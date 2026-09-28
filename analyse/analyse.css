@@ -1,0 +1,94 @@
+/* ============================================================
+   MOVIE ANALYSIS — l'accueil de l'outil dans le portail.
+   Règles du thème : aucune couleur en dur (tout vient de
+   commun/tokens.css), des filets et jamais de bordures, un seul
+   .tb.go par écran (« Nouvelle analyse »), les capitales pour la
+   machine. Les pages d'analyse (Studio, dépouillement) et la page de
+   diarisation gardent leur propre feuille : elles sont autonomes,
+   copiées de MOVIE_ANALYSE (voir PROVENANCE.md).
+   ============================================================ */
+
+.ma { max-width: 1420px; margin: 0 auto; padding: var(--s6) var(--s6) 64px; display: flex; flex-direction: column; gap: var(--s6); }
+@media (max-width: 700px) { .ma { padding: var(--s4) var(--s4) 48px; } }
+
+.ma-top { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: var(--s4); }
+@media (max-width: 900px) { .ma-top { grid-template-columns: 1fr; } }
+/* Norelli ne tient que le logotype et le titre de l'accueil du portail : ici, Venus Rising */
+.hero.ma-hero h1 { font-family: var(--f-disp); font-size: clamp(26px, 3.2vw, 40px); line-height: 1.06; letter-spacing: .03em; }
+.ma-sum { justify-content: flex-start; gap: var(--s4); box-shadow: inset 0 0 0 1px var(--line-gr); }
+.ma-sum .kv { font-size: 10px; row-gap: 7px; }
+.ma-sum .kv dd.big { font-family: var(--f-disp); font-size: 34px; font-weight: 400; line-height: 1; }
+.ma-sum .ma-note { margin-top: auto; font-size: 11.5px; }
+
+/* ── les cartes d'analyse ───────────────────────────────── */
+.ma-cards { display: grid; gap: var(--s4); grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+.ma-card {
+  background: var(--panel); border-radius: var(--r4); overflow: hidden;
+  display: flex; flex-direction: column; box-shadow: inset 0 0 0 1px transparent; transition: box-shadow .12s;
+}
+.ma-card:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.ma-card.run { box-shadow: inset 0 0 0 1px var(--line-gr); }
+.ma-card.err { box-shadow: inset 0 0 0 1px var(--line-or); }
+.ma-im {
+  position: relative; display: block; aspect-ratio: 21 / 9;
+  background: var(--black) center / cover no-repeat; text-decoration: none;
+}
+.ma-im .kind, .ma-im .dur {
+  position: absolute; padding: 3px 6px; border-radius: var(--r1); background: var(--veil);
+  font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink2);
+}
+.ma-im .kind { top: 8px; left: 8px; }
+.ma-im .kind.portail { color: var(--cy); }
+.ma-im .dur { bottom: 8px; right: 8px; font-size: 8px; letter-spacing: .1em; color: var(--ink); }
+.ma-body { padding: var(--s4) var(--s5) var(--s5); display: flex; flex-direction: column; gap: var(--s3); flex: 1; }
+.ma-t { font-family: var(--f-disp); font-size: 15px; line-height: 1.2; letter-spacing: .04em; text-transform: uppercase; }
+.ma-s { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink3); margin-top: -4px; }
+/* « personnages » est le plus long des quatre libellés : sa case est la plus large */
+.ma-n { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr) minmax(0, 1.15fr) minmax(0, .8fr); gap: 5px; margin: 0; }
+.ma-n div { background: var(--panel2); border-radius: var(--r2); padding: 8px 10px 9px; min-width: 0; }
+.ma-n dt { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ma-n dd { margin: 3px 0 0; font-size: 18px; font-weight: 600; line-height: 1.1; color: var(--cy); letter-spacing: .02em; }
+.ma-n dd.ok { color: var(--grn2); font-size: 13px; text-transform: uppercase; letter-spacing: .1em; }
+.ma-n dd.non { color: var(--ink3); font-size: 13px; text-transform: uppercase; letter-spacing: .1em; }
+.ma-body .row { margin-top: auto; }
+.ma-bar { height: 3px; border-radius: 2px; background: var(--panel3); overflow: hidden; }
+.ma-bar i { display: block; height: 100%; background: var(--cy); transition: width .4s; }
+.ma-msg { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink2); line-height: 1.7; }
+.ma-msg.err { color: var(--or); text-transform: none; letter-spacing: .04em; font-size: 9.5px; }
+
+/* ── diarisation, projets, chaîne ───────────────────────── */
+.ma-diar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s5); align-items: start; }
+@media (max-width: 800px) { .ma-diar { grid-template-columns: 1fr; } }
+.ma-diar-t { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
+.ma-diar-t p, .ma-note { margin: 0; color: var(--ink2); font-size: 12.5px; line-height: 1.7; max-width: 92ch; }
+.pan code, .ma-note code, .modal code { font-family: var(--f-mono); font-size: 10px; color: var(--cy); word-break: break-all; }
+.ma-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; }
+/* des commandes : mono, mais pas en capitales — elles se recopient telles quelles */
+.ma-list li { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .02em; color: var(--ink2); line-height: 1.65; padding-left: 12px; box-shadow: inset 2px 0 0 var(--line-gr); }
+
+.ma-proj { display: flex; align-items: baseline; gap: var(--s3); padding: 8px 0; box-shadow: inset 0 -1px 0 var(--line); }
+.ma-proj b { font-weight: 600; font-size: 13px; }
+#projets { display: flex; flex-direction: column; gap: var(--s3); }
+
+.ma-kv { margin-bottom: var(--s4); font-size: 9.5px; }
+.ma-kv dd { word-break: break-word; }
+.ma-outils { list-style: none; margin: 0 0 var(--s4); padding: 0; display: grid; gap: 5px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+.ma-outils li { display: flex; align-items: center; gap: 9px; background: var(--panel2); border-radius: var(--r2); padding: 8px 10px; font-size: 12px; }
+.ma-outils li i { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--ink3); }
+.ma-outils li.ok i { background: var(--grn2); }
+.ma-outils li.err i { background: var(--or); }
+.ma-outils li.err { box-shadow: inset 0 0 0 1px var(--line-or); }
+.ma-outils li .lbl { margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* ── la fenêtre « Nouvelle analyse » ────────────────────── */
+#nv .modal { width: min(760px, 100%); }
+.ma-src { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+.ma-src .lbl { flex-basis: 100%; }
+.ma-choisie:empty { display: none; }
+.ma-choisie .thumb { width: 150px; }
+.ma-chemin { display: flex; align-items: center; gap: 0; background: var(--panel2); border-radius: var(--r2); box-shadow: inset 0 0 0 1px var(--line); }
+.ma-chemin > span { padding: 0 0 0 var(--s3); font-family: var(--f-mono); font-size: 10px; color: var(--ink3); white-space: nowrap; }
+.ma-chemin .fld { box-shadow: none; background: transparent; padding-left: 2px; font-family: var(--f-mono); font-size: 11px; }
+.ma-rep { font-size: 12px; color: var(--ink2); gap: var(--s2); }
+.ma-rep input { accent-color: var(--grn2); }
+#nv .modal-foot .why { max-width: 60%; }

@@ -33,6 +33,8 @@ DEFAULTS: dict = {
         "h3": ["http://127.0.0.1:8189", "http://169.254.110.6:8189"],
         "audio": ["http://127.0.0.1:8188"],
         "cpu": ["local", "local"],
+        # Movie Analysis : la chaîne complète (analyse.sh) est lourde — une seule à la fois, sur la machine du portail
+        "analyse": ["local"],
     },
     # Character Factory : son studio (DGX1, joint par le câble) pour lire
     # les personnages, et le lien que Cal ouvre (relais de DGX2)

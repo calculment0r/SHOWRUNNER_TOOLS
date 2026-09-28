@@ -1,0 +1,716 @@
+{
+ "source": "getaround.mp4",
+ "title": "Evadez-vous avec Getaround",
+ "lang": "fr",
+ "meta": {
+  "durationSeconds": 30.26,
+  "fps": 25,
+  "width": 1920,
+  "height": 804,
+  "aspect": "160:67",
+  "codec": "h264",
+  "hasAudio": true
+ },
+ "params": {
+  "sceneThreshold": 0.3,
+  "minShotSeconds": 0.3
+ },
+ "seedCuts": [
+  2.24,
+  4.44,
+  5.24,
+  6.72,
+  12.44,
+  14.56,
+  15.64,
+  19.2,
+  20.4,
+  21.04,
+  25.4
+ ],
+ "manualCuts": [],
+ "cast": [
+  {
+   "id": "P1",
+   "name": "L’homme chauve à la moustache",
+   "note": "Un homme d'âge moyen avec une moustache et des cheveux noirs, portant un vêtement sombre. — 13.5 s à l'image, 3 piste(s), 6.8→25.4 s, identifié par le visage",
+   "tracks": [
+    18,
+    53,
+    97
+   ],
+   "by": "visage",
+   "portrait": "portraits/P1.jpg"
+  },
+  {
+   "id": "P2",
+   "name": "L'homme aux lunettes aviateur",
+   "note": "Un homme avec des lunettes aviateur et une barbe visible. — 5.6 s à l'image, 5 piste(s), 2.3→19.8 s, identifié par le visage",
+   "tracks": [
+    4,
+    40,
+    85,
+    29,
+    96
+   ],
+   "by": "visage",
+   "portrait": "portraits/P2.jpg"
+  },
+  {
+   "id": "P3",
+   "name": "La femme aux cheveux noirs attachés",
+   "note": "Un visage marqué par une expression sérieuse et concentrée. — 5.4 s à l'image, 4 piste(s), 4.4→22.4 s, identifié par le visage",
+   "tracks": [
+    84,
+    86,
+    89,
+    92
+   ],
+   "by": "visage",
+   "portrait": "portraits/P3.jpg"
+  },
+  {
+   "id": "P4",
+   "name": "Figurant P4",
+   "note": "Silhouette mystérieuse avec une capuche couvrant partiellement le visage. — 3.1 s à l'image, 2 piste(s), 10.1→19.2 s, identifié par le buste",
+   "tracks": [
+    22,
+    38
+   ],
+   "by": "buste",
+   "portrait": "portraits/P4.jpg"
+  },
+  {
+   "id": "P5",
+   "name": "L'homme aux yeux bleus et au regard intense",
+   "note": "Un regard perçant et expressif, captivant l'attention. — 2.1 s à l'image, 1 piste(s), 12.4→14.5 s, identifié par le buste",
+   "tracks": [
+    87
+   ],
+   "by": "buste",
+   "portrait": "portraits/P5.jpg"
+  },
+  {
+   "id": "P6",
+   "name": "Figurant P6",
+   "note": "Personne âgée utilisant un smartphone pour consulter des annonces de voitures. — 1.5 s à l'image, 2 piste(s), 12.4→21.0 s, identifié par le buste",
+   "tracks": [
+    95,
+    101
+   ],
+   "by": "buste",
+   "portrait": "portraits/P6.jpg"
+  },
+  {
+   "id": "P7",
+   "name": "Figurant P7",
+   "note": "Personne tenant un smartphone affichant une image de voiture, main visible mais visage flou. — 0.9 s à l'image, 2 piste(s), 20.4→21.0 s, identifié par le buste",
+   "tracks": [
+    91,
+    48
+   ],
+   "by": "buste",
+   "portrait": "portraits/P7.jpg"
+  },
+  {
+   "id": "P8",
+   "name": "Figurant P8",
+   "note": "Silhouette floue avec un chapeau, vue à travers une fenêtre. — 0.6 s à l'image, 1 piste(s), 19.2→19.8 s, identifié par le buste",
+   "tracks": [
+    100
+   ],
+   "by": "buste",
+   "portrait": "portraits/P8.jpg"
+  },
+  {
+   "id": "P9",
+   "name": "Figurant P9",
+   "note": "Silhouette sombre avec un col roulé distinctif. — 0.6 s à l'image, 1 piste(s), 24.4→25.2 s, identifié par le buste",
+   "tracks": [
+    81
+   ],
+   "by": "buste",
+   "portrait": "portraits/P9.jpg"
+  },
+  {
+   "id": "P10",
+   "name": "L'homme à la moustache et au bonnet noir",
+   "note": "Un homme d'âge moyen avec une moustache prononcée et un bonnet noir. — 0.5 s à l'image, 1 piste(s), 19.2→19.6 s, identifié par le visage",
+   "tracks": [
+    90
+   ],
+   "by": "visage",
+   "portrait": "portraits/P10.jpg"
+  },
+  {
+   "id": "P11",
+   "name": "Figurant P11",
+   "note": "Visage flou mais tenue distinctive — 0.5 s à l'image, 1 piste(s), 4.0→4.4 s, identifié par le buste",
+   "tracks": [
+    11
+   ],
+   "by": "buste",
+   "portrait": "portraits/P11.jpg"
+  }
+ ],
+ "shots": [
+  {
+   "id": "S01",
+   "start": 0,
+   "end": 2.24,
+   "seconds": 2.24,
+   "motion": 14.35,
+   "size": "extreme-wide",
+   "category": "text-card",
+   "camera": "static",
+   "transitionIn": "fade-in",
+   "subjects": [],
+   "frame": "Hélicoptère survolant une ville au coucher du soleil.",
+   "onscreenText": "GETAROUND PRÉSENTE",
+   "audio": "? : Ok, les braqueurs sont sur le toit, je répète, les braqueurs sont sur le toit.",
+   "masks": {},
+   "lines": [
+    {
+     "start": 0,
+     "end": 2.84,
+     "speaker": null,
+     "voice": "SPEAKER_02",
+     "how": "voix off (aucune bouche ; voix la plus proche à 0.73, pas assez sûre)",
+     "text": "Ok, les braqueurs sont sur le toit, je répète, les braqueurs sont sur le toit."
+    }
+   ],
+   "rhythm": "hook",
+   "rhythmNote": "Accroche visuelle avec un hélicoptère survolant une ville, introduisant le titre du film.",
+   "cards": [
+    {
+     "t": 1,
+     "texte": "GETAROUND PRÉSENTE"
+    }
+   ],
+   "teinte": "#7d7961"
+  },
+  {
+   "id": "S02",
+   "start": 2.24,
+   "end": 4.44,
+   "seconds": 2.2,
+   "motion": 25.5,
+   "size": "medium",
+   "category": "text-card",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P2"
+   ],
+   "frame": "Texte jaune sur fond bleu ciel. Un homme porte des lunettes de soleil.",
+   "onscreenText": "",
+   "audio": "? : Ok, les braqueurs sont sur le toit, je répète, les braqueurs sont sur le toit. / ? : Bonjour, je suis la négociatrice, qu'est-ce que vous voulez ?",
+   "masks": {
+    "P2": {
+     "coverage": 38.4,
+     "frames": 53,
+     "share": 0.96
+    },
+    "P11": {
+     "coverage": 2.7,
+     "frames": 12,
+     "share": 0.22
+    }
+   },
+   "lines": [
+    {
+     "start": 0,
+     "end": 2.84,
+     "speaker": null,
+     "voice": "SPEAKER_02",
+     "how": "voix off (aucune bouche ; voix la plus proche à 0.73, pas assez sûre)",
+     "text": "Ok, les braqueurs sont sur le toit, je répète, les braqueurs sont sur le toit."
+    },
+    {
+     "start": 3.4,
+     "end": 5.28,
+     "speaker": null,
+     "voice": "SPEAKER_02",
+     "how": "voix off (aucune bouche ; voix la plus proche à 0.72, pas assez sûre)",
+     "text": "Bonjour, je suis la négociatrice, qu'est-ce que vous voulez ?"
+    }
+   ],
+   "rhythm": "hook",
+   "rhythmNote": "Texte jaune sur fond bleu ciel.",
+   "teinte": "#94865e"
+  },
+  {
+   "id": "S03",
+   "start": 4.44,
+   "end": 5.24,
+   "seconds": 0.8,
+   "motion": 1.2,
+   "size": "medium-close",
+   "category": "subject",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P3"
+   ],
+   "frame": "Femme cheveux noirs téléphone écouteur concentrée",
+   "onscreenText": "",
+   "audio": "? : Bonjour, je suis la négociatrice, qu'est-ce que vous voulez ?",
+   "masks": {
+    "P3": {
+     "coverage": 49.2,
+     "frames": 18,
+     "share": 0.9
+    }
+   },
+   "lines": [
+    {
+     "start": 3.4,
+     "end": 5.28,
+     "speaker": null,
+     "voice": "SPEAKER_02",
+     "how": "voix off (aucune bouche ; voix la plus proche à 0.72, pas assez sûre)",
+     "text": "Bonjour, je suis la négociatrice, qu'est-ce que vous voulez ?"
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Mise en place de la scène avec la femme aux cheveux noirs.",
+   "teinte": "#4d5251"
+  },
+  {
+   "id": "S04",
+   "start": 5.24,
+   "end": 6.72,
+   "seconds": 1.48,
+   "motion": 5.1,
+   "size": "medium-close",
+   "category": "subject",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P2"
+   ],
+   "frame": "Homme en chemise à motifs, lunettes de soleil, téléphone à l'oreille, soleil en arrière-plan.",
+   "onscreenText": "",
+   "audio": "L’homme chauve à la moustache : On veut une voiture devant la banque dans 5 minutes.",
+   "masks": {
+    "P2": {
+     "coverage": 49.5,
+     "frames": 35,
+     "share": 0.95
+    }
+   },
+   "lines": [
+    {
+     "start": 5.28,
+     "end": 6.76,
+     "speaker": "P1",
+     "voice": "SPEAKER_02",
+     "how": "hors champ — même voix qu'à 15.6 s (distance 0.69)",
+     "text": "On veut une voiture devant la banque dans 5 minutes."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction d'un personnage dans un environnement extérieur.",
+   "teinte": "#87836a"
+  },
+  {
+   "id": "S05",
+   "start": 6.72,
+   "end": 12.44,
+   "seconds": 5.72,
+   "motion": 1.5,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P1",
+    "P4"
+   ],
+   "frame": "Deux personnes regardent un téléphone dans un espace sombre.",
+   "onscreenText": "",
+   "audio": "La femme aux cheveux noirs attachés : 5 minutes ? Mais trouver une voiture dans 5 minutes, c'est impossible. / L’homme chauve à la moustache : Get a round ? J'en ai eu une la semaine dernière.",
+   "masks": {
+    "P3": {
+     "coverage": 16.2,
+     "frames": 141,
+     "share": 0.99
+    },
+    "P1": {
+     "coverage": 7.4,
+     "frames": 141,
+     "share": 0.99
+    },
+    "P4": {
+     "coverage": 10.8,
+     "frames": 58,
+     "share": 0.41
+    }
+   },
+   "lines": [
+    {
+     "start": 6.96,
+     "end": 9.42,
+     "speaker": "P3",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +2.10)",
+     "text": "5 minutes ? Mais trouver une voiture dans 5 minutes, c'est impossible."
+    },
+    {
+     "start": 9.88,
+     "end": 12.16,
+     "speaker": "P1",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +0.56)",
+     "text": "Get a round ? J'en ai eu une la semaine dernière."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction des personnages et de leur environnement.",
+   "teinte": "#3f4141"
+  },
+  {
+   "id": "S06",
+   "start": 12.44,
+   "end": 14.56,
+   "seconds": 2.12,
+   "motion": 9.3,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P5",
+    "P6"
+   ],
+   "frame": "Homme chauve à la moustache, mains levées, visage tendu.",
+   "onscreenText": "",
+   "audio": "? : On attend là ! / La femme aux cheveux noirs attachés : Ok, SUV ou familial ?",
+   "masks": {
+    "P5": {
+     "coverage": 31,
+     "frames": 51,
+     "share": 0.96
+    },
+    "P6": {
+     "coverage": 10.9,
+     "frames": 29,
+     "share": 0.55
+    }
+   },
+   "lines": [
+    {
+     "start": 12.2,
+     "end": 13.22,
+     "speaker": null,
+     "voice": "SPEAKER_03",
+     "how": "voix off (aucune bouche ; voix la plus proche à 0.87, pas assez sûre)",
+     "text": "On attend là !"
+    },
+    {
+     "start": 13.22,
+     "end": 14.64,
+     "speaker": "P3",
+     "voice": "SPEAKER_02",
+     "how": "hors champ — même voix qu'à 7.0 s (distance 0.61)",
+     "text": "Ok, SUV ou familial ?"
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction du personnage principal dans un moment de tension.",
+   "teinte": "#483f3a"
+  },
+  {
+   "id": "S07",
+   "start": 14.56,
+   "end": 15.64,
+   "seconds": 1.08,
+   "motion": 29.85,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P2"
+   ],
+   "frame": "Homme moustachu porte lunettes soleil, téléphone à l'oreille, veste jaune.",
+   "onscreenText": "",
+   "audio": "? : Mais c'est quoi cette question ?",
+   "masks": {
+    "P2": {
+     "coverage": 58.3,
+     "frames": 25,
+     "share": 0.93
+    }
+   },
+   "lines": [
+    {
+     "start": 14.64,
+     "end": 15.56,
+     "speaker": null,
+     "voice": "SPEAKER_03",
+     "how": "voix off (aucune bouche ; voix la plus proche à 0.80, pas assez sûre)",
+     "text": "Mais c'est quoi cette question ?"
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction d'un personnage en action.",
+   "teinte": "#8c7b5c"
+  },
+  {
+   "id": "S08",
+   "start": 15.64,
+   "end": 19.2,
+   "seconds": 3.56,
+   "motion": 2.05,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P1",
+    "P3",
+    "P4"
+   ],
+   "frame": "Deux personnes assises dans un espace confiné, l'homme tient un paquet de chips, la femme utilise un téléphone.",
+   "onscreenText": "",
+   "audio": "L’homme chauve à la moustache : Tu peux même déverrouiller tes vêtures avec tantale ? / L’homme chauve à la moustache : Mais non, non, c'est tard ça.",
+   "masks": {
+    "P3": {
+     "coverage": 13,
+     "frames": 87,
+     "share": 0.98
+    },
+    "P1": {
+     "coverage": 7.6,
+     "frames": 87,
+     "share": 0.98
+    },
+    "P4": {
+     "coverage": 9.5,
+     "frames": 34,
+     "share": 0.38
+    }
+   },
+   "lines": [
+    {
+     "start": 15.56,
+     "end": 17.6,
+     "speaker": "P1",
+     "voice": "SPEAKER_03",
+     "how": "vue et entendue (synchronie +3.66)",
+     "text": "Tu peux même déverrouiller tes vêtures avec tantale ?"
+    },
+    {
+     "start": 17.6,
+     "end": 19.28,
+     "speaker": "P1",
+     "voice": "SPEAKER_03",
+     "how": "vue et entendue (synchronie +1.53)",
+     "text": "Mais non, non, c'est tard ça."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction des personnages dans leur environnement.",
+   "teinte": "#3f3f3d"
+  },
+  {
+   "id": "S09",
+   "start": 19.2,
+   "end": 20.4,
+   "seconds": 1.2,
+   "motion": 34.7,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P8",
+    "P2",
+    "P10"
+   ],
+   "frame": "Homme moustachu en chemise hawaïenne parle au téléphone.",
+   "onscreenText": "",
+   "audio": "? : Demande à Kim.",
+   "masks": {
+    "P8": {
+     "coverage": 3,
+     "frames": 18,
+     "share": 0.6
+    },
+    "P2": {
+     "coverage": 32.7,
+     "frames": 28,
+     "share": 0.93
+    },
+    "P10": {
+     "coverage": 16.3,
+     "frames": 28,
+     "share": 0.93
+    }
+   },
+   "lines": [
+    {
+     "start": 19.48,
+     "end": 20.08,
+     "speaker": null,
+     "voice": "SPEAKER_03",
+     "how": "voix off (aucune bouche ; voix la plus proche à 0.89, pas assez sûre)",
+     "text": "Demande à Kim."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de l'homme moustachu dans une situation.",
+   "teinte": "#7d7558"
+  },
+  {
+   "id": "S10",
+   "start": 20.4,
+   "end": 21.04,
+   "seconds": 0.64,
+   "motion": 27.95,
+   "size": "medium-close",
+   "category": "subject",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P7",
+    "P6"
+   ],
+   "frame": "Main droite tenant un smartphone affichant une application de covoiturage.",
+   "onscreenText": "",
+   "audio": "",
+   "masks": {
+    "P7": {
+     "coverage": 15.9,
+     "frames": 14,
+     "share": 0.88
+    }
+   },
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de l'application de covoiturage utilisée par la femme.",
+   "teinte": "#475151"
+  },
+  {
+   "id": "S11",
+   "start": 21.04,
+   "end": 25.4,
+   "seconds": 4.36,
+   "motion": 10.2,
+   "size": "medium",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P1",
+    "P3"
+   ],
+   "frame": "Deux personnes dans un espace confiné, l'une chauve avec une moustache, l'autre avec des cheveux noirs attachés.",
+   "onscreenText": "",
+   "audio": "? : Et c'est réservé à l'aide !",
+   "masks": {
+    "P3": {
+     "coverage": 15.3,
+     "frames": 107,
+     "share": 0.98
+    },
+    "P1": {
+     "coverage": 8.9,
+     "frames": 107,
+     "share": 0.98
+    },
+    "P9": {
+     "coverage": 6.6,
+     "frames": 7,
+     "share": 0.06
+    }
+   },
+   "lines": [
+    {
+     "start": 21.02,
+     "end": 23.580000000000002,
+     "speaker": null,
+     "voice": "SPEAKER_01",
+     "how": "voix off (aucune bouche ; voix la plus proche à 0.83, pas assez sûre)",
+     "text": "Et c'est réservé à l'aide !"
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction des personnages dans leur environnement de travail.",
+   "teinte": "#444744"
+  },
+  {
+   "id": "S12",
+   "start": 25.4,
+   "end": 30.26,
+   "seconds": 4.86,
+   "motion": 5.4,
+   "size": "medium-wide",
+   "category": "text-card",
+   "camera": "tracking",
+   "transitionIn": "cut",
+   "subjects": [],
+   "frame": "Voiture rouge roule sur route côtière. Oiseaux volent au-dessus. Texte incrusté à droite.",
+   "onscreenText": "EVADEZ-VOUS AVEC GETAROUND\n*COMPARAISON POUR UNE LOCATION D'UNE SEMAINE EN GARE OU AÉROPORT. TARIFS VARIABLES SELON LE VÉHICULE ET LA SAISONNALITÉ. SOURCE UFC-QUE CHOISIR, MARS 2025 · getaround\nLouez une voiture en 1 clic\nJusqu'à 40% moins cher qu'en agence*\n*COMPARAISON POUR UNE LOCATION D'UNE SEMAINE EN GARE OU AÉROPORT. TARIFS VARIABLES SELON LE VÉHICULE ET LA SAISONNALITÉ. SOURCE UFC-QUE CHOISIR, MARS 2025",
+   "audio": "La femme aux cheveux noirs attachés : Allez, bonnes vacances, soyez prudents. / La femme aux cheveux noirs attachés : Évadez-vous avec Get a round.",
+   "masks": {},
+   "lines": [
+    {
+     "start": 25.48,
+     "end": 26.76,
+     "speaker": "P3",
+     "voice": "SPEAKER_01",
+     "how": "hors champ — même voix qu'à 7.0 s (distance 0.61)",
+     "text": "Allez, bonnes vacances, soyez prudents."
+    },
+    {
+     "start": 27.38,
+     "end": 28.54,
+     "speaker": "P3",
+     "voice": "SPEAKER_02",
+     "how": "hors champ — même voix qu'à 7.0 s (distance 0.65)",
+     "text": "Évadez-vous avec Get a round."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de la voiture et de l'environnement.",
+   "note": "catégorie corrigée par le code : dialogue → text-card, aucun personnage à l'image",
+   "cards": [
+    {
+     "t": 27.83,
+     "texte": "EVADEZ-VOUS AVEC GETAROUND\n*COMPARAISON POUR UNE LOCATION D'UNE SEMAINE EN GARE OU AÉROPORT. TARIFS VARIABLES SELON LE VÉHICULE ET LA SAISONNALITÉ. SOURCE UFC-QUE CHOISIR, MARS 2025"
+    },
+    {
+     "t": 30.11,
+     "texte": "getaround\nLouez une voiture en 1 clic\nJusqu'à 40% moins cher qu'en agence*\n*COMPARAISON POUR UNE LOCATION D'UNE SEMAINE EN GARE OU AÉROPORT. TARIFS VARIABLES SELON LE VÉHICULE ET LA SAISONNALITÉ. SOURCE UFC-QUE CHOISIR, MARS 2025"
+    }
+   ],
+   "teinte": "#7b776a"
+  }
+ ],
+ "faceDist": {
+  "P1|P2": 1.061,
+  "P1|P3": 1.456,
+  "P1|P10": 1.362,
+  "P2|P3": 1.305,
+  "P2|P10": 1.179,
+  "P3|P10": 1.395
+ },
+ "provenance": {
+  "cast": "yolo11m+bytetrack → mtcnn+facenet(vggface2) [visage] / dinov2 [buste] → regroupement ; figurants sans visage gardés",
+  "masks": "sam3 (text) → IoU avec pistes yolo → casting ; sujets non étayés retirés",
+  "speakers": "synchronie bouche/son (SyncNet-like) ; hors champ recolle par empreinte ECAPA ; sinon voix off, non attribuee",
+  "recast": "identités reportées à la main (ancien P1→P3, P2→P1) : la découpe aux raccords a renuméroté les pistes",
+  "cartons": "texte incruste relu a plusieurs instants du plan ; chaque carton distinct garde son instant ; revus a l'oeil le 25/09 : seuls les textes incrustes restent (le modele lisait aussi le texte filme)"
+ },
+ "voices": {},
+ "extras": [],
+ "portes": [
+  {
+   "plan": "S12",
+   "de": "dialogue",
+   "vers": "text-card",
+   "motif": "aucun personnage ni silhouette à l'image ; texte incrusté"
+  }
+ ]
+}

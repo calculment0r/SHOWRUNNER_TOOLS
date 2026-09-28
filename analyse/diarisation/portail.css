@@ -1,0 +1,93 @@
+/* ============================================================
+   L'en-tête du portail posée sur la page de diarisation.
+
+   La page garde ses propres styles (Verdant, polices embarquées) : elle
+   est autonome et éprouvée telle quelle dans MOVIE_ANALYSE. On ne lui
+   charge donc pas commun/base.css, dont les classes .pill, .pan, .mono
+   et .bar croiseraient les siennes. Ne sont repris ici, bornés à .hdr,
+   .drawer et .toast, que les composants de commun/base.css dont
+   l'en-tête et le tiroir de la file ont besoin. Couleurs : les jetons de
+   commun/tokens.css, rien en dur.
+
+   L'en-tête n'est pas collante ici : la barre de la page (.bar) l'est
+   déjà, et deux barres collées en haut se recouvriraient.
+   ============================================================ */
+
+@font-face {
+  font-family: 'Norelli';
+  src: url('../../commun/fonts/norelli-black.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+.hdr {
+  position: relative; z-index: 60;
+  background: var(--hdr-bg);
+  padding: 13px var(--s6);
+  display: flex; align-items: center; gap: var(--s5); flex-wrap: wrap;
+  box-shadow: inset 0 -1px 0 var(--line);
+  font-family: var(--f-ui); font-size: 12px; line-height: 1.5; color: var(--ink);
+}
+/* la page colore tous ses liens (a { color: cy }) : le logo reprend l'encre */
+.hdr .logo { display: flex; align-items: center; gap: 11px; padding: 0; text-align: left; color: var(--ink); text-decoration: none; }
+.hdr .logo .sq {
+  width: 24px; height: 24px; border-radius: var(--r1); background: var(--or);
+  display: flex; align-items: center; justify-content: center;
+}
+.hdr .logo .sq i { display: block; width: 7px; height: 7px; border-radius: 2px; background: var(--on-or); }
+.hdr .logo b {
+  display: block; font-family: var(--f-black); font-size: 16px; font-weight: 400;
+  letter-spacing: .05em; text-transform: uppercase; line-height: 1.1;
+}
+.hdr .logo small {
+  display: block; font-family: var(--f-mono); font-size: 8.5px;
+  letter-spacing: .22em; color: var(--ink3); text-transform: uppercase;
+}
+.hdr .sp { flex: 1; min-width: 16px; }
+.hdr .lbl, .drawer .lbl {
+  font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .2em;
+  text-transform: uppercase; color: var(--ink3);
+}
+
+/* la pastille des machines : celle du portail, pas le bouton .pill de la page */
+.hdr .pill {
+  display: flex; align-items: center; gap: 9px; padding: 0; border-radius: 0;
+  background: none; box-shadow: none; white-space: normal;
+  font-family: var(--f-mono); font-size: 9px; font-weight: 400; line-height: 1.5;
+  letter-spacing: .2em; color: var(--ink3); text-transform: uppercase;
+}
+.hdr .pill:hover { color: var(--ink3); box-shadow: none; }
+.hdr .pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--ink3); flex: none; }
+.hdr .pill.on i { background: var(--grn2); }
+.hdr .pill.err i { background: var(--or); }
+.hdr .pill.on { color: var(--ink2); }
+.hdr .pill.err { color: var(--or); }
+
+/* boutons du portail (File, Fermer, Arrêter…) */
+.hdr .tb, .drawer .tb {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 30px; min-width: 30px; padding: 0 var(--s3);
+  border-radius: var(--r2); background: var(--panel2);
+  color: var(--ink); font-family: var(--f-ui); font-size: 11px; font-weight: 600;
+  letter-spacing: .1em; text-transform: uppercase;
+}
+.hdr .tb.ghost, .drawer .tb.ghost { background: transparent; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink2); }
+.hdr .tb.ghost:hover, .drawer .tb.ghost:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.hdr .tb.sm, .drawer .tb.sm { height: 26px; font-size: 10px; padding: 0 var(--s2); }
+
+/* le tiroir de la file (shell.css le place ; ici sa tête et ses lignes) */
+.drawer { font-family: var(--f-ui); font-size: 12px; color: var(--ink); }
+.drawer .pan-head { display: flex; align-items: center; gap: var(--s3); box-shadow: inset 0 -1px 0 var(--line); }
+.drawer .pan-head .t { font-family: var(--f-mono); font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink3); }
+.drawer .pan-head .sp { flex: 1; }
+/* la barre de progression d'un travail s'appelle .bar, comme la barre collante de la page */
+.drawer .job .bar { position: static; z-index: auto; backdrop-filter: none; }
+
+.toast {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 90;
+  background: var(--panel3); color: var(--ink); padding: var(--s3) var(--s5);
+  border-radius: var(--r3); font-size: 12px; box-shadow: 0 8px 30px var(--drop);
+  opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw;
+}
+.toast.on { opacity: 1; }

@@ -1,0 +1,454 @@
+{
+  "youtubeId": "local:getaround.mp4",
+  "scriptText": "DÉCOUPAGE TECHNIQUE — Evadez-vous avec Getaround\n\nPLAN S01 · 00:00.00 → 00:02.24 · 2.24s\nPLAN GÉNÉRAL. Hélicoptère survolant une ville au coucher du soleil.\nLa femme aux cheveux noirs attachés : Ok, les braqueurs sont sur le toit, je répète, les braqueurs sont sur le toit.\nTEXTE À L'IMAGE : GETAROUND PRÉSENTE\nTRANSITION : fade-in\nRYTHME : accroche — Accroche visuelle avec un hélicoptère survolant une ville, introduisant le titre du film.\n\nPLAN S02 · 00:02.24 → 00:04.44 · 2.2s\nPLAN AMÉRICAIN. Texte jaune sur fond bleu ciel. Un homme porte des lunettes de soleil.\nLa femme aux cheveux noirs attachés : Ok, les braqueurs sont sur le toit, je répète, les braqueurs sont sur le toit. / La femme aux cheveux noirs attachés : Bonjour, je suis la négociatrice, qu'est-ce que vous voulez ?\nTEXTE À L'IMAGE : GETAROUND PRÉSENTE\nRYTHME : accroche — Texte jaune sur fond bleu ciel.\n\nPLAN S03 · 00:04.44 → 00:05.24 · 0.8s\nPLAN RAPPROCHÉ. Femme cheveux noirs téléphone écouteur concentrée\nLA FEMME AUX CHEVEUX NOIRS ATTACHÉS\nLa femme aux cheveux noirs attachés : Bonjour, je suis la négociatrice, qu'est-ce que vous voulez ?\nRYTHME : mise en place — Mise en place de la scène avec la femme aux cheveux noirs.\n\nPLAN S04 · 00:05.24 → 00:06.72 · 1.48s\nPLAN RAPPROCHÉ. Homme en chemise à motifs, lunettes de soleil, téléphone à l'oreille, soleil en arrière-plan.\nLa femme aux cheveux noirs attachés : On veut une voiture devant la banque dans 5 minutes.\nRYTHME : mise en place — Introduction d'un personnage dans un environnement extérieur.\n\nPLAN S05 · 00:06.72 → 00:12.44 · 5.72s\nPLAN RAPPROCHÉ. Deux personnes regardent un téléphone dans un espace sombre.\nLA FEMME AUX CHEVEUX NOIRS ATTACHÉS\nLa femme aux cheveux noirs attachés : 5 minutes ? Mais trouver une voiture dans 5 minutes, c'est impossible. / ? : Get a round ? J'en ai eu une la semaine dernière.\nRYTHME : mise en place — Introduction des personnages et de leur environnement.\n\nPLAN S06 · 00:12.44 → 00:14.56 · 2.12s\nPLAN RAPPROCHÉ. Homme chauve à la moustache, mains levées, visage tendu.\nL'HOMME CHAUVE À LA MOUSTACHE\nL'homme chauve à la moustache : On attend là ! / La femme aux cheveux noirs attachés : Ok, SUV ou familial ?\nTEXTE À L'IMAGE : C22\nRYTHME : mise en place — Introduction du personnage principal dans un moment de tension.\n\nPLAN S07 · 00:14.56 → 00:15.64 · 1.08s\nPLAN RAPPROCHÉ. Homme moustachu porte lunettes soleil, téléphone à l'oreille, veste jaune.\nL'HOMME CHAUVE À LA MOUSTACHE\nL'homme chauve à la moustache : Mais c'est quoi cette question ?\nRYTHME : mise en place — Introduction d'un personnage en action.\n\nPLAN S08 · 00:15.64 → 00:19.20 · 3.56s\nPLAN RAPPROCHÉ. Deux personnes assises dans un espace confiné, l'homme tient un paquet de chips, la femme utilise un téléphone.\nLA FEMME AUX CHEVEUX NOIRS ATTACHÉS\nL'homme chauve à la moustache : Tu peux même déverrouiller tes vêtures avec tantale ? / L'homme chauve à la moustache : Mais non, non, c'est tard ça.\nRYTHME : mise en place — Introduction des personnages dans leur environnement.\n\nPLAN S09 · 00:19.20 → 00:20.40 · 1.2s\nPLAN RAPPROCHÉ. Homme moustachu en chemise hawaïenne parle au téléphone.\nL'HOMME CHAUVE À LA MOUSTACHE\nL'homme chauve à la moustache : Demande à Kim.\nRYTHME : mise en place — Introduction de l'homme moustachu dans une situation.\n\nPLAN S10 · 00:20.40 → 00:21.04 · 0.64s\nPLAN RAPPROCHÉ. Main droite tenant un smartphone affichant une application de covoiturage.\nRYTHME : mise en place — Introduction de l'application de covoiturage utilisée par la femme.\n\nPLAN S11 · 00:21.04 → 00:25.40 · 4.36s\nPLAN AMÉRICAIN. Deux personnes dans un espace confiné, l'une chauve avec une moustache, l'autre avec des cheveux noirs attachés.\nLA FEMME AUX CHEVEUX NOIRS ATTACHÉS\n? : Et c'est réservé à l'aide !\nRYTHME : mise en place — Introduction des personnages dans leur environnement de travail.\n\nPLAN S12 · 00:25.40 → 00:30.26 · 4.86s\nPLAN MOYEN. Voiture rouge roule sur route côtière. Oiseaux volent au-dessus. Texte incrusté à droite.\nCAMÉRA : travelling d'accompagnement\nLA FEMME AUX CHEVEUX NOIRS ATTACHÉS\n? : Allez, bonnes vacances, soyez prudents. / La femme aux cheveux noirs attachés : Évadez-vous avec Get a round.\nTEXTE À L'IMAGE : getaround\nRYTHME : mise en place — Introduction de la voiture et de l'environnement.\n\n",
+  "cues": [
+    {
+      "id": "c1",
+      "type": "shot",
+      "speaker": null,
+      "selectedText": "PLAN GÉNÉRAL. Hélicoptère survolant une ville au coucher du soleil.",
+      "startIndex": 89,
+      "endIndex": 156,
+      "startTime": 0,
+      "endTime": 2.24
+    },
+    {
+      "id": "c2",
+      "type": "dialogue",
+      "speaker": null,
+      "selectedText": "La femme aux cheveux noirs attachés : Ok, les braqueurs sont sur le toit, je répète, les braqueurs sont sur le toit.",
+      "startIndex": 157,
+      "endIndex": 273,
+      "startTime": 0,
+      "endTime": 2.24
+    },
+    {
+      "id": "c3",
+      "type": "vfx",
+      "speaker": null,
+      "selectedText": "TEXTE À L'IMAGE : GETAROUND PRÉSENTE",
+      "startIndex": 274,
+      "endIndex": 310,
+      "startTime": 0,
+      "endTime": 2.24
+    },
+    {
+      "id": "c4",
+      "type": "transition",
+      "speaker": null,
+      "selectedText": "TRANSITION : fade-in",
+      "startIndex": 311,
+      "endIndex": 331,
+      "startTime": 0,
+      "endTime": 0.5
+    },
+    {
+      "id": "c5",
+      "type": "action",
+      "speaker": null,
+      "selectedText": "RYTHME : accroche — Accroche visuelle avec un hélicoptère survolant une ville, introduisant le titre du film.",
+      "startIndex": 332,
+      "endIndex": 441,
+      "startTime": 0,
+      "endTime": 2.24
+    },
+    {
+      "id": "c6",
+      "type": "shot",
+      "speaker": null,
+      "selectedText": "PLAN AMÉRICAIN. Texte jaune sur fond bleu ciel. Un homme porte des lunettes de soleil.",
+      "startIndex": 481,
+      "endIndex": 567,
+      "startTime": 2.24,
+      "endTime": 4.44
+    },
+    {
+      "id": "c7",
+      "type": "dialogue",
+      "speaker": null,
+      "selectedText": "La femme aux cheveux noirs attachés : Ok, les braqueurs sont sur le toit, je répète, les braqueurs sont sur le toit. / La femme aux cheveux noirs attachés : Bonjour, je suis la négociatrice, qu'est-ce que vous voulez ?",
+      "startIndex": 568,
+      "endIndex": 786,
+      "startTime": 2.24,
+      "endTime": 4.44
+    },
+    {
+      "id": "c8",
+      "type": "vfx",
+      "speaker": null,
+      "selectedText": "TEXTE À L'IMAGE : GETAROUND PRÉSENTE",
+      "startIndex": 787,
+      "endIndex": 823,
+      "startTime": 2.24,
+      "endTime": 4.44
+    },
+    {
+      "id": "c9",
+      "type": "action",
+      "speaker": null,
+      "selectedText": "RYTHME : accroche — Texte jaune sur fond bleu ciel.",
+      "startIndex": 824,
+      "endIndex": 875,
+      "startTime": 2.24,
+      "endTime": 4.44
+    },
+    {
+      "id": "c10",
+      "type": "shot",
+      "speaker": null,
+      "selectedText": "PLAN RAPPROCHÉ. Femme cheveux noirs téléphone écouteur concentrée",
+      "startIndex": 915,
+      "endIndex": 980,
+      "startTime": 4.44,
+      "endTime": 5.24
+    },
+    {
+      "id": "c11",
+      "type": "dialogue",
+      "speaker": "LA FEMME AUX CHEVEUX NOIRS ATTACHÉS",
+      "selectedText": "La femme aux cheveux noirs attachés : Bonjour, je suis la négociatrice, qu'est-ce que vous voulez ?",
+      "startIndex": 1017,
+      "endIndex": 1116,
+      "startTime": 4.44,
+      "endTime": 5.24
+    },
+    {
+      "id": "c12",
+      "type": "action",
+      "speaker": null,
+      "selectedText": "RYTHME : mise en place — Mise en place de la scène avec la femme aux cheveux noirs.",
+      "startIndex": 1117,
+      "endIndex": 1200,
+      "startTime": 4.44,
+      "endTime": 5.24
+    },
+    {
+      "id": "c13",
+      "type": "shot",
+      "speaker": null,
+      "selectedText": "PLAN RAPPROCHÉ. Homme en chemise à motifs, lunettes de soleil, téléphone à l'oreille, soleil en arrière-plan.",
+      "startIndex": 1241,
+      "endIndex": 1350,
+      "startTime": 5.24,
+      "endTime": 6.72
+    },
+    {
+      "id": "c14",
+      "type": "dialogue",
+      "speaker": null,
+      "selectedText": "La femme aux cheveux noirs attachés : On veut une voiture devant la banque dans 5 minutes.",
+      "startIndex": 1351,
+      "endIndex": 1441,
+      "startTime": 5.24,
+      "endTime": 6.72
+    },
+    {
+      "id": "c15",
+      "type": "action",
+      "speaker": null,
+      "selectedText": "RYTHME : mise en place — Introduction d'un personnage dans un environnement extérieur.",
+      "startIndex": 1442,
+      "endIndex": 1528,
+      "startTime": 5.24,
+      "endTime": 6.72
+    },
+    {
+      "id": "c16",
+      "type": "shot",
+      "speaker": null,
+      "selectedText": "PLAN RAPPROCHÉ. Deux personnes regardent un téléphone dans un espace sombre.",
+      "startIndex": 1569,
+      "endIndex": 1645,
+      "startTime": 6.72,
+      "endTime": 12.44
+    },
+    {
+      "id": "c17",
+      "type": "dialogue",
+      "speaker": "LA FEMME AUX CHEVEUX NOIRS ATTACHÉS",
+      "selectedText": "La femme aux cheveux noirs attachés : 5 minutes ? Mais trouver une voiture dans 5 minutes, c'est impossible. / ? : Get a round ? J'en ai eu une la semaine dernière.",
+      "startIndex": 1682,
+      "endIndex": 1846,
+      "startTime": 6.72,
+      "endTime": 12.44
+    },
+    {
+      "id": "c18",
+      "type": "action",
+      "speaker": null,
+      "selectedText": "RYTHME : mise en place — Introduction des personnages et de leur environnement.",
+      "startIndex": 1847,
+      "endIndex": 1926,
+      "startTime": 6.72,
+      "endTime": 12.44
+    },
+    {
+      "id": "c19",
+      "type": "shot",
+      "speaker": null,
+      "selectedText": "PLAN RAPPROCHÉ. Homme chauve à la moustache, mains levées, visage tendu.",
+      "startIndex": 1967,
+      "endIndex": 2039,
+      "startTime": 12.44,
+      "endTime": 14.56
+    },
+    {
+      "id": "c20",
+      "type": "dialogue",
+      "speaker": "L'HOMME CHAUVE À LA MOUSTACHE",
+      "selectedText": "L'homme chauve à la moustache : On attend là ! / La femme aux cheveux noirs attachés : Ok, SUV ou familial ?",
+      "startIndex": 2070,
+      "endIndex": 2178,
+      "startTime": 12.44,
+      "endTime": 14.56
+    },
+    {
+      "id": "c21",
+      "type": "vfx",
+      "speaker": null,
+      "selectedText": "TEXTE À L'IMAGE : C22",
+      "startIndex": 2179,
+      "endIndex": 2200,
+      "startTime": 12.44,
+      "endTime": 14.56
+    },
+    {
+      "id": "c22",
+      "type": "action",
+      "speaker": null,
+      "selectedText": "RYTHME : mise en place — Introduction du personnage principal dans un moment de tension.",
+      "startIndex": 2201,
+      "endIndex": 2289,
+      "startTime": 12.44,
+      "endTime": 14.56
+    },
+    {
+      "id": "c23",
+      "type": "shot",
+      "speaker": null,
+      "selectedText": "PLAN RAPPROCHÉ. Homme moustachu porte lunettes soleil, téléphone à l'oreille, veste jaune.",
+      "startIndex": 2330,
+      "endIndex": 2420,
+      "startTime": 14.56,
+      "endTime": 15.64
+    },
+    {
+      "id": "c24",
+      "type": "dialogue",
+      "speaker": "L'HOMME CHAUVE À LA MOUSTACHE",
+      "selectedText": "L'homme chauve à la moustache : Mais c'est quoi cette question ?",
+      "startIndex": 2451,
+      "endIndex": 2515,
+      "startTime": 14.56,
+      "endTime": 15.64
+    },
+    {
+      "id": "c25",
+      "type": "action",
+      "speaker": null,
+      "selectedText": "RYTHME : mise en place — Introduction d'un personnage en action.",
+      "startIndex": 2516,
+      "endIndex": 2580,
+      "startTime": 14.56,
+      "endTime": 15.64
+    },
+    {
+      "id": "c26",
+      "type": "shot",
+      "speaker": null,
+      "selectedText": "PLAN RAPPROCHÉ. Deux personnes assises dans un espace confiné, l'homme tient un paquet de chips, la femme utilise un téléphone.",
+      "startIndex": 2621,
+      "endIndex": 2748,
+      "startTime": 15.64,
+      "endTime": 19.2
+    },
+    {
+      "id": "c27",
+      "type": "dialogue",
+      "speaker": "LA FEMME AUX CHEVEUX NOIRS ATTACHÉS",
+      "selectedText": "L'homme chauve à la moustache : Tu peux même déverrouiller tes vêtures avec tantale ? / L'homme chauve à la moustache : Mais non, non, c'est tard ça.",
+      "startIndex": 2785,
+      "endIndex": 2934,
+      "startTime": 15.64,
+      "endTime": 19.2
+    },
+    {
+      "id": "c28",
+      "type": "action",
+      "speaker": null,
+      "selectedText": "RYTHME : mise en place — Introduction des personnages dans leur environnement.",
+      "startIndex": 2935,
+      "endIndex": 3013,
+      "startTime": 15.64,
+      "endTime": 19.2
+    },
+    {
+      "id": "c29",
+      "type": "shot",
+      "speaker": null,
+      "selectedText": "PLAN RAPPROCHÉ. Homme moustachu en chemise hawaïenne parle au téléphone.",
+      "startIndex": 3053,
+      "endIndex": 3125,
+      "startTime": 19.2,
+      "endTime": 20.4
+    },
+    {
+      "id": "c30",
+      "type": "dialogue",
+      "speaker": "L'HOMME CHAUVE À LA MOUSTACHE",
+      "selectedText": "L'homme chauve à la moustache : Demande à Kim.",
+      "startIndex": 3156,
+      "endIndex": 3202,
+      "startTime": 19.2,
+      "endTime": 20.4
+    },
+    {
+      "id": "c31",
+      "type": "action",
+      "speaker": null,
+      "selectedText": "RYTHME : mise en place — Introduction de l'homme moustachu dans une situation.",
+      "startIndex": 3203,
+      "endIndex": 3281,
+      "startTime": 19.2,
+      "endTime": 20.4
+    },
+    {
+      "id": "c32",
+      "type": "shot",
+      "speaker": null,
+      "selectedText": "PLAN RAPPROCHÉ. Main droite tenant un smartphone affichant une application de covoiturage.",
+      "startIndex": 3322,
+      "endIndex": 3412,
+      "startTime": 20.4,
+      "endTime": 21.04
+    },
+    {
+      "id": "c33",
+      "type": "action",
+      "speaker": null,
+      "selectedText": "RYTHME : mise en place — Introduction de l'application de covoiturage utilisée par la femme.",
+      "startIndex": 3413,
+      "endIndex": 3505,
+      "startTime": 20.4,
+      "endTime": 21.04
+    },
+    {
+      "id": "c34",
+      "type": "shot",
+      "speaker": null,
+      "selectedText": "PLAN AMÉRICAIN. Deux personnes dans un espace confiné, l'une chauve avec une moustache, l'autre avec des cheveux noirs attachés.",
+      "startIndex": 3546,
+      "endIndex": 3674,
+      "startTime": 21.04,
+      "endTime": 25.4
+    },
+    {
+      "id": "c35",
+      "type": "dialogue",
+      "speaker": "LA FEMME AUX CHEVEUX NOIRS ATTACHÉS",
+      "selectedText": "? : Et c'est réservé à l'aide !",
+      "startIndex": 3711,
+      "endIndex": 3742,
+      "startTime": 21.04,
+      "endTime": 25.4
+    },
+    {
+      "id": "c36",
+      "type": "action",
+      "speaker": null,
+      "selectedText": "RYTHME : mise en place — Introduction des personnages dans leur environnement de travail.",
+      "startIndex": 3743,
+      "endIndex": 3832,
+      "startTime": 21.04,
+      "endTime": 25.4
+    },
+    {
+      "id": "c37",
+      "type": "shot",
+      "speaker": null,
+      "selectedText": "PLAN MOYEN. Voiture rouge roule sur route côtière. Oiseaux volent au-dessus. Texte incrusté à droite.",
+      "startIndex": 3873,
+      "endIndex": 3974,
+      "startTime": 25.4,
+      "endTime": 30.26
+    },
+    {
+      "id": "c38",
+      "type": "camera",
+      "speaker": null,
+      "selectedText": "CAMÉRA : travelling d'accompagnement",
+      "startIndex": 3975,
+      "endIndex": 4011,
+      "startTime": 25.4,
+      "endTime": 30.26
+    },
+    {
+      "id": "c39",
+      "type": "dialogue",
+      "speaker": "LA FEMME AUX CHEVEUX NOIRS ATTACHÉS",
+      "selectedText": "? : Allez, bonnes vacances, soyez prudents. / La femme aux cheveux noirs attachés : Évadez-vous avec Get a round.",
+      "startIndex": 4048,
+      "endIndex": 4161,
+      "startTime": 25.4,
+      "endTime": 30.26
+    },
+    {
+      "id": "c40",
+      "type": "vfx",
+      "speaker": null,
+      "selectedText": "TEXTE À L'IMAGE : getaround",
+      "startIndex": 4162,
+      "endIndex": 4189,
+      "startTime": 25.4,
+      "endTime": 30.26
+    },
+    {
+      "id": "c41",
+      "type": "action",
+      "speaker": null,
+      "selectedText": "RYTHME : mise en place — Introduction de la voiture et de l'environnement.",
+      "startIndex": 4190,
+      "endIndex": 4264,
+      "startTime": 25.4,
+      "endTime": 30.26
+    }
+  ],
+  "settings": {
+    "general": {
+      "before": 0,
+      "after": 0
+    },
+    "dialogue": {
+      "before": 0.3,
+      "after": 0.5
+    },
+    "action": {
+      "before": 0,
+      "after": 0
+    },
+    "camera": {
+      "before": 0,
+      "after": 0
+    },
+    "shot": {
+      "before": 0,
+      "after": 0
+    },
+    "audio": {
+      "before": 0,
+      "after": 0
+    },
+    "vfx": {
+      "before": 0,
+      "after": 0
+    },
+    "transition": {
+      "before": 0,
+      "after": 0
+    },
+    "environment": {
+      "before": 0,
+      "after": 0
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  // Le dépôt partagé de Movie Analysis (corrections, projets), sur Cloudflare Workers + KV. Voir worker.js.
+  //   npx wrangler login                      (une fois, dans un terminal)
+  //   npx wrangler deploy                     (depuis outils/partage ; le KV se crée tout seul au premier déploiement)
+  //   npx wrangler secret put GITHUB_TOKEN    (une fois : « Publier sur GitHub » sans jeton dans le navigateur)
+  //   node videos.mjs                         (les vidéos des analyses vers R2 : seulement ce qui a changé)
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "movie-analysis-partage",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-01",
+  // le stockage créé au premier déploiement (28/09) : son identifiant, pour que les suivants le reprennent
+  "kv_namespaces": [{ "binding": "PARTAGE", "id": "b4e27fdea993454d8ce158dfe375837f" }],
+  // les vidéos et les pistes de son des analyses (GET /video/…) : npx wrangler r2 bucket create movie-analysis-videos
+  // (une fois), puis node videos.mjs pour les y envoyer
+  "r2_buckets": [{ "binding": "VIDEOS", "bucket_name": "movie-analysis-videos" }],
+  "vars": { "DEPOT": "calculment0r/MOVIE_ANALYSE", "BRANCHE": "claude/new-session-forpe9" },
+  "observability": { "enabled": true }
+}

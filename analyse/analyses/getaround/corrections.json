@@ -1,0 +1,53 @@
+{
+  "noms": {
+    "P1": "Commissaire",
+    "P2": "Chef voleur",
+    "P3": "Negociatrice",
+    "P8": "voleur 2",
+    "P10": "voleur 3"
+  },
+  "fusions": {
+    "P5": "P3",
+    "P7": "P3",
+    "P11": "P8",
+    "P6": "P3"
+  },
+  "repliques": {
+    "9.88-12.16": "Getaround ? J'en ai eu une la semaine dernière.",
+    "15.56-17.6": "Tu peux même déverrouiller ta voiture avec ton tél ?",
+    "17.6-19.28": "Mais non, non, c'est top ça.",
+    "19.48-20.08": "Demande la clim'.",
+    "21.02-23.580000000000002": "Et c'est réservé, allez !",
+    "27.38-28.54": "Évadez-vous avec Getaround."
+  },
+  "pistes": {
+    "P3": [
+      84,
+      86,
+      89,
+      92
+    ],
+    "P5": [
+      87
+    ],
+    "P7": [
+      91,
+      48
+    ],
+    "P8": [
+      100
+    ],
+    "P11": [
+      11
+    ]
+  },
+  "locuteurs": {
+    "0-2.84": "",
+    "5.28-6.76": "P2",
+    "12.2-13.22": "P2",
+    "14.64-15.56": "P2",
+    "17.6-19.28": "P3",
+    "19.48-20.08": "P10",
+    "21.02-23.580000000000002": "P3"
+  }
+}

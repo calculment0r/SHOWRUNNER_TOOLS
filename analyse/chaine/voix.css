@@ -1,0 +1,111 @@
+/* ── la timeline des voix : celle de la diarisation, portée dans le Studio (skill/voix.js) ── */
+.vx{background:var(--surface-2);padding:14px 16px 16px;display:flex;flex-direction:column;gap:10px}
+.vx-tete{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.vx-tete .aide{font:400 9px/1.4 var(--mono);letter-spacing:.08em;color:var(--ink-3)}
+.vx-tete .etat{font:400 9px/1.4 var(--mono);letter-spacing:.08em;color:var(--ok)}
+.vx-tete .etat.local{color:var(--signal)}
+.vx-zooms{display:flex;gap:4px}
+.vx-bouton{font:600 10px/1 var(--ui);letter-spacing:.06em;padding:6px 10px;border-radius:6px;border:0;cursor:pointer;background:none;
+  box-shadow:inset 0 0 0 1px var(--hairline-strong);color:var(--ink-2)}
+.vx-bouton:hover{color:var(--ink);box-shadow:inset 0 0 0 1px #3f9a6a;background:rgba(47,107,74,.14)}
+.vx-bouton:disabled{opacity:.35;cursor:default;background:none}
+.vx-zooms button{font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;padding:5px 10px;border-radius:6px;border:0;cursor:pointer;
+  background:none;box-shadow:inset 0 0 0 1px var(--hairline);color:var(--ink-3);min-width:38px}
+.vx-zooms button:hover{color:var(--ink-2)}
+.vx-zooms button[aria-pressed="true"]{background:#b9cfd8;color:#0a0d0b;box-shadow:none}
+.vx-corps{display:grid;grid-template-columns:150px minmax(0,1fr)}
+.vx-noms{display:flex;flex-direction:column}
+.vx-noms > div{display:flex;align-items:center;gap:8px;padding-right:10px;font:400 8.5px/1.2 var(--mono);letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-3);overflow:hidden;white-space:nowrap}
+.vx-noms > div.cible{background:rgba(63,154,106,.18)}
+.vx-noms i{width:10px;height:3px;border-radius:2px;flex:none}
+.vx-noms .nv{display:flex;flex-direction:column;gap:3px;min-width:0}
+.vx-noms b{font:600 11px/1.2 var(--ui);letter-spacing:.03em;text-transform:none;color:var(--ink);overflow:hidden;text-overflow:ellipsis}
+.vx-noms small{font:400 8px/1.2 var(--mono);letter-spacing:.08em;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis}
+.vx-plot{position:relative;min-width:0}
+.vx-zone{overflow-x:auto;overflow-y:hidden;position:relative;border-radius:8px;background:var(--well);cursor:crosshair;touch-action:pan-x}
+.vx-zone.saisie{cursor:grabbing}
+.vx-espace{position:relative}
+.vx-plot > canvas{position:absolute;top:0;left:0;display:block;pointer-events:none;z-index:1}
+.vx-cue{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--red-accent);pointer-events:none;z-index:3}
+.vx-cue::before{content:'';position:absolute;top:0;left:-5px;border:6px solid transparent;border-top-color:var(--red-accent)}
+.vx-croix{position:absolute;top:0;bottom:0;width:1px;background:rgba(230,234,231,.35);pointer-events:none;z-index:2}
+.vx-bulle{position:absolute;z-index:6;pointer-events:none;min-width:170px;max-width:300px;border-radius:8px;background:rgba(21,26,24,.97);
+  box-shadow:0 0 0 1px var(--hairline-strong),0 14px 40px rgba(0,0,0,.5);padding:9px 11px;font-size:11.5px;line-height:1.45}
+.vx-bulle .t{font:400 9px/1.4 var(--mono);letter-spacing:.12em;color:var(--ink-3);margin-bottom:4px}
+.vx-bulle .qui{font:600 10.5px/1.4 var(--ui);margin-top:6px}
+.vx-bulle .dit{color:var(--ink)}
+.vx-bulle .src{font:400 9px/1.4 var(--mono);letter-spacing:.06em;color:var(--ink-3)}
+/* la réplique qu'on déplace, sous le doigt */
+.vx-fantome{position:fixed;z-index:60;pointer-events:none;max-width:320px;border-radius:6px;padding:6px 10px;background:rgba(21,26,24,.97);
+  box-shadow:0 0 0 1px var(--cy),0 14px 40px rgba(0,0,0,.55);font:600 11px/1.3 var(--ui);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vx-fantome small{display:block;font:400 9px/1.4 var(--mono);letter-spacing:.08em;color:var(--cy);margin-top:2px}
+/* le menu d'une réplique : à qui l'attribuer */
+.vx-menu{position:absolute;z-index:40;min-width:230px;max-height:320px;overflow:auto;border-radius:8px;background:rgba(21,26,24,.98);
+  box-shadow:0 0 0 1px var(--hairline-strong),0 16px 44px rgba(0,0,0,.6);padding:6px}
+.vx-menu .t{font:400 9px/1.4 var(--mono);letter-spacing:.1em;color:var(--ink-3);padding:4px 8px 6px}
+.vx-menu .dit{font-size:12px;color:var(--ink);padding:0 8px 8px;white-space:normal}
+.vx-menu button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;background:none;border-radius:5px;padding:6px 8px;
+  font:500 11.5px/1.3 var(--ui);color:var(--ink-2);cursor:pointer}
+.vx-menu button:hover{background:rgba(47,107,74,.22);color:var(--ink)}
+.vx-menu button[aria-current="true"]{color:var(--ink);box-shadow:inset 0 0 0 1px var(--hairline-strong)}
+.vx-menu button i{width:10px;height:10px;border-radius:2px;flex:none}
+.vx-menu hr{border:0;border-top:1px solid var(--hairline);margin:5px 2px}
+/* le sous-titre : une ligne par personnage qui parle, chaque mot à son instant */
+.st{flex-direction:column;gap:5px}
+.st .ligne{display:flex;align-items:baseline;justify-content:center;gap:10px;max-width:100%}
+.st .qui{flex:none;display:inline-flex;align-items:center;gap:6px;font:400 9px/1.2 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+.st .qui i{width:10px;height:3px;border-radius:2px}
+.st .dit{font-size:15.5px;line-height:1.4;color:var(--ink);text-align:left}
+.st .m{color:var(--ink-3);transition:color .08s}
+.st .m.dit{color:var(--ink)}
+.st .m.ici{color:var(--ink);text-decoration:underline 2px var(--red-accent);text-underline-offset:4px}
+/* les paramètres avancés : fermés, on ne les ouvre que pour régler */
+.vx-avance{border-radius:8px;box-shadow:inset 0 0 0 1px var(--hairline)}
+.vx-avance > summary{cursor:pointer;list-style:none;padding:10px 14px;font:400 9px/1.2 var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--ink-2)}
+.vx-avance > summary::-webkit-details-marker{display:none}
+.vx-avance > summary::before{content:'+';display:inline-block;width:14px;color:var(--ink-3)}
+.vx-avance[open] > summary::before{content:'−'}
+.vx-avance .corps{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;padding:4px 14px 16px}
+.vx-avance .bloc{display:flex;flex-direction:column;gap:8px;min-width:0}
+.vx-avance h4{margin:0;font:400 8.5px/1.2 var(--mono);letter-spacing:.2em;text-transform:uppercase;color:var(--ink-3)}
+.vx-avance table{width:100%;border-collapse:collapse;font-size:11.5px}
+.vx-avance td,.vx-avance th{text-align:left;padding:5px 6px;border-bottom:1px solid rgba(47,107,74,.25);vertical-align:middle}
+.vx-avance th{font:400 8px/1.2 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+.vx-avance select,.vx-avance input[type=number]{background:var(--well);border:0;border-radius:5px;box-shadow:inset 0 0 0 1px var(--hairline-strong);
+  padding:5px 7px;font:inherit;font-size:11.5px;color:var(--ink);max-width:100%}
+.vx-avance input[type=number]{width:74px}
+.vx-avance .champs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.vx-avance .champs label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--ink-2)}
+.vx-avance .champs small{font:400 8.5px/1.3 var(--mono);color:var(--ink-3)}
+.vx-avance .rangee{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.vx-avance .btn{display:inline-flex;align-items:center;gap:6px;border-radius:6px;padding:6px 10px;border:0;cursor:pointer;background:none;
+  box-shadow:inset 0 0 0 1px var(--hairline-strong);font:600 10.5px/1.2 var(--ui);color:var(--ink-2);text-decoration:none}
+.vx-avance .btn:hover{color:var(--ink);box-shadow:inset 0 0 0 1px #3f9a6a;background:rgba(47,107,74,.14)}
+.vx-avance .note{font-size:11.5px;color:var(--ink-2);margin:0}
+.vx-avance .info{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 12px;font-size:11.5px;margin:0}
+.vx-avance .info dt{font:400 8.5px/1.6 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+.vx-avance .info dd{margin:0;color:var(--ink-2)}
+.vx-avance .dim{color:var(--ink-3)}
+@media(max-width:760px){.vx-corps{grid-template-columns:96px minmax(0,1fr)}}
+/* le son (son.js) : la version, le fond ; un personnage coupé */
+.vx-son{display:flex;align-items:center;gap:8px}
+.vx-son:empty{display:none}
+.vx-son .etat{font:400 9px/1 var(--mono);color:var(--ink-3)}
+.vx-noms div.audible{cursor:pointer}
+.vx-noms div.audible:hover b{text-decoration:underline;text-underline-offset:3px}
+.vx-noms div.muet{opacity:.42}
+.vx-noms div.muet b{text-decoration:line-through}
+.vx-noms div.muet small::before{content:'coupé · '}
+/* le sous-titre ne pousse jamais la timeline : hauteur fixe (deux lignes) ; plus long, le texte rétrécit pour tenir
+   (vxAjusteST) */
+.st{height:86px;min-height:0;overflow:hidden;box-sizing:border-box}
+.st .dit{font-size:var(--st-taille,15.5px)}
+/* les barres de défilement aux couleurs de la page : le vert du thème, pas le gris du système */
+.vx-zone,.script-body,#script{scrollbar-width:thin;scrollbar-color:rgba(47,107,74,.8) rgba(47,107,74,.10)}
+.vx-zone::-webkit-scrollbar{height:8px;width:8px}
+.vx-zone::-webkit-scrollbar-track{background:rgba(47,107,74,.10);border-radius:4px}
+.vx-zone::-webkit-scrollbar-thumb{background:rgba(47,107,74,.8);border-radius:4px}
+.vx-zone::-webkit-scrollbar-thumb:hover{background:var(--ok)}
+/* ce que ce navigateur garde et que le dépôt partagé n'a pas (xvEtatPartage) */
+.vx-local{display:inline-flex;align-items:center;gap:6px;font:400 10px/1.2 var(--mono);color:var(--signal)}

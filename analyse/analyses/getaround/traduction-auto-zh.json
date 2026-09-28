@@ -1,0 +1,109 @@
+{
+ "format": "movie-analysis-doublage",
+ "version": 1,
+ "film": "getaround",
+ "langue": "zh",
+ "source": "fr",
+ "traduction": "automatique : qwen3:30b-a3b (Ollama), 2026-09-27, budget 6.5 syllabes/s",
+ "lignes": [
+  {
+   "a": 0,
+   "b": 2.84,
+   "qui": "",
+   "texte": "Ok, les braqueurs sont sur le toit, je répète, les braqueurs sont sur le toit.",
+   "trad": "劫匪在屋顶，重复一遍，劫匪在屋顶。"
+  },
+  {
+   "a": 3.4,
+   "b": 5.28,
+   "qui": "P3",
+   "texte": "Bonjour, je suis la négociatrice, qu'est-ce que vous voulez ?",
+   "trad": "你好，我是谈判员，要什么？"
+  },
+  {
+   "a": 5.28,
+   "b": 6.76,
+   "qui": "P2",
+   "texte": "On veut une voiture devant la banque dans 5 minutes.",
+   "trad": "五分钟内，银行门口要车。"
+  },
+  {
+   "a": 6.96,
+   "b": 9.42,
+   "qui": "P3",
+   "texte": "5 minutes ? Mais trouver une voiture dans 5 minutes, c'est impossible.",
+   "trad": "五分钟？五分钟内找车？这不可能！"
+  },
+  {
+   "a": 9.88,
+   "b": 12.16,
+   "qui": "P1",
+   "texte": "Getaround ? J'en ai eu une la semaine dernière.",
+   "trad": "上周刚租过一辆 Getaround。"
+  },
+  {
+   "a": 12.2,
+   "b": 13.22,
+   "qui": "P2",
+   "texte": "On attend là !",
+   "trad": "等著！"
+  },
+  {
+   "a": 13.22,
+   "b": 14.64,
+   "qui": "P3",
+   "texte": "Ok, SUV ou familial ?",
+   "trad": "SUV还是家庭车？"
+  },
+  {
+   "a": 14.64,
+   "b": 15.56,
+   "qui": "P2",
+   "texte": "Mais c'est quoi cette question ?",
+   "trad": "这什么问题？"
+  },
+  {
+   "a": 15.56,
+   "b": 17.6,
+   "qui": "P1",
+   "texte": "Tu peux même déverrouiller ta voiture avec ton tél ?",
+   "trad": "手机能直接解锁你的车吗？"
+  },
+  {
+   "a": 17.6,
+   "b": 19.28,
+   "qui": "P3",
+   "texte": "Mais non, non, c'est top ça.",
+   "trad": "不不不，这太棒了！"
+  },
+  {
+   "a": 19.48,
+   "b": 20.08,
+   "qui": "P10",
+   "texte": "Demande la clim'.",
+   "trad": "要空调。"
+  },
+  {
+   "a": 21.02,
+   "b": 23.580000000000002,
+   "qui": "P3",
+   "texte": "Et c'est réservé, allez !",
+   "trad": "已经预订了，快去！"
+  },
+  {
+   "a": 25.48,
+   "b": 26.76,
+   "qui": "P3",
+   "texte": "Allez, bonnes vacances, soyez prudents.",
+   "trad": "祝旅途愉快，注意安全。"
+  },
+  {
+   "a": 27.38,
+   "b": 28.54,
+   "qui": "P3",
+   "texte": "Évadez-vous avec Getaround.",
+   "trad": "说走就走，就用 Getaround。"
+  }
+ ],
+ "contexte": "publicité pour Getaround (location de voitures entre particuliers, réservée et ouverte depuis l'application) qui parodie un film de braquage : des braqueurs sur un toit exigent une voiture ; dans le fourgon de police, la négociatrice et le commissaire la leur louent sur Getaround. Ton comique, dialogues vifs. La dernière réplique est le slogan de la marque."
+}

@@ -1,0 +1,9 @@
+{
+ "titre": "Le Loup de Wall Street",
+ "genre": "extrait VO",
+ "page": "index.html",
+ "depouillement": "depouillement.html",
+ "video": "wall.mp4",
+ "origine": {"depot": "calculment0r/MOVIE_ANALYSE", "branche": "claude/new-session-forpe9", "commit": "fa8d9d9",
+             "titres": "commun/projets.js (DU_DEPOT)", "video_r2": "https://movie-analysis-partage.luxigone.workers.dev/video/wall/wall.mp4"}
+}

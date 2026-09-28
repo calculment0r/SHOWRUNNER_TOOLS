@@ -1,0 +1,2847 @@
+{
+ "source": "wall.mp4",
+ "title": "Le Loup de Wall Street",
+ "lang": "fr",
+ "meta": {
+  "durationSeconds": 139.06,
+  "fps": 23.98,
+  "width": 1280,
+  "height": 534,
+  "aspect": "640:267",
+  "codec": "h264",
+  "hasAudio": true
+ },
+ "params": {
+  "sceneThreshold": 0.3,
+  "minShotSeconds": 0.3
+ },
+ "seedCuts": [
+  3.38,
+  21.15,
+  23.61,
+  26.32,
+  28.57,
+  32.41,
+  33.74,
+  40,
+  42.33,
+  47.8,
+  49.84,
+  52.3,
+  54.05,
+  58.02,
+  60.44,
+  63.27,
+  64.56,
+  66.36,
+  69.49,
+  70.9,
+  71.53,
+  72.2,
+  75.45,
+  80.66,
+  81.75,
+  83.88,
+  92.34,
+  93.34,
+  96.05,
+  96.97,
+  101.98,
+  103.9,
+  104.9,
+  109.78,
+  115.41,
+  117.33,
+  120,
+  121.16,
+  123.71,
+  126.17,
+  127.29,
+  130.96,
+  134.76,
+  137.1
+ ],
+ "manualCuts": [],
+ "cast": [
+  {
+   "id": "P1",
+   "name": "L'homme aux lunettes rondes et costume sombre",
+   "note": "Un homme d'âge moyen avec des cheveux courts et des lunettes rondes, portant un costume sombre et une cravate. — 42.9 s à l'image, 15 piste(s), 0.0→130.9 s, identifié par le visage",
+   "tracks": [
+    2,
+    473,
+    899,
+    480,
+    587,
+    905,
+    872,
+    901,
+    912,
+    924,
+    937,
+    710,
+    954,
+    956,
+    952
+   ],
+   "by": "visage",
+   "portrait": "portraits/P1.jpg"
+  },
+  {
+   "id": "P2",
+   "name": "L'homme aux cheveux gominés en chemise bleue",
+   "note": "Un homme d'âge moyen avec une coiffure soignée et une chemise bleue. — 41.6 s à l'image, 15 piste(s), 3.5→127.3 s, identifié par le visage",
+   "tracks": [
+    8,
+    12,
+    947,
+    949,
+    895,
+    933,
+    897,
+    931,
+    961,
+    467,
+    877,
+    923,
+    929,
+    894,
+    672
+   ],
+   "by": "visage",
+   "portrait": "portraits/P2.jpg"
+  },
+  {
+   "id": "P3",
+   "name": "L'homme au costume bleu et cravate à motifs",
+   "note": "Un homme d'âge moyen en costume bleu avec une cravate à motifs distinctifs. — 36.6 s à l'image, 3 piste(s), 3.4→138.6 s, identifié par le visage",
+   "tracks": [
+    788,
+    871,
+    7
+   ],
+   "by": "visage",
+   "portrait": "portraits/P3.jpg"
+  },
+  {
+   "id": "P4",
+   "name": "L'homme aux lunettes à monture rouge et chemise claire",
+   "note": "Un homme d'âge mûr avec des lunettes distinctives et une barbe grise. — 26.7 s à l'image, 10 piste(s), 42.4→137.1 s, identifié par le visage",
+   "tracks": [
+    660,
+    676,
+    670,
+    910,
+    942,
+    946,
+    944,
+    958,
+    925,
+    957
+   ],
+   "by": "visage",
+   "portrait": "portraits/P4.jpg"
+  },
+  {
+   "id": "P5",
+   "name": "L'homme aux cheveux courts et costume bleu",
+   "note": "Un homme d'âge moyen avec une coiffure courte et un costume bleu. — 18.5 s à l'image, 7 piste(s), 26.4→64.5 s, identifié par le visage",
+   "tracks": [
+    874,
+    479,
+    882,
+    896,
+    909,
+    570,
+    668
+   ],
+   "by": "visage",
+   "portrait": "portraits/P5.jpg"
+  },
+  {
+   "id": "P6",
+   "name": "L'homme au costume gris et chemise blanche",
+   "note": "Un homme d'âge moyen vu de dos, portant un costume gris et une chemise blanche, dans un environnement urbain. — 16.6 s à l'image, 2 piste(s), 6.2→139.0 s, identifié par le visage",
+   "tracks": [
+    77,
+    754
+   ],
+   "by": "visage",
+   "portrait": "portraits/P6.jpg"
+  },
+  {
+   "id": "P7",
+   "name": "L'homme aux cheveux courts et chemise noire",
+   "note": "Visage partiellement visible, profil droit. — 10.7 s à l'image, 1 piste(s), 10.5→21.1 s, identifié par le visage",
+   "tracks": [
+    182
+   ],
+   "by": "visage",
+   "portrait": "portraits/P7.jpg"
+  },
+  {
+   "id": "P8",
+   "name": "L'homme aux cheveux bouclés et lunettes",
+   "note": "Un homme jeune avec des cheveux bouclés et des lunettes, portant une veste sombre. — 9.8 s à l'image, 6 piste(s), 8.7→138.2 s, identifié par le visage",
+   "tracks": [
+    148,
+    323,
+    356,
+    760,
+    260,
+    206
+   ],
+   "by": "visage",
+   "portrait": "portraits/P8.jpg"
+  },
+  {
+   "id": "P9",
+   "name": "L'homme aux lunettes à monture noire et chemise blanche",
+   "note": "Un homme d'âge mûr avec des lunettes à monture noire et une chemise blanche. — 7.4 s à l'image, 3 piste(s), 21.7→133.6 s, identifié par le visage",
+   "tracks": [
+    435,
+    575,
+    745
+   ],
+   "by": "visage",
+   "portrait": "portraits/P9.jpg"
+  },
+  {
+   "id": "P10",
+   "name": "L'homme aux cheveux courts et veste en cuir",
+   "note": "Un homme d'âge moyen avec une coupe de cheveux courte et une veste en cuir. — 7.3 s à l'image, 3 piste(s), 11.2→19.4 s, identifié par le visage",
+   "tracks": [
+    220,
+    288,
+    306
+   ],
+   "by": "visage",
+   "portrait": "portraits/P10.jpg"
+  },
+  {
+   "id": "P11",
+   "name": "L'homme aux cheveux courts et veste à carreaux",
+   "note": "Un homme d'âge moyen avec des cheveux courts et une veste à carreaux distinctifs. — 7.1 s à l'image, 3 piste(s), 8.6→18.2 s, identifié par le visage",
+   "tracks": [
+    141,
+    218,
+    293
+   ],
+   "by": "visage",
+   "portrait": "portraits/P11.jpg"
+  },
+  {
+   "id": "P12",
+   "name": "L'homme aux lunettes à monture fine et veste sombre",
+   "note": "Visage visible avec des lunettes à monture fine et une veste sombre. — 4.6 s à l'image, 3 piste(s), 30.5→137.8 s, identifié par le visage",
+   "tracks": [
+    876,
+    959,
+    880
+   ],
+   "by": "visage",
+   "portrait": "portraits/P12.jpg"
+  },
+  {
+   "id": "P13",
+   "name": "La femme aux cheveux courts et veste noire",
+   "note": "Une femme avec une coupe de cheveux courte et une veste noire. — 4.4 s à l'image, 3 piste(s), 12.1→18.3 s, identifié par le visage",
+   "tracks": [
+    143,
+    311,
+    349
+   ],
+   "by": "visage",
+   "portrait": "portraits/P13.jpg"
+  },
+  {
+   "id": "P14",
+   "name": "L'homme aux cheveux courts et chemise à carreaux",
+   "note": "Un homme d'âge moyen avec des cheveux courts et une chemise à carreaux. — 3.8 s à l'image, 1 piste(s), 28.7→32.4 s, identifié par le visage",
+   "tracks": [
+    481
+   ],
+   "by": "visage",
+   "portrait": "portraits/P14.jpg"
+  },
+  {
+   "id": "P15",
+   "name": "L'homme aux cheveux courts et lunettes à monture fine",
+   "note": "Visage rond et sourire discret, portant une chemise claire. — 3.5 s à l'image, 1 piste(s), 3.9→8.1 s, identifié par le visage",
+   "tracks": [
+    28
+   ],
+   "by": "visage",
+   "portrait": "portraits/P15.jpg"
+  },
+  {
+   "id": "P16",
+   "name": "L'homme aux cheveux courts et chemise rayée",
+   "note": "Un homme d'âge moyen avec une expression sérieuse. — 3.4 s à l'image, 1 piste(s), 0.0→3.4 s, identifié par le visage",
+   "tracks": [
+    1
+   ],
+   "by": "visage",
+   "portrait": "portraits/P16.jpg"
+  }
+ ],
+ "shots": [
+  {
+   "id": "S01",
+   "start": 0,
+   "end": 3.38,
+   "seconds": 3.38,
+   "motion": 1.5,
+   "size": "medium",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "fade-in",
+   "subjects": [
+    "P16",
+    "P1"
+   ],
+   "frame": "Trois hommes en costume autour d'une table de réunion.",
+   "onscreenText": "",
+   "audio": "L'homme aux cheveux gominés en chemise bleue : They come in, we treat it just like one of us, okay?",
+   "masks": {
+    "P16": {
+     "coverage": 9.3,
+     "frames": 79,
+     "share": 0.98
+    },
+    "P1": {
+     "coverage": 9.3,
+     "frames": 79,
+     "share": 0.98
+    }
+   },
+   "lines": [
+    {
+     "start": 0,
+     "end": 3.18,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "hors champ — même voix qu'à 88.1 s (distance 0.52)",
+     "text": "They come in, we treat it just like one of us, okay?"
+    }
+   ],
+   "rhythm": "hook",
+   "rhythmNote": "Introduction des personnages principaux dans un cadre professionnel.",
+   "teinte": "#5c4640"
+  },
+  {
+   "id": "S02",
+   "start": 3.38,
+   "end": 21.15,
+   "seconds": 17.77,
+   "motion": 4.5,
+   "size": "medium-wide",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P3",
+    "P6",
+    "P7",
+    "P8",
+    "P10",
+    "P11",
+    "P2",
+    "P1"
+   ],
+   "frame": "Quatre hommes en costume discutent autour d'une table.",
+   "onscreenText": "",
+   "audio": "L'homme aux cheveux gominés en chemise bleue : That's one of us. / L'homme aux cheveux gominés en chemise bleue : Kubelgaba, one of us. / L'homme aux cheveux gominés en chemise bleue : We accept that one of us. / L'homme au costume gris et chemise blanche : Kubelgaba, one of us. / L'homme au costume gris et chemise blanche : We accept that one of us. / La femme aux cheveux courts et veste noire : Jordan! / La femme aux cheveux courts et veste noire : Your dad's coming. / La femme aux cheveux courts et veste noire : Something about the American Express bill? / ? : Can you get him out of here? / La femme aux cheveux courts et veste noire : Yeah, lick my tongue. / L'homme aux lunettes à monture fine et veste sombre : No, I'm serious. / ? : Get the fuck up. / ? : Okay, guys, act like we're gonna get any fucking stock.",
+   "masks": {
+    "P1": {
+     "coverage": 8.9,
+     "frames": 424,
+     "share": 1
+    },
+    "P3": {
+     "coverage": 21.2,
+     "frames": 142,
+     "share": 0.33
+    },
+    "P2": {
+     "coverage": 6.3,
+     "frames": 424,
+     "share": 1
+    },
+    "P15": {
+     "coverage": 0.2,
+     "frames": 43,
+     "share": 0.1
+    },
+    "P6": {
+     "coverage": 1,
+     "frames": 216,
+     "share": 0.51
+    },
+    "P11": {
+     "coverage": 0.6,
+     "frames": 299,
+     "share": 0.7
+    },
+    "P7": {
+     "coverage": 4.9,
+     "frames": 256,
+     "share": 0.6
+    },
+    "P13": {
+     "coverage": 0.3,
+     "frames": 134,
+     "share": 0.31
+    },
+    "P10": {
+     "coverage": 0.2,
+     "frames": 199,
+     "share": 0.47
+    },
+    "P8": {
+     "coverage": 0.3,
+     "frames": 220,
+     "share": 0.52
+    }
+   },
+   "lines": [
+    {
+     "start": 3.32,
+     "end": 4.62,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +1.76)",
+     "text": "That's one of us."
+    },
+    {
+     "start": 5.040000000000001,
+     "end": 6.48,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +4.26)",
+     "text": "Kubelgaba, one of us."
+    },
+    {
+     "start": 6.88,
+     "end": 8.5,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +3.49)",
+     "text": "We accept that one of us."
+    },
+    {
+     "start": 9,
+     "end": 10.12,
+     "speaker": "P6",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +3.65)",
+     "text": "Kubelgaba, one of us."
+    },
+    {
+     "start": 10.36,
+     "end": 11.56,
+     "speaker": "P6",
+     "voice": "SPEAKER_00",
+     "how": "hors champ — même voix qu'à 9.0 s (distance 0.64)",
+     "text": "We accept that one of us."
+    },
+    {
+     "start": 12.14,
+     "end": 12.54,
+     "speaker": "P13",
+     "how": "vue et entendue (synchronie +1.40)",
+     "text": "Jordan!"
+    },
+    {
+     "start": 13.14,
+     "end": 14.06,
+     "speaker": "P13",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +3.14)",
+     "text": "Your dad's coming."
+    },
+    {
+     "start": 14.18,
+     "end": 15.56,
+     "speaker": "P13",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +1.76)",
+     "text": "Something about the American Express bill?"
+    },
+    {
+     "start": 15.64,
+     "end": 16.7,
+     "speaker": null,
+     "voice": "SPEAKER_00",
+     "how": "voix off (aucune bouche ; voix la plus proche à 0.72, pas assez sûre)",
+     "text": "Can you get him out of here?"
+    },
+    {
+     "start": 17.14,
+     "end": 17.96,
+     "speaker": "P13",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +1.40)",
+     "text": "Yeah, lick my tongue."
+    },
+    {
+     "start": 18.22,
+     "end": 18.86,
+     "speaker": "P12",
+     "voice": "SPEAKER_00",
+     "how": "hors champ — même voix qu'à 38.9 s (distance 0.63)",
+     "text": "No, I'm serious."
+    },
+    {
+     "start": 19.56,
+     "end": 20.52,
+     "speaker": null,
+     "voice": "SPEAKER_00",
+     "how": "voix off (aucune bouche ; voix la plus proche à 0.70, pas assez sûre)",
+     "text": "Get the fuck up."
+    },
+    {
+     "start": 20.68,
+     "end": 22.78,
+     "speaker": null,
+     "voice": "SPEAKER_00",
+     "how": "voix off (aucune bouche ; voix la plus proche à 0.79, pas assez sûre)",
+     "text": "Okay, guys, act like we're gonna get any fucking stock."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction des personnages principaux dans leur environnement de travail.",
+   "teinte": "#51423f"
+  },
+  {
+   "id": "S03",
+   "start": 21.15,
+   "end": 23.61,
+   "seconds": 2.46,
+   "motion": 27.8,
+   "size": "medium-wide",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P9"
+   ],
+   "frame": "Homme en chemise blanche marche devant vitres fumées.",
+   "onscreenText": "",
+   "audio": "? : Okay, guys, act like we're gonna get any fucking stock. / L'homme aux cheveux gominés en chemise bleue : Okay, wait, wait, he's coming, he's coming.",
+   "masks": {
+    "P9": {
+     "coverage": 10.9,
+     "frames": 46,
+     "share": 0.78
+    }
+   },
+   "lines": [
+    {
+     "start": 20.68,
+     "end": 22.78,
+     "speaker": null,
+     "voice": "SPEAKER_00",
+     "how": "voix off (aucune bouche ; voix la plus proche à 0.79, pas assez sûre)",
+     "text": "Okay, guys, act like we're gonna get any fucking stock."
+    },
+    {
+     "start": 23,
+     "end": 24.46,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +3.27)",
+     "text": "Okay, wait, wait, he's coming, he's coming."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de l'homme aux lunettes à monture fine.",
+   "teinte": "#4c403b"
+  },
+  {
+   "id": "S04",
+   "start": 23.61,
+   "end": 26.32,
+   "seconds": 2.71,
+   "motion": 10.5,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P2"
+   ],
+   "frame": "Homme en costume bleu, chemise blanche, dos à la caméra, assis dans un fauteuil en cuir.",
+   "onscreenText": "",
+   "audio": "L'homme aux cheveux gominés en chemise bleue : Okay, wait, wait, he's coming, he's coming. / L'homme aux cheveux gominés en chemise bleue : Make some shit up.",
+   "masks": {
+    "P2": {
+     "coverage": 18.3,
+     "frames": 62,
+     "share": 0.95
+    }
+   },
+   "lines": [
+    {
+     "start": 23,
+     "end": 24.46,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +3.27)",
+     "text": "Okay, wait, wait, he's coming, he's coming."
+    },
+    {
+     "start": 25.020000000000003,
+     "end": 26.02,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +3.09)",
+     "text": "Make some shit up."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction du personnage principal dans son environnement.",
+   "teinte": "#604e49"
+  },
+  {
+   "id": "S05",
+   "start": 26.32,
+   "end": 28.57,
+   "seconds": 2.25,
+   "motion": 6.2,
+   "size": "medium",
+   "category": "subject",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P1",
+    "P5"
+   ],
+   "frame": "deux hommes en costume discutent dans un bureau, l'un sourit et gesticule, l'autre écoute attentivement",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes rondes et costume sombre : So I think if we short Pfizer...",
+   "masks": {
+    "P5": {
+     "coverage": 18.6,
+     "frames": 52,
+     "share": 0.96
+    },
+    "P1": {
+     "coverage": 20.2,
+     "frames": 52,
+     "share": 0.96
+    }
+   },
+   "lines": [
+    {
+     "start": 26.36,
+     "end": 28,
+     "speaker": "P1",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +2.60)",
+     "text": "So I think if we short Pfizer..."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "mise en place de la scène de discussion",
+   "teinte": "#605451"
+  },
+  {
+   "id": "S06",
+   "start": 28.57,
+   "end": 32.41,
+   "seconds": 3.84,
+   "motion": 5.5,
+   "size": "medium-wide",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P1",
+    "P14",
+    "P5",
+    "P12"
+   ],
+   "frame": "Trois hommes assis autour d'une table, bureau rempli de dossiers.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes rondes et costume sombre : $430,000 in one month, Jordy?",
+   "masks": {
+    "P5": {
+     "coverage": 6.2,
+     "frames": 90,
+     "share": 0.98
+    },
+    "P12": {
+     "coverage": 12.2,
+     "frames": 90,
+     "share": 0.98
+    },
+    "P14": {
+     "coverage": 2.9,
+     "frames": 90,
+     "share": 0.98
+    },
+    "P1": {
+     "coverage": 7.7,
+     "frames": 90,
+     "share": 0.98
+    }
+   },
+   "lines": [
+    {
+     "start": 29.799999999999997,
+     "end": 32.78,
+     "speaker": "P1",
+     "voice": "SPEAKER_01",
+     "how": "vue et entendue (synchronie +2.01)",
+     "text": "$430,000 in one month, Jordy?"
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction des personnages principaux dans un cadre professionnel.",
+   "teinte": "#695b58"
+  },
+  {
+   "id": "S07",
+   "start": 32.41,
+   "end": 33.74,
+   "seconds": 1.33,
+   "motion": 4.95,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P2"
+   ],
+   "frame": "Homme en costume bleu téléphone main gauche bouche ouverte",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes rondes et costume sombre : $430,000 in one month, Jordy? / ? : Huh?",
+   "masks": {
+    "P2": {
+     "coverage": 16.4,
+     "frames": 30,
+     "share": 0.94
+    }
+   },
+   "lines": [
+    {
+     "start": 29.799999999999997,
+     "end": 32.78,
+     "speaker": "P1",
+     "voice": "SPEAKER_01",
+     "how": "vue et entendue (synchronie +2.01)",
+     "text": "$430,000 in one month, Jordy?"
+    },
+    {
+     "start": 33.12,
+     "end": 33.22,
+     "speaker": null,
+     "voice": "SPEAKER_01",
+     "how": "voix off (aucune bouche à l'image ne la porte)",
+     "text": "Huh?"
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction du personnage principal dans son environnement de travail.",
+   "teinte": "#5b4945"
+  },
+  {
+   "id": "S08",
+   "start": 33.74,
+   "end": 40,
+   "seconds": 6.26,
+   "motion": 4.5,
+   "size": "medium-wide",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P5",
+    "P9"
+   ],
+   "frame": "Hommes en costume assis autour d'une table de réunion.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes à monture noire et chemise blanche : Four hundred and fucking, $30,000 fucking dollars in one fucking month! / L'homme aux lunettes à monture fine et veste sombre : Good morning, they're business expenses, relax.",
+   "masks": {
+    "P5": {
+     "coverage": 3.9,
+     "frames": 148,
+     "share": 0.99
+    },
+    "P9": {
+     "coverage": 3.1,
+     "frames": 147,
+     "share": 0.98
+    }
+   },
+   "lines": [
+    {
+     "start": 33.52,
+     "end": 38.66,
+     "speaker": "P9",
+     "voice": "SPEAKER_01",
+     "how": "vue et entendue (synchronie +1.70)",
+     "text": "Four hundred and fucking, $30,000 fucking dollars in one fucking month!"
+    },
+    {
+     "start": 38.86,
+     "end": 40.7,
+     "speaker": "P12",
+     "voice": "SPEAKER_01",
+     "how": "vue et entendue (synchronie +1.51)",
+     "text": "Good morning, they're business expenses, relax."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction des personnages dans un cadre professionnel.",
+   "teinte": "#77655f"
+  },
+  {
+   "id": "S09",
+   "start": 40,
+   "end": 42.33,
+   "seconds": 2.33,
+   "motion": 1.5,
+   "size": "medium-wide",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P12",
+    "P5",
+    "P1"
+   ],
+   "frame": "Trois hommes en costume discutent autour d'une table.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes à monture fine et veste sombre : Good morning, they're business expenses, relax. / L'homme aux lunettes à monture rouge et chemise claire : Business expenses? / L'homme aux lunettes à monture rouge et chemise claire : Jordy, look what you got here.",
+   "masks": {
+    "P5": {
+     "coverage": 6.5,
+     "frames": 54,
+     "share": 0.96
+    },
+    "P12": {
+     "coverage": 14,
+     "frames": 54,
+     "share": 0.96
+    },
+    "P1": {
+     "coverage": 7.7,
+     "frames": 54,
+     "share": 0.96
+    }
+   },
+   "lines": [
+    {
+     "start": 38.86,
+     "end": 40.7,
+     "speaker": "P12",
+     "voice": "SPEAKER_01",
+     "how": "vue et entendue (synchronie +1.51)",
+     "text": "Good morning, they're business expenses, relax."
+    },
+    {
+     "start": 41.1,
+     "end": 41.64,
+     "speaker": "P4",
+     "voice": "SPEAKER_01",
+     "how": "hors champ — même voix qu'à 43.8 s (distance 0.58)",
+     "text": "Business expenses?"
+    },
+    {
+     "start": 42,
+     "end": 43.4,
+     "speaker": "P4",
+     "voice": "SPEAKER_01",
+     "how": "vue et entendue (synchronie +2.40)",
+     "text": "Jordy, look what you got here."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction des personnages dans leur environnement.",
+   "teinte": "#615451"
+  },
+  {
+   "id": "S10",
+   "start": 42.33,
+   "end": 47.8,
+   "seconds": 5.47,
+   "motion": 1.25,
+   "size": "medium-wide",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P4"
+   ],
+   "frame": "Hommes assis discutent autour d'une table de réunion.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes à monture rouge et chemise claire : Jordy, look what you got here. / ? : What? / L'homme aux lunettes à monture rouge et chemise claire : Look at this, $26,000 for one fucking dinner!",
+   "masks": {
+    "P4": {
+     "coverage": 5,
+     "frames": 129,
+     "share": 0.98
+    }
+   },
+   "lines": [
+    {
+     "start": 42,
+     "end": 43.4,
+     "speaker": "P4",
+     "voice": "SPEAKER_01",
+     "how": "vue et entendue (synchronie +2.40)",
+     "text": "Jordy, look what you got here."
+    },
+    {
+     "start": 43.52,
+     "end": 43.64,
+     "speaker": null,
+     "voice": "SPEAKER_01",
+     "how": "voix off (aucune bouche à l'image ne la porte)",
+     "text": "What?"
+    },
+    {
+     "start": 43.76,
+     "end": 47.68,
+     "speaker": "P4",
+     "voice": "SPEAKER_01",
+     "how": "vue et entendue (synchronie +4.10)",
+     "text": "Look at this, $26,000 for one fucking dinner!"
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction des personnages dans un cadre professionnel.",
+   "teinte": "#7d6d66"
+  },
+  {
+   "id": "S11",
+   "start": 47.8,
+   "end": 49.84,
+   "seconds": 2.04,
+   "motion": 2.7,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P2"
+   ],
+   "frame": "Homme en costume bleu parle à un autre homme.  L'homme écoute attentivement.",
+   "onscreenText": "",
+   "audio": "L'homme aux cheveux gominés en chemise bleue : Okay, no, no, no, this could be explained.",
+   "masks": {
+    "P2": {
+     "coverage": 21.6,
+     "frames": 47,
+     "share": 0.96
+    }
+   },
+   "lines": [
+    {
+     "start": 47.86,
+     "end": 49.68,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +2.06)",
+     "text": "Okay, no, no, no, this could be explained."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de l'homme en costume bleu.",
+   "teinte": "#543732"
+  },
+  {
+   "id": "S12",
+   "start": 49.84,
+   "end": 52.3,
+   "seconds": 2.46,
+   "motion": 4.75,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P2"
+   ],
+   "frame": "Homme en costume bleu gesticule avec assurance, visage flou à gauche.",
+   "onscreenText": "",
+   "audio": "L'homme aux cheveux gominés en chemise bleue : Dad, we had clients, we had the Pfizer clients.",
+   "masks": {
+    "P2": {
+     "coverage": 23.9,
+     "frames": 57,
+     "share": 0.97
+    }
+   },
+   "lines": [
+    {
+     "start": 49.94,
+     "end": 52.28,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +4.16)",
+     "text": "Dad, we had clients, we had the Pfizer clients."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction du personnage principal dans la scène.",
+   "teinte": "#675653"
+  },
+  {
+   "id": "S13",
+   "start": 52.3,
+   "end": 54.05,
+   "seconds": 1.75,
+   "motion": 1.4,
+   "size": "medium",
+   "category": "subject",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P5",
+    "P1"
+   ],
+   "frame": "deux hommes en costume discutent dans un bureau, l'un pointe du doigt",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes rondes et costume sombre : Right, the porterhouse from Argentina.",
+   "masks": {
+    "P5": {
+     "coverage": 17.2,
+     "frames": 40,
+     "share": 0.95
+    },
+    "P1": {
+     "coverage": 20.7,
+     "frames": 40,
+     "share": 0.95
+    }
+   },
+   "lines": [
+    {
+     "start": 52.58,
+     "end": 53.8,
+     "speaker": "P1",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +3.91)",
+     "text": "Right, the porterhouse from Argentina."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "présentation des personnages et de leur interaction",
+   "teinte": "#625653"
+  },
+  {
+   "id": "S14",
+   "start": 54.05,
+   "end": 58.02,
+   "seconds": 3.97,
+   "motion": 5.15,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P2"
+   ],
+   "frame": "Homme en costume bleu parle, dos flou, bureau en arrière-plan.",
+   "onscreenText": "",
+   "audio": "L'homme aux cheveux gominés en chemise bleue : The expensive champagne, the wine, we had to buy champagne. / L'homme aux cheveux gominés en chemise bleue : And you ordered all the fucking sides.",
+   "masks": {
+    "P2": {
+     "coverage": 20.7,
+     "frames": 93,
+     "share": 0.98
+    }
+   },
+   "lines": [
+    {
+     "start": 54.08,
+     "end": 56.1,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +3.73)",
+     "text": "The expensive champagne, the wine, we had to buy champagne."
+    },
+    {
+     "start": 56.1,
+     "end": 57.72,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +2.98)",
+     "text": "And you ordered all the fucking sides."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de l'homme en costume bleu.",
+   "teinte": "#593d37"
+  },
+  {
+   "id": "S15",
+   "start": 58.02,
+   "end": 60.44,
+   "seconds": 2.42,
+   "motion": 4,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P1"
+   ],
+   "frame": "Homme en costume gris gesticulant assis dans un fauteuil.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes rondes et costume sombre : Tell them about the sides you ordered. / L'homme aux lunettes rondes et costume sombre : I ordered the sides, so... / ? : Sides? / L'homme aux lunettes rondes et costume sombre : Sides?",
+   "masks": {
+    "P1": {
+     "coverage": 27.6,
+     "frames": 56,
+     "share": 0.97
+    }
+   },
+   "lines": [
+    {
+     "start": 57.92,
+     "end": 58.92,
+     "speaker": "P1",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +1.06)",
+     "text": "Tell them about the sides you ordered."
+    },
+    {
+     "start": 59.16,
+     "end": 59.94,
+     "speaker": "P1",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +3.44)",
+     "text": "I ordered the sides, so..."
+    },
+    {
+     "start": 59.94,
+     "end": 60.1,
+     "speaker": null,
+     "voice": "SPEAKER_02",
+     "how": "voix off (aucune bouche à l'image ne la porte)",
+     "text": "Sides?"
+    },
+    {
+     "start": 60.12,
+     "end": 60.54,
+     "speaker": "P1",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +2.33)",
+     "text": "Sides?"
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction du personnage principal dans son environnement.",
+   "teinte": "#55413e"
+  },
+  {
+   "id": "S16",
+   "start": 60.44,
+   "end": 63.27,
+   "seconds": 2.83,
+   "motion": 1.3,
+   "size": "medium-wide",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P5",
+    "P4"
+   ],
+   "frame": "Hommes en costume discutent autour d'une table de réunion.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes à monture rouge et chemise claire : $26,000 worth of sides?",
+   "masks": {
+    "P5": {
+     "coverage": 3.8,
+     "frames": 66,
+     "share": 0.97
+    },
+    "P4": {
+     "coverage": 5,
+     "frames": 66,
+     "share": 0.97
+    }
+   },
+   "lines": [
+    {
+     "start": 60.88,
+     "end": 63.4,
+     "speaker": "P4",
+     "voice": "SPEAKER_01",
+     "how": "vue et entendue (synchronie +3.73)",
+     "text": "$26,000 worth of sides?"
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction des personnages dans un cadre professionnel.",
+   "teinte": "#7d6c66"
+  },
+  {
+   "id": "S17",
+   "start": 63.27,
+   "end": 64.56,
+   "seconds": 1.29,
+   "motion": 1.2,
+   "size": "medium",
+   "category": "subject",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P1",
+    "P5"
+   ],
+   "frame": "deux hommes en costume discutent dans un bureau.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes à monture rouge et chemise claire : What are these sides?",
+   "masks": {
+    "P5": {
+     "coverage": 17,
+     "frames": 29,
+     "share": 0.94
+    },
+    "P1": {
+     "coverage": 19.6,
+     "frames": 29,
+     "share": 0.94
+    }
+   },
+   "lines": [
+    {
+     "start": 63.82,
+     "end": 64.76,
+     "speaker": "P4",
+     "voice": "SPEAKER_02",
+     "how": "hors champ — même voix qu'à 43.8 s (distance 0.58)",
+     "text": "What are these sides?"
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction des personnages principaux dans leur environnement de travail.",
+   "teinte": "#635654"
+  },
+  {
+   "id": "S18",
+   "start": 64.56,
+   "end": 66.36,
+   "seconds": 1.8,
+   "motion": 2,
+   "size": "medium",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P4"
+   ],
+   "frame": "Homme en chemise blanche gesticule devant un cadre.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes à monture rouge et chemise claire : Did cure cancer? / L'homme aux lunettes rondes et costume sombre : The sides did cure cancer, that's the problem.",
+   "masks": {
+    "P4": {
+     "coverage": 27.6,
+     "frames": 41,
+     "share": 0.95
+    }
+   },
+   "lines": [
+    {
+     "start": 64.86,
+     "end": 65.64,
+     "speaker": "P4",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +2.14)",
+     "text": "Did cure cancer?"
+    },
+    {
+     "start": 65.86,
+     "end": 67.92,
+     "speaker": "P1",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +3.69)",
+     "text": "The sides did cure cancer, that's the problem."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction d'un personnage en train de parler.",
+   "teinte": "#817267"
+  },
+  {
+   "id": "S19",
+   "start": 66.36,
+   "end": 69.49,
+   "seconds": 3.13,
+   "motion": 1.9,
+   "size": "medium-close",
+   "category": "subject",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P1"
+   ],
+   "frame": "Homme en costume gris et lunettes rondes assis sur canapé.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes rondes et costume sombre : The sides did cure cancer, that's the problem. / L'homme aux lunettes rondes et costume sombre : They were, that's why they were expensive.",
+   "masks": {
+    "P1": {
+     "coverage": 25.9,
+     "frames": 73,
+     "share": 0.97
+    }
+   },
+   "lines": [
+    {
+     "start": 65.86,
+     "end": 67.92,
+     "speaker": "P1",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +3.69)",
+     "text": "The sides did cure cancer, that's the problem."
+    },
+    {
+     "start": 68.08,
+     "end": 69.52,
+     "speaker": "P1",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +4.48)",
+     "text": "They were, that's why they were expensive."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction du personnage principal dans son environnement.",
+   "teinte": "#574340"
+  },
+  {
+   "id": "S20",
+   "start": 69.49,
+   "end": 70.9,
+   "seconds": 1.41,
+   "motion": 2.8,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P2"
+   ],
+   "frame": "Homme en costume bleu lit document sourire visage flou",
+   "onscreenText": "",
+   "audio": "L'homme aux cheveux gominés en chemise bleue : Shut the fuck up.",
+   "masks": {
+    "P2": {
+     "coverage": 23,
+     "frames": 32,
+     "share": 0.94
+    }
+   },
+   "lines": [
+    {
+     "start": 69.82,
+     "end": 70.7,
+     "speaker": "P2",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +3.14)",
+     "text": "Shut the fuck up."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de l'homme au costume bleu et cravate à motifs.",
+   "teinte": "#5b4945"
+  },
+  {
+   "id": "S21",
+   "start": 70.9,
+   "end": 71.53,
+   "seconds": 0.63,
+   "motion": 2.1,
+   "size": "medium-close",
+   "category": "insert",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [],
+   "frame": "Homme aux lunettes rondes en costume gris assis.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes rondes et costume sombre : I'm serious, I know.",
+   "lines": [
+    {
+     "start": 70.76,
+     "end": 71.56,
+     "speaker": "P1",
+     "voice": "SPEAKER_02",
+     "how": "hors champ — même voix qu'à 109.4 s (distance 0.58)",
+     "text": "I'm serious, I know."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction du personnage principal dans son environnement.",
+   "note": "catégorie corrigée par le code : dialogue → insert, aucun personnage à l'image",
+   "teinte": "#54403d"
+  },
+  {
+   "id": "S22",
+   "start": 71.53,
+   "end": 72.2,
+   "seconds": 0.67,
+   "motion": 24.7,
+   "size": "medium-close",
+   "category": "subject",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [],
+   "frame": "Homme gesticulant avec assurance, costume gris, cravate à motifs, pointant du doigt.",
+   "onscreenText": "",
+   "audio": "",
+   "rhythm": "setup",
+   "rhythmNote": "Introduction du personnage principal dans son environnement.",
+   "teinte": "#553934"
+  },
+  {
+   "id": "S23",
+   "start": 72.2,
+   "end": 75.45,
+   "seconds": 3.25,
+   "motion": 1.55,
+   "size": "medium-wide",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P4"
+   ],
+   "frame": "Hommes assis discutent autour d'une table, un homme debout présente des documents.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes à monture rouge et chemise claire : EJ Entertainment. / L'homme aux lunettes à monture rouge et chemise claire : What the fuck is EJ Entertainment?",
+   "masks": {
+    "P4": {
+     "coverage": 4.4,
+     "frames": 76,
+     "share": 0.97
+    }
+   },
+   "lines": [
+    {
+     "start": 72.22,
+     "end": 73.26,
+     "speaker": "P4",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +1.21)",
+     "text": "EJ Entertainment."
+    },
+    {
+     "start": 73.62,
+     "end": 75.44,
+     "speaker": "P4",
+     "voice": "SPEAKER_01",
+     "how": "vue et entendue (synchronie +3.56)",
+     "text": "What the fuck is EJ Entertainment?"
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction des personnages et de la situation.",
+   "teinte": "#7c6b66"
+  },
+  {
+   "id": "S24",
+   "start": 75.45,
+   "end": 80.66,
+   "seconds": 5.21,
+   "motion": 7.3,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P2"
+   ],
+   "frame": "Homme en costume bleu tient des papiers, visage flou à gauche.",
+   "onscreenText": "",
+   "audio": "L'homme aux cheveux gominés en chemise bleue : Well, that's, uh... / L'homme aux cheveux gominés en chemise bleue : Yeah, Jordy, what's EJ Entertainment? / L'homme aux cheveux gominés en chemise bleue : I don't like to describe this.",
+   "masks": {
+    "P2": {
+     "coverage": 23,
+     "frames": 123,
+     "share": 0.98
+    }
+   },
+   "lines": [
+    {
+     "start": 76.52,
+     "end": 78.82,
+     "speaker": "P2",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +2.25)",
+     "text": "Well, that's, uh..."
+    },
+    {
+     "start": 78.82,
+     "end": 79.86,
+     "speaker": "P2",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +2.11)",
+     "text": "Yeah, Jordy, what's EJ Entertainment?"
+    },
+    {
+     "start": 79.86,
+     "end": 80.56,
+     "speaker": "P2",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +3.97)",
+     "text": "I don't like to describe this."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction du personnage principal dans son environnement de travail.",
+   "teinte": "#4d3d3e"
+  },
+  {
+   "id": "S25",
+   "start": 80.66,
+   "end": 81.75,
+   "seconds": 1.09,
+   "motion": 1.9,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P1"
+   ],
+   "frame": "Homme lunettes rondes costume gris sourire canapé cuir",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes rondes et costume sombre : Jordy, what is that?",
+   "masks": {
+    "P1": {
+     "coverage": 26.2,
+     "frames": 24,
+     "share": 0.92
+    }
+   },
+   "lines": [
+    {
+     "start": 80.72,
+     "end": 81.42,
+     "speaker": "P1",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +1.59)",
+     "text": "Jordy, what is that?"
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction du personnage principal dans son environnement.",
+   "teinte": "#513835"
+  },
+  {
+   "id": "S26",
+   "start": 81.75,
+   "end": 83.88,
+   "seconds": 2.13,
+   "motion": 6.4,
+   "size": "medium",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P4"
+   ],
+   "frame": "Homme barbu en chemise blanche gesticule devant un homme flou.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes à monture rouge et chemise claire : It's a fucking prostitution ring, Jordy. / ? : I know.",
+   "masks": {
+    "P4": {
+     "coverage": 24.9,
+     "frames": 49,
+     "share": 0.96
+    }
+   },
+   "lines": [
+    {
+     "start": 81.48,
+     "end": 83.38,
+     "speaker": "P4",
+     "voice": "SPEAKER_01",
+     "how": "vue et entendue (synchronie +4.22)",
+     "text": "It's a fucking prostitution ring, Jordy."
+    },
+    {
+     "start": 83.5,
+     "end": 83.76,
+     "speaker": null,
+     "voice": "SPEAKER_01",
+     "how": "voix off (aucune bouche à l'image ne la porte)",
+     "text": "I know."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction d'un personnage en train de parler.",
+   "teinte": "#9a877f"
+  },
+  {
+   "id": "S27",
+   "start": 83.88,
+   "end": 92.34,
+   "seconds": 8.46,
+   "motion": 6.45,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P2"
+   ],
+   "frame": "Homme en costume bleu tenant des papiers, visage flou à gauche.",
+   "onscreenText": "",
+   "audio": "L'homme aux cheveux gominés en chemise bleue : That's what it is. / L'homme aux cheveux gominés en chemise bleue : That's, that's, that is what it is. / L'homme aux cheveux gominés en chemise bleue : Isn't that the perfect description for it? / L'homme aux cheveux gominés en chemise bleue : That is what it is, but none of these were charged to me. / L'homme aux cheveux gominés en chemise bleue : This is all of them.",
+   "masks": {
+    "P2": {
+     "coverage": 21.1,
+     "frames": 201,
+     "share": 0.99
+    }
+   },
+   "lines": [
+    {
+     "start": 83.84,
+     "end": 84.6,
+     "speaker": "P2",
+     "voice": "SPEAKER_01",
+     "how": "vue et entendue (synchronie +2.21)",
+     "text": "That's what it is."
+    },
+    {
+     "start": 84.6,
+     "end": 86.18,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +4.36)",
+     "text": "That's, that's, that is what it is."
+    },
+    {
+     "start": 86.2,
+     "end": 88.02,
+     "speaker": "P2",
+     "voice": "SPEAKER_01",
+     "how": "vue et entendue (synchronie +3.19)",
+     "text": "Isn't that the perfect description for it?"
+    },
+    {
+     "start": 88.06,
+     "end": 90.86,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +3.93)",
+     "text": "That is what it is, but none of these were charged to me."
+    },
+    {
+     "start": 90.92,
+     "end": 92.06,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +4.50)",
+     "text": "This is all of them."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de l'homme en costume bleu tenant des papiers, établissant la scène.",
+   "teinte": "#5f4e4b"
+  },
+  {
+   "id": "S28",
+   "start": 92.34,
+   "end": 93.34,
+   "seconds": 1,
+   "motion": 1.5,
+   "size": "medium-close",
+   "category": "insert",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [],
+   "frame": "Homme lunettes rondes costume gris assis canapé rouge",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes rondes et costume sombre : Oh, that was all us.",
+   "lines": [
+    {
+     "start": 92.16,
+     "end": 93.24,
+     "speaker": "P1",
+     "voice": "SPEAKER_00",
+     "how": "hors champ — même voix qu'à 109.4 s (distance 0.55)",
+     "text": "Oh, that was all us."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de l'homme aux lunettes rondes dans le cadre de la discussion.",
+   "note": "catégorie corrigée par le code : dialogue → insert, aucun personnage à l'image",
+   "teinte": "#513835"
+  },
+  {
+   "id": "S29",
+   "start": 93.34,
+   "end": 96.05,
+   "seconds": 2.71,
+   "motion": 4.4,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P2"
+   ],
+   "frame": "Homme en costume bleu parle, dos flou, tableau mural, bureau en arrière-plan.",
+   "onscreenText": "",
+   "audio": "L'homme aux cheveux gominés en chemise bleue : It wasn't me, though. / L'homme aux cheveux gominés en chemise bleue : Fucking explain this shit to them.",
+   "masks": {
+    "P2": {
+     "coverage": 17.8,
+     "frames": 63,
+     "share": 0.97
+    }
+   },
+   "lines": [
+    {
+     "start": 93.38,
+     "end": 94.14,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +3.77)",
+     "text": "It wasn't me, though."
+    },
+    {
+     "start": 94.3,
+     "end": 95.88,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +3.49)",
+     "text": "Fucking explain this shit to them."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de l'homme en costume bleu comme sujet principal.",
+   "teinte": "#553834"
+  },
+  {
+   "id": "S30",
+   "start": 96.05,
+   "end": 96.97,
+   "seconds": 0.92,
+   "motion": 5.35,
+   "size": "medium",
+   "category": "insert",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [],
+   "frame": "deux hommes en costume rient dans un bureau avec des dossiers",
+   "onscreenText": "",
+   "audio": "L'homme aux cheveux gominés en chemise bleue : This is all your fucking charges right here.",
+   "lines": [
+    {
+     "start": 96,
+     "end": 98.18,
+     "speaker": "P2",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +3.57)",
+     "text": "This is all your fucking charges right here."
+    }
+   ],
+   "rhythm": "beat",
+   "rhythmNote": "réaction des personnages à une situation comique",
+   "note": "catégorie corrigée par le code : dialogue → insert, aucun personnage à l'image",
+   "teinte": "#615451"
+  },
+  {
+   "id": "S31",
+   "start": 96.97,
+   "end": 101.98,
+   "seconds": 5.01,
+   "motion": 3.9,
+   "size": "medium",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P1",
+    "P2"
+   ],
+   "frame": "Homme en costume gris et cravate à motifs, assis, souriant, tenant un dossier.",
+   "onscreenText": "",
+   "audio": "L'homme aux cheveux gominés en chemise bleue : This is all your fucking charges right here. / L'homme aux lunettes rondes et costume sombre : You guys, the IRS, they allow for TNA, it's fine. / ? : TNE.",
+   "masks": {
+    "P2": {
+     "coverage": 22.9,
+     "frames": 118,
+     "share": 0.98
+    },
+    "P1": {
+     "coverage": 27.2,
+     "frames": 53,
+     "share": 0.44
+    }
+   },
+   "lines": [
+    {
+     "start": 96,
+     "end": 98.18,
+     "speaker": "P2",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +3.57)",
+     "text": "This is all your fucking charges right here."
+    },
+    {
+     "start": 98.18,
+     "end": 101.28,
+     "speaker": "P1",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +3.89)",
+     "text": "You guys, the IRS, they allow for TNA, it's fine."
+    },
+    {
+     "start": 101.54,
+     "end": 101.9,
+     "speaker": null,
+     "voice": "SPEAKER_02",
+     "how": "voix off (aucune bouche à l'image ne la porte)",
+     "text": "TNE."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction du personnage principal dans son environnement.",
+   "teinte": "#573d39"
+  },
+  {
+   "id": "S32",
+   "start": 101.98,
+   "end": 103.9,
+   "seconds": 1.92,
+   "motion": 10.1,
+   "size": "medium",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P4"
+   ],
+   "frame": "Homme barbu en chemise blanche parle, dos flou devant rideaux.",
+   "onscreenText": "",
+   "audio": "? : TNE. / ? : Yeah.",
+   "masks": {
+    "P4": {
+     "coverage": 23.4,
+     "frames": 44,
+     "share": 0.96
+    }
+   },
+   "lines": [
+    {
+     "start": 103.02,
+     "end": 103.38,
+     "speaker": null,
+     "voice": "SPEAKER_02",
+     "how": "voix off (aucune bouche à l'image ne la porte)",
+     "text": "TNE."
+    },
+    {
+     "start": 103.66,
+     "end": 103.82,
+     "speaker": null,
+     "voice": "SPEAKER_02",
+     "how": "voix off (aucune bouche à l'image ne la porte)",
+     "text": "Yeah."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de l'homme barbu en chemise blanche.",
+   "teinte": "#7d6b63"
+  },
+  {
+   "id": "S33",
+   "start": 103.9,
+   "end": 104.9,
+   "seconds": 1,
+   "motion": 1.9,
+   "size": "medium-close",
+   "category": "insert",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [],
+   "frame": "Homme lunettes rondes costume gris sourire bureau bois",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes rondes et costume sombre : I said TNE.",
+   "lines": [
+    {
+     "start": 103.96,
+     "end": 104.58,
+     "speaker": "P1",
+     "voice": "SPEAKER_02",
+     "how": "hors champ — même voix qu'à 114.3 s (distance 0.52)",
+     "text": "I said TNE."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de l'homme aux lunettes rondes dans un cadre professionnel.",
+   "subjectsNonCorrobores": [
+    "P4"
+   ],
+   "note": "catégorie corrigée par le code : dialogue → insert, aucun personnage à l'image",
+   "teinte": "#5d4946"
+  },
+  {
+   "id": "S34",
+   "start": 104.9,
+   "end": 109.78,
+   "seconds": 4.88,
+   "motion": 6.35,
+   "size": "medium",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P4"
+   ],
+   "frame": "Homme barbu en chemise blanche gesticule devant un cadre.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes à monture rouge et chemise claire : No, no, you said TNA. / L'homme aux lunettes rondes et costume sombre : No, I didn't. / L'homme aux lunettes à monture rouge et chemise claire : Yeah, you did. / L'homme aux lunettes à monture rouge et chemise claire : When did I say that? / L'homme aux lunettes à monture rouge et chemise claire : You said TNA, it's TNA. / L'homme aux lunettes rondes et costume sombre : I know you're upset about the dinner, and that makes sense, because we did spend too much money,",
+   "masks": {
+    "P4": {
+     "coverage": 23.2,
+     "frames": 115,
+     "share": 0.98
+    }
+   },
+   "lines": [
+    {
+     "start": 104.62,
+     "end": 105.64,
+     "speaker": "P4",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +2.79)",
+     "text": "No, no, you said TNA."
+    },
+    {
+     "start": 105.82,
+     "end": 106.34,
+     "speaker": "P1",
+     "voice": "SPEAKER_02",
+     "how": "hors champ — même voix qu'à 65.9 s (distance 0.52)",
+     "text": "No, I didn't."
+    },
+    {
+     "start": 106.38,
+     "end": 106.9,
+     "speaker": "P4",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +1.83)",
+     "text": "Yeah, you did."
+    },
+    {
+     "start": 107.1,
+     "end": 107.88,
+     "speaker": "P4",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +2.70)",
+     "text": "When did I say that?"
+    },
+    {
+     "start": 107.88,
+     "end": 109.28,
+     "speaker": "P4",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +2.84)",
+     "text": "You said TNA, it's TNA."
+    },
+    {
+     "start": 109.42,
+     "end": 113.9,
+     "speaker": "P1",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +3.74)",
+     "text": "I know you're upset about the dinner, and that makes sense, because we did spend too much money,"
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de l'homme barbu en chemise blanche.",
+   "teinte": "#79685f"
+  },
+  {
+   "id": "S35",
+   "start": 109.78,
+   "end": 115.41,
+   "seconds": 5.63,
+   "motion": 2.3,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P1"
+   ],
+   "frame": "Homme gesticulant en costume gris et cravate rouge",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes rondes et costume sombre : I know you're upset about the dinner, and that makes sense, because we did spend too much money, / L'homme aux lunettes rondes et costume sombre : but I said TNE.",
+   "masks": {
+    "P1": {
+     "coverage": 23.6,
+     "frames": 133,
+     "share": 0.99
+    }
+   },
+   "lines": [
+    {
+     "start": 109.42,
+     "end": 113.9,
+     "speaker": "P1",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +3.74)",
+     "text": "I know you're upset about the dinner, and that makes sense, because we did spend too much money,"
+    },
+    {
+     "start": 114.26,
+     "end": 115.14,
+     "speaker": "P1",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +4.51)",
+     "text": "but I said TNE."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de l'homme gesticulant en costume gris et cravate rouge",
+   "teinte": "#5d4a47"
+  },
+  {
+   "id": "S36",
+   "start": 115.41,
+   "end": 117.33,
+   "seconds": 1.92,
+   "motion": 7.1,
+   "size": "medium-close",
+   "category": "subject",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P4"
+   ],
+   "frame": "Homme chauve aux lunettes fines gesticule devant rideaux.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes à monture rouge et chemise claire : Don't tell me what you said, I heard what you said.",
+   "masks": {
+    "P4": {
+     "coverage": 22.7,
+     "frames": 44,
+     "share": 0.96
+    }
+   },
+   "lines": [
+    {
+     "start": 115.2,
+     "end": 117.02,
+     "speaker": "P4",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +2.92)",
+     "text": "Don't tell me what you said, I heard what you said."
+    }
+   ],
+   "rhythm": "breath",
+   "rhythmNote": "respiration entre deux répliques",
+   "teinte": "#78675f"
+  },
+  {
+   "id": "S37",
+   "start": 117.33,
+   "end": 120,
+   "seconds": 2.67,
+   "motion": 5.2,
+   "size": "medium",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P2"
+   ],
+   "frame": "Homme en costume bleu gesticule devant un autre.",
+   "onscreenText": "",
+   "audio": "L'homme aux cheveux gominés en chemise bleue : Dad, he said TNA. / L'homme aux cheveux gominés en chemise bleue : He did, he said TNA. / L'homme aux cheveux gominés en chemise bleue : Absolutely no question, I heard it.",
+   "masks": {
+    "P2": {
+     "coverage": 24,
+     "frames": 62,
+     "share": 0.97
+    }
+   },
+   "lines": [
+    {
+     "start": 117.2,
+     "end": 117.94,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +2.30)",
+     "text": "Dad, he said TNA."
+    },
+    {
+     "start": 118.14,
+     "end": 118.86,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +1.92)",
+     "text": "He did, he said TNA."
+    },
+    {
+     "start": 119.06,
+     "end": 120.22,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +3.38)",
+     "text": "Absolutely no question, I heard it."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de l'interaction entre les deux hommes.",
+   "teinte": "#584545"
+  },
+  {
+   "id": "S38",
+   "start": 120,
+   "end": 121.16,
+   "seconds": 1.16,
+   "motion": 5.7,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P1"
+   ],
+   "frame": "Homme lunettes rondes costume gris parle main gestuelle",
+   "onscreenText": "",
+   "audio": "? : I'm trying to fucking sweating.",
+   "masks": {
+    "P1": {
+     "coverage": 20.9,
+     "frames": 26,
+     "share": 0.93
+    }
+   },
+   "lines": [
+    {
+     "start": 120.46,
+     "end": 121.16,
+     "speaker": null,
+     "voice": "SPEAKER_02",
+     "how": "voix off (aucune bouche ; voix la plus proche à 0.71, pas assez sûre)",
+     "text": "I'm trying to fucking sweating."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction du personnage principal dans son environnement.",
+   "teinte": "#5d4844"
+  },
+  {
+   "id": "S39",
+   "start": 121.16,
+   "end": 123.71,
+   "seconds": 2.55,
+   "motion": 5.7,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P2"
+   ],
+   "frame": "Homme en costume bleu pointe doigt vers interlocuteur.",
+   "onscreenText": "",
+   "audio": "L'homme aux cheveux gominés en chemise bleue : I'm getting this close. / L'homme aux cheveux gominés en chemise bleue : I'm getting this close.",
+   "masks": {
+    "P2": {
+     "coverage": 19.9,
+     "frames": 59,
+     "share": 0.97
+    }
+   },
+   "lines": [
+    {
+     "start": 121.16,
+     "end": 121.8,
+     "speaker": "P2",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +2.51)",
+     "text": "I'm getting this close."
+    },
+    {
+     "start": 122.4,
+     "end": 123.48,
+     "speaker": "P2",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +2.95)",
+     "text": "I'm getting this close."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction d'un moment de confrontation.",
+   "teinte": "#534142"
+  },
+  {
+   "id": "S40",
+   "start": 123.71,
+   "end": 126.17,
+   "seconds": 2.46,
+   "motion": 4,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P1"
+   ],
+   "frame": "homme gesticulant lunettes rondes costume gris cravate rouge",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes rondes et costume sombre : That's what I'm saying, I want you to open up more, Max.",
+   "masks": {
+    "P1": {
+     "coverage": 26.6,
+     "frames": 57,
+     "share": 0.97
+    }
+   },
+   "lines": [
+    {
+     "start": 123.78,
+     "end": 126.08,
+     "speaker": "P1",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +4.25)",
+     "text": "That's what I'm saying, I want you to open up more, Max."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "l'homme explique son point de vue",
+   "teinte": "#4f3c38"
+  },
+  {
+   "id": "S41",
+   "start": 126.17,
+   "end": 127.29,
+   "seconds": 1.12,
+   "motion": 3.2,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P2"
+   ],
+   "frame": "Homme en costume bleu parle dos flou peinture mur",
+   "onscreenText": "",
+   "audio": "L'homme aux cheveux gominés en chemise bleue : He's gonna fucking kill you.",
+   "masks": {
+    "P2": {
+     "coverage": 19.8,
+     "frames": 25,
+     "share": 0.93
+    }
+   },
+   "lines": [
+    {
+     "start": 126.08,
+     "end": 127.1,
+     "speaker": "P2",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +2.53)",
+     "text": "He's gonna fucking kill you."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de l'homme en costume bleu.",
+   "teinte": "#523634"
+  },
+  {
+   "id": "S42",
+   "start": 127.29,
+   "end": 130.96,
+   "seconds": 3.67,
+   "motion": 3.7,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P1"
+   ],
+   "frame": "Homme aux lunettes rondes rit, mains jointes, costume gris, bureau en bois.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes rondes et costume sombre : Why do you hold it in? / L'homme aux lunettes rondes et costume sombre : Why do you, Max, Max, why do you hold it in?",
+   "masks": {
+    "P1": {
+     "coverage": 26.4,
+     "frames": 86,
+     "share": 0.98
+    }
+   },
+   "lines": [
+    {
+     "start": 127.14,
+     "end": 128.22,
+     "speaker": "P1",
+     "voice": "SPEAKER_00",
+     "how": "vue et entendue (synchronie +1.32)",
+     "text": "Why do you hold it in?"
+    },
+    {
+     "start": 128.38,
+     "end": 130.74,
+     "speaker": "P1",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +3.73)",
+     "text": "Why do you, Max, Max, why do you hold it in?"
+    }
+   ],
+   "rhythm": "beat",
+   "rhythmNote": "Réaction émotionnelle de P1, accentue le moment comique.",
+   "teinte": "#4e3834"
+  },
+  {
+   "id": "S43",
+   "start": 130.96,
+   "end": 134.76,
+   "seconds": 3.8,
+   "motion": 21.1,
+   "size": "medium-close",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P9",
+    "P4"
+   ],
+   "frame": "Homme gesticulant avec assurance, costume gris, cravate rouge.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes à monture rouge et chemise claire : That's it, that's it. / L'homme aux lunettes à monture rouge et chemise claire : Get the fuck out of here. / L'homme aux lunettes à monture noire et chemise blanche : Get out of here. / ? : Get out of here. / ? : Get out of here.",
+   "masks": {
+    "P4": {
+     "coverage": 18.8,
+     "frames": 89,
+     "share": 0.98
+    },
+    "P9": {
+     "coverage": 10,
+     "frames": 17,
+     "share": 0.19
+    }
+   },
+   "lines": [
+    {
+     "start": 130.78,
+     "end": 131.4,
+     "speaker": "P4",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +3.55)",
+     "text": "That's it, that's it."
+    },
+    {
+     "start": 131.44,
+     "end": 133.04,
+     "speaker": "P4",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +4.01)",
+     "text": "Get the fuck out of here."
+    },
+    {
+     "start": 133.46,
+     "end": 134.32,
+     "speaker": "P9",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +2.07)",
+     "text": "Get out of here."
+    },
+    {
+     "start": 134.32,
+     "end": 134.54,
+     "speaker": null,
+     "voice": "SPEAKER_02",
+     "how": "voix off (aucune bouche à l'image ne la porte)",
+     "text": "Get out of here."
+    },
+    {
+     "start": 134.54,
+     "end": 134.72,
+     "speaker": null,
+     "voice": "SPEAKER_02",
+     "how": "voix off (aucune bouche à l'image ne la porte)",
+     "text": "Get out of here."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction d'un personnage en mouvement.",
+   "teinte": "#544441"
+  },
+  {
+   "id": "S44",
+   "start": 134.76,
+   "end": 137.1,
+   "seconds": 2.34,
+   "motion": 1.25,
+   "size": "medium",
+   "category": "dialogue",
+   "camera": "static",
+   "transitionIn": "cut",
+   "subjects": [
+    "P4"
+   ],
+   "frame": "Homme barbu en chemise blanche et cravate rouge.",
+   "onscreenText": "",
+   "audio": "? : Get out of here. / L'homme aux lunettes à monture rouge et chemise claire : What kind of hooker takes credit cards?",
+   "masks": {
+    "P4": {
+     "coverage": 23.1,
+     "frames": 54,
+     "share": 0.96
+    }
+   },
+   "lines": [
+    {
+     "start": 134.76,
+     "end": 135.32,
+     "speaker": null,
+     "how": "voix off (aucune bouche ; voix la plus proche à 0.79, pas assez sûre)",
+     "text": "Get out of here."
+    },
+    {
+     "start": 135.32,
+     "end": 137.04,
+     "speaker": "P4",
+     "voice": "SPEAKER_01",
+     "how": "vue et entendue (synchronie +3.36)",
+     "text": "What kind of hooker takes credit cards?"
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction de l'homme barbu en train de parler.",
+   "teinte": "#907e74"
+  },
+  {
+   "id": "S45",
+   "start": 137.1,
+   "end": 139.06,
+   "seconds": 1.96,
+   "motion": 14,
+   "size": "medium-wide",
+   "category": "dialogue",
+   "camera": "tracking",
+   "transitionIn": "cut",
+   "subjects": [
+    "P6",
+    "P3",
+    "P8"
+   ],
+   "frame": "Homme dos bleu chemise blanche, homme lunettes rondes gesticulant, bureau ouvert, employés travaillant, miroir reflétant salle.",
+   "onscreenText": "",
+   "audio": "L'homme aux lunettes à monture fine et veste sombre : A rich one. / ? : At Stratton.",
+   "masks": {
+    "P6": {
+     "coverage": 24.6,
+     "frames": 43,
+     "share": 0.91
+    },
+    "P12": {
+     "coverage": 11.4,
+     "frames": 43,
+     "share": 0.91
+    },
+    "P3": {
+     "coverage": 3,
+     "frames": 29,
+     "share": 0.62
+    }
+   },
+   "lines": [
+    {
+     "start": 137.28,
+     "end": 138.06,
+     "speaker": "P12",
+     "voice": "SPEAKER_02",
+     "how": "vue et entendue (synchronie +3.90)",
+     "text": "A rich one."
+    },
+    {
+     "start": 138.24,
+     "end": 138.92,
+     "speaker": null,
+     "voice": "SPEAKER_01",
+     "how": "voix off (aucune bouche ; voix la plus proche à 0.75, pas assez sûre)",
+     "text": "At Stratton."
+    }
+   ],
+   "rhythm": "setup",
+   "rhythmNote": "Introduction des personnages principaux dans leur environnement de travail.",
+   "teinte": "#524646"
+  }
+ ],
+ "provenance": {
+  "cast": "yolo11m+bytetrack → mtcnn+facenet(vggface2) [visage] / dinov2 [buste] → regroupement ; figurants sans visage écartés",
+  "masks": "sam3 (text) → IoU avec pistes yolo → casting ; sujets non étayés retirés",
+  "speakers": "synchronie bouche/son (SyncNet-like) ; hors champ recolle par empreinte ECAPA ; sinon voix off, non attribuee",
+  "recast": "7 → 6",
+  "cartons": "texte incruste relu a plusieurs instants du plan ; chaque carton distinct garde son instant"
+ },
+ "voices": {},
+ "faceDist": {
+  "P1|P2": 1.131,
+  "P1|P3": 1.041,
+  "P1|P4": 1.418,
+  "P1|P5": 1.086,
+  "P1|P6": 1.178,
+  "P1|P7": 0.998,
+  "P1|P8": 1.087,
+  "P1|P9": 1.408,
+  "P1|P10": 1.189,
+  "P1|P11": 1.403,
+  "P1|P12": 0.715,
+  "P1|P13": 1.155,
+  "P1|P14": 1.491,
+  "P1|P15": 1.432,
+  "P1|P16": 1.24,
+  "P2|P3": 1.075,
+  "P2|P4": 1.342,
+  "P2|P5": 1.213,
+  "P2|P6": 0.768,
+  "P2|P7": 1.27,
+  "P2|P8": 1.398,
+  "P2|P9": 1.329,
+  "P2|P10": 1.458,
+  "P2|P11": 1.486,
+  "P2|P12": 1.194,
+  "P2|P13": 1.178,
+  "P2|P14": 1.461,
+  "P2|P15": 1.397,
+  "P2|P16": 1.251,
+  "P3|P4": 1.341,
+  "P3|P5": 1.121,
+  "P3|P6": 1.214,
+  "P3|P7": 0.887,
+  "P3|P8": 1.199,
+  "P3|P9": 1.387,
+  "P3|P10": 1.351,
+  "P3|P11": 1.486,
+  "P3|P12": 1.22,
+  "P3|P13": 1.175,
+  "P3|P14": 1.433,
+  "P3|P15": 1.413,
+  "P3|P16": 1.215,
+  "P4|P5": 1.435,
+  "P4|P6": 1.27,
+  "P4|P7": 1.385,
+  "P4|P8": 1.363,
+  "P4|P9": 0.794,
+  "P4|P10": 1.346,
+  "P4|P11": 1.432,
+  "P4|P12": 1.47,
+  "P4|P13": 1.321,
+  "P4|P14": 1.048,
+  "P4|P15": 1.511,
+  "P4|P16": 1.343,
+  "P5|P6": 1.156,
+  "P5|P7": 1.084,
+  "P5|P8": 1.364,
+  "P5|P9": 1.527,
+  "P5|P10": 1.519,
+  "P5|P11": 1.561,
+  "P5|P12": 1.094,
+  "P5|P13": 1.379,
+  "P5|P14": 1.413,
+  "P5|P15": 1.454,
+  "P5|P16": 0.733,
+  "P6|P7": 1.224,
+  "P6|P8": 1.409,
+  "P6|P9": 1.195,
+  "P6|P10": 1.449,
+  "P6|P11": 1.526,
+  "P6|P12": 1.194,
+  "P6|P13": 1.358,
+  "P6|P14": 1.409,
+  "P6|P15": 1.374,
+  "P6|P16": 1.311,
+  "P7|P8": 1.159,
+  "P7|P9": 1.375,
+  "P7|P10": 1.219,
+  "P7|P11": 1.487,
+  "P7|P12": 1.161,
+  "P7|P13": 1.351,
+  "P7|P14": 1.489,
+  "P7|P15": 1.355,
+  "P7|P16": 1.18,
+  "P8|P9": 1.385,
+  "P8|P10": 0.761,
+  "P8|P11": 0.852,
+  "P8|P12": 1.18,
+  "P8|P13": 1.297,
+  "P8|P14": 1.295,
+  "P8|P15": 1.128,
+  "P8|P16": 1.396,
+  "P9|P10": 1.369,
+  "P9|P11": 1.475,
+  "P9|P12": 1.413,
+  "P9|P13": 1.409,
+  "P9|P14": 1.05,
+  "P9|P15": 1.476,
+  "P9|P16": 1.481,
+  "P10|P11": 0.806,
+  "P10|P12": 1.337,
+  "P10|P13": 1.355,
+  "P10|P14": 1.359,
+  "P10|P15": 0.937,
+  "P10|P16": 1.569,
+  "P11|P12": 1.446,
+  "P11|P13": 1.4,
+  "P11|P14": 1.339,
+  "P11|P15": 1.052,
+  "P11|P16": 1.545,
+  "P12|P13": 1.276,
+  "P12|P14": 1.457,
+  "P12|P15": 1.464,
+  "P12|P16": 1.27,
+  "P13|P14": 1.495,
+  "P13|P15": 1.354,
+  "P13|P16": 1.38,
+  "P14|P15": 1.429,
+  "P14|P16": 1.297,
+  "P15|P16": 1.529
+ },
+ "extras": [
+  {
+   "par": "buste",
+   "pistes": [
+    568,
+    881,
+    667,
+    674,
+    659,
+    902,
+    916,
+    569,
+    658,
+    675
+   ],
+   "secondes": 43.9,
+   "motif": "aucun visage exploitable (de dos, masqué, flou ou trop loin)",
+   "de": 33.8,
+   "a": 75.4
+  },
+  {
+   "par": "buste",
+   "pistes": [
+    150,
+    493,
+    486,
+    408,
+    484,
+    603,
+    268,
+    290,
+    602,
+    405,
+    402,
+    591,
+    597,
+    508,
+    535,
+    590
+   ],
+   "secondes": 27.6,
+   "motif": "aucun visage exploitable (de dos, masqué, flou ou trop loin)",
+   "de": 8.8,
+   "a": 42.3
+  },
+  {
+   "par": "buste",
+   "pistes": [
+    898,
+    917,
+    690,
+    951,
+    913,
+    953,
+    960,
+    689
+   ],
+   "secondes": 24.8,
+   "motif": "aucun visage exploitable (de dos, masqué, flou ou trop loin)",
+   "de": 49.9,
+   "a": 123.7
+  },
+  {
+   "par": "buste",
+   "pistes": [
+    9,
+    11,
+    10,
+    32,
+    71,
+    765,
+    81,
+    22,
+    38
+   ],
+   "secondes": 24,
+   "motif": "aucun visage exploitable (de dos, masqué, flou ou trop loin)",
+   "de": 3.5,
+   "a": 138.2
+  },
+  {
+   "par": "buste",
+   "pistes": [
+    892,
+    900,
+    935,
+    955,
+    671,
+    702,
+    708,
+    950,
+    711
+   ],
+   "secondes": 21.4,
+   "motif": "aucun visage exploitable (de dos, masqué, flou ou trop loin)",
+   "de": 47.8,
+   "a": 127.3
+  },
+  {
+   "par": "buste",
+   "pistes": [
+    194,
+    482,
+    532,
+    483,
+    589,
+    779,
+    237,
+    513
+   ],
+   "secondes": 15,
+   "motif": "aucun visage exploitable (de dos, masqué, flou ou trop loin)",
+   "de": 10.7,
+   "a": 139
+  },
+  {
+   "par": "buste",
+   "pistes": [
+    883,
+    921,
+    669
+   ],
+   "secondes": 11.5,
+   "motif": "aucun visage exploitable (de dos, masqué, flou ou trop loin)",
+   "de": 42.3,
+   "a": 75.4
+  },
+  {
+   "par": "buste",
+   "pistes": [
+    904,
+    943,
+    945
+   ],
+   "secondes": 7.3,
+   "motif": "aucun visage exploitable (de dos, masqué, flou ou trop loin)",
+   "de": 58.1,
+   "a": 115.4
+  },
+  {
+   "par": "buste",
+   "pistes": [
+    571
+   ],
+   "secondes": 6.2,
+   "motif": "aucun visage exploitable (de dos, masqué, flou ou trop loin)",
+   "de": 33.8,
+   "a": 40
+  },
+  {
+   "par": "buste",
+   "pistes": [
+    142,
+    259
+   ],
+   "secondes": 3.6,
+   "motif": "aucun visage exploitable (de dos, masqué, flou ou trop loin)",
+   "de": 8.6,
+   "a": 13.6
+  },
+  {
+   "par": "buste",
+   "pistes": [
+    3
+   ],
+   "secondes": 3.4,
+   "motif": "aucun visage exploitable (de dos, masqué, flou ou trop loin)",
+   "de": 0,
+   "a": 3.4
+  },
+  {
+   "par": "buste",
+   "pistes": [
+    573
+   ],
+   "secondes": 2.5,
+   "motif": "aucun visage exploitable (de dos, masqué, flou ou trop loin)",
+   "de": 33.8,
+   "a": 36.5
+  },
+  {
+   "par": "visage",
+   "pistes": [
+    41,
+    810
+   ],
+   "secondes": 1.9,
+   "motif": "moins de 2.0 s à l'image",
+   "de": 4.3,
+   "a": 139
+  },
+  {
+   "par": "buste",
+   "pistes": [
+    618
+   ],
+   "secondes": 1.5,
+   "motif": "moins de 2.0 s à l'image",
+   "de": 40.8,
+   "a": 42.3
+  },
+  {
+   "par": "visage",
+   "pistes": [
+    821
+   ],
+   "secondes": 1,
+   "motif": "moins de 2.0 s à l'image",
+   "de": 138.1,
+   "a": 139
+  }
+ ],
+ "portes": [
+  {
+   "plan": "S21",
+   "de": "dialogue",
+   "vers": "insert",
+   "motif": "aucun personnage ni silhouette à l'image"
+  },
+  {
+   "plan": "S28",
+   "de": "dialogue",
+   "vers": "insert",
+   "motif": "aucun personnage ni silhouette à l'image"
+  },
+  {
+   "plan": "S30",
+   "de": "dialogue",
+   "vers": "insert",
+   "motif": "aucun personnage ni silhouette à l'image"
+  },
+  {
+   "plan": "S33",
+   "de": "dialogue",
+   "vers": "insert",
+   "motif": "aucun personnage ni silhouette à l'image"
+  }
+ ]
+}

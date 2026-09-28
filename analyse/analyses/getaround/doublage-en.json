@@ -1,0 +1,108 @@
+{
+ "format": "movie-analysis-doublage",
+ "version": 1,
+ "film": "getaround",
+ "langue": "en",
+ "source": "fr",
+ "traduction": "essai du 25/09 : traduite par Claude (Opus 5.5), ≤ 6 syllabes/s ; la traduction automatique (Qwen3-8B) viendra ensuite",
+ "lignes": [
+  {
+   "a": 0,
+   "b": 2.84,
+   "qui": "",
+   "texte": "Ok, les braqueurs sont sur le toit, je répète, les braqueurs sont sur le toit.",
+   "trad": "Robbers on the roof, I repeat, robbers on the roof."
+  },
+  {
+   "a": 3.4,
+   "b": 5.28,
+   "qui": "P3",
+   "texte": "Bonjour, je suis la négociatrice, qu'est-ce que vous voulez ?",
+   "trad": "Hi, I'm the negotiator. What do you want?"
+  },
+  {
+   "a": 5.28,
+   "b": 6.76,
+   "qui": "P2",
+   "texte": "On veut une voiture devant la banque dans 5 minutes.",
+   "trad": "A car outside the bank in five minutes."
+  },
+  {
+   "a": 6.96,
+   "b": 9.42,
+   "qui": "P3",
+   "texte": "5 minutes ? Mais trouver une voiture dans 5 minutes, c'est impossible.",
+   "trad": "Five minutes? Finding a car in five minutes is impossible."
+  },
+  {
+   "a": 9.88,
+   "b": 12.16,
+   "qui": "P1",
+   "texte": "Getaround ? J'en ai eu une la semaine dernière.",
+   "trad": "Getaround? I used one just last week."
+  },
+  {
+   "a": 12.2,
+   "b": 13.22,
+   "qui": "P2",
+   "texte": "On attend là !",
+   "trad": "We're waiting!"
+  },
+  {
+   "a": 13.22,
+   "b": 14.64,
+   "qui": "P3",
+   "texte": "Ok, SUV ou familial ?",
+   "trad": "Okay, SUV or family car?"
+  },
+  {
+   "a": 14.64,
+   "b": 15.56,
+   "qui": "P2",
+   "texte": "Mais c'est quoi cette question ?",
+   "trad": "What kind of question?"
+  },
+  {
+   "a": 15.56,
+   "b": 17.6,
+   "qui": "P1",
+   "texte": "Tu peux même déverrouiller ta voiture avec ton tél ?",
+   "trad": "You can even unlock the car with your phone?"
+  },
+  {
+   "a": 17.6,
+   "b": 19.28,
+   "qui": "P3",
+   "texte": "Mais non, non, c'est top ça.",
+   "trad": "No way, that's awesome."
+  },
+  {
+   "a": 19.48,
+   "b": 20.08,
+   "qui": "P10",
+   "texte": "Demande la clim'.",
+   "trad": "Ask for air con."
+  },
+  {
+   "a": 21.02,
+   "b": 23.580000000000002,
+   "qui": "P3",
+   "texte": "Et c'est réservé, allez !",
+   "trad": "And it's booked, let's go!"
+  },
+  {
+   "a": 25.48,
+   "b": 26.76,
+   "qui": "P3",
+   "texte": "Allez, bonnes vacances, soyez prudents.",
+   "trad": "Have a great holiday, drive safe."
+  },
+  {
+   "a": 27.38,
+   "b": 28.54,
+   "qui": "P3",
+   "texte": "Évadez-vous avec Getaround.",
+   "trad": "Escape with Getaround."
+  }
+ ]
+}

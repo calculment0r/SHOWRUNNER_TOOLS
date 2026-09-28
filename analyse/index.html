@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MOVIE ANALYSIS — Showrunner Tools</title>
+<meta name="description" content="Le dépouillement d'un film plan par plan : les analyses, leur Studio, la diarisation, et une nouvelle analyse lancée sur DGX2.">
+<!-- icône vide au chargement : le script la dessine depuis les jetons -->
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Azeret+Mono:wght@300;400;500&display=swap">
+<link rel="stylesheet" href="../commun/tokens.css">
+<link rel="stylesheet" href="../commun/base.css">
+<link rel="stylesheet" href="../commun/shell.css">
+<link rel="stylesheet" href="./analyse.css">
+</head>
+<body>
+<main class="ma">
+  <section class="ma-top">
+    <div class="hero ma-hero">
+      <span class="ref">SR—07 · Movie Analysis</span>
+      <h1>Le film plan par plan</h1>
+      <p>Le code mesure, le modèle juge, le code vérifie. Les coupes, les durées et le mouvement sont mesurés ; la
+        transcription, les personnages suivis puis nommés et qui parle sont calculés ; l'échelle, la catégorie, la caméra
+        et le rythme de chaque plan sont jugés par le modèle, puis vérifiés par quinze portes. Tout tourne sur les DGX.</p>
+      <div class="row">
+        <button class="tb go" id="nouvelle" type="button">Nouvelle analyse</button>
+        <a class="tb ghost" href="./diarisation/">Diarisation</a>
+      </div>
+      <div class="why" id="why-nouvelle" hidden></div>
+    </div>
+    <div class="meta ma-sum" aria-label="en chiffres">
+      <span class="dots"></span>
+      <span class="lbl">En chiffres</span>
+      <dl class="kv" id="somme"><dt>analyses</dt><dd>—</dd></dl>
+      <p class="ma-note">Les Studio lisent leurs vidéos sur Cloudflare R2 et les corrections dans le dépôt partagé de
+        MOVIE_ANALYSE. Une correction faite d'ici n'y arrive pas : le dépôt partagé n'accepte pas encore l'adresse
+        du portail, et la page garde ce qui n'est pas parti dans ce navigateur (analyse/PROVENANCE.md).</p>
+    </div>
+  </section>
+
+  <section class="sect">
+    <div class="sect-head"><h2>Les analyses</h2><span class="k">A</span><span class="cnt" id="n-analyses"></span></div>
+    <div class="ma-cards" id="analyses"><p class="lbl">chargement</p></div>
+  </section>
+
+  <section class="sect">
+    <div class="sect-head"><h2>Diarisation</h2><span class="k">B</span><span class="cnt" id="diar-cnt"></span></div>
+    <div class="pan ma-diar" id="diar"><p class="lbl">on interroge le service</p></div>
+  </section>
+
+  <section class="sect">
+    <div class="sect-head"><h2>Les projets</h2><span class="k">C</span><span class="cnt" id="n-projets"></span></div>
+    <div class="pan" id="projets"><p class="lbl">lecture du dépôt partagé</p></div>
+  </section>
+
+  <section class="sect">
+    <div class="sect-head"><h2>La chaîne</h2><span class="k">D</span><span class="cnt" id="chaine-cnt"></span></div>
+    <div class="pan" id="chaine"><p class="lbl">lecture</p></div>
+  </section>
+</main>
+
+<div class="scrim" id="nv" hidden>
+  <div class="modal lg" role="dialog" aria-label="nouvelle analyse">
+    <div class="modal-head"><span class="t">Nouvelle analyse</span><span class="sp"></span>
+      <button class="tb ghost sm" type="button" data-ferme>Fermer</button></div>
+    <div class="modal-body">
+      <div class="field">
+        <span class="lbl">La vidéo</span>
+        <div class="seg" id="nv-src">
+          <button class="tb on" type="button" data-src="bib">Bibliothèque</button>
+          <button class="tb" type="button" data-src="yt">YouTube</button>
+        </div>
+        <div class="ma-src" id="nv-bib">
+          <div class="ma-choisie" id="nv-video"></div>
+          <button class="tb ghost" type="button" id="nv-choisir">Choisir une vidéo</button>
+        </div>
+        <div class="ma-src" id="nv-yt" hidden>
+          <input class="fld" id="nv-url" type="url" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off" spellcheck="false">
+          <span class="lbl">la chaîne la télécharge (yt-dlp, 1080p au plus) et range le travail sous l'identifiant de la vidéo</span>
+        </div>
+      </div>
+      <label class="field"><span class="lbl">Titre</span>
+        <input class="fld" id="nv-titre" maxlength="120" autocomplete="off" placeholder="le titre du film ou de l'extrait"></label>
+      <div class="field">
+        <span class="lbl">Langue du dépouillement</span>
+        <div class="opts" id="nv-langue"></div>
+        <span class="lbl">descriptions, fiches et portes ; la transcription détecte seule la langue du film</span>
+      </div>
+      <div class="field">
+        <span class="lbl">En plus</span>
+        <div class="opts"><button class="opt" type="button" id="nv-sceneflow" aria-pressed="false">SceneFlow<small>projet + contrôle d'adhérence</small></button></div>
+      </div>
+      <label class="field" id="nv-nom-champ"><span class="lbl">Le dossier de travail sur <b id="nv-machine">DGX2</b></span>
+        <span class="ma-chemin"><span id="nv-runs">~/reelbench/runs/</span><input class="fld" id="nv-nom" maxlength="48" autocomplete="off" spellcheck="false"></span></label>
+      <label class="row ma-rep" id="nv-rep-champ" hidden><input type="checkbox" id="nv-reprendre">
+        <span>reprendre l'analyse lancée d'ici sous ce nom, où elle s'est arrêtée</span></label>
+      <p class="ma-note">La chaîne est lourde : une seule tourne à la fois. Elle attend que la machine soit libre (GPU au repos,
+        files ComfyUI vides, 40 Go disponibles), puis chaque étape reprend ce qui est déjà sur le disque. La page de
+        l'analyse s'ouvre d'ici quand elle a fini : un premier Studio, la vidéo à côté de lui et les voix de la chaîne.
+        La diarisation Nemotron, les teintes et les cartons de la recette de MOVIE_ANALYSE n'y sont pas encore
+        (docs/etudes/analyse.md).</p>
+    </div>
+    <div class="modal-foot">
+      <span class="why" id="nv-why"></span>
+      <span class="sp"></span>
+      <button class="tb ghost" type="button" data-ferme>Annuler</button>
+      <button class="tb go" type="button" id="nv-lancer" disabled>Lancer</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="./analyse.js"></script>
+</body>
+</html>
