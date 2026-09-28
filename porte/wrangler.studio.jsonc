@@ -1,0 +1,35 @@
+{
+  // La porte du studio Character Factory : https://character-factory.luxigone.workers.dev
+  // Même worker.js que le portail, en mode studio : tout chemin va au studio de DGX1, tel quel, parce que ses pages
+  // demandent /api/…, /files/…, /v1/… à la racine de leur origine (js/studio.js). Pas d'assets : le studio sert ses
+  // propres pages. SQUELETTE NON DÉPLOYÉ (docs/etudes/cloudflare.md, étape 4 du plan).
+  //
+  //   npx wrangler deploy -c wrangler.studio.jsonc --dry-run
+  //   npx wrangler secret put PORTE_CLE -c wrangler.studio.jsonc
+  //   npx wrangler secret put ADMINS -c wrangler.studio.jsonc
+  //   npx wrangler deploy -c wrangler.studio.jsonc
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "character-factory",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-28",
+  "workers_dev": true,
+  "preview_urls": false,
+
+  "vars": {
+    "MODE": "studio",
+    "TEAM_DOMAIN": "https://<equipe>.cloudflareaccess.com",
+    "POLICY_AUD": "<tag AUD de l'application Access du studio>",
+    "PORTAIL_URL": "https://showrunner.luxigone.workers.dev/"
+  },
+
+  // Tunnel de DGX1, 127.0.0.1:9765 : la porte du studio (8765 + 1000), qui exige la signature de la porte.
+  "vpc_services": [
+    { "binding": "STUDIO", "service_id": "<id du service studio-dgx1>" }
+  ],
+
+  "ratelimits": [
+    { "name": "LIMITE", "namespace_id": "8765", "simple": { "limit": 60, "period": 60 } }
+  ],
+
+  "observability": { "enabled": true, "head_sampling_rate": 1 }
+}
