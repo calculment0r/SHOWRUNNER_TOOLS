@@ -155,10 +155,28 @@ ssh dgx2 'cd /tmp/sr_<outil> && SHOWRUNNER_PORT=87xx SHOWRUNNER_DATA=/tmp/sr_<ou
 Ports réservés aux essais : image 8791, movie 8792, montage 8793,
 musique 8794, analyse 8795, objet 8796, asset 8797.
 
-## 7. Plus tard : la porte Cloudflare
+## 7. Les outils : routes, travaux, interrupteurs
+
+Chaque outil tourne d'abord sur un **moteur factice** (images, vidéos,
+sons d'essai) : l'interface se mène de bout en bout sans GPU. Le câblage
+réel est écrit, vérifié à vide, et s'allume par un réglage de
+`showrunner.local.json` (sur DGX2), puis `tools/portail.sh restart`.
+
+| outil | routes | travaux | interrupteur |
+|---|---|---|---|
+| Asset | `/api/asset/view`, `move`, `folders/rename`, `lineage/<id>`, `trash`, `trash/<id>/thumb`, `refs/<id>`, `cf/refresh` | — | — |
+| Image | `/api/image/models`, `compose` (le prompt envoyé), `generate`, `edit`, `redo` | `image.generate`, `image.edit` (voie image) | `"image_backend": "comfyui"` |
+| Movie Creator | `/api/movie/options`, `plan` (le graphe H3), `loras`, `element-image`, `assist`, `h3`, `h3/start`, `h3/stop` | `movie.t2v`, `movie.i2v`, `movie.r2v` (voie h3) | `"movie_engine": "h3"` ; `h3_idle_minutes`, `h3_min_free_gb` |
+| Montage | `/api/montage/meta`, `projects…` (créer, enregistrer, renommer, dupliquer, supprimer, `plan`), `wave/<id>` | `montage.export` (voie cpu, ffmpeg) | — |
+| Musique | `/api/music/projects…`, `engines`, `generate`, `stems` | `music.generate`, `music.stems` | `"music_engine": "ace-step"` |
+| Object Creator | `/api/objet/state`, `objects` | `objet.mesh` (TRELLIS.2), `objet.mesh_factice` | `"objet_trellis": true` |
+| Movie Analysis | `/api/analyse/list`, `projets`, `diarisation`, `chaine`, `nom/<nom>`, `run`, `diar/*` (relais vers DGX1 :10002) | `analyse.run` (voie analyse, une à la fois) | — |
+
+## 8. Plus tard : la porte Cloudflare
 
 Les pages n'ont que des chemins relatifs et une base d'API réglable
 (`window.SR_API`) : elles pourront être servies par Cloudflare (Pages ou
 Workers, sous *.workers.dev — Cal n'a pas de domaine) pendant que l'API
 reste sur DGX2 derrière un tunnel sortant. Rien n'est ouvert sur internet
-tant que l'audit de sécurité n'est pas soldé (`docs/etudes/cloudflare.md`).
+tant que l'audit de sécurité n'est pas soldé (`docs/etudes/cloudflare.md`,
+squelette de Worker non déployé dans `porte/`).
