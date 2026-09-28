@@ -713,7 +713,8 @@ function paintSlots() {
     const it = S[k] ? S.items.get(S[k]) : null;
     const p = it?.params || {};
     $('#slot-' + k.toLowerCase()).replaceChildren(
-      el('div', { class: 'th', style: bg(it?.thumb_url) }, el('b', {}, k)),
+      el('b', { class: 'k' }, k),
+      el('div', { class: 'th', style: bg(it?.thumb_url) }),
       el('div', { class: 'ab-txt' }, el('span', { class: 't' }, it ? (it.title || it.id) : 'aucun plan'),
         el('span', { class: 'lbl' }, it ? [p.mode ? MODE_FR[p.mode] : null, p.method || null, it.width ? `${it.width}×${it.height}` : null].filter(Boolean).join(' · ') : 'à choisir')),
       el('button', { class: 'tb ghost sm', type: 'button', onclick: () => chooseAB(k) }, 'Choisir'));
@@ -733,8 +734,10 @@ async function benchLoad() {
     else if (!src && v.getAttribute('src')) { v.removeAttribute('src'); v.load(); }
     v.playbackRate = BS.speed;
   }
-  $('#tagA').textContent = a ? (a.title || a.id) : '—';
-  $('#tagB').textContent = b ? (b.title || b.id) : '—';
+  $('#tagA').textContent = a ? (a.title || a.id) : '';
+  $('#tagB').textContent = b ? (b.title || b.id) : '';
+  $('#tagA').parentElement.hidden = !a;   // une étiquette sans plan n'a rien à dire
+  $('#tagB').parentElement.hidden = !b;
   $('#benchEmpty').hidden = !!(a || b);
   applyAudio();
   const once = (v) => v.addEventListener('loadedmetadata', () => { seekBoth(Math.min(t, minDur())); updateTime(); }, { once: true });
@@ -846,8 +849,10 @@ function paintMetas(a, b) {   // les recettes côte à côte : ce qui diffère e
   const keys = [...new Set([...(ra ? Object.keys(ra) : []), ...(rb ? Object.keys(rb) : [])])];
   const differs = (k) => ra && rb && k !== 'Rendu' && String(ra[k] ?? '') !== String(rb[k] ?? '');
   const dk = keys.filter(differs);
+  const bare = a && b && !a.params?.mode && !b.params?.mode;
   $('#diffline').replaceChildren(!(a && b) ? el('span', { class: 'lbl' }, 'choisissez deux plans pour voir ce qui diffère')
-    : dk.length ? el('span', {}, el('b', {}, `${dk.length} différence${dk.length > 1 ? 's' : ''}`), ' · ' + dk.join(', ').toLowerCase())
+    : bare ? el('span', {}, 'ces vidéos n’ont pas de recette (déposées, pas faites ici) : seuls l’image et le son se comparent')
+    : dk.length ?el('span', {}, el('b', {}, `${dk.length} différence${dk.length > 1 ? 's' : ''}`), ' · ' + dk.join(', ').toLowerCase())
       : el('span', {}, 'mêmes réglages : seul le hasard du rendu les sépare'));
   for (const [k, it, r] of [['a', a, ra], ['b', b, rb]]) {
     const box = $('#meta' + k.toUpperCase());

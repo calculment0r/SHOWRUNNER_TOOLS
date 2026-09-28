@@ -59,7 +59,9 @@
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
   box-shadow: inset 0 0 0 1px var(--line); color: var(--ink2);
 }
-.modes button b { font-family: var(--f-disp); font-weight: 400; font-size: 10.5px; letter-spacing: .03em; text-transform: uppercase; color: var(--ink); }
+.modes button { padding: 8px 4px; }
+/* Venus Rising est large : « Références » tient dans le tiers du rail à 9,5 px, sans espacement */
+.modes button b { font-family: var(--f-disp); font-weight: 400; font-size: 9.5px; letter-spacing: 0; text-transform: uppercase; color: var(--ink); white-space: nowrap; }
 .modes button span { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
 .modes button:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
 .modes button.on { background: var(--grn-bg); box-shadow: inset 0 0 0 1px var(--line-gr); }
@@ -279,13 +281,13 @@ details.adv { background: var(--panel2); }
 .modal .kv dd { overflow-wrap: anywhere; }
 
 /* ── comparer : A et B dans le rail ─────────────────────── */
-.ab-slot { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: var(--s3); align-items: center; background: var(--panel2); border-radius: var(--r3); padding: 8px 10px; }
+.ab-slot { display: grid; grid-template-columns: 18px 60px minmax(0, 1fr) auto; gap: var(--s3); align-items: center; background: var(--panel2); border-radius: var(--r3); padding: 8px 10px; }
 .ab-slot.a { box-shadow: inset 0 0 0 1px var(--line-cy); }
 .ab-slot.b { box-shadow: inset 0 0 0 1px var(--line-or); }
-.ab-slot .th { width: 64px; height: 64px; border-radius: var(--r2); background: var(--panel3) center / cover no-repeat; padding: 4px 6px; }
-.ab-slot .th b { font-family: var(--f-disp); font-weight: 400; font-size: 15px; }
-.ab-slot.a .th b { color: var(--cy); }
-.ab-slot.b .th b { color: var(--or); }
+.ab-slot .k { font-family: var(--f-disp); font-weight: 400; font-size: 16px; line-height: 1; text-align: center; }   /* la lettre à côté de la vignette, pas dessus */
+.ab-slot.a .k { color: var(--cy); }
+.ab-slot.b .k { color: var(--or); }
+.ab-slot .th { width: 60px; height: 60px; border-radius: var(--r2); background: var(--panel3) center / cover no-repeat; }
 .ab-txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .ab-txt .t { font-size: 12px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .keys { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; line-height: 2; color: var(--ink3); }
@@ -299,6 +301,10 @@ details.adv { background: var(--panel2); }
 .monitor.mode-blink .handle { display: none; }
 .monitor .zoombadge { position: absolute; left: 12px; bottom: 12px; z-index: 6; pointer-events: none; }
 .monitor .zoombadge:not([hidden]) { padding: 5px 8px; border-radius: var(--r1); background: var(--veil); box-shadow: inset 0 0 0 1px var(--line); font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink2); }
+/* les étiquettes A/B du moniteur : un voile plein, sans flou d'arrière-plan — posé sur une
+   vidéo, le flou peut peindre la boîte sans son texte (constaté en capture) */
+.movie .monitor .tag { backdrop-filter: none; background: var(--veil); max-width: 44%; }
+.movie .monitor .tag span { min-width: 0; }
 .tag .spk { font-style: normal; font-size: 10px; line-height: 1; padding: 2px 5px; border-radius: 3px; opacity: .25; }
 .tag.a .spk { background: var(--cy); color: var(--on-cy); }
 .tag.b .spk { background: var(--or); color: var(--on-or); }
