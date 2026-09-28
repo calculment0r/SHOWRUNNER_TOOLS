@@ -145,7 +145,7 @@ export function createNodal(app) {
   };
   function paintWires() {
     const ns = 'http://www.w3.org/2000/svg';
-    wires.replaceChildren();
+    put(wires);
     for (const c of S.proj.cables) {
       const a = portXY(c.a, 'out'), b = portXY(c.b, 'in');
       if (!a || !b) continue;
@@ -271,7 +271,7 @@ export function createNodal(app) {
       const def = MODULES[m.type], { name, sub } = title(m), accent = accentOf(m);
       const grid = el('div', { class: 'nd-params' });
       // les cartes se redessinent une fois la molette lâchée : les deux vues d'un même réglage restent d'accord
-      sideParams = () => grid.replaceChildren(...def.params
+      sideParams = () => put(grid, ...def.params
         .filter((p) => m.type !== 'drums' || p.k === 'lvl')
         .map((p) => (p.opts ? choice(p, val(m, p.k), { onChange: (v) => { m.params[p.k] = v; app.commit('param', m); app.commit('data'); } })
           : knob(p, val(m, p.k), { accent, onInput: (v) => { m.params[p.k] = v; app.commit('param', m); },
@@ -309,7 +309,7 @@ export function createNodal(app) {
     const mt = el('div', { class: 'mtr lg' }, el('i'));
     meters.push([mst.id, mt, big]);
     secs.push(el('div', { class: 'pan' }, el('div', { class: 'row' }, el('b', { class: 'venus' }, 'Sortie'), el('span', { class: 'sp' }), el('span', { class: 'lbl' }, 'dB crête')), big, mt));
-    side.replaceChildren(...secs);
+    put(side, ...secs);
   }
 
   // ── l'ensemble ──
@@ -322,13 +322,13 @@ export function createNodal(app) {
       el('button', { class: 'tb ghost sm', type: 'button', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); const [wx, wy] = toWorld(r.left + 200, r.bottom + 120); newModuleMenu(r.left, r.bottom + 4, wx, wy, null); } }, '+ Module'),
       el('span', { class: 'lbl' }, `${P.modules.length} modules · ${P.cables.length} câbles`),
       S.sel.cable ? el('button', { class: 'tb ghost sm', type: 'button', onclick: () => { const [a, b] = S.sel.cable.split('>'); app.disconnect(a, b); } }, 'Couper le câble') : null);
-    zoomBox.replaceChildren(
+    put(zoomBox,
       el('button', { class: 'tb ghost sm', type: 'button', onclick: () => zoomAt(view().z / 1.2, cv.clientWidth / 2, cv.clientHeight / 2) }, '−'),
       el('span', { class: 'pct' }, ''),
       el('button', { class: 'tb ghost sm', type: 'button', onclick: () => zoomAt(view().z * 1.2, cv.clientWidth / 2, cv.clientHeight / 2) }, '+'),
       el('button', { class: 'tb ghost sm', type: 'button', onclick: fit }, 'Ajuster'));
     hint.textContent = HINT;
-    world.replaceChildren(wires, ...P.modules.map(card));
+    put(world, wires, ...P.modules.map(card));
     applyView();
     paintWires();
     paintSide();

@@ -9,7 +9,7 @@
 import { mountHeader, api, jobs, pick, uploadFile, toast, $, href, fmtDur, stateFr } from '../commun/shell.js';
 import { Engine, renderMix, wav24, peakDb, songEnd } from './moteur.js';
 import { MODULES, TRACK_KINDS, COLORS, DRUM_VOICES } from './modules.js';
-import { el, modal, ask, confirmBox, menu } from './ui.js';
+import { el, modal, ask, confirmBox, menu, put } from './ui.js';
 import { createTimeline } from './timeline.js';
 import { createRack } from './rack.js';
 import { createNodal } from './nodal.js';
@@ -371,7 +371,7 @@ function paintBar() {
     onchange: (e) => { P.sig = +e.target.value; app.commit('meta'); } },
   [2, 3, 4, 6].map((n) => el('option', { value: n, selected: n === P.sig || null }, `${n} temps`)));
   const pend = (P.pending || []).length;
-  bar.replaceChildren(
+  put(bar,
     el('div', { class: 'grp' }, sel,
       el('button', { class: 'tb ghost sm', type: 'button', onclick: newProject, title: 'un projet neuf' }, 'Nouveau'),
       el('button', { class: 'tb ghost sm', type: 'button', title: 'renommer, corbeille', onclick: (e) => projMenu(e) }, '···')),
@@ -434,7 +434,7 @@ function render(full = false) {
   paintBar();
   if (!views[S.view]) views[S.view] = { timeline: createTimeline, rack: createRack, nodal: createNodal }[S.view](app);
   const v = views[S.view];
-  if (full || viewBox.firstChild !== v.el) viewBox.replaceChildren(v.el);
+  if (full || viewBox.firstChild !== v.el) put(viewBox, v.el);
   document.body.dataset.view = S.view;
   v.render();
 }
@@ -656,7 +656,7 @@ function openExport() {
   const title = el('input', { class: 'fld', maxlength: 80, value: `${P.name} · mixage` });
   const seg = el('div', { class: 'seg' });
   const opts = [['loop', `Boucle (${fmtBar(P.loop.a)} → ${fmtBar(P.loop.b)})`], ['song', `Morceau (01.1 → ${fmtBar(end)})`]];
-  const paintSeg = () => seg.replaceChildren(...opts.map(([k, l]) => el('button', { class: `tb${range === k ? ' on' : ''}`, type: 'button',
+  const paintSeg = () => put(seg, ...opts.map(([k, l]) => el('button', { class: `tb${range === k ? ' on' : ''}`, type: 'button',
     onclick: () => { range = k; paintSeg(); } }, l)));
   paintSeg();
   const out = el('div', { class: 'mu-export' });
@@ -678,7 +678,7 @@ function openExport() {
     const [a, b] = range === 'loop' ? [P.loop.a, P.loop.b] : [0, end];
     if (b <= a) { toast('rien à exporter : pas de clip'); return; }
     go.disabled = true;
-    const say = (t) => out.replaceChildren(el('p', { class: 'lbl' }, t));
+    const say = (t) => put(out, el('p', { class: 'lbl' }, t));
     try {
       say('rendu du mixage…');
       const t0 = performance.now();
@@ -692,7 +692,7 @@ function openExport() {
       items.set(it.id, Promise.resolve({ ...it, href: href(it.url) }));
       const secs = ((performance.now() - t0) / 1000).toFixed(1);
       window.__muLastExport = { id: it.id, url: it.url, peak: pk, duration: buf.duration, secs: +secs };
-      out.replaceChildren(
+      put(out,
         el('div', { class: 'mu-done' },
           el('div', {}, el('b', {}, it.title), el('span', { class: 'lbl' }, ` ${fmtDur(buf.duration)} · crête ${pk.toFixed(1)} dBFS · rendu en ${secs} s`)),
           pk > -0.1 ? el('p', { class: 'warn' }, 'la crête touche 0 dBFS : le mixage sature, baisse la sortie ou les pistes') : null,
@@ -720,7 +720,7 @@ function openExport() {
     await openProject(id);
     engines();
   } catch (e) {
-    viewBox.replaceChildren(el('p', { class: 'warn' }, `le portail ne répond pas : ${e.message}`));
+    put(viewBox, el('p', { class: 'warn' }, `le portail ne répond pas : ${e.message}`));
   }
 })();
 

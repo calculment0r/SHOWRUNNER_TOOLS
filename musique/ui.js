@@ -4,26 +4,12 @@
 // Aucune couleur ici : l'accent passe par la variable --k, posée sur un
 // jeton de commun/tokens.css.
 
-import { el as el0, $ } from '../commun/shell.js';
+import { el, $ } from '../commun/shell.js';
 import { toNorm, fromNorm, fmt } from './modules.js';
 
-// el() de shell.js, qui pose aussi les variables CSS (--k, --c…) : un
-// Object.assign sur element.style ignore les propriétés personnalisées,
-// il faut style.setProperty (MDN, CSSStyleDeclaration.setProperty).
-export function el(tag, attrs = {}, ...kids) {
-  let vars = null;
-  if (attrs && attrs.style && typeof attrs.style === 'object') {
-    const st = {};
-    for (const [k, v] of Object.entries(attrs.style)) {
-      if (k.startsWith('--')) (vars ||= {})[k] = v;
-      else st[k] = v;
-    }
-    attrs = { ...attrs, style: st };
-  }
-  const n = el0(tag, attrs, ...kids);
-  if (vars) for (const [k, v] of Object.entries(vars)) n.style.setProperty(k, v);
-  return n;
-}
+// el() de shell.js pose les variables CSS (--k, --c) par setProperty et
+// saute les enfants null : une seule vérité, rien à doubler ici.
+export { el };
 
 const R = 16, C = 2 * Math.PI * R, SWEEP = 0.75;
 

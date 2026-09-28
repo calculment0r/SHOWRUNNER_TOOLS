@@ -8,7 +8,7 @@
 import { toast } from '../commun/shell.js';
 import { MODULES, TRACK_KINDS, DRUM_VOICES, spec, val } from './modules.js';
 import { peaks, songEnd } from './moteur.js';
-import { el, knob, menu, ask, tok, clamp } from './ui.js';
+import { el, knob, menu, ask, tok, clamp, put } from './ui.js';
 
 const HEAD_W = 232;
 const ROW_H = 66;
@@ -37,7 +37,7 @@ export function createTimeline(app) {
     const inside = c && pos > c.start && pos < c.start + c.len;
     const btn = (label, on, why, fn) => el('button', { class: 'tb ghost sm', type: 'button', disabled: !on || null,
       title: on ? '' : why, onclick: fn }, label);
-    tools.replaceChildren(
+    put(tools,
       el('button', { class: 'tb ghost sm', type: 'button', onclick: (e) => addTrackMenu(e) }, '+ Piste'),
       el('button', { class: 'tb ghost sm', type: 'button', title: 'poser un son de la bibliothèque à la tête de lecture',
         onclick: () => app.addAudio(S.sel.track) }, '+ Son'),
@@ -322,7 +322,7 @@ export function createTimeline(app) {
     zone.style.left = `${HEAD_W + P.loop.a * zoom}px`;
     zone.style.width = `${(P.loop.b - P.loop.a) * zoom}px`;
     zone.classList.toggle('on', P.loop.on);
-    grid.replaceChildren(...rows, zone, ph);
+    put(grid, ...rows, zone, ph);
     frame(app.pos());
   }
 

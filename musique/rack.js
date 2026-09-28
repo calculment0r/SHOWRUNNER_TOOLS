@@ -23,7 +23,7 @@ export function createRack(app) {
   // ── la liste des pistes ──
   function paintSide() {
     const P = S.proj;
-    side.replaceChildren(
+    put(side,
       el('div', { class: 'c-head' }, el('h2', {}, 'Pistes'), el('span', { class: 'cnt' }, String(P.tracks.length))),
       el('ul', { class: 'rack' }, P.tracks.map((t) => el('li', {},
         el('button', { class: `item${S.sel.track === t.id ? ' sel' : ''}`, type: 'button', style: { '--c': `var(--${t.color})` },
@@ -292,7 +292,7 @@ export function createRack(app) {
     const paintNotes = () => {
       const w = cw();
       area.style.setProperty('--cw', `${w}px`); area.style.setProperty('--rh', `${RH}px`);
-      notes.replaceChildren(...p.notes.map((n, i) => el('div', { class: 'pr-n', 'data-i': i,
+      put(notes, ...p.notes.map((n, i) => el('div', { class: 'pr-n', 'data-i': i,
         style: { left: `${n.s * w}px`, top: `${(HI - n.p) * RH}px`, width: `${Math.max(3, n.l * w - 1)}px`, height: `${RH - 1}px` } },
       el('i', { class: 'rs' }))));
     };
@@ -359,7 +359,7 @@ export function createRack(app) {
     stepCells = null; roll = null; curPat = null;
     if (S.sel.track === BUS) {
       const mods = P.modules.filter((m) => !m.track);
-      main.replaceChildren(
+      put(main,
         el('div', { class: 'rk-head' }, el('span', { class: 'k' }, 'bus'), el('b', { class: 'venus' }, 'Bus et sortie'),
           el('span', { class: 'lbl' }, 'les effets partagés et la sortie ; leurs câbles se tirent dans la vue Nodal'),
           el('span', { class: 'sp' }),
@@ -368,7 +368,7 @@ export function createRack(app) {
       return;
     }
     const t = app.track(S.sel.track) || P.tracks[0];
-    if (!t) { main.replaceChildren(el('div', { class: 'tl-empty' }, el('b', {}, 'Aucune piste'), el('span', {}, '« + Piste » à gauche'))); return; }
+    if (!t) { put(main, el('div', { class: 'tl-empty' }, el('b', {}, 'Aucune piste'), el('span', {}, '« + Piste » à gauche'))); return; }
     S.sel.track = t.id;
     const ch = app.chain(t.id);
     const loose = P.modules.filter((m) => m.track === t.id && !ch.includes(m));
