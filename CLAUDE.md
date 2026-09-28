@@ -28,8 +28,9 @@ Le portail tourne sur **DGX2** (Wi-Fi 5 GHz ; celui de DGX1 est lent),
 calcule sur les deux DGX. Dépôt dans `~/SHOWRUNNER_TOOLS` sur les deux.
 
 ```sh
-cd ~/SHOWRUNNER_TOOLS && setsid nohup python3 server/showrunner.py > ~/showrunner.log 2>&1 < /dev/null &
-# arrêt : pkill -f "[s]erver/showrunner.py"
+cd ~/SHOWRUNNER_TOOLS && tools/portail.sh start     # stop | restart | status (PID dans ~/showrunner.pid)
+# mise à jour : git fetch && git reset --hard origin/main && tools/portail.sh restart
+# jamais « pkill -f showrunner.py » par ssh : le motif tue aussi la commande ssh elle-même
 ```
 
 Lien : **http://192.168.10.247:8790/** (Tailscale http://100.108.108.65:8790/).
