@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SHOWRUNNER TOOLS</title>
+<meta name="description" content="Le portail : tous les outils de Cal au même endroit, une bibliothèque commune, les DGX derrière.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23e0674a'/%3E%3Crect x='12' y='12' width='8' height='8' rx='2' fill='%23170c08'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Azeret+Mono:wght@300;400;500&display=swap">
+<link rel="stylesheet" href="./commun/tokens.css">
+<link rel="stylesheet" href="./commun/base.css">
+<link rel="stylesheet" href="./commun/shell.css">
+</head>
+<body>
+<main class="home">
+  <section class="console-top">
+    <div class="hero">
+      <span class="ref">00_PORTAIL</span>
+      <!-- Norelli : lettres et espaces seulement -->
+      <h1>Tous nos outils une seule porte</h1>
+      <p>Chaque outil s'ouvre d'ici et range ce qu'il fabrique dans la même bibliothèque. Un personnage fait dans Character Factory devient un élément qu'on appelle dans une image ou une vidéo ; une image devient le premier plan d'un film ; un film passe au montage.</p>
+      <div class="row"><a class="tb go" id="go-image" href="./image/">Créer une image</a>
+        <a class="tb ghost" href="./movie/">Faire un plan</a><a class="tb ghost" href="./asset/">Ouvrir la bibliothèque</a></div>
+    </div>
+    <a class="statcard" href="./asset/" title="la bibliothèque">
+      <span class="ref">Asset · la bibliothèque</span>
+      <span class="n" id="n-assets">——</span>
+      <span class="foot" id="n-detail">images · éléments · vidéos · sons</span>
+      <span class="dots"></span>
+    </a>
+  </section>
+
+  <section class="sect">
+    <div class="sect-head"><h2>Créer</h2><span class="k">A</span></div>
+    <div class="stack" id="slabs"></div>
+  </section>
+
+  <section class="sect">
+    <div class="sect-head"><h2>Les outils</h2><span class="k">B</span><span class="cnt" id="n-tools"></span></div>
+    <div class="tiles" id="tiles"></div>
+  </section>
+
+  <section class="sect" id="recent-sect" hidden>
+    <div class="sect-head"><h2>Derniers assets</h2><span class="k">C</span><a class="cnt" href="./asset/">tout voir</a></div>
+    <div class="strip" id="recent"></div>
+  </section>
+
+  <section class="sect">
+    <div class="sect-head"><h2>Les machines</h2><span class="k">D</span><span class="cnt" id="n-queue"></span></div>
+    <div class="machines" id="machines"></div>
+  </section>
+</main>
+<script type="module" src="./accueil.js"></script>
+</body>
+</html>

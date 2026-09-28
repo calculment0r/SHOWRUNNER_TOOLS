@@ -1,0 +1,118 @@
+/* ============================================================
+   SHOWRUNNER TOOLS — jetons de thème
+   Source unique de vérité pour tous les outils du portail. Copie des
+   jetons de Character Factory (assets/tokens.css), eux-mêmes repris du
+   rack NL (Station NL Rack
+   Verdant / Banc NL Comparatif). Aucune couleur en dur ailleurs :
+   tout composant passe par une variable définie ici.
+   ============================================================ */
+
+:root {
+  /* fonds, du plus profond au plus relevé */
+  --bg:      #0a0d0b;
+  --panel:   #101413;
+  --panel2:  #151a18;
+  --panel3:  #1b211e;
+
+  /* encres */
+  --ink:     #e6eae7;
+  --ink2:    #9ca8a2;
+  --ink3:    #7c8884;
+
+  /* accents */
+  --cy:      #b9cfd8;   /* acier pâle — la voie A, les valeurs lues */
+  --or:      #e0674a;   /* orange — l'action, la voie B, l'alerte */
+  --grn:     #2f6b4a;   /* vert sourd — l'état engagé */
+  --grn2:    #3d8a60;   /* vert clair — la progression */
+  --amb:     #d6a24a;   /* ambre — ce qui attend Cal, jamais une action */
+
+  /* rampe des barres de la console — du plus clair au plus sourd,
+     comme la pile de logiciels du banc NL */
+  --coral-3: #f2cdb8;
+  --coral-2: #e79b7c;
+  --coral-1: #a8603c;
+  --verd-2:  #35684a;
+  --verd-1:  #2a5540;
+  --on-light: #1a0d07;
+
+  /* traits */
+  --line:    rgba(198, 213, 220, .14);
+  --line-cy: rgba(185, 207, 216, .45);
+  --line-or: rgba(224, 103, 74, .70);
+  --line-gr: rgba(47, 107, 74, .85);
+  --line-amb: rgba(214, 162, 74, .55);
+  --amb-bg:  rgba(214, 162, 74, .08);
+  --grn-bg:  rgba(47, 107, 74, .18);   /* fond d'une pastille retenue (look porté, pose montrée) */
+
+  /* voile posé sur une image, sous une étiquette */
+  --veil:    rgba(10, 13, 11, .82);
+  --veil-0:  rgba(10, 13, 11, 0);     /* départ transparent d'un dégradé de voile */
+  --scrim:   rgba(4, 6, 5, .78);
+
+  /* planche de présentation, rendue en PNG par factory/presentation_sheet.py :
+     la variante sombre reprend --bg, --panel et les encres ; la claire,
+     un fond de studio gris, a ses propres jetons. --shade est l'ombre de
+     contact sous les pieds. */
+  --paper:       #e6e6e2;
+  --paper2:      #dadad5;
+  --paper-ink:   #141816;
+  --paper-ink2:  #4c5551;
+  --paper-ink3:  #7d8682;
+  --paper-line:  rgba(20, 24, 22, .18);
+  --paper-shade: rgba(20, 24, 22, .30);
+  --shade:       rgba(0, 0, 0, .55);
+
+  /* portail : ce que les composants communs écrivaient en dur dans le
+     rack de Character Factory, ramené ici */
+  --hdr-bg:    rgba(10, 13, 11, .94);  /* en-tête collante, sur flou */
+  --sel-bg:    #122a2d;                /* rangée choisie */
+  --black:     #000;                   /* fond d'un moniteur, d'une vidéo */
+  --dot:       rgba(198, 213, 220, .12);  /* trame de points des dalles */
+  --dot-hi:    rgba(198, 213, 220, .16);
+  --dot-on-or: rgba(26, 13, 7, .22);   /* trame posée sur l'aplat orange */
+  --or-bg:     rgba(224, 103, 74, .14);
+  --or-bg2:    rgba(224, 103, 74, .55);
+  --cy-bg:     rgba(185, 207, 216, .10);
+  --on-coral1: #fdf1ea;                /* encre sur la teinte corail la plus sourde */
+  --drop:      rgba(0, 0, 0, .5);      /* ombre portée d'un élément qui flotte */
+  --drop-lg:   rgba(0, 0, 0, .6);
+  --verd-3:    #2f6b4a;                /* cartes vertes de l'accueil, la plus claire */
+  --verd-4:    #24543b;
+  --verd-5:    #1a3f2c;
+
+  /* encres inversées, posées sur un aplat d'accent */
+  --on-or:   #170c08;
+  --on-cy:   #0a0d0b;
+  --on-grn:  #eaf4ee;
+
+  /* typographie */
+  --f-ui:    'Chakra Petch', 'Saira Semi Condensed', sans-serif;
+  --f-mono:  'Azeret Mono', ui-monospace, monospace;
+  --f-disp:  'Venus Rising', 'Chakra Petch', sans-serif;
+  /* Norelli Demo Black ne porte que 54 glyphes : A-Z et a-z, sans
+     chiffre ni accent. Elle ne peut donc tenir que des chaînes dont on
+     maîtrise le contenu exact — en pratique le seul logotype. Partout
+     ailleurs, un caractère manquant ferait basculer la police en plein
+     mot, ce qui se voit. */
+  --f-black: 'Norelli', 'Venus Rising', 'Chakra Petch', sans-serif;
+
+  /* rayons — sobres, outil professionnel */
+  --r1: 4px;
+  --r2: 5px;
+  --r3: 7px;
+  --r4: 9px;
+
+  /* espacements */
+  --s1: 4px;
+  --s2: 6px;
+  --s3: 10px;
+  --s4: 14px;
+  --s5: 18px;
+  --s6: 24px;
+
+  /* gouttières du banc */
+  --rack-w:  252px;
+  --sheet-w: 340px;
+
+  color-scheme: dark;
+}

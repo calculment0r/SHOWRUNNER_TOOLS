@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+showrunner.local.json
+node_modules/
+.claude/
