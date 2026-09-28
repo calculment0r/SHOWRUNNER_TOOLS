@@ -39,11 +39,17 @@ dépôt, qui est **public**.
 
 ## Règles de travail (Cal, fermes)
 
-- **ssh / scp / curl seulement** vers `dgx1` et `dgx2`. Sur le PC : lire,
-  écrire des fichiers, git — rien d'autre (pas de python, node, navigateur,
-  Edge en local ; pas d'artifact). Captures d'écran : Chromium sans
-  affichage **sur DGX2** (`playwright` de `~/Character_Sheet`). À répéter en
-  tête du brief de chaque sous-agent.
+- **Chaque commande commence par `ssh dgx1 `, `ssh dgx2 ` ou `scp `** : ce
+  sont les seules que Cal a autorisées une fois pour toutes ; toute autre
+  commande (même `ls`, `cd … && git`, `cat`) lui demande « allow once ». Sur
+  le PC : Read, Write, Edit, Glob, Grep seulement. Pas de python, node,
+  navigateur, Edge en local ; pas d'artifact. Captures d'écran : Chromium
+  sans affichage **sur DGX2** (`tools/shot.mjs`). À répéter en tête du brief
+  de chaque sous-agent.
+- **Git se fait sur DGX2**, qui pousse par sa clé ssh : écrire sur le PC,
+  `scp` les fichiers dans `dgx2:~/SHOWRUNNER_TOOLS/`, puis
+  `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && git add … && git commit … && git push && tools/portail.sh restart'`.
+  Le git du PC n'est plus à jour : ne pas s'en servir.
 - **Chercher avant de faire, rien inventer** : chaque choix technique part
   de la documentation du modèle et d'un essai, avec sa source ; « non
   documenté » plutôt qu'une supposition. Vérifier qu'un choix ne contredit

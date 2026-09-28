@@ -1,0 +1,19 @@
+{
+  "_source": "Gabarit officiel ComfyUI utility_z_image_turbo_2k_upscaler.app.json (sous-graphe « Image Upscale (Z-image-Turbo) ») au format API : l'image ramenée à 1 Mpx, agrandie par un modèle ESRGAN, réencodée et reprise par Z-Image Turbo en 5 pas, dpmpp_2m_sde, beta, CFG 1, débruitage 0,15–0,35 (note du gabarit : au-delà de 0,35, des défauts ; une description détaillée en prompt tient mieux). Écart : le gabarit prend RealESRGAN_x4plus puis divise par 2 ; seul RealESRGAN_x2 est installé, on le prend sans la division — même facteur net ×2, soit ~4 Mpx.",
+  "1": {"class_type": "LoadImage", "inputs": {"image": "src.png"}, "_meta": {"title": "REF 1"}},
+  "2": {"class_type": "ImageScaleToTotalPixels", "inputs": {"image": ["1", 0], "upscale_method": "lanczos", "megapixels": 1.0, "resolution_steps": 1}},
+  "3": {"class_type": "UpscaleModelLoader", "inputs": {"model_name": "RealESRGAN_x2.pth"}},
+  "4": {"class_type": "ImageUpscaleWithModel", "inputs": {"upscale_model": ["3", 0], "image": ["2", 0]}},
+  "5": {"class_type": "UNETLoader", "inputs": {"unet_name": "z_image_turbo_bf16.safetensors", "weight_dtype": "default"}},
+  "6": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["5", 0], "shift": 3.0}},
+  "7": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_3_4b.safetensors", "type": "lumina2", "device": "default"}},
+  "8": {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}},
+  "9": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["7", 0], "text": "{{prompt}}"}},
+  "10": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["7", 0], "text": ""}},
+  "11": {"class_type": "VAEEncode", "inputs": {"pixels": ["4", 0], "vae": ["8", 0]}},
+  "12": {"class_type": "KSampler", "inputs": {"model": ["6", 0], "positive": ["9", 0], "negative": ["10", 0], "latent_image": ["11", 0],
+                                              "seed": "{{seed}}", "steps": 5, "cfg": 1.0, "sampler_name": "dpmpp_2m_sde",
+                                              "scheduler": "beta", "denoise": "{{denoise}}"}},
+  "13": {"class_type": "VAEDecode", "inputs": {"samples": ["12", 0], "vae": ["8", 0]}},
+  "14": {"class_type": "SaveImage", "inputs": {"images": ["13", 0], "filename_prefix": "showrunner/zimage_refine"}, "_meta": {"title": "OUT"}}
+}

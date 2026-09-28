@@ -1,0 +1,15 @@
+{
+  "_source": "Gabarit officiel ComfyUI image_z_image_turbo.json (comfyui_workflow_templates 0.11.69, sous-graphe « Text to Image (Z-Image-Turbo) ») mis au format API : UNETLoader z_image_turbo_bf16, ModelSamplingAuraFlow décalage 3, CLIPLoader qwen_3_4b type lumina2, VAE ae, négatif = ConditioningZeroOut, KSampler 8 pas, CFG 1, res_multistep, simple. {{unet}}, {{steps}}, {{cfg}} servent aussi à Z-Image base (gabarit image_z_image.json : 25 pas, CFG 4, négatif écrit).",
+  "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "{{unet}}", "weight_dtype": "default"}},
+  "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
+  "3": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_3_4b.safetensors", "type": "lumina2", "device": "default"}},
+  "4": {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}},
+  "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": "{{prompt}}"}},
+  "6": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["5", 0]}},
+  "7": {"class_type": "EmptySD3LatentImage", "inputs": {"width": "{{width}}", "height": "{{height}}", "batch_size": 1}},
+  "8": {"class_type": "KSampler", "inputs": {"model": ["2", 0], "positive": ["5", 0], "negative": ["6", 0], "latent_image": ["7", 0],
+                                             "seed": "{{seed}}", "steps": "{{steps}}", "cfg": "{{cfg}}", "sampler_name": "res_multistep",
+                                             "scheduler": "simple", "denoise": 1.0}},
+  "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["4", 0]}},
+  "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "showrunner/zimage"}, "_meta": {"title": "OUT"}}
+}
