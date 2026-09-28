@@ -146,7 +146,8 @@ export async function system() {
   return sysInfo;
 }
 export function toolHref(t, sys) {
-  if (t.external === 'cf') return (sys && sys.cf_studio && sys.cf_studio.url) || 'http://192.168.10.247:8765/';
+  // le studio (la page des personnages), pas la page d'état à la racine du site
+  if (t.external === 'cf') return ((sys && sys.cf_studio && sys.cf_studio.url) || 'http://192.168.10.247:8765/') + 'studio.html';
   return href(t.path);
 }
 
