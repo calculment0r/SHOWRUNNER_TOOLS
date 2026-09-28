@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import re
+import sys
 import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -268,7 +269,16 @@ class App:
             def do_DELETE(self):
                 self._run("DELETE")
 
-        server = ThreadingHTTPServer((host, port), Handler)
+        class Server(ThreadingHTTPServer):
+            def handle_error(self, request, client_address):
+                # un navigateur qui abandonne une lecture vidéo coupe la connexion :
+                # ce n'est pas une panne, le journal n'a pas à s'en remplir
+                exc = sys.exc_info()[1]
+                if isinstance(exc, (ConnectionResetError, BrokenPipeError, TimeoutError)):
+                    return
+                super().handle_error(request, client_address)
+
+        server = Server((host, port), Handler)
         server.daemon_threads = True
         print(f"showrunner : http://{host}:{port}/", flush=True)
         threading.current_thread().name = "http"
