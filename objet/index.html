@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OBJECT CREATOR — Showrunner Tools</title>
+<meta name="description" content="Un objet : une image choisie, ses vues, sa 3D par TRELLIS.2. Chaîne séparée des personnages.">
+<!-- icône vide au chargement : le script la dessine depuis les jetons -->
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Azeret+Mono:wght@300;400;500&display=swap">
+<link rel="stylesheet" href="../commun/tokens.css">
+<link rel="stylesheet" href="../commun/base.css">
+<link rel="stylesheet" href="../commun/shell.css">
+<link rel="stylesheet" href="./objet.css">
+<!-- three.js : le même CDN et la même version que le viewer de Character Factory (viewer.html) -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<main class="obj" id="app" aria-live="polite"></main>
+<div class="sr" aria-live="assertive" id="live"></div>
+<script type="module" src="./objet.js"></script>
+</body>
+</html>

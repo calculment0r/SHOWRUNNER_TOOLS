@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ASSET — Showrunner Tools</title>
+<meta name="description" content="La bibliothèque commune : images, éléments, vidéos, sons ; rangés en dossiers, triés, réutilisés dans tous les outils.">
+<!-- icône vide au chargement : le script la dessine depuis les jetons -->
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Azeret+Mono:wght@300;400;500&display=swap">
+<link rel="stylesheet" href="../commun/tokens.css">
+<link rel="stylesheet" href="../commun/base.css">
+<link rel="stylesheet" href="../commun/shell.css">
+<link rel="stylesheet" href="./asset.css">
+</head>
+<body>
+<main class="lib" id="lib" aria-label="la bibliothèque"></main>
+<main class="sheet" id="sheet" aria-label="la fiche" hidden></main>
+<div class="sr" aria-live="assertive" id="live"></div>
+<script type="module" src="./asset.js"></script>
+</body>
+</html>
