@@ -186,3 +186,8 @@ body.dropping::after {
 /* un lien habillé en carte garde son habit (comme a.tb, a.slab dans base.css) */
 a.statcard, a.tile, a.thumb, .sect-head a { text-decoration: none; }
 .sect-head a.cnt:hover { color: var(--ink); }
+
+/* l'en-tête tient sur une ligne : le sous-titre d'un outil s'efface avant
+   que la navigation ne passe dessous */
+.hdr .tool-name .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 26ch; }
+@media (max-width: 1720px) { .hdr .tool-name .lbl { display: none; } }
