@@ -29,7 +29,13 @@ export function el(tag, attrs = {}, ...kids) {
   for (const [k, v] of Object.entries(attrs || {})) {
     if (v === null || v === undefined || v === false) continue;
     if (k === 'class') n.className = v;
-    else if (k === 'style' && typeof v === 'object') Object.assign(n.style, v);
+    // Object.assign ne pose pas les variables CSS (--k) : setProperty les prend
+    else if (k === 'style' && typeof v === 'object') {
+      for (const [p, val] of Object.entries(v)) {
+        if (val === null || val === undefined) continue;
+        if (p.startsWith('--')) n.style.setProperty(p, val); else n.style[p] = val;
+      }
+    }
     else if (k.startsWith('on') && typeof v === 'function') n.addEventListener(k.slice(2), v);
     else if (k === 'html') n.innerHTML = v;
     else n.setAttribute(k, v === true ? '' : v);
