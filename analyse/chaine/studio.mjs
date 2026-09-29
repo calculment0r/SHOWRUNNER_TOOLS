@@ -1,9 +1,16 @@
 #!/usr/bin/env node
 /**
- * STUDIO — une seule page MOVIE ANALYSIS qui rassemble tout :
+ * STUDIO — une seule page MOVIE ANALYSIS qui rassemble tout, DANS LE PORTAIL
+ * (Showrunner Tools, 29/09 : Cal ne veut plus des pages autonomes à part) :
  *
- *   ┌ barre ──────────────────────────────────────────────────────────────┐
- *   │ ← Accueil · MOVIE ANALYSIS · titre   [ Studio | Casting | Découpage ]
+ *   La page vit sous analyse/analyses/<film>/ ou analyse/runs/<nom>/ (toujours deux
+ *   dossiers sous analyse/) ; elle charge le thème du portail (commun/tokens.css,
+ *   base.css, shell.css), l'en-tête commun (commun/shell.js par analyse/film/film.js)
+ *   et sa propre feuille, analyse/film/film.css — aucune couleur ni police écrite
+ *   dans la page. Sombre seulement : le portail n'a pas de bascule.
+ *
+ *   ┌ en-tête du portail ─────────────────────────────────────────────────┐
+ *   ├ ← Les films · titre   [ Studio | Casting | Dépouillement ]  Voix ↗   ┤
  *   ├ scène ───────────────────────────────┬ scénario ───────────────────┤
  *   │ la vidéo analysée, timecode, plan    │ le film écrit comme un script │
  *   │ courant                              │ (plans, actions, répliques),  │
@@ -16,32 +23,41 @@
  *   │ du plan : échelle, catégorie, mouvement, motion mesurée, transition,  │
  *   │ durée, rythme, sujets (portraits), part d'image, texte, répliques    │
  *   └──────────────────────────────────────────────────────────────────────┘
- *   L'onglet Dépouillement = le rapport-liste existant, dans un cadre.
+ *   L'onglet Dépouillement = la table des plans (filtres, accordéon, CSV), et ce que
+ *   montrait le rapport-liste de la chaîne (video-shots render) : les chiffres, la
+ *   bande de rythme, les répartitions et les portes qualité — dans la page, plus dans
+ *   un cadre ni dans une page à part. ?vue=casting|depouillement ouvre sur la vue.
  *
  *   node studio.mjs shots.json --video wall.mp4 --frames frames --overlays overlays \
- *        --portraits portraits --report rapport.html --css report.css -o studio.html
+ *        --portraits portraits [--track track.json] -o index.html
  *
- * Tout est embarqué (images, polices) sauf la vidéo et le rapport-liste, servis
- * à côté du fichier. #S03 dans l'adresse ouvre le studio sur ce plan.
- * --video-url https://…/video : la vidéo et les pistes de son prises sur R2
- * (<url>/<slug>/<fichier>), celles d'à côté en repli.
+ * Tout est embarqué (images) sauf la vidéo, servie à côté du fichier. #S03 dans
+ * l'adresse ouvre le studio sur ce plan. --video-url https://…/video : la vidéo et
+ * les pistes de son prises sur R2 (<url>/<slug>/<fichier>), celles d'à côté en repli.
+ * (--report et --css, de la page autonome d'avant, sont acceptés et ignorés.)
  */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as CASTING from './casting-parts.mjs';
+// les portes qualité, calculées comme le rapport de la chaîne les calculait (même fonction, mêmes libellés)
+import { validate } from './video-shots.mjs';
 
 const [file, ...rest] = process.argv.slice(2);
 const flag = (n, d = null) => { const i = rest.indexOf(n); return i < 0 ? d : rest[i + 1]; };
-if (!file) { console.error('usage: studio.mjs shots.json --video v.mp4 [--video-url https://…/video] [--frames dir] [--overlays dir] [--portraits dir] [--report rapport.html] [--css report.css] -o studio.html'); process.exit(1); }
+if (!file) { console.error('usage: studio.mjs shots.json --video v.mp4 [--video-url https://…/video] [--frames dir] [--overlays dir] [--portraits dir] [--track track.json] -o index.html'); process.exit(1); }
 
 const doc = JSON.parse(readFileSync(file, 'utf8'));
 const video = flag('--video', doc.source ?? 'video.mp4');
 const dirs = { frames: flag('--frames', 'frames'), overlays: flag('--overlays', 'overlays'), portraits: flag('--portraits', 'portraits') };
-const reportHref = flag('--report', 'rapport.html');
 // Cle de memorisation des noms corriges : un dossier d'analyse = un casting.
 const slug = flag('--slug', basename(video).replace(/\.[^.]+$/, ''));
-const cssFile = flag('--css', null);
+// La page est TOUJOURS deux dossiers sous analyse/ (analyses/<film>/ ou runs/<nom>/) : le portail et l'outil
+// sont donc aux mêmes chemins relatifs, où qu'elle soit publiée.
+const PORTAIL = '../../../', OUTIL = '../../';
+// --titre : le titre affiché (la barre du film, l'onglet), quand celui du document n'a pas ses accents
+// (« Evadez-vous avec Getaround » dans shots.json, « Évadez-vous… » dans portail.json) ; les données ne changent pas
+const TITRE = flag('--titre', null);
 // Les voix : la diarisation gardee pour ce film (Nemotron, format xverse-diarisation) et les mots horodates de la
 // chaine (whisper.json → mots.json). Sans elles, la timeline suit l'attribution de la chaine, en bloc.
 const ICI = dirname(fileURLToPath(import.meta.url));
@@ -59,7 +75,7 @@ const VOIX = {
 VOIX.son = lisJson(flag('--son', 'son.json'));
 const VOIX_JS = readFileSync(join(ICI, 'voix.js'), 'utf8').replace(/\r\n/g, '\n');
 const SON_JS = readFileSync(join(ICI, 'son.js'), 'utf8').replace(/\r\n/g, '\n');
-const VOIX_CSS = readFileSync(join(ICI, 'voix.css'), 'utf8').replace(/\r\n/g, '\n');
+// (voix.css, la feuille de la page autonome, n'est plus posée : analyse/film/film.css porte ces styles dans le thème du portail)
 
 // Les corrections faites dans le trombinoscope — noms, fiches reconnues comme une
 // seule personne, repliques retouchees — vivent a cote de la page. On les relit ICI,
@@ -106,14 +122,22 @@ for (const s of doc.shots) {
 }
 for (const c of doc.cast ?? []) { const u = b64(c.portrait && existsSync(c.portrait) ? c.portrait : join(dirs.portraits, `${c.id}.jpg`)); if (u) PORTRAITS[c.id] = u; }
 
-// les polices du kit, reprises telles quelles dans report.css (base64).
-// On normalise les fins de ligne : sur un checkout Windows, report.css arrive en
-// CRLF et la page rendue differait de celle rendue ailleurs, pour rien.
-let fonts = '';
-if (cssFile && existsSync(cssFile)) {
-  const css = readFileSync(cssFile, 'utf8').replace(/\r\n/g, '\n');
-  fonts = (css.match(/@font-face\{[\s\S]*?\}/g) ?? []).join('\n');
-}
+// Les polices et les couleurs ne sont plus dans la page : ce sont celles du portail (commun/base.css,
+// commun/tokens.css), et les teintes des personnages, des voix et du rythme sont déclarées une fois, dans
+// analyse/film/film.css, que le script de la page lit à l'exécution.
+
+// Les portes qualité du rapport de la chaîne (video-shots.mjs validate), sur le document corrigé — celui que
+// le dépouillement publié montrait (corriger.mjs puis render) ; --track ajoute la porte du mouvement mesuré.
+const PORTES = (() => {
+  const ctx = { lang: doc.lang ?? null, frameDir: dirs.frames, frameRel: dirs.frames, frameExists: {} };
+  if (existsSync(dirs.frames)) for (const f of readdirSync(dirs.frames)) { const m = /^(S\d+[ab])\.jpg$/.exec(f); if (m) ctx.frameExists[m[1]] = true; }
+  const trk = flag('--track', null);
+  if (trk && existsSync(trk)) ctx.track = JSON.parse(readFileSync(trk, 'utf8'));
+  try {
+    const v = validate(doc, ctx);
+    return { gates: v.gates.map((g) => ({ id: g.id, label: g.label, ok: g.ok, skipped: g.skipped || '', issues: g.issues })), hints: v.hints, track: !!ctx.track };
+  } catch (e) { process.stderr.write(`   portes : ${e.message}\n`); return null; }
+})();
 
 /* ------------------------------------------------------------- libellés -- */
 const L = {
@@ -123,11 +147,6 @@ const L = {
   trans: { cut: 'coupe franche', dissolve: 'fondu enchaîné', 'fade-in': 'ouverture en fondu', 'fade-out': 'fermeture en fondu', whip: 'coupe filée', 'match-cut': 'raccord graphique', wipe: 'volet', morph: 'transition truquée' },
   rhythms: { hook: 'accroche', setup: 'mise en place', build: 'montée', beat: 'accent', turn: 'bascule', payoff: 'récompense', breath: 'respiration', close: 'chute' },
 };
-const SIZE_COLORS = { none: '#EAE6D9', 'extreme-wide': '#DDD8C8', wide: '#C8C0A8', 'medium-wide': '#B0A78C', medium: '#938970', 'medium-close': '#756C57', close: '#55503F', 'extreme-close': '#35322A' };
-const RHYTHM_COLORS = { hook: '#A67A16', setup: '#8C846A', build: '#2E6E9E', beat: '#4E7A3B', turn: '#A85570', payoff: '#B23138', breath: '#2F7E74', close: '#7D5A76' };
-const CAST_COLORS = ['#e0674a', '#b9cfd8', '#3f9a6a', '#d9a486', '#f0b49b', '#2f6b4a', '#e59578', '#8fb3c0',
-  '#d47a5c', '#4f8f6a', '#c99b7a', '#a3502f', '#6fa88c', '#e8c4ae', '#7a3a22', '#24543b'];
-
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const tc = (s) => { const m = Math.floor(s / 60); return `${String(m).padStart(2, '0')}:${(s - m * 60).toFixed(2).padStart(5, '0')}`; };
 const castName = (id) => (doc.cast ?? []).find((c) => c.id === id)?.name ?? id;
@@ -157,389 +176,37 @@ const DATA = {
 const html = `<!DOCTYPE html>
 <html lang="fr">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#0a0d0b">
-<title>${esc(DATA.title)} · Movie Analysis</title>
-<style>
-${fonts}
-/* ── Verdant : une seule palette, sombre par construction (kit Showrunner) ── */
-:root{--surface:#0a0d0b;--surface-2:#101413;--surface-3:#151a18;--surface-4:#1b211e;--ink:#e6eae7;--ink-2:#9ca8a2;--ink-3:#7c8884;--hairline:rgba(47,107,74,.42);--hairline-strong:rgba(47,107,74,.8);--red-accent:#e0674a;--red-hairline:rgba(224,103,74,.7);--red-fill:rgba(224,103,74,.13);--signal:#d9a486;--signal-fill:rgba(217,164,134,.15);--ok:#3f9a6a;--stage:#070908;--stage-2:#0a0d0b;--stage-ink:#e6eae7;--stage-ink-2:#9ca8a2;--ui:'Chakra Petch','Helvetica Neue','Segoe UI',Arial,sans-serif;--mono:'Azeret Mono',ui-monospace,Menlo,monospace;--disp:'Venus Rising','Chakra Petch',sans-serif}
-*{box-sizing:border-box}html{scroll-behavior:auto}
-
-body{margin:0;background:var(--surface);color:var(--ink);font:400 13px/1.55 var(--ui)}
-button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
-.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
-.lab{font:600 9px/1 var(--ui);letter-spacing:1.6px;text-transform:uppercase;color:var(--ink-3)}
-[hidden]{display:none!important}
-
-/* ── la barre ── */
-.bar{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:16px;padding:9px 20px;background:var(--surface-2);border-bottom:1px solid var(--hairline)}
-.bar .mark{font:700 12px/1 var(--ui);letter-spacing:2.4px;text-transform:uppercase}.bar .mark b{color:var(--red-accent)}
-.bar .title{font:600 13px/1 var(--ui);color:var(--ink-2)}.bar .title small{font:400 10px var(--mono);color:var(--ink-3);margin-left:10px}
-.bar .sep{flex:1}
-.seg{display:inline-flex;border:1px solid var(--hairline-strong)}
-.seg button{height:24px;padding:0 12px;font:600 9px/1 var(--ui);letter-spacing:1.2px;text-transform:uppercase;color:var(--ink-3);border-right:1px solid var(--hairline)}
-.seg button:last-child{border-right:0}.seg button[aria-pressed="true"]{background:var(--red-fill);color:var(--ink)}.seg button:hover:not([aria-pressed="true"]){background:var(--surface-3);color:var(--ink-2)}
-
-/* ── scène + scénario ── */
-.wrap{padding:14px 20px 40px}
-/* Deux réglages indépendants (28/09) : la hauteur de la scène (poignée de la timeline) et la largeur du script
-   (poignée du script). La vidéo remplit au mieux son cadre ; la timeline est là où on l'a posée. Avant, la poignée
-   du script recalculait la hauteur de la vidéo et défaisait celle de la timeline. */
-.stage-row{display:grid;grid-template-columns:minmax(0,1fr) 12px var(--l-script,400px);gap:0;align-items:stretch;height:var(--h-scene,62vh)}
-.stage-row>.player{min-height:0;overflow:hidden}
-.visionneuse{display:flex!important;flex-direction:column;flex:1;min-height:0}
-.visionneuse .scene{flex:1;min-height:0}
-.visionneuse .hud,.visionneuse .st{flex:none}
-.player{background:var(--stage-2);border:1px solid var(--hairline-strong);display:flex;flex-direction:column;min-width:0}
-.player video{width:100%;display:block;background:#000}
-.hud{display:flex;align-items:center;gap:14px;padding:8px 12px;color:var(--stage-ink);font:600 9px/1 var(--ui);letter-spacing:1.4px;text-transform:uppercase;border-top:1px solid #2D2D2B}
-.hud .mono{font-size:12px;letter-spacing:0;text-transform:none;color:var(--stage-ink)}.hud .dim{color:var(--stage-ink-2)}.hud .sep{flex:1}
-.hud button,.hud label{color:var(--stage-ink-2);border:1px solid #2D2D2B;padding:4px 8px;font:600 9px/1 var(--ui);letter-spacing:1.1px;text-transform:uppercase;cursor:pointer}.hud button:hover,.hud label:hover{color:var(--stage-ink);background:rgba(255,255,255,.06)}
-/* L'action du plan, contre la video : on doit pouvoir la lire EN REGARDANT, pas
-   trois ecrans plus bas. Elle occupe la place que la colonne laissait vide. */
-.actionnow{flex:1;min-height:92px;overflow:auto;padding:16px 20px;border-top:1px solid #2D2D2B;background:var(--stage-2);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
-.actionnow .lab{display:block;margin-bottom:6px;font:600 9px/1 var(--ui);letter-spacing:1.4px;text-transform:uppercase;color:var(--stage-ink-2)}
-.actionnow .txt{color:var(--stage-ink);font:400 19px/1.45 var(--ui);max-width:62ch;text-wrap:balance}
-.actionnow .oi{margin-top:9px;color:var(--signal);font:600 10px/1.5 var(--ui);letter-spacing:1.3px;text-transform:uppercase}
-.actionnow .vide{color:var(--stage-ink-2);font-size:12px}
-.nofile{padding:10px 14px;background:var(--signal-fill);border-top:1px solid var(--signal);color:var(--ink-2);font-size:11.5px}
-.nofile .link{color:var(--red-accent);text-decoration:underline;cursor:pointer}
-.script{border:1px solid var(--hairline-strong);background:var(--surface-2);position:relative;display:flex;flex-direction:column;min-height:0}
-.script::before,.script::after{content:'';position:absolute;width:7px;height:7px;border:1px solid var(--red-hairline)}.script::before{top:-1px;left:-1px;border-right:0;border-bottom:0}.script::after{bottom:-1px;right:-1px;border-left:0;border-top:0}
-.script-head{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--hairline)}
-.script-body{overflow:auto;padding:10px 22px 40vh;font-family:var(--mono);font-size:12.5px;line-height:1.6;max-height:56vh}
-.sc-shot{padding:10px 0 6px;border-top:1px solid var(--hairline)}.sc-shot:first-child{border-top:0}
-.sc-carton{font:600 10px/1.55 var(--ui);letter-spacing:1.1px;text-transform:uppercase;color:var(--signal);border-left:2px solid var(--signal);padding:2px 0 2px 9px;margin:7px 0}
-.sc-trans{font:600 9.5px/1.6 var(--ui);letter-spacing:1.7px;text-transform:uppercase;color:var(--ink-3);text-align:right;margin:16px 0 8px;padding-right:2px}
-.sc-slug{font:600 9px/1.6 var(--ui);letter-spacing:1.3px;text-transform:uppercase;color:var(--ink-3);display:flex;gap:10px;flex-wrap:wrap;align-items:baseline}.sc-slug b{color:var(--ink)}.sc-slug i{font-style:normal;color:var(--ink-2)}
-.sc-action{margin:6px 0 4px;color:var(--ink-2)}
-.sc-text{margin:4px 0;color:var(--signal);font-size:11px}
-.sc-line{margin:8px 0 2px;padding:4px 10px;border-left:2px solid transparent}
-.sc-who{font:600 11px/1.4 var(--ui);letter-spacing:1.2px;text-transform:uppercase;text-align:center;color:var(--ink-2)}.sc-who small{font-weight:400;letter-spacing:0;text-transform:none;color:var(--ink-3)}
-.sc-say{text-align:center;padding:0 12%}
-.sc-shot.now{background:var(--surface-3)}
-.sc-line.now{border-left-color:var(--red-accent);background:var(--red-fill)}.sc-line.now .sc-who{color:var(--red-accent)}
-
-/* ── timeline ── */
-.tl{margin-top:14px;border:1px solid var(--hairline-strong);background:var(--surface-2);position:relative}
-.tl::before,.tl::after{content:'';position:absolute;width:7px;height:7px;border:1px solid var(--red-hairline)}.tl::before{top:-1px;left:-1px;border-right:0;border-bottom:0}.tl::after{bottom:-1px;right:-1px;border-left:0;border-top:0}
-.tl-head{display:flex;align-items:center;gap:12px;padding:8px 14px;border-bottom:1px solid var(--hairline)}
-.tl-head .hint{font-size:10px;color:var(--ink-3)}
-.ruler{position:relative;height:18px;border-bottom:1px solid var(--hairline);margin-left:96px;overflow:hidden}
-.ruler .tk{position:absolute;top:0;height:100%;border-left:1px solid var(--hairline-strong);padding-left:4px;font:9px/18px var(--mono);color:var(--ink-3);white-space:nowrap}.ruler .tk.minor{border-left-color:var(--hairline);color:transparent}
-.lane{display:grid;grid-template-columns:96px 1fr;border-bottom:1px solid var(--hairline)}.lane:last-child{border-bottom:0}
-.lane-name{font:600 9px/1 var(--ui);letter-spacing:1.4px;text-transform:uppercase;color:var(--ink-3);padding:0 10px;display:flex;align-items:center;border-right:1px solid var(--hairline);background:var(--surface)}
-.lane-name.on{color:var(--ink)}.lane-name i{width:6px;height:6px;background:var(--hairline-strong);margin-right:7px}.lane-name.on i{background:var(--red-accent)}
-.track{position:relative;height:30px;overflow:hidden}.track.tall{height:auto;min-height:30px}
-.blk{position:absolute;top:4px;height:22px;border:1px solid var(--hairline-strong);background:var(--surface-3);font:600 9.5px/20px var(--ui);letter-spacing:.5px;padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink);cursor:pointer;text-transform:uppercase}
-.blk.dl{text-transform:none;letter-spacing:0;font-family:var(--mono);font-weight:400}
-/* Presence = un trait. La replique s'ecrit SUR le rail de qui la dit : deux
-   personnes qui parlent en meme temps occupent deux rails, la ou un rail
-   « dialogue » unique les aurait empilees au meme endroit. */
-.blk.trait{top:13px;height:4px;padding:0;border:0;font-size:0;opacity:.55}
-.blk.trait.on{opacity:1;outline:0;height:6px;top:12px}
-.blk.dit{top:3px;height:24px;line-height:22px;font:400 10.5px/22px var(--mono);letter-spacing:0;text-transform:none;border-color:transparent}
-.blk.dit.on{outline:2px solid var(--ink);outline-offset:-1px}
-.blk.on{outline:2px solid var(--red-accent);outline-offset:-1px;z-index:2}
-.blk.p{top:auto}
-
-/* ── le plan ── */
-.shot{margin-top:14px;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px}
-.frame-card{border:1px solid var(--hairline-strong);background:var(--surface-2);padding:12px}
-.frames{display:grid;grid-template-columns:1fr 1fr;gap:6px}.frames img{width:100%;display:block;background:#000;aspect-ratio:16/9;object-fit:contain}
-.frames figcaption{font:600 8.5px/1.8 var(--ui);letter-spacing:1.2px;text-transform:uppercase;color:var(--ink-3)}
-.overlay{margin-top:8px}.overlay img{width:100%;display:block;background:#000}
-.overlay .none{padding:18px;border:1px dashed var(--hairline-strong);color:var(--ink-3);font-size:11px;text-align:center}
-.info{border:1px solid var(--hairline-strong);background:var(--surface-2);padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
-.info h2{margin:0;font:700 22px/1.1 var(--ui);letter-spacing:-.4px;display:flex;align-items:baseline;gap:12px}.info h2 .mono{font-size:12px;color:var(--ink-3);letter-spacing:0}
-.info .desc{font-size:14px;line-height:1.6;color:var(--ink);margin:0}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:1px;background:var(--hairline);border:1px solid var(--hairline)}
-.cell{background:var(--surface-2);padding:8px 10px;min-width:0}.cell .lab{display:block;margin-bottom:4px}.cell b{font-weight:600;font-size:12.5px;display:block;overflow:hidden;text-overflow:ellipsis}.cell .mono{font-size:13px}
-.cell.red b{color:var(--red-accent)}
-.people{display:flex;gap:8px;flex-wrap:wrap}
-.person{display:flex;align-items:center;gap:8px;border:1px solid var(--hairline);padding:4px 8px 4px 4px;font-size:11px}.person img{width:34px;height:34px;object-fit:cover;display:block;background:var(--surface-3)}.person i{width:8px;height:8px;flex:none}
-.person .pct{font-family:var(--mono);color:var(--red-accent);margin-left:4px}
-.lines{border-top:1px solid var(--hairline);padding-top:8px;font-family:var(--mono);font-size:12px}
-.lines div{padding:2px 0}.lines b{font:600 9px/1 var(--ui);letter-spacing:1.2px;text-transform:uppercase;color:var(--ink-3);margin-right:8px}.lines div.now b{color:var(--red-accent)}
-.rh{display:inline-flex;align-items:center;gap:6px}.rh i{width:8px;height:8px}
-.note{font-size:11px;color:var(--ink-3)}
-
-/* ── dépouillement (le rapport-liste existant, dans un cadre) ── */
-#depouillement iframe{width:100%;height:calc(100vh - 60px);border:0;display:block;background:var(--surface)}
-${CASTING.CASTING_CSS}
-
-@media(max-width:1100px){.stage-row{grid-template-columns:1fr;height:auto}.sep-v{display:none}.script-body{max-height:40vh}.shot{grid-template-columns:1fr}
-  .visionneuse .scene{flex:none}.visionneuse .scene video{height:auto;max-height:50vh}}
-@media(prefers-reduced-motion:reduce){*{transition:none!important}}
-
-/* ── Verdant : le display sur ce qui se lit d'un coup d'œil. Pose en dernier,
-      une declaration font raccourcie plus haut remettrait la famille a zero. ── */
-.bar .title,.bar .mark,h1,h2,h3,.cast-head h2{font-family:var(--disp);font-weight:400;letter-spacing:.07em}
-#hud-shot,#hud-time,.tl .tk,.big,.kpi b,.chiffre{font-family:var(--disp);letter-spacing:.02em}
-.lab,.dim,.hint{font-family:var(--mono);letter-spacing:.16em;text-transform:uppercase}
-/* ── Verdant : en-tête à deux rangs, menu d'onglets centré ── */
-.bar{display:block;padding:0;background:rgba(10,13,11,.95);backdrop-filter:blur(12px)}
-.bar .haut{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:8px 20px 6px;box-shadow:inset 0 -1px 0 rgba(47,107,74,.4)}
-.bar .mark{font-size:12px;letter-spacing:.24em;color:var(--ink);text-decoration:none;white-space:nowrap}
-.bar .retour{display:inline-flex;align-items:center;gap:7px;border-radius:6px;padding:7px 12px;box-shadow:inset 0 0 0 1px var(--hairline-strong);
-  font:600 11px/1 var(--ui);letter-spacing:.06em;color:var(--ink-2);text-decoration:none;white-space:nowrap}
-.bar .retour:hover{color:var(--ink);box-shadow:inset 0 0 0 1px #3f9a6a;background:rgba(47,107,74,.14)}
-.bar .retour svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.5}
-.bar .title{font-size:15px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
-.bar .title small{display:inline-block;margin-left:10px;font:400 9px/1.3 var(--mono);
-  letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
-.menu{position:relative;display:flex;justify-content:center;margin-left:auto}
-.menu .pan{position:relative;display:flex}
-.menu button{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;
-  padding:6px 18px 8px;background:none;border:0;cursor:pointer}
-.menu .ix{font-family:var(--mono);font-size:8px;letter-spacing:.24em;color:var(--ink-3);transition:color .18s}
-.menu .nm{font-family:var(--disp);font-size:14px;letter-spacing:.17em;text-transform:uppercase;
-  color:var(--ink-3);transition:color .18s;white-space:nowrap}
-.menu button:hover .nm{color:var(--ink-2)}
-.menu button[aria-pressed="true"] .nm{color:var(--ink)}
-.menu button[aria-pressed="true"] .ix{color:var(--red-accent)}
-.menu .curseur{position:absolute;bottom:-1px;left:0;width:0;height:2px;background:var(--red-accent);
-  transition:transform .26s cubic-bezier(.4,0,.2,1),width .26s cubic-bezier(.4,0,.2,1)}
-
-/* ── la frise des plans, au-dessus de l'image ── */
-.frise{display:flex;gap:4px;overflow-x:auto;padding-bottom:3px;margin-bottom:10px}
-/* les vignettes suivent la taille de la vidéo (poignée de la timeline) */
-.frise button{flex:0 0 auto;position:relative;overflow:hidden;width:clamp(52px,calc(var(--h-scene,62vh) * .14),108px);padding:0;border:0;
-  background:none;cursor:pointer;opacity:.62;box-shadow:inset 0 0 0 1px transparent;transition:box-shadow .15s,opacity .15s}
-.frise button:hover{opacity:1}
-.frise button img{display:block;width:100%;height:auto;aspect-ratio:108/45;object-fit:cover}
-.frise button[aria-current="true"]{opacity:1;box-shadow:0 0 0 2px var(--red-accent)}
-.frise button .n{position:absolute;left:4px;bottom:2px;font-family:var(--disp);font-size:10px;
-  color:#e6eae7;text-shadow:0 1px 3px #000}
-
-/* ── la visionneuse : coins carrés, un rayon rognerait le cadre ── */
-.visionneuse{display:block}
-.visionneuse .scene{position:relative;background:#000;overflow:hidden;line-height:0}
-.visionneuse .scene video{display:block;width:100%;height:100%;object-fit:contain;border-radius:0}
-.visionneuse .scene .calque{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
-  opacity:0;transition:opacity .22s;pointer-events:none}
-.visionneuse[data-calque="1"] .scene .calque{opacity:1}
-
-/* ── la barre de lecture : repères à gauche, lecture au centre, calque à droite ── */
-.player .hud{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center;
-  padding:8px 12px;background:var(--surface-3);border:0}
-.player .hud > *{min-width:0}
-.hud .g{display:flex;align-items:center;gap:10px}
-.hud .g.droite{justify-content:flex-end}
-.hud .gros{font-family:var(--disp);font-size:19px;line-height:1;color:var(--ink);width:62px;white-space:nowrap}
-.hud .tc{font-family:var(--mono);font-size:9px;letter-spacing:.1em;color:var(--ink-3);white-space:nowrap;width:150px}
-.lecture{width:42px;height:42px;border-radius:999px;display:grid;place-items:center;border:0;cursor:pointer;
-  background:none;box-shadow:inset 0 0 0 1.5px var(--red-accent);color:var(--red-accent);
-  transition:box-shadow .15s,color .15s,background .15s}
-.lecture:hover{background:var(--red-fill);color:#f0b49b;box-shadow:inset 0 0 0 1.5px #e59578}
-.lecture svg{width:15px;height:15px;fill:currentColor;display:block}
-.lecture[aria-pressed="true"]{background:var(--red-accent);color:#170c08;box-shadow:none}
-.outil{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:0;cursor:pointer;
-  border-radius:10px;padding:8px 14px;background:none;font:600 11px/1 var(--ui);letter-spacing:.08em;
-  text-transform:uppercase;color:var(--ink-2);white-space:nowrap;box-shadow:inset 0 0 0 1px var(--hairline);
-  transition:color .15s,box-shadow .15s,background .15s}
-.outil:hover{color:var(--ink);box-shadow:inset 0 0 0 1px rgba(63,154,106,.95)}
-.outil[aria-pressed="true"]{background:#b9cfd8;color:#0a0d0b;box-shadow:none}
-.outil:disabled{opacity:.35;cursor:default}
-.outil.ico{padding:8px 10px}
-.outil.ico svg{width:14px;height:14px;fill:currentColor;display:block}
-
-/* ── le sous-titre : sous l'image, jamais par-dessus ── */
-.st{display:flex;align-items:center;justify-content:center;min-height:54px;padding:11px 22px;
-  background:var(--surface-2)}
-.st p{margin:0;font-size:15.5px;line-height:1.4;text-align:center;color:var(--ink);opacity:0;transition:opacity .14s}
-.st p.on{opacity:1}
-
-/* ── l'action : plus grande, centrée ── */
-/* Hauteur FIGEE : l'action est plus ou moins longue selon le plan, et le
-   panneau faisait monter et descendre la timeline a chaque raccord. On reserve
-   la place de trois lignes une fois pour toutes ; au-dela le texte est coupe et
-   reste lisible en entier au survol. */
-.actionnow{flex:none;height:132px;min-height:0;padding:14px 22px;text-align:center;color:var(--ink);
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;overflow:hidden}
-.actionnow .txt{font:400 19px/1.45 var(--ui);max-width:62ch;text-wrap:balance;
-  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.actionnow .oi{margin-top:0}
-/* La colonne du script : sa hauteur est celle de la colonne video (le contenu est pose par-dessus, en absolu, et ne
-   pese pas sur la ligne) ; avant, le script s'arretait a 56 vh et laissait une bande vide en bas. */
-.script-in{position:absolute;inset:0;display:flex;flex-direction:column;min-height:0}
-.script-in .script-body{flex:1;min-height:0;max-height:none}
-.player .actionnow{flex:none;height:108px;padding:10px 22px}
-.player .actionnow .txt{font-size:17px}
-/* les poignées */
-.sep-v{position:relative;cursor:col-resize;touch-action:none}
-.sep-v::after{content:'';position:absolute;top:0;bottom:0;left:5px;width:2px;border-radius:1px;background:rgba(47,107,74,.22);transition:background .15s}
-.sep-h{position:relative;height:14px;cursor:row-resize;touch-action:none}
-.sep-h::after{content:'';position:absolute;left:0;right:0;top:6px;height:2px;border-radius:1px;background:rgba(47,107,74,.22);transition:background .15s}
-.sep-v:hover::after,.sep-h:hover::after,.sep-v.actif::after,.sep-h.actif::after{background:var(--ok)}
-body.redim{user-select:none}
-body.redim.col{cursor:col-resize}body.redim.row{cursor:row-resize}
-@media(max-width:1100px){.script-in{position:static}.script-in .script-body{flex:none;max-height:40vh}}
-/* Les barres de defilement aux couleurs du theme, partout (vignettes au-dessus de la video, script, casting…) :
-   pas le gris du systeme */
-*{scrollbar-width:thin;scrollbar-color:rgba(47,107,74,.8) rgba(47,107,74,.10)}
-::-webkit-scrollbar{width:8px;height:8px}
-::-webkit-scrollbar-track{background:rgba(47,107,74,.10);border-radius:4px}
-::-webkit-scrollbar-thumb{background:rgba(47,107,74,.8);border-radius:4px}
-::-webkit-scrollbar-thumb:hover{background:var(--ok)}
-
-/* ── la timeline Verdant ── */
-.tl{background:var(--surface-2);padding:16px;display:flex;flex-direction:column;gap:10px}
-.tl-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.tl .zone{overflow-x:auto;overflow-y:hidden}
-.tl .enveloppe{position:relative;width:calc(100% * var(--zoom,1));min-width:760px}
-.tl .grille{width:100%;display:grid;grid-template-columns:154px minmax(0,1fr);gap:0 12px;align-items:center}
-.tl .nom{position:sticky;left:0;z-index:4;background:var(--surface-2);
-  font-family:var(--mono);font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;
-  color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:4px 8px 4px 0}
-.tl .rail{position:relative;height:19px;border-radius:5px;background:var(--surface-4)}
-.tl .seg{position:absolute;top:0;bottom:0;border-radius:4px;opacity:.3}
-.tl .dit{position:absolute;top:2px;bottom:2px;border-radius:3px;cursor:pointer;
-  display:flex;align-items:center;padding:0 5px;overflow:hidden}
-.tl .dit i{font:500 9px/1 var(--ui);font-style:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tl .regle{position:relative;height:18px;cursor:ew-resize}
-.tl .tick{position:absolute;top:0;bottom:0;width:1px;background:rgba(185,207,216,.16);cursor:pointer}
-.tl .tick b{position:absolute;top:2px;left:4px;font-family:var(--disp);font-size:8px;font-weight:400;
-  color:var(--ink-3);white-space:nowrap;opacity:0;transition:opacity .15s}
-.tl .grille[data-dense="1"] .tick b{opacity:1}
-/* La cue traverse toute la hauteur : 166px = la colonne des noms (154) + la gouttière (12). */
-.tl .cue{position:absolute;top:0;bottom:0;width:2px;background:var(--red-accent);pointer-events:none;z-index:5;
-  left:calc(166px + (100% - 166px) * var(--t,0))}
-.tl .cue b{position:absolute;top:-3px;left:-10px;width:22px;height:16px;pointer-events:auto;cursor:ew-resize;display:block}
-.tl .cue b::after{content:'';position:absolute;top:3px;left:4px;width:14px;height:10px;
-  background:var(--red-accent);clip-path:polygon(0 0,100% 0,50% 100%)}
-.tl .cue b:hover::after{background:#f0b49b}
-body.glisse-cue{user-select:none}
-body.glisse-cue .tl .cue b::after{background:#f0b49b}
-.tl .zoom{display:flex;gap:4px}
-.tl .zoom button{font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;padding:5px 10px;border-radius:6px;
-  border:0;cursor:pointer;background:none;box-shadow:inset 0 0 0 1px var(--hairline);color:var(--ink-3);min-width:38px}
-.tl .zoom button:hover{color:var(--ink-2)}
-.tl .zoom button[aria-pressed="true"]{background:#b9cfd8;color:#0a0d0b;box-shadow:none}
-.tl .chiffre{font-size:12px;color:var(--ink);min-width:40px;text-align:right}
-
-/* ── casting : de vrais visages, toutes les vignettes au même format ── */
-#casting .cast-sub{color:var(--ink-3)}
-#casting .cast-grid{grid-template-columns:repeat(auto-fill,minmax(216px,1fr));gap:13px}
-#casting .fiche{display:flex;flex-direction:column;height:100%;gap:0;padding:0;border:0;
-  border-radius:14px;overflow:hidden;background:var(--surface-3);
-  box-shadow:inset 0 0 0 1px rgba(47,107,74,.5),0 10px 22px -14px #000;
-  transition:box-shadow .16s,transform .16s}
-#casting .fiche:hover{box-shadow:inset 0 0 0 1px rgba(47,107,74,.95),0 14px 26px -14px #000;
-  transform:translateY(-2px)}
-/* L'image est un élément de flex : sans min-height:0 sa hauteur intrinsèque
-   devient sa taille minimale, et un portrait en hauteur étire la carte. */
-#casting .fiche .por{width:100%;height:auto;aspect-ratio:1/1;min-height:0;flex:none;
-  object-fit:cover;border:0;cursor:grab;background:var(--stage)}
-#casting .fiche .por:active{cursor:grabbing}
-#casting .fiche .por.vide{aspect-ratio:1/1;font-size:30px}
-#casting .fiche > div{padding:11px 12px 12px;display:flex;flex-direction:column;flex:1;min-width:0}
-#casting .fiche .note{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-#casting .chiffres{margin-top:auto;padding-top:9px}
-#casting .fiche.attrape{opacity:.4}
-#casting .fiche.cible{box-shadow:0 0 0 2px var(--ok);transform:translateY(-3px)}
-#casting input.nom{border-radius:7px;background:var(--stage);border-color:var(--hairline)}
-#casting select.fus{border-radius:7px;background:var(--stage)}
-#casting button{border-radius:10px;font-family:var(--ui)}
-@media(max-width:560px){#casting .cast-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
-
-/* ── découpage : compteurs, filtres, accordéon ── */
-.dp{display:flex;flex-direction:column;gap:12px;padding:18px 0 40px}
-.dp-tete{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
-.dp-media{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px 18px;margin:12px 0 4px;padding:12px 14px;
-  border:1px solid var(--hairline);border-radius:6px;background:var(--surface-2)}
-.dp-media div{min-width:0}
-.dp-media dt{font:600 9px/1.2 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
-.dp-media dd{margin:4px 0 0;font:400 14px/1.3 var(--ui);color:var(--ink);overflow-wrap:anywhere}
-.etat{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-radius:14px;background:var(--stage);padding:9px 12px}
-.etat .m{display:inline-flex;align-items:center;gap:8px;border-radius:6px;padding:5px 12px;border:0;background:none;
-  box-shadow:inset 0 0 0 1px var(--hairline);transition:box-shadow .15s}
-.etat button.m{cursor:pointer}
-.etat button.m:hover{box-shadow:inset 0 0 0 1px rgba(63,154,106,.95)}
-.etat .m b{font-family:var(--disp);font-weight:400;font-size:14px;color:var(--ink)}
-.etat .m span{font-family:var(--mono);font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
-.etat .m.alerte{box-shadow:inset 0 0 0 1px var(--red-hairline)}
-.etat .m.alerte b{color:var(--red-accent)}
-.etat button.m[aria-pressed="true"]{background:#b9cfd8}
-.etat button.m[aria-pressed="true"] b,.etat button.m[aria-pressed="true"] span{color:#0a0d0b}
-
-.filtres{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.filtres input[type=search]{flex:1;min-width:180px;background:var(--stage);border:0;border-radius:10px;
-  padding:9px 12px;font:400 12.5px var(--ui);color:var(--ink);box-shadow:inset 0 0 0 1px var(--hairline)}
-.filtres input[type=search]:focus{outline:0;box-shadow:inset 0 0 0 1px var(--red-hairline)}
-.filtres select{background:var(--stage);border:0;border-radius:10px;padding:9px 10px;font:400 11.5px var(--ui);
-  color:var(--ink);box-shadow:inset 0 0 0 1px var(--hairline);max-width:220px}
-.jeu{display:flex;gap:4px;flex-wrap:wrap}
-.jeu button{font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;border:0;cursor:pointer;
-  padding:6px 11px;border-radius:7px;background:none;box-shadow:inset 0 0 0 1px var(--hairline);color:var(--ink-3)}
-.jeu button:hover{color:var(--ink-2)}
-.jeu button[aria-pressed="true"]{background:#b9cfd8;color:#0a0d0b;box-shadow:none}
-
-.dp .table{display:flex;flex-direction:column;gap:3px}
-.bloc{border-radius:10px;overflow:hidden}
-.bloc[aria-expanded="true"]{background:var(--surface-2);box-shadow:inset 0 0 0 1px rgba(63,154,106,.8)}
-.lg{display:grid;grid-template-columns:14px 46px minmax(0,1fr) 96px 104px 92px 66px;gap:11px;align-items:center;
-  padding:8px 11px;cursor:pointer}
-.lg:hover{background:var(--surface-2)}
-.bloc.courant .lg .no{color:var(--red-accent)}
-.lg .teinte{width:14px;height:14px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
-.lg .no{font-family:var(--disp);font-size:13px;color:var(--ink)}
-.lg .ac{font-size:12.5px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.lg .pts{display:flex;gap:3px;align-items:center}
-.lg .pts i{width:9px;height:9px;border-radius:999px;display:block}
-.lg .pts em{font-family:var(--mono);font-size:8px;font-style:normal;color:var(--ink-3)}
-.lg .dr{font-family:var(--disp);font-size:12px;color:var(--ink);text-align:right}
-.detail{display:none;padding:0 11px 13px;gap:12px;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr)}
-.bloc[aria-expanded="true"] .detail{display:grid}
-.detail .vues{display:flex;gap:6px;flex-wrap:wrap}
-.detail .vues figure{margin:0;flex:1;min-width:132px}
-.detail .vues img{width:100%;border-radius:7px;display:block}
-.detail .vues figcaption{margin-top:4px}
-.detail .bl{display:flex;flex-direction:column;gap:8px;min-width:0}
-.detail .paire{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:7px}
-.detail .paire > div{background:var(--stage);border-radius:7px;padding:7px 9px;min-width:0}
-.detail .paire .v{font-family:var(--disp);font-size:13px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.detail .rq{display:flex;gap:9px;align-items:baseline;padding:5px 0;box-shadow:inset 0 -1px 0 rgba(47,107,74,.22)}
-.detail .rq .h{font-family:var(--mono);font-size:8px;letter-spacing:.1em;color:var(--ink-3);white-space:nowrap}
-.detail .rq .x{font-size:12.5px;color:var(--ink-2)}
-.detail .avert{border-radius:7px;box-shadow:inset 0 0 0 1px var(--red-hairline);padding:8px 10px;
-  font-size:11.5px;color:var(--ink-2);line-height:1.5}
-.dp .tetes{display:flex;flex-wrap:wrap;gap:6px}
-.dp .tete{display:inline-flex;align-items:center;gap:7px;border-radius:6px;padding:3px 12px 3px 3px;
-  background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--hairline)}
-.dp .tete img{width:26px;height:26px;border-radius:4px;object-fit:cover}
-.dp .tete span{font-size:11.5px;color:var(--ink-2);white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}
-.dp .tete b{font-family:var(--disp);font-size:11px;font-weight:400}
-.pied-dp{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding-top:11px;
-  box-shadow:inset 0 1px 0 rgba(47,107,74,.3)}
-a.outil{text-decoration:none}
-@media(max-width:1020px){.detail{grid-template-columns:minmax(0,1fr)}}
-@media(max-width:760px){.lg{grid-template-columns:14px 44px minmax(0,1fr) 62px}.lg .cat,.lg .tai,.lg .pts{display:none}}
-
-${VOIX_CSS}
-</style>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>${esc(TITRE || DATA.title)} — Movie Analysis · Showrunner Tools</title>
+<meta name="description" content="Le Studio de l'analyse : la vidéo, le script, la timeline des voix, la fiche de chaque plan, le casting et le dépouillement.">
+<meta name="sr-forme" content="portail">
+<!-- icône vide au chargement : analyse/film/film.js la dessine depuis les jetons -->
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Azeret+Mono:wght@300;400;500&display=swap">
+<link rel="stylesheet" href="${PORTAIL}commun/tokens.css">
+<link rel="stylesheet" href="${PORTAIL}commun/base.css">
+<link rel="stylesheet" href="${PORTAIL}commun/shell.css">
+<link rel="stylesheet" href="${OUTIL}film/film.css">
+<script type="module" src="${OUTIL}film/film.js"></script>
 </head>
-<body>
-<header class="bar">
-  <div class="haut">
-    <a class="retour" href="../../" title="Tous les projets"><svg viewBox="0 0 12 12"><path d="M8 2L4 6l4 4"/></svg>Accueil</a>
-    <a class="mark" href="../../">Movie Analysis</a>
-    <span class="title">${esc(DATA.title)}</span>
-    <!-- les onglets dans la barre, sans numéros : un rang de moins au-dessus de la vidéo (28/09) ; les infos du média
-         d'origine sont dans le Découpage -->
-    <nav class="menu" role="tablist" aria-label="Vues">
-      <div class="pan" id="tabs">
-        <button data-tab="studio" aria-pressed="true"><span class="nm">Studio</span></button>
-        <button data-tab="casting" aria-pressed="false"><span class="nm">Casting</span></button>
-        <button data-tab="depouillement" aria-pressed="false"><span class="nm">Découpage</span></button>
-        <span class="curseur" id="curseur"></span>
-      </div>
-    </nav>
+<body class="film">
+<!-- l'en-tête du portail se pose au-dessus (film.js → mountHeader('analyse')) ; dessous, la barre du film -->
+<nav class="fm-bar" aria-label="le film">
+  <a class="tb ghost sm" href="${OUTIL}" title="Movie Analysis : nos films, les analyses, la diarisation">← Les films</a>
+  <div class="fm-t"><b>${esc(TITRE || DATA.title)}</b><span class="lbl">${DATA.shots.length} plans · ${tc(DATA.duration).replace(/\.\d+$/, '')} · ${DATA.meta.width ?? '?'}×${DATA.meta.height ?? '?'}</span></div>
+  <div class="fm-onglets" id="tabs" role="tablist" aria-label="les vues du film">
+    <button type="button" role="tab" data-tab="studio" aria-pressed="true">Studio</button>
+    <button type="button" role="tab" data-tab="casting" aria-pressed="false">Casting</button>
+    <button type="button" role="tab" data-tab="depouillement" aria-pressed="false">Dépouillement</button>
+    <a class="fm-voix" href="${esc(VOIX.labo)}" title="la diarisation Nemotron de ce film, dans le labo : recalculer, direct, micro">Voix <span aria-hidden="true">↗</span></a>
   </div>
-</header>
+  <span class="sp"></span>
+  <span class="lbl fm-src" title="${esc(video)}">${MEDIA ? 'vidéo sur R2 · repli à côté' : 'vidéo à côté de la page'}</span>
+</nav>
 
-<main id="studio" class="wrap">
+<main id="studio" class="fm-vue">
   <section class="stage-row">
     <div class="player">
       <div class="frise" id="frise"></div>
@@ -569,11 +236,11 @@ ${VOIX_CSS}
       <div class="actionnow" id="actionnow"></div>
       <!-- La page voyage sans la vidéo (trop lourde pour un dépôt). Si elle manque,
            on le dit et on propose de charger le fichier depuis le disque du lecteur. -->
-      <div class="nofile" id="nofile" hidden>La vidéo n'est pas à côté de cette page. Tout le reste — scénario, timeline, plans, silhouettes — fonctionne. <label class="link">Charge le fichier depuis ton disque<input type="file" accept="video/*" hidden></label>.</div>
+      <div class="nofile" id="nofile" hidden>La vidéo ne se lit ni sur R2 ni à côté de cette page. Tout le reste — script, timeline, plans, silhouettes — fonctionne. <label class="link">Charger le fichier depuis ce poste<input type="file" accept="video/*" hidden></label>.</div>
     </div>
     <div class="sep-v" id="sep-cols" title="Glisser : largeur du script · double-clic : par défaut"></div>
     <aside class="script"><div class="script-in">
-      <div class="script-head"><span class="lab">Script</span><span class="lab" style="color:var(--ink-2)">${DATA.shots.length} plans · ${new Set(DATA.shots.flatMap((s) => s.lines.map((l) => `${l.start}-${l.end}`))).size} répliques</span><span style="flex:1"></span><span class="lab" id="script-etat" style="color:var(--ok)"></span><label class="lab" style="display:flex;gap:6px;align-items:center;cursor:pointer;margin-left:10px"><input type="checkbox" id="follow" checked> suivre</label></div>
+      <div class="script-head"><span class="lab">Script</span><span class="lab fort">${DATA.shots.length} plans · ${new Set(DATA.shots.flatMap((s) => s.lines.map((l) => `${l.start}-${l.end}`))).size} répliques</span><span class="sp"></span><span class="lab ok" id="script-etat"></span><label class="lab suivre"><input type="checkbox" id="follow" checked> suivre</label></div>
       <div class="script-body" id="script"></div>
     </div></aside>
   </section>
@@ -584,7 +251,7 @@ ${VOIX_CSS}
     <div class="vx-tete">
       <span class="lab">Timeline · une piste par personnage</span>
       <span class="aide">chaque mot à son instant · glisser une réplique sur une autre piste pour la réattribuer, ou cliquer dessus</span>
-      <span style="flex:1"></span>
+      <span class="sp"></span>
       <span class="etat" id="vx-etat"></span>
       <span class="vx-local" id="vx-local" hidden></span>
       <button class="vx-bouton" id="vx-annuler" type="button" title="Annuler le dernier geste (Ctrl+Z)" disabled>↶ Annuler</button>
@@ -608,12 +275,16 @@ ${VOIX_CSS}
   <section class="shot" id="shot"></section>
 </main>
 
-<main id="depouillement" class="wrap" hidden>
+<main id="depouillement" class="fm-vue" hidden>
   <div class="dp">
     <div class="dp-tete">
-      <span class="lab">Dépouillement</span><span class="lab-s" id="dp-compte">—</span>
-      <span style="flex:1"></span>
-      <a class="outil" id="dp-rapport" href="${esc(reportHref)}" target="_blank" rel="noopener">Rapport complet</a>
+      <h2 class="fm-h">Dépouillement</h2><span class="lab-s" id="dp-compte">—</span>
+      <span class="sp"></span>
+      <!-- le sommaire du rapport de la chaîne : ses deux sections sont sous la table -->
+      <button class="outil" type="button" data-aller="dp-rep-s">Répartition</button>
+      <button class="outil" type="button" data-aller="dp-portes-s" id="dp-aller-portes">Portes qualité</button>
+      <button class="outil" id="dp-json" type="button" title="le document tel que la page le montre, corrections comprises">Exporter le JSON</button>
+      <button class="outil" id="dp-csv" type="button">Exporter CSV</button>
     </div>
     <!-- le média d'origine, en clair (il était en petit dans le titre du Studio) -->
     <dl class="dp-media">
@@ -626,6 +297,13 @@ ${VOIX_CSS}
       <div><dt>Son</dt><dd>${DATA.meta.hasAudio === false ? 'aucun' : (DATA.meta.hasAudio ? 'oui' : '—')}</dd></div>
       <div><dt>Plans</dt><dd>${DATA.shots.length}</dd></div>
     </dl>
+    <!-- ce que montrait le rapport-liste de la chaîne (video-shots render), calculé ici depuis les mêmes données -->
+    <div class="dp-chiffres" id="dp-chiffres"></div>
+    <section class="dp-bande">
+      <div class="dp-bande-t"><span class="lab">Bande de rythme</span><span class="sp"></span><span class="aide">largeur = durée · couleur = teinte moyenne du plan · clic : le plan dans la table</span></div>
+      <div class="dp-segs" id="dp-bande"></div>
+      <div class="dp-grad" id="dp-grad"></div>
+    </section>
     <div class="etat" id="dp-etat"></div>
     <div class="filtres">
       <input type="search" id="dp-q" placeholder="Chercher dans l'action et les dialogues…" aria-label="Rechercher">
@@ -646,9 +324,19 @@ ${VOIX_CSS}
     <div class="table" id="dp-table"></div>
     <div class="pied-dp">
       <span class="lab-s" id="dp-total">—</span>
-      <span style="flex:1"></span>
-      <button class="outil" id="dp-replier">Tout replier</button>
-      <button class="outil" id="dp-csv">Exporter CSV</button>
+      <span class="sp"></span>
+      <button class="outil" id="dp-replier" type="button">Tout replier</button>
+    </div>
+    <div class="dp-deux">
+      <section class="dp-pan" id="dp-rep-s" aria-label="répartition">
+        <div class="dp-pan-t"><span class="lab">Répartition</span><span class="sp"></span><span class="aide">la part est calculée sur la durée, pas sur le nombre de plans</span></div>
+        <p class="dp-note" id="dp-note"></p>
+        <div class="dp-dist" id="dp-dist"></div>
+      </section>
+      <section class="dp-pan" id="dp-portes-s" aria-label="portes qualité">
+        <div class="dp-pan-t"><span class="lab">Portes qualité</span><span class="sp"></span><span class="lab-s" id="dp-portes-n"></span></div>
+        <div class="dp-portes" id="dp-portes"></div>
+      </section>
     </div>
   </div>
 </main>
@@ -665,6 +353,8 @@ window.XV_CORR_URL = ${corrUrl ? JSON.stringify(corrUrl.replace(/\/$/, '') + '/'
 window.XV_PUBLIER_URL = ${corrUrl ? JSON.stringify(corrUrl.replace(/\/$/, '').replace(/\/corrections$/, '') + '/publier/' + slug) : 'null'};
 // la video et les pistes de son sur R2 (--video-url) ; a cote de la page si R2 ne repond pas
 window.XV_MEDIA = ${JSON.stringify(MEDIA)};
+// les portes qualite du rapport de la chaine, calculees au rendu (video-shots.mjs validate)
+const PORTES = ${JSON.stringify(PORTES).replace(/</g, '\\u003c')};
 ${CASTING.CORRECTIONS_JS}
 ${CASTING.appliqueNoms(slug)}
 const FRAMES = ${JSON.stringify(FRAMES)};
@@ -672,7 +362,14 @@ const OVERLAYS = ${JSON.stringify(OVERLAYS)};
 const PORTRAITS = ${JSON.stringify(PORTRAITS)};
 const L = ${JSON.stringify(L)};
 const VOIX = ${JSON.stringify(VOIX).replace(/[⺀-￿]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))};
-const SIZE_COLORS = ${JSON.stringify(SIZE_COLORS)}, RHYTHM_COLORS = ${JSON.stringify(RHYTHM_COLORS)}, CAST_COLORS = ${JSON.stringify(CAST_COLORS)};
+// Les teintes : celles du portail (commun/tokens.css), et la palette des personnages, des voix et du rythme,
+// declaree une seule fois dans analyse/film/film.css. Aucune couleur n'est ecrite dans cette page : on les lit
+// (la feuille est chargee avant ce script, qui l'attend). Une palette absente retombe sur l'encre du portail.
+const JETON = (() => { const cs = getComputedStyle(document.documentElement); return (n) => cs.getPropertyValue(n).trim(); })();
+const PALETTE = (prefixe, n) => { const out = []; for (let i = 0; i < n; i++) { const c = JETON(prefixe + i); if (c) out.push(c); } return out.length ? out : [JETON('--ink2')]; };
+const CAST_COLORS = PALETTE('--pc-', 16);
+const RHYTHM_COLORS = {};
+['hook', 'setup', 'build', 'beat', 'turn', 'payoff', 'breath', 'close'].forEach((k) => { RHYTHM_COLORS[k] = JETON('--ry-' + k) || JETON('--ink3'); });
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const tc = (s) => { const m = Math.floor(s / 60); return String(m).padStart(2, '0') + ':' + (s - m * 60).toFixed(2).padStart(5, '0'); };
@@ -690,16 +387,10 @@ const courtNom = (n) => {
 const video = $('video');
 const D = DATA.duration || 1;
 
-/* ── thème : Verdant est sombre par construction, il n'y a plus de choix.
-   On pose la marque pour les pages qui la lisent encore (le dépouillement). ── */
-document.documentElement.dataset.theme = 'dark';
-try { localStorage.setItem('xverse-theme', 'dark'); } catch {}
+/* ── thème : celui du portail, sombre, sans bascule — la page ne pose plus de marque de thème ── */
 
 /* ── onglets ── */
 ${CASTING.ONGLETS}
-
-/* ── le theme jusque dans le cadre du depouillement ── */
-${CASTING.THEME_VERS_IFRAME}
 
 /* ── trombinoscope ── */
 ${CASTING.TROMBINOSCOPE}
@@ -739,14 +430,6 @@ const etiquettesRails = (noms) => {
     return queue;
   });
 };
-/* Encre lisible sur une couleur pleine : le kit demande 4.5 de contraste. */
-function encre(hex) {
-  if (!/^#[0-9a-f]{6}$/i.test(hex)) return '#0a0d0b';
-  const v = (k) => { const c = parseInt(hex.substr(k, 2), 16) / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
-  const Lum = 0.2126 * v(1) + 0.7152 * v(3) + 0.0722 * v(5);
-  return (Lum + 0.05) / 0.05 > 4.5 ? '#0a0d0b' : '#e6eae7';
-}
-
 ${VOIX_JS}
 ${SON_JS}
 function layout() { rendreTimeline(); paint(video.currentTime || 0, true); }
@@ -756,7 +439,7 @@ function paint(t, force) {
   majSousTitre(t);
   majCue(t);
   const s = shotAt(t);
-  if (s && (force || s.id !== lastShot)) { lastShot = s.id; $('hud-shot').textContent = s.id; majVerdant(s); dessineAction(s, t); renderShot(s); markScript(s, t); if (history.replaceState) history.replaceState(null, '', '#' + s.id); }
+  if (s && (force || s.id !== lastShot)) { lastShot = s.id; $('hud-shot').textContent = s.id; majVerdant(s); dessineAction(s, t); renderShot(s); markScript(s, t); if (window.xvPlanCourant) window.xvPlanCourant(s); if (history.replaceState) history.replaceState(null, '', '#' + s.id); }
   const cles = s ? s.id + ':' + cartonsA(s, t).map((c) => c.t).join(',') : '';
   if (s && cles !== lastCartes) { lastCartes = cles; dessineAction(s, t); }
   const line = s && s.lines.find((l) => t >= l.start && t < l.end);
@@ -979,11 +662,12 @@ window.addEventListener('resize', layout);
     });
     el.addEventListener('dblclick', () => { defaut(); pose(); garde(); redessine(); });
   };
-  poignee('sep-tl', 'row', {
+  // (redim-h / redim-v : « row » et « col » sont des classes du portail, qui mettaient la page en flex pendant un glisser)
+  poignee('sep-tl', 'redim-h', {
     depart: () => document.querySelector('.stage-row').getBoundingClientRect().height,
     applique: (h0, dx, dy) => { d.hs = Math.round(Math.max(380, Math.min(innerHeight * 0.92, h0 + dy))); },
   }, () => { delete d.hs; });
-  poignee('sep-cols', 'col', {
+  poignee('sep-cols', 'redim-v', {
     depart: () => document.querySelector('.script').getBoundingClientRect().width,
     // la largeur du script, rien d'autre : la hauteur (la timeline) reste où on l'a posée
     applique: (l0, dx) => { const tot = document.querySelector('.stage-row').getBoundingClientRect().width; d.ls = Math.round(Math.max(240, Math.min(tot * 0.6, l0 - dx))); },
@@ -1356,10 +1040,11 @@ if ($('b-plein')) $('b-plein').addEventListener('click', () => {
       const sh = x.s;
       const bloc = document.createElement('div');
       bloc.className = 'bloc' + (courant && courant.id === sh.id ? ' courant' : '');
+      bloc.dataset.shot = sh.id;
       bloc.setAttribute('aria-expanded', String(ouverts.has(sh.id)));
       const lg = document.createElement('div'); lg.className = 'lg';
       const te = document.createElement('span'); te.className = 'teinte';
-      te.style.background = sh.teinte || 'var(--surface-4)';
+      te.style.background = sh.teinte || 'var(--panel3)';
       te.title = sh.teinte ? 'teinte moyenne ' + sh.teinte : 'teinte inconnue';
       const no = document.createElement('span'); no.className = 'no'; no.textContent = sh.id;
       const ac = document.createElement('span'); ac.className = 'ac'; ac.textContent = sh.frame || '—'; ac.title = sh.frame || '';
@@ -1424,38 +1109,150 @@ if ($('b-plein')) $('b-plein').addEventListener('click', () => {
     URL.revokeObjectURL(a.href);
   };
 
+  // le document tel que la page le montre (corrections comprises), comme « Exporter le JSON » du rapport de la chaîne
+  document.getElementById('dp-json').onclick = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(DATA, null, 2)], { type: 'application/json' }));
+    a.download = (VOIX.slug || 'film') + '-depouillement.json'; document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  };
+
+  /* ── ce que montrait le rapport-liste de la chaîne (video-shots render), plus dans une page à part :
+     les chiffres, la bande de rythme, les répartitions, les portes qualité. Mêmes calculs que report.js. ── */
+  const TOTAL = Number(DATA.meta && DATA.meta.durationSeconds) || DATA.shots.reduce((a, s) => a + s.seconds, 0) || 1;
+  const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+  // Aller à un plan depuis le dépouillement : il s'ouvre dans la table, la table vient à lui, la vidéo s'y cale
+  // (le Studio le montrera). Pas de scrollIntoView : il fait sauter toute la page ; on défile la fenêtre, sous les barres.
+  const defileVers = (n) => {
+    if (!n) return;
+    const barre = document.querySelector('.fm-bar'), haut = barre ? barre.getBoundingClientRect().bottom : 0;
+    window.scrollTo({ top: Math.max(0, n.getBoundingClientRect().top + scrollY - haut - 12), behavior: 'smooth' });
+  };
+  function allerAuPlan(id) {
+    const sh = DATA.shots.find((x) => x.id === id); if (!sh) return;
+    video.currentTime = sh.start + 0.02; paint(video.currentTime, true);
+    if (!ouverts.has(id)) { ouverts.add(id); rendre(); }
+    defileVers(T.querySelector('.bloc[data-shot="' + id + '"]'));
+  }
+  document.querySelectorAll('#depouillement [data-aller]').forEach((b) => { b.onclick = () => defileVers(document.getElementById(b.dataset.aller)); });
+  function rendreChiffres() {
+    const secs = DATA.shots.map((s) => s.seconds).sort((a, b) => a - b), n = secs.length;
+    const med = n ? (n % 2 ? secs[(n - 1) / 2] : (secs[n / 2 - 1] + secs[n / 2]) / 2) : 0;
+    const box = document.getElementById('dp-chiffres'); box.textContent = '';
+    [['plans', String(n), ''], ['durée', tc(TOTAL), ''], ['plan moyen', (n ? TOTAL / n : 0).toFixed(2), 's'], ['plan médian', med.toFixed(2), 's'],
+     ['min / max', (secs[0] || 0) + ' / ' + (secs[n - 1] || 0), 's'], ['coupes / min', (n / TOTAL * 60).toFixed(1), '']].forEach(([k, v, u]) => {
+      const d = el('div'); const b = el('b', null, v); if (u) b.append(el('small', null, u));
+      d.append(el('span', 'lab', k), b); box.append(d);
+    });
+    // la bande : la couleur du plan (la moyenne de ses images clés) quand on la connaît
+    const bande = document.getElementById('dp-bande'); bande.textContent = '';
+    DATA.shots.forEach((s) => {
+      const b = el('button'); b.type = 'button'; b.dataset.shot = s.id;
+      b.style.width = (s.seconds / TOTAL * 100) + '%';
+      b.style.background = s.teinte || 'var(--panel3)';
+      b.title = s.id + ' · ' + tc(s.start) + ' · ' + s.seconds + ' s · ' + (L.sizes[s.size] || s.size || '');
+      b.onclick = () => allerAuPlan(s.id);
+      bande.append(b);
+    });
+    const grad = document.getElementById('dp-grad'); grad.textContent = '';
+    const pas = [1, 2, 5, 10, 15, 20, 30, 40, 60, 90, 120, 180, 240, 300, 600, 900, 1200, 1800].reverse().find((x) => x <= TOTAL / 5) || 1;
+    for (let i = 0; i * pas < TOTAL && i < 5; i++) grad.append(el('span', null, tc(i * pas).slice(0, 5)));
+    grad.append(el('span', null, tc(TOTAL)));
+  }
+  function rendreRepartition() {
+    const part = (champ, k) => DATA.shots.filter((s) => s[champ] === k).reduce((a, s) => a + s.seconds, 0) / TOTAL * 100;
+    const box = document.getElementById('dp-dist'); box.textContent = '';
+    [['size', 'Échelle de plan', 'la distance — à quelle distance le spectateur se tient', L.sizes],
+     ['category', 'Catégorie', 'la fonction — ce que le plan vient faire', L.cats],
+     ['camera', 'Mouvement', 'le déplacement — par où passe l’émotion', L.cams]]
+      .concat(DATA.shots.some((s) => s.rhythm) ? [['rhythm', 'Rôle de rythme', 'pourquoi le spectateur n’a pas encore décroché', L.rhythms]] : [])
+      .forEach(([champ, titre, sous, noms]) => {
+        const lignes = Object.keys(noms).map((k) => { const it = DATA.shots.filter((s) => s[champ] === k); return { k, nom: noms[k], n: it.length, sec: it.reduce((a, s) => a + s.seconds, 0) }; })
+          .filter((x) => x.n).sort((a, b) => b.sec - a.sec);
+        const art = el('article', 'dp-rep'); art.append(el('h3', null, titre), el('p', null, sous));
+        lignes.forEach((x) => {
+          const r = el('div', 'dp-rep-l');
+          const t = el('div', 'dp-rep-t'); t.append(el('span', null, x.nom), el('small', null, x.n + ' plan' + (x.n > 1 ? 's' : '') + ' · ' + (x.sec / TOTAL * 100).toFixed(1) + ' %'));
+          const barre = el('div', 'dp-rep-b'), i = el('i');
+          i.style.width = (x.sec / TOTAL * 100) + '%';
+          if (champ === 'rhythm') i.style.background = RHYTHM_COLORS[x.k];
+          barre.append(i); r.append(t, barre); art.append(r);
+        });
+        box.append(art);
+      });
+    // la phrase de synthèse, calculée elle aussi
+    const haut = (champ) => [...new Set(DATA.shots.map((s) => s[champ]))].sort((a, b) => part(champ, b) - part(champ, a))[0];
+    const long = DATA.shots.reduce((a, s) => (!a || s.seconds > a.seconds ? s : a), null), court = DATA.shots.reduce((a, s) => (!a || s.seconds < a.seconds ? s : a), null);
+    const hs = haut('size'), hc = haut('category'), note = document.getElementById('dp-note'); note.textContent = '';
+    if (!long) return;
+    note.append('Surtout du ', el('b', null, L.sizes[hs] || hs || '—'), ', ', el('b', null, part('size', hs).toFixed(1) + ' %'), ' de la durée ; ',
+      el('b', null, L.cats[hc] || hc || '—'), ' pèse ', el('b', null, part('category', hc).toFixed(1) + ' %'), '. Plan le plus long ',
+      el('b', null, long.id + ' · ' + long.seconds + ' s'), ', le plus court ', el('b', null, court.id + ' · ' + court.seconds + ' s'), '.');
+  }
+  function rendrePortes() {
+    const box = document.getElementById('dp-portes'); box.textContent = '';
+    if (!PORTES) { box.append(el('p', 'aide', 'portes non calculées au rendu')); return; }
+    const echec = PORTES.gates.filter((g) => !g.ok), saute = PORTES.gates.filter((g) => g.skipped), N = PORTES.gates.length;
+    document.getElementById('dp-portes-n').textContent = [(N - echec.length - saute.length) + ' passées', echec.length ? echec.length + ' en échec' : '',
+      saute.length ? saute.length + ' sautée' + (saute.length > 1 ? 's' : '') : '', PORTES.hints.length ? PORTES.hints.length + ' indice' + (PORTES.hints.length > 1 ? 's' : '') : ''].filter(Boolean).join(' · ');
+    if (echec.length) document.getElementById('dp-aller-portes').textContent = 'Portes qualité · ' + echec.length + ' en échec';
+    const tete = el('div', 'dp-verdict' + (echec.length ? ' aregarder' : ''));
+    tete.append(el('b', null, echec.length ? echec.length + ' porte' + (echec.length > 1 ? 's' : '') + ' en échec' : 'les ' + N + ' portes sont passées'),
+      el('span', null, 'ligne de temps, images clés et annotations vérifiées par le script, de façon déterministe, au rendu de la page'));
+    box.append(tete);
+    const ul = el('ul', 'dp-gates');
+    PORTES.gates.forEach((g) => {
+      const li = el('li', g.skipped ? 'saute' : g.ok ? 'ok' : 'echec');
+      const t = el('div', 'g-t'); t.append(el('b', null, g.label), el('span', 'g-e', g.skipped ? 'sautée' : g.ok ? 'passée' : 'échec'));
+      li.append(t);
+      if (g.skipped) li.append(el('div', 'g-n', g.skipped));
+      if (g.issues && g.issues.length) { const u = el('ul'); g.issues.forEach((x) => u.append(el('li', null, x))); li.append(u); }
+      ul.append(li);
+    });
+    box.append(ul);
+    if (PORTES.hints.length) {
+      const h = el('div', 'dp-indices'); h.append(el('span', 'lab', PORTES.hints.length === 1 ? '1 indice à regarder' : PORTES.hints.length + ' indices à regarder'));
+      PORTES.hints.forEach((x) => {
+        // (le deux-points pleine chasse des indices en chinois, écrit en échappement : aucun idéogramme dans la page)
+        const m = /^(S\\d+)[\\uFF1A:]\\s*(.*)$/.exec(x), p = el('p');
+        if (m) { const b = el('button', 'outil', m[1] + ' ↗'); b.type = 'button'; b.onclick = () => allerAuPlan(m[1]); p.append(b, ' ' + m[2]); } else p.textContent = x;
+        h.append(p);
+      });
+      box.append(h);
+    }
+  }
+  // le plan courant (la vidéo, le Studio) marqué dans la table et sur la bande, sans rien redessiner
+  window.xvPlanCourant = (s) => {
+    T.querySelectorAll('.bloc').forEach((b) => b.classList.toggle('courant', !!s && b.dataset.shot === s.id));
+    document.querySelectorAll('#dp-bande button').forEach((b) => b.classList.toggle('on', !!s && b.dataset.shot === s.id));
+  };
+
   /* Une correction change les noms et les fusions : la vue se refait. */
   window.xvRendreDecoupage = function () { majRoles(); rendre(); };
   majRoles(); rendre();
+  rendreChiffres(); rendreRepartition(); rendrePortes();
+  window.xvPlanCourant(shotAt(video.currentTime || 0));
 })();
 
-/* Le curseur du menu d'onglets. */
-function curseurOnglet() {
-  const a = document.querySelector('#tabs button[aria-pressed="true"]'), c = $('curseur');
-  if (!a || !c) return;
-  c.style.width = a.offsetWidth + 'px';
-  c.style.transform = 'translateX(' + a.offsetLeft + 'px)';
-}
-document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('click', () => setTimeout(curseurOnglet, 0)));
-addEventListener('resize', curseurOnglet);
-if (document.fonts && document.fonts.ready) document.fonts.ready.then(curseurOnglet);
-curseurOnglet();
+/* La vue dans l'adresse : ?vue=casting|depouillement ouvre sur elle, et chaque onglet l'y écrit (le #S05 du plan
+   reste). History.prototype : la page retient replaceState tant qu'elle saute au plan demandé. */
+(function () {
+  const vues = ['studio', 'casting', 'depouillement'];
+  document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('click', () => {
+    const u = new URL(location.href);
+    if (b.dataset.tab === 'studio') u.searchParams.delete('vue'); else u.searchParams.set('vue', b.dataset.tab);
+    History.prototype.replaceState.call(history, history.state, '', u);
+  }));
+  const v = new URLSearchParams(location.search).get('vue');
+  if (vues.indexOf(v) > 0) { const b = document.querySelector('#tabs button[data-tab="' + v + '"]'); if (b) b.click(); }
+})();
 
 </script>
 </body>
 </html>`;
 
 const out = flag('-o', 'studio.html');
-// --fragment : l'hébergeur d'artefacts fournit lui-même <html>/<head>/<body>, on ne
-// livre donc que le contenu (titre, styles, corps, script). La langue et le thème sont
-// posés par script, sinon l'hôte impose le sien.
-let page = html;
-if (rest.includes('--fragment')) {
-  const head = /<head>([\s\S]*?)<\/head>/i.exec(html)[1];
-  const body = /<body[^>]*>([\s\S]*?)<\/body>/i.exec(html)[1];
-  const styles = [...head.matchAll(/<style[\s\S]*?<\/style>/gi)].map((m) => m[0]).join('\n');
-  const title = (/<title>([\s\S]*?)<\/title>/i.exec(head) ?? [])[1] ?? 'Studio';
-  page = `<title>${title}</title>\n<script>document.documentElement.lang='fr';</script>\n${styles}\n${body}`;
-}
-writeFileSync(out, page);
-process.stderr.write(`studio → ${out} (${Math.round(Buffer.byteLength(page) / 1024)} Ko : ${Object.keys(FRAMES).length} images clés, ${Object.keys(OVERLAYS).length} calques, ${Object.keys(PORTRAITS).length} portraits)\n`);
+// (--fragment, pour l'hébergeur d'artefacts de MOVIE_ANALYSE, n'a plus de sens : la page est celle du portail)
+writeFileSync(out, html);
+const pt = PORTES ? `, portes ${PORTES.gates.filter((g) => g.ok && !g.skipped).length} passées / ${PORTES.gates.filter((g) => !g.ok).length} en échec / ${PORTES.gates.filter((g) => g.skipped).length} sautées` : '';
+process.stderr.write(`studio (portail) → ${out} (${Math.round(Buffer.byteLength(html) / 1024)} Ko : ${Object.keys(FRAMES).length} images clés, ${Object.keys(OVERLAYS).length} calques, ${Object.keys(PORTRAITS).length} portraits${pt})\n`);

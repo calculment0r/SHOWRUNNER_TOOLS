@@ -98,9 +98,19 @@ for (const f of pages) {
     const src = /\ssrc="([^"]*)"/.exec(v), repli = /\sdata-repli="([^"]*)"/.exec(v);
     return src && src[1].startsWith(R2_VIDEO) && repli && repli[1] && !/^[a-z]+:|^\//i.test(repli[1]) ? v.replace(src[0], ' src="R2"') : v;
   });
-  // Autonome : aucune ressource ni script ne doit venir du reseau.
-  const externes = sansR2.match(/(?:src|href)="https?:\/\/[^"]+"/g) || [];
+  // Autonome : aucune ressource ni script ne doit venir du reseau. Une page de film dans le portail (studio.mjs,
+  // 29/09 : <meta name="sr-forme" content="portail">) prend le theme du portail comme toutes ses pages -- les feuilles
+  // et l'en-tete communs en chemins relatifs, les deux polices de Google Fonts -- et rien d'autre.
+  const portail = page.includes('<meta name="sr-forme" content="portail">');
+  const externes = (sansR2.match(/(?:src|href)="https?:\/\/[^"]+"/g) || [])
+    .filter((x) => !(portail && /^(?:src|href)="https:\/\/fonts\.(?:googleapis|gstatic)\.com[/"]/.test(x)));
   exige(externes.length === 0, `${f} appelle ${externes.length} ressource(s) externe(s), ex. ${externes[0]}`);
+  if (portail) {
+    for (const lien of ['../../../commun/tokens.css', '../../../commun/base.css', '../../../commun/shell.css', '../../film/film.css', '../../film/film.js']) {
+      exige(page.includes(`"${lien}"`), `${f} : page du portail sans ${lien}`);
+    }
+    exige(!/<style[\s>]/i.test(page), `${f} : page du portail avec sa propre feuille (<style>) -- le theme est dans film.css`);
+  }
   // Le theme est clair par defaut : le sombre passe par data-theme explicite,
   // jamais par la preference du systeme.
   exige(!/@media[^{]*prefers-color-scheme/.test(page), `${f} : prefers-color-scheme est revenu dans le CSS`);

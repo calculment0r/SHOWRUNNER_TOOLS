@@ -2,7 +2,7 @@
 // dépôt, copiées de MOVIE_ANALYSE, et celles faites d'ici), la diarisation, les
 // projets du dépôt partagé, l'état de la chaîne, et « Nouvelle analyse », qui
 // lance la chaîne complète sur DGX2 par la file des rendus (travail analyse.run).
-import { mountHeader, api, jobs, pick, thumb, toast, el, $, $$, href, fmtDur, fmtDate } from '../commun/shell.js';
+import { mountHeader, api, jobs, pick, thumb, toast, el, $, $$, href, fmtDur, fmtDate, dropZone } from '../commun/shell.js';
 
 mountHeader('analyse');
 favicon();
@@ -37,30 +37,60 @@ async function chargeAnalyses() {
   peint();
 }
 
+// les chiffres d'une analyse (plans, personnages, répliques, voix), les mêmes sur les deux sortes de cartes
+function chiffresDe(a) {
+  const c = a.chiffres || {};
+  const perso = c.reunies ? `${c.fiches} fiches de la chaîne, ${c.reunies} réunies par les corrections` : `${c.fiches} fiches de la chaîne`;
+  return el('dl', { class: 'ma-n' },
+    el('div', {}, el('dt', {}, 'plans'), el('dd', {}, nb(c.plans))),
+    el('div', { title: perso }, el('dt', {}, 'personnages'), el('dd', {}, nb(c.personnages))),
+    el('div', {}, el('dt', {}, 'répliques'), el('dd', {}, nb(c.repliques))),
+    el('div', { title: c.voix ? 'diarisation Nemotron embarquée dans le Studio' : 'pas encore de diarisation : le labo la calcule' },
+      el('dt', {}, 'voix'), el('dd', { class: c.voix ? 'ok' : 'non' }, c.voix ? 'oui' : 'non')));
+}
+// les vues de la page du film (Studio, Casting, Dépouillement : une page du portail) et le labo des voix
+function vuesDe(a) {
+  return [
+    a.studio ? el('a', { class: 'tb ghost sm', href: href(a.studio) }, 'Studio') : null,
+    a.casting ? el('a', { class: 'tb ghost sm', href: href(a.casting) }, 'Casting') : null,
+    a.depouillement ? el('a', { class: 'tb ghost sm', href: href(a.depouillement) }, 'Dépouillement') : null,
+    el('a', { class: 'tb ghost sm', href: href(a.labo), title: 'la diarisation de ce film, dans le labo' }, 'Voix'),
+  ];
+}
+
+// un de nos films : en grand, son image, ses chiffres ; l'image ouvre le Studio
+function carteFilm(a) {
+  const c = a.chiffres || {};
+  const genre = [a.genre, dims(c), c.langue].filter(Boolean).join(' · ');
+  return el('article', { class: 'ma-film' },
+    el('a', { class: 'ma-film-im', href: a.studio ? href(a.studio) : null, title: 'ouvrir le Studio',
+      style: a.affiche ? { backgroundImage: `url(${href(a.affiche)})` } : null },
+      el('span', { class: 'kind' }, 'MOVIE_ANALYSE'),
+      c.duree ? el('span', { class: 'dur' }, fmtDur(c.duree)) : null,
+      el('span', { class: 'go' }, 'Ouvrir le Studio →')),
+    el('div', { class: 'ma-film-b' },
+      el('div', { class: 'ma-film-t' }, el('h3', {}, a.titre), el('span', { class: 'ma-s' }, genre || '—')),
+      chiffresDe(a),
+      el('div', { class: 'row' }, ...vuesDe(a), el('span', { class: 'sp' }),
+        el('span', { class: 'lbl', title: 'la vidéo et ses pistes de son sur Cloudflare R2, les corrections dans le dépôt partagé de MOVIE_ANALYSE' },
+          'vidéo sur R2'))));
+}
+
+// une analyse lancée d'ici : la même page, une carte plus petite
 function carte(a) {
   const c = a.chiffres || {};
   const genre = [a.genre, dims(c), c.langue].filter(Boolean).join(' · ');
-  const perso = c.reunies ? `${c.fiches} fiches de la chaîne, ${c.reunies} réunies par les corrections` : `${c.fiches} fiches de la chaîne`;
   return el('article', { class: 'ma-card' },
     el('a', { class: 'ma-im', href: a.studio ? href(a.studio) : null, title: 'ouvrir le Studio',
-      style: a.vignette ? { backgroundImage: `url(${href(a.vignette)})` } : null },
+      style: (a.affiche || a.vignette) ? { backgroundImage: `url(${href(a.affiche || a.vignette)})` } : null },
       el('span', { class: 'kind ' + a.source }, a.source === 'depot' ? 'dépôt' : 'portail'),
       c.duree ? el('span', { class: 'dur' }, fmtDur(c.duree)) : null),
     el('div', { class: 'ma-body' },
       el('div', { class: 'ma-t' }, a.titre),
       el('div', { class: 'ma-s' }, genre || '—'),
-      el('dl', { class: 'ma-n' },
-        el('div', {}, el('dt', {}, 'plans'), el('dd', {}, nb(c.plans))),
-        el('div', { title: perso }, el('dt', {}, 'personnages'), el('dd', {}, nb(c.personnages))),
-        el('div', {}, el('dt', {}, 'répliques'), el('dd', {}, nb(c.repliques))),
-        el('div', { title: c.voix ? 'diarisation Nemotron embarquée dans le Studio' : 'pas encore de diarisation : le labo la calcule' },
-          el('dt', {}, 'voix'), el('dd', { class: c.voix ? 'ok' : 'non' }, c.voix ? 'oui' : 'non'))),
-      el('div', { class: 'row' },
-        a.studio ? el('a', { class: 'tb ghost sm', href: href(a.studio) }, 'Studio') : null,
-        a.depouillement ? el('a', { class: 'tb ghost sm', href: href(a.depouillement) }, 'Dépouillement') : null,
-        el('a', { class: 'tb ghost sm', href: href(a.labo) }, 'Voix'),
-        el('span', { class: 'sp' }),
-        el('span', { class: 'lbl', title: a.run || '' }, a.source === 'depot' ? 'MOVIE_ANALYSE' : fmtDate(a.date)))));
+      chiffresDe(a),
+      el('div', { class: 'row' }, ...vuesDe(a), el('span', { class: 'sp' }),
+        el('span', { class: 'lbl', title: a.run || '' }, fmtDate(a.date)))));
 }
 
 // un travail en cours (ou fini, pas encore relu) : même carte, avec sa progression
@@ -92,11 +122,21 @@ function peint() {
   // les travaux actifs, et les échecs récents ; un travail fini dont l'analyse est déjà dans la liste n'a plus de carte
   const enCours = travaux.filter((j) => j.kind === 'analyse.run' &&
     (['queued', 'running', 'error', 'cancelled', 'interrupted'].includes(j.state) || (j.state === 'done' && !faites.has((j.params || {}).nom))));
+  // nos films (le dépôt, déjà faits) en tête et en grand ; celles lancées d'ici, et les travaux, dessous
+  const films = S.analyses.filter((a) => a.source === 'depot'), ici = S.analyses.filter((a) => a.source !== 'depot');
+  const fb = $('#films');
+  fb.replaceChildren(...films.map(carteFilm));
+  if (!films.length) fb.append(el('p', { class: 'lbl' }, 'aucun film dans analyse/analyses/'));
+  const dFilms = films.reduce((s, a) => s + (a.chiffres?.duree || 0), 0);
+  $('#n-films').textContent = `${films.length} film${films.length > 1 ? 's' : ''} · ${films.reduce((s, a) => s + (a.chiffres?.plans || 0), 0)} plans · ${fmtDur(dFilms)}`;
   const box = $('#analyses');
-  box.replaceChildren(...enCours.map(carteTravail), ...S.analyses.map(carte));
-  if (!box.children.length) box.append(el('p', { class: 'lbl' }, 'aucune analyse'));
+  box.replaceChildren(...enCours.map(carteTravail), ...ici.map(carte));
+  if (!box.children.length) {
+    box.append(el('p', { class: 'ma-note' }, 'Aucune pour l’instant. « Nouvelle analyse » en lance une sur ',
+      S.chaine?.machine || 'DGX2', ' : elle arrive ici, dans la même page du portail que nos films — Studio, Casting, Dépouillement.'));
+  }
   const n = S.analyses.length;
-  $('#n-analyses').textContent = `${n} analyse${n > 1 ? 's' : ''}${enCours.length ? ` · ${enCours.length} travail en cours` : ''}`;
+  $('#n-analyses').textContent = `${ici.length} analyse${ici.length > 1 ? 's' : ''}${enCours.length ? ` · ${enCours.length} travail en cours` : ''}`;
   const plans = S.analyses.reduce((s, a) => s + (a.chiffres?.plans || 0), 0);
   const duree = S.analyses.reduce((s, a) => s + (a.chiffres?.duree || 0), 0);
   const voix = S.analyses.filter((a) => a.chiffres?.voix).length;
@@ -223,7 +263,7 @@ function verifieNom() {
 function pourquoi() {
   if (!S.chaine) return 'lecture de la chaîne';
   if (!S.chaine.pret) return 'la chaîne n’est pas prête : ' + S.chaine.outils.filter((o) => o.requis && !o.ok).map((o) => o.nom).join(', ') + ' — voir « La chaîne » plus bas';
-  if (S.source === 'bib' && !S.video) return 'choisir une vidéo de la bibliothèque';
+  if (S.source === 'bib' && !S.video) return 'choisir une vidéo de la bibliothèque, ou la déposer';
   const url = $('#nv-url').value.trim();
   if (S.source === 'yt') {
     if (!url) return 'coller une adresse YouTube';
@@ -274,8 +314,7 @@ $$('#nv-src .tb').forEach((b) => (b.onclick = () => {
   S.nomVu = ''; verifieNom(); majLancer();
 }));
 
-$('#nv-choisir').onclick = async () => {
-  const [it] = await pick({ kinds: ['video'], title: 'Une vidéo à dépouiller' });
+function prendVideo(it) {
   if (!it) return;
   S.video = it;
   $('#nv-video').replaceChildren(thumb(it, { onclick: () => $('#nv-choisir').click() }));
@@ -283,7 +322,14 @@ $('#nv-choisir').onclick = async () => {
   if (!$('#nv-titre').value.trim()) $('#nv-titre').value = it.title || '';
   if (!$('#nv-nom').dataset.touche) $('#nv-nom').value = slug($('#nv-titre').value);
   verifieNom(); majLancer();
+}
+$('#nv-choisir').onclick = async () => {
+  const [it] = await pick({ kinds: ['video'], title: 'Une vidéo à dépouiller' });
+  prendVideo(it);
 };
+// La règle de Cal (29/09) : tout bloc qui attend un asset accepte un dépôt — une vidéo du disque (elle entre dans la
+// bibliothèque, catégorie Upload, via « analyse ») ou une vignette glissée d'ailleurs dans le portail.
+dropZone($('#nv-bib'), { kinds: ['video'], multiple: false, via: 'analyse', onitems: ([it]) => prendVideo(it) });
 $('#nv-titre').oninput = () => {
   if (S.source === 'bib' && !$('#nv-nom').dataset.touche) $('#nv-nom').value = slug($('#nv-titre').value);
   verifieNom(); majLancer();

@@ -13,7 +13,11 @@
    l'homme à la moustache de Getaround les répliques que Nemotron entendait à 0,41 au lieu de 0,5.
 
    Globales du Studio : DATA, video, D, $ (getElementById), tc, castName, castColor, courtNom, repliquesUniques,
-   paint ; VOIX est posé par studio.mjs (diarisation, mots horodatés, labo). */
+   paint, JETON, PALETTE ; VOIX est posé par studio.mjs (diarisation, mots horodatés, labo). */
+// Les teintes du dessin (le canvas, les pastilles) : les jetons du portail (commun/tokens.css) et la palette des
+// voix (--pv-0…7, déclarée dans analyse/film/film.css), lus à l'exécution — aucune couleur n'est écrite ici.
+const VXC = { ink: JETON('--ink'), ink2: JETON('--ink2'), ink3: JETON('--ink3'), bg: JETON('--bg'), panel3: JETON('--panel3'),
+  grn: JETON('--grn'), cy: JETON('--cy'), amb: JETON('--amb') };
 const VX_POST_DEFAUT = { onset: 0.5, offset: 0.5, pad_onset: 0, pad_offset: 0, min_duration_on: 0, min_duration_off: 0 };
 const VX_POST_CHAMPS = [
   ['onset', 'Seuil d’entrée', 0, 1, 0.01, 'une voix commence au-dessus'],
@@ -23,7 +27,7 @@ const VX_POST_CHAMPS = [
   ['pad_onset', 'Marge avant', 0, 1, 0.01, 'ajoutée au début (s)'],
   ['pad_offset', 'Marge après', 0, 1, 0.01, 'ajoutée à la fin (s)'],
 ];
-const VX_COULEURS_VOIX = ['#3e8ec1', '#819341', '#ab639c', '#389560', '#7a6cbc', '#00a0a1', '#b48c2b', '#c76174'];
+const VX_COULEURS_VOIX = PALETTE('--pv-', 8);
 const VX_CLE = 'movie-analysis-voix-' + (VOIX.slug || '');
 const vxLit = (k, d) => { try { const v = localStorage.getItem(VX_CLE + '-' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } };
 const vxEcrit = (k, v) => { try { localStorage.setItem(VX_CLE + '-' + k, JSON.stringify(v)); } catch (e) {} };
@@ -328,7 +332,7 @@ function vxPistes() {
     P.push({ cle: 'V:' + s, type: 'voix', s, nom: 'V' + (s + 1), court: 'V' + (s + 1), couleur: VX_COULEURS_VOIX[s % 8], lignes: l, voix: [s], presence: [], h: 76, cible: false });
   }
   const voixOff = voixDe('off');
-  P.push({ cle: 'off', type: 'off', nom: 'Personne', court: 'Personne', couleur: '#7c8884', lignes: par.off || [], voix: voixOff, presence: [], h: voixOff.length ? 76 : ((par.off || []).length ? 44 : 30), cible: true });
+  P.push({ cle: 'off', type: 'off', nom: 'Personne', court: 'Personne', couleur: VXC.ink3, lignes: par.off || [], voix: voixOff, presence: [], h: voixOff.length ? 76 : ((par.off || []).length ? 44 : 30), cible: true });
   if (DIAR && VX.brutes) for (let s = 0; s < DIAR.V; s++) P.push({ cle: 'B:' + s, type: 'brute', s, nom: 'V' + (s + 1), court: 'V' + (s + 1), couleur: VX_COULEURS_VOIX[s % 8], lignes: [], voix: [s], presence: [], h: 40, cible: false });
   VX.pistes = P;
 }
@@ -346,7 +350,15 @@ function rendreTimeline() {
 }
 
 /* ═════════════════════════════════════════════════════════════════════════ le dessin ── */
-const vxRgba = (hex, a) => { const n = parseInt(String(hex).slice(1), 16); return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')'; };
+// une teinte (un jeton : #rrggbb, ou rgb(…) si le navigateur la rend ainsi) avec son alpha
+const vxRgba = (c, a) => {
+  c = String(c || '').trim();
+  let m = /^#([0-9a-f]{6})$/i.exec(c);
+  if (m) { const n = parseInt(m[1], 16); return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')'; }
+  m = /^rgba?\(([^)]*)\)$/i.exec(c);
+  if (m) { const p = m[1].split(/[\s,/]+/).filter(Boolean); return 'rgba(' + p[0] + ',' + p[1] + ',' + p[2] + ',' + a + ')'; }
+  return c;
+};
 function vxRond(ctx, x, y, w, h, r) {
   r = Math.min(r, w / 2, h / 2);
   ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
@@ -387,22 +399,23 @@ function vxDessine() {
       ctx.font = '9px "Azeret Mono", monospace'; ctx.textBaseline = 'middle';
       for (let t = Math.ceil(a / pasGrille) * pasGrille; t <= b; t += pasGrille) {
         const x = Math.round(X(t)) + 0.5;
-        ctx.fillStyle = 'rgba(47,107,74,.55)'; ctx.fillRect(x, y + 2, 1, 6);
-        ctx.fillStyle = '#7c8884'; ctx.fillText(pasGrille < 1 ? tc(t) : tc(t).slice(0, -3), x + 4, y + 6);
+        ctx.fillStyle = vxRgba(VXC.grn, 0.55); ctx.fillRect(x, y + 2, 1, 6);
+        ctx.fillStyle = VXC.ink3; ctx.fillText(pasGrille < 1 ? tc(t) : tc(t).slice(0, -3), x + 4, y + 6);
       }
       for (const sh of DATA.shots) {
         if (sh.end < a || sh.start > b) continue;
         const x0 = X(sh.start), x1 = X(sh.end);
-        ctx.fillStyle = sh.teinte && /^#[0-9a-f]{6}$/i.test(sh.teinte) ? sh.teinte : '#1b211e';
+        // (la teinte d'un plan est une mesure — la moyenne de ses images clés —, pas une couleur du thème)
+        ctx.fillStyle = sh.teinte && /^#[0-9a-f]{6}$/i.test(sh.teinte) ? sh.teinte : VXC.panel3;
         ctx.fillRect(x0, y + 16, Math.max(1, x1 - x0 - 1), 12);
-        ctx.fillStyle = 'rgba(10,13,11,.55)'; ctx.fillRect(x0, y + 16, Math.max(1, x1 - x0 - 1), 12);
-        if (x1 - x0 > 26) { ctx.save(); ctx.beginPath(); ctx.rect(x0, y + 16, x1 - x0 - 2, 12); ctx.clip(); ctx.fillStyle = '#e6eae7'; ctx.font = '8px "Venus Rising", sans-serif'; ctx.fillText(sh.id, x0 + 4, y + 22.5); ctx.restore(); }
+        ctx.fillStyle = vxRgba(VXC.bg, 0.55); ctx.fillRect(x0, y + 16, Math.max(1, x1 - x0 - 1), 12);
+        if (x1 - x0 > 26) { ctx.save(); ctx.beginPath(); ctx.rect(x0, y + 16, x1 - x0 - 2, 12); ctx.clip(); ctx.fillStyle = VXC.ink; ctx.font = '8px "Venus Rising", sans-serif'; ctx.fillText(sh.id, x0 + 4, y + 22.5); ctx.restore(); }
       }
       continue;
     }
-    ctx.fillStyle = 'rgba(47,107,74,.12)';
+    ctx.fillStyle = vxRgba(VXC.grn, 0.12);
     for (let t = Math.ceil(a / pasGrille) * pasGrille; t <= b; t += pasGrille) ctx.fillRect(Math.round(X(t)), y, 1, h);
-    ctx.fillStyle = 'rgba(47,107,74,.28)'; ctx.fillRect(0, y + h - 1, w, 1);
+    ctx.fillStyle = vxRgba(VXC.grn, 0.28); ctx.fillRect(0, y + h - 1, w, 1);
     if (r.type === 'onde') { vxOnde(ctx, a, b, w, y, h); continue; }
     // la présence à l'image : un fond léger sur les plans où le personnage est vu
     for (const [p0, p1] of r.presence) { if (p1 < a || p0 > b) continue; ctx.fillStyle = vxRgba(r.couleur, 0.07); ctx.fillRect(X(p0), y, X(p1) - X(p0), h - 1); }
@@ -431,7 +444,7 @@ function vxDessine() {
         for (const [sa, sb] of VX.segs[s] || []) { if (sb < a || sa > b) continue; vxRond(ctx, X(sa), bas + 2, Math.max(2, X(sb) - X(sa) - 1), 3, 1.5); ctx.fill(); }
         ctx.restore();
       }
-      ctx.setLineDash([3, 4]); ctx.strokeStyle = 'rgba(230,234,231,.18)';
+      ctx.setLineDash([3, 4]); ctx.strokeStyle = vxRgba(VXC.ink, 0.18);
       ctx.beginPath(); ctx.moveTo(0, Math.round(Y(VX.post.onset)) + 0.5); ctx.lineTo(w, Math.round(Y(VX.post.onset)) + 0.5); ctx.stroke(); ctx.setLineDash([]);
     }
     if (bande || r.lignes.length) vxLignes(ctx, r, a, b, X, y + 5, r.type === 'off' ? 22 : 28);
@@ -439,7 +452,7 @@ function vxDessine() {
   // la piste visée pendant qu'on glisse une réplique
   if (VX.glisse && VX.glisse.cible) {
     const r = VX.lignesFrise.find((x) => x.cle === VX.glisse.cible);
-    if (r) { ctx.fillStyle = 'rgba(185,207,216,.10)'; ctx.fillRect(0, r.y, w, r.h); ctx.strokeStyle = 'rgba(185,207,216,.7)'; ctx.lineWidth = 1; ctx.strokeRect(0.5, r.y + 0.5, w - 1, r.h - 2); }
+    if (r) { ctx.fillStyle = vxRgba(VXC.cy, 0.10); ctx.fillRect(0, r.y, w, r.h); ctx.strokeStyle = vxRgba(VXC.cy, 0.7); ctx.lineWidth = 1; ctx.strokeRect(0.5, r.y + 0.5, w - 1, r.h - 2); }
   }
   majCue(video.currentTime || 0);
 }
@@ -490,9 +503,10 @@ function vxLignes(ctx, r, a, b, X, y, h) {
     const x0 = X(g.a), x1 = X(g.b), lw = Math.max(3, x1 - x0 - 1);
     const choisi = VX.choisi === g || (VX.glisse && VX.glisse.g === g);
     ctx.fillStyle = vxRgba(r.couleur, choisi ? 0.55 : 0.34); vxRond(ctx, x0, y, lw, h, 4); ctx.fill();
-    if (g.source === 'main' || choisi) { ctx.strokeStyle = choisi ? '#b9cfd8' : 'rgba(230,234,231,.85)'; ctx.lineWidth = 1.4; vxRond(ctx, x0 + 0.7, y + 0.7, lw - 1.4, h - 1.4, 4); ctx.stroke(); }
+    if (g.source === 'main' || choisi) { ctx.strokeStyle = choisi ? VXC.cy : vxRgba(VXC.ink, 0.85); ctx.lineWidth = 1.4; vxRond(ctx, x0 + 0.7, y + 0.7, lw - 1.4, h - 1.4, 4); ctx.stroke(); }
     else if (g.source === 'image' || g.faible) { ctx.setLineDash([3, 3]); ctx.strokeStyle = vxRgba(r.couleur, 0.9); ctx.lineWidth = 1; vxRond(ctx, x0 + 0.5, y + 0.5, lw - 1, h - 1, 4); ctx.stroke(); ctx.setLineDash([]); }
-    if (g.desaccord) { ctx.fillStyle = '#d9a486'; ctx.beginPath(); ctx.arc(x0 + 5, y + 5, 2.5, 0, 7); ctx.fill(); }
+    // la voix contredit la chaîne : à regarder (l'ambre du portail, ce qui attend Cal)
+    if (g.desaccord) { ctx.fillStyle = VXC.amb; ctx.beginPath(); ctx.arc(x0 + 5, y + 5, 2.5, 0, 7); ctx.fill(); }
     if (g.mots && g.mots.length) vxMotsDans(ctx, g.mots, X, y, h, x0, x0 + lw, g.texte, X(b));
     else { const tx = Math.max(x0, 0) + 4; vxTexteDans(ctx, g.texte, tx, y, Math.min(x0 + lw, X(b)) - 4 - tx, h); }
     VX.boites.push({ x0, x1: x0 + lw, y0: y, y1: y + h, g, piste: r.cle });
@@ -515,7 +529,7 @@ function vxMotsDans(ctx, mots, X, y, h, x0, x1, texte, xVu) {
   }
   if (!pos) { const tx = Math.max(x0, 0) + 4; vxTexteDans(ctx, texte, tx, y, Math.min(x1, xVu) - 4 - tx, h); return; }
   ctx.save(); ctx.beginPath(); ctx.rect(x0, y, x1 - x0, h); ctx.clip();
-  ctx.fillStyle = '#e6eae7'; ctx.textBaseline = 'middle'; police(taille);
+  ctx.fillStyle = VXC.ink; ctx.textBaseline = 'middle'; police(taille);
   mots.forEach((m, k) => ctx.fillText(mw[k], pos[k], y + h / 2));
   ctx.restore();
 }
@@ -537,7 +551,7 @@ function vxTexteDans(ctx, texte, x, y, w, h) {
   if (lignes.length > max) { lignes = lignes.slice(0, max); lignes[max - 1] = ellipse(lignes[max - 1]); }
   lignes = lignes.map((l) => (ctx.measureText(l).width > wt ? ellipse(l) : l));
   ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
-  ctx.fillStyle = '#e6eae7'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = VXC.ink; ctx.textBaseline = 'middle';
   const y0 = y + (h - lignes.length * pas) / 2 + pas / 2;
   lignes.forEach((l, i) => ctx.fillText(l, x + 2, y0 + i * pas));
   ctx.restore();
@@ -583,7 +597,7 @@ function vxOnde(ctx, a, b, w, y, h) {
     const p0 = Math.max(0, Math.floor((g.a - a) / (b - a) * w)), p1 = Math.min(w, Math.ceil((g.b - a) / (b - a) * w));
     for (let p = p0; p < p1; p++) if (!teinte[p]) teinte[p] = r.type === 'off' ? null : r.couleur;
   }
-  const couleur = (p, fort) => (teinte[p] ? vxRgba(teinte[p], fort ? 0.95 : 0.5) : (fort ? 'rgba(200,210,205,.7)' : 'rgba(156,168,162,.35)'));
+  const couleur = (p, fort) => (teinte[p] ? vxRgba(teinte[p], fort ? 0.95 : 0.5) : (fort ? vxRgba(VXC.ink, 0.7) : vxRgba(VXC.ink2, 0.35)));
   if (O.etat === 'pret') {
     const k = amp / O.crete, spp = (b - a) * O.taux / w;
     if (spp < 2) {
@@ -619,8 +633,8 @@ function vxOnde(ctx, a, b, w, y, h) {
       ctx.fillStyle = couleur(px, false); ctx.fillRect(px, mid - hh, 1, hh * 2);
     }
   }
-  ctx.fillStyle = 'rgba(230,234,231,.10)'; ctx.fillRect(0, Math.round(mid), w, 1);
-  if (O.etat === 'charge') { ctx.fillStyle = '#7c8884'; ctx.font = '400 9px "Azeret Mono", monospace'; ctx.textBaseline = 'top'; ctx.fillText('DÉCODAGE DU SON…', 6, y + 4); }
+  ctx.fillStyle = vxRgba(VXC.ink, 0.10); ctx.fillRect(0, Math.round(mid), w, 1);
+  if (O.etat === 'charge') { ctx.fillStyle = VXC.ink3; ctx.font = '400 9px "Azeret Mono", monospace'; ctx.textBaseline = 'top'; ctx.fillText('DÉCODAGE DU SON…', 6, y + 4); }
 }
 
 /* ═══════════════════════════════════════════════════════════════════ la lecture ── */
@@ -644,7 +658,7 @@ function majSousTitre(t) {
   box.dataset.cle = cle;
   box.textContent = '';
   for (const g of ici) {
-    const r = VX.pistes.find((x) => x.cle === g.piste) || { couleur: '#7c8884', court: '' };
+    const r = VX.pistes.find((x) => x.cle === g.piste) || { couleur: VXC.ink3, court: '' };
     const ligne = document.createElement('div'); ligne.className = 'ligne';
     const qui = document.createElement('span'); qui.className = 'qui';
     const i = document.createElement('i'); i.style.background = r.couleur;
@@ -801,7 +815,7 @@ function vxMenu(g, clientX, clientY) {
     m.append(b);
   };
   for (const c of DATA.cast) bouton(castColor(c.id), c.id + ' · ' + c.name, c.id, g.perso === c.id);
-  bouton('#7c8884', 'Personne — voix off, narrateur', '', !g.perso);
+  bouton(VXC.ink3, 'Personne — voix off, narrateur', '', !g.perso);
   if (g.source === 'main') { m.append(document.createElement('hr')); bouton('transparent', 'Revenir à l’automatique', null, false); }
   plot.append(m);
   const mw = m.offsetWidth, mh = m.offsetHeight;

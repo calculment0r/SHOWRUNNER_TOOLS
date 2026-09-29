@@ -22,7 +22,7 @@ Ses documents de reprise y restent et font foi pour l'histoire et les décisions
 
 | ici | là-bas | |
 |---|---|---|
-| `analyses/getaround/`, `analyses/wall/` | `analyses/<film>/` | les pages publiées (Studio `index.html`, `depouillement.html`, autonomes : images et polices en base64) et leurs données (`shots.json`, `corrections.json`, `diarisation.json`, `mots.json`, `son.json`, `sceneflow.json`, doublages, `vignette.jpg`) |
+| `analyses/getaround/`, `analyses/wall/` | `analyses/<film>/` | les pages publiées (Studio `index.html`, `depouillement.html`, autonomes : images et polices en base64) et leurs données (`shots.json`, `corrections.json`, `diarisation.json`, `mots.json`, `son.json`, `sceneflow.json`, doublages, `vignette.jpg`). **Depuis le 29/09 les pages sont re-rendues dans la forme du portail** (voir plus bas) : les données et les images sont celles-là, inchangées |
 | `diarisation/index.html` | `outils/diarisation/index.html` | le labo Nemotron |
 | `chaine/` | `skill/` | toute la chaîne (`analyse.sh`, `studio.mjs`, `voix.js`…, 51 fichiers) |
 | `outils/banc/`, `outils/casting.mjs`, `outils/controle.mjs`, `outils/ressors.mjs` | `outils/…` | le banc d'essai du Studio, le recollage du casting, les contrôles, la ressortie des images d'une page |
@@ -30,7 +30,8 @@ Ses documents de reprise y restent et font foi pour l'histoire et les décisions
 | `commun/projets.js` | `commun/projets.js` | lu par la page de diarisation (noms des projets) |
 
 Ajouté ici : `index.html`, `analyse.js`, `analyse.css` (l'accueil de l'outil, dans le thème du
-portail), `analyses/<film>/portail.json` (titre accentué et genre, repris de `DU_DEPOT` dans
+portail), `film/film.css` et `film/film.js` (le cadre de la page d'un film, 29/09),
+`outils/rendre-films.sh` (re-rendre nos films), `analyses/<film>/portail.json` (titre accentué et genre, repris de `DU_DEPOT` dans
 `commun/projets.js`), `diarisation/portail.css` (l'en-tête du portail sur la page),
 `outils/faux/analyse.sh` (la chaîne factice des essais), ce fichier. Le serveur :
 `server/tools/analyse.py`.
@@ -63,6 +64,32 @@ portail), `analyses/<film>/portail.json` (titre accentué et genre, repris de `D
 - `outils/casting.mjs` (`../chaine/casting-parts.mjs`), `outils/banc/banc.mjs`
   (`chaine/serve.mjs`), `outils/controle.mjs` (à lancer depuis `analyse/` : les analyses et
   `diarisation/index.html` ; plus l'accueil ni `.nojekyll`).
+
+### Le 29/09 : nos films dans le portail (Cal : « tu as gardé l'ancienne page »)
+
+Le Studio n'est plus une page autonome : `chaine/studio.mjs` n'écrit plus que **la page du portail**
+(thème et en-tête communs, `film/film.css` et `film/film.js`, Studio · Casting · Dépouillement dans une
+page, Voix vers le labo) — l'autonome reste celle de MOVIE_ANALYSE, qui la publie de son côté. Le
+pourquoi et les preuves : `docs/etudes/analyse.md` §6. Retouché :
+
+- `chaine/studio.mjs` : le gabarit (plus de `<style>`, de polices embarquées, de barre X—VERSE, de
+  bascule de thème, d'iframe), le Dépouillement enrichi de ce que montrait le rapport (chiffres, bande de
+  rythme, répartitions, portes qualité par `validate` de `video-shots.mjs`), `?vue=`, les teintes lues
+  dans les jetons ; le script du Studio est le même ;
+- `chaine/voix.js`, `chaine/son.js` : les couleurs du canvas et des pastilles lues dans les jetons
+  (`VXC`, `PALETTE('--pv-', 8)`) au lieu d'être écrites ;
+- `analyses/getaround/index.html`, `analyses/wall/index.html` : re-rendues par `outils/rendre-films.sh`
+  (mêmes données, mêmes images, vérifié bloc par bloc) ; `depouillement.html` ne fait plus que renvoyer
+  à `./?vue=depouillement` ; `affiche.jpg` ajoutée (l'image clé de la vignette, en 1280 px) ;
+  `portail.json` : `forme: portail` ;
+- `outils/banc/banc.mjs` : `--base <url du portail>` et `PLAYWRIGHT=<package.json>` (le Chromium de DGX2) ;
+  `outils/controle.mjs` : une page de film du portail peut charger les feuilles communes et les deux
+  polices Google, pas de `<style>` ; `outils/casting.mjs` : ignore le renvoi `depouillement.html` ;
+  `outils/faux/analyse.sh` : rend sa page par le vrai `studio.mjs` quand node est là.
+
+`chaine/voix.css` n'est plus lu (ses styles sont dans `film/film.css`) ; `chaine/report.js`,
+`report.css` restent pour `video-shots.mjs render` (le rapport-liste de la chaîne, que le portail ne
+publie plus).
 
 Fins de ligne : le clone du poste est en CRLF ; le `.gitattributes` du portail range tout en LF.
 `video-shots.mjs` était gardé en CRLF dans MOVIE_ANALYSE pour que le rendu y reproduise les pages

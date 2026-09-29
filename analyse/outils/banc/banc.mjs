@@ -2,11 +2,15 @@
 // Le banc d'essai du Studio : les pages d'analyse ouvertes dans Chrome headless (CDP), rejouées comme par l'utilisateur,
 // et contrôlées. À relancer après chaque changement de skill/voix.js, son.js, studio.mjs, casting-parts.mjs.
 //
-//   node outils/banc/banc.mjs [getaround wall …] [--etat <film>=<fichier.json>] [--photos <dossier>]
+//   node outils/banc/banc.mjs [getaround wall …] [--etat <film>=<fichier.json>] [--photos <dossier>] [--base <url>]
 //
 // Le dépôt partagé (Cloudflare, et l'ancien de dgx1) est INTERCEPTÉ (Fetch.enable) : rien n'y est lu ni écrit. Par défaut il est vide ;
 // --etat getaround=partage.json le remplit (ex. une copie du vrai : curl …/corrections/getaround.json).
-// Les pages sont servies depuis le dépôt (skill/serve.mjs, port 8811). Code de sortie 1 au moindre échec.
+// Les pages sont servies depuis le dépôt (skill/serve.mjs, port 8811) ; dans le portail, où elles chargent le thème et
+// l'en-tête communs (../../../commun/), --base http://127.0.0.1:8795/analyse les prend au portail qui tourne.
+// CHROME=<chemin> : le navigateur. PLAYWRIGHT=<package.json> : le Chromium lancé par playwright, ouvert aussi en CDP
+// (sur DGX2 : PLAYWRIGHT=/home/dgx/Character_Sheet/package.json — le même binaire lancé à la main n'y charge aucune
+// page http, playwright sait le lancer). Code de sortie 1 au moindre échec.
 //
 // Ce qui est vérifié :
 //   timeline   chaque instant de voix dessiné sur une seule piste, la courbe sous chaque réplique sur sa piste
@@ -20,6 +24,7 @@
 //              on y saute, elle se lit, la forme d'onde se dessine, aucun message « vidéo manquante »
 //   repli      R2 en panne (ses requêtes échouent) : la vidéo et les pistes de son viennent d'à côté de la page, sans message
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -31,20 +36,32 @@ const opt = (n) => { const i = args.indexOf(n); return i < 0 ? null : args.splic
 const etats = {};
 for (let e; (e = opt('--etat'));) { const [f, p] = e.split('='); etats[f] = readFileSync(p, 'utf8'); }
 const PHOTOS = opt('--photos');
+const BASE = opt('--base');
 const films = args.length ? args : ['getaround', 'wall'];
 const CHROME = process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const VERIF = readFileSync(join(ICI, 'verif.js'), 'utf8');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// d'où viennent les pages : le portail (--base), sinon le petit serveur du dépôt
+const ORIGINE = BASE ? BASE.replace(/\/$/, '') : 'http://127.0.0.1:8811';
 
 // le serveur des pages
 let serveur = null;
-try { await fetch('http://127.0.0.1:8811/'); } catch { serveur = spawn(process.execPath, [join(RACINE, 'chaine', 'serve.mjs'), RACINE, '8811'], { stdio: 'ignore' }); await wait(800); }
+if (!BASE) { try { await fetch('http://127.0.0.1:8811/'); } catch { serveur = spawn(process.execPath, [join(RACINE, 'chaine', 'serve.mjs'), RACINE, '8811'], { stdio: 'ignore' }); await wait(800); } }
 
 const SERVICE = 'https://movie-analysis-partage.luxigone.workers.dev';
 async function navigateur(film, { panneR2 = false } = {}) {
   const port = 9400 + Math.floor(Math.random() * 400);
-  const ch = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${join(tmpdir(), 'banc-studio-' + Date.now())}`,
-    '--window-size=1600,1100', '--force-device-scale-factor=1', '--autoplay-policy=no-user-gesture-required', 'about:blank'], { stdio: 'ignore' });
+  let ch = null, pw = null;
+  if (process.env.PLAYWRIGHT) {
+    const { chromium } = createRequire(process.env.PLAYWRIGHT)('playwright');
+    pw = await chromium.launch({ args: [`--remote-debugging-port=${port}`, '--remote-allow-origins=*', '--autoplay-policy=no-user-gesture-required'] });
+    await (await pw.newContext({ viewport: { width: 1600, height: 1100 } })).newPage();
+  } else {
+    ch = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${join(tmpdir(), 'banc-studio-' + Date.now())}`,
+      '--window-size=1600,1100', '--force-device-scale-factor=1', '--autoplay-policy=no-user-gesture-required',
+      // CHROME_ARGS : ce que la machine demande en plus (ex. --no-sandbox)
+      ...(process.env.CHROME_ARGS || '').split(' ').filter(Boolean), 'about:blank'], { stdio: 'ignore' });
+  }
   let tabs; for (let i = 0; i < 60; i++) { try { tabs = await (await fetch(`http://127.0.0.1:${port}/json`)).json(); break; } catch { await wait(200); } }
   const ws = new WebSocket(tabs.find((t) => t.type === 'page').webSocketDebuggerUrl);
   await new Promise((r) => { ws.onopen = r; });
@@ -73,7 +90,7 @@ async function navigateur(film, { panneR2 = false } = {}) {
     .map((p) => ({ urlPattern: SERVICE + p })).concat([{ urlPattern: 'https://dgx1.tail6c4306.ts.net/*' }]) });
   const api = {
     exceptions, puts, depot: () => depot,
-    async ouvre() { await send('Page.navigate', { url: `http://127.0.0.1:8811/analyses/${film}/` }); await wait(4500); await api.ev(VERIF + ';window.confirm=()=>true;'); },
+    async ouvre() { await send('Page.navigate', { url: `${ORIGINE}/analyses/${film}/` }); await wait(4500); await api.ev(VERIF + ';window.confirm=()=>true;'); },
     async ev(expr) { const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }); if (r.result.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description || 'évaluation'); return r.result.result.value; },
     async glisse(x0, y0, x1, y1) {
       const souris = (type, x, y, b) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: b, clickCount: 1 });
@@ -88,7 +105,7 @@ async function navigateur(film, { panneR2 = false } = {}) {
       const s = await send('Page.captureScreenshot', { format: 'png', clip: { x: r.x, y: r.y, width: r.w, height: r.h, scale: 1 }, captureBeyondViewport: true });
       writeFileSync(join(PHOTOS, `${film}-${nom}.png`), Buffer.from(s.result.data, 'base64'));
     },
-    ferme() { try { ws.close(); } catch {} ch.kill(); },
+    ferme() { try { ws.close(); } catch {} if (pw) pw.close().catch(() => {}); else ch.kill(); },
   };
   return api;
 }
@@ -191,7 +208,7 @@ const SCENARIOS = {
     await api.ouvre();
     const r = await api.ev(MESURE_VIDEO);
     const fautes = [];
-    if (!/^http:\/\/127\.0\.0\.1:8811\//.test(r.src)) fautes.push('R2 en panne, la vidéo ne vient pas d’à côté de la page : ' + r.src);
+    if (!r.src.startsWith(ORIGINE + '/')) fautes.push('R2 en panne, la vidéo ne vient pas d’à côté de la page : ' + r.src);
     fautes.push(...fautesLecture(r));
     let son = '';
     const versions = await api.ev(`(typeof SON !== 'undefined' && SON) ? SON.versions.map(v=>v.id).filter(v=>v!=='vo') : []`);
@@ -203,7 +220,7 @@ const SCENARIOS = {
       if (!s.sources) fautes.push(`${versions[0]} : aucune piste ne joue (${s.etat})`);
       son = ` · ${versions[0]} : ${s.l.length} pistes d'à côté`;
     }
-    return { ok: !fautes.length, detail: `${r.src.replace('http://127.0.0.1:8811', '')} · saut ${r.apresSaut} s · onde ${r.onde}${son}` + (fautes.length ? ' — ' + fautes.join(' | ') : '') };
+    return { ok: !fautes.length, detail: `${r.src.replace(ORIGINE, '')} · saut ${r.apresSaut} s · onde ${r.onde}${son}` + (fautes.length ? ' — ' + fautes.join(' | ') : '') };
   },
   async partage(api) {
     await api.ouvre();
@@ -229,7 +246,7 @@ const SCENARIOS = {
 
 let echecs = 0;
 for (const film of films) {
-  if (!existsSync(join(RACINE, 'analyses', film, 'index.html'))) { console.log(`${film} : pas de page`); echecs++; continue; }
+  if (!BASE && !existsSync(join(RACINE, 'analyses', film, 'index.html'))) { console.log(`${film} : pas de page`); echecs++; continue; }
   for (const [nom, sc] of Object.entries(SCENARIOS)) {
     const api = await navigateur(film, { panneR2: nom === 'repli' });
     let r;

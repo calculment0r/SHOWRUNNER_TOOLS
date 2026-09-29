@@ -96,6 +96,10 @@ say "9b. studio — vidéo, scénario, timeline, fiche du plan, silhouettes"
 if [ -n "${FAUX_DEPUIS:-}" ]; then
   node "$CHAINE/studio.mjs" shots.json --video "$(basename "$video")" --frames frames --overlays overlays --portraits portraits \
     --report "$slug-liste.html" --css "$CHAINE/report.css" -o "$slug.html"
+elif command -v node >/dev/null 2>&1; then
+  # la vraie mise en page (la forme du portail, 29/09) sur les données factices : quelques millisecondes, sans GPU ;
+  # le contrôle vérifie ainsi qu'une nouvelle analyse a la forme des films du dépôt
+  node "$CHAINE/studio.mjs" shots.json --video "$(basename "$video")" --frames frames -o "$slug.html"
 else
   printf '<!DOCTYPE html><html lang="fr"><meta charset="utf-8"><title>%s</title><video src="%s"></video><iframe src="%s"></iframe></html>\n' \
     "$title" "$(basename "$video")" "$slug-liste.html" > "$slug.html"

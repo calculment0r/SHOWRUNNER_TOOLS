@@ -168,7 +168,7 @@ if (SON) {
     for (const l of ici) {
       const ligne = document.createElement('div'); ligne.className = 'ligne';
       const qui = document.createElement('span'); qui.className = 'qui';
-      const i = document.createElement('i'); i.style.background = l.qui ? castColor(l.qui) : '#7c8884';
+      const i = document.createElement('i'); i.style.background = l.qui ? castColor(l.qui) : VXC.ink3;
       qui.append(i, l.qui || 'off');
       const dit = document.createElement('span'); dit.className = 'dit';
       if (l.mots) for (const [w, a, b] of l.mots) { const s = document.createElement('span'); s.className = 'm' + (a <= t ? (t < b ? ' ici' : ' dit') : ''); s.textContent = w; dit.append(s); }

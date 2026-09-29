@@ -134,19 +134,43 @@ def chiffres(d: Path) -> dict:
     }
 
 
+# La page d'un film dans le portail (chaine/studio.mjs, 29/09) le dit elle-même en tête : elle charge le thème et
+# l'en-tête du portail, et porte le Studio, le Casting et le Dépouillement (?vue=…). Une page d'avant (autonome,
+# X—VERSE) ne le dit pas : ses liens restent les siens.
+FORME = b'<meta name="sr-forme" content="portail">'
+
+
+def forme(page: Path) -> str:
+    try:
+        with open(page, "rb") as f:
+            return "portail" if FORME in f.read(4096) else "autonome"
+    except OSError:
+        return "absente"
+
+
 def _entree(d: Path, source: str) -> dict:
     base = ("analyse/analyses/" if source == "depot" else "analyse/runs/") + d.name + "/"
     info = _lit_json(d / "portail.json") or {}
     c = chiffres(d)
-    dep = info.get("depouillement") or ("depouillement.html" if (d / "depouillement.html").is_file() else None)
     page = info.get("page") or "index.html"
+    f = forme(d / page)
+    if f == "portail":
+        # une seule page, trois vues ; l'adresse du dossier plutôt que index.html
+        studio = base if page == "index.html" else base + page
+        vues = {"studio": studio, "casting": studio + "?vue=casting", "depouillement": studio + "?vue=depouillement"}
+    else:
+        dep = info.get("depouillement") or ("depouillement.html" if (d / "depouillement.html").is_file() else None)
+        vues = {"studio": base + page if f != "absente" else None, "casting": None,
+                "depouillement": base + dep if dep and (d / dep).is_file() else None}
+    vignette = base + "vignette.jpg" if (d / "vignette.jpg").is_file() else None
     return {
-        "id": d.name, "source": source,
+        "id": d.name, "source": source, "forme": f,
         "titre": info.get("titre") or c["titre_chaine"] or d.name,
         "genre": info.get("genre", ""),
-        "studio": base + page if (d / page).is_file() else None,
-        "depouillement": base + dep if dep and (d / dep).is_file() else None,
-        "vignette": base + "vignette.jpg" if (d / "vignette.jpg").is_file() else None,
+        **vues,
+        "vignette": vignette,
+        # l'image en grand des cartes « Nos films » (une image clé à 1280 px) ; à défaut, la vignette
+        "affiche": base + "affiche.jpg" if (d / "affiche.jpg").is_file() else vignette,
         "labo": "analyse/diarisation/?projet=" + urllib.parse.quote(d.name),
         "date": info.get("date") or _iso((d / page).stat().st_mtime if (d / page).is_file() else d.stat().st_mtime),
         "job": info.get("job"), "run": info.get("run"), "origine": info.get("origine"),
@@ -553,10 +577,30 @@ def run(ctx):
     return {"analyse": nom, "open": f"analyse/runs/{nom}/", "run": str(w), "pages": str(dest)}
 
 
+def _affiche(video: Path, plan: dict, dest: Path) -> None:
+    """L'image en grand de la carte du film : l'image clé du plan le plus long, au même instant que
+    video-shots frames (15 % du plan), en 1280 px au lieu de 480. Une image par ffmpeg ; rien s'il échoue
+    (la carte prend alors la vignette)."""
+    if not video.is_file() or not shutil.which("ffmpeg"):
+        return
+    try:
+        a, b = float(plan.get("start") or 0), float(plan.get("end") or 0)
+        t = a + 0.15 * max(0.0, b - a)
+        subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-y", "-ss", f"{t:.3f}", "-i", str(video), "-frames:v", "1",
+                        "-vf", "scale='min(1280,iw)':-2", "-q:v", "4", str(dest)], capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        pass
+    if dest.is_file() and dest.stat().st_size == 0:
+        dest.unlink()
+
+
 def _publie(w: Path, log: Path, nom: str, titre: str, video_nom: str, p: dict, job_id: str) -> Path:
-    """Les pages produites (le Studio, le dépouillement), la vidéo à côté
-    (la page la lit par son nom, en chemin relatif), les données et une
-    vignette — dans les données du portail, servies sous analyse/runs/<nom>/."""
+    """La page produite (le Studio, dans la forme du portail : Casting et
+    Dépouillement sont ses vues), la vidéo à côté (la page la lit par son
+    nom, en chemin relatif), les données, une vignette et une affiche —
+    dans les données du portail, servies sous analyse/runs/<nom>/. Le
+    rapport-liste de la chaîne (<slug>-liste.html, l'ancienne page à part)
+    n'est repris que si le Studio produit est encore de l'ancienne forme."""
     faites = PAGE_FAITE.findall(_journal(log))
     slug = faites[-1] if faites else None
     if not slug:
@@ -569,9 +613,11 @@ def _publie(w: Path, log: Path, nom: str, titre: str, video_nom: str, p: dict, j
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir(parents=True)
     shutil.copyfile(studio, tmp / "index.html")
-    liste = w / f"{slug}-liste.html"
-    if liste.is_file():
+    f_page = forme(tmp / "index.html")
+    liste, liste_nom = w / f"{slug}-liste.html", None
+    if f_page != "portail" and liste.is_file():
         shutil.copyfile(liste, tmp / liste.name)
+        liste_nom = liste.name
     if (w / video_nom).is_file():
         _lien(w / video_nom, tmp / video_nom)
     for f in ("shots.json", "shots.md", "sceneflow.json", "adherence.json", "corrections.json"):
@@ -587,9 +633,10 @@ def _publie(w: Path, log: Path, nom: str, titre: str, video_nom: str, p: dict, j
         img = w / "frames" / f"{long['id']}a.jpg"
         if img.is_file():
             shutil.copyfile(img, tmp / "vignette.jpg")
+        _affiche(w / video_nom, long, tmp / "affiche.jpg")
     (tmp / "portail.json").write_text(json.dumps({
-        "titre": titre or shots.get("title") or nom, "page": "index.html",
-        "depouillement": liste.name if liste.is_file() else None, "video": video_nom,
+        "titre": titre or shots.get("title") or nom, "page": "index.html", "forme": f_page,
+        "depouillement": liste_nom, "video": video_nom,
         "origine": {"item": p.get("item"), "url": p.get("url"), "langue": p.get("langue"), "sceneflow": p.get("sceneflow")},
         "run": str(w), "job": job_id, "chaine": str(skill()), "date": library.now(),
     }, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -634,17 +681,46 @@ def selftest(call, ok) -> None:
     ok(bool(g) and g["chiffres"]["plans"] == 12 and round(g["chiffres"]["duree"]) == 30, f"getaround : 12 plans, 30 s ({g and g['chiffres']})")
     ok(bool(wall) and wall["chiffres"]["plans"] == 45 and wall["chiffres"]["personnages"] == 10,
        f"wall : 45 plans, 10 personnages après les fusions ({wall and wall['chiffres']})")
-    ok(bool(g) and g["chiffres"]["voix"] and g["studio"] == "analyse/analyses/getaround/index.html", "getaround a ses voix et son Studio")
+    ok(bool(g) and g["chiffres"]["voix"] and g["studio"] == "analyse/analyses/getaround/", f"getaround a ses voix et son Studio ({g and g['studio']})")
+    # nos films, dans la page du portail (29/09) : le thème et l'en-tête communs, trois vues dans une page
     for a in (g, wall):
         if a:
-            for k in ("studio", "depouillement", "vignette"):
-                st, _ = call("GET", "/" + a[k])
+            ok(a["forme"] == "portail", f"{a['id']} : la page est dans la forme du portail ({a['forme']})")
+            ok(a["casting"] == a["studio"] + "?vue=casting" and a["depouillement"] == a["studio"] + "?vue=depouillement",
+               f"{a['id']} : Casting et Dépouillement sont des vues de la page ({a['casting']}, {a['depouillement']})")
+            for k in ("studio", "casting", "depouillement", "vignette", "affiche"):
+                st, _ = call("GET", "/" + (a[k] or "absent"))
                 ok(st == 200, f"{a['id']} : {k} se sert ({st})")
-    for page in ("/analyse/", "/analyse/diarisation/", "/analyse/diarisation/portail.css", "/analyse/commun/projets.js"):
+            st, page = call("GET", "/" + a["studio"])
+            txt = page.decode("utf-8", "replace") if isinstance(page, bytes) else ""
+            liens = ('href="../../../commun/tokens.css"', 'href="../../../commun/base.css"', 'href="../../../commun/shell.css"',
+                     'href="../../film/film.css"', 'src="../../film/film.js"')
+            ok(all(x in txt for x in liens) and "<style" not in txt and 'class="bar"' not in txt and "xverse-theme" not in txt,
+               f"{a['id']} : le thème et l'en-tête du portail, ni feuille ni barre X—VERSE à elle")
+            ok('data-repli="' in txt and "movie-analysis-partage.luxigone.workers.dev/video/" in txt,
+               f"{a['id']} : la vidéo sur R2, le fichier d'à côté en repli")
+            # l'ancienne page du dépouillement n'est plus : son adresse, pour les liens d'avant, mène à la vue
+            ancienne = DEPOT / a["id"] / "depouillement.html"
+            ok(not ancienne.exists() or (ancienne.stat().st_size < 4096 and b"?vue=depouillement" in ancienne.read_bytes()),
+               f"{a['id']} : plus d'ancienne page de dépouillement à part (depouillement.html ne fait que renvoyer à la vue)")
+    for page in ("/analyse/", "/analyse/film/film.css", "/analyse/film/film.js", "/analyse/diarisation/",
+                 "/analyse/diarisation/portail.css", "/analyse/commun/projets.js"):
         st, _ = call("GET", page)
         ok(st == 200, f"{page} se sert ({st})")
     st, _ = call("GET", "/analyse/runs/../../jobs.json")
     ok(st == 404, "les pages produites ne sortent pas de leur dossier")
+
+    # le thème (CLAUDE.md) : aucune couleur écrite hors de la palette de film.css — le script des pages lit les jetons
+    teinte = re.compile(r"#[0-9a-fA-F]{3,8}\b|rgba?\(\s*\d")
+    css = (TOOL / "film" / "film.css").read_text(encoding="utf-8")
+    marque = "/* ── fin de la palette"
+    ok(marque in css and not teinte.search(css.split(marque, 1)[-1]),
+       "film.css : aucune couleur hors de la palette déclarée en tête")
+    ok(not re.search(r"(?<![-\w])border(-(top|right|bottom|left))?(-(width|style|color))?\s*:(?!\s*(0|none)\s*[;}])", css),
+       "film.css : des filets, jamais de bordures")
+    for f in ("voix.js", "son.js", "studio.mjs", "casting-parts.mjs"):
+        src = (TOOL / "chaine" / f).read_text(encoding="utf-8")
+        ok(not re.search(r"['\"]#[0-9a-fA-F]{3,8}['\"]|rgba?\(\s*\d", src), f"chaine/{f} : aucune couleur écrite")
 
     # ce qu'on refuse avant de lancer
     st, _ = call("POST", "/api/analyse/run", {"titre": "rien"})
@@ -683,8 +759,17 @@ def selftest(call, ok) -> None:
     ok(j.get("result", {}).get("open") == "analyse/runs/essai-de-film/", f"le résultat mène à la page ({j.get('result')})")
     st, res = call("GET", "/api/analyse/list")
     faite = {a["id"]: a for a in res.get("analyses", [])}.get("essai-de-film")
-    ok(bool(faite) and faite["source"] == "portail" and faite["studio"] == "analyse/runs/essai-de-film/index.html",
+    ok(bool(faite) and faite["source"] == "portail" and faite["studio"] in ("analyse/runs/essai-de-film/", "analyse/runs/essai-de-film/index.html"),
        f"l'analyse faite est dans la liste ({faite})")
+    if faite and shutil.which("node"):
+        # la chaîne factice rend sa page par le vrai studio.mjs : une nouvelle analyse a la forme de nos films
+        ok(faite["forme"] == "portail" and faite["depouillement"] == "analyse/runs/essai-de-film/?vue=depouillement",
+           f"une nouvelle analyse a la forme du portail, Casting et Dépouillement dans sa page ({faite['forme']}, {faite['depouillement']})")
+        st, page = call("GET", "/" + faite["studio"])
+        txt = page.decode("utf-8", "replace") if isinstance(page, bytes) else ""
+        video = re.search(r"<video[^>]*>", txt)
+        ok('href="../../film/film.css"' in txt and bool(video) and 'src="essai-de-film.mp4"' in video.group(0)
+           and "data-repli" not in video.group(0), f"la page de l'analyse faite : le thème du portail, sa vidéo à côté d'elle ({video and video.group(0)})")
     if faite:
         for k in ("studio", "depouillement", "vignette"):
             st, _ = call("GET", "/" + (faite[k] or "absent"))

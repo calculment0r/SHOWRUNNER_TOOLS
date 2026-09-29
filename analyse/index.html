@@ -17,6 +17,12 @@
 </head>
 <body>
 <main class="ma">
+  <!-- nos films d'abord (Cal, 29/09) : les deux analyses déjà faites, en grand, qui ouvrent leur page dans le portail -->
+  <section class="sect">
+    <div class="sect-head"><h2>Nos films</h2><span class="k">A</span><span class="cnt" id="n-films"></span></div>
+    <div class="ma-films" id="films"><p class="lbl">chargement</p></div>
+  </section>
+
   <section class="ma-top">
     <div class="hero ma-hero">
       <span class="ref">SR—07 · Movie Analysis</span>
@@ -34,29 +40,29 @@
       <span class="dots"></span>
       <span class="lbl">En chiffres</span>
       <dl class="kv" id="somme"><dt>analyses</dt><dd>—</dd></dl>
-      <p class="ma-note">Les Studio lisent leurs vidéos sur Cloudflare R2 et les corrections dans le dépôt partagé de
+      <p class="ma-note">Nos films lisent leurs vidéos sur Cloudflare R2 et les corrections dans le dépôt partagé de
         MOVIE_ANALYSE. Une correction faite d'ici n'y arrive pas : le dépôt partagé n'accepte pas encore l'adresse
         du portail, et la page garde ce qui n'est pas parti dans ce navigateur (analyse/PROVENANCE.md).</p>
     </div>
   </section>
 
   <section class="sect">
-    <div class="sect-head"><h2>Les analyses</h2><span class="k">A</span><span class="cnt" id="n-analyses"></span></div>
+    <div class="sect-head"><h2>Analyses lancées d'ici</h2><span class="k">B</span><span class="cnt" id="n-analyses"></span></div>
     <div class="ma-cards" id="analyses"><p class="lbl">chargement</p></div>
   </section>
 
   <section class="sect">
-    <div class="sect-head"><h2>Diarisation</h2><span class="k">B</span><span class="cnt" id="diar-cnt"></span></div>
+    <div class="sect-head"><h2>Diarisation</h2><span class="k">C</span><span class="cnt" id="diar-cnt"></span></div>
     <div class="pan ma-diar" id="diar"><p class="lbl">on interroge le service</p></div>
   </section>
 
   <section class="sect">
-    <div class="sect-head"><h2>Les projets</h2><span class="k">C</span><span class="cnt" id="n-projets"></span></div>
+    <div class="sect-head"><h2>Les projets</h2><span class="k">D</span><span class="cnt" id="n-projets"></span></div>
     <div class="pan" id="projets"><p class="lbl">lecture du dépôt partagé</p></div>
   </section>
 
   <section class="sect">
-    <div class="sect-head"><h2>La chaîne</h2><span class="k">D</span><span class="cnt" id="chaine-cnt"></span></div>
+    <div class="sect-head"><h2>La chaîne</h2><span class="k">E</span><span class="cnt" id="chaine-cnt"></span></div>
     <div class="pan" id="chaine"><p class="lbl">lecture</p></div>
   </section>
 </main>
@@ -72,9 +78,10 @@
           <button class="tb on" type="button" data-src="bib">Bibliothèque</button>
           <button class="tb" type="button" data-src="yt">YouTube</button>
         </div>
-        <div class="ma-src" id="nv-bib">
+        <div class="ma-src ma-depot" id="nv-bib">
           <div class="ma-choisie" id="nv-video"></div>
           <button class="tb ghost" type="button" id="nv-choisir">Choisir une vidéo</button>
+          <span class="lbl">ou la déposer ici : du disque (elle entre dans la bibliothèque, Upload), ou une vignette glissée d'ailleurs dans le portail</span>
         </div>
         <div class="ma-src" id="nv-yt" hidden>
           <input class="fld" id="nv-url" type="url" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off" spellcheck="false">
@@ -97,10 +104,10 @@
       <label class="row ma-rep" id="nv-rep-champ" hidden><input type="checkbox" id="nv-reprendre">
         <span>reprendre l'analyse lancée d'ici sous ce nom, où elle s'est arrêtée</span></label>
       <p class="ma-note">La chaîne est lourde : une seule tourne à la fois. Elle attend que la machine soit libre (GPU au repos,
-        files ComfyUI vides, 40 Go disponibles), puis chaque étape reprend ce qui est déjà sur le disque. La page de
-        l'analyse s'ouvre d'ici quand elle a fini : un premier Studio, la vidéo à côté de lui et les voix de la chaîne.
-        La diarisation Nemotron, les teintes et les cartons de la recette de MOVIE_ANALYSE n'y sont pas encore
-        (docs/etudes/analyse.md).</p>
+        files ComfyUI vides, 40 Go disponibles), puis chaque étape reprend ce qui est déjà sur le disque. Quand elle a
+        fini, l'analyse a la même page que nos films, dans le portail : Studio, Casting et Dépouillement, la vidéo à
+        côté d'elle et les voix de la chaîne. La diarisation Nemotron, les teintes et les cartons de la recette de
+        MOVIE_ANALYSE n'y sont pas encore (docs/etudes/analyse.md).</p>
     </div>
     <div class="modal-foot">
       <span class="why" id="nv-why"></span>

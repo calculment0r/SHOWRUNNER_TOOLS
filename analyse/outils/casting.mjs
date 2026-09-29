@@ -96,6 +96,8 @@ function poseStudio(fichier, slug) {
 function poseDepouillement(fichier, slug) {
   let t = readFileSync(fichier, 'utf8');
   if (t.includes(`${MARQUE}-theme-dep`)) return 'deja pose';
+  // dans le portail (29/09), depouillement.html ne fait plus que renvoyer a la vue de la page du film
+  if (!/const\s+DOC\s*=/.test(t)) return 'renvoi vers la page du film, rien a poser';
   const apres = finDuLitteral(t, 'DOC');
   if (apres < 0) throw new Error(fichier + ' : DOC introuvable');
   t = t.slice(0, apres) + '</script>' + NOMS_IFRAME(slug) + '<script>\n' + t.slice(apres);
