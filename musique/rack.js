@@ -1,50 +1,23 @@
-// ODIO — la vue Rack : la chaîne d'une piste (source → effets → tranche),
-// module par module avec ses molettes, et l'éditeur de son motif. Les
-// effets s'ajoutent, se déplacent et se retirent ici ; c'est la même chaîne
-// de câbles que dans la vue Nodal. L'instrument d'une piste se change ici
-// (DR-9 ou boîte à rythme ODIO ; synthé, Analog, basse acide ou numérique),
-// ses préréglages aussi.
+// ODIO — la vue Instruments, en bas de l'arrangement (la « Device View » de
+// Live) : toute la chaîne de la piste choisie (source → effets → tranche),
+// module par module avec ses molettes, de gauche à droite. Les effets
+// s'ajoutent, se déplacent et se retirent ici ; c'est la même chaîne de
+// câbles que dans la vue Nodal. L'instrument d'une piste se change ici, ses
+// préréglages aussi, et « Enregistrer le réglage » garde celui de la source
+// dans le projet (navigateur, Préréglages, Les miens).
 
 import { toast, pick, href, dropZone } from '../commun/shell.js';
 import { MODULES, TRACK_KINDS, EFFECT_TYPES, DRUM_VOICES, RHYTHM_VOICES, SOURCES_OF, spec, val, fmt, presetsFor, moduleName } from './modules.js';
 import { peaks } from './moteur.js';
-import { el, knob, choice, menu, tok, put } from './ui.js';
-import { patternEditor } from './editeurs.js';
+import { el, knob, choice, menu, tok, put, inlineEdit } from './ui.js';
 
 const BUS = '__bus';
 
-export function createRack(app) {
+export function createDevices(app) {
   const { S } = app;
-  const root = el('section', { class: 'rk', 'aria-label': 'rack' });
-  const side = el('aside', { class: 'rk-side' });
-  const main = el('div', { class: 'rk-main' });
-  root.append(side, main);
+  const root = el('div', { class: 'rk' });
   let padSel = 'bd';
   const meters = [];
-  let ed = null;
-
-  // ── la liste des pistes ──
-  function paintSide() {
-    const P = S.proj;
-    put(side,
-      el('div', { class: 'c-head' }, el('h2', {}, 'Pistes'), el('span', { class: 'cnt' }, String(P.tracks.length))),
-      el('ul', { class: 'rack' }, P.tracks.map((t) => el('li', {},
-        el('button', { class: `item${S.sel.track === t.id ? ' sel' : ''}`, type: 'button', style: { '--c': `var(--${t.color})` },
-          onclick: () => app.select({ track: t.id, mod: null }) },
-        el('i', { class: 'st rk-dot' }),
-        el('span', { class: 'txt' }, el('span', { class: 'ref' }, `${TRACK_KINDS[t.kind].label}${t.mute ? ' · muet' : ''}${t.solo ? ' · solo' : ''}`),
-          el('span', { class: 'nm' }, t.name),
-          el('span', { class: 'sub' }, app.chain(t.id).map((m) => MODULES[m.type].name).join(' → '))),
-        el('span', { class: 'dots' })))),
-      el('li', {}, el('button', { class: `item${S.sel.track === BUS ? ' sel' : ''}`, type: 'button', onclick: () => app.select({ track: BUS, mod: null }) },
-        el('i', { class: 'st ok' }),
-        el('span', { class: 'txt' }, el('span', { class: 'ref' }, 'hors piste'), el('span', { class: 'nm' }, 'Modules libres et sortie'),
-          el('span', { class: 'sub' }, `${P.modules.filter((m) => !m.track).length} module(s) · la sortie`))))),
-      el('button', { class: 'tb ghost block', type: 'button', onclick: (e) => {
-        const r = e.currentTarget.getBoundingClientRect();
-        menu(r.left, r.bottom + 4, app.trackChoices());
-      } }, '+ Piste'));
-  }
 
   // ── un module ──
   const onoff = (m) => el('button', { class: `tb sm${m.on !== false ? ' on' : ' ghost'}`, type: 'button', title: 'actif ou court-circuité',
@@ -55,19 +28,18 @@ export function createRack(app) {
     if (s.opts && size !== 'xs') return choice(s, val(m, k), { onChange: (v) => { m.params[k] = v; app.commit('param', m); app.commit('data'); } });
     return knob(s, val(m, k), { accent, size, onInput: (v) => { m.params[k] = v; app.commit('param', m); },
       // les dessins (enveloppe, filtre, départ du son) suivent une fois la molette lâchée
-      onChange: () => { app.commit('quiet'); if (m.type === 'synth' || m.type === 'sampler') paintMain(); } });
+      onChange: () => { app.commit('quiet'); if (m.type === 'synth' || m.type === 'sampler') render(); } });
   }
 
-  function devHead(m, t, extra = []) {
+  function devHead(m, t) {
     const def = MODULES[m.type], fx = def.role === 'effect';
     const ch = t ? app.chain(t.id) : [];
     const i = ch.findIndex((x) => x.id === m.id);
     const src = def.role === 'source' && t;
-    const pres = src ? presetsFor(m.type) : [];
+    const pres = src ? [...(S.proj.presets || []).filter((p) => p.type === m.type).map((p) => ({ ...p, mine: true })), ...presetsFor(m.type)] : [];
     return el('div', { class: 'dev-head' },
       el('i', { class: 'dot' }),
       el('b', { class: 'venus' }, def.name), el('span', { class: 'lbl' }, def.odio ? `ODIO · ${def.kind}` : def.kind),
-      ...extra,
       el('span', { class: 'sp' }),
       src && (SOURCES_OF[t.kind] || []).length > 1 ? el('button', { class: 'tb ghost sm', type: 'button', title: 'changer l\'instrument de la piste (ses motifs restent)', onclick: (e) => {
         const r = e.currentTarget.getBoundingClientRect();
@@ -76,10 +48,12 @@ export function createRack(app) {
       } }, 'Instrument') : null,
       pres.length ? el('button', { class: 'tb ghost sm', type: 'button', title: 'des réglages nommés', onclick: (e) => {
         const r = e.currentTarget.getBoundingClientRect();
-        menu(r.left, r.bottom + 4, pres.map((p) => ({ label: p.name, sub: p.sub, onclick: () => app.applyPreset(t.id, p.id) })));
+        menu(r.left, r.bottom + 4, pres.map((p) => ({ label: p.name, sub: p.mine ? 'le mien' : p.sub, onclick: () => app.applyPreset(t.id, p.id) })));
       } }, 'Préréglages') : null,
-      fx && t && i > 0 ? el('button', { class: 'tb ghost sm', type: 'button', title: 'plus tôt dans la chaîne', disabled: i <= 1 || null, onclick: () => app.moveInChain(t.id, m.id, -1) }, '↑') : null,
-      fx && t && i > 0 ? el('button', { class: 'tb ghost sm', type: 'button', title: 'plus tard dans la chaîne', disabled: i >= ch.length - 2 || null, onclick: () => app.moveInChain(t.id, m.id, 1) }, '↓') : null,
+      src ? el('button', { class: 'tb ghost sm', type: 'button', title: 'garder ce réglage dans le projet : il s\'ajoute au navigateur (Préréglages, Les miens), où un double-clic le renomme',
+        onclick: () => app.savePreset(t.id) }, 'Enregistrer le réglage') : null,
+      fx && t && i > 0 ? el('button', { class: 'tb ghost sm', type: 'button', title: 'plus tôt dans la chaîne', disabled: i <= 1 || null, onclick: () => app.moveInChain(t.id, m.id, -1) }, '←') : null,
+      fx && t && i > 0 ? el('button', { class: 'tb ghost sm', type: 'button', title: 'plus tard dans la chaîne', disabled: i >= ch.length - 2 || null, onclick: () => app.moveInChain(t.id, m.id, 1) }, '→') : null,
       def.role === 'source' || fx ? onoff(m) : null,
       fx ? el('button', { class: 'tb ghost sm', type: 'button', title: 'retirer l\'effet (ses câbles se referment)', onclick: () => app.removeModule(m.id) }, '×') : null);
   }
@@ -87,7 +61,8 @@ export function createRack(app) {
   function device(m, t) {
     const def = MODULES[m.type];
     const accent = t?.color || def.color;
-    const box = el('div', { class: `dev ${m.type}${m.on === false ? ' off' : ''}${def.odio ? ' odio' : ''}`, style: { '--k': `var(--${accent})` }, 'data-mod': m.id });
+    const box = el('div', { class: `dev ${m.type}${m.on === false ? ' off' : ''}${def.odio ? ' odio' : ''}${S.sel.mod === m.id ? ' sel' : ''}`, style: { '--k': `var(--${accent})` }, 'data-mod': m.id,
+      onpointerdown: () => { S.sel.mod = m.id; } });
     if (m.type === 'drums') box.append(devHead(m, t), drumBody(m, t, accent));
     else if (m.type === 'rythme') box.append(devHead(m, t), rhythmBody(m, t, accent));
     else if (m.type === 'synth') box.append(devHead(m, t), synthBody(m, accent));
@@ -116,7 +91,7 @@ export function createRack(app) {
     const v = DRUM_VOICES.find((x) => x.id === padSel) || DRUM_VOICES[0];
     const pads = el('div', { class: 'pads' }, DRUM_VOICES.map((x, i) => el('button', {
       class: `pad${x.id === v.id ? ' on' : ''}`, type: 'button', title: `${x.name} — clic : écouter`,
-      onpointerdown: () => { padSel = x.id; app.engine.hit(m.id, x.id, 1); paintMain(); },
+      onpointerdown: () => { padSel = x.id; app.engine.hit(m.id, x.id, 1); render(); },
     }, el('span', { class: 'no' }, String(i + 1).padStart(2, '0')), el('span', { class: 'nm' }, x.name))));
     return el('div', { class: 'dev-body dr9' },
       el('div', { class: 'padsel' }, el('span', { class: 'lbl' }, 'pad choisi'),
@@ -132,7 +107,7 @@ export function createRack(app) {
     const v = RHYTHM_VOICES.find((x) => x.id === padSel) || RHYTHM_VOICES[0];
     const pads = el('div', { class: 'pads r11' }, RHYTHM_VOICES.map((x, i) => el('button', {
       class: `pad${x.id === v.id ? ' on' : ''}`, type: 'button', title: `${x.name} — clic : écouter`,
-      onpointerdown: () => { padSel = x.id; app.engine.hit(m.id, x.id, 1); paintMain(); },
+      onpointerdown: () => { padSel = x.id; app.engine.hit(m.id, x.id, 1); render(); },
     }, el('span', { class: 'no' }, `${String(i + 1).padStart(2, '0')} · ${x.short}`), el('span', { class: 'nm' }, x.name))));
     return el('div', { class: 'dev-body dr9' },
       el('div', { class: 'padsel' }, el('span', { class: 'lbl' }, 'pad choisi'),
@@ -219,41 +194,45 @@ export function createRack(app) {
     g.fillRect(Math.round(start * w), 0, 2, h);
   }
 
-  // ── l'ensemble ──
-  function paintMain() {
+  // ── l'ensemble : la piste choisie ──
+  function render() {
     const P = S.proj;
     meters.length = 0;
-    ed = null;
+    const scrollL = root.querySelector('.rk-chain')?.scrollLeft || 0;
+    const trackSel = el('select', { class: 'fld mu-mini', 'aria-label': 'piste', title: 'la piste dont on voit la chaîne',
+      onchange: (e) => app.select({ track: e.target.value, mod: null }) },
+    P.tracks.map((t) => el('option', { value: t.id, selected: S.sel.track === t.id || null }, t.name)),
+    el('option', { value: BUS, selected: S.sel.track === BUS || null }, 'Sortie et modules libres'));
     if (S.sel.track === BUS) {
       const mods = P.modules.filter((m) => !m.track);
-      put(main,
-        el('div', { class: 'rk-head' }, el('span', { class: 'k' }, 'hors piste'), el('b', { class: 'venus' }, 'Modules libres et sortie'),
-          el('span', { class: 'lbl' }, 'les effets sans piste et la sortie ; leurs câbles se tirent dans la vue Nodal · les bus d\'effets de la console sont des pistes'),
+      put(root,
+        el('div', { class: 'rk-head' }, trackSel, el('b', { class: 'venus' }, 'Sortie et modules libres'),
+          el('span', { class: 'lbl' }, 'les effets sans piste et la sortie ; leurs câbles se tirent dans la vue Nodal'),
           el('span', { class: 'sp' }),
           el('button', { class: 'tb ghost sm', type: 'button', onclick: (e) => fxMenu(e, null) }, '+ Effet')),
         el('div', { class: 'rk-chain' }, mods.map((m) => device(m, null))));
       return;
     }
     const t = app.track(S.sel.track) || P.tracks[0];
-    if (!t) { put(main, el('div', { class: 'tl-empty' }, el('b', {}, 'Aucune piste'), el('span', {}, '« + Piste » à gauche'))); return; }
-    S.sel.track = t.id;
+    if (!t) { put(root, el('div', { class: 'dk-empty' }, el('b', { class: 'venus' }, 'Instruments'), el('span', {}, 'aucune piste : « + Piste » en haut de l\'arrangement'))); return; }
     const ch = app.chain(t.id);
     const loose = P.modules.filter((m) => m.track === t.id && !ch.includes(m));
-    const edHost = el('div', { class: 'rk-ed' });
-    put(main,
+    const nm = el('b', { class: 'venus', title: 'double-clic : renommer la piste' }, t.name);
+    nm.addEventListener('dblclick', () => inlineEdit(nm, t.name, (v) => { t.name = v.slice(0, 60); app.commit('data'); }, { max: 60 }));
+    put(root,
       el('div', { class: 'rk-head', style: { '--c': `var(--${t.color})` } },
-        el('span', { class: 'k' }, TRACK_KINDS[t.kind].label), el('b', { class: 'venus' }, t.name),
+        el('span', { class: 'k' }, TRACK_KINDS[t.kind].label), nm, trackSel,
         el('span', { class: 'lbl' }, `${ch.length} module${ch.length > 1 ? 's' : ''} en chaîne`),
         el('span', { class: 'sp' }),
         el('button', { class: 'tb ghost sm', type: 'button', onclick: (e) => fxMenu(e, t.id) }, '+ Effet'),
         el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.setView('nodal') }, 'Voir les câbles')),
       el('div', { class: 'rk-chain' }, ch.map((m, i) => [i ? el('i', { class: 'rk-arrow', 'aria-hidden': 'true' }, '→') : null, device(m, t)])),
       loose.length ? el('div', { class: 'rk-loose' }, el('span', { class: 'why' }, 'hors chaîne : ces modules de la piste ne sont pas sur le trajet source → tranche ; câble-les dans la vue Nodal'),
-        el('div', { class: 'rk-chain' }, loose.map((m) => device(m, t)))) : null,
-      TRACK_KINDS[t.kind].pattern ? edHost : el('p', { class: 'lbl pe-hint' }, t.kind === 'bus'
-        ? 'un bus reçoit les envois des pistes (console) et les rend à la sortie'
-        : 'une piste audio joue des clips : « Importer », « + Son », un fichier glissé sur l\'arrangement, ou « Générer »'));
-    if (TRACK_KINDS[t.kind].pattern) ed = patternEditor(app, edHost, t, null, { tall: true });
+        el('div', { class: 'rk-chain' }, loose.map((m) => device(m, t)))) : null);
+    const chain = root.querySelector('.rk-chain');
+    if (chain) chain.scrollLeft = scrollL;
+    const sel = S.sel.mod && root.querySelector(`.dev[data-mod="${S.sel.mod}"]`);
+    if (sel && !scrollL) sel.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
 
   function fxMenu(e, trackId) {
@@ -262,26 +241,21 @@ export function createRack(app) {
       onclick: () => { const m = app.addEffect(trackId, k); if (!trackId) toast(`${MODULES[k].name} ajouté hors piste : câble-le dans la vue Nodal`); return m; } })));
   }
 
-  function render() { paintSide(); paintMain(); }
-
-  function frame(beat) {
+  function frame() {
     for (const [id, mt] of meters) {
       const db = app.engine.level(id);
       mt.firstChild.style.width = `${Math.max(0, Math.min(100, (db + 60) / 60 * 100)).toFixed(1)}%`;
       mt.classList.toggle('hot', db > -1);
     }
-    ed?.frame?.(beat);
   }
 
   function key(e) {
-    if (ed?.key?.(e)) return;
-    if ((e.key === 'Delete' || e.key === 'Backspace') && S.sel.mod) {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && S.sel.mod && !(S.sel.clips || []).length) {
       const m = app.mod(S.sel.mod);
-      if (m && MODULES[m.type].role === 'effect') { e.preventDefault(); app.removeModule(m.id); }
+      if (m && MODULES[m.type].role === 'effect') { e.preventDefault(); app.removeModule(m.id); return true; }
     }
+    return false;
   }
-
-  document.addEventListener('mu:buffer', () => { if (S.view === 'rack') paintMain(); });
 
   return { el: root, render, frame, key };
 }

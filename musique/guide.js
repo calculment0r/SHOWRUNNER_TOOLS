@@ -7,28 +7,69 @@ import { el, drawer, put } from './ui.js';
 import { options, bestStems } from './generatif.js';
 
 const STEPS = [
-  ['La session', 'Le tempo (− / + ou la molette), la tonalité et la mesure sont ceux de tout le morceau : le piano roll éclaire la gamme, les modèles de motifs et la génération les reprennent.', ['#mu-bpm', '#mu-key']],
-  ['Les sections', 'La règle du haut : double-clic pour une section (intro, couplet, refrain…), double-clic dessus pour la nommer, glisser pour la déplacer avec ses clips, clic droit pour la dupliquer avec ses clips, la colorer, l\'étiqueter pour les paroles.', ['.ar-secs']],
-  ['Les pistes', 'Glisser un instrument du navigateur sous les pistes, ou « + Piste ». Chaque piste : muet (M), solo (S), armer (●), automation (A), volume, panoramique ; un clic sur sa barre de couleur la recolore.', ['.nv', '.ar-head']],
-  ['Les clips', 'Double-clic sur une piste : un clip neuf. Glisser un clip : le déplacer (Ctrl : le copier, Alt : sans aimant) ; ses bords : le rogner. Maj+clic ou un cadre tiré sur le vide : plusieurs. L\'éditeur du bas ouvre le clip choisi.', ['.ar-lane', '.dk']],
-  ['Enregistrer', 'Armer une piste (●), activer « Rec », puis Lecture : jouer au clavier (rangée du milieu, Z X pour l\'octave) ou en MIDI (menu ··· du projet). Stop : la prise se pose en clip « Nouveau ». Une piste audio armée prend le micro.', ['#mu-rec', '.ar-head .arm']],
-  ['Importer de l\'audio', 'Glisser des fichiers (WAV, MP3, FLAC, M4A, OGG) sur une piste ou sous les pistes, ou « Importer ». Ils entrent dans la bibliothèque (Upload) et se posent à la grille ; l\'éditeur audio règle gain, fondus et boucle.', ['[data-imp]']],
+  ['La session', 'Le tempo (− / +, la molette, ou « Tap » : le frapper), la tonalité et la mesure sont ceux de tout le morceau : le piano roll éclaire la gamme, les modèles de motifs et la génération les reprennent.', ['#mu-bpm', '#mu-tap', '#mu-key']],
+  ['Les sections', 'La règle du haut : double-clic pour une section (intro, couplet, refrain…), double-clic dessus pour la renommer sur place, glisser pour la déplacer avec ses clips, clic droit pour la dupliquer avec ses clips, la colorer, l\'étiqueter pour les paroles.', ['.ar-secs']],
+  ['Les pistes', 'Glisser un instrument du navigateur sous les pistes, ou « + Piste ». Chaque piste : muet (M), solo (S), armer (●), automation (A), volume, panoramique ; double-clic sur son nom : le renommer ; un clic sur sa barre de couleur la recolore.', ['.nv', '.ar-head']],
+  ['Les clips', 'Double-clic sur une piste : un clip neuf. Glisser un clip : le déplacer (Ctrl : le copier, Alt : sans aimant). Le bord gauche rogne le début (la fin et le contenu restent en place), le droit la fin. Double-clic sur son titre : le renommer. Ctrl+clic ou un cadre tiré sur le vide : plusieurs.', ['.ar-lane']],
+  ['La vue de détail', 'En bas de l\'arrangement, comme dans Live : « Clip » (les notes, les pas, ou le son d\'un clip audio) et « Instruments » (toute la chaîne de la piste). Maj+Tab bascule ; le filet du haut se tire, sa hauteur reste. Le navigateur, à gauche, se replie (‹ ou Ctrl+Alt+B).', ['.dk', '.nv']],
+  ['Enregistrer', 'Armer une piste (●), activer « Rec » (F9), puis Lecture : jouer au clavier de l\'ordinateur (« Clavier » allumé : rangée du milieu, Z X l\'octave, C V la vélocité) ou en MIDI (menu ··· du projet). Stop : la prise se pose en clip « Nouveau ». Une piste audio armée prend le micro.', ['#mu-rec', '#mu-kbd', '.ar-head .arm']],
+  ['Importer de l\'audio', 'Glisser des fichiers (WAV, MP3, FLAC, M4A, OGG) sur une piste ou sous les pistes, ou « Importer ». Ils entrent dans la bibliothèque (Upload) et se posent à la grille. La vue Clip règle début, fin, boucle, gain, transposition, inversion, fondus, et « Caler » au tempo.', ['[data-imp]']],
   ['L\'arc d\'énergie', 'La piste orange sous la règle : peindre à la souris (Maj : une droite, clic droit : effacer). Elle ouvre et ferme le filtre de la sortie, ou son volume. Chaque piste a aussi ses voies d\'automation (A).', ['.ar-arch', '.ar-arc']],
-  ['Mixer', 'La console : un fader, un vu-mètre, des envois vers les bus d\'effets par piste ; les inserts s\'ouvrent dans le rack ; le nodal montre les mêmes câbles.', ['[data-view="console"]']],
+  ['Mixer', 'La console : un fader, un vu-mètre, des envois vers les bus d\'effets par piste ; un insert s\'ouvre dans la vue Instruments ; le nodal montre les mêmes câbles.', ['[data-view="console"]']],
+  ['Le nodal et son banc', 'Tab : Arrangement ↔ Nodal. Sous le graphe, le banc d\'ODIO_01 : l\'arrangement en petit et ses lanes (RYTHME, HARMONIE, TIMBRE, ÉNERGIE, TENSION). Glisser sur une lane : un segment ; clic milieu tiré d\'un segment jusque sur le graphe : un attracteur, qui lit ce que les modules sous ses anneaux ont de sa facette.', ['[data-view="nodal"]']],
   ['Générer', 'YuE (paroles et voix) ou ACE-Step : le style, les sections de l\'arrangement comme plan des paroles, la durée, la graine. Le morceau se pose sur une piste audio, puis se sépare en voix, batterie, basse, autre — chacune sur sa piste, alignées.', ['#mu-gen']],
   ['Exporter', 'Le mixage en WAV 24 bits, et chaque piste à part (stems) : tout entre dans la bibliothèque ; « Envoyer au montage » ouvre le montage avec le mixage.', ['#mu-exp']],
 ];
 
+// Les raccourcis : ceux de Live 12, relevés dans son manuel de référence,
+// chapitre « Live Keyboard Shortcuts » (ableton.com/en/manual/live-keyboard-shortcuts,
+// Live 12, consulté le 29/09/2026), et pour les gestes, le chapitre
+// « Arrangement View » (ableton.com/en/manual/arrangement-view). Sur Mac,
+// Ctrl se lit Cmd et Alt se lit Option. Ce qui est à ODIO seul est marqué.
+export const LIVE_SOURCE = 'Ableton Live 12 Reference Manual · « Live Keyboard Shortcuts » et « Arrangement View » · consulté le 29/09/2026';
 const KEYS = [
-  ['Espace', 'lecture / arrêt (retour au départ)'], ['Entrée · Origine', 'retour au début'], ['R', 'enregistrer (armer la prise)'],
-  ['C', 'métronome'], ['B', 'boucle'], ['M', 'marqueur à la tête de lecture'],
-  ['A S D F G H J K L', 'jouer (touches blanches) · W E T Y U O P : noires'], ['Z · X', 'octave − / +'],
-  ['Ctrl+Z · Ctrl+Y', 'annuler · rétablir'], ['Ctrl+C · X · V', 'copier · couper · coller à la tête de lecture'],
-  ['Ctrl+D', 'dupliquer'], ['Ctrl+E', 'couper le clip à la tête de lecture'], ['Suppr', 'retirer la sélection'],
-  ['Ctrl+A · Échap', 'tout choisir · rien'], ['← →', 'déplacer la sélection d\'un pas de grille'],
-  ['Alt en glissant', 'sans aimant'], ['Ctrl en glissant', 'copier les clips'], ['Maj+clic', 'ajouter à la sélection'],
-  ['Ctrl+molette', 'zoom horizontal'], ['Ctrl+Maj+molette', 'hauteur des pistes'], ['Maj+molette', 'défiler'],
-  ['Piano roll', '↑ ↓ transposer (Maj : octave) · Q quantifier · Maj+glisser : choisir · double-clic : ôter'],
+  ['les vues', [
+    ['Tab', 'Arrangement ↔ Nodal (Live : Session ↔ Arrangement)'],
+    ['Maj+Tab · F12', 'vue de détail : Clip ↔ Instruments (Live : Clip View ↔ Device View) ; F12, le navigateur web peut le garder pour ses outils'],
+    ['Ctrl+Alt+3 · Ctrl+Alt+4', 'vue Clip · vue Instruments'],
+    ['Ctrl+Alt+B', 'montrer / cacher le navigateur'],
+  ]],
+  ['le transport', [
+    ['Espace', 'lecture / arrêt (retour au départ)'], ['Maj+Espace', 'reprendre là où l\'on s\'est arrêté'],
+    ['Origine (Home)', 'au début (Entrée aussi, l\'ancien raccourci d\'ODIO)'], ['F9', 'enregistrer (armer la prise)'],
+    ['O (la lettre)', 'métronome (clavier MIDI éteint)'], ['Ctrl+L', 'boucle sur la sélection (sans clip choisi : allumer / éteindre la boucle)'],
+    ['Maj+T', 'frapper le tempo (ODIO : Live n\'a pas de raccourci pour son bouton TAP)'],
+  ]],
+  ['l\'édition', [
+    ['Ctrl+Z · Ctrl+Y', 'annuler · rétablir (Mac : Cmd+Maj+Z)'], ['Ctrl+X · C · V', 'couper · copier · coller à la tête de lecture'],
+    ['Ctrl+D', 'dupliquer'], ['Suppr', 'retirer la sélection'], ['Ctrl+R', 'renommer (le clip choisi, sinon la piste)'],
+    ['Ctrl+A · Échap', 'tout choisir · rien'], ['Ctrl+E', 'couper les clips à la tête de lecture (Live : Split)'],
+    ['Ctrl+J', 'consolider en un clip'], ['0 (zéro)', 'activer / désactiver les clips choisis'], ['R', 'inverser les clips audio choisis'],
+    ['← →', 'déplacer la sélection d\'un pas de grille'], ['Ctrl+1 · Ctrl+2', 'resserrer · élargir la grille'], ['Ctrl+4', 'aimant allumé / éteint'],
+    ['Alt en glissant', 'sans aimant'], ['Ctrl en glissant', 'copier les clips'], ['Ctrl+clic · Maj+clic', 'ajouter à la sélection'],
+  ]],
+  ['les pistes et les clips', [
+    ['Ctrl+T · Ctrl+Maj+T', 'une piste audio · MIDI — Chrome garde ces deux-là pour ses onglets (réservés, la page ne les reçoit pas) : « + Piste »'],
+    ['Ctrl+Alt+T', 'un bus de retour'],
+    ['Ctrl+Maj+M', 'un clip MIDI à la tête de lecture, sur la piste choisie'],
+    ['S · C · A', 'solo · armer · automation de la piste choisie (clavier MIDI éteint)'],
+    ['Maj+M', 'un marqueur à la tête de lecture (ODIO)'],
+  ]],
+  ['le zoom (chapitre « Arrangement View »)', [
+    ['+ · −', 'zoomer · dézoomer'], ['Ctrl+molette', 'zoom horizontal, autour du curseur'], ['Maj+molette', 'défiler à l\'horizontale'],
+    ['Alt+molette', 'hauteur des pistes (sur une piste) ; Alt + / Alt − aussi'], ['Ctrl+Alt+glisser', 'déplacer la vue'],
+    ['règle des temps', 'glisser à l\'horizontale : chercher · à la verticale : zoomer · double-clic : zoomer sur la sélection'],
+    ['Z · X', 'zoomer sur la sélection · revenir (clavier MIDI éteint)'], ['W · H', 'tout le morceau en largeur · toutes les pistes en hauteur'],
+  ]],
+  ['le clavier MIDI de l\'ordinateur', [
+    ['M', 'l\'allumer / l\'éteindre (bouton « Clavier »)'], ['A S D F G H J K L', 'jouer (touches blanches) · W E T Y U O P : noires'],
+    ['Z · X', 'octave − / +'], ['C · V', 'vélocité − / +'],
+  ]],
+  ['les éditeurs', [
+    ['Piano roll', '↑ ↓ transposer (Maj : octave) · Ctrl+U quantifier · Maj+glisser : choisir · double-clic : ôter'],
+    ['Onde d\'un clip audio', 'Ctrl+molette : zoom · molette : défiler · double-clic : tout le son'],
+    ['Nodal, le banc', '« c » : quelle tête gouverne (ODIO_01) · Suppr : retirer l\'attracteur choisi'],
+  ]],
 ];
 
 export function openGuide(app) {
@@ -72,8 +113,9 @@ export function openGuide(app) {
           el('div', {}, el('b', {}, t), el('p', {}, txt)),
           el('button', { class: 'tb ghost sm', type: 'button', onclick: () => show(sels) }, 'Montre-moi'))));
     } else if (tab === 'touches') {
-      put(dr.body, el('dl', { class: 'gd-keys' }, KEYS.map(([k, v]) => [el('dt', {}, k), el('dd', {}, v)])),
-        el('p', { class: 'lbl' }, 'le clavier joue par touches physiques : la même rangée en QWERTY et en AZERTY (KeyboardEvent.code, MDN)'));
+      put(dr.body, el('p', { class: 'gd-src' }, `Les raccourcis de Live 12. Source : ${LIVE_SOURCE}.`),
+        KEYS.map(([g, list]) => [el('h4', { class: 'gd-kh' }, g), el('dl', { class: 'gd-keys' }, list.map(([k, v]) => [el('dt', {}, k), el('dd', {}, v)]))]),
+        el('p', { class: 'lbl' }, 'le clavier joue par touches physiques : la même rangée en QWERTY et en AZERTY (KeyboardEvent.code, MDN) · Mac : Ctrl = Cmd, Alt = Option'));
     } else {
       put(dr.body, el('p', { class: 'lbl' }, 'lecture…'));
       put(dr.body, ...(await engines()));

@@ -1,25 +1,27 @@
 // ODIO — le studio musique du portail : une DAW.
 //   Arrangement  sections, arc d'énergie, pistes, clips, automation ; en
-//                bas l'éditeur du clip choisi, à gauche le navigateur
+//                bas la vue de détail (le clip choisi, ou les instruments
+//                et effets de la piste), à gauche le navigateur
 //   Console      faders, panoramiques, envois vers les bus, vu-mètres, sortie
-//   Rack         les instruments et effets d'une piste, et son motif
-//   Nodal        le graphe des modules et de leurs câbles (le même projet)
+//   Nodal        le graphe des modules et de leurs câbles (le même projet),
+//                et en bas le banc d'ODIO_01 (banc.js) ; Tab bascule
+//                Arrangement ↔ Nodal
 // Autour : le transport (retour, lecture, stop, prise, boucle, métronome),
-// la position mesure.temps.double-croche, le tempo, la tonalité, la forme
-// d'onde de la session, annuler / rétablir, Générer (YuE, ACE-Step,
-// séparation en pistes), Exporter (mixage et stems), et le GUIDE.
+// la position mesure.temps.double-croche, le tempo (et sa frappe), la
+// tonalité, la forme d'onde de la session, annuler / rétablir, Générer (YuE,
+// ACE-Step, séparation en pistes), Exporter (mixage et stems), et le GUIDE.
+// Les raccourcis sont ceux de Live 12 (guide.js en donne la table et la source).
 // Le projet s'enregistre seul (server/tools/music.py) ; le moteur
 // (moteur.js) le joue ; ce qu'on entend est ce qu'on exporte.
 
 import { mountHeader, api, jobs, pick, uploadFile, toast, $, href, fmtDur, stateFr } from '../commun/shell.js';
-import { Engine, renderMix, wav24, peakDb, songEnd, peaks } from './moteur.js';
+import { Engine, renderMix, renderClips, wav24, peakDb, songEnd, peaks } from './moteur.js';
 import { MODULES, TRACK_KINDS, COLORS, PRESETS, SOURCES_OF, DRUM_MODELS, NOTE_MODELS, TONICS, TONICS_FR, MODES,
   kindOfSource, keyLabel, moduleName } from './modules.js';
 import { el, modal, ask, confirmBox, menu, put, tok } from './ui.js';
-import { migrate, History, copyClips, pasteClips, splitClip } from './projet.js';
+import { migrate, History, copyClips, pasteClips, splitClip, consolidatePatterns, clipRate } from './projet.js';
 import { createTimeline } from './timeline.js';
 import { createConsole } from './console.js';
-import { createRack } from './rack.js';
 import { createNodal } from './nodal.js';
 import { createRecorder } from './enregistrement.js';
 import { openGenerative, options, bestStems, STEM_FR } from './generatif.js';
@@ -31,7 +33,7 @@ mountHeader('music', { sub: 'studio · YuE · stems' });
 const S = {
   proj: null, list: [], view: 'timeline', engines: null,
   sel: { track: null, pat: null, clip: null, clips: [], mod: null, cable: null },
-  oct: 4, midi: null, rec: false, metro: false,
+  oct: 4, vel: 0.85, kbd: true, midi: null, rec: false, metro: false,
 };
 const items = new Map();   // les objets de la bibliothèque déjà lus
 async function loadItem(id) {
@@ -69,6 +71,24 @@ export const app = {
     if (kind !== 'param' && kind !== 'quiet') render();
   },
   saveUi() { saveQuiet(); },
+  renderView: () => render(),
+  kbdOn: () => S.kbd,
+  playStop: () => togglePlay(),
+
+  // choisir une piste (clic sur son en-tête) : ses clips ne sont plus choisis
+  selectTrack(id) {
+    const t = app.track(id);
+    if (!t) return;
+    Object.assign(S.sel, { track: id, pat: t.pat || null, clip: null, clips: [], mod: null });
+    if (views[S.view]?.paintSel) views[S.view].paintSel(); else render();
+  },
+  // la vue de détail en bas : 'clip' ou 'device' (Live : Clip View, Device View)
+  showDetail(which) {
+    S.proj.ui.detail = which;
+    S.proj.ui.dock = true;
+    saveQuiet();
+    if (S.view !== 'timeline') app.setView('timeline'); else render();
+  },
 
   select(patch) {
     Object.assign(S.sel, patch);
@@ -88,6 +108,8 @@ export const app = {
   },
 
   setView(v) {
+    // l'ancienne vue Rack est la vue de détail « Instruments » de l'arrangement
+    if (v === 'rack') { S.proj.ui = { ...(S.proj.ui || {}), detail: 'device', dock: true }; v = 'timeline'; }
     S.view = v;
     S.proj.ui = { ...(S.proj.ui || {}), view: v };
     saveQuiet();
@@ -100,7 +122,7 @@ export const app = {
     const t = app.track(p.track);
     t.pat = p.id;
     S.sel.track = t.id; S.sel.pat = p.id;
-    app.setView('rack');
+    app.showDetail('clip');
   },
 
   // ── pistes ──
@@ -170,15 +192,33 @@ export const app = {
     toast(`${t.name} : ${MODULES[type].name}`);
     app.commit('graph');
   },
+  preset: (id) => PRESETS.find((x) => x.id === id) || (S.proj.presets || []).find((x) => x.id === id),
   applyPreset(trackId, presetId) {
-    const t = app.track(trackId), p = PRESETS.find((x) => x.id === presetId);
+    const t = app.track(trackId), p = app.preset(presetId);
     if (!t || !p) return;
     const m = app.mod(t.src);
     if (m.type !== p.type) m.type = p.type;
     m.params = { ...p.params };
-    t.sub = p.sub;
+    t.sub = p.sub || p.name;
     toast(`${t.name} : ${p.name}`);
     app.commit('graph');
+  },
+  // garder le réglage de la source d'une piste dans le projet : il s'ajoute
+  // au navigateur (Préréglages, Les miens), où un double-clic le renomme
+  savePreset(trackId) {
+    const t = app.track(trackId), m = t && app.mod(t.src);
+    if (!m) return null;
+    const P = S.proj;
+    P.presets = P.presets || [];
+    if (P.presets.length >= 200) { toast('200 réglages au plus par projet'); return null; }
+    const n = P.presets.filter((x) => x.type === m.type).length + 1;
+    const p = { id: uid('r'), name: `${MODULES[m.type].name} ${n}`.slice(0, 40), type: m.type, params: JSON.parse(JSON.stringify(m.params || {})) };
+    P.presets.push(p);
+    P.ui.navOpen = { ...(P.ui.navOpen || { inst: true, son: true }), pre: true };
+    if (P.ui.nav === false) P.ui.nav = true;
+    toast(`réglage « ${p.name} » gardé : navigateur, Préréglages · double-clic pour le renommer`, 5000);
+    app.commit('data');
+    return p;
   },
 
   async removeTrack(id) {
@@ -403,7 +443,7 @@ export const app = {
     if (d.t === 'fx') { if (!t) { toast('glisser l\'effet sur une piste'); return null; } return app.addEffect(t.id, d.type); }
     if (d.t === 'bus') return app.addBus(d.fx);
     if (d.t === 'preset') {
-      const p = PRESETS.find((x) => x.id === d.id);
+      const p = app.preset(d.id);
       if (!p) return null;
       if (t && app.mod(t.src)?.type === p.type) { app.applyPreset(t.id, p.id); return t; }
       const k = kindOfSource(p.type);
@@ -486,16 +526,95 @@ export const app = {
     for (const c of g) c.mute = to || undefined;
     app.commit('data');
   },
+  // la boucle d'un clip audio : l'accolade prend la région jouée (du
+  // marqueur de début à celui de fin) ; sans boucle, la fin revient au son
   async toggleLoop(id) {
     const c = app.clip(id);
     if (!c?.item) return;
-    if (c.loop) { c.loop = undefined; const buf = engine.buffers.get(c.item); if (buf) c.len = Math.min(c.len, (buf.duration - (c.off || 0)) * S.proj.bpm / 60); }
-    else {
+    const rate = clipRate(c);
+    if (c.loop) {
+      c.loop = undefined; c.ls = undefined; c.llen = undefined;
+      const buf = engine.buffers.get(c.item);
+      if (buf) c.len = Math.min(c.len, (buf.duration - (c.off || 0)) / rate * S.proj.bpm / 60);
+    } else {
       const buf = await engine.buffer(c.item).catch(() => null);
       c.loop = true;
-      c.llen = Math.round(Math.min(c.len * 60 / S.proj.bpm, buf ? buf.duration - (c.off || 0) : 4) * 1000) / 1000;
+      c.ls = c.off || 0;
+      c.llen = Math.round(Math.max(0.02, Math.min(c.len * 60 / S.proj.bpm * rate, buf ? buf.duration - c.ls : 4)) * 1000) / 1000;
       toast('en boucle : tirer le bord droit du clip répète le son');
     }
+    app.commit('data');
+  },
+  // R (Live : « Reverse audio clip selection ») : le son à l'envers ; les
+  // marqueurs sont retournés avec lui, la même région joue, de la fin au début
+  async reverseSel(ids = null) {
+    const g = (ids ? ids.map(app.clip) : app.selected()).filter((c) => c?.item);
+    if (!g.length) { toast('R inverse les clips audio choisis'); return; }
+    for (const c of g) {
+      const buf = await engine.buffer(c.item).catch(() => null);
+      if (!buf) continue;
+      const D = buf.duration, rate = clipRate(c);
+      if (c.loop) {
+        // l'accolade se retourne ; un début posé sur elle y reste
+        const off = c.off || 0, ls = c.ls ?? off, le = Math.min(D, ls + (c.llen || D - ls));
+        c.ls = Math.round(Math.max(0, D - le) * 1e6) / 1e6; c.llen = le - ls;
+        c.off = Math.abs(off - ls) < 1e-6 ? c.ls : Math.max(0, Math.min(D - 0.01, D - off));
+      } else {
+        const end = Math.min(D, (c.off || 0) + c.len * 60 / S.proj.bpm * rate);
+        c.off = Math.round(Math.max(0, D - end) * 1e6) / 1e6;
+      }
+      c.rev = !c.rev || undefined;
+    }
+    toast(g.length > 1 ? `${g.length} clips inversés` : (g[0].rev ? 'le son joue à l\'envers' : 'le son joue à l\'endroit'));
+    app.commit('data');
+  },
+  // Ctrl+L (Live : « Loop selection ») : la boucle sur les clips choisis ;
+  // sans clip choisi, la boucle s'allume ou s'éteint
+  loopSelection() {
+    const g = app.selected(), P = S.proj;
+    if (!g.length) { P.loop.on = !P.loop.on; app.commit('meta'); return; }
+    const a = Math.min(...g.map((c) => c.start)), b = Math.max(...g.map((c) => c.start + c.len));
+    P.loop = { on: true, a, b };
+    toast(`boucle : ${fmtBar(a)} → ${fmtBar(b)}`);
+    app.commit('meta');
+  },
+  // Ctrl+J (Live : « Consolidate ») : les clips choisis d'une piste en un
+  // seul. Motifs : un motif neuf qui contient ce qu'ils jouaient ; sons :
+  // leur son rendu tel qu'ils le lisent (moteur.js, renderClips), en WAV
+  // dans la bibliothèque (dossier Musique), sans les effets de la piste.
+  async consolidateSel() {
+    const P = S.proj, g = app.selected();
+    if (!g.length) { toast('Ctrl+J : choisis des clips'); return; }
+    const byTrack = new Map();
+    for (const c of g) { if (!byTrack.has(c.track)) byTrack.set(c.track, []); byTrack.get(c.track).push(c); }
+    const made = [];
+    for (const [tid, cs] of byTrack) {
+      const t = app.track(tid);
+      if (t.kind === 'audio') {
+        const a = Math.min(...cs.map((c) => c.start)), b = Math.max(...cs.map((c) => c.start + c.len));
+        toast(`consolidation · ${t.name}…`, 20000);
+        try {
+          const buf = await renderClips(engine, P, cs, a, b);
+          const name = `${`${t.name} consolidé`.replace(/[^A-Za-z0-9._ -]+/g, '_').slice(0, 60)}.wav`;
+          const it = await uploadFile(new File([wav24(buf)], name, { type: 'audio/wav' }), { tool: 'music', folder: 'Musique', title: `${t.name} · consolidé` });
+          items.set(it.id, Promise.resolve({ ...it, href: href(it.url) }));
+          const ids = new Set(cs.map((c) => c.id));
+          P.clips = P.clips.filter((c) => !ids.has(c.id));
+          const n = { id: uid('c'), track: tid, start: a, len: b - a, item: it.id, off: 0 };
+          P.clips.push(n); made.push(n);
+        } catch (e) { toast(`consolider : ${e.message}`, 6000); }
+      } else {
+        const r = consolidatePatterns(P, cs, uid);
+        if (typeof r === 'string') { toast(`consolider ${t.name} : ${r}`, 5000); continue; }
+        const ids = new Set(cs.map((c) => c.id));
+        P.clips = P.clips.filter((c) => !ids.has(c.id));
+        P.patterns.push(r.pattern);
+        P.clips.push(r.clip); made.push(r.clip);
+      }
+    }
+    if (!made.length) return;
+    S.sel.clips = made.map((c) => c.id); S.sel.clip = made[0].id;
+    toast(made.length > 1 ? `${made.length} clips consolidés (un par piste)` : 'consolidé : un seul clip');
     app.commit('data');
   },
 
@@ -538,7 +657,23 @@ function fmtBar(beat) {
 function fmtPos(beat) {
   const b = Math.max(0, beat + 1e-9), sig = S.proj?.sig || 4;
   const bar = Math.floor(b / sig) + 1, bt = Math.floor(b % sig) + 1, six = Math.floor((b % 1) * 4) + 1;
-  return `${String(bar).padStart(3, '0')}.${bt}.${six}`;
+  return `${String(Math.min(999, bar)).padStart(3, '0')}.${bt}.${six}`;
+}
+// le temps, toujours sur sept signes : mm:ss.d (dixièmes tronqués, pas
+// arrondis : 59,97 s reste 00:59.9)
+function fmtClock(sec) {
+  const t = Math.max(0, Math.floor(sec * 10)), m = Math.min(99, Math.floor(t / 600)), r = t % 600;
+  return `${String(m).padStart(2, '0')}:${String(Math.floor(r / 10)).padStart(2, '0')}.${r % 10}`;
+}
+// Le compteur ne pousse rien : un signe par case de largeur fixe (chiffres
+// et ponctuation ont chacun la leur, musique.css), la boîte a sa largeur ;
+// seules les cases qui changent sont récrites.
+function setCue(node, str) {
+  if (node.childElementCount !== str.length) {
+    node.replaceChildren(...[...str].map((ch) => el('i', { class: /\d/.test(ch) ? 'd' : 'p' }, ch)));
+    return;
+  }
+  for (let i = 0; i < str.length; i++) { const k = node.children[i]; if (k.textContent !== str[i]) k.textContent = str[i]; }
 }
 
 // ── l'enregistrement du projet ──────────────────────────────
@@ -643,8 +778,9 @@ const bar = el('div', { class: 'mu-bar' });
 const viewBox = el('div', { class: 'mu-view' });
 document.body.append(el('main', { class: 'mu-app' }, bar, viewBox));
 const ov = el('canvas', { class: 'mu-ov', title: 'la forme d\'onde de la session (rendu hors temps réel) · clic : aller là' });
-const posEl = el('b', { id: 'mu-pos' }, '001.1.1');
-const secEl = el('small', { id: 'mu-sec' }, '');
+const posEl = el('b', { id: 'mu-pos' });
+const secEl = el('small', { id: 'mu-sec' });
+setCue(posEl, '001.1.1'); setCue(secEl, '00:00.0');
 
 function paintBar() {
   const P = S.proj;
@@ -652,11 +788,14 @@ function paintBar() {
     S.list.map((x) => el('option', { value: x.id, selected: x.id === P.id || null }, x.name)));
   const ic = (label, title, fn, cls = '', attrs = {}) => el('button', { class: `tb sm mu-ic ${cls}`, type: 'button', title, onclick: fn, ...attrs }, label);
   const views = el('div', { class: 'seg mu-views', role: 'tablist' },
-    [['timeline', 'Arrangement'], ['console', 'Console'], ['rack', 'Rack'], ['nodal', 'Nodal']].map(([v, l]) =>
-      el('button', { class: `tb${S.view === v ? ' on' : ''}`, role: 'tab', 'aria-selected': S.view === v, type: 'button', 'data-view': v,
+    [['timeline', 'Arrangement', 'Tab : Arrangement ↔ Nodal'], ['console', 'Console', ''], ['nodal', 'Nodal', 'Tab : Arrangement ↔ Nodal']].map(([v, l, ti]) =>
+      el('button', { class: `tb${S.view === v ? ' on' : ''}`, role: 'tab', 'aria-selected': S.view === v, type: 'button', 'data-view': v, title: ti,
         onclick: () => app.setView(v) }, l)));
   const bpm = el('button', { class: 'mu-bpm', id: 'mu-bpm', type: 'button', title: 'tempo · clic : le saisir · molette : ± 1', onclick: editBpm,
     onwheel: (e) => { e.preventDefault(); setBpm(P.bpm + (e.deltaY < 0 ? 1 : -1)); } }, el('b', {}, String(P.bpm)), el('small', {}, 'bpm'));
+  const tap = el('button', { class: 'tb ghost sm mu-tap', id: 'mu-tap', type: 'button',
+    title: 'frapper le tempo : quatre frappes ou plus, au temps · Maj+T · la moyenne des dernières frappes (jusqu\'à huit) ; une pause de deux secondes recommence',
+    onpointerdown: (e) => { e.preventDefault(); tapTempo(e.timeStamp); } }, 'Tap');
   const pend = (P.pending || []).length;
   put(bar,
     el('div', { class: 'grp mu-brand', title: 'ODIO · le studio musique · le projet s\'enregistre seul' }, el('b', { class: 'venus' }, 'ODIO'),
@@ -664,16 +803,20 @@ function paintBar() {
     el('div', { class: 'grp' }, sel,
       el('button', { class: 'tb ghost sm', type: 'button', title: 'nouveau projet, renommer, corbeille', onclick: (e) => projMenu(e) }, '···')),
     el('div', { class: 'grp mu-tr' },
-      ic('⏮', 'retour au début · Entrée', () => engine.seek(0)),
-      ic(engine.running ? '❚❚' : '▶', engine.running ? 'pause (on reste là)' : 'lecture · Espace', togglePause, 'play', { id: 'mu-play' }),
-      ic('■', 'stop : retour où la lecture a commencé (à l\'arrêt : au début)', stopBtn),
-      el('button', { class: `tb sm mu-rec${S.rec ? ' on' : ''}${rec.active ? ' live' : ''}`, id: 'mu-rec', type: 'button', title: 'prise : armée, la lecture enregistre les pistes armées · R',
+      ic('⏮', 'retour au début · Origine (Home)', () => engine.seek(0)),
+      ic(engine.running ? '❚❚' : '▶', engine.running ? 'pause (on reste là) · Maj+Espace : reprendre' : 'lecture · Espace', togglePause, 'play', { id: 'mu-play' }),
+      ic('■', 'stop : retour où la lecture a commencé (à l\'arrêt : au début) · Espace', stopBtn),
+      el('button', { class: `tb sm mu-rec${S.rec ? ' on' : ''}${rec.active ? ' live' : ''}`, id: 'mu-rec', type: 'button', title: 'prise : armée, la lecture enregistre les pistes armées · F9',
         onclick: toggleRec }, el('i'), 'Rec'),
-      el('button', { class: `tb sm${P.loop.on ? ' on' : ' ghost'}`, type: 'button', title: 'boucle · B', onclick: () => { P.loop.on = !P.loop.on; app.commit('meta'); } }, 'Boucle'),
-      el('button', { class: `tb sm${S.metro ? ' on' : ' ghost'}`, type: 'button', title: 'métronome · C', onclick: toggleMetro }, 'Clic')),
-    el('div', { class: 'mu-tc' }, posEl, secEl),
+      el('button', { class: `tb sm${P.loop.on ? ' on' : ' ghost'}`, type: 'button', title: 'boucle · Ctrl+L (sur les clips choisis : la boucle les prend)', onclick: () => { P.loop.on = !P.loop.on; app.commit('meta'); } }, 'Boucle'),
+      el('button', { class: `tb sm${S.metro ? ' on' : ' ghost'}`, type: 'button', title: 'métronome · O (clavier MIDI éteint)', onclick: toggleMetro }, 'Clic'),
+      el('button', { class: `tb sm mu-kbd${S.kbd ? ' on' : ' ghost'}`, id: 'mu-kbd', type: 'button',
+        title: S.kbd ? 'clavier MIDI de l\'ordinateur : allumé — les lettres jouent des notes (A W S E D…), Z X l\'octave, C V la vélocité · M : l\'éteindre (les lettres redeviennent des raccourcis)'
+          : 'clavier MIDI de l\'ordinateur : éteint — les lettres sont des raccourcis (Z, X, W, H, O, S, C, A) · M : l\'allumer',
+        onclick: toggleKbd }, 'Clavier')),
+    el('div', { class: 'mu-tc', title: 'mesure . temps . double-croche · minutes : secondes' }, posEl, secEl),
     el('div', { class: 'grp mu-tempo' },
-      ic('−', 'tempo − 1 (Maj : − 10)', (e) => setBpm(P.bpm - (e.shiftKey ? 10 : 1))), bpm, ic('+', 'tempo + 1 (Maj : + 10)', (e) => setBpm(P.bpm + (e.shiftKey ? 10 : 1))),
+      ic('−', 'tempo − 1 (Maj : − 10)', (e) => setBpm(P.bpm - (e.shiftKey ? 10 : 1))), bpm, ic('+', 'tempo + 1 (Maj : + 10)', (e) => setBpm(P.bpm + (e.shiftKey ? 10 : 1))), tap,
       el('select', { class: 'fld mu-mini', 'aria-label': 'mesure', title: 'temps par mesure', onchange: (e) => { P.sig = +e.target.value; app.commit('meta'); } },
         [2, 3, 4, 6].map((n) => el('option', { value: n, selected: n === P.sig || null }, n === 6 ? '6/8' : `${n}/4`))),
       el('button', { class: 'mu-key', id: 'mu-key', type: 'button', title: 'tonalité et mode de la session', onclick: keyPop }, el('b', {}, keyLabel(P.key)))),
@@ -776,6 +919,39 @@ function toggleMetro() {
   S.metro = !S.metro; engine.metro = S.metro;
   paintBar();
 }
+// M (Live : « Computer MIDI Keyboard ») : les lettres jouent, ou commandent
+function toggleKbd() {
+  S.kbd = !S.kbd;
+  toast(S.kbd ? 'clavier MIDI allumé : les lettres jouent des notes · M pour l\'éteindre' : 'clavier MIDI éteint : les lettres sont des raccourcis · M pour l\'allumer', 2500);
+  paintBar();
+}
+
+// ── frapper le tempo ────────────────────────────────────────
+// Chaque frappe note son instant (performance.now, en millisecondes) ; le
+// tempo est 60 000 divisé par la moyenne des intervalles entre les
+// dernières frappes (huit au plus, donc sept intervalles). Une pause de plus
+// de deux secondes recommence le compte. Dès deux frappes le tempo suit,
+// arrondi au battement (le projet garde un tempo entier, de 20 à 300).
+// Choix de réglage : Live 12 n'a pas de raccourci par défaut pour frapper
+// le tempo (son bouton TAP se mappe) ; Maj+T est donc à ODIO.
+// L'instant d'une frappe est celui de l'événement (Event.timeStamp, même
+// horloge que performance.now, MDN) : une page occupée à redessiner le
+// tempo précédent ne retarde pas la mesure de la frappe suivante.
+const taps = [];
+function tapTempo(at = performance.now()) {
+  const t = at;
+  if (taps.length && t - taps[taps.length - 1] > 2000) taps.length = 0;
+  taps.push(t);
+  if (taps.length > 8) taps.shift();
+  const b = $('#mu-tap');
+  if (b) { b.classList.add('hit'); setTimeout(() => b.classList.remove('hit'), 90); }
+  if (taps.length < 2) { toast('tempo : frappe encore, au temps', 1500); return; }
+  const iv = taps.slice(1).map((x, i) => x - taps[i]);
+  const bpm = 60000 / (iv.reduce((a, x) => a + x, 0) / iv.length);
+  window.__muTap = { taps: taps.length, bpm };
+  if (bpm < 20 || bpm > 300) return;
+  setBpm(bpm);
+}
 
 // ── la forme d'onde de la session ───────────────────────────
 // Le mixage rendu hors temps réel (le même graphe qu'à l'export), refait
@@ -821,13 +997,14 @@ ov.addEventListener('pointerdown', (e) => {
 
 // ── les vues ────────────────────────────────────────────────
 const views = {};
-const MAKERS = { timeline: createTimeline, console: createConsole, rack: createRack, nodal: createNodal };
+const MAKERS = { timeline: createTimeline, console: createConsole, nodal: createNodal };
 function render(full = false) {
   if (!S.proj) return;
   paintBar();
   if (!views[S.view]) views[S.view] = MAKERS[S.view](app);
   const v = views[S.view];
   if (full || viewBox.firstChild !== v.el) put(viewBox, v.el);
+  if (S.view !== 'nodal') views.nodal?.hide?.();
   document.body.dataset.view = S.view;
   v.render();
 }
@@ -836,8 +1013,8 @@ function render(full = false) {
 function frame() {
   if (S.proj) {
     const b = engine.position();
-    posEl.textContent = fmtPos(b);
-    secEl.textContent = fmtDur(b * 60 / S.proj.bpm);
+    setCue(posEl, fmtPos(b));
+    setCue(secEl, fmtClock(b * 60 / S.proj.bpm));
     views[S.view]?.frame?.(b);
     if (ovBuf && ov.dataset.tot) {
       // la tête sur la forme d'onde
@@ -865,33 +1042,82 @@ function srcForPlay() {
   return t && TRACK_KINDS[t.kind]?.pattern ? t : null;
 }
 
+// Les raccourcis sont ceux de Live 12 (« Live Keyboard Shortcuts », manuel
+// de référence ; la table est dans guide.js). Comme dans Live, les lettres
+// seules jouent des notes tant que le clavier MIDI de l'ordinateur est
+// allumé (M) ; éteint, elles redeviennent des commandes.
+const newTrack = (kind, type) => { app.addTrack(kind, type ? { type } : {}); app.commit('graph'); };
 addEventListener('keydown', async (e) => {
   if (!S.proj || typing(e) || document.querySelector('.scrim')) return;
-  const ctrl = e.ctrlKey || e.metaKey;
-  if (ctrl && e.code === 'KeyZ') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
-  if (ctrl && e.code === 'KeyY') { e.preventDefault(); redo(); return; }
-  if (ctrl || e.altKey) { views[S.view]?.key?.(e); return; }
-  if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) togglePlay(); return; }
-  if (e.code === 'Enter' || e.code === 'Home') { e.preventDefault(); engine.seek(0); return; }
-  if (e.code === 'KeyR' && !e.repeat) { toggleRec(); return; }
-  if (e.code === 'KeyC' && !e.repeat) { toggleMetro(); return; }
-  if (e.code === 'KeyB' && !e.repeat) { S.proj.loop.on = !S.proj.loop.on; app.commit('meta'); return; }
-  if (e.code === 'KeyM' && !e.repeat) { app.addMarker(engine.position()); return; }
-  if (e.code === 'KeyZ' || e.code === 'KeyX') {
-    S.oct = Math.max(0, Math.min(8, S.oct + (e.code === 'KeyZ' ? -1 : 1)));
-    toast(`clavier : octave ${S.oct} (do${S.oct})`, 1200);
+  const ctrl = e.ctrlKey || e.metaKey, c = e.code;
+  // annuler, rétablir (Ctrl+Z ; Ctrl+Y, ou Cmd+Maj+Z sur Mac)
+  if (ctrl && !e.altKey && c === 'KeyZ') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+  if (ctrl && c === 'KeyY') { e.preventDefault(); redo(); return; }
+  // les vues : Tab Arrangement ↔ Nodal (Live : Session ↔ Arrangement),
+  // Maj+Tab ou F12 : Clip ↔ Instruments, Ctrl+Alt+B : le navigateur,
+  // Ctrl+Alt+3 / 4 : la vue Clip / Instruments
+  if (c === 'Tab' && !ctrl && !e.altKey) {
+    e.preventDefault();
+    if (e.shiftKey) app.showDetail(S.proj.ui.detail === 'device' ? 'clip' : 'device');
+    else app.setView(S.view === 'nodal' ? 'timeline' : 'nodal');
     return;
   }
-  if (e.code in KEYS) {
-    if (e.repeat || held.has(e.code)) return;
-    const t = srcForPlay();
-    if (!t) return;
-    const pitch = t.kind === 'drums' ? KEYS[e.code] : 12 * (S.oct + 1) + KEYS[e.code];
-    held.set(e.code, null);
-    const h = await engine.noteOn(t.src, pitch, 0.85);
-    rec.noteOn(t, pitch, 0.85, e.code);
-    if (held.has(e.code)) held.set(e.code, h); else engine.noteOff(h);
+  if (c === 'F12') { e.preventDefault(); app.showDetail(S.proj.ui.detail === 'device' ? 'clip' : 'device'); return; }
+  if (ctrl && e.altKey && c === 'KeyB') { e.preventDefault(); S.proj.ui.nav = S.proj.ui.nav === false; saveQuiet(); render(); return; }
+  if (ctrl && e.altKey && c === 'Digit3') { e.preventDefault(); app.showDetail('clip'); return; }
+  if (ctrl && e.altKey && c === 'Digit4') { e.preventDefault(); app.showDetail('device'); return; }
+  // les pistes : Ctrl+T audio, Ctrl+Maj+T MIDI (un synthé), Ctrl+Alt+T retour (bus)
+  if (ctrl && c === 'KeyT') {
+    e.preventDefault();
+    if (e.altKey) app.addBus('reverb'); else if (e.shiftKey) newTrack('synth', 'synth'); else newTrack('audio');
     return;
+  }
+  // Ctrl+Maj+M : un clip MIDI (de motif) à la tête de lecture, sur la piste choisie
+  if (ctrl && e.shiftKey && c === 'KeyM') {
+    e.preventDefault();
+    const t = app.track(S.sel.track);
+    if (!t || !TRACK_KINDS[t.kind]?.pattern) { toast('Ctrl+Maj+M : choisis une piste de batterie ou de synthé'); return; }
+    if (app.newClip(t.id, Math.floor(engine.position() / S.proj.sig) * S.proj.sig)) app.showDetail('clip');
+    return;
+  }
+  // le transport : Espace lecture / stop, Maj+Espace reprendre là où l'on
+  // s'est arrêté, Origine au début (Entrée aussi, l'ancien d'ODIO), F9 prise
+  if (c === 'Space') { e.preventDefault(); if (e.repeat) return; if (e.shiftKey) togglePause(); else togglePlay(); return; }
+  if (c === 'Home' || c === 'Enter') { e.preventDefault(); engine.seek(0); return; }
+  if (c === 'F9') { e.preventDefault(); if (!e.repeat) toggleRec(); return; }
+  if (e.shiftKey && c === 'KeyT' && !ctrl && !e.altKey) { e.preventDefault(); tapTempo(e.timeStamp); return; }
+  if (e.shiftKey && c === 'KeyM' && !ctrl && !e.altKey) { app.addMarker(engine.position()); return; }
+  if (ctrl || e.altKey) { views[S.view]?.key?.(e); return; }
+  if (c === 'KeyM' && !e.repeat) { toggleKbd(); return; }
+  if (S.kbd) {
+    if (c === 'KeyZ' || c === 'KeyX') {
+      S.oct = Math.max(0, Math.min(8, S.oct + (c === 'KeyZ' ? -1 : 1)));
+      toast(`clavier : octave ${S.oct} (do${S.oct})`, 1200);
+      return;
+    }
+    if (c === 'KeyC' || c === 'KeyV') {
+      S.vel = Math.max(0.05, Math.min(1, Math.round((S.vel + (c === 'KeyC' ? -0.15 : 0.15)) * 100) / 100));
+      toast(`clavier : vélocité ${Math.round(S.vel * 127)}`, 1200);
+      return;
+    }
+    if (c in KEYS) {
+      if (e.repeat || held.has(c)) return;
+      const t = srcForPlay();
+      if (!t) return;
+      const pitch = t.kind === 'drums' ? KEYS[c] : 12 * (S.oct + 1) + KEYS[c];
+      held.set(c, null);
+      const h = await engine.noteOn(t.src, pitch, S.vel);
+      rec.noteOn(t, pitch, S.vel, c);
+      if (held.has(c)) held.set(c, h); else engine.noteOff(h);
+      return;
+    }
+  } else if (!e.repeat) {
+    // clavier MIDI éteint : les lettres de Live 12
+    const t = app.track(S.sel.track);
+    if (c === 'KeyO') { toggleMetro(); return; }
+    if (c === 'KeyS' && t) { t.solo = !t.solo; app.commit('mute'); return; }
+    if (c === 'KeyC' && t) { t.arm = !t.arm; app.commit('quiet'); render(); return; }
+    if (c === 'KeyA' && t) { S.proj.ui.auto = { ...(S.proj.ui.auto || {}), [t.id]: !S.proj.ui.auto?.[t.id] }; saveQuiet(); render(); return; }
   }
   views[S.view]?.key?.(e);
 });
@@ -1103,4 +1329,4 @@ function openExport() {
 })();
 
 // pour les essais pilotés (playwright) : l'état, le moteur, l'export
-window.__mu = { S, app, engine, renderMix, wav24, peakDb, hist, rec, undo, redo, flush };
+window.__mu = { S, app, engine, renderMix, wav24, peakDb, hist, rec, undo, redo, flush, views, tapTempo };

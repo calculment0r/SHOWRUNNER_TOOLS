@@ -6,7 +6,7 @@
 
 import { toast } from '../commun/shell.js';
 import { MODULES, EFFECT_TYPES, spec, val, fmt, moduleName } from './modules.js';
-import { el, knob, fader, vu, menu, ask, put } from './ui.js';
+import { el, knob, fader, vu, menu, put, inlineEdit } from './ui.js';
 
 const SEND = { k: 'send', label: 'Envoi', min: -60, max: 6, def: -60, unit: 'dB', curve: 'lin', step: 0 };
 
@@ -42,8 +42,8 @@ export function createConsole(app) {
   function inserts(t) {
     const ch = app.chain(t.id).filter((m) => m.id !== t.src && m.id !== t.strip);
     return el('div', { class: 'cs-ins' },
-      ch.map((m) => el('button', { class: `cs-in${m.on === false ? ' off' : ''}`, type: 'button', title: `${MODULES[m.type].name} · clic : dans le rack`,
-        style: { '--k': `var(--${MODULES[m.type].color})` }, onclick: () => { app.select({ track: t.id, mod: m.id }); app.setView('rack'); } }, moduleName(m.type))),
+      ch.map((m) => el('button', { class: `cs-in${m.on === false ? ' off' : ''}`, type: 'button', title: `${MODULES[m.type].name} · clic : dans la vue Instruments, sous l'arrangement`,
+        style: { '--k': `var(--${MODULES[m.type].color})` }, onclick: () => { S.sel.track = t.id; S.sel.mod = m.id; app.showDetail('device'); } }, moduleName(m.type))),
       el('button', { class: 'cs-in add', type: 'button', title: 'un effet en insert, avant la tranche', onclick: (e) => {
         const r = e.currentTarget.getBoundingClientRect();
         menu(r.left, r.bottom + 4, EFFECT_TYPES.map((k) => ({ label: MODULES[k].name, sub: MODULES[k].odio ? `ODIO · ${MODULES[k].kind}` : MODULES[k].kind, dot: MODULES[k].color,
@@ -59,10 +59,15 @@ export function createConsole(app) {
     const fd = fader(volS, val(st, 'vol'), { accent: t.color, label: `volume ${t.name}`,
       onInput: (v) => { st.params.vol = Math.round(v * 10) / 10; app.commit('param', st); }, onChange: () => app.commit('quiet') });
     const tog = (label, on, title, fn, cls = '') => el('button', { class: `tb sm ${cls}${on ? ' on' : ' ghost'}`, type: 'button', title, onclick: fn }, label);
-    return el('div', { class: `cs-strip${bus ? ' bus' : ''}${S.sel.track === t.id ? ' sel' : ''}${t.mute ? ' muted' : ''}`, style: { '--c': `var(--${t.color})` },
-      onclick: (e) => { if (e.target.closest('button, .kn, .fdr')) return; app.select({ track: t.id }); } },
-    el('div', { class: 'cs-top' }, el('i', { class: 'bar' }),
-      el('b', { title: 'double-clic : renommer', ondblclick: async () => { const n = await ask('Renommer', 'Nom', t.name, 'Renommer'); if (n) { t.name = n.slice(0, 60); app.commit('data'); } } }, t.name),
+    const nm = el('b', { title: 'double-clic : renommer', ondblclick: () => inlineEdit(nm, t.name, (n) => { t.name = n.slice(0, 60); app.commit('data'); }, { max: 60 }) }, t.name);
+    return el('div', { class: `cs-strip${bus ? ' bus' : ''}${S.sel.track === t.id ? ' sel' : ''}${t.mute ? ' muted' : ''}`, style: { '--c': `var(--${t.color})` }, 'data-track': t.id,
+      onclick: (e) => {
+        if (e.target.closest('button, .kn, .fdr, .mu-inline') || S.sel.track === t.id) return;
+        // choisir sans refaire la console : un double-clic qui suit renomme encore
+        S.sel.track = t.id; S.sel.pat = t.pat || null; S.sel.clip = null; S.sel.clips = [];
+        for (const s of root.querySelectorAll('.cs-strip')) s.classList.toggle('sel', s === e.currentTarget);
+      } },
+    el('div', { class: 'cs-top' }, el('i', { class: 'bar' }), nm,
       el('span', { class: 'lbl' }, bus ? 'retour' : moduleName(src?.type))),
     inserts(t),
     bus ? el('div', { class: 'cs-sends empty' }, el('span', { class: 'lbl' }, 'ce que les pistes y envoient'))

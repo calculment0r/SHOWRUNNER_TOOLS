@@ -226,6 +226,56 @@ export function drawer({ title, cls = '', head = [], onclose }) {
 }
 export const drawerOpen = () => openDrawer;
 
+// Renommer EN PLACE (double-clic sur ce que l'utilisateur personnalise :
+// piste, clip, section, marqueur, motif, préréglage) : le texte devient un
+// champ, le seul endroit de la page où l'on sélectionne du texte. Entrée ou
+// quitter le champ : valider ; Échap : annuler.
+export function inlineEdit(node, value, onCommit, { max = 60 } = {}) {
+  if (!node || node.classList.contains('editing')) return;
+  const inp = el('input', { class: 'mu-inline', value: value || '', maxlength: max, 'aria-label': 'renommer', spellcheck: 'false' });
+  const w = node.getBoundingClientRect().width;
+  inp.style.width = `${Math.max(70, Math.min(320, w + 20))}px`;
+  const prev = [...node.childNodes];
+  node.classList.add('editing');
+  node.replaceChildren(inp);
+  inp.focus(); inp.select();
+  let done = false;
+  const finish = (ok) => {
+    if (done) return;
+    done = true;
+    const v = inp.value.trim();
+    node.classList.remove('editing');
+    node.replaceChildren(...prev);
+    if (ok && v && v !== value) onCommit(v);
+  };
+  inp.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); } else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  inp.addEventListener('blur', () => finish(true));
+  for (const ev of ['pointerdown', 'dblclick', 'click', 'contextmenu']) inp.addEventListener(ev, (e) => e.stopPropagation());
+}
+
+// Un séparateur qu'on tire : `axis` 'x' (largeur) ou 'y' (hauteur) ;
+// get() → taille courante, set(v) pendant le geste, done(v) à la fin.
+// Double-clic : `reset`.
+export function splitter(axis, { get, set, done, min = 80, max = 2000, reset = null, invert = false, title = '' }) {
+  const s = el('div', { class: `mu-split ${axis}`, role: 'separator', 'aria-orientation': axis === 'x' ? 'vertical' : 'horizontal', title });
+  s.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    s.setPointerCapture(e.pointerId);
+    const p0 = axis === 'x' ? e.clientX : e.clientY, v0 = get();
+    s.classList.add('on');
+    const mv = (ev) => { const d = (axis === 'x' ? ev.clientX : ev.clientY) - p0; set(clamp(v0 + (invert ? -d : d), min, max)); };
+    const up = (ev) => { s.removeEventListener('pointermove', mv); s.removeEventListener('pointerup', up); s.classList.remove('on');
+      const d = (axis === 'x' ? ev.clientX : ev.clientY) - p0; done(clamp(v0 + (invert ? -d : d), min, max)); };
+    s.addEventListener('pointermove', mv); s.addEventListener('pointerup', up);
+  });
+  if (reset !== null) s.addEventListener('dblclick', () => { set(reset); done(reset); });
+  return s;
+}
+
 // Un nom demandé dans une petite modale → Promise<texte | null>
 export function ask(title, label, value = '', go = 'Créer') {
   return new Promise((resolve) => {

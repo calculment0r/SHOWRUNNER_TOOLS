@@ -24,8 +24,8 @@ des contrats (YuE2, séparation, ACE-Step).
 |---|---|
 | **Arrangement** | la règle des **sections** (double-clic : une section ; double-clic dessus : la nommer ; glisser : la déplacer **avec ses clips et ses courbes** — Maj : l'étiquette seule ; bords : la longueur ; clic droit : dupliquer avec ses clips (la copie s'insère, la suite recule), échanger avec la voisine, colorer, étiqueter pour les paroles, boucler dessus, retirer avec ou sans ses clips) ; les mesures, la boucle (bande du haut), les **marqueurs** (M, clic droit sur la règle ; glisser, renommer) ; l'**arc d'énergie** (une piste qu'on peint : il ouvre et ferme le filtre de la sortie, son volume, ou les deux ; Maj : une droite, clic droit : effacer ; « suivre les sections ») ; les pistes (muet, solo, **armer**, **automation**, volume, panoramique, couleur, instrument, monter/descendre) ; sous chaque piste ses **voies d'automation**, peintes de même ; les clips de motifs (leurs notes ou leurs coups dessinés, nommés « SECTION · MOTIF » comme la maquette) et les clips audio (forme d'onde, fondus, boucle) ; aimant (libre, 1/16 … mesure ; Alt : libre), **sélection multiple** (Maj+clic, cadre tiré sur le vide), **copier / couper / coller** à la tête de lecture, dupliquer, **couper** à la tête de lecture, **rogner par les deux bords**, boucler, rendre muet, changer de piste (même sorte ; un motif suit), Ctrl+glisser : copier ; zoom horizontal (Ctrl+molette, « px/mes » comme la maquette) et vertical (S M L) ; en bas l'**éditeur** du clip choisi ; à gauche le **navigateur** |
 | **Console** | une tranche par piste : inserts (clic : le rack), **envois vers les bus d'effets** (après le fader), panoramique, M/S/●, **fader**, **vu-mètre** avec maintien de crête ; les **bus** (retours : Réverbération, Réverbe ODIO, Délai, RTT-01, Chorus, vide) ; la **sortie** (vu-mètres gauche et droite, l'arc, sa coupure basse et son volume bas) |
-| **Rack** | la chaîne d'une piste (source → effets → tranche) avec ses molettes ; changer d'instrument, préréglages ; DR-9 (8 pads) ou boîte à rythme ODIO (11 pads, 4 réglages par voix, 808 / 909) ; l'éditeur du motif de la piste |
-| **Nodal** | tous les modules et leurs câbles ; **les envois de la console sont des câbles en pointillé avec leur niveau** : le même graphe |
+| **Instruments** (depuis le 29/09 : en bas de l'arrangement, § 6) | la chaîne d'une piste (source → effets → tranche) avec ses molettes ; changer d'instrument, préréglages, enregistrer le sien ; DR-9 (8 pads) ou boîte à rythme ODIO (11 pads, 4 réglages par voix, 808 / 909) |
+| **Nodal** | tous les modules et leurs câbles ; **les envois de la console sont des câbles en pointillé avec leur niveau** : le même graphe ; en bas, le banc d'ODIO_01 (§ 6) |
 
 **Éditeurs** (le tiroir de l'arrangement, le bas du rack) :
 - *piano roll* : notes, longueurs, **vélocités** (voie du bas), grille 1/32 à
@@ -211,7 +211,8 @@ YuE2 et la séparation : `docs/etudes/yue.md`, `docs/etudes/stems.md`.
 - Pas de décompte avant la prise, pas de « punch » in/out, pas de quantification
   à l'enregistrement (on quantifie ensuite dans le piano roll).
 - Un clip audio n'est pas étiré quand le tempo change (sa longueur en temps
-  reste, le son garde sa vitesse).
+  reste, le son garde sa vitesse) ; « Caler » (§ 6) le recale à la main, en
+  Re-Pitch seulement.
 - Les notes d'un clip ne se voient que dans l'éditeur (pas d'édition directe
   dans l'arrangement) ; pas de fondu enchaîné entre deux clips audio.
 - Le rendu de la forme d'onde de la session refait tout le mixage (au-delà de
@@ -224,3 +225,49 @@ YuE2 et la séparation : `docs/etudes/yue.md`, `docs/etudes/stems.md`.
   échantillonnée, soundfonts General MIDI) ne sont pas repris.
 - À 1600 px, la barre de transport tient juste ; en dessous de 1280 px, la
   forme d'onde de la session se cache.
+
+## 6. Les remarques de Cal du 29/09 (deuxième tour)
+
+Cal a essayé ODIO ; onze remarques, toutes tenues. Chacune a été pilotée
+dans Chromium sans affichage sur DGX2 (portail d'essai :8784, script
+`sr_daw_r2.mjs` du scratchpad), une capture par point (`daw/r2_*.png`).
+
+| # | remarque | ce qui est fait | la preuve |
+|---|---|---|---|
+| 1 | panneau de gauche repliable | le navigateur en accordéon (Instruments, Effets, Préréglages, Sons, Motifs ; plusieurs ouverts), repliable en un rail (‹ ou Ctrl+Alt+B), sa largeur se tire (160 à 420 px, gardée dans le projet) | tiré de 60 px : 214 → 274 px, gardé ; replié : l'arrangement passe de 1290 à 1534 px |
+| 2 | aucune sélection de texte ; renommer sur place | `user-select: none` sur la page, les champs seuls restent sélectionnables ; double-clic : piste (arrangement et console), clip (sur son titre), section, marqueur, motif, préréglage à soi — un champ remplace le texte, Entrée valide, Échap annule ; Ctrl+R renomme le clip choisi ou la piste | un glisser à travers la barre et les pistes ne sélectionne rien (`""`) ; piste, clip, section et préréglage renommés au clavier |
+| 3 | tap tempo | bouton TAP et Maj+T ; tempo = 60 000 / moyenne des intervalles des dernières frappes (huit au plus), remise à zéro après 2 s de pause, instant pris sur `Event.timeStamp` | frappes à 500 ms → 120,0 bpm ; clics à 400 ms → 150,0 bpm |
+| 4 | le compteur ne pousse rien | une case de largeur fixe par signe (le 0 de Venus Rising fait 1,06 em, mesuré ; case de 1,12 em), compteur de 126 px, temps en `mm:ss.d` tronqué ; état d'enregistrement et bouton de lecture de largeur fixe | pendant la lecture, les 33 éléments de la barre n'ont pas bougé d'un pixel (x et largeur relevés 12 fois) |
+| 5 | poignées des clips | poignée gauche : rogne le début, la fin reste, le contenu reste calé (`off` avance d'autant de contenu : un motif en temps, un son en secondes × vitesse) ; droite : la fin ; corps : déplacer. Le dessin est refait à chaque pas depuis le nouveau départ | motif rogné de 2 temps : les pixels de la partie restante sont identiques avant, pendant et après le geste (comparaison octet à octet des captures) ; son rogné d'un temps : début + 0,4999 s (= 0,4 s × 1,25) |
+| 6 | raccourcis de Live | la table de Live 12 (source ci-dessous) : Tab, Maj+Tab / F12, Ctrl+Alt+B / 3 / 4, Espace, Maj+Espace, Origine, F9, O, Ctrl+L, Ctrl+Z/Y, Ctrl+X/C/V, Ctrl+D, Suppr, Ctrl+R, Ctrl+A, Ctrl+E, Ctrl+J, 0, R, flèches, Ctrl+1/2/4, Ctrl+Alt+T, Ctrl+Maj+M, S/C/A, + / −, Z/X, W/H, Alt+ / Alt−, M (clavier MIDI), Z X C V (octave, vélocité), Ctrl+U (piano roll) ; la table dans le GUIDE, onglet Raccourcis | Ctrl+E, Ctrl+D, Ctrl+J (deux clips de batterie → un clip « Consolidé » de 128 pas), Ctrl+L, 0, Ctrl+C / Ctrl+V, Suppr → Ctrl+Z → Ctrl+Y, R, Ctrl+R, Ctrl+A, F9, O (clavier MIDI éteint) vérifiés |
+| 7 | le rack en bas | la vue de détail de Live : onglets Clip et Instruments sous l'arrangement (Maj+Tab) ; Instruments = toute la chaîne de la piste choisie, de gauche à droite ; séparateur tiré (hauteur gardée) ; le panneau défile | 300 → 444 px, gardé ; la boîte à rythme dépasse 300 px et défile |
+| 8 | zoom à la molette | Ctrl+molette : zoom horizontal ancré au curseur ; Maj+molette : défiler ; Alt+molette sur une piste : sa hauteur ; + / − ; la règle des temps tirée à la verticale : zoom, à l'horizontale : chercher, double-clic : la sélection ; Z / X : zoomer sur la sélection / revenir ; W : tout le morceau ; H : toutes les pistes ; Ctrl+Alt+glisser : déplacer la vue | le temps sous le curseur reste 32,0 après Ctrl+molette ; Alt+molette 88 → 100 px ; W : 64 temps dans 1290 px |
+| 9 | réglages d'un clip audio | la vue Clip d'un son : fanions DÉBUT / FIN, accolade de boucle (position et longueur), gain, transposition (demi-tons et cents), inverser, fondus, normaliser, **Caler** (la région dure N mesures) ; l'onde se zoome (Ctrl+molette) | son de 440 puis 660 Hz : +12 → 880 / 1320 Hz et clip deux fois plus court ; inversé → 1319 / 879 ; en boucle, tiré à 7 temps : le son continue au-delà de sa fin ; calé sur une mesure à 150 bpm : vitesse × 1,2498 (attendu 1,25) |
+| 10 | Tab | Arrangement ↔ Nodal | vérifié |
+| 11 | le nodal façon ODIO_01 | le banc (`banc.js`) : l'arrangement en petit (sections, pistes et clips) et les lanes d'ODIO_01, leurs segments, les attracteurs tirés au clic milieu d'un segment jusque sur le graphe, anneaux, poignées, loi, teinte, fil, opérateurs, deux têtes (« c ») ; détail et écarts dans `musique/PROVENANCE.md` | segment TIMBRE tracé, attracteur posé sur la basse acide (anneaux matière 260 et brillance 420, 3 modules captés), il parle quand la tête rouge est dans son segment, se tait quand la verte gouverne |
+
+**Source des raccourcis et des gestes** : *Ableton Live 12 Reference
+Manual*, chapitres « Live Keyboard Shortcuts »
+(ableton.com/en/manual/live-keyboard-shortcuts) et « Arrangement View »
+(ableton.com/en/manual/arrangement-view), consultés le 29/09/2026. Écarts :
+Live n'a pas de raccourci pour son bouton TAP (Maj+T est à ODIO) ; Maj+M
+(un marqueur) est à ODIO ; Chrome garde Ctrl+T et Ctrl+Maj+T pour ses
+onglets (réservés : la page ne les reçoit pas) et peut garder F12.
+
+**Ce qui reste, ou n'est pas beau** :
+- Le calage au tempo est un Re-Pitch : la hauteur suit la vitesse.
+  `AudioBufferSourceNode.playbackRate` change les deux ensemble (MDN) ; un
+  étirement qui garde la hauteur (vocodeur de phase, WSOLA) demanderait un
+  AudioWorklet de plus.
+- Consolider un son rend le clip sans les effets de la piste (comme Live) ;
+  le WAV entre dans la bibliothèque, dossier Musique.
+- Le banc : les opérateurs se lisent, ils n'agissent pas sur le son — ODIO_01
+  non plus ; la table `FACETTES` (ce que chaque réglage a de rythmique,
+  d'harmonique, de timbral) est à relire par Cal : nos boîtes à rythme n'ont
+  ni swing ni densité, RYTHME ne capte que l'accent de la basse acide. Les
+  couleurs des lanes sont des jetons voisins de celles d'ODIO_01 ; les vraies
+  demanderaient cinq jetons dans `commun/tokens.css`.
+- Un segment de 40 px ne montre qu'une ligne d'opérateur (comme dans
+  ODIO_01) ; zoomer le banc en montre plus.
+- La touche « c » bascule les têtes dans le nodal (ODIO_01) : là, elle ne
+  règle plus la vélocité du clavier.

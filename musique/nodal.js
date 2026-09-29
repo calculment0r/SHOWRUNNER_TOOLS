@@ -3,11 +3,14 @@
 // fond = se déplacer, glisser une sortie vers une entrée = un câble, clic
 // sur un câble puis « Couper » (ou Suppr) = le retirer. Lâcher un câble dans
 // le vide propose un module neuf déjà branché. Le zoom est sémantique : de
-// loin, les cartes ne gardent que leur nom.
+// loin, les cartes ne gardent que leur nom. En bas, le banc d'ODIO_01
+// (banc.js) : l'arrangement simplifié et les lanes, d'où l'on tire des
+// attracteurs vers le canvas.
 
 import { toast } from '../commun/shell.js';
 import { MODULES, TRACK_KINDS, EFFECT_TYPES, spec, val } from './modules.js';
 import { el, knob, choice, menu, clamp, put } from './ui.js';
+import { createBench } from './banc.js';
 
 const CARD_W = 236;
 
@@ -25,9 +28,13 @@ export function createNodal(app) {
   const hint = el('div', { class: 'nd-hint lbl' });
   const side = el('aside', { class: 'nd-side' });
   cv.append(world, tools, zoomBox, hint);
-  root.append(cv, side);
   const view = () => (S.proj.ui = S.proj.ui || {}, S.proj.ui.nodal = S.proj.ui.nodal || { z: 0.8, px: 40, py: 40 });
   const cards = new Map();
+  const bench = createBench(app, {
+    cv, view: () => view(),
+    box: (id) => { const m = app.mod(id), c = cards.get(id); return m && c ? { x: m.x, y: m.y, w: CARD_W, h: c.offsetHeight || 200 } : null; },
+  });
+  root.append(el('div', { class: 'nd-main' }, cv, bench.el), side);
   const meters = [];
   let link = null;   // { from, dir: 'out' | 'in' }
 
@@ -46,6 +53,7 @@ export function createNodal(app) {
     world.classList.toggle('lod0', v.z < 0.55);
     world.classList.toggle('lod1', v.z < 0.9);
     zoomBox.querySelector('.pct') && (zoomBox.querySelector('.pct').textContent = `${Math.round(v.z * 100)} %`);
+    bench.paintMeta();
   }
   function zoomAt(nz, cx, cy) {
     const v = view(), k = clamp(nz, 0.3, 2) / v.z;
@@ -106,6 +114,7 @@ export function createNodal(app) {
         m.x = Math.round(mx + (ev.clientX - x0) / z); m.y = Math.round(my + (ev.clientY - y0) / z);
         box.style.left = `${m.x}px`; box.style.top = `${m.y}px`;
         paintWires();
+        bench.paintMeta();            // les opérateurs bougent dans le même geste (n° 57)
       };
       const up = () => { hd.removeEventListener('pointermove', mv); hd.removeEventListener('pointerup', up); if (moved) app.commit('data'); };
       hd.addEventListener('pointermove', mv); hd.addEventListener('pointerup', up);
@@ -120,7 +129,7 @@ export function createNodal(app) {
     });
     box.addEventListener('dblclick', (e) => {
       if (e.target.closest('.kn')) return;
-      if (m.track) { app.select({ track: m.track, mod: m.id }); app.setView('rack'); }
+      if (m.track) { S.sel.track = m.track; S.sel.mod = m.id; app.showDetail('device'); }
     });
     cards.set(m.id, box);
     return box;
@@ -289,7 +298,7 @@ export function createNodal(app) {
       sideParams();
       secs.push(el('div', { class: 'pan nd-sel', style: { '--k': `var(--${accent})` } },
         el('div', { class: 'row' }, el('b', { class: 'venus' }, name), el('span', { class: 'sp' }), el('span', { class: 'lbl' }, `${def.kind} · ${sub}`)),
-        m.type === 'drums' || m.type === 'rythme' ? el('p', { class: 'lbl' }, 'les voix se règlent dans le rack (double-clic sur la carte)') : null,
+        m.type === 'drums' || m.type === 'rythme' ? el('p', { class: 'lbl' }, 'les voix se règlent dans la vue Instruments, sous l\'arrangement (double-clic sur la carte)') : null,
         grid,
         el('div', { class: 'row' },
           def.role === 'effect' || def.role === 'source' ? el('button', { class: `tb sm${m.on !== false ? ' on' : ' ghost'}`, type: 'button',
@@ -298,12 +307,12 @@ export function createNodal(app) {
             const c = { ...m, id: app.uid('m'), x: m.x + 30, y: m.y + 30, params: { ...m.params } };
             S.proj.modules.push(c); S.sel.mod = c.id; app.commit('graph');
           } }, 'Dupliquer') : null,
-          m.track ? el('button', { class: 'tb ghost sm', type: 'button', onclick: () => { app.select({ track: m.track, mod: m.id }); app.setView('rack'); } }, 'Dans le rack') : null,
+          m.track ? el('button', { class: 'tb ghost sm', type: 'button', title: 'la chaîne de sa piste, sous l\'arrangement', onclick: () => { S.sel.track = m.track; S.sel.mod = m.id; app.showDetail('device'); } }, 'Instruments') : null,
           el('span', { class: 'sp' }),
           def.role === 'effect' ? el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.removeModule(m.id) }, 'Retirer') : null)));
     } else {
       sideParams = null;
-      secs.push(el('div', { class: 'pan nd-sel' }, el('p', { class: 'lbl' }, 'clic sur une carte : ses réglages ici · double-clic : son rack')));
+      secs.push(el('div', { class: 'pan nd-sel' }, el('p', { class: 'lbl' }, 'clic sur une carte : ses réglages ici · double-clic : sa chaîne, sous l\'arrangement')));
     }
     const nm = (id) => { const x = app.mod(id); if (!x) return '?'; const t = title(x); return `${t.name} · ${t.sub}`; };
     secs.push(el('div', { class: 'pan' },
@@ -342,10 +351,12 @@ export function createNodal(app) {
     applyView();
     paintWires();
     paintSide();
-    if (!P.ui?.nodal?.fitted) { requestAnimationFrame(() => { fit(); view().fitted = true; paintWires(); }); }
+    bench.render();
+    if (!P.ui?.nodal?.fitted) { requestAnimationFrame(() => { fit(); view().fitted = true; paintWires(); bench.paintMeta(); }); }
   }
 
   function frame() {
+    bench.frame();
     for (const [id, mt, big] of meters) {
       const db = app.engine.level(id);
       mt.firstChild.style.width = `${Math.max(0, Math.min(100, (db + 60) / 60 * 100)).toFixed(1)}%`;
@@ -360,6 +371,6 @@ export function createNodal(app) {
     else if (S.sel.mod && MODULES[app.mod(S.sel.mod)?.type]?.role === 'effect') { e.preventDefault(); app.removeModule(S.sel.mod); }
   }
 
-  new ResizeObserver(() => { if (S.view === 'nodal') paintWires(); }).observe(cv);
-  return { el: root, render, frame, key };
+  new ResizeObserver(() => { if (S.view === 'nodal') { paintWires(); bench.paintMeta(); bench.renderPlan(); } }).observe(cv);
+  return { el: root, render, frame, key, hide: () => bench.hide() };
 }

@@ -89,6 +89,30 @@ function release(param, t, r) {
   param.setTargetAtTime(0, t, Math.max(0.002, r / 4));
 }
 
+// ── les clips audio : la géométrie de la vue Clip ────────────
+// Le son à l'envers : une copie retournée, faite une fois par son (le Web
+// Audio ne lit pas à vitesse négative : AudioBufferSourceNode.playbackRate).
+const REVERSED = new WeakMap();
+export function clipBuffer(buf, c) {
+  if (!buf || !c?.rev) return buf;
+  let r = REVERSED.get(buf);
+  if (!r) {
+    r = new AudioBuffer({ length: buf.length, sampleRate: buf.sampleRate, numberOfChannels: buf.numberOfChannels });
+    for (let ch = 0; ch < buf.numberOfChannels; ch++) { const d = buf.getChannelData(ch).slice().reverse(); r.copyToChannel(d, ch); }
+    REVERSED.set(buf, r);
+  }
+  return r;
+}
+// vitesse, départ, boucle d'un clip audio, bornés par la durée du son D
+export function audioGeom(c, D) {
+  const rate = Math.pow(2, (c.pitch || 0) / 12);
+  const off = Math.max(0, Math.min(c.off || 0, Math.max(0, D - 0.001)));
+  const loop = !!c.loop;
+  const ls = loop ? Math.max(0, Math.min(c.ls ?? off, D - 0.02)) : off;
+  const llen = loop ? Math.max(0.02, Math.min(c.llen || (D - ls), D - ls)) : 0;
+  return { rate, off, loop, ls, llen };
+}
+
 // La valeur d'une courbe de points [[temps, valeur], …] triés : ligne
 // droite entre deux points, palier avant le premier et après le dernier.
 export function interp(pts, b) {
@@ -454,8 +478,10 @@ const SRC = {
       clip(buf, t, off, dur, o = {}) {
         if (!buf || dur <= 0) return;
         const loop = !!o.loop && o.llen > 0.01;
-        if (!loop) { if (off >= buf.duration) return; dur = Math.min(dur, buf.duration - off); }
-        const src = new AudioBufferSourceNode(ctx, { buffer: buf });
+        const rate = o.rate || 1;
+        // `dur` est en secondes de temps ; le son en lit `dur × rate`
+        if (!loop) { if (off >= buf.duration) return; dur = Math.min(dur, (buf.duration - off) / rate); }
+        const src = new AudioBufferSourceNode(ctx, { buffer: buf, playbackRate: rate });
         if (loop) { src.loop = true; src.loopStart = o.ls; src.loopEnd = Math.min(buf.duration, o.ls + o.llen); }
         const g = G(ctx, 0);
         const G0 = dbToGain(o.gain || 0), T0 = o.T0 ?? t, L = o.L ?? dur;
@@ -470,7 +496,9 @@ const SRC = {
         for (const [x, v] of pts) g.gain.linearRampToValueAtTime(v, x);
         g.gain.linearRampToValueAtTime(0, end);
         src.connect(g).connect(out);
-        if (loop) { src.start(t, off); src.stop(end); } else src.start(t, off, dur);
+        // l'arrêt se donne en temps de l'horloge (stop), pas en durée de son :
+        // la durée de start() se compte en secondes de contenu (spécification)
+        src.start(t, off); src.stop(end);
         env.live(src);
       },
       noteOn() { return null; }, noteOff() {},
@@ -766,17 +794,22 @@ export class Graph {
     }
   }
 
-  // un clip audio lu à partir du temps `beat` (son début, ou plus loin quand
-  // la lecture part au milieu), qui tombe à l'instant `t`
+  // Un clip audio lu à partir du temps `beat` (son début, ou plus loin quand
+  // la lecture part au milieu), qui tombe à l'instant `t`. Ses réglages
+  // (vue Clip) : `off` le marqueur de début dans le son (s), `pitch` la
+  // transposition en demi-tons — lue en changeant la vitesse, comme le mode
+  // « Re-Pitch » de Live : hauteur et durée bougent ensemble —, `rev` le son
+  // à l'envers, `loop` / `ls` / `llen` la boucle (début et longueur dans le son).
   audioClip(src, c, t, beat, cs, limit, spb) {
-    const buf = this.env.buffers.get(c.item);
+    const buf = clipBuffer(this.env.buffers.get(c.item), c);
     if (!buf) return;
-    const into = (beat - cs) * spb;                    // secondes déjà passées du clip
-    const L = c.len * spb, ls = c.off || 0;
-    const llen = c.loop ? Math.max(0.02, Math.min(c.llen || (buf.duration - ls), buf.duration - ls)) : 0;
-    const off = c.loop ? ls + (into % llen) : ls + into;
+    const clip = audioGeom(c, buf.duration);
+    const into = (beat - cs) * spb;                    // secondes de temps déjà passées du clip
+    const pos = clip.off + into * clip.rate;           // où en est le son
+    const off = clip.loop && pos >= clip.ls + clip.llen ? clip.ls + ((pos - clip.ls) % clip.llen) : pos;
     const dur = (Math.min(cs + c.len, limit) - beat) * spb;
-    src.clip(buf, t, off, dur, { T0: t - into, L, gain: c.gain || 0, fi: c.fi || 0, fo: c.fo || 0, loop: !!c.loop, ls, llen });
+    src.clip(buf, t, off, dur, { T0: t - into, L: c.len * spb, gain: c.gain || 0, fi: c.fi || 0, fo: c.fo || 0,
+      loop: clip.loop, ls: clip.ls, llen: clip.llen, rate: clip.rate });
   }
 
   // Les clips audio déjà commencés à l'instant où la lecture part (ou
@@ -1013,6 +1046,31 @@ export async function renderMix(engine, p, from, to, { tail = 2, sampleRate = 48
   g.schedule(p, from, to, 0, to);
   for (const n of g.nodes.values()) n.flush?.();                       // la réverbe d'ODIO
   await Promise.all([...g.nodes.values()].map((n) => n.ping?.()));    // les notes postées au worklet
+  return octx.startRendering();
+}
+
+// Consolider des clips audio (Ctrl+J, « Consolidate » de Live) : leur son
+// seul, tel que le clip le lit — début, boucle, vitesse, sens, gain,
+// fondus — sans les effets de la piste, qui restent dans sa chaîne. `a`, `b`
+// en noires ; rend un AudioBuffer de (b − a) noires.
+export async function renderClips(engine, p, clips, a, b, sampleRate = 48000) {
+  const spb = 60 / p.bpm;
+  const octx = new OfflineAudioContext({ numberOfChannels: 2, length: Math.max(1, Math.ceil((b - a) * spb * sampleRate)), sampleRate });
+  for (const c of clips) {
+    if (c.mute) continue;
+    const buf = clipBuffer(await engine.buffer(c.item), c);
+    const G = audioGeom(c, buf.duration);
+    const t0 = Math.max(0, (c.start - a) * spb), L = c.len * spb;
+    const src = new AudioBufferSourceNode(octx, { buffer: buf, playbackRate: G.rate });
+    if (G.loop) { src.loop = true; src.loopStart = G.ls; src.loopEnd = G.ls + G.llen; }
+    const lin = Math.pow(10, (c.gain || 0) / 20);
+    const g = new GainNode(octx, { gain: c.fi ? 0 : lin });
+    if (c.fi) { g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(lin, t0 + Math.min(c.fi, L)); }
+    if (c.fo) { g.gain.setValueAtTime(lin, t0 + Math.max(0, L - c.fo)); g.gain.linearRampToValueAtTime(0, t0 + L); }
+    src.connect(g).connect(octx.destination);
+    src.start(t0, G.off);
+    src.stop(t0 + L);
+  }
   return octx.startRendering();
 }
 

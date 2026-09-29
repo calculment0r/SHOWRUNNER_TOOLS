@@ -303,6 +303,12 @@ def validate(p: dict) -> None:
             _num(c.get("fo", 0) or 0, 0, 600, "fondu de sortie (s)")
             if c.get("llen") is not None:
                 _num(c["llen"], 0, 1e5, "longueur de boucle (s)")
+            # transposition (demi-tons, vitesse et hauteur ensemble), à
+            # l'envers, début de la boucle dans le son (29/09)
+            _num(c.get("pitch", 0) or 0, -48, 48, "transposition du clip (demi-tons)")
+            _bool(c, "rev", f"{cid} : rev")
+            if c.get("ls") is not None:
+                _num(c["ls"], 0, 1e5, "début de boucle (s)")
         elif c.get("pat") not in by_pat or by_pat[c["pat"]]["track"] != tr["id"]:
             raise ValueError(f"{cid} : motif absent")
         else:
@@ -361,6 +367,31 @@ def validate(p: dict) -> None:
     gen = p.get("gen")
     if gen is not None and (not isinstance(gen, dict) or len(json.dumps(gen)) > 65536):
         raise ValueError("brouillon du génératif : 64 ko au plus")
+    # les réglages enregistrés (le navigateur, « Les miens ») et le banc du
+    # nodal (segments, attracteurs, la courbe de tension) — 29/09
+    pres = p.get("presets", [])
+    if not isinstance(pres, list) or len(pres) > 200:
+        raise ValueError("réglages enregistrés : 200 au plus")
+    rids = set()
+    for r in pres:
+        rid = _id((r or {}).get("id"), "réglage")
+        if rid in rids:
+            raise ValueError(f"réglage en double : {rid}")
+        rids.add(rid)
+        _str(r.get("name"), 40, "nom de réglage", 1)
+        if r.get("type") not in SOURCES:
+            raise ValueError(f"{r['name']} : un réglage de source connue")
+        if not isinstance(r.get("params", {}), dict) or len(r.get("params", {})) > 200:
+            raise ValueError(f"{r['name']} : réglages invalides")
+    banc = p.get("banc")
+    if banc is not None and (not isinstance(banc, dict) or len(json.dumps(banc)) > 65536):
+        raise ValueError("banc du nodal : 64 ko au plus")
+    if isinstance(banc, dict):
+        for k in ("segs", "atts"):
+            if not isinstance(banc.get(k, []), list) or len(banc.get(k, [])) > 256:
+                raise ValueError(f"banc du nodal : {k}, 256 au plus")
+        if banc.get("ten") is not None:
+            _curve(banc["ten"], "courbe de tension")
 
 
 # ── les projets de départ ───────────────────────────────────
@@ -841,6 +872,10 @@ def selftest(call, ok) -> None:
     good["auto"] = [{"id": "a1", "mod": "m4", "k": "vol", "on": True, "pts": [[0, 0.5], [4, 0.9]]}]
     good["key"] = {"tonic": 5, "mode": "dorian"}
     good["clips"][0].update(mute=True, name="Intro · kit")
+    good["presets"] = [{"id": "r1", "name": "Ma basse", "type": "acid", "params": {"cutoff": 0.4}}]
+    good["banc"] = {"segs": [{"id": "g1", "lane": "ryt", "d": 4, "l": 8}], "atts": [], "ten": [[0, 0.5], [8, 0.7]]}
+    refused(lambda b: b.update(presets=[{"id": "r1", "name": "X", "type": "theremine", "params": {}}]), "un réglage d'une source inconnue", "source")
+    refused(lambda b: b.update(banc={"segs": [], "atts": [], "ten": [[0, 2]]}), "une tension hors de 0..1", "tension")
     st, r = call("POST", f"/api/music/projects/{pid}", good)
     ok(st == 200 and r.get("rev") == 3, f"sections, marqueurs, arc, automation, tonalité passent ({st} {r})")
     good["rev"] = 3

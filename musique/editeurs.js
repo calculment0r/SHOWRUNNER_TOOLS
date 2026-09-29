@@ -1,27 +1,38 @@
-// ODIO — les éditeurs du clip choisi (le tiroir sous l'arrangement, et le
-// bas du rack) :
-//   piano roll   notes, longueurs, vélocités (la voie du bas), grille et
-//                quantification, gamme de la session mise en évidence et
-//                aimant à la gamme, transposer, accent et liaison (la basse
-//                acide d'ODIO)
-//   pas          le séquenceur de la batterie : une rangée par voix de la
-//                source (DR-9 : huit, boîte à rythme : onze), vélocité par pas
-//   audio        gain, fondus, boucle, glisser le son dans le clip, couper
-//                à la tête de lecture, normaliser, séparer en pistes
+// ODIO — la vue de détail, en bas de l'arrangement, comme celle de Live :
+// deux onglets, Clip et Instruments (Maj+Tab ou F12 bascule ; Ctrl+Alt+3 :
+// Clip, Ctrl+Alt+4 : Instruments — les raccourcis de Live 12).
+//   Clip         le clip choisi :
+//     piano roll   notes, longueurs, vélocités (la voie du bas), grille et
+//                  quantification, gamme de la session mise en évidence et
+//                  aimant à la gamme, transposer, accent et liaison (la basse
+//                  acide d'ODIO)
+//     pas          le séquenceur de la batterie : une rangée par voix de la
+//                  source (DR-9 : huit, boîte à rythme : onze), vélocité par pas
+//     audio        la « Clip View » de Live pour un son : marqueurs de début
+//                  et de fin, boucle (sa position et sa longueur), gain,
+//                  transposition, inversion, fondus, calage au tempo
+//   Instruments  la chaîne de la piste choisie (rack.js)
+// Le panneau défile à la verticale ; sa hauteur se tire (timeline.js).
 
-import { toast, href } from '../commun/shell.js';
+import { toast } from '../commun/shell.js';
 import { MODULES, TRACK_KINDS, DRUM_MODELS, NOTE_MODELS, drumVoicesOf, noteName, isBlack, inScale, snapToScale, keyLabel,
   MODES, TONICS } from './modules.js';
-import { peaks, peakDb } from './moteur.js';
-import { el, knob, menu, ask, tok, clamp, put } from './ui.js';
+import { peaks, peakDb, clipBuffer, audioGeom } from './moteur.js';
+import { el, knob, menu, tok, clamp, put, inlineEdit } from './ui.js';
+import { createDevices } from './rack.js';
 
 const STEP_MAX = 256;
 
-// ── le tiroir ───────────────────────────────────────────────
+// ── la vue de détail ────────────────────────────────────────
 export function createDock(app) {
   const { S } = app;
-  const root = el('section', { class: 'dk', 'aria-label': 'éditeur' });
+  const root = el('section', { class: 'dk', 'aria-label': 'vue de détail' });
+  const tabs = el('div', { class: 'dk-tabs', role: 'tablist' });
+  const body = el('div', { class: 'dk-body' });
+  root.append(tabs, body);
+  const devices = createDevices(app);
   let ed = null;
+  const which = () => (S.proj.ui.detail === 'device' ? 'device' : 'clip');
   function target() {
     const c = app.clip(S.sel.clip);
     if (c) return { c, t: app.track(c.track) };
@@ -29,17 +40,46 @@ export function createDock(app) {
     if (t && TRACK_KINDS[t.kind]?.pattern) return { c: null, t };
     return null;
   }
+  function paintTabs() {
+    const t = app.track(S.sel.track), c = app.clip(S.sel.clip);
+    put(tabs,
+      [['clip', 'Clip', 'le clip choisi : ses notes, ses pas ou son son · Ctrl+Alt+3'], ['device', 'Instruments', 'les instruments et effets de la piste choisie · Ctrl+Alt+4']].map(([k, l, ti]) =>
+        el('button', { class: `dk-tab${which() === k ? ' on' : ''}`, type: 'button', role: 'tab', 'aria-selected': which() === k, title: `${ti} · Maj+Tab : basculer`,
+          onclick: () => { S.proj.ui.detail = k; app.saveUi(); render(); } }, l)),
+      el('span', { class: 'lbl dk-what' }, which() === 'clip'
+        ? (c ? `${t?.name || ''} · ${app.bar(c.start)} → ${app.bar(c.start + c.len)}` : t ? t.name : '')
+        : (t ? `${t.name} · ${app.chain(t.id).length} modules` : '')),
+      el('span', { class: 'sp' }),
+      el('span', { class: 'lbl' }, 'tirer le filet du haut : la hauteur'));
+  }
   function render() {
-    const tg = target();
-    if (!tg || !tg.t) {
+    paintTabs();
+    const top = body.scrollTop;
+    if (which() === 'device') {
       ed = null;
-      put(root, el('div', { class: 'dk-empty' }, el('b', { class: 'venus' }, 'Éditeur'),
-        el('span', {}, 'choisis un clip : ses notes, ses pas ou sa forme d\'onde s\'ouvrent ici · double-clic sur une piste vide : un clip neuf')));
+      if (body.firstChild !== devices.el) put(body, devices.el);
+      devices.render();
+      body.scrollTop = top;
       return;
     }
-    ed = tg.t.kind === 'audio' ? (tg.c ? audioEditor(app, root, tg.c, tg.t) : null) : patternEditor(app, root, tg.t, tg.c);
+    const tg = target();
+    const host = el('div', { class: 'dk-clip' });
+    put(body, host);
+    if (!tg || !tg.t) {
+      ed = null;
+      put(host, el('div', { class: 'dk-empty' }, el('b', { class: 'venus' }, 'Clip'),
+        el('span', {}, 'choisis un clip : ses notes, ses pas ou son son s\'ouvrent ici · double-clic sur une piste vide : un clip neuf')));
+      return;
+    }
+    ed = tg.t.kind === 'audio'
+      ? (tg.c ? audioEditor(app, host, tg.c, tg.t) : (put(host, el('div', { class: 'dk-empty' }, el('b', { class: 'venus' }, 'Clip'), el('span', {}, 'choisis un clip de cette piste audio'))), null))
+      : patternEditor(app, host, tg.t, tg.c);
   }
-  return { el: root, render, frame: (b) => ed?.frame?.(b), key: (e) => ed?.key?.(e) };
+  function key(e) {
+    if (which() === 'device') return devices.key(e);
+    return ed?.key?.(e) || false;
+  }
+  return { el: root, render, frame: (b) => { if (which() === 'device') devices.frame(b); else ed?.frame?.(b); }, key };
 }
 
 // ── l'éditeur de motif (notes ou pas) ───────────────────────
@@ -64,11 +104,14 @@ export function patternEditor(app, host, t, c = null, { tall = false } = {}) {
   Number.isInteger(bars) && [1, 2, 4, 8, 16].includes(bars) ? null : el('option', { value: bars, selected: true }, `${pat.steps} pas`));
   const head = el('div', { class: 'pe-head' },
     el('span', { class: 'k', style: { '--c': `var(--${t.color})` } }, t.name),
-    el('div', { class: 'pe-pats' }, pats.map((x) => el('button', {
-      class: `tb sm${x.id === pat.id ? ' on' : ' ghost'}`, type: 'button', title: c ? 'le motif que ce clip joue · double-clic : renommer' : 'double-clic : renommer',
-      onclick: () => setPat(x.id),
-      ondblclick: async () => { const n = await ask('Renommer le motif', 'Nom', x.name, 'Renommer'); if (n) { x.name = n.slice(0, 40); app.commit('data'); } },
-    }, x.name))),
+    el('div', { class: 'pe-pats' }, pats.map((x) => {
+      const b = el('button', {
+        class: `tb sm${x.id === pat.id ? ' on' : ' ghost'}`, type: 'button', title: c ? 'le motif que ce clip joue · double-clic : renommer' : 'double-clic : renommer',
+        onclick: () => { if (!b.classList.contains('editing') && x.id !== pat.id) setPat(x.id); },
+        ondblclick: () => inlineEdit(b, x.name, (n) => { x.name = n.slice(0, 40); app.commit('data'); }, { max: 40 }),
+      }, x.name);
+      return b;
+    })),
     el('button', { class: 'tb ghost sm', type: 'button', title: 'un motif neuf pour ce clip', onclick: () => { const p = app.newPattern(t.id); setPat(p.id); } }, '+ Motif'),
     el('button', { class: 'tb ghost sm', type: 'button', title: 'une copie de ce motif, que ce clip joue désormais', onclick: () => { const p = app.newPattern(t.id, pat); setPat(p.id); } }, 'Copier'),
     el('span', { class: 'sp' }),
@@ -333,7 +376,7 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
     el('div', { class: 'seg' }, GRIDS.map(([v, l]) => el('button', { class: `tb${gridS() === v ? ' on' : ''}`, type: 'button', onclick: (e) => {
       ui.grid = v; app.saveUi(); [...e.currentTarget.parentNode.children].forEach((b) => b.classList.toggle('on', b === e.currentTarget));
     } }, l))),
-    el('button', { class: 'tb ghost sm', type: 'button', title: 'ramener les débuts de notes sur la grille (les notes choisies, sinon toutes) · Q', onclick: () => quantize(gridS()) }, 'Quantifier'),
+    el('button', { class: 'tb ghost sm', type: 'button', title: 'ramener les débuts de notes sur la grille (les notes choisies, sinon toutes) · Ctrl+U', onclick: () => quantize(gridS()) }, 'Quantifier'),
     el('i', { class: 'ar-sep' }),
     el('button', { class: `tb sm${ui.scale ? ' on' : ' ghost'}`, type: 'button', title: `aimanter les notes à la gamme de la session (${keyLabel(P.key)})`,
       onclick: (e) => { ui.scale = !ui.scale; app.saveUi(); e.currentTarget.classList.toggle('on', ui.scale); e.currentTarget.classList.toggle('ghost', !ui.scale); } },
@@ -355,7 +398,7 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
   });
   return {
     el: el('div', { class: 'pr-wrap', style: { '--k': `var(--${t.color})` } }, tools, wrap, velBox),
-    hint: 'clic : une note · glisser : sa longueur · glisser une note : la déplacer · Maj+glisser : choisir · double-clic ou clic droit : l\'ôter · ↑ ↓ transposer · Ctrl+A tout · Suppr · Q quantifier · la voie du bas : vélocités',
+    hint: 'clic : une note · glisser : sa longueur · glisser une note : la déplacer · Maj+glisser : choisir · double-clic ou clic droit : l\'ôter · ↑ ↓ transposer · Ctrl+A tout · Suppr · Ctrl+U quantifier · la voie du bas : vélocités',
     frame() {
       const st = playingStep(app, p, c);
       nowCol.style.display = st >= 0 ? 'block' : 'none';
@@ -381,81 +424,250 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
         for (const n of g) if (n.s + (b - a) < p.steps) { const m = { ...n, s: n.s + (b - a) }; p.notes.push(m); chosen.add(m); }
         commit(); return true;
       }
-      if (e.code === 'KeyQ' && !ctrl) { e.preventDefault(); quantize(gridS()); return true; }
+      // Ctrl+U : « Quantize » de Live 12 ; Q, l'ancien raccourci d'ODIO, reste
+      if ((ctrl && e.code === 'KeyU') || (e.code === 'KeyQ' && !ctrl)) { e.preventDefault(); quantize(gridS()); return true; }
       return false;
     },
   };
 }
 
-// ── l'éditeur audio ─────────────────────────────────────────
+// ── le clip audio (la « Clip View » de Live pour un son) ────
+// Ce que le manuel de Live 12 range dans les boîtes Clip et Sample, réduit
+// à ce que le moteur tient (moteur.js, audioGeom) :
+//   début, fin   les marqueurs dans le son (fanions en haut de l'onde) ; le
+//                clip dans l'arrangement lit de l'un à l'autre
+//   boucle       l'accolade au-dessus de l'onde : sa position et sa longueur
+//                dans le son ; le clip part du marqueur de début, puis
+//                tourne dans l'accolade aussi longtemps qu'on le tire
+//   gain, transposition (demi-tons et cents), inversion, fondus
+//   caler        le calage au tempo : la région jouée dure N mesures. C'est
+//                le mode « Re-Pitch » de Live : la vitesse change, la hauteur
+//                suit (AudioBufferSourceNode.playbackRate, MDN). Un étirement
+//                qui garde la hauteur demanderait un algorithme de plus
+//                (vocodeur de phase, WSOLA) dans un AudioWorklet : pas fait.
+// L'onde : Ctrl+molette zoome autour du curseur, la molette la fait défiler,
+// double-clic : tout le son.
 function audioEditor(app, host, c, t) {
   const P = app.S.proj;
-  const spb = 60 / P.bpm;
-  const cv = el('canvas', { class: 'ae-wave', title: 'glisser : choisir où le clip commence dans le son' });
-  const info = el('span', { class: 'lbl' }, '…');
-  const title = el('b', { class: 'venus' }, c.name || '…');
-  app.loadItem(c.item).then((it) => { if (!c.name) title.textContent = it.title; }).catch(() => { title.textContent = 'son introuvable'; });
-  const K = (label, k, min, max, def, unit, curve = 'lin') => knob({ k, label, min, max, def, unit, curve, step: 0 }, c[k] ?? def, { accent: t.color,
-    onInput: (v) => { c[k] = Math.round(v * 1000) / 1000; draw(); }, onChange: () => app.commit('data') });
-  const draw = () => {
-    const buf = app.engine.buffers.get(c.item);
-    const w = cv.clientWidth || 600, h = cv.clientHeight || 110, dpr = devicePixelRatio || 1;
+  const spb = () => 60 / P.bpm;
+  const cv = el('canvas', { class: 'ae-wave' });
+  const now = el('i', { class: 'ae-now' });
+  const info = el('span', { class: 'lbl ae-info' }, '…');
+  const title = el('span', { class: 'sn' }, '…');
+  const cname = el('b', { class: 'venus ae-name', title: 'double-clic : renommer le clip' }, c.name || 'clip');
+  cname.addEventListener('dblclick', () => inlineEdit(cname, c.name || '', (n) => { c.name = n.slice(0, 60); app.commit('data'); }, { max: 60 }));
+  app.loadItem(c.item).then((it) => { title.textContent = it.title; if (!c.name) cname.textContent = it.title; }).catch(() => { title.textContent = 'son introuvable'; });
+  let view = null;                          // [v0, v1] : la part du son montrée, en secondes
+  const src = () => app.engine.buffers.get(c.item);
+  const buf = () => clipBuffer(src(), c);
+  const D = () => src()?.duration || 1;
+  const G = () => audioGeom(c, D());
+  const endSec = () => Math.min(D(), (c.off || 0) + c.len * spb() * G().rate);
+  const region = () => (c.loop ? [G().ls, G().ls + G().llen] : [c.off || 0, endSec()]);
+  const BR = 16;                            // la bande de l'accolade, en haut
+  const xOf = (s, w) => ((s - view[0]) / (view[1] - view[0])) * w;
+  const sOf = (x, w) => view[0] + (x / w) * (view[1] - view[0]);
+
+  function draw() {
+    const b0 = src();
+    const w = cv.clientWidth || 600, h = cv.clientHeight || 150, dpr = devicePixelRatio || 1;
     cv.width = w * dpr; cv.height = h * dpr;
     const g = cv.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, h);
-    if (!buf) { app.engine.buffer(c.item).then(draw).catch(() => {}); return; }
-    const pk = peaks(buf, 2400), D = buf.duration;
-    const off = c.off || 0, L = c.len * spb;
-    const regionEnd = c.loop ? off + Math.min(c.llen || (D - off), D - off) : Math.min(D, off + L);
-    const xOf = (s) => (s / D) * w;
-    g.fillStyle = tok('cy-bg'); g.fillRect(xOf(off), 0, Math.max(1, xOf(regionEnd) - xOf(off)), h);
+    if (!b0) { app.engine.buffer(c.item).then(draw).catch(() => {}); return; }
+    const bf = buf(), Dd = bf.duration;
+    if (!view) view = [0, Dd];
+    const pk = peaks(bf, 6000);
+    const [ra, rb] = region(), off = c.off || 0, gm = G();
+    const wy = BR + 4, wh = h - wy - 4;
+    // la région qui joue
+    g.fillStyle = tok('cy-bg'); g.fillRect(xOf(ra, w), wy, Math.max(1, xOf(rb, w) - xOf(ra, w)), wh);
+    const gain = Math.pow(10, (c.gain || 0) / 20);
     for (let x = 0; x < w; x++) {
-      const v = pk[Math.floor((x / w) * pk.length)], hh = Math.max(1, v * (h - 4));
-      const s = (x / w) * D;
-      g.fillStyle = s >= off && s < regionEnd ? tok(t.color) : tok('ink3');
-      g.fillRect(x, (h - hh) / 2, 1, hh);
+      const s = sOf(x, w);
+      if (s < 0 || s >= Dd) continue;
+      const i0 = Math.floor((s / Dd) * pk.length), i1 = Math.max(i0 + 1, Math.floor((sOf(x + 1, w) / Dd) * pk.length));
+      let v = 0;
+      for (let i = i0; i < Math.min(i1, pk.length); i++) v = Math.max(v, pk[i]);
+      const hh = Math.max(1, Math.min(1, v * gain) * (wh - 2));
+      const inside = c.loop ? (s >= Math.min(off, ra) && s < rb) : (s >= ra && s < rb);
+      g.fillStyle = inside ? tok(t.color) : tok('ink3');
+      g.fillRect(x, wy + (wh - hh) / 2, 1, hh);
     }
-    g.strokeStyle = tok('or'); g.lineWidth = 1.5; g.beginPath();
-    const fi = c.fi || 0, fo = c.fo || 0;
-    g.moveTo(xOf(off), fi ? h - 2 : 2); g.lineTo(xOf(off + Math.min(fi, L)), 2);
-    g.lineTo(xOf(Math.min(regionEnd, off + Math.max(0, L - fo))), 2); g.lineTo(xOf(regionEnd), fo ? h - 2 : 2);
-    g.stroke();
-    const pkDb = peakDb(buf, off, regionEnd);
-    info.textContent = `son ${D.toFixed(2)} s · clip ${L.toFixed(2)} s · départ ${off.toFixed(2)} s · crête ${pkDb.toFixed(1)} dBFS${c.gain ? ` (+ gain ${c.gain > 0 ? '+' : ''}${c.gain.toFixed(1)} dB)` : ''}`;
-  };
+    // les fondus, depuis le début du clip et avant sa fin
+    const L = c.len * spb();
+    g.strokeStyle = tok('ink2'); g.lineWidth = 1;
+    if (c.fi) { g.beginPath(); g.moveTo(xOf(off, w), wy + wh); g.lineTo(xOf(off + c.fi * gm.rate, w), wy); g.stroke(); }
+    if (c.fo && !c.loop) { const e = off + L * gm.rate; g.beginPath(); g.moveTo(xOf(e - c.fo * gm.rate, w), wy); g.lineTo(xOf(e, w), wy + wh); g.stroke(); }
+    // la bande de l'accolade
+    g.fillStyle = tok('panel3'); g.fillRect(0, 0, w, BR);
+    if (c.loop) {
+      g.fillStyle = tok('line-cy'); g.fillRect(xOf(ra, w), 2, Math.max(2, xOf(rb, w) - xOf(ra, w)), BR - 4);
+      g.fillStyle = tok('cy'); g.fillRect(xOf(ra, w), 0, 2, BR); g.fillRect(xOf(rb, w) - 2, 0, 2, BR);
+      g.fillStyle = tok('on-cy'); g.font = `9px ${tok('f-mono') || 'monospace'}`;
+      g.fillText('BOUCLE', xOf(ra, w) + 6, BR - 5);
+    }
+    // les marqueurs : début (toujours), fin (sans boucle)
+    const flag = (s, label, right) => {
+      const x = xOf(s, w);
+      g.fillStyle = tok('ink'); g.fillRect(x - (right ? 1 : 0), wy, 1.5, wh);
+      g.beginPath();
+      if (right) { g.moveTo(x, wy); g.lineTo(x - 9, wy); g.lineTo(x, wy + 9); } else { g.moveTo(x, wy); g.lineTo(x + 9, wy); g.lineTo(x, wy + 9); }
+      g.fill();
+      g.font = `9px ${tok('f-mono') || 'monospace'}`; g.fillStyle = tok('ink2');
+      g.fillText(label, right ? x - 9 - g.measureText(label).width - 2 : x + 11, wy + 9);
+    };
+    flag(off, 'DÉBUT', false);
+    if (!c.loop) flag(rb, 'FIN', true);
+    const pkDb = peakDb(bf, ra, rb);
+    info.textContent = `son ${Dd.toFixed(2)} s · ${bf.sampleRate / 1000} kHz · début ${off.toFixed(3)} s · ${c.loop ? `boucle ${ra.toFixed(3)} → ${rb.toFixed(3)} s` : `fin ${rb.toFixed(3)} s`} · vitesse ×${gm.rate.toFixed(3)} · crête ${isFinite(pkDb) ? pkDb.toFixed(1) : '−∞'} dBFS`;
+  }
+
+  // les gestes sur l'onde : fanions, accolade, défilement
   cv.addEventListener('pointerdown', (e) => {
-    const buf = app.engine.buffers.get(c.item);
-    if (!buf) return;
+    if (!src() || e.button !== 0) return;
     e.preventDefault();
     cv.setPointerCapture(e.pointerId);
-    const x0 = e.clientX, o0 = c.off || 0, w = cv.clientWidth;
-    const maxOff = c.loop ? buf.duration - 0.02 : Math.max(0, buf.duration - c.len * spb);
-    const mv = (ev) => { c.off = clamp(o0 + ((ev.clientX - x0) / w) * buf.duration, 0, Math.max(0, maxOff)); draw(); };
-    const up = () => { cv.removeEventListener('pointermove', mv); cv.removeEventListener('pointerup', up); app.commit('data'); };
+    const r = cv.getBoundingClientRect(), w = r.width;
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    const off0 = c.off || 0, [ra, rb] = region(), gm = G(), Dd = D();
+    const near = (s) => Math.abs(xOf(s, w) - x) < 7;
+    let what = null;
+    if (y < BR && c.loop) what = near(ra) ? 'ls' : near(rb) ? 'le' : (x > xOf(ra, w) && x < xOf(rb, w)) ? 'lmove' : null;
+    if (!what && y >= BR) what = near(off0) ? 'start' : (!c.loop && near(rb)) ? 'end' : 'pan';
+    if (!what) return;
+    const s0 = sOf(x, w), v0 = [...view], ls0 = gm.ls, llen0 = gm.llen, end0 = rb;
+    const mv = (ev) => {
+      const s = clamp(sOf(ev.clientX - r.left, w), 0, Dd);
+      if (what === 'pan') { const d = (ev.clientX - r.left - x) / w * (v0[1] - v0[0]); const a = clamp(v0[0] - d, 0, Math.max(0, Dd - (v0[1] - v0[0]))); view = [a, a + (v0[1] - v0[0])]; }
+      else if (what === 'start') {
+        c.off = clamp(s, 0, Dd - 0.01);
+        if (!c.loop) { c.off = Math.min(c.off, end0 - 0.01); c.len = Math.max(0.0625, (end0 - c.off) / (gm.rate * spb())); }
+      } else if (what === 'end') c.len = Math.max(0.0625, (Math.max(s, off0 + 0.01) - off0) / (gm.rate * spb()));
+      else if (what === 'ls') { const e2 = ls0 + llen0; c.ls = clamp(s, 0, e2 - 0.02); c.llen = e2 - c.ls; }
+      else if (what === 'le') c.llen = clamp(s - ls0, 0.02, Dd - ls0);
+      else if (what === 'lmove') c.ls = clamp(ls0 + (s - s0), 0, Dd - llen0);
+      draw();
+      if (what !== 'pan') paintNums();
+    };
+    const up = () => { cv.removeEventListener('pointermove', mv); cv.removeEventListener('pointerup', up); if (what !== 'pan') app.commit('data'); };
     cv.addEventListener('pointermove', mv); cv.addEventListener('pointerup', up);
   });
+  cv.addEventListener('pointermove', (e) => {
+    if (e.buttons || !src() || !view) return;
+    const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, w = r.width;
+    const [ra, rb] = region(), near = (s) => Math.abs(xOf(s, w) - x) < 7;
+    cv.style.cursor = (y < BR && c.loop && (near(ra) || near(rb))) || (y >= BR && (near(c.off || 0) || (!c.loop && near(rb)))) ? 'ew-resize'
+      : y < BR && c.loop ? 'grab' : 'default';
+  });
+  cv.addEventListener('wheel', (e) => {
+    if (!view) return;
+    e.preventDefault();
+    const r = cv.getBoundingClientRect(), w = r.width, Dd = D();
+    const span = view[1] - view[0];
+    if (e.ctrlKey || e.metaKey) {
+      const s = sOf(e.clientX - r.left, w), k = Math.pow(1.0015, e.deltaY);
+      const ns = clamp(span * k, 0.05, Dd);
+      const a = clamp(s - (s - view[0]) * (ns / span), 0, Math.max(0, Dd - ns));
+      view = [a, a + ns];
+    } else {
+      const d = ((e.deltaY || e.deltaX) / w) * span;
+      const a = clamp(view[0] + d, 0, Math.max(0, Dd - span));
+      view = [a, a + span];
+    }
+    draw();
+  }, { passive: false });
+  cv.addEventListener('dblclick', () => { view = [0, D()]; draw(); });
+
+  // ── les réglages ──
+  const nums = el('div', { class: 'ae-nums' });
+  function paintNums() {
+    const gm = G(), [ra, rb] = region();
+    put(nums,
+      el('span', {}, el('i', {}, 'dans l\'arrangement'), el('b', {}, `${app.bar(c.start)} → ${app.bar(c.start + c.len)}`)),
+      el('span', {}, el('i', {}, 'longueur'), el('b', {}, `${(c.len / P.sig).toFixed(2)} mes.`)),
+      el('span', {}, el('i', {}, 'début'), el('b', {}, `${(c.off || 0).toFixed(3)} s`)),
+      c.loop ? el('span', {}, el('i', {}, 'boucle'), el('b', {}, `${ra.toFixed(3)} s · ${gm.llen.toFixed(3)} s`))
+        : el('span', {}, el('i', {}, 'fin'), el('b', {}, `${rb.toFixed(3)} s`)));
+  }
+  const pitchSt = () => Math.round(c.pitch || 0), pitchCt = () => Math.round(((c.pitch || 0) - pitchSt()) * 100);
+  // transposer garde la région du son : sans boucle, le clip s'allonge ou
+  // raccourcit dans l'arrangement (comme un clip non calé de Live)
+  const setPitch = (p) => {
+    const gm = G(), reg = c.len * spb() * gm.rate;
+    c.pitch = clamp(Math.round(p * 100) / 100, -48, 48) || undefined;
+    if (!c.loop) c.len = Math.max(0.0625, reg / (spb() * G().rate));
+    draw(); paintNums();
+  };
+  const kSt = knob({ k: 'st', label: 'Transpo', min: -24, max: 24, def: 0, unit: 'dt', step: 1 }, pitchSt(), { accent: t.color,
+    onInput: (v) => setPitch(v + pitchCt() / 100), onChange: () => app.commit('data') });
+  const kCt = knob({ k: 'ct', label: 'Désaccord', min: -50, max: 50, def: 0, unit: 'ct', step: 1 }, pitchCt(), { accent: t.color,
+    onInput: (v) => setPitch(pitchSt() + v / 100), onChange: () => app.commit('data') });
+  const K = (label, k, min, max, def, unit) => knob({ k, label, min, max, def, unit, step: 0 }, c[k] ?? def, { accent: t.color,
+    onInput: (v) => { c[k] = Math.round(v * 1000) / 1000 || undefined; draw(); }, onChange: () => app.commit('data') });
   const normalize = () => {
-    const buf = app.engine.buffers.get(c.item);
-    if (!buf) return;
-    const off = c.off || 0, pk = peakDb(buf, off, off + c.len * spb);
+    const b = buf();
+    if (!b) return;
+    const [ra, rb] = region(), pk = peakDb(b, ra, rb);
     if (!isFinite(pk)) { toast('le clip est silencieux'); return; }
     c.gain = Math.round((-1 - pk) * 10) / 10;
     toast(`gain ${c.gain > 0 ? '+' : ''}${c.gain} dB : la crête du clip à −1 dBFS`);
     app.commit('data');
   };
-  put(host, el('div', { class: 'ae' },
-    el('div', { class: 'pe-head' }, el('span', { class: 'k', style: { '--c': `var(--${t.color})` } }, t.name), title, el('span', { class: 'sp' }),
-      el('button', { class: 'tb ghost sm', type: 'button', title: 'à la tête de lecture · Ctrl+E', onclick: () => app.splitAtPlayhead() }, 'Couper'),
-      el('button', { class: `tb sm${c.loop ? ' on' : ' ghost'}`, type: 'button', title: 'le son se répète sur toute la longueur du clip (tirer le bord droit)', onclick: () => app.toggleLoop(c.id) }, c.loop ? 'En boucle' : 'Boucler'),
-      el('button', { class: 'tb ghost sm', type: 'button', title: 'la crête du clip à −1 dBFS', onclick: normalize }, 'Normaliser'),
-      el('button', { class: 'tb ghost sm', type: 'button', title: 'voix, batterie, basse, autre : chacun sur sa piste, alignés', onclick: () => app.stems(c.id) }, 'Séparer en pistes'),
-      el('a', { class: 'tb ghost sm', href: href('asset/'), target: '_blank', rel: 'noopener' }, 'Asset')),
-    el('div', { class: 'ae-body' },
-      el('div', { class: 'kns' },
-        K('Gain', 'gain', -24, 12, 0, 'dB'), K('Fondu entrée', 'fi', 0, 10, 0, 's'), K('Fondu sortie', 'fo', 0, 10, 0, 's'),
-        c.loop ? K('Boucle', 'llen', 0.05, 30, 2, 's', 'log') : null),
-      el('div', { class: 'ae-w' }, cv, info))));
+  // caler au tempo : la région jouée (sans boucle, du début à la fin ; en
+  // boucle, l'accolade) dure N mesures de la session
+  const regSec = () => { const [ra, rb] = region(); return rb - ra; };
+  // ce que la région dure aujourd'hui, en mesures (le son lu à sa vitesse), arrondi à une puissance de deux
+  const guessBars = () => { const n = regSec() / G().rate / (P.sig * spb()); return Math.max(1, Math.pow(2, Math.round(Math.log2(Math.max(0.5, n))))); };
+  let bars = guessBars();
+  const barsSel = el('select', { class: 'fld mu-mini', 'aria-label': 'mesures', onchange: (e) => { bars = +e.target.value; } },
+    [1, 2, 4, 8, 16, 32, 64].map((n) => el('option', { value: n, selected: n === bars || null }, `${n} mes.`)));
+  const fit = () => {
+    const reg = regSec();
+    const rate = reg / (bars * P.sig * spb());
+    const p = 12 * Math.log2(rate);
+    if (!(Math.abs(p) <= 48)) { toast(`caler sur ${bars} mesures demanderait ${p.toFixed(1)} demi-tons : au-delà de ±48`); return; }
+    c.pitch = Math.round(p * 100) / 100 || undefined;
+    if (!c.loop) c.len = bars * P.sig;
+    toast(`calé : ${reg.toFixed(2)} s de son = ${bars} mesure${bars > 1 ? 's' : ''} à ${P.bpm} bpm · vitesse ×${rate.toFixed(3)} (${p > 0 ? '+' : ''}${p.toFixed(2)} demi-tons, la hauteur suit : Re-Pitch)`, 6000);
+    app.commit('data');
+  };
+  const tog = (label, on, title, fn) => el('button', { class: `tb sm${on ? ' on' : ' ghost'}`, type: 'button', title, onclick: fn }, label);
+  paintNums();
+  put(host, el('div', { class: 'ae', style: { '--k': `var(--${t.color})` } },
+    el('div', { class: 'ae-side' },
+      el('div', { class: 'ae-box' }, el('span', { class: 'lbl' }, 'clip'), cname, title,
+        el('div', { class: 'row' },
+          tog(c.mute ? 'Désactivé' : 'Actif', !c.mute, 'activer ou désactiver le clip · 0', () => { c.mute = !c.mute || undefined; app.commit('data'); }),
+          el('button', { class: 'tb ghost sm', type: 'button', title: 'à la tête de lecture · Ctrl+E', onclick: () => app.splitAtPlayhead() }, 'Couper'),
+          el('button', { class: 'tb ghost sm', type: 'button', title: 'voix, batterie, basse, autre : chacun sur sa piste, alignés', onclick: () => app.stems(c.id) }, 'Séparer'))),
+      el('div', { class: 'ae-box' }, el('span', { class: 'lbl' }, 'son'),
+        el('div', { class: 'kns' }, K('Gain', 'gain', -24, 12, 0, 'dB'), kSt, kCt),
+        el('div', { class: 'row' },
+          tog('Inverser', !!c.rev, 'lire le son à l\'envers · R', () => app.reverseSel([c.id])),
+          el('button', { class: 'tb ghost sm', type: 'button', title: 'la crête de la région jouée à −1 dBFS', onclick: normalize }, 'Normaliser'))),
+      el('div', { class: 'ae-box' }, el('span', { class: 'lbl' }, 'tempo · re-pitch'),
+        el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'la région dure'), barsSel,
+          el('button', { class: 'tb ghost sm', type: 'button', title: 'régler la vitesse pour que la région jouée dure ces mesures ; la hauteur suit la vitesse (Re-Pitch) : l\'étirement qui garde la hauteur n\'est pas fait', onclick: fit }, 'Caler'))),
+      el('div', { class: 'ae-box' }, el('span', { class: 'lbl' }, 'boucle · fondus'),
+        el('div', { class: 'row' }, tog(c.loop ? 'Boucle' : 'Sans boucle', !!c.loop, 'le son tourne dans l\'accolade ; tirer le bord droit du clip le répète', () => app.toggleLoop(c.id))),
+        el('div', { class: 'kns' }, K('Entrée', 'fi', 0, 10, 0, 's'), K('Sortie', 'fo', 0, 10, 0, 's')))),
+    el('div', { class: 'ae-w' }, el('div', { class: 'ae-cv' }, cv, now), nums, info,
+      el('p', { class: 'lbl pe-hint' }, 'fanions DÉBUT et FIN : où le clip commence et finit dans le son · la bande du haut : l\'accolade de la boucle (bords : sa longueur ; milieu : sa place) · Ctrl+molette : zoomer · molette ou glisser : défiler · double-clic : tout le son'))));
   requestAnimationFrame(draw);
-  return { frame() {}, key() { return false; } };
+  const ro = new ResizeObserver(() => draw());
+  requestAnimationFrame(() => ro.observe(cv));
+  return {
+    frame(beat) {
+      if (!view || !src() || beat < c.start || beat >= c.start + c.len || !app.engine.running) { now.style.display = 'none'; return; }
+      const gm = G(), into = (beat - c.start) * spb();
+      let pos = gm.off + into * gm.rate;
+      if (gm.loop && pos >= gm.ls + gm.llen) pos = gm.ls + ((pos - gm.ls) % gm.llen);
+      const w = cv.clientWidth;
+      now.style.display = 'block';
+      now.style.transform = `translateX(${xOf(pos, w).toFixed(1)}px)`;
+    },
+    key() { return false; },
+  };
 }

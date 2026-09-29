@@ -13,6 +13,11 @@
 //   cables[]  + send (dB) : un envoi de la console vers un bus
 //   clips[]   + gain, fi, fo, loop, llen, mute, name
 //   gen       le brouillon du panneau génératif (style, plan, paroles)
+// Ajouts du 29/09 (même version, champs facultatifs) :
+//   clips[]   + pitch (demi-tons, −48..48 : vitesse et hauteur ensemble),
+//               rev (à l'envers), ls (début de la boucle, en secondes de son)
+//   presets   [{ id, name, type, params, sub }]  les réglages enregistrés
+//   banc      { segs, atts }                     le banc du nodal (banc.js)
 
 import { guessTag } from './modules.js';
 
@@ -28,6 +33,13 @@ export function migrate(p) {
   p.loop = p.loop || { on: false, a: 0, b: 16 };
   p.ui = p.ui || {};
   for (const s of p.sections) if (!s.tag) s.tag = guessTag(s.name);
+  // la boucle d'un clip audio a son propre début (Live : « Loop Position »),
+  // distinct du marqueur de début ; avant, c'était le même
+  for (const c of p.clips) if (c.item && c.loop && c.ls === undefined) c.ls = c.off || 0;
+  p.presets = p.presets || [];
+  p.banc = p.banc || { segs: [], atts: [] };
+  // la vue Rack est devenue la vue de détail, en bas de l'arrangement
+  if (p.ui.view === 'rack') { p.ui.view = 'timeline'; p.ui.detail = 'device'; }
   p.v = VERSION;
   return p;
 }
@@ -180,6 +192,50 @@ export function pasteClips(p, board, at, uid, fallback = null) {
   return out;
 }
 
+// ── consolider (Ctrl+J, « Consolidate » de Live) ────────────
+// Les clips de motif choisis d'une même piste deviennent UN clip, sur un
+// motif neuf qui contient ce qu'ils jouaient réellement (répétitions,
+// décalages et coupes déroulés). Rend { pattern, clip } ou un refus.
+export function consolidatePatterns(p, clips, uid) {
+  const tr = p.tracks.find((t) => t.id === clips[0].track);
+  const a = Math.floor(Math.min(...clips.map((c) => c.start)) * 4) / 4;
+  const b = Math.max(...clips.map((c) => c.start + c.len));
+  const steps = Math.ceil(((b - a) * 4) / 4) * 4;
+  if (steps > 256) return 'un motif tient 64 temps au plus (256 pas)';
+  const drums = tr.kind === 'drums';
+  const pat = { id: uid('p'), track: tr.id, name: 'Consolidé', steps: Math.max(4, steps) };
+  if (drums) pat.lanes = {}; else pat.notes = [];
+  for (const c of clips) {
+    if (c.mute) continue;
+    const src = p.patterns.find((x) => x.id === c.pat);
+    if (!src) continue;
+    const plen = src.steps / 4, origin = c.start - (c.off || 0), ce = c.start + c.len;
+    for (let k = Math.floor((c.start - origin) / plen); origin + k * plen < ce; k++) {
+      const base = origin + k * plen;
+      if (drums) {
+        for (const [v, arr] of Object.entries(src.lanes || {})) arr.forEach((vel, s) => {
+          const bt = base + s / 4;
+          if (!vel || bt < c.start || bt >= ce) return;
+          const i = Math.round((bt - a) * 4);
+          if (i < 0 || i >= pat.steps) return;
+          if (!pat.lanes[v]) pat.lanes[v] = Array(pat.steps).fill(0);
+          pat.lanes[v][i] = Math.max(pat.lanes[v][i], vel);
+        });
+      } else {
+        for (const n of src.notes || []) {
+          const bt = base + n.s / 4;
+          if (bt < c.start || bt >= ce) continue;
+          const s = Math.round((bt - a) * 4 * 100) / 100;
+          const l = Math.max(0.25, Math.min(n.l, (ce - bt) * 4, pat.steps - s));
+          pat.notes.push({ ...n, s, l });
+        }
+      }
+    }
+  }
+  const clip = { id: uid('c'), track: tr.id, start: a, len: pat.steps / 4, pat: pat.id };
+  return { pattern: pat, clip };
+}
+
 // ── couper, rogner ──────────────────────────────────────────
 // `off` d'un clip de motif est en noires (où en est le motif), celui d'un
 // clip audio en secondes (où en est le son)
@@ -194,10 +250,15 @@ export function splitClip(p, c, pos, uid) {
   p.clips.push(n);
   return n;
 }
+// la vitesse de lecture d'un clip audio (sa transposition, lue comme le
+// « Re-Pitch » de Live) : `secs` de temps lisent `secs × rate` de son
+export const clipRate = (c) => Math.pow(2, (c.pitch || 0) / 12);
 function addAudioOff(c, secs) {
-  if (!c.loop || !c.llen) return (c.off || 0) + secs;
+  const pos = (c.off || 0) + secs * clipRate(c);
+  if (!c.loop || !c.llen) return pos;
   // dans une boucle, la coupe tombe quelque part dans la région qui se répète
-  return (c.off || 0) + (secs % c.llen);
+  const ls = c.ls ?? (c.off || 0);
+  return pos < ls + c.llen ? pos : ls + ((pos - ls) % c.llen);
 }
 
 // rogner par le bord gauche : le clip commence plus tard, son contenu reste en place
@@ -205,9 +266,12 @@ export function trimStart(p, c, d) {
   d = Math.max(-c.start, Math.min(c.len - 0.0625, d));
   const tr = p.tracks.find((t) => t.id === c.track);
   if (tr?.kind === 'audio') {
-    const secs = d * 60 / p.bpm;
-    if (!c.loop && (c.off || 0) + secs < 0) d = -(c.off || 0) * p.bpm / 60;
-    c.off = Math.max(0, (c.off || 0) + d * 60 / p.bpm);
+    // rogner le début : le marqueur de début avance dans le son d'autant de
+    // son que le temps retiré en lit ; le son reste calé dans le temps
+    const rate = clipRate(c);
+    if (c.loop && c.ls === undefined) c.ls = c.off || 0;
+    if ((c.off || 0) + d * 60 / p.bpm * rate < 0) d = -(c.off || 0) / rate * p.bpm / 60;
+    c.off = d > 0 ? addAudioOff(c, d * 60 / p.bpm) : Math.max(0, (c.off || 0) + d * 60 / p.bpm * rate);
   } else {
     // le motif se répète : on le lit modulo sa longueur
     const pat = p.patterns.find((x) => x.id === c.pat), plen = pat ? pat.steps / 4 : 4;
