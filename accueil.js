@@ -176,13 +176,9 @@ function paintStudio() {
 async function paintAssets() {
   try {
     const res = await api('library?limit=16');
-    const c = res.counts || {};
-    const n = Object.values(c).reduce((a, b) => a + b, 0);
-    $('#acc-n').textContent = String(n).padStart(4, '0');
-    $('#acc-detail').textContent = `${c.image || 0} images · ${c.element || 0} éléments · ${c.video || 0} vidéos · ${c.audio || 0} sons`;
     $('#acc-assets').hidden = !res.items.length;
     $('#acc-strip').replaceChildren(...res.items.map((it) => thumb(it, { onclick: () => { location.href = href('asset/#' + it.id); } })));
-  } catch (e) { $('#acc-detail').textContent = e.message; }
+  } catch { $('#acc-assets').hidden = true; }
 }
 
 // ── reprendre (Studio) : les travaux en cours, les derniers projets ──

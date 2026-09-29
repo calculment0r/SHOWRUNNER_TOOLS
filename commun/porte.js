@@ -45,7 +45,7 @@ function frame(...body) {
   return el('div', { class: 'porte-in' },
     el('div', { class: 'porte-top' },
       el('span', { class: 'logo' }, el('span', { class: 'sq' }, el('i')),
-        el('span', {}, el('b', {}, 'Showrunner'), el('small', {}, 'tools'))),
+        el('span', {}, el('b', {}, 'Nirvalab'))),
       el('span', { class: 'sp' }),
       el('span', { class: 'lbl' }, 'les outils de Cal · sur ses DGX')),
     el('section', { class: 'hero porte-card' },

@@ -17,7 +17,7 @@
 .acc [hidden] { display: none !important; }
 
 /* ── la tête : le titre, l'action, la bibliothèque ──────────── */
-.acc-top { display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr); gap: var(--s3); }
+.acc-top { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); }
 .acc-hero {
   background: var(--panel); border-radius: var(--r4); padding: 28px 32px;
   display: flex; flex-direction: column; gap: var(--s4); justify-content: center;

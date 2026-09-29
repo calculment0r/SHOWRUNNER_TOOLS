@@ -302,11 +302,13 @@ export function mountHeader(toolId, { sub = '' } = {}) {
   const hdr = el('header', { class: 'hdr' },
     el('a', { class: 'logo', href: href('') , title: 'le portail' },
       el('span', { class: 'sq' }, el('i')),
-      el('span', {}, el('b', {}, 'Showrunner'), el('small', {}, 'tools'))),
+      el('span', {}, el('b', {}, 'Nirvalab'))),
     t ? el('span', { class: 'tool-name' }, el('span', { class: 'k' }, t.k), el('b', {}, t.name),
       sub ? el('span', { class: 'lbl' }, sub) : null) : null,
     nav,
     el('span', { class: 'sp' }),
+    // Asset, la bibliothèque commune : en haut à droite, hors des Apps et du Studio (Cal, 29/09)
+    el('a', { class: `tb ghost sm${toolId === 'asset' ? ' on' : ''}`, id: 'sr-asset', href: href('asset/'), title: 'la bibliothèque' }, 'Asset'),
     el('span', { class: 'pill', id: 'sr-sys', title: 'les machines' }, el('i'), el('span', {}, 'machines')),
     el('a', { class: 'tb ghost sm', id: 'sr-admin', href: href('admin/'), hidden: true, title: 'la page de Cal' }, 'Admin'),
     el('button', { class: 'tb ghost sm', id: 'sr-me', hidden: true, title: 'mon compte',
@@ -354,6 +356,7 @@ export function mountHeader(toolId, { sub = '' } = {}) {
   system().then((sys) => {
     let tier = null;
     for (const x of TOOLS) {
+      if (x.id === 'asset') continue;   // son bouton est à droite (#sr-asset)
       // Apps | Studio : un filet dans la barre, un intitulé dans le menu
       if (x.tier !== tier) {
         if (tier !== null) nav.append(el('i', { class: 'sep', 'aria-hidden': 'true' }));
