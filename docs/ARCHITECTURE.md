@@ -171,6 +171,14 @@ réel est écrit, vérifié à vide, et s'allume par un réglage de
 | Musique | `/api/music/projects…`, `engines`, `generate`, `stems` | `music.generate`, `music.stems` | `"music_engine": "ace-step"` |
 | Object Creator | `/api/objet/state`, `objects` | `objet.mesh` (TRELLIS.2), `objet.mesh_factice` | `"objet_trellis": true` |
 | Movie Analysis | `/api/analyse/list`, `projets`, `diarisation`, `chaine`, `nom/<nom>`, `run`, `diar/*` (relais vers DGX1 :10002) | `analyse.run` (voie analyse, une à la fois) | — |
+| Upscale | `/api/upscale/models`, `plan`, `run` | `upscale.image`, `upscale.video` (voie image ; cpu en factice) | `"upscale_backend": "comfyui"` |
+| Character Factory | `/character/api/*`, `/character/files/*`, `/character/v1/*` : relais en flux vers le studio de DGX1 | (la file du studio, sur DGX1) | — |
+
+**Déposer un asset** : tout bloc qui attend un asset passe par `dropZone()`
+de `commun/shell.js` (fichier du disque → bibliothèque avec `tool: upload`,
+`via: <outil>` ; ou vignette glissée, type `application/x-sr-item`). Les
+vignettes se glissent par `dragItem()`. Ce qu'un outil fabrique garde son
+nom d'outil ; seul ce que quelqu'un dépose est « Upload ».
 
 ## 8. Plus tard : la porte Cloudflare
 

@@ -1,0 +1,18 @@
+{
+  "_source": "Gabarit officiel ComfyUI utility_seedvr2_3b_int8_upscale_video.json (comfyui_workflow_templates_json 0.1.95 sur DGX2, sous-graphe « Upscale Video (SeedVR2 3B Int8) ») au format API, nœuds natifs de ComfyUI (PR #14424, comfy_extras/nodes_seedvr.py). Réglages du gabarit : VAEEncodeTiled/VAEDecodeTiled 512 · 128 · 64 · 8 ; KSampler 1 pas, CFG 1, euler, simple, débruitage 1 (« denoise=1 means full restore ») ; SeedVR2TemporalChunk chevauchement 0, mode auto. Trois écarts : (1) le découpage en morceaux (« Split Latent ») est branché d'office — la note du gabarit le conseille pour les vidéos longues et le mode auto « predict the largest chunk that fits free VRAM » ; (2) la taille est donnée en pixels exacts (« scale dimensions », côtés pairs, calculés par le portail) au lieu d'un multiplicateur, pour que la taille affichée avant l'envoi soit celle qui sort ; (3) la couleur est recalée en « lab » par défaut (le défaut du nœud, « most faithful » ; le gabarit met « none »), réglable. Le tronçonnage par Video Slice du gabarit n'est pas repris : le portail envoie la vidéo entière.",
+  "1": {"class_type": "LoadVideo", "inputs": {"file": "{{video}}"}, "_meta": {"title": "vidéo source"}},
+  "2": {"class_type": "GetVideoComponents", "inputs": {"video": ["1", 0]}},
+  "3": {"class_type": "ResizeImageMaskNode", "inputs": {"input": ["2", 0], "resize_type": "scale dimensions", "resize_type.width": "{{width}}", "resize_type.height": "{{height}}", "resize_type.crop": "disabled", "scale_method": "lanczos"}},
+  "4": {"class_type": "SeedVR2Preprocess", "inputs": {"resized_images": ["3", 0]}},
+  "5": {"class_type": "VAELoader", "inputs": {"vae_name": "{{vae}}"}},
+  "6": {"class_type": "VAEEncodeTiled", "inputs": {"pixels": ["4", 0], "vae": ["5", 0], "tile_size": 512, "overlap": 128, "temporal_size": 64, "temporal_overlap": 8}},
+  "7": {"class_type": "SeedVR2TemporalChunk", "inputs": {"latent": ["6", 0], "temporal_overlap": 0, "chunking_mode": "auto"}},
+  "8": {"class_type": "UNETLoader", "inputs": {"unet_name": "{{unet}}", "weight_dtype": "default"}},
+  "9": {"class_type": "SeedVR2Conditioning", "inputs": {"model": ["8", 0], "vae_conditioning": ["7", 0]}},
+  "10": {"class_type": "KSampler", "inputs": {"model": ["8", 0], "positive": ["9", 0], "negative": ["9", 1], "latent_image": ["7", 0], "seed": "{{seed}}", "steps": 1, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}},
+  "11": {"class_type": "SeedVR2TemporalMerge", "inputs": {"latents": ["10", 0], "temporal_overlap": ["7", 1]}},
+  "12": {"class_type": "VAEDecodeTiled", "inputs": {"samples": ["11", 0], "vae": ["5", 0], "tile_size": 512, "overlap": 128, "temporal_size": 64, "temporal_overlap": 8}},
+  "13": {"class_type": "SeedVR2PostProcessing", "inputs": {"images": ["12", 0], "original_resized_images": ["3", 0], "color_correction_method": "{{color}}"}},
+  "14": {"class_type": "CreateVideo", "inputs": {"images": ["13", 0], "audio": ["2", 1], "fps": ["2", 2], "bit_depth": ["2", 3]}},
+  "15": {"class_type": "SaveVideo", "inputs": {"video": ["14", 0], "filename_prefix": "{{prefix}}", "format": "auto", "format.codec": "auto"}, "_meta": {"title": "OUT"}}
+}
