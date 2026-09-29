@@ -653,15 +653,24 @@ html.dragging * { cursor: inherit !important; }
 /* ── le banc : sa couche méta vit dans le monde du nodal (en pixels d'écran) ── */
 .ndx-monde .bn-meta { position: absolute; left: 0; top: 0; width: 0; height: 0; inset: auto; }
 .ndx-monde .bn-atr { position: absolute; left: 0; top: 0; width: 0; height: 0; inset: auto; }
-.ndx-monde .bn-anneau { box-shadow: inset 0 0 0 calc(1px * var(--iz)) var(--c); }
-.ndx-monde .bn-atr.off .bn-anneau { box-shadow: none; outline: calc(1px * var(--iz)) dashed var(--c); outline-offset: calc(-1px * var(--iz)); }
+/* les cercles (anneaux, filet du disque) : des <circle> SVG, le rayon en unités
+   monde (la portée), le trait et ses tirets en pixels d'écran par --iz, comme
+   les fils (§ 4 et § 11 de docs/etudes/musique_theme.md) — ni box-shadow ni
+   outline : Chromium arrondit une largeur d'outline au pixel entier avant la
+   mise à l'échelle, et l'ombre intérieure s'empâte au dézoom */
+.ndx-monde .bn-anneau, .ndx-monde .bn-disque { position: absolute; overflow: visible; pointer-events: none; box-shadow: none; outline: none; border-radius: 0; }
+.ndx-monde .bn-anneau circle, .ndx-monde .bn-disque circle { fill: none; stroke: var(--c); stroke-width: calc(1px * var(--iz)); }
+.ndx-monde .bn-atr.off .bn-anneau { outline: none; }
+.ndx-monde .bn-atr.off .bn-anneau circle { stroke-dasharray: calc(4px * var(--iz)) calc(3px * var(--iz)); }
+.ndx-monde .bn-atr.sel .bn-disque circle { stroke: var(--or); stroke-width: calc(2px * var(--iz)); }
+.ndx-monde .bn-atr.off .bn-disque { opacity: .66; }
+.ndx-monde .bn-atr.off .bn-disque circle { stroke: var(--ink); stroke-dasharray: calc(4px * var(--iz)) calc(3px * var(--iz)); }
 .ndx-monde .bn-poignee { margin: 0; border-radius: 2px; transform-origin: 0 0; transform: scale(var(--iz)) translate(-50%, -50%); }
 .ndx-monde .bn-poignee:hover { background: var(--c); }
 .ndx-monde .bn-etiquette { border-radius: 2px; transform-origin: 0 0; transform: scale(var(--iz)) translate(var(--dx, 10px), var(--dy, 4px)); }
 .ndx-monde .bn-titre { border-radius: 2px; transform-origin: 0 0; transform: scale(var(--iz)) translate(-50%, -16px); }
-.ndx-monde .bn-centre { background: var(--panel2); box-shadow: inset 0 0 0 calc(1px * var(--iz)) var(--c, var(--ink)), 0 calc(6px * var(--iz)) calc(18px * var(--iz)) var(--drop); }
-.ndx-monde .bn-atr.sel .bn-centre { box-shadow: inset 0 0 0 calc(2px * var(--iz)) var(--or), 0 calc(6px * var(--iz)) calc(18px * var(--iz)) var(--drop); }
-.ndx-monde .bn-atr.off .bn-centre { box-shadow: none; outline: calc(1px * var(--iz)) dashed var(--ink); outline-offset: calc(-1px * var(--iz)); }
+.ndx-monde .bn-centre, .ndx-monde .bn-atr.sel .bn-centre { background: var(--panel2); box-shadow: 0 calc(6px * var(--iz)) calc(18px * var(--iz)) var(--drop); }
+.ndx-monde .bn-atr.off .bn-centre { box-shadow: none; outline: none; }
 .bn-plan .bn-fond, .bn-plan .bn-segs { position: absolute; inset: 0; }
 .bn-plan .bn-segs { pointer-events: none; z-index: 4; }
 .bn-plan .bn-segs > * { pointer-events: auto; }

@@ -549,6 +549,24 @@ export function createBench(app, nodal) {
   // Tout est en unités monde : déplacer la vue ne la redessine pas. Ce qui
   // doit garder une taille d'écran (poignées, étiquettes, filets) se
   // contre-échelonne par la variable --iz du monde.
+  // LE PARTAGE (Cal, 29/09 : « les cercles de l'attracteur ne sont pas screen
+  // space », docs/etudes/musique_theme.md § 11) : sont du MONDE la place de
+  // l'attracteur, le rayon de ses anneaux (sa portée : ce qu'il capte), la
+  // teinte à travers les blocs captés, et le disque (le corps de l'attracteur,
+  // posé dans la scène comme une tuile ; son texte est responsif, n° 72). Sont
+  // de l'ÉCRAN les traits : l'épaisseur des cercles, leurs tirets, le filet du
+  // disque et son anneau de choix, les poignées, les étiquettes, le titre.
+  // Les cercles sont des <circle> SVG : leur rayon en unités monde, leur trait
+  // en calc(… * var(--iz)) (nodal.css), le moyen des fils du nodal (§ 4). Un
+  // filet par box-shadow ou outline ne tenait pas : Chromium arrondit une
+  // largeur d'outline au pixel entier AVANT la mise à l'échelle (le tireté d'un
+  // muet faisait 2,8 px à 280 %), et l'ombre intérieure s'empâtait à 2 px au
+  // dézoom (mesures du § 11).
+  const cercle = (classe, x, y, r, couleur) => {
+    const s = sv('svg', { class: classe, width: 2 * r, height: 2 * r, style: `left:${x - r}px;top:${y - r}px;--c:var(--${couleur})` });
+    s.append(sv('circle', { cx: r, cy: r, r }));
+    return s;
+  };
   let rafMeta = 0;
   function paintMeta(seg = null) {
     if (!rafMeta) rafMeta = requestAnimationFrame(peindreMeta);
@@ -559,8 +577,20 @@ export function createBench(app, nodal) {
     if (!P()) return;
     const v = nodal.view(), atts = B().atts;
     if (!atts.length) { put(meta); paintFil(); return; }
-    const bl = blocs(), tg = gouvernant();
+    const bl = blocs(), tg = gouvernant(), z = v.z;
     const kids = [];
+    // LA PLACE DES TRAITS D'ÉCRAN. Poignées, étiquettes et titres ont une taille
+    // d'écran ; l'écart entre deux cercles est du monde et fond au dézoom. On les
+    // pose donc en pixels d'écran (monde × zoom), chacun là où il ne recouvre
+    // rien de déjà posé : d'abord les titres et les disques, puis l'anneau frôlé
+    // (n° 75 : toujours), puis ceux du choisi, du plus serré au plus large. Ce
+    // qui ne tient pas attend d'être frôlé ou qu'on zoome.
+    const pris = [];
+    const couvre = (r) => pris.some((q) => r.x < q.x + q.w && q.x < r.x + r.w && r.y < q.y + q.h && q.y < r.y + r.h);
+    for (const a of atts) {
+      const w = largeur(a.nom) + a.nom.length * 9 * 0.16 + 8;   // .bn-titre : 9 px, espacé de .16em, 4 px de chaque côté
+      pris.push({ x: a.x * z - w / 2, y: (a.y - a.r) * z - 16, w, h: 13 }, { x: (a.x - a.r) * z, y: (a.y - a.r) * z, w: 2 * a.r * z, h: 2 * a.r * z });
+    }
     // le choisi passe au-dessus des autres (n° 77)
     const order = [...atts].sort((a, b) => (a.id === selection) - (b.id === selection));
     for (const a of order) {
@@ -583,16 +613,29 @@ export function createBench(app, nodal) {
           }
         }
       }
-      for (const { an, compte } of forces) {
-        const vise = surAnneau && surAnneau.atr === a.id && surAnneau.facette === an.facette;
-        const ang = vise ? surAnneau.ang : an.ang;
-        g.append(el('span', { class: 'bn-anneau', style: { left: `${a.x - an.r}px`, top: `${a.y - an.r}px`, width: `${an.r * 2}px`, height: `${an.r * 2}px`, '--c': `var(--${an.couleur})` } }));
-        if (vise || choisi) {
-          const hx = a.x + Math.cos(ang) * an.r, hy = a.y + Math.sin(ang) * an.r;
-          const et = `${an.facette} · ${compte}`, pl = largeur(et) + MARGE + 8;
+      // la poignée et l'étiquette de chaque anneau montré, posées sans recouvrement (plus haut)
+      const poses = new Map();
+      const poser = (f) => {
+        const vise = surAnneau && surAnneau.atr === a.id && surAnneau.facette === f.an.facette;
+        const ang = vise ? surAnneau.ang : f.an.ang;
+        const hx = a.x + Math.cos(ang) * f.an.r, hy = a.y + Math.sin(ang) * f.an.r;
+        const et = `${f.an.facette} · ${f.compte}`, pl = largeur(et) + MARGE + 8;
+        const dx = Math.cos(ang) >= 0 ? 10 : -10 - pl, dy = Math.sin(ang) >= 0 ? 4 : -17;
+        const hd = { x: hx * z - 6, y: hy * z - 6, w: 11, h: 11 }, lb = { x: hx * z + dx, y: hy * z + dy, w: pl, h: 13 };
+        if (!vise && (couvre(hd) || couvre(lb))) return;
+        pris.push(hd, lb);
+        poses.set(f.an, { hx, hy, et, dx, dy });
+      };
+      forces.filter((f) => surAnneau && surAnneau.atr === a.id && surAnneau.facette === f.an.facette).forEach(poser);
+      if (choisi) [...forces].sort((p, q) => p.an.r - q.an.r).filter((f) => !poses.has(f.an)).forEach(poser);
+      for (const { an } of forces) {
+        g.append(cercle('bn-anneau', a.x, a.y, an.r, an.couleur));
+        const ps = poses.get(an);
+        if (ps) {
+          const { hx, hy, et, dx, dy } = ps;
           const hd = el('span', { class: 'bn-poignee', style: { left: `${hx}px`, top: `${hy}px`, '--c': `var(--${an.couleur})` }, title: `${an.facette} : tirer — le rayon et l'angle` });
           hd.addEventListener('pointerdown', (e) => tirerRayon(e, a, an.facette));
-          g.append(hd, el('span', { class: 'bn-etiquette', style: { left: `${hx}px`, top: `${hy}px`, '--dx': `${Math.cos(ang) >= 0 ? 10 : -10 - pl}px`, '--dy': `${Math.sin(ang) >= 0 ? 4 : -17}px`, '--c': `var(--${an.couleur})` } }, et));
+          g.append(hd, el('span', { class: 'bn-etiquette', style: { left: `${hx}px`, top: `${hy}px`, '--dx': `${dx}px`, '--dy': `${dy}px`, '--c': `var(--${an.couleur})` } }, et));
         }
       }
       g.append(el('span', { class: 'bn-titre', style: { left: `${a.x}px`, top: `${a.y - a.r}px` } }, a.nom));
@@ -613,7 +656,8 @@ export function createBench(app, nodal) {
       centre.addEventListener('pointerdown', (e) => tirerAttracteur(e, a));
       centre.addEventListener('pointerenter', () => { survol = a.id; paintFil(); });
       centre.addEventListener('pointerleave', () => { if (survol === a.id) { survol = null; paintFil(); } });
-      g.append(centre);
+      // son filet (plein, choisi, muet) : un trait d'écran par-dessus le panneau du disque
+      g.append(centre, cercle('bn-disque', a.x, a.y, a.r, a.couleur));
       kids.push(g);
     }
     put(meta, ...kids);

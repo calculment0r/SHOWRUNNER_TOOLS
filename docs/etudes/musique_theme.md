@@ -381,3 +381,108 @@ avec cette version, la cause est ailleurs et la mesure est à refaire chez lui.
 
 Fichiers : `musique/nodal.js`, `musique/nodal.css`, `musique/jouets/index.js`,
 `musique/guide.js` (les deux lignes du nodal), ce paragraphe.
+
+## 11. Les cercles de l'attracteur en espace écran (29/09, 20 h)
+
+Cal : « les cercles de l'attracteur dans ODIO ne sont pas screen space... donc
+l'affichage en dézoom est mauvais ». Copie d'essai `/tmp/sr_odio6` (DGX2, port
+8865 = origin/main b01a463 « Accueil » + ce changement), mesures et captures
+dans `/tmp/sr_odio6_mesures/` (`avant/`, `apres/`, `cote/`).
+
+**Ce qui dessine un attracteur** : tout est dans `banc.js peindreMeta`, en DOM
+dans le monde du nodal (`.bn-meta`), habillé par `musique.css` puis
+`nodal.css` (`.ndx-monde .bn-*`). Pas de canvas : le banc n'en a aucun (le
+plan du bas est du DOM et du SVG, à sa propre caméra ; le fil et l'aperçu de
+naissance sont fixés au corps de la page, déjà à l'écran). Rien à
+redimensionner à l'arrêt.
+
+**Le partage retenu** :
+
+| monde (grandit et rapetisse avec le zoom) | écran (taille constante) |
+|---|---|
+| la place de l'attracteur (x, y) | l'épaisseur des anneaux (1 px) et leurs tirets de muet (4 · 3) |
+| **le rayon des anneaux : la portée** (ce qu'il capte, le poids qui décroît jusqu'au bord — `influence.js membres`, `poids`) | le filet du disque (1 px), son anneau de choix (orange, 2 px), son tireté de muet, son ombre |
+| la teinte vue à travers les blocs captés (un disque du rayon de l'anneau) | les poignées (11 px), les étiquettes d'anneau et le titre (mono 9 px) |
+| le disque (le corps de l'attracteur, posé dans la scène comme une tuile ; son rayon n'entre dans aucun calcul d'influence, mais son texte est responsif à la taille où on le voit : n° 72 d'ODIO_01, qui le dessinait aussi à `r × k`) | le corps du texte du disque (8 à 17 px d'écran, une ligne retirée plutôt que de rétrécir) |
+| — | la zone où frôler un anneau montre sa poignée (11 px) ; le fil (1,5 px) |
+
+**Ce qui n'allait pas — mesuré** (`/tmp/sr_odio6_atr.mjs` : deux attracteurs,
+A qui parle et choisi, B muet ; tout est caché sauf le cercle mesuré, coupe
+horizontale au point le plus à droite du cercle, là où il est vertical ;
+épaisseur = somme des écarts au fond / écart du trait au fond, divisée par
+l'opacité du muet ; plancher = `max(MIN_K, plancher / 3)` = 13,3 %) :
+
+| trait à l'écran, px | 13,3 % | 15 % | 25 % | 100 % | 200 % | 280 % |
+|---|---|---|---|---|---|---|
+| anneau plein — avant | 0,98 | 0,99 | 0,99 | 1 | 1 | 1 |
+| — après | 1 | 0,99 | 1 | 1 | 1 | 1 |
+| anneau muet (tireté) — avant | 0,93 | 0,90 | 0,99 | 1 | **2** | **2,79** |
+| — après | 1,01 | 1 | 1,01 | 1,01 | 1,01 | 1,01 |
+| disque muet (tireté) — avant | 0,96 | 0,90 | 1,01 | 1 | **2** | **2,80** |
+| — après | 1,02 | 1,01 | 1 | 1 | 1 | 1 |
+| disque choisi (2 px) — avant · après | 2,01 · 2 | 1,97 · 2 | 1,98 · 2,01 | 1,99 · 2,01 | 2 · 2 | 2 · 2 |
+| traits d'interface qui se chevauchent (titres, étiquettes, poignées) — avant | **3** | **2** | **1** | 0 | 0 | 0 |
+| — après | 0 | 0 | 0 | 0 | 0 | 0 |
+
+(Sombre et clair donnent les mêmes chiffres à 0,01 près. Poignée 11 × 11,
+étiquette 13 px de haut, titre 49 × 13 à tous les zooms, avant comme après.)
+
+Deux causes :
+
+1. **Le tireté d'un muet était un `outline`** de `calc(1px * var(--iz))`.
+   Chromium arrondit la largeur d'un `outline` (comme d'une bordure) au pixel
+   entier, au moins 1, **dans le repère de l'élément, avant la mise à
+   l'échelle** du monde : la valeur calculée vaut `1px` pour 0,5 ou 0,357
+   (lue par `getComputedStyle`), donc 2 px à 200 %, 2,8 px à 280 %, et des
+   tirets qui s'allongent avec le zoom ; au dézoom, 6,67 devient 6 (0,9 px).
+   L'`inset box-shadow` des anneaux pleins, lui, tenait (1 px mesuré).
+2. **Au dézoom, les traits d'écran se marchaient dessus** : le titre, les
+   poignées et les étiquettes gardent leur taille, l'écart entre deux cercles
+   (du monde) fond — au plancher, le titre sous la poignée de l'anneau
+   intérieur, les deux étiquettes l'une sur l'autre.
+
+(Une première mesure, coupe de ±24 px, donnait 2 px aux anneaux pleins au
+dézoom : c'était le disque voisin, à 20 px, pris dans la coupe. Coupe ramenée
+à ±12 px, l'autre attracteur caché.)
+
+**Ce qui est fait** :
+
+- Les cercles (anneaux et filet du disque) sont des `<circle>` SVG
+  (`banc.js cercle`) : le rayon en unités monde, `stroke-width` et
+  `stroke-dasharray` en `calc(… * var(--iz))` dans `nodal.css` — le moyen des
+  fils (§ 4), qu'aucun arrondi ne touche. Le trait est centré sur la portée.
+  Le disque garde son panneau, son texte et son ombre ; son filet, son anneau
+  de choix et son tireté passent au cercle posé par-dessus (`.bn-disque`).
+- Les traits d'écran se posent **sans recouvrement, par construction**
+  (`peindreMeta`) : en pixels d'écran (monde × zoom), d'abord les titres et
+  les disques de tous les attracteurs, puis la poignée et l'étiquette de
+  l'anneau frôlé (n° 75 : toujours), puis celles du choisi, du plus serré au
+  plus large, chacune seulement si elle ne recouvre rien de déjà posé. Ce
+  qui ne tient pas attend d'être frôlé ou qu'on zoome (dans la scène mesurée,
+  le choisi montre ses deux poignées à 100 % et au-delà, une seule à 25 %,
+  15 % et au plancher).
+- Aucune couleur neuve : `--c` (la facette), `--or`, `--ink`, `--panel2`,
+  `--drop`, comme avant.
+
+**Reste à décider par Cal** : le disque suit le monde (choix d'ODIO_01) ; à
+280 % il fait 616 px et couvre les tuiles voisines. Le borner à sa taille de
+100 % (`rayon d'écran = r × min(1, zoom)`) serait une ligne dans
+`peindreMeta` et une règle `--iz` ; je ne l'ai pas fait sans son avis.
+
+**Preuves** : `python3 tools/check.py` sur la copie : **1420 passés, 0 en
+échec** ; les pilotes du nodal
+(`/tmp/sr_th_pilotes.sh`, `sr_odio5_pilote.mjs`) avant / après sur la même
+copie (`/tmp/sr_odio6_pilotes.sh`, sorties `/tmp/sr_th_pilotes/odio6_avant/`
+et `odio6/`, comparées par `/tmp/sr_th_compare.py`) : `essai`, `nodal`,
+`nodal2` identiques, `nodal4` et `nodal5` aux identifiants près, `gen` et
+`jouets` aux graines et à la physique près, `smoke` ouvre le dernier projet
+du dossier (comme au § 10.4) ; `sr_odio5_pilote` : 25 vérifications, 0 en
+échec, des deux côtés ; `/tmp/sr_odio6_gestes.mjs` (neuf) : 6 vérifications,
+0 en échec — un clic sur le disque le choisit (anneau orange, deux
+poignées), au plancher une seule poignée tient, frôler l'anneau amène la
+sienne sous la souris, la tirer de 20 px d'écran donne 260 → 410,4 (= 260 +
+20 / 0,133), le fond lâche le choix ; journaux vides. Captures `cote/<thème>_<zoom>.png` (la vue entière) et
+`cote/<thème>_<zoom>_gros.png` (A au milieu, 480 × 360), avant à gauche,
+après à droite, zooms `plancher`, `z15`, `z25`, `z100`, `z200`, `z280`.
+
+Fichiers : `musique/banc.js`, `musique/nodal.css`, ce paragraphe.
