@@ -1,0 +1,98 @@
+/* ============================================================
+   SHOWRUNNER TOOLS — le cadre « Entrées » (commun/entrees.js)
+   Images, éléments, vidéos, sons rangés par sorte ; des jetons de
+   position (@image1…) verts s'ils pointent vers une place remplie,
+   rouges sinon. Règles du thème : aucune couleur en dur, des filets.
+   ============================================================ */
+
+.ent { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ent-head { display: flex; align-items: baseline; gap: 8px; }
+.ent-head h3 { margin: 0; font-family: var(--f-disp); font-weight: 400; font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; }
+.ent-head .sp { flex: 1; }
+
+/* la zone de dépôt : grande au départ, une ligne ensuite */
+.ent-drop {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 76px; padding: 12px 14px; border-radius: var(--r2);
+  text-align: left; background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line-gr); color: var(--ink3); font-size: 11px; line-height: 1.45;
+}
+.ent-drop.compact { min-height: 0; padding: 7px 10px; font-size: 10px; }
+.ent-drop b { flex: none; font-family: var(--f-mono); font-size: 22px; font-weight: 400; line-height: 1; color: var(--grn2); }
+.ent-drop.compact b { font-size: 16px; }
+.ent-drop:hover { color: var(--ink2); box-shadow: inset 0 0 0 1px var(--or); }
+.ent-drop:hover b { color: var(--or); }
+.ent-drop.full { box-shadow: inset 0 0 0 1px var(--line-amb); color: var(--amb); }
+.ent-drop.full b { color: var(--amb); }
+.ent.drop-on .ent-drop { color: var(--ink); }
+
+/* une catégorie : elle n'existe que si elle a du contenu */
+.ent-cats { display: flex; flex-direction: column; gap: 8px; }
+.ent-cats:empty { display: none; }
+.ent-cat { display: flex; flex-direction: column; gap: 5px; }
+.ent-cat-head { display: flex; align-items: center; gap: 8px; min-height: 22px; }
+.ent-cat-head .sp { flex: 1; }
+.ent-cat-head .n { color: var(--ink2); }
+.ent-cat-head .n.full { color: var(--amb); }
+.ent-cat-head .tb.sm { height: 22px; font-size: 8.5px; padding: 0 7px; }
+.ent-slots { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* une place : la vignette, son jeton, retirer, le rôle */
+.ent-slot { position: relative; width: 70px; display: flex; flex-direction: column; gap: 3px; }
+.ent-im {
+  position: relative; display: flex; align-items: center; justify-content: center; width: 70px; height: 70px; border-radius: var(--r2);
+  background: var(--panel2) center / cover no-repeat; box-shadow: inset 0 0 0 1px var(--line); cursor: pointer;
+}
+.ent-slot.element .ent-im { box-shadow: inset 0 0 0 1px var(--line-or); }
+.ent-slot:hover .ent-im { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.ent-slot.drop-on .ent-im { box-shadow: inset 0 0 0 2px var(--grn2); }
+.ent-slot.hole .ent-im { background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line-or); cursor: default; }
+.ent-empty { font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--or); }
+.ent-ico { font-size: 22px; color: var(--cy); }
+.ent-dur { position: absolute; right: 3px; bottom: 3px; padding: 1px 4px; border-radius: 2px; background: var(--veil); font-family: var(--f-mono); font-size: 7px; color: var(--ink); }
+.ent-tok { font-family: var(--f-mono); font-size: 9px; letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ent-tok.ok { color: var(--grn2); }
+.ent-tok.bad { color: var(--or); }
+.ent-x {
+  position: absolute; top: -5px; right: -5px; width: 18px; height: 18px; border-radius: 50%; z-index: 2;
+  background: var(--panel3); color: var(--ink2); font-size: 11px; line-height: 18px; text-align: center; box-shadow: inset 0 0 0 1px var(--line);
+  opacity: 0; transition: opacity .12s;
+}
+.ent-slot:hover .ent-x, .ent-x:focus-visible { opacity: 1; }
+.ent-x:hover { color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }
+.ent-role, .ent-snd {
+  align-self: flex-start; max-width: 100%; padding: 1px 5px; border-radius: var(--r1); background: var(--panel2);
+  font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink3);
+  box-shadow: inset 0 0 0 1px var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ent-role:hover, .ent-snd:hover { color: var(--ink); }
+.ent-role.still { box-shadow: none; background: none; padding: 0; }
+.ent-snd { position: absolute; left: 3px; top: 3px; background: var(--veil); }
+.ent-snd.on { color: var(--grn2); box-shadow: inset 0 0 0 1px var(--line-gr); }
+
+/* un champ lié : le texte reste du texte ; le calque miroir colore les jetons */
+.ent-wrap { position: relative; display: block; border-radius: var(--r2); background: var(--panel3); }
+/* textarea.ent-ta : plus précis que le fond d'un .fld posé par un outil (le calque doit se voir) */
+.ent-wrap textarea.ent-ta, .ent-mirror {
+  font-family: var(--f-ui); font-size: 12px; line-height: 1.55; letter-spacing: normal; padding: 8px var(--s3);
+  white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; tab-size: 4;
+}
+.ent-wrap textarea.ent-ta {
+  position: relative; z-index: 1; display: block; width: 100%; background: transparent; color: transparent; caret-color: var(--ink);
+  resize: none; overflow: hidden;
+}
+.ent-wrap textarea.ent-ta::placeholder { color: var(--ink3); }
+.ent-wrap textarea.ent-ta::selection { color: transparent; background: var(--cy-bg); }
+.ent-mirror { position: absolute; inset: 0; margin: 0; color: var(--ink); overflow: hidden; pointer-events: none; }
+.ent-mirror mark { border-radius: 2px; padding: 0; }
+.ent-mirror mark.ok { background: var(--grn-bg); color: var(--grn2); }
+.ent-mirror mark.bad { background: var(--or-bg); color: var(--or); }
+
+/* le menu « @ » */
+.ent-menu {
+  position: absolute; left: 6px; right: 6px; top: calc(100% - 4px); z-index: 20; max-height: 230px; overflow: auto;
+  border-radius: var(--r2); background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line-cy), 0 12px 30px var(--drop);
+}
+.ent-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; text-align: left; font-size: 11.5px; color: var(--ink2); }
+.ent-menu button b { font-family: var(--f-mono); font-weight: 400; color: var(--grn2); }
+.ent-menu button span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ent-menu button.on, .ent-menu button:hover { background: var(--sel-bg); color: var(--ink); }
+.ent-menu .mi { flex: none; width: 28px; height: 28px; border-radius: var(--r1); background: var(--panel2) center / cover no-repeat; display: flex; align-items: center; justify-content: center; color: var(--cy); }

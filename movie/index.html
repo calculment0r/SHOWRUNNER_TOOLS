@@ -4,13 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>MOVIE CREATOR · SHOWRUNNER</title>
-<meta name="description" content="Des plans vidéo avec H3 : texte, images de début et de fin, références nommées ; et le banc pour comparer deux plans.">
+<meta name="description" content="Des plans vidéo avec H3 : texte, images de début et de fin, entrées appelées par @image1, @element1… ; et le banc pour comparer deux plans.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Azeret+Mono:wght@300;400;500&display=swap">
 <link rel="stylesheet" href="../commun/tokens.css">
 <link rel="stylesheet" href="../commun/base.css">
 <link rel="stylesheet" href="../commun/shell.css">
+<link rel="stylesheet" href="../commun/entrees.css">
 <link rel="stylesheet" href="./movie.css">
 </head>
 <!-- Mise en page reprise de H3 Studio (github.com/underworldhistory1-ctrl/minimax-h3-higgsfield,
@@ -43,107 +44,83 @@
 
       <!-- Images : début · fin -->
       <section class="card" data-for="i2v">
-        <h3>Images de début et de fin</h3>
-        <p>Le plan part exactement de la première image, finit sur la dernière, ou les deux. La toile suit la première image.</p>
+        <div class="row"><h3>Début · fin</h3><span class="sp"></span><span class="lbl">la toile suit l'image</span></div>
         <div class="frames">
           <div class="field"><span class="lbl">Début</span><div class="slot" id="start-slot"></div></div>
           <div class="field"><span class="lbl">Fin</span><div class="slot" id="end-slot"></div></div>
         </div>
       </section>
 
-      <!-- Références nommées -->
+      <!-- Entrées : par sorte, appelées par position (@image1, @element1…) -->
       <section class="card" data-for="r2v">
-        <h3>Références nommées</h3>
-        <p>Donnez un nom à chaque référence, puis écrivez <b>@nom</b> dans le prompt : chaque mention est reliée à son entrée H3.</p>
-        <div class="row nowrap">
-          <select class="fld" id="ref-kind" aria-label="type de référence">
-            <option value="image">Image ou élément · personnage, lieu, look</option>
-            <option value="video">Vidéo · mouvement, caméra, scène</option>
-            <option value="audio">Son · voix, musique, bruitages</option>
-          </select>
-          <button class="tb ghost sm" id="ref-add" type="button">+ Ajouter</button>
-        </div>
-        <div class="refcards" id="refcards"></div>
-        <span class="hint" id="ref-limits"></span>
-        <label class="field sep"><span class="lbl">Détail des images de référence</span>
-          <select class="fld" id="ref-size">
-            <option value="match">à l'aire du plan · plus rapide (R5)</option>
-            <option value="max">détail max · jusqu'à 2048 px, plus lent</option>
-          </select>
-          <span class="hint">« max » affine la ressemblance des références, pas la définition du plan ; il peut être plusieurs fois plus lent (infobulle du nœud).</span>
-        </label>
+        <div id="entrees"></div>
+        <span class="hint">dans le prompt, chaque entrée s'appelle par son jeton — <b>@image1</b>, <b>@element1</b>, <b>@video1</b>, <b>@audio1</b> ; tapez <b>@</b> pour la liste. Vert : la place est remplie ; rouge : rien à cette place.</span>
       </section>
 
       <!-- Le prompt : les trois champs d'H3 -->
       <section class="card">
         <div class="row"><h3>Prompt</h3><span class="sp"></span><span class="lbl" id="words"></span></div>
-        <p>H3 lit trois champs, pas du texte libre : ce qu'on voit et entend plan par plan, le son d'ambiance, la musique hors champ.</p>
-        <label class="field"><span class="lbl" id="desc-lbl">Description · integrated_multimodal_description</span>
-          <span class="chips" id="chips"></span>
-          <span class="mention-wrap"><textarea class="fld" id="desc" rows="7" spellcheck="false"></textarea>
-            <span class="mention-menu" id="mention-menu" hidden></span></span>
-        </label>
-        <details class="cam" id="cam">
-          <summary><span class="lbl">Caméra · vocabulaire MiniMax</span></summary>
+        <span class="chips" id="chips"></span>
+        <label class="field"><span class="lbl" id="desc-lbl">Ce qu'on voit et entend</span>
+          <textarea class="fld" id="desc" rows="6" spellcheck="false"></textarea></label>
+        <label class="field"><span class="lbl">Son d'ambiance</span>
+          <textarea class="fld" id="sound" rows="1" placeholder="bruits, souffles, pas. Vide : le son naturel de la scène"></textarea></label>
+        <label class="field"><span class="lbl">Musique hors champ</span>
+          <textarea class="fld" id="music" rows="1" placeholder="instruments, tempo. Vide : pas de musique"></textarea></label>
+        <div class="row helpers">
+          <button class="chip" type="button" id="h-cam" title="le vocabulaire caméra de MiniMax">+ caméra</button>
+          <button class="chip" type="button" id="h-say" title="une réplique : identité et voix dehors, les mots exacts dans <d>">(S1) réplique</button>
+          <button class="chip" type="button" id="h-excl" title="H3 n'a pas de prompt négatif : ce qu'on évite s'écrit à la fin">exclusions</button>
+          <button class="chip" type="button" id="h-assist" title="décrire simplement, le modèle de texte écrit le prompt">+ assistant</button>
+        </div>
+        <div class="cam" id="cam" hidden>
           <div class="row cam-mods">
             <div class="seg" id="cam-amp" title="amplitude"><button class="tb on" data-v="">amplitude</button><button class="tb" data-v=" with small amplitude">petite</button><button class="tb" data-v=" with large amplitude">grande</button></div>
             <div class="seg" id="cam-speed" title="vitesse"><button class="tb on" data-v="">vitesse</button><button class="tb" data-v=" at slow speed">lente</button><button class="tb" data-v=" at fast speed">rapide</button></div>
           </div>
           <div class="cam-chips" id="cam-chips"></div>
-          <span class="hint">le mouvement s'écrit dans la phrase, comme une action ; amplitude et vitesse normales se taisent (guide MiniMax)</span>
-        </details>
-        <div class="row helpers">
-          <button class="chip" type="button" id="h-say" title="une réplique : identité et voix dehors, les mots exacts dans <d>">(S1) réplique</button>
-          <button class="chip" type="button" id="h-excl" title="H3 n'a pas de prompt négatif : ce qu'on évite s'écrit à la fin">exclusions</button>
         </div>
-        <label class="field"><span class="lbl">Son · overall_soundscape</span>
-          <textarea class="fld" id="sound" rows="2" placeholder="ambiance, bruits d'action, souffles. Vide : le son naturel de la scène"></textarea></label>
-        <label class="field"><span class="lbl">Musique · non_diegetic_music</span>
-          <textarea class="fld" id="music" rows="2" placeholder="instruments, tempo, dynamique — pas d'adjectif d'humeur. Vide : N/A"></textarea></label>
-        <span class="hint" id="format-hint"></span>
-
-        <details class="assist" id="assist">
-          <summary><span class="lbl">Assistant de prompt</span></summary>
+        <div class="assist" id="assist" hidden>
           <textarea class="fld" id="as-brief" rows="3" placeholder="Décrivez simplement ce que vous voulez. Ex. : un gardien de phare monte l'escalier à l'aube en marmonnant contre la tempête"></textarea>
           <input class="fld" id="as-keep" placeholder="à garder : noms, styles">
           <div class="row"><button class="tb ghost sm" id="as-write" type="button" disabled>Écrire le prompt</button>
             <button class="tb ghost sm" id="as-refine" type="button" disabled>Affiner</button></div>
           <span class="why">pas encore câblé : le modèle de texte du portail (llm_url) viendra ensuite</span>
-        </details>
-      </section>
-
-      <!-- LoRA -->
-      <section class="card">
-        <div class="row"><h3>LoRA</h3><span class="lbl" id="lora-count"></span><span class="sp"></span>
-          <button class="tb ghost sm" id="lora-refresh" type="button">Relire</button></div>
-        <p>Ceux installés sur la machine H3. N'activez que ceux voulus pour ce rendu, dans l'ordre affiché.</p>
-        <div class="loras" id="loras"></div>
-      </section>
-
-      <!-- Sortie -->
-      <section class="card">
-        <h3>Sortie</h3>
-        <p>De vraies toiles H3 ; une toile plus petite porte moins de détail.</p>
-        <span class="lbl">Toile et temps estimé</span>
-        <div class="seg fam" id="fam"></div>
-        <div class="canvases" id="canvases"></div>
-        <label class="field"><span class="lbl">Méthode de rendu</span><select class="fld" id="method"></select></label>
-        <div class="grid2">
-          <label class="field"><span class="lbl">Durée</span><select class="fld" id="frames"></select></label>
-          <div class="field"><label class="lbl" for="steps">Pas</label>
-            <input class="fld" id="steps" inputmode="numeric" placeholder="auto"></div>
         </div>
-        <div class="seg presets" id="step-presets"></div>
-        <div class="profile" id="profile"></div>
-        <div class="field"><label class="lbl" for="seed">Graine</label>
-          <div class="row nowrap"><input class="fld" id="seed" inputmode="numeric" placeholder="au hasard à chaque rendu">
-            <button class="tb ghost sm" id="seed-rand" type="button" title="tirer une graine">Aléatoire</button></div></div>
-        <div class="estimate" id="estimate"></div>
+        <span class="hint" id="format-hint"></span>
+      </section>
+
+      <!-- Format et durée -->
+      <section class="card">
+        <div class="row"><h3>Format</h3><span class="sp"></span><span class="lbl" id="estimate-short"></span></div>
+        <div class="seg fam" id="fam"></div>
+        <div class="grid2">
+          <label class="field"><span class="lbl">Toile · temps estimé</span><select class="fld" id="canvas"></select></label>
+          <label class="field"><span class="lbl">Durée</span><select class="fld" id="frames"></select></label>
+        </div>
       </section>
 
       <details class="card adv" id="adv">
-        <summary><span class="lbl">Réglages avancés</span></summary>
+        <summary><span class="lbl">Réglages avancés</span><span class="lbl custom" id="adv-sum"></span></summary>
         <div class="adv-body">
+          <label class="field"><span class="lbl">Méthode de rendu</span><select class="fld" id="method"></select></label>
+          <div class="profile" id="profile"></div>
+          <div class="grid2">
+            <div class="field"><label class="lbl" for="steps">Pas</label><input class="fld" id="steps" inputmode="numeric" placeholder="auto"></div>
+            <div class="field"><label class="lbl" for="seed">Graine</label>
+              <div class="row nowrap"><input class="fld" id="seed" inputmode="numeric" placeholder="au hasard">
+                <button class="tb ghost sm" id="seed-rand" type="button" title="tirer une graine">⚄</button></div></div>
+          </div>
+          <div class="seg presets" id="step-presets"></div>
+          <div class="estimate" id="estimate"></div>
+          <label class="field" data-for="r2v"><span class="lbl">Détail des images de référence</span>
+            <select class="fld" id="ref-size">
+              <option value="match">à l'aire du plan · plus rapide (R5)</option>
+              <option value="max">détail max · jusqu'à 2048 px, plus lent</option>
+            </select></label>
+          <div class="field"><div class="row"><span class="lbl">LoRA</span><span class="lbl" id="lora-count"></span><span class="sp"></span>
+            <button class="tb ghost sm" id="lora-refresh" type="button">Relire</button></div>
+            <div class="loras" id="loras"></div></div>
           <label class="field"><span class="lbl">Modèle</span><select class="fld" id="a-unet"></select></label>
           <div class="grid2">
             <label class="field"><span class="lbl">Sampler</span><select class="fld" id="a-sampler"></select></label>
@@ -160,7 +137,7 @@
       <div class="c-head"><h2>Comparer</h2><span class="sec">A / B</span></div>
       <div class="ab-slot a" id="slot-a"></div>
       <div class="ab-slot b" id="slot-b"></div>
-      <span class="hint">choisissez dans la bibliothèque, ou avec les boutons A et B des vidéos ; les réglages qui diffèrent sont marqués sous le moniteur</span>
+      <span class="hint">déposez une vidéo sur A ou B (du disque, ou une carte des vidéos glissée), choisissez dans la bibliothèque, ou prenez les boutons A et B des vidéos ; les réglages qui diffèrent sont marqués sous le moniteur</span>
       <div class="keys"><kbd>espace</kbd>lecture <kbd>←</kbd><kbd>→</kbd>image <kbd>1</kbd>…<kbd>5</kbd>modes <kbd>[</kbd><kbd>]</kbd>rideau <kbd>molette</kbd>zoom sous le curseur <kbd>glisser</kbd>déplacer <kbd>L</kbd>boucle <kbd>S</kbd>échanger <kbd>A</kbd><kbd>B</kbd><kbd>M</kbd>écoute</div>
     </div>
 
@@ -234,14 +211,15 @@
       <div class="metas"><div class="meta a" id="metaA"></div><div class="meta b" id="metaB"></div></div>
     </div>
 
-    <!-- les vidéos générées = la bibliothèque, filtrée sur l'outil -->
-    <section class="lib">
-      <div class="lib-head"><h2>Vidéos générées</h2><span class="lbl" id="lib-count"></span><span class="sp"></span>
-        <div class="seg" id="lib-seg"><button class="tb on" data-h="movie" type="button">Movie Creator</button><button class="tb" data-h="all" type="button">Toute la bibliothèque</button></div></div>
-      <div class="vgrid" id="vgrid"></div>
-      <button class="tb ghost more" id="lib-more" type="button" hidden>Voir plus</button>
-    </section>
   </section>
+
+  <!-- ── la file et les vidéos générées (la bibliothèque, filtrée sur l'outil) ── -->
+  <aside class="lib" id="lib" aria-label="vidéos générées">
+    <div class="lib-head"><h2>Vidéos générées</h2><span class="lbl" id="lib-count"></span><span class="sp"></span>
+      <div class="seg" id="lib-seg"><button class="tb on" data-h="movie" type="button">Movie Creator</button><button class="tb" data-h="all" type="button">Toute la bibliothèque</button></div></div>
+    <div class="vgrid" id="vgrid"></div>
+    <button class="tb ghost more" id="lib-more" type="button" hidden>Voir plus</button>
+  </aside>
 </main>
 <script type="module" src="./movie.js"></script>
 </body>

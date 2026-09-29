@@ -148,8 +148,8 @@ CANVASES = [   # (largeur, hauteur, famille, libellé, source)
 FAMILIES = ["paysage", "21:9", "portrait", "carré"]
 SAMPLERS = ["res_multistep", "euler", "euler_ancestral", "dpmpp_2m", "ddim"]   # liste du banc H3
 SCHEDULERS = ["simple", "beta", "normal"]   # simple = R5 ; beta/normal : note du gabarit officiel r2v
-ROLES = {   # « utiliser comme » : les rôles de H3 Studio
-    "image": [("character", "personnage"), ("location", "lieu"), ("style", "look · style"), ("object", "objet")],
+ROLES = {   # « utiliser comme » : les rôles de H3 Studio ; « auto » laisse le prompt dire ce que c'est
+    "image": [("auto", "auto"), ("character", "personnage"), ("location", "lieu"), ("style", "look"), ("object", "objet")],
     "video": [("motion", "mouvement"), ("camera", "caméra"), ("action", "action"), ("scene", "scène entière")],
     "audio": [("voice", "voix"), ("music", "musique"), ("effects", "bruitages")],
 }
@@ -158,9 +158,12 @@ ROLE_EN = {"character": "character identity", "location": "location", "style": "
            "music": "music", "effects": "sound effects"}
 REF_ROLES = ("face", "full body")    # ce qu'un élément donne à H3 : son visage, son plein pied
 ROLE_FR = {"face": "visage", "full body": "plein pied", "expression": "expression", "outfit": "tenue",
-           "view": "vue", "detail": "détail", "style": "style"}
-NAME_RX = re.compile(r"^[\w-]{1,32}$", re.UNICODE)
-MENTION_RX = re.compile(r"@([\w-]+)", re.UNICODE)
+           "view": "vue", "detail": "détail", "style": "style", "voice": "voix"}
+# Les entrées du mode Références, appelées par position (décision de Cal du 29/09) :
+# @image1…, @element1…, @video1…, @audio1… — commun/entrees.js fait le même compte
+INPUT_CATS = ("image", "element", "video", "audio")
+TOKEN_RX = re.compile(r"(?<![^\W_]|[@_])@([^\W\d]+)(\d*)")
+AUDIO_EXT = (".wav", ".mp3", ".flac", ".m4a", ".ogg")
 SECTION_HEADS = ("integrated_multimodal_description:", "subject_definitions:")
 CAMERA = [   # le vocabulaire contrôlé de MiniMax (corpus/h3_style_rules.md) et sa phrase
     ("Push In", "The camera pushes in"), ("Pull Out", "The camera pulls out"),
@@ -271,84 +274,108 @@ def _image(item_id: str, what: str, errors: list) -> dict | None:
     return it
 
 
-def mention_name(title: str) -> str:
-    n = re.sub(r"[^\w-]+", "_", (title or "ref").strip(), flags=re.UNICODE).strip("_")
-    return (n or "ref")[:32]
+def element_parts(el: dict) -> tuple[list, list]:
+    """Ce qu'un élément envoie : son premier visage et son premier plein pied
+    (sans eux, ses deux premières images), et sa voix quand sa carte en porte
+    une (une référence son). movie.js fait le même compte pour la capacité."""
+    refs = el.get("refs") or []
+    imgs = [r for r in refs if not r.get("file", "").lower().endswith(AUDIO_EXT)]
+    # la voix est rangée à part (element.voices, library.py) ; un son dans refs
+    # (ancienne forme) compte aussi
+    voices = list(el.get("voices") or []) + [r for r in refs if r.get("file", "").lower().endswith(AUDIO_EXT)]
+    chosen = [r for role in REF_ROLES for r in [next((x for x in imgs if x.get("role") == role), None)] if r]
+    return (chosen or imgs[:2]), voices[:1]
 
 
-def _refs(entries: list, errors: list) -> dict:
-    """Les références dans l'ordre d'H3 : les images (et les éléments), puis
-    les vidéos, puis les sons (MiniMaxH3ReferenceToVideo). Rend les images
-    envoyées (`<Picture n>`), les sujets (`<Subject k>`), les vidéos et les
-    sons, et la table @nom → étiquette."""
-    cards, seen = [], set()
-    for e in entries:
-        if not isinstance(e, dict):
-            continue
-        it = library.get(e.get("item") or "")
+def token_key(kind: str, num: str) -> str:
+    return f"{kind.lower()}{num}"
+
+
+def _inputs(inputs: dict, errors: list) -> dict:
+    """Les entrées par position : {image: [{item, role}|None…], element: […],
+    video: [{item, role, sound}|None…], audio: […]}. Une place vide garde sa
+    position (son jeton est rouge). L'ordre d'H3 : les images (celles de la
+    catégorie Images, puis celles des éléments), puis les vidéos, puis les
+    sons (les bandes-son de vidéo d'abord, puis les sons, puis les voix des
+    éléments — MiniMaxH3ReferenceToVideo). Rend les images (`<Picture n>`),
+    les sujets (`<Subject k>`), les vidéos, les sons et la table jeton → étiquette."""
+    slots = {c: (inputs.get(c) if isinstance(inputs.get(c), list) else []) for c in INPUT_CATS}
+    pictures, subjects, videos, audios, tags, used = [], [], [], [], {}, []
+
+    def entry(cat, pos, p, kinds):
+        if not isinstance(p, dict) or not p.get("item"):
+            return None
+        it = library.get(p["item"])
         if not it:
-            errors.append(f"référence introuvable : {e.get('item')}")
+            errors.append(f"@{cat}{pos + 1} n'est plus dans la bibliothèque ({p['item']})")
+            return None
+        if it["kind"] not in kinds:
+            errors.append(f"@{cat}{pos + 1} : une {it['kind']} n'a pas sa place parmi les {cat}s")
+            return None
+        roles = [r for r, _ in ROLES.get("image" if cat in ("image", "element") else cat, [])]
+        role = p.get("role") if p.get("role") in roles else (roles[0] if roles else "")
+        used.append(it["id"])
+        return it, role
+
+    for pos, p in enumerate(slots["image"]):
+        got = entry("image", pos, p, ("image",))
+        if not got:
             continue
-        kind = "image" if it["kind"] in ("image", "element") else it["kind"]
-        if kind not in ROLES:
-            errors.append(f"« {it.get('title')} » : {it['kind']} n'est pas une référence")
+        it, role = got
+        pictures.append(_pic(library.path_of(it), it, it.get("title") or it["id"], "", library.public(it).get("thumb_url")))
+        subjects.append({"kind": "image", "title": it.get("title") or "", "token": f"image{pos + 1}", "role": role,
+                         "pics": [len(pictures)], "nums": {}, "item": it["id"]})
+        tags[f"image{pos + 1}"] = f"<Subject {len(subjects)}>"
+    element_voices = []
+    for pos, p in enumerate(slots["element"]):
+        got = entry("element", pos, p, ("element",))
+        if not got:
             continue
-        name = (e.get("name") or mention_name(it.get("title"))).lstrip("@")
-        if not NAME_RX.match(name):
-            errors.append(f"@{name} : un nom de mention est fait de lettres, chiffres, _ ou -, sans espace (32 au plus)")
-        elif name.lower() in seen:
-            errors.append(f"@{name} : deux références portent ce nom")
-        seen.add(name.lower())
-        roles = [r for r, _ in ROLES[kind]]
-        role = e.get("role") if e.get("role") in roles else roles[0]
-        cards.append({"it": it, "kind": kind, "name": name, "role": role, "sound": bool(e.get("sound")) and kind == "video"})
-    order = [c for k in ("image", "video", "audio") for c in cards if c["kind"] == k]
-    pictures, subjects, videos, audios, tags = [], [], [], [], {}
-    for c in order:
-        it = c["it"]
-        pub = library.public(it)
-        if c["kind"] == "image":
-            if it["kind"] == "element":
-                el = it["element"]
-                chosen = []
-                for role in REF_ROLES:
-                    r = next((r for r in el["refs"] if r.get("role") == role), None)
-                    if r:
-                        chosen.append(r)
-                chosen = chosen or el["refs"][:2]
-                if not chosen:
-                    errors.append(f"l'élément « {it['title']} » n'a aucune image")
-                    continue
-                pub_refs = {r["file"]: r for r in pub["element"]["refs"]}
-                nums = {}
-                for r in chosen:
-                    pictures.append(_pic(library.path_of(it, r["file"]), it,
-                                         f"{it['title']} · {r.get('label') or ROLE_FR.get(r.get('role'), r.get('role') or 'réf.')}",
-                                         r.get("role", ""), pub_refs.get(r["file"], {}).get("thumb_url")))
-                    nums.setdefault(r.get("role") or "other", []).append(len(pictures))
-                subjects.append({"kind": "element", "etype": el.get("type"), "title": it["title"], "name": c["name"],
-                                 "role": c["role"], "description": (el.get("description") or "").strip(),
-                                 "nums": nums, "pics": [n for v in nums.values() for n in v], "item": it["id"]})
-            else:
-                pictures.append(_pic(library.path_of(it), it, it.get("title") or it["id"], "", pub.get("thumb_url")))
-                subjects.append({"kind": "image", "title": it.get("title") or "", "name": c["name"], "role": c["role"],
-                                 "pics": [len(pictures)], "nums": {}, "item": it["id"]})
-            tags[c["name"]] = f"<Subject {len(subjects)}>"
-        elif c["kind"] == "video":
-            dur = it.get("duration") or 0
-            if dur and not (LIMITS["min_seconds"] <= dur <= LIMITS["seconds"] + 0.1):
-                errors.append(f"@{c['name']} : une vidéo de référence dure de 2 à 15 s ({dur:.1f} s)")
-            if c["sound"] and not it.get("audio"):
-                errors.append(f"@{c['name']} : cette vidéo n'a pas de son")
-            videos.append({"path": library.path_of(it), "item": it["id"], "name": c["name"], "role": c["role"],
-                           "sound": c["sound"], "duration": dur, "thumb_url": pub.get("thumb_url")})
-            tags[c["name"]] = f"<Video {len(videos)}>"
-        else:
-            dur = it.get("duration") or 0
-            if dur and not (LIMITS["min_seconds"] <= dur <= LIMITS["seconds"] + 0.1):
-                errors.append(f"@{c['name']} : un son de référence dure de 2 à 15 s ({dur:.1f} s)")
-            audios.append({"path": library.path_of(it), "item": it["id"], "name": c["name"], "role": c["role"],
-                           "duration": dur})
+        it, role = got
+        el = it["element"]
+        imgs, voices = element_parts(el)
+        if not imgs:
+            errors.append(f"@element{pos + 1} « {it['title']} » n'a aucune image")
+            continue
+        pub_refs = {r["file"]: r for r in library.public(it)["element"]["refs"]}
+        nums = {}
+        for r in imgs:
+            pictures.append(_pic(library.path_of(it, r["file"]), it,
+                                 f"{it['title']} · {r.get('label') or ROLE_FR.get(r.get('role'), r.get('role') or 'réf.')}",
+                                 r.get("role", ""), pub_refs.get(r["file"], {}).get("thumb_url")))
+            nums.setdefault(r.get("role") or "other", []).append(len(pictures))
+        subjects.append({"kind": "element", "etype": el.get("type"), "title": it["title"], "token": f"element{pos + 1}",
+                         "role": "character" if el.get("type") in (None, "character") else "object",
+                         "description": (el.get("description") or "").strip(), "nums": nums,
+                         "pics": [n for v in nums.values() for n in v], "item": it["id"]})
+        tags[f"element{pos + 1}"] = f"<Subject {len(subjects)}>"
+        for r in voices:
+            element_voices.append({"path": library.path_of(it, r["file"]), "item": it["id"], "token": None,
+                                   "role": "voice", "duration": r.get("duration") or 0, "subject": len(subjects)})
+    for pos, p in enumerate(slots["video"]):
+        got = entry("video", pos, p, ("video",))
+        if not got:
+            continue
+        it, role = got
+        dur = it.get("duration") or 0
+        if dur and not (LIMITS["min_seconds"] <= dur <= LIMITS["seconds"] + 0.1):
+            errors.append(f"@video{pos + 1} : une vidéo de référence dure de 2 à 15 s ({dur:.1f} s)")
+        sound = bool(p.get("sound"))
+        if sound and not it.get("audio"):
+            errors.append(f"@video{pos + 1} : cette vidéo n'a pas de son")
+        videos.append({"path": library.path_of(it), "item": it["id"], "token": f"video{pos + 1}", "role": role,
+                       "sound": sound, "duration": dur, "thumb_url": library.public(it).get("thumb_url")})
+        tags[f"video{pos + 1}"] = f"<Video {len(videos)}>"
+    for pos, p in enumerate(slots["audio"]):
+        got = entry("audio", pos, p, ("audio",))
+        if not got:
+            continue
+        it, role = got
+        dur = it.get("duration") or 0
+        if dur and not (LIMITS["min_seconds"] <= dur <= LIMITS["seconds"] + 0.1):
+            errors.append(f"@audio{pos + 1} : un son de référence dure de 2 à 15 s ({dur:.1f} s)")
+        audios.append({"path": library.path_of(it), "item": it["id"], "token": f"audio{pos + 1}", "role": role, "duration": dur})
+    audios += element_voices
     # une bande-son de vidéo prend son <Audio j> avant les sons seuls (le nœud)
     n_audio = 0
     for v in videos:
@@ -357,20 +384,42 @@ def _refs(entries: list, errors: list) -> dict:
             v["audio_tag"] = f"<Audio {n_audio}>"
     for a in audios:
         n_audio += 1
-        tags[a["name"]] = f"<Audio {n_audio}>"
+        a["tag"] = f"<Audio {n_audio}>"
+        if a["token"]:
+            tags[a["token"]] = a["tag"]
     if len(pictures) > LIMITS["image"]:
-        errors.append(f"{len(pictures)} images : H3 en prend {LIMITS['image']} au plus (un personnage en compte deux)")
+        errors.append(f"{len(pictures)} images : H3 en prend {LIMITS['image']} au plus (un personnage en envoie deux)")
     if len(videos) > LIMITS["video"]:
         errors.append(f"{len(videos)} vidéos : H3 en prend {LIMITS['video']} au plus")
     if n_audio > LIMITS["audio"]:
-        errors.append(f"{n_audio} sons (bandes-son de vidéo comprises) : H3 en prend {LIMITS['audio']} au plus")
+        errors.append(f"{n_audio} sons (bandes-son et voix comprises) : H3 en prend {LIMITS['audio']} au plus")
     if len(pictures) + len(videos) + len(audios) > LIMITS["files"]:
         errors.append(f"{LIMITS['files']} fichiers de référence au plus")
     for what, lst in (("vidéos", videos), ("sons", audios)):
         total = sum(x["duration"] or 0 for x in lst)
         if total > LIMITS["seconds"] + 0.1:
             errors.append(f"les {what} de référence font {total:.1f} s ensemble : 15 s au plus par type")
-    return {"cards": order, "pictures": pictures, "subjects": subjects, "videos": videos, "audios": audios, "tags": tags}
+    norm = {c: [({k: v for k, v in p.items() if k in ("item", "role", "sound")} if isinstance(p, dict) and p.get("item") else None)
+                for p in slots[c]] for c in INPUT_CATS}
+    return {"inputs": norm, "pictures": pictures, "subjects": subjects, "videos": videos, "audios": audios,
+            "tags": tags, "parents": list(dict.fromkeys(used))}
+
+
+def check_tokens(texts: list[str], tags: dict) -> tuple[list, set]:
+    """Les jetons des champs : ceux qui ne pointent vers rien (rouges), et
+    ceux qui servent."""
+    bad, seen = [], set()
+    for t in texts:
+        for m in TOKEN_RX.finditer(t or ""):
+            k = token_key(m.group(1), m.group(2))
+            seen.add(k)
+            if k not in tags and m.group(0) not in bad:
+                bad.append(m.group(0))
+    return bad, seen
+
+
+def swap_tokens(text: str, tags: dict) -> str:
+    return TOKEN_RX.sub(lambda m: tags.get(token_key(m.group(1), m.group(2)), m.group(0)), text or "")
 
 
 def _tags(nums: list[int], word: str = "Picture") -> str:
@@ -421,8 +470,8 @@ def compose_ref(desc: str, sound: str, music: str, R: dict) -> str:
     viennent son visage et son corps — la forme de Character Factory) ; la
     rétention suit le rôle : un look passe en attribute_transfer (H3 Studio),
     un lieu garde son monde mais pas son cadrage (la planète de
-    test-r2v-h3.py), le reste est fully_preserved (le guide). Les @noms
-    deviennent les étiquettes."""
+    test-r2v-h3.py), le reste est fully_preserved (le guide). Les jetons
+    (@image1, @element1…) deviennent les étiquettes."""
     defs, keep, notes = [], [], []
     for k, s in enumerate(R["subjects"], start=1):
         subj = f"<Subject {k}>"
@@ -438,6 +487,8 @@ def compose_ref(desc: str, sound: str, music: str, R: dict) -> str:
                 src.append(f"shown in {_tags(others)}")
             d = s["description"].rstrip(".")
             defs.append(f"{subj} is {s['title']}" + (f", {d}" if d else "") + (", " + ", and ".join(src) if src else "") + ".")
+        elif s["role"] == "auto":   # le prompt dit ce que c'est
+            defs.append(f"{subj} is what {_tags(s['pics'])} shows. Keep its visible defining details.")
         else:
             defs.append(f"{subj} is the {ROLE_EN[s['role']]} shown in {_tags(s['pics'])}. Keep its visible defining details.")
         pics = _tags(s["pics"])
@@ -462,9 +513,12 @@ def compose_ref(desc: str, sound: str, music: str, R: dict) -> str:
         else:
             notes.append(f"{tag} is a {ROLE_EN[v['role']]} reference.")
     for a in R["audios"]:
-        notes.append(f"{R['tags'][a['name']]} is a {ROLE_EN[a['role']]} reference.")
-    body = MENTION_RX.sub(lambda m: R["tags"].get(m.group(1), m.group(0)), desc)
-    snd, mus = _sound(MENTION_RX.sub(lambda m: R["tags"].get(m.group(1), m.group(0)), sound or ""), music)
+        if a.get("subject"):   # la voix d'un élément
+            notes.append(f"{a['tag']} is the voice reference of <Subject {a['subject']}>: timbre, tone and delivery only, never its words.")
+        else:
+            notes.append(f"{a['tag']} is a {ROLE_EN[a['role']]} reference.")
+    body = swap_tokens(desc, R["tags"])
+    snd, mus = _sound(swap_tokens(sound, R["tags"]), swap_tokens(music, R["tags"]))
     return ("subject_definitions:\n" + ("\n".join(defs) or "No separate still-image subject is defined.")
             + "\n\nsummary:\n[reference generation] " + _first_sentence(body) + ((" " + " ".join(notes)) if notes else "")
             + "\n\nretention_analysis:\n" + ("\n".join(keep) or "Preserve the motion and sound qualities of the cited references.")
@@ -497,7 +551,7 @@ def plan(mode: str, p: dict, *, with_graph: bool = False) -> dict:
     method = p.get("method") if p.get("method") in METHODS else "turbo"
     start = end = None
     pictures, parents = [], []
-    R = {"cards": [], "pictures": [], "subjects": [], "videos": [], "audios": [], "tags": {}}
+    R = {"inputs": None, "pictures": [], "subjects": [], "videos": [], "audios": [], "tags": {}, "parents": []}
     auto = None
     if mode == "i2v":
         start = _image(p.get("start") or "", "la première image", errors)
@@ -511,21 +565,22 @@ def plan(mode: str, p: dict, *, with_graph: bool = False) -> dict:
         anchor = start or end
         if anchor and anchor.get("width") and anchor.get("height"):
             auto = adapt_canvas(anchor["width"], anchor["height"])
-    elif mode == "r2v":
-        entries = p.get("refs") if isinstance(p.get("refs"), list) else []
-        if not entries:
-            errors.append("ajoutez une référence : une image, un élément (un personnage), une vidéo ou un son")
-        R = _refs(entries, errors)
-        pictures = R["pictures"]
-        parents = [c["it"]["id"] for c in R["cards"]]
-        names = set(R["tags"])
-        used = set(MENTION_RX.findall(desc + " " + sound))
-        missing = [c["name"] for c in R["cards"] if c["name"] not in used]
-        if missing and desc:
-            errors.append("mentionnez chaque référence dans le prompt : " + ", ".join("@" + n for n in missing))
-        unknown = sorted(u for u in used if u not in names)
-        if unknown:
-            errors.append("mention inconnue : " + ", ".join("@" + u for u in unknown))
+    if mode == "r2v":
+        R = _inputs(p.get("inputs") if isinstance(p.get("inputs"), dict) else {}, errors)
+        pictures, parents = R["pictures"], R["parents"]
+        if not R["tags"]:
+            errors.append("ajoutez une entrée : une image, un élément (un personnage), une vidéo ou un son")
+    # les jetons des trois champs : rouges s'ils ne pointent vers rien (commun/entrees.js en direct)
+    bad, seen = check_tokens([desc, sound, music], R["tags"])
+    if bad:
+        errors.append(("ces jetons ne pointent vers rien : " + ", ".join(bad) + " — remplissez leur place dans les entrées, "
+                       "ou retirez-les") if mode == "r2v" else
+                      ("les jetons " + ", ".join(bad) + " ne servent qu'en mode Références"))
+    if mode == "r2v":
+        idle = [f"@{k}" for k in R["tags"] if k not in seen]
+        if idle and desc:
+            notes.append(f"{', '.join(idle)} {'ne sont' if len(idle) > 1 else 'n’est'} pas dans le prompt : H3 "
+                         f"{'les' if len(idle) > 1 else 'la'} reçoit quand même, définie{'s' if len(idle) > 1 else ''} dans subject_definitions")
     # la toile
     canvas = p.get("canvas")
     if canvas == "auto" or (canvas in (None, "") and auto):
@@ -573,8 +628,8 @@ def plan(mode: str, p: dict, *, with_graph: bool = False) -> dict:
     crf = max(10, min(30, _num(adv.get("crf"), int, 19)))
     raw = any(h in desc for h in SECTION_HEADS)
     if raw:
-        sent = desc
-        notes.append("prompt déjà au format H3 (sections) : envoyé tel quel")
+        sent = swap_tokens(desc, R["tags"])
+        notes.append("prompt déjà au format H3 (sections) : envoyé tel quel, jetons remplacés")
     elif mode == "r2v":
         sent = compose_ref(desc, sound, music, R) if (R["subjects"] or R["videos"] or R["audios"]) else ""
     else:
@@ -605,15 +660,14 @@ def plan(mode: str, p: dict, *, with_graph: bool = False) -> dict:
         "estimate": est, "canvases": rows, "weights": weights,
         "pictures": [{k: v for k, v in x.items() if k != "path"} | {"tag": f"<Picture {n}>"}
                      for n, x in enumerate(pictures, start=1)],
-        "subjects": [{"tag": f"<Subject {k}>", "name": s["name"], "title": s["title"], "role": s["role"],
+        "subjects": [{"tag": f"<Subject {k}>", "token": "@" + s["token"], "title": s["title"], "role": s["role"],
                       "pictures": [f"<Picture {n}>" for n in s["pics"]]} for k, s in enumerate(R["subjects"], start=1)],
-        "videos": [{"tag": f"<Video {n}>", "name": v["name"], "role": v["role"], "sound": v["sound"],
+        "videos": [{"tag": f"<Video {n}>", "token": "@" + v["token"], "role": v["role"], "sound": v["sound"],
                     "audio_tag": v.get("audio_tag")} for n, v in enumerate(R["videos"], start=1)],
-        "audios": [{"tag": R["tags"][a["name"]], "name": a["name"], "role": a["role"]} for a in R["audios"]],
-        "mentions": R["tags"],
+        "audios": [{"tag": a["tag"], "token": "@" + a["token"] if a["token"] else None, "role": a["role"]} for a in R["audios"]],
+        "mentions": {"@" + k: v for k, v in R["tags"].items()},
         "start": start["id"] if start else None, "end": end["id"] if end else None,
-        "refs": [{"item": c["it"]["id"], "name": c["name"], "role": c["role"], "kind": c["kind"], "sound": c["sound"]}
-                 for c in R["cards"]],
+        "inputs": R["inputs"],
         "parents": parents, "_pictures": pictures, "_R": R,
     }
     if with_graph and not errors:
@@ -911,7 +965,7 @@ def _recipe(pl: dict, eng: str) -> dict:
     ce que le banc compare ; le graphe H3 y est rangé tel qu'il partirait."""
     r = {k: pl[k] for k in ("mode", "method", "width", "height", "family", "frames", "seconds", "fps", "steps", "seed",
                             "sampler", "scheduler", "unet", "turbo", "loras", "ref_image_size", "crf", "desc", "sound",
-                            "music", "raw", "start", "end", "refs", "estimate", "weights")}
+                            "music", "raw", "start", "end", "inputs", "estimate", "weights")}
     r["engine"] = eng
     r["prompt_sent"] = pl["prompt_sent"]
     r["pictures"] = [{"tag": x["tag"], "item": x["item"], "label": x["label"], "role": x["role"]} for x in pl["pictures"]]
@@ -920,7 +974,7 @@ def _recipe(pl: dict, eng: str) -> dict:
 
 
 def _store(ctx, pl: dict, path: Path, *, secs: float, machine: str, model: str, eng: str, graph: dict | None) -> dict:
-    title = " ".join(MENTION_RX.sub(lambda m: m.group(1), pl["desc"]).split())[:70] or MODES[pl["mode"]]["label"]
+    title = " ".join(pl["desc"].split())[:70] or MODES[pl["mode"]]["label"]
     tags = [("h3" if eng == "h3" else "factice"), pl["mode"], pl["method"]]
     params = _recipe(pl, eng)
     if graph:
@@ -1480,54 +1534,70 @@ def selftest(call, ok) -> None:
     st, p16 = call("POST", "/api/movie/plan", {"mode": "i2v", "params": {"start": sid, "desc": "x", "canvas": [1344, 768]}})
     ok(any("recadrée" in n for n in p16.get("notes", [])), "toile imposée : le recadrage de la première image est annoncé")
 
-    # Références nommées : un élément, une image, une vidéo
+    # Références : les entrées par position, appelées par jeton (@image1, @element1…)
     st, el = call("POST", "/api/elements", {"title": "MJ Survêt", "type": "character", "description": "male, 28, athletic",
                                             "refs": [{"item": sid, "role": "full body", "label": "tenue 1"},
                                                      {"item": fid, "role": "face", "label": "visage"},
                                                      {"item": fid, "role": "expression"}]})
     eid = el.get("id")
-    refs = [{"item": eid, "name": "mj", "role": "character"}, {"item": fid, "name": "rue", "role": "location"}]
+    ins = {"image": [{"item": fid, "role": "location"}], "element": [{"item": eid}]}
     st, pr = call("POST", "/api/movie/plan", {"mode": "r2v", "graph": True, "params": {
-        "refs": refs, "desc": "@mj runs through @rue at night. Handheld tracking shot.", "sound": "Footsteps, distant sirens."}})
+        "inputs": ins, "desc": "@element1 runs through @image1 at night. Handheld tracking shot.", "sound": "Footsteps, distant sirens."}})
     s = pr.get("prompt_sent", "")
     ok(st == 200 and pr["ok"] and [p["tag"] for p in pr["pictures"]] == ["<Picture 1>", "<Picture 2>", "<Picture 3>"]
-       and pr["pictures"][0]["role"] == "face" and pr["mentions"] == {"mj": "<Subject 1>", "rue": "<Subject 2>"},
-       f"références : @mj = visage + plein pied, @rue suit ({pr.get('errors')})")
+       and pr["pictures"][1]["role"] == "face" and pr["mentions"] == {"@image1": "<Subject 1>", "@element1": "<Subject 2>"},
+       f"références : @image1 d'abord, puis @element1 = visage + plein pied ({pr.get('errors')})")
     heads = ["subject_definitions:", "summary:", "retention_analysis:", "detailed_description:", "overall_soundscape:",
              "non_diegetic_music:"]
     ok(all(h in s for h in heads) and [s.index(h) for h in heads] == sorted(s.index(h) for h in heads)
-       and "[Shot 1] <Subject 1> runs through <Subject 2> at night." in s and "@" not in s,
-       "références : six sections dans l'ordre, les @noms devenus étiquettes")
-    ok("<Subject 1> is MJ Survêt, male, 28, athletic, whose face, hair, age and identity come from <Picture 1>" in s
-       and "<Subject 2> is the location shown in <Picture 3>" in s and "partially_preserved" in s,
+       and "[Shot 1] <Subject 2> runs through <Subject 1> at night." in s and "@" not in s,
+       "références : six sections dans l'ordre, les jetons devenus étiquettes")
+    ok("<Subject 2> is MJ Survêt, male, 28, athletic, whose face, hair, age and identity come from <Picture 2>" in s
+       and "<Subject 1> is the location shown in <Picture 1>" in s and "partially_preserved" in s,
        "références : le personnage défini par ses images, le lieu gardé sans son cadrage")
-    st, miss = call("POST", "/api/movie/plan", {"mode": "r2v", "params": {"refs": refs, "desc": "@mj walks. @inconnu too."}})
-    ok(not miss["ok"] and any("@rue" in e for e in miss["errors"]) and any("@inconnu" in e for e in miss["errors"]),
-       "références : une référence non mentionnée et une mention inconnue sont dites")
+    # une place vide : son jeton est rouge ; les autres sont dits ; une entrée non citée est seulement notée
+    st, hole = call("POST", "/api/movie/plan", {"mode": "r2v", "params": {
+        "inputs": {"image": [None, {"item": fid}]}, "desc": "@image2 walks by @image1, then @video1. Contact: cal@ex.fr"}})
+    bad = " ".join(hole.get("errors", []))
+    ok(not hole["ok"] and "@image1" in bad and "@video1" in bad and "@image2" not in bad and "@ex" not in bad
+       and hole["mentions"] == {"@image2": "<Subject 1>"}, f"une place vide garde son rang : @image1 rouge, @image2 vert ({bad})")
+    st, idle = call("POST", "/api/movie/plan", {"mode": "r2v", "params": {
+        "inputs": {"image": [{"item": fid}, {"item": sid}]}, "desc": "@image1 alone."}})
+    ok(idle["ok"] and any("@image2" in n for n in idle["notes"]), "une entrée non citée est notée, pas refusée")
     st, many = call("POST", "/api/movie/plan", {"mode": "r2v", "params": {
-        "refs": [{"item": eid, "name": f"p{k}"} for k in range(5)], "desc": " ".join(f"@p{k}" for k in range(5))}})
-    ok(not many["ok"] and any("9 au plus" in e for e in many["errors"]), "références : plus de 9 images refusé")
-    # une vidéo de référence de 3 s (ffmpeg), son compris
+        "inputs": {"element": [{"item": eid}] * 5}, "desc": " ".join(f"@element{k + 1}" for k in range(5))}})
+    ok(not many["ok"] and any("9 au plus" in e for e in many["errors"]), "cinq personnages (10 images) : refusé, 9 au plus")
+    st, t2 = call("POST", "/api/movie/plan", {"mode": "t2v", "params": {"desc": "@image1 at dawn."}})
+    ok(not t2["ok"] and any("mode Références" in e for e in t2["errors"]), "un jeton en mode Texte est dit")
+    # une vidéo de référence de 3 s (ffmpeg), son compris ; un élément qui porte une voix
     import tempfile
-    tmp = Path(tempfile.mkdtemp()) / "geste.mp4"
+    tdir = Path(tempfile.mkdtemp())
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24:duration=3",
                     "-f", "lavfi", "-i", "sine=duration=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
-                    "-shortest", str(tmp)], capture_output=True, timeout=60)
-    st, vid = call("PUT", "/api/library/upload?name=geste.mp4&title=Geste", raw=tmp.read_bytes() if tmp.exists() else b"")
-    pv = plan("r2v", {"refs": refs + [{"item": vid.get("id"), "name": "geste", "role": "motion", "sound": True}],
-                      "desc": "@mj runs through @rue like @geste."})
+                    "-shortest", str(tdir / "geste.mp4")], capture_output=True, timeout=60)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=300:duration=4", str(tdir / "voix.wav")],
+                   capture_output=True, timeout=60)
+    st, vid = call("PUT", "/api/library/upload?name=geste.mp4&title=Geste", raw=(tdir / "geste.mp4").read_bytes())
+    pv = plan("r2v", {"inputs": {**ins, "video": [{"item": vid.get("id"), "role": "motion", "sound": True}]},
+                      "desc": "@element1 runs through @image1 like @video1."})
     gv = build_graph("r2v", pv, ["f.png", "b.png", "i.png"], "p", videos=["v.mp4"], audios=[]) if pv["ok"] else {}
     ok(pv["ok"] and gv["136"]["inputs"].get("ref_videos.ref_video_0") == ["301", 0] and gv["300"]["class_type"] == "LoadVideo"
        and gv["136"]["inputs"].get("ref_video_audios.ref_video_audio_0") == ["301", 1]
        and "<Video 1> is a motion reference." in pv["prompt_sent"] and "<Audio 1> is the soundtrack paired with <Video 1>." in pv["prompt_sent"],
        f"références : une vidéo et sa bande-son passent par LoadVideo → GetVideoComponents ({pv['errors']})")
+    ev = library.create_element("Voix", "character", "", [{"path": library.path_of(library.get(fid)), "role": "face"},
+                                                           {"path": tdir / "voix.wav", "role": "voice"}])
+    pw = plan("r2v", {"inputs": {"element": [{"item": ev["id"]}], "audio": []}, "desc": "@element1 speaks."})
+    ok(pw["ok"] and len(pw["pictures"]) == 1 and pw["audios"] and pw["audios"][0]["tag"] == "<Audio 1>"
+       and "<Audio 1> is the voice reference of <Subject 1>" in pw["prompt_sent"],
+       f"un élément qui porte une voix l'envoie en <Audio> ({pw.get('errors')})")
     g2 = pr.get("graph") or {}
     ok(g2.get("136", {}).get("class_type") == "MiniMaxH3ReferenceToVideo" and g2["136"]["inputs"]["ref_images.ref_image_2"] == ["242", 0]
        and g2["148"]["inputs"]["lora_name"] == TURBO["ref2va"] and g2["136"]["inputs"]["ref_image_size"] == "match",
        "graphe références : trois images, LoRA turbo ref2va, taille match")
-    st, raw = call("POST", "/api/movie/plan", {"mode": "r2v", "params": {"refs": [refs[0]], "desc": "subject_definitions:\n@mj"}})
-    ok(raw.get("raw") and raw.get("prompt_sent") == "subject_definitions:\n@mj", "un prompt déjà au format H3 part tel quel")
-    st, lo = call("POST", "/api/movie/plan", {"mode": "r2v", "params": {"refs": [refs[0]], "desc": "@mj",
+    st, raw = call("POST", "/api/movie/plan", {"mode": "r2v", "params": {"inputs": {"element": [{"item": eid}]}, "desc": "subject_definitions:\n@element1"}})
+    ok(raw.get("raw") and raw.get("prompt_sent") == "subject_definitions:\n<Subject 1>", "un prompt au format H3 part tel quel, jetons remplacés")
+    st, lo = call("POST", "/api/movie/plan", {"mode": "r2v", "params": {"inputs": {"element": [{"item": eid}]}, "desc": "@element1",
                                                                          "loras": [{"name": "Minimax_H3/minimax_h3_fl2v_x.safetensors"}]}})
     ok(not lo["ok"] and any("l'autre modèle" in e for e in lo["errors"]), "un LoRA fl2v est refusé en références")
     pg = plan("t2v", {"desc": "x", "loras": [{"name": "h3-realism-people-t2v-i2v-r2v.safetensors", "strength": 0.6}]})
@@ -1568,7 +1638,7 @@ def selftest(call, ok) -> None:
         for kind, params, parents in (
                 ("movie.t2v", {"desc": "A quiet station at dawn.", "canvas": [864, 480], "seed": 2}, set()),
                 ("movie.i2v", {"start": sid, "desc": "He turns and smiles.", "seed": 3}, {sid}),
-                ("movie.r2v", {"refs": refs, "desc": "@mj walks in @rue.", "canvas": [1344, 576], "seed": 4}, {eid, fid})):
+                ("movie.r2v", {"inputs": ins, "desc": "@element1 walks in @image1.", "canvas": [1344, 576], "seed": 4}, {eid, fid})):
             st, j = call("POST", "/api/jobs", {"kind": kind, "params": params, "title": "essai", "tool": "movie"})
             for _ in range(300):
                 st, j = call("GET", f"/api/jobs/{j['id']}")

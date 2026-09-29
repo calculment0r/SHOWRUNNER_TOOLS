@@ -97,6 +97,41 @@ Changé pour le portail :
 - le temps estimé part de mesures faites sur **nos** DGX (§5), pas de leurs
   fourchettes RTX.
 
+### Les entrées par position (Cal, 29/09)
+
+« On ne les nomme pas par leur nom mais par @image1 @image2… car très
+souvent on veut garder le prompt mais changer les images de ref » — comme les
+« @ » de Higgsfield et de Magnific. Le cadre commun `commun/entrees.js` +
+`commun/entrees.css` (repris ensuite par l'outil Image) :
+
+- un seul cadre « Entrées » : une zone de dépôt ; les catégories Images,
+  Éléments, Vidéos, Sons n'apparaissent qu'avec du contenu ; ce qu'on dépose
+  (fichier du disque → bibliothèque `tool: upload`, `via: movie` ; ou vignette
+  glissée d'ailleurs) va dans sa catégorie ;
+- des jetons de position `@image1`, `@element1`, `@video1`, `@audio1` ; places
+  stables : déposer sur une vignette la remplace, retirer laisse la place vide
+  (son jeton rougit), « Tasser » renumérote et réécrit les jetons du prompt ;
+- dans les trois champs, chaque jeton est vert s'il pointe vers une place
+  remplie, rouge sinon, en direct (calque miroir derrière le `textarea`) ; `@`
+  ouvre le menu des entrées ; Générer dit pourquoi il est grisé ;
+- la capacité est un paramètre (`limits`, `cost`) : pour H3, 9 images (un
+  personnage en envoie deux, visage et plein pied), 3 vidéos, 3 sons (bande-son
+  de vidéo et voix d'élément comprises), 12 fichiers ; pas de places vides
+  affichées d'avance, un compteur par catégorie, et un refus clair quand c'est
+  plein (« plus de place pour une image : 9 / 9 images ») ;
+- le serveur refait tout (`_inputs`, `check_tokens`, `swap_tokens`) : l'ordre
+  d'H3 est images (catégorie Images, puis celles des éléments), vidéos, sons
+  (bandes-son, sons, voix des éléments) ; une entrée non citée est seulement
+  notée (elle est définie dans `subject_definitions`).
+
+### Déposer partout, la file à droite (Cal, 29/09)
+
+Tout emplacement qui attend un asset accepte un dépôt (`dropZone` du socle) :
+début, fin, Entrées, A et B de Comparer ; les cartes des vidéos se glissent
+(`dragItem`). « Vidéos générées » passe à droite (comme l'outil Image) : les
+rendus y sont dès l'envoi, avec leur place dans la file, leur progression et
+« Arrêter » ; un clic sur une autre vidéo la montre sans rien interrompre.
+
 ## 4. Réglages retenus, et pourquoi
 
 | Réglage | Valeur | Source |

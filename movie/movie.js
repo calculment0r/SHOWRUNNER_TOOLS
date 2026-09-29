@@ -2,11 +2,16 @@
 //
 // Le parcours suit H3 Studio (github.com/underworldhistory1-ctrl/minimax-h3-higgsfield,
 // licence MIT, Copyright (c) 2026 Charles Mod) : un rail de création (carte du
-// modèle, modes Texte / Images / Références, références nommées @nom, les trois
-// champs du prompt H3, LoRA, toiles avec temps estimé, méthode, durée, pas,
-// graine), un espace de travail (la vidéo en grand, la progression, « Vidéo en
-// cours ») et les vidéos générées. Réécrit ici ; la bibliothèque du portail,
-// la file commune et les éléments remplacent leurs fichiers locaux.
+// modèle, modes Texte / Images / Références, les trois champs du prompt H3,
+// toiles avec temps estimé, durée ; méthode, pas, graine, LoRA repliés), un
+// espace de travail (la vidéo en grand, la progression, « Vidéo en cours ») et
+// les vidéos générées. Réécrit ici ; la bibliothèque du portail, la file
+// commune et les éléments remplacent leurs fichiers locaux.
+//
+// Les entrées du mode Références passent par le cadre commun (commun/entrees.js) :
+// rangées par sorte, appelées par position — @image1, @element1, @video1,
+// @audio1 — vertes si leur place est remplie, rouges sinon (décision de Cal
+// du 29/09 : on garde le prompt en changeant les images).
 //
 // Le banc « Comparer » reprend le banc NL de Cal : rideau, côte à côte,
 // clignotement, zoom sous le curseur, boucle, écoute A/B, recettes et
@@ -16,7 +21,8 @@
 // prompt envoyé, graphe, temps estimé, ce qui manque) ; la page l'affiche et
 // soumet à la file (movie.t2v / movie.i2v / movie.r2v).
 
-import { mountHeader, api, jobs, pick, uploadFile, toast, el, $, $$, href, fmtDate, kindFr, etypeFr, dropAnywhere } from '../commun/shell.js';
+import { mountHeader, api, jobs, pick, uploadFile, toast, el, $, $$, href, fmtDate, kindFr, etypeFr, dropAnywhere, dropZone, dragItem } from '../commun/shell.js';
+import { createEntrees } from '../commun/entrees.js';
 
 mountHeader('movie');
 
@@ -40,12 +46,14 @@ const saved = store.get('movie.v2', {});
 const F = {
   mode: 't2v',
   p: { t2v: { desc: '', sound: '', music: '' }, i2v: { desc: '', sound: '', music: '' }, r2v: { desc: '', sound: '', music: '' } },
-  start: null, end: null, refs: [], refKind: 'image', refSize: 'match',
+  start: null, end: null, inputs: {}, refSize: 'match',
   canvas: { t2v: [1344, 768], i2v: 'auto', r2v: [1344, 768] }, fam: { t2v: 'paysage', i2v: 'image', r2v: 'paysage' },
   method: 'turbo', frames: 124, steps: '', seed: '', loras: {}, adv: {},
   ...saved,
 };
 for (const k of ['t2v', 'i2v', 'r2v']) F.p[k] = { desc: '', sound: '', music: '', ...((saved.p || {})[k] || {}) };
+delete F.refs; delete F.refKind;   // l'ancienne forme (références nommées)
+let E = null;   // le cadre des entrées, créé quand les options sont là
 const S = {
   view: 'create', opts: null, plan: null, seq: 0, items: new Map(), lib: [], libAll: store.get('movie.lib', 'movie'),
   libShown: 8, jobs: [], cur: null, focus: 'create', loras: [], loraMachine: '', A: null, B: null, h3: null, myJobs: new Set(store.get('movie.myjobs', [])),
@@ -90,11 +98,11 @@ function setMode(m) {
   document.body.dataset.mode = m;
   $$('#modes [data-mode]').forEach((b) => { const on = b.dataset.mode === m; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
   $$('#create [data-for]').forEach((n) => { n.hidden = n.dataset.for !== m; });
-  $('#desc-lbl').textContent = m === 'r2v' ? 'Description · detailed_description' : 'Description · integrated_multimodal_description';
+  $$('#adv [data-for]').forEach((n) => { n.hidden = n.dataset.for !== m; });
+  $('#desc-lbl').textContent = m === 'r2v' ? 'Ce qu’on voit et entend · detailed_description' : 'Ce qu’on voit et entend · integrated_multimodal_description';
   $('#desc').placeholder = PH[m];
   syncFields();
   if (m === 'i2v') { paintSlot('start'); paintSlot('end'); }
-  if (m === 'r2v') paintRefs();
   paintLoras();
   paintAdv();
   save(); schedulePlan();
@@ -131,7 +139,15 @@ async function paintSlot(which) {
 }
 async function chooseImage(which) {
   const [it] = await pick({ kinds: ['image', 'element'], multiple: false, title: which === 'start' ? 'Image de début' : 'Image de fin' });
-  if (!it) return;
+  if (it) setImage(which, it);
+}
+// Déposer sur un emplacement : un fichier du disque (bibliothèque · Upload,
+// via movie) ou une vignette glissée d'ailleurs dans le portail (dropZone).
+for (const which of ['start', 'end']) {
+  dropZone($(which === 'start' ? '#start-slot' : '#end-slot'), { kinds: ['image', 'element'], multiple: false, via: 'movie',
+    onitems: ([it]) => setImage(which, it) });
+}
+async function setImage(which, it) {
   const img = it.kind === 'element' ? await fromElement(it) : it;
   if (!img) return;
   S.items.set(img.id, img);
@@ -166,94 +182,42 @@ function fromElement(elem) {
   });
 }
 
-// ── Références nommées ──────────────────────────────────────
-const KIND_PICK = { image: ['image', 'element'], video: ['video'], audio: ['audio'] };
-$('#ref-kind').value = F.refKind;
-$('#ref-kind').addEventListener('change', (e) => { F.refKind = e.target.value; save(); });
+// ── Entrées (mode Références) : le cadre commun ─────────────
 $('#ref-size').value = F.refSize;
 $('#ref-size').addEventListener('change', (e) => { F.refSize = e.target.value; changed(); });
-$('#ref-add').addEventListener('click', addRefs);
-function nameFor(title) {
-  let n = (title || 'ref').normalize('NFC').replace(/[^\p{L}\p{N}_-]+/gu, '_').replace(/^_+|_+$/g, '').slice(0, 24) || 'ref';
-  const taken = new Set(F.refs.map((r) => r.name.toLowerCase()));
-  let k = 2, base = n;
-  while (taken.has(n.toLowerCase())) n = `${base}_${k++}`;
-  return n;
+const AUDIO_EXT = /\.(wav|mp3|flac|m4a|ogg)$/i;
+function elementParts(it) {   // le même compte que element_parts() de server/tools/movie.py
+  const refs = it.element?.refs || [];
+  const imgs = refs.filter((r) => !AUDIO_EXT.test(r.file || ''));
+  // la voix est rangée à part (element.voices) ; un son dans refs (ancienne forme) compte aussi
+  const voices = [...(it.element?.voices || []), ...refs.filter((r) => AUDIO_EXT.test(r.file || ''))].slice(0, 1);
+  const chosen = ['face', 'full body'].map((role) => imgs.find((r) => r.role === role)).filter(Boolean);
+  return { imgs: chosen.length ? chosen : imgs.slice(0, 2), voices };
 }
-async function addRefs() {
-  const kind = F.refKind;
-  const got = await pick({ kinds: KIND_PICK[kind], multiple: true, title: { image: 'Images et éléments', video: 'Vidéos de référence', audio: 'Sons de référence' }[kind] });
-  for (const it of got) {
-    S.items.set(it.id, it);
-    if (F.refs.some((r) => r.item === it.id)) continue;
-    const k = it.kind === 'element' || it.kind === 'image' ? 'image' : it.kind;
-    const role = (S.opts?.roles[k] || [{ id: '' }])[0].id;
-    F.refs.push({ item: it.id, name: nameFor(it.title), role: it.kind === 'element' && it.element?.type === 'place' ? 'location' : role, sound: false });
-  }
-  if (got.length) { changed(); paintRefs(); }
+function h3Cost(it, p = {}) {   // ce qu'une entrée prend des limites d'H3
+  if (it.kind === 'element') { const { imgs, voices } = elementParts(it); return { image: imgs.length, audio: voices.length, files: imgs.length + voices.length }; }
+  if (it.kind === 'video') return { video: 1, audio: p.sound ? 1 : 0, files: 1 };
+  return { [it.kind]: 1, files: 1 };
 }
-async function paintRefs() {
-  const box = $('#refcards');
-  const cards = [];
-  for (const [i, r] of F.refs.entries()) {
-    const it = await item(r.item);
-    if (!it) continue;
-    const k = it.kind === 'element' || it.kind === 'image' ? 'image' : it.kind;
-    const tag = S.plan?.mentions?.[r.name];
-    const pics = (S.plan?.pictures || []).filter((p) => p.item === it.id).map((p) => p.tag);
-    const src = it.kind === 'element'
-      ? `élément · ${etypeFr(it.element?.type)}${pics.length ? ' · ' + pics.join(' ') : ''}`
-      : `${kindFr(it.kind)}${it.duration ? ' · ' + it.duration.toFixed(1) + ' s' : ''}${it.width ? ' · ' + it.width + '×' + it.height : ''}${pics.length ? ' · ' + pics.join(' ') : ''}`;
-    const name = el('input', { class: 'fld', value: r.name, 'aria-label': 'nom de mention', spellcheck: 'false' });
-    name.addEventListener('change', () => {
-      const v = name.value.trim().replace(/^@/, '');
-      if (!/^[\p{L}\p{N}_-]{1,32}$/u.test(v) || F.refs.some((x, j) => j !== i && x.name.toLowerCase() === v.toLowerCase())) {
-        name.value = r.name; toast('un nom unique : lettres, chiffres, _ ou -, sans espace'); return;
-      }
-      const old = r.name;
-      r.name = v;
-      const rx = new RegExp('@' + old.replace(/[-]/g, '\\-') + '(?=$|[^\\p{L}\\p{N}_-])', 'gu');
-      for (const f of ['desc', 'sound']) F.p.r2v[f] = F.p.r2v[f].replace(rx, '@' + v);
-      syncFields(); changed(); paintRefs();
-    });
-    const role = el('select', { class: 'fld', 'aria-label': 'utiliser comme' },
-      ...(S.opts?.roles[k] || []).map((x) => el('option', { value: x.id }, x.label)));
-    role.value = r.role;
-    role.addEventListener('change', () => { r.role = role.value; changed(); });
-    const snd = k === 'video' ? el('label', { class: 'check' + (it.audio ? '' : ' off') },
-      el('input', { type: 'checkbox', checked: r.sound || null, disabled: it.audio ? null : true,
-        onchange: (e) => { r.sound = e.target.checked; changed(); } }),
-      it.audio ? 'utiliser aussi sa bande-son' : 'cette vidéo n’a pas de son') : null;
-    cards.push(el('div', { class: 'refcard' + (it.kind === 'element' ? ' element' : '') },
-      el('div', { class: 'rh' },
-        el('span', { class: 'th', style: bg(it.thumb_url || (it.kind === 'image' ? it.url : null)) }, k === 'audio' ? el('span', { class: 'ico' }, '♪') : null),
-        el('span', { class: 'rn' }, el('b', {}, '@' + r.name), el('span', { class: 'lbl' }, tag || '')),
-        el('button', { class: 'tb ghost sm', type: 'button', onclick: () => { F.refs.splice(i, 1); changed(); paintRefs(); } }, 'Retirer')),
-      el('span', { class: 'src' }, `${it.title} · ${src}`),
-      el('div', { class: 'grid2' },
-        el('label', { class: 'field' }, el('span', { class: 'lbl' }, 'Nom de mention'), name),
-        el('label', { class: 'field' }, el('span', { class: 'lbl' }, 'Utiliser comme'), role)),
-      snd));
-  }
-  box.replaceChildren(...cards);
-  const L = S.opts?.limits;
-  if (L) {
-    const n = S.plan?.mode === 'r2v' ? S.plan : null;
-    $('#ref-limits').textContent = `${n ? n.pictures.length : '—'} / ${L.image} images · ${n ? n.videos.length : '—'} / ${L.video} vidéos · ${n ? n.audios.length + n.videos.filter((v) => v.sound).length : '—'} / ${L.audio} sons · ${L.files} fichiers au plus. `
-      + `Une bande-son de vidéo compte comme un son ; chaque vidéo ou son dure de ${L.min_seconds} à ${L.seconds} s, ${L.seconds} s par type. Un personnage envoie deux images : visage et plein pied.`;
-  }
+function mountEntrees() {
+  const L = S.opts.limits;
+  const roles = Object.fromEntries(Object.entries(S.opts.roles).map(([k, v]) => [k, v.map((r) => [r.id, r.label])]));
+  E = createEntrees($('#entrees'), { limits: { image: L.image, video: L.video, audio: L.audio, files: L.files }, cost: h3Cost,
+    roles, via: 'movie', state: F.inputs, onchange: (st) => { F.inputs = st; changed(); } });
+  for (const ta of [descEl, soundEl, musicEl]) E.bindField(ta);
+  E.enable(F.mode === 'r2v');
 }
-
 // ── le prompt : trois champs, mentions, caméra ──────────────
 const PH = {
   t2v: 'Ce qu’on voit et entend, dans l’ordre. Ex. : [Shot 1] Live-action, cinematic. A lighthouse keeper climbs a spiral staircase at dawn; the camera tracks up with him at slow speed. The weathered man (S1) mutters: <d>[English] Not tonight.</d>',
   i2v: 'Ce qui se passe à partir de l’image : l’action, la caméra, une réplique. Ex. : The man shown in <Picture 1> slowly turns toward the lens and smiles; the camera pushes in with small amplitude at slow speed.',
-  r2v: 'Le plan à composer : @nom pour chaque référence. Ex. : @MJ runs through a Paris street at night; a tracking shot follows him at fast speed, neon reflections on wet asphalt.',
+  r2v: 'Le plan, avec les jetons des entrées (tapez @). Ex. : @element1 runs through @image1 at night; a tracking shot follows him at fast speed, neon reflections on wet asphalt.',
 };
 const descEl = $('#desc'), soundEl = $('#sound'), musicEl = $('#music');
 function syncFields() {
   const p = F.p[F.mode];
   descEl.value = p.desc; soundEl.value = p.sound; musicEl.value = p.music;
+  if (E) { E.enable(F.mode === 'r2v'); E.refreshFields(); }
   paintWords();
 }
 function paintWords() {
@@ -261,10 +225,7 @@ function paintWords() {
   $('#words').textContent = `${n} mot${n > 1 ? 's' : ''} · visé 350–500`;
   $('#words').classList.toggle('low', n > 0 && n < 60);
 }
-descEl.addEventListener('input', () => { F.p[F.mode].desc = descEl.value; paintWords(); changed(); mention(); });
-descEl.addEventListener('click', mention);
-descEl.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#mention-menu').hidden = true; });
-descEl.addEventListener('blur', () => setTimeout(() => { $('#mention-menu').hidden = true; }, 150));
+descEl.addEventListener('input', () => { F.p[F.mode].desc = descEl.value; paintWords(); changed(); });
 soundEl.addEventListener('input', () => { F.p[F.mode].sound = soundEl.value; changed(); });
 musicEl.addEventListener('input', () => { F.p[F.mode].music = musicEl.value; changed(); });
 
@@ -278,29 +239,10 @@ function insertAt(t, text, { select = null } = {}) {
   if (select) t.setSelectionRange(at + select[0], at + select[1]); else t.setSelectionRange(at + text.length, at + text.length);
   t.dispatchEvent(new Event('input'));
 }
-// @ ouvre le menu des mentions (H3 Studio)
-function mention() {
-  const menu = $('#mention-menu');
-  const before = descEl.value.slice(0, descEl.selectionStart);
-  const m = before.match(/@([\p{L}\p{N}_-]*)$/u);
-  if (F.mode !== 'r2v' || !m || !F.refs.length) { menu.hidden = true; return; }
-  const list = F.refs.filter((r) => r.name.toLowerCase().startsWith(m[1].toLowerCase()));
-  menu.replaceChildren(...list.map((r) => {
-    const it = S.items.get(r.item);
-    return el('button', { type: 'button', onmousedown: (e) => {
-      e.preventDefault();
-      const s = descEl.selectionStart - m[0].length;
-      descEl.setRangeText('@' + r.name + ' ', s, descEl.selectionStart, 'end');
-      menu.hidden = true; descEl.focus(); descEl.dispatchEvent(new Event('input'));
-    } }, el('b', {}, '@' + r.name), ' ', el('span', { class: 'lbl' }, it ? (it.kind === 'element' ? etypeFr(it.element?.type) : kindFr(it.kind)) : ''));
-  }));
-  menu.hidden = !list.length;
-}
-// les étiquettes à glisser : les mentions (références), les images (début · fin)
+// les étiquettes des images de début et de fin (en Références, les jetons sont sur les vignettes et dans le menu « @ »)
 function paintChips() {
   const pl = S.plan;
-  const chips = F.mode === 'r2v' ? F.refs.map((r) => ({ ins: '@' + r.name, lab: pl?.mentions?.[r.name] || '' }))
-    : F.mode === 'i2v' ? (pl?.pictures || []).map((p) => ({ ins: p.tag, lab: p.label })) : [];
+  const chips = F.mode === 'i2v' ? (pl?.pictures || []).map((p) => ({ ins: p.tag, lab: p.label })) : [];
   $('#chips').replaceChildren(...chips.map((c) => el('button', { class: 'chip', type: 'button', title: `insérer ${c.ins}`, onclick: () => insertAt(descEl, c.ins) },
     el('b', {}, c.ins), c.lab ? ' ' + c.lab : '')));
 }
@@ -316,6 +258,8 @@ function paintCamera() {
       insertAt(descEl, c.phrase + (fixed ? '' : cam.amp) + (/Static/.test(c.id) ? '' : cam.speed) + '.');
     } }, c.id)));
 }
+$('#h-cam').addEventListener('click', () => { $('#cam').hidden = !$('#cam').hidden; $('#h-cam').classList.toggle('on', !$('#cam').hidden); });
+$('#h-assist').addEventListener('click', () => { $('#assist').hidden = !$('#assist').hidden; $('#h-assist').classList.toggle('on', !$('#assist').hidden); });
 $('#h-say').addEventListener('click', () => insertAt(descEl, '(S1) says: <d>[French] …</d>', { select: [23, 24] }));
 $('#h-excl').addEventListener('click', () => insertAt(descEl, 'No text, subtitles, logos or watermarks of any kind, keep the live-action texture.'));
 
@@ -360,15 +304,22 @@ function paintOutput() {
   if (!fams.includes(F.fam[F.mode])) F.fam[F.mode] = fams[0];
   const FAM_FR = { image: 'image', paysage: 'paysage', '21:9': '21:9', portrait: 'portrait', 'carré': 'carré' };
   $('#fam').replaceChildren(...fams.map((f) => el('button', { class: 'tb' + (F.fam[F.mode] === f ? ' on' : ''), type: 'button',
-    onclick: () => { F.fam[F.mode] = f; save(); paintOutput(); } }, FAM_FR[f])));
+    onclick: () => {   // une famille : sa première toile, pour que l'affiché soit l'envoyé
+      F.fam[F.mode] = f;
+      const first = o.canvases.find((c) => c.family === f);
+      F.canvas[F.mode] = f === 'image' ? 'auto' : first ? [first.w, first.h] : F.canvas[F.mode];
+      changed(); paintOutput();
+    } }, FAM_FR[f])));
   const rows = (pl?.canvases || o.canvases.map((c) => ({ ...c, estimate: null }))).filter((c) => c.family === F.fam[F.mode]);
   const cur = F.canvas[F.mode];
-  $('#canvases').replaceChildren(...rows.map((c) => {
-    const on = c.family === 'image' ? cur === 'auto' : Array.isArray(cur) && cur[0] === c.w && cur[1] === c.h;
-    return el('button', { class: 'crow' + (on ? ' on' : ''), type: 'button', title: c.source, 'aria-pressed': on,
-      onclick: () => { F.canvas[F.mode] = c.family === 'image' ? 'auto' : [c.w, c.h]; changed(); paintOutput(); } },
-    el('span', {}, el('b', {}, c.label), ` · ${c.w}×${c.h}`), el('span', { class: 't' }, rng(c.estimate)));
-  }));
+  const key = (c) => (c.family === 'image' ? 'auto' : `${c.w}x${c.h}`);
+  const sel = $('#canvas');
+  sel.replaceChildren(...rows.map((c) => el('option', { value: key(c), title: c.source }, `${c.w}×${c.h} · ${c.label}${c.estimate ? ' · ' + rng(c.estimate) : ''}`)));
+  const curKey = cur === 'auto' ? 'auto' : Array.isArray(cur) ? `${cur[0]}x${cur[1]}` : '';
+  if (rows.some((c) => key(c) === curKey)) sel.value = curKey;
+  else if (rows.length) { sel.value = key(rows[0]); }
+  $('#estimate-short').textContent = pl ? `≈ ${rng(pl.estimate)}` : '';
+  $('#adv-sum').textContent = pl ? `${o.methods.find((m) => m.id === F.method)?.label.split(' · ')[0].toLowerCase()} · ${pl.steps} pas${F.seed ? ' · graine ' + F.seed : ''}${pl.loras.length ? ` · ${pl.loras.length} LoRA` : ''}` : '';
   $('#method').replaceChildren(...o.methods.map((m) => el('option', { value: m.id }, m.label)));
   $('#method').value = F.method;
   $('#frames').replaceChildren(...o.frames.map((f) => el('option', { value: f.frames }, `${String(f.seconds).replace('.', ',')} s · ${f.frames} images`)));
@@ -385,6 +336,11 @@ function paintOutput() {
   if (pl) $('#estimate').replaceChildren(el('b', {}, `Estimé ${pl.width}×${pl.height} : ${rng(pl.estimate)}`),
     el('span', { class: 'hint' }, `${pl.estimate.basis}. Chargement du modèle, image et son compris ; le premier rendu après un démarrage d’H3 est plus long.`));
 }
+$('#canvas').addEventListener('change', (e) => {
+  const v = e.target.value;
+  F.canvas[F.mode] = v === 'auto' ? 'auto' : v.split('x').map(Number);
+  changed();
+});
 $('#method').addEventListener('change', (e) => { F.method = e.target.value; F.steps = ''; changed(); paintOutput(); });
 $('#frames').addEventListener('change', (e) => { F.frames = Number(e.target.value); changed(); });
 $('#steps').addEventListener('input', (e) => { F.steps = e.target.value.replace(/[^0-9]/g, ''); if (e.target.value !== F.steps) e.target.value = F.steps; changed(); });
@@ -419,7 +375,7 @@ function params(mode = F.mode) {
     adv: { unet: F.adv['unet_' + w], sampler: F.adv.sampler, scheduler: F.adv.scheduler, crf: F.adv.crf || null },
   };
   if (mode === 'i2v') { out.start = F.start; out.end = F.end; }
-  if (mode === 'r2v') { out.refs = F.refs.map((r) => ({ ...r })); out.ref_image_size = F.refSize; }
+  if (mode === 'r2v') { out.inputs = E ? E.get() : F.inputs; out.ref_image_size = F.refSize; }
   return out;
 }
 
@@ -438,8 +394,8 @@ async function runPlan() {
 $('#adv').addEventListener('toggle', () => { if ($('#adv').open) runPlan(); });
 const FIX = [   // chaque blocage mène à ce qui le lève
   [/première image, une dernière/, () => chooseImage('start')],
-  [/ajoutez une référence/, () => addRefs()],
-  [/mentionnez/, (e) => { const m = e.match(/@[\p{L}\p{N}_-]+/gu) || []; insertAt(descEl, m.join(' ')); }],
+  [/ajoutez une entrée/, () => $('#entrees .ent-drop').click()],
+  [/ne pointent vers rien|mode Références/, () => descEl.focus()],
   [/description|déclencheur/, () => descEl.focus()],
 ];
 function paintPlan() {
@@ -454,11 +410,10 @@ function paintPlan() {
   $('#sent').textContent = pl.prompt_sent || '';
   $('#graph').textContent = pl.graph ? JSON.stringify(pl.graph, null, 1) : (pl.ok ? 'ouvrez ce panneau pour le construire' : 'le graphe se construit quand le plan est complet');
   $('#format-hint').textContent = pl.raw ? 'prompt déjà au format H3 : il part tel quel.'
-    : F.mode === 'r2v' ? 'À l’envoi : six sections (subject_definitions, summary, retention_analysis, detailed_description, son, musique) ; les @noms deviennent <Subject n>, <Video n>, <Audio n>.'
-      : 'À l’envoi : integrated_multimodal_description, overall_soundscape, non_diegetic_music' + (F.mode === 'i2v' ? ', et la ligne d’ancrage des images avec la durée.' : '.');
+    : F.mode === 'r2v' ? `À l’envoi : les six sections du guide ref de MiniMax ; ${Object.entries(pl.mentions || {}).map(([k, v]) => `${k} → ${v}`).join(', ') || 'les jetons deviennent <Subject n>, <Video n>, <Audio n>'}.`
+      : 'À l’envoi : les trois champs du guide de MiniMax' + (F.mode === 'i2v' ? ', et la ligne d’ancrage des images avec la durée.' : '.');
   paintChips();
   paintOutput();
-  if (F.mode === 'r2v') paintRefs();
 }
 $('#go').addEventListener('click', launch);
 async function launch() {
@@ -501,8 +456,8 @@ let stageKey = '';
 async function paintStage() {
   const box = $('#stage');
   const it = S.cur ? await item(S.cur) : null;
-  const j = S.jobs.find((x) => x.id === S.watch && ['queued', 'running'].includes(x.state));
-  const key = it ? 'v' + it.id : j ? 'j' + j.id : 'vide';
+  const j = S.jobs.find((x) => x.id === S.watch && ['queued', 'running', 'error'].includes(x.state));
+  const key = it ? 'v' + it.id : j ? 'j' + j.id + j.state : 'vide';
   if (key === stageKey) return;
   stageKey = key;
   if (it) {
@@ -511,9 +466,13 @@ async function paintStage() {
         it.params?.mode ? el('span', { class: 'badge' }, `${MODE_FR[it.params.mode]} · ${METH_FR[it.params.method] || ''}`) : null,
         it.audio ? el('span', { class: 'badge snd' }, 'son') : el('span', { class: 'badge' }, 'muet'),
         it.params?.engine === 'factice' ? el('span', { class: 'badge fake' }, 'factice') : null));
+  } else if (j && j.state === 'error') {
+    put(box, el('div', { class: 'empty' }, el('b', {}, 'Le rendu a échoué'), el('span', { class: 'warn' }, j.message || ''),
+      el('button', { class: 'tb ghost sm', onclick: () => jobs.retry(j.id).then((n) => { S.myJobs.add(n.id); watchJob(n.id); }) }, 'Relancer')));
   } else if (j) {
     put(box, j.thumb ? el('img', { class: 'poster', src: href(j.thumb), alt: '' }) : null,
-      el('div', { class: 'empty' }, el('b', {}, 'Le plan se fabrique'), el('span', {}, 'il s’affichera ici, et dans les vidéos générées')));
+      el('div', { class: 'empty' }, el('b', {}, j.state === 'queued' ? 'En file' : 'Le plan se fabrique'),
+        el('span', {}, 'il se posera ici et dans les vidéos générées ; cliquez une autre vidéo pour la voir, le rendu continue')));
   } else {
     box.replaceChildren(el('div', { class: 'empty' }, el('span', { class: 'play' }, '▶'), el('b', {}, 'Votre vidéo s’affichera ici'),
       el('span', {}, 'choisissez un mode, décrivez la scène et le son, générez : la progression et le plan restent ici')));
@@ -532,7 +491,7 @@ function paintProgress() {
   lab.textContent = run ? (j.message || 'en cours') : wait ? (j.message || 'en file') : j.state === 'done' ? `fini · ${j.result?.note || ''}`
     : j.state === 'error' ? 'échec : ' + (j.message || '') : j.state === 'cancelled' ? 'arrêté' : j.message || j.state;
   lab.classList.toggle('err', j.state === 'error');
-  pct.textContent = p != null ? Math.round(p * 100) + ' %' : run ? '…' : wait ? 'en file' : '—';
+  pct.textContent = p != null ? Math.round(p * 100) + ' %' : run ? '…' : '—';
   bar.firstChild.style.width = (p != null ? p * 100 : j.state === 'done' ? 100 : 0) + '%';
   bar.classList.toggle('busy', run && p == null);
   const t0 = j.started ? Date.parse(j.started) : null, t1 = j.finished ? Date.parse(j.finished) : Date.now();
@@ -593,7 +552,7 @@ function recipeRows(it) {
     ['Sampler', p.sampler ? `${p.sampler} · ${p.scheduler}` : null],
     ['Modèle', unet],
     ['LoRA', p.method !== undefined ? [...(p.loras || []).map((l) => `${l.name.split('/').pop().replace('.safetensors', '')} × ${l.strength}`), p.turbo ? 'turbo du banc' : null].filter(Boolean).join(' + ') || 'aucun' : null],
-    ['Références', p.mode === 'r2v' ? (p.refs || []).map((r) => `@${r.name} → ${p.mentions?.[r.name] || '?'} (${r.role})`).join(' · ') + ` · détail ${p.ref_image_size}` : null],
+    ['Entrées', p.mode === 'r2v' ? Object.entries(p.mentions || {}).map(([k, v]) => `${k} → ${v}`).join(' · ') + ` · détail ${p.ref_image_size}` : null],
     ['Images', p.mode === 'i2v' ? [p.start ? 'début' : null, p.end ? 'fin' : null].filter(Boolean).join(' + ') : null],
     ['Son', it.audio ? 'oui, rendu avec l’image' : 'non'],
     ['Moteur', p.engine === 'factice' ? 'factice · vidéo d’essai, pas H3' : it.origin?.model || it.origin?.tool],
@@ -629,7 +588,7 @@ function reuse(it) {
   F.canvas[p.mode] = p.family === 'image' ? 'auto' : [p.width, p.height];
   F.fam[p.mode] = p.family || 'paysage';
   if (p.mode === 'i2v') { F.start = p.start || null; F.end = p.end || null; }
-  if (p.mode === 'r2v') { F.refs = (p.refs || []).map((r) => ({ item: r.item, name: r.name, role: r.role, sound: !!r.sound })); F.refSize = p.ref_image_size || 'match'; $('#ref-size').value = F.refSize; }
+  if (p.mode === 'r2v') { F.inputs = p.inputs || {}; E?.set(F.inputs); F.refSize = p.ref_image_size || 'match'; $('#ref-size').value = F.refSize; }
   for (const k of Object.keys(F.loras)) F.loras[k].on = false;
   for (const l of p.loras || []) F.loras[l.name] = { on: true, strength: l.strength };
   if (p.weights) F.adv['unet_' + p.weights] = p.unet;
@@ -652,21 +611,59 @@ $$('#lib-seg .tb').forEach((b) => {
   b.addEventListener('click', () => { S.libAll = b.dataset.h; store.set('movie.lib', S.libAll); $$('#lib-seg .tb').forEach((x) => x.classList.toggle('on', x === b)); S.libShown = 8; loadLib(); });
 });
 $('#lib-more').addEventListener('click', () => { S.libShown += 8; paintLib(); });
+// La file d'abord : les rendus envoyés y sont aussitôt (place, progression,
+// arrêter) ; le résultat prend leur place à l'arrivée. Puis les vidéos.
+function liveJobs() {
+  const recent = (j) => Date.now() - Date.parse(j.finished || j.created) < 3 * 3600e3;
+  const rank = { running: 0, queued: 1, error: 2 };
+  return S.jobs.filter((j) => ['queued', 'running'].includes(j.state) || (j.state === 'error' && recent(j) && S.myJobs.has(j.id)))
+    .sort((a, b) => rank[a.state] - rank[b.state] || Date.parse(a.created) - Date.parse(b.created));
+}
+function queuePos(j) {   // la place dans la voie : ce qui tourne ou attend devant lui
+  const same = (S.allJobs || S.jobs).filter((x) => x.lane === j.lane && ['queued', 'running'].includes(x.state) && x.id !== j.id);
+  return same.filter((x) => x.state === 'running' || Date.parse(x.created) < Date.parse(j.created)).length;
+}
 function paintLib() {
   const cmp = S.view === 'cmp';
+  const live = liveJobs();
   const list = S.lib.slice(0, S.libShown);
-  $('#lib-count').textContent = `${S.lib.length} vidéo${S.lib.length > 1 ? 's' : ''}`;
-  $('#vgrid').replaceChildren(...(list.length ? list.map((it) => vcard(it, cmp)) : [el('div', { class: 'vempty' },
-    S.libAll === 'all' ? 'aucune vidéo dans la bibliothèque : déposez un mp4 sur la page, ou générez-en une'
-      : 'vos rendus arriveront ici, avec leur recette ; ils restent dans la bibliothèque jusqu’à leur suppression')]));
+  const nrun = live.filter((j) => j.state !== 'error').length;
+  $('#lib-count').textContent = `${S.lib.length} vidéo${S.lib.length > 1 ? 's' : ''}${nrun ? ` · ${nrun} en cours` : ''}`;
+  put($('#vgrid'), live.map((j) => jobCard(j, cmp)), list.map((it) => vcard(it, cmp)),
+    !list.length && !live.length ? el('div', { class: 'vempty' },
+      S.libAll === 'all' ? 'aucune vidéo dans la bibliothèque : déposez un mp4 sur la page, ou générez-en une'
+        : 'vos rendus arriveront ici dès l’envoi, avec leur place dans la file ; ils restent dans la bibliothèque jusqu’à leur suppression') : null);
   $('#lib-more').hidden = S.lib.length <= S.libShown;
   $('#lib-more').textContent = `Voir plus · ${S.lib.length - S.libShown} autres`;
+}
+function jobCard(j, cmp) {
+  const run = j.state === 'running', wait = j.state === 'queued', err = j.state === 'error';
+  const pct = j.progress != null ? Math.round(j.progress * 100) : null;
+  const ahead = wait ? queuePos(j) : 0;
+  const on = !S.cur && S.watch === j.id && !cmp;
+  const state = run ? (pct != null ? `${pct} %` : 'en cours') : wait ? (ahead ? `en file · ${ahead} devant` : 'en file · le suivant') : 'échec';
+  // « vjob », pas « job » : .job est la rangée du tiroir de la file du portail
+  return el('div', { class: 'vcard vjob' + (run ? ' run' : wait ? ' wait' : ' err') + (on ? ' sel' : '') },
+    el('button', { class: 'vopen', type: 'button', title: j.message || j.title, onclick: () => watchJob(j.id) },
+      el('span', { class: 'vm', style: bg(j.thumb) },
+        el('span', { class: 'jst' }, state),
+        el('span', { class: 'jbar' + (run && pct == null ? ' busy' : '') }, el('i', { style: { width: (pct ?? (err ? 100 : 0)) + '%' } }))),
+      el('span', { class: 'vl' }, el('span', { class: 't' }, j.title || MODE_FR[j.kind.split('.')[1]]),
+        el('span', { class: 's' }, err ? (j.message || '').slice(0, 90) : [MODE_FR[j.kind.split('.')[1]], j.message].filter(Boolean).join(' · ')))),
+    run || wait ? el('button', { class: 'vdet', type: 'button', title: 'arrêter ce rendu', onclick: () => jobs.cancel(j.id).then(() => toast('rendu arrêté')) }, 'Arrêter')
+      : el('button', { class: 'vdet', type: 'button', onclick: () => jobs.retry(j.id).then((n) => { S.myJobs.add(n.id); store.set('movie.myjobs', [...S.myJobs].slice(-40)); watchJob(n.id); }) }, 'Relancer'));
+}
+// voir un rendu en cours dans l'espace de travail, sans rien interrompre
+function watchJob(id) {
+  if (S.view !== 'create') setView('create');
+  S.watch = id; S.cur = null; stageKey = '';
+  paintStage(); paintResult(); paintProgress(); paintLib(); syncUrl();
 }
 function vcard(it, cmp) {
   const p = it.params || {};
   const sel = !cmp && S.cur === it.id;
   const ab = (k) => el('button', { type: 'button', class: 'abk' + (S[k] === it.id ? ' is' + k : ''), title: `charger en ${k}`, onclick: (e) => { e.stopPropagation(); assign(k, it.id); } }, k);
-  return el('div', { class: 'vcard' + (sel ? ' sel' : '') + (S.A === it.id ? ' selA' : '') + (S.B === it.id ? ' selB' : '') + (it.fav ? ' pinned' : '') },
+  return dragItem(el('div', { class: 'vcard' + (sel ? ' sel' : '') + (S.A === it.id ? ' selA' : '') + (S.B === it.id ? ' selB' : '') + (it.fav ? ' pinned' : '') },
     el('button', { class: 'vopen', type: 'button', title: it.prompt || it.title, onclick: () => (cmp ? assign(S.A ? 'B' : 'A', it.id) : show(it.id)) },
       el('span', { class: 'vm', style: bg(it.thumb_url) },
         it.duration ? el('span', { class: 'dur' }, it.duration.toFixed(1) + ' s') : null,
@@ -675,7 +672,7 @@ function vcard(it, cmp) {
       el('span', { class: 'vl' }, el('span', { class: 't' }, it.title || it.id),
         el('span', { class: 's' }, [fmtDate(it.created), it.render_seconds != null ? 'rendu ' + mmss(it.render_seconds) : null, p.mode ? MODE_FR[p.mode] : null].filter(Boolean).join(' · ')))),
     cmp ? el('span', { class: 'abs' }, ab('A'), ab('B'))
-      : el('button', { class: 'vdet', type: 'button', onclick: () => details(it) }, 'Détails'));
+      : el('button', { class: 'vdet', type: 'button', onclick: () => details(it) }, 'Détails')), it);   // la carte se glisse ailleurs
 }
 
 // ── la file ─────────────────────────────────────────────────
@@ -689,14 +686,17 @@ jobs.watch((list) => {
   if (!S.watch) S.watch = S.jobs.find((j) => ['queued', 'running'].includes(j.state))?.id || null;
   paintProgress();
   paintStage();
+  paintLib();
 });
 document.addEventListener('sr:job', async (e) => {
   const j = e.detail;
   if (j.tool !== 'movie') return;
   if (j.state === 'done') {
     await loadLib();
-    if (j.id === S.watch && j.result?.items?.[0] && S.view === 'create') show(j.result.items[0]);
-    toast(`vidéo prête · ${j.message || ''}`);
+    // le résultat se pose dans les vidéos ; la scène ne bascule que si on regardait ce rendu-là
+    if (j.id === S.watch && !S.cur && j.result?.items?.[0] && S.view === 'create') show(j.result.items[0]);
+    else if (j.id === S.watch) S.watch = S.jobs.find((x) => ['queued', 'running'].includes(x.state))?.id || j.id;
+    toast(`vidéo prête · ${j.result?.note || ''}`);
   } else if (j.state === 'error') toast('échec : ' + (j.message || '').slice(0, 160));
   paintProgress();
 });
@@ -716,11 +716,14 @@ function paintSlots() {
       el('b', { class: 'k' }, k),
       el('div', { class: 'th', style: bg(it?.thumb_url) }),
       el('div', { class: 'ab-txt' }, el('span', { class: 't' }, it ? (it.title || it.id) : 'aucun plan'),
-        el('span', { class: 'lbl' }, it ? [p.mode ? MODE_FR[p.mode] : null, p.method || null, it.width ? `${it.width}×${it.height}` : null].filter(Boolean).join(' · ') : 'à choisir')),
+        el('span', { class: 'lbl' }, it ? [p.mode ? MODE_FR[p.mode] : null, p.method || null, it.width ? `${it.width}×${it.height}` : null].filter(Boolean).join(' · ') : 'à choisir, ou déposez une vidéo ici')),
       el('button', { class: 'tb ghost sm', type: 'button', onclick: () => chooseAB(k) }, 'Choisir'));
   }
 }
 async function chooseAB(k) { const [it] = await pick({ kinds: ['video'], multiple: false, title: `Plan ${k}` }); if (it) { S.items.set(it.id, it); assign(k, it.id); } }
+for (const k of ['A', 'B']) {   // une vidéo déposée sur A ou B : du disque, ou une carte glissée
+  dropZone($('#slot-' + k.toLowerCase()), { kinds: ['video'], multiple: false, via: 'movie', onitems: ([it]) => { S.items.set(it.id, it); assign(k, it.id); } });
+}
 const master = () => (vA.getAttribute('src') ? vA : vB);
 const both = () => [vA, vB].filter((v) => v.getAttribute('src'));
 function minDur() { const ds = both().filter((v) => isFinite(v.duration)).map((v) => v.duration); return ds.length ? Math.min(...ds) : 0; }
@@ -861,39 +864,36 @@ function paintMetas(a, b) {   // les recettes côte à côte : ce qui diffère e
     box.replaceChildren(el('span', { class: 'dots' }), head, el('div', { class: 'name' }, it.title || it.id),
       el('dl', { class: 'kv' }, ...keys.filter((x) => r[x] !== undefined && r[x] !== '').flatMap((x) => {
         const d = differs(x) ? 'diff' : '';
-        const long = x === 'Prompt' || x === 'Son demandé' || x === 'Références' ? ' long' : '';
+        const long = x === 'Prompt' || x === 'Son demandé' || x === 'Entrées' ? ' long' : '';
         return [el('dt', { class: d }, x), el('dd', { class: (d + long + (x === 'Rendu' ? ' big' : '')).trim() }, String(r[x]))];
       })));
   }
 }
 
 // ── dépôt n'importe où ──────────────────────────────────────
+// Hors des emplacements (qui prennent le dépôt eux-mêmes) : le fichier entre
+// seulement dans la bibliothèque, catégorie Upload, sans rien remplacer.
 dropAnywhere(async (files) => {
+  let n = 0;
   for (const f of files) {
-    try {
-      const it = await uploadFile(f, { tool: 'upload' });
-      S.items.set(it.id, it);
-      if (S.view === 'cmp' && it.kind === 'video') assign(!S.A ? 'A' : 'B', it.id);
-      else if (F.mode === 'i2v' && it.kind === 'image') { if (!F.start) F.start = it.id; else F.end = it.id; }
-      else if (F.mode === 'r2v' && ['image', 'video', 'audio'].includes(it.kind)) F.refs.push({ item: it.id, name: nameFor(it.title), role: (S.opts?.roles[it.kind] || [{ id: '' }])[0].id, sound: false });
-      toast(`${kindFr(it.kind)} rangé${it.kind === 'image' ? 'e' : ''} dans la bibliothèque`);
-    } catch (e) { toast(e.message); }
+    try { await uploadFile(f, { tool: 'upload', via: 'movie' }); n++; } catch (e) { toast(`${f.name} : ${e.message}`); }
   }
-  changed();
-  if (F.mode === 'i2v') { paintSlot('start'); paintSlot('end'); }
-  if (F.mode === 'r2v') paintRefs();
-  loadLib();
+  if (n) toast(`${n > 1 ? n + ' fichiers rangés' : 'rangé'} dans la bibliothèque · Upload — déposez sur un emplacement pour vous en servir`);
+  if (S.libAll === 'all') loadLib();
 });
 
 // ── démarrage ───────────────────────────────────────────────
 (async function boot() {
   const q = new URLSearchParams(location.search);
   if (q.get('start')) { F.start = q.get('start'); F.mode = 'i2v'; F.canvas.i2v = 'auto'; F.fam.i2v = 'image'; }
-  if (q.get('ref')) { const id = q.get('ref'); const it = await item(id); if (it && !F.refs.some((r) => r.item === id)) F.refs.push({ item: id, name: nameFor(it.title), role: it.kind === 'video' ? 'motion' : it.kind === 'audio' ? 'voice' : 'character', sound: false }); F.mode = 'r2v'; }
+  const refId = q.get('ref');
+  if (refId) F.mode = 'r2v';
   if (q.get('mode') && ['t2v', 'i2v', 'r2v'].includes(q.get('mode'))) F.mode = q.get('mode');
   if (q.get('a') || q.get('b')) { S.A = q.get('a'); S.B = q.get('b'); }
   try { S.opts = await api('movie/options'); } catch (e) { toast('options illisibles : ' + e.message); }
   paintCamera();
+  if (S.opts) mountEntrees();
+  if (refId) { const it = await item(refId); if (it && E) E.add([it]); }   // ?ref=<id> : l'objet entre dans sa catégorie
   await loadLib();
   S.cur = q.get('id') || S.lib[0]?.id || null;
   setMode(F.mode);
