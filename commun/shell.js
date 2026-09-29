@@ -258,6 +258,12 @@ export function mountHeader(toolId, { sub = '' } = {}) {
     el('button', { class: 'tb ghost sm', id: 'sr-me', hidden: true, title: 'mon compte',
       onclick: (e) => session().then((me) => me && import('./porte.js').then((m) => m.account(me, e.target.closest('button')))) }, 'compte'),
     el('button', { class: 'tb ghost sm', id: 'sr-queue', title: 'la file des calculs', onclick: () => drawer(true) }, 'File'));
+  // fenêtre étroite : la navigation passe dans un menu « Outils », jamais cachée
+  const menu = el('div', { class: 'tools-menu', hidden: true });
+  const menuBtn = el('button', { class: 'tb ghost sm tools-btn', type: 'button', title: 'les outils',
+    onclick: (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; } }, 'Outils');
+  nav.after(menuBtn, menu);
+  document.addEventListener('click', () => { menu.hidden = true; });
   document.body.prepend(hdr);
   if (!document.querySelector('link[data-porte]')) {
     document.head.append(el('link', { rel: 'stylesheet', href: href('commun/porte.css'), 'data-porte': '' }));
@@ -282,6 +288,7 @@ export function mountHeader(toolId, { sub = '' } = {}) {
     for (const x of TOOLS) {
       nav.append(el('a', { href: toolHref(x, sys), class: x.id === toolId ? 'on' : null,
         target: x.external ? '_blank' : null, rel: x.external ? 'noopener' : null }, x.name));
+      menu.append(el('a', { href: toolHref(x, sys), class: x.id === toolId ? 'on' : null }, x.name));
     }
     paintSys(sys);
   });
