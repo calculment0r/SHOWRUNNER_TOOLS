@@ -1261,6 +1261,23 @@ def _cap_edit(p: dict) -> str:
     return p["tool"]
 
 
+# la famille de modèles de chaque travail, pour la file (core/jobs.py) : les
+# noms de FAMILY_GB (Character_Factory/factory/memory.py) ; SeedVR2 n'y est pas
+EDIT_FAMILY = {"refine": "zimage", "angle": "qwenedit", "matte": "birefnet", "upscale": "seedvr2"}
+
+
+def _family_generate(p: dict) -> str:
+    return p.get("model") or "?"
+
+
+def _family_edit(p: dict) -> str:
+    return p.get("model") or "?" if p.get("tool") == "instruct" else EDIT_FAMILY.get(p.get("tool"), "?")
+
+
+def _uses_comfy(p: dict) -> bool:
+    return backend() == "comfyui"   # le moteur factice ne charge rien : aucune règle de mémoire
+
+
 def api_models(req) -> dict:
     """Ce que la page affiche : modèles, tailles, réglages photo, outils
     d'édition, le moteur, et ce que chaque machine sait faire."""
@@ -1320,11 +1337,20 @@ def api_generate(req) -> dict:
             out["graph"] = graph_generate(p, [f"ref{k + 1}.png" for k in range(len(refs))], comp["prompt"])
         return out
     pin = _pin_for(_cap_generate(p))
+    batch = _batch()
     out = []
     for k in range(count):
-        pk = {**p, "seed": (p["seed"] + k) % MAX_SEED}
+        pk = {**p, "seed": (p["seed"] + k) % MAX_SEED, "batch": batch}
         out.append(_submit("image.generate", pk, f"{MODELS[p['model']]['name']} · {_title(p['prompt'], 6)}", pin))
-    return {"jobs": out}
+    return {"batch": batch, "jobs": out}
+
+
+def _batch() -> str:
+    """Une demande (« 4 images », « 4 variations ») : ses travaux et ses
+    images portent le même `batch` dans leurs réglages — la colonne de la
+    page les range ensemble. Relancer une recette en fait une autre
+    (`check_*` ne le recopie pas)."""
+    return "b-" + secrets.token_hex(4)
 
 
 def api_edit(req) -> dict:
@@ -1351,12 +1377,13 @@ def api_edit(req) -> dict:
         return info
     pin = _pin_for(_cap_edit(p))
     name = EDIT_TOOLS[p["tool"]]["name"]
+    batch = _batch()
     out = []
     n = count if p["tool"] in ("instruct", "angle", "refine") else 1
     for k in range(n):
-        pk = {**p, "seed": (p["seed"] + k) % MAX_SEED}
+        pk = {**p, "seed": (p["seed"] + k) % MAX_SEED, "batch": batch}
         out.append(_submit("image.edit", pk, f"{name} · {src.get('title') or src['id']}", pin))
-    return {"jobs": out}
+    return {"batch": batch, "jobs": out}
 
 
 def api_redo(req) -> dict:
@@ -1377,15 +1404,25 @@ def api_redo(req) -> dict:
         raise HttpError(400, f"la recette ne passe plus : {e}") from e
     pin = _pin_for(_cap_generate(p) if kind == "image.generate" else _cap_edit(p))
     title = (it.get("title") or it["id"])[:60]
+    batch = _batch()
     if not n:
-        return {"jobs": [_submit(kind, p, f"Refaire · {title}", pin)]}
+        return {"batch": batch, "jobs": [_submit(kind, {**p, "batch": batch}, f"Refaire · {title}", pin)]}
     base = random.randrange(MAX_SEED)
-    return {"jobs": [_submit(kind, {**p, "seed": (base + k) % MAX_SEED}, f"Variation · {title}", pin) for k in range(n)]}
+    return {"batch": batch, "jobs": [_submit(kind, {**p, "seed": (base + k) % MAX_SEED, "batch": batch},
+                                             f"Variation · {title}", pin) for k in range(n)]}
+
+
+def _register_job(kind: str, fn, title: str, family) -> None:
+    """`family` et `gpu` (la règle de mémoire de la file) n'existent que dans
+    le socle qui les porte ; un socle plus ancien enregistre sans eux."""
+    import inspect
+    extra = {"family": family, "gpu": _uses_comfy} if "family" in inspect.signature(jobs.register).parameters else {}
+    jobs.register(kind, fn, lane="image", title=title, **extra)
 
 
 def register(app) -> None:
-    jobs.register("image.generate", run_generate, lane="image", title="Image")
-    jobs.register("image.edit", run_edit, lane="image", title="Édition")
+    _register_job("image.generate", run_generate, "Image", _family_generate)
+    _register_job("image.edit", run_edit, "Édition", _family_edit)
     app.route("GET", "/api/image/models", api_models)
     app.route("POST", "/api/image/compose", api_compose)
     app.route("POST", "/api/image/generate", api_generate)
@@ -1449,6 +1486,14 @@ def selftest(call, ok) -> None:
     for body, msg in bad:
         st, r = call("POST", "/api/image/generate", {**body, "dry": True})
         ok(st == 400, f"image : {msg} ({st} {r})")
+    # une demande de deux images : deux travaux, un même `batch` (le contrôle
+    # n'a pas de voie image : ils attendent, on les retire aussitôt)
+    st, r = call("POST", "/api/image/generate", {"model": "krea2", "prompt": "a lighthouse", "count": 2, "seed": 5})
+    js = (r or {}).get("jobs") or []
+    ok(st == 200 and len(js) == 2 and r.get("batch") and all(j["params"].get("batch") == r["batch"] for j in js)
+       and [j["params"]["seed"] for j in js] == [5, 6], f"image : une demande = un batch, graines qui se suivent ({st} {str(r)[:200]})")
+    for j in js:
+        call("POST", f"/api/jobs/{j['id']}/cancel")
     st, r = call("POST", "/api/image/edit", {"source": iid, "tool": "extend", "dry": True})
     ok(st == 400 and "documentée" in r.get("error", ""), "image : « Étendre » refusé avec sa raison")
     st, r = call("POST", "/api/image/edit", {"source": iid, "tool": "instruct", "model": "zimage", "prompt": "x", "dry": True})

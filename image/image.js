@@ -4,11 +4,20 @@
 // Factory) ; les outils d'édition, dont la zone peinte. Le serveur tient la
 // seule vérité : modèles, tailles, pastilles et prompt envoyé viennent de
 // /api/image/*.
-import { mountHeader, api, jobs, pick, refBoard, thumb, toast, el, $, href, fmtDate, jobRow } from '../commun/shell.js';
+//
+// La colonne de droite est la file et l'historique vivants : une demande
+// envoyée y paraît aussitôt (sa place dans la file, sa progression,
+// « Arrêter »), ses images s'y posent en arrivant, groupées par demande
+// (`params.batch`). Un clic montre une image au centre sans rien arrêter.
+// Tout emplacement qui attend une image accepte un dépôt (fichier du disque →
+// bibliothèque, catégorie Upload ; ou une vignette glissée) : `dropZone` du
+// socle ; toute vignette d'ici se glisse (`dragItem`).
+import { mountHeader, api, jobs, pick, refBoard, toast, el, $, href, fmtDate, dropZone, dragItem } from '../commun/shell.js';
 
 mountHeader('image', { sub: 'créer · éditer' });
 
 const KEY = 'sr-image-draft';
+const VIA = 'image';
 const S = {
   cfg: null,
   mode: 'create',
@@ -20,7 +29,19 @@ const S = {
   current: null, parent: null, compare: false, open: {}, mine: new Map(),
   sent: '', notes: [],
   paint: { on: false, size: 48, canvas: null, for: null, dirty: false },
+  // la colonne : les images de l'outil, le filtre, ce qui vient d'arriver
+  items: [], total: 0, hist: 'all', fresh: new Set(), done: new Set(), cells: new Map(), autoShow: new Set(),
+  session: sessionStart(),
 };
+
+// le début de cette session : le premier chargement de la page dans cet onglet
+function sessionStart() {
+  try {
+    let s = sessionStorage.getItem('sr-image-session');
+    if (!s) { s = new Date().toISOString(); sessionStorage.setItem('sr-image-session', s); }
+    return s;
+  } catch { return new Date().toISOString(); }
+}
 
 // ── le brouillon : une commodité de ce navigateur ───────────
 function saveDraft() {
@@ -28,14 +49,14 @@ function saveDraft() {
     const { model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, open } = S;
     const edit = { ...S.edit, refs: S.edit.refs.map((r) => r.id) };
     localStorage.setItem(KEY, JSON.stringify({ model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, open,
-      refs: S.refs.map((r) => r.id), edit, mode: S.mode, current: S.current?.id }));
+      refs: S.refs.map((r) => r.id), edit, mode: S.mode, current: S.current?.id, hist: S.hist }));
   } catch { /* stockage fermé : rien à garder */ }
 }
 async function loadDraft() {
   let d = null;
   try { d = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { d = null; }
   if (!d) return null;
-  for (const k of ['model', 'variant', 'prompt', 'looks', 'aspect', 'quality', 'count', 'seed', 'realism', 'transparent', 'refChoice', 'open']) {
+  for (const k of ['model', 'variant', 'prompt', 'looks', 'aspect', 'quality', 'count', 'seed', 'realism', 'transparent', 'refChoice', 'open', 'hist']) {
     if (d[k] !== undefined && d[k] !== null) S[k] = d[k];
   }
   const fetchAll = async (ids) => (await Promise.all((ids || []).map((id) => api('library/' + id).catch(() => null)))).filter(Boolean);
@@ -246,7 +267,7 @@ function refsPanel(m) {
   }
   const box = el('div', { class: 'refs' });
   const choices = el('div', { class: 'choices' });
-  const bd = refBoard(box, { max: m.refs, onchange: (list) => {
+  const bd = refBoard(box, { max: m.refs, via: VIA, onchange: (list) => {
     S.refs = list.slice(); saveDraft(); paintChoices(choices, S.refs, 1, (k) => bd.set(swap(S.refs, k))); schedCompose();
     $('#refs-n') && ($('#refs-n').textContent = `${S.refs.length} / ${m.refs}`);
   } });
@@ -352,19 +373,24 @@ const QUICK = {
 function editPanels() {
   const out = [];
   const src = S.current;
-  const pickSrc = async () => { const [it] = await pick({ kinds: ['image'], title: 'L’image à éditer' }); if (it) show(it); };
+  const pickSrc = async () => { const [it] = await pick({ kinds: ['image'], title: 'L’image à éditer' }); if (it) pickShow(it); };
+  // l'emplacement de l'image à éditer : un dépôt (fichier ou vignette) la remplace
+  const srcZone = (node) => dropZone(node, { kinds: ['image'], multiple: false, via: VIA, onitems: ([it]) => pickShow(it) });
   if (!src || src.kind !== 'image') {
-    out.push(pan('Image à éditer', null,
-      el('p', { class: 'hint' }, 'Choisissez une image : dans l’historique à droite, ou dans la bibliothèque (déposée, faite ailleurs, un personnage…).'),
-      el('button', { class: 'tb ghost block', onclick: pickSrc }, 'Choisir dans la bibliothèque')));
+    out.push(srcZone(pan('Image à éditer', 'déposez-la ici',
+      el('div', { class: 'dropslot' }, el('b', {}, '+'),
+        el('span', {}, 'Glissez une image ici — un fichier de votre disque, ou une vignette de l’historique à droite.')),
+      el('button', { class: 'tb ghost block', onclick: pickSrc }, 'Choisir dans la bibliothèque'))));
     out.push(el('div', { class: 'act', id: 'act' }));
     setTimeout(paintAct);
     return out;
   }
-  out.push(pan('Image à éditer', `${src.width || '?'} × ${src.height || '?'}`,
-    el('div', { class: 'srcrow' }, el('span', { class: 'srcim', style: { backgroundImage: `url(${href(src.thumb_url || src.url)})` } }),
-      el('div', { class: 'srcnm' }, el('b', {}, src.title || src.id), el('small', {}, src.origin?.model || src.origin?.tool || '')),
-      el('button', { class: 'tb ghost sm', onclick: pickSrc }, 'changer'))));
+  out.push(srcZone(pan('Image à éditer', `${src.width || '?'} × ${src.height || '?'}`,
+    el('div', { class: 'srcrow' }, dragItem(el('span', { class: 'srcim', title: 'glissez-la vers les références',
+      style: { backgroundImage: `url(${href(src.thumb_url || src.url)})` } }), src),
+    el('div', { class: 'srcnm' }, el('b', {}, src.title || src.id), el('small', {}, src.origin?.model || src.origin?.tool || '')),
+    el('button', { class: 'tb ghost sm', onclick: pickSrc }, 'changer')),
+    el('p', { class: 'hint' }, 'une autre image se dépose ici pour la remplacer'))));
 
   const E = S.edit;
   out.push(pan('Outil', null, el('div', { class: 'tools' }, ...S.cfg.edit_tools.map((t) => {
@@ -402,7 +428,7 @@ function editPanels() {
     const max = M(E.model).refs - 1;
     const box = el('div', { class: 'refs' });
     const choices = el('div', { class: 'choices' });
-    const eb = refBoard(box, { max, onchange: (list) => {
+    const eb = refBoard(box, { max, via: VIA, onchange: (list) => {
       E.refs = list.slice(); saveDraft(); paintChoices(choices, E.refs, 2, (k) => eb.set(swap(E.refs, k))); schedCompose();
       $('#erefs-n') && ($('#erefs-n').textContent = `${E.refs.length} / ${max}`);
     } });
@@ -562,21 +588,33 @@ async function launch(path, body) {
   if (btn) btn.disabled = true;
   let r;
   try { r = await api(path, { method: 'POST', body }); } catch (e) { toast(e.message, 7000); paintAct(); return; }
+  // la première image de chaque demande envoyée s'affichera au centre, tant
+  // qu'on n'a rien choisi d'autre depuis (un clic dans la colonne l'annule)
+  S.autoShow.add(r.batch || r.jobs[0]?.id);
   for (const j of r.jobs) follow(j);
-  toast(r.jobs.length > 1 ? `${r.jobs.length} travaux en file` : 'en file');
+  toast(r.jobs.length > 1 ? `${r.jobs.length} rendus en file — à droite` : 'en file — à droite');
   paintAct();
-  paintPending();
+  paintSide();
 }
 // les travaux lancés d'ici : suivis un à un (la file commune ne les voit
-// qu'au relevé suivant), le premier fini s'affiche
+// qu'au relevé suivant) ; leurs images se posent dans la colonne en arrivant
 function follow(j) {
   S.mine.set(j.id, j);
-  jobs.wait(j.id, (t) => { S.mine.set(j.id, t); paintPending(); }).then((done) => {
+  jobs.wait(j.id, (now) => { S.mine.set(j.id, now); paintSide(); }).then((done) => {
     S.mine.delete(j.id);
-    paintPending();
-    if (done.state === 'done' && done.items?.length) { show(done.items[0]); loadHistory(); }
+    // un échec reste dans la colonne (Relancer, ×) ; le reste laisse la place à ses images
+    if (done.state === 'error') S.mine.set(j.id, done); else S.done.add(j.id);
+    if (done.state === 'done' && done.items?.length) arrived(done.items, j.params?.batch);
     else if (done.state === 'error') toast(`échec : ${done.message}`, 9000);
+    paintSide();
   }).catch(() => { S.mine.delete(j.id); });
+}
+function arrived(items, batch) {
+  for (const it of items) {
+    if (!S.items.some((x) => x.id === it.id)) { S.items.unshift(it); S.total += 1; }
+    S.fresh.add(it.id);
+  }
+  if (S.autoShow.delete(batch)) { S.fresh.delete(items[0].id); show(items[0]); }
 }
 
 // ── la scène ────────────────────────────────────────────────
@@ -590,7 +628,16 @@ async function show(it) {
   }
   paintStage();
   if (S.mode === 'edit') paintRail();
-  markHistory();
+  paintSide();
+}
+// un choix de Cal (clic dans la colonne, dépôt, sélecteur) : l'image arrivée
+// ensuite ne lui passera pas devant
+function pickShow(it) {
+  S.autoShow.clear();
+  // vue une image d'une demande, ses sœurs ne sont plus « nouvelles »
+  const b = it.params?.batch;
+  for (const x of S.items) if (x.id === it.id || (b && x.params?.batch === b)) S.fresh.delete(x.id);
+  return show(it);
 }
 
 function paintStage() {
@@ -598,8 +645,7 @@ function paintStage() {
   st.replaceChildren(...[
     stub() ? el('div', { class: 'banner' }, el('b', {}, 'Moteur factice'),
       el('span', {}, 'les images sont des mires dessinées — aucun modèle n’est chargé. Le câblage réel est en place : « image_backend » : « comfyui » dans showrunner.local.json.')) : null,
-    viewer(), actionBar(), el('div', { id: 'pending', class: 'pending' }), meta()].filter(Boolean));
-  paintPending();
+    viewer(), actionBar(), meta()].filter(Boolean));
 }
 
 // les gestes sur l'image montrée : sous elle, pour ne rien cacher de l'image
@@ -624,22 +670,34 @@ function actionBar() {
       el('a', { class: 'tb ghost sm', href: href(it.url), download: `${(it.title || it.id).replace(/[^\w.-]+/g, '_').slice(0, 60)}${(it.file || '.png').slice((it.file || '.png').lastIndexOf('.'))}` }, 'Télécharger')));
 }
 
+// le grand cadre : on y dépose une image (fichier ou vignette) pour la voir
+// — ou, en avant / après, pour la mettre « avant » et comparer deux images
+function viewerZone(box) {
+  return dropZone(box, { kinds: ['image'], multiple: false, via: VIA, onitems: ([it]) => {
+    if (S.compare && S.current) { S.parent = it; paintStage(); toast(`« ${it.title} » en « avant »`); } else pickShow(it);
+  } });
+}
+
 function viewer() {
   const it = S.current;
   if (!it) {
-    return el('div', { class: 'viewer iv' }, el('div', { class: 'empty' },
+    return viewerZone(el('div', { class: 'viewer iv' }, el('div', { class: 'empty' },
       el('b', {}, S.mode === 'edit' ? 'Quelle image ?' : 'Rien encore'),
       el('span', {}, S.mode === 'edit'
-        ? 'Choisissez l’image à éditer : dans l’historique à droite, ou dans la bibliothèque (à gauche).'
-        : 'Réglez à gauche, puis « Générer ». Les images rendues s’affichent ici et se rangent dans la bibliothèque, onglet Asset.')));
+        ? 'Déposez ici l’image à éditer — un fichier de votre disque ou une vignette de la colonne de droite —, ou choisissez-la à gauche.'
+        : 'Réglez à gauche, puis « Générer » : les rendus paraissent à droite dès l’envoi, leurs images s’y posent en arrivant. Une image déposée ici s’ouvre.'))));
   }
   const alpha = /birefnet/.test(it.origin?.model || '') || it.params?.transparent;
-  const box = el('div', { class: 'viewer iv' + (alpha ? ' alpha' : '') });
+  const box = viewerZone(el('div', { class: 'viewer iv' + (alpha ? ' alpha' : '') }));
   const painting = S.mode === 'edit' && S.edit.tool === 'instruct';
   if (S.compare && S.parent) box.append(compareView(S.parent, it));
   else {
-    const wrap = el('div', { class: 'imwrap' }, el('img', { src: href(it.url), alt: it.title || '', draggable: 'false' }));
-    if (painting && (S.paint.on || (S.paint.dirty && S.paint.for === it.id))) wrap.append(paintCanvas());
+    const withPaint = painting && (S.paint.on || (S.paint.dirty && S.paint.for === it.id));
+    // l'image se glisse vers les références ou un autre outil, sauf quand on peint dessus
+    const img = el('img', { src: href(it.url), alt: it.title || '', draggable: withPaint ? 'false' : null });
+    if (!withPaint) dragItem(img, it);
+    const wrap = el('div', { class: 'imwrap' }, img);
+    if (withPaint) wrap.append(paintCanvas());
     box.append(wrap);
   }
   const fac = /factice/.test(it.origin?.model || '');
@@ -658,7 +716,8 @@ function compareView(a, b) {
   const move = (e) => { const r = wrap.getBoundingClientRect(); set(((e.clientX - r.left) / r.width) * 100); };
   wrap.addEventListener('pointerdown', (e) => { wrap.setPointerCapture(e.pointerId); move(e); wrap.onpointermove = move; });
   wrap.addEventListener('pointerup', () => { wrap.onpointermove = null; });
-  wrap.append(imA, imB, handle, el('span', { class: 'cap a' }, 'avant'), el('span', { class: 'cap b' }, 'après'));
+  wrap.append(imA, imB, handle, el('span', { class: 'cap a', title: 'déposez une autre image sur le cadre pour la comparer' }, 'avant · déposer pour changer'),
+    el('span', { class: 'cap b' }, 'après'));
   set(50);
   return wrap;
 }
@@ -683,11 +742,11 @@ function meta() {
   (async () => {
     const got = (await Promise.all((it.parents || []).map((id) => api('library/' + id).catch(() => null)))).filter(Boolean);
     if (!got.length) return;
-    lineage.replaceChildren(el('span', { class: 'lbl' }, 'Lignée'), ...got.map((x, k) => el('button', {
+    lineage.replaceChildren(el('span', { class: 'lbl' }, 'Lignée'), ...got.map((x, k) => dragItem(el('button', {
       class: 'par', title: `${k === 0 && p.job === 'image.edit' ? 'source' : 'référence'} : ${x.title}`,
       style: { backgroundImage: x.thumb_url ? `url(${href(x.thumb_url)})` : null },
-      onclick: () => (x.kind === 'image' ? show(x) : toast(`${x.title} : un élément de la bibliothèque`)) },
-    el('span', {}, k === 0 && p.job === 'image.edit' ? 'source' : 'réf.'))));
+      onclick: () => (x.kind === 'image' ? pickShow(x) : toast(`${x.title} : un élément de la bibliothèque`)) },
+    el('span', {}, k === 0 && p.job === 'image.edit' ? 'source' : 'réf.')), x)));
   })();
   return el('section', { class: 'ipan meta-i' },
     el('div', { class: 'ipan-h' }, el('span', { class: 'lbl' }, 'L’image'), el('span', { class: 'r' },
@@ -707,9 +766,11 @@ async function trashIt(it) {
   try { await api(`library/${it.id}/delete`, { method: 'POST' }); } catch (e) { toast(e.message); return; }
   toast(`« ${it.title} » à la corbeille — elle revient depuis Asset`);
   S.current = null; S.parent = null;
+  S.items = S.items.filter((x) => x.id !== it.id); S.total = Math.max(0, S.total - 1);
+  S.cells.delete('i:' + it.id);
   try { history.replaceState(null, '', location.pathname); } catch { /* sans historique */ }
   saveDraft(); paintStage(); if (S.mode === 'edit') paintRail();
-  loadHistory();
+  paintSide();
 }
 
 function editWith(tool) {
@@ -737,58 +798,221 @@ async function takeRecipe(it) {
 }
 async function redo(n) { await launch('image/redo', { item: S.current.id, variations: n }); }
 
+// ── la colonne : la file et l'historique vivants ────────────
 let lastList = [];
-function paintPending() {
-  const box = $('#pending');
-  if (!box) return;
-  const live = (j) => j.state === 'queued' || j.state === 'running';
-  const byId = new Map(lastList.filter((j) => j.tool === 'image' && live(j)).map((j) => [j.id, j]));
-  for (const [id, j] of S.mine) if (live(j)) byId.set(id, j); else byId.delete(id);
-  const list = [...byId.values()];
-  box.replaceChildren(...(list.length ? [el('div', { class: 'ipan-h' }, el('span', { class: 'lbl' }, 'En cours'),
-    el('span', { class: 'r' }, plural(list.length, 'travail', 'travaux'))), ...list.map(jobRow)] : []));
-}
-jobs.watch((list) => { lastList = list; paintPending(); });
+const LIVE = ['queued', 'running'];
+const RANK = { queued: 0, running: 1, done: 2, error: 2, cancelled: 2, interrupted: 2 };
+const ms = (iso) => Date.parse(iso || '') || 0;
+const inSession = (iso) => ms(iso) >= ms(S.session);
 
-// ── l'historique ────────────────────────────────────────────
-async function loadHistory() {
-  const side = $('#side');
-  let res;
-  try { res = await api('library?kind=image&tool=image&limit=120'); } catch (e) {
-    side.replaceChildren(el('p', { class: 'warn' }, e.message)); return;
+// les travaux de l'outil à montrer : en file, en cours, et les échecs de la session
+function liveJobs() {
+  const byId = new Map();
+  for (const j of lastList) if (j.tool === 'image') byId.set(j.id, j);
+  for (const [id, j] of S.mine) { const cur = byId.get(id); if (!cur || RANK[j.state] >= RANK[cur.state]) byId.set(id, j); }
+  // un rendu fini que la page n'a pas encore rapatrié (S.mine) garde sa case
+  // jusqu'à ce que son image la remplace : la demande ne « perd » pas d'image
+  return [...byId.values()].filter((j) => !S.done.has(j.id) && (LIVE.includes(j.state) || (S.mine.has(j.id) && j.state === 'done')
+    || (['error', 'interrupted'].includes(j.state) && inSession(j.created))));
+}
+// la place dans la file de la voie image (toutes les pages la partagent)
+function queuePos(j) {
+  // l'état le plus frais d'abord : un rendu que la page sait parti n'est plus devant
+  const q = lastList.filter((x) => x.lane === 'image' && x.state === 'queued' && (S.mine.get(x.id)?.state || 'queued') === 'queued')
+    .sort((a, b) => ms(a.created) - ms(b.created));
+  const k = q.findIndex((x) => x.id === j.id);
+  return k < 0 ? null : k + 1;
+}
+
+// une demande = un groupe : ses images arrivées et ses rendus qui restent
+function groups() {
+  const map = new Map();
+  const add = (key, when) => {
+    let g = map.get(key);
+    if (!g) { g = { key, items: [], jobs: [], at: 0 }; map.set(key, g); }
+    g.at = Math.max(g.at, ms(when));
+    return g;
+  };
+  for (const it of S.items) {
+    if (S.hist === 'session' && !inSession(it.created)) continue;
+    add(it.params?.batch || it.id, it.created).items.push(it);
   }
-  side.replaceChildren(
-    el('div', { class: 'ipan-h hist-h' }, el('span', { class: 'lbl' }, 'Historique'),
-      el('span', { class: 'r' }, el('a', { href: href('asset/') }, `${res.total} · Asset`))),
-    res.items.length
-      ? el('div', { class: 'grid sm hist' }, ...res.items.map((it) => {
-        const t = thumb(it, { selected: S.current?.id === it.id, onclick: () => show(it),
-          sub: [(it.origin?.model || '').replace(/-factice$/, ''), it.width ? `${it.width}×${it.height}` : ''].filter(Boolean).join(' · ') });
-        t.dataset.id = it.id;
-        return t;
-      }))
-      : el('p', { class: 'hint' }, 'Les images créées ici se rangent dans la bibliothèque et s’affichent ici.'));
+  for (const j of liveJobs()) add(j.params?.batch || j.id, j.created).jobs.push(j);
+  return [...map.values()].sort((a, b) => b.at - a.at);
 }
-function markHistory() {
-  for (const b of document.querySelectorAll('#side .thumb')) b.classList.toggle('sel', b.dataset.id === S.current?.id);
+
+const shortModel = (m) => (m || '').replace(/-factice$/, '').replace(/-turbo$/, '').replace(/-edit(-zone)?$/, ' éd.')
+  .replace(/^qwen-edit-2511-angles$/, 'angle').toUpperCase();
+
+// une image arrivée : cliquer la montre au centre, sans rien arrêter ; elle se glisse
+function itemCell(it) {
+  const key = 'i:' + it.id;
+  let n = S.cells.get(key);
+  if (!n) {
+    n = dragItem(el('button', { class: 'hc', type: 'button', title: `${it.title}\n${it.prompt || ''}`.trim(), onclick: () => pickShow(it) },
+      el('span', { class: 'im' }, el('img', { src: href(it.thumb_url || it.url), alt: '', loading: S.fresh.has(it.id) ? 'eager' : 'lazy', draggable: 'false' }),
+        el('span', { class: 'tg' }, shortModel(it.origin?.model))),
+      el('span', { class: 'cap' }, el('span', { class: 't' }, it.title || it.id),
+        el('span', { class: 's' }, [it.width ? `${it.width}×${it.height}` : '', fmtS(it.render_s)].filter(Boolean).join(' · ')))), it);
+    S.cells.set(key, n);
+  }
+  n.classList.toggle('sel', S.current?.id === it.id);
+  n.classList.toggle('fresh', S.fresh.has(it.id));
+  return n;
 }
+
+// un rendu qui n'est pas encore là : la forme de l'image attendue, sa place ou sa progression
+function jobCell(j) {
+  const key = 'j:' + j.id;
+  let n = S.cells.get(key);
+  if (!n) {
+    const P = j.params || {};
+    const w = P.width || 1, h = P.height || 1;
+    const parts = {
+      st: el('b', { class: 'st' }), msg: el('span', { class: 'msg' }), bar: el('i'),
+      stop: el('button', { class: 'tb ghost sm', title: 'arrêter ce rendu', onclick: (e) => { e.stopPropagation(); jobs.cancel(j.id).then(paintSide); } }, 'Arrêter'),
+      retry: el('button', { class: 'tb ghost sm', onclick: (e) => { e.stopPropagation(); jobs.retry(j.id).then((nj) => { S.done.add(j.id); jobs.forget(j.id); follow(nj); paintSide(); }); } }, 'Relancer'),
+      forget: el('button', { class: 'tb ghost sm', title: 'retirer', onclick: (e) => { e.stopPropagation(); S.done.add(j.id); jobs.forget(j.id); paintSide(); } }, '×'),
+    };
+    n = el('div', { class: 'hc job-c', title: j.title },
+      el('span', { class: 'im' }, el('span', { class: 'shape', style: { aspectRatio: `${w} / ${h}`, [w >= h ? 'width' : 'height']: '62%' } }),
+        parts.st, el('span', { class: 'bar' }, parts.bar)),
+      el('span', { class: 'cap' }, el('span', { class: 't' }, j.title), parts.msg),
+      el('span', { class: 'acts' }, parts.stop, parts.retry, parts.forget));
+    n._p = parts;
+    S.cells.set(key, n);
+  }
+  const p = n._p;
+  const arriving = j.state === 'done';
+  const run = j.state === 'running' || arriving, err = !LIVE.includes(j.state) && !arriving;
+  n.classList.toggle('run', run);
+  n.classList.toggle('err', err);
+  const pos = j.state === 'queued' ? queuePos(j) : null;
+  p.st.textContent = arriving ? 'arrive' : err ? 'échec' : run ? (j.progress != null ? `${Math.round(j.progress * 100)} %` : 'en cours')
+    : pos ? `en file · n° ${pos}` : 'en file';
+  // « en file » est déjà écrit sur la case : la légende dit le reste (la machine, une attente)
+  p.msg.textContent = err ? (j.message || '') : [j.machine, j.message === 'en file' ? '' : j.message].filter(Boolean).join(' · ');
+  p.bar.style.width = arriving ? '100%' : run && j.progress != null ? `${Math.round(j.progress * 100)}%` : '0';
+  p.stop.hidden = err || arriving; p.retry.hidden = !err; p.forget.hidden = !err;
+  return n;
+}
+
+function groupHead(g) {
+  const first = g.items[0], job = g.jobs[0];
+  const model = first?.origin?.model || job?.params?.model || job?.params?.tool || '';
+  const total = g.items.length + g.jobs.length;
+  const left = g.jobs.filter((j) => LIVE.includes(j.state)).length;
+  const title = (job?.title || first?.title || '').replace(/^(Krea 2|Qwen-Image 2\.1|Z-Image|Variation|Refaire|Consigne|Détourer|Agrandir|Affiner ×2|Angle) · /, '');
+  return el('div', { class: 'gh' },
+    el('span', { class: 'k' }, shortModel(model)),
+    el('span', { class: 'n' }, left ? `${total - left} / ${total}` : `${total} images`),
+    el('span', { class: 'when' }, fmtDate(new Date(g.at).toISOString()).split(' ')[1] || ''),
+    el('span', { class: 'tt', title }, title));
+}
+
+function paintSide() {
+  const side = $('#side');
+  if (!side || !S.cfg) return;
+  const gs = groups();
+  const live = liveJobs().filter((j) => LIVE.includes(j.state)).length;
+  const seg = el('div', { class: 'seg sm' }, ...[['session', 'Session'], ['all', 'Tout']].map(([id, lab]) => el('button', {
+    class: 'tb' + (S.hist === id ? ' on' : ''), title: id === 'session' ? 'ce qui a été fait depuis l’ouverture de cet onglet' : 'toutes les images de l’outil',
+    onclick: () => { S.hist = id; saveDraft(); paintSide(); } }, lab)));
+  const grid = el('div', { class: 'hist' });
+  for (const g of gs) {
+    const cells = [...g.items.slice().sort((a, b) => ms(a.created) - ms(b.created)).map(itemCell),
+      ...g.jobs.slice().sort((a, b) => ms(a.created) - ms(b.created)).map(jobCell)];
+    if (cells.length === 1) grid.append(cells[0]);
+    else grid.append(el('div', { class: 'hgrp' + (g.jobs.some((j) => LIVE.includes(j.state)) ? ' live' : '') }, groupHead(g), el('div', { class: 'cells' }, ...cells)));
+  }
+  const top = side.scrollTop;
+  side.replaceChildren(...[
+    el('div', { class: 'side-h' },
+      el('div', { class: 'ipan-h' }, el('span', { class: 'lbl' }, 'File · historique'),
+        el('span', { class: 'r' + (live ? ' set' : '') }, live ? `${live} en cours` : el('a', { href: href('asset/') }, `${S.total} · Asset`))),
+      seg),
+    gs.length ? grid : el('p', { class: 'hint' }, S.hist === 'session'
+      ? 'Rien encore dans cette session. Un rendu paraît ici dès l’envoi ; « Tout » montre les images d’avant.'
+      : 'Un rendu paraît ici dès l’envoi, son image s’y pose en arrivant. Rien ne s’arrête quand on en regarde une autre.'),
+    S.items.length < S.total && S.hist === 'all'
+      ? el('button', { class: 'tb ghost sm block', onclick: () => loadHistory(S.items.length) }, `Plus — ${S.total - S.items.length} autres`) : null,
+  ].filter(Boolean));
+  side.scrollTop = top;
+}
+
+async function loadHistory(offset = 0) {
+  let res;
+  try { res = await api(`library?kind=image&tool=image&limit=120&offset=${offset}`); } catch (e) {
+    $('#side').replaceChildren(el('p', { class: 'warn' }, e.message)); return;
+  }
+  const known = new Set(offset ? S.items.map((x) => x.id) : []);
+  S.items = offset ? S.items.concat(res.items.filter((x) => !known.has(x.id))) : res.items;
+  S.total = res.total;
+  paintSide();
+}
+
+let paintT = null;
+jobs.watch((list) => { lastList = list; clearTimeout(paintT); paintT = setTimeout(paintSide, 60); });
+// un rendu fini ailleurs (un autre onglet, une relance) : ses images arrivent aussi
+document.addEventListener('sr:job', async (e) => {
+  const j = e.detail;
+  if (j.tool !== 'image' || S.mine.has(j.id) || S.done.has(j.id)) return;
+  if (j.state !== 'error') S.done.add(j.id);
+  if (j.state === 'done') {
+    try { const full = await jobs.get(j.id); if (full.items?.length) arrived(full.items, j.params?.batch); } catch { /* parti */ }
+  }
+  paintSide();
+});
+
+// un fichier lâché hors des emplacements ne doit pas faire quitter la page
+addEventListener('dragover', (e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'none'; } });
+addEventListener('drop', (e) => { if (e.dataTransfer?.files?.length) { e.preventDefault(); toast('déposez sur l’image au centre, sur les références ou sur l’image à éditer'); } });
 
 // ── démarrage ───────────────────────────────────────────────
+// Adresses : ?edit=<id> (d'Asset, d'Idéation) ouvre l'édition sur cet objet ;
+// ?ref=<id> le met dans les références de « Créer » ; #<id> le montre.
+async function resolveImage(id) {
+  const it = await api('library/' + encodeURIComponent(id));
+  if (it.kind === 'image') return it;
+  // un élément : l'image d'où vient sa première référence, s'il y en a une
+  const src = (it.element?.refs || []).find((r) => r.item);
+  if (src) return api('library/' + src.item);
+  throw new Error(`« ${it.title} » n’est pas une image`);
+}
+
 async function start() {
   $('#rail').replaceChildren(el('p', { class: 'lbl' }, 'chargement'));
   try { S.cfg = await api('image/models'); } catch (e) {
     $('#rail').replaceChildren(el('p', { class: 'warn' }, `le portail ne répond pas : ${e.message}`)); return;
   }
-  const want = (location.hash || '').slice(1) || await loadDraft();
+  const drafted = await loadDraft();
+  const qs = new URLSearchParams(location.search);
+  let want = (location.hash || '').slice(1) || drafted;
+  if (qs.get('edit')) {
+    try {
+      const it = await resolveImage(qs.get('edit'));
+      S.mode = 'edit'; S.edit.tool = 'instruct'; want = it.id;
+    } catch (e) { toast(`édition : ${e.message}`, 7000); }
+  }
+  if (qs.get('ref')) {
+    try {
+      const it = await api('library/' + encodeURIComponent(qs.get('ref')));
+      S.mode = 'create';
+      if (!M(S.model).refs) S.model = 'krea2';
+      if (!S.refs.some((r) => r.id === it.id)) S.refs = [...S.refs, it].slice(-M(S.model).refs);
+    } catch (e) { toast(`référence : ${e.message}`, 7000); }
+  }
+  if (qs.get('edit') || qs.get('ref')) { try { history.replaceState(null, '', location.pathname + (want ? '#' + want : '')); } catch { /* sans historique */ } }
   if (!S.cfg.models.some((m) => m.id === S.model)) S.model = 'krea2';
   fixQuality();
   paintRail();
+  paintSide();
   if (want) { try { await show(await api('library/' + want)); } catch { S.current = null; paintStage(); } } else paintStage();
   loadHistory();
   if (S.cfg.availability_error) toast(`machines : ${S.cfg.availability_error}`, 6000);
 }
 addEventListener('hashchange', async () => {
   const id = location.hash.slice(1);
-  if (id && id !== S.current?.id) { try { show(await api('library/' + id)); } catch { /* introuvable */ } }
+  if (id && id !== S.current?.id) { try { pickShow(await api('library/' + id)); } catch { /* introuvable */ } }
 });
 start();
