@@ -1,0 +1,77 @@
+/* IDÉATION — le composeur v2 : varier une case, la prise de vue en pastilles, le lot
+   sur la carte Générer, « Voir le prompt envoyé ». Chargé par composer.js. Les couleurs :
+   commun/tokens.css seulement. Aucun orange ici : le composeur ne fabrique rien. */
+
+/* un bouton de case éteint : lisible, il dit pourquoi au clic */
+.cs-t.dis { opacity: .35; cursor: help; }
+.cs-t.dis:hover { background: transparent; color: var(--ink3); }
+.cs-t[data-k="vary"].on { color: var(--amb); background: var(--amb-bg); }
+.cslot.vary { background: var(--amb-bg); }
+.cslot.vary .cs-lab small { color: var(--amb); }
+
+/* les valeurs d'une case qui varie : une par ligne, chacune cochée ou non */
+.cvals { display: flex; flex-direction: column; gap: 3px; }
+.cval { display: flex; align-items: flex-start; gap: 5px; }
+.cval .cv-on { flex: none; width: 13px; height: 13px; margin: 6px 0 0; accent-color: var(--amb); cursor: pointer; }
+.nd textarea.cv-t, .card textarea.cv-t {
+  flex: 1; min-width: 0; min-height: 26px; padding: 3px 7px; font-size: 12px; line-height: 18px; resize: none; overflow: hidden;
+}
+.cval.no .cv-t, .cval.no .cv-r { color: var(--ink3); text-decoration: line-through; text-decoration-color: var(--line); }
+.cv-x {
+  flex: none; width: 20px; height: 22px; border-radius: var(--r1); color: var(--ink3); font-family: var(--f-mono); font-size: 11px;
+  display: inline-grid; place-items: center;
+}
+.cv-x:hover:not(:disabled) { color: var(--ink); background: var(--panel3); }
+.cv-x:disabled { opacity: .25; cursor: default; }
+.cv-add { align-self: flex-start; margin-left: 18px; }
+.cvals.wired .cval { cursor: pointer; padding: 1px 0; }
+.cvals.wired .cv-on { margin-top: 3px; }
+.cv-r { flex: 1; min-width: 0; font-size: 12px; line-height: 1.45; color: var(--ink2); overflow-wrap: anywhere; }
+
+/* la case Photographie : les pastilles de l'outil Image */
+.cph { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.cpp {
+  display: inline-flex; align-items: baseline; gap: 5px; padding: 3px 7px; border-radius: var(--r1);
+  background: var(--grn-bg); box-shadow: inset 0 0 0 1px var(--line-gr); font-size: 10.5px; color: var(--ink2);
+}
+.cpp small { font-family: var(--f-mono); font-size: 7px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); }
+.cpp:hover:not(:disabled) { color: var(--ink); box-shadow: inset 0 0 0 1px var(--grn2); }
+.cpp:disabled { cursor: default; opacity: .7; }
+
+/* la prose : la valeur montrée d'un lot (‹ ›) */
+.clh { display: inline-flex; align-items: center; min-width: 0; }
+.clot { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; }
+.clot .lbl { color: var(--amb); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cnav {
+  width: 16px; height: 16px; border-radius: var(--r1); color: var(--amb); font-family: var(--f-mono); font-size: 11px; line-height: 1;
+  display: inline-grid; place-items: center;
+}
+.cnav:hover:not(:disabled) { background: var(--amb-bg); }
+.cnav:disabled { opacity: .3; cursor: default; }
+.lbl.warn { color: var(--amb); margin-left: 6px; }
+.clk { font-size: 10.5px; line-height: 1.45; color: var(--grn2); }
+.clk[hidden] { display: none; }
+.cline.vary { box-shadow: inset 0 0 0 1px var(--line-amb); }
+
+/* la carte Générer : le lot qu'elle reçoit, l'étiquette et « composer » */
+.prow-h { display: flex; align-items: center; gap: 6px; min-height: 16px; }
+.prow-h .sp { flex: 1; }
+.glot { display: flex; align-items: baseline; gap: 8px; font-size: 10.5px; color: var(--ink3); }
+.glot b { flex: none; white-space: nowrap; font-family: var(--f-mono); font-size: 8px; font-weight: 400; letter-spacing: .14em; text-transform: uppercase; color: var(--amb); }
+.glot span { min-width: 0; }
+.glot.bad b { color: var(--amb); }
+.glot.bad { color: var(--ink2); }
+.nd .vest { display: block; }
+.nd .vest[hidden] { display: none; }
+
+/* « Voir le prompt envoyé » */
+.sent-box { gap: 10px; }
+.sent-h { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.sent-h .lbl { color: var(--amb); flex: none; }
+.sent-v { font-size: 12px; color: var(--ink2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sent-box pre.sent {
+  margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--f-mono); font-size: 11px; line-height: 1.65;
+  color: var(--cy); background: var(--panel2); border-radius: var(--r2); padding: 10px 12px; max-height: 52vh; overflow: auto;
+}
+.sent-n { display: flex; flex-direction: column; gap: 4px; }
+.sent-n .hint { margin: 0; font-size: 11px; line-height: 1.5; color: var(--ink3); }

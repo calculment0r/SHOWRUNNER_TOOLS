@@ -14,10 +14,16 @@
 // refait les entrées à l'instant ; un fil qui ne va plus passe en alerte.
 // Le résultat se pose à droite de la carte, relié ; sa sortie (une vidéo)
 // se branche sur l'entrée vidéo d'une autre carte.
+//
+// Un lot (une case du composeur varie) : une vidéo par valeur cochée, la même
+// graine, dans le plafond d'un envoi (/api/ideation/meta) ; le temps estimé du
+// plan est multiplié par le nombre de rendus. Le lot tombe dans un cadre, une
+// colonne par valeur (gen.js, launchLot). Les pastilles de prise de vue ne vont
+// pas à H3 (son vocabulaire de caméra est à lui) : seule la ligne libre passe.
 
 import { api, jobs, toast, el, href, dropZone, fmtDur, pick } from '../commun/shell.js';
-import { KINDS, VMODES, inPorts, nameOf } from './ports.js';
-import { plab, inbox, badList, chip } from './gen.js';
+import { KINDS, VMODES, inPorts, nameOf, cleanLooks } from './ports.js';
+import { plab, inbox, badList, chip, lotCheck, composeBtn } from './gen.js';
 
 const SLOTS_R2V = ['image', 'element', 'video', 'audio'];
 
@@ -28,15 +34,17 @@ export function createVideo(app) {
   const O = () => S.mopts;
   const modes = () => O()?.modes || Object.entries(VMODES).map(([id, label]) => ({ id, label }));
   const modeName = (id) => modes().find((m) => m.id === id)?.label || VMODES[id] || id;
-  // le prompt : le texte d'un fil (d'un composeur : sa prose, et son Son, sa Musique à part), sinon le champ
-  const promptOf = (v, F = app.flowNow()) => F.prompt(v.id) || { text: v.prompt || '', from: null, link: null, son: '', musique: '' };
+  // le prompt : le texte d'un fil (d'un composeur : sa prose — la valeur k si une case varie —,
+  // et son Son, sa Musique à part), sinon le champ
+  const promptOf = (v, F = app.flowNow(), k = null) => F.prompt(v.id, k) || { text: v.prompt || '', from: null, link: null, son: '', musique: '', lot: null, looks: null };
+  const lotOf = (v, F = app.flowNow()) => promptOf(v, F).lot;
   const canvasOf = (v) => (v.mode === 'i2v' && v.canvas === 'auto' ? 'auto'
     : (v.canvas && v.canvas !== 'auto' ? v.canvas : '1344x768').split('x').map(Number));
 
-  // ce que la page Vidéo enverrait pour cette carte (movie.js, params)
-  function params(v, F = app.flowNow()) {
+  // ce que la page Vidéo enverrait pour cette carte (movie.js, params) ; `k` : la valeur du lot
+  function params(v, F = app.flowNow(), k = null) {
     const take = (pb) => F.take(v.id, pb).filter((e) => e.item);
-    const pr = promptOf(v, F);
+    const pr = promptOf(v, F, k);
     const p = { desc: pr.text, sound: pr.son || v.sound || '', music: pr.musique || v.music || '', method: v.method || 'turbo', frames: v.frames,
       steps: null, seed: v.seed ? Number(v.seed) : null, canvas: canvasOf(v), loras: [], adv: {} };
     if (v.mode === 'i2v') { p.start = take('start')[0]?.item || ''; p.end = take('end')[0]?.item || ''; }
@@ -69,6 +77,8 @@ export function createVideo(app) {
     if (!O()) return S.moptsError ? `l’outil Vidéo ne répond pas : ${S.moptsError}` : 'lecture des réglages de Vidéo…';
     const F = app.flowNow();
     const pr = promptOf(v, F);
+    const lw = lotCheck(app, pr.lot, 1, 'vidéo');
+    if (lw) return lw;
     if (!pr.text.trim()) return pr.from ? `le prompt vient de ${nameOf(pr.from)} : il est vide` : 'écrivez la description (ce qu’on voit, ce qu’on entend), ou branchez un texte';
     const wait = Object.values(F.inputs(v.id)).flat().find((e) => e.ok && e.pending);
     if (wait) return `en attente : ${wait.pending}`;
@@ -81,7 +91,21 @@ export function createVideo(app) {
     return p.pl.errors[0] || '';
   }
   const planOf = (v) => { const p = plans.get(v.id); return p && !p.err && p.sig === JSON.stringify([v.mode, params(v)]) ? p.pl : null; };
-  const goLabel = (v) => { const pl = planOf(v); return pl?.ok ? `Générer · ${pl.width}×${pl.height} · ${String(pl.seconds.toFixed(1)).replace('.', ',')} s` : 'Générer la vidéo'; };
+  // un lot : combien de rendus (les valeurs cochées), 1 sinon
+  const renders = (v) => { const L = lotOf(v); return L && !L.conflict && L.on.length ? L.on.length : 1; };
+  const goLabel = (v) => {
+    const pl = planOf(v), n = renders(v);
+    if (!pl?.ok) return 'Générer la vidéo';
+    const s = `${pl.width}×${pl.height} · ${String(pl.seconds.toFixed(1)).replace('.', ',')} s`;
+    return n > 1 ? `Générer ${n} × 1 · ${s}` : `Générer · ${s}`;
+  };
+  // le temps estimé (le plan de l'outil Vidéo) multiplié par le nombre de rendus
+  const estimate = (v) => {
+    const pl = planOf(v), n = renders(v);
+    if (!pl?.estimate) return '';
+    const lo = Math.round((pl.estimate.low * n) / 60), hi = Math.round((pl.estimate.high * n) / 60);
+    return `estimé ${lo} à ${hi} min sur H3${n > 1 ? ` pour ${n} rendus` : ''} — ${pl.estimate.basis}`;
+  };
 
   const cardKey = (v) => '|' + app.flow().sig(v.id) + (O() ? '|o' : '') + '|' + (O()?.engine || '');
 
@@ -128,16 +152,21 @@ export function createVideo(app) {
     const btn = el('button', { class: 'gbtn', type: 'button', onclick: () => generate(v.id) }, 'Générer');
     const w = el('div', { class: 'gwhy why' });
     const stub = o && o.engine !== 'h3';
+    const lk = pr ? cleanLooks(pr.looks) : {};
     setTimeout(() => refresh(v.id));
     return [
       el('div', { class: 'ghead', 'data-anchor': 'out:video' }, el('span', { class: 'lbl k' }, 'générer vidéo'), el('span', { class: 'lbl' }, modeName(v.mode)),
         el('span', { class: 'sp' }), stub ? el('span', { class: 'fac lbl', title: 'moteur factice de l’outil Vidéo : une vidéo d’essai (ffmpeg), pas H3' }, 'factice') : null),
       el('div', { class: 'gsum' }, (pr ? pr.text : v.prompt) || '—'),
       el('div', { class: 'gform' }, seg,
-        el('div', { class: 'prow', 'data-row': 'prompt' }, plab('in', 'prompt', v.mode === 'r2v' ? 'prompt · @image1…' : 'prompt', pr ? 'fil' : ''), field),
+        el('div', { class: 'prow', 'data-row': 'prompt' }, el('div', { class: 'prow-h' }, plab('in', 'prompt', v.mode === 'r2v' ? 'prompt · @image1…' : 'prompt', pr ? 'fil' : ''),
+          el('span', { class: 'sp' }), pr ? null : composeBtn(app, v.id)), field),
+        Object.keys(lk).length ? el('span', { class: 'ghint', title: 'le guide d’H3 : le mouvement de caméra s’écrit dans la description, avec son vocabulaire' },
+          'pastilles de prise de vue du composeur : ignorées par H3 (seule la ligne libre de Photographie passe)') : null,
         ...ports.filter((p) => p.id !== 'prompt').map((p) => slot(v, p, F.inputs(v.id)[p.id] || [])),
         el('div', { class: 'grow' }, frames, canv),
         el('div', { class: 'grow' }, btn, w),
+        el('span', { class: 'ghint vest' }),
         badList(app, v.id)),
       v.error ? el('p', { class: 'gerr' }, v.error) : null,
     ];
@@ -148,10 +177,12 @@ export function createVideo(app) {
     const e = app.canvas?.dom.get(id)?.el;
     if (!v || v.type !== 'vgen' || !e) return;
     const w = why(v);
-    const btn = e.querySelector('.gbtn'), wy = e.querySelector('.gwhy'), sum = e.querySelector('.gsum');
+    const btn = e.querySelector('.gbtn'), wy = e.querySelector('.gwhy'), sum = e.querySelector('.gsum'), est = e.querySelector('.vest');
     if (btn) { btn.disabled = !!w; btn.textContent = w ? 'Générer' : goLabel(v); }
     if (wy) wy.textContent = w;
     if (sum) sum.textContent = promptOf(v).text || '—';
+    // un lot : le temps estimé multiplié par le nombre de rendus, sur la carte
+    if (est) { est.textContent = !w && renders(v) > 1 ? estimate(v) : ''; est.hidden = !est.textContent; }
     paintGo(v);
   }
 
@@ -161,6 +192,15 @@ export function createVideo(app) {
     const w = why(v);
     if (w) { toast(w, 6000); return; }
     const mode = v.mode;
+    const F = app.flowNow();
+    const L = lotOf(v, F);
+    if (L) {
+      // un lot : une vidéo par valeur, la même graine (le serveur la tire une fois si la carte n'en a pas)
+      const pl = planOf(v);
+      const values = L.on.map((t, k) => ({ value: t, params: params(v, F, k) }));
+      await app.gen.launchLot(id, { kind: 'video', mode, name: L.name, values }, 1, pl ? pl.width / pl.height : 16 / 9);
+      return;
+    }
     const p = params(v);
     const title = (p.desc.replace(/@([\p{L}\p{N}_-]+)/gu, '$1').trim().replace(/\s+/g, ' ') || modeName(mode)).slice(0, 70);
     await app.gen.launch(id, async () => [await jobs.submit('movie.' + mode, p, { title, tool: 'movie' })], 'video');
@@ -262,11 +302,11 @@ export function createVideo(app) {
       el('label', { class: 'look' }, el('span', { class: 'lbl' }, 'méthode'), meth),
       el('label', { class: 'look' }, el('span', { class: 'lbl' }, 'graine'), seed),
       sound,
-      pl?.estimate ? hint(`estimé ${Math.round(pl.estimate.low / 60)} à ${Math.round(pl.estimate.high / 60)} min sur H3 — ${pl.estimate.basis}`) : null,
+      pl?.estimate ? hint(estimate(v)) : null,
       ...(pl?.notes || []).map((n) => el('p', { class: 'hint' }, n)),
       pl?.prompt_sent ? el('details', { class: 'pr' }, el('summary', { class: 'lbl' }, 'prompt envoyé à H3'), el('pre', { class: 'sent' }, pl.prompt_sent)) : null));
     return out;
   }
 
-  return { card, cardKey, refresh, why, params, generate, panels, promptOf, KINDS };
+  return { card, cardKey, refresh, why, params, generate, panels, promptOf, goLabel, KINDS };
 }

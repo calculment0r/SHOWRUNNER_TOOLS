@@ -19,8 +19,9 @@ Ce qu'une planche porte (`nodes`, dans l'ordre d'empilement) :
            entrées `prompt`, et selon le mode `start`, `end` ou `image`,
            `element`, `video`, `audio` (@image1…)
   compose  un composeur de prompt : des cases nommées dans l'ordre (`slots` :
-           id, name, text, lock, off), chacune une entrée `s:<id>` ; sa
-           sortie est le texte des cases jointes
+           id, name, text, lock, off ; vary, values, skip pour une case qui
+           varie ; looks, les pastilles d'une case Photographie), chacune une
+           entrée `s:<id>` ; sa sortie est le texte des cases jointes
   palette  un nuancier tiré d'une image (des couleurs de données)
 
 Un objet peut porter `parent` (l'identifiant d'un autre objet de la
@@ -49,6 +50,10 @@ Les générations ne passent pas par ici : la page appelle les routes de
 l'outil Image (`/api/image/generate`, `edit`, `redo`), donc ses travaux
 `image.generate` et `image.edit`, et ceux de Vidéo (`/api/movie/plan`, puis
 `movie.t2v|i2v|r2v` dans la file), avec leurs moteurs (factices aujourd'hui).
+Sauf un lot (une case du composeur varie) : `/api/ideation/lot` valide chaque
+valeur comme l'outil le ferait et met tout en file d'un coup, la même graine
+d'une valeur à l'autre ; ses rendus tombent dans un cadre (lignée `out` marquée
+`lot`, les travaux de la carte `jobs` avec leur colonne et leur rang).
 
 Travail `ideation.export` (voie `cpu`) : la planche ou un cadre rendus en
 PNG par PIL, aux couleurs de `commun/tokens.css`, rangés dans la
@@ -103,6 +108,11 @@ MAX_LINKS = 6000
 MAX_SIDE = 4096          # le grand côté d'un export
 EXPORT_SCALE = 2.0       # une planche petite s'exporte au double : nette à l'écran
 MARGIN = 48              # autour de la planche entière, en px du monde
+# les lots (une case du composeur varie, étude ideation_weavy.md § 9.3) : le plafond d'un envoi,
+# celui d'/api/image/generate (image.py, api_generate : « nombre d'images » de 1 à 8) — le
+# contrôle vérifie que les deux disent la même chose ; une vidéo par valeur, sous le même plafond
+LOT_MAX = 8
+MAX_VALUES = 24          # les valeurs d'une case qui varie (cochées ou non)
 
 _lock = threading.RLock()
 
@@ -175,7 +185,34 @@ def _jobs(v) -> list:
     out = []
     for j in (v or [])[:32]:
         if isinstance(j, dict) and JOB.fullmatch(str(j.get("id", ""))):
-            out.append({"id": j["id"], "act": _s(j.get("act"), 20)})
+            e = {"id": j["id"], "act": _s(j.get("act"), 20)}
+            # un rendu de lot : son cadre, sa colonne (la valeur), son rang, sa place dans le cadre
+            if NID.fullmatch(str(j.get("frame", ""))):
+                e.update(frame=j["frame"], col=int(_num(j.get("col"), 0, LOT_MAX, 0)), row=int(_num(j.get("row"), 0, LOT_MAX, 0)),
+                         dx=_num(j.get("dx"), 0, 20000, 20.0), w=_num(j.get("w"), 16, 4000, 220.0))
+            out.append(e)
+    return out
+
+
+def _slot_lot(s: dict, role: str) -> dict:
+    """Ce qu'une case du composeur porte en plus (ideation/ports.js) : `vary`
+    (elle varie ; ni Son ni Musique), `values` [{t, on}] (ses valeurs écrites),
+    `skip` (les lignes décochées d'une case branchée), `looks` (les pastilles
+    d'une case Photographie, celles de l'outil Image : une pastille disparue
+    tombe, comme sur la carte Générer)."""
+    out = {}
+    if s.get("vary") and role not in VIDEO_ONLY:
+        out["vary"] = True
+    if isinstance(s.get("values"), list):
+        out["values"] = [{"t": " ".join(_s(v.get("t"), 2000).split()), "on": v.get("on") is not False}
+                         for v in s["values"][:MAX_VALUES] if isinstance(v, dict)]
+    if isinstance(s.get("skip"), list):
+        out["skip"] = [" ".join(_s(x, 2000).split()) for x in s["skip"][:MAX_VALUES] if isinstance(x, str)]
+    if role == "photo" and isinstance(s.get("looks"), dict):
+        img = _image()
+        looks = {g: lid for g, lid in s["looks"].items() if g in img.LOOKS and any(x["id"] == lid for x in img.LOOKS[g]["items"])}
+        if looks:
+            out["looks"] = looks
     return out
 
 
@@ -257,8 +294,10 @@ def _node(n) -> dict:
                 continue
             seen.add(sid)
             role = s.get("role") if s.get("role") in ROLES else sid if sid in ROLES else "libre"
-            slots.append({"id": sid, "role": role, "name": _s(s.get("name"), 40).strip() or "case", "text": _s(s.get("text"), 4000),
-                          "lock": bool(s.get("lock")), "off": bool(s.get("off"))})
+            slot = {"id": sid, "role": role, "name": _s(s.get("name"), 40).strip() or "case", "text": _s(s.get("text"), 4000),
+                    "lock": bool(s.get("lock")), "off": bool(s.get("off"))}
+            slot.update(_slot_lot(s, role))
+            slots.append(slot)
         out["slots"] = slots
     elif t == "palette":
         out["colors"] = [c.lower() for c in (n.get("colors") or [])[:16] if isinstance(c, str) and HEX.fullmatch(c)]
@@ -315,6 +354,8 @@ def normalize(b: dict) -> dict:
             if not PORT.fullmatch(pa) or not PORT.fullmatch(pb):
                 raise HttpError(400, f"le fil {lid} n'a pas de sortie ou d'entrée valide ({pa!r} → {pb!r})")
             entry.update(pa=pa, pb=pb)
+        elif kind == "out" and str(lk.get("lot", "")) in ids and byid[str(lk["lot"])]["type"] == "frame":
+            entry["lot"] = lk["lot"]      # la lignée d'un rendu de lot : son cadre (la page ne dessine qu'un lien, vers lui)
         if entry["kind"] == "wire":
             key = (a, entry["pa"], z, entry["pb"])
             if key in wires:
@@ -351,6 +392,7 @@ def r_meta(req):
     return {"sticky": [{"id": k, "ink": v} for k, v in STICKY.items()], "title_sizes": TITLE_SIZES,
             "link_kinds": list(LINK_KINDS), "types": list(TYPES), "version": VERSION,
             "limits": {"nodes": MAX_NODES, "links": MAX_LINKS, "slots": MAX_SLOTS},
+            "lot": {"max": LOT_MAX, "values": MAX_VALUES},
             "element_types": list(library.ELEMENT_TYPES), "backend": img.backend(), "movie_engine": _movie().engine()}
 
 
@@ -637,10 +679,35 @@ def _text_of(b: dict, byid: dict, n: dict, depth: int = 0) -> str:
         if s.get("off") or s.get("role") in VIDEO_ONLY:
             continue
         got = _wired_text(b, byid, n["id"], "s:" + s["id"], depth)
-        t = _sentence(got if got is not None else s.get("text") or "")
+        t = _sentence(_slot_value(s, got))
         if t:
             parts.append(t)
     return " ".join(parts)
+
+
+def _varies(s: dict) -> bool:
+    return bool(s.get("vary")) and not s.get("lock") and s.get("role") not in VIDEO_ONLY
+
+
+def _slot_values(s: dict, got: str | None) -> list[tuple[str, bool]]:
+    """Les valeurs d'une case qui varie (ports.js, valuesOf) : branchée, les
+    lignes du texte reçu (`skip` : les décochées) ; écrite, `values`, sinon
+    les lignes de son texte."""
+    lines = lambda t: [x for x in (" ".join(y.split()) for y in (t or "").split("\n")) if x]   # noqa: E731
+    if got is not None:
+        skip = set(s.get("skip") or [])
+        return [(t, t not in skip) for t in lines(got)]
+    if isinstance(s.get("values"), list):
+        return [(" ".join((v.get("t") or "").split()), v.get("on") is not False) for v in s["values"]]
+    return [(t, True) for t in lines(s.get("text"))]
+
+
+def _slot_value(s: dict, got: str | None) -> str:
+    """Le texte d'une case : ce que son fil apporte, sinon le sien ; si elle
+    varie, sa première valeur cochée (ce que la page montre et envoie hors lot)."""
+    if not _varies(s):
+        return got if got is not None else s.get("text") or ""
+    return next((t for t, on in _slot_values(s, got) if on and t), "")
 
 
 def render(b: dict, frame: str = "", check=lambda: None):
@@ -712,6 +779,8 @@ def render(b: dict, frame: str = "", check=lambda: None):
         a, z = byid.get(lk["a"]), byid.get(lk["b"])
         if not a or not z:
             continue
+        if lk.get("lot") in byid:
+            continue          # un rendu de lot : sa lignée passe par le lien de la carte vers son cadre
         if lk["kind"] in ("wire", "out"):
             ports = _in_ports(z)
             if lk["kind"] == "wire" and lk.get("pb") in ports:
@@ -807,7 +876,11 @@ def render(b: dict, frame: str = "", check=lambda: None):
             lines = []
             for sl in n.get("slots") or []:
                 got = _wired_text(b, byid, n["id"], "s:" + sl["id"])
-                val = " ".join(((got if got is not None else sl.get("text")) or "—").split())
+                if _varies(sl):
+                    on = [v for v, k in _slot_values(sl, got) if k and v]
+                    val = f"× {len(on)} : " + " | ".join(on) if on else "—"
+                else:
+                    val = " ".join(((got if got is not None else sl.get("text")) or "—").split())
                 lines.append(f"{sl['name'].upper()}{' (COUPÉE)' if sl.get('off') else ''} · {val}")
             text({**n, "text": "\n".join(lines)}, _font("ui", 11 * s), T["ink2"], rad(14), 1.5, top=rad(22))
         elif t == "palette":
@@ -845,8 +918,103 @@ def run_export(ctx) -> dict:
     return {"note": f"{img.width} × {img.height}", "item": it["id"], "board": bid}
 
 
+# ── les lots : une case varie, la même carte part une fois par valeur ────────
+# (étude ideation_weavy.md § 9.3). La page envoie, valeur par valeur, le prompt
+# résolu (image) ou les réglages du plan (vidéo) ; ici on valide chaque valeur
+# comme l'outil le ferait (image.check_generate, movie.plan), dans le plafond
+# d'un envoi, avec la même graine d'une valeur à l'autre (l'image k de chaque
+# valeur : base + k, comme api_generate) — et tout part, ou rien.
+def _lot_values(d: dict) -> list[dict]:
+    vals = d.get("values")
+    if not isinstance(vals, list) or not vals:
+        raise HttpError(400, "un lot sans valeur : cochez au moins une valeur de la case qui varie")
+    if len(vals) > LOT_MAX:
+        raise HttpError(400, f"{len(vals)} valeurs : {LOT_MAX} au plus par envoi")
+    if not all(isinstance(v, dict) for v in vals):
+        raise HttpError(400, "une valeur de lot est un objet JSON")
+    return vals
+
+
+def _submit_all(todo: list) -> list:
+    """Met en file tous les travaux d'un lot ; un quota atteint en route retire
+    ceux qui y sont déjà (un lot à moitié parti n'aurait pas de sens)."""
+    out = []
+    try:
+        for kind, params, title, tool, pin, extra in todo:
+            out.append({**jobs.public(jobs.submit(kind, params, title=title, tool=tool, pin=pin)), **extra})
+    except jobs.QuotaError:
+        for j in out:
+            jobs.cancel(j["id"])
+        raise
+    return out
+
+
+def _lot_image(d: dict, vals: list, name: str) -> dict:
+    img = _image()
+    card = d.get("image") if isinstance(d.get("image"), dict) else {}
+    try:
+        count = img._int(card.get("count", 1), 1, LOT_MAX, "nombre d'images")
+        base = img._seed(card.get("seed"))
+    except ValueError as e:
+        raise HttpError(400, str(e)) from e
+    if len(vals) * count > LOT_MAX:
+        raise HttpError(400, f"{len(vals)} valeurs × {count} images = {len(vals) * count} : {LOT_MAX} au plus par envoi")
+    ps = []
+    for i, v in enumerate(vals):
+        try:
+            ps.append(img.check_generate({**card, "prompt": _s(v.get("prompt"), 6001), "seed": base}))
+        except ValueError as e:
+            raise HttpError(400, f"valeur {i + 1} : {e}") from e
+    pin = img._pin_for(img._cap_generate(ps[0]))
+    batch = img._batch()
+    todo = []
+    for i, (v, p) in enumerate(zip(vals, ps)):
+        value = " ".join(_s(v.get("value"), 2000).split())
+        for k in range(count):
+            # chaque image garde son prompt résolu et {case, valeur} : Réutiliser, Recréer, le fil de l'outil Image
+            pk = {**p, "seed": (base + k) % img.MAX_SEED, "batch": batch, "lot": {"name": name, "value": value, "index": i}}
+            todo.append(("image.generate", pk, f"{img.MODELS[p['model']]['name']} · {name} {i + 1}/{len(vals)} · {img._title(value, 6)}",
+                         "image", pin, {"col": i, "row": k}))
+    return {"batch": batch, "seed": base, "count": count, "jobs": _submit_all(todo)}
+
+
+def _lot_video(d: dict, vals: list, name: str) -> dict:
+    mv = _movie()
+    mode = d.get("mode")
+    if mode not in mv.MODES:
+        raise HttpError(400, f"mode inconnu : {mode!r} ({', '.join(mv.MODES)})")
+    ps = [v.get("params") if isinstance(v.get("params"), dict) else {} for v in vals]
+    seed = next((p.get("seed") for p in ps if p.get("seed") not in (None, "")), None)
+    try:
+        # la graine de la carte, sinon une tirée ici, une fois (movie.run en tire une par plan)
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 31 - 2) + 1
+    except (TypeError, ValueError) as e:
+        raise HttpError(400, "graine illisible") from e
+    todo = []
+    for i, (v, p) in enumerate(zip(vals, ps)):
+        p = {**p, "seed": seed}
+        pl = mv.plan(mode, p)
+        if pl["errors"]:
+            raise HttpError(400, f"valeur {i + 1} : {pl['errors'][0]}")
+        desc = " ".join(re.sub(r"@([\w-]+)", r"\1", str(p.get("desc") or "")).split())
+        todo.append((f"movie.{mode}", p, f"{name} {i + 1}/{len(vals)} · {desc[:56] or mv.MODES[mode]['label']}", "movie", None, {"col": i, "row": 0}))
+    return {"batch": "lot-" + secrets.token_hex(4), "seed": seed, "count": 1, "jobs": _submit_all(todo)}
+
+
+def r_lot(req):
+    d = req.json()
+    vals = _lot_values(d)
+    name = " ".join(_s(d.get("name"), 40).split()) or "case"
+    if d.get("kind") == "image":
+        return _lot_image(d, vals, name)
+    if d.get("kind") == "video":
+        return _lot_video(d, vals, name)
+    raise HttpError(400, "un lot est d'images ou de vidéos (kind : image | video)")
+
+
 def register(app) -> None:
     jobs.register("ideation.export", run_export, lane="cpu", title="Idéation · export")
+    app.route("POST", "/api/ideation/lot", r_lot)
     app.route("GET", "/api/ideation/meta", r_meta)
     app.route("GET", "/api/ideation/boards", r_list)
     app.route("POST", "/api/ideation/boards", r_create)
@@ -960,6 +1128,7 @@ def selftest(call, ok) -> None:
     ok(st == 400, "idéation : exporter un objet qui n'est pas un cadre est refusé")
     _selftest_wires(call, ok, iid)
     _selftest_ports(call, ok)
+    _selftest_lot(call, ok, iid)
 
 
 def _selftest_wires(call, ok, iid: str) -> None:
@@ -1168,8 +1337,8 @@ def _selftest_ports(call, ok) -> None:
        f"ports : le fil d'une carte qui fabrique attend son résultat, puis porte la dernière image ({R['pending']} {R['after']})")
     ok(R["composed"] == "a woman in a red coat. a man runs.",
        f"ports : le composeur fait un paragraphe dans l'ordre des cases (Personnages puis Action), un point par case, la coupée en moins ({R['composed']!r})")
-    ok(R["with_son"] == ["a woman in a red coat. a man runs.", {"son": "rain on the roof.", "musique": ""}],
-       f"ports : la case Son sort de la prose et part à part ({R['with_son']})")
+    ok(R["with_son"] == ["a woman in a red coat. a man runs.", {"son": "rain on the roof.", "musique": "", "looks": {}}],
+       f"ports : la case Son sort de la prose et part à part ; une case Photographie sans pastille n'en donne aucune ({R['with_son']})")
     ok(R["sentence"] == ["a quiet street.", "Is it?", ""], f"ports : une phrase, un point s'il manque, rien d'inventé ({R['sentence']})")
     ok("verrouillée" in R["locked"] and R["replace"] == "k1", f"ports : une case verrouillée refuse un fil ; un fil neuf remplace l'ancien ({R['locked']})")
     ok("boucle" in R["cycle"], f"ports : une boucle de composeurs est refusée ({R['cycle']})")
@@ -1184,3 +1353,154 @@ def _selftest_ports(call, ok) -> None:
     ok(R["kinds"] == KIND_COLORS and R["slots"] == [list(s) for s in SLOTS] and R["roles"] == list(ROLES),
        "ports : la page et l'export ont les mêmes teintes de fil, les mêmes rôles et les mêmes cases de composeur")
     ok(bool(R["self"]), "ports : un objet ne se branche pas sur lui-même")
+
+
+# le lot côté page (ideation/ports.js : varier une case, le lot d'une carte, la prose valeur par
+# valeur, une case à la fois, les pastilles d'une case Photographie), mené par node ; la planche
+# est rendue pour que l'export (`_text_of`) lise la même prose
+_LOT_JS = r"""
+const P = await import(process.env.PORTS_URL);
+const R = {};
+const c1 = { id: 'c1', type: 'compose', slots: P.newSlots() };
+c1.slots[0].text = 'A candid photograph';
+c1.slots[1].text = 'A woman in a red coat';
+Object.assign(c1.slots[3], { vary: true, values: [{ t: 'A rainy street in Tokyo', on: true }, { t: 'A snowy square', on: false }, { t: ' A desert  road ', on: true }] });
+c1.slots[4].looks = { lens: '35', film: '' };
+const c2 = { id: 'c2', type: 'compose', slots: P.newSlots(['libre', 'action']) };
+const B = { nodes: [c1, c2, { id: 'g1', type: 'gen', model: 'krea2', prompt: '' }, { id: 'n1', type: 'note', text: 'She runs\n\nShe walks\nShe waits' }], links: [] };
+const W = (id, a, b, pb) => B.links.push({ id, a, b, kind: 'wire', pa: 'text', pb, label: '' });
+W('w1', 'c1', 'g1', 'prompt');
+let F = P.flow(B, {}, null);
+const L = F.lot('g1') || F.prompt('g1').lot;
+R.lot = [L.name, L.on, L.values.length];
+R.text = F.text('c1');
+R.at = [F.textAt('c1', 0), F.textAt('c1', 1)];
+R.prompt1 = F.prompt('g1', 1).text;
+R.looks = F.prompt('g1').looks;
+R.why_action = P.varyWhy(B, c1, c1.slots[2]);
+R.why_son = P.varyWhy(B, c1, P.newSlot('son', c1.slots));
+R.why_decor = P.varyWhy(B, c1, c1.slots[3]);
+// une case branchée qui varie : les lignes du texte reçu, une décochée par son texte
+W('w2', 'n1', 'c2', 's:action');
+Object.assign(c2.slots[1], { vary: true, skip: ['She walks'] });
+F = P.flow(B, {}, null);
+R.wired = [F.lot('c2').on, F.lot('c2').values.length, F.text('c2')];
+R.board = JSON.parse(JSON.stringify(B));
+// deux cases qui varient sur la même chaîne : refusé à l'ajout, dit sur la carte
+c1.slots.push(P.newSlot('libre', c1.slots));
+W('w3', 'c2', 'c1', 's:' + c1.slots[5].id);
+F = P.flow(B, {}, null);
+const K = F.prompt('g1').lot;
+R.conflict = K && K.conflict ? K.conflict.map((x) => x.name) : null;
+R.family = P.varyWhy(B, c2, c2.slots[1]);
+R.why_other = P.varyWhy(B, c2, c2.slots[0]);
+console.log(JSON.stringify(R));
+"""
+
+
+def _selftest_lot(call, ok, iid: str) -> None:
+    """Les lots : le plafond (celui d'api_generate), un lot d'images 3 × 2 (un
+    batch, les mêmes graines d'une colonne à l'autre, {case, valeur} rangés),
+    le refus au-delà, un lot vidéo, les cases qui varient bornées et relues,
+    la prose de la page et celle de l'export identiques."""
+    st, meta = call("GET", "/api/ideation/meta")
+    ok(st == 200 and meta.get("lot", {}).get("max") == LOT_MAX, f"lots : le plafond est dit à la page ({meta.get('lot')})")
+    st8, _ = call("POST", "/api/image/generate", {"model": "zimage", "prompt": "x", "count": LOT_MAX, "dry": True})
+    st9, r9 = call("POST", "/api/image/generate", {"model": "zimage", "prompt": "x", "count": LOT_MAX + 1, "dry": True})
+    ok(st8 == 200 and st9 == 400, f"lots : le plafond d'un lot est celui d'/api/image/generate ({st8} {st9} {r9})")
+
+    vals = [{"value": f"place {k}", "prompt": f"A woman runs. Place {k}."} for k in range(3)]
+    card = {"model": "zimage", "aspect": "1:1", "count": 2, "seed": 41, "looks": {"lens": "35"}}
+    st, r = call("POST", "/api/ideation/lot", {"kind": "image", "name": "Décor", "values": vals, "image": card})
+    js = r.get("jobs", []) if st == 200 and isinstance(r, dict) else []
+    ok(st == 200 and len(js) == 6 and len({j["params"]["batch"] for j in js}) == 1 and r.get("seed") == 41
+       and [(j["col"], j["row"], j["params"]["seed"]) for j in js] == [(c, k, 41 + k) for c in range(3) for k in range(2)],
+       f"lots : 3 valeurs × 2 images = un batch de 6, la graine k la même d'une colonne à l'autre ({st} {str(r)[:300]})")
+    ok(js and all(j["params"]["prompt"] == vals[j["col"]]["prompt"] and j["params"]["lot"] == {"name": "Décor", "value": f"place {j['col']}", "index": j["col"]}
+                  and j["params"]["looks"] == {"lens": "35"} for j in js),
+       "lots : chaque image garde son prompt résolu, {case, valeur} et la prise de vue")
+    for j in js:
+        call("POST", f"/api/jobs/{j['id']}/cancel")
+    st, r = call("POST", "/api/ideation/lot", {"kind": "image", "name": "Décor", "values": vals, "image": {**card, "count": 3}})
+    ok(st == 400 and f"{LOT_MAX} au plus" in str(r), f"lots : 3 × 3 = 9 images refusé, en disant le plafond ({st} {r})")
+    st, r = call("POST", "/api/ideation/lot", {"kind": "image", "name": "Décor", "values": [], "image": card})
+    st2, r2 = call("POST", "/api/ideation/lot", {"kind": "image", "name": "Décor", "values": [vals[0], {"value": "vide", "prompt": " "}], "image": card})
+    ok(st == 400 and st2 == 400 and "valeur 2" in str(r2), f"lots : sans valeur, ou une valeur au prompt vide : refusé en le disant ({r} | {r2})")
+    st, r = call("POST", "/api/ideation/lot", {"kind": "video", "mode": "t2v", "name": "Action", "values": [
+        {"value": "runs", "params": {"desc": "A man runs.", "canvas": [864, 480], "frames": 124, "method": "turbo"}},
+        {"value": "walks", "params": {"desc": "A man walks.", "canvas": [864, 480], "frames": 124, "method": "turbo"}}]})
+    js = r.get("jobs", []) if st == 200 and isinstance(r, dict) else []
+    ok(st == 200 and len(js) == 2 and js[0]["params"]["seed"] == js[1]["params"]["seed"] == r.get("seed") and [j["col"] for j in js] == [0, 1]
+       and js[1]["params"]["desc"] == "A man walks." and js[0]["kind"] == "movie.t2v",
+       f"lots : deux vidéos, la même graine, une par valeur ({st} {str(r)[:300]})")
+    for j in js:
+        call("POST", f"/api/jobs/{j['id']}/cancel")
+    st, r = call("POST", "/api/ideation/lot", {"kind": "video", "mode": "t2v", "name": "Action", "values": [{"value": "x", "params": {"desc": ""}}]})
+    ok(st == 400 and "valeur 1" in str(r), f"lots : une vidéo sans description est refusée, avec sa valeur ({st} {r})")
+
+    # la planche : une case qui varie, ses valeurs, les pastilles, un travail de lot, la lignée marquée
+    b = blank("Essai des lots")
+    _write(b)
+    nodes = [
+        {"id": "c1", "type": "compose", "x": 0, "y": 0, "w": 340, "h": 300, "slots": [
+            {"id": "style", "role": "style", "name": "Style", "text": "A photograph"},
+            {"id": "decor", "role": "decor", "name": "Décor", "vary": True,
+             "values": [{"t": "  a  rainy street ", "on": True}, {"t": "a snowy square", "on": False}, {"t": "x"}, "pas une valeur"]},
+            {"id": "photo", "role": "photo", "name": "Photographie", "looks": {"lens": "35", "film": "n-existe-plus", "zz": "1"}},
+            {"id": "son", "role": "son", "name": "Son", "vary": True, "looks": {"lens": "35"}}]},
+        {"id": "f1", "type": "frame", "x": 400, "y": 0, "w": 500, "h": 400, "name": "Décor × 2"},
+        {"id": "m1", "type": "media", "item": iid, "kind": "image", "x": 420, "y": 60, "w": 220, "h": 147},
+        {"id": "g1", "type": "gen", "x": 0, "y": 400, "w": 320, "h": 300, "prompt": "", "model": "zimage",
+         "jobs": [{"id": "job-0929-120000-abcd", "act": "lot", "frame": "f1", "col": 1, "row": 0, "dx": 254, "w": 220},
+                  {"id": "job-0929-120001-abcd", "act": "gen", "frame": "../x"}]},
+    ]
+    links = [{"id": "o1", "a": "g1", "b": "f1", "kind": "out"}, {"id": "o2", "a": "g1", "b": "m1", "kind": "out", "lot": "f1"},
+             {"id": "o3", "a": "c1", "b": "m1", "kind": "out", "lot": "g1"}]
+    st, sv = call("POST", f"/api/ideation/boards/{b['id']}", {"name": b["name"], "v": VERSION, "nodes": nodes, "links": links, "base_rev": 1})
+    st, got = call("GET", f"/api/ideation/boards/{b['id']}")
+    N = {n["id"]: n for n in got.get("nodes", [])}
+    S = {s["id"]: s for s in N.get("c1", {}).get("slots", [])}
+    ok(st == 200 and S.get("decor", {}).get("vary") is True
+       and S["decor"].get("values") == [{"t": "a rainy street", "on": True}, {"t": "a snowy square", "on": False}, {"t": "x", "on": True}]
+       and S.get("photo", {}).get("looks") == {"lens": "35"} and "vary" not in S.get("son", {}) and "looks" not in S.get("son", {}),
+       f"lots : une case qui varie garde ses valeurs bornées, une pastille disparue tombe, Son ne varie pas ({list(S.values())})")
+    J = N.get("g1", {}).get("jobs", [])
+    ok(J == [{"id": "job-0929-120000-abcd", "act": "lot", "frame": "f1", "col": 1, "row": 0, "dx": 254.0, "w": 220.0},
+             {"id": "job-0929-120001-abcd", "act": "gen"}],
+       f"lots : un travail de lot garde son cadre, sa colonne, son rang ; un cadre illisible tombe ({J})")
+    Lk = {lk["id"]: lk for lk in got.get("links", [])}
+    ok(Lk.get("o2", {}).get("lot") == "f1" and "lot" not in Lk.get("o1", {}) and "lot" not in Lk.get("o3", {}),
+       f"lots : la lignée d'un rendu garde son cadre ; un « cadre » qui n'en est pas un tombe ({list(Lk.values())})")
+    byid = {n["id"]: n for n in got["nodes"]}
+    ok(_text_of(got, byid, byid["c1"]) == "A photograph. a rainy street.", f"lots : l'export lit la première valeur cochée ({_text_of(got, byid, byid['c1'])!r})")
+
+    # la page (ports.js), par node : le lot, la prose valeur par valeur, une case à la fois
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        ok(True, "lots : node absent, ports.js n'est pas essayé ici")
+        return
+    env = {**__import__("os").environ, "PORTS_URL": (REPO / "ideation" / "ports.js").as_uri()}
+    r = subprocess.run([node, "--input-type=module", "-e", _LOT_JS], capture_output=True, text=True, timeout=60, env=env)
+    try:
+        R = json.loads(r.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        ok(False, f"lots : ports.js ne répond pas ({r.returncode} {r.stderr[-400:]})")
+        return
+    ok(R["lot"] == ["Décor", ["A rainy street in Tokyo", "A desert road"], 3],
+       f"ports : la case Décor varie, deux valeurs cochées sur trois ({R['lot']})")
+    ok(R["text"] == "A candid photograph. A woman in a red coat. A rainy street in Tokyo."
+       and R["at"][1] == "A candid photograph. A woman in a red coat. A desert road." and R["prompt1"] == R["at"][1],
+       f"ports : la prose valeur par valeur, seule la case change ({R['at']})")
+    ok(R["looks"] == {"lens": "35"}, f"ports : la carte reçoit les pastilles de la case Photographie ({R['looks']})")
+    ok("Décor" in R["why_action"] and "Son" in R["why_son"] and R["why_decor"] == "",
+       f"ports : une case à la fois, Son ne varie pas ({R['why_action']} | {R['why_son']})")
+    ok(R["wired"] == [["She runs", "She waits"], 3, "She runs."],
+       f"ports : une case branchée varie par les lignes du texte reçu, une décochée par son texte ({R['wired']})")
+    ok(R["conflict"] == ["Décor", "Action"] and "un autre composeur" in R["family"] and "varie déjà" in R["why_other"],
+       f"ports : deux cases qui varient sur la même chaîne : dit, et refusé à l'ajout ({R['conflict']} | {R['family']})")
+    pb = normalize({**R["board"], "id": b["id"]})
+    pid = {n["id"]: n for n in pb["nodes"]}
+    ok(_text_of(pb, pid, pid["c1"]) == R["text"] and _text_of(pb, pid, pid["c2"]) == R["wired"][2],
+       f"lots : l'export et la page font la même prose d'une case qui varie ({_text_of(pb, pid, pid['c1'])!r})")

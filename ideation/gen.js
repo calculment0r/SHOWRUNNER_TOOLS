@@ -14,22 +14,62 @@
 // l'objet (`jobs`) : la page rechargée reprend leur attente, et pose les
 // résultats à côté, reliés (lignée `out`). `launch`, `follow`, `finish` et
 // `placeResults` servent aussi la carte vidéo (video.js).
+//
+// Le lot (étude docs/etudes/ideation_weavy.md § 9.3) : le prompt vient d'un
+// composeur dont une case varie. La carte dit « Générer 3 × 2 » (valeurs
+// cochées × images par valeur), dans le plafond du serveur (/api/ideation/meta,
+// celui d'/api/image/generate) ; tout part en un envoi (/api/ideation/lot),
+// la même graine d'une valeur à l'autre. Le lot tombe dans un cadre nommé
+// d'après la case (« Décor × 3 ») : une colonne par valeur, la valeur en
+// légende, les images d'une valeur l'une sous l'autre ; chaque image garde son
+// lien de lignée (`out`, marqué `lot` : le cadre), la carte un lien vers le cadre.
 
 import { api, jobs, toast, el, href, dropZone } from '../commun/shell.js';
-import { KINDS, nameOf, fromName, short, inPorts } from './ports.js';
+import { KINDS, nameOf, fromName, short, inPorts, newSlots, DEFAULT_ROLES, cleanLooks } from './ports.js';
 
 // ── ce que les cartes partagent (video.js aussi) ──────────────
 // l'étiquette d'une entrée, que le port vise (data-anchor) ; `count` : « 1/2 »
 export const plab = (side, id, text, extra = '') => el('span', { class: 'plab', 'data-anchor': `${side}:${id}` }, text, extra ? el('small', {}, extra) : null);
+// ce qu'une carte dit de son lot : la case qui varie et ses valeurs cochées
+export function lotLine(L) {
+  if (!L) return null;
+  if (L.conflict) return el('div', { class: 'glot bad' }, el('b', {}, 'deux cases varient'), el('span', {}, L.conflict.map((x) => `« ${x.name} »`).join(', ')));
+  const off = L.values.length - L.on.length;
+  return el('div', { class: 'glot', title: L.on.map((t, k) => `${k + 1}. ${t}`).join('\n') }, el('b', {}, `${L.name} × ${L.on.length}`),
+    el('span', {}, L.on.length ? `une colonne par valeur${off ? ` · ${off} décochée${off > 1 ? 's' : ''}` : ''}` : 'aucune valeur cochée'));
+}
 // le texte reçu par un fil, en lecture, avec d'où il vient
-// (en lecture ; « détacher » copie le texte là où il arrivait et coupe le fil)
+// (en lecture ; « détacher » copie le texte là où il arrivait et coupe le fil) ;
+// sur une carte Générer : son lot, et « voir le prompt envoyé »
 export function inbox(app, pr, what = 'le texte est copié dans la carte') {
   const t = (pr.text || '').trim();
+  const card = pr.link ? app.node(pr.link.b) : null;
+  const maker = card && (card.type === 'gen' || card.type === 'vgen');
   return el('div', { class: 'gin' },
     el('div', { class: 'gin-h' }, el('span', { class: 'from', title: fromName(pr.from) }, fromName(pr.from)),
+      maker ? el('button', { class: 'gcut', type: 'button', title: 'le prompt tel qu’il part au modèle, valeur par valeur', onclick: (e) => { e.stopPropagation(); app.gen.showSent(card.id); } }, 'envoyé') : null,
       el('button', { class: 'gcut', type: 'button', title: `détacher : ${what}, le fil coupé`, onclick: () => app.detach(pr.link.id) }, 'détacher')),
+    maker ? lotLine(pr.lot) : null,
     el('div', { class: 'gin-t' + (t ? '' : ' ph') }, t || 'vide pour l’instant'));
 }
+// ce qui empêche un lot de partir ('' : il part) : `per` rendus par valeur
+export function lotCheck(app, L, per, unit = 'image') {
+  if (!L) return '';
+  if (L.conflict) return `deux cases varient (${L.conflict.map((x) => `« ${x.name} »`).join(', ')}) : une seule à la fois`;
+  if (!L.on.length) return `« ${L.name} » varie, mais aucune valeur n’est cochée`;
+  const max = app.S.meta?.lot?.max;
+  if (!max) return 'le plafond d’un lot n’est pas lu (/api/ideation/meta)';
+  const n = L.on.length, tot = n * per;
+  if (tot <= max) return '';
+  const keep = Math.floor(max / per), fewer = Math.floor(max / n);
+  const fix = [keep >= 1 ? `décochez ${n - keep} valeur${n - keep > 1 ? 's' : ''}` : '',
+    per > 1 && fewer >= 1 ? `passez à ${fewer} ${unit}${fewer > 1 ? 's' : ''} par valeur` : ''].filter(Boolean).join(', ou ');
+  return `${n} × ${per} = ${tot} ${unit}s : ${max} au plus par envoi — ${fix}`;
+}
+// le bouton « composer » d'un prompt écrit : il part dans un composeur neuf, branché
+export const composeBtn = (app, id) => el('button', { class: 'gcut', type: 'button',
+  title: 'faire de ce prompt un composeur, posé à gauche et branché : le texte dans une case Libre, les cinq cases prêtes',
+  onclick: (e) => { e.stopPropagation(); app.gen.composeFrom(id); } }, 'composer');
 // les fils d'une carte qui ne vont plus : dits sur la carte (une ligne par raison), pas relus
 export function badList(app, id) {
   const groups = new Map();
@@ -58,8 +98,12 @@ export function createGen(app) {
 
   // les références qui partent : les fils bons de l'entrée `refs`, avec leur objet
   const refsOf = (g, F = app.flowNow()) => F.take(g.id, 'refs');
-  const promptOf = (g, F = app.flowNow()) => F.prompt(g.id) || { text: g.prompt || '', from: null, link: null };
+  // le prompt : celui du fil (la valeur k si une case varie), sinon le champ de la carte
+  const promptOf = (g, F = app.flowNow(), k = null) => F.prompt(g.id, k) || { text: g.prompt || '', from: null, link: null, lot: null, looks: null };
+  // la prise de vue : celle du composeur s'il a une case Photographie (une seule vérité), sinon celle de la carte
+  const looksOf = (g, pr = promptOf(g)) => cleanLooks(pr.looks || g.looks);
   const quality = (g) => { const m = M(g.model); return !m ? g.quality : m.sizes[g.quality] ? g.quality : m.quality[0].id; };
+  const goText = (g, pr = promptOf(g)) => (pr.lot && !pr.lot.conflict && pr.lot.on.length ? `Générer ${pr.lot.on.length} × ${g.count}` : `Générer${g.count > 1 ? ' ×' + g.count : ''}`);
 
   // ce qui empêche de générer, dit en clair (une action éteinte dit pourquoi)
   function why(g) {
@@ -68,6 +112,8 @@ export function createGen(app) {
     if (!m) return `modèle inconnu : ${g.model}`;
     const F = app.flowNow();
     const pr = promptOf(g, F);
+    const lw = lotCheck(app, pr.lot, g.count);
+    if (lw) return lw;
     if (!pr.text.trim()) return pr.from ? `le prompt vient de ${nameOf(pr.from)} : il est vide` : 'écrivez un prompt, ou branchez un texte';
     const refs = refsOf(g, F);
     const wait = refs.find((e) => e.pending);
@@ -108,10 +154,12 @@ export function createGen(app) {
     const models = S.cfg ? S.cfg.models.map((x) => [x.id, `${x.name}${x.refs ? ` · ${x.refs} réf.` : ' · texte seul'}`]) : [[g.model, g.model]];
     const aspects = S.cfg ? S.cfg.aspects.map((a) => [a, a, m ? !m.sizes[quality(g)]?.[a] : false]) : [[g.aspect, g.aspect]];
     const count = el('div', { class: 'seg' }, ...[1, 2, 3, 4].map((k) => el('button', { class: 'tb' + (g.count === k ? ' on' : ''), type: 'button',
-      title: `${k} image${k > 1 ? 's' : ''}`, onclick: () => app.mutate(() => { g.count = k; }) }, String(k))));
-    const looks = Object.entries(g.looks || {}).map(([gid, lid]) => {
+      title: pr?.lot && !pr.lot.conflict ? `${k} image${k > 1 ? 's' : ''} par valeur` : `${k} image${k > 1 ? 's' : ''}`, onclick: () => app.mutate(() => { g.count = k; }) }, String(k))));
+    // la prise de vue : celle de la case Photographie du composeur branché, sinon celle de la carte
+    const fromC = !!pr?.looks;
+    const looks = Object.entries(looksOf(g, pr || promptOf(g, F))).map(([gid, lid]) => {
       const it = S.cfg?.looks.find((x) => x.id === gid)?.items.find((x) => x.id === lid);
-      return el('span', { class: 'chip' }, it ? it.name : lid);
+      return el('span', { class: 'chip', title: it?.sub || '' }, it ? it.name : lid);
     });
     // les références : on y branche, on y dépose (fichier du disque ou vignette), on y ajoute
     const shut = port && port.max === 0;
@@ -124,7 +172,7 @@ export function createGen(app) {
         : m ? `branchez ou déposez des images, des éléments (${m.refs} au plus)` : 'branchez ou déposez des images'));
     // fermée aussi, elle reçoit le dépôt : pour dire pourquoi elle le refuse (app.feed → canWire)
     dropZone(strip, { kinds: ['image', 'element'], via: 'ideation', onitems: (items) => app.addRefs(g.id, items) });
-    const btn = el('button', { class: 'gbtn', type: 'button', onclick: () => generate(g.id) }, `Générer${g.count > 1 ? ' ×' + g.count : ''}`);
+    const btn = el('button', { class: 'gbtn', type: 'button', onclick: () => generate(g.id) }, goText(g, pr || promptOf(g, F)));
     const w = el('div', { class: 'gwhy why' });
     const stub = S.cfg?.backend === 'stub';
     setTimeout(() => refresh(g.id));
@@ -133,11 +181,13 @@ export function createGen(app) {
         el('span', { class: 'sp' }), stub ? el('span', { class: 'fac lbl', title: 'moteur factice de l’outil Image : des mires dessinées, aucun modèle chargé' }, 'factice') : null),
       el('div', { class: 'gsum' }, (pr ? pr.text : g.prompt) || '—'),
       el('div', { class: 'gform' },
-        el('div', { class: 'prow', 'data-row': 'prompt' }, plab('in', 'prompt', 'prompt', pr ? 'fil' : ''), field),
+        el('div', { class: 'prow', 'data-row': 'prompt' }, el('div', { class: 'prow-h' }, plab('in', 'prompt', 'prompt', pr ? 'fil' : ''), el('span', { class: 'sp' }),
+          pr ? null : composeBtn(app, g.id)), field),
         el('div', { class: 'prow', 'data-row': 'refs' }, plab('in', 'refs', 'références', shut ? 'fermé' : m ? `${refs.length}/${m.refs}` : String(refs.length)), strip),
         el('div', { class: 'grow' }, sel(models, g.model, (v) => app.mutate(() => { g.model = v; app.LS('gen-model', v); }), 'le modèle : ses entrées suivent'),
           sel(aspects, g.aspect, (v) => app.mutate(() => { g.aspect = v; }), 'le format'), count),
-        looks.length ? el('div', { class: 'opts' }, ...looks) : el('span', { class: 'ghint' }, 'prise de vue (caméra, objectif, pellicule, lumière) : panneau de droite'),
+        looks.length ? el('div', { class: 'opts' }, fromC ? el('span', { class: 'lbl dim', title: 'les pastilles de la case Photographie du composeur : celles de la carte ne comptent pas' }, 'du composeur') : null, ...looks)
+          : el('span', { class: 'ghint' }, fromC ? 'prise de vue : la case Photographie du composeur (aucune pastille)' : 'prise de vue (caméra, objectif, pellicule, lumière) : panneau de droite'),
         el('div', { class: 'grow' }, btn, w),
         badList(app, g.id)),
       g.error ? el('p', { class: 'gerr' }, g.error) : null,
@@ -151,23 +201,163 @@ export function createGen(app) {
     if (!g || !e) return;
     const w = why(g);
     const btn = e.querySelector('.gbtn'), wy = e.querySelector('.gwhy'), sum = e.querySelector('.gsum');
-    if (btn) { btn.disabled = !!w; btn.textContent = `Générer${g.count > 1 ? ' ×' + g.count : ''}`; }
+    if (btn) { btn.disabled = !!w; btn.textContent = goText(g); }
     if (wy) wy.textContent = w;
     if (sum) sum.textContent = promptOf(g).text || '—';
   }
 
+  const refsBody = (g, F) => refsOf(g, F).map((e) => ({ item: e.item, ...(g.refChoice?.[e.item] ? { ref: g.refChoice[e.item] } : {}) }));
   async function generate(id) {
     const g = app.node(id);
     if (!g) return;
     const w = why(g);
     if (w) { toast(w, 5000); return; }
     const F = app.flowNow();
-    const refs = refsOf(g, F);
-    const body = { model: g.model, prompt: promptOf(g, F).text, aspect: g.aspect, quality: quality(g), count: g.count, looks: g.looks,
-      realism: g.realism, variant: g.variant,
-      refs: refs.map((e) => ({ item: e.item, ...(g.refChoice?.[e.item] ? { ref: g.refChoice[e.item] } : {}) })) };
+    const pr = promptOf(g, F);
+    const body = { model: g.model, prompt: pr.text, aspect: g.aspect, quality: quality(g), count: g.count, looks: looksOf(g, pr),
+      realism: g.realism, variant: g.variant, refs: refsBody(g, F) };
     if (g.seed) body.seed = Number(g.seed);
+    if (pr.lot) {
+      // un lot : une valeur par colonne, la même graine de l'une à l'autre (le serveur la tire une fois)
+      const { prompt, count, ...card } = body;
+      const values = pr.lot.on.map((t, k) => ({ value: t, prompt: promptOf(g, F, k).text }));
+      const wh = M(g.model)?.sizes?.[quality(g)]?.[g.aspect];
+      await launchLot(id, { kind: 'image', name: pr.lot.name, values, image: { ...card, count } }, g.count, wh ? wh[0] / wh[1] : 1);
+      return;
+    }
     await launch(id, async () => (await api('image/generate', { method: 'POST', body })).jobs, 'gen');
+  }
+
+  // ── le lot : un envoi, un cadre, une colonne par valeur ───────
+  const PAD = 20, GAP = 14, CAP_GAP = 10, CELL = 220;
+  // la hauteur d'une légende (une note : 13 px, interligne 1,5, 12 px de marge) : estimée
+  // à la pose, relue sur la planche quand les images arrivent (les notes suivent leur texte)
+  const capH = (t, w) => Math.round(24 + 19.5 * Math.max(1, Math.ceil(t.length / Math.max(8, Math.floor((w - 24) / 6.9)))));
+  // `rows` rendus par valeur ; `ratio` : largeur / hauteur d'un rendu
+  async function launchLot(id, body, rows, ratio) {
+    let r;
+    try { r = await api('ideation/lot', { method: 'POST', body }); } catch (e) {
+      const n = app.node(id);
+      if (n) app.quiet(() => { n.error = e.message; });
+      toast(e.message, 8000);
+      return false;
+    }
+    const n = app.node(id);
+    if (!n) return false;
+    const values = body.values.map((v) => v.value);
+    const cols = values.length, cw = CELL, ch = Math.round(CELL / (ratio || 1));
+    let name = '';
+    app.mutate((B) => {
+      const band = Math.max(...values.map((t) => capH(t, cw)));
+      const fw = 2 * PAD + cols * cw + (cols - 1) * GAP, fh = 2 * PAD + band + CAP_GAP + rows * ch + (rows - 1) * GAP;
+      const [x, y] = app.freeSpot(n.x + n.w + 90, n.y, fw, fh);
+      name = `${body.name} × ${cols}`;
+      const f = { id: app.uid('n'), type: 'frame', x, y, w: fw, h: fh, name };
+      B.nodes.unshift(f);
+      values.forEach((t, i) => B.nodes.push({ id: app.uid('n'), type: 'note', x: x + PAD + i * (cw + GAP), y: y + PAD, w: cw, h: capH(t, cw), text: t }));
+      B.links.push({ id: app.uid('l'), a: n.id, b: f.id, kind: 'out', label: '' });
+      n.error = '';
+      n.jobs = [...(n.jobs || []), ...r.jobs.map((j) => ({ id: j.id, act: 'lot', frame: f.id, col: j.col, row: j.row, dx: PAD + j.col * (cw + GAP), w: cw }))];
+    });
+    for (const j of r.jobs) { S.jobs.set(j.id, j); follow(id, j.id); }
+    toast(`${r.jobs.length} travaux en file, graine ${r.seed} pour chaque valeur — le lot se pose dans le cadre « ${name} »`, 6000);
+    return true;
+  }
+  // un rendu du lot à sa place : sa colonne, sous la légende (la plus haute du cadre), à son rang
+  function placeInFrame(from, f, e, items) {
+    const caps = S.board.nodes.filter((m) => m.type === 'note' && Math.abs(m.y - (f.y + PAD)) < 3 && m.x >= f.x && m.x + m.w <= f.x + f.w + 1);
+    const top = caps.length ? PAD + Math.max(...caps.map((m) => m.h)) + CAP_GAP : PAD;
+    for (const it of items) {
+      const r = it.width && it.height ? it.width / it.height : 1;
+      const w = Math.round(e.w || CELL), h = Math.round((e.w || CELL) / r);
+      const x = f.x + (e.dx ?? PAD), y = f.y + top + (e.row || 0) * (h + GAP);
+      const node = app.newMedia(it, x, y, w, h);
+      S.board.nodes.push(node);
+      S.board.links.push({ id: app.uid('l'), a: from.id, b: node.id, kind: 'out', label: '', lot: f.id });
+      f.w = Math.max(f.w, x + w + PAD - f.x);
+      f.h = Math.max(f.h, y + h + PAD - f.y);
+    }
+  }
+
+  // « Voir le prompt envoyé » : ce qui part au modèle, valeur par valeur (‹ ›) — la route
+  // /api/image/compose de l'outil Image, ou le plan de Vidéo (/api/movie/plan)
+  function showSent(id) {
+    const n = app.node(id);
+    if (!n) return;
+    const L0 = app.flowNow().prompt(id)?.lot;
+    const L = L0 && !L0.conflict && L0.on.length ? L0 : null;
+    const N = L ? L.on.length : 1;
+    let k = 0, seq = 0;
+    const head = el('div', { class: 'sent-h' });
+    const pre = el('pre', { class: 'sent' });
+    const notes = el('div', { class: 'sent-n' });
+    const prev = el('button', { class: 'tb ghost sm', type: 'button', title: 'la valeur d’avant · ←', onclick: () => go(-1) }, '‹');
+    const next = el('button', { class: 'tb ghost sm', type: 'button', title: 'la valeur suivante · →', onclick: () => go(1) }, '›');
+    async function paint() {
+      const my = ++seq;
+      const g = app.node(id);
+      if (!g) return;
+      const F = app.flowNow();
+      prev.disabled = k <= 0; next.disabled = k >= N - 1;
+      head.replaceChildren(el('span', { class: 'lbl' }, L ? `${L.name} · ${k + 1} / ${N}` : 'une seule valeur'),
+        L ? el('span', { class: 'sent-v' }, `« ${L.on[k]} »`) : null);
+      pre.textContent = '…';
+      notes.replaceChildren();
+      try {
+        if (g.type === 'gen') {
+          const pr = promptOf(g, F, L ? k : null);
+          const r = await api('image/compose', { method: 'POST', body: { model: g.model, prompt: pr.text, looks: looksOf(g, pr), refs: refsBody(g, F) } });
+          if (my !== seq) return;
+          pre.textContent = r.prompt || '—';
+          notes.replaceChildren(...(r.notes || []).map((x) => el('p', { class: 'hint' }, x)),
+            (() => {
+              const k = Object.keys(looksOf(g, pr)).length;
+              return el('p', { class: 'hint' }, `${M(g.model)?.name || g.model} · ${k ? `${k} pastille${k > 1 ? 's' : ''} de prise de vue, écrite${k > 1 ? 's' : ''} par l’outil Image${g.model === 'krea2' ? ' sans marque' : ' avec le matériel nommé'}` : 'aucune pastille de prise de vue'}`);
+            })());
+        } else {
+          const pl = await api('movie/plan', { method: 'POST', body: { mode: g.mode, params: app.video.params(g, F, L ? k : null) } });
+          if (my !== seq) return;
+          pre.textContent = pl.prompt_sent || (pl.errors || []).join(' ; ') || '—';
+          const lk = cleanLooks(F.prompt(id)?.looks);
+          notes.replaceChildren(...(pl.errors || []).map((x) => el('p', { class: 'why' }, x)),
+            Object.keys(lk).length ? el('p', { class: 'hint' }, 'Les pastilles de prise de vue ne vont pas à H3 : seule la ligne libre de la case Photographie passe.') : null);
+        }
+      } catch (e) { if (my === seq) pre.textContent = e.message; }
+    }
+    const go = (d) => { const k2 = Math.max(0, Math.min(N - 1, k + d)); if (k2 !== k) { k = k2; paint(); } };
+    const keys = (e) => { if (e.key === 'ArrowLeft') { e.preventDefault(); go(-1); } if (e.key === 'ArrowRight') { e.preventDefault(); go(1); } };
+    document.addEventListener('keydown', keys, true);
+    app.modal('Le prompt envoyé', el('div', { class: 'stack sent-box' }, head, pre, notes),
+      N > 1 ? () => [prev, next, el('span', { class: 'sp' }), el('span', { class: 'lbl' }, `${N} valeurs · la même graine`)] : null,
+      { cls: 'lg', onclose: () => document.removeEventListener('keydown', keys, true) });
+    paint();
+  }
+
+  // « Composer » : le prompt écrit d'une carte part dans un composeur neuf, posé à gauche,
+  // branché ; le texte dans une case Libre en tête, les cinq cases prêtes derrière. La prise de
+  // vue de la carte passe dans sa case Photographie (une seule vérité ensuite : le composeur).
+  function composeFrom(id) {
+    const g = app.node(id);
+    if (!g || !S.board) return;
+    if (app.flowNow().prompt(id)) { toast('le prompt vient déjà d’un fil : détachez-le d’abord'); return; }
+    const text = (g.prompt || '').trim();
+    let c = null;
+    app.mutate((B) => {
+      const slots = newSlots(text ? ['libre', ...DEFAULT_ROLES] : DEFAULT_ROLES);
+      if (text) slots[0].text = g.prompt;
+      const photo = slots.find((s) => s.role === 'photo');
+      if (g.type === 'gen' && Object.keys(cleanLooks(g.looks)).length) { photo.looks = cleanLooks(g.looks); g.looks = {}; }
+      // sa hauteur, estimée pour lui trouver une place (la page la mesure ensuite) : une case ≈ 80 px
+      const h = 150 + slots.length * 80;
+      const [x, y] = app.freeSpot(g.x - 340 - 90, g.y, 340, h, { around: true });
+      c = { id: app.uid('n'), type: 'compose', x, y, w: 340, h, slots };
+      B.nodes.push(c);
+      B.links = B.links.filter((l) => !(l.kind === 'wire' && l.b === g.id && l.pb === 'prompt'));
+      B.links.push({ id: app.uid('l'), a: c.id, b: g.id, kind: 'wire', pa: 'text', pb: 'prompt', label: '' });
+      g.prompt = '';
+      S.sel = new Set([c.id]); S.link = null;
+    });
+    toast(text ? 'un composeur : le prompt est dans la case Libre — répartissez-le dans les cases, puis faites varier l’une d’elles' : 'un composeur branché sur la carte : remplissez ses cases');
   }
 
   // Variations : la recette de l'image, d'autres graines (route « redo » de l'outil Image)
@@ -221,9 +411,12 @@ export function createGen(app) {
     const n = app.node(nodeId);
     const fresh = (j.items || []).filter((it) => !S.board.nodes.some((x) => x.type === 'media' && x.item === it.id));
     for (const it of j.items || []) S.items.set(it.id, it);
+    const entry = n?.jobs?.find((x) => x.id === j.id);
     const drop = () => { if (n?.jobs) n.jobs = n.jobs.filter((x) => x.id !== j.id); };
     if (j.state === 'done' && fresh.length && n) {
-      app.mutate(() => { drop(); placeResults(n, fresh); });
+      // un rendu de lot va dans son cadre, s'il est encore là ; sinon à côté de la carte
+      const f = entry?.frame ? app.node(entry.frame) : null;
+      app.mutate(() => { drop(); if (f?.type === 'frame') placeInFrame(n, f, entry, fresh); else placeResults(n, fresh); });
     } else {
       app.quiet(() => { drop(); if (j.state === 'error' && (n?.type === 'gen' || n?.type === 'vgen')) n.error = j.message; });
       if (j.state === 'done' && fresh.length && !n) toast('le résultat est dans la bibliothèque (l’objet qui le demandait n’est plus sur la planche)');
@@ -252,5 +445,8 @@ export function createGen(app) {
     for (const n of S.board?.nodes || []) for (const j of n.jobs || []) follow(n.id, j.id);
   }
 
-  return { card, cardKey, refresh, why, refsOf, promptOf, quality, generate, variations, edit, recipe, resume, placeResults, launch, M, KINDS };
+  return { card, cardKey, refresh, why, refsOf, promptOf, looksOf, goText, quality, generate, variations, edit, recipe, resume, placeResults, launch,
+    launchLot, showSent, composeFrom, M, KINDS,
+    // pour l'inspecteur : d'où vient la prise de vue de la carte ('composer' : sa case Photographie)
+    looksFrom: (g) => (promptOf(g).looks ? 'composer' : 'card') };
 }

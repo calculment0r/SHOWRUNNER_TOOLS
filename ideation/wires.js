@@ -102,6 +102,8 @@ export function createWires(app, env) {
           : `${KINDS[kind].label} · ${nameOf(a)} → ${nameOf(b)}`;
         layer.append(wire(portPoint(a, l.pa, 'out'), portPoint(b, l.pb, 'in'), { color: KINDS[kind].color, id: l.id, cls, why, label }));
       } else if (l.kind === 'out') {
+        // un rendu d'un lot : la carte est déjà reliée au cadre du lot, pas un fil par image
+        if (l.lot && app.node(l.lot)) continue;
         const o = outPort(a);
         const from = o ? portPoint(a, o.id, 'out') : [a.x + a.w, a.y + a.h / 2];
         layer.append(wire(from, [b.x, b.y + b.h / 2], { color: o ? KINDS[o.kind].color : 'grn2', id: l.id, cls: 'lineage' + (sel ? ' sel' : ''),

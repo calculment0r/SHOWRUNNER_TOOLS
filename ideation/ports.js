@@ -57,6 +57,28 @@ export const DEFAULT_ROLES = ['style', 'persos', 'action', 'decor', 'photo'];
 export const SLOTS = DEFAULT_ROLES.map((r) => ROLES.find((x) => x.id === r));   // les cinq d'un composeur neuf
 const ROLE = Object.fromEntries(ROLES.map((r) => [r.id, r]));
 const VIDEO_ONLY = new Set(['son', 'musique']);
+// Son et Musique ne varient pas : ils vont aux champs à part d'H3, pas à la prose
+export const NO_VARY = VIDEO_ONLY;
+
+// « Varier » (étude § 9.3) : une case devient une liste, une valeur par ligne,
+// chacune cochée ou non. Écrite : ses valeurs `values` [{ t, on }] (sans liste,
+// les lignes de son texte) ; branchée : les lignes du texte reçu, `skip` les
+// valeurs décochées (par leur texte : l'ordre de la note peut changer). Une
+// seule case varie sur toute la chaîne de composeurs qui mène à une carte.
+const lines = (t) => String(t || '').split('\n').map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean);
+export function valuesOf(s, received = null) {
+  if (received !== null) {
+    const skip = new Set(s.skip || []);
+    return lines(received).map((t) => ({ t, on: !skip.has(t) }));
+  }
+  if (Array.isArray(s.values)) return s.values.map((v) => ({ t: String(v?.t ?? '').replace(/\s+/g, ' ').trim(), on: v?.on !== false }));
+  return lines(s.text).map((t) => ({ t, on: true }));
+}
+export const picked = (vals) => vals.filter((v) => v.on && v.t).map((v) => v.t);
+export const varies = (s) => !!s?.vary && !s.lock && !NO_VARY.has(roleOf(s).id);
+// les pastilles d'une case Photographie (celles de l'outil Image : caméra, objectif,
+// ouverture, pellicule, lumière) : leurs identifiants, le serveur écrit leur phrase
+export const cleanLooks = (L) => Object.fromEntries(Object.entries(L || {}).filter(([g, v]) => g && v));
 export const roleOf = (s) => ROLE[s?.role] || ROLE[s?.id] || ROLE.libre;
 export const slotHint = (s) => roleOf(s).hint;
 // une case neuve : son identifiant est son rôle, ou rôle-2, rôle-3… s'il est pris
@@ -338,52 +360,119 @@ export function flow(board, caps = {}, items = null) {
     return MAKERS.includes(A.type) && o ? latestResult(board, A.id, o.kind, items)?.item || null : null;
   };
   // le texte d'une sortie : une note telle qu'écrite ; un composeur, ses cases
-  // (ni coupées, ni vides, ni Son ni Musique) en phrases jointes par une espace
-  function textOf(id, seen = new Set()) {
+  // (ni coupées, ni vides, ni Son ni Musique) en phrases jointes par une espace.
+  // `sub` { cid, sid, t } : la valeur que prend la case qui varie (sinon sa première cochée)
+  function textOf(id, seen = new Set(), sub = null) {
     const n = nodes.get(id);
     if (!n || seen.has(id)) return '';
     if (TEXT_TYPES.includes(n.type)) return n.text || '';
     if (n.type !== 'compose') return '';
     seen.add(id);
-    return parts(n, seen).filter((p) => !p.off && !VIDEO_ONLY.has(p.role) && p.text.trim()).map((p) => sentence(p.text)).join(SEP);
+    return parts(n, seen, sub).filter((p) => !p.off && !VIDEO_ONLY.has(p.role) && p.text.trim()).map((p) => sentence(p.text)).join(SEP);
   }
-  function parts(C, seen = new Set([C.id])) {
+  function parts(C, seen = new Set([C.id]), sub = null) {
     const got = into.get(C.id) || {};
     return (C.slots || []).map((s) => {
       const e = (got['s:' + s.id] || []).find((x) => x.ok);
-      return { slot: s, role: roleOf(s).id, text: e ? textOf(e.from.id, new Set(seen)) : (s.text || ''), from: e ? e.from : null,
+      let text = e ? textOf(e.from.id, new Set(seen), sub) : (s.text || '');
+      let values = null;
+      if (varies(s)) {
+        values = valuesOf(s, e ? text : null);
+        const on = picked(values);
+        text = sub && sub.cid === C.id && sub.sid === s.id ? sub.t : on[0] || '';
+      }
+      return { slot: s, role: roleOf(s).id, text, values, from: e ? e.from : null,
         link: e ? e.link : null, off: !!s.off, bad: (got['s:' + s.id] || []).filter((x) => !x.ok) };
     });
   }
-  // le son et la musique d'un composeur (et des composeurs qui s'y branchent) : les champs à part d'H3
+  // le son et la musique d'un composeur (et des composeurs qui s'y branchent) : les champs à part
+  // d'H3 ; et ses pastilles de prise de vue (ses cases Photographie, puis les composeurs branchés,
+  // dans l'ordre de la prose : la dernière dit vrai) — null s'il n'a aucune case Photographie
   function extras(id, seen = new Set()) {
     const n = nodes.get(id);
     const out = { son: [], musique: [] };
-    if (!n || n.type !== 'compose' || seen.has(id)) return { son: '', musique: '' };
+    let looks = null;
+    if (!n || n.type !== 'compose' || seen.has(id)) return { son: '', musique: '', looks: null };
     seen.add(id);
     for (const p of parts(n, new Set(seen))) {
       if (p.off) continue;
       if (VIDEO_ONLY.has(p.role) && p.text.trim()) out[p.role].push(sentence(p.text));
-      if (p.from?.type === 'compose') { const x = extras(p.from.id, seen); if (x.son) out.son.push(x.son); if (x.musique) out.musique.push(x.musique); }
+      if (p.role === 'photo') looks = { ...(looks || {}), ...cleanLooks(p.slot.looks) };
+      if (p.from?.type === 'compose') {
+        const x = extras(p.from.id, seen);
+        if (x.son) out.son.push(x.son);
+        if (x.musique) out.musique.push(x.musique);
+        if (x.looks) looks = { ...(looks || {}), ...x.looks };
+      }
     }
-    return { son: out.son.join(SEP), musique: out.musique.join(SEP) };
+    return { son: out.son.join(SEP), musique: out.musique.join(SEP), looks };
   }
+  // les cases qui varient sous une sortie : celles du composeur et des composeurs qui s'y branchent
+  function lotsIn(id, seen = new Set()) {
+    const n = nodes.get(id);
+    if (!n || n.type !== 'compose' || seen.has(id)) return [];
+    seen.add(id);
+    const out = [];
+    for (const p of parts(n, new Set(seen))) {
+      if (p.off) continue;
+      if (p.values) out.push({ cid: n.id, sid: p.slot.id, name: p.slot.name || roleOf(p.slot).name, values: p.values, on: picked(p.values) });
+      else if (p.from?.type === 'compose') out.push(...lotsIn(p.from.id, seen));
+    }
+    return out;
+  }
+  // le lot d'une sortie : { cid, sid, name, values, on } — la case qui varie, ses valeurs cochées
+  // (`on`) ; { conflict: [cases] } si deux cases varient ; null si rien ne varie
+  const lot = (id) => { const L = lotsIn(id); return !L.length ? null : L.length === 1 ? L[0] : { conflict: L }; };
+  // le texte d'une sortie pour la valeur k de son lot (la première cochée sans lot)
+  const textAt = (id, k = 0) => {
+    const L = lot(id);
+    if (!L || L.conflict || !L.on.length) return textOf(id);
+    return textOf(id, new Set(), { cid: L.cid, sid: L.sid, t: L.on[Math.max(0, Math.min(k, L.on.length - 1))] });
+  };
   const inputs = (id) => into.get(id) || {};
   // ce qu'une entrée reçoit de lisible : les fils bons, dans l'ordre, avec leur valeur
   const take = (id, pb) => (inputs(id)[pb] || []).filter((e) => e.ok).map((e) => ({ ...e, item: itemOf(e.from), text: outPort(e.from)?.kind === 'text' ? textOf(e.from.id) : '' }));
-  // le prompt reçu par un fil : sa prose, et le son et la musique d'un composeur (pour la vidéo)
-  const prompt = (id) => {
+  // le prompt reçu par un fil : sa prose (celle de la valeur k si une case varie), son lot, et
+  // d'un composeur son son, sa musique (pour la vidéo) et ses pastilles de prise de vue
+  const prompt = (id, k = null) => {
     const e = take(id, 'prompt')[0];
-    return e ? { text: e.text, from: e.from, link: e.link, ...extras(e.from.id) } : null;
+    if (!e) return null;
+    return { text: k === null ? e.text : textAt(e.from.id, k), from: e.from, link: e.link, lot: lot(e.from.id), ...extras(e.from.id) };
   };
   // la signature de ce qu'une carte reçoit : ce qui, s'il change, refait la carte
+  const brief = (L) => (!L ? '' : L.conflict ? 'x' + L.conflict.map((x) => x.name).join('+') : `${L.name}:${L.values.map((v) => (v.on ? '1' : '0') + v.t).join('\n')}`);
   const sig = (id) => {
     const o = inputs(id);
     return Object.keys(o).sort().map((pb) => pb + ':' + o[pb].map((e) => [e.link.id, e.ok ? 1 : 0, e.why, e.pending || '', e.off ? 1 : 0,
-      e.ok ? itemOf(e.from) || '' : '', e.ok && outPort(e.from)?.kind === 'text' ? textOf(e.from.id) + JSON.stringify(extras(e.from.id)) : ''].join('~')).join(',')).join('|');
+      e.ok ? itemOf(e.from) || '' : '', e.ok && outPort(e.from)?.kind === 'text' ? textOf(e.from.id) + JSON.stringify(extras(e.from.id)) + brief(lot(e.from.id)) : ''].join('~')).join(',')).join('|');
   };
-  return { state: (lid) => state.get(lid) || null, inputs, take, prompt, text: textOf, parts, extras, sig, itemOf,
+  return { state: (lid) => state.get(lid) || null, inputs, take, prompt, text: textOf, textAt, parts, extras, lot, sig, itemOf,
     bad: (id) => Object.values(inputs(id)).flat().filter((e) => !e.ok) };
+}
+
+// les composeurs reliés à celui-ci par des fils de composeur à composeur (dans les deux
+// sens) : une seule case varie sur toute cette famille (une carte n'en reçoit qu'une)
+export function composerFamily(board, id) {
+  const nodes = nodeMap(board);
+  const next = new Map();
+  for (const l of board?.links || []) {
+    if (l.kind !== 'wire' || nodes.get(l.a)?.type !== 'compose' || nodes.get(l.b)?.type !== 'compose') continue;
+    for (const [x, y] of [[l.a, l.b], [l.b, l.a]]) { if (!next.has(x)) next.set(x, []); next.get(x).push(y); }
+  }
+  const seen = new Set([id]);
+  const todo = [id];
+  while (todo.length) for (const y of next.get(todo.pop()) || []) if (!seen.has(y)) { seen.add(y); todo.push(y); }
+  return [...seen].map((x) => nodes.get(x)).filter(Boolean);
+}
+// pourquoi cette case ne peut pas varier ('' : elle le peut)
+export function varyWhy(board, c, s) {
+  if (s.lock) return 'verrouillée : elle ne varie pas';
+  if (NO_VARY.has(roleOf(s).id)) return `${roleOf(s).name} ne varie pas : il va au champ à part d’H3`;
+  for (const n of composerFamily(board, c.id)) {
+    const o = (n.slots || []).find((x) => varies(x) && !(n.id === c.id && x.id === s.id));
+    if (o) return `« ${o.name} »${n.id === c.id ? '' : ' (un autre composeur branché)'} varie déjà : une case à la fois`;
+  }
+  return '';
 }
 
 // le texte composé d'un composeur (raccourci)
