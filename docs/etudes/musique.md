@@ -271,3 +271,357 @@ onglets (réservés : la page ne les reçoit pas) et peut garder F12.
   ODIO_01) ; zoomer le banc en montre plus.
 - La touche « c » bascule les têtes dans le nodal (ODIO_01) : là, elle ne
   règle plus la vélocité du clavier.
+
+## 7. Les jouets du Playground dans le nodal (29/09)
+
+Cal : « aussi pour ODIO on va intégrer ces nodes rigolos dans le canva. on
+doit leur mettre des in et out pour pouvoir les relier, on les met dans notre
+DA mais on garde le design à l'intérieur des nodes qui est bon. il faut garder
+leur code d'interaction qui est cool. et le graphisme doit rester identique
+dedans. » La référence : son « ODIO-O1 Playground » (quatorze blocs), et sa
+fiche `UI/3_machine/PLAYGROUND.md` dans ODIO_01.
+
+**Porté, pas embarqué** (`musique/jouets/`, détail dans `musique/PROVENANCE.md`).
+Le Playground n'est pas un arbre de composants React : c'est une classe
+`DCLogic` rendue par le gabarit et le moteur de l'outil de conception qui
+l'a produit (`<x-dc>`, `sc-for`, 69 Ko de script à la licence non dite),
+sur React 18. React n'y dessine que le cadre — que Cal veut dans notre DA ;
+tout l'intérieur est du Canvas 2D. Il est donc repris mot pour mot en modules
+ES : aucune étape de construction, aucune dépendance réseau, 143 Ko de code
+lisible et commenté (dont 81 Ko de scènes reprises, qu'il faudrait de toute
+façon) au lieu de 212 Ko minifiés de React et du moteur DC qui ne
+dessineraient que le cadre, et une seule façon d'écrire dans le portail.
+
+| fichier | rôle |
+|---|---|
+| `jouets/defs.js` | les quatorze jouets et l'horloge : réglages (ceux de `BLOCKS`), taille, ports |
+| `jouets/scenes.js` | l'intérieur : physique, dessin, gestes du Playground, jouet par jouet |
+| `jouets/son.js` | le son des quatre qu'on traverse (écho à bande, réverbe, filtre, volume) |
+| `jouets/index.js` | les jouets posés, **une** boucle d'animation (elle s'arrête sans jouet), ports et câbles typés, notes calées sur le transport, valeurs, mélange de la fontaine |
+| `jouets/jouets.css` | les jetons de la palette du Playground (`--jo-*`), IBM Plex Mono, les ports |
+| `server/tools/music_jouets.py` | les sortes, les câbles typés, leurs boucles, le chemin de l'aimant ; son selftest |
+
+Points d'accroche, marqués `jouets :` : `modules.js` (3), `moteur.js` (4),
+`musique.js` (10 lignes), `nodal.js` (12), `server/tools/music.py` (5).
+
+**Le cadre et l'intérieur.** La carte est celle du nodal (en-tête, point de
+couleur, ports, molettes, choix, sélection, menus, panneau de droite) ; son
+en-tête dit ce que disait celui du Playground (« 03 · générateur de trigs »),
+son pied le geste (« attrape la balle et lâche-la ») et ce qu'elle reçoit et
+émet. La scène fait la taille de celle du Playground (bloc − 2 × − 102 px) ;
+à 100 % elle est dessinée pixel pour pixel comme lui, au-delà sa définition
+suit le zoom (celle de l'écran, DPR plafonné à 2 comme lui).
+
+### Les ports
+
+Trois sortes, trois formes : **son** (le rond du nodal, inchangé), **notes**
+(losange, câble en pointillé rond : une note horodatée), **valeur** (carré,
+câble tiret-point : un nombre 0..1 qui règle un réglage choisi au
+branchement). Dans le projet : `{ a, b }` (son), `{ a, b, t: 'notes' }`,
+`{ a, b, t: 'mod', k }`. Chaque réseau est sans boucle (refusé au câblage et
+par le serveur). Les instruments ont une entrée notes (les cinq sources
+d'ODIO et les trois d'ici, pas le lecteur audio) ; tout module qui a un
+réglage pilotable a une entrée valeur (ce qu'`AUTOMATABLE` tient ; pas la
+sortie).
+
+| jouet | reçoit | émet | ce qui sonne |
+|---|---|---|---|
+| Shuffle fountain (00) | notes : un tir · valeur | notes : l'explosion d'une bille armée | ses billes volent au-dessus du nodal et mélangent les réglages des cartes où elles retombent (reviennent exactement) |
+| Reel–2 (01) | **son** · valeur | **son** · valeur : la bande (remplissage) | écho à bande : vitesse → temps (800 → 80 ms), feedback, wow = sinus au rythme du brin dessiné ; scruber change la vitesse de bande |
+| Alchimie (02) | **son** · valeur | **son** · valeur : le niveau du liquide | le volume = le liquide (amplitude), la viscosité le fait suivre lentement |
+| Ping–pong (03) | notes : relance la balle · valeur | notes : chaque rebond au sol (vélocité = l'impact) · valeur : la hauteur | sa Note (do par défaut) |
+| Lance–pierre (04) | notes : un tir vers la cible · valeur | notes : l'anneau touché | les trois notes écrites sur la cible (degrés 1, 3, 5 de sa gamme) |
+| Ressort (05) | **son** · notes : pincer · valeur | **son** · valeur : l'énergie de la corde | réverbe d'ODIO : decay = decay × 0,06 s (ce que la scène affiche), tension → amorti ; pincer ouvre le mélange |
+| Aimant (06) | **son** · valeur | **son** · valeur : x de l'aimant | filtre d'ODIO : coupure 40 Hz × 400^x (la lecture de la scène), y → résonance ; le chemin se rejoue sur le transport, à l'export aussi |
+| Ninja (07) | notes : lance une forme · valeur | notes : chaque forme tranchée ; combo : + l'octave | la note écrite dans la forme |
+| Secousse (08) | notes : une secousse · valeur | notes : chaque bille qui frappe une paroi · valeur : l'agitation | la note de la bille |
+| Pachinko (09) | notes : lâche une bille · valeur | notes : le bac d'arrivée · valeur : le bac | bac − 4 = degré de sa gamme (comme ODIO_01) |
+| Grille–pain (10) | notes : baisse le levier · valeur | notes : la tranche qui saute · valeur : la chaleur | la note gravée sur la tranche (le brunissage) |
+| Flipper (11) | notes : les deux palettes · valeur | notes : champignons, cibles, couloirs, lance-billes | la, do, sol / ré, si (la fiche du Playground) |
+| Navette (12) | notes : un tir (elle joue un instant sans survol) · valeur | notes : chaque forme détruite | sa note |
+| Berceau (13) | notes : lève la bille de gauche · valeur | notes : la bille de bout qui repart | do la sol si ré mi fa (`NEWT_PC`) |
+| Horloge | — | notes : une par division (1/1 à 1/16) tant que le transport joue | sa Note ; posée à l'instant exact de la division |
+
+**Une note émise** : hauteur 12 × (Octave + 1) + la note du jouet (do4 = 60) ;
+une batterie joue la voix de ce rang (modulo son nombre de voix). Instant :
+**calé sur la grille du transport** quand il joue (Calage : libre, 1/32,
+1/16 par défaut, 1/8, 1/4 ; la fin de boucle est un point de grille), tout
+de suite sinon. Durée : Durée × la noire. Une piste armée qui enregistre
+garde aussi les notes des jouets (la prise). Les jouets vivent dans toutes
+les vues (la boucle ne dessine que dans le nodal, et seulement ce qui est à
+l'écran) ; ce qui se lance seul (fontaine, NINJA, PACHINKO, la bobine) suit
+le transport, comme le bouton lecture du Playground.
+
+**Une valeur** : relevée à chaque image, envoyée quand elle bouge de plus de
+0,002 (ou toutes les 250 ms) ; un AudioParam y glisse (`setTargetAtTime`,
+20 ms), un module d'ODIO la prend par `setParameter` ; une voie
+d'automation qui joue garde la main. Câble retiré : le réglage reprend sa
+valeur.
+
+### Ce qui a été vu (DGX2, portail d'essai :8794, `jouets/*.mjs` du scratchpad)
+
+- **Au pixel près** (`pixels.mjs`) : le Playground de Cal joue (un geste s'il
+  en faut un : tirer, verser, tracer, trancher…), on fige son horloge, on lit
+  l'état de la scène ; le même état posé dans notre carte, on compare les
+  deux canvas : **14 jouets sur 14, 0 pixel différent** (tailles identiques,
+  de 378 × 238 à 778 × 438), en rendu logiciel comme sur le GPU. Sur six
+  passages, deux fois la SECOUSSE a différé de 8 pixels aux bouts de deux
+  filets (et d'une unité sur une rangée) : l'anticrénelage du canvas
+  accéléré d'une page à l'autre, pas le dessin — les quatre autres passages,
+  même code, 0. Captures côte à côte : `cote_<jouet>.png`.
+- **Les gestes** (`gestes.mjs`, à la souris sur nos cartes, notes vers une
+  piste Analog sans clip) : Ping–pong lancé → 2 notes ; fontaine → 1
+  explosion, un module de réverbe mélangé ; Lance–pierre visé → 3 tirs,
+  3 notes ; Secousse → 22 ; Pachinko → 2 billes au bac ; Grille–pain → les
+  deux tranches, 1 note ; Berceau → 4 ; Flipper → 10 ; Navette → 4 formes
+  détruites, 4 notes ; Ressort pincé → énergie 20. La piste crête entre
+  −5 et −12 dBFS.
+- **Calé sur le transport** : pendant la lecture, 53 notes (Pachinko relancé
+  par l'horloge 35, Flipper 12, Ninja tranché 4, fontaine 2) : **toutes sur
+  la double croche** (écart 0), posées au plus tôt 12 ms avant de sonner.
+- **Les quatre qu'on traverse** (un la tenu passe dedans) : scruber le REEL
+  fait passer l'écho de 277 à 154 ms ; pincer le RESSORT fait monter le
+  mélange de 38 à 63 % ; l'AIMANT sur un chemin tracé, transport en marche :
+  coupure 393 → 3 714 → 8 788 Hz, résonance 11,1 → 2,8 ; verser l'ALCHIMIE :
+  −2,9 → −19,9 dB.
+- **Une valeur** : la hauteur du Ping–pong règle la vitesse du REEL (46 au
+  repos) : 49, 10, 61, 96, 67, 30 pendant le vol.
+- **Bibliothèque, pose, câble** (`menu.mjs`) : double-clic dans le vide → la
+  section « jouets · le Playground de Cal » ; la Navette posée, tirée par
+  son en-tête, un câble de notes tiré à la souris du losange jusqu'au Lead.
+- **Enregistré, rouvert** : 19 jouets, 12 câbles typés, le chemin de
+  l'aimant (25 points) reviennent à l'ouverture. **Retirés** (Suppr, puis
+  les autres) : plus d'instance, la boucle d'animation s'arrête en 50 ms.
+- **Performance** (`perf.mjs`, la session de départ en boucle, 10 s par
+  mesure, Chromium sur le GPU de DGX2 — ANGLE, NVIDIA GB10) : sans jouet
+  59,9 images/s ; les quatorze animés (une horloge à la croche les relance,
+  175 à 221 notes en 10 s), tous à l'écran à 38 % : **60,1 images/s**, image
+  la plus longue 16,8 ms, aucune tâche longue ; à 100 % : 60,0 ; en vue
+  Arrangement : 60,0. Le planificateur garde toujours au moins 83 ms d'avance
+  (aucune tranche en retard sur 400) et l'horloge audio suit la murale
+  (0,9996). Le même banc sur SwiftShader (rendu logiciel) tombe à 4 à
+  25 images/s — le Playground de Cal lui-même y fait 46 : c'est le rendu
+  logiciel, le son n'y prend aucun retard non plus. `playoutStats` (les
+  pertes de la carte son) n'existe pas dans ce Chromium : pas de mesure
+  directe des craquements.
+- `python3 tools/check.py` : **625 passés, 0 en échec** (12 de plus :
+  `music_jouets`).
+
+### Ce qui diffère encore du Playground, ou n'est pas beau
+
+- Le cadre n'est plus le sien : titres en Chakra Petch (pas Microgramma),
+  nos molettes au lieu de ses trois familles (dial, enc, slider), la
+  lecture des valeurs sans unité (« 62 » et non « 62 % »).
+- Deux défauts du Playground corrigés (voir PROVENANCE) : l'anneau de
+  `d_pong` (« TN is not defined » à chaque rebond) et le tir de la NAVETTE
+  (`ev.button`, le clic ne tirait jamais).
+- À l'export, le son des jouets est ce qui s'écrit : le chemin de l'AIMANT,
+  les réglages des trois autres ; ce qui se joue à la main (scruber,
+  pincer, verser) et les notes des jouets ne s'exportent que par une prise.
+- Le texte des scènes suit le zoom du nodal (le Playground le gardait à
+  taille fixe) ; à 100 % tout est identique.
+- Les cartes de jouet sont grandes (380 à 780 px) : elles passent devant les
+  cartes qu'elles recouvrent (sans quoi les ports de celles-ci traversaient
+  leur scène) ; le nodal n'a pas d'autre ordre de profondeur.
+- La fontaine ne mélange ni les niveaux (dB) ni la console : choix de
+  prudence, à confirmer par Cal ; ODIO_01 mélangeait tout.
+- Les nombres qui ne viennent pas du Playground sont des choix de réglage
+  (écrits dans `son.js`) : temps d'écho, pleurage de 4 ms, tension →
+  amorti, énergie → + 50 points de mélange, résonance de l'aimant.
+- Pas encore de jouet dans la vue Instruments (le rack les liste parmi les
+  modules libres, sans leur scène).
+
+## 8. Le génératif dans l'arrangeur : pistes génératives, prises, partition, MIDI (29/09)
+
+Cal : « il faut pouvoir ajouter des pistes "génératives" dans l'arrangeur […]
+on dessine une sélection sur la zone et dans le panel du bas on a les infos
+pour faire de la génération avec les options données par notre modèle […]
+pouvoir générer seulement une batterie, ou une guitare avec une tonalité
+donnée et qui colle à notre tempo […] YuE2 génère d'abord une partition […]
+injecter nos pistes MIDI dedans ? […] clic droit sur nos clips audio pour
+extraire le MIDI et donc se faire une bibliothèque de clips MIDI. » L'étude
+des modèles : `docs/etudes/musique_generatif.md` (§ 6 pour l'intégration,
+§ 6.5 pour les paramètres). **Tout tourne sur des moteurs factices** ; le
+câblage réel est écrit derrière des interrupteurs.
+
+### Ce qui est fait
+
+- **La piste générative** : une piste audio qui porte `gen: { model, task }`
+  (« + Piste » → Générative · ACE-Step ou YuE2, ou le navigateur,
+  Instruments → Génératif). Elle joue, se mixe, s'exporte, se sépare comme
+  les autres. Sur sa voie, **tirer sur le vide dessine une région**, aimantée
+  à la grille (Alt : la double croche ; Maj ou Ctrl : le cadre de sélection,
+  comme ailleurs ; double-clic : quatre mesures).
+- **La région** est un clip audio qui porte `gen` (modèle, tâche, réglages,
+  contexte, prises) ; sans prise, elle n'a pas de son (hachurée, « à
+  générer »). Elle s'ouvre dans le **panneau du bas** (vue de détail, onglet
+  Clip), dessiné depuis le schéma : à gauche la région, le modèle, la tâche
+  (chacune dit « essai », « réel » ou « pas câblé » et pourquoi), **ce qui
+  vient du projet tout seul** (tempo, mesure, tonalité ramenée à majeur ou
+  mineur, durée et ce que le modèle en fera, sections couvertes), la case des
+  attracteurs ; au milieu les réglages de la tâche (**seulement** : les douze
+  pistes d'ACE-Step ; **ce qui joue autour** : les pistes cochées, la marge ;
+  **audio de style** ou **son à varier** : un clip glissé depuis
+  l'arrangement, le navigateur, la bibliothèque ou le disque ; style,
+  paroles, graine, **prises** 1 à 8 ; les réglages avancés repliés), et ce que
+  le modèle n'a pas, barré avec la raison ; à droite les **prises** et
+  **Générer** (le seul orange ; le GUIDE s'éteint).
+- **Le contexte** (une piste, compléter, repeindre, isoler) : les pistes
+  cochées sont rendues hors temps réel sur la région ± la marge par le moteur
+  de la page (`renderMix`, le même graphe que l'export), rangées dans la
+  bibliothèque et envoyées comme `src_audio` ; la région y garde sa place
+  (`repainting_start/end`). ACE-Step rend la durée exacte de ce qu'on lui
+  envoie (étude § 2.3) : la prise tombe calée par construction (`off` = la
+  marge).
+- **Les prises** (les « takes » de Live) : N propositions, graine, graine + 1…
+  La première joue ; on écoute (▶ depuis la région), on choisit, on retire ;
+  « Garder » en fait un clip audio ordinaire ; « En pistes » pose une piste
+  muette par prise ; clic droit sur la région : les prises, la suivante.
+  **L'empreinte** (étude § 6, canon d'ODIO_01 § 2.9) : une prise dont les
+  entrées ont changé (tempo, mesure, tonalité, réglages, longueur, place pour
+  un contexte) reste jouable et le dit (« périmée »).
+- **YuE2 et sa partition** : « Écrire la partition » (travail `music.yue.abc`,
+  YuE2GenerateABC seul, rien n'est chanté) ; l'ABC s'affiche, se modifie, est
+  **jugé par abc_tools.py** (celui du dépôt YuE, chargé tel quel) et dessiné
+  (chant, thème, accords) ; trois cases **Chant** (voix Vocal), **Thème**
+  (Ins), **Accords** reçoivent un clip de notes glissé depuis l'arrangement, un
+  motif, un clip MIDI de la bibliothèque, ou le clic droit d'un clip de notes
+  (« Comme chant / thème / accords »). Notre sérialiseur
+  (`generatif_abc.js`) relit la partition par abc_tools, remplace la voix,
+  réécrit le dialecte (la note la plus haute quand deux se chevauchent ; les
+  accords reconnus parmi les 15 qualités, basse en barre oblique) ; les prises
+  chantent cette partition (`abc`), qui reste rangée avec elles ; « Par nos
+  instruments » la joue tout de suite sur des pistes de notes ; « D'une
+  prise » reprend celle qu'une prise a chantée.
+- **Clic droit sur un clip audio** : « Séparer en stems » (le contrat
+  existant), **« Extraire le MIDI »** (notes par basic-pitch, partition par
+  SheetSage2, batterie par ADTOF, piano par ByteDance, « séparer d'abord »,
+  quantifier ; les réglages de basic-pitch repliés), « Comme audio de style »
+  (la case de la région ouverte en bas). Le MIDI se pose en clips de notes sur
+  une piste neuve **sous le clip, au même départ** (transposition, vitesse et
+  sens du clip suivis), un canal par piste (chant, thème, accords, batterie).
+- **La bibliothèque MIDI** : une sorte `midi` ajoutée à la bibliothèque du
+  portail (`server/core/library.py`, `.mid`/`.midi` — **un fichier du
+  socle**, au plus court) ; le navigateur a sa rubrique **MIDI** (chercher,
+  glisser sur une piste d'instrument : ses notes ; ailleurs : une piste par
+  canal ; renommer, télécharger le .mid, corbeille ; « + Le clip choisi » ;
+  déposer des .mid) ; clic droit sur un clip de notes : « Ranger dans la
+  bibliothèque MIDI ». Le fichier s'écrit et se lit côté serveur seulement
+  (SMF format 0 ; la batterie en General MIDI au canal 10).
+- Le tiroir « Générer » (un morceau entier) renvoie vers les pistes génératives.
+
+### Le schéma des paramètres
+
+`musique/generatif_modeles.json` : **la seule vérité**, lue par la page
+(`generatif_modeles.js` dessine le panneau) et par le serveur (`music_gen.py`,
+`music_midi.py` valident contre lui : un réglage qui n'est pas celui de la
+tâche est refusé, une valeur hors bornes aussi). Chaque paramètre : `label`,
+`type`, `min`/`max`/`step`, `defaut`, `projet` (ce qui vient de la session),
+`si` (sa condition), `envoi` (le nom du champ chez le modèle), `source`.
+
+| modèle · tâche | paramètres (hors projet) | réel |
+|---|---|---|
+| ACE · morceau (`text2music`) | style 512, sans voix, paroles 4096, langue (51), graine, prises 1-8, audio de style ; avancés : pas 1-200 (50), guidage 1-15 (6), décalage 1-5 (3), codes LM, température / guidage / top-p du LM | ComfyUI, câblé (`"music_engine": "ace-step"`) ; l'audio de style par ReferenceTimbreAudio, écrit, jamais rendu |
+| ACE · une piste (`lego`) | seulement (12 pistes), style, style du morceau entier, contexte + marge 0-8, graine, prises, audio de style, avancés + méthode ode/sde | serveur d'API d'ACE-Step pas câblé ; modèle base à télécharger (acestep-v15-base, 4 791 792 407 o, MIT) |
+| ACE · compléter, isoler | ajouter (plusieurs pistes) / seulement, contexte, marge… | idem (base seulement) |
+| ACE · repeindre | contexte, conservation (prudente, équilibrée, libre), intensité 0-1 ; zone 3 à 90 s | serveur d'API pas câblé (sft sur disque) |
+| ACE · variation (`cover`) | son à varier, fidélité 0-1 (1,0), bruit de départ, style, paroles… | idem |
+| YuE2 · chanson | style 2000 (+ « 112 BPM, F minor » ajoutés seuls), paroles 12 000, graine, prises 1-8, partition full / melody / off, la partition (60 000), précision bf16 / int8 | ComfyUI, câblé (`"music_yue": true`) |
+| YuE2 · reprise d'un clip | clip à reprendre (SheetSage2), style, paroles… | ComfyUI, câblé |
+| YuE2 : absents, avec la raison | seulement une piste, audio de style, ce qui joue autour, tempo et tonalité (écrits dans le style et la partition) | — |
+| MIDI · notes (basic-pitch 0.4.0) | séparer d'abord + le stem, seuils d'attaque 0,5 et de tenue 0,3, note la plus courte 127,7 ms, fréquences mini/maxi, melodia, quantifier | `"music_midi": true`, venv d'AUDIOLAB |
+| MIDI · partition (SheetSage2) | ce qu'il relève (full / melody), quantifier | ComfyUI (voie audio) |
+| MIDI · batterie (ADTOF), piano (ByteDance) | quantifier | à télécharger (ADTOF, taille non relevée, non commercial ; le point de contrôle du piano) |
+
+Ce qui vient du projet, recalculé par le serveur depuis les nombres de la
+session : tempo (30-300 pour ACE : 25 est refusé), mesure, tonalité
+(`aceKey`), durée de la région (sous 10 s : 10 s demandées, le clip n'en
+joue que la région ; au-delà de 600 s : refusé), sections (le plan d'une
+partition d'essai). Les interrupteurs `music_yue`, `music_stems`,
+`music_midi` sont maintenant déclarés (Admin → Câblage) ; `music_yue` était
+attendu par `admin.py`.
+
+### Le serveur
+
+| route | travail | module |
+|---|---|---|
+| `GET /api/music/gen/engines` · `POST /api/music/gen/generate` | `music.gen.ace`, `music.gen.yue` (les prises d'une région) | `music_gen.py` (neuf) |
+| `POST /api/music/yue/abc` · `POST /api/music/yue/abc/check` | `music.yue.abc` (la partition seule) ; le jugement par abc_tools | `music_yue.py` |
+| `GET /api/music/midi/options` · `POST /api/music/midi/extract` · `POST /api/music/midi` · `GET /api/music/midi/{id}/notes` | `music.midi` (notes, batterie, piano), `music.midi.abc` (partition) | `music_midi.py` (neuf) |
+
+`music.py` accepte les pistes et les régions génératives (`gen` : modèle
+connu, 4 ko sur une piste, 96 ko et 64 prises sur une région ; un clip audio
+sans son seulement s'il est une région) et dit les sept contrats.
+`music.yue` juge désormais une partition fournie par abc_tools avant le
+modèle, et son moteur d'essai chante sa partition (celle d'essai est écrite
+dans le dialecte natif). Les moteurs d'essai : une boucle de deux mesures
+synthétisée par famille (batterie, basse, pincé, clavier, arpège, nappe,
+voix…) dans la gamme du projet ; une variation par un filtre ffmpeg sur le
+son source ; la partition jouée en sinus ; le MIDI par l'énergie et les
+passages à zéro, ramené à la gamme.
+
+### Ce qui a été vu (DGX2, portail d'essai :8807, `sr_odio_gen_drive.mjs`)
+
+`python3 tools/check.py` sur un clone du dépôt (1f64157) avec ces fichiers :
+**692 passés, 0 en échec** (dont les selftests de `music_gen`, `music_midi`,
+et ceux de `music_yue` pour la partition). Pilotage dans Chromium sans
+affichage, **aucune erreur de console** :
+
+- « + Piste » → Générative · ACE-Step : piste `gen: {ace, lego}` ; une région
+  tirée de la mesure 5 à 9 ; le panneau : 112 → « bpm 112 », FA MIN →
+  « F minor », 4/4, 8,6 s, « celle du contexte » ; la tâche « une piste »,
+  batterie choisie, Batterie, Basse, Nappe, Lead autour ; un seul orange.
+- 3 prises (graines n, n + 1, n + 2), chacune **17,14 s = la fenêtre (8
+  mesures)**, la région à 4,29 s dedans (2 mesures de marge), parent = le
+  contexte rendu ; la 2ᵉ choisie : elle joue (−9 dBFS sur la tranche) ;
+  gardée : un clip audio ordinaire.
+- Un clip de l'arrangement **glissé dans « audio de style »** d'une autre
+  région : la case le prend, le clip ne bouge pas.
+- YuE2 par le navigateur ; ses absents dits (seulement une piste, audio de
+  style, ce qui joue autour) ; la partition d'essai écrite (Q:1/4=112, K:Fm) ;
+  le Lead (mesure 9) en **Chant** : 18 notes ; la Nappe en **Accords** :
+  **Fm, Db, Ab/C, Eb** — jugée bonne par abc_tools (4 mesures) ; deux prises
+  qui chantent **cette** partition ; « Par nos instruments » : pistes Chant et
+  Accords ; le tempo passé à 120 : les deux prises « périmées », revenu à
+  112 : plus aucune.
+- Clic droit sur un clip audio : Séparer en stems, **Extraire le MIDI** ; la
+  modale (quatre méthodes, licences, réglages) ; 26 notes posées sur une
+  piste « MIDI · … » **sous le clip, au même départ** ; l'objet `midi` dans la
+  bibliothèque, parent = le son.
+- La rubrique MIDI du navigateur ; un clip MIDI **glissé sur le Lead** à la
+  mesure 3 : un clip de 26 notes, qui **joue** (−20 dBFS sur la tranche du
+  Lead, ses autres clips rendus muets). Le glisser se fait par ses
+  événements (dragstart, dragover, drop) : `dragTo` de Playwright attend une
+  navigation après un glisser de lien et ne finit pas.
+
+Captures (scratchpad de la session, `odio_gen/`) : menu, piste, région en
+dessin, panneau, prises, audio de style glissé, partition écrite et nourrie,
+prises YuE2, périmées, menu du clip, modale MIDI, MIDI posé, bibliothèque,
+clip MIDI qui joue.
+
+### Ce qui n'est pas fait, ou pas beau
+
+- **Rien n'a été rendu par un modèle** ; les moteurs d'essai sont des repères.
+  Ce que rend `lego` (la piste seule ou le mélange) : non documenté, à
+  relever au premier rendu (étude § 7).
+- Le **nodal** : la piste générative y apparaît par son lecteur (le module
+  `player`), sans entrées propres. Le module `gen` de l'étude (§ 6.2 : entrées
+  contexte, motifs, style ; réglages captables par un attracteur) demande
+  `nodal.js` et `FACETTES` de `banc.js`, d'autres chantiers : pas fait.
+- **Les attracteurs** : la case liste les segments du banc qui couvrent la
+  région ; « ce qu'ils ramènent » attend la fonction que `banc.js` doit
+  exposer (cherchée sous `attracteursActifs`, `attracteurs`,
+  `activeAttractors`…) : vide, avec la raison.
+- Les **étages** de l'étude (intent → plan → proxy → stems → final) ne sont
+  pas dessinés ; seule l'empreinte l'est.
+- « Séparer d'abord » ne s'enchaîne pas en réel (deux voies : la séparation
+  sur `audio`, la transcription sur `cpu`) : refusé avec la raison ; en essai,
+  le filtre du stem.
+- La mesure 6 s'écrit **M:6/4** dans la partition (une mesure d'ODIO compte
+  6 noires sur la grille de 4 doubles croches) ; l'étude proposait 6/8 : à
+  trancher par Cal.
+- Asset (`asset/`, `commun/shell.js`) ne connaît pas encore la sorte `midi` :
+  ses clips s'y listent sans vignette ni libellé traduit.
+- Le panneau est dense sous 1400 px (trois colonnes) ; la partition éditée à
+  la main n'a pas de coloration, seul abc_tools la juge (à 700 ms de la
+  frappe).

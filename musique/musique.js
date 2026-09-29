@@ -23,8 +23,10 @@ import { migrate, History, copyClips, pasteClips, splitClip, consolidatePatterns
 import { createTimeline } from './timeline.js';
 import { createConsole } from './console.js';
 import { createNodal } from './nodal.js';
+import { createJouets } from './jouets/index.js';   // jouets : les jouets du Playground de Cal
 import { createRecorder } from './enregistrement.js';
 import { openGenerative, options, bestStems, STEM_FR } from './generatif.js';
+import { GEN_KINDS, genJobDone } from './generatif_region.js';   // génératif : les prises d'une région, sa partition, le MIDI extrait
 import { openGuide } from './guide.js';
 
 mountHeader('music', { sub: 'studio · YuE · stems' });
@@ -245,7 +247,7 @@ export const app = {
     const P = S.proj, out = [t.src], seen = new Set(out);
     let cur = t.src;
     for (;;) {
-      const next = P.cables.map((c) => c.a === cur && typeof c.send !== 'number' && app.mod(c.b)).find((m) => m && m.track === trackId && !seen.has(m.id));
+      const next = P.cables.map((c) => c.a === cur && typeof c.send !== 'number' && !c.t && app.mod(c.b)).find((m) => m && m.track === trackId && !seen.has(m.id));   // jouets : !c.t, le son seul
       if (!next) break;
       out.push(next.id); seen.add(next.id);
       if (next.type === 'strip') break;
@@ -259,10 +261,10 @@ export const app = {
     const P = S.proj, old = app.chain(trackId).map((m) => m.id);
     const pairs = (arr) => arr.slice(1).map((b, i) => `${arr[i]}>${b}`);
     const drop = new Set(pairs(old));
-    P.cables = P.cables.filter((c) => !drop.has(`${c.a}>${c.b}`));
+    P.cables = P.cables.filter((c) => c.t || !drop.has(`${c.a}>${c.b}`));   // jouets : c.t, les câbles de notes et de valeur restent
     for (const k of pairs(mods.map((m) => m.id))) {
       const [a, b] = k.split('>');
-      if (!P.cables.some((c) => c.a === a && c.b === b)) P.cables.push({ a, b });
+      if (!P.cables.some((c) => c.a === a && c.b === b && !c.t)) P.cables.push({ a, b });   // jouets : !c.t
     }
   },
 
@@ -279,7 +281,7 @@ export const app = {
         ch.splice(strip, 0, m);
         app.setChain(trackId, ch);
         const st = app.mod(ch[ch.length - 1].id);
-        if (x === undefined) st.x = m.x + 320;
+        if (x === undefined) st.x = m.x + Math.max(320, (app.toys?.width(m) || 0) + 84);   // jouets : une carte de jouet est plus large
       }
     }
     S.sel.mod = m.id;
@@ -290,8 +292,8 @@ export const app = {
   removeModule(id) {
     const P = S.proj, m = app.mod(id);
     if (!m || MODULES[m.type].role !== 'effect') return;
-    const ins = P.cables.filter((c) => c.b === id && typeof c.send !== 'number').map((c) => c.a);
-    const outs = P.cables.filter((c) => c.a === id).map((c) => c.b);
+    const ins = P.cables.filter((c) => c.b === id && typeof c.send !== 'number' && !c.t).map((c) => c.a);   // jouets : !c.t, le son seul se referme
+    const outs = P.cables.filter((c) => c.a === id && !c.t).map((c) => c.b);   // jouets : idem
     P.cables = P.cables.filter((c) => c.a !== id && c.b !== id);
     P.modules = P.modules.filter((x) => x.id !== id);
     P.auto = (P.auto || []).filter((L) => L.mod !== id);
@@ -317,7 +319,7 @@ export const app = {
       if (n === a) return true;
       if (seen.has(n)) continue;
       seen.add(n);
-      for (const c of P.cables) if (c.a === n) stack.push(c.b);
+      for (const c of P.cables) if (c.a === n && !c.t) stack.push(c.b);   // jouets : !c.t, une boucle de son seulement
     }
     return false;
   },
@@ -647,6 +649,7 @@ export const app = {
 };
 const rec = createRecorder(app);
 app.rec = rec;
+app.toys = createJouets(app);   // jouets : les jouets posés, leur boucle, leurs câbles de notes et de valeur
 
 function fmtBar(beat) {
   const b = Math.max(0, beat), bpb = S.proj?.sig || 4;
@@ -1007,6 +1010,7 @@ function render(full = false) {
   if (S.view !== 'nodal') views.nodal?.hide?.();
   document.body.dataset.view = S.view;
   v.render();
+  app.toys?.wake();   // jouets : un projet qui a des jouets les fait vivre, dans toutes les vues
 }
 
 // la tête de lecture, les vu-mètres, la position : à chaque image
@@ -1236,6 +1240,8 @@ function watchPending() {
         S.sel.clips = made.map((c) => c.id); S.sel.clip = made[0]?.id || null;
         toast(`${made.length} pistes posées sous l'original, alignées ; l'original est rendu muet`, 6000);
         app.commit('graph');
+      } else if (GEN_KINDS.has(pd.kind)) {
+        await genJobDone(app, pd, full);   // génératif : generatif_region.js
       }
       document.dispatchEvent(new CustomEvent('mu:placed'));
     }

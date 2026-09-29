@@ -265,7 +265,10 @@ export async function openGenerative(app) {
       : !yue.ok ? `YuE2 absent : ${yue.why}` : yo.ready === false ? `YuE2 indisponible : ${yo.why}` : '';
     if (why) { go.disabled = true; go.title = why; }
     go.addEventListener('click', () => launch(go));
-    put(dr.body, engineBox(), styleBox(), planBox(), settingsBox(), resultsBox(),
+    put(dr.body,
+      // le génératif par région (generatif_region.js) : une piste seule, calée sur la région, en prises
+      el('p', { class: 'gen-hint' }, 'Ici, un morceau entier. Une seule piste (la batterie, une guitare), une région précise, une partition à relire : « + Piste » → Générative, puis tirer sur sa voie ; le panneau du bas la règle.'),
+      engineBox(), styleBox(), planBox(), settingsBox(), resultsBox(),
       el('div', { class: 'gen-foot' },
         el('span', { class: why ? 'why' : 'lbl' }, why || `le morceau se pose sur une piste audio neuve ${G.at === 'plan' ? `au début du plan (${app.bar(planStart())})` : `à la tête de lecture (${app.bar(app.pos())})`} et entre dans la bibliothèque (Musique)`),
         el('span', { class: 'sp' }), go));

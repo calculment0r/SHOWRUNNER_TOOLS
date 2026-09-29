@@ -17,12 +17,17 @@
 //                ou les instruments et effets de la piste (Instrument) ;
 //                Maj+Tab bascule ; le séparateur se tire, sa hauteur reste
 //   à gauche     le navigateur, en accordéon, repliable ; sa largeur se tire
+//   génératif    une piste générative (+ Piste, ou le navigateur) : tirer sur
+//                sa voie dessine une région, que le panneau du bas fait générer
+//                en prises (generatif_region.js) ; clic droit sur un clip audio :
+//                Extraire le MIDI, Séparer en stems ; sur un clip de notes :
+//                le ranger dans la bibliothèque MIDI, le mettre dans une partition
 //
 // Gestes et raccourcis : ceux de Live 12 (manuel de référence, chapitres
 // « Live Keyboard Shortcuts » et « Arrangement View », ableton.com/en/manual,
 // relevés le 29/09/2026) — le détail dans guide.js.
 
-import { toast, api, ITEM_MIME } from '../commun/shell.js';
+import { toast, api, ITEM_MIME, uploadFile } from '../commun/shell.js';
 import { MODULES, TRACK_KINDS, COLORS, COLOR_FR, AUTOMATABLE, SECTION_TAGS, SECTION_NAMES, SOURCES_OF,
   spec, val, fmt, toNorm, fromNorm, drumVoicesOf, guessTag, moduleName } from './modules.js';
 import { peaks, projEnd, interp, clipBuffer, audioGeom } from './moteur.js';
@@ -30,6 +35,10 @@ import { el, knob, menu, tok, clamp, put, confirmBox, inlineEdit, splitter } fro
 import { sectionAt, duplicateSection, moveSection, swapSection, removeSection, trimStart } from './projet.js';
 import { createDock } from './editeurs.js';
 import { createBrowser } from './navigateur.js';
+// le génératif (29/09) : la piste générative et ses régions, le MIDI
+import { isGenTrack, isRegion, genTrackChoices, addGenTrack, newRegion, drawRegion, regionMenuItems, genTarget, soundSlotsOf, useSound, injectFrom } from './generatif_region.js';
+import { openExtract, placeMidi, saveClipMidi } from './generatif_midi.js';
+import { schemaNow } from './generatif_modeles.js';
 
 const HEAD_W = 224;
 const SEC_H = 22, BAR_H = 30, RULER_H = SEC_H + BAR_H, ARC_H = 58, AUTO_H = 46;
@@ -119,7 +128,7 @@ export function createTimeline(app) {
 
   function addTrackMenu(e) {
     const r = e.currentTarget.getBoundingClientRect();
-    menu(r.left, r.bottom + 4, app.trackChoices());
+    menu(r.left, r.bottom + 4, [...app.trackChoices(), '-', ...genTrackChoices(app)]);
   }
 
   // zoom horizontal ancré sur un point de l'écran (le curseur, ou le milieu)
@@ -473,7 +482,7 @@ export function createTimeline(app) {
     const mtr = el('div', { class: 'ar-mtr' }, el('i'));
     meters.push([t.strip, mtr]);
     const nm = el('span', { class: 'nm', title: 'double-clic : renommer (Ctrl+R)', ondblclick: (e) => { e.stopPropagation(); renameTrack(t, nm); } }, t.name);
-    const box = el('div', { class: `ar-head${S.sel.track === t.id ? ' sel' : ''}${t.mute ? ' muted' : ''}`, style: { '--c': `var(--${t.color})`, height: `${th()}px` },
+    const box = el('div', { class: `ar-head${S.sel.track === t.id ? ' sel' : ''}${t.mute ? ' muted' : ''}${isGenTrack(t) ? ' gen' : ''}`, style: { '--c': `var(--${t.color})`, height: `${th()}px` },
       'data-track': t.id, onclick: () => app.selectTrack(t.id) },
     el('i', { class: 'bar', title: 'couleur', onclick: (e) => { e.stopPropagation(); colorMenu(e, t); } }),
     el('div', { class: 'txt' },
@@ -525,13 +534,20 @@ export function createTimeline(app) {
     const ln = el('div', { class: `ar-lane${S.sel.track === t.id ? ' sel' : ''}`, 'data-track': t.id,
       style: { width: `${width()}px`, height: `${th()}px`, '--bar': `${X(p.sig)}px`, '--beat': `${X(1)}px`, '--c': `var(--${t.color})` } });
     for (const c of p.clips.filter((x) => x.track === t.id)) ln.append(clipEl(c, t));
+    if (isGenTrack(t)) ln.classList.add('gen');
     ln.addEventListener('dblclick', (e) => {
       if (e.target !== ln) return;
       const b = Math.max(0, Math.floor(beatAt(e.clientX) / p.sig) * p.sig);
-      if (t.kind === 'audio') app.addAudio(t.id, b);
+      if (isGenTrack(t)) newRegion(app, t, b, b + 4 * p.sig);          // une région de quatre mesures
+      else if (t.kind === 'audio') app.addAudio(t.id, b);
       else { const c = app.newClip(t.id, b); if (c) app.showDetail('clip'); }
     });
-    ln.addEventListener('pointerdown', (e) => { if (e.target === ln && e.button === 0) startMarquee(e, t); });
+    // sur une piste générative, tirer sur le vide dessine une région (Maj ou
+    // Ctrl : le cadre de sélection, comme ailleurs)
+    ln.addEventListener('pointerdown', (e) => {
+      if (e.target !== ln || e.button !== 0) return;
+      if (isGenTrack(t) && !e.shiftKey && !e.ctrlKey && !e.metaKey) startRegion(e, t, ln); else startMarquee(e, t);
+    });
     ln.addEventListener('dragover', (e) => onDragOver(e, t));
     ln.addEventListener('dragleave', () => { dropLine.style.display = 'none'; });
     ln.addEventListener('drop', (e) => onDrop(e, t));
@@ -562,6 +578,11 @@ export function createTimeline(app) {
   // ── un clip ──
   function clipLabel(c, t, pat) {
     if (c.name) return c.name;
+    if (isRegion(c)) {
+      const s = schemaNow(), g = c.gen;
+      const M = s?.modeles?.[g.model], T = M?.taches?.[g.task];
+      return ['région', M?.court || g.model, T?.nom || g.task, g.v?.track_name ? s.pistes.fr[g.v.track_name] : ''].filter(Boolean).join(' · ');
+    }
     const sec = sectionAt(P(), c.start);
     const nm = t.kind === 'audio' ? '' : pat?.name || '';
     return sec ? `${sec.name}${nm ? ` · ${nm}` : ''}` : nm;
@@ -572,14 +593,16 @@ export function createTimeline(app) {
     const pat = c.pat && app.pat(c.pat);
     const cv = el('canvas', { class: 'cv' });
     const ttl = el('span', { class: 't' }, clipLabel(c, t, pat));
+    const reg = isRegion(c), takes = reg ? c.gen.takes.length : 0;
     const ch = el('div', { class: 'ch', title: 'double-clic : renommer le clip' }, el('i', { class: 'sq' }), ttl,
       c.loop ? el('span', { class: 'lp', title: 'en boucle' }, '∞') : null, c.rev ? el('span', { class: 'lp', title: 'à l\'envers' }, '⇆') : null,
-      c.pitch ? el('span', { class: 'lp', title: 'transposé' }, `${c.pitch > 0 ? '+' : ''}${(+c.pitch).toFixed(1)}`) : null);
+      c.pitch ? el('span', { class: 'lp', title: 'transposé' }, `${c.pitch > 0 ? '+' : ''}${(+c.pitch).toFixed(1)}`) : null,
+      reg && takes ? el('span', { class: 'lp gr-tk', title: 'la prise qui joue · clic droit : les autres' }, `${(c.gen.take ?? -1) + 1}/${takes}`) : null);
     const on = sel().has(c.id);
-    const box = el('div', { class: `clip${on ? ' sel' : ''}${c.mute || t.mute ? ' muted' : ''}${c.loop ? ' looped' : ''}`, 'data-id': c.id,
+    const box = el('div', { class: `clip${on ? ' sel' : ''}${c.mute || t.mute ? ' muted' : ''}${c.loop ? ' looped' : ''}${reg ? ` gen-region${c.item ? ' has' : ''}` : ''}`, 'data-id': c.id,
       style: { left: `${X(c.start)}px`, width: `${Math.max(4, X(c.len))}px` } },
     ch, cv, el('i', { class: 'rs l', title: 'rogner le début (la fin reste, le contenu reste calé)' }), el('i', { class: 'rs r', title: t.kind === 'audio' ? 'rogner la fin' : 'rogner ou rallonger la fin : le motif se répète' }));
-    if (t.kind === 'audio' && !c.name) app.loadItem(c.item).then((it) => { ttl.textContent = `${clipLabel(c, t, null)}${clipLabel(c, t, null) ? ' · ' : ''}${it.title}`; box.title = it.title; }).catch(() => { ttl.textContent = 'son introuvable'; });
+    if (t.kind === 'audio' && !c.name && c.item) app.loadItem(c.item).then((it) => { ttl.textContent = `${clipLabel(c, t, null)}${clipLabel(c, t, null) ? ' · ' : ''}${it.title}`; box.title = it.title; }).catch(() => { ttl.textContent = 'son introuvable'; });
     requestAnimationFrame(() => drawClip(cv, c, t, pat));
     box.addEventListener('dblclick', (e) => {
       e.stopPropagation();
@@ -604,7 +627,11 @@ export function createTimeline(app) {
         paintSel();
         return;
       }
-      if (!sel().has(c.id)) { app.selectClips([c.id], true); paintSel(); }
+      // le panneau génératif ouvert en bas : il reste là tant que le geste n'est
+      // pas fini (un clip glissé jusque dans une de ses cases) ; un simple clic
+      // l'ouvre ensuite sur le clip, comme d'habitude (dragClips, up)
+      const keepDock = document.body.classList.contains('mu-gen-dock');
+      if (!sel().has(c.id)) { app.selectClips([c.id], true); paintSel(keepDock); }
       else { S.sel.clip = c.id; S.sel.track = t.id; }
       dragClips(e, c, t, box, edge);
     });
@@ -613,7 +640,15 @@ export function createTimeline(app) {
 
   function clipMenu(e, c, t, ttl) {
     const n = (S.sel.clips || []).length;
+    // le génératif : les prises d'une région ; un clip audio comme son de la
+    // région montrée en bas ; un clip de notes dans sa partition (YuE2)
+    const reg = isRegion(c), tgt = genTarget(app), sch = schemaNow();
+    const slots = c.item && tgt && tgt.id !== c.id ? soundSlotsOf(app) : [];
+    const PT = sch?.modeles?.yue?.partition;
+    const yue = tgt && tgt.id !== c.id && tgt.gen.model === 'yue' && (tgt.gen.v?.mode ?? 'full') !== 'off' && PT && t.kind !== 'drums';
+    const noSound = 'une région sans prise n\'a pas encore de son';
     menu(e.clientX, e.clientY, [
+      ...(reg ? regionMenuItems(app, c) : []),
       { head: n > 1 ? `${n} clips` : clipLabel(c, t, app.pat(c.pat)) || 'clip' },
       { label: 'Ouvrir dans la vue Clip', onclick: () => app.showDetail('clip') },
       { label: 'Renommer', sub: 'Ctrl+R', onclick: () => renameClip(c, ttl, c.name || ttl.textContent) },
@@ -626,11 +661,17 @@ export function createTimeline(app) {
       { label: 'Coller à la tête de lecture', sub: 'Ctrl+V', disabled: !app.board, onclick: () => app.paste() },
       { label: c.mute ? 'Activer' : 'Désactiver', sub: '0', onclick: () => app.muteSel() },
       ...(t.kind === 'audio' ? [
-        { label: c.rev ? 'À l\'endroit' : 'Inverser', sub: 'R', onclick: () => app.reverseSel() },
-        { label: c.loop ? 'Ne plus boucler le son' : 'Boucler le son', onclick: () => app.toggleLoop(c.id) },
-        { label: 'Séparer en pistes', sub: 'voix · batterie · basse · autre', onclick: () => app.stems(c.id) },
+        { label: c.rev ? 'À l\'endroit' : 'Inverser', sub: 'R', disabled: !c.item, why: noSound, onclick: () => app.reverseSel() },
+        { label: c.loop ? 'Ne plus boucler le son' : 'Boucler le son', disabled: !c.item, why: noSound, onclick: () => app.toggleLoop(c.id) },
+        { label: 'Séparer en stems', sub: 'voix · batterie · basse · autre', disabled: !c.item, why: noSound, onclick: () => app.stems(c.id) },
+        { label: 'Extraire le MIDI', sub: 'notes · partition · batterie', disabled: !c.item, why: noSound, onclick: () => openExtract(app, c.id) },
+        ...(slots.length ? ['-', { head: `pour ${tgt.name || 'la région'} (génératif)` }] : []),
+        ...slots.map((sl) => ({ label: `Comme ${sl.label}`, sub: 'la case du panneau du bas', onclick: () => useSound(app, sl.region, sl.pid, c.item) })),
       ] : [
         { label: 'Motif à part (copie)', onclick: () => app.uniqueClip(c.id) },
+        { label: 'Ranger dans la bibliothèque MIDI', sub: 'navigateur, MIDI', onclick: () => saveClipMidi(app, c) },
+        ...(yue ? ['-', { head: `dans la partition de ${tgt.name || 'la région YuE2'}` },
+          ...Object.entries(PT.cases).map(([k, cs]) => ({ label: `Comme ${cs.label}`, sub: `voix ${cs.voix}`, onclick: () => injectFrom(app, tgt, sch, k, { clip: c.id }) }))] : []),
       ]),
       '-', { label: 'Retirer', sub: 'Suppr', onclick: () => app.removeSel() },
     ]);
@@ -638,12 +679,12 @@ export function createTimeline(app) {
 
   // la sélection repeinte sans refaire la grille : un double-clic qui suit
   // (renommer) tombe encore sur le même élément
-  function paintSel() {
+  function paintSel(keepDock = false) {
     const s = sel();
     for (const b of grid.querySelectorAll('.clip')) b.classList.toggle('sel', s.has(b.dataset.id));
     for (const b of grid.querySelectorAll('.ar-head, .ar-lane')) b.classList.toggle('sel', b.dataset.track === S.sel.track);
     paintTools();
-    if (ui().dock !== false) dock.render();
+    if (ui().dock !== false && !keepDock) dock.render();
   }
 
   // Glisser des clips : le corps les déplace (Ctrl : les copie, Alt : sans
@@ -720,6 +761,20 @@ export function createTimeline(app) {
     const up = (ev) => {
       box.removeEventListener('pointermove', mv); box.removeEventListener('pointerup', up);
       if (!moved) { paintTools(); dock.render(); return; }
+      // lâché sur une case du panneau génératif (le son d'une région, une case
+      // de sa partition) : le clip y entre, il ne bouge pas
+      const slot = !edge && document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('[data-gen-slot], [data-gen-case]');
+      if (slot) {
+        for (const x of group) restore(x);
+        const reg = app.clip(slot.dataset.genRegion);
+        if (reg) Object.assign(S.sel, { clips: [reg.id], clip: reg.id, track: reg.track });   // la région reste en bas
+        app.commit('data');
+        if (!reg?.gen) return;
+        if (slot.dataset.genSlot) { if (c.item) useSound(app, reg, slot.dataset.genSlot, c.item); else toast('une région sans prise n\'a pas encore de son'); }
+        else if (c.pat) injectFrom(app, reg, schemaNow(), slot.dataset.genCase, { clip: c.id });
+        else toast('la partition prend des clips de notes (chant, thème, accords)');
+        return;
+      }
       if (!edge && dRow) {
         for (const x of group) {
           const tr = rows[rowOf(orig.get(x.id).track) + dRow];
@@ -741,6 +796,38 @@ export function createTimeline(app) {
     box.addEventListener('pointermove', mv); box.addEventListener('pointerup', up);
   }
   const sameKind = (a, b) => a && b && (a.kind === b.kind || (a.kind !== 'audio' && b.kind !== 'audio' && TRACK_KINDS[a.kind].pattern === TRACK_KINDS[b.kind].pattern));
+
+  // Dessiner une région générative : tirer sur le vide d'une piste générative,
+  // aimanté à la grille (au moins une double-croche ; Alt : la double-croche) ;
+  // un simple clic fait comme ailleurs (la tête de lecture, la piste)
+  function startRegion(e, t, ln) {
+    e.preventDefault();
+    const x0 = e.clientX, b0 = Math.max(0, beatAt(x0));
+    const draft = el('div', { class: 'gr-draft' }, el('span'));
+    let moved = false, a = b0, b = b0;
+    const mv = (ev) => {
+      if (Math.abs(ev.clientX - x0) > 4) moved = true;
+      if (!moved) return;
+      if (!draft.isConnected) ln.append(draft);
+      const q = ev.altKey ? 0.25 : Math.max(0.25, snapU() || 0.25), b1 = Math.max(0, beatAt(ev.clientX));
+      a = Math.floor(Math.min(b0, b1) / q) * q; b = Math.ceil(Math.max(b0, b1) / q) * q;
+      if (b - a < q) b = a + q;
+      Object.assign(draft.style, { left: `${X(a)}px`, width: `${X(b - a)}px` });
+      draft.firstChild.textContent = `région · ${app.bar(a)} → ${app.bar(b)} · ${((b - a) / P().sig).toFixed(2).replace(/\.?0+$/, '')} mes.`;
+    };
+    const up = (ev) => {
+      removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
+      draft.remove();
+      if (!moved) {
+        S.sel.clips = []; S.sel.clip = null;
+        if (!app.engine.running) app.engine.seek(Math.max(0, snapB(beatAt(ev.clientX), ev)));
+        app.selectTrack(t.id);
+        return;
+      }
+      newRegion(app, t, a, b);
+    };
+    addEventListener('pointermove', mv); addEventListener('pointerup', up);
+  }
 
   // tirer un cadre sur les voies vides : les clips qu'il touche ; un simple
   // clic pose la tête de lecture (à l'arrêt) et choisit la piste
@@ -786,6 +873,7 @@ export function createTimeline(app) {
     g.scale(dpr, dpr);
     g.fillStyle = tok(t.color);
     const p = P();
+    if (t.kind === 'audio' && isRegion(c) && !c.item) { drawRegion(g, w, h, c, app); return; }
     if (t.kind === 'audio') {
       const buf0 = app.engine.buffers.get(c.item);
       if (!buf0) { app.engine.buffer(c.item).then(() => drawClip(cv, c, t, pat)).catch(() => {}); return; }
@@ -865,24 +953,34 @@ export function createTimeline(app) {
     document.body.classList.remove('dropping');
     grid.querySelectorAll('.ar-lane.drop').forEach((x) => x.classList.remove('drop'));
     const at = atBeat ?? Math.max(0, snapB(beatAt(e.clientX), e));
-    const raw = e.dataTransfer.getData(ITEM_MIME);
+    const od = e.dataTransfer.getData('application/x-odio');
+    const raw = od ? '' : e.dataTransfer.getData(ITEM_MIME);
     if (raw) {
       try {
         const it = await api(`library/${JSON.parse(raw).id}`);
-        if (it.kind !== 'audio') { toast(`ODIO prend des sons ; « ${it.title} » est ${it.kind === 'image' ? 'une image' : it.kind === 'video' ? 'une vidéo' : 'un élément'}`); return; }
+        if (it.kind === 'midi') { await placeMidi(app, it.id, t?.id || null, at); return; }       // un clip MIDI : ses notes
+        if (it.kind !== 'audio') { toast(`ODIO prend des sons et des clips MIDI ; « ${it.title} » est ${it.kind === 'image' ? 'une image' : it.kind === 'video' ? 'une vidéo' : 'un élément'}`); return; }
         app.dropItem({ t: 'son', item: it }, t?.id || null, at);
       } catch (err) { toast(err.message); }
       return;
     }
-    if (e.dataTransfer.files?.length) {
+    if (e.dataTransfer.files?.length && !od) {
       const files = [...e.dataTransfer.files];
-      const audio = files.filter((f) => AUDIO_EXT.test(f.name) || f.type.startsWith('audio/'));
-      if (audio.length < files.length) toast(`${files.length - audio.length} fichier(s) ignoré(s) : ODIO prend WAV, MP3, FLAC, M4A, OGG`, 5000);
+      const mids = files.filter((f) => /\.midi?$/i.test(f.name));
+      const audio = files.filter((f) => !mids.includes(f) && (AUDIO_EXT.test(f.name) || f.type.startsWith('audio/')));
+      if (audio.length + mids.length < files.length) toast(`${files.length - audio.length - mids.length} fichier(s) ignoré(s) : ODIO prend WAV, MP3, FLAC, M4A, OGG et MIDI`, 5000);
       if (audio.length) app.importFiles(audio, { track: t?.id || null, at, perTrack: !t });
+      // un fichier MIDI du disque : la bibliothèque (Upload), puis ses notes
+      for (const f of mids) {
+        try { const it = await uploadFile(f, { tool: 'upload', via: 'odio' }); await placeMidi(app, it.id, t?.id || null, at); } catch (err) { toast(`${f.name} : ${err.message}`, 6000); }
+      }
+      if (mids.length) document.dispatchEvent(new CustomEvent('mu:midi'));
       return;
     }
     let d = null;
-    try { d = JSON.parse(e.dataTransfer.getData('application/x-odio')); } catch { return; }
+    try { d = JSON.parse(od); } catch { return; }
+    if (d.t === 'midi') { await placeMidi(app, d.id, t?.id || null, at); return; }
+    if (d.t === 'gen') { await addGenTrack(app, d.model); return; }
     app.dropItem(d, t?.id || null, at);
   }
 
@@ -897,6 +995,7 @@ export function createTimeline(app) {
     browser.render();
     dock.el.hidden = ui().dock === false;
     dockSplit.hidden = ui().dock === false;
+    if (ui().dock === false) document.body.classList.remove('mu-gen-dock');     // le panneau génératif fermé : le GUIDE reprend son orange
     dock.el.style.height = `${dockH()}px`;
     if (ui().dock !== false) dock.render();
     const Wd = width();
@@ -919,7 +1018,7 @@ export function createTimeline(app) {
       n.addEventListener('dragover', (e) => onDragOver(e, null));
       n.addEventListener('drop', (e) => onDrop(e, null));
     }
-    dropLane.addEventListener('dblclick', (e) => { const r = e.currentTarget.getBoundingClientRect(); menu(e.clientX, Math.min(e.clientY, r.bottom), app.trackChoices()); });
+    dropLane.addEventListener('dblclick', (e) => { const r = e.currentTarget.getBoundingClientRect(); menu(e.clientX, Math.min(e.clientY, r.bottom), [...app.trackChoices(), '-', ...genTrackChoices(app)]); });
     rows.push(dropHead, dropLane);
     paintZone();
     put(grid, ...rows, zone, ph, recBox, marquee, dropLine);

@@ -1,0 +1,94 @@
+/* ── JOUETS — les jetons et le cadre des jouets du Playground ─────────────
+   L'intérieur d'un jouet (son <canvas>) est dessiné avec la palette du
+   « ODIO-O1 Playground » de Cal (themes.dark de code.jsx) : ses teintes sont
+   des jetons ici, lus par scenes.js à l'exécution — aucune couleur n'est
+   écrite dans le code. Le Playground garde ses scènes sombres dans les deux
+   thèmes (« un écran encastré ne change pas de couleur », PLAYGROUND.md
+   d'ODIO_01) : ces jetons ne suivent pas le thème du portail.
+   Le cadre (en-tête, ports, molettes, choix, menu) est celui du nodal : ses
+   jetons sont ceux de commun/tokens.css. */
+
+:root {
+  --jo-room:  #060605;
+  --jo-face:  #131312;
+  --jo-ink:   #E6E6E2;
+  --jo-mut:   #8B8B81;
+  --jo-dim:   #78786F;
+  --jo-line:  #3A3A36;
+  --jo-rule:  #2A2A28;
+  --jo-tick:  #5A5A54;
+  --jo-tick2: #6F6F68;
+  --jo-well:  #080807;
+  --jo-acc:   #FFC400;
+  --jo-acc2:  #FF4A1C;
+  --jo-grn:   #5FD08A;
+  --jo-sur-acc: #0A0A09;          /* le chiffre posé sur un bac jaune (PACHINKO) */
+  --jo-pain:  #FFC43C;            /* la tranche crue, rgb(255,196,60) (GRILLE–PAIN) */
+  --jo-brule: #7D3814;            /* la tranche brûlée, rgb(125,56,20) */
+  /* une note = une couleur : hsl(38 + ((pc × 7) mod 12) × 26, 66 %, 56 %) —
+     noteCol() du Playground, écrite ici pour chaque classe de hauteur */
+  --jo-note-0:  hsl(38 66% 56%);
+  --jo-note-1:  hsl(220 66% 56%);
+  --jo-note-2:  hsl(90 66% 56%);
+  --jo-note-3:  hsl(272 66% 56%);
+  --jo-note-4:  hsl(142 66% 56%);
+  --jo-note-5:  hsl(324 66% 56%);
+  --jo-note-6:  hsl(194 66% 56%);
+  --jo-note-7:  hsl(64 66% 56%);
+  --jo-note-8:  hsl(246 66% 56%);
+  --jo-note-9:  hsl(116 66% 56%);
+  --jo-note-10: hsl(298 66% 56%);
+  --jo-note-11: hsl(168 66% 56%);
+  --jo-police: "IBM Plex Mono", monospace;
+}
+
+/* IBM Plex Mono (licence SIL OFL 1.1, plex/OFL.txt) : les fichiers et les
+   plages Unicode du Playground, graisses 400 et 500 (celles que ses canvas
+   emploient ; 600 et 700 y tombent sur 500, ici de même) */
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap;
+  src: url('plex/ibm-plex-mono-400-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap;
+  src: url('plex/ibm-plex-mono-400-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: swap;
+  src: url('plex/ibm-plex-mono-500-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: swap;
+  src: url('plex/ibm-plex-mono-500-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+/* ── la carte d'un jouet : le cadre du nodal, la scène dedans ── */
+/* une carte de jouet est grande : elle passe devant les cartes qu'elle recouvre
+   (sinon leurs ports, au-dessus des cartes, traverseraient sa scène) */
+.nd-card.jo { z-index: 3; }
+/* les filets sont sur l'en-tête et sous la scène, jamais sur elle : ses pixels restent ceux du Playground */
+.nd-card.jo .hd { height: 38px; box-sizing: border-box; padding-top: 0; padding-bottom: 0; box-shadow: inset 0 -1px 0 var(--line); }
+/* chaque scène est sa propre couche : la redessiner ne repeint pas le reste du nodal */
+.jo-stage { position: relative; flex: none; background: var(--jo-well); contain: strict; }
+.jo-cv { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; will-change: transform; }
+.nd-card.jo .bd { padding-top: 10px; box-shadow: inset 0 1px 0 var(--line); }
+.nd-card.jo .ft .io { gap: 10px; }
+.nd-card.jo .ft .io span { flex: none; white-space: nowrap; }
+.nd-card.jo .ft .io .lbl { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: center; text-transform: none; letter-spacing: .04em; }
+.nd-card.jo-shuf { box-shadow: inset 0 0 0 1.5px var(--line-or); }
+.nd-world.lod0 .nd-card.jo .bd, .nd-world.lod0 .nd-card.jo .ft { display: none; }
+
+/* les billes de la fontaine volent au-dessus de toutes les cartes */
+.jo-ov { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; }
+
+/* ── les ports typés : losange = notes, carré = valeur (le rond du nodal est le son) ── */
+.nd-card .port.jo-port { border-radius: 2px; }
+.nd-card .port.jo-notes { width: 11px; height: 11px; transform: translate(-50%, -50%) rotate(45deg); }
+.nd-card .port.jo-notes:hover { transform: translate(-50%, -50%) rotate(45deg) scale(1.45); }
+.nd-card .port.jo-mod { width: 10px; height: 10px; }
+.nd-card .port.jo-port.out { left: 100%; box-shadow: inset 0 0 0 2px var(--k); }
+.nd-card .port.jo-port.in { left: 0; }
+.nd-card .port.jo-port.hit { background: var(--k); }
+
+/* ── leurs câbles : pointillé rond = notes, tiret-point = valeur ── */
+.jo-wires .w.jo-notes .vis { stroke-dasharray: 1 6; stroke-linecap: round; stroke-width: 3; }
+.jo-wires .w.jo-mod .vis { stroke-dasharray: 12 4 2 4; stroke-width: 1.6; }
+.jo-wires .w.sel .vis { stroke: var(--or); opacity: 1; }
+
+.jo-side p { margin: 0; font-size: 12px; color: var(--ink2); }

@@ -53,6 +53,8 @@ from core import config, jobs, library
 from core.comfy import Comfy, ComfyError, fill
 from core.http import HttpError
 
+from . import music_jouets   # jouets : les jouets du Playground, leurs câbles de notes et de valeur
+
 WORKFLOWS = Path(__file__).resolve().parents[1] / "workflows"
 GEN_GRAPH = "music_ace15_xl_base.json"
 GEN_MODEL = "acestep_v1.5_xl_base_bf16.safetensors"
@@ -67,7 +69,7 @@ ODIO_SOURCES = {"rythme", "analog", "acid", "plaits"}
 ODIO_EFFECTS = {"reverbe", "chorus", "rtt", "comp3", "eq3", "filtre", "satura", "crush", "table", "volume"}
 SOURCES = {"drums", "synth", "sampler", "player"} | ODIO_SOURCES
 EFFECTS = {"delay", "reverb", "comp", "eq", "filter", "dist"} | ODIO_EFFECTS
-MODULE_TYPES = SOURCES | EFFECTS | {"strip", "master", "bus"}
+MODULE_TYPES = SOURCES | EFFECTS | {"strip", "master", "bus"} | music_jouets.TYPES   # jouets : leurs sortes
 TRACK_SOURCES = {"drums": {"drums", "rythme"}, "synth": {"synth", "analog", "acid", "plaits"},
                  "sampler": {"sampler"}, "audio": {"player"}, "bus": {"bus"}}
 COLORS = {"or", "cy", "amb", "grn2", "coral-1", "coral-2", "coral-3"}
@@ -78,6 +80,7 @@ MODES = {"major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "locria
          "pentamaj", "pentamin", "blues"}
 ARC_TO = ("lpf", "vol", "both")
 TEMPLATES = ("rythme", "session", "vide")
+GEN_MODELS = ("ace", "yue")          # musique/generatif_modeles.json, « modeles »
 
 # ── les listes du nœud TextEncodeAceStepAudio1.5 (object_info, DGX2, 28/09) ──
 _NOTES = ["C", "C#", "Db", "D", "D#", "Eb", "E", "F", "F#", "Gb", "G", "G#", "Ab", "A", "A#", "Bb", "B"]
@@ -222,6 +225,13 @@ def validate(p: dict) -> None:
             _str(t["sub"], 60, "sous-titre de piste")
         for k in ("mute", "solo", "arm"):
             _bool(t, k, f"{t['name']} : {k}")
+        # une piste générative (29/09) : une piste audio qui porte son modèle et
+        # sa tâche par défaut (musique/generatif_region.js, music_gen.py)
+        if t.get("gen") is not None:
+            if t["kind"] != "audio" or not isinstance(t["gen"], dict) or len(json.dumps(t["gen"])) > 4096:
+                raise ValueError(f"{t['name']} : une piste générative est une piste audio (4 ko de réglages au plus)")
+            if t["gen"].get("model") not in GEN_MODELS:
+                raise ValueError(f"{t['name']} : modèle génératif inconnu ({t['gen'].get('model')!r})")
         src, strip = by_mod.get(t.get("src")), by_mod.get(t.get("strip"))
         if not src or src["type"] not in TRACK_SOURCES[t["kind"]]:
             raise ValueError(f"{t['name']} : sa source manque")
@@ -237,6 +247,11 @@ def validate(p: dict) -> None:
         a, b = (c or {}).get("a"), (c or {}).get("b")
         if a not in by_mod or b not in by_mod or a == b:
             raise ValueError("câble vers un module absent")
+        if c.get("t") is not None:   # jouets : un câble de notes ou de valeur, vu par music_jouets.check
+            if (a, b, c.get("t"), c.get("k")) in seen:
+                raise ValueError("câble en double")
+            seen.add((a, b, c.get("t"), c.get("k")))
+            continue
         if by_mod[a]["type"] == "master":
             raise ValueError("la sortie ne se câble vers rien")
         if by_mod[b]["type"] in SOURCES:
@@ -246,8 +261,9 @@ def validate(p: dict) -> None:
         if c.get("send") is not None:
             _num(c["send"], -60, 6, "niveau d'envoi (dB)")
         seen.add((a, b))
-    if _cycle(set(by_mod), cables):
+    if _cycle(set(by_mod), [c for c in cables if c.get("t") is None]):   # jouets : le son seul
         raise ValueError("le câblage fait une boucle : le son tournerait sans fin")
+    music_jouets.check(p, by_mod)   # jouets : leurs câbles, leurs boucles, le chemin de l'aimant
 
     by_pat: dict = {}
     for pt in pats:
@@ -296,7 +312,19 @@ def validate(p: dict) -> None:
         if c.get("name") is not None:
             _str(c["name"], 60, "nom de clip")
         if tr["kind"] == "audio":
-            _str(c.get("item"), 64, "son du clip", 1)
+            # une région générative (`gen` : modèle, tâche, réglages, prises) n'a
+            # de son qu'une fois une prise choisie
+            g = c.get("gen")
+            if g is not None:
+                if not isinstance(g, dict) or len(json.dumps(g)) > 98304:
+                    raise ValueError(f"{cid} : région générative, 96 ko au plus")
+                if g.get("model") not in GEN_MODELS:
+                    raise ValueError(f"{cid} : modèle génératif inconnu ({g.get('model')!r})")
+                takes = g.get("takes", [])
+                if not isinstance(takes, list) or len(takes) > 64 or not all(isinstance(x, dict) and isinstance(x.get("item"), str) for x in takes):
+                    raise ValueError(f"{cid} : prises, 64 au plus, chacune un son")
+            if g is None or c.get("item") is not None:
+                _str(c.get("item"), 64, "son du clip", 1)
             _num(c.get("off", 0), 0, 1e5, "décalage du clip")
             _num(c.get("gain", 0) or 0, -60, 24, "gain du clip (dB)")
             _num(c.get("fi", 0) or 0, 0, 600, "fondu d'entrée (s)")
@@ -630,10 +658,14 @@ def _audio_endpoint() -> str | None:
     return None
 
 
+CONTRACTS = ("music.yue", "music.stems", "music.yue.abc", "music.gen.ace", "music.gen.yue", "music.midi", "music.midi.abc")
+
+
 def contracts() -> dict:
-    """Les travaux tenus par d'autres modules (YuE, la séparation) : sont-ils
-    déclarés ? Lu à chaque appel — ils se chargent après celui-ci."""
-    return {k: k in jobs.HANDLERS for k in ("music.yue", "music.stems")}
+    """Les travaux tenus par d'autres modules (YuE et sa partition, la
+    séparation, les régions génératives, le MIDI) : sont-ils déclarés ? Lu à
+    chaque appel — ils se chargent après celui-ci."""
+    return {k: k in jobs.HANDLERS for k in CONTRACTS}
 
 
 def engines(req=None):
@@ -894,7 +926,8 @@ def selftest(call, ok) -> None:
     st, eng = call("GET", "/api/music/engines")
     ok(st == 200 and eng.get("mode") == "factice" and eng["generate"]["ok"], f"mode essai par défaut ({eng})")
     ok(len(eng.get("keyscales", [])) == 34, "les 34 tonalités du nœud ACE-Step")
-    ok(isinstance(eng.get("contracts"), dict) and set(eng["contracts"]) == {"music.yue", "music.stems"}, "les contrats YuE et séparation sont dits")
+    ok(isinstance(eng.get("contracts"), dict) and set(eng["contracts"]) == set(CONTRACTS) and all(eng["contracts"].values()),
+       f"les contrats YuE, partition, séparation, régions, MIDI sont dits et déclarés ({eng.get('contracts')})")
 
     p1 = gen_params({"tags": "synthwave, basse analogique", "duration": 30, "bpm": 110, "keyscale": "A minor",
                      "timesignature": "4", "language": "fr", "seed": 7})

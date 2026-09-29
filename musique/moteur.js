@@ -23,6 +23,8 @@
 // et à la fin de la tranche (linearRampToValueAtTime) — AudioParam, MDN.
 
 import { MODULES, DRUM_VOICES, WAVES, FILTER_TYPES, DELAY_DIVS, val, spec, fromNorm, dbToGain, drumVoicesOf } from './modules.js';
+import { jouetNode, jouetsAutomate } from './jouets/son.js';   // jouets : le son des jouets du Playground
+import { influer, rendre } from './machines/influence.js';   // attracteurs : ce que les attracteurs du banc font au son (nodal)
 
 const LOOKAHEAD_MS = 25;      // MDN : « lookahead = 25.0 »
 const AHEAD_S = 0.12;         // MDN : « scheduleAheadTime = 0.1 » (+ 20 ms de marge au démarrage d'onglet)
@@ -607,6 +609,7 @@ function odioEffect(ctx, m, env) {
 function makeNode(ctx, m, env) {
   const def = MODULES[m.type];
   if (!def) throw new Error(`module inconnu : ${m.type}`);
+  if (def.jouet) return jouetNode(ctx, m, env);   // jouets : écho, réverbe, filtre, volume — ou un nœud muet
   if (def.odio) return def.role === 'source' ? { ...odioSource(ctx, m, env), input: null } : odioEffect(ctx, m, env);
   if (def.role === 'source') { const n = SRC[m.type](ctx, m, env); n.input = null; return n; }
   if (def.role === 'strip') return strip(ctx);
@@ -654,6 +657,7 @@ export class Graph {
     for (const g of this.sends.values()) g.disconnect();
     const used = new Set();
     for (const c of p.cables) {
+      if (c.t) continue;   // jouets : un câble de notes ou de valeur ne porte pas de son
       const a = this.nodes.get(c.a), b = this.nodes.get(c.b);
       if (!a || !b || !b.input) continue;
       if (typeof c.send === 'number') {
@@ -706,6 +710,8 @@ export class Graph {
       this.env.held.add(`${L.mod}:${L.k}`);
       for (let b = b0; b < b1; b = Math.floor(b * 2 + 1e-9) / 2 + 0.5) n.setAt(L.k, fromNorm(s, interp(L.pts, b)), at(b));
     }
+    jouetsAutomate(this, p, b0, b1, at);   // jouets : le chemin de l'AIMANT, rejoué sur le transport
+    influer(this, p, b0, b1, at);   // attracteurs : tant qu'un attracteur parle, ses réglages captés jouent leur opérateur
     const A = p.arc, mm = p.modules.find((x) => x.type === 'master');
     const mn = mm && this.nodes.get(mm.id);
     if (mn && A?.on && A.pts?.length) ramp(mn.arcAp(A.to, mm), A.pts, b0, b1, at, same);
@@ -714,6 +720,7 @@ export class Graph {
   // à l'arrêt : l'automation rend la main ; les réglages prennent la valeur
   // de leur courbe à la tête de lecture (ce qu'on entend en jouant à la main)
   settle(p, beat) {
+    rendre(this, p);   // attracteurs : à l'arrêt, chaque réglage reprend sa valeur
     for (const L of p.auto || []) {
       const m = p.modules.find((y) => y.id === L.mod), n = this.nodes.get(L.mod);
       const x = this.lane(p, L);
@@ -861,7 +868,7 @@ export class Engine {
   async start() {
     if (!this.ctx) {
       this.ctx = new AudioContext({ latencyHint: 'interactive' });
-      this.graph = new Graph(this.ctx, { buffers: this.buffers, live: this.live });
+      this.graph = new Graph(this.ctx, { buffers: this.buffers, live: this.live, ecoute: () => this.ecoute });   // attracteurs : la tête d'écoute du banc, quand elle gouverne
       if (this.proj) { this.graph.sync(this.proj); this.graph.settle(this.proj, this.pos); }
     }
     if (this.ctx.state !== 'running') await this.ctx.resume();

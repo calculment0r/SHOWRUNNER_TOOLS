@@ -12,6 +12,9 @@
 //                  et de fin, boucle (sa position et sa longueur), gain,
 //                  transposition, inversion, fondus, calage au tempo
 //   Instruments  la chaîne de la piste choisie (rack.js)
+//   Génération   une région d'une piste générative : son modèle, sa tâche, ses
+//                réglages dessinés depuis le schéma, ses prises
+//                (generatif_region.js) ; « Son de la prise » : la vue Clip du son
 // Le panneau défile à la verticale ; sa hauteur se tire (timeline.js).
 
 import { toast } from '../commun/shell.js';
@@ -20,6 +23,9 @@ import { MODULES, TRACK_KINDS, DRUM_MODELS, NOTE_MODELS, drumVoicesOf, noteName,
 import { peaks, peakDb, clipBuffer, audioGeom } from './moteur.js';
 import { el, knob, menu, tok, clamp, put, inlineEdit } from './ui.js';
 import { createDevices } from './rack.js';
+// le génératif (29/09) : une région (un clip qui porte `gen`) s'ouvre sur sa
+// génération ; sa prise choisie, sur la vue Clip d'un son
+import { isRegion, isGenTrack, regionPanel, trackPanel } from './generatif_region.js';
 
 const STEP_MAX = 256;
 
@@ -37,15 +43,19 @@ export function createDock(app) {
     const c = app.clip(S.sel.clip);
     if (c) return { c, t: app.track(c.track) };
     const t = app.track(S.sel.track);
-    if (t && TRACK_KINDS[t.kind]?.pattern) return { c: null, t };
+    if (t && (TRACK_KINDS[t.kind]?.pattern || isGenTrack(t))) return { c: null, t };
     return null;
   }
   function paintTabs() {
     const t = app.track(S.sel.track), c = app.clip(S.sel.clip);
+    // une région qui a une prise : la génération, ou le son de la prise (la vue Clip d'un son)
+    const reg = which() === 'clip' && c && isRegion(c) && c.item;
     put(tabs,
       [['clip', 'Clip', 'le clip choisi : ses notes, ses pas ou son son · Ctrl+Alt+3'], ['device', 'Instruments', 'les instruments et effets de la piste choisie · Ctrl+Alt+4']].map(([k, l, ti]) =>
         el('button', { class: `dk-tab${which() === k ? ' on' : ''}`, type: 'button', role: 'tab', 'aria-selected': which() === k, title: `${ti} · Maj+Tab : basculer`,
           onclick: () => { S.proj.ui.detail = k; app.saveUi(); render(); } }, l)),
+      reg ? el('div', { class: 'seg dk-gen' }, [['gen', 'Génération'], ['son', 'Son de la prise']].map(([k, l]) => el('button', { class: `tb${(S.proj.ui.genSon ? 'son' : 'gen') === k ? ' on' : ''}`, type: 'button',
+        onclick: () => { S.proj.ui.genSon = k === 'son' || undefined; app.saveUi(); render(); } }, l))) : null,
       el('span', { class: 'lbl dk-what' }, which() === 'clip'
         ? (c ? `${t?.name || ''} · ${app.bar(c.start)} → ${app.bar(c.start + c.len)}` : t ? t.name : '')
         : (t ? `${t.name} · ${app.chain(t.id).length} modules` : '')),
@@ -54,6 +64,7 @@ export function createDock(app) {
   }
   function render() {
     paintTabs();
+    document.body.classList.remove('mu-gen-dock');          // le panneau génératif le remet s'il s'ouvre
     const top = body.scrollTop;
     if (which() === 'device') {
       ed = null;
@@ -71,6 +82,8 @@ export function createDock(app) {
         el('span', {}, 'choisis un clip : ses notes, ses pas ou son son s\'ouvrent ici · double-clic sur une piste vide : un clip neuf')));
       return;
     }
+    if (tg.t.kind === 'audio' && tg.c && isRegion(tg.c) && !(tg.c.item && S.proj.ui.genSon)) { ed = regionPanel(app, host, tg.c, tg.t); body.scrollTop = top; return; }
+    if (tg.t.kind === 'audio' && !tg.c && isGenTrack(tg.t)) { ed = trackPanel(app, host, tg.t); return; }
     ed = tg.t.kind === 'audio'
       ? (tg.c ? audioEditor(app, host, tg.c, tg.t) : (put(host, el('div', { class: 'dk-empty' }, el('b', { class: 'venus' }, 'Clip'), el('span', {}, 'choisis un clip de cette piste audio'))), null))
       : patternEditor(app, host, tg.t, tg.c);

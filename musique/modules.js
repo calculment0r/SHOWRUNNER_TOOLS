@@ -28,6 +28,7 @@ import { DriveEffect } from './odio/effects/drive.js';
 import { CrushEffect } from './odio/effects/crush.js';
 import { MixTable } from './odio/effects/table.js';
 import { VolumeEffect } from './odio/effects/volume.js';
+import { JOUETS } from './jouets/defs.js';   // jouets : les quatorze jouets du Playground de Cal (musique/jouets/)
 
 // ── les sortes de réglage ───────────────────────────────────
 // { k, label, min, max, def, unit, curve: 'lin' | 'log', step, opts: [libellés] }
@@ -237,6 +238,7 @@ function fromOdio(d) {
   }
 }
 export const ODIO_TYPES = Object.keys(ODIO);
+Object.assign(MODULES, JOUETS);   // jouets : leurs réglages et leurs ports (musique/jouets/defs.js)
 
 export const EFFECT_TYPES = ['delay', 'reverb', 'comp', 'eq', 'filter', 'dist', ...ODIO_TYPES.filter((t) => ODIO[t].role === 'effect')];
 // les sources qu'une piste peut porter, par sorte de piste
@@ -295,6 +297,7 @@ export function fromNorm(s, n) {
   return v;
 }
 export function fmt(s, v) {
+  if (s.fmt) return s.fmt(v);   // jouets : les lectures du Playground (0.92 g, +8, 2.2 s)
   if (s.opts) return s.opts[Math.round(v)] ?? '';
   if (s.unit === 'Hz') return v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)} k` : `${Math.round(v)}`;
   if (s.unit === 's') return v < 1 ? `${Math.round(v * 1000)} ms` : `${v.toFixed(2)} s`;

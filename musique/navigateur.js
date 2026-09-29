@@ -13,14 +13,20 @@
 //                 aussi des fichiers du disque (catégorie Upload)
 //   Motifs        les motifs du projet, et des modèles (rythmes, motifs tirés
 //                 de la gamme de la session)
+//   MIDI          la bibliothèque MIDI (sorte « midi » de la bibliothèque du
+//                 portail) : les notes extraites d'un son, nos clips rangés,
+//                 les fichiers .mid déposés ; glisser sur une piste
+//                 d'instrument : ses notes (29/09)
 // Clic sur un élément = le poser sur la piste choisie (ou une piste neuve).
 
-import { api, href, toast, dragItem, dropZone, fmtDur } from '../commun/shell.js';
+import { api, href, toast, dragItem, dropZone, fmtDur, uploadFile } from '../commun/shell.js';
 import { MODULES, SOURCES_OF, EFFECT_TYPES, PRESETS, DRUM_MODELS, NOTE_MODELS, TRACK_KINDS, keyLabel } from './modules.js';
 import { el, put, menu, inlineEdit } from './ui.js';
+import { listMidi, midiSub, placeMidi, saveClipMidi } from './generatif_midi.js';
+import { addGenTrack } from './generatif_region.js';
 
 const MIME = 'application/x-odio';
-const SECTIONS = [['inst', 'Instruments'], ['fx', 'Effets'], ['pre', 'Préréglages'], ['son', 'Sons'], ['mot', 'Motifs']];
+const SECTIONS = [['inst', 'Instruments'], ['fx', 'Effets'], ['pre', 'Préréglages'], ['son', 'Sons'], ['mot', 'Motifs'], ['midi', 'MIDI']];
 
 export function createBrowser(app) {
   const { S } = app;
@@ -67,6 +73,12 @@ export function createBrowser(app) {
     out.push(group('Bus d\'effets'));
     for (const [fx, name] of [['reverb', 'Bus réverbération'], ['reverbe', 'Bus réverbe ODIO'], ['delay', 'Bus délai'], ['rtt', 'Bus RTT-01']]) {
       out.push(item({ t: 'bus', fx }, { name, sub: 'retour dans la console', dot: MODULES[fx].color, onclick: () => app.addBus(fx) }));
+    }
+    // les pistes génératives : on y dessine une région, le modèle la remplit
+    out.push(group('Génératif'));
+    for (const [model, name, sub, dot] of [['ace', 'Piste générative · ACE-Step', 'une piste, morceau, repeindre', 'coral-1'], ['yue', 'Piste générative · YuE2', 'chanson, partition', 'coral-3']]) {
+      out.push(item({ t: 'gen', model }, { name, sub, dot, title: 'une piste neuve : tirer sur sa voie dessine une région, le panneau du bas la fait générer',
+        onclick: () => addGenTrack(app, model) }));
     }
     return out;
   }
@@ -162,10 +174,60 @@ export function createBrowser(app) {
     return out;
   }
 
-  const BODY = { inst: instruments, fx: effects, pre: presets, son: soundsList, mot: motifs };
+  // ── la bibliothèque MIDI ──
+  let mids = null, mloading = false, mq = '', msearch = null, midBox = null;
+  async function loadMidi() {
+    mloading = true;
+    try { mids = await listMidi(mq); } catch (e) { mids = []; toast(e.message); }
+    mloading = false;
+    if (isOpen('midi') && midBox?.isConnected) paintMidi();
+  }
+  const playhead = () => Math.floor(app.pos() / S.proj.sig) * S.proj.sig;
+  function paintMidi() {
+    if (!mids) { put(midBox, el('p', { class: 'lbl' }, 'chargement')); return; }
+    const out = [];
+    if (!mids.length) out.push(el('p', { class: 'lbl nv-note' }, 'aucun clip MIDI · clic droit sur un clip audio : Extraire le MIDI · sur un clip de notes : le ranger · ou déposer un .mid'));
+    for (const it of mids) {
+      const rename = (nm) => inlineEdit(nm, it.title, async (v) => { await api(`library/${it.id}`, { method: 'POST', body: { title: v.slice(0, 80) } }); loadMidi(); }, { max: 60 });
+      const n = item({ t: 'midi', id: it.id }, { name: it.title, sub: midiSub(it), dot: it.params?.drums ? 'or' : 'cy', rename,
+        title: 'glisser sur une piste d\'instrument : ses notes · ailleurs : une piste neuve par canal · clic : sur la piste choisie, à la tête de lecture · double-clic : renommer',
+        onclick: () => placeMidi(app, it.id, S.sel.track, playhead()),
+        ctx: (nm) => [{ head: it.title }, { label: 'Renommer', sub: 'double-clic', onclick: () => rename(nm) },
+          { label: 'Sur des pistes neuves', sub: 'une par canal', onclick: () => placeMidi(app, it.id, null, playhead()) },
+          { label: 'Télécharger le fichier .mid', onclick: () => { const a = el('a', { href: href(it.url), download: `${it.title}.mid` }); document.body.append(a); a.click(); a.remove(); } },
+          { label: 'Mettre à la corbeille', sub: 'bibliothèque', onclick: async () => { await api(`library/${it.id}/delete`, { method: 'POST' }); loadMidi(); } }] });
+      dragItem(n, it);          // le type commun du portail (ITEM_MIME), en plus du nôtre
+      out.push(n);
+    }
+    put(midBox, ...out);
+  }
+  function midiList() {
+    msearch = msearch || el('input', { class: 'fld', placeholder: 'chercher un clip MIDI', value: mq,
+      oninput: (e) => { mq = e.target.value; clearTimeout(msearch._t); msearch._t = setTimeout(loadMidi, 250); } });
+    midBox = el('div', { class: 'nv-sounds' });
+    const save = el('button', { class: 'tb ghost sm nv-wide', type: 'button', title: 'ranger dans la bibliothèque le clip de notes choisi dans l\'arrangement (ce qu\'il joue vraiment : répétitions, décalage, coupe)',
+      onclick: async () => { const c = app.clip(S.sel.clip); if (!c?.pat) { toast('choisis d\'abord un clip de notes dans l\'arrangement'); return; } if (await saveClipMidi(app, c)) loadMidi(); } }, '+ Le clip choisi');
+    const drop = el('div', { class: 'nv-drop' }, 'déposer ici des fichiers .mid : ils entrent dans la bibliothèque (Upload)');
+    drop.addEventListener('dragover', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); drop.classList.add('drop-on'); } });
+    drop.addEventListener('dragleave', () => drop.classList.remove('drop-on'));
+    drop.addEventListener('drop', async (e) => {
+      e.preventDefault(); e.stopPropagation(); drop.classList.remove('drop-on');
+      const fs = [...(e.dataTransfer.files || [])];
+      if (fs.some((f) => !/\.midi?$/i.test(f.name))) toast('ici, des fichiers MIDI (.mid) : les sons vont dans « Sons »');
+      for (const f of fs.filter((x) => /\.midi?$/i.test(x.name))) { try { await uploadFile(f, { tool: 'upload', via: 'odio' }); } catch (err) { toast(`${f.name} : ${err.message}`); } }
+      loadMidi();
+    });
+    if (!mids && !mloading) loadMidi();
+    paintMidi();
+    return [msearch, save, drop, midBox];
+  }
+  document.addEventListener('mu:midi', () => { mids = null; if (isOpen('midi')) loadMidi(); });
+
+  const BODY = { inst: instruments, fx: effects, pre: presets, son: soundsList, mot: motifs, midi: midiList };
   function toggle(k) {
     ui().navOpen = { ...(ui().navOpen || { inst: true, son: true }), [k]: !isOpen(k) };
     if (k === 'son' && isOpen('son')) sounds = null;
+    if (k === 'midi' && isOpen('midi')) mids = null;
     app.saveUi();
     render();
   }
@@ -192,6 +254,6 @@ export function createBrowser(app) {
       acc);
     acc.scrollTop = scrollTop;
   }
-  document.addEventListener('sr:job', () => { if (isOpen('son')) loadSounds(); });
+  document.addEventListener('sr:job', () => { if (isOpen('son')) loadSounds(); if (isOpen('midi')) loadMidi(); });
   return { el: root, render, refresh: () => { sounds = null; if (isOpen('son')) render(); } };
 }

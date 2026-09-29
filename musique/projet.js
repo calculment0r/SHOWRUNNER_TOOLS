@@ -18,10 +18,17 @@
 //               rev (à l'envers), ls (début de la boucle, en secondes de son)
 //   presets   [{ id, name, type, params, sub }]  les réglages enregistrés
 //   banc      { segs, atts }                     le banc du nodal (banc.js)
+// Le génératif (29/09, même version, champs facultatifs ; generatif_region.js) :
+//   tracks[]  + gen { model, task }   une piste générative (une piste audio)
+//   clips[]   + gen { model, task, v, ctx, takes: [{ item, seed, off, … }], take }
+//               une région : sans prise, pas encore d'`item` ; une prise
+//               choisie lui donne son `item` et son `off`
+//   ui        + genSon (la vue de détail : le son de la prise plutôt que la génération)
 
 import { guessTag } from './modules.js';
 
 export const VERSION = 2;
+const own = (c) => (c.gen ? { gen: JSON.parse(JSON.stringify(c.gen)) } : {});   // une copie de région a ses propres prises
 
 export function migrate(p) {
   for (const k of ['pending', 'patterns', 'clips', 'cables', 'modules', 'tracks']) p[k] = p[k] || [];
@@ -117,7 +124,7 @@ function carry(p, a, b, d) {
 // l'original, et tout ce qui suivait recule d'autant.
 export function duplicateSection(p, sec, uid) {
   const len = sec.b - sec.a;
-  const copies = p.clips.filter((c) => within(c.start, sec.a, sec.b)).map((c) => ({ ...c, id: uid('c'), start: c.start + len }));
+  const copies = p.clips.filter((c) => within(c.start, sec.a, sec.b)).map((c) => ({ ...c, ...own(c), id: uid('c'), start: c.start + len }));
   const ptsCopies = curves(p).map((pts) => pts.filter((pt) => within(pt[0], sec.a, sec.b)).map(([b, v]) => [b + len, v]));
   shiftFrom(p, sec.b, len);
   p.clips.push(...copies);
@@ -243,7 +250,7 @@ export function splitClip(p, c, pos, uid) {
   if (pos <= c.start + 1e-6 || pos >= c.start + c.len - 1e-6) return null;
   const tr = p.tracks.find((t) => t.id === c.track);
   const cut = pos - c.start;
-  const n = { ...c, id: uid('c'), start: pos, len: c.len - cut };
+  const n = { ...c, ...own(c), id: uid('c'), start: pos, len: c.len - cut };
   n.off = tr?.kind === 'audio' ? addAudioOff(c, cut * 60 / p.bpm) : (c.off || 0) + cut;
   if (tr?.kind === 'audio') { n.fi = 0; c.fo = 0; }
   c.len = cut;

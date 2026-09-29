@@ -153,6 +153,11 @@ def mode() -> str:
     return "reel" if config.get("music_stems") is True else "factice"
 
 
+# l'interrupteur, déclaré pour la page Admin → Câblage
+config.declare_switch("music_stems", [False, True], label="Musique · séparation (stems)", default=False,
+                      doc="server/tools/music_stems.py, mode() : factice (filtres ffmpeg) ou Demucs par ComfyUI et RoFormer par audio-separator")
+
+
 def asep_bin() -> Path:
     return Path(config.get("stems_asep_bin") or HOME / "audio-studio/.venv/bin/audio-separator").expanduser()
 

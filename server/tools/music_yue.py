@@ -34,10 +34,12 @@ la reprise (SheetSage2 transcrit la mélodie, YuE2 la rechante, cot=melody).
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import math
 import random
 import re
+import sys
 import time
 import wave
 from array import array
@@ -78,6 +80,12 @@ CARD = "github.com/multimodal-art-projection/YuE (README, docs/generation.md, sk
 def mode() -> str:
     """« factice » tant que Cal n'a pas dit de brancher YuE2."""
     return "comfyui" if config.get("music_yue") is True else "factice"
+
+
+# l'interrupteur, déclaré pour la page Admin → Câblage (admin.py l'attendait : EXPECTED)
+config.declare_switch("music_yue", [False, True], label="Musique · YuE2", default=False,
+                      doc="server/tools/music_yue.py, mode() : factice (mélodie d'essai) ou les nœuds YuE2 du cœur de ComfyUI ; "
+                          "aussi la partition seule (music.yue.abc) et les prises YuE2 d'une région (music.gen.yue)")
 
 
 # ── les réglages d'une chanson ──────────────────────────────
@@ -149,6 +157,12 @@ def yue_params(d: dict) -> dict:
         it = library.get(ref)
         if not it or it.get("kind") != "audio":
             raise ValueError("la référence n'est pas un son de la bibliothèque")
+    if abc and abc_tools():
+        # une partition qu'on a relue ou nourrie d'un clip MIDI : jugée par
+        # abc_tools avant d'aller au modèle (le dialecte natif de YuE2)
+        chk = abc_check(abc)
+        if chk["ok"] is False:
+            raise ValueError(f"la partition ne suit pas le dialecte de YuE2 : {chk['error']}")
     title = (d.get("title") or "")
     title = (title.strip() if isinstance(title, str) else "")[:80] or tags[:60]
     return {"tags": tags, "lyrics": lyrics, "instrumental": not lyrics, "duration_s": round(dur, 2),
@@ -393,6 +407,13 @@ def options(req=None) -> dict:
             {"id": "bf16", "file": CKPTS["bf16"], "size_gb": 7.80, "doc": "qualité ; celle des LoRA (workflow 07 de Cal)"},
             {"id": "int8", "file": CKPTS["int8"], "size_gb": 3.96, "doc": "rapide ; celle du gabarit officiel"},
         ],
+        "partition": {
+            "edit": True, "check": abc_tools_state(),
+            "doc": "YuE2 écrit d'abord la partition (YuE2GenerateABC) ; YuE2GenerateMusic prend « an edited score » : "
+                   "POST /api/music/yue/abc l'écrit seule (travail music.yue.abc, rien n'est chanté), "
+                   "POST /api/music/yue/abc/check la juge (abc_tools.py), puis `abc` la fait chanter",
+            "dialect": "deux voix monophoniques Vocal et Ins, accords entre guillemets dans Vocal, L:1/16 ou 1/32, "
+                       "groupes d'une à quatre mesures (abc-editing.md)"},
         "reference": {
             "icl": False,
             "doc": "YuE2 n'a pas d'entrée son de référence (pas d'ICL comme YuE v1) : une référence passe par sa partition. "
@@ -481,29 +502,40 @@ def _score_of(entry: dict, graph: dict) -> str:
     return ""
 
 
-def run_real(ctx):
-    p = yue_params(ctx.params)
-    ctx.progress(0.02, "prépare YuE2")
+def render_real(ctx, p: dict):
+    """Un rendu YuE2 par ComfyUI : rend [(fichier, partition)] — la partition
+    fournie, ou celle que le nœud PreviewAny « ABC » a affichée. Partagé par
+    music.yue et par les prises d'une région (music_gen.py)."""
+    ctx.progress(message="prépare YuE2")
     ref_name = None
-    parents = []
     if p["ref"]:
-        it = library.get(p["ref"])
-        ctx.progress(0.03, "envoie la référence à ComfyUI")
-        ref_name = ctx.comfy.upload(library.path_of(it))
-        parents = [it["id"]]
+        ctx.progress(message="envoie la référence à ComfyUI")
+        ref_name = ctx.comfy.upload(library.path_of(library.get(p["ref"])))
     graph = build_graph(p, ref_name)
     problems = check_graph(graph, fetch_info(ctx.comfy, [n["class_type"] for n in graph.values()]))
     if problems:
         raise ComfyError("graphe YuE2 refusé avant l'envoi : " + " ; ".join(problems[:8]))
     ctx.check()
-    t0 = time.time()
     pid = ctx.comfy.queue(graph)
     entry = ctx.comfy.wait(pid, cancelled=ctx.cancelled, report=ctx.comfy_report("YuE2"), timeout=TIMEOUT)
-    secs = round(time.time() - t0, 1)
     score = p["abc"] or _score_of(entry, graph)
-    ids = []
+    out = []
     for k, f in enumerate(Comfy.outputs(entry, graph)):
-        dest = ctx.comfy.download(f, ctx.workdir / f"yue2_{k:02d}{Path(f['filename']).suffix or '.flac'}")
+        out.append((ctx.comfy.download(f, ctx.workdir / f"yue2_{int(time.time() * 1000) % 10 ** 8}_{k:02d}{Path(f['filename']).suffix or '.flac'}"), score))
+    if not out:
+        raise ComfyError("ComfyUI n'a rendu aucun son")
+    return out
+
+
+def run_real(ctx):
+    p = yue_params(ctx.params)
+    ctx.progress(0.02, "prépare YuE2")
+    parents = [p["ref"]] if p["ref"] else []
+    t0 = time.time()
+    got = render_real(ctx, p)
+    secs = round(time.time() - t0, 1)
+    ids = []
+    for dest, score in got:
         it = ctx.add(dest, kind="audio", title=p["title"], prompt=p["tags"], parents=parents,
                      params={**p, "engine": "comfyui", "checkpoint": CKPTS[p["precision"]], "score": score,
                              "render_seconds": secs, "sampling": {"abc": ABC_SAMPLING, "music": MUSIC_SAMPLING,
@@ -511,10 +543,287 @@ def run_real(ctx):
                      origin={"model": f"yue2-3b-{p['precision']}"}, tags=["musique", "généré", "yue2"],
                      folder="Musique")
         ids.append(it["id"])
-    if not ids:
-        raise ComfyError("ComfyUI n'a rendu aucun son")
+    score = got[0][1]
     return {"note": f"YuE2 : chanson rendue en {secs:g} s", "render_seconds": secs, "audio": ids,
             "score": score[:4000]}
+
+
+# ── la partition : le dialecte natif de YuE2 ────────────────
+# YuE2 écrit d'abord une partition ABC (YuE2GenerateABC) que YuE2GenerateMusic
+# chante ; son entrée `abc` prend aussi « an edited score » (infobulle du
+# nœud). Le dialecte natif est décrit par ~/YuE/skills/yue2-music/references/
+# abc-editing.md et vérifié par abc_tools.py (même dépôt, Apache 2.0,
+# bibliothèque standard) : chargé ici tel quel, jamais recopié.
+ABC_TOOLS_DEFAULT = Path.home() / "YuE/skills/yue2-music/scripts/abc_tools.py"
+_abc = {"m": None, "why": "", "path": ""}
+ABC_VOICES = ('V: Vocal clef=treble name="Vocal Melody" snm="Vocal"', 'V: Ins clef=treble name="Ins Melody" snm="Inst."')
+ABC_DURS = (48, 32, 24, 16, 12, 8, 6, 4, 3, 2, 1)          # abc-editing.md : les durées permises
+_NAT = dict(zip("CDEFGAB", (0, 2, 4, 5, 7, 9, 11)))
+# le nombre d'altérations de chaque armure (abc_tools.py, KEYS)
+_KEY_COUNT = {**dict(zip(("Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#"), range(-7, 8))),
+              **dict(zip(("Abm", "Ebm", "Bbm", "Fm", "Cm", "Gm", "Dm", "Am", "Em", "Bm", "F#m", "C#m", "G#m", "D#m", "A#m"), range(-7, 8)))}
+# la tonique d'ODIO (0 = do) écrite comme une armure que le dialecte connaît
+_MAJ_NAME = ("C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B")
+_MIN_NAME = ("Cm", "C#m", "Dm", "D#m", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "Bbm", "Bm")
+_MAJORISH = {"major", "lydian", "mixolydian", "pentamaj"}
+KEY_MODES = ("major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "locrian", "harmonic", "pentamaj", "pentamin", "blues")
+
+
+def abc_tools():
+    if _abc["m"] is None and not _abc["why"]:
+        path = Path(config.get("yue_abc_tools") or ABC_TOOLS_DEFAULT).expanduser()
+        if not path.exists():
+            _abc["why"] = f"abc_tools.py absent ({path}) : la partition ne peut pas être vérifiée"
+        else:
+            try:
+                spec = importlib.util.spec_from_file_location("yue2_abc_tools", path)
+                m = importlib.util.module_from_spec(spec)
+                sys.modules["yue2_abc_tools"] = m          # ses dataclasses se cherchent là
+                spec.loader.exec_module(m)
+                _abc.update(m=m, path=str(path))
+            except Exception as e:  # un fichier cassé ne doit pas empêcher le portail de démarrer
+                _abc["why"] = f"abc_tools.py illisible : {type(e).__name__}: {e}"
+    return _abc["m"]
+
+
+def abc_tools_state() -> dict:
+    m = abc_tools()
+    return {"ok": bool(m), "path": _abc["path"], "why": _abc["why"],
+            "source": "~/YuE/skills/yue2-music/scripts/abc_tools.py (YuE, Apache 2.0) : « a bounded native ABC dialect »"}
+
+
+def abc_check(text: str) -> dict:
+    """La partition jugée par abc_tools.parse_abc : {ok, error} ou {ok, report}
+    (notes MIDI, instants et durées en noires, accords, mesures, par voix)."""
+    m = abc_tools()
+    if not m:
+        return {"ok": None, "why": _abc["why"]}
+    if not isinstance(text, str) or not text.strip():
+        return {"ok": False, "error": "partition vide"}
+    try:
+        # les lignes blanches du bout et les espaces de fin de ligne ne sont pas du dialecte
+        score = m.parse_abc("\n".join(ln.rstrip() for ln in text.strip().splitlines()))
+    except m.AbcError as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "report": json.loads(json.dumps(m.report(score), default=m.json_value))}
+
+
+def abc_key(tonic: int, md: str) -> str:
+    return (_MAJ_NAME if md in _MAJORISH else _MIN_NAME)[tonic]
+
+
+def abc_note(pitch: int, key: str, local: dict) -> str:
+    """Une hauteur MIDI écrite dans le dialecte natif (C = do4 = 60, c = do5,
+    C, = do3, c' = do6), l'altération seulement quand l'armure et les
+    altérations déjà posées dans la mesure ne la donnent pas (elles valent
+    pour la lettre à toutes les octaves : abc-editing.md)."""
+    count = _KEY_COUNT[key]
+    key_alt = {k: 0 for k in _NAT}
+    for letter in ("FCGDAEB" if count > 0 else "BEADGCF")[:abs(count)]:
+        key_alt[letter] = 1 if count > 0 else -1
+    pc = pitch % 12
+    cands = []
+    for letter, n in _NAT.items():
+        for alt in (0, 1, -1):
+            if (n + alt) % 12 == pc:
+                cands.append((letter, alt))
+    # d'abord la lettre que l'armure donne telle quelle, puis le sens de l'armure
+    cands.sort(key=lambda c: (c[1] != key_alt[c[0]], c[1] != 0, (c[1] < 0) if count >= 0 else (c[1] > 0)))
+    letter, alt = cands[0]
+    cur = local.get(letter, key_alt[letter])
+    acc = "" if cur == alt else {0: "=", 1: "^", -1: "_"}[alt]
+    if acc:
+        local[letter] = alt
+    natural = pitch - alt
+    octave = natural // 12 - 1
+    if octave <= 4:
+        return acc + letter + "," * (4 - octave)
+    return acc + letter.lower() + "'" * (octave - 5)
+
+
+def abc_durs(units: int) -> list[int]:
+    out = []
+    while units > 0:
+        d = next(x for x in ABC_DURS if x <= units)
+        out.append(d)
+        units -= d
+    return out
+
+
+def fake_abc(seed: int, bpm: float, sig: int, tonic: int, md: str, sections: list, sing: bool = True,
+             chords: bool = True) -> str:
+    """La partition d'essai (moteur factice), dans le dialecte natif : une
+    mélodie tirée de la graine dans la gamme du projet, un accord par mesure
+    (i VI III VII en mineur, I V vi IV en majeur) dans la voix Vocal, la voix
+    Ins au repos ; une section `% tag` par section que la région couvre.
+    Ce n'est pas la partition de YuE2 : c'est de quoi relire, modifier et
+    vérifier le trajet."""
+    rng = random.Random(seed)
+    key = abc_key(tonic, md)
+    minor = md not in _MAJORISH
+    sc = (0, 2, 3, 5, 7, 8, 10) if minor else (0, 2, 4, 5, 7, 9, 11)
+    degs = (0, 5, 2, 6) if minor else (0, 4, 5, 3)
+    qual = ({0: "m", 5: "", 2: "", 6: ""} if minor else {0: "", 4: "", 5: "m", 3: ""})
+    names = ("C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B")
+    unit = sig * 4                                       # L:1/16 : une mesure de sig noires
+    lines = ["X:1", "T:", f"M:{sig}/4", "L:1/16", f"Q:1/4={int(round(bpm))}", *ABC_VOICES, f"K:{key}"]
+    bar_no = 0
+    deg = 7                                              # la mélodie part de la tonique aiguë
+    for tag, n in sections:
+        n = int(n)
+        g = 0
+        while g < n:
+            size = min(4, n - g)
+            vocal = []
+            for _ in range(size):
+                d = degs[bar_no % 4]
+                chord = f'"{names[(tonic + sc[d]) % 12]}{qual[d]}"' if chords else ""
+                local: dict = {}
+                if not sing:
+                    vocal.append(chord + "".join(f"z{x}" if x != 1 else "z" for x in abc_durs(unit)))
+                else:
+                    toks, left = [], unit
+                    while left > 0:
+                        ln = min(left, rng.choice((2, 2, 4, 4, 6, 8)))
+                        deg = max(0, min(11, deg + rng.choice((-2, -1, -1, 0, 1, 1, 2))))
+                        pitch = 60 + tonic + sc[deg % 7] + 12 * (deg // 7)
+                        parts = abc_durs(ln)
+                        note = abc_note(pitch, key, local)
+                        toks.append("-".join(note + (str(x) if x != 1 else "") for x in parts))
+                        left -= ln
+                    vocal.append(chord + "".join(toks))
+                bar_no += 1
+            lines += [f"% {tag}", "V: Vocal", "|".join(vocal) + "|", "V: Ins", ("Z" if size == 1 else f"Z{size}") + "|"]
+            g += size
+    return "\n".join(lines)
+
+
+def abc_song(path: Path, abc: str, max_s: float, sr: int = 24000) -> float:
+    """Le son d'essai d'une partition : ses notes jouées telles que
+    abc_tools les lit (Vocal en sinus vibré, Ins en triangle, les accords en
+    nappe), au tempo de la partition, jusqu'à `max_s` secondes. De quoi
+    entendre qu'une partition modifiée a fait le trajet."""
+    chk = abc_check(abc)
+    if not chk.get("ok"):
+        raise ValueError(f"partition refusée : {chk.get('error') or chk.get('why')}")
+    rep = chk["report"]
+    spq = 60.0 / rep["bpm"]
+    total = min(max_s, float(rep["nominal_duration_seconds"])) if max_s else float(rep["nominal_duration_seconds"])
+    n = max(1, int(total * sr))
+    buf = [0.0] * n
+
+    def frac(s):
+        a, _, b = str(s).partition("/")
+        return float(a) / float(b or 1)
+
+    def tone(t0, dur, midi, amp, tri=False, vib=0.0):
+        f = 440.0 * 2 ** ((midi - 69) / 12)
+        i0, ln = int(t0 * sr), int(dur * sr)
+        ph = 0.0
+        for i in range(max(0, min(ln, n - i0))):
+            t = i / sr
+            env = min(1.0, t / 0.02) * min(1.0, (ln - i) / (0.03 * sr))
+            ph += 2 * math.pi * f * (1 + vib * math.sin(2 * math.pi * 5.5 * t)) / sr
+            s = (2 / math.pi) * math.asin(math.sin(ph)) if tri else math.sin(ph) + 0.25 * math.sin(2 * ph)
+            buf[i0 + i] += amp * env * s
+    for name, amp, tri, vib in (("Vocal", 0.32, False, 0.006), ("Ins", 0.22, True, 0.0)):
+        for nt in rep["voices"][name]["notes"]:
+            tone(frac(nt["onset_quarters"]) * spq, frac(nt["duration_quarters"]) * spq, nt["midi_pitch"], amp, tri, vib)
+    # les accords : la racine lue dans le symbole, tenue jusqu'au suivant (une nappe grave)
+    ch = rep["voices"]["Vocal"]["chords"]
+    root = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+    for i, (t, name) in enumerate(ch):
+        t0 = frac(t) * spq
+        t1 = frac(ch[i + 1][0]) * spq if i + 1 < len(ch) else total
+        pc = root[name[0]] + (1 if name[1:2] == "#" else -1 if name[1:2] == "b" else 0)
+        minor = name[1:].lstrip("#b").startswith("m") and not name[1:].lstrip("#b").startswith("maj")
+        for iv in (0, 3 if minor else 4, 7):
+            tone(t0, t1 - t0, 48 + pc + iv, 0.07)
+    peak = max(1e-9, max(abs(x) for x in buf))
+    pcm = array("h", (int(x / peak * 0.7 * 32767) for x in buf for _ in (0, 1)))
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(pcm.tobytes())
+    return total
+
+
+def abc_params(d: dict) -> dict:
+    """Écrire seulement la partition (YuE2GenerateABC) : le style, les paroles,
+    la graine, le mode (full ou melody : le nœud n'a pas « off »), la
+    précision ; et, pour le moteur d'essai, ce que dit le projet (tempo,
+    mesure, tonalité, les sections de la région)."""
+    base = yue_params({**d, "duration_s": DUR_DEFAULT, "ref": "", "abc": ""})
+    if base["mode"] == "off":
+        raise ValueError("écrire la partition demande « mélodie et accords » ou « mélodie seule » (YuE2GenerateABC)")
+    pj = d.get("projet") or {}
+    bpm = _num(pj.get("bpm", 120), "tempo")
+    sig = pj.get("sig", 4)
+    if sig not in (2, 3, 4, 6) or not 20 <= bpm <= 300:
+        raise ValueError("tempo (20 à 300) et mesure (2, 3, 4 ou 6) du projet")
+    tonic = pj.get("tonic", 9)
+    if isinstance(tonic, bool) or not isinstance(tonic, int) or not 0 <= tonic <= 11:
+        raise ValueError("tonique : 0 à 11")
+    md = pj.get("mode", "minor")
+    if md not in KEY_MODES:
+        raise ValueError(f"mode inconnu : {md}")
+    secs = d.get("sections") or [["verse", 4]]
+    if not isinstance(secs, list) or not all(isinstance(s, list) and len(s) == 2 and isinstance(s[0], str)
+                                             and isinstance(s[1], int) and 1 <= s[1] <= 256 for s in secs) or sum(s[1] for s in secs) > 512:
+        raise ValueError("sections : [[étiquette, mesures], …], 512 mesures au plus")
+    return {**base, "projet": {"bpm": bpm, "sig": sig, "tonic": tonic, "mode": md}, "sections": secs}
+
+
+def build_abc_graph(p: dict) -> dict:
+    """Seulement le plan : CheckpointLoaderSimple → YuE2GenerateABC →
+    PreviewAny (« OUT ABC », la sortie texte que lit _score_of)."""
+    return {
+        "1": {"class_type": "CheckpointLoaderSimple", "_meta": {"title": "YuE2"}, "inputs": {"ckpt_name": CKPTS[p["precision"]]}},
+        "2": {"class_type": "YuE2GenerateABC", "_meta": {"title": "plan ABC"},
+              "inputs": {"clip": ["1", 1], "style": p["tags"], "lyrics": p["lyrics"], "seed": p["seed"], "mode": p["mode"], **ABC_SAMPLING}},
+        "9": {"class_type": "PreviewAny", "_meta": {"title": "OUT ABC"}, "inputs": {"source": ["2", 0]}},
+    }
+
+
+def run_abc_test(ctx):
+    p = abc_params(ctx.params)
+    ctx.progress(0.2, "partition d'essai (moteur factice)")
+    pj = p["projet"]
+    abc = fake_abc(p["seed"], pj["bpm"], pj["sig"], pj["tonic"], pj["mode"], p["sections"], sing=bool(p["lyrics"]),
+                   chords=p["mode"] == "full")
+    return {"note": "partition d'essai écrite (moteur factice, pas YuE2)", "abc": abc, "engine": "factice", "check": abc_check(abc)}
+
+
+def run_abc_real(ctx):
+    p = abc_params(ctx.params)
+    g = build_abc_graph(p)
+    problems = check_graph(g, fetch_info(ctx.comfy, [n["class_type"] for n in g.values()]))
+    if problems:
+        raise ComfyError("graphe de la partition refusé avant l'envoi : " + " ; ".join(problems[:8]))
+    pid = ctx.comfy.queue(g)
+    entry = ctx.comfy.wait(pid, cancelled=ctx.cancelled, report=ctx.comfy_report("YuE2 · partition"), timeout=TIMEOUT)
+    abc = _score_of(entry, g)
+    if not abc.strip():
+        raise ComfyError("YuE2 n'a pas rendu de partition (sortie texte de PreviewAny vide)")
+    return {"note": "partition écrite par YuE2", "abc": abc, "engine": "comfyui", "check": abc_check(abc)}
+
+
+def api_abc(req):
+    try:
+        p = abc_params(req.json())
+    except (ValueError, TypeError) as e:
+        raise HttpError(400, str(e)) from e
+    j = jobs.submit("music.yue.abc", {**req.json(), "seed": p["seed"]}, title=f"YuE2 · partition · {p['title']}"[:90], tool="music")
+    return jobs.public(j)
+
+
+def api_abc_check(req):
+    d = req.json()
+    text = d.get("abc")
+    if not isinstance(text, str) or len(text) > MAX_ABC:
+        raise HttpError(400, f"partition : un texte de {MAX_ABC} signes au plus")
+    return {**abc_check(text), "tools": abc_tools_state()}
 
 
 # ── le moteur factice : une mélodie d'essai, sans modèle ────
@@ -584,9 +893,19 @@ def run_test(ctx):
     ctx.progress(0.1, "mélodie d'essai (moteur factice)")
     t0 = time.time()
     dest = ctx.workdir / "essai_yue.wav"
-    score = p["abc"] or test_song(dest, p)
-    if p["abc"]:
-        test_song(dest, p)
+    if abc_tools():
+        # comme YuE2 : d'abord une partition (la sienne, ou une d'essai dans le
+        # dialecte natif), puis le son qu'elle dit — la partition rangée est
+        # celle qu'on entend
+        bpm = _tempo(p["tags"])
+        bars = max(1, math.ceil(p["duration_s"] / (4 * 60 / bpm)))
+        score = p["abc"] or fake_abc(p["seed"], bpm, 4, 9, "minor", [["verse", bars]], sing=not p["instrumental"],
+                                     chords=p["mode"] == "full")
+        abc_song(dest, score, p["duration_s"])
+    else:
+        score = p["abc"] or test_song(dest, p)
+        if p["abc"]:
+            test_song(dest, p)
     ctx.check()
     secs = round(time.time() - t0, 1)
     it = ctx.add(dest, kind="audio", title=f"{p['title']} (essai)", prompt=p["tags"],
@@ -600,11 +919,16 @@ def run_test(ctx):
 def register(app) -> None:
     if mode() == "comfyui":
         jobs.register("music.yue", run_real, lane="audio", title="YuE2")
+        jobs.register("music.yue.abc", run_abc_real, lane="audio", title="YuE2 · partition")
     else:
         jobs.register("music.yue", run_test, lane="cpu", title="YuE2 (essai)")
+        jobs.register("music.yue.abc", run_abc_test, lane="cpu", title="YuE2 · partition (essai)")
     app.route("GET", "/api/music/yue/options", api_options)
     app.route("POST", "/api/music/yue/plan", api_plan)
     app.route("POST", "/api/music/yue/generate", api_generate)
+    # la partition : l'écrire seule (YuE2GenerateABC), la vérifier (abc_tools)
+    app.route("POST", "/api/music/yue/abc", api_abc)
+    app.route("POST", "/api/music/yue/abc/check", api_abc_check)
 
 
 # ── le contrôle sans GPU (tools/check.py) ───────────────────
@@ -736,3 +1060,46 @@ def selftest(call, ok) -> None:
         it2 = (j2.get("items") or [{}])[0]
         ok(j2.get("state") == "done" and it2.get("parents") == [items[0]["id"]] and it2["params"]["mode"] == "melody",
            f"une reprise garde sa référence pour parent ({j2.get('state')} {j2.get('message')})")
+
+    # ── la partition : le dialecte natif, écrit, vérifié, chanté ──
+    if not abc_tools():
+        ok(True, f"abc_tools.py absent : essais de la partition sautés ({_abc['why']})")
+        return
+    ex = ('X:1\nT:\nM:4/4\nL:1/16\nQ:1/4=88\n' + "\n".join(ABC_VOICES) + '\nK:C\n% verse\nV: Vocal\n'
+          '"C"E2G2A2G2E2D2C4|"G"D2E2G2E2D2C2D4|\nV: Ins\nZ2|\n')
+    chk = abc_check(ex)
+    ok(chk["ok"] and chk["report"]["voices"]["Vocal"]["sounding_notes"] == 14 and chk["report"]["bpm"] == 88,
+       f"abc_tools lit l'exemple du dépôt YuE ({str(chk)[:200]})")
+    bad = abc_check(ex.replace("C4|", "C4C|"))
+    ok(bad["ok"] is False and "bar 1" in bad["error"], f"une mesure trop longue est refusée, la mesure nommée ({bad})")
+    ok(abc_note(66, "D", {}) == "F" and abc_note(65, "D", {}) == "=F" and abc_note(70, "F", {}) == "B"
+       and abc_note(72, "C", {}) == "c" and abc_note(48, "C", {}) == "C," and abc_note(61, "C", {}) == "^C",
+       "les hauteurs dans l'armure : F dièse en ré, si bémol en fa, do5 en minuscule, do3 avec une virgule")
+    loc: dict = {}
+    ok([abc_note(p, "C", loc) for p in (66, 66, 65)] == ["^F", "F", "=F"], "une altération vaut pour la mesure, un bécarre la défait")
+    for sig in (2, 3, 4, 6):
+        f = fake_abc(3, 112, sig, 5, "minor", [["verse", 5], ["chorus", 3]], sing=True)
+        c = abc_check(f)
+        ok(c["ok"] and c["report"]["voices"]["Vocal"]["measures"] == 8 and len(c["report"]["voices"]["Vocal"]["chords"]) == 8,
+           f"partition d'essai en {sig}/4 : 8 mesures, un accord par mesure, jugée bonne ({str(c)[:160]})")
+    ok(abc_check(fake_abc(3, 90, 4, 0, "major", [["intro", 2]], sing=False))["ok"], "partition instrumentale : des silences sous les accords")
+    try:
+        yue_params({"tags": "pop", "abc": ex.replace("C4|", "C4C|"), "mode": "full"})
+        ok(False, "une partition hors dialecte est refusée avant le modèle")
+    except ValueError:
+        ok(True, "une partition hors dialecte est refusée avant le modèle")
+    gg = build_abc_graph(abc_params({"tags": "pop", "seed": 2, "mode": "melody"}))
+    ok(check_graph(gg, FAKE_INFO) == [] and gg["2"]["inputs"]["mode"] == "melody", f"le graphe de la partition seule ({check_graph(gg, FAKE_INFO)})")
+    st, r = call("POST", "/api/music/yue/abc/check", {"abc": ex})
+    ok(st == 200 and r.get("ok") is True and r["tools"]["ok"], f"la route de vérification ({st})")
+    st, j = call("POST", "/api/music/yue/abc", {"tags": "pop", "seed": 4, "mode": "full", "projet": {"bpm": 112, "sig": 4, "tonic": 5, "mode": "minor"},
+                                              "sections": [["verse", 4], ["chorus", 4]], "lyrics": "[Verse]\nla"})
+    j = wait(j["id"]) if st == 200 else {}
+    res = j.get("result") or {}
+    ok(j.get("state") == "done" and res.get("check", {}).get("ok") and "Q:1/4=112" in res.get("abc", "") and "K:Fm" in res["abc"],
+       f"la partition d'essai d'une région : 112, fa mineur, jugée bonne ({j.get('state')} {j.get('message')})")
+    st, j = call("POST", "/api/music/yue/generate", {"tags": "pop", "abc": ex, "mode": "full", "duration_s": 12, "seed": 1})
+    j = wait(j["id"]) if st == 200 else {}
+    it3 = (j.get("items") or [{}])[0]
+    ok(j.get("state") == "done" and it3.get("params", {}).get("score") == ex.strip() and abs(it3.get("duration", 0) - 8 * 60 / 88) < 0.05,
+       f"une partition fournie est chantée telle quelle : 8 temps à 88 = 5,45 s ({j.get('state')} {it3.get('duration')})")

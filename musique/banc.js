@@ -10,16 +10,24 @@
 //   - la lane ÉNERGIE est l'arc d'énergie du projet (les mêmes points) ;
 //   - la tête rouge (temps réel) est le transport de la DAW ; la verte
 //     (écoute) est libre, comme dans ODIO_01 ;
-//   - les « blocs » sont les cartes du nodal, et la table FACETTES dit ce
-//     que chaque réglage de nos modules a de rythmique, d'harmonique, de
-//     timbral — À RELIRE PAR CAL, comme celle d'ODIO_01 l'était par son
-//     auteur (question ouverte n° 6) ;
-//   - les couleurs d'ODIO_01 sont en dur dans son code ; ici elles passent
-//     par des jetons existants (commun/tokens.css) : acier pour RYTHME, les
-//     corail pour HARMONIE, TIMBRE, TENSION, le vert pour ÉNERGIE. L'ambre
-//     et le vermillon restent exclus des facettes (n° 44).
-// Les opérateurs sont une LECTURE de ce que l'attracteur ramènerait :
-// ODIO_01 non plus ne les branche pas au moteur (« le chantier suivant »).
+//   - les « blocs » sont les TUILES du nodal — une par section de machine,
+//     comme dans ODIO_01 — et ce qu'un réglage a de rythmique, d'harmonique,
+//     de timbral est dit par les facettes (machines/influence.js : celles
+//     d'ODIO_01 pour les machines, la table du 29/09 pour nos modules, À
+//     RELIRE PAR CAL — question ouverte n° 6) ;
+//   - ODIO_01 s'arrêtait à la LECTURE des opérateurs. Ici l'attracteur AGIT :
+//     tant qu'il parle, chaque réglage capté joue son opérateur (le moteur
+//     l'entend, machines/influence.js) et le chiffre bouge sur la tuile ;
+//   - les couleurs passent par des jetons (commun/tokens.css) : acier pour
+//     RYTHME, les corail pour HARMONIE, TIMBRE, TENSION, le vert pour
+//     ÉNERGIE. L'ambre et le vermillon restent exclus des facettes (n° 44).
+//
+// Pour la fluidité (mesurée, docs/etudes/musique_odio01.md) : les têtes ne
+// redessinent plus le plan — elles glissent (une transformation par image),
+// les courbes se découpent sous la tête rouge par un masque ; le plan ne se
+// reconstruit que quand il change (caméra, segments, attracteur qui se met à
+// parler). La couche méta vit DANS le monde du nodal : déplacer ou zoomer la
+// vue ne la redessine pas.
 //
 // Les gestes (ceux d'ODIO_01) :
 //   banc     molette : zoom ancré au curseur · clic milieu glissé : déplacer
@@ -42,9 +50,21 @@
 //            point devant se tire à la verticale (n° 53)
 
 import { toast } from '../commun/shell.js';
-import { MODULES, spec, val, moduleName } from './modules.js';
 import { songEnd, projEnd } from './moteur.js';
 import { el, put, tok, clamp } from './ui.js';
+import { attracteursActifs as actifsDuProjet, blocsDInfluence, operateurs, membres, actif, ecartBoite, poids, FACETTES_MODULES } from './machines/influence.js';
+
+/**
+ * POUR LE GÉNÉRATIF (et qui veut lire le banc) : à l'instant `temps` (en
+ * noires), les attracteurs qui parlent et ce qu'ils ramènent —
+ * [{ id, nom, couleur, lane, segment { id, d, l }, x, y, loi,
+ *    anneaux [{ facette, r }], operateurs [{ blocId, mod, blocNom, facette,
+ *    label, valeur, op, w, unite, ctl | cle }] }], du plus lourd au plus léger.
+ * Pur : ne lit que le projet.
+ */
+export function attracteursActifs(proj, temps) { return actifsDuProjet(proj, temps); }
+/** La table des facettes de nos modules (machines/influence.js) ; celle des machines est dans machines/banc/logique.js. */
+export const FACETTES = FACETTES_MODULES;
 
 /** Unités de plan par battement — l'échelle horizontale du banc (ODIO_01). */
 const PPB = 9;
@@ -53,6 +73,7 @@ const RAYON_DISQUE = 110;
 /** Les anneaux, du plus serré au plus large. */
 const RAYONS_ANNEAUX = [260, 420, 580];
 const MARGE = 4;
+const NS = 'http://www.w3.org/2000/svg';
 
 // Les cinq lanes d'ODIO_01, leurs hauteurs et leurs écarts gardés ; y est
 // compté depuis le haut des lanes (sous l'image de l'arrangement).
@@ -68,56 +89,6 @@ export const LANES = [
 const RESERVE = ['coral-3', 'grn2', 'coral-2', 'coral-1', 'cy'];
 const teintesAnneaux = (lane) => [lane.couleur, ...RESERVE.filter((t) => t !== lane.couleur)];
 
-// CE QUE CHAQUE RÉGLAGE A « DE RYTHMIQUE, D'HARMONIQUE, DE TIMBRAL »
-// (n° 54, 66) : la déclaration décide, pas le type de module. Un réglage
-// absent n'appartient à aucun thème (le volume, le panoramique…). Le partage
-// suit celui d'ODIO_01 (hauteur → tonalité, modulation croisée → tension,
-// coupure → brillance, résonance, saturation, forme → matière, accent →
-// accents). ⚠ À RELIRE PAR CAL, réglage par réglage. Nos boîtes à rythme
-// n'ont ni swing ni densité : RYTHME ne capte que l'accent de la basse acide.
-export const FACETTES = {
-  'synth.oct': 'tonalité', 'synth.oct2': 'tonalité', 'synth.det': 'tension', 'synth.cut': 'brillance',
-  'synth.res': 'matière', 'synth.fenv': 'matière', 'synth.wave': 'matière',
-  'analog.detune': 'tension', 'analog.cutoff': 'brillance', 'analog.resonance': 'matière', 'analog.envAmount': 'matière', 'analog.wave': 'matière',
-  'acid.cutoff': 'brillance', 'acid.resonance': 'matière', 'acid.envMod': 'matière', 'acid.accent': 'accents',
-  'plaits.timbre': 'brillance', 'plaits.harmo': 'matière', 'plaits.morph': 'matière', 'plaits.cutoff': 'brillance', 'plaits.resonance': 'matière',
-  'sampler.root': 'tonalité',
-  'rythme.drive': 'matière',
-  'filtre.cutoff': 'brillance', 'filtre.reso': 'matière', 'filtre.drive': 'matière',
-  'satura.drive': 'matière', 'crush.bits': 'matière', 'eq3.high': 'brillance',
-};
-
-// ── la géométrie et les opérateurs (logique.ts, tels quels) ──
-/** Distance d'un point au bord d'une boîte — nulle dedans. */
-export function ecartBoite(b, cx, cy) {
-  const px = Math.max(b.x, Math.min(cx, b.x + b.w)), py = Math.max(b.y, Math.min(cy, b.y + b.h));
-  return Math.hypot(cx - px, cy - py);
-}
-/** Le poids d'un bloc dans un anneau (n° 55-56) : 1 sous le centre, 0 au bord. */
-export function poids(distance, rayon, loi) {
-  if (rayon <= 0) return 0;
-  return Math.pow(Math.max(0, Math.min(1, 1 - distance / rayon)), loi);
-}
-/** Ce que l'attracteur ramène : neutre + (valeur − neutre) × poids (n° 55). */
-export function operateurs(atr, blocs) {
-  const out = [];
-  for (const an of atr.anneaux) {
-    for (const b of blocs) {
-      const d = ecartBoite(b.boite, atr.x, atr.y);
-      if (d > an.r) continue;
-      const w = poids(d, an.r, atr.loi);
-      for (const p of b.parametres) {
-        if (p.facette !== an.facette) continue;
-        out.push({ blocId: b.id, blocNom: b.nom, facette: an.facette, couleur: an.couleur, label: p.label, valeur: p.valeur, w,
-          op: p.def + (p.valeur - p.def) * w, unite: p.unit || '' });
-      }
-    }
-  }
-  return out.sort((a, b) => b.w - a.w);
-}
-const membres = (atr, an, blocs) => blocs.filter((b) => b.facettes.has(an.facette) && ecartBoite(b.boite, atr.x, atr.y) <= an.r);
-/** Le temps décide s'il parle : la tête gouvernante traverse-t-elle le segment ? */
-const actif = (seg, t) => seg.d <= t && t < seg.d + seg.l;
 /** Une valeur, sobre, sans zéros de traîne (ecrire d'ODIO_01). */
 function ecrire(v) {
   const a = Math.abs(v);
@@ -135,8 +106,10 @@ const tient = (cands, place) => cands.find((t) => t && largeur(t) + MARGE <= pla
 
 let suite = 1;
 const nid = (p) => `${p}${Date.now().toString(36).slice(-4)}${(suite++).toString(36)}`;
+let clips = 0;
+const sv = (tag, attrs = {}) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
 
-// createBench(app, nodal) — nodal : { cv, view() → {px, py, z}, box(id) → {x, y, w, h} }
+// createBench(app, nodal) — nodal : { cv, world, view() → {px, py, z}, tuiles() → les tuiles du nodal }
 export function createBench(app, nodal) {
   const { S } = app;
   const P = () => S.proj;
@@ -160,11 +133,17 @@ export function createBench(app, nodal) {
   const bar = el('div', { class: 'bn-bar', title: 'la barre des temps : la tirer règle la hauteur du banc' });
   const plan = el('div', { class: 'bn-plan' });
   root.append(bar, plan);
+  const fond = el('div', { class: 'bn-fond' });          // l'arrangement, les lanes, les courbes
+  const segsEl = el('div', { class: 'bn-segs' });        // les segments
+  const avance = el('div', { class: 'bn-avance' });
+  const cueReel = cueEl('reel'), cueEco = cueEl('eco');
+  plan.append(fond, segsEl, avance, cueReel, cueEco);
+  // la couche méta vit dans le monde du nodal
   const meta = el('div', { class: 'bn-meta' });
-  nodal.cv.append(meta);
-  const filSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  (nodal.world || nodal.cv).append(meta);
+  const filSvg = document.createElementNS(NS, 'svg');
   filSvg.setAttribute('class', 'bn-fil');
-  const filPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  const filPath = document.createElementNS(NS, 'path');
   filSvg.append(filPath);
   const poseEl = el('div', { class: 'bn-pose' }, el('span', { class: 'bn-titre' }), el('span', { class: 'bn-centre bn-pose-disque' }));
 
@@ -187,20 +166,13 @@ export function createBench(app, nodal) {
   }
   const laneAt = (lanes, id) => lanes.find((L) => L.id === id);
 
-  // ── les blocs : les cartes du nodal qui déclarent un thème ──
-  function blocs() {
-    const out = [];
-    for (const m of P().modules) {
-      const ps = (MODULES[m.type]?.params || []).map((s) => ({ s, f: FACETTES[`${m.type}.${s.k}`] })).filter((x) => x.f);
-      if (!ps.length) continue;
-      const boite = nodal.box(m.id);
-      if (!boite) continue;
-      const t = m.track && app.track(m.track);
-      out.push({ id: m.id, nom: `${moduleName(m.type)}${t ? ` · ${t.name}` : ''}`, boite, facettes: new Set(ps.map((x) => x.f)),
-        parametres: ps.map(({ s, f }) => ({ facette: f, label: s.label, def: s.def, unit: s.unit, valeur: val(m, s.k) })) });
-    }
-    return out;
-  }
+  // ── les blocs : les tuiles du nodal qui déclarent une facette (relus au plus une fois par image) ──
+  let blocsMemo = null, blocsT = -1;
+  const blocs = () => {
+    const now = performance.now();
+    if (!blocsMemo || now - blocsT > 30) { blocsMemo = blocsDInfluence(P(), nodal.tuiles ? nodal.tuiles() : undefined); blocsT = now; }
+    return blocsMemo;
+  };
 
   // ── la barre des temps ──
   const tps = el('span', { class: 'bn-tps' });
@@ -216,13 +188,16 @@ export function createBench(app, nodal) {
         onpointerdown: (e) => e.stopPropagation(), onclick: marche }, courtG ? 'arrêt' : 'marche'),
       tps,
       el('span', { class: 'sp' }),
-      el('span', { class: 'lbl bn-aide' }, 'glisser sur une lane : un segment · clic milieu tiré d\'un segment vers le haut : un attracteur'));
+      el('span', { class: 'lbl bn-aide' }, 'glisser sur une lane : un segment · clic milieu tiré d\'un segment vers le haut : un attracteur — il agit sur le son quand la tête le traverse'));
+    tpsTxt = '';
     paintTps();
   }
+  let tpsTxt = '';
   function paintTps() {
-    tps.textContent = `temps ${reel().toFixed(1)} ${app.engine.running ? '▸' : '■'} · écoute ${heads.eco.toFixed(1)} ${heads.courtEco ? '▸' : '■'} · gouverne ${gouvernant().toFixed(1)}`;
+    const t = `temps ${reel().toFixed(1)} ${app.engine.running ? '▸' : '■'} · écoute ${heads.eco.toFixed(1)} ${heads.courtEco ? '▸' : '■'} · gouverne ${gouvernant().toFixed(1)}`;
+    if (t !== tpsTxt) { tpsTxt = t; tps.textContent = t; }
   }
-  function toggleHeads() { heads.gouverne = heads.gouverne === 'reel' ? 'eco' : 'reel'; U().gouverne = heads.gouverne; app.saveUi(); paintBar(); renderPlan(); paintMeta(); }
+  function toggleHeads() { heads.gouverne = heads.gouverne === 'reel' ? 'eco' : 'reel'; U().gouverne = heads.gouverne; app.saveUi(); paintBar(); majSegments(); paintMeta(); }
   function marche() {
     if (heads.gouverne === 'reel') app.playStop();
     else { heads.courtEco = !heads.courtEco; lastT = null; }
@@ -234,17 +209,23 @@ export function createBench(app, nodal) {
     e.preventDefault();
     bar.setPointerCapture(e.pointerId);
     const y0 = e.clientY, h0 = U().h;
-    const mv = (ev) => { U().h = clamp(h0 - (ev.clientY - y0), 120, innerHeight - 220); root.style.height = `${U().h}px`; renderPlan(); };
+    const mv = (ev) => { U().h = clamp(h0 - (ev.clientY - y0), 120, innerHeight - 220); root.style.height = `${U().h}px`; demanderPlan(); };
     const up = () => { bar.removeEventListener('pointermove', mv); bar.removeEventListener('pointerup', up); app.saveUi(); paintMeta(); };
     bar.addEventListener('pointermove', mv); bar.addEventListener('pointerup', up);
   });
 
-  // ── le plan ──
+  // ═══════════════════════════════════ le plan : reconstruit quand il change
+  let rafPlan = 0;
+  function demanderPlan() { if (!rafPlan) rafPlan = requestAnimationFrame(renderPlan); }
+  let courbesVives = [];   // [{ passe, futur, pts: [{el, b}] }] — ce que la tête découpe à chaque image
   function renderPlan() {
+    if (rafPlan) cancelAnimationFrame(rafPlan);
+    rafPlan = 0;
+    if (!P()) return;
     const L = layout(), k = cam().k, W = plan.clientWidth || 800;
     const kids = [];
     // l'arrangement, simplifié : les sections, puis une rangée par piste
-    for (const s of P().sections) {
+    for (const s of P().sections || []) {
       const x = pxB(s.a), w = (s.b - s.a) * PPB * k;
       if (x + w < 0 || x > W) continue;
       kids.push(el('div', { class: 'bn-sec', style: { left: `${x}px`, top: `${pyB(L.secY)}px`, width: `${Math.max(2, w - 1)}px`, height: `${L.secH * k}px`, '--c': `var(--${s.color || 'cy'})` } },
@@ -265,7 +246,7 @@ export function createBench(app, nodal) {
     // la fin de l'arrangement
     for (const lane of L.lanes) {
       const y = pyB(lane.y), h = lane.h * k;
-      const hz = lane.id === 'nrj' ? lastPt(P().arc.pts) : lane.id === 'ten' ? lastPt(B().ten) : songEnd(P());
+      const hz = lane.id === 'nrj' ? lastPt(P().arc?.pts) : lane.id === 'ten' ? lastPt(B().ten) : songEnd(P());
       const xh = pxB(hz);
       const ln = el('div', { class: 'bn-lane', 'data-lane': lane.id, style: { top: `${y}px`, height: `${h}px` } },
         xh < W ? el('div', { class: 'bn-hz', style: { left: `${Math.max(0, xh)}px`, '--c': `var(--${lane.couleur})` } },
@@ -277,17 +258,41 @@ export function createBench(app, nodal) {
       if (h >= 15) kids.push(el('span', { class: 'bn-lanenom', style: { top: `${y}px`, '--c': `var(--${lane.couleur})` } }, el('i'), tient([lane.nom, lane.nom.slice(0, 3)], 92) || ''));
     }
     kids.push(curves(L, W));
-    for (const s of B().segs) { const n = segmentEl(s, L, W); if (n) kids.push(n); }
-    // l'avance de l'écoute sur le temps réel, les deux têtes
-    const xr = pxB(reel()), xe = pxB(heads.eco);
-    kids.push(el('div', { class: 'bn-avance', style: { left: `${Math.min(xr, xe)}px`, width: `${Math.abs(xe - xr)}px` } }));
-    kids.push(cueEl('reel', xr), cueEl('eco', xe));
-    put(plan, ...kids);
+    put(fond, ...kids);
+    majSegments(L, W);
+    poserTetes(true);
   }
   const lastPt = (pts) => (pts?.length ? pts[pts.length - 1][0] : 0);
 
-  function cueEl(which, x) {
-    const n = el('div', { class: `bn-cue ${which}`, 'data-cue': which, style: { left: `${x}px`, zIndex: heads.gouverne === which ? 31 : 30 } },
+  // les segments seuls : ils changent quand un attracteur bouge ou se met à
+  // parler — et quand on tire UN attracteur, seul son segment se refait
+  let rafSegs = 0, segsTous = false;
+  const segsIds = new Set();
+  function demanderSegments(id = null) {
+    if (id) segsIds.add(id); else segsTous = true;
+    if (rafSegs) return;
+    rafSegs = requestAnimationFrame(() => {
+      rafSegs = 0;
+      if (segsTous) majSegments(); else majSegmentsIds([...segsIds]);
+      segsTous = false; segsIds.clear();
+    });
+  }
+  function majSegments(L = layout(), W = plan.clientWidth || 800) {
+    if (!P()) return;
+    const bl = blocs();
+    put(segsEl, ...B().segs.map((s) => segmentEl(s, L, W, bl)).filter(Boolean));
+  }
+  function majSegmentsIds(ids) {
+    const L = layout(), W = plan.clientWidth || 800, bl = blocs();
+    for (const id of ids) {
+      const s = B().segs.find((x) => x.id === id), old = segsEl.querySelector(`[data-seg="${CSS.escape(id)}"]`);
+      const n = s && segmentEl(s, L, W, bl);
+      if (old && n) old.replaceWith(n); else if (n) segsEl.append(n); else old?.remove();
+    }
+  }
+
+  function cueEl(which) {
+    const n = el('div', { class: `bn-cue ${which}`, 'data-cue': which },
       el('span', { class: 'bn-cuez', title: which === 'reel' ? 'le temps réel — attrape-le n\'importe où sur son trait' : 'l\'écoute — attrape-la n\'importe où sur son trait' }));
     n.firstChild.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
@@ -305,35 +310,60 @@ export function createBench(app, nodal) {
     });
     return n;
   }
+  // les têtes GLISSENT : une transformation par image, rien ne se reconstruit
+  let posAvant = null;
+  function poserTetes(force = false) {
+    const xr = pxB(reel()), xe = pxB(heads.eco);
+    const cle = `${xr.toFixed(1)}|${xe.toFixed(1)}|${heads.gouverne}`;
+    if (!force && cle === posAvant) return;
+    posAvant = cle;
+    cueReel.style.transform = `translateX(${xr}px)`;
+    cueEco.style.transform = `translateX(${xe}px)`;
+    cueReel.style.zIndex = heads.gouverne === 'reel' ? 31 : 30;
+    cueEco.style.zIndex = heads.gouverne === 'eco' ? 31 : 30;
+    avance.style.transform = `translateX(${Math.min(xr, xe)}px) scaleX(${Math.max(0.001, Math.abs(xe - xr))})`;
+    // les courbes : l'aire et la ligne pleine DERRIÈRE la tête rouge, la ligne légère et les points DEVANT
+    const tr = reel();
+    for (const c of courbesVives) {
+      c.passe.setAttribute('width', String(Math.max(0, xr + 20000)));
+      c.futur.setAttribute('x', String(xr));
+      for (const q of c.pts) { const v = q.b >= tr; if (q.vu !== v) { q.vu = v; q.el.style.display = v ? '' : 'none'; } }
+    }
+  }
 
-  // les courbes : aire pleine derrière la tête rouge, ligne à points devant
+  // les courbes, dessinées une fois ; la tête les découpe par deux masques
   function curves(L, W) {
-    const ns = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(ns, 'svg');
-    svg.setAttribute('class', 'bn-courbes');
-    svg.setAttribute('width', W); svg.setAttribute('height', plan.clientHeight || 300);
-    const k = cam().k, tr = reel();
+    const svg = sv('svg', { class: 'bn-courbes', width: W, height: plan.clientHeight || 300 });
+    const defs = sv('defs');
+    svg.append(defs);
+    courbesVives = [];
+    const k = cam().k;
     for (const lane of L.lanes.filter((x) => x.nature === 'courbe')) {
-      const pts = lane.id === 'nrj' ? P().arc.pts : B().ten;
+      const pts = lane.id === 'nrj' ? P().arc?.pts || [] : B().ten;
       if (!pts.length) continue;
       const y0 = pyB(lane.y), h = lane.h * k;
       const co = pts.map(([b, v], i) => ({ x: pxB(b), y: y0 + 4 * k + (1 - v) * (h - 10 * k), b, i }));
-      const path = (list) => (list.length > 1 ? `M ${list.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' L ')}` : '');
-      const passe = co.filter((p) => p.b <= tr), futur = co.filter((p) => p.b >= tr);
-      const col = tok(lane.couleur), bas = y0 + h - 3;
-      const add = (d, attrs) => { if (!d) return; const p = document.createElementNS(ns, 'path'); p.setAttribute('d', d); for (const [a, v] of Object.entries(attrs)) p.setAttribute(a, v); svg.append(p); };
-      if (passe.length > 1) add(`${path(passe)} L ${passe.at(-1).x.toFixed(1)} ${bas.toFixed(1)} L ${passe[0].x.toFixed(1)} ${bas.toFixed(1)} Z`, { fill: col, 'fill-opacity': 0.13, stroke: 'none' });
-      add(path(passe), { stroke: col, 'stroke-width': 1.5, fill: 'none' });
-      add(path(futur), { stroke: col, 'stroke-width': 1, fill: 'none', opacity: 0.55 });
-      if (h < 22) continue;
-      for (const p of futur) {
-        if (p.x < -10 || p.x > W + 10) continue;
-        const c = document.createElementNS(ns, 'circle');
-        c.setAttribute('class', 'bn-pt'); c.setAttribute('cx', p.x); c.setAttribute('cy', p.y); c.setAttribute('r', 3.5);
-        c.setAttribute('stroke', col); c.setAttribute('stroke-width', 1.5);
-        c.addEventListener('pointerdown', (e) => tirerPoint(e, lane, pts, p.i));
-        svg.append(c);
+      const d = co.length > 1 ? `M ${co.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' L ')}` : '';
+      if (!d) continue;
+      const col = tok(lane.couleur), bas = y0 + h - 3, n = ++clips;
+      const cp = sv('clipPath', { id: `bn-passe-${n}` }), cf = sv('clipPath', { id: `bn-futur-${n}` });
+      const rp = sv('rect', { x: -20000, y: -2000, width: 0, height: 8000 }), rf = sv('rect', { x: 0, y: -2000, width: 40000, height: 8000 });
+      cp.append(rp); cf.append(rf); defs.append(cp, cf);
+      svg.append(
+        sv('path', { d: `${d} L ${co.at(-1).x.toFixed(1)} ${bas.toFixed(1)} L ${co[0].x.toFixed(1)} ${bas.toFixed(1)} Z`, fill: col, 'fill-opacity': 0.13, stroke: 'none', 'clip-path': `url(#bn-passe-${n})` }),
+        sv('path', { d, stroke: col, 'stroke-width': 1.5, fill: 'none', 'clip-path': `url(#bn-passe-${n})` }),
+        sv('path', { d, stroke: col, 'stroke-width': 1, fill: 'none', opacity: 0.55, 'clip-path': `url(#bn-futur-${n})` }));
+      const vif = { passe: rp, futur: rf, pts: [] };
+      if (h >= 22) {
+        for (const p of co) {
+          if (p.x < -10 || p.x > W + 10) continue;
+          const c = sv('circle', { class: 'bn-pt', cx: p.x, cy: p.y, r: 3.5, stroke: col, 'stroke-width': 1.5 });
+          c.addEventListener('pointerdown', (e) => tirerPoint(e, lane, pts, p.i));
+          svg.append(c);
+          vif.pts.push({ el: c, b: p.b, vu: true });
+        }
       }
+      courbesVives.push(vif);
     }
     return svg;
   }
@@ -346,27 +376,27 @@ export function createBench(app, nodal) {
       const yPlan = (ev.clientY - r.top) / cam().k + cam().y;
       const L = laneAt(layout().lanes, lane.id);
       pts[i][1] = Math.round(clamp(1 - (yPlan - L.y - 4) / (L.h - 10), 0, 1) * 1000) / 1000;
-      renderPlan();
+      demanderPlan();
     };
     const up = () => { removeEventListener('pointermove', mv, true); removeEventListener('pointerup', up, true); app.commit(lane.id === 'nrj' ? 'meta' : 'quiet'); };
     addEventListener('pointermove', mv, true); addEventListener('pointerup', up, true);
   }
 
   // ── les segments ──
-  function segmentEl(seg, L, W) {
+  function segmentEl(seg, L, W, bl) {
     const lane = laneAt(L.lanes, seg.lane);
     if (!lane) return null;
     const k = cam().k;
     const atr = seg.atr && B().atts.find((a) => a.id === seg.atr);
     const parle = atr ? actif(seg, gouvernant()) : false;
     const x = pxB(seg.d), w = seg.l * PPB * k, y = pyB(lane.y + 3), h = (lane.h - 6) * k;
+    if (x > W + 20 || x + w < -20) return null;
     // le contenu se recale sur la part visible (n° 52)
     const gx = Math.max(0, -x), vw = Math.min(w, W - x) - gx;
     const nom = vw >= 30 && h >= 14 ? tient([lane.nom, lane.nom.slice(0, 3)], vw - 10) : null;
     const lignes = [];
     if (atr && vw >= 120 && h >= 30) {
       let reste = h - 18;
-      const bl = blocs();
       for (const o of operateurs(atr, bl)) {
         if (reste < 14) break;
         const valeur = ecrire(o.op), source = `${ecrire(o.valeur)}${o.unite} → `;
@@ -377,7 +407,7 @@ export function createBench(app, nodal) {
         }
         if (!mis) continue;
         reste -= 14;
-        lignes.push(el('div', { class: 'bn-op', style: { '--c': `var(--${o.couleur})` } }, el('span', {}, mis.et), mis.src ? el('u', {}, mis.src) : null, el('b', {}, valeur)));
+        lignes.push(el('div', { class: `bn-op${parle ? ' agit' : ''}`, style: { '--c': `var(--${o.couleur})` } }, el('span', {}, mis.et), mis.src ? el('u', {}, mis.src) : null, el('b', {}, valeur)));
       }
     }
     const dort = !atr && vw >= 60 && h >= 26 ? tient(['dormant', '·'], vw - 12) : null;
@@ -426,16 +456,16 @@ export function createBench(app, nodal) {
       const yPlan = (ev.clientY - r.top) / cam().k + cam().y;
       const dessus = layout().lanes.find((L) => L.nature === 'matiere' && yPlan >= L.y && yPlan < L.y + L.h);
       if (dessus) seg.lane = dessus.id;
-      renderPlan(); paintMeta();
+      demanderSegments(); paintMeta();
     };
-    const up = () => { removeEventListener('pointermove', mv, true); removeEventListener('pointerup', up, true); app.commit('quiet'); };
+    const up = () => { removeEventListener('pointermove', mv, true); removeEventListener('pointerup', up, true); app.commit('quiet'); renderPlan(); };
     addEventListener('pointermove', mv, true); addEventListener('pointerup', up, true);
   }
   function etirerSegment(e, seg) {
     if (e.button !== 0) return;
     e.preventDefault(); e.stopPropagation();
     const x0 = e.clientX, l0 = seg.l;
-    const mv = (ev) => { seg.l = Math.max(2, Math.round(l0 + (ev.clientX - x0) / (PPB * cam().k))); renderPlan(); paintMeta(); };
+    const mv = (ev) => { seg.l = Math.max(2, Math.round(l0 + (ev.clientX - x0) / (PPB * cam().k))); demanderSegments(); paintMeta(); };
     const up = () => { removeEventListener('pointermove', mv, true); removeEventListener('pointerup', up, true); app.commit('quiet'); };
     addEventListener('pointermove', mv, true); addEventListener('pointerup', up, true);
   }
@@ -491,7 +521,7 @@ export function createBench(app, nodal) {
       if (!bonne) {
         if (cree && vif) { undoBirth(vif, seg); selection = null; }
         else if (deja && origine) Object.assign(deja, origine);
-      } else toast(cree ? `attracteur ${lane.nom} : il parle quand la tête qui gouverne traverse son segment` : 'attracteur déplacé', 3500);
+      } else toast(cree ? `attracteur ${lane.nom} : il agit sur ce qu'il capte quand la tête qui gouverne traverse son segment` : 'attracteur déplacé', 3500);
       app.commit('quiet');
       renderPlan(); paintMeta(); paintFil();
     };
@@ -511,16 +541,25 @@ export function createBench(app, nodal) {
     d.style.setProperty('--c', `var(--${pose.couleur})`);
   }
 
-  // ── la couche méta, sur le nodal ──
-  function paintMeta() {
+  // ═══════════════════════════════ la couche méta, DANS le monde du nodal
+  // Tout est en unités monde : déplacer la vue ne la redessine pas. Ce qui
+  // doit garder une taille d'écran (poignées, étiquettes, filets) se
+  // contre-échelonne par la variable --iz du monde.
+  let rafMeta = 0;
+  function paintMeta(seg = null) {
+    if (!rafMeta) rafMeta = requestAnimationFrame(peindreMeta);
+    demanderSegments(seg);
+  }
+  function peindreMeta() {
+    rafMeta = 0;
+    if (!P()) return;
     const v = nodal.view(), atts = B().atts;
-    if (!atts.length) { put(meta); return; }
+    if (!atts.length) { put(meta); paintFil(); return; }
     const bl = blocs(), tg = gouvernant();
     const kids = [];
     // le choisi passe au-dessus des autres (n° 77)
     const order = [...atts].sort((a, b) => (a.id === selection) - (b.id === selection));
     for (const a of order) {
-      const cx = v.px + a.x * v.z, cy = v.py + a.y * v.z, R = a.r * v.z;
       const seg = B().segs.find((s) => s.id === a.segment);
       const parle = seg ? actif(seg, tg) : false;
       const choisi = selection === a.id;
@@ -534,33 +573,32 @@ export function createBench(app, nodal) {
       if (parle || (dragging && choisi)) {
         for (const { an, dedans } of [...forces].reverse()) {
           for (const b of dedans) {
-            const bx = v.px + b.boite.x * v.z, by = v.py + b.boite.y * v.z, rr = an.r * v.z;
             const w = poids(ecartBoite(b.boite, a.x, a.y), an.r, a.loi);
-            kids.push(el('div', { class: 'bn-teinte', style: { left: `${bx}px`, top: `${by}px`, width: `${b.boite.w * v.z}px`, height: `${b.boite.h * v.z}px` } },
-              el('i', { style: { left: `${cx - bx - rr}px`, top: `${cy - by - rr}px`, width: `${rr * 2}px`, height: `${rr * 2}px`, background: `var(--${an.couleur})`, opacity: (0.08 + 0.14 * w).toFixed(3) } })));
+            kids.push(el('div', { class: 'bn-teinte', style: { left: `${b.boite.x}px`, top: `${b.boite.y}px`, width: `${b.boite.w}px`, height: `${b.boite.h}px` } },
+              el('i', { style: { left: `${a.x - b.boite.x - an.r}px`, top: `${a.y - b.boite.y - an.r}px`, width: `${an.r * 2}px`, height: `${an.r * 2}px`, background: `var(--${an.couleur})`, opacity: (0.08 + 0.14 * w).toFixed(3) } })));
           }
         }
       }
       for (const { an, compte } of forces) {
-        const rr = an.r * v.z;
         const vise = surAnneau && surAnneau.atr === a.id && surAnneau.facette === an.facette;
         const ang = vise ? surAnneau.ang : an.ang;
-        g.append(el('span', { class: 'bn-anneau', style: { left: `${cx - rr}px`, top: `${cy - rr}px`, width: `${rr * 2}px`, height: `${rr * 2}px`, '--c': `var(--${an.couleur})` } }));
+        g.append(el('span', { class: 'bn-anneau', style: { left: `${a.x - an.r}px`, top: `${a.y - an.r}px`, width: `${an.r * 2}px`, height: `${an.r * 2}px`, '--c': `var(--${an.couleur})` } }));
         if (vise || choisi) {
-          const hx = cx + Math.cos(ang) * rr, hy = cy + Math.sin(ang) * rr;
+          const hx = a.x + Math.cos(ang) * an.r, hy = a.y + Math.sin(ang) * an.r;
           const et = `${an.facette} · ${compte}`, pl = largeur(et) + MARGE + 8;
-          const h = el('span', { class: 'bn-poignee', style: { left: `${hx}px`, top: `${hy}px`, '--c': `var(--${an.couleur})` }, title: `${an.facette} : tirer — le rayon et l'angle` });
-          h.addEventListener('pointerdown', (e) => tirerRayon(e, a, an.facette));
-          g.append(h, el('span', { class: 'bn-etiquette', style: { left: `${hx + (Math.cos(ang) >= 0 ? 10 : -10 - pl)}px`, top: `${hy + (Math.sin(ang) >= 0 ? 4 : -17)}px`, '--c': `var(--${an.couleur})` } }, et));
+          const hd = el('span', { class: 'bn-poignee', style: { left: `${hx}px`, top: `${hy}px`, '--c': `var(--${an.couleur})` }, title: `${an.facette} : tirer — le rayon et l'angle` });
+          hd.addEventListener('pointerdown', (e) => tirerRayon(e, a, an.facette));
+          g.append(hd, el('span', { class: 'bn-etiquette', style: { left: `${hx}px`, top: `${hy}px`, '--dx': `${Math.cos(ang) >= 0 ? 10 : -10 - pl}px`, '--dy': `${Math.sin(ang) >= 0 ? 4 : -17}px`, '--c': `var(--${an.couleur})` } }, et));
         }
       }
-      g.append(el('span', { class: 'bn-titre', style: { left: `${cx - (largeur(a.nom) + MARGE + 8) / 2}px`, top: `${cy - R - 16}px` } }, a.nom));
-      // le centre est responsif (n° 72) : la plus grande taille qui tient
+      g.append(el('span', { class: 'bn-titre', style: { left: `${a.x}px`, top: `${a.y - a.r}px` } }, a.nom));
+      // le centre est responsif (n° 72) : la plus grande taille qui tient, à la taille où on le voit
+      const R = a.r * v.z;
       const lignes = a.anneaux.length + 1 + (parle ? 0 : 1);
       const txt = forces.map(({ an, force }) => `${an.facette} ${force.toFixed(2)}`);
       const plusLarge = Math.max(1, ...txt.map(largeur));
       const corps = Math.max(8, Math.min(17, Math.floor((R * 1.42) / (lignes * 1.3)), Math.floor((9 * (R * 1.55 - MARGE)) / plusLarge)));
-      const centre = el('span', { class: 'bn-centre', style: { left: `${cx - R}px`, top: `${cy - R}px`, width: `${R * 2}px`, height: `${R * 2}px`, fontSize: `${corps}px`, '--c': `var(--${a.couleur})` } },
+      const centre = el('span', { class: 'bn-centre', style: { left: `${a.x - a.r}px`, top: `${a.y - a.r}px`, width: `${a.r * 2}px`, height: `${a.r * 2}px`, fontSize: `calc(${corps}px * var(--iz, 1))`, '--c': `var(--${a.couleur})` } },
         forces.map(({ an, force }) => { const t = tient([`${an.facette} ${force.toFixed(2)}`, force.toFixed(2)], R * 1.55); return t ? el('em', { style: { '--c': `var(--${an.couleur})` } }, t) : null; }));
       if (tient([`loi ×${a.loi.toFixed(2)}`, `×${a.loi.toFixed(2)}`], R * 1.55)) {
         const loi = el('em', { class: 'bn-loi', title: 'la loi de distance : tire à l\'horizontale' }, `loi ×${a.loi.toFixed(2)}`);
@@ -583,8 +621,9 @@ export function createBench(app, nodal) {
     e.preventDefault(); e.stopPropagation();
     selection = a.id; dragging = true;
     const x0 = e.clientX, y0 = e.clientY, ax = a.x, ay = a.y, z = nodal.view().z;
-    const mv = (ev) => { a.x = ax + (ev.clientX - x0) / z; a.y = ay + (ev.clientY - y0) / z; paintMeta(); };
-    const up = () => { removeEventListener('pointermove', mv, true); removeEventListener('pointerup', up, true); dragging = false; app.commit('quiet'); paintMeta(); renderPlan(); };
+    // n° 57 : les opérateurs bougent dans le même geste — et le son aussi
+    const mv = (ev) => { a.x = ax + (ev.clientX - x0) / z; a.y = ay + (ev.clientY - y0) / z; paintMeta(a.segment); };
+    const up = () => { removeEventListener('pointermove', mv, true); removeEventListener('pointerup', up, true); dragging = false; app.commit('quiet'); paintMeta(); };
     addEventListener('pointermove', mv, true); addEventListener('pointerup', up, true);
     paintMeta();
   }
@@ -600,9 +639,9 @@ export function createBench(app, nodal) {
       an.r = Math.max(a.r + 30, Math.hypot(dx, dy) / v.z);
       an.ang = Math.atan2(dy, dx);
       surAnneau = { atr: a.id, facette, ang: an.ang };
-      paintMeta();
+      paintMeta(a.segment);
     };
-    const up = () => { removeEventListener('pointermove', mv, true); removeEventListener('pointerup', up, true); surAnneau = null; app.commit('quiet'); paintMeta(); renderPlan(); };
+    const up = () => { removeEventListener('pointermove', mv, true); removeEventListener('pointerup', up, true); surAnneau = null; app.commit('quiet'); paintMeta(); };
     addEventListener('pointermove', mv, true); addEventListener('pointerup', up, true);
   }
   function reglerLoi(e, a) {
@@ -610,14 +649,14 @@ export function createBench(app, nodal) {
     e.preventDefault(); e.stopPropagation();
     selection = a.id;
     const x0 = e.clientX, l0 = a.loi;
-    const mv = (ev) => { a.loi = clamp(l0 * Math.exp((ev.clientX - x0) / 130), 0.25, 4); paintMeta(); };
-    const up = () => { removeEventListener('pointermove', mv, true); removeEventListener('pointerup', up, true); app.commit('quiet'); renderPlan(); };
+    const mv = (ev) => { a.loi = clamp(l0 * Math.exp((ev.clientX - x0) / 130), 0.25, 4); paintMeta(a.segment); };
+    const up = () => { removeEventListener('pointermove', mv, true); removeEventListener('pointerup', up, true); app.commit('quiet'); };
     addEventListener('pointermove', mv, true); addEventListener('pointerup', up, true);
   }
 
   // frôler un anneau sur le nodal : sa poignée vient sous la souris (n° 75)
   nodal.cv.addEventListener('pointermove', (e) => {
-    if (e.buttons || !B().atts.length) return;
+    if (e.buttons || !P() || !B().atts.length) return;
     const v = nodal.view(), r = nodal.cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
     let trouve = null, mieux = 11;
     for (const a of B().atts) {
@@ -630,7 +669,7 @@ export function createBench(app, nodal) {
     if (!surAnneau && !trouve) return;
     if (surAnneau && trouve && surAnneau.atr === trouve.atr && surAnneau.facette === trouve.facette && Math.abs(surAnneau.ang - trouve.ang) < 0.004) return;
     surAnneau = trouve;
-    paintMeta();
+    if (!rafMeta) rafMeta = requestAnimationFrame(peindreMeta);
   });
   nodal.cv.addEventListener('pointerleave', () => { if (surAnneau) { surAnneau = null; paintMeta(); } });
   // un clic sur le fond du nodal ne choisit plus d'attracteur
@@ -655,6 +694,15 @@ export function createBench(app, nodal) {
     filPath.style.stroke = `var(--${couleur})`;
     if (!filSvg.isConnected) document.body.append(filSvg);
   }
+  // la vue du nodal a bougé : le fil suit ; le centre se remet à la taille où on le voit
+  let tVue = 0;
+  function suivreVue() {
+    if (survol || pose) paintFil();
+    if (!B().atts.length) return;
+    clearTimeout(tVue);
+    // seul le centre dépend du zoom (sa taille lisible) : les segments ne bougent pas
+    tVue = setTimeout(() => { if (!rafMeta) rafMeta = requestAnimationFrame(peindreMeta); }, 120);
+  }
 
   // ── la caméra du banc : molette ancrée au curseur, clic milieu pour se déplacer (n° 51, 61) ──
   plan.addEventListener('wheel', (e) => {
@@ -663,7 +711,7 @@ export function createBench(app, nodal) {
     const wx = mx / c.k + c.x, wy = my / c.k + c.y;
     const k = clamp(c.k * (e.deltaY > 0 ? 0.9 : 1.111), 0.25, 3);
     U().cam = { k, x: wx - mx / k, y: wy - my / k };
-    renderPlan(); paintFil();
+    demanderPlan(); paintFil();
     clearTimeout(plan._t); plan._t = setTimeout(() => app.saveUi(), 400);
   }, { passive: false });
   plan.addEventListener('pointerdown', (e) => {
@@ -672,7 +720,7 @@ export function createBench(app, nodal) {
     const x0 = e.clientX, y0 = e.clientY, c0 = { ...cam() };
     plan.setPointerCapture(e.pointerId);
     plan.classList.add('drag');
-    const mv = (ev) => { U().cam = { ...c0, x: c0.x - (ev.clientX - x0) / c0.k, y: c0.y - (ev.clientY - y0) / c0.k }; renderPlan(); paintFil(); };
+    const mv = (ev) => { U().cam = { ...c0, x: c0.x - (ev.clientX - x0) / c0.k, y: c0.y - (ev.clientY - y0) / c0.k }; demanderPlan(); paintFil(); };
     const up = () => { plan.removeEventListener('pointermove', mv); plan.removeEventListener('pointerup', up); plan.classList.remove('drag'); app.saveUi(); };
     plan.addEventListener('pointermove', mv); plan.addEventListener('pointerup', up);
   });
@@ -680,7 +728,7 @@ export function createBench(app, nodal) {
 
   // ── clavier : « c » bascule les têtes, Suppr retire l'attracteur choisi (n° 71, 84) ──
   addEventListener('keydown', (e) => {
-    if (S.view !== 'nodal' || !S.proj || e.target.closest?.('input, textarea, select, [contenteditable]') || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (S.view !== 'nodal' || !S.proj || !root.isConnected || e.target.closest?.('input, textarea, select, [contenteditable]') || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.code === 'KeyC' && !e.repeat) { e.preventDefault(); e.stopImmediatePropagation(); toggleHeads(); return; }
     if ((e.key === 'Delete' || e.key === 'Backspace') && selection) {
       e.preventDefault(); e.stopImmediatePropagation();
@@ -692,9 +740,9 @@ export function createBench(app, nodal) {
     }
   }, true);
 
-  // ── à chaque image ──
+  // ── à chaque image : les têtes glissent ; le plan ne se refait que s'il change ──
   function frame(force = false) {
-    if (S.view !== 'nodal') return;
+    if (S.view !== 'nodal' || !P()) return;
     const now = performance.now();
     if (heads.courtEco) {
       const dt = lastT ? ((now - lastT) / 1000) * (P().bpm / 60) : 0;
@@ -703,24 +751,23 @@ export function createBench(app, nodal) {
     }
     lastT = now;
     if (frame.run !== app.engine.running) { frame.run = app.engine.running; paintBar(); }
+    // l'écoute qui gouverne décide aussi de ce que les attracteurs font au son (moteur.js lit engine.ecoute)
+    app.engine.ecoute = heads.gouverne === 'eco' ? heads.eco : undefined;
     const tg = gouvernant();
     const parle = B().segs.filter((s) => s.atr && actif(s, tg)).map((s) => s.id).join(',');
-    const moved = Math.abs((frame.r ?? -1) - reel()) > 0.2 || Math.abs((frame.e ?? -1) - heads.eco) > 0.05;
-    if (force || parle !== lastParle || moved) {
-      if (parle !== lastParle || force) { lastParle = parle; paintMeta(); }
-      frame.r = reel(); frame.e = heads.eco;
-      renderPlan();
-    }
+    if (force || parle !== lastParle) { lastParle = parle; majSegments(); paintMeta(); }
+    poserTetes(force);
     paintTps();
   }
 
   function render() {
     heads.gouverne = U().gouverne === 'eco' ? 'eco' : 'reel';
     root.style.height = `${U().h}px`;
+    if (!meta.isConnected) (nodal.world || nodal.cv).append(meta);
     paintBar();
     requestAnimationFrame(() => { renderPlan(); paintMeta(); });
   }
-  function hide() { filSvg.remove(); poseEl.remove(); }
+  function hide() { filSvg.remove(); poseEl.remove(); app.engine.ecoute = undefined; }
 
-  return { el: root, render, frame, paintMeta, renderPlan, hide, state: () => ({ heads, selection }) };
+  return { el: root, render, frame, paintMeta, renderPlan, hide, suivreVue, tempsGouvernant: gouvernant, state: () => ({ heads, selection }) };
 }

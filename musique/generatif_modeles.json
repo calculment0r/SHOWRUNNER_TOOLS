@@ -1,0 +1,265 @@
+{
+  "_doc": "ODIO — le schéma des paramètres de la génération par région (pistes génératives) et de l'extraction MIDI. UNE seule vérité : la page le lit (musique/generatif_modeles.js) et dessine le panneau depuis lui ; le serveur (server/tools/music_gen.py, music_midi.py) valide chaque demande contre lui. Chaque paramètre porte sa source ; ce qui n'est pas documenté est dit tel. Aligné sur docs/etudes/musique_generatif.md § 6.5 (29/09/2026). Relevé sur DGX2 : ComfyUI v0.37.2 (comfy_extras/nodes_ace.py, nodes_yue2.py, comfy/text_encoders/yue2.py), ~/ACE-Step-1.5 commit 97ac511 (docs/en/INFERENCE.md, API.md, acestep/constants.py, acestep/inference.py, acestep/api/http/release_task_models.py), ~/YuE commit 92a73cc (docs/generation.md, docs/editing.md, skills/yue2-music/references/abc-editing.md), basic-pitch 0.4.0 (~/audio-studio/.venv).",
+  "version": 1,
+
+  "projet": {
+    "_doc": "Ce qui vient du projet, tout seul (les « verrous » de l'étude, § 6.1) : la page le lit dans la session et la région, le serveur le recalcule depuis les nombres du projet.",
+    "bpm": { "label": "tempo", "source": "le projet (P.bpm, 20 à 300)" },
+    "sig": { "label": "mesure", "source": "le projet (P.sig : 2, 3, 4 ou 6 temps)" },
+    "key": { "label": "tonalité", "source": "le projet (P.key) ; ramenée à majeur ou mineur par la tierce (modules.js, aceKey)" },
+    "region": { "label": "région", "source": "la région dessinée sur la piste (début et fin en temps ; secondes = temps × 60 / tempo)" },
+    "sections": { "label": "sections", "source": "les sections de l'arrangement que la région couvre (leurs étiquettes de paroles, % verse… dans une partition)" },
+    "autour": { "label": "ce qui joue autour", "source": "les pistes dont un clip non muet touche la région ± la marge ; rendues hors temps réel par le moteur de la page (renderMix, le même graphe que l'export) puis envoyées comme src_audio" }
+  },
+
+  "pistes": {
+    "_doc": "Les pistes qu'ACE-Step 1.5 sait générer seules (lego), isoler (extract) ou demander en complément (complete). L'instruction envoyée : « Generate the {TRACK_NAME} track based on the audio context: », TRACK_NAME en capitales (acestep/core/generation/handler/task_utils.py).",
+    "ordre": ["drums", "bass", "guitar", "keyboard", "synth", "strings", "brass", "woodwinds", "percussion", "vocals", "backing_vocals", "fx"],
+    "fr": { "drums": "batterie", "bass": "basse", "guitar": "guitare", "keyboard": "clavier", "synth": "synthé", "strings": "cordes", "brass": "cuivres",
+            "woodwinds": "bois", "percussion": "percussions", "vocals": "voix", "backing_vocals": "chœurs", "fx": "effets" },
+    "source": "~/ACE-Step-1.5/acestep/constants.py:150-153, TRACK_NAMES"
+  },
+
+  "modeles": {
+    "ace": {
+      "nom": "ACE-Step 1.5",
+      "court": "ACE",
+      "doc": "diffusion de musique (DiT) guidée par un modèle de langue 5 Hz ; six tâches, dont trois réservées au modèle « base » ; bpm, tonalité et mesure en nombres",
+      "licence": "code et poids : MIT (ACE-Step/acestep-v15-base, fiche Hugging Face) ; Apache 2.0 pour le code du dépôt",
+      "interrupteur": "\"music_engine\": \"ace-step\" (ComfyUI, « générer ») ; les autres tâches : le serveur d'API du dépôt, à câbler",
+      "voies": {
+        "comfyui": { "doc": "le gabarit officiel du portail (server/workflows/music_ace15_xl_base.json), poids XL base 9,97 Go sur DGX2 ; « générer » seulement : le cœur ne passe ni audio source ni masque au DiT (comfy/ldm/ace/ace_step15.py:1131-1135)" },
+        "api": { "doc": "le serveur d'API du dépôt ~/ACE-Step-1.5 (POST /release_task, docs/en/API.md § 4.2), celui qu'AUDIOLAB appelait sur :8001 ; les six tâches ; ne tourne pas aujourd'hui, démarré à la demande quand il sera câblé (travail music.ace, étude § 6.6)",
+                 "telecharger": [{ "nom": "ACE-Step/acestep-v15-base", "octets": 4791792407, "licence": "MIT", "pour": "lego, extract, complete en 2B" },
+                                 { "nom": "ACE-Step/acestep-v15-xl-base", "octets": 19953389529, "licence": "MIT", "pour": "les mêmes en XL (le fichier ComfyUI est un réempaquetage : que le dépôt le lise n'est pas vérifié)" }],
+                 "sur_disque": "acestep-v15-sft, acestep-v15-turbo (2B), LM 5 Hz 1,7B et 4B — pas de modèle base (~/ACE-Step-1.5/checkpoints, les deux DGX)" }
+      },
+      "sources": ["~/ACE-Step-1.5/docs/en/INFERENCE.md (GenerationParams, GenerationConfig, Task Types)", "~/ACE-Step-1.5/docs/en/API.md", "~/ACE-Step-1.5/acestep/constants.py", "~/ACE-Step-1.5/acestep/inference.py", "~/ACE-Step-1.5/acestep/api/http/release_task_models.py", "ComfyUI v0.37.2 comfy_extras/nodes_ace.py", "docs/etudes/musique_generatif.md § 2, § 6.5"],
+      "taches": {
+        "text2music": {
+          "nom": "morceau", "doc": "une musique neuve à la longueur de la région, au tempo, à la mesure et dans la tonalité du projet",
+          "sortie": "region",
+          "params": ["caption", "instrumental", "lyrics", "language", "bpm", "keyscale", "timesignature", "duration", "seed", "n", "style_audio", "inference_steps", "guidance_scale", "shift", "thinking", "lm_temperature", "lm_cfg_scale", "lm_top_p"],
+          "reel": { "ok": true, "voie": "comfyui", "doc": "graphe du gabarit officiel ; n = batch_size ; l'audio de style par ReferenceTimbreAudio (nœud expérimental, nodes_ace.py:109-131) — écrit, jugé à vide, jamais rendu" }
+        },
+        "lego": {
+          "nom": "une piste", "doc": "une seule piste (la batterie, une guitare…) dans le contexte de ce qui joue autour : elle entend le reste, au tempo et dans la tonalité du projet ; la sortie a la durée du contexte envoyé (inference.py:606-610), calée par construction",
+          "sortie": "contexte", "base": true,
+          "params": ["track_name", "caption", "global_caption", "autour", "marge", "bpm", "keyscale", "timesignature", "seed", "n", "style_audio", "inference_steps", "guidance_scale", "shift", "infer_method"],
+          "reel": { "ok": false, "voie": "api", "pourquoi": "le serveur d'API d'ACE-Step n'est pas câblé au portail (travail music.ace à écrire) ; lego est « Base Model Only » (INFERENCE.md:526) — à télécharger : ACE-Step/acestep-v15-base, 4 791 792 407 o (MIT). AUDIOLAB a lancé un lego avec acestep-v15-sft : le code l'accepte, la qualité n'est pas connue. Ce que rend lego (la piste seule, ou le mélange) : non documenté" }
+        },
+        "complete": {
+          "nom": "compléter", "doc": "ajoute à ce qui joue autour les pistes choisies (« Complete the input track with {TRACK_CLASSES}: », constants.py:134)",
+          "sortie": "contexte", "base": true,
+          "params": ["track_classes", "caption", "autour", "marge", "bpm", "keyscale", "timesignature", "seed", "n", "inference_steps", "guidance_scale", "shift", "infer_method"],
+          "reel": { "ok": false, "voie": "api", "pourquoi": "serveur d'API pas câblé ; complete est « Base Model Only » (INFERENCE.md:585) — à télécharger : ACE-Step/acestep-v15-base, 4 791 792 407 o (MIT)" }
+        },
+        "repaint": {
+          "nom": "repeindre", "doc": "refait seulement la région dans le mixage de ce qui joue autour, garde le reste ; la zone va de 3 à 90 s par passe (Tutorial.md:787)",
+          "sortie": "contexte", "zone": { "min": 3, "max": 90, "source": "~/ACE-Step-1.5/docs/en/Tutorial.md:787 : « 3 seconds to 90 seconds »" },
+          "params": ["caption", "autour", "marge", "repaint_mode", "repaint_strength", "bpm", "keyscale", "timesignature", "seed", "n", "inference_steps", "guidance_scale", "shift", "infer_method"],
+          "reel": { "ok": false, "voie": "api", "pourquoi": "le serveur d'API d'ACE-Step n'est pas câblé au portail (repaint marche avec acestep-v15-sft, sur disque : TASK_TYPES_TURBO, constants.py:80) ; aucun nœud ComfyUI ne la porte" }
+        },
+        "cover": {
+          "nom": "variation", "doc": "transforme le son glissé dans « son à varier » en gardant sa structure ; la sortie a la durée du son source (inference.py:606-610)",
+          "sortie": "source",
+          "params": ["src_audio", "audio_cover_strength", "cover_noise_strength", "caption", "lyrics", "instrumental", "bpm", "keyscale", "timesignature", "seed", "n", "inference_steps", "guidance_scale", "shift", "infer_method"],
+          "reel": { "ok": false, "voie": "api", "pourquoi": "le serveur d'API d'ACE-Step n'est pas câblé au portail (cover marche avec acestep-v15-sft, sur disque) ; aucun nœud ComfyUI ne la porte" }
+        },
+        "extract": {
+          "nom": "isoler (génératif)", "doc": "« Extract the {TRACK_NAME} track from the audio: » — une piste générée à l'image de celle du mélange, pas une séparation : elle porte sa méthode (ODIO_01, etude-hub.md § 15 n° 9) ; pour de vrais stems, « Séparer en stems »",
+          "sortie": "contexte", "base": true,
+          "params": ["track_name", "autour", "marge", "seed", "n", "inference_steps", "guidance_scale", "shift", "infer_method"],
+          "reel": { "ok": false, "voie": "api", "pourquoi": "serveur d'API pas câblé ; extract est « Base Model Only » (INFERENCE.md:558) — à télécharger : ACE-Step/acestep-v15-base, 4 791 792 407 o (MIT)" }
+        }
+      },
+      "params": {
+        "caption": { "label": "style", "type": "texte", "max": 512, "defaut": "", "envoi": "prompt (API) · tags (ComfyUI)",
+                     "exemple": "tight funk drums, dry room, ghost notes",
+                     "source": "INFERENCE.md, GenerationParams.caption : « Max 512 characters »", "doc": "genre, instruments, humeur ; l'anglais est la langue des exemples de la documentation" },
+        "global_caption": { "label": "style du morceau entier", "type": "texte", "max": 512, "defaut": "", "envoi": "global_caption", "avance": true,
+                            "source": "release_task_models.py : « Global song description for SFT-stems lego tasks (full song context) » ; inference.py:108" },
+        "instrumental": { "label": "sans voix", "type": "bool", "defaut": true,
+                          "source": "INFERENCE.md : « Use \"[Instrumental]\" for instrumental tracks » ; GenerationParams.instrumental", "doc": "une région d'instrument : sans voix par défaut" },
+        "lyrics": { "label": "paroles", "type": "texte", "max": 4096, "defaut": "", "si": "instrumental=false", "envoi": "lyrics",
+                    "source": "INFERENCE.md, GenerationParams.lyrics : 4096 signes, étiquettes [Verse] [Chorus]…" },
+        "language": { "label": "langue", "type": "choix", "defaut": "en", "si": "instrumental=false", "envoi": "vocal_language (API) · language (ComfyUI)",
+                      "choix": ["ar", "az", "bg", "bn", "ca", "cs", "da", "de", "el", "en", "es", "fa", "fi", "fr", "he", "hi", "hr", "ht", "hu", "id", "is", "it", "ja", "ko", "la", "lt", "ms", "ne", "nl", "no", "pa", "pl", "pt", "ro", "ru", "sa", "sk", "sr", "sv", "sw", "ta", "te", "th", "tl", "tr", "uk", "ur", "vi", "yue", "zh", "unknown"],
+                      "source": "nodes_ace.py:45 (51 codes, défaut en) ; API.md vocal_language" },
+        "bpm": { "label": "tempo", "type": "entier", "min": 30, "max": 300, "projet": "bpm", "envoi": "bpm",
+                 "source": "API.md « Music Attribute Parameters » : 30-300 (le nœud ComfyUI accepte 10 à 300)" },
+        "keyscale": { "label": "tonalité", "type": "choix", "projet": "key", "envoi": "key_scale (API) · keyscale (ComfyUI)",
+                      "source": "nodes_ace.py : 17 toniques × majeur/mineur ; API.md key_scale", "doc": "majeur ou mineur seulement : un mode du projet se ramène à la tierce de sa tonique (aceKey)" },
+        "timesignature": { "label": "mesure", "type": "choix", "choix": ["2", "3", "4", "6"], "projet": "sig", "envoi": "time_signature (API) · timesignature (ComfyUI)",
+                           "source": "INFERENCE.md : « 2 for '2/4', 3 for '3/4', 4 for '4/4', 6 for '6/8' »" },
+        "duration": { "label": "durée (s)", "type": "nombre", "min": 10, "max": 600, "projet": "region", "envoi": "audio_duration (API) · duration (ComfyUI)",
+                      "source": "API.md audio_duration 10-600 ; ignorée pour cover, repaint, lego, extract (inference.py:606-610)", "doc": "celle de la région ; sous 10 s, le modèle rend 10 s et le clip n'en joue que la région" },
+        "seed": { "label": "graine", "type": "entier", "min": -1, "max": 18446744073709551615, "defaut": -1, "envoi": "seed",
+                  "source": "API.md : « -1 = au hasard » ; nœud : 0 à 0xffffffffffffffff", "doc": "N prises : graine, graine + 1… (notée sur chaque prise)" },
+        "n": { "label": "prises", "type": "entier", "min": 1, "max": 8, "defaut": 2, "envoi": "batch_size",
+               "source": "API.md, batch_size 1-8, défaut 2 ; GenerationConfig.batch_size", "doc": "autant de propositions dans la région" },
+        "style_audio": { "label": "audio de style", "type": "son", "envoi": "reference_audio_path (API) · ReferenceTimbreAudio (ComfyUI)",
+                         "source": "INFERENCE.md:376 : reference_audio « for style transfer or continuation tasks » ; nodes_ace.py:109-131 ReferenceTimbreAudio (expérimental)",
+                         "doc": "le timbre à imiter : glisser un clip ou un son" },
+        "src_audio": { "label": "son à varier", "type": "son", "requis": true, "envoi": "src_audio_path",
+                       "source": "INFERENCE.md, tâche cover : « src_audio: Path to source audio file »", "doc": "glisser un clip ou un son : la variation garde sa structure et sa durée" },
+        "audio_cover_strength": { "label": "fidélité à l'original", "type": "nombre", "min": 0, "max": 1, "step": 0.05, "defaut": 1.0, "envoi": "audio_cover_strength",
+                                  "source": "INFERENCE.md:381 ; inference.py:152 : 1,0 fidèle · 0,5 équilibré · 0,1 libre ; 0,2 pour un transfert de style" },
+        "cover_noise_strength": { "label": "bruit de départ", "type": "nombre", "min": 0, "max": 1, "step": 0.05, "defaut": 0.0, "avance": true, "envoi": "cover_noise_strength",
+                                  "source": "inference.py:153 ; release_task_models.py : « 0.0=pure noise, 1.0=closest to source audio »" },
+        "repaint_mode": { "label": "conservation", "type": "choix", "defaut": "balanced", "envoi": "repaint_mode",
+                          "choix": [{ "id": "conservative", "label": "prudente" }, { "id": "balanced", "label": "équilibrée" }, { "id": "aggressive", "label": "libre" }],
+                          "source": "inference.py:150 ; release_task_models.py repaint_mode" },
+        "repaint_strength": { "label": "intensité", "type": "nombre", "min": 0, "max": 1, "step": 0.05, "defaut": 0.5, "si": "repaint_mode=balanced", "envoi": "repaint_strength",
+                              "source": "inference.py:151 ; release_task_models.py : « Balanced-mode repaint intensity: 0.0=conservative, 1.0=aggressive »" },
+        "track_name": { "label": "seulement", "type": "piste", "requis": true, "defaut": "drums", "envoi": "track_name → instruction",
+                        "source": "constants.py:132,150-153 ; INFERENCE.md, Lego : « instruction: Must specify the track type »" },
+        "track_classes": { "label": "ajouter", "type": "pistes", "requis": true, "defaut": ["drums", "bass"], "envoi": "track_classes → instruction",
+                           "source": "constants.py:134 « Complete the input track with {TRACK_CLASSES}: » ; release_task_models.py track_classes" },
+        "autour": { "label": "contexte", "type": "contexte", "projet": "autour", "requis": true, "envoi": "src_audio_path (le mixage rendu) · repainting_start / repainting_end (la région dedans, en s)",
+                    "source": "INFERENCE.md, Lego : « src_audio: Path to source/backing audio » ; inference.py:145-146 repainting_start, repainting_end" },
+        "marge": { "label": "marge (mesures)", "type": "entier", "min": 0, "max": 8, "defaut": 2,
+                   "source": "choix du portail (étude § 6.1 : « la région plus une marge ») : combien de mesures avant et après la région le contexte fait entendre" },
+        "inference_steps": { "label": "pas", "type": "entier", "min": 1, "max": 200, "defaut": 50, "avance": true, "envoi": "inference_steps",
+                             "source": "API.md : « base 1-200 (32-64) » ; 50 : gabarit ComfyUI XL base et défaut sft (model_config.py)" },
+        "guidance_scale": { "label": "guidage", "type": "nombre", "min": 1, "max": 15, "step": 0.5, "defaut": 6.0, "avance": true, "envoi": "guidance_scale (API) · cfg du KSampler (ComfyUI)",
+                            "source": "INFERENCE.md : « (1.0-15.0) … Typical range: 5.0-9.0 », base seulement (défaut API 7,0) ; 6,0 : KSampler du gabarit ComfyUI" },
+        "shift": { "label": "décalage", "type": "nombre", "min": 1, "max": 5, "step": 0.5, "defaut": 3.0, "avance": true, "envoi": "shift",
+                   "source": "API.md « Advanced DiT » : 1,0-5,0, défaut 3,0 ; ModelSamplingAuraFlow 3 dans le gabarit ComfyUI" },
+        "infer_method": { "label": "méthode", "type": "choix", "defaut": "ode", "avance": true, "envoi": "infer_method",
+                          "choix": [{ "id": "ode", "label": "ode (déterministe)" }, { "id": "sde", "label": "sde (stochastique)" }],
+                          "source": "INFERENCE.md : « \"ode\" (Euler) is faster and deterministic. \"sde\" (stochastic) may produce different results »" },
+        "thinking": { "label": "codes audio par le modèle de langue", "type": "bool", "defaut": true, "avance": true, "envoi": "thinking (API) · generate_audio_codes (ComfyUI)",
+                      "source": "nodes_ace.py generate_audio_codes (vrai) : « Turn this off if you are giving the model an audio reference » ; API.md thinking (faux par défaut)" },
+        "lm_temperature": { "label": "température (LM)", "type": "nombre", "min": 0, "max": 2, "step": 0.05, "defaut": 0.85, "avance": true, "envoi": "lm_temperature · temperature",
+                            "source": "API.md « 5Hz LM » : 0-2, 0,85" },
+        "lm_cfg_scale": { "label": "guidage (LM)", "type": "nombre", "min": 0, "max": 10, "step": 0.1, "defaut": 2.0, "avance": true, "envoi": "lm_cfg_scale · cfg_scale",
+                          "source": "nodes_ace.py cfg_scale 2,0 (API : 2,5) ; la borne 10 est celle du portail" },
+        "lm_top_p": { "label": "top-p (LM)", "type": "nombre", "min": 0, "max": 1, "step": 0.01, "defaut": 0.9, "avance": true, "envoi": "lm_top_p · top_p",
+                      "source": "API.md lm_top_p 0-1, 0,9" }
+      }
+    },
+
+    "yue": {
+      "nom": "YuE2",
+      "court": "YuE2",
+      "doc": "une chanson entière, voix et accompagnement ; il écrit d'abord une partition ABC lisible, qu'on relit et modifie avant le rendu, et que nos clips MIDI nourrissent en partie",
+      "licence": "poids YuE2 : CC BY-NC 4.0 (non commercial) ; code : Apache 2.0",
+      "interrupteur": "\"music_yue\": true (showrunner.local.json)",
+      "sources": ["ComfyUI v0.37.2 comfy_extras/nodes_yue2.py (YuE2GenerateABC, YuE2GenerateMusic)", "comfy/text_encoders/yue2.py", "~/YuE/docs/generation.md, docs/editing.md", "~/YuE/skills/yue2-music/references/abc-editing.md, generation-and-covers.md", "docs/etudes/yue.md", "docs/etudes/musique_generatif.md § 1, § 6.5"],
+      "taches": {
+        "chanson": {
+          "nom": "chanson", "doc": "le style et les paroles, puis (au choix) la partition écrite, relue, modifiée ou nourrie de nos clips MIDI avant le rendu",
+          "sortie": "region",
+          "params": ["tags", "lyrics", "duration_s", "seed", "n", "mode", "abc", "precision"],
+          "reel": { "ok": true, "voie": "comfyui", "doc": "nœuds YuE2 du cœur : YuE2GenerateABC → (relue) → YuE2GenerateMusic.abc, « Connect the ABC generator or supply an edited score » (nodes_yue2.py:53)" }
+        },
+        "reprise": {
+          "nom": "reprise d'un clip", "doc": "SheetSage2 transcrit la mélodie du son glissé ici, YuE2 la rechante dans ton style",
+          "sortie": "region",
+          "params": ["ref", "tags", "lyrics", "duration_s", "seed", "n", "mode", "precision"],
+          "reel": { "ok": true, "voie": "comfyui", "doc": "SheetSage2AudioToABC → YuE2GenerateMusic (workflow 02 de Cal ; music_yue.py)" }
+        }
+      },
+      "indisponible": {
+        "track_name": "YuE2 rend la chanson entière, voix et accompagnement (README de YuE, « a complete song with vocals and accompaniment ») : pas de piste seule. Pour une batterie seule : ACE-Step « une piste », ou une prise puis « Séparer en stems ».",
+        "style_audio": "YuE2 n'a pas d'entrée « son de référence » : « There is no request field for reference_audio… or a reference singer » (generation-and-covers.md:17) ; un son n'entre que par sa partition (reprise).",
+        "bpm": "pas d'entrée tempo : « Put tempo and meter in the ABC and describe them consistently in the style » (generation-and-covers.md:17) — le panneau l'écrit dans le style (« 112 BPM ») et la partition (Q:1/4=112).",
+        "keyscale": "pas d'entrée tonalité : elle vit dans la partition (K:, majeur ou mineur) et se redit dans le style (« F minor »).",
+        "autour": "YuE2 n'a ni entrée audio ni intervalle d'édition : il n'entend pas ce qui joue autour et ne prolonge pas un morceau (generation-and-covers.md:17,141)."
+      },
+      "params": {
+        "tags": { "label": "style", "type": "texte", "max": 2000, "requis": true, "defaut": "", "envoi": "style (alias tags)",
+                  "exemple": "English, warm female vocal, contemporary pop, piano, rounded electric bass",
+                  "source": "nodes_yue2.py:19,51 ; skill yue2-music : « tags is an alias for style » ; 2000 : garde-fou du portail", "doc": "langue, genre, voix, instruments, caractère ; le tempo et la tonalité du projet s'y ajoutent seuls" },
+        "lyrics": { "label": "paroles", "type": "texte", "max": 12000, "defaut": "", "envoi": "lyrics",
+                    "source": "docs/generation.md:7 : les mots chantés, [Verse] [Chorus]… ; vide = instrumental", "doc": "un bloc par section que la région couvre" },
+        "duration_s": { "label": "durée max (s)", "type": "nombre", "min": 10, "max": 900, "projet": "region", "envoi": "max_duration",
+                        "source": "nodes_yue2.py:56 max_duration 0,04-900 : « Automatically reduced for long prompts; generation can stop earlier » ; 10 : 200 jetons au moins (yue2.py, min_tokens)" },
+        "seed": { "label": "graine", "type": "entier", "min": -1, "max": 18446744073709551615, "defaut": -1, "envoi": "seed",
+                  "source": "nodes_yue2.py:21 : 0 à 0xffffffffffffffff ; -1 = au hasard (music_yue.py)" },
+        "n": { "label": "prises", "type": "entier", "min": 1, "max": 8, "defaut": 2,
+               "source": "docs/generation.md : « One pipeline call produces one candidate » — N prises = N rendus (graine, graine + 1…) ; 8 : borne du portail" },
+        "mode": { "label": "partition", "type": "choix", "defaut": "full", "envoi": "mode (cot)",
+                  "choix": [{ "id": "full", "label": "mélodie et accords" }, { "id": "melody", "label": "mélodie seule" }, { "id": "off", "label": "sans partition" }],
+                  "source": "nodes_yue2.py:22 : « full: generates melody and chords; melody: generates melody only, recommended for covers » ; yue2.py:22-26 (off)" },
+        "abc": { "label": "partition", "type": "partition", "max": 60000, "si": "mode!=off", "envoi": "abc",
+                 "source": "nodes_yue2.py:53 : « Connect the ABC generator or supply an edited score » ; dialecte : abc-editing.md ; vérifiée par abc_tools.py avant l'envoi", "doc": "écrite par YuE2, relue ici, nourrie de nos clips MIDI (cases Chant, Thème, Accords)" },
+        "precision": { "label": "précision", "type": "choix", "defaut": "bf16", "avance": true, "envoi": "le poids chargé",
+                       "choix": [{ "id": "bf16", "label": "bf16 · 7,80 Go · qualité, LoRA" }, { "id": "int8", "label": "int8 · 3,96 Go · rapide" }],
+                       "source": "music_yue.py CKPTS (Comfy-Org/YuE2) ; workflow 01 de Cal" },
+        "ref": { "label": "clip à reprendre", "type": "son", "requis": true, "envoi": "ref → SheetSage2AudioToABC",
+                 "source": "docs/covers.md ; workflow 02 de Cal ; music_yue.py:186-194", "doc": "sa mélodie seulement (mode « mélodie seule » conseillé)" }
+      },
+      "partition": {
+        "_doc": "Le dialecte natif que YuE2 lit et écrit (abc-editing.md:7-31) et ce que nos clips MIDI peuvent y mettre (étude § 1.5) : la page écrit ses injections, abc_tools.py (Apache 2.0, ~/YuE/skills/yue2-music/scripts) les juge avant le rendu.",
+        "cases": {
+          "chant": { "label": "chant", "voix": "Vocal", "doc": "une ligne monophonique (deux notes qui se chevauchent : la plus haute reste, notre choix)", "source": "abc-editing.md:27 ; sheetsage2_abc.py:427-430" },
+          "theme": { "label": "thème", "voix": "Ins", "doc": "« an instrumental theme or solo ; it is not a piano chord-voicing staff »", "source": "abc-editing.md:27" },
+          "accords": { "label": "accords", "voix": "Vocal", "doc": "les notes tenues ensemble → un symbole (racine + une des 15 qualités, basse en barre oblique), posé sur la voix Vocal même quand elle se tait", "source": "abc-editing.md:84-91" }
+        },
+        "refuse": "batterie, ligne de basse, polyphonie (nappe, piano), triolets, ornements : le dialecte ne les porte pas (abc-editing.md:27,80) — la batterie et la basse se disent dans le style",
+        "voix": ["Vocal", "Ins"],
+        "unite": "1/16",
+        "durees": [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48],
+        "accords": ["", "m", "dim", "aug", "7", "maj7", "m7", "dim7", "m7b5", "sus4", "sus2", "6", "m6", "7sus4", "m(maj7)"],
+        "intervalles": { "": [0, 4, 7], "m": [0, 3, 7], "dim": [0, 3, 6], "aug": [0, 4, 8], "7": [0, 4, 7, 10], "maj7": [0, 4, 7, 11], "m7": [0, 3, 7, 10],
+                         "dim7": [0, 3, 6, 9], "m7b5": [0, 3, 6, 10], "sus4": [0, 5, 7], "sus2": [0, 2, 7], "6": [0, 4, 7, 9], "m6": [0, 3, 7, 9],
+                         "7sus4": [0, 5, 7, 10], "m(maj7)": [0, 3, 7, 11] },
+        "intervalles_source": "la théorie musicale courante (demi-tons depuis la racine) pour les 15 qualités du dialecte : reconnaître un accord de nos clips, et poser en notes les accords d'une partition",
+        "mesure": { "2": "2/4", "3": "3/4", "4": "4/4", "6": "6/4" },
+        "mesure_doc": "une mesure d'ODIO compte P.sig noires sur la grille de 4 doubles-croches par temps : 6 temps s'écrivent M:6/4 pour que chaque pas d'ODIO soit une unité L:1/16 exacte (l'étiquette « 6/8 » du menu vient d'ACE-Step) — à trancher par Cal",
+        "regles": "en-tête X:1, T: vide, M:, L:1/16, Q:1/4=<entier>, les deux voix, K: majeur ou mineur ; groupes d'une à quatre mesures, V: Vocal puis V: Ins ; % verse… délimitent les sections ; C = do4 (MIDI 60), c = do5, C, = do3 ; une durée hors de la liste se lie (C8-C2)",
+        "source": "~/YuE/skills/yue2-music/references/abc-editing.md ; ~/YuE/examples/score.abc ; abc_tools.py parse()"
+      }
+    }
+  },
+
+  "midi": {
+    "_doc": "Clic droit sur un clip audio → « Extraire le MIDI » (étude § 4, § 6.4) : trois méthodes ; le fichier MIDI (tempo du projet) entre dans la bibliothèque du portail (sorte « midi ») et la page le pose en clips de notes sur des pistes d'instrument sous le clip audio. Chaque clip extrait garde sa méthode et sa source : « AUDIO → NOTES est une estimation » (ODIO_01, etude-hub.md § 2.4).",
+    "interrupteur": "\"music_midi\": true (showrunner.local.json)",
+    "moteurs": {
+      "basic_pitch": {
+        "nom": "notes · basic-pitch 0.4.0", "methode": "notes", "doc": "transcription polyphonique, tout instrument ; « works best on one instrument at a time » : séparer d'abord un mélange",
+        "licence": "Apache 2.0", "lanceur": "~/audio-studio/.venv/bin/basic-pitch (venv d'AUDIOLAB, les deux DGX ; modèle ONNX de 230 444 o dans le paquet)",
+        "params": ["separer", "stem", "onset_threshold", "frame_threshold", "minimum_note_length", "minimum_frequency", "maximum_frequency", "melodia", "quantize"],
+        "source": "basic_pitch/inference.py predict() ; basic-pitch --help ; AUDIOLAB backend/transcribe.py:22-30"
+      },
+      "sheetsage2": {
+        "nom": "partition · SheetSage2", "methode": "partition", "doc": "mélodie chantée et thème instrumental séparés, accords, tempo : le nœud SheetSage2AudioToABC du cœur de ComfyUI rend l'ABC natif, relu par abc_tools en notes datées ; trois pistes (chant, thème, accords)",
+        "licence": "CC BY-NC 4.0 (poids m-a-p/SheetSage2)", "lanceur": "ComfyUI : LoadAudio → AudioEncoderLoader (sheetsage2_bf16.safetensors, 1,39 Go, sur les deux DGX) → SheetSage2AudioToABC",
+        "params": ["ss_mode", "quantize"],
+        "source": "étude § 4 ; nodes_audio_encoder.py:53-71 ; music_yue.py (reprise)"
+      },
+      "adtof": {
+        "nom": "batterie · ADTOF (drum2midi)", "methode": "batterie", "doc": "grosse caisse, caisse claire, charleston, toms, cymbales, vélocités ; sur le stem de batterie",
+        "licence": "ADTOF CC BY-NC-SA 4.0 (non commercial) ; drum2midi MIT",
+        "params": ["quantize"],
+        "pret": { "pourquoi": "à télécharger : ADTOF et drum2midi (taille non relevée), licence non commerciale — rien d'installé" },
+        "source": "étude § 4 : github.com/MZehren/ADTOF, github.com/miraer/drum2midi"
+      },
+      "bytedance": {
+        "nom": "piano · ByteDance", "methode": "notes", "doc": "piano seulement, notes et pédale (piano_transcription_inference 0.0.6, même venv)",
+        "licence": "non relevée", "params": ["quantize"],
+        "pret": { "fichier": "~/piano_transcription_inference_data/note_F1=0.9677_pedal_F1=0.9186.pth", "pourquoi": "à télécharger : note_F1=0.9677_pedal_F1=0.9186.pth (zenodo 4034264 ; le paquet exige plus de 1,6e8 o, inference.py:31) — il le téléchargerait seul au premier appel : refusé" },
+        "source": "piano_transcription_inference/inference.py:27-34 ; AUDIOLAB backend/transcribe.py:12-20"
+      }
+    },
+    "params": {
+      "separer": { "label": "séparer d'abord", "type": "bool", "defaut": false, "source": "basic-pitch : « works best on one instrument at a time » (README) ; étude § 4 n° 1", "doc": "la séparation (Séparer en stems) passe avant, la transcription lit le stem choisi" },
+      "stem": { "label": "le stem", "type": "choix", "defaut": "other", "si": "separer=true",
+                "choix": [{ "id": "vocals", "label": "voix" }, { "id": "bass", "label": "basse" }, { "id": "other", "label": "autre" }, { "id": "guitar", "label": "guitare" }, { "id": "piano", "label": "piano" }],
+                "source": "music_stems.py, les pistes des modèles de séparation (guitare et piano : BS-RoFormer SW ou htdemucs_6s, à télécharger)" },
+      "onset_threshold": { "label": "seuil d'attaque", "type": "nombre", "min": 0, "max": 1, "step": 0.05, "defaut": 0.5, "avance": true, "source": "basic_pitch/inference.py predict(onset_threshold=0.5)" },
+      "frame_threshold": { "label": "seuil de tenue", "type": "nombre", "min": 0, "max": 1, "step": 0.05, "defaut": 0.3, "avance": true, "source": "predict(frame_threshold=0.3)" },
+      "minimum_note_length": { "label": "note la plus courte (ms)", "type": "nombre", "min": 10, "max": 2000, "step": 10, "defaut": 127.7, "avance": true, "source": "predict(minimum_note_length=127.70) ; bornes : choix du portail" },
+      "minimum_frequency": { "label": "fréquence mini (Hz, 0 : sans)", "type": "nombre", "min": 0, "max": 8000, "step": 10, "defaut": 0, "avance": true, "source": "predict(minimum_frequency=None)" },
+      "maximum_frequency": { "label": "fréquence maxi (Hz, 0 : sans)", "type": "nombre", "min": 0, "max": 8000, "step": 10, "defaut": 0, "avance": true, "source": "predict(maximum_frequency=None)" },
+      "melodia": { "label": "astuce melodia", "type": "bool", "defaut": true, "avance": true, "source": "predict(melodia_trick=True) ; CLI --no-melodia" },
+      "ss_mode": { "label": "ce qu'il relève", "type": "choix", "defaut": "full", "choix": [{ "id": "full", "label": "mélodie et accords" }, { "id": "melody", "label": "mélodie seule" }],
+                   "source": "SheetSage2AudioToABC.mode : melody, full (music_yue.py FAKE_INFO ; /object_info DGX2)" },
+      "quantize": { "label": "quantifier", "type": "choix", "defaut": "1/16", "choix": [{ "id": "1/16", "label": "1/16" }, { "id": "1/32", "label": "1/32" }, { "id": "libre", "label": "libre" }],
+                    "source": "étude § 6.5 : « quantize (1/16 par défaut, la grille d'ODIO) » ; le fichier rangé garde les instants du moteur" }
+    }
+  }
+}
