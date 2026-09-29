@@ -207,26 +207,51 @@ se met plein écran … quand on scrolle à la molette, on passe d'une image à 
 "reuse" est assez important pour les images et vidéos car on est souvent en train de faire des
 variantes. »
 
-**La disposition retenue : la même colonne de réglages à gauche que l'outil Vidéo, le fil en grille
-au centre** — pas la barre de prompt flottante de leur page image (capture 2). Pourquoi :
+**La disposition : exactement la capture 2 — le fil en grille sur toute la largeur, la barre de
+prompt flottante en bas, centrée, au-dessus des images.** Un premier essai (le matin du 29/09) avait
+gardé une colonne à gauche, comme Vidéo ; Cal l'a refusé : « pour les images, tu as capté mon
+screenshot où la barre de prompt est simplifiée, en bas et flottante au-dessus des images ??? ».
+Vidéo garde sa colonne (capture 1).
 
-- l'outil a deux modes (Créer, Éditer) et six outils d'édition, chacun ses panneaux (zone peinte,
-  boussole des angles, débruitage, références ordonnées, choix de l'image d'un élément) ; une barre
-  d'une ligne les cacherait derrière des menus empilés, là où la colonne les garde à un défilement ;
-- une seule disposition pour Image et Vidéo : les réglages au même endroit, le fil au même endroit ;
-- la barre flottante de Higgsfield recouvre le bas du fil ; la colonne ne cache aucune image.
+La barre (`image/index.html` `#pbar`, `image/image.js`, `image/image.css`) : un voile flou, une
+ombre, un rayon, des filets ; 940 px au plus, toute la largeur au téléphone ; le fil garde une marge
+basse de la hauteur de la barre (mesurée), sa dernière rangée n'est jamais dessous.
 
-Ce qui reprend leur barre : les réglages courants tiennent en **trois pavés** (Format, Taille,
-Nombre — leurs « 16:9 · 4K · 1/4 »), chacun son menu ; le modèle est une **carte avec « Changer »**
-(leur carte de préréglage), ses options propres dessous (variantes Z-Image, UltraReal de Krea, fond
-transparent de Qwen) ; la prise de vue (caméra, objectif, ouverture, pellicule, lumière) et
-l'avancé (graine, « d'origine », prompt envoyé) se replient ; les notes du prompt (pellicule sur un
-numérique, `<image2>` présentée) s'affichent au-dessus de « Générer ». **Rien n'est perdu** :
-Z-Image / Qwen 2.1 / Krea 2 et leurs variantes, les 44 pastilles, les références et le choix de
-l'image d'un élément, l'édition (Consigne, Détourer, Agrandir, Affiner, Angle, Étendre éteint avec
-sa raison), la zone peinte (dans une grande fenêtre, sur l'image à sa taille), Avant / après
-(dans la visionneuse ; une image déposée sur le cadre prend la place de « avant »), Variations et
-Refaire (dans Recréer), la file vivante (en tête du fil), le glisser-déposer partout.
+- **ligne 1** : les vignettes des références — on y dépose (fichier, vignette du fil, élément) ;
+  « + » ; un clic : passer avant / après (l'ordre compte : `<image1>`… pour Qwen, la scène puis le
+  sujet pour Krea), l'image envoyée d'un élément, voir en grand, retirer ; déposer sur une vignette
+  la remplace ; à droite, « Éditer » passe la barre en édition ;
+- **ligne 2** : le prompt, d'une à trois lignes, qui grandit en tapant ; « @ » ouvre la liste des
+  références et écrit `<imageN>` (Qwen ; Krea et Z-Image disent pourquoi ils n'en ont pas) ;
+  Ctrl + Entrée lance ;
+- **ligne 3, des puces** (leurs « + · @ · GPT Image 2 · 16:9 · High · 4K · Auto · 1/4 ») : `+`,
+  `@`, le **modèle** avec sa pastille (Z-Image, Qwen-Image 2.1, Krea 2), le **format**, la
+  **qualité** (ce que le modèle propose : Turbo / Base de Z-Image, UltraReal de Krea, fond opaque
+  ou transparent de Qwen), la **taille** (1 Mpx, 2 Mpx, 2K natif…), **Auto** (la graine : au hasard,
+  tirée, celle d'origine d'une image réutilisée, écrite), le **nombre** `− n/4 +`, **Prise de vue**
+  et **Avancé** ; chaque puce ouvre un petit menu vers le haut (`commun/menu.js`), Prise de vue et
+  Avancé un panneau au-dessus de la barre (les cinq groupes en onglets, leurs 44 pastilles ; la
+  graine et le prompt réellement envoyé) ;
+- **à droite, « Générer »**, le seul orange, avec le temps mesuré : la médiane des rendus de ce
+  modèle dans le fil (« temps non mesuré » s'il n'y en a pas — aucune estimation inventée) ; ce qui
+  manque s'écrit dessous ; les notes du prompt (pellicule sur un numérique, `<image2>` présentée)
+  en une ligne ambre en tête de la barre.
+
+**L'édition part de la visionneuse (« Éditer ») ou du ⋯ → Éditer** : la barre passe en édition —
+l'image source en vignette (un clic : la voir, la changer ; on y dépose), l'outil en puce (Consigne,
+Détourer, Agrandir, Affiner ×2, Angle ; Étendre éteint avec sa raison). Consigne : modèle (Qwen,
+Krea ; Z-Image éteint avec sa raison), Zone (Peindre une zone… → la grande fenêtre du pinceau ;
+Effacer), Consignes toutes faites, références, `@`, Visage gardé / libre, Rééclairer (panneau des
+lumières), nombre, graine, Avancé. Agrandir : ×2 / ×4 (éteint au-delà de 8192 px). Affiner : le
+débruitage (panneau), la description dans la ligne 2. Angle : Point de vue (panneau : la boussole,
+la hauteur, la distance). « ← Créer » revient à la création. **Réutiliser remplit la barre.**
+
+**Rien n'est perdu** : Z-Image / Qwen 2.1 / Krea 2 et leurs variantes, les 44 pastilles, les
+références, leur ordre et le choix de l'image d'un élément, l'édition complète, la zone peinte (dans
+sa grande fenêtre, sur l'image à sa taille ; reprise par Réutiliser), Avant / après (dans la
+visionneuse ; une image déposée sur le cadre prend la place de « avant »), Variations et Refaire
+(dans Recréer), la file vivante (en tête du fil), le glisser-déposer partout, `?edit=`, `?ref=`,
+`#<id>`.
 
 Le fil (`commun/fil.js`, `commun/fil.css`, partagé avec Vidéo) :
 
@@ -252,9 +277,9 @@ Le fil (`commun/fil.js`, `commun/fil.css`, partagé avec Vidéo) :
 | Ouvrir | la visionneuse | leur « Open » |
 | **Réutiliser** | prompt, références (et l'image choisie d'un élément), modèle, variante, prise de vue, format, taille dans « Créer » — pour une édition : la source, l'outil, la consigne, les références, **la même zone** (le masque gardé), dans « Éditer » ; **graine vidée**, la graine d'origine à un clic (« d'origine ») | leur « Reuse » ; l'action des variantes (Cal), aussi en accès direct et en orange dans la visionneuse |
 | Recréer › nouvelle graine · 4 variations · à l'identique | `POST /api/image/redo` (`variations` 1, 4, 0) : la recette gardée remise en file | leur « Recreate » ; reprend les anciens « Variations » et « Refaire » |
-| Éditer › Consigne · Détourer · Agrandir · Affiner · Angle | la colonne passe en Éditer sur cette image, l'outil choisi | les outils d'édition de l'étude §6 (l'ancienne barre sous l'image) |
+| Éditer › Consigne · Zone peinte · Détourer · Agrandir · Affiner · Angle | la barre passe en édition sur cette image, l'outil choisi (Zone peinte ouvre aussi la grande fenêtre du pinceau) ; le même menu sous « Éditer » dans la visionneuse | les outils d'édition de l'étude §6 |
 | Animer | `movie/?start=<id>` : l'image en première image d'un plan | leur « Turn to video » |
-| Prendre en référence › ici · dans Vidéo | les références de « Créer » ; `movie/?ref=<id>` (`@image`) | leur « Reference » |
+| Prendre en référence › dans la barre · dans Vidéo | les références de la barre ; `movie/?ref=<id>` (`@image`) | leur « Reference » |
 | Agrandir dans Upscale | `upscale/?src=<id>` | l'outil Upscale (d'autres modèles que SeedVR2) |
 | Envoyer au Montage | `montage/?add=<id>` | la route d'entrée du Montage |
 | Créer un élément › personnage · objet · lieu · style | `POST /api/elements` avec cette image en référence | un élément se réutilise partout (Image, Vidéo) |
@@ -272,7 +297,11 @@ portail).
 
 Ce qui n'est plus là : le regroupement des images d'une même demande dans la colonne (le fil les
 montre côte à côte, dans l'ordre d'arrivée) ; l'image « en grand » au centre de la page (c'est la
-visionneuse).
+visionneuse) ; la colonne de réglages (c'est la barre).
+
+Écarts restants avec leur capture 2 : pas d'interrupteur « Unlimited » ni de coût (rien de payant
+ici) ; notre ligne 3 a deux puces de plus (Prise de vue, Avancé) et, en édition, jusqu'à onze puces
+qui passent sur deux lignes ; « Générer » est orange, pas vert fluo.
 
 ## 11. Sources
 

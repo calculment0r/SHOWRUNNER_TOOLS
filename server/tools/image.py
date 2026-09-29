@@ -1517,7 +1517,8 @@ def selftest(call, ok) -> None:
 
     # le fil (29/09) : la page charge le composant commun ; Recréer relance la recette
     st, page = call("GET", "/image/")
-    ok(st == 200 and b"../commun/fil.css" in page and b'id="fil"' in page, "image : la page porte le fil commun")
+    ok(st == 200 and b"../commun/fil.css" in page and b'id="fil"' in page and b'id="pbar"' in page and b'class="rail"' not in page,
+       "image : la page porte le fil commun et la barre de prompt flottante, sans colonne")
     ijs = (REPO / "image" / "image.js").read_text(encoding="utf-8")
     ok("createFil(" in ijs and "image/redo" in ijs and "reuse" in ijs, "image : image.js passe par le fil, Réutiliser, Recréer")
     css = re.sub(r"/\*.*?\*/", "", (REPO / "image" / "image.css").read_text(encoding="utf-8"), flags=re.S)

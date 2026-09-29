@@ -5,19 +5,25 @@
 // seule vérité : modèles, tailles, pastilles et prompt envoyé viennent de
 // /api/image/*.
 //
-// La page (Cal, 29/09, sur le modèle de Higgsfield) : les réglages à gauche
-// — la même colonne que l'outil Vidéo, onglets Créer | Éditer —, le fil au
-// centre (commun/fil.js), en grille : les rendus en file et en cours en tête,
-// puis les images ; un clic ouvre la visionneuse plein écran, la molette passe
-// d'une image à l'autre ; au survol, aimer, réutiliser, recréer, télécharger,
-// et le menu ⋯ (le même au clic droit). « Réutiliser » recharge le prompt, les
-// références, le modèle et les réglages dans le formulaire, graine vidée :
+// La page (Cal, 29/09, capture 2 de Higgsfield) : le fil en grille sur toute
+// la largeur (commun/fil.js) et, en bas, la barre de prompt flottante :
+//   ligne 1 — les vignettes des références (un clic : retirer, changer de
+//             place ou d'image ; on y dépose), « + », le passage en édition ;
+//   ligne 2 — le prompt, d'une à trois lignes, « @ » nomme une référence ;
+//   ligne 3 — des puces : + · @ · modèle · format · qualité · taille · Auto
+//             (la graine) · − n/4 + · Prise de vue · Avancé ; chaque puce
+//             ouvre un petit menu vers le haut (commun/menu.js) ou un panneau
+//             au-dessus de la barre ;
+//   à droite — « Générer », le seul orange, avec le temps mesuré.
+// L'édition part de la visionneuse ou du ⋯ → Éditer : la barre passe en
+// édition (l'image source en vignette, l'outil en puce) ; la zone se peint
+// dans sa grande fenêtre. « Réutiliser » remplit la barre, graine vidée :
 // « Générer » fait une variante.
 //
 // Tout emplacement qui attend une image accepte un dépôt (fichier du disque →
 // bibliothèque, catégorie Upload ; ou une vignette glissée) : `dropZone` du
 // socle ; toute vignette d'ici se glisse (`dragItem`).
-import { mountHeader, api, jobs, pick, refBoard, toast, el, $, href, fmtDate, dropZone, dragItem } from '../commun/shell.js';
+import { mountHeader, api, jobs, pick, toast, el, $, href, fmtDate, dropZone, dragItem } from '../commun/shell.js';
 import { menu } from '../commun/menu.js';
 import { createFil } from '../commun/fil.js';
 
@@ -33,7 +39,8 @@ const S = {
   edit: { tool: 'instruct', model: 'krea2', prompt: '', keepFace: true, factor: 2, denoise: 0.25, mask: '',
     azimuth: '', elevation: '', distance: '', count: 1, seed: '', looks: {}, refs: [], origSeed: null },
   transparent: false,
-  current: null, open: {},
+  current: null,
+  pop: null, lookTab: 'camera',
   sent: '', notes: [],
   paint: { on: false, size: 48, canvas: null, for: null, dirty: false },
   // la file : ce que la page a lancé (suivi un à un), ce qui est arrivé, ce qu'on a retiré
@@ -44,9 +51,9 @@ let fil = null;
 // ── le brouillon : une commodité de ce navigateur ───────────
 function saveDraft() {
   try {
-    const { model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, open, origSeed } = S;
+    const { model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, origSeed, lookTab } = S;
     const edit = { ...S.edit, refs: S.edit.refs.map((r) => r.id) };
-    localStorage.setItem(KEY, JSON.stringify({ model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, open, origSeed,
+    localStorage.setItem(KEY, JSON.stringify({ model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, origSeed, lookTab,
       refs: S.refs.map((r) => r.id), edit, mode: S.mode, current: S.current?.id }));
   } catch { /* stockage fermé : rien à garder */ }
 }
@@ -54,7 +61,7 @@ async function loadDraft() {
   let d = null;
   try { d = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { d = null; }
   if (!d) return null;
-  for (const k of ['model', 'variant', 'prompt', 'looks', 'aspect', 'quality', 'count', 'seed', 'realism', 'transparent', 'refChoice', 'open', 'origSeed']) {
+  for (const k of ['model', 'variant', 'prompt', 'looks', 'aspect', 'quality', 'count', 'seed', 'realism', 'transparent', 'refChoice', 'origSeed', 'lookTab']) {
     if (d[k] !== undefined && d[k] !== null) S[k] = d[k];
   }
   const fetchAll = async (ids) => (await Promise.all((ids || []).map((id) => api('library/' + id).catch(() => null)))).filter(Boolean);
@@ -68,9 +75,19 @@ async function loadDraft() {
 const M = (id) => S.cfg.models.find((m) => m.id === id);
 const stub = () => S.cfg?.backend === 'stub';
 const plural = (n, w, pl = w + 's') => `${n} ${n > 1 ? pl : w}`;
-const fmtS = (s) => (s == null ? '' : s < 60 ? `${Math.round(s * 10) / 10} s` : `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, '0')}`);
+const fmtS = (s) => (s == null ? '' : s < 60 ? `${String(Math.round(s * 10) / 10).replace('.', ',')} s` : `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, '0')}`);
 const ms = (iso) => Date.parse(iso || '') || 0;
-const at = (e) => { const r = e.currentTarget.getBoundingClientRect(); return [r.left, r.bottom + 4]; };
+const DOT = { zimage: 'cy', qwen21: 'grn2', krea2: 'coral-2' };   // la pastille de chaque modèle
+const TOOL_FR = { instruct: 'consigne', matte: 'détourer', upscale: 'agrandir', refine: 'affiner ×2', angle: 'angle' };
+
+// un petit menu qui s'ouvre vers le haut, au-dessus de sa puce (la barre est en bas)
+function up(anchor, items) {
+  const r = anchor.getBoundingClientRect();
+  const { node } = menu(r.left, r.top, items);
+  if (!node) return;
+  const h = node.getBoundingClientRect().height;
+  node.style.top = `${Math.max(8, r.top - h - 6)}px`;
+}
 
 // ce que les machines savent faire ; en factice, rien ne bloque (aucun modèle chargé)
 function avail(cap) {
@@ -96,24 +113,11 @@ function fixQuality() {
   if (!m.sizes[S.quality][S.aspect]) S.aspect = '1:1';
 }
 
-function pan(label, right, ...kids) {
-  return el('section', { class: 'ipan' },
-    el('div', { class: 'ipan-h' }, el('span', { class: 'lbl' }, label), right ? el('span', { class: 'r' }, right) : null), ...kids);
-}
-// un groupe repliable : l'en-tête dit ce qui est choisi
-function fold(id, label, value, ...kids) {
-  const d = el('details', { class: 'ipan fold', open: S.open[id] ? true : null },
-    el('summary', { class: 'ipan-h' }, el('span', { class: 'lbl' }, label), el('span', { class: 'r' + (value ? ' set' : '') }, value || '—')),
-    ...kids);
-  d.addEventListener('toggle', () => { S.open[id] = d.open; saveDraft(); });
-  return d;
-}
-
 // ── le prompt envoyé : demandé au serveur ───────────────────
 let composeT = null;
 function schedCompose() { clearTimeout(composeT); composeT = setTimeout(doCompose, 220); }
 async function doCompose() {
-  if (S.mode === 'edit' && S.edit.tool !== 'instruct') return;
+  if (S.mode === 'edit' && S.edit.tool !== 'instruct') { S.sent = ''; S.notes = []; paintNote(); return; }
   const body = S.mode === 'create'
     ? { mode: 'generate', model: S.model, prompt: S.prompt, looks: S.looks, refs: refsParam(S.refs), transparent: S.model === 'qwen21' && S.transparent }
     : { mode: 'edit', model: S.edit.model, prompt: S.edit.prompt, looks: S.edit.looks, refs: refsParam(S.edit.refs), keep_face: S.edit.keepFace };
@@ -121,256 +125,561 @@ async function doCompose() {
     const r = await api('image/compose', { method: 'POST', body });
     S.sent = r.prompt; S.notes = r.notes || [];
   } catch (e) { S.sent = ''; S.notes = [e.message]; }
+  paintNote();
   const box = $('#sent');
-  if (box) paintSent(box);
-  paintAct();
-}
-function paintSent(box) {
-  box.replaceChildren(el('pre', { class: 'sent' }, S.sent || '—'));
+  if (box) box.textContent = S.sent || '—';
 }
 const refsParam = (list) => list.map((it) => ({ item: it.id, ...(S.refChoice[it.id] ? { ref: S.refChoice[it.id] } : {}) }));
+function paintNote() {
+  const n = $('#pb-note');
+  const notes = S.mode === 'create' || S.edit.tool === 'instruct' ? S.notes : [];
+  n.hidden = !notes.length;
+  n.textContent = notes.join(' · ');
+  n.title = notes.join('\n');
+}
 
-// ── le rail ─────────────────────────────────────────────────
-function paintRail() {
-  const r = $('#rail');
-  const top = r.scrollTop;
-  const seg = el('div', { class: 'seg mode', role: 'tablist' },
-    el('button', { class: 'tb' + (S.mode === 'create' ? ' on' : ''), role: 'tab', onclick: () => setMode('create') }, 'Créer'),
-    el('button', { class: 'tb' + (S.mode === 'edit' ? ' on' : ''), role: 'tab', onclick: () => setMode('edit') }, 'Éditer'));
-  r.replaceChildren(seg, ...(S.mode === 'create' ? createPanels() : editPanels()));
-  r.scrollTop = top;
+// ── la barre ────────────────────────────────────────────────
+function paintBar() {
+  if (S.mode === 'create') fixQuality();
+  paintRefs();
+  paintText();
+  paintChips();
+  paintPop();
+  paintAct();
+  paintNote();
   schedCompose();
 }
-function setMode(m) { S.mode = m; S.paint.on = false; saveDraft(); paintRail(); }
-
-// la carte du modèle : son nom, ce qu'il fait, « Changer » (le menu des modèles)
-function modelCard(ids, current, onpick, disabled = {}, extra = null) {
-  const m = M(current);
-  const change = el('button', { class: 'tb ghost sm', type: 'button', 'aria-haspopup': 'menu', title: 'choisir un autre modèle',
-    onclick: (e) => {
-      const [x, y] = at(e);
-      menu(x, y, [{ head: 'Modèle' }, ...ids.map((id) => {
-        const it = M(id);
-        const off = disabled[id] || '';
-        return { label: it.name, sub: it.refs ? `${it.refs} réf.` : 'texte seul', checked: current === id, disabled: !!off,
-          why: off ? `${it.name} : ${off}` : '', title: it.role, onclick: () => onpick(id) };
-      })]);
-    } }, 'Changer');
-  return el('section', { class: 'mcard' },
-    el('div', { class: 'mc-h' }, el('span', { class: 'mk' }, m.k), el('span', { class: 'sp' }), change),
-    el('b', {}, m.name), el('span', { class: 'role' }, m.role), extra);
+function setMode(m) {
+  S.mode = m; S.pop = null; S.paint.on = false;
+  saveDraft(); paintBar();
+  const ta = $('#prompt');
+  if (!ta.hidden) ta.focus();
 }
 
-// ── créer ───────────────────────────────────────────────────
-function createPanels() {
-  fixQuality();
-  const m = M(S.model);
-  const out = [];
-  out.push(modelCard(['zimage', 'qwen21', 'krea2'], S.model, (id) => {
-    S.model = id;
-    if (S.refs.length > M(id).refs) S.refs = S.refs.slice(0, M(id).refs);
-    fixQuality(); saveDraft(); paintRail();
-  }, {}, variantRow(m)));
-  out.push(refsPanel(m));
-
-  const ta = el('textarea', { class: 'fld prompt', id: 'prompt', rows: 6, placeholder: promptHint(),
-    oninput: (e) => { S.prompt = e.target.value; saveDraft(); schedCompose(); paintAct(); } });
-  ta.value = S.prompt;
-  out.push(pan('Prompt', 'en anglais', ta, tokenRow(ta, S.refs, 1)));
-
-  // format, taille, nombre : trois pavés, chacun son menu (comme la barre de Higgsfield)
-  const sizes = m.sizes[S.quality];
-  const qLabel = m.quality.find((q) => q.id === S.quality)?.label || '';
-  const wh = sizes[S.aspect];
-  out.push(el('section', { class: 'params3' },
-    pavé('Format', S.aspect, () => [{ head: `Format · ${qLabel}` }, ...S.cfg.aspects.map((a) => {
-      const x = sizes[a];
-      return { label: a, sub: x ? `${x[0]}×${x[1]}` : '', checked: S.aspect === a, disabled: !x,
-        why: `${a} : non documenté en ${qLabel} pour ${m.name}`, onclick: () => { S.aspect = a; saveDraft(); paintRail(); } };
-    })]),
-    pavé('Taille', qLabel, () => [{ head: 'Taille' }, ...m.quality.map((q) => ({ label: q.label, checked: S.quality === q.id,
-      onclick: () => { S.quality = q.id; fixQuality(); saveDraft(); paintRail(); } }))]),
-    pavé('Nombre', String(S.count), () => [{ head: 'Images par envoi' }, ...[1, 2, 3, 4].map((n) => ({ label: plural(n, 'image'),
-      sub: n > 1 ? 'graines qui se suivent' : '', checked: S.count === n, onclick: () => { S.count = n; saveDraft(); paintRail(); } }))]),
-    el('p', { class: 'hint' }, `${wh ? wh.join(' × ') + ' · ' : ''}${sizeNote(m)}${S.count > 1 ? ` · ${S.count} travaux, les deux DGX les rendent en même temps` : ''}`)));
-
-  const chosen = S.cfg.looks.map((g) => g.items.find((x) => x.id === S.looks[g.id])?.name).filter(Boolean);
-  out.push(fold('looks', 'Prise de vue', chosen.join(' · '),
-    el('div', { class: 'row' }, el('p', { class: 'hint' }, 'caméra, objectif, ouverture, pellicule, lumière : des phrases ajoutées au prompt'),
-      el('button', { class: 'tb ghost sm', title: 'tout retirer', disabled: chosen.length ? null : true,
-        onclick: () => { S.looks = {}; saveDraft(); paintRail(); } }, 'aucune')),
-    ...S.cfg.looks.map((g) => lookGroup(g, S.looks, 'generate'))));
-  out.push(advPanel(S));
-  out.push(el('div', { class: 'act', id: 'act' }));
-  setTimeout(paintAct);
-  return out;
+// ligne 1 : les références (ou, en édition, l'image source et ses références)
+function roleOf(model, k, n, edit) {
+  if (model === 'qwen21') return `<image${(edit ? 2 : 1) + k}>`;
+  if (edit) return 'le sujet';   // Krea : l'image éditée est la scène
+  return n > 1 ? (k === 0 ? 'la scène' : 'le sujet') : 'la personne ou l’objet';
 }
-
-// un pavé de réglage : sa valeur, son menu
-function pavé(label, value, items) {
-  return el('button', { class: 'pb', type: 'button', 'aria-haspopup': 'menu', title: `${label} : choisir`,
-    onclick: (e) => { const [x, y] = at(e); menu(x, y, items()); } },
-  el('span', { class: 'lbl' }, label), el('b', {}, value || '—'));
-}
-
-// ce qui est avancé : la graine, et le prompt réellement envoyé
-function advPanel(o) {
-  const seed = el('input', { class: 'fld seed', inputmode: 'numeric', placeholder: 'au hasard', value: o.seed, title: 'la graine : la même graine et la même recette refont la même image',
-    oninput: (e) => { o.seed = e.target.value.replace(/\D/g, ''); e.target.value = o.seed; saveDraft(); } });
-  const box = el('div', { id: 'sent' });
-  paintSent(box);
-  const instruct = S.mode === 'create' || S.edit.tool === 'instruct';
-  return fold('adv-' + S.mode, 'Avancé', o.seed ? `graine ${o.seed}` : 'graine au hasard',
-    el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'Graine'), el('span', { class: 'sp' }), seed,
-      el('button', { class: 'tb ghost sm', title: 'une graine au hasard', onclick: () => { o.seed = String(Math.floor(Math.random() * 1e9)); seed.value = o.seed; saveDraft(); } }, 'dé'),
-      o.origSeed != null ? el('button', { class: 'tb ghost sm', title: `la graine de l’image réutilisée : ${o.origSeed} — la même recette refait la même image`,
-        onclick: () => { o.seed = String(o.origSeed); seed.value = o.seed; saveDraft(); } }, 'd’origine') : null),
-    instruct ? el('div', { class: 'field' }, el('span', { class: 'lbl' }, 'Prompt envoyé'), box) : null);
-}
-
-function paintAct() {
-  const box = $('#act');
-  if (!box) return;
-  let label; let why; let info;
-  const notes = (S.mode === 'create' || S.edit.tool === 'instruct') ? S.notes : [];
-  const noteEls = notes.map((n) => el('p', { class: 'reason' }, n));
-  if (S.mode === 'create') {
-    const m = M(S.model);
-    const a = avail(capCreate());
-    why = !S.prompt.trim() ? 'écrivez un prompt' : !a.ok ? `modèle absent — ${a.why}` : '';
-    label = S.count > 1 ? `Générer ${S.count} images` : 'Générer';
-    const wh = m.sizes[S.quality]?.[S.aspect];
-    info = `${m.name} · ${wh ? wh.join(' × ') : ''}${a.on?.length ? ' · ' + a.on.join(' + ') : ''}`;
-    box.replaceChildren(...noteEls, el('button', { class: 'tb go block', disabled: why ? true : null, onclick: generate }, label),
-      el('p', { class: why ? 'why' : 'hint' }, why || info));
-    return;
-  }
+const swap = (list, k) => { const l = list.slice(); [l[k - 1], l[k]] = [l[k], l[k - 1]]; return l; };
+function refsOf() {
+  if (S.mode === 'create') return { list: S.refs, max: M(S.model).refs, model: S.model, edit: false, set: (l) => { S.refs = l.slice(0, M(S.model).refs); afterRefs(); } };
   const E = S.edit;
-  const a = avail(capEdit());
-  label = { instruct: (E.mask || (S.paint.dirty && S.paint.for === S.current?.id)) ? 'Éditer la zone' : 'Éditer', matte: 'Détourer', upscale: `Agrandir ×${E.factor}`,
-    refine: 'Affiner ×2', angle: 'Tourner la caméra' }[E.tool] || 'Éditer';
-  why = !S.current ? 'choisissez l’image à éditer' : !a.ok ? `modèle absent — ${a.why}`
-    : (E.tool === 'instruct' && !E.prompt.trim()) ? 'écrivez une consigne' : '';
-  box.replaceChildren(...noteEls, el('button', { class: 'tb go block', disabled: why ? true : null, onclick: editRun }, label),
-    el('p', { class: why ? 'why' : 'hint' }, why || (a.on?.length ? `sur ${a.on.join(' + ')}` : '')));
+  return { list: E.refs, max: M(E.model).refs - 1, model: E.model, edit: true, set: (l) => { E.refs = l.slice(0, M(E.model).refs - 1); afterRefs(); } };
+}
+function afterRefs() { saveDraft(); schedCompose(); paintRefs(); paintChips(); paintAct(); }
+function refMenu(it, k, R) {
+  const els = it.kind === 'element' ? (it.element?.refs || []) : [];
+  const cur = S.refChoice[it.id] || els[0]?.file;
+  return [
+    { head: `${roleOf(R.model, k, R.list.length, R.edit)} · ${it.title || it.id}` },
+    k > 0 ? { label: 'Passer avant', sub: roleOf(R.model, k - 1, R.list.length, R.edit), onclick: () => R.set(swap(R.list, k)) } : null,
+    k < R.list.length - 1 ? { label: 'Passer après', sub: roleOf(R.model, k + 1, R.list.length, R.edit), onclick: () => R.set(swap(R.list, k + 1)) } : null,
+    els.length ? '-' : null,
+    els.length ? { head: 'l’image de l’élément envoyée' } : null,
+    ...els.map((r) => ({ label: r.label || r.role || r.file, sub: r.role || '', checked: cur === r.file,
+      onclick: () => { S.refChoice[it.id] = r.file; saveDraft(); schedCompose(); paintRefs(); } })),
+    '-',
+    { label: 'Voir en grand', onclick: () => fil.open(it) },
+    { label: 'Retirer', icon: '×', danger: true, onclick: () => R.set(R.list.filter((_, i) => i !== k)) },
+  ];
+}
+function refThumb(it, k, R) {
+  const t = it.kind === 'element' ? (it.element?.refs?.find((r) => r.file === S.refChoice[it.id])?.thumb_url || it.thumb_url) : (it.thumb_url || it.url);
+  const role = roleOf(R.model, k, R.list.length, R.edit);
+  const b = el('button', { class: 'pb-ref' + (it.kind === 'element' ? ' element' : ''), type: 'button',
+    title: `${role} · ${it.title || ''} — cliquer : retirer, changer de place${it.kind === 'element' ? ' ou d’image' : ''} ; déposer ici : remplacer`,
+    style: t ? { backgroundImage: `url(${href(t)})` } : null,
+    onclick: (e) => up(e.currentTarget, refMenu(it, k, R)) },
+  el('span', { class: 'n' }, role.replace(/^<image(\d+)>$/, '$1').replace(/^la |^le /, '').replace('personne ou l’objet', 'réf.')));
+  // déposer sur une vignette la remplace, à la même place
+  dropZone(b, { kinds: ['image', 'element'], multiple: false, via: VIA, onitems: ([x]) => { const l = R.list.slice(); l[k] = x; R.set(l); } });
+  return b;
+}
+async function addRefs() {
+  const R = refsOf();
+  if (!R.max) { toast(M(R.model).refs_why || `${M(R.model).name} ne prend pas de référence`, 5000); return; }
+  if (R.list.length >= R.max) { toast(`${plural(R.max, 'référence')} au plus pour ${M(R.model).name}`); return; }
+  const got = await pick({ kinds: ['image', 'element'], multiple: true, title: `Références (${R.max} au plus)` });
+  addItems(got);
+}
+function addItems(items) {
+  const R = refsOf();
+  if (!items?.length) return;
+  if (!R.max) { toast(M(R.model).refs_why || 'ce modèle ne prend pas de référence', 5000); return; }
+  const l = R.list.slice();
+  for (const it of items) if (l.length < R.max && !l.some((x) => x.id === it.id)) l.push(it);
+  if (items.length && l.length >= R.max && l.length - R.list.length < items.length) toast(`${plural(R.max, 'référence')} au plus pour ${M(R.model).name}`);
+  R.set(l);
+}
+function paintRefs() {
+  const box = $('#pb-refs');
+  const kids = [];
+  if (S.mode === 'create') {
+    const R = refsOf();
+    const m = M(S.model);
+    R.list.forEach((it, k) => kids.push(refThumb(it, k, R)));
+    if (m.refs && R.list.length < m.refs) {
+      kids.push(el('button', { class: 'pb-ref add', type: 'button', title: 'ajouter une référence — ou déposez une image, un élément, un personnage sur la barre', onclick: addRefs }, '+'));
+    }
+    if (!m.refs) kids.push(el('span', { class: 'pb-hint', title: m.refs_why }, `${m.name} : texte seul, sans référence`));
+    else if (!R.list.length) kids.push(el('span', { class: 'pb-hint' }, m.id === 'qwen21' ? 'des références : <image1>, <image2>… dans le prompt' : '1 référence : la personne ; 2 : la scène puis le sujet'));
+    kids.push(el('span', { class: 'sp' }),
+      el('button', { class: 'pb-mode', type: 'button', title: 'éditer une image : consigne, détourer, agrandir, affiner, angle, zone peinte', onclick: () => setMode('edit') },
+        el('span', { class: 'ic', 'aria-hidden': 'true' }, '✎'), 'Éditer'));
+  } else {
+    const src = S.current;
+    if (src) {
+      const b = el('button', { class: 'pb-ref src', type: 'button', title: `l’image à éditer (${src.width || '?'} × ${src.height || '?'}) — cliquer : la voir, la changer ; déposer ici : la remplacer`,
+        style: { backgroundImage: `url(${href(src.thumb_url || src.url)})` },
+        onclick: (e) => up(e.currentTarget, [{ head: `source · ${src.width || '?'} × ${src.height || '?'}` },
+          { label: 'Voir en grand', onclick: () => fil.open(src) }, { label: 'Changer d’image…', onclick: pickSrc }]) },
+      el('span', { class: 'n' }, 'source'));
+      dropZone(b, { kinds: ['image'], multiple: false, via: VIA, onitems: ([x]) => setSource(x) });
+      dragItem(b, src);
+      kids.push(b);
+    } else {
+      kids.push(el('button', { class: 'pb-ref add src', type: 'button', title: 'choisir l’image à éditer', onclick: pickSrc }, '+'),
+        el('span', { class: 'pb-hint' }, 'l’image à éditer : déposez-la sur la barre, choisissez-la, ou ⋯ → Éditer sur une image du fil'));
+    }
+    if (S.edit.tool === 'instruct' && src) {
+      const R = refsOf();
+      R.list.forEach((it, k) => kids.push(refThumb(it, k, R)));
+      if (R.list.length < R.max) kids.push(el('button', { class: 'pb-ref add', type: 'button', title: 'une référence : une personne, un objet, une tenue à mettre dans l’image', onclick: addRefs }, '+'));
+    }
+    kids.push(el('span', { class: 'sp' }),
+      el('button', { class: 'pb-mode', type: 'button', title: 'revenir à la création d’images', onclick: () => setMode('create') },
+        el('span', { class: 'ic', 'aria-hidden': 'true' }, '←'), 'Créer'));
+  }
+  box.replaceChildren(...kids);
+}
+async function pickSrc() { const [it] = await pick({ kinds: ['image'], title: 'L’image à éditer' }); if (it) setSource(it); }
+function setSource(it) {
+  if (!it || it.kind !== 'image') return;
+  if (S.current?.id !== it.id) { S.edit.mask = ''; if (S.paint.for !== it.id) clearPaint(); }
+  S.current = it;
+  if (S.mode !== 'edit') S.mode = 'edit';
+  saveDraft(); paintBar();
 }
 
+// ligne 2 : le prompt (d'une à trois lignes) ; « @ » nomme une référence
+function field() {
+  if (S.mode === 'create') return { obj: S, key: 'prompt', ph: promptHint() };
+  const E = S.edit;
+  if (!S.current) return null;
+  if (E.tool === 'instruct') {
+    return { obj: E, key: 'prompt', ph: E.model === 'qwen21' ? 'La consigne, en anglais : « Change the jacket in <image1> to a red leather jacket »'
+      : 'La consigne, en anglais : « Recolor the jacket to red leather »' };
+  }
+  if (E.tool === 'refine') {
+    // « une description détaillée » : le prompt d'une image créée ici en est une ; une consigne d'édition non
+    const caption = S.current.params?.job === 'image.generate' ? (S.current.prompt || '') : '';
+    if (E.captionFor !== S.current.id) { E.caption = caption; E.captionFor = S.current.id; }
+    return { obj: E, key: 'caption', ph: 'une description détaillée de l’image tient mieux (note du gabarit Z-Image 2K) — en anglais' };
+  }
+  return null;
+}
+function fixedText() {
+  const E = S.edit;
+  if (!S.current) return 'Choisissez l’image à éditer : déposez-la sur la barre, « + », ou ⋯ → Éditer sur une image du fil.';
+  const tool = S.cfg.edit_tools.find((t) => t.id === E.tool);
+  if (tool?.off) return `${tool.name} : ${tool.off}`;
+  if (E.tool === 'matte') return 'Détourer : pas de consigne — BiRefNet (nœuds natifs de ComfyUI) rend le sujet seul, sur fond transparent (PNG), le détourage de Character Factory.';
+  if (E.tool === 'upscale') return `Agrandir ×${E.factor} : SeedVR2 7B en un pas — l’image agrandie en Lanczos puis restaurée, couleurs recalées sur l’originale (gabarit officiel ComfyUI). Pour une vidéo ou d’autres modèles : l’outil Upscale.`;
+  if (E.tool === 'angle' && angleDefaults()) return `<sks> ${E.azimuth} ${E.elevation} ${E.distance} — LoRA fal Multiple-Angles sur Qwen-Image-Edit 2511 (Lightning 4 pas), Apache-2.0 ; les côtés sont ceux du sujet.`;
+  return '';
+}
+function paintText() {
+  const ta = $('#prompt'), fx = $('#pb-fixed');
+  const f = field();
+  ta.hidden = !f;
+  fx.hidden = !!f;
+  if (!f) { fx.textContent = fixedText(); atClose(); return; }
+  const v = f.obj[f.key] || '';
+  if (ta.value !== v) ta.value = v;
+  ta.placeholder = f.ph;
+  grow();
+}
+function grow() {
+  const ta = $('#prompt');
+  const lh = parseFloat(getComputedStyle(ta).lineHeight) || 20;
+  ta.style.height = 'auto';
+  ta.style.height = `${Math.min(ta.scrollHeight, lh * 3 + 8)}px`;
+}
+function promptHint() {
+  if (S.model === 'qwen21') return 'Décrivez l’image, en anglais. Tapez @ pour nommer une référence : <image1>, <image2>…';
+  if (S.model === 'krea2') return 'Décrivez la photo en langage naturel, long et précis : le sujet, le lieu, la lumière — en anglais.';
+  return 'Décrivez l’image en anglais, en phrases détaillées : le sujet, le lieu, la lumière.';
+}
+const AT = { list: [], sel: 0, q: null };
+function atChoices() {
+  const R = refsOf();
+  if (R.model !== 'qwen21') {
+    return { why: R.model === 'krea2' ? 'Krea 2 ne nomme pas ses références : la première est la scène, la seconde le sujet (Identity Edit v1.2) — l’ordre suffit'
+      : `${M(R.model).name} ne prend pas de référence` };
+  }
+  const toks = (R.edit ? [{ title: 'l’image éditée', url: S.current?.thumb_url || S.current?.url }] : []).concat(R.list);
+  if (!toks.length) return { why: 'aucune référence : « + », ou déposez une image sur la barre' };
+  return { toks: toks.map((it, k) => ({ tag: `<image${k + 1}>`, title: it.title || '', thumb: it.thumb_url || it.url })) };
+}
+function atCheck() {
+  const ta = $('#prompt');
+  const m = ta.value.slice(0, ta.selectionStart).match(/(?<![\p{L}\p{N}_])@([\p{L}\p{N}]*)$/u);
+  if (!m) { atClose(); return; }
+  const c = atChoices();
+  AT.q = m[0];
+  if (c.why) { AT.list = []; showAt([], c.why); return; }
+  const q = m[1].toLowerCase();
+  AT.list = c.toks.filter((t) => !q || t.tag.includes(q) || t.title.toLowerCase().includes(q));
+  AT.sel = 0;
+  showAt(AT.list, AT.list.length ? '' : `rien ne répond à « ${m[1]} »`);
+}
+function showAt(list, why) {
+  const box = $('#pb-at');
+  box.hidden = false;
+  box.replaceChildren(...(why ? [el('p', { class: 'why' }, why)] : []), ...list.map((t, k) => el('button', { class: 'pb-atb' + (k === AT.sel ? ' on' : ''), type: 'button',
+    onmousedown: (e) => { e.preventDefault(); insertTok(t.tag); } },
+  el('span', { class: 'mi', style: t.thumb ? { backgroundImage: `url(${href(t.thumb)})` } : null }), el('b', {}, t.tag), el('span', {}, t.title))));
+}
+function atClose() { const b = $('#pb-at'); if (b) { b.hidden = true; b.replaceChildren(); } AT.q = null; AT.list = []; }
+function insertTok(tag) {
+  const ta = $('#prompt');
+  const at = ta.selectionStart;
+  const start = AT.q ? at - AT.q.length : at;
+  ta.setRangeText(`${tag} `, start, at, 'end');
+  atClose();
+  ta.focus();
+  ta.dispatchEvent(new Event('input'));
+}
+// la puce « @ » : tape @ à la place du curseur, le menu des références s'ouvre
+function typeAt() {
+  const ta = $('#prompt');
+  if (ta.hidden) return;
+  const c = atChoices();
+  if (c.why) { toast(c.why, 5000); return; }
+  ta.focus();
+  const p = ta.selectionStart ?? ta.value.length;
+  const pre = ta.value.slice(0, p);
+  ta.setRangeText(`${pre && !/\s$/.test(pre) ? ' ' : ''}@`, p, ta.selectionEnd ?? p, 'end');
+  ta.dispatchEvent(new Event('input'));
+}
+function wireText() {
+  const ta = $('#prompt');
+  ta.addEventListener('input', () => {
+    const f = field();
+    if (!f) return;
+    f.obj[f.key] = ta.value;
+    saveDraft(); schedCompose(); paintAct(); grow(); atCheck();
+  });
+  ta.addEventListener('click', atCheck);
+  ta.addEventListener('blur', () => setTimeout(atClose, 150));
+  ta.addEventListener('keydown', (e) => {
+    const box = $('#pb-at');
+    if (!box.hidden && AT.list.length) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        AT.sel = (AT.sel + (e.key === 'ArrowDown' ? 1 : AT.list.length - 1)) % AT.list.length;
+        showAt(AT.list, '');
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); insertTok(AT.list[AT.sel].tag); return; }
+    }
+    if (!box.hidden && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); atClose(); return; }
+    // Ctrl (ou ⌘) + Entrée : lancer
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $('#act .pb-gen')?.click(); }
+  });
+}
+
+// ligne 3 : les puces
+function chip(label, { value = '', dot = null, onclick, title = '', cls = '', off = '', open = false } = {}) {
+  return el('button', { class: `pc ${cls}${open ? ' on' : ''}`.trim(), type: 'button', 'aria-haspopup': 'menu',
+    title: off ? `${title} — ${off}` : title, 'aria-disabled': off ? 'true' : null,
+    onclick: (e) => { if (off) { toast(off, 5000); return; } onclick(e.currentTarget); } },
+  dot ? el('i', { class: 'pc-dot', style: { background: `var(--${dot})` } }) : null,
+  label ? el('span', { class: 'pc-l' }, label) : null,
+  value ? el('b', {}, value) : null);
+}
+// le nombre : − n/4 +
+function counter(o, max) {
+  const set = (n) => { o.count = Math.max(1, Math.min(max, n)); saveDraft(); paintChips(); paintAct(); };
+  return el('span', { class: 'pc count', title: `images par envoi : ${max} au plus ; des graines qui se suivent, un travail chacune (les deux DGX en même temps)` },
+    el('button', { type: 'button', 'aria-label': 'une de moins', disabled: o.count <= 1 ? true : null, onclick: () => set(o.count - 1) }, '−'),
+    el('b', {}, `${o.count}/${max}`),
+    el('button', { type: 'button', 'aria-label': 'une de plus', disabled: o.count >= max ? true : null, onclick: () => set(o.count + 1) }, '+'));
+}
+function seedItems(o) {
+  const set = (v) => { o.seed = v; saveDraft(); paintChips(); if (S.pop === 'adv') paintPop(); };
+  return [{ head: 'La graine' },
+    { label: 'Auto', sub: 'au hasard', checked: !o.seed, onclick: () => set('') },
+    { label: 'Tirer une graine', sub: 'et la garder', onclick: () => set(String(Math.floor(Math.random() * 1e9))) },
+    o.origSeed != null ? { label: 'Celle d’origine', sub: String(o.origSeed), checked: o.seed === String(o.origSeed), title: 'la graine de l’image réutilisée : la même recette refait la même image', onclick: () => set(String(o.origSeed)) } : null,
+    { label: 'L’écrire…', sub: 'avancé', onclick: () => { S.pop = 'adv'; paintPop(); paintChips(); setTimeout(() => $('#seed')?.focus()); } }];
+}
+function modelItems(ids, current, onpick, disabled = {}) {
+  return [{ head: 'Modèle' }, ...ids.map((id) => {
+    const it = M(id);
+    const off = disabled[id] || '';
+    return { label: it.name, dot: DOT[id], sub: it.refs ? `${it.refs} réf.` : 'texte seul', checked: current === id, disabled: !!off,
+      why: off ? `${it.name} : ${off}` : '', title: it.role, onclick: () => onpick(id) };
+  })];
+}
+function qualityOf(m) {
+  if (m.id === 'zimage') return { value: (m.variants.find((v) => v.id === S.variant)?.label || S.variant).split(' · ')[0],
+    items: [{ head: 'Z-Image' }, ...m.variants.map((v) => {
+      const a = avail('zimage:' + v.id);
+      const where = S.cfg.availability?.['zimage:' + v.id]?.on || [];
+      return { label: v.label, sub: where.length ? where.join(' + ') : 'absent', checked: S.variant === v.id, disabled: !a.ok, why: a.why,
+        onclick: () => { S.variant = v.id; saveDraft(); paintBar(); } };
+    })] };
+  if (m.id === 'krea2') return { value: S.realism ? 'UltraReal' : 'sans LoRA photo',
+    items: [{ head: 'Krea 2 · le rendu photo' },
+      { label: 'UltraReal 0,7', sub: 'lora photo', checked: !!S.realism, title: 'LoRA photo, banc Character Factory du 28/09 · sans effet avec une référence', onclick: () => { S.realism = true; saveDraft(); paintChips(); } },
+      { label: 'Sans LoRA photo', checked: !S.realism, onclick: () => { S.realism = false; saveDraft(); paintChips(); } }] };
+  return { value: S.transparent ? 'fond transparent' : 'fond opaque',
+    items: [{ head: 'Qwen 2.1 · turbo Viggle, 6 pas' },
+      { label: 'Fond opaque', checked: !S.transparent, onclick: () => { S.transparent = false; saveDraft(); paintChips(); schedCompose(); } },
+      { label: 'Fond transparent', sub: 'rgba natif', checked: !!S.transparent, title: 'RGBA natif de Qwen 2.1, sans détourage : le prompt prend le gabarit officiel', onclick: () => { S.transparent = true; saveDraft(); paintChips(); schedCompose(); } }] };
+}
 function sizeNote(m) {
   if (m.id === 'zimage') return 'paliers du Space officiel Z-Image-Turbo';
   if (m.id === 'qwen21') return S.quality === '2k' ? 'tailles natives du README Qwen-Image 2.1 (pas de 21:9 publié)' : '1 Mpx au pas de 32, défaut des gabarits ComfyUI';
   return 'Krea 2 Turbo : de 1k à 2k, au pas de 16';
 }
-function promptHint() {
-  if (S.model === 'qwen21') return 'Décrivez l’image, en anglais. Les références se nomment <image1>, <image2>…';
-  if (S.model === 'krea2') return 'Décrivez la photo en langage naturel, long et précis : le sujet, le lieu, la lumière — en anglais.';
-  return 'Décrivez l’image en anglais, en phrases détaillées : le sujet, le lieu, la lumière.';
-}
-
-// le panneau propre au modèle : ses variantes, ses options
-function variantRow(m) {
-  if (m.id === 'zimage') {
-    return el('div', { class: 'opts sub' }, ...m.variants.map((v) => {
-      const a = avail('zimage:' + v.id);
-      const where = S.cfg.availability?.['zimage:' + v.id]?.on || [];
-      return el('button', { class: 'opt' + (S.variant === v.id ? ' on' : ''), disabled: a.ok ? null : true,
-        title: a.ok ? (where.length ? `sur ${where.join(' + ')}` : '') : a.why,
-        onclick: () => { S.variant = v.id; saveDraft(); paintRail(); } }, v.label,
-      el('small', {}, where.length ? where.join(' + ') : 'absent des machines'));
-    }));
+function paintChips() {
+  const box = $('#pb-chips');
+  if (S.mode === 'create') {
+    const m = M(S.model);
+    const sizes = m.sizes[S.quality];
+    const qLabel = m.quality.find((q) => q.id === S.quality)?.label || '';
+    const q = qualityOf(m);
+    const nLooks = Object.values(S.looks).filter(Boolean).length;
+    const at = atChoices();
+    box.replaceChildren(
+      chip('+', { cls: 'ic', title: 'ajouter des références (images, éléments, personnages de Character Factory)',
+        off: !m.refs ? m.refs_why : S.refs.length >= m.refs ? `${plural(m.refs, 'référence')} au plus pour ${m.name}` : '', onclick: addRefs }),
+      chip('@', { cls: 'ic', title: 'nommer une référence dans le prompt', off: at.why || '', onclick: typeAt }),
+      chip('', { value: m.name, dot: DOT[m.id], title: m.role, onclick: (a) => up(a, modelItems(['zimage', 'qwen21', 'krea2'], S.model, (id) => {
+        S.model = id;
+        if (S.refs.length > M(id).refs) S.refs = S.refs.slice(0, M(id).refs);
+        fixQuality(); saveDraft(); paintBar();
+      })) }),
+      chip('', { value: S.aspect, title: `le format · ${sizes[S.aspect]?.join(' × ') || ''}`, onclick: (a) => up(a, [{ head: `Format · ${qLabel}` }, ...S.cfg.aspects.map((x) => {
+        const wh = sizes[x];
+        return { label: x, sub: wh ? `${wh[0]}×${wh[1]}` : '', checked: S.aspect === x, disabled: !wh, why: `${x} : non documenté en ${qLabel} pour ${m.name}`,
+          onclick: () => { S.aspect = x; saveDraft(); paintChips(); paintAct(); } };
+      })]) }),
+      chip('', { value: q.value, title: 'la qualité : ce que ce modèle propose', onclick: (a) => up(a, q.items) }),
+      chip('', { value: qLabel, title: `la taille · ${sizeNote(m)}`, onclick: (a) => up(a, [{ head: 'Taille' }, ...m.quality.map((x) => {
+        const wh = m.sizes[x.id][S.aspect];
+        return { label: x.label, sub: wh ? `${wh[0]}×${wh[1]}` : `pas de ${S.aspect}`, checked: S.quality === x.id,
+          onclick: () => { S.quality = x.id; fixQuality(); saveDraft(); paintChips(); paintAct(); } };
+      })]) }),
+      chip('', { value: S.seed ? `graine ${S.seed}` : 'Auto', title: 'la graine : Auto = au hasard ; la même graine et la même recette refont la même image', onclick: (a) => up(a, seedItems(S)) }),
+      counter(S, 4),
+      chip('Prise de vue', { value: nLooks ? String(nLooks) : '', cls: nLooks ? 'set' : '', open: S.pop === 'looks', title: 'caméra, objectif, ouverture, pellicule, lumière',
+        onclick: () => togglePop('looks') }),
+      chip('Avancé', { open: S.pop === 'adv', title: 'la graine, le prompt réellement envoyé', onclick: () => togglePop('adv') }));
+    return;
   }
-  if (m.id === 'krea2') {
-    return el('label', { class: 'tog' }, el('input', { type: 'checkbox', checked: S.realism ? true : null,
-      onchange: (e) => { S.realism = e.target.checked; saveDraft(); } }),
-    el('span', {}, 'UltraReal 0,7'), el('small', {}, 'LoRA photo, banc Character Factory du 28/09 · sans effet avec une référence'));
+  const E = S.edit;
+  const tool = S.cfg.edit_tools.find((t) => t.id === E.tool);
+  const kids = [chip('Outil', { value: tool?.name || E.tool, title: tool?.about || '', onclick: (a) => up(a, [{ head: 'Outil' }, ...S.cfg.edit_tools.map((t) => ({
+    label: t.name, sub: t.sub, checked: E.tool === t.id, disabled: !!t.off, why: t.off ? `${t.name} : ${t.off}` : '', title: t.about,
+    onclick: () => { E.tool = t.id; S.pop = null; S.paint.on = false; saveDraft(); paintBar(); } }))]) })];
+  if (!S.current || tool?.off) { box.replaceChildren(...kids); return; }
+  if (E.tool === 'instruct') {
+    const P = S.paint;
+    const painted = P.dirty && P.for === S.current?.id;
+    const light = S.cfg.looks.find((g) => g.id === 'light');
+    const lightName = light?.items.find((x) => x.id === E.looks.light)?.name || '';
+    const at = atChoices();
+    kids.push(
+      chip('', { value: M(E.model).name, dot: DOT[E.model], title: M(E.model).role, onclick: (a) => up(a, modelItems(['qwen21', 'krea2', 'zimage'], E.model, (id) => {
+        E.model = id;
+        if (E.refs.length > M(id).refs - 1) E.refs = E.refs.slice(0, M(id).refs - 1);
+        saveDraft(); paintBar();
+      }, { zimage: 'n’édite pas par consigne (Z-Image-Edit n’est pas publié) — il sait affiner : outil « Affiner ×2 »' })) }),
+      chip('Zone', { value: painted ? 'peinte' : E.mask ? 'reprise' : 'toute l’image', cls: painted || E.mask ? 'set' : '', title: 'seule la zone peinte change : éditée de près puis recollée, bord adouci',
+        onclick: (a) => up(a, [{ head: painted ? 'la zone peinte' : E.mask ? 'la zone de l’image réutilisée' : 'toute l’image change' },
+          { label: painted ? 'Reprendre la zone…' : 'Peindre une zone…', sub: 'grande fenêtre', onclick: openPaint },
+          { label: 'Effacer la zone', disabled: !(painted || E.mask), why: 'aucune zone : toute l’image change', onclick: () => { clearPaint(); E.mask = ''; saveDraft(); paintBar(); } }]) }),
+      chip('Consignes', { title: 'des consignes toutes faites, tirées des exemples officiels', onclick: (a) => up(a, [{ head: `Consignes · ${M(E.model).name}` },
+        ...QUICK[E.model].map((q) => ({ label: q.name, title: `${q.text}\nsource : ${q.src}`, onclick: () => { E.prompt = q.text; saveDraft(); paintText(); schedCompose(); paintAct(); $('#prompt').focus(); } })),
+        E.model === 'krea2' ? { head: 'retirer : Qwen (Krea Raw non installé)' } : null]) }),
+      chip('+', { cls: 'ic', title: 'une référence : une personne, un objet, une tenue à mettre dans l’image',
+        off: E.refs.length >= M(E.model).refs - 1 ? `${M(E.model).name} : ${plural(M(E.model).refs - 1, 'référence')} en plus de l’image éditée` : '', onclick: addRefs }),
+      chip('@', { cls: 'ic', title: 'nommer une image dans la consigne', off: at.why || '', onclick: typeAt }),
+      chip('Visage', { value: E.keepFace ? 'gardé' : 'libre', cls: E.keepFace ? 'set' : '',
+        title: E.model === 'qwen21' ? 'garder le visage : phrase du gabarit officiel Qwen 2.1' : 'garder le visage : phrase de Character Factory, banc du 28/09',
+        onclick: () => { E.keepFace = !E.keepFace; saveDraft(); paintChips(); schedCompose(); } }),
+      chip('Rééclairer', { value: lightName, cls: lightName ? 'set' : '', open: S.pop === 'relight', title: 'une consigne de lumière s’ajoute à la vôtre', onclick: () => togglePop('relight') }),
+      counter(E, 4),
+      chip('', { value: E.seed ? `graine ${E.seed}` : 'Auto', title: 'la graine : Auto = au hasard', onclick: (a) => up(a, seedItems(E)) }),
+      chip('Avancé', { open: S.pop === 'adv', title: 'la graine, le prompt réellement envoyé', onclick: () => togglePop('adv') }));
+  } else if (E.tool === 'upscale') {
+    const src = S.current;
+    kids.push(chip('Facteur', { value: `×${E.factor}`, title: 'SeedVR2 7B : ×2 ou ×4', onclick: (a) => up(a, [{ head: 'Agrandir' }, ...[2, 4].map((f) => {
+      const big = Math.max(src.width || 0, src.height || 0) * f;
+      return { label: `×${f}`, sub: `${(src.width || 0) * f}×${(src.height || 0) * f}`, checked: E.factor === f, disabled: big > 8192, why: `×${f} dépasserait 8192 px`,
+        onclick: () => { E.factor = f; saveDraft(); paintBar(); } };
+    })]) }));
+  } else if (E.tool === 'refine') {
+    kids.push(chip('Débruitage', { value: E.denoise.toFixed(2).replace('.', ','), open: S.pop === 'refine', title: '0,15–0,25 reste proche · 0,25–0,35 réinvente le détail',
+      onclick: () => togglePop('refine') }), counter(E, 2),
+    chip('', { value: E.seed ? `graine ${E.seed}` : 'Auto', title: 'la graine', onclick: (a) => up(a, seedItems(E)) }));
+  } else if (E.tool === 'angle') {
+    const A = angleDefaults();
+    const name = (list, id) => list.find(([x]) => x === id)?.[1] || id;
+    kids.push(chip('Point de vue', { value: `${name(A.azimuth, E.azimuth)} · ${name(A.elevation, E.elevation)} · ${name(A.distance, E.distance)}`,
+      open: S.pop === 'angle', title: 'autour du sujet, la hauteur, la distance', onclick: () => togglePop('angle') }), counter(E, 4),
+    chip('', { value: E.seed ? `graine ${E.seed}` : 'Auto', title: 'la graine', onclick: (a) => up(a, seedItems(E)) }));
   }
-  return el('div', { class: 'stack' },
-    el('label', { class: 'tog' }, el('input', { type: 'checkbox', checked: S.transparent ? true : null,
-      onchange: (e) => { S.transparent = e.target.checked; saveDraft(); schedCompose(); } }),
-    el('span', {}, 'Fond transparent'), el('small', {}, 'RGBA natif de Qwen 2.1, sans détourage : le prompt prend le gabarit officiel')),
-    el('p', { class: 'hint' }, 'turbo Viggle, 6 pas — le réglage de Character Factory'));
+  box.replaceChildren(...kids);
 }
 
-// les références : la planche commune, et le choix d'une image dans un élément
-function refsPanel(m) {
-  if (!m.refs) {
-    return pan('Références', 'aucune', el('p', { class: 'reason' }, m.refs_why),
-      el('div', { class: 'row' },
-        el('button', { class: 'tb ghost sm', onclick: () => { S.model = 'qwen21'; fixQuality(); saveDraft(); paintRail(); } }, 'Passer à Qwen 2.1'),
-        el('button', { class: 'tb ghost sm', onclick: () => { S.model = 'krea2'; fixQuality(); saveDraft(); paintRail(); } }, 'Passer à Krea 2')));
-  }
-  const box = el('div', { class: 'refs' });
-  const choices = el('div', { class: 'choices' });
-  const bd = refBoard(box, { max: m.refs, via: VIA, onchange: (list) => {
-    S.refs = list.slice(); saveDraft(); paintChoices(choices, S.refs, 1, (k) => bd.set(swap(S.refs, k))); schedCompose();
-    $('#refs-n') && ($('#refs-n').textContent = `${S.refs.length} / ${m.refs}`);
-  } });
-  bd.set(S.refs.slice(0, m.refs));
-  const hint = m.id === 'qwen21'
-    ? 'dans l’ordre de la planche : <image1>, <image2>, <image3> — nommez-les dans le prompt ; un personnage de Character Factory s’importe d’un clic (+ → onglet Character Factory)'
-    : '1 référence : la personne ou l’objet à reprendre · 2 : la scène d’abord, puis le sujet (Identity Edit v1.2) ; un personnage de Character Factory s’importe d’un clic';
-  return el('section', { class: 'ipan' }, el('div', { class: 'ipan-h' }, el('span', { class: 'lbl' }, 'Références'),
-    el('span', { class: 'r', id: 'refs-n' }, `${S.refs.length} / ${m.refs}`)), box, choices, el('p', { class: 'hint' }, hint));
+// l'angle par défaut : ¾ avant droit, hauteur d'œil, plan moyen
+function angleDefaults() {
+  const A = S.cfg.angles, E = S.edit;
+  if (!E.azimuth) E.azimuth = A.azimuth[1][0];
+  if (!E.elevation) E.elevation = 'eye-level shot';
+  if (!E.distance) E.distance = 'medium shot';
+  return A;
 }
 
-// l'ordre compte : <image1>, <image2>… (Qwen) ; la scène puis le sujet (Krea)
-const swap = (list, k) => { const l = list.slice(); [l[k - 1], l[k]] = [l[k], l[k - 1]]; return l; };
-function paintChoices(box, list, first, onUp) {
-  box.replaceChildren(...list.map((it, k) => {
-    const tag = el('span', { class: 'tok' }, `<image${first + k}>`);
-    const up = k > 0 && onUp ? el('button', { class: 'tb ghost sm up', title: 'passer avant', onclick: () => onUp(k) }, '↑') : null;
-    if (it.kind !== 'element') return el('div', { class: 'choice' }, tag, el('span', { class: 'nm' }, it.title), up);
-    const refs = it.element?.refs || [];
-    const sel = el('select', { class: 'fld sm', title: 'quelle image de l’élément envoyer',
-      onchange: (e) => { S.refChoice[it.id] = e.target.value; saveDraft(); schedCompose(); } },
-    ...refs.map((r) => el('option', { value: r.file, selected: (S.refChoice[it.id] || refs[0]?.file) === r.file ? true : null },
-      `${r.label || r.role || r.file}${r.role ? ' · ' + r.role : ''}`)));
-    return el('div', { class: 'choice' }, tag, el('span', { class: 'nm' }, it.title), sel, up);
-  }));
-}
-
-// les jetons <imageN> à glisser dans le prompt (Qwen)
-function tokenRow(ta, list, first) {
-  const model = S.mode === 'create' ? S.model : S.edit.model;
-  if (model !== 'qwen21') return null;
-  const toks = (S.mode === 'edit' ? [{ title: 'l’image éditée' }] : []).concat(list);
-  if (!toks.length) return null;
-  const start = S.mode === 'edit' ? 1 : first;
-  return el('div', { class: 'row toks' }, ...toks.map((it, k) => el('button', { class: 'tb ghost sm', title: `insérer <image${start + k}> — ${it.title}`,
-    onclick: () => {
-      const t = `<image${start + k}>`;
-      const p = ta.selectionStart ?? ta.value.length;
-      ta.value = ta.value.slice(0, p) + t + ta.value.slice(ta.selectionEnd ?? p);
-      ta.dispatchEvent(new Event('input'));
-      ta.focus();
-    } }, `<image${start + k}>`)));
-}
-
+// ── les panneaux au-dessus de la barre ──────────────────────
+function togglePop(id) { S.pop = S.pop === id ? null : id; paintPop(); paintChips(); }
 // le sigle posé sur la vignette dessinée (image.css) d'une caméra ou d'un objectif
 const ABBR = {
   camera: { fullframe: 'FF', mediumformat: 'MF', leica: 'M6', alexa: 'S35', imax: '70', '16mm': '16', digicam: 'DC', disposable: 'FL', phone: 'PH' },
   lens: { 14: '14', 24: '24', 35: '35', 50: '50', 85: '85', 135: '135', macro: '1:1', anamorphic: '2.39', swirl: 'PTZ', vintage: 'K35' },
 };
-
-function lookGroup(g, looks, mode) {
-  const cur = g.items.find((x) => x.id === looks[g.id]);
+function swatches(g, looks, mode) {
   const model = mode === 'edit' ? S.edit.model : S.model;
-  return fold(`look-${mode}-${g.id}`, g.label, cur ? cur.name : '',
-    g.about ? el('p', { class: 'hint' }, g.about) : null,
-    el('div', { class: 'looks' }, ...g.items.map((x) => {
-      const said = mode === 'edit' ? (x.edit || x.prose) : (model === 'krea2' && x.krea ? x.krea : x.prose);
-      return el('button', { class: 'opt look' + (looks[g.id] === x.id ? ' on' : ''), title: `« ${said} »\nsource : ${x.src}`,
-        onclick: () => { looks[g.id] = looks[g.id] === x.id ? null : x.id; saveDraft(); paintRail(); } },
-      el('span', { class: 'sw', 'data-g': g.id, 'data-id': x.id, 'data-abbr': ABBR[g.id]?.[x.id] ?? null }), el('b', {}, x.name), x.sub ? el('small', {}, x.sub) : null);
-    })));
+  return el('div', { class: 'looks' }, ...g.items.map((x) => {
+    const said = mode === 'edit' ? (x.edit || x.prose) : (model === 'krea2' && x.krea ? x.krea : x.prose);
+    return el('button', { class: 'opt look' + (looks[g.id] === x.id ? ' on' : ''), type: 'button', title: `« ${said} »\nsource : ${x.src}`,
+      onclick: () => { looks[g.id] = looks[g.id] === x.id ? null : x.id; saveDraft(); schedCompose(); paintPop(); paintChips(); } },
+    el('span', { class: 'sw', 'data-g': g.id, 'data-id': x.id, 'data-abbr': ABBR[g.id]?.[x.id] ?? null }), el('b', {}, x.name), x.sub ? el('small', {}, x.sub) : null);
+  }));
+}
+function paintPop() {
+  const box = $('#pop');
+  if (!S.pop) { box.hidden = true; box.replaceChildren(); return; }
+  const keep = box.querySelector('.pp-body')?.scrollTop || 0;
+  const head = (title, ...right) => el('div', { class: 'pp-h' }, el('span', { class: 'lbl' }, title), el('span', { class: 'sp' }), ...right,
+    el('button', { class: 'pp-x', type: 'button', title: 'fermer (Échap)', 'aria-label': 'fermer', onclick: () => togglePop(S.pop) }, '×'));
+  let kids = [];
+  if (S.pop === 'looks' || S.pop === 'relight') {
+    const edit = S.pop === 'relight';
+    const looks = edit ? S.edit.looks : S.looks;
+    const groups = edit ? S.cfg.looks.filter((g) => g.id === 'light') : S.cfg.looks;
+    const g = groups.find((x) => x.id === S.lookTab) || groups[0];
+    const chosen = groups.map((x) => x.items.find((i) => i.id === looks[x.id])?.name).filter(Boolean);
+    kids = [head(edit ? 'Rééclairer' : 'Prise de vue', el('span', { class: 'lbl pp-sum' }, chosen.join(' · ') || 'aucune'),
+      el('button', { class: 'tb ghost sm', type: 'button', disabled: chosen.length ? null : true, title: 'tout retirer',
+        onclick: () => { for (const x of groups) looks[x.id] = null; saveDraft(); schedCompose(); paintPop(); paintChips(); } }, 'aucune')),
+    groups.length > 1 ? el('div', { class: 'pp-tabs', role: 'tablist' }, ...groups.map((x) => {
+      const cur = x.items.find((i) => i.id === looks[x.id]);
+      return el('button', { class: 'pp-tab' + (x.id === g.id ? ' on' : ''), type: 'button', role: 'tab',
+        onclick: () => { S.lookTab = x.id; saveDraft(); paintPop(); } }, el('span', {}, x.label), el('small', {}, cur ? cur.name : '—'));
+    })) : null,
+    el('div', { class: 'pp-body' }, el('p', { class: 'hint' }, edit ? 'la consigne de lumière s’ajoute à la vôtre : « Relight the scene… »' : g.about || ''), swatches(g, looks, edit ? 'edit' : 'generate'))];
+  } else if (S.pop === 'adv') {
+    const o = S.mode === 'create' ? S : S.edit;
+    const seed = el('input', { class: 'fld seed', id: 'seed', inputmode: 'numeric', placeholder: 'au hasard', value: o.seed,
+      title: 'la graine : la même graine et la même recette refont la même image',
+      oninput: (e) => { o.seed = e.target.value.replace(/\D/g, ''); e.target.value = o.seed; saveDraft(); paintChips(); } });
+    const instruct = S.mode === 'create' || S.edit.tool === 'instruct';
+    kids = [head('Avancé'),
+      el('div', { class: 'pp-body' },
+        el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'Graine'), seed,
+          el('button', { class: 'tb ghost sm', type: 'button', title: 'une graine au hasard', onclick: () => { o.seed = String(Math.floor(Math.random() * 1e9)); seed.value = o.seed; saveDraft(); paintChips(); } }, 'dé'),
+          o.origSeed != null ? el('button', { class: 'tb ghost sm', type: 'button', title: `la graine de l’image réutilisée : ${o.origSeed}`,
+            onclick: () => { o.seed = String(o.origSeed); seed.value = o.seed; saveDraft(); paintChips(); } }, 'd’origine') : null,
+          el('span', { class: 'hint' }, 'vide : au hasard (Auto)')),
+        instruct ? el('div', { class: 'field' }, el('span', { class: 'lbl' }, 'Le prompt envoyé au modèle'), el('pre', { class: 'sent', id: 'sent' }, S.sent || '—')) : null,
+        ...S.notes.map((n) => el('p', { class: 'reason' }, n)))];
+  } else if (S.pop === 'angle') {
+    const A = S.cfg.angles, E = S.edit;
+    const grp = (key, title, list) => el('div', { class: 'field' }, el('span', { class: 'lbl' }, title), el('div', { class: 'opts' }, ...list.map(([id, name]) => el('button', {
+      class: 'opt' + (E[key] === id ? ' on' : ''), type: 'button', title: id, onclick: () => { E[key] = id; saveDraft(); paintPop(); paintChips(); paintText(); } }, name))));
+    kids = [head('Angle', el('span', { class: 'lbl pp-sum' }, `<sks> ${E.azimuth} ${E.elevation} ${E.distance}`)),
+      el('div', { class: 'pp-body pp-angle' }, compass(A.azimuth, E), el('div', { class: 'stack' },
+        grp('elevation', 'Hauteur', A.elevation), grp('distance', 'Distance', A.distance),
+        el('p', { class: 'hint' }, 'LoRA fal Multiple-Angles sur Qwen-Image-Edit 2511 (Lightning 4 pas), Apache-2.0 ; les côtés sont ceux du sujet.')))];
+  } else if (S.pop === 'refine') {
+    const E = S.edit;
+    const val = el('span', { class: 'val' }, E.denoise.toFixed(2));
+    kids = [head('Affiner ×2 · Z-Image Turbo'),
+      el('div', { class: 'pp-body' }, el('div', { class: 'slide' },
+        el('input', { type: 'range', min: 0.1, max: 0.5, step: 0.01, value: E.denoise, 'aria-label': 'débruitage',
+          oninput: (e) => { E.denoise = Number(e.target.value); val.textContent = E.denoise.toFixed(2); saveDraft(); paintChips(); } }), val),
+      el('div', { class: 'scale' }, el('span', {}, 'proche'), el('span', {}, 'réinventé'), el('span', {}, 'défauts')),
+      el('p', { class: 'hint' }, '0,15–0,25 reste proche · 0,25–0,35 réinvente le détail · au-delà, des défauts (note du gabarit officiel Z-Image 2K). La description se tape dans la barre.'))];
+  }
+  box.hidden = false;
+  box.replaceChildren(...kids.filter(Boolean));
+  const b = box.querySelector('.pp-body');
+  if (b) b.scrollTop = keep;
+}
+// la boussole des huit azimuts : la vue de dessus, le sujet au centre
+function compass(list, E) {
+  const box = el('div', { class: 'compass' }, el('span', { class: 'who' }, 'sujet'));
+  list.forEach(([id, name], k) => {
+    const ang = (k * 45 - 90) * Math.PI / 180;
+    // « 3/4 avant droit » sur deux lignes : la boussole reste compacte
+    const m = name.match(/^(3\/4 \S+) (.+)$/);
+    box.append(el('button', { class: 'pt' + (E.azimuth === id ? ' on' : ''), type: 'button', title: `${name} — ${id}`,
+      style: { left: `${50 + 40 * Math.cos(ang)}%`, top: `${50 + 40 * Math.sin(ang)}%` },
+      onclick: () => { E.azimuth = id; saveDraft(); paintPop(); paintChips(); paintText(); } }, ...(m ? [m[1].replace('3/4', '¾'), el('br'), m[2]] : [name])));
+  });
+  return box;
 }
 
-function countRow(o, counts) {
-  return pan('Nombre', null, el('div', { class: 'seg' }, ...counts.map((n) => el('button', { class: 'tb' + (o.count === n ? ' on' : ''),
-    onclick: () => { o.count = n; saveDraft(); paintRail(); } }, String(n)))));
+// à droite : l'action, le seul orange, avec le temps mesuré
+function measured(prefix, job) {
+  const xs = (fil?.items() || []).filter((x) => x.render_s && x.params?.job === job && (x.origin?.model || '').startsWith(prefix))
+    .map((x) => x.render_s).sort((a, b) => a - b);
+  if (!xs.length) return { short: 'temps non mesuré', long: 'aucun rendu de ce modèle dans le fil : pas de temps mesuré' };
+  const med = xs[Math.floor(xs.length / 2)];
+  return { short: `≈ ${fmtS(med)}`, long: `médiane de ${plural(xs.length, 'rendu')} de ce modèle dans le fil : ${fmtS(med)} par image${stub() ? ' (moteur factice)' : ''}` };
+}
+function paintAct() {
+  const box = $('#act');
+  if (!box || !S.cfg) return;
+  let label; let why; let info; let est; let n;
+  if (S.mode === 'create') {
+    const m = M(S.model);
+    const a = avail(capCreate());
+    why = !S.prompt.trim() ? 'écrivez un prompt' : !a.ok ? `modèle absent — ${a.why}` : '';
+    label = 'Générer';
+    n = S.count;
+    const wh = m.sizes[S.quality]?.[S.aspect];
+    info = `${m.name} · ${wh ? wh.join(' × ') : ''}${a.on?.length ? ' · ' + a.on.join(' + ') : ''}`;
+    est = measured(S.model, 'image.generate');
+  } else {
+    const E = S.edit;
+    const a = avail(capEdit());
+    const tool = S.cfg.edit_tools.find((t) => t.id === E.tool);
+    label = { instruct: (E.mask || (S.paint.dirty && S.paint.for === S.current?.id)) ? 'Éditer la zone' : 'Éditer', matte: 'Détourer', upscale: `Agrandir ×${E.factor}`,
+      refine: 'Affiner ×2', angle: 'Tourner' }[E.tool] || 'Éditer';
+    why = !S.current ? 'choisissez l’image à éditer' : tool?.off ? `${tool.name} : indisponible` : !a.ok ? `modèle absent — ${a.why}`
+      : (E.tool === 'instruct' && !E.prompt.trim()) ? 'écrivez une consigne' : '';
+    n = ['instruct', 'angle', 'refine'].includes(E.tool) ? E.count : 1;
+    info = a.on?.length ? `sur ${a.on.join(' + ')}` : '';
+    const prefix = { instruct: `${E.model}-edit`, matte: 'birefnet', upscale: 'seedvr2', refine: 'zimage-refine', angle: 'qwen-edit-2511-angles' }[E.tool] || E.tool;
+    est = measured(prefix, 'image.edit');
+  }
+  // replaceChildren(null) écrirait « null » : on ne passe que des nœuds
+  box.replaceChildren(...[
+    el('button', { class: 'tb go pb-gen', type: 'button', disabled: why ? true : null, title: `${info}\n${est.long}`.trim(), onclick: S.mode === 'create' ? generate : editRun },
+      el('span', { class: 'gl' }, label), el('small', {}, `${n > 1 ? `${n} × ` : ''}${est.short}`)),
+    why ? el('p', { class: 'why' }, why) : null].filter(Boolean));
 }
 
-// ── éditer ──────────────────────────────────────────────────
-// Des consignes toutes faites, tirées des exemples officiels (étude §6).
+// ── éditer : consignes toutes faites, la zone peinte ────────
+// Des consignes tirées des exemples officiels (étude §6).
 const QUICK = {
   qwen21: [
     { name: 'Essayage', text: 'Keep the person and the pose in <image1> unchanged, put the outfit from <image2> on the person, preserve the original facial features, hair, body shape and pose, natural clothing folds, keep the original background and original lighting.', src: 'gabarit officiel Qwen 2.1 (essayage)' },
@@ -388,165 +697,12 @@ const QUICK = {
   ],
 };
 
-function setSource(it) {
-  if (!it || it.kind !== 'image') return;
-  if (S.current?.id !== it.id) { S.edit.mask = ''; if (S.paint.for !== it.id) clearPaint(); }
-  S.current = it;
-  saveDraft(); paintRail();
-}
-
-function editPanels() {
-  const out = [];
-  const src = S.current;
-  const pickSrc = async () => { const [it] = await pick({ kinds: ['image'], title: 'L’image à éditer' }); if (it) setSource(it); };
-  // l'emplacement de l'image à éditer : un dépôt (fichier ou vignette) la remplace
-  const srcZone = (node) => dropZone(node, { kinds: ['image'], multiple: false, via: VIA, onitems: ([it]) => setSource(it) });
-  if (!src || src.kind !== 'image') {
-    out.push(srcZone(pan('Image à éditer', 'déposez-la ici',
-      el('div', { class: 'dropslot' }, el('b', {}, '+'),
-        el('span', {}, 'Glissez une image ici — un fichier de votre disque, ou une vignette du fil. Ou, sur une image du fil : ⋯ → Éditer.')),
-      el('button', { class: 'tb ghost block', onclick: pickSrc }, 'Choisir dans la bibliothèque'))));
-    out.push(el('div', { class: 'act', id: 'act' }));
-    setTimeout(paintAct);
-    return out;
-  }
-  out.push(srcZone(pan('Image à éditer', `${src.width || '?'} × ${src.height || '?'}`,
-    el('div', { class: 'srcrow' }, dragItem(el('button', { class: 'srcim', type: 'button', title: 'la voir en grand — elle se glisse aussi vers les références',
-      style: { backgroundImage: `url(${href(src.thumb_url || src.url)})` }, onclick: () => fil?.open(src) }), src),
-    el('div', { class: 'srcnm' }, el('b', {}, src.title || src.id), el('small', {}, src.origin?.model || src.origin?.tool || '')),
-    el('button', { class: 'tb ghost sm', onclick: pickSrc }, 'changer')),
-    el('p', { class: 'hint' }, 'une autre image se dépose ici pour la remplacer'))));
-
-  const E = S.edit;
-  out.push(pan('Outil', null, el('div', { class: 'tools' }, ...S.cfg.edit_tools.map((t) => {
-    const a = t.off ? { ok: false } : avail(t.id === 'instruct' ? (E.model === 'krea2' ? 'krea2:edit' : 'qwen21') : t.id);
-    return el('button', { class: 'opt tool' + (E.tool === t.id ? ' on' : '') + (t.off ? ' off' : ''), title: t.off || (a.ok ? t.about : a.why),
-      onclick: () => { E.tool = t.id; S.paint.on = false; saveDraft(); paintRail(); } },
-    el('b', {}, t.name), el('small', {}, t.sub));
-  }))));
-
-  const tool = S.cfg.edit_tools.find((t) => t.id === E.tool);
-  if (tool?.off) {
-    out.push(pan(tool.name, 'indisponible', el('p', { class: 'reason' }, tool.off),
-      el('a', { class: 'tb ghost sm', href: href('docs/etudes/image.md'), target: '_blank' }, 'L’étude, §9')));
-    return out;
-  }
-  out.push(el('p', { class: 'hint tool-about' }, tool?.about || ''));
-
-  if (E.tool === 'instruct') {
-    out.push(modelCard(['qwen21', 'krea2', 'zimage'], E.model, (id) => {
-      E.model = id;
-      const max = M(id).refs - 1;
-      if (E.refs.length > max) E.refs = E.refs.slice(0, max);
-      saveDraft(); paintRail();
-    }, { zimage: 'n’édite pas par consigne (Z-Image-Edit n’est pas publié) — il sait affiner : outil « Affiner ×2 »' }));
-    const ta = el('textarea', { class: 'fld prompt', id: 'prompt', rows: 5, placeholder: E.model === 'qwen21'
-      ? 'La consigne, en anglais : « Change the jacket in <image1> to a red leather jacket »'
-      : 'La consigne, en anglais : « Recolor the jacket to red leather »',
-    oninput: (e) => { E.prompt = e.target.value; saveDraft(); schedCompose(); paintAct(); } });
-    ta.value = E.prompt;
-    out.push(pan('Consigne', 'en anglais', ta, tokenRow(ta, E.refs, 2),
-      el('div', { class: 'opts quick' }, ...QUICK[E.model].map((q) => el('button', { class: 'opt', title: `${q.text}\nsource : ${q.src}`,
-        onclick: () => { E.prompt = q.text; saveDraft(); paintRail(); } }, q.name))),
-      E.model === 'krea2' ? el('p', { class: 'hint' }, 'Krea Turbo retire mal (il faut Krea Raw, CFG 3, non installé) : pour retirer, prenez Qwen.') : null));
-    out.push(zonePanel());
-    const max = M(E.model).refs - 1;
-    const box = el('div', { class: 'refs' });
-    const choices = el('div', { class: 'choices' });
-    const eb = refBoard(box, { max, via: VIA, onchange: (list) => {
-      E.refs = list.slice(); saveDraft(); paintChoices(choices, E.refs, 2, (k) => eb.set(swap(E.refs, k))); schedCompose();
-      $('#erefs-n') && ($('#erefs-n').textContent = `${E.refs.length} / ${max}`);
-    } });
-    eb.set(E.refs.slice(0, max));
-    out.push(el('section', { class: 'ipan' }, el('div', { class: 'ipan-h' }, el('span', { class: 'lbl' }, 'Références'),
-      el('span', { class: 'r', id: 'erefs-n' }, `${E.refs.length} / ${max}`)), box, choices,
-    el('p', { class: 'hint' }, E.model === 'qwen21'
-      ? 'l’image éditée est <image1> ; les références suivent : <image2>, <image3>'
-      : 'l’image éditée est la scène ; une référence = le sujet à y mettre (Identity Edit v1.2, 2 images au plus)')));
-    const light = S.cfg.looks.find((g) => g.id === 'light');
-    if (light) out.push(lookGroup({ ...light, label: 'Rééclairer', about: 'la consigne de lumière s’ajoute à la vôtre' }, E.looks, 'edit'));
-    out.push(el('label', { class: 'tog' }, el('input', { type: 'checkbox', checked: E.keepFace ? true : null,
-      onchange: (e) => { E.keepFace = e.target.checked; saveDraft(); schedCompose(); } }),
-    el('span', {}, 'Garder le visage'), el('small', {}, E.model === 'qwen21' ? 'phrase du gabarit officiel Qwen 2.1' : 'phrase de Character Factory, banc du 28/09')));
-    out.push(countRow(E, [1, 2, 3, 4]));
-    out.push(advPanel(E));
-  } else if (E.tool === 'upscale') {
-    out.push(pan('Facteur', null, el('div', { class: 'opts' }, ...[2, 4].map((f) => {
-      const big = Math.max(src.width || 0, src.height || 0) * f;
-      return el('button', { class: 'opt' + (E.factor === f ? ' on' : ''), disabled: big > 8192 ? true : null,
-        title: big > 8192 ? 'plus de 8192 px' : '', onclick: () => { E.factor = f; saveDraft(); paintRail(); } }, `×${f}`,
-      el('small', {}, `${(src.width || 0) * f} × ${(src.height || 0) * f}`));
-    })), el('p', { class: 'hint' }, 'SeedVR2 7B en un pas : l’image agrandie en Lanczos puis restaurée, couleurs recalées sur l’originale (gabarit officiel ComfyUI, repris de Character Factory). Pour une vidéo, ou d’autres modèles : l’outil Upscale.')));
-  } else if (E.tool === 'refine') {
-    const val = el('span', { class: 'val' }, E.denoise.toFixed(2));
-    out.push(pan('Débruitage', null, el('div', { class: 'slide' },
-      el('input', { type: 'range', min: 0.1, max: 0.5, step: 0.01, value: E.denoise,
-        oninput: (e) => { E.denoise = Number(e.target.value); val.textContent = E.denoise.toFixed(2); saveDraft(); } }), val),
-    el('div', { class: 'scale' }, el('span', {}, 'proche'), el('span', {}, 'réinventé'), el('span', {}, 'défauts')),
-    el('p', { class: 'hint' }, '0,15–0,25 reste proche · 0,25–0,35 réinvente le détail · au-delà, des défauts (note du gabarit officiel Z-Image 2K).')));
-    // « une description détaillée » : le prompt d'une image créée ici en est
-    // une ; celui d'une édition n'est qu'une consigne, il n'est pas repris
-    const caption = src.params?.job === 'image.generate' ? (src.prompt || '') : '';
-    if (E.captionFor !== src.id) { E.caption = caption; E.captionFor = src.id; }
-    const ta = el('textarea', { class: 'fld prompt', rows: 4, placeholder: 'une description détaillée de l’image tient mieux (note du gabarit) — en anglais',
-      oninput: (e) => { E.caption = e.target.value; saveDraft(); } });
-    ta.value = E.caption || '';
-    out.push(pan('Description', caption && E.caption === caption ? 'reprise de l’image' : '', ta));
-    out.push(countRow(E, [1, 2]));
-    out.push(advPanel(E));
-  } else if (E.tool === 'angle') {
-    const A = S.cfg.angles;
-    if (!E.azimuth) E.azimuth = A.azimuth[1][0];
-    if (!E.elevation) E.elevation = 'eye-level shot';
-    if (!E.distance) E.distance = 'medium shot';
-    out.push(pan('Autour du sujet', A.azimuth.find(([id]) => id === E.azimuth)?.[1] || '', compass(A.azimuth, E)));
-    const grp = (key, title, list) => pan(title, null, el('div', { class: 'opts' }, ...list.map(([id, name]) => el('button', {
-      class: 'opt' + (E[key] === id ? ' on' : ''), title: id, onclick: () => { E[key] = id; saveDraft(); paintRail(); } }, name))));
-    out.push(grp('elevation', 'Hauteur', A.elevation), grp('distance', 'Distance', A.distance));
-    out.push(countRow(E, [1, 2, 3, 4]));
-    out.push(pan('Prompt envoyé', null, el('pre', { class: 'sent' }, `<sks> ${E.azimuth} ${E.elevation} ${E.distance}`),
-      el('p', { class: 'hint' }, 'LoRA fal Multiple-Angles sur Qwen-Image-Edit 2511 (Lightning 4 pas), Apache-2.0 ; les côtés sont ceux du sujet.')));
-    out.push(advPanel(E));
-  } else if (E.tool === 'matte') {
-    out.push(pan('Détourer', null, el('p', { class: 'hint' }, 'BiRefNet (nœuds natifs de ComfyUI) : un PNG transparent, le sujet seul — le détourage de Character Factory.')));
-  }
-  out.push(el('div', { class: 'act', id: 'act' }));
-  setTimeout(paintAct);
-  return out;
-}
-
-// la boussole des huit azimuts : la vue de dessus, le sujet au centre
-function compass(list, E) {
-  const box = el('div', { class: 'compass' }, el('span', { class: 'who' }, 'sujet'));
-  list.forEach(([id, name], k) => {
-    const ang = (k * 45 - 90) * Math.PI / 180;
-    // « 3/4 avant droit » sur deux lignes : la boussole reste compacte
-    const m = name.match(/^(3\/4 \S+) (.+)$/);
-    box.append(el('button', { class: 'pt' + (E.azimuth === id ? ' on' : ''), title: `${name} — ${id}`,
-      style: { left: `${50 + 40 * Math.cos(ang)}%`, top: `${50 + 40 * Math.sin(ang)}%` },
-      onclick: () => { E.azimuth = id; saveDraft(); paintRail(); } }, ...(m ? [m[1].replace('3/4', '¾'), el('br'), m[2]] : [name])));
-  });
-  return box;
-}
-
-// ── la zone peinte : un masque au pinceau sur l'image, à sa taille réelle ──
-// On peint dans une grande fenêtre (l'image à sa place, en grand) ; le masque
-// reste d'une ouverture à l'autre, jusqu'à « Effacer » ou une autre image.
-function zonePanel() {
-  const P = S.paint;
-  const painted = P.dirty && P.for === S.current?.id;
-  const reused = !painted && S.edit.mask;
-  return pan('Zone', painted ? 'peinte' : reused ? 'reprise' : 'toute l’image',
-    el('div', { class: 'row' },
-      el('button', { class: 'tb ghost sm', onclick: openPaint }, painted ? 'Reprendre la zone' : 'Peindre une zone'),
-      el('button', { class: 'tb ghost sm', disabled: painted || reused ? null : true,
-        onclick: () => { clearPaint(); S.edit.mask = ''; saveDraft(); paintRail(); } }, 'Effacer')),
-    reused ? el('p', { class: 'hint' }, 'la zone de l’image réutilisée : l’édition reprend le même masque ; « Peindre » en dessine une nouvelle') : null,
-    el('p', { class: 'hint' }, 'Seule la zone peinte change : elle est éditée de près puis recollée, bord adouci — le reste de l’image ne bouge pas (méthode du report de visage de Character Factory).'));
-}
+// La zone peinte : un masque au pinceau sur l'image, à sa taille réelle, dans
+// une grande fenêtre ; il reste d'une ouverture à l'autre, jusqu'à « Effacer »
+// ou une autre image.
 function openPaint() {
   const it = S.current;
-  if (!it) return;
+  if (!it) { toast('choisissez d’abord l’image à éditer'); return; }
   const P = S.paint;
   P.on = true;
   const cv = paintCanvas();
@@ -556,7 +712,7 @@ function openPaint() {
     P.on = false; cv.classList.remove('on');
     if (P.dirty) S.edit.mask = '';   // une zone peinte remplace celle d'une image réutilisée
     scrim.remove(); document.removeEventListener('keydown', esc, true);
-    saveDraft(); paintRail();
+    saveDraft(); paintChips(); paintAct();
   };
   const esc = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
   const scrim = el('div', { class: 'scrim paintm' }, el('div', { class: 'modal lg', role: 'dialog', 'aria-label': 'peindre la zone' },
@@ -564,7 +720,8 @@ function openPaint() {
       el('label', { class: 'brush' }, el('span', { class: 'lbl' }, 'pinceau'), brush),
       el('button', { class: 'tb ghost sm', onclick: () => clearPaint() }, 'Effacer'),
       el('button', { class: 'tb sm on', onclick: close }, 'Terminé')),
-    el('div', { class: 'modal-body pm-body' }, wrap)));
+    el('div', { class: 'modal-body pm-body' }, wrap,
+      el('p', { class: 'hint' }, 'Seule la zone peinte change : elle est éditée de près puis recollée, bord adouci — le reste de l’image ne bouge pas (méthode du report de visage de Character Factory).'))));
   document.addEventListener('keydown', esc, true);
   document.body.append(scrim);
 }
@@ -636,7 +793,7 @@ async function editRun() {
   await launch('image/edit', body);
 }
 async function launch(path, body) {
-  const btn = $('#act .tb.go');
+  const btn = $('#act .pb-gen');
   if (btn) btn.disabled = true;
   let r;
   try { r = await api(path, { method: 'POST', body }); } catch (e) { toast(e.message, 7000); paintAct(); return; }
@@ -644,6 +801,7 @@ async function launch(path, body) {
   toast(r.jobs.length > 1 ? `${r.jobs.length} rendus en file — en tête du fil` : 'en file — en tête du fil');
   paintAct();
   fil?.paintJobs();
+  scrollTo({ top: 0, behavior: 'smooth' });   // la tête du fil, où paraissent les rendus
 }
 // les travaux lancés d'ici : suivis un à un (la file commune ne les voit
 // qu'au relevé suivant) ; leurs images se posent dans le fil en arrivant
@@ -656,6 +814,7 @@ function follow(j) {
     if (done.state === 'done' && done.items?.length) fil?.add(done.items);
     else if (done.state === 'error') toast(`échec : ${done.message}`, 9000);
     fil?.paintJobs();
+    paintAct();   // le temps mesuré suit les rendus arrivés
   }).catch(() => { S.mine.delete(j.id); });
 }
 
@@ -680,7 +839,6 @@ const onJob = {
 
 const shortModel = (m) => (m || '').replace(/^qwen-edit-2511-angles/, 'angle').replace(/-factice$/, ' · factice')
   .replace(/-turbo/, '').replace(/-edit(-zone)?/, ' éd.').toUpperCase();
-const TOOL_FR = { instruct: 'consigne', matte: 'détourer', upscale: 'agrandir', refine: 'affiner ×2', angle: 'angle' };
 
 // ── ce que le fil sait d'une image de l'outil ───────────────
 const hasRecipe = (it) => ['image.generate', 'image.edit'].includes(it.params?.job);
@@ -746,20 +904,19 @@ function compareView(a, b) {
   return wrap;
 }
 
-// ── réutiliser, recréer, et le reste du menu ⋯ ──────────────
+// ── réutiliser (remplit la barre), recréer, et le reste du menu ⋯ ──
 async function reuse(it) {
   const p = it.params || {};
   if (p.job === 'image.edit') return reuseEdit(it);
   Object.assign(S, { model: M(p.model) ? p.model : S.model, prompt: p.prompt || '', looks: { ...(p.looks || {}) }, aspect: p.aspect || S.aspect,
     quality: p.quality || S.quality, variant: p.variant || S.variant, realism: p.realism ?? S.realism, transparent: !!p.transparent,
-    seed: '', origSeed: p.seed ?? null, mode: 'create' });
+    seed: '', origSeed: p.seed ?? null, mode: 'create', pop: null });
   S.refs = (await Promise.all((p.refs || []).map((r) => api('library/' + r.item).catch(() => null)))).filter(Boolean);
   for (const r of p.refs || []) if (r.ref) S.refChoice[r.item] = r.ref;
   const lost = (p.refs || []).length - S.refs.length;
-  fixQuality(); saveDraft(); paintRail();
-  $('#rail').scrollTop = 0;
-  $('#prompt')?.focus();
-  toast(`réglages repris${lost ? ` (${plural(lost, 'référence partie', 'références parties')} de la bibliothèque)` : ''} · graine vidée : « Générer » fait une variante`, 5000);
+  fixQuality(); saveDraft(); paintBar();
+  $('#prompt').focus();
+  toast(`réglages repris dans la barre${lost ? ` (${plural(lost, 'référence partie', 'références parties')} de la bibliothèque)` : ''} · graine vidée : « Générer » fait une variante`, 5000);
 }
 async function reuseEdit(it) {
   const p = it.params || {};
@@ -770,30 +927,30 @@ async function reuseEdit(it) {
   if (S.paint.for !== src.id) clearPaint();
   S.current = src;
   S.mode = 'edit';
+  S.pop = null;
   S.edit = { ...S.edit, tool: p.tool, model: p.model || S.edit.model, prompt: p.tool === 'instruct' ? (p.prompt || '') : S.edit.prompt,
     looks: { ...(p.looks || {}) }, keepFace: p.keep_face ?? S.edit.keepFace, factor: p.factor || S.edit.factor, denoise: p.denoise ?? S.edit.denoise,
     azimuth: p.azimuth || S.edit.azimuth, elevation: p.elevation || S.edit.elevation, distance: p.distance || S.edit.distance,
     mask: p.mask || '', refs, seed: '', origSeed: p.seed ?? null };
   if (p.tool === 'refine') { S.edit.caption = p.prompt || ''; S.edit.captionFor = src.id; }
-  saveDraft(); paintRail();
-  $('#rail').scrollTop = 0;
-  toast(`édition reprise (${TOOL_FR[p.tool] || p.tool}) sur la même source · graine vidée : une variante`, 5000);
+  saveDraft(); paintBar();
+  toast(`édition reprise dans la barre (${TOOL_FR[p.tool] || p.tool}, même source${p.mask ? ', même zone' : ''}) · graine vidée : une variante`, 5000);
 }
 async function redo(it, n) { await launch('image/redo', { item: it.id, variations: n }); }
 function editWith(it, tool) {
   if (S.paint.for !== it.id) clearPaint();
-  S.current = it; S.mode = 'edit'; S.edit.tool = tool; S.edit.mask = ''; S.paint.on = false;
+  S.current = it; S.mode = 'edit'; S.edit.tool = tool; S.edit.mask = ''; S.paint.on = false; S.pop = null;
   fil?.close();
-  saveDraft(); paintRail();
-  $('#rail').scrollTop = 0;
-  toast(`à gauche : Éditer · ${TOOL_FR[tool]}`);
+  saveDraft(); paintBar();
+  if (!$('#prompt').hidden) $('#prompt').focus();
+  toast(`la barre passe en édition · ${TOOL_FR[tool]}`);
 }
 function useAsRef(it) {
   if (!M(S.model).refs) S.model = 'krea2';
   const max = M(S.model).refs;
   if (!S.refs.some((r) => r.id === it.id)) S.refs = [...S.refs, it].slice(-max);
   S.mode = 'create';
-  fixQuality(); saveDraft(); paintRail();
+  fixQuality(); saveDraft(); paintBar();
   toast(`« ${it.title} » dans les références de ${M(S.model).name}`);
 }
 const ETYPES = [['character', 'Personnage'], ['object', 'Objet'], ['place', 'Lieu'], ['style', 'Style']];
@@ -804,20 +961,24 @@ async function makeElement(it, type) {
   } catch (e) { toast(e.message, 6000); }
 }
 const go = (path) => () => { location.href = href(path); };
-function menuFor(it) {
-  const id = it.id;
+function editEntries(it) {
   const huge = Math.max(it.width || 0, it.height || 0) * 2 > 8192;
   return [
-    { label: 'Éditer', icon: '✎', items: [
-      { label: 'Consigne', sub: 'qwen · krea', title: 'changer l’image par une phrase, sur tout ou une zone peinte', onclick: () => editWith(it, 'instruct') },
-      { label: 'Détourer', sub: 'birefnet', onclick: () => editWith(it, 'matte') },
-      { label: 'Agrandir ×2 · ×4', sub: 'seedvr2', disabled: huge, why: 'déjà trop grande : ×2 dépasserait 8192 px', onclick: () => editWith(it, 'upscale') },
-      { label: 'Affiner ×2', sub: 'z-image', onclick: () => editWith(it, 'refine') },
-      { label: 'Angle', sub: 'qwen-edit', onclick: () => editWith(it, 'angle') },
-    ] },
+    { label: 'Consigne', sub: 'qwen · krea', title: 'changer l’image par une phrase, sur tout ou une zone peinte', onclick: () => editWith(it, 'instruct') },
+    { label: 'Zone peinte', sub: 'consigne', title: 'peindre la zone à changer, dans une grande fenêtre', onclick: () => { editWith(it, 'instruct'); openPaint(); } },
+    { label: 'Détourer', sub: 'birefnet', onclick: () => editWith(it, 'matte') },
+    { label: 'Agrandir ×2 · ×4', sub: 'seedvr2', disabled: huge, why: 'déjà trop grande : ×2 dépasserait 8192 px', onclick: () => editWith(it, 'upscale') },
+    { label: 'Affiner ×2', sub: 'z-image', onclick: () => editWith(it, 'refine') },
+    { label: 'Angle', sub: 'qwen-edit', onclick: () => editWith(it, 'angle') },
+  ];
+}
+function menuFor(it) {
+  const id = it.id;
+  return [
+    { label: 'Éditer', icon: '✎', items: editEntries(it) },
     { label: 'Animer', icon: '▶', sub: 'vidéo', title: 'cette image en première image d’un plan (outil Vidéo)', onclick: go(`movie/?start=${id}`) },
     { label: 'Prendre en référence', icon: '+', items: [
-      { label: 'ici, dans « Créer »', onclick: () => useAsRef(it) },
+      { label: 'dans la barre', onclick: () => useAsRef(it) },
       { label: 'dans Vidéo', sub: '@image', onclick: go(`movie/?ref=${id}`) },
     ] },
     { label: 'Agrandir dans Upscale', icon: '⇱', onclick: go(`upscale/?src=${id}`) },
@@ -840,8 +1001,10 @@ function mountFil() {
     alpha: (it) => /birefnet/.test(it.origin?.model || '') || !!it.params?.transparent,
     viewerTools,
     viewerActions: (it) => [
+      el('button', { class: 'tb ghost', type: 'button', title: 'consigne, zone peinte, détourer, agrandir, affiner, angle : la barre passe en édition',
+        onclick: (e) => up(e.currentTarget, [{ head: 'Éditer cette image' }, ...editEntries(it)]) }, 'Éditer'),
       el('button', { class: 'tb ghost', type: 'button', title: 'cette image en première image d’un plan (outil Vidéo)', onclick: go(`movie/?start=${it.id}`) }, 'Animer'),
-      el('button', { class: 'tb ghost', type: 'button', title: 'l’ajouter aux références de « Créer »', onclick: () => { fil.close(); useAsRef(it); } }, 'Référence'),
+      el('button', { class: 'tb ghost', type: 'button', title: 'l’ajouter aux références de la barre', onclick: () => { fil.close(); useAsRef(it); } }, 'Référence'),
     ],
     reuse: { run: reuse, why: noRecipe },
     recreate: {
@@ -854,7 +1017,8 @@ function mountFil() {
     },
     menu: menuFor,
     link: (it) => href('image/#' + it.id),
-    empty: 'Réglez à gauche, puis « Générer » : le rendu paraît ici dès l’envoi, son image s’y pose en arrivant. Une image déposée ici s’ouvre en grand.',
+    onLoad: () => paintAct(),   // le temps mesuré vient des rendus du fil
+    empty: 'Écrivez un prompt dans la barre en bas, puis « Générer » : le rendu paraît ici dès l’envoi, son image s’y pose en arrivant. Une image déposée ici s’ouvre en grand.',
   });
   // une image déposée sur le fil (fichier ou vignette) s'ouvre en grand
   dropZone($('#fil'), { kinds: ['image'], multiple: false, via: VIA, onitems: ([it]) => fil.open(it) });
@@ -863,6 +1027,33 @@ function mountFil() {
 function paintBanner() {
   $('#banner').replaceChildren(...(stub() ? [el('div', { class: 'banner' }, el('b', {}, 'Moteur factice'),
     el('span', {}, 'les images sont des mires dessinées — aucun modèle n’est chargé. Le câblage réel est en place : « image_backend » : « comfyui » dans showrunner.local.json.'))] : []));
+}
+
+// la barre : ses dépôts, sa hauteur (le fil garde sa marge basse), ses panneaux
+function wireBar() {
+  const bar = $('#pbar');
+  // une image, un élément déposés sur la barre : des références (en édition hors consigne : l'image à éditer)
+  dropZone(bar, { kinds: ['image', 'element'], multiple: true, via: VIA, onitems: (items) => {
+    if (S.mode === 'edit' && (S.edit.tool !== 'instruct' || !S.current)) {
+      const img = items.find((x) => x.kind === 'image');
+      if (img) setSource(img); else toast('l’image à éditer est une image, pas un élément');
+      return;
+    }
+    addItems(items);
+  } });
+  const setH = () => document.documentElement.style.setProperty('--pbar-h', `${Math.ceil(bar.getBoundingClientRect().height)}px`);
+  if ('ResizeObserver' in window) new ResizeObserver(setH).observe(bar);
+  setH();
+  // un panneau se ferme par Échap ou un clic hors de la barre
+  addEventListener('pointerdown', (e) => {
+    if (!S.pop || bar.contains(e.target) || e.target.closest?.('.sr-menu, .scrim, .fv')) return;
+    S.pop = null; paintPop(); paintChips();
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !S.pop || document.querySelector('.sr-menu, .scrim, .fv')) return;
+    S.pop = null; paintPop(); paintChips();
+  });
+  wireText();
 }
 
 let paintT = null;
@@ -880,11 +1071,11 @@ document.addEventListener('sr:job', async (e) => {
 
 // un fichier lâché hors des emplacements ne doit pas faire quitter la page
 addEventListener('dragover', (e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'none'; } });
-addEventListener('drop', (e) => { if (e.dataTransfer?.files?.length) { e.preventDefault(); toast('déposez sur le fil, sur les références ou sur l’image à éditer'); } });
+addEventListener('drop', (e) => { if (e.dataTransfer?.files?.length) { e.preventDefault(); toast('déposez sur la barre (une référence, l’image à éditer) ou sur le fil (la voir en grand)'); } });
 
 // ── démarrage ───────────────────────────────────────────────
-// Adresses : ?edit=<id> (d'Asset, d'Idéation) ouvre l'édition sur cet objet ;
-// ?ref=<id> le met dans les références de « Créer » ; #<id> l'ouvre en grand.
+// Adresses : ?edit=<id> (d'Asset, d'Idéation) met la barre en édition sur cet
+// objet ; ?ref=<id> le met dans les références ; #<id> l'ouvre en grand.
 async function resolveImage(id) {
   const it = await api('library/' + encodeURIComponent(id));
   if (it.kind === 'image') return it;
@@ -895,9 +1086,8 @@ async function resolveImage(id) {
 }
 
 async function start() {
-  $('#rail').replaceChildren(el('p', { class: 'lbl' }, 'chargement'));
   try { S.cfg = await api('image/models'); } catch (e) {
-    $('#rail').replaceChildren(el('p', { class: 'warn' }, `le portail ne répond pas : ${e.message}`)); return;
+    $('#pb-chips').replaceChildren(el('p', { class: 'warn' }, `le portail ne répond pas : ${e.message}`)); return;
   }
   const drafted = await loadDraft();
   const qs = new URLSearchParams(location.search);
@@ -921,9 +1111,10 @@ async function start() {
   if (qs.get('edit') || qs.get('ref')) { try { history.replaceState(null, '', location.pathname + (want ? '#' + want : '')); } catch { /* sans historique */ } }
   if (!S.cfg.models.some((m) => m.id === S.model)) S.model = 'krea2';
   fixQuality();
-  paintRail();
   paintBanner();
   mountFil();
+  wireBar();
+  paintBar();
   if (want) fil.open(want);
   if (S.cfg.availability_error) toast(`machines : ${S.cfg.availability_error}`, 6000);
 }

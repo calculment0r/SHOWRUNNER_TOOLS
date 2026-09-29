@@ -33,6 +33,7 @@
 //     reuse: { run(it), why(it) }, recreate: { run(it), why(it), more(it) → sous-menu },
 //     menu: (it) => [entrées propres à l'outil],   // placées au milieu du menu « ⋯ »
 //     link: (it) => 'adresse qui rouvre cet objet', empty: 'texte du fil vide',
+//     onLoad: () => {},                   // après chaque chargement du fil
 //   });
 //   fil.reload() · fil.add(items) · fil.update(it) · fil.remove(id) · fil.open(idOuObjet)
 //   fil.close() · fil.paintJobs() · fil.items() · fil.get(id) · fil.current()
@@ -237,6 +238,7 @@ export function createFil(box, o = {}) {
     if (!more) { S.cells.clear(); }
     paint();
     if (V) paintPos();
+    o.onLoad?.();
   }
 
   function add(items, { fresh = true } = {}) {
