@@ -42,6 +42,15 @@ tuiles, machines et panneaux du nodal dans notre DA (cartes du nodal d'avant, `c
 milieu, pistes liées). Les jouets gardent leur intérieur (demande de Cal) dans notre cadre.
 Captures côte à côte avant eebbd9f / maintenant / après, à lui montrer.
 
+Précision de Cal (16 h 40) : « garde les fonctions dedans comme on a mais les cards doivent être
+avec le nouveau design.. les sliders rotatifs etc doivent être avec le nouveau design.. on garde
+juste le code et la logique et on repasse tout dans notre thème qui est plus abouti. »
+**Un agent y travaille depuis 16 h 40** : copie `/tmp/sr_odio_theme` sur DGX2 (port 8828),
+référence `/tmp/sr_odio_avant` (4a20f41, port 8827), fichiers sur le PC dans `musique/**`, son
+rapport écrit dans `docs/etudes/musique_theme.md`. Session suivante : lire ce rapport, repasser
+`tools/check.py` et les pilotes (`/tmp/sr_odio3_essai.mjs`, `/tmp/nodal_essai.mjs`,
+`/tmp/sr_odio3_*.mjs`) sur un assemblage `/tmp/sr_deploy`, montrer les captures à Cal, déployer.
+
 ## Démo en ligne (lancée le 29/09 à 16 h 20, à la demande de Cal)
 
 `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && tools/demo.sh status'` — adresse
