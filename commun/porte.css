@@ -1,0 +1,75 @@
+/* ============================================================
+   SHOWRUNNER TOOLS — la porte, le menu du compte, la file dans le tiroir
+   Chargé par commun/porte.js (et par shell.js avec l'en-tête). Règles du
+   thème : aucune couleur en dur (tokens.css), des filets et jamais de
+   bordures, un seul .tb.go par écran (ici : « Demander l'accès »),
+   l'ambre pour ce qui attend Cal.
+   ============================================================ */
+
+/* ── la porte : elle couvre la page tant qu'on n'est pas entré ── */
+body.porte-on { overflow: hidden; }
+.porte {
+  position: fixed; inset: 0; z-index: 95; overflow: auto;
+  background: var(--bg); display: flex; justify-content: center; align-items: flex-start;
+  padding: var(--s6) var(--s4) 48px;
+}
+.porte-in { width: min(760px, 100%); display: flex; flex-direction: column; gap: var(--s4); margin-top: 6vh; }
+.porte-top { display: flex; align-items: center; gap: var(--s3); }
+.porte-top .sp { flex: 1; }
+.porte-card { gap: var(--s4); }
+.porte-card p { margin: 0; }
+.porte-form .row, .porte-code .row { flex-wrap: nowrap; gap: 8px; }
+.porte-form .fld { flex: 1; font-size: 14px; padding: 10px var(--s3); }
+.porte-form .tb.go { height: 40px; padding: 0 var(--s5); flex: none; }
+.porte-alt { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+.porte-code { display: flex; flex-direction: column; gap: var(--s3); padding: var(--s4); border-radius: var(--r3);
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
+.porte-code p { color: var(--ink2); font-size: 12px; line-height: 1.6; }
+.porte-code .fld { flex: 1; min-width: 0; }
+.porte-code .mono-in { font-family: var(--f-mono); letter-spacing: .16em; text-transform: uppercase; }
+@media (max-width: 560px) {
+  .porte-form .row, .porte-code .row { flex-wrap: wrap; }
+  .porte-form .tb.go, .porte-code .tb { width: 100%; }
+}
+
+/* ce qui attend Cal : l'ambre, jamais une action */
+.porte-state {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 9px;
+  padding: 7px var(--s3); border-radius: var(--r2); background: var(--amb-bg);
+  box-shadow: inset 0 0 0 1px var(--line-amb); color: var(--amb);
+  font-family: var(--f-mono); font-size: 9px; letter-spacing: .2em; text-transform: uppercase;
+}
+.porte-state i { width: 6px; height: 6px; border-radius: 50%; background: var(--amb); animation: sPulse 1.4s infinite; }
+.porte-state.off { background: transparent; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink3); }
+.porte-state.off i { background: var(--ink3); animation: none; }
+.porte-pulse { height: 3px; border-radius: 2px; background: var(--panel3); overflow: hidden; position: relative; }
+.porte-pulse i { position: absolute; top: 0; bottom: 0; width: 28%; border-radius: 2px; background: var(--amb);
+  animation: porteSlide 2.2s ease-in-out infinite; }
+@keyframes porteSlide { 0% { left: -28%; } 100% { left: 100%; } }
+
+/* ── le menu du compte (en-tête) ─────────────────────────── */
+.acct {
+  position: fixed; z-index: 80; width: min(340px, calc(100vw - 16px)); padding: var(--s4);
+  display: flex; flex-direction: column; gap: var(--s3); border-radius: var(--r3);
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line), 0 18px 44px var(--drop);
+}
+.acct-head { display: flex; align-items: baseline; gap: var(--s3); }
+.acct-head b { font-family: var(--f-disp); font-size: 15px; font-weight: 400; letter-spacing: .06em; text-transform: uppercase; }
+.acct-list { display: flex; flex-direction: column; gap: 4px; }
+.acct-dev { display: flex; align-items: center; gap: var(--s3); padding: 6px var(--s3); border-radius: var(--r2); background: var(--panel2); }
+.acct-dev.cur { box-shadow: inset 2px 0 0 var(--cy); }
+.acct-dev .ua { flex: 1; font-size: 11.5px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acct-link { display: flex; flex-direction: column; gap: 6px; }
+.acct-link:empty { display: none; }
+.acct-code { font-family: var(--f-mono); font-size: 22px; font-weight: 400; letter-spacing: .22em; color: var(--cy); }
+.hdr #sr-me.adm { color: var(--ink); }
+
+/* ── la file dans le tiroir : sections, sa place ─────────── */
+.drawer .qh {
+  display: flex; align-items: baseline; gap: var(--s3); padding: var(--s3) 2px 2px;
+  font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink3);
+}
+.drawer .qh:first-child { padding-top: 0; }
+.drawer .qh .n { margin-left: auto; }
+.job.mine { box-shadow: inset 2px 0 0 var(--cy); }
+.job .jo { color: var(--ink2); }

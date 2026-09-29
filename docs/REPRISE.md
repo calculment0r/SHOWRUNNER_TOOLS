@@ -65,6 +65,94 @@ câblage : `docs/ARCHITECTURE.md` §7. Les études : `docs/etudes/`.
 7. Movie Creator : 24 i/s (le banc écrivait 25), turbo R5 par défaut,
    première image recadrée au centre — à confirmer.
 
+## La porte, la page de Cal, la file des calculs (29/09)
+
+Demande de Cal : « une home avec une façon simple de se log : on demande un
+nom de login, on met en attente, et moi un dashboard pour gérer cela […]
+seul moi y aura accès », et « un gros travail de queue de nos demandes en
+calcul ».
+
+- **La porte** (`server/core/auth.py`, `commun/porte.js`) : sans session,
+  toute page montre la porte ; on donne son nom, la demande attend Cal, la
+  page s'ouvre seule quand il accepte (un cookie `HttpOnly; SameSite=Lax`
+  lie ce navigateur à la demande). Un nom pris ou réservé (« Cal », et ses
+  variantes : casse, accents, « CaI ») ne donne rien. Un second appareil
+  entre par un **code de liaison** (menu de son nom → « Relier un
+  appareil », 10 min, 5 essais). Sans session, le socle refuse `/api/…`,
+  `/character/…` et les fichiers de `/library/` (401) ; toute écriture
+  venue d'une autre page est refusée (`Origin`, `Sec-Fetch-Site`, JSON
+  déguisé en `text/plain` : audit du 28/09, H3). Chaque écriture est
+  journalisée (qui, quoi, le code rendu : audit B5).
+- **La page de Cal** : `admin/` (lien « Admin » dans l'en-tête, pour lui
+  seul) — demandes, personnes (quotas, suspendre, appareils), la file
+  (glisser, priorités, épingler, pause par machine, vidange), les machines
+  (ComfyUI, mémoire, modèles chargés et « décharger », H3, le studio
+  Character Factory, le relais), le câblage (`showrunner.local.json`), le
+  stockage (corbeille), le journal.
+- **La file** (`server/core/jobs.py`, `server/core/machines.py`) : un
+  ordonnanceur. Ordre : épinglés, priorité, tourniquet entre personnes ;
+  quotas (simultanés, en file, par jour, total) ; un seul travail GPU du
+  portail par machine, rien sous le rendu d'un autre (le studio, une autre
+  session : lu sur `/queue` de ComfyUI, `client_id`), la famille déjà
+  chargée d'abord, `/free` entre deux familles, la mémoire de chaque
+  famille lue dans `Character_Factory/factory/memory.py` (FAMILY_GB). Le
+  tiroir « File » montre la place de chacun (« 2 devant toi · départ ≈
+  4 min »). Détail : `docs/ARCHITECTURE.md` §3 et §9.
+
+### Devenir admin, au déploiement (Cal, une fois)
+
+La porte est **allumée par défaut** : dès le redémarrage, le portail ne
+s'ouvre qu'à ceux qu'il connaît, et personne n'est encore admin.
+
+1. Déployer et relancer comme d'habitude (`git pull`, `tools/portail.sh restart`
+   sur DGX2). Au démarrage, sans admin, le portail écrit un code à usage
+   unique dans `~/showrunner-data/admin-code.txt` (lisible par `dgx` seul).
+2. Le lire : `ssh dgx2 'cat ~/showrunner-data/admin-code.txt'` (première
+   ligne, du genre `ABCD-EFGH-JKLM`).
+3. Ouvrir http://192.168.10.247:8790/ → la porte → **« J'ai un code »** →
+   laisser le nom vide, taper le code → **Entrer**. Ce navigateur est Cal
+   (admin) ; le fichier s'efface.
+4. Chaque autre appareil de Cal : sur un appareil déjà connecté, son nom
+   en haut à droite → « Relier un appareil » → sur le nouveau, « J'ai un
+   code », « Cal » et ce code.
+5. Navigateur perdu, plus aucun appareil connecté :
+   `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && python3 server/showrunner.py --code-admin'`
+   affiche un nouveau code (sans redémarrer le portail), à taper comme au 3.
+
+Cinq codes faux d'affilée : le code change, relire le fichier. Couper la
+porte (essais seulement) : `"auth": false` dans `showrunner.local.json`,
+puis redémarrer — tout se passe alors comme si Cal était connecté.
+
+### Ce qui attend Cal (la porte et la file)
+
+1. **Qui voit quoi** : « tout le monde voit tout » par défaut (page admin →
+   Personnes → Réglages) ; l'audit (C2) et l'étude Cloudflare recommandent
+   « chacun le sien et le partagé » (des photos de visages réels). Dans les
+   deux cas, seul le propriétaire (ou Cal) modifie ou met à la corbeille.
+   En « chacun le sien », il manquera un bouton « Partager » dans Asset
+   (`POST /api/library/<id> {"shared": true}` existe déjà).
+2. **Les quotas par défaut** : 1 simultané, 3 en file, pas de limite par
+   jour, 50 en file au total (les chiffres de l'audit H4) ; Cal passe devant
+   (audit H4) — réglable.
+3. **Un compte = un nom**, sans mot de passe : l'appareil est la clé. Sur
+   internet, la porte Cloudflare (Access, e-mail) viendra devant
+   (`docs/etudes/cloudflare.md`) ; la liaison identité Cloudflare ↔ compte
+   du portail reste à écrire.
+
+### Pour les autres outils
+
+- Un travail déclare sa famille de modèles : `jobs.register(kind, run,
+  lane=…, family="krea2" | fonction(params), gpu=…, mem_gb=…)`. Sans
+  déclaration, la file devine (`DEFAULT_FAMILY` dans `core/jobs.py`) ou
+  traite le travail comme un modèle inconnu (« ? » : l'instance est vidée
+  avant, 30 Go exigés). Image le déclare ; Upscale, YuE, Musique, Objet,
+  Movie sont dans la table par défaut — à déclarer chez eux.
+- Un interrupteur de câblage se déclare pour la page admin :
+  `config.declare_switch("music_yue", [False, True], label=…, doc=…)`
+  (`music_yue` et `upscale_backend` ne le sont pas encore).
+- Rien d'autre à changer : le propriétaire des travaux et des objets est
+  posé par le socle.
+
 ## Travailler ici (règles fermes)
 
 - Chaque commande commence par `ssh dgx1 `, `ssh dgx2 ` ou `scp `. Sur le

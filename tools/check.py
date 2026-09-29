@@ -38,6 +38,9 @@ os.environ["SHOWRUNNER_PORT"] = str(PORT)
 from core import config, jobs  # noqa: E402
 
 config.CFG["lanes"] = {"cpu": ["local"]}  # aucun GPU pour le contrôle
+# la porte coupée pour les outils : tout se passe comme si Cal était connecté ;
+# la porte elle-même s'essaie à part, allumée (server/tools/compte.py, admin.py)
+config.CFG["auth"] = False
 import showrunner  # noqa: E402
 
 BASE = f"http://127.0.0.1:{PORT}"

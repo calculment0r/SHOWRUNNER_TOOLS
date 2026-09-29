@@ -47,7 +47,52 @@ DEFAULTS: dict = {
     "h3_min_free_gb": 45,
     "llm_url": "http://127.0.0.1:11434",
     "llm_model": "qwen3-vl-32b-32k",
+    # la porte (core/auth.py) : activée ; "auth": false seulement pour les essais
+    "auth": True,
+    "admin_name": "Cal",
+    # la file (core/jobs.py) : un seul travail GPU du portail par machine
+    # (Character_Factory/factory/memory.py : « un seul gros travail GPU à la
+    # fois ») ; la famille déjà chargée d'abord parmi les 4 premiers ; un
+    # travail ne se fait pas doubler plus de 3 fois
+    "gpu_jobs_per_machine": 1,
+    "group_window": 4,
+    "max_overtake": 3,
+    # mémoire d'un modèle inconnu : le seuil du studio (factory/memory.py, min_free_gb=30)
+    "min_free_gb": 30,
+    # les Ollama de chaque machine (page admin : modèles de texte chargés, décharger)
+    "machine_ollama": {"DGX2": "http://127.0.0.1:11434", "DGX1": "http://169.254.110.6:11434"},
+    # le journal du serveur (tools/portail.sh), lu par la page admin
+    "log_file": str(Path.home() / "showrunner.log"),
 }
+
+# Les interrupteurs de câblage que la page admin lit et change : chaque
+# outil déclare les siens (declare_switch), avec les valeurs que son code
+# comprend. Ils s'écrivent dans showrunner.local.json et prennent effet au
+# redémarrage du portail (le serveur ne relit ce fichier qu'au démarrage).
+SWITCHES: dict[str, dict] = {}
+
+
+def declare_switch(key: str, values: list, *, label: str, default=None, doc: str = "") -> None:
+    SWITCHES[key] = {"key": key, "values": list(values), "label": label, "default": default, "doc": doc}
+
+
+def read_local() -> dict:
+    if not LOCAL.exists():
+        return {}
+    try:
+        return json.loads(LOCAL.read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+
+
+def write_local(key: str, value) -> dict:
+    """Écrit une clé de showrunner.local.json, les autres gardées telles quelles."""
+    data = read_local()
+    data[key] = value
+    tmp = LOCAL.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(LOCAL)
+    return data
 
 
 def _merge(a: dict, b: dict) -> dict:

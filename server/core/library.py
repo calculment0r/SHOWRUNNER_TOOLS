@@ -16,6 +16,11 @@ Sur disque, sous `<data_dir>/library/<id>/` : `item.json`, le fichier
 principal, sa vignette ; les références d'un élément y sont copiées, pour
 qu'il ne dépende de rien d'autre. Une suppression met l'objet à la
 corbeille (`<data_dir>/trash/`), d'où il peut revenir.
+
+Chaque objet porte qui l'a fait (`origin.user`), posé ici d'après la
+personne de la requête ou du travail en cours (core/auth.py) : les outils
+n'ont rien à changer. Seul son propriétaire (ou Cal) le modifie ou le met
+à la corbeille ; qui voit quoi suit le réglage d'admin (`visibility`).
 """
 
 from __future__ import annotations
@@ -30,9 +35,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config
+from . import auth, config
 
-KINDS = ("image", "video", "audio", "element")
+KINDS =("image", "video", "audio", "element")
 EXT_KIND = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
     ".mp4": "video", ".webm": "video", ".mov": "video", ".m4v": "video",
@@ -91,6 +96,35 @@ def _save(it: dict) -> None:
 
 def folder_of(item_id: str) -> Path:
     return root() / item_id
+
+
+# ── à qui ───────────────────────────────────────────────────
+def _owned(origin: dict) -> dict:
+    """`origin.user` : la personne de la requête, ou du travail qui range."""
+    out = dict(origin)
+    uid = auth.current_id()
+    if uid and not out.get("user"):
+        out["user"] = uid
+    return out
+
+
+def _check_write(it: dict) -> None:
+    u = auth.current()
+    if not auth.can_write_item(it, u):
+        owner = auth.display_name(auth.owner_of(it)) or auth.admin_name()
+        who = owner if owner == auth.admin_name() else f"{owner} (ou {auth.admin_name()})"
+        raise PermissionError(f"« {it.get('title') or it['id']} » est à {owner} : seul·e {who} peut le modifier "
+                              "ou le mettre à la corbeille")
+
+
+def readable(it: dict) -> bool:
+    return auth.can_read_item(it, auth.current())
+
+
+def readable_path(rel: str) -> bool:
+    """Le juge des fichiers servis sous /library/ : `<id>/<fichier>`."""
+    it = get(rel.split("/", 1)[0])
+    return bool(it) and readable(it)
 
 
 # ── les médias ──────────────────────────────────────────────
@@ -165,7 +199,7 @@ def add_file(src: Path, *, kind: str | None = None, title: str = "", origin: dic
     (shutil.move if move else shutil.copyfile)(str(src), str(d / name))
     it = {
         "id": iid, "kind": kind, "title": title or src.stem, "created": now(), "updated": now(),
-        "file": name, "origin": origin or {"tool": "upload"}, "prompt": prompt, "params": params or {},
+        "file": name, "origin": _owned(origin or {"tool": "upload"}), "prompt": prompt, "params": params or {},
         "parents": list(parents or []), "tags": list(tags or []), "folder": folder, "fav": False,
         **probe(d / name), **(extra or {}),
     }
@@ -227,7 +261,7 @@ def create_element(title: str, etype: str = "character", description: str = "", 
         out_refs.append(ref)
     it = {
         "id": iid, "kind": "element", "title": title or "élément", "created": now(), "updated": now(),
-        "origin": {"tool": (source or {}).get("tool", "asset")}, "tags": list(tags or []), "folder": folder,
+        "origin": _owned({"tool": (source or {}).get("tool", "asset")}), "tags": list(tags or []), "folder": folder,
         "fav": False, "parents": [r["item"] for r in out_refs + voices if r.get("item")],
         "element": {"type": etype, "description": description, "refs": out_refs, "source": source or {},
                     **({"voices": voices} if voices else {})},
@@ -246,9 +280,12 @@ def update(item_id: str, patch: dict) -> dict:
         it = _items.get(item_id)
         if not it:
             raise KeyError(item_id)
+        _check_write(it)
         for k in ("title", "tags", "folder", "fav", "prompt"):
             if k in patch:
                 it[k] = patch[k]
+        if "shared" in patch:
+            it["shared"] = bool(patch["shared"])
         if it["kind"] == "element" and isinstance(patch.get("element"), dict):
             el = it["element"]
             for k in ("type", "description"):
@@ -278,6 +315,7 @@ def add_ref(item_id: str, src: Path, role: str = "", label: str = "", from_item:
         it = _items.get(item_id)
         if not it or it["kind"] != "element":
             raise KeyError(item_id)
+        _check_write(it)
         d = folder_of(item_id)
         if EXT_KIND.get(src.suffix.lower()) == "audio":
             # un son : la voix de l'élément, rangée à côté de ses images (`voices`)
@@ -304,9 +342,11 @@ def add_ref(item_id: str, src: Path, role: str = "", label: str = "", from_item:
 def trash(item_id: str) -> None:
     _load()
     with _lock:
-        it = _items.pop(item_id, None)
+        it = _items.get(item_id)
         if not it:
             raise KeyError(item_id)
+        _check_write(it)
+        _items.pop(item_id, None)
         dest = trash_root() / item_id
         if dest.exists():
             shutil.rmtree(dest)
@@ -325,6 +365,10 @@ def restore(item_id: str) -> dict:
         src = trash_root() / item_id
         if not src.exists():
             raise KeyError(item_id)
+        try:
+            _check_write(json.loads((src / "item.json").read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            pass
         shutil.move(str(src), str(folder_of(item_id)))
         it = json.loads((folder_of(item_id) / "item.json").read_text(encoding="utf-8"))
         _items[item_id] = it
@@ -361,6 +405,7 @@ def public(it: dict) -> dict:
     """L'objet tel que la page le voit : avec ses adresses."""
     base = f"library/{it['id']}/"
     out = dict(it)
+    out["owner"] = auth.owner_of(it)
     if it.get("file"):
         out["url"] = base + it["file"]
     out["thumb_url"] = base + it["thumb"] if it.get("thumb") else (out.get("url") if it["kind"] == "image" else None)
@@ -379,6 +424,10 @@ def query(kinds: list[str] | None = None, q: str = "", folder: str | None = None
     _load()
     with _lock:
         items = list(_items.values())
+    u = auth.current()
+    if u and not auth.is_admin(u) and auth.settings()["visibility"] != "all":
+        items = [i for i in items if auth.can_read_item(i, u)]
+    visible = items
     if kinds:
         items = [i for i in items if i["kind"] in kinds]
     if folder is not None:
@@ -395,8 +444,8 @@ def query(kinds: list[str] | None = None, q: str = "", folder: str | None = None
            "updated": lambda i: i.get("updated", i["created"])}.get(sort, lambda i: i["created"])
     items.sort(key=key, reverse=sort in ("new", "updated"))
     counts = {k: 0 for k in KINDS}
-    for i in _items.values():
+    for i in visible:
         counts[i["kind"]] = counts.get(i["kind"], 0) + 1
-    folders = sorted({i.get("folder") for i in _items.values() if i.get("folder")})
+    folders = sorted({i.get("folder") for i in visible if i.get("folder")})
     return {"total": len(items), "items": [public(i) for i in items[offset:offset + limit]],
             "counts": counts, "folders": folders}

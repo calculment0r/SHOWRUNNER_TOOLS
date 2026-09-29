@@ -24,6 +24,22 @@ export const TOOLS = [
   { id: 'ideation',  k: 'SR—08', name: 'Idéation',          path: 'ideation/', sub: 'canvas · planches · idées' },
   { id: 'upscale',   k: 'SR—09', name: 'Upscale',           path: 'upscale/',  sub: 'images · vidéos · netteté' },
 ];
+// les pages du portail qui ne sont pas des outils (pas de carte à l'accueil)
+const PAGES = { admin: { id: 'admin', k: 'SR—AD', name: 'Admin' } };
+
+// ── la porte (core/auth.py, commun/porte.js) ────────────────
+// qui je suis : { auth, state: anonymous | pending | active | refused | suspended, user }
+let meP = null;
+let doorOn = false;
+export const session = (fresh = false) => {
+  if (!meP || fresh) meP = api('auth/me').catch(() => null);
+  return meP;
+};
+export function showDoor(me) {
+  if (doorOn) return;
+  doorOn = true;
+  import('./porte.js').then((m) => m.door(me));
+}
 
 // ── DOM ─────────────────────────────────────────────────────
 export function el(tag, attrs = {}, ...kids) {
@@ -84,6 +100,8 @@ export async function api(path, { method = 'GET', body, raw, headers = {}, signa
   let data = null;
   try { data = txt ? JSON.parse(txt) : null; } catch { data = { error: txt.slice(0, 300) }; }
   if (!r.ok) {
+    // plus de session (retirée, suspendue, jamais ouverte) : la porte
+    if (r.status === 401 && !/^\/?(api\/)?auth\//.test(path)) showDoor();
     const e = new Error((data && data.error) || `${r.status} ${r.statusText}`);
     e.status = r.status;
     throw e;
@@ -177,6 +195,7 @@ export const jobs = {
   async poll(now = false) {
     clearTimeout(pollT);
     const go = async () => {
+      if (doorOn) return;   // la porte est fermée : on ne relit rien
       try {
         const { jobs: list } = await api('jobs?limit=60');
         const before = new Map(lastJobs.map((j) => [j.id, j.state]));
@@ -221,7 +240,10 @@ export function toolHref(t, sys) {
 }
 
 export function mountHeader(toolId, { sub = '' } = {}) {
-  const t = TOOLS.find((x) => x.id === toolId);
+  // la page reste cachée le temps de savoir qui entre (3 s au plus)
+  document.documentElement.classList.add('sr-wait');
+  setTimeout(() => document.documentElement.classList.remove('sr-wait'), 3000);
+  const t = TOOLS.find((x) => x.id === toolId) || PAGES[toolId];
   const nav = el('nav', { class: 'tools' });
   const hdr = el('header', { class: 'hdr' },
     el('a', { class: 'logo', href: href('') , title: 'le portail' },
@@ -232,8 +254,30 @@ export function mountHeader(toolId, { sub = '' } = {}) {
     nav,
     el('span', { class: 'sp' }),
     el('span', { class: 'pill', id: 'sr-sys', title: 'les machines' }, el('i'), el('span', {}, 'machines')),
-    el('button', { class: 'tb ghost sm', id: 'sr-queue', title: 'la file des rendus', onclick: () => drawer(true) }, 'File'));
+    el('a', { class: 'tb ghost sm', id: 'sr-admin', href: href('admin/'), hidden: true, title: 'la page de Cal' }, 'Admin'),
+    el('button', { class: 'tb ghost sm', id: 'sr-me', hidden: true, title: 'mon compte',
+      onclick: (e) => session().then((me) => me && import('./porte.js').then((m) => m.account(me, e.target.closest('button')))) }, 'compte'),
+    el('button', { class: 'tb ghost sm', id: 'sr-queue', title: 'la file des calculs', onclick: () => drawer(true) }, 'File'));
   document.body.prepend(hdr);
+  if (!document.querySelector('link[data-porte]')) {
+    document.head.append(el('link', { rel: 'stylesheet', href: href('commun/porte.css'), 'data-porte': '' }));
+  }
+  const paintMe = (me) => {
+    const adm = $('#sr-admin'), mine = $('#sr-me');
+    if (!me || !adm) return;
+    const isAdmin = me.user && me.user.role === 'admin';
+    adm.hidden = !isAdmin;
+    adm.textContent = isAdmin && me.pending_requests ? `Admin · ${me.pending_requests}` : 'Admin';
+    adm.classList.toggle('on', toolId === 'admin');
+    mine.hidden = !(me.auth && me.user);
+    if (me.user) mine.textContent = me.user.name;
+  };
+  session().then((me) => {
+    document.documentElement.classList.remove('sr-wait');
+    if (me && me.auth && me.state !== 'active') return showDoor(me);
+    paintMe(me);
+  });
+  setInterval(() => { if (!doorOn) session(true).then(paintMe); }, 20000);
   system().then((sys) => {
     for (const x of TOOLS) {
       nav.append(el('a', { href: toolHref(x, sys), class: x.id === toolId ? 'on' : null,
@@ -265,38 +309,79 @@ function paintSys(sys) {
 }
 
 // ── le tiroir de la file ────────────────────────────────────
+// La file de tous (GET /api/queue) : ce qui tourne, ce qui attend dans
+// l'ordre où ça partira — sa place (« 2 devant toi »), son départ estimé —
+// et ce qu'on vient de finir.
+let qT = null;
+let qBusy = false;
 function drawer(on) {
   let d = $('.drawer');
   if (!d) {
-    d = el('aside', { class: 'drawer', 'aria-label': 'file des rendus' },
-      el('div', { class: 'pan-head' }, el('span', { class: 't' }, 'La file des rendus'), el('span', { class: 'sp' }),
+    d = el('aside', { class: 'drawer', 'aria-label': 'la file des calculs' },
+      el('div', { class: 'pan-head' }, el('span', { class: 't' }, 'La file des calculs'), el('span', { class: 'sp' }),
         el('button', { class: 'tb ghost sm', onclick: () => drawer(false) }, 'Fermer')),
       el('div', { class: 'list' }));
     document.body.append(d);
   }
   d.classList.toggle('on', on);
-  if (on) jobs.poll(true), paintDrawer(lastJobs);
+  clearTimeout(qT);
+  if (on) paintDrawer();
 }
 
-function paintDrawer(list) {
+async function paintDrawer() {
   const box = $('.drawer .list');
-  if (!box) return;
-  box.replaceChildren(...(list.length ? list.map(jobRow) : [el('p', { class: 'lbl' }, 'rien en file')]));
+  if (!box || !$('.drawer.on') || qBusy) return;
+  qBusy = true;
+  clearTimeout(qT);
+  let q = null;
+  try {
+    q = await api('queue');
+    const rows = [];
+    if (q.paused) rows.push(el('p', { class: 'why' }, 'la file est en pause : Cal la reprendra'));
+    for (const [m, s] of Object.entries(q.machines || {})) {
+      if (s.mode !== 'active') rows.push(el('p', { class: 'why' }, `${m} ${s.mode === 'draining' ? 'en vidange : finit, puis ne prend plus rien' : 'en pause'}`));
+    }
+    const head = (t, n) => el('div', { class: 'qh' }, t, el('span', { class: 'n' }, String(n)));
+    rows.push(head('en cours', q.running.length), ...q.running.map(jobRow));
+    rows.push(head('en file', q.queued.length), ...q.queued.map(jobRow));
+    if (q.done.length) rows.push(head(q.admin ? 'fini récemment' : 'mes travaux finis', q.done.length), ...q.done.map(jobRow));
+    box.replaceChildren(...rows);
+  } catch (e) {
+    if (e.status !== 401) box.replaceChildren(el('p', { class: 'warn' }, e.message));
+  } finally { qBusy = false; }
+  const busy = q && (q.running.length || q.queued.length);
+  if ($('.drawer.on')) qT = setTimeout(paintDrawer, busy ? 1500 : 5000);
 }
+
+export const fmtWait = (s) => {
+  if (s === null || s === undefined) return '';
+  if (s < 60) return 'moins d’une minute';
+  const m = Math.round(s / 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`;
+};
 
 export function jobRow(j) {
   const cls = j.state === 'running' ? 'run' : j.state === 'error' ? 'err' : j.state === 'done' ? 'ok' : '';
   const acts = el('div', { class: 'row' });
-  if (j.state === 'queued' || j.state === 'running') acts.append(el('button', { class: 'tb ghost sm', onclick: () => jobs.cancel(j.id) }, 'Arrêter'));
-  else {
-    acts.append(el('button', { class: 'tb ghost sm', onclick: () => jobs.retry(j.id) }, 'Relancer'));
-    acts.append(el('button', { class: 'tb ghost sm', title: 'retirer de la liste', onclick: () => jobs.forget(j.id) }, '×'));
+  // `can` (la file, core_api) : le sien, ou Cal ; absent : comme avant
+  if (j.can !== false) {
+    if (j.state === 'queued' || j.state === 'running') acts.append(el('button', { class: 'tb ghost sm', onclick: () => jobs.cancel(j.id).then(paintDrawer).catch((e) => toast(e.message)) }, 'Arrêter'));
+    else {
+      acts.append(el('button', { class: 'tb ghost sm', onclick: () => jobs.retry(j.id).then(paintDrawer).catch((e) => toast(e.message)) }, 'Relancer'));
+      acts.append(el('button', { class: 'tb ghost sm', title: 'retirer de la liste', onclick: () => jobs.forget(j.id).then(paintDrawer).catch((e) => toast(e.message)) }, '×'));
+    }
   }
-  return el('div', { class: 'job', title: j.message || '' },
+  const who = j.owner_name && !j.mine ? ` · ${j.owner_name}` : '';
+  let place = '';
+  if (j.state === 'queued' && j.position) {
+    place = j.mine ? (j.ahead ? ` · ${j.ahead} devant toi` : ' · le prochain') : ` · n° ${j.position}`;
+    if (j.eta_s != null) place += j.eta_s < 30 ? ' · part bientôt' : ` · départ ≈ ${fmtWait(j.eta_s)}`;
+  }
+  return el('div', { class: 'job' + (j.mine ? ' mine' : ''), title: j.message || '' },
     el('div', { class: 'jt', style: j.thumb ? { backgroundImage: `url(${href(j.thumb)})` } : null }),
     el('div', { style: { minWidth: 0 } },
       el('div', { class: 'jn' }, j.title),
-      el('div', { class: 'js ' + cls }, `${stateFr(j.state)}${j.machine ? ' · ' + j.machine : ''} — ${j.message || ''}`)),
+      el('div', { class: 'js ' + cls }, `${stateFr(j.state)}${j.machine ? ' · ' + j.machine : ''}${who}${place} — ${j.message || ''}`)),
     acts,
     j.state === 'running' ? el('div', { class: 'bar' }, el('i', { style: { width: j.progress != null ? `${Math.round(j.progress * 100)}%` : '100%', opacity: j.progress != null ? 1 : 0.35 } })) : null);
 }

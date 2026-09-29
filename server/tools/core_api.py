@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from core import config, jobs, library
+from core import auth, config, jobs, library
 from core.comfy import Comfy, ComfyError
 from core.http import HttpError, Response
 
@@ -21,7 +21,7 @@ SAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
 
 def _item_or_404(item_id: str) -> dict:
     it = library.get(item_id)
-    if not it:
+    if not it or not library.readable(it):   # on ne dit pas qu'un objet invisible existe
         raise HttpError(404, f"introuvable : {item_id}")
     return it
 
@@ -245,8 +245,52 @@ def _cf_description(c: dict) -> str:
 
 
 # ── la file ─────────────────────────────────────────────────
+# ce qu'on montre d'un travail qui n'est pas le sien quand chacun ne voit
+# que le sien : sa place, pas sa recette (audit du 28/09, M4)
+MASKED = ("id", "kind", "lane", "tool", "state", "created", "started", "finished", "progress", "machine", "owner",
+          "owner_name", "position", "ahead", "eta_s", "est_s", "priority", "top", "family", "gpu")
+
+
+def _mine(j: dict, u: dict | None) -> bool:
+    return u is None or auth.is_admin(u) or j.get("owner") == u["id"]
+
+
+def job_out(j: dict, u: dict | None) -> dict:
+    mine = bool(u) and j.get("owner") == u["id"]
+    if _mine(j, u) or auth.settings()["visibility"] == "all":
+        return {**j, "mine": mine, "can": _mine(j, u)}
+    out = {k: j.get(k) for k in MASKED}
+    out.update(title=f"travail de {j.get('owner_name') or 'quelqu’un'}", mine=False, masked=True, can=False,
+               message={"queued": "en file", "running": "en cours"}.get(j["state"], j["state"]))
+    return out
+
+
+def _job_or_404(job_id: str, write: bool = False) -> dict:
+    j = jobs.get(job_id)
+    u = auth.current()
+    if not j:
+        raise HttpError(404, "travail introuvable")
+    if write and not _mine(j, u):   # audit H4 : arrêter, relancer, retirer — le sien, ou Cal
+        raise HttpError(403, f"ce travail est à {j.get('owner_name') or 'quelqu’un d’autre'} : seul·e cette personne "
+                             f"(ou {auth.admin_name()}) peut l'arrêter ou le relancer")
+    return j
+
+
 def jobs_list(req):
-    return {"jobs": jobs.listing(req.q("active") == "1", req.q("tool"), int(req.q("limit", "80")))}
+    jobs.annotate()
+    u = auth.current()
+    return {"jobs": [job_out(j, u) for j in jobs.listing(req.q("active") == "1", req.q("tool"), int(req.q("limit", "80")))]}
+
+
+def queue(req):
+    """La file de tous, dans l'ordre : ce qui tourne, ce qui attend (avec sa
+    place et son départ estimé), et ce que j'ai fini récemment."""
+    u = auth.current()
+    v = jobs.queue_view(recent=60)
+    mine_done = [j for j in v["done"] if auth.is_admin(u) or (u and j.get("owner") == u["id"])]
+    return {"running": [job_out(j, u) for j in v["running"]], "queued": [job_out(j, u) for j in v["queued"]],
+            "done": [job_out(j, u) for j in mine_done[:20]], "paused": v["paused"], "machines": v["machines"],
+            "me": u["id"] if u else None, "admin": auth.is_admin(u)}
 
 
 def jobs_submit(req):
@@ -259,15 +303,15 @@ def jobs_submit(req):
 
 
 def jobs_get(req, job_id):
-    j = jobs.get(job_id)
-    if not j:
-        raise HttpError(404, "travail introuvable")
-    out = jobs.public(j)
-    out["items"] = [library.public(i) for i in (library.get(x) for x in j["result"].get("items", [])) if i]
+    j = _job_or_404(job_id)
+    out = job_out(jobs.public(j), auth.current())
+    if not out.get("masked"):
+        out["items"] = [library.public(i) for i in (library.get(x) for x in j["result"].get("items", [])) if i]
     return out
 
 
 def jobs_cancel(req, job_id):
+    _job_or_404(job_id, write=True)
     try:
         return jobs.public(jobs.cancel(job_id))
     except KeyError as e:
@@ -275,6 +319,7 @@ def jobs_cancel(req, job_id):
 
 
 def jobs_retry(req, job_id):
+    _job_or_404(job_id, write=True)
     try:
         return jobs.public(jobs.retry(job_id))
     except KeyError as e:
@@ -282,6 +327,8 @@ def jobs_retry(req, job_id):
 
 
 def jobs_forget(req, job_id):
+    if jobs.get(job_id):
+        _job_or_404(job_id, write=True)
     jobs.forget(job_id)
     return {"ok": True}
 
@@ -344,6 +391,7 @@ def register(app) -> None:
     app.route("GET", "/api/cf/characters", cf_characters)
     app.route("GET", "/api/cf/file", cf_file)
     app.route("POST", "/api/cf/import", cf_import)
+    app.route("GET", "/api/queue", queue)
     app.route("GET", "/api/jobs", jobs_list)
     app.route("POST", "/api/jobs", jobs_submit)
     app.route("GET", "/api/jobs/{job_id}", jobs_get)

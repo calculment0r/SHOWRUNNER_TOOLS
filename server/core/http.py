@@ -200,7 +200,7 @@ class App:
                     continue
                 params = {k: unquote(v) for k, v in m.groupdict().items()}
                 # un segment d'adresse décodé ne sort jamais de son dossier :
-                # « %2F », « .. », une barre inverse ou un octet nul refusés ici, pour toutes les routes
+                # « %2F », « .. » ou « \ » refusés ici, pour toutes les routes
                 for v in params.values():
                     if "/" in v or "\\" in v or ".." in v or "\x00" in v:
                         raise HttpError(400, "identifiant refusé")

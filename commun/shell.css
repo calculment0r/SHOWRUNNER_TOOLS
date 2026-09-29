@@ -212,3 +212,7 @@ a.statcard, a.tile, a.thumb, .sect-head a { text-decoration: none; }
   .hdr .sp { flex: 0 0 var(--s3); min-width: var(--s3); }
   .hdr > .logo, .hdr > .tool-name, .hdr > .pill, .hdr > .tb { flex: none; }
 }
+
+/* la porte (commun/porte.js) : la page reste cachée le temps de savoir
+   qui entre ; ses propres styles sont dans commun/porte.css */
+html.sr-wait body { visibility: hidden; }
