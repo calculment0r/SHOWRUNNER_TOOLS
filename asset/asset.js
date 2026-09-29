@@ -11,8 +11,17 @@
 // sur une autre crée un dossier (une fenêtre demande son nom), sur un
 // dossier l'y range, sur « Asset » en haut l'en sort. Un dossier n'existe
 // que par ses objets (champ `folder`, ARCHITECTURE.md §2), sur un niveau.
+//
+// La sélection (Cal, 29/09 : « les standards de sélection ») : clic pour
+// choisir, double-clic pour ouvrir, ctrl/⌘+clic pour ajouter ou retirer,
+// maj+clic pour une plage, glisser sur le fond pour une zone, ctrl+A,
+// Échap. Dès qu'il y a une sélection, une barre d'outils s'ouvre en bas.
+// Ce qu'on dépose de son disque entre avec `tool: 'upload'` et `via`
+// (l'onglet « Uploads ») ; une carte-dossier et la planche d'un élément
+// acceptent un dépôt (`dropZone` de shell.js).
 import {
   mountHeader, api, pick, thumb, el, $, $$, href, ROOT, fmtDate, fmtDur, kindFr, etypeFr, dropAnywhere,
+  dropZone, dragItem,
 } from '../commun/shell.js';
 
 mountHeader('asset');
@@ -43,8 +52,9 @@ const PREF = 'sr.asset.prefs';
 const prefs = (() => { try { return JSON.parse(localStorage.getItem(PREF)) || {}; } catch { return {}; } })();
 const S = {
   kind: prefs.kind || '', sort: prefs.sort || 'new', size: prefs.size || 190,
-  q: '', fav: false, tool: '', folder: '', limit: 300,
+  q: '', fav: false, tool: '', origin: '', folder: '', limit: 300,
   data: null, route: { view: 'lib' }, backHash: '#', item: null,
+  sel: new Set(), anchor: null,   // la sélection, et d'où part une plage (maj+clic)
 };
 const savePrefs = () => { try { localStorage.setItem(PREF, JSON.stringify({ kind: S.kind, sort: S.sort, size: S.size })); } catch { /* navigation privée */ } };
 
@@ -64,10 +74,13 @@ const ORDER_HINT = {
   other: 'La plus importante d\'abord : les outils lisent les références dans cet ordre.',
 };
 const TOOL_FR = {
-  upload: 'déposé', asset: 'Asset', image: 'Image', movie: 'Movie Creator', 'character-factory': 'Character Factory',
-  object: 'Object Creator', montage: 'Montage', music: 'Musique', musique: 'Musique', analyse: 'Movie Analysis',
+  upload: 'upload', asset: 'Asset', image: 'Image', movie: 'Movie Creator', 'character-factory': 'Character Factory',
+  object: 'Object Creator', objet: 'Object Creator', montage: 'Montage', music: 'ODIO', musique: 'ODIO', odio: 'ODIO',
+  analyse: 'Movie Analysis', upscale: 'Upscale', ideation: 'Idéation', selecteur: 'le sélecteur',
 };
-const toolFr = (t) => TOOL_FR[t] || t || 'déposé';
+const toolFr = (t) => TOOL_FR[t] || t || 'upload';
+const ORIGINS = [['', 'Tout'], ['made', 'Créations'], ['upload', 'Uploads']];
+const MEDIA = ['image', 'video', 'audio'];
 const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
 const KIND_N = { image: ['image', 'images'], element: ['élément', 'éléments'], video: ['vidéo', 'vidéos'], audio: ['son', 'sons'] };
 
@@ -95,9 +108,10 @@ async function render() {
   closeMenu();
   libEl.hidden = r.view === 'sheet';
   sheetEl.hidden = r.view !== 'sheet';
+  paintSel();                                  // la barre de sélection ne vit que sur la grille
   if (r.view === 'sheet') { window.scrollTo({ top: 0 }); return paintSheet(r.id); }
   if (r.view === 'trash') return paintTrash();
-  if (S.folder !== r.folder) S.q = '';
+  if (S.folder !== r.folder) { S.q = ''; S.sel = new Set(); }
   S.folder = r.folder;
   buildLib();
   return loadLib();
@@ -114,6 +128,8 @@ function say(msg, undo = null, ms = 6000) {
     document.body.append(t);
   }
   $('.t', t).textContent = msg;
+  // un seul bandeau à la fois : celui de shell.js (dépôts) s'efface devant le mien
+  $('.toast.on')?.classList.remove('on');
   const b = $('button', t);
   b.hidden = !undo;
   b.onclick = async () => {
@@ -136,11 +152,13 @@ function buildLib() {
     who: el('div', { class: 'who' }),
     acts: el('div', { class: 'acts' }),
     bar: el('div', { class: 'lib-bar', role: 'toolbar', 'aria-label': 'trier, filtrer' }),
-    grid: el('div', { class: 'lib-grid', role: 'list' }),
+    grid: el('div', { class: 'lib-grid', role: 'listbox', 'aria-multiselectable': 'true', 'aria-label': 'les objets' }),
     more: el('div', { class: 'row', style: { justifyContent: 'center' } }),
     fileIn,
   };
-  libEl.replaceChildren(el('section', { class: 'lib-top' }, parts.who, parts.acts), parts.bar, parts.grid, parts.more, fileIn);
+  const hint = el('p', { class: 'lib-hint lbl' },
+    'clic : choisir · double-clic : ouvrir · ctrl/⌘ + clic : ajouter · maj + clic : une plage · glisser sur le fond : une zone · ctrl+A : tout · Échap : rien');
+  libEl.replaceChildren(el('section', { class: 'lib-top' }, parts.who, parts.acts), parts.bar, hint, parts.grid, parts.more, fileIn);
   buildBar();
 }
 
@@ -159,8 +177,9 @@ function buildBar() {
   fav.onclick = () => { S.fav = !S.fav; loadLib(); };
   parts.crumbs = el('nav', { class: 'crumbs', 'aria-label': 'où' });
   parts.seg = el('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'sorte' });
+  parts.oseg = el('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'origine : créé dans un outil ou déposé' });
   parts.search = search; parts.sort = sort; parts.tool = tool; parts.favBtn = fav;
-  b.replaceChildren(parts.crumbs, parts.seg, fav, tool, sort, el('span', { class: 'sp' }), search,
+  b.replaceChildren(parts.crumbs, parts.seg, parts.oseg, fav, tool, sort, el('span', { class: 'sp' }), search,
     el('label', { class: 'size', title: 'taille des vignettes' }, el('span', { class: 'lbl' }, 'taille'), size),
     el('a', { class: 'tb ghost sm', href: '#/corbeille', title: 'les objets jetés, qu\'on peut rétablir' }, 'Corbeille'));
   parts.grid.style.setProperty('--card', `${S.size}px`);
@@ -173,6 +192,7 @@ async function loadLib({ append = false } = {}) {
   if (S.q) p.set('q', S.q);
   if (S.fav) p.set('fav', '1');
   if (S.tool) p.set('tool', S.tool);
+  if (S.origin) p.set('origin', S.origin);
   if (S.folder) p.set('folder', S.folder);
   const seq = ++loadSeq;
   let d;
@@ -182,7 +202,10 @@ async function loadLib({ append = false } = {}) {
   }
   if (seq !== loadSeq) return;
   if (append) { S.data.items.push(...d.items); S.data.total = d.total; } else S.data = d;
-  paintTop(); paintBar(); paintGrid();
+  // la sélection ne garde que ce qui est encore à l'écran
+  const shown = new Set(S.data.items.map((i) => i.id));
+  S.sel = new Set([...S.sel].filter((id) => shown.has(id)));
+  paintTop(); paintBar(); paintGrid(); paintSel(true);
 }
 
 function paintTop() {
@@ -197,7 +220,7 @@ function paintTop() {
     parts.acts.replaceChildren(
       el('button', { class: 'tb ghost', type: 'button', onclick: renameInline }, 'Renommer'),
       el('button', { class: 'tb ghost', type: 'button', title: 'remettre ses objets à la racine ; le dossier disparaît', onclick: () => emptyFolder(S.folder) }, 'Vider le dossier'),
-      el('button', { class: 'tb go', type: 'button', onclick: () => parts.fileIn.click(), title: 'ou glisser des fichiers n\'importe où sur la page' }, 'Déposer ici'));
+      parts.dropBtn = el('button', { class: 'tb go', type: 'button', onclick: () => parts.fileIn.click(), title: 'ou glisser des fichiers n\'importe où sur la page' }, 'Déposer ici'));
     if (S.renameOnLoad === S.folder) { S.renameOnLoad = null; renameInline(); }
   } else {
     parts.who.replaceChildren(
@@ -207,7 +230,7 @@ function paintTop() {
     parts.acts.replaceChildren(
       el('button', { class: 'tb ghost', type: 'button', onclick: cfModal, title: 'un personnage du studio devient un élément' }, 'Importer de Character Factory'),
       el('button', { class: 'tb ghost', type: 'button', onclick: () => elementModal({}) }, 'Nouvel élément'),
-      el('button', { class: 'tb go', type: 'button', onclick: () => parts.fileIn.click(), title: 'ou glisser des fichiers n\'importe où sur la page' }, 'Déposer des fichiers'));
+      parts.dropBtn = el('button', { class: 'tb go', type: 'button', onclick: () => parts.fileIn.click(), title: 'ou glisser des fichiers n\'importe où sur la page' }, 'Déposer des fichiers'));
   }
 }
 
@@ -230,6 +253,12 @@ function paintBar() {
     class: 'tb' + (S.kind === k ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': String(S.kind === k),
     onclick: () => { S.kind = k; savePrefs(); loadLib(); },
   }, lab, el('b', {}, String(k ? d.counts[k] : total)))));
+  const o = d.origins || { upload: 0, made: 0 };
+  parts.oseg.replaceChildren(...ORIGINS.map(([k, lab]) => el('button', {
+    class: 'tb' + (S.origin === k ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': String(S.origin === k),
+    title: k === 'upload' ? 'ce qu\'on a déposé de son disque' : k === 'made' ? 'ce que les outils ont fabriqué' : 'tout',
+    onclick: () => { S.origin = k; loadLib(); },
+  }, lab, el('b', {}, String(k ? o[k] : o.upload + o.made)))));
   parts.favBtn.classList.toggle('on', S.fav);
   parts.favBtn.setAttribute('aria-pressed', String(S.fav));
   const tools = Object.entries(d.tools).sort((a, b) => b[1] - a[1]);
@@ -244,10 +273,11 @@ function paintGrid() {
   const d = S.data;
   const cards = [...d.folders.map(folderCard), ...d.items.map((it) => itemCard(it, { search: !!S.q }))];
   if (!cards.length) {
-    const filtered = S.kind || S.fav || S.tool || S.q;
+    const filtered = S.kind || S.fav || S.tool || S.q || S.origin;
     cards.push(el('div', { class: 'empty-state', style: { gridColumn: '1 / -1' } },
-      el('b', {}, filtered ? 'Rien avec ces filtres' : S.folder ? 'Ce dossier est vide' : 'La bibliothèque est vide'),
-      el('p', { class: 'hint' }, filtered ? 'Change de sorte, retire les favoris ou la recherche.'
+      el('b', {}, S.origin === 'upload' && !S.kind && !S.q ? 'Aucun upload ici' : filtered ? 'Rien avec ces filtres' : S.folder ? 'Ce dossier est vide' : 'La bibliothèque est vide'),
+      el('p', { class: 'hint' }, S.origin === 'upload' ? 'Ce qu\'on dépose de son disque — ici ou dans n\'importe quel outil — arrive dans cet onglet.'
+        : filtered ? 'Change de sorte ou d\'origine, retire les favoris ou la recherche.'
         : 'Dépose des fichiers n\'importe où sur la page, importe un personnage de Character Factory, ou crée une image dans Image.')));
   }
   parts.grid.replaceChildren(...cards);
@@ -264,26 +294,86 @@ function wave(n = 9) {
 }
 
 function subOf(it) {
-  if (it.kind === 'element') return `${plural(it.element?.refs?.length || 0, 'réf.', 'réf.')}${it.element?.meshes?.length ? ' · 3D' : ''} · ${toolFr(it.origin?.tool)}`;
+  if (it.kind === 'element') return `${plural(it.element?.refs?.length || 0, 'réf.', 'réf.')}${it.element?.voices?.length ? ' · voix' : ''}${it.element?.meshes?.length ? ' · 3D' : ''} · ${toolFr(it.origin?.tool)}`;
   return [it.width && it.height ? `${it.width}×${it.height}` : '', it.origin?.model || toolFr(it.origin?.tool)].filter(Boolean).join(' · ');
 }
 
 function itemCard(it, { search = false } = {}) {
-  const t = thumb(it, { sub: subOf(it), onclick: () => { if (!suppressClick) go('#' + it.id); } });
+  const t = thumb(it, { sub: subOf(it), onclick: (e) => onCardClick(e, it) });
+  // le glisser d'une carte est celui de la page (ranger, dossiers), pas celui du navigateur
+  t.draggable = false;
   t.setAttribute('aria-label', `${it.kind === 'element' ? etypeFr(it.element?.type) : kindFr(it.kind)} ${it.title}`);
+  t.addEventListener('dblclick', () => go('#' + it.id));
+  t.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); go('#' + it.id); }
+    if (e.key === ' ') { e.preventDefault(); toggleSel(it.id); }
+  });
   const im = $('.im', t);
   if (it.kind === 'audio' && !it.thumb_url) im.prepend(wave());
   if (it.kind === 'element' && !it.thumb_url) im.prepend(el('span', { class: 'noimg' }, 'sans image'));
   if (it.fav) im.append(el('span', { class: 'star', title: 'favori' }, '★'));
   if (search && it.folder) im.append(el('span', { class: 'where', title: 'dans ce dossier' }, it.folder));
+  // un élément qui a une voix le montre : la même voix d'un plan à l'autre
+  const voice = it.kind === 'element' ? it.element?.voices?.[0] : null;
+  if (voice) im.append(el('span', { class: 'vbadge', title: `sa voix · ${voice.label || 'voix'}` }, el('i', { 'aria-hidden': 'true' }), el('i'), el('i'),
+    `voix${voice.duration ? ` · ${fmtDur(voice.duration)}` : ''}`));
   if (it.kind === 'video' && it.url) {
     // au survol, la vidéo joue en muet
     t.addEventListener('mouseenter', () => { if (!drag && !$('.live', im)) im.append(el('video', { class: 'live', src: href(it.url), muted: true, autoplay: true, loop: true, playsinline: true })); });
     t.addEventListener('mouseleave', () => $('.live', im)?.remove());
   }
-  return el('div', { class: 'acard', 'data-id': it.id, role: 'listitem' }, t,
+  const on = S.sel.has(it.id);
+  if (on) t.classList.add('sel');
+  return el('div', { class: 'acard' + (on ? ' sel' : ''), 'data-id': it.id, role: 'option', 'aria-selected': String(on) }, t,
+    el('button', { class: 'chk', type: 'button', 'aria-pressed': String(on), title: 'choisir (ctrl/⌘ + clic)', 'aria-label': `choisir ${it.title}`,
+      onclick: (e) => { e.stopPropagation(); toggleSel(it.id); } }),
     el('button', { class: 'menu-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', title: 'ranger',
       'aria-label': `ranger ${it.title}`, onclick: (e) => { e.stopPropagation(); toggleMenu(e.currentTarget, itemMenu(it)); } }, '⋯'));
+}
+
+// ── la sélection ─────────────────────────────────────────────
+let lastPointer = 'mouse';
+const cardIds = () => (parts ? $$('.acard[data-id]', parts.grid).map((n) => n.dataset.id) : []);
+const selItems = () => (S.data?.items || []).filter((it) => S.sel.has(it.id));
+function setSel(ids, anchor) {
+  S.sel = new Set(ids);
+  if (anchor !== undefined) S.anchor = anchor;
+  paintSel();
+}
+function toggleSel(id) {
+  const s = new Set(S.sel);
+  if (s.has(id)) s.delete(id); else s.add(id);
+  setSel(s, id);
+}
+const clearSel = () => setSel([], null);
+const selectAll = () => setSel(cardIds(), S.anchor);
+
+function onCardClick(e, it) {
+  if (suppressClick || e.detail === 0) return;          // e.detail 0 : Entrée ou Espace, traités à part
+  const mod = e.ctrlKey || e.metaKey;
+  // au doigt, sans sélection en cours : un toucher ouvre, comme avant
+  if (lastPointer === 'touch' && !S.sel.size && !mod && !e.shiftKey) return go('#' + it.id);
+  if (e.shiftKey && S.anchor) {
+    const ids = cardIds();
+    const a = ids.indexOf(S.anchor), b = ids.indexOf(it.id);
+    if (a >= 0 && b >= 0) return setSel([...(mod ? S.sel : []), ...ids.slice(Math.min(a, b), Math.max(a, b) + 1)]);
+  }
+  if (mod || lastPointer === 'touch') return toggleSel(it.id);
+  setSel([it.id], it.id);
+}
+
+function paintSel(force = false) {
+  if (parts?.grid) {
+    for (const n of $$('.acard[data-id]', parts.grid)) {
+      const on = S.sel.has(n.dataset.id);
+      n.classList.toggle('sel', on);
+      n.setAttribute('aria-selected', String(on));
+      $('.thumb', n)?.classList.toggle('sel', on);
+      $('.chk', n)?.setAttribute('aria-pressed', String(on));
+    }
+  }
+  document.body.classList.toggle('selecting', S.sel.size > 0 && S.route.view === 'lib');
+  paintSelBar(force);
 }
 
 function miniOf(m) {
@@ -303,10 +393,14 @@ function folderCard(f) {
     onclick: () => { if (!suppressClick) go(folderHash(f.name)); } },
   el('div', { class: 'im' }, ...cells),
   el('div', { class: 'cap' }, el('div', { class: 't' }, f.name), el('div', { class: 's' }, kinds || plural(f.total, 'objet', 'objets'))));
-  return el('div', { class: 'acard folder', 'data-folder': f.name, role: 'listitem' },
+  const card = el('div', { class: 'acard folder', 'data-folder': f.name, role: 'option', 'aria-selected': 'false' },
     el('span', { class: 'ftab kicker' }, 'dossier'), b,
     el('button', { class: 'menu-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', title: 'le dossier',
       'aria-label': `dossier ${f.name}`, onclick: (e) => { e.stopPropagation(); toggleMenu(e.currentTarget, folderMenu(f)); } }, '⋯'));
+  // un fichier lâché sur un dossier y entre (catégorie Upload) ; une vignette glissée d'ailleurs aussi
+  dropZone(card, { kinds: ['image', 'video', 'audio', 'element'], via: 'asset',
+    onitems: (items) => moveItems(items.map((i) => i.id), f.name, `${plural(items.length, 'objet rangé', 'objets rangés')} dans « ${f.name} »`) });
+  return card;
 }
 
 // ── ranger ───────────────────────────────────────────────────
@@ -413,7 +507,8 @@ function toggleMenu(btn, spec) {
     const k = items.indexOf(document.activeElement);
     if (e.key === 'ArrowDown') { e.preventDefault(); items[(k + 1) % items.length]?.focus(); }
     if (e.key === 'ArrowUp') { e.preventDefault(); items[(k - 1 + items.length) % items.length]?.focus(); }
-    if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); closeMenu(true); }
+    // Échap ferme le menu, et seulement lui : la sélection reste
+    if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); closeMenu(true); }
   });
 }
 function closeMenu(refocus = false) {
@@ -449,12 +544,14 @@ function startDrag(e) {
   g.style.width = `${r.width}px`;
   g.style.transformOrigin = '0 0';
   g.style.transform = `scale(${w / r.width}) rotate(-2.5deg)`;
+  $$('.chk, .menu-btn', g).forEach((n) => n.remove());
+  if (drag.ids.length > 1) g.append(el('span', { class: 'drag-count' }, String(drag.ids.length)));
   document.body.append(g);
   drag.ghost = g;
-  drag.card.classList.add('lifting');
+  for (const id of drag.ids) $(`.acard[data-id="${id}"]`, parts.grid)?.classList.add('lifting');
   document.body.classList.add('dragging');
   $$('.crumb[data-drop-root]').forEach((c) => c.classList.add('drop-armed'));
-  live(`${drag.title} saisi. Relâche sur une carte, un dossier, ou Échap pour annuler.`);
+  live(`${drag.ids.length > 1 ? plural(drag.ids.length, 'objet', 'objets') : drag.title} saisi. Relâche sur une carte, un dossier, ou Échap pour annuler.`);
   moveDrag(e);
 }
 
@@ -473,7 +570,7 @@ function moveDrag(e) {
     drag.target = { kind: 'into', folder: f.dataset.folder };
   } else {
     const t = at?.closest('.acard[data-id]');
-    if (t && t.dataset.id !== drag.id && !S.folder && !S.q) {
+    if (t && !drag.ids.includes(t.dataset.id) && !S.folder && !S.q) {
       t.classList.add('drop-merge');
       t.append(el('span', { class: 'drop-say' }, 'nouveau dossier'));
       drag.target = { kind: 'merge', id: t.dataset.id };
@@ -489,28 +586,34 @@ function endDrag(cancel) {
   drag = null;
   clearMarks();
   d.ghost?.remove();
-  d.card.classList.remove('lifting');
+  $$('.acard.lifting').forEach((n) => n.classList.remove('lifting'));
   document.body.classList.remove('dragging');
   $$('.crumb.drop-armed').forEach((c) => c.classList.remove('drop-armed'));
   suppressClick = true;
   setTimeout(() => { suppressClick = false; }, 80);
   if (cancel || !d.target) { live('déplacement annulé'); return; }
-  const it = S.data.items.find((x) => x.id === d.id);
+  const items = d.ids.map((id) => S.data.items.find((x) => x.id === id)).filter(Boolean);
+  const what = items.length > 1 ? plural(items.length, 'objet', 'objets') : items[0].title;
   const t = d.target;
-  if (t.kind === 'into') moveItems([d.id], t.folder, `${it.title} rangé dans « ${t.folder} »`);
-  if (t.kind === 'out') moveItems([d.id], '', `${it.title} sorti de « ${S.folder} »`);
-  if (t.kind === 'merge') askFolderName([S.data.items.find((x) => x.id === t.id), it]);
+  if (t.kind === 'into') moveItems(d.ids, t.folder, `${what} rangé${items.length > 1 ? 's' : ''} dans « ${t.folder} »`);
+  if (t.kind === 'out') moveItems(d.ids, '', `${what} sorti${items.length > 1 ? 's' : ''} de « ${S.folder} »`);
+  if (t.kind === 'merge') askFolderName([S.data.items.find((x) => x.id === t.id), ...items]);
 }
 
 document.addEventListener('pointerdown', (e) => {
+  lastPointer = e.pointerType || 'mouse';
   if (e.button !== 0 || S.route.view !== 'lib') return;
   const card = e.target.closest('.acard[data-id]');
-  if (!card || e.target.closest('.menu-btn')) return;
+  if (!card) return startMarquee(e);
+  if (e.target.closest('.menu-btn, .chk')) return;
   const it = S.data?.items.find((x) => x.id === card.dataset.id);
-  drag = { id: card.dataset.id, title: it?.title || '', card, x0: e.clientX, y0: e.clientY, started: false, touch: e.pointerType !== 'mouse' };
+  // glisser une carte choisie emporte toute la sélection ; une autre part seule
+  const ids = S.sel.has(card.dataset.id) && S.sel.size > 1 ? cardIds().filter((id) => S.sel.has(id)) : [card.dataset.id];
+  drag = { id: card.dataset.id, ids, title: it?.title || '', card, x0: e.clientX, y0: e.clientY, started: false, touch: e.pointerType !== 'mouse' };
   if (drag.touch) drag.timer = setTimeout(() => { if (drag && !drag.started) { navigator.vibrate?.(12); startDrag(e); } }, 350);
 });
 document.addEventListener('pointermove', (e) => {
+  if (mq) return moveMarquee(e);
   if (!drag) return;
   if (!drag.started) {
     const dist = Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0);
@@ -522,11 +625,228 @@ document.addEventListener('pointermove', (e) => {
   moveDrag(e);
 });
 document.addEventListener('pointerup', () => {
+  if (mq) return endMarquee();
   if (!drag) return;
   clearTimeout(drag.timer);
   if (drag.started) endDrag(false); else drag = null;
 });
-document.addEventListener('pointercancel', () => { if (drag?.started) endDrag(true); else drag = null; });
+document.addEventListener('pointercancel', () => {
+  if (mq) return endMarquee(true);
+  if (drag?.started) endDrag(true); else drag = null;
+});
+
+// ── la zone de sélection : glisser sur le fond ───────────────
+// À la souris et au stylet ; au doigt, glisser fait défiler la page.
+// Ctrl/⌘ ou maj : la zone s'ajoute à la sélection au lieu de la remplacer.
+// Un clic sur le fond, sans glisser, vide la sélection.
+let mq = null;
+function startMarquee(e) {
+  if (e.pointerType === 'touch' || !parts || !libEl.contains(e.target)) return;
+  if (e.target.closest('button, a, input, select, textarea, label, .lib-bar, .lib-top, .lib-hint, .empty-state, .acard')) return;
+  mq = { x0: e.pageX, y0: e.pageY, add: e.ctrlKey || e.metaKey || e.shiftKey, base: new Set(S.sel), started: false, last: null };
+}
+function moveMarquee(e) {
+  if (!mq.started) {
+    if (Math.hypot(e.pageX - mq.x0, e.pageY - mq.y0) < 5) return;
+    mq.started = true;
+    mq.box = el('div', { class: 'marquee', 'aria-hidden': 'true' });
+    document.body.append(mq.box);
+    document.body.classList.add('marqueeing');
+    getSelection()?.removeAllRanges();
+  }
+  const x = Math.min(e.pageX, mq.x0), y = Math.min(e.pageY, mq.y0);
+  const w = Math.abs(e.pageX - mq.x0), h = Math.abs(e.pageY - mq.y0);
+  Object.assign(mq.box.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
+  const hits = [];
+  for (const n of $$('.acard[data-id]', parts.grid)) {
+    const r = n.getBoundingClientRect();
+    const L = r.left + scrollX, T = r.top + scrollY;
+    if (L < x + w && L + r.width > x && T < y + h && T + r.height > y) hits.push(n.dataset.id);
+  }
+  mq.last = hits[hits.length - 1] || mq.last;
+  S.sel = new Set([...(mq.add ? mq.base : []), ...hits]);
+  paintSel();
+  if (e.clientY < 70) scrollBy(0, -14);
+  else if (e.clientY > innerHeight - 70) scrollBy(0, 14);
+}
+function endMarquee(cancel = false) {
+  const m = mq;
+  mq = null;
+  document.body.classList.remove('marqueeing');
+  m.box?.remove();
+  if (cancel) return;
+  if (m.started) {
+    if (m.last) S.anchor = m.last;
+    suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 80);
+    live(`${plural(S.sel.size, 'objet choisi', 'objets choisis')}`);
+  } else if (!m.add) clearSel();
+}
+
+// ── la barre d'outils de la sélection ────────────────────────
+// Un seul orange : « Télécharger » ; « Déposer » repasse en gris le temps
+// de la sélection. Raccourcis : T télécharger, N nouveau dossier, F favori,
+// Entrée ouvrir (un seul), Suppr corbeille, ctrl+A tout, Échap rien.
+let selSig = '';
+function paintSelBar(force = false) {
+  const on = S.sel.size > 0 && S.route.view === 'lib';
+  if (parts?.dropBtn) { parts.dropBtn.classList.toggle('go', !on); parts.dropBtn.classList.toggle('ghost', on); }
+  document.body.classList.toggle('has-selbar', on);
+  let bar = $('.selbar');
+  if (!on) { bar?.remove(); selSig = ''; return; }
+  const items = selItems();
+  const sig = `${items.map((i) => `${i.id}${i.fav ? '*' : ''}`).join(',')}|${(S.data?.all_folders || []).join('/')}`;
+  if (bar && sig === selSig && !force) return;
+  selSig = sig;
+  const n = items.length;
+  const counts = {};
+  for (const i of items) counts[i.kind] = (counts[i.kind] || 0) + 1;
+  const imgs = items.filter((i) => i.kind === 'image');
+  const ups = items.filter((i) => i.kind === 'image' || i.kind === 'video');
+  const one = n === 1 ? items[0] : null;
+  const allFav = n > 0 && items.every((i) => i.fav);
+  const b = (label, onclick, { key = '', title = '', disabled = false, go: orange = false } = {}) =>
+    el('button', { class: `tb ${orange ? 'go' : 'ghost'} sm`, type: 'button', disabled, onclick,
+      title: `${title}${key ? ` · ${key}` : ''}`, 'aria-keyshortcuts': key || null }, label);
+  // le clic ne remonte pas : la page fermerait aussitôt le menu qu'il ouvre
+  const moveBtn = b('Déplacer ▾', (e) => { e.stopPropagation(); toggleMenu(e.currentTarget, moveMenu(items)); }, { title: 'vers un dossier, ou à la racine' });
+  moveBtn.setAttribute('aria-haspopup', 'menu');
+  const nextBar = el('div', { class: 'selbar', role: 'toolbar', 'aria-label': 'la sélection' },
+    el('div', { class: 'cnt' }, el('b', {}, String(n)),
+      el('span', { class: 'lbl' }, `${n > 1 ? 'choisis' : 'choisi'}${countLine(counts) !== 'vide' ? ` · ${countLine(counts)}` : ''}`)),
+    b('Tout', selectAll, { key: 'Ctrl+A', title: 'choisir tout ce qui est affiché' }),
+    el('span', { class: 'sep' }),
+    b('Télécharger', () => download(items), { go: true, key: 'T',
+      title: one && one.kind !== 'element' ? 'le fichier' : 'un zip, fait par DGX2 qui a les fichiers ; un élément apporte ses références' }),
+    b('Créer un dossier', () => askFolderName(items), { key: 'N', title: 'un dossier neuf avec la sélection ; son nom est demandé' }),
+    moveBtn,
+    b(allFav ? '☆ Retirer des favoris' : '★ Favori', () => bulkFav(items, !allFav), { key: 'F' }),
+    b('Tags', () => tagsModal(items), { title: 'ajouter ou retirer un tag sur toute la sélection' }),
+    b('Faire un élément', () => elementModal({ items: imgs, title: imgs[0]?.title || '', folder: commonFolder(imgs) }), {
+      disabled: !imgs.length,
+      title: imgs.length ? `un élément avec ${plural(imgs.length, 'image', 'images')} en références` : 'aucune image dans la sélection : un élément se fait d\'images' }),
+    b('Agrandir', () => { location.href = href(`upscale/?src=${ups.map((i) => i.id).join(',')}`); }, {
+      disabled: !ups.length,
+      title: !ups.length ? 'Upscale prend des images et des vidéos : il n\'y en a pas dans la sélection'
+        : ups.length < n ? `Upscale : les ${plural(ups.length, 'image ou vidéo', 'images et vidéos')} de la sélection seulement` : 'Upscale : agrandir et affiner' }),
+    b('Ajouter au montage', () => { location.href = href(`montage/?add=${encodeURIComponent(one.id)}`); }, {
+      disabled: !(one && MEDIA.includes(one.kind)),
+      title: one && MEDIA.includes(one.kind) ? 'Montage : au bout de la piste' : n > 1
+        ? 'le montage prend un objet à la fois par son adresse (?add=) : n\'en choisis qu\'un' : 'une image, une vidéo ou un son' }),
+    one ? b('Ouvrir', () => go('#' + one.id), { key: 'Entrée', title: 'sa fiche' }) : null,
+    b('Corbeille', () => trashMany(items), { key: 'Suppr', title: 'à la corbeille ; « annuler » dans le bandeau' }),
+    el('button', { class: 'x', type: 'button', title: 'ne plus rien choisir · Échap', 'aria-label': 'vider la sélection', onclick: clearSel }, '×'));
+  if (bar) bar.replaceWith(nextBar); else document.body.append(nextBar);
+}
+
+function commonFolder(items) {
+  const f = new Set(items.map((i) => i.folder || ''));
+  return f.size === 1 ? [...f][0] : '';
+}
+
+function moveMenu(items) {
+  const here = new Set(items.map((i) => i.folder || ''));
+  const ids = items.map((i) => i.id);
+  const what = plural(items.length, 'objet', 'objets');
+  return {
+    title: `déplacer · ${what}`,
+    items: [
+      ...(S.data?.all_folders || []).filter((f) => !(here.size === 1 && here.has(f)))
+        .map((f) => ({ label: `Dans « ${f} »`, dir: true, do: () => moveItems(ids, f, `${what} dans « ${f} »`).then(clearSel) })),
+      { label: 'Dans un nouveau dossier…', dir: true, do: () => askFolderName(items) },
+      [...here].some(Boolean) ? { label: 'À la racine', do: () => moveItems(ids, '', `${what} remis à la racine`).then(clearSel) } : null,
+    ].filter(Boolean),
+  };
+}
+
+const saveUrl = (url, name) => { const a = el('a', { href: url, download: name || '' }); document.body.append(a); a.click(); a.remove(); };
+async function download(items) {
+  if (!items.length) return;
+  const one = items.length === 1 ? items[0] : null;
+  if (one && one.kind !== 'element' && one.url) return saveUrl(href(one.url), `${one.title || one.id}${(one.file || '').replace(/^main/, '')}`);
+  say(`préparation du zip · ${plural(items.length, 'objet', 'objets')}`, null, 60000);
+  try {
+    const z = await api('asset/zip', { method: 'POST', body: { ids: items.map((i) => i.id) } });
+    saveUrl(href(z.url), z.name);
+    say(`zip prêt · ${plural(z.files, 'fichier', 'fichiers')} · ${fmtSize(z.size)}`);
+  } catch (e) { say(`zip : ${e.message}`); }
+}
+
+async function bulkFav(items, on) {
+  try {
+    const r = await api('asset/bulk', { method: 'POST', body: { ids: items.map((i) => i.id), fav: on } });
+    say(on ? `${plural(items.length, 'objet', 'objets')} en favori` : `${plural(items.length, 'objet retiré', 'objets retirés')} des favoris`,
+      async () => { await api('asset/bulk', { method: 'POST', body: { restore: r.before } }); refresh(); });
+  } catch (e) { say(e.message); }
+  refresh();
+}
+
+function tagsModal(items) {
+  const ids = items.map((i) => i.id);
+  const box = el('div', { class: 'chips' });
+  const inp = el('input', { class: 'fld', id: 'tg-add', placeholder: 'un tag pour toute la sélection', maxlength: 40, 'aria-label': 'ajouter un tag' });
+  const paint = () => {
+    const count = {};
+    for (const it of items) for (const t of it.tags || []) count[t] = (count[t] || 0) + 1;
+    const tags = Object.entries(count).sort((a, b) => b[1] - a[1]);
+    box.replaceChildren(...(tags.length ? tags.map(([t, k]) => el('span', { class: 'chip' }, `${t} · ${k}/${items.length}`,
+      el('button', { type: 'button', title: `retirer « ${t} » de toute la sélection`, 'aria-label': `retirer ${t}`, onclick: () => change({ tags_remove: [t] }, `« ${t} » retiré`) }, '×')))
+      : [el('span', { class: 'hint' }, 'aucun tag dans la sélection')]));
+  };
+  async function change(body, msg) {
+    try {
+      const r = await api('asset/bulk', { method: 'POST', body: { ids, ...body } });
+      const fresh = await Promise.all(ids.map((id) => api('library/' + id).catch(() => null)));
+      fresh.forEach((f, k) => { if (f) items[k].tags = f.tags; });
+      paint();
+      say(msg, async () => { await api('asset/bulk', { method: 'POST', body: { restore: r.before } }); refresh(); });
+    } catch (e) { say(e.message); }
+  }
+  inp.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const v = inp.value.trim();
+    if (v) { inp.value = ''; change({ tags_add: [v] }, `« ${v} » ajouté à ${plural(items.length, 'objet', 'objets')}`); }
+  });
+  paint();
+  const m = modal({
+    title: `tags · ${plural(items.length, 'objet', 'objets')}`,
+    body: [el('span', { class: 'lbl' }, 'les tags de la sélection · combien l\'ont'), box, el('label', { class: 'new-q', for: 'tg-add' }, 'Ajouter un tag à tous'), inp,
+      el('p', { class: 'hint' }, 'Entrée ajoute ; × retire de toute la sélection. Chaque geste s\'annule dans le bandeau.')],
+    foot: [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', type: 'button', onclick: () => m.close() }, 'Fermer')],
+    onclose: refresh,
+  });
+  setTimeout(() => inp.focus(), 30);
+}
+
+async function trashMany(items) {
+  const ids = items.map((i) => i.id);
+  try {
+    await api('asset/trash', { method: 'POST', body: { ids } });
+    clearSel();
+    say(`${plural(ids.length, 'objet', 'objets')} à la corbeille`, async () => {
+      await api('asset/restore', { method: 'POST', body: { ids } });
+      refresh();
+    }, 8000);
+  } catch (e) { say(e.message); }
+  refresh();
+}
+
+// les raccourcis de la sélection (hors d'un champ, d'une fenêtre, d'un menu)
+document.addEventListener('keydown', (e) => {
+  if (S.route.view !== 'lib' || $('.scrim') || menuFor || drag?.started) return;
+  if (e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+  const mod = e.ctrlKey || e.metaKey;
+  const k = e.key.toLowerCase();
+  if (mod && k === 'a') { e.preventDefault(); selectAll(); return; }
+  if (!S.sel.size || mod || e.altKey) return;
+  const items = selItems();
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); trashMany(items); }
+  else if (k === 't') download(items);
+  else if (k === 'n') { e.preventDefault(); askFolderName(items); }
+  else if (k === 'f') bulkFav(items, !items.every((i) => i.fav));
+  else if (e.key === 'Enter' && items.length === 1 && !e.target.closest?.('button, a')) go('#' + items[0].id);
+});
 document.addEventListener('touchmove', (e) => { if (drag?.started) e.preventDefault(); }, { passive: false });
 document.addEventListener('contextmenu', (e) => { if (drag) e.preventDefault(); });
 document.addEventListener('dragstart', (e) => { if (e.target.closest?.('.acard, .refc')) e.preventDefault(); });
@@ -705,7 +1025,8 @@ const fmtSize = (b) => (b < 1048576 ? `${Math.max(1, Math.round(b / 1024))} Ko` 
 
 function xhrUpload(file, folder, onprog) {
   return new Promise((resolve, reject) => {
-    const q = new URLSearchParams({ name: file.name, tool: 'upload', folder, title: file.name.replace(/\.[^.]+$/, '') });
+    // un dépôt du disque : catégorie Upload, entré par Asset (shell.js : uploadFile, même contrat)
+    const q = new URLSearchParams({ name: file.name, tool: 'upload', via: 'asset', folder, title: file.name.replace(/\.[^.]+$/, '') });
     const x = new XMLHttpRequest();
     x.open('PUT', new URL('library/upload?' + q, API));
     x.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
@@ -738,14 +1059,39 @@ async function uploadFiles(files, { folder = '', then } = {}) {
   upClear = setTimeout(() => { upBox?.remove(); upBox = null; }, errs ? 12000 : 3500);
 }
 
+// des images deviennent des références de l'élément ouvert, au rôle choisi ;
+// un son devient sa voix (le serveur la range dans `element.voices`)
+async function addRefs(it, items) {
+  const imgs = items.filter((x) => x.kind === 'image');
+  const snd = items.find((x) => x.kind === 'audio');
+  for (const x of imgs) await api(`elements/${it.id}/refs`, { method: 'POST', body: { item: x.id, role: S.addRole || 'detail', label: '' } });
+  if (snd) await setVoice(it, snd, { repaint: false });
+  if (imgs.length) say(`${plural(imgs.length, 'référence ajoutée', 'références ajoutées')} à ${it.title} · rôle ${roleFr(S.addRole)}`);
+  if (imgs.length + (snd ? 1 : 0) < items.length) say('une référence est une image, une voix est un son : le reste est rangé dans la bibliothèque');
+}
+
+// la voix d'un élément : un son ; s'il en avait une, elle est remplacée (« annuler » la remet)
+async function setVoice(it, snd, { repaint = true } = {}) {
+  const before = (it.element.voices || []).map((v) => ({ file: v.file, label: v.label, item: v.item }));
+  try {
+    const n = await api(`elements/${it.id}/refs`, { method: 'POST', body: { item: snd.id, role: 'voice', label: snd.title || 'voix' } });
+    const vs = n.element.voices || [];
+    const added = vs[vs.length - 1];
+    if (before.length) await api(`asset/refs/${it.id}`, { method: 'POST', body: { voices: [{ file: added.file, label: added.label, item: added.item }] } });
+    say(before.length ? `voix remplacée : ${added.label}` : `voix ajoutée : ${added.label}`, before.length ? async () => {
+      await api(`asset/refs/${it.id}`, { method: 'POST', body: { voices: before } });
+      paintSheet(it.id, { keepScroll: true });
+    } : null);
+  } catch (e) { say(e.message); }
+  if (repaint) paintSheet(it.id, { keepScroll: true });
+}
+
+// Déposé ailleurs que sur un emplacement : dans la bibliothèque (le dossier
+// ouvert) ; sur la fiche d'un élément, ses références.
 dropAnywhere((files) => {
   if (S.route.view === 'sheet' && S.item?.kind === 'element') {
     const it = S.item;
-    const role = S.addRole || ROLE_FOR[it.element.type] || 'detail';
-    return uploadFiles(files, { folder: it.folder || '', then: async (items) => {
-      for (const x of items) if (x.kind === 'image') await api(`elements/${it.id}/refs`, { method: 'POST', body: { item: x.id, role, label: '' } });
-      say(`${plural(items.length, 'référence ajoutée', 'références ajoutées')} à ${it.title}`);
-    } });
+    return uploadFiles(files, { folder: it.folder || '', then: (items) => addRefs(it, items) });
   }
   return uploadFiles(files, { folder: S.route.view === 'lib' ? S.folder : '' });
 });
@@ -830,7 +1176,7 @@ function itemSheet(it) {
   if (it.kind === 'audio') media.append(el('div', { class: 'audio-box' }, wave(24), el('audio', { src: href(it.url), controls: true, preload: 'metadata' })));
   const size = it.width && it.height ? `${it.width}×${it.height}` : '';
   const tool = it.origin?.tool;
-  const from = it.origin?.model || (!tool || tool === 'upload' ? 'déposé' : `fait dans ${toolFr(tool)}`);
+  const from = it.origin?.model || (!tool || tool === 'upload' ? `upload${it.origin?.via ? ` · par ${toolFr(it.origin.via)}` : ''}` : `fait dans ${toolFr(tool)}`);
   const kicker = [kindFr(it.kind), size, it.duration ? fmtDur(it.duration) : '', from].filter(Boolean).join(' · ');
   const id = encodeURIComponent(it.id);
   const acts = el('section', { class: 'sh-acts' });
@@ -904,8 +1250,9 @@ function recette(it) {
 
 function lineage(it) {
   const box = el('div', { class: 'lineage' }, el('p', { class: 'lbl' }, 'lecture'));
-  const lk = (x) => el('a', { class: 'lk', href: '#' + x.id, title: x.title },
-    x.thumb_url ? el('img', { src: href(x.thumb_url), alt: '' }) : (x.kind === 'audio' ? wave(5) : null), el('i', {}, x.title));
+  // une vignette de la lignée se glisse vers un emplacement (la planche d'un élément…)
+  const lk = (x) => dragItem(el('a', { class: 'lk', href: '#' + x.id, title: x.title },
+    x.thumb_url ? el('img', { src: href(x.thumb_url), alt: '' }) : (x.kind === 'audio' ? wave(5) : null), el('i', {}, x.title)), x);
   api('asset/lineage/' + it.id).then((l) => {
     const parts2 = [];
     parts2.push(el('span', { class: 'lbl' }, `vient de · ${l.parents.length}`),
@@ -920,6 +1267,8 @@ function lineage(it) {
 function fabrication(it) {
   const o = it.origin || {};
   return blk('fabrication', null, readout([
+    ['origine', o.tool === 'upload' || !o.tool ? 'upload · déposé de son disque' : `fait dans ${toolFr(o.tool)}`],
+    ['entré par', o.tool === 'upload' || !o.tool ? (o.via ? toolFr(o.via) : 'non dit (déposé avant le 29/09)') : ''],
     ['machine', o.machine], ['créé', fmtDate(it.created)], ['modifié', it.updated && it.updated !== it.created ? fmtDate(it.updated) : ''],
     ['taille', it.width && it.height ? `${it.width} × ${it.height} px` : ''], ['durée', it.duration ? `${String(it.duration).replace('.', ',')} s` : ''],
     ['images/s', it.fps], ['fichier', it.file], ['id', it.id],
@@ -930,7 +1279,7 @@ function fabrication(it) {
 function elementSheet(it) {
   const e = it.element;
   const src = e.source || {};
-  const kicker = () => `élément · ${etypeFr(e.type)} · ${plural(e.refs.length, 'référence', 'références')}`;
+  const kicker = () => `élément · ${etypeFr(it.element.type)} · ${plural(it.element.refs.length, 'référence', 'références')}${it.element.voices?.length ? ' · une voix' : ''}`;
   const head = sheetHead(it, kicker());
   const id = encodeURIComponent(it.id);
   const acts = el('section', { class: 'sh-acts' },
@@ -943,7 +1292,9 @@ function elementSheet(it) {
         try { const n = await api('asset/cf/refresh', { method: 'POST', body: { id: it.id } }); say(`${n.title} mis à jour : ${plural(n.element.refs.length, 'référence', 'références')}`); paintSheet(it.id, { keepScroll: true }); } catch (err) { say(err.message); b.disabled = false; b.textContent = 'Mettre à jour depuis le studio'; }
       }, { title: 'relire le personnage et remplacer ses images sur place' }));
   }
-  acts.append(el('span', { class: 'sp' }), btn('Corbeille', () => trashItem(it, { leave: true }), { title: 'mettre à la corbeille — on peut l\'annuler' }));
+  acts.append(el('span', { class: 'sp' }),
+    btn('Télécharger', () => download([it]), { title: 'un zip : ses références dans l\'ordre, sa 3D, sa description' }),
+    btn('Corbeille', () => trashItem(it, { leave: true }), { title: 'mettre à la corbeille — on peut l\'annuler' }));
 
   // la planche
   const board = el('div', { class: 'board', role: 'list', 'aria-label': 'références' });
@@ -987,10 +1338,42 @@ function elementSheet(it) {
           try { Object.assign(it, await api(`elements/${it.id}/refs`, { method: 'POST', body: { item: g.id, role: S.addRole, label: '' } })); } catch (err) { say(err.message); }
         }
         if (got.length) { say(`${plural(got.length, 'référence ajoutée', 'références ajoutées')} · rôle ${roleFr(S.addRole)}`); paintBoard(); $('.kicker', head).textContent = kicker(); }
-      } }, el('b', {}, '+'), el('span', { class: 'lbl' }, 'ajouter depuis la bibliothèque'), el('span', { class: 'hint' }, 'ou déposer des images sur la page')));
+      } }, el('b', {}, '+'), el('span', { class: 'lbl' }, 'ajouter depuis la bibliothèque'), el('span', { class: 'hint' }, 'ou déposer ici des images : de ton disque, ou une vignette glissée')));
   };
   paintBoard();
   enableRefDrag(board, it, saveRefs);
+  // les références se déposent : un fichier du disque (catégorie Upload) ou une vignette glissée
+  dropZone(board, { kinds: ['image', 'audio'], via: 'asset', onitems: async (items) => {
+    await addRefs(it, items);
+    paintSheet(it.id, { keepScroll: true });
+  } });
+
+  // la voix : un son, le même d'un plan à l'autre (Cal, 29/09 : « l'audio consistant »)
+  const voices = e.voices || [];
+  const pickVoice = async () => {
+    const [snd] = await pick({ kinds: ['audio'], title: `La voix de ${it.title}` });
+    if (snd) setVoice(it, snd);
+  };
+  const removeVoice = async (v) => {
+    const before = voices.map((x) => ({ file: x.file, label: x.label, item: x.item }));
+    try {
+      await api(`asset/refs/${it.id}`, { method: 'POST', body: { voices: before.filter((x) => x.file !== v.file) } });
+      say('voix retirée', async () => { await api(`asset/refs/${it.id}`, { method: 'POST', body: { voices: before } }); paintSheet(it.id, { keepScroll: true }); });
+    } catch (err) { say(err.message); }
+    paintSheet(it.id, { keepScroll: true });
+  };
+  const voiceBlk = blk('sa voix', voices.length ? plural(voices.length, 'son', 'sons') : 'pas encore',
+    ...(voices.length ? voices.map((v) => el('div', { class: 'voice' },
+      wave(14),
+      el('div', { class: 'vmeta' }, el('b', {}, v.label || 'voix'),
+        el('span', { class: 'lbl' }, [v.duration ? fmtDur(v.duration) : '', (v.file.split('.').pop() || '').toUpperCase()].filter(Boolean).join(' · '))),
+      el('audio', { src: href(v.url), controls: true, preload: 'metadata' }),
+      el('button', { class: 'tb ghost sm', type: 'button', title: 'retirer la voix — on peut l\'annuler', onclick: () => removeVoice(v) }, 'Retirer')))
+      : [el('p', { class: 'hint' }, 'Aucune voix : dépose ici un son (WAV, MP3, FLAC, M4A, OGG) ou choisis-en un dans la bibliothèque. L\'élément la portera avec ses images, pour que ce personnage garde la même voix d\'un plan à l\'autre.')]),
+    el('div', { class: 'row' }, el('button', { class: 'tb ghost sm', type: 'button', onclick: pickVoice }, voices.length ? 'Remplacer depuis la bibliothèque' : 'Choisir dans la bibliothèque'),
+      el('span', { class: 'lbl' }, 'ou déposer un son ici')));
+  voiceBlk.classList.add('voice-blk');
+  dropZone(voiceBlk, { kinds: ['audio'], multiple: false, via: 'asset', onitems: ([snd]) => setVoice(it, snd) });
 
   // la colonne
   const saved = el('span', { class: 'saved' }, 'enregistré');
@@ -1022,9 +1405,11 @@ function elementSheet(it) {
   side.push(rangement(it), lineage(it), fabrication(it));
 
   return [head, acts, el('section', { class: 'sh-grid' },
-    blk('références', 'dans l\'ordre où un modèle les lit',
-      el('div', { class: 'row' }, el('span', { class: 'hint' }, `${ORDER_HINT[e.type] || ORDER_HINT.other} Glisser une image pour la déplacer.`),
-        el('span', { class: 'sp' }), el('label', { class: 'row' }, el('span', { class: 'lbl' }, 'ajouter comme'), addRole)), board),
+    el('div', { class: 'sh-main' },
+      blk('références', 'dans l\'ordre où un modèle les lit',
+        el('div', { class: 'row' }, el('span', { class: 'hint' }, `${ORDER_HINT[e.type] || ORDER_HINT.other} Glisser une image pour la déplacer.`),
+          el('span', { class: 'sp' }), el('label', { class: 'row' }, el('span', { class: 'lbl' }, 'ajouter comme'), addRole)), board),
+      voiceBlk),
     el('aside', { class: 'sh-side' }, ...side))];
 }
 
@@ -1108,7 +1493,9 @@ async function paintTrash() {
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (drag?.started) { endDrag(true); return; }
+  if (mq) { endMarquee(true); return; }
   if ($('.scrim') || menuFor) return;
+  if (S.route.view === 'lib' && S.sel.size && !e.target.closest?.('input, textarea, select')) { clearSel(); live('plus rien de choisi'); return; }
   if (S.route.view === 'sheet' && !e.target.closest?.('input, textarea, select')) go(S.backHash || '#');
 });
 document.addEventListener('sr:job', () => { if (S.route.view === 'lib') loadLib(); });

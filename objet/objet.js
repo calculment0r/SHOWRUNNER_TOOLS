@@ -11,7 +11,11 @@
 // fait encore les vues d'un objet justes. La page dit ce qui marche et ce
 // qui attend ; la 3D n'est pas câblée (Cal, 28/09 nuit : l'UX d'abord),
 // son bouton lance un cube de contrôle marqué « factice ».
-import { mountHeader, api, jobs, pick, el, $, $$, href, fmtDate, uploadFile, dropAnywhere } from '../commun/shell.js';
+import { mountHeader, api, jobs, pick, el, $, $$, href, fmtDate, uploadFile, dropAnywhere, dropZone } from '../commun/shell.js';
+
+// Un fichier déposé ici entre dans la bibliothèque comme tout dépôt du
+// disque : catégorie Upload, entré par Object Creator (shell.js, uploadFile).
+const UP = { tool: 'upload', via: 'objet' };
 
 mountHeader('object');
 
@@ -56,6 +60,7 @@ function say(msg, undo = null) {
     document.body.append(t);
   }
   $('.t', t).textContent = msg;
+  $('.toast.on')?.classList.remove('on');   // un seul bandeau : celui de shell.js (dépôts) s'efface
   const b = $('button', t);
   b.hidden = !undo;
   b.onclick = async () => { t.classList.remove('on'); try { await undo(); } catch (e) { say(e.message); } };
@@ -199,20 +204,26 @@ function newObject({ item = null } = {}) {
     const f = fileIn.files[0];
     if (!f) return;
     why.textContent = 'envoi de l\'image';
-    try { chosen = await uploadFile(f, { tool: 'object' }); if (!name.value) name.value = chosen.title; } catch (e) { say(e.message); }
+    try { chosen = await uploadFile(f, UP); if (!name.value) name.value = chosen.title; } catch (e) { say(e.message); }
     paint();
   } });
   name.addEventListener('input', paint);
+  const pickBox = el('div', { class: 'src-pick', title: 'dépose une image ici : de ton disque, ou une vignette glissée' });
+  dropZone(pickBox, { kinds: ['image'], multiple: false, via: 'objet', onitems: ([it]) => {
+    chosen = it;
+    if (!name.value) name.value = it.title;
+    paint();
+  } });
+  pickBox.append(prev, el('div', { class: 'row' },
+    el('button', { class: 'tb ghost', type: 'button', onclick: async () => {
+      const [it] = await pick({ kinds: ['image'], title: 'L\'image de l\'objet', upload: true });
+      if (it) { chosen = it; if (!name.value) name.value = it.title; paint(); }
+    } }, 'Dans la bibliothèque'),
+    el('button', { class: 'tb ghost', type: 'button', onclick: () => fileIn.click() }, 'Déposer une image'),
+    el('a', { class: 'tb ghost', href: href('image/?for=object') }, 'La créer dans Image ↗'), fileIn));
   const form = el('form', { id: 'no-form', autocomplete: 'off', style: { display: 'contents' } },
     el('div', { class: 'q-row' }, el('label', { class: 'new-q', for: 'no-name' }, 'Comment s\'appelle-t-il ?'), name),
-    el('div', { class: 'q-row' }, el('span', { class: 'lbl' }, 'son image · la seule que tu valides'),
-      el('div', { class: 'src-pick' }, prev, el('div', { class: 'row' },
-        el('button', { class: 'tb ghost', type: 'button', onclick: async () => {
-          const [it] = await pick({ kinds: ['image'], title: 'L\'image de l\'objet', upload: true });
-          if (it) { chosen = it; if (!name.value) name.value = it.title; paint(); }
-        } }, 'Dans la bibliothèque'),
-        el('button', { class: 'tb ghost', type: 'button', onclick: () => fileIn.click() }, 'Déposer une image'),
-        el('a', { class: 'tb ghost', href: href('image/?for=object') }, 'La créer dans Image ↗'), fileIn)),
+    el('div', { class: 'q-row' }, el('span', { class: 'lbl' }, 'son image · la seule que tu valides · on peut la déposer ici'), pickBox,
       el('p', { class: 'hint' }, 'L\'objet entier, sur un fond simple : TRELLIS.2 le détoure et le recadre en carré lui-même.')),
     el('div', { class: 'q-row' }, el('span', { class: 'lbl' }, 'ce que c\'est'), desc));
   const m = modal({ title: 'nouvel objet', body: [form], foot: [why, el('span', { class: 'sp' }),
@@ -297,18 +308,31 @@ function objectSheet(o, s) {
       el('p', { class: 'hint' }, 'La seule image que tu valides : TRELLIS.2 part d\'elle, et les vues aussi quand un modèle saura les faire.'),
       el('div', { class: 'row-end' },
         el('button', { class: 'tb ghost sm', type: 'button', onclick: () => changeImage(o, main) }, 'Changer d\'image'),
-        el('a', { class: 'tb ghost sm', href: href('image/?for=object') }, 'En créer une dans Image ↗'))));
+        el('a', { class: 'tb ghost sm', href: href('image/?for=object') }, 'En créer une dans Image ↗')),
+      el('p', { class: 'lbl' }, 'ou dépose une image sur celle-ci pour la remplacer')));
+  // l'image choisie se remplace par un dépôt : un fichier du disque ou une vignette glissée
+  dropZone(hero, { kinds: ['image'], multiple: false, via: 'objet', onitems: ([it]) => changeImage(o, main, it) });
 
   // les vues
+  // chaque emplacement de vue prend un dépôt : vide, il se remplit ; plein, la vue est remplacée
   const slot = (v, k) => {
     const r = views.find((x) => x.label === v.label) || (k === 0 ? main : null);
+    let n;
     if (r) {
-      return el('div', { class: 'view ref' }, el('img', { src: href(r.thumb_url || r.url), alt: v.label }), el('span', { class: 'veil2' }),
+      n = el('div', { class: 'view ref', title: k ? `dépose une image pour remplacer la vue ${v.label}` : 'dépose une image pour changer l\'image choisie' },
+        el('img', { src: href(r.thumb_url || r.url), alt: v.label }), el('span', { class: 'veil2' }),
         k ? el('button', { class: 'x', type: 'button', title: 'retirer cette vue', 'aria-label': `retirer ${v.label}`, onclick: () => removeRef(o, r) }, '×') : null,
         el('span', { class: 'nm' }, v.label), el('span', { class: `az ${k ? 'wait' : 'ok'}` }, k ? 'à la main · non contrôlée' : 'l\'image choisie'));
+    } else {
+      n = el('button', { class: 'view empty', type: 'button', title: `ajouter la vue ${v.label} : depuis la bibliothèque, ou en y déposant une image`,
+        onclick: () => addView(o, v.label), html: v.svg },
+      el('span', { class: 'nm' }, v.label), el('span', { class: 'az' }, 'aucun modèle · ajouter ou déposer'));
     }
-    return el('button', { class: 'view empty', type: 'button', title: `ajouter la vue ${v.label} depuis la bibliothèque`, onclick: () => addView(o, v.label), html: v.svg },
-      el('span', { class: 'nm' }, v.label), el('span', { class: 'az' }, 'aucun modèle · ajouter à la main'));
+    dropZone(n, { kinds: ['image'], multiple: false, via: 'objet', onitems: ([it]) => {
+      if (k === 0) return changeImage(o, main, it);
+      return r ? replaceView(o, r, v.label, it) : addView(o, v.label, [it]);
+    } });
+    return n;
   };
   const extra = views.filter((r) => r !== main && !VIEWS.some((v) => v.label === r.label));
   const viewsBlk = el('div', { class: 'blk' },
@@ -398,8 +422,22 @@ async function removeRef(o, r) {
   paintObject(o.id, { keepScroll: true });
 }
 
-async function changeImage(o, main) {
-  const [it] = await pick({ kinds: ['image'], title: `Une autre image pour ${o.title}` });
+// une vue pleine remplacée par un dépôt : la nouvelle prend sa place et son libellé
+async function replaceView(o, old, label, it) {
+  try {
+    const n = await api(`elements/${o.id}/refs`, { method: 'POST', body: { item: it.id, role: 'view', label } });
+    const refs = n.element.refs;
+    const added = refs[refs.length - 1];
+    const before = refs.slice(0, -1).map((x) => ({ file: x.file, role: x.role, label: x.label, item: x.item }));
+    const list = refs.slice(0, -1).map((x) => (x.file === old.file ? added : x)).map((x) => ({ file: x.file, role: x.role, label: x.label, item: x.item }));
+    await api(`asset/refs/${o.id}`, { method: 'POST', body: { refs: list } });
+    say(`vue ${label} remplacée`, async () => { await api(`asset/refs/${o.id}`, { method: 'POST', body: { refs: before } }); paintObject(o.id, { keepScroll: true }); });
+  } catch (e) { say(e.message); }
+  paintObject(o.id, { keepScroll: true });
+}
+
+async function changeImage(o, main, given = null) {
+  const it = given || (await pick({ kinds: ['image'], title: `Une autre image pour ${o.title}` }))[0];
   if (!it) return;
   try {
     const n = await api(`elements/${o.id}/refs`, { method: 'POST', body: { item: it.id, role: 'view', label: VIEWS[0].label } });
@@ -534,7 +572,7 @@ function preview(box, url) {
 dropAnywhere(async (files) => {
   const f = files.find((x) => /^image\//.test(x.type)) || files[0];
   let it;
-  try { it = await uploadFile(f, { tool: 'object' }); } catch (e) { say(e.message); return; }
+  try { it = await uploadFile(f, UP); } catch (e) { say(e.message); return; }
   const h = decodeURIComponent(location.hash.slice(1));
   if (ID_RX.test(h)) {
     const o = await api('library/' + h);

@@ -21,6 +21,7 @@ corbeille (`<data_dir>/trash/`), d'où il peut revenir.
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import shutil
 import subprocess
@@ -38,6 +39,7 @@ EXT_KIND = {
     ".wav": "audio", ".mp3": "audio", ".flac": "audio", ".m4a": "audio", ".ogg": "audio",
 }
 ELEMENT_TYPES = ("character", "object", "place", "style", "other")
+AUDIO_EXT = tuple(e for e, k in EXT_KIND.items() if k == "audio")   # la voix d'un élément
 THUMB = 384
 
 _lock = threading.RLock()
@@ -175,6 +177,20 @@ def add_file(src: Path, *, kind: str | None = None, title: str = "", origin: dic
     return it
 
 
+def _add_voice(d: Path, voices: list, src: Path, label: str = "", item: str | None = None) -> dict:
+    """Une voix d'élément (rôle « voice ») : un son copié dans son dossier,
+    avec sa durée, sans vignette. Elle vit dans `element.voices`, à côté des
+    images de `element.refs` : les outils lisent `refs` comme des images."""
+    n = 1 + max([int(v["file"][6:8]) for v in voices if v["file"][6:8].isdigit()] or [0])
+    name = f"voice-{n:02d}{src.suffix.lower()}"
+    shutil.copyfile(src, d / name)
+    v = {"file": name, "role": "voice", "label": label or "voix", **probe(d / name)}
+    if item:
+        v["item"] = item
+    voices.append(v)
+    return v
+
+
 def create_element(title: str, etype: str = "character", description: str = "", refs: list | None = None,
                    source: dict | None = None, tags: list | None = None, folder: str = "") -> dict:
     """Un élément : `refs` = [{item: id | path: Path, role: "face"…, label?}]. Chaque
@@ -186,16 +202,20 @@ def create_element(title: str, etype: str = "character", description: str = "", 
     d = folder_of(iid)
     d.mkdir(parents=True, exist_ok=True)
     out_refs = []
+    voices: list = []
     for k, r in enumerate(refs or []):
         if r.get("item"):
             src_it = get(r["item"])
-            if not src_it or src_it["kind"] != "image":
-                raise ValueError(f"référence introuvable ou pas une image : {r['item']}")
+            if not src_it or src_it["kind"] not in ("image", "audio"):
+                raise ValueError(f"référence introuvable, ni image ni son : {r['item']}")
             src = folder_of(src_it["id"]) / src_it["file"]
         else:
             src = Path(r["path"])
         if not src.exists():
             raise ValueError(f"référence absente : {src}")
+        if EXT_KIND.get(src.suffix.lower()) == "audio":
+            _add_voice(d, voices, src, r.get("label", ""), r.get("item"))
+            continue
         name = f"ref-{k + 1:02d}{src.suffix.lower()}"
         shutil.copyfile(src, d / name)
         ref = {"file": name, "role": r.get("role", ""), "label": r.get("label", "")}
@@ -208,8 +228,9 @@ def create_element(title: str, etype: str = "character", description: str = "", 
     it = {
         "id": iid, "kind": "element", "title": title or "élément", "created": now(), "updated": now(),
         "origin": {"tool": (source or {}).get("tool", "asset")}, "tags": list(tags or []), "folder": folder,
-        "fav": False, "parents": [r["item"] for r in out_refs if r.get("item")],
-        "element": {"type": etype, "description": description, "refs": out_refs, "source": source or {}},
+        "fav": False, "parents": [r["item"] for r in out_refs + voices if r.get("item")],
+        "element": {"type": etype, "description": description, "refs": out_refs, "source": source or {},
+                    **({"voices": voices} if voices else {})},
     }
     if out_refs and out_refs[0].get("thumb"):
         it["thumb"] = out_refs[0]["thumb"]
@@ -258,6 +279,12 @@ def add_ref(item_id: str, src: Path, role: str = "", label: str = "", from_item:
         if not it or it["kind"] != "element":
             raise KeyError(item_id)
         d = folder_of(item_id)
+        if EXT_KIND.get(src.suffix.lower()) == "audio":
+            # un son : la voix de l'élément, rangée à côté de ses images (`voices`)
+            _add_voice(d, it["element"].setdefault("voices", []), src, label, from_item)
+            it["updated"] = now()
+            _save(it)
+            return it
         n = 1 + max([int(r["file"][4:6]) for r in it["element"]["refs"] if r["file"][4:6].isdigit()] or [0])
         name = f"ref-{n:02d}{src.suffix.lower()}"
         shutil.copyfile(src, d / name)
@@ -286,9 +313,15 @@ def trash(item_id: str) -> None:
         shutil.move(str(folder_of(item_id)), str(dest))
 
 
+ID_RE = re.compile(r"[a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4}")
+
+
 def restore(item_id: str) -> dict:
     _load()
     with _lock:
+        # un identifiant de la corbeille a la forme de new_id, rien d'autre (pas de ../)
+        if not ID_RE.fullmatch(item_id or ""):
+            raise KeyError(item_id)
         src = trash_root() / item_id
         if not src.exists():
             raise KeyError(item_id)
@@ -315,7 +348,9 @@ def ref_paths(it: dict, roles: list[str] | None = None) -> list[tuple[Path, dict
     if it["kind"] != "element":
         return []
     out = []
-    for r in it["element"]["refs"]:
+    # la voix (`voices`) ne vient que si on la demande : les outils lisent `refs` comme des images
+    extra = (it["element"].get("voices") or []) if (roles and "voice" in roles) else []
+    for r in it["element"]["refs"] + extra:
         if roles and r.get("role") not in roles:
             continue
         out.append((path_of(it, r["file"]), r))
@@ -333,6 +368,8 @@ def public(it: dict) -> dict:
         el = dict(it["element"])
         el["refs"] = [{**r, "url": base + r["file"], "thumb_url": base + r["thumb"] if r.get("thumb") else base + r["file"]}
                       for r in it["element"]["refs"]]
+        if it["element"].get("voices"):
+            el["voices"] = [{**v, "url": base + v["file"]} for v in it["element"]["voices"]]
         out["element"] = el
     return out
 

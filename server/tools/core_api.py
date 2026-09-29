@@ -92,8 +92,8 @@ def el_create(req):
 def el_add_ref(req, item_id):
     d = req.json()
     src = _item_or_404(d.get("item", ""))
-    if src["kind"] != "image":
-        raise HttpError(400, "une référence est une image")
+    if src["kind"] not in ("image", "audio"):
+        raise HttpError(400, "une référence est une image, ou un son pour la voix")
     try:
         it = library.add_ref(item_id, library.path_of(src), d.get("role", ""), d.get("label", ""), src["id"])
     except KeyError as e:
@@ -167,7 +167,8 @@ def cf_import(req):
         if not rel or not isinstance(rel, str) or ".." in rel:
             return
         ext = Path(rel).suffix.lower() or ".png"
-        if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+        # des images ; pour la voix, un son
+        if ext not in (".png", ".jpg", ".jpeg", ".webp") and not (role == "voice" and ext in library.AUDIO_EXT):
             return
         dest = tmp / f"{len(refs):02d}{ext}"
         try:
@@ -207,6 +208,22 @@ def _walk_cf(c: dict, fetch) -> None:
         for ex in ((cos.get("presentation") or {}).get("panels") or {}).get("expressions") or []:
             if isinstance(ex, dict):
                 fetch(ex.get("file"), "expression", ex.get("label") or ex.get("id") or "expression")
+    # sa voix, quand il en a une : elle va dans `element.voices` (library._add_voice)
+    fetch(_cf_voice(c.get("voice")), "voice", "voix")
+
+
+def _cf_voice(voice) -> str | None:
+    """Le fichier de la voix choisie, lu comme le studio le lit
+    (Character_Factory/factory/studio.py, `_voice_file`) : `locked` est un
+    chemin, ou le numéro d'une proposition de `candidates`."""
+    if not isinstance(voice, dict) or not voice.get("locked"):
+        return None
+    locked = voice["locked"]
+    if str(locked).isdigit():
+        cands = voice.get("candidates") or []
+        i = int(locked)
+        return (cands[i - 1] or {}).get("file") if 1 <= i <= len(cands) and isinstance(cands[i - 1], dict) else None
+    return str(locked)
 
 
 def _cf_description(c: dict) -> str:
