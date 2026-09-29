@@ -7,7 +7,7 @@
 // Zoom : alt + molette (ou ctrl + molette), ancré sous le pointeur — comme
 // la timeline des voix du Studio de Movie Analysis (voix.js, vxZoome).
 
-import { el, href } from '../commun/shell.js';
+import { el, href, ITEM_MIME } from '../commun/shell.js';
 import * as M from './model.js';
 
 export const HEAD = 124;           // la tête de piste, collée à gauche (même largeur que .tl-hd)
@@ -218,7 +218,7 @@ export class Timeline {
     // poser depuis le chutier ou la source (glisser-déposer HTML, MDN) ou des fichiers du disque
     this.lanes.addEventListener('dragover', (e) => {
       const types = [...(e.dataTransfer?.types || [])];
-      if (!types.includes('application/x-sr-item') && !types.includes('Files')) return;
+      if (!types.includes(ITEM_MIME) && !types.includes('Files')) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
       const lane = e.target.closest('.tl-lane');
@@ -250,7 +250,8 @@ export class Timeline {
       this.dropAt = null;
       const mode = (e.ctrlKey || e.metaKey) ? 'insert' : 'overwrite';
       if (e.dataTransfer.files && e.dataTransfer.files.length) { this.app.dropFiles([...e.dataTransfer.files], track, frame, mode); return; }
-      const raw = e.dataTransfer.getData('application/x-sr-item');
+      // une vignette de ce chutier, de la source, d'une autre page ou du sélecteur (dragItem du socle)
+      const raw = e.dataTransfer.getData(ITEM_MIME);
       if (!raw) return;
       try { this.app.placeItem(JSON.parse(raw), track, frame, mode); } catch { /* */ }
     });

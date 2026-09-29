@@ -11,7 +11,7 @@
 // Envoi depuis un autre outil : montage/?add=<id> pose l'objet au bout de
 // la piste cible du montage ouvert (le dernier ouvert, sinon un nouveau).
 
-import { mountHeader, api, jobs, el, $, $$, toast, href, uploadFile, dropAnywhere, fmtDate, stateFr } from '../commun/shell.js';
+import { mountHeader, api, jobs, el, $, $$, toast, href, uploadFile, dropAnywhere, dropZone, dragItem, ITEM_MIME, fmtDate, stateFr } from '../commun/shell.js';
 import * as M from './model.js';
 import { Program, Source } from './player.js';
 import { Timeline } from './timeline.js';
@@ -321,30 +321,41 @@ function paintBin() {
     return;
   }
   box.replaceChildren(...S.bin.map((it) => {
-    const row = el('div', { class: 'bi' + (it.id === cur ? ' on' : ''), draggable: 'true', 'data-id': it.id, title: `${it.title}\n${itemMeta(it)}\ndouble-clic : dans la source · glisser : sur la timeline`,
+    const row = el('div', { class: 'bi' + (it.id === cur ? ' on' : ''), 'data-id': it.id, title: `${it.title}\n${itemMeta(it)}\ndouble-clic : dans la source · glisser : sur la timeline, la source, une autre page`,
       ondblclick: () => openSource(it), onclick: () => openSource(it) },
       el('span', { class: 'th' + (it.kind === 'audio' ? ' audio' : ''), style: it.thumb_url ? { backgroundImage: `url("${href(it.thumb_url)}")` } : null }),
       el('span', { class: 'tx' }, el('b', {}, it.title || it.id), el('small', {}, itemMeta(it))),
       used.has(it.id) ? el('span', { class: 'used', title: 'déjà dans ce montage' }) : null);
-    row.addEventListener('dragstart', (e) => startDrag(e, it, 0, it.duration || 0));
+    // la vignette se glisse comme partout dans le portail (dragItem, ITEM_MIME) ;
+    // on retient en plus sa durée pour l'ombre posée sur la timeline
+    dragItem(row, it);
+    row.addEventListener('dragstart', () => markDrag(it, 0, it.duration || 0, 'bin'));
     row.addEventListener('dragend', () => { S.dragging = null; });
     return row;
   }));
 }
 
-function startDrag(e, it, tin, tout) {
+// ce qu'on glisse depuis cette page : sa longueur sur la timeline, d'où il part
+function markDrag(it, tin, tout, from) {
   const frames = it.kind === 'image' ? Math.round(S.p ? S.p.settings.still * fps() : 125)
     : Math.max(1, Math.round(((tout || it.duration || 5) - (tin || 0)) * (S.p ? fps() : 25)));
-  S.dragging = { id: it.id, kind: it.kind, frames };
-  e.dataTransfer.setData('application/x-sr-item', JSON.stringify({ id: it.id, in: tin, out: tout }));
-  e.dataTransfer.setData('text/plain', it.title || it.id);
-  e.dataTransfer.effectAllowed = 'copy';
+  S.dragging = { id: it.id, kind: it.kind, frames, from };
 }
 
+// la source se glisse avec ses points d'entrée et de sortie (même type que dragItem)
+function startDrag(e, it, tin, tout) {
+  markDrag(it, tin, tout, 'source');
+  e.dataTransfer.setData(ITEM_MIME, JSON.stringify({ id: it.id, kind: it.kind, title: it.title, thumb_url: it.thumb_url, in: tin, out: tout }));
+  if (it.url) e.dataTransfer.setData('text/uri-list', href(it.url));
+  e.dataTransfer.effectAllowed = 'copyMove';
+}
+
+// un fichier du disque, déposé où que ce soit dans le montage : catégorie
+// Upload de la bibliothèque, entré par le montage (seul l'export garde `montage`)
 async function uploadMany(files) {
   const out = [];
   for (const f of files) {
-    try { toast(`dépôt de ${f.name}…`, 1500); const it = await uploadFile(f, { tool: 'montage' }); S.items.set(it.id, it); out.push(it); }
+    try { toast(`dépôt de ${f.name}…`, 1500); const it = await uploadFile(f, { tool: 'upload', via: 'montage' }); S.items.set(it.id, it); out.push(it); }
     catch (e) { toast(`${f.name} : ${e.message}`); }
   }
   if (out.length) { toast(`${out.length} fichier${out.length > 1 ? 's' : ''} dans la bibliothèque`); loadBin(); }
@@ -425,14 +436,19 @@ async function placeItem(desc, tid, frame, mode = 'overwrite') {
   return clip;
 }
 
-async function appendItem(id) {
+async function appendItem(id, marks = {}) {
+  if (!S.p) return toast('ouvrez d’abord un montage');
   await ensureItems([id]);
   const it = itemOf(id);
   if (!it) return toast('objet introuvable : ' + id);
   const tid = it.kind === 'audio' ? S.target.audio : S.target.video;
   const end = M.trackClips(S.p, tid).reduce((m, c) => Math.max(m, M.clipEnd(c)), 0);
-  const c = await placeItem({ id, in: 0, out: it.duration || 0 }, tid, end);
-  if (c) { toast(`« ${it.title} » ajouté au montage « ${S.p.name} »`); program.seekFrame(c.start); openSource(it); }
+  const c = await placeItem({ id, in: marks.in || 0, out: marks.out || it.duration || 0 }, tid, end);
+  if (c) {
+    toast(`« ${it.title} » ajouté au montage « ${S.p.name} »`);
+    program.seekFrame(c.start);
+    if (!source.item || source.item.id !== it.id) openSource(it);
+  }
 }
 
 // ── le programme ────────────────────────────────────────────
@@ -1037,6 +1053,41 @@ function wire() {
   $('#bin-up').onclick = () => $('#bin-file').click();
   $('#bin-file').addEventListener('change', async (e) => { await uploadMany([...e.target.files]); e.target.value = ''; });
   dropAnywhere((files) => uploadMany(files));
+
+  // Tout bloc qui attend un asset prend un dépôt (dropZone du socle) : un
+  // fichier du disque (bibliothèque, catégorie Upload, via montage) ou une
+  // vignette glissée d'une autre page ou du sélecteur (ITEM_MIME). Les pistes
+  // ont le leur (timeline.js) : elles posent à l'endroit du dépôt.
+  const MEDIA = ['video', 'image', 'audio'];
+  const own = (node, from) => {       // ce qui part d'un bloc n'y retombe pas
+    for (const ev of ['dragenter', 'dragover', 'drop']) {
+      node.addEventListener(ev, (e) => { if (S.dragging && S.dragging.from === from) e.stopImmediatePropagation(); }, true);
+    }
+  };
+  const bin = $('.bin');
+  own(bin, 'bin');
+  dropZone(bin, { kinds: MEDIA, via: 'montage', onitems: (items) => {
+    for (const it of items) S.items.set(it.id, it);
+    if (S.binQ || (S.binKind && !items.every((i) => i.kind === S.binKind))) {    // qu'on le voie dans la liste
+      S.binQ = ''; $('#bin-q').value = ''; S.binKind = '';
+      $$('#bin-kinds .tb').forEach((b, i) => b.classList.toggle('on', i === 0));
+    }
+    loadBin();
+    openSource(items[items.length - 1]);
+  } });
+  own($('#src'), 'source');
+  dropZone($('#src'), { kinds: MEDIA, multiple: false, via: 'montage', onitems: ([it]) => { loadBin(); openSource(it); } });
+  // sur le programme : au bout de la piste cible (la source y garde ses points d'entrée et de sortie)
+  $('#prg').addEventListener('drop', (e) => {
+    if (!S.dragging || S.dragging.from !== 'source') return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    $('#prg').classList.remove('drop-on');
+    try { const d = JSON.parse(e.dataTransfer.getData(ITEM_MIME)); appendItem(d.id, d); } catch { /* */ }
+  }, true);
+  dropZone($('#prg'), { kinds: MEDIA, via: 'montage', onitems: async (items) => {
+    for (const it of items) { S.items.set(it.id, it); await appendItem(it.id); }
+    loadBin();
+  } });
   document.addEventListener('sr:job', (e) => { if (e.detail && e.detail.state === 'done') loadBin(); });
   addEventListener('hashchange', () => { const id = location.hash.slice(1); if (id && (!S.p || S.p.id !== id)) openProject(id).catch((er) => toast(er.message)); });
   addEventListener('resize', () => { if (S.p) timeline.render(); });
