@@ -49,7 +49,10 @@ Le contrat entre outils : `docs/ARCHITECTURE.md`. Les études : `docs/etudes/`.
 
 ## En cours au moment de la coupure
 
-- **ODIO, deuxième tour** (agent parti à 11 h) : les 11 remarques de Cal —
+- **ODIO, deuxième tour : FAIT et en ligne (commit 194ae62, 586/586)** ; restent
+  à relire par Cal : la table FACETTES de `musique/banc.js`, le calage au tempo
+  qui change la hauteur (pas d'étirement), et les cinq teintes des lanes
+  d'ODIO_01 (remplacées par des jetons voisins). Pour mémoire, la liste livrée —
   panneau gauche repliable, pas de sélection de texte sauf renommer au
   double-clic, tap tempo, en-tête qui ne bouge plus, poignée gauche = rogner le
   début, raccourcis d'Ableton Live, rack sous l'arrangement (panneaux
