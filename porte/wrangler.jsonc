@@ -28,7 +28,7 @@
     "binding": "ASSETS",
     "run_worker_first": [
       "/api/*", "/library/*", "/character/api/*", "/character/files/*", "/character/v1/*", "/analyse/runs/*",
-      "/pont/*", "/agents/*"
+      "/pont/*", "/agents/*", "/invitation", "/invitation/*"
     ]
   },
 
@@ -38,7 +38,13 @@
   //                 (Zero Trust → Access controls → Applications → l'application → Configure → Additional settings)
   "vars": {
     "TEAM_DOMAIN": "https://nirvalab.cloudflareaccess.com",
-    "POLICY_AUD": "1bf6d877f2f6454c6693e85e9c60648dfd148793914ce22447cb04da5c38ff90"
+    "POLICY_AUD": "1bf6d877f2f6454c6693e85e9c60648dfd148793914ce22447cb04da5c38ff90",
+    // PORTE_MODE : "access" (tout le nom d'hôte derrière Cloudflare Access, e-mails) ou "code" (l'adresse est publique ;
+    // code d'invitation puis pseudo, jugés par le portail en porte.mode = "code" ; pour tous, Cal compris : aucun jeton
+    // Access lu). Décisions de Cal du 29/09 : « un login simple genre su007 », puis « virer » Access → "code".
+    // TEAM_DOMAIN et POLICY_AUD ne servent qu'en "access".
+    // docs/etudes/cloudflare.md, « La porte par code ». Changer : bash tools/porte.sh remplis mode <code|access>.
+    "PORTE_MODE": "code"
   },
 
   // La bibliothèque publiée : wrangler r2 bucket create showrunner-bibliotheque (avant le premier déploiement).
@@ -62,8 +68,11 @@
   // Limite de débit par e-mail sur ce qui écrit : 30 par minute, compté par lieu Cloudflare (pas global).
   // namespace_id : un nombre choisi, unique dans le compte. Si le déploiement la refuse, retirer ce bloc (le Worker
   // s'en passe : if (env.LIMITE)).
+  // ESSAIS (porte « code ») : les codes d'invitation et les pseudos tapés, 10 par minute et par adresse
+  // (https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/ : période de 10 ou 60 s).
   "ratelimits": [
-    { "name": "LIMITE", "namespace_id": "8790", "simple": { "limit": 30, "period": 60 } }
+    { "name": "LIMITE", "namespace_id": "8790", "simple": { "limit": 30, "period": 60 } },
+    { "name": "ESSAIS", "namespace_id": "8791", "simple": { "limit": 10, "period": 60 } }
   ],
 
   // Plus tard (étude, § 6) : l'agent de l'étage Identité, un Durable Object par personnage.

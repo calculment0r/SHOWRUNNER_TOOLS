@@ -1,9 +1,12 @@
 // MOVIE ANALYSIS — l'accueil de l'outil dans le portail : les PROJETS, comme la home de MOVIE_ANALYSE (index.html :
 // « Projets », « Nouveau projet », une carte par projet avec ses étapes Dépouillement et Voix), dans la grammaire des
 // autres outils du portail (Image, Vidéo : commun/fil.css) — le fil en grille ou en liste, un filtre, une recherche, la
-// taille des vignettes ; au survol Studio, Voix et « ⋯ » ; le même menu au clic droit (commun/menu.js) ; un clic ouvre
-// la visionneuse plein écran, qui porte la page projet de MOVIE_ANALYSE (projet/index.html : son dépouillement, son labo
-// des voix, renommer, supprimer, restaurer) ; la molette et les flèches passent au projet voisin, Échap ferme.
+// taille des vignettes ; au survol « Voir le film », Voix et « ⋯ » ; le même menu au clic droit (commun/menu.js).
+// Un clic sur la carte (ou Entrée) OUVRE LE PROJET — Cal, 29/09 : « je clique sur un projet existant, et ça ouvre la
+// vidéo... il faut ouvrir direct le projet » : sa page (Studio · Casting · Dépouillement) quand il en a une, sinon sa
+// fiche. La visionneuse plein écran (la vidéo, et la fiche : la page projet de MOVIE_ANALYSE, projet/index.html — son
+// dépouillement, son labo des voix, renommer, supprimer, restaurer ; la molette et les flèches passent au projet voisin,
+// Échap ferme) est le geste second : ▶ au survol, « Voir le film » du menu, le plein écran de la barre, ?projet=<id>.
 //
 // Les projets viennent du serveur (/api/analyse/projets) : nos films (analyse/analyses/), les analyses faites d'ici, les
 // projets créés dans le portail et ceux du dépôt partagé de MOVIE_ANALYSE, fusionnés comme le fait son commun/projets.js.
@@ -88,10 +91,14 @@ function pourquoiPasStudio(p) {
   if (d.j) return `le dépouillement s’est arrêté (${d.etat}) : « Relancer » reprend où il en était`;
   return 'pas encore de dépouillement : « Lancer le dépouillement » (sa fiche, ou ⋯)';
 }
-const lienDe = (p) => href('analyse/?projet=' + encodeURIComponent(p.id));
 const arDe = (p) => Math.max(0.42, Math.min(2.6, p.largeur && p.hauteur ? p.largeur / p.hauteur : 16 / 9));
 const dateDe = (p) => (p.sorte === 'film' ? 'du dépôt MOVIE_ANALYSE' : p.cree ? 'créé ' + fmtDate(p.cree) : fmtDate(p.date));
 const va = (u) => { if (u) location.href = href(u); };
+// ouvrir LE PROJET (le clic sur sa carte, Entrée) : sa page — Studio, Casting, Dépouillement — quand il en a une ;
+// sinon (à dépouiller, en cours, en échec) sa fiche, qui lance, suit ou relance le dépouillement
+const ouvreProjet = (p) => (p.studio ? va(p.studio) : ouvre(p.id));
+// le lien d'un projet : ce que le clic ouvre (sa page, sinon ?projet=<id>, sa fiche)
+const lienDe = (p) => href(p.studio || 'analyse/?projet=' + encodeURIComponent(p.id));
 
 // les étapes d'une carte, celles de la home de MOVIE_ANALYSE (index.html : etape('Dépouillement', faite), etape('Voix', …))
 function etapes(p) {
@@ -113,20 +120,19 @@ function progres(p) {
 
 // ── les gestes : au survol, dans le menu « ⋯ », au clic droit ──
 function gestes(p) {
-  const pas = pourquoiPasStudio(p);
-  const b = (k, title, fn, why = '') => el('button', { class: 'fl-ib', type: 'button', 'aria-label': title,
-    title: why ? `${title} — ${why}` : title, 'aria-disabled': why ? 'true' : null,
-    onclick: (e) => { e.stopPropagation(); if (why) { toast(why, 5000); return; } fn(); } }, ico(k));
+  const b = (k, title, fn) => el('button', { class: 'fl-ib', type: 'button', 'aria-label': title, title,
+    onclick: (e) => { e.stopPropagation(); fn(); } }, ico(k));
   return el('div', { class: 'fl-acts' },
-    b('play', 'Ouvrir le Studio', () => va(p.studio), pas),
+    // le geste second : la vidéo (et la fiche), dans la visionneuse — le clic sur la carte ouvre le projet
+    p.media ? b('play', 'Voir le film', () => ouvre(p.id)) : null,
     b('voix', 'Le labo des voix (diarisation)', () => va(p.labo)),
     kebab(() => entrees(p), { cls: 'fl-ib', title: 'plus d’actions' }));
 }
 function entrees(p) {
   const d = depDe(p), pas = pourquoiPasStudio(p), j = d.j;
   return tidy([
-    { label: 'Ouvrir', icon: '⤢', sub: 'la fiche', onclick: () => ouvre(p.id) },
-    { label: 'Studio', icon: '▶', disabled: !!pas, why: pas, onclick: () => va(p.studio) },
+    { label: 'Ouvrir', icon: '⤢', sub: p.studio ? 'le Studio' : 'la fiche', onclick: () => ouvreProjet(p) },
+    p.studio ? { label: p.media ? 'Voir le film' : 'La fiche', icon: '▶', sub: p.media ? 'et sa fiche' : '', onclick: () => ouvre(p.id) } : null,
     { label: 'Casting', icon: '◎', disabled: !!pas, why: pas, onclick: () => va(p.casting) },
     { label: 'Dépouillement', icon: '▤', disabled: !!pas, why: pas, onclick: () => va(p.depouillement) },
     { label: 'Labo des voix', icon: '↗', sub: 'diarisation', onclick: () => va(p.labo) },
@@ -216,8 +222,9 @@ function hoverPlay(zone, v, url) {
 }
 function carteGrille(p) {
   const ar = arDe(p);
-  const open = el('button', { class: 'fl-open', type: 'button', title: 'ouvrir la fiche : ' + p.nom, 'aria-label': 'ouvrir ' + p.nom,
-    onclick: () => ouvre(p.id) }, vignette(p), el('span', { class: 'fl-tag' }, BADGE(p)));
+  // un bouton, pas un lien : Entrée l'ouvre aussi ; le bouton du milieu n'ouvre pas d'onglet (règle de Cal : il déplace)
+  const open = el('button', { class: 'fl-open', type: 'button', title: (p.studio ? 'ouvrir le projet : ' : 'ouvrir la fiche : ') + p.nom,
+    'aria-label': 'ouvrir ' + p.nom, onclick: () => ouvreProjet(p) }, vignette(p), el('span', { class: 'fl-tag' }, BADGE(p)));
   const cap = el('div', { class: 'ma-cap' },
     el('div', { class: 'ma-cap-l' }, el('b', {}, p.nom), p.duree ? el('span', { class: 'ma-cap-d' }, fmtDur(p.duree)) : null),
     el('span', { class: 'ma-cap-m' }, p.meta || ''), etapes(p), progres(p));
@@ -252,8 +259,9 @@ function ligne(p) {
   let media;
   if (p.media) { media = el('video', { loop: true, playsinline: true, preload: 'none', poster: im ? href(im) : null }); media.muted = true; }
   else media = vignette(p);
-  const open = el('button', { class: 'fl-open', type: 'button', title: 'ouvrir la fiche', 'aria-label': 'ouvrir ' + p.nom, onclick: () => ouvre(p.id) },
-    media, p.media ? el('span', { class: 'fl-play' }, ico('play')) : null);
+  // le survol fait défiler la vidéo, muette ; le clic ouvre le projet (▶ « Voir le film », dans les gestes, la montre)
+  const open = el('button', { class: 'fl-open', type: 'button', title: p.studio ? 'ouvrir le projet' : 'ouvrir la fiche', 'aria-label': 'ouvrir ' + p.nom,
+    onclick: () => ouvreProjet(p) }, media);
   const stage = el('div', { class: 'fl-stage' }, open, gestes(p));
   if (p.media) hoverPlay(stage, media, p.media);
   const info = el('div', { class: 'fl-info ma-info' },
@@ -497,7 +505,7 @@ function peintMedia(p) {
   else {
     const d = depDe(p);
     m = el('div', { class: 'ma-fv-vide' }, el('b', {}, d.etat === 'à faire' ? 'À commencer' : d.etat),
-      el('p', {}, d.etat === 'à faire' ? 'Pas encore de dépouillement : la chaîne le fait sur DGX2, à partir d’une vidéo de la bibliothèque ou de YouTube.' : d.message || ''),
+      d.etat !== 'à faire' && d.message ? el('p', {}, d.message) : null,
       d.etat === 'à faire' ? el('button', { class: 'tb ghost', type: 'button', onclick: () => ouvreNouvelle(p) }, 'Lancer le dépouillement') : null);
   }
   V.mediaBox.replaceChildren(m);
@@ -523,8 +531,8 @@ function peintV() {
   const cmd = "ssh dgx2 'mkdir -p ~/reelbench/runs/" + p.id + ' && cd ~/reelbench/runs/' + p.id
     + ' && SKILL=$HOME/SHOWRUNNER_TOOLS/analyse/chaine bash $HOME/SHOWRUNNER_TOOLS/analyse/chaine/analyse.sh <video.mp4> "'
     + p.nom.replace(/["'\\$\u0060]/g, '') + "\" --lang fr --sceneflow'";
+  // (Cal, 29/09 : « calmer les messages redondants d'aide et d'explication » — la fiche dit l'état, pas ce qu'est un dépouillement)
   const dep = sec('Dépouillement', '01',
-    el('p', { class: 'ma-quoi' }, 'Plan par plan : coupes et durées, personnages identifiés au visage, silhouettes, échelle et mouvement de caméra — et les voix : qui dit quoi, une piste par personnage, chaque mot à son instant, réattribuable à la main.'),
     etapes(p), progres(p),
     d.etat === 'fait' ? el('dl', { class: 'kv' },
       el('dt', {}, 'plans'), el('dd', {}, nb(c.plans)),
@@ -544,18 +552,14 @@ function peintV() {
     d.j && !(d.j.state === 'queued' || d.j.state === 'running') ? el('div', { class: 'fv-row' }, el('button', { class: 'tb ghost', type: 'button', onclick: () => jobs.retry(d.j.id).catch((e) => toast(e.message)) }, 'Relancer')) : null);
   // 02 — le labo des voix (la diarisation seule), qui s'ouvre sur ce projet
   const lab = sec('Labo des voix', '02',
-    el('p', { class: 'ma-quoi' }, 'La diarisation seule, pour calculer ou recalculer les voix sur le DGX (Nemotron, 8 voix), essayer une autre latence, le direct au micro. Son résultat nourrit le dépouillement.'),
     el('div', { class: 'ma-etapes' }, el('span', { class: 'ma-etape ' + (v.etat === 'fait' ? 'faite' : '') }, el('i'),
       v.etat === 'fait' ? 'voix calculées — déjà dans le dépouillement' : p.sorte === 'projet' ? 'déposer le son ou la vidéo dans le labo' : 'voix pas encore calculées : le dépouillement suit la chaîne')),
     el('div', { class: 'fv-row' }, el('a', { class: 'tb ghost', href: href(p.labo) }, 'Ouvrir le labo')));
-  // où vit ce qu'on y change
-  const partage = S.partage || {};
-  const ou = sec('Où c’est gardé', '03', el('p', { class: 'ma-quoi' },
-    p.sorte === 'film'
-      ? 'Ses corrections : le fichier du dépôt, puis le dépôt partagé de MOVIE_ANALYSE (lu), puis le portail — ce qu’on corrige ici y est enregistré, pour tous ceux qui ouvrent le portail : le dépôt partagé refuse l’écriture depuis cette adresse.'
-      : p.origine === 'partage' ? 'Créé depuis la home de MOVIE_ANALYSE : lu dans son dépôt partagé. Ce qu’on en change ici (nom, suppression) est gardé dans le portail.'
-        : 'Enregistré dans le portail, sur DGX2 — le même pour tous ceux qui l’ouvrent.'),
-  partage.ecriture ? el('p', { class: 'lbl', title: partage.ecriture.source }, partage.ecriture.source) : null);
+  // où vit ce qu'on y change — seulement quand ce n'est pas l'évidence (le portail) : nos films et les projets du dépôt
+  // partagé, qui refuse l'écriture d'ici (le détail : l'encadré C de l'accueil)
+  const ou = p.sorte === 'film' || p.origine === 'partage' ? sec('Où c’est gardé', '03', el('p', { class: 'ma-quoi' },
+    p.sorte === 'film' ? 'Ses corrections sont gardées dans le portail : le dépôt partagé de MOVIE_ANALYSE est lu, il refuse l’écriture d’ici.'
+      : 'Créé depuis MOVIE_ANALYSE (dépôt partagé, lu) ; ce qu’on en change ici est gardé dans le portail.')) : null;
   const head = el('div', { class: 'fv-head' }, el('span', { class: 'fl-badge' }, BADGE(p)), el('span', { class: 'lbl' }, dateDe(p)), el('span', { class: 'sp' }),
     el('button', { class: 'fl-ib', type: 'button', title: 'fermer (Échap)', 'aria-label': 'fermer', onclick: ferme }, ico('close')));
   const actes = el('div', { class: 'fv-acts' },
@@ -586,14 +590,16 @@ function peintPartage() {
   $('#partage-cnt').textContent = pt.etat === 'lu' ? 'lu' : 'injoignable';
   const ligneEtat = (cls, txt, sous) => el('div', { class: 'ma-l' }, el('span', { class: 'pill ' + cls }, el('i'), el('span', {}, txt)), sous ? el('p', { class: 'ma-note' }, sous) : null);
   const e = pt.ecriture || {};
+  // (Cal, 29/09 : « calmer les messages redondants ») les voyants seuls quand tout va ; une phrase quand ça ne va pas ;
+  // le pourquoi et le remède sous « le détail »
   box2.replaceChildren(
     ligneEtat(pt.etat === 'lu' ? 'on' : 'err', pt.etat === 'lu' ? `lu par le portail · ${fmtDate(pt.lu)}` : 'le portail ne le lit pas',
-      pt.etat === 'lu' ? (pt.n ? `${pt.n} projet${pt.n > 1 ? 's' : ''} partagé${pt.n > 1 ? 's' : ''} (projets.json), fusionnés ici` : 'aucun projet créé depuis la home de MOVIE_ANALYSE (projets.json est vide) : ses projets sont nos films')
-        : pt.erreur),
-    navigateur ? ligneEtat(navigateur.ok ? 'on' : 'err', navigateur.ok ? 'lu par ce navigateur' : 'ce navigateur ne le lit pas', navigateur.texte)
+      pt.etat === 'lu' ? (pt.n ? `${pt.n} projet${pt.n > 1 ? 's' : ''} partagé${pt.n > 1 ? 's' : ''}, fusionné${pt.n > 1 ? 's' : ''} ici` : '') : pt.erreur),
+    navigateur ? ligneEtat(navigateur.ok ? 'on' : 'err', navigateur.ok ? 'lu par ce navigateur' : 'ce navigateur ne le lit pas', navigateur.ok ? '' : navigateur.texte)
       : ligneEtat('work', 'ce navigateur : on vérifie', ''),
-    ligneEtat('err', 'écriture refusée depuis cette adresse', e.pourquoi),
+    ligneEtat('err', 'écriture refusée depuis cette adresse', ''),
     el('details', { class: 'ma-cmd' }, el('summary', { class: 'lbl' }, 'le détail'),
+      e.pourquoi ? el('p', { class: 'ma-note' }, el('b', {}, 'Pourquoi : '), e.pourquoi) : null,
       el('p', { class: 'ma-note' }, el('b', {}, 'Où : '), e.source), el('p', { class: 'ma-note' }, el('b', {}, 'Ici : '), e.ici, '.'),
       el('p', { class: 'ma-note' }, el('b', {}, 'Pour y écrire aussi : '), e.remede, '.'),
       el('p', { class: 'ma-note' }, el('code', {}, base))));
@@ -622,15 +628,16 @@ async function chargeDiar() {
   try { d = await api('analyse/diarisation'); } catch (e) { b.replaceChildren(el('p', { class: 'warn' }, e.message)); return; }
   const ouvrir = el('div', { class: 'row' }, el('a', { class: 'tb ghost sm', href: './diarisation/' }, 'Ouvrir le labo'),
     el('a', { class: 'tb ghost sm', href: './diarisation/?projet=getaround' }, 'La démo Getaround'));
-  $('#diar-cnt').textContent = d.up ? (d.pret ? 'prête' : (d.phase || 'répond')) : 'ne répond pas';
+  // l'état et la machine dans le titre de l'encadré (comme « La chaîne ») : pas de voyant qui le redit
+  $('#diar-cnt').textContent = d.up ? `${d.pret ? 'prête' : (d.phase || 'répond')} · ${d.machine || 'dgx1'}` : 'ne répond pas';
   if (d.up) {
-    b.replaceChildren(el('div', { class: 'ma-l' }, el('span', { class: 'pill ' + (d.pret ? 'on' : 'work') }, el('i'), el('span', {}, `${d.machine || 'dgx1'} · ${d.pret ? 'prêt' : d.phase}`))),
+    b.replaceChildren(
       el('dl', { class: 'kv' },
         el('dt', {}, 'modèle'), el('dd', {}, d.modele || '—'),
         el('dt', {}, 'voix'), el('dd', {}, nb(d.voix)),
         el('dt', {}, 'transcription'), el('dd', {}, d.transcription ? 'possible' : 'non'),
         el('dt', {}, 'file'), el('dd', {}, d.file ? `${d.file.en_cours ? 'un calcul' : 'libre'} · ${d.file.attente || 0} en attente` : '—')),
-      el('p', { class: 'ma-note' }, 'Nemotron 3 : qui parle, quand, jusqu’à huit voix. Le labo passe par le relais du portail — pas besoin de Tailscale ici.'), ouvrir);
+      ouvrir);
   } else {
     b.replaceChildren(el('div', { class: 'ma-l' }, el('span', { class: 'pill err' }, el('i'), el('span', {}, 'le service ne répond pas'))),
       el('p', { class: 'ma-note' }, 'Le portail n’atteint pas ', el('code', {}, d.url), ` (${d.why}). Le labo s’ouvre quand même : la démo Getaround, un résultat gardé, les exports.`),
@@ -649,8 +656,8 @@ async function chargeChaine() {
   const retard = rb.compare && (rb.differe.length || rb.absents.length)
     ? `${rb.chemin} est en retard sur cette copie : ${rb.differe.length} fichier(s) diffèrent (${rb.differe.join(', ')}), ${rb.absents.length} manquent`
     : rb.compare ? `${rb.chemin} : identique à cette copie` : '';
+  // (l'état « prête · DGX2 » est dans le titre de l'encadré : pas de voyant qui le redit)
   b.replaceChildren(
-    el('div', { class: 'ma-l' }, el('span', { class: 'pill ' + (c.pret ? 'on' : 'err') }, el('i'), el('span', {}, `${c.machine} · ${c.pret ? 'prête' : 'incomplète'}`))),
     el('ul', { class: 'ma-outils' }, ...c.outils.map((o) => el('li', { class: o.ok ? 'ok' : o.requis ? 'err' : 'opt', title: o.chemin + (o.pour ? ' — ' + o.pour : '') },
       el('i'), el('span', {}, o.nom), el('span', { class: 'lbl' }, o.ok ? 'là' : o.requis ? 'manque' : 'absent')))),
     el('details', { class: 'ma-cmd' }, el('summary', { class: 'lbl' }, 'le détail'),
@@ -658,8 +665,7 @@ async function chargeChaine() {
         el('dt', {}, 'voie'), el('dd', {}, `analyse, une à la fois${c.scope ? ' · mémoire plafonnée (systemd-run)' : ' · nice seul'}`),
         el('dt', {}, 'chaîne'), el('dd', {}, c.skill + (c.copie_du_depot ? ' (la copie du dépôt MOVIE_ANALYSE)' : '')),
         el('dt', {}, 'travail'), el('dd', {}, c.runs + '/<nom>/'),
-        retard ? el('dt', {}, 'reelbench') : null, retard ? el('dd', {}, retard) : null),
-      el('p', { class: 'ma-note' }, 'La chaîne tourne en local, rien ne part chez un fournisseur. Chaque étape reprend ce qui existe déjà : relancer une analyse arrêtée repart de là où elle en était.')));
+        retard ? el('dt', {}, 'reelbench') : null, retard ? el('dd', {}, retard) : null)));
   const langs = $('#nv-langue');
   langs.replaceChildren(...Object.entries(c.langues || { fr: 'français' }).map(([k, v]) =>
     el('button', { class: 'opt' + (k === S.langue ? ' on' : ''), type: 'button', onclick: () => { S.langue = k; $$('.opt', langs).forEach((b2) => b2.classList.toggle('on', b2.textContent.startsWith(v))); } }, v)));

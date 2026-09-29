@@ -56,6 +56,8 @@
 
 /* ── le fil : ce que fil.css ne fait pas pour une carte de projet ── */
 .ma-fil { min-width: 0; }
+/* le clic sur une carte ouvre le projet, pas une vue agrandie : la main, pas la loupe de fil.css */
+.ma-fil .fl-open { cursor: pointer; }
 .fl-i.plein svg { fill: currentColor; stroke: none; }
 .ma-card .fl-open img { transition: opacity .15s; }
 .ma-card.retire .fl-open img, .fl-row.retire .fl-stage { opacity: .5; }

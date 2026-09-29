@@ -13,11 +13,6 @@
 @media (max-width: 700px) { .img-page { padding: var(--s3) var(--s3) 0; } }
 
 .hint { margin: 0; font-size: 11px; line-height: 1.5; color: var(--ink3); }
-/* une raison, en prose : pourquoi c'est éteint, ce qui a été ajouté */
-.reason {
-  margin: 0; padding: 7px 10px; border-radius: var(--r2); background: var(--amb-bg); box-shadow: inset 0 0 0 1px var(--line-amb);
-  font-size: 11px; line-height: 1.5; color: var(--amb);
-}
 .banner {
   display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; padding: 7px 12px; margin-bottom: 2px; border-radius: var(--r2);
   background: var(--amb-bg); box-shadow: inset 0 0 0 1px var(--line-amb); font-size: 11px; color: var(--ink2);
@@ -56,7 +51,6 @@
 }
 .pb-ref.add { display: grid; place-items: center; color: var(--ink3); font-family: var(--f-mono); font-size: 18px; box-shadow: inset 0 0 0 1px var(--line-gr); }
 .pb-ref.add:hover { color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }
-.pb-hint { min-width: 0; font-size: 10.5px; line-height: 1.4; color: var(--ink3); }
 .pb-mode {
   display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border-radius: var(--r2); flex: none;
   background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); font-size: 11.5px; color: var(--ink2);
@@ -133,6 +127,17 @@
 .pp-body { overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .pp-body .looks { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
 .pp-body .row .fld.seed { margin-left: 4px; }
+/* les paramètres avancés : un intitulé à gauche, les choix à droite */
+.pp-body > .row > .lbl { flex: none; min-width: 72px; }
+.pp-body .opt:disabled { opacity: .38; cursor: default; }
+.pc.adv b { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+/* le prompt envoyé : un pli, fermé par défaut */
+.pp-acc > summary { display: flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; padding: 2px 0; }
+.pp-acc > summary::-webkit-details-marker { display: none; }
+.pp-acc > summary::before { content: "▸"; font-size: 9px; color: var(--ink3); transition: transform .12s; }
+.pp-acc[open] > summary::before { transform: rotate(90deg); }
+.pp-acc[open] > summary { margin-bottom: 6px; }
+.pp-acc > summary:hover { color: var(--ink); }
 .pp-angle { flex-direction: row; flex-wrap: wrap; align-items: flex-start; gap: 18px; }
 .pp-angle .compass { flex: none; width: 230px; margin: 0; }
 .pp-angle .stack { flex: 1; min-width: 220px; gap: 10px; }

@@ -30,8 +30,21 @@
 // ainsi : un tunnel rapide, un processus voisin ou une erreur de réglage ne donnent rien.
 //
 // Secrets (npx wrangler secret put …, jamais dans ce dépôt, qui est public) : PORTE_CLE, ADMINS.
+//
+// PORTE_MODE (variable de wrangler.jsonc ; docs/etudes/cloudflare.md, « La porte par code ») :
+//   "access" (défaut) : sans jeton Access valide, 403 — l'application Access garde tout le nom d'hôte.
+//   "code"            : l'adresse est publique ; les amis entrent par un code d'invitation puis leur pseudo (le portail
+//                       juge : porte « code » de server/core/auth.py). Le Worker signe alors le rôle « code » et
+//                       l'adresse du visiteur (x-porte-qui), transmet les deux cookies du portail (sr_session,
+//                       sr_invitation) et rien d'autre ; sans l'un d'eux, il répond 401 lui-même (les robots ne vont
+//                       pas jusqu'à DGX2) ; les essais de code et de pseudo sont limités par adresse (ESSAIS).
+//                       Aucun jeton Access n'y est lu ni transmis, Cal compris (le code admin, puis nico007) :
+//                       l'application Access du nom d'hôte est à supprimer (étude, « La porte par code »).
 
-const VERSION = 'porte du 29/09/2026';
+const VERSION = 'porte du 29/09/2026 (code)';
+const COOKIES_PORTAIL = ['sr_session', 'sr_invitation'];
+const JETON_COOKIE = /^[A-Za-z0-9_-]{1,200}$/;   // secrets.token_urlsafe, empreintes hexadécimales
+const INVITATION = /^\/invitation(\/|$)/;
 const ENC = new TextEncoder();
 const DEC = new TextDecoder();
 const SANS_CORPS = new Set(['GET', 'HEAD']);
@@ -152,6 +165,15 @@ async function qui(req, env) {
   return { email, role: admins.includes(email) ? 'admin' : 'ami', jeton };
 }
 
+function cookiesPortail(req) {
+  return COOKIES_PORTAIL.map((n) => [n, cookie(req, n)]).filter(([, v]) => JETON_COOKIE.test(v))
+    .map(([n, v]) => `${n}=${v}`).join('; ');
+}
+
+// Porte « code » : qui n'a ni session ni invitation n'atteint du portail que la page d'invitation et /api/auth/…
+// (qui je suis, entrer) ; le reste, le portail le refuserait (401) : le Worker le dit sans déranger DGX2.
+const SANS_COOKIE = (chemin) => INVITATION.test(chemin) || chemin.startsWith('/api/auth/') || chemin.startsWith('/api/porte/');
+
 // Une requête qui écrit doit venir d'une page de cette adresse (audit H3 : pas de formulaire piégé ailleurs).
 function memeOrigine(req, url) {
   const site = req.headers.get('sec-fetch-site');
@@ -194,7 +216,12 @@ async function joins(req, env, ctx, nom, id, chemin, { delai } = {}) {
   const h = new Headers();
   for (const [k, v] of req.headers) if (EN_TETES_TRANSMIS.has(k)) h.set(k, v);
   for (const [k, v] of Object.entries(await signe(env, id, req.method, cible.pathname + cible.search))) h.set(k, v);
-  h.set('cf-access-jwt-assertion', id.jeton);
+  if (id.jeton) h.set('cf-access-jwt-assertion', id.jeton);
+  // porte « code » : la session et l'invitation sont les cookies du portail ; eux seuls passent (jamais CF_Authorization)
+  if (id.role === 'code') {
+    const c = cookiesPortail(req);
+    if (c) h.set('cookie', c);
+  }
   try {
     return await service.fetch(cible, {
       method: req.method, headers: h, body: corps, redirect: 'manual',
@@ -317,7 +344,8 @@ async function bibliotheque(req, env, ctx, id, chemin) {
   if (!SANS_CORPS.has(req.method)) return erreur(405, 'lecture seule');
   const [, , objet, fichier, ...reste] = chemin.split('/');
   if (reste.length || !ID_OBJET.test(objet || '') || !FICHIER.test(fichier || '')) return erreur(404, 'introuvable');
-  if (env.BIBLIO) {
+  // porte « code » : le Worker ne sait pas qui est derrière la session (le portail le sait) : pas de R2, DGX2 juge
+  if (env.BIBLIO && id.role !== 'code') {
     const droit = await peutVoir(env, id, objet);
     if (droit === false) return erreur(404, 'introuvable');   // on ne dit pas qu'il existe
     if (droit === true) {
@@ -332,7 +360,7 @@ async function bibliotheque(req, env, ctx, id, chemin) {
 // DGX éteintes : la liste de la bibliothèque vient du dernier index publié par DGX2 dans R2 (library/index.json,
 // les objets tels que library.public() les rend, avec owner_email, shared et tous), filtrée pour l'appelant.
 async function listeHorsLigne(env, id, url) {
-  const o = env.BIBLIO ? await env.BIBLIO.get('library/index.json') : null;
+  const o = env.BIBLIO && id.role !== 'code' ? await env.BIBLIO.get('library/index.json') : null;
   if (!o) return erreur(503, 'les machines dorment, et la bibliothèque n’est pas encore publiée', { machines: false });
   const index = await o.json().catch(() => ({ items: [] }));
   const sortes = (url.searchParams.get('kind') || '').split(',').filter(Boolean);
@@ -347,31 +375,58 @@ export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     const chemin = url.pathname;
-    // Déployé avant d'avoir son tag AUD (l'emplacement "<…>" de wrangler.jsonc) : aucun jeton ne passerait de toute
-    // façon (aud ≠), mais on le dit plutôt que de laisser croire à un refus d'Access.
-    if (!env.POLICY_AUD || String(env.POLICY_AUD).startsWith('<')) return erreur(503, 'la porte n’a pas encore son tag AUD (wrangler.jsonc, POLICY_AUD)');
-    let id;
-    try {
-      id = await qui(req, env);
-    } catch (e) {
-      console.log(JSON.stringify({ evenement: 'certs', raison: String((e && e.message) || e) }));
-      return erreur(503, 'la porte ne peut pas vérifier les jetons pour le moment');
+    const code = env.PORTE_MODE === 'code' && env.MODE !== 'studio';
+    // l'adresse du visiteur, telle que Cloudflare la pose (https://developers.cloudflare.com/fundamentals/reference/http-headers/)
+    const ip = req.headers.get('cf-connecting-ip') || 'inconnue';
+    let id = null;
+    if (code) {
+      // pseudo seul, pour tous (Cal, 29/09 au soir : plus de Cloudflare Access) : aucun jeton n'est lu ni transmis ;
+      // qui = l'adresse du visiteur, signée pour le portail, qui juge le code d'invitation et le pseudo
+      id = { email: ip, role: 'code' };
+    } else {
+      // Déployé avant d'avoir son tag AUD (l'emplacement "<…>" de wrangler.jsonc) : aucun jeton ne passerait de toute
+      // façon (aud ≠), mais on le dit plutôt que de laisser croire à un refus d'Access.
+      if (!env.POLICY_AUD || String(env.POLICY_AUD).startsWith('<')) return erreur(503, 'la porte n’a pas encore son tag AUD (wrangler.jsonc, POLICY_AUD)');
+      try {
+        id = await qui(req, env);
+      } catch (e) {
+        console.log(JSON.stringify({ evenement: 'certs', raison: String((e && e.message) || e) }));
+        return erreur(503, 'la porte ne peut pas vérifier les jetons pour le moment');
+      }
+      if (!id) return erreur(403, 'passe par la porte : cette adresse demande la connexion Cloudflare Access');
     }
-    if (!id) return erreur(403, 'passe par la porte : cette adresse demande la connexion Cloudflare Access');
+    if (code && !SANS_COOKIE(chemin) && !cookiesPortail(req)) return erreur(401, 'sur invitation : ouvre d’abord le lien d’invitation de Cal');
     if (!SANS_CORPS.has(req.method) && !memeOrigine(req, url)) return erreur(403, 'requête venue d’une autre page : refusée');
-    // Limite de débit par personne sur ce qui écrit (audit H4) ; le quota de GPU, lui, est tenu par la file des DGX.
+    // Les essais de code d'invitation et de pseudo, par adresse (10 par minute) : le portail les compte aussi
+    // (10 codes par 10 min et par adresse, 300 en tout), mais le Worker arrête les robots avant DGX2.
+    const essai = code && ((INVITATION.test(chemin) && (req.method === 'POST' || chemin.replace(INVITATION, '') !== ''))
+      || (req.method === 'POST' && chemin === '/api/auth/enter'));
+    if (essai && env.ESSAIS) {
+      const { success } = await env.ESSAIS.limit({ key: ip });
+      if (!success) return erreur(429, 'trop d’essais depuis cette adresse : attends une minute');
+    }
+    // Limite de débit par personne (par adresse en mode code) sur ce qui écrit (audit H4) ; le quota de GPU, lui,
+    // est tenu par la file des DGX.
     if (env.LIMITE && !SANS_CORPS.has(req.method) && !GESTE_COLLAB.test(chemin)) {
-      const { success } = await env.LIMITE.limit({ key: id.email });
+      const { success } = await env.LIMITE.limit({ key: code ? `ip:${ip}` : id.email });
       if (!success) return erreur(429, 'trop de demandes d’un coup : attends une minute');
     }
 
     try {
       if (env.MODE === 'studio') return await relaie(req, env, ctx, 'STUDIO', id, chemin);
 
-      if (chemin === '/api/porte/moi') return json({ email: id.email, role: id.role, version: VERSION });
+      if (chemin === '/api/porte/moi') {
+        return json(code ? { porte: 'code', role: 'code', version: VERSION }
+          : { porte: 'access', email: id.email, role: id.role, version: VERSION });
+      }
+      if (INVITATION.test(chemin)) {
+        return code ? await relaie(req, env, ctx, 'PORTAIL', id, chemin) : erreur(404, 'introuvable');
+      }
       if (chemin === '/api/porte/etat') return await etat(req, env, ctx, id);
       if (chemin.startsWith('/library/')) return await bibliotheque(req, env, ctx, id, chemin);
       if (VERS_PORTAIL.test(chemin)) return await relaie(req, env, ctx, 'PORTAIL', id, chemin);
+      // les ponts (plus tard) décideront selon une identité Access ; une session à code ne les atteint pas
+      if (code && chemin.startsWith('/pont/')) return erreur(403, 'les machines se pilotent depuis la page d’admin du portail');
       const pont = chemin.match(/^\/pont\/(dgx1|dgx2)\/(etat|preparer|liberer)$/);
       if (pont) return await relaie(req, env, ctx, pont[1] === 'dgx1' ? 'PONT_DGX1' : 'PONT_DGX2', id, `/pont/${pont[2]}`);
       if (chemin.startsWith('/agents/')) return erreur(501, 'les agents viendront plus tard (docs/etudes/cloudflare.md, § 6)');

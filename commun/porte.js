@@ -27,6 +27,12 @@ export async function door(me) {
   await styles();
   document.documentElement.classList.remove('sr-wait');
   if (!me) { try { me = await api('auth/me'); } catch { me = { state: 'anonymous' }; } }
+  // La porte « code » (le Worker, à l'adresse fixe) : les pages sont servies sans lui, la page d'invitation par le
+  // portail. Sans code d'invitation, on y va d'abord ; le code donné, elle ramène ici (next).
+  if (me.porte === 'code' && !me.invitation && me.state === 'anonymous') {
+    location.replace(`/invitation/?next=${encodeURIComponent(location.pathname + location.search)}`);
+    return;
+  }
   if (!box) {
     box = el('div', { class: 'porte', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'la porte du portail' });
     document.body.append(box);
@@ -145,7 +151,8 @@ export async function account(me, anchor) {
     el('p', { class: 'acct-note' }, access
       ? 'Pour revenir : ton e-mail, puis le code que Cloudflare t’envoie.'
       : adm
-        ? 'Pour revenir : retaper ce pseudo, depuis le réseau de Cal (la maison, le câble, Tailscale).'
+        ? (me.porte ? 'Pour revenir par cette adresse : le code admin, puis ce pseudo.'
+          : 'Pour revenir : retaper ce pseudo, depuis le réseau de Cal (la maison, le câble, Tailscale).')
         : 'Pour revenir, d’ici ou d’ailleurs : retaper ce pseudo.'),
     el('div', { class: 'row' },
       adm ? el('a', { class: 'tb ghost sm', href: href('admin/') }, 'La page d’admin') : null,

@@ -19,7 +19,9 @@
 <body>
 <!-- La home de MOVIE_ANALYSE (index.html : « Projets », « Nouveau projet », les cartes et leurs étapes Dépouillement / Voix)
      dans la grammaire du portail (Image, Vidéo) : le réglage à gauche, le fil à droite — grille ou liste, ⋯ et clic droit,
-     la visionneuse plein écran, qui porte la page projet de MOVIE_ANALYSE (projet/index.html). -->
+     un clic sur une carte ouvre le projet (son Studio, sinon sa fiche) ; la visionneuse plein écran (la vidéo et la fiche :
+     la page projet de MOVIE_ANALYSE, projet/index.html) est le geste second, ▶ et « Voir le film ».
+     Cal, 29/09 : « calmer les messages redondants d'aide et d'explication » — pas de phrase qui redit un bouton. -->
 <main class="ma-app">
   <aside class="ma-rail" aria-label="créer, et ce qui tourne">
     <section class="ma-box">
@@ -30,12 +32,10 @@
         <button class="tb go block" id="np-ok" type="submit">Créer le projet</button>
         <span class="why" id="np-why"></span>
       </form>
-      <p class="ma-note">Le nom tout de suite : le projet se crée et s’ouvre. Son dépouillement se lance depuis sa fiche, sur DGX2.</p>
     </section>
 
     <section class="ma-box">
       <div class="ma-bh"><h2>Nouvelle analyse</h2><span class="k">B</span></div>
-      <p class="ma-note">Une vidéo de la bibliothèque ou de YouTube, la chaîne complète sur DGX2 : elle arrive dans les projets, avec son Studio.</p>
       <button class="tb ghost block" id="nouvelle" type="button">Nouvelle analyse…</button>
       <div class="why" id="why-nouvelle" hidden></div>
     </section>
@@ -73,11 +73,11 @@
         <div class="ma-src ma-depot" id="nv-bib">
           <div class="ma-choisie" id="nv-video"></div>
           <button class="tb ghost" type="button" id="nv-choisir">Choisir une vidéo</button>
-          <span class="lbl">ou la déposer ici : du disque (elle entre dans la bibliothèque, Upload), ou une vignette glissée d'ailleurs dans le portail</span>
+          <span class="lbl">ou la déposer ici</span>
         </div>
         <div class="ma-src" id="nv-yt" hidden>
           <input class="fld" id="nv-url" type="url" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off" spellcheck="false">
-          <span class="lbl">la chaîne la télécharge (yt-dlp, 1080p au plus) et range le travail sous l'identifiant de la vidéo (ou du projet)</span>
+          <span class="lbl">yt-dlp, 1080p au plus</span>
         </div>
       </div>
       <label class="field"><span class="lbl">Titre</span>
@@ -85,7 +85,7 @@
       <div class="field">
         <span class="lbl">Langue du dépouillement</span>
         <div class="opts" id="nv-langue"></div>
-        <span class="lbl">descriptions, fiches et portes ; la transcription détecte seule la langue du film</span>
+        <span class="lbl">la transcription détecte seule la langue du film</span>
       </div>
       <div class="field">
         <span class="lbl">En plus</span>
@@ -95,11 +95,8 @@
         <span class="ma-chemin"><span id="nv-runs">~/reelbench/runs/</span><input class="fld" id="nv-nom" maxlength="48" autocomplete="off" spellcheck="false"></span></label>
       <label class="row ma-rep" id="nv-rep-champ" hidden><input type="checkbox" id="nv-reprendre">
         <span>reprendre l'analyse lancée d'ici sous ce nom, où elle s'est arrêtée</span></label>
-      <p class="ma-note">La chaîne est lourde : une seule tourne à la fois. Elle attend que la machine soit libre (GPU au repos,
-        files ComfyUI vides, 40 Go disponibles), puis chaque étape reprend ce qui est déjà sur le disque. Quand elle a
-        fini, l'analyse a la même page que nos films, dans le portail : Studio, Casting et Dépouillement, la vidéo à
-        côté d'elle et les voix de la chaîne. La diarisation Nemotron, les teintes et les cartons de la recette de
-        MOVIE_ANALYSE n'y sont pas encore (docs/etudes/analyse.md).</p>
+      <p class="ma-note">Une à la fois : elle attend que la machine soit libre, et reprend ce qui est déjà sur le disque.
+        Sans la diarisation Nemotron, les teintes ni les cartons de MOVIE_ANALYSE (pas encore).</p>
     </div>
     <div class="modal-foot">
       <span class="why" id="nv-why"></span>

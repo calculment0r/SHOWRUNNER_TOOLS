@@ -136,6 +136,150 @@ def _jwt(n: int, d: int, claims: dict, kid: str = "essai-1", alg: str = "RS256")
     return f"{head}.{body}.{_b64u(pow(int.from_bytes(em, 'big'), d, n).to_bytes(256, 'big'))}"
 
 
+# ── la porte « code » (29/09 : « un login simple genre su007 ») ──
+def _selftest_code(ok, home, home_tok, same_home, keyfile, key, team, jwt_for) -> None:
+    """Derrière le Worker, à l'adresse fixe : la signature du Worker (rôle « code », l'adresse
+    du visiteur), sans Cloudflare Access, puis le code d'invitation et le pseudo — pour tous,
+    Cal compris (le code admin, puis nico007)."""
+    import hmac
+
+    import showrunner
+    from core import auth, config
+
+    cport = _free_port()
+    config.CFG["porte"] = {"mode": "code", "port": cport, "team_domain": team, "aud": "aud-essai", "cle": str(keyfile),
+                           "emails": {"cal@essai.test": "cal"}, "url": "https://essai.workers.dev"}
+    showrunner.serve_door(_APP, "code", "127.0.0.1", cport)
+    ok(_wait_port(cport), f"la porte « code » écoute sur 127.0.0.1:{cport}")
+
+    def sig(method, path, qui="203.0.113.30", role="code", k=key, quand=None, jwt=None):
+        q = str(int(quand if quand is not None else time.time()))
+        s = hmac.new(k, "\n".join((qui, role, q, method, path)).encode(), hashlib.sha256).hexdigest()
+        h = {"X-Porte-Qui": qui, "X-Porte-Role": role, "X-Porte-Quand": q, "X-Porte-Sig": s, "Host": "portail"}
+        if jwt:
+            h["Cf-Access-Jwt-Assertion"] = jwt
+        return h
+
+    def C(method, path, body=None, *, cookies=None, raw=None, headers=None, **kw):
+        return _req(cport, method, path, body, cookies=cookies, raw=raw, headers={**sig(method, path, **kw), **(headers or {})})
+
+    inv, adm = auth.demo_codes()["invitation"], auth.demo_codes()["admin"]
+    # ── seul le Worker entre ──
+    for path in ("/invitation/", f"/invitation/{inv}", "/api/auth/me", "/api/library", "/"):
+        s, _, jar, _ = _req(cport, "GET", path, headers={"Host": "portail"})
+        ok(s == 401 and not jar.get(auth.INVITE_COOKIE), f"code, sans la signature du Worker : 401, même le lien d'invitation ({path} {s})")
+    s, _, _, _ = _req(cport, "GET", "/api/auth/me", headers=sig("GET", "/api/library"))
+    ok(s == 401, f"code : une signature faite pour un autre chemin → 401 ({s})")
+    s, _, _, _ = _req(cport, "GET", "/api/auth/me", headers=sig("GET", "/api/auth/me", k=b"une-autre-cle-" * 4))
+    ok(s == 401, f"code : une signature d'une autre clé → 401 ({s})")
+    s, _, _, _ = C("GET", "/api/auth/me", quand=time.time() - 120)
+    ok(s == 401, f"code : une signature vieille de deux minutes → 401 ({s})")
+    for role in ("admin", "ami"):
+        s, _, _, _ = C("GET", "/api/library", qui="cal@essai.test", role=role)
+        ok(s == 401, f"code : signé « {role} » sans jeton Access → 401 (le chemin « access » exige le jeton) ({s})")
+
+    # ── signé par le Worker, sans code : la page d'invitation, rien d'autre ──
+    s, d, _, _ = C("GET", "/api/auth/me")
+    ok(s == 200 and d.get("state") == "anonymous" and d.get("porte") == "code" and d.get("invitation") is False,
+       f"code, signé, sans invitation : anonyme, la porte le dit ({d})")
+    for path in ("/api/library", "/api/jobs", "/api/admin/state", "/character/api/characters"):
+        s, _, _, _ = C("GET", path)
+        ok(s == 401, f"code, signé, sans invitation : refusé {path} ({s})")
+    s, d, _, h = C("GET", "/invitation/")
+    ok(s == 200 and isinstance(d, bytes) and b'action="/invitation/"' in d and h.get("X-Porte") == "code"
+       and "démonstration".encode() not in d, f"la page d'invitation, à l'adresse fixe ({s})")
+    s, d, _, _ = C("GET", "/invitation/?next=/image/")
+    ok(s == 200 and b'name="next" value="/image/"' in d, f"… elle garde la page d'où l'on vient (next) ({s})")
+    for name in ("nico007", "su007"):
+        s, _, jar, _ = C("POST", "/api/auth/enter", {"name": name})
+        ok(s == 401 and not jar.get(auth.COOKIE), f"code, sans invitation, « {name} » n'entre pas ({s})")
+
+    # ── le lien d'invitation ──
+    s, _, jar, h = C("GET", f"/invitation/{inv}?next=/image/")
+    inv_ck = jar.get(auth.INVITE_COOKIE)
+    ok(s == 303 and inv_ck and h.get("Location") == "/image/" and "Secure" in " ".join(jar["_raw"]),
+       f"le lien d'invitation (le code dedans) : cookie Secure, retour à la page demandée ({s} {h.get('Location')})")
+    ic = {auth.INVITE_COOKIE: inv_ck}
+    for name in ("nico007", "NICO007"):
+        s, d, jar, _ = C("POST", "/api/auth/enter", {"name": name}, cookies=ic)
+        ok(s == 403 and not jar.get(auth.COOKIE) and "code admin" in (d or {}).get("error", ""),
+           f"code : « {name} » avec le code d'invitation → 403, aucune session ({s})")
+
+    # ── Cal crée su007 d'avance (Admin, à la maison) ──
+    s, d, _, _ = _req(home, "POST", "/api/admin/users", {"name": "su007"}, cookies={auth.COOKIE: home_tok}, headers=same_home)
+    ok(s == 200 and d.get("role") == "ami" and (auth.user("su007") or {}).get("state") == "active",
+       f"Admin : Cal crée « su007 », déjà accepté ({s} {d})")
+    for name, why in (("su007", "existe"), ("SU007", "existe"), ("nic0007", "réservé"), ("CaI", "réservé"), ("Cal", "existe"),
+                      ("s", "2 à 24")):
+        s, d, _, _ = _req(home, "POST", "/api/admin/users", {"name": name}, cookies={auth.COOKIE: home_tok}, headers=same_home)
+        ok(s in (400, 409) and why in (d or {}).get("error", ""), f"Admin : « {name} » refusé : {why} ({s} {d})")
+    s, d, _, _ = _req(home, "GET", "/api/admin/porte", cookies={auth.COOKIE: home_tok})
+    ok(s == 200 and d.get("mode") == "code" and d.get("lien") == f"https://essai.workers.dev/invitation/{inv}"
+       and adm not in json.dumps(d), f"Admin : le lien à envoyer, sans le code admin ({s} {d})")
+
+    s, d, jar, _ = C("POST", "/api/auth/enter", {"name": "Su007"}, cookies=ic)
+    su_tok = jar.get(auth.COOKIE)
+    ok(s == 200 and su_tok and d.get("state") == "active" and "Secure" in " ".join(jar["_raw"]),
+       f"code : « su007 », créé d'avance, entre aussitôt ({s} {d})")
+    suc = {**ic, auth.COOKIE: su_tok}
+    s, d, _, _ = C("GET", "/api/auth/me", cookies=suc)
+    s2, _, _, _ = C("GET", "/api/library", cookies=suc)
+    s3, _, _, _ = C("GET", "/api/admin/state", cookies=suc)
+    s4, _, _, _ = C("POST", "/api/admin/users", {"name": "Intrus"}, cookies=suc)
+    ok(d.get("state") == "active" and d.get("porte") == "code" and s2 == 200 and s3 == 403 and s4 == 403,
+       f"su007 : la bibliothèque, pas l'admin, ne crée personne ({d.get('state')}, {s2}, {s3}, {s4})")
+    s, _, _, _ = C("GET", "/api/library", cookies={auth.COOKIE: su_tok})
+    ok(s == 200, f"… sa session suffit ensuite, même sans le cookie d'invitation ({s})")
+    s, _, _, _ = C("GET", "/api/library", cookies={auth.COOKIE: home_tok})
+    ok(s == 401, f"code : la session admin de la maison n'y vaut rien ({s})")
+
+    # ── un pseudo neuf attend Cal ──
+    s, d, jar, _ = C("POST", "/api/auth/enter", {"name": "Margaux"}, cookies=ic, qui="203.0.113.31")
+    mg = {**ic, auth.COOKIE: jar.get(auth.COOKIE)}
+    ok(s == 200 and d.get("state") == "pending", f"code : « Margaux », pseudo neuf → en attente ({s} {d})")
+    s, _, _, _ = C("GET", "/api/library", cookies=mg)
+    ok(s == 401, f"en attente : rien ne s'ouvre ({s})")
+    ok((auth.user("margaux") or {}).get("ip") == "203.0.113.31",
+       "l'adresse notée pour Cal est celle que le Worker a signée")
+    s, _, _, _ = _req(home, "POST", "/api/admin/requests/margaux/accept", cookies={auth.COOKIE: home_tok}, headers=same_home)
+    s2, _, _, _ = C("GET", "/api/library", cookies=mg)
+    ok(s == 200 and s2 == 200, f"Cal l'accepte dans Admin : elle entre ({s}, {s2})")
+
+    # ── Cal : le code admin, puis nico007 ──
+    s, _, jar, _ = C("POST", "/invitation/", raw=f"code={urllib.parse.quote(adm)}".encode(),
+                     headers={"Content-Type": "application/x-www-form-urlencoded"})
+    adm_ck = jar.get(auth.INVITE_COOKIE)
+    s, d, jar, _ = C("POST", "/api/auth/enter", {"name": "nico007"}, cookies={auth.INVITE_COOKIE: adm_ck})
+    calc = {auth.INVITE_COOKIE: adm_ck, auth.COOKIE: jar.get(auth.COOKIE)}
+    s2, _, _, _ = C("GET", "/api/admin/state", cookies=calc)
+    ok(s == 200 and d.get("user", {}).get("role") == "admin" and s2 == 200,
+       f"code : le code admin puis nico007 → admin, la page d'admin s'ouvre ({s}, {s2})")
+
+    # ── pseudo seul : aucune identité Access n'est reçue sur cette porte, pas même celle de Cal ──
+    for role in ("admin", "ami"):
+        s, _, _, _ = C("GET", "/api/admin/state", qui="cal@essai.test", role=role, jwt=jwt_for("cal@essai.test"))
+        ok(s == 401, f"code : signé « {role} » avec un vrai jeton Access de Cal → 401 (pseudo seul) ({s})")
+    s, _, _, _ = C("GET", "/api/admin/state", cookies=calc, jwt=jwt_for("ami@essai.test"))
+    ok(s == 200, f"code : un jeton Access en plus ne change rien à la session ({s})")
+    s, _, _, _ = C("GET", "/api/admin/state", cookies={auth.COOKIE: calc[auth.COOKIE]})
+    ok(s == 200, f"code : Cal reste admin par sa seule session (120 jours), sans retaper le code ({s})")
+
+    # ── les essais de code, par adresse ──
+    got = [C("GET", f"/invitation/ZZZZ-ZZZZ-ZZZ{i % 10}", qui="198.51.100.77")[0] for i in range(11)]
+    ok(got[:10] == [403] * 10 and got[10] == 429, f"code : 10 mauvais codes depuis une adresse, puis 429 ({got})")
+    s, _, _, _ = C("GET", f"/invitation/{inv}", qui="198.51.100.77")
+    ok(s == 429, f"… même le bon code attend (la limite ne dit rien du code) ({s})")
+    s, _, jar, _ = C("GET", f"/invitation/{inv}", qui="198.51.100.78")
+    ok(s == 303, f"… une autre adresse n'est pas gênée ({s})")
+
+    # ── de nouveaux codes : les sessions de la porte se ferment ──
+    auth.demo_codes(renew=True)
+    for label, ck in (("su007", suc), ("Cal", calc)):
+        s, _, _, _ = C("GET", "/api/library", cookies=ck)
+        ok(s == 401, f"code : nouveaux codes, la session de {label} se ferme ({s})")
+    ok((auth.user("su007") or {}).get("state") == "active", "… le pseudo su007, lui, reste : avec le nouveau lien, il rentre")
+
+
 # ── le contrôle (tools/check.py) ────────────────────────────
 def selftest(call, ok) -> None:
     import hmac
@@ -442,6 +586,10 @@ def selftest(call, ok) -> None:
         ok(s == 200, f"access : de retour ({s})")
         ok(auth.rs256_ok(n, e, b"x", b"\x00" * 256) is False and auth.rs256_ok(n, e, b"x", b"") is False,
            "RS256 : une signature vide ou nulle ne passe pas")
+        s, _, _, _ = _req(aport, "GET", "/api/auth/me", headers=signed("GET", "/api/auth/me", "203.0.113.9", "code", jwt=False))
+        ok(s == 401, f"access : une signature « code » (bonne clé) n'est pas reçue sur la porte « access » ({s})")
+
+        _selftest_code(ok, home, home_tok, same_home, keyfile, key, team, lambda em: _jwt(n, d_, claims(em)))
     finally:
         auth._ip = real_ip
         auth.set_current(None)

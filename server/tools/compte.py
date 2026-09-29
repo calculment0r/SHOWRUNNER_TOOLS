@@ -9,6 +9,11 @@ passe par la porte du socle (core/auth.py). La page : commun/porte.js.
     POST /api/auth/logout               se déconnecter (ce navigateur) ; on revient en retapant son pseudo
     GET  /api/auth/devices              mes connexions (navigateurs)
     POST /api/auth/devices/<id>/revoke  en fermer une
+
+Pour Cal (sous /api/admin/ : la porte du socle les refuse à qui n'est pas admin) :
+
+    POST /api/admin/users {name}        un pseudo d'ami créé d'avance, déjà accepté (su007 entre sans attendre)
+    GET  /api/admin/porte               la porte publique : mode, adresse, lien d'invitation à envoyer
 """
 
 from __future__ import annotations
@@ -64,7 +69,29 @@ def revoke(req, sid):
     return {"removed": auth.revoke(u["id"], sid)}
 
 
+def _admin(req) -> dict:
+    u = getattr(req, "user", None)
+    if not auth.is_admin(u):
+        raise HttpError(403, "réservé aux admins")
+    return u
+
+
+def create_friend(req):
+    u = _admin(req)
+    return auth.public_user(auth.create_friend(req.json().get("name"), by=u["id"]))
+
+
+def door_links(req):
+    """Le lien d'invitation (le code dedans), pas le code admin : Cal l'a déjà, et
+    la page n'a pas à le répéter (tools/porte.sh lien le donne sur DGX2)."""
+    _admin(req)
+    d = auth.invite_links()
+    return {k: d.get(k) for k in ("mode", "url", "lien", "invitation")}
+
+
 def register(app) -> None:
+    app.route("POST", "/api/admin/users", create_friend)
+    app.route("GET", "/api/admin/porte", door_links)
     app.route("GET", "/api/auth/me", me)
     app.route("POST", "/api/auth/enter", enter)
     app.route("POST", "/api/auth/cancel", cancel)

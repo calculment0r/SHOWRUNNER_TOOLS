@@ -18,6 +18,15 @@
 #   bash tools/porte.sh essai                       sans connexion, l'adresse publique renvoie vers Access
 #   bash tools/porte.sh demo                        revenir à la démo (porte.mode = "demo"), relancé
 #
+# La porte par code (29/09, « un login simple genre su007 » ; étude : « La porte par code ») :
+#   bash tools/porte.sh code                        le portail en mode « code » (code d'invitation puis pseudo, derrière
+#                                                   le Worker), relancé, vérifié ; puis le lien et les codes
+#   bash tools/porte.sh remplis mode <code|access>  PORTE_MODE du Worker dans wrangler.jsonc (puis deploie)
+#   bash tools/porte.sh lien                        le lien d'invitation à envoyer, le code admin (lecture seule)
+#   bash tools/porte.sh ami <pseudo>                un pseudo d'ami créé d'avance, déjà accepté (il entre sans attendre)
+#   bash tools/porte.sh nouveaux-codes              d'autres codes : toutes les sessions ouvertes par la porte se ferment
+#   (revenir à Cloudflare Access pour tous : remplis mode access, deploie, acces <e-mail de Cal>)
+#
 # Réglages (pour un essai sur une copie ; défauts = la production) : WRANGLER, PORTE_CLE_FICHIER, PORTAIL_RELANCE,
 # DEMO_SH, SAUVE_DIR, URL_PUBLIQUE.
 set -u
@@ -46,7 +55,7 @@ a_remplir_liste() { grep -v '^[[:space:]]*//' "$CONF" | grep -o '"<[^"]*>"' | tr
 a_remplir() { [ -n "$(a_remplir_liste)" ]; }
 
 plan() {
-  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'
   cat <<'EOF'
 
 L'ordre (étude, « La vraie porte : les gestes, dans l'ordre ») :
@@ -139,7 +148,14 @@ remplis() {
     aud)
       [[ "$val" =~ ^[0-9a-f]{32,128}$ ]] || faux "usage : remplis aud <tag AUD> (des chiffres hexadécimaux : Access → l'application → Configure → Additional settings)"
       place="\"<tag AUD de l'application Access>\"" ;;
-    *) faux "usage : remplis service <id> | remplis aud <tag AUD>" ;;
+    mode)
+      [[ "$val" =~ ^(code|access)$ ]] || faux "usage : remplis mode <code|access>"
+      grep -qE '^[[:space:]]*"PORTE_MODE"[[:space:]]*:' "$CONF" || faux "$CONF : pas de PORTE_MODE dans vars"
+      sed -i -E "s|^([[:space:]]*\"PORTE_MODE\"[[:space:]]*:[[:space:]]*)\"[^\"]*\"|\1\"$val\"|" "$CONF"
+      git --no-pager diff --stat -- "$CONF"
+      bon "PORTE_MODE = $val ; à déployer (deploie), à committer, à recopier sur le PC"
+      return 0 ;;
+    *) faux "usage : remplis service <id> | remplis aud <tag AUD> | remplis mode <code|access>" ;;
   esac
   grep -qF "$place" "$CONF" || faux "$CONF : l'emplacement $place n'y est plus (déjà rempli ?)"
   sed -i "s|$place|\"$val\"|" "$CONF"
@@ -187,6 +203,9 @@ porte = d.get("porte") if isinstance(d.get("porte"), dict) else {}
 porte["mode"] = mode
 if mode == "access":
     porte["team_domain"], porte["aud"], porte["emails"] = sys.argv[3], sys.argv[4], {sys.argv[5].strip().lower(): "cal"}
+elif mode == "code":
+    # team_domain, aud, emails restent (ils ne servent qu'en « access ») : revenir en arrière ne demande rien de plus
+    porte["url"] = sys.argv[3]
 d["porte"] = porte
 p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 print(json.dumps({"porte": {k: v for k, v in porte.items() if k != "emails"}}, ensure_ascii=False))
@@ -224,9 +243,23 @@ acces() {
 # Sans connexion, l'application Access doit répondre avant le Worker (une redirection vers la page de connexion de
 # l'équipe) ; un 403 JSON du Worker (« passe par la porte ») veut dire qu'Access n'est pas posé sur ce nom d'hôte.
 essai() {
-  local r
-  r=$(curl -s -m 10 -o /dev/null -w '%{http_code} %{redirect_url}' "$URL_PUBLIQUE/api/porte/moi")
-  dit "sans connexion : $r"
+  local r corps
+  corps=$(mktemp)
+  r=$(curl -s -m 10 -o "$corps" -w '%{http_code} %{redirect_url}' "$URL_PUBLIQUE/api/porte/moi")
+  dit "sans connexion : $r $(head -c 200 "$corps")"
+  # porte par code (l'application Access supprimée) : le Worker répond lui-même, et rien d'autre ne s'ouvre sans code
+  if [ "${r%% *}" = 200 ] && grep -q '"porte": *"code"' "$corps"; then
+    rm -f "$corps"
+    bon "porte par code : $URL_PUBLIQUE répond sans Access (le Worker en PORTE_MODE = code)"
+    r=$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$URL_PUBLIQUE/api/library")
+    [ "$r" = 401 ] || faux "sans code, /api/library répond $r (attendu 401)"
+    bon "sans code : /api/library → 401"
+    r=$(curl -s -m 15 -o /dev/null -w '%{http_code}' "$URL_PUBLIQUE/invitation/")
+    [ "$r" = 200 ] || faux "la page d'invitation répond $r (attendu 200 : le portail en mode « code », joint par le tunnel)"
+    bon "la page d'invitation se sert (DGX2 jointe, portail en mode « code »)"
+    return 0
+  fi
+  rm -f "$corps"
   case "$r" in
     30[0-9]\ "$EQUIPE"*|30[0-9]\ https://*.cloudflareaccess.com*) bon "Access garde l'adresse (redirection vers la connexion)" ;;
     403*) faux "403 du Worker : l'application Access n'est pas posée sur ce nom d'hôte (étape 5)" ;;
@@ -247,7 +280,68 @@ demo() {
   dit "pour rouvrir la démo : tools/demo.sh start"
 }
 
+# ── la porte par code : l'adresse fixe, un code d'invitation puis le pseudo ───────────────────────────────────────
+py() { python3 server/showrunner.py "$@"; }
+val_lien() { py --porte-lien | awk -v k="$1" '$1 == k { print $2 }'; }
+
+lien() {
+  local mode url l inv adm
+  mode=$(val_lien mode)
+  case "$mode" in code|demo) ;; *) faux "la porte publique est en mode « $mode » : pas de lien d'invitation (bash tools/porte.sh code)" ;; esac
+  url=$(val_lien url); l=$(val_lien lien); inv=$(val_lien invitation); adm=$(val_lien admin)
+  [ -n "$url" ] || faux "pas d'adresse publique (mode « $mode »)"
+  dit "porte         $mode · $url"
+  dit "pour un ami   $l"
+  dit "              (ou $url/invitation/ et le code $inv) ; puis son pseudo : un pseudo créé d'avance entre aussitôt"
+  dit "              (bash tools/porte.sh ami <pseudo>), un pseudo neuf attend Cal (page Admin)"
+  dit "pour Cal      $url/invitation/$adm   puis le pseudo nico007 (le code admin : ne l'envoyer à personne)"
+  dit "              (sa session tient 120 jours ; « nouveaux-codes » ferme toutes les sessions de la porte)"
+  return 0
+}
+
+code_() {
+  [ -f "$CLE" ] || faux "$CLE absente (cle) : le portail refuserait tout"
+  [ "$(stat -c '%a' "$CLE")" = 600 ] || faux "$CLE n'est pas en 600 (le portail la refuse)"
+  # la porte est l'une ou l'autre : la démo (tunnel rapide vers la même porte) s'arrête d'abord
+  if [ -f "$DEMO_SH" ]; then bash "$DEMO_SH" stop > /dev/null; fi
+  regle code "$URL_PUBLIQUE"
+  py --porte-codes > /dev/null || faux "codes non créés"
+  $RELANCE || faux "le portail ne repart pas"
+  local mode code adr
+  for _ in $(seq 1 20); do
+    read -r mode code adr < <(sonde_porte)
+    [ "$code" = 000 ] || break
+    sleep 0.5
+  done
+  [ "$mode" = code ] || faux "la porte publique est en mode « $mode »"
+  [ "$code" = 401 ] || faux "sans signature, $adr répond $code (attendu 401)"
+  code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://$adr/invitation/")
+  [ "$code" = 401 ] || faux "sans signature, la page d'invitation répond $code (attendu 401 : seul le Worker entre)"
+  bon "porte « code » sur $adr : sans la signature du Worker → 401, page d'invitation comprise"
+  local wmode
+  wmode=$(grep -v '^[[:space:]]*//' "$CONF" | sed -n 's/.*"PORTE_MODE"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  [ "$wmode" = code ] && bon "$CONF : PORTE_MODE = code (déployé ? bash tools/porte.sh deploie)" \
+    || dit "ATTENTION $CONF : PORTE_MODE = « $wmode » : bash tools/porte.sh remplis mode code, puis deploie"
+  lien
+}
+
+ami() {
+  local p=${1:-}
+  [ -n "$p" ] || faux "usage : ami <pseudo> (par exemple su007)"
+  py --ami "$p" || faux "pseudo non créé"
+}
+
+nouveaux_codes() {
+  py --porte-codes-nouveaux > /dev/null || faux "codes non renouvelés"
+  bon "nouveaux codes : toutes les sessions ouvertes par la porte sont fermées, les anciens liens ne valent plus"
+  lien
+}
+
 case "${1:-}" in
+  code) code_ ;;
+  lien) lien ;;
+  ami) ami "${2:-}" ;;
+  nouveaux-codes) nouveaux_codes ;;
   verifie) verifie ;;
   cle) cle ;;
   service) service "${2:-}" ;;

@@ -81,6 +81,7 @@ async function go(id) {
 
 async function loadSection() {
   try {
+    if (S.sec === 'demandes' && S.porte === undefined) await loadPorte();
     if (S.sec === 'machines') S.mach = await api('admin/machines');
     if (S.sec === 'cablage') S.sw = await api('admin/switches');
     if (S.sec === 'stockage') S.store = await api('admin/storage');
@@ -124,9 +125,42 @@ function render(force = false) {
 }
 
 // ── A · les demandes ────────────────────────────────────────
+// Inviter d'avance (Cal, 29/09 : « un login simple genre su007 ») : un pseudo créé ici est déjà accepté ; l'ami
+// ouvre le lien d'invitation (le code est dedans), tape ce pseudo, et entre sans attendre.
+async function loadPorte() {
+  try { S.porte = await api('admin/porte'); } catch { S.porte = null; }
+}
+function inviter() {
+  const p = S.porte || {};
+  const name = el('input', { class: 'fld', placeholder: 'su007', maxlength: 24, autocomplete: 'off', spellcheck: 'false',
+    autocapitalize: 'none', 'aria-label': 'le pseudo de l’ami' });
+  const create = el('button', { class: 'tb', type: 'submit' }, 'Créer ce pseudo');
+  const lien = p.lien || '';
+  return el('div', { class: 'card' },
+    el('div', { class: 'card-head' }, el('span', { class: 'nm' }, 'Inviter un ami'),
+      el('span', { class: 'chip' }, p.mode ? `porte · ${p.mode}` : 'porte')),
+    el('p', { class: 'adm-note' }, 'Un pseudo créé ici est déjà accepté : ton ami ouvre le lien, tape ce pseudo, et entre sans attendre. ',
+      'Un pseudo qui imite un admin ou ressemble trop à un autre est refusé.'),
+    el('form', { class: 'row', onsubmit: (e) => {
+      e.preventDefault();
+      const v = name.value.trim();
+      if (!v) { name.focus(); return; }
+      act(() => post('admin/users', { name: v }), `« ${v} » peut entrer`);
+    } }, name, create),
+    lien
+      ? el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'le lien à lui envoyer'),
+        el('b', { class: 'acct-code' }, lien), el('span', { class: 'sp' }),
+        el('button', { class: 'tb ghost sm', type: 'button', onclick: async () => {
+          try { await navigator.clipboard.writeText(lien); toast('lien copié'); } catch { toast(lien); }
+        } }, 'Copier'))
+      : el('p', { class: 'why' }, p.mode === 'access'
+        ? 'porte « access » : tes amis entrent par leur e-mail (la politique Cloudflare Access), pas par un lien'
+        : 'pas de lien d’invitation : la porte publique n’est ni « code » ni une démo en route (tools/porte.sh code)'));
+}
+
 function demandes() {
   const r = S.state.requests;
-  return [head('Demandes d’accès', 'A', `${r.length} en attente`),
+  return [head('Demandes d’accès', 'A', `${r.length} en attente`), inviter(),
     el('p', { class: 'adm-note' }, 'Une demande, c’est un pseudo neuf tapé à l’accueil. Accepté, il entre — la page qui attend s’ouvre seule, ',
       'et ensuite ce pseudo suffit, de n’importe quel navigateur ; refusé, la page le dit et le pseudo redevient libre. ',
       'Un pseudo qui imite un admin (casse, accents, 0/O, 1/l/I) est refusé d’office.'),

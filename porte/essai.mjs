@@ -5,10 +5,13 @@
 // du portail. Rien n'est ouvert sur internet.
 //
 //   node porte/essai.mjs --porte http://127.0.0.1:9813 --certs 9899 --cle /chemin/porte.key [--aud aud-e2e]
+//                        [--codes <données>/porte-demo.json]
 //
 // Le portail d'essai doit avoir, dans son showrunner.local.json :
 //   "porte": {"mode": "access", "team_domain": "http://127.0.0.1:9899", "aud": "aud-e2e", "cle": "/chemin/porte.key",
 //             "emails": {"cal@e2e.test": "cal"}}
+// Avec --codes : le portail d'essai en "mode": "code" (le reste pareil ; le chemin « access » y passe aussi), et un
+// pseudo créé d'avance (python3 server/showrunner.py --ami su007) : les essais de la porte par code s'ajoutent.
 // Rend 0 si tout passe.
 
 import { createServer } from 'node:http';
@@ -87,8 +90,24 @@ async function W(chemin, { email, jwt, method = 'GET', body, headers = {}, e = e
   return { s: r.status, d, h: r.headers };
 }
 
-// ── les essais ──
-let r = await W('/api/library', { jwt: null });
+// une image PNG de 8 × 6, faite ici (zlib de Node), pour les dépôts
+const png = (() => {
+  const bloc = (type, data) => {
+    const td = Buffer.concat([Buffer.from(type), data]);
+    const n = Buffer.alloc(4); n.writeUInt32BE(data.length);
+    const c = Buffer.alloc(4); c.writeUInt32BE(crc32(td) >>> 0);
+    return Buffer.concat([n, td, c]);
+  };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(8, 0); ihdr.writeUInt32BE(6, 4); ihdr[8] = 8; ihdr[9] = 2;
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), bloc('IHDR', ihdr),
+    bloc('IDAT', deflateSync(Buffer.concat(Array.from({ length: 6 }, () => Buffer.concat([Buffer.from([0]), Buffer.alloc(8 * 3, 0x40)]))))),
+    bloc('IEND', Buffer.alloc(0))]);
+})();
+
+// ── les essais de la porte « access » (le portail d'essai en porte.mode = "access" ; sans --codes) ──
+let r;
+if (!args.codes) {
+r = await W('/api/library', { jwt: null });
 ok(r.s === 403, `le Worker, sans jeton Access : 403 (${r.s})`);
 r = await W('/api/library', { jwt: await jeton('ami@e2e.test', {}, autre.privateKey) });
 ok(r.s === 403, `le Worker, jeton signé par une autre clé : 403 (${r.s})`);
@@ -119,18 +138,6 @@ r = await W('/api/library?q=%C3%A9t%C3%A9%20bleu&kind=image&limit=3', { email: '
 ok(r.s === 200 && Array.isArray(r.d.items), `chemin et requête encodés : la signature tient (${r.s})`);
 
 // un dépôt : corps de longueur fixe, signature sur le chemin avec sa requête
-const png = (() => {   // une image PNG de 8 × 6, faite ici (zlib de Node)
-  const bloc = (type, data) => {
-    const td = Buffer.concat([Buffer.from(type), data]);
-    const n = Buffer.alloc(4); n.writeUInt32BE(data.length);
-    const c = Buffer.alloc(4); c.writeUInt32BE(crc32(td) >>> 0);
-    return Buffer.concat([n, td, c]);
-  };
-  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(8, 0); ihdr.writeUInt32BE(6, 4); ihdr[8] = 8; ihdr[9] = 2;
-  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), bloc('IHDR', ihdr),
-    bloc('IDAT', deflateSync(Buffer.concat(Array.from({ length: 6 }, () => Buffer.concat([Buffer.from([0]), Buffer.alloc(8 * 3, 0x40)]))))),
-    bloc('IEND', Buffer.alloc(0))]);
-})();
 r = await W('/api/library/upload?name=e2e.png&title=Par%20la%20porte', { email: 'cal@e2e.test', method: 'PUT', body: png,
   headers: { 'content-type': 'image/png', origin: PAGE, 'sec-fetch-site': 'same-origin' } });
 ok(r.s === 200 && r.d.kind === 'image' && r.d.owner === 'cal', `un dépôt par la porte : rangé, à Cal (${r.s} ${JSON.stringify(r.d).slice(0, 160)})`);
@@ -221,6 +228,96 @@ ok(r.s === 503, `… la bibliothèque hors ligne attend R2 (${r.s})`);
 r = await W('/api/auth/me', { email: 'ami@e2e.test', e: { ...env, PORTE_CLE: 'une-autre-cle-'.repeat(4) } });
 ok(r.s === 401, `une autre clé de porte : le portail refuse (${r.s})`);
 ok(lectures <= 2, `les certificats de l'équipe sont gardés (lus ${lectures} fois : le Worker, le portail)`);
+
+}
+
+// ── la porte par code (PORTE_MODE = "code" ; le portail d'essai en porte.mode = "code") ──
+// --codes <données>/porte-demo.json, et un pseudo créé d'avance (python3 server/showrunner.py --ami su007)
+if (args.codes) {
+  const codes = JSON.parse(readFileSync(args.codes, 'utf8'));
+  const IP = '203.0.113.50';
+  const envC = { ...env, PORTE_MODE: 'code' };
+  const C = (chemin, o = {}) => W(chemin, { jwt: null, e: envC, ...o, headers: { 'cf-connecting-ip': IP, ...(o.headers || {}) } });
+  const posee = (h, nom) => (h.getSetCookie?.() || []).map((c) => c.split(';')[0]).find((c) => c.startsWith(`${nom}=`))?.slice(nom.length + 1);
+  console.log('  la porte par code :');
+
+  let n0 = vus.length;
+  r = await C('/api/library');
+  ok(r.s === 401 && vus.length === n0, `code, sans cookie : 401 du Worker, rien ne part vers DGX2 (${r.s})`);
+  r = await C('/api/jobs', { method: 'POST', body: Buffer.from('{}'), headers: { 'content-type': 'application/json', origin: PAGE } });
+  ok(r.s === 401 && vus.length === n0, `code, sans cookie, une écriture : 401 du Worker (${r.s})`);
+  r = await C('/api/porte/moi');
+  ok(r.s === 200 && r.d.porte === 'code' && !r.d.email, `/api/porte/moi : porte « code », pas d'e-mail (${JSON.stringify(r.d)})`);
+  r = await C('/api/auth/me');
+  let vu = vus.at(-1).entetes;
+  ok(r.s === 200 && r.d.porte === 'code' && r.d.state === 'anonymous' && r.d.invitation === false,
+    `code : le portail voit un visiteur signé, sans invitation (${r.s} ${JSON.stringify(r.d)})`);
+  ok(vu['x-porte-role'] === 'code' && vu['x-porte-qui'] === IP && !vu['cf-access-jwt-assertion'] && !vu.cookie,
+    `vers le portail : rôle « code », l'adresse du visiteur, ni jeton ni cookie (${vu['x-porte-role']} ${vu['x-porte-qui']})`);
+  r = await C('/invitation/');
+  ok(r.s === 200 && String(r.d).includes('action="/invitation/"'), `la page d'invitation, par le Worker (${r.s})`);
+  r = await C(`/invitation/${codes.invitation}`);
+  const inv = posee(r.h, 'sr_invitation');
+  ok(r.s === 303 && inv && r.h.get('location') === '/' && (r.h.getSetCookie?.() || []).join(' ').includes('Secure'),
+    `le lien d'invitation : 303, le cookie du portail revient au navigateur (${r.s})`);
+  r = await C('/api/auth/me', { headers: { cookie: `sr_invitation=${inv}; CF_Authorization=abc.def.ghi; autre=1` } });
+  vu = vus.at(-1).entetes;
+  ok(r.d.invitation === 'invitation' && vu.cookie === `sr_invitation=${inv}`,
+    `vers le portail : les cookies du portail seulement, jamais CF_Authorization (${vu.cookie})`);
+  const avec = (c) => ({ cookie: c, 'content-type': 'application/json', origin: PAGE, 'sec-fetch-site': 'same-origin' });
+  r = await C('/api/auth/enter', { method: 'POST', body: Buffer.from('{"name":"nico007"}'), headers: avec(`sr_invitation=${inv}`) });
+  ok(r.s === 403, `code : nico007 avec le code d'invitation → 403 (${r.s} ${r.d.error})`);
+  r = await C('/api/auth/enter', { method: 'POST', body: Buffer.from('{"name":"su007"}'), headers: avec(`sr_invitation=${inv}`) });
+  const ses = posee(r.h, 'sr_session');
+  ok(r.s === 200 && r.d.state === 'active' && ses, `code : su007, créé d'avance par Cal, entre aussitôt (${r.s} ${r.d.state})`);
+  const su = `sr_invitation=${inv}; sr_session=${ses}`;
+  r = await C('/api/library', { headers: { cookie: su } });
+  ok(r.s === 200 && Array.isArray(r.d.items), `su007 : la bibliothèque (${r.s})`);
+  r = await C('/api/admin/state', { headers: { cookie: su } });
+  ok(r.s === 403, `su007 : pas l'admin (${r.s})`);
+  r = await C('/api/auth/enter', { method: 'POST', body: Buffer.from('{"name":"Margaux2"}'), headers: avec(`sr_invitation=${inv}`) });
+  ok(r.s === 200 && r.d.state === 'pending', `code : un pseudo neuf attend Cal (${r.s} ${r.d.state})`);
+  r = await C('/api/library/upload?name=x.png', { method: 'PUT', body: png, headers: { cookie: su, 'content-type': 'image/png', origin: 'https://evil.example' } });
+  ok(r.s === 403, `code : une écriture venue d'une autre page → 403 (${r.s})`);
+  r = await C('/pont/dgx2/etat', { headers: { cookie: su } });
+  ok(r.s === 403, `code : les ponts ne s'ouvrent pas à une session à code (${r.s})`);
+
+  // pseudo seul : un jeton Access, même vrai (le cookie d'une ancienne session, ou l'en-tête), ne compte pour rien
+  const calJ = await jeton('cal@e2e.test');
+  r = await C('/api/porte/moi', { jwt: calJ, headers: { cookie: `CF_Authorization=${calJ}` } });
+  ok(r.d.porte === 'code' && !r.d.email, `code : le vrai jeton Access de Cal ne compte pas (${JSON.stringify(r.d)})`);
+  r = await C('/api/admin/state', { jwt: calJ, headers: { cookie: `CF_Authorization=${calJ}` } });
+  ok(r.s === 401, `… sans session du portail, pas d'admin (${r.s})`);
+  r = await C('/api/auth/me', { jwt: calJ, headers: { cookie: su } });
+  vu = vus.at(-1).entetes;
+  ok(r.d.porte === 'code' && vu['x-porte-role'] === 'code' && !vu['cf-access-jwt-assertion'],
+    `… et il ne part jamais vers le portail (${vu['x-porte-role']})`);
+  const calCode = await C(`/invitation/${codes.admin}`);
+  const admCk = posee(calCode.h, 'sr_invitation');
+  r = await C('/api/auth/enter', { method: 'POST', body: Buffer.from('{"name":"nico007"}'), headers: avec(`sr_invitation=${admCk}`) });
+  const calSes = posee(r.h, 'sr_session');
+  ok(r.s === 200 && r.d.user?.role === 'admin' && calSes, `code : Cal, le lien du code admin puis nico007 → admin (${r.s})`);
+  r = await C('/api/admin/state', { headers: { cookie: `sr_session=${calSes}` } });
+  ok(r.s === 200 && r.d.me?.id === 'cal', `… la page d'admin, par sa seule session ensuite (${r.s})`);
+  r = await C('/api/library/upload?name=code.png&title=Par%20le%20code', { method: 'PUT', body: png,
+    headers: { cookie: `sr_session=${calSes}`, 'content-type': 'image/png', origin: PAGE, 'sec-fetch-site': 'same-origin' } });
+  ok(r.s === 200 && r.d.owner === 'cal', `code : un dépôt de Cal par la porte, à Cal (${r.s})`);
+  r = await C(`/library/${r.d.id}/main.png`, { headers: { cookie: su, range: 'bytes=0-3' } });
+  ok(r.s === 206 && r.d.length === 4, `su007 : le fichier, jugé par le portail (pas R2 : le Worker ne sait pas qui), Range (${r.s})`);
+
+  // les essais de code et de pseudo, limités par adresse (ESSAIS)
+  const cles_ = [];
+  const bride2 = { ...envC, ESSAIS: { limit: async ({ key }) => { cles_.push(key); return { success: false }; } } };
+  r = await C('/invitation/AAAA-BBBB-CCCC', { e: bride2 });
+  ok(r.s === 429 && cles_.at(-1) === IP, `ESSAIS atteint : un code → 429, compté par adresse (${r.s} ${cles_.at(-1)})`);
+  r = await C('/api/auth/enter', { e: bride2, method: 'POST', body: Buffer.from('{"name":"x"}'), headers: avec(`sr_invitation=${inv}`) });
+  ok(r.s === 429, `… un pseudo tapé aussi (${r.s})`);
+  n0 = cles_.length;
+  r = await C('/invitation/', { e: bride2 });
+  ok(r.s === 200 && cles_.length === n0, `… la page d'invitation seule n'est pas un essai (${r.s})`);
+  r = await W('/api/library', { jwt: null });
+  ok(r.s === 403, `le Worker en mode « access » : sans jeton, toujours 403 (${r.s})`);
+}
 
 await Promise.allSettled(attente);
 certs.close();

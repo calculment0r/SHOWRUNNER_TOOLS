@@ -10,10 +10,14 @@
 //   ligne 1 — les vignettes des références (un clic : retirer, changer de
 //             place ou d'image ; on y dépose), « + », le passage en édition ;
 //   ligne 2 — le prompt, d'une à trois lignes, « @ » nomme une référence ;
-//   ligne 3 — des puces : + · @ · modèle · format · qualité · taille · Auto
-//             (la graine) · − n/4 + · Prise de vue · Avancé ; chaque puce
-//             ouvre un petit menu vers le haut (commun/menu.js) ou un panneau
-//             au-dessus de la barre ;
+//   ligne 3 — des puces : + · @ · modèle · format · taille · − n/4 + ·
+//             Prise de vue · Paramètres avancés (fermés par défaut : la
+//             graine, le rendu propre au modèle, le visage gardé, le prompt
+//             envoyé ; ce qui s'écarte du défaut se lit sur la puce) ; chaque
+//             puce ouvre un petit menu vers le haut (commun/menu.js) ou un
+//             panneau au-dessus de la barre ;
+// Peu de texte d'aide (Cal, 29/09 : « calmer les messages redondants ») :
+// une infobulle courte là où elle sert ; une action éteinte dit pourquoi.
 //   à droite — « Générer », le seul orange, avec le temps mesuré.
 // L'édition part de la visionneuse ou du ⋯ → Éditer : la barre passe en
 // édition (l'image source en vignette, l'outil en puce) ; la zone se peint
@@ -255,7 +259,7 @@ function refThumb(it, k, R) {
   const t = it.kind === 'element' ? (it.element?.refs?.find((r) => r.file === S.refChoice[it.id])?.thumb_url || it.thumb_url) : (it.thumb_url || it.url);
   const role = roleOf(R.model, k, R.list.length, R.edit);
   const b = el('button', { class: 'pb-ref' + (it.kind === 'element' ? ' element' : ''), type: 'button',
-    title: `${role} · ${it.title || ''} — cliquer : retirer, changer de place${it.kind === 'element' ? ' ou d’image' : ''} ; déposer ici : remplacer`,
+    title: `${role} · ${it.title || ''}`,
     style: t ? { backgroundImage: `url(${href(t)})` } : null,
     onclick: (e) => up(e.currentTarget, refMenu(it, k, R)) },
   el('span', { class: 'n' }, role.replace(/^<image(\d+)>$/, '$1').replace(/^la |^le /, '').replace('personne ou l’objet', 'réf.')));
@@ -264,20 +268,25 @@ function refThumb(it, k, R) {
   b._menu = () => refMenu(it, k, R);   // le même menu au clic droit
   return b;
 }
+// pourquoi on ne peut plus ajouter : la limite du modèle, dite par le serveur
+function maxWhy(R) {
+  const m = M(R.model);
+  if (!R.max) return m.refs_why || `${m.name} ne prend pas de référence`;
+  return R.edit ? `${m.name} : ${plural(R.max, 'référence')} au plus, en plus de l’image éditée` : (m.refs_max_why || `${m.name} : ${plural(R.max, 'référence')} au plus`);
+}
 async function addRefs() {
   const R = refsOf();
-  if (!R.max) { toast(M(R.model).refs_why || `${M(R.model).name} ne prend pas de référence`, 5000); return; }
-  if (R.list.length >= R.max) { toast(`${plural(R.max, 'référence')} au plus pour ${M(R.model).name}`); return; }
+  if (!R.max || R.list.length >= R.max) { toast(maxWhy(R), 5000); return; }
   const got = await pick({ kinds: ['image', 'element'], multiple: true, title: `Références (${R.max} au plus)` });
   addItems(got);
 }
 function addItems(items) {
   const R = refsOf();
   if (!items?.length) return;
-  if (!R.max) { toast(M(R.model).refs_why || 'ce modèle ne prend pas de référence', 5000); return; }
+  if (!R.max) { toast(maxWhy(R), 5000); return; }
   const l = R.list.slice();
   for (const it of items) if (l.length < R.max && !l.some((x) => x.id === it.id)) l.push(it);
-  if (items.length && l.length >= R.max && l.length - R.list.length < items.length) toast(`${plural(R.max, 'référence')} au plus pour ${M(R.model).name}`);
+  if (items.length && l.length >= R.max && l.length - R.list.length < items.length) toast(maxWhy(R), 5000);
   R.set(l);
 }
 function paintRefs() {
@@ -288,17 +297,15 @@ function paintRefs() {
     const m = M(S.model);
     R.list.forEach((it, k) => kids.push(refThumb(it, k, R)));
     if (m.refs && R.list.length < m.refs) {
-      kids.push(el('button', { class: 'pb-ref add', type: 'button', title: 'ajouter une référence — ou déposez une image, un élément, un personnage sur la barre', onclick: addRefs }, '+'));
+      kids.push(el('button', { class: 'pb-ref add', type: 'button', title: `ajouter une référence (${R.list.length}/${m.refs})`, onclick: addRefs }, '+'));
     }
-    if (!m.refs) kids.push(el('span', { class: 'pb-hint', title: m.refs_why }, `${m.name} : texte seul, sans référence`));
-    else if (!R.list.length) kids.push(el('span', { class: 'pb-hint' }, m.id === 'qwen21' ? 'des références : <image1>, <image2>… dans le prompt' : '1 référence : la personne ; 2 : la scène puis le sujet'));
     kids.push(el('span', { class: 'sp' }), undoBox,
-      el('button', { class: 'pb-mode', type: 'button', title: 'éditer une image : consigne, détourer, agrandir, affiner, angle, zone peinte', onclick: () => setMode('edit') },
+      el('button', { class: 'pb-mode', type: 'button', title: 'éditer une image', onclick: () => setMode('edit') },
         el('span', { class: 'ic', 'aria-hidden': 'true' }, '✎'), 'Éditer'));
   } else {
     const src = S.current;
     if (src) {
-      const b = el('button', { class: 'pb-ref src', type: 'button', title: `l’image à éditer (${src.width || '?'} × ${src.height || '?'}) — cliquer : la voir, la changer ; déposer ici : la remplacer`,
+      const b = el('button', { class: 'pb-ref src', type: 'button', title: `l’image à éditer · ${src.width || '?'} × ${src.height || '?'}`,
         style: { backgroundImage: `url(${href(src.thumb_url || src.url)})` },
         onclick: (e) => up(e.currentTarget, [{ head: `source · ${src.width || '?'} × ${src.height || '?'}` },
           { label: 'Voir en grand', onclick: () => fil.open(src) }, { label: 'Changer d’image…', onclick: pickSrc }]) },
@@ -307,13 +314,12 @@ function paintRefs() {
       dragItem(b, src);
       kids.push(b);
     } else {
-      kids.push(el('button', { class: 'pb-ref add src', type: 'button', title: 'choisir l’image à éditer', onclick: pickSrc }, '+'),
-        el('span', { class: 'pb-hint' }, 'l’image à éditer : déposez-la sur la barre, choisissez-la, ou ⋯ → Éditer sur une image du fil'));
+      kids.push(el('button', { class: 'pb-ref add src', type: 'button', title: 'choisir l’image à éditer', onclick: pickSrc }, '+'));
     }
     if (S.edit.tool === 'instruct' && src) {
       const R = refsOf();
       R.list.forEach((it, k) => kids.push(refThumb(it, k, R)));
-      if (R.list.length < R.max) kids.push(el('button', { class: 'pb-ref add', type: 'button', title: 'une référence : une personne, un objet, une tenue à mettre dans l’image', onclick: addRefs }, '+'));
+      if (R.list.length < R.max) kids.push(el('button', { class: 'pb-ref add', type: 'button', title: `ajouter une référence (${R.list.length}/${R.max})`, onclick: addRefs }, '+'));
     }
     kids.push(el('span', { class: 'sp' }), undoBox,
       el('button', { class: 'pb-mode', type: 'button', title: 'revenir à la création d’images', onclick: () => setMode('create') },
@@ -336,25 +342,26 @@ function field() {
   const E = S.edit;
   if (!S.current) return null;
   if (E.tool === 'instruct') {
-    return { obj: E, key: 'prompt', ph: E.model === 'qwen21' ? 'La consigne, en anglais : « Change the jacket in <image1> to a red leather jacket »'
+    return { obj: E, key: 'prompt', ph: E.model === 'qwen21' ? 'La consigne, en anglais : « Change the jacket in <image1> to red leather »'
       : 'La consigne, en anglais : « Recolor the jacket to red leather »' };
   }
   if (E.tool === 'refine') {
-    // « une description détaillée » : le prompt d'une image créée ici en est une ; une consigne d'édition non
+    // « une description détaillée » (note du gabarit Z-Image 2K) : le prompt
+    // d'une image créée ici en est une ; une consigne d'édition non
     const caption = S.current.params?.job === 'image.generate' ? (S.current.prompt || '') : '';
     if (E.captionFor !== S.current.id) { E.caption = caption; E.captionFor = S.current.id; }
-    return { obj: E, key: 'caption', ph: 'une description détaillée de l’image tient mieux (note du gabarit Z-Image 2K) — en anglais' };
+    return { obj: E, key: 'caption', ph: 'Une description détaillée de l’image, en anglais' };
   }
   return null;
 }
 function fixedText() {
   const E = S.edit;
-  if (!S.current) return 'Choisissez l’image à éditer : déposez-la sur la barre, « + », ou ⋯ → Éditer sur une image du fil.';
+  if (!S.current) return 'Choisissez l’image à éditer : « + », ou déposez-la sur la barre.';
   const tool = S.cfg.edit_tools.find((t) => t.id === E.tool);
   if (tool?.off) return `${tool.name} : ${tool.off}`;
-  if (E.tool === 'matte') return 'Détourer : pas de consigne — BiRefNet (nœuds natifs de ComfyUI) rend le sujet seul, sur fond transparent (PNG), le détourage de Character Factory.';
-  if (E.tool === 'upscale') return `Agrandir ×${E.factor} : SeedVR2 7B en un pas — l’image agrandie en Lanczos puis restaurée, couleurs recalées sur l’originale (gabarit officiel ComfyUI). Pour une vidéo ou d’autres modèles : l’outil Upscale.`;
-  if (E.tool === 'angle' && angleDefaults()) return `<sks> ${E.azimuth} ${E.elevation} ${E.distance} — LoRA fal Multiple-Angles sur Qwen-Image-Edit 2511 (Lightning 4 pas), Apache-2.0 ; les côtés sont ceux du sujet.`;
+  if (E.tool === 'matte') return 'Le sujet seul, sur fond transparent (BiRefNet).';
+  if (E.tool === 'upscale') return `×${E.factor} par SeedVR2 7B. Une vidéo : l’outil Upscale.`;
+  if (E.tool === 'angle' && angleDefaults()) return `<sks> ${E.azimuth} ${E.elevation} ${E.distance}`;
   return '';
 }
 function paintText() {
@@ -374,20 +381,20 @@ function grow() {
   ta.style.height = 'auto';
   ta.style.height = `${Math.min(ta.scrollHeight, lh * 3 + 8)}px`;
 }
+// Krea : « Long detailed prompts yield best results » (docs/prompting.md) ; Z-Image et Qwen : des phrases détaillées
 function promptHint() {
-  if (S.model === 'qwen21') return 'Décrivez l’image, en anglais. Tapez @ pour nommer une référence : <image1>, <image2>…';
-  if (S.model === 'krea2') return 'Décrivez la photo en langage naturel, long et précis : le sujet, le lieu, la lumière — en anglais.';
-  return 'Décrivez l’image en anglais, en phrases détaillées : le sujet, le lieu, la lumière.';
+  if (S.model === 'qwen21') return 'Décrivez l’image, en anglais — @ nomme une référence';
+  return 'Décrivez l’image, en anglais : le sujet, le lieu, la lumière';
 }
 const AT = { list: [], sel: 0, q: null };
 function atChoices() {
   const R = refsOf();
   if (R.model !== 'qwen21') {
-    return { why: R.model === 'krea2' ? 'Krea 2 ne nomme pas ses références : la première est la scène, la seconde le sujet (Identity Edit v1.2) — l’ordre suffit'
-      : `${M(R.model).name} ne prend pas de référence` };
+    return { why: R.model === 'krea2' ? 'Krea 2 ne nomme pas ses références : l’ordre suffit (la scène, puis le sujet)'
+      : M(R.model).refs_why || `${M(R.model).name} ne prend pas de référence` };
   }
   const toks = (R.edit ? [{ title: 'l’image éditée', url: S.current?.thumb_url || S.current?.url }] : []).concat(R.list);
-  if (!toks.length) return { why: 'aucune référence : « + », ou déposez une image sur la barre' };
+  if (!toks.length) return { why: 'aucune référence : ajoutez-en par « + »' };
   return { toks: toks.map((it, k) => ({ tag: `<image${k + 1}>`, title: it.title || '', thumb: it.thumb_url || it.url })) };
 }
 function atCheck() {
@@ -463,7 +470,7 @@ function wireText() {
 // ligne 3 : les puces
 function chip(label, { value = '', dot = null, onclick, title = '', cls = '', off = '', open = false } = {}) {
   return el('button', { class: `pc ${cls}${open ? ' on' : ''}`.trim(), type: 'button', 'aria-haspopup': 'menu',
-    title: off ? `${title} — ${off}` : title, 'aria-disabled': off ? 'true' : null,
+    title: off || title || null, 'aria-disabled': off ? 'true' : null,
     onclick: (e) => { if (off) { toast(off, 5000); return; } onclick(e.currentTarget); } },
   dot ? el('i', { class: 'pc-dot', style: { background: `var(--${dot})` } }) : null,
   label ? el('span', { class: 'pc-l' }, label) : null,
@@ -472,18 +479,10 @@ function chip(label, { value = '', dot = null, onclick, title = '', cls = '', of
 // le nombre : − n/4 +
 function counter(o, max) {
   const set = (n) => { o.count = Math.max(1, Math.min(max, n)); saveDraft(); paintChips(); paintAct(); };
-  return el('span', { class: 'pc count', title: `images par envoi : ${max} au plus ; des graines qui se suivent, un travail chacune (les deux DGX en même temps)` },
+  return el('span', { class: 'pc count', title: `images par envoi, ${max} au plus` },
     el('button', { type: 'button', 'aria-label': 'une de moins', disabled: o.count <= 1 ? true : null, onclick: () => set(o.count - 1) }, '−'),
     el('b', {}, `${o.count}/${max}`),
     el('button', { type: 'button', 'aria-label': 'une de plus', disabled: o.count >= max ? true : null, onclick: () => set(o.count + 1) }, '+'));
-}
-function seedItems(o) {
-  const set = (v) => { o.seed = v; saveDraft(); paintChips(); if (S.pop === 'adv') paintPop(); };
-  return [{ head: 'La graine' },
-    { label: 'Auto', sub: 'au hasard', checked: !o.seed, onclick: () => set('') },
-    { label: 'Tirer une graine', sub: 'et la garder', onclick: () => set(String(Math.floor(Math.random() * 1e9))) },
-    o.origSeed != null ? { label: 'Celle d’origine', sub: String(o.origSeed), checked: o.seed === String(o.origSeed), title: 'la graine de l’image réutilisée : la même recette refait la même image', onclick: () => set(String(o.origSeed)) } : null,
-    { label: 'L’écrire…', sub: 'avancé', onclick: () => { S.pop = 'adv'; paintPop(); paintChips(); setTimeout(() => $('#seed')?.focus()); } }];
 }
 function modelItems(ids, current, onpick, disabled = {}) {
   return [{ head: 'Modèle' }, ...ids.map((id) => {
@@ -493,27 +492,34 @@ function modelItems(ids, current, onpick, disabled = {}) {
       why: off ? `${it.name} : ${off}` : '', title: it.role, onclick: () => onpick(id) };
   })];
 }
-function qualityOf(m) {
-  if (m.id === 'zimage') return { value: (m.variants.find((v) => v.id === S.variant)?.label || S.variant).split(' · ')[0],
-    items: [{ head: 'Z-Image' }, ...m.variants.map((v) => {
+// le rendu propre à chaque modèle (un réglage rare : dans les paramètres avancés) ;
+// `alt` : ce qui s'écarte du défaut, montré sur la puce
+function renderOf(m) {
+  const set = (k, v) => () => { S[k] = v; saveDraft(); paintBar(); };
+  if (m.id === 'zimage') return { label: 'Variante', alt: S.variant !== 'turbo' ? (m.variants.find((v) => v.id === S.variant)?.label || S.variant).split(' · ')[0] : '',
+    opts: m.variants.map((v) => {
       const a = avail('zimage:' + v.id);
-      const where = S.cfg.availability?.['zimage:' + v.id]?.on || [];
-      return { label: v.label, sub: where.length ? where.join(' + ') : 'absent', checked: S.variant === v.id, disabled: !a.ok, why: a.why,
-        onclick: () => { S.variant = v.id; saveDraft(); paintBar(); } };
-    })] };
-  if (m.id === 'krea2') return { value: S.realism ? 'UltraReal' : 'sans LoRA photo',
-    items: [{ head: 'Krea 2 · le rendu photo' },
-      { label: 'UltraReal 0,7', sub: 'lora photo', checked: !!S.realism, title: 'LoRA photo, banc Character Factory du 28/09 · sans effet avec une référence', onclick: () => { S.realism = true; saveDraft(); paintChips(); } },
-      { label: 'Sans LoRA photo', checked: !S.realism, onclick: () => { S.realism = false; saveDraft(); paintChips(); } }] };
-  return { value: S.transparent ? 'fond transparent' : 'fond opaque',
-    items: [{ head: 'Qwen 2.1 · turbo Viggle, 6 pas' },
-      { label: 'Fond opaque', checked: !S.transparent, onclick: () => { S.transparent = false; saveDraft(); paintChips(); schedCompose(); } },
-      { label: 'Fond transparent', sub: 'rgba natif', checked: !!S.transparent, title: 'RGBA natif de Qwen 2.1, sans détourage : le prompt prend le gabarit officiel', onclick: () => { S.transparent = true; saveDraft(); paintChips(); schedCompose(); } }] };
+      return { label: v.label, on: S.variant === v.id, off: a.ok ? '' : a.why, onclick: set('variant', v.id) };
+    }) };
+  if (m.id === 'krea2') return { label: 'Rendu photo', alt: S.realism ? '' : 'sans LoRA photo',
+    opts: [{ label: 'UltraReal 0,7', title: 'LoRA photo (banc Character Factory du 28/09), sans effet avec une référence', on: !!S.realism, onclick: set('realism', true) },
+      { label: 'Sans LoRA photo', on: !S.realism, onclick: set('realism', false) }] };
+  return { label: 'Fond', alt: S.transparent ? 'fond transparent' : '',
+    opts: [{ label: 'Opaque', on: !S.transparent, onclick: set('transparent', false) },
+      { label: 'Transparent', title: 'RGBA natif de Qwen 2.1 (gabarit officiel)', on: !!S.transparent, onclick: set('transparent', true) }] };
 }
 function sizeNote(m) {
-  if (m.id === 'zimage') return 'paliers du Space officiel Z-Image-Turbo';
-  if (m.id === 'qwen21') return S.quality === '2k' ? 'tailles natives du README Qwen-Image 2.1 (pas de 21:9 publié)' : '1 Mpx au pas de 32, défaut des gabarits ComfyUI';
-  return 'Krea 2 Turbo : de 1k à 2k, au pas de 16';
+  if (m.id === 'zimage') return 'paliers du Space Z-Image-Turbo';
+  if (m.id === 'qwen21') return S.quality === '2k' ? 'tailles du README Qwen-Image 2.1' : 'gabarits ComfyUI';
+  return 'README Krea 2';
+}
+// la puce des paramètres avancés : fermée par défaut ; ce qui s'écarte du défaut s'y lit
+function advChip() {
+  const o = S.mode === 'create' ? S : S.edit;
+  const alt = [o.seed ? `graine ${o.seed}` : '',
+    S.mode === 'create' ? renderOf(M(S.model)).alt : '',
+    S.mode === 'edit' && S.edit.tool === 'instruct' && !S.edit.keepFace ? 'visage libre' : ''].filter(Boolean);
+  return chip('Paramètres avancés', { value: alt.join(' · '), cls: 'adv' + (alt.length ? ' set' : ''), open: S.pop === 'adv', onclick: () => togglePop('adv') });
 }
 function paintChips() {
   const box = $('#pb-chips');
@@ -521,34 +527,32 @@ function paintChips() {
     const m = M(S.model);
     const sizes = m.sizes[S.quality];
     const qLabel = m.quality.find((q) => q.id === S.quality)?.label || '';
-    const q = qualityOf(m);
     const nLooks = Object.values(S.looks).filter(Boolean).length;
     const at = atChoices();
+    const R = refsOf();
     box.replaceChildren(
-      chip('+', { cls: 'ic', title: 'ajouter des références (images, éléments, personnages de Character Factory)',
-        off: !m.refs ? m.refs_why : S.refs.length >= m.refs ? `${plural(m.refs, 'référence')} au plus pour ${m.name}` : '', onclick: addRefs }),
-      chip('@', { cls: 'ic', title: 'nommer une référence dans le prompt', off: at.why || '', onclick: typeAt }),
+      chip('+', { cls: 'ic', title: m.refs ? `ajouter une référence (${S.refs.length}/${m.refs})` : '',
+        off: !m.refs || S.refs.length >= m.refs ? maxWhy(R) : '', onclick: addRefs }),
+      chip('@', { cls: 'ic', title: 'nommer une référence', off: at.why || '', onclick: typeAt }),
       chip('', { value: m.name, dot: DOT[m.id], title: m.role, onclick: (a) => up(a, modelItems(['zimage', 'qwen21', 'krea2'], S.model, (id) => {
         S.model = id;
         if (S.refs.length > M(id).refs) S.refs = S.refs.slice(0, M(id).refs);
         fixQuality(); saveDraft(); paintBar();
       })) }),
-      chip('', { value: S.aspect, title: `le format · ${sizes[S.aspect]?.join(' × ') || ''}`, onclick: (a) => up(a, [{ head: `Format · ${qLabel}` }, ...S.cfg.aspects.map((x) => {
+      chip('', { value: S.aspect, title: `format · ${sizes[S.aspect]?.join(' × ') || ''}`, onclick: (a) => up(a, [{ head: `Format · ${qLabel}` }, ...S.cfg.aspects.map((x) => {
         const wh = sizes[x];
         return { label: x, sub: wh ? `${wh[0]}×${wh[1]}` : '', checked: S.aspect === x, disabled: !wh, why: `${x} : non documenté en ${qLabel} pour ${m.name}`,
           onclick: () => { S.aspect = x; saveDraft(); paintChips(); paintAct(); } };
       })]) }),
-      chip('', { value: q.value, title: 'la qualité : ce que ce modèle propose', onclick: (a) => up(a, q.items) }),
-      chip('', { value: qLabel, title: `la taille · ${sizeNote(m)}`, onclick: (a) => up(a, [{ head: 'Taille' }, ...m.quality.map((x) => {
+      chip('', { value: qLabel, title: `taille · source : ${sizeNote(m)}`, onclick: (a) => up(a, [{ head: 'Taille' }, ...m.quality.map((x) => {
         const wh = m.sizes[x.id][S.aspect];
         return { label: x.label, sub: wh ? `${wh[0]}×${wh[1]}` : `pas de ${S.aspect}`, checked: S.quality === x.id,
           onclick: () => { S.quality = x.id; fixQuality(); saveDraft(); paintChips(); paintAct(); } };
       })]) }),
-      chip('', { value: S.seed ? `graine ${S.seed}` : 'Auto', title: 'la graine : Auto = au hasard ; la même graine et la même recette refont la même image', onclick: (a) => up(a, seedItems(S)) }),
       counter(S, 4),
       chip('Prise de vue', { value: nLooks ? String(nLooks) : '', cls: nLooks ? 'set' : '', open: S.pop === 'looks', title: 'caméra, objectif, ouverture, pellicule, lumière',
         onclick: () => togglePop('looks') }),
-      chip('Avancé', { open: S.pop === 'adv', title: 'la graine, le prompt réellement envoyé', onclick: () => togglePop('adv') }));
+      advChip());
     return;
   }
   const E = S.edit;
@@ -569,40 +573,34 @@ function paintChips() {
         if (E.refs.length > M(id).refs - 1) E.refs = E.refs.slice(0, M(id).refs - 1);
         saveDraft(); paintBar();
       }, { zimage: 'n’édite pas par consigne (Z-Image-Edit n’est pas publié) — il sait affiner : outil « Affiner ×2 »' })) }),
-      chip('Zone', { value: painted ? 'peinte' : E.mask ? 'reprise' : 'toute l’image', cls: painted || E.mask ? 'set' : '', title: 'seule la zone peinte change : éditée de près puis recollée, bord adouci',
+      chip('Zone', { value: painted ? 'peinte' : E.mask ? 'reprise' : 'toute l’image', cls: painted || E.mask ? 'set' : '', title: 'la zone qui change',
         onclick: (a) => up(a, [{ head: painted ? 'la zone peinte' : E.mask ? 'la zone de l’image réutilisée' : 'toute l’image change' },
           { label: painted ? 'Reprendre la zone…' : 'Peindre une zone…', sub: 'grande fenêtre', onclick: openPaint },
           { label: 'Effacer la zone', disabled: !(painted || E.mask), why: 'aucune zone : toute l’image change', onclick: () => { clearPaint(); E.mask = ''; saveDraft(); paintBar(); } }]) }),
-      chip('Consignes', { title: 'des consignes toutes faites, tirées des exemples officiels', onclick: (a) => up(a, [{ head: `Consignes · ${M(E.model).name}` },
+      chip('Consignes', { title: 'consignes toutes faites', onclick: (a) => up(a, [{ head: `Consignes · ${M(E.model).name}` },
         ...QUICK[E.model].map((q) => ({ label: q.name, title: `${q.text}\nsource : ${q.src}`, onclick: () => { E.prompt = q.text; saveDraft(); paintText(); schedCompose(); paintAct(); $('#prompt').focus(); } })),
         E.model === 'krea2' ? { head: 'retirer : Qwen (Krea Raw non installé)' } : null]) }),
-      chip('+', { cls: 'ic', title: 'une référence : une personne, un objet, une tenue à mettre dans l’image',
-        off: E.refs.length >= M(E.model).refs - 1 ? `${M(E.model).name} : ${plural(M(E.model).refs - 1, 'référence')} en plus de l’image éditée` : '', onclick: addRefs }),
-      chip('@', { cls: 'ic', title: 'nommer une image dans la consigne', off: at.why || '', onclick: typeAt }),
-      chip('Visage', { value: E.keepFace ? 'gardé' : 'libre', cls: E.keepFace ? 'set' : '',
-        title: E.model === 'qwen21' ? 'garder le visage : phrase du gabarit officiel Qwen 2.1' : 'garder le visage : phrase de Character Factory, banc du 28/09',
-        onclick: () => { E.keepFace = !E.keepFace; saveDraft(); paintChips(); schedCompose(); } }),
-      chip('Rééclairer', { value: lightName, cls: lightName ? 'set' : '', open: S.pop === 'relight', title: 'une consigne de lumière s’ajoute à la vôtre', onclick: () => togglePop('relight') }),
+      chip('+', { cls: 'ic', title: `ajouter une référence (${E.refs.length}/${M(E.model).refs - 1})`,
+        off: E.refs.length >= M(E.model).refs - 1 ? maxWhy(refsOf()) : '', onclick: addRefs }),
+      chip('@', { cls: 'ic', title: 'nommer une image', off: at.why || '', onclick: typeAt }),
+      chip('Rééclairer', { value: lightName, cls: lightName ? 'set' : '', open: S.pop === 'relight', title: 'une lumière ajoutée à la consigne', onclick: () => togglePop('relight') }),
       counter(E, 4),
-      chip('', { value: E.seed ? `graine ${E.seed}` : 'Auto', title: 'la graine : Auto = au hasard', onclick: (a) => up(a, seedItems(E)) }),
-      chip('Avancé', { open: S.pop === 'adv', title: 'la graine, le prompt réellement envoyé', onclick: () => togglePop('adv') }));
+      advChip());
   } else if (E.tool === 'upscale') {
     const src = S.current;
-    kids.push(chip('Facteur', { value: `×${E.factor}`, title: 'SeedVR2 7B : ×2 ou ×4', onclick: (a) => up(a, [{ head: 'Agrandir' }, ...[2, 4].map((f) => {
+    kids.push(chip('Facteur', { value: `×${E.factor}`, onclick: (a) => up(a, [{ head: 'Agrandir' }, ...[2, 4].map((f) => {
       const big = Math.max(src.width || 0, src.height || 0) * f;
       return { label: `×${f}`, sub: `${(src.width || 0) * f}×${(src.height || 0) * f}`, checked: E.factor === f, disabled: big > 8192, why: `×${f} dépasserait 8192 px`,
         onclick: () => { E.factor = f; saveDraft(); paintBar(); } };
     })]) }));
   } else if (E.tool === 'refine') {
-    kids.push(chip('Débruitage', { value: E.denoise.toFixed(2).replace('.', ','), open: S.pop === 'refine', title: '0,15–0,25 reste proche · 0,25–0,35 réinvente le détail',
-      onclick: () => togglePop('refine') }), counter(E, 2),
-    chip('', { value: E.seed ? `graine ${E.seed}` : 'Auto', title: 'la graine', onclick: (a) => up(a, seedItems(E)) }));
+    kids.push(chip('Débruitage', { value: E.denoise.toFixed(2).replace('.', ','), open: S.pop === 'refine',
+      onclick: () => togglePop('refine') }), counter(E, 2), advChip());
   } else if (E.tool === 'angle') {
     const A = angleDefaults();
     const name = (list, id) => list.find(([x]) => x === id)?.[1] || id;
     kids.push(chip('Point de vue', { value: `${name(A.azimuth, E.azimuth)} · ${name(A.elevation, E.elevation)} · ${name(A.distance, E.distance)}`,
-      open: S.pop === 'angle', title: 'autour du sujet, la hauteur, la distance', onclick: () => togglePop('angle') }), counter(E, 4),
-    chip('', { value: E.seed ? `graine ${E.seed}` : 'Auto', title: 'la graine', onclick: (a) => up(a, seedItems(E)) }));
+      open: S.pop === 'angle', onclick: () => togglePop('angle') }), counter(E, 4), advChip());
   }
   box.replaceChildren(...kids);
 }
@@ -653,39 +651,49 @@ function paintPop() {
       return el('button', { class: 'pp-tab' + (x.id === g.id ? ' on' : ''), type: 'button', role: 'tab',
         onclick: () => { S.lookTab = x.id; saveDraft(); paintPop(); } }, el('span', {}, x.label), el('small', {}, cur ? cur.name : '—'));
     })) : null,
-    el('div', { class: 'pp-body' }, el('p', { class: 'hint' }, edit ? 'la consigne de lumière s’ajoute à la vôtre : « Relight the scene… »' : g.about || ''), swatches(g, looks, edit ? 'edit' : 'generate'))];
+    el('div', { class: 'pp-body' }, swatches(g, looks, edit ? 'edit' : 'generate'))];
   } else if (S.pop === 'adv') {
     const o = S.mode === 'create' ? S : S.edit;
     const seed = el('input', { class: 'fld seed', id: 'seed', inputmode: 'numeric', placeholder: 'au hasard', value: o.seed,
-      title: 'la graine : la même graine et la même recette refont la même image',
+      title: 'la même graine et la même recette refont la même image',
       oninput: (e) => { o.seed = e.target.value.replace(/\D/g, ''); e.target.value = o.seed; saveDraft(); paintChips(); } });
     const instruct = S.mode === 'create' || S.edit.tool === 'instruct';
-    kids = [head('Avancé'),
+    // une rangée : un intitulé, des boutons à choix unique
+    const opts = (label, list) => el('div', { class: 'row' }, el('span', { class: 'lbl' }, label), el('div', { class: 'opts' }, ...list.map((x) => el('button', {
+      class: 'opt' + (x.on ? ' on' : ''), type: 'button', title: x.off || x.title || null, disabled: x.off ? true : null, onclick: x.onclick }, x.label))));
+    const rd = S.mode === 'create' ? renderOf(M(S.model)) : null;
+    const E = S.edit;
+    const face = S.mode === 'edit' && E.tool === 'instruct' ? opts('Visage', [
+      { label: 'Gardé', on: E.keepFace, title: E.model === 'qwen21' ? 'phrase du gabarit officiel Qwen 2.1' : 'phrase de Character Factory (banc du 28/09)',
+        onclick: () => { E.keepFace = true; saveDraft(); paintBar(); } },
+      { label: 'Libre', on: !E.keepFace, onclick: () => { E.keepFace = false; saveDraft(); paintBar(); } }]) : null;
+    kids = [head('Paramètres avancés'),
       el('div', { class: 'pp-body' },
         el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'Graine'), seed,
           el('button', { class: 'tb ghost sm', type: 'button', title: 'une graine au hasard', onclick: () => { o.seed = String(Math.floor(Math.random() * 1e9)); seed.value = o.seed; saveDraft(); paintChips(); } }, 'dé'),
+          o.seed ? el('button', { class: 'tb ghost sm', type: 'button', onclick: () => { o.seed = ''; saveDraft(); paintChips(); paintPop(); } }, 'auto') : null,
           o.origSeed != null ? el('button', { class: 'tb ghost sm', type: 'button', title: `la graine de l’image réutilisée : ${o.origSeed}`,
-            onclick: () => { o.seed = String(o.origSeed); seed.value = o.seed; saveDraft(); paintChips(); } }, 'd’origine') : null,
-          el('span', { class: 'hint' }, 'vide : au hasard (Auto)')),
-        instruct ? el('div', { class: 'field' }, el('span', { class: 'lbl' }, 'Le prompt envoyé au modèle'), el('pre', { class: 'sent', id: 'sent' }, S.sent || '—')) : null,
-        ...S.notes.map((n) => el('p', { class: 'reason' }, n)))];
+            onclick: () => { o.seed = String(o.origSeed); seed.value = o.seed; saveDraft(); paintChips(); } }, 'd’origine') : null),
+        rd ? opts(rd.label, rd.opts) : null,
+        face,
+        instruct ? el('details', { class: 'pp-acc', open: S.sentOpen ? true : null, ontoggle: (e) => { S.sentOpen = e.currentTarget.open; } },
+          el('summary', { class: 'lbl' }, 'Le prompt envoyé'), el('pre', { class: 'sent', id: 'sent' }, S.sent || '—')) : null)];
   } else if (S.pop === 'angle') {
     const A = S.cfg.angles, E = S.edit;
     const grp = (key, title, list) => el('div', { class: 'field' }, el('span', { class: 'lbl' }, title), el('div', { class: 'opts' }, ...list.map(([id, name]) => el('button', {
       class: 'opt' + (E[key] === id ? ' on' : ''), type: 'button', title: id, onclick: () => { E[key] = id; saveDraft(); paintPop(); paintChips(); paintText(); } }, name))));
     kids = [head('Angle', el('span', { class: 'lbl pp-sum' }, `<sks> ${E.azimuth} ${E.elevation} ${E.distance}`)),
       el('div', { class: 'pp-body pp-angle' }, compass(A.azimuth, E), el('div', { class: 'stack' },
-        grp('elevation', 'Hauteur', A.elevation), grp('distance', 'Distance', A.distance),
-        el('p', { class: 'hint' }, 'LoRA fal Multiple-Angles sur Qwen-Image-Edit 2511 (Lightning 4 pas), Apache-2.0 ; les côtés sont ceux du sujet.')))];
+        grp('elevation', 'Hauteur', A.elevation), grp('distance', 'Distance', A.distance)))];
   } else if (S.pop === 'refine') {
     const E = S.edit;
     const val = el('span', { class: 'val' }, E.denoise.toFixed(2));
     kids = [head('Affiner ×2 · Z-Image Turbo'),
       el('div', { class: 'pp-body' }, el('div', { class: 'slide' },
         el('input', { type: 'range', min: 0.1, max: 0.5, step: 0.01, value: E.denoise, 'aria-label': 'débruitage',
+          title: '0,15–0,25 proche · 0,25–0,35 réinvente le détail · au-delà, des défauts (gabarit Z-Image 2K)',
           oninput: (e) => { E.denoise = Number(e.target.value); val.textContent = E.denoise.toFixed(2); saveDraft(); paintChips(); } }), val),
-      el('div', { class: 'scale' }, el('span', {}, 'proche'), el('span', {}, 'réinventé'), el('span', {}, 'défauts')),
-      el('p', { class: 'hint' }, '0,15–0,25 reste proche · 0,25–0,35 réinvente le détail · au-delà, des défauts (note du gabarit officiel Z-Image 2K). La description se tape dans la barre.'))];
+      el('div', { class: 'scale' }, el('span', {}, 'proche'), el('span', {}, 'réinventé'), el('span', {}, 'défauts')))];
   }
   box.hidden = false;
   box.replaceChildren(...kids.filter(Boolean));
@@ -790,7 +798,7 @@ function openPaint() {
       el('button', { class: 'tb ghost sm', onclick: () => clearPaint() }, 'Effacer'),
       el('button', { class: 'tb sm on', onclick: close }, 'Terminé')),
     el('div', { class: 'modal-body pm-body' }, wrap,
-      el('p', { class: 'hint' }, 'Seule la zone peinte change : elle est éditée de près puis recollée, bord adouci — le reste de l’image ne bouge pas (méthode du report de visage de Character Factory).'))));
+      el('p', { class: 'hint' }, 'Seule la zone peinte change.'))));
   document.addEventListener('keydown', esc, true);
   document.body.append(scrim);
 }
@@ -968,7 +976,7 @@ function compareView(a, b) {
   const move = (e) => { const r = wrap.getBoundingClientRect(); set(((e.clientX - r.left) / r.width) * 100); };
   wrap.addEventListener('pointerdown', (e) => { wrap.setPointerCapture(e.pointerId); move(e); wrap.onpointermove = move; });
   wrap.addEventListener('pointerup', () => { wrap.onpointermove = null; });
-  wrap.append(imA, imB, handle, el('span', { class: 'cap a', title: 'déposez une autre image sur le cadre pour la comparer' }, 'avant · déposer pour changer'),
+  wrap.append(imA, imB, handle, el('span', { class: 'cap a', title: 'déposez une autre image sur le cadre pour la comparer' }, 'avant'),
     el('span', { class: 'cap b' }, 'après'));
   set(50);
   return wrap;
@@ -987,7 +995,7 @@ async function reuse(it) {
   bar?.label(`réutiliser les réglages de « ${it.title || it.id} »`);
   fixQuality(); saveDraft(); paintBar();
   $('#prompt').focus();
-  toast(`réglages repris dans la barre${lost ? ` (${plural(lost, 'référence partie', 'références parties')} de la bibliothèque)` : ''} · graine vidée : « Générer » fait une variante`, 5000);
+  toast(`réglages repris, graine vidée${lost ? ` · ${plural(lost, 'référence partie', 'références parties')} de la bibliothèque` : ''}`, 5000);
 }
 async function reuseEdit(it) {
   const p = it.params || {};
@@ -1006,7 +1014,7 @@ async function reuseEdit(it) {
   if (p.tool === 'refine') { S.edit.caption = p.prompt || ''; S.edit.captionFor = src.id; }
   bar?.label(`réutiliser l’édition « ${it.title || it.id} »`);
   saveDraft(); paintBar();
-  toast(`édition reprise dans la barre (${TOOL_FR[p.tool] || p.tool}, même source${p.mask ? ', même zone' : ''}) · graine vidée : une variante`, 5000);
+  toast(`édition reprise (${TOOL_FR[p.tool] || p.tool}${p.mask ? ', même zone' : ''}), graine vidée`, 5000);
 }
 async function redo(it, n) { await launch('image/redo', { item: it.id, variations: n }); }
 function editWith(it, tool) {
@@ -1075,10 +1083,9 @@ function mountFil() {
     alpha: (it) => /birefnet/.test(it.origin?.model || '') || !!it.params?.transparent,
     viewerTools,
     viewerActions: (it) => [
-      el('button', { class: 'tb ghost', type: 'button', title: 'consigne, zone peinte, détourer, agrandir, affiner, angle : la barre passe en édition',
-        onclick: (e) => up(e.currentTarget, [{ head: 'Éditer cette image' }, ...editEntries(it)]) }, 'Éditer'),
-      el('button', { class: 'tb ghost', type: 'button', title: 'cette image en première image d’un plan (outil Vidéo)', onclick: go(`movie/?start=${it.id}`) }, 'Animer'),
-      el('button', { class: 'tb ghost', type: 'button', title: 'l’ajouter aux références de la barre', onclick: () => { fil.close(); useAsRef(it); } }, 'Référence'),
+      el('button', { class: 'tb ghost', type: 'button', onclick: (e) => up(e.currentTarget, [{ head: 'Éditer cette image' }, ...editEntries(it)]) }, 'Éditer'),
+      el('button', { class: 'tb ghost', type: 'button', title: 'en première image d’un plan (Vidéo)', onclick: go(`movie/?start=${it.id}`) }, 'Animer'),
+      el('button', { class: 'tb ghost', type: 'button', title: 'dans les références de la barre', onclick: () => { fil.close(); useAsRef(it); } }, 'Référence'),
     ],
     reuse: { run: reuse, why: noRecipe },
     recreate: {
@@ -1092,7 +1099,7 @@ function mountFil() {
     menu: menuFor,
     link: (it) => href('image/#' + it.id),
     onLoad: () => paintAct(),   // le temps mesuré vient des rendus du fil
-    empty: 'Écrivez un prompt dans la barre en bas, puis « Générer » : le rendu paraît ici dès l’envoi, son image s’y pose en arrivant. Une image déposée ici s’ouvre en grand.',
+    empty: 'Écrivez un prompt en bas, puis « Générer ».',
   });
   // une image déposée sur le fil (fichier ou vignette) s'ouvre en grand
   dropZone($('#fil'), { kinds: ['image'], multiple: false, via: VIA, onitems: ([it]) => fil.open(it) });
@@ -1100,7 +1107,7 @@ function mountFil() {
 
 function paintBanner() {
   $('#banner').replaceChildren(...(stub() ? [el('div', { class: 'banner' }, el('b', {}, 'Moteur factice'),
-    el('span', {}, 'les images sont des mires dessinées — aucun modèle n’est chargé. Le câblage réel est en place : « image_backend » : « comfyui » dans showrunner.local.json.'))] : []));
+    el('span', {}, 'des mires, aucun modèle chargé — ', el('a', { href: href('admin/#cablage') }, 'Admin → Câblage')))] : []));
 }
 
 // la barre : ses dépôts, sa hauteur (le fil garde sa marge basse), ses panneaux

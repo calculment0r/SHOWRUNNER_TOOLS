@@ -1,7 +1,220 @@
 # La porte d'entrée Cloudflare — étude du 28/09/2026, prête à déployer le 29/09
 
-**Rien n'est déployé, aucun tunnel ne tourne, rien n'est ouvert sur
-internet.** Le 29/09, le code de la porte est écrit et essayé sur une copie
+**29/09 au soir : la porte est en ligne** (Worker `showrunner` → Workers
+VPC → 127.0.0.1:9790 de DGX2) ; Cal quitte Cloudflare Access pour **la
+porte par code** (section suivante). Ce qui suit la section « La porte par
+code » est l'étude d'avant, gardée telle quelle.
+
+---
+
+## La porte par code (29/09/2026, soir)
+
+### La demande
+
+Cal, 18 h 15 : « je veux envoyer le lien à un ami pour tester […] un login
+simple genre su007 ? je veux pas de mail etc.. simple ». Puis, 18 h 45 : plus
+de Cloudflare Access du tout, **Cal compris** (la page d'Access, son attente
+du code par e-mail, « ça fait pas pro du tout […] je veux virer cette
+merde »). Donc : à l'adresse fixe `https://showrunner.luxigone.workers.dev`,
+**notre** page d'entrée, dans notre thème ; un code d'invitation (ou un lien
+qui le porte), puis un pseudo ; Cal admin par `nico007` et le code admin.
+
+### Ce qui est retenu, et pourquoi
+
+**La mécanique de la démo (tunnel rapide), derrière le Worker.** Elle est
+déjà écrite et contrôlée (« Prêt à déployer », mode `demo`) : code
+d'invitation → cookie `sr_invitation` (empreinte du code, `Secure`,
+`HttpOnly`, `SameSite=Lax`) ; puis le pseudo : un pseudo accepté entre, un
+pseudo neuf **attend Cal** (Admin) ; **un compte admin n'entre qu'avec le
+code admin** ; `nouveaux-codes` ferme toutes les sessions de la porte. Ce
+qui change, c'est qui a le droit de parler à la porte :
+
+| | porte `demo` | porte **`code`** (neuve) |
+|---|---|---|
+| qui atteint 127.0.0.1:9790 | le tunnel rapide (`cloudflared --url`) | **le Worker seulement** : chaque requête porte sa signature HMAC (`x-porte-*`, clé `porte.key`, ±60 s, méthode + chemin), sinon 401 — la page d'invitation comprise |
+| l'adresse du visiteur | `Cf-Connecting-IP` en clair | **signée par le Worker** (`x-porte-qui`, rôle `code`) : elle sert aux limites d'essais et à la page Admin, jamais à un droit |
+| l'adresse | tirée au hasard à chaque lancement | **fixe** |
+| Cloudflare Access | — | **aucun** : le Worker ne lit ni ne transmet aucun jeton ; le portail refuse une signature `admin` ou `ami` sur cette porte, même avec un vrai jeton (contrôlé) |
+
+Réglages : `porte.mode = "code"` dans `showrunner.local.json` (le portail)
+et `PORTE_MODE = "code"` dans `porte/wrangler.jsonc` (le Worker). Les deux
+doivent dire « code » : un Worker `code` devant un portail `access`, ou
+l'inverse, ne laisse rien passer (401 partout) — jamais rien d'ouvert.
+
+**Le Worker en mode code** (`porte/worker.js`) :
+- les pages restent des assets (le dépôt, public de toute façon) ; `/api/*`,
+  les relais et **`/invitation/*`** (ajouté à `run_worker_first`) passent par
+  lui ;
+- il transmet au portail **les deux cookies du portail seulement**
+  (`sr_session`, `sr_invitation` ; jamais `CF_Authorization` ni un autre) et
+  rend les `Set-Cookie` du portail tels quels ;
+- **sans l'un de ces cookies, il répond 401 lui-même** (sauf
+  `/invitation/…`, `/api/auth/…`, `/api/porte/…`) : les robots n'atteignent
+  pas DGX2 ;
+- la bibliothèque dans R2 n'est pas servie en mode code (le Worker ne sait
+  pas qui est derrière une session ; DGX2 juge) ; les ponts (`/pont/…`) sont
+  refusés.
+
+**Le portail en mode code** (`server/core/auth.py`, `_door_gate`) : la
+signature d'abord (rôle `code` seulement), puis exactement le chemin de la
+démo ; les sessions ouvertes là sont marquées `code` (une session de la démo
+ou de la maison n'y vaut rien). La page d'invitation dit « sur invitation »
+(plus « démonstration ») ; `?next=` y ramène à la page d'où l'on vient
+(`commun/porte.js` y envoie qui n'a pas encore de code).
+
+**Cal, admin** : le lien du code admin (`…/invitation/<code admin>`), puis
+`nico007`. Sa session tient **120 jours** (`SESSION_DAYS`) sans retaper le
+code (contrôlé) : c'est le « cookie long ». Un mot de passe choisi par Cal
+aurait demandé un stockage de mot de passe (dérivation lente, sel,
+changement, oubli) pour un gain nul : un code de 16 signes tirés par
+`secrets` vaut mieux qu'un mot de passe choisi, et un marque-page suffit.
+**Non retenu.**
+
+**Inviter d'avance** : Admin → A · Demandes → « Inviter un ami » : un pseudo
+(`su007`) créé **déjà accepté** — l'ami entre sans attendre — et le lien
+d'invitation à copier (le code admin n'y est jamais montré). Mêmes règles
+qu'à la porte : ni imitation d'un admin (`nic0007`, `CaI`), ni mot réservé,
+ni pseudo trop proche d'un autre. En ligne de commande : `tools/porte.sh ami
+su007` (`showrunner.py --ami`). Routes : `POST /api/admin/users`,
+`GET /api/admin/porte` (`server/tools/compte.py`).
+
+**À savoir** (décision de Cal, « on se log juste avec le pseudo ») : qui a le
+code d'invitation et connaît le pseudo d'un ami entre sous ce pseudo. Le code
+d'invitation est le vrai secret ; un admin, lui, exige le code admin. Un ami
+qui fuit le lien : `nouveaux-codes`, et Cal renvoie le nouveau lien aux
+autres (leurs pseudos restent).
+
+### « Access et le pseudo en même temps » : étudié, abandonné
+
+Documenté : une application Access sur un chemin ne protège que ce chemin
+([chemins d'application](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/app-paths/)) ;
+le cookie `CF_Authorization` vaut pour tout le nom d'hôte tant que « Cookie
+Path Attribute » est désactivé, le défaut
+([cookie](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/)).
+Access sur `/cal` et le pseudo ailleurs était donc faisable (essayé : le
+Worker lisait le cookie hors de `/cal`), au prix du « binding cookie », qui
+n'est vérifié que par Cloudflare sur le chemin protégé. Cal ne veut plus
+d'Access : **pseudo seul**, code retiré.
+
+Pour mémoire, une politique **Bypass** + **Everyone** : « Bypass does not
+enforce any Access security controls and requests are not logged » ; Bypass
+est évalué avant Allow ([politiques](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/)) ;
+qu'un jeton soit émis pour une requête contournée : **non documenté**. Une
+application qui ne garde plus rien n'a pas de raison de rester : **la
+supprimer**.
+
+### Les robots, sur une adresse fixe
+
+- Codes : invitation **12 signes**, admin **16**, tirés par `secrets` dans
+  un alphabet de 31 (sans 0/O, 1/I/L) : 31¹² ≈ 8·10¹⁷, 31¹⁶ ≈ 7·10²³.
+- **Worker** : liaison `ESSAIS` (10 par minute et par adresse) sur chaque
+  code tenté (`/invitation/<code>`, `POST /invitation/`) et chaque pseudo
+  tapé (`POST /api/auth/enter`) ; `LIMITE` (30 écritures par minute et par
+  adresse) comme avant ([rate limit](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/) :
+  compté par lieu Cloudflare, périodes de 10 ou 60 s). Sans cookie du portail,
+  401 sans aller jusqu'à DGX2.
+- **Portail** : 10 codes par 10 min et par adresse (signée), 300 en tout ;
+  30 pseudos par 10 min et par adresse ; 5 demandes par heure et par adresse,
+  3 en attente par adresse, 30 en attente en tout. Contrôlé : 10 mauvais
+  codes, puis 429 — même le bon code attend ; une autre adresse passe.
+- Un pseudo neuf n'ouvre rien tant que Cal ne l'a pas accepté.
+
+### L'ordre des gestes (le site n'est jamais ouvert sans code)
+
+Aujourd'hui : Worker `access` en ligne, application Access sur le nom
+d'hôte, portail `access`.
+
+1. **Le portail en mode code** (l'agent) :
+   `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && tools/portail.sh status && bash tools/porte.sh code'`
+   — il écrit `porte.mode = "code"` (+ `url`), crée les codes s'il n'y en a
+   pas, relance, vérifie (sans signature : 401, page d'invitation comprise) et
+   affiche le lien et le code admin. De là jusqu'au geste 2, Cal (seul à
+   passer Access) reçoit 401 : le Worker `access` signe `admin`, que la porte
+   `code` refuse.
+2. **Le Worker en mode code** (l'agent, aussitôt) :
+   `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && bash tools/porte.sh deploie'`
+   (`PORTE_MODE = "code"` est déjà dans `wrangler.jsonc`). Access garde encore
+   l'adresse : seul Cal passe, et tombe sur **notre** page d'invitation ; il
+   peut essayer (code admin, `nico007`).
+3. **Cal supprime l'application Access** : tableau de bord Zero Trust
+   ([one.dash.cloudflare.com](https://one.dash.cloudflare.com/)) → **Access
+   controls** → **Applications** → l'application du nom d'hôte
+   `showrunner.luxigone.workers.dev` → **Delete** (dans le menu « ⋯ » de sa
+   ligne, ou en bas de **Configure**) → confirmer. Le libellé exact du bouton
+   n'est pas dans la documentation ; l'API a bien une suppression
+   ([API](https://developers.cloudflare.com/api/resources/zero_trust/subresources/access/subresources/applications/methods/delete/)),
+   mais le jeton de wrangler n'a pas la portée `access` : c'est Cal. Rien à
+   redéployer. Le fournisseur One-time PIN et l'équipe `nirvalab` peuvent
+   rester (gratuits, inutilisés).
+4. **Vérifier** (l'agent) : `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && bash tools/porte.sh essai'`
+   → `/api/porte/moi` 200 `{"porte":"code"}`, `/api/library` 401,
+   `/invitation/` 200.
+
+Les autres ordres : supprimer l'application d'abord laisse le Worker
+`access` répondre 403 à tous (cassé, pas ouvert) jusqu'au déploiement ;
+déployer le Worker avant le portail donne 401 à tous (la porte `access`
+refuse le rôle `code`) jusqu'au geste 1. Aucun n'ouvre rien ; l'ordre 1 → 2
+→ 3 ne casse que l'accès de Cal, une minute.
+
+Revenir à Access : `remplis mode access`, `deploie`, `acces <e-mail>`, et
+recréer l'application (« La vraie porte : les gestes », étape 5).
+
+### Les commandes
+
+```sh
+ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && bash tools/porte.sh lien'            # le lien à envoyer, le code admin
+ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && bash tools/porte.sh ami su007'       # un pseudo créé d'avance, déjà accepté
+ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && bash tools/porte.sh nouveaux-codes'  # tout fermer, d'autres codes
+```
+
+### Les preuves (copie `/tmp/sr_porte3` sur DGX2, ports 8853 / 9853)
+
+- `python3 tools/check.py` : **1280 passés, 0 en échec** (1229 sur
+  origin/main : 51 contrôles neufs, `_selftest_code` de
+  `server/tools/porte_publique.py`). Entre autres : sans signature → 401
+  partout, page et lien d'invitation compris ; signature d'un autre chemin,
+  d'une autre clé, vieille de 2 min → 401 ; signé `admin`/`ami`, même avec un
+  vrai jeton Access de Cal → 401 ; signé `code` sans invitation → la page
+  d'invitation, l'API en 401 ; `nico007` avec le code d'invitation → 403,
+  aucune session ; `su007` créé d'avance par Admin → entre aussitôt, pas
+  d'admin, ne crée personne ; `Margaux` → en attente, l'adresse signée notée,
+  acceptée → entre ; code admin + `nico007` → admin, et le reste par sa seule
+  session ; 10 mauvais codes → 429 ; nouveaux codes → sessions fermées ; une
+  signature `code` sur la porte `access` → 401.
+- **Le trou rouvert exprès** (la signature non exigée en mode code, sur une
+  copie jetable) : 6 contrôles tombent.
+- `node porte/essai.mjs` : **33/33** devant un portail `access`, **26/26**
+  devant un portail `code` (`--codes`) : sans cookie → 401 du Worker, rien
+  vers DGX2 ; vers le portail, rôle `code`, l'adresse, ni jeton ni cookie
+  étranger ; le lien d'invitation pose son cookie à travers le Worker ;
+  `nico007` → 403 ; `su007` entre ; un vrai jeton Access (en-tête ou cookie)
+  ne compte pour rien et ne part jamais ; `ESSAIS` : un code, un pseudo → 429,
+  compté par adresse ; la page d'invitation seule n'est pas un essai.
+- `bash tools/porte.sh verifie` (`wrangler deploy --dry-run`) : passe ;
+  liaisons `PORTAIL`, `BIBLIO`, `LIMITE`, `ESSAIS`, `PORTE_MODE = "code"`.
+- `tools/porte.sh code`, `ami su007`, `ami nic0007` (refusé), `acces`, puis
+  `code` à nouveau : essayés sur la copie (relance et démo factices).
+- Captures (Chromium sans affichage, un faux bord local qui fait tourner
+  `worker.js` devant la porte d'essai) : l'accueil sans code mène à la page
+  d'invitation, dans le thème ; le lien mène au pseudo ; téléphone compris.
+
+### Ce qui reste
+
+- Rien n'a tourné chez Cloudflare en mode code : le premier essai réel est
+  le geste 4 (et Cal, depuis la 4G : le lien, son pseudo).
+- `Cf-Connecting-IP` lu par le Worker : documenté pour les requêtes qui
+  arrivent au bord ([en-têtes](https://developers.cloudflare.com/fundamentals/reference/http-headers/)) ;
+  s'il manquait, l'adresse vaudrait « inconnue » et les limites par adresse
+  deviendraient une limite commune (rien ne s'ouvrirait pour autant).
+- La collaboration en direct d'Idéation par le Worker : essayée par
+  `essai.mjs` en mode `access` ; en mode code, même relais, cookies en plus.
+
+---
+
+## L'étude d'avant la porte par code
+
+*(Tel qu'écrit le 29/09 avant le déploiement :)* rien n'est déployé, aucun
+tunnel ne tourne, rien n'est ouvert sur internet. Le 29/09, le code de la porte est écrit et essayé sur une copie
 (section suivante, « Prêt à déployer ») : le trou « nico007 derrière un
 tunnel » est fermé, la démo par tunnel rapide et la vraie porte (Worker +
 Access + Workers VPC + R2) n'attendent que les gestes de Cal. Documentation

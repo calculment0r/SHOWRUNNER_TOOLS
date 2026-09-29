@@ -18,13 +18,16 @@ Deux points d'écoute (docs/etudes/cloudflare.md, « Prêt à déployer ») :
 
 Réglage `porte` de showrunner.local.json : `{"mode": "demo"}` par défaut
 (tunnel rapide, codes d'invitation : tools/demo.sh), `"access"` (le Worker
-de porte/, Cloudflare Access), `"off"` (pas de seconde écoute). La porte
-n'écoute jamais ailleurs que sur le loopback.
+de porte/, Cloudflare Access), `"code"` (le Worker de porte/, à l'adresse
+fixe, code d'invitation puis pseudo : tools/porte.sh code), `"off"` (pas de
+seconde écoute). La porte n'écoute jamais ailleurs que sur le loopback.
 
     python3 server/showrunner.py --porte-adresse          # « hôte port mode »
-    python3 server/showrunner.py --porte-codes            # les codes de la démo (créés s'il n'y en a pas)
+    python3 server/showrunner.py --porte-codes            # les codes d'invitation (créés s'il n'y en a pas)
     python3 server/showrunner.py --porte-codes-nouveaux   # d'autres codes : les sessions de la porte se ferment
     python3 server/showrunner.py --porte-url <https://….trycloudflare.com | "">   # l'adresse du tunnel
+    python3 server/showrunner.py --porte-lien             # mode, adresse, lien d'invitation, code admin
+    python3 server/showrunner.py --ami su007              # un pseudo d'ami créé d'avance, déjà accepté
 """
 
 from __future__ import annotations
@@ -123,6 +126,19 @@ def main() -> None:
             sys.exit(f"--admin <pseudo> : {e}")
         print(f"« {u['pseudo']} » est admin (id {u['id']}) : à l'accueil du portail, taper ce pseudo "
               f"(depuis le réseau de Cal). Le portail en marche le relit seul.")
+        return
+    if "--ami" in sys.argv:
+        try:
+            u = auth.create_friend(_arg("--ami") or "", by=f"{auth.admin_id()} (ligne de commande)")
+        except auth.HttpError as e:
+            sys.exit(f"--ami <pseudo> : {e.message}")
+        lien = auth.invite_links().get("lien") or ""
+        print(f"« {u['pseudo']} » est un ami, déjà accepté (id {u['id']}) : il entre en tapant ce pseudo"
+              + (f", après le lien d'invitation {lien}" if lien else "") + ". Le portail en marche le relit seul.")
+        return
+    if "--porte-lien" in sys.argv:
+        for k, v in auth.invite_links().items():
+            print(k, v)
         return
     if "--porte-adresse" in sys.argv:
         ds = auth.door_settings()

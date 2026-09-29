@@ -42,6 +42,14 @@ n'est du réseau de Cal, `"auth": false` n'y vaut rien, et tout est gardé :
     ici contre les clés de l'équipe, `aud`, `iss`, `exp`), au même e-mail.
     Admin seulement si le Worker le signe ET si l'e-mail mène à un compte
     admin (`porte.emails` de showrunner.local.json).
+  - « code » (la vraie porte, à l'adresse fixe, sans e-mail ni Cloudflare
+    Access : décisions de Cal du 29/09, « un login simple genre su007 », puis
+    « virer » Access) : chaque requête porte la signature HMAC du Worker,
+    comme en « access » — seul le Worker entre —, rôle `code`, l'adresse du
+    visiteur ; le portail applique la mécanique de la démo (code d'invitation,
+    puis le pseudo ; un pseudo neuf attend Cal, un pseudo créé d'avance par Cal
+    entre aussitôt ; un compte admin n'entre qu'avec le code admin).
+    docs/etudes/cloudflare.md, « La porte par code ».
 Sur l'écoute de la maison, une requête qui porte les en-têtes du bord de
 Cloudflare (Cf-Ray, Cf-Connecting-IP…) est refusée : un tunnel pointé par
 erreur sur 8790 n'ouvre rien.
@@ -357,6 +365,8 @@ def _ip(req) -> str:
         ip = req._h.client_address[0]
     except (AttributeError, IndexError):
         ip = ""
+    if door_of(req) == "code":   # l'adresse que le Worker a signée (Cf-Connecting-IP vu par lui)
+        return getattr(req, "porte_ip", "") or ip
     if door_of(req) == "demo":
         real = (req.headers.get("Cf-Connecting-IP") or "").strip()
         try:
@@ -642,6 +652,14 @@ def _door_gate(req) -> None:
     comprises : le Worker sert les pages lui-même). « demo » : sans invitation
     ni session, seule la page d'invitation (et les feuilles de style
     qu'elle charge) ; ensuite, comme à la maison, sans le réseau de Cal."""
+    if req.door == "code":
+        # seul le Worker entre (sa signature, rôle « code », l'adresse du visiteur) ; ensuite, comme la démo.
+        # Pseudo seul (Cal, 29/09 au soir) : aucune identité Access n'est reçue ici, Cal compris.
+        ident = _worker_identity(req, ("code",))
+        try:
+            req.porte_ip = str(ipaddress.ip_address(ident[0]))
+        except ValueError:
+            req.porte_ip = ""
     if req.door == "access":
         u = _access_user(req)
         set_current(u)
@@ -652,7 +670,7 @@ def _door_gate(req) -> None:
             return _guest_gate(req)
         _admin_only(req)
         return
-    if req.door != "demo":
+    if req.door not in PSEUDO_DOORS:
         raise HttpError(503, f"porte publique : mode inconnu « {req.door} »")
     req.invitation = demo_level(_cookie(req, INVITE_COOKIE))
     h, s, u = session_of(req)
@@ -673,7 +691,7 @@ def _door_gate(req) -> None:
             req.next = _next_of(req)
             req.path, req.rewritten = "/invitation/", True
             return
-        raise HttpError(401, "démonstration privée : ouvre d'abord le lien d'invitation de Cal")
+        raise HttpError(401, NO_INVITE)
     if is_guest(req.user):
         return _guest_gate(req)
     if not req.protected:
@@ -729,7 +747,7 @@ def me(req) -> dict:
             with _lock:
                 out["pending_requests"] = sum(1 for x in _data()["users"].values() if x.get("state") == "pending")
         return out
-    if d == "demo":
+    if d in PSEUDO_DOORS:
         return {**_me(req), "porte": d, "invitation": getattr(req, "invitation", None) or False}
     return _me(req)
 
@@ -783,11 +801,11 @@ def enter(name, req) -> tuple[str, dict, str]:
     if d == "access":
         raise HttpError(409, "sur cette porte, ton identité vient de Cloudflare Access : rien à taper")
     level, door = None, {}
-    if d == "demo":
+    if d in PSEUDO_DOORS:
         level = demo_level(_cookie(req, INVITE_COOKIE))
         if not level:
-            raise HttpError(401, "démonstration privée : ouvre d'abord le lien d'invitation de Cal")
-        door = {"porte": "demo", "code": _cookie(req, INVITE_COOKIE)}
+            raise HttpError(401, NO_INVITE)
+        door = {"porte": d, "code": _cookie(req, INVITE_COOKIE)}
     elif not enabled():
         raise HttpError(409, "la porte est coupée sur ce portail (auth: false)")
     name = clean_name(name)
@@ -932,6 +950,32 @@ def cli_admin(pseudo: str) -> dict:
     return out
 
 
+def create_friend(pseudo, by: str) -> dict:
+    """Un pseudo d'ami créé d'avance par Cal (Admin, ou `showrunner.py --ami`),
+    déjà accepté : l'ami qui le tape entre aussitôt, sans attendre (Cal, 29/09 :
+    « un login simple genre su007 »). Mêmes règles qu'un pseudo tapé à la porte :
+    ni imitation d'un admin, ni mot réservé, ni pseudo trop proche d'un autre."""
+    name = clean_name(pseudo)
+    if not valid_name(name):
+        raise HttpError(400, "le pseudo : de 2 à 24 lettres ou chiffres (espace, trait d'union, point permis)")
+    key = slug(name)
+    with _lock:
+        db = _data()
+        if _find(key) or key in db["users"]:
+            raise HttpError(409, f"« {name} » existe déjà")
+        why = _imitation(key)
+        if why == "réservé":
+            raise HttpError(409, f"« {name} » est réservé : choisis un autre pseudo")
+        if why:
+            raise HttpError(409, f"« {name} » ressemble trop à un pseudo qui existe déjà : choisis-en un autre")
+        u = {"id": key, "name": name, "pseudo": name, "role": "ami", "state": "active", "created": now_iso(),
+             "accepted": now_iso(), "by": by, "via": "admin", "quotas": {}}
+        db["users"][key] = u
+        _save()
+    journal("ami créé d'avance", user=key, by=by)
+    return dict(u)
+
+
 # ── les personnes, pour la page d'admin ─────────────────────
 def devices(uid: str, current_hash: str | None = None) -> list[dict]:
     with _lock:
@@ -1018,10 +1062,14 @@ def set_user(uid: str, patch: dict, by: str) -> dict:
 
 # ── la porte publique : le second point d'écoute ────────────
 # Réglage `porte` de showrunner.local.json (défauts ci-dessous) :
-#   {"mode": "demo" | "access" | "off", "port": <port + 1000>,
+#   {"mode": "demo" | "access" | "code" | "off", "port": <port + 1000>,
 #    "team_domain": "https://nirvalab.cloudflareaccess.com", "aud": "<tag AUD>",
-#    "cle": "~/.config/showrunner/porte.key", "emails": {"<e-mail de Cal>": "cal"}}
-DOOR_MODES = ("demo", "access", "off")
+#    "cle": "~/.config/showrunner/porte.key", "emails": {"<e-mail de Cal>": "cal"},
+#    "url": "https://showrunner.luxigone.workers.dev"}   (l'adresse des liens d'invitation, mode « code »)
+DOOR_MODES = ("demo", "access", "code", "off")
+PSEUDO_DOORS = ("demo", "code")   # les portes où l'on entre par un code d'invitation, puis son pseudo
+PUBLIC_URL = "https://showrunner.luxigone.workers.dev"
+NO_INVITE = "sur invitation : ouvre d'abord le lien d'invitation de Cal"
 INVITE_COOKIE = "sr_invitation"
 INVITE_DAYS = 14
 DOOR_ADMIN = ("{p} est un compte admin : sur la porte publique, il n'entre qu'avec le code admin "
@@ -1045,7 +1093,20 @@ def door_settings() -> dict:
         "aud": str(d.get("aud") or ""),
         "cle": str(d.get("cle") or "~/.config/showrunner/porte.key"),
         "emails": {str(k).strip().lower(): str(v) for k, v in (d.get("emails") or {}).items()},
+        "url": str(d.get("url") or PUBLIC_URL).rstrip("/"),
     }
+
+
+def invite_links() -> dict:
+    """Ce que Cal envoie : l'adresse, le lien d'invitation (le code dedans), le code
+    admin. Porte « code » : l'adresse fixe ; « demo » : celle du tunnel rapide."""
+    ds = door_settings()
+    if ds["mode"] not in PSEUDO_DOORS:
+        return {"mode": ds["mode"]}
+    st = demo_codes()
+    url = ds["url"] if ds["mode"] == "code" else str(st.get("url") or "")
+    return {"mode": ds["mode"], "url": url, "invitation": st["invitation"], "admin": st["admin"],
+            "lien": f"{url}/invitation/{st['invitation']}" if url else ""}
 
 
 def door_address() -> tuple[str, int]:
@@ -1156,7 +1217,7 @@ def _door_session_ok(req, s: dict, u: dict | None) -> bool:
     d = door_of(req)
     if not d:
         return True
-    if d != "demo" or s.get("porte") != "demo":
+    if d not in PSEUDO_DOORS or s.get("porte") != d:
         return False
     level = demo_level(s.get("code"))
     return bool(level) and (level == "admin" or not is_admin(u))
@@ -1168,9 +1229,11 @@ def invite_cookie(level_mark: str | None) -> str:
     return f"{INVITE_COOKIE}={level_mark}; Path=/; HttpOnly; SameSite=Lax; Max-Age={INVITE_DAYS * 86400}; Secure"
 
 
-def _invitation_page(message: str = "", status: int = 200, next_: str = "") -> Response:
+def _invitation_page(message: str = "", status: int = 200, next_: str = "", door: str = "demo") -> Response:
     warn = f'<p class="warn" role="alert">{html.escape(message)}</p>' if message else ""
     back = f'<input type="hidden" name="next" value="{html.escape(next_)}">' if _safe_next(next_) else ""
+    lbl, intro = (("démonstration · sur invitation", "Une démonstration privée du portail de Cal.") if door == "demo"
+                  else ("sur invitation", "Le portail de Cal, sur invitation."))
     page = f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -1191,12 +1254,12 @@ def _invitation_page(message: str = "", status: int = 200, next_: str = "") -> R
   <div class="porte-in">
     <div class="porte-top">
       <span class="logo"><span class="sq"><i></i></span><span><b>Showrunner</b><small>tools</small></span></span>
-      <span class="sp"></span><span class="lbl">démonstration · sur invitation</span>
+      <span class="sp"></span><span class="lbl">{lbl}</span>
     </div>
     <section class="hero porte-card">
       <span class="ref">00_INVITATION</span>
       <h1>Tous nos outils une seule porte</h1>
-      <p>Une démonstration privée du portail de Cal. Tape le code d’invitation qu’il t’a donné ; ensuite, ton pseudo.</p>
+      <p>{intro} Tape le code d’invitation qu’il t’a donné ; ensuite, ton pseudo.</p>
       <form class="porte-form" method="post" action="/invitation/">
         <div class="row"><input class="fld" name="code" placeholder="le code d’invitation" maxlength="40" autocomplete="off"
           aria-label="le code d’invitation" spellcheck="false" autocapitalize="characters" required autofocus>
@@ -1209,17 +1272,21 @@ def _invitation_page(message: str = "", status: int = 200, next_: str = "") -> R
 </body>
 </html>
 """
-    return Response(page, status, "text/html; charset=utf-8", {"Cache-Control": "no-store", "X-Porte": "demo"})
+    return Response(page, status, "text/html; charset=utf-8", {"Cache-Control": "no-store", "X-Porte": door})
 
 
 def invitation(req, rest: str):
     """`/invitation/` (le formulaire), `POST /invitation/` (code=…), `/invitation/<code>`
-    (le lien que Cal envoie) : sur la porte « demo » seulement."""
-    if door_of(req) != "demo":
+    (le lien que Cal envoie) : sur les portes « demo » et « code » seulement.
+    `?next=/chemin` : où revenir le code donné (commun/porte.js l'y envoie)."""
+    d = door_of(req)
+    if d not in PSEUDO_DOORS:
         raise HttpError(404, "introuvable")
     if req.method not in ("GET", "HEAD", "POST"):
         raise HttpError(405, "méthode refusée ici : GET, POST")
     code, back = "", ""
+    if req.method != "POST" and _safe_next(req.q("next")):
+        back = req.q("next")
     if req.method == "POST":
         raw = req.body()[:6144].decode("utf-8", "replace")
         ctype = (req.headers.get("Content-Type") or "").split(";")[0].strip().lower()
@@ -1241,7 +1308,7 @@ def invitation(req, rest: str):
             _rate(f"code:{ip}", 10, 600)
             _rate("code:tous", 300, 600)
         except HttpError as e:
-            return _invitation_page(e.message, 429, back)
+            return _invitation_page(e.message, 429, back, d)
         st = demo_state()
         n = _norm_code(code)
         level = None
@@ -1251,14 +1318,14 @@ def invitation(req, rest: str):
             level = "invitation"
         if not level:
             journal("porte : code refusé", ip=ip)
-            return _invitation_page("ce code n’ouvre pas la porte : vérifie-le auprès de Cal", 403, back)
-        journal("porte : invitation", niveau=level, ip=ip)
+            return _invitation_page("ce code n’ouvre pas la porte : vérifie-le auprès de Cal", 403, back, d)
+        journal("porte : invitation", niveau=level, ip=ip, porte=d)
         return Response(b"", 303, "text/plain; charset=utf-8",
                         {"Location": back or "/", "Set-Cookie": invite_cookie(code_mark(n)), "Cache-Control": "no-store",
-                         "X-Porte": "demo"})
+                         "X-Porte": d})
     if getattr(req, "invitation", None) and not getattr(req, "rewritten", False):
-        return Response(b"", 303, "text/plain; charset=utf-8", {"Location": "/", "Cache-Control": "no-store"})
-    return _invitation_page("", 401 if getattr(req, "rewritten", False) else 200, getattr(req, "next", ""))
+        return Response(b"", 303, "text/plain; charset=utf-8", {"Location": back or "/", "Cache-Control": "no-store"})
+    return _invitation_page("", 401 if getattr(req, "rewritten", False) else 200, getattr(req, "next", "") or back, d)
 
 
 # ── la vraie porte : le Worker et Cloudflare Access ─────────
@@ -1280,12 +1347,14 @@ def door_key() -> bytes | None:
         return _keyc["v"]
 
 
-def signed_identity(req, key: bytes) -> tuple[str, str] | None:
-    """(e-mail, rôle) signés par le Worker, ou None. La signature couvre
-    qui \\n rôle \\n quand \\n méthode \\n chemin?requête (tel que reçu), à ±60 s."""
+def signed_identity(req, key: bytes, roles=("admin", "ami")) -> tuple[str, str] | None:
+    """(qui, rôle) signés par le Worker, ou None. La signature couvre
+    qui \\n rôle \\n quand \\n méthode \\n chemin?requête (tel que reçu), à ±60 s.
+    `qui` : l'e-mail (rôles admin, ami : Cloudflare Access) ou, pour le rôle
+    `code` (porte « code » seulement), l'adresse du visiteur."""
     g = req.headers.get
     qui, role, quand, sig = (g(h) or "" for h in ("X-Porte-Qui", "X-Porte-Role", "X-Porte-Quand", "X-Porte-Sig"))
-    if not (qui and role in ("admin", "ami") and quand.isdigit() and re.fullmatch(r"[0-9a-f]{64}", sig)):
+    if not (qui and role in roles and quand.isdigit() and re.fullmatch(r"[0-9a-f]{64}", sig)):
         return None
     if abs(time.time() - int(quand)) > 60:
         return None
@@ -1409,15 +1478,23 @@ def _user_for_email(email: str, mapping: dict) -> dict:
     return dict(u)
 
 
-def _access_user(req) -> dict:
-    ds = door_settings()
+def _worker_identity(req, roles) -> tuple[str, str]:
+    """(qui, rôle) signés par le Worker ; sinon 401 (503 sans clé) : seul le Worker entre."""
     key = door_key()
-    if not key or not ds["team_domain"] or not ds["aud"]:
-        raise HttpError(503, "la porte Access n'est pas réglée sur ce portail (clé, team_domain, aud : "
-                             "docs/etudes/cloudflare.md, « Prêt à déployer »)")
-    ident = signed_identity(req, key)
+    if not key:
+        raise HttpError(503, "la porte n'a pas sa clé sur ce portail (~/.config/showrunner/porte.key, 600)")
+    ident = signed_identity(req, key, roles)
     if not ident:
         raise HttpError(401, "requête refusée : elle ne vient pas de la porte Cloudflare (signature absente ou fausse)")
+    return ident
+
+
+def _access_user(req) -> dict:
+    ds = door_settings()
+    if not door_key() or not ds["team_domain"] or not ds["aud"]:
+        raise HttpError(503, "la porte Access n'est pas réglée sur ce portail (clé, team_domain, aud : "
+                             "docs/etudes/cloudflare.md, « Prêt à déployer »)")
+    ident = _worker_identity(req, ("admin", "ami"))
     tok = req.headers.get("Cf-Access-Jwt-Assertion") or ""
     try:
         claims = verify_access_jwt(tok, ds["team_domain"], ds["aud"]) if tok else None

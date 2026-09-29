@@ -118,20 +118,33 @@ MODELS: dict[str, dict] = {
             "turbo": {"label": "Turbo · 8 pas", "unet": "z_image_turbo_bf16.safetensors", "steps": 8, "cfg": 1.0},
             "base": {"label": "Base · 25 pas", "unet": "z_image_bf16.safetensors", "steps": 25, "cfg": 4.0},
         },
-        "refs_why": "Z-Image ne prend pas de référence : son édition (Z-Image-Edit) n'est pas publiée, "
-                    "seul le texte → image l'est.",
+        "refs_why": "Z-Image : texte seul, sans référence (Z-Image-Edit n'est pas publié)",
     },
     "qwen21": {
         "name": "Qwen-Image 2.1", "k": "QWEN 2.1",
-        "role": "suit le prompt à la lettre, écrit du texte, édite ; jusqu'à 3 références <image1>…",
-        "refs": 3,
+        "role": "suit le prompt à la lettre, écrit du texte, édite ; jusqu'à 10 références <image1>…",
+        # « Support up to 10 reference images » (README
+        # github.com/QwenLM/Qwen-Image-2.1) ; le nœud TextEncodeQwenImage21
+        # de ComfyUI ouvre image_1 … image_16 (comfy_extras/nodes_qwen.py) et
+        # qwen21.workflow de Character Factory en branche autant qu'on lui
+        # en donne. Le turbo Viggle qu'on emploie a appris sur 3 au plus
+        # (« Up to 3 references were used in training ») ; « edits with 5,
+        # 6 and 10 reference images work … but are not measured » (sa carte,
+        # huggingface.co/Viggle/Qwen-Image-2.1-viggle-turbo) : au-delà de
+        # `refs_trained`, une note le dit, rien n'est bloqué.
+        "refs": 10, "refs_trained": 3,
+        "refs_max_why": "Qwen-Image 2.1 prend 10 références au plus (sa limite publiée)",
         "sizes": {"1": {a: size_for(a, 1.0, 32) for a in ASPECTS}, "2k": QWEN_2K},
         "quality_labels": {"1": "1 Mpx", "2k": "2K natif"},
     },
     "krea2": {
         "name": "Krea 2", "k": "KREA 2",
         "role": "la plus belle photo (peau, lumière) ; reprend une personne d'après 1 ou 2 références",
+        # Identity Edit v1.2 : deux entrées, la scène puis le sujet
+        # (Krea2EditModelPatch : source_latent, source_latent_b ; README
+        # github.com/lbouaraba/comfyui-krea2edit)
         "refs": 2,
+        "refs_max_why": "Krea 2 prend 2 références au plus : la scène, puis le sujet (Identity Edit)",
         "sizes": {"1": {a: size_for(a, 1.0, 16) for a in ASPECTS}, "2": {a: size_for(a, 2.0, 16) for a in ASPECTS}},
         "quality_labels": {"1": "1 Mpx", "2": "2 Mpx"},
     },
@@ -524,11 +537,19 @@ def compose(model: str, prompt: str, looks: dict | None = None, refs: list[dict]
         # que le prompt ne nomme pas est présentée en une phrase.
         joined = " ".join(parts)
         first = 2 if mode == "edit" else 1
+        told = []
         for k, r in enumerate(refs):
             tag = f"<image{first + k}>"
             if tag not in joined:
                 parts.append(f"{tag} shows {r['label']}.")
-                notes.append(f"{tag} présentée automatiquement : le prompt ne la nommait pas")
+                told.append(tag)
+        if told:
+            names = " ".join(told) if len(told) <= 3 else f"{told[0]} … {told[-1]}"
+            s = "s" if len(told) > 1 else ""
+            notes.append(f"{names} non nommée{s} : présentée{s} d'office")
+        n_img = len(refs) + (1 if mode == "edit" else 0)
+        if n_img > MODELS["qwen21"]["refs_trained"]:
+            notes.append(f"{n_img} images : le turbo a appris sur {MODELS['qwen21']['refs_trained']} au plus, non mesuré")
     if transparent and model == "qwen21" and mode == "generate":
         # le gabarit de la note officielle ComfyUI (image_qwen_image_2_1_t2i)
         # et du README Qwen-Image 2.1 : l'alpha est natif, sans détourage
@@ -721,7 +742,7 @@ def check_generate(d: dict) -> dict:
     variant = d.get("variant") or "turbo"
     if model == "zimage" and variant not in m["variants"]:
         raise ValueError(f"Z-Image : variante inconnue {variant}")
-    refs = _refs(d.get("refs"), m["refs"], m.get("refs_why", ""))
+    refs = _refs(d.get("refs"), m["refs"], m.get("refs_why") or m.get("refs_max_why", ""))
     out = {"model": model, "prompt": prompt, "looks": _looks(d.get("looks")), "aspect": aspect, "quality": quality,
            "width": wh[0], "height": wh[1], "seed": _seed(d.get("seed")), "refs": refs}
     if model == "zimage":
@@ -1293,7 +1314,7 @@ def api_models(req) -> dict:
     models = []
     for mid, m in MODELS.items():
         entry = {"id": mid, "name": m["name"], "k": m["k"], "role": m["role"], "refs": m["refs"],
-                 "refs_why": m.get("refs_why", ""),
+                 "refs_why": m.get("refs_why", ""), "refs_max_why": m.get("refs_max_why", ""),
                  "sizes": {q: {a: list(wh) if wh else None for a, wh in t.items()} for q, t in m["sizes"].items()},
                  "quality": [{"id": q, "label": m["quality_labels"][q]} for q in m["sizes"]]}
         if "variants" in m:
@@ -1318,7 +1339,7 @@ def api_compose(req) -> dict:
         model = d.get("model")
         if model not in MODELS:
             raise ValueError(f"modèle inconnu : {model}")
-        refs = [_ref(r) for r in _refs(d.get("refs"), 4)]
+        refs = [_ref(r) for r in _refs(d.get("refs"), max(m["refs"] for m in MODELS.values()))]
         out = compose(model, d.get("prompt") or "", _looks(d.get("looks")), refs, mode=mode,
                       keep_face=bool(d.get("keep_face")), transparent=bool(d.get("transparent")))
     except ValueError as e:
@@ -1478,6 +1499,15 @@ def selftest(call, ok) -> None:
     ok(st == 200 and "<image1> shows the face of Maren." in c["prompt"] and c["notes"], f"image : Qwen présente <image1> ({c})")
     st, c = call("POST", "/api/image/compose", {"model": "qwen21", "prompt": "<image1> at a table", "refs": [{"item": eid}]})
     ok(st == 200 and "shows" not in c["prompt"], "image : une <image1> déjà nommée n'est pas répétée")
+    # Qwen 2.1 : 10 références (README) ; au-delà des 3 du turbo, une note, rien de bloqué
+    st, c = call("POST", "/api/image/compose", {"model": "qwen21", "prompt": "a group photo", "refs": [iid] * 5})
+    ok(st == 200 and "<image5> shows" in c["prompt"] and len(c["notes"]) == 2 and "non mesuré" in c["notes"][1],
+       f"image : Qwen, 5 références présentées en une note, le turbo au-delà de 3 signalé ({c})")
+    st, r = call("POST", "/api/image/generate", {"model": "qwen21", "prompt": "x", "refs": [iid] * 10, "dry": True})
+    ok(st == 200 and len(r.get("params", {}).get("refs", [])) == 10, f"image : Qwen accepte 10 références ({st})")
+    st, r = call("POST", "/api/image/edit", {"source": iid, "tool": "instruct", "model": "qwen21", "prompt": "x",
+                                             "refs": [iid] * 9, "dry": True})
+    ok(st == 200, f"image : Qwen édite avec 9 références en plus de l'image éditée ({st})")
 
     bad = [({"model": "zimage", "prompt": "x", "refs": [iid]}, "Z-Image refuse une référence"),
            ({"model": "dall-e", "prompt": "x"}, "modèle inconnu refusé"),
@@ -1486,6 +1516,7 @@ def selftest(call, ok) -> None:
            ({"model": "krea2", "prompt": "x", "quality": "4"}, "Krea 4 Mpx refusé"),
            ({"model": "qwen21", "prompt": "x", "quality": "2k", "aspect": "21:9"}, "Qwen 2K 21:9 refusé (non documenté)"),
            ({"model": "krea2", "prompt": "x", "refs": [iid, iid, iid]}, "Krea : 3 références refusées"),
+           ({"model": "qwen21", "prompt": "x", "refs": [iid] * 11}, "Qwen : 11 références refusées"),
            ({"model": "qwen21", "prompt": "x", "refs": ["ima-rien"]}, "référence introuvable refusée")]
     for body, msg in bad:
         st, r = call("POST", "/api/image/generate", {**body, "dry": True})
@@ -1554,6 +1585,7 @@ def selftest(call, ok) -> None:
         print("  (Character Factory absent : graphes Krea 2 / Qwen 2.1 non construits)")
         return
     for model, extra in (("zimage", {}), ("zimage", {"variant": "base"}), ("qwen21", {}), ("qwen21", {"refs": [{"item": eid}, iid]}),
+                         ("qwen21", {"refs": [iid] * 10}),
                          ("krea2", {}), ("krea2", {"refs": [iid]}), ("krea2", {"realism": False})):
         st, r = call("POST", "/api/image/generate", {"model": model, "prompt": "a lighthouse at dusk", "aspect": "16:9",
                                                      "seed": 7, "looks": look, "dry": True, **extra})
@@ -1565,6 +1597,8 @@ def selftest(call, ok) -> None:
         if model == "zimage" and st == 200:
             lat = next(n for n in g.values() if n["class_type"] == "EmptySD3LatentImage")["inputs"]
             ok((lat["width"], lat["height"]) == (1280, 720), f"image : Z-Image à la taille du Space ({lat})")
+        if model == "qwen21" and extra.get("refs") and st == 200:
+            ok(f"images.image_{len(extra['refs'])}" in g["6"]["inputs"], "image : Qwen branche chaque référence sur l'encodeur")
         if model == "krea2" and extra.get("refs") and st == 200:
             ok(any(n["class_type"] == "Krea2EditModelPatch" for n in g.values()), "image : Krea avec référence = Identity Edit v1.2")
     for body, msg in (({"tool": "instruct", "model": "qwen21", "prompt": "make it night", "refs": [eid]}, "Qwen édite"),
