@@ -6,21 +6,35 @@
 // Ce module tient la planche : l'ouvrir, l'enregistrer seule (600 ms après
 // le dernier geste, avec sa version : un autre onglet ne l'écrase pas en
 // silence), annuler et rétablir, le clavier, le dépôt de fichiers, et les
-// gestes qui touchent plusieurs objets. Le canvas (canvas.js), la
-// bibliothèque (library.js), l'inspecteur (inspector.js) et les générations
-// (gen.js) passent tous par `app`.
+// gestes qui touchent plusieurs objets. Le canvas (canvas.js, wires.js), la
+// bibliothèque (library.js), l'inspecteur (inspector.js), les cartes
+// (gen.js, video.js, composer.js) passent tous par `app`.
+//
+// Les fils (ports.js, la seule vérité de ce qui se branche) : `app.flow()`
+// rend ce qui passe dans les fils de la planche, recalculé à chaque rendu
+// (`app.flowNow()` le recalcule tout de suite) ; `app.caps()` les capacités
+// lues chez les outils (Image : /api/image/models, Vidéo : /api/movie/options).
+// Brancher : `app.wire(a, pa, b, pb)` (refuse en disant pourquoi), couper :
+// `app.cutLink(id)`, détacher : `app.detach(id)`, nourrir une entrée d'objets
+// de la bibliothèque : `app.feed(id, port, items)`. Un objet lâché sur un
+// autre : `app.dropRules` (la première règle qui le prend ; le module des
+// groupes peut y ajouter la sienne, après celles-ci).
 
 import { mountHeader, api, jobs, toast, el, $, href, fmtDate, uploadFile, pick } from '../commun/shell.js';
-import { createCanvas, bbox, menu } from './canvas.js';
+import { menu } from '../commun/menu.js';
+import { createCanvas, bbox } from './canvas.js';
 import { createGen } from './gen.js';
+import { createVideo } from './video.js';
+import { createComposer } from './composer.js';
 import { createInspector } from './inspector.js';
 import { createLibrary, cfElement } from './library.js';
 import { installPlugins } from './plugins.js';
+import { flow, canWire, replaces, portOf, outPort, nameOf, newSlots, newSlot, TEXT_TYPES } from './ports.js';
 
 mountHeader('ideation', { sub: 'planches · idées' });
 
 const S = {
-  meta: null, cfg: null, cfgError: '', board: null, rev: 0,
+  meta: null, cfg: null, cfgError: '', mopts: null, moptsError: '', board: null, rev: 0,
   items: new Map(), jobs: new Map(),
   sel: new Set(), link: null, tool: 'select', space: false, grid: true,
   view: { x: 0, y: 0, z: 1 },
@@ -43,18 +57,26 @@ const app = {
   node: (id) => S.board?.nodes.find((n) => n.id === id) || null,
 };
 
+// ── les fils : ce que les outils disent de leurs modèles, ce qui passe ─────
+app.caps = () => ({ image: S.cfg, movie: S.mopts });
+let F = null;
+app.flowNow = () => (F = flow(S.board || { nodes: [], links: [] }, app.caps(), S.items));
+app.flow = () => F || app.flowNow();
+
 // ── les libellés ───────────────────────────────────────────
 app.label = (n) => {
   if (!n) return '?';
   const cut = (s, k = 42) => { s = (s || '').replace(/\s+/g, ' ').trim(); return s.length > k ? s.slice(0, k - 1) + '…' : s; };
   if (n.type === 'media') return cut(S.items.get(n.item)?.title || n.title || n.item);
   if (n.type === 'frame') return cut(n.name || 'Cadre');
-  if (n.type === 'gen') return 'Générer · ' + cut(n.prompt || '—', 30);
+  if (n.type === 'gen') return 'Générer image · ' + cut(app.flow().prompt(n.id)?.text || n.prompt || '—', 30);
+  if (n.type === 'vgen') return 'Générer vidéo · ' + cut(app.flow().prompt(n.id)?.text || n.prompt || '—', 30);
+  if (n.type === 'compose') return 'Composeur · ' + cut(app.flow().text(n.id) || '—', 30);
   if (n.type === 'palette') return 'Nuancier';
   return cut(n.text || { note: 'note vide', sticky: 'post-it vide', title: 'titre vide' }[n.type]);
 };
 app.kindLabel = (n) => (n.type === 'media' ? { image: 'image', video: 'vidéo', audio: 'son', element: 'élément' }[n.kind]
-  : { note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', gen: 'générer', palette: 'nuancier' }[n.type]);
+  : { note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', gen: 'image', vgen: 'vidéo', compose: 'composeur', palette: 'nuancier' }[n.type]);
 
 // ── annuler, rétablir, enregistrer ─────────────────────────
 const snapshot = () => JSON.stringify({ name: S.board.name, nodes: S.board.nodes, links: S.board.links });
@@ -72,8 +94,19 @@ app.commit = () => { app.touch(); app.canvas.render(); app.insp.render(); paintB
 app.mutate = (fn) => { if (!S.board) return; app.snap(); fn(S.board); pruneSel(); app.commit(); };
 // un changement qui n'est pas un geste de Cal (un travail qui avance) : ni annuler ni rétablir
 app.quiet = (fn) => { if (!S.board) return; fn(S.board); app.touch(); app.canvas.render(); };
-// un champ qu'on remplit : un seul pas d'annulation pour toute la saisie
-app.editing = () => { let done = false; return () => { if (!done) { app.snap(); done = true; } app.touch(); }; };
+// un champ qu'on remplit : un seul pas d'annulation pour toute la saisie, et un commit
+// quand elle se pose (0,6 s sans frappe) — chaque geste finit par un commit, que les
+// modules greffés entendent (machine temporelle, collaboration)
+let editT = 0;
+app.editing = () => {
+  let done = false;
+  return () => {
+    if (!done) { app.snap(); done = true; }
+    app.touch();
+    clearTimeout(editT);
+    editT = setTimeout(() => { if (S.board) app.commit(); }, 600);
+  };
+};
 
 function pruneSel() {
   for (const id of [...S.sel]) if (!app.node(id)) S.sel.delete(id);
@@ -97,7 +130,7 @@ async function flushSave() {
   if (!S.board || !S.dirty || S.conflict) return;
   if (S.saving) { S.again = true; return S.saving; }
   const b = S.board;
-  const body = { name: b.name, nodes: b.nodes, links: b.links, base_rev: S.rev };
+  const body = { name: b.name, v: b.v, nodes: b.nodes, links: b.links, base_rev: S.rev };
   S.dirty = false;
   paintSave();
   S.saving = api(`ideation/boards/${b.id}`, { method: 'POST', body }).then((r) => {
@@ -122,7 +155,7 @@ function paintSave() {
 addEventListener('beforeunload', () => {
   if (!S.dirty || !S.board || S.conflict) return;
   const b = S.board;
-  const body = JSON.stringify({ name: b.name, nodes: b.nodes, links: b.links, base_rev: S.rev });
+  const body = JSON.stringify({ name: b.name, v: b.v, nodes: b.nodes, links: b.links, base_rev: S.rev });
   try { navigator.sendBeacon(href(`api/ideation/boards/${b.id}`), new Blob([body], { type: 'application/json' })); } catch { /* */ }
 });
 $('#c-reload').addEventListener('click', async () => { S.conflict = false; $('#conflict').hidden = true; await openBoard(S.board.id, { force: true }); });
@@ -155,20 +188,40 @@ const DEF = {
   frame: () => ({ w: 560, h: 380, name: `Cadre ${S.board.nodes.filter((n) => n.type === 'frame').length + 1}` }),
   gen: () => ({ w: 320, h: 300, prompt: '', model: LS('gen-model') || 'krea2', aspect: '3:4', quality: '', count: 2, looks: {},
     variant: 'turbo', realism: true, seed: '', refChoice: {}, jobs: [], error: '' }),
+  vgen: () => ({ w: 330, h: 320, prompt: '', mode: 'i2v', frames: S.mopts?.frames?.[0]?.frames || 124, canvas: 'auto', method: 'turbo',
+    seed: '', sound: '', music: '', jobs: [], error: '' }),
+  compose: () => ({ w: 340, h: 300, slots: newSlots() }),
   palette: () => ({ w: 280, h: 64, colors: [] }),
 };
-app.addAt = (type, wx, wy, { edit = false, select = true, link = null, w, h } = {}) => {
+// poser un objet ; `link` : une flèche d'annotation depuis cet objet ; `wireIn` : { from, pa, pb }
+// un fil qui y entre ; `wireOut` : { to, pb } un fil qui en part ; `preset` : ses réglages
+app.addAt = (type, wx, wy, { edit = false, select = true, link = null, w, h, preset = null, wireIn = null, wireOut = null } = {}) => {
   if (!S.board) { toast('ouvrez ou créez d’abord une planche'); return null; }
-  const n = { id: app.uid('n'), type, x: Math.round(wx), y: Math.round(wy), ...DEF[type]() };
+  const n = { id: app.uid('n'), type, x: Math.round(wx), y: Math.round(wy), ...DEF[type](), ...(preset ? JSON.parse(JSON.stringify(preset)) : {}) };
   if (w) n.w = Math.round(w);
   if (h) n.h = Math.round(h);
+  let why = '';
   app.mutate((B) => {
     B.nodes.push(n);
     if (link && app.node(link)) B.links.push({ id: app.uid('l'), a: link, b: n.id, kind: 'arrow', label: '' });
+    if (wireIn) {
+      why = canWire(B, wireIn.from, wireIn.pa, n.id, wireIn.pb, app.caps(), S.items);
+      if (!why) B.links.push({ id: app.uid('l'), a: wireIn.from, b: n.id, kind: 'wire', pa: wireIn.pa, pb: wireIn.pb, label: '' });
+    }
+    if (wireOut) {
+      const o = outPort(n);
+      why = o ? canWire(B, n.id, o.id, wireOut.to, wireOut.pb, app.caps(), S.items) : 'cet objet ne donne rien';
+      if (!why) {
+        const old = replaces(B, wireOut.to, wireOut.pb, app.caps());
+        if (old) B.links = B.links.filter((l) => l !== old);
+        B.links.push({ id: app.uid('l'), a: n.id, b: wireOut.to, kind: 'wire', pa: o.id, pb: wireOut.pb, label: '' });
+      }
+    }
     if (select) { S.sel = new Set([n.id]); S.link = null; }
   });
+  if (why) toast(why, 6000);
   if (edit) setTimeout(() => app.canvas.editText(n.id), 30);
-  if (type === 'gen') setTimeout(() => app.canvas.dom.get(n.id)?.el.querySelector('textarea')?.focus({ preventScroll: true }), 30);
+  if (type === 'gen' || type === 'vgen') setTimeout(() => app.canvas.dom.get(n.id)?.el.querySelector('textarea')?.focus({ preventScroll: true }), 30);
   return n;
 };
 // la taille où poser un objet : son grand côté à W, son rapport gardé
@@ -232,57 +285,164 @@ app.placeCf = async (cf, wx, wy) => {
   app.placeItem(it, wx, wy, { free: !!cf.center });
   app.lib.reload();
 };
-// des références ajoutées à une carte Générer (déposées dans la carte, ou prises dans la
-// bibliothèque) : posées à sa gauche, reliées à elle — la planche montre d'où elles viennent
-app.addRefs = (genId, items) => {
-  const g = app.node(genId);
-  if (!g || !items.length) return;
-  const have = new Set(app.gen.refsOf(g).map((n) => n.item));
-  const fresh = items.filter((it) => ['image', 'element'].includes(it.kind) && !have.has(it.id));
-  if (!fresh.length) { toast('déjà en référence'); return; }
-  for (const it of fresh) S.items.set(it.id, it);
+// ── brancher ───────────────────────────────────────────────
+// un fil de la sortie `pa` de a vers l'entrée `pb` de b : refusé en le disant
+// (ports.js, canWire) ; sur une entrée à une place, il remplace l'ancien
+app.wire = (a, pa, b, pb, { quiet = false } = {}) => {
+  if (!S.board) return false;
+  const why = canWire(S.board, a, pa, b, pb, app.caps(), S.items);
+  if (why) { if (!quiet) toast(why, 6000); return false; }
+  const old = replaces(S.board, b, pb, app.caps());
   app.mutate((B) => {
-    for (const it of fresh) {
-      // un objet déjà sur la planche est relié tel quel ; sinon il se pose à gauche de la carte
+    if (old) B.links = B.links.filter((l) => l !== old);
+    B.links.push({ id: app.uid('l'), a, b, kind: 'wire', pa, pb, label: '' });
+  });
+  if (!quiet) {
+    const port = portOf(app.node(b), pb, app.caps());
+    toast(old ? `${port?.label || pb} vient maintenant de ${nameOf(app.node(a))} (ctrl+Z : l’ancien fil)` : `branché : ${port?.label || pb} de ${nameOf(app.node(b))}`);
+  }
+  return true;
+};
+// couper un lien (ou plusieurs, en un seul pas d'annulation)
+app.cutLink = (ids) => {
+  const gone = new Set([].concat(ids));
+  if (S.board?.links.some((l) => gone.has(l.id))) app.mutate((B) => { B.links = B.links.filter((l) => !gone.has(l.id)); });
+};
+// détacher : le texte reçu est copié là où il arrivait (le champ de la carte, la case), le fil coupé
+app.detach = (id) => {
+  const l = S.board?.links.find((x) => x.id === id && x.kind === 'wire');
+  if (!l) return;
+  const Fl = app.flowNow();
+  const text = Fl.text(l.a);
+  const x = Fl.extras(l.a);
+  const b = app.node(l.b);
+  app.mutate((B) => {
+    if (b?.type === 'compose' && l.pb.startsWith('s:')) { const s = b.slots.find((y) => 's:' + y.id === l.pb); if (s) s.text = text; }
+    else if (b && l.pb === 'prompt') {
+      b.prompt = text;
+      if (b.type === 'vgen') { if (x.son) b.sound = x.son; if (x.musique) b.music = x.musique; }
+    }
+    B.links = B.links.filter((y) => y !== l);
+  });
+  toast('détaché : le texte est copié, le fil coupé');
+};
+// un fil avant ou après ses voisins de la même entrée (l'ordre fait réf. 1, 2… et @image1, @image2…)
+app.moveWire = (id, dir) => {
+  const L = S.board?.links;
+  const l = L?.find((x) => x.id === id);
+  if (!l) return;
+  const same = L.filter((x) => x.kind === 'wire' && x.b === l.b && x.pb === l.pb);
+  const k = same.indexOf(l), o = same[k + dir];
+  if (!o) return;
+  app.mutate(() => { const i = L.indexOf(l), j = L.indexOf(o); [L[i], L[j]] = [L[j], L[i]]; });
+};
+// des objets de la bibliothèque vers une entrée (déposés dans la carte, ou pris dans la
+// bibliothèque) : posés à gauche de la carte, branchés — la planche montre d'où ils viennent
+app.feed = (id, port, items, { at = null } = {}) => {
+  const g = app.node(id);
+  if (!g || !items.length || !S.board) return;
+  for (const it of items) S.items.set(it.id, it);
+  const caps = app.caps();
+  const refused = [];
+  let done = 0;
+  app.mutate((B) => {
+    items.forEach((it, k) => {
+      // un objet déjà sur la planche est branché tel quel ; sinon il se pose à gauche de la carte
       let n = B.nodes.find((x) => x.type === 'media' && x.item === it.id);
-      if (!n) {
+      const fresh = !n;
+      if (fresh) {
         const [w, h] = app.sizeFor(it, 180);
-        const [x, y] = app.freeSpot(g.x - w - 70, g.y, w, h);
+        const [x, y] = at ? [at[0] - w, at[1] + k * (h + 16)] : app.freeSpot(g.x - w - 70, g.y, w, h);
         n = app.newMedia(it, x, y, w, h);
         B.nodes.push(n);
       }
-      B.links.push({ id: app.uid('l'), a: n.id, b: g.id, kind: 'arrow', label: '' });
-    }
+      const why = canWire(B, n.id, it.kind, id, port, caps, S.items);
+      if (why) { refused.push(why); if (fresh) B.nodes = B.nodes.filter((x) => x !== n); return; }
+      const old = replaces(B, id, port, caps);
+      if (old) B.links = B.links.filter((l) => l !== old);
+      B.links.push({ id: app.uid('l'), a: n.id, b: id, kind: 'wire', pa: it.kind, pb: port, label: '' });
+      done++;
+    });
   });
-  const m = app.gen.M(g.model);
-  const k = app.gen.refsOf(g).length;
-  if (m && k > m.refs) toast(`${m.name} prend ${m.refs} référence${m.refs > 1 ? 's' : ''} au plus — ${k} reliées : la carte le dit`, 6000);
+  if (refused.length) toast(done ? `${done} branché${done > 1 ? 's' : ''} ; refusé : ${refused[0]}` : refused[0], 6000);
 };
+app.addRefs = (genId, items) => app.feed(genId, 'refs', items.filter((it) => ['image', 'element'].includes(it.kind)));
 app.pickRefs = async (genId) => {
   const got = await pick({ kinds: ['image', 'element'], multiple: true, title: 'Références de la carte' });
   app.addRefs(genId, got);
 };
+// une flèche d'annotation (l'outil L, « relier par une flèche ») : elle ne porte rien
 app.connect = (a, b) => {
-  if (S.board.links.some((l) => l.a === a && l.b === b)) { toast('ces deux objets sont déjà reliés'); return; }
-  const A = app.node(a), B = app.node(b);
+  if (S.board.links.some((l) => l.a === a && l.b === b && l.kind !== 'wire')) { toast('ces deux objets sont déjà reliés'); return; }
   app.mutate((P) => { P.links.push({ id: app.uid('l'), a, b, kind: 'arrow', label: '' }); });
-  if (B?.type === 'gen' && A?.type === 'media' && ['image', 'element'].includes(A.kind)) {
-    const m = app.gen.M(B.model);
-    const k = app.gen.refsOf(B).length;
-    toast(m && k > m.refs ? `${m.name} prend ${m.refs} référence${m.refs > 1 ? 's' : ''} au plus : la carte le dit` : `référence ${k} de la carte Générer`);
-  }
 };
 app.genWith = (ids) => {
   const refs = ids.map((id) => app.node(id)).filter(Boolean);
   const r = bbox(refs);
   const g = { id: app.uid('n'), type: 'gen', ...DEF.gen(), x: Math.round(r.x + r.w + 90), y: Math.round(r.y) };
-  if (refs.length > 2 && g.model !== 'qwen21') g.model = 'qwen21';
+  // un modèle qui prend ces références : Krea 2 jusqu'à deux, Qwen 2.1 au-delà (/api/image/models)
+  const models = S.cfg?.models || [];
+  const fits = (id) => (models.find((m) => m.id === id)?.refs ?? 0) >= refs.length;
+  if (!fits(g.model)) g.model = ['krea2', 'qwen21'].find(fits) || models.filter((m) => m.refs).sort((a, b) => b.refs - a.refs)[0]?.id || g.model;
   app.mutate((B) => {
     B.nodes.push(g);
-    for (const n of refs) B.links.push({ id: app.uid('l'), a: n.id, b: g.id, kind: 'arrow', label: '' });
+    for (const n of refs) {
+      const o = outPort(n);
+      if (o && !canWire(B, n.id, o.id, g.id, 'refs', app.caps(), S.items)) B.links.push({ id: app.uid('l'), a: n.id, b: g.id, kind: 'wire', pa: o.id, pb: 'refs', label: '' });
+    }
     S.sel = new Set([g.id]); S.link = null;
   });
   setTimeout(() => app.canvas.dom.get(g.id)?.el.querySelector('textarea')?.focus({ preventScroll: true }), 30);
+};
+
+// ── un objet lâché sur un autre ────────────────────────────
+// { name, test(moving, target) → ce qui arrivera (dit pendant le geste) | '', run(moving, target, orig) }.
+// `run` modifie S.board puis appelle app.commit() : le pas d'annulation est déjà pris (le glisser l'a pris).
+// « Deux textes qui se rencontrent font un composeur » (étude ideation_weavy.md § 9.5) : les notes
+// restent des sources, branchées, et le texte glissé revient à sa place.
+const isText = (n) => n && TEXT_TYPES.includes(n.type);
+const back = (orig) => { for (const [n, x, y] of orig) { n.x = x; n.y = y; } };
+app.dropRules = [
+  { name: 'texte sur texte',
+    test: (mv, t) => (mv.length === 1 && isText(mv[0]) && isText(t) ? 'lâcher : un composeur de prompt, les deux textes branchés' : ''),
+    run: (mv, t, orig) => {
+      back(orig);
+      const d = mv[0];
+      const c = { id: app.uid('n'), type: 'compose', ...DEF.compose(), slots: newSlots(['libre', 'libre']) };
+      const [x, y] = app.freeSpot(Math.max(t.x + t.w, d.x + d.w) + 90, Math.min(t.y, d.y), c.w, 220);
+      Object.assign(c, { x, y });
+      S.board.nodes.push(c);
+      for (const [src, s] of [[t, c.slots[0]], [d, c.slots[1]]]) S.board.links.push({ id: app.uid('l'), a: src.id, b: c.id, kind: 'wire', pa: 'text', pb: 's:' + s.id, label: '' });
+      S.sel = new Set([c.id]); S.link = null;
+      app.commit();
+      toast('un composeur : les deux textes y sont branchés — un clic sur une étiquette donne son rôle');
+    } },
+  { name: 'texte sur composeur',
+    test: (mv, t) => (mv.length === 1 && isText(mv[0]) && t?.type === 'compose' ? 'lâcher : dans une case du composeur' : ''),
+    run: (mv, t, orig, ev) => {
+      back(orig);
+      const d = mv[0];
+      const caps = app.caps();
+      // la case sous le curseur (vide, ou remplacée), sinon la première libre, sinon une case Libre neuve
+      const under = ev && document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('[data-row^="s:"]')?.dataset.row;
+      const free = (s) => !s.lock && !S.board.links.some((l) => l.kind === 'wire' && l.b === t.id && l.pb === 's:' + s.id);
+      let s = under && t.slots.find((x) => 's:' + x.id === under && !x.lock);
+      if (!s) s = t.slots.find((x) => free(x) && !x.text);
+      if (!s) { s = newSlot('libre', t.slots); t.slots.push(s); }
+      const why = canWire(S.board, d.id, 'text', t.id, 's:' + s.id, caps, S.items);
+      if (why) { app.commit(); toast(why, 6000); return; }
+      const old = replaces(S.board, t.id, 's:' + s.id, caps);
+      if (old) S.board.links = S.board.links.filter((l) => l !== old);
+      S.board.links.push({ id: app.uid('l'), a: d.id, b: t.id, kind: 'wire', pa: 'text', pb: 's:' + s.id, label: '' });
+      app.commit();
+      toast(`branché dans la case « ${s.name} »${old ? ' (ctrl+Z : l’ancien fil)' : ''}`);
+    } },
+];
+app.dropOnto = (moving, target, orig, ev) => {
+  const r = app.dropRules.find((x) => x.test(moving, target));
+  if (!r) return false;
+  r.run(moving, target, orig, ev);
+  return true;
 };
 app.palette = async (id) => {
   const n = app.node(id);
@@ -311,8 +471,10 @@ app.remove = () => {
     S.sel.clear();
   });
 };
-// des copies, décalées, avec les liens qui les reliaient entre elles
-function cloneInto(B, list, dx, dy, links) {
+// des copies, décalées, avec les liens qui les reliaient entre elles ; `inputs` : les fils qui
+// y entraient depuis le reste de la planche entrent aussi dans les copies (une variante garde
+// ses sources : dupliquer un composeur et sa carte, puis changer une case)
+function cloneInto(B, list, dx, dy, links, { inputs = false } = {}) {
   const map = new Map();
   for (const n of list) {
     const c = JSON.parse(JSON.stringify(n));
@@ -321,13 +483,16 @@ function cloneInto(B, list, dx, dy, links) {
     map.set(n.id, c.id);
     B.nodes.push(c);
   }
-  for (const l of links) if (map.has(l.a) && map.has(l.b)) B.links.push({ ...l, id: app.uid('l'), a: map.get(l.a), b: map.get(l.b) });
+  for (const l of links) {
+    if (map.has(l.a) && map.has(l.b)) B.links.push({ ...l, id: app.uid('l'), a: map.get(l.a), b: map.get(l.b) });
+    else if (inputs && l.kind === 'wire' && map.has(l.b) && B.nodes.some((n) => n.id === l.a)) B.links.push({ ...l, id: app.uid('l'), b: map.get(l.b) });
+  }
   S.sel = new Set(map.values());
 }
 app.duplicate = () => {
   const list = selected();
   if (!list.length) return;
-  app.mutate((B) => cloneInto(B, list, 30, 30, B.links.slice()));
+  app.mutate((B) => cloneInto(B, list, 30, 30, B.links.slice(), { inputs: true }));
 };
 app.order = (dir) => {
   if (!S.sel.size) return;
@@ -460,7 +625,7 @@ app.boardsModal = async () => {
       if (S.board?.id === bd.id) closeBoard();
       paint();
     } }, 'Supprimer');
-    const kinds = Object.entries(bd.kinds || {}).map(([k, v]) => `${v} ${({ image: 'image', video: 'vidéo', audio: 'son', element: 'élément', note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', gen: 'carte', palette: 'nuancier' })[k] || k}${v > 1 && !['son'].includes(k) ? 's' : ''}`).join(' · ');
+    const kinds = Object.entries(bd.kinds || {}).map(([k, v]) => `${v} ${({ image: 'image', video: 'vidéo', audio: 'son', element: 'élément', note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', gen: 'carte image', vgen: 'carte vidéo', compose: 'composeur', palette: 'nuancier' })[k] || k}${v > 1 && !['son'].includes(k) ? 's' : ''}`).join(' · ');
     return el('div', { class: 'brow' + (S.board?.id === bd.id ? ' on' : '') },
       el('span', { class: 'th', style: bd.thumb_url ? { backgroundImage: `url("${href(bd.thumb_url)}")` } : null }),
       el('div', { class: 'bt' }, el('b', {}, bd.name), el('small', {}, `${kinds || 'vide'} · ${fmtDate(bd.updated)}`)),
@@ -516,6 +681,9 @@ async function openBoard(id, { force = false } = {}) {
   app.gen.resume();
   return true;
 }
+// relire la planche du serveur sans recharger la page (la collaboration : quelqu'un d'autre
+// l'a changée) ; ce qui n'est pas enregistré ici est perdu — la page qui appelle le sait
+app.reloadBoard = () => (S.board ? openBoard(S.board.id, { force: true }) : Promise.resolve(false));
 function closeBoard() {
   S.board = null; S.sel.clear(); S.link = null;
   $('#b-name').value = '';
@@ -581,8 +749,10 @@ if (LS('nolib')) { document.body.classList.add('nolib'); $('#b-lib').classList.r
 for (const b of document.querySelectorAll('#tools [data-tool]')) b.addEventListener('click', () => app.setTool(b.dataset.tool));
 $('#b-help').addEventListener('click', help);
 function help() {
-  const K = [['V', 'choisir'], ['H · espace', 'se déplacer'], ['L', 'relier deux objets'], ['N', 'note'], ['S', 'post-it'], ['T', 'titre'], ['F', 'cadre (tracer)'],
-    ['G', 'carte Générer'], ['molette · pincer', 'zoomer'], ['Maj+1 · Maj+0', 'tout voir · 100 %'], ['glisser le fond', 'cadre de sélection'], ['Alt + glisser', 'lasso'],
+  const K = [['V', 'choisir'], ['H · espace', 'se déplacer'], ['L', 'une flèche d’annotation'], ['N', 'note'], ['S', 'post-it'], ['T', 'titre'], ['F', 'cadre (tracer)'],
+    ['G', 'carte Générer image'], ['M', 'carte Générer vidéo'], ['P', 'composeur de prompt'],
+    ['tirer une sortie', 'un fil : sur une carte, la bonne entrée ; dans le vide, un objet déjà branché'], ['texte sur texte', 'un composeur'],
+    ['molette · pincer', 'zoomer'], ['Maj+1 · Maj+0', 'tout voir · 100 %'], ['glisser le fond', 'cadre de sélection'], ['Alt + glisser', 'lasso'],
     ['Maj + clic', 'ajouter, retirer'], ['ctrl+A', 'tout choisir'], ['ctrl+D', 'dupliquer'], ['ctrl+C · ctrl+V', 'copier, coller (et coller une image)'],
     ['Suppr', 'supprimer'], ['[ · ]', 'arrière-plan · premier plan'], ['flèches', 'déplacer (Maj : 10)'], ['Entrée · double-clic', 'écrire'],
     ['ctrl+Z · ctrl+maj+Z', 'annuler · rétablir'], ['Échap', 'rien choisi']];
@@ -596,6 +766,8 @@ document.addEventListener('keydown', (e) => {
   const k = e.key, mod = e.ctrlKey || e.metaKey, low = k.toLowerCase();
   if (k === ' ') { e.preventDefault(); if (!S.space) { S.space = true; app.canvas.el.classList.add('space'); } return; }
   if (!S.board) return;
+  // le canvas figé (canvas.lock) : la vue seulement
+  if (app.canvas.isLocked() && !['+', '=', '-', '_'].includes(k) && !(e.shiftKey && ['Digit0', 'Digit1'].includes(e.code))) return;
   if (mod && low === 'z') { e.preventDefault(); if (e.shiftKey) app.redoStep(); else app.undoStep(); return; }
   if (mod && low === 'y') { e.preventDefault(); app.redoStep(); return; }
   if (mod && low === 'd') { e.preventDefault(); app.duplicate(); return; }
@@ -624,7 +796,8 @@ document.addEventListener('keydown', (e) => {
     if (!arrowSnap) { app.snap(); arrowSnap = true; }
     for (const n of selected()) { n.x += dx; n.y += dy; }
     app.touch(); app.canvas.render();
-    clearTimeout(arrowT); arrowT = setTimeout(() => { arrowSnap = false; }, 600);
+    // une suite de flèches est un seul geste : un pas d'annulation, un commit à la fin
+    clearTimeout(arrowT); arrowT = setTimeout(() => { arrowSnap = false; app.commit(); }, 600);
     return;
   }
   if (k === ']') { app.order(1); return; }
@@ -635,7 +808,7 @@ document.addEventListener('keydown', (e) => {
   if (k === '-' || k === '_') { app.canvas.zoomBy(0.8); return; }
   if (k === '?') { help(); return; }
   if (mod || e.altKey) return;
-  const T = { v: 'select', h: 'hand', l: 'link', n: 'note', s: 'sticky', t: 'title', f: 'frame', g: 'gen' }[low];
+  const T = { v: 'select', h: 'hand', l: 'link', n: 'note', s: 'sticky', t: 'title', f: 'frame', g: 'gen', m: 'vgen', p: 'compose' }[low];
   if (T) app.setTool(T);
 });
 let arrowSnap = false, arrowT = 0;
@@ -683,6 +856,8 @@ addEventListener('drop', (e) => {
 
 // ── le départ ──────────────────────────────────────────────
 app.gen = createGen(app);
+app.video = createVideo(app);
+app.composer = createComposer(app);
 app.canvas = createCanvas(app);
 app.insp = createInspector(app);
 app.elementModal = (ids, name) => app.insp.elementModal(ids, name);
@@ -696,8 +871,11 @@ async function start() {
   app.insp.render();
   paintSave(); paintUndo(); paintBar();
   try { S.meta = await api('ideation/meta'); } catch (e) { toast(`le portail ne répond pas : ${e.message}`, 8000); return; }
-  // les modèles de l'outil Image : lus à part, la planche n'attend pas
+  // les modèles de l'outil Image et les réglages de Vidéo : lus à part, la planche n'attend
+  // pas ; lus, ils refont les entrées des cartes (et les fils qui ne vont plus le disent)
   api('image/models').then((c) => { S.cfg = c; }).catch((e) => { S.cfgError = e.message; })
+    .finally(() => { app.canvas.render(); app.insp.render(); });
+  api('movie/options').then((o) => { S.mopts = o; }).catch((e) => { S.moptsError = e.message; })
     .finally(() => { app.canvas.render(); app.insp.render(); });
   const want = location.hash.slice(1) || LS('last');
   if (want && await openBoard(want)) return;
@@ -709,4 +887,4 @@ addEventListener('hashchange', () => { const id = location.hash.slice(1); if (id
 start();
 
 // pour les essais (playwright) et le débogage : l'état, en lecture
-window.ideation = { S, app };
+window.ideation = { S, app, flow: () => app.flowNow() };

@@ -1,0 +1,32 @@
+/* ============================================================
+   SHOWRUNNER TOOLS — les fils (commun/wire.js)
+   Le dessin des câbles du nodal d'ODIO (musique/musique.css, .nd-wires) :
+   trait de 2 dans la teinte de la source à 75 %, zone de clic de 16, fil
+   choisi orange à 3, fil tiré orange en tirets 5 5, envoi en tirets 6 5.
+   L'épaisseur reste celle de l'écran quel que soit le zoom.
+   Chargé par wire.js ; le <svg> qui les porte n'a qu'à laisser passer les
+   clics (pointer-events: none), la zone de clic les reprend.
+   ============================================================ */
+
+.sr-wire .vis {
+  fill: none; stroke: var(--k, var(--ink3)); stroke-width: 2; opacity: .75;
+  vector-effect: non-scaling-stroke; stroke-linecap: round; transition: opacity .12s, stroke-width .12s;
+}
+.sr-wire .hit { fill: none; stroke: transparent; stroke-width: 16; pointer-events: stroke; cursor: pointer; vector-effect: non-scaling-stroke; }
+.sr-wire:hover .vis { opacity: 1; stroke-width: 2.6; }
+.sr-wire.send .vis, .sr-wire.lineage .vis { stroke-dasharray: 6 5; }
+.sr-wire.lineage .vis { stroke-width: 1.5; opacity: .55; }
+.sr-wire.idle .vis { opacity: .32; stroke-dasharray: 6 5; }
+.sr-wire.bad .vis { stroke: var(--or); stroke-dasharray: 2 5; opacity: .95; }
+.sr-wire.sel .vis { stroke: var(--or); stroke-width: 3; opacity: 1; stroke-dasharray: none; }
+.sr-wire .lab {
+  font-family: var(--f-mono); font-size: 9px; letter-spacing: .12em; text-transform: uppercase; fill: var(--ink2);
+  text-anchor: middle; dominant-baseline: middle; pointer-events: none;
+  paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round;
+}
+.sr-wire.bad .lab { fill: var(--or); }
+.sr-wire-temp {
+  fill: none; stroke: var(--k, var(--or)); stroke-width: 2; stroke-dasharray: 5 5; opacity: .9;
+  vector-effect: non-scaling-stroke; pointer-events: none;
+}
+.sr-wire-temp.snap { stroke-dasharray: none; opacity: 1; }

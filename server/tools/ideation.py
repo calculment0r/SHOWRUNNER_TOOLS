@@ -12,12 +12,32 @@ Ce qu'une planche porte (`nodes`, dans l'ordre d'empilement) :
            (`item` = son identifiant ; la page le lit dans /api/library)
   note     un texte libre            sticky   un post-it (couleur = jeton)
   title    un titre                  frame    un cadre : une zone nommée
-  gen      une carte « Générer » : prompt, modèle, format, prise de vue ;
-           les images et éléments qui lui sont reliés sont ses références
+  gen      une carte « Générer image » : prompt, modèle, format, prise de
+           vue ; entrées `prompt` (un texte) et `refs` (images, éléments)
+  vgen     une carte « Générer vidéo » (les travaux movie.* de l'outil
+           Vidéo) : mode t2v | i2v | r2v, durée (`frames`), toile, méthode ;
+           entrées `prompt`, et selon le mode `start`, `end` ou `image`,
+           `element`, `video`, `audio` (@image1…)
+  compose  un composeur de prompt : des cases nommées dans l'ordre (`slots` :
+           id, name, text, lock, off), chacune une entrée `s:<id>` ; sa
+           sortie est le texte des cases jointes
   palette  un nuancier tiré d'une image (des couleurs de données)
 
-et des liens (`links` : a → b, `arrow`, `line`, ou `out` = « a produit
-b »). Les objets `media` et `gen` gardent leurs travaux en cours
+Un objet peut porter `parent` (l'identifiant d'un autre objet de la
+planche : un groupe, à venir) ; un parent absent tombe.
+
+Des liens (`links`, a → b) de deux familles (ideation/ports.js, la seule
+vérité de ce qui se branche) :
+
+  wire     un fil de données : de la sortie `pa` de a (sa sorte : text,
+           image, video, audio, element) à l'entrée `pb` de b ;
+  arrow, line   des annotations (flèches droites) ; out : la lignée (« a a
+           produit b » : une carte et ses résultats).
+
+Une planche d'avant les fils (`v` absent ou 1) est migrée en la lisant :
+une flèche d'une image ou d'un élément vers une carte Générer était sa
+référence, elle devient le fil `refs` ; les autres flèches restent des
+flèches. Les objets `media`, `gen` et `vgen` gardent leurs travaux en cours
 (`jobs`) : rechargée, la page reprend leur attente et pose les résultats.
 
 La validation est stricte sur la structure (identifiants, sortes, liens
@@ -27,7 +47,8 @@ reviennent au défaut) : une vieille planche s'ouvre toujours.
 
 Les générations ne passent pas par ici : la page appelle les routes de
 l'outil Image (`/api/image/generate`, `edit`, `redo`), donc ses travaux
-`image.generate` et `image.edit` et leur moteur (factice aujourd'hui).
+`image.generate` et `image.edit`, et ceux de Vidéo (`/api/movie/plan`, puis
+`movie.t2v|i2v|r2v` dans la file), avec leurs moteurs (factices aujourd'hui).
 
 Travail `ideation.export` (voie `cpu`) : la planche ou un cadre rendus en
 PNG par PIL, aux couleurs de `commun/tokens.css`, rangés dans la
@@ -57,14 +78,26 @@ JOB = re.compile(r"job-\d{4}-\d{6}-[0-9a-f]{4}")
 HEX = re.compile(r"#[0-9a-fA-F]{6}")
 REF_FILE = re.compile(r"ref-\d{2}\.[a-z]{3,4}")
 
-TYPES = ("media", "note", "sticky", "title", "frame", "gen", "palette")
+TYPES = ("media", "note", "sticky", "title", "frame", "gen", "vgen", "compose", "palette")
 MEDIA_KINDS = ("image", "video", "audio", "element")
+VERSION = 2              # 2 : les fils (29/09) ; une planche plus ancienne est migrée en la lisant
+PORT = re.compile(r"[a-z]{1,12}(?::[A-Za-z0-9_-]{1,40})?")
+SLOT_ID = re.compile(r"[A-Za-z0-9_-]{1,40}")
+MAX_SLOTS = 24
+# les rôles des cases du composeur, et les cinq d'un composeur neuf, dans l'ordre de la
+# prose (ideation/ports.js, ROLES et SLOTS : le contrôle compare ; étude ideation_weavy.md § 9)
+ROLES = ("style", "persos", "action", "decor", "photo", "son", "musique", "libre")
+VIDEO_ONLY = ("son", "musique")      # les champs à part d'H3 : overall_soundscape, non_diegetic_music
+SLOTS = [("style", "Style"), ("persos", "Personnages"), ("action", "Action"), ("decor", "Décor"), ("photo", "Photographie")]
+# la teinte de chaque sorte de fil (ideation/ports.js, KINDS : le contrôle compare)
+KIND_COLORS = {"text": "amb", "image": "coral-3", "element": "coral-2", "video": "cy", "audio": "grn2"}
+TEXT_TYPES = ("note", "sticky", "title")
 # les post-it : des jetons du thème, et l'encre qui se lit dessus
 STICKY = {"coral-3": "on-light", "coral-2": "on-light", "coral-1": "on-coral1", "amb": "on-light",
           "verd-3": "on-grn", "verd-4": "on-grn", "cy": "on-cy", "paper": "paper-ink"}
 TITLE_SIZES = {"s": 22, "m": 34, "l": 52}
 ETYPE_FR = {"character": "personnage", "object": "objet", "place": "lieu", "style": "style", "other": "élément"}
-LINK_KINDS = ("arrow", "line", "out")
+LINK_KINDS = ("wire", "arrow", "line", "out")
 MAX_NODES = 3000
 MAX_LINKS = 6000
 MAX_SIDE = 4096          # le grand côté d'un export
@@ -78,6 +111,12 @@ def _image():
     """Les modèles, formats et réglages de l'outil Image : la seule vérité."""
     from tools import image
     return image
+
+
+def _movie():
+    """Les modes, durées et méthodes de l'outil Vidéo : la seule vérité."""
+    from tools import movie
+    return movie
 
 
 # ── les fichiers ─────────────────────────────────────────────
@@ -114,7 +153,7 @@ def new_id() -> str:
 def blank(name: str) -> dict:
     now = library.now()
     return {"id": new_id(), "name": (name or "").strip()[:120] or "Sans titre",
-            "created": now, "updated": now, "rev": 1, "nodes": [], "links": []}
+            "created": now, "updated": now, "rev": 1, "v": VERSION, "nodes": [], "links": []}
 
 
 # ── validation ───────────────────────────────────────────────
@@ -151,6 +190,9 @@ def _node(n) -> dict:
         raise HttpError(400, f"sorte d'objet inconnue : {t!r} ({', '.join(TYPES)})")
     out = {"id": nid, "type": t, "x": _num(n.get("x"), -1e6, 1e6, 0.0), "y": _num(n.get("y"), -1e6, 1e6, 0.0),
            "w": _num(n.get("w"), 16, 20000, 200.0), "h": _num(n.get("h"), 16, 20000, 120.0)}
+    par = n.get("parent")
+    if isinstance(par, str) and NID.fullmatch(par) and par != nid:
+        out["parent"] = par          # vérifié dans normalize : un parent absent tombe
     if t == "media":
         item = str(n.get("item", ""))
         if not ITEM.fullmatch(item):
@@ -166,6 +208,10 @@ def _node(n) -> dict:
             out["size"] = n.get("size") if n.get("size") in TITLE_SIZES else "m"
     elif t == "frame":
         out["name"] = _s(n.get("name"), 120)
+        # l'ordre de présentation (atelier : présentation par cadres) ; un nombre, sinon rien
+        sl = n.get("slide")
+        if isinstance(sl, (int, float)) and not isinstance(sl, bool) and math.isfinite(sl):
+            out["slide"] = int(max(0, min(9999, sl))) if float(sl).is_integer() else round(max(0.0, min(9999.0, float(sl))), 3)
     elif t == "gen":
         img = _image()
         model = n.get("model") if n.get("model") in img.MODELS else "krea2"
@@ -188,6 +234,32 @@ def _node(n) -> dict:
                    variant="base" if n.get("variant") == "base" else "turbo",
                    realism=bool(n.get("realism", True)), seed=seed, refChoice=choice,
                    jobs=_jobs(n.get("jobs")), error=_s(n.get("error"), 500))
+    elif t == "vgen":
+        mv = _movie()
+        try:
+            frames = int(n.get("frames", mv.FRAMES[0]))
+        except (TypeError, ValueError):
+            frames = mv.FRAMES[0]
+        canvas = str(n.get("canvas") or "auto")
+        if canvas != "auto" and not re.fullmatch(r"\d{3,4}x\d{3,4}", canvas):
+            canvas = "auto"
+        out.update(prompt=_s(n.get("prompt"), 6000), mode=n.get("mode") if n.get("mode") in mv.MODES else "i2v",
+                   frames=min(mv.FRAMES, key=lambda f: abs(f - frames)), canvas=canvas,
+                   method=n.get("method") if n.get("method") in mv.METHODS else "turbo",
+                   seed=re.sub(r"\D", "", str(n.get("seed") or ""))[:15], sound=_s(n.get("sound"), 2000),
+                   music=_s(n.get("music"), 2000), jobs=_jobs(n.get("jobs")), error=_s(n.get("error"), 500))
+    elif t == "compose":
+        raw = n.get("slots") if isinstance(n.get("slots"), list) else [{"id": i, "role": i, "name": nm} for i, nm in SLOTS]
+        slots, seen = [], set()
+        for s in raw[:MAX_SLOTS]:
+            sid = str(s.get("id", "")) if isinstance(s, dict) else ""
+            if not SLOT_ID.fullmatch(sid) or sid in seen:
+                continue
+            seen.add(sid)
+            role = s.get("role") if s.get("role") in ROLES else sid if sid in ROLES else "libre"
+            slots.append({"id": sid, "role": role, "name": _s(s.get("name"), 40).strip() or "case", "text": _s(s.get("text"), 4000),
+                          "lock": bool(s.get("lock")), "off": bool(s.get("off"))})
+        out["slots"] = slots
     elif t == "palette":
         out["colors"] = [c.lower() for c in (n.get("colors") or [])[:16] if isinstance(c, str) and HEX.fullmatch(c)]
         if ITEM.fullmatch(str(n.get("item", ""))):
@@ -209,10 +281,18 @@ def normalize(b: dict) -> dict:
             raise HttpError(400, f"objet en double : {nn['id']}")
         ids.add(nn["id"])
         nodes.append(nn)
+    for nn in nodes:
+        if nn.get("parent") not in ids:
+            nn.pop("parent", None)
+    byid = {nn["id"]: nn for nn in nodes}
+    try:
+        old = int(b.get("v") or 1) < VERSION
+    except (TypeError, ValueError):
+        old = True
     rawl = b.get("links") or []
     if not isinstance(rawl, list) or len(rawl) > MAX_LINKS:
         raise HttpError(400, f"trop de liens ({MAX_LINKS} au plus)")
-    links, lids = [], set()
+    links, lids, wires = [], set(), set()
     for lk in rawl:
         if not isinstance(lk, dict):
             raise HttpError(400, "un lien est un objet JSON")
@@ -224,11 +304,26 @@ def normalize(b: dict) -> dict:
             raise HttpError(400, f"le lien {lid} relie un objet absent de la planche")
         if a == z:
             raise HttpError(400, f"le lien {lid} relie un objet à lui-même")
+        kind = lk.get("kind") if lk.get("kind") in LINK_KINDS else "arrow"
+        entry = {"id": lid, "a": a, "b": z, "kind": kind, "label": _s(lk.get("label"), 120)}
+        src, dst = byid[a], byid[z]
+        # la migration : avant les fils, une image ou un élément relié à une carte Générer en était la référence
+        if old and kind == "arrow" and dst["type"] == "gen" and src["type"] == "media" and src.get("kind") in ("image", "element"):
+            entry.update(kind="wire", pa=src["kind"], pb="refs")
+        elif kind == "wire":
+            pa, pb = str(lk.get("pa", "")), str(lk.get("pb", ""))
+            if not PORT.fullmatch(pa) or not PORT.fullmatch(pb):
+                raise HttpError(400, f"le fil {lid} n'a pas de sortie ou d'entrée valide ({pa!r} → {pb!r})")
+            entry.update(pa=pa, pb=pb)
+        if entry["kind"] == "wire":
+            key = (a, entry["pa"], z, entry["pb"])
+            if key in wires:
+                continue          # le même fil deux fois : gardé une fois
+            wires.add(key)
         lids.add(lid)
-        links.append({"id": lid, "a": a, "b": z, "kind": lk.get("kind") if lk.get("kind") in LINK_KINDS else "arrow",
-                      "label": _s(lk.get("label"), 120)})
+        links.append(entry)
     out = {"id": b.get("id"), "name": _s(b.get("name") or "Sans titre", 120).strip() or "Sans titre",
-           "nodes": nodes, "links": links}
+           "v": VERSION, "nodes": nodes, "links": links}
     for k in ("created", "updated", "rev"):
         if k in b:
             out[k] = b[k]
@@ -254,8 +349,9 @@ def _summary(b: dict) -> dict:
 def r_meta(req):
     img = _image()
     return {"sticky": [{"id": k, "ink": v} for k, v in STICKY.items()], "title_sizes": TITLE_SIZES,
-            "link_kinds": list(LINK_KINDS), "types": list(TYPES), "limits": {"nodes": MAX_NODES, "links": MAX_LINKS},
-            "element_types": list(library.ELEMENT_TYPES), "backend": img.backend()}
+            "link_kinds": list(LINK_KINDS), "types": list(TYPES), "version": VERSION,
+            "limits": {"nodes": MAX_NODES, "links": MAX_LINKS, "slots": MAX_SLOTS},
+            "element_types": list(library.ELEMENT_TYPES), "backend": img.backend(), "movie_engine": _movie().engine()}
 
 
 def r_list(req):
@@ -290,7 +386,8 @@ def r_save(req, bid):
         base = d.get("base_rev")
         if base is not None and int(base) != int(cur.get("rev", 1)):
             raise HttpError(409, "cette planche a été modifiée ailleurs (un autre onglet ?) : rechargez-la")
-        new = normalize({**d, "id": bid, "name": d.get("name", cur.get("name"))})
+        # la version : celle de la page (qui a lu la planche migrée), sinon celle du fichier
+        new = normalize({**d, "id": bid, "name": d.get("name", cur.get("name")), "v": d.get("v") or cur.get("v") or 1})
         new.update(created=cur.get("created"), updated=library.now(), rev=int(cur.get("rev", 1)) + 1)
         _write(new)
     return {"ok": True, "rev": new["rev"], "updated": new["updated"]}
@@ -487,6 +584,65 @@ def _inside(n: dict, r: tuple) -> bool:
     return n["x"] < r[2] and n["x"] + n["w"] > r[0] and n["y"] < r[3] and n["y"] + n["h"] > r[1]
 
 
+def _wire_pts(p, q, steps: int = 28) -> list:
+    """La courbe des fils (commun/wire.js, celle du nodal d'ODIO) en points :
+    poignées horizontales à la moitié de l'écart, 40 au moins."""
+    dx = max(40.0, abs(q[0] - p[0]) * 0.5)
+    c1, c2 = (p[0] + dx, p[1]), (q[0] - dx, q[1])
+    out = []
+    for k in range(steps + 1):
+        t = k / steps
+        u = 1 - t
+        out.append(tuple(u * u * u * p[i] + 3 * u * u * t * c1[i] + 3 * u * t * t * c2[i] + t * t * t * q[i] for i in (0, 1)))
+    return out
+
+
+def _in_ports(n: dict) -> list:
+    """Les entrées d'une carte dans leur ordre d'affichage (ideation/ports.js,
+    inPorts) : pour poser le bout d'un fil à sa hauteur dans l'export."""
+    if n["type"] == "gen":
+        return ["prompt", "refs"]
+    if n["type"] == "vgen":
+        return ["prompt"] + {"i2v": ["start", "end"], "r2v": ["image", "element", "video", "audio"]}.get(n.get("mode"), [])
+    if n["type"] == "compose":
+        return ["s:" + s["id"] for s in n.get("slots") or []]
+    return []
+
+
+def _wired_text(b: dict, byid: dict, nid: str, port: str, depth: int = 0) -> str | None:
+    """Le texte qu'un fil apporte à une entrée (une note, un post-it, un titre,
+    un composeur) ; None si rien n'y est branché."""
+    for lk in b["links"]:
+        if lk["kind"] == "wire" and lk["b"] == nid and lk.get("pb") == port and lk["a"] in byid:
+            return _text_of(b, byid, byid[lk["a"]], depth + 1)
+    return None
+
+
+def _sentence(s: str) -> str:
+    """Une case devient une phrase : un point s'il en manque un (image.py, _sentence)."""
+    s = " ".join((s or "").split())
+    return s if not s or s[-1] in ".!?»\"'" else s + "."
+
+
+def _text_of(b: dict, byid: dict, n: dict, depth: int = 0) -> str:
+    """La prose d'une sortie (ideation/ports.js, flow().text) : une note telle
+    qu'écrite ; un composeur, ses cases ni coupées ni vides, ni Son ni
+    Musique, en phrases jointes par une espace."""
+    if n["type"] in TEXT_TYPES:
+        return n.get("text") or ""
+    if n["type"] != "compose" or depth > 12:
+        return ""
+    parts = []
+    for s in n.get("slots") or []:
+        if s.get("off") or s.get("role") in VIDEO_ONLY:
+            continue
+        got = _wired_text(b, byid, n["id"], "s:" + s["id"], depth)
+        t = _sentence(got if got is not None else s.get("text") or "")
+        if t:
+            parts.append(t)
+    return " ".join(parts)
+
+
 def render(b: dict, frame: str = "", check=lambda: None):
     """La planche (ou un cadre) en image PIL, et les objets de la
     bibliothèque qu'elle montre (sa lignée)."""
@@ -550,14 +706,27 @@ def render(b: dict, frame: str = "", check=lambda: None):
         d.text((x0 + rad(4), y0 - rad(22)), name, font=_font("disp", 13 * s), fill=T["ink2"])
     check()
 
-    # 2. les liens
+    # 2. les liens : les fils et la lignée en courbes (sortie à droite, entrée à gauche),
+    # les annotations en flèches droites
     for lk in b["links"]:
         a, z = byid.get(lk["a"]), byid.get(lk["b"])
         if not a or not z:
             continue
+        if lk["kind"] in ("wire", "out"):
+            ports = _in_ports(z)
+            if lk["kind"] == "wire" and lk.get("pb") in ports:
+                k = ports.index(lk["pb"])
+                py = z["y"] + 48 + (z["h"] - 72) * (k / max(1, len(ports) - 1) if len(ports) > 1 else 0)
+            else:
+                py = z["y"] + z["h"] / 2
+            ay = a["y"] + (24 if a["type"] in ("gen", "vgen", "compose") else a["h"] / 2)
+            kind = lk.get("pa") if lk["kind"] == "wire" else {"gen": "image", "vgen": "video"}.get(a["type"], a.get("kind"))
+            col = T.get(KIND_COLORS.get(kind or "", ""), T["ink3"])
+            pts = [(X(x), Y(y)) for x, y in _wire_pts((a["x"] + a["w"], ay), (z["x"], py))]
+            d.line(pts, fill=col, width=max(1, rad(2 if lk["kind"] == "wire" else 1.2)), joint="curve")
+            continue
         p0, p1 = _edge(a, z)
-        into_gen = z["type"] == "gen" and a["type"] == "media" and a.get("kind") in ("image", "element")
-        col = T["grn2"] if lk["kind"] == "out" else T["cy"] if into_gen else T["ink3"]
+        col = T["ink3"]
         q0, q1 = (X(p0[0]), Y(p0[1])), (X(p1[0]), Y(p1[1]))
         d.line([q0, q1], fill=col, width=max(1, rad(1.5)))
         if lk["kind"] != "line":
@@ -623,11 +792,24 @@ def render(b: dict, frame: str = "", check=lambda: None):
         elif t == "title":
             size = TITLE_SIZES.get(n.get("size"), 34)
             text(n, _font("disp", size * s), T["ink"], 0, 1.15)
-        elif t == "gen":
+        elif t in ("gen", "vgen"):
             d.rounded_rectangle([x0, y0, x1, y1], radius=rad(9), fill=T["panel"], outline=T["line-or"], width=max(1, rad(1)))
-            model = _image().MODELS.get(n.get("model"), {}).get("k", "")
-            d.text((x0 + rad(14), y0 + rad(12)), f"GÉNÉRER · {model}", font=_font("mono", 8.5 * s), fill=T["or"])
-            text({**n, "text": n.get("prompt") or "—"}, _font("ui", 12 * s), T["ink2"], rad(14), 1.5, top=rad(22))
+            if t == "gen":
+                head = f"GÉNÉRER · {_image().MODELS.get(n.get('model'), {}).get('k', '')}"
+            else:
+                head = f"VIDÉO · {_movie().MODES.get(n.get('mode'), {}).get('label', '').upper()}"
+            d.text((x0 + rad(14), y0 + rad(12)), head, font=_font("mono", 8.5 * s), fill=T["or"])
+            got = _wired_text(b, byid, n["id"], "prompt")
+            text({**n, "text": (got if got is not None else n.get("prompt")) or "—"}, _font("ui", 12 * s), T["ink2"], rad(14), 1.5, top=rad(22))
+        elif t == "compose":
+            d.rounded_rectangle([x0, y0, x1, y1], radius=rad(9), fill=T["panel"], outline=T["line-amb"], width=max(1, rad(1)))
+            d.text((x0 + rad(14), y0 + rad(12)), "COMPOSEUR", font=_font("mono", 8.5 * s), fill=T["amb"])
+            lines = []
+            for sl in n.get("slots") or []:
+                got = _wired_text(b, byid, n["id"], "s:" + sl["id"])
+                val = " ".join(((got if got is not None else sl.get("text")) or "—").split())
+                lines.append(f"{sl['name'].upper()}{' (COUPÉE)' if sl.get('off') else ''} · {val}")
+            text({**n, "text": "\n".join(lines)}, _font("ui", 11 * s), T["ink2"], rad(14), 1.5, top=rad(22))
         elif t == "palette":
             cols = n.get("colors") or []
             if cols:
@@ -776,3 +958,229 @@ def selftest(call, ok) -> None:
            f"idéation : l'image posée est à sa place dans l'export ({red} {blue})")
     st, r = call("POST", f"/api/ideation/boards/{bid}/export", {"frame": "n1"})
     ok(st == 400, "idéation : exporter un objet qui n'est pas un cadre est refusé")
+    _selftest_wires(call, ok, iid)
+    _selftest_ports(call, ok)
+
+
+def _selftest_wires(call, ok, iid: str) -> None:
+    """Les fils côté serveur : la migration des planches d'avant, les cartes
+    vidéo et composeur bornées, les fils bornés, le parent, l'export."""
+    # une planche d'avant les fils (sans « v ») : écrite telle quelle, comme sur le disque de Cal
+    old = {"id": new_id(), "name": "Planche d'avant", "created": library.now(), "updated": library.now(), "rev": 4,
+           "nodes": [{"id": "m1", "type": "media", "item": iid, "kind": "image", "x": 0, "y": 0, "w": 120, "h": 80},
+                     {"id": "n1", "type": "note", "x": 0, "y": 200, "w": 160, "h": 60, "text": "a note"},
+                     {"id": "g1", "type": "gen", "x": 300, "y": 0, "w": 300, "h": 300, "prompt": "x", "model": "krea2"}],
+           "links": [{"id": "l1", "a": "m1", "b": "g1", "kind": "arrow", "label": "réf. à garder"},
+                     {"id": "l2", "a": "n1", "b": "g1", "kind": "arrow"},
+                     {"id": "l3", "a": "n1", "b": "m1", "kind": "line"}]}
+    _write(old)
+    st, got = call("GET", f"/api/ideation/boards/{old['id']}")
+    L = {lk["id"]: lk for lk in got.get("links", [])}
+    ok(st == 200 and got.get("v") == VERSION and L.get("l1", {}).get("kind") == "wire" and L["l1"].get("pa") == "image"
+       and L["l1"].get("pb") == "refs" and L["l1"].get("label") == "réf. à garder",
+       f"idéation : migration — la flèche image → Générer devient le fil des références, son mot gardé ({L.get('l1')})")
+    ok(L.get("l2", {}).get("kind") == "arrow" and L.get("l3", {}).get("kind") == "line" and len(L) == 3,
+       f"idéation : migration — les autres liens restent des annotations ({list(L.values())})")
+    st, sv = call("POST", f"/api/ideation/boards/{old['id']}", {**got, "base_rev": got["rev"]})
+    st, again = call("GET", f"/api/ideation/boards/{old['id']}")
+    ok(st == 200 and [lk["kind"] for lk in again["links"]] == ["wire", "arrow", "line"] and load(old["id"]).get("v") == VERSION,
+       "idéation : migration — enregistrée une fois, elle ne se refait pas")
+    # une flèche d'annotation tirée exprès (planche déjà en v2) reste une flèche
+    st, sv = call("POST", f"/api/ideation/boards/{old['id']}", {**again, "links": again["links"] + [
+        {"id": "l4", "a": "m1", "b": "g1", "kind": "arrow"}], "base_rev": again["rev"]})
+    st, again = call("GET", f"/api/ideation/boards/{old['id']}")
+    ok(any(lk["id"] == "l4" and lk["kind"] == "arrow" for lk in again.get("links", [])), "idéation : une flèche neuve vers une carte reste une flèche")
+
+    b = blank("Essai des fils")
+    _write(b)
+    nodes = [
+        {"id": "n1", "type": "note", "x": 0, "y": 0, "w": 200, "h": 60, "text": "a man runs through the rain"},
+        {"id": "m1", "type": "media", "item": iid, "kind": "image", "x": 0, "y": 100, "w": 120, "h": 80, "parent": "c1"},
+        {"id": "c1", "type": "compose", "x": 300, "y": 0, "w": 340, "h": 300,
+         "slots": [{"id": "action", "name": "Action", "text": "", "lock": 1}, {"id": "action", "name": "doublon"},
+                   {"id": "../x", "name": "mauvaise"}, {"id": "free1", "name": "", "text": "35mm film", "off": True}]},
+        {"id": "c2", "type": "compose", "x": 300, "y": 400, "w": 340, "h": 300, "parent": "fantome"},
+        {"id": "v1", "type": "vgen", "x": 700, "y": 0, "w": 320, "h": 300, "prompt": "p", "mode": "bof", "frames": 200,
+         "canvas": "../../etc", "method": "?", "seed": "12a3"},
+        {"id": "v2", "type": "vgen", "x": 700, "y": 400, "w": 320, "h": 300, "mode": "r2v", "canvas": "1344x768"},
+        {"id": "f1", "type": "frame", "x": -600, "y": 0, "w": 400, "h": 300, "name": "Plan 1", "slide": 2},
+        {"id": "f2", "type": "frame", "x": -600, "y": 400, "w": 400, "h": 300, "name": "Plan 2", "slide": "trois"},
+    ]
+    links = [{"id": "w1", "a": "n1", "b": "c1", "kind": "wire", "pa": "text", "pb": "s:action"},
+             {"id": "w2", "a": "n1", "b": "c1", "kind": "wire", "pa": "text", "pb": "s:action"},
+             {"id": "w3", "a": "c1", "b": "v1", "kind": "wire", "pa": "text", "pb": "prompt"},
+             {"id": "w4", "a": "m1", "b": "v1", "kind": "wire", "pa": "image", "pb": "start"},
+             {"id": "w5", "a": "m1", "b": "v2", "kind": "wire", "pa": "image", "pb": "image"}]
+    st, sv = call("POST", f"/api/ideation/boards/{b['id']}", {"name": b["name"], "v": VERSION, "nodes": nodes, "links": links, "base_rev": 1})
+    ok(st == 200, f"idéation : une planche avec des fils, un composeur, des cartes vidéo ({st} {sv})")
+    st, got = call("GET", f"/api/ideation/boards/{b['id']}")
+    N = {n["id"]: n for n in got.get("nodes", [])}
+    c1, c2, v1 = N.get("c1", {}), N.get("c2", {}), N.get("v1", {})
+    ok([s["id"] for s in c1.get("slots", [])] == ["action", "free1"] and c1["slots"][0]["lock"] is True
+       and [s["role"] for s in c1["slots"]] == ["action", "libre"] and c1["slots"][1]["name"] == "case" and c1["slots"][1]["off"] is True,
+       f"idéation : les cases du composeur sont bornées (doublon et identifiant hors motif retirés) ({c1.get('slots')})")
+    ok([s["id"] for s in c2.get("slots", [])] == [i for i, _ in SLOTS], "idéation : un composeur sans cases reçoit les cinq de Cal")
+    ok(v1.get("mode") == "i2v" and v1.get("frames") == 175 and v1.get("canvas") == "auto" and v1.get("method") == "turbo"
+       and v1.get("seed") == "123", f"idéation : la carte vidéo est bornée ({v1})")
+    ok(N.get("m1", {}).get("parent") == "c1" and "parent" not in c2, "idéation : un parent présent reste, un parent absent tombe")
+    ok(N.get("f1", {}).get("slide") == 2 and "slide" not in N.get("f2", {}), "idéation : un cadre garde son ordre de présentation (slide), un ordre illisible tombe")
+    ok([lk["id"] for lk in got["links"]] == ["w1", "w3", "w4", "w5"] and all(lk.get("pa") and lk.get("pb") for lk in got["links"]),
+       f"idéation : un fil en double n'est gardé qu'une fois, chaque fil garde ses deux ports ({[lk['id'] for lk in got['links']]})")
+    st, r = call("POST", f"/api/ideation/boards/{b['id']}", {**got, "base_rev": got["rev"],
+                 "links": got["links"] + [{"id": "w9", "a": "n1", "b": "v2", "kind": "wire", "pa": "text", "pb": "../../x"}]})
+    ok(st == 400, f"idéation : un fil sans port valide est refusé ({st} {r})")
+    # l'export dessine les fils (courbes) et les deux nouvelles cartes
+    st2, j = call("POST", f"/api/ideation/boards/{b['id']}/export", {})
+    for _ in range(150):
+        st2, j = call("GET", f"/api/jobs/{j['id']}")
+        if j["state"] in ("done", "error", "cancelled"):
+            break
+        time.sleep(0.2)
+    ok(j.get("state") == "done", f"idéation : exporter une planche à fils, composeur et vidéo ({j.get('message')})")
+    byid = {n["id"]: n for n in got["nodes"]}
+    ok(_text_of(got, byid, byid["c1"]) == "a man runs through the rain." and _wired_text(got, byid, "v1", "prompt") == "a man runs through the rain.",
+       "idéation : l'export lit la prose qu'un fil apporte (la case coupée n'y est pas)")
+
+
+# les essais de la fonction pure (ideation/ports.js), menés par node : le
+# scénario est ici, ports.js répond, le contrôle compare
+_PORTS_JS = r"""
+import { readFileSync } from 'fs';
+const P = await import(process.env.PORTS_URL);
+const { image, movie, iid, eid } = JSON.parse(readFileSync(0, 'utf8'));
+const caps = { image, movie };
+const items = new Map([[iid, { id: iid, kind: 'image' }],
+  [eid, { id: eid, kind: 'element', element: { refs: [{ file: 'ref-01.png', role: 'face' }, { file: 'ref-02.png', role: 'full body' }] } }]]);
+const R = {};
+const B = { nodes: [
+  { id: 'n1', type: 'note', text: 'a man runs' }, { id: 'n2', type: 'sticky', text: 'a woman' },
+  { id: 'm1', type: 'media', kind: 'image', item: iid }, { id: 'm2', type: 'media', kind: 'image', item: iid },
+  { id: 'm3', type: 'media', kind: 'image', item: iid }, { id: 'e1', type: 'media', kind: 'element', item: eid },
+  { id: 'g1', type: 'gen', model: 'krea2', prompt: 'local' }, { id: 'v1', type: 'vgen', mode: 'i2v', prompt: '' },
+  { id: 'c1', type: 'compose', slots: P.newSlots() }, { id: 'c2', type: 'compose', slots: P.newSlots() },
+], links: [] };
+const W = (id, a, pa, b, pb) => B.links.push({ id, a, b, kind: 'wire', pa, pb, label: '' });
+const gen = () => B.nodes.find((n) => n.id === 'g1');
+const vid = () => B.nodes.find((n) => n.id === 'v1');
+R.text_prompt = P.canWire(B, 'n1', 'text', 'g1', 'prompt', caps, items);
+R.image_prompt = P.canWire(B, 'm1', 'image', 'g1', 'prompt', caps, items);
+R.text_refs = P.canWire(B, 'n1', 'text', 'g1', 'refs', caps, items);
+gen().model = 'zimage';
+R.zimage_refs = P.canWire(B, 'm1', 'image', 'g1', 'refs', caps, items);
+gen().model = 'krea2';
+W('r1', 'm1', 'image', 'g1', 'refs'); W('r2', 'm2', 'image', 'g1', 'refs');
+R.krea_third = P.canWire(B, 'm3', 'image', 'g1', 'refs', caps, items);
+W('r3', 'm3', 'image', 'g1', 'refs'); W('p1', 'n1', 'text', 'g1', 'prompt');
+const st = () => ['r1', 'r2', 'r3'].map((id) => P.flow(B, caps, items).state(id));
+R.krea_states = st().map((s) => s.ok);
+R.krea_why3 = st()[2].why;
+gen().model = 'zimage';
+R.zimage_states = st().map((s) => s.ok);
+R.zimage_why = st()[0].why;
+gen().model = 'qwen21';
+R.qwen_states = st().map((s) => s.ok);
+R.prompt = P.flow(B, caps, items).prompt('g1')?.text;
+R.refs_items = P.flow(B, caps, items).take('g1', 'refs').map((e) => e.item === iid);
+// la vidéo : image → vidéo, puis le mode change
+R.element_start = P.canWire(B, 'e1', 'element', 'v1', 'start', caps, items);
+R.image_start = P.canWire(B, 'm1', 'image', 'v1', 'start', caps, items);
+W('s1', 'm1', 'image', 'v1', 'start');
+vid().mode = 'r2v';
+R.r2v_start = P.flow(B, caps, items).state('s1');
+R.r2v_element = P.canWire(B, 'e1', 'element', 'v1', 'element', caps, items);
+vid().mode = 'i2v';
+R.back_i2v = P.flow(B, caps, items).state('s1').ok;
+// une carte qui fabrique : son fil attend son premier résultat, puis le prend
+B.links = B.links.filter((l) => l.id !== 's1');
+W('s2', 'g1', 'image', 'v1', 'start');
+R.pending = P.flow(B, caps, items).state('s2');
+B.nodes.push({ id: 'm9', type: 'media', kind: 'image', item: 'ima-resultat' });
+items.set('ima-resultat', { id: 'ima-resultat', kind: 'image' });
+B.links.push({ id: 'o1', a: 'g1', b: 'm9', kind: 'out', label: '' });
+R.after = P.flow(B, caps, items).take('v1', 'start').map((e) => [e.item, !!e.pending]);
+// le composeur (Style, Personnages, Action, Décor, Photographie) : une case branchée, une écrite, une coupée
+const c1 = B.nodes.find((n) => n.id === 'c1');
+W('k1', 'n1', 'text', 'c1', 's:action');
+c1.slots[1].text = 'a woman in a red coat';
+c1.slots[3].text = 'a train station'; c1.slots[3].off = true;
+R.composed = P.flow(B, caps, items).text('c1');
+c1.slots.push(P.newSlot('son', c1.slots));
+c1.slots[5].text = 'rain on the roof';
+R.with_son = [P.flow(B, caps, items).text('c1'), P.flow(B, caps, items).extras('c1')];
+c1.slots[1].lock = true;
+R.locked = P.canWire(B, 'n2', 'text', 'c1', 's:persos', caps, items);
+R.replace = (P.replaces(B, 'c1', 's:action', caps) || {}).id;
+W('k2', 'c1', 'text', 'c2', 's:action');
+R.cycle = P.canWire(B, 'c2', 'text', 'c1', 's:decor', caps, items);
+W('k3', 'c1', 'text', 'v1', 'prompt');
+R.video_prompt = P.flow(B, caps, items).prompt('v1')?.text;
+R.video_sound = P.flow(B, caps, items).prompt('v1')?.son;
+c1.slots[2].text = 'ignored while wired';   // la case Action est branchée : son texte écrit ne compte pas
+B.nodes.find((n) => n.id === 'n1').text = 'a man walks';
+R.live = P.flow(B, caps, items).prompt('v1')?.text;
+R.makers_text = P.makersFor('text', caps, { gen: { model: 'zimage' } }).map((m) => m.template.type + ':' + m.port.id);
+R.makers_image = P.makersFor('image', caps, { gen: { model: 'zimage' } }).map((m) => m.template.type + ':' + m.port.id + ':' + (m.preset.model || m.preset.mode || ''));
+R.makers_video = P.makersFor('video', caps, {}).map((m) => m.template.type + ':' + m.port.id);
+R.kinds = Object.fromEntries(Object.entries(P.KINDS).map(([k, v]) => [k, v.color]));
+R.slots = P.SLOTS.map((s) => [s.id, s.name]);
+R.roles = P.ROLES.map((r) => r.id);
+R.sentence = [P.sentence('  a  quiet\nstreet '), P.sentence('Is it?'), P.sentence('')];
+R.self = P.canWire(B, 'n1', 'text', 'n1', 'prompt', caps, items);
+console.log(JSON.stringify(R));
+"""
+
+
+def _selftest_ports(call, ok) -> None:
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        ok(True, "idéation : node absent, la fonction des ports n'est pas essayée ici")
+        return
+    st, image = call("GET", "/api/image/models")
+    st2, movie = call("GET", "/api/movie/options")
+    # un élément (visage + plein pied) et une image : les vrais objets ne sont pas lus par la fonction pure
+    payload = {"image": image, "movie": movie, "iid": "ima-20260101-000000-aaaa", "eid": "ele-20260101-000000-bbbb"}
+    env = {**__import__("os").environ, "PORTS_URL": (REPO / "ideation" / "ports.js").as_uri()}
+    r = subprocess.run([node, "--input-type=module", "-e", _PORTS_JS], input=json.dumps(payload), capture_output=True,
+                       text=True, timeout=60, env=env)
+    try:
+        R = json.loads(r.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        ok(False, f"idéation : ports.js ne répond pas ({r.returncode} {r.stderr[-400:]})")
+        return
+    zwhy = next((m.get("refs_why") for m in image.get("models", []) if m["id"] == "zimage"), "")
+    ok(R["text_prompt"] == "" and "prompt" in R["image_prompt"] and "références" in R["text_refs"],
+       f"ports : un texte va au prompt, une image n'y va pas, un texte ne va pas aux références ({R['image_prompt']} | {R['text_refs']})")
+    ok(R["zimage_refs"] == zwhy and zwhy, f"ports : impossible de relier une référence à Z-Image, avec la raison de l'outil Image ({R['zimage_refs']})")
+    ok(R["krea_third"].startswith("Krea 2 prend 2") and R["krea_states"] == [True, True, False] and "3e" in R["krea_why3"],
+       f"ports : Krea 2 prend deux références, la troisième est refusée, et marquée si elle est là ({R['krea_third']} · {R['krea_why3']})")
+    ok(R["zimage_states"] == [False, False, False] and R["zimage_why"] == zwhy,
+       f"ports : passer à Z-Image met les trois fils en alerte à l'instant, avec la raison ({R['zimage_states']})")
+    ok(R["qwen_states"] == [True, True, True] and R["refs_items"] == [True, True, True] and R["prompt"] == "a man runs",
+       f"ports : Qwen 2.1 les reprend toutes, le prompt vient de la note ({R['qwen_states']} {R['prompt']!r})")
+    ok("Références" in R["element_start"] and R["image_start"] == "",
+       f"ports : un élément ne va pas en première image (il va en mode Références), une image si ({R['element_start']})")
+    ok(R["r2v_start"]["ok"] is False and "première image" in R["r2v_start"]["why"] and R["r2v_element"] == "" and R["back_i2v"] is True,
+       f"ports : changer de mode rend le fil de la première image faux, avec la raison ; revenir le rend bon ({R['r2v_start']})")
+    ok(R["pending"]["ok"] is True and "pas encore de résultat" in (R["pending"].get("pending") or "")
+       and R["after"] == [["ima-resultat", False]],
+       f"ports : le fil d'une carte qui fabrique attend son résultat, puis porte la dernière image ({R['pending']} {R['after']})")
+    ok(R["composed"] == "a woman in a red coat. a man runs.",
+       f"ports : le composeur fait un paragraphe dans l'ordre des cases (Personnages puis Action), un point par case, la coupée en moins ({R['composed']!r})")
+    ok(R["with_son"] == ["a woman in a red coat. a man runs.", {"son": "rain on the roof.", "musique": ""}],
+       f"ports : la case Son sort de la prose et part à part ({R['with_son']})")
+    ok(R["sentence"] == ["a quiet street.", "Is it?", ""], f"ports : une phrase, un point s'il manque, rien d'inventé ({R['sentence']})")
+    ok("verrouillée" in R["locked"] and R["replace"] == "k1", f"ports : une case verrouillée refuse un fil ; un fil neuf remplace l'ancien ({R['locked']})")
+    ok("boucle" in R["cycle"], f"ports : une boucle de composeurs est refusée ({R['cycle']})")
+    ok(R["video_prompt"] == "a woman in a red coat. a man runs." and R["video_sound"] == "rain on the roof."
+       and R["live"] == "a woman in a red coat. a man walks.",
+       f"ports : le prompt d'une vidéo vient d'un composeur (son Son à part), et suit la note en direct ({R['live']!r})")
+    ok(R["makers_text"] == ["gen:prompt", "vgen:prompt", "vgen:prompt", "vgen:prompt", "compose:s:libre"],
+       f"ports : depuis un texte, dans le vide : Générer image, vidéo (trois modes), composeur en case Libre ({R['makers_text']})")
+    ok(R["makers_image"] == ["gen:refs:krea2", "vgen:start:i2v", "vgen:image:r2v"],
+       f"ports : depuis une image : une carte image (Krea 2, Z-Image n'en prend pas), vidéo en première image ou en référence ({R['makers_image']})")
+    ok(R["makers_video"] == ["vgen:video"], f"ports : depuis une vidéo : la vidéo en références seulement ({R['makers_video']})")
+    ok(R["kinds"] == KIND_COLORS and R["slots"] == [list(s) for s in SLOTS] and R["roles"] == list(ROLES),
+       "ports : la page et l'export ont les mêmes teintes de fil, les mêmes rôles et les mêmes cases de composeur")
+    ok(bool(R["self"]), "ports : un objet ne se branche pas sur lui-même")

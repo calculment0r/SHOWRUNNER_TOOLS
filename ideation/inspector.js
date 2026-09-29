@@ -2,11 +2,15 @@
 // faire. Rien choisi : la planche (plan, liens, export). Un objet : ses
 // réglages, « faire naître » (variations, nuancier, carte Générer),
 // « éditer » (image.edit), « production » (les autres outils du portail,
-// par les adresses qu'ils lisent déjà). Plusieurs : aligner, répartir,
-// encadrer, relier, en faire des références ou un élément.
+// par les adresses qu'ils lisent déjà). Une carte Générer vidéo ou un
+// composeur : leurs panneaux viennent de video.js et composer.js. Un fil :
+// ce qu'il porte, d'où, vers quelle entrée, et s'il va. Plusieurs : aligner,
+// répartir, encadrer, relier, en faire des références ou un élément.
 
 import { api, toast, el, href, fmtDate, fmtDur, etypeFr, dropZone } from '../commun/shell.js';
 import { bbox, inside } from './canvas.js';
+import { KINDS, nameOf, portOf } from './ports.js';
+import { inbox } from './gen.js';
 
 const ROLES = [['face', 'visage'], ['full body', 'plein pied'], ['outfit', 'tenue'], ['view', 'vue'], ['detail', 'détail'], ['style', 'style'], ['expression', 'expression']];
 const ICONS = {
@@ -41,7 +45,8 @@ export function createInspector(app) {
   box.addEventListener('focusout', () => setTimeout(() => { if (pending && !box.contains(document.activeElement)) render(); }));
   function render() {
     const a = document.activeElement;
-    if (a && box.contains(a) && a.matches('input, textarea, select')) { pending = true; return; }
+    // un champ où l'on écrit attend qu'on le quitte ; un sélecteur qu'on vient de changer, non (tout se refait à l'instant)
+    if (a && box.contains(a) && a.matches('textarea, input:not([type="checkbox"]):not([type="radio"]):not([type="button"])')) { pending = true; return; }
     pending = false;
     const top = box.scrollTop;
     let parts;
@@ -71,11 +76,17 @@ export function createInspector(app) {
       el('span', {}, app.label(n)), el('small', { class: 'lbl' }, app.kindLabel(n)));
     out.push(card('Plan', `${frames.length} cadre${frames.length > 1 ? 's' : ''}`,
       el('div', { class: 'olist' }, ...(B.nodes.length ? [...frames, ...rest].slice(0, 120).map(item) : [hint('rien encore')]))));
+    const F = app.flowNow();
     out.push(card('Liens', String(B.links.length),
-      el('div', { class: 'olist' }, ...(B.links.length ? B.links.slice(0, 80).map((l) => el('div', { class: 'lline' + (S.link === l.id ? ' on' : '') },
-        el('button', { class: 'nm', type: 'button', onclick: () => app.selectLink(l.id) }, `${app.label(app.node(l.a))} → ${app.label(app.node(l.b))}`),
-        el('button', { class: 'cut', type: 'button', onclick: () => app.mutate(() => { S.board.links = S.board.links.filter((x) => x.id !== l.id); }) }, 'Couper')))
-        : [hint('Tirez depuis le point à droite d’un objet jusqu’à un autre. Une image reliée à une carte Générer en devient la référence.')]))));
+      el('div', { class: 'olist' }, ...(B.links.length ? B.links.slice(0, 80).map((l) => {
+        const st = l.kind === 'wire' ? F.state(l.id) : null;
+        const to = l.kind === 'wire' ? ` · ${portOf(app.node(l.b), l.pb, app.caps())?.label || l.pb}` : '';
+        return el('div', { class: 'lline' + (S.link === l.id ? ' on' : '') + (st && !st.ok ? ' bad' : ''), title: st && !st.ok ? `ignoré : ${st.why}` : '' },
+          l.kind === 'wire' ? el('i', { class: 'kd', style: { background: `var(--${KINDS[l.pa]?.color || 'ink3'})` } }) : null,
+          el('button', { class: 'nm', type: 'button', onclick: () => app.selectLink(l.id) }, `${app.label(app.node(l.a))} → ${app.label(app.node(l.b))}${to}`),
+          el('button', { class: 'cut', type: 'button', onclick: () => app.cutLink(l.id) }, 'Couper'));
+      })
+        : [hint('Tirez depuis la sortie d’un objet (le point à sa droite) jusqu’à une entrée : un texte vers un prompt, une image vers des références. L : une flèche d’annotation.')]))));
     out.push(card('Gestes', null, el('dl', { class: 'keys' }, ...[
       ['molette · pincer', 'zoomer'], ['espace + glisser', 'se déplacer'], ['glisser le fond', 'choisir (Alt : lasso)'],
       ['double-clic', 'poser, écrire'], ['N S T F G', 'note, post-it, titre, cadre, générer'], ['L', 'relier'],
@@ -93,23 +104,37 @@ export function createInspector(app) {
     let ch = () => {};
     lab.addEventListener('focus', () => { ch = app.editing(); });
     lab.addEventListener('input', () => { ch(); l.label = lab.value; app.canvas.paintLinks(); });
-    const ref = z?.type === 'gen' && a?.type === 'media' && ['image', 'element'].includes(a.kind);
-    return [card('Lien', ref ? 'référence' : l.kind === 'out' ? 'résultat' : '',
+    const cut = b('Couper', () => { app.cutLink(l.id); S.link = null; render(); }, { title: 'Suppr' });
+    if (l.kind === 'wire') {
+      // un fil de données : ce qu'il porte, vers quelle entrée, s'il va
+      const st = app.flowNow().state(l.id) || { ok: false, why: 'fil illisible' };
+      const port = portOf(z, l.pb, app.caps());
+      const k = KINDS[l.pa] || KINDS.text;
+      return [card('Fil', k.label,
+        el('p', { class: 'lk-ends' }, el('b', {}, nameOf(a)), ' → ', el('b', {}, nameOf(z)), ` · ${port?.label || l.pb}`),
+        st.ok ? hint(st.pending ? `En attente : ${st.pending}.` : st.off ? 'La case est coupée : ce fil ne compte pas tant qu’elle l’est.'
+          : l.pb === 'refs' ? `Référence ${st.idx + 1} de la carte, dans l’ordre des fils.` : port?.token ? `Dans le prompt : @${port.token}${st.idx + 1}.` : 'Il est lu à chaque génération : changer la source change ce qui part.')
+          : el('p', { class: 'why' }, `Ignoré : ${st.why}. Il n’est pas envoyé ; il revient quand la carte le reprend (un autre modèle, un autre mode).`),
+        lab, row(el('span', { class: 'sp' }), cut))];
+    }
+    return [card('Lien', l.kind === 'out' ? 'résultat' : 'annotation',
       el('p', { class: 'lk-ends' }, el('b', {}, app.label(a)), ' → ', el('b', {}, app.label(z))),
-      ref ? hint('Cette image est une référence de la carte Générer, dans l’ordre des liens.') : null,
+      hint(l.kind === 'out' ? 'La lignée : cet objet est né de l’autre.' : 'Une flèche d’annotation : elle ne porte rien. Pour qu’une image ou un texte parte dans une carte, tirez un fil depuis sa sortie.'),
       el('div', { class: 'seg' }, ...[['arrow', 'Flèche'], ['line', 'Ligne'], ['out', 'Résultat']].map(([k, v]) =>
         el('button', { class: 'tb' + (l.kind === k ? ' on' : ''), type: 'button', onclick: () => app.mutate(() => { l.kind = k; }) }, v))),
       lab,
-      row(b('Inverser', () => app.mutate(() => { [l.a, l.b] = [l.b, l.a]; })), el('span', { class: 'sp' }),
-        b('Couper', () => { app.mutate(() => { S.board.links = S.board.links.filter((x) => x.id !== l.id); }); S.link = null; render(); }, { title: 'Suppr' })))];
+      row(b('Inverser', () => app.mutate(() => { [l.a, l.b] = [l.b, l.a]; })), el('span', { class: 'sp' }), cut))];
   }
 
   // ── un objet ────────────────────────────────────────────────
   function nodePanels(n) {
     if (!n) return boardPanels();
     const out = [];
+    const K = { card, b, row, hint };
     if (n.type === 'media') out.push(...mediaPanels(n));
     else if (n.type === 'gen') out.push(...genPanels(n));
+    else if (n.type === 'vgen') out.push(...app.video.panels(n, K));
+    else if (n.type === 'compose') out.push(...app.composer.panels(n, K));
     else if (n.type === 'frame') out.push(framePanel(n));
     else if (n.type === 'palette') out.push(palettePanel(n));
     else out.push(textPanel(n));
@@ -189,9 +214,12 @@ export function createInspector(app) {
     ta.value = n.text || '';
     let ch = () => {};
     ta.addEventListener('focus', () => { ch = app.editing(); });
-    ta.addEventListener('input', () => { ch(); n.text = ta.value; app.render(); });
+    ta.addEventListener('input', () => { ch(); n.text = ta.value; app.canvas.renderSoon(); });
     const name = { note: 'Note', sticky: 'Post-it', title: 'Titre' }[n.type];
-    return card(name, null, ta,
+    const outs = S.board.links.filter((l) => l.kind === 'wire' && l.a === n.id).map((l) => nameOf(app.node(l.b)));
+    return card(name, outs.length ? `${outs.length} fil${outs.length > 1 ? 's' : ''}` : null, ta,
+      outs.length ? hint(`Ce texte part vers : ${outs.join(', ')} — le changer les change.`)
+        : hint('Tirez sa sortie (le point à droite) vers le prompt d’une carte, ou lâchez-le sur un autre texte : un composeur.'),
       n.type === 'sticky' ? el('div', { class: 'swatches' }, ...(S.meta?.sticky || []).map((c) =>
         el('button', { class: 'swc' + (n.color === c.id ? ' on' : ''), type: 'button', title: c.id, style: { background: `var(--${c.id})` },
           onclick: () => { app.mutate(() => { n.color = c.id; }); app.LS('sticky', c.id); } }))) : null,
@@ -235,17 +263,25 @@ export function createInspector(app) {
     const m = G.M(n.model);
     const q = G.quality(n);
     const out = [];
-    const ta = el('textarea', { class: 'fld', rows: 5, id: 'insp-prompt', placeholder: 'le prompt, en anglais' });
-    ta.value = n.prompt || '';
-    let ch = () => {};
-    ta.addEventListener('focus', () => { ch = app.editing(); });
-    ta.addEventListener('input', () => {
-      ch(); n.prompt = ta.value;
-      const c = app.canvas.dom.get(n.id)?.el.querySelector('textarea.gp');
-      if (c) c.value = n.prompt;
-      G.refresh(n.id); paintGo(n);
-    });
-    out.push(card('Générer', cfg.backend === 'stub' ? 'moteur factice' : m?.name,
+    const F = app.flowNow();
+    const pr = F.prompt(n.id);
+    let ta;
+    if (pr) {
+      ta = inbox(app, pr, 'la prose est copiée dans le prompt de la carte');
+      if (pr.son || pr.musique) ta.append(el('p', { class: 'why' }, 'Son et Musique du composeur ne vont qu’à la vidéo : ignorés ici.'));
+    } else {
+      ta = el('textarea', { class: 'fld', rows: 5, id: 'insp-prompt', placeholder: 'le prompt, en anglais — ou branchez un texte, un composeur' });
+      ta.value = n.prompt || '';
+      let ch = () => {};
+      ta.addEventListener('focus', () => { ch = app.editing(); });
+      ta.addEventListener('input', () => {
+        ch(); n.prompt = ta.value;
+        const c = app.canvas.dom.get(n.id)?.el.querySelector('textarea.gp');
+        if (c) c.value = n.prompt;
+        G.refresh(n.id); paintGo(n);
+      });
+    }
+    out.push(card('Générer image', cfg.backend === 'stub' ? 'moteur factice' : m?.name,
       el('div', { class: 'models' }, ...cfg.models.map((x) => el('button', { class: 'opt model' + (n.model === x.id ? ' on' : ''), type: 'button', title: x.role,
         onclick: () => { app.mutate(() => { n.model = x.id; }); app.LS('gen-model', x.id); } },
       el('b', {}, x.name), el('small', {}, x.refs ? `${x.refs} réf. au plus` : 'texte seul')))),
@@ -255,35 +291,34 @@ export function createInspector(app) {
       cfg.backend === 'stub' ? el('p', { class: 'why' }, 'Moteur factice : l’outil Image rend des mires dessinées, aucun modèle n’est chargé. Le câblage réel s’allume dans showrunner.local.json (« image_backend »).') : null));
     setTimeout(() => paintGo(n));
 
-    const refs = G.refsOf(n);
+    // les références : tous les fils de l'entrée, dans leur ordre ; ceux qui ne vont plus disent pourquoi
+    const all = F.inputs(n.id).refs || [];
+    const refs = all.filter((e) => e.ok);
     const refCard = card('Références', m ? `${refs.length} / ${m.refs}` : String(refs.length),
-      refs.length ? el('div', { class: 'rlist' }, ...refs.map((r, k) => {
-        const it = S.items.get(r.item);
-        const link = S.board.links.find((l) => l.a === r.id && l.b === n.id);
+      all.length ? el('div', { class: 'rlist' }, ...all.map((e) => {
+        const itemId = F.itemOf(e.from);
+        const it = itemId ? S.items.get(itemId) : null;
         const erefs = it?.kind === 'element' ? it.element?.refs || [] : [];
-        return el('div', { class: 'rrow' },
-          el('b', { class: 'rn' }, String(k + 1)),
+        return el('div', { class: 'rrow' + (e.ok ? '' : ' bad') },
+          el('b', { class: 'rn' }, e.ok ? String(e.idx + 1) : '×'),
           el('span', { class: 'rim', style: { backgroundImage: it?.thumb_url ? `url("${href(it.thumb_url)}")` : null } }),
-          el('div', { class: 'rt' }, el('span', {}, it?.title || r.title || r.item),
-            erefs.length ? (() => {
+          el('div', { class: 'rt' }, el('span', {}, it?.title || nameOf(e.from)),
+            !e.ok ? el('small', { class: 'why' }, e.why) : e.pending ? el('small', { class: 'hint' }, e.pending) : null,
+            e.ok && erefs.length ? (() => {
               const s = el('select', { class: 'fld sm', title: 'quelle image de l’élément envoyer' },
-                ...erefs.map((x) => el('option', { value: x.file, selected: (n.refChoice?.[r.item] || erefs[0].file) === x.file ? true : null },
+                ...erefs.map((x) => el('option', { value: x.file, selected: (n.refChoice?.[itemId] || erefs[0].file) === x.file ? true : null },
                   `${x.label || x.role || x.file}${x.role ? ' · ' + x.role : ''}`)));
-              s.addEventListener('change', () => app.mutate(() => { n.refChoice = { ...(n.refChoice || {}), [r.item]: s.value }; }));
+              s.addEventListener('change', () => app.mutate(() => { n.refChoice = { ...(n.refChoice || {}), [itemId]: s.value }; }));
               return s;
             })() : null),
-          k > 0 ? b('↑', () => app.mutate(() => {
-            const L = S.board.links;
-            const prev = L.find((l) => l.a === refs[k - 1].id && l.b === n.id);
-            const i = L.indexOf(link), j = L.indexOf(prev);
-            [L[i], L[j]] = [L[j], L[i]];
-          }), { title: 'passer avant (l’ordre des références compte)' }) : null,
-          b('×', () => app.mutate(() => { S.board.links = S.board.links.filter((l) => l !== link); }), { title: 'délier' }));
+          e.ok && e.idx > 0 ? b('↑', () => app.moveWire(e.link.id, -1), { title: 'passer avant (l’ordre des références compte)' }) : null,
+          b('×', () => app.cutLink(e.link.id), { title: 'couper ce fil' }));
       })) : null,
       hint(n.model === 'qwen21' ? 'dans l’ordre : <image1>, <image2>, <image3> — nommez-les dans le prompt'
         : n.model === 'krea2' ? '1 référence : la personne ou l’objet à reprendre · 2 : la scène d’abord, puis le sujet'
-          : 'Z-Image ne prend pas de référence'),
-      row(b('Ajouter depuis la bibliothèque', () => app.pickRefs(n.id), { disabled: m && refs.length >= m.refs, title: 'posées à gauche de la carte, reliées' })),
+          : m?.refs_why || 'ce modèle ne prend pas de référence'),
+      row(b('Ajouter depuis la bibliothèque', () => app.pickRefs(n.id), { disabled: m && refs.length >= m.refs,
+        title: m && refs.length >= m.refs ? (m.refs ? `${m.name} prend ${m.refs} références au plus` : m.refs_why) : 'posées à gauche de la carte, branchées' })),
       hint('On peut aussi y déposer un fichier du disque ou une vignette de la bibliothèque.'));
     // tout bloc qui attend un asset accepte un dépôt (règle de Cal, 29/09)
     dropZone(refCard, { kinds: ['image', 'element'], via: 'ideation', onitems: (items) => app.addRefs(n.id, items) });

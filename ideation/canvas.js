@@ -1,20 +1,29 @@
 // IDÉATION — le canvas infini : la vue (glisser, molette, pincer), les
-// objets posés, les liens, la sélection (clic, Maj + clic, cadre de
-// sélection, lasso avec Alt), déplacer, redimensionner, la mini-carte.
+// objets posés et leurs ports, la sélection (clic, Maj + clic, cadre de
+// sélection, lasso avec Alt), déplacer, redimensionner, la mini-carte. Les
+// liens et le geste « tirer un fil » : wires.js ; ce qui se branche : ports.js.
 //
 // Rien ici n'écrit la planche sans passer par l'app : `app.snap()` garde
 // l'état d'avant (annuler), `app.commit()` repeint et enregistre. Les
 // couleurs viennent des jetons, même dans la mini-carte (lus à l'exécution).
+// Un objet peut porter `parent` (un groupe, à venir) : le rendu l'ignore.
+// Le canvas émet 'view' (app.emit, plugins.js) quand la caméra bouge.
 
 import { el, href, fmtDur, etypeFr, toast, dropZone } from '../commun/shell.js';
+import { menu } from '../commun/menu.js';
 import { CF_MIME } from './library.js';
+import { createWires, edgePts } from './wires.js';
+import { KINDS, outPort, inPorts } from './ports.js';
 
+export { menu, edgePts };
 const NS = 'http://www.w3.org/2000/svg';
 const GRID = 24;
 const ZMIN = 0.08;
 const ZMAX = 4;
+const DWELL = 400;   // un texte posé sur un autre : un court arrêt au-dessus avant de proposer le composeur (étude Weavy § 9.5)
 // les objets dont la hauteur suit le contenu : la page la mesure et l'écrit
-export const AUTO_H = new Set(['note', 'sticky', 'title', 'gen']);
+export const AUTO_H = new Set(['note', 'sticky', 'title', 'gen', 'vgen', 'compose']);
+const CARDS = new Set(['gen', 'vgen', 'compose']);
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const svg = (tag, attrs = {}) => {
   const n = document.createElementNS(NS, tag);
@@ -22,19 +31,6 @@ const svg = (tag, attrs = {}) => {
   return n;
 };
 const isControl = (t) => t?.closest?.('input, textarea, select, button, a, .editing, audio');
-
-// le segment d'une boîte à l'autre, de bord à bord (même calcul que l'export)
-export function edgePts(a, b) {
-  const clip = (n, dx, dy) => {
-    if (!dx && !dy) return [0, 0];
-    const t = Math.min(dx ? (n.w / 2) / Math.abs(dx) : Infinity, dy ? (n.h / 2) / Math.abs(dy) : Infinity);
-    return [dx * t, dy * t];
-  };
-  const ca = [a.x + a.w / 2, a.y + a.h / 2], cb = [b.x + b.w / 2, b.y + b.h / 2];
-  const dx = cb[0] - ca[0], dy = cb[1] - ca[1];
-  const [ox, oy] = clip(a, dx, dy), [ix, iy] = clip(b, -dx, -dy);
-  return [[ca[0] + ox, ca[1] + oy], [cb[0] + ix, cb[1] + iy]];
-}
 export const inside = (n, f) => n.x >= f.x && n.y >= f.y && n.x + n.w <= f.x + f.w && n.y + n.h <= f.y + f.h;
 const hits = (n, r) => n.x < r.x + r.w && n.x + n.w > r.x && n.y < r.y + r.h && n.y + n.h > r.y;
 export function bbox(list) {
@@ -42,27 +38,6 @@ export function bbox(list) {
   const x0 = Math.min(...list.map((n) => n.x)), y0 = Math.min(...list.map((n) => n.y));
   const x1 = Math.max(...list.map((n) => n.x + n.w)), y1 = Math.max(...list.map((n) => n.y + n.h));
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-}
-
-// un petit menu flottant : [{label, sub, onclick} | '-' | {head}]
-export function menu(x, y, items) {
-  document.querySelector('.ide-menu')?.remove();
-  const box = el('div', { class: 'ide-menu', role: 'menu' });
-  const close = () => { box.remove(); removeEventListener('pointerdown', out, true); removeEventListener('keydown', esc, true); };
-  const out = (e) => { if (!box.contains(e.target)) close(); };
-  const esc = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-  for (const it of items) {
-    if (it === '-') box.append(el('i', { class: 'sep' }));
-    else if (it.head) box.append(el('span', { class: 'lbl head' }, it.head));
-    else box.append(el('button', { class: 'mi', type: 'button', role: 'menuitem', disabled: it.disabled ? true : null, title: it.title || null,
-      onclick: () => { close(); it.onclick(); } }, el('span', {}, it.label), it.sub ? el('small', {}, it.sub) : null));
-  }
-  document.body.append(box);
-  const r = box.getBoundingClientRect();
-  box.style.left = `${Math.min(x, innerWidth - r.width - 8)}px`;
-  box.style.top = `${Math.min(y, innerHeight - r.height - 8)}px`;
-  setTimeout(() => { addEventListener('pointerdown', out, true); addEventListener('keydown', esc, true); });
-  return close;
 }
 
 export function createCanvas(app) {
@@ -73,7 +48,8 @@ export function createCanvas(app) {
   const linksS = svg('svg', { class: 'links', width: 1, height: 1 });
   const nodesL = el('div', { class: 'layer nodes' });
   world.append(framesL, linksS, nodesL);
-  const temp = svg('path', { class: 'temp' });
+  const temp = svg('path', { class: 'temp' });   // la flèche d'annotation qu'on tire (outil L)
+  const HINT = 'molette : zoom · glisser le fond : choisir · Alt : lasso · espace : se déplacer · tirer une sortie : un fil · double-clic : poser';
   const marquee = el('div', { class: 'marquee', hidden: true });
   const over = svg('svg', { class: 'overlay' });
   const lassoP = svg('polygon', { class: 'lasso' });
@@ -91,8 +67,11 @@ export function createCanvas(app) {
   cv.append(world, marquee, over, empty, banner, zoomBox, mini, hint);
   pct.addEventListener('click', () => zoomTo(1));
 
-  const dom = new Map();   // id → { el, key }
+  const dom = new Map();   // id → { el, key, py: { 'in:prompt': y… } }
   const V = () => S.view;
+  const W = createWires(app, { cv, layer: linksS, dom, toWorld, drag, hint, HINT });
+  let soonF = 0;
+  let locked = false;   // canvas.lock() : les gestes sont figés (seul le déplacement de la vue reste)
   // rien ne défile jamais sous la planche : la vue est la seule vérité (un
   // champ qui prend le focus ferait sinon glisser la page)
   for (const n of [cv, cv.parentElement, cv.closest('.ide'), document.body]) {
@@ -101,7 +80,7 @@ export function createCanvas(app) {
   addEventListener('scroll', () => { if (scrollX || scrollY) scrollTo(0, 0); });
 
   // ── la vue ────────────────────────────────────────────────
-  let viewT = 0, resT = 0;
+  let viewT = 0, resT = 0, farNow = null, viewF = 0;
   function applyView() {
     const v = V();
     world.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.z})`;
@@ -112,9 +91,15 @@ export function createCanvas(app) {
     cv.style.setProperty('--gy', `${v.y}px`);
     cv.classList.toggle('nogrid', !S.grid);
     gridB.classList.toggle('on', !!S.grid);
-    cv.classList.toggle('far', v.z < 0.42);
+    const far = v.z < 0.42;
+    cv.classList.toggle('far', far);
+    // de loin, les cartes n'ont plus leurs lignes : leurs ports et leurs fils se replacent
+    if (farNow !== null && far !== farNow) { measure(); W.placePorts(); paintLinks(); }
+    farNow = far;
     pct.textContent = `${Math.round(v.z * 100)} %`;
     paintMini();
+    cancelAnimationFrame(viewF);
+    viewF = requestAnimationFrame(() => app.emit?.('view', V()));
     clearTimeout(viewT);
     viewT = setTimeout(() => { if (S.board) app.LS('view-' + S.board.id, S.view); }, 400);
     clearTimeout(resT);
@@ -128,9 +113,41 @@ export function createCanvas(app) {
   }
   const zoomBy = (k) => zoomAt(V().z * k, cv.clientWidth / 2, cv.clientHeight / 2);
   const zoomTo = (z) => zoomAt(z, cv.clientWidth / 2, cv.clientHeight / 2);
+  // monde ↔ écran (coordonnées de la fenêtre, comme clientX / clientY)
   function toWorld(cx, cy) {
     const r = rect(), v = V();
     return [(cx - r.left - v.x) / v.z, (cy - r.top - v.y) / v.z];
+  }
+  function toScreen(wx, wy) {
+    const r = rect(), v = V();
+    return [r.left + v.x + wx * v.z, r.top + v.y + wy * v.z];
+  }
+  // la vue qui montre une zone du monde { x, y, w, h } : marge `pad`, zoom au plus `zmax`
+  function viewFor(b, pad = 70, zmax = 1.5) {
+    const top = 30;
+    const z = clamp(Math.min((cv.clientWidth - 2 * pad) / Math.max(b.w, 1), (cv.clientHeight - 2 * pad - top) / Math.max(b.h, 1)), ZMIN, zmax);
+    return { z, x: (cv.clientWidth - b.w * z) / 2 - b.x * z, y: (cv.clientHeight - b.h * z) / 2 - b.y * z + top / 2 };
+  }
+  // voler jusqu'à une cible : une vue { x, y, z }, une zone { x, y, w, h }, un objet (son id) ;
+  // rend une promesse tenue à l'arrivée (ms: 0 : sans animation)
+  let flyF = 0;
+  function flyTo(target, { ms = 420, pad = 70, zmax = 1.5 } = {}) {
+    const t = typeof target === 'string' ? app.node(target) : target;
+    if (!t) return Promise.resolve(false);
+    const to = Number.isFinite(t.z) && !Number.isFinite(t.w) ? { x: t.x, y: t.y, z: clamp(t.z, ZMIN, ZMAX) } : viewFor(t, pad, zmax);
+    cancelAnimationFrame(flyF);
+    const v = V(), from = { ...v }, t0 = performance.now();
+    if (!ms) { Object.assign(v, to); applyView(); return Promise.resolve(true); }
+    return new Promise((done) => {
+      const step = (now) => {
+        const k = Math.min(1, (now - t0) / ms), e = k < 0.5 ? 4 * k * k * k : 1 - (-2 * k + 2) ** 3 / 2;
+        // le zoom en géométrique (régulier à l'œil), la position en douceur
+        Object.assign(v, { z: from.z * (to.z / from.z) ** e, x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e });
+        applyView();
+        if (k < 1) flyF = requestAnimationFrame(step); else done(true);
+      };
+      flyF = requestAnimationFrame(step);
+    });
   }
   function viewRect() {
     const v = V();
@@ -140,11 +157,7 @@ export function createCanvas(app) {
   function fit(target) {
     const b = target || bbox(S.board?.nodes || []);
     if (!b) { Object.assign(V(), { x: cv.clientWidth / 2, y: cv.clientHeight / 2, z: 1 }); applyView(); return; }
-    const pad = 70, top = 30;
-    const v = V();
-    v.z = clamp(Math.min((cv.clientWidth - 2 * pad) / Math.max(b.w, 1), (cv.clientHeight - 2 * pad - top) / Math.max(b.h, 1)), ZMIN, 1.5);
-    v.x = (cv.clientWidth - b.w * v.z) / 2 - b.x * v.z;
-    v.y = (cv.clientHeight - b.h * v.z) / 2 - b.y * v.z + top / 2;
+    Object.assign(V(), viewFor(b));
     applyView();
   }
   // une image posée en grand se lit en pleine définition, de loin sa vignette
@@ -165,16 +178,44 @@ export function createCanvas(app) {
     const it = n.type === 'media' ? S.items.get(n.item) : null;
     // la place et la taille ne refont pas l'objet : `place` les suit
     const { x, y, w, h, jobs, ...rest } = n;
-    const extra = n.type === 'gen' ? app.gen.cardKey(n) : '';
+    const extra = n.type === 'gen' ? app.gen.cardKey(n) : n.type === 'vgen' ? app.video.cardKey(n) : n.type === 'compose' ? app.composer.cardKey(n) : '';
     return JSON.stringify(rest) + (it ? `|${it.updated || ''}${it.missing ? 'x' : ''}` : '|?') + extra;
   }
   function place(e, n) {
     e.style.left = `${n.x}px`; e.style.top = `${n.y}px`; e.style.width = `${n.w}px`;
     e.style.height = AUTO_H.has(n.type) ? '' : `${n.h}px`;
   }
-  const ports = () => [el('span', { class: 'port', 'data-port': '1', title: 'tirer un lien vers un autre objet' }), el('span', { class: 'rz', 'data-rz': '1', title: 'redimensionner' })];
+  // les ports d'un objet (ports.js) : ses entrées à gauche, sa sortie à droite, dans la teinte de ce qu'ils portent
+  const accepts = (p) => p.accepts.map((k) => KINDS[k].label).join(' ou ');
+  function ports(n) {
+    const out = [];
+    for (const p of inPorts(n, app.caps())) {
+      out.push(el('span', { class: 'pt in' + (p.max === 0 ? ' shut' : '') + (p.lock ? ' lock' : ''), 'data-port': p.id, 'data-side': 'in',
+        style: { '--k': `var(--${KINDS[p.accepts[0]].color})` },
+        title: p.max === 0 ? `${p.label} : ${p.why}` : p.lock ? `${p.label} : case verrouillée` : `entrée · ${p.label} — ${accepts(p)}${p.max && p.max > 1 ? ` · ${p.max} au plus` : ''} · tirer : de quoi la remplir` }));
+    }
+    const o = outPort(n);
+    if (o) {
+      out.push(el('span', { class: 'pt out', 'data-port': o.id, 'data-side': 'out', style: { '--k': `var(--${KINDS[o.kind].color})` },
+        title: `sortie · ${KINDS[o.kind].label}${CARDS.has(n.type) && n.type !== 'compose' ? ' (le dernier résultat)' : ''} — tirer vers une entrée` }));
+    }
+    out.push(el('span', { class: 'rz', 'data-rz': '1', title: 'redimensionner' }));
+    return out;
+  }
 
+  // un objet refait : les modules greffés peuvent l'habiller (canvas.decorate(fn) : fn(n, el))
+  const decorators = new Set();
   function build(n) {
+    const e = buildRaw(n);
+    for (const f of decorators) { try { f(n, e); } catch (err) { console.error('idéation · decorate', err); } }
+    return e;
+  }
+  function decorate(fn) {
+    decorators.add(fn);
+    for (const [id, d] of dom) { const n = app.node(id); if (n) { try { fn(n, d.el); } catch (err) { console.error('idéation · decorate', err); } } }
+    return () => decorators.delete(fn);
+  }
+  function buildRaw(n) {
     if (n.type === 'frame') {
       return el('div', { class: 'fr', 'data-id': n.id },
         el('div', { class: 'fr-h', 'data-id': n.id, title: 'glisser le cadre · double-clic : le renommer' },
@@ -194,6 +235,8 @@ export function createCanvas(app) {
       const ph = { note: 'une note — double-clic pour écrire', sticky: 'un post-it', title: 'un titre' }[n.type];
       body = [el('div', { class: 'txt' + (n.text ? '' : ' ph') }, n.text || ph)];
     } else if (n.type === 'gen') body = app.gen.card(n);
+    else if (n.type === 'vgen') { cls.push('gen'); body = app.video.card(n); }
+    else if (n.type === 'compose') body = app.composer.card(n);
     else if (n.type === 'palette') {
       body = [el('div', { class: 'sws' }, ...(n.colors || []).map((c) =>
         // une couleur tirée d'une image : une donnée, pas une teinte du thème
@@ -201,7 +244,7 @@ export function createCanvas(app) {
           onclick: () => { navigator.clipboard?.writeText(c).then(() => toast(`${c} copiée`), () => toast(c)); } },
         el('span', {}, c))))];
     }
-    const e = el('div', { class: cls.join(' '), 'data-id': n.id, style }, ...body, el('div', { class: 'jobs' }), ...ports());
+    const e = el('div', { class: cls.join(' '), 'data-id': n.id, style }, ...body, el('div', { class: 'jobs' }), ...ports(n));
     if (n.type === 'media' && n.kind === 'video') {
       const v = e.querySelector('video');
       if (v) {
@@ -243,18 +286,29 @@ export function createCanvas(app) {
   }
 
   function render() {
+    cancelAnimationFrame(soonF);
     if (!S.board) { framesL.replaceChildren(); nodesL.replaceChildren(); linksS.replaceChildren(); dom.clear(); paintEmpty(); return; }
+    app.flowNow();            // ce qui passe dans les fils, relu une fois par rendu
     const nodes = S.board.nodes;
     // les grands cadres dessous : un cadre posé dans un autre reste visible
     const frames = nodes.filter((n) => n.type === 'frame').sort((a, b) => b.w * b.h - a.w * a.h);
     const others = nodes.filter((n) => n.type !== 'frame');
     const seen = new Set();
+    // l'objet où l'on écrit n'est pas refait sous les doigts : il le sera à la sortie. Seul un
+    // champ de saisie protège ainsi sa carte — un sélecteur ou un bouton qu'on vient de toucher
+    // (changer de modèle, de mode) la laisse se refaire à l'instant, ses entrées avec elle
+    const act = document.activeElement;
+    const typing = act?.matches?.('textarea, input:not([type="checkbox"]):not([type="radio"]):not([type="button"]), [contenteditable="true"], [contenteditable="plaintext-only"]') ? act : null;
     const sync = (layer, list) => list.forEach((n, i) => {
       seen.add(n.id);
       const key = keyOf(n);
       let d = dom.get(n.id);
-      // l'objet où l'on écrit n'est pas refait sous les doigts : il le sera à la sortie
-      if (!d || (d.key !== key && !d.el.contains(document.activeElement))) {
+      // tenue à cause d'un champ où l'on écrit : elle se refait dès qu'on le quitte, jamais plus tard
+      if (d && d.key !== key && typing && d.el.contains(typing) && !d.held) {
+        d.held = true;
+        typing.addEventListener('blur', () => { d.held = false; renderSoon(); }, { once: true });
+      }
+      if (!d || (d.key !== key && !(typing && d.el.contains(typing)))) {
         const e = build(n);
         if (d) d.el.replaceWith(e);
         d = { el: e, key };
@@ -267,22 +321,42 @@ export function createCanvas(app) {
     sync(nodesL, others);
     for (const [id, d] of dom) if (!seen.has(id)) { d.el.remove(); dom.delete(id); }
     measure();
+    W.placePorts();
     paintFrames();
     paintLinks();
+    W.paintPorts();
     paintSel();
     paintEmpty();
     for (const n of nodes) if (n.jobs) paintJobs(n.id);
     paintMini();
   }
+  // un rendu à la prochaine image : ce qu'on tape dans une note ou une case suit, en direct,
+  // dans les cartes qui la lisent (la note où l'on écrit n'est pas refaite sous les doigts)
+  function renderSoon() {
+    cancelAnimationFrame(soonF);
+    soonF = requestAnimationFrame(() => { render(); app.insp?.render(); });
+  }
+  // une carte a changé de hauteur (une case qui grandit) : ses ports et ses fils suivent,
+  // une fois par image au plus
+  let flowF = 0;
+  function reflow() {
+    cancelAnimationFrame(flowF);
+    flowF = requestAnimationFrame(() => { measure(); W.placePorts(); paintLinks(); });
+  }
 
+  // la hauteur des objets qui suivent leur contenu. Une mesure n'est pas un geste : elle
+  // ne salit pas la planche (rien ne s'enregistre à l'ouverture, deux personnes qui ouvrent
+  // la même planche ne se mettent pas en conflit) et n'entre pas dans l'annulation ; la
+  // hauteur mesurée part avec le prochain vrai geste. De loin, une carte n'a plus que son
+  // résumé : sa hauteur n'est pas relevée.
   function measure() {
     let changed = false;
+    const far = cv.classList.contains('far');
     for (const n of S.board?.nodes || []) {
-      if (!AUTO_H.has(n.type)) continue;
+      if (!AUTO_H.has(n.type) || (far && CARDS.has(n.type))) continue;
       const h = dom.get(n.id)?.el.offsetHeight;
       if (h && Math.abs(h - n.h) > 0.5) { n.h = Math.round(h); changed = true; }
     }
-    if (changed) app.touch();
     return changed;
   }
   function paintFrames() {
@@ -308,10 +382,12 @@ export function createCanvas(app) {
     if (!has) {
       empty.replaceChildren(el('b', {}, S.board ? 'Planche vide' : 'Aucune planche ouverte'),
         el('p', {}, S.board
-          ? 'Glissez des images, des vidéos, des sons, des personnages depuis la bibliothèque (à gauche), déposez des fichiers du disque, ou double-cliquez sur le fond : une note, un post-it, un cadre, une carte Générer.'
+          ? 'Glissez des images, des vidéos, des sons, des personnages depuis la bibliothèque (à gauche), déposez des fichiers du disque, ou double-cliquez sur le fond : une note, un cadre, une carte Générer image ou vidéo, un composeur de prompt.'
           : 'Ouvrez une planche ou créez-en une : elle s’enregistre seule, à chaque geste.'),
         el('div', { class: 'row' }, ...(S.board
-          ? [el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.addAt('gen', ...center()) }, 'Carte Générer'),
+          ? [el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.addAt('gen', ...center()) }, 'Générer image'),
+            el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.addAt('vgen', ...center()) }, 'Générer vidéo'),
+            el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.addAt('compose', ...center()) }, 'Composeur'),
             el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.addAt('note', ...center()) }, 'Note'),
             el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.addAt('frame', ...center()) }, 'Cadre')]
           : [el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.boardsModal() }, 'Les planches'),
@@ -319,7 +395,7 @@ export function createCanvas(app) {
     }
     const stub = (S.cfg?.backend || S.meta?.backend) === 'stub';
     banner.hidden = !stub || !S.board;
-    banner.replaceChildren(el('b', {}, 'Moteur factice'), el('span', {}, 'Générer, Variations et Éditer rendent des mires dessinées : aucun modèle n’est chargé. Le câblage se fait dans l’outil Image.'));
+    banner.replaceChildren(el('b', {}, 'Moteur factice'), el('span', {}, `Générer image, Variations et Éditer rendent des mires dessinées${S.mopts && S.mopts.engine !== 'h3' ? ', Générer vidéo une vidéo d’essai (ffmpeg)' : ''} : aucun modèle n’est chargé. Le câblage : page Admin.`));
   }
 
   // les travaux en cours d'un objet : une barre par travail
@@ -333,39 +409,9 @@ export function createCanvas(app) {
       el('i', { style: { width: `${Math.round((j.progress ?? (j.state === 'queued' ? 0 : 0.1)) * 100)}%` } }))));
   }
 
-  // ── les liens ─────────────────────────────────────────────
-  function defs() {
-    const d = svg('defs');
-    for (const [id, cls] of [['ar', ''], ['ar-out', 'out'], ['ar-ref', 'ref'], ['ar-sel', 'sel']]) {
-      const m = svg('marker', { id, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 11, markerHeight: 11, markerUnits: 'userSpaceOnUse', orient: 'auto' });
-      m.append(svg('path', { d: 'M0 0L10 5L0 10z', class: 'mk ' + cls }));
-      d.append(m);
-    }
-    return d;
-  }
-  const isRef = (a, b) => b.type === 'gen' && a.type === 'media' && (a.kind === 'image' || a.kind === 'element');
+  // ── les liens : wires.js les dessine ; la flèche qu'on tire avec l'outil L se pose par-dessus
   function paintLinks() {
-    linksS.replaceChildren(defs());
-    if (!S.board) return;
-    const refN = new Map();
-    for (const l of S.board.links) {
-      const a = app.node(l.a), b = app.node(l.b);
-      if (!a || !b) continue;
-      const [p, q] = edgePts(a, b);
-      const ref = isRef(a, b);
-      const sel = S.link === l.id;
-      const d = `M${p[0]} ${p[1]}L${q[0]} ${q[1]}`;
-      const g = svg('g', { class: `lk ${l.kind}${ref ? ' ref' : ''}${sel ? ' sel' : ''}`, 'data-link': l.id });
-      const mk = l.kind === 'line' ? null : `url(#${sel ? 'ar-sel' : l.kind === 'out' ? 'ar-out' : ref ? 'ar-ref' : 'ar'})`;
-      g.append(svg('path', { class: 'vis', d, 'marker-end': mk }), svg('path', { class: 'hit', d, 'data-link': l.id }));
-      const lab = ref ? `réf. ${(refN.set(b.id, (refN.get(b.id) || 0) + 1), refN.get(b.id))}` : l.label;
-      if (lab) {
-        const t = svg('text', { class: 'lbt' + (ref ? ' r' : ''), x: p[0] + (q[0] - p[0]) * (ref ? 0.35 : 0.5), y: p[1] + (q[1] - p[1]) * (ref ? 0.35 : 0.5) });
-        t.textContent = lab;
-        g.append(t);
-      }
-      linksS.append(g);
-    }
+    W.paint();
     linksS.append(temp);
   }
 
@@ -395,7 +441,7 @@ export function createCanvas(app) {
     }
     for (const n of nodes) {
       if (n.type === 'frame') continue;
-      c.fillStyle = n.type === 'sticky' ? tok(n.color) || tok('coral-3') : n.type === 'gen' ? tok('or')
+      c.fillStyle = n.type === 'sticky' ? tok(n.color) || tok('coral-3') : n.type === 'gen' || n.type === 'vgen' ? tok('or') : n.type === 'compose' ? tok('amb')
         : n.type === 'palette' ? (n.colors?.[0] || tok('ink3')) : n.type === 'media' ? (n.kind === 'element' ? tok('coral-2') : tok('ink3'))
           : n.type === 'title' ? tok('ink') : tok('ink2');
       if (S.sel.has(n.id)) c.fillStyle = tok('or');
@@ -443,22 +489,24 @@ export function createCanvas(app) {
       touches.set(e.pointerId, [e.clientX, e.clientY]);
       if (touches.size === 2) { startPinch(); return; }
     }
-    document.querySelector('.ide-menu')?.remove();
     const nodeEl = t.closest('[data-id]');
     if (isControl(t)) {
+      if (locked) { e.preventDefault(); return; }
       if (nodeEl && !S.sel.has(nodeEl.dataset.id)) app.select([nodeEl.dataset.id]);
       return;
     }
     if (document.activeElement && document.activeElement !== document.body && cv.contains(document.activeElement)) document.activeElement.blur();
-    if (e.button === 1 || (e.button === 0 && (S.tool === 'hand' || S.space))) { e.preventDefault(); return startPan(e); }
+    // figée (canvas.lock : une présentation, la machine temporelle) : on se déplace, rien d'autre
+    if (e.button === 1 || (e.button === 0 && (S.tool === 'hand' || S.space || locked))) { e.preventDefault(); return startPan(e); }
     if (e.button !== 0) return;
     e.preventDefault();
     const id = nodeEl?.dataset.id;
     if (t.closest('[data-rz]') && id) return startResize(e, id);
-    if (t.closest('[data-port]') && id) return startLink(e, id);
+    const pt = t.closest('.pt[data-port]');
+    if (pt && id) return W.start(e, id, pt.dataset.port, pt.dataset.side);
     if (S.tool === 'link' && id) return startLink(e, id);
     // un outil de pose pose où l'on clique, par-dessus un objet aussi (une note sur une image)
-    if (['note', 'sticky', 'title', 'gen', 'frame'].includes(S.tool)) return startCreate(e, S.tool);
+    if (['note', 'sticky', 'title', 'gen', 'vgen', 'compose', 'frame'].includes(S.tool)) return startCreate(e, S.tool);
     const lk = t.closest('[data-link]');
     if (lk && !id) { app.selectLink(lk.dataset.link); return; }
     if (id) return pressNode(e, id);
@@ -514,6 +562,39 @@ export function createCanvas(app) {
     const orig = moving.map((n) => [n, n.x, n.y]);
     const x0 = e.clientX, y0 = e.clientY, z = V().z;
     let moved = false;
+    // un objet lâché sur un autre (app.dropRules) : la règle se dit après un court arrêt au-dessus
+    const drop = { t: null, since: 0, armed: false, timer: 0, label: '' };
+    const disarm = () => {
+      clearTimeout(drop.timer);
+      if (drop.t) dom.get(drop.t.id)?.el.classList.remove('drop-to');
+      Object.assign(drop, { t: null, armed: false, label: '' });
+      hint.textContent = HINT;
+    };
+    const overNode = (ev) => {
+      const [wx, wy] = toWorld(ev.clientX, ev.clientY);
+      const mine = new Set(moving.map((n) => n.id));
+      const list = S.board.nodes;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const n = list[i];
+        if (n.type === 'frame' || mine.has(n.id)) continue;
+        if (wx >= n.x && wx <= n.x + n.w && wy >= n.y && wy <= n.y + n.h) return n;
+      }
+      return null;
+    };
+    const watchDrop = (ev) => {
+      const t = overNode(ev);
+      let label = '';
+      for (const r of (t && app.dropRules) || []) { label = r.test(moving, t); if (label) break; }
+      if (!label) { if (drop.t) disarm(); return; }
+      if (drop.t?.id === t.id) return;
+      disarm();
+      Object.assign(drop, { t, label });
+      drop.timer = setTimeout(() => {
+        drop.armed = true;
+        dom.get(t.id)?.el.classList.add('drop-to');
+        hint.textContent = label;
+      }, DWELL);
+    };
     drag((ev) => {
       if (pinch) return;
       const dx = (ev.clientX - x0) / z, dy = (ev.clientY - y0) / z;
@@ -524,9 +605,15 @@ export function createCanvas(app) {
         const d = dom.get(n.id);
         if (d) place(d.el, n);
       }
+      watchDrop(ev);
       paintLinks(); paintMini();
-    }, () => {
+      app.emit?.('moving', moving.map((n) => n.id));
+    }, (ev) => {
       cv.classList.remove('moving');
+      if (moved) app.emit?.('moving', []);
+      const target = drop.armed ? drop.t : null;
+      disarm();
+      if (moved && target && app.dropOnto(moving, target, orig, ev)) return;
       if (moved) { paintFrames(); app.commit(); }
       else if (!add && was && S.sel.size > 1) app.select([id]);
     });
@@ -543,21 +630,22 @@ export function createCanvas(app) {
     drag((ev) => {
       const dx = (ev.clientX - x0) / z, dy = (ev.clientY - y0) / z;
       if (!moved) { app.snap(); moved = true; }
-      const minW = n.type === 'gen' ? 260 : n.type === 'frame' ? 120 : 48;
+      const minW = CARDS.has(n.type) ? 270 : n.type === 'frame' ? 120 : 48;
       n.w = Math.round(Math.max(minW, w0 + dx));
       if (keep && !ev.shiftKey) n.h = Math.round(n.w * h0 / w0);
       else if (!auto) n.h = Math.round(Math.max(n.type === 'frame' ? 90 : 36, h0 + dy));
       const d = dom.get(id);
       if (d) place(d.el, n);
-      if (auto) measure();
+      if (auto) { measure(); W.placePorts(); }
       paintLinks(); paintMini();
     }, () => { if (moved) { paintFrames(); app.commit(); } });
   }
 
+  // l'outil L : une flèche d'annotation, droite, qui ne porte rien (les fils partent des sorties)
   function startLink(e, from) {
     const a = app.node(from);
     if (!a) return;
-    hint.textContent = 'relâchez sur un autre objet — dans le vide : un objet neuf, déjà relié';
+    hint.textContent = 'une flèche d’annotation : relâchez sur un autre objet — dans le vide : une note, déjà fléchée';
     cv.classList.add('linking');
     const mv = (ev) => {
       const [wx, wy] = toWorld(ev.clientX, ev.clientY);
@@ -574,11 +662,9 @@ export function createCanvas(app) {
       if (to && to !== from) { app.connect(from, to); return; }
       if (!to && cv.contains(tgt)) {
         const [wx, wy] = toWorld(ev.clientX, ev.clientY);
-        const mk = (type) => () => { const n = app.addAt(type, wx, wy - 30, { edit: type !== 'gen', select: true, link: from }); return n; };
-        menu(ev.clientX, ev.clientY, [{ head: 'un objet neuf, relié' },
-          { label: 'Note', onclick: mk('note') }, { label: 'Post-it', onclick: mk('sticky') },
-          { label: 'Carte Générer', sub: a.type === 'media' && (a.kind === 'image' || a.kind === 'element') ? 'cet objet en référence' : '', onclick: mk('gen') },
-          { label: 'Titre', onclick: mk('title') }]);
+        const mk = (type) => () => app.addAt(type, wx, wy - 30, { edit: true, select: true, link: from });
+        menu(ev.clientX, ev.clientY, [{ head: 'un objet neuf, fléché' },
+          { label: 'Note', onclick: mk('note') }, { label: 'Post-it', onclick: mk('sticky') }, { label: 'Titre', onclick: mk('title') }]);
       }
     });
   }
@@ -586,7 +672,7 @@ export function createCanvas(app) {
   function startCreate(e, type) {
     const [wx, wy] = toWorld(e.clientX, e.clientY);
     if (type !== 'frame') {
-      app.addAt(type, wx, wy, { edit: type !== 'gen', select: true });
+      app.addAt(type, wx, wy, { edit: ['note', 'sticky', 'title'].includes(type), select: true });
       if (!e.shiftKey) app.setTool('select');
       return;
     }
@@ -672,6 +758,7 @@ export function createCanvas(app) {
   }, { passive: false });
 
   cv.addEventListener('dblclick', (e) => {
+    if (locked) return;
     const t = e.target;
     if (t.closest('.zoombox, .mini, .empty, .banner') || isControl(t)) return;
     const id = t.closest('[data-id]')?.dataset.id;
@@ -680,7 +767,7 @@ export function createCanvas(app) {
       if (['note', 'sticky', 'title'].includes(n.type)) editText(n.id);
       else if (n.type === 'frame') renameFrame(n.id);
       else if (n.type === 'media' && (n.kind === 'image' || n.kind === 'video')) app.lightbox(n);
-      else if (n.type === 'gen') dom.get(n.id)?.el.querySelector('textarea')?.focus({ preventScroll: true });
+      else if (CARDS.has(n.type)) dom.get(n.id)?.el.querySelector('textarea:not([readonly])')?.focus({ preventScroll: true });
       return;
     }
     const [wx, wy] = toWorld(e.clientX, e.clientY);
@@ -690,6 +777,7 @@ export function createCanvas(app) {
   cv.addEventListener('contextmenu', (e) => {
     if (isControl(e.target)) return;
     e.preventDefault();
+    if (locked) return;
     const id = e.target.closest('[data-id]')?.dataset.id;
     const [wx, wy] = toWorld(e.clientX, e.clientY);
     if (!id) { createMenu(e.clientX, e.clientY, wx, wy); return; }
@@ -706,11 +794,13 @@ export function createCanvas(app) {
   });
 
   function createMenu(cx, cy, wx, wy) {
-    const at = (type) => () => app.addAt(type, wx, wy, { edit: !['gen', 'frame'].includes(type), select: true });
+    const at = (type) => () => app.addAt(type, wx, wy, { edit: ['note', 'sticky', 'title'].includes(type), select: true });
     menu(cx, cy, [{ head: 'poser ici' },
-      { label: 'Note', sub: 'N', onclick: at('note') }, { label: 'Post-it', sub: 'S', onclick: at('sticky') },
-      { label: 'Titre', sub: 'T', onclick: at('title') }, { label: 'Cadre', sub: 'F', onclick: at('frame') },
-      { label: 'Carte Générer', sub: 'G', onclick: at('gen') },
+      { label: 'Note', key: 'N', onclick: at('note') }, { label: 'Post-it', key: 'S', onclick: at('sticky') },
+      { label: 'Titre', key: 'T', onclick: at('title') }, { label: 'Cadre', key: 'F', onclick: at('frame') },
+      '-', { label: 'Générer image', key: 'G', dot: 'or', onclick: at('gen') },
+      { label: 'Générer vidéo', key: 'M', dot: 'cy', onclick: at('vgen') },
+      { label: 'Composeur de prompt', key: 'P', dot: 'amb', onclick: at('compose') },
       '-', { label: 'Depuis la bibliothèque…', sub: 'images, vidéos, sons, éléments', onclick: () => app.pickAt(wx, wy) }]);
   }
 
@@ -731,7 +821,9 @@ export function createCanvas(app) {
     sel.selectAllChildren(txt);
     sel.collapseToEnd();
     const changed = app.editing();
-    const onInput = () => { changed(); n.text = txt.innerText.replace(/\n$/, ''); measure(); paintLinks(); };
+    let wrote = false;
+    // ce qu'on écrit part aussitôt dans les cartes qui lisent ce texte (la note elle-même n'est pas refaite)
+    const onInput = () => { wrote = true; changed(); n.text = txt.innerText.replace(/\n$/, ''); measure(); W.placePorts(); paintLinks(); renderSoon(); };
     const onPaste = (ev) => { ev.preventDefault(); document.execCommand('insertText', false, ev.clipboardData.getData('text/plain')); };
     const onKey = (ev) => { if (ev.key === 'Escape' || (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey))) { ev.preventDefault(); txt.blur(); } };
     txt.addEventListener('input', onInput);
@@ -743,7 +835,8 @@ export function createCanvas(app) {
       txt.classList.remove('editing');
       const d2 = dom.get(id);
       if (d2) d2.key = '';
-      render();
+      // écrire dans une note est un geste : il finit par un commit (les modules l'entendent)
+      if (wrote) app.commit(); else render();
       app.selectionChanged();
     }, { once: true });
   }
@@ -787,11 +880,18 @@ export function createCanvas(app) {
     try { app.placeCf(JSON.parse(raw), ...toWorld(e.clientX, e.clientY)); } catch { /* charge illisible */ }
   });
 
-  const HINT = 'molette : zoom · glisser le fond : choisir · Alt : lasso · espace ou bouton du milieu : se déplacer · double-clic : poser';
   hint.textContent = HINT;
   new ResizeObserver(() => paintMini()).observe(cv);
-  document.fonts?.ready?.then(() => { if (measure()) paintLinks(); });
+  document.fonts?.ready?.then(() => { if (measure()) { W.placePorts(); paintLinks(); } });
 
-  return { el: cv, render, applyView, paintSel, paintLinks, paintJobs, paintMini, paintEmpty, fit, zoomTo, zoomBy, toWorld, center, viewRect, editText, renameFrame,
-    dom, over: (x, y) => { const r = rect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; } };
+  // ce que les modules greffés lisent et appellent (plugins.js) — des ajouts seulement :
+  //   toWorld(x, y) / toScreen(wx, wy)   fenêtre (clientX, clientY) ↔ planche
+  //   viewFor(zone, pad, zmax) → { x, y, z } · flyTo(vue | zone | id, { ms, pad, zmax }) → promesse
+  //   zoomAt(z, x, y)                    zoomer autour d'un point du canvas (px depuis son coin)
+  //   decorate(fn) → désabonner          fn(n, el) à chaque objet refait, et tout de suite
+  //   lock() / unlock() / isLocked()     figer les gestes (la vue se déplace encore)
+  return { el: cv, render, renderSoon, reflow, applyView, paintSel, paintLinks, paintJobs, paintMini, paintEmpty, fit, zoomTo, zoomBy, zoomAt,
+    toWorld, toScreen, viewFor, flyTo, center, viewRect, editText, renameFrame, decorate,
+    lock: () => { locked = true; cv.classList.add('locked'); }, unlock: () => { locked = false; cv.classList.remove('locked'); }, isLocked: () => locked,
+    dom, portPoint: W.portPoint, over: (x, y) => { const r = rect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; } };
 }

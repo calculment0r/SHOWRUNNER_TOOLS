@@ -11,9 +11,10 @@
 //   app.emit(nom, donnée)
 // Les événements émis ici : 'commit' (la planche a changé, geste de Cal),
 // 'quiet' (elle a changé seule : un travail qui avance), 'selection',
-// 'render', 'view' (la caméra a bougé : { x, y, z }), 'board' (une planche
-// s'ouvre : S.board). Le canvas peut émettre les siens (il le dit dans
-// son en-tête).
+// 'render', 'board' (une planche s'ouvre : S.board). Le canvas émet les
+// siens (il le dit dans son en-tête) : 'view' (la caméra a bougé : S.view,
+// { x, y, z }, depuis applyView — plus de relevé par image ici) et 'moving'
+// (des objets se déplacent : leurs identifiants ; [] quand le geste finit).
 
 const PLUGINS = [
   // [nom, () => import('./module.js')] — chargés après le départ de la planche
@@ -24,6 +25,7 @@ const PLUGINS = [
   ['atelier · machine temporelle', () => import('./atelier/machine.js')],
   ['atelier · palette de commandes', () => import('./atelier/commandes.js')],
   ['atelier · vues ancrées', () => import('./atelier/vues.js')],
+  ['collab', () => import('./collab.js')],
 ];
 
 export function installPlugins(app) {
@@ -31,7 +33,6 @@ export function installPlugins(app) {
   app.on = (ev, fn) => {
     if (!subs.has(ev)) subs.set(ev, new Set());
     subs.get(ev).add(fn);
-    if (ev === 'view') watchView();
     return () => subs.get(ev)?.delete(fn);
   };
   app.emit = (ev, data) => {
@@ -50,19 +51,6 @@ export function installPlugins(app) {
   wrap('quiet', 'quiet', () => app.S.board);
   wrap('selectionChanged', 'selection', () => [...app.S.sel]);
   wrap('render', 'render');
-  // la caméra : tant que personne ne l'écoute, rien ne tourne
-  let watching = false, last = '';
-  function watchView() {
-    if (watching) return;
-    watching = true;
-    const tick = () => {
-      const v = app.S.view;
-      const k = v ? `${v.x.toFixed(1)},${v.y.toFixed(1)},${v.z.toFixed(4)}` : '';
-      if (k !== last) { last = k; app.emit('view', v); }
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }
   // une planche qui s'ouvre (openBoard ne passe pas toujours par commit)
   let boardId = null;
   const checkBoard = () => {

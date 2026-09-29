@@ -239,6 +239,10 @@ class App:
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
             server_version = "Showrunner/1"
+            # sans cela, chaque réponse sur une connexion gardée ouverte attend
+            # l'accusé retardé du client : 41 ms par requête mesurées sur DGX2
+            # (docs/etudes/ideation_fluidite.md) ; socketserver.StreamRequestHandler
+            disable_nagle_algorithm = True
 
             def log_message(self, fmt, *args):  # le journal des requêtes noierait celui des rendus
                 pass

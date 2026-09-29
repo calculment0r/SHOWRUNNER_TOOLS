@@ -28,14 +28,15 @@ body.ide-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .pname .nm:hover { box-shadow: inset 0 0 0 1px var(--line); }
 .pname .nm:focus { box-shadow: inset 0 0 0 1px var(--line-cy); background: var(--panel2); }
 .tgrp { display: flex; gap: 4px; align-items: center; }
-.ic {
+/* les boutons à icône de la page (barre, inspecteur) — pas le .ic des entrées de commun/menu.js */
+button.ic {
   width: 34px; height: 30px; border-radius: var(--r3); display: inline-flex; align-items: center; justify-content: center;
   box-shadow: inset 0 0 0 1px var(--line-gr); color: var(--ink2); font-family: var(--f-mono); font-size: 12px; flex: none;
 }
-.ic svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.ic:hover:not(:disabled) { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
-.ic.on { color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }
-.ic:disabled { opacity: .3; cursor: default; }
+button.ic svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+button.ic:hover:not(:disabled) { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
+button.ic.on { color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }
+button.ic:disabled { opacity: .3; cursor: default; }
 #exp-st { display: inline-flex; }
 .conflict { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .conflict span { flex: 1; min-width: 200px; }
@@ -103,24 +104,20 @@ body.nolib .lib { visibility: hidden; }
 .layer { position: absolute; left: 0; top: 0; }
 .links { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
 
-/* les fils */
-.links .vis { fill: none; stroke: var(--ink3); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.links .hit { fill: none; stroke: transparent; stroke-width: 14; vector-effect: non-scaling-stroke; pointer-events: stroke; cursor: pointer; }
-.links .lk.out .vis { stroke: var(--grn2); }
-.links .lk.ref .vis { stroke: var(--cy); stroke-dasharray: 6 4; }
+/* les liens : les fils et la lignée (commun/wire.css, le dessin d'ODIO), et les
+   flèches droites d'annotation, ici */
+.links .lk .vis { fill: none; stroke: var(--ink3); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.links .lk .hit { fill: none; stroke: transparent; stroke-width: 14; vector-effect: non-scaling-stroke; pointer-events: stroke; cursor: pointer; }
 .links .lk.line .vis { stroke: var(--ink2); }
 .links .lk.sel .vis { stroke: var(--or); stroke-width: 2.5; }
 .links .lk:hover .vis { stroke: var(--ink); }
 .links .mk { fill: var(--ink3); }
-.links .mk.out { fill: var(--grn2); }
-.links .mk.ref { fill: var(--cy); }
 .links .mk.sel { fill: var(--or); }
 .links .lbt {
   font-family: var(--f-mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; fill: var(--ink2);
   text-anchor: middle; dominant-baseline: middle; paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round;
 }
-.links .lbt.r { fill: var(--cy); }
-.links .temp { fill: none; stroke: var(--or); stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.links .temp { fill: none; stroke: var(--ink2); stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
 
 /* le cadre de sélection, le lasso */
 .marquee { position: absolute; pointer-events: none; background: var(--or-bg); box-shadow: inset 0 0 0 1px var(--or); border-radius: var(--r1); z-index: 5; }
@@ -151,13 +148,41 @@ body.nolib .lib { visibility: hidden; }
 .nd { position: absolute; border-radius: var(--r3); }
 .nd.sel { box-shadow: 0 0 0 calc(2px / var(--z)) var(--or); }
 .cv:not(.moving) .nd:hover:not(.sel) { box-shadow: 0 0 0 calc(1px / var(--z)) var(--line-cy); }
-.port {
-  position: absolute; top: 50%; right: 0; width: calc(13px / var(--z)); height: calc(13px / var(--z));
-  transform: translate(50%, -50%); border-radius: 50%; background: var(--bg);
-  box-shadow: inset 0 0 0 calc(2px / var(--z)) var(--or); cursor: crosshair; opacity: 0; transition: opacity .12s; z-index: 3;
+/* les ports (ports.js) : entrées à gauche, sortie à droite, dans la teinte de ce
+   qu'ils portent (--k) ; plein quand un fil y est branché ; ceux du nodal d'ODIO
+   (13 px, anneau de 2), gardés lisibles à tout zoom */
+.pt {
+  /* sous 80 %, le port garde sa taille à l'écran ; au-dessus, il grandit avec la carte (comme ODIO) sans mordre ses étiquettes */
+  --pz: max(var(--z), .8);
+  position: absolute; top: 50%; width: calc(13px / var(--pz)); height: calc(13px / var(--pz)); border-radius: 50%; z-index: 3;
+  background: var(--bg); box-shadow: inset 0 0 0 calc(2px / var(--pz)) var(--k, var(--ink3)); cursor: crosshair;
+  transform: translate(-50%, -50%); transition: transform .1s, opacity .12s, background .12s;
 }
-.nd:hover .port, .nd.sel .port, .cv[data-tool="link"] .port, .cv.linking .port { opacity: 1; }
-.cv.moving .port { opacity: 0; }
+.pt.in { left: 0; }
+.pt.out { left: 100%; }
+.pt.on { background: var(--k); }
+.pt.bad { box-shadow: inset 0 0 0 calc(2px / var(--pz)) var(--or); }
+.pt.shut, .pt.lock { opacity: .28; cursor: not-allowed; box-shadow: inset 0 0 0 calc(1px / var(--pz)) var(--ink3); }
+.pt:hover { transform: translate(-50%, -50%) scale(1.45); }
+/* un objet simple (note, image…) : sa sortie se montre au survol, choisi, ou branchée */
+.nd:not(.gen):not(.compose) > .pt.out:not(.on) { opacity: 0; }
+.nd:not(.gen):not(.compose):hover > .pt.out, .nd.sel > .pt.out { opacity: 1; }
+.cv.moving .pt { opacity: 0 !important; }
+/* tirer un fil : ce qui prend s'allume, le reste s'éteint */
+.cv.wiring .pt { opacity: 1; }
+.cv.wiring .pt.no { opacity: .1; transform: translate(-50%, -50%) scale(.75); }
+.cv.wiring .pt.ok {
+  transform: translate(-50%, -50%) scale(1.2);
+  box-shadow: inset 0 0 0 calc(2px / var(--pz)) var(--k), 0 0 0 calc(3px / var(--pz)) color-mix(in srgb, var(--k) 30%, transparent);
+}
+.cv.wiring .pt.ok.hit { background: var(--k); transform: translate(-50%, -50%) scale(1.45); }
+.cv.wiring .pt.src { background: var(--k); }
+.cv.wiring .nd.w-no { opacity: .38; }
+.cv.wiring .nd.w-ok.hit { box-shadow: 0 0 0 calc(1.5px / var(--z)) var(--line-cy); }
+.cv.wiring .prow.r-ok, .cv.wiring .cslot.r-ok { background: var(--cy-bg); }
+.cv.wiring .prow.r-ok.hit, .cv.wiring .cslot.r-ok.hit { box-shadow: inset 0 0 0 1px var(--line-cy); }
+/* un texte tenu au-dessus d'un autre : la règle qui s'appliquera (composeur) */
+.nd.drop-to { box-shadow: 0 0 0 calc(2px / var(--z)) var(--amb) !important; }
 .rz {
   position: absolute; right: 0; bottom: 0; width: calc(11px / var(--z)); height: calc(11px / var(--z));
   transform: translate(45%, 45%); border-radius: 2px; background: var(--or); cursor: nwse-resize; display: none; z-index: 3;
@@ -252,10 +277,41 @@ body.nolib .lib { visibility: hidden; }
 .ghead .fac { color: var(--amb); box-shadow: inset 0 0 0 1px var(--line-amb); border-radius: var(--r1); padding: 2px 5px; }
 .gsum { display: none; font-size: 13px; line-height: 1.45; color: var(--ink2); max-height: 9em; overflow: hidden; }
 .gform { display: flex; flex-direction: column; gap: 8px; }
+/* une entrée de carte : son étiquette (le port la vise), ce qui y arrive */
+.prow { display: flex; flex-direction: column; gap: 5px; margin: 0 -6px; padding: 4px 6px; border-radius: var(--r2); transition: background .12s; }
+.plab {
+  display: flex; align-items: baseline; gap: 6px; font-family: var(--f-mono); font-size: 8px; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--ink2); line-height: 1.3;
+}
+.plab small { font-size: 7.5px; color: var(--ink3); letter-spacing: .12em; }
+/* le texte reçu par un fil : en lecture, avec d'où il vient */
+.gin { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; border-radius: var(--r2); background: var(--panel2); box-shadow: inset 2px 0 0 var(--amb); }
+.gin-h { display: flex; align-items: baseline; gap: 8px; }
+.gin-h .from { flex: 1; min-width: 0; font-size: 10.5px; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gin-t { font-size: 12px; line-height: 1.45; color: var(--ink2); max-height: 7.3em; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
+.gin-t.ph { color: var(--ink3); font-style: italic; }
+.gcut {
+  flex: none; padding: 2px 6px; border-radius: var(--r1); box-shadow: inset 0 0 0 1px var(--line);
+  font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3);
+}
+.gcut:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
+/* les fils qui ne vont plus : dits sur la carte, pas envoyés */
+.gbad { display: flex; flex-direction: column; gap: 4px; font-size: 10.5px; line-height: 1.4; color: var(--ink2); }
+.gbad:empty { display: none; }
+.gbad > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; padding: 5px 7px; border-radius: var(--r1); background: var(--or-bg); }
+.gbad b { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .14em; text-transform: uppercase; font-weight: 400; color: var(--or); }
+.gbad .gcut { margin-left: auto; }
 .grefs { display: flex; flex-wrap: wrap; gap: 5px; min-height: 22px; align-items: center; }
-.grefs i { position: relative; width: 40px; height: 40px; border-radius: var(--r2); background: var(--panel3) center / cover no-repeat; box-shadow: inset 0 0 0 1px var(--line-cy); }
-.grefs i b { position: absolute; left: 2px; top: 2px; min-width: 13px; height: 13px; border-radius: 2px; background: var(--cy); color: var(--on-cy);
-  font-family: var(--f-mono); font-size: 8px; font-weight: 400; line-height: 13px; text-align: center; }
+.gchip { position: relative; width: 40px; height: 40px; border-radius: var(--r2); background: var(--panel3) center / cover no-repeat; box-shadow: inset 0 0 0 1px var(--line-cy); }
+.gchip b { position: absolute; left: 2px; top: 2px; min-width: 13px; height: 13px; padding: 0 2px; border-radius: 2px; background: var(--cy); color: var(--on-cy);
+  font-family: var(--f-mono); font-size: 8px; font-weight: 400; line-height: 13px; text-align: center; font-style: normal; }
+.gchip.bad { box-shadow: inset 0 0 0 2px var(--or); opacity: .55; }
+.gchip.bad b { background: var(--or); color: var(--on-or); }
+.gchip.wait { box-shadow: inset 0 0 0 1px var(--line-amb); background-image: none !important; }
+.gchip.wait b { background: var(--amb); color: var(--on-light); }
+.grefs.shut { opacity: .7; }
+.vmodes { align-self: flex-start; }
+.vmodes .tb { height: 22px; padding: 0 9px; font-size: 9px; }
 .ghint { font-size: 11px; line-height: 1.45; color: var(--ink3); }
 .grefs { padding: 4px; margin: -4px; border-radius: var(--r2); }
 .grefs .ghint { flex: 1; min-width: 0; color: var(--cy); }
@@ -284,9 +340,36 @@ body.nolib .lib { visibility: hidden; }
   padding: 6px 8px; font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .08em; line-height: 1.6; color: var(--or); text-transform: uppercase;
 }
 
+/* le composeur de prompt : des cases à rôle, une prose ; aucun orange (il ne fabrique rien) */
+.nd.compose { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); padding: 12px 14px 14px; }
+.nd.compose.sel { box-shadow: inset 0 0 0 1px var(--line-amb), 0 0 0 calc(2px / var(--z)) var(--or); }
+.nd.compose .ghead .k { color: var(--amb); }
+.cslots { display: flex; flex-direction: column; gap: 4px; }
+.cslot { display: flex; flex-direction: column; gap: 4px; margin: 0 -6px; padding: 4px 6px; border-radius: var(--r2); transition: background .12s; }
+.cs-h { display: flex; align-items: center; gap: 4px; min-height: 18px; }
+.cs-lab { cursor: pointer; }
+.cs-lab:hover { color: var(--ink); }
+.cslot.off .cs-lab { text-decoration: line-through; color: var(--ink3); }
+.cslot.off .ctext, .cslot.off .gin { opacity: .4; }
+.cslot.lock .ctext { color: var(--ink3); cursor: default; }
+.cs-t { width: 22px; height: 18px; display: inline-grid; place-items: center; border-radius: var(--r1); color: var(--ink3); flex: none; }
+.cs-t svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.cs-t:hover { color: var(--ink); background: var(--panel3); }
+.cslot.lock .cs-t.on { color: var(--cy); }
+.cslot.off .cs-t:last-child { color: var(--or); }
+.nd textarea.ctext { font-size: 12px; line-height: 18px; min-height: 30px; resize: none; padding: 5px 8px; overflow: hidden; }
+.cs-in {
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink);
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line-cy); border-radius: var(--r1); padding: 2px 5px; width: 14em;
+}
+.cout { margin-top: 2px; padding-top: 8px; box-shadow: inset 0 1px 0 var(--line); display: flex; flex-direction: column; gap: 4px; }
+.cprev { font-size: 12px; line-height: 1.5; color: var(--ink); max-height: 9em; overflow: hidden; overflow-wrap: anywhere; }
+.cprev.ph { color: var(--ink3); }
+.cout .cx { color: var(--cy); white-space: normal; line-height: 1.5; }
+
 /* de loin : les cartes ne gardent que l'essentiel (zoom sémantique, comme le nodal de Musique) */
-.cv.far .nd.gen .gform, .cv.far .nd.gen .gerr { display: none; }
-.cv.far .nd.gen .gsum { display: block; }
+.cv.far .nd.gen .gform, .cv.far .nd.gen .gerr, .cv.far .nd.compose .gform { display: none; }
+.cv.far .nd.gen .gsum, .cv.far .nd.compose .gsum { display: block; }
 .cv.far .nd .cap, .cv.far .estrip, .cv.far .jobs { display: none; }
 
 /* ── les coins de la planche ───────────────────────────── */
@@ -325,17 +408,7 @@ body.nolib .lib { visibility: hidden; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* ── menus ─────────────────────────────────────────────── */
-.ide-menu {
-  position: fixed; z-index: 80; min-width: 210px; padding: 5px; border-radius: var(--r3); background: var(--panel);
-  box-shadow: inset 0 0 0 1px var(--line), 0 16px 36px var(--drop-lg); display: flex; flex-direction: column;
-}
-.ide-menu .head { padding: 6px 8px 4px; color: var(--or); }
-.ide-menu .sep { height: 1px; margin: 4px 6px; background: var(--line); }
-.ide-menu .mi { display: flex; align-items: baseline; gap: 12px; padding: 7px 8px; border-radius: var(--r1); text-align: left; font-size: 12px; color: var(--ink); }
-.ide-menu .mi:hover:not(:disabled) { background: var(--panel3); }
-.ide-menu .mi:disabled { opacity: .35; cursor: default; }
-.ide-menu .mi small { margin-left: auto; font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); }
+/* les menus : commun/menu.js (clic droit, créer déjà branché, choisir une entrée) */
 
 /* ── l'inspecteur ──────────────────────────────────────── */
 .insp { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 2px; }
@@ -362,7 +435,8 @@ body.nolib .lib { visibility: hidden; }
 .oline small { flex: none; font-size: 7.5px; }
 .oline .dot { width: 7px; height: 7px; border-radius: 2px; flex: none; background: var(--ink3); }
 .oline .dot.t-frame { background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line-cy); }
-.oline .dot.t-gen { background: var(--or); }
+.oline .dot.t-gen, .oline .dot.t-vgen { background: var(--or); }
+.oline .dot.t-compose { background: var(--amb); }
 .oline .dot.t-element { background: var(--coral-2); }
 .oline .dot.t-video { background: var(--cy); }
 .oline .dot.t-audio { background: var(--grn2); }
@@ -371,13 +445,29 @@ body.nolib .lib { visibility: hidden; }
 .lline.on { box-shadow: inset 0 0 0 1px var(--or); }
 .lline .nm { flex: 1; min-width: 0; text-align: left; font-size: 11px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lline .cut { flex: none; font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--or); }
+.lline .kd { width: 10px; height: 2px; border-radius: 1px; flex: none; }
+.lline.bad .nm { color: var(--or); }
+.rrow.bad { box-shadow: inset 0 0 0 1px var(--or-bg2); }
+.rrow.bad .rn { background: var(--or); color: var(--on-or); }
+.rrow .rt small { font-size: 10px; line-height: 1.4; white-space: normal; }
+.rrow .rn { width: auto; min-width: 16px; padding: 0 3px; }
+.stack.sm { gap: 6px; }
+.cline { display: flex; flex-direction: column; gap: 6px; padding: 7px; border-radius: var(--r2); background: var(--panel2); }
+.cline .rn { min-width: 16px; height: 16px; border-radius: 2px; background: var(--panel3); color: var(--ink2); font-family: var(--f-mono); font-size: 9px; font-weight: 400; text-align: center; line-height: 16px; }
+.cl-h { display: flex; align-items: center; gap: 4px; }
+.cl-h select { width: auto; flex: 1; min-width: 0; }
+.cline.lock .cs-t.on { color: var(--cy); }
+.cline.off .cl-h .cs-t:nth-of-type(2) { color: var(--or); }
+.cline.off { opacity: .6; }
+.cline.lock { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.cline .tb.sm { height: 22px; min-width: 22px; padding: 0 6px; }
 .lk-ends { margin: 0; font-size: 12px; color: var(--ink3); }
 .lk-ends b { color: var(--ink); font-weight: 500; }
 .keys { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; margin: 0; }
 .keys dt { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--cy); white-space: nowrap; }
 .keys dd { margin: 0; font-size: 11px; color: var(--ink2); }
 .aligns { display: flex; flex-wrap: wrap; gap: 4px; }
-.aligns .ic { width: 30px; height: 28px; }
+.aligns button.ic { width: 30px; height: 28px; }
 .models { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
 .opt.model { text-align: left; padding: 7px 8px; }
 .opt.model b { display: block; font-size: 11px; font-weight: 600; }

@@ -1,0 +1,237 @@
+/* ============================================================
+   IDÉATION À PLUSIEURS — présence, fil, visio (ideation/collab.js)
+   Langage du kit « Atelier » de Cal, dans les jetons du portail : filets
+   (inset), jamais de bordures ; capitales mono pour la machine ; Venus
+   Rising pour les initiales et les nombres ; aucune couleur en dur — la
+   couleur d'un participant est un jeton passé en --c (var(--cy)…).
+   Aucun .tb.go ici : l'orange reste l'action de l'inspecteur.
+   ============================================================ */
+
+/* un élément caché le reste, même quand une règle ci-dessous lui donne un display */
+.co-bar [hidden], .co-dock [hidden], .co-layer [hidden], .co-mini [hidden], .co-tile [hidden],
+.co-dock[hidden], .co-mini[hidden], .co-strip[hidden] { display: none !important; }
+
+/* ── la barre ──────────────────────────────────────────── */
+.co-bar { display: flex; align-items: center; gap: 6px; flex: none; }
+.co-who { display: flex; align-items: center; gap: 3px; }
+.co-av {
+  --c: var(--ink3);
+  position: relative; width: 26px; height: 26px; border-radius: var(--r2); flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--c); color: var(--on-light);
+  font-family: var(--f-disp); font-size: 8.5px; letter-spacing: .04em; line-height: 1;
+}
+.co-av.me { box-shadow: 0 0 0 1px var(--bg), 0 0 0 2px var(--c); }
+.co-av.away { opacity: .5; }
+.co-av.lost { opacity: .3; }
+.co-av.more { background: var(--panel2); color: var(--ink2); box-shadow: inset 0 0 0 1px var(--line); font-family: var(--f-mono); font-size: 9px; }
+.co-av .co-oncall {
+  position: absolute; right: -3px; bottom: -3px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--grn2); box-shadow: 0 0 0 2px var(--bg);
+}
+.co-av.sm { width: 22px; height: 22px; font-size: 7.5px; }
+.co-ic {
+  position: relative; width: 34px; height: 30px; border-radius: var(--r3); flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  box-shadow: inset 0 0 0 1px var(--line-gr); color: var(--ink2);
+}
+.co-ic:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.co-ic.on { color: var(--cy); box-shadow: inset 0 0 0 1px var(--cy); }
+.co-svg { display: inline-flex; }
+.co-svg svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+/* le point corail : un message arrivé, fil fermé */
+.co-dot {
+  position: absolute; top: 4px; right: 5px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--or); box-shadow: 0 0 0 2px var(--bg);
+}
+.co-callpill, .co-notice {
+  display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; border-radius: 999px;
+  font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase; white-space: nowrap;
+  color: var(--ink2); box-shadow: inset 0 0 0 1px var(--line-gr);
+}
+.co-callpill i { width: 6px; height: 6px; border-radius: 50%; background: var(--grn2); animation: sPulse 1.6s infinite; }
+.co-callpill.on { color: var(--on-grn); background: var(--grn); box-shadow: none; }
+.co-callpill.on i { background: var(--on-grn); }
+.co-notice { --c: var(--cy); color: var(--ink); box-shadow: inset 0 0 0 1px var(--c); max-width: 320px; overflow: hidden; }
+.co-notice i { width: 6px; height: 6px; border-radius: 2px; background: var(--c); flex: none; }
+.co-notice span { overflow: hidden; text-overflow: ellipsis; }
+.co-link { max-width: 260px; overflow: hidden; white-space: nowrap; }
+.co-link span { overflow: hidden; text-overflow: ellipsis; }
+
+/* ── sur la planche ────────────────────────────────────── */
+.co-layer { position: absolute; inset: 0; pointer-events: none; z-index: 5; overflow: hidden; }
+.co-layer > * { position: absolute; left: 0; top: 0; will-change: transform; }
+.co-tag {
+  position: absolute; left: 0; top: 0; padding: 2px 6px; border-radius: var(--r1); white-space: nowrap;
+  background: var(--c); color: var(--on-light);
+  font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; line-height: 1.4;
+}
+/* un curseur : la flèche à la couleur de la personne, son nom dessous */
+.co-cur { --c: var(--cy); transition: transform 90ms linear; }
+.co-layer.jump .co-cur { transition: none; }
+.co-cur svg { display: block; width: 16px; height: 20px; fill: var(--c); stroke: var(--bg); stroke-width: 1.2; stroke-linejoin: round; }
+.co-cur .co-tag { left: 13px; top: 16px; }
+/* la sélection d'un autre : un anneau à sa couleur (la mienne est orange, le canvas la trace) */
+.co-ring { --c: var(--cy); border-radius: var(--r3); box-shadow: inset 0 0 0 2px var(--c); }
+.co-ring .co-tag { top: -18px; left: -1px; }
+/* où regarde quelqu'un */
+.co-view { --c: var(--cy); border-radius: var(--r2); outline: 1px dashed var(--c); outline-offset: -1px; }
+.co-view .co-tag { top: 4px; left: 4px; background: var(--veil); color: var(--c); box-shadow: inset 0 0 0 1px var(--c); }
+/* une pastille : un message épinglé ; sa pointe (en bas à gauche) est l'endroit visé */
+.co-pin {
+  --c: var(--cy);
+  width: 26px; height: 26px; border-radius: 50% 50% 50% 2px; pointer-events: auto; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--c); color: var(--on-light); box-shadow: 0 0 0 2px var(--bg), 0 6px 14px var(--drop);
+  font-family: var(--f-disp); font-size: 9px; line-height: 1;
+  transition: transform 90ms linear;
+}
+.co-layer.jump .co-pin { transition: none; }
+.co-pin:hover { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--c), 0 6px 14px var(--drop); }
+.co-pin.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ink); }
+.co-pin.new::after {
+  content: ""; position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--or); box-shadow: 0 0 0 2px var(--bg);
+}
+.co-pin.draft { background: var(--panel); color: var(--c); box-shadow: inset 0 0 0 1.5px var(--c), 0 6px 14px var(--drop); pointer-events: none; }
+.cv.co-pinning, .cv.co-pinning .nd, .cv.co-pinning .fr-h { cursor: crosshair; }
+
+/* la pastille de la présentation : le fil et la visio réduits */
+/* en bas à gauche, à la hauteur de la barre de présentation (au milieu) : le haut
+   porte le nom de la diapositive, le coin haut droit est celui de l'atelier (.at-tr) */
+.co-mini {
+  position: absolute; left: 12px; bottom: 18px; z-index: 9; display: flex; align-items: center; gap: 12px;
+  height: 28px; padding: 0 12px; border-radius: 999px; background: var(--veil); box-shadow: inset 0 0 0 1px var(--line);
+}
+.co-mini .lbl { position: relative; display: inline-flex; align-items: center; gap: 7px; color: var(--ink2); }
+.co-mini .lbl.on { color: var(--grn2); }
+.co-mini .lbl i { width: 6px; height: 6px; border-radius: 50%; background: var(--grn2); animation: sPulse 1.6s infinite; }
+.co-mini .co-dot { position: static; }
+
+/* ── le bandeau à onglets (sur la colonne de l'inspecteur) ─ */
+.co-dock {
+  position: fixed; z-index: 30; display: flex; flex-direction: column; min-height: 0;
+  background: var(--panel); border-radius: var(--r4); box-shadow: inset 0 0 0 1px var(--line);
+}
+.co-dock.float { box-shadow: inset 0 0 0 1px var(--line), 0 16px 40px var(--drop-lg); }
+.co-dhead { flex: none; display: flex; align-items: center; gap: 4px; padding: 8px 8px 0 10px; }
+.co-dhead .sp { flex: 1; }
+.co-tab {
+  position: relative; height: 30px; padding: 0 12px; border-radius: var(--r2) var(--r2) 0 0;
+  font-family: var(--f-disp); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink3);
+}
+.co-tab:hover { color: var(--ink); }
+.co-tab.on { color: var(--ink); box-shadow: inset 0 -2px 0 var(--cy); }
+.co-tab .co-dot { top: 5px; right: 2px; }
+.co-live { display: inline-block; width: 6px; height: 6px; margin-left: 7px; border-radius: 50%; background: var(--grn2); vertical-align: middle; animation: sPulse 1.6s infinite; }
+.co-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px; box-shadow: inset 0 1px 0 var(--line); }
+.co-pane[hidden] { display: none; }
+.co-fhead { flex: none; display: flex; align-items: center; gap: 8px; }
+.co-fhead .sp { flex: 1; }
+.co-tog {
+  height: 22px; padding: 0 8px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line);
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink3);
+}
+.co-tog.on { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.co-empty { margin: 8px 2px; font-size: 11.5px; line-height: 1.6; color: var(--ink3); }
+
+/* le fil */
+.co-list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 2px; }
+.co-thr { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: var(--r3); background: var(--panel2); }
+.co-thr.on { box-shadow: inset 0 0 0 1px var(--cy); }
+.co-msg { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; align-items: start; }
+.co-msg.gone .co-mt { color: var(--ink3); font-style: italic; }
+.co-mb { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.co-mh { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.co-mh b { font-size: 12px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.co-mh time { font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; color: var(--ink3); flex: none; }
+.co-mh .sp { flex: 1; }
+.co-mt { font-size: 12.5px; line-height: 1.5; color: var(--ink2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.co-reps { display: flex; flex-direction: column; gap: 8px; margin-left: 12px; padding-left: 10px; box-shadow: inset 1px 0 0 var(--line); }
+.co-act {
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); padding: 2px 0;
+}
+.co-act:hover { color: var(--ink); }
+.co-act.rep { align-self: flex-start; margin-left: 30px; color: var(--cy); }
+.co-chip {
+  align-self: flex-start; max-width: 100%; height: 22px; padding: 0 8px; border-radius: var(--r1);
+  box-shadow: inset 0 0 0 1px var(--line-cy); color: var(--cy);
+  font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .08em; text-transform: uppercase;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.co-chip:hover { background: var(--cy-bg); }
+.co-chip.on { color: var(--ink); background: var(--cy-bg); }
+.co-comp { flex: none; display: flex; flex-direction: column; gap: 6px; padding-top: 8px; box-shadow: inset 0 1px 0 var(--line); }
+.co-arow { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.co-ta { resize: none; min-height: 52px; max-height: 160px; font-size: 12px; line-height: 1.5; }
+.co-srow { display: flex; align-items: center; gap: 8px; }
+.co-why { flex: 1; min-width: 0; font-size: 10.5px; line-height: 1.4; color: var(--or); }
+
+/* la visio */
+.co-warn {
+  flex: none; display: flex; flex-direction: column; gap: 6px; padding: 9px 10px; border-radius: var(--r2);
+  background: var(--amb-bg); box-shadow: inset 0 0 0 1px var(--line-amb); font-size: 11px; line-height: 1.55; color: var(--ink2);
+}
+.co-warn p { margin: 0; }
+.co-warn a { align-self: flex-start; font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--amb); }
+.co-vlist { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+.co-vrow2 { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 5px 6px; border-radius: var(--r2); background: var(--panel2); }
+.co-vrow2 .nm { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.co-vrow2 .lbl { font-size: 7.5px; }
+.co-vrow2 .st { color: var(--cy); }
+.co-vrow2 .st.failed { color: var(--or); }
+.co-vrow { flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.co-ctl { display: flex; gap: 4px; }
+.co-ctlb {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 9px; border-radius: var(--r2);
+  box-shadow: inset 0 0 0 1px var(--line); color: var(--ink3);
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase;
+}
+.co-ctlb:hover { color: var(--ink); }
+.co-ctlb.on { color: var(--cy); box-shadow: inset 0 0 0 1px var(--cy); }
+.co-ctlb[aria-disabled="true"] { opacity: .38; cursor: help; }
+.co-ctlb .co-svg svg { width: 13px; height: 13px; }
+.co-note { flex: none; margin: 0; font-size: 10.5px; line-height: 1.5; color: var(--ink3); }
+
+/* le bandeau des vignettes, au-dessus de la planche (il prend sa place, ne couvre rien) */
+.co-strip { flex: none; display: flex; align-items: stretch; gap: 8px; min-width: 0; }
+.co-strip[hidden] { display: none; }
+/* replié : hors du flux, mais les vidéos continuent (le son des autres passe par elles) */
+.co-strip.fold { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.co-strip.in-cv { position: absolute; left: 12px; right: 12px; top: 52px; z-index: 7; }
+.co-fold {
+  flex: none; width: 34px; border-radius: var(--r3); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  box-shadow: inset 0 0 0 1px var(--line-gr);
+}
+.co-fold .lbl { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 8px; color: var(--grn2); }
+.co-fold .co-n { color: var(--ink3); }
+.co-fold:hover .lbl { color: var(--ink); }
+.co-tiles { flex: 1; min-width: 0; display: flex; gap: 8px; overflow-x: auto; }
+.co-tile {
+  --c: var(--cy);
+  position: relative; flex: none; width: 160px; height: 90px; margin: 0; border-radius: var(--r3); overflow: hidden;
+  background: var(--black); box-shadow: inset 0 0 0 1px var(--c);
+}
+.co-tile video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.co-tile.mirror video { transform: scaleX(-1); }
+.co-tile.screen video { object-fit: contain; }
+.co-tile .co-ph {
+  position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+  background: var(--panel2); color: var(--c); font-family: var(--f-disp); font-size: 20px; letter-spacing: .06em;
+}
+.co-tile.nocam .co-ph { display: flex; }
+.co-tile figcaption {
+  position: absolute; left: 6px; bottom: 6px; right: 6px; display: flex; align-items: center; gap: 6px; pointer-events: none;
+}
+.co-tile figcaption .nm {
+  padding: 2px 6px; border-radius: var(--r1); background: var(--veil); color: var(--ink);
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: inset 2px 0 0 var(--c);
+}
+.co-tile .co-flag { font-style: normal; font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--or); }
+.co-tile .co-flag:empty { display: none; }
+.co-tile .co-state { position: absolute; top: 6px; left: 6px; color: var(--cy); font-size: 7.5px; }
+.co-tile.blocked::after {
+  content: "cliquer pour entendre"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--veil); color: var(--ink); font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; cursor: pointer;
+}
