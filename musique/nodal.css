@@ -66,6 +66,8 @@ html.dragging * { cursor: inherit !important; }
   position: absolute; width: auto; padding: 0; margin: 0; border-radius: 0;
   background: none; box-shadow: none; overflow: visible; z-index: 2; color: var(--ink);
 }
+/* ce que la tuile héritait de l’ancienne règle globale .tile de commun/shell.css (retirée avec l’accueil du 29/09) */
+.nd-card.tile { min-height: 150px; display: flex; flex-direction: column; gap: 8px; }
 /* la coque : le panneau relevé et son filet ; les coins (12 px à l'échelle
    apparente) sont posés par nodal.js là où la tuile est libre des deux côtés ;
    deux tuiles accolées ne dessinent qu'un filet entre elles (tileBody) */

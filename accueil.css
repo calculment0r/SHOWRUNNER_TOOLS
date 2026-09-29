@@ -1,0 +1,190 @@
+/* ============================================================
+   L'ACCUEIL DU PORTAIL — tête, reprendre, Apps, Studio, assets, machines
+   Tout est cantonné sous .acc et préfixé acc- : aucun outil n'attrape
+   ces cartes (les anciennes .tile / .machine de shell.css collaient aux
+   vignettes d'Upscale et au nodal d'ODIO). Règles du thème : aucune
+   couleur en dur (commun/tokens.css), des filets, un seul .tb.go (la tête),
+   les capitales pour la machine. Reprend .statcard, .tb, .pill, .thumb,
+   .why, .lbl (base.css, shell.css).
+   ============================================================ */
+
+.acc {
+  max-width: 1760px; margin: 0 auto; padding: var(--s6) var(--s6) var(--s5);
+  display: flex; flex-direction: column; gap: 34px;
+}
+@media (min-width: 2200px) { .acc { max-width: 2080px; } }
+@media (max-width: 700px) { .acc { padding: var(--s4); gap: 26px; } }
+.acc [hidden] { display: none !important; }
+
+/* ── la tête : le titre, l'action, la bibliothèque ──────────── */
+.acc-top { display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr); gap: var(--s3); }
+.acc-hero {
+  background: var(--panel); border-radius: var(--r4); padding: 28px 32px;
+  display: flex; flex-direction: column; gap: var(--s4); justify-content: center;
+}
+.acc-ref { font-family: var(--f-mono); font-size: 10px; letter-spacing: .22em; text-transform: uppercase; color: var(--or); }
+/* Norelli : des lettres et des espaces seulement */
+.acc-title {
+  margin: 0; font-family: var(--f-black); font-weight: 400;
+  font-size: clamp(28px, 3.4vw, 54px); line-height: 1.02; letter-spacing: .01em;
+  text-transform: uppercase; color: var(--ink);
+}
+.acc-lede { margin: 0; max-width: 62ch; color: var(--ink2); font-size: 13px; line-height: 1.6; }
+.acc-stat.statcard { min-height: 0; padding: 20px 24px; text-decoration: none; }
+.acc-stat .n { font-size: clamp(48px, 5.4vw, 84px); }
+
+.acc-sect { display: flex; flex-direction: column; gap: var(--s3); }
+.acc-head { display: flex; align-items: baseline; gap: var(--s3); flex-wrap: wrap; }
+.acc-head h2 {
+  margin: 0; font-family: var(--f-disp); font-weight: 400; font-size: 15px;
+  letter-spacing: .18em; text-transform: uppercase; color: var(--ink2);
+}
+.acc-key { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .2em; color: var(--or); }
+.acc-tag { margin-left: var(--s2); font-size: 12px; color: var(--ink3); }
+.acc-more { margin-left: auto; text-decoration: none; }
+.acc-more:hover { color: var(--ink); }
+
+/* les icônes : un trait, la couleur de la carte */
+.acc-ico { display: block; flex: none; }
+.acc-ico svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+
+/* le coin haut droit : où l'outil calcule (LOCAL), fermé, bientôt */
+.acc-st {
+  position: absolute; top: 14px; right: 16px; z-index: 2; display: flex; gap: 4px;
+  font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .18em; text-transform: uppercase;
+}
+.acc-st svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+.acc-eng { font-weight: 400; font-size: 7.5px; padding: 3px 6px; border-radius: var(--r1); box-shadow: inset 0 0 0 1px currentColor; opacity: .7; }
+
+/* ── reprendre : une rangée de puces ────────────────────────── */
+.acc-chips {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  grid-auto-rows: 0; grid-template-rows: auto; row-gap: 0; column-gap: var(--s3); overflow: hidden;
+}
+.acc-chip {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "k d" "n n"; gap: 4px var(--s3);
+  width: 100%; padding: 12px 14px; border-radius: var(--r3); background: var(--panel);
+  text-align: left; text-decoration: none; color: var(--ink); transition: background .12s;
+}
+.acc-chip:hover { background: var(--panel2); }
+.acc-chip.job { box-shadow: inset 2px 0 0 var(--cy); }
+.acc-ck { grid-area: k; font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink3); }
+.acc-ck.run { color: var(--cy); }
+.acc-cd { grid-area: d; font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .1em; color: var(--ink3); white-space: nowrap; }
+.acc-cn { grid-area: n; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── A · les Apps : deux grandes cartes, puis une rangée ────── */
+.acc-big { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
+.acc-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s3); }
+
+.acc-app {
+  position: relative; overflow: hidden; width: 100%; min-height: 168px;
+  border-radius: var(--r4); display: flex; flex-direction: column;
+  text-align: left; text-decoration: none; transition: filter .14s, transform .14s;
+}
+a.acc-app:hover { filter: brightness(1.06); transform: translateY(-2px); }
+.acc-app.t3 { background: var(--coral-3); color: var(--on-light); }
+.acc-app.t2 { background: var(--coral-2); color: var(--on-light); }
+.acc-app.t1 { background: var(--coral-1); color: var(--on-coral1); }
+.acc-app .acc-vis { position: relative; flex: 1; display: flex; padding: 18px 20px 0; }
+.acc-app .acc-vis::after {
+  /* la trame de points des dalles (base.css .slab .dots) */
+  content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 46%; pointer-events: none;
+  background-image: radial-gradient(currentColor 1px, transparent 1.1px); background-size: 7px 7px; opacity: .16;
+}
+.acc-app .acc-ico { width: 30px; height: 30px; opacity: .78; position: relative; z-index: 1; }
+.acc-app .acc-txt { position: relative; z-index: 1; padding: 14px 20px 18px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.acc-verb {
+  font-family: var(--f-disp); font-weight: 400; font-size: clamp(15px, 1.35vw, 22px);
+  line-height: 1.1; letter-spacing: .02em; text-transform: uppercase; overflow-wrap: break-word;
+}
+.acc-line { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .1em; opacity: .8; }
+
+/* les deux grandes : la dernière création en plein cadre, le verbe dessus */
+.acc-app.big { min-height: clamp(230px, 20vw, 400px); justify-content: flex-end; }
+.acc-app.big:nth-child(odd) { background: var(--coral-3); color: var(--on-light); }
+.acc-app.big:nth-child(even) { background: var(--coral-2); color: var(--on-light); }
+.acc-app.big .acc-vis { position: absolute; inset: 0; padding: 22px 24px; }
+.acc-app.big .acc-ico { width: 42px; height: 42px; }
+.acc-app.big .acc-vis img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.acc-app.big .acc-txt { padding: 48px 24px 22px; }
+.acc-app.big .acc-verb { font-size: clamp(22px, 2.2vw, 40px); }
+.acc-app.big .acc-line { font-size: 10px; }
+.acc-app.big .acc-st { top: 18px; right: 20px; }
+.acc-app.big.has-img { color: var(--ink); }
+.acc-app.big.has-img .acc-ico, .acc-app.big.has-img .acc-vis::after { display: none; }
+.acc-app.big.has-img .acc-txt { background: linear-gradient(to top, var(--veil) 30%, var(--veil-0)); }
+.acc-app.big.has-img .acc-eng { background: var(--veil); opacity: 1; box-shadow: none; }
+
+/* ── B · le Studio : les outils liés ────────────────────────── */
+.acc-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s3); }
+.acc-tool {
+  position: relative; width: 100%; min-height: 128px; padding: 16px 18px 18px;
+  border-radius: var(--r4); display: flex; flex-direction: column; justify-content: space-between; gap: 14px;
+  text-align: left; text-decoration: none; color: var(--on-grn); transition: filter .14s, transform .14s;
+}
+a.acc-tool:hover { filter: brightness(1.1); transform: translateY(-2px); }
+.acc-tool.v3 { background: var(--verd-3); }
+.acc-tool.v4 { background: var(--verd-4); }
+.acc-tool.v5 { background: var(--verd-5); }
+.acc-top-l { display: flex; align-items: center; gap: var(--s3); }
+.acc-tool .acc-ico { width: 22px; height: 22px; opacity: .8; }
+.acc-code { font-family: var(--f-mono); font-size: 9px; letter-spacing: .2em; opacity: .7; }
+.acc-tool .acc-txt { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.acc-name {
+  font-family: var(--f-disp); font-weight: 400; font-size: clamp(15px, 1.2vw, 20px);
+  line-height: 1.1; letter-spacing: .02em; text-transform: uppercase; overflow-wrap: break-word;
+}
+
+/* fermée (compte Apps : le Studio est un autre droit) ou bientôt (pas de page) */
+.acc-app.lock, .acc-app.soon, .acc-tool.lock, .acc-tool.soon {
+  background: var(--panel); color: var(--ink3); box-shadow: inset 0 0 0 1px var(--line);
+}
+.acc-app.soon, .acc-tool.soon { cursor: default; }
+.acc-app.lock:hover, .acc-tool.lock:hover { color: var(--ink2); box-shadow: inset 0 0 0 1px var(--line-amb); }
+.acc-app.lock .acc-vis::after, .acc-app.soon .acc-vis::after { opacity: .07; }
+.acc-why { margin: 0; display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+.acc-why.flash { animation: accFlash .9s; }
+@keyframes accFlash { 0%, 100% { opacity: 1; } 30% { opacity: .25; } }
+
+/* ── C · les derniers assets : une seule rangée, autant que la largeur en tient ── */
+.acc-strip {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-rows: auto; grid-auto-rows: 0; row-gap: 0; column-gap: var(--s3); overflow: hidden;
+}
+
+/* ── les machines, en pied ──────────────────────────────────── */
+.acc-sys { display: flex; flex-wrap: wrap; gap: 8px 20px; padding-top: var(--s4); box-shadow: inset 0 1px 0 var(--line); }
+.acc-sys .pill { font-size: 8.5px; letter-spacing: .16em; }
+
+/* ── étroit, puis téléphone ─────────────────────────────────── */
+@media (max-width: 1100px) {
+  .acc-top { grid-template-columns: minmax(0, 1fr); }
+  .acc-row { grid-template-columns: 1fr 1fr; }
+  .acc-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  .acc-hero { padding: 20px; gap: var(--s3); }
+  .acc-stat.statcard { padding: 16px 18px; }
+  .acc-big { grid-template-columns: 1fr; gap: 8px; }
+  .acc-row, .acc-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .acc-app { min-height: 132px; }
+  .acc-app.big { min-height: 210px; }
+  .acc-app .acc-vis { padding: 14px 14px 0; }
+  .acc-app .acc-ico { width: 24px; height: 24px; }
+  .acc-app .acc-txt { padding: 10px 14px 14px; }
+  .acc-app.big .acc-txt { padding: 40px 16px 16px; }
+  .acc-app.big .acc-vis { padding: 16px; }
+  .acc-app.big .acc-st { top: 14px; right: 14px; }
+  .acc-tool { min-height: 108px; padding: 14px; }
+  .acc-st { top: 12px; right: 12px; }
+  .acc-tag { flex-basis: 100%; margin-left: 0; }
+  /* les rangées défilent sur place, au doigt */
+  .acc-strip, .acc-chips {
+    grid-template-columns: none; grid-auto-flow: column; grid-auto-rows: auto;
+    overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none;
+  }
+  .acc-strip { grid-auto-columns: 42%; }
+  .acc-chips { grid-auto-columns: 78%; }
+  .acc-strip > *, .acc-chips > * { scroll-snap-align: start; }
+}

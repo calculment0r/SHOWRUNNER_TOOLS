@@ -18,20 +18,24 @@ export const href = (p) => (p && /^https?:/.test(p) ? p : new URL(p || '', ROOT)
 // La base de l'API : le portail lui-même, sauf si la page en déclare une autre.
 const API = window.SR_API ? new URL(window.SR_API, location.href) : new URL('api/', ROOT);
 
+// Deux espaces (docs/etudes/apps_studio_elements.md § 3, Cal le 29/09) :
+// `tier: 'app'` (faire vite, seul) puis `tier: 'studio'` (les outils liés par
+// les éléments) ; l'en-tête et l'accueil les rangent dans cet ordre. `open` :
+// ouvert aux comptes sans Studio (la bibliothèque est commune).
 export const TOOLS = [
-  { id: 'asset',     k: 'SR—00', name: 'Asset',             path: 'asset/',    sub: 'images · éléments · vidéos · sons' },
-  { id: 'image',     k: 'SR—01', name: 'Image',             path: 'image/',    sub: 'Z-Image · Qwen 2.1 · Krea 2 · édition' },
-  { id: 'movie',     k: 'SR—02', name: 'Vidéo',             path: 'movie/',    sub: 'image → vidéo · références → vidéo · banc' },
-  { id: 'character', k: 'SR—03', name: 'Character Factory', path: 'character/', sub: 'du visage au rig' },
-  { id: 'object',    k: 'SR—04', name: 'Object Creator',    path: 'objet/',    sub: 'une image, des vues, un mesh' },
-  { id: 'montage',   k: 'SR—05', name: 'Montage',           path: 'montage/',  sub: 'timeline · découpe · export' },
-  { id: 'music',     k: 'SR—06', name: 'ODIO',              path: 'musique/',  sub: 'studio musique · YuE · stems' },
-  { id: 'analyse',   k: 'SR—07', name: 'Movie Analysis',    path: 'analyse/',  sub: 'dépouillement · diarisation' },
-  { id: 'ideation',  k: 'SR—08', name: 'Idéation',          path: 'ideation/', sub: 'canvas · planches · idées' },
-  { id: 'upscale',   k: 'SR—09', name: 'Upscale',           path: 'upscale/',  sub: 'images · vidéos · netteté' },
+  { id: 'image',     k: 'SR—01', name: 'Image',             path: 'image/',    sub: 'Z-Image · Qwen 2.1 · Krea 2 · édition', tier: 'app' },
+  { id: 'movie',     k: 'SR—02', name: 'Vidéo',             path: 'movie/',    sub: 'image → vidéo · références → vidéo · banc', tier: 'app' },
+  { id: 'upscale',   k: 'SR—09', name: 'Upscale',           path: 'upscale/',  sub: 'images · vidéos · netteté', tier: 'app' },
   // accroche Transcrire (29/09, docs/etudes/transcrire.md) : une app, côté Apps (tier, apps_studio_elements.md § 3.7)
   { id: 'transcrire', k: 'SR—10', name: 'Trans­crire',  path: 'transcrire/', sub: 'transcription · traduction · sous-titres', tier: 'app' },
   { id: 'chanson', k: 'SR—11', name: 'Musique', path: 'chanson/', sub: 'une chanson par prompt · reprise', tier: 'app' },
+  { id: 'asset',     k: 'SR—00', name: 'Asset',             path: 'asset/',    sub: 'images · éléments · vidéos · sons', tier: 'studio', open: true },
+  { id: 'music',     k: 'SR—06', name: 'ODIO',              path: 'musique/',  sub: 'studio musique · YuE · stems', tier: 'studio' },
+  { id: 'montage',   k: 'SR—05', name: 'Montage',           path: 'montage/',  sub: 'timeline · découpe · export', tier: 'studio' },
+  { id: 'ideation',  k: 'SR—08', name: 'Idéation',          path: 'ideation/', sub: 'canvas · planches · idées', tier: 'studio' },
+  { id: 'character', k: 'SR—03', name: 'Character Factory', path: 'character/', sub: 'du visage au rig', tier: 'studio' },
+  { id: 'object',    k: 'SR—04', name: 'Object Creator',    path: 'objet/',    sub: 'une image, des vues, un mesh', tier: 'studio' },
+  { id: 'analyse',   k: 'SR—07', name: 'Movie Analysis',    path: 'analyse/',  sub: 'dépouillement · diarisation', tier: 'studio' },
 ];
 // les pages du portail qui ne sont pas des outils (pas de carte à l'accueil)
 const PAGES = { admin: { id: 'admin', k: 'SR—AD', name: 'Admin' } };
@@ -319,6 +323,14 @@ export function mountHeader(toolId, { sub = '' } = {}) {
   nav.after(menuBtn, menu);
   document.addEventListener('click', () => { menu.hidden = true; });
   document.body.prepend(hdr);
+  // la barre ne se coupe jamais : si les noms n'y tiennent pas entiers (douze
+  // outils, le nom de l'outil, le compte…), elle passe dans le menu « Outils ».
+  // Mesurée, pas devinée par une largeur : juste quel que soit le contenu.
+  const fit = () => {
+    hdr.classList.remove('squeeze');
+    if (nav.children.length && nav.scrollWidth > nav.clientWidth + 1) hdr.classList.add('squeeze');
+  };
+  if (window.ResizeObserver) { const ro = new ResizeObserver(fit); ro.observe(hdr); ro.observe(nav); }
   if (!document.querySelector('link[data-porte]')) {
     document.head.append(el('link', { rel: 'stylesheet', href: href('commun/porte.css'), 'data-porte': '' }));
   }
@@ -340,12 +352,20 @@ export function mountHeader(toolId, { sub = '' } = {}) {
   });
   setInterval(() => { if (!doorOn) session(true).then(paintMe); }, 20000);
   system().then((sys) => {
+    let tier = null;
     for (const x of TOOLS) {
+      // Apps | Studio : un filet dans la barre, un intitulé dans le menu
+      if (x.tier !== tier) {
+        if (tier !== null) nav.append(el('i', { class: 'sep', 'aria-hidden': 'true' }));
+        menu.append(el('span', { class: 'grp' }, x.tier === 'app' ? 'Apps' : 'Studio'));
+        tier = x.tier;
+      }
       nav.append(el('a', { href: toolHref(x, sys), class: x.id === toolId ? 'on' : null,
         target: x.external ? '_blank' : null, rel: x.external ? 'noopener' : null }, x.name));
       menu.append(el('a', { href: toolHref(x, sys), class: x.id === toolId ? 'on' : null }, x.name));
     }
     paintSys(sys);
+    fit();
   });
   setInterval(() => { sysInfo = null; system().then(paintSys); }, 20000);
   jobs.watch((list) => {

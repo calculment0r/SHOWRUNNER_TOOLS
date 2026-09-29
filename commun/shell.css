@@ -15,6 +15,10 @@
 }
 .hdr .tools a:hover { color: var(--ink); background: var(--panel2); }
 .hdr .tools a.on { color: var(--ink); box-shadow: inset 0 -2px 0 var(--or); border-radius: 0; }
+/* Apps | Studio (TOOLS, tier) : un filet entre les deux, un intitulé dans le menu */
+.hdr .tools .sep { flex: none; width: 1px; align-self: stretch; margin: 5px 6px; background: var(--line); }
+.hdr .tools-menu .grp { padding: 9px 10px 3px; font-family: var(--f-mono); font-size: 8px; letter-spacing: .22em; text-transform: uppercase; color: var(--ink3); }
+.hdr .tools-menu .grp:not(:first-child) { margin-top: 4px; box-shadow: inset 0 1px 0 var(--line); }
 .hdr .tool-name { display: flex; align-items: baseline; gap: 10px; }
 .hdr .tool-name .k { font-family: var(--f-mono); font-size: 9px; letter-spacing: .2em; color: var(--or); }
 .hdr .tool-name b { font-family: var(--f-disp); font-size: 15px; font-weight: 400; letter-spacing: .06em; text-transform: uppercase; }
@@ -177,38 +181,26 @@
 .why { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--amb); line-height: 1.6; }
 .why a { color: var(--amb); }
 
-/* ── l'accueil du portail ───────────────────────────────── */
-.home { max-width: 1420px; margin: 0 auto; padding: var(--s6) var(--s6) 64px; display: flex; flex-direction: column; gap: var(--s6); }
-@media (max-width: 700px) { .home { padding: var(--s4) var(--s4) 48px; } }
-.home .console-top { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: var(--s4); }
-@media (max-width: 900px) { .home .console-top { grid-template-columns: 1fr; } }
+/* ── l'accueil du portail : accueil.css, cantonné sous .acc ── */
 .statcard a { color: inherit; }
 .stack { display: flex; flex-direction: column; gap: 6px; }
 
-/* les cartes vertes des outils, comme les kits de la console NL */
-.tiles { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
-.tile {
+/* les cartes vertes de l'ancien accueil, que l'aperçu de l'éditeur de thème
+   montre encore (commun/theme-editor.js) : sous .te seulement, pour qu'aucun
+   outil ne les attrape (le nodal d'ODIO, les vignettes d'Upscale) */
+.te .tiles { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.te .tile {
   position: relative; overflow: hidden; border-radius: var(--r4); padding: 18px 20px 20px;
   min-height: 150px; display: flex; flex-direction: column; gap: 8px; text-decoration: none;
   background: var(--verd-3); color: var(--on-grn); transition: filter .14s, transform .14s;
 }
-.tile:nth-child(3n+2) { background: var(--verd-4); }
-.tile:nth-child(3n) { background: var(--verd-5); }
-.tile:hover { filter: brightness(1.1); transform: translateY(-2px); }
-.tile .k { font-family: var(--f-mono); font-size: 9px; letter-spacing: .2em; opacity: .75; }
-.tile .st { position: absolute; top: 20px; right: 20px; width: 7px; height: 7px; border-radius: 50%; background: var(--or); }
-.tile .st.off { background: var(--ink3); }
-.tile .nm { margin-top: auto; font-family: var(--f-disp); font-size: clamp(20px, 2vw, 26px); line-height: 1.05; letter-spacing: .02em; text-transform: uppercase; }
-.tile .sub { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .1em; opacity: .8; }
-
-/* la rangée des derniers assets */
-.strip { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
-.machines { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
-.machine { background: var(--panel); border-radius: var(--r3); padding: var(--s4) var(--s5); display: flex; flex-direction: column; gap: 6px; }
-.machine .nm { font-family: var(--f-disp); font-size: 16px; letter-spacing: .06em; text-transform: uppercase; }
-.machine .v { font-family: var(--f-mono); font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink2); line-height: 1.7; }
-.machine .v b { color: var(--grn2); font-weight: 400; }
-.machine .v s { color: var(--or); text-decoration: none; }
+.te .tile:nth-child(3n+2) { background: var(--verd-4); }
+.te .tile:nth-child(3n) { background: var(--verd-5); }
+.te .tile:hover { filter: brightness(1.1); transform: translateY(-2px); }
+.te .tile .k { font-family: var(--f-mono); font-size: 9px; letter-spacing: .2em; opacity: .75; }
+.te .tile .st { position: absolute; top: 20px; right: 20px; width: 7px; height: 7px; border-radius: 50%; background: var(--or); }
+.te .tile .nm { margin-top: auto; font-family: var(--f-disp); font-size: clamp(20px, 2vw, 26px); line-height: 1.05; letter-spacing: .02em; text-transform: uppercase; overflow-wrap: break-word; }
+.te .tile .sub { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .1em; opacity: .8; }
 
 /* un emplacement qui attend un asset, pendant qu'on y glisse quelque chose */
 .drop-on { box-shadow: inset 0 0 0 2px var(--grn2) !important; background-color: var(--grn-bg) !important; }
@@ -244,6 +236,10 @@ a.statcard, a.tile, a.thumb, .sect-head a { text-decoration: none; }
   .hdr .tools a { white-space: nowrap; flex: none; }
   .hdr .sp { flex: 0 0 var(--s3); min-width: var(--s3); }
   .hdr > .logo, .hdr > .tool-name, .hdr > .pill, .hdr > .tb { flex: none; }
+  /* les noms n'y tiennent pas entiers (mesuré par shell.js, mountHeader) : le menu « Outils » */
+  .hdr.squeeze .tools { display: none; }
+  .hdr.squeeze .tools-btn { display: inline-flex; }
+  .hdr.squeeze .sp { flex: 1; }
 }
 
 /* la porte (commun/porte.js) : la page reste cachée le temps de savoir
