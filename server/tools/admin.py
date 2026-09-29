@@ -576,12 +576,12 @@ def selftest(call, ok) -> None:
 
         # 10. l'API d'admin, porte allumée
         config.CFG["auth"] = True
+        auth.startup()
         tmp = config.data_dir() / "essai-local.json"
         config.LOCAL = tmp
-        code = auth.new_admin_code()
-        s_, d, tok = essai_http("POST", "/api/auth/code", {"code": code})
-        ok(s_ == 200 and tok and d.get("user", {}).get("role") == "admin", f"Cal entre par son code ({s_} {d})")
         same = {"Origin": f"http://127.0.0.1:{config.get('port')}"}
+        s_, d, tok = essai_http("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
+        ok(s_ == 200 and tok and d.get("user", {}).get("role") == "admin", f"Cal entre par son pseudo ({s_} {d})")
         s_, d, _ = essai_http("GET", "/api/admin/state", cookie=tok)
         ok(s_ == 200 and {"lea", "zoe"} <= {u["id"] for u in d.get("users", [])}, f"l'état pour Cal ({s_})")
         jobs.set_mode(None, "paused")
@@ -612,11 +612,10 @@ def selftest(call, ok) -> None:
             ok(s_ == 200 and isinstance(d, dict), f"{path} ({s_})")
         s_, d, _ = essai_http("GET", "/api/admin/machines", cookie=tok)
         ok(any(m["name"] == "ESSAI-A" and m["instances"] for m in d.get("machines", [])), "les machines et leurs instances")
-        lk = auth.link_code("lea")
-        s_, d, tl = essai_http("POST", "/api/auth/code", {"name": "Léa", "code": lk["code"]})
-        ok(s_ == 200 and tl, f"Léa relie un appareil par son code ({s_})")
+        s_, d, tl = essai_http("POST", "/api/auth/enter", {"name": "Léa"}, headers=same)
+        ok(s_ == 200 and tl and d.get("state") == "active", f"Léa, acceptée, entre par son pseudo ({s_})")
         s_, _, _ = essai_http("GET", "/api/admin/state", cookie=tl)
-        ok(s_ == 403, f"la page d'admin est à Cal seul ({s_})")
+        ok(s_ == 403, f"la page d'admin est aux admins seuls ({s_})")
         la2 = jobs.submit("essai.krea2", {"k": "LQ"}, title="LQ", owner="lea")
         s_, d, _ = essai_http("GET", "/api/queue", cookie=tl)
         mine = next((j for j in d.get("queued", []) if j["id"] == la2["id"]), {})

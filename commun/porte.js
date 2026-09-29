@@ -1,6 +1,6 @@
-// SHOWRUNNER TOOLS — la porte : donner son nom, attendre que Cal accepte,
-// entrer par un code (celui de Cal, ou un code de liaison) ; et le menu de
-// son compte (appareils, relier un appareil, se déconnecter).
+// SHOWRUNNER TOOLS — la porte : taper son pseudo et entrer ; un pseudo
+// neuf attend que Cal l'accepte (la page s'ouvre seule) ; et le menu de son
+// compte (se déconnecter : on revient en retapant son pseudo).
 //
 // shell.js la charge quand il le faut (mountHeader, ou une réponse 401) :
 // une page d'outil n'a rien à faire pour être gardée. Le serveur juge
@@ -55,62 +55,41 @@ function paint(me) {
   if (st === 'pending') return paintWait(me);
   if (st === 'refused') return paintRefused(me);
   if (st === 'suspended') return paintSuspended(me);
+  if (st === 'offnet') return paintAsk(me, me.message || '');
   if (st === 'active') { location.reload(); return; }
   paintAsk(me);
 }
 
-function paintAsk(me, err = '', codeOpen = false) {
-  const name = el('input', { class: 'fld', id: 'porte-nom', placeholder: 'ton nom', maxlength: 24, autocomplete: 'nickname',
-    'aria-label': 'ton nom', spellcheck: 'false' });
+function paintAsk(me, err = '') {
+  const name = el('input', { class: 'fld', id: 'porte-nom', placeholder: 'ton pseudo', maxlength: 24, autocomplete: 'username',
+    'aria-label': 'ton pseudo', spellcheck: 'false', autocapitalize: 'none' });
   const warn = el('p', { class: 'warn', role: 'alert', hidden: !err }, err);
-  const go = el('button', { class: 'tb go', type: 'submit' }, 'Demander l’accès');
-  const ask = el('form', { class: 'porte-form', onsubmit: async (e) => {
+  const go = el('button', { class: 'tb go', type: 'submit' }, 'Entrer');
+  const form = el('form', { class: 'porte-form', onsubmit: async (e) => {
     e.preventDefault();
     go.disabled = true;
     try {
-      const d = await api('auth/request', { method: 'POST', body: { name: name.value } });
-      paint({ state: 'pending', user: d.user, since: d.since });
+      const d = await api('auth/enter', { method: 'POST', body: { name: name.value } });
+      if (d.state === 'active') { location.reload(); return; }
+      paint({ state: d.state, user: d.user, since: d.since });
     } catch (x) { warn.hidden = false; warn.textContent = x.message; go.disabled = false; name.focus(); }
   } }, el('div', { class: 'row' }, name, go));
-  const cName = el('input', { class: 'fld', placeholder: 'ton nom (vide pour Cal)', maxlength: 24, 'aria-label': 'ton nom' });
-  const cCode = el('input', { class: 'fld mono-in', placeholder: 'XXXX-XXXX', maxlength: 20, autocomplete: 'one-time-code',
-    'aria-label': 'le code', spellcheck: 'false' });
-  const cWarn = el('p', { class: 'warn', role: 'alert', hidden: true });
-  const enter = el('button', { class: 'tb', type: 'submit' }, 'Entrer');
-  const codeForm = el('form', { class: 'porte-code', hidden: !codeOpen, onsubmit: async (e) => {
-    e.preventDefault();
-    enter.disabled = true;
-    try {
-      await api('auth/code', { method: 'POST', body: { name: cName.value, code: cCode.value } });
-      location.reload();
-    } catch (x) { cWarn.hidden = false; cWarn.textContent = x.message; enter.disabled = false; }
-  } },
-  el('p', {}, 'Un code de liaison se crée sur un appareil déjà connecté : ton nom, en haut à droite, puis « Relier un appareil ». ',
-    'Cal entre avec le code écrit sur DGX2.'),
-  el('div', { class: 'row' }, cName, cCode, enter), cWarn);
   box.replaceChildren(frame(
     el('p', {}, 'Le portail de Cal : images, vidéos, personnages, sur ses deux DGX quand elles sont allumées. ',
-      'Donne ton nom : Cal reçoit ta demande et t’ouvre la porte. Ce navigateur s’en souviendra.'),
-    ask, warn,
-    el('div', { class: 'porte-alt' },
-      el('button', { class: 'tb ghost sm', type: 'button', 'aria-expanded': String(codeOpen), onclick: (e) => {
-        codeForm.hidden = !codeForm.hidden;
-        e.currentTarget.setAttribute('aria-expanded', String(!codeForm.hidden));
-        if (!codeForm.hidden) cCode.focus();
-      } }, 'J’ai un code'),
-      me.bootstrap ? el('span', { class: 'lbl' }, 'pas encore d’admin : Cal entre d’abord, avec son code') : null),
-    codeForm));
-  (codeOpen ? cCode : name).focus();
+      'Tape ton pseudo : si Cal l’a déjà accepté, tu entres ; sinon, il reçoit ta demande et t’ouvre la porte.'),
+    form, warn));
+  name.focus();
 }
 
 function paintWait(me) {
   const nm = me.user?.name || '';
-  const since = el('span', { class: 'lbl' }, me.since ? `demandé à ${hhmm(me.since)}` : '');
   box.replaceChildren(frame(
     el('span', { class: 'porte-state' }, el('i'), 'demande envoyée · en attente de Cal'),
-    el('p', {}, `Bonjour ${nm}. Cal doit accepter ta demande ; cette page s’ouvrira toute seule, tu peux la laisser ouverte.`),
+    el('p', {}, `Bonjour ${nm}. Cal doit accepter ce pseudo ; cette page s’ouvrira toute seule, tu peux la laisser ouverte. `,
+      'Ensuite, il suffira de retaper ton pseudo, d’où tu veux.'),
     el('div', { class: 'porte-pulse', 'aria-hidden': 'true' }, el('i')),
-    el('div', { class: 'row' }, since, el('span', { class: 'sp' }),
+    el('div', { class: 'row' }, el('span', { class: 'lbl' }, me.since ? `demandé à ${hhmm(me.since)}` : ''),
+      el('span', { class: 'sp' }),
       el('button', { class: 'tb ghost sm', onclick: async () => {
         try { await api('auth/cancel', { method: 'POST' }); } catch { /* */ }
         paintAsk({ state: 'anonymous' });
@@ -126,21 +105,21 @@ function paintWait(me) {
 function paintRefused(me) {
   box.replaceChildren(frame(
     el('span', { class: 'porte-state off' }, el('i'), 'demande refusée'),
-    el('p', {}, `Cal n’a pas accepté la demande${me.name ? ` de ${me.name}` : ''}.`),
+    el('p', {}, `Cal n’a pas accepté ${me.name ? `le pseudo ${me.name}` : 'cette demande'}.`),
     el('div', { class: 'row' }, el('button', { class: 'tb ghost', onclick: async () => {
       try { await api('auth/cancel', { method: 'POST' }); } catch { /* */ }
       paintAsk({ state: 'anonymous' });
-    } }, 'Faire une autre demande'))));
+    } }, 'Taper un autre pseudo'))));
 }
 
 function paintSuspended(me) {
   box.replaceChildren(frame(
     el('span', { class: 'porte-state off' }, el('i'), 'accès suspendu'),
-    el('p', {}, `${me.user?.name || 'Ton accès'} : Cal a suspendu cet accès. Vois avec lui.`),
+    el('p', {}, `${me.user?.name || 'Ce compte'} : Cal a suspendu cet accès. Vois avec lui.`),
     el('div', { class: 'row' }, el('button', { class: 'tb ghost', onclick: async () => {
       try { await api('auth/logout', { method: 'POST' }); } catch { /* */ }
       paintAsk({ state: 'anonymous' });
-    } }, 'Se déconnecter'))));
+    } }, 'Taper un autre pseudo'))));
 }
 
 // ── le menu de son compte ───────────────────────────────────
@@ -151,51 +130,25 @@ function outside(e) { if (menu && !menu.contains(e.target) && !e.target.closest(
 export async function account(me, anchor) {
   await styles();
   if (menu) return closeMenu();
-  const list = el('div', { class: 'acct-list' }, el('p', { class: 'lbl' }, 'chargement'));
-  const link = el('div', { class: 'acct-link' });
+  const adm = me.user.role === 'admin';
   menu = el('div', { class: 'acct', role: 'menu', 'aria-label': 'mon compte' },
-    el('div', { class: 'acct-head' }, el('b', {}, me.user.name),
-      el('span', { class: 'lbl' }, me.user.role === 'admin' ? 'admin' : 'ami·e')),
-    el('span', { class: 'lbl' }, 'mes appareils'), list,
+    el('div', { class: 'acct-head' }, el('b', {}, me.user.name), el('span', { class: 'lbl' }, adm ? 'admin' : 'ami·e')),
+    el('p', { class: 'acct-note' }, 'Pseudo : ', el('b', { class: 'acct-code' }, me.user.pseudo || me.user.name)),
+    el('p', { class: 'acct-note' }, adm
+      ? 'Pour revenir : retaper ce pseudo, depuis le réseau de Cal (la maison, le câble, Tailscale).'
+      : 'Pour revenir, d’ici ou d’ailleurs : retaper ce pseudo.'),
     el('div', { class: 'row' },
-      el('button', { class: 'tb ghost sm', onclick: async () => {
-        try {
-          const c = await api('auth/link', { method: 'POST' });
-          const t0 = Date.now();
-          const left = el('span', { class: 'lbl' });
-          const tick = () => {
-            const s = Math.max(0, c.expires_in - Math.round((Date.now() - t0) / 1000));
-            left.textContent = s ? `valable ${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')}` : 'expiré';
-            if (s && menu) setTimeout(tick, 1000);
-          };
-          link.replaceChildren(el('span', { class: 'lbl' }, 'sur l’autre appareil : « J’ai un code », ton nom, puis'),
-            el('b', { class: 'acct-code' }, c.code), left);
-          tick();
-        } catch (e) { toast(e.message); }
-      } }, 'Relier un appareil'),
+      adm ? el('a', { class: 'tb ghost sm', href: href('admin/') }, 'La page d’admin') : null,
       el('span', { class: 'sp' }),
       el('button', { class: 'tb ghost sm', onclick: async () => {
-        try { await api('auth/logout', { method: 'POST' }); } catch { /* */ }
+        try { await api('auth/logout', { method: 'POST' }); } catch (e) { toast(e.message); }
         location.href = href('');
-      } }, 'Se déconnecter')),
-    link);
+      } }, 'Se déconnecter')));
   const r = anchor.getBoundingClientRect();
   menu.style.top = `${r.bottom + 6}px`;
   menu.style.right = `${Math.max(8, innerWidth - r.right)}px`;
   document.body.append(menu);
   document.addEventListener('pointerdown', outside, true);
-  const paintDevices = async () => {
-    try {
-      const { devices } = await api('auth/devices');
-      list.replaceChildren(...devices.map((d) => el('div', { class: 'acct-dev' + (d.current ? ' cur' : '') },
-        el('span', { class: 'ua', title: d.ua }, uaShort(d.ua)),
-        el('span', { class: 'lbl' }, d.current ? 'celui-ci' : `vu ${new Date(d.seen).toLocaleDateString('fr-FR')}`),
-        d.current ? null : el('button', { class: 'tb ghost sm', title: 'ce navigateur n’entrera plus', onclick: async () => {
-          try { await api(`auth/devices/${d.id}/revoke`, { method: 'POST' }); paintDevices(); } catch (e) { toast(e.message); }
-        } }, 'Retirer'))));
-    } catch (e) { list.replaceChildren(el('p', { class: 'warn' }, e.message)); }
-  };
-  paintDevices();
 }
 
 export function uaShort(ua = '') {

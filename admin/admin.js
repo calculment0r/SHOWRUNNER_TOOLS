@@ -84,8 +84,8 @@ async function refresh(now = false) {
 
 function denied() {
   $('#adm-nav').replaceChildren();
-  main.replaceChildren(head('Réservé à Cal', '—'),
-    el('p', { class: 'adm-note' }, 'Cette page est la page d’administration du portail : seul Cal y a accès.'),
+  main.replaceChildren(head('Réservé aux admins', '—'),
+    el('p', { class: 'adm-note' }, 'Cette page est la page d’administration du portail : Cal, et ceux à qui il a donné le rôle admin.'),
     el('div', { class: 'row' }, el('a', { class: 'tb ghost', href: href('') }, 'Retour à l’accueil')));
 }
 
@@ -101,8 +101,9 @@ function render(force = false) {
 function demandes() {
   const r = S.state.requests;
   return [head('Demandes d’accès', 'A', `${r.length} en attente`),
-    el('p', { class: 'adm-note' }, 'Une demande, c’est un nom tapé à l’accueil, lié au navigateur qui l’a faite. Acceptée, ce navigateur ',
-      'entre tout seul ; refusée, la page le dit. Un nom déjà pris — ou le tien, réservé — ne peut pas être redemandé.'),
+    el('p', { class: 'adm-note' }, 'Une demande, c’est un pseudo neuf tapé à l’accueil. Accepté, il entre — la page qui attend s’ouvre seule, ',
+      'et ensuite ce pseudo suffit, de n’importe quel navigateur ; refusé, la page le dit et le pseudo redevient libre. ',
+      'Un pseudo qui imite un admin (casse, accents, 0/O, 1/l/I) est refusé d’office.'),
     r.length ? el('div', { class: 'grid2' }, ...r.map((u, i) => el('div', { class: 'card amb' },
       el('div', { class: 'card-head' }, el('span', { class: 'nm' }, u.name), el('span', { class: 'chip amb' }, el('i'), 'en attente')),
       el('div', { class: 'cmeta' }, `demandé ${fmtDate(u.created)} · `, el('b', {}, u.ip || 'adresse inconnue'), ` · ${uaShort(u.ua)}`),
@@ -132,7 +133,11 @@ function reglages() {
       'seul le propriétaire d’un objet — ou toi — le modifie ou le met à la corbeille. L’audit du 28/09 (C2) recommande ',
       '« chacun le sien » : les amis déposeront des photos de visages réels.'),
     el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'dans la file'),
-      seg([[true, 'tu passes devant'], [false, 'tu es dans le tourniquet']], s.admin_first, 'admin_first')),
+      seg([[true, 'les admins passent devant'], [false, 'tout le monde au tourniquet']], s.admin_first, 'admin_first')),
+    el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'un pseudo admin entre'),
+      seg([[true, 'depuis le réseau de Cal'], [false, 'de partout']], s.admin_lan_only, 'admin_lan_only')),
+    el('p', { class: 'adm-note' }, 'Le réseau de Cal : la maison (192.168.10.x), le câble des DGX, Tailscale. Hors de lui, ',
+      'un pseudo admin est refusé — c’est la seule précaution d’une porte sans mot de passe.'),
     el('span', { class: 'lbl' }, 'quotas par défaut d’un·e ami·e — vide : sans limite'),
     el('div', { class: 'qfs' },
       qf('simultanés', s.quotas.running, 'sans limite', (v) => set({ quotas: { running: v } })),
@@ -148,8 +153,8 @@ async function paintDevices(u, box) {
       el('span', { class: 'ua', title: d.ua }, `${uaShort(d.ua)} · ${d.ip || ''}`),
       el('span', { class: 'lbl' }, `vu ${fmtDate(d.seen)}`),
       el('button', { class: 'tb ghost sm', onclick: async () => {
-        try { await post(`admin/users/${u.id}/devices/${d.id}/revoke`); toast('appareil retiré : il n’entre plus'); paintDevices(u, box); } catch (e) { toast(e.message); }
-      } }, 'Retirer'))) : [el('p', { class: 'lbl' }, 'aucun appareil')]));
+        try { await post(`admin/users/${u.id}/devices/${d.id}/revoke`); toast('connexion fermée : ce navigateur devra retaper le pseudo'); paintDevices(u, box); } catch (e) { toast(e.message); }
+      } }, 'Fermer'))) : [el('p', { class: 'lbl' }, 'aucune connexion')]));
   } catch (e) { box.replaceChildren(el('p', { class: 'warn' }, e.message)); }
 }
 
@@ -159,24 +164,31 @@ function personne(u) {
   const setQ = (k, label) => (v) => act(() => post(`admin/users/${u.id}`, { quotas: { [k]: v } }), `${u.name} · ${label} : ${v ?? 'par défaut'}`);
   const devBox = el('div', { class: 'acct-list', hidden: true });
   const susp = u.state === 'suspended';
+  const nAdm = S.state.users.filter((x) => x.role === 'admin' && x.state === 'active').length;
+  const lastAdm = adm && nAdm <= 1;
   return el('div', { class: 'card' + (susp ? ' off' : '') },
     el('div', { class: 'card-head' }, el('span', { class: 'nm' }, u.name),
       adm ? el('span', { class: 'chip adm-role' }, 'admin') : el('span', { class: 'chip' }, 'ami·e'),
       susp ? el('span', { class: 'chip err' }, el('i'), 'suspendu') : el('span', { class: 'chip ok' }, el('i'), 'actif')),
-    el('div', { class: 'cmeta' }, `entré ${fmtDate(u.accepted || u.created)} · vu ${u.seen ? fmtDate(u.seen) : 'jamais'} · `,
-      el('b', {}, plural(u.devices, 'appareil', 'appareils'))),
+    el('div', { class: 'cmeta' }, 'pseudo ', el('b', {}, u.pseudo || u.name), ` · entré ${fmtDate(u.accepted || u.created)} · vu ${u.seen ? fmtDate(u.seen) : 'jamais'} · `,
+      el('b', {}, plural(u.devices, 'connexion', 'connexions'))),
     el('div', { class: 'cmeta' }, el('b', {}, `${u.running} en cours · ${u.queued} en file · ${u.today} aujourd’hui`),
       ` · ${plural(u.items, 'objet', 'objets')} dans la bibliothèque`),
-    adm ? el('p', { class: 'adm-note' }, 'Toi : pas de quota.') : el('div', { class: 'qfs' },
+    adm ? el('p', { class: 'adm-note' }, 'Admin : pas de quota, la page d’admin, entre depuis le réseau de Cal.') : el('div', { class: 'qfs' },
       qf('simultanés', u.quotas.running, `défaut ${def.running ?? '∞'}`, setQ('running', 'simultanés')),
       qf('en file', u.quotas.queued, `défaut ${def.queued ?? '∞'}`, setQ('queued', 'en file')),
       qf('par jour', u.quotas.per_day, `défaut ${def.per_day ?? '∞'}`, setQ('per_day', 'par jour'))),
     u.recent.length ? el('div', { class: 'cmeta' }, 'lancé dernièrement : ',
       ...u.recent.slice(0, 4).map((j, i) => el('b', {}, `${i ? ' · ' : ''}${j.title} (${stateFr(j.state)})`))) : null,
     el('div', { class: 'row' },
-      el('button', { class: 'tb ghost sm', onclick: () => { devBox.hidden = !devBox.hidden; if (!devBox.hidden) paintDevices(u, devBox); } }, 'Appareils'),
+      el('button', { class: 'tb ghost sm', onclick: () => { devBox.hidden = !devBox.hidden; if (!devBox.hidden) paintDevices(u, devBox); } }, 'Connexions'),
+      susp ? null : el('button', { class: 'tb ghost sm', disabled: lastAdm,
+        title: lastAdm ? 'le dernier admin garde son rôle : donne-le d’abord à quelqu’un d’autre' : '',
+        onclick: () => act(() => post(`admin/users/${u.id}`, { role: adm ? 'ami' : 'admin' }),
+          adm ? `${u.name} n’est plus admin` : `${u.name} est admin`) }, adm ? 'Retirer le rôle admin' : 'Donner le rôle admin'),
       adm ? null : el('button', { class: 'tb ghost sm', onclick: () => act(() => post(`admin/users/${u.id}`, { state: susp ? 'active' : 'suspended' }),
         susp ? `${u.name} peut revenir` : `${u.name} suspendu·e : ses travaux en file sont retirés`) }, susp ? 'Réactiver' : 'Suspendre')),
+    lastAdm ? el('p', { class: 'why' }, 'dernier admin : son rôle ne se retire pas') : null,
     devBox);
 }
 

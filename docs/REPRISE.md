@@ -72,19 +72,25 @@ nom de login, on met en attente, et moi un dashboard pour gérer cela […]
 seul moi y aura accès », et « un gros travail de queue de nos demandes en
 calcul ».
 
-- **La porte** (`server/core/auth.py`, `commun/porte.js`) : sans session,
-  toute page montre la porte ; on donne son nom, la demande attend Cal, la
-  page s'ouvre seule quand il accepte (un cookie `HttpOnly; SameSite=Lax`
-  lie ce navigateur à la demande). Un nom pris ou réservé (« Cal », et ses
-  variantes : casse, accents, « CaI ») ne donne rien. Un second appareil
-  entre par un **code de liaison** (menu de son nom → « Relier un
-  appareil », 10 min, 5 essais). Sans session, le socle refuse `/api/…`,
-  `/character/…` et les fichiers de `/library/` (401) ; toute écriture
-  venue d'une autre page est refusée (`Origin`, `Sec-Fetch-Site`, JSON
-  déguisé en `text/plain` : audit du 28/09, H3). Chaque écriture est
-  journalisée (qui, quoi, le code rendu : audit B5).
-- **La page de Cal** : `admin/` (lien « Admin » dans l'en-tête, pour lui
-  seul) — demandes, personnes (quotas, suspendre, appareils), la file
+- **La porte** (`server/core/auth.py`, `commun/porte.js`) — décision de
+  Cal du 29/09 : « on se log juste avec le pseudo », ni code ni mot de
+  passe. Sans session, toute page montre la porte : on tape son pseudo ;
+  un pseudo déjà accepté entre aussitôt, de n'importe quel navigateur ; un
+  pseudo inconnu devient une demande, la page s'ouvre seule quand Cal
+  l'accepte. Se déconnecter ne bloque rien : on retape son pseudo. La
+  session est un cookie `HttpOnly; SameSite=Lax`. Un pseudo qui imite un
+  admin ou un mot réservé (casse, accents, 0/O, 1/l/I : « Cal », « CaI »,
+  « nic0007 ») ou un pseudo existant est refusé. **Un pseudo admin n'entre
+  que depuis le réseau de Cal** (127.0.0.1, 192.168.10.0/24, le câble
+  169.254.0.0/16, Tailscale 100.64.0.0/10) : réglage `admin_lan_only`,
+  vrai par défaut, dans la page admin → Personnes → Réglages. Sans session,
+  le socle refuse `/api/…`, `/character/…` et les fichiers de `/library/`
+  (401) ; toute écriture venue d'une autre page est refusée (`Origin`,
+  `Sec-Fetch-Site`, JSON déguisé en `text/plain` : audit du 28/09, H3).
+  Chaque écriture est journalisée (qui, quoi, le code rendu : audit B5).
+- **La page d'admin** : `admin/` (lien « Admin » dans l'en-tête, pour les
+  admins seuls) — demandes, personnes (quotas, suspendre, connexions,
+  **donner ou retirer le rôle admin** — jamais au dernier admin), la file
   (glisser, priorités, épingler, pause par machine, vidange), les machines
   (ComfyUI, mémoire, modèles chargés et « décharger », H3, le studio
   Character Factory, le relais), le câblage (`showrunner.local.json`), le
@@ -99,29 +105,29 @@ calcul ».
   tiroir « File » montre la place de chacun (« 2 devant toi · départ ≈
   4 min »). Détail : `docs/ARCHITECTURE.md` §3 et §9.
 
-### Devenir admin, au déploiement (Cal, une fois)
+### Entrer, pour Cal
 
-La porte est **allumée par défaut** : dès le redémarrage, le portail ne
-s'ouvre qu'à ceux qu'il connaît, et personne n'est encore admin.
+Ouvrir http://192.168.10.247:8790/ (ou par Tailscale), taper **`nico007`**,
+Entrer. C'est tout — de chez lui, du câble ou de Tailscale ; ailleurs, le
+pseudo admin est refusé, et la porte le dit.
 
-1. Déployer et relancer comme d'habitude (`git pull`, `tools/portail.sh restart`
-   sur DGX2). Au démarrage, sans admin, le portail écrit un code à usage
-   unique dans `~/showrunner-data/admin-code.txt` (lisible par `dgx` seul).
-2. Le lire : `ssh dgx2 'cat ~/showrunner-data/admin-code.txt'` (première
-   ligne, du genre `ABCD-EFGH-JKLM`).
-3. Ouvrir http://192.168.10.247:8790/ → la porte → **« J'ai un code »** →
-   laisser le nom vide, taper le code → **Entrer**. Ce navigateur est Cal
-   (admin) ; le fichier s'efface.
-4. Chaque autre appareil de Cal : sur un appareil déjà connecté, son nom
-   en haut à droite → « Relier un appareil » → sur le nouveau, « J'ai un
-   code », « Cal » et ce code.
-5. Navigateur perdu, plus aucun appareil connecté :
-   `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && python3 server/showrunner.py --code-admin'`
-   affiche un nouveau code (sans redémarrer le portail), à taper comme au 3.
-
-Cinq codes faux d'affilée : le code change, relire le fichier. Couper la
-porte (essais seulement) : `"auth": false` dans `showrunner.local.json`,
-puis redémarrer — tout se passe alors comme si Cal était connecté.
+- Le compte `nico007` est créé au démarrage du portail s'il n'existe pas,
+  admin, sous l'id `cal` : ses objets et ses travaux d'avant restent à lui.
+  Plus de code d'amorçage : `~/showrunner-data/admin-code.txt` est effacé
+  au démarrage.
+- Secours en ligne de commande (sans code, portail en marche ou non ; il
+  relit `auth.json` quand il change) :
+  `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && python3 server/showrunner.py --admin nico007'`
+  — crée ou remet ce pseudo admin (un autre pseudo marche aussi).
+- Couper la porte (essais seulement) : `"auth": false` dans
+  `showrunner.local.json`, puis redémarrer — tout se passe alors comme si
+  Cal était connecté.
+- **Derrière un tunnel Cloudflare**, toutes les requêtes arriveront de
+  127.0.0.1 : la règle « admin depuis le réseau de Cal » laisserait passer
+  tout le monde. Avant d'ouvrir un tunnel, le portail devra lire l'identité
+  signée par la porte (`x-porte-*`, étude `docs/etudes/cloudflare.md`
+  § 3.3) et ne plus juger sur l'adresse ; en attendant, ne pas ouvrir de
+  tunnel vers le portail.
 
 ### Ce qui attend Cal (la porte et la file)
 
@@ -132,12 +138,13 @@ puis redémarrer — tout se passe alors comme si Cal était connecté.
    En « chacun le sien », il manquera un bouton « Partager » dans Asset
    (`POST /api/library/<id> {"shared": true}` existe déjà).
 2. **Les quotas par défaut** : 1 simultané, 3 en file, pas de limite par
-   jour, 50 en file au total (les chiffres de l'audit H4) ; Cal passe devant
-   (audit H4) — réglable.
-3. **Un compte = un nom**, sans mot de passe : l'appareil est la clé. Sur
-   internet, la porte Cloudflare (Access, e-mail) viendra devant
-   (`docs/etudes/cloudflare.md`) ; la liaison identité Cloudflare ↔ compte
-   du portail reste à écrire.
+   jour, 50 en file au total (les chiffres de l'audit H4) ; les admins
+   passent devant (audit H4) — réglable.
+3. **Un compte = un pseudo**, sans mot de passe (décision de Cal) :
+   quiconque connaît le pseudo d'un ami entre sous son nom ; seuls les
+   admins sont tenus au réseau de Cal. Sur internet, la porte Cloudflare
+   (Access, e-mail) viendra devant (`docs/etudes/cloudflare.md`) ; la
+   liaison identité Cloudflare ↔ compte du portail reste à écrire.
 
 ### Pour les autres outils
 

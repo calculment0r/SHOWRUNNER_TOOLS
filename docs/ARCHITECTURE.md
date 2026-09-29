@@ -230,14 +230,18 @@ squelette de Worker non déployé dans `porte/`).
 
 `server/core/auth.py`, posée par le socle devant chaque requête
 (`app.gate`, `app.after` dans `core/http.py`) : **un outil n'a rien à
-changer**. Un compte = un nom ; un appareil = un jeton aléatoire en cookie
-`sr_session` (`HttpOnly; SameSite=Lax`), dont le serveur ne garde que
-l'empreinte (`<data_dir>/auth.json`).
+changer**. Un compte = un pseudo (décision de Cal du 29/09 : ni code ni
+mot de passe) ; une connexion = un jeton aléatoire en cookie `sr_session`
+(`HttpOnly; SameSite=Lax`), dont le serveur ne garde que l'empreinte
+(`<data_dir>/auth.json`, relu s'il change : `showrunner.py --admin
+<pseudo>` l'écrit). Le compte de Cal : pseudo `nico007`, id `cal`, admin,
+créé au démarrage. Un pseudo admin n'entre que depuis le réseau de Cal
+(`admin_lan_only`, `auth.ADMIN_NETS`), jugé à chaque requête.
 
 | sans session | avec |
 |---|---|
 | les pages se servent et montrent la porte (`commun/porte.js`, chargée par `mountHeader` ou un 401) | tout |
-| `/api/…` (sauf `/api/auth/…`), les relais (`/character/…`), `/library/…` : **401** | selon le rôle : `/api/admin/…` et `POST /api/movie/h3/stop` à Cal seul (403) |
+| `/api/…` (sauf `/api/auth/…`), les relais (`/character/…`), `/library/…` : **401** | selon le rôle : `/api/admin/…` et `POST /api/movie/h3/stop` aux admins (403) ; un admin hors du réseau de Cal : 403 |
 
 - Toute écriture dont `Sec-Fetch-Site` n'est ni `same-origin` ni `none`,
   ou dont `Origin` n'est pas l'hôte de la requête : 403 ; un corps JSON en
@@ -257,17 +261,16 @@ l'empreinte (`<data_dir>/auth.json`).
 
 | Routes de la porte (`server/tools/compte.py`) | |
 |---|---|
-| `GET /api/auth/me` | `{auth, state: anonymous pending active refused suspended, user}` |
-| `POST /api/auth/request {name}` · `/cancel` | demander l'accès (le cookie lie ce navigateur), annuler |
-| `POST /api/auth/code {name, code}` | entrer par le code de Cal (`<data_dir>/admin-code.txt`) ou un code de liaison |
-| `POST /api/auth/link` · `GET /api/auth/devices` · `POST /api/auth/devices/<id>/revoke` · `POST /api/auth/logout` | ses appareils |
+| `GET /api/auth/me` | `{auth, state: anonymous pending active refused suspended offnet, user}` |
+| `POST /api/auth/enter {name}` · `/cancel` | entrer par son pseudo (un pseudo inconnu : une demande), annuler sa demande |
+| `POST /api/auth/logout` · `GET /api/auth/devices` · `POST /api/auth/devices/<id>/revoke` | se déconnecter, ses connexions |
 
 | Routes de Cal (`server/tools/admin.py`, page `admin/`) | |
 |---|---|
 | `GET /api/admin/state` | demandes, personnes (quotas, compte du jour, derniers travaux), réglages, la file entière |
 | `POST /api/admin/requests/<id>/accept` · `/refuse` | les demandes |
-| `POST /api/admin/users/<id> {state, quotas}` · `GET …/devices` · `POST …/devices/<sid>/revoke` | suspendre (ses travaux en file s'en vont), quotas, appareils |
-| `POST /api/admin/settings {visibility, admin_first, quotas, total_queued}` | les réglages |
+| `POST /api/admin/users/<id> {role, state, quotas}` · `GET …/devices` · `POST …/devices/<sid>/revoke` | le rôle admin (jamais le dernier), suspendre (ses travaux en file s'en vont ; pas un admin), quotas, connexions |
+| `POST /api/admin/settings {visibility, admin_first, admin_lan_only, quotas, total_queued}` | les réglages |
 | `POST /api/admin/queue/<job> {before | to_end | priority | top}` | glisser, priorité, épingler |
 | `POST /api/admin/pause {machine?, mode: active paused draining}` | pause, reprise, vidange |
 | `GET /api/admin/machines` · `POST /api/admin/instances/free {url}` · `POST /api/admin/ollama/unload` | instances, mémoire, familles chargées, ce que chacune prendrait, H3, le studio, le relais |

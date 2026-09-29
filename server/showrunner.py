@@ -3,7 +3,7 @@
 la file des rendus.
 
     python3 server/showrunner.py            # port 8790 (showrunner.local.json : "port")
-    python3 server/showrunner.py --code-admin   # écrit un code admin à usage unique et l'affiche
+    python3 server/showrunner.py --admin nico007   # secours : crée ou remet ce pseudo admin
 
 Chaque module de `server/tools/` expose `register(app)` : il y déclare
 ses routes (`app.route`) et ses travaux (`jobs.register`). Un module qui
@@ -47,10 +47,15 @@ def build() -> App:
 
 
 def main() -> None:
-    if "--code-admin" in sys.argv:
-        code = auth.new_admin_code(in_server=False)
-        print(f"code admin à usage unique : {code}\n(écrit dans {auth.admin_code_file()} ; à l'accueil du portail : "
-              "« J'ai un code »)")
+    if "--admin" in sys.argv:
+        k = sys.argv.index("--admin")
+        pseudo = sys.argv[k + 1] if k + 1 < len(sys.argv) else ""
+        try:
+            u = auth.cli_admin(pseudo)
+        except ValueError as e:
+            sys.exit(f"--admin <pseudo> : {e}")
+        print(f"« {u['pseudo']} » est admin (id {u['id']}) : à l'accueil du portail, taper ce pseudo "
+              f"(depuis le réseau de Cal). Le portail en marche le relit seul.")
         return
     app = build()
     jobs.start()
