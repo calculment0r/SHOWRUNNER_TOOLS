@@ -1,9 +1,11 @@
-// La porte d'entrée de Showrunner Tools, sur Cloudflare. SQUELETTE, NON DÉPLOYÉ : l'étude qui le justifie est
-// docs/etudes/cloudflare.md (28/09/2026). Rien ici n'est encore relié à un compte, un tunnel ou un bucket.
+// La porte d'entrée de Showrunner Tools, sur Cloudflare. PRÊT À DÉPLOYER, NON DÉPLOYÉ (29/09/2026) : l'étude qui le
+// justifie et l'ordre des gestes sont dans docs/etudes/cloudflare.md (« Prêt à déployer »). Essai de bout en bout,
+// sans Cloudflare : porte/essai.mjs (ce Worker dans Node, devant la vraie porte du portail d'essai).
 //
 // Deux déploiements du même fichier :
 //   wrangler.jsonc          → « showrunner »        https://showrunner.luxigone.workers.dev   (le portail)
-//   wrangler.studio.jsonc   → « character-factory » https://character-factory.luxigone.workers.dev (le studio de DGX1)
+//   wrangler.studio.jsonc   → « character-factory » https://character-factory.luxigone.workers.dev (le studio de DGX1,
+//                             plus tard : il faut d'abord une porte au studio ; d'ici là, le studio passe par /character/)
 //
 // Devant chaque requête, Cloudflare Access (application self-hosted sur le nom d'hôte workers.dev) a déjà demandé
 // l'e-mail. Ce Worker ne le croit pas sur parole : il revérifie le jeton (JWT RS256, clés de l'équipe, aud, iss, exp),
@@ -12,7 +14,9 @@
 //   GET  /api/porte/moi                 → { email, role } : qui je suis pour la porte
 //   GET  /api/porte/etat                → les deux DGX : joignables, prêtes (le détail pour un admin seulement)
 //   *    /api/*                         → le portail de DGX2 (Workers VPC → tunnel sortant → 127.0.0.1:9790)
-//   GET  /library/<id>/<fichier>        → R2 d'abord (Range ; droit lu dans item.json : owner, shared), sinon DGX2
+//   *    /character/{api,files,v1}/*    → le portail de DGX2, qui relaie au studio de DGX1 par le câble
+//   GET  /analyse/runs/*                → le portail de DGX2 (les rendus de Movie Analysis)
+//   GET  /library/<id>/<fichier>        → R2 d'abord (Range ; droit lu dans item.json), sinon DGX2
 //   *    /pont/<dgx1|dgx2>/<action>     → le pont de la machine (état, préparer, libérer) ; il décide seul des droits
 //   *    /agents/*                      → réservé (étude § 6)
 //   le reste                            → les pages du portail (assets statiques : le dépôt, sans server/ ni docs/)
@@ -20,14 +24,14 @@
 // En mode studio (MODE = "studio"), tout chemin va au studio de DGX1 tel quel : ses pages y demandent /api/…, /files/…
 //
 // Vers les DGX, l'identité part signée : x-porte-qui, x-porte-role, x-porte-quand, x-porte-sig =
-// HMAC-SHA256(PORTE_CLE, qui \n role \n quand \n méthode \n chemin?requête). Les DGX n'écoutent la porte que sur
-// 127.0.0.1 (port de la maison + 1000) et refusent toute requête qui n'est pas signée ainsi : un tunnel rapide, un
-// processus voisin ou une erreur de réglage ne donnent rien. La vérification côté DGX (bibliothèque standard) est dans
-// l'étude, § 3.
+// HMAC-SHA256(PORTE_CLE, qui \n role \n quand \n méthode \n chemin?requête), et le jeton Access vérifié ici suit tel
+// quel (cf-access-jwt-assertion) : le portail revérifie les deux (server/core/auth.py, porte « access »). Les DGX
+// n'écoutent la porte que sur 127.0.0.1 (port de la maison + 1000) et refusent toute requête qui n'est pas signée
+// ainsi : un tunnel rapide, un processus voisin ou une erreur de réglage ne donnent rien.
 //
 // Secrets (npx wrangler secret put …, jamais dans ce dépôt, qui est public) : PORTE_CLE, ADMINS.
 
-const VERSION = 'squelette du 28/09/2026';
+const VERSION = 'porte du 29/09/2026';
 const ENC = new TextEncoder();
 const DEC = new TextDecoder();
 const SANS_CORPS = new Set(['GET', 'HEAD']);
@@ -37,8 +41,12 @@ const SANS_CORPS = new Set(['GET', 'HEAD']);
 // Content-Length n'y est pas : le FixedLengthStream du corps le donne lui-même (corpsDeLongueurFixe).
 const EN_TETES_TRANSMIS = new Set([
   'accept', 'accept-language', 'content-type', 'range', 'if-range',
-  'if-none-match', 'if-modified-since', 'x-filename',
+  'if-none-match', 'if-modified-since', 'x-filename', 'last-event-id', 'user-agent',
 ]);
+
+// Ce qui va au portail de DGX2 plutôt qu'aux assets (et figure donc dans run_worker_first de wrangler.jsonc) :
+// les relais du studio (server/tools/character.py) et les rendus de Movie Analysis (server/tools/analyse.py).
+const VERS_PORTAIL = /^\/(character\/(api|files|v1)|analyse\/runs)\//;
 
 // L'hôte de l'URL ne sert qu'à l'en-tête Host : c'est le service VPC qui décide où va la requête
 // (https://developers.cloudflare.com/workers-vpc/configuration/vpc-services/).
@@ -132,7 +140,8 @@ async function qui(req, env) {
   const email = await verifieJeton(jeton, env);
   if (!email) return null;
   const admins = String(env.ADMINS || '').toLowerCase().split(',').map((a) => a.trim()).filter(Boolean);
-  return { email, role: admins.includes(email) ? 'admin' : 'ami' };
+  // le jeton suit vers le portail, qui le revérifie : une signature seule ne suffit pas là-bas
+  return { email, role: admins.includes(email) ? 'admin' : 'ami', jeton };
 }
 
 // Une requête qui écrit doit venir d'une page de cette adresse (audit H3 : pas de formulaire piégé ailleurs).
@@ -145,9 +154,11 @@ function memeOrigine(req, url) {
 
 // ── vers les DGX ─────────────────────────────────────────────────────────────────────────────────────────────────
 async function signe(env, id, methode, cheminEtRequete) {
-  if (!env.PORTE_CLE) throw new Error('la porte n’a pas sa clé (npx wrangler secret put PORTE_CLE)');
+  // sans les blancs autour, comme le portail lit porte.key : un retour à la ligne final ne change pas la clé
+  const cleHmac = String(env.PORTE_CLE || '').trim();
+  if (!cleHmac) throw new Error('la porte n’a pas sa clé (wrangler secret put PORTE_CLE)');
   const quand = String(Math.floor(Date.now() / 1000));
-  const k = await crypto.subtle.importKey('raw', ENC.encode(env.PORTE_CLE), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const k = await crypto.subtle.importKey('raw', ENC.encode(cleHmac), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   const sig = await crypto.subtle.sign('HMAC', k, ENC.encode([id.email, id.role, quand, methode, cheminEtRequete].join('\n')));
   return { 'x-porte-qui': id.email, 'x-porte-role': id.role, 'x-porte-quand': quand, 'x-porte-sig': hex(sig) };
 }
@@ -175,6 +186,7 @@ async function joins(req, env, ctx, nom, id, chemin, { delai } = {}) {
   const h = new Headers();
   for (const [k, v] of req.headers) if (EN_TETES_TRANSMIS.has(k)) h.set(k, v);
   for (const [k, v] of Object.entries(await signe(env, id, req.method, cible.pathname + cible.search))) h.set(k, v);
+  h.set('cf-access-jwt-assertion', id.jeton);
   try {
     return await service.fetch(cible, {
       method: req.method, headers: h, body: corps, redirect: 'manual',
@@ -229,8 +241,12 @@ async function etat(req, env, ctx, id) {
 }
 
 // ── la bibliothèque dans R2 ──────────────────────────────────────────────────────────────────────────────────────
-// Le DGX recopie chaque objet de la bibliothèque dans R2 sous la même clé qu'ici : library/<id>/<fichier>, avec son
-// item.json, qui porte owner (l'e-mail) et shared (vu par tous). La page garde ses adresses relatives.
+// DGX2 recopie chaque objet de la bibliothèque dans R2 sous la même clé qu'ici : library/<id>/<fichier>
+// (porte/r2_recopie.py), avec un item.json qui porte owner_email (l'e-mail du propriétaire, s'il en a un), shared
+// (partagé par lui) et tous (vrai quand le réglage « qui voit quoi » du portail est « tout le monde voit tout »).
+// La page garde ses adresses relatives.
+const visible = (it, id) => !!it && (id.role === 'admin' || it.tous === true || it.shared === true
+  || (!!it.owner_email && it.owner_email === id.email));
 const ID_OBJET = /^[a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4}$/;
 const FICHIER = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}$/;
 const TYPES = {
@@ -244,8 +260,7 @@ async function peutVoir(env, id, objet) {
   const fiche = await env.BIBLIO.get(`library/${objet}/item.json`);
   if (!fiche) return null;
   if (id.role === 'admin') return true;
-  const it = await fiche.json().catch(() => null);
-  return !!it && (it.owner === id.email || it.shared === true);
+  return visible(await fiche.json().catch(() => null), id);
 }
 
 // La plage demandée, bornée au fichier : { debut, long }, 'hors', ou null (reprise de movie-analysis-partage).
@@ -298,14 +313,13 @@ async function bibliotheque(req, env, ctx, id, chemin) {
 }
 
 // DGX éteintes : la liste de la bibliothèque vient du dernier index publié par DGX2 dans R2 (library/index.json,
-// les objets tels que library.public() les rend, avec owner et shared), filtrée pour l'appelant.
+// les objets tels que library.public() les rend, avec owner_email, shared et tous), filtrée pour l'appelant.
 async function listeHorsLigne(env, id, url) {
   const o = env.BIBLIO ? await env.BIBLIO.get('library/index.json') : null;
   if (!o) return erreur(503, 'les machines dorment, et la bibliothèque n’est pas encore publiée', { machines: false });
   const index = await o.json().catch(() => ({ items: [] }));
   const sortes = (url.searchParams.get('kind') || '').split(',').filter(Boolean);
-  const items = (index.items || []).filter((it) => (id.role === 'admin' || it.owner === id.email || it.shared === true)
-    && (!sortes.length || sortes.includes(it.kind)));
+  const items = (index.items || []).filter((it) => visible(it, id) && (!sortes.length || sortes.includes(it.kind)));
   const counts = {};
   for (const it of items) counts[it.kind] = (counts[it.kind] || 0) + 1;
   return json({ items, total: items.length, counts, folders: [], hors_ligne: true, publie: index.at || null });
@@ -337,6 +351,7 @@ export default {
       if (chemin === '/api/porte/moi') return json({ email: id.email, role: id.role, version: VERSION });
       if (chemin === '/api/porte/etat') return await etat(req, env, ctx, id);
       if (chemin.startsWith('/library/')) return await bibliotheque(req, env, ctx, id, chemin);
+      if (VERS_PORTAIL.test(chemin)) return await relaie(req, env, ctx, 'PORTAIL', id, chemin);
       const pont = chemin.match(/^\/pont\/(dgx1|dgx2)\/(etat|preparer|liberer)$/);
       if (pont) return await relaie(req, env, ctx, pont[1] === 'dgx1' ? 'PONT_DGX1' : 'PONT_DGX2', id, `/pont/${pont[2]}`);
       if (chemin.startsWith('/agents/')) return erreur(501, 'les agents viendront plus tard (docs/etudes/cloudflare.md, § 6)');

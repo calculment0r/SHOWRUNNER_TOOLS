@@ -9,7 +9,8 @@
 node_modules/
 __pycache__/
 *.pyc
-*.md
+# les notes à la racine seulement : character/data/methodology.md est lu par les pages du studio
+/*.md
 showrunner.local.json
 server/
 tools/

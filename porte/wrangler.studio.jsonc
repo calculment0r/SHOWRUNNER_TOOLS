@@ -2,7 +2,10 @@
   // La porte du studio Character Factory : https://character-factory.luxigone.workers.dev
   // Même worker.js que le portail, en mode studio : tout chemin va au studio de DGX1, tel quel, parce que ses pages
   // demandent /api/…, /files/…, /v1/… à la racine de leur origine (js/studio.js). Pas d'assets : le studio sert ses
-  // propres pages. SQUELETTE NON DÉPLOYÉ (docs/etudes/cloudflare.md, étape 4 du plan).
+  // propres pages. NON DÉPLOYÉ, ET PAS ENCORE À DÉPLOYER (29/09) : il faut d'abord au studio de DGX1 (dépôt
+  // Character_Factory) une porte 127.0.0.1:9765 qui exige la signature et le jeton, comme celle du portail
+  // (server/core/auth.py, porte « access »). D'ici là, le studio passe par le portail : /character/api|files|v1/…,
+  // gardé par la porte du portail (wrangler.jsonc, run_worker_first).
   //
   //   npx wrangler deploy -c wrangler.studio.jsonc --dry-run
   //   npx wrangler secret put PORTE_CLE -c wrangler.studio.jsonc
@@ -17,7 +20,7 @@
 
   "vars": {
     "MODE": "studio",
-    "TEAM_DOMAIN": "https://<equipe>.cloudflareaccess.com",
+    "TEAM_DOMAIN": "https://nirvalab.cloudflareaccess.com",
     "POLICY_AUD": "<tag AUD de l'application Access du studio>",
     "PORTAIL_URL": "https://showrunner.luxigone.workers.dev/"
   },

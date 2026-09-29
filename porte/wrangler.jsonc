@@ -1,19 +1,19 @@
 {
   // La porte d'entrée de Showrunner Tools : le portail, sous https://showrunner.luxigone.workers.dev
   // (le nom du Worker + le sous-domaine workers.dev de Cal, celui de movie-analysis-partage).
-  // SQUELETTE NON DÉPLOYÉ. Étude : docs/etudes/cloudflare.md ; le plan par étapes y dit quand remplir quoi.
-  //
-  // Quand Cal le décidera (étape 1 du plan), dans un terminal, depuis porte/ :
-  //   npx wrangler login
-  //   npx wrangler deploy --dry-run          (vérifie la configuration, dont "directory": "..")
-  //   npx wrangler secret put PORTE_CLE      (la clé HMAC, la même que ~/.config/showrunner/porte.key sur les DGX)
-  //   npx wrangler secret put ADMINS         (les e-mails admin, séparés par des virgules : pas dans ce dépôt public)
-  //   npx wrangler deploy
-  // Puis, dans Zero Trust, l'application Access self-hosted sur showrunner.luxigone.workers.dev (étude, § 2).
+  // PRÊT À DÉPLOYER, NON DÉPLOYÉ. L'ordre exact des gestes : docs/etudes/cloudflare.md, « Prêt à déployer ».
+  // En bref, depuis porte/ sur DGX2 (wrangler est dans ~/.local/bin) :
+  //   wrangler r2 bucket create showrunner-bibliotheque
+  //   wrangler vpc service create portail-dgx2 --type http --tunnel-id <id du tunnel dgx2> --ipv4 127.0.0.1 --http-port 9790
+  //   (coller l'identifiant rendu dans vpc_services ci-dessous, et le tag AUD dans vars)
+  //   wrangler deploy --dry-run
+  //   wrangler secret put PORTE_CLE          (la clé HMAC : le contenu de ~/.config/showrunner/porte.key sur DGX2)
+  //   wrangler secret put ADMINS             (les e-mails admin, séparés par des virgules : pas dans ce dépôt public)
+  //   wrangler deploy
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "showrunner",
   "main": "worker.js",
-  "compatibility_date": "2026-09-28",
+  "compatibility_date": "2026-09-29",
 
   "workers_dev": true,
   // Les « version URLs » (<version>-showrunner.luxigone.workers.dev) ne sont pas couvertes par une application Access
@@ -24,23 +24,29 @@
   // Les pages du portail sont le dépôt lui-même (chemins relatifs, window.SR_API inutile : même origine).
   // ../.assetsignore écarte server/, tools/, docs/, porte/, .git… Les requêtes d'assets sont gratuites et ne passent
   // pas par le Worker ; Access les garde quand même (application sur le nom d'hôte).
-  // Limites : 20 000 fichiers (Workers Free), 25 Mio par fichier.
+  // run_worker_first : ce que sert le portail de DGX2, et non les assets (le Worker le relaie, signé).
+  // Limites : 20 000 fichiers (Workers Free), 25 Mio par fichier ; run_worker_first : 100 motifs au plus.
   "assets": {
     "directory": "..",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*", "/library/*", "/pont/*", "/agents/*"]
+    "run_worker_first": [
+      "/api/*", "/library/*", "/character/api/*", "/character/files/*", "/character/v1/*", "/analyse/runs/*",
+      "/pont/*", "/agents/*"
+    ]
   },
 
-  // Rien de secret ici, mais propre au compte de Cal : à remplir à l'étape 1.
-  //   TEAM_DOMAIN : https://<nom d'équipe>.cloudflareaccess.com (Zero Trust → Settings)
-  //   POLICY_AUD  : le tag AUD de l'application Access (Access → Applications → l'application → Overview)
+  // Rien de secret ici, mais propre au compte de Cal.
+  //   TEAM_DOMAIN : l'équipe Zero Trust de Cal (nirvalab, active le 29/09)
+  //   POLICY_AUD  : le tag AUD de l'application Access, à coller après l'avoir créée
+  //                 (Zero Trust → Access controls → Applications → l'application → Configure → Additional settings)
   "vars": {
-    "TEAM_DOMAIN": "https://<equipe>.cloudflareaccess.com",
+    "TEAM_DOMAIN": "https://nirvalab.cloudflareaccess.com",
     "POLICY_AUD": "<tag AUD de l'application Access>"
   },
 
-  // La bibliothèque publiée (étape 3) : npx wrangler r2 bucket create showrunner-bibliotheque
+  // La bibliothèque publiée : wrangler r2 bucket create showrunner-bibliotheque (avant le premier déploiement).
   // Bucket privé : pas de r2.dev (non prévu pour la production, et Access ne peut pas le garder).
+  // DGX2 y écrit par porte/r2_recopie.py (API S3, jeton limité à ce bucket).
   "r2_buckets": [
     { "binding": "BIBLIO", "bucket_name": "showrunner-bibliotheque" }
   ],
@@ -48,20 +54,17 @@
   // Les DGX, par Workers VPC (bêta, gratuite pendant la bêta), un tunnel sortant par machine, sans nom d'hôte public.
   // Chaque service vise UNE adresse et UN port, sur 127.0.0.1 de la machine du tunnel : jamais une « VPC Network »,
   // qui laisserait le Worker joindre tout ce que voit le tunnel (ComfyUI, Ollama… ouverts sur le réseau local).
-  //   PORTAIL   → tunnel de DGX2, 127.0.0.1:9790 (la porte du portail : 8790 + 1000, signature exigée)   étape 2
-  //   PONT_DGX2 → tunnel de DGX2, 127.0.0.1:9770 (la porte du pont de DGX2)                              étape 4
-  //   PONT_DGX1 → tunnel de DGX1, 127.0.0.1:9770 (la porte du pont de DGX1)                              étape 4
-  // Création (tableau de bord Workers VPC → VPC Services, ou npx wrangler vpc service create … --type http
-  //   --tunnel-id <id> --ipv4 127.0.0.1 --http-port 9790), puis coller l'identifiant rendu.
+  //   PORTAIL   → tunnel de DGX2, 127.0.0.1:9790 (la porte du portail : 8790 + 1000, porte.mode = "access")
+  // Plus tard, quand les ponts existeront (étude § 5) :
+  //   { "binding": "PONT_DGX2", "service_id": "<id du service pont-dgx2>" }   tunnel de DGX2, 127.0.0.1:9770
+  //   { "binding": "PONT_DGX1", "service_id": "<id du service pont-dgx1>" }   tunnel de DGX1, 127.0.0.1:9770
   "vpc_services": [
-    { "binding": "PORTAIL", "service_id": "<id du service portail-dgx2>" },
-    { "binding": "PONT_DGX2", "service_id": "<id du service pont-dgx2>" },
-    { "binding": "PONT_DGX1", "service_id": "<id du service pont-dgx1>" }
+    { "binding": "PORTAIL", "service_id": "<id du service portail-dgx2>" }
   ],
 
   // Limite de débit par e-mail sur ce qui écrit : 30 par minute, compté par lieu Cloudflare (pas global).
-  // namespace_id : un nombre choisi, unique dans le compte. La disponibilité sur Workers Free n'est pas précisée par
-  // la documentation : si le déploiement la refuse, retirer ce bloc (le Worker s'en passe).
+  // namespace_id : un nombre choisi, unique dans le compte. Si le déploiement la refuse, retirer ce bloc (le Worker
+  // s'en passe : if (env.LIMITE)).
   "ratelimits": [
     { "name": "LIMITE", "namespace_id": "8790", "simple": { "limit": 30, "period": 60 } }
   ],

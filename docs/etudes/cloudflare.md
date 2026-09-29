@@ -1,10 +1,284 @@
-# La porte d'entrée Cloudflare — étude du 28/09/2026
+# La porte d'entrée Cloudflare — étude du 28/09/2026, prête à déployer le 29/09
 
-Étude seulement : **rien n'est déployé, aucun tunnel ne tourne, rien n'est
-ouvert sur internet** (l'audit de sécurité du 28/09 dit de ne rien ouvrir en
-l'état). Documentation Cloudflare lue le 28/09/2026 ; chaque affirmation
-technique porte son lien, « non documenté » quand la documentation se tait.
-Un squelette de Worker, non déployé, est dans `porte/` (§ 8).
+**Rien n'est déployé, aucun tunnel ne tourne, rien n'est ouvert sur
+internet.** Le 29/09, le code de la porte est écrit et essayé sur une copie
+(section suivante, « Prêt à déployer ») : le trou « nico007 derrière un
+tunnel » est fermé, la démo par tunnel rapide et la vraie porte (Worker +
+Access + Workers VPC + R2) n'attendent que les gestes de Cal. Documentation
+Cloudflare lue le 28 et le 29/09/2026 ; chaque affirmation technique porte
+son lien, « non documenté » quand la documentation se tait.
+
+---
+
+## Prêt à déployer (29/09/2026)
+
+### Le trou fermé
+
+Avant : `server/core/auth.py` faisait entrer un pseudo admin « depuis le
+réseau de Cal », et ce réseau comprenait `127.0.0.0/8`. Derrière un tunnel
+(cloudflared, Workers VPC), **toute requête arrive de 127.0.0.1** : n'importe
+qui tapant `nico007` aurait été admin.
+
+Maintenant, le portail a **deux écoutes** (`server/showrunner.py`) :
+
+| écoute | adresse | pour qui | identité |
+|---|---|---|---|
+| **la maison** | `0.0.0.0:8790`, inchangée | Cal sur place, le LAN, Tailscale, le câble | comme avant ; et **toute requête qui porte un en-tête du bord de Cloudflare** (`Cf-Ray`, `Cf-Connecting-IP`, `Cf-Access-Jwt-Assertion`, `Cf-Worker`, `Cf-Visitor`, `CDN-Loop: cloudflare`) **est refusée** : un tunnel pointé par erreur sur 8790 n'ouvre rien |
+| **la porte publique** | `127.0.0.1:9790` (maison + 1000) ; refuse d'écouter ailleurs que sur le loopback | les tunnels seulement | **jamais « le réseau de Cal »** ; `"auth": false` n'y vaut rien ; tout est gardé, relais (`/character/…`, la diarisation `/api/analyse/diar/…`) et fichiers de la bibliothèque compris |
+
+C'est **l'App qui a reçu la requête** qui dit d'où elle vient : la porte est
+une copie de l'App de la maison (mêmes routes, partagées), marquée `door`,
+servie sur sa propre socket — ni une adresse, ni un en-tête (juste par
+construction). Deux modes, réglage `porte` de `showrunner.local.json` :
+
+- **`"demo"`** (défaut ; le tunnel rapide) : sans invitation, toute page
+  montre la page d'invitation (401) et l'API répond 401. Le code
+  d'invitation (lien `/invitation/<code>` ou formulaire `/invitation/`) pose
+  un cookie `sr_invitation` (empreinte du code, `Secure`, `HttpOnly`,
+  `SameSite=Lax`, 14 jours) ; ensuite le pseudo, comme à la maison : un
+  pseudo neuf **attend que Cal l'accepte** (page Admin, qui le fait déjà) ;
+  **un compte admin n'entre qu'avec le code admin**, distinct (16 signes).
+  Une session ouverte par la porte est liée au code qui l'a ouverte :
+  `tools/demo.sh nouveaux-codes` les ferme toutes. Une session de la maison
+  n'y vaut rien. Les codes : `~/showrunner-data/porte-demo.json` (0600),
+  relus à chaud.
+- **`"access"`** (la vraie porte) : chaque requête doit porter **la
+  signature HMAC du Worker** (`x-porte-*`, clé `~/.config/showrunner/porte.key`,
+  0600, ±60 s, sur `qui\nrôle\nquand\nméthode\nchemin?requête` tel que reçu)
+  **et le jeton Cloudflare Access** (`Cf-Access-Jwt-Assertion`, que le Worker
+  transmet après l'avoir vérifié), **revérifié sur DGX2** : RS256 contre les
+  clés de l'équipe (`https://nirvalab.cloudflareaccess.com/cdn-cgi/access/certs`,
+  gardées une heure, relues pour un `kid` inconnu au plus une fois par
+  minute), `iss`, `aud`, `exp`, `nbf`, et le même e-mail que la signature
+  ([valider le JWT](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/)).
+  RS256 est écrit en bibliothèque standard (RFC 8017, `pow`), clés de 2048
+  bits au moins. **Admin seulement si le Worker le signe (secret `ADMINS`)
+  ET si l'e-mail mène à un compte admin** (`porte.emails` : l'e-mail de Cal →
+  `cal`, ses objets restent à lui) ; un autre e-mail reçoit un compte « ami »
+  actif (la liste d'Access est déjà celle de Cal). Taper un pseudo n'y sert
+  à rien (409).
+- `"off"` : pas de seconde écoute.
+
+**Les preuves** (copie `/tmp/sr_porte` sur DGX2, ports 8813 et 9813) :
+
+- `python3 tools/check.py` : **846 passés, 0 en échec**, dont **91 pour la
+  porte** (`server/tools/porte_publique.py` ; 755 sans elle : les contrôles
+  existants de la porte par pseudo, `compte.py`, passent tous). Entre
+  autres : sur la porte, `nico007` avec le code d'invitation → 403, aucune
+  session ; sans code → 401 partout (pages, API, `/character/`, fichiers,
+  diarisation) ; la session admin de la maison sur la porte → 401 ; un
+  jeton Access signé par une autre clé, d'une autre application, d'une autre
+  équipe, périmé, pas encore valable, sans e-mail, `alg: none`, d'un autre
+  e-mail que la signature → 401 ; la signature sans jeton, le jeton sans
+  signature, une signature vieille de 2 min ou faite pour un autre chemin →
+  401 ; une clé de porte lisible par d'autres → 503 ; la maison marche comme
+  avant, et refuse `nico007` qui viendrait avec `Cf-Connecting-IP`.
+- **Le trou rouvert exprès** (sur une copie jetable) : 4 contrôles tombent.
+- **Un faux tunnel** (un relais local qui arrive de 127.0.0.1 sur 9813 en
+  posant l'hôte `….trycloudflare.com`, `Cf-Connecting-IP`, `Cf-Ray`) : sans
+  code tout est 401 ; `nico007`/`NiCo007` avec le code d'invitation → 403 ;
+  « Margaux » → en attente, 401, puis acceptée à la maison → 200, admin 403 ;
+  code admin + `nico007` → admin 200.
+- **Le Worker de bout en bout** (`node porte/essai.mjs`) : `porte/worker.js`
+  tourne dans Node devant la vraie porte « access » ; les jetons sont signés
+  par WebCrypto, une autre implémentation de RS256 que celle du portail :
+  **20 passés sur 20** (signature, chemins encodés, dépôt d'une image par
+  `FixedLengthStream`, Range, `/character/` relayé, DGX2 injoignable → 503,
+  autre clé de porte → 401).
+- `wrangler deploy --dry-run` (wrangler 4.143.0 de DGX2, lecture seule) :
+  la configuration passe ; 259 fichiers publiés, `server/`, `tools/`,
+  `docs/`, `porte/`, `.git`, `showrunner.local.json` écartés
+  (`.assetsignore`).
+
+### La démo : tunnel rapide, prête à lancer
+
+La commande, telle que la documentation la donne
+([Quick Tunnels](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/),
+« cloudflared tunnel --url http://localhost:8080 ») :
+
+```sh
+cloudflared tunnel --url http://127.0.0.1:9790
+```
+
+C'est `tools/demo.sh start` qui la lance (sur DGX2, `cloudflared` 2026.9.3
+y est), après avoir vérifié que la porte répond en mode « demo » (jamais la
+maison), qu'aucun `~/.cloudflared/config.yaml` n'existe, et créé les codes ;
+il relève l'adresse `https://….trycloudflare.com` dans le journal et
+l'affiche avec le lien d'invitation, le code d'invitation et le code admin.
+`tools/demo.sh stop | status | nouveaux-codes`. PID dans
+`~/showrunner-demo.pid`, journal `~/showrunner-demo.log`. Essayé avec un faux
+`cloudflared` (`CLOUDFLARED=…`) : il reçoit bien `tunnel --url
+http://127.0.0.1:<porte>`.
+
+```sh
+ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && tools/demo.sh start'     # l'adresse, le lien, les codes
+# à l'ami : https://<…>.trycloudflare.com/invitation/  et le code d'invitation (ou le lien direct avec le code)
+# Cal, depuis n'importe où : le code admin, puis nico007 ; il accepte les demandes dans Admin
+ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && tools/demo.sh stop'
+```
+
+Ce que dit la documentation (même page) : « Quick Tunnels are intended for
+testing and development only » ; « a hard limit on the number of concurrent
+requests … Currently, this limit is 200 in-flight requests » ; « Quick
+Tunnels do not support Server-Sent Events (SSE) » ; « We don't guarantee any
+SLA or uptime of TryCloudflare » ; pas de tunnel rapide si un `config.yaml`
+existe ; une adresse tirée au hasard à chaque lancement ; aucun compte
+nécessaire.
+
+**Ce qui marche encore, ce qui ne marche pas** (déduit du code ; aucun tunnel
+n'a tourné) :
+
+- Marche (requêtes ordinaires) : toutes les pages, la bibliothèque et ses
+  fichiers (Range), les dépôts, la file et les rendus (la page relit la file
+  toutes les 1,5 s pendant un rendu, 6 s au repos : un onglet ≈ 1 requête en
+  vol), Character Factory sous `/character/` (le studio n'utilise pas de
+  flux : aucun `stream` dans `character/js`), la lecture de Movie Analysis.
+- **Ne marche pas : la collaboration en direct d'Idéation.** Elle passe
+  entièrement par un flux SSE (`ideation/collab.js` : `EventSource` sur
+  `…/collab/<planche>/stream` ; l'événement `hello` donne l'identifiant de
+  connexion sans lequel ni présence ni message ne partent) : pas de
+  curseurs, pas de présences, pas de fil en direct, pas de signalisation de
+  la visio (qui, sans serveur STUN/TURN — `ideation_ice_servers` vide —, ne
+  traverserait de toute façon pas deux réseaux). La planche elle-même
+  s'enregistre par des requêtes ordinaires.
+- Ne marche pas non plus : écrire des corrections dans le dépôt partagé de
+  Movie Analysis depuis l'adresse de la démo — le Worker de MOVIE_ANALYSE
+  refuse les origines inconnues, et il faut qu'il continue à refuser
+  `*.trycloudflare.com` (n'importe qui peut en ouvrir une).
+- Taille d'un dépôt par le tunnel rapide : non documentée.
+- L'hôte reçu derrière le tunnel rapide est celui du tunnel (constaté par
+  d'autres, pas documenté : `httpHostHeader` de cloudflared est vide par
+  défaut, [paramètres d'origine](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/cloudflared-parameters/origin-parameters/)) ;
+  si ce n'était pas le cas, l'adresse relevée par `demo.sh` vaut pour
+  `Origin` (contrôlé).
+
+### La vraie porte : les gestes, dans l'ordre
+
+Déjà fait (29/09) : Zero Trust actif, équipe **`nirvalab`**
+(`https://nirvalab.cloudflareaccess.com`), plan Free ; `wrangler` 4.143.0
+connecté au compte de Cal sur DGX2 (`~/.local/bin/wrangler`, compte
+`4428c8a9c5e493580d3f003c2adcf1ca`). Le jeton de wrangler n'a **pas** de
+portée `access` : l'application Access se crée à la main.
+
+1. **La clé de la porte** (l'agent, sur DGX2 ; elle ne sort jamais de
+   DGX2 que vers le secret du Worker) :
+   `ssh dgx2 'mkdir -p ~/.config/showrunner && (umask 077; openssl rand -hex 32 > ~/.config/showrunner/porte.key)'`
+   (le portail la refuse si elle est lisible par d'autres ; lui et le Worker ignorent le retour à la ligne final)
+2. **Le tunnel de DGX2** (Cal : tableau de bord et `sudo`) : tableau de bord
+   Cloudflare → **Workers VPC** → onglet **Tunnels** → **Create** → nom
+   `dgx2`, Linux, arm64 → copier la commande d'installation qu'il affiche
+   (`sudo cloudflared service install <jeton>`) et la lancer **lui-même**
+   dans un terminal sur DGX2 (le jeton est un secret : ni dans le chat, ni
+   dans un dépôt ; « Anyone with the token can run the tunnel »,
+   [jetons](https://developers.cloudflare.com/tunnel/reference/tunnel-tokens/)).
+   Noter l'identifiant du tunnel. Vérifier : le tunnel apparaît « Healthy »,
+   et `systemctl status cloudflared` sur DGX2 ; il faut l'UDP sortant 7844
+   (QUIC) ([démarrer](https://developers.cloudflare.com/workers-vpc/get-started/)).
+   (Autre voie, expérimentale : `wrangler tunnel create dgx2`.)
+3. **Le service VPC** (l'agent) :
+   `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS/porte && ~/.local/bin/wrangler vpc service create portail-dgx2 --type http --tunnel-id <id du tunnel> --ipv4 127.0.0.1 --http-port 9790'`
+   ([commandes](https://developers.cloudflare.com/workers-vpc/reference/wrangler-commands/)),
+   puis coller l'identifiant rendu dans `porte/wrangler.jsonc`
+   (`vpc_services`, `PORTAIL`).
+4. **L'accès par code e-mail** (Cal) : Zero Trust → **Integrations** →
+   **Identity providers** → **Add new identity provider** → **One-time PIN**
+   ([One-time PIN](https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/one-time-pin/)).
+5. **L'application Access** (Cal) : Zero Trust → **Access controls** →
+   **Applications** → **Create new application** → **Self-hosted and
+   private** ([application](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/)) :
+   nom `Showrunner` ; nom d'hôte **`showrunner.luxigone.workers.dev`** (un
+   nom `workers.dev` est admis :
+   [Access pour Workers](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)) ;
+   durée de session **24 hours** ; politique **Allow**, nom « Cal et ses
+   amis », **Include → Emails** → son e-mail (ceux des amis plus tard) ;
+   aucune règle *Bypass* ni *Service Auth* ; méthode de connexion
+   **One-time PIN** ; réglages du cookie : **SameSite Lax**, **HttpOnly**,
+   **Binding Cookie**. Enregistrer, puis **Configure → Additional settings →
+   Application Audience (AUD) Tag** : le copier (ce n'est pas un secret) dans
+   `porte/wrangler.jsonc` (`POLICY_AUD`) et dans le réglage du portail
+   (étape 6). Ne pas utiliser l'onglet Access du Worker (« Protect this
+   Worker ») : ses politiques ne sont que « Cloudflare account » ou « Email
+   domain », et `gmail.com` ouvrirait à tout Gmail.
+6. **Le portail en mode « access »** (l'agent) : dans
+   `~/SHOWRUNNER_TOOLS/showrunner.local.json` de DGX2,
+   `"porte": {"mode": "access", "team_domain": "https://nirvalab.cloudflareaccess.com", "aud": "<tag AUD>", "emails": {"<l'e-mail de Cal pour Access>": "cal"}}`,
+   puis `tools/portail.sh restart`. **La démo s'arrête** : la porte est
+   l'une ou l'autre.
+7. **Le Worker** (l'agent, sur DGX2, dans `~/SHOWRUNNER_TOOLS/porte`) :
+   ```sh
+   ~/.local/bin/wrangler r2 bucket create showrunner-bibliotheque
+   ~/.local/bin/wrangler deploy --dry-run
+   ~/.local/bin/wrangler deploy
+   ~/.local/bin/wrangler secret put PORTE_CLE < ~/.config/showrunner/porte.key
+   ~/.local/bin/wrangler secret put ADMINS        # l'e-mail de Cal (virgules entre plusieurs), tapé à l'invite
+   ```
+   Déployer avant de poser les secrets ne laisse rien passer : sans jeton
+   Access valide le Worker répond 403, sans `PORTE_CLE` il ne joint pas DGX2.
+   `wrangler secret put` d'un fichier : la forme conseillée pour ne jamais
+   écrire un secret dans une commande ; le Worker et le portail ignorent le
+   retour à la ligne final (essayé).
+8. **L'essai** (Cal, depuis la 4G) : `https://showrunner.luxigone.workers.dev`
+   → la page d'Access → le code reçu par e-mail → le portail ;
+   `…/api/porte/moi` rend son e-mail et `admin`. Une version URL
+   (`<version>-showrunner…`) : coupée (`preview_urls: false`).
+9. **R2** (Cal, puis l'agent) : **R2 object storage** → **Account Details →
+   API Tokens → Manage** → créer un jeton **Object Read & Write** limité au
+   bucket `showrunner-bibliotheque` ([jetons R2](https://developers.cloudflare.com/r2/api/tokens/) ;
+   la clé secrète ne s'affiche qu'une fois). Cal écrit lui-même, dans un
+   terminal sur DGX2, `~/.config/showrunner/r2.json` (chmod 600) :
+   `{"account_id": "4428c8a9c5e493580d3f003c2adcf1ca", "access_key_id": "…", "secret_access_key": "…", "bucket": "showrunner-bibliotheque"}`.
+   Puis `python3 porte/r2_recopie.py --a-blanc`, et sans `--a-blanc`.
+10. **Les amis** : Cal ajoute leurs e-mails à la politique (étape 5).
+
+`porte/r2_recopie.py` : API S3 de R2 (`https://<ACCOUNT_ID>.r2.cloudflarestorage.com`,
+région `auto`, [S3](https://developers.cloudflare.com/r2/api/s3/api/)),
+SigV4 en bibliothèque standard — elle retrouve l'exemple « GET Object » de la
+documentation AWS (contrôlé dans `check.py`) et la signature de botocore pour
+un envoi tel qu'il part vers R2 ; contre un faux S3 local : 4 envois, puis
+rien à renvoyer, puis le retrait d'un objet parti de la bibliothèque. Chaque
+`item.json` publié porte `owner_email`, `shared` et `tous` (« tout le monde
+voit tout ») : le Worker ne sert un fichier de R2 qu'à un admin, au
+propriétaire, ou si l'un des deux derniers est vrai.
+
+### Movie Analysis : le changement à faire dans son Worker (non appliqué)
+
+`C:\claude\MOVIE_ANALYSE\outils\partage\worker.js`, ligne 18 : le Worker
+refuse les écritures (`PUT /corrections/…`, `POST /publier/…`) dont `Origin`
+n'est pas `calculment0r.github.io` ou `localhost`. Pour que les pages du
+portail y écrivent — à la maison et derrière la vraie porte, **jamais depuis
+`*.trycloudflare.com`** :
+
+```diff
+-const ORIGINES = [/^https:\/\/calculment0r\.github\.io$/, /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/];
++const ORIGINES = [
++  /^https:\/\/calculment0r\.github\.io$/,
++  /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/,
++  // le portail Showrunner Tools : la maison (DGX2 sur le LAN, par Tailscale) et la porte Cloudflare
++  /^http:\/\/(192\.168\.10\.247|100\.108\.108\.65):8790$/,
++  /^https:\/\/showrunner\.luxigone\.workers\.dev$/,
++];
+```
+
+Puis `npx wrangler deploy` dans `outils/partage` (le compte de Cal). Le
+préflight CORS est déjà servi (`OPTIONS` → 204, l'origine renvoyée telle
+quelle). À savoir : ce contrôle d'`Origin` protège des pages piégées, pas
+d'un script (curl pose l'`Origin` qu'il veut) ; ce Worker n'est pas derrière
+Access.
+
+### Ce qui reste
+
+- **Rien n'a tourné chez Cloudflare** : Workers VPC vers `127.0.0.1`, le
+  jeton `Cf-Access-Jwt-Assertion` reçu par un Worker à assets, les flux par
+  Workers VPC, la limite de débit sur Workers Free, l'UDP 7844 depuis la box
+  restent à vérifier au premier essai (liste plus bas).
+- Le studio en direct (`wrangler.studio.jsonc`) attend une porte au studio
+  (dépôt Character_Factory) ; d'ici là il passe par `/character/`, gardé.
+- Les ponts (`PONT_DGX1`, `PONT_DGX2`) : pas écrits (§ 5).
+- La recopie R2 se lance à la main (pas encore de minuteur).
+- « Se déconnecter » dans le portail ne ferme pas la session Access
+  (`/cdn-cgi/access/logout`) : `commun/porte.js` n'a pas été touché.
+- Démo ou vraie porte : une seule à la fois (`porte.mode`).
+- `tools/demo.sh` doit être exécutable dans git (`git update-index --chmod=+x tools/demo.sh`).
 
 La demande de Cal (28/09) : travailler de n'importe où **sans Tailscale** ;
 que ses amis aillent sur la page et fassent leur personnage **quand les DGX
@@ -359,7 +633,10 @@ d'e-mail en clair — la signature ci-dessous.
 La clé est un secret du Worker (`PORTE_CLE`) et un fichier hors dépôt sur
 chaque DGX (`~/.config/showrunner/porte.key`, `chmod 600`). HMAC plutôt que
 revérifier le JWT sur les DGX : le portail est en bibliothèque standard, qui
-n'a pas RS256 ; HMAC, si. Côté DGX :
+n'a pas RS256 ; HMAC, si. *(29/09 : le portail fait les deux — la
+signature, et le jeton revérifié en RS256 écrit en bibliothèque standard ;
+voir « Prêt à déployer ». Le code ci-dessous est l'esquisse d'origine.)*
+Côté DGX :
 
 ```python
 import hashlib, hmac, time
@@ -738,7 +1015,13 @@ HMAC par WebCrypto, relayer en flux) : non mesuré.
 
 ---
 
-## 8. Le squelette `porte/` (non déployé)
+## 8. `porte/` (prêt, non déployé)
+
+Mis à jour le 29/09 (« Prêt à déployer », plus haut) : le jeton Access vérifié
+suit vers le portail, qui le revérifie avec la signature ; `/character/…` et
+`/analyse/runs/…` vont au portail ; le droit de lire dans R2 suit
+`owner_email`, `shared`, `tous` ; `porte/essai.mjs` essaie le Worker de bout
+en bout dans Node ; `porte/r2_recopie.py` recopie la bibliothèque.
 
 - `porte/worker.js` — le Worker, sans dépendance : vérification du JWT
   Access (WebCrypto, clés par `kid`, relues au plus une fois par minute),

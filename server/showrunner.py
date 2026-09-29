@@ -9,13 +9,31 @@ Chaque module de `server/tools/` expose `register(app)` : il y déclare
 ses routes (`app.route`) et ses travaux (`jobs.register`). Un module qui
 ne se charge pas est signalé au démarrage ; les autres outils tournent.
 La porte (core/auth.py) est posée devant tout, ici.
+
+Deux points d'écoute (docs/etudes/cloudflare.md, « Prêt à déployer ») :
+
+  la maison         host:port (0.0.0.0:8790)   Cal sur place, le LAN, Tailscale
+  la porte publique 127.0.0.1:port+1000 (9790) les tunnels Cloudflare seulement :
+                    rien n'y est « le réseau de Cal » (core/auth.py, `app.door`)
+
+Réglage `porte` de showrunner.local.json : `{"mode": "demo"}` par défaut
+(tunnel rapide, codes d'invitation : tools/demo.sh), `"access"` (le Worker
+de porte/, Cloudflare Access), `"off"` (pas de seconde écoute). La porte
+n'écoute jamais ailleurs que sur le loopback.
+
+    python3 server/showrunner.py --porte-adresse          # « hôte port mode »
+    python3 server/showrunner.py --porte-codes            # les codes de la démo (créés s'il n'y en a pas)
+    python3 server/showrunner.py --porte-codes-nouveaux   # d'autres codes : les sessions de la porte se ferment
+    python3 server/showrunner.py --porte-url <https://….trycloudflare.com | "">   # l'adresse du tunnel
 """
 
 from __future__ import annotations
 
+import copy
 import importlib
 import pkgutil
 import sys
+import threading
 import traceback
 from pathlib import Path
 
@@ -31,6 +49,8 @@ def build() -> App:
     app.gate, app.after = auth.gate, auth.after
     # les copies d'affichage à leur adresse versionnée se gardent un an (library.cache_policy)
     app.mount("library", library.root(), check=library.readable_path, cache=library.cache_policy)
+    # la page d'invitation de la porte « demo » (404 partout ailleurs)
+    app.prefix("/invitation/", auth.invitation)
     auth.startup()
     import tools
     loaded, failed = [], []
@@ -47,10 +67,56 @@ def build() -> App:
     return app
 
 
+def door_app(app: App, mode: str) -> App:
+    """L'App de la porte publique : les mêmes routes, relais et dossiers que la
+    maison (partagés, pas recopiés), marquée `door` — c'est elle que la porte
+    du socle reçoit (`gate(req, app)`) pour chaque requête arrivée sur cette
+    écoute. Ses `starters` sont vides : le rattrapage ne part qu'une fois."""
+    door = copy.copy(app)
+    door.door = mode
+    door.starters = []
+    return door
+
+
+def serve_door(app: App, mode: str | None = None, host: str | None = None, port: int | None = None):
+    """Ouvre la porte publique dans un fil à part ; rend le fil, ou None si elle reste fermée."""
+    ds = auth.door_settings()
+    mode, host, port = mode or ds["mode"], host or ds["host"], int(port or ds["port"])
+    if mode == "off":
+        print("porte publique : fermée (porte.mode = off)", flush=True)
+        return None
+    if not auth.loopback(host):
+        print(f"porte publique : refusée sur {host} — elle n'écoute que sur 127.0.0.1 (les tunnels y arrivent)",
+              flush=True)
+        return None
+    door = door_app(app, mode)
+
+    def run() -> None:
+        try:
+            door.serve(host, port)
+        except OSError as e:
+            print(f"porte publique : {host}:{port} ne s'ouvre pas ({e}) ; la maison tourne", flush=True)
+
+    print(f"porte publique ({mode}) : http://{host}:{port}/", flush=True)
+    t = threading.Thread(target=run, name="porte", daemon=True)
+    t.start()
+    return t
+
+
+def _arg(flag: str) -> str | None:
+    k = sys.argv.index(flag)
+    return sys.argv[k + 1] if k + 1 < len(sys.argv) else None
+
+
+def _print_codes(st: dict) -> None:
+    print(f"invitation {st.get('invitation', '')}")
+    print(f"admin {st.get('admin', '')}")
+    print(f"url {st.get('url', '')}")
+
+
 def main() -> None:
     if "--admin" in sys.argv:
-        k = sys.argv.index("--admin")
-        pseudo = sys.argv[k + 1] if k + 1 < len(sys.argv) else ""
+        pseudo = _arg("--admin") or ""
         try:
             u = auth.cli_admin(pseudo)
         except ValueError as e:
@@ -58,8 +124,22 @@ def main() -> None:
         print(f"« {u['pseudo']} » est admin (id {u['id']}) : à l'accueil du portail, taper ce pseudo "
               f"(depuis le réseau de Cal). Le portail en marche le relit seul.")
         return
+    if "--porte-adresse" in sys.argv:
+        ds = auth.door_settings()
+        print(ds["host"], ds["port"], ds["mode"])
+        return
+    if "--porte-codes" in sys.argv or "--porte-codes-nouveaux" in sys.argv:
+        _print_codes(auth.demo_codes(renew="--porte-codes-nouveaux" in sys.argv))
+        return
+    if "--porte-url" in sys.argv:
+        try:
+            _print_codes(auth.demo_set_url(_arg("--porte-url") or ""))
+        except ValueError as e:
+            sys.exit(f"--porte-url : {e}")
+        return
     app = build()
     jobs.start()
+    serve_door(app)
     app.serve(config.get("host"), int(config.get("port")))
 
 
