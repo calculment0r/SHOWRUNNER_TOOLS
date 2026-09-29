@@ -106,7 +106,7 @@ a.acc-app:hover { filter: brightness(1.06); transform: translateY(-2px); }
 .acc-app.big:nth-child(even) { background: var(--coral-2); color: var(--on-light); }
 .acc-app.big .acc-vis { position: absolute; inset: 0; padding: 22px 24px; }
 .acc-app.big .acc-ico { width: 42px; height: 42px; }
-.acc-app.big .acc-vis img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.acc-app.big .acc-vis img, .acc-app.big .acc-vis video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .acc-app.big .acc-txt { padding: 48px 24px 22px; }
 .acc-app.big .acc-verb { font-size: clamp(22px, 2.2vw, 40px); }
 .acc-app.big .acc-line { font-size: 10px; }

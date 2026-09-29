@@ -35,8 +35,8 @@ const ICON = {
 // dans TOOLS le jour où sa page arrive ; ses stems et l'arrangement vont
 // dans ODIO (Studio), sa ligne le dit (positionnement.md § 5.3, règle 5).
 const APPS = [
-  { id: 'image', tool: 'image', verb: 'Créer une image', sub: 'créer · éditer · caméra, objectif', icon: 'image', big: true, feed: 'kind=image&tool=image' },
-  { id: 'movie', tool: 'movie', verb: 'Faire une vidéo', sub: 'texte, image, références → vidéo', icon: 'movie', big: true, feed: 'kind=video&tool=movie' },
+  { id: 'image', tool: 'image', verb: 'Créer une image', sub: 'créer · éditer · caméra, objectif', icon: 'image', big: true, img: 'media/accueil-image.webp' },
+  { id: 'movie', tool: 'movie', verb: 'Faire une vidéo', sub: 'texte, image, références → vidéo', icon: 'movie', big: true, video: 'media/accueil-video.mp4', poster: 'media/accueil-video.webp' },
   { id: 'chanson', tool: 'chanson', verb: 'Faire une chanson', sub: 'style · paroles · reprise — stems : ODIO', icon: 'song' },
   { id: 'upscale', tool: 'upscale', verb: 'Agrandir', sub: 'images · vidéos · netteté', icon: 'upscale' },
   { id: 'object3d', tool: 'object', verb: 'Faire un objet 3D', sub: 'une image → un mesh', icon: 'cube' },
@@ -133,7 +133,17 @@ function paintApps() {
     const vis = el('span', { class: 'acc-vis' }, el('span', { class: 'acc-ico', html: ICON[a.icon] }));
     const txt = el('span', { class: 'acc-txt' }, el('b', { class: 'acc-verb' }, a.verb), el('span', { class: 'acc-line' }, a.sub));
     const c = card(`acc-app ${a.big ? 'big' : tones[n++ % 3]}`, { ...a, label: a.verb }, t, false, !t, [vis, txt]);
-    if (a.feed && t) feed(c, vis, a.feed);
+    if (a.img || a.video) {
+      let m;
+      if (a.video) {
+        m = el('video', { poster: a.poster, loop: true, playsinline: true, preload: 'auto', 'aria-hidden': 'true' });
+        m.muted = true;              // la propriété : l'attribut posé après coup ne suffit pas à l'autoplay
+        m.src = a.video;
+        m.play().catch(() => {});    // refusée (économie d'énergie…) : l'affiche reste
+      } else m = el('img', { src: a.img, alt: '', decoding: 'async' });
+      vis.prepend(m);
+      c.classList.add('has-img');
+    } else if (a.feed && t) feed(c, vis, a.feed);
     return c;
   };
   $('#acc-big').replaceChildren(...APPS.filter((a) => a.big).map(node));
