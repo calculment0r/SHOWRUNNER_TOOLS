@@ -82,7 +82,9 @@ function paintAsk(me, err = '') {
   } }, el('div', { class: 'row' }, name, go));
   box.replaceChildren(frame(
     el('p', {}, 'Le portail de Cal : images, vidéos, personnages, sur ses deux DGX quand elles sont allumées. ',
-      'Tape ton pseudo : si Cal l’a déjà accepté, tu entres ; sinon, il reçoit ta demande et t’ouvre la porte.'),
+      me.sur_liste
+        ? 'Tape le pseudo que Cal t’a donné, et entre.'
+        : 'Tape ton pseudo : si Cal l’a déjà accepté, tu entres ; sinon, il reçoit ta demande et t’ouvre la porte.'),
     form, warn));
   name.focus();
 }

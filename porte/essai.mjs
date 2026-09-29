@@ -5,7 +5,8 @@
 // du portail. Rien n'est ouvert sur internet.
 //
 //   node porte/essai.mjs --porte http://127.0.0.1:9813 --certs 9899 --cle /chemin/porte.key [--aud aud-e2e]
-//                        [--codes <données>/porte-demo.json]
+//                        [--codes <données>/porte-demo.json [--ouverte oui]]
+// (--ouverte oui : le portail d'essai en "mode": "code" avec "invitation": false)
 //
 // Le portail d'essai doit avoir, dans son showrunner.local.json :
 //   "porte": {"mode": "access", "team_domain": "http://127.0.0.1:9899", "aud": "aud-e2e", "cle": "/chemin/porte.key",
@@ -233,7 +234,40 @@ ok(lectures <= 2, `les certificats de l'équipe sont gardés (lus ${lectures} fo
 
 // ── la porte par code (PORTE_MODE = "code" ; le portail d'essai en porte.mode = "code") ──
 // --codes <données>/porte-demo.json, et un pseudo créé d'avance (python3 server/showrunner.py --ami su007)
-if (args.codes) {
+// ── sans invitation (--ouverte oui ; le portail d'essai en porte.mode = "code", porte.invitation = false) ──
+// Le Worker n'a rien de neuf à faire : les pages sont des assets, /api/auth/… passe sans cookie ; il garde ESSAIS.
+if (args.ouverte) {
+  const codes = JSON.parse(readFileSync(args.codes, 'utf8'));
+  const IP = '203.0.113.51';
+  const envC = { ...env, PORTE_MODE: 'code' };
+  const C = (chemin, o = {}) => W(chemin, { jwt: null, e: envC, ...o, headers: { 'cf-connecting-ip': IP, ...(o.headers || {}) } });
+  const posee = (h, nom) => (h.getSetCookie?.() || []).map((c) => c.split(';')[0]).find((c) => c.startsWith(`${nom}=`))?.slice(nom.length + 1);
+  const avec = (c) => ({ ...(c ? { cookie: c } : {}), 'content-type': 'application/json', origin: PAGE, 'sec-fetch-site': 'same-origin' });
+  console.log('  la porte sans invitation :');
+  r = await C('/api/auth/me');
+  ok(r.s === 200 && r.d.sur_liste === true && r.d.invitation && r.d.state === 'anonymous',
+    `sans cookie : /api/auth/me passe le Worker, la porte demande le pseudo (${r.s} ${JSON.stringify(r.d)})`);
+  const n0 = vus.length;
+  r = await C('/api/library');
+  ok(r.s === 401 && vus.length === n0, `sans cookie, l'API : 401 du Worker, rien vers DGX2 (${r.s})`);
+  r = await C('/api/auth/enter', { method: 'POST', body: Buffer.from('{"name":"su007"}'), headers: avec() });
+  const ses = posee(r.h, 'sr_session');
+  ok(r.s === 200 && r.d.state === 'active' && ses, `su007 (ajouté par Cal) : son pseudo, sans cookie ni code → entre (${r.s} ${JSON.stringify(r.d).slice(0, 80)})`);
+  r = await C('/api/library', { headers: { cookie: `sr_session=${ses}` } });
+  ok(r.s === 200 && Array.isArray(r.d.items), `… la bibliothèque (${r.s})`);
+  r = await C('/api/auth/enter', { method: 'POST', body: Buffer.from('{"name":"Personne007"}'), headers: avec() });
+  ok(r.s === 403 && /demande à Cal/.test(r.d.error || ''), `un pseudo inconnu : refusé, poliment (${r.s} ${r.d.error})`);
+  r = await C('/api/auth/enter', { method: 'POST', body: Buffer.from('{"name":"nico007"}'), headers: avec() });
+  ok(r.s === 403 && !posee(r.h, 'sr_session'), `nico007 sans le code admin : 403 (${r.s})`);
+  const a = await C(`/invitation/${codes.admin}`);
+  r = await C('/api/auth/enter', { method: 'POST', body: Buffer.from('{"name":"nico007"}'), headers: avec(`sr_invitation=${posee(a.h, 'sr_invitation')}`) });
+  ok(r.s === 200 && r.d.user?.role === 'admin', `nico007 avec le lien du code admin : admin (${r.s})`);
+  const bride = { ...envC, ESSAIS: { limit: async () => ({ success: false }) } };
+  r = await C('/api/auth/enter', { e: bride, method: 'POST', body: Buffer.from('{"name":"su007"}'), headers: avec() });
+  ok(r.s === 429, `ESSAIS atteint : les pseudos tapés sont bridés par adresse (${r.s})`);
+}
+
+if (args.codes && !args.ouverte) {
   const codes = JSON.parse(readFileSync(args.codes, 'utf8'));
   const IP = '203.0.113.50';
   const envC = { ...env, PORTE_MODE: 'code' };

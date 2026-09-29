@@ -215,7 +215,8 @@ def _selftest_code(ok, home, home_tok, same_home, keyfile, key, team, jwt_for) -
         ok(s in (400, 409) and why in (d or {}).get("error", ""), f"Admin : « {name} » refusé : {why} ({s} {d})")
     s, d, _, _ = _req(home, "GET", "/api/admin/porte", cookies={auth.COOKIE: home_tok})
     ok(s == 200 and d.get("mode") == "code" and d.get("lien") == f"https://essai.workers.dev/invitation/{inv}"
-       and adm not in json.dumps(d), f"Admin : le lien à envoyer, sans le code admin ({s} {d})")
+       and d.get("lien_admin") == f"https://essai.workers.dev/invitation/{adm}" and d.get("invitation_requise") is True,
+       f"Admin : le lien à envoyer, et le lien admin pour un admin ajouté ({s} {d})")
 
     s, d, jar, _ = C("POST", "/api/auth/enter", {"name": "Su007"}, cookies=ic)
     su_tok = jar.get(auth.COOKIE)
@@ -278,6 +279,54 @@ def _selftest_code(ok, home, home_tok, same_home, keyfile, key, team, jwt_for) -
         s, _, _, _ = C("GET", "/api/library", cookies=ck)
         ok(s == 401, f"code : nouveaux codes, la session de {label} se ferme ({s})")
     ok((auth.user("su007") or {}).get("state") == "active", "… le pseudo su007, lui, reste : avec le nouveau lien, il rentre")
+
+    # ── sans invitation (porte.invitation = false : la phase d'essai de Cal, 29/09 à 19 h) ──
+    config.CFG["porte"]["invitation"] = False
+    ip2 = "203.0.113.40"
+    s, d, _, _ = C("GET", "/api/auth/me", qui=ip2)
+    ok(s == 200 and d.get("sur_liste") is True and d.get("invitation") and d.get("state") == "anonymous",
+       f"sans invitation : rien à ouvrir d'abord, la porte demande le pseudo ({d})")
+    s, _, _, _ = C("GET", "/api/library", qui=ip2)
+    ok(s == 401, f"sans invitation, sans pseudo : l'API reste fermée ({s})")
+    s, d, jar, _ = C("POST", "/api/auth/enter", {"name": "su007"}, qui=ip2)
+    open_tok = jar.get(auth.COOKIE)
+    s2, _, _, _ = C("GET", "/api/library?limit=500", cookies={auth.COOKIE: open_tok}, qui=ip2)
+    s3, _, _, _ = C("GET", "/api/admin/state", cookies={auth.COOKIE: open_tok}, qui=ip2)
+    ok(s == 200 and d.get("state") == "active" and s2 == 200 and s3 == 403,
+       f"sans invitation : su007 (ajouté par Cal) tape son pseudo et entre, pas l'admin ({s}, {s2}, {s3})")
+    for name in ("Inconnu", "Zazou"):
+        s, d, jar, _ = C("POST", "/api/auth/enter", {"name": name}, qui=ip2)
+        ok(s == 403 and not jar.get(auth.COOKIE) and "demande à Cal" in (d or {}).get("error", "")
+           and not auth.user(auth.slug(name)), f"sans invitation : « {name} », inconnu → refusé, aucune demande ({s} {d})")
+    for name in ("nico007", "NICO007"):
+        s, d, jar, _ = C("POST", "/api/auth/enter", {"name": name}, qui=ip2)
+        ok(s == 403 and not jar.get(auth.COOKIE) and "code admin" in (d or {}).get("error", ""),
+           f"sans invitation : « {name} » sans le code admin → 403, aucune session ({s})")
+    # un admin ajouté par Cal : il entre avec le lien du code admin, puis son pseudo
+    s, d, _, _ = _req(home, "POST", "/api/admin/users", {"name": "Lea007", "role": "admin"}, cookies={auth.COOKIE: home_tok},
+                      headers=same_home)
+    ok(s == 200 and d.get("role") == "admin", f"Admin : Cal ajoute « Lea007 », admin ({s} {d})")
+    s, _, _, _ = C("POST", "/api/auth/enter", {"name": "lea007"}, qui=ip2)
+    ok(s == 403, f"… sans le code admin, elle n'entre pas ({s})")
+    adm2 = auth.demo_codes()["admin"]
+    s, _, jar, _ = C("GET", f"/invitation/{adm2}", qui=ip2)
+    s, d, jar2, _ = C("POST", "/api/auth/enter", {"name": "lea007"}, cookies={auth.INVITE_COOKIE: jar.get(auth.INVITE_COOKIE)}, qui=ip2)
+    s2, _, _, _ = C("GET", "/api/admin/state", cookies={auth.COOKIE: jar2.get(auth.COOKIE)}, qui=ip2)
+    ok(s == 200 and d["user"]["role"] == "admin" and s2 == 200, f"… avec le lien du code admin, elle entre, admin ({s}, {s2})")
+    s, d, _, _ = _req(home, "POST", "/api/admin/users", {"name": "Truc", "role": "root"}, cookies={auth.COOKIE: home_tok},
+                      headers=same_home)
+    ok(s == 400, f"Admin : un autre rôle que ami/admin → 400 ({s})")
+    s, d, _, _ = _req(home, "GET", "/api/admin/porte", cookies={auth.COOKIE: home_tok})
+    ok(d.get("invitation_requise") is False and d.get("lien") == "https://essai.workers.dev",
+       f"Admin : sans invitation, l'adresse à envoyer, rien d'autre ({d})")
+    ok(auth.settings()["visibility"] == "all", "par défaut, tout le monde voit tout : les amis voient la bibliothèque comme Cal")
+    # nouveaux codes : les sessions ouvertes sans invitation se ferment aussi
+    auth.demo_codes(renew=True)
+    s, _, _, _ = C("GET", "/api/library", cookies={auth.COOKIE: open_tok}, qui=ip2)
+    ok(s == 401, f"sans invitation : nouveaux codes, la session de su007 se ferme aussi ({s})")
+    config.CFG["porte"]["invitation"] = True
+    s, _, jar, _ = C("POST", "/api/auth/enter", {"name": "su007"}, qui=ip2)
+    ok(s == 401 and not jar.get(auth.COOKIE), f"invitation rétablie : le pseudo seul ne suffit plus ({s})")
 
 
 # ── le contrôle (tools/check.py) ────────────────────────────

@@ -12,8 +12,8 @@ passe par la porte du socle (core/auth.py). La page : commun/porte.js.
 
 Pour Cal (sous /api/admin/ : la porte du socle les refuse à qui n'est pas admin) :
 
-    POST /api/admin/users {name}        un pseudo d'ami créé d'avance, déjà accepté (su007 entre sans attendre)
-    GET  /api/admin/porte               la porte publique : mode, adresse, lien d'invitation à envoyer
+    POST /api/admin/users {name, role}  un pseudo créé d'avance (ami ou admin), déjà accepté (su007 entre sans attendre)
+    GET  /api/admin/porte               la porte publique : mode, adresse ou lien à envoyer, lien du code admin
 """
 
 from __future__ import annotations
@@ -78,15 +78,17 @@ def _admin(req) -> dict:
 
 def create_friend(req):
     u = _admin(req)
-    return auth.public_user(auth.create_friend(req.json().get("name"), by=u["id"]))
+    d = req.json()
+    return auth.public_user(auth.create_friend(d.get("name"), by=u["id"], role=str(d.get("role") or "ami")))
 
 
 def door_links(req):
-    """Le lien d'invitation (le code dedans), pas le code admin : Cal l'a déjà, et
-    la page n'a pas à le répéter (tools/porte.sh lien le donne sur DGX2)."""
+    """Ce que Cal envoie : l'adresse (ou le lien d'invitation, le code dedans) pour un
+    ami ; le lien du code admin pour un admin qu'il vient d'ajouter (la page ne le
+    montre qu'à la demande : seuls les admins la voient)."""
     _admin(req)
     d = auth.invite_links()
-    return {k: d.get(k) for k in ("mode", "url", "lien", "invitation")}
+    return {k: d.get(k) for k in ("mode", "url", "lien", "lien_admin", "invitation_requise")}
 
 
 def register(app) -> None:

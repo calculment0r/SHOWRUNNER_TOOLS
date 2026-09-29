@@ -672,7 +672,7 @@ def _door_gate(req) -> None:
         return
     if req.door not in PSEUDO_DOORS:
         raise HttpError(503, f"porte publique : mode inconnu « {req.door} »")
-    req.invitation = demo_level(_cookie(req, INVITE_COOKIE))
+    req.invitation = demo_level(_door_mark(req))
     h, s, u = session_of(req)
     if u and u.get("state") == "active":
         set_current(u)
@@ -748,7 +748,8 @@ def me(req) -> dict:
                 out["pending_requests"] = sum(1 for x in _data()["users"].values() if x.get("state") == "pending")
         return out
     if d in PSEUDO_DOORS:
-        return {**_me(req), "porte": d, "invitation": getattr(req, "invitation", None) or False}
+        return {**_me(req), "porte": d, "invitation": getattr(req, "invitation", None) or False,
+                "sur_liste": open_door(d)}
     return _me(req)
 
 
@@ -802,10 +803,11 @@ def enter(name, req) -> tuple[str, dict, str]:
         raise HttpError(409, "sur cette porte, ton identité vient de Cloudflare Access : rien à taper")
     level, door = None, {}
     if d in PSEUDO_DOORS:
-        level = demo_level(_cookie(req, INVITE_COOKIE))
+        mark = _door_mark(req)
+        level = demo_level(mark)
         if not level:
             raise HttpError(401, NO_INVITE)
-        door = {"porte": d, "code": _cookie(req, INVITE_COOKIE)}
+        door = {"porte": d, "code": mark}
     elif not enabled():
         raise HttpError(409, "la porte est coupée sur ce portail (auth: false)")
     name = clean_name(name)
@@ -817,6 +819,8 @@ def enter(name, req) -> tuple[str, dict, str]:
         db = _data()
         u = _find(key)
         if u is None:
+            if open_door(d):   # sans invitation : seuls entrent les pseudos que Cal a ajoutés (Admin)
+                raise HttpError(403, f"« {name} » n'est pas encore inscrit : demande à Cal de t'ajouter")
             why = _imitation(key)
             if why == "réservé":
                 raise HttpError(409, f"« {name} » est réservé : choisis un autre pseudo")
@@ -950,11 +954,14 @@ def cli_admin(pseudo: str) -> dict:
     return out
 
 
-def create_friend(pseudo, by: str) -> dict:
-    """Un pseudo d'ami créé d'avance par Cal (Admin, ou `showrunner.py --ami`),
-    déjà accepté : l'ami qui le tape entre aussitôt, sans attendre (Cal, 29/09 :
-    « un login simple genre su007 »). Mêmes règles qu'un pseudo tapé à la porte :
-    ni imitation d'un admin, ni mot réservé, ni pseudo trop proche d'un autre."""
+def create_friend(pseudo, by: str, role: str = "ami") -> dict:
+    """Un pseudo créé d'avance par Cal (Admin, ou `showrunner.py --ami`), déjà
+    accepté : celui qui le tape entre aussitôt, sans attendre (Cal, 29/09 : « un
+    login simple genre su007 »). Mêmes règles qu'un pseudo tapé à la porte : ni
+    imitation d'un admin, ni mot réservé, ni pseudo trop proche d'un autre.
+    `role` : ami ou admin (un admin, sur la porte publique, entre avec le code admin)."""
+    if role not in ("ami", "admin"):
+        raise HttpError(400, "rôle : ami ou admin")
     name = clean_name(pseudo)
     if not valid_name(name):
         raise HttpError(400, "le pseudo : de 2 à 24 lettres ou chiffres (espace, trait d'union, point permis)")
@@ -968,11 +975,11 @@ def create_friend(pseudo, by: str) -> dict:
             raise HttpError(409, f"« {name} » est réservé : choisis un autre pseudo")
         if why:
             raise HttpError(409, f"« {name} » ressemble trop à un pseudo qui existe déjà : choisis-en un autre")
-        u = {"id": key, "name": name, "pseudo": name, "role": "ami", "state": "active", "created": now_iso(),
+        u = {"id": key, "name": name, "pseudo": name, "role": role, "state": "active", "created": now_iso(),
              "accepted": now_iso(), "by": by, "via": "admin", "quotas": {}}
         db["users"][key] = u
         _save()
-    journal("ami créé d'avance", user=key, by=by)
+    journal("ajouté d'avance", user=key, by=by, role=role)
     return dict(u)
 
 
@@ -1094,7 +1101,30 @@ def door_settings() -> dict:
         "cle": str(d.get("cle") or "~/.config/showrunner/porte.key"),
         "emails": {str(k).strip().lower(): str(v) for k, v in (d.get("emails") or {}).items()},
         "url": str(d.get("url") or PUBLIC_URL).rstrip("/"),
+        # porte « code » : le code d'invitation est-il demandé ? false (phase d'essai, Cal, 29/09 à 19 h) : on tape son
+        # pseudo et l'on entre si Cal l'a ajouté dans Admin ; un compte admin exige toujours le code admin
+        "invitation": d.get("invitation", True) is not False,
     }
+
+
+def open_door(d: str | None) -> bool:
+    """La porte « code » sans code d'invitation (`porte.invitation = false`)."""
+    return d == "code" and not door_settings()["invitation"]
+
+
+def _door_mark(req) -> str | None:
+    """L'empreinte du code qui ouvre la porte pour cette requête : celle du cookie
+    d'invitation ; sur la porte ouverte (sans invitation), à défaut, celle du code
+    d'invitation en cours — comme si chacun l'avait. Une session ouverte ainsi y
+    reste liée : `nouveaux-codes` la ferme aussi, et rétablir l'invitation n'y
+    change rien (elle garde le code en cours). Le code admin, lui, reste exigé
+    pour un compte admin (le cookie qu'il pose)."""
+    mark = _cookie(req, INVITE_COOKIE)
+    if demo_level(mark):
+        return mark
+    if open_door(door_of(req)):
+        return code_mark(demo_codes()["invitation"])
+    return mark
 
 
 def invite_links() -> dict:
@@ -1105,8 +1135,11 @@ def invite_links() -> dict:
         return {"mode": ds["mode"]}
     st = demo_codes()
     url = ds["url"] if ds["mode"] == "code" else str(st.get("url") or "")
+    ouverte = open_door(ds["mode"])
     return {"mode": ds["mode"], "url": url, "invitation": st["invitation"], "admin": st["admin"],
-            "lien": f"{url}/invitation/{st['invitation']}" if url else ""}
+            "invitation_requise": not ouverte,
+            "lien": (url if ouverte else f"{url}/invitation/{st['invitation']}") if url else "",
+            "lien_admin": f"{url}/invitation/{st['admin']}" if url else ""}
 
 
 def door_address() -> tuple[str, int]:

@@ -25,6 +25,8 @@
 #   bash tools/porte.sh lien                        le lien d'invitation à envoyer, le code admin (lecture seule)
 #   bash tools/porte.sh ami <pseudo>                un pseudo d'ami créé d'avance, déjà accepté (il entre sans attendre)
 #   bash tools/porte.sh nouveaux-codes              d'autres codes : toutes les sessions ouvertes par la porte se ferment
+#   bash tools/porte.sh invitation <on|off>         off : pas de code d'invitation, seuls les pseudos ajoutés dans Admin
+#                                                   entrent ; un admin garde le code admin (relancé, vérifié)
 #   (revenir à Cloudflare Access pour tous : remplis mode access, deploie, acces <e-mail de Cal>)
 #
 # Réglages (pour un essai sur une copie ; défauts = la production) : WRANGLER, PORTE_CLE_FICHIER, PORTAIL_RELANCE,
@@ -55,7 +57,7 @@ a_remplir_liste() { grep -v '^[[:space:]]*//' "$CONF" | grep -o '"<[^"]*>"' | tr
 a_remplir() { [ -n "$(a_remplir_liste)" ]; }
 
 plan() {
-  sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
   cat <<'EOF'
 
 L'ordre (étude, « La vraie porte : les gestes, dans l'ordre ») :
@@ -290,11 +292,17 @@ lien() {
   case "$mode" in code|demo) ;; *) faux "la porte publique est en mode « $mode » : pas de lien d'invitation (bash tools/porte.sh code)" ;; esac
   url=$(val_lien url); l=$(val_lien lien); inv=$(val_lien invitation); adm=$(val_lien admin)
   [ -n "$url" ] || faux "pas d'adresse publique (mode « $mode »)"
-  dit "porte         $mode · $url"
-  dit "pour un ami   $l"
-  dit "              (ou $url/invitation/ et le code $inv) ; puis son pseudo : un pseudo créé d'avance entre aussitôt"
-  dit "              (bash tools/porte.sh ami <pseudo>), un pseudo neuf attend Cal (page Admin)"
-  dit "pour Cal      $url/invitation/$adm   puis le pseudo nico007 (le code admin : ne l'envoyer à personne)"
+  if [ "$(val_lien invitation_requise)" = False ]; then
+    dit "porte         $mode · $url · SANS invitation (bash tools/porte.sh invitation on pour la remettre)"
+    dit "pour un ami   $url   puis le pseudo que Cal a ajouté (Admin → Ajouter quelqu'un, ou bash tools/porte.sh ami <pseudo>) ;"
+    dit "              un pseudo inconnu est refusé"
+  else
+    dit "porte         $mode · $url"
+    dit "pour un ami   $l"
+    dit "              (ou $url/invitation/ et le code $inv) ; puis son pseudo : un pseudo créé d'avance entre aussitôt"
+    dit "              (bash tools/porte.sh ami <pseudo>), un pseudo neuf attend Cal (page Admin)"
+  fi
+  dit "pour un admin $url/invitation/$adm   puis son pseudo (nico007 pour Cal) ; ce lien ne va qu'aux admins"
   dit "              (sa session tient 120 jours ; « nouveaux-codes » ferme toutes les sessions de la porte)"
   return 0
 }
@@ -331,6 +339,37 @@ ami() {
   py --ami "$p" || faux "pseudo non créé"
 }
 
+# porte.invitation (mode « code ») : off = phase d'essai (Cal, 29/09 à 19 h) : on ouvre l'adresse, on tape le pseudo
+# que Cal a ajouté dans Admin, on entre ; un pseudo inconnu est refusé ; un compte admin exige toujours le code admin.
+invitation() {
+  local v=${1:-}
+  case "$v" in on) v=true ;; off) v=false ;; *) faux "usage : invitation <on|off>" ;; esac
+  mkdir -p "$SAUVE_DIR"
+  [ -f "$LOCAL" ] && cp -p "$LOCAL" "$SAUVE_DIR/showrunner.local.json.$(date +%Y%m%d-%H%M%S)"
+  python3 - "$LOCAL" "$v" <<'PY' || faux "réglage non écrit"
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+d = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+porte = d.get("porte") if isinstance(d.get("porte"), dict) else {"mode": d.get("porte") or "demo"}
+porte["invitation"] = sys.argv[2] == "true"
+d["porte"] = porte
+p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+print(json.dumps({"porte": {k: v for k, v in porte.items() if k != "emails"}}, ensure_ascii=False))
+PY
+  $RELANCE || faux "le portail ne repart pas"
+  local mode code adr
+  for _ in $(seq 1 20); do
+    read -r mode code adr < <(sonde_porte)
+    [ "$code" = 000 ] || break
+    sleep 0.5
+  done
+  [ "$code" = 401 ] || faux "sans signature, $adr répond $code (attendu 401)"
+  [ "$mode" = code ] || dit "ATTENTION la porte publique est en mode « $mode » : invitation ne compte qu'en mode « code »"
+  bon "invitation $1 ; porte « $mode » sur $adr : sans la signature du Worker → 401"
+  lien
+}
+
 nouveaux_codes() {
   py --porte-codes-nouveaux > /dev/null || faux "codes non renouvelés"
   bon "nouveaux codes : toutes les sessions ouvertes par la porte sont fermées, les anciens liens ne valent plus"
@@ -341,6 +380,7 @@ case "${1:-}" in
   code) code_ ;;
   lien) lien ;;
   ami) ami "${2:-}" ;;
+  invitation) invitation "${2:-}" ;;
   nouveaux-codes) nouveaux_codes ;;
   verifie) verifie ;;
   cle) cle ;;

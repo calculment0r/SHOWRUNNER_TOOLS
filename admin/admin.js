@@ -125,37 +125,50 @@ function render(force = false) {
 }
 
 // ── A · les demandes ────────────────────────────────────────
-// Inviter d'avance (Cal, 29/09 : « un login simple genre su007 ») : un pseudo créé ici est déjà accepté ; l'ami
-// ouvre le lien d'invitation (le code est dedans), tape ce pseudo, et entre sans attendre.
+// Ajouter quelqu'un d'avance (Cal, 29/09 : « un login simple genre su007 », puis « je veux les rentrer côté
+// dashboard admin ») : un pseudo créé ici est déjà accepté. Sans invitation (porte.invitation = false), l'ami ouvre
+// l'adresse, tape ce pseudo et entre ; un admin, lui, ouvre d'abord le lien du code admin.
 async function loadPorte() {
   try { S.porte = await api('admin/porte'); } catch { S.porte = null; }
 }
+const copier = (txt, quoi) => el('button', { class: 'tb ghost sm', type: 'button', onclick: async () => {
+  try { await navigator.clipboard.writeText(txt); toast(`${quoi} copié`); } catch { toast(txt); }
+} }, 'Copier');
 function inviter() {
   const p = S.porte || {};
+  S.addRole ||= 'ami';
   const name = el('input', { class: 'fld', placeholder: 'su007', maxlength: 24, autocomplete: 'off', spellcheck: 'false',
-    autocapitalize: 'none', 'aria-label': 'le pseudo de l’ami' });
-  const create = el('button', { class: 'tb', type: 'submit' }, 'Créer ce pseudo');
+    autocapitalize: 'none', 'aria-label': 'le pseudo', value: S.addName || '', oninput: (e) => { S.addName = e.target.value; } });
+  const role = el('div', { class: 'seg' }, ...[['ami', 'ami·e'], ['admin', 'admin']].map(([v, lab]) =>
+    el('button', { class: 'tb' + (S.addRole === v ? ' on' : ''), type: 'button', onclick: () => { S.addRole = v; render(true); } }, lab)));
   const lien = p.lien || '';
+  const admLine = el('div', { class: 'row', hidden: true }, el('span', { class: 'lbl' }, 'lien admin'),
+    el('b', { class: 'acct-code' }, p.lien_admin || ''), el('span', { class: 'sp' }), copier(p.lien_admin || '', 'lien admin'));
   return el('div', { class: 'card' },
-    el('div', { class: 'card-head' }, el('span', { class: 'nm' }, 'Inviter un ami'),
-      el('span', { class: 'chip' }, p.mode ? `porte · ${p.mode}` : 'porte')),
-    el('p', { class: 'adm-note' }, 'Un pseudo créé ici est déjà accepté : ton ami ouvre le lien, tape ce pseudo, et entre sans attendre. ',
-      'Un pseudo qui imite un admin ou ressemble trop à un autre est refusé.'),
+    el('div', { class: 'card-head' }, el('span', { class: 'nm' }, 'Ajouter quelqu’un'),
+      el('span', { class: 'chip' }, p.mode ? `porte · ${p.mode}${p.mode === 'code' ? (p.invitation_requise ? ' · sur invitation' : ' · sans invitation') : ''}` : 'porte')),
+    el('p', { class: 'adm-note' }, 'Un pseudo ajouté ici est déjà accepté : il entre en le tapant, sans attendre. ',
+      p.invitation_requise === false ? 'Sans invitation, un pseudo que tu n’as pas ajouté est refusé. ' : '',
+      'Un admin entre par l’adresse publique avec le code admin : donne-lui le lien admin, puis son pseudo.'),
     el('form', { class: 'row', onsubmit: (e) => {
       e.preventDefault();
       const v = name.value.trim();
       if (!v) { name.focus(); return; }
-      act(() => post('admin/users', { name: v }), `« ${v} » peut entrer`);
-    } }, name, create),
+      const r = S.addRole;
+      S.addName = '';
+      act(() => post('admin/users', { name: v, role: r }), r === 'admin'
+        ? `« ${v} » ajouté, admin : donne-lui le lien admin` : `« ${v} » peut entrer`);
+    } }, name, role, el('button', { class: 'tb', type: 'submit' }, 'Ajouter')),
     lien
-      ? el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'le lien à lui envoyer'),
-        el('b', { class: 'acct-code' }, lien), el('span', { class: 'sp' }),
-        el('button', { class: 'tb ghost sm', type: 'button', onclick: async () => {
-          try { await navigator.clipboard.writeText(lien); toast('lien copié'); } catch { toast(lien); }
-        } }, 'Copier'))
+      ? el('div', { class: 'row' }, el('span', { class: 'lbl' }, p.invitation_requise === false ? 'l’adresse à lui envoyer' : 'le lien à lui envoyer'),
+        el('b', { class: 'acct-code' }, lien), el('span', { class: 'sp' }), copier(lien, 'lien'))
       : el('p', { class: 'why' }, p.mode === 'access'
         ? 'porte « access » : tes amis entrent par leur e-mail (la politique Cloudflare Access), pas par un lien'
-        : 'pas de lien d’invitation : la porte publique n’est ni « code » ni une démo en route (tools/porte.sh code)'));
+        : 'pas de lien : la porte publique n’est ni « code » ni une démo en route (tools/porte.sh code)'),
+    p.lien_admin ? el('div', { class: 'row' }, el('span', { class: 'sp' }),
+      el('button', { class: 'tb ghost sm', type: 'button', onclick: (e) => { admLine.hidden = !admLine.hidden;
+        e.target.textContent = admLine.hidden ? 'Montrer le lien admin' : 'Cacher le lien admin'; } }, 'Montrer le lien admin')) : null,
+    admLine);
 }
 
 function demandes() {

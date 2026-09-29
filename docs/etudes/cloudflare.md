@@ -159,6 +159,29 @@ refuse le rôle `code`) jusqu'au geste 1. Aucun n'ouvre rien ; l'ordre 1 → 2
 Revenir à Access : `remplis mode access`, `deploie`, `acces <e-mail>`, et
 recréer l'application (« La vraie porte : les gestes », étape 5).
 
+### Sans invitation, pour la phase d'essai (29/09, 19 h)
+
+Cal : « vire-moi ces invitations […] je veux les rentrer côté dashboard
+admin […] là c'est juste pour tester ». Réglage `porte.invitation = false`
+(mode « code » seulement ; défaut `true`) : on ouvre l'adresse, on tape le
+pseudo que Cal a ajouté (Admin → A · Demandes → « Ajouter quelqu'un », rôle
+ami ou admin), on entre. **Un pseudo inconnu est refusé** (« demande à Cal de
+t'ajouter »), sans demande en attente. **Un compte admin garde le code
+admin** (sinon `nico007` tapé par n'importe qui serait admin : le trou du
+28/09) ; un admin ajouté par Cal reçoit le lien du code admin (Admin :
+« Montrer le lien admin », ou `tools/porte.sh lien`), puis tape son pseudo.
+Une session ouverte sans invitation est liée au code d'invitation en cours
+(`_door_mark`) : `nouveaux-codes` la ferme aussi. Le Worker n'a rien à
+changer : les pages sont des assets, `/api/auth/…` passe déjà sans cookie,
+`ESSAIS` bride les pseudos tapés par adresse. Qui voit quoi : `visibility`
+vaut « all » par défaut (`DEFAULT_SETTINGS`) et n'est pas changé dans
+`auth.json` en ligne (relevé du 29/09) : les amis voient la bibliothèque
+comme Cal ; seul le propriétaire (ou un admin) modifie.
+
+```sh
+ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && bash tools/porte.sh invitation off'  # on | off ; relancé, vérifié, puis le lien
+```
+
 ### Les commandes
 
 ```sh
