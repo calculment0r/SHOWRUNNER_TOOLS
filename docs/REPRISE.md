@@ -64,13 +64,10 @@ invitation `/invitation/<code>`, code admin pour Cal ; les pseudos neufs attende
 
 ## Prêt sur le PC, pas encore en ligne (sauvegardé dans `wip/travail-en-cours`)
 
-- **Idéation · objets du prototype** (formes, cartes, mind map, crayon, guides, regrouper par
-  couleur, modèles ; `ideation/objets/**` + canvas, menus, selection, groups, inspector,
-  `ideation.py`) : fini, 1090/1090, 80/80 ; **son `ideation.py` appelle
-  `ideation_collab.need`** : il part avec la co-édition. Copie d'essai `/tmp/sr_ide_obj` (:8824).
-- **Idéation · co-édition** (+ rôles propriétaire / éditeur / spectateur, inviter, suivre) :
-  agent en cours au moment de la coupure (`ideation/collab.*`, `coedition.js`,
-  `ideation_collab.py`, `/tmp/sr_ide_coed` :8825). Relire son état sur le PC.
+- **Idéation · objets du prototype et co-édition : EN LIGNE** (1d70b78, 1108/1108 ; pilotes objets
+  80/80, co-édition 48/48, groupes 41/41, fils 18/18). Restes : un invité par lien devient un ami
+  du portail (il faudrait un état « invité » dans `core/auth.py`) ; registres de co-édition trop
+  larges (cases d'un composeur, texte d'une note) ; la barre d'Idéation passe sur deux lignes.
 - **Étude Apps / Studio et éléments liés** : `docs/etudes/apps_studio_elements.md` (source
   vivante → versions publiées → usages épinglés, pastille « vN+1 », accès apps | studio) ;
   6 questions à Cal (recommandations : oui, oui, à la main, propriétaire + Cal, Apps par défaut,
