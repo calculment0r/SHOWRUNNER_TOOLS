@@ -501,17 +501,22 @@ def api_plan(req):
     return _plan(p)
 
 
+def submit(p: dict, tool: str = "music") -> dict:
+    """Met en file une séparation déjà jugée (stems_params) ; partagé par ODIO
+    et par l'app Musique (server/tools/chanson.py, `tool` = « chanson »)."""
+    it = library.get(p["src"])
+    pin = None
+    if mode() == "reel" and MODELS[p["model"]]["runner"] in ("asep", "chain"):
+        pin = _local_audio_endpoint()      # le sous-processus et Demucs sur la même machine
+    return jobs.submit("music.stems", p, title=f"Séparer · {it.get('title') or it['id']}"[:90], tool=tool, pin=pin)
+
+
 def api_separate(req):
     try:
         p = stems_params(req.json())
     except (ValueError, TypeError) as e:
         raise HttpError(400, str(e)) from e
-    it = library.get(p["src"])
-    pin = None
-    if mode() == "reel" and MODELS[p["model"]]["runner"] in ("asep", "chain"):
-        pin = _local_audio_endpoint()      # le sous-processus et Demucs sur la même machine
-    j = jobs.submit("music.stems", p, title=f"Séparer · {it.get('title') or it['id']}"[:90], tool="music", pin=pin)
-    return jobs.public(j)
+    return jobs.public(submit(p))
 
 
 # ── les deux moteurs ────────────────────────────────────────

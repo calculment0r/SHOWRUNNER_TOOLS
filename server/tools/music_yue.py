@@ -888,11 +888,10 @@ def test_song(path: Path, p: dict, sr: int = 48000) -> str:
             f"V:Vocal\n{notes if not p['instrumental'] else 'z4 | z4 |'}\n")
 
 
-def run_test(ctx):
-    p = yue_params(ctx.params)
-    ctx.progress(0.1, "mélodie d'essai (moteur factice)")
-    t0 = time.time()
-    dest = ctx.workdir / "essai_yue.wav"
+def fake_render(dest: Path, p: dict) -> str:
+    """Le rendu d'essai d'une chanson (réglages de yue_params) dans `dest`
+    (WAV) ; rend la partition qu'on entend. Partagé par music.yue et par
+    l'app Musique (server/tools/chanson.py)."""
     if abc_tools():
         # comme YuE2 : d'abord une partition (la sienne, ou une d'essai dans le
         # dialecte natif), puis le son qu'elle dit — la partition rangée est
@@ -902,10 +901,19 @@ def run_test(ctx):
         score = p["abc"] or fake_abc(p["seed"], bpm, 4, 9, "minor", [["verse", bars]], sing=not p["instrumental"],
                                      chords=p["mode"] == "full")
         abc_song(dest, score, p["duration_s"])
-    else:
-        score = p["abc"] or test_song(dest, p)
-        if p["abc"]:
-            test_song(dest, p)
+        return score
+    score = p["abc"] or test_song(dest, p)
+    if p["abc"]:
+        test_song(dest, p)
+    return score
+
+
+def run_test(ctx):
+    p = yue_params(ctx.params)
+    ctx.progress(0.1, "mélodie d'essai (moteur factice)")
+    t0 = time.time()
+    dest = ctx.workdir / "essai_yue.wav"
+    score = fake_render(dest, p)
     ctx.check()
     secs = round(time.time() - t0, 1)
     it = ctx.add(dest, kind="audio", title=f"{p['title']} (essai)", prompt=p["tags"],

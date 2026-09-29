@@ -1,0 +1,168 @@
+/* ============================================================
+   MUSIQUE (l'app) — la chanson à créer | tes chansons
+   Les règles du thème : aucune couleur en dur (tout vient de
+   commun/tokens.css, la forme d'onde comprise : elle lit `color` et
+   `--played` du canvas), des filets et jamais de bordures, un seul
+   .tb.go par écran (Créer, au pied du rail), les capitales pour la
+   machine, la prose en bas de casse.
+   ============================================================ */
+
+.ch-studio { grid-template-columns: 360px minmax(0, 1fr); max-width: 1480px; }
+@media (max-width: 1380px) { .ch-studio { grid-template-columns: 340px minmax(0, 1fr); } }
+@media (max-width: 860px) {
+  .ch-studio { grid-template-columns: 1fr; }
+  .ch-studio .rail { position: static; max-height: none; overflow: visible; }
+}
+
+/* ── le rail ────────────────────────────────────────────── */
+.ch-studio .rail { gap: 8px; padding-bottom: 0; scrollbar-gutter: stable; }
+.ch-pan {
+  background: var(--panel); border-radius: var(--r3); padding: 10px var(--s4) 12px;
+  display: flex; flex-direction: column; gap: 8px; box-shadow: inset 0 0 0 1px var(--line);
+}
+.ch-pan-h { display: flex; align-items: center; gap: var(--s3); min-height: 20px; }
+.ch-pan-h .lbl { color: var(--ink2); }
+.ch-pan-h .r { margin-left: auto; }
+.ch-pan textarea.fld { font-size: 12.5px; }
+.ch-fake {
+  padding: 1px 6px; border-radius: var(--r1); cursor: help;
+  font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--amb); background: var(--amb-bg); box-shadow: inset 0 0 0 1px var(--line-amb);
+}
+
+.ch-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.ch-chips .opt { padding: 4px 8px; font-size: 10.5px; }
+.seg.ch-full { display: flex; width: 100%; }
+.seg.ch-full .tb { flex: 1; min-width: 0; padding: 0 4px; }
+textarea.fld.ch-lyr { min-height: 150px; font-family: var(--f-mono); font-size: 11px; letter-spacing: 0; line-height: 1.6; }
+.ch-lyr-h { display: flex; align-items: center; gap: 6px; }
+.ch-lyr-h .sp { flex: 1; }
+.tb[aria-disabled="true"] { opacity: .45; }
+.ch-note { margin: 0; font-size: 11px; line-height: 1.45; color: var(--ink3); }
+.ch-note.warn { color: var(--amb); }
+
+/* la référence son : une zone de dépôt, puis le son et le geste */
+.ch-drop {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--r2);
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink3); font-size: 11.5px;
+}
+.ch-drop .sp { flex: 1; }
+.ch-drop.drop-on { box-shadow: inset 0 0 0 1px var(--line-cy); background: var(--cy-bg); color: var(--ink); }
+.ch-ref {
+  display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 8px; align-items: center;
+  padding: 6px 8px; border-radius: var(--r2); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line);
+}
+.ch-ref .t { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-ref small { display: block; font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
+.ch-ref.drop-on { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.ch-x { width: 22px; height: 22px; border-radius: 50%; color: var(--ink3); font-size: 14px; line-height: 22px; text-align: center; }
+.ch-x:hover { color: var(--ink); background: var(--panel3); }
+
+/* la qualité : des mots simples */
+.ch-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.opt.ch-preset { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 8px 11px; }
+.opt.ch-preset b { font-weight: 600; font-size: 12.5px; color: var(--ink); letter-spacing: .02em; }
+.opt.ch-preset span { font-size: 10.5px; color: var(--ink3); line-height: 1.35; }
+.opt.ch-preset.on span { color: var(--ink2); }
+.opt.off { opacity: .45; cursor: not-allowed; }
+
+/* les paramètres avancés : fermés par défaut */
+details.ch-adv { display: flex; flex-direction: column; background: var(--panel); border-radius: var(--r3); padding: 6px var(--s4); box-shadow: inset 0 0 0 1px var(--line); }
+details.ch-adv > summary { list-style: none; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+details.ch-adv > summary::-webkit-details-marker { display: none; }
+details.ch-adv > summary::before {
+  content: ""; width: 5px; height: 5px; margin-right: 2px; flex: none;
+  box-shadow: inset -1px -1px 0 var(--ink3); transform: rotate(-45deg); transition: transform .15s;
+}
+details.ch-adv[open] > summary::before { transform: rotate(45deg); }
+details.ch-adv > summary .r { margin-left: auto; font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
+.ch-advin { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px 10px; align-items: center; padding: 8px 0 8px; }
+.ch-advin > .lbl { line-height: 1.3; }
+.ch-advin .fld { padding: 6px 9px; font-size: 11.5px; }
+.ch-models { display: flex; flex-direction: column; gap: 4px; }
+.opt.ch-model { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; text-align: left; }
+.opt.ch-model b { font-weight: 500; font-size: 11.5px; }
+.opt.ch-model small { margin: 0; }
+
+/* l'action, toujours visible au pied du rail */
+.ch-act {
+  position: sticky; bottom: 0; z-index: 2; padding: 8px 0 12px; display: flex; flex-direction: column; gap: 6px;
+  background: var(--bg); box-shadow: 0 -16px 14px -6px var(--bg);
+}
+.ch-act .tb.go { height: 38px; font-size: 12px; }
+.ch-act .why { text-align: center; }
+
+/* ── tes chansons ───────────────────────────────────────── */
+.ch-head { display: flex; align-items: center; gap: 10px; min-height: 32px; }
+.ch-head .sp { flex: 1; }
+.ch-head .n { font-family: var(--f-mono); font-size: 9px; letter-spacing: .14em; color: var(--ink3); }
+.ch-list { display: flex; flex-direction: column; gap: 8px; }
+.ch-empty { padding: 48px 16px; text-align: center; border-radius: var(--r3); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+.ch-empty b { display: block; font-weight: 500; font-size: 14px; color: var(--ink2); margin-bottom: 6px; }
+.ch-empty span { font-size: 12px; color: var(--ink3); }
+
+.ch-song {
+  display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: var(--r3);
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
+}
+.ch-song.on { box-shadow: inset 3px 0 0 var(--cy), inset 0 0 0 1px var(--line-cy); }
+.ch-song.fresh { box-shadow: inset 0 0 0 1px var(--line-gr); }
+.ch-top { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.ch-play {
+  width: 38px; height: 38px; border-radius: 50%; background: var(--panel2); color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line); font-size: 12px; display: flex; align-items: center; justify-content: center;
+}
+.ch-play:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.ch-play.on { background: var(--cy-bg); color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.ch-play svg { width: 13px; height: 13px; fill: currentColor; }
+.ch-tx { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ch-tx b { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-meta { font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-meta .e { color: var(--amb); }
+.ch-wavebox { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+canvas.ch-wave { display: block; width: 100%; height: 56px; cursor: pointer; color: var(--ink3); --played: var(--cy); }
+.ch-song.on canvas.ch-wave { color: var(--ink2); }
+.ch-time { font-family: var(--f-mono); font-size: 9px; letter-spacing: .08em; color: var(--ink3); min-width: 76px; text-align: right; }
+.ch-acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ch-lock {
+  margin-left: 6px; padding: 0 4px; border-radius: 2px; font-family: var(--f-mono); font-size: 7px; letter-spacing: .14em;
+  color: var(--amb); background: var(--amb-bg); box-shadow: inset 0 0 0 1px var(--line-amb); line-height: 12px;
+}
+.ch-busy { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--cy); }
+.ch-busy.err { color: var(--or); }
+
+/* les pistes séparées d'une chanson */
+.ch-stems { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.ch-stems > .lbl { margin-right: 4px; }
+.ch-stem {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px 0 7px; border-radius: var(--r1);
+  background: var(--panel2); color: var(--ink2); font-size: 11px; box-shadow: inset 0 0 0 1px var(--line);
+}
+.ch-stem:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.ch-stem.on { color: var(--cy); background: var(--cy-bg); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.ch-stem svg { width: 9px; height: 9px; fill: currentColor; }
+
+/* les rendus en file et en cours */
+.ch-pend {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; padding: 10px 14px;
+  border-radius: var(--r3); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
+}
+.ch-pend b { font-weight: 500; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-pend small { display: block; font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--cy); margin-top: 2px; }
+.ch-pend.err small { color: var(--or); }
+.ch-pend .acts { display: flex; gap: 4px; }
+.ch-pend .bar { grid-column: 1 / -1; height: 3px; border-radius: 2px; background: var(--panel3); overflow: hidden; }
+.ch-pend .bar i { display: block; height: 100%; background: var(--grn2); transition: width .4s; }
+
+/* le Studio : ce que c'est, et le demander */
+.ch-studio-modal .modal-body p { margin: 0 0 10px; font-size: 13px; line-height: 1.55; color: var(--ink2); }
+.ch-studio-modal .modal-body p.asked { color: var(--amb); font-size: 12px; }
+
+@media (max-width: 560px) {
+  .ch-song { padding: 10px 11px; }
+  canvas.ch-wave { height: 44px; }
+  .ch-wavebox { grid-template-columns: 1fr; gap: 2px; }
+  .ch-time { text-align: left; }
+  .ch-advin { grid-template-columns: 1fr; gap: 4px; }
+  .ch-presets { grid-template-columns: 1fr; }
+}

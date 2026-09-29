@@ -1,0 +1,10 @@
+{
+  "tool": "chanson",
+  "title": "Musique",
+  "about": "L'écoute des chansons de l'app.",
+  "prefs": [
+    {
+      "key": "autoplay", "label": "Écouter une chanson dès qu'elle arrive", "type": "toggle", "default": false
+    }
+  ]
+}

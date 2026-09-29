@@ -31,6 +31,7 @@ export const TOOLS = [
   { id: 'upscale',   k: 'SR—09', name: 'Upscale',           path: 'upscale/',  sub: 'images · vidéos · netteté' },
   // accroche Transcrire (29/09, docs/etudes/transcrire.md) : une app, côté Apps (tier, apps_studio_elements.md § 3.7)
   { id: 'transcrire', k: 'SR—10', name: 'Trans­crire',  path: 'transcrire/', sub: 'transcription · traduction · sous-titres', tier: 'app' },
+  { id: 'chanson', k: 'SR—11', name: 'Musique', path: 'chanson/', sub: 'une chanson par prompt · reprise', tier: 'app' },
 ];
 // les pages du portail qui ne sont pas des outils (pas de carte à l'accueil)
 const PAGES = { admin: { id: 'admin', k: 'SR—AD', name: 'Admin' } };
