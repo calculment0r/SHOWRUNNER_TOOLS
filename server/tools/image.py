@@ -1509,6 +1509,41 @@ def selftest(call, ok) -> None:
                                              "mask": durl, "dry": True})
     ok(st == 200 and MASK_RX.fullmatch(r.get("params", {}).get("mask", "")), f"image : une zone peinte est gardée ({st} {str(r)[:200]})")
     ok(zone_box(mk, (96, 64), least=16) == (22, 12, 67, 57), "image : la boîte de zone, élargie, reste dans l'image")
+    # une zone reprise d'une image réutilisée : son nom de masque suffit
+    zone = (r or {}).get("params", {}).get("mask", "")
+    st, r = call("POST", "/api/image/edit", {"source": iid, "tool": "instruct", "model": "qwen21", "prompt": "a blue hat",
+                                             "mask": zone, "dry": True})
+    ok(st == 200 and r.get("params", {}).get("mask") == zone, f"image : Réutiliser une édition reprend sa zone ({st})")
+
+    # le fil (29/09) : la page charge le composant commun ; Recréer relance la recette
+    st, page = call("GET", "/image/")
+    ok(st == 200 and b"../commun/fil.css" in page and b'id="fil"' in page, "image : la page porte le fil commun")
+    ijs = (REPO / "image" / "image.js").read_text(encoding="utf-8")
+    ok("createFil(" in ijs and "image/redo" in ijs and "reuse" in ijs, "image : image.js passe par le fil, Réutiliser, Recréer")
+    css = re.sub(r"/\*.*?\*/", "", (REPO / "image" / "image.css").read_text(encoding="utf-8"), flags=re.S)
+    ok(not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", css), "image.css : aucune couleur en dur (tokens.css seulement)")
+    ok(not re.search(r"(?<![\w-])border(-(top|right|bottom|left))?\s*:(?!\s*(none|0)\b)", css), "image.css : des filets, jamais de bordures")
+    import tempfile
+    tmp = Path(tempfile.mkdtemp()) / "phare.png"
+    Image.new("RGB", (48, 64), (10, 20, 30)).save(tmp)
+    rec = check_generate({"model": "krea2", "prompt": "a lighthouse", "aspect": "3:4", "seed": 11, "looks": {"lens": "35"}})
+    made = library.add_file(tmp, kind="image", title="phare", prompt="a lighthouse", params={"job": "image.generate", **rec},
+                            origin={"tool": "image", "model": "krea2-factice"})
+    st, r1 = call("POST", "/api/image/redo", {"item": made["id"], "variations": 1})
+    j1 = (r1 or {}).get("jobs") or []
+    ok(st == 200 and len(j1) == 1 and j1[0]["params"]["seed"] != 11 and j1[0]["params"]["prompt"] == "a lighthouse"
+       and j1[0]["params"]["aspect"] == "3:4" and j1[0]["params"]["looks"] == {"lens": "35"},
+       f"image : Recréer = la même recette, une nouvelle graine ({st} {str(r1)[:200]})")
+    st, r0 = call("POST", "/api/image/redo", {"item": made["id"]})
+    j0 = (r0 or {}).get("jobs") or []
+    ok(st == 200 and len(j0) == 1 and j0[0]["params"]["seed"] == 11, "image : Recréer à l'identique = la même graine")
+    st, r4 = call("POST", "/api/image/redo", {"item": made["id"], "variations": 4})
+    j4 = (r4 or {}).get("jobs") or []
+    ok(st == 200 and len(j4) == 4 and len({j["params"]["seed"] for j in j4}) == 4, "image : 4 variations, 4 graines")
+    for j in j1 + j0 + j4:
+        call("POST", f"/api/jobs/{j['id']}/cancel")
+    st, _ = call("POST", "/api/image/redo", {"item": iid})
+    ok(st == 409, f"image : Recréer une image déposée (sans recette) est refusé avec la raison ({st})")
 
     if not cf_available():
         print("  (Character Factory absent : graphes Krea 2 / Qwen 2.1 non construits)")

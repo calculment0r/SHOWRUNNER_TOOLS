@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>MOVIE CREATOR · SHOWRUNNER</title>
-<meta name="description" content="Des plans vidéo avec H3 : texte, images de début et de fin, entrées appelées par @image1, @element1… ; et le banc pour comparer deux plans.">
+<title>VIDÉO · SHOWRUNNER</title>
+<meta name="description" content="Des plans vidéo avec H3 : texte, images de début et de fin, entrées appelées par @image1, @element1… ; le fil des vidéos ; le banc pour comparer deux plans.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Azeret+Mono:wght@300;400;500&display=swap">
@@ -12,27 +12,28 @@
 <link rel="stylesheet" href="../commun/base.css">
 <link rel="stylesheet" href="../commun/shell.css">
 <link rel="stylesheet" href="../commun/entrees.css">
+<link rel="stylesheet" href="../commun/menu.css" data-sr-menu>
+<link rel="stylesheet" href="../commun/fil.css">
 <link rel="stylesheet" href="./movie.css">
 </head>
 <!-- Mise en page reprise de H3 Studio (github.com/underworldhistory1-ctrl/minimax-h3-higgsfield,
-     MIT, Copyright (c) 2026 Charles Mod), redessinée dans le thème du portail. -->
+     MIT, Copyright (c) 2026 Charles Mod), redessinée dans le thème du portail ; depuis le 29/09,
+     sur le modèle de Higgsfield : les réglages à gauche, le fil des vidéos au centre. -->
 <body data-view="create" data-mode="t2v">
-<nav class="subnav" aria-label="Movie Creator">
-  <button class="on" data-view="create" type="button">Créer une vidéo</button>
-  <button data-view="cmp" type="button">Comparer</button>
-  <span class="sp"></span>
-  <span class="pill" id="engine-pill"><i></i><span>moteur</span></span>
-</nav>
-
 <main class="movie" id="studio">
 
-  <!-- ── le rail de création ─────────────────────────────── -->
+  <!-- ── la colonne des réglages ─────────────────────────── -->
   <aside class="rail" id="rail" aria-label="réglages">
+    <nav class="rail-tabs" aria-label="Vidéo">
+      <button class="on" data-view="create" type="button">Créer</button>
+      <button data-view="cmp" type="button">Comparer</button>
+    </nav>
     <div class="rail-scroll" id="create">
       <div class="model-card">
         <span class="lbl k">Modèle · H3</span>
         <b>MiniMax H3</b>
         <span class="sub">vidéo et son natif · 24 i/s</span>
+        <span class="pill" id="engine-pill"><i></i><span>moteur</span></span>
         <span class="wm" aria-hidden="true">H3</span>
       </div>
 
@@ -109,7 +110,8 @@
             <div class="field"><label class="lbl" for="steps">Pas</label><input class="fld" id="steps" inputmode="numeric" placeholder="auto"></div>
             <div class="field"><label class="lbl" for="seed">Graine</label>
               <div class="row nowrap"><input class="fld" id="seed" inputmode="numeric" placeholder="au hasard">
-                <button class="tb ghost sm" id="seed-rand" type="button" title="tirer une graine">⚄</button></div></div>
+                <button class="tb ghost sm" id="seed-rand" type="button" title="tirer une graine">⚄</button>
+                <button class="tb ghost sm" id="seed-orig" type="button" hidden>d’origine</button></div></div>
           </div>
           <div class="seg presets" id="step-presets"></div>
           <div class="estimate" id="estimate"></div>
@@ -137,7 +139,7 @@
       <div class="c-head"><h2>Comparer</h2><span class="sec">A / B</span></div>
       <div class="ab-slot a" id="slot-a"></div>
       <div class="ab-slot b" id="slot-b"></div>
-      <span class="hint">déposez une vidéo sur A ou B (du disque, ou une carte des vidéos glissée), choisissez dans la bibliothèque, ou prenez les boutons A et B des vidéos ; les réglages qui diffèrent sont marqués sous le moniteur</span>
+      <span class="hint">déposez une vidéo sur A ou B (du disque, ou une vignette du fil glissée), choisissez dans la bibliothèque, ou dans le fil : ⋯ → Comparer → en A, en B ; les réglages qui diffèrent sont marqués sous le moniteur</span>
       <div class="keys"><kbd>espace</kbd>lecture <kbd>←</kbd><kbd>→</kbd>image <kbd>1</kbd>…<kbd>5</kbd>modes <kbd>[</kbd><kbd>]</kbd>rideau <kbd>molette</kbd>zoom sous le curseur <kbd>glisser</kbd>déplacer <kbd>L</kbd>boucle <kbd>S</kbd>échanger <kbd>A</kbd><kbd>B</kbd><kbd>M</kbd>écoute</div>
     </div>
 
@@ -145,32 +147,13 @@
       <button class="tb go block" id="go" type="button">Générer la vidéo →</button>
       <div class="why" id="why"></div>
       <div class="notes" id="notes"></div>
-      <span class="small">le rendu continue si la page se ferme ; les vidéos restent dans la bibliothèque jusqu'à leur suppression</span>
+      <span class="small">le rendu paraît en tête du fil dès l'envoi ; il continue si la page se ferme</span>
     </div>
   </aside>
 
-  <!-- ── l'espace de travail ─────────────────────────────── -->
+  <!-- ── le fil des vidéos, ou le banc ───────────────────── -->
   <section class="wspace" id="work">
-    <div class="pane" id="view">
-      <div class="stage-top"><h2>Espace de travail</h2><span class="lbl">générer · revoir · garder</span></div>
-      <div class="viewer" id="stage"></div>
-      <div class="out" id="progress-card">
-        <div class="status"><span id="st-label">rien en cours</span><span id="st-pct">—</span></div>
-        <div class="bar" id="st-bar"><i></i></div>
-        <div class="status"><span id="st-elapsed">—</span><span id="st-left">restant : —</span></div>
-        <div class="status q"><span id="st-queue">file : —</span><button class="tb ghost sm" id="st-cancel" type="button" hidden>Annuler le rendu</button></div>
-      </div>
-      <div class="out" id="result-card" hidden>
-        <div class="row"><h3>Vidéo en cours</h3><span class="sp"></span><span class="lbl" id="res-meta"></span></div>
-        <p id="res-title"></p>
-        <div class="acts">
-          <button class="tb ghost" id="res-pin" type="button">Épingler</button>
-          <button class="tb ghost" id="res-details" type="button">Réglages</button>
-          <a class="tb ghost" id="res-dl" download>Télécharger</a>
-          <button class="tb ghost" id="res-del" type="button">Supprimer</button>
-        </div>
-      </div>
-    </div>
+    <div class="pane" id="view"><div id="fil"></div></div>
 
     <div class="pane" id="bench" hidden>
       <div class="monitor" id="monitor" tabindex="0" aria-label="moniteur de comparaison">
@@ -181,7 +164,7 @@
         <div class="tag b"><b>B</b><i class="spk" id="spkB" title="on écoute B">♪</i><span id="tagB">—</span></div>
         <div class="zoombadge" id="zoomBadge" hidden></div>
         <div class="readout" id="readout">00:00.00</div>
-        <div class="empty" id="benchEmpty"><b>Deux plans</b><span class="lbl">choisissez A et B : à gauche, ou dans les vidéos plus bas</span></div>
+        <div class="empty" id="benchEmpty"><b>Deux plans</b><span class="lbl">choisissez A et B : à gauche, ou dans le fil (⋯ → Comparer)</span></div>
       </div>
       <div class="transport">
         <button class="tb go" id="bPlay" title="lecture / pause (espace)"><svg viewBox="0 0 24 24" id="icoPlay"><path d="M7 4l13 8-13 8z"/></svg></button>
@@ -210,16 +193,7 @@
       <div class="diffline" id="diffline"></div>
       <div class="metas"><div class="meta a" id="metaA"></div><div class="meta b" id="metaB"></div></div>
     </div>
-
   </section>
-
-  <!-- ── la file et les vidéos générées (la bibliothèque, filtrée sur l'outil) ── -->
-  <aside class="lib" id="lib" aria-label="vidéos générées">
-    <div class="lib-head"><h2>Vidéos générées</h2><span class="lbl" id="lib-count"></span><span class="sp"></span>
-      <div class="seg" id="lib-seg"><button class="tb on" data-h="movie" type="button">Movie Creator</button><button class="tb" data-h="all" type="button">Toute la bibliothèque</button></div></div>
-    <div class="vgrid" id="vgrid"></div>
-    <button class="tb ghost more" id="lib-more" type="button" hidden>Voir plus</button>
-  </aside>
 </main>
 <script type="module" src="./movie.js"></script>
 </body>

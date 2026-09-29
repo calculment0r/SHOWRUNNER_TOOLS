@@ -754,7 +754,7 @@ officielles illisibles sans JavaScript).
    et un travail `movie.cloud` qui appelle **le Router** (un modèle, pas de
    workflow à maintenir), relit l'état toutes les quelques secondes, range
    la vidéo dans la bibliothèque avec son coût. Le nombre d'ouvriers de la
-   voie = le nombre de rendus nuage simultanés. Movie Creator gagne
+   voie = le nombre de rendus nuage simultanés. L'outil Vidéo gagne
    « Seedance 2.5 », « Kling 3 », « Veo 3.1 » à côté d'H3 ; chaque pastille
    dit le prix avant l'envoi.
 2. **Machines éteintes** : le même appel, depuis le Durable Object de

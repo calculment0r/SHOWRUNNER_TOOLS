@@ -15,7 +15,7 @@ Les études : `docs/etudes/`.
 |---|---|---|
 | Asset | `asset/` | la bibliothèque : images, éléments, vidéos, sons |
 | Image | `image/` | Z-Image, Qwen-Image 2.1, Krea 2 ; édition ; caméra, objectif, pellicule |
-| Movie Creator | `movie/` | H3 : image → vidéo (première image), références → vidéo ; le banc A/B |
+| Vidéo | `movie/` | H3 : image → vidéo (première image), références → vidéo ; le banc A/B (ex « Movie Creator », renommé par Cal le 29/09) |
 | Character Factory | dépôt `Character_Factory`, studio sur DGX1 | carte vers le studio ; ses personnages deviennent des éléments |
 | Object Creator | `objet/` | chaîne séparée des personnages (décision du 28/09) |
 | Montage | `montage/` | timeline, découpe, export ffmpeg |

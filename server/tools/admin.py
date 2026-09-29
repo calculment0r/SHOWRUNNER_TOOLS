@@ -29,7 +29,7 @@ from core.http import HttpError
 # chaque outil comprend (la ligne est dite dans `doc`)
 config.declare_switch("image_backend", ["stub", "comfyui"], label="Image · moteur", default="stub",
                       doc="server/tools/image.py, backend() : stub (factice) ou comfyui")
-config.declare_switch("movie_engine", ["factice", "h3"], label="Movie Creator · moteur", default="factice",
+config.declare_switch("movie_engine", ["factice", "h3"], label="Vidéo · moteur", default="factice",
                       doc="server/tools/movie.py, engine() : factice (ffmpeg) ou h3 (ComfyUI-H3TEST :8189, démarré à la demande)")
 config.declare_switch("music_engine", ["factice", "ace-step"], label="Musique · moteur", default="factice",
                       doc="server/tools/music.py, engine() : factice ou ace-step (ACE-Step 1.5 et Demucs sur ComfyUI)")

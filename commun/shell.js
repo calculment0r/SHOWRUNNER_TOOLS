@@ -15,7 +15,7 @@ const API = window.SR_API ? new URL(window.SR_API, location.href) : new URL('api
 export const TOOLS = [
   { id: 'asset',     k: 'SR—00', name: 'Asset',             path: 'asset/',    sub: 'images · éléments · vidéos · sons' },
   { id: 'image',     k: 'SR—01', name: 'Image',             path: 'image/',    sub: 'Z-Image · Qwen 2.1 · Krea 2 · édition' },
-  { id: 'movie',     k: 'SR—02', name: 'Movie Creator',     path: 'movie/',    sub: 'image → vidéo · références → vidéo · banc' },
+  { id: 'movie',     k: 'SR—02', name: 'Vidéo',             path: 'movie/',    sub: 'image → vidéo · références → vidéo · banc' },
   { id: 'character', k: 'SR—03', name: 'Character Factory', path: 'character/', sub: 'du visage au rig' },
   { id: 'object',    k: 'SR—04', name: 'Object Creator',    path: 'objet/',    sub: 'une image, des vues, un mesh' },
   { id: 'montage',   k: 'SR—05', name: 'Montage',           path: 'montage/',  sub: 'timeline · découpe · export' },

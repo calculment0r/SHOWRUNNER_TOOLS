@@ -1,0 +1,45 @@
+/* ============================================================
+   SHOWRUNNER TOOLS — le menu commun (commun/menu.js)
+   Clic droit, bouton « ⋯ », sous-menus : une seule présentation pour
+   tous les outils. Chargé par menu.js, rien à ajouter dans les pages.
+   ============================================================ */
+
+.sr-menu {
+  position: fixed; z-index: 90; min-width: 220px; max-width: 340px; max-height: 76vh; overflow: auto;
+  padding: 5px; border-radius: var(--r3); background: var(--panel2);
+  box-shadow: inset 0 0 0 1px var(--line), 0 18px 44px var(--drop-lg);
+  display: flex; flex-direction: column;
+  font-family: var(--f-ui); font-size: 12px; color: var(--ink);
+}
+.sr-menu:focus { outline: none; }
+.sr-menu .head {
+  padding: 7px 10px 3px; color: var(--or);
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .18em; text-transform: uppercase;
+}
+.sr-menu .sep { height: 1px; margin: 4px 6px; background: var(--line); flex: none; }
+.sr-menu .mi {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px 10px;
+  border-radius: var(--r2); text-align: left; font-size: 12px; color: var(--ink); flex: none;
+}
+.sr-menu .mi:hover:not([aria-disabled="true"]),
+.sr-menu .mi.on:not([aria-disabled="true"]) { background: var(--panel3); }
+.sr-menu .mi[aria-disabled="true"] { opacity: .38; cursor: default; }
+.sr-menu .mi .ic { width: 14px; flex: none; text-align: center; color: var(--ink2); }
+.sr-menu .mi .dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.sr-menu .mi .lb { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-menu .mi .key,
+.sr-menu .mi .sub {
+  margin-left: auto; padding-left: 12px; flex: none;
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3);
+}
+.sr-menu .mi .arr { margin-left: auto; padding-left: 12px; color: var(--ink3); flex: none; }
+.sr-menu .mi.danger .lb, .sr-menu .mi.danger .ic { color: var(--or); }
+.sr-menu .mi[aria-checked="true"] .ic { color: var(--cy); }
+
+/* le bouton « ⋯ » */
+.sr-kebab {
+  display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r2);
+  background: var(--veil); color: var(--ink); font-size: 15px; line-height: 1; letter-spacing: .05em;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.sr-kebab:hover, .sr-kebab[aria-expanded="true"] { background: var(--panel3); }

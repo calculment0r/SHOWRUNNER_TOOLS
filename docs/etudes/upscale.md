@@ -2,7 +2,7 @@
 
 Cal, 29/09 : « il faudra un upscale aussi ». Il fait des images et des films photoréalistes :
 l'outil agrandit et affine **les images et les vidéos** de la bibliothèque — un portrait de
-Character Factory, une photo de l'outil Image, un plan H3 de Movie Creator (768 à 1344 px) porté
+Character Factory, une photo de l'outil Image, un plan H3 de l'outil Vidéo (768 à 1344 px) porté
 en 1080p ou en 4K.
 
 **Statut** : étude sur documentation, inventaire lu sur les deux DGX, **aucun rendu fait**
@@ -29,7 +29,7 @@ de l'outil Image (`tools.image.edit_graph`, « Affiner ×2 »), importés, jamai
   estimé — ou pourquoi il ne passera pas. Un seul bouton orange.
 - **Résultat** : avant/après en **rideau**, **côte à côte**, avant seul, après seul ; une **loupe
   1:1** qui suit la souris (la même zone : l'avant agrandi simplement | l'après pixel pour pixel) ;
-  pour une vidéo, la **lecture synchronisée** des deux (le banc A/B de Movie Creator : l'une suit
+  pour une vidéo, la **lecture synchronisée** des deux (le banc A/B de l'outil Vidéo : l'une suit
   l'autre à 0,06 s près), image par image, boucle, son de l'une ou de l'autre. La file de la page,
   l'historique ; « Ouvrir dans la bibliothèque », « Envoyer au montage » (`montage/?add=<id>`),
   « Télécharger ».
@@ -58,7 +58,7 @@ Lu par `ls ~/ComfyUI/models/*`, `ls ~/ComfyUI/custom_nodes`, `GET /object_info` 
 
 Les upscalers latents (LTX, H3 Latent Upscaler-Plus, SesquiLSR) agrandissent **pendant une
 génération** (un second passage du même modèle, README de chacun) : ils ne prennent pas une vidéo
-finie. Ils relèvent de Movie Creator, pas de cet outil.
+finie. Ils relèvent de l'outil Vidéo, pas de cet outil.
 
 Gabarits officiels lus dans `comfyui_workflow_templates_json` 0.1.95 (DGX2) :
 `utility_seedvr2_3b_int8_upscale_image`, `utility_seedvr2_7b_int8_upscale_image`,

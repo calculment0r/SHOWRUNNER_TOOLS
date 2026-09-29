@@ -5,14 +5,21 @@
 // seule vérité : modèles, tailles, pastilles et prompt envoyé viennent de
 // /api/image/*.
 //
-// La colonne de droite est la file et l'historique vivants : une demande
-// envoyée y paraît aussitôt (sa place dans la file, sa progression,
-// « Arrêter »), ses images s'y posent en arrivant, groupées par demande
-// (`params.batch`). Un clic montre une image au centre sans rien arrêter.
+// La page (Cal, 29/09, sur le modèle de Higgsfield) : les réglages à gauche
+// — la même colonne que l'outil Vidéo, onglets Créer | Éditer —, le fil au
+// centre (commun/fil.js), en grille : les rendus en file et en cours en tête,
+// puis les images ; un clic ouvre la visionneuse plein écran, la molette passe
+// d'une image à l'autre ; au survol, aimer, réutiliser, recréer, télécharger,
+// et le menu ⋯ (le même au clic droit). « Réutiliser » recharge le prompt, les
+// références, le modèle et les réglages dans le formulaire, graine vidée :
+// « Générer » fait une variante.
+//
 // Tout emplacement qui attend une image accepte un dépôt (fichier du disque →
 // bibliothèque, catégorie Upload ; ou une vignette glissée) : `dropZone` du
 // socle ; toute vignette d'ici se glisse (`dragItem`).
 import { mountHeader, api, jobs, pick, refBoard, toast, el, $, href, fmtDate, dropZone, dragItem } from '../commun/shell.js';
+import { menu } from '../commun/menu.js';
+import { createFil } from '../commun/fil.js';
 
 mountHeader('image', { sub: 'créer · éditer' });
 
@@ -22,41 +29,32 @@ const S = {
   cfg: null,
   mode: 'create',
   model: 'krea2', variant: 'turbo', prompt: '', looks: {}, aspect: '3:4', quality: '', count: 2, seed: '', realism: true,
-  refs: [], refChoice: {},
-  edit: { tool: 'instruct', model: 'krea2', prompt: '', keepFace: true, factor: 2, denoise: 0.25,
-    azimuth: '', elevation: '', distance: '', count: 1, seed: '', looks: {}, refs: [] },
+  refs: [], refChoice: {}, origSeed: null,
+  edit: { tool: 'instruct', model: 'krea2', prompt: '', keepFace: true, factor: 2, denoise: 0.25, mask: '',
+    azimuth: '', elevation: '', distance: '', count: 1, seed: '', looks: {}, refs: [], origSeed: null },
   transparent: false,
-  current: null, parent: null, compare: false, open: {}, mine: new Map(),
+  current: null, open: {},
   sent: '', notes: [],
   paint: { on: false, size: 48, canvas: null, for: null, dirty: false },
-  // la colonne : les images de l'outil, le filtre, ce qui vient d'arriver
-  items: [], total: 0, hist: 'all', fresh: new Set(), done: new Set(), cells: new Map(), autoShow: new Set(),
-  session: sessionStart(),
+  // la file : ce que la page a lancé (suivi un à un), ce qui est arrivé, ce qu'on a retiré
+  mine: new Map(), done: new Set(), gone: new Set(), lastList: [], session: new Date().toISOString(),
 };
-
-// le début de cette session : le premier chargement de la page dans cet onglet
-function sessionStart() {
-  try {
-    let s = sessionStorage.getItem('sr-image-session');
-    if (!s) { s = new Date().toISOString(); sessionStorage.setItem('sr-image-session', s); }
-    return s;
-  } catch { return new Date().toISOString(); }
-}
+let fil = null;
 
 // ── le brouillon : une commodité de ce navigateur ───────────
 function saveDraft() {
   try {
-    const { model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, open } = S;
+    const { model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, open, origSeed } = S;
     const edit = { ...S.edit, refs: S.edit.refs.map((r) => r.id) };
-    localStorage.setItem(KEY, JSON.stringify({ model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, open,
-      refs: S.refs.map((r) => r.id), edit, mode: S.mode, current: S.current?.id, hist: S.hist }));
+    localStorage.setItem(KEY, JSON.stringify({ model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, open, origSeed,
+      refs: S.refs.map((r) => r.id), edit, mode: S.mode, current: S.current?.id }));
   } catch { /* stockage fermé : rien à garder */ }
 }
 async function loadDraft() {
   let d = null;
   try { d = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { d = null; }
   if (!d) return null;
-  for (const k of ['model', 'variant', 'prompt', 'looks', 'aspect', 'quality', 'count', 'seed', 'realism', 'transparent', 'refChoice', 'open', 'hist']) {
+  for (const k of ['model', 'variant', 'prompt', 'looks', 'aspect', 'quality', 'count', 'seed', 'realism', 'transparent', 'refChoice', 'open', 'origSeed']) {
     if (d[k] !== undefined && d[k] !== null) S[k] = d[k];
   }
   const fetchAll = async (ids) => (await Promise.all((ids || []).map((id) => api('library/' + id).catch(() => null)))).filter(Boolean);
@@ -71,6 +69,8 @@ const M = (id) => S.cfg.models.find((m) => m.id === id);
 const stub = () => S.cfg?.backend === 'stub';
 const plural = (n, w, pl = w + 's') => `${n} ${n > 1 ? pl : w}`;
 const fmtS = (s) => (s == null ? '' : s < 60 ? `${Math.round(s * 10) / 10} s` : `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, '0')}`);
+const ms = (iso) => Date.parse(iso || '') || 0;
+const at = (e) => { const r = e.currentTarget.getBoundingClientRect(); return [r.left, r.bottom + 4]; };
 
 // ce que les machines savent faire ; en factice, rien ne bloque (aucun modèle chargé)
 function avail(cap) {
@@ -123,11 +123,10 @@ async function doCompose() {
   } catch (e) { S.sent = ''; S.notes = [e.message]; }
   const box = $('#sent');
   if (box) paintSent(box);
-  const cnt = $('#sent-n');
-  if (cnt) cnt.textContent = S.notes.length ? plural(S.notes.length, 'note') : `${S.sent.split(/\s+/).filter(Boolean).length} mots`;
+  paintAct();
 }
 function paintSent(box) {
-  box.replaceChildren(el('pre', { class: 'sent' }, S.sent || '—'), ...S.notes.map((n) => el('p', { class: 'reason' }, n)));
+  box.replaceChildren(el('pre', { class: 'sent' }, S.sent || '—'));
 }
 const refsParam = (list) => list.map((it) => ({ item: it.id, ...(S.refChoice[it.id] ? { ref: S.refChoice[it.id] } : {}) }));
 
@@ -135,24 +134,31 @@ const refsParam = (list) => list.map((it) => ({ item: it.id, ...(S.refChoice[it.
 function paintRail() {
   const r = $('#rail');
   const top = r.scrollTop;
-  const seg = el('div', { class: 'seg mode' },
-    el('button', { class: 'tb' + (S.mode === 'create' ? ' on' : ''), onclick: () => setMode('create') }, 'Créer'),
-    el('button', { class: 'tb' + (S.mode === 'edit' ? ' on' : ''), onclick: () => setMode('edit') }, 'Éditer'));
+  const seg = el('div', { class: 'seg mode', role: 'tablist' },
+    el('button', { class: 'tb' + (S.mode === 'create' ? ' on' : ''), role: 'tab', onclick: () => setMode('create') }, 'Créer'),
+    el('button', { class: 'tb' + (S.mode === 'edit' ? ' on' : ''), role: 'tab', onclick: () => setMode('edit') }, 'Éditer'));
   r.replaceChildren(seg, ...(S.mode === 'create' ? createPanels() : editPanels()));
   r.scrollTop = top;
   schedCompose();
 }
-function setMode(m) { S.mode = m; S.paint.on = false; saveDraft(); paintRail(); paintStage(); }
+function setMode(m) { S.mode = m; S.paint.on = false; saveDraft(); paintRail(); }
 
-function modelCards(ids, current, onpick, disabled = {}) {
-  return el('div', { class: 'models' }, ...ids.map((id) => {
-    const m = M(id);
-    const off = disabled[id];
-    return el('button', { class: 'opt model' + (current === id ? ' on' : '') + (off ? ' off' : ''), 'aria-disabled': off ? 'true' : null,
-      title: off || m.role, onclick: () => (off ? toast(`${m.name} : ${off}`, 5000) : onpick(id)) },
-    el('span', { class: 'mk' }, m.k), el('b', {}, m.name), el('span', { class: 'role' }, off || m.role),
-    el('span', { class: 'cap' }, off ? 'indisponible ici' : m.refs ? `${m.refs} réf. au plus` : 'texte seul'));
-  }));
+// la carte du modèle : son nom, ce qu'il fait, « Changer » (le menu des modèles)
+function modelCard(ids, current, onpick, disabled = {}, extra = null) {
+  const m = M(current);
+  const change = el('button', { class: 'tb ghost sm', type: 'button', 'aria-haspopup': 'menu', title: 'choisir un autre modèle',
+    onclick: (e) => {
+      const [x, y] = at(e);
+      menu(x, y, [{ head: 'Modèle' }, ...ids.map((id) => {
+        const it = M(id);
+        const off = disabled[id] || '';
+        return { label: it.name, sub: it.refs ? `${it.refs} réf.` : 'texte seul', checked: current === id, disabled: !!off,
+          why: off ? `${it.name} : ${off}` : '', title: it.role, onclick: () => onpick(id) };
+      })]);
+    } }, 'Changer');
+  return el('section', { class: 'mcard' },
+    el('div', { class: 'mc-h' }, el('span', { class: 'mk' }, m.k), el('span', { class: 'sp' }), change),
+    el('b', {}, m.name), el('span', { class: 'role' }, m.role), extra);
 }
 
 // ── créer ───────────────────────────────────────────────────
@@ -160,48 +166,74 @@ function createPanels() {
   fixQuality();
   const m = M(S.model);
   const out = [];
-  out.push(pan('Modèle', null, modelCards(['zimage', 'qwen21', 'krea2'], S.model, (id) => {
+  out.push(modelCard(['zimage', 'qwen21', 'krea2'], S.model, (id) => {
     S.model = id;
     if (S.refs.length > M(id).refs) S.refs = S.refs.slice(0, M(id).refs);
     fixQuality(); saveDraft(); paintRail();
-  }), variantRow(m)));
+  }, {}, variantRow(m)));
+  out.push(refsPanel(m));
 
-  const ta = el('textarea', { class: 'fld prompt', rows: 6, placeholder: promptHint(),
+  const ta = el('textarea', { class: 'fld prompt', id: 'prompt', rows: 6, placeholder: promptHint(),
     oninput: (e) => { S.prompt = e.target.value; saveDraft(); schedCompose(); paintAct(); } });
   ta.value = S.prompt;
   out.push(pan('Prompt', 'en anglais', ta, tokenRow(ta, S.refs, 1)));
-  out.push(refsPanel(m));
-  out.push(el('div', { class: 'looks-h' }, el('span', { class: 'lbl' }, 'Prise de vue'),
-    el('button', { class: 'tb ghost sm', title: 'tout retirer', disabled: Object.values(S.looks).some(Boolean) ? null : true,
-      onclick: () => { S.looks = {}; saveDraft(); paintRail(); } }, 'aucune')));
-  for (const g of S.cfg.looks) out.push(lookGroup(g, S.looks, 'generate'));
 
+  // format, taille, nombre : trois pavés, chacun son menu (comme la barre de Higgsfield)
   const sizes = m.sizes[S.quality];
-  out.push(pan('Format', sizes[S.aspect] ? `${sizes[S.aspect][0]} × ${sizes[S.aspect][1]}` : '',
-    el('div', { class: 'aspects' }, ...S.cfg.aspects.map((a) => {
-      const [w, h] = a.split(':').map(Number);
-      const wh = sizes[a];
-      return el('button', { class: 'opt asp' + (S.aspect === a ? ' on' : ''), disabled: wh ? null : true,
-        title: wh ? `${wh[0]} × ${wh[1]}` : `${a} : non documenté en ${m.quality.find((q) => q.id === S.quality).label}`,
-        onclick: () => { S.aspect = a; saveDraft(); paintRail(); } },
-      el('i', { style: { aspectRatio: `${w} / ${h}`, [w >= h ? 'width' : 'height']: '22px' } }), el('span', {}, a));
-    })),
-    el('div', { class: 'opts' }, ...m.quality.map((q) => el('button', { class: 'opt' + (S.quality === q.id ? ' on' : ''),
-      onclick: () => { S.quality = q.id; fixQuality(); saveDraft(); paintRail(); } }, q.label))),
-    el('p', { class: 'hint' }, sizeNote(m))));
+  const qLabel = m.quality.find((q) => q.id === S.quality)?.label || '';
+  const wh = sizes[S.aspect];
+  out.push(el('section', { class: 'params3' },
+    pavé('Format', S.aspect, () => [{ head: `Format · ${qLabel}` }, ...S.cfg.aspects.map((a) => {
+      const x = sizes[a];
+      return { label: a, sub: x ? `${x[0]}×${x[1]}` : '', checked: S.aspect === a, disabled: !x,
+        why: `${a} : non documenté en ${qLabel} pour ${m.name}`, onclick: () => { S.aspect = a; saveDraft(); paintRail(); } };
+    })]),
+    pavé('Taille', qLabel, () => [{ head: 'Taille' }, ...m.quality.map((q) => ({ label: q.label, checked: S.quality === q.id,
+      onclick: () => { S.quality = q.id; fixQuality(); saveDraft(); paintRail(); } }))]),
+    pavé('Nombre', String(S.count), () => [{ head: 'Images par envoi' }, ...[1, 2, 3, 4].map((n) => ({ label: plural(n, 'image'),
+      sub: n > 1 ? 'graines qui se suivent' : '', checked: S.count === n, onclick: () => { S.count = n; saveDraft(); paintRail(); } }))]),
+    el('p', { class: 'hint' }, `${wh ? wh.join(' × ') + ' · ' : ''}${sizeNote(m)}${S.count > 1 ? ` · ${S.count} travaux, les deux DGX les rendent en même temps` : ''}`)));
 
-  out.push(countSeed(S, [1, 2, 3, 4],
-    S.count > 1 ? `${S.count} images, graines qui se suivent : un travail chacune, les deux DGX les rendent en même temps` : ''));
-  out.push(sentPanel());
+  const chosen = S.cfg.looks.map((g) => g.items.find((x) => x.id === S.looks[g.id])?.name).filter(Boolean);
+  out.push(fold('looks', 'Prise de vue', chosen.join(' · '),
+    el('div', { class: 'row' }, el('p', { class: 'hint' }, 'caméra, objectif, ouverture, pellicule, lumière : des phrases ajoutées au prompt'),
+      el('button', { class: 'tb ghost sm', title: 'tout retirer', disabled: chosen.length ? null : true,
+        onclick: () => { S.looks = {}; saveDraft(); paintRail(); } }, 'aucune')),
+    ...S.cfg.looks.map((g) => lookGroup(g, S.looks, 'generate'))));
+  out.push(advPanel(S));
   out.push(el('div', { class: 'act', id: 'act' }));
   setTimeout(paintAct);
   return out;
+}
+
+// un pavé de réglage : sa valeur, son menu
+function pavé(label, value, items) {
+  return el('button', { class: 'pb', type: 'button', 'aria-haspopup': 'menu', title: `${label} : choisir`,
+    onclick: (e) => { const [x, y] = at(e); menu(x, y, items()); } },
+  el('span', { class: 'lbl' }, label), el('b', {}, value || '—'));
+}
+
+// ce qui est avancé : la graine, et le prompt réellement envoyé
+function advPanel(o) {
+  const seed = el('input', { class: 'fld seed', inputmode: 'numeric', placeholder: 'au hasard', value: o.seed, title: 'la graine : la même graine et la même recette refont la même image',
+    oninput: (e) => { o.seed = e.target.value.replace(/\D/g, ''); e.target.value = o.seed; saveDraft(); } });
+  const box = el('div', { id: 'sent' });
+  paintSent(box);
+  const instruct = S.mode === 'create' || S.edit.tool === 'instruct';
+  return fold('adv-' + S.mode, 'Avancé', o.seed ? `graine ${o.seed}` : 'graine au hasard',
+    el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'Graine'), el('span', { class: 'sp' }), seed,
+      el('button', { class: 'tb ghost sm', title: 'une graine au hasard', onclick: () => { o.seed = String(Math.floor(Math.random() * 1e9)); seed.value = o.seed; saveDraft(); } }, 'dé'),
+      o.origSeed != null ? el('button', { class: 'tb ghost sm', title: `la graine de l’image réutilisée : ${o.origSeed} — la même recette refait la même image`,
+        onclick: () => { o.seed = String(o.origSeed); seed.value = o.seed; saveDraft(); } }, 'd’origine') : null),
+    instruct ? el('div', { class: 'field' }, el('span', { class: 'lbl' }, 'Prompt envoyé'), box) : null);
 }
 
 function paintAct() {
   const box = $('#act');
   if (!box) return;
   let label; let why; let info;
+  const notes = (S.mode === 'create' || S.edit.tool === 'instruct') ? S.notes : [];
+  const noteEls = notes.map((n) => el('p', { class: 'reason' }, n));
   if (S.mode === 'create') {
     const m = M(S.model);
     const a = avail(capCreate());
@@ -209,17 +241,17 @@ function paintAct() {
     label = S.count > 1 ? `Générer ${S.count} images` : 'Générer';
     const wh = m.sizes[S.quality]?.[S.aspect];
     info = `${m.name} · ${wh ? wh.join(' × ') : ''}${a.on?.length ? ' · ' + a.on.join(' + ') : ''}`;
-    box.replaceChildren(el('button', { class: 'tb go block', disabled: why ? true : null, onclick: generate }, label),
+    box.replaceChildren(...noteEls, el('button', { class: 'tb go block', disabled: why ? true : null, onclick: generate }, label),
       el('p', { class: why ? 'why' : 'hint' }, why || info));
     return;
   }
   const E = S.edit;
   const a = avail(capEdit());
-  label = { instruct: E.mask || S.paint.dirty ? 'Éditer la zone' : 'Éditer', matte: 'Détourer', upscale: `Agrandir ×${E.factor}`,
+  label = { instruct: (E.mask || (S.paint.dirty && S.paint.for === S.current?.id)) ? 'Éditer la zone' : 'Éditer', matte: 'Détourer', upscale: `Agrandir ×${E.factor}`,
     refine: 'Affiner ×2', angle: 'Tourner la caméra' }[E.tool] || 'Éditer';
   why = !S.current ? 'choisissez l’image à éditer' : !a.ok ? `modèle absent — ${a.why}`
     : (E.tool === 'instruct' && !E.prompt.trim()) ? 'écrivez une consigne' : '';
-  box.replaceChildren(el('button', { class: 'tb go block', disabled: why ? true : null, onclick: editRun }, label),
+  box.replaceChildren(...noteEls, el('button', { class: 'tb go block', disabled: why ? true : null, onclick: editRun }, label),
     el('p', { class: why ? 'why' : 'hint' }, why || (a.on?.length ? `sur ${a.on.join(' + ')}` : '')));
 }
 
@@ -234,6 +266,7 @@ function promptHint() {
   return 'Décrivez l’image en anglais, en phrases détaillées : le sujet, le lieu, la lumière.';
 }
 
+// le panneau propre au modèle : ses variantes, ses options
 function variantRow(m) {
   if (m.id === 'zimage') {
     return el('div', { class: 'opts sub' }, ...m.variants.map((v) => {
@@ -331,24 +364,9 @@ function lookGroup(g, looks, mode) {
     })));
 }
 
-function sentPanel() {
-  const box = el('div', { id: 'sent' });
-  paintSent(box);
-  const d = el('details', { class: 'ipan fold', open: S.open.sent ? true : null },
-    el('summary', { class: 'ipan-h' }, el('span', { class: 'lbl' }, 'Prompt envoyé'), el('span', { class: 'r set', id: 'sent-n' }, '…')), box);
-  d.addEventListener('toggle', () => { S.open.sent = d.open; saveDraft(); });
-  return d;
-}
-
-function countSeed(o, counts, note = '') {
-  const seed = el('input', { class: 'fld seed', inputmode: 'numeric', placeholder: 'au hasard', value: o.seed, title: 'la graine : la même graine et la même recette refont la même image',
-    oninput: (e) => { o.seed = e.target.value.replace(/\D/g, ''); e.target.value = o.seed; saveDraft(); } });
-  return pan('Nombre · graine', null, el('div', { class: 'row' },
-    el('div', { class: 'seg' }, ...counts.map((n) => el('button', { class: 'tb' + (o.count === n ? ' on' : ''),
-      onclick: () => { o.count = n; saveDraft(); paintRail(); } }, String(n)))),
-    el('span', { class: 'sp' }), seed,
-    el('button', { class: 'tb ghost sm', title: 'une graine au hasard', onclick: () => { o.seed = String(Math.floor(Math.random() * 1e9)); seed.value = o.seed; saveDraft(); } }, 'dé')),
-  note ? el('p', { class: 'hint' }, note) : null);
+function countRow(o, counts) {
+  return pan('Nombre', null, el('div', { class: 'seg' }, ...counts.map((n) => el('button', { class: 'tb' + (o.count === n ? ' on' : ''),
+    onclick: () => { o.count = n; saveDraft(); paintRail(); } }, String(n)))));
 }
 
 // ── éditer ──────────────────────────────────────────────────
@@ -370,24 +388,31 @@ const QUICK = {
   ],
 };
 
+function setSource(it) {
+  if (!it || it.kind !== 'image') return;
+  if (S.current?.id !== it.id) { S.edit.mask = ''; if (S.paint.for !== it.id) clearPaint(); }
+  S.current = it;
+  saveDraft(); paintRail();
+}
+
 function editPanels() {
   const out = [];
   const src = S.current;
-  const pickSrc = async () => { const [it] = await pick({ kinds: ['image'], title: 'L’image à éditer' }); if (it) pickShow(it); };
+  const pickSrc = async () => { const [it] = await pick({ kinds: ['image'], title: 'L’image à éditer' }); if (it) setSource(it); };
   // l'emplacement de l'image à éditer : un dépôt (fichier ou vignette) la remplace
-  const srcZone = (node) => dropZone(node, { kinds: ['image'], multiple: false, via: VIA, onitems: ([it]) => pickShow(it) });
+  const srcZone = (node) => dropZone(node, { kinds: ['image'], multiple: false, via: VIA, onitems: ([it]) => setSource(it) });
   if (!src || src.kind !== 'image') {
     out.push(srcZone(pan('Image à éditer', 'déposez-la ici',
       el('div', { class: 'dropslot' }, el('b', {}, '+'),
-        el('span', {}, 'Glissez une image ici — un fichier de votre disque, ou une vignette de l’historique à droite.')),
+        el('span', {}, 'Glissez une image ici — un fichier de votre disque, ou une vignette du fil. Ou, sur une image du fil : ⋯ → Éditer.')),
       el('button', { class: 'tb ghost block', onclick: pickSrc }, 'Choisir dans la bibliothèque'))));
     out.push(el('div', { class: 'act', id: 'act' }));
     setTimeout(paintAct);
     return out;
   }
   out.push(srcZone(pan('Image à éditer', `${src.width || '?'} × ${src.height || '?'}`,
-    el('div', { class: 'srcrow' }, dragItem(el('span', { class: 'srcim', title: 'glissez-la vers les références',
-      style: { backgroundImage: `url(${href(src.thumb_url || src.url)})` } }), src),
+    el('div', { class: 'srcrow' }, dragItem(el('button', { class: 'srcim', type: 'button', title: 'la voir en grand — elle se glisse aussi vers les références',
+      style: { backgroundImage: `url(${href(src.thumb_url || src.url)})` }, onclick: () => fil?.open(src) }), src),
     el('div', { class: 'srcnm' }, el('b', {}, src.title || src.id), el('small', {}, src.origin?.model || src.origin?.tool || '')),
     el('button', { class: 'tb ghost sm', onclick: pickSrc }, 'changer')),
     el('p', { class: 'hint' }, 'une autre image se dépose ici pour la remplacer'))));
@@ -396,7 +421,7 @@ function editPanels() {
   out.push(pan('Outil', null, el('div', { class: 'tools' }, ...S.cfg.edit_tools.map((t) => {
     const a = t.off ? { ok: false } : avail(t.id === 'instruct' ? (E.model === 'krea2' ? 'krea2:edit' : 'qwen21') : t.id);
     return el('button', { class: 'opt tool' + (E.tool === t.id ? ' on' : '') + (t.off ? ' off' : ''), title: t.off || (a.ok ? t.about : a.why),
-      onclick: () => { E.tool = t.id; S.paint.on = false; saveDraft(); paintRail(); paintStage(); } },
+      onclick: () => { E.tool = t.id; S.paint.on = false; saveDraft(); paintRail(); } },
     el('b', {}, t.name), el('small', {}, t.sub));
   }))));
 
@@ -409,13 +434,13 @@ function editPanels() {
   out.push(el('p', { class: 'hint tool-about' }, tool?.about || ''));
 
   if (E.tool === 'instruct') {
-    out.push(pan('Modèle', null, modelCards(['qwen21', 'krea2', 'zimage'], E.model, (id) => {
+    out.push(modelCard(['qwen21', 'krea2', 'zimage'], E.model, (id) => {
       E.model = id;
       const max = M(id).refs - 1;
       if (E.refs.length > max) E.refs = E.refs.slice(0, max);
       saveDraft(); paintRail();
-    }, { zimage: 'n’édite pas par consigne (Z-Image-Edit n’est pas publié) — il sait affiner : outil « Affiner ×2 »' })));
-    const ta = el('textarea', { class: 'fld prompt', rows: 5, placeholder: E.model === 'qwen21'
+    }, { zimage: 'n’édite pas par consigne (Z-Image-Edit n’est pas publié) — il sait affiner : outil « Affiner ×2 »' }));
+    const ta = el('textarea', { class: 'fld prompt', id: 'prompt', rows: 5, placeholder: E.model === 'qwen21'
       ? 'La consigne, en anglais : « Change the jacket in <image1> to a red leather jacket »'
       : 'La consigne, en anglais : « Recolor the jacket to red leather »',
     oninput: (e) => { E.prompt = e.target.value; saveDraft(); schedCompose(); paintAct(); } });
@@ -443,15 +468,15 @@ function editPanels() {
     out.push(el('label', { class: 'tog' }, el('input', { type: 'checkbox', checked: E.keepFace ? true : null,
       onchange: (e) => { E.keepFace = e.target.checked; saveDraft(); schedCompose(); } }),
     el('span', {}, 'Garder le visage'), el('small', {}, E.model === 'qwen21' ? 'phrase du gabarit officiel Qwen 2.1' : 'phrase de Character Factory, banc du 28/09')));
-    out.push(countSeed(E, [1, 2, 3, 4]));
-    out.push(sentPanel());
+    out.push(countRow(E, [1, 2, 3, 4]));
+    out.push(advPanel(E));
   } else if (E.tool === 'upscale') {
     out.push(pan('Facteur', null, el('div', { class: 'opts' }, ...[2, 4].map((f) => {
       const big = Math.max(src.width || 0, src.height || 0) * f;
       return el('button', { class: 'opt' + (E.factor === f ? ' on' : ''), disabled: big > 8192 ? true : null,
         title: big > 8192 ? 'plus de 8192 px' : '', onclick: () => { E.factor = f; saveDraft(); paintRail(); } }, `×${f}`,
       el('small', {}, `${(src.width || 0) * f} × ${(src.height || 0) * f}`));
-    })), el('p', { class: 'hint' }, 'SeedVR2 7B en un pas : l’image agrandie en Lanczos puis restaurée, couleurs recalées sur l’originale (gabarit officiel ComfyUI, repris de Character Factory).')));
+    })), el('p', { class: 'hint' }, 'SeedVR2 7B en un pas : l’image agrandie en Lanczos puis restaurée, couleurs recalées sur l’originale (gabarit officiel ComfyUI, repris de Character Factory). Pour une vidéo, ou d’autres modèles : l’outil Upscale.')));
   } else if (E.tool === 'refine') {
     const val = el('span', { class: 'val' }, E.denoise.toFixed(2));
     out.push(pan('Débruitage', null, el('div', { class: 'slide' },
@@ -467,7 +492,8 @@ function editPanels() {
       oninput: (e) => { E.caption = e.target.value; saveDraft(); } });
     ta.value = E.caption || '';
     out.push(pan('Description', caption && E.caption === caption ? 'reprise de l’image' : '', ta));
-    out.push(countSeed(E, [1, 2]));
+    out.push(countRow(E, [1, 2]));
+    out.push(advPanel(E));
   } else if (E.tool === 'angle') {
     const A = S.cfg.angles;
     if (!E.azimuth) E.azimuth = A.azimuth[1][0];
@@ -477,9 +503,10 @@ function editPanels() {
     const grp = (key, title, list) => pan(title, null, el('div', { class: 'opts' }, ...list.map(([id, name]) => el('button', {
       class: 'opt' + (E[key] === id ? ' on' : ''), title: id, onclick: () => { E[key] = id; saveDraft(); paintRail(); } }, name))));
     out.push(grp('elevation', 'Hauteur', A.elevation), grp('distance', 'Distance', A.distance));
-    out.push(countSeed(E, [1, 2, 3, 4]));
+    out.push(countRow(E, [1, 2, 3, 4]));
     out.push(pan('Prompt envoyé', null, el('pre', { class: 'sent' }, `<sks> ${E.azimuth} ${E.elevation} ${E.distance}`),
       el('p', { class: 'hint' }, 'LoRA fal Multiple-Angles sur Qwen-Image-Edit 2511 (Lightning 4 pas), Apache-2.0 ; les côtés sont ceux du sujet.')));
+    out.push(advPanel(E));
   } else if (E.tool === 'matte') {
     out.push(pan('Détourer', null, el('p', { class: 'hint' }, 'BiRefNet (nœuds natifs de ComfyUI) : un PNG transparent, le sujet seul — le détourage de Character Factory.')));
   }
@@ -502,19 +529,44 @@ function compass(list, E) {
   return box;
 }
 
-// la zone peinte : un masque au pinceau sur l'image, à sa taille réelle
+// ── la zone peinte : un masque au pinceau sur l'image, à sa taille réelle ──
+// On peint dans une grande fenêtre (l'image à sa place, en grand) ; le masque
+// reste d'une ouverture à l'autre, jusqu'à « Effacer » ou une autre image.
 function zonePanel() {
   const P = S.paint;
-  const has = P.dirty && P.for === S.current?.id;
-  return pan('Zone', has ? 'peinte' : 'toute l’image',
+  const painted = P.dirty && P.for === S.current?.id;
+  const reused = !painted && S.edit.mask;
+  return pan('Zone', painted ? 'peinte' : reused ? 'reprise' : 'toute l’image',
     el('div', { class: 'row' },
-      el('button', { class: 'tb sm' + (P.on ? ' on' : ' ghost'), onclick: () => { P.on = !P.on; paintStage(); paintRail(); } },
-        P.on ? 'Peindre : actif' : 'Peindre une zone'),
-      el('button', { class: 'tb ghost sm', disabled: has ? null : true, onclick: () => { clearPaint(); paintStage(); paintRail(); } }, 'Effacer'),
-      el('span', { class: 'sp' }),
-      el('label', { class: 'brush' }, el('span', { class: 'lbl' }, 'pinceau'),
-        el('input', { type: 'range', min: 8, max: 200, value: P.size, oninput: (e) => { P.size = Number(e.target.value); } }))),
+      el('button', { class: 'tb ghost sm', onclick: openPaint }, painted ? 'Reprendre la zone' : 'Peindre une zone'),
+      el('button', { class: 'tb ghost sm', disabled: painted || reused ? null : true,
+        onclick: () => { clearPaint(); S.edit.mask = ''; saveDraft(); paintRail(); } }, 'Effacer')),
+    reused ? el('p', { class: 'hint' }, 'la zone de l’image réutilisée : l’édition reprend le même masque ; « Peindre » en dessine une nouvelle') : null,
     el('p', { class: 'hint' }, 'Seule la zone peinte change : elle est éditée de près puis recollée, bord adouci — le reste de l’image ne bouge pas (méthode du report de visage de Character Factory).'));
+}
+function openPaint() {
+  const it = S.current;
+  if (!it) return;
+  const P = S.paint;
+  P.on = true;
+  const cv = paintCanvas();
+  const wrap = el('div', { class: 'imwrap' }, el('img', { src: href(it.url), alt: '', draggable: 'false' }), cv);
+  const brush = el('input', { type: 'range', min: 8, max: 200, value: P.size, oninput: (e) => { P.size = Number(e.target.value); } });
+  const close = () => {
+    P.on = false; cv.classList.remove('on');
+    if (P.dirty) S.edit.mask = '';   // une zone peinte remplace celle d'une image réutilisée
+    scrim.remove(); document.removeEventListener('keydown', esc, true);
+    saveDraft(); paintRail();
+  };
+  const esc = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+  const scrim = el('div', { class: 'scrim paintm' }, el('div', { class: 'modal lg', role: 'dialog', 'aria-label': 'peindre la zone' },
+    el('div', { class: 'modal-head' }, el('span', { class: 't' }, 'Peindre la zone à changer'), el('span', { class: 'sp' }),
+      el('label', { class: 'brush' }, el('span', { class: 'lbl' }, 'pinceau'), brush),
+      el('button', { class: 'tb ghost sm', onclick: () => clearPaint() }, 'Effacer'),
+      el('button', { class: 'tb sm on', onclick: close }, 'Terminé')),
+    el('div', { class: 'modal-body pm-body' }, wrap)));
+  document.addEventListener('keydown', esc, true);
+  document.body.append(scrim);
 }
 function paintCanvas() {
   const P = S.paint;
@@ -524,13 +576,13 @@ function paintCanvas() {
     P.for = it.id; P.dirty = false;
     let drawing = false;
     const ctx = P.canvas.getContext('2d');
-    const at = (e) => { const r = P.canvas.getBoundingClientRect(); return [(e.clientX - r.left) * P.canvas.width / r.width, (e.clientY - r.top) * P.canvas.height / r.height]; };
+    const pos = (e) => { const r = P.canvas.getBoundingClientRect(); return [(e.clientX - r.left) * P.canvas.width / r.width, (e.clientY - r.top) * P.canvas.height / r.height]; };
     const dot = (e) => {
-      const [x, y] = at(e);
+      const [x, y] = pos(e);
       const r = P.canvas.getBoundingClientRect();
       ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--or').trim();
       ctx.beginPath(); ctx.arc(x, y, (P.size / 2) * P.canvas.width / r.width, 0, Math.PI * 2); ctx.fill();
-      if (!P.dirty) { P.dirty = true; paintRail(); }
+      P.dirty = true;
     };
     P.canvas.addEventListener('pointerdown', (e) => { if (!P.on) return; drawing = true; P.canvas.setPointerCapture(e.pointerId); dot(e); });
     P.canvas.addEventListener('pointermove', (e) => { if (drawing && P.on) dot(e); });
@@ -575,7 +627,7 @@ async function editRun() {
   if (E.seed) body.seed = Number(E.seed);
   if (E.tool === 'instruct') {
     Object.assign(body, { model: E.model, prompt: E.prompt, looks: E.looks, keep_face: E.keepFace, refs: refsParam(E.refs), count: E.count });
-    const mask = maskDataUrl();
+    const mask = maskDataUrl() || E.mask;
     if (mask) body.mask = mask;
   }
   if (E.tool === 'upscale') body.factor = E.factor;
@@ -588,125 +640,97 @@ async function launch(path, body) {
   if (btn) btn.disabled = true;
   let r;
   try { r = await api(path, { method: 'POST', body }); } catch (e) { toast(e.message, 7000); paintAct(); return; }
-  // la première image de chaque demande envoyée s'affichera au centre, tant
-  // qu'on n'a rien choisi d'autre depuis (un clic dans la colonne l'annule)
-  S.autoShow.add(r.batch || r.jobs[0]?.id);
   for (const j of r.jobs) follow(j);
-  toast(r.jobs.length > 1 ? `${r.jobs.length} rendus en file — à droite` : 'en file — à droite');
+  toast(r.jobs.length > 1 ? `${r.jobs.length} rendus en file — en tête du fil` : 'en file — en tête du fil');
   paintAct();
-  paintSide();
+  fil?.paintJobs();
 }
 // les travaux lancés d'ici : suivis un à un (la file commune ne les voit
-// qu'au relevé suivant) ; leurs images se posent dans la colonne en arrivant
+// qu'au relevé suivant) ; leurs images se posent dans le fil en arrivant
 function follow(j) {
   S.mine.set(j.id, j);
-  jobs.wait(j.id, (now) => { S.mine.set(j.id, now); paintSide(); }).then((done) => {
+  jobs.wait(j.id, (now) => { S.mine.set(j.id, now); fil?.paintJobs(); }).then((done) => {
     S.mine.delete(j.id);
-    // un échec reste dans la colonne (Relancer, ×) ; le reste laisse la place à ses images
+    // un échec reste dans le fil (Relancer, ×) ; le reste laisse la place à ses images
     if (done.state === 'error') S.mine.set(j.id, done); else S.done.add(j.id);
-    if (done.state === 'done' && done.items?.length) arrived(done.items, j.params?.batch);
+    if (done.state === 'done' && done.items?.length) fil?.add(done.items);
     else if (done.state === 'error') toast(`échec : ${done.message}`, 9000);
-    paintSide();
+    fil?.paintJobs();
   }).catch(() => { S.mine.delete(j.id); });
 }
-function arrived(items, batch) {
-  for (const it of items) {
-    if (!S.items.some((x) => x.id === it.id)) { S.items.unshift(it); S.total += 1; }
-    S.fresh.add(it.id);
-  }
-  if (S.autoShow.delete(batch)) { S.fresh.delete(items[0].id); show(items[0]); }
-}
 
-// ── la scène ────────────────────────────────────────────────
-async function show(it) {
-  S.current = it; S.compare = false; S.parent = null; S.paint.on = false;
-  try { history.replaceState(null, '', '#' + it.id); } catch { /* sans historique */ }
-  saveDraft();
+// ── la file dans le fil : en file, en cours, et les échecs de la session ──
+const LIVE = ['queued', 'running'];
+const RANK = { queued: 0, running: 1, done: 2, error: 2, cancelled: 2, interrupted: 2 };
+function liveJobs() {
+  const byId = new Map();
+  for (const j of S.lastList) if (j.tool === 'image') byId.set(j.id, j);
+  for (const [id, j] of S.mine) { const cur = byId.get(id); if (!cur || RANK[j.state] >= RANK[cur.state]) byId.set(id, j); }
+  return [...byId.values()].filter((j) => !S.done.has(j.id) && !S.gone.has(j.id)
+    && (LIVE.includes(j.state) || (S.mine.has(j.id) && j.state === 'done')
+      || (['error', 'interrupted'].includes(j.state) && ms(j.created) >= ms(S.session))))
+    .sort((a, b) => ms(b.created) - ms(a.created));
+}
+const onJob = {
+  cancel: (j) => jobs.cancel(j.id).then(() => fil.paintJobs()).catch((e) => toast(e.message)),
+  retry: (j) => jobs.retry(j.id).then((nj) => { S.done.add(j.id); S.mine.delete(j.id); jobs.forget(j.id).catch(() => {}); follow(nj); fil.paintJobs(); })
+    .catch((e) => toast(e.message)),
+  forget: (j) => { S.gone.add(j.id); S.mine.delete(j.id); jobs.forget(j.id).catch(() => {}); fil.paintJobs(); },
+};
+
+const shortModel = (m) => (m || '').replace(/^qwen-edit-2511-angles/, 'angle').replace(/-factice$/, ' · factice')
+  .replace(/-turbo/, '').replace(/-edit(-zone)?/, ' éd.').toUpperCase();
+const TOOL_FR = { instruct: 'consigne', matte: 'détourer', upscale: 'agrandir', refine: 'affiner ×2', angle: 'angle' };
+
+// ── ce que le fil sait d'une image de l'outil ───────────────
+const hasRecipe = (it) => ['image.generate', 'image.edit'].includes(it.params?.job);
+const noRecipe = (it) => (hasRecipe(it) ? '' : 'image sans recette de l’outil Image : déposée, ou faite ailleurs');
+function details(it) {
+  const p = it.params || {};
+  const m = S.cfg.models.find((x) => x.id === p.model);
+  return [
+    ['modèle', it.origin?.model || it.origin?.tool || ''],
+    ['outil', p.job === 'image.edit' ? TOOL_FR[p.tool] || p.tool : p.job === 'image.generate' ? 'créer' : ''],
+    ['taille', it.width ? `${it.width} × ${it.height}` : ''],
+    ['format', p.aspect ? `${p.aspect}${m && p.quality ? ' · ' + (m.quality.find((q) => q.id === p.quality)?.label || p.quality) : ''}` : ''],
+    ['graine', p.seed ?? ''],
+    ['rendu', fmtS(it.render_s)],
+    ['machine', it.origin?.machine || ''],
+    ['dossier', it.folder || ''],
+    ['créée', fmtDate(it.created)],
+  ];
+}
+function extra(it) {
+  const p = it.params || {};
+  const looks = Object.entries(p.looks || {}).filter(([, v]) => v).map(([g, v]) => {
+    const grp = S.cfg.looks.find((x) => x.id === g);
+    return grp?.items.find((x) => x.id === v)?.name || v;
+  });
+  const out = [];
+  if (looks.length) out.push(el('section', { class: 'fv-sec' }, el('span', { class: 'lbl' }, 'Prise de vue'),
+    el('div', { class: 'fv-chips' }, ...looks.map((n) => el('span', { class: 'fl-chip' }, n)))));
+  if (it.prompt && it.prompt !== p.prompt) {
+    out.push(el('section', { class: 'fv-sec' }, el('details', {}, el('summary', { class: 'lbl' }, 'Prompt envoyé au modèle'), el('pre', {}, it.prompt))));
+  }
+  return out;
+}
+// « Avant / après » : l'image éditée contre sa source ; une autre image déposée
+// sur le cadre prend la place de « avant »
+function viewerTools(it, v) {
   const pid = it.parents?.[0];
-  if (pid) {
-    try { const p = await api('library/' + pid); if (p.kind === 'image' && S.current?.id === it.id) S.parent = p; } catch { /* parti */ }
-  }
-  paintStage();
-  if (S.mode === 'edit') paintRail();
-  paintSide();
+  if (!pid || it.params?.job !== 'image.edit') return [];
+  const b = el('button', { class: 'tb sm ghost', type: 'button', title: 'comparer à l’image source ; déposez une autre image sur le cadre pour changer « avant »' }, 'Avant / après');
+  b.onclick = async () => {
+    if (b.classList.contains('on')) { b.className = 'tb sm ghost'; v.reset(); return; }
+    const src = await api('library/' + pid).catch(() => null);
+    if (!src || src.kind !== 'image') { toast('l’image source a quitté la bibliothèque'); return; }
+    b.className = 'tb sm on';
+    const box = el('div', { class: 'cmpbox' }, compareView(src, it));
+    dropZone(box, { kinds: ['image'], multiple: false, via: VIA, onitems: ([x]) => { box.replaceChildren(compareView(x, it)); toast(`« ${x.title} » en « avant »`); } });
+    v.media(box);
+  };
+  return [b];
 }
-// un choix de Cal (clic dans la colonne, dépôt, sélecteur) : l'image arrivée
-// ensuite ne lui passera pas devant
-function pickShow(it) {
-  S.autoShow.clear();
-  // vue une image d'une demande, ses sœurs ne sont plus « nouvelles »
-  const b = it.params?.batch;
-  for (const x of S.items) if (x.id === it.id || (b && x.params?.batch === b)) S.fresh.delete(x.id);
-  return show(it);
-}
-
-function paintStage() {
-  const st = $('#stage');
-  st.replaceChildren(...[
-    stub() ? el('div', { class: 'banner' }, el('b', {}, 'Moteur factice'),
-      el('span', {}, 'les images sont des mires dessinées — aucun modèle n’est chargé. Le câblage réel est en place : « image_backend » : « comfyui » dans showrunner.local.json.')) : null,
-    viewer(), actionBar(), meta()].filter(Boolean));
-}
-
-// les gestes sur l'image montrée : sous elle, pour ne rien cacher de l'image
-function actionBar() {
-  const it = S.current;
-  if (!it) return null;
-  const rec = it.params?.job;
-  const g = (label, fn, title = '', on = false) => el('button', { class: 'tb sm ' + (on ? 'on' : 'ghost'), title, onclick: fn }, label);
-  return el('div', { class: 'vbar' },
-    el('div', { class: 'grp' }, el('span', { class: 'lbl' }, 'Éditer'),
-      g('Consigne', () => editWith('instruct'), 'changer l’image par une phrase, sur tout ou une zone'),
-      g('Détourer', () => editWith('matte')), g('Agrandir', () => editWith('upscale')),
-      g('Affiner', () => editWith('refine')), g('Angle', () => editWith('angle'))),
-    el('div', { class: 'grp' }, el('span', { class: 'lbl' }, 'Recette'),
-      rec ? g('Variations', () => redo(4), 'la même recette, 4 autres graines') : null,
-      rec ? g('Refaire', () => redo(0), 'la même recette, la même graine') : null,
-      !rec ? el('span', { class: 'hint' }, 'image sans recette : déposée ou faite ailleurs') : null),
-    el('span', { class: 'sp' }),
-    el('div', { class: 'grp' },
-      S.parent ? g('Avant / après', () => { S.compare = !S.compare; paintStage(); }, 'comparer à l’image source', S.compare) : null,
-      g('Référence', () => useAsRef(it), 'l’ajouter aux références de « Créer »'),
-      el('a', { class: 'tb ghost sm', href: href(it.url), download: `${(it.title || it.id).replace(/[^\w.-]+/g, '_').slice(0, 60)}${(it.file || '.png').slice((it.file || '.png').lastIndexOf('.'))}` }, 'Télécharger')));
-}
-
-// le grand cadre : on y dépose une image (fichier ou vignette) pour la voir
-// — ou, en avant / après, pour la mettre « avant » et comparer deux images
-function viewerZone(box) {
-  return dropZone(box, { kinds: ['image'], multiple: false, via: VIA, onitems: ([it]) => {
-    if (S.compare && S.current) { S.parent = it; paintStage(); toast(`« ${it.title} » en « avant »`); } else pickShow(it);
-  } });
-}
-
-function viewer() {
-  const it = S.current;
-  if (!it) {
-    return viewerZone(el('div', { class: 'viewer iv' }, el('div', { class: 'empty' },
-      el('b', {}, S.mode === 'edit' ? 'Quelle image ?' : 'Rien encore'),
-      el('span', {}, S.mode === 'edit'
-        ? 'Déposez ici l’image à éditer — un fichier de votre disque ou une vignette de la colonne de droite —, ou choisissez-la à gauche.'
-        : 'Réglez à gauche, puis « Générer » : les rendus paraissent à droite dès l’envoi, leurs images s’y posent en arrivant. Une image déposée ici s’ouvre.'))));
-  }
-  const alpha = /birefnet/.test(it.origin?.model || '') || it.params?.transparent;
-  const box = viewerZone(el('div', { class: 'viewer iv' + (alpha ? ' alpha' : '') }));
-  const painting = S.mode === 'edit' && S.edit.tool === 'instruct';
-  if (S.compare && S.parent) box.append(compareView(S.parent, it));
-  else {
-    const withPaint = painting && (S.paint.on || (S.paint.dirty && S.paint.for === it.id));
-    // l'image se glisse vers les références ou un autre outil, sauf quand on peint dessus
-    const img = el('img', { src: href(it.url), alt: it.title || '', draggable: withPaint ? 'false' : null });
-    if (!withPaint) dragItem(img, it);
-    const wrap = el('div', { class: 'imwrap' }, img);
-    if (withPaint) wrap.append(paintCanvas());
-    box.append(wrap);
-  }
-  const fac = /factice/.test(it.origin?.model || '');
-  box.append(el('div', { class: 'tagm' }, el('b', {}, (it.origin?.model || it.origin?.tool || '').replace(/-factice$/, '').toUpperCase()),
-    el('span', {}, `${it.width || '?'} × ${it.height || '?'}${fac ? ' · factice' : ''}`)));
-  if (S.paint.on && painting) box.append(el('div', { class: 'painthint' }, 'peignez la zone à changer'));
-  return box;
-}
-
 function compareView(a, b) {
   const wrap = el('div', { class: 'cmp' });
   const imA = el('img', { src: href(a.url), alt: 'avant', draggable: 'false' });
@@ -722,255 +746,145 @@ function compareView(a, b) {
   return wrap;
 }
 
-function meta() {
-  const it = S.current;
-  if (!it) return null;
+// ── réutiliser, recréer, et le reste du menu ⋯ ──────────────
+async function reuse(it) {
   const p = it.params || {};
-  const kv = [
-    ['modèle', it.origin?.model || it.origin?.tool || ''],
-    ['taille', it.width ? `${it.width} × ${it.height}` : ''],
-    ['graine', p.seed ?? ''],
-    ['durée', fmtS(it.render_s)],
-    ['machine', it.origin?.machine || ''],
-    ['créée', fmtDate(it.created)],
-  ].filter(([, v]) => v !== '' && v != null);
-  const looks = Object.entries(p.looks || {}).filter(([, v]) => v).map(([g, v]) => {
-    const grp = S.cfg.looks.find((x) => x.id === g);
-    return grp?.items.find((x) => x.id === v)?.name || v;
-  });
-  const lineage = el('div', { class: 'lineage' });
-  (async () => {
-    const got = (await Promise.all((it.parents || []).map((id) => api('library/' + id).catch(() => null)))).filter(Boolean);
-    if (!got.length) return;
-    lineage.replaceChildren(el('span', { class: 'lbl' }, 'Lignée'), ...got.map((x, k) => dragItem(el('button', {
-      class: 'par', title: `${k === 0 && p.job === 'image.edit' ? 'source' : 'référence'} : ${x.title}`,
-      style: { backgroundImage: x.thumb_url ? `url(${href(x.thumb_url)})` : null },
-      onclick: () => (x.kind === 'image' ? pickShow(x) : toast(`${x.title} : un élément de la bibliothèque`)) },
-    el('span', {}, k === 0 && p.job === 'image.edit' ? 'source' : 'réf.')), x)));
-  })();
-  return el('section', { class: 'ipan meta-i' },
-    el('div', { class: 'ipan-h' }, el('span', { class: 'lbl' }, 'L’image'), el('span', { class: 'r' },
-      el('a', { href: href('asset/#' + it.id) }, 'dans Asset'))),
-    el('h2', { class: 'ttl' }, it.title || it.id),
-    el('dl', { class: 'kv' }, ...kv.flatMap(([k, v]) => [el('dt', {}, k), el('dd', {}, String(v))])),
-    looks.length ? el('div', { class: 'opts' }, ...looks.map((n) => el('span', { class: 'chip' }, n))) : null,
-    lineage,
-    it.prompt ? el('details', { class: 'pr' }, el('summary', { class: 'lbl' }, 'Prompt envoyé'), el('pre', { class: 'sent' }, it.prompt)) : null,
-    el('div', { class: 'row' },
-      p.job === 'image.generate' ? el('button', { class: 'tb ghost sm', title: 'le formulaire « Créer » reprend sa recette', onclick: () => takeRecipe(it) }, 'Reprendre ses réglages') : null,
-      el('span', { class: 'sp' }),
-      el('button', { class: 'tb ghost sm', title: 'à la corbeille de la bibliothèque, d’où elle peut revenir (Asset)', onclick: () => trashIt(it) }, 'Corbeille')));
-}
-
-async function trashIt(it) {
-  try { await api(`library/${it.id}/delete`, { method: 'POST' }); } catch (e) { toast(e.message); return; }
-  toast(`« ${it.title} » à la corbeille — elle revient depuis Asset`);
-  S.current = null; S.parent = null;
-  S.items = S.items.filter((x) => x.id !== it.id); S.total = Math.max(0, S.total - 1);
-  S.cells.delete('i:' + it.id);
-  try { history.replaceState(null, '', location.pathname); } catch { /* sans historique */ }
-  saveDraft(); paintStage(); if (S.mode === 'edit') paintRail();
-  paintSide();
-}
-
-function editWith(tool) {
-  S.mode = 'edit'; S.edit.tool = tool; S.paint.on = false;
-  saveDraft(); paintRail(); paintStage();
+  if (p.job === 'image.edit') return reuseEdit(it);
+  Object.assign(S, { model: M(p.model) ? p.model : S.model, prompt: p.prompt || '', looks: { ...(p.looks || {}) }, aspect: p.aspect || S.aspect,
+    quality: p.quality || S.quality, variant: p.variant || S.variant, realism: p.realism ?? S.realism, transparent: !!p.transparent,
+    seed: '', origSeed: p.seed ?? null, mode: 'create' });
+  S.refs = (await Promise.all((p.refs || []).map((r) => api('library/' + r.item).catch(() => null)))).filter(Boolean);
+  for (const r of p.refs || []) if (r.ref) S.refChoice[r.item] = r.ref;
+  const lost = (p.refs || []).length - S.refs.length;
+  fixQuality(); saveDraft(); paintRail();
   $('#rail').scrollTop = 0;
+  $('#prompt')?.focus();
+  toast(`réglages repris${lost ? ` (${plural(lost, 'référence partie', 'références parties')} de la bibliothèque)` : ''} · graine vidée : « Générer » fait une variante`, 5000);
+}
+async function reuseEdit(it) {
+  const p = it.params || {};
+  const src = await api('library/' + p.source).catch(() => null);
+  if (!src || src.kind !== 'image') { toast('l’image source de cette édition a quitté la bibliothèque', 6000); return; }
+  const refs = (await Promise.all((p.refs || []).map((r) => api('library/' + r.item).catch(() => null)))).filter(Boolean);
+  for (const r of p.refs || []) if (r.ref) S.refChoice[r.item] = r.ref;
+  if (S.paint.for !== src.id) clearPaint();
+  S.current = src;
+  S.mode = 'edit';
+  S.edit = { ...S.edit, tool: p.tool, model: p.model || S.edit.model, prompt: p.tool === 'instruct' ? (p.prompt || '') : S.edit.prompt,
+    looks: { ...(p.looks || {}) }, keepFace: p.keep_face ?? S.edit.keepFace, factor: p.factor || S.edit.factor, denoise: p.denoise ?? S.edit.denoise,
+    azimuth: p.azimuth || S.edit.azimuth, elevation: p.elevation || S.edit.elevation, distance: p.distance || S.edit.distance,
+    mask: p.mask || '', refs, seed: '', origSeed: p.seed ?? null };
+  if (p.tool === 'refine') { S.edit.caption = p.prompt || ''; S.edit.captionFor = src.id; }
+  saveDraft(); paintRail();
+  $('#rail').scrollTop = 0;
+  toast(`édition reprise (${TOOL_FR[p.tool] || p.tool}) sur la même source · graine vidée : une variante`, 5000);
+}
+async function redo(it, n) { await launch('image/redo', { item: it.id, variations: n }); }
+function editWith(it, tool) {
+  if (S.paint.for !== it.id) clearPaint();
+  S.current = it; S.mode = 'edit'; S.edit.tool = tool; S.edit.mask = ''; S.paint.on = false;
+  fil?.close();
+  saveDraft(); paintRail();
+  $('#rail').scrollTop = 0;
+  toast(`à gauche : Éditer · ${TOOL_FR[tool]}`);
 }
 function useAsRef(it) {
   if (!M(S.model).refs) S.model = 'krea2';
   const max = M(S.model).refs;
   if (!S.refs.some((r) => r.id === it.id)) S.refs = [...S.refs, it].slice(-max);
   S.mode = 'create';
-  saveDraft(); paintRail(); paintStage();
-  toast(`« ${it.title} » ajoutée aux références de ${M(S.model).name}`);
+  fixQuality(); saveDraft(); paintRail();
+  toast(`« ${it.title} » dans les références de ${M(S.model).name}`);
 }
-async function takeRecipe(it) {
-  const p = it.params || {};
-  Object.assign(S, { model: p.model || S.model, prompt: p.prompt || '', looks: { ...(p.looks || {}) }, aspect: p.aspect || S.aspect,
-    quality: p.quality || S.quality, seed: p.seed != null ? String(p.seed) : '', variant: p.variant || S.variant,
-    realism: p.realism ?? S.realism, mode: 'create' });
-  S.refs = (await Promise.all((p.refs || []).map((r) => api('library/' + r.item).catch(() => null)))).filter(Boolean);
-  for (const r of p.refs || []) if (r.ref) S.refChoice[r.item] = r.ref;
-  saveDraft(); paintRail(); paintStage();
-  toast('réglages repris : même graine, même recette');
+const ETYPES = [['character', 'Personnage'], ['object', 'Objet'], ['place', 'Lieu'], ['style', 'Style']];
+async function makeElement(it, type) {
+  try {
+    const e = await api('elements', { method: 'POST', body: { title: it.title || 'élément', type, refs: [{ item: it.id, role: '', label: '' }] } });
+    toast(`« ${e.title} » est un élément (${ETYPES.find(([t]) => t === type)[1].toLowerCase()}) : dans Asset, pris en référence partout`, 6000);
+  } catch (e) { toast(e.message, 6000); }
 }
-async function redo(n) { await launch('image/redo', { item: S.current.id, variations: n }); }
-
-// ── la colonne : la file et l'historique vivants ────────────
-let lastList = [];
-const LIVE = ['queued', 'running'];
-const RANK = { queued: 0, running: 1, done: 2, error: 2, cancelled: 2, interrupted: 2 };
-const ms = (iso) => Date.parse(iso || '') || 0;
-const inSession = (iso) => ms(iso) >= ms(S.session);
-
-// les travaux de l'outil à montrer : en file, en cours, et les échecs de la session
-function liveJobs() {
-  const byId = new Map();
-  for (const j of lastList) if (j.tool === 'image') byId.set(j.id, j);
-  for (const [id, j] of S.mine) { const cur = byId.get(id); if (!cur || RANK[j.state] >= RANK[cur.state]) byId.set(id, j); }
-  // un rendu fini que la page n'a pas encore rapatrié (S.mine) garde sa case
-  // jusqu'à ce que son image la remplace : la demande ne « perd » pas d'image
-  return [...byId.values()].filter((j) => !S.done.has(j.id) && (LIVE.includes(j.state) || (S.mine.has(j.id) && j.state === 'done')
-    || (['error', 'interrupted'].includes(j.state) && inSession(j.created))));
-}
-// la place dans la file de la voie image (toutes les pages la partagent)
-function queuePos(j) {
-  // l'état le plus frais d'abord : un rendu que la page sait parti n'est plus devant
-  const q = lastList.filter((x) => x.lane === 'image' && x.state === 'queued' && (S.mine.get(x.id)?.state || 'queued') === 'queued')
-    .sort((a, b) => ms(a.created) - ms(b.created));
-  const k = q.findIndex((x) => x.id === j.id);
-  return k < 0 ? null : k + 1;
+const go = (path) => () => { location.href = href(path); };
+function menuFor(it) {
+  const id = it.id;
+  const huge = Math.max(it.width || 0, it.height || 0) * 2 > 8192;
+  return [
+    { label: 'Éditer', icon: '✎', items: [
+      { label: 'Consigne', sub: 'qwen · krea', title: 'changer l’image par une phrase, sur tout ou une zone peinte', onclick: () => editWith(it, 'instruct') },
+      { label: 'Détourer', sub: 'birefnet', onclick: () => editWith(it, 'matte') },
+      { label: 'Agrandir ×2 · ×4', sub: 'seedvr2', disabled: huge, why: 'déjà trop grande : ×2 dépasserait 8192 px', onclick: () => editWith(it, 'upscale') },
+      { label: 'Affiner ×2', sub: 'z-image', onclick: () => editWith(it, 'refine') },
+      { label: 'Angle', sub: 'qwen-edit', onclick: () => editWith(it, 'angle') },
+    ] },
+    { label: 'Animer', icon: '▶', sub: 'vidéo', title: 'cette image en première image d’un plan (outil Vidéo)', onclick: go(`movie/?start=${id}`) },
+    { label: 'Prendre en référence', icon: '+', items: [
+      { label: 'ici, dans « Créer »', onclick: () => useAsRef(it) },
+      { label: 'dans Vidéo', sub: '@image', onclick: go(`movie/?ref=${id}`) },
+    ] },
+    { label: 'Agrandir dans Upscale', icon: '⇱', onclick: go(`upscale/?src=${id}`) },
+    { label: 'Envoyer au Montage', icon: '▤', onclick: go(`montage/?add=${id}`) },
+    { label: 'Créer un élément', icon: '◆', items: ETYPES.map(([t, lab]) => ({ label: lab, onclick: () => makeElement(it, t) })) },
+  ];
 }
 
-// une demande = un groupe : ses images arrivées et ses rendus qui restent
-function groups() {
-  const map = new Map();
-  const add = (key, when) => {
-    let g = map.get(key);
-    if (!g) { g = { key, items: [], jobs: [], at: 0 }; map.set(key, g); }
-    g.at = Math.max(g.at, ms(when));
-    return g;
-  };
-  for (const it of S.items) {
-    if (S.hist === 'session' && !inSession(it.created)) continue;
-    add(it.params?.batch || it.id, it.created).items.push(it);
-  }
-  for (const j of liveJobs()) add(j.params?.batch || j.id, j.created).jobs.push(j);
-  return [...map.values()].sort((a, b) => b.at - a.at);
+function mountFil() {
+  fil = createFil($('#fil'), {
+    id: 'image', layout: 'grid', title: 'Historique',
+    query: () => 'library?kind=image&tool=image',
+    jobs: liveJobs, onJob,
+    jobLines: (j) => [j.machine, j.message === 'en file' ? '' : j.message],
+    prompt: (it) => it.params?.prompt ?? it.prompt ?? '',
+    promptLabel: 'Prompt',
+    badge: (it) => shortModel(it.origin?.model || it.origin?.tool),
+    chips: (it) => [it.width ? `${it.width}×${it.height}` : '', it.params?.aspect || '', it.render_s ? fmtS(it.render_s) : ''],
+    details, extra,
+    alpha: (it) => /birefnet/.test(it.origin?.model || '') || !!it.params?.transparent,
+    viewerTools,
+    viewerActions: (it) => [
+      el('button', { class: 'tb ghost', type: 'button', title: 'cette image en première image d’un plan (outil Vidéo)', onclick: go(`movie/?start=${it.id}`) }, 'Animer'),
+      el('button', { class: 'tb ghost', type: 'button', title: 'l’ajouter aux références de « Créer »', onclick: () => { fil.close(); useAsRef(it); } }, 'Référence'),
+    ],
+    reuse: { run: reuse, why: noRecipe },
+    recreate: {
+      run: (it) => redo(it, 1), why: noRecipe,
+      more: (it) => [
+        { label: 'Nouvelle graine', sub: '1 image', onclick: () => redo(it, 1) },
+        { label: '4 variations', sub: '4 graines', onclick: () => redo(it, 4) },
+        { label: 'À l’identique', sub: 'même graine', onclick: () => redo(it, 0) },
+      ],
+    },
+    menu: menuFor,
+    link: (it) => href('image/#' + it.id),
+    empty: 'Réglez à gauche, puis « Générer » : le rendu paraît ici dès l’envoi, son image s’y pose en arrivant. Une image déposée ici s’ouvre en grand.',
+  });
+  // une image déposée sur le fil (fichier ou vignette) s'ouvre en grand
+  dropZone($('#fil'), { kinds: ['image'], multiple: false, via: VIA, onitems: ([it]) => fil.open(it) });
 }
 
-const shortModel = (m) => (m || '').replace(/-factice$/, '').replace(/-turbo$/, '').replace(/-edit(-zone)?$/, ' éd.')
-  .replace(/^qwen-edit-2511-angles$/, 'angle').toUpperCase();
-
-// une image arrivée : cliquer la montre au centre, sans rien arrêter ; elle se glisse
-function itemCell(it) {
-  const key = 'i:' + it.id;
-  let n = S.cells.get(key);
-  if (!n) {
-    n = dragItem(el('button', { class: 'hc', type: 'button', title: `${it.title}\n${it.prompt || ''}`.trim(), onclick: () => pickShow(it) },
-      el('span', { class: 'im' }, el('img', { src: href(it.thumb_url || it.url), alt: '', loading: S.fresh.has(it.id) ? 'eager' : 'lazy', draggable: 'false' }),
-        el('span', { class: 'tg' }, shortModel(it.origin?.model))),
-      el('span', { class: 'cap' }, el('span', { class: 't' }, it.title || it.id),
-        el('span', { class: 's' }, [it.width ? `${it.width}×${it.height}` : '', fmtS(it.render_s)].filter(Boolean).join(' · ')))), it);
-    S.cells.set(key, n);
-  }
-  n.classList.toggle('sel', S.current?.id === it.id);
-  n.classList.toggle('fresh', S.fresh.has(it.id));
-  return n;
-}
-
-// un rendu qui n'est pas encore là : la forme de l'image attendue, sa place ou sa progression
-function jobCell(j) {
-  const key = 'j:' + j.id;
-  let n = S.cells.get(key);
-  if (!n) {
-    const P = j.params || {};
-    const w = P.width || 1, h = P.height || 1;
-    const parts = {
-      st: el('b', { class: 'st' }), msg: el('span', { class: 'msg' }), bar: el('i'),
-      stop: el('button', { class: 'tb ghost sm', title: 'arrêter ce rendu', onclick: (e) => { e.stopPropagation(); jobs.cancel(j.id).then(paintSide); } }, 'Arrêter'),
-      retry: el('button', { class: 'tb ghost sm', onclick: (e) => { e.stopPropagation(); jobs.retry(j.id).then((nj) => { S.done.add(j.id); jobs.forget(j.id); follow(nj); paintSide(); }); } }, 'Relancer'),
-      forget: el('button', { class: 'tb ghost sm', title: 'retirer', onclick: (e) => { e.stopPropagation(); S.done.add(j.id); jobs.forget(j.id); paintSide(); } }, '×'),
-    };
-    n = el('div', { class: 'hc job-c', title: j.title },
-      el('span', { class: 'im' }, el('span', { class: 'shape', style: { aspectRatio: `${w} / ${h}`, [w >= h ? 'width' : 'height']: '62%' } }),
-        parts.st, el('span', { class: 'bar' }, parts.bar)),
-      el('span', { class: 'cap' }, el('span', { class: 't' }, j.title), parts.msg),
-      el('span', { class: 'acts' }, parts.stop, parts.retry, parts.forget));
-    n._p = parts;
-    S.cells.set(key, n);
-  }
-  const p = n._p;
-  const arriving = j.state === 'done';
-  const run = j.state === 'running' || arriving, err = !LIVE.includes(j.state) && !arriving;
-  n.classList.toggle('run', run);
-  n.classList.toggle('err', err);
-  const pos = j.state === 'queued' ? queuePos(j) : null;
-  p.st.textContent = arriving ? 'arrive' : err ? 'échec' : run ? (j.progress != null ? `${Math.round(j.progress * 100)} %` : 'en cours')
-    : pos ? `en file · n° ${pos}` : 'en file';
-  // « en file » est déjà écrit sur la case : la légende dit le reste (la machine, une attente)
-  p.msg.textContent = err ? (j.message || '') : [j.machine, j.message === 'en file' ? '' : j.message].filter(Boolean).join(' · ');
-  p.bar.style.width = arriving ? '100%' : run && j.progress != null ? `${Math.round(j.progress * 100)}%` : '0';
-  p.stop.hidden = err || arriving; p.retry.hidden = !err; p.forget.hidden = !err;
-  return n;
-}
-
-function groupHead(g) {
-  const first = g.items[0], job = g.jobs[0];
-  const model = first?.origin?.model || job?.params?.model || job?.params?.tool || '';
-  const total = g.items.length + g.jobs.length;
-  const left = g.jobs.filter((j) => LIVE.includes(j.state)).length;
-  const title = (job?.title || first?.title || '').replace(/^(Krea 2|Qwen-Image 2\.1|Z-Image|Variation|Refaire|Consigne|Détourer|Agrandir|Affiner ×2|Angle) · /, '');
-  return el('div', { class: 'gh' },
-    el('span', { class: 'k' }, shortModel(model)),
-    el('span', { class: 'n' }, left ? `${total - left} / ${total}` : `${total} images`),
-    el('span', { class: 'when' }, fmtDate(new Date(g.at).toISOString()).split(' ')[1] || ''),
-    el('span', { class: 'tt', title }, title));
-}
-
-function paintSide() {
-  const side = $('#side');
-  if (!side || !S.cfg) return;
-  const gs = groups();
-  const live = liveJobs().filter((j) => LIVE.includes(j.state)).length;
-  const seg = el('div', { class: 'seg sm' }, ...[['session', 'Session'], ['all', 'Tout']].map(([id, lab]) => el('button', {
-    class: 'tb' + (S.hist === id ? ' on' : ''), title: id === 'session' ? 'ce qui a été fait depuis l’ouverture de cet onglet' : 'toutes les images de l’outil',
-    onclick: () => { S.hist = id; saveDraft(); paintSide(); } }, lab)));
-  const grid = el('div', { class: 'hist' });
-  for (const g of gs) {
-    const cells = [...g.items.slice().sort((a, b) => ms(a.created) - ms(b.created)).map(itemCell),
-      ...g.jobs.slice().sort((a, b) => ms(a.created) - ms(b.created)).map(jobCell)];
-    if (cells.length === 1) grid.append(cells[0]);
-    else grid.append(el('div', { class: 'hgrp' + (g.jobs.some((j) => LIVE.includes(j.state)) ? ' live' : '') }, groupHead(g), el('div', { class: 'cells' }, ...cells)));
-  }
-  const top = side.scrollTop;
-  side.replaceChildren(...[
-    el('div', { class: 'side-h' },
-      el('div', { class: 'ipan-h' }, el('span', { class: 'lbl' }, 'File · historique'),
-        el('span', { class: 'r' + (live ? ' set' : '') }, live ? `${live} en cours` : el('a', { href: href('asset/') }, `${S.total} · Asset`))),
-      seg),
-    gs.length ? grid : el('p', { class: 'hint' }, S.hist === 'session'
-      ? 'Rien encore dans cette session. Un rendu paraît ici dès l’envoi ; « Tout » montre les images d’avant.'
-      : 'Un rendu paraît ici dès l’envoi, son image s’y pose en arrivant. Rien ne s’arrête quand on en regarde une autre.'),
-    S.items.length < S.total && S.hist === 'all'
-      ? el('button', { class: 'tb ghost sm block', onclick: () => loadHistory(S.items.length) }, `Plus — ${S.total - S.items.length} autres`) : null,
-  ].filter(Boolean));
-  side.scrollTop = top;
-}
-
-async function loadHistory(offset = 0) {
-  let res;
-  try { res = await api(`library?kind=image&tool=image&limit=120&offset=${offset}`); } catch (e) {
-    $('#side').replaceChildren(el('p', { class: 'warn' }, e.message)); return;
-  }
-  const known = new Set(offset ? S.items.map((x) => x.id) : []);
-  S.items = offset ? S.items.concat(res.items.filter((x) => !known.has(x.id))) : res.items;
-  S.total = res.total;
-  paintSide();
+function paintBanner() {
+  $('#banner').replaceChildren(...(stub() ? [el('div', { class: 'banner' }, el('b', {}, 'Moteur factice'),
+    el('span', {}, 'les images sont des mires dessinées — aucun modèle n’est chargé. Le câblage réel est en place : « image_backend » : « comfyui » dans showrunner.local.json.'))] : []));
 }
 
 let paintT = null;
-jobs.watch((list) => { lastList = list; clearTimeout(paintT); paintT = setTimeout(paintSide, 60); });
+jobs.watch((list) => { S.lastList = list; clearTimeout(paintT); paintT = setTimeout(() => fil?.paintJobs(), 60); });
 // un rendu fini ailleurs (un autre onglet, une relance) : ses images arrivent aussi
 document.addEventListener('sr:job', async (e) => {
   const j = e.detail;
   if (j.tool !== 'image' || S.mine.has(j.id) || S.done.has(j.id)) return;
   if (j.state !== 'error') S.done.add(j.id);
   if (j.state === 'done') {
-    try { const full = await jobs.get(j.id); if (full.items?.length) arrived(full.items, j.params?.batch); } catch { /* parti */ }
+    try { const full = await jobs.get(j.id); if (full.items?.length) fil?.add(full.items); } catch { /* parti */ }
   }
-  paintSide();
+  fil?.paintJobs();
 });
 
 // un fichier lâché hors des emplacements ne doit pas faire quitter la page
 addEventListener('dragover', (e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'none'; } });
-addEventListener('drop', (e) => { if (e.dataTransfer?.files?.length) { e.preventDefault(); toast('déposez sur l’image au centre, sur les références ou sur l’image à éditer'); } });
+addEventListener('drop', (e) => { if (e.dataTransfer?.files?.length) { e.preventDefault(); toast('déposez sur le fil, sur les références ou sur l’image à éditer'); } });
 
 // ── démarrage ───────────────────────────────────────────────
 // Adresses : ?edit=<id> (d'Asset, d'Idéation) ouvre l'édition sur cet objet ;
-// ?ref=<id> le met dans les références de « Créer » ; #<id> le montre.
+// ?ref=<id> le met dans les références de « Créer » ; #<id> l'ouvre en grand.
 async function resolveImage(id) {
   const it = await api('library/' + encodeURIComponent(id));
   if (it.kind === 'image') return it;
@@ -987,12 +901,13 @@ async function start() {
   }
   const drafted = await loadDraft();
   const qs = new URLSearchParams(location.search);
-  let want = (location.hash || '').slice(1) || drafted;
   if (qs.get('edit')) {
     try {
-      const it = await resolveImage(qs.get('edit'));
-      S.mode = 'edit'; S.edit.tool = 'instruct'; want = it.id;
+      S.current = await resolveImage(qs.get('edit'));
+      S.mode = 'edit'; S.edit.tool = 'instruct'; S.edit.mask = '';
     } catch (e) { toast(`édition : ${e.message}`, 7000); }
+  } else if (drafted) {
+    S.current = await api('library/' + drafted).catch(() => null);
   }
   if (qs.get('ref')) {
     try {
@@ -1002,17 +917,18 @@ async function start() {
       if (!S.refs.some((r) => r.id === it.id)) S.refs = [...S.refs, it].slice(-M(S.model).refs);
     } catch (e) { toast(`référence : ${e.message}`, 7000); }
   }
+  const want = (location.hash || '').slice(1);
   if (qs.get('edit') || qs.get('ref')) { try { history.replaceState(null, '', location.pathname + (want ? '#' + want : '')); } catch { /* sans historique */ } }
   if (!S.cfg.models.some((m) => m.id === S.model)) S.model = 'krea2';
   fixQuality();
   paintRail();
-  paintSide();
-  if (want) { try { await show(await api('library/' + want)); } catch { S.current = null; paintStage(); } } else paintStage();
-  loadHistory();
+  paintBanner();
+  mountFil();
+  if (want) fil.open(want);
   if (S.cfg.availability_error) toast(`machines : ${S.cfg.availability_error}`, 6000);
 }
-addEventListener('hashchange', async () => {
+addEventListener('hashchange', () => {
   const id = location.hash.slice(1);
-  if (id && id !== S.current?.id) { try { pickShow(await api('library/' + id)); } catch { /* introuvable */ } }
+  if (id && id !== fil?.current()?.id) fil?.open(id);
 });
 start();

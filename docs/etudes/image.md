@@ -199,7 +199,82 @@ inconnu) contre le catalogue de chaque ComfyUI — **rien mis en file, aucun mod
 
 Tailles relevées par l'API Hugging Face le 28/09.
 
-## 10. Sources
+## 10. Le fil, sur le modèle de Higgsfield (Cal, 29/09)
+
+Cal, avec quatre captures de Higgsfield : « on va simplifier les panels image et "movie creator"
+… le fait d'avoir un fil est assez pratique. quand je clique sur une image dans le fil généré, elle
+se met plein écran … quand on scrolle à la molette, on passe d'une image à l'autre du fil … le
+"reuse" est assez important pour les images et vidéos car on est souvent en train de faire des
+variantes. »
+
+**La disposition retenue : la même colonne de réglages à gauche que l'outil Vidéo, le fil en grille
+au centre** — pas la barre de prompt flottante de leur page image (capture 2). Pourquoi :
+
+- l'outil a deux modes (Créer, Éditer) et six outils d'édition, chacun ses panneaux (zone peinte,
+  boussole des angles, débruitage, références ordonnées, choix de l'image d'un élément) ; une barre
+  d'une ligne les cacherait derrière des menus empilés, là où la colonne les garde à un défilement ;
+- une seule disposition pour Image et Vidéo : les réglages au même endroit, le fil au même endroit ;
+- la barre flottante de Higgsfield recouvre le bas du fil ; la colonne ne cache aucune image.
+
+Ce qui reprend leur barre : les réglages courants tiennent en **trois pavés** (Format, Taille,
+Nombre — leurs « 16:9 · 4K · 1/4 »), chacun son menu ; le modèle est une **carte avec « Changer »**
+(leur carte de préréglage), ses options propres dessous (variantes Z-Image, UltraReal de Krea, fond
+transparent de Qwen) ; la prise de vue (caméra, objectif, ouverture, pellicule, lumière) et
+l'avancé (graine, « d'origine », prompt envoyé) se replient ; les notes du prompt (pellicule sur un
+numérique, `<image2>` présentée) s'affichent au-dessus de « Générer ». **Rien n'est perdu** :
+Z-Image / Qwen 2.1 / Krea 2 et leurs variantes, les 44 pastilles, les références et le choix de
+l'image d'un élément, l'édition (Consigne, Détourer, Agrandir, Affiner, Angle, Étendre éteint avec
+sa raison), la zone peinte (dans une grande fenêtre, sur l'image à sa taille), Avant / après
+(dans la visionneuse ; une image déposée sur le cadre prend la place de « avant »), Variations et
+Refaire (dans Recréer), la file vivante (en tête du fil), le glisser-déposer partout.
+
+Le fil (`commun/fil.js`, `commun/fil.css`, partagé avec Vidéo) :
+
+- **grille** en rangées justifiées (chaque image à son format, rien de rogné), ou **liste** (la
+  grande image, sa carte : modèle, prompt aux jetons `<image1>` surlignés, références, puces
+  taille · format · rendu, date) ; curseur de taille ; filtre (tout, aimés, cette session) ;
+  recherche ; « plein écran » ;
+- **les rendus en file et en cours en tête** : leur place (« 2 devant », « le prochain »), leur
+  progression, Arrêter ; en échec, Relancer et × ; l'image prend leur place en arrivant, marquée
+  « nouveau » ;
+- **la visionneuse plein écran** (capture 3) : la grande image, à droite le prompt (Copier), les
+  références et la lignée, les détails (modèle, outil, taille, format, graine, rendu, machine,
+  dossier), la prise de vue, le prompt envoyé ; Réutiliser (l'orange de cet écran), Recréer, Animer,
+  Référence, Télécharger, aimer, ⋯. **La molette passe à l'image suivante ou précédente du fil**,
+  les flèches aussi, Échap ferme ; au bout du fil chargé, la suite se charge ;
+- **au survol** : aimer, réutiliser, recréer, télécharger, ⋯ (`commun/menu.js`), le même menu au
+  clic droit.
+
+### Les options du menu ⋯ : ce que le portail sait faire
+
+| entrée | ce qu'elle fait | pourquoi |
+|---|---|---|
+| Ouvrir | la visionneuse | leur « Open » |
+| **Réutiliser** | prompt, références (et l'image choisie d'un élément), modèle, variante, prise de vue, format, taille dans « Créer » — pour une édition : la source, l'outil, la consigne, les références, **la même zone** (le masque gardé), dans « Éditer » ; **graine vidée**, la graine d'origine à un clic (« d'origine ») | leur « Reuse » ; l'action des variantes (Cal), aussi en accès direct et en orange dans la visionneuse |
+| Recréer › nouvelle graine · 4 variations · à l'identique | `POST /api/image/redo` (`variations` 1, 4, 0) : la recette gardée remise en file | leur « Recreate » ; reprend les anciens « Variations » et « Refaire » |
+| Éditer › Consigne · Détourer · Agrandir · Affiner · Angle | la colonne passe en Éditer sur cette image, l'outil choisi | les outils d'édition de l'étude §6 (l'ancienne barre sous l'image) |
+| Animer | `movie/?start=<id>` : l'image en première image d'un plan | leur « Turn to video » |
+| Prendre en référence › ici · dans Vidéo | les références de « Créer » ; `movie/?ref=<id>` (`@image`) | leur « Reference » |
+| Agrandir dans Upscale | `upscale/?src=<id>` | l'outil Upscale (d'autres modèles que SeedVR2) |
+| Envoyer au Montage | `montage/?add=<id>` | la route d'entrée du Montage |
+| Créer un élément › personnage · objet · lieu · style | `POST /api/elements` avec cette image en référence | un élément se réutilise partout (Image, Vidéo) |
+| Aimer | le drapeau `fav` de l'objet, filtre « aimés » | leur « Like » |
+| Ajouter à un dossier › dossiers · Nouveau dossier… · Retirer | les dossiers d'Asset | leur « Add to folder » |
+| Copier le prompt · Copier le lien | le prompt écrit ; `image/#<id>` rouvre la visionneuse | la copie marche aussi en http (`execCommand`) |
+| Voir dans Asset · Télécharger | la fiche ; le fichier | leur « Download » |
+| Supprimer | à la corbeille, après confirmation (retour depuis Asset) | leur « Delete » |
+
+Absentes : **Relight** et **Change Color Palette** en une touche (le rééclairage existe, par
+consigne : Éditer › Consigne, groupe « Rééclairer » ; une palette n'a pas de méthode documentée
+pour nos trois modèles), **Share / Publish** (portail fermé à internet, « Copier le lien » sert
+entre ses personnes), les **Comments** de leur visionneuse (pas de fil de discussion dans le
+portail).
+
+Ce qui n'est plus là : le regroupement des images d'une même demande dans la colonne (le fil les
+montre côte à côte, dans l'ordre d'arrivée) ; l'image « en grand » au centre de la page (c'est la
+visionneuse).
+
+## 11. Sources
 
 Toutes les pages citées ci-dessus, plus : gabarits officiels ComfyUI lus dans
 `comfyui_workflow_templates_json` 0.11.69 sur DGX2 (`image_z_image_turbo`, `image_z_image`,

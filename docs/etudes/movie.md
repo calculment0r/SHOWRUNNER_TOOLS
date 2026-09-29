@@ -1,4 +1,8 @@
-# Movie Creator — étude (28/09/2026)
+# Vidéo (ex « Movie Creator ») — étude (28/09/2026, fil du 29/09)
+
+Cal, 29/09 : « movie creator devient simplement "vidéo", movie creator c'est trop long et pas
+clair ». Le nom affiché partout est **Vidéo** ; le chemin `movie/`, les travaux `movie.*`, les
+routes `/api/movie/*` et l'interrupteur `movie_engine` gardent le leur (aucun lien mort).
 
 Ce que Cal a demandé (28/09 au soir) : un outil « simple et qui fonctionne
 comme Higgsfield » — un prompt, image → vidéo (première image), références
@@ -27,7 +31,7 @@ j'ai déjà bien avancé » — et la référence d'interface H3 Studio.
 
 ## 2. Ce qu'H3 fait de pareil, en local
 
-| Higgsfield | H3 (ComfyUI) | Movie Creator |
+| Higgsfield | H3 (ComfyUI) | Vidéo |
 |---|---|---|
 | texte → vidéo | `MiniMaxH3ImageToVideo` sans image, poids **fl2va** | mode **Texte** (`movie.t2v`) |
 | première / dernière image | le même nœud, `first_frame` / `last_frame` | mode **Images** (`movie.i2v`) |
@@ -73,10 +77,10 @@ Référence d'UX de Cal : **H3 Studio**
 Changé pour le portail :
 
 - **le thème** : jetons de `commun/tokens.css`, filets, Venus Rising /
-  Chakra Petch / Azeret Mono ; **un seul orange** : « Générer » pendant la
-  création, « Télécharger » quand un plan vient d'arriver ou qu'on en
-  regarde un — jamais les deux (leur vert fluo « Download » à côté du bleu
-  « Generate ») ;
+  Chakra Petch / Azeret Mono ; **un seul orange** : « Générer » dans la
+  colonne ; depuis le fil (29/09), « Réutiliser » dans la visionneuse plein
+  écran, qui recouvre tout — jamais les deux (leur vert fluo « Download » à
+  côté du bleu « Generate ») ;
 - leurs fichiers locaux deviennent **la bibliothèque et les éléments** :
   une référence, une image de début, un personnage se prennent dans le
   sélecteur commun (`pick`), onglet Character Factory compris ; un élément
@@ -131,6 +135,69 @@ début, fin, Entrées, A et B de Comparer ; les cartes des vidéos se glissent
 (`dragItem`). « Vidéos générées » passe à droite (comme l'outil Image) : les
 rendus y sont dès l'envoi, avec leur place dans la file, leur progression et
 « Arrêter » ; un clic sur une autre vidéo la montre sans rien interrompre.
+(Remplacé le même jour par le fil, ci-dessous.)
+
+### Le fil, sur le modèle de Higgsfield (Cal, 29/09 après-midi)
+
+Cal, avec quatre captures de Higgsfield : « regarde les interfaces de Higgsfield … cela est le
+standard et les gens y sont habitués, le fait d'avoir un fil est assez pratique … pour le fil vidéo,
+on fait aussi comme Higgsfield et au survol on a les options … le like, le recreate et le download
+en accès direct, mais aussi un menu avec 3 petits points … le "reuse" est assez important pour les
+images et vidéos car on est souvent en train de faire des variantes. »
+
+La page devient deux colonnes, comme la capture 1 (page vidéo de Higgsfield) :
+
+- **à gauche, les réglages** : onglets Créer | Comparer en tête (leur Create Video / Edit Video),
+  la carte du modèle (MiniMax H3, avec l'état du moteur), les modes Texte / Images / Références,
+  début · fin ou les Entrées, le prompt (les trois champs H3, caméra, réplique, exclusions,
+  assistant), le format (famille, toile avec temps estimé, durée), les réglages avancés repliés
+  (méthode, pas, graine et « d'origine », détail des références, LoRA, modèle, sampler, crf, prompt
+  envoyé, graphe), et « Générer » au pied, le seul orange ;
+- **au centre, le fil** (`commun/fil.js`, le même que l'outil Image) : en liste par défaut — la
+  grande vidéo et sa carte à droite (modèle · mode · méthode, prompt aux jetons `@image1` surlignés,
+  vignettes des entrées, puces toile · durée · famille · son, date) — ou en grille ; curseur de
+  taille ; filtre (tout, aimés, cette session ; source : Vidéo ou toute la bibliothèque) ;
+  recherche. Les rendus en file et en cours sont **en tête du fil** (place — « 2 devant », « le
+  prochain » —, progression, étape, écoulé, restant, machine, Arrêter ; en échec : Relancer, ×) ;
+  la vidéo prend la place de sa carte en arrivant, marquée « nouveau ». « Espace de travail »,
+  « Vidéo en cours » et la colonne de droite disparaissent : tout est dans le fil et la visionneuse.
+- **la visionneuse plein écran** (capture 3) : la vidéo en grand, lue en boucle ; à droite, le
+  prompt (Copier), les entrées, la recette (`recipeRows`), le son et la musique demandés, le prompt
+  envoyé à H3 et le graphe (repliés) ; « Réutiliser » (l'orange de cet écran), Recréer, Comparer,
+  Continuer, Télécharger, aimer, ⋯. **La molette passe à la vidéo suivante ou précédente du fil**
+  (les flèches aussi ; un panneau qui peut encore défiler garde la molette), Échap ferme ; au bout du
+  fil chargé, la suite se charge.
+- **au survol d'une vidéo** (capture 4) : aimer, réutiliser, recréer, télécharger en accès direct, et
+  « ⋯ » (`commun/menu.js`) ; le même menu au clic droit sur la carte.
+
+#### Les options du menu ⋯ : ce que le portail sait faire
+
+Retenues (dans l'ordre du menu) :
+
+| entrée | ce qu'elle fait | pourquoi |
+|---|---|---|
+| Ouvrir | la visionneuse plein écran | leur « Open » |
+| **Réutiliser** | la recette dans le formulaire (mode, prompt et son, entrées ou images de début · fin, toile, durée, méthode, pas, LoRA, modèle, sampler, crf), **graine vidée** : « Générer » fait une variante ; la graine d'origine reste à un clic (« d'origine », réglages avancés) | leur « Reuse » ; l'action des variantes, que Cal a dite importante — aussi en accès direct et en orange dans la visionneuse |
+| Recréer › nouvelle graine · à l'identique | remet en file, au nom de la personne, les réglages d'envoi de la vidéo (`POST /api/movie/redo`) | leur « Regenerate » ; « à l'identique » garde la graine (refaire un plan perdu, comparer deux méthodes) |
+| Extraire une image › la première · la dernière | l'image rangée dans la bibliothèque, une seule fois (`POST /api/movie/frame`, ffmpeg) | pour reprendre un plan en image de début, en référence, dans Image, en élément |
+| Continuer le plan | sa dernière image devient la première d'un nouveau plan (mode Images) | l'usage courant de la dernière image : enchaîner les plans |
+| Prendre en référence | la vidéo dans les entrées du mode Références (`@video1`) | leur « Reuse » d'un mouvement ; H3 prend 3 vidéos de référence |
+| Comparer › en A · en B | le banc A/B de Cal | remplace les boutons A et B des anciennes cartes |
+| Agrandir dans Upscale | `upscale/?src=<id>` | l'outil Upscale prend les vidéos |
+| Envoyer au Montage | `montage/?add=<id>` | la route d'entrée du Montage |
+| Créer un élément | **désactivé, dit pourquoi** : un élément se fait d'images (et d'une voix) — tirer d'abord une image | la bibliothèque n'accepte pas une vidéo en référence d'élément (`POST /api/elements`) |
+| Aimer | le drapeau `fav` de l'objet (`POST /api/library/<id>`), filtre « aimés » | leur « Like » ; c'était l'« Épingler » de l'ancienne page |
+| Ajouter à un dossier › dossiers · Nouveau dossier… · Retirer | les dossiers d'Asset (`folder`) | leur « Add to folder » |
+| Copier le prompt · Copier le lien | le prompt écrit ; `movie/#<id>` rouvre la visionneuse | le portail est en http : la copie passe par `execCommand` quand le presse-papiers moderne manque |
+| Voir dans Asset · Télécharger | la fiche ; le mp4 | leur « Download » |
+| Supprimer | à la corbeille, après confirmation (elle en revient depuis Asset) | leur « Delete », rouge ; jamais sans confirmation |
+
+Absentes, parce que rien ne les fait ici : **Virality Predictor** (aucun modèle), **Change Color
+Palette**, **Relight** et **Change Voice** d'une vidéo (aucun modèle local documenté pour
+retoucher un plan H3 ; la voix d'un personnage passe par un élément avant le rendu), **Translate**
+(pas de doublage de plan ; Movie Analysis double des films, pas les rendus), **Share** et
+**Publish** (le portail n'est pas ouvert sur internet : `docs/etudes/cloudflare.md` — « Copier le
+lien » sert entre les personnes du portail).
 
 ## 4. Réglages retenus, et pourquoi
 
@@ -203,12 +270,17 @@ existent, l'estimation se recale sur eux (même méthode).
 
 ## 8. Fichiers
 
-`movie/index.html`, `movie/movie.js`, `movie/movie.css` ;
+`movie/index.html`, `movie/movie.js`, `movie/movie.css` ; le fil commun
+`commun/fil.js`, `commun/fil.css` (et le menu `commun/menu.js`) ;
 `server/tools/movie.py` (routes `GET /api/movie/options`, `POST /api/movie/plan`,
-`GET /api/movie/loras`, `POST /api/movie/element-image`, `POST /api/movie/assist`,
-`GET /api/movie/h3`, `POST /api/movie/h3/start|stop` ; travaux `movie.t2v`,
-`movie.i2v`, `movie.r2v`) ; `server/workflows/h3_i2v.json`, `h3_r2v.json`.
+`GET /api/movie/loras`, `POST /api/movie/element-image`, `POST /api/movie/redo`
+`{item, same_seed}`, `POST /api/movie/frame` `{item, which: first|last}`,
+`POST /api/movie/assist`, `GET /api/movie/h3`, `POST /api/movie/h3/start|stop` ;
+travaux `movie.t2v`, `movie.i2v`, `movie.r2v`) ; `server/workflows/h3_i2v.json`,
+`h3_r2v.json`. Chaque vidéo garde, en plus de sa recette résolue, ses réglages
+d'envoi (`params.request`) : Réutiliser et Recréer repartent d'eux (les vidéos
+d'avant le 29/09 : refaits depuis la recette, `request_of`).
 Réglages lus : `movie_engine` (`factice` | `h3`), `movie_stub_step_s`,
 `h3_min_free_gb`, `h3_idle_minutes`, `h3_service`, `h3_neighbour_port`.
 Paramètres d'URL : `?mode=t2v|i2v|r2v`, `?start=<image>`, `?ref=<id>`,
-`?id=<vidéo>`, `?view=cmp&a=<id>&b=<id>`.
+`#<vidéo>` (ou `?id=<vidéo>`) l'ouvre en grand, `?view=cmp&a=<id>&b=<id>`.

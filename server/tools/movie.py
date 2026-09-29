@@ -1,4 +1,6 @@
-"""Movie Creator : des plans vidéo avec MiniMax H3, en local, son compris.
+"""Vidéo (ex « Movie Creator », renommé par Cal le 29/09) : des plans vidéo
+avec MiniMax H3, en local, son compris. Le chemin (`movie/`), les travaux
+(`movie.*`) et les routes (`/api/movie/*`) gardent leur nom.
 
 Trois travaux dans la file commune, comme les trois modes de la page :
 
@@ -960,6 +962,26 @@ def _prep_start(ctx, pic: dict, width: int, height: int, name: str = "premiere.p
     return dest
 
 
+# ce que la page envoie pour un plan (movie.js, params()) : de quoi le refaire tel quel
+REQUEST_KEYS = ("desc", "sound", "music", "method", "frames", "steps", "seed", "canvas", "loras", "adv",
+                "start", "end", "inputs", "ref_image_size")
+
+
+def request_of(rec: dict) -> dict:
+    """Les réglages d'envoi d'une vidéo faite ici : ceux qu'elle a reçus
+    (`request`, rangés depuis le 29/09), sinon refaits depuis sa recette
+    (les vidéos d'avant). movie.js, requestOf(), fait le même."""
+    if isinstance(rec.get("request"), dict):
+        return {k: v for k, v in rec["request"].items() if k in REQUEST_KEYS}
+    return {"desc": rec.get("desc", ""), "sound": rec.get("sound", ""), "music": rec.get("music", ""),
+            "method": rec.get("method"), "frames": rec.get("frames"), "steps": rec.get("steps"), "seed": rec.get("seed"),
+            "canvas": "auto" if rec.get("family") == "image" else [rec.get("width"), rec.get("height")],
+            "loras": rec.get("loras") or [],
+            "adv": {"unet": rec.get("unet"), "sampler": rec.get("sampler"), "scheduler": rec.get("scheduler"), "crf": rec.get("crf")},
+            "start": rec.get("start"), "end": rec.get("end"), "inputs": rec.get("inputs") or {},
+            "ref_image_size": rec.get("ref_image_size")}
+
+
 def _recipe(pl: dict, eng: str) -> dict:
     """De quoi refaire le plan : ce que « Reprendre ces réglages » relit et
     ce que le banc compare ; le graphe H3 y est rangé tel qu'il partirait."""
@@ -977,6 +999,9 @@ def _store(ctx, pl: dict, path: Path, *, secs: float, machine: str, model: str, 
     title = " ".join(pl["desc"].split())[:70] or MODES[pl["mode"]]["label"]
     tags = [("h3" if eng == "h3" else "factice"), pl["mode"], pl["method"]]
     params = _recipe(pl, eng)
+    # les réglages tels qu'envoyés : « Réutiliser » et « Recréer » (POST
+    # /api/movie/redo) repartent d'eux, pas d'une recette relue
+    params["request"] = {k: v for k, v in (ctx.params or {}).items() if k in REQUEST_KEYS}
     if graph:
         params["graph"] = graph
     it = ctx.add(path, kind="video", title=title, prompt=pl["desc"], params=params,
@@ -1433,6 +1458,72 @@ def r_element_image(req):
     return library.public(it)
 
 
+def r_redo(req):
+    """Recréer une vidéo du fil : ses réglages d'envoi, une nouvelle graine
+    (ou la même, `same_seed`), remise en file au nom de la personne."""
+    d = req.json()
+    it = library.get(d.get("item") or "")
+    if not it or it["kind"] != "video":
+        raise HttpError(404, "vidéo introuvable")
+    rec = it.get("params") or {}
+    mode = rec.get("mode")
+    if mode not in MODES:
+        raise HttpError(409, "cette vidéo n'a pas de recette de l'outil Vidéo (déposée, ou faite ailleurs)")
+    p = request_of(rec)
+    if d.get("same_seed"):
+        if rec.get("seed") is None:
+            raise HttpError(409, "la graine de cette vidéo n'a pas été gardée : « à l'identique » est impossible")
+        p["seed"] = rec["seed"]
+    else:
+        p["seed"] = random.randrange(1, 2 ** 31 - 1)
+    pl = plan(mode, p)
+    if pl["errors"]:
+        raise HttpError(409, "la recette ne passe plus : " + " ; ".join(pl["errors"]))
+    title = ("Refaire · " if d.get("same_seed") else "Recréer · ") + (it.get("title") or MODES[mode]["label"])[:60]
+    return jobs.public(jobs.submit("movie." + mode, p, title=title, tool="movie"))
+
+
+def r_frame(req):
+    """La première ou la dernière image d'une vidéo, rangée dans la
+    bibliothèque (une seule fois : redemandée, elle est rendue telle quelle).
+    ffmpeg : la première image décodée ; la dernière, en relisant la fin
+    (`-sseof`) et en gardant l'image écrite en dernier (`-update 1`)."""
+    import shutil
+    import tempfile
+    d = req.json()
+    it = library.get(d.get("item") or "")
+    if not it or it["kind"] != "video":
+        raise HttpError(404, "vidéo introuvable")
+    which = d.get("which")
+    if which not in ("first", "last"):
+        raise HttpError(400, "which : first (la première image) ou last (la dernière)")
+    for x in library.query(["image"], limit=100000)["items"]:
+        p = x.get("params") or {}
+        if p.get("from_video") == it["id"] and p.get("frame") == which:
+            return x
+    src = library.path_of(it)
+    tmp = Path(tempfile.mkdtemp(prefix="sr_frame_"))
+    out = tmp / "frame.png"
+    tries = ([["-i", str(src), "-frames:v", "1"]] if which == "first"
+             else [["-sseof", "-0.6", "-i", str(src), "-update", "1"], ["-i", str(src), "-update", "1"]])
+    err = ""
+    for args in tries:
+        r = subprocess.run(["ffmpeg", "-v", "error", "-y", *args, str(out)], capture_output=True, text=True, timeout=180)
+        if r.returncode == 0 and out.exists() and out.stat().st_size:
+            break
+        err = (r.stderr or "").strip()[-300:]
+    else:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise HttpError(500, f"ffmpeg n'a pas pu lire l'image : {err or 'rien écrit'}")
+    lab = "première image" if which == "first" else "dernière image"
+    name = " ".join((it.get("title") or it["id"]).split())[:50]
+    new = library.add_file(out, kind="image", title=f"{name} · {lab}", origin={"tool": "movie", "model": "ffmpeg"},
+                           params={"from_video": it["id"], "frame": which}, parents=[it["id"]],
+                           folder=it.get("folder") or "", move=True)
+    shutil.rmtree(tmp, ignore_errors=True)
+    return library.public(new)
+
+
 def r_assist(req):
     """L'assistant de prompt : l'interface est prête, le modèle de texte
     se câblera plus tard (décision de Cal du 28/09)."""
@@ -1460,6 +1551,8 @@ def register(app) -> None:
     app.route("POST", "/api/movie/plan", r_plan)
     app.route("GET", "/api/movie/loras", r_loras)
     app.route("POST", "/api/movie/element-image", r_element_image)
+    app.route("POST", "/api/movie/redo", r_redo)
+    app.route("POST", "/api/movie/frame", r_frame)
     app.route("POST", "/api/movie/assist", r_assist)
     app.route("GET", "/api/movie/h3", h3_status)
     app.route("POST", "/api/movie/h3/start", r_h3_start)
@@ -1618,7 +1711,7 @@ def selftest(call, ok) -> None:
     st, _ = call("POST", "/api/movie/plan", {"mode": "x", "params": {}})
     ok(st == 400, "un mode inconnu est refusé")
     st, page = call("GET", "/movie/")
-    ok(st == 200 and b"movie.js" in (page if isinstance(page, bytes) else b""), "la page Movie Creator se sert")
+    ok(st == 200 and b"movie.js" in (page if isinstance(page, bytes) else b""), "la page Vidéo se sert")
     lane = "h3" if engine() == "h3" else "cpu"
     ok(all(jobs.HANDLERS.get(k, (0, ""))[1] == lane for k in ("movie.t2v", "movie.i2v", "movie.r2v")),
        f"les trois travaux sont sur la voie {lane}")
@@ -1632,9 +1725,23 @@ def selftest(call, ok) -> None:
     ok(st == 200 and img2.get("kind") == "image" and img2.get("id") == img3.get("id") and img2["parents"] == [cf["id"]],
        "une référence copiée (Character Factory) devient une image, une seule fois")
 
+    # la page (29/09) : le fil commun, le thème tenu
+    st, page = call("GET", "/movie/")
+    ok(st == 200 and b"../commun/fil.css" in page and b"Movie Creator" not in page, "la page Vidéo charge le fil commun, sans « Movie Creator »")
+    st, fjs = call("GET", "/commun/fil.js")
+    ok(st == 200 and b"export function createFil" in fjs, "commun/fil.js se sert")
+    mjs = (config.REPO / "movie" / "movie.js").read_text(encoding="utf-8")
+    ok("createFil(" in mjs and "movie/redo" in mjs and "movie/frame" in mjs, "movie.js passe par le fil, Recréer et Extraire")
+    for name in ("movie/movie.css", "commun/fil.css"):
+        css = (config.REPO / name).read_text(encoding="utf-8")
+        body = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+        ok(not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", body), f"{name} : aucune couleur en dur (tokens.css seulement)")
+        ok(not re.search(r"(?<![\w-])border(-(top|right|bottom|left))?\s*:(?!\s*(none|0)\b)", body), f"{name} : des filets, jamais de bordures")
+
     # de bout en bout avec le moteur factice : un vrai mp4, sa recette, sa lignée, le graphe H3 rangé
     if engine() != "h3":
         config.CFG["movie_stub_step_s"] = 0.02
+        made = []
         for kind, params, parents in (
                 ("movie.t2v", {"desc": "A quiet station at dawn.", "canvas": [864, 480], "seed": 2}, set()),
                 ("movie.i2v", {"start": sid, "desc": "He turns and smiles.", "seed": 3}, {sid}),
@@ -1652,5 +1759,49 @@ def selftest(call, ok) -> None:
                and set(v.get("parents", [])) == parents and "136" in (pp.get("graph") or {})
                and (v.get("width"), v.get("height")) == (pp.get("width"), pp.get("height")),
                f"{kind} factice : mp4 avec son, recette, lignée, graphe H3 rangé ({j['state']} {j.get('message')})")
+            ok(pp.get("request", {}).get("desc") == params["desc"] and pp["request"].get("seed") == params["seed"],
+               f"{kind} : la vidéo garde ses réglages d'envoi (request), de quoi Réutiliser et Recréer")
+            made.append(v)
         st, hist = call("GET", "/api/library?kind=video&tool=movie")
         ok(st == 200 and hist["total"] == 3, "l'historique : les vidéos de l'outil")
+
+        def wait(jid):
+            for _ in range(300):
+                st, jj = call("GET", f"/api/jobs/{jid}")
+                if jj.get("state") in ("done", "error", "cancelled"):
+                    return jj
+                time.sleep(0.1)
+            return jj
+
+        # Recréer : mêmes réglages, une autre graine ; à l'identique : la même
+        t2v = made[0] if made else {}
+        st, rj = call("POST", "/api/movie/redo", {"item": t2v.get("id")})
+        ok(st == 200 and rj.get("kind") == "movie.t2v" and rj.get("params", {}).get("seed") not in (None, 2)
+           and rj["params"].get("desc") == "A quiet station at dawn." and rj.get("tool") == "movie",
+           f"Recréer : la recette remise en file, nouvelle graine ({st} {str(rj)[:200]})")
+        rv = (wait(rj.get("id")).get("items") or [{}])[0] if st == 200 else {}
+        ok(rv.get("params", {}).get("desc") == "A quiet station at dawn." and (rv.get("width"), rv.get("height")) == (864, 480),
+           "Recréer : la nouvelle vidéo a la même recette, la même toile")
+        st, sj = call("POST", "/api/movie/redo", {"item": made[1]["id"] if len(made) > 1 else "", "same_seed": True})
+        ok(st == 200 and sj.get("kind") == "movie.i2v" and sj.get("params", {}).get("seed") == 3
+           and sj["params"].get("start") == sid, f"Refaire à l'identique : même graine, même première image ({st})")
+        if st == 200:
+            wait(sj["id"])
+        st, _ = call("POST", "/api/movie/redo", {"item": vid.get("id")})
+        ok(st == 409, f"Recréer une vidéo déposée (sans recette) : refusé avec la raison ({st})")
+        st, _ = call("POST", "/api/movie/redo", {"item": "vid-rien"})
+        ok(st == 404, "Recréer : une vidéo introuvable")
+        # la première et la dernière image, rangées une seule fois
+        st, f1 = call("POST", "/api/movie/frame", {"item": t2v.get("id"), "which": "first"})
+        st2, f2 = call("POST", "/api/movie/frame", {"item": t2v.get("id"), "which": "last"})
+        st3, f1b = call("POST", "/api/movie/frame", {"item": t2v.get("id"), "which": "first"})
+        ok(st == 200 and st2 == 200 and f1.get("kind") == "image" and f2.get("kind") == "image" and f1["id"] != f2["id"]
+           and (f1.get("width"), f1.get("height")) == (864, 480) and f1.get("parents") == [t2v.get("id")] and f1b.get("id") == f1["id"],
+           f"Extraire : la première et la dernière image, dans la bibliothèque, une seule fois ({st} {st2} {str(f1)[:160]})")
+        st, _ = call("POST", "/api/movie/frame", {"item": t2v.get("id"), "which": "milieu"})
+        ok(st == 400, "Extraire : « which » vaut first ou last")
+        # aimer (le drapeau fav de la bibliothèque) et la corbeille, comme le fil les fait
+        st, fv = call("POST", f"/api/library/{t2v.get('id')}", {"fav": True})
+        st2, favs = call("GET", "/api/library?kind=video&tool=movie&fav=1")
+        ok(st == 200 and fv.get("fav") is True and st2 == 200 and [x["id"] for x in favs["items"]] == [t2v.get("id")],
+           "Aimer : le drapeau fav, et le filtre « aimés » du fil")

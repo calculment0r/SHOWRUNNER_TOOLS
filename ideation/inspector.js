@@ -157,18 +157,18 @@ export function createInspector(app) {
         hint('Le résultat se pose à droite, relié à l’image. Plus d’outils (zone peinte, angle, affiner) : Éditer dans Image.')));
       out.push(card('Production', null, el('div', { class: 'prod' },
         go('Éditer dans Image', `image/#${id}`, 'l’outil Image, cette image ouverte'),
-        go('Animer', `movie/?start=${id}`, 'Movie Creator : cette image en première image d’un plan'),
-        go('Référence vidéo', `movie/?ref=${id}`, 'Movie Creator : cette image en référence d’un plan'),
+        go('Animer', `movie/?start=${id}`, 'Vidéo : cette image en première image d’un plan'),
+        go('Référence vidéo', `movie/?ref=${id}`, 'Vidéo : cette image en référence d’un plan'),
         go('Ajouter au montage', `montage/?add=${id}`),
         b('Faire un élément', () => app.elementModal([n.id]), { title: 'un personnage, un objet, un lieu, un style réutilisable partout' }))));
     } else if (n.kind === 'video') {
       out.push(card('Production', null, el('div', { class: 'prod' },
-        go('Référence vidéo', `movie/?ref=${id}`, 'Movie Creator : ce mouvement en référence'),
+        go('Référence vidéo', `movie/?ref=${id}`, 'Vidéo : ce mouvement en référence'),
         go('Ajouter au montage', `montage/?add=${id}`))));
     } else if (n.kind === 'audio') {
       out.push(card('Production', null, el('div', { class: 'prod' },
         go('Ajouter au montage', `montage/?add=${id}`),
-        go('Référence vidéo', `movie/?ref=${id}`, 'Movie Creator : cette voix en référence'))));
+        go('Référence vidéo', `movie/?ref=${id}`, 'Vidéo : cette voix en référence'))));
     } else if (n.kind === 'element') {
       const refs = it.element?.refs || [];
       out.push(card('Références', `${refs.length}`,
@@ -178,7 +178,7 @@ export function createInspector(app) {
       out.push(card('Faire naître', null, row(b('Carte Générer', () => app.genWith([n.id]), { title: 'une carte qui prend cet élément en référence' }),
         b('Nuancier', () => app.palette(n.id)))));
       out.push(card('Production', null, el('div', { class: 'prod' },
-        go('Référence vidéo', `movie/?ref=${id}`, 'Movie Creator : cet élément dans un plan'),
+        go('Référence vidéo', `movie/?ref=${id}`, 'Vidéo : cet élément dans un plan'),
         it.element?.source?.open ? el('a', { class: 'tb ghost sm', href: it.element.source.open, target: '_blank', rel: 'noopener' }, 'Character Factory ↗') : null)));
     }
     return out;
@@ -212,7 +212,7 @@ export function createInspector(app) {
         b('Voir', () => app.canvas.fit(bbox([n]))),
         b('Choisir son contenu', () => app.select(inner.map((m) => m.id)), { disabled: !inner.length })),
       row(b(`Faire un élément (${imgs.length} image${imgs.length > 1 ? 's' : ''})`, () => app.elementModal(imgs.map((m) => m.id), n.name),
-        { disabled: !imgs.length, title: 'une planche d’ambiance → un élément « style » ou « lieu », pris en référence par Image et Movie Creator' })),
+        { disabled: !imgs.length, title: 'une planche d’ambiance → un élément « style » ou « lieu », pris en référence par Image et Vidéo' })),
       imgs.length ? null : el('p', { class: 'why' }, 'Faire un élément : posez des images dans ce cadre.'),
       hint('Déplacer le cadre emmène ce qu’il contient. Double-clic sur son nom : le renommer.'));
   }
@@ -382,7 +382,7 @@ export function createInspector(app) {
       el('div', { class: 'row' }, el('label', { class: 'field fgrow' }, el('span', { class: 'lbl' }, 'sorte'), type),
         el('label', { class: 'field fgrow' }, el('span', { class: 'lbl' }, `rôle de ${nodes.length > 1 ? 'ces images' : 'l’image'}`), role)),
       el('label', { class: 'field' }, el('span', { class: 'lbl' }, 'description'), desc),
-      el('p', { class: 'hint' }, 'Un élément se réutilise partout : Image et Movie Creator le prennent en référence ; il se retrouve dans Asset.')),
+      el('p', { class: 'hint' }, 'Un élément se réutilise partout : Image et Vidéo le prennent en référence ; il se retrouve dans Asset.')),
     (close) => [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', type: 'button', onclick: close }, 'Annuler'),
       el('button', { class: 'tb go', type: 'button', onclick: async () => {
         if (!title.value.trim()) { title.focus(); return; }
@@ -403,7 +403,7 @@ export function createInspector(app) {
           S.sel = new Set([e.id]);
         });
         app.lib?.reload();
-        toast(`« ${it.title} » est un élément — dans Asset, et en référence dans Image et Movie Creator`);
+        toast(`« ${it.title} » est un élément — dans Asset, et en référence dans Image et Vidéo`);
       } }, 'Créer l’élément')]);
   }
 

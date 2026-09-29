@@ -1,12 +1,19 @@
-// MOVIE CREATOR — des plans vidéo avec H3, dans le thème du portail.
+// VIDÉO (ex « Movie Creator », renommé par Cal le 29/09) — des plans vidéo
+// avec H3, dans le thème du portail.
 //
 // Le parcours suit H3 Studio (github.com/underworldhistory1-ctrl/minimax-h3-higgsfield,
-// licence MIT, Copyright (c) 2026 Charles Mod) : un rail de création (carte du
-// modèle, modes Texte / Images / Références, les trois champs du prompt H3,
-// toiles avec temps estimé, durée ; méthode, pas, graine, LoRA repliés), un
-// espace de travail (la vidéo en grand, la progression, « Vidéo en cours ») et
-// les vidéos générées. Réécrit ici ; la bibliothèque du portail, la file
-// commune et les éléments remplacent leurs fichiers locaux.
+// licence MIT, Copyright (c) 2026 Charles Mod) : une colonne de création (carte
+// du modèle, modes Texte / Images / Références, les trois champs du prompt H3,
+// toiles avec temps estimé, durée ; méthode, pas, graine, LoRA repliés).
+// Réécrit ici ; la bibliothèque du portail, la file commune et les éléments
+// remplacent leurs fichiers locaux.
+//
+// Depuis le 29/09, sur le modèle de Higgsfield : les réglages à gauche, le
+// fil des vidéos au centre (commun/fil.js), en liste — la grande vidéo et sa
+// carte (modèle, prompt aux jetons surlignés, entrées, puces, date) — ; les
+// rendus en file et en cours en tête du fil ; au survol, aimer, réutiliser,
+// recréer, télécharger, et le menu ⋯ ; un clic ouvre la visionneuse plein
+// écran, la molette passe d'une vidéo à l'autre.
 //
 // Les entrées du mode Références passent par le cadre commun (commun/entrees.js) :
 // rangées par sorte, appelées par position — @image1, @element1, @video1,
@@ -19,10 +26,12 @@
 //
 // Le serveur fait foi : /api/movie/plan résout tout (toile, étiquettes H3,
 // prompt envoyé, graphe, temps estimé, ce qui manque) ; la page l'affiche et
-// soumet à la file (movie.t2v / movie.i2v / movie.r2v).
+// soumet à la file (movie.t2v / movie.i2v / movie.r2v) ; /api/movie/redo
+// recrée une vidéo, /api/movie/frame en tire la première ou la dernière image.
 
-import { mountHeader, api, jobs, pick, uploadFile, toast, el, $, $$, href, fmtDate, kindFr, etypeFr, dropAnywhere, dropZone, dragItem } from '../commun/shell.js';
+import { mountHeader, api, jobs, pick, uploadFile, toast, el, $, $$, href, fmtDate, dropAnywhere, dropZone } from '../commun/shell.js';
 import { createEntrees } from '../commun/entrees.js';
+import { createFil } from '../commun/fil.js';
 
 mountHeader('movie');
 
@@ -40,6 +49,7 @@ const bg = (u) => (u ? { backgroundImage: `url(${href(u)})` } : null);
 // replaceChildren écrirait « null » : on ne passe que des nœuds
 const put = (box, ...kids) => box.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false));
 const rng = (e) => (e ? `${mmss(e.low)} – ${mmss(e.high)}` : '');
+const ms = (iso) => Date.parse(iso || '') || 0;
 
 // ── l'état ──────────────────────────────────────────────────
 const saved = store.get('movie.v2', {});
@@ -48,50 +58,39 @@ const F = {
   p: { t2v: { desc: '', sound: '', music: '' }, i2v: { desc: '', sound: '', music: '' }, r2v: { desc: '', sound: '', music: '' } },
   start: null, end: null, inputs: {}, refSize: 'match',
   canvas: { t2v: [1344, 768], i2v: 'auto', r2v: [1344, 768] }, fam: { t2v: 'paysage', i2v: 'image', r2v: 'paysage' },
-  method: 'turbo', frames: 124, steps: '', seed: '', loras: {}, adv: {},
+  method: 'turbo', frames: 124, steps: '', seed: '', origSeed: null, loras: {}, adv: {},
   ...saved,
 };
 for (const k of ['t2v', 'i2v', 'r2v']) F.p[k] = { desc: '', sound: '', music: '', ...((saved.p || {})[k] || {}) };
 delete F.refs; delete F.refKind;   // l'ancienne forme (références nommées)
 let E = null;   // le cadre des entrées, créé quand les options sont là
+let fil = null; // le fil des vidéos (commun/fil.js)
 const S = {
-  view: 'create', opts: null, plan: null, seq: 0, items: new Map(), lib: [], libAll: store.get('movie.lib', 'movie'),
-  libShown: 8, jobs: [], cur: null, focus: 'create', loras: [], loraMachine: '', A: null, B: null, h3: null, myJobs: new Set(store.get('movie.myjobs', [])),
+  view: 'create', opts: null, plan: null, seq: 0, items: new Map(), jobs: [], allJobs: [], loras: [], loraMachine: '', A: null, B: null, h3: null,
+  myJobs: new Set(store.get('movie.myjobs', [])), seen: new Set(), landed: new Set(), gone: new Set(),
 };
 const save = () => store.set('movie.v2', F);
-function changed({ focus = true } = {}) { save(); schedulePlan(); if (focus) setFocus('create'); }
+function changed() { save(); schedulePlan(); }
 async function item(id) {
   if (!id) return null;
   if (S.items.has(id)) return S.items.get(id);
   try { const it = await api('library/' + id); S.items.set(id, it); return it; } catch { S.items.set(id, null); return null; }
 }
 
-// Un seul orange : « Générer » pendant la création, l'action du résultat ensuite.
-function setFocus(f) {
-  S.focus = f;
-  const res = f === 'result' && S.cur && S.view === 'create';
-  $('#go').classList.toggle('go', !res);
-  $('#go').classList.toggle('ghost', !!res);
-  $('#res-dl').classList.toggle('go', !!res);
-  $('#res-dl').classList.toggle('ghost', !res);
-}
-
 // ── vues : créer, comparer ──────────────────────────────────
 function setView(v) {
   S.view = v;
   document.body.dataset.view = v;
-  $$('.subnav [data-view]').forEach((b) => b.classList.toggle('on', b.dataset.view === v));
+  $$('.rail-tabs [data-view]').forEach((b) => b.classList.toggle('on', b.dataset.view === v));
   $('#create').hidden = v !== 'create';
   $('#cmp-rail').hidden = v !== 'cmp';
   $('#dock').hidden = v !== 'create';
   $('#view').hidden = v !== 'create';
   $('#bench').hidden = v !== 'cmp';
   if (v === 'cmp') benchLoad(); else pauseBench();
-  paintLib();
-  setFocus(S.focus);
   syncUrl();
 }
-$$('.subnav [data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+$$('.rail-tabs [data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
 
 function setMode(m) {
   F.mode = m;
@@ -108,13 +107,13 @@ function setMode(m) {
   save(); schedulePlan();
   syncUrl();
 }
-$$('#modes [data-mode]').forEach((b) => b.addEventListener('click', () => { setMode(b.dataset.mode); setFocus('create'); }));
+$$('#modes [data-mode]').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
 
 function syncUrl() {
   const q = new URLSearchParams();
   if (S.view === 'cmp') { q.set('view', 'cmp'); if (S.A) q.set('a', S.A); if (S.B) q.set('b', S.B); }
-  else { q.set('mode', F.mode); if (S.cur) q.set('id', S.cur); }
-  try { history.replaceState(null, '', '?' + q); } catch { /* aperçu */ }
+  else q.set('mode', F.mode);
+  try { history.replaceState(null, '', '?' + q + location.hash); } catch { /* aperçu */ }
 }
 
 // ── Images : début · fin ────────────────────────────────────
@@ -333,8 +332,14 @@ function paintOutput() {
   $('#steps').placeholder = steps ? `auto · ${steps}` : 'auto';
   $('#profile').replaceChildren(el('b', {}, `${meth.label}${steps ? ' · ' + steps + ' pas' : ''}`), el('span', {}, meth.note));
   $('#seed').value = F.seed;
+  paintSeedOrig();
   if (pl) $('#estimate').replaceChildren(el('b', {}, `Estimé ${pl.width}×${pl.height} : ${rng(pl.estimate)}`),
     el('span', { class: 'hint' }, `${pl.estimate.basis}. Chargement du modèle, image et son compris ; le premier rendu après un démarrage d’H3 est plus long.`));
+}
+function paintSeedOrig() {
+  const b = $('#seed-orig');
+  b.hidden = F.origSeed === null || F.origSeed === undefined;
+  b.title = b.hidden ? '' : `la graine de la vidéo réutilisée : ${F.origSeed} — la même recette refait le même plan`;
 }
 $('#canvas').addEventListener('change', (e) => {
   const v = e.target.value;
@@ -346,6 +351,7 @@ $('#frames').addEventListener('change', (e) => { F.frames = Number(e.target.valu
 $('#steps').addEventListener('input', (e) => { F.steps = e.target.value.replace(/[^0-9]/g, ''); if (e.target.value !== F.steps) e.target.value = F.steps; changed(); });
 $('#seed').addEventListener('input', (e) => { F.seed = e.target.value.replace(/[^0-9]/g, ''); if (e.target.value !== F.seed) e.target.value = F.seed; changed(); });
 $('#seed-rand').addEventListener('click', () => { F.seed = String(Math.floor(Math.random() * 2 ** 31)); $('#seed').value = F.seed; changed(); });
+$('#seed-orig').addEventListener('click', () => { if (F.origSeed == null) return; F.seed = String(F.origSeed); $('#seed').value = F.seed; changed(); });
 
 // ── réglages avancés ────────────────────────────────────────
 function paintAdv() {
@@ -424,15 +430,18 @@ async function launch() {
   try {
     const title = (F.p[mode].desc.replace(/@([\p{L}\p{N}_-]+)/gu, '$1').trim().replace(/\s+/g, ' ') || MODE_FR[mode]).slice(0, 70);
     const j = await jobs.submit('movie.' + mode, params(mode), { title, tool: 'movie' });
-    S.myJobs.add(j.id); store.set('movie.myjobs', [...S.myJobs].slice(-40));
-    S.watch = j.id;
-    S.jobs = [j, ...S.jobs.filter((x) => x.id !== j.id)];
-    S.cur = null;   // la scène montre le plan qui se fabrique ; le précédent reste dans les vidéos
-    paintStage(); paintResult(); paintLib(); syncUrl();
-    paintProgress();
-    toast(pl.engine === 'h3' ? 'rendu en file : H3 démarre s’il dort' : 'rendu en file · moteur factice : une vidéo d’essai');
+    mine(j);
+    toast(pl.engine === 'h3' ? 'rendu en file, en tête du fil : H3 démarre s’il dort' : 'rendu en file, en tête du fil · moteur factice : une vidéo d’essai');
   } catch (e) { toast(e.message); }
   finally { $('#go').disabled = !S.plan?.ok; }
+}
+// un rendu lancé d'ici : il est dans le fil aussitôt, avant le relevé de la file
+function mine(j) {
+  S.myJobs.add(j.id);
+  store.set('movie.myjobs', [...S.myJobs].slice(-40));
+  S.seen.add(j.id);
+  S.jobs = [j, ...S.jobs.filter((x) => x.id !== j.id)];
+  fil?.paintJobs();
 }
 
 // ── le moteur ───────────────────────────────────────────────
@@ -451,94 +460,7 @@ async function paintEngine() {
   pill.className = cls; pill.lastChild.textContent = txt; pill.title = tip;
 }
 
-// ── l'espace de travail ─────────────────────────────────────
-let stageKey = '';
-async function paintStage() {
-  const box = $('#stage');
-  const it = S.cur ? await item(S.cur) : null;
-  const j = S.jobs.find((x) => x.id === S.watch && ['queued', 'running', 'error'].includes(x.state));
-  const key = it ? 'v' + it.id : j ? 'j' + j.id + j.state : 'vide';
-  if (key === stageKey) return;
-  stageKey = key;
-  if (it) {
-    box.replaceChildren(el('video', { src: href(it.url), poster: it.thumb_url ? href(it.thumb_url) : null, controls: true, loop: true, playsinline: true, preload: 'metadata' }),
-      el('div', { class: 'badges' },
-        it.params?.mode ? el('span', { class: 'badge' }, `${MODE_FR[it.params.mode]} · ${METH_FR[it.params.method] || ''}`) : null,
-        it.audio ? el('span', { class: 'badge snd' }, 'son') : el('span', { class: 'badge' }, 'muet'),
-        it.params?.engine === 'factice' ? el('span', { class: 'badge fake' }, 'factice') : null));
-  } else if (j && j.state === 'error') {
-    put(box, el('div', { class: 'empty' }, el('b', {}, 'Le rendu a échoué'), el('span', { class: 'warn' }, j.message || ''),
-      el('button', { class: 'tb ghost sm', onclick: () => jobs.retry(j.id).then((n) => { S.myJobs.add(n.id); watchJob(n.id); }) }, 'Relancer')));
-  } else if (j) {
-    put(box, j.thumb ? el('img', { class: 'poster', src: href(j.thumb), alt: '' }) : null,
-      el('div', { class: 'empty' }, el('b', {}, j.state === 'queued' ? 'En file' : 'Le plan se fabrique'),
-        el('span', {}, 'il se posera ici et dans les vidéos générées ; cliquez une autre vidéo pour la voir, le rendu continue')));
-  } else {
-    box.replaceChildren(el('div', { class: 'empty' }, el('span', { class: 'play' }, '▶'), el('b', {}, 'Votre vidéo s’affichera ici'),
-      el('span', {}, 'choisissez un mode, décrivez la scène et le son, générez : la progression et le plan restent ici')));
-  }
-}
-function show(id) { S.cur = id; stageKey = ''; paintStage(); paintResult(); paintLib(); setFocus('result'); syncUrl(); }
-
-function paintProgress() {
-  const j = S.jobs.find((x) => x.id === S.watch) || S.jobs.find((x) => ['queued', 'running'].includes(x.state));
-  const lab = $('#st-label'), pct = $('#st-pct'), bar = $('#st-bar'), el_ = $('#st-elapsed'), left = $('#st-left'), q = $('#st-queue');
-  const cancel = $('#st-cancel');
-  if (!j) { lab.textContent = 'rien en cours'; pct.textContent = '—'; bar.firstChild.style.width = '0%'; bar.classList.remove('busy');
-    el_.textContent = '—'; left.textContent = 'restant : —'; q.textContent = queueText(); cancel.hidden = true; return; }
-  const run = j.state === 'running', wait = j.state === 'queued';
-  const p = j.progress;
-  lab.textContent = run ? (j.message || 'en cours') : wait ? (j.message || 'en file') : j.state === 'done' ? `fini · ${j.result?.note || ''}`
-    : j.state === 'error' ? 'échec : ' + (j.message || '') : j.state === 'cancelled' ? 'arrêté' : j.message || j.state;
-  lab.classList.toggle('err', j.state === 'error');
-  pct.textContent = p != null ? Math.round(p * 100) + ' %' : run ? '…' : '—';
-  bar.firstChild.style.width = (p != null ? p * 100 : j.state === 'done' ? 100 : 0) + '%';
-  bar.classList.toggle('busy', run && p == null);
-  const t0 = j.started ? Date.parse(j.started) : null, t1 = j.finished ? Date.parse(j.finished) : Date.now();
-  const elapsed = t0 ? (t1 - t0) / 1000 : null;
-  el_.textContent = elapsed != null ? `écoulé : ${mmss(elapsed)}` : 'pas encore commencé';
-  const est = j.estimate || j.params?.estimate;
-  let rest = null;
-  if (run && p > 0.2 && elapsed) rest = (elapsed * (1 - p)) / p;
-  else if (run && est && elapsed != null) rest = (est.low + est.high) / 2 - elapsed;
-  left.textContent = !run ? (j.state === 'done' ? 'restant : 0 s' : 'restant : —') : rest != null ? (rest > 0 ? `restant ≈ ${mmss(rest)}` : 'estimation dépassée · ça continue') : 'restant : —';
-  q.textContent = queueText(j);
-  cancel.hidden = !(run || wait);
-  cancel.onclick = () => jobs.cancel(j.id).then(() => toast('rendu arrêté'));
-}
-function queueText(j) {
-  const active = S.allJobs?.filter((x) => (x.lane === 'h3' || x.kind?.startsWith('movie.')) && ['queued', 'running'].includes(x.state)) || [];
-  if (!j) return `file : ${active.length ? active.length + ' rendu' + (active.length > 1 ? 's' : '') + ' vidéo' : 'vide'}`;
-  if (j.state === 'running') return `file : rendu en cours${j.machine ? ' sur ' + j.machine : ''} · ${active.length} travail${active.length > 1 ? 'x' : ''} vidéo en tout`;
-  if (j.state === 'queued') { const ahead = active.filter((x) => x.id !== j.id && Date.parse(x.created) <= Date.parse(j.created)).length; return `file : ${ahead} devant`; }
-  return 'file : —';
-}
-
-async function paintResult() {
-  const card = $('#result-card');
-  const it = S.cur ? await item(S.cur) : null;
-  card.hidden = !it;
-  if (!it) return;
-  const p = it.params || {};
-  $('#res-title').textContent = it.prompt || it.title;
-  $('#res-meta').textContent = [it.width && `${it.width}×${it.height}`, it.duration && `${it.duration.toFixed(1)} s`, it.render_seconds != null && `rendu ${mmss(it.render_seconds)}`, fmtDate(it.created)].filter(Boolean).join(' · ');
-  $('#res-pin').textContent = it.fav ? 'Épinglée ★' : 'Épingler';
-  $('#res-pin').onclick = async () => { const n = await api('library/' + it.id, { method: 'POST', body: { fav: !it.fav } }); S.items.set(n.id, n); S.lib = S.lib.map((x) => (x.id === n.id ? n : x)); paintResult(); paintLib(); };
-  $('#res-details').onclick = () => details(it);
-  $('#res-dl').href = href(it.url);
-  $('#res-dl').setAttribute('download', `${(it.title || it.id).slice(0, 40).replace(/[^\p{L}\p{N}_-]+/gu, '_')}.mp4`);
-  const del = $('#res-del');
-  del.textContent = 'Supprimer';
-  del.onclick = async () => {
-    if (!del.dataset.arm) { del.dataset.arm = '1'; del.textContent = 'Confirmer : à la corbeille'; setTimeout(() => { delete del.dataset.arm; del.textContent = 'Supprimer'; }, 4000); return; }
-    delete del.dataset.arm;
-    try { await api(`library/${it.id}/delete`, { method: 'POST' }); toast('à la corbeille de la bibliothèque (elle peut en revenir)'); S.cur = null; S.items.delete(it.id); await loadLib(); show(S.lib[0]?.id || null); }
-    catch (e) { toast(e.message); }
-  };
-  void p;
-}
-
-// la recette d'une vidéo, lisible
+// la recette d'une vidéo, lisible (la visionneuse, le banc)
 function recipeRows(it) {
   const p = it.params || {};
   const o = S.opts;
@@ -559,155 +481,223 @@ function recipeRows(it) {
     ['Rendu', it.render_seconds != null ? `${mmss(it.render_seconds)}${it.machine ? ' · ' + it.machine : ''}${p.estimate ? ` (estimé H3 ${rng(p.estimate)})` : ''}` : null],
   ].filter(([, v]) => v !== null && v !== undefined && v !== '');
 }
-function details(it) {
-  const p = it.params || {};
-  const close = () => { scrim.remove(); document.removeEventListener('keydown', esc); };
-  const esc = (e) => { if (e.key === 'Escape') close(); };
-  const scrim = el('div', { class: 'scrim', onclick: (e) => { if (e.target === scrim) close(); } },
-    el('div', { class: 'modal lg', role: 'dialog', 'aria-label': 'réglages de la vidéo' },
-      el('div', { class: 'modal-head' }, el('span', { class: 't' }, 'Réglages de la vidéo'), el('span', { class: 'sp' }),
-        el('button', { class: 'tb ghost sm', onclick: close }, 'Fermer')),
-      el('div', { class: 'modal-body' },
-        el('p', { class: 'ttl' }, it.prompt || it.title),
-        el('dl', { class: 'kv' }, ...recipeRows(it).flatMap(([k, v]) => [el('dt', {}, k), el('dd', {}, String(v))])),
-        p.sound ? el('div', { class: 'field' }, el('span', { class: 'lbl' }, 'Son demandé'), el('p', {}, p.sound)) : null,
-        p.music ? el('div', { class: 'field' }, el('span', { class: 'lbl' }, 'Musique'), el('p', {}, p.music)) : null,
-        p.prompt_sent ? el('details', { class: 'sentbox', open: true }, el('summary', { class: 'lbl' }, 'Le prompt envoyé à H3'), el('pre', { class: 'sent' }, p.prompt_sent)) : null,
-        p.graph ? el('details', { class: 'sentbox' }, el('summary', { class: 'lbl' }, 'Le graphe H3'), el('pre', { class: 'sent' }, JSON.stringify(p.graph, null, 1))) : null),
-      el('div', { class: 'modal-foot' },
-        p.mode ? el('button', { class: 'tb ghost', onclick: () => { close(); reuse(it); } }, 'Reprendre ces réglages') : null,
-        el('button', { class: 'tb ghost', onclick: () => { close(); S.A = it.id; if (S.B === it.id) S.B = null; setView('cmp'); } }, 'Comparer'),
-        el('span', { class: 'sp' }), el('span', { class: 'lbl' }, fmtDate(it.created)))));
-  document.addEventListener('keydown', esc);
-  document.body.append(scrim);
+
+// ── réutiliser : la recette dans le formulaire, graine vidée ──
+// les réglages d'envoi d'une vidéo : ceux qu'elle a reçus (`request`, rangés
+// depuis le 29/09), sinon refaits depuis sa recette — request_of() du serveur
+function requestOf(p) {
+  if (p.request && typeof p.request === 'object') return p.request;
+  return { desc: p.desc, sound: p.sound, music: p.music, method: p.method, frames: p.frames, steps: p.steps, seed: p.seed,
+    canvas: p.family === 'image' ? 'auto' : [p.width, p.height], loras: p.loras || [],
+    adv: { unet: p.unet, sampler: p.sampler, scheduler: p.scheduler, crf: p.crf }, start: p.start, end: p.end,
+    inputs: p.inputs || {}, ref_image_size: p.ref_image_size };
 }
+const noRecipe = (it) => (it.params?.mode && MODE_FR[it.params.mode] ? '' : 'vidéo sans recette de l’outil Vidéo : déposée, ou faite ailleurs');
 function reuse(it) {
   const p = it.params || {};
-  F.p[p.mode] = { desc: p.desc ?? it.prompt ?? '', sound: p.sound || '', music: p.music || '' };
-  F.method = p.method || 'turbo'; F.frames = p.frames || 124; F.seed = p.seed != null ? String(p.seed) : ''; F.steps = p.steps ? String(p.steps) : '';
-  F.canvas[p.mode] = p.family === 'image' ? 'auto' : [p.width, p.height];
-  F.fam[p.mode] = p.family || 'paysage';
-  if (p.mode === 'i2v') { F.start = p.start || null; F.end = p.end || null; }
-  if (p.mode === 'r2v') { F.inputs = p.inputs || {}; E?.set(F.inputs); F.refSize = p.ref_image_size || 'match'; $('#ref-size').value = F.refSize; }
+  const mode = p.mode;
+  if (!MODE_FR[mode]) { toast(noRecipe(it)); return; }
+  const r = requestOf(p);
+  F.p[mode] = { desc: r.desc ?? it.prompt ?? '', sound: r.sound || '', music: r.music || '' };
+  F.method = r.method || 'turbo'; F.frames = r.frames || 124; F.steps = r.steps ? String(r.steps) : '';
+  F.seed = ''; F.origSeed = p.seed ?? r.seed ?? null;
+  const cv = r.canvas;
+  F.canvas[mode] = cv === 'auto' || (!Array.isArray(cv) && p.family === 'image') ? 'auto' : Array.isArray(cv) ? cv.map(Number) : [p.width, p.height];
+  F.fam[mode] = F.canvas[mode] === 'auto' ? 'image'
+    : (S.opts?.canvases.find((c) => c.w === F.canvas[mode][0] && c.h === F.canvas[mode][1])?.family || p.family || 'paysage');
+  if (mode === 'i2v') { F.start = r.start || null; F.end = r.end || null; }
+  if (mode === 'r2v') { F.inputs = r.inputs || {}; E?.set(F.inputs); F.refSize = r.ref_image_size || 'match'; $('#ref-size').value = F.refSize; }
   for (const k of Object.keys(F.loras)) F.loras[k].on = false;
-  for (const l of p.loras || []) F.loras[l.name] = { on: true, strength: l.strength };
-  if (p.weights) F.adv['unet_' + p.weights] = p.unet;
-  F.adv.sampler = p.sampler; F.adv.scheduler = p.scheduler; F.adv.crf = p.crf && p.crf !== 19 ? String(p.crf) : '';
+  for (const l of r.loras || []) F.loras[l.name] = { on: true, strength: l.strength };
+  const adv = r.adv || {};
+  if (p.weights) F.adv['unet_' + p.weights] = adv.unet || p.unet;
+  F.adv.sampler = adv.sampler || p.sampler; F.adv.scheduler = adv.scheduler || p.scheduler;
+  const crf = adv.crf ?? p.crf;
+  F.adv.crf = crf && Number(crf) !== 19 ? String(crf) : '';
   if (S.view !== 'create') setView('create');
-  setMode(p.mode);
-  setFocus('create');
-  toast('réglages repris, graine comprise : videz la graine pour une variante');
+  setMode(mode);
+  $('#rail .rail-scroll').scrollTop = 0;
+  descEl.focus();
+  toast('réglages repris · graine vidée : « Générer » fait une variante (la graine d’origine : Réglages avancés)', 5500);
+}
+async function recreate(it, same = false) {
+  try {
+    const j = await api('movie/redo', { method: 'POST', body: { item: it.id, same_seed: same } });
+    mine(j);
+    jobs.poll(true);
+    toast(same ? 'refait à l’identique, même graine : en tête du fil' : 'recréé, nouvelle graine : en tête du fil');
+  } catch (e) { toast(e.message, 6000); }
+}
+// la première ou la dernière image d'une vidéo, rangée dans la bibliothèque
+async function frame(it, which) {
+  try { return await api('movie/frame', { method: 'POST', body: { item: it.id, which } }); } catch (e) { toast(e.message, 6000); return null; }
+}
+async function extract(it, which) {
+  const img = await frame(it, which);
+  if (img) toast(`« ${img.title} » dans la bibliothèque (Asset) — elle se reprend en image de début, en référence, dans Image`, 6000);
+}
+// continuer le plan : sa dernière image devient la première d'un nouveau plan
+async function continueFrom(it) {
+  const img = await frame(it, 'last');
+  if (!img) return;
+  fil.close();
+  if (S.view !== 'create') setView('create');
+  setMode('i2v');
+  await setImage('start', img);
+  toast('la dernière image en début de plan : décrivez la suite', 5000);
+}
+function asRef(it) {
+  fil.close();
+  if (S.view !== 'create') setView('create');
+  setMode('r2v');
+  if (E) E.add([it]);
+}
+function toBench(k, it) {
+  S.items.set(it.id, it);
+  fil.close();
+  assign(k, it.id);
+}
+const go = (path) => () => { location.href = href(path); };
+function menuFor(it) {
+  const id = it.id;
+  const vid = it.kind === 'video';
+  return [
+    { label: 'Extraire une image', icon: '▣', items: [
+      { label: 'La première', onclick: () => extract(it, 'first') },
+      { label: 'La dernière', onclick: () => extract(it, 'last') },
+    ] },
+    { label: 'Continuer le plan', icon: '→', sub: 'dernière image', title: 'sa dernière image en première image d’un nouveau plan', onclick: () => continueFrom(it) },
+    { label: 'Prendre en référence', icon: '+', sub: '@video', title: 'dans les entrées du mode Références', onclick: () => asRef(it) },
+    { label: 'Comparer', icon: '◧', items: [
+      { label: 'en A', onclick: () => toBench('A', it) },
+      { label: 'en B', onclick: () => toBench('B', it) },
+    ] },
+    { label: 'Agrandir dans Upscale', icon: '⇱', disabled: !vid, why: 'pas une vidéo', onclick: go(`upscale/?src=${id}`) },
+    { label: 'Envoyer au Montage', icon: '▤', onclick: go(`montage/?add=${id}`) },
+    { label: 'Créer un élément', icon: '◆', disabled: true,
+      why: 'un élément se fait d’images (et d’une voix) : tirez d’abord une image de la vidéo (⋯ → Extraire une image), puis faites l’élément depuis Image ou Asset' },
+  ];
+}
+function extra(it) {
+  const p = it.params || {};
+  const out = [];
+  if (p.sound || p.music) {
+    out.push(el('section', { class: 'fv-sec' },
+      p.sound ? el('div', { class: 'field' }, el('span', { class: 'lbl' }, 'Son demandé'), el('p', { class: 'fv-prompt' }, p.sound)) : null,
+      p.music ? el('div', { class: 'field' }, el('span', { class: 'lbl' }, 'Musique'), el('p', { class: 'fv-prompt' }, p.music)) : null));
+  }
+  if (p.prompt_sent) out.push(el('section', { class: 'fv-sec' }, el('details', {}, el('summary', { class: 'lbl' }, 'Le prompt envoyé à H3'), el('pre', {}, p.prompt_sent))));
+  if (p.graph) out.push(el('section', { class: 'fv-sec' }, el('details', {}, el('summary', { class: 'lbl' }, 'Le graphe H3'), el('pre', {}, JSON.stringify(p.graph, null, 1)))));
+  return out;
+}
+function badge(it) {
+  const p = it.params || {};
+  if (!p.mode) return it.origin?.tool === 'upload' ? 'déposée' : (it.origin?.tool || 'vidéo');
+  return ['H3', MODE_FR[p.mode], METH_FR[p.method] || '', p.engine === 'factice' ? 'factice' : ''].filter(Boolean).join(' · ');
 }
 
-// ── les vidéos générées (la bibliothèque) ───────────────────
-async function loadLib() {
-  const q = S.libAll === 'all' ? 'library?kind=video&limit=500' : 'library?kind=video&tool=movie&limit=500';
-  try { const r = await api(q); S.lib = r.items; for (const it of r.items) S.items.set(it.id, it); }
-  catch (e) { S.lib = []; toast(e.message); }
-  paintLib();
-}
-$$('#lib-seg .tb').forEach((b) => {
-  b.classList.toggle('on', b.dataset.h === S.libAll);
-  b.addEventListener('click', () => { S.libAll = b.dataset.h; store.set('movie.lib', S.libAll); $$('#lib-seg .tb').forEach((x) => x.classList.toggle('on', x === b)); S.libShown = 8; loadLib(); });
-});
-$('#lib-more').addEventListener('click', () => { S.libShown += 8; paintLib(); });
-// La file d'abord : les rendus envoyés y sont aussitôt (place, progression,
-// arrêter) ; le résultat prend leur place à l'arrivée. Puis les vidéos.
+// ── la file dans le fil : les rendus en file, en cours, et mes échecs récents ──
 function liveJobs() {
-  const recent = (j) => Date.now() - Date.parse(j.finished || j.created) < 3 * 3600e3;
-  const rank = { running: 0, queued: 1, error: 2 };
-  return S.jobs.filter((j) => ['queued', 'running'].includes(j.state) || (j.state === 'error' && recent(j) && S.myJobs.has(j.id)))
-    .sort((a, b) => rank[a.state] - rank[b.state] || Date.parse(a.created) - Date.parse(b.created));
+  const recent = (j) => Date.now() - ms(j.finished || j.created) < 3 * 3600e3;
+  return S.jobs.filter((j) => !S.gone.has(j.id) && (['queued', 'running'].includes(j.state)
+    || (j.state === 'done' && S.seen.has(j.id) && !S.landed.has(j.id))    // arrive : sa vidéo est en route
+    || (j.state === 'error' && recent(j) && S.myJobs.has(j.id))))
+    .sort((a, b) => ms(b.created) - ms(a.created));
 }
-function queuePos(j) {   // la place dans la voie : ce qui tourne ou attend devant lui
-  const same = (S.allJobs || S.jobs).filter((x) => x.lane === j.lane && ['queued', 'running'].includes(x.state) && x.id !== j.id);
-  return same.filter((x) => x.state === 'running' || Date.parse(x.created) < Date.parse(j.created)).length;
+function jobLines(j) {
+  const run = j.state === 'running';
+  const t0 = j.started ? ms(j.started) : null;
+  const spent = t0 ? (Date.now() - t0) / 1000 : null;
+  const p = j.progress;
+  const est = j.estimate || j.params?.estimate;
+  let rest = null;
+  if (run && p > 0.2 && spent) rest = (spent * (1 - p)) / p;
+  else if (run && est && spent != null) rest = (est.low + est.high) / 2 - spent;
+  return [MODE_FR[(j.kind || '').split('.')[1]], j.message === 'en file' ? '' : j.message,
+    run && spent != null ? `écoulé ${mmss(spent)}` : '',
+    run && rest != null ? (rest > 0 ? `restant ≈ ${mmss(rest)}` : 'estimation dépassée · ça continue') : '',
+    j.machine];
 }
-function paintLib() {
-  const cmp = S.view === 'cmp';
-  const live = liveJobs();
-  const list = S.lib.slice(0, S.libShown);
-  const nrun = live.filter((j) => j.state !== 'error').length;
-  $('#lib-count').textContent = `${S.lib.length} vidéo${S.lib.length > 1 ? 's' : ''}${nrun ? ` · ${nrun} en cours` : ''}`;
-  put($('#vgrid'), live.map((j) => jobCard(j, cmp)), list.map((it) => vcard(it, cmp)),
-    !list.length && !live.length ? el('div', { class: 'vempty' },
-      S.libAll === 'all' ? 'aucune vidéo dans la bibliothèque : déposez un mp4 sur la page, ou générez-en une'
-        : 'vos rendus arriveront ici dès l’envoi, avec leur place dans la file ; ils restent dans la bibliothèque jusqu’à leur suppression') : null);
-  $('#lib-more').hidden = S.lib.length <= S.libShown;
-  $('#lib-more').textContent = `Voir plus · ${S.lib.length - S.libShown} autres`;
-}
-function jobCard(j, cmp) {
-  const run = j.state === 'running', wait = j.state === 'queued', err = j.state === 'error';
-  const pct = j.progress != null ? Math.round(j.progress * 100) : null;
-  const ahead = wait ? queuePos(j) : 0;
-  const on = !S.cur && S.watch === j.id && !cmp;
-  const state = run ? (pct != null ? `${pct} %` : 'en cours') : wait ? (ahead ? `en file · ${ahead} devant` : 'en file · le suivant') : 'échec';
-  // « vjob », pas « job » : .job est la rangée du tiroir de la file du portail
-  return el('div', { class: 'vcard vjob' + (run ? ' run' : wait ? ' wait' : ' err') + (on ? ' sel' : '') },
-    el('button', { class: 'vopen', type: 'button', title: j.message || j.title, onclick: () => watchJob(j.id) },
-      el('span', { class: 'vm', style: bg(j.thumb) },
-        el('span', { class: 'jst' }, state),
-        el('span', { class: 'jbar' + (run && pct == null ? ' busy' : '') }, el('i', { style: { width: (pct ?? (err ? 100 : 0)) + '%' } }))),
-      el('span', { class: 'vl' }, el('span', { class: 't' }, j.title || MODE_FR[j.kind.split('.')[1]]),
-        el('span', { class: 's' }, err ? (j.message || '').slice(0, 90) : [MODE_FR[j.kind.split('.')[1]], j.message].filter(Boolean).join(' · ')))),
-    run || wait ? el('button', { class: 'vdet', type: 'button', title: 'arrêter ce rendu', onclick: () => jobs.cancel(j.id).then(() => toast('rendu arrêté')) }, 'Arrêter')
-      : el('button', { class: 'vdet', type: 'button', onclick: () => jobs.retry(j.id).then((n) => { S.myJobs.add(n.id); store.set('movie.myjobs', [...S.myJobs].slice(-40)); watchJob(n.id); }) }, 'Relancer'));
-}
-// voir un rendu en cours dans l'espace de travail, sans rien interrompre
-function watchJob(id) {
-  if (S.view !== 'create') setView('create');
-  S.watch = id; S.cur = null; stageKey = '';
-  paintStage(); paintResult(); paintProgress(); paintLib(); syncUrl();
-}
-function vcard(it, cmp) {
-  const p = it.params || {};
-  const sel = !cmp && S.cur === it.id;
-  const ab = (k) => el('button', { type: 'button', class: 'abk' + (S[k] === it.id ? ' is' + k : ''), title: `charger en ${k}`, onclick: (e) => { e.stopPropagation(); assign(k, it.id); } }, k);
-  return dragItem(el('div', { class: 'vcard' + (sel ? ' sel' : '') + (S.A === it.id ? ' selA' : '') + (S.B === it.id ? ' selB' : '') + (it.fav ? ' pinned' : '') },
-    el('button', { class: 'vopen', type: 'button', title: it.prompt || it.title, onclick: () => (cmp ? assign(S.A ? 'B' : 'A', it.id) : show(it.id)) },
-      el('span', { class: 'vm', style: bg(it.thumb_url) },
-        it.duration ? el('span', { class: 'dur' }, it.duration.toFixed(1) + ' s') : null,
-        it.fav ? el('span', { class: 'pin' }, '★') : null,
-        p.engine === 'factice' ? el('span', { class: 'fk' }, 'factice') : null),
-      el('span', { class: 'vl' }, el('span', { class: 't' }, it.title || it.id),
-        el('span', { class: 's' }, [fmtDate(it.created), it.render_seconds != null ? 'rendu ' + mmss(it.render_seconds) : null, p.mode ? MODE_FR[p.mode] : null].filter(Boolean).join(' · ')))),
-    cmp ? el('span', { class: 'abs' }, ab('A'), ab('B'))
-      : el('button', { class: 'vdet', type: 'button', onclick: () => details(it) }, 'Détails')), it);   // la carte se glisse ailleurs
+const onJob = {
+  cancel: (j) => jobs.cancel(j.id).then(() => toast('rendu arrêté')).catch((e) => toast(e.message)),
+  retry: (j) => jobs.retry(j.id).then((n) => { S.gone.add(j.id); mine(n); }).catch((e) => toast(e.message)),
+  forget: (j) => { S.gone.add(j.id); jobs.forget(j.id).catch(() => {}); fil.paintJobs(); },
+};
+
+function mountFil() {
+  fil = createFil($('#fil'), {
+    id: 'movie', layout: 'list', title: 'Historique',
+    scopes: [{ id: 'movie', label: 'Vidéo' }, { id: 'all', label: 'Toute la bibliothèque' }],
+    query: ({ scope }) => (scope === 'all' ? 'library?kind=video' : 'library?kind=video&tool=movie'),
+    jobs: liveJobs, jobLines, onJob,
+    prompt: (it) => it.params?.desc ?? it.prompt ?? '',
+    promptLabel: 'Prompt',
+    badge,
+    chips: (it) => [it.width ? `${it.width}×${it.height}` : '', it.duration ? `${it.duration.toFixed(1).replace('.', ',')} s` : '',
+      it.params?.family || '', it.audio ? 'son' : 'muet'],
+    details: (it) => recipeRows(it),
+    extra,
+    viewerActions: (it) => [
+      el('button', { class: 'tb ghost', type: 'button', title: 'la mettre en A du banc', onclick: () => toBench(S.A && S.A !== it.id ? 'B' : 'A', it) }, 'Comparer'),
+      el('button', { class: 'tb ghost', type: 'button', title: 'sa dernière image en première image d’un nouveau plan', onclick: () => continueFrom(it) }, 'Continuer'),
+    ],
+    reuse: { run: reuse, why: noRecipe },
+    recreate: {
+      run: (it) => recreate(it, false), why: noRecipe,
+      more: (it) => [
+        { label: 'Nouvelle graine', onclick: () => recreate(it, false) },
+        { label: 'À l’identique', sub: 'même graine', onclick: () => recreate(it, true) },
+      ],
+    },
+    menu: menuFor,
+    link: (it) => href('movie/#' + it.id),
+    empty: 'Choisissez un mode, décrivez la scène et le son, « Générer » : le rendu paraît ici dès l’envoi, avec sa place dans la file ; la vidéo reste dans la bibliothèque jusqu’à sa suppression.',
+  });
 }
 
 // ── la file ─────────────────────────────────────────────────
 let jobsKey = '';
+// un rendu fini que la page a vu partir : sa vidéo prend sa place dans le fil
+const fetching = new Set();
+async function land(j) {
+  if (S.landed.has(j.id) || fetching.has(j.id)) return;
+  fetching.add(j.id);
+  try {
+    const full = await jobs.get(j.id);
+    if (full.items?.length) { for (const it of full.items) S.items.set(it.id, it); fil?.add(full.items); }
+  } catch { /* parti */ }
+  S.landed.add(j.id);
+  fetching.delete(j.id);
+  fil?.paintJobs();
+}
 jobs.watch((list) => {
   S.allJobs = list;
-  S.jobs = list.filter((j) => j.tool === 'movie');
+  // les rendus de l'outil ; ceux que la page vient de lancer restent même avant le relevé
+  const fresh = S.jobs.filter((j) => !list.some((x) => x.id === j.id) && ['queued', 'running'].includes(j.state));
+  S.jobs = [...fresh, ...list.filter((j) => j.tool === 'movie')];
+  for (const j of S.jobs) {
+    if (['queued', 'running'].includes(j.state)) S.seen.add(j.id);
+    else if (j.state === 'done' && S.seen.has(j.id)) land(j);   // même si la fin a eu lieu entre deux relevés
+  }
   const key = S.jobs.map((j) => `${j.id}:${j.state}:${j.progress}:${j.message}`).join('|');
   if (key === jobsKey) return;
   jobsKey = key;
-  if (!S.watch) S.watch = S.jobs.find((j) => ['queued', 'running'].includes(j.state))?.id || null;
-  paintProgress();
-  paintStage();
-  paintLib();
+  fil?.paintJobs();
 });
-document.addEventListener('sr:job', async (e) => {
+document.addEventListener('sr:job', (e) => {
   const j = e.detail;
   if (j.tool !== 'movie') return;
-  if (j.state === 'done') {
-    await loadLib();
-    // le résultat se pose dans les vidéos ; la scène ne bascule que si on regardait ce rendu-là
-    if (j.id === S.watch && !S.cur && j.result?.items?.[0] && S.view === 'create') show(j.result.items[0]);
-    else if (j.id === S.watch) S.watch = S.jobs.find((x) => ['queued', 'running'].includes(x.state))?.id || j.id;
-    toast(`vidéo prête · ${j.result?.note || ''}`);
-  } else if (j.state === 'error') toast('échec : ' + (j.message || '').slice(0, 160));
-  paintProgress();
+  if (j.state === 'done') { S.seen.add(j.id); land(j); toast(`vidéo prête · ${j.result?.note || ''}`); }
+  else if (j.state === 'error') toast('échec : ' + (j.message || '').slice(0, 160));
 });
-setInterval(() => { if (S.jobs.some((j) => j.state === 'running')) paintProgress(); }, 1000);   // l'écoulé avance
+setInterval(() => { if (S.jobs.some((j) => j.state === 'running')) fil?.paintJobs(); }, 1000);   // l'écoulé avance
 
 // ── le banc A/B (repris du banc NL de Cal) ──────────────────
 const vA = $('#vA'), vB = $('#vB'), mon = $('#monitor'), layA = $('#layA'), layB = $('#layB'), handle = $('#handle');
 const zsA = $('#zsA'), zsB = $('#zsB'), scrub = $('#scrub'), fill = $('#fill');
 const BS = { mode: store.get('movie.bench.mode', 'wipe'), listen: 'a', zoom: 1, pan: { x: 0, y: 0 }, loop: store.get('movie.bench.loop', true),
   speed: 1, wipe: 50, blinkT: null, seeking: false, volume: 1 };
-function assign(k, id) { S[k] = id; if (S.view !== 'cmp') setView('cmp'); else { benchLoad(); paintLib(); syncUrl(); } }
+function assign(k, id) { S[k] = id; if (S.view !== 'cmp') setView('cmp'); else { benchLoad(); syncUrl(); } }
 function paintSlots() {
   for (const k of ['A', 'B']) {
     const it = S[k] ? S.items.get(S[k]) : null;
@@ -721,7 +711,7 @@ function paintSlots() {
   }
 }
 async function chooseAB(k) { const [it] = await pick({ kinds: ['video'], multiple: false, title: `Plan ${k}` }); if (it) { S.items.set(it.id, it); assign(k, it.id); } }
-for (const k of ['A', 'B']) {   // une vidéo déposée sur A ou B : du disque, ou une carte glissée
+for (const k of ['A', 'B']) {   // une vidéo déposée sur A ou B : du disque, ou une vignette du fil glissée
   dropZone($('#slot-' + k.toLowerCase()), { kinds: ['video'], multiple: false, via: 'movie', onitems: ([it]) => { S.items.set(it.id, it); assign(k, it.id); } });
 }
 const master = () => (vA.getAttribute('src') ? vA : vB);
@@ -773,7 +763,7 @@ $('#bPrev').addEventListener('click', () => step(-1));
 $('#bNext').addEventListener('click', () => step(1));
 $('#bLoop').classList.toggle('on', BS.loop);
 $('#bLoop').addEventListener('click', () => { BS.loop = !BS.loop; $('#bLoop').classList.toggle('on', BS.loop); store.set('movie.bench.loop', BS.loop); });
-$('#bSwap').addEventListener('click', () => { [S.A, S.B] = [S.B, S.A]; benchLoad(); paintLib(); syncUrl(); });
+$('#bSwap').addEventListener('click', () => { [S.A, S.B] = [S.B, S.A]; benchLoad(); syncUrl(); });
 function seg(id, attr, cb) { $$(`#${id} .tb`).forEach((b) => b.addEventListener('click', () => { $$(`#${id} .tb`).forEach((x) => x.classList.remove('on')); b.classList.add('on'); cb(b.dataset[attr]); })); }
 seg('segSpeed', 'v', (v) => { BS.speed = +v; vA.playbackRate = vB.playbackRate = BS.speed; });
 seg('segMode', 'm', (m) => setBenchMode(m));
@@ -833,7 +823,7 @@ mon.addEventListener('pointermove', (e) => { if (!drag) return; const r = mon.ge
 ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) => mon.addEventListener(ev, () => { drag = null; if (BS.zoom > 1) mon.style.cursor = 'grab'; }));
 mon.addEventListener('dblclick', (e) => { const r = mon.getBoundingClientRect(); zoomAt(BS.zoom > 1 ? 1 : 2, e.clientX - r.left, e.clientY - r.top); });
 document.addEventListener('keydown', (e) => {
-  if (S.view !== 'cmp' || $('.scrim')) return;
+  if (S.view !== 'cmp' || $('.scrim') || $('.fv') || $('.sr-menu')) return;
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
   const k = e.key;
   if (k === ' ') { e.preventDefault(); playing() ? pauseBench() : play(); }
@@ -855,7 +845,7 @@ function paintMetas(a, b) {   // les recettes côte à côte : ce qui diffère e
   const bare = a && b && !a.params?.mode && !b.params?.mode;
   $('#diffline').replaceChildren(!(a && b) ? el('span', { class: 'lbl' }, 'choisissez deux plans pour voir ce qui diffère')
     : bare ? el('span', {}, 'ces vidéos n’ont pas de recette (déposées, pas faites ici) : seuls l’image et le son se comparent')
-    : dk.length ?el('span', {}, el('b', {}, `${dk.length} différence${dk.length > 1 ? 's' : ''}`), ' · ' + dk.join(', ').toLowerCase())
+    : dk.length ? el('span', {}, el('b', {}, `${dk.length} différence${dk.length > 1 ? 's' : ''}`), ' · ' + dk.join(', ').toLowerCase())
       : el('span', {}, 'mêmes réglages : seul le hasard du rendu les sépare'));
   for (const [k, it, r] of [['a', a, ra], ['b', b, rb]]) {
     const box = $('#meta' + k.toUpperCase());
@@ -879,10 +869,12 @@ dropAnywhere(async (files) => {
     try { await uploadFile(f, { tool: 'upload', via: 'movie' }); n++; } catch (e) { toast(`${f.name} : ${e.message}`); }
   }
   if (n) toast(`${n > 1 ? n + ' fichiers rangés' : 'rangé'} dans la bibliothèque · Upload — déposez sur un emplacement pour vous en servir`);
-  if (S.libAll === 'all') loadLib();
+  fil?.reload();
 });
 
 // ── démarrage ───────────────────────────────────────────────
+// Adresses : ?mode=t2v|i2v|r2v, ?start=<image>, ?ref=<id>, #<vidéo> (ou ?id=)
+// l'ouvre en grand, ?view=cmp&a=<id>&b=<id> le banc.
 (async function boot() {
   const q = new URLSearchParams(location.search);
   if (q.get('start')) { F.start = q.get('start'); F.mode = 'i2v'; F.canvas.i2v = 'auto'; F.fam.i2v = 'image'; }
@@ -894,13 +886,16 @@ dropAnywhere(async (files) => {
   paintCamera();
   if (S.opts) mountEntrees();
   if (refId) { const it = await item(refId); if (it && E) E.add([it]); }   // ?ref=<id> : l'objet entre dans sa catégorie
-  await loadLib();
-  S.cur = q.get('id') || S.lib[0]?.id || null;
+  mountFil();
   setMode(F.mode);
   setView(q.get('view') === 'cmp' || q.get('a') ? 'cmp' : 'create');
-  paintStage(); paintResult(); paintProgress();
-  setFocus(S.cur ? 'result' : 'create');
+  const want = (location.hash || '').slice(1) || q.get('id');
+  if (want) fil.open(want);
   loadLoras();
   paintEngine();
   setInterval(paintEngine, 15000);
 })();
+addEventListener('hashchange', () => {
+  const id = location.hash.slice(1);
+  if (id && id !== fil?.current()?.id) fil?.open(id);
+});

@@ -74,7 +74,7 @@ const ORDER_HINT = {
   other: 'La plus importante d\'abord : les outils lisent les références dans cet ordre.',
 };
 const TOOL_FR = {
-  upload: 'upload', asset: 'Asset', image: 'Image', movie: 'Movie Creator', 'character-factory': 'Character Factory',
+  upload: 'upload', asset: 'Asset', image: 'Image', movie: 'Vidéo', 'character-factory': 'Character Factory',
   object: 'Object Creator', objet: 'Object Creator', montage: 'Montage', music: 'ODIO', musique: 'ODIO', odio: 'ODIO',
   analyse: 'Movie Analysis', upscale: 'Upscale', ideation: 'Idéation', selecteur: 'le sélecteur',
 };
@@ -966,7 +966,7 @@ function elementModal({ items = [], title = '', etype = 'character', folder = nu
     el('div', { class: 'q-row' }, el('span', { class: 'lbl' }, 'ses références · on en ajoute ensuite dans sa fiche'), refs,
       el('label', { class: 'row' }, el('span', { class: 'lbl' }, 'avec le rôle'), role)),
     el('div', { class: 'q-row' }, el('span', { class: 'lbl' }, 'ce que les modèles liront'), desc),
-    el('p', { class: 'hint' }, 'Un élément s\'appelle ensuite comme référence dans Image et Movie Creator, comme une image.'));
+    el('p', { class: 'hint' }, 'Un élément s\'appelle ensuite comme référence dans Image et Vidéo, comme une image.'));
   const m = modal({
     title: 'nouvel élément', body: [form],
     foot: [el('span', { class: 'sp' }),
@@ -1181,9 +1181,9 @@ function itemSheet(it) {
   const id = encodeURIComponent(it.id);
   const acts = el('section', { class: 'sh-acts' });
   if (it.kind === 'image') {
-    acts.append(link('Animer', href(`movie/?start=${id}`), { go: true, title: 'Movie Creator : cette image en première image d\'un plan' }),
+    acts.append(link('Animer', href(`movie/?start=${id}`), { go: true, title: 'Vidéo : cette image en première image d\'un plan' }),
       link('Éditer dans Image', href(`image/?edit=${id}`)),
-      link('Référence vidéo', href(`movie/?ref=${id}`), { title: 'Movie Creator : cette image en référence d\'un plan' }),
+      link('Référence vidéo', href(`movie/?ref=${id}`), { title: 'Vidéo : cette image en référence d\'un plan' }),
       link('Ajouter au montage', href(`montage/?add=${id}`)),
       btn('Faire un élément', () => elementModal({ items: [it], title: it.title, folder: it.folder || '' })));
   } else {
@@ -1283,7 +1283,7 @@ function elementSheet(it) {
   const head = sheetHead(it, kicker());
   const id = encodeURIComponent(it.id);
   const acts = el('section', { class: 'sh-acts' },
-    link('Référence vidéo', href(`movie/?ref=${id}`), { go: true, title: 'Movie Creator : cet élément en référence d\'un plan' }));
+    link('Référence vidéo', href(`movie/?ref=${id}`), { go: true, title: 'Vidéo : cet élément en référence d\'un plan' }));
   if (e.type === 'object') acts.append(link('Ouvrir dans Object Creator', href(`objet/#${id}`)));
   if (src.tool === 'character-factory') {
     acts.append(link('Sa fiche dans Character Factory ↗', src.open, { blank: true }),

@@ -165,6 +165,23 @@ historique `.side-r`), `.viewer` pour l'image ou la vidéo en grand,
 `.opts/.opt` pour les pastilles de choix, `.grid/.thumb` pour les
 vignettes, `.refs/.ref-chip` pour la planche de références.
 
+**Le fil** (`commun/fil.js` + `fil.css`, depuis le 29/09, Image et Vidéo) :
+ce qu'un outil a fabriqué, en grille ou en liste, les rendus en file et en
+cours en tête, une visionneuse plein écran (la molette passe d'un objet à
+l'autre), au survol aimer · réutiliser · recréer · télécharger et le menu ⋯
+(`commun/menu.js`, le même au clic droit). L'outil donne sa requête de
+bibliothèque, ses travaux, et ce que valent Réutiliser, Recréer et ses
+entrées de menu propres ; le fil fait le reste (aimer = `fav`, dossiers,
+copier, télécharger, corbeille avec confirmation) :
+
+```js
+import { createFil } from '../commun/fil.js';
+const fil = createFil($('#fil'), { id: 'image', layout: 'grid', query: () => 'library?kind=image&tool=image',
+  jobs: () => liveJobs, onJob: { cancel, retry, forget }, reuse: { run, why }, recreate: { run, why, more },
+  menu: (it) => [entrées], details: (it) => [[clé, valeur]], link: (it) => href('image/#' + it.id) });
+fil.add(items) · fil.open(id) · fil.paintJobs()
+```
+
 ## 5. Les machines
 
 | | DGX2 (192.168.10.247) | DGX1 (192.168.10.205) |
@@ -203,7 +220,7 @@ réel est écrit, vérifié à vide, et s'allume par un réglage de
 |---|---|---|---|
 | Asset | `/api/asset/view`, `move`, `folders/rename`, `lineage/<id>`, `trash`, `trash/<id>/thumb`, `refs/<id>`, `cf/refresh` | — | — |
 | Image | `/api/image/models`, `compose` (le prompt envoyé), `generate`, `edit`, `redo` | `image.generate`, `image.edit` (voie image) | `"image_backend": "comfyui"` |
-| Movie Creator | `/api/movie/options`, `plan` (le graphe H3), `loras`, `element-image`, `assist`, `h3`, `h3/start`, `h3/stop` | `movie.t2v`, `movie.i2v`, `movie.r2v` (voie h3) | `"movie_engine": "h3"` ; `h3_idle_minutes`, `h3_min_free_gb` |
+| Vidéo (`movie/`) | `/api/movie/options`, `plan` (le graphe H3), `loras`, `element-image`, `redo` (recréer), `frame` (première / dernière image), `assist`, `h3`, `h3/start`, `h3/stop` | `movie.t2v`, `movie.i2v`, `movie.r2v` (voie h3) | `"movie_engine": "h3"` ; `h3_idle_minutes`, `h3_min_free_gb` |
 | Montage | `/api/montage/meta`, `projects…` (créer, enregistrer, renommer, dupliquer, supprimer, `plan`), `wave/<id>` | `montage.export` (voie cpu, ffmpeg) | — |
 | Musique | `/api/music/projects…`, `engines`, `generate`, `stems` | `music.generate`, `music.stems` | `"music_engine": "ace-step"` |
 | Object Creator | `/api/objet/state`, `objects` | `objet.mesh` (TRELLIS.2), `objet.mesh_factice` | `"objet_trellis": true` |
