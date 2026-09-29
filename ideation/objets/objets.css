@@ -1,0 +1,214 @@
+/* ============================================================
+   IDÉATION · OBJETS — formes, cartes, mind map, crayon ; les poignées,
+   les guides, les modèles et l'aimant (le prototype de Cal, repris dans le
+   thème du portail ; l'étude : docs/etudes/ideation_atelier.md § 3).
+   Règles du thème : les jetons seulement (deux thèmes par les jetons),
+   des filets (inset), les capitales pour la machine. Les tailles qui
+   doivent rester lisibles à tout zoom se divisent par --z. Chargée par
+   objets/index.js, après ideation.css.
+   ============================================================ */
+
+.cv[data-tool="shape"], .cv[data-tool="card"], .cv[data-tool="mind"], .cv[data-tool="ink"] { cursor: crosshair; }
+.cv[data-tool="ink"] .nd, .cv[data-tool="ink"] .nd * { cursor: crosshair; }
+
+/* ── les formes ────────────────────────────────────────── */
+.nd.shape .shp { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.nd.shape .shp path {
+  fill: color-mix(in srgb, var(--k) 8%, transparent); stroke: var(--k); stroke-width: 1.3;
+  vector-effect: non-scaling-stroke; stroke-linejoin: round;
+}
+.nd.shape .txt {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center;
+  padding: 0 18px; font-size: 14px; font-weight: 500; line-height: 1.3; color: var(--ink); overflow: hidden;
+}
+.nd.shape .txt.ph:not(.editing) { visibility: hidden; }
+.cv.far .nd.shape .txt:not(.editing) { visibility: hidden; }
+
+/* ── les cartes ────────────────────────────────────────── */
+.nd.card {
+  display: flex; flex-direction: column; gap: 10px; padding: 14px; overflow: hidden; border-radius: 10px; font-size: 13px;
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line), 0 4px 16px var(--drop);
+}
+.nd.card.sel { box-shadow: inset 0 0 0 1px var(--line), 0 0 0 calc(2px / var(--z)) var(--or); }
+.cv:not(.moving) .nd.card:hover:not(.sel):not(.ingrp) { box-shadow: inset 0 0 0 1px var(--line-cy), 0 4px 16px var(--drop); }
+.chd { display: flex; align-items: center; gap: 7px; min-height: 17px; flex: none; }
+.cdot { width: 8px; height: 8px; border-radius: 2px; background: var(--k); flex: none; }
+.ck { font-family: var(--f-mono); font-size: 8px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink3); }
+.cst {
+  margin-left: auto; padding: 2px 7px; border-radius: var(--r1); cursor: pointer;
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase;
+}
+.cst.s0 { background: var(--cy-bg); color: var(--cy); }
+.cst.s1 { background: var(--amb-bg); color: var(--amb); }
+.cst.s2 { background: var(--or-bg); color: var(--coral-2); }
+.cst.s3 { background: var(--verd-5); color: var(--on-grn); }
+.nd.card > .txt {
+  flex: none; font-size: 15px; font-weight: 500; line-height: 1.3; color: var(--ink);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.nd.card > .txt.editing { display: block; -webkit-line-clamp: none; }
+.crow { display: flex; align-items: center; gap: 8px; flex: none; }
+.crow .sp { flex: 1; }
+.cav {
+  width: 20px; height: 20px; border-radius: 5px; flex: none; display: flex; align-items: center; justify-content: center;
+  background: var(--verd-5) center / cover no-repeat; color: var(--on-grn); font-family: var(--f-disp); font-size: 7px; letter-spacing: .04em;
+}
+.cav.ph { background-color: var(--panel3); color: var(--ink3); }
+.cdue { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink2); white-space: nowrap; }
+.cbar { flex: 1; min-width: 20px; height: 3px; border-radius: 1px; background: var(--line); overflow: hidden; }
+.cbar i { display: block; height: 100%; background: var(--grn2); transition: width .3s; }
+.cpr { font-family: var(--f-disp); font-size: 8.5px; color: var(--ink2); }
+/* de près (Détail) : les étapes, qui se cochent d'un clic */
+.cchk { display: none; flex-direction: column; gap: 5px; min-height: 0; }
+.cv.near .cchk { display: flex; }
+.cc { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 1.3; color: var(--ink2); text-align: left; min-width: 0; }
+.cc span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cc i { width: 12px; height: 12px; border-radius: 3px; flex: none; box-shadow: inset 0 0 0 1px var(--line-cy); }
+.cc.on i { background: var(--grn2); box-shadow: none; }
+.cc.on span { color: var(--ink3); text-decoration: line-through; }
+.cc:hover span { color: var(--ink); }
+.curl { font-family: var(--f-mono); font-size: 9px; letter-spacing: .06em; color: var(--cy); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
+.curl.ph { color: var(--ink3); font-style: italic; }
+.cdesc { display: none; margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink2); overflow: hidden; }
+.cv.near .cdesc { display: block; }
+.cmet { display: flex; align-items: baseline; gap: 6px; flex: none; }
+.cval { font-family: var(--f-disp); font-weight: 400; font-size: 26px; line-height: 1; color: var(--ink); }
+.cval.ph { color: var(--ink3); }
+.cun { font-family: var(--f-mono); font-size: 9px; color: var(--ink3); }
+.cdel { margin-left: auto; font-family: var(--f-disp); font-size: 9px; color: var(--grn2); }
+.cspk { display: none; width: 100%; height: 26px; overflow: visible; flex: none; }
+.cv.near .cspk { display: block; }
+.cspk path { fill: none; stroke: var(--k); stroke-width: 1.2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.cper { display: flex; align-items: center; gap: 10px; flex: none; }
+.cav.big { width: 34px; height: 34px; border-radius: 8px; font-size: 10px; background-color: var(--verd-4); }
+.cav.face { background-color: var(--panel3); box-shadow: inset 0 0 0 1px var(--line); }
+.crole { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crole.ph { color: var(--ink3); }
+/* de loin (Ensemble) : le carré de couleur et le titre, à taille d'écran */
+.cv.far .nd.card { background: var(--panel3); padding: calc(6px / var(--z)); gap: calc(4px / var(--z)); box-shadow: inset 0 0 0 calc(1px / var(--z)) var(--line); }
+.cv.far .nd.card.sel { box-shadow: 0 0 0 calc(2px / var(--z)) var(--or); }
+.cv.far .nd.card > :not(.chd):not(.txt) { display: none; }
+.cv.far .nd.card .ck, .cv.far .nd.card .cst { display: none; }
+.cv.far .nd.card .cdot { width: calc(10px / var(--z)); height: calc(10px / var(--z)); border-radius: calc(2px / var(--z)); }
+.cv.far .nd.card .chd { min-height: 0; }
+.cv.far .nd.card > .txt:not(.editing) { font-size: calc(11px / var(--z)); display: block; white-space: nowrap; text-overflow: ellipsis; }
+
+/* ── la mind map ───────────────────────────────────────── */
+.nd.mind { display: flex; align-items: center; justify-content: center; white-space: nowrap; }
+.nd.mind .txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.nd.mind .txt.editing { overflow: visible; text-overflow: clip; }
+.nd.mind.m0 { background: var(--or); border-radius: 10px; box-shadow: 0 4px 18px var(--or-bg); }
+.nd.mind.m0 .txt { font-family: var(--f-disp); font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--on-or); }
+.nd.mind.m0 .txt.ph { color: var(--on-or); opacity: .6; }
+.nd.mind.m1 { --bw: max(calc(1px / var(--z)), calc(1.5px / max(var(--z), 1))); background: var(--panel); border-radius: 8px; box-shadow: inset 0 0 0 var(--bw) var(--k); }
+.nd.mind.m1 .txt { font-size: 14px; font-weight: 500; color: var(--ink); }
+.nd.mind.m2 { justify-content: flex-start; border-radius: 0; box-shadow: inset 0 -2px 0 var(--k); }
+.nd.mind.m2 .txt { font-size: 14px; font-weight: 500; color: var(--ink2); padding-left: 6px; }
+.nd.mind.m0.sel { box-shadow: 0 0 0 calc(2px / var(--z)) var(--or), 0 0 0 calc(4px / var(--z)) var(--bg); }
+.nd.mind.m1.sel { box-shadow: inset 0 0 0 var(--bw) var(--k), 0 0 0 calc(2px / var(--z)) var(--or); }
+.nd.mind.m2.sel { box-shadow: inset 0 -2px 0 var(--k), 0 0 0 calc(2px / var(--z)) var(--or); }
+.cv:not(.moving) .nd.mind.m1:hover:not(.sel):not(.ingrp) { box-shadow: inset 0 0 0 var(--bw) var(--k), 0 0 0 calc(1px / var(--z)) var(--line-cy); }
+.cv:not(.moving) .nd.mind.m2:hover:not(.sel):not(.ingrp) { box-shadow: inset 0 -2px 0 var(--k), 0 0 0 calc(1px / var(--z)) var(--line-cy); }
+.cv:not(.moving) .nd.mind.m0:hover:not(.sel):not(.ingrp) { box-shadow: 0 4px 18px var(--or-bg), 0 0 0 calc(1px / var(--z)) var(--line-cy); }
+/* la pastille : le nombre d'enfants, « +n » replié ; au survol, choisi, replié, et toujours de près */
+.mfold {
+  position: absolute; left: 100%; top: 50%; transform: translate(calc(6px / var(--z)), -50%); z-index: 3;
+  min-width: calc(18px / var(--z)); height: calc(18px / var(--z)); padding: 0 calc(4px / var(--z)); border-radius: calc(4px / var(--z));
+  display: none; align-items: center; justify-content: center; cursor: pointer;
+  background: var(--bg); box-shadow: inset 0 0 0 calc(1px / var(--z)) var(--k); color: var(--k);
+  font-family: var(--f-disp); font-size: calc(8px / var(--z)); line-height: 1;
+}
+.nd.mind:hover .mfold, .nd.mind.sel .mfold, .mfold.on, .cv.near .mfold { display: flex; }
+.mfold:hover { background: var(--k); color: var(--bg); }
+/* les branches (sous les objets, dans le calque des liens), à épaisseur d'écran */
+.links .mbr path { fill: none; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.links .mbr .b1 { stroke-width: 2.6; }
+.links .mbr .b2 { stroke-width: 1.7; }
+.links .mbr .b3 { stroke-width: 1.2; }
+/* de loin : deux rangs ; le nom de la racine en pastille à taille d'écran, avec son nombre de
+   branches (le prototype : les noms du premier rang n'y ont pas la place, leurs boîtes restent) */
+.cv.far .nd.mind.m2, .cv.far .links .mbr .b2, .cv.far .links .mbr .b3, .cv.far .mfold { display: none; }
+.cv.far .nd.mind.m1 .txt:not(.editing) { visibility: hidden; }
+.cv.far .nd.mind.m0 { overflow: visible; background: none; box-shadow: none; }
+.cv.far .nd.mind.m0 .txt:not(.editing) {
+  position: absolute; left: 0; top: 50%; transform: translateY(-50%); max-width: none; overflow: visible; z-index: 4;
+  padding: calc(7px / var(--z)) calc(12px / var(--z)); border-radius: calc(6px / var(--z));
+  font-size: calc(11px / var(--z)); background: var(--or);
+}
+.cv.far .nd.mind.m0 .txt:not(.editing)::after { content: attr(data-n); }
+.cv.far .nd.mind.m0.sel .txt:not(.editing) { box-shadow: 0 0 0 calc(2px / var(--z)) var(--or), 0 0 0 calc(4px / var(--z)) var(--bg); }
+
+/* ── le crayon ─────────────────────────────────────────── */
+.nd.ink { pointer-events: none; border-radius: 0; }
+.nd.ink svg.ink { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.nd.ink .ivis {
+  fill: none; stroke: var(--k); stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none;
+  stroke-width: calc(var(--iw, 2.2) * 1px * clamp(.6, var(--z), 1.6));
+}
+.nd.ink .ihit { fill: none; stroke: transparent; stroke-width: 14px; vector-effect: non-scaling-stroke; pointer-events: stroke; }
+.nd.ink .rz { pointer-events: auto; }
+.nd.ink.sel { box-shadow: 0 0 0 calc(1px / var(--z)) var(--line-or); }
+.overlay .ink-live { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ── les flèches en pointillé ──────────────────────────── */
+.links .lk.dash .vis { stroke-dasharray: 6 5; }
+
+/* ── les guides magnétiques ────────────────────────────── */
+.overlay .guides line { stroke: var(--or); stroke-width: 1; stroke-dasharray: 3 3; }
+
+/* ── les poignées : quatre ronds autour de l'objet choisi (px d'écran) ── */
+.ob-hd {
+  position: absolute; z-index: 6; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; cursor: crosshair;
+  background: var(--bg); box-shadow: inset 0 0 0 2px var(--or); transition: transform .15s, background .15s;
+}
+.ob-hd:hover { transform: scale(1.45); background: var(--or); }
+.ob-hd[hidden], .cv.moving .ob-hd, .cv.scaling .ob-hd, .cv.locked .ob-hd, .cv.wiring .ob-hd, .cv.glide .ob-hd { display: none; }
+
+/* ── la barre : la grille des formes et des cartes ─────── */
+.ob-sub {
+  position: fixed; z-index: 60; display: grid; grid-template-columns: repeat(3, 64px); gap: 3px; padding: 4px;
+  border-radius: var(--r4); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line), 0 12px 30px var(--drop);
+}
+.ob-cell, .ob-grid .ob-cell {
+  height: 52px; border-radius: var(--r3); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; color: var(--ink2);
+}
+.ob-cell svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
+.ob-cell span { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase; }
+.ob-cell:hover { background: var(--panel3); color: var(--ink); }
+.ob-cell.on { background: var(--panel3); color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }
+.ob-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; }
+
+/* ── le coin bas gauche : les modèles, l'aimant ────────── */
+.ob-dock { position: absolute; left: 12px; bottom: 78px; z-index: 7; display: flex; gap: 6px; }
+.ob-dk {
+  height: 30px; padding: 0 10px; border-radius: var(--r3); display: inline-flex; align-items: center; gap: 7px;
+  background: var(--veil); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink2);
+  font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase;
+}
+.ob-dk svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linejoin: round; }
+.ob-dk:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.ob-dk.mag.on { color: var(--or); box-shadow: inset 0 0 0 1px var(--line-or); }
+.ob-tpl {
+  position: absolute; z-index: 9; width: 310px; padding: 8px; display: flex; flex-direction: column; gap: 2px;
+  border-radius: var(--r4); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line), 0 20px 50px var(--drop-lg);
+}
+.ob-tpl > .lbl { padding: 6px 8px; color: var(--cy); }
+.ob-tr { display: flex; flex-direction: column; gap: 3px; padding: 9px 10px; border-radius: var(--r3); text-align: left; }
+.ob-tr:hover { background: var(--panel3); }
+.ob-tr b { font-family: var(--f-disp); font-weight: 400; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink); }
+.ob-tr span { font-size: 11.5px; line-height: 1.4; color: var(--ink2); }
+body.at-presenting .cv > .ob-dock, body.at-presenting .cv > .ob-tpl, .cv.at-replay > .ob-dock { display: none; }
+
+/* ── les objets qui glissent à leur place (regrouper par couleur) ── */
+.cv.glide .nd { transition: left .6s cubic-bezier(.2, .7, .2, 1), top .6s cubic-bezier(.2, .7, .2, 1), width .6s, height .6s; }
+
+/* ── l'inspecteur ──────────────────────────────────────── */
+.ob-checks { display: flex; flex-direction: column; gap: 4px; }
+.ob-chk { display: flex; align-items: center; gap: 6px; }
+.ob-chk .fld { flex: 1; min-width: 0; }
+.ob-chk input[type="checkbox"] { accent-color: var(--grn2); }
+.ob-chk .tb.sm { height: 22px; min-width: 22px; padding: 0 6px; }
+.oline .dot.t-shape { background: var(--cy); border-radius: 50%; }
+.oline .dot.t-card { background: var(--panel3); box-shadow: inset 0 0 0 1px var(--or); }
+.oline .dot.t-mind { background: var(--or); border-radius: 50%; }
+.oline .dot.t-ink { height: 2px; background: var(--or); }

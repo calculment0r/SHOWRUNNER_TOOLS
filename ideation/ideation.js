@@ -25,6 +25,11 @@
 // unités — un groupe (ses enfants viennent avec lui), un objet seul, ou un
 // enfant choisi dans le groupe ouvert par un double-clic (`S.focus`).
 // Supprimer, dupliquer, copier, aligner, ranger passent par ces unités.
+//
+// Les objets d'atelier (objets/, l'étude ideation_atelier.md § 3) : formes (R),
+// cartes (K), mind map (B), crayon (D), et leurs gestes — `app.objets`. Un nœud
+// de mind map compte pour tout son arbre quand on le déplace ou l'aligne, pour
+// sa descendance quand on le supprime, le copie ou le duplique.
 
 import { mountHeader, api, jobs, toast, el, $, href, fmtDate, uploadFile, pick } from '../commun/shell.js';
 import { menu } from '../commun/menu.js';
@@ -37,6 +42,7 @@ import { createComposer } from './composer.js';
 import { createInspector } from './inspector.js';
 import { createLibrary, cfElement } from './library.js';
 import { installPlugins } from './plugins.js';
+import { createObjets } from './objets/index.js';
 import { flow, canWire, replaces, portOf, outPort, nameOf, newSlots, newSlot, TEXT_TYPES } from './ports.js';
 
 mountHeader('ideation', { sub: 'planches · idées' });
@@ -82,10 +88,13 @@ app.label = (n) => {
   if (n.type === 'vgen') return 'Générer vidéo · ' + cut(app.flow().prompt(n.id)?.text || n.prompt || '—', 30);
   if (n.type === 'compose') return 'Composeur · ' + cut(app.flow().text(n.id) || '—', 30);
   if (n.type === 'palette') return 'Nuancier';
-  return cut(n.text || { note: 'note vide', sticky: 'post-it vide', title: 'titre vide' }[n.type]);
+  if (n.type === 'ink') return 'Trait de crayon';
+  return cut(n.text || { note: 'note vide', sticky: 'post-it vide', title: 'titre vide', shape: 'forme vide', card: 'carte sans titre', mind: 'nœud vide' }[n.type]);
 };
 app.kindLabel = (n) => (n.type === 'media' ? { image: 'image', video: 'vidéo', audio: 'son', element: 'élément' }[n.kind]
-  : { note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', group: 'groupe', gen: 'image', vgen: 'vidéo', compose: 'composeur', palette: 'nuancier' }[n.type]);
+  : n.type === 'card' ? { task: 'tâche', link: 'lien', metric: 'mesure', person: 'personne' }[n.kind] || 'carte'
+    : { note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', group: 'groupe', gen: 'image', vgen: 'vidéo', compose: 'composeur', palette: 'nuancier',
+      shape: 'forme', mind: 'mind map', ink: 'trait' }[n.type]);
 
 // ── annuler, rétablir, enregistrer ─────────────────────────
 const snapshot = () => JSON.stringify({ name: S.board.name, nodes: S.board.nodes, links: S.board.links });
@@ -146,6 +155,8 @@ let saveT = 0;
 function scheduleSave() { paintSave(); clearTimeout(saveT); saveT = setTimeout(flushSave, 600); }
 async function flushSave() {
   clearTimeout(saveT);
+  // collab : à plusieurs, les gestes partent en opérations (coedition.js) ; la planche entière reste le repli
+  if (app.coed?.on()) return app.coed.save();
   if (!S.board || !S.dirty || S.conflict) return;
   if (S.saving) { S.again = true; return S.saving; }
   const b = S.board;
@@ -165,6 +176,7 @@ async function flushSave() {
   return S.saving;
 }
 app.flushSave = flushSave;
+app.paintSave = () => paintSave();   // collab : la co-édition dit où en sont ses envois
 function paintSave() {
   const p = $('#save-st');
   const [cls, txt] = S.conflict ? ['err', 'conflit'] : S.saving ? ['work', 'enregistre'] : S.dirty ? ['work', 'modifiée'] : S.board ? ['on', 'enregistrée'] : ['', '—'];
@@ -172,6 +184,7 @@ function paintSave() {
   p.lastChild.textContent = txt;
 }
 addEventListener('beforeunload', () => {
+  if (app.coed?.on()) { app.coed.unload(); return; }   // collab : les dernières opérations, par sendBeacon
   if (!S.dirty || !S.board || S.conflict) return;
   const b = S.board;
   const body = JSON.stringify({ name: b.name, v: b.v, nodes: b.nodes, links: b.links, base_rev: S.rev });
@@ -204,7 +217,8 @@ app.enter = (id) => {
 app.selectLink = (id) => { S.sel.clear(); S.link = id; app.canvas.paintLinks(); app.selectionChanged(); };
 app.setTool = (t) => {
   S.tool = t;
-  for (const b of document.querySelectorAll('#tools [data-tool]')) b.classList.toggle('on', b.dataset.tool === t);
+  // tous les outils de la barre (les deux groupes, et ceux que objets/ y ajoute)
+  for (const b of document.querySelectorAll('.ide-bar [data-tool]')) b.classList.toggle('on', b.dataset.tool === t);
   app.canvas.el.dataset.tool = t;
 };
 
@@ -222,12 +236,15 @@ const DEF = {
   palette: () => ({ w: 280, h: 64, colors: [] }),
 };
 // poser un objet ; `link` : une flèche d'annotation depuis cet objet ; `wireIn` : { from, pa, pb }
-// un fil qui y entre ; `wireOut` : { to, pb } un fil qui en part ; `preset` : ses réglages
-app.addAt = (type, wx, wy, { edit = false, select = true, link = null, w, h, preset = null, wireIn = null, wireOut = null } = {}) => {
+// un fil qui y entre ; `wireOut` : { to, pb } un fil qui en part ; `preset` : ses réglages ;
+// `at` : le point est son coin (défaut), son centre ('center') ou le milieu de son bord gauche ('left')
+app.addAt = (type, wx, wy, { edit = false, select = true, link = null, w, h, preset = null, wireIn = null, wireOut = null, at = 'corner' } = {}) => {
   if (!S.board) { toast('ouvrez ou créez d’abord une planche'); return null; }
   const n = { id: app.uid('n'), type, x: Math.round(wx), y: Math.round(wy), ...DEF[type](), ...(preset ? JSON.parse(JSON.stringify(preset)) : {}) };
   if (w) n.w = Math.round(w);
   if (h) n.h = Math.round(h);
+  if (at === 'center') { n.x = Math.round(wx - n.w / 2); n.y = Math.round(wy - n.h / 2); }
+  if (at === 'left') n.y = Math.round(wy - n.h / 2);
   let why = '';
   app.mutate((B) => {
     B.nodes.push(n);
@@ -519,7 +536,8 @@ app.palette = async (id) => {
 // les unités choisies (un groupe, un objet, un enfant du groupe ouvert), et la même liste
 // avec les enfants de ses groupes (ce qui part, se copie, s'empile avec eux)
 const selected = () => [...S.sel].map(app.node).filter(Boolean);
-const selectedAll = () => app.groups.expand(selected());
+// … et la descendance d'un nœud de mind map (supprimer, copier, dupliquer une branche l'emportent)
+const selectedAll = () => app.objets.subtrees(app.groups.expand(selected()));
 app.remove = () => {
   if (S.link && !S.sel.size) { app.mutate((B) => { B.links = B.links.filter((l) => l.id !== S.link); }); S.link = null; app.insp.render(); return; }
   if (!S.sel.size) return;
@@ -547,6 +565,12 @@ function cloneInto(B, list, dx, dy, links, { inputs = false, keepGroup = false }
     B.nodes.push(c);
   }
   for (const c of made) {
+    // un nœud de mind map copié : son parent, s'il est copié aussi ; sinon il reste une branche de
+    // son parent (ctrl+D) ou devient une racine (coller ailleurs)
+    if (c.parent && c.type === 'mind') {
+      if (map.has(c.parent)) c.parent = map.get(c.parent);
+      else if (!keepGroup || !B.nodes.some((n) => n.id === c.parent)) delete c.parent;
+    }
     if (!c.group) continue;
     if (map.has(c.group)) c.group = map.get(c.group);
     else if (!keepGroup || !B.nodes.some((n) => n.id === c.group)) delete c.group;
@@ -557,7 +581,8 @@ function cloneInto(B, list, dx, dy, links, { inputs = false, keepGroup = false }
   }
   // choisies : les copies qui sont des unités (pas les enfants d'un groupe copié)
   const groups = new Set(made.filter((c) => c.type === 'group').map((c) => c.id));
-  S.sel = new Set(made.filter((c) => !c.group || !groups.has(c.group)).map((c) => c.id));
+  const tops = new Set(made.map((c) => c.id));
+  S.sel = new Set(made.filter((c) => (!c.group || !groups.has(c.group)) && !(c.type === 'mind' && tops.has(c.parent))).map((c) => c.id));
   if (!made.some((c) => c.group && !groups.has(c.group))) S.focus = null;
 }
 app.duplicate = () => {
@@ -587,8 +612,10 @@ app.frameAround = () => {
 };
 // aligner, distribuer, ranger : sur les unités (un groupe bouge d'un bloc, par sa boîte)
 const boxOf = (n) => app.canvas.dispBox(n);
+// les unités qu'on aligne, distribue, range : une mind map compte pour sa racine (son arbre la suit)
+const layoutUnits = () => app.objets.roots(selected());
 app.align = (k) => {
-  const list = selected();
+  const list = layoutUnits();
   const r = bbox(list.map(boxOf));
   if (!r || list.length < 2) return;
   app.mutate(() => {
@@ -606,7 +633,7 @@ app.align = (k) => {
   });
 };
 app.distribute = (axis) => {
-  const list = selected();
+  const list = layoutUnits();
   if (list.length < 3) return;
   const W = axis === 'x' ? 'w' : 'h';
   const s = list.map((n) => [n, { ...boxOf(n) }]).sort((a, b) => a[1][axis] - b[1][axis]);
@@ -621,7 +648,7 @@ app.distribute = (axis) => {
 // ranger en grille : les objets choisis, dans l'ordre de lecture, en colonnes régulières ; un
 // groupe seul passe en rangée (sa mise en forme reste : la pastille à droite règle sa largeur)
 app.tidy = () => {
-  const list = selected().filter((n) => n.type !== 'frame');
+  const list = layoutUnits().filter((n) => n.type !== 'frame');
   if (list.length === 1 && list[0].type === 'group') {
     const g = list[0];
     const kids = kidsOf(S.board, g.id);
@@ -729,7 +756,7 @@ app.boardsModal = async () => {
       if (S.board?.id === bd.id) closeBoard();
       paint();
     } }, 'Supprimer');
-    const kinds = Object.entries(bd.kinds || {}).map(([k, v]) => `${v} ${({ image: 'image', video: 'vidéo', audio: 'son', element: 'élément', note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', group: 'groupe', gen: 'carte image', vgen: 'carte vidéo', compose: 'composeur', palette: 'nuancier' })[k] || k}${v > 1 && !['son'].includes(k) ? 's' : ''}`).join(' · ');
+    const kinds = Object.entries(bd.kinds || {}).map(([k, v]) => `${v} ${({ image: 'image', video: 'vidéo', audio: 'son', element: 'élément', note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', group: 'groupe', gen: 'carte image', vgen: 'carte vidéo', compose: 'composeur', palette: 'nuancier', shape: 'forme', card: 'carte', mind: 'nœud', ink: 'trait' })[k] || k}${v > 1 && !['son'].includes(k) ? 's' : ''}`).join(' · ');
     return el('div', { class: 'brow' + (S.board?.id === bd.id ? ' on' : '') },
       el('span', { class: 'th', style: bd.thumb_url ? { backgroundImage: `url("${href(bd.thumb_url)}")` } : null }),
       el('div', { class: 'bt' }, el('b', {}, bd.name), el('small', {}, `${kinds || 'vide'} · ${fmtDate(bd.updated)}`)),
@@ -780,13 +807,15 @@ async function openBoard(id, { force = false } = {}) {
   let b;
   try { b = await api('ideation/boards/' + id); } catch (e) { toast(e.message, 6000); return false; }
   S.board = b; S.rev = b.rev;
+  app.emit?.('board:open', b);   // collab : la co-édition part de la planche telle que le serveur l'a donnée
   S.undo = []; S.redo = []; S.sel = new Set(); S.link = null; S.focus = null; S.dirty = false; S.conflict = false; S.clip = null;
   $('#conflict').hidden = true;
   LS('last', id);
   if (location.hash.slice(1) !== id) history.replaceState(null, '', location.pathname + '#' + id);
   $('#b-name').value = b.name;
   document.title = `${b.name} · Idéation`;
-  await ensureItems(b.nodes.filter((n) => n.type === 'media').map((n) => n.item));
+  // les objets posés, et les visages des cartes personne (objets/cartes.js)
+  await ensureItems([...b.nodes.filter((n) => n.type === 'media').map((n) => n.item), ...app.objets.items(b)]);
   await viewsReady;   // les copies d'affichage (commun/proxies.js) choisies dès le premier rendu
   // la vue avant le premier rendu (celle gardée, sinon toute la planche) : les images se
   // choisissent au bon zoom dès l'ouverture (étude de fluidité, § 2.6)
@@ -864,11 +893,16 @@ $('#b-lib').addEventListener('click', () => {
   setTimeout(() => app.canvas.paintMini(), 250);
 });
 if (LS('nolib')) { document.body.classList.add('nolib'); $('#b-lib').classList.remove('on'); }
-for (const b of document.querySelectorAll('#tools [data-tool]')) b.addEventListener('click', () => app.setTool(b.dataset.tool));
+// les outils : un clic le prend (les boutons « poser » n'avaient pas d'écoute : seul le clavier les prenait)
+document.querySelector('.ide-bar')?.addEventListener('click', (e) => { const b = e.target.closest?.('[data-tool]'); if (b) app.setTool(b.dataset.tool); });
 $('#b-help').addEventListener('click', help);
 function help() {
   const K = [['V', 'choisir'], ['H · espace', 'se déplacer'], ['L', 'une flèche d’annotation'], ['N', 'note'], ['S', 'post-it'], ['T', 'titre'], ['F', 'cadre (tracer)'],
     ['G', 'carte Générer image'], ['M', 'carte Générer vidéo'], ['P', 'composeur de prompt'],
+    ['R', 'forme (la grille des six contours)'], ['K', 'carte : tâche, lien, mesure, personne'], ['B', 'mind map'], ['D', 'crayon (Échap : le reposer)'],
+    ['Tab · Entrée', 'sur un nœud de mind map : un enfant · un frère'], ['Entrée · F2', 'écrire dans l’objet choisi'],
+    ['les poignées d’un objet', 'une flèche vers un autre ; dans le vide : créer et relier'],
+    ['glisser · Alt', 'l’aimant aligne bords et centres · libre le temps du geste'],
     ['tirer une sortie', 'un fil : sur une carte, la bonne entrée ; dans le vide, un objet déjà branché'], ['texte sur texte', 'un composeur'],
     ['texte sur une carte Générer', 'un composeur'],
     ['un objet lâché sur un autre', 'un groupe (Alt : poser par-dessus) ; une image sur une carte : sa référence'],
@@ -914,7 +948,7 @@ document.addEventListener('keydown', (e) => {
   // Échap : de l'objet choisi dans son groupe au groupe, puis à rien
   if (k === 'Escape') {
     if (S.focus) { const g = S.focus; S.focus = null; app.select([g]); return; }
-    S.sel.clear(); S.link = null; app.setTool('select'); app.selectionChanged(); app.canvas.paintLinks(); return;
+    S.sel.clear(); S.link = null; app.setTool('select'); app.objets.closeSub(); app.selectionChanged(); app.canvas.paintLinks(); return;
   }
   // aligner et distribuer au clavier (Figma, tldraw) — pas de raccourci pour « même taille »
   if (e.altKey && !mod && S.sel.size > 1) {
@@ -924,9 +958,15 @@ document.addEventListener('keydown', (e) => {
     if (e.shiftKey && (L === 'h' || L === 'v')) { e.preventDefault(); app.distribute(L === 'h' ? 'x' : 'y'); return; }
     if (A && !e.shiftKey) { e.preventDefault(); app.align(A); return; }
   }
-  if (k === 'Enter' && S.sel.size === 1) {
+  // Tab, Entrée sur un nœud de mind map : un enfant, un frère (objets/mindmap.js)
+  if ((k === 'Tab' || k === 'Enter') && S.sel.size === 1 && !mod && !e.altKey) {
     const n = app.node([...S.sel][0]);
-    if (n && ['note', 'sticky', 'title'].includes(n.type)) { e.preventDefault(); app.canvas.editText(n.id); }
+    if (n && app.objets.mindKey(n, k)) { e.preventDefault(); return; }
+  }
+  // Entrée, F2 : écrire (une note, un post-it, un titre, une forme, le titre d'une carte, un nœud) ou renommer un cadre
+  if ((k === 'Enter' || k === 'F2') && S.sel.size === 1) {
+    const n = app.node([...S.sel][0]);
+    if (n && (['note', 'sticky', 'title'].includes(n.type) || app.objets.writable(n))) { e.preventDefault(); app.canvas.editText(n.id); }
     if (n && n.type === 'frame') { e.preventDefault(); app.canvas.renameFrame(n.id); }
     return;
   }
@@ -935,7 +975,8 @@ document.addEventListener('keydown', (e) => {
     const d = e.shiftKey ? 10 : 1;
     const [dx, dy] = { ArrowLeft: [-d, 0], ArrowRight: [d, 0], ArrowUp: [0, -d], ArrowDown: [0, d] }[k];
     if (!arrowSnap) { app.snap(); arrowSnap = true; }
-    for (const n of selectedAll()) { n.x += dx; n.y += dy; }
+    // une mind map se déplace d'un bloc (ses nœuds se rangent depuis la racine)
+    for (const n of app.objets.trees(selectedAll())) { n.x += dx; n.y += dy; }
     app.touch(); app.canvas.render();
     // une suite de flèches est un seul geste : un pas d'annulation, un commit à la fin
     clearTimeout(arrowT); arrowT = setTimeout(() => { arrowSnap = false; app.commit(); }, 600);
@@ -949,6 +990,8 @@ document.addEventListener('keydown', (e) => {
   if (k === '-' || k === '_') { app.canvas.zoomBy(0.8); return; }
   if (k === '?') { help(); return; }
   if (mod || e.altKey) return;
+  // R forme, K carte, B mind map, D crayon (objets/ ; M et P sont la carte vidéo et le composeur, C le « commenter » de la collaboration)
+  if (app.objets.onKey(e)) return;
   const T = { v: 'select', h: 'hand', l: 'link', n: 'note', s: 'sticky', t: 'title', f: 'frame', g: 'gen', m: 'vgen', p: 'compose' }[low];
   if (T) app.setTool(T);
 });
@@ -1020,6 +1063,11 @@ app.gen = createGen(app);
 app.video = createVideo(app);
 app.composer = createComposer(app);
 app.groups = createGroups(app);
+// les objets d'atelier (objets/) : formes, cartes, mind map, crayon, et leurs gestes
+app.objets = createObjets(app);
+Object.assign(DEF, app.objets.defs);
+// une image ou un personnage lâché sur une carte personne : son visage
+app.dropRules.push(app.objets.faceRule());
 // un objet lâché sur un autre, en dernier recours (après app.dropRules) : un groupe
 app.dropLast = [app.groups.rule];
 app.menus = createMenus(app);
@@ -1028,8 +1076,11 @@ app.insp = createInspector(app);
 app.elementModal = (ids, name) => app.insp.elementModal(ids, name);
 app.lib = createLibrary(app);
 app.menu = menu;
+app.objets.mount();   // ses outils dans la barre, les modèles et l'aimant sur la planche
 app.setTool('select');
 installPlugins(app);
+// ses commandes dans la palette ⌘K, dès que l'atelier est chargé
+for (const ev of ['board', 'commit', 'selection']) app.on(ev, () => app.objets.commands());
 
 async function start() {
   app.canvas.render();

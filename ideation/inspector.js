@@ -85,7 +85,7 @@ export function createInspector(app) {
         : [hint('Tirez depuis la sortie d’un objet (le point à sa droite) jusqu’à une entrée : un texte vers un prompt, une image vers des références. L : une flèche d’annotation.')]))));
     out.push(card('Gestes', null, el('dl', { class: 'keys' }, ...[
       ['molette · pincer', 'zoomer'], ['espace + glisser', 'se déplacer'], ['glisser le fond', 'choisir (Alt : lasso)'],
-      ['double-clic', 'poser, écrire'], ['N S T F G', 'note, post-it, titre, cadre, générer'], ['L', 'relier'],
+      ['double-clic', 'poser, écrire'], ['N S T F G', 'note, post-it, titre, cadre, générer'], ['R K B D', 'forme, carte, mind map, crayon'], ['L', 'relier'],
       ['objet sur objet', 'un groupe (Alt : par-dessus)'], ['ctrl+G · ctrl+maj+G', 'grouper, dégrouper'],
       ['ctrl+Z · ctrl+maj+Z', 'annuler, rétablir'], ['ctrl+D · Suppr', 'dupliquer, supprimer'], ['[ ]', 'arrière, premier plan']]
       .flatMap(([k, v]) => [el('dt', {}, k), el('dd', {}, v)]))));
@@ -135,6 +135,8 @@ export function createInspector(app) {
     else if (n.type === 'frame') out.push(framePanel(n));
     else if (n.type === 'group') out.push(groupPanel(n));
     else if (n.type === 'palette') out.push(palettePanel(n));
+    // formes, cartes, nœuds de mind map, traits (objets/)
+    else if (app.objets?.has(n.type)) out.push(...app.objets.panels(n, K));
     else out.push(textPanel(n));
     out.push(card('Disposition', null, row(
       b('Dupliquer', () => app.duplicate(), { title: 'ctrl+D' }), b('Premier plan', () => app.order(1), { title: ']' }),

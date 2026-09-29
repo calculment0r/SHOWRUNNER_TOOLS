@@ -21,7 +21,7 @@ export function createMenus(app) {
     { label: 'À droite', key: 'Alt+D', onclick: () => app.align('right') }, '-',
     { label: 'En haut', key: 'Alt+W', onclick: () => app.align('top') }, { label: 'Au milieu', key: 'Alt+V', onclick: () => app.align('vmiddle') },
     { label: 'En bas', key: 'Alt+S', onclick: () => app.align('bottom') }];
-  const colorItems = (list) => (S.meta?.sticky || []).map((c) => ({ label: c.id, dot: c.id, checked: list.every((s) => s.color === c.id),
+  const colorItems = (list) => (S.meta?.sticky || []).map((c) => ({ label: c.name || c.id, dot: c.id, checked: list.every((s) => s.color === c.id),
     onclick: () => { app.mutate(() => { for (const s of list) s.color = c.id; }); app.LS('sticky', c.id); } }));
   const order = [{ label: 'Dupliquer', key: 'ctrl+D', onclick: () => app.duplicate() },
     { label: 'Premier plan', key: ']', onclick: () => app.order(1) }, { label: 'Arrière-plan', key: '[', onclick: () => app.order(-1) }];
@@ -51,6 +51,8 @@ export function createMenus(app) {
       { label: 'Relier dans l’ordre', sub: 'des flèches', onclick: () => app.chain() },
       refs.length ? { label: 'Carte Générer', sub: `${refs.length} réf.`, dot: 'or', onclick: () => app.genWith(refs.map((n) => n.id)) } : null,
       stickies.length ? { label: 'Couleur des post-it', items: colorItems(stickies) } : null,
+      // regrouper par couleur, convertir en mind map (objets/)
+      ...(app.objets?.selectionItems(us) || []),
       '-', ...order, remove];
   }
 
@@ -108,11 +110,16 @@ export function createMenus(app) {
       out.push({ label: 'Écrire le prompt', onclick: () => C().dom.get(n.id)?.el.querySelector('textarea:not([readonly])')?.focus({ preventScroll: true }) });
     } else if (n.type === 'palette') {
       out.push({ label: 'Copier les couleurs', onclick: () => navigator.clipboard?.writeText((n.colors || []).join(' ')).then(() => toast('couleurs copiées'), () => toast((n.colors || []).join(' '))) });
+    } else if (app.objets?.has(n.type)) {
+      // formes, cartes, nœuds de mind map, traits (objets/)
+      out.push(...app.objets.menu(n));
     }
-    // un objet choisi dans son groupe : l'en sortir
+    // un post-it, une note, une forme, une carte : en mind map ; des post-it : par couleur
+    if (['note', 'sticky', 'title', 'shape', 'card'].includes(n.type) && app.objets) out.push({ label: 'Convertir en mind map', onclick: () => app.objets.toMind() });
+    // un objet choisi dans son groupe : l'en sortir (une mind map sort tout entière)
     if (n.group && n.type !== 'group') {
       const g = app.node(n.group);
-      out.push({ label: `Sortir du groupe « ${g?.name || 'groupe'} »`, onclick: () => app.mutate(() => { delete n.group; S.focus = null; }) });
+      out.push({ label: `Sortir du groupe « ${g?.name || 'groupe'} »`, onclick: () => app.mutate(() => { for (const m of app.objets ? app.objets.tree(n) : [n]) delete m.group; S.focus = null; }) });
     }
     out.push('-', ...order, remove);
     return out;
@@ -139,6 +146,7 @@ export function createMenus(app) {
       { label: `${app.label(a)} → ${app.label(b)}`, disabled: true, why: l.kind === 'out' ? 'cet objet est né de l’autre' : 'une flèche d’annotation ne porte rien' },
       { label: 'Choisir', sub: 'un mot sur le lien, à droite', onclick: () => app.selectLink(l.id) },
       ...[['arrow', 'Flèche'], ['line', 'Ligne'], ['out', 'Résultat']].map(([k, v]) => ({ label: v, checked: l.kind === k, onclick: () => app.mutate(() => { l.kind = k; }) })),
+      { label: 'Pointillé', checked: !!l.dash, disabled: l.kind === 'out', why: 'la lignée est une courbe à elle', onclick: () => app.mutate(() => { if (l.dash) delete l.dash; else l.dash = true; }) },
       { label: 'Inverser', onclick: () => app.mutate(() => { [l.a, l.b] = [l.b, l.a]; }) },
       '-', { label: 'Supprimer', key: 'Suppr', danger: true, onclick: () => app.cutLink(l.id) }];
   }
@@ -149,13 +157,17 @@ export function createMenus(app) {
     const out = [{ head: 'poser ici' },
       { label: 'Note', key: 'N', onclick: at('note') }, { label: 'Post-it', key: 'S', onclick: at('sticky') },
       { label: 'Titre', key: 'T', onclick: at('title') }, { label: 'Cadre', key: 'F', onclick: at('frame') },
+      // forme, carte, mind map, modèle d'atelier (objets/)
+      ...(app.objets?.boardItems(wx, wy) || []),
       '-', { label: 'Générer image', key: 'G', dot: 'or', onclick: at('gen') },
       { label: 'Générer vidéo', key: 'M', dot: 'cy', onclick: at('vgen') },
       { label: 'Composeur de prompt', key: 'P', dot: 'amb', onclick: at('compose') },
       '-', { label: 'Depuis la bibliothèque…', sub: 'images, vidéos, sons, éléments', onclick: () => app.pickAt(wx, wy) }];
     if (!more) return out;
+    const st = (S.board?.nodes || []).filter((n) => n.type === 'sticky').length;
     out.push({ label: 'Coller ici', key: 'ctrl+V', disabled: !S.clip?.length, why: 'rien de copié : ctrl+C sur des objets de la planche', onclick: () => app.pasteAt?.(wx, wy) },
       '-', { label: 'Tout choisir', key: 'ctrl+A', disabled: !S.board?.nodes.length, why: 'la planche est vide', onclick: () => app.select(S.board.nodes.filter((n) => !n.group).map((n) => n.id)) },
+      app.objets ? { label: 'Regrouper les post-it par couleur', sub: `${st} post-it`, disabled: st < 2, why: 'il faut au moins deux post-it', onclick: () => app.objets.regroup() } : null,
       ...view());
     return out;
   }

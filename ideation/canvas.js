@@ -316,6 +316,9 @@ export function createCanvas(app) {
     cardsKey = wantCards();
     cards = new Set(cardsKey ? cardsKey.split(',') : []);
     hidden = new Map();
+    // la descendance d'un nœud de mind map replié (objets/mindmap.js) : cachée comme les enfants
+    // d'un groupe réduit — ni peinte, ni choisie ; ses flèches vont au nœud replié
+    for (const [id, by] of app.objets?.folded() || []) hidden.set(id, by);
     if (!cards.size) return;
     const K = kidsMap(S.board);
     for (const gid of cards) for (const k of K.get(gid) || []) hidden.set(k.id, gid);
@@ -347,7 +350,8 @@ export function createCanvas(app) {
     const it = n.type === 'media' ? S.items.get(n.item) : null;
     // la place, la taille et l'appartenance ne refont pas l'objet : `place` les suit
     const { x, y, w, h, jobs, group, ...rest } = n;
-    const extra = n.type === 'gen' ? app.gen.cardKey(n) : n.type === 'vgen' ? app.video.cardKey(n) : n.type === 'compose' ? app.composer.cardKey(n) : '';
+    const extra = n.type === 'gen' ? app.gen.cardKey(n) : n.type === 'vgen' ? app.video.cardKey(n) : n.type === 'compose' ? app.composer.cardKey(n)
+      : app.objets?.has(n.type) ? app.objets.key(n) : '';
     return JSON.stringify(rest) + (it ? `|${it.updated || ''}${it.missing ? 'x' : ''}${viewsOf(it)[0]?.url || ''}` : '|?') + extra;
   }
   function place(e, n) {
@@ -362,7 +366,7 @@ export function createCanvas(app) {
   }
   // les ports d'un objet (ports.js) : ses entrées à gauche, sa sortie à droite, dans la teinte de ce qu'ils portent
   const accepts = (p) => p.accepts.map((k) => KINDS[k].label).join(' ou ');
-  function ports(n) {
+  function ports(n, { resize = true } = {}) {
     const out = [];
     for (const p of inPorts(n, app.caps())) {
       out.push(el('span', { class: 'pt in' + (p.max === 0 ? ' shut' : '') + (p.lock ? ' lock' : ''), 'data-port': p.id, 'data-side': 'in',
@@ -374,7 +378,7 @@ export function createCanvas(app) {
       out.push(el('span', { class: 'pt out', 'data-port': o.id, 'data-side': 'out', style: { '--k': `var(--${KINDS[o.kind].color})` },
         title: `sortie · ${KINDS[o.kind].label}${CARDS.has(n.type) && n.type !== 'compose' ? ' (le dernier résultat)' : ''} — tirer vers une entrée` }));
     }
-    out.push(el('span', { class: 'rz', 'data-rz': '1', title: 'redimensionner' }));
+    if (resize) out.push(el('span', { class: 'rz', 'data-rz': '1', title: 'redimensionner' }));
     return out;
   }
 
@@ -400,6 +404,12 @@ export function createCanvas(app) {
         el('span', { class: 'rz', 'data-rz': '1', title: 'redimensionner' }));
     }
     if (n.type === 'group') return cards.has(n.id) ? groupCard(n) : el('div', { class: 'gp', 'data-id': n.id }, el('span', { class: 'gp-n' }, n.name || 'Groupe'));
+    // les objets d'atelier (objets/) : formes, cartes, nœuds de mind map, traits de crayon
+    const ob = app.objets?.has(n.type) ? app.objets.build(n) : null;
+    if (ob) {
+      return el('div', { class: ['nd', n.type, ...(ob.cls || [])].join(' '), 'data-id': n.id, 'data-g': n.group || '', style: ob.style || {} },
+        ...ob.body, ...ports(n, { resize: !ob.noResize }));
+    }
     const cls = ['nd', n.type];
     const style = {};
     let body = [];
@@ -523,6 +533,8 @@ export function createCanvas(app) {
     cancelAnimationFrame(soonF);
     if (!S.board) { framesL.replaceChildren(); groupsL.replaceChildren(); nodesL.replaceChildren(); linksS.replaceChildren(); dom.clear(); paintEmpty(); sel.hide(); return; }
     app.flowNow();            // ce qui passe dans les fils, relu une fois par rendu
+    // les mind maps se rangent depuis leur racine (objets/mindmap.js), avant les groupes qui peuvent les déplacer
+    app.objets?.layout(S.board);
     // les groupes se remettent en forme (rangée, même taille) et prennent la boîte de leurs enfants
     layoutAll(S.board);
     computeCards();
@@ -681,6 +693,8 @@ export function createCanvas(app) {
   // ── les liens : wires.js les dessine ; la flèche qu'on tire avec l'outil L se pose par-dessus
   function paintLinks() {
     W.paint();
+    // les branches des mind maps (sous les liens), les flèches en pointillé (objets/)
+    app.objets?.paint(linksS);
     linksS.append(temp);
   }
 
@@ -710,7 +724,8 @@ export function createCanvas(app) {
     }
     for (const n of nodes) {
       if (n.type === 'frame' || hidden.has(n.id) || (n.type === 'group' && !cards.has(n.id))) continue;
-      c.fillStyle = n.type === 'group' ? tok('ink3') : n.type === 'sticky' ? tok(n.color) || tok('coral-3') : n.type === 'gen' || n.type === 'vgen' ? tok('or') : n.type === 'compose' ? tok('amb')
+      c.fillStyle = app.objets?.has(n.type) ? app.objets.mini(n, tok) || tok('ink3')
+        : n.type === 'group' ? tok('ink3') : n.type === 'sticky' ? tok(n.color) || tok('coral-3') : n.type === 'gen' || n.type === 'vgen' ? tok('or') : n.type === 'compose' ? tok('amb')
         : n.type === 'palette' ? (n.colors?.[0] || tok('ink3')) : n.type === 'media' ? (n.kind === 'element' ? tok('coral-2') : tok('ink3'))
           : n.type === 'title' ? tok('ink') : tok('ink2');
       if (S.sel.has(n.id)) c.fillStyle = tok('or');
@@ -782,6 +797,8 @@ export function createCanvas(app) {
     }
     if (e.button !== 0) return;
     e.preventDefault();
+    // le crayon trace partout, par-dessus les objets aussi (objets/crayon.js)
+    if (S.tool === 'ink' && app.objets) return app.objets.startInk(e, { cv, over, drag, toWorld });
     const id = nodeEl?.dataset.id;
     if (t.closest('[data-rz]') && id) return startResize(e, id);
     const pt = t.closest('.pt[data-port]');
@@ -789,7 +806,7 @@ export function createCanvas(app) {
     if (pt && id) return W.start(e, pt.dataset.inner || id, pt.dataset.port, pt.dataset.side);
     if (S.tool === 'link' && id) return startLink(e, id);
     // un outil de pose pose où l'on clique, par-dessus un objet aussi (une note sur une image)
-    if (['note', 'sticky', 'title', 'gen', 'vgen', 'compose', 'frame'].includes(S.tool)) return startCreate(e, S.tool);
+    if (['note', 'sticky', 'title', 'gen', 'vgen', 'compose', 'frame', 'shape', 'card', 'mind'].includes(S.tool)) return startCreate(e, S.tool);
     const lk = t.closest('[data-link]');
     if (lk && !id) { app.selectLink(lk.dataset.link); return; }
     if (id) return pressNode(e, id);
@@ -833,9 +850,11 @@ export function createCanvas(app) {
   function carried() {
     const out = new Map();
     const K = kidsMap(S.board);
+    const minds = [];
     const unit = (n) => {
       out.set(n.id, n);
       if (n.type === 'group') for (const k of K.get(n.id) || []) out.set(k.id, k);
+      if (n.type === 'mind') minds.push(n);
     };
     for (const id of S.sel) {
       const n = app.node(id);
@@ -849,6 +868,8 @@ export function createCanvas(app) {
         }
       }
     }
+    // un nœud de mind map emmène tout son arbre (le prototype : déplacer un nœud déplace l'arbre)
+    if (minds.length) for (const m of app.objets.trees(minds)) out.set(m.id, m);
     return [...out.values()];
   }
   // la place d'insertion dans une rangée (un enfant qu'on glisse dans son groupe)
@@ -920,11 +941,18 @@ export function createCanvas(app) {
         hint.textContent = label;
       }, rule.dwell ?? DWELL);
     };
+    // les guides magnétiques (objets/guides.js) : bords et centres aimantés, Alt pour s'en passer ;
+    // pas dans un groupe ouvert (la rangée y range déjà)
+    let guide = null;
     drag((ev) => {
       if (pinch) return;
-      const dx = (ev.clientX - x0) / z, dy = (ev.clientY - y0) / z;
+      let dx = (ev.clientX - x0) / z, dy = (ev.clientY - y0) / z;
       if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 3) return;
-      if (!moved) { app.snap(); moved = true; cv.classList.add('moving'); sel.gesture(true); }
+      if (!moved) {
+        app.snap(); moved = true; cv.classList.add('moving'); sel.gesture(true);
+        if (!inner) guide = app.objets?.snapper({ cv, over }, new Set(moving.map((n) => n.id)), bbox(moving.map((n) => ({ ...dispBox(n) }))));
+      }
+      if (guide) [dx, dy] = guide.move(dx, dy, ev.altKey);
       for (const [n, ox, oy] of orig) {
         n.x = Math.round(ox + dx); n.y = Math.round(oy + dy);
         const d = dom.get(n.id);
@@ -947,6 +975,7 @@ export function createCanvas(app) {
       app.emit?.('moving', moving.map((n) => n.id));
     }, (ev) => {
       cv.classList.remove('moving');
+      guide?.end();
       paintSlot(null);
       if (inner) dom.get(inner.id)?.el.classList.remove('leave');
       if (moved) { app.emit?.('moving', []); sel.gesture(false); }
@@ -996,6 +1025,11 @@ export function createCanvas(app) {
   // des objets changés pendant un geste (échelle, organisation, taille) : leurs groupes se
   // remettent en forme, tout se replace, sans rendu complet
   function live(list) {
+    // une mind map mise à l'échelle : son arbre se range depuis sa racine
+    if (list.some((n) => n.type === 'mind')) {
+      app.objets.layout(S.board);
+      for (const n of S.board.nodes) if (n.type === 'mind') { const d = dom.get(n.id); if (d) place(d.el, n); }
+    }
     const gs = new Set();
     for (const n of list) { if (n.type === 'group') gs.add(n.id); else if (n.group) gs.add(n.group); }
     const all = new Set(list);
@@ -1009,11 +1043,12 @@ export function createCanvas(app) {
     W.placePorts(); paintLinks(); paintMini();
   }
 
-  // l'outil L : une flèche d'annotation, droite, qui ne porte rien (les fils partent des sorties)
+  // l'outil L, et les poignées d'un objet d'annotation (selection.js) : une flèche droite, qui
+  // ne porte rien (les fils partent des sorties) ; lâchée dans le vide : « créer et relier »
   function startLink(e, from) {
     const a = app.node(from);
     if (!a) return;
-    hint.textContent = 'une flèche d’annotation : relâchez sur un autre objet — dans le vide : une note, déjà fléchée';
+    hint.textContent = 'une flèche d’annotation : relâchez sur un autre objet — dans le vide : un objet neuf, déjà relié';
     cv.classList.add('linking');
     const mv = (ev) => {
       const [wx, wy] = toWorld(ev.clientX, ev.clientY);
@@ -1026,12 +1061,13 @@ export function createCanvas(app) {
       cv.classList.remove('linking');
       hint.textContent = HINT;
       const tgt = document.elementFromPoint(ev.clientX, ev.clientY);
+      // un objet d'un groupe fermé : la flèche va à lui (on relie des objets, pas des groupes)
       const to = tgt?.closest?.('[data-id]')?.dataset.id;
-      if (to && to !== from) { app.connect(from, to); return; }
-      if (!to && cv.contains(tgt)) {
+      if (to && to !== from && app.node(to)?.type !== 'frame') { app.connect(from, to); return; }
+      if ((!to || app.node(to)?.type === 'frame') && cv.contains(tgt) && !tgt.closest('.zoombox, .mini, .banner, .ob-dock')) {
         const [wx, wy] = toWorld(ev.clientX, ev.clientY);
         const mk = (type) => () => app.addAt(type, wx, wy - 30, { edit: true, select: true, link: from });
-        menu(ev.clientX, ev.clientY, [{ head: 'un objet neuf, fléché' },
+        menu(ev.clientX, ev.clientY, app.objets ? app.objets.linkItems(from, wx, wy) : [{ head: 'un objet neuf, fléché' },
           { label: 'Note', onclick: mk('note') }, { label: 'Post-it', onclick: mk('sticky') }, { label: 'Titre', onclick: mk('title') }]);
       }
     });
@@ -1039,6 +1075,12 @@ export function createCanvas(app) {
 
   function startCreate(e, type) {
     const [wx, wy] = toWorld(e.clientX, e.clientY);
+    // une forme, une carte : centrée sur le clic ; une mind map : sa racine (objets/)
+    if (app.objets?.has(type)) {
+      app.objets.place(type, wx, wy);
+      if (!e.shiftKey) app.setTool('select');
+      return;
+    }
     if (type !== 'frame') {
       app.addAt(type, wx, wy, { edit: ['note', 'sticky', 'title'].includes(type), select: true });
       if (!e.shiftKey) app.setTool('select');
@@ -1157,7 +1199,7 @@ export function createCanvas(app) {
       if (n.type === 'group') { if (n.collapsed) app.groups.collapse(n.id, false); else flyTo(n.id, { zmax: 1 }); return; }
       // un enfant d'un groupe fermé : le choisir dans son groupe (Miro) ; le double-clic suivant fait le reste
       if (n.group && S.focus !== n.group) { app.enter(n.id); return; }
-      if (['note', 'sticky', 'title'].includes(n.type)) editText(n.id);
+      if (['note', 'sticky', 'title'].includes(n.type) || app.objets?.writable(n)) editText(n.id);
       else if (n.type === 'frame') renameFrame(n.id);
       else if (n.type === 'media' && (n.kind === 'image' || n.kind === 'video')) app.lightbox(n);
       else if (CARDS.has(n.type)) dom.get(n.id)?.el.querySelector('textarea:not([readonly])')?.focus({ preventScroll: true });
@@ -1211,10 +1253,19 @@ export function createCanvas(app) {
     sel2.collapseToEnd();
     const changed = app.editing();
     let wrote = false;
+    const clean = (t) => (app.objets ? app.objets.cleanText(n, t) : t);
+    // le texte tel qu'écrit : innerText rend les capitales d'un text-transform (un titre, une
+    // racine de mind map s'enregistraient en capitales) — lu sans elles, remises aussitôt
+    const typed = () => { const tt = txt.style.textTransform; txt.style.textTransform = 'none'; const t = txt.innerText; txt.style.textTransform = tt; return t; };
     // ce qu'on écrit part aussitôt dans les cartes qui lisent ce texte (la note elle-même n'est pas refaite)
-    const onInput = () => { wrote = true; changed(); n.text = txt.innerText.replace(/\n$/, ''); measure(); W.placePorts(); paintLinks(); renderSoon(); };
+    const onInput = () => { wrote = true; changed(); n.text = clean(typed().replace(/\n$/, '')); measure(); W.placePorts(); paintLinks(); renderSoon(); };
     const onPaste = (ev) => { ev.preventDefault(); document.execCommand('insertText', false, ev.clipboardData.getData('text/plain')); };
-    const onKey = (ev) => { if (ev.key === 'Escape' || (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey))) { ev.preventDefault(); txt.blur(); } };
+    // Tab et Entrée dans un nœud de mind map : un enfant, un frère (objets/) ; Échap, ctrl+Entrée : fini
+    // la touche reste ici : le champ quitté, la page la prendrait pour elle (un second nœud, tout déchoisir)
+    const onKey = (ev) => {
+      if (app.objets?.editKey(n, ev, () => txt.blur())) { ev.stopPropagation(); return; }
+      if (ev.key === 'Escape' || (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey))) { ev.preventDefault(); ev.stopPropagation(); txt.blur(); }
+    };
     txt.addEventListener('input', onInput);
     txt.addEventListener('paste', onPaste);
     txt.addEventListener('keydown', onKey);
@@ -1270,11 +1321,15 @@ export function createCanvas(app) {
   });
 
   // le cadre de sélection et sa barre (selection.js), au-dessus de la planche
-  const sel = createSelection(app, { cv, drag, toWorld, box: dispBox, isCard, isLocked: () => locked, live });
+  const sel = createSelection(app, { cv, drag, toWorld, box: dispBox, isCard, isLocked: () => locked, live, startLink });
 
   hint.textContent = HINT;
   new ResizeObserver(() => { paintMini(); sel.follow(); scheduleCull(); }).observe(cv);
-  document.fonts?.ready?.then(() => { if (measure()) { W.placePorts(); paintLinks(); } });
+  document.fonts?.ready?.then(() => {
+    // les nœuds de mind map prennent la largeur de leur nom, mesurée dans la fonte : elle est là
+    if (S.board?.nodes.some((n) => n.type === 'mind')) { render(); return; }
+    if (measure()) { W.placePorts(); paintLinks(); }
+  });
 
   // ce que les modules greffés lisent et appellent (plugins.js) — des ajouts seulement :
   //   toWorld(x, y) / toScreen(wx, wy)   fenêtre (clientX, clientY) ↔ planche

@@ -5,6 +5,9 @@ idées visuelles avant de passer aux outils de production. L'étude :
 Une planche est un fichier JSON sous `<data_dir>/ideation/<id>.json` ; la
 page l'enregistre seule après chaque geste (rien à « enregistrer »), avec
 sa version `rev` : un second onglet qui écrirait par-dessus reçoit 409.
+À plusieurs, la page envoie ses gestes en opérations par objet et par
+propriété (la co-édition : `ideation_collab.py`, qui tient la planche en
+mémoire et avance `rev` à chaque lot) ; la planche entière reste le repli.
 
 Ce qu'une planche porte (`nodes`, dans l'ordre d'empilement) :
 
@@ -24,6 +27,17 @@ Ce qu'une planche porte (`nodes`, dans l'ordre d'empilement) :
            entrée `s:<id>` ; sa sortie est le texte des cases jointes
   palette  un nuancier tiré d'une image (des couleurs de données)
 
+  Les objets d'atelier (ideation/objets/, l'étude docs/etudes/ideation_atelier.md § 3) :
+  shape    une forme : `kind` rect | round | ellipse | diamond | hex | para,
+           `color` (un jeton de PALETTE), `text`
+  card     une carte : `kind` task | link | metric | person, `color`, `text`
+           (le titre), `data` (les champs de sa sorte, bornés : _card_data)
+  mind     un nœud de mind map : `text`, `parent` (un autre nœud ; une racine
+           n'en a pas), `collapsed` ; la page range l'arbre depuis sa racine et
+           écrit les places de chaque nœud (x, y, w, h)
+  ink      un trait de crayon : `pts` (x, y entiers de 0 à 1000 dans sa boîte),
+           `color`, `width` (px d'écran)
+
   group    un groupe (l'étude : docs/etudes/ideation_miro.md § 3) : une
            appartenance, pas une zone — nom, `collapsed` (réduit : une carte),
            `lod` (se réduit de loin), `layout` { mode free | flow, width, gap,
@@ -38,7 +52,11 @@ Le cadre reste une zone : ce qui est entièrement dedans lui appartient.
 
 Un objet peut porter `parent` (l'identifiant d'un autre objet de la planche,
 l'ancienne place prévue pour les groupes) ; un parent absent tombe, un parent
-qui est un groupe devient son `group` (la migration, sans perte).
+qui est un groupe devient son `group` (la migration, sans perte). Le `parent`
+d'un nœud de mind map est un autre nœud (_minds) : un parent d'une autre sorte
+tombe, une boucle se coupe, et tout l'arbre est dans le groupe de sa racine.
+
+Un lien d'annotation (`arrow`, `line`) peut porter `dash` : en pointillé.
 
 Des liens (`links`, a → b) de deux familles (ideation/ports.js, la seule
 vérité de ce qui se branche) :
@@ -96,7 +114,15 @@ JOB = re.compile(r"job-\d{4}-\d{6}-[0-9a-f]{4}")
 HEX = re.compile(r"#[0-9a-fA-F]{6}")
 REF_FILE = re.compile(r"ref-\d{2}\.[a-z]{3,4}")
 
-TYPES = ("media", "note", "sticky", "title", "frame", "gen", "vgen", "compose", "palette", "group")
+TYPES = ("media", "note", "sticky", "title", "frame", "gen", "vgen", "compose", "palette", "group",
+         "shape", "card", "mind", "ink")
+# les objets d'atelier (ideation/objets/ : les mêmes listes ; une valeur inconnue revient au défaut)
+SHAPES = ("rect", "round", "ellipse", "diamond", "hex", "para")
+PALETTE = ("cy", "or", "grn2", "amb", "ink")          # formes, cartes, traits : acier, orange, vert, ambre, encre
+CARD_KINDS = {"task": "or", "link": "cy", "metric": "grn2", "person": "amb"}   # la sorte et sa couleur par défaut
+MIND_BRANCH = ("or", "grn2", "cy", "amb", "ink2", "coral-2")   # la couleur des rameaux du premier rang
+INK_MAX = 4000           # les nombres d'un trait (2000 points)
+MAX_CHECKS = 20
 # les groupes (ideation/groups.js : la même règle) : libre ou rangée, même hauteur ou largeur
 GROUP_MODES = ("free", "flow")
 GROUP_FITS = ("", "h", "w")
@@ -117,6 +143,9 @@ TEXT_TYPES = ("note", "sticky", "title")
 # les post-it : des jetons du thème, et l'encre qui se lit dessus
 STICKY = {"coral-3": "on-light", "coral-2": "on-light", "coral-1": "on-coral1", "amb": "on-light",
           "verd-3": "on-grn", "verd-4": "on-grn", "cy": "on-cy", "paper": "paper-ink"}
+# leurs noms (le cadre d'une colonne quand on regroupe les post-it par couleur, les menus)
+STICKY_NAMES = {"coral-3": "corail clair", "coral-2": "corail", "coral-1": "corail sourd", "amb": "ambre",
+                "verd-3": "vert", "verd-4": "vert sourd", "cy": "acier", "paper": "papier"}
 TITLE_SIZES = {"s": 22, "m": 34, "l": 52}
 ETYPE_FR = {"character": "personnage", "object": "objet", "place": "lieu", "style": "style", "other": "élément"}
 LINK_KINDS = ("wire", "arrow", "line", "out")
@@ -163,6 +192,10 @@ def load(bid: str) -> dict:
     f = _path(bid)
     if not f.exists():
         raise HttpError(404, f"planche introuvable : {bid}")
+    # collab : la co-édition tient la planche en mémoire (ideation_collab.py) ; ses
+    # opérations partent d'abord sur le disque, chaque lecture lit le vrai
+    from tools import ideation_collab
+    ideation_collab.hot_flush(bid)
     return json.loads(f.read_text(encoding="utf-8"))
 
 
@@ -171,6 +204,10 @@ def _write(b: dict) -> None:
     tmp = f.with_suffix(".tmp")
     tmp.write_text(json.dumps(b, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(f)
+    # collab : une planche écrite entière (l'enregistrement de repli, renommer)
+    # remplace la copie des opérations ; les onglets reliés se recalent
+    from tools import ideation_collab
+    ideation_collab.hot_forget(b)
 
 
 def new_id() -> str:
@@ -329,6 +366,101 @@ def _node(n) -> dict:
         out["colors"] = [c.lower() for c in (n.get("colors") or [])[:16] if isinstance(c, str) and HEX.fullmatch(c)]
         if ITEM.fullmatch(str(n.get("item", ""))):
             out["item"] = n["item"]
+    elif t == "shape":
+        out.update(kind=n.get("kind") if n.get("kind") in SHAPES else "round",
+                   color=n.get("color") if n.get("color") in PALETTE else "cy", text=_s(n.get("text"), 2000))
+    elif t == "card":
+        kind = n.get("kind") if n.get("kind") in CARD_KINDS else "task"
+        out.update(kind=kind, color=n.get("color") if n.get("color") in PALETTE else CARD_KINDS[kind],
+                   text=_s(n.get("text"), 300), data=_card_data(kind, n.get("data")))
+    elif t == "mind":
+        # un nœud tient sur une ligne ; son parent est vérifié dans normalize (_minds)
+        out.update(text=" ".join(_s(n.get("text"), 300).split()), collapsed=bool(n.get("collapsed")))
+    elif t == "ink":
+        pts = n.get("pts")
+        if (not isinstance(pts, list) or len(pts) < 4 or len(pts) % 2 or len(pts) > INK_MAX
+                or not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in pts)):
+            raise HttpError(400, f"le trait {nid} n'a pas de points lisibles (des paires x, y de 0 à 1000, {INK_MAX // 2} au plus)")
+        out.update(pts=[int(max(0, min(1000, round(v)))) for v in pts],
+                   color=n.get("color") if n.get("color") in PALETTE else "or", width=_num(n.get("width"), 0.5, 12, 2.2))
+    return out
+
+
+def _card_data(kind: str, d) -> dict:
+    """Les champs d'une carte, selon sa sorte (ideation/objets/cartes.js) : bornés,
+    ceux d'une autre sorte tombent."""
+    d = d if isinstance(d, dict) else {}
+    line = lambda v, n: " ".join(_s(v, n).split())   # noqa: E731
+    if kind == "task":
+        try:
+            status = int(d.get("status", 0))
+        except (TypeError, ValueError):
+            status = 0
+        checks = []
+        for c in (d.get("checks") if isinstance(d.get("checks"), list) else [])[:MAX_CHECKS * 4]:
+            if isinstance(c, (list, tuple)) and c and len(checks) < MAX_CHECKS:
+                checks.append([line(c[0], 200), bool(c[1]) if len(c) > 1 else False])
+        return {"status": max(0, min(3, status)), "who": line(d.get("who"), 4).upper(), "due": line(d.get("due"), 24), "checks": checks}
+    if kind == "link":
+        return {"url": line(d.get("url"), 500), "desc": _s(d.get("desc"), 1000)}
+    if kind == "metric":
+        series = [round(float(v), 4) for v in (d.get("series") if isinstance(d.get("series"), list) else [])[:60]
+                  if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)]
+        return {"value": line(d.get("value"), 24), "unit": line(d.get("unit"), 12), "delta": line(d.get("delta"), 12), "series": series}
+    item = str(d.get("item") or "")
+    return {"who": line(d.get("who"), 4).upper(), "role": line(d.get("role"), 60), "item": item if ITEM.fullmatch(item) else ""}
+
+
+def _minds(nodes: list) -> None:
+    """Les arbres de mind map (ideation/objets/mindmap.js : la même règle) : le
+    parent d'un nœud est un nœud, sinon il tombe (le nœud fait racine) ; une
+    boucle se coupe ; tout l'arbre est dans le groupe de sa racine."""
+    byid = {nn["id"]: nn for nn in nodes if nn["type"] == "mind"}
+    for nn in byid.values():
+        if nn.get("parent") not in byid:
+            nn.pop("parent", None)
+    # une boucle : en remontant depuis un nœud, on retombe sur lui ; son parent se coupe
+    for nn in byid.values():
+        p, steps = nn.get("parent"), 0
+        while p and steps <= len(byid):
+            if p == nn["id"]:
+                nn.pop("parent")
+                break
+            p, steps = byid[p].get("parent"), steps + 1
+
+    def root(nn):
+        r, steps = nn, 0
+        while r.get("parent") and steps <= len(byid):
+            r, steps = byid[r["parent"]], steps + 1
+        return r
+    for nn in byid.values():
+        r = root(nn)
+        if r is nn:
+            continue
+        if r.get("group"):
+            nn["group"] = r["group"]
+        else:
+            nn.pop("group", None)
+
+
+def _mind_info(nodes: list) -> dict:
+    """La profondeur, la couleur du rameau et le repli de chaque nœud de mind
+    map (ideation/objets/mindmap.js, mindLayout) : { id: (rang, jeton, caché) }."""
+    byid = {nn["id"]: nn for nn in nodes if nn["type"] == "mind"}
+    kids: dict[str, list] = {}
+    for nn in byid.values():
+        if nn.get("parent") in byid:
+            kids.setdefault(nn["parent"], []).append(nn)
+    out: dict[str, tuple] = {}
+    # un parcours sans récursion (un arbre de 3000 rangs ne fait pas déborder la pile)
+    todo = [(nn, 0, "or", False) for nn in byid.values() if nn.get("parent") not in byid]
+    while todo:
+        nn, depth, color, hidden = todo.pop()
+        if nn["id"] in out:
+            continue
+        out[nn["id"]] = (depth, color, hidden)
+        for i, c in enumerate(kids.get(nn["id"], [])):
+            todo.append((c, depth + 1, MIND_BRANCH[i % len(MIND_BRANCH)] if depth == 0 else color, hidden or bool(nn.get("collapsed"))))
     return out
 
 
@@ -376,6 +508,7 @@ def normalize(b: dict) -> dict:
     for nn in nodes:
         if nn.get("parent") not in ids:
             nn.pop("parent", None)
+    _minds(nodes)
     nodes, gone = _groups(nodes)
     ids -= gone
     byid = {nn["id"]: nn for nn in nodes}
@@ -413,6 +546,8 @@ def normalize(b: dict) -> dict:
             entry.update(pa=pa, pb=pb)
         elif kind == "out" and str(lk.get("lot", "")) in ids and byid[str(lk["lot"])]["type"] == "frame":
             entry["lot"] = lk["lot"]      # la lignée d'un rendu de lot : son cadre (la page ne dessine qu'un lien, vers lui)
+        if entry["kind"] in ("arrow", "line") and lk.get("dash") is True:
+            entry["dash"] = True          # une annotation en pointillé (le menu du lien, les modèles)
         if entry["kind"] == "wire":
             key = (a, entry["pa"], z, entry["pb"])
             if key in wires:
@@ -429,6 +564,13 @@ def normalize(b: dict) -> dict:
 
 
 # ── les routes ───────────────────────────────────────────────
+def _need(req, bid: str, what: str) -> None:
+    """collab : le rôle de la personne sur la planche (ideation_collab.py : propriétaire,
+    éditeur, spectateur) permet-il `what` (see, edit, invite) ? Sinon 403, en disant pourquoi."""
+    from tools import ideation_collab
+    ideation_collab.need(req, bid, what)
+
+
 def _summary(b: dict) -> dict:
     thumb = None
     kinds: dict[str, int] = {}
@@ -446,7 +588,8 @@ def _summary(b: dict) -> dict:
 
 def r_meta(req):
     img = _image()
-    return {"sticky": [{"id": k, "ink": v} for k, v in STICKY.items()], "title_sizes": TITLE_SIZES,
+    return {"sticky": [{"id": k, "ink": v, "name": STICKY_NAMES.get(k, k)} for k, v in STICKY.items()], "title_sizes": TITLE_SIZES,
+            "objets": {"shapes": list(SHAPES), "palette": list(PALETTE), "cards": list(CARD_KINDS), "branch": list(MIND_BRANCH), "ink_max": INK_MAX},
             "link_kinds": list(LINK_KINDS), "types": list(TYPES), "version": VERSION,
             "limits": {"nodes": MAX_NODES, "links": MAX_LINKS, "slots": MAX_SLOTS},
             "lot": {"max": LOT_MAX, "values": MAX_VALUES},
@@ -454,10 +597,15 @@ def r_meta(req):
 
 
 def r_list(req):
+    from tools import ideation_collab   # collab : seulement les planches où l'on a un rôle
     out = []
     for f in _dir().glob("ide-*.json"):
         try:
-            out.append(_summary(normalize(json.loads(f.read_text(encoding="utf-8")))))
+            if not ideation_collab.can(getattr(req, "user", None), f.stem, "see"):
+                continue
+            s = _summary(normalize(json.loads(f.read_text(encoding="utf-8"))))
+            s["role"] = ideation_collab.role_of(getattr(req, "user", None), f.stem)
+            out.append(s)
         except (ValueError, HttpError):
             continue
     out.sort(key=lambda s: s.get("updated") or "", reverse=True)
@@ -468,10 +616,13 @@ def r_create(req):
     b = blank(req.json().get("name", ""))
     with _lock:
         _write(b)
+    from tools import ideation_collab   # collab : qui crée la planche en est le propriétaire
+    ideation_collab.created(b, getattr(req, "user", None))
     return b
 
 
 def r_get(req, bid):
+    _need(req, bid, "see")
     return normalize(load(bid))
 
 
@@ -479,6 +630,7 @@ def r_save(req, bid):
     """La page envoie la planche entière. `base_rev` : la version qu'elle
     avait ; si le fichier a bougé entre-temps, on refuse plutôt que
     d'écraser en silence."""
+    _need(req, bid, "edit")
     d = req.json()
     with _lock:
         cur = load(bid)
@@ -493,6 +645,7 @@ def r_save(req, bid):
 
 
 def r_rename(req, bid):
+    _need(req, bid, "edit")
     name = str(req.json().get("name", "")).strip()[:120]
     if not name:
         raise HttpError(400, "un nom, s'il vous plaît")
@@ -504,6 +657,7 @@ def r_rename(req, bid):
 
 
 def r_duplicate(req, bid):
+    _need(req, bid, "edit")
     with _lock:
         src = normalize(load(bid))
         now = library.now()
@@ -512,10 +666,13 @@ def r_duplicate(req, bid):
         b = {**src, "id": new_id(), "name": (src["name"] + " (copie)")[:120], "nodes": nodes,
              "created": now, "updated": now, "rev": 1}
         _write(b)
+    from tools import ideation_collab   # collab : la copie est à qui l'a faite
+    ideation_collab.created(b, getattr(req, "user", None))
     return _summary(b)
 
 
 def r_delete(req, bid):
+    _need(req, bid, "invite")   # collab : seul le propriétaire met sa planche à la corbeille
     f = _path(bid)
     if not f.exists():
         raise HttpError(404, "planche introuvable")
@@ -527,6 +684,7 @@ def r_delete(req, bid):
 
 
 def r_export(req, bid):
+    _need(req, bid, "see")
     d = req.json()
     b = normalize(load(bid))
     fid = str(d.get("frame") or "")
@@ -599,7 +757,9 @@ def tokens() -> dict:
     posé sur le fond (`--bg`), comme à l'écran."""
     global _tok
     if _tok is None:
-        css = (REPO / "commun" / "tokens.css").read_text(encoding="utf-8")
+        # le thème sombre, le défaut (:root) : le bloc clair ([data-theme="light"]) redonne les
+        # mêmes noms plus bas dans le fichier, il ne doit pas les écraser
+        css = re.split(r'\n\[data-theme="light"\]\s*\{', (REPO / "commun" / "tokens.css").read_text(encoding="utf-8"))[0]
         out = {k: tuple(int(v[i:i + 2], 16) for i in (1, 3, 5))
                for k, v in re.findall(r"--([\w-]+):\s*(#[0-9a-fA-F]{6})\b", css)}
         bg = out.get("bg", (0, 0, 0))
@@ -796,7 +956,10 @@ def render(b: dict, frame: str = "", check=lambda: None):
         gx += step
 
     byid = {n["id"]: n for n in b["nodes"]}
-    shown = [n for n in b["nodes"] if _inside(n, r)]
+    # la descendance d'un nœud de mind map replié n'est pas montrée (comme à l'écran)
+    minfo = _mind_info(b["nodes"])
+    folded = {k for k, v in minfo.items() if v[2]}
+    shown = [n for n in b["nodes"] if _inside(n, r) and n["id"] not in folded]
     parents: list[str] = []
 
     def picture(n, w, h, radius):
@@ -830,11 +993,21 @@ def render(b: dict, frame: str = "", check=lambda: None):
         d.text((x0 + rad(4), y0 - rad(22)), name, font=_font("disp", 13 * s), fill=T["ink2"])
     check()
 
-    # 2. les liens : les fils et la lignée en courbes (sortie à droite, entrée à gauche),
-    # les annotations en flèches droites
+    # 2. les branches des mind maps (sous tout le reste), puis les liens : les fils et la
+    # lignée en courbes (sortie à droite, entrée à gauche), les annotations en flèches droites
+    for n in b["nodes"]:
+        p = byid.get(n.get("parent") or "") if n["type"] == "mind" else None
+        if not p or n["id"] in folded or n["id"] not in minfo:
+            continue
+        depth, col, _ = minfo[n["id"]]
+        p0 = (p["x"] + p["w"], p["y"] + p["h"] / 2)
+        p1 = (n["x"], n["y"] + (n["h"] if depth >= 2 else n["h"] / 2))
+        mx = (p0[0] + p1[0]) / 2
+        pts = [(X(x), Y(y)) for x, y in _bezier(p0, (mx, p0[1]), (mx, p1[1]), p1)]
+        d.line(pts, fill=T.get(col, T["or"]), width=max(1, rad(2.6 if depth == 1 else 1.7 if depth == 2 else 1.2)), joint="curve")
     for lk in b["links"]:
         a, z = byid.get(lk["a"]), byid.get(lk["b"])
-        if not a or not z:
+        if not a or not z or a["id"] in folded or z["id"] in folded:
             continue
         if lk.get("lot") in byid:
             continue          # un rendu de lot : sa lignée passe par le lien de la carte vers son cadre
@@ -854,7 +1027,10 @@ def render(b: dict, frame: str = "", check=lambda: None):
         p0, p1 = _edge(a, z)
         col = T["ink3"]
         q0, q1 = (X(p0[0]), Y(p0[1])), (X(p1[0]), Y(p1[1]))
-        d.line([q0, q1], fill=col, width=max(1, rad(1.5)))
+        if lk.get("dash"):
+            _dashed(d, q0, q1, 6 * s, 5 * s, col, max(1, rad(1.5)))
+        else:
+            d.line([q0, q1], fill=col, width=max(1, rad(1.5)))
         if lk["kind"] != "line":
             ang = math.atan2(q1[1] - q0[1], q1[0] - q0[0])
             L, sp = 10 * s, 0.45
@@ -950,8 +1126,146 @@ def render(b: dict, frame: str = "", check=lambda: None):
                     rgb = tuple(int(c[i:i + 2], 16) for i in (1, 3, 5))
                     d.rectangle([x0 + k * sw, y0, x0 + (k + 1) * sw, y1 - lab], fill=rgb)
                     d.text((x0 + k * sw + rad(4), y1 - lab + rad(4)), c.upper(), font=_font("mono", 8 * s), fill=T["ink3"])
+        elif t == "shape":
+            col = T.get(n.get("color"), T["cy"])
+            fill = _mix(col, T["bg"], 0.08)
+            kind = n.get("kind")
+            lw = max(1, rad(1.3))
+            if kind == "rect":
+                d.rectangle([x0, y0, x1, y1], fill=fill, outline=col, width=lw)
+            elif kind == "ellipse":
+                d.ellipse([x0, y0, x1, y1], fill=fill, outline=col, width=lw)
+            elif kind in _SHAPE_PTS:
+                d.polygon([(x0 + px / 100 * w, y0 + py / 100 * h) for px, py in _SHAPE_PTS[kind]], fill=fill, outline=col, width=lw)
+            else:   # arrondi
+                d.rounded_rectangle([x0, y0, x1, y1], radius=0.12 * min(w, h), fill=fill, outline=col, width=lw)
+            _centered(d, n.get("text", ""), _font("ui", 14 * s), (x0 + rad(18), y0, x1 - rad(18), y1), T["ink"])
+        elif t == "card":
+            _card(d, img, n, (x0, y0, x1, y1), T, s, rad, picture, parents)
+        elif t == "mind":
+            depth, col, _ = minfo.get(n["id"], (0, "or", False))
+            bcol = T.get(col, T["or"])
+            if depth == 0:
+                d.rounded_rectangle([x0, y0, x1, y1], radius=rad(10), fill=T["or"])
+                _centered(d, (n.get("text") or "idée").upper(), _font("disp", 13 * s), (x0, y0, x1, y1), T["on-or"], one=True)
+            elif depth == 1:
+                d.rounded_rectangle([x0, y0, x1, y1], radius=rad(8), fill=T["panel"], outline=bcol, width=max(1, rad(1.5)))
+                _centered(d, n.get("text") or "idée", _font("ui", 14 * s), (x0, y0, x1, y1), T["ink"], one=True)
+            else:
+                d.line([(x0, y1 - rad(1)), (x1, y1 - rad(1))], fill=bcol, width=max(1, rad(2)))
+                f = _font("ui", 14 * s)
+                d.text((x0 + rad(6), y0 + (h - f.size) / 2 - rad(2)), n.get("text") or "idée", font=f, fill=T["ink2"])
+        elif t == "ink":
+            p = n.get("pts") or []
+            pts = [(x0 + p[i] / 1000 * w, y0 + p[i + 1] / 1000 * h) for i in range(0, len(p) - 1, 2)]
+            if len(pts) > 1:
+                d.line(pts, fill=T.get(n.get("color"), T["or"]), width=max(1, rad(n.get("width") or 2.2)), joint="curve")
         check()
     return img, list(dict.fromkeys(parents)), s
+
+
+# les contours des formes en polygone (ideation/objets/formes.js : les mêmes, dans 100 × 100)
+_SHAPE_PTS = {"diamond": [(50, 0), (100, 50), (50, 100), (0, 50)],
+              "hex": [(22, 0), (78, 0), (100, 50), (78, 100), (22, 100), (0, 50)],
+              "para": [(18, 0), (100, 0), (82, 100), (0, 100)]}
+_STATUS = ("À FAIRE", "EN COURS", "REVUE", "FAIT")
+
+
+def _mix(c, bg, a: float) -> tuple:
+    """Une teinte posée à `a` sur le fond (le fond d'une forme : sa couleur à 8 %)."""
+    return tuple(round(c[i] * a + bg[i] * (1 - a)) for i in range(3))
+
+
+def _bezier(p0, c1, c2, p1, steps: int = 24) -> list:
+    out = []
+    for k in range(steps + 1):
+        t = k / steps
+        u = 1 - t
+        out.append(tuple(u * u * u * p0[i] + 3 * u * u * t * c1[i] + 3 * u * t * t * c2[i] + t * t * t * p1[i] for i in (0, 1)))
+    return out
+
+
+def _dashed(d, q0, q1, dash: float, gap: float, fill, width: int) -> None:
+    """Une ligne en pointillé (PIL n'en a pas)."""
+    L = math.hypot(q1[0] - q0[0], q1[1] - q0[1])
+    if L < 1:
+        return
+    ux, uy = (q1[0] - q0[0]) / L, (q1[1] - q0[1]) / L
+    t = 0.0
+    while t < L:
+        e = min(L, t + dash)
+        d.line([(q0[0] + ux * t, q0[1] + uy * t), (q0[0] + ux * e, q0[1] + uy * e)], fill=fill, width=width)
+        t = e + gap
+
+
+def _centered(d, text: str, font, box: tuple, fill, one: bool = False, lh_k: float = 1.3) -> None:
+    """Un texte centré dans une boîte (une forme, un nœud) ; `one` : une seule ligne."""
+    x0, y0, x1, y1 = box
+    lh = font.size * lh_k
+    lines = [" ".join((text or "").split())] if one else _wrap(d, text or "", font, max(1, x1 - x0), max(1, int((y1 - y0) // lh)))
+    lines = [ln for ln in lines if ln] if not one else lines
+    top = y0 + (y1 - y0 - lh * len(lines)) / 2 + (lh - font.size) / 2
+    for k, ln in enumerate(lines):
+        tw = d.textlength(ln, font=font)
+        d.text((x0 + (x1 - x0 - tw) / 2, top + k * lh), ln, font=font, fill=fill)
+
+
+def _card(d, img, n: dict, bx: tuple, T: dict, s: float, rad, picture, parents: list) -> None:
+    """Une carte tâche, lien, mesure ou personne (ideation/objets/cartes.js), telle qu'on la
+    voit en travail : sa sorte, son titre, sa ligne."""
+    x0, y0, x1, y1 = bx
+    data = n.get("data") or {}
+    col = T.get(n.get("color"), T["or"])
+    d.rounded_rectangle([x0, y0, x1, y1], radius=rad(10), fill=T["panel2"], outline=T["line"], width=max(1, rad(1)))
+    p = rad(14)
+    d.rectangle([x0 + p, y0 + p + rad(4), x0 + p + rad(8), y0 + p + rad(12)], fill=col)
+    mono = _font("mono", 8 * s)
+    kind = n.get("kind")
+    d.text((x0 + p + rad(15), y0 + p + rad(3)), {"task": "TÂCHE", "link": "LIEN", "metric": "MESURE", "person": "PERSONNE"}.get(kind, "CARTE"), font=mono, fill=T["ink3"])
+    if kind == "task":
+        st = _STATUS[max(0, min(3, int(data.get("status") or 0)))]
+        tw = d.textlength(st, font=mono)
+        d.text((x1 - p - tw, y0 + p + rad(3)), st, font=mono, fill=T["cy"])
+    title = _font("ui", 15 * s)
+    lines = _wrap(d, n.get("text") or "", title, x1 - x0 - 2 * p, 2)
+    yy = y0 + p + rad(28)
+    for k, ln in enumerate(lines):
+        d.text((x0 + p, yy + k * title.size * 1.3), ln, font=title, fill=T["ink"])
+    yy += max(1, len([ln for ln in lines if ln])) * title.size * 1.3 + rad(10)
+    if kind == "task":
+        checks = data.get("checks") or []
+        done = sum(1 for c in checks if c[1])
+        who = data.get("who") or "—"
+        d.rounded_rectangle([x0 + p, yy, x0 + p + rad(20), yy + rad(20)], radius=rad(5), fill=T["verd-5"])
+        _centered(d, who, _font("disp", 7 * s), (x0 + p, yy, x0 + p + rad(20), yy + rad(20)), T["on-grn"], one=True)
+        d.text((x0 + p + rad(28), yy + rad(5)), (data.get("due") or "").upper(), font=_font("mono", 8.5 * s), fill=T["ink2"])
+        if checks:
+            bx0, bx1 = x0 + p + rad(110), x1 - p - rad(34)
+            if bx1 > bx0:
+                d.rectangle([bx0, yy + rad(9), bx1, yy + rad(11)], fill=T["line"])
+                d.rectangle([bx0, yy + rad(9), bx0 + (bx1 - bx0) * done / len(checks), yy + rad(11)], fill=T["grn2"])
+            d.text((x1 - p - rad(26), yy + rad(5)), f"{done}/{len(checks)}", font=_font("disp", 8.5 * s), fill=T["ink2"])
+    elif kind == "link":
+        d.text((x0 + p, yy), data.get("url") or "", font=_font("mono", 9 * s), fill=T["cy"])
+    elif kind == "metric":
+        big = _font("disp", 26 * s)
+        d.text((x0 + p, yy), data.get("value") or "—", font=big, fill=T["ink"])
+        vw = d.textlength(data.get("value") or "—", font=big)
+        d.text((x0 + p + vw + rad(6), yy + big.size - rad(10)), data.get("unit") or "", font=_font("mono", 9 * s), fill=T["ink3"])
+        dl = data.get("delta") or ""
+        f = _font("disp", 9 * s)
+        d.text((x1 - p - d.textlength(dl, font=f), yy + big.size - rad(10)), dl, font=f, fill=T["grn2"])
+    elif kind == "person":
+        a = rad(34)
+        got = picture({"item": data["item"]}, a, a, rad(8)) if data.get("item") else None
+        if got:
+            img.paste(got[0], (round(x0 + p), round(yy)), got[1])
+            parents.append(data["item"])
+        else:
+            d.rounded_rectangle([x0 + p, yy, x0 + p + a, yy + a], radius=rad(8), fill=T["verd-4"])
+            who = (data.get("who") or "".join(w[0] for w in (n.get("text") or "").split()[:2]) or "?").upper()
+            _centered(d, who, _font("disp", 10 * s), (x0 + p, yy, x0 + p + a, yy + a), T["on-grn"], one=True)
+        d.text((x0 + p + a + rad(10), yy + a / 2 - rad(5)), (data.get("role") or "").upper(), font=_font("mono", 8.5 * s), fill=T["ink2"])
 
 
 def run_export(ctx) -> dict:
@@ -1188,6 +1502,7 @@ def selftest(call, ok) -> None:
     _selftest_ports(call, ok)
     _selftest_lot(call, ok, iid)
     _selftest_groups(call, ok, iid)
+    _selftest_objets(call, ok, iid)
 
 
 def _selftest_groups(call, ok, iid: str) -> None:
@@ -1257,6 +1572,98 @@ def _selftest_groups(call, ok, iid: str) -> None:
         with Image.open(library.path_of(library.get(out["id"]))) as ex:
             px = ex.convert("RGB").getpixel((round((24 + 30 - x0) * s), round((24 + 40 - y0) * s)))
         ok(px[0] > 180 and px[2] < 80, f"groupes : l'export montre le contenu du groupe réduit, déplié ({px})")
+
+
+def _selftest_objets(call, ok, iid: str) -> None:
+    """Les objets d'atelier (docs/etudes/ideation_atelier.md § 3) : formes, cartes, nœuds de
+    mind map, traits de crayon bornés et validés ; les arbres (un parent d'une autre sorte
+    tombe, une boucle se coupe, tout l'arbre dans le groupe de sa racine) ; les flèches en
+    pointillé ; l'export les dessine à leur place."""
+    from PIL import Image
+    st, meta = call("GET", "/api/ideation/meta")
+    ok(st == 200 and next((c for c in meta.get("sticky", []) if c["id"] == "verd-3"), {}).get("name") == "vert"
+       and meta.get("objets", {}).get("shapes") == list(SHAPES) and meta["objets"].get("palette") == list(PALETTE),
+       f"objets : les noms des couleurs des post-it et les listes des objets sont dits à la page ({meta.get('objets')})")
+    b = blank("Essai des objets")
+    _write(b)
+    nodes = [
+        {"id": "s1", "type": "shape", "x": 0, "y": 0, "w": 160, "h": 96, "kind": "diamond", "color": "grn2", "text": "Validée ?"},
+        {"id": "s2", "type": "shape", "x": 200, "y": 0, "w": 160, "h": 96, "kind": "étoile", "color": "#ff0000", "text": "x" * 3000},
+        {"id": "c1", "type": "card", "x": 0, "y": 200, "w": 300, "h": 190, "kind": "task", "color": "or", "text": "Essai caméra",
+         "data": {"status": 9, "who": "léa brun", "due": "12 oct", "checks": [["Lumière", True], ["Texte", 0], "pas une étape"] + [["x", False]] * 30,
+                  "url": "http://en-trop"}},
+        {"id": "c2", "type": "card", "x": 320, "y": 200, "w": 300, "h": 150, "kind": "metric", "text": "Disponibilité",
+         "data": {"value": "98.4", "unit": "%", "delta": "+1.2", "series": [8, 10, "douze", 12, True]}},
+        {"id": "c3", "type": "card", "x": 640, "y": 200, "w": 300, "h": 150, "kind": "person", "text": "Léa Brun",
+         "data": {"who": "", "role": "Responsable", "item": iid}},
+        {"id": "c4", "type": "card", "x": 960, "y": 200, "w": 300, "h": 150, "kind": "bof", "color": "rose", "data": "rien"},
+        {"id": "m0", "type": "mind", "x": 700, "y": 100, "w": 120, "h": 48, "text": "Lumière\n  forte", "group": "g1"},
+        {"id": "m1", "type": "mind", "parent": "m0", "x": 900, "y": 60, "w": 80, "h": 36, "text": "Heure", "collapsed": 1},
+        {"id": "m2", "type": "mind", "parent": "m1", "x": 1000, "y": 60, "w": 80, "h": 28, "text": "Aube", "group": "autre"},
+        {"id": "m3", "type": "mind", "parent": "s1", "x": 700, "y": 600, "w": 90, "h": 48, "text": "sous une forme"},
+        {"id": "m4", "type": "mind", "parent": "m5", "x": 900, "y": 600, "w": 90, "h": 48, "text": "boucle a"},
+        {"id": "m5", "type": "mind", "parent": "m4", "x": 1000, "y": 600, "w": 90, "h": 48, "text": "boucle b"},
+        {"id": "n1", "type": "note", "x": 400, "y": 0, "w": 160, "h": 60, "text": "dans le groupe", "group": "g1"},
+        {"id": "i1", "type": "ink", "x": 0, "y": 500, "w": 200, "h": 100, "pts": [0, 0, 500, 1000, 1000.4, 0, 1200, -5], "color": "grn2", "width": 99},
+        {"id": "g1", "type": "group", "name": "Lumière", "x": 0, "y": 0, "w": 16, "h": 16},
+    ]
+    links = [{"id": "a1", "a": "s1", "b": "c1", "kind": "arrow", "dash": True, "label": "non"},
+             {"id": "a2", "a": "c1", "b": "c2", "kind": "out", "dash": True},
+             {"id": "a3", "a": "s1", "b": "s2", "kind": "line", "dash": "oui"}]
+    st, sv = call("POST", f"/api/ideation/boards/{b['id']}", {"name": b["name"], "v": VERSION, "nodes": nodes, "links": links, "base_rev": 1})
+    ok(st == 200, f"objets : une planche de formes, cartes, mind map et traits s'enregistre ({st} {sv})")
+    st, got = call("GET", f"/api/ideation/boards/{b['id']}")
+    N = {n["id"]: n for n in got.get("nodes", [])}
+    s1, s2 = N.get("s1", {}), N.get("s2", {})
+    ok(s1.get("kind") == "diamond" and s1.get("color") == "grn2" and s2.get("kind") == "round" and s2.get("color") == "cy" and len(s2.get("text", "")) == 2000,
+       f"objets : une forme garde son contour et sa couleur ; un contour, une couleur inconnus reviennent au défaut, le texte est borné ({s2.get('kind')} {s2.get('color')})")
+    c1, c2, c3, c4 = N.get("c1", {}), N.get("c2", {}), N.get("c3", {}), N.get("c4", {})
+    d1 = c1.get("data", {})
+    ok(d1.get("status") == 3 and d1.get("who") == "LÉA" and d1.get("due") == "12 oct" and len(d1.get("checks", [])) == MAX_CHECKS
+       and d1["checks"][:2] == [["Lumière", True], ["Texte", False]] and "url" not in d1,
+       f"objets : une carte tâche est bornée (état 0-3, initiales, {MAX_CHECKS} étapes), les champs d'une autre sorte tombent ({str(d1)[:160]})")
+    ok(c2.get("data", {}).get("series") == [8.0, 10.0, 12.0] and c2.get("color") == "grn2" and c3.get("data") == {"who": "", "role": "Responsable", "item": iid}
+       and c4.get("kind") == "task" and c4.get("color") == "or" and c4.get("data") == {"status": 0, "who": "", "due": "", "checks": []},
+       f"objets : mesure (une courbe de nombres), personne (son visage de la bibliothèque), sorte inconnue : une tâche vide ({c2.get('data')} {c4.get('data')})")
+    m = {k: N.get(k, {}) for k in ("m0", "m1", "m2", "m3", "m4", "m5")}
+    ok(m["m0"].get("text") == "Lumière forte" and m["m1"].get("group") == "g1" and m["m2"].get("group") == "g1" and m["m1"].get("collapsed") is True,
+       f"objets : un nœud tient sur une ligne ; tout l'arbre est dans le groupe de sa racine ({m['m1'].get('group')} {m['m2'].get('group')})")
+    ok("parent" not in m["m3"] and ("parent" in m["m4"]) != ("parent" in m["m5"]),
+       f"objets : un parent qui n'est pas un nœud tombe ; une boucle se coupe ({m['m4'].get('parent')} {m['m5'].get('parent')})")
+    info = _mind_info(got["nodes"])
+    ok(info.get("m1", (0, "", False))[:2] == (1, MIND_BRANCH[0]) and info.get("m2", (0, "", False))[2] is True and info.get("m0", (9,))[0] == 0,
+       f"objets : le rang, le rameau, le repli de chaque nœud ({info.get('m1')} {info.get('m2')})")
+    i1 = N.get("i1", {})
+    ok(i1.get("pts") == [0, 0, 500, 1000, 1000, 0, 1000, 0] and i1.get("color") == "grn2" and i1.get("width") == 12,
+       f"objets : un trait garde ses points bornés à sa boîte, son épaisseur est bornée ({i1.get('pts')} {i1.get('width')})")
+    L = {lk["id"]: lk for lk in got.get("links", [])}
+    ok(L.get("a1", {}).get("dash") is True and "dash" not in L.get("a2", {}) and "dash" not in L.get("a3", {}),
+       f"objets : une flèche garde son pointillé ; ni la lignée ni un pointillé illisible ({list(L.values())})")
+    for bad, msg in (([0, 0, 1000], "un nombre impair de points"), ("0 0 1000 1000", "des points en texte"), ([0, 0], "un seul point"),
+                     ([1, 2] * (INK_MAX // 2 + 1), f"plus de {INK_MAX // 2} points")):
+        st, r = call("POST", f"/api/ideation/boards/{b['id']}", {**got, "nodes": got["nodes"] + [{**i1, "id": "i9", "pts": bad}], "base_rev": got["rev"]})
+        ok(st == 400 and "trait" in str(r), f"objets : un trait à {msg} est refusé ({st})")
+    # l'export : la forme (son fond à 8 % de sa couleur), la racine orange, le trait vert, à leur place
+    st, j = call("POST", f"/api/ideation/boards/{b['id']}/export", {})
+    for _ in range(150):
+        st, j = call("GET", f"/api/jobs/{j['id']}")
+        if j["state"] in ("done", "error", "cancelled"):
+            break
+        time.sleep(0.2)
+    ok(j.get("state") == "done", f"objets : une planche d'objets d'atelier s'exporte ({j.get('message')})")
+    if j.get("items"):
+        out = j["items"][0]
+        s = out["params"]["scale"]
+        x0, y0 = min(n["x"] for n in got["nodes"]) - MARGIN, min(n["y"] for n in got["nodes"]) - MARGIN - 28
+        T = tokens()
+        at = lambda x, y: (round((x - x0) * s), round((y - y0) * s))   # noqa: E731
+        with Image.open(library.path_of(library.get(out["id"]))) as ex:
+            ex = ex.convert("RGB")
+            shape, root, ink = ex.getpixel(at(80, 20)), ex.getpixel(at(712, 142)), ex.getpixel(at(50, 550))
+        near = lambda p, q, k=24: all(abs(p[i] - q[i]) <= k for i in range(3))   # noqa: E731
+        ok(near(shape, _mix(T["grn2"], T["bg"], 0.08), 4) and shape != T["bg"] and near(root, T["or"]) and near(ink, T["grn2"], 40),
+           f"objets : l'export dessine le fond de la forme, la racine de la mind map, le trait, à leur place ({shape} {root} {ink})")
+        ok(iid in out.get("parents", []), "objets : le visage d'une carte personne entre dans la lignée de l'export")
 
 
 def _selftest_wires(call, ok, iid: str) -> None:

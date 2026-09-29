@@ -30,9 +30,32 @@ d'un `cid` doit venir de la même personne et de la même session.
     POST /api/ideation/collab/<planche>/signal            {cid, to, kind: offer|answer|bye, data}
 
 Le flux porte les événements `hello` (l'état entier : moi, les autres, le
-fil), `p` (des présences), `join`, `leave`, `msg`, `del`, `sig` et `bye`
-(la session n'est plus valable). Réglage : `ideation_ice_servers` (liste
-RTCIceServer, vide par défaut : réseau local, aucun STUN ni TURN).
+fil, la version de la planche), `p` (des présences), `join`, `leave`, `msg`,
+`del`, `sig`, `bye` (la session n'est plus valable), et pour la co-édition
+`op` (un lot d'opérations appliqué, numéroté) et `reset` (la planche a été
+écrite entière ailleurs : la page se recale). Réglage : `ideation_ice_servers`
+(liste RTCIceServer, vide par défaut : réseau local, aucun STUN ni TURN).
+
+La co-édition (l'étude, § 5, sur le modèle du multijoueur de Figma) : le
+serveur est l'arbitre. Il tient la planche en mémoire, ordonne les lots
+d'opérations que les pages envoient (un numéro chacun : `rev`, la version de
+la planche), les applique, les renvoie à tous par le flux, et écrit la
+planche sur le disque (tout de suite ; un geste en cours, au plus toutes les
+0,8 s). Le dernier écrit gagne, propriété par propriété ; un objet retiré
+l'emporte sur une modification.
+
+    POST /api/ideation/collab/<planche>/ops               {sid, n, ops, live}  → {rev, dup}
+    GET  /api/ideation/collab/<planche>/ops?since=R       les lots d'après R (ou reset)
+    GET  /api/ideation/collab/<planche>/stream?since=R    le flux rejoue d'abord les lots d'après R
+    GET  /api/ideation/collab/<planche>/poll?resume=&since=&wait=   sans flux : l'interrogation longue
+
+Les rôles par planche (propriétaire, éditeur, spectateur) et les invitations :
+
+    GET · POST /api/ideation/collab/<planche>/access      mon rôle ; pour le propriétaire, les
+                                                          personnes, les liens, les réglages
+    POST /api/ideation/collab/<planche>/invites           {role, hours} → le lien (une fois)
+    POST /api/ideation/collab/<planche>/invites/<id>/revoke
+    POST /api/auth/ideation-invite/<jeton>                ouvrir un lien (une session qui attend passe)
 """
 
 from __future__ import annotations
@@ -48,7 +71,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from core import auth, config
+from core import auth, config, library
 from core.http import HttpError, StreamResponse
 
 # les délais (des variables du module : le contrôle les raccourcit)
@@ -107,6 +130,10 @@ class Conn:
         self.call = None
         self.away = False
         self.rev = None
+        self.lead = False      # « suivez-moi » : les autres suivent sa vue
+        self.role = "editor"
+        self.poll = False      # sans flux : l'onglet interroge (r_poll)
+        self.polled = 0.0
         self.since = time.time()
         self.attached = False
         self.lost = 0.0
@@ -121,7 +148,7 @@ class Conn:
     def public(self) -> dict:
         return {"cid": self.cid, "user": self.uid, "name": self.name, "color": self.color,
                 "cursor": self.cursor, "sel": self.sel, "view": self.view, "call": self.call,
-                "away": self.away, "rev": self.rev, "lost": not self.attached}
+                "away": self.away, "rev": self.rev, "lost": not self.attached, "lead": self.lead, "role": self.role}
 
 
 def _sse(event: str, data) -> bytes:
@@ -185,8 +212,14 @@ def _sweep(bid: str) -> None:
     now = time.time()
     with _lock:
         gone = [x for x in _boards.get(bid, {}).values() if not x.attached and x.lost and now - x.lost > GRACE_S]
+        # un onglet qui interroge et ne demande plus : coupé, comme un flux fermé
+        quiet = [x for x in _boards.get(bid, {}).values() if x.poll and x.attached and now - x.polled > POLL_LOST_S]
+        for x in quiet:
+            x.attached, x.lost = False, now
     for x in gone:
         _remove(x, "délai")
+    for x in quiet:
+        _changed(x)
 
 
 def _count(pred) -> int:
@@ -300,61 +333,433 @@ def _anchor(v):
     return {"x": round(x, 1), "y": round(y, 1)}
 
 
+# ── les rôles par planche, les invitations ──────────────────
+# Trois rôles (Figma, « Guide to sharing and permissions » : « People with can
+# view access can only perform certain 'read only' actions, like inspecting
+# properties, following, and commenting ») : le propriétaire (qui a créé la
+# planche ; les admins le sont de toutes), l'éditeur, le spectateur (il voit
+# tout en direct, ne modifie rien — le serveur refuse ses opérations — et
+# commente si le propriétaire le permet). Les membres du portail sans rôle
+# sur une planche y ont le rôle `open` de la planche (éditeur par défaut :
+# comme avant) ; un invité entré par un lien n'a que les planches de ses liens.
+# Hors du dépôt : <data_dir>/ideation_collab/<planche>.access.json, et
+# _invites.json (les personnes entrées par un lien).
+ROLES = ("editor", "viewer")
+OPEN = ("editor", "viewer", "none")
+ROLE_FR = {"owner": "propriétaire", "editor": "éditeur", "viewer": "spectateur", "none": "aucun accès"}
+RANK = {"none": 0, "viewer": 1, "editor": 2, "owner": 3}
+INVITE_HOURS = (1, 24, 24 * 7, 24 * 30)
+TOKEN = re.compile(r"(ide-\d{8}-\d{6}-[0-9a-f]{4})\.([A-Za-z0-9_-]{16,64})")
+_alock = threading.RLock()
+_acc: dict[str, dict] = {}
+_gst: dict | None = None
+
+
+def _afile(bid: str) -> Path:
+    p = config.data_dir() / "ideation_collab"
+    p.mkdir(parents=True, exist_ok=True)
+    return p / f"{bid}.access.json"
+
+
+def _access(bid: str) -> dict:
+    with _alock:
+        a = _acc.get(bid)
+        if a is None:
+            a = {"owner": None, "members": {}, "invites": [], "comments": False, "open": "editor"}
+            f = _afile(bid)
+            if f.exists():
+                try:
+                    a.update(json.loads(f.read_text(encoding="utf-8")))
+                except ValueError:
+                    pass
+            _acc[bid] = a
+        return a
+
+
+def _asave(bid: str) -> None:
+    with _alock:
+        f = _afile(bid)
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text(json.dumps(_acc[bid], ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(f)
+
+
+def _guests() -> dict:
+    global _gst
+    with _alock:
+        if _gst is None:
+            f = config.data_dir() / "ideation_collab" / "_invites.json"
+            try:
+                _gst = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+            except ValueError:
+                _gst = {}
+        return _gst
+
+
+def _gsave() -> None:
+    with _alock:
+        f = config.data_dir() / "ideation_collab" / "_invites.json"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text(json.dumps(_guests(), ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(f)
+
+
+def role_of(u: dict | None, bid: str) -> str:
+    """owner | editor | viewer | none."""
+    if not auth.enabled():
+        return "owner"
+    if not u:
+        return "none"
+    if auth.is_admin(u):
+        return "owner"
+    a = _access(bid)
+    if a.get("owner") == u["id"]:
+        return "owner"
+    m = a["members"].get(u["id"])
+    if m and m.get("role") in ROLES:
+        return m["role"]
+    if u["id"] in _guests():
+        return "none"
+    return a.get("open") if a.get("open") in OPEN else "editor"
+
+
+def can_of(role: str, bid: str) -> dict:
+    a = _access(bid)
+    return {"see": RANK[role] >= 1, "edit": RANK[role] >= 2, "invite": role == "owner",
+            "comment": RANK[role] >= 2 or (role == "viewer" and bool(a.get("comments")))}
+
+
+WHY = {"see": "tu n'as pas accès à cette planche : demande un lien à son propriétaire",
+       "edit": "spectateur : cette planche se regarde, elle ne se modifie pas ici",
+       "comment": "spectateur : le propriétaire n'a pas ouvert le fil aux spectateurs",
+       "invite": "seul le propriétaire de la planche invite et règle les accès"}
+
+
+def can(u: dict | None, bid: str, what: str) -> bool:
+    return can_of(role_of(u, bid), bid)[what]
+
+
+def need(req, bid: str, what: str) -> str:
+    """Le rôle de la personne ; 403 (en disant pourquoi) s'il ne permet pas `what`."""
+    r = role_of(getattr(req, "user", None), bid)
+    if not can_of(r, bid)[what]:
+        raise HttpError(403, WHY[what])
+    return r
+
+
+def created(b: dict, u: dict | None) -> None:
+    """Une planche neuve : celui qui la crée en est le propriétaire."""
+    if not u or not auth.enabled():
+        return
+    with _alock:
+        a = _access(b["id"])
+        a["owner"] = u["id"]
+        _asave(b["id"])
+
+
+def _reroles(bid: str) -> None:
+    """Les rôles ont changé : chaque onglet relié reçoit le sien (`role`) ; un
+    onglet qui n'a plus accès s'en va."""
+    for c in _others(bid):
+        u = auth.user(c.uid)
+        r = role_of(u, bid) if u and u.get("state") == "active" else "none"
+        if r == "none":
+            _remove(c, "accès retiré par le propriétaire")
+            continue
+        c.role = r
+        _push(c, _sse("role", {"role": r, "can": can_of(r, bid)}))
+        _changed(c)
+
+
+def _invite_public(i: dict) -> dict:
+    return {"id": i["id"], "role": i["role"], "created": i["created"], "exp": i["exp"], "by": i["by"],
+            "by_name": auth.display_name(i["by"]), "revoked": bool(i.get("revoked")),
+            "expired": time.time() > i["exp"], "uses": [{"id": x, "name": auth.display_name(x)} for x in i.get("uses", [])]}
+
+
+def r_access(req, bid):
+    u = _user(req)
+    _bid_ok(bid)
+    r = need(req, bid, "see")
+    a = _access(bid)
+    out = {"board": bid, "role": r, "role_fr": ROLE_FR[r], "can": can_of(r, bid), "comments": bool(a.get("comments")),
+           "open": a.get("open", "editor"), "owner": {"id": a.get("owner"), "name": auth.display_name(a.get("owner")) if a.get("owner") else auth.admin_name()},
+           "hours": list(INVITE_HOURS), "me": u["id"]}
+    if r == "owner":
+        out["members"] = [{"id": k, "name": auth.display_name(k), "role": m.get("role"), "via": m.get("via")}
+                          for k, m in a["members"].items()]
+        out["invites"] = [_invite_public(i) for i in a["invites"]][::-1]
+    return out
+
+
+def r_access_set(req, bid):
+    u = _user(req)
+    _bid_ok(bid)
+    need(req, bid, "invite")
+    d = _small(req, 4096)
+    with _alock:
+        a = _access(bid)
+        if "comments" in d:
+            a["comments"] = bool(d["comments"])
+        if "open" in d:
+            if d["open"] not in OPEN:
+                raise HttpError(400, "les autres membres du portail : éditeur, spectateur ou aucun accès")
+            a["open"] = d["open"]
+        m = d.get("member")
+        if isinstance(m, dict):
+            uid = str(m.get("id") or "")
+            if uid not in a["members"]:
+                raise HttpError(404, "cette personne n'a pas de rôle sur la planche")
+            if m.get("role") in ROLES:
+                a["members"][uid]["role"] = m["role"]
+            elif m.get("role") is None:
+                a["members"].pop(uid)
+            else:
+                raise HttpError(400, "un rôle : éditeur ou spectateur (ou null : le retirer)")
+        _asave(bid)
+    auth.journal("idéation · accès", user=u["id"], board=bid, **{k: d[k] for k in ("comments", "open") if k in d},
+                 **({"membre": m.get("id"), "role": m.get("role")} if isinstance(m, dict) else {}))
+    _reroles(bid)
+    return r_access(req, bid)
+
+
+def r_invite(req, bid):
+    u = _user(req)
+    _bid_ok(bid)
+    need(req, bid, "invite")
+    d = _small(req, 4096)
+    role = d.get("role")
+    if role not in ROLES:
+        raise HttpError(400, "le rôle de l'invitation : éditeur ou spectateur")
+    try:
+        hours = int(d.get("hours") or 24)
+    except (TypeError, ValueError) as e:
+        raise HttpError(400, "la durée : un nombre d'heures") from e
+    if hours not in INVITE_HOURS:
+        raise HttpError(400, f"la durée : {', '.join(map(str, INVITE_HOURS))} heures")
+    secret = secrets.token_urlsafe(24)
+    now = time.time()
+    rec = {"id": "i-" + secrets.token_hex(4), "h": auth._hash(secret), "role": role, "created": now, "exp": now + hours * 3600,
+           "by": u["id"], "revoked": False, "uses": []}
+    with _alock:
+        a = _access(bid)
+        a["invites"] = [i for i in a["invites"] if i.get("exp", 0) > now - 30 * 86400 or i.get("uses")][-49:] + [rec]
+        _asave(bid)
+    auth.journal("idéation · invitation", user=u["id"], board=bid, role=role, hours=hours, invite=rec["id"])
+    # le lien ne se montre qu'une fois : le serveur n'en garde que l'empreinte
+    return {**_invite_public(rec), "token": f"{bid}.{secret}"}
+
+
+def r_invite_revoke(req, bid, iid):
+    u = _user(req)
+    _bid_ok(bid)
+    need(req, bid, "invite")
+    with _alock:
+        a = _access(bid)
+        rec = next((i for i in a["invites"] if i["id"] == iid), None)
+        if not rec:
+            raise HttpError(404, "cette invitation n'existe pas")
+        rec["revoked"] = True
+        # ce que ce lien a donné s'en va avec lui
+        for k in [k for k, m in a["members"].items() if m.get("via") == iid]:
+            a["members"].pop(k)
+        _asave(bid)
+    auth.journal("idéation · invitation retirée", user=u["id"], board=bid, invite=iid)
+    _reroles(bid)
+    return r_access(req, bid)
+
+
+def r_redeem(req, tok):
+    """Ouvrir un lien d'invitation. Sous /api/auth/ : la porte laisse passer une
+    session qui attend (un pseudo neuf) ; le lien, que le propriétaire a créé,
+    vaut son accord — la demande est acceptée, et la personne n'a que cette
+    planche dans Idéation (invitée)."""
+    auth._rate(f"invitation-planche:{auth._ip(req)}", 30, 600)   # deviner un lien : 30 essais par 10 min
+    m = TOKEN.fullmatch(tok or "")
+    if not m:
+        raise HttpError(404, "ce lien d'invitation n'est pas valable")
+    bid, secret = m.group(1), m.group(2)
+    _bid_ok(bid)
+    if not auth.enabled():
+        return {"board": bid, "role": "owner"}
+    _, _, u = auth.session_of(req)
+    if not u:
+        raise HttpError(401, "tape d'abord ton pseudo à la porte du portail, puis rouvre le lien")
+    if u.get("state") == "suspended":
+        raise HttpError(403, "ton accès est suspendu : vois avec Cal")
+    h = auth._hash(secret)
+    now = time.time()
+    with _alock:
+        a = _access(bid)
+        rec = next((i for i in a["invites"] if i.get("h") == h), None)
+        if not rec or rec.get("revoked"):
+            raise HttpError(410, "ce lien d'invitation a été retiré par le propriétaire")
+        if now > rec["exp"]:
+            raise HttpError(410, "ce lien d'invitation a expiré : demande-en un autre")
+        fresh = u.get("state") == "pending"
+        if fresh:
+            auth.accept(u["id"], by=rec["by"])
+            g = _guests()
+            g[u["id"]] = {"boards": [bid], "invite": rec["id"], "by": rec["by"], "t": now}
+            _gsave()
+        elif u["id"] in _guests() and bid not in _guests()[u["id"]]["boards"]:
+            _guests()[u["id"]]["boards"].append(bid)
+            _gsave()
+        u = auth.user(u["id"]) or u
+        # le rôle du lien, sauf si la personne a déjà mieux sur cette planche (jamais de recul)
+        if RANK[role_of(u, bid)] < RANK[rec["role"]]:
+            a["members"][u["id"]] = {"role": rec["role"], "via": rec["id"], "t": now}
+        if u["id"] not in rec["uses"]:
+            rec["uses"] = (rec.get("uses") or [])[-99:] + [u["id"]]
+        _asave(bid)
+        role = role_of(u, bid)
+    auth.journal("idéation · invitation ouverte", user=u["id"], board=bid, invite=rec["id"], role=role, accepte=fresh)
+    _reroles(bid)
+    return {"board": bid, "role": role, "role_fr": ROLE_FR[role], "accepted": fresh}
+
+
 # ── les routes ───────────────────────────────────────────────
 def r_state(req, bid):
     u = _user(req)
     _bid_ok(bid)
+    r = need(req, bid, "see")
     _sweep(bid)
     with _lock:
         peers = [x.public() for x in _boards.get(bid, {}).values()]
         why = _can_join(bid, u)
-    return {"board": bid, "peers": peers, "join": {"ok": not why, "why": why},
+    return {"board": bid, "peers": peers, "join": {"ok": not why, "why": why}, "role": r, "can": can_of(r, bid),
             "limits": {k: LIMITS[k] for k in ("call", "msg_len", "history")}}
 
 
-def r_stream(req, bid):
+def _attach(req, bid: str, poll: bool = False):
+    """Un onglet arrive (ou revient, `resume`) : son identifiant, `hello`, et les lots
+    à rejouer depuis `since`. Le flux SSE et l'interrogation (r_poll) passent par ici."""
     u = _user(req)
     _bid_ok(bid)
+    role = need(req, bid, "see")
     _sweep(bid)
     resume = req.q("resume")
+    since = req.q("since")
     joined = False
-    with _lock:
-        conns = _boards.setdefault(bid, {})
-        c = conns.get(resume) if resume else None
-        if c is not None and (c.uid != u["id"] or c.sess != getattr(req, "session", None)):
-            c = None   # le cid d'un autre : on ne le reprend pas
-        if c is None:
-            why = _can_join(bid, u)
-            if why:
-                if not conns:
-                    _boards.pop(bid, None)
-                raise HttpError(429, why)
-            c = Conn(bid, u, getattr(req, "session", None), _color(conns, u["id"]))
-            conns[c.cid] = c
-            joined = True
-        c.gen += 1
-        gen = c.gen
-        c.attached, c.lost, c.kicked = True, 0.0, ""
-        others = [x.public() for x in conns.values() if x is not c]
+    # sous le verrou des opérations : aucun lot ne passe entre ce que le flux rejoue
+    # (les lots d'après `since`) et le moment où l'onglet reçoit les suivants
+    with _ide()._lock:
+        with _lock:
+            conns = _boards.setdefault(bid, {})
+            c = conns.get(resume) if resume else None
+            if c is not None and (c.uid != u["id"] or c.sess != getattr(req, "session", None)):
+                c = None   # le cid d'un autre : on ne le reprend pas
+            if c is None:
+                why = _can_join(bid, u)
+                if why:
+                    if not conns:
+                        _boards.pop(bid, None)
+                    raise HttpError(429, why)
+                c = Conn(bid, u, getattr(req, "session", None), _color(conns, u["id"]))
+                conns[c.cid] = c
+                joined = True
+            c.gen += 1
+            gen = c.gen
+            c.attached, c.lost, c.kicked, c.role = True, 0.0, "", role
+            c.poll, c.polled = poll, time.time()
+            if poll:
+                c.events = []   # la reprise rejoue ce qui manque : la file d'avant ne ferait que doubler
+            others = [x.public() for x in conns.values() if x is not c]
+        ops, replay = _ops_hello(bid, since)
     with c.cond:   # l'ancien flux d'une reprise se retire aussitôt
         c.cond.notify_all()
     with _mlock:   # des copies : un retrait concurrent ne change pas un message pendant qu'on l'écrit
         hist = _history(bid)
         msgs, total = [dict(m) for m in hist[-LIMITS["history"]:]], len(hist)
-    hello = {"cid": c.cid, "resumed": not joined, "board": bid,
-             "me": {"id": c.uid, "name": c.name, "color": c.color, "admin": c.admin},
+    hello = {"cid": c.cid, "resumed": not joined, "board": bid, "poll": poll,
+             "me": {"id": c.uid, "name": c.name, "color": c.color, "admin": c.admin, "role": role}, "can": can_of(role, bid),
              "peers": others, "messages": msgs, "total": total,
              "limits": {k: LIMITS[k] for k in ("call", "msg_len", "history", "sel")},
-             "ice": config.get("ideation_ice_servers") or [], "t": time.time()}
+             "ice": config.get("ideation_ice_servers") or [], "t": time.time(), "ops": ops}
     if joined:
         _broadcast(bid, _sse("join", c.public()), exclude=c.cid)
-        auth.journal("idéation · entre", user=c.uid, board=bid, cid=c.cid)
+        auth.journal("idéation · entre", user=c.uid, board=bid, cid=c.cid, **({"mode": "interrogation"} if poll else {}))
     else:
         _changed(c)
+    return c, gen, hello, replay
+
+
+# ── sans flux : l'interrogation longue ──────────────────────
+# Le tunnel rapide de la démo ne passe pas les flux (« Quick Tunnels do not
+# support Server-Sent Events (SSE) », docs/etudes/cloudflare.md § 3.1) : la page
+# demande alors « ce qui s'est passé depuis », et le serveur tient la question
+# jusqu'à 20 s ou jusqu'au premier événement (une réponse ordinaire, entière). Les
+# mêmes événements, dans le même ordre ; un onglet qui ne demande plus depuis
+# POLL_LOST_S est « coupé » pour les autres, puis part après GRACE_S.
+POLL_WAIT_S = 20.0
+POLL_LOST_S = 8.0
+
+
+def _unsse(raw: bytes):
+    ev, data = "message", []
+    for line in raw.decode("utf-8").split("\n"):
+        if line.startswith("event:"):
+            ev = line[6:].strip()
+        elif line.startswith("data:"):
+            data.append(line[5:].strip())
+    return [ev, json.loads("\n".join(data))] if data else None
+
+
+def r_poll(req, bid):
+    u = _user(req)
+    try:
+        wait = max(0.0, min(POLL_WAIT_S, float(req.q("wait", str(POLL_WAIT_S)))))
+    except ValueError as e:
+        raise HttpError(400, "wait : des secondes") from e
+    resume = req.q("resume")
+    with _lock:
+        c = _boards.get(bid, {}).get(resume) if resume else None
+    if c is None or not c.poll or c.uid != u["id"] or c.sess != getattr(req, "session", None) or c.kicked:
+        c, gen, hello, replay = _attach(req, bid, poll=True)
+        return {"cid": c.cid, "events": [["hello", hello]] + [["op", json.loads(raw)] for raw in replay]}
+    _bid_ok(bid)
+    need(req, bid, "see")
+    _sweep(bid)
+    c.polled = time.time()
+    if not c.attached:
+        with _lock:
+            c.attached, c.lost = True, 0.0
+        _changed(c)
+    end = time.time() + wait
+    with c.cond:
+        while not c.events and not c.dirty and not c.kicked and time.time() < end:
+            c.cond.wait(min(1.0, max(0.01, end - time.time())))
+            c.polled = time.time()   # la question tenue compte : l'onglet est là
+    # ce qui arrive dans les 40 ms part avec (comme le flux : au plus ~25 réponses par seconde)
+    if wait and not c.kicked:
+        time.sleep(PRESENCE_GAP_S)
+    with c.cond:
+        evs, c.events = c.events, []
+        dirty, c.dirty = c.dirty, set()
+        kicked = c.kicked
+    c.polled = time.time()
+    out = [x for x in (_unsse(raw) for raw in evs) if x]
+    if dirty:
+        with _lock:
+            cur = _boards.get(bid, {})
+            states = [cur[x].public() for x in dirty if x in cur]
+        if states:
+            out.append(["p", states])
+    if kicked:
+        out.append(["bye", {"why": kicked}])
+    # une présence acceptée par interrogation ne va pas au journal non plus (r_presence)
+    req.protected = False
+    return {"cid": c.cid, "events": out}
+
+
+def r_stream(req, bid):
+    c, gen, hello, replay = _attach(req, bid)
     sock = getattr(getattr(req, "_h", None), "connection", None)
 
     def chunks():
-        yield b"retry: 3000\n\n" + _sse("hello", hello)
+        # bonjour, puis les lots manqués, dans l'ordre (ceux qui arrivent ensuite suivent dans la file)
+        yield b"retry: 3000\n\n" + _sse("hello", hello) + b"".join(_op_bytes(raw) for raw in replay)
         beat = time.time()
         while True:
             with c.cond:
@@ -504,6 +909,8 @@ def r_presence(req, bid):
             upd["rev"] = int(d["rev"]) if d["rev"] is not None else None
         except (TypeError, ValueError) as e:
             raise HttpError(400, "rev : un entier") from e
+    if "lead" in d:
+        upd["lead"] = bool(d["lead"])   # « suivez-moi » : les autres suivent sa vue
     with _lock:
         for k, v in upd.items():
             setattr(c, k, v)
@@ -527,6 +934,7 @@ def r_leave(req, bid):
 def r_messages(req, bid):
     _user(req)
     _bid_ok(bid)
+    need(req, bid, "see")
     with _mlock:
         h = _history(bid)
         return {"messages": [dict(m) for m in h[-LIMITS["history"]:]], "total": len(h)}
@@ -535,6 +943,7 @@ def r_messages(req, bid):
 def r_post(req, bid):
     u = _user(req)
     _bid_ok(bid)
+    need(req, bid, "comment")
     d = _small(req, 32768)
     text = str(d.get("text") or "").strip()
     if not text:
@@ -578,6 +987,7 @@ def r_post(req, bid):
 def r_delete(req, bid, mid):
     u = _user(req)
     _bid_ok(bid)
+    need(req, bid, "see")
     with _mlock:
         m = next((x for x in _history(bid) if x["id"] == mid), None)
         if not m or m.get("deleted"):
@@ -617,9 +1027,476 @@ def r_signal(req, bid):
     return {"ok": True}
 
 
+# ── la co-édition : des opérations par objet et par propriété ─────────────
+# L'étude, § 5. Figma, « How Figma's multiplayer technology works » (2019) :
+# « Figma's multiplayer servers keep track of the latest value that any client
+# has sent for a given property on a given object » ; « similar to a
+# last-writer-wins register in CRDT literature except we don't need a
+# timestamp because the server can define the order of events ».
+#
+# Les opérations (t : n un objet, l un lien, b la planche) :
+#   {o: add, t, v}         poser un objet entier (déjà là : remplacé, un renvoi ne double rien)
+#   {o: del, t, id}        retirer ; un objet retire ses liens
+#   {o: set, t, id, k, v}  une propriété (`v` absent : la retirer) ; k = geo : {x, y, w, h}
+#                          d'un objet, k = ends : {a, b, pa, pb} d'un lien (un geste ne se
+#                          mélange pas) ; un objet absent : ignoré (le retrait gagne)
+#   {o: set, t: b, k: name, v}
+#   {o: ord, t, ids}       l'ordre (l'empilement, l'ordre des fils) tel que la page le voit :
+#                          ce qu'elle ne connaissait pas reste après son voisin d'avant
+# Chaque lot devient un événement `op` : {rev, sid, n, user, name, ops (acceptées,
+# normalisées), fx (ce que le serveur en déduit et que tous appliquent : un groupe
+# dissous, un ajout refusé retiré, un objet remis tel qu'il est), drop, order,
+# lorder (l'ordre complet, quand il a pu changer)}.
+OPS_LOG = 4000          # les derniers lots gardés en mémoire par planche (reprise, trous)
+OPS_LOG_BYTES = 16 << 20   # … et 16 Mo au plus (un collage de 200 cartes pèse)
+OPS_MAX = 5000          # opérations par lot
+OPS_BYTES = 8 << 20     # un lot (un collage de 200 cartes tient)
+OPS_WRITE_S = 0.8       # un geste en cours (déplacer) s'écrit au plus toutes les 0,8 s
+OPS_IDLE_S = 600.0      # une planche sans opération ni onglet depuis 10 min quitte la mémoire
+OPS_RATE = 40           # lots par seconde et par onglet (la page en envoie 20 au plus)
+SID = re.compile(r"[A-Za-z0-9_-]{8,40}")
+GEO = ("x", "y", "w", "h")
+ENDS = ("a", "b", "pa", "pb")
+
+_hot: dict[str, dict] = {}
+_tl = threading.local()
+
+
+class _Drop(Exception):
+    """Une opération écartée (`why`) ; `fix` : les objets (t, id) à remettre chez
+    tous tels que le serveur les a (présents : remplacés, absents : retirés)."""
+
+    def __init__(self, why: str, *fix) -> None:
+        super().__init__(why)
+        self.why = why
+        self.fix = fix
+
+
+def _ide():
+    from tools import ideation
+    return ideation
+
+
+def _op_bytes(raw: str) -> bytes:
+    return f"event: op\ndata: {raw}\n\n".encode()
+
+
+def _hot_get(bid: str) -> dict:
+    """La planche tenue en mémoire, chargée au premier besoin (sous ideation._lock)."""
+    h = _hot.get(bid)
+    if h is None:
+        ide = _ide()
+        b = ide.normalize(ide.load(bid))
+        b["rev"] = int(b.get("rev") or 1)
+        h = {"b": b, "n": {x["id"]: x for x in b["nodes"]}, "l": {x["id"]: x for x in b["links"]},
+             "log": deque(maxlen=OPS_LOG), "logb": 0, "seen": {}, "rate": {}, "dirty": False, "timer": None, "used": 0.0}
+        _hot[bid] = h
+        _hot_sweep(bid)
+    h["used"] = time.time()
+    return h
+
+
+def _hot_sweep(keep: str) -> None:
+    now = time.time()
+    with _lock:
+        busy = {b for b, c in _boards.items() if c}
+    for bid in [b for b, h in _hot.items() if b != keep and not h["dirty"] and b not in busy and now - h["used"] > OPS_IDLE_S]:
+        _hot.pop(bid, None)
+
+
+def _hot_write(bid: str, h: dict) -> None:
+    ide = _ide()
+    if h.get("timer"):
+        h["timer"].cancel()
+        h["timer"] = None
+    if not h["dirty"]:
+        return
+    if not ide._path(bid).exists():   # la planche est partie à la corbeille : rien ne la recrée
+        _hot.pop(bid, None)
+        return
+    h["b"]["updated"] = library.now()
+    _tl.ops = True
+    try:
+        ide._write(h["b"])
+    finally:
+        _tl.ops = False
+    h["dirty"] = False
+
+
+def _hot_later(bid: str, h: dict) -> None:
+    if h.get("timer"):
+        return
+
+    def run():
+        with _ide()._lock:
+            if _hot.get(bid) is h:
+                h["timer"] = None
+                _hot_write(bid, h)
+    t = threading.Timer(OPS_WRITE_S, run)
+    t.daemon = True
+    h["timer"] = t
+    t.start()
+
+
+def hot_flush(bid: str) -> None:
+    """Appelé par ideation.load : ce que les opérations ont changé part d'abord
+    sur le disque (l'export, l'enregistrement entier, la copie lisent le vrai)."""
+    h = _hot.get(bid)
+    if h is None or not h["dirty"]:
+        return
+    with _ide()._lock:
+        if _hot.get(bid) is h:
+            _hot_write(bid, h)
+
+
+def hot_forget(b: dict) -> None:
+    """Appelé par ideation._write : une planche écrite entière ailleurs
+    (l'enregistrement de repli, renommer) devient la vérité ; la copie en
+    mémoire s'efface et les onglets reliés se recalent (`reset`)."""
+    if getattr(_tl, "ops", False):
+        return
+    bid = str(b.get("id") or "")
+    h = _hot.pop(bid, None)
+    if h and h.get("timer"):
+        h["timer"].cancel()
+    with _lock:
+        here = bool(_boards.get(bid))
+    if here:
+        _broadcast(bid, _sse("reset", {"board": bid, "rev": b.get("rev")}))
+
+
+def _since(h: dict, since: int):
+    """Les lots d'après `since` (JSON), ou None si la mémoire ne remonte pas jusque-là."""
+    rev = h["b"]["rev"]
+    if since >= rev:
+        return []
+    log = h["log"]
+    if not log or log[0][0] > since + 1:
+        return None
+    return [raw for r, raw in log if r > since]
+
+
+def _ops_hello(bid: str, since: str):
+    """Ce que `hello` dit de la planche, et les lots à rejouer (sous ideation._lock)."""
+    h = _hot_get(bid)
+    rev = h["b"]["rev"]
+    if not since:
+        return {"rev": rev}, []
+    try:
+        s = int(since)
+    except ValueError:
+        return {"rev": rev, "reset": True}, []
+    evs = _since(h, s)
+    return {"rev": rev, "reset": evs is None}, evs or []
+
+
+def _merge(want: list, have: list) -> list:
+    """L'ordre voulu par une page (`want`) sur ce que le serveur a (`have`) : ce
+    qui n'existe plus tombe ; ce qu'elle ne connaissait pas (posé entre-temps
+    par un autre) reste juste après son voisin d'avant."""
+    hs = set(have)
+    out, seen = [], set()
+    for x in want:
+        if x in hs and x not in seen:
+            out.append(x)
+            seen.add(x)
+    if len(out) == len(have):
+        return out
+    after: dict = {}
+    prev = None
+    for x in have:
+        if x in seen:
+            prev = x
+        else:
+            after.setdefault(prev, []).append(x)
+    res = list(after.get(None, []))
+    for x in out:
+        res.append(x)
+        res.extend(after.get(x, []))
+    return res
+
+
+def _link(ide, h: dict, lk, lid_self: str | None = None) -> dict:
+    """Un lien validé comme ideation.normalize le ferait, contre la planche en mémoire."""
+    if not isinstance(lk, dict):
+        raise HttpError(400, "un lien est un objet JSON")
+    lid = str(lk.get("id", ""))
+    if not ide.NID.fullmatch(lid):
+        raise HttpError(400, "lien sans identifiant valide")
+    a, z = str(lk.get("a", "")), str(lk.get("b", ""))
+    N = h["n"]
+    if a not in N or z not in N:
+        raise _Drop("absent", ("l", lid))   # un bout retiré entre-temps : le retrait gagne
+    if a == z:
+        raise HttpError(400, "un lien relie deux objets")
+    kind = lk.get("kind") if lk.get("kind") in ide.LINK_KINDS else "arrow"
+    out = {"id": lid, "a": a, "b": z, "kind": kind, "label": ide._s(lk.get("label"), 120)}
+    if kind == "wire":
+        pa, pb = str(lk.get("pa", "")), str(lk.get("pb", ""))
+        if not ide.PORT.fullmatch(pa) or not ide.PORT.fullmatch(pb):
+            raise HttpError(400, "fil sans sortie ou entrée valide")
+        out.update(pa=pa, pb=pb)
+        for o in h["b"]["links"]:
+            if o["id"] != lid and o["kind"] == "wire" and (o["a"], o.get("pa"), o["b"], o.get("pb")) == (a, pa, z, pb):
+                raise _Drop("double", ("l", lid))
+    elif kind == "out" and str(lk.get("lot", "")) in N and N[str(lk["lot"])]["type"] == "frame":
+        out["lot"] = lk["lot"]
+    if kind in ("arrow", "line") and lk.get("dash") is True:
+        out["dash"] = True        # une annotation en pointillé : comme ideation.normalize
+    return out
+
+
+def _result_twice(h: dict, lk: dict, added: set) -> bool:
+    """Un résultat de travail posé deux fois : deux onglets ont suivi le même
+    travail (gen.js, resume) et posent chacun l'image, reliée `out` à sa carte.
+    Le premier arrivé reste."""
+    N = h["n"]
+    m = N.get(lk["b"])
+    if lk["kind"] != "out" or lk["b"] not in added or not m or m["type"] != "media":
+        return False
+    for o in h["b"]["links"]:
+        if o["kind"] == "out" and o["a"] == lk["a"] and o["b"] != lk["b"]:
+            m2 = N.get(o["b"])
+            if m2 and m2["type"] == "media" and m2.get("item") == m.get("item"):
+                return True
+    return False
+
+
+def _one(ide, h: dict, op, added: set):
+    """Applique une opération ; rend sa forme normalisée (None : sans effet)."""
+    if not isinstance(op, dict):
+        raise _Drop("invalide")
+    o, t = op.get("o"), op.get("t")
+    B = h["b"]
+    if t == "b":
+        if o == "set" and op.get("k") == "name":
+            B["name"] = ide._s(op.get("v"), 120).strip() or "Sans titre"
+            return {"o": "set", "t": "b", "k": "name", "v": B["name"]}
+        raise _Drop("invalide")
+    if t not in ("n", "l"):
+        raise _Drop("invalide")
+    coll, idx = (B["nodes"], h["n"]) if t == "n" else (B["links"], h["l"])
+    if o == "ord":
+        ids = op.get("ids")
+        if not isinstance(ids, list) or len(ids) > len(coll) + OPS_MAX:
+            raise _Drop("invalide")
+        coll[:] = [idx[i] for i in _merge([str(x) for x in ids], [x["id"] for x in coll])]
+        return {"o": "ord", "t": t}
+    if o == "add":
+        v = op.get("v")
+        oid = str(v.get("id", "")) if isinstance(v, dict) else ""
+        fix = (t, oid) if NID.fullmatch(oid) else None
+        try:
+            obj = ide._node(v) if t == "n" else _link(ide, h, v)
+        except HttpError as e:
+            raise _Drop("invalide", *([fix] if fix else [])) from e
+        cur = idx.get(obj["id"])
+        if cur is not None:              # un renvoi, ou l'annulation d'un retrait déjà rejoué
+            cur.clear()
+            cur.update(obj)
+            return {"o": "add", "t": t, "v": cur}
+        if len(coll) >= (ide.MAX_NODES if t == "n" else ide.MAX_LINKS):
+            raise _Drop("plafond", fix)
+        if t == "l" and _result_twice(h, obj, added):
+            gone = obj["b"]
+            B["nodes"][:] = [x for x in B["nodes"] if x["id"] != gone]
+            h["n"].pop(gone, None)
+            B["links"][:] = [x for x in B["links"] if x["a"] != gone and x["b"] != gone]
+            h["l"] = {x["id"]: x for x in B["links"]}
+            raise _Drop("déjà posé", ("n", gone), fix)
+        coll.append(obj)
+        idx[obj["id"]] = obj
+        if t == "n":
+            added.add(obj["id"])
+        return {"o": "add", "t": t, "v": obj}
+    oid = str(op.get("id") or "")
+    cur = idx.get(oid)
+    if o == "del":
+        if cur is None:
+            return None
+        coll[:] = [x for x in coll if x is not cur]
+        del idx[oid]
+        if t == "n":   # ses liens partent avec lui (les pages font de même en l'appliquant)
+            B["links"][:] = [x for x in B["links"] if x["a"] != oid and x["b"] != oid]
+            h["l"] = {x["id"]: x for x in B["links"]}
+        return {"o": "del", "t": t, "id": oid}
+    if o == "set":
+        if cur is None:
+            raise _Drop("absent")        # retiré avant : le retrait gagne
+        k = str(op.get("k") or "")
+        if k in ("", "id", "type"):
+            raise _Drop("invalide", (t, oid))
+        trial = dict(cur)
+        group = GEO if (t, k) == ("n", "geo") else ENDS if (t, k) == ("l", "ends") else None
+        if group:
+            v = op.get("v")
+            if not isinstance(v, dict):
+                raise _Drop("invalide", (t, oid))
+            keys = [g for g in group if g in v]
+            trial.update({g: v[g] for g in keys})
+        elif "v" in op:
+            trial[k] = op["v"]
+        else:
+            trial.pop(k, None)
+        try:
+            obj = ide._node(trial) if t == "n" else _link(ide, h, trial)
+        except HttpError as e:
+            raise _Drop("invalide", (t, oid)) from e
+        cur.clear()
+        cur.update(obj)
+        out = {"o": "set", "t": t, "id": oid, "k": k}
+        if group:
+            out["v"] = {g: cur[g] for g in keys if g in cur}
+        elif k in cur:
+            out["v"] = cur[k]
+        return out
+    raise _Drop("invalide")
+
+
+def _structure(ide, h: dict, fx: list) -> None:
+    """Les règles des groupes (ideation._groups, les mêmes que la page) après un
+    lot : un groupe de moins de deux enfants se dissout, une appartenance vers
+    un groupe absent tombe. Ce qui en change part dans `fx`."""
+    B = h["b"]
+    before = {x["id"]: (x.get("group"), x.get("parent")) for x in B["nodes"]}
+    kept, gone = ide._groups(B["nodes"])
+    for x in kept:
+        g, p = before[x["id"]]
+        for k, old in (("group", g), ("parent", p)):
+            if x.get(k) != old:
+                fx.append({"o": "set", "t": "n", "id": x["id"], "k": k, **({"v": x[k]} if k in x else {})})
+    if gone:
+        B["nodes"][:] = kept
+        for gid in gone:
+            h["n"].pop(gid, None)
+            fx.append({"o": "del", "t": "n", "id": gid})
+        B["links"][:] = [x for x in B["links"] if x["a"] not in gone and x["b"] not in gone]
+        h["l"] = {x["id"]: x for x in B["links"]}
+
+
+def _apply(bid: str, h: dict, ops: list, sid: str, n: int, u: dict) -> int:
+    """Un lot : chaque opération dans l'ordre, les règles de structure, un numéro,
+    le journal des lots, et l'événement à tous (sous ideation._lock)."""
+    ide = _ide()
+    B = h["b"]
+    acc, fx, drop, fixes = [], [], [], []
+    added: set = set()
+    order_n = order_l = struct = False
+    for i, op in enumerate(ops):
+        try:
+            r = _one(ide, h, op, added)
+        except _Drop as e:
+            drop.append({"i": i, "why": e.why})
+            fixes.extend(f for f in e.fix if f)
+            continue
+        if r is None:
+            continue
+        acc.append(r)
+        if r["o"] != "set" or r.get("k") not in ("geo",):
+            struct = True
+        if r["t"] == "n" and r["o"] in ("add", "ord"):
+            order_n = True
+        if r["t"] == "l" and r["o"] in ("add", "ord"):
+            order_l = True
+    if struct or fixes:
+        _structure(ide, h, fx)
+    for t, oid in dict.fromkeys(fixes):
+        cur = (h["n"] if t == "n" else h["l"]).get(oid)
+        fx.append({"o": "put", "t": t, "v": cur} if cur is not None else {"o": "del", "t": t, "id": oid})
+    B["rev"] = int(B.get("rev") or 1) + 1
+    ev = {"rev": B["rev"], "sid": sid, "n": n, "user": u["id"], "name": u.get("name") or u["id"], "ops": acc, "fx": fx}
+    if drop:
+        ev["drop"] = drop
+    if order_n:
+        ev["order"] = [x["id"] for x in B["nodes"]]
+    if order_l:
+        ev["lorder"] = [x["id"] for x in B["links"]]
+    raw = json.dumps(ev, ensure_ascii=False, separators=(",", ":"))
+    log = h["log"]
+    if len(log) == log.maxlen:
+        h["logb"] -= len(log[0][1])
+    log.append((B["rev"], raw))
+    h["logb"] = h.get("logb", 0) + len(raw)
+    while h["logb"] > OPS_LOG_BYTES and len(log) > 1:
+        h["logb"] -= len(log.popleft()[1])
+    h["dirty"] = True
+    _broadcast(bid, _op_bytes(raw))
+    return B["rev"]
+
+
+def r_ops(req, bid):
+    u = _user(req)
+    _bid_ok(bid)
+    need(req, bid, "edit")        # un spectateur ne modifie rien, même en passant par ici
+    d = _small(req, OPS_BYTES)
+    sid = str(d.get("sid") or "")
+    if not SID.fullmatch(sid):
+        raise HttpError(400, "sid invalide")
+    try:
+        n = int(d.get("n"))
+    except (TypeError, ValueError) as e:
+        raise HttpError(400, "n : un entier") from e
+    ops = d.get("ops")
+    if n < 1 or not isinstance(ops, list) or len(ops) > OPS_MAX:
+        raise HttpError(400, f"un lot : une liste de {OPS_MAX} opérations au plus")
+    live = bool(d.get("live"))
+    now = time.time()
+    with _ide()._lock:
+        h = _hot_get(bid)
+        t0, tokens = h["rate"].get(sid, (now, float(OPS_RATE)))
+        tokens = min(float(OPS_RATE), tokens + (now - t0) * OPS_RATE)
+        if tokens < 1:
+            h["rate"][sid] = (now, tokens)
+            raise HttpError(429, "trop de gestes à la fois")
+        h["rate"][sid] = (now, tokens - 1)
+        dup = n <= h["seen"].get(sid, 0)     # un renvoi (réponse perdue) : déjà appliqué
+        if not dup:
+            _apply(bid, h, ops, sid, n, u)
+            h["seen"].pop(sid, None)
+            h["seen"][sid] = n
+            while len(h["seen"]) > 512:
+                h["seen"].pop(next(iter(h["seen"])))
+            while len(h["rate"]) > 512:
+                h["rate"].pop(next(iter(h["rate"])))
+        rev = h["b"]["rev"]
+        if live:
+            _hot_later(bid, h)
+        else:
+            _hot_write(bid, h)
+    # un geste en cours (jusqu'à 20 lots par seconde) ne noie pas le journal des
+    # écritures ; le lot qui le termine, et tout le reste, y sont (voir r_presence)
+    if live:
+        req.protected = False
+    return {"ok": True, "rev": rev, "dup": dup}
+
+
+def r_ops_since(req, bid):
+    _user(req)
+    _bid_ok(bid)
+    need(req, bid, "see")
+    try:
+        since = int(req.q("since", "0"))
+    except ValueError as e:
+        raise HttpError(400, "since : un entier") from e
+    with _ide()._lock:
+        h = _hot_get(bid)
+        evs = _since(h, since)
+        rev = h["b"]["rev"]
+    return {"rev": rev, "reset": evs is None, "events": [json.loads(x) for x in evs or []]}
+
+
 def register(app) -> None:
     app.route("GET", "/api/ideation/collab/{bid}", r_state)
+    app.route("POST", "/api/ideation/collab/{bid}/ops", r_ops)
+    app.route("GET", "/api/ideation/collab/{bid}/ops", r_ops_since)
+    app.route("GET", "/api/ideation/collab/{bid}/access", r_access)
+    app.route("POST", "/api/ideation/collab/{bid}/access", r_access_set)
+    app.route("POST", "/api/ideation/collab/{bid}/invites", r_invite)
+    app.route("POST", "/api/ideation/collab/{bid}/invites/{iid}/revoke", r_invite_revoke)
+    # sous /api/auth/ : la porte y laisse passer une session qui attend (core/auth.py, gate)
+    app.route("POST", "/api/auth/ideation-invite/{tok}", r_redeem)
     app.route("GET", "/api/ideation/collab/{bid}/stream", r_stream)
+    app.route("GET", "/api/ideation/collab/{bid}/poll", r_poll)
     app.route("POST", "/api/ideation/collab/{bid}/presence", r_presence)
     app.route("POST", "/api/ideation/collab/{bid}/leave", r_leave)
     app.route("GET", "/api/ideation/collab/{bid}/messages", r_messages)
@@ -863,6 +1740,238 @@ def selftest(call, ok) -> None:
         globals().update(saved)
         LIMITS.clear()
         LIMITS.update(saved_lim)
+        with _lock:
+            _boards.clear()
+        auth.set_current(None)
+        config.CFG["auth"] = before
+    _selftest_ops(call, ok)
+    _selftest_roles(call, ok)
+
+
+def _selftest_ops(call, ok) -> None:
+    """La co-édition (l'étude, § 5) : deux onglets, des lots d'opérations ; le dernier
+    écrit gagne propriété par propriété, le retrait gagne, l'ordre se fusionne, un renvoi
+    ne double rien, un trou se relit, une écriture entière recale tout le monde."""
+    ide = _ide()
+    st, b = call("POST", "/api/ideation/boards", {"name": "Essai co-édition"})
+    bid = b.get("id", "")
+    base = f"/api/ideation/collab/{bid}"
+    nodes = [{"id": "n1", "type": "note", "x": 0, "y": 0, "w": 200, "h": 80, "text": "un"},
+             {"id": "s1", "type": "sticky", "x": 300, "y": 0, "w": 190, "h": 150, "text": "deux", "color": "coral-3"},
+             {"id": "m1", "type": "media", "item": "ima-20260101-000000-abcd", "kind": "image", "x": 0, "y": 300, "w": 200, "h": 150}]
+    st, sv = call("POST", f"/api/ideation/boards/{bid}", {"name": "Essai co-édition", "nodes": nodes,
+                                                         "links": [{"id": "l1", "a": "n1", "b": "s1", "kind": "arrow"}], "base_rev": 1})
+    rev0 = sv.get("rev", 0)
+    fa, fb = _Flux(f"{base}/stream?since={rev0}"), _Flux(f"{base}/stream?since={rev0}")
+    try:
+        _, ha = fa.wait(lambda e, d: e == "hello")
+        _, hb = fb.wait(lambda e, d: e == "hello")
+        ok(ha and hb and ha["ops"] == {"rev": rev0, "reset": False} and ha["me"]["role"] == "owner" and ha["can"]["edit"],
+           f"co-édition : le flux dit la version de la planche et le rôle ({ha and ha.get('ops')})")
+        A = lambda n, ops, **kw: call("POST", f"{base}/ops", {"sid": "sid-aaaaaaaa", "n": n, "ops": ops, **kw})   # noqa: E731
+        B = lambda n, ops, **kw: call("POST", f"{base}/ops", {"sid": "sid-bbbbbbbb", "n": n, "ops": ops, **kw})   # noqa: E731
+        node = lambda i: next((x for x in call("GET", f"/api/ideation/boards/{bid}")[1]["nodes"] if x["id"] == i), None)   # noqa: E731
+
+        # deux propriétés du même objet en même temps : les deux gagnent
+        s1_, r1 = A(1, [{"o": "set", "t": "n", "id": "n1", "k": "geo", "v": {"x": 120, "y": 40}}])
+        s2_, r2 = B(1, [{"o": "set", "t": "n", "id": "n1", "k": "text", "v": "écrit par B"}])
+        ok(s1_ == 200 and s2_ == 200 and r1["rev"] == rev0 + 1 and r2["rev"] == rev0 + 2, f"co-édition : deux lots, deux numéros ({r1} {r2})")
+        _, e1 = fb.wait(lambda e, d: e == "op" and d["sid"] == "sid-aaaaaaaa")
+        ok(e1 and e1["rev"] == rev0 + 1 and e1["ops"] == [{"o": "set", "t": "n", "id": "n1", "k": "geo", "v": {"x": 120.0, "y": 40.0}}],
+           f"co-édition : B reçoit le déplacement de A par le flux ({e1})")
+        _, e2 = fa.wait(lambda e, d: e == "op" and d["sid"] == "sid-bbbbbbbb")
+        ok(e2 and e2["rev"] == rev0 + 2, "co-édition : A reçoit le texte de B, dans l'ordre")
+        n1 = node("n1")
+        ok(n1 and n1["x"] == 120 and n1["y"] == 40 and n1["text"] == "écrit par B", f"co-édition : deux propriétés d'un objet, les deux gagnent ({n1})")
+        # la même propriété : le dernier arrivé gagne
+        A(2, [{"o": "set", "t": "n", "id": "s1", "k": "color", "v": "amb"}])
+        B(2, [{"o": "set", "t": "n", "id": "s1", "k": "color", "v": "cy"}])
+        ok((node("s1") or {}).get("color") == "cy", "co-édition : la même propriété, le dernier écrit gagne")
+        # le retrait gagne : A retire s1 (son lien part avec lui), B le modifie ensuite
+        A(3, [{"o": "del", "t": "n", "id": "s1"}])
+        B(3, [{"o": "set", "t": "n", "id": "s1", "k": "text", "v": "trop tard"}])
+        _, eb = fa.wait(lambda e, d: e == "op" and d["sid"] == "sid-bbbbbbbb" and d["n"] == 3)
+        st, got = call("GET", f"/api/ideation/boards/{bid}")
+        ok(eb and eb["ops"] == [] and eb.get("drop") == [{"i": 0, "why": "absent"}] and not any(x["id"] == "s1" for x in got["nodes"])
+           and not got["links"], f"co-édition : un objet retiré l'emporte sur une modification ({eb and eb.get('drop')})")
+        # l'ordre : A pose x1 dessous (en tête), B pose x2 sans connaître x1
+        A(4, [{"o": "add", "t": "n", "v": {"id": "x1", "type": "note", "x": 0, "y": 0, "w": 100, "h": 40, "text": "a"}},
+              {"o": "ord", "t": "n", "ids": ["x1", "n1", "m1"]}])
+        B(4, [{"o": "add", "t": "n", "v": {"id": "x2", "type": "note", "x": 0, "y": 0, "w": 100, "h": 40, "text": "b"}},
+              {"o": "ord", "t": "n", "ids": ["m1", "n1", "x2"]}])
+        _, eo = fa.wait(lambda e, d: e == "op" and d["sid"] == "sid-bbbbbbbb" and d["n"] == 4)
+        st, got = call("GET", f"/api/ideation/boards/{bid}")
+        order = [x["id"] for x in got["nodes"]]
+        ok(order == ["x1", "m1", "n1", "x2"] and eo and eo.get("order") == order,
+           f"co-édition : deux ordres se fusionnent, ce que l'autre ne connaissait pas reste à sa place ({order})")
+        # un renvoi (réponse perdue) ne double rien
+        st, dup = B(4, [{"o": "add", "t": "n", "v": {"id": "x3", "type": "note", "x": 0, "y": 0, "w": 100, "h": 40}}])
+        ok(st == 200 and dup["dup"] and node("x3") is None, f"co-édition : un lot renvoyé n'est appliqué qu'une fois ({dup})")
+        # des opérations invalides : écartées, et l'objet est remis chez tous tel que le serveur l'a
+        A(5, [{"o": "add", "t": "n", "v": {"id": "z1", "type": "bombe"}}, {"o": "set", "t": "n", "id": "n1", "k": "type", "v": "media"},
+              {"o": "set", "t": "n", "id": "n1", "k": "w", "v": 260}])
+        _, ez = fb.wait(lambda e, d: e == "op" and d["sid"] == "sid-aaaaaaaa" and d["n"] == 5)
+        fx = (ez or {}).get("fx", [])
+        ok(ez and {"o": "del", "t": "n", "id": "z1"} in fx and any(f["o"] == "put" and f["v"]["id"] == "n1" and f["v"]["type"] == "note" for f in fx)
+           and (node("n1") or {}).get("w") == 260, f"co-édition : une opération invalide est écartée, l'objet remis ({[f['o'] for f in fx]})")
+        # deux onglets posent le même résultat d'un travail : le premier reste
+        media = lambda i: {"id": i, "type": "media", "item": "ima-20260101-000000-beef", "kind": "image", "x": 500, "y": 0, "w": 100, "h": 100}   # noqa: E731
+        A(6, [{"o": "add", "t": "n", "v": media("r1")}, {"o": "add", "t": "l", "v": {"id": "o1", "a": "n1", "b": "r1", "kind": "out"}}])
+        B(6, [{"o": "add", "t": "n", "v": media("r2")}, {"o": "add", "t": "l", "v": {"id": "o2", "a": "n1", "b": "r2", "kind": "out"}}])
+        _, er = fa.wait(lambda e, d: e == "op" and d["sid"] == "sid-bbbbbbbb" and d["n"] == 6)
+        ok(node("r1") and node("r2") is None and er and {"o": "del", "t": "n", "id": "r2"} in er["fx"],
+           "co-édition : un résultat posé deux fois (deux onglets suivaient le travail) ne reste qu'une fois")
+        # les groupes : un groupe à qui on retire un enfant se dissout, chez tous
+        A(7, [{"o": "add", "t": "n", "v": {"id": "g1", "type": "group", "x": 0, "y": 0, "w": 10, "h": 10, "name": "G"}},
+              {"o": "set", "t": "n", "id": "x1", "k": "group", "v": "g1"}, {"o": "set", "t": "n", "id": "x2", "k": "group", "v": "g1"}])
+        B(7, [{"o": "del", "t": "n", "id": "x2"}])
+        _, eg = fa.wait(lambda e, d: e == "op" and d["sid"] == "sid-bbbbbbbb" and d["n"] == 7)
+        ok(eg and {"o": "del", "t": "n", "id": "g1"} in eg["fx"] and {"o": "set", "t": "n", "id": "x1", "k": "group"} in eg["fx"]
+           and node("g1") is None and "group" not in (node("x1") or {"group": 1}), f"co-édition : les règles des groupes suivent un retrait ({eg and eg['fx']})")
+        # un geste en cours ne noie pas le journal ; le lot qui le termine y est
+        jn = lambda: sum(1 for e in auth.journal_tail(1000) if e.get("event") == "http" and e.get("path", "").endswith(f"{bid}/ops"))   # noqa: E731
+        time.sleep(0.3)   # le journal s'écrit après la réponse (auth.after)
+        j0 = jn()
+        A(8, [{"o": "set", "t": "n", "id": "n1", "k": "geo", "v": {"x": 130}}], live=True)
+        time.sleep(0.3)
+        j1 = jn()
+        A(9, [{"o": "set", "t": "n", "id": "n1", "k": "geo", "v": {"x": 140}}])
+        time.sleep(0.3)
+        ok(j1 == j0 and jn() == j0 + 1, f"co-édition : un geste en cours hors du journal, sa fin dedans ({j0} {j1} {jn()})")
+        disk = json.loads(ide._path(bid).read_text(encoding="utf-8"))
+        ok(next(x for x in disk["nodes"] if x["id"] == "n1")["x"] == 140 and disk["rev"] == _hot[bid]["b"]["rev"],
+           "co-édition : la planche est sur le disque dès la fin d'un geste")
+        # un trou se relit ; trop ancien : se recaler
+        st, gap = call("GET", f"{base}/ops?since={rev0 + 1}")
+        ok(st == 200 and not gap["reset"] and gap["events"][0]["rev"] == rev0 + 2 and gap["events"][-1]["rev"] == gap["rev"],
+           f"co-édition : les lots d'après une version se relisent ({st} {len(gap.get('events', []))})")
+        f3 = _Flux(f"{base}/stream?since={rev0 + 3}")
+        _, h3 = f3.wait(lambda e, d: e == "hello")
+        _, first = f3.wait(lambda e, d: e == "op")
+        f3.close()
+        ok(h3 and not h3["ops"]["reset"] and first and first["rev"] == rev0 + 4, "co-édition : le flux rejoue d'abord ce qui manque")
+        # sans flux (le tunnel rapide) : l'interrogation longue rend les mêmes événements
+        rv = _hot[bid]["b"]["rev"]
+        st, p1 = call("GET", f"{base}/poll?wait=0&since={rv}")
+        pc = (p1 or {}).get("cid", "")
+        ok(st == 200 and p1["events"][0][0] == "hello" and p1["events"][0][1]["poll"] and CID.fullmatch(pc),
+           f"interrogation : bonjour, un identifiant ({st})")
+        _, jn_ = fa.wait(lambda e, d: e == "join" and d["cid"] == pc)
+        A(10, [{"o": "set", "t": "n", "id": "n1", "k": "text", "v": "par interrogation"}])
+        t0 = time.time()
+        st, p2 = call("GET", f"{base}/poll?wait=5&resume={pc}&since={rv}")
+        evs = [e for e, _ in (p2 or {}).get("events", [])]
+        ok(jn_ and st == 200 and p2["cid"] == pc and "op" in evs and time.time() - t0 < 2,
+           f"interrogation : les autres le voient arriver ; un lot lui arrive aussitôt ({evs}, {time.time() - t0:.2f} s)")
+        t0 = time.time()
+        st, p3 = call("GET", f"{base}/poll?wait=0.6&resume={pc}")
+        ok(st == 200 and p3["events"] == [] and 0.5 < time.time() - t0 < 2, "interrogation : rien de neuf, la question est tenue puis rendue vide")
+        keep = globals()["POLL_LOST_S"]
+        globals()["POLL_LOST_S"] = 0.2
+        time.sleep(0.4)
+        _sweep(bid)
+        globals()["POLL_LOST_S"] = keep
+        _, pl = fa.wait(lambda e, d: e == "p" and any(x["cid"] == pc and x["lost"] for x in d))
+        ok(pl is not None, "interrogation : un onglet qui ne demande plus est vu « coupé »")
+        # une écriture entière ailleurs (l'enregistrement de repli) : tout le monde se recale
+        cur = call("GET", f"/api/ideation/boards/{bid}")[1]
+        st, _ = call("POST", f"/api/ideation/boards/{bid}", {**cur, "base_rev": cur["rev"]})
+        _, rs = fa.wait(lambda e, d: e == "reset")
+        st2, old = call("GET", f"{base}/ops?since={rev0}")
+        ok(st == 200 and rs and rs["rev"] == cur["rev"] + 1 and old["reset"], f"co-édition : une écriture entière recale les onglets ({rs})")
+        st, stale = call("POST", f"/api/ideation/boards/{bid}", {**cur, "base_rev": cur["rev"]})
+        ok(st == 409, "co-édition : l'enregistrement de repli garde sa version (409)")
+        st, bad = call("POST", f"{base}/ops", {"sid": "x", "n": 1, "ops": []})
+        ok(st == 400, f"co-édition : un lot mal formé est refusé ({st})")
+    finally:
+        fa.close()
+        fb.close()
+        with _lock:
+            _boards.clear()
+
+
+def _selftest_roles(call, ok) -> None:
+    """Les rôles par planche et les invitations, porte allumée : Cal propriétaire,
+    Lina éditrice par défaut, Mirabelle (« Zoé » dans les messages) entre par un
+    lien de spectatrice."""
+    from tools.admin import essai_http as H
+    saved = {k: globals()[k] for k in ("HEARTBEAT_S", "GRACE_S", "WAKE_S")}
+    before = config.CFG.get("auth")
+    config.CFG["auth"] = True
+    auth.startup()
+    same = {"Origin": f"http://127.0.0.1:{config.get('port')}"}
+    flux: list[_Flux] = []
+    try:
+        globals().update(HEARTBEAT_S=1.0, GRACE_S=2.0, WAKE_S=0.2)
+        for k in ("entree:127.0.0.1", "demande:127.0.0.1"):
+            auth._hits.pop(k, None)
+        s, d, cal = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
+        s, d, lina = H("POST", "/api/auth/enter", {"name": "Lina"}, headers=same)
+        s, bd, _ = H("POST", "/api/ideation/boards", {"name": "Planche de Cal"}, cookie=cal, headers=same)
+        bid = bd.get("id", "")
+        s, other, _ = H("POST", "/api/ideation/boards", {"name": "Une autre"}, cookie=cal, headers=same)
+        base = f"/api/ideation/collab/{bid}"
+        s, acc, _ = H("GET", f"{base}/access", cookie=cal)
+        ok(s == 200 and acc["role"] == "owner" and acc["can"]["invite"], f"rôles : Cal est propriétaire ({s} {acc.get('role')})")
+        s, acl, _ = H("GET", f"{base}/access", cookie=lina)
+        ok(s == 200 and acl["role"] == "editor" and "invites" not in acl, "rôles : Lina, membre du portail, y est éditrice (comme avant)")
+        s, _, _ = H("POST", f"{base}/invites", {"role": "viewer", "hours": 24}, cookie=lina, headers=same)
+        ok(s == 403, f"rôles : seul le propriétaire invite ({s})")
+        s, inv, _ = H("POST", f"{base}/invites", {"role": "viewer", "hours": 24}, cookie=cal, headers=same)
+        tok = inv.get("token", "")
+        ok(s == 200 and tok.startswith(bid + ".") and inv["role"] == "viewer", "rôles : un lien de spectateur, 24 h")
+        # Zoé : un pseudo neuf (en attente), puis le lien
+        s, dz, zoe = H("POST", "/api/auth/enter", {"name": "Mirabelle"}, headers=same)
+        ok(dz.get("state") == "pending" if isinstance(dz, dict) else False, f"rôles : Zoé tape son pseudo, elle attend ({s} {dz})")
+        s, _, _ = H("GET", f"/api/ideation/boards/{bid}", cookie=zoe)
+        ok(s == 401, f"rôles : en attente, pas de planche ({s})")
+        s, rd, _ = H("POST", f"/api/auth/ideation-invite/{tok}", {}, cookie=zoe, headers=same)
+        ok(s == 200 and rd["role"] == "viewer" and rd["accepted"], f"rôles : le lien l'accepte, spectatrice de cette planche ({s} {rd})")
+        s, lst, _ = H("GET", "/api/ideation/boards", cookie=zoe)
+        ok(s == 200 and [x["id"] for x in lst["boards"]] == [bid] and lst["boards"][0]["role"] == "viewer",
+           "rôles : dans Idéation, Zoé n'a que la planche de son lien")
+        s, _, _ = H("GET", f"/api/ideation/boards/{other['id']}", cookie=zoe)
+        ok(s == 403, f"rôles : pas les autres planches ({s})")
+        fz = _Flux(f"{base}/stream?since=0", zoe)
+        flux.append(fz)
+        _, hz = fz.wait(lambda e, d: e == "hello")
+        ok(hz and hz["me"]["role"] == "viewer" and not hz["can"]["edit"] and hz["can"]["see"], "rôles : son flux dit « spectateur »")
+        s, _, _ = H("POST", f"{base}/ops", {"sid": "sid-zzzzzzzz", "n": 1, "ops": [{"o": "set", "t": "b", "k": "name", "v": "x"}]},
+                    cookie=zoe, headers=same)
+        ok(s == 403, f"rôles : une opération de spectateur est refusée ({s})")
+        cur = H("GET", f"/api/ideation/boards/{bid}", cookie=zoe)[1]
+        s, _, _ = H("POST", f"/api/ideation/boards/{bid}", {**cur, "base_rev": cur["rev"]}, cookie=zoe, headers=same)
+        ok(s == 403, f"rôles : l'enregistrement entier aussi ({s})")
+        s, _, _ = H("POST", f"{base}/messages", {"text": "bravo"}, cookie=zoe, headers=same)
+        ok(s == 403, f"rôles : le fil fermé aux spectateurs par défaut ({s})")
+        s, _, _ = H("POST", f"{base}/access", {"comments": True}, cookie=cal, headers=same)
+        _, rz = fz.wait(lambda e, d: e == "role")
+        s2, _, _ = H("POST", f"{base}/messages", {"text": "bravo"}, cookie=zoe, headers=same)
+        ok(s == 200 and rz and rz["can"]["comment"] and s2 == 200, "rôles : le propriétaire ouvre le fil, Zoé commente")
+        # « suivez-moi » : la présence le porte
+        fc = _Flux(f"{base}/stream", cal)
+        flux.append(fc)
+        _, hc = fc.wait(lambda e, d: e == "hello")
+        H("POST", f"{base}/presence", {"cid": hc["cid"], "lead": True, "view": [0, 0, 800, 600]}, cookie=cal, headers=same)
+        _, pl = fz.wait(lambda e, d: e == "p" and any(x["cid"] == hc["cid"] and x["lead"] for x in d))
+        ok(pl is not None, "suivre : « suivez-moi » arrive chez les autres avec la vue")
+        # retirer le lien : ce qu'il a donné s'en va, l'onglet de Zoé est fermé
+        s, a2, _ = H("GET", f"{base}/access", cookie=cal)
+        iid = a2["invites"][0]["id"]
+        ok(a2["invites"][0]["uses"][0]["id"] == "mirabelle" and a2["members"][0]["via"] == iid, "rôles : le propriétaire voit qui a ouvert le lien")
+        s, _, _ = H("POST", f"{base}/invites/{iid}/revoke", {}, cookie=cal, headers=same)
+        ev, bye = fz.wait(lambda e, d: e in ("bye", "eof"), 4)
+        ok(s == 200 and ev == "bye", f"rôles : le lien retiré, Zoé perd la planche ({ev} {bye})")
+        s, _, _ = H("POST", f"/api/auth/ideation-invite/{tok}", {}, cookie=zoe, headers=same)
+        ok(s == 410, f"rôles : un lien retiré ne s'ouvre plus ({s})")
+        s, _, _ = H("POST", f"/api/auth/ideation-invite/{bid}.faux-faux-faux-faux-faux", {}, cookie=zoe, headers=same)
+        ok(s == 410, f"rôles : un faux lien non plus ({s})")
+        s, _, _ = H("POST", f"/api/ideation/boards/{bid}/delete", {}, cookie=lina, headers=same)
+        ok(s == 403, f"rôles : seul le propriétaire met la planche à la corbeille ({s})")
+    finally:
+        for f in flux:
+            f.close()
+        globals().update(saved)
         with _lock:
             _boards.clear()
         auth.set_current(None)

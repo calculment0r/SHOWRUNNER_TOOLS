@@ -25,6 +25,7 @@
 
 import { toast } from '../commun/shell.js';
 import { KINDS, portOf, nameOf } from './ports.js';
+import { treeOf, withTrees, asRoots } from './objets/mindmap.js';
 
 export const PAD = 24;        // la boîte d'un groupe déplié : ses enfants + 24 px
 export const GAP = 24;        // l'espacement par défaut d'une rangée (px du monde)
@@ -33,7 +34,7 @@ export const LOD_PX = 240;    // « se réduit de loin » : une carte quand sa b
 export const EXIT = 32;       // un enfant lâché à plus de 32 px hors de la boîte en sort (tldraw onDragShapesOut)
 const CARDS = new Set(['gen', 'vgen', 'compose']);
 const AUTO = new Set(['note', 'sticky', 'title', 'gen', 'vgen', 'compose']);   // leur hauteur suit leur contenu (canvas.js, AUTO_H)
-const keeps = (n) => n.type === 'media' && n.kind !== 'audio';                // une image garde ses proportions
+const keeps = (n) => (n.type === 'media' && n.kind !== 'audio') || n.type === 'ink';   // une image, un trait gardent leurs proportions
 const minW = (n) => (CARDS.has(n.type) ? 270 : n.type === 'frame' ? 120 : 48);
 
 export const isGroup = (n) => n?.type === 'group';
@@ -64,6 +65,7 @@ export const readingOrder = (list) => [...list].sort((a, b) => (Math.abs(a.y - b
 // image garde ses proportions (l'autre côté suit) ; une note, un post-it, une
 // carte : leur hauteur suit leur texte, seule leur largeur se règle
 export function setSize(n, axis, v) {
+  if (n.type === 'mind') return;   // un nœud de mind map prend la taille de son nom
   if (axis === 'h') {
     if (AUTO.has(n.type) || n.type === 'frame' || n.type === 'group') return;
     if (keeps(n) && n.h > 0) n.w = Math.max(16, Math.round(v * n.w / n.h));
@@ -104,13 +106,37 @@ export function arrange(g, kids) {
   if (!kids.length) return false;
   const L = layoutOf(g);
   const before = sig(kids);
-  if (L.fit && kids.length > 1) {
-    const ref = L.fit === 'h' ? kids[0].h : kids[0].w;
-    for (const k of kids.slice(1)) setSize(k, L.fit, ref);
+  const sized = kids.filter((k) => k.type !== 'mind');
+  if (L.fit && sized.length > 1) {
+    const ref = L.fit === 'h' ? sized[0].h : sized[0].w;
+    for (const k of sized.slice(1)) setSize(k, L.fit, ref);
   }
-  if (L.mode === 'flow') flowAt(kids, g.x + PAD, g.y + PAD, L.width, L.gap);
+  if (L.mode === 'flow') {
+    // une mind map se range d'un bloc (sa boîte), ses nœuds suivent (objets/mindmap.js les place depuis leur racine)
+    const blocks = blocksOf(kids);
+    flowAt(blocks, g.x + PAD, g.y + PAD, L.width, L.gap);
+    for (const b of blocks) {
+      const dx = b.x - b.x0, dy = b.y - b.y0;
+      if (dx || dy) for (const m of b.members) { m.x = Math.round(m.x + dx); m.y = Math.round(m.y + dy); }
+    }
+  }
   fitBox(g, kids);
   return sig(kids) !== before;
+}
+// les unités d'une rangée : un objet, ou une mind map entière (tous ses nœuds dans la boîte de l'arbre)
+function blocksOf(kids) {
+  const out = [], trees = new Map();
+  const byId = new Map(kids.map((k) => [k.id, k]));
+  for (const k of kids) {
+    if (k.type !== 'mind') { out.push({ x: k.x, y: k.y, w: k.w, h: k.h, x0: k.x, y0: k.y, members: [k] }); continue; }
+    let r = k;
+    for (let i = 0; i < kids.length && r.parent && byId.get(r.parent)?.type === 'mind'; i++) r = byId.get(r.parent);
+    let b = trees.get(r.id);
+    if (!b) { b = { members: [] }; trees.set(r.id, b); out.push(b); }
+    b.members.push(k);
+  }
+  for (const b of trees.values()) { const bb = bboxOf(b.members); Object.assign(b, bb, { x0: bb.x, y0: bb.y }); }
+  return out;
 }
 // tous les groupes dépliés (un groupe réduit ne bouge pas : sa carte garde sa place)
 export function layoutAll(B) {
@@ -130,6 +156,13 @@ export function tidy(B) {
   if (!B) return false;
   const byId = new Map(B.nodes.map((n) => [n.id, n]));
   let changed = false;
+  // une mind map est tout entière dans le groupe de sa racine (le serveur tient la même règle)
+  const root = (n) => { let r = n; for (let i = 0; i < B.nodes.length && r.parent && byId.get(r.parent)?.type === 'mind' && byId.get(r.parent) !== n; i++) r = byId.get(r.parent); return r; };
+  for (const n of B.nodes) {
+    if (n.type !== 'mind' || !n.parent) continue;
+    const r = root(n);
+    if (r !== n && (n.group || '') !== (r.group || '')) { if (r.group) n.group = r.group; else delete n.group; changed = true; }
+  }
   for (const n of B.nodes) {
     if (!n.group) continue;
     const g = byId.get(n.group);
@@ -217,7 +250,9 @@ export function createGroups(app) {
   // déplacer une unité : un groupe emmène ses enfants
   function shift(n, dx, dy) {
     if (!dx && !dy) return;
-    for (const m of n.type === 'group' ? [n, ...kidsOf(B(), n.id)] : [n]) { m.x = Math.round(m.x + dx); m.y = Math.round(m.y + dy); }
+    // un groupe emmène ses enfants ; un nœud de mind map, son arbre
+    const list = n.type === 'group' ? [n, ...kidsOf(B(), n.id)] : n.type === 'mind' ? treeOf(B(), n) : [n];
+    for (const m of list) { m.x = Math.round(m.x + dx); m.y = Math.round(m.y + dy); }
   }
   const count = () => B().nodes.filter((n) => n.type === 'group').length;
   function make(kids, { flow = false, name = '' } = {}) {
@@ -250,7 +285,8 @@ export function createGroups(app) {
     app.mutate(() => {
       const u = list.filter((n) => n.type !== 'frame');
       const host = u.find((n) => n.type === 'group');
-      const loose = u.filter((n) => n.type !== 'group');
+      // un nœud de mind map entre avec tout son arbre
+      const loose = withTrees(B(), u.filter((n) => n.type !== 'group'));
       if (host) {
         const L = layoutOf(host);
         const kids = kidsOf(B(), host.id);
@@ -345,28 +381,34 @@ export function createGroups(app) {
         let at = nodes.indexOf(anchor);
         for (const n of list) { nodes.splice(nodes.indexOf(n), 1); at = nodes.indexOf(anchor) + 1 + list.indexOf(n); nodes.splice(at, 0, n); }
       };
-      // à droite de la cible, alignés en haut (ce qu'on glissait, dans son ordre)
-      const toRight = (list, from) => { let x = from.x + from.w + GAP; for (const n of list) { shift(n, x - n.x, from.y - n.y); x += n.w + GAP; } };
+      // à droite de la cible, alignés en haut (ce qu'on glissait, dans son ordre) ; une mind map
+      // s'y range par sa racine (son arbre suit) et entre tout entière dans le groupe
+      const toRight = (list, from) => { let x = from.x + from.w + GAP; for (const n of asRoots(B(), list)) { shift(n, x - n.x, from.y - n.y); x += n.w + GAP; } };
+      const all = (list) => withTrees(B(), list);
       let g;
       if (p.kind === 'new') {
         const loose = p.loose.filter((n) => n.type !== 'group');
         toRight(loose, t);
-        moveAfter(loose, t);
-        g = make([t, ...loose], { flow: true });
+        const tt = t.type === 'mind' ? treeOf(B(), t) : [t];
+        const moved = all(loose).filter((n) => !tt.includes(n));
+        moveAfter(moved, tt[tt.length - 1]);
+        g = make([...tt, ...moved], { flow: true });
         g.layout.width = Math.max(0, g.w - 2 * PAD);
       } else if (p.kind === 'join') {
         g = p.host;
         const kids = kidsOf(B(), g.id);
         const anchor = t.type === 'group' ? kids[kids.length - 1] : t;
         if (layoutOf(g).mode !== 'flow') toRight(p.loose, t.type === 'group' ? bboxOf(kids) : t);
-        for (const n of p.loose) n.group = g.id;
-        moveAfter(p.loose, anchor);
+        const loose = all(p.loose);
+        for (const n of loose) n.group = g.id;
+        moveAfter(loose, anchor);
       } else {
         g = p.host;
         const kids = kidsOf(B(), g.id);
         if (layoutOf(g).mode !== 'flow') toRight([t, ...p.loose], bboxOf(kids));
-        for (const n of [t, ...p.loose]) n.group = g.id;
-        moveAfter([t, ...p.loose], kids[kids.length - 1]);
+        const loose = all([t, ...p.loose]);
+        for (const n of loose) n.group = g.id;
+        moveAfter(loose, kids[kids.length - 1]);
       }
       S.sel = new Set([g.id]); S.focus = null; S.link = null;
       app.commit();

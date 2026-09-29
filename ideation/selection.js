@@ -54,6 +54,37 @@ export function createSelection(app, env) {
   for (const c of corners) c.addEventListener('pointerdown', (e) => startScale(e, c.dataset.c));
   org.addEventListener('pointerdown', startOrganise);
 
+  // ── les poignées d'un objet d'annotation choisi seul (étude ideation_atelier.md § 3.5) ──
+  // quatre ronds hors de ses bords (px d'écran) : en tirer un vers un objet le relie d'une
+  // flèche droite ; lâché dans le vide, « créer et relier » (canvas.js, startLink)
+  const hds = ['t', 'r', 'b', 'l'].map((s) => el('i', { class: 'ob-hd', 'data-side': s, hidden: true,
+    title: 'tirer vers un objet : une flèche · dans le vide : un objet neuf, déjà relié' }));
+  cv.append(...hds);
+  let hdId = null;
+  for (const h of hds) {
+    h.addEventListener('pointerdown', (e) => {
+      if (e.button === 1) return;   // le bouton du milieu déplace la vue
+      e.preventDefault(); e.stopPropagation();
+      if (e.button !== 0 || isLocked() || !hdId) return;
+      env.startLink(e, hdId);
+    });
+    h.addEventListener('dblclick', (e) => e.stopPropagation());
+    h.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); });
+  }
+  function placeHandles() {
+    const one = S.sel.size === 1 && !S.link ? app.node([...S.sel][0]) : null;
+    const show = !!(S.board && one && app.objets?.annot(one) && !isLocked() && !isCard(one) && !app.canvas?.hiddenIn?.(one.id));
+    hdId = show ? one.id : null;
+    for (const h of hds) h.hidden = !show;
+    if (!show) return;
+    const v = V(), b = box(one);
+    const sx = v.x + b.x * v.z, sy = v.y + b.y * v.z, sw = b.w * v.z, sh = b.h * v.z;
+    // hors du bord : la sortie d'un texte (son port) reste à elle ; la pastille d'un nœud de mind map aussi
+    const off = 14, offR = one.type === 'mind' && app.objets.info(one.id)?.kids ? 36 : off;
+    const pos = { t: [sx + sw / 2, sy - off], r: [sx + sw + offR, sy + sh / 2], b: [sx + sw / 2, sy + sh + off], l: [sx - off, sy + sh / 2] };
+    for (const h of hds) { const [x, y] = pos[h.dataset.side]; h.style.left = `${Math.round(x)}px`; h.style.top = `${Math.round(y)}px`; }
+  }
+
   // ce qui est choisi, et ce que le cadre et la barre en montrent
   const units = () => [...S.sel].map((id) => app.node(id)).filter(Boolean);
   function modeOf(us) {
@@ -109,9 +140,12 @@ export function createSelection(app, env) {
         btn('Encadrer', () => app.frameAround(), { title: 'un cadre autour · ctrl+alt+G' }));
       if (refable.length) out.push(btn('Carte Générer', () => app.genWith(refable.map((n) => n.id)), { title: `une carte qui prend ${refable.length > 1 ? 'ces ' + refable.length + ' objets' : 'cet objet'} en référence` }));
       if (stickies.length) {
-        out.push(sub('Couleur', () => [{ head: 'les post-it' }, ...(S.meta?.sticky || []).map((c) => ({ label: c.id, dot: c.id,
+        out.push(sub('Couleur', () => [{ head: 'les post-it' }, ...(S.meta?.sticky || []).map((c) => ({ label: c.name || c.id, dot: c.id,
           onclick: () => { app.mutate(() => { for (const s of stickies) s.color = c.id; }); app.LS('sticky', c.id); } }))], { title: 'la couleur des post-it choisis' }));
       }
+      // les gestes d'atelier (objets/) : regrouper les post-it par couleur, convertir en mind map
+      if (stickies.length >= 2) out.push(btn('Par couleur', () => app.objets.regroup(), { title: 'regrouper les post-it en colonnes par couleur, chacune dans un cadre titré' }));
+      if (flat.some((n) => ['note', 'sticky', 'title', 'shape', 'card'].includes(n.type))) out.push(btn('En mind map', () => app.objets.toMind(), { title: 'une racine « Synthèse » et une branche par note, forme ou carte' }));
     } else if (mode === 'group') {
       const L = layoutOf(one);
       out.push(nameBtn(one), sep(),
@@ -187,6 +221,7 @@ export function createSelection(app, env) {
   }
   function hide() { frame.hidden = true; bar.hidden = true; cur = null; key = ''; }
   function paint() {
+    placeHandles();
     const us = units();
     const mode = S.board && !isLocked() && !S.link ? modeOf(us) : null;
     if (!mode) { hide(); return; }
@@ -210,6 +245,7 @@ export function createSelection(app, env) {
   // la sélection bouge (un objet qu'on glisse, la vue qui se déplace) : le cadre suit,
   // la barre se cache et revient 150 ms après le dernier mouvement
   function follow() {
+    placeHandles();
     if (!cur) return;
     const us = units();
     const b = us.length ? selBox(us) : null;
@@ -255,6 +291,8 @@ export function createSelection(app, env) {
           n.x = n.collapsed ? px : px - PAD; n.y = n.collapsed ? py : py - PAD;
           continue;
         }
+        // une mind map : sa racine suit l'échelle, l'arbre se range depuis elle (ses nœuds gardent leur taille)
+        if (n.type === 'mind') { if (!n.parent) [n.x, n.y] = P(x, y); continue; }
         [n.x, n.y] = P(x, y);
         // un texte garde sa police : sa boîte s'élargit, sa hauteur suit
         if (AUTO.has(n.type)) n.w = Math.max(minW(n), Math.round(w * k));
@@ -299,8 +337,9 @@ export function createSelection(app, env) {
       });
       return;
     }
-    // une sélection : ranger une fois, à la largeur qu'on tire (rien ne la retient sans groupe)
-    const list = readingOrder(us);
+    // une sélection : ranger une fois, à la largeur qu'on tire (rien ne la retient sans groupe) ;
+    // une mind map compte pour sa racine (son arbre la suit)
+    const list = readingOrder(app.objets ? app.objets.roots(us) : us);
     const boxes = new Map(list.map((n) => [n.id, { ...box(n) }]));
     const b0 = bboxOf([...boxes.values()]);
     drag((ev) => {

@@ -19,9 +19,19 @@
 // sans quitter l'appel. Les événements du bus : board, view, selection,
 // commit, quiet, render ; il écoute aussi 'present' (true/false, ou {on}),
 // que le module de présentation émet quand il commence et s'arrête.
+//
+// La co-édition (coedition.js, `app.coed`) passe par le même flux : les
+// événements `op` (un lot d'opérations, numéroté) et `reset` ; le flux
+// s'ouvre avec `since` (la version de la planche ici) et rejoue ce qui manque.
+// Sans flux (le tunnel rapide de la démo), l'interrogation longue rend les
+// mêmes événements. Le rôle sur la planche (propriétaire, éditeur, spectateur ;
+// événement `role`), « Inviter » (un lien, un rôle, une durée), suivre la vue de
+// quelqu'un (un clic sur son visage) et « suivez-moi » (la présence porte `lead`).
+// L'étude : docs/etudes/ideation_collab.md, § 5 à 8.
 
 import { api, el, toast, href, $ } from '../commun/shell.js';
 import { menu } from '../commun/menu.js';
+import { createCoedition } from './coedition.js';
 
 const API = window.SR_API ? new URL(window.SR_API, location.href) : new URL(href('api/'));
 const url = (p) => new URL(p, API).href;
@@ -34,6 +44,7 @@ const CAN_SCREEN = SECURE && typeof navigator.mediaDevices?.getDisplayMedia === 
 const VIDEO = { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 24, max: 30 } };
 const INSECURE = `la caméra, le micro et le partage d’écran ne s’ouvrent que sur une page sûre (https, ou localhost) : ce portail est servi en http sur ${location.host}, et le navigateur n’y donne pas l’accès aux appareils`;
 const MDN = 'https://developer.mozilla.org/fr/docs/Web/Security/Secure_Contexts';
+const ROLE_FR = { owner: 'propriétaire', editor: 'éditeur', viewer: 'spectateur', none: 'sans accès' };
 
 const ICO = {
   fil: 'M4 5h16v11h-9l-5 4v-4H4z',
@@ -80,8 +91,13 @@ export function install(app) {
     tab: null, pinning: false, anchor: null, reply: null, focus: null, bottom: false,
     views: LS('co-views') === true, pins: LS('co-pins') !== false, fold: LS('co-fold') === true, compact: false, before: null,
     cursor: null, last: null, selKey: '', rev: null, viewT: 0, whoKey: '', callKey: '',
+    // le rôle sur la planche (propriétaire, éditeur, spectateur) ; suivre la vue de quelqu'un
+    role: '', can: null, follow: null, byLead: false, broke: null, leadMe: false, leads: new Map(), flyT: 0,
   };
   const K = { on: false, joining: false, local: null, cam: false, screen: null, pcs: new Map(), camWhy: '', micWhy: '' };
+  // la co-édition : ses opérations passent par ce flux ; elle prend l'enregistrement de la planche
+  const CO = createCoedition(app, { url, moved: () => schedule(), status: () => paintNotice() });
+  app.coed = CO;
 
   // ── la barre : qui est là, l'appel, le fil, la visio ─────────
   const linkSt = el('span', { class: 'pill co-link', hidden: true, role: 'status' }, el('i'), el('span'));
@@ -92,7 +108,11 @@ export function install(app) {
   const filDot = el('b', { class: 'co-dot', hidden: true });
   const bFil = el('button', { class: 'co-ic', type: 'button', 'aria-label': 'le fil', title: 'le fil de la planche : messages et commentaires épinglés', onclick: () => toggleDock('fil') }, svg(ICO.fil), filDot);
   const bVis = el('button', { class: 'co-ic', type: 'button', 'aria-label': 'la visio', title: 'la visio de la planche', onclick: () => toggleDock('visio') }, svg(ICO.cam));
-  const barBox = el('div', { class: 'co-bar' }, linkSt, notice, who, callPill, bPin, bFil, bVis);
+  // suivre : « suit Lina · arrêter », ou « reprendre » après un geste qui a rompu le suivi
+  const followPill = el('button', { class: 'co-follow', type: 'button', hidden: true, onclick: () => followClick() }, el('i'), el('span'));
+  const roleChip = el('span', { class: 'co-role lbl', hidden: true });
+  const bInvite = el('button', { class: 'tb ghost sm co-inv', type: 'button', hidden: true, title: 'inviter quelqu’un sur cette planche : un lien, un rôle, une durée', onclick: () => inviteModal() }, 'Inviter');
+  const barBox = el('div', { class: 'co-bar' }, linkSt, notice, followPill, who, callPill, roleChip, bInvite, bPin, bFil, bVis);
   const ideBar = $('.ide-bar');
   if (ideBar) ideBar.append(barBox); else document.body.append(barBox);
 
@@ -157,7 +177,9 @@ export function install(app) {
   // sur la planche : curseurs, anneaux, cadres de vue, pastilles
   const layer = el('div', { class: 'co-layer', 'aria-hidden': 'true' });
   const mini = el('button', { class: 'co-mini', type: 'button', hidden: true, title: 'le fil et la visio, réduits pendant la présentation', onclick: () => setCompact(false) });
-  cv.append(layer, mini);
+  // pendant la présentation : « suivez-moi » à portée de main (la barre est cachée)
+  const leadMini = el('button', { class: 'co-mini co-leadmini', type: 'button', hidden: true, onclick: () => lead(!C.leadMe) });
+  cv.append(layer, mini, leadMini);
 
   // ── le flux ────────────────────────────────────────────────
   const post = (path, body) => api(`ideation/collab/${C.bid}/${path}`, { method: 'POST', body });
@@ -172,26 +194,71 @@ export function install(app) {
   function closeStream() {
     C.gen++;
     clearTimeout(C.retryT);
+    clearTimeout(C.helloT);
     if (C.es) C.es.close();
     C.es = null;
+    CO.stream(false);
   }
+  // les événements du flux (et de l'interrogation, qui rend les mêmes)
+  const EVENTS = {
+    hello: (d) => onHello(d), p: (d) => onPresence(d), join: (d) => onJoin(d), leave: (d) => onLeave(d),
+    msg: (d) => onMsg(d), del: (d) => onDel(d), sig: (d) => onSig(d), bye: (d) => onBye(d),
+    op: (d) => CO.event(d), reset: () => CO.reset(), role: (d) => onRole(d),
+  };
+  const query = (resume) => {
+    const qs = new URLSearchParams();
+    if (resume && C.cid) qs.set('resume', C.cid);
+    // la version de la planche ici : le serveur rejoue d'abord les lots d'après
+    const since = CO.since();
+    if (since !== null && since !== undefined) qs.set('since', String(since));
+    return qs;
+  };
+  // sans flux (le tunnel rapide de la démo : « Quick Tunnels do not support Server-Sent
+  // Events ») : l'interrogation longue ; aussi quand un flux ne dit jamais bonjour, deux fois
+  C.poll = /\.trycloudflare\.com$/i.test(location.hostname) || new URLSearchParams(location.search).has('poll') || LS('co-poll') === true;
   function open(resume) {
     closeStream();
     if (!C.bid) return;
     const g = C.gen;
-    const q = resume && C.cid ? `?resume=${encodeURIComponent(C.cid)}` : '';
-    const es = new EventSource(url(`ideation/collab/${C.bid}/stream${q}`));
-    C.es = es;
     if (!C.cid) setLink('work', 'connexion');
-    const on = (ev, fn) => es.addEventListener(ev, (e) => {
+    if (C.poll) { pollLoop(g, resume); return; }
+    const qs = query(resume);
+    const es = new EventSource(url(`ideation/collab/${C.bid}/stream${qs.toString() ? `?${qs}` : ''}`));
+    C.es = es;
+    let hi = false;
+    const noHello = () => { C.noHello = (C.noHello || 0) + 1; if (C.noHello >= 2) { C.poll = true; console.warn('collab · pas de flux : interrogation'); } };
+    C.helloT = setTimeout(() => { if (g === C.gen && !hi) { noHello(); es.close(); C.es = null; lost(g); } }, 9000);
+    for (const [ev, fn] of Object.entries(EVENTS)) {
+      es.addEventListener(ev, (e) => {
+        if (g !== C.gen) return;
+        if (ev === 'hello') { hi = true; C.noHello = 0; clearTimeout(C.helloT); }
+        let d;
+        try { d = JSON.parse(e.data); } catch { return; }
+        try { fn(d); } catch (err) { console.error('collab ·', ev, err); }
+      });
+    }
+    es.onerror = () => { if (g !== C.gen) return; if (!hi) noHello(); clearTimeout(C.helloT); es.close(); C.es = null; CO.stream(false); lost(g); };
+  }
+  async function pollLoop(g, resume) {
+    let fails = 0, first = true;
+    while (g === C.gen && C.bid) {
+      const qs = query(resume || !first);
+      qs.set('wait', first ? '0' : '20');
+      let r;
+      try { r = await api(`ideation/collab/${C.bid}/poll?${qs}`); } catch (e) {
+        if (g !== C.gen) return;
+        CO.stream(false);
+        if (e.status === 401) { setLink('err', 'hors connexion'); return; }
+        if (e.status === 403 || e.status === 404) { C.cid = null; C.peers.clear(); setLink('err', e.message); paintAll(); return; }
+        setLink('work', 'reconnexion');
+        await new Promise((res) => setTimeout(res, Math.min(15000, 800 * 2 ** fails++)));
+        continue;
+      }
       if (g !== C.gen) return;
-      let d;
-      try { d = JSON.parse(e.data); } catch { return; }
-      try { fn(d); } catch (err) { console.error('collab ·', ev, err); }
-    });
-    on('hello', onHello); on('p', onPresence); on('join', onJoin); on('leave', onLeave);
-    on('msg', onMsg); on('del', onDel); on('sig', onSig); on('bye', onBye);
-    es.onerror = () => { if (g !== C.gen) return; es.close(); C.es = null; lost(g); };
+      fails = 0; first = false;
+      for (const [ev, d] of r.events || []) { try { EVENTS[ev]?.(d); } catch (err) { console.error('collab · poll', ev, err); } }
+      if (!C.cid || g !== C.gen) return;   // bye
+    }
   }
   async function lost(g) {
     setLink('work', 'reconnexion');
@@ -219,8 +286,26 @@ export function install(app) {
     delete P.pend.call;
     sendFull();
     if (C.tab === 'fil') markRead();
+    setRole(d.me?.role, d.can);
     paintAll();
     reconcile(true);
+    CO.hello(d.ops);
+    // quelqu'un demande déjà qu'on le suive (« suivez-moi ») : on le suit
+    C.leads = new Map([...C.peers.values()].map((p) => [p.cid, !!p.lead]));
+    const lead = [...C.peers.values()].find((p) => p.lead && !p.lost);
+    if (lead && !C.follow && !C.leadMe) startFollow(lead.cid, { byLead: true });
+  }
+  function onRole(d) {
+    const was = C.role;
+    setRole(d.role, d.can);
+    if (was && was !== d.role) toast(`votre rôle sur cette planche : ${ROLE_FR[d.role] || d.role}`, 5000);
+  }
+  function setRole(role, can) {
+    C.role = role || '';
+    C.can = can || null;
+    CO.role(role, can);
+    paintRole();
+    paintComposer();
   }
   function onBye(d) {
     closeStream();
@@ -231,10 +316,18 @@ export function install(app) {
   }
   function onPresence(listP) {
     for (const p of listP) if (p.cid !== C.cid) C.peers.set(p.cid, p);
+    for (const p of listP) if (p.cid !== C.cid) watchLead(p);
+    const f = C.follow && listP.find((p) => p.cid === C.follow);
+    if (f?.view) followView(f.view);
     paintWho(); paintNotice(); schedule(); reconcile();
   }
-  function onJoin(p) { if (p.cid !== C.cid) C.peers.set(p.cid, p); paintWho(); schedule(); reconcile(); }
-  function onLeave(d) { C.peers.delete(d.cid); closePeer(d.cid); paintWho(); paintNotice(); schedule(); reconcile(); }
+  function onJoin(p) { if (p.cid !== C.cid) { C.peers.set(p.cid, p); watchLead(p); } paintWho(); schedule(); reconcile(); }
+  function onLeave(d) {
+    C.peers.delete(d.cid); C.leads.delete(d.cid); closePeer(d.cid);
+    if (C.follow === d.cid) { stopFollow(); toast('la personne suivie a quitté la planche', 4000); }
+    if (C.broke === d.cid) { C.broke = null; paintFollow(); }
+    paintWho(); paintNotice(); schedule(); reconcile();
+  }
 
   function connect(bid) {
     if (bid === C.bid) { if (bid && !C.es && !C.retryT) open(true); return; }
@@ -243,7 +336,8 @@ export function install(app) {
       if (C.cid) beacon('leave', { cid: C.cid });
     }
     closeStream();
-    Object.assign(C, { bid, cid: null, me: null, anchor: null, reply: null, focus: null, total: 0, rev: null });
+    Object.assign(C, { bid, cid: null, me: null, anchor: null, reply: null, focus: null, total: 0, rev: null,
+      role: '', can: null, follow: null, broke: null, byLead: false, leadMe: false, leads: new Map() });
     C.peers.clear(); C.msgs.clear(); C.order = [];
     P.pend = {};
     if (bid) open(false); else setLink('', '');
@@ -281,7 +375,7 @@ export function install(app) {
   function sendFull() {
     C.selKey = [...S.sel].join(',');
     C.rev = S.rev ?? null;
-    send({ cursor: C.cursor, sel: [...S.sel].slice(0, 200), view: viewArr(), away: document.hidden, rev: C.rev, call: K.on ? callState() : null });
+    send({ cursor: C.cursor, sel: [...S.sel].slice(0, 200), view: viewArr(), away: document.hidden, rev: C.rev, call: K.on ? callState() : null, lead: C.leadMe });
   }
   function toWorld(x, y) {
     const r = cv.getBoundingClientRect(), v = S.view;
@@ -356,15 +450,20 @@ export function install(app) {
   }
   function paintWho() {
     const ps = people();
-    const key = `${C.me?.color}|${C.me?.name}|${K.on}|` + ps.map(({ best: p, tabs }) => `${p.cid}:${p.name}:${p.color}:${p.away}:${p.lost}:${p.call?.on}:${tabs}`).join(';');
+    const key = `${C.me?.color}|${C.me?.name}|${K.on}|${C.follow}|${C.leadMe}|` + ps.map(({ best: p, tabs }) => `${p.cid}:${p.name}:${p.color}:${p.away}:${p.lost}:${p.call?.on}:${p.lead}:${p.role}:${tabs}`).join(';');
     if (key !== C.whoKey) {
       C.whoKey = key;
       const av = (p, { me = false, tabs = 1 } = {}) => el('button', {
         class: `co-av${me ? ' me' : ''}${p.away ? ' away' : ''}${p.lost ? ' lost' : ''}`, type: 'button', role: 'listitem',
         style: { '--c': col(p.color) },
-        title: me ? `${p.name} · vous` : `${p.name}${p.lost ? ' · connexion coupée' : p.away ? ' · ailleurs (onglet caché)' : ''}${tabs > 1 ? ` · ${tabs} onglets` : ''}${p.call?.on ? ' · en appel' : ''}`,
-        onclick: (e) => personMenu(e, p, me),
-      }, initials(p.name), (me ? K.on : p.call?.on) ? el('i', { class: 'co-oncall' }) : null);
+        title: me ? `${p.name} · vous${C.role && C.role !== 'editor' ? ` · ${ROLE_FR[C.role]}` : ''}`
+          : `${p.name}${p.lost ? ' · connexion coupée' : p.away ? ' · ailleurs (onglet caché)' : ''}${tabs > 1 ? ` · ${tabs} onglets` : ''}${p.call?.on ? ' · en appel' : ''}${p.role === 'viewer' ? ' · spectateur' : ''}${p.lead ? ' · « suivez-moi »' : ''}${C.follow === p.cid ? ' · vous suivez sa vue' : ' · clic : suivre sa vue'}`,
+        // un clic sur quelqu'un : on suit sa vue (Figma : « If you click on another person's
+        // avatar, you will begin to follow their view ») ; le menu dit le reste
+        onclick: (e) => { if (!me && C.follow !== p.cid) startFollow(p.cid); personMenu(e, p, me); },
+      }, initials(p.name), (me ? K.on : p.call?.on) ? el('i', { class: 'co-oncall' }) : null,
+        !me && C.follow === p.cid ? el('i', { class: 'co-eye' }) : null,
+        (me ? C.leadMe : p.lead) ? el('i', { class: 'co-lead' }) : null);
       const shown = ps.slice(0, 5);
       const rest = ps.slice(5);
       fill(who, ...(C.me ? [av({ ...C.me, call: { on: K.on } }, { me: true })] : []),
@@ -377,12 +476,182 @@ export function install(app) {
   function personMenu(e, p, me) {
     const r = e.currentTarget.getBoundingClientRect();
     menu(r.left, r.bottom + 4, [
-      { head: me ? `${p.name} · vous` : p.name },
-      me ? null : { label: 'Aller à sa vue', sub: 'ce qu’il regarde', disabled: !p.view, why: 'sa vue n’est pas encore connue', onclick: () => goView(p) },
+      { head: me ? `${p.name} · vous${C.role ? ` · ${ROLE_FR[C.role]}` : ''}` : `${p.name}${p.role === 'viewer' ? ' · spectateur' : ''}` },
+      me ? { label: C.leadMe ? 'Arrêter « suivez-moi »' : 'Suivez-moi', sub: C.leadMe ? 'chacun reprend sa vue' : 'tous suivent votre vue',
+        checked: C.leadMe, onclick: () => lead(!C.leadMe) }
+        : { label: C.follow === p.cid ? 'Ne plus suivre' : 'Suivre sa vue', sub: 'un geste sur la planche rompt le suivi', checked: C.follow === p.cid,
+          disabled: !p.view, why: 'sa vue n’est pas encore connue', onclick: () => (C.follow === p.cid ? stopFollow() : startFollow(p.cid)) },
+      me ? null : { label: 'Aller à sa vue', sub: 'une fois', disabled: !p.view, why: 'sa vue n’est pas encore connue', onclick: () => { stopFollow(); goView(p); } },
       { label: 'Voir où regardent les autres', checked: C.views, onclick: () => { C.views = !C.views; LS('co-views', C.views); schedule(); } },
       !me && p.call?.on ? { label: 'En appel · ouvrir la visio', onclick: () => openDock('visio') } : null,
+      C.can?.invite ? '-' : null,
+      C.can?.invite ? { label: 'Inviter, rôles…', sub: 'un lien, éditeur ou spectateur', onclick: () => inviteModal() } : null,
     ]);
   }
+
+  // ── suivre la vue de quelqu'un ──────────────────────────────
+  // Figma : cliquer sur quelqu'un suit sa vue ; « Spotlight » demande à tous de suivre la
+  // sienne (« They'll have a few seconds to click Not now before automatically being shown
+  // your view ») ; « Stop following » en haut. Ici : on suit sa vue (le cadre qu'il voit,
+  // envoyé avec sa présence), un geste sur la planche rompt le suivi, « reprendre » le rétablit.
+  function startFollow(cid, { byLead = false } = {}) {
+    const p = C.peers.get(cid);
+    if (!p || cid === C.cid) return;
+    C.follow = cid; C.byLead = byLead; C.broke = null;
+    if (p.view) followView(p.view, true);
+    if (byLead) toast(`${p.name} vous fait suivre sa vue — un geste sur la planche, ou « arrêter », vous rend la vôtre`, 5000);
+    paintFollow(); C.whoKey = ''; paintWho();
+  }
+  function stopFollow({ broke = false } = {}) {
+    if (!C.follow) return;
+    const was = C.follow, p = C.peers.get(was);
+    C.follow = null;
+    // rompu par un geste : « reprendre » le rétablit (tant qu'il est là)
+    C.broke = broke && p ? was : null;
+    C.byLead = false;
+    paintFollow(); C.whoKey = ''; paintWho();
+  }
+  function followClick() {
+    if (C.follow) stopFollow();
+    else if (C.broke && C.peers.has(C.broke)) startFollow(C.broke);
+    else { C.broke = null; paintFollow(); }
+  }
+  function paintFollow() {
+    const p = C.peers.get(C.follow || C.broke);
+    followPill.hidden = !p;
+    if (!p) return;
+    followPill.classList.toggle('on', !!C.follow);
+    followPill.style.setProperty('--c', col(p.color));
+    followPill.lastChild.textContent = C.follow ? `suit ${p.name} · arrêter` : `${p.name}${p.lead ? ' présente' : ''} · reprendre`;
+    followPill.title = C.follow ? 'vous suivez sa vue : un geste sur la planche, ou ce bouton, vous rend la vôtre' : 'suivre de nouveau sa vue';
+  }
+  // sa vue [x, y, w, h] tient dans la mienne, centrée (le vol est court : 20 présences par seconde)
+  function followView(v, first = false) {
+    if (!v || document.body.classList.contains('at-presenting')) return;
+    const cw = cv.clientWidth, ch = cv.clientHeight;
+    const [x, y, w, h] = v;
+    const z = Math.max(0.08, Math.min(4, cw / Math.max(w, 1), ch / Math.max(h, 1)));
+    const to = { x: cw / 2 - (x + w / 2) * z, y: ch / 2 - (y + h / 2) * z, z };
+    C.flyT = Date.now();
+    if (app.canvas.flyTo) app.canvas.flyTo(to, { ms: first ? 380 : 140 });
+    else { Object.assign(S.view, to); app.canvas.applyView?.(); }
+  }
+  // un geste de celui qui suit (molette, glisser, clavier de la vue) rompt le suivi
+  const breakFollow = () => { if (C.follow) stopFollow({ broke: true }); };
+  cv.addEventListener('wheel', breakFollow, { capture: true, passive: true });
+  cv.addEventListener('pointerdown', (e) => { if (e.button === 0 || e.button === 1) breakFollow(); }, true);
+  document.addEventListener('keydown', (e) => {
+    if (!C.follow || typing(e.target) || document.querySelector('.scrim')) return;
+    if (['+', '=', '-', '_', ' '].includes(e.key) || (e.shiftKey && ['Digit0', 'Digit1'].includes(e.code))) breakFollow();
+  }, true);
+  // « suivez-moi » : ma présence le dit, les autres me suivent
+  function lead(on) {
+    C.leadMe = !!on;
+    send({ lead: C.leadMe });
+    if (on) { stopFollow(); toast('suivez-moi : les autres suivent votre vue', 4000); }
+    C.whoKey = ''; paintWho(); paintMini();
+  }
+  function watchLead(p) {
+    const was = C.leads.get(p.cid) || false;
+    C.leads.set(p.cid, !!p.lead);
+    if (p.lead && !was && !C.leadMe) startFollow(p.cid, { byLead: true });
+    if (!p.lead && was) {
+      if (C.follow === p.cid && C.byLead) stopFollow();
+      if (C.broke === p.cid) { C.broke = null; paintFollow(); }
+    }
+  }
+
+  // ── le rôle, les invitations ────────────────────────────────
+  function paintRole() {
+    const r = C.role;
+    roleChip.hidden = !r || r === 'editor' || r === 'owner';
+    roleChip.textContent = ROLE_FR[r] || '';
+    roleChip.title = r === 'viewer' ? `spectateur : vous voyez tout en direct, sans rien modifier${C.can?.comment ? ' ; vous pouvez écrire au fil' : ''}` : '';
+    bInvite.hidden = !C.can?.invite;
+    bPin.hidden = !!C.can && !C.can.comment;
+  }
+  async function inviteModal() {
+    if (!C.bid) return;
+    const bid = C.bid;
+    const body = el('div', { class: 'stack co-invite' });
+    let A = null;
+    const hoursFr = (h) => (h < 24 ? `${h} h` : h === 24 ? '1 jour' : `${h / 24} jours`);
+    const left = (t) => { const s = t - Date.now() / 1000; return s <= 0 ? 'expiré' : s < 3600 ? `${Math.ceil(s / 60)} min` : s < 86400 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} j`; };
+    const role = el('select', { class: 'fld' }, el('option', { value: 'viewer' }, 'spectateur — voit tout en direct, ne modifie rien'), el('option', { value: 'editor' }, 'éditeur — modifie la planche avec vous'));
+    const dur = el('select', { class: 'fld' });
+    const out = el('div', { class: 'co-link-out', hidden: true });
+    const make = el('button', { class: 'tb go', type: 'button', onclick: async () => {
+      make.disabled = true;
+      try {
+        const r = await api(`ideation/collab/${bid}/invites`, { method: 'POST', body: { role: role.value, hours: Number(dur.value) } });
+        const link = new URL(`?invite=${encodeURIComponent(r.token)}#${bid}`, location.href.split('?')[0].split('#')[0]).href;
+        const inp = el('input', { class: 'fld', value: link, readonly: true });
+        out.hidden = false;
+        fill(out, el('span', { class: 'lbl' }, `lien · ${ROLE_FR[r.role]} · ${hoursFr(Number(dur.value))} — il ne s’affiche qu’une fois`), inp,
+          el('button', { class: 'tb ghost sm', type: 'button', onclick: () => { inp.select(); navigator.clipboard?.writeText(link).then(() => toast('lien copié'), () => toast('sélectionné : ctrl+C')); } }, 'Copier'));
+        setTimeout(() => inp.select(), 30);
+        await load();
+      } catch (e) { toast(e.message, 6000); } finally { make.disabled = false; }
+    } }, 'Créer le lien');
+    const lists = el('div', { class: 'stack' });
+    const setA = async (patch) => { try { A = await api(`ideation/collab/${bid}/access`, { method: 'POST', body: patch }); paint(); } catch (e) { toast(e.message, 6000); } };
+    async function load() { try { A = await api(`ideation/collab/${bid}/access`); paint(); } catch (e) { fill(lists, el('p', { class: 'warn' }, e.message)); } }
+    function paint() {
+      if (!A) return;
+      if (!dur.children.length) fill(dur, ...A.hours.map((h) => el('option', { value: String(h), selected: h === 24 ? true : null }, `valable ${hoursFr(h)}`)));
+      const inv = (A.invites || []).map((i) => el('div', { class: 'co-irow' + (i.revoked || i.expired ? ' off' : '') },
+        el('span', { class: 'lbl' }, ROLE_FR[i.role]),
+        el('span', { class: 'nm' }, i.revoked ? 'retiré' : i.expired ? 'expiré' : `expire dans ${left(i.exp)}`,
+          el('small', {}, ` · par ${i.by_name}${i.uses.length ? ` · ouvert par ${i.uses.map((x) => x.name).join(', ')}` : ' · pas encore ouvert'}`)),
+        i.revoked || i.expired ? null : el('button', { class: 'tb ghost sm', type: 'button', title: 'le lien ne marche plus ; ce qu’il a donné est retiré',
+          onclick: async () => { try { A = await api(`ideation/collab/${bid}/invites/${i.id}/revoke`, { method: 'POST' }); paint(); } catch (e) { toast(e.message); } } }, 'Retirer')));
+      const mem = (A.members || []).map((m) => el('div', { class: 'co-irow' },
+        el('span', { class: 'nm' }, m.name, el('small', {}, m.via ? ' · par un lien' : '')),
+        el('select', { class: 'fld sm', onchange: (e) => setA({ member: { id: m.id, role: e.target.value } }) },
+          ...['editor', 'viewer'].map((x) => el('option', { value: x, selected: m.role === x ? true : null }, ROLE_FR[x]))),
+        el('button', { class: 'tb ghost sm', type: 'button', onclick: () => setA({ member: { id: m.id, role: null } }) }, 'Retirer')));
+      const comments = el('input', { type: 'checkbox', checked: A.comments ? true : null, onchange: (e) => setA({ comments: e.target.checked }) });
+      const open = el('select', { class: 'fld sm', onchange: (e) => setA({ open: e.target.value }) },
+        ...[['editor', 'éditeurs'], ['viewer', 'spectateurs'], ['none', 'sans accès']].map(([v, t]) => el('option', { value: v, selected: A.open === v ? true : null }, t)));
+      fill(lists,
+        el('div', { class: 'co-ihead lbl' }, `les liens · ${inv.length}`), inv.length ? inv : el('p', { class: 'co-empty' }, 'Aucun lien encore.'),
+        el('div', { class: 'co-ihead lbl' }, `les personnes invitées · ${mem.length}`), mem.length ? mem : el('p', { class: 'co-empty' }, 'Personne n’a encore de rôle à part sur cette planche.'),
+        el('div', { class: 'co-ihead lbl' }, 'réglages'),
+        el('label', { class: 'co-irow' }, comments, el('span', { class: 'nm' }, 'les spectateurs peuvent écrire au fil')),
+        el('label', { class: 'co-irow' }, el('span', { class: 'nm' }, 'les autres membres du portail y sont'), open));
+    }
+    fill(body,
+      el('p', { class: 'hint' }, `Propriétaire : ${C.me?.name || '—'}. Un lien donne un rôle sur cette planche seulement ; la personne entre par la porte du portail (son pseudo). Un spectateur voit tout en direct — objets, curseurs, fil, visio — et ne modifie rien.`),
+      el('div', { class: 'co-irow mk' }, role, dur, make), out, lists);
+    app.modal('Inviter sur cette planche', body, null, { cls: 'lg' });
+    load();
+  }
+  // un lien d'invitation ouvert (…/ideation/?invite=<jeton>#<planche>) : la porte d'abord (un pseudo),
+  // puis le rôle sur la planche ; une demande neuve est acceptée par le lien (le propriétaire l'a créé)
+  async function redeem(tok) {
+    for (let i = 0; i < 400; i++) {
+      let me = null;
+      try { me = await api('auth/me'); } catch { /* le portail ne répond pas : on réessaie */ }
+      if (me && (!me.auth || me.state === 'active' || me.state === 'pending')) {
+        try {
+          const r = await api(`auth/ideation-invite/${encodeURIComponent(tok)}`, { method: 'POST', body: {} });
+          toast(`invitation : ${r.role_fr} sur cette planche`, 5000);
+          history.replaceState(null, '', `${location.pathname}#${r.board}`);
+          setTimeout(() => location.reload(), 600);
+          return;
+        } catch (e) {
+          if ([404, 410, 403].includes(e.status)) {
+            toast(e.message, 12000);
+            history.replaceState(null, '', location.pathname + location.hash);
+            return;
+          }
+        }
+      }
+      await new Promise((res) => setTimeout(res, 1500));
+    }
+  }
+  const invTok = new URLSearchParams(location.search).get('invite');
+  if (invTok) redeem(invTok);
   function paintCallPill() {
     const n = [...C.peers.values()].filter((p) => p.call?.on).length + (K.on ? 1 : 0);
     callPill.hidden = !n;
@@ -395,7 +664,8 @@ export function install(app) {
   function paintNotice() {
     const mine = S.rev || 0;
     const ahead = [...C.peers.values()].filter((p) => !p.lost && p.rev && p.rev > mine).sort((a, b) => b.rev - a.rev);
-    notice.hidden = !ahead.length || !S.board || !!S.conflict;
+    // co-édition : les gestes des autres arrivent d'eux-mêmes ; l'avis ne reste que pour le repli
+    notice.hidden = CO.on() || !ahead.length || !S.board || !!S.conflict;
     if (notice.hidden) return;
     const p = ahead[0];
     notice.style.setProperty('--c', col(p.color));
@@ -646,9 +916,11 @@ export function install(app) {
     const n = a?.node ? app.node(a.node) : null;
     anchorBtn.textContent = !a ? 'toute la planche' : a.node ? `« ${n ? app.label(n) : a.label} »` : 'un point de la planche';
     anchorBtn.classList.toggle('on', !!a);
-    const why = !C.bid ? 'aucune planche ouverte' : '';
+    const why = !C.bid ? 'aucune planche ouverte'
+      : C.can && !C.can.comment ? 'spectateur : le propriétaire n’a pas ouvert le fil aux spectateurs (vous le lisez)' : '';
     sendBtn.disabled = !!why;
-    if (why) compWhy.textContent = why;
+    ta.disabled = !!(C.can && !C.can.comment);
+    compWhy.textContent = why;
     schedule();
   }
   function anchorMenu(e) {
@@ -680,6 +952,7 @@ export function install(app) {
   // commenter ici : le prochain clic sur la planche choisit l'objet ou le point
   function pinMode(on) {
     if (on && !S.board) { toast('ouvrez d’abord une planche'); return; }
+    if (on && C.can && !C.can.comment) { toast('spectateur : le propriétaire n’a pas ouvert le fil aux spectateurs', 5000); return; }
     C.pinning = on;
     cv.classList.toggle('co-pinning', on);
     bPin.classList.toggle('on', on);
@@ -757,6 +1030,11 @@ export function install(app) {
     fill(mini,
       n ? el('span', { class: 'lbl on' }, el('i'), `appel · ${n}`) : null,
       el('span', { class: 'lbl' }, 'fil', u ? el('b', { class: 'co-dot' }) : null));
+    leadMini.hidden = !C.compact || !C.peers.size || !!C.follow;
+    leadMini.classList.toggle('on', C.leadMe);
+    leadMini.classList.toggle('alone', mini.hidden);
+    fill(leadMini, el('span', { class: 'lbl' + (C.leadMe ? ' on' : '') }, C.leadMe ? el('i') : null, C.leadMe ? 'on vous suit · arrêter' : 'suivez-moi'));
+    leadMini.title = C.leadMe ? 'les autres suivent votre vue : arrêter' : 'demander à tous de suivre votre vue pendant la présentation';
   }
   function fold(on) {
     C.fold = on;
@@ -1043,11 +1321,12 @@ export function install(app) {
 
   function paintAll() {
     C.whoKey = '';
-    paintWho(); paintNotice(); paintDots(); paintFil(); paintComposer(); paintTiles(); paintCall(); schedule();
+    paintWho(); paintNotice(); paintDots(); paintFil(); paintComposer(); paintTiles(); paintCall(); paintRole(); paintFollow(); schedule();
   }
 
   // pour les essais (playwright) et le module de présentation
-  app.collab = { C, K, open: openDock, close: closeDock, present: setCompact, pin: pinMode };
+  app.collab = { C, K, CO, open: openDock, close: closeDock, present: setCompact, pin: pinMode, stream: { open, close: closeStream },
+    follow: startFollow, unfollow: stopFollow, lead, invite: inviteModal };
   const t0 = LS('co-tab');
   if (t0 === 'fil' || t0 === 'visio') openDock(t0);
   paintAll();
