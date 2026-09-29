@@ -17,24 +17,94 @@
 
 export const NEUTRAL = { exposure: 0, contrast: 0, saturation: 0, temperature: 6500 };
 export const SPEED_MIN = 0.1, SPEED_MAX = 10;
-export const MAX_TRACKS = 20;            // par sorte (vidéo, son) — le serveur borne pareil
+export const MAX_TRACKS = 20;            // par sorte (vidéo, calque d'effet, son) — le serveur borne pareil
 export const clipEnd = (c) => c.start + c.dur;
-export const trackKind = (tid) => (tid[0] === 'V' ? 'video' : 'audio');
-export const spd = (c) => (c.kind === 'image' ? 1 : (c.speed > 0 ? c.speed : 1));
+// V : vidéo, X : calque d'effet (une piste de l'image qui ne porte que des
+// calques), A : son. Vidéo et calques forment l'image (en haut), le son en bas.
+export const trackKind = (tid) => (tid[0] === 'V' ? 'video' : tid[0] === 'X' ? 'fx' : 'audio');
+export const family = (kind) => (kind === 'audio' ? 'audio' : 'image');
+// une image fixe et un calque d'effet n'ont ni source qui défile ni vitesse
+export const still = (c) => c.kind === 'image' || c.kind === 'adjust';
+export const spd = (c) => (still(c) ? 1 : (c.speed > 0 ? c.speed : 1));
 export const isOn = (c) => c.enabled !== false;
 
 // Une piste vidéo prend vidéos et images ; une piste son prend les sons,
-// et le son d'une vidéo (le plan ne lit alors que sa bande son).
+// et le son d'une vidéo (le plan ne lit alors que sa bande son) ; une piste
+// de calques, les calques d'effet.
 export function accepts(tid, kind) {
-  return trackKind(tid) === 'video' ? kind === 'video' || kind === 'image' : kind === 'audio' || kind === 'video';
+  const k = trackKind(tid);
+  if (k === 'fx') return kind === 'adjust';
+  return k === 'video' ? kind === 'video' || kind === 'image' : kind === 'audio' || kind === 'video';
 }
 
 export const projectEnd = (p) => p.clips.reduce((m, c) => Math.max(m, clipEnd(c)), 0);
 export const trackClips = (p, tid) => p.clips.filter((c) => c.track === tid).sort((a, b) => a.start - b.start);
 export const byId = (p, id) => p.clips.find((c) => c.id === id);
 export const trackOf = (p, tid) => p.tracks.find((t) => t.id === tid);
+export const groupOf = (p, gid) => (p.groups || []).find((g) => g.id === gid);
 export const lockedSet = (p) => new Set(p.tracks.filter((t) => t.lock).map((t) => t.id));
-export const trackOrder = (p) => ({ video: p.tracks.filter((t) => t.kind === 'video').map((t) => t.id), audio: p.tracks.filter((t) => t.kind === 'audio').map((t) => t.id) });
+export const trackOrder = (p) => ({ video: p.tracks.filter((t) => t.kind === 'video').map((t) => t.id), audio: p.tracks.filter((t) => t.kind === 'audio').map((t) => t.id),
+  fx: p.tracks.filter((t) => t.kind === 'fx').map((t) => t.id) });
+export const mediaIds = (p) => p.clips.filter((c) => c.kind !== 'adjust' && c.item).map((c) => c.item);
+
+// ── les effets ───────────────────────────────────────────────
+// Un effet est { id, type, on, …réglages } ; une liste d'effets s'applique
+// dans l'ordre. Les types sont ceux que l'export sait rendre et que l'aperçu
+// calcule pareil : `grade` (exposure, eq, colortemperature — aperçu :
+// les formules de Filter Effects) et `lut` (lut3d trilinéaire / lut1d
+// linéaire — aperçu : le même calcul en WebGL2). Un plan porte les siens ;
+// une piste et un groupe de pistes aussi : ils s'ajoutent à ceux de chacun
+// de leurs plans (plan, puis piste, puis groupe). Un calque d'effet (plan
+// `adjust` d'une piste X) applique les siens à tout ce qui est dessous.
+export const FX_TYPES = ['grade', 'lut'];
+export function newFx(type, params = {}) {
+  const base = type === 'lut' ? { lut: null, mix: 1 } : { ...NEUTRAL };
+  return { id: newId('f'), type, on: true, ...base, ...params };
+}
+export const cloneFx = (list) => (list || []).map((f) => ({ ...JSON.parse(JSON.stringify(f)), id: newId('f') }));
+export const fxOn = (list) => (list || []).filter((f) => f.on !== false && FX_TYPES.includes(f.type));
+export const gradeNeutral = (g) => !g.exposure && !g.contrast && !g.saturation && Math.abs((g.temperature || 6500) - 6500) < 0.5;
+// ce que l'image d'un plan traverse : ses effets, ceux de sa piste, de son groupe
+export function chainOf(p, c) {
+  if (!c) return [];
+  const t = trackOf(p, c.track);
+  if (c.kind === 'adjust') return fxOn(c.fx);
+  if (!t || t.kind !== 'video') return [];
+  const g = t.grp ? groupOf(p, t.grp) : null;
+  return [...fxOn(c.fx), ...fxOn(t.fx), ...(g ? fxOn(g.fx) : [])].filter((f) => f.type !== 'grade' || !gradeNeutral(f));
+}
+// un plan d'avant ce jour (grade, lut) : ses effets (le serveur fait pareil, `normalize`)
+export function normClip(c) {
+  if (Array.isArray(c.fx)) { delete c.grade; delete c.lut; return c; }
+  const fx = [];
+  if (c.grade && !gradeNeutral(c.grade)) fx.push(newFx('grade', { exposure: c.grade.exposure || 0, contrast: c.grade.contrast || 0, saturation: c.grade.saturation || 0, temperature: c.grade.temperature || 6500 }));
+  if (c.lut && c.lut.id) fx.push(newFx('lut', { lut: c.lut.id, mix: c.lut.mix ?? 1 }));
+  c.fx = fx;
+  delete c.grade; delete c.lut;
+  return c;
+}
+
+// La courbe d'un fondu de son, comme `afade` (ffmpeg 6.1.1,
+// libavfilter/af_afade.c, fade_gain) : x de 0 à 1 le long du fondu. L'image
+// fond toujours en ligne droite : le filtre `fade` de ffmpeg 6.1 n'a pas de
+// courbe (ffmpeg -h filter=fade).
+export const CURVES = [['tri', 'linéaire'], ['qsin', 'quart de sinus'], ['hsin', 'demi-sinus'], ['esin', 'sinus exponentiel'], ['log', 'logarithmique'],
+  ['exp', 'exponentielle'], ['par', 'parabole'], ['ipar', 'parabole inversée'], ['qua', 'carré'], ['squ', 'racine carrée']];
+export function curveGain(curve, x) {
+  const g = Math.max(0, Math.min(1, x));
+  switch (curve) {
+    case 'qsin': return Math.sin(g * Math.PI / 2);
+    case 'hsin': return (1 - Math.cos(g * Math.PI)) / 2;
+    case 'esin': return 1 - Math.cos(Math.PI / 4 * (Math.pow(2 * g - 1, 3) + 1));
+    case 'log': return Math.max(0, Math.min(1, 1 + 0.2 * Math.log10(g)));
+    case 'exp': return Math.exp(-11.512925464970227 * (1 - g));
+    case 'par': return 1 - Math.sqrt(1 - g);
+    case 'ipar': return 1 - (1 - g) * (1 - g);
+    case 'qua': return g * g;
+    case 'squ': return Math.sqrt(g);
+    default: return g;
+  }
+}
 
 let seq = 0;
 export const newClipId = () => 'k' + Date.now().toString(36).slice(-5) + (seq++).toString(36) + Math.random().toString(36).slice(2, 5);
@@ -55,8 +125,9 @@ export function windows(p) {
   const out = new Map();
   const tracks = new Map();
   for (const c of p.clips) {
-    out.set(c.id, { clip: c, ws: c.start, we: clipEnd(c), fin: c.fade_in || 0, fout: c.fade_out || 0, xin: 0, xout: 0 });
-    if (!isOn(c)) continue;
+    const fc = c.fcurve || {};
+    out.set(c.id, { clip: c, ws: c.start, we: clipEnd(c), fin: c.fade_in || 0, fout: c.fade_out || 0, xin: 0, xout: 0, cin: fc.in || 'tri', cout: fc.out || 'tri' });
+    if (!isOn(c) || c.kind === 'adjust') continue;
     if (!tracks.has(c.track)) tracks.set(c.track, []);
     tracks.get(c.track).push(c);
   }
@@ -85,14 +156,16 @@ export function opacityAt(w, frame) {
   return Math.max(0, Math.min(1, a));
 }
 
-// Le gain d'un son (hors volume du plan), comme `afade` (rampe linéaire).
+// Le gain d'un son (hors volume du plan), comme `afade` : le fondu enchaîné
+// en ligne droite, les fondus d'entrée et de sortie selon leur courbe
+// (curveGain ; afade multiplie ses rampes l'une après l'autre).
 export function gainAt(w, t, fps) {
   const x = t * fps - w.ws, nf = w.we - w.ws;
   let g = 1;
-  if (w.xin) g = Math.min(g, x / w.xin);
-  if (w.fin) g = Math.min(g, x / w.fin);
-  if (w.xout) g = Math.min(g, (nf - x) / w.xout);
-  if (w.fout) g = Math.min(g, (nf - x) / w.fout);
+  if (w.xin) g *= Math.max(0, Math.min(1, x / w.xin));
+  if (w.fin) g *= curveGain(w.cin, x / w.fin);
+  if (w.xout) g *= Math.max(0, Math.min(1, (nf - x) / w.xout));
+  if (w.fout) g *= curveGain(w.cout, (nf - x) / w.fout);
   return Math.max(0, Math.min(1, g));
 }
 
@@ -107,7 +180,7 @@ export function audibleTracks(p) {
 // ── les gestes ───────────────────────────────────────────────
 function headCut(c, cutFrames, fps) {
   return { ...c, start: c.start + cutFrames, dur: c.dur - cutFrames,
-    in: c.kind === 'image' ? 0 : (c.in || 0) + cutFrames / fps * spd(c), xfade: 0, fade_in: Math.min(c.fade_in || 0, c.dur - cutFrames) };
+    in: still(c) ? 0 : (c.in || 0) + cutFrames / fps * spd(c), xfade: 0, fade_in: Math.min(c.fade_in || 0, c.dur - cutFrames) };
 }
 
 // Vide [s, e) sur une piste : les plans couverts partent, ceux qui
@@ -216,9 +289,9 @@ export function pasteClips(p, clips, at, mode = 'overwrite', target = {}) {
   if (mode === 'insert') for (const t of p.tracks) if (!locked.has(t.id)) insertGap(p, t.id, at, span);
   const out = [];
   for (const c0 of clips) {
-    const c = clone(c0);
+    const c = normClip(clone(c0));
     c.id = newClipId();
-    if (!trackOf(p, c.track) || !accepts(c.track, c.kind)) c.track = target[c.kind === 'audio' ? 'audio' : 'video'];
+    if (!trackOf(p, c.track) || !accepts(c.track, c.kind)) c.track = c.kind === 'adjust' ? (p.tracks.find((t) => t.kind === 'fx') || {}).id : target[c.kind === 'audio' ? 'audio' : 'video'];
     if (!c.track || locked.has(c.track)) continue;
     c.start = at + (c0.start - min);
     placeClip(p, c, 'overwrite');
@@ -243,9 +316,9 @@ export function extractRange(p, s, e) {
 
 // Les bornes d'un rognage, en images, fixées au début du geste : on ne
 // passe ni sur le voisin, ni au-delà de la source.
-function headRoom(c, fps) { return c.kind === 'image' ? Infinity : Math.floor((c.in || 0) * fps / spd(c) + 1e-6); }
+function headRoom(c, fps) { return still(c) ? Infinity : Math.floor((c.in || 0) * fps / spd(c) + 1e-6); }
 function tailRoom(c, fps) {
-  if (c.kind === 'image' || !(c.src_dur > 0)) return Infinity;
+  if (still(c) || !(c.src_dur > 0)) return Infinity;
   return Math.max(0, Math.floor((c.src_dur - (c.in || 0)) * fps / spd(c) + 1e-6) - c.dur);
 }
 function neighbours(p, c) {
@@ -267,10 +340,15 @@ export function trimLimits(p, c, side) {
 export function trimClip(c, side, d, fps) {
   if (side === 'l') {
     c.start += d; c.dur -= d;
-    if (c.kind !== 'image') c.in = Math.max(0, (c.in || 0) + d / fps * spd(c));
+    if (!still(c)) c.in = Math.max(0, (c.in || 0) + d / fps * spd(c));
   } else c.dur += d;
-  c.fade_in = Math.min(c.fade_in || 0, c.dur);
-  c.fade_out = Math.min(c.fade_out || 0, c.dur);
+  fitFades(c);
+}
+
+// les fondus tiennent dans le plan : entrée + sortie ≤ durée (la sortie cède d'abord)
+export function fitFades(c) {
+  c.fade_in = Math.max(0, Math.min(c.fade_in || 0, c.dur));
+  c.fade_out = Math.max(0, Math.min(c.fade_out || 0, c.dur - c.fade_in));
 }
 
 // Propagation (Premiere, B) : rogner un bord et pousser ou tirer la suite
@@ -287,10 +365,9 @@ export function rippleTrim(p, id, side, d) {
   const end0 = clipEnd(c);
   if (side === 'l') {
     c.dur -= d;
-    if (c.kind !== 'image') c.in = Math.max(0, (c.in || 0) + d / fps * spd(c));
+    if (!still(c)) c.in = Math.max(0, (c.in || 0) + d / fps * spd(c));
   } else c.dur += d;
-  c.fade_in = Math.min(c.fade_in || 0, c.dur);
-  c.fade_out = Math.min(c.fade_out || 0, c.dur);
+  fitFades(c);
   const shift = clipEnd(c) - end0;
   for (const x of p.clips) if (x.id !== c.id && x.track === c.track && x.start >= end0) x.start += shift;
 }
@@ -306,8 +383,8 @@ export function roll(p, aId, bId, d) {
   if (!a || !b || !d) return;
   a.dur += d;
   b.start += d; b.dur -= d;
-  if (b.kind !== 'image') b.in = Math.max(0, (b.in || 0) + d / fps * spd(b));
-  for (const x of [a, b]) { x.fade_in = Math.min(x.fade_in || 0, x.dur); x.fade_out = Math.min(x.fade_out || 0, x.dur); }
+  if (!still(b)) b.in = Math.max(0, (b.in || 0) + d / fps * spd(b));
+  for (const x of [a, b]) fitFades(x);
 }
 // le voisin collé de ce côté, s'il y en a un (sinon Rolling rogne comme Sélection)
 export function rollPair(p, c, side) {
@@ -321,12 +398,12 @@ export function rollPair(p, c, side) {
 // d'entrée et de sortie source avancent »).
 export function slipLimits(p, c) {
   const fps = p.settings.fps;
-  if (c.kind === 'image') return [0, 0];
+  if (still(c)) return [0, 0];
   return [-tailRoom(c, fps), headRoom(c, fps)];
 }
 export function slip(p, id, d) {
   const c = byId(p, id);
-  if (!c || c.kind === 'image' || !d) return;
+  if (!c || still(c) || !d) return;
   c.in = Math.max(0, (c.in || 0) - d / p.settings.fps * spd(c));
 }
 
@@ -346,12 +423,12 @@ export function slide(p, id, d) {
   const c = byId(p, id), fps = p.settings.fps;
   if (!c || !d) return;
   const n = neighbours(p, c);
-  if (n.prevTouch) { const a = byId(p, n.prevTouch.id); a.dur += d; a.fade_out = Math.min(a.fade_out || 0, a.dur); }
+  if (n.prevTouch) { const a = byId(p, n.prevTouch.id); a.dur += d; fitFades(a); }
   if (n.nextTouch) {
     const b = byId(p, n.nextTouch.id);
     b.start += d; b.dur -= d;
-    if (b.kind !== 'image') b.in = Math.max(0, (b.in || 0) + d / fps * spd(b));
-    b.fade_in = Math.min(b.fade_in || 0, b.dur);
+    if (!still(b)) b.in = Math.max(0, (b.in || 0) + d / fps * spd(b));
+    fitFades(b);
   }
   c.start += d;
 }
@@ -362,7 +439,7 @@ export function slide(p, id, d) {
 export function stretchLimits(p, c, side) {
   const { prevEnd, next } = neighbours(p, c);
   const srcFrames = c.dur * spd(c);                    // la matière, en images de timeline à vitesse 1
-  const img = c.kind === 'image';
+  const img = still(c);
   const dMin = img ? 1 : Math.ceil(srcFrames / SPEED_MAX - 1e-9), dMax = img ? Infinity : Math.floor(srcFrames / SPEED_MIN + 1e-9);
   const lo = Math.max(1, dMin), hiRoom = side === 'l' ? c.start - prevEnd : (next ? next.start - clipEnd(c) : Infinity);
   const hi = Math.min(dMax, c.dur + hiRoom);
@@ -373,11 +450,10 @@ export function stretch(p, id, side, d) {
   if (!c || !d) return;
   const nd = c.dur + (side === 'l' ? -d : d);
   if (nd < 1) return;
-  if (c.kind !== 'image') c.speed = Math.max(SPEED_MIN, Math.min(SPEED_MAX, spd(c) * c.dur / nd));
+  if (!still(c)) c.speed = Math.max(SPEED_MIN, Math.min(SPEED_MAX, spd(c) * c.dur / nd));
   if (side === 'l') c.start += d;
   c.dur = nd;
-  c.fade_in = Math.min(c.fade_in || 0, c.dur);
-  c.fade_out = Math.min(c.fade_out || 0, c.dur);
+  fitFades(c);
 }
 
 // Vitesse/Durée (Premiere, Ctrl+R) : la matière reste, la durée suit la
@@ -385,7 +461,7 @@ export function stretch(p, id, side, d) {
 // durée s'arrête au plan suivant (rend la durée obtenue).
 export function setSpeed(p, id, speed, ripple = false) {
   const c = byId(p, id);
-  if (!c || c.kind === 'image') return 0;
+  if (!c || still(c)) return 0;
   speed = Math.max(SPEED_MIN, Math.min(SPEED_MAX, speed));
   const end0 = clipEnd(c);
   let nd = Math.max(1, Math.round(c.dur * spd(c) / speed));
@@ -393,8 +469,7 @@ export function setSpeed(p, id, speed, ripple = false) {
   if (!ripple && next) nd = Math.min(nd, next.start - c.start);
   c.speed = speed;
   c.dur = nd;
-  c.fade_in = Math.min(c.fade_in || 0, c.dur);
-  c.fade_out = Math.min(c.fade_out || 0, c.dur);
+  fitFades(c);
   if (ripple) for (const x of p.clips) if (x.id !== c.id && x.track === c.track && x.start >= end0) x.start += clipEnd(c) - end0;
   return nd;
 }
@@ -407,38 +482,148 @@ export function selectForward(p, f, tid = null) {
 }
 
 // ── les pistes ───────────────────────────────────────────────
+// Les pistes de l'image (vidéo et calques, dans l'ordre de l'écran, la plus
+// haute en premier) puis le son. V et X se comptent du bas, A du haut.
 export function renumber(p) {
-  const vids = p.tracks.filter((t) => t.kind === 'video'), auds = p.tracks.filter((t) => t.kind === 'audio');
+  const img = p.tracks.filter((t) => t.kind !== 'audio'), auds = p.tracks.filter((t) => t.kind === 'audio');
   const map = {};
-  vids.forEach((t, i) => { map[t.id] = 'V' + (vids.length - i); });
+  for (const [kind, pre] of [['video', 'V'], ['fx', 'X']]) {
+    const list = img.filter((t) => t.kind === kind);
+    list.forEach((t, i) => { map[t.id] = pre + (list.length - i); });
+  }
   auds.forEach((t, i) => { map[t.id] = 'A' + (i + 1); });
-  p.tracks = [...vids, ...auds].map((t) => ({ ...t, id: map[t.id] }));
+  // deux passes : un nom neuf peut être l'ancien nom d'une autre piste
+  p.tracks = [...img, ...auds].map((t) => ({ ...t, id: map[t.id] }));
   for (const c of p.clips) c.track = map[c.track];
+  rangerGroupes(p);
   return map;
 }
+
+const blankTrack = (id, kind, name = '') => ({ id, kind, mute: false, solo: false, lock: false, hide: false, name, fx: [] });
 
 // Ajouter une piste de cette sorte au-dessus ou au-dessous de `ref` (à
 // l'écran) ; rend { map, id } : la table des anciens noms et le nom de la
 // nouvelle.
-export function addTrack(p, kind, ref, where = 'above') {
+export function addTrack(p, kind, ref, where = 'above', name = '') {
   const n = p.tracks.filter((t) => t.kind === kind).length;
   if (n >= MAX_TRACKS) return null;
-  const t = { id: '_new', kind, mute: false, solo: false, lock: false, hide: false, name: '' };
-  let i = p.tracks.findIndex((x) => x.id === ref && x.kind === kind);
-  if (i < 0) i = kind === 'video' ? (where === 'above' ? 0 : n - 1) : (where === 'above' ? p.tracks.findIndex((x) => x.kind === 'audio') : p.tracks.length - 1);
+  const t = blankTrack('_new', kind, name);
+  const fam = family(kind);
+  let i = p.tracks.findIndex((x) => x.id === ref && family(x.kind) === fam);
+  if (i < 0) {
+    const first = p.tracks.findIndex((x) => family(x.kind) === fam);
+    const last = p.tracks.length - 1 - [...p.tracks].reverse().findIndex((x) => family(x.kind) === fam);
+    i = fam === 'image' ? (where === 'above' ? 0 : Math.max(0, last)) : (where === 'above' ? first : p.tracks.length - 1);
+  }
+  const g = p.tracks[i] && p.tracks[i].grp;
   p.tracks.splice(where === 'above' ? i : i + 1, 0, t);
+  // entre deux membres d'un groupe, la piste neuve y entre
+  const av = p.tracks[p.tracks.indexOf(t) - 1], ap = p.tracks[p.tracks.indexOf(t) + 1];
+  if (g && av && ap && av.grp === g && ap.grp === g) t.grp = g;
   const map = renumber(p);
   return { map, id: map._new };
 }
 
+// Un calque d'effet : une piste de calques tout en haut de l'image, nommée
+// « FX <effet> », qui porte un calque de `start` à `start + dur` avec cet effet.
+export function addFxLayer(p, fx, start, dur, name) {
+  const r = addTrack(p, 'fx', null, 'above', name);
+  if (!r) return null;
+  const c = { id: newClipId(), track: r.id, item: '', kind: 'adjust', title: name, start: Math.max(0, start), dur: Math.max(1, dur),
+    in: 0, src_dur: 0, speed: 1, enabled: true, vol: 1, fade_in: 0, fade_out: 0, xfade: 0, audio: false, fx: [fx] };
+  p.clips.push(c);
+  return { ...r, clip: c.id };
+}
+
 export function deleteTrack(p, tid) {
   const t = trackOf(p, tid);
-  if (!t || p.tracks.filter((x) => x.kind === t.kind).length <= 1) return null;
+  if (!t || (t.kind !== 'fx' && p.tracks.filter((x) => x.kind === t.kind).length <= 1)) return null;
   p.clips = p.clips.filter((c) => c.track !== tid);
   p.tracks = p.tracks.filter((x) => x.id !== tid);
   const map = renumber(p);
   map[tid] = null;
   return map;
+}
+
+// ── les groupes de pistes ────────────────────────────────────
+// Comme dans ODIO (musique/projet.js) : un groupe est une étiquette sur des
+// pistes qui se suivent, d'une même famille (l'image, ou le son). Il porte
+// son nom et ses effets (qui s'appliquent à chacun des plans de ses pistes).
+// Ses membres restent contigus ; un groupe d'une seule piste se défait.
+export function rangerGroupes(p) {
+  p.groups = (p.groups || []).filter((g) => g && g.id);
+  const ids = new Set(p.groups.map((g) => g.id));
+  for (const t of p.tracks) if (t.grp && !ids.has(t.grp)) delete t.grp;
+  // une famille par groupe : celle de son premier membre
+  const fam = new Map();
+  for (const t of p.tracks) if (t.grp) { if (!fam.has(t.grp)) fam.set(t.grp, family(t.kind)); else if (fam.get(t.grp) !== family(t.kind)) delete t.grp; }
+  const out = [], place = new Set();
+  for (const t of p.tracks) {
+    if (place.has(t.id)) continue;
+    if (!t.grp) { out.push(t); place.add(t.id); continue; }
+    for (const m of p.tracks) if (m.grp === t.grp && !place.has(m.id)) { out.push(m); place.add(m.id); }
+  }
+  p.tracks.splice(0, p.tracks.length, ...out);
+  const count = new Map();
+  for (const t of p.tracks) if (t.grp) count.set(t.grp, (count.get(t.grp) || 0) + 1);
+  for (const t of p.tracks) if (t.grp && count.get(t.grp) < 2) delete t.grp;
+  p.groups = p.groups.filter((g) => (count.get(g.id) || 0) >= 2);
+}
+
+// Déplacer des pistes avant ou après une autre, dans leur famille. Le groupe
+// suit la place : entre deux membres d'un groupe, on y entre ; au bord de son
+// propre groupe, on y reste ; ailleurs, on en sort. Un groupe entier qu'on
+// déplace (par son en-tête) reste un groupe. Rend la table des noms, ou null.
+export function moveTracks(p, ids, cible, cote) {
+  if (ids.includes(cible)) return null;
+  const tc = trackOf(p, cible);
+  const bouge = p.tracks.filter((t) => ids.includes(t.id));
+  if (!tc || !bouge.length || bouge.some((t) => family(t.kind) !== family(tc.kind))) return null;
+  const reste = p.tracks.filter((t) => !ids.includes(t.id));
+  const i = reste.indexOf(reste.find((t) => t.id === cible)) + (cote === 'apres' ? 1 : 0);
+  const av = reste[i - 1], ap = reste[i];
+  const siens = new Set(bouge.map((t) => t.grp || ''));
+  const g0 = siens.size === 1 ? [...siens][0] : '';
+  let g = null;
+  if (g0 && p.tracks.filter((t) => t.grp === g0).every((t) => ids.includes(t.id))) g = g0;
+  else if (av && ap && av.grp && av.grp === ap.grp) g = av.grp;
+  else if (g0 && ((av && av.grp === g0) || (ap && ap.grp === g0))) g = g0;
+  const sig = (list) => list.map((t) => t.id + ':' + (t.grp || '')).join(',');
+  const before = sig(p.tracks);
+  for (const t of bouge) { if (g) t.grp = g; else delete t.grp; }
+  reste.splice(i, 0, ...bouge);
+  if (sig(reste) === before) return null;
+  p.tracks = reste;
+  return renumber(p);
+}
+
+// Lâcher des pistes sur une autre : la cible garde son groupe s'il existe,
+// sinon un groupe neuf naît autour d'elles. Rend { g, map } ou null.
+export function groupTracks(p, ids, cible) {
+  const tc = trackOf(p, cible);
+  if (!tc || ids.includes(cible)) return null;
+  const bouge = p.tracks.filter((t) => ids.includes(t.id) && family(t.kind) === family(tc.kind));
+  if (!bouge.length) return null;
+  p.groups = p.groups || [];
+  let g = tc.grp && groupOf(p, tc.grp);
+  if (!g) {
+    let n = p.groups.length + 1;
+    while (p.groups.some((x) => x.name === `Groupe ${n}`)) n++;
+    g = { id: newId('g'), name: `Groupe ${n}`, fx: [] };
+    p.groups.push(g);
+    tc.grp = g.id;
+  }
+  const reste = p.tracks.filter((t) => !bouge.includes(t));
+  const membres = reste.filter((t) => t.grp === g.id);
+  const i = reste.indexOf(membres[membres.length - 1]) + 1;
+  for (const t of bouge) t.grp = g.id;
+  reste.splice(i, 0, ...bouge);
+  p.tracks = reste;
+  return { g, map: renumber(p) };
+}
+export function ungroup(p, gid) {
+  for (const t of p.tracks) if (t.grp === gid) delete t.grp;
+  p.groups = (p.groups || []).filter((g) => g.id !== gid);
 }
 
 // ── les marques ──────────────────────────────────────────────

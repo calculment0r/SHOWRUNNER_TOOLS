@@ -20,11 +20,14 @@ import { mountHeader, api, jobs, el, $, $$, toast, href, uploadFile, dropAnywher
 import { menu, contextMenu, pageMenu } from '../commun/menu.js';
 import { split } from '../commun/split.js';
 import * as M from './model.js';
-import { Program, Source, tempGains } from './player.js';
+import { Program, Source, tempGains, gradeCss } from './player.js';
 import { Timeline } from './timeline.js';
-import { getLut, getMini, lutGL } from './lut.js';
+import { getLut, lutGL } from './lut.js';
 import { mountProject, MULTI_MIME } from './projet.js';
+import { mountEffects, bindEffectDrops, fxOfDesc, lutFamilies } from './effets.js';
+import { bindTrackDrag } from './pistes.js';
 import { createUndo } from '../commun/undo.js';
+import { REGLE as MOLETTE, AIDE as MOLETTE_AIDE } from '../commun/molette.js';
 
 mountHeader('montage');
 
@@ -41,18 +44,22 @@ const S = {
   dirty: false, saving: null, conflict: false,
   dragging: null, shuttle: 0,
   exportJob: null, exports: [],
+  fxDrag: null,                  // l'effet glissé depuis le panneau Effets
+  selTrack: null,                // la piste choisie (id), ou un groupe ('g:<id>')
+  fxSel: new Set(),              // les effets choisis dans l'inspecteur
+  fxClip: LS('montage-fx-clipboard'), lastCopy: null, fxFocus: false,
 };
 
 // ── le projet en mémoire ────────────────────────────────────
-const core = (p) => JSON.stringify({ name: p.name, settings: p.settings, tracks: p.tracks, clips: p.clips, markers: p.markers, range: p.range });
+const core = (p) => JSON.stringify({ name: p.name, settings: p.settings, tracks: p.tracks, groups: p.groups || [], clips: p.clips, markers: p.markers, range: p.range });
 const fps = () => S.p.settings.fps;
 const lockedTracks = (p = S.p) => M.lockedSet(p);
 const itemOf = (id) => { const it = S.items.get(id); return it && !it.missing ? it : undefined; };
 const body = (p, extra = {}) => ({ name: p.name, settings: { format: p.settings.format, fps: p.settings.fps, still: p.settings.still, width: p.settings.width, height: p.settings.height },
-  tracks: p.tracks, clips: p.clips, markers: p.markers, range: p.range, ...extra });
+  tracks: p.tracks, groups: p.groups || [], clips: p.clips, markers: p.markers, range: p.range, ...extra });
 
 async function ensureItems(ids) {
-  const miss = [...new Set(ids)].filter((id) => !S.items.has(id));
+  const miss = [...new Set(ids)].filter((id) => id && !S.items.has(id));
   await Promise.all(miss.map(async (id) => {
     try { S.items.set(id, await api('library/' + id)); } catch { S.items.set(id, { id, missing: true, title: '(introuvable)' }); }
   }));
@@ -218,19 +225,21 @@ async function openProject(id) {
   if (S.p && S.p.id !== id) {
     await flushSave();
     clearTimeout(viewT);
-    LS('montage-view-' + S.p.id, { pps: timeline.pps, scroll: timeline.scroll.scrollLeft, t: program.t });
+    LS('montage-view-' + S.p.id, viewOf());
     targets.set(S.p.id, { ...S.target });
   }
   const p = await api(`montage/projects/${id}`);
   id = p.id;                                   // un « mon-… » d'avant mène à sa séquence
-  await ensureItems([id, ...p.clips.map((c) => c.item)]);
+  await ensureItems([id, ...M.mediaIds(p)]);
   program.pause();
   program.clear();
+  for (const c of p.clips) M.normClip(c);
+  p.groups = p.groups || [];
   S.p = p;
   S.rev = p.rev;
   useUndo(undoFor(id));                        // la pile de cette séquence (gardée tant que la page vit)
   if (targets.has(id)) S.target = { ...targets.get(id) };
-  S.sel = new Set(); S.gap = null; S.conflict = false; S.dirty = false;
+  S.sel = new Set(); S.gap = null; S.conflict = false; S.dirty = false; S.selTrack = null; S.fxSel = new Set();
   if (!S.tabs.includes(id)) { S.tabs.push(id); LS('montage-tabs', S.tabs); }
   validTargets();
   $('#conflict').hidden = true;
@@ -239,6 +248,7 @@ async function openProject(id) {
   LS('montage-last', id);
   if (location.hash.slice(1) !== id) history.replaceState(null, '', location.pathname + '#' + id);
   const v = LS('montage-view-' + id);
+  timeline.h = (v && v.h && typeof v.h === 'object') ? { ...v.h } : {};   // la hauteur des pistes de cette séquence (molette commune)
   timeline.render();
   if (v && v.pps) { timeline.pps = v.pps; timeline.render(); timeline.scroll.scrollLeft = v.scroll || 0; timeline.paintRuler(); } else timeline.fit();
   program.invalidate();
@@ -311,7 +321,7 @@ async function projectsModal() {
   const count = el('span', { class: 'lbl' });
   const paint = () => {
     count.textContent = `${list.length} séquence${list.length > 1 ? 's' : ''} dans Asset`;
-    box.replaceChildren(...(list.length ? list.map(row) : [el('p', {}, 'Aucune séquence encore. Créez-en une (ou clic droit sur un clip du projet → « Nouvelle séquence à partir de l’élément ») : elle s’enregistre seule, à chaque geste.')]));
+    box.replaceChildren(...(list.length ? list.map(row) : [el('p', { class: 'lbl' }, 'aucune séquence')]));
   };
   const row = (pr) => {
     const name = el('b', {}, pr.name);
@@ -356,7 +366,6 @@ function paintEmptyState() {
   document.title = 'Montage';
   $('#insp').replaceChildren(el('div', { class: 'card proj' },
     el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Aucune séquence ouverte')),
-    el('p', { class: 'note' }, 'Double-cliquez une séquence du projet, créez-en une, ou clic droit sur un clip → « Nouvelle séquence à partir de l’élément » (ses réglages, comme dans Premiere).'),
     el('div', { class: 'row' }, el('button', { class: 'tb ghost', onclick: projectsModal }, 'Les séquences'),
       el('button', { class: 'tb ghost', onclick: () => newProjectFlow(project.state.tab) }, 'Nouvelle'))));
 }
@@ -367,11 +376,11 @@ const project = mountProject({
   items: S.items,
   modal, confirmBox,
   hasSequence: () => !!S.p,
-  usedIds: () => new Set(S.p ? S.p.clips.map((c) => c.item) : []),
+  usedIds: () => new Set(S.p ? M.mediaIds(S.p) : []),
   usedAnywhere: (id) => !!(S.p && S.p.clips.some((c) => c.item === id)),
   sourceId: () => source.item && source.item.id,
   openSequenceId: () => S.p && S.p.id,
-  openSource: (it) => openSource(it),
+  openSource: (it, opts) => openSource(it, null, opts),
   openSequence: (id) => openProject(id),
   closeSequence: (id) => closeSeqTab(id, { quiet: true }),
   newSequence: (folder) => newProjectFlow(folder),
@@ -426,7 +435,7 @@ async function uploadMany(files) {
 async function appendMany(ids) {
   for (const id of ids) {
     const it = S.items.get(id);
-    if (it && it.kind === 'sequence') { toast('une séquence ne se pose pas (encore) dans une autre : l’imbrication n’est pas faite'); continue; }
+    if (it && it.kind === 'sequence') { toast('une séquence ne se pose pas dans une autre'); continue; }
     await appendItem(id);
   }
 }
@@ -467,7 +476,6 @@ async function closeSeqTab(id, { quiet = false } = {}) {
     else closeAll();
   }
   paintSeqTabs();
-  if (!quiet) toast('onglet fermé : la séquence reste dans le projet (double-clic pour la rouvrir)', 2000);
 }
 function closeAll() {
   program.pause(); program.clear();
@@ -502,9 +510,268 @@ async function duplicateSequence(id) {
 // ── la source ───────────────────────────────────────────────
 const source = new Source($('#src-screen'), { onTick: paintSource, fpsOf: () => (S.p ? fps() : 25) });
 
-function openSource(it, marks) {
+// ── le panneau Effets (effets.js) ───────────────────────────
+let thumbImg = null;
+// l'image des vignettes : le plan choisi, sinon celui qu'on voit au programme
+function thumbSource(again) {
+  if (!S.p) return null;
+  const pick = S.sel.size === 1 ? M.byId(S.p, [...S.sel][0]) : null;
+  const vis = program.visible || [];
+  const c = pick && (pick.kind === 'video' || pick.kind === 'image') && M.trackKind(pick.track) === 'video' ? pick
+    : vis[vis.length - 1] || S.p.clips.find((x) => (x.kind === 'video' || x.kind === 'image') && M.trackKind(x.track) === 'video');
+  if (!c) return null;
+  const e = program.els.get(c.id);
+  if (e && e.tag === 'video' && e.el.readyState >= 2) return { el: e.el, key: `${c.id}|${e.el.currentTime.toFixed(3)}` };
+  if (e && e.tag === 'img' && e.el.complete && e.el.naturalWidth) return { el: e.el, key: `${c.id}|img` };
+  const it = S.items.get(c.item);
+  const u = it && (c.kind === 'image' ? it.url : it.thumb_url);
+  if (!u) return null;
+  if (!thumbImg || thumbImg.dataset.u !== u) {
+    thumbImg = new Image();
+    thumbImg.dataset.u = u;
+    thumbImg.onload = () => again();
+    thumbImg.src = href(u);
+    return null;
+  }
+  if (!thumbImg.complete || !thumbImg.naturalWidth) return null;
+  return { el: thumbImg, key: u };
+}
+const effects = mountEffects({ root: $('#fx-pane'), app: {
+  luts: () => S.luts,
+  setFxDrag: (d) => { S.fxDrag = d; },
+  applyToSelection: (d) => applyToSelection(d),
+  importLut: () => importLutModal(),
+  thumbSource,
+  tempGains,
+} });
+
+// ── les effets : les poser, les régler, les copier ──────────
+const lutMetaOf = (id) => (S.lutById ? S.lutById.get(id) : null);
+function fxName(f) {
+  if (f.type === 'lut') { const m = lutMetaOf(f.lut); return (m ? m.title : 'LUT') + (f.mix < 0.999 ? ` ${Math.round(f.mix * 100)} %` : ''); }
+  if (f.type === 'grade') {
+    const parts = [];
+    if (f.exposure) parts.push(`${f.exposure > 0 ? '+' : ''}${(+f.exposure).toFixed(2)} IL`);
+    if (f.contrast) parts.push(`contraste ${f.contrast > 0 ? '+' : ''}${Math.round(f.contrast)}`);
+    if (f.saturation) parts.push(f.saturation <= -100 ? 'N&B' : `saturation ${f.saturation > 0 ? '+' : ''}${Math.round(f.saturation)}`);
+    if (Math.abs((f.temperature || 6500) - 6500) > 0.5) parts.push(`${Math.round(f.temperature)} K`);
+    return parts.length ? `Étalonnage (${parts.join(', ')})` : 'Étalonnage';
+  }
+  return f.type;
+}
+
+// Le propriétaire d'une liste d'effets : un plan, une piste, un groupe ;
+// `list(p)` rend sa liste (à modifier dans le projet `p`).
+function ownerOf(key) {
+  if (!key) return null;
+  if (key.startsWith('g:')) {
+    const gid = key.slice(2);
+    return { key, kind: 'group', label: 'groupe', list: (p) => { const g = M.groupOf(p, gid); if (!g) return null; g.fx = g.fx || []; return g.fx; } };
+  }
+  if (key.startsWith('t:')) {
+    const tid = key.slice(2);
+    return { key, kind: 'track', label: `piste ${tid}`, list: (p) => { const t = M.trackOf(p, tid); if (!t || t.kind !== 'video') return null; t.fx = t.fx || []; return t.fx; } };
+  }
+  const id = key.slice(2);
+  return { key, kind: 'clip', label: 'plan', list: (p) => { const c = M.byId(p, id); if (!c || !(c.kind === 'adjust' || M.trackKind(c.track) === 'video')) return null; c.fx = c.fx || []; return c.fx; } };
+}
+// ce que l'inspecteur montre : la liste qui reçoit un collage
+function inspectorOwner() {
+  if (!S.p) return null;
+  if (S.selTrack) return ownerOf(S.selTrack.startsWith('g:') ? S.selTrack : 't:' + S.selTrack);
+  if (S.sel.size === 1) return ownerOf('c:' + [...S.sel][0]);
+  return null;
+}
+const trackLocked = (tid) => { const t = M.trackOf(S.p, tid); return !!(t && t.lock); };
+
+// Poser un effet sur des plans : une LUT remplace la LUT du plan (on change
+// de look), Maj l'ajoute en plus ; les autres effets s'ajoutent au bout.
+function addFxTo(keys, desc, { add = false } = {}) {
+  const fx = fxOfDesc(desc);
+  if (!fx) return 0;
+  let n = 0;
+  commit(`effet « ${desc.title} »`, (p) => {
+    for (const k of keys) {
+      const o = ownerOf(k);
+      const list = o && o.list(p);
+      if (!list) continue;
+      if (k.startsWith('c:') && trackLocked(M.byId(p, k.slice(2)).track)) continue;
+      const cur = fx.type === 'lut' && !add ? list.find((f) => f.type === 'lut') : null;
+      if (cur) { cur.lut = fx.lut; cur.on = true; } else list.push({ ...fx, id: M.newId('f') });
+      n++;
+    }
+  });
+  const m = desc.type === 'lut' ? lutMetaOf(desc.lut) : null;
+  if (n && m && m.input && m.input !== 'rec709') toast(`« ${m.title} » attend du ${m.input_label}`, 3000);
+  return n;
+}
+
+// un fondu lâché sur un plan : au bord le plus proche (une seconde, dans ce que le plan permet)
+function dropFade(id, side, cross) {
+  const c = M.byId(S.p, id);
+  if (!c) return;
+  if (trackLocked(c.track)) return toast(`la piste ${c.track} est verrouillée`);
+  const f = fps();
+  if (cross) {
+    if (side === 'l') return dissolve(c.id, f);
+    const next = M.trackClips(S.p, c.track).find((x) => x.start === M.clipEnd(c) && x.id !== c.id);
+    if (!next) return toast('pas de plan collé après');
+    return dissolve(next.id, f);
+  }
+  commit(side === 'l' ? 'fondu d’entrée' : 'fondu de sortie', (p) => {
+    const x = M.byId(p, id);
+    if (side === 'l') { x.xfade = 0; x.fade_in = Math.min(f, x.dur - (x.fade_out || 0)); }
+    else x.fade_out = Math.min(f, x.dur - (x.fade_in || 0));
+    M.fitFades(x);
+  });
+}
+
+// Un effet lâché sur la timeline (effets.js, bindEffectDrops).
+function dropEffect(d, t, { add = false } = {}) {
+  if (!S.p || !d) return;
+  // le champ de recherche du panneau garde sinon le clavier : ctrl+Z défait ce geste, pas le texte cherché
+  const a = document.activeElement;
+  if (a && a.closest && a.closest('#fx-pane')) a.blur();
+  focus('program');
+  if (d.type === 'fade' || d.type === 'xfade') { if (t.kind === 'clip') dropFade(t.id, t.side, d.type === 'xfade'); return; }
+  const fx = fxOfDesc(d);
+  if (!fx) return;
+  if (t.kind === 'new' || t.kind === 'layer') {
+    const f = fps();
+    const from = Math.max(0, t.frame);
+    const end = M.projectEnd(S.p);
+    const dur = end - from >= f ? end - from : 5 * f;
+    const name = `FX ${d.title}`.slice(0, 40);
+    let made = null;
+    if (t.kind === 'new') {
+      commit(`calque « ${name} »`, (p) => { made = M.addFxLayer(p, fx, from, dur, name); if (made) remapTargets(made.map); });
+      if (!made) return toast(`${M.MAX_TRACKS} pistes de calques au plus`);
+      remapHeights(made.map);
+    } else {
+      const free = M.trackClips(S.p, t.track).find((c) => c.start <= from && M.clipEnd(c) > from);
+      if (free) return addFxTo(['c:' + free.id], d, { add });
+      const nextC = M.trackClips(S.p, t.track).find((c) => c.start > from);
+      const len = Math.min(dur, nextC ? nextC.start - from : dur);
+      commit(`calque « ${name} »`, (p) => {
+        const c = { id: M.newClipId(), track: t.track, item: '', kind: 'adjust', title: name, start: from, dur: Math.max(1, len), in: 0, src_dur: 0, speed: 1,
+          enabled: true, vol: 1, fade_in: 0, fade_out: 0, xfade: 0, audio: false, fx: [fx] };
+        p.clips.push(c);
+        made = { clip: c.id };
+      });
+    }
+    if (made) select(new Set([made.clip]));
+    return;
+  }
+  if (t.kind === 'clip') {
+    const ids = S.sel.has(t.id) ? [...S.sel] : [t.id];
+    addFxTo(ids.map((x) => 'c:' + x), d, { add });
+    if (!S.sel.has(t.id)) select(new Set([t.id])); else paintInspector();
+    return;
+  }
+  if (t.kind === 'track') { addFxTo(['t:' + t.id], d, { add }); selectTrack(t.id); return; }
+  if (t.kind === 'group') { addFxTo(['g:' + t.id], d, { add }); selectTrack('g:' + t.id); }
+}
+
+// double-clic sur un effet du panneau : sur ce qui est choisi
+function applyToSelection(d) {
+  if (!S.p) return toast('aucune séquence ouverte');
+  if (d.type === 'fade' || d.type === 'xfade') {
+    if (S.sel.size !== 1) return toast('choisissez un plan');
+    return dropFade([...S.sel][0], 'l', d.type === 'xfade');
+  }
+  const o = inspectorOwner();
+  const keys = S.sel.size ? [...S.sel].map((x) => 'c:' + x) : o ? [o.key] : [];
+  if (!keys.length) return toast('choisissez un plan, une piste ou un groupe');
+  if (!addFxTo(keys, d)) toast('un effet d’image va sur un plan vidéo, une piste vidéo ou un calque');
+  paintInspector();
+}
+
+// les gestes sur une liste d'effets (l'inspecteur)
+function editFx(owner, label, fn) {
+  commit(label, (p) => { const list = owner.list(p); if (list) fn(list, p); });
+}
+function copyFx(owner) {
+  const list = owner.list(S.p) || [];
+  const picked = list.filter((f) => S.fxSel.has(f.id));
+  const out = picked.length ? picked : list;
+  if (!out.length) return toast('aucun effet à copier');
+  S.fxClip = JSON.parse(JSON.stringify(out));
+  S.lastCopy = 'fx';
+  LS('montage-fx-clipboard', S.fxClip);
+  toast(`${out.length} effet${out.length > 1 ? 's' : ''} copié${out.length > 1 ? 's' : ''}`, 1200);
+}
+function pasteFx(keys) {
+  if (!S.fxClip || !S.fxClip.length) return toast('aucun effet copié');
+  let n = 0;
+  commit(`coller ${S.fxClip.length > 1 ? S.fxClip.length + ' effets' : 'un effet'}`, (p) => {
+    for (const k of keys) {
+      const list = ownerOf(k)?.list(p);
+      if (!list) continue;
+      list.push(...M.cloneFx(S.fxClip));
+      n++;
+    }
+  });
+  if (!n) toast('les effets d’image vont sur un plan vidéo, une piste vidéo, un groupe ou un calque');
+}
+function pasteKeys() {
+  if (S.sel.size) return [...S.sel].map((x) => 'c:' + x);
+  const o = inspectorOwner();
+  return o ? [o.key] : [];
+}
+
+// ── les pistes : déplacer, grouper (pistes.js) ──────────────
+// la hauteur de chaque piste (molette commune) suit son nom quand les pistes se renumérotent
+function remapHeights(map) {
+  const h = {};
+  for (const [id, v] of Object.entries(timeline.h || {})) if (map[id] !== null) h[map[id] || id] = v;
+  timeline.h = h;
+  saveView();
+}
+function afterTracks(map) {
+  if (!map) return;
+  remapTargets(map);
+  remapHeights(map);
+  if (S.selTrack && !S.selTrack.startsWith('g:') && map[S.selTrack]) S.selTrack = map[S.selTrack];
+}
+function moveTracks(ids, cible, cote) {
+  let map = null;
+  commit(ids.length > 1 ? `déplacer ${ids.length} pistes` : 'déplacer la piste', (p) => { map = M.moveTracks(p, ids, cible, cote); if (map) remapTargets(map); });
+  if (map) { remapHeights(map); if (S.selTrack && map[S.selTrack]) S.selTrack = map[S.selTrack]; timeline.render(); paintInspector(); }
+}
+function groupTracks(ids, cible) {
+  let r = null;
+  commit('grouper des pistes', (p) => { r = M.groupTracks(p, ids, cible); if (r) remapTargets(r.map); });
+  if (r) { remapHeights(r.map); selectTrack('g:' + r.g.id); toast(`« ${r.g.name} »`, 1200); }
+}
+function ungroupTracks(gid) {
+  commit('défaire le groupe', (p) => M.ungroup(p, gid));
+  if (S.selTrack === 'g:' + gid) selectTrack(null);
+}
+async function renameGroup(gid) {
+  const g = M.groupOf(S.p, gid);
+  if (!g) return;
+  const v = await askName('Renommer le groupe', g.name, 'Renommer', { placeholder: 'le nom du groupe', max: 40 });
+  if (v) commit('renommer le groupe', (p) => { M.groupOf(p, gid).name = v; });
+}
+
+// Le panneau Source a deux onglets : Effets (montré au départ) et Source.
+// Ouvrir un plan dans la source y bascule (double-clic dans le Projet,
+// « Ouvrir dans le moniteur source », concordance des images) ; un simple
+// clic dans le Projet le charge sans quitter les effets.
+function srcTab(which) {
+  S.srcTab = which;
+  for (const b of $$('#src-tabs [data-tab]')) { b.classList.toggle('on', b.dataset.tab === which); b.setAttribute('aria-selected', String(b.dataset.tab === which)); }
+  $('#fx-pane').hidden = which !== 'fx';
+  $('#src-pane').hidden = which !== 'src';
+  $('#src-meta').hidden = which !== 'src';
+  if (which === 'fx') { effects.paint(); if (S.focus === 'source') focus('program'); }
+  else focus('source');
+}
+
+function openSource(it, marks, { show = true } = {}) {
   S.items.set(it.id, it);
-  source.load(it, marks);
+  if (show && S.srcTab !== 'src') srcTab('src');
+  source.load(it, marks || undefined);
   const wave = $('#src-screen .wave');
   if (wave) wave.remove();
   if (it.kind === 'audio') {
@@ -512,7 +779,7 @@ function openSource(it, marks) {
     $('#src-screen').append(el('i', { class: 'wave', style: { maskImage: u, webkitMaskImage: u } }));
   }
   $('#src-name').textContent = it.title || it.id;
-  focus('source');
+  if (S.srcTab === 'src') focus('source');
   paintBin();
   paintSource();
 }
@@ -531,7 +798,7 @@ function paintSource() {
   for (const b of ['#s-in', '#s-out', '#s-prev', '#s-next', '#s-play']) $(b).disabled = !it || it.kind === 'image';
   for (const b of ['#s-insert', '#s-over']) {
     $(b).disabled = !it || !S.p;
-    $(b).title = !it ? 'choisissez d’abord un plan dans le chutier' : !S.p ? 'ouvrez d’abord un montage' : $(b).dataset.title || $(b).title;
+    $(b).title = !it ? 'aucun plan dans la source' : !S.p ? 'aucune séquence ouverte' : $(b).dataset.title || $(b).title;
   }
 }
 $('#s-insert').dataset.title = $('#s-insert').title;
@@ -559,8 +826,8 @@ async function placeItem(desc, tid, frame, mode = 'overwrite') {
   await ensureItems([desc.id]);
   const it = itemOf(desc.id);
   if (!it) return toast('objet introuvable dans la bibliothèque');
-  if (it.kind === 'sequence') return toast('une séquence ne se pose pas (encore) dans une autre : l’imbrication n’est pas faite — double-cliquez-la pour l’ouvrir');
-  if (!['video', 'image', 'audio'].includes(it.kind)) return toast('un élément ne se monte pas : prenez une vidéo, une image ou un son');
+  if (it.kind === 'sequence') return toast('une séquence ne se pose pas dans une autre');
+  if (!['video', 'image', 'audio'].includes(it.kind)) return toast('seulement une vidéo, une image ou un son');
   let track = trackFor(tid, it.kind);
   if (M.trackKind(track) === 'audio' && it.kind === 'video' && !it.audio) { toast('cette vidéo n’a pas de son : posée sur la piste vidéo cible'); track = S.target.video; }
   const t = S.p.tracks.find((x) => x.id === track);
@@ -572,7 +839,7 @@ async function placeItem(desc, tid, frame, mode = 'overwrite') {
   if (dur < 1) return toast('plan trop court : réglez l’entrée et la sortie');
   const clip = { id: M.newClipId(), track, item: it.id, kind: it.kind, title: it.title || '', start: Math.max(0, frame), dur,
     in: tin, src_dur: it.kind === 'image' ? 0 : (it.duration || 0), speed: 1, enabled: true, vol: 1, fade_in: 0, fade_out: 0, xfade: 0,
-    audio: it.kind === 'video' && !!it.audio, grade: { ...M.NEUTRAL }, lut: null };
+    audio: it.kind === 'video' && !!it.audio, fx: [], fcurve: { in: 'tri', out: 'tri' } };
   commit(`${mode === 'insert' ? 'insérer' : 'poser'} « ${clip.title || 'plan'} »`, (p) => M.placeClip(p, clip, mode));
   select(new Set([clip.id]));
   return clip;
@@ -587,9 +854,8 @@ async function appendItem(id, marks = {}) {
   const end = M.trackClips(S.p, tid).reduce((m, c) => Math.max(m, M.clipEnd(c)), 0);
   const c = await placeItem({ id, in: marks.in || 0, out: marks.out || it.duration || 0 }, tid, end);
   if (c) {
-    toast(`« ${it.title} » ajouté au montage « ${S.p.name} »`);
     program.seekFrame(c.start);
-    if (!source.item || source.item.id !== it.id) openSource(it);
+    if (!source.item || source.item.id !== it.id) openSource(it, null, { show: false });
   }
 }
 
@@ -615,14 +881,16 @@ function paintProgram(t, playing) {
   const vis = program.visible || [];
   $('#prg-name').textContent = vis.length ? vis[vis.length - 1].title || '' : (D && t >= D ? 'fin du montage' : '—');
   $('#prg-empty').hidden = !!S.p.clips.length;
-  if (!playing) { saveView(); clearTimeout(shelfT); shelfT = setTimeout(paintShelf, 180); }
+  if (!playing) { saveView(); clearTimeout(shelfT); shelfT = setTimeout(() => effects.thumbs(), 250); }
 }
 let shelfT = 0;
 
 let viewT = 0;
+// la vue d'une séquence, gardée dans ce navigateur : zoom, défilement, tête de lecture, hauteur des pistes
+const viewOf = () => ({ pps: timeline.pps, scroll: timeline.scroll.scrollLeft, t: program.t, h: timeline.h });
 function saveView() {
   clearTimeout(viewT);
-  viewT = setTimeout(() => { if (S.p) LS('montage-view-' + S.p.id, { pps: timeline.pps, scroll: timeline.scroll.scrollLeft, t: program.t }); }, 400);
+  viewT = setTimeout(() => { if (S.p) LS('montage-view-' + S.p.id, viewOf()); }, 400);
 }
 
 function shuttle(dir) {
@@ -637,6 +905,7 @@ function shuttle(dir) {
 
 function focus(which) {
   S.focus = which;
+  S.fxFocus = null;                 // un clic ailleurs rend le clavier aux raccourcis du montage
   $('#src').classList.toggle('focus', which === 'source');
   $('#prg').classList.toggle('focus', which === 'program');
 }
@@ -694,6 +963,10 @@ const timeline = new Timeline($('#tl'), {
     return () => { if (!inside) program.seek(t0); };
   },
   zoomed,
+  resized: () => saveView(),
+  selTrack: () => S.selTrack,
+  fxName: (f) => fxName(f),
+  renameGroup: (gid) => renameGroup(gid),
 });
 
 function zoomed(pps) {
@@ -704,6 +977,20 @@ function zoomed(pps) {
 function select(sel, gap = null) {
   S.sel = sel;
   S.gap = gap;
+  S.selTrack = null;
+  S.fxSel = new Set();
+  S.fxFocus = null;
+  timeline.render();
+  paintInspector();
+  paintBar();
+}
+
+// choisir une piste ('V2') ou un groupe ('g:<id>') : l'inspecteur montre ses effets
+function selectTrack(key) {
+  S.sel = new Set(); S.gap = null;
+  S.selTrack = key;
+  S.fxSel = new Set();
+  S.fxFocus = null;
   timeline.render();
   paintInspector();
   paintBar();
@@ -770,11 +1057,11 @@ function dissolve(id, frames) {
     // sans plan choisi : la coupe sous la tête de lecture, sur la piste vidéo cible
     const f = program.frame();
     const at = M.trackClips(S.p, S.target.video).find((x) => Math.abs(x.start - f) <= 2 && x.start > 0);
-    if (!at) return toast('choisissez le plan d’arrivée, ou placez la tête de lecture sur une coupe de la piste cible');
+    if (!at) return toast('choisissez le plan d’arrivée');
     return dissolve(at.id, frames);
   }
   const prev = prevClip(S.p, c);
-  if (!prev) return toast('fondu enchaîné : il faut un plan collé juste avant, sur la même piste');
+  if (!prev) return toast('pas de plan collé avant');
   const n = Math.max(2, Math.min(frames || fps(), c.dur, prev.dur));
   commit('fondu enchaîné', (p) => { const x = M.byId(p, c.id); x.xfade = n; x.fade_in = 0; const pv = M.byId(p, prev.id); pv.fade_out = 0; });
   select(new Set([c.id]));
@@ -785,9 +1072,9 @@ function detachSound(id) {
   if (!c || c.kind !== 'video' || !c.audio) return toast('rien à dissocier : ce plan n’a pas de son attaché');
   const tid = S.target.audio;
   if (lockedTracks().has(tid)) return toast(`la piste ${tid} est verrouillée`);
-  const a = { ...JSON.parse(JSON.stringify(c)), id: M.newClipId(), track: tid, grade: { ...M.NEUTRAL }, lut: null, audio: true };
+  const a = { ...JSON.parse(JSON.stringify(c)), id: M.newClipId(), track: tid, fx: [], audio: true };
   commit('dissocier le son', (p) => { M.byId(p, id).audio = false; M.placeClip(p, a, 'overwrite'); });
-  toast(`le son est sur ${tid} : il se déplace et se coupe à part`);
+  toast(`son sur ${tid}`, 1400);
 }
 
 function stepEdit(dir) {
@@ -802,14 +1089,15 @@ function addTrack(kind, ref, where) {
   let res = null;
   commit(`ajouter une piste ${kind === 'video' ? 'vidéo' : 'son'}`, (p) => { res = M.addTrack(p, kind, ref, where); if (res) remapTargets(res.map); });
   if (!res) return toast(`${M.MAX_TRACKS} pistes ${kind === 'video' ? 'vidéo' : 'son'} au plus`);
-  toast(`piste ${res.id} ajoutée`, 1600);
+  remapHeights(res.map);
 }
 async function deleteTrack(tid) {
   const t = M.trackOf(S.p, tid);
   const n = S.p.clips.filter((c) => c.track === tid).length;
-  if (n && !(await confirmBox('Supprimer la piste', `La piste ${tid}${t.name ? ` (« ${t.name} »)` : ''} porte ${n} plan${n > 1 ? 's' : ''} : ${n > 1 ? 'ils partent' : 'il part'} avec elle (ctrl+Z pour revenir).`, 'Supprimer la piste'))) return;
+  if (n && !(await confirmBox('Supprimer la piste', `${tid}${t.name ? ` « ${t.name} »` : ''} : ${n} plan${n > 1 ? 's' : ''} ${n > 1 ? 'partent' : 'part'} avec elle.`, 'Supprimer la piste'))) return;
   let map = null;
   commit(`supprimer la piste ${tid}`, (p) => { map = M.deleteTrack(p, tid); if (map) remapTargets(map); });
+  if (map) { remapHeights(map); if (S.selTrack === tid) selectTrack(null); }
 }
 async function renameTrack(tid) {
   const t = M.trackOf(S.p, tid);
@@ -820,7 +1108,7 @@ async function renameTrack(tid) {
 }
 
 // ── les marques, l'entrée et la sortie de séquence ──────────
-function addMarkerAt(f) { commit('ajouter une marque', (p) => M.addMarker(p, f)); toast(`marque à ${M.tc(f, fps())} · double-clic dessus : la nommer`, 1800); }
+function addMarkerAt(f) { commit('ajouter une marque', (p) => M.addMarker(p, f)); }
 async function renameMarker(id) {
   const m = (S.p.markers || []).find((x) => x.id === id);
   if (!m) return;
@@ -852,7 +1140,7 @@ function rangeBounds() {
 }
 function liftExtract(extract) {
   const b = rangeBounds();
-  if (!b || b[1] <= b[0]) return toast('posez d’abord une entrée et une sortie (I, O) sur la séquence');
+  if (!b || b[1] <= b[0]) return toast('pas d’entrée ni de sortie (I, O)');
   // extraire referme la plage : l'entrée et la sortie n'ont plus d'objet (une seule annulation)
   commit(extract ? 'extraire' : 'prélever', (p) => { if (extract) { M.extractRange(p, b[0], b[1]); p.range = { in: null, out: null }; } else M.liftRange(p, b[0], b[1]); });
   program.seekFrame(b[0]);
@@ -863,6 +1151,7 @@ function copySel() {
   const cl = [...S.sel].map((id) => M.byId(S.p, id)).filter(Boolean);
   if (!cl.length) return toast('choisissez d’abord des plans');
   S.clip = { clips: JSON.parse(JSON.stringify(cl)) };
+  S.lastCopy = 'clips';
   LS('montage-clipboard', S.clip);
   toast(`${cl.length} plan${cl.length > 1 ? 's' : ''} copié${cl.length > 1 ? 's' : ''}`, 1400);
 }
@@ -888,13 +1177,12 @@ function toggleEnabled(ids = [...S.sel]) {
   if (!list.length) return toast('choisissez d’abord des plans');
   const on = !list.every(M.isOn);
   commit(on ? 'activer' : 'désactiver', (p) => { for (const c of list) M.byId(p, c.id).enabled = on; });
-  toast(on ? 'activé' : 'désactivé : ni vu, ni entendu, ni exporté', 1600);
 }
 
 function speedModal(id) {
   const c = M.byId(S.p, id);
   if (!c) return toast('choisissez d’abord un plan');
-  if (c.kind === 'image') return toast('une image fixe n’a pas de vitesse : réglez sa durée dans l’inspecteur');
+  if (M.still(c)) return toast('pas de vitesse : étirez-le');
   const f = fps(), sp0 = M.spd(c);
   const inp = el('input', { class: 'fld nfld', type: 'number', min: Math.round(M.SPEED_MIN * 100), max: Math.round(M.SPEED_MAX * 100), step: 1, value: Math.round(sp0 * 100) });
   const rip = el('input', { type: 'checkbox' });
@@ -907,14 +1195,13 @@ function speedModal(id) {
     let nd = 0;
     commit('vitesse/durée', (p) => { nd = M.setSpeed(p, c.id, s, rip.checked); });
     const want = Math.round(c.dur * sp0 / s);
-    if (nd && nd < want) toast(`durée arrêtée au plan suivant (${M.short(nd / f)}) : cochez « propager » pour pousser la suite`, 4000);
+    if (nd && nd < want) toast(`arrêtée au plan suivant (${M.short(nd / f)})`, 2500);
     close();
   };
   modal('Vitesse/Durée', el('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
     el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'vitesse (%)'), el('span', { class: 'sp' }), inp),
     el('dl', { class: 'kv' }, el('dt', {}, 'durée'), out, el('dt', {}, 'matière'), el('dd', {}, `${M.short(c.dur / f * sp0)} de source (${M.short(c.in || 0)} → ${M.short((c.in || 0) + c.dur / f * sp0)})`)),
-    el('label', { class: 'row chk' }, rip, el('span', {}, 'propager : décaler la suite de la piste (Premiere : « Montage par propagation, décaler les éléments suivants »)')),
-    el('p', { class: 'note' }, `de ${Math.round(M.SPEED_MIN * 100)} à ${Math.round(M.SPEED_MAX * 100)} % · le son garde sa hauteur (atempo à l’export, preservesPitch à l’aperçu).`)),
+    el('label', { class: 'row chk' }, rip, el('span', {}, 'propager (décaler la suite de la piste)'))),
   (close) => [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', onclick: close }, 'Annuler'), el('button', { class: 'tb go', onclick: () => apply(close) }, 'Appliquer')]);
   setTimeout(() => { inp.focus(); inp.select(); }, 30);
 }
@@ -922,43 +1209,17 @@ function speedModal(id) {
 async function loadLuts() {
   try { const r = await api('montage/luts'); S.luts = r.luts; } catch { S.luts = []; }
   S.lutById = new Map(S.luts.map((l) => [l.id, l]));
-  if (S.sel.size === 1) paintInspector();
+  effects.paint();
+  if (S.p) { timeline.render(); paintInspector(); }
 }
 const lutMeta = (id) => (S.lutById ? S.lutById.get(id) : S.luts.find((l) => l.id === id));
-
-// Les LUT rangées pour l'étagère : les favoris (par rang), puis les familles —
-// les cuites Rec.709 de Fujifilm d'abord, les marques de pellicules, les
-// LUT d'origine en log à la fin (elles ne vont pas sur nos vidéos).
-const lutFav = () => S.luts.filter((l) => l.fav > 0).sort((a, b) => a.fav - b.fav);
-function lutFamilies() {
-  const by = new Map();
-  for (const l of S.luts) { if (!by.has(l.family)) by.set(l.family, []); by.get(l.family).push(l); }
-  const rank = (f) => (/rec\.?709/i.test(f) && /fuji/i.test(f) ? 0 : /origine|log/i.test(f) ? 3 : /import/i.test(f) ? 2 : 1);
-  return [...by.entries()].sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0], 'fr'))
-    .map(([name, list]) => ({ name, list: list.sort((a, b) => a.title.localeCompare(b.title, 'fr')) }));
-}
-function lutSearch(q) {
-  const words = q.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').split(/\s+/).filter(Boolean);
-  const hay = (l) => `${l.title} ${l.family} ${l.pack || ''} ${l.input_label}`.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
-  return S.luts.filter((l) => words.every((w) => hay(l).includes(w)));
-}
-
-function setLut(ids, lutId, mix = null) {
-  const list = ids.map((id) => M.byId(S.p, id)).filter((c) => c && M.trackKind(c.track) === 'video');
-  if (!list.length) return toast('une LUT se pose sur un plan d’une piste vidéo');
-  const m = lutId ? lutMeta(lutId) : null;
-  commit(lutId ? `LUT « ${m ? m.title : lutId} »` : 'retirer la LUT', (p) => {
-    for (const c of list) M.byId(p, c.id).lut = lutId ? { id: lutId, mix: mix ?? (c.lut && c.lut.id === lutId ? c.lut.mix : 1) } : null;
-  });
-  if (m && m.input && m.input !== 'rec709') toast(`« ${m.title} » attend du ${m.input_label} : sur une image Rec.709 le rendu sera faux (voir l’étude)`, 5000);
-}
 
 function importLutModal(then) {
   const file = el('input', { type: 'file', accept: '.cube,.png', class: 'fld' });
   const title = el('input', { class: 'fld', placeholder: 'le nom de la LUT (sinon celui du fichier)', maxlength: 80 });
   const inp = el('select', { class: 'fld' }, ...(S.meta.lut_inputs || []).map((x) => el('option', { value: x.id, selected: x.id === 'rec709' ? '' : null }, x.label)));
   const fam = el('input', { class: 'fld', placeholder: 'la famille sur l’étagère (sinon « Importées »)', maxlength: 60, list: 'lut-families' });
-  const famList = el('datalist', { id: 'lut-families' }, ...lutFamilies().map((f) => el('option', { value: f.name })));
+  const famList = el('datalist', { id: 'lut-families' }, ...lutFamilies(S.luts).map((f) => el('option', { value: f.name })));
   const why = el('p', { class: 'why', hidden: true });
   let busy = false;
   const go = async (close) => {
@@ -976,9 +1237,7 @@ function importLutModal(then) {
     } catch (e) { why.hidden = false; why.textContent = e.message; busy = false; }
   };
   modal('Importer une LUT', el('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-    el('p', {}, 'Un fichier .cube (3D, ou 1D jusqu’à 4096 entrées, domaine 0..1 — Adobe « Cube LUT Specification 1.0 ») ou une HaldCLUT en PNG ; au-delà de 65 points, elle est rééchantillonnée à 33. Elle est rangée dans les données du portail, pas dans le dépôt.'),
-    file, title, fam, famList, el('span', { class: 'lbl' }, 'l’image qu’elle attend'), inp,
-    el('p', { class: 'note' }, 'une LUT faite pour du log (F-Log, F-Log2…) donne un rendu faux sur nos vidéos Rec.709 : le banc le dira quand vous la poserez.'), why),
+    file, title, fam, famList, el('span', { class: 'lbl' }, 'l’image qu’elle attend'), inp, why),
   (close) => [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', onclick: close }, 'Annuler'), el('button', { class: 'tb go', onclick: () => go(close) }, 'Importer')]);
 }
 
@@ -1005,17 +1264,19 @@ const dB = (v) => (v <= 0 ? '−∞ dB' : `${(20 * Math.log10(v)).toFixed(1)} dB
 function paintInspector() {
   const box = $('#insp');
   if (!S.p) return paintEmptyState();
+  const keep = box.scrollTop;
   const cards = [];
   const f = fps();
-  if (S.sel.size === 1) {
+  if (S.selTrack) cards.push(...trackCards(S.selTrack));
+  else if (S.sel.size === 1) {
     const c = M.byId(S.p, [...S.sel][0]);
-    if (c) cards.push(...clipCards(c, f));
+    if (c) cards.push(...(c.kind === 'adjust' ? adjustCards(c, f) : clipCards(c, f)));
   } else if (S.sel.size > 1) {
     cards.push(el('div', { class: 'card' },
       el('div', { class: 'card-head' }, el('span', { class: 't' }, `${S.sel.size} plans choisis`)),
-      el('p', { class: 'note' }, 'Glissez-les ensemble sur la timeline ; maj ou ctrl + clic pour en ajouter ou en retirer ; clic droit pour la LUT, activer, copier.'),
       el('div', { class: 'row' }, el('button', { class: 'tb ghost sm', onclick: () => del(false) }, 'Supprimer'),
-        el('button', { class: 'tb ghost sm', onclick: () => del(true) }, 'Et raccorder'))));
+        el('button', { class: 'tb ghost sm', onclick: () => del(true) }, 'Et raccorder'),
+        el('button', { class: 'tb ghost sm', disabled: !(S.fxClip && S.fxClip.length) || null, title: 'Ctrl+Alt+V', onclick: () => pasteFx(pasteKeys()) }, 'Coller les effets'))));
   } else if (S.gap) {
     cards.push(el('div', { class: 'card' },
       el('div', { class: 'card-head' }, el('span', { class: 't' }, `Vide · ${S.gap.track}`)),
@@ -1023,9 +1284,226 @@ function paintInspector() {
         el('dt', {}, 'durée'), el('dd', {}, M.short((S.gap.e - S.gap.s) / f))),
       el('button', { class: 'tb ghost sm', onclick: () => del(true), title: 'Suppr' }, 'Supprimer et raccorder')));
   }
-  if (!S.sel.size) cards.push(...projectCards(f));
+  if (!S.sel.size && !S.selTrack) cards.push(...projectCards(f));
   box.replaceChildren(...cards);
-  paintShelf();
+  box.scrollTop = keep;
+}
+
+// ── la liste d'effets d'un plan, d'une piste, d'un groupe, d'un calque ──
+// Clic : choisir (Maj : jusqu'à lui, Ctrl : ajouter ou retirer) ; glisser par
+// la poignée : réordonner ; l'interrupteur : désactiver ; × ou Suppr :
+// retirer ; Ctrl+C / Ctrl+V : copier, coller sur une autre piste ou un autre
+// plan (Ctrl+Alt+V : « Coller les attributs » de Premiere, toujours les effets).
+function fxCard(owner, locked = false) {
+  const list = owner.list(S.p) || [];
+  const rows = el('div', { class: 'fxl' });
+  const card = el('div', { class: 'card fxc', 'data-owner': owner.key },
+    el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Effets'),
+      el('span', { class: 'acts' },
+        el('button', { class: 'lnk', disabled: !list.length || null, title: 'Ctrl+C', onclick: () => copyFx(owner) }, 'Copier'),
+        el('button', { class: 'lnk', disabled: (!(S.fxClip && S.fxClip.length) || locked) || null, title: 'Ctrl+V', onclick: () => pasteFx([owner.key]) }, 'Coller'))),
+    rows);
+  if (!list.length) rows.append(el('p', { class: 'lbl fx-empty' }, 'aucun effet'));
+  for (const fx of list) {
+    const on = fx.on !== false;
+    const lm = fx.type === 'lut' ? lutMeta(fx.lut) : null;
+    const gone = fx.type === 'lut' && S.luts.length && !lm;
+    const row = el('div', { class: `fxr${S.fxSel.has(fx.id) ? ' on' : ''}${on ? '' : ' off'}${gone ? ' gone' : ''}`, 'data-fx': fx.id, title: gone ? 'LUT introuvable : l’export la refusera' : '' },
+      el('i', { class: 'grip' }),
+      el('button', { class: 'sw sm' + (on ? ' on' : ''), title: on ? 'désactiver' : 'activer', 'aria-pressed': String(on), disabled: locked || null,
+        onclick: (e) => { e.stopPropagation(); editFx(owner, on ? 'désactiver un effet' : 'activer un effet', (l) => { const x = l.find((y) => y.id === fx.id); if (x) x.on = !on; }); } }, el('i')),
+      el('span', { class: 'nm' }, fxName(fx)),
+      el('button', { class: 'x', title: 'retirer', 'aria-label': 'retirer', disabled: locked || null, onclick: (e) => { e.stopPropagation(); removeFx(owner, [fx.id]); } }, '×'));
+    row.addEventListener('pointerdown', (e) => fxRowDown(e, owner, fx.id, rows, locked));
+    rows.append(row);
+    if (S.fxSel.size === 1 && S.fxSel.has(fx.id)) rows.append(fxParams(owner, fx, locked));
+  }
+  card.addEventListener('pointerdown', () => { S.fxFocus = owner.key; }, true);
+  return card;
+}
+
+function removeFx(owner, ids) {
+  const gone = new Set(ids);
+  editFx(owner, ids.length > 1 ? `retirer ${ids.length} effets` : 'retirer un effet', (l) => { const keep = l.filter((f) => !gone.has(f.id)); l.splice(0, l.length, ...keep); });
+  for (const id of ids) S.fxSel.delete(id);
+  paintInspector();
+}
+
+// choisir, ou glisser pour réordonner (le trait dit où l'effet ira)
+function fxRowDown(e, owner, id, rows, locked) {
+  if (e.button !== 0 || e.target.closest('button')) return;
+  const list = owner.list(S.p) || [];
+  const y0 = e.clientY;
+  let moving = false, to = -1;
+  const line = el('i', { class: 'fx-line' });
+  const mv = (ev) => {
+    if (!moving && Math.abs(ev.clientY - y0) < 4) return;
+    if (locked) return;
+    moving = true;
+    const rs = [...rows.querySelectorAll('.fxr')];
+    to = rs.length;
+    for (let i = 0; i < rs.length; i++) { const b = rs[i].getBoundingClientRect(); if (ev.clientY < b.top + b.height / 2) { to = i; break; } }
+    const ref = rs[to];
+    if (ref) ref.before(line); else rows.append(line);
+  };
+  const up = (ev) => {
+    removeEventListener('pointermove', mv, true);
+    removeEventListener('pointerup', up, true);
+    line.remove();
+    if (moving) {
+      const from = list.findIndex((f) => f.id === id);
+      const picked = S.fxSel.has(id) ? list.filter((f) => S.fxSel.has(f.id)).map((f) => f.id) : [id];
+      if (from >= 0) editFx(owner, 'réordonner les effets', (l) => {
+        const moved = l.filter((f) => picked.includes(f.id));
+        const before = l.slice(0, to).filter((f) => !picked.includes(f.id)).length;
+        const rest = l.filter((f) => !picked.includes(f.id));
+        rest.splice(before, 0, ...moved);
+        l.splice(0, l.length, ...rest);
+      });
+      return;
+    }
+    // un clic : choisir (Maj : jusqu'à lui ; Ctrl : ajouter ou retirer)
+    const ids = list.map((f) => f.id);
+    if (ev.shiftKey && S.fxAnchor && ids.includes(S.fxAnchor)) {
+      const [a, b] = [ids.indexOf(S.fxAnchor), ids.indexOf(id)].sort((x, y) => x - y);
+      S.fxSel = new Set(ids.slice(a, b + 1));
+    } else if (ev.ctrlKey || ev.metaKey) {
+      S.fxSel.has(id) ? S.fxSel.delete(id) : S.fxSel.add(id);
+      S.fxAnchor = id;
+    } else {
+      S.fxSel = S.fxSel.size === 1 && S.fxSel.has(id) ? new Set() : new Set([id]);
+      S.fxAnchor = id;
+    }
+    S.fxFocus = owner.key;
+    paintInspector();
+  };
+  addEventListener('pointermove', mv, true);
+  addEventListener('pointerup', up, true);
+}
+
+// les réglages de l'effet choisi : l'intensité d'une LUT, les curseurs de l'étalonnage
+function fxParams(owner, fx, locked) {
+  const box = el('div', { class: 'fxp' });
+  const set = (fn) => (v) => { const x = (owner.list(S.p) || []).find((y) => y.id === fx.id); if (x) fn(x, v); };
+  if (fx.type === 'lut') {
+    const m = lutMeta(fx.lut);
+    if (m && m.input !== 'rec709') box.append(el('p', { class: 'why' }, `attend du ${m.input_label}`));
+    box.append(slider({ label: 'intensité', min: 0, max: 100, step: 1, value: Math.round((fx.mix ?? 1) * 100), fmt: (v) => `${v} %`, disabled: locked,
+      apply: set((x, v) => { x.mix = v / 100; }) }));
+  } else if (fx.type === 'grade') {
+    const neutral = M.gradeNeutral(fx);
+    box.append(
+      slider({ label: 'exposition', min: -2, max: 2, step: 0.05, value: fx.exposure || 0, fmt: (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)} IL`, disabled: locked, apply: set((x, v) => { x.exposure = v; }) }),
+      slider({ label: 'contraste', min: -100, max: 100, step: 1, value: fx.contrast || 0, fmt: (v) => `${v > 0 ? '+' : ''}${v}`, disabled: locked, apply: set((x, v) => { x.contrast = v; }) }),
+      slider({ label: 'saturation', min: -100, max: 100, step: 1, value: fx.saturation || 0, fmt: (v) => `${v > 0 ? '+' : ''}${v}`, color: 'var(--or)', disabled: locked, apply: set((x, v) => { x.saturation = v; }) }),
+      slider({ label: 'température', min: 2000, max: 12000, step: 100, value: fx.temperature || 6500, fmt: (v) => `${v} K`, cls: 'temp', disabled: locked, apply: set((x, v) => { x.temperature = v; }) }),
+      el('div', { class: 'row' }, el('span', { class: 'sp' }), el('button', { class: 'lnk', disabled: (neutral || locked) || null,
+        onclick: () => editFx(owner, 'réinitialiser l’étalonnage', (l) => { const x = l.find((y) => y.id === fx.id); if (x) Object.assign(x, M.NEUTRAL); }) }, 'Réinit.')));
+  }
+  return box;
+}
+
+// Les fondus d'un plan : leur durée (aussi aux poignées, dans les coins du
+// plan), la courbe du son (celles d'afade ; l'image fond en ligne droite :
+// le `fade` de ffmpeg 6.1 n'a pas de courbe), le fondu enchaîné avec le plan d'avant.
+function fadeCard(c, track, locked) {
+  const f = fps();
+  const set = (fn) => (v) => { const x = M.byId(S.p, c.id); if (x) { fn(x, v); M.fitFades(x); } };
+  const card = el('div', { class: 'card' }, el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Fondus')));
+  const prev = c.kind !== 'adjust' ? prevClip(S.p, c) : null;
+  const w = M.windows(S.p).get(c.id) || {};
+  const maxIn = Math.max(1, c.dur - (c.fade_out || 0)), maxOut = Math.max(1, c.dur - (c.fade_in || 0));
+  if (w.xin) {
+    card.append(slider({ label: 'enchaîné', min: 2, max: Math.max(2, Math.min(c.dur, prev ? prev.dur : c.dur)), step: 1, value: c.xfade, fmt: (v) => M.short(v / f), disabled: locked,
+      apply: set((x, v) => { x.xfade = v; }) }));
+  } else {
+    card.append(slider({ label: 'entrée', min: 0, max: maxIn, step: 1, value: c.fade_in || 0, fmt: (v) => (v ? M.short(v / f) : '—'), disabled: locked, apply: set((x, v) => { x.fade_in = v; }) }));
+  }
+  const nextX = M.trackClips(S.p, c.track).find((x) => x.start === M.clipEnd(c) && x.xfade > 0 && x.id !== c.id);
+  if (!w.xout) card.append(slider({ label: 'sortie', min: 0, max: maxOut, step: 1, value: c.fade_out || 0, fmt: (v) => (v ? M.short(v / f) : '—'), disabled: locked, apply: set((x, v) => { x.fade_out = v; }) }));
+  else if (nextX) card.append(el('p', { class: 'lbl' }, 'sortie : fondu enchaîné'));
+  const sound = track.kind === 'audio' || (c.kind === 'video' && c.audio);
+  if (sound && (c.fade_in || c.fade_out)) {
+    const pick = (side) => {
+      const s = el('select', { class: 'fld sm', disabled: locked || null, 'aria-label': 'courbe' }, ...M.CURVES.map(([id, label]) => el('option', { value: id, selected: ((c.fcurve || {})[side] || 'tri') === id ? '' : null }, label)));
+      s.addEventListener('change', () => commit('courbe du fondu', (p) => { const x = M.byId(p, c.id); x.fcurve = { in: 'tri', out: 'tri', ...(x.fcurve || {}), [side]: s.value }; }));
+      return s;
+    };
+    card.append(el('div', { class: 'row curves' }, el('span', { class: 'lbl', title: 'la courbe du son ; l’image fond en ligne droite' }, 'courbe'),
+      c.fade_in ? pick('in') : null, c.fade_out ? pick('out') : null));
+  }
+  if (prev && !w.xin && c.kind !== 'adjust') card.append(el('button', { class: 'tb ghost sm', disabled: locked || null, title: 'Ctrl+D', onclick: () => dissolve(c.id) }, 'Fondu enchaîné'));
+  if (w.xin) card.append(el('button', { class: 'tb ghost sm', disabled: locked || null, onclick: () => commit('coupe franche', (p) => { M.byId(p, c.id).xfade = 0; }) }, 'Coupe franche'));
+  return card;
+}
+
+// un calque d'effet : son nom, sa place, ses fondus, ses effets
+function adjustCards(c, f) {
+  const track = M.trackOf(S.p, c.track);
+  const locked = track.lock;
+  const head = el('div', { class: 'card' },
+    el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Calque · ', el('b', {}, c.title || 'calque')),
+      el('span', { class: 'snapper', title: 'maj+E' }, 'actif',
+        el('button', { class: 'sw' + (M.isOn(c) ? ' on' : ''), disabled: locked || null, 'aria-pressed': String(M.isOn(c)), onclick: () => toggleEnabled([c.id]) }, el('i')))),
+    el('dl', { class: 'props' }, el('dt', {}, 'piste'), el('dd', {}, c.track + (track.name ? ` · ${track.name}` : '')),
+      el('dt', {}, 'début'), el('dd', { class: 'tcv' }, M.tc(c.start, f)), el('dt', {}, 'durée'), el('dd', { class: 'tcv' }, M.tc(c.dur, f))),
+    el('div', { class: 'row' }, el('button', { class: 'tb ghost sm', onclick: () => renameClip(c.id) }, 'Renommer')));
+  return [head, fxCard(ownerOf('c:' + c.id), locked), fadeCard(c, track, locked)];
+}
+
+// une piste, ou un groupe de pistes, choisis par leur en-tête
+function trackCards(key) {
+  if (key.startsWith('g:')) {
+    const g = M.groupOf(S.p, key.slice(2));
+    if (!g) return [];
+    const members = S.p.tracks.filter((t) => t.grp === g.id);
+    const img = members.some((t) => t.kind !== 'audio');
+    return [el('div', { class: 'card' },
+      el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Groupe · ', el('b', {}, g.name))),
+      el('dl', { class: 'props' }, el('dt', {}, 'pistes'), el('dd', {}, members.map((t) => t.id).join(' · '))),
+      el('div', { class: 'row' }, el('button', { class: 'tb ghost sm', onclick: () => renameGroup(g.id) }, 'Renommer'),
+        el('button', { class: 'tb ghost sm', onclick: () => ungroupTracks(g.id) }, 'Défaire'))),
+    ...(img ? [fxCard(ownerOf('g:' + g.id))] : [])];
+  }
+  const t = M.trackOf(S.p, key);
+  if (!t) return [];
+  const n = S.p.clips.filter((c) => c.track === t.id).length;
+  const g = t.grp ? M.groupOf(S.p, t.grp) : null;
+  const cards = [el('div', { class: 'card' },
+    el('div', { class: 'card-head' }, el('span', { class: 't' }, `Piste ${t.id}`, t.name ? el('b', {}, ' · ' + t.name) : null)),
+    el('dl', { class: 'props' }, el('dt', {}, t.kind === 'fx' ? 'calques' : 'plans'), el('dd', {}, String(n)), g ? el('dt', {}, 'groupe') : null, g ? el('dd', {}, g.name) : null),
+    el('div', { class: 'row' }, el('button', { class: 'tb ghost sm', onclick: () => renameTrack(t.id) }, 'Renommer'),
+      g ? el('button', { class: 'tb ghost sm', onclick: () => leaveGroup(t.id) }, 'Sortir du groupe') : null))];
+  if (t.kind === 'video') cards.push(fxCard(ownerOf('t:' + t.id), t.lock));
+  return cards;
+}
+
+// sortir une piste de son groupe : elle se pose juste sous lui (un groupe d'une seule piste se défait)
+function leaveGroup(tid) {
+  const t = M.trackOf(S.p, tid);
+  if (!t || !t.grp) return;
+  const members = S.p.tracks.filter((x) => x.grp === t.grp && x.id !== tid);
+  const last = members[members.length - 1];
+  let map = null;
+  commit('sortir du groupe', (p) => {
+    const tt = M.trackOf(p, tid);
+    const g = tt.grp;
+    delete tt.grp;
+    const rest = p.tracks.filter((x) => x.id !== tid);
+    rest.splice(rest.findIndex((x) => x.id === last.id) + 1, 0, tt);
+    p.tracks = rest;
+    map = M.renumber(p);
+    if (!p.tracks.some((x) => x.grp === g)) M.ungroup(p, g);
+    remapTargets(map);
+  });
+  if (map) { remapHeights(map); S.selTrack = map[tid] || null; paintInspector(); timeline.render(); }
+}
+
+async function renameClip(id) {
+  const c = M.byId(S.p, id);
+  if (!c) return;
+  const v = await askName(c.kind === 'adjust' ? 'Renommer le calque' : 'Renommer le plan', c.title || '', 'Renommer', { placeholder: 'son nom dans cette séquence', max: 200 });
+  if (v) commit('renommer', (p) => { M.byId(p, id).title = v; });
 }
 
 function clipCards(c, f) {
@@ -1039,10 +1517,10 @@ function clipCards(c, f) {
   if (c.kind !== 'image') props.push(['entrée source', M.short(c.in || 0) + (c.src_dur ? ` / ${M.short(c.src_dur)}` : ''), ''], ['vitesse', M.pct(sp), '']);
   const head = el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Plan · ', el('b', {}, c.title || it.title || c.item)),
-      el('span', { class: 'snapper', title: 'un plan désactivé ne se voit, ne s’entend ni ne s’exporte · maj+E' }, 'actif',
+      el('span', { class: 'snapper', title: 'maj+E' }, 'actif',
         el('button', { class: 'sw' + (M.isOn(c) ? ' on' : ''), disabled: locked || null, 'aria-pressed': String(M.isOn(c)), onclick: () => toggleEnabled([c.id]) }, el('i')))),
     el('dl', { class: 'props' }, ...props.flatMap(([k, v, cls]) => [el('dt', {}, k), el('dd', { class: cls }, v)])));
-  if (it.missing) head.append(el('p', { class: 'warn' }, 'objet introuvable dans la bibliothèque (à la corbeille ?) : l’export le refusera'));
+  if (it.missing) head.append(el('p', { class: 'warn' }, 'introuvable dans la bibliothèque : l’export le refusera'));
   if (c.kind === 'image') {
     const inp = el('input', { class: 'fld nfld', type: 'number', min: 0.04, step: 0.5, value: (c.dur / f).toFixed(2), disabled: locked || null });
     const next = M.trackClips(S.p, c.track).find((x) => x.start >= M.clipEnd(c) && x.id !== c.id);
@@ -1052,53 +1530,20 @@ function clipCards(c, f) {
       commit('durée de l’image', (p) => { const x = M.byId(p, c.id); x.dur = d; x.fade_in = Math.min(x.fade_in, d); x.fade_out = Math.min(x.fade_out, d); });
     });
     head.append(el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'durée de l’image (s)'), el('span', { class: 'sp' }), inp));
-    if (next) head.append(el('p', { class: 'why' }, `au plus ${M.short((next.start - c.start) / f)} : le plan suivant commence là`));
   }
   const acts = el('div', { class: 'row' },
     el('button', { class: 'tb ghost sm', onclick: () => openClipInSource(c.id), disabled: it.missing || null }, 'Dans la source'));
   if (c.kind !== 'image') acts.append(el('button', { class: 'tb ghost sm', disabled: locked || null, title: 'ctrl+R', onclick: () => speedModal(c.id) }, 'Vitesse…'));
   if (c.kind === 'video' && track.kind === 'video') {
-    acts.append(c.audio ? el('button', { class: 'tb ghost sm', disabled: locked || null, title: `mettre le son sur ${S.target.audio} pour le déplacer à part · ctrl+L`, onclick: () => detachSound(c.id) }, 'Dissocier le son')
+    acts.append(c.audio ? el('button', { class: 'tb ghost sm', disabled: locked || null, title: 'ctrl+L', onclick: () => detachSound(c.id) }, 'Dissocier le son')
       : el('span', { class: 'lbl' }, it.audio ? 'son dissocié' : 'vidéo sans son'));
   }
   head.append(acts);
   cards.push(head);
 
-  // transitions
-  const prev = prevClip(S.p, c);
-  const mode = c.xfade > 0 && prev ? 'x' : c.fade_in > 0 ? 'f' : 'c';
-  const isV1 = track.kind === 'video' && track.id === 'V1';
-  const fadeName = track.kind === 'audio' ? 'fondu (du silence)' : isV1 ? 'fondu au noir' : 'fondu (transparence)';
-  const maxT = Math.max(2, Math.min(c.dur, 5 * f));
-  const trans = el('div', { class: 'card' }, el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Transitions')));
-  const opt = (id, label, why) => el('button', { class: 'opt' + (mode === id ? ' on' : ''), disabled: (locked || why) ? true : null, title: why || '', onclick: () => {
-    commit(label, (p) => {
-      const x = M.byId(p, c.id), pv = prev ? M.byId(p, prev.id) : null;
-      const n = Math.max(2, Math.min(f, x.dur, pv ? pv.dur : Infinity));
-      if (id === 'c') { x.xfade = 0; x.fade_in = 0; if (pv && pv.fade_out && mode === 'f') pv.fade_out = 0; }
-      if (id === 'x') { x.xfade = n; x.fade_in = 0; if (pv) pv.fade_out = 0; }
-      if (id === 'f') { x.xfade = 0; x.fade_in = Math.min(x.dur, Math.round(f / 2)); if (pv) pv.fade_out = Math.min(pv.dur, Math.round(f / 2)); }
-    });
-  } }, label);
-  trans.append(el('span', { class: 'lbl' }, 'à l’entrée'),
-    el('div', { class: 'opts tight' }, opt('c', 'coupe franche'), opt('x', 'fondu enchaîné', prev ? '' : 'il faut un plan collé juste avant, sur la même piste'), opt('f', fadeName)));
-  if (mode === 'x') {
-    const lim = Math.max(2, Math.min(c.dur, prev.dur));
-    trans.append(slider({ label: 'durée', min: 2, max: lim, step: 1, value: Math.min(c.xfade, lim), fmt: (v) => M.short(v / f), disabled: locked,
-      apply: set((x, v) => { x.xfade = v; }), title: 'centré sur la coupe : prend la matière au-delà des points d’entrée/sortie, ou fige l’image s’il n’y en a pas' }));
-    trans.append(el('p', { class: 'note' }, 'centré sur la coupe ; sans matière au-delà des bords, l’image se fige le temps du fondu.'));
-  }
-  if (mode === 'f') {
-    trans.append(slider({ label: 'durée', min: 1, max: maxT, step: 1, value: Math.min(c.fade_in, maxT), fmt: (v) => M.short(v / f), disabled: locked,
-      apply: set((x, v) => { x.fade_in = v; if (prev) { const pv = M.byId(S.p, prev.id); if (pv) pv.fade_out = Math.min(pv.dur, v); } }) }));
-    if (prev) trans.append(el('p', { class: 'note' }, 'le plan d’avant descend au noir sur la même durée.'));
-  }
-  const nextTouch = M.trackClips(S.p, c.track).find((x) => x.start === M.clipEnd(c) && x.xfade > 0);
-  trans.append(el('span', { class: 'lbl' }, 'à la sortie'),
-    nextTouch ? el('p', { class: 'note' }, 'fondu enchaîné avec le plan suivant (réglé sur celui-ci)')
-      : slider({ label: 'fondu', title: `${fadeName.replace('fondu', 'fondu de sortie')} ; 0 = coupe franche`, min: 0, max: maxT, step: 1, value: Math.min(c.fade_out || 0, maxT), fmt: (v) => (v ? M.short(v / f) : 'coupe'), disabled: locked,
-        apply: set((x, v) => { x.fade_out = v; }) }));
-  cards.push(trans);
+  // les effets (une piste vidéo), puis les fondus
+  if (track.kind === 'video') cards.push(fxCard(ownerOf('c:' + c.id), locked));
+  cards.push(fadeCard(c, track, locked));
 
   // le son
   const sound = track.kind === 'audio' || (c.kind === 'video' && c.audio);
@@ -1106,141 +1551,15 @@ function clipCards(c, f) {
     const snd = el('div', { class: 'card' }, el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Son')));
     if (sound) {
       snd.append(slider({ label: 'volume', min: 0, max: 2, step: 0.01, value: c.vol ?? 1, fmt: (v) => `${Math.round(v * 100)} %`, color: 'var(--grn2)', disabled: locked,
-        title: '0 à 200 % ; au-delà de 100 %, gare à la saturation', apply: set((x, v) => { x.vol = v; }) }),
+        apply: set((x, v) => { x.vol = v; }) }),
       el('div', { class: 'row' }, el('span', { class: 'lbl' }, dB(c.vol ?? 1)), el('span', { class: 'sp' }),
         el('button', { class: 'tb ghost sm', disabled: locked || null, onclick: () => commit('volume à 100 %', (p) => { M.byId(p, c.id).vol = 1; }) }, '100 %')));
-      if (!M.audibleTracks(S.p).has(track.id)) snd.append(el('p', { class: 'why' }, `la piste ${track.id} ne s’entend pas (muette, ou un autre solo)`));
-    } else snd.append(el('p', { class: 'note' }, it.audio ? `son dissocié : il est sur une piste son` : 'cette vidéo n’a pas de son'));
+      if (!M.audibleTracks(S.p).has(track.id)) snd.append(el('p', { class: 'why' }, `${track.id} ne s’entend pas (muette ou solo)`));
+    } else snd.append(el('p', { class: 'lbl' }, it.audio ? 'son dissocié' : 'sans son'));
     cards.push(snd);
   }
 
-  // l'étalonnage et la LUT
-  if (track.kind === 'video') {
-    const g = c.grade || { ...M.NEUTRAL };
-    const gs = (k) => set((x, v) => { x.grade = { ...(x.grade || M.NEUTRAL), [k]: v }; });
-    const neutral = !g.exposure && !g.contrast && !g.saturation && (g.temperature || 6500) === 6500;
-    cards.push(el('div', { class: 'card grade' },
-      el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Étalonnage'),
-        el('button', { class: 'lnk', disabled: (neutral || locked) ? true : null, onclick: () => commit('réinitialiser l’étalonnage', (p) => { M.byId(p, c.id).grade = { ...M.NEUTRAL }; }) }, 'Réinit.')),
-      slider({ label: 'exposition', min: -2, max: 2, step: 0.05, value: g.exposure || 0, fmt: (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)} IL`, disabled: locked, apply: gs('exposure'), title: 'ffmpeg exposure (IL) · aperçu brightness()' }),
-      slider({ label: 'contraste', min: -100, max: 100, step: 1, value: g.contrast || 0, fmt: (v) => `${v > 0 ? '+' : ''}${v}`, disabled: locked, apply: gs('contrast'), title: 'ffmpeg eq contrast · aperçu contrast()' }),
-      slider({ label: 'saturation', min: -100, max: 100, step: 1, value: g.saturation || 0, fmt: (v) => `${v > 0 ? '+' : ''}${v}`, color: 'var(--or)', disabled: locked, apply: gs('saturation'), title: 'ffmpeg eq saturation · aperçu saturate()' }),
-      slider({ label: 'température', min: 2000, max: 12000, step: 100, value: g.temperature || 6500, fmt: (v) => `${v} K`, cls: 'temp', disabled: locked, apply: gs('temperature'),
-        title: 'ffmpeg colortemperature : bas = chaud (orangé), haut = froid (bleuté) ; 6500 K = neutre' }),
-      el('p', { class: 'note' }, 'l’aperçu reprend les filtres de l’export, mesurés ; l’export fait foi.')));
-    cards.push(lutCard(c, locked));
-  }
   return cards;
-}
-
-// La LUT d'un plan : l'étagère (une vignette par LUT, sur l'image courante du plan), l'intensité.
-function lutCard(c, locked) {
-  const cur = c.lut && c.lut.id ? lutMeta(c.lut.id) : null;
-  const card = el('div', { class: 'card lutc' },
-    el('div', { class: 'card-head' }, el('span', { class: 't' }, 'LUT · ', el('b', {}, cur ? cur.title : c.lut ? '(introuvable)' : 'aucune')),
-      el('button', { class: 'lnk', disabled: (!c.lut || locked) ? true : null, onclick: () => setLut([c.id], null) }, 'Retirer')));
-  if (c.lut && !cur && S.luts.length) card.append(el('p', { class: 'warn' }, 'cette LUT n’est plus dans la bibliothèque (supprimée ?) : l’export la refusera'));
-  if (cur && cur.input !== 'rec709') card.append(el('p', { class: 'why' }, `faite pour du ${cur.input_label} : sur une image Rec.709, le rendu sera faux`));
-  // l'étagère : chercher, les favoris, puis les familles repliables (l'état par visiteur)
-  const shelf = el('div', { class: 'shelf', 'data-clip': c.id });
-  const tile = (m) => el('button', { class: 'lt' + (cur && cur.id === m.id ? ' on' : ''), 'data-lut': m.id, disabled: locked || null,
-    title: `${m.title} · ${m.family} · ${m.kind.toUpperCase()} ${m.size}${m.resampled_from ? ` (de ${m.resampled_from})` : ''} · attend ${m.input_label}${m.note ? '\n' + m.note : ''}\nclic : poser sur ce plan · clic droit : favori, renommer, supprimer`,
-    onclick: () => setLut([c.id], m.id) }, el('canvas', { width: 96, height: 54 }), el('span', {}, m.title),
-  m.input !== 'rec709' ? el('i', { class: 'in' }, m.input === 'inconnu' ? '?' : m.input) : null, m.fav ? el('i', { class: 'star', title: 'favori' }, '★') : null);
-  const tiles = (list) => el('div', { class: 'tiles' }, ...list.map(tile));
-  const open = LS('montage-lut-open') || { '★': true };
-  if (cur) open[cur.family] = open[cur.family] ?? true;
-  const group = (key, label, list, cap = 400) => {
-    const on = !!open[key];
-    const head = el('button', { class: 'lg' + (on ? ' open' : ''), title: on ? 'replier' : 'déplier',
-      onclick: () => { open[key] = !on; LS('montage-lut-open', open); paintInspector(); } },
-    el('i', { class: 'chev' }), el('span', {}, label), el('small', { class: 'num' }, String(list.length)));
-    return el('div', { class: 'lgrp' }, head, on ? tiles(list.slice(0, cap)) : null, on && list.length > cap ? el('p', { class: 'note' }, `${list.length - cap} de plus : cherchez`) : null);
-  };
-  const q = el('input', { class: 'fld lq', placeholder: `chercher parmi ${S.luts.length} LUT (Portra, ETERNA, N&B…)`, value: S.lutQ || '', 'aria-label': 'chercher une LUT' });
-  q.addEventListener('input', () => { S.lutQ = q.value; clearTimeout(S.lutQT); S.lutQT = setTimeout(() => { paintInspector(); const n = $('#insp .lq'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }, 200); });
-  q.addEventListener('keydown', (e) => { if (e.key === 'Escape' && q.value) { e.stopPropagation(); S.lutQ = ''; paintInspector(); } });
-  if (S.luts.length > 8) shelf.append(q);
-  if (S.lutQ && S.lutQ.trim()) {
-    const found = lutSearch(S.lutQ.trim());
-    shelf.append(el('span', { class: 'lbl' }, found.length ? `${found.length} trouvée${found.length > 1 ? 's' : ''}${found.length > 60 ? ' · les 60 premières' : ''}` : 'aucune LUT ne correspond'), tiles(found.slice(0, 60)));
-  } else if (S.luts.length > 12) {
-    const fav = lutFav();
-    if (fav.length) shelf.append(group('★', 'Favoris', fav));
-    for (const f of lutFamilies()) shelf.append(group(f.name, f.name, f.list));
-  } else shelf.append(tiles(S.luts));
-  if (!S.luts.length) shelf.append(el('p', { class: 'note' }, 'aucune LUT encore : importez un .cube ou une HaldCLUT.'));
-  card.append(shelf);
-  if (c.lut) {
-    card.append(slider({ label: 'intensité', min: 0, max: 100, step: 1, value: Math.round(c.lut.mix * 100), fmt: (v) => `${v} %`, disabled: locked,
-      title: 'mêle l’image et l’image passée par la LUT ; l’export lit la même LUT mêlée', apply: (v) => { const x = M.byId(S.p, c.id); if (x && x.lut) x.lut = { ...x.lut, mix: v / 100 }; } }));
-  }
-  card.append(el('div', { class: 'row' }, el('button', { class: 'tb ghost sm', onclick: () => importLutModal((m) => setLut([c.id], m.id)) }, 'Importer .cube…'),
-    el('span', { class: 'sp' }), el('span', { class: 'lbl', title: 'lut3d trilinéaire (lut1d linéaire) à l’export, le même calcul dans le shader WebGL2 de l’aperçu' }, 'aperçu = export')));
-  return card;
-}
-
-// Les vignettes de l'étagère : l'image courante du plan, passée par chaque
-// LUT (sa version 17³ de vignette). Seules les vignettes qui se voient se
-// dessinent (IntersectionObserver, MDN), et chacune est gardée tant que
-// l'image et l'étalonnage du plan ne changent pas.
-let thumbImg = null, shelfIO = null;
-const thumbCache = new Map();
-function paintShelf() {
-  const shelf = $('#insp .shelf');
-  if (!shelf) return;
-  const c = M.byId(S.p, shelf.dataset.clip);
-  if (!c) return;
-  const gl = lutGL();
-  if (!gl.ok) { shelf.title = gl.why; return; }
-  if (shelfIO) shelfIO.disconnect();
-  shelfIO = new IntersectionObserver((ents) => {
-    const seen = ents.filter((x) => x.isIntersecting).map((x) => x.target);
-    for (const t of seen) { t.dataset.vis = '1'; shelfIO.unobserve(t); }
-    if (seen.length) drawTiles(c, seen);
-  }, { root: $('#insp'), rootMargin: '120px' });
-  for (const t of shelf.querySelectorAll('.lt')) shelfIO.observe(t);
-}
-function drawTiles(c, list) {
-  const gl = lutGL();
-  const e = program.els.get(c.id);
-  let src = null;
-  if (e && e.tag === 'video' && e.el.readyState >= 2) src = e.el;
-  else if (e && e.tag === 'img' && e.el.complete && e.el.naturalWidth) src = e.el;
-  if (!src) {
-    const it = S.items.get(c.item);
-    const u = it && (c.kind === 'image' ? it.url : it.thumb_url);
-    if (!u) return;
-    if (!thumbImg || thumbImg.dataset.u !== u) {
-      thumbImg = new Image();
-      thumbImg.dataset.u = u;
-      thumbImg.onload = () => drawTiles(c, list);
-      thumbImg.src = href(u);
-      return;
-    }
-    if (!thumbImg.complete || !thumbImg.naturalWidth) return;
-    src = thumbImg;
-  }
-  const g = c.grade || {};
-  const temp = g.temperature && Math.abs(g.temperature - 6500) > 0.5 ? tempGains(g.temperature) : [1, 1, 1];
-  const srcKey = `${c.id}|${src === thumbImg ? src.dataset.u : (src.currentTime ?? src.src)}|${JSON.stringify(g)}`;
-  for (const t of list) {
-    if (!t.isConnected) continue;
-    const cv = t.querySelector('canvas');
-    const key = srcKey + '|' + t.dataset.lut;
-    const kept = thumbCache.get(key);
-    if (kept) { cv.getContext('2d').drawImage(kept, 0, 0); continue; }
-    const lut = getMini(t.dataset.lut, () => drawTiles(c, [t]));
-    if (!lut) continue;
-    if (gl.draw(src, cv.width, cv.height, { lut, mix: 1, grade: g, temp, srcKey })) {
-      cv.getContext('2d').drawImage(gl.cv, 0, 0);
-      const keep = document.createElement('canvas');
-      keep.width = cv.width; keep.height = cv.height;
-      keep.getContext('2d').drawImage(cv, 0, 0);
-      thumbCache.set(key, keep);
-      if (thumbCache.size > 600) thumbCache.delete(thumbCache.keys().next().value);
-    }
-  }
 }
 
 function projectCards(f) {
@@ -1261,13 +1580,12 @@ function projectCards(f) {
   cards.push(el('div', { class: 'card proj' },
     el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Séquence · ', el('b', {}, S.p.name))),
     el('dl', { class: 'props' }, el('dt', {}, 'durée'), el('dd', { class: 'tcv' }, M.tc(M.projectEnd(S.p), f)), el('dt', {}, 'plans'), el('dd', {}, String(S.p.clips.length)),
-      el('dt', {}, 'pistes'), el('dd', {}, `${S.p.tracks.filter((t) => t.kind === 'video').length} vidéo · ${S.p.tracks.filter((t) => t.kind === 'audio').length} son`),
+      el('dt', {}, 'pistes'), el('dd', {}, `${S.p.tracks.filter((t) => t.kind === 'video').length} vidéo · ${S.p.tracks.filter((t) => t.kind === 'audio').length} son${S.p.tracks.some((t) => t.kind === 'fx') ? ` · ${S.p.tracks.filter((t) => t.kind === 'fx').length} calque` : ''}`),
       el('dt', {}, 'sortie'), el('dd', {}, `${st.width}×${st.height} · ${st.fps} i/s · BT.709`)),
     el('span', { class: 'lbl' }, 'format'), fmtOpts,
     el('span', { class: 'lbl' }, 'cadence'), fpsOpts,
-    slider({ label: 'image fixe', min: 0.5, max: 20, step: 0.5, value: st.still, fmt: (v) => M.short(v), title: 'durée d’une image posée sur la timeline (réglable ensuite, plan par plan)',
-      apply: (v) => { S.p.settings.still = v; } }),
-    el('p', { class: 'note' }, 'changer de cadence recale chaque bord sur la nouvelle grille ; deux plans collés le restent.')));
+    slider({ label: 'image fixe', min: 0.5, max: 20, step: 0.5, value: st.still, fmt: (v) => M.short(v), title: 'durée d’une image posée',
+      apply: (v) => { S.p.settings.still = v; } })));
   // la séquence : entrée, sortie, marques
   const r = S.p.range || {};
   const seq = el('div', { class: 'card' }, el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Séquence'),
@@ -1278,20 +1596,19 @@ function projectCards(f) {
   if ((S.p.markers || []).length) {
     seq.append(el('div', { class: 'mlist' }, ...S.p.markers.slice(0, 40).map((m) => el('button', { class: 'mrow', title: 'aller à la marque · double-clic : la nommer',
       onclick: () => program.seekFrame(m.f), ondblclick: () => renameMarker(m.id) }, el('i'), el('span', { class: 'tcv' }, M.tc(m.f, f)), el('span', {}, m.name || 'marque')))));
-  } else seq.append(el('p', { class: 'note' }, 'I · O : entrée et sortie à la tête de lecture (l’export peut s’y borner) · M : une marque.'));
+  }
   cards.push(seq);
   // l'export
   const ex = el('div', { class: 'card' }, el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Exports'),
     el('span', { class: 'lbl' }, dur ? `${M.short(dur)} à rendre` : '')));
   if (S.exportJob) ex.append(exportMeter(S.exportJob));
-  if (!S.p.clips.length) ex.append(el('p', { class: 'why' }, 'rien à exporter : posez des plans sur la timeline'));
   const mine = S.exports;
   ex.append(mine.length ? el('div', { class: 'exports' }, ...mine.slice(0, 6).map((it) => el('div', { class: 'exp', title: it.title },
     el('span', { class: 'th', style: it.thumb_url ? { backgroundImage: `url("${href(it.thumb_url)}")` } : null }),
     el('div', { style: { minWidth: 0 } }, el('b', {}, it.title), el('small', {}, `${M.short(it.duration || 0)} · ${it.width}×${it.height} · ${fmtDate(it.created)}`)),
-    el('div', { class: 'row' }, el('button', { class: 'tb ghost sm', title: 'la regarder dans le moniteur source', onclick: () => openSource(it) }, 'Voir'),
-      el('a', { class: 'tb ghost sm', href: href(it.url), download: `${it.title}.mp4`, title: 'télécharger le MP4' }, '↓')))))
-    : el('p', { class: 'note' }, 'Les vidéos exportées vont dans la bibliothèque (Asset), avec leur lignée : les plans utilisés et ce montage.'));
+    el('div', { class: 'row' }, el('button', { class: 'tb ghost sm', onclick: () => openSource(it) }, 'Voir'),
+      el('a', { class: 'tb ghost sm', href: href(it.url), download: `${it.title}.mp4`, title: 'télécharger' }, '↓')))))
+    : el('p', { class: 'lbl' }, 'aucun export'));
   cards.push(ex);
   return cards;
 }
@@ -1316,8 +1633,8 @@ function exportModal() {
   const hear = M.audibleTracks(S.p);
   const deaf = S.p.tracks.filter((t) => !hear.has(t.id) && S.p.clips.some((c) => c.track === t.id && (t.kind === 'audio' || c.audio))).map((t) => t.id);
   const off = S.p.clips.filter((c) => !M.isOn(c)).length;
-  const missing = S.p.clips.filter((c) => M.isOn(c) && !itemOf(c.item));
-  const lutGone = S.p.clips.filter((c) => M.isOn(c) && c.lut && S.luts.length && !lutMeta(c.lut.id));
+  const missing = S.p.clips.filter((c) => M.isOn(c) && c.kind !== 'adjust' && !itemOf(c.item));
+  const lutGone = S.p.clips.filter((c) => M.isOn(c) && S.luts.length && M.chainOf(S.p, c).some((x) => x.type === 'lut' && !lutMeta(x.lut)));
   const q = el('div', { class: 'opts' });
   const paintQ = () => q.replaceChildren(
     el('button', { class: 'opt' + (!draft ? ' on' : ''), onclick: () => { draft = false; paintQ(); } }, 'finale', el('small', {}, 'x264 medium · crf 18')),
@@ -1343,9 +1660,7 @@ function exportModal() {
       el('dt', {}, 'fichier'), el('dd', {}, 'MP4 · H.264 BT.709 + AAC 48 kHz stéréo')),
     el('span', { class: 'lbl' }, 'étendue'), rg,
     el('span', { class: 'lbl' }, 'qualité'), q,
-    el('p', {}, 'L’export rend ce que vous voyez et entendez : ' + (hidden.length || deaf.length
-      ? `${hidden.length ? `piste${hidden.length > 1 ? 's' : ''} masquée${hidden.length > 1 ? 's' : ''} ${hidden.join(', ')}` : ''}${hidden.length && deaf.length ? ' et ' : ''}${deaf.length ? `${deaf.join(', ')} qu’on n’entend pas` : ''} n’y seront pas.`
-      : 'toutes les pistes y sont.')),
+    hidden.length || deaf.length ? el('p', { class: 'lbl' }, `sans ${[...hidden, ...deaf].join(', ')}`) : null,
     missing.length ? el('p', { class: 'warn' }, `${missing.length} plan(s) pointent vers un objet introuvable : l’export sera refusé`) : null,
     lutGone.length ? el('p', { class: 'warn' }, `${lutGone.length} plan(s) portent une LUT supprimée : l’export sera refusé`) : null);
   modal('Exporter', bodyNode, (close) => [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', onclick: close }, 'Annuler'),
@@ -1370,7 +1685,7 @@ async function watchExport(j) {
   paintExportPill();
   if (done.state === 'done') {
     const it = done.items && done.items[0];
-    toast(`export fini : ${done.result && done.result.note ? done.result.note : ''}`, 5000);
+    toast(`export fini${done.machine ? ` sur ${done.machine}` : ''} : ${done.result && done.result.note ? done.result.note : ''}`, 5000);
     if (it) { S.items.set(it.id, it); openSource(it); }
     loadBin();
   } else toast(`export ${stateFr(done.state)} : ${done.message || ''}`, 7000);
@@ -1451,7 +1766,7 @@ function toolCursors() {
 
 function paintTools() {
   $('#tools').replaceChildren(...TOOLS.map((t) => el('button', { class: 'ic tool' + (S.tool === t.id ? ' on' : ''), 'data-tool': t.id, 'aria-pressed': String(S.tool === t.id),
-    title: `${t.fr} (${t.en}) · ${t.key}\n${t.what}`, html: svg(t.d), onclick: () => setTool(t.id) })));
+    title: `${t.fr} (${t.en}) · ${t.key}`, html: svg(t.d), onclick: () => setTool(t.id) })));
 }
 
 function setTool(t) {
@@ -1459,8 +1774,6 @@ function setTool(t) {
   S.tool = t;
   paintTools();
   timeline.root.dataset.tool = t;
-  const d = TOOLS.find((x) => x.id === t);
-  toast(`${d.fr} · ${d.key} — ${d.what}`, 1800);
 }
 
 // ── la barre ────────────────────────────────────────────────
@@ -1473,10 +1786,10 @@ function paintBar() {
   const hasSel = S.sel.size > 0;
   $('#b-del').disabled = !hasSel && !S.gap;
   $('#b-ripple').disabled = !hasSel && !S.gap;
-  $('#b-del').title = hasSel || S.gap ? 'effacer · Suppr' : 'choisissez d’abord un plan (ou un vide)';
+  $('#b-del').title = hasSel || S.gap ? 'Suppr' : 'rien de choisi';
   const exp = $('#b-export');
   exp.disabled = !S.p.clips.length;
-  exp.title = S.p.clips.length ? 'rendre le montage en MP4 (H.264 + AAC) dans la bibliothèque · ctrl+M' : 'rien à exporter : posez des plans sur la timeline';
+  exp.title = S.p.clips.length ? 'MP4 dans la bibliothèque · ctrl+M' : 'rien à exporter';
   $('#prg-empty').hidden = !!S.p.clips.length;
   const sw = $('#b-snap');
   sw.classList.toggle('on', S.snap);
@@ -1513,6 +1826,16 @@ function helpModal() {
     ['F', 'concordance des images : le plan sous la tête, dans la source à la même image'],
     ['S · = · − · \\', 'aimant · zoomer · dézoomer · tout le montage'],
     ['glisser + ctrl', 'insérer (pousse la suite) au lieu d’écraser'],
+    ['LA MOLETTE (TOUTES LES TIMELINES)', ''],
+    ...MOLETTE,
+    ['EFFETS', ''],
+    ['glisser un effet', 'sur un plan · sur l’en-tête d’une piste ou d’un groupe · sur la règle : un calque d’effet'],
+    ['maj + lâcher une LUT', 'l’ajouter au lieu de remplacer celle du plan'],
+    ['ctrl + C · ctrl + V', 'dans la liste d’effets : copier, coller'],
+    ['ctrl + alt + V', 'coller les effets sur les plans choisis'],
+    ['PISTES', ''],
+    ['glisser un en-tête', 'entre deux pistes : la déplacer · sur une piste : un groupe'],
+    ['coin haut d’un plan', 'poignée de fondu'],
     ['PROJET (ASSET)', ''],
     ['un objet sur un autre', 'un dossier neuf pour les deux (son nom est demandé) — les dossiers sont ceux d’Asset'],
     ['cadre sur le fond', 'choisir plusieurs objets (maj : ajouter) ; les glisser sur l’icône dossier : un dossier neuf'],
@@ -1532,30 +1855,31 @@ const K = { cut: 'Ctrl+K', cutAll: 'Ctrl+Maj+K', del: 'Suppr', ripple: 'Maj+Supp
   lift: ';', extract: '\'', newBin: 'Ctrl+B', importK: 'Ctrl+I', rename: 'F2', insert: ',', over: '.', selAll: 'Ctrl+A' };
 const noProject = { disabled: true, why: 'ouvrez d’abord un montage' };
 
-function lutItems(ids) {
-  const cur = ids.length === 1 ? M.byId(S.p, ids[0]).lut : null;
-  const entry = (m) => ({ label: m.title, sub: m.input === 'rec709' ? '' : m.input, checked: !!cur && cur.id === m.id, onclick: () => setLut(ids, m.id) });
-  const many = S.luts.length > 12;
-  const fav = lutFav();
+// Les effets d'une liste, dans un menu : les activer ou les retirer, coller, tout retirer.
+function fxItems(owner, locked) {
+  const list = owner.list(S.p) || [];
+  const lk = locked ? { disabled: true, why: 'piste verrouillée' } : {};
   return [
-    { label: 'Aucune', checked: !cur, onclick: () => setLut(ids, null) },
-    ...(S.luts.length ? ['-'] : []),
-    ...(many ? [...(fav.length ? [{ head: 'Favoris' }, ...fav.map(entry), '-'] : []),
-      ...lutFamilies().map((f) => ({ label: f.name, sub: String(f.list.length), items: f.list.map(entry) }))] : S.luts.map(entry)),
-    '-',
-    many ? { label: 'Chercher sur l’étagère…', onclick: () => { if (ids.length === 1) select(new Set(ids)); setTimeout(() => { const n = $('#insp .lq'); if (n) { n.scrollIntoView({ block: 'center' }); n.focus(); } }, 60); } } : null,
-    { label: 'Importer une LUT…', icon: '+', onclick: () => importLutModal((m) => setLut(ids, m.id)) },
+    ...list.map((f) => ({ label: fxName(f), checked: f.on !== false, ...lk, onclick: () => editFx(owner, 'activer un effet', (l) => { const x = l.find((y) => y.id === f.id); if (x) x.on = x.on === false; }) })),
+    list.length ? '-' : null,
+    { label: 'Copier les effets', disabled: !list.length, why: 'aucun effet', onclick: () => copyFx(owner) },
+    { label: 'Coller les effets', key: 'Ctrl+Alt+V', ...(!(S.fxClip && S.fxClip.length) ? { disabled: true, why: 'aucun effet copié' } : lk), onclick: () => pasteFx(owner.key.startsWith('c:') && S.sel.size > 1 ? [...S.sel].map((x) => 'c:' + x) : [owner.key]) },
+    { label: 'Retirer tous les effets', danger: true, ...(!list.length ? { disabled: true, why: 'aucun effet' } : lk), onclick: () => editFx(owner, 'retirer les effets', (l) => l.splice(0, l.length)) },
   ];
 }
 
 function trackMenu(tid) {
   const t = M.trackOf(S.p, tid);
   if (!t) return null;
-  const kindFr = t.kind === 'video' ? 'vidéo' : 'son';
-  const other = t.kind === 'video' ? 'audio' : 'video';
+  const kindFr = t.kind === 'video' ? 'vidéo' : t.kind === 'fx' ? 'de calques' : 'son';
+  const other = t.kind === 'audio' ? 'video' : 'audio';
   const nClips = S.p.clips.filter((c) => c.track === tid).length;
-  const last = S.p.tracks.filter((x) => x.kind === t.kind).length <= 1;
+  const last = t.kind !== 'fx' && S.p.tracks.filter((x) => x.kind === t.kind).length <= 1;
   const full = S.p.tracks.filter((x) => x.kind === t.kind).length >= M.MAX_TRACKS;
+  const g = t.grp ? M.groupOf(S.p, t.grp) : null;
+  const same = S.p.tracks.filter((x) => x.id !== tid && M.family(x.kind) === M.family(t.kind));
+  const i = S.p.tracks.findIndex((x) => x.id === tid);
+  const up = S.p.tracks[i - 1], down = S.p.tracks[i + 1];
   return [
     { head: `Piste ${tid}${t.name ? ' · ' + t.name : ''}` },
     { label: `Ajouter une piste ${kindFr} au-dessus`, icon: '+', disabled: full, why: `${M.MAX_TRACKS} pistes au plus`, onclick: () => addTrack(t.kind, tid, 'above') },
@@ -1563,16 +1887,36 @@ function trackMenu(tid) {
     { label: `Ajouter une piste ${other === 'video' ? 'vidéo (en haut)' : 'son (en bas)'}`, icon: '+', onclick: () => addTrack(other, null, other === 'video' ? 'above' : 'below') },
     '-',
     { label: 'Renommer la piste…', onclick: () => renameTrack(tid) },
-    { label: 'En faire la piste cible', checked: S.target[t.kind] === tid, onclick: () => { S.target[t.kind] = tid; timeline.render(); } },
+    t.kind !== 'fx' ? { label: 'En faire la piste cible', checked: S.target[t.kind] === tid, onclick: () => { S.target[t.kind] = tid; timeline.render(); } } : null,
     { label: 'Choisir tous ses plans', disabled: !nClips, why: 'la piste est vide', onclick: () => select(new Set(S.p.clips.filter((c) => c.track === tid).map((c) => c.id))) },
-    t.kind === 'video' ? { label: 'Appliquer une LUT à tous ses plans', disabled: !nClips || t.lock, why: t.lock ? 'la piste est verrouillée' : 'la piste est vide', items: lutItems(S.p.clips.filter((c) => c.track === tid).map((c) => c.id)) } : null,
+    t.kind === 'video' ? { label: 'Effets de la piste', items: fxItems(ownerOf('t:' + tid), t.lock) } : null,
+    '-',
+    { label: 'Monter', disabled: !up || M.family(up.kind) !== M.family(t.kind), why: 'déjà en haut', onclick: () => moveTracks([tid], up.id, 'avant') },
+    { label: 'Descendre', disabled: !down || M.family(down.kind) !== M.family(t.kind), why: 'déjà en bas', onclick: () => moveTracks([tid], down.id, 'apres') },
+    g ? { label: `Sortir du groupe « ${g.name} »`, onclick: () => leaveGroup(tid) }
+      : { label: 'Grouper avec…', disabled: !same.length, why: 'aucune autre piste de cette famille', items: same.map((x) => ({ label: `${x.id}${x.name ? ' · ' + x.name : ''}`, onclick: () => groupTracks([tid], x.id) })) },
     '-',
     { label: 'Verrouiller', checked: t.lock, onclick: () => timeline.app.toggleTrack(tid, 'lock', 'verrouiller une piste') },
-    t.kind === 'video' ? { label: 'Masquer (ni vue, ni exportée)', checked: t.hide, onclick: () => timeline.app.toggleTrack(tid, 'hide', 'masquer une piste') } : null,
-    { label: 'Muette', checked: t.mute, onclick: () => timeline.app.toggleTrack(tid, 'mute', 'couper une piste') },
-    { label: 'Solo', checked: t.solo, onclick: () => timeline.app.toggleTrack(tid, 'solo', 'solo') },
+    t.kind !== 'audio' ? { label: t.kind === 'fx' ? 'Couper les calques' : 'Masquer', checked: t.hide, onclick: () => timeline.app.toggleTrack(tid, 'hide', 'masquer une piste') } : null,
+    t.kind !== 'fx' ? { label: 'Muette', checked: t.mute, onclick: () => timeline.app.toggleTrack(tid, 'mute', 'couper une piste') } : null,
+    t.kind !== 'fx' ? { label: 'Solo', checked: t.solo, onclick: () => timeline.app.toggleTrack(tid, 'solo', 'solo') } : null,
     '-',
     { label: 'Supprimer la piste', danger: true, disabled: last, why: `il faut au moins une piste ${kindFr}`, sub: nClips ? `${nClips} plan${nClips > 1 ? 's' : ''}` : '', onclick: () => deleteTrack(tid) },
+  ];
+}
+
+function groupMenu(gid) {
+  const g = M.groupOf(S.p, gid);
+  if (!g) return null;
+  const members = S.p.tracks.filter((t) => t.grp === gid);
+  const img = members.some((t) => t.kind !== 'audio');
+  return [
+    { head: `Groupe · ${g.name}` },
+    { label: 'Renommer…', sub: 'double-clic', onclick: () => renameGroup(gid) },
+    { label: 'Choisir ses plans', onclick: () => select(new Set(S.p.clips.filter((c) => members.some((t) => t.id === c.track)).map((c) => c.id))) },
+    img ? { label: 'Effets du groupe', items: fxItems(ownerOf('g:' + gid), false) } : null,
+    '-',
+    { label: 'Défaire le groupe', sub: 'les pistes restent', onclick: () => ungroupTracks(gid) },
   ];
 }
 
@@ -1599,17 +1943,22 @@ function clipMenu(id, f) {
     { label: 'Effacer', key: K.del, ...lk, onclick: () => del(false) },
     { label: 'Supprimer et raccorder', key: K.ripple, ...lk, onclick: () => del(true) },
     '-',
-    { label: 'Vitesse/Durée…', key: K.speed, ...(c.kind === 'image' ? { disabled: true, why: 'une image fixe n’a pas de vitesse : réglez sa durée dans l’inspecteur' } : lk), onclick: () => speedModal(id) },
-    t.kind === 'video' ? { label: 'LUT', items: lutItems(ids), ...lk } : null,
+    { label: 'Vitesse/Durée…', key: K.speed, ...(M.still(c) ? { disabled: true, why: 'pas de vitesse : étirez-le' } : lk), onclick: () => speedModal(id) },
+    t.kind === 'video' || c.kind === 'adjust' ? { label: 'Effets', items: fxItems(ownerOf('c:' + id), t.lock) } : null,
     { label: 'Activer', key: K.enable, checked: M.isOn(c), ...lk, onclick: () => toggleEnabled(ids) },
-    t.kind === 'video' ? { label: 'Fondu enchaîné à l’entrée', key: K.xfade, ...(!prevClip(S.p, c) ? { disabled: true, why: 'il faut un plan collé juste avant, sur la même piste' } : lk), onclick: () => dissolve(id) } : null,
-    c.kind === 'video' && t.kind === 'video' ? { label: 'Dissocier le son', key: K.unlink, ...(!c.audio ? { disabled: true, why: it.audio ? 'déjà dissocié' : 'cette vidéo n’a pas de son' } : lk), onclick: () => detachSound(id) } : null,
+    t.kind === 'video' ? { label: 'Fondu enchaîné à l’entrée', key: K.xfade, ...(!prevClip(S.p, c) ? { disabled: true, why: 'pas de plan collé avant' } : lk), onclick: () => dissolve(id) } : null,
+    { label: 'Fondus', items: [
+      { label: 'Fondu d’entrée (1 s)', ...lk, onclick: () => dropFade(id, 'l', false) },
+      { label: 'Fondu de sortie (1 s)', ...lk, onclick: () => dropFade(id, 'r', false) },
+      { label: 'Sans fondu', ...lk, onclick: () => commit('sans fondu', (p) => { const x = M.byId(p, id); x.fade_in = 0; x.fade_out = 0; }) },
+    ] },
+    c.kind === 'video' && t.kind === 'video' ? { label: 'Dissocier le son', key: K.unlink, ...(!c.audio ? { disabled: true, why: it.audio ? 'déjà dissocié' : 'sans son' } : lk), onclick: () => detachSound(id) } : null,
     '-',
-    { label: 'Ouvrir dans le moniteur source', sub: 'double-clic', disabled: !!it.missing, why: 'objet introuvable', onclick: () => openClipInSource(id) },
-    { label: 'Concordance des images', key: K.match, ...(!inPh ? { disabled: true, why: 'placez la tête de lecture dans ce plan' } : {}), onclick: matchFrame },
-    { label: 'Renommer le plan…', onclick: async () => { const v = await askName('Renommer le plan', c.title || '', 'Renommer', { placeholder: 'le nom du plan dans ce montage', max: 200 }); if (v) commit('renommer le plan', (p) => { M.byId(p, id).title = v; }); } },
-    { label: 'Révéler dans le chutier', onclick: () => revealInBin(c.item) },
-    { label: 'Révéler dans Asset', sub: '↗', onclick: () => revealInAsset(c.item) },
+    c.kind !== 'adjust' ? { label: 'Ouvrir dans le moniteur source', sub: 'double-clic', disabled: !!it.missing, why: 'introuvable', onclick: () => openClipInSource(id) } : null,
+    c.kind !== 'adjust' ? { label: 'Concordance des images', key: K.match, ...(!inPh ? { disabled: true, why: 'la tête de lecture n’est pas dans ce plan' } : {}), onclick: matchFrame } : null,
+    { label: c.kind === 'adjust' ? 'Renommer le calque…' : 'Renommer le plan…', onclick: () => renameClip(id) },
+    c.kind !== 'adjust' ? { label: 'Révéler dans le chutier', onclick: () => revealInBin(c.item) } : null,
+    c.kind !== 'adjust' ? { label: 'Révéler dans Asset', sub: '↗', onclick: () => revealInAsset(c.item) } : null,
   ];
 }
 
@@ -1691,6 +2040,8 @@ function timelineMenu(e) {
   const mk = e.target.closest('.tl-m');
   if (mk) return markerMenu(mk.dataset.marker);
   if (e.target.closest('.tl-ruler')) return rulerMenu(f);
+  const gr = e.target.closest('.tl-grp');
+  if (gr) return groupMenu(gr.dataset.grp);
   const hd = e.target.closest('.tl-lanes .tl-hd');
   if (hd) return trackMenu(hd.dataset.head);
   const clip = e.target.closest('.clip');
@@ -1700,19 +2051,21 @@ function timelineMenu(e) {
   return null;
 }
 
-// l'étagère de LUT (inspecteur) : renommer, dire l'image attendue, supprimer
-function inspMenu(e) {
-  const t = e.target.closest('.lt');
-  if (!t) return null;
+// une LUT du panneau Effets : poser, favori, renommer, dire l'image attendue, supprimer
+function fxPaneMenu(e) {
+  const t = e.target.closest('.fxi.lut');
+  if (!t) return [{ head: 'Effets' }, { label: 'Importer une LUT…', icon: '+', onclick: () => importLutModal() }];
   const m = lutMeta(t.dataset.lut);
   if (!m) return null;
   const edit = async (patch) => {
     try { await api(`montage/luts/${m.id}`, { method: 'POST', body: patch }); await loadLuts(); }
-    catch (er) { toast(er.status === 403 ? 'cette LUT est à quelqu’un d’autre : seul son auteur (ou Cal) la change' : er.message); }
+    catch (er) { toast(er.status === 403 ? 'LUT d’un autre : seul son auteur (ou Cal) la change' : er.message); }
   };
-  const users = S.p ? S.p.clips.filter((c) => c.lut && c.lut.id === m.id).length : 0;
+  const users = S.p ? S.p.clips.filter((c) => M.chainOf(S.p, c).some((x) => x.type === 'lut' && x.lut === m.id)).length : 0;
   return [
     { head: `LUT · ${m.title}` },
+    { label: 'Poser sur ce qui est choisi', sub: 'double-clic', onclick: () => applyToSelection({ type: 'lut', lut: m.id, title: m.title }) },
+    '-',
     { label: 'Favori', checked: m.fav > 0, sub: m.fav ? `n° ${m.fav}` : '', onclick: () => edit({ fav: !(m.fav > 0) }) },
     { label: 'Renommer…', onclick: async () => { const v = await askName('Renommer la LUT', m.title, 'Renommer', { placeholder: 'le nom de la LUT', max: 80 }); if (v) edit({ title: v }); } },
     { label: 'Changer de famille…', sub: m.family, onclick: async () => { const v = await askName('Famille de la LUT', m.family, 'Ranger', { placeholder: 'la famille sur l’étagère', max: 60 }); if (v) edit({ family: v }); } },
@@ -1720,7 +2073,7 @@ function inspMenu(e) {
     { label: `${m.kind.toUpperCase()} ${m.size}${m.source ? ' · ' + m.source : ''}`, disabled: true, why: 'la taille de la grille et le fichier d’origine' },
     '-',
     { label: 'Supprimer de la bibliothèque', danger: true, sub: users ? `${users} plan${users > 1 ? 's' : ''} ici` : '', onclick: async () => {
-      if (!(await confirmBox('Supprimer la LUT', `« ${m.title} » part à la corbeille des LUT${users ? ` ; ${users} plan${users > 1 ? 's' : ''} de ce montage la ${users > 1 ? 'portent' : 'porte'} encore : l’export les refusera tant qu’ils la gardent` : ''}.`, 'Supprimer'))) return;
+      if (!(await confirmBox('Supprimer la LUT', `« ${m.title} » part à la corbeille des LUT${users ? ` ; ${users} plan${users > 1 ? 's' : ''} la ${users > 1 ? 'portent' : 'porte'} encore` : ''}.`, 'Supprimer'))) return;
       try { await api(`montage/luts/${m.id}/delete`, { method: 'POST' }); await loadLuts(); paintInspector(); } catch (er) { toast(er.message); }
     } },
   ];
@@ -1730,8 +2083,9 @@ function sourceMenu() {
   const it = source.item;
   const media = it && it.kind !== 'image';
   const np = S.p ? {} : noProject;
-  const none = { disabled: true, why: 'choisissez d’abord un plan dans le chutier' };
-  if (!it) return [{ head: 'Source' }, { label: 'Ouvrir un plan : cliquez-le dans le chutier', ...none }];
+  if (S.srcTab === 'fx') return null;
+  const none = { disabled: true, why: 'double-cliquez un plan du Projet' };
+  if (!it) return [{ head: 'Source' }, { label: 'Aucun plan', ...none }];
   const nm = media ? {} : { disabled: true, why: 'une image fixe n’a ni entrée ni sortie' };
   return [
     { head: `Source · ${it.title || ''}` },
@@ -1823,6 +2177,16 @@ document.addEventListener('keydown', (e) => {
   if (!S.p) return;
   const f = fps();
   const ph = program.frame();
+  // la liste d'effets de l'inspecteur a le clavier (on y a cliqué) : copier, coller, retirer
+  const fxOwner = S.fxFocus ? ownerOf(S.fxFocus) : null;
+  if (fxOwner && !alt) {
+    if (ctrl && low === 'c') { e.preventDefault(); copyFx(fxOwner); return; }
+    if (ctrl && low === 'v') { e.preventDefault(); pasteFx([fxOwner.key]); return; }
+    if ((k === 'Delete' || k === 'Backspace') && S.fxSel.size) { e.preventDefault(); removeFx(fxOwner, [...S.fxSel]); return; }
+    if (ctrl && low === 'a') { e.preventDefault(); S.fxSel = new Set((fxOwner.list(S.p) || []).map((x) => x.id)); paintInspector(); return; }
+  }
+  // Premiere « Coller les attributs » (ctrl+alt+V) : les effets copiés, sur ce qui est choisi
+  if (ctrl && alt && low === 'v') { e.preventDefault(); pasteFx(pasteKeys()); return; }
   if (ctrl && alt) {
     if (low === 'm') { e.preventDefault(); if (sh) commit('effacer les marques', (p) => { p.markers = []; }); else { const m = markerAt(ph); if (m) commit('effacer la marque', (p) => { p.markers = p.markers.filter((x) => x.id !== m.id); }); else toast('pas de marque sous la tête de lecture', 1400); } return; }
     if (k === 'ArrowLeft' || k === 'ArrowRight') { e.preventDefault(); slipKey((k === 'ArrowLeft' ? -1 : 1) * (sh ? 5 : 1)); return; }
@@ -1831,8 +2195,12 @@ document.addEventListener('keydown', (e) => {
   if (ctrl) {
     if (low === 'k') { e.preventDefault(); cutAtPlayhead(sh); }
     else if (low === 'd') { e.preventDefault(); dissolve(S.sel.size === 1 ? [...S.sel][0] : null); }
-    else if (low === 'c') { if (S.sel.size) { e.preventDefault(); copySel(); } }
-    else if (low === 'v') { e.preventDefault(); paste(sh); }
+    else if (low === 'c') { if (S.sel.size) { e.preventDefault(); copySel(); } else if (S.selTrack) { e.preventDefault(); copyFx(inspectorOwner()); } }
+    else if (low === 'v') {
+      e.preventDefault();
+      // des effets copiés en dernier, et une piste, un groupe ou des plans choisis : on colle les effets
+      if (S.lastCopy === 'fx' && !sh && (S.selTrack || S.sel.size)) pasteFx(pasteKeys()); else paste(sh);
+    }
     else if (low === 'r') { e.preventDefault(); const c = oneSelected('régler'); if (c) speedModal(c.id); }
     else if (low === 'l') { e.preventDefault(); const c = oneSelected('dissocier'); if (c) detachSound(c.id); }
     else if (low === 'a') { e.preventDefault(); select(sh ? new Set() : new Set(S.p.clips.map((c) => c.id))); }
@@ -1911,6 +2279,7 @@ function wire() {
   $('#b-ripple').onclick = () => del(true);
   $('#b-snap').onclick = () => { S.snap = !S.snap; paintBar(); };
   $('#z-in').onclick = () => timeline.zoom(1.25);
+  $('#z-in').title = `zoomer · =\n${MOLETTE_AIDE}`;           // la molette commune (commun/molette.js)
   $('#z-out').onclick = () => timeline.zoom(0.8);
   $('#z-fit').onclick = () => timeline.fit();
   timeline.scroll.addEventListener('scroll', saveView);
@@ -1932,15 +2301,21 @@ function wire() {
 
   // le clic droit, partout (commun/menu.js)
   contextMenu($('#tl'), timelineMenu);         // (le panneau Projet a le sien : projet.js)
+  contextMenu($('#fx-pane'), fxPaneMenu);
   contextMenu($('#src'), sourceMenu);
   contextMenu($('#prg'), programMenu);
-  contextMenu($('#insp'), inspMenu);
   contextMenu($('#seq-tabs'), seqTabMenu);
+  // les effets se lâchent sur la timeline (effets.js) ; les pistes se glissent par leur en-tête (pistes.js)
+  bindEffectDrops(timeline, { fxDrag: () => S.fxDrag, setFxDrag: (d) => { S.fxDrag = d; }, dropEffect });
+  bindTrackDrag(timeline, { selectTrack, moveTracks, groupTracks });
+  // le panneau Source : ses deux onglets, Effets au départ
+  for (const b of $$('#src-tabs [data-tab]')) b.onclick = () => srcTab(b.dataset.tab);
+  srcTab('fx');
   // ailleurs (la barre, les outils, les poignées) : les gestes de la séquence, en tête du menu
   // commun de repli (commun/menu.js, pageMenu) — le navigateur n'a jamais le clic droit (Cal, 29/09)
   pageMenu(() => (!S.p ? [{ head: 'Montage' }, { label: 'Nouvelle séquence…', icon: '+', onclick: () => newProjectFlow() }, { label: 'Ouvrir une séquence…', icon: '▤', onclick: projectsModal }]
     : [{ head: `séquence · ${S.p.name}` },
-      { label: 'Exporter en MP4…', icon: '↓', key: 'Ctrl+M', disabled: !S.p.clips.length, why: 'rien à exporter : posez des plans sur la timeline', onclick: exportModal },
+      { label: 'Exporter en MP4…', icon: '↓', key: 'Ctrl+M', disabled: !S.p.clips.length, why: 'rien à exporter', onclick: exportModal },
       { label: 'Nouvelle séquence…', icon: '+', onclick: () => newProjectFlow() },
       { label: 'Ouvrir une séquence…', icon: '▤', onclick: projectsModal },
       { label: 'La voir dans Asset', icon: '▦', onclick: () => { location.href = href('asset/#' + S.p.id); } },
@@ -1949,7 +2324,7 @@ function wire() {
       { label: 'Les raccourcis', icon: '?', onclick: helpModal }]));
 
   // moniteurs : le clic donne le clavier
-  $('#src').addEventListener('pointerdown', () => focus('source'));
+  $('#src').addEventListener('pointerdown', () => { if (S.srcTab === 'src') focus('source'); });
   $('#prg').addEventListener('pointerdown', () => focus('program'));
   $('#s-play').onclick = () => { S.shuttle = 0; source.toggle(); };
   $('#s-prev').onclick = () => source.step(-1);
@@ -1993,7 +2368,7 @@ function wire() {
   dropZone(bin, { kinds: MEDIA, via: 'montage', onitems: (items) => {
     for (const it of items) S.items.set(it.id, it);
     loadBin();
-    openSource(items[items.length - 1]);
+    openSource(items[items.length - 1], null, { show: false });
   } });
   own($('#src'), 'source');
   dropZone($('#src'), { kinds: MEDIA, multiple: false, via: 'montage', onitems: ([it]) => { loadBin(); openSource(it); } });
@@ -2060,5 +2435,6 @@ async function start() {
 start();
 
 // pour les essais (playwright) et le débogage : l'état, en lecture
-window.montage = { S, program, timeline, source, M, commit, placeItem, openProject, flushSave, setTool, lutGL, getLut, loadLuts, paintShelf, focus, select, project, closeSeqTab, undo, redo,
+window.montage = { S, program, timeline, source, M, commit, placeItem, openProject, flushSave, setTool, lutGL, getLut, loadLuts, focus, select, project, closeSeqTab, undo, redo,
+  effects, dropEffect, selectTrack, moveTracks, groupTracks, ungroupTracks, leaveGroup, copyFx, pasteFx, ownerOf, srcTab, openSource, paintInspector,
   undoLabels: () => ({ done: U.done.map((e) => e.label), undone: U.undone.map((e) => e.label), name: U.name }) };

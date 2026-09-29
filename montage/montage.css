@@ -130,6 +130,8 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .bi .sq, .stab .sq { display: inline-flex; width: 12px; height: 12px; flex: none; color: var(--cy); }
 .bi .sq svg, .stab .sq svg, .bi .seqth svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
 .bi .th.seqth { display: grid; place-items: center; color: var(--cy); padding: 4px 12px; }
+/* une séquence : la marque commune (commun/shell.js, kindMark) dans le coin de sa vignette */
+.bi .th .kmark { position: absolute; left: 2px; bottom: 2px; }
 .bi .drop-say, .bf .drop-say, .btab .drop-say, .ic .drop-say {
   position: absolute; right: 6px; top: 50%; transform: translateY(-50%); padding: 1px 5px; border-radius: 2px; pointer-events: none;
   font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--or); background: var(--veil); white-space: nowrap; z-index: 3;
@@ -163,7 +165,6 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .newfolder .mini b { font-weight: 400; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .newfolder .big-fld { font-size: 14px; padding: 10px 12px; }
 .bin-list input.ren { padding: 3px 6px; font-size: 11.5px; height: 22px; flex: 1; min-width: 0; }
-.bin-hint { padding: 6px 12px 10px; margin: 0; }
 .bin-list .lbl { padding: 10px 4px; line-height: 1.7; }
 
 /* les moniteurs */
@@ -183,6 +184,8 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 }
 .screen .layer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; pointer-events: none; }
 .screen audio.layer { display: none; }
+/* le programme composé (un calque d'effet agit) : au-dessus des éléments, sous les zones de sécurité */
+.screen .layer.comp { z-index: 800; }
 .screen .empty {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
   color: var(--ink3); text-align: center; padding: 16px; font-size: 11.5px; pointer-events: none;
@@ -219,8 +222,7 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 /* l'inspecteur */
 .insp { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; overflow-x: hidden; min-height: 0; padding-right: 2px; }
 .card { border-radius: var(--r4); padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; background: var(--panel); flex: none; }
-.card.grade { background: transparent; box-shadow: inset 0 0 0 1px var(--line-or); }
-.card.lutc { background: transparent; box-shadow: inset 0 0 0 1px var(--line-cy); }
+.card.fxc { background: transparent; box-shadow: inset 0 0 0 1px var(--line-cy); }
 .card.proj { background: transparent; box-shadow: inset 0 0 0 1px var(--line-gr); }
 .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .card-head .t { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -266,11 +268,8 @@ input[type=range].rg.temp::-webkit-slider-runnable-track { background: linear-gr
 .row.chk { align-items: flex-start; gap: 8px; font-size: 11.5px; color: var(--ink2); cursor: pointer; }
 .row.chk input { margin-top: 2px; accent-color: var(--or); }
 
-/* l'étagère de LUT : chercher, les favoris, les familles repliables ; une vignette par LUT, sur l'image courante du plan */
-.shelf { display: flex; flex-direction: column; gap: 6px; }
-.shelf .lq { padding: 6px 10px; font-size: 11px; }
-.shelf .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 6px; }
-.lgrp { display: flex; flex-direction: column; gap: 6px; }
+/* les dossiers repliables (panneau Effets) */
+.lgrp { display: flex; flex-direction: column; gap: 4px; }
 .lg { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: var(--r2); text-align: left; color: var(--ink2);
   font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; }
 .lg:hover { background: var(--panel2); color: var(--ink); }
@@ -279,15 +278,61 @@ input[type=range].rg.temp::-webkit-slider-runnable-track { background: linear-gr
 .lg.open .chev { transform: rotate(90deg); }
 .lg span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lg small { color: var(--ink3); letter-spacing: 0; }
-.lt .star { position: absolute; top: 4px; left: 6px; font-style: normal; font-size: 9px; color: var(--amb); text-shadow: 0 0 2px var(--black); }
-.lt { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 3px; border-radius: var(--r2); background: var(--panel2); text-align: left; min-width: 0; }
-.lt:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--line-cy); }
-.lt.on { box-shadow: inset 0 0 0 1px var(--or); }
-.lt.bad { opacity: .4; }
-.lt canvas { width: 100%; aspect-ratio: 16 / 9; height: auto; border-radius: var(--r1); background: var(--black); display: block; }
-.lt span { font-size: 9.5px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lt .in { position: absolute; top: 5px; right: 5px; font-style: normal; font-family: var(--f-mono); font-size: 7px; letter-spacing: .1em; text-transform: uppercase;
-  color: var(--or); background: var(--veil); padding: 1px 3px; border-radius: 2px; }
+
+/* ── le panneau Source : ses onglets (Effets, Source) ───── */
+.mon-head .ptabs { display: flex; gap: 2px; flex: none; }
+.ptab { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink3); padding: 3px 8px 5px; border-radius: var(--r1) var(--r1) 0 0; }
+.ptab:hover { color: var(--ink); }
+.ptab.on { color: var(--ink); box-shadow: inset 0 -2px 0 var(--or); }
+.src-meta { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex: 1; }
+.src-meta[hidden] { display: none; }
+.src-pane { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; }
+.src-pane[hidden], .fx-pane[hidden] { display: none; }
+
+/* ── le panneau Effets : chercher, les dossiers, une ligne par effet ── */
+.fx-pane { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; }
+.fx-head { display: flex; gap: 6px; align-items: center; flex: none; }
+.fx-head .fld { flex: 1; min-width: 0; padding: 6px 10px; font-size: 11px; }
+.mtg .fx-head .ic.sm { width: 28px; height: 26px; flex: none; }
+.fx-list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding-right: 2px; }
+.fx-rows { display: flex; flex-direction: column; gap: 1px; padding-left: 10px; }
+.fx-none { padding: 8px 4px; }
+.fxi { position: relative; display: flex; align-items: center; gap: 8px; padding: 3px 6px 3px 3px; border-radius: var(--r2); cursor: grab; user-select: none; min-width: 0; }
+.fxi:hover { background: var(--panel2); }
+.fxi:active { cursor: grabbing; }
+.fxi canvas { width: 48px; height: 27px; flex: none; border-radius: var(--r1); background: var(--black); }
+.fxi .nm { flex: 1; min-width: 0; font-size: 11px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fxi:hover .nm { color: var(--ink); }
+.fxi .in { font-style: normal; font-family: var(--f-mono); font-size: 7px; letter-spacing: .1em; text-transform: uppercase; color: var(--or); flex: none; }
+.fxi .star { font-style: normal; font-size: 9px; color: var(--amb); flex: none; }
+/* les transitions : une rampe (fondu) ou deux (fondu enchaîné), dessinées aux jetons */
+.fxi .tico { width: 48px; height: 27px; flex: none; border-radius: var(--r1); background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line); }
+.fxi .tico.fade { background: linear-gradient(to top right, var(--panel3) 50%, var(--cy-bg) 50%), var(--panel3); }
+.fxi .tico.xfade { background: linear-gradient(to top right, var(--veil-0) calc(50% - 1px), var(--or) 50%, var(--veil-0) calc(50% + 1px)), var(--or-bg); }
+
+/* ── l'inspecteur : la liste d'effets (choisir, réordonner, désactiver, retirer) ── */
+.card-head .acts { display: flex; gap: 10px; flex: none; }
+.fxl { display: flex; flex-direction: column; gap: 2px; position: relative; }
+.fx-empty { padding: 2px 0; }
+.fxr { display: flex; align-items: center; gap: 7px; padding: 4px 6px; border-radius: var(--r2); background: var(--panel2); user-select: none; min-width: 0; cursor: default; }
+.fxr:hover { box-shadow: inset 0 0 0 1px var(--line); }
+.fxr.on { box-shadow: inset 0 0 0 1px var(--or); background: var(--or-bg); }
+.fxr.off .nm { color: var(--ink3); text-decoration: line-through; }
+.fxr.gone .nm { color: var(--or); }
+.fxr .grip { width: 8px; height: 14px; flex: none; cursor: grab; background: radial-gradient(circle, var(--ink3) 1px, var(--veil-0) 1.5px) 0 0 / 4px 4px; }
+.fxr .nm { flex: 1; min-width: 0; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fxr .x { width: 16px; height: 16px; border-radius: 3px; color: var(--ink3); font-size: 12px; line-height: 1; flex: none; }
+.fxr .x:hover { background: var(--panel3); color: var(--ink); }
+.sw.sm { width: 24px; height: 12px; }
+.sw.sm i { width: 8px; height: 8px; }
+.sw.sm.on i { left: 14px; }
+.fx-line { display: block; height: 2px; margin: -1px 0; background: var(--or); border-radius: 1px; }
+.fxp { display: flex; flex-direction: column; gap: 8px; padding: 6px 2px 8px 14px; }
+.fxp .lnk { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--or); flex: none; }
+.fxp .lnk:disabled { color: var(--ink3); cursor: default; }
+.fxp .row .sp { flex: 1; }
+.row.curves { gap: 6px; }
+.row.curves .fld.sm { padding: 3px 6px; font-size: 10.5px; flex: 1; min-width: 0; }
 
 /* ── la timeline ───────────────────────────────────────── */
 .mtg .tlw { background: var(--panel); padding: 6px 12px 10px; gap: 6px; min-height: 0; }
@@ -398,9 +443,53 @@ input[type=range].rg.temp::-webkit-slider-runnable-track { background: linear-gr
   right: auto; width: 100%;
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
 }
-.clip .fi, .clip .fo { position: absolute; top: 0; bottom: 0; pointer-events: none; }
-.clip .fi { left: 0; background: linear-gradient(to top right, var(--scrim) 50%, var(--veil-0) 50%); }
-.clip .fo { right: 0; background: linear-gradient(to top left, var(--scrim) 50%, var(--veil-0) 50%); }
+/* les fondus : la courbe (le gain du son, ou la ligne droite de l'image) et la part assombrie au-dessus */
+.clip .fade { position: absolute; top: 0; bottom: 0; pointer-events: none; z-index: 1; }
+.clip .fade.l { left: 0; }
+.clip .fade.r { right: 0; }
+.clip .fade svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.clip .fade .sh { fill: var(--scrim); }
+.clip .fade .ln { fill: none; stroke: var(--ink); stroke-width: 1.2; }
+/* la poignée de fondu, dans le coin haut (Premiere, Resolve) : glisser vers l'intérieur */
+.clip .fh { position: absolute; top: 1px; width: 9px; height: 9px; margin-left: -4px; margin-right: -4px; z-index: 6; cursor: ew-resize;
+  background: var(--ink); box-shadow: 0 0 0 1px var(--bg); border-radius: 2px; opacity: 0; transition: opacity .1s; }
+.clip:hover .fh, .clip.sel .fh, .tl.dragging .clip .fh { opacity: 1; }
+.clip .fh:hover { background: var(--or); }
+.clip .fh.r { left: auto; }
+/* un calque d'effet : une bande hachurée, ses effets écrits dessus */
+.tl-lane.fx { height: 38px; }
+.tl-lane.fx .tl-area { background: var(--panel); }
+.clip.adjust .body { background: repeating-linear-gradient(135deg, var(--cy-bg) 0 6px, var(--panel2) 6px 12px); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.clip.adjust .body::before { display: none; }
+.clip.adjust .nm { top: 2px; font-size: 10px; }
+.clip.adjust .bd { bottom: 2px; }
+.tl-hd.fxh .tn { color: var(--cy); }
+.tl-hd .tfx { font-style: normal; font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--cy); margin-left: 2px; }
+/* une piste choisie (clic sur son en-tête) : ses effets dans l'inspecteur */
+.tl-lanes .tl-hd.sel { box-shadow: inset -1px 0 0 var(--line), inset 3px 0 0 var(--or); background: var(--panel3); }
+/* un groupe de pistes : une ligne d'en-tête au-dessus de ses membres, un filet à gauche de chacun */
+.tl-grp { display: flex; height: 18px; margin-bottom: 2px; }
+.tl-grp .tl-area { background: var(--panel); background-clip: content-box; }
+.tl-lanes .tl-hd.grp { flex-direction: row; align-items: center; justify-content: flex-start; gap: 6px; cursor: grab; padding: 0 6px 0 4px; }
+.tl-hd.grp .gbar { width: 3px; align-self: stretch; margin: 3px 0; border-radius: 2px; background: var(--cy); flex: none; }
+.tl-hd.grp .gnm { flex: 1; min-width: 0; font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl-hd.grp small { font-size: 8px; color: var(--ink3); }
+.tl-grp.sel .tl-hd.grp { background: var(--panel3); box-shadow: inset -1px 0 0 var(--line), inset 3px 0 0 var(--or); }
+.tl-lane.ingrp .tl-hd { box-shadow: inset -1px 0 0 var(--line), inset 3px 0 0 var(--line-cy); padding-left: 9px; }
+.tl-lane.ingrp .tl-hd.sel { box-shadow: inset -1px 0 0 var(--line), inset 3px 0 0 var(--or); }
+/* glisser une piste : le trait d'insertion, la cible d'un groupe, l'étiquette qui suit la souris */
+.tl-tline { position: absolute; left: 0; right: 0; height: 2px; background: var(--or); z-index: 30; pointer-events: none; }
+.tl-lane.tgrp-on, .tl-grp.tgrp-on { box-shadow: inset 0 0 0 1px var(--or); }
+.tl.tdragging, .tl.tdragging * { cursor: grabbing !important; }
+.tl-tghost { position: fixed; z-index: 90; pointer-events: none; padding: 3px 8px; border-radius: var(--r1); background: var(--veil); box-shadow: inset 0 0 0 1px var(--line-cy);
+  font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink); }
+.tl-tghost[data-what]:not([data-what=""])::after { content: " · " attr(data-what); color: var(--or); }
+/* un effet glissé depuis le panneau Effets : la cible s'éclaire ; sur la règle, un calque neuf */
+.tl .fx-on { box-shadow: inset 0 0 0 2px var(--or); }
+.clip.fx-on .body { box-shadow: inset 0 0 0 2px var(--or); }
+.tl-ruler.fx-new { background: var(--or-bg); }
+.tl-ruler.fx-new::after { content: "calque d’effet"; position: sticky; right: 8px; margin-left: auto; align-self: center; padding-right: 8px;
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--or); }
 .clip .xf {
   position: absolute; top: -3px; bottom: -3px; z-index: 3; pointer-events: none; border-radius: var(--r1);
   background: linear-gradient(to top right, var(--veil-0) calc(50% - 1px), var(--or) 50%, var(--veil-0) calc(50% + 1px)), var(--or-bg);

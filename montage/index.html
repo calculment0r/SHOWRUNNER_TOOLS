@@ -20,33 +20,33 @@
 
   <!-- la barre : le projet, le transport, le temps, l'export -->
   <div class="mtg-bar">
-    <button class="tb ghost sm" id="b-projects" title="toutes les séquences : ouvrir, créer, dupliquer">Séquences</button>
-    <label class="pname" title="le nom de la séquence ouverte (il s'enregistre seul)">
+    <button class="tb ghost sm" id="b-projects">Séquences</button>
+    <label class="pname">
       <span class="k">séquence</span>
       <input id="p-name" class="nm" value="" spellcheck="false" aria-label="nom de la séquence">
     </label>
-    <span class="pill save" id="save-st" title="le montage s'enregistre seul à chaque geste"><i></i><span>—</span></span>
+    <span class="pill save" id="save-st"><i></i><span>—</span></span>
     <span class="sp"></span>
     <span class="tgrp sr-undo" id="undo-box" role="group" aria-label="annuler, rétablir, le journal des gestes"></span>
     <div class="tgrp transport-mini" aria-label="lecture du programme">
-      <button class="pb" id="p-home" title="début · Origine">|◀</button>
-      <button class="pb" id="p-prev" title="image précédente · ←">◀</button>
-      <button class="pb play" id="p-play" title="lecture / pause · espace (J K L : arrière, arrêt, avant)">Lecture</button>
-      <button class="pb" id="p-next" title="image suivante · →">▶</button>
-      <button class="pb" id="p-end" title="fin · Fin">▶|</button>
+      <button class="pb" id="p-home" title="Origine">|◀</button>
+      <button class="pb" id="p-prev" title="←">◀</button>
+      <button class="pb play" id="p-play" title="espace · J K L">Lecture</button>
+      <button class="pb" id="p-next" title="→">▶</button>
+      <button class="pb" id="p-end" title="Fin">▶|</button>
     </div>
-    <div class="tcbox" title="position de la tête de lecture du programme (heures:minutes:secondes:images)">
+    <div class="tcbox">
       <span><small>timecode</small><b id="tc" class="tcv">00:00:00:00</b></span>
       <i></i>
       <span><small>cadence</small><b id="fps" class="num">25</b></span>
     </div>
     <span class="pill exp" id="exp-st" hidden><i></i><span></span></span>
-    <button class="tb go" id="b-export" title="rendre le montage en MP4 (H.264 + AAC) dans la bibliothèque · ctrl+M">Exporter</button>
-    <button class="ic" id="b-help" title="les raccourcis (ceux de Premiere Pro)">?</button>
+    <button class="tb go" id="b-export" title="ctrl+M">Exporter</button>
+    <button class="ic" id="b-help" title="raccourcis">?</button>
   </div>
 
   <div class="warn conflict" id="conflict" hidden>
-    <span>ce montage a été modifié ailleurs (un autre onglet ?) — vos derniers gestes ne sont pas enregistrés.</span>
+    <span>modifié ailleurs : vos derniers gestes ne sont pas enregistrés.</span>
     <button class="tb ghost sm" id="c-reload">Recharger celui du serveur</button>
     <button class="tb ghost sm" id="c-force">Garder le mien</button>
   </div>
@@ -58,9 +58,9 @@
         <div class="btabs" id="bin-tabs" role="tablist" aria-label="le projet et les dossiers ouverts"></div>
         <span class="sp"></span>
         <span class="lbl num" id="bin-n" title="objets montrés">0</span>
-        <button class="ic sm" id="bin-newseq" title="nouvelle séquence — un clip lâché ici : une séquence à ses réglages (Premiere, icône « Nouvel élément »)" aria-label="nouvelle séquence"><svg viewBox="0 0 24 24"><path d="M3 6h14v12H3zM3 10h14M3 14h14M20 9v6M17 12h6"/></svg></button>
-        <button class="ic sm" id="bin-new" title="nouveau dossier avec la sélection — ou glissez-y des objets · ctrl+B" aria-label="nouveau dossier"><svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3zM12 12v5M9.5 14.5h5"/></svg></button>
-        <button class="ic sm" id="bin-up" title="importer des fichiers du disque dans la bibliothèque · ctrl+I" aria-label="importer"><svg viewBox="0 0 24 24"><path d="M12 15V4M8 8l4-4 4 4M4 15v5h16v-5"/></svg></button>
+        <button class="ic sm" id="bin-newseq" title="nouvelle séquence (un clip lâché ici : à ses réglages)" aria-label="nouvelle séquence"><svg viewBox="0 0 24 24"><path d="M3 6h14v12H3zM3 10h14M3 14h14M20 9v6M17 12h6"/></svg></button>
+        <button class="ic sm" id="bin-new" title="nouveau dossier · ctrl+B" aria-label="nouveau dossier"><svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3zM12 12v5M9.5 14.5h5"/></svg></button>
+        <button class="ic sm" id="bin-up" title="importer · ctrl+I" aria-label="importer"><svg viewBox="0 0 24 24"><path d="M12 15V4M8 8l4-4 4 4M4 15v5h16v-5"/></svg></button>
         <input type="file" id="bin-file" multiple accept="video/*,image/*,audio/*" hidden>
       </div>
       <div class="bin-tools">
@@ -68,36 +68,43 @@
         <input class="fld" id="bin-q" placeholder="chercher" aria-label="chercher dans le chutier">
       </div>
       <div class="bin-list" id="bin-list"></div>
-      <p class="bin-hint lbl" title="un objet lâché sur un autre : un dossier neuf pour les deux · un cadre sur le fond : choisir plusieurs objets, puis les glisser sur l'icône dossier · double-clic sur un dossier : un onglet · les dossiers sont ceux d'Asset">un objet sur un autre : un dossier · cadre : plusieurs · clic droit</p>
     </section>
 
-    <!-- la source -->
-    <section class="pan mon src" id="src" aria-label="moniteur source">
-      <div class="mon-head"><span class="t">Source</span><span class="mon-nm" id="src-name">—</span><span class="sp"></span><span class="lbl dur" id="s-dur"></span><span class="tcv" id="src-tc">00:00:00:00</span></div>
-      <div class="screen" id="src-screen" draggable="true">
-        <div class="empty"><b>Source</b><span>choisissez un plan dans le chutier</span></div>
+    <!-- le panneau Source : deux onglets, Effets (au départ) et Source -->
+    <section class="pan mon src" id="src" aria-label="effets et moniteur source">
+      <div class="mon-head">
+        <div class="ptabs" id="src-tabs" role="tablist" aria-label="effets ou source">
+          <button class="ptab on" data-tab="fx" role="tab" aria-selected="true">Effets</button>
+          <button class="ptab" data-tab="src" role="tab" aria-selected="false">Source</button>
+        </div>
+        <span class="src-meta" id="src-meta" hidden><span class="mon-nm" id="src-name">—</span><span class="sp"></span><span class="lbl dur" id="s-dur"></span><span class="tcv" id="src-tc">00:00:00:00</span></span>
       </div>
-      <div class="scrub" id="src-scrub" title="glisser pour se déplacer dans la source"><div class="rng" id="src-rng"></div><div class="pos" id="src-pos"></div></div>
-      <div class="mon-foot">
-        <button class="pb" id="s-play" title="lecture / pause · espace">▶</button>
-        <button class="pb" id="s-prev" title="image précédente · ←">◀</button>
-        <button class="pb" id="s-next" title="image suivante · →">▶</button>
-        <button class="tb ghost sm" id="s-in" title="point d'entrée · I">Entrée</button>
-        <button class="tb ghost sm" id="s-out" title="point de sortie · O">Sortie</button>
-        <span class="sp"></span>
-        <button class="tb ghost sm" id="s-insert" title="insérer à la tête de lecture, sur la piste cible, en poussant la suite · virgule">Insérer</button>
-        <button class="tb ghost sm" id="s-over" title="écraser à la tête de lecture, sur la piste cible · point">Écraser</button>
+      <div class="fx-pane" id="fx-pane"></div>
+      <div class="src-pane" id="src-pane" hidden>
+        <div class="screen" id="src-screen" draggable="true">
+          <div class="empty"><b>Source</b><span>double-cliquez un plan du Projet</span></div>
+        </div>
+        <div class="scrub" id="src-scrub"><div class="rng" id="src-rng"></div><div class="pos" id="src-pos"></div></div>
+        <div class="mon-foot">
+          <button class="pb" id="s-play" title="espace">▶</button>
+          <button class="pb" id="s-prev" title="←">◀</button>
+          <button class="pb" id="s-next" title="→">▶</button>
+          <button class="tb ghost sm" id="s-in" title="I">Entrée</button>
+          <button class="tb ghost sm" id="s-out" title="O">Sortie</button>
+          <span class="sp"></span>
+          <button class="tb ghost sm" id="s-insert" title="virgule">Insérer</button>
+          <button class="tb ghost sm" id="s-over" title="point">Écraser</button>
+        </div>
       </div>
     </section>
 
     <!-- le programme -->
     <section class="pan mon prg" id="prg" aria-label="moniteur programme">
       <div class="mon-head"><span class="t">Programme</span><span class="mon-nm" id="prg-name">—</span><span class="sp"></span><span class="st" id="prg-state">arrêt</span></div>
-      <div class="screen" id="prg-screen"><div class="stage" id="stage"><div class="empty" id="prg-empty"><b>Programme</b><span>posez des plans sur la timeline</span></div><div class="safe" id="safe" hidden><i></i><i></i></div></div></div>
-      <div class="scrub" id="prg-scrub" title="glisser pour se déplacer dans le montage"><div class="fill" id="prg-fill"></div><div class="pos" id="prg-pos"></div></div>
+      <div class="screen" id="prg-screen"><div class="stage" id="stage"><div class="empty" id="prg-empty"><b>Programme</b></div><div class="safe" id="safe" hidden><i></i><i></i></div></div></div>
+      <div class="scrub" id="prg-scrub"><div class="fill" id="prg-fill"></div><div class="pos" id="prg-pos"></div></div>
       <div class="mon-foot">
         <span class="lbl">durée</span><span class="tcv sm" id="prg-dur">00:00:00:00</span><span class="sp"></span>
-        <span class="lbl note" title="coupes, fondus, fondus enchaînés, vitesses, volumes, LUT, pistes muettes ou masquées : lus comme l'export les rend (la LUT fait le même calcul que ffmpeg lut3d). L'étalonnage est approché par les filtres du navigateur (mesurés sur ceux de ffmpeg) ; l'export fait foi.">aperçu fidèle · étalonnage approché</span>
       </div>
     </section>
 
@@ -112,15 +119,15 @@
       <div class="tgrp tools" id="tools" role="toolbar" aria-label="outils (Premiere Pro)"></div>
       <span class="t">Timeline · <b id="tl-n" class="num">0</b> plans · <b id="tl-dur" class="tcv">00:00:00:00</b></span>
       <span class="sp"></span>
-      <button class="tb ghost sm" id="b-cut" title="ajouter une coupe à la tête de lecture (plans choisis, sinon toutes les pistes libres) · ctrl+K ; toutes les pistes : ctrl+maj+K">Couper</button>
-      <button class="tb ghost sm" id="b-xfade" title="fondu enchaîné d'une seconde à la tête du plan choisi · ctrl+D">Fondu enchaîné</button>
-      <button class="tb ghost sm" id="b-del" title="effacer · Suppr">Effacer</button>
-      <button class="tb ghost sm" id="b-ripple" title="supprimer et refermer le vide · maj+Suppr">Raccorder</button>
-      <span class="snapper" title="aimant : les bords se collent aux coupes, aux marques et à la tête de lecture · S">aimant<button class="sw on" id="b-snap" aria-pressed="true"><i></i></button></span>
+      <button class="tb ghost sm" id="b-cut" title="ctrl+K · toutes les pistes : ctrl+maj+K">Couper</button>
+      <button class="tb ghost sm" id="b-xfade" title="ctrl+D">Fondu enchaîné</button>
+      <button class="tb ghost sm" id="b-del" title="Suppr">Effacer</button>
+      <button class="tb ghost sm" id="b-ripple" title="maj+Suppr">Raccorder</button>
+      <span class="snapper" title="S">aimant<button class="sw on" id="b-snap" aria-pressed="true"><i></i></button></span>
       <div class="zoomer">
         <button id="z-out" title="dézoomer · −">−</button>
         <span id="z-val" class="num">100 %</span>
-        <button id="z-in" title="zoomer · = (ou alt + molette)">+</button>
+        <button id="z-in" title="zoomer · = · alt + molette">+</button>
         <button id="z-fit" title="tout le montage · \">tout</button>
       </div>
     </div>

@@ -513,16 +513,216 @@ sans redémarrer ; un pack réimporté n'ajoute rien (même `source`).
   famille, 1,27 sans LUT — la LUT n'ajoute rien à l'erreur de l'encodage.
   La mesure sur les vrais packs se refera dès les archives là.
 
+## Le 29/09 au soir : effets, calques d'effet, groupes de pistes, fondus à poignées
+
+Réponse à la demande de Cal du 29/09, 18 h 10. Essais sur DGX2 (copie
+`/tmp/sr_montage`, portail d'essai sur le port 8851, données d'essai à part,
+les 342 LUT du portail copiées), Chromium sans affichage de playwright ;
+les pilotes sont dans `/tmp/sr_mtg_scripts`.
+
+### L'export : ffmpeg, sur DGX2, voie `cpu`
+
+Le bouton Exporter lance le travail `montage.export` de la file, voie
+`cpu` : deux ouvriers « local » (`server/core/config.py`, `lanes.cpu`), donc
+sur la machine du portail, **DGX2** ; ffmpeg **6.1.1** d'Ubuntu
+(`6.1.1-3ubuntu5+esm7`), `libx264` et l'encodeur AAC de ffmpeg, pas de GPU.
+Essai de bout en bout (`exporte.py`) : trois plans (une LUT, un fondu
+d'entrée de 12 images, un fondu de sortie de 25, du son) → MP4 lu par
+ffprobe : H.264 1280×720 yuv420p BT.709, 25 i/s, **150 images, 6,00 s**,
+AAC 48 kHz stéréo de 6,00 s ; rendu en 4 s (une passe), 4,5 s de la demande
+au fichier rangé. Le travail rangé dit sa machine (`machine: DGX2`) : la
+bulle de fin d'export la nomme.
+
+### Le modèle : des listes d'effets
+
+Un **effet** est `{id, type, on, …}` : `grade` (exposure, contrast,
+saturation, temperature — les filtres d'avant) ou `lut` (`lut`, `mix`).
+Ce sont les seuls que l'export sait rendre **et** que l'aperçu calcule
+pareil ; rien d'autre n'est proposé. Une liste d'effets s'applique dans
+l'ordre ; elle est portée par un plan (`clip.fx`), une piste vidéo
+(`track.fx`), un groupe de pistes (`group.fx`) ou un calque d'effet. La
+chaîne d'un plan (`chainOf`, `model.js` ; `chain_of`, `montage.py`, ligne
+pour ligne) : ses effets, puis ceux de sa piste, puis ceux du groupe de sa
+piste — les effets désactivés et les étalonnages neutres ne comptent pas.
+Un plan d'avant (champs `grade` et `lut`) se relit sans perte : son
+étalonnage puis sa LUT deviennent deux effets (`normalize`, `normClip`).
+
+Les effets de piste et de groupe s'appliquent **plan par plan** (dans la
+passe de chaque plan, comme ses propres effets), pas à l'image composée de
+la piste : c'est la même chose tant que les plans d'une piste ne se
+recouvrent pas ; pendant un fondu enchaîné, chaque plan est passé par
+l'effet avant d'être mêlé (non documenté pour Premiere ; choisi parce que
+l'aperçu et l'export le font de la même façon).
+
+**Aperçu** : une chaîne passe par `lut.js` (`drawChain`) — un étalonnage
+et la LUT qui le suit en une passe (le shader d'avant), plusieurs passes
+sinon, d'image intermédiaire en image intermédiaire (demi-flottants si
+`EXT_color_buffer_float` le permet, MDN ; 8 bits sinon). **Export** : les
+filtres de chaque effet, dans l'ordre (`_fx_filters`). Lu dans ffmpeg
+(`-v verbose`, DGX2) : `eq` n'accepte pas le RVB ; ffmpeg insère lui-même
+une conversion vers yuv444p avant lui et revient en RVB après (matrice par
+défaut dans les deux sens : l'aller-retour se compense) — c'était déjà le
+cas avant ce soir, ce n'est pas nouveau.
+
+### La LUT qui repassait par « sans LUT »
+
+Cause (lue dans `player.js` d'avant) : à chaque image, le plan demandait sa
+LUT (`getLut`) ; une LUT pas encore chargée rendait `null`, le canevas de
+la LUT était **retiré** et la vidéo brute se montrait le temps du
+chargement du `.cube` (7 Mo de texte pour une cuite Fujifilm 65³).
+Désormais chaque plan garde sa dernière chaîne **prête** (`chainReady`) :
+tant qu'une LUT de la nouvelle chaîne se charge, l'ancienne reste dessinée,
+puis l'image bascule d'un coup.
+
+Mesure (`p1_lut_flash.mjs`, à l'arrêt sur le plan c2, sa LUT « Sarcelle
+orange » remplacée par la cuite ETERNA 65³, jamais chargée ; un
+enregistreur à chaque image d'affichage, `requestAnimationFrame`, lit ce
+qui se voit et le pixel du centre) :
+
+| | ce qui se voit |
+|---|---|
+| origin/main (port 8852) | Sarcelle (229,173,148) jusqu'à 158 ms · **vidéo brute (220,172,152) de 186 à 490 ms** · ETERNA (216,200,189) |
+| ce soir (8851) | Sarcelle (229,173,148) jusqu'à 440 ms · ETERNA (216,200,189) dès 440 ms · **aucune image sans LUT** (210 images enregistrées) |
+
+Captures pendant le changement : `p1-avant-0…5.png`, `p1-neuf-0…5.png`.
+
+### Le panneau Effets (un onglet du panneau Source)
+
+Le panneau Source a deux onglets, **Effets** (au départ) et **Source**.
+Un clic sur un clip du Projet le charge dans la source sans quitter les
+effets ; un **double-clic** bascule sur Source (comme « Ouvrir dans le
+moniteur source », la concordance des images, « Voir » un export).
+La bibliothèque (`effets.js`) : Transitions (Fondu, Fondu enchaîné),
+Couleur (l'étalonnage et sept préréglages : noir et blanc, désaturer,
+réchauffer 4800 K, refroidir 8500 K, contraste +25, ±½ IL — des réglages de
+l'effet `grade`, rien d'autre), les LUT favorites, puis une famille par
+dossier repliable (Fujifilm cuites Rec.709, marques de pellicules
+RawTherapee, importées, les « d'origine » en log à la fin). Une recherche
+sans accents ; une vignette par effet (l'image du plan choisi ou du
+programme passée par l'effet — la LUT par sa version 17³), dessinée
+seulement quand elle se voit. Une famille repliée ne fabrique pas ses
+lignes. Premiere a le même panneau (« Effects ») ; le double-clic sur un
+effet l'applique à ce qui est choisi.
+
+L'étagère de LUT de l'inspecteur et le sous-menu LUT de chaque plan sont
+retirés : un plan montre **ses** effets, pas la bibliothèque.
+
+**Glisser un effet** (`bindEffectDrops`) : sur un plan, il s'ajoute à ses
+effets — une LUT **remplace** la LUT du plan (changer de look), Maj
+l'ajoute en plus ; sur l'en-tête d'une piste vidéo : aux effets de la piste
+; sur l'en-tête d'un groupe : aux effets du groupe ; sur la **règle**,
+au-dessus de la première piste : un **calque d'effet** ; sur une piste de
+calques : un calque de plus à cet endroit. Un fondu lâché sur un plan se
+pose au bord le plus proche. Pendant le glisser, la cible s'éclaire et une
+étiquette dit ce qui va se passer.
+
+### Le calque d'effet
+
+Une piste de sorte `fx` (identifiants **X1, X2…**, comptés du bas comme
+V) parmi les pistes de l'image, qui ne porte que des plans `adjust` (sans
+objet, `item: ""`) : leurs effets s'appliquent à **tout ce qui est dessous**
+sur leur durée ; ils s'étirent, se déplacent, se coupent, fondent comme des
+plans. Le lâcher sur la règle crée la piste tout en haut, nommée
+« FX <effet> » (renommable : double-clic sur son nom, clic droit), et un
+calque de l'image lâchée à la fin de la séquence (5 s s'il n'y a rien
+après). L'œil de la piste coupe ses calques.
+
+- **Export** (`plan_video`) : en montant les pistes (V1 d'abord), un calque
+  actif dédouble l'image composée jusque-là (`split`) ; une branche, coupée à
+  sa fenêtre (`trim=start_frame:end_frame`), passe en RVB BT.709, traverse
+  les effets, revient en YUV, fond en transparence (`fade … alpha=1`) et se
+  pose sur l'autre (`overlay=eof_action=pass`) — le même motif que les plans.
+- **Aperçu** (`Program.compose`) : un calque actif fait composer tout le
+  programme dans un canevas à la taille de la séquence (1920 px au plus), sur
+  du noir opaque (0,0,0 — celui de `color=c=black`), plans cadrés comme
+  l'export (contenus, centrés), chacun avec son opacité ; le calque applique
+  sa chaîne à ce qui est déjà posé, mêlé selon son fondu ; les éléments
+  restent dessous comme sources. Sans calque actif, rien ne change.
+- **Mesure** (`p3_calque.mjs` + `cmp_calque.py`) : un calque « Inversion »
+  au-dessus de trois pistes (dont une image à LUT 60 % en V2), image 60 :
+  le canevas de l'aperçu contre l'image 60 du MP4 exporté (décodée en
+  BT.709) : **écart moyen 1,20/255**, 96,3 % des pixels à ±3, maximum 83 sur
+  les bords francs (le 4:2:0 de la sortie — la branche du calque repasse par
+  le yuv420p de l'image composée) ; l'aperçu inversé contre l'export :
+  126/255, donc c'est bien la même image, pas une ressemblance. Le contrôle
+  (`check.py`) exporte un calque d'inversion sur des images 10 à 30 : rouge
+  avant et après, (35,215,215) dedans.
+- La lecture passe dans le calque (essai : 2,5 s de lecture, composée).
+
+### Les groupes de pistes
+
+Comme dans ODIO (`musique/projet.js` : `rangerGroupes`, `deplacerPistes`,
+`grouperPistes`) : `track.grp` + `project.groups = [{id, name, fx}]`.
+Glisser l'en-tête d'une piste (`pistes.js`) : le tiers haut ou bas d'une
+autre piste = entre les pistes (un trait d'insertion, elle ira là) ; son
+cœur = elle-même (elle s'entoure : lâchée, un groupe naît, « Groupe n ») ;
+l'en-tête d'un groupe (une ligne fine au-dessus de ses membres) se glisse :
+le groupe entier bouge ; lâcher sur lui fait entrer. Entre deux membres on
+entre dans le groupe, à son bord on y reste, ailleurs on en sort ; **un
+groupe d'une seule piste se défait**. Une piste reste dans sa famille
+(l'image en haut, le son en bas : une piste son lâchée sur une vidéo ne fait
+rien). Les pistes se renumérotent par leur place (V1 en bas), les plans et
+la hauteur de chaque piste (molette commune) suivent leur piste. Un clic sur
+un en-tête choisit la piste ou le groupe : l'inspecteur montre ses effets.
+Chaque geste est une entrée d'annulation (essais : `p4_groupes.mjs`, 14 sur 14).
+
+### Les effets dans l'inspecteur
+
+La liste d'effets d'un plan, d'un calque, d'une piste ou d'un groupe :
+clic = choisir (Maj : jusqu'à lui, Ctrl : ajouter ou retirer), l'effet seul
+choisi ouvre ses réglages sous lui (l'intensité d'une LUT, les quatre
+curseurs de l'étalonnage) ; la poignée ⋮ se glisse pour réordonner ;
+l'interrupteur désactive (l'effet reste, barré) ; × ou Suppr retire ;
+Ctrl+C copie les effets choisis (tous s'il n'y en a pas), Ctrl+V les colle
+sur la liste qui a le clavier — ou, les effets ayant été copiés en dernier,
+sur la piste, le groupe ou les plans choisis ; **Ctrl+Alt+V** colle
+toujours les effets sur ce qui est choisi (Premiere : « Coller les
+attributs » ; raccourci non revérifié ce soir dans la page d'Adobe, qui
+répond 403 aux robots). Essais : `p5_copier.mjs`, 18 sur 18.
+
+### Les fondus à poignées
+
+Chaque plan (vidéo, image, son, calque) a deux poignées dans ses coins hauts
+(Premiere et Resolve les mettent là) : tirées vers l'intérieur, elles
+allongent le fondu d'entrée ou de sortie, image par image, vu en direct au
+programme, la durée écrite pendant le geste, une seule annulation. Entrée +
+sortie ≤ durée (`fitFades`). Le fondu se dessine sur le plan : la courbe, et
+au-dessus la part assombrie. L'ancien réglage (« fondu au noir » qui
+descendait aussi le plan d'avant, des boutons à trois choix) est remplacé par
+la carte **Fondus** de l'inspecteur (entrée, sortie, le fondu enchaîné avec
+le plan d'avant s'il y en a un, collé).
+
+**Les courbes** : `fade` (l'image) n'a pas de courbe dans ffmpeg 6.1
+(`ffmpeg -h filter=fade` : type, start_frame, nb_frames, alpha, start_time,
+duration, color) : l'image fond toujours en ligne droite. `afade` (le son) a
+`curve` ; on en propose dix (tri, qsin, hsin, esin, log, exp, par, ipar,
+qua, squ), leurs formules lues dans `libavfilter/af_afade.c` de la 6.1.1
+(`fade_gain`) et recopiées dans `curveGain` (`model.js`) pour l'aperçu ;
+la sortie lit la courbe sur ce qui reste du fondu (`start_sample +
+nb_samples − cur_sample`), comme `gainAt`. Mesure (`mesure_courbe.py`) :
+une sinusoïde fondue en « exp » (entrée) et « qsin » (sortie), exportée par
+le vrai travail ; le gain mesuré dans le MP4 (RMS par image) contre la
+formule : **écart maximal 0,006** (le bruit de l'AAC). Le gain de l'aperçu
+à 20, 50 et 80 % du fondu = sin(x·π/2) à 10⁻¹⁶ près.
+
+### Moins de texte
+
+Les aides répétées sont retirées : la ligne d'aide du Projet, « aperçu
+fidèle · étalonnage approché », les notes des cartes de l'inspecteur, la
+bulle à chaque changement d'outil, les infobulles-phrases (il reste le
+raccourci). Les gestes sont dans la boîte des raccourcis (?), qui a ses
+sections Effets, Pistes, et la molette commune (`REGLE`).
+
 ## Les limites connues
 
 - L'aperçu de l'étalonnage est approché ; l'export fait foi (la LUT, elle,
   est le même calcul).
 - Le son d'une vidéo est attaché à son plan tant qu'on ne le dissocie pas
   (« Dissocier le son » le pose sur la piste son cible ; on ne relie pas).
-- Pas de piste (ou calque) d'ajustement : une LUT sur tout ce qui est
-  dessous demanderait de composer tout le programme dans un seul canevas
-  WebGL (l'aperçu empile des éléments). « Appliquer une LUT à tous les plans
-  de la piste » pose la LUT sur chacun.
+- Un calque d'effet compose l'aperçu dans un canevas : plus lourd à la
+  lecture (chaque image est dessinée deux fois). Les effets de piste et de
+  groupe agissent plan par plan (voir plus haut).
+- L'image fond en ligne droite seulement (ffmpeg 6.1, `fade`).
 - Vitesse : un plan dont la cadence diffère du projet (24 i/s dans un
   projet à 25) peut montrer à l'export l'image voisine de celle de l'aperçu
   (le filtre `fps` arrondit, le navigateur prend l'image en cours) ; pas de

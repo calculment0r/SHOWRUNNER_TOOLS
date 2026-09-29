@@ -17,9 +17,10 @@
 // coupe, vitesse, slip, slide), par `app.gesture` : chaque mouvement repart
 // du projet d'avant le geste et rejoue l'opération du modèle avec le
 // décalage du moment ; le lâcher fait une seule entrée d'annulation.
-// Zoom : alt + molette (ou ctrl + molette), ancré sous le pointeur.
+// molette commune (commun/molette.js) : seule, défiler haut / bas ; Maj : le temps ; Alt : zoom sous le pointeur ; Ctrl : hauteur des pistes, sur un en-tête (à gauche) : la sienne
 
 import { el, href, ITEM_MIME } from '../commun/shell.js';
+import { brancher, borne, tenirY } from '../commun/molette.js';   // molette commune
 import * as M from './model.js';
 
 export const HEAD = 124;           // la tête de piste, collée à gauche (même largeur que .tl-hd)
@@ -41,6 +42,7 @@ export class Timeline {
     this.root = root;
     this.app = app;
     this.pps = 40;
+    this.h = {};                   // molette commune : id de piste → hauteur (px), le temps de la page ; absente : celle de montage.css
     this.scroll = el('div', { class: 'tl-scroll' });
     this.ticks = el('div', { class: 'tl-ticks' });
     this.mlayer = el('div', { class: 'tl-mlayer' });
@@ -82,14 +84,23 @@ export class Timeline {
     const sel = this.app.sel();
     const gap = this.app.gap();
     const tgt = this.app.targets();
-    const lanes = p.tracks.map((t) => {
+    const selT = this.app.selTrack ? this.app.selTrack() : null;
+    // au-dessus des membres d'un groupe, son en-tête (glisser : le déplacer entier)
+    const rows = [], seen = new Set();
+    p.tracks.forEach((t, i) => {
+      if (t.grp && !seen.has(t.grp)) {
+        seen.add(t.grp);
+        const g = M.groupOf(p, t.grp);
+        if (g) rows.push(this.groupRow(g, p.tracks.filter((x) => x.grp === g.id), selT === 'g:' + g.id));
+      }
       const clips = M.trackClips(p, t.id).map((c) => this.clipNode(c, win.get(c.id), sel.has(c.id), t));
       if (gap && gap.track === t.id) clips.push(el('div', { class: 'gap', style: { left: this.fx(gap.s) + 'px', width: this.fx(gap.e - gap.s) + 'px' } }));
-      return el('div', { class: `tl-lane ${t.kind}${t.lock ? ' lock' : ''}${t.hide ? ' hide' : ''}${t.mute ? ' mute' : ''}`, 'data-track': t.id },
-        this.head(t, tgt[t.kind] === t.id),
-        el('div', { class: 'tl-area', style: { width: this.width + 'px' } }, ...clips));
+      const last = t.grp && (!p.tracks[i + 1] || p.tracks[i + 1].grp !== t.grp);
+      rows.push(el('div', { class: `tl-lane ${t.kind}${t.lock ? ' lock' : ''}${t.hide ? ' hide' : ''}${t.mute ? ' mute' : ''}${t.grp ? ' ingrp' : ''}${last ? ' grplast' : ''}`, 'data-track': t.id, style: this.h[t.id] ? { height: this.h[t.id] + 'px' } : null },   // molette commune
+        this.headFor(t, tgt[t.kind] === t.id, selT === t.id),
+        el('div', { class: 'tl-area', style: { width: this.width + 'px' } }, ...clips)));
     });
-    this.lanes.replaceChildren(...lanes, this.ghost);
+    this.lanes.replaceChildren(...rows, this.ghost);
     this.root.dataset.tool = this.app.tool();
     this.paintRuler();
     this.paintMarks();
@@ -98,7 +109,7 @@ export class Timeline {
 
   // plus de séquence ouverte : une timeline vide qui dit quoi faire
   clear() {
-    this.lanes.replaceChildren(el('p', { class: 'tl-none' }, 'aucune séquence ouverte : double-cliquez une séquence du panneau Projet, ou clic droit sur un clip → « Nouvelle séquence à partir de l’élément »'));
+    this.lanes.replaceChildren(el('p', { class: 'tl-none' }, 'aucune séquence ouverte'));
     this.ticks.replaceChildren();
     this.mlayer.replaceChildren();
     this.rngv.hidden = true;
@@ -107,7 +118,7 @@ export class Timeline {
 
   head(t, isTarget) {
     const act = (k, label) => (e) => { e.stopPropagation(); this.app.toggleTrack(t.id, k, label); };
-    return el('div', { class: 'tl-hd', 'data-head': t.id, title: `${t.id}${t.name ? ' · ' + t.name : ''} — clic droit : ajouter, renommer, supprimer la piste…` },
+    return el('div', { class: 'tl-hd', 'data-head': t.id, 'data-piste': t.id, title: `${t.id}${t.name ? ' · ' + t.name : ''} — clic droit : ajouter, renommer, supprimer la piste… · ctrl + molette : sa hauteur` },   // molette commune : data-piste, l'infobulle
       el('div', { class: 'hr' },
         el('button', { class: 'tn' + (isTarget ? ' tgt' : ''), title: isTarget ? 'piste cible (Insérer, Écraser, Coller)' : 'en faire la piste cible', onclick: (e) => { e.stopPropagation(); this.app.setTarget(t); } }, t.id),
         t.kind === 'video' ? el('button', { class: 'tg' + (t.hide ? ' on' : ''), title: t.hide ? 'piste masquée (ni vue, ni exportée) — la montrer' : 'masquer l’image de cette piste', html: t.hide ? ICON.eyeOff : ICON.eye, onclick: act('hide', 'masquer une piste') }) : null,
@@ -117,7 +128,39 @@ export class Timeline {
       el('span', { class: 'tnm', title: 'double-clic : renommer la piste' }, t.name || (t.kind === 'video' ? 'vidéo' : 'son')));
   }
 
+  // l'en-tête d'une piste, retouché selon sa sorte : une piste de calques n'a
+  // ni cible, ni muette, ni solo ; choisie (clic), elle s'éclaire ; ses effets s'y voient
+  headFor(t, isTarget, selected) {
+    const h = this.head(t, isTarget);
+    if (selected) h.classList.add('sel');
+    if (t.grp) h.classList.add('ingrp');
+    if (t.kind === 'fx') {
+      h.classList.add('fxh');
+      for (const b of h.querySelectorAll('.tg.m, .tg.s')) b.remove();
+      const tn = h.querySelector('.tn');
+      tn.onclick = (e) => e.stopPropagation();
+      tn.title = 'piste de calques d’effet';
+      tn.after(el('button', { class: 'tg' + (t.hide ? ' on' : ''), title: t.hide ? 'calques coupés — les remettre' : 'couper ces calques', html: t.hide ? ICON.eyeOff : ICON.eye,
+        onclick: (e) => { e.stopPropagation(); this.app.toggleTrack(t.id, 'hide', 'couper un calque'); } }));
+      h.querySelector('.tnm').textContent = t.name || 'calque';
+    }
+    const n = (t.fx || []).filter((f) => f.on !== false).length;
+    if (n) h.querySelector('.hr').append(el('i', { class: 'tfx', title: (t.fx || []).map((f) => this.app.fxName(f)).join(' · ') }, 'fx'));
+    return h;
+  }
+
+  // l'en-tête d'un groupe de pistes : une ligne fine au-dessus de ses membres
+  groupRow(g, members, selected) {
+    const n = (g.fx || []).filter((f) => f.on !== false).length;
+    return el('div', { class: 'tl-grp' + (selected ? ' sel' : ''), 'data-grp': g.id },
+      el('div', { class: 'tl-hd grp', 'data-ghead': g.id, title: g.name },
+        el('i', { class: 'gbar' }), el('span', { class: 'gnm' }, g.name), el('small', { class: 'num' }, String(members.length)),
+        n ? el('i', { class: 'tfx', title: g.fx.map((f) => this.app.fxName(f)).join(' · ') }, 'fx') : null),
+      el('div', { class: 'tl-area', style: { width: this.width + 'px' } }));
+  }
+
   clipNode(c, w, selected, t) {
+    if (c.kind === 'adjust') return this.fxClipNode(c, w, selected);
     const it = this.app.item(c.item);
     const fps = this.fps;
     const x = this.fx(c.start), wpx = Math.max(3, this.fx(c.dur));
@@ -133,23 +176,20 @@ export class Timeline {
         maskPosition: `${-(c.in || 0) / sp * this.pps}px 0`, webkitMaskPosition: `${-(c.in || 0) / sp * this.pps}px 0` });
       body.append(wave);
     }
-    const fin = w ? (w.fin || 0) : 0, fout = w ? (w.fout || 0) : 0;
-    if (fin) body.append(el('i', { class: 'fi', style: { width: this.fx(fin) + 'px' } }));
-    if (fout) body.append(el('i', { class: 'fo', style: { width: this.fx(fout) + 'px' } }));
+    this.fadeMarks(body, w, t.kind === 'audio');
     const badges = [];
     if (!M.isOn(c)) badges.push('désactivé');
     if (c.kind === 'video' && t.kind === 'video' && c.audio) badges.push('son');
     if (Math.abs(M.spd(c) - 1) > 1e-6) badges.push(M.pct(M.spd(c)));
     if (c.vol !== undefined && Math.abs(c.vol - 1) > 0.005 && hasSound) badges.push(`vol ${Math.round(c.vol * 100)} %`);
-    const g = c.grade || M.NEUTRAL;
-    if (g.exposure || g.contrast || g.saturation || (g.temperature && g.temperature !== 6500)) badges.push('étal.');
-    if (c.lut && c.lut.mix > 0) badges.push(c.lut.mix < 0.999 ? `LUT ${Math.round(c.lut.mix * 100)} %` : 'LUT');
+    const fxs = M.fxOn(c.fx);
+    if (fxs.length) badges.push(fxs.length > 1 ? `${fxs.length} effets` : this.app.fxName(fxs[0]));
     body.append(el('span', { class: 'nm' }, c.title || (it ? it.title : c.item)));
     if (badges.length) body.append(el('span', { class: 'bd' }, badges.join(' · ')));
     const node = el('div', {
       class: `clip ${c.kind}${t.kind === 'audio' ? ' snd' : ''}${selected ? ' sel' : ''}${it && !it.missing ? '' : ' miss'}${M.isOn(c) ? '' : ' off'}`,
       'data-id': c.id,
-      title: `${c.title || ''}\n${M.tc(c.start, fps)} → ${M.tc(M.clipEnd(c), fps)} · ${M.short(c.dur / fps)}${Math.abs(M.spd(c) - 1) > 1e-6 ? ` · vitesse ${M.pct(M.spd(c))}` : ''}${it && it.missing ? '\nobjet introuvable dans la bibliothèque (à la corbeille ?)' : ''}\nclic droit : couper, vitesse, LUT, activer…`,
+      title: `${c.title || ''}\n${M.tc(c.start, fps)} → ${M.tc(M.clipEnd(c), fps)} · ${M.short(c.dur / fps)}${it && it.missing ? '\nintrouvable dans la bibliothèque' : ''}`,
       style: { left: x + 'px', width: wpx + 'px' },
     }, body);
     if (w && w.xin) {
@@ -159,6 +199,47 @@ export class Timeline {
       node.append(el('i', { class: 'xf off', title: 'fondu enchaîné sans effet : aucun plan actif ne touche celui-ci à gauche', style: { left: '0px', width: this.fx(Math.min(c.xfade, c.dur)) + 'px' } }));
     }
     node.append(el('i', { class: 'h l' }), el('i', { class: 'h r' }));
+    this.fadeHandles(node, w);
+    return node;
+  }
+
+  // Les fondus d'un plan : la courbe (le gain du son selon sa courbe, l'image
+  // en ligne droite) et, au-dessus, la part assombrie.
+  fadeMarks(body, w, sound) {
+    if (!w) return;
+    const ramp = (n, curve, side) => {
+      const pts = [];
+      for (let i = 0; i <= 24; i++) { const x = i / 24; pts.push(`${(x * 100).toFixed(2)},${(100 - 100 * (sound ? M.curveGain(curve, x) : x)).toFixed(2)}`); }
+      const path = side === 'l' ? `M0,0 L${pts.join(' L')} L100,0 Z` : `M100,0 L${pts.map((q) => q.split(',')).map(([a, b]) => `${(100 - a).toFixed(2)},${b}`).join(' L')} L0,0 Z`;
+      const line = side === 'l' ? `M${pts.join(' L')}` : `M${pts.map((q) => q.split(',')).map(([a, b]) => `${(100 - a).toFixed(2)},${b}`).join(' L')}`;
+      const s = el('i', { class: 'fade ' + side, style: { width: this.fx(n) + 'px' },
+        html: `<svg viewBox="0 0 100 100" preserveAspectRatio="none"><path class="sh" d="${path}"/><path class="ln" d="${line}" vector-effect="non-scaling-stroke"/></svg>` });
+      body.append(s);
+    };
+    if (w.fin) ramp(w.fin, w.cin, 'l');
+    if (w.fout) ramp(w.fout, w.cout, 'r');
+  }
+
+  // Les poignées de fondu (Premiere, Resolve : dans le coin haut du plan) :
+  // glisser vers l'intérieur allonge le fondu. Rien là où un fondu enchaîné
+  // tient le bord (il se règle par son propre repère).
+  fadeHandles(node, w) {
+    if (!w) return;
+    if (!w.xin) node.append(el('i', { class: 'fh l', title: 'fondu d’entrée', style: { left: this.fx(w.fin || 0) + 'px' } }));
+    if (!w.xout) node.append(el('i', { class: 'fh r', title: 'fondu de sortie', style: { right: this.fx(w.fout || 0) + 'px' } }));
+  }
+
+  // Un calque d'effet : une bande qui dit ses effets ; étirable, déplaçable, fondue comme un plan.
+  fxClipNode(c, w, selected) {
+    const fps = this.fps;
+    const body = el('div', { class: 'body' });
+    this.fadeMarks(body, w, false);
+    const fxs = M.fxOn(c.fx);
+    body.append(el('span', { class: 'nm' }, c.title || 'calque'), el('span', { class: 'bd' }, fxs.length ? fxs.map((f) => this.app.fxName(f)).join(' · ') : 'aucun effet'));
+    const node = el('div', { class: `clip adjust${selected ? ' sel' : ''}${M.isOn(c) ? '' : ' off'}`, 'data-id': c.id,
+      title: `${c.title || ''}\n${M.tc(c.start, fps)} → ${M.tc(M.clipEnd(c), fps)}`, style: { left: this.fx(c.start) + 'px', width: Math.max(3, this.fx(c.dur)) + 'px' } }, body);
+    node.append(el('i', { class: 'h l' }), el('i', { class: 'h r' }));
+    this.fadeHandles(node, w);
     return node;
   }
 
@@ -227,6 +308,20 @@ export class Timeline {
     this.app.zoomed(this.pps);
   }
   zoom(factor, anchorClientX) { this.setPps(this.pps * factor, anchorClientX); }
+  // molette commune — Ctrl + molette : une piste (id) ou toutes (null), bornée 28–240 px (assez pour l'en-tête) ;
+  // toutes : ce qui est sous le pointeur y reste. Point de départ : la hauteur dessinée (montage.css)
+  scaleHeights(factor, id, clientY) {
+    const p = this.p;
+    if (!p) return;
+    const one = id && p.tracks.find((t) => t.id === id);
+    const cur = (t) => this.h[t.id] || this.lanes.querySelector(`.tl-lane[data-track="${t.id}"]`)?.offsetHeight || 46;
+    const apply = () => {
+      for (const t of one ? [one] : p.tracks) this.h[t.id] = Math.round(borne(cur(t) * factor, 28, 240) * 10) / 10;
+      this.render();
+    };
+    if (one || clientY === undefined) apply(); else tenirY(this.scroll, clientY, apply);
+    this.app.resized?.(this.h);
+  }
   fit() {
     const end = M.projectEnd(this.p) || 10 * this.fps;
     const w = Math.max(200, this.scroll.clientWidth - HEAD - 40);
@@ -243,15 +338,11 @@ export class Timeline {
       this.paintRuler();
       if (this.phX !== undefined) this.ph.style.visibility = this.phX < this.scroll.scrollLeft - 1 ? 'hidden' : 'visible';
     });
-    this.scroll.addEventListener('wheel', (e) => {
-      if (e.altKey || e.ctrlKey) {
-        e.preventDefault();
-        this.zoom(e.deltaY < 0 ? 1.25 : 0.8, e.clientX);
-      } else if (!e.shiftKey && Math.abs(e.deltaY) > Math.abs(e.deltaX) && this.scroll.scrollHeight <= this.scroll.clientHeight + 2) {
-        e.preventDefault();
-        this.scroll.scrollLeft += e.deltaY;
-      }
-    }, { passive: false });
+    // molette commune (commun/molette.js) ; les en-têtes portent data-piste
+    brancher(this.scroll, {
+      zoom: (f, x) => { if (this.p) this.zoom(f, x); },
+      hauteur: (f, id, e) => this.scaleHeights(f, id, e.clientY),
+    });
 
     // la règle : cliquer, glisser = la tête de lecture ; une marque : y aller
     this.ruler.addEventListener('pointerdown', (e) => {
@@ -273,7 +364,11 @@ export class Timeline {
     this.lanes.addEventListener('pointerdown', (e) => this.down(e));
     this.lanes.addEventListener('dblclick', (e) => {
       const hd = e.target.closest('.tl-hd');
-      if (hd) { if (e.target.closest('.tnm')) this.app.renameTrack(hd.dataset.head); return; }
+      if (hd) {
+        if (hd.dataset.ghead) this.app.renameGroup(hd.dataset.ghead);
+        else if (e.target.closest('.tnm')) this.app.renameTrack(hd.dataset.head);
+        return;
+      }
       const n = e.target.closest('.clip');
       if (n && this.app.tool() === 'select') this.app.openClipInSource(n.dataset.id);
     });
@@ -415,6 +510,8 @@ export class Timeline {
     }
     if (!sel.has(id) || tool !== 'select') { sel.clear(); sel.add(id); this.app.select(sel); }
     if (track.lock) return this.app.locked(track.id);
+    const fh = e.target.closest('.fh');
+    if (fh && tool === 'select') return this.fadeDrag(e, c, fh.classList.contains('l') ? 'l' : 'r');
     const handle = e.target.closest('.h');
     const side = handle ? (handle.classList.contains('l') ? 'l' : 'r') : null;
     if (tool === 'slip') return this.slip(e, c);
@@ -450,6 +547,20 @@ export class Timeline {
       if (d) this.app.commit('rogner', (q) => M.trimClip(M.byId(q, c.id), side, d, fps));
       else this.render();
     });
+  }
+
+  // La poignée de fondu : la durée suit la souris, image par image, vue en
+  // direct (programme et courbe) ; une seule annulation au lâcher.
+  fadeDrag(e, c, side) {
+    const fps = this.fps, fin = c.fade_in || 0, fout = c.fade_out || 0;
+    const room = Math.max(0, c.dur - fin - fout);
+    const lim = side === 'l' ? [-fin, room] : [-room, fout];
+    const len = (d) => (side === 'l' ? fin + d : fout - d);
+    this.live(e, side === 'l' ? 'fondu d’entrée' : 'fondu de sortie', lim, (q, d) => {
+      const x = M.byId(q, c.id);
+      if (side === 'l') x.fade_in = len(d); else x.fade_out = len(d);
+      M.fitFades(x);
+    }, (d) => `${side === 'l' ? 'entrée' : 'sortie'} · ${M.short(len(d) / fps)} · ${len(d)} im.`);
   }
 
   // Un geste vu en direct : chaque mouvement rejoue `apply(q, d)` sur le

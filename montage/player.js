@@ -25,9 +25,22 @@
 // une LUT se dessine dans un canevas (lut.js : WebGL2, le calcul de lut3d),
 // posé à la place de son élément, qui reste dessous comme source.
 
+//
+// Les effets (model.js, chainOf : ceux du plan, de sa piste, de son groupe)
+// passent par lut.js (drawChain). Une chaîne dont une LUT se charge encore
+// ne remplace pas celle qui se voit : l'image garde l'ancienne jusqu'à ce que
+// la nouvelle soit prête, puis bascule d'un coup (plus de passage par
+// l'image sans LUT). Un calque d'effet actif compose tout le programme dans
+// un seul canevas (dans l'ordre des pistes, V1 d'abord, sur du noir comme
+// l'export), y applique ses effets à l'endroit de sa piste, et montre ce
+// canevas à la place des éléments.
+
 import { href } from '../commun/shell.js';
-import { windows, opacityAt, gainAt, audibleTracks, projectEnd, spd, isOn } from './model.js';
-import { getLut, lutGL } from './lut.js';
+import { windows, opacityAt, gainAt, audibleTracks, projectEnd, spd, isOn, chainOf } from './model.js';
+import { getLut, lutFailed, lutGL, passesOf } from './lut.js';
+
+// la signature d'une chaîne : ce qui change l'image
+const sigOf = (steps) => JSON.stringify(steps.map((f) => (f.type === 'lut' ? ['l', f.lut, f.mix] : ['g', f.exposure || 0, f.contrast || 0, f.saturation || 0, f.temperature || 6500])));
 
 // ── étalonnage : l'aperçu par les filtres du navigateur ─────
 // colortemperature de ffmpeg 6.1 mesuré sur DGX2 (28/09) : un blanc
@@ -230,24 +243,90 @@ export class Program {
     return e;
   }
 
-  // Le canevas d'un plan qui a une LUT : la source passée par le shader
-  // (étalonnage puis LUT), à la taille de la source (1920 px de large au plus).
-  paintLut(e, c, lut) {
+  // La chaîne prête d'un plan (ou d'un calque) : ses passes, quand toutes ses
+  // LUT sont chargées. Tant qu'une LUT se charge, c'est la chaîne d'avant qui
+  // reste (`hold.ready`) : l'image ne repasse jamais par « sans LUT ».
+  chainReady(hold, steps) {
+    const sig = sigOf(steps);
+    if (hold.ready && hold.ready.sig === sig) return hold.ready;
+    const luts = new Map();
+    let pending = false;
+    const cb = hold.waiting === sig ? null : () => { if (!this.playing) this.render(); };   // un rappel par chaîne attendue
+    for (const f of steps) {
+      if (f.type !== 'lut' || !(f.mix > 0)) continue;
+      const l = getLut(f.lut, cb);
+      if (l) luts.set(f.lut, l);
+      else if (!lutFailed(f.lut)) pending = true;
+    }
+    if (pending) { hold.waiting = sig; return hold.ready || null; }
+    hold.waiting = null;
+    hold.ready = { sig, empty: !steps.length, passes: passesOf(steps, luts, tempGains) };
+    return hold.ready;
+  }
+
+  // Le canevas d'un plan qui a des effets : la source passée par la chaîne,
+  // à la taille de la source (1920 px de large au plus).
+  paintChain(e, ready) {
     const src = e.el;
     const vw = e.tag === 'img' ? src.naturalWidth : src.videoWidth, vh = e.tag === 'img' ? src.naturalHeight : src.videoHeight;
     if (!vw || !vh || (e.tag === 'video' && src.readyState < 2)) return;
     const s = Math.min(1, 1920 / vw);
     const w = Math.max(2, Math.round(vw * s)), h = Math.max(2, Math.round(vh * s));
-    const key = `${e.tag === 'img' ? 0 : src.currentTime}|${lut.id}|${c.lut.mix}|${JSON.stringify(c.grade || '')}|${w}`;
+    const key = `${e.tag === 'img' ? 0 : src.currentTime}|${ready.sig}|${w}`;
     if (!this.playing && e.drawn === key) return;
     const gl = lutGL();
     if (!gl.ok) return;
-    const g = c.grade || {};
-    if (!gl.draw(src, w, h, { lut, mix: c.lut.mix, grade: g, temp: g.temperature && Math.abs(g.temperature - 6500) > 0.5 ? tempGains(g.temperature) : [1, 1, 1] })) return;
+    if (!gl.drawChain(src, w, h, ready.passes)) return;
     if (e.cv.width !== w || e.cv.height !== h) { e.cv.width = w; e.cv.height = h; }
     e.ctx.clearRect(0, 0, w, h);
     e.ctx.drawImage(gl.cv, 0, 0);
     e.drawn = key;
+    e.shown = ready.sig;
+  }
+
+  // Le programme composé (un calque d'effet est actif) : les couches du bas
+  // vers le haut, cadrées comme l'export (contenues, centrées), sur du noir ;
+  // un calque applique ses effets à ce qui est déjà posé, mêlé selon son fondu.
+  compose(layers) {
+    const p = this.getP();
+    const W = p.settings.width || 1920, H = p.settings.height || 1080;
+    const s = Math.min(1, 1920 / W);
+    const w = Math.max(2, Math.round(W * s)), h = Math.max(2, Math.round(H * s));
+    if (!this.comp) {
+      this.comp = document.createElement('canvas');
+      this.comp.className = 'layer comp';
+      this.cctx = this.comp.getContext('2d');
+      this.stage.append(this.comp);
+    }
+    const cv = this.comp, ctx = this.cctx;
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; this.black = null; }
+    if (!this.black) {                     // le fond : du noir opaque (0, 0, 0), celui de `color=c=black` à l'export
+      const d = new ImageData(w, h);
+      for (let i = 3; i < d.data.length; i += 4) d.data[i] = 255;
+      this.black = d;
+    }
+    ctx.globalAlpha = 1;
+    ctx.putImageData(this.black, 0, 0);
+    const gl = lutGL();
+    for (const L of layers) {
+      if (L.op <= 0) continue;
+      if (L.adj) {
+        if (!gl.ok || !gl.drawChain(cv, w, h, L.ready.passes)) continue;
+        ctx.globalAlpha = L.op;
+        ctx.drawImage(gl.cv, 0, 0);
+        continue;
+      }
+      const src = L.e.cv && L.e.shown ? L.e.cv : L.e.el;
+      const el = L.e.el;
+      const vw = L.e.tag === 'img' ? el.naturalWidth : el.videoWidth, vh = L.e.tag === 'img' ? el.naturalHeight : el.videoHeight;
+      if (!vw || !vh || (L.e.tag === 'video' && el.readyState < 2)) continue;
+      const k = Math.min(w / vw, h / vh), dw = vw * k, dh = vh * k;
+      ctx.globalAlpha = L.op;
+      ctx.filter = src === el ? (L.css || 'none') : 'none';
+      ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
+      ctx.filter = 'none';
+    }
+    ctx.globalAlpha = 1;
   }
 
   lutLayer(e, on) {
@@ -257,7 +336,8 @@ export class Program {
       e.ctx = e.cv.getContext('2d');
       e.el.after(e.cv);
       e.drawn = '';
-    } else if (!on && e.cv) { e.cv.remove(); e.cv = null; e.ctx = null; }
+      e.shown = null;
+    } else if (!on && e.cv) { e.cv.remove(); e.cv = null; e.ctx = null; e.shown = null; }
   }
 
   drop(id) {
@@ -283,14 +363,33 @@ export class Program {
     const hear = audibleTracks(p);
     const hidden = new Set(p.tracks.filter((x) => x.hide).map((x) => x.id));
     const fwd = this.playing && this.rate > 0;
-    const order = [...p.tracks.filter((x) => x.kind === 'video').reverse(), ...p.tracks.filter((x) => x.kind === 'audio')];
+    // l'image du bas vers le haut (V1 d'abord, les calques à leur place), puis le son
+    const order = [...p.tracks.filter((x) => x.kind !== 'audio').reverse(), ...p.tracks.filter((x) => x.kind === 'audio')];
     const need = new Set();
     const media = [];
+    const layers = [];
+    let adjOn = false;
     let z = 1;
     const now = performance.now();
+    const gl = lutGL();
+    this.adjHold = this.adjHold || new Map();
     this.visible = [];
     for (const track of order) {
       const clips = p.clips.filter((c) => c.track === track.id && isOn(c)).sort((a, b) => a.start - b.start);
+      if (track.kind === 'fx') {
+        // un calque d'effet actif (piste non coupée, chaîne prête) : le programme sera composé
+        if (track.hide || !gl.ok) continue;
+        for (const c of clips) {
+          const w = this.win.get(c.id);
+          if (!w || frame < w.ws || frame >= w.we) continue;
+          if (!this.adjHold.has(c.id)) this.adjHold.set(c.id, {});
+          const ready = this.chainReady(this.adjHold.get(c.id), chainOf(p, c));
+          if (!ready || ready.empty) continue;
+          layers.push({ adj: true, c, op: opacityAt(w, frame), ready });
+          adjOn = true;
+        }
+        continue;
+      }
       for (const c of clips) {
         const w = this.win.get(c.id);
         if (!w) continue;
@@ -305,8 +404,12 @@ export class Program {
         e.el.style.zIndex = String(z++);
         const sp = spd(c);
         const target = (c.in || 0) + ((active ? t : a) - c.start / fps) * sp;
-        // une LUT (chargée) : le canevas se montre, l'élément reste dessous comme source
-        const lut = e.tag !== 'audio' && c.lut && c.lut.mix > 0 ? getLut(c.lut.id, () => { e.drawn = ''; this.render(); }) : null;
+        // des effets (chaîne prête) : le canevas se montre, l'élément reste dessous comme source ;
+        // sans WebGL2, l'étalonnage seul passe par les filtres CSS
+        const steps = e.tag !== 'audio' ? chainOf(p, c) : [];
+        const ready = steps.length && gl.ok ? this.chainReady(e, steps) : null;
+        const lut = ready && !ready.empty ? ready : null;
+        e.css = !gl.ok ? steps.filter((f) => f.type === 'grade').map(gradeCss).filter((x) => x !== 'none').join(' ') || 'none' : 'none';
         this.lutLayer(e, !!lut);
         if (e.cv) e.cv.style.zIndex = e.el.style.zIndex;
         if (!active) {                      // en attente : arrêté sur sa première image
@@ -328,9 +431,9 @@ export class Program {
             e.cv.style.opacity = String(op);
           } else {
             e.el.style.opacity = String(op);
-            e.el.style.filter = gradeCss(c.grade);
+            e.el.style.filter = e.css;
           }
-          if (op > 0) this.visible.push(c);
+          if (op > 0) { this.visible.push(c); layers.push({ e, c, op, css: e.css }); }
         }
         const sound = hear.has(track.id) && (track.kind === 'audio' || c.audio) && c.kind !== 'image';
         setGain(e, sound ? (c.vol ?? 1) * gainAt(w, t, fps) : 0);
@@ -338,9 +441,16 @@ export class Program {
           this.sync(e, target, fwd, fps, sp);
           if (target >= 0 && (!e.dur || target < e.dur - 0.05)) media.push({ e, c });
         }
-        if (e.cv && lut) this.paintLut(e, c, lut);
+        if (e.cv && lut) this.paintChain(e, lut);
       }
     }
+    // un calque d'effet actif : tout se compose dans un canevas, les éléments restent dessous comme sources
+    if (adjOn) {
+      this.compose(layers);
+      this.comp.style.opacity = '1';
+      for (const L of layers) if (!L.adj) { L.e.el.style.opacity = '0'; if (L.e.cv) L.e.cv.style.opacity = '0'; }
+    } else if (this.comp) this.comp.style.opacity = '0';
+    this.composed = adjOn;
     this.media = media;
     for (const [id, e] of this.els) {
       if (need.has(id)) continue;

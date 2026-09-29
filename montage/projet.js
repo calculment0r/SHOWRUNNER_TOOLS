@@ -22,7 +22,7 @@
 // Glisser vers la timeline, la source ou une autre page : le glisser-déposer
 // HTML du portail (dragItem, ITEM_MIME), plusieurs objets sous MULTI_MIME.
 
-import { api, el, $, $$, toast, href, ITEM_MIME } from '../commun/shell.js';
+import { api, el, $, $$, toast, href, ITEM_MIME, kindMark } from '../commun/shell.js';
 import { contextMenu } from '../commun/menu.js';
 
 export const MULTI_MIME = 'application/x-sr-items';
@@ -244,7 +244,7 @@ export function mountProject(app) {
   function folderRow(name, n) {
     const renaming = P.renaming && P.renaming.type === 'folder' && P.renaming.id === name;
     const row = el('div', { class: 'bf' + (P.sel.has('folder:' + name) ? ' on' : ''), 'data-folder': name,
-      title: `${name} — double-clic : l’ouvrir dans un onglet · double-clic sur le nom : le renommer · y glisser des objets : les y ranger`,
+      title: name,
       onclick: (e) => { if (e.target.closest('input')) return; selectRow('folder:' + name, e); },
       ondblclick: (e) => { if (e.target.closest('input')) return; if (e.target.closest('b')) startRename('folder', name); else openTab(name); } },
     el('i', { class: 'fic' }), renaming ? renameField(name, (v) => renameFolder(name, v)) : el('b', {}, name), el('small', { class: 'num' }, String(n)));
@@ -256,10 +256,13 @@ export function mountProject(app) {
     const renaming = P.renaming && P.renaming.type === 'item' && P.renaming.id === it.id;
     const seq = it.kind === 'sequence';
     const row = el('div', { class: 'bi' + (seq ? ' seq' : '') + (it.id === cur || it.id === open ? ' cur' : '') + (P.sel.has(it.id) ? ' on' : ''), 'data-id': it.id,
-      title: `${it.title}\n${meta(it)}${P.q && it.folder ? '\ndossier : ' + it.folder : ''}\n${seq ? 'double-clic : l’ouvrir dans un onglet de la timeline' : 'clic : dans la source'} · glisser : sur la timeline, un autre objet (nouveau dossier), un dossier · clic droit`,
-      onclick: (e) => { if (e.target.closest('input')) return; selectRow(it.id, e); if (!seq && !e.shiftKey && !e.ctrlKey && !e.metaKey) app.openSource(it); },
-      ondblclick: (e) => { if (e.target.closest('input')) return; if (seq) app.openSequence(it.id); } },
-    el('span', { class: 'th' + (it.kind === 'audio' ? ' audio' : '') + (seq ? ' seqth' : ''), style: it.thumb_url ? { backgroundImage: `url("${href(it.thumb_url)}")` } : null, html: seq && !it.thumb_url ? SEQ_ICON : null }),
+      title: `${it.title}\n${meta(it)}${P.q && it.folder ? '\ndossier : ' + it.folder : ''}`,
+      // clic : chargé dans la source sans quitter l'onglet Effets ; double-clic : l'onglet Source
+      onclick: (e) => { if (e.target.closest('input')) return; selectRow(it.id, e); if (!seq && !e.shiftKey && !e.ctrlKey && !e.metaKey) app.openSource(it, { show: false }); },
+      ondblclick: (e) => { if (e.target.closest('input')) return; if (seq) app.openSequence(it.id); else app.openSource(it); } },
+    el('span', { class: 'th' + (it.kind === 'audio' ? ' audio' : '') + (seq ? ' seqth' : ''), style: it.thumb_url ? { backgroundImage: `url("${href(it.thumb_url)}")` } : null, html: seq && !it.thumb_url ? SEQ_ICON : null },
+      // une séquence porte la marque commune dans le coin (on ne la confond plus avec le clip de même première image)
+      seq ? kindMark(it, { compact: true }) : null),
     el('span', { class: 'tx' }, renaming ? renameField(it.title || '', (v) => renameItem(it, v)) : el('b', {}, seq ? el('i', { class: 'sq', html: SEQ_ICON }) : null, it.title || it.id),
       el('small', {}, P.q && it.folder ? `${it.folder} · ${meta(it)}` : meta(it))),
     used.has(it.id) ? el('span', { class: 'used', title: 'employé dans la séquence ouverte' }) : null);

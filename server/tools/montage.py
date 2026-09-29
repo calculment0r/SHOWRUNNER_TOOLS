@@ -34,17 +34,20 @@ longueur du film. Dans chaque passe :
     `force_original_aspect_ratio=decrease`) et passée en RVB **avec la
     matrice que le navigateur emploie pour cette source** (celle de son
     étiquette ; sans étiquette, BT.709 à partir de 720 lignes, BT.601
-    en dessous — mesuré dans Chromium le 29/09, voir l'étude), étalonnée
-    (`exposure`, `eq`, `colortemperature`), passée par sa LUT (`lut3d`
-    trilinéaire ou `lut1d` linéaire, en flottants), remise en YUV BT.709,
+    en dessous — mesuré dans Chromium le 29/09, voir l'étude), passée par
+    sa chaîne d'effets (`chain_of` : les siens, ceux de sa piste, ceux du
+    groupe de sa piste — étalonnage `exposure`, `eq`, `colortemperature` ;
+    LUT `lut3d` trilinéaire ou `lut1d` linéaire, en flottants), remise en YUV BT.709,
     prolongée en figeant sa première ou dernière image quand un fondu
     enchaîné demande plus que la source n'a (`tpad` clone), coupée au
     nombre d'images exact (`trim=end_frame`), fondue en transparence
     (`fade … alpha=1`, en temps : un fondu à cheval sur deux passes reste
     continu), puis décalée à sa place (`setpts=PTS+…`) et posée sur ce qui
     est dessous (`overlay=eof_action=pass`) ; V1 d'abord, la plus haute
-    en dernier, donc au-dessus. La sortie est étiquetée BT.709 : tout
-    lecteur la décode comme elle a été écrite ;
+    en dernier, donc au-dessus. Un calque d'effet (piste X, plan `adjust`)
+    dédouble l'image composée jusque-là (`split`), en passe une branche par
+    ses effets sur sa durée et la repose dessus. La sortie est étiquetée
+    BT.709 : tout lecteur la décode comme elle a été écrite ;
   - chaque son : le même découpage (`atrim`), sa vitesse (`atempo`),
     `volume`, `afade`, décalé (`adelay` en échantillons, `all=1`), puis
     `amix` sans renormaliser (`normalize=0`).
@@ -95,7 +98,11 @@ PID = re.compile(r"(?:seq|mon)-\d{8}-\d{6}-[0-9a-f]{4}")    # une séquence ; «
 SID = re.compile(r"seq-\d{8}-\d{6}-[0-9a-f]{4}")
 SEQ_FILE = "sequence.json"
 CID = re.compile(r"[A-Za-z0-9_-]{1,40}")
-TID = re.compile(r"[VA](?:[1-9]|1[0-9]|20)")
+TID = re.compile(r"[VAX](?:[1-9]|1[0-9]|20)")    # V : vidéo, X : calques d'effet, A : son
+FXID = re.compile(r"f[A-Za-z0-9_-]{1,40}")
+GID = re.compile(r"g[A-Za-z0-9_-]{1,40}")
+MAX_FX = 32                  # effets par plan, piste ou groupe
+CURVES = ("tri", "qsin", "hsin", "esin", "log", "exp", "par", "ipar", "qua", "squ")   # afade (ffmpeg -h filter=afade), celles de la page
 ITEM = re.compile(r"[a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4}")
 MID = re.compile(r"m[A-Za-z0-9_-]{1,30}")
 LUT_ID = re.compile(r"lut-\d{8}-\d{6}-[0-9a-f]{4}")
@@ -164,6 +171,8 @@ def load(pid: str) -> dict:
 def _thumb_of(p: dict) -> Path | None:
     """La vignette d'une séquence : celle du premier plan qui se voit."""
     for c in sorted(p["clips"], key=lambda c: (c["track"][0] != "V", c["start"])):
+        if c.get("kind") == "adjust" or not c.get("item"):
+            continue
         it = library.get(c["item"])
         if it and it["kind"] in ("video", "image") and it.get("thumb"):
             return library.folder_of(it["id"]) / it["thumb"]
@@ -181,7 +190,7 @@ def _sync_item(p: dict) -> None:
         st = p["settings"]
         it.update(title=p["name"], updated=library.now(), width=st["width"], height=st["height"], fps=st["fps"],
                   duration=round(project_end(p) / st["fps"], 3),
-                  parents=list(dict.fromkeys(c["item"] for c in p["clips"])))
+                  parents=list(dict.fromkeys(c["item"] for c in p["clips"] if c.get("item"))))
         it["params"] = {**(it.get("params") or {}), "format": st["format"], "clips": len(p["clips"])}
         src = _thumb_of(p)
         d = library.folder_of(p["id"])
@@ -267,9 +276,13 @@ def migrate() -> list[str]:
     return made
 
 
+def _kind_of(tid: str) -> str:
+    return {"V": "video", "X": "fx"}.get(tid[0], "audio")
+
+
 def _track(tid: str) -> dict:
-    return {"id": tid, "kind": "video" if tid[0] == "V" else "audio",
-            "mute": False, "solo": False, "lock": False, "hide": False, "name": ""}
+    return {"id": tid, "kind": _kind_of(tid),
+            "mute": False, "solo": False, "lock": False, "hide": False, "name": "", "fx": []}
 
 
 def blank(name: str, settings: dict | None = None) -> dict:
@@ -326,34 +339,107 @@ def _num(v, lo, hi, default, integer=False):
     return int(round(x)) if integer else x
 
 
+def _fx_list(raw, image: bool = True) -> list[dict]:
+    """Une liste d'effets propre (la page : montage/model.js, `newFx`).
+    `grade` : exposure (IL), contrast, saturation (−100..100), temperature (K) ;
+    `lut` : une LUT de la bibliothèque et son intensité. Un effet d'image
+    n'a rien à faire sur le son : `image=False` rend une liste vide."""
+    out, ids = [], set()
+    if not image or not isinstance(raw, list):
+        return out
+    for f in raw[:MAX_FX]:
+        if not isinstance(f, dict) or f.get("type") not in ("grade", "lut"):
+            continue
+        fid = str(f.get("id", ""))
+        if not FXID.fullmatch(fid) or fid in ids:
+            fid = "f" + secrets.token_hex(4)
+        ids.add(fid)
+        e = {"id": fid, "type": f["type"], "on": f.get("on") is not False}
+        if f["type"] == "lut":
+            if not LUT_ID.fullmatch(str(f.get("lut", ""))):
+                continue
+            e.update(lut=str(f["lut"]), mix=round(_num(f.get("mix"), 0, 1, 1.0), 3))
+        else:
+            e.update(exposure=_num(f.get("exposure"), -2, 2, 0.0), contrast=_num(f.get("contrast"), -100, 100, 0.0),
+                     saturation=_num(f.get("saturation"), -100, 100, 0.0),
+                     temperature=_num(f.get("temperature"), 2000, 12000, float(NEUTRAL_K)))
+        out.append(e)
+    return out
+
+
+def _grade_neutral(g: dict) -> bool:
+    return (abs(g.get("exposure", 0)) < 1e-4 and abs(g.get("contrast", 0)) < 1e-4 and abs(g.get("saturation", 0)) < 1e-4
+            and abs(g.get("temperature", NEUTRAL_K) - NEUTRAL_K) <= 0.5)
+
+
 def _tracks(raw: list) -> tuple[list[dict], dict[str, str]]:
-    """Les pistes, dans l'ordre de l'écran (vidéo de haut en bas, puis son),
-    renommées par leur place si elles ne le sont pas (V1 en bas, A1 en
-    haut) : rend (pistes, ancien nom → nouveau)."""
+    """Les pistes, dans l'ordre de l'écran : l'image (vidéo et calques
+    d'effet, mêlés, la plus haute d'abord), puis le son ; renommées par leur
+    place si elles ne le sont pas (V1 et X1 en bas, A1 en haut) : rend
+    (pistes, ancien nom → nouveau)."""
     tracks, seen = [], set()
     for t in raw or []:
         tid = str((t or {}).get("id", ""))
         if not TID.fullmatch(tid) or tid in seen:
             raise HttpError(400, f"piste invalide ou en double : {tid!r}")
         seen.add(tid)
-        tracks.append({"id": tid, "kind": "video" if tid[0] == "V" else "audio",
-                       **{k: bool(t.get(k)) for k in ("mute", "solo", "lock", "hide")},
-                       "name": " ".join(str(t.get("name") or "").split())[:40]})
-    vids = [t for t in tracks if t["kind"] == "video"]
+        kind = _kind_of(tid)
+        tr = {"id": tid, "kind": kind, **{k: bool(t.get(k)) for k in ("mute", "solo", "lock", "hide")},
+              "name": " ".join(str(t.get("name") or "").split())[:40], "fx": _fx_list(t.get("fx"), kind == "video")}
+        if GID.fullmatch(str(t.get("grp") or "")):
+            tr["grp"] = t["grp"]
+        tracks.append(tr)
+    img = [t for t in tracks if t["kind"] != "audio"]
     auds = [t for t in tracks if t["kind"] == "audio"]
-    if not vids:
-        vids = [_track("V1")]
+    if not any(t["kind"] == "video" for t in img):
+        img.append(_track("V1"))
     if not auds:
         auds = [_track("A1")]
-    if len(vids) > MAX_TRACKS or len(auds) > MAX_TRACKS:
-        raise HttpError(400, f"trop de pistes ({MAX_TRACKS} vidéo et {MAX_TRACKS} son au plus)")
+    for kind in ("video", "fx", "audio"):
+        if sum(t["kind"] == kind for t in img + auds) > MAX_TRACKS:
+            raise HttpError(400, f"trop de pistes ({MAX_TRACKS} de chaque sorte au plus)")
     ren = {}
-    for i, t in enumerate(vids):
-        ren[t["id"]] = f"V{len(vids) - i}"
+    for kind, pre in (("video", "V"), ("fx", "X")):
+        lst = [t for t in img if t["kind"] == kind]
+        for i, t in enumerate(lst):
+            ren[t["id"]] = f"{pre}{len(lst) - i}"
     for i, t in enumerate(auds):
         ren[t["id"]] = f"A{i + 1}"
-    out = [{**t, "id": ren[t["id"]]} for t in vids + auds]
+    out = [{**t, "id": ren[t["id"]]} for t in img + auds]
     return out, ren
+
+
+def _groups(raw, tracks: list[dict]) -> list[dict]:
+    """Les groupes de pistes : un nom, des effets ; au moins deux membres
+    contigus d'une même famille (sinon le groupe se défait, comme dans la page)."""
+    by = {}
+    for g in (raw if isinstance(raw, list) else [])[:100]:
+        if isinstance(g, dict) and GID.fullmatch(str(g.get("id", ""))) and g["id"] not in by:
+            by[g["id"]] = g
+    fam = lambda t: "audio" if t["kind"] == "audio" else "image"   # noqa: E731
+    for i, t in enumerate(tracks):
+        gid = t.get("grp")
+        if not gid:
+            continue
+        prev = tracks[i - 1] if i else None
+        first = not prev or prev.get("grp") != gid
+        # un membre séparé des autres, ou d'une autre famille, sort du groupe
+        if gid not in by or (first and any(x.get("grp") == gid for x in tracks[:i])) or (prev and prev.get("grp") == gid and fam(prev) != fam(t)):
+            t.pop("grp", None)
+    count = {}
+    for t in tracks:
+        if t.get("grp"):
+            count[t["grp"]] = count.get(t["grp"], 0) + 1
+    for t in tracks:
+        if t.get("grp") and count[t["grp"]] < 2:
+            t.pop("grp")
+    out = []
+    for gid, g in by.items():
+        members = [t for t in tracks if t.get("grp") == gid]
+        if len(members) >= 2:
+            out.append({"id": gid, "name": " ".join(str(g.get("name") or "Groupe").split())[:40] or "Groupe",
+                        "fx": _fx_list(g.get("fx"), members[0]["kind"] != "audio")})
+    return out
 
 
 def normalize(p: dict) -> dict:
@@ -374,6 +460,7 @@ def normalize(p: dict) -> dict:
     settings = {"format": fmt, "fps": fps, "width": W, "height": H,
                 "still": _num(s.get("still"), 0.2, 600, STILL_DEFAULT)}
     tracks, ren = _tracks(p.get("tracks") or [_track(t) for t in TRACKS_DEFAULT])
+    groups = _groups(p.get("groups"), tracks)
     kinds = {t["id"]: t["kind"] for t in tracks}
     clips, ids = [], set()
     raw = p.get("clips") or []
@@ -390,22 +477,35 @@ def normalize(p: dict) -> dict:
         if tid not in kinds:
             raise HttpError(400, f"le plan {cid} est sur une piste inconnue : {c.get('track')!r}")
         kind = c.get("kind")
-        if kind not in ("video", "image", "audio"):
-            raise HttpError(400, f"le plan {cid} n'est ni vidéo, ni image, ni son")
+        if kind not in ("video", "image", "audio", "adjust"):
+            raise HttpError(400, f"le plan {cid} n'est ni vidéo, ni image, ni son, ni calque d'effet")
+        if (kind == "adjust") != (kinds[tid] == "fx"):
+            raise HttpError(400, f"le plan {cid} : un calque d'effet va sur une piste de calques (X), et seulement lui")
         if kinds[tid] == "video" and kind == "audio":
             raise HttpError(400, f"le plan {cid} est un son sur une piste vidéo")
         if kinds[tid] == "audio" and kind == "image":
             raise HttpError(400, f"le plan {cid} est une image sur une piste son")
-        item = str(c.get("item", ""))
-        if not ITEM.fullmatch(item):
+        item = str(c.get("item") or "")
+        if kind == "adjust":
+            item = ""
+        elif not ITEM.fullmatch(item):
             raise HttpError(400, f"le plan {cid} ne pointe vers aucun objet de la bibliothèque")
         dur = _num(c.get("dur"), 1, 10 ** 8, 1, True)
-        g = c.get("grade") or {}
-        lut = c.get("lut") if isinstance(c.get("lut"), dict) else None
-        if lut and LUT_ID.fullmatch(str(lut.get("id", ""))) and kinds[tid] == "video":
-            lut = {"id": str(lut["id"]), "mix": round(_num(lut.get("mix"), 0, 1, 1.0), 3)}
+        image = kinds[tid] != "audio"
+        if isinstance(c.get("fx"), list):
+            fx = _fx_list(c["fx"], image)
         else:
-            lut = None
+            # un plan d'avant le 29/09 au soir : son étalonnage, puis sa LUT, deviennent ses effets
+            g = c.get("grade") or {}
+            old = []
+            if not _grade_neutral(g):
+                old.append({"id": "fg" + cid[-8:].replace("-", "_"), "type": "grade", **g})
+            lut = c.get("lut") if isinstance(c.get("lut"), dict) else None
+            if lut and LUT_ID.fullmatch(str(lut.get("id", ""))):
+                old.append({"id": "fl" + cid[-8:].replace("-", "_"), "type": "lut", "lut": lut["id"], "mix": lut.get("mix", 1)})
+            fx = _fx_list(old, image)
+        fi = _num(c.get("fade_in"), 0, dur, 0, True)
+        fc = c.get("fcurve") if isinstance(c.get("fcurve"), dict) else {}
         clips.append({
             "id": cid, "track": tid, "item": item, "kind": kind,
             "title": str(c.get("title", ""))[:200],
@@ -413,18 +513,15 @@ def normalize(p: dict) -> dict:
             "dur": dur,
             "in": _num(c.get("in"), 0, 10 ** 7, 0.0),
             "src_dur": _num(c.get("src_dur"), 0, 10 ** 7, 0.0),
-            "speed": 1.0 if kind == "image" else _num(c.get("speed"), SPEED_MIN, SPEED_MAX, 1.0),
+            "speed": 1.0 if kind in ("image", "adjust") else _num(c.get("speed"), SPEED_MIN, SPEED_MAX, 1.0),
             "enabled": c.get("enabled") is not False,
             "vol": _num(c.get("vol"), 0, 4, 1.0),
-            "fade_in": _num(c.get("fade_in"), 0, dur, 0, True),
-            "fade_out": _num(c.get("fade_out"), 0, dur, 0, True),
-            "xfade": _num(c.get("xfade"), 0, 10 ** 6, 0, True),
+            "fade_in": fi,
+            "fade_out": _num(c.get("fade_out"), 0, dur - fi, 0, True),
+            "fcurve": {"in": fc.get("in") if fc.get("in") in CURVES else "tri", "out": fc.get("out") if fc.get("out") in CURVES else "tri"},
+            "xfade": 0 if kind == "adjust" else _num(c.get("xfade"), 0, 10 ** 6, 0, True),
             "audio": bool(c.get("audio")) if kind == "video" else kind == "audio",
-            "grade": {"exposure": _num(g.get("exposure"), -2, 2, 0.0),
-                      "contrast": _num(g.get("contrast"), -100, 100, 0.0),
-                      "saturation": _num(g.get("saturation"), -100, 100, 0.0),
-                      "temperature": _num(g.get("temperature"), 2000, 12000, float(NEUTRAL_K))},
-            "lut": lut,
+            "fx": fx,
         })
     markers, mids = [], set()
     for m in (p.get("markers") or [])[:500]:
@@ -442,7 +539,7 @@ def normalize(p: dict) -> dict:
     # (les dossiers « bins » propres au montage du 29/09 midi ne sont plus lus : le chutier est Asset,
     # ses dossiers sont ceux de la bibliothèque ; aucun montage enregistré n'en portait)
     out = {"id": p.get("id"), "name": str(p.get("name") or "Sans titre")[:120], "settings": settings,
-           "tracks": tracks, "clips": clips, "markers": markers, "range": {"in": rin, "out": rout}}
+           "tracks": tracks, "groups": groups, "clips": clips, "markers": markers, "range": {"in": rin, "out": rout}}
     for k in ("created", "updated", "rev", "legacy"):
         if k in p:
             out[k] = p[k]
@@ -485,9 +582,11 @@ def windows(p: dict) -> dict[str, dict]:
     out = {}
     by_track: dict[str, list] = {}
     for c in p["clips"]:
+        fc = c.get("fcurve") or {}
         out[c["id"]] = {"clip": c, "ws": c["start"], "we": c["start"] + c["dur"],
-                        "fin": c["fade_in"], "fout": c["fade_out"], "xin": 0, "xout": 0}
-        if c.get("enabled", True):
+                        "fin": c["fade_in"], "fout": c["fade_out"], "xin": 0, "xout": 0,
+                        "cin": fc.get("in", "tri"), "cout": fc.get("out", "tri")}
+        if c.get("enabled", True) and c.get("kind") != "adjust":
             by_track.setdefault(c["track"], []).append(c)
     for cl in by_track.values():
         cl.sort(key=lambda c: c["start"])
@@ -505,6 +604,22 @@ def audible(p: dict) -> set[str]:
     """Les pistes qu'on entend : pas muettes, et solo s'il y en a un."""
     solo = any(t["solo"] for t in p["tracks"])
     return {t["id"] for t in p["tracks"] if not t["mute"] and (t["solo"] or not solo)}
+
+
+def chain_of(p: dict, c: dict) -> list[dict]:
+    """Ce que l'image d'un plan traverse, dans l'ordre : ses effets, ceux de
+    sa piste, ceux du groupe de sa piste (un calque d'effet : les siens).
+    Même calcul que `chainOf` de montage/model.js."""
+    on = lambda lst: [f for f in (lst or []) if f.get("on", True) and f.get("type") in ("grade", "lut")]   # noqa: E731
+    if c.get("kind") == "adjust":
+        steps = on(c.get("fx"))
+    else:
+        t = next((x for x in p["tracks"] if x["id"] == c["track"]), None)
+        if not t or t["kind"] != "video":
+            return []
+        g = next((x for x in p.get("groups") or [] if x["id"] == t.get("grp")), None)
+        steps = on(c.get("fx")) + on(t.get("fx")) + (on(g.get("fx")) if g else [])
+    return [f for f in steps if f["type"] != "grade" or not _grade_neutral(f)]
 
 
 # ── les LUT ──────────────────────────────────────────────────
@@ -888,9 +1003,14 @@ def read_lut(lid: str) -> dict:
     return parse_cube((_luts_dir() / f"{lid}.cube").read_text(encoding="utf-8"))
 
 
-def lut_key(c: dict) -> str | None:
-    lut = c.get("lut")
-    return f"{lut['id']}@{round(lut['mix'] * 1000)}" if lut and lut.get("mix", 0) > 0 else None
+def lut_key(f: dict) -> str | None:
+    """La clé d'un effet LUT (la LUT et son intensité), None s'il n'agit pas."""
+    return f"{f['lut']}@{round(f['mix'] * 1000)}" if f.get("type") == "lut" and f.get("mix", 0) > 0 else None
+
+
+def lut_steps(p: dict) -> list[dict]:
+    """Tous les effets LUT que l'export traverse (plans actifs, calques)."""
+    return [f for c in p["clips"] if c.get("enabled", True) for f in chain_of(p, c) if lut_key(f)]
 
 
 def prepare_luts(p: dict, workdir: str, write: bool = True) -> dict[str, dict]:
@@ -898,14 +1018,14 @@ def prepare_luts(p: dict, workdir: str, write: bool = True) -> dict[str, dict]:
     rangée à 100 %, sinon une copie mêlée à son intensité dans le dossier
     du travail. Une LUT absente n'y est pas (l'export le dira)."""
     out = {}
-    for c in p["clips"]:
-        key = lut_key(c)
-        if not key or key in out:
+    for f in lut_steps(p):
+        key = lut_key(f)
+        if key in out:
             continue
-        m = lut_meta(c["lut"]["id"])
+        m = lut_meta(f["lut"])
         if not m:
             continue
-        mix = round(c["lut"]["mix"] * 1000)
+        mix = round(f["mix"] * 1000)
         path = _luts_dir() / f"{m['id']}.cube"
         if mix < 1000:
             path = Path(workdir) / f"{m['id']}-{mix:04d}.cube"
@@ -1119,6 +1239,19 @@ def _lut_filter(info: dict) -> list[str]:
     return ["format=gbrpf32le", f"lut3d=file='{info['path']}':interp=trilinear"]
 
 
+def _fx_filters(steps: list[dict], luts: dict) -> list[str]:
+    """Les filtres d'une chaîne d'effets, dans l'ordre (entrée en RVB gbrp)."""
+    out = []
+    for f in steps:
+        if f["type"] == "grade":
+            out += _grade(f)
+        elif lut_key(f):
+            if lut_key(f) not in luts:
+                raise ValueError(f"LUT introuvable : {f['lut']}")
+            out += _lut_filter(luts[lut_key(f)])
+    return out
+
+
 def _atempo(speed: float) -> list[str]:
     """atempo prend 0,5 à 100 (ffmpeg 6.1, -h filter=atempo) : en dessous, on enchaîne."""
     out, s = [], speed
@@ -1137,12 +1270,12 @@ def _check(p: dict, media: dict[str, dict], luts: dict | None = None, rng=None) 
     bad = overlaps(p)
     if bad:
         raise ValueError("des plans se chevauchent : " + " ; ".join(bad[:6]))
-    live = [c for c in p["clips"] if c.get("enabled", True)]
+    live = [c for c in p["clips"] if c.get("enabled", True) and c.get("kind") != "adjust"]
     missing = sorted({c["item"] for c in live if c["item"] not in media})
     if missing:
         raise ValueError("objets absents de la bibliothèque (à la corbeille ?) : " + ", ".join(missing[:8]))
     if luts is not None:
-        gone = sorted({c["lut"]["id"] for c in live if lut_key(c) and lut_key(c) not in luts})
+        gone = sorted({f["lut"] for f in lut_steps(p) if lut_key(f) not in luts})
         if gone:
             raise ValueError("LUT introuvables (supprimées ?) : " + ", ".join(gone[:8]))
     if rng and not (0 <= rng[0] < rng[1]):
@@ -1214,7 +1347,9 @@ def plan_video(p: dict, media: dict[str, dict], f0: int, f1: int, out_path: str,
     luts = luts or {}
     win = windows(p)
     hidden = {t["id"] for t in p["tracks"] if t["hide"]}
-    order = [t["id"] for t in reversed([t for t in p["tracks"] if t["kind"] == "video"])]   # V1 d'abord
+    # l'image, du bas vers le haut : V1 d'abord ; un calque d'effet agit sur tout ce qui est posé avant lui
+    order = [t["id"] for t in reversed([t for t in p["tracks"] if t["kind"] != "audio"])]
+    kinds = {t["id"]: t["kind"] for t in p["tracks"]}
     inputs: list[list[str]] = []
     graph = [f"color=c=black:s={W}x{H}:r={fps}:d={_f((f1 - f0) / fps)},format=yuv420p[base]"]
     last = "base"
@@ -1229,6 +1364,30 @@ def plan_video(p: dict, media: dict[str, dict], f0: int, f1: int, out_path: str,
             a, b = max(w["ws"], f0), min(w["we"], f1)
             if a >= b:
                 continue
+            if kinds[tid] == "fx":
+                # Un calque d'effet : l'image composée jusqu'ici, dédoublée
+                # (split) ; une branche, coupée à la fenêtre du calque (trim),
+                # passe en RVB BT.709 (la matrice de la sortie), traverse les
+                # effets, revient en YUV, fond en transparence comme un plan, et
+                # se pose sur l'autre (overlay, eof_action=pass).
+                steps = chain_of(p, c)
+                if not steps:
+                    continue
+                nw = w["we"] - w["ws"]
+                chain = [f"trim=start_frame={a - f0}:end_frame={b - f0}", f"setpts=PTS-STARTPTS{_shift(a - w['ws'], fps)}",
+                         "scale=in_color_matrix=bt709:in_range=limited", "format=gbrp", *_fx_filters(steps, luts),
+                         "scale=out_color_matrix=bt709:out_range=limited", "format=yuva420p"]
+                if w["fin"]:
+                    chain.append(f"fade=t=in:st=0:d={_f(w['fin'] / fps)}:alpha=1")
+                if w["fout"]:
+                    chain.append(f"fade=t=out:st={_f((nw - w['fout']) / fps)}:d={_f(w['fout'] / fps)}:alpha=1")
+                chain.append(f"setpts=PTS{_shift(w['ws'] - f0, fps)}")
+                k = c["id"]
+                graph.append(f"[{last}]split=2[s{k}][t{k}]")
+                graph.append(f"[t{k}]" + ",".join(chain) + f"[x{k}]")
+                graph.append(f"[s{k}][x{k}]overlay=eof_action=pass[o{k}]")
+                last = f"o{k}"
+                continue
             m = media[c["item"]]
             args, pre = _open(c, m, fps, a, b)
             inputs.append(args)
@@ -1241,16 +1400,11 @@ def plan_video(p: dict, media: dict[str, dict], f0: int, f1: int, out_path: str,
                      f"fps={fps}",
                      f"scale={W}:{H}:force_original_aspect_ratio=decrease:force_divisible_by=2{_to_rgb(m)}",
                      "format=gbrp", "setsar=1",
-                     *_grade(c["grade"])]
-            key = lut_key(c)
-            if key:
-                if key not in luts:
-                    raise ValueError(f"LUT introuvable : {c['lut']['id']}")
-                chain += _lut_filter(luts[key])
-            chain += ["scale=out_color_matrix=bt709:out_range=limited", "format=yuva420p",
-                      f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black@0",
-                      f"tpad=start={pre}:start_mode=clone:stop=-1:stop_mode=clone",
-                      f"trim=end_frame={b - a}", f"setpts=PTS-STARTPTS{_shift(a - w['ws'], fps)}"]
+                     *_fx_filters(chain_of(p, c), luts),
+                     "scale=out_color_matrix=bt709:out_range=limited", "format=yuva420p",
+                     f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black@0",
+                     f"tpad=start={pre}:start_mode=clone:stop=-1:stop_mode=clone",
+                     f"trim=end_frame={b - a}", f"setpts=PTS-STARTPTS{_shift(a - w['ws'], fps)}"]
             if w["xin"]:
                 chain.append(f"fade=t=in:st=0:d={_f(w['xin'] / fps)}:alpha=1")
             if w["fin"]:
@@ -1294,6 +1448,8 @@ def plan_mux(p: dict, media: dict[str, dict], list_path: str, out_path: str, rng
     for t in p["tracks"]:
         if t["id"] not in hear:
             continue
+        if t["kind"] == "fx":
+            continue
         for c in sorted((c for c in p["clips"] if c["track"] == t["id"]), key=lambda c: c["start"]):
             m = media.get(c["item"])
             if not c.get("enabled", True) or not m or c["vol"] <= 0 or not m.get("audio") or m["kind"] == "image":
@@ -1316,12 +1472,14 @@ def plan_mux(p: dict, media: dict[str, dict], list_path: str, out_path: str, rng
                 chain.append(f"volume={_f(c['vol'])}")
             if w["xin"]:
                 chain.append(f"afade=t=in:ss=0:ns={round(w['xin'] / fps * 48000)}")
+            # les fondus d'entrée et de sortie suivent leur courbe (afade curve ; la page : curveGain)
             if w["fin"]:
-                chain.append(f"afade=t=in:ss=0:ns={round(w['fin'] / fps * 48000)}")
+                chain.append(f"afade=t=in:ss=0:ns={round(w['fin'] / fps * 48000)}" + (f":curve={w['cin']}" if w["cin"] != "tri" else ""))
             if w["xout"]:
                 chain.append(f"afade=t=out:ss={round((nf - w['xout']) / fps * 48000)}:ns={round(w['xout'] / fps * 48000)}")
             if w["fout"]:
-                chain.append(f"afade=t=out:ss={round((nf - w['fout']) / fps * 48000)}:ns={round(w['fout'] / fps * 48000)}")
+                chain.append(f"afade=t=out:ss={round((nf - w['fout']) / fps * 48000)}:ns={round(w['fout'] / fps * 48000)}"
+                             + (f":curve={w['cout']}" if w["cout"] != "tri" else ""))
             if w["ws"]:
                 chain.append(f"adelay=delays={round(w['ws'] / fps * 48000)}S:all=1")
             graph.append(f"[{k}:a]" + ",".join(chain) + f"[a{c['id']}]")
@@ -1401,7 +1559,7 @@ def _video_color(path: Path) -> dict:
 def media_of(p: dict) -> dict[str, dict]:
     """Les fichiers des objets du montage, lus dans la bibliothèque."""
     out = {}
-    for iid in {c["item"] for c in p["clips"]}:
+    for iid in {c["item"] for c in p["clips"] if c.get("kind") != "adjust" and c.get("item")}:
         it = library.get(iid)
         if not it or it["kind"] not in ("video", "image", "audio"):
             continue
@@ -1498,7 +1656,7 @@ def run_export(ctx) -> dict:
     if not out.exists():
         raise RuntimeError("ffmpeg n'a rien écrit")
     ctx.progress(0.99, "range dans la bibliothèque")
-    snap = {k: p[k] for k in ("id", "name", "settings", "tracks", "clips", "markers", "range", "rev") if k in p}
+    snap = {k: p[k] for k in ("id", "name", "settings", "tracks", "groups", "clips", "markers", "range", "rev") if k in p}
     it = ctx.add(out, kind="video", title=p["name"] + (" (entrée → sortie)" if rng else ""),
                  params={"montage": p["id"], "rev": p.get("rev"), "project": snap, "preset": preset,
                          "range": list(rng) if rng else None},
@@ -1866,7 +2024,8 @@ def selftest(call, ok) -> None:
     mig = normalize(old)
     c0 = mig["clips"][0]
     ok(all(c0[k] == old["clips"][0][k] for k in ("id", "track", "item", "start", "dur", "in", "vol", "fade_in", "audio"))
-       and c0["speed"] == 1.0 and c0["enabled"] is True and c0["lut"] is None and mig["markers"] == []
+       and c0["speed"] == 1.0 and c0["enabled"] is True and [(f["type"], f["exposure"]) for f in c0["fx"]] == [("grade", 0.5)]
+       and "grade" not in c0 and "lut" not in c0 and mig["groups"] == [] and mig["markers"] == []
        and mig["range"] == {"in": None, "out": None} and "bins" not in mig
        and mig["tracks"][4]["mute"] is True and mig["rev"] == 7 and normalize(mig) == mig,
        f"montage : un projet d'avant se relit sans perte, les champs neufs à leur défaut ({c0})")
@@ -1887,6 +2046,27 @@ def selftest(call, ok) -> None:
     mk = normalize({**old, "markers": [{"id": "m1", "f": 50, "name": "  refrain "}, {"id": "m0", "f": 10}], "range": {"in": 20, "out": 10}})
     ok([m["f"] for m in mk["markers"]] == [10, 50] and mk["markers"][1]["name"] == "refrain" and mk["range"] == {"in": 20, "out": None},
        "montage : les marques triées, une sortie avant l'entrée tombe")
+    # un plan d'avant avec une LUT : ses effets, l'étalonnage d'abord ; relu, il ne bouge plus
+    lo = normalize({**old, "clips": [{**old["clips"][0], "lut": {"id": "lut-20260929-000000-abcd", "mix": 0.4}}]})
+    ok([f["type"] for f in lo["clips"][0]["fx"]] == ["grade", "lut"] and lo["clips"][0]["fx"][1]["mix"] == 0.4 and normalize(lo) == lo,
+       "montage : un plan d'avant (étalonnage + LUT) devient deux effets, dans cet ordre")
+    # les calques d'effet (X), les groupes de pistes, les fondus et leurs courbes
+    fxp = normalize({**old, "tracks": [{"id": "X1", "name": "FX Inversion"}, {"id": "V2", "grp": "gA"}, {"id": "V1", "grp": "gA"},
+                                        {"id": "A1", "grp": "gB"}, {"id": "A2"}],
+                     "groups": [{"id": "gA", "name": "Image", "fx": [{"id": "f1", "type": "grade", "saturation": -100}]}, {"id": "gB", "name": "seul"}],
+                     "clips": [{**old["clips"][0], "fade_in": 30, "fade_out": 30, "fcurve": {"in": "qsin", "out": "bogus"}},
+                               {"id": "x", "track": "X1", "kind": "adjust", "item": "n'importe", "start": 0, "dur": 20,
+                                "fx": [{"id": "f2", "type": "lut", "lut": "lut-20260929-000000-abcd", "mix": 2}, {"type": "flou"}]}]})
+    xc = next(c for c in fxp["clips"] if c["id"] == "x")
+    ok([t["id"] for t in fxp["tracks"]] == ["X1", "V2", "V1", "A1", "A2"] and fxp["tracks"][0]["kind"] == "fx"
+       and [g["id"] for g in fxp["groups"]] == ["gA"] and "grp" not in fxp["tracks"][3] and xc["item"] == "" and xc["fx"][0]["mix"] == 1
+       and len(xc["fx"]) == 1 and fxp["clips"][0]["fade_out"] == 18 and fxp["clips"][0]["fcurve"] == {"in": "qsin", "out": "tri"},
+       f"montage : piste de calques X1, groupe gardé (deux pistes) ou défait (une seule), fondus bornés, courbe inconnue → linéaire ({fxp['tracks']} {fxp['groups']})")
+    try:
+        normalize({**old, "clips": [{**old["clips"][0], "track": "X1"}], "tracks": [{"id": "X1"}, {"id": "V1"}, {"id": "A1"}]})
+        ok(False, "montage : une vidéo sur une piste de calques doit être refusée")
+    except HttpError:
+        ok(True, "montage : une vidéo sur une piste de calques est refusée")
 
     # 2. le modèle et la commande, sans fichier
     fake = {"id": pid, "name": "x", "settings": {"format": "720p", "fps": 25}, "tracks": p["tracks"],
@@ -1950,6 +2130,19 @@ def selftest(call, ok) -> None:
         ok(False, "montage : une LUT absente doit être refusée")
     except ValueError as e:
         ok("LUT introuvables" in str(e), f"montage : une LUT absente est refusée en la nommant ({e})")
+    # un calque d'effet (X1, images 10 à 40, fondu d'entrée de 5) sur V1 ; un groupe V2+V1 qui désature ; une courbe de son
+    lk = "lut-20260929-000000-abcd"
+    fxg = normalize({**fake, "tracks": [{"id": "X1"}, {"id": "V2", "grp": "gA"}, {"id": "V1", "grp": "gA"}, {"id": "A1"}],
+                     "groups": [{"id": "gA", "name": "g", "fx": [{"id": "fs", "type": "grade", "saturation": -50}]}],
+                     "clips": [fake["clips"][0], {**fake["clips"][3], "fade_in": 25, "fcurve": {"in": "qsin"}},
+                               {"id": "x", "track": "X1", "kind": "adjust", "start": 10, "dur": 30, "fade_in": 5,
+                                "fx": [{"id": "fl", "type": "lut", "lut": lk, "mix": 1}]}]})
+    gx = plan(fxg, med, "/o.mp4", luts={f"{lk}@1000": {"path": "/l.cube", "kind": "3d", "title": "l"}})["graph"]
+    ok("[oa]split=2[sx][tx]" in gx and "[tx]trim=start_frame=10:end_frame=40,setpts=PTS-STARTPTS+0/(25*TB),scale=in_color_matrix=bt709:in_range=limited,format=gbrp,format=gbrpf32le,lut3d=file='/l.cube'" in gx
+       and "fade=t=in:st=0:d=0.2:alpha=1,setpts=PTS+10/(25*TB)[xx];[sx][xx]overlay=eof_action=pass[ox]" in gx,
+       f"montage : le calque d'effet agit sur ce qui est dessous, sur sa durée, avec son fondu ({gx[:300]})")
+    ok("setsar=1,eq=contrast=1:saturation=0.5,scale=out_color_matrix" in gx, "montage : l'effet du groupe s'applique aux plans de ses pistes")
+    ok("afade=t=in:ss=0:ns=48000:curve=qsin" in gx, "montage : un fondu de son en quart de sinus (afade curve=qsin)")
 
     # 2 bis. les LUT : lecture de la spécification, forme unique, intensité
     ident = _test_cube(3, lambda r, g, b: (r, g, b))
@@ -2195,6 +2388,20 @@ def selftest(call, ok) -> None:
         vs = [s for s in _probe(path).get("streams", []) if s["codec_type"] == "video"]
         ok(vs and int(vs[0].get("nb_read_frames", 0)) == 75 and red(_pixel(path, 3)),
            f"montage : export borné (25 → 100) : 75 images, commence au plan 2 ({vs[0].get('nb_read_frames') if vs else '?'})")
+    # 5. un calque d'effet (inversion, images 10 à 30) au-dessus du rouge de rvb.mp4
+    st, cur = call("GET", f"/api/montage/projects/{pid}")
+    st, sv = call("POST", f"/api/montage/projects/{pid}", {**cur, "base_rev": cur["rev"], "range": {"in": None, "out": None},
+                  "tracks": [{"id": "X1", "name": "FX Inversion"}] + [t for t in cur["tracks"]],
+                  "clips": [{"id": "q1", "track": "V1", "item": rvb["id"], "kind": "video", "start": 0, "dur": 25, "in": 0, "src_dur": 3},
+                            {"id": "qx", "track": "X1", "kind": "adjust", "start": 10, "dur": 10, "fx": [{"id": "fi", "type": "lut", "lut": lut["id"], "mix": 1}]}]})
+    ok(st == 200, f"montage : enregistrer un calque d'effet ({st} {sv})")
+    j = export({}, "calque d'effet")
+    if j["state"] == "done" and j["items"]:
+        path = str(library.path_of(library.get(j["items"][0]["id"])))
+        q = {f: _pixel(path, f) for f in (5, 15, 22)}
+        cy = q[15]
+        ok(red(q[5]) and red(q[22]) and abs(cy[0] - 35) <= 6 and abs(cy[1] - 215) <= 6 and abs(cy[2] - 215) <= 6,
+           f"montage : le calque d'effet inverse ce qui est dessous sur sa durée seulement ({q})")
     shutil.rmtree(tmp, ignore_errors=True)
 
 

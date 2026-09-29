@@ -193,6 +193,74 @@ export class LutGL {
     // des textures vides pour les unités qu'on n'emploie pas (un échantillonneur doit être lié)
     this.empty3 = this.tex3(new Float32Array(3), 1);
     this.empty1 = this.tex1(new Float32Array(3), 1);
+    // les images intermédiaires d'une chaîne d'effets : en demi-flottants si
+    // l'on peut y dessiner (EXT_color_buffer_float, MDN), sinon sur 8 bits
+    this.half = !!gl.getExtension('EXT_color_buffer_float');
+    this.pp = [null, null];
+  }
+
+  // une image intermédiaire (texture + framebuffer) à w×h
+  target(i, w, h) {
+    const gl = this.gl;
+    let t = this.pp[i];
+    if (t && t.w === w && t.h === h) return t;
+    if (t) { gl.deleteTexture(t.tex); gl.deleteFramebuffer(t.fb); }
+    const tex = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    if (this.half) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
+    else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    for (const [p, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, p, v);
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    t = this.pp[i] = { tex, fb, w, h };
+    return t;
+  }
+
+  // Une chaîne d'effets : chaque passe est un étalonnage (facultatif) suivi
+  // d'une LUT (facultative) — { grade, temp, lut, mix }. Une seule passe :
+  // le calcul de toujours ; plusieurs : de passe en passe par deux images
+  // intermédiaires, dans l'ordre de la liste (comme les filtres de l'export).
+  drawChain(source, w, h, passes, srcKey = null) {
+    const gl = this.gl;
+    if (!gl) return false;
+    if (!passes || !passes.length) passes = [{}];
+    if (this.cv.width !== w || this.cv.height !== h) { this.cv.width = w; this.cv.height = h; }
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
+    if (!srcKey || srcKey !== this.srcKey || source !== this.src) {
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, source); } catch { gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); this.srcKey = null; return false; }
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      this.src = source;
+      this.srcKey = srcKey;
+    }
+    let input = this.srcTex;
+    for (let i = 0; i < passes.length; i++) {
+      const last = i === passes.length - 1;
+      const out = last ? null : this.target(i % 2, w, h);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, out ? out.fb : null);
+      gl.viewport(0, 0, w, h);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, input);
+      const { lut = null, mix = 1, grade = null, temp = [1, 1, 1] } = passes[i];
+      const g = grade || {};
+      gl.uniform3f(this.u.grade, Math.pow(2, g.exposure || 0), 1 + (g.contrast || 0) / 100, 1 + (g.saturation || 0) / 100);
+      gl.uniform3f(this.u.temp, temp[0], temp[1], temp[2]);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_3D, lut && lut.kind === '3d' ? this.lutTex(lut) : this.empty3);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, lut && lut.kind === '1d' ? this.lutTex(lut) : this.empty1);
+      gl.uniform1i(this.u.kind, !lut ? 0 : lut.kind === '3d' ? 1 : 2);
+      gl.uniform1i(this.u.n, lut ? lut.size : 1);
+      gl.uniform1f(this.u.k, lut ? Math.max(0, Math.min(1, mix)) : 0);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      if (out) input = out.tex;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return true;
   }
 
   get ok() { return !!this.gl; }
@@ -229,32 +297,29 @@ export class LutGL {
   // Rend `source` (vidéo, image, canevas) à w×h dans this.cv. opts : { lut, mix, grade, temp: [r,g,b], srcKey }
   // srcKey : la même source qu'au dessin d'avant (une étagère de vignettes) : elle ne remonte pas au GPU.
   draw(source, w, h, { lut = null, mix = 1, grade = null, temp = [1, 1, 1], srcKey = null } = {}) {
-    const gl = this.gl;
-    if (!gl) return false;
-    if (this.cv.width !== w || this.cv.height !== h) { this.cv.width = w; this.cv.height = h; }
-    gl.viewport(0, 0, w, h);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
-    if (!srcKey || srcKey !== this.srcKey || source !== this.src) {
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-      try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, source); } catch { gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); this.srcKey = null; return false; }
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-      this.src = source;
-      this.srcKey = srcKey;
-    }
-    const g = grade || {};
-    gl.uniform3f(this.u.grade, Math.pow(2, g.exposure || 0), 1 + (g.contrast || 0) / 100, 1 + (g.saturation || 0) / 100);
-    gl.uniform3f(this.u.temp, temp[0], temp[1], temp[2]);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_3D, lut && lut.kind === '3d' ? this.lutTex(lut) : this.empty3);
-    gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, lut && lut.kind === '1d' ? this.lutTex(lut) : this.empty1);
-    gl.uniform1i(this.u.kind, !lut ? 0 : lut.kind === '3d' ? 1 : 2);
-    gl.uniform1i(this.u.n, lut ? lut.size : 1);
-    gl.uniform1f(this.u.k, lut ? Math.max(0, Math.min(1, mix)) : 0);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-    return true;
+    return this.drawChain(source, w, h, [{ lut, mix, grade, temp }], srcKey);
   }
+}
+
+// Les passes d'une chaîne d'effets (model.js, chainOf) : un étalonnage et la
+// LUT qui le suit se font en une passe (l'ordre du shader : étalonnage puis
+// LUT) ; `luts` : les LUT chargées, par identifiant. `tempOf` : les gains de
+// la température (player.js).
+export function passesOf(steps, luts, tempOf) {
+  const out = [];
+  let open = null;
+  for (const f of steps) {
+    if (f.type === 'grade') {
+      open = { grade: f, temp: Math.abs((f.temperature || 6500) - 6500) > 0.5 ? tempOf(f.temperature) : [1, 1, 1] };
+      out.push(open);
+    } else if (f.type === 'lut') {
+      const lut = luts.get(f.lut);
+      if (!lut || !(f.mix > 0)) continue;
+      if (open) { open.lut = lut; open.mix = f.mix; } else out.push({ lut, mix: f.mix });
+      open = null;
+    }
+  }
+  return out;
 }
 
 let shared = null;
