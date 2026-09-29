@@ -78,17 +78,19 @@ const MARGE = 4;
 const NS = 'http://www.w3.org/2000/svg';
 
 // Les cinq lanes d'ODIO_01, leurs hauteurs et leurs écarts gardés ; y est
-// compté depuis le haut des lanes (sous l'image de l'arrangement).
+// compté depuis le haut des lanes (sous l'image de l'arrangement). Leurs
+// teintes sont celles d'ODIO_01, en jetons nommés (nodal.css : --nd-ryt…,
+// sombre et clair, au contraste AA) — 29/09, au lieu des voisines du portail.
 export const LANES = [
-  { id: 'ryt', nom: 'RYTHME', couleur: 'cy', y: 0, h: 46, nature: 'matiere', facettes: ['swing', 'densité', 'accents'] },
-  { id: 'har', nom: 'HARMONIE', couleur: 'coral-3', y: 52, h: 46, nature: 'matiere', facettes: ['tonalité', 'tension'] },
-  { id: 'tim', nom: 'TIMBRE', couleur: 'coral-2', y: 104, h: 46, nature: 'matiere', facettes: ['matière', 'brillance'] },
-  { id: 'nrj', nom: 'ÉNERGIE', couleur: 'grn2', y: 156, h: 40, nature: 'courbe', facettes: [] },
-  { id: 'ten', nom: 'TENSION', couleur: 'coral-1', y: 202, h: 40, nature: 'courbe', facettes: [] },
+  { id: 'ryt', nom: 'RYTHME', couleur: 'nd-ryt', y: 0, h: 46, nature: 'matiere', facettes: ['swing', 'densité', 'accents'] },
+  { id: 'har', nom: 'HARMONIE', couleur: 'nd-har', y: 52, h: 46, nature: 'matiere', facettes: ['tonalité', 'tension'] },
+  { id: 'tim', nom: 'TIMBRE', couleur: 'nd-tim', y: 104, h: 46, nature: 'matiere', facettes: ['matière', 'brillance'] },
+  { id: 'nrj', nom: 'ÉNERGIE', couleur: 'nd-nrj', y: 156, h: 40, nature: 'courbe', facettes: [] },
+  { id: 'ten', nom: 'TENSION', couleur: 'nd-ten', y: 202, h: 40, nature: 'courbe', facettes: [] },
 ];
 // les teintes des anneaux, la couleur de la lane en tête (l'ordre de la
 // réserve d'ODIO_01 : harmonie, énergie, timbre, tension, rythme)
-const RESERVE = ['coral-3', 'grn2', 'coral-2', 'coral-1', 'cy'];
+const RESERVE = ['nd-har', 'nd-nrj', 'nd-tim', 'nd-ten', 'nd-ryt'];
 const teintesAnneaux = (lane) => [lane.couleur, ...RESERVE.filter((t) => t !== lane.couleur)];
 
 /** Une valeur, sobre, sans zéros de traîne (ecrire d'ODIO_01). */

@@ -100,23 +100,24 @@
  * L'AMBRE ET LE VERMILLON SONT EXCLUS (n° 44) : l'un est la couleur de l'UI,
  * l'autre celle de l'alerte — et du temps réel.
  */
-// SHOWRUNNER : les teintes sont des NOMS de jetons (commun/tokens.css, règle 1
-// du thème), les voisines de celles d'ODIO_01 — #3f7a9c → cy, #6b5fa8 →
-// coral-3, #b0567f → coral-2, #3f8a72 → grn2, #8a6f5a → coral-1 (le choix du
-// 29/09, musique/PROVENANCE.md).
+// SHOWRUNNER : les teintes sont des NOMS de jetons (règle 1 du thème) — celles
+// d'ODIO_01 (#3f7a9c, #6b5fa8, #b0567f, #3f8a72, #8a6f5a), en jetons nommés dans
+// musique/nodal.css (--nd-ryt, --nd-har, --nd-tim, --nd-nrj, --nd-ten ; sombre
+// et clair, au contraste AA) — le rhabillage du 29/09, au lieu des voisines du
+// portail (cy, coral-3, coral-2, grn2, coral-1).
 export const LANES                  = [
-  { id: "ryt", nom: "RYTHME", couleur: "cy", y: 26, h: 46, nature: "matiere", facettes: ["swing", "densité", "accents"], horizon: 104 },
-  { id: "har", nom: "HARMONIE", couleur: "coral-3", y: 78, h: 46, nature: "matiere", facettes: ["tonalité", "tension"], horizon: 76 },
-  { id: "tim", nom: "TIMBRE", couleur: "coral-2", y: 130, h: 46, nature: "matiere", facettes: ["matière", "brillance"], horizon: 62 },
-  { id: "nrj", nom: "ÉNERGIE", couleur: "grn2", y: 182, h: 40, nature: "courbe", facettes: [], horizon: 118 },
-  { id: "ten", nom: "TENSION", couleur: "coral-1", y: 228, h: 40, nature: "courbe", facettes: [], horizon: 88 },
+  { id: "ryt", nom: "RYTHME", couleur: "nd-ryt", y: 26, h: 46, nature: "matiere", facettes: ["swing", "densité", "accents"], horizon: 104 },
+  { id: "har", nom: "HARMONIE", couleur: "nd-har", y: 78, h: 46, nature: "matiere", facettes: ["tonalité", "tension"], horizon: 76 },
+  { id: "tim", nom: "TIMBRE", couleur: "nd-tim", y: 130, h: 46, nature: "matiere", facettes: ["matière", "brillance"], horizon: 62 },
+  { id: "nrj", nom: "ÉNERGIE", couleur: "nd-nrj", y: 182, h: 40, nature: "courbe", facettes: [], horizon: 118 },
+  { id: "ten", nom: "TENSION", couleur: "nd-ten", y: 228, h: 40, nature: "courbe", facettes: [], horizon: 88 },
 ]
 
 export const laneDe = (id        )                   => LANES.find((lane) => lane.id === id)
 
 /** Les teintes des anneaux, la couleur de la lane en tête. */
 export function teintesAnneaux(lane      )           {
-  const reserve = ["coral-3", "grn2", "coral-2", "coral-1", "cy"]
+  const reserve = ["nd-har", "nd-nrj", "nd-tim", "nd-ten", "nd-ryt"]
   return [lane.couleur, ...reserve.filter((teinte) => teinte !== lane.couleur)]
 }
 

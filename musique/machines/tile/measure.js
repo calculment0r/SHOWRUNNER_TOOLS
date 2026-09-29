@@ -34,7 +34,7 @@ async function awaitFonts()                {
   if (typeof document === "undefined" || !document.fonts) return
   try {
     // SHOWRUNNER : les fontes du portail (commun/tokens.css) au lieu de Microgramma
-    await Promise.all([document.fonts.load('16px "Azeret Mono"'), document.fonts.load('16px "Venus Rising"')])
+    await Promise.all([document.fonts.load('16px "Azeret Mono"'), document.fonts.load('16px "Venus Rising"'), document.fonts.load('600 16px "Chakra Petch"')])
   } catch {
     // Fonte absente : les mesures resteront celles du repli — et seront justes.
   }
@@ -151,8 +151,25 @@ export function engraveMicrogramma(text        )         {
 /** Les familles du portail (commun/tokens.css : --f-mono, --f-disp), écrites pour le canvas. */
 export const MONO = '"Azeret Mono", ui-monospace, monospace'
 export const DISP = '"Venus Rising", "Chakra Petch", sans-serif'
-/** Police du nom de tuile, telle que définie dans nodal.css (SHOWRUNNER : au lieu de Microgramma). */
-export const TILE_NAME_FONT = `9px ${MONO}`
-export const TILE_NAME_SPACING = "0.13em"
+/** --f-ui : le texte des cartes du nodal (le nom d'un bloc, les valeurs). */
+export const UI = '"Chakra Petch", "Saira Semi Condensed", sans-serif'
+/**
+ * Police du nom de tuile, telle que définie dans nodal.css. SHOWRUNNER (29/09,
+ * le rhabillage dans le thème du portail) : le nom d'une section de machine est
+ * une étiquette de machine (mono, capitales, espacée — règle 5 du thème) ; le
+ * nom d'un bloc est celui des cartes du nodal (--f-ui, 600), à trois corps selon
+ * la hauteur de l'en-tête (`nomDeCarte`).
+ */
+export const TILE_NAME_FONT = `8.5px ${MONO}`
+export const TILE_NAME_SPACING = "0.14em"
+export const CARD_NAME_SPACING = "0px"
+/** Le corps du nom d'une carte pour une hauteur d'en-tête : 13 px (les cartes d'avant), 11, 9. */
+export function nomDeCarte(head        )         {
+  const size = head >= 24 ? 13 : head >= 18 ? 11 : 9
+  return `600 ${size}px ${UI}`
+}
+/** L'étiquette à droite de l'en-tête (le réglage exposé) : celle des cartes, `.lbl`. */
+export const TILE_SUB_FONT = `7.5px ${MONO}`
+export const TILE_SUB_SPACING = "0.14em"
 /** Police de la référence gravée. */
 export const TILE_REF_FONT = `8px ${MONO}`

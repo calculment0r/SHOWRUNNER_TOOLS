@@ -87,10 +87,11 @@ body.mu-page { display: flex; flex-direction: column; height: 100vh; overflow: h
 /* ── la molette ─────────────────────────────────────────── */
 .kn { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; width: 54px; cursor: ns-resize; touch-action: none; user-select: none; }
 .kn .dial { width: 40px; height: 40px; border-radius: 50%; background: var(--panel3); }
-.kn svg { width: 100%; height: 100%; display: block; overflow: visible; }
-.kn .tr { fill: none; stroke: var(--line); stroke-width: 3; }
-.kn .ar { fill: none; stroke: var(--k, var(--cy)); stroke-width: 3; stroke-linecap: round; }
-.kn .pt { stroke: var(--k, var(--cy)); stroke-width: 2.4; stroke-linecap: round; }
+/* le même cadran sur les sections de machine du nodal (machines/panneau.js, ui.js `dial`) */
+.kn svg, .knob__dial { width: 100%; height: 100%; display: block; overflow: visible; }
+.kn .tr, .knob__dial .tr { fill: none; stroke: var(--line); stroke-width: 3; }
+.kn .ar, .knob__dial .ar { fill: none; stroke: var(--k, var(--cy)); stroke-width: 3; stroke-linecap: round; }
+.kn .pt, .knob__dial .pt { stroke: var(--k, var(--cy)); stroke-width: 2.4; stroke-linecap: round; }
 .kn .v { font-size: 11px; font-weight: 600; color: var(--ink); white-space: nowrap; }
 .kn .l { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink3); text-align: center; line-height: 1.25; }
 .kn:focus-visible { outline: 2px solid var(--or); outline-offset: 2px; border-radius: var(--r2); }

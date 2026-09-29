@@ -61,12 +61,13 @@ const MIN_GRAPHIC = { w: 24, h: 16 }
  * @param label  nom du paramètre exposé, ou `null` si c'est le graphisme qui reste
  * @param value  valeur formatée, telle qu'elle s'affichera
  */
-export function minLegibleSize(short        , label               , value        )          {
+export function minLegibleSize(short        , label               , value        , nameFont = TILE_NAME_FONT, nameSpacing = TILE_NAME_SPACING)          {
   const legible = getTuning().legibleMin
-  // SHOWRUNNER : la fonte des valeurs en grand (corps.js) est celle d'affichage du portail
+  // SHOWRUNNER : la fonte des valeurs en grand (corps.js) est celle d'affichage du portail ;
+  // le nom se mesure dans la fonte où la tuile l'écrit (une carte : --f-ui, une section : mono)
   const fallbackFont = `${legible}px ${DISP}`
   const head =
-    measureText(short, TILE_NAME_FONT, TILE_NAME_SPACING) + HEAD_PAD * 2 + LED_SPACE + FIT_MARGIN
+    measureText(short, nameFont, nameSpacing) + HEAD_PAD * 2 + LED_SPACE + FIT_MARGIN
 
   const body =
     label === null

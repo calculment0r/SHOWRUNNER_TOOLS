@@ -13,6 +13,7 @@
 //   - le MENU D'UN CÂBLE (clic droit) : le passer en saut, ou y insérer un bloc.
 
 import { MODULES, TRACK_KINDS, EFFECT_TYPES, SOURCES_OF } from '../modules.js';
+import { menu } from '../ui.js';   // le menu commun du portail (commun/menu.js) : la liste rapide en est un
 import { MACHINES, MACHINE_ENGINES } from './blocks/machines.js';
 import { prisesDe } from './liens.js';
 import { cellulesDe } from './tuiles.js';
@@ -92,6 +93,11 @@ function silhouette(kind, cells, type) {
 }
 const vignette = (e) => (e.machine ? planMachine(e.machine) : silhouette(e.kind, e.cells, e.type));
 const div = (cls, text) => { const e = document.createElement('div'); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+// SHOWRUNNER (29/09, le thème du portail) : une entrée dit son nom comme le
+// navigateur d'ODIO (.nv-it) — le module en bas de casse ; une machine garde
+// le nom gravé sur sa façade (MINILOGUE XD) ; et sa teinte, un jeton
+const nomLisible = (e) => (e.module && MODULES[e.module]?.name) || (e.type === 'bloc:clavier' ? 'Clavier' : e.type.startsWith('bus:') ? 'Bus d\'effets' : e.name);
+const teinteDe = (e) => (e.module && MODULES[e.module]?.color) || (e.machine ? 'cy' : 'ink3');
 
 /**
  * La fenêtre du catalogue. `onPick(type)` : poser au centre ; `onDrop(type,
@@ -100,7 +106,7 @@ const div = (cls, text) => { const e = document.createElement('div'); if (cls) e
 export function ouvrirCatalogue({ onPick, onDrop, onClose }) {
   const entrees = entreesDuCatalogue();
   const voile = document.createElement('span');
-  voile.className = 'palette__veil';
+  voile.className = 'palette__veil cat__voile';   // le voile d'une fenêtre du portail (.scrim)
   const fen = div('cat cat--fenetre');
   const fermer = () => { voile.remove(); fen.remove(); porte?.remove(); removeEventListener('keydown', echap, true); onClose?.(); };
   const echap = (e) => { if (e.key === 'Escape') { e.stopPropagation(); fermer(); } };
@@ -132,7 +138,8 @@ export function ouvrirCatalogue({ onPick, onDrop, onClose }) {
       const it = div('cat__item');
       it.title = 'Glisser sur le canvas pour le poser où l\'on veut · double-clic pour le poser au centre';
       const ligne = div('cat__ligne');
-      ligne.append(vignette(e), div('cat__nom', e.name), div('cat__ref', e.ref));
+      ligne.append(vignette(e), div('cat__nom', nomLisible(e)), div('cat__ref', e.ref));
+      it.style.setProperty('--k', `var(--${teinteDe(e)})`);
       it.append(ligne);
       it.addEventListener('click', () => {
         const ouvert = detail === e.type;
@@ -160,7 +167,7 @@ export function ouvrirCatalogue({ onPick, onDrop, onClose }) {
             transporte = true;
             fen.classList.add('cat--transport');
             porte = div('cat__porte');
-            porte.append(vignette(e), div('cat__porte-nom', e.name));
+            porte.append(vignette(e), div('cat__porte-nom', nomLisible(e)));
             document.body.append(porte);
           }
           porte.style.left = `${m.clientX}px`; porte.style.top = `${m.clientY}px`;
@@ -184,39 +191,26 @@ export function ouvrirCatalogue({ onPick, onDrop, onClose }) {
   return { fermer };
 }
 
-/** La liste rapide (Palette.tsx) — au point d'écran `at`, `only` : une rubrique. */
-export function ouvrirPalette({ at, only, onPick, onClose }) {
+/**
+ * La liste rapide (Palette.tsx) — au point d'écran `at`, `only` : une rubrique.
+ * SHOWRUNNER (29/09) : c'est le menu commun du portail (commun/menu.js, par
+ * ui.js), comme la liste du nodal d'avant (« brancher après… », une entrée
+ * par module : son nom, son genre, sa teinte) — il se retourne seul au bord de
+ * la fenêtre, se ferme à Échap, se lit au clavier.
+ */
+export function ouvrirPalette({ at, only, onPick }) {
   const entrees = entreesDuCatalogue();
   const cats = ['ENTREES', 'INSTRUMENTS', 'EFFETS', 'FLUX', 'MACHINES', 'PLAYGROUND', 'SORTIE'].filter((c) => !only || c === only);
-  const voile = document.createElement('span');
-  voile.className = 'palette__veil';
-  const p = div('palette');
-  const fermer = () => { voile.remove(); p.remove(); removeEventListener('keydown', echap, true); onClose?.(); };
-  const echap = (e) => { if (e.key === 'Escape') { e.stopPropagation(); fermer(); } };
-  addEventListener('keydown', echap, true);
-  voile.addEventListener('pointerdown', fermer);
-  p.addEventListener('pointerdown', (e) => e.stopPropagation());
-  p.addEventListener('wheel', (e) => e.stopPropagation(), { passive: true });
+  const items = [];
   for (const c of cats) {
     const dedans = entrees.filter((e) => e.category === c);
     if (!dedans.length) continue;
-    const g = div('palette__group');
-    g.append(div('palette__title', c));
-    for (const e of dedans) {
-      const b = document.createElement('button');
-      b.className = 'palette__item'; b.type = 'button'; b.textContent = e.name;
-      b.addEventListener('click', () => { fermer(); onPick(e.type); });
-      g.append(b);
-    }
-    p.append(g);
+    if (items.length) items.push('-');
+    items.push({ head: c.toLowerCase() });
+    for (const e of dedans) items.push({ label: nomLisible(e), sub: e.machine ? 'machine' : (MODULES[e.module]?.kind || e.ref || '').slice(0, 22), dot: teinteDe(e), onclick: () => onPick(e.type) });
   }
-  document.body.append(voile, p);
-  // il ne sort jamais de la fenêtre : en bas ou à droite, il se retourne
-  const r = p.getBoundingClientRect();
-  const bas = r.height + at.y - innerHeight + 8, droite = r.width + at.x - innerWidth + 8;
-  p.style.left = `${at.x - (droite > 0 ? Math.min(droite, r.width) : 0)}px`;
-  p.style.top = `${at.y - (bas > 0 ? Math.min(bas, r.height) : 0)}px`;
-  return { fermer };
+  const node = menu(at.x, at.y, items);
+  return { fermer: () => node?.remove() };
 }
 
 /** Le menu d'un câble (CableMenu.tsx) : le premier item tombe sous le curseur. */

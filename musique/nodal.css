@@ -1,13 +1,53 @@
-/* MUSIQUE — le nodal porté d'ODIO_01 (apps/studio/src/app.css), dans la DA
-   du portail : les jetons de commun/tokens.css, des filets en box-shadow (ou
-   en outline, qui ne prend pas de place non plus), l'acier pour ce qu'on
-   règle, l'ambre pour les ensembles, le vert pour ce qui joue.
+/* MUSIQUE — le nodal : la logique d'ODIO_01 (apps/studio/src/, commit 6d8a7ed),
+   l'habit du portail. Rhabillé le 29/09 à la demande de Cal (« on garde juste
+   le code et la logique et on repasse tout dans notre thème qui est plus
+   abouti ») : chaque tuile est une CARTE du nodal d'avant (4a20f41,
+   musique.css .nd-card — coins de 12 px, panneau relevé, filet, point
+   d'accent, nom en --f-ui 600, étiquette .lbl à droite), ses molettes sont
+   celles du rack (ui.js `dial`, musique.css .kn), ses curseurs, ses faders,
+   ses pas, ses pads ceux de la console et du séquenceur (.ar-vol, .fdr, .sq-c,
+   .pad) ; le canvas, la sélection, les poignées, le cadre, les menus sont ceux
+   de nos canvas (le nodal d'avant, Idéation : ideation.css .marquee, .selbox,
+   .sbar ; commun/menu.css ; commun/wire.css pour les fils).
+   Règles du thème (CLAUDE.md) : jetons seulement ; filets en box-shadow (ou
+   outline, qui ne prend pas de place non plus) ; l'orange est l'action et la
+   sélection de canvas (Idéation) ; capitales = mono petit espacé.
+   L'accent d'une tuile est --k (nodal.js `accentDe` : sa piste, sinon son
+   module), comme celui des cartes d'avant.
    Ce qui vit dans le MONDE (.ndx-monde) garde une taille d'écran constante
-   par la variable --iz (1 / zoom), posée par nodal.js. */
+   par --iz (1 / zoom, posée par nodal.js) : bornes, fils, tirets, étiquettes,
+   cadres, poignées. (vector-effect ne suffit pas sous une transformation CSS
+   dans Chromium : mesuré le 29/09, le trait suivait le zoom.) */
+
+/* ── les teintes d'ODIO_01, en jetons nommés (sombre, clair) ────────────────
+   Les cinq lanes du banc (banc/logique.ts d'ODIO_01 : #3f7a9c, #6b5fa8,
+   #b0567f, #3f8a72, #8a6f5a), à la même teinte, leur clarté réglée pour le
+   contraste AA (4,5:1) d'un texte sur les panneaux (/tmp/sr_th_teintes.py) ;
+   et les touches d'un clavier (blanche plus claire que noire dans les deux
+   thèmes, ce qu'aucune paire de jetons communs ne donne). */
+:root {
+  --nd-ryt: #4b8fb6;
+  --nd-har: #8b82bb;
+  --nd-tim: #bd7294;
+  --nd-nrj: #45967c;
+  --nd-ten: #a0836d;
+  --nd-key-w: var(--panel3);
+  --nd-key-b: var(--bg);
+}
+[data-theme="light"] {
+  --nd-ryt: #356683;
+  --nd-har: #62569f;
+  --nd-tim: #95466a;
+  --nd-nrj: #316a58;
+  --nd-ten: #735c4b;
+  --nd-key-w: var(--panel);
+  --nd-key-b: var(--ink3);
+}
 
 /* ── la vue et le monde ─────────────────────────────────────── */
 .ndx-vue { cursor: default; touch-action: none; outline: none; }
 .ndx-vue:focus, .ndx-vue:focus-visible { outline: none; }
+.ndx-vue.drag { cursor: grabbing; }
 .ndx-monde { --iz: 1; will-change: transform; }
 .ndx-monde.ndx-net { will-change: auto; }
 .ndx-cadres, .ndx-tuiles, .ndx-bornes, .ndx-dessus { position: absolute; left: 0; top: 0; width: 0; height: 0; }
@@ -19,85 +59,101 @@
 .ndx-ecran > * { pointer-events: auto; }
 html.dragging * { cursor: inherit !important; }
 
-/* ── la tuile (Tile.tsx) ────────────────────────────────────── */
+/* ── la tuile : une carte du nodal d'avant ──────────────────── */
 .nd-card.tile {
   position: absolute; width: auto; padding: 0; margin: 0; border-radius: 0;
   background: none; box-shadow: none; overflow: visible; z-index: 2; color: var(--ink);
 }
+/* la coque : le panneau relevé et son filet ; les coins (12 px à l'échelle
+   apparente) sont posés par nodal.js là où la tuile est libre des deux côtés ;
+   deux tuiles accolées ne dessinent qu'un filet entre elles (tileBody) */
 .tile__mise {
   position: absolute; left: 0; top: 0; transform-origin: 0 0; box-sizing: border-box;
   display: flex; flex-direction: column; overflow: hidden;
-  background: var(--panel);
+  background: var(--panel2);
   padding: 1px 0 0 1px;
   box-shadow: inset 1px 1px 0 var(--line);
-  font-family: var(--f-mono);
+  font-family: var(--f-ui);
 }
 .tile__mise.tile--bd-r { padding-right: 1px; box-shadow: inset 1px 1px 0 var(--line), inset -1px 0 0 var(--line); }
 .tile__mise.tile--bd-b { padding-bottom: 1px; box-shadow: inset 1px 1px 0 var(--line), inset 0 -1px 0 var(--line); }
-.tile__mise.tile--bd-r.tile--bd-b { box-shadow: inset 1px 1px 0 var(--line), inset -1px -1px 0 var(--line); }
-/* la sélection ne touche PAS aux filets : un contour, qui ne prend pas de place */
+.tile__mise.tile--bd-r.tile--bd-b { box-shadow: inset 0 0 0 1px var(--line); }
+/* choisie : comme une carte d'avant (.nd-card.sel), le panneau d'un cran plus haut, cerné de son accent */
 .tile--selected { z-index: 5; }
-.tile--selected > .tile__mise { outline: 1px solid var(--cy); outline-offset: -1px; }
-.tile--selected .tile__head { background: var(--panel3); }
+.tile--selected > .tile__mise { background: var(--panel3); box-shadow: inset 0 0 0 1.5px var(--k); }
 .tile--moving { z-index: 8; opacity: 0.92; }
-.tile__teinte { position: absolute; inset: 0; opacity: 0.13; pointer-events: none; }
+.tile__teinte { position: absolute; inset: 0; opacity: 0.1; pointer-events: none; border-radius: inherit; }
+.tile__teinte--piste { opacity: 0.08; }
+
+/* l'en-tête d'une carte : le point, le nom, l'étiquette à droite (.nd-card .hd) */
 .tile__head {
-  position: relative; flex: none; display: flex; align-items: center; overflow: hidden; cursor: move;
-  box-shadow: inset 0 -1px 0 var(--line); color: var(--ink2);
+  position: relative; flex: none; display: flex; align-items: center; overflow: hidden; cursor: grab;
+  color: var(--ink2);
 }
-.led-btn { flex: none; padding: 6px; margin: -6px; display: flex; align-items: center; justify-content: center; line-height: 0; position: relative; z-index: 7; background: none; border: 0; cursor: pointer; }
-.led { display: block; flex: none; }
-.led--on { background: var(--grn2); }
-.led--off { background: var(--coral-1); }
-.led--idle { background: var(--line); }
-.led-btn:hover .led { box-shadow: 0 0 0 2px var(--line); }
-.tile__name {
-  font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase;
-  flex: none; white-space: nowrap; color: var(--ink);
+.tile--moving .tile__head { cursor: grabbing; }
+.tile__name { flex: none; white-space: nowrap; color: var(--ink); line-height: 1.2; }
+.tile--section .tile__name { text-transform: uppercase; color: var(--ink2); }
+.tile--section.tile--selected .tile__name { color: var(--ink); }
+/* l'en-tête d'une section de machine : une étiquette de machine sur un filet (les .sec du rack) */
+.tile--section .tile__head { box-shadow: inset 0 -1px 0 var(--line); }
+.tile__name--editing {
+  font: 600 12px var(--f-ui); color: var(--ink); background: var(--bg); border: 0; outline: none; border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--line-cy); width: 110px; padding: 1px 4px; user-select: text;
 }
-.tile__name--editing { background: var(--bg); color: var(--ink); box-shadow: inset 0 0 0 1px var(--cy); border: 0; outline: none; width: 92px; padding: 0 3px; user-select: text; }
 .tile__scroll { flex: 1 1 auto; min-width: 0; overflow: hidden; }
 .tile__scroll-inner { display: inline-flex; align-items: center; white-space: nowrap; animation: ndx-defile var(--dur, 4s) ease-in-out infinite; }
 @keyframes ndx-defile { 0%, 18% { transform: translateX(0); } 55%, 80% { transform: translateX(var(--shift, 0px)); } 100% { transform: translateX(0); } }
 .tile__spacer { flex: 1; min-width: 0; }
 .tile__exposed { display: flex; align-items: baseline; gap: 5px; flex: none; overflow: hidden; }
-.tile__exposed-label { font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.13em; white-space: nowrap; color: var(--cy); }
-.tile__body { flex: 1; min-height: 0; overflow: hidden; position: relative; }
+.tile__exposed-label { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap; color: var(--k); }
+.tile__sous .tile__exposed-label { color: var(--ink3); }
+.tile__body { flex: 1; min-height: 0; overflow: hidden; position: relative; box-sizing: border-box; }
 .tile__panneau { position: relative; }
-/* un bloc contourné se désature — son témoin garde sa couleur pleine */
-.tile--off .tile__body, .tile--off .tile__name, .tile--off .tile__exposed { filter: saturate(0.08) opacity(0.62); }
+
+/* le témoin (Tile.tsx) : le point d'accent des cartes d'avant ; vert quand le
+   transport joue, creux quand le bloc est éteint ; clic = allumer / éteindre */
+.led-btn { flex: none; padding: 6px; margin: -6px; display: flex; align-items: center; justify-content: center; line-height: 0; position: relative; z-index: 7; background: none; border: 0; cursor: pointer; }
+.led { display: block; flex: none; border-radius: 50%; }
+.led--idle { background: var(--k, var(--ink3)); }
+.led--on { background: var(--grn2); }
+.led--off { background: transparent; box-shadow: inset 0 0 0 1px var(--ink3); }
+.led-btn:hover .led { box-shadow: 0 0 0 2px var(--line-cy); }
+.led-btn:hover .led--off { box-shadow: inset 0 0 0 1px var(--ink3), 0 0 0 2px var(--line-cy); }
+
+/* un bloc contourné s'efface, comme une carte d'avant éteinte (.nd-card.off) — son témoin reste lisible */
+.tile--off .tile__body, .tile--off .tile__name, .tile--off .tile__exposed { opacity: 0.55; filter: saturate(0.2); }
 .tile--off .tile__head { color: var(--ink3); }
-/* une tuile captée par un attracteur qui parle : ses chiffres sont ceux de l'opérateur */
-.tile--influe > .tile__mise { box-shadow: inset 1px 1px 0 var(--line), inset 0 0 0 1px var(--line-gr); }
-.tile--influe .tile__head { box-shadow: inset 0 -1px 0 var(--line-gr); }
+/* captée par un attracteur qui parle : ses chiffres sont ceux de l'opérateur (le vert qui joue) */
+.tile--influe > .tile__mise { box-shadow: inset 0 0 0 1px var(--line-gr); }
+.tile--influe.tile--selected > .tile__mise { box-shadow: inset 0 0 0 1.5px var(--k), inset 0 0 0 3px var(--line-gr); }
 
-/* LE NŒUD DE DÉPART D'UNE PISTE (29/09) : la couleur de la piste — un bandeau
-   sur l'en-tête, la teinte du corps plus franche ; la piste courante (celle
-   qu'on a choisie ici ou dans l'arrangement) se cerne de sa couleur */
-.tile--piste .tile__head { box-shadow: inset 0 3px 0 var(--pc), inset 0 -1px 0 var(--line); }
+/* LE NŒUD DE DÉPART D'UNE PISTE (29/09) : le trait d'accent en tête des cartes
+   du rack (.dev), à la couleur de la piste ; la piste courante se cerne de sa couleur */
+.tile--piste .tile__head { box-shadow: inset 0 2px 0 var(--pc); }
+.tile--piste.tile--section .tile__head { box-shadow: inset 0 2px 0 var(--pc), inset 0 -1px 0 var(--line); }
 .tile--piste .tile__name { color: var(--ink); }
-.tile__teinte--piste { opacity: 0.2; }
-.tile--piste.tile--courante > .tile__mise { outline: 1px solid var(--pc); outline-offset: 1px; }
-.tile--piste.tile--selected > .tile__mise { outline: 1px solid var(--cy); outline-offset: -1px; }
+.tile--piste.tile--courante > .tile__mise { outline: 1px solid var(--pc); outline-offset: 2px; }
+/* une machine-instrument : ses sections ne se cernent pas une à une (son étiquette de piste le dit) */
+.tile--piste.tile--section.tile--courante > .tile__mise { outline: none; }
 /* son nom, à GAUCHE du nœud de départ (comme l'en-tête d'une piste dans
-   l'arrangement), à taille d'écran constante : lisible à tous les reculs,
-   sans couvrir la tuile ni celle du dessus */
+   l'arrangement, .ar-ghost), à taille d'écran constante */
 .ndx-dessus .piste-titre {
-  position: absolute; z-index: 11; display: flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer;
-  padding: 2px 8px 2px 3px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--c), 0 2px 8px var(--drop);
-  transform-origin: 0 0; transform: scale(var(--iz)) translate(calc(-100% - 8px), 0);
+  position: absolute; z-index: 11; display: flex; align-items: center; gap: 7px; white-space: nowrap; cursor: pointer;
+  padding: 3px 9px 3px 4px; border-radius: var(--r2); background: var(--panel2);
+  box-shadow: inset 0 0 0 1px var(--line), inset 3px 0 0 var(--c), 0 6px 18px var(--drop);
+  transform-origin: 0 0; transform: scale(var(--iz)) translate(calc(-100% - 10px), 0);
 }
-.ndx-dessus .piste-titre--courante { background: var(--panel3); }
-.ndx-dessus .piste-titre .nm { font-family: var(--f-disp); font-size: 13px; line-height: 18px; letter-spacing: 0.04em; color: var(--ink); }
-.ndx-dessus .piste-titre__couleur { width: 16px; height: 16px; padding: 0; border: 0; cursor: pointer; background: var(--c); flex: none; }
-.ndx-dessus .piste-titre__couleur:hover { box-shadow: inset 0 0 0 1px var(--ink); }
+.ndx-dessus .piste-titre--courante { background: var(--panel3); box-shadow: inset 0 0 0 1px var(--c), inset 3px 0 0 var(--c), 0 6px 18px var(--drop); }
+.ndx-dessus .piste-titre .nm { font-family: var(--f-disp); font-size: 12px; line-height: 18px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink); }
+.ndx-dessus .piste-titre__couleur { width: 14px; height: 14px; padding: 0; border: 0; border-radius: 3px; cursor: pointer; background: var(--c); flex: none; margin-left: 3px; }
+.ndx-dessus .piste-titre__couleur:hover { box-shadow: 0 0 0 2px var(--line-cy); }
 
-/* LE TRACÉ D'ORDRE au bouton du milieu sur une tuile (MachinePanel.tsx, tracerOrdre) :
-   la courbe et les rangs vivent dans l'écran, par-dessus le monde */
+/* LE TRACÉ D'ORDRE au bouton du milieu (MachinePanel.tsx, tracerOrdre) : la
+   courbe et les rangs vivent dans l'écran ; le trait du lasso d'Idéation */
 .ndx-trace { position: absolute; left: 0; top: 0; z-index: 8; }
 .ndx-rangs { position: absolute; inset: 0; pointer-events: none; z-index: 8; }
 
-/* les poignées */
+/* les poignées d'arête (Tile.tsx) : invisibles, un voile au survol d'un séparateur */
 .grip { position: absolute; z-index: 3; }
 .grip--n { top: 0; left: 0; right: 0; }
 .grip--s { bottom: 0; left: 0; right: 0; }
@@ -108,385 +164,495 @@ html.dragging * { cursor: inherit !important; }
 .grip--nw { top: 0; left: 0; }
 .grip--se { right: 0; bottom: 0; }
 .grip--sw { left: 0; bottom: 0; }
-.grip--shared:hover { background: var(--cy); opacity: 0.28; }
+.grip--shared:hover { background: var(--cy-bg); box-shadow: inset 0 0 0 1px var(--line-cy); }
 
-/* ── le corps (BlockBody, ParamRow, faders, surface, promoted) ── */
+/* ── le corps : rails, faders, surface, réglage en grand ───── */
 .tile .body { height: 100%; display: flex; flex-direction: column; gap: 6px; overflow: hidden; box-sizing: border-box; }
 .tile .body--fallback { padding: 0; }
 .tile .split { flex: none; cursor: ns-resize; display: flex; align-items: center; justify-content: center; position: relative; z-index: 4; }
-.tile .split__bar { width: 26px; height: 1px; background: var(--line); transition: width 90ms ease-out, background-color 90ms ease-out; }
-.tile .split:hover .split__bar { width: 100%; background: var(--cy); }
+.tile .split__bar { width: 26px; height: 2px; border-radius: 1px; background: var(--line); transition: width 90ms ease-out, background-color 90ms ease-out; }
+.tile .split:hover .split__bar { width: 100%; background: var(--k); }
+/* une ligne de réglage : le nom en étiquette (.kn .l), le curseur de la piste (.ar-vol), la valeur (.kn .v) */
 .tile .row { height: 19px; position: relative; flex: none; display: flex; align-items: center; gap: 8px; cursor: ew-resize; }
-.tile .row__label { font-family: var(--f-mono); font-size: 10px; color: var(--ink2); flex: none; overflow: hidden; white-space: nowrap; text-align: left; cursor: pointer; background: none; border: 0; padding: 0; }
+.tile .row__label {
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink3);
+  flex: none; overflow: hidden; white-space: nowrap; text-align: left; cursor: pointer; background: none; border: 0; padding: 0; line-height: 1.3;
+}
 .tile .row__label:hover, .tile .fader__label:hover { color: var(--ink); }
-.tile .row__label--exposed, .tile .fader__label--exposed { color: var(--cy); outline: 1px solid var(--cy); outline-offset: 1px; }
-.tile .row__rail { flex: 1; min-width: 0; height: 11px; position: relative; display: flex; align-items: center; }
-.tile .row__rail::before { content: ""; position: absolute; left: 0; right: 0; height: 1px; background: var(--line); }
-.tile .row__travel { position: absolute; left: 0; height: 1px; background: var(--cy); }
-.tile .row__cursor { position: absolute; width: 3px; height: 9px; background: var(--cy); transform: translateX(-1px); }
-.tile .row__value { font-family: var(--f-mono); font-size: 11px; color: var(--ink); text-align: right; flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tile .row__label--exposed, .tile .fader__label--exposed { color: var(--k); box-shadow: inset 0 -1px 0 var(--k); }
+.tile .row__rail { flex: 1; min-width: 0; height: 12px; position: relative; display: flex; align-items: center; }
+.tile .row__rail::before { content: ""; position: absolute; left: 0; right: 0; height: 3px; border-radius: 2px; background: var(--line); }
+.tile .row__travel { position: absolute; left: 0; height: 3px; border-radius: 2px; background: var(--k); opacity: 0.55; }
+.tile .row__cursor { position: absolute; width: 8px; height: 12px; margin-left: -4px; border-radius: 2px; background: var(--k); }
+.tile .row:hover .row__cursor { box-shadow: 0 0 0 2px var(--line-cy); }
+.tile .row__value { font-family: var(--f-ui); font-weight: 600; font-size: 11px; color: var(--ink); text-align: right; flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .tile .row__gap { flex: 1; min-width: 0; }
-.tile .row__value--editing { background: var(--bg); color: var(--ink); box-shadow: inset 0 0 0 1px var(--cy); border: 0; outline: none; width: 74px; padding: 0 3px; user-select: text; font-family: inherit; }
+.tile .row__value--editing {
+  font: 600 11px var(--f-ui); background: var(--bg); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy);
+  border: 0; border-radius: 2px; outline: none; width: 74px; padding: 0 4px; user-select: text;
+}
+/* les faders d'une colonne : le fader de la console (.fdr) — rail arrondi, trait d'accent, chapeau plein */
 .tile .faders { display: flex; gap: 6px; align-items: stretch; min-height: 0; }
 .tile .fader { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: ns-resize; }
 .tile .fader__track { flex: 1; width: 100%; min-height: 0; position: relative; }
-.tile .fader__track::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--line); }
-.tile .fader__travel { position: absolute; left: 50%; bottom: 0; width: 1px; background: var(--cy); }
-.tile .fader__cursor { position: absolute; left: 50%; width: 9px; height: 3px; background: var(--cy); transform: translate(-50%, 1px); }
-.tile .fader__label { font-family: var(--f-mono); font-size: 10px; color: var(--ink2); flex: none; white-space: nowrap; cursor: pointer; max-width: 100%; background: none; border: 0; padding: 0; }
+.tile .fader__track::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: min(10px, 60%); transform: translateX(-50%); border-radius: 999px; background: var(--line); }
+.tile .fader__travel { position: absolute; left: 50%; bottom: 0; width: 2px; transform: translateX(-50%); background: var(--k); opacity: 0.55; }
+.tile .fader__cursor { position: absolute; left: 50%; width: min(18px, 100%); height: 8px; border-radius: 999px; background: var(--ink); box-shadow: 0 2px 6px var(--drop); transform: translate(-50%, 50%); }
+.tile .fader__label {
+  font-family: var(--f-mono); font-size: 7.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink3);
+  flex: none; white-space: nowrap; cursor: pointer; max-width: 100%; background: none; border: 0; padding: 0; line-height: 1.3;
+}
 .tile .fader__label--upright { writing-mode: vertical-rl; text-orientation: mixed; transform: rotate(180deg); display: flex; align-items: center; justify-content: flex-end; overflow: hidden; }
-.tile .surface { position: relative; flex: none; }
-.surface__readout { position: absolute; pointer-events: none; background: var(--panel); box-shadow: inset 0 0 0 1px var(--cy); padding: 4px 8px; font-family: var(--f-mono); font-size: 9px; color: var(--ink); white-space: nowrap; z-index: 6; font-variant-numeric: tabular-nums; }
+/* la surface : un écran encastré (.viz du rack) — le dessin du jumeau, son filet par-dessus */
+.tile .surface { position: relative; flex: none; border-radius: var(--r2); overflow: hidden; }
+.tile .surface::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--line); pointer-events: none; }
+.surface__readout {
+  position: absolute; pointer-events: none; z-index: 6; white-space: nowrap; padding: 4px 8px; border-radius: var(--r2);
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line), 0 6px 18px var(--drop);
+  font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink); font-variant-numeric: tabular-nums;
+}
+/* le réglage en grand, quand plus rien d'autre ne tient : son nom en étiquette, sa valeur en --f-disp, dans l'accent (.nd-db) */
 .tile .promoted { height: 100%; width: 100%; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 2px; cursor: ns-resize; overflow: hidden; color: var(--ink); box-sizing: border-box; }
-.tile .promoted__name { font-family: var(--f-mono); text-transform: uppercase; color: var(--cy); line-height: 1; white-space: nowrap; flex: none; text-align: center; }
-.tile .promoted__value { font-family: var(--f-disp); letter-spacing: 0.02em; text-indent: 0.02em; line-height: 1; white-space: nowrap; flex: none; text-align: center; color: var(--ink); }
-.tile .glyph-wave { display: block; margin: 0 auto; color: var(--cy); flex: none; overflow: visible; }
+.tile .promoted__name { font-family: var(--f-mono); text-transform: uppercase; color: var(--ink3); line-height: 1; white-space: nowrap; flex: none; text-align: center; }
+.tile .promoted__value { font-family: var(--f-disp); letter-spacing: 0.02em; text-indent: 0.02em; line-height: 1; white-space: nowrap; flex: none; text-align: center; color: var(--k); }
+.tile .glyph-wave { display: block; margin: 0 auto; color: var(--k); flex: none; overflow: visible; }
 
-/* la boîte à rythme (Groove.tsx), les pads, les minis, les touches */
+/* la boîte à rythme (Groove.tsx) : les pas du séquenceur d'ODIO (.sq-c), les tranches en faders de console */
 .tile .groove { display: flex; flex-direction: column; min-height: 0; }
 .tile .groove__console { display: flex; gap: 4px; min-height: 0; }
 .tile .groove__legend { display: flex; flex-direction: column; flex: none; }
-.tile .groove__legend-row { font-family: var(--f-mono); font-size: 8px; color: var(--ink3); display: flex; align-items: center; }
+.tile .groove__legend-row { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink3); display: flex; align-items: center; }
 .tile .groove__strips { display: flex; min-width: 0; }
-.tile .groove__strip { flex: 1; min-width: 0; display: flex; flex-direction: column; cursor: pointer; }
-.tile .groove__strip--on { box-shadow: inset 0 -1px 0 var(--cy); }
-.tile .groove__strip--on .fader__label { color: var(--cy); }
+.tile .groove__strip { flex: 1; min-width: 0; display: flex; flex-direction: column; cursor: pointer; border-radius: 3px; }
+.tile .groove__strip:hover { background: var(--cy-bg); }
+.tile .groove__strip--on { box-shadow: inset 0 -2px 0 var(--k); }
+.tile .groove__strip--on .fader__label { color: var(--k); }
 .tile .groove__fader { display: flex; }
 .tile .groove__fader .fader { width: 100%; }
 .tile .mini { position: relative; display: flex; align-items: center; cursor: ew-resize; }
-.tile .mini__rail { position: relative; flex: 1; height: 1px; background: var(--line); }
-.tile .mini__cursor { position: absolute; top: -3px; width: 3px; height: 7px; margin-left: -1px; background: var(--ink3); }
+.tile .mini__rail { position: relative; flex: 1; height: 2px; border-radius: 1px; background: var(--line); }
+.tile .mini__cursor { position: absolute; top: -4px; width: 5px; height: 10px; margin-left: -2px; border-radius: 2px; background: var(--ink3); }
 .tile .mini:hover .mini__cursor { background: var(--ink); }
-.tile .mini--exposed .mini__cursor { background: var(--cy); }
+.tile .mini--exposed .mini__cursor { background: var(--k); }
 .tile .pads { display: flex; gap: 2px; flex: none; }
-.tile .pad { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; font-family: var(--f-mono); font-size: 8px; color: var(--ink3); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); cursor: pointer; user-select: none; }
-.tile .pad:hover { box-shadow: inset 0 0 0 1px var(--ink3); }
-.tile .pad--beat { box-shadow: inset 0 0 0 1px var(--ink3); }
-.tile .pad--on { background: var(--cy); color: var(--on-cy); box-shadow: none; }
-.tile .pad--now { outline: 1px solid var(--grn2); outline-offset: -1px; }
+.tile .pad {
+  flex: 1; min-width: 0; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 0;
+  font-family: var(--f-mono); font-size: 7.5px; color: var(--ink3); border-radius: 3px; background: var(--dot); box-shadow: none;
+  cursor: pointer; user-select: none; transition: none;
+}
+.tile .pad:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.tile .pad--beat { background: var(--dot-hi); }
+.tile .pad--on { background: var(--or); color: var(--on-or); }
+.tile .pad--now { box-shadow: inset 0 0 0 2px var(--cy); }
+/* le clavier : ses touches (Keys.tsx) — blanches et noires dans les deux thèmes, la tenue dans l'accent */
 .tile .keys { position: relative; flex: none; }
-.tile .key { position: absolute; top: 0; box-sizing: border-box; cursor: pointer; }
-.tile .key--white { background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
-.tile .key--black { background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); z-index: 1; }
-.tile .key--held { background: var(--cy); }
-/* le vumètre de la console (le « vu » d'ODIO_01) */
-.ndx-vu { position: relative; flex: none; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+.tile .key { position: absolute; top: 0; box-sizing: border-box; cursor: pointer; border-radius: 0 0 3px 3px; }
+.tile .key--white { background: var(--nd-key-w); box-shadow: inset 0 0 0 1px var(--line); }
+.tile .key--black { background: var(--nd-key-b); box-shadow: inset 0 0 0 1px var(--line); z-index: 1; }
+.tile .key--held { background: var(--k); }
+/* le vumètre d'une tranche : celui des cartes d'avant (.mtr) */
+.ndx-vu { position: relative; flex: none; border-radius: 3px; background: var(--bg); overflow: hidden; }
 .ndx-vu i { position: absolute; left: 0; top: 0; bottom: 0; width: 100%; background: var(--grn2); transform-origin: 0 50%; transform: scaleX(0); }
-.ndx-vu.hot i { background: var(--coral-1); }
+.ndx-vu.hot i { background: var(--or); }
 
 /* ── le panneau d'une section de machine (MachinePanel.tsx) ── */
 .machine { position: relative; flex: none; overflow: visible; font-family: var(--f-mono); }
 .machine__ctl { position: absolute; display: flex; align-items: center; justify-content: center; }
+/* la molette : le cadran d'ODIO (ui.js `dial`, .kn .dial : musique.css) */
 .knob { position: relative; flex: none; }
 .knob__body { position: absolute; inset: 0; cursor: ns-resize; }
-.knob__circle { position: absolute; inset: 0; box-shadow: inset 0 0 0 1px var(--ink3); border-radius: 50%; background: var(--panel); }
-.knob__needle { position: absolute; left: calc(50% - 0.5px); top: 2px; width: 1px; background: var(--cy); }
-.knob__label { position: absolute; left: 50%; top: 100%; transform: translateX(-50%); margin-top: 2px; color: var(--ink2); white-space: nowrap; letter-spacing: 0.04em; pointer-events: none; }
-.knob__bubble { position: fixed; transform: translate(-50%, -100%); display: flex; align-items: baseline; gap: 7px; padding: 4px 8px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--cy); white-space: nowrap; pointer-events: none; z-index: 90; font-family: var(--f-mono); }
-.knob__bubble-label { font-size: 8px; color: var(--ink2); letter-spacing: 0.12em; text-transform: uppercase; }
-.knob__bubble-value { font-size: 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
-.machine__switch { position: absolute; box-shadow: inset 0 0 0 1px var(--line); cursor: pointer; }
-.machine__switch--exposed { box-shadow: inset 0 0 0 1px var(--cy); }
-.machine__switch-mark { position: absolute; background: var(--cy); }
-.machine__btn { position: absolute; box-shadow: inset 0 0 0 1px var(--line); cursor: pointer; display: flex; align-items: center; justify-content: center; }
-.machine__btn--on { box-shadow: none; background: var(--cy); }
+.knob__dial { position: absolute; inset: 0; border-radius: 50%; background: var(--panel3); }
+.knob__body:hover .knob__dial { box-shadow: 0 0 0 2px var(--line-cy); }
+.knob__bubble {
+  position: fixed; transform: translate(-50%, -100%); display: flex; align-items: baseline; gap: 7px; padding: 4px 9px; border-radius: var(--r2);
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line), 0 8px 22px var(--drop); white-space: nowrap; pointer-events: none; z-index: 90;
+}
+.knob__bubble-label { font-family: var(--f-mono); font-size: 7.5px; color: var(--ink3); letter-spacing: 0.14em; text-transform: uppercase; }
+.knob__bubble-value { font-family: var(--f-ui); font-weight: 600; font-size: 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
+/* le sélecteur : un .seg en miniature, la position dans l'accent */
+.machine__switch { position: absolute; border-radius: 3px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); cursor: pointer; }
+.machine__switch:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.machine__switch--exposed { box-shadow: inset 0 0 0 1px var(--k); }
+.machine__switch-mark { position: absolute; border-radius: 2px; background: var(--k); }
+/* bouton / pas : un pas du séquenceur d'ODIO (.sq-c) */
+.machine__btn { position: absolute; border-radius: 3px; background: var(--dot-hi); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.machine__btn:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.machine__btn--on { background: var(--or); }
 .machine__digit { color: var(--ink3); font-variant-numeric: tabular-nums; pointer-events: none; }
-.machine__btn--on .machine__digit { color: var(--on-cy); }
-.machine__pad { position: absolute; box-shadow: inset 0 0 0 1px var(--line); background: var(--bg); cursor: pointer; }
-.machine__pad--on { box-shadow: inset 0 0 0 1px var(--cy); background: var(--cy-bg); }
-.machine__led { position: absolute; box-shadow: inset 0 0 0 1px var(--ink3); border-radius: 50%; cursor: pointer; }
-.machine__led--on { background: var(--cy); box-shadow: none; }
+.machine__btn--on .machine__digit { color: var(--on-or); }
+/* pad : un pad du rack (.pad), allumé dans l'accent */
+.machine__pad { position: absolute; border-radius: 4px; background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line); cursor: pointer; }
+.machine__pad:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.machine__pad--on { background: var(--k); box-shadow: none; }
+/* diode : le point des cartes (creux éteint, plein dans l'accent) */
+.machine__led { position: absolute; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--ink3); cursor: pointer; }
+.machine__led--on { background: var(--k); box-shadow: none; }
+/* fader : celui de la console (.fdr) */
 .machine__fader { position: absolute; cursor: ns-resize; }
-.machine__fader-rail { position: absolute; left: calc(50% - 0.5px); top: 0; bottom: 0; width: 1px; background: var(--line); }
-.machine__fader-cursor { position: absolute; height: 3px; background: var(--cy); }
-.machine__label { position: absolute; left: 50%; top: 100%; transform: translateX(-50%); margin-top: 2px; color: var(--ink2); white-space: nowrap; letter-spacing: 0.04em; pointer-events: none; font-family: var(--f-mono); background: none; border: 0; padding: 0; }
+.machine__fader-rail { position: absolute; left: 50%; top: 0; bottom: 0; width: max(3px, 32%); transform: translateX(-50%); border-radius: 999px; background: var(--line); }
+.machine__fader-fill { position: absolute; left: 50%; bottom: 0; width: 2px; transform: translateX(-50%); background: var(--k); opacity: 0.55; }
+.machine__fader-cursor { position: absolute; left: 4%; right: 4%; border-radius: 999px; background: var(--ink); box-shadow: 0 1px 4px var(--drop); }
+/* l'étiquette d'un contrôle : celle des molettes (.kn .l) — un bouton qui expose */
+.machine__label {
+  position: absolute; left: 50%; top: 100%; transform: translateX(-50%); margin-top: 2px; white-space: nowrap; pointer-events: none;
+  font-family: var(--f-mono); text-transform: uppercase; color: var(--ink3); background: none; border: 0; padding: 0; line-height: 1.25;
+}
 .machine__label--live { pointer-events: auto; cursor: pointer; }
 .machine__label--live:hover { color: var(--ink); }
-.machine__label--exposed { color: var(--cy); outline: 1px solid var(--cy); outline-offset: 1px; }
-.machine__strip { position: absolute; display: flex; align-items: center; justify-content: center; color: var(--ink2); white-space: nowrap; pointer-events: none; }
-.machine__display { position: absolute; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); display: flex; align-items: center; overflow: hidden; }
-.machine__display-text { color: var(--cy); white-space: nowrap; padding-left: 5px; }
+.machine__label--exposed { color: var(--k); box-shadow: inset 0 -1px 0 var(--k); }
+.machine__strip { position: absolute; display: flex; align-items: center; justify-content: center; color: var(--ink2); text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; pointer-events: none; }
+/* l'afficheur : un écran encastré (.gen-pre), le texte dans l'accent */
+.machine__display { position: absolute; border-radius: var(--r1); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); display: flex; align-items: center; overflow: hidden; }
+.machine__display-text { color: var(--k); white-space: nowrap; padding-left: 5px; letter-spacing: 0.06em; }
+/* la molette de clavier : un rail de console, un chapeau */
 .machine__wheel { position: absolute; cursor: ns-resize; }
-.machine__wheel-well { position: absolute; inset: 0; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
-.machine__wheel-mid { position: absolute; left: 2px; right: 2px; top: calc(50% - 0.5px); height: 1px; background: var(--ink3); }
-.machine__wheel-cursor { position: absolute; left: 1px; right: 1px; height: 2px; background: var(--cy); }
+.machine__wheel-well { position: absolute; inset: 0; border-radius: var(--r1); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
+.machine__wheel-mid { position: absolute; left: 3px; right: 3px; top: calc(50% - 0.5px); height: 1px; background: var(--line); }
+.machine__wheel-cursor { position: absolute; left: 2px; right: 2px; height: 4px; border-radius: 2px; background: var(--ink); }
 .machine__wheel-cursor--spring { transition: top 200ms cubic-bezier(0.22, 1, 0.36, 1); }
-.machine__key { position: absolute; box-shadow: inset 0 0 0 1px var(--line); cursor: pointer; }
-.machine__key--white { background: var(--panel2); }
-.machine__key--black { background: var(--bg); }
-.machine__key--held { background: var(--cy); box-shadow: none; }
-.machine__ribbon { position: absolute; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); cursor: ew-resize; overflow: hidden; }
-.machine__ribbon-mark { position: absolute; top: 2px; bottom: 2px; width: 1px; background: var(--cy); pointer-events: none; }
-.machine__ribbon-head { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--coral-2); transform: translateX(-1px); pointer-events: none; }
-.machine__orbit { position: absolute; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); cursor: crosshair; overflow: hidden; }
+.machine__key { position: absolute; box-shadow: inset 0 0 0 1px var(--line); cursor: pointer; border-radius: 0 0 2px 2px; }
+.machine__key--white { background: var(--nd-key-w); }
+.machine__key--black { background: var(--nd-key-b); }
+.machine__key--held { background: var(--k); box-shadow: none; }
+.machine__ribbon { position: absolute; border-radius: var(--r1); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); cursor: ew-resize; overflow: hidden; }
+.machine__ribbon-mark { position: absolute; top: 2px; bottom: 2px; width: 1px; background: var(--k); pointer-events: none; }
+.machine__ribbon-head { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--k); transform: translateX(-1px); pointer-events: none; }
+.machine__orbit { position: absolute; border-radius: var(--r2); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); cursor: crosshair; overflow: hidden; }
 .machine__orbit-x { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line); pointer-events: none; }
 .machine__orbit-y { position: absolute; left: 0; right: 0; height: 1px; background: var(--line); pointer-events: none; }
-.machine__orbit-dot { position: absolute; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 50%; background: var(--cy); pointer-events: none; }
-.machine__matrix { position: absolute; display: grid; gap: 1px; background: var(--line); box-shadow: 0 0 0 1px var(--line); }
+.machine__orbit-dot { position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: var(--k); pointer-events: none; }
+.machine__matrix { position: absolute; display: grid; gap: 1px; border-radius: 3px; overflow: hidden; background: var(--line); box-shadow: 0 0 0 1px var(--line); }
 .machine__matrix-cell { background: var(--bg); cursor: pointer; }
-.machine__matrix-cell[data-n="1"] { background: var(--cy-bg); }
-.machine__matrix-cell[data-n="2"] { background: var(--line-cy); }
-.machine__matrix-cell[data-n="3"] { background: var(--cy); }
-.machine__matrix-cell:hover { outline: 1px solid var(--cy); outline-offset: -1px; }
-.machine__curve, .machine__vu { position: absolute; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
-.machine__curve-trace { fill: none; stroke: var(--cy); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.machine__curve-pt { fill: var(--panel); stroke: var(--cy); cursor: move; }
+.machine__matrix-cell[data-n="1"] { background: color-mix(in srgb, var(--k) 25%, var(--bg)); }
+.machine__matrix-cell[data-n="2"] { background: color-mix(in srgb, var(--k) 58%, var(--bg)); }
+.machine__matrix-cell[data-n="3"] { background: var(--k); }
+.machine__matrix-cell:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.machine__curve, .machine__vu { position: absolute; border-radius: var(--r1); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
+.machine__curve-trace { fill: none; stroke: var(--k); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+.machine__curve-pt { fill: var(--panel2); stroke: var(--k); cursor: move; }
 .machine__vu { cursor: ns-resize; }
-.machine__vu-tick { position: absolute; background: var(--ink3); }
-.machine__vu--haut .machine__vu-tick { background: var(--coral-1); }
-.machine__vu-aiguille { position: absolute; background: var(--cy); transform-origin: 50% 100%; }
+.machine__vu-tick { stroke: var(--ink3); }
+.machine__vu--haut .machine__vu-tick, .machine__vu-tick--haut { stroke: var(--or); }
+.machine__vu-aiguille { stroke: var(--k); stroke-width: 1.5; }
 /* mode macros : la géométrie a cédé, les contrôles non */
 .machine--macros .machine__ctl, .machine--macros .machine__switch, .machine--macros .machine__btn,
 .machine--macros .machine__pad, .machine--macros .machine__led, .machine--macros .machine__fader { position: absolute; }
-/* le mode ÉLÉMENT, dans le poste de conception */
+/* le mode ÉLÉMENT, dans le poste de conception : la sélection d'un éditeur (l'acier des éléments pris) */
 .machine--composing { outline: 1px dashed var(--line-cy); outline-offset: -1px; }
-.machine__prise { position: absolute; cursor: move; z-index: 2; }
+.machine__prise { position: absolute; cursor: move; z-index: 2; border-radius: 3px; }
 .machine__prise:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
 .machine__prise--prise { box-shadow: inset 0 0 0 1px var(--cy); background: var(--cy-bg); }
-.machine__poignee { position: absolute; width: 9px; height: 9px; margin: -4px 0 0 -4px; background: var(--cy); cursor: nwse-resize; z-index: 3; }
-.machine__marquee { position: absolute; box-shadow: inset 0 0 0 1px var(--cy); pointer-events: none; z-index: 3; }
-.machine__regle { position: absolute; background: var(--cy); opacity: 0.7; pointer-events: none; z-index: 3; }
+.machine__poignee { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 2px; background: var(--bg); box-shadow: inset 0 0 0 1.5px var(--cy); cursor: nwse-resize; z-index: 3; }
+.machine__poignee:hover { background: var(--cy); }
+.machine__marquee { position: absolute; border-radius: var(--r1); background: var(--cy-bg); box-shadow: inset 0 0 0 1px var(--line-cy); pointer-events: none; z-index: 3; }
+.machine__regle { position: absolute; background: var(--line-cy); pointer-events: none; z-index: 3; }
 .machine__regle--x { width: 1px; }
 .machine__regle--y { height: 1px; }
 .machine__marge { position: absolute; outline: 1px dashed var(--line); outline-offset: -1px; pointer-events: none; }
 .machine__ecart { position: absolute; outline: 1px dashed var(--line-cy); outline-offset: -1px; pointer-events: none; }
+/* le tracé d'ordre : le lasso d'Idéation (orange, l'action) et ses rangs (.selbox .sinfo) */
 .machine__courbe { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 4; overflow: visible; }
-.machine__courbe polyline { fill: none; stroke: var(--amb); stroke-width: 1.5; }
-.machine__rang { position: absolute; z-index: 5; font-family: var(--f-mono); font-size: 9px; line-height: 12px; padding: 0 3px; background: var(--amb); color: var(--bg); pointer-events: none; }
-
-/* ── les bornes, les sauts, les câbles (Ports.tsx) ─────────── */
-.ndx-borne {
-  position: absolute; width: 9px; height: 9px; box-sizing: border-box; z-index: 12;
-  transform-origin: 0 0; transform: scale(var(--iz)) translate(-50%, -50%);
-  background: var(--panel); box-shadow: inset 0 0 0 1px var(--ink3);
+.machine__courbe polyline { fill: none; stroke: var(--or); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.machine__rang {
+  position: absolute; z-index: 5; pointer-events: none; padding: 0 4px; border-radius: 3px; line-height: 13px;
+  font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.06em; background: var(--or); color: var(--on-or);
+  box-shadow: 0 2px 6px var(--drop);
 }
-.ndx-borne.port--live { background: var(--ink3); }
-.ndx-borne.port--out { cursor: crosshair; }
-.ndx-borne:hover { box-shadow: inset 0 0 0 1px var(--cy); }
-.ndx-borne.port--out:hover { background: var(--cy); }
-.ndx-borne.port--notes { box-shadow: inset 0 0 0 1px var(--grn2); }
-.ndx-borne.port--notes.port--live, .ndx-borne.port--notes:hover { background: var(--grn2); }
+
+/* ── les bornes : les ports des cartes d'avant (13 px, anneau de 2) ─────── */
+/* à taille d'écran constante ; la sortie dans l'accent de sa carte, pleine quand un fil y part */
+.ndx-borne {
+  position: absolute; width: 13px; height: 13px; box-sizing: border-box; z-index: 12; border-radius: 50%;
+  transform-origin: 0 0; transform: scale(var(--iz)) translate(-50%, -50%);
+  background: var(--bg); box-shadow: inset 0 0 0 2px var(--ink3); transition: background .12s;
+}
+.ndx-borne.port--out { cursor: crosshair; box-shadow: inset 0 0 0 2px var(--k); }
+.ndx-borne.port--in.port--live { box-shadow: inset 0 0 0 2px var(--ink2); }
+.ndx-borne.port--out.port--live { background: var(--k); }
+.ndx-borne:hover { transform: scale(calc(var(--iz) * 1.45)) translate(-50%, -50%); }
+/* les notes : le losange des jouets (jouets.css .jo-notes) */
+.ndx-borne.port--notes { width: 11px; height: 11px; border-radius: 2px; transform: scale(var(--iz)) rotate(45deg) translate(-50%, -50%); }
+.ndx-borne.port--notes:hover { transform: scale(calc(var(--iz) * 1.45)) rotate(45deg) translate(-50%, -50%); }
+/* les sauts : une pastille par saut, empilées sous la borne, à la couleur du saut */
 .ndx-bornes .jump {
-  position: absolute; width: 11px; height: 11px; z-index: 12; cursor: pointer;
-  transform-origin: 0 0; transform: scale(var(--iz)) translate(-50%, calc(-50% + var(--i, 1) * 13px));
-  opacity: 0.75;
+  position: absolute; width: 11px; height: 11px; z-index: 12; cursor: pointer; border-radius: 3px; box-shadow: inset 0 0 0 1px var(--line);
+  transform-origin: 0 0; transform: scale(var(--iz)) translate(-50%, calc(-50% + var(--i, 1) * 14px)); opacity: 0.8;
 }
 .ndx-bornes .jump:hover { opacity: 1; }
-.ndx-bornes .jump--shown { opacity: 1; box-shadow: inset 0 0 0 1px var(--ink); }
+.ndx-bornes .jump--shown { opacity: 1; box-shadow: inset 0 0 0 1.5px var(--ink); }
 .ndx-bornes .jump--auto { opacity: 0.45; }
 .ndx-bornes .jump--auto:hover { opacity: 0.9; }
-.ndx-cables .cable__line { fill: none; stroke: var(--ink3); stroke-width: 1; vector-effect: non-scaling-stroke; }
-/* un fil d'une chaîne de piste : la couleur de la piste ; emprunté par deux chaînes : tireté */
-.ndx-cables .cable--piste .cable__line { stroke: currentColor; stroke-width: 1.5; }
-.ndx-cables .cable--multi .cable__line { stroke-dasharray: 7 3; }
-.ndx-cables .cable--notes .cable__line, .ndx-cables .cable__line--notes { stroke: var(--grn2); stroke-dasharray: 5 3; }
-.ndx-cables .cable--notes.cable--piste .cable__line { stroke: currentColor; }
-.ndx-cables .cable--survol .cable__line, .ndx-cables .cable--picked .cable__line { stroke: var(--cy); }
-.ndx-cables .cable--picked .cable__line { stroke-width: 2; stroke: var(--or); }
-.ndx-cables .cable__line--jump { stroke: currentColor; stroke-dasharray: 2 3; }
-.ndx-cables .cable__line--drawing { stroke: var(--cy); stroke-dasharray: 3 3; }
-.ndx-cables .cable__line--refused { stroke: var(--coral-1); stroke-dasharray: 2 4; }
-.ndx-cables .cable__envoi { fill: var(--ink2); font-family: var(--f-mono); font-size: calc(9px * var(--iz)); letter-spacing: 0.08em; text-anchor: middle; }
-.ndx-saisie .cable__hit { fill: none; stroke: transparent; stroke-width: 12; vector-effect: non-scaling-stroke; pointer-events: stroke; cursor: pointer; }
-.ndx-cables .cible { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.ndx-cables .cible--permise { stroke: var(--grn2); }
-.ndx-cables .cible--refusee { stroke: var(--coral-1); stroke-dasharray: 4 3; }
+
+/* ── les fils : ceux du portail (commun/wire.css), en pixels d'écran ────── */
+/* le trait de 2 dans la teinte de la source (ou de la piste) à 75 %, le fil choisi
+   orange à 3, les envois en tirets 6 5, le fil qu'on tire orange en tirets 5 5 —
+   ici en espace écran par --iz : l'épaisseur, les tirets, l'étiquette */
+.ndx-cables .sr-wire .vis { vector-effect: none; stroke-width: calc(2px * var(--iz)); }
+.ndx-cables .cable--survol .vis { opacity: 1; stroke-width: calc(2.6px * var(--iz)); }
+.ndx-cables .cable--picked .vis { stroke: var(--or); stroke-width: calc(3px * var(--iz)); opacity: 1; stroke-dasharray: none; }
+.ndx-cables .sr-wire.send .vis { stroke-dasharray: calc(6px * var(--iz)) calc(5px * var(--iz)); }
+/* emprunté par deux chaînes (un effet partagé) : un tireté long */
+.ndx-cables .cable--multi .vis { stroke-dasharray: calc(9px * var(--iz)) calc(4px * var(--iz)); }
+/* des notes : le pointillé rond des câbles de notes des jouets */
+.ndx-cables .cable--notes .vis { stroke-dasharray: calc(1px * var(--iz)) calc(6px * var(--iz)); stroke-linecap: round; stroke-width: calc(3px * var(--iz)); }
+.ndx-cables .cable--notes.cable--picked .vis { stroke-dasharray: calc(1px * var(--iz)) calc(6px * var(--iz)); stroke-width: calc(3.5px * var(--iz)); }
+.ndx-cables .vis.cable__line--jump { stroke-dasharray: calc(2px * var(--iz)) calc(4px * var(--iz)); }
+.ndx-cables .sr-wire .cable__envoi.lab { font-size: calc(9px * var(--iz)); stroke-width: calc(4px * var(--iz)); }
+.ndx-saisie .cable__hit { fill: none; stroke: transparent; stroke-width: calc(16px * var(--iz)); vector-effect: none; pointer-events: stroke; cursor: pointer; }
+.ndx-cables .sr-wire-temp { vector-effect: none; stroke-width: calc(2px * var(--iz)); stroke-dasharray: calc(5px * var(--iz)) calc(5px * var(--iz)); }
+.ndx-cables .sr-wire-temp.snap { stroke-dasharray: none; }
+.ndx-cables .sr-wire-temp.cable__line--notes { stroke-dasharray: calc(1px * var(--iz)) calc(6px * var(--iz)); stroke-linecap: round; stroke-width: calc(3px * var(--iz)); }
+.ndx-cables .sr-wire-temp.bad { stroke: var(--or); stroke-dasharray: calc(2px * var(--iz)) calc(5px * var(--iz)); opacity: .95; }
+/* le cadre de parentage : vert, la liaison se fera ; orange d'alerte, refusée (wire.css .bad) */
+.ndx-cables .cible { fill: none; stroke-width: calc(1.5px * var(--iz)); }
+.ndx-cables .cible--permise { stroke: var(--grn2); fill: var(--grn-bg); }
+.ndx-cables .cible--refusee { stroke: var(--or); fill: var(--or-bg); stroke-dasharray: calc(4px * var(--iz)) calc(3px * var(--iz)); }
 /* les ports typés des jouets sur l'ancre d'une machine */
 .nd-card.ndx-ancre { position: absolute; background: none; box-shadow: none; pointer-events: none; padding: 0; border-radius: 0; z-index: 4; }
 .nd-card.ndx-ancre .port { pointer-events: auto; }
 
-/* ── les liens entre molettes (liens-knob.ts) ──────────────── */
-.ndx-liens .lien__fil { stroke: var(--amb); stroke-width: 1; }
+/* ── les liens entre molettes (liens-knob.ts) : l'ambre de ce qui est lié (.dev.lie) ── */
+.ndx-liens .lien__fil { stroke: var(--amb); stroke-width: 1.5; }
 .ndx-liens .lien:not(.lien--allume) .lien__fil { opacity: 0.6; }
-.ndx-liens .lien__fil--tirage { stroke: var(--amb); stroke-dasharray: 3 3; }
+.ndx-liens .lien__fil--tirage { stroke: var(--amb); stroke-dasharray: 4 4; }
 .ndx-liens .lien__signe { pointer-events: auto; cursor: ns-resize; }
-.ndx-liens .lien__signe rect { fill: var(--panel); stroke: var(--line-amb); }
-.ndx-liens .lien__signe line { stroke: var(--amb); stroke-width: 1.5; }
+.ndx-liens .lien__signe rect { fill: var(--panel2); stroke: var(--line-amb); rx: 4px; }
+.ndx-liens .lien__signe line { stroke: var(--amb); stroke-width: 1.5; stroke-linecap: round; }
 .ndx-liens .lien__signe:hover rect, .ndx-liens .lien__signe--pris rect { stroke: var(--amb); }
 
-/* ── les ensembles : cadres, menus, séparateurs (App.tsx) ──── */
-.group-frame { position: absolute; outline: calc(1px * var(--iz)) solid var(--line-amb); outline-offset: calc(2px * var(--iz)); pointer-events: none; z-index: 1; }
-.ndx-dessus .group-menu {
-  position: absolute; z-index: 9; display: flex; align-items: stretch; gap: 1px; background: var(--line); box-shadow: 0 0 0 1px var(--line);
-  transform-origin: 0 0; transform: scale(var(--iz)) translate(-3px, calc(-100% - 10px));
+/* ── les ensembles : cadres, menus, séparateurs — ceux d'Idéation ──────── */
+/* un groupe : le pointillé acier d'un groupe d'Idéation (.gp.sel), aux coins des cartes */
+.group-frame {
+  position: absolute; pointer-events: none; z-index: 1; border-radius: calc(14px * var(--iz));
+  outline: calc(1px * var(--iz)) dashed var(--line-cy); outline-offset: calc(3px * var(--iz));
 }
-.ndx-dessus .group-menu--open { opacity: 0.7; }
+/* sa barre : la barre de sélection d'Idéation (.sbar, .sbt) */
+.ndx-dessus .group-menu {
+  position: absolute; z-index: 9; display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: var(--r3);
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line), 0 10px 26px var(--drop);
+  transform-origin: 0 0; transform: scale(var(--iz)) translate(-3px, calc(-100% - 24px));
+}
+.ndx-dessus .group-menu--open { opacity: 0.75; }
 .ndx-dessus .group-menu--open:hover { opacity: 1; }
-.group-menu__btn { height: 17px; min-width: 17px; padding: 0 4px; background: var(--panel); color: var(--ink2); display: flex; align-items: center; justify-content: center; gap: 4px; font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.06em; border: 0; cursor: pointer; }
-.group-menu__btn:hover { color: var(--ink); background: var(--bg); }
-.group-menu__btn--on { color: var(--cy); box-shadow: inset 0 -1px 0 var(--cy); }
+.group-menu__btn {
+  height: 22px; min-width: 22px; padding: 0 6px; border: 0; border-radius: var(--r2); background: none; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px; color: var(--ink2);
+  font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase;
+}
+.group-menu__btn:hover { color: var(--ink); background: var(--panel3); }
+.group-menu__btn--on { background: var(--grn); color: var(--on-grn); }
 .group-menu .led { width: 8px; height: 8px; }
+.group-menu .led--idle { background: var(--ink2); }
 .glyph-pack { display: block; color: currentColor; }
 .teinte { position: relative; display: flex; }
-.teinte-pastille { width: 9px; height: 9px; box-shadow: inset 0 0 0 1px var(--line); }
+.teinte-pastille { width: 10px; height: 10px; border-radius: 3px; box-shadow: inset 0 0 0 1px var(--line-cy); }
 .teinte-pastille--pleine { box-shadow: none; }
-.teinte__nuancier { position: absolute; left: 0; bottom: calc(100% + 4px); display: grid; grid-template-columns: repeat(5, 15px); gap: 3px; padding: 5px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); z-index: 20; }
-.teinte__choix { width: 15px; height: 15px; border: 0; cursor: pointer; background: var(--panel2); position: relative; }
-.teinte__choix--prise { outline: 1px solid var(--ink); outline-offset: 1px; }
-.teinte__barre { position: absolute; left: 2px; right: 2px; top: 50%; height: 1px; background: var(--coral-1); transform: rotate(-45deg); }
+.teinte__nuancier {
+  position: absolute; left: 0; bottom: calc(100% + 6px); display: grid; grid-template-columns: repeat(5, 16px); gap: 4px; padding: 6px; z-index: 20;
+  border-radius: var(--r3); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line), 0 10px 26px var(--drop);
+}
+.teinte__choix { width: 16px; height: 16px; border: 0; border-radius: 3px; cursor: pointer; background: var(--panel3); position: relative; }
+.teinte__choix:hover { box-shadow: 0 0 0 2px var(--line-cy); }
+.teinte__choix--prise { box-shadow: 0 0 0 2px var(--ink); }
+.teinte__barre { position: absolute; left: 2px; right: 2px; top: 50%; height: 1px; background: var(--or); transform: rotate(-45deg); }
+/* le nom d'une machine, au-dessus d'elle à droite : une étiquette de machine */
 .machine-titre {
   position: absolute; z-index: 12; display: block; text-align: right; white-space: nowrap; pointer-events: none;
-  font-family: var(--f-mono); font-size: 9px; line-height: 13px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink2);
-  background: var(--bg); padding: 0 3px;
-  transform-origin: 0 0; transform: scale(var(--iz)) translate(-100%, -15px);
+  font-family: var(--f-mono); font-size: 8.5px; line-height: 13px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink2);
+  transform-origin: 0 0; transform: scale(var(--iz)) translate(-100%, -17px);
 }
+/* les séparateurs d'un groupe et leurs croisements : un trait qui s'éclaire au survol */
 .divider { position: absolute; z-index: 9; display: flex; align-items: center; justify-content: center; }
 .divider--x { width: calc(8px * var(--iz)); transform: translateX(-50%); cursor: ew-resize; }
 .divider--y { height: calc(8px * var(--iz)); transform: translateY(-50%); cursor: ns-resize; }
-.divider::after { content: ""; background: transparent; }
-.divider--x::after { width: calc(1px * var(--iz)); height: 100%; }
-.divider--y::after { width: 100%; height: calc(1px * var(--iz)); }
-.divider:hover::after { background: var(--amb); }
-.junction { position: absolute; width: 11px; height: 11px; z-index: 10; cursor: move; background: var(--panel); box-shadow: inset 0 0 0 1px var(--ink3); transform-origin: 0 0; transform: scale(var(--iz)) translate(-50%, -50%); }
-.junction:hover { background: var(--amb); box-shadow: none; }
-.selection-frame { position: absolute; outline: calc(1px * var(--iz)) solid var(--cy); outline-offset: calc(2px * var(--iz)); pointer-events: none; z-index: 8; }
+.divider::after { content: ""; background: transparent; border-radius: 1px; }
+.divider--x::after { width: calc(2px * var(--iz)); height: 100%; }
+.divider--y::after { width: 100%; height: calc(2px * var(--iz)); }
+.divider:hover::after { background: var(--line-cy); }
+.junction {
+  position: absolute; width: 11px; height: 11px; z-index: 10; cursor: move; border-radius: 3px; background: var(--bg); box-shadow: inset 0 0 0 1.5px var(--line-cy);
+  transform-origin: 0 0; transform: scale(var(--iz)) translate(-50%, -50%);
+}
+.junction:hover { background: var(--cy); }
+/* plusieurs blocs choisis : le cadre de sélection d'Idéation (.selbox) et ses poignées */
+.selection-frame {
+  position: absolute; pointer-events: none; z-index: 8; border-radius: calc(4px * var(--iz));
+  outline: calc(1px * var(--iz)) solid var(--or); outline-offset: calc(4px * var(--iz));
+}
 .bounds-edge { position: absolute; z-index: 9; }
-.bounds-edge--n, .bounds-edge--s { height: calc(6px * var(--iz)); transform: translateY(-50%); }
-.bounds-edge--w, .bounds-edge--e { width: calc(6px * var(--iz)); transform: translateX(-50%); }
-.bounds-edge:hover { background: var(--cy); opacity: 0.3; }
-.bounds-corner { position: absolute; width: 11px; height: 11px; background: var(--ink3); z-index: 10; transform-origin: 0 0; transform: scale(var(--iz)) translate(-50%, -50%); transition: background-color 90ms ease-out; }
-.bounds-corner:hover { background: var(--cy); }
-.ndx-dessus .guide { position: absolute; background: var(--cy); pointer-events: none; z-index: 10; }
+.bounds-edge--n, .bounds-edge--s { height: calc(8px * var(--iz)); transform: translateY(-50%); }
+.bounds-edge--w, .bounds-edge--e { width: calc(8px * var(--iz)); transform: translateX(-50%); }
+.bounds-edge:hover { background: var(--or-bg); }
+.bounds-corner {
+  position: absolute; width: 9px; height: 9px; z-index: 10; border-radius: 2px; background: var(--bg); box-shadow: inset 0 0 0 1.5px var(--or);
+  transform-origin: 0 0; transform: scale(var(--iz)) translate(-50%, -50%); transition: background-color 90ms ease-out;
+}
+.bounds-corner:hover { background: var(--or); }
+/* l'aimantation : le trait d'insertion de l'arrangement (.ar-dropline), à un pixel d'écran */
+.ndx-dessus .guide { position: absolute; background: var(--line-or); pointer-events: none; z-index: 10; }
 .ndx-dessus .guide--x { top: -100000px; height: 200000px; width: calc(1px * var(--iz)); }
 .ndx-dessus .guide--y { left: -100000px; width: 200000px; height: calc(1px * var(--iz)); }
-.ndx-dessus .marquee { position: absolute; outline: calc(1px * var(--iz)) solid var(--cy); outline-offset: 0; pointer-events: none; z-index: 12; }
-
-/* ── le poste de conception, le panneau des seuils ─────────── */
-.machine-panel { position: absolute; z-index: 40; display: flex; flex-direction: column; gap: 7px; padding: 10px 12px 12px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line), 0 6px 24px var(--drop); color: var(--ink); font-family: var(--f-mono); font-size: 10px; }
-.machine-panel--etiquette {
-  flex-direction: row; align-items: center; gap: 10px; padding: 3px 9px; max-width: 760px; white-space: nowrap;
-  transform-origin: 0 0; transform: scale(var(--iz)) translate(-3px, calc(-100% - 34px));
+/* le rectangle de sélection : le cadre d'Idéation (.marquee) */
+.ndx-dessus .marquee {
+  position: absolute; pointer-events: none; z-index: 12; border-radius: calc(4px * var(--iz));
+  background: var(--or-bg); box-shadow: inset 0 0 0 calc(1px * var(--iz)) var(--or);
 }
-.machine-panel__head { display: flex; justify-content: space-between; align-items: center; }
-.machine-panel__name { font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink); }
-.machine-panel__aide { font-size: 10px; color: var(--ink2); margin: 0; line-height: 1.45; white-space: normal; }
-.machine-panel--etiquette .machine-panel__aide { white-space: nowrap; }
-.machine-panel__close { background: none; border: 0; color: var(--ink2); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
-.machine-panel__close:hover { color: var(--ink); }
-.machine-panel__scroll { overflow: auto; max-height: 52vh; display: flex; flex-direction: column; gap: 10px; }
-.machine-panel__group { display: flex; flex-direction: column; gap: 5px; }
-.machine-panel__title { font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink3); }
+
+/* ── le poste de conception, le panneau des seuils : des panneaux flottants (.sbar, .pan) ── */
+.machine-panel {
+  position: absolute; z-index: 40; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px 14px; border-radius: var(--r4);
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line), 0 18px 44px var(--drop-lg); color: var(--ink); font-family: var(--f-ui); font-size: 11px;
+}
+.machine-panel--etiquette {
+  flex-direction: row; align-items: center; gap: 10px; padding: 4px 6px 4px 12px; max-width: 800px; white-space: nowrap; border-radius: var(--r3);
+  transform-origin: 0 0; transform: scale(var(--iz)) translate(-3px, calc(-100% - 60px));
+}
+.machine-panel__head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.machine-panel__name { font-family: var(--f-disp); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink); }
+.machine-panel__aide { font-size: 11px; color: var(--ink3); margin: 0; line-height: 1.5; white-space: normal; }
+.machine-panel--etiquette .machine-panel__aide { white-space: nowrap; font-family: var(--f-mono); font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; }
+.machine-panel__close { background: none; border: 0; color: var(--ink2); cursor: pointer; font-size: 15px; line-height: 1; padding: 2px 6px; border-radius: var(--r1); }
+.machine-panel__close:hover { color: var(--ink); background: var(--panel3); }
+.machine-panel__scroll { overflow: auto; max-height: 52vh; display: flex; flex-direction: column; gap: 12px; padding-right: 2px; }
+.machine-panel__group { display: flex; flex-direction: column; gap: 6px; }
+.machine-panel__title { font-family: var(--f-mono); font-size: 8px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--or); }
 .machine-panel__row { display: flex; align-items: center; gap: 8px; }
-.machine-panel__label { width: 92px; flex: none; color: var(--ink2); }
+.machine-panel__label { width: 96px; flex: none; color: var(--ink2); font-size: 11px; }
 .machine-panel__row input[type="range"] { flex: 1; min-width: 0; height: 14px; accent-color: var(--cy); }
-.machine-panel__value { width: 40px; flex: none; text-align: right; font-variant-numeric: tabular-nums; }
+.machine-panel__value { width: 42px; flex: none; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
 .machine-panel__actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 4px; }
-.machine-panel__distance { display: flex; align-items: center; gap: 5px; color: var(--ink2); }
-.machine-panel__distance input { width: 42px; background: var(--bg); color: var(--ink); border: 0; box-shadow: inset 0 0 0 1px var(--line); padding: 2px 4px; font-family: var(--f-mono); font-size: 10px; }
-.ndx-seuils { right: 12px; top: 46px; width: 300px; }
-.ndx-semantique { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; box-shadow: inset 0 0 0 1px var(--line); border-radius: var(--r1, 3px); }
+.machine-panel__distance { display: flex; align-items: center; gap: 6px; color: var(--ink3); font-family: var(--f-mono); font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; }
+.machine-panel__distance input {
+  width: 46px; background: var(--panel); color: var(--ink); border: 0; border-radius: var(--r1); box-shadow: inset 0 0 0 1px var(--line);
+  padding: 3px 5px; font-family: var(--f-ui); font-size: 11px;
+}
+.machine-panel__distance input:focus { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.ndx-seuils { right: 12px; top: 50px; width: 310px; }
+.ndx-semantique { display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border-radius: var(--r2); box-shadow: inset 0 0 0 1px var(--line); }
 .ndx-semantique input[type="range"] { width: 88px; accent-color: var(--cy); }
 .ndx-semantique-v { min-width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
 
-/* ── le catalogue, la liste rapide, le menu d'un câble ─────── */
+/* ── le catalogue : une fenêtre du portail (.modal), ses rubriques et ses entrées (le navigateur, .nv-it) ── */
 .palette__veil { position: fixed; inset: 0; z-index: 69; }
-.palette { position: fixed; z-index: 70; min-width: 180px; max-height: 70vh; overflow: auto; padding: 5px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line), 0 8px 28px var(--drop); display: flex; flex-direction: column; gap: 2px; }
-.palette__group + .palette__group { margin-top: 6px; padding-top: 6px; box-shadow: inset 0 1px 0 var(--line); }
-.palette__group { display: flex; flex-direction: column; gap: 1px; }
-.palette__title { font-family: var(--f-mono); font-size: 8px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink3); padding: 2px 6px 3px; }
-.palette__item { text-align: left; background: none; border: 0; color: var(--ink); font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.08em; padding: 4px 8px; cursor: pointer; white-space: nowrap; }
-.palette__item:hover { background: var(--panel3); color: var(--cy); }
-.palette--menu .palette__item { font-size: 9px; letter-spacing: 0.14em; }
+.palette__veil.cat__voile { background: var(--scrim); backdrop-filter: blur(3px); }
 .cat.cat--fenetre {
-  position: fixed; z-index: 70; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(1080px, 92vw); max-height: 82vh;
-  display: flex; flex-direction: column; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line), 0 12px 40px var(--drop); color: var(--ink);
+  position: fixed; z-index: 70; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(1080px, 92vw); max-height: 82vh; overflow: hidden;
+  display: flex; flex-direction: column; border-radius: var(--r4); background: var(--panel); color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line), 0 24px 60px var(--drop-lg);
 }
 .cat.cat--transport { opacity: 0; pointer-events: none; }
-.cat__tete { display: flex; align-items: center; gap: 14px; padding: 10px 14px; box-shadow: inset 0 -1px 0 var(--line); }
-.cat__titre-fenetre { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; }
-.cat__aide { font-size: 10.5px; color: var(--ink2); flex: 1; }
-.cat__fermer { background: none; border: 0; color: var(--ink2); font-size: 16px; cursor: pointer; }
-.cat__fermer:hover { color: var(--ink); }
-.cat__corps { overflow: auto; padding: 10px 14px 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
-.cat__rubrique { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.cat__titre { margin: 0 0 4px; display: flex; justify-content: space-between; font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.16em; font-weight: 400; color: var(--ink3); text-transform: uppercase; padding-bottom: 4px; box-shadow: inset 0 -1px 0 var(--line); }
+.palette__veil.cat__voile:has(+ .cat--transport) { opacity: 0; }
+.cat__tete { display: flex; align-items: center; gap: var(--s3); padding: var(--s4) var(--s5); box-shadow: inset 0 -1px 0 var(--line); }
+.cat__titre-fenetre { font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink3); }
+.cat__aide { font-size: 11px; color: var(--ink3); flex: 1; }
+.cat__fermer { background: none; border: 0; color: var(--ink2); font-size: 16px; line-height: 1; cursor: pointer; padding: 3px 7px; border-radius: var(--r1); }
+.cat__fermer:hover { color: var(--ink); background: var(--panel3); }
+.cat__corps { overflow: auto; padding: var(--s3) var(--s5) var(--s5); display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: var(--s4) var(--s5); }
+.cat__rubrique { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cat__titre {
+  margin: 0 0 4px; display: flex; justify-content: space-between; padding: 9px 6px 5px; box-shadow: inset 0 -1px 0 var(--line);
+  font-family: var(--f-mono); font-size: 7.5px; letter-spacing: 0.18em; font-weight: 400; text-transform: uppercase; color: var(--or);
+}
 .cat__compte { color: var(--ink3); }
 .cat__liste { display: flex; flex-direction: column; gap: 2px; }
-.cat__item { padding: 5px 6px; cursor: grab; border-radius: var(--r1, 3px); }
-.cat__item:hover, .cat__item--ouvert { background: var(--panel3); }
-.cat__ligne { display: grid; grid-template-columns: 34px 1fr; grid-template-rows: auto auto; column-gap: 8px; align-items: center; }
+.cat__item { padding: 5px 7px; cursor: grab; border-radius: var(--r2); }
+.cat__item:hover, .cat__item--ouvert { background: var(--panel2); }
+.cat__item--ouvert { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.cat__ligne { display: grid; grid-template-columns: 34px 1fr; grid-template-rows: auto auto; column-gap: 9px; align-items: center; }
 .cat__vignette { grid-row: 1 / 3; width: 34px; height: 24px; }
-.cat__vignette rect, .cat__vignette circle, .cat__vignette path { fill: none; stroke: var(--ink3); stroke-width: 0.5; vector-effect: non-scaling-stroke; }
-.cat__item:hover .cat__vignette rect, .cat__item:hover .cat__vignette circle, .cat__item:hover .cat__vignette path { stroke: var(--cy); }
-.cat__nom { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cat__ref { font-size: 10px; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cat__detail { display: grid; grid-template-columns: 50px 1fr; gap: 2px 8px; margin: 6px 0 2px 42px; font-size: 10px; }
-.cat__detail dt { color: var(--ink3); font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase; }
+.cat__vignette rect, .cat__vignette circle, .cat__vignette path { fill: none; stroke: var(--ink3); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.cat__item:hover .cat__vignette rect, .cat__item:hover .cat__vignette circle, .cat__item:hover .cat__vignette path,
+.cat__item--ouvert .cat__vignette rect, .cat__item--ouvert .cat__vignette circle, .cat__item--ouvert .cat__vignette path { stroke: var(--k, var(--cy)); }
+.cat__nom { font-family: var(--f-ui); font-size: 11.5px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cat__ref { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cat__detail { display: grid; grid-template-columns: 54px 1fr; gap: 3px 8px; margin: 7px 0 3px 43px; font-size: 11px; }
+.cat__detail dt { color: var(--ink3); font-family: var(--f-mono); font-size: 7.5px; letter-spacing: 0.14em; text-transform: uppercase; align-self: center; }
 .cat__detail dd { margin: 0; color: var(--ink2); }
-.cat__porte { position: fixed; z-index: 80; pointer-events: none; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--cy); }
-.cat__porte .cat__vignette { width: 48px; height: 32px; }
-.cat__porte-nom { font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.12em; color: var(--ink); }
-
-/* ── PLANO (Plano.tsx) : trois colonnes par-dessus le nodal ── */
-.plano {
-  position: fixed; z-index: 70; inset: 5vh 3vw; display: grid; grid-template-columns: 230px minmax(0, 1fr) minmax(0, 1.1fr); grid-template-rows: auto minmax(0, 1fr);
-  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line), 0 12px 40px var(--drop); color: var(--ink); font-size: 11px;
+.cat__porte {
+  position: fixed; z-index: 80; pointer-events: none; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 7px 9px; border-radius: var(--r3); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line-cy), 0 10px 26px var(--drop);
 }
-.plano__entete { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 10px 14px; box-shadow: inset 0 -1px 0 var(--line); }
-.plano__titre { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.2em; }
-.plano__message { flex: 1; color: var(--ink2); font-size: 10.5px; }
-.plano__message--erreur { color: var(--coral-1); }
-.plano__fermer { background: none; border: 0; color: var(--ink2); font-size: 16px; cursor: pointer; }
-.plano__liste, .plano__editeur, .plano__apercu { overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.cat__porte .cat__vignette { width: 48px; height: 32px; }
+.cat__porte .cat__vignette rect, .cat__porte .cat__vignette circle, .cat__porte .cat__vignette path { stroke: var(--cy); }
+.cat__porte-nom { font-family: var(--f-mono); font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink); }
+/* le menu d'un câble d'ODIO_01 (ouvrirMenuCable, plus appelé : le menu commun le remplace) */
+.palette { position: fixed; z-index: 70; min-width: 200px; max-height: 70vh; overflow: auto; padding: 5px; border-radius: var(--r3); background: var(--panel2);
+  box-shadow: inset 0 0 0 1px var(--line), 0 18px 44px var(--drop-lg); display: flex; flex-direction: column; gap: 1px; }
+.palette__item { text-align: left; background: none; border: 0; color: var(--ink); font-family: var(--f-ui); font-size: 12px; padding: 6px 10px; border-radius: var(--r2); cursor: pointer; white-space: nowrap; }
+.palette__item:hover { background: var(--panel3); }
+
+/* ── PLANO (Plano.tsx) : une fenêtre du portail en trois colonnes ─────── */
+.plano {
+  position: fixed; z-index: 70; inset: 5vh 3vw; display: grid; grid-template-columns: 240px minmax(0, 1fr) minmax(0, 1.1fr); grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden; border-radius: var(--r4); background: var(--panel); color: var(--ink); font-size: 11.5px;
+  box-shadow: inset 0 0 0 1px var(--line), 0 0 0 100vmax var(--scrim), 0 24px 60px var(--drop-lg);
+}
+.plano__entete { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--s3); padding: var(--s4) var(--s5); box-shadow: inset 0 -1px 0 var(--line); }
+.plano__titre { font-family: var(--f-disp); font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; }
+.plano__message { flex: 1; color: var(--ink3); font-size: 11px; }
+.plano__message--erreur { color: var(--or); }
+.plano__fermer { background: none; border: 0; color: var(--ink2); font-size: 16px; line-height: 1; cursor: pointer; padding: 3px 7px; border-radius: var(--r1); }
+.plano__fermer:hover { color: var(--ink); background: var(--panel3); }
+.plano__liste, .plano__editeur, .plano__apercu { overflow: auto; padding: var(--s4); display: flex; flex-direction: column; gap: 7px; min-height: 0; }
 .plano__liste { box-shadow: inset -1px 0 0 var(--line); }
 .plano__apercu { box-shadow: inset 1px 0 0 var(--line); background: var(--bg); }
-.plano__rubrique { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.16em; color: var(--ink3); margin-top: 8px; }
-.plano__aide { color: var(--ink2); font-size: 10.5px; line-height: 1.5; margin: 0; }
-.plano__btn { align-self: flex-start; background: var(--panel2); border: 0; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; padding: 5px 10px; cursor: pointer; border-radius: var(--r1, 3px); }
-.plano__btn:hover { box-shadow: inset 0 0 0 1px var(--ink3); }
-.plano__btn--acc { box-shadow: inset 0 0 0 1px var(--cy); color: var(--cy); }
-.plano__btn:disabled { opacity: 0.4; cursor: default; }
-.plano__item { display: flex; justify-content: space-between; gap: 8px; text-align: left; background: none; border: 0; color: var(--ink); padding: 4px 6px; cursor: pointer; font-size: 10.5px; border-radius: var(--r1, 3px); }
-.plano__item:hover { background: var(--panel3); }
-.plano__item--pris { background: var(--panel3); box-shadow: inset 2px 0 0 var(--cy); }
-.plano__item-id { font-family: var(--f-mono); font-size: 8.5px; color: var(--ink3); }
+.plano__rubrique { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--or); margin-top: 10px; }
+.plano__aide { color: var(--ink3); font-size: 11px; line-height: 1.6; margin: 0; }
+.plano__btn { align-self: flex-start; }
+.plano__btn--acc { box-shadow: inset 0 0 0 1px var(--line-cy); color: var(--cy); }
+.plano__item { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; text-align: left; background: none; border: 0; color: var(--ink); padding: 5px 7px; cursor: pointer; font-size: 11.5px; border-radius: var(--r2); }
+.plano__item:hover { background: var(--panel2); }
+.plano__item--pris { background: var(--sel-bg); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.plano__item-id { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink3); }
 .plano__actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .plano__champs { display: flex; flex-wrap: wrap; gap: 8px 10px; }
-.plano__champ { display: flex; flex-direction: column; gap: 3px; font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.08em; color: var(--ink3); min-width: 120px; }
+.plano__champ { display: flex; flex-direction: column; gap: 4px; font-family: var(--f-mono); font-size: 7.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink3); min-width: 120px; }
 .plano__champ--large { flex-basis: 100%; }
-.plano__champ input, .plano__champ select, .plano__champ textarea, .plano__nom, .plano__id {
-  background: var(--bg); color: var(--ink); border: 0; box-shadow: inset 0 0 0 1px var(--line); padding: 4px 6px; font-family: var(--f-mono); font-size: 10.5px; border-radius: var(--r1, 3px);
-}
-.plano__champ textarea { min-height: 90px; resize: vertical; }
-.plano__section { display: flex; flex-direction: column; gap: 4px; padding: 8px; box-shadow: inset 0 0 0 1px var(--line); border-radius: var(--r2, 4px); }
+.plano__champ .fld, .plano__nom.fld, .plano__id.fld { padding: 5px 8px; font-size: 11.5px; text-transform: none; letter-spacing: 0; }
+.plano__champ textarea { min-height: 90px; resize: vertical; font-family: var(--f-mono); font-size: 10px; }
+.plano__section { display: flex; flex-direction: column; gap: 5px; padding: 9px; border-radius: var(--r3); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
 .plano__section-tete { display: flex; align-items: center; gap: 5px; }
 .plano__nom { flex: 1; min-width: 0; }
 .plano__id { width: 90px; }
 .plano__rangee { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.plano__rangee-num { font-family: var(--f-mono); font-size: 8.5px; color: var(--ink3); width: 12px; }
-.plano__chip { display: inline-flex; align-items: center; gap: 5px; background: var(--panel2); border: 0; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); padding: 3px 6px; font-size: 10px; cursor: pointer; border-radius: var(--r1, 3px); }
-.plano__chip--pris { box-shadow: inset 0 0 0 1px var(--cy); }
+.plano__rangee-num { font-family: var(--f-mono); font-size: 8px; color: var(--ink3); width: 12px; }
+.plano__chip { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: var(--r2); background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); padding: 4px 7px; font-size: 11px; cursor: pointer; }
+.plano__chip:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.plano__chip--pris { box-shadow: inset 0 0 0 1px var(--cy); background: var(--sel-bg); }
 .plano__chip--branche { box-shadow: inset 2px 0 0 var(--grn2), inset 0 0 0 1px var(--line); }
-.plano__chip-kind { font-family: var(--f-mono); font-size: 8px; letter-spacing: 0.1em; color: var(--ink3); text-transform: uppercase; }
-.plano__chip-cote { font-family: var(--f-mono); font-size: 8.5px; color: var(--ink3); }
-.plano__mini { background: none; border: 0; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink2); font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.08em; padding: 2px 6px; cursor: pointer; border-radius: var(--r1, 3px); }
-.plano__mini:hover { color: var(--ink); }
-.plano__mini--on { color: var(--cy); box-shadow: inset 0 0 0 1px var(--cy); }
-.plano__mini:disabled { opacity: 0.35; cursor: default; }
-.plano__proprietes { display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line-cy); border-radius: var(--r2, 4px); }
-.plano__proprietes-tete { display: flex; justify-content: space-between; align-items: center; font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.12em; color: var(--ink2); }
-.plano__panneau { display: flex; flex-direction: column; gap: 8px; padding: 10px; box-shadow: inset 0 0 0 1px var(--line); }
-.plano__panneau-tete { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.16em; color: var(--ink3); }
-.plano__apercu-titre { display: flex; justify-content: space-between; gap: 10px; font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink); }
-.plano__apercu-cote { color: var(--ink3); text-transform: none; letter-spacing: 0.04em; }
-.plano__apercu-section { display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; box-shadow: inset 0 -1px 0 var(--line); }
+.plano__chip-kind { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: 0.1em; color: var(--ink3); text-transform: uppercase; }
+.plano__chip-cote { font-family: var(--f-mono); font-size: 8px; color: var(--ink3); }
+.plano__mini { height: 22px; min-width: 22px; padding: 0 6px; font-size: 9px; }
+.plano__mini--on { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.plano__proprietes { display: flex; flex-direction: column; gap: 8px; padding: 11px; border-radius: var(--r3); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.plano__proprietes-tete { display: flex; justify-content: space-between; align-items: center; font-family: var(--f-mono); font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink2); }
+.plano__panneau { display: flex; flex-direction: column; gap: 8px; padding: 11px; border-radius: var(--r3); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
+.plano__panneau-tete { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--or); }
+.plano__apercu-titre { display: flex; justify-content: space-between; gap: 10px; font-family: var(--f-disp); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink); }
+.plano__apercu-cote { font-family: var(--f-mono); font-size: 8px; color: var(--ink3); letter-spacing: 0.1em; }
+.plano__apercu-section { display: flex; flex-direction: column; gap: 7px; padding-bottom: 12px; box-shadow: inset 0 -1px 0 var(--line); }
 .plano__recul { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; }
-.plano__echelle { display: flex; flex-direction: column; gap: 3px; }
-.plano__echelle-k { font-family: var(--f-mono); font-size: 8.5px; color: var(--ink3); }
-.plano__cadre { position: relative; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); box-sizing: border-box; padding: 1px; }
-.plano__cadre-nom { display: block; height: 23px; line-height: 23px; padding: 0 6px; font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.13em; color: var(--ink); box-shadow: inset 0 -1px 0 var(--line); overflow: hidden; white-space: nowrap; }
+.plano__echelle { display: flex; flex-direction: column; gap: 4px; }
+.plano__echelle-k { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: 0.1em; color: var(--ink3); }
+/* l'aperçu : la section rendue dans une carte (la coque et l'en-tête des tuiles) */
+.plano__cadre { position: relative; border-radius: 10px; overflow: hidden; background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); box-sizing: border-box; padding: 1px; --k: var(--cy); }
+.plano__cadre-nom {
+  display: block; height: 23px; line-height: 23px; padding: 0 8px; box-shadow: inset 0 -1px 0 var(--line); overflow: hidden; white-space: nowrap;
+  font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink2);
+}
 .plano__cadre-corps { position: relative; overflow: hidden; }
 
-/* ── le banc : sa couche méta vit dans le monde du nodal ───── */
+/* ── le banc : sa couche méta vit dans le monde du nodal (en pixels d'écran) ── */
 .ndx-monde .bn-meta { position: absolute; left: 0; top: 0; width: 0; height: 0; inset: auto; }
 .ndx-monde .bn-atr { position: absolute; left: 0; top: 0; width: 0; height: 0; inset: auto; }
 .ndx-monde .bn-anneau { box-shadow: inset 0 0 0 calc(1px * var(--iz)) var(--c); }
 .ndx-monde .bn-atr.off .bn-anneau { box-shadow: none; outline: calc(1px * var(--iz)) dashed var(--c); outline-offset: calc(-1px * var(--iz)); }
-.ndx-monde .bn-poignee { margin: 0; transform-origin: 0 0; transform: scale(var(--iz)) translate(-50%, -50%); }
-.ndx-monde .bn-etiquette { transform-origin: 0 0; transform: scale(var(--iz)) translate(var(--dx, 10px), var(--dy, 4px)); }
-.ndx-monde .bn-titre { transform-origin: 0 0; transform: scale(var(--iz)) translate(-50%, -16px); }
-.ndx-monde .bn-centre { box-shadow: inset 0 0 0 calc(1px * var(--iz)) var(--ink); }
-.ndx-monde .bn-atr.sel .bn-centre { box-shadow: inset 0 0 0 calc(2px * var(--iz)) var(--ink); }
+.ndx-monde .bn-poignee { margin: 0; border-radius: 2px; transform-origin: 0 0; transform: scale(var(--iz)) translate(-50%, -50%); }
+.ndx-monde .bn-poignee:hover { background: var(--c); }
+.ndx-monde .bn-etiquette { border-radius: 2px; transform-origin: 0 0; transform: scale(var(--iz)) translate(var(--dx, 10px), var(--dy, 4px)); }
+.ndx-monde .bn-titre { border-radius: 2px; transform-origin: 0 0; transform: scale(var(--iz)) translate(-50%, -16px); }
+.ndx-monde .bn-centre { background: var(--panel2); box-shadow: inset 0 0 0 calc(1px * var(--iz)) var(--c, var(--ink)), 0 calc(6px * var(--iz)) calc(18px * var(--iz)) var(--drop); }
+.ndx-monde .bn-atr.sel .bn-centre { box-shadow: inset 0 0 0 calc(2px * var(--iz)) var(--or), 0 calc(6px * var(--iz)) calc(18px * var(--iz)) var(--drop); }
 .ndx-monde .bn-atr.off .bn-centre { box-shadow: none; outline: calc(1px * var(--iz)) dashed var(--ink); outline-offset: calc(-1px * var(--iz)); }
 .bn-plan .bn-fond, .bn-plan .bn-segs { position: absolute; inset: 0; }
 .bn-plan .bn-segs { pointer-events: none; z-index: 4; }
@@ -494,3 +660,5 @@ html.dragging * { cursor: inherit !important; }
 .bn-plan .bn-cue { left: 0; will-change: transform; }
 .bn-plan .bn-avance { left: 0; width: 1px; transform-origin: 0 0; will-change: transform; }
 .bn-op.agit b { color: var(--grn2); }
+.bn-seg { border-radius: 3px; }
+.bn-seg.sel, .bn-seg:focus-visible { box-shadow: inset 0 0 0 2px var(--or); }
