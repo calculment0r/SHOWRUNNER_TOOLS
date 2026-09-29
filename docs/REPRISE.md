@@ -58,7 +58,9 @@ rapport écrit dans `docs/etudes/musique_theme.md`. Session suivante : lire ce r
 ## Démo en ligne (lancée le 29/09 à 16 h 20, à la demande de Cal)
 
 `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && tools/demo.sh status'` — adresse
-https://marc-availability-reality-terrorist.trycloudflare.com (change à chaque `start`),
+https://infinite-tracks-enjoyed-cooked.trycloudflare.com (change à chaque `start` : **relire les
+mots tirés au hasard avant de la donner** — la première contenait « terrorist », Cal furieux),
+compte simple de Cal pour la démo : pseudo **`nico`** (ami, actif, sans code),
 invitation `/invitation/<code>`, code admin pour Cal ; les pseudos neufs attendent son accord
 (Admin). Pas de SSE : la collaboration en direct ne passe pas. Arrêt : `tools/demo.sh stop`.
 
