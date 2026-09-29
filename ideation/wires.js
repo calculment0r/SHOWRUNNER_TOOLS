@@ -68,8 +68,11 @@ export function createWires(app, env) {
     }
     for (const [p, y] of put) p.style.top = `${y}px`;
   }
-  // un bout de fil, en coordonnées de la planche
+  // un bout de fil, en coordonnées de la planche ; un objet caché dans un groupe réduit
+  // (canvas.js, env.alias) : le port de la carte du groupe
   function portPoint(n, port, side) {
+    const al = env.alias?.(n.id, port, side);
+    if (al) return al;
     const y = dom.get(n.id)?.py?.[`${side}:${port}`];
     return [side === 'out' ? n.x + n.w : n.x, n.y + (y ?? fallback(n))];
   }
@@ -89,8 +92,10 @@ export function createWires(app, env) {
     if (!S.board) return;
     const F = app.flow();
     for (const l of S.board.links) {
-      const a = app.node(l.a), b = app.node(l.b);
+      let a = app.node(l.a), b = app.node(l.b);
       if (!a || !b) continue;
+      // les groupes réduits (canvas.js, env.shown) : un lien du dedans se cache, une flèche va au bord de la carte
+      if (env.shown) { const ab = env.shown(l, a, b); if (!ab) continue; [a, b] = ab; }
       const sel = S.link === l.id;
       if (l.kind === 'wire') {
         const st = F.state(l.id) || { ok: false, why: 'fil illisible' };

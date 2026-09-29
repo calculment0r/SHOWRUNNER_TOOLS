@@ -17,12 +17,20 @@
 // Brancher : `app.wire(a, pa, b, pb)` (refuse en disant pourquoi), couper :
 // `app.cutLink(id)`, détacher : `app.detach(id)`, nourrir une entrée d'objets
 // de la bibliothèque : `app.feed(id, port, items)`. Un objet lâché sur un
-// autre : `app.dropRules` (la première règle qui le prend ; le module des
-// groupes peut y ajouter la sienne, après celles-ci).
+// autre : `app.dropRules` (la première règle qui le prend), puis
+// `app.dropLast` (le groupe : groups.js) — une règle ajoutée à la liste passe
+// donc toujours avant le groupe.
+//
+// Les groupes (groups.js, l'étude ideation_miro.md) : la sélection porte des
+// unités — un groupe (ses enfants viennent avec lui), un objet seul, ou un
+// enfant choisi dans le groupe ouvert par un double-clic (`S.focus`).
+// Supprimer, dupliquer, copier, aligner, ranger passent par ces unités.
 
 import { mountHeader, api, jobs, toast, el, $, href, fmtDate, uploadFile, pick } from '../commun/shell.js';
 import { menu } from '../commun/menu.js';
-import { createCanvas, bbox } from './canvas.js';
+import { createCanvas, bbox, ready as viewsReady } from './canvas.js';
+import { createGroups, tidy as tidyGroups, kidsOf, setSize, readingOrder, setOrder, layoutOf } from './groups.js';
+import { createMenus } from './menus.js';
 import { createGen } from './gen.js';
 import { createVideo } from './video.js';
 import { createComposer } from './composer.js';
@@ -36,7 +44,7 @@ mountHeader('ideation', { sub: 'planches · idées' });
 const S = {
   meta: null, cfg: null, cfgError: '', mopts: null, moptsError: '', board: null, rev: 0,
   items: new Map(), jobs: new Map(),
-  sel: new Set(), link: null, tool: 'select', space: false, grid: true,
+  sel: new Set(), link: null, focus: null, tool: 'select', space: false, grid: true,
   view: { x: 0, y: 0, z: 1 },
   undo: [], redo: [], dirty: false, saving: null, again: false, conflict: false, clip: null,
 };
@@ -69,6 +77,7 @@ app.label = (n) => {
   const cut = (s, k = 42) => { s = (s || '').replace(/\s+/g, ' ').trim(); return s.length > k ? s.slice(0, k - 1) + '…' : s; };
   if (n.type === 'media') return cut(S.items.get(n.item)?.title || n.title || n.item);
   if (n.type === 'frame') return cut(n.name || 'Cadre');
+  if (n.type === 'group') return cut(n.name || 'Groupe');
   if (n.type === 'gen') return 'Générer image · ' + cut(app.flow().prompt(n.id)?.text || n.prompt || '—', 30);
   if (n.type === 'vgen') return 'Générer vidéo · ' + cut(app.flow().prompt(n.id)?.text || n.prompt || '—', 30);
   if (n.type === 'compose') return 'Composeur · ' + cut(app.flow().text(n.id) || '—', 30);
@@ -76,7 +85,7 @@ app.label = (n) => {
   return cut(n.text || { note: 'note vide', sticky: 'post-it vide', title: 'titre vide' }[n.type]);
 };
 app.kindLabel = (n) => (n.type === 'media' ? { image: 'image', video: 'vidéo', audio: 'son', element: 'élément' }[n.kind]
-  : { note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', gen: 'image', vgen: 'vidéo', compose: 'composeur', palette: 'nuancier' }[n.type]);
+  : { note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', group: 'groupe', gen: 'image', vgen: 'vidéo', compose: 'composeur', palette: 'nuancier' }[n.type]);
 
 // ── annuler, rétablir, enregistrer ─────────────────────────
 const snapshot = () => JSON.stringify({ name: S.board.name, nodes: S.board.nodes, links: S.board.links });
@@ -90,7 +99,9 @@ app.snap = () => {
 app.touch = () => { if (S.board) { S.dirty = true; scheduleSave(); } };
 app.render = () => app.canvas.render();
 app.selectionChanged = () => { app.canvas.paintSel(); app.insp.render(); paintBar(); };
-app.commit = () => { app.touch(); app.canvas.render(); app.insp.render(); paintBar(); };
+// chaque geste finit ici : la structure des groupes se remet d'aplomb (un groupe
+// de moins de deux enfants se dissout, groups.js tidy — la règle du serveur)
+app.commit = () => { if (S.board && tidyGroups(S.board)) pruneSel(); app.touch(); app.canvas.render(); app.insp.render(); paintBar(); };
 app.mutate = (fn) => { if (!S.board) return; app.snap(); fn(S.board); pruneSel(); app.commit(); };
 // un changement qui n'est pas un geste de Cal (un travail qui avance) : ni annuler ni rétablir
 app.quiet = (fn) => { if (!S.board) return; fn(S.board); app.touch(); app.canvas.render(); };
@@ -109,8 +120,16 @@ app.editing = () => {
 };
 
 function pruneSel() {
-  for (const id of [...S.sel]) if (!app.node(id)) S.sel.delete(id);
+  const ids = new Set(S.board.nodes.map((n) => n.id));
+  for (const id of [...S.sel]) if (!ids.has(id)) S.sel.delete(id);
   if (S.link && !S.board.links.some((l) => l.id === S.link)) S.link = null;
+  pruneFocus();
+}
+// le groupe ouvert (double-clic sur un enfant) le reste tant qu'on choisit dedans
+function pruneFocus() {
+  if (!S.focus) return;
+  const g = app.node(S.focus);
+  if (!g || g.type !== 'group' || !S.sel.size || ![...S.sel].every((id) => app.node(id)?.group === S.focus)) S.focus = null;
 }
 function restore(json) {
   const o = JSON.parse(json);
@@ -171,6 +190,15 @@ app.select = (ids, { toggle = false } = {}) => {
   if (!toggle) S.sel.clear();
   for (const id of ids) { if (toggle && S.sel.has(id)) S.sel.delete(id); else S.sel.add(id); }
   S.link = null;
+  pruneFocus();
+  app.selectionChanged();
+};
+// choisir un objet dans son groupe (double-clic, le plan de l'inspecteur) : le groupe s'ouvre
+app.enter = (id) => {
+  const n = app.node(id);
+  if (!n) return;
+  S.focus = n.group || null;
+  S.sel = new Set([id]); S.link = null;
   app.selectionChanged();
 };
 app.selectLink = (id) => { S.sel.clear(); S.link = id; app.canvas.paintLinks(); app.selectionChanged(); };
@@ -437,9 +465,37 @@ app.dropRules = [
       app.commit();
       toast(`branché dans la case « ${s.name} »${old ? ' (ctrl+Z : l’ancien fil)' : ''}`);
     } },
+  // une image ou un élément lâché sur une carte Générer : sa référence (le sens que la planche
+  // donne aux liens vers une carte, étude ideation.md § 2) ; la carte qui n'en prend pas laisse
+  // la place au groupe (une carte et ses références font un groupe de fabrication)
+  { name: 'référence sur une carte', cls: 'drop-grp', tag: 'RÉFÉRENCE',
+    test: (mv, t) => (refPort(mv, t) ? `lâcher : ${refPort(mv, t).label} de la carte (l’image revient à sa place)` : ''),
+    run: (mv, t, orig) => {
+      back(orig);
+      const p = refPort(mv, t);
+      const d = mv[0];
+      if (!p) { app.commit(); return; }
+      const old = replaces(S.board, t.id, p.id, app.caps());
+      if (old) S.board.links = S.board.links.filter((l) => l !== old);
+      S.board.links.push({ id: app.uid('l'), a: d.id, b: t.id, kind: 'wire', pa: d.kind, pb: p.id, label: '' });
+      app.commit();
+      toast(`branché : ${p.label} de ${nameOf(t)}${old ? ' (ctrl+Z : l’ancien fil)' : ''}`);
+    } },
 ];
+// l'entrée d'une carte Générer qui prend l'objet qu'on y lâche (null : aucune)
+function refPort(mv, t) {
+  if (mv.length !== 1 || !t || (t.type !== 'gen' && t.type !== 'vgen')) return null;
+  const d = mv[0];
+  if (d.type !== 'media' || !['image', 'element'].includes(d.kind)) return null;
+  const caps = app.caps();
+  const want = t.type === 'gen' ? ['refs'] : t.mode === 'i2v' ? ['start', 'end'] : t.mode === 'r2v' ? [d.kind] : [];
+  const ports = want.map((id) => portOf(t, id, caps)).filter(Boolean);
+  // une première image vide avant une dernière image vide ; sinon la première qui prend
+  const free = ports.find((p) => !replaces(S.board, t.id, p.id, caps) && !canWire(S.board, d.id, d.kind, t.id, p.id, caps, S.items));
+  return free || ports.find((p) => !canWire(S.board, d.id, d.kind, t.id, p.id, caps, S.items)) || null;
+}
 app.dropOnto = (moving, target, orig, ev) => {
-  const r = app.dropRules.find((x) => x.test(moving, target));
+  const r = [...app.dropRules, ...(app.dropLast || [])].find((x) => x.test(moving, target));
   if (!r) return false;
   r.run(moving, target, orig, ev);
   return true;
@@ -460,11 +516,14 @@ app.palette = async (id) => {
 };
 
 // ── plusieurs objets ───────────────────────────────────────
+// les unités choisies (un groupe, un objet, un enfant du groupe ouvert), et la même liste
+// avec les enfants de ses groupes (ce qui part, se copie, s'empile avec eux)
 const selected = () => [...S.sel].map(app.node).filter(Boolean);
+const selectedAll = () => app.groups.expand(selected());
 app.remove = () => {
   if (S.link && !S.sel.size) { app.mutate((B) => { B.links = B.links.filter((l) => l.id !== S.link); }); S.link = null; app.insp.render(); return; }
   if (!S.sel.size) return;
-  const gone = new Set(S.sel);
+  const gone = new Set(selectedAll().map((n) => n.id));
   app.mutate((B) => {
     B.nodes = B.nodes.filter((n) => !gone.has(n.id));
     B.links = B.links.filter((l) => !gone.has(l.a) && !gone.has(l.b));
@@ -473,37 +532,50 @@ app.remove = () => {
 };
 // des copies, décalées, avec les liens qui les reliaient entre elles ; `inputs` : les fils qui
 // y entraient depuis le reste de la planche entrent aussi dans les copies (une variante garde
-// ses sources : dupliquer un composeur et sa carte, puis changer une case)
-function cloneInto(B, list, dx, dy, links, { inputs = false } = {}) {
+// ses sources : dupliquer un composeur et sa carte, puis changer une case). L'appartenance suit
+// comme les deux bouts d'un lien : un groupe copié emmène ses enfants ; un enfant copié seul
+// reste dans son groupe (`keepGroup`, ctrl+D) ou le quitte (coller ailleurs)
+function cloneInto(B, list, dx, dy, links, { inputs = false, keepGroup = false } = {}) {
   const map = new Map();
+  const made = [];
   for (const n of list) {
     const c = JSON.parse(JSON.stringify(n));
-    c.id = app.uid('n'); c.x += dx; c.y += dy;
+    c.id = app.uid(n.type === 'group' ? 'g' : 'n'); c.x += dx; c.y += dy;
     if (c.jobs) c.jobs = [];
     map.set(n.id, c.id);
+    made.push(c);
     B.nodes.push(c);
+  }
+  for (const c of made) {
+    if (!c.group) continue;
+    if (map.has(c.group)) c.group = map.get(c.group);
+    else if (!keepGroup || !B.nodes.some((n) => n.id === c.group)) delete c.group;
   }
   for (const l of links) {
     if (map.has(l.a) && map.has(l.b)) B.links.push({ ...l, id: app.uid('l'), a: map.get(l.a), b: map.get(l.b) });
     else if (inputs && l.kind === 'wire' && map.has(l.b) && B.nodes.some((n) => n.id === l.a)) B.links.push({ ...l, id: app.uid('l'), b: map.get(l.b) });
   }
-  S.sel = new Set(map.values());
+  // choisies : les copies qui sont des unités (pas les enfants d'un groupe copié)
+  const groups = new Set(made.filter((c) => c.type === 'group').map((c) => c.id));
+  S.sel = new Set(made.filter((c) => !c.group || !groups.has(c.group)).map((c) => c.id));
+  if (!made.some((c) => c.group && !groups.has(c.group))) S.focus = null;
 }
 app.duplicate = () => {
-  const list = selected();
+  const list = selectedAll();
   if (!list.length) return;
-  app.mutate((B) => cloneInto(B, list, 30, 30, B.links.slice(), { inputs: true }));
+  app.mutate((B) => cloneInto(B, list, 30, 30, B.links.slice(), { inputs: true, keepGroup: true }));
 };
 app.order = (dir) => {
   if (!S.sel.size) return;
+  const mineIds = new Set(selectedAll().map((n) => n.id));
   app.mutate((B) => {
-    const mine = B.nodes.filter((n) => S.sel.has(n.id)), rest = B.nodes.filter((n) => !S.sel.has(n.id));
+    const mine = B.nodes.filter((n) => mineIds.has(n.id)), rest = B.nodes.filter((n) => !mineIds.has(n.id));
     B.nodes = dir > 0 ? [...rest, ...mine] : [...mine, ...rest];
   });
 };
 app.frameAround = () => {
   const list = selected();
-  const r = bbox(list);
+  const r = bbox(list.map((n) => app.canvas.dispBox(n)));
   if (!r) return;
   const pad = 36;
   app.mutate((B) => {
@@ -513,18 +585,23 @@ app.frameAround = () => {
   });
   setTimeout(() => app.canvas.renameFrame([...S.sel][0]), 30);
 };
+// aligner, distribuer, ranger : sur les unités (un groupe bouge d'un bloc, par sa boîte)
+const boxOf = (n) => app.canvas.dispBox(n);
 app.align = (k) => {
   const list = selected();
-  const r = bbox(list);
+  const r = bbox(list.map(boxOf));
   if (!r || list.length < 2) return;
   app.mutate(() => {
     for (const n of list) {
-      if (k === 'left') n.x = r.x;
-      if (k === 'right') n.x = r.x + r.w - n.w;
-      if (k === 'hcenter') n.x = Math.round(r.x + r.w / 2 - n.w / 2);
-      if (k === 'top') n.y = r.y;
-      if (k === 'bottom') n.y = r.y + r.h - n.h;
-      if (k === 'vmiddle') n.y = Math.round(r.y + r.h / 2 - n.h / 2);
+      const b = boxOf(n);
+      let x = b.x, y = b.y;
+      if (k === 'left') x = r.x;
+      if (k === 'right') x = r.x + r.w - b.w;
+      if (k === 'hcenter') x = Math.round(r.x + r.w / 2 - b.w / 2);
+      if (k === 'top') y = r.y;
+      if (k === 'bottom') y = r.y + r.h - b.h;
+      if (k === 'vmiddle') y = Math.round(r.y + r.h / 2 - b.h / 2);
+      app.groups.shift(n, x - b.x, y - b.y);
     }
   });
 };
@@ -532,27 +609,54 @@ app.distribute = (axis) => {
   const list = selected();
   if (list.length < 3) return;
   const W = axis === 'x' ? 'w' : 'h';
-  const s = [...list].sort((a, b) => a[axis] - b[axis]);
-  const span = s[s.length - 1][axis] + s[s.length - 1][W] - s[0][axis];
-  const gap = (span - s.reduce((t, n) => t + n[W], 0)) / (s.length - 1);
-  app.mutate(() => { let p = s[0][axis]; for (const n of s) { n[axis] = Math.round(p); p += n[W] + gap; } });
+  const s = list.map((n) => [n, { ...boxOf(n) }]).sort((a, b) => a[1][axis] - b[1][axis]);
+  const last = s[s.length - 1][1];
+  const span = last[axis] + last[W] - s[0][1][axis];
+  const gap = (span - s.reduce((t, [, b]) => t + b[W], 0)) / (s.length - 1);
+  app.mutate(() => {
+    let p = s[0][1][axis];
+    for (const [n, b] of s) { const d = Math.round(p) - b[axis]; app.groups.shift(n, axis === 'x' ? d : 0, axis === 'y' ? d : 0); p += b[W] + gap; }
+  });
 };
-// ranger en grille : les objets choisis, dans l'ordre de lecture, en colonnes régulières
+// ranger en grille : les objets choisis, dans l'ordre de lecture, en colonnes régulières ; un
+// groupe seul passe en rangée (sa mise en forme reste : la pastille à droite règle sa largeur)
 app.tidy = () => {
   const list = selected().filter((n) => n.type !== 'frame');
+  if (list.length === 1 && list[0].type === 'group') {
+    const g = list[0];
+    const kids = kidsOf(S.board, g.id);
+    const cols = Math.max(1, Math.round(Math.sqrt(kids.length * 1.4)));
+    const cw = Math.max(...kids.map((n) => n.w));
+    const L = layoutOf(g);
+    app.mutate((B) => {
+      setOrder(B, g.id, readingOrder(kidsOf(B, g.id)));
+      g.layout = { ...L, mode: 'flow', width: cols * (cw + L.gap) - L.gap };
+    });
+    return;
+  }
   if (list.length < 2) return;
-  const r = bbox(list);
+  const r = bbox(list.map(boxOf));
   const cols = Math.max(1, Math.round(Math.sqrt(list.length * 1.4)));
-  const cw = Math.max(...list.map((n) => n.w)) + 24;
-  const s = [...list].sort((a, b) => (Math.abs(a.y - b.y) > 40 ? a.y - b.y : a.x - b.x));
+  const cw = Math.max(...list.map((n) => boxOf(n).w)) + 24;
+  const s = readingOrder(list.map((n) => ({ n, ...boxOf(n) })));
   app.mutate(() => {
     let y = r.y;
     for (let i = 0; i < s.length; i += cols) {
       const line = s.slice(i, i + cols);
-      line.forEach((n, k) => { n.x = r.x + k * cw; n.y = y; });
-      y += Math.max(...line.map((n) => n.h)) + 24;
+      line.forEach((b, k) => app.groups.shift(b.n, r.x + k * cw - b.x, y - b.y));
+      y += Math.max(...line.map((b) => b.h)) + 24;
     }
   });
+};
+// même hauteur, même largeur (PureRef « Normalize ») : une fois, d'après le premier choisi ;
+// sur un groupe, elle reste (groups.js, fit)
+app.sameSize = (axis) => {
+  const list = selected();
+  if (list.length === 1 && list[0].type === 'group') { app.groups.fit(list[0].id, axis); return; }
+  const objs = list.filter((n) => n.type !== 'group' && n.type !== 'frame');
+  if (objs.length < 2) { toast('choisissez au moins deux objets'); return; }
+  const ref = axis === 'h' ? objs[0].h : objs[0].w;
+  app.mutate(() => { for (const n of objs.slice(1)) setSize(n, axis, ref); });
 };
 app.chain = () => {
   const ids = [...S.sel];
@@ -625,7 +729,7 @@ app.boardsModal = async () => {
       if (S.board?.id === bd.id) closeBoard();
       paint();
     } }, 'Supprimer');
-    const kinds = Object.entries(bd.kinds || {}).map(([k, v]) => `${v} ${({ image: 'image', video: 'vidéo', audio: 'son', element: 'élément', note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', gen: 'carte image', vgen: 'carte vidéo', compose: 'composeur', palette: 'nuancier' })[k] || k}${v > 1 && !['son'].includes(k) ? 's' : ''}`).join(' · ');
+    const kinds = Object.entries(bd.kinds || {}).map(([k, v]) => `${v} ${({ image: 'image', video: 'vidéo', audio: 'son', element: 'élément', note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', group: 'groupe', gen: 'carte image', vgen: 'carte vidéo', compose: 'composeur', palette: 'nuancier' })[k] || k}${v > 1 && !['son'].includes(k) ? 's' : ''}`).join(' · ');
     return el('div', { class: 'brow' + (S.board?.id === bd.id ? ' on' : '') },
       el('span', { class: 'th', style: bd.thumb_url ? { backgroundImage: `url("${href(bd.thumb_url)}")` } : null }),
       el('div', { class: 'bt' }, el('b', {}, bd.name), el('small', {}, `${kinds || 'vide'} · ${fmtDate(bd.updated)}`)),
@@ -652,11 +756,22 @@ app.boardsModal = async () => {
   paint();
 };
 
+// les fiches des objets posés : par paquets de 500, une requête chacun (POST /api/library/batch ;
+// une planche de 1000 images en faisait 1000 — étude de fluidité, § 2.2) ; un serveur sans lot :
+// une par objet, huit à la fois
 async function ensureItems(ids) {
   const want = [...new Set(ids)].filter((id) => !S.items.has(id));
-  for (let i = 0; i < want.length; i += 8) {
-    await Promise.all(want.slice(i, i + 8).map((id) => api('library/' + id)
-      .then((it) => S.items.set(id, it)).catch(() => S.items.set(id, { id, missing: true }))));
+  const one = (list) => Promise.all(list.map((id) => api('library/' + id)
+    .then((it) => S.items.set(id, it)).catch(() => S.items.set(id, { id, missing: true }))));
+  for (let i = 0; i < want.length; i += 500) {
+    const chunk = want.slice(i, i + 500);
+    try {
+      const r = await api('library/batch', { method: 'POST', body: { ids: chunk } });
+      for (const it of r.items || []) S.items.set(it.id, it);
+      for (const id of r.missing || []) S.items.set(id, { id, missing: true });
+    } catch {
+      for (let k = 0; k < chunk.length; k += 8) await one(chunk.slice(k, k + 8));
+    }
   }
 }
 
@@ -665,17 +780,20 @@ async function openBoard(id, { force = false } = {}) {
   let b;
   try { b = await api('ideation/boards/' + id); } catch (e) { toast(e.message, 6000); return false; }
   S.board = b; S.rev = b.rev;
-  S.undo = []; S.redo = []; S.sel = new Set(); S.link = null; S.dirty = false; S.conflict = false; S.clip = null;
+  S.undo = []; S.redo = []; S.sel = new Set(); S.link = null; S.focus = null; S.dirty = false; S.conflict = false; S.clip = null;
   $('#conflict').hidden = true;
   LS('last', id);
   if (location.hash.slice(1) !== id) history.replaceState(null, '', location.pathname + '#' + id);
   $('#b-name').value = b.name;
   document.title = `${b.name} · Idéation`;
   await ensureItems(b.nodes.filter((n) => n.type === 'media').map((n) => n.item));
+  await viewsReady;   // les copies d'affichage (commun/proxies.js) choisies dès le premier rendu
+  // la vue avant le premier rendu (celle gardée, sinon toute la planche) : les images se
+  // choisissent au bon zoom dès l'ouverture (étude de fluidité, § 2.6)
   const v = LS('view-' + id);
-  if (v && Number.isFinite(v.z)) S.view = v;
+  app.canvas.prime(v && Number.isFinite(v.z) ? v : null);
   app.canvas.render();
-  if (!v) app.canvas.fit(); else app.canvas.applyView();
+  app.canvas.applyView();
   app.insp.render();
   paintUndo(); paintSave(); paintBar();
   app.gen.resume();
@@ -752,10 +870,15 @@ function help() {
   const K = [['V', 'choisir'], ['H · espace', 'se déplacer'], ['L', 'une flèche d’annotation'], ['N', 'note'], ['S', 'post-it'], ['T', 'titre'], ['F', 'cadre (tracer)'],
     ['G', 'carte Générer image'], ['M', 'carte Générer vidéo'], ['P', 'composeur de prompt'],
     ['tirer une sortie', 'un fil : sur une carte, la bonne entrée ; dans le vide, un objet déjà branché'], ['texte sur texte', 'un composeur'],
+    ['texte sur une carte Générer', 'un composeur'],
+    ['un objet lâché sur un autre', 'un groupe (Alt : poser par-dessus) ; une image sur une carte : sa référence'],
+    ['ctrl+G · ctrl+maj+G', 'grouper · dégrouper'], ['double-clic dans un groupe · Échap', 'choisir l’objet · remonter au groupe'],
+    ['ctrl+alt+G', 'encadrer la sélection'], ['Alt+A · D · W · S', 'aligner à gauche, à droite, en haut, en bas'], ['Alt+H · Alt+V', 'aligner les centres'],
+    ['Alt+maj+H · V', 'distribuer'], ['ctrl+alt+T', 'ranger'],
     ['molette · pincer', 'zoomer'], ['Maj+1 · Maj+0', 'tout voir · 100 %'], ['glisser le fond', 'cadre de sélection'], ['Alt + glisser', 'lasso'],
     ['Maj + clic', 'ajouter, retirer'], ['ctrl+A', 'tout choisir'], ['ctrl+D', 'dupliquer'], ['ctrl+C · ctrl+V', 'copier, coller (et coller une image)'],
     ['Suppr', 'supprimer'], ['[ · ]', 'arrière-plan · premier plan'], ['flèches', 'déplacer (Maj : 10)'], ['Entrée · double-clic', 'écrire'],
-    ['ctrl+Z · ctrl+maj+Z', 'annuler · rétablir'], ['Échap', 'rien choisi']];
+    ['ctrl+Z · ctrl+maj+Z', 'annuler · rétablir'], ['Échap', 'remonter au groupe, puis rien choisi']];
   app.modal('Raccourcis', el('dl', { class: 'keys' }, ...K.flatMap(([k, v]) => [el('dt', {}, k), el('dd', {}, v)])));
 }
 
@@ -771,18 +894,36 @@ document.addEventListener('keydown', (e) => {
   if (mod && low === 'z') { e.preventDefault(); if (e.shiftKey) app.redoStep(); else app.undoStep(); return; }
   if (mod && low === 'y') { e.preventDefault(); app.redoStep(); return; }
   if (mod && low === 'd') { e.preventDefault(); app.duplicate(); return; }
-  if (mod && low === 'a') { e.preventDefault(); app.select(S.board.nodes.map((n) => n.id)); return; }
+  // les groupes (Miro : ctrl+G, ctrl+maj+G ; tldraw : ctrl+alt+G encadre)
+  if (mod && e.altKey && low === 'g') { e.preventDefault(); if (S.sel.size) app.frameAround(); return; }
+  if (mod && low === 'g') { e.preventDefault(); if (e.shiftKey) app.groups.ungroup(); else app.groups.group(); return; }
+  if (mod && e.altKey && low === 't') { e.preventDefault(); app.tidy(); return; }
+  // tout choisir : les unités (un groupe plutôt que ses enfants)
+  if (mod && low === 'a') { e.preventDefault(); S.focus = null; app.select(S.board.nodes.filter((n) => !n.group).map((n) => n.id)); return; }
   if (mod && (low === 'c' || low === 'x')) {
-    const list = selected();
+    const list = selectedAll();
     if (!list.length) return;
+    const ids = new Set(list.map((n) => n.id));
     S.clip = JSON.parse(JSON.stringify(list));
-    S.clipLinks = S.board.links.filter((l) => S.sel.has(l.a) && S.sel.has(l.b));
-    toast(`${list.length} objet${list.length > 1 ? 's' : ''} copié${list.length > 1 ? 's' : ''}`);
+    S.clipLinks = S.board.links.filter((l) => ids.has(l.a) && ids.has(l.b));
+    toast(`${S.sel.size} objet${S.sel.size > 1 ? 's' : ''} copié${S.sel.size > 1 ? 's' : ''}`);
     if (low === 'x') app.remove();
     return;
   }
   if (k === 'Delete' || k === 'Backspace') { e.preventDefault(); app.remove(); return; }
-  if (k === 'Escape') { S.sel.clear(); S.link = null; app.setTool('select'); app.selectionChanged(); app.canvas.paintLinks(); return; }
+  // Échap : de l'objet choisi dans son groupe au groupe, puis à rien
+  if (k === 'Escape') {
+    if (S.focus) { const g = S.focus; S.focus = null; app.select([g]); return; }
+    S.sel.clear(); S.link = null; app.setTool('select'); app.selectionChanged(); app.canvas.paintLinks(); return;
+  }
+  // aligner et distribuer au clavier (Figma, tldraw) — pas de raccourci pour « même taille »
+  if (e.altKey && !mod && S.sel.size > 1) {
+    // la lettre inscrite sur la touche (AZERTY compris), sinon sa place (Alt+lettre peut rendre un signe)
+    const L = /^[a-z]$/.test(low) ? low : (e.code || '').replace(/^Key/, '').toLowerCase();
+    const A = { a: 'left', d: 'right', w: 'top', s: 'bottom', h: 'hcenter', v: 'vmiddle' }[L];
+    if (e.shiftKey && (L === 'h' || L === 'v')) { e.preventDefault(); app.distribute(L === 'h' ? 'x' : 'y'); return; }
+    if (A && !e.shiftKey) { e.preventDefault(); app.align(A); return; }
+  }
   if (k === 'Enter' && S.sel.size === 1) {
     const n = app.node([...S.sel][0]);
     if (n && ['note', 'sticky', 'title'].includes(n.type)) { e.preventDefault(); app.canvas.editText(n.id); }
@@ -794,7 +935,7 @@ document.addEventListener('keydown', (e) => {
     const d = e.shiftKey ? 10 : 1;
     const [dx, dy] = { ArrowLeft: [-d, 0], ArrowRight: [d, 0], ArrowUp: [0, -d], ArrowDown: [0, d] }[k];
     if (!arrowSnap) { app.snap(); arrowSnap = true; }
-    for (const n of selected()) { n.x += dx; n.y += dy; }
+    for (const n of selectedAll()) { n.x += dx; n.y += dy; }
     app.touch(); app.canvas.render();
     // une suite de flèches est un seul geste : un pas d'annulation, un commit à la fin
     clearTimeout(arrowT); arrowT = setTimeout(() => { arrowSnap = false; app.commit(); }, 600);
@@ -824,8 +965,28 @@ document.addEventListener('paste', (e) => {
     e.preventDefault();
     const r = bbox(S.clip);
     const [cx, cy] = app.canvas.center();
-    app.mutate((B) => cloneInto(B, S.clip, Math.round(cx - r.x - r.w / 2), Math.round(cy - r.y - r.h / 2), S.clipLinks || []));
+    app.pasteAt(cx - r.w / 2, cy - r.h / 2);
   }
+});
+// coller les objets copiés, leur coin en (wx, wy) (le menu du fond : « Coller ici »)
+app.pasteAt = (wx, wy) => {
+  if (!S.board || !S.clip?.length) return;
+  const r = bbox(S.clip);
+  app.mutate((B) => cloneInto(B, S.clip, Math.round(wx - r.x), Math.round(wy - r.y), S.clipLinks || []));
+};
+// le clic droit ailleurs dans la page d'Idéation (la barre, l'inspecteur…) : un champ a son menu
+// du texte, le reste le menu de la page — jamais celui du navigateur (la planche a les siens)
+document.querySelector('.ide')?.addEventListener('contextmenu', (e) => {
+  if (e.defaultPrevented) return;
+  e.preventDefault();
+  const fld = e.target.closest?.('input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]');
+  if (fld) { menu(e.clientX, e.clientY, app.menus.text(fld)); return; }
+  menu(e.clientX, e.clientY, [{ head: 'idéation' },
+    { label: 'Les planches…', onclick: () => app.boardsModal() }, { label: 'Nouvelle planche…', onclick: () => app.newBoard() },
+    { label: 'Exporter la planche en PNG', sub: 'dans la bibliothèque', disabled: !S.board?.nodes.length, why: 'la planche est vide', onclick: () => app.exportBoard('') },
+    '-', { label: 'Annuler', key: 'ctrl+Z', disabled: !S.undo.length, why: 'rien à annuler', onclick: () => app.undoStep() },
+    { label: 'Rétablir', key: 'ctrl+maj+Z', disabled: !S.redo.length, why: 'rien à rétablir', onclick: () => app.redoStep() },
+    '-', { label: 'Les raccourcis', key: '?', onclick: () => help() }]);
 });
 
 // ── des fichiers du disque (bouton Déposer, coller) ────────
@@ -858,6 +1019,10 @@ addEventListener('drop', (e) => {
 app.gen = createGen(app);
 app.video = createVideo(app);
 app.composer = createComposer(app);
+app.groups = createGroups(app);
+// un objet lâché sur un autre, en dernier recours (après app.dropRules) : un groupe
+app.dropLast = [app.groups.rule];
+app.menus = createMenus(app);
 app.canvas = createCanvas(app);
 app.insp = createInspector(app);
 app.elementModal = (ids, name) => app.insp.elementModal(ids, name);

@@ -68,7 +68,9 @@ body.nolib .lib { visibility: hidden; }
   cursor: grab; touch-action: none; box-shadow: inset 0 0 0 1px transparent;
 }
 .lt:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
-.lt .im { position: relative; aspect-ratio: 1 / 1; background: var(--panel3) center / cover no-repeat; }
+.lt .im { position: relative; aspect-ratio: 1 / 1; background: var(--panel3); overflow: hidden; }
+.lt .im img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.lt .im .kind { z-index: 1; }
 .lt .kind {
   position: absolute; top: 4px; left: 4px; padding: 2px 5px; border-radius: var(--r1); background: var(--veil);
   font-family: var(--f-mono); font-size: 7px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink2);
@@ -82,15 +84,18 @@ body.nolib .lib { visibility: hidden; }
 .lt:focus-visible { outline: 2px solid var(--or); outline-offset: 1px; }
 
 /* ── la planche ────────────────────────────────────────── */
+/* la trame bouge à chaque image d'un déplacement : la page pose background-size et
+   background-position sur .cv même (canvas.js) — des variables héritées feraient
+   recalculer le style de tous les objets (20 ms par image à 1000 objets, mesuré) */
 .cv {
-  --z: 1; --gs: 24px; --gx: 0px; --gy: 0px;
+  --z: 1;
   /* clip, pas hidden : un conteneur « hidden » se fait encore défiler par le
      navigateur quand un champ posé sur la planche prend le focus, et toute
      la vue glisse sous les calculs */
   position: relative; overflow: hidden; overflow: clip; border-radius: var(--r4); outline: none;
   background-color: var(--bg);
   background-image: radial-gradient(var(--dot-hi) 1px, transparent 1.2px);
-  background-size: var(--gs) var(--gs); background-position: var(--gx) var(--gy);
+  background-size: 24px 24px;
   box-shadow: inset 0 0 0 1px var(--line); touch-action: none; user-select: none; cursor: default;
 }
 .cv.nogrid { background-image: none; }
@@ -143,11 +148,23 @@ body.nolib .lib { visibility: hidden; }
   background: var(--panel2); box-shadow: inset 0 0 0 1px var(--or); border-radius: var(--r1); padding: 0 .3em; width: 18em;
 }
 .fr .rz { pointer-events: auto; }
+/* de loin (Ensemble) : le nom du cadre en grand, au centre, sur un voile, avec son compte
+   (le prototype de Cal : largeur / 14, bornée à 10-26 px à l'écran) */
+.fr-big {
+  display: none; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 92%;
+  flex-direction: column; align-items: center; gap: .3em; padding: .45em .9em; border-radius: calc(6px / var(--z));
+  background: var(--veil); box-shadow: inset 0 0 0 calc(1px / var(--z)) var(--line); text-align: center;
+  font-size: calc(clamp(10px, var(--fw, 560px) * var(--z) / 14, 26px) / var(--z));
+}
+.fr-big b { font-family: var(--f-disp); font-weight: 400; letter-spacing: .06em; text-transform: uppercase; color: var(--ink); line-height: 1.15;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.fr-bc { font-family: var(--f-mono); font-size: .42em; letter-spacing: .18em; text-transform: uppercase; color: var(--ink3); }
 
 /* ── les objets ────────────────────────────────────────── */
 .nd { position: absolute; border-radius: var(--r3); }
 .nd.sel { box-shadow: 0 0 0 calc(2px / var(--z)) var(--or); }
-.cv:not(.moving) .nd:hover:not(.sel) { box-shadow: 0 0 0 calc(1px / var(--z)) var(--line-cy); }
+/* un enfant d'un groupe fermé : le survol montre son groupe, pas lui */
+.cv:not(.moving) .nd:hover:not(.sel):not(.ingrp) { box-shadow: 0 0 0 calc(1px / var(--z)) var(--line-cy); }
 /* les ports (ports.js) : entrées à gauche, sortie à droite, dans la teinte de ce
    qu'ils portent (--k) ; plein quand un fil y est branché ; ceux du nodal d'ODIO
    (13 px, anneau de 2), gardés lisibles à tout zoom */
@@ -183,6 +200,13 @@ body.nolib .lib { visibility: hidden; }
 .cv.wiring .prow.r-ok.hit, .cv.wiring .cslot.r-ok.hit { box-shadow: inset 0 0 0 1px var(--line-cy); }
 /* un texte tenu au-dessus d'un autre : la règle qui s'appliquera (composeur) */
 .nd.drop-to { box-shadow: 0 0 0 calc(2px / var(--z)) var(--amb) !important; }
+/* un objet tenu au-dessus d'un autre : GROUPER (ou RÉFÉRENCE sur une carte), le filet orange avant le lâcher */
+.nd.drop-grp { box-shadow: 0 0 0 calc(2px / var(--z)) var(--or) !important; }
+.nd.drop-grp::after {
+  content: attr(data-drop); position: absolute; left: 0; bottom: 100%; margin-bottom: calc(5px / var(--z)); z-index: 4;
+  padding: calc(2px / var(--z)) calc(6px / var(--z)); border-radius: calc(3px / var(--z)); background: var(--or); color: var(--on-or);
+  font-family: var(--f-mono); font-size: calc(8.5px / var(--z)); letter-spacing: .18em; line-height: 1.4; white-space: nowrap; pointer-events: none;
+}
 .rz {
   position: absolute; right: 0; bottom: 0; width: calc(11px / var(--z)); height: calc(11px / var(--z));
   transform: translate(45%, 45%); border-radius: 2px; background: var(--or); cursor: nwse-resize; display: none; z-index: 3;
@@ -206,6 +230,7 @@ body.nolib .lib { visibility: hidden; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none;
 }
 .nd.media:hover .cap, .nd.media.sel .cap { opacity: 1; }
+.nd.media .cap .cm { display: none; color: var(--ink3); }
 .nd.media.sel .jobs:not(:empty) ~ .cap, .nd.media:has(.jobs:not(:empty)) .cap { display: none; }
 .nd .badge {
   position: absolute; top: 8px; left: 8px; padding: 3px 7px; border-radius: var(--r1); background: var(--veil);
@@ -367,10 +392,130 @@ body.nolib .lib { visibility: hidden; }
 .cprev.ph { color: var(--ink3); }
 .cout .cx { color: var(--cy); white-space: normal; line-height: 1.5; }
 
-/* de loin : les cartes ne gardent que l'essentiel (zoom sémantique, comme le nodal de Musique) */
+/* ── le zoom sémantique : trois niveaux sur le zoom « efficace » (canvas.js, 150 ms
+   après le geste ; étude ideation_miro.md § 3.7) ─────────────────────────────── */
+/* Ensemble (sous 42 %) : les cartes ne gardent que l'essentiel (comme le nodal de
+   Musique) ; les noms des cadres en grand ; notes et post-it : leur couleur seule ;
+   légendes, travaux, étiquettes des liens cachés */
 .cv.far .nd.gen .gform, .cv.far .nd.gen .gerr, .cv.far .nd.compose .gform { display: none; }
 .cv.far .nd.gen .gsum, .cv.far .nd.compose .gsum { display: block; }
 .cv.far .nd .cap, .cv.far .estrip, .cv.far .jobs { display: none; }
+.cv.far .fr-h { visibility: hidden; }
+.cv.far .fr-big { display: flex; }
+/* (sauf celle où l'on écrit : un texte caché ne prend pas le clavier) */
+.cv.far .nd.sticky .txt:not(.editing), .cv.far .nd.note .txt:not(.editing) { visibility: hidden; }
+.cv.far .nd.note:has(.editing) { background: var(--panel2); }
+.cv.far .nd.note { background: var(--panel3); }
+.cv.far .links text { display: none; }
+/* Détail (au-dessus de 130 %) : les légendes restent sous les images, avec taille et modèle ;
+   la carte Générer montre son prompt entier ; l'élément toutes ses références */
+.cv.near .nd.media .cap { opacity: 1; }
+.cv.near .nd.media .cap .cm { display: inline; }
+.cv.near .nd.media:has(.jobs:not(:empty)) .cap { display: none; }
+.cv.near .nd.gen textarea.gp { field-sizing: content; min-height: 76px; }
+.cv.near .gin-t, .cv.near .cprev { max-height: none; }
+.estrip i:nth-child(n + 6) { display: none; }
+.cv.near .estrip { flex-wrap: wrap; }
+.cv.near .estrip i { display: block; }
+
+/* ── les groupes (groups.js) : une appartenance, pas une zone — pas de dessin à eux ;
+   un filet pointillé et leur nom au survol d'un enfant, choisis, ou ouverts ─────── */
+.gp { position: absolute; pointer-events: none; border-radius: var(--r3); }
+.gp.hov, .gp.sel, .gp.open { outline: calc(1px / var(--z)) dashed var(--line-cy); outline-offset: 0; }
+.gp.open { outline-color: var(--or); }
+/* un enfant qu'on sort (plus de 32 px hors de la boîte) : le filet l'annonce en gris */
+.gp.leave { outline: calc(1px / var(--z)) dashed var(--ink3); background: var(--cy-bg); }
+.gp-n {
+  position: absolute; left: 0; bottom: 100%; margin-bottom: calc(4px / var(--z)); display: none; white-space: nowrap;
+  font-family: var(--f-mono); font-size: calc(8.5px / var(--z)); letter-spacing: .18em; text-transform: uppercase; color: var(--cy);
+}
+.gp.hov .gp-n, .gp.open .gp-n { display: block; }
+.gp.sel .gp-n { display: none; }   /* choisi : son nom est en tête de la barre */
+.gp.open .gp-n { color: var(--or); }
+/* la place d'insertion quand on glisse un enfant dans sa rangée */
+.gins { position: absolute; width: calc(2px / var(--z)); margin-left: calc(-1px / var(--z)); border-radius: 1px; background: var(--or); pointer-events: none; z-index: 6; }
+/* un groupe réduit : une carte à ports (le nœud replié d'un sous-graphe de ComfyUI) */
+.nd.grp {
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-cy); padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 6px;
+}
+.nd.grp.sel { box-shadow: inset 0 0 0 1px var(--line-cy), 0 0 0 calc(2px / var(--z)) var(--or); }
+.nd.grp.lod { box-shadow: inset 0 0 0 1px var(--line); }
+.nd.grp .ghead { margin-bottom: 0; }
+.nd.grp .ghead .k { color: var(--cy); }
+.nd.grp .gname { font-family: var(--f-disp); font-weight: 400; font-size: 15px; letter-spacing: .06em; text-transform: uppercase; line-height: 1.15;
+  color: var(--ink); overflow-wrap: anywhere; }
+.nd.grp .gcount { color: var(--ink2); }
+.gmos { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 4px; }
+.gmos i { aspect-ratio: 4 / 3; border-radius: var(--r2); background: var(--panel3) center / cover no-repeat; }
+.gmos.n1 { grid-template-columns: 1fr; }
+.gmos.n1 i { aspect-ratio: 16 / 9; }
+.gmos.n3 i:first-child { grid-column: span 2; aspect-ratio: 16 / 7; }
+.gprs { display: flex; flex-direction: column; gap: 2px; margin: 4px -14px 0; padding-top: 6px; box-shadow: inset 0 1px 0 var(--line); }
+.gpr { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-height: 22px; align-items: center; padding: 0 14px; }
+.gpl { min-width: 0; font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gpl.r { text-align: right; }
+.nd.grp .ghint { margin: 2px 0 0; }
+
+/* ── le cadre de sélection (px d'écran) et sa barre (selection.js) ────────────── */
+.selbox { position: absolute; z-index: 5; pointer-events: none; box-shadow: inset 0 0 0 1px var(--or); border-radius: 2px; }
+.cv.moving .selbox, .cv.scaling .selbox { box-shadow: inset 0 0 0 1px var(--or-bg2); }
+.selbox .sh {
+  position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 2px; pointer-events: auto;
+  background: var(--bg); box-shadow: inset 0 0 0 1.5px var(--or);
+}
+.selbox .sh[data-c="nw"] { left: 0; top: 0; cursor: nwse-resize; }
+.selbox .sh[data-c="ne"] { left: 100%; top: 0; cursor: nesw-resize; }
+.selbox .sh[data-c="sw"] { left: 0; top: 100%; cursor: nesw-resize; }
+.selbox .sh[data-c="se"] { left: 100%; top: 100%; cursor: nwse-resize; }
+.selbox .sh:hover { background: var(--or); }
+/* la poignée d'organisation : une pastille à trois points au milieu du bord droit */
+.selbox .sorg {
+  position: absolute; left: 100%; top: 50%; width: 12px; height: 26px; margin: -13px 0 0 -6px; border-radius: 999px; pointer-events: auto;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; cursor: ew-resize;
+  background: var(--panel2); box-shadow: inset 0 0 0 1.5px var(--or), 0 2px 8px var(--drop);
+}
+.selbox .sorg i { width: 3px; height: 3px; border-radius: 50%; background: var(--or); }
+.selbox .sorg:hover { background: var(--or-bg); }
+.selbox .sinfo {
+  position: absolute; left: 100%; top: 50%; margin: -9px 0 0 14px; padding: 2px 7px; border-radius: var(--r1); white-space: nowrap;
+  background: var(--or); color: var(--on-or); letter-spacing: .16em;
+}
+/* max-content : posée à gauche d'un bord, une boîte absolue rétrécirait (et passerait à la ligne) */
+.sbar {
+  position: absolute; z-index: 7; display: flex; align-items: center; gap: 2px; padding: 3px; width: max-content; max-width: calc(100% - 16px); flex-wrap: wrap;
+  border-radius: var(--r3); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line), 0 10px 26px var(--drop);
+  transition: opacity .12s; font-size: 11px;
+}
+.sbar.hide { opacity: 0; pointer-events: none; transition: none; }
+.sbt {
+  height: 26px; padding: 0 7px; border-radius: var(--r2); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+  font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink2);
+}
+.sbt:hover { color: var(--ink); background: var(--panel3); }
+.sbt.on { background: var(--grn); color: var(--on-grn); }
+.sbt.off { opacity: .35; cursor: default; }
+.sbt.off:hover { background: transparent; color: var(--ink2); }
+.sbt.dd::after { content: '▾'; font-size: 8px; color: var(--ink3); }
+.sbt.more { font-family: var(--f-ui); font-size: 14px; letter-spacing: 0; padding: 0 9px; }
+.ssep { width: 1px; height: 16px; margin: 0 3px; background: var(--line); flex: none; }
+.sseg { display: inline-flex; gap: 2px; padding: 0; border-radius: var(--r2); }
+.sgap { display: inline-flex; align-items: center; gap: 1px; padding-left: 4px; }
+.sgap .lbl { font-size: 7.5px; margin-right: 3px; }
+.sgap .sbt { padding: 0 7px; font-size: 11px; letter-spacing: 0; }
+.sgap .sv { min-width: 22px; text-align: center; font-family: var(--f-mono); font-size: 9px; font-weight: 400; color: var(--ink); }
+.sname {
+  height: 26px; padding: 0 8px; border-radius: var(--r2); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--f-disp); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink);
+}
+.sname:hover { background: var(--panel3); }
+.sname-in {
+  height: 26px; width: 180px; padding: 0 8px; border-radius: var(--r2); background: var(--panel); color: var(--ink);
+  font-family: var(--f-disp); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; box-shadow: inset 0 0 0 1px var(--line-cy);
+}
+.cv.locked .sbar, .cv.locked .selbox { display: none; }
+/* `hidden` doit gagner sur les display: flex ci-dessus (une barre cachée ne prend aucun clic) */
+.sbar[hidden], .selbox[hidden], .selbox [hidden], .gins[hidden] { display: none !important; }
 
 /* ── les coins de la planche ───────────────────────────── */
 .empty {
@@ -441,6 +586,8 @@ body.nolib .lib { visibility: hidden; }
 .oline .dot.t-video { background: var(--cy); }
 .oline .dot.t-audio { background: var(--grn2); }
 .oline .dot.t-title { background: var(--ink); }
+.oline .dot.t-group { background: transparent; box-shadow: inset 0 0 0 1px var(--cy); border-radius: 50%; }
+.oline.kid { padding-left: 20px; }
 .lline { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--r2); background: var(--panel2); }
 .lline.on { box-shadow: inset 0 0 0 1px var(--or); }
 .lline .nm { flex: 1; min-width: 0; text-align: left; font-size: 11px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

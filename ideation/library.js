@@ -8,6 +8,10 @@
 
 import { api, toast, el, href, fmtDur, kindFr, etypeFr, dragItem } from '../commun/shell.js';
 
+// la copie d'affichage à la taille d'une vignette (commun/proxies.js), chargée sans être exigée
+let pickView = null;
+const viewsReady = import('../commun/proxies.js').then((m) => { pickView = m.pickView; }).catch(() => {});
+
 export const CF_MIME = 'application/x-sr-cf';
 const TABS = [['image,video,audio,element', 'Tout'], ['image', 'Images'], ['video', 'Vidéos'], ['audio', 'Sons'], ['element', 'Éléments'], ['cf', 'Personnages']];
 
@@ -38,7 +42,7 @@ export function createLibrary(app) {
     grid.replaceChildren(el('p', { class: 'lbl' }, 'chargement'));
     if (tab === 'cf') return loadCf(my);
     try {
-      const r = await api(`library?kind=${tab}&q=${encodeURIComponent(q)}&limit=240`);
+      const [r] = await Promise.all([api(`library?kind=${tab}&q=${encodeURIComponent(q)}&limit=240`), viewsReady]);
       if (my !== seq) return;
       count.textContent = String(r.total);
       grid.replaceChildren(...(r.items.length ? r.items.map(card) : [el('p', { class: 'hint' }, q ? 'rien ne répond' : 'rien ici — déposez un fichier, ou créez-le dans un outil')]));
@@ -54,20 +58,38 @@ export function createLibrary(app) {
     } catch (e) { grid.replaceChildren(el('p', { class: 'warn' }, `Character Factory : ${e.message}`)); }
   }
 
-  // une vignette : un div (un bouton ne se glisse pas partout), qui se pose d'un clic ou d'Entrée
+  // une vignette : un div (un bouton ne se glisse pas partout), qui se pose d'un clic ou d'Entrée.
+  // L'image est une <img loading="lazy"> : le panneau ne charge que ce qu'on voit défiler
+  // (240 fonds d'écran partaient à l'ouverture, sur les six connexions de la planche :
+  // étude de fluidité, § 2.3) ; la copie 256 quand le serveur l'a faite.
   function tile(title, thumb, badge, badgeCls, name, sub, place) {
     const c = el('div', { class: 'lt', role: 'button', tabindex: 0, title },
-      el('span', { class: 'im', style: { backgroundImage: thumb ? `url("${href(thumb)}")` : null } }, el('span', { class: 'kind ' + badgeCls }, badge)),
+      el('span', { class: 'im' }, thumb ? el('img', { src: href(thumb), alt: '', loading: 'lazy', decoding: 'async', draggable: 'false' }) : null,
+        el('span', { class: 'kind ' + badgeCls }, badge)),
       el('span', { class: 't' }, name), el('span', { class: 's lbl' }, sub));
     c.addEventListener('click', place);
     c.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); place(); } });
     return c;
   }
+  // le clic droit sur une vignette : la poser, l'ouvrir ailleurs (jamais le menu du navigateur)
+  function tileMenu(c, head, place, extra = () => []) {
+    c.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      app.menu(e.clientX, e.clientY, [{ head }, { label: 'Poser au centre de la vue', sub: 'clic', onclick: place }, ...extra()]);
+    });
+  }
   function card(it) {
     const sub = it.kind === 'element' ? `${etypeFr(it.element?.type)} · ${it.element?.refs?.length || 0} réf.` : it.duration ? fmtDur(it.duration) : it.width ? `${it.width}×${it.height}` : '';
-    const c = tile(`${it.title || it.id}${it.prompt ? '\n' + it.prompt.slice(0, 200) : ''}`, it.thumb_url,
+    // la copie d'affichage à la taille de la vignette (commun/proxies.js), sinon la vignette du socle
+    const pic = pickView && (it.kind === 'image' || it.kind === 'video') ? pickView(it, 120).url || it.thumb_url : it.thumb_url;
+    const c = tile(`${it.title || it.id}${it.prompt ? '\n' + it.prompt.slice(0, 200) : ''}`, pic,
       it.kind === 'element' ? etypeFr(it.element?.type) : kindFr(it.kind), it.kind, it.title || it.id, sub,
       () => { if (!S.board) { toast('ouvrez ou créez d’abord une planche'); return; } app.placeItem(it, ...app.canvas.center(), { free: true }); });
+    tileMenu(c, it.title || it.id, () => c.click(), () => {
+      const sel1 = S.sel.size === 1 ? app.node([...S.sel][0]) : null;
+      return [sel1?.type === 'gen' && ['image', 'element'].includes(it.kind) ? { label: 'En référence de la carte choisie', dot: 'or', onclick: () => app.addRefs(sel1.id, [it]) } : null,
+        '-', { label: 'Dans Asset', icon: '↗', onclick: () => window.open(href(`asset/#${it.id}`), '_blank', 'noopener') }];
+    });
     return dragItem(c, it);
   }
   function cfCard(ch) {
@@ -75,6 +97,7 @@ export function createLibrary(app) {
     const c = tile(`${ch.name} — posé, il devient un élément de la bibliothèque`, thumb, 'personnage', 'element', ch.name,
       ch.imported.length ? 'déjà un élément' : `${ch.costumes} tenue${ch.costumes > 1 ? 's' : ''}`,
       () => app.placeCf({ slug: ch.slug, imported: ch.imported[0] || '', center: true }, ...app.canvas.center()));
+    tileMenu(c, ch.name, () => c.click(), () => (ch.imported[0] ? ['-', { label: 'Dans Asset', icon: '↗', onclick: () => window.open(href(`asset/#${ch.imported[0]}`), '_blank', 'noopener') }] : []));
     // pas encore un objet de la bibliothèque : son propre type, que la planche importe au dépôt
     c.draggable = true;
     c.addEventListener('dragstart', (e) => {

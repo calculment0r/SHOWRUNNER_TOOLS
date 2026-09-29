@@ -2,18 +2,30 @@
 // objets posés et leurs ports, la sélection (clic, Maj + clic, cadre de
 // sélection, lasso avec Alt), déplacer, redimensionner, la mini-carte. Les
 // liens et le geste « tirer un fil » : wires.js ; ce qui se branche : ports.js.
+// Les groupes (groups.js) : un clic sur un enfant choisit son groupe, un
+// double-clic l'enfant, Échap remonte ; un objet lâché sur un autre fait un
+// groupe ; un groupe réduit est une carte dont les ports sont les fils qui
+// traversent sa frontière. Le cadre de sélection et sa barre : selection.js.
 //
 // Rien ici n'écrit la planche sans passer par l'app : `app.snap()` garde
 // l'état d'avant (annuler), `app.commit()` repeint et enregistre. Les
 // couleurs viennent des jetons, même dans la mini-carte (lus à l'exécution).
-// Un objet peut porter `parent` (un groupe, à venir) : le rendu l'ignore.
 // Le canvas émet 'view' (app.emit, plugins.js) quand la caméra bouge.
+//
+// La fluidité (docs/etudes/ideation_fluidite.md, § 4.2) : ce qui est hors de
+// la vue (plus un quart d'écran) n'est ni stylé ni peint (display: none) ; la
+// trame se pose sur le fond de .cv (pas de variable héritée par les objets) ;
+// le zoom « efficace » (--z, les niveaux Ensemble / Travail / Détail) se pose
+// 150 ms après le geste ; une image se lit à la taille où elle est vue, 220 ms
+// après le geste, décodée avant l'échange.
 
 import { el, href, fmtDur, etypeFr, toast, dropZone } from '../commun/shell.js';
 import { menu } from '../commun/menu.js';
 import { CF_MIME } from './library.js';
 import { createWires, edgePts } from './wires.js';
 import { KINDS, outPort, inPorts } from './ports.js';
+import { CARD_W, LOD_PX, EXIT, kidsMap, kidsOf, layoutAll, arrange, layoutOf, crossing, portLabel, slotAt, setOrder } from './groups.js';
+import { createSelection } from './selection.js';
 
 export { menu, edgePts };
 const NS = 'http://www.w3.org/2000/svg';
@@ -21,6 +33,10 @@ const GRID = 24;
 const ZMIN = 0.08;
 const ZMAX = 4;
 const DWELL = 400;   // un texte posé sur un autre : un court arrêt au-dessus avant de proposer le composeur (étude Weavy § 9.5)
+// les trois niveaux du zoom sémantique, sur le zoom « efficace » (étude Miro § 3.7)
+const FAR = 0.42;    // Ensemble : un texte de 13 px y fait moins de 5,5 px à l'écran
+const NEAR = 1.3;    // Détail : le seuil du prototype de Cal
+const CULL = 0.25;   // la marge du culling : un quart d'écran (tldraw)
 // les objets dont la hauteur suit le contenu : la page la mesure et l'écrit
 export const AUTO_H = new Set(['note', 'sticky', 'title', 'gen', 'vgen', 'compose']);
 const CARDS = new Set(['gen', 'vgen', 'compose']);
@@ -40,16 +56,49 @@ export function bbox(list) {
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
+// les copies d'affichage (commun/proxies.js : pickView, swap, viewsOf), chargées sans être
+// exigées ; tant qu'elles ne sont pas là (ou sur un portail qui ne les a pas), la règle
+// d'avant : la vignette, l'original quand l'image est vue en grand ; l'échange décodé d'abord
+let PX = {
+  viewsOf: () => [],
+  pickView: (it, css) => (css * (devicePixelRatio || 1) > 400 && it?.url ? { url: href(it.url), w: Infinity } : { url: href(it?.thumb_url || it?.url || ''), w: 384 }),
+  swap(img, url, w, { force = false } = {}) {
+    const cur = img.getAttribute('src') ? +img.dataset.vw || 0 : -1;
+    if ((!force && cur >= 0 && w <= cur) || img.dataset.want === url) return;
+    img.dataset.want = url;
+    const put = () => { if (img.dataset.want === url) { img.src = url; img.dataset.vw = String(w); } };
+    if (cur < 0) { put(); return; }
+    const pre = new Image();
+    pre.decoding = 'async'; pre.src = url;
+    pre.decode().then(put, put);
+  },
+};
+export const ready = import('../commun/proxies.js').then((m) => { PX = m; return true; }).catch(() => false);
+const viewsOf = (it) => PX.viewsOf(it);
+const pickView = (it, css) => PX.pickView(it, css);
+const swap = (...a) => PX.swap(...a);
+
+// la plus petite image qui représente un objet (la mosaïque d'un groupe réduit) : la
+// copie d'affichage de 256 (commun/proxies.js), sinon la vignette
+export function smallest(it) {
+  if (!it || it.missing) return null;
+  if (it.kind === 'element') return it.element?.refs?.[0]?.thumb_url || it.thumb_url || null;
+  if (it.kind === 'image') return viewsOf(it)[0]?.url || it.thumb_url || it.url;
+  return it.thumb_url || null;
+}
+
 export function createCanvas(app) {
   const { S } = app;
   const cv = document.getElementById('cv');
   const world = el('div', { class: 'world' });
   const framesL = el('div', { class: 'layer frames' });
+  const groupsL = el('div', { class: 'layer groups' });
   const linksS = svg('svg', { class: 'links', width: 1, height: 1 });
   const nodesL = el('div', { class: 'layer nodes' });
-  world.append(framesL, linksS, nodesL);
+  const slotM = el('div', { class: 'gins', hidden: true });   // la place d'insertion dans une rangée
+  world.append(framesL, groupsL, linksS, nodesL, slotM);
   const temp = svg('path', { class: 'temp' });   // la flèche d'annotation qu'on tire (outil L)
-  const HINT = 'molette : zoom · glisser le fond : choisir · Alt : lasso · espace : se déplacer · tirer une sortie : un fil · double-clic : poser';
+  const HINT = 'molette : zoom · glisser le fond : choisir · Alt : lasso · espace : se déplacer · tirer une sortie : un fil · un objet sur un autre : un groupe · double-clic : poser';
   const marquee = el('div', { class: 'marquee', hidden: true });
   const over = svg('svg', { class: 'overlay' });
   const lassoP = svg('polygon', { class: 'lasso' });
@@ -67,9 +116,16 @@ export function createCanvas(app) {
   cv.append(world, marquee, over, empty, banner, zoomBox, mini, hint);
   pct.addEventListener('click', () => zoomTo(1));
 
-  const dom = new Map();   // id → { el, key, py: { 'in:prompt': y… } }
+  const dom = new Map();   // id → { el, key, py: { 'in:prompt': y… }, off }
   const V = () => S.view;
-  const W = createWires(app, { cv, layer: linksS, dom, toWorld, drag, hint, HINT });
+  // les groupes montrés en carte (réduits, ou « se réduit de loin » vus de loin), et leurs enfants cachés
+  let cards = new Set(), hidden = new Map(), cardsKey = '';
+  const cardH = new Map();        // la hauteur mesurée d'une carte de groupe
+  const cardPortY = new Map();    // gid → Map('in:<objet>|<port>' → y dans la carte)
+  const isCard = (n) => n?.type === 'group' && cards.has(n.id);
+  // la boîte montrée d'un objet (un groupe en carte : la carte, au coin de sa boîte)
+  const dispBox = (n) => (isCard(n) ? { x: n.x, y: n.y, w: CARD_W, h: cardH.get(n.id) || (n.collapsed ? n.h : 160) } : n);
+  const W = createWires(app, { cv, layer: linksS, dom, toWorld, drag, hint, HINT, alias, shown });
   let soonF = 0;
   let locked = false;   // canvas.lock() : les gestes sont figés (seul le déplacement de la vue reste)
   // rien ne défile jamais sous la planche : la vue est la seule vérité (un
@@ -80,30 +136,56 @@ export function createCanvas(app) {
   addEventListener('scroll', () => { if (scrollX || scrollY) scrollTo(0, 0); });
 
   // ── la vue ────────────────────────────────────────────────
-  let viewT = 0, resT = 0, farNow = null, viewF = 0;
+  // --z (dont dépendent les filets et les poignées en 1/z) est hérité par chaque
+  // objet : le changer à chaque image d'un zoom restylerait toute la planche
+  // (20 ms par image à 1000 objets, mesuré). Pendant le geste, la planche garde
+  // le zoom « efficace » d'avant ; il se pose 150 ms après (getEfficientZoomLevel
+  // de tldraw), avec le niveau du zoom sémantique.
+  let viewT = 0, resT = 0, viewF = 0, zT = 0, zShown = null, level = null;
+  function showZ(z, { quiet = false } = {}) {
+    zShown = z;
+    cv.style.setProperty('--z', z);
+    const lv = z < FAR ? 'far' : z > NEAR ? 'near' : 'work';
+    const changed = lv !== level;
+    level = lv;
+    cv.classList.toggle('far', lv === 'far');
+    cv.classList.toggle('near', lv === 'near');
+    cv.dataset.level = lv;
+    if (quiet || !S.board) return;
+    // un groupe « se réduit de loin » qui passe sous (ou au-dessus de) 240 px à l'écran : la planche se refait
+    if (wantCards() !== cardsKey) { render(); return; }
+    // de loin, les cartes n'ont plus leurs lignes : leurs ports et leurs fils se replacent
+    if (changed) { measure(); W.placePorts(); paintLinks(); }
+  }
   function applyView() {
     const v = V();
     world.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.z})`;
-    cv.style.setProperty('--z', v.z);
+    if (zShown === null) showZ(v.z);
+    else if (v.z !== zShown) { clearTimeout(zT); zT = setTimeout(() => showZ(V().z), 150); }
+    // la trame posée sur le fond lui-même, sans variable héritée par les objets
     const g = GRID * v.z * (v.z < 0.3 ? 4 : v.z < 0.6 ? 2 : 1);
-    cv.style.setProperty('--gs', `${g}px`);
-    cv.style.setProperty('--gx', `${v.x}px`);
-    cv.style.setProperty('--gy', `${v.y}px`);
+    cv.style.backgroundSize = `${g}px ${g}px`;
+    cv.style.backgroundPosition = `${v.x}px ${v.y}px`;
     cv.classList.toggle('nogrid', !S.grid);
     gridB.classList.toggle('on', !!S.grid);
-    const far = v.z < 0.42;
-    cv.classList.toggle('far', far);
-    // de loin, les cartes n'ont plus leurs lignes : leurs ports et leurs fils se replacent
-    if (farNow !== null && far !== farNow) { measure(); W.placePorts(); paintLinks(); }
-    farNow = far;
     pct.textContent = `${Math.round(v.z * 100)} %`;
     paintMini();
+    scheduleCull();
+    sel.follow();
     cancelAnimationFrame(viewF);
     viewF = requestAnimationFrame(() => app.emit?.('view', V()));
     clearTimeout(viewT);
     viewT = setTimeout(() => { if (S.board) app.LS('view-' + S.board.id, S.view); }, 400);
     clearTimeout(resT);
     resT = setTimeout(swapRes, 220);
+  }
+  // la vue d'une planche qu'on ouvre, posée AVANT le premier rendu : les images se
+  // choisissent au bon zoom (une vue gardée, sinon toute la planche à l'écran)
+  function prime(v) {
+    const b = bbox(S.board?.nodes || []);
+    Object.assign(V(), v && Number.isFinite(v.z) ? v : b ? viewFor(b) : { x: cv.clientWidth / 2, y: cv.clientHeight / 2, z: 1 });
+    clearTimeout(zT);
+    showZ(V().z, { quiet: true });
   }
   const rect = () => cv.getBoundingClientRect();
   function zoomAt(nz, sx, sy) {
@@ -160,30 +242,123 @@ export function createCanvas(app) {
     Object.assign(V(), viewFor(b));
     applyView();
   }
-  // une image posée en grand se lit en pleine définition, de loin sa vignette
+
+  // ── hors de la vue : ni stylé ni peint (display: none, le culling de tldraw) ──
+  // Une marge d'un quart d'écran ; un objet choisi ou où l'on écrit reste affiché.
+  let cullF = 0;
+  function scheduleCull() { if (!cullF) cullF = requestAnimationFrame(() => { cullF = 0; cull(); }); }
+  function cullRect() {
+    const r = viewRect(), mx = r.w * CULL, my = r.h * CULL;
+    return { x: r.x - mx, y: r.y - my, w: r.w + 2 * mx, h: r.h + 2 * my };
+  }
+  function cull() {
+    if (!S.board) return;
+    const q = cullRect();
+    const act = document.activeElement;
+    let back = false;
+    for (const n of S.board.nodes) {
+      const d = dom.get(n.id);
+      if (!d) continue;
+      // le nom d'un cadre est posé au-dessus de lui : la marge le couvre
+      const off = !hits(dispBox(n), q) && !S.sel.has(n.id) && !(act && d.el.contains(act));
+      if (d.off !== off) {
+        d.off = off;
+        d.el.style.display = off ? 'none' : '';
+        if (off) lowRes(n, d.el);
+        else if (CARDS.has(n.type)) back = true;
+      }
+    }
+    // une carte qui revient : ses ports se replacent à la hauteur de leurs lignes
+    if (back) reflow();
+  }
+
+  // ── la définition d'une image : celle de sa taille à l'écran ──
+  // La plus petite copie d'affichage dont le grand côté couvre max(w, h) × zoom ×
+  // densité de pixels (commun/proxies.js, pickView) ; au-delà de la plus grande,
+  // l'original. Seulement pour ce qui est dans la vue, jamais pendant le geste
+  // (220 ms après) ; décodée avant l'échange (swap) ; une image qu'on regarde ne
+  // redescend pas (pas de va-et-vient au seuil), une image qui sort de la vue
+  // retombe à la plus petite (la mémoire suit ce qu'on voit). Sans copies (rangée
+  // avant elles) : la vignette tant qu'elle suffit, sinon l'original.
+  const pickSrc = (n, it, z = V().z) => pickView(it, Math.max(n.w, n.h) * z);
   function swapRes() {
     for (const n of S.board?.nodes || []) {
       if (n.type !== 'media' || n.kind !== 'image') continue;
-      const img = dom.get(n.id)?.el.querySelector('img');
+      const d = dom.get(n.id);
+      if (!d || d.off) continue;
+      const img = d.el.querySelector('img');
       const it = S.items.get(n.item);
       if (!img || !it || it.missing) continue;
-      const want = href(pickSrc(n, it));
-      if (img.src !== want) img.src = want;
+      const p = pickSrc(n, it);
+      swap(img, p.url, p.w);
     }
   }
-  const pickSrc = (n, it) => (n.w * V().z * (devicePixelRatio || 1) > 400 && it.url ? it.url : it.thumb_url || it.url);
+  function lowRes(n, e) {
+    if (n.type !== 'media' || n.kind !== 'image') return;
+    const it = S.items.get(n.item);
+    const img = it && !it.missing && e.querySelector('img');
+    if (!img) return;
+    const p = pickView(it, 1);
+    if (p.url && p.w < (+img.dataset.vw || 0)) swap(img, p.url, p.w, { force: true });
+  }
+
+  // ── les groupes montrés en carte ──────────────────────────
+  function wantCards() {
+    const out = [];
+    const far = level === 'far', z = zShown ?? V().z;
+    for (const g of S.board?.nodes || []) {
+      if (g.type !== 'group') continue;
+      if (g.collapsed || (g.lod && far && Math.max(g.w, g.h) * z < LOD_PX)) out.push(g.id);
+    }
+    return out.join(',');
+  }
+  function computeCards() {
+    cardsKey = wantCards();
+    cards = new Set(cardsKey ? cardsKey.split(',') : []);
+    hidden = new Map();
+    if (!cards.size) return;
+    const K = kidsMap(S.board);
+    for (const gid of cards) for (const k of K.get(gid) || []) hidden.set(k.id, gid);
+  }
+  // un fil dont un bout est caché dans un groupe réduit part du port de la carte (wires.js)
+  function alias(id, port, side) {
+    const gid = hidden.get(id);
+    if (!gid) return null;
+    const g = app.node(gid);
+    if (!g) return null;
+    const b = dispBox(g);
+    const y = cardPortY.get(gid)?.get(`${side}:${id}|${port}`);
+    return [side === 'out' ? b.x + b.w : b.x, b.y + (y ?? Math.min(36, b.h / 2))];
+  }
+  // les liens vus depuis les cartes : ceux du dedans se cachent, les flèches vont au bord de la carte
+  function shown(l, a, b) {
+    const ga = hidden.get(a.id), gb = hidden.get(b.id);
+    const stand = (gid) => { const g = app.node(gid); return { ...g, ...dispBox(g) }; };
+    const disp = (n) => (isCard(n) && !n.collapsed ? stand(n.id) : n);
+    if (!ga && !gb) return [disp(a), disp(b)];
+    if (ga && ga === gb) return null;
+    if (l.kind === 'wire') return [a, b];
+    return [ga ? stand(ga) : disp(a), gb ? stand(gb) : disp(b)];
+  }
 
   // ── les objets ────────────────────────────────────────────
   function keyOf(n) {
+    if (n.type === 'group') return cards.has(n.id) ? 'card|' + cardKey(n) : `gp|${n.name}`;
     const it = n.type === 'media' ? S.items.get(n.item) : null;
-    // la place et la taille ne refont pas l'objet : `place` les suit
-    const { x, y, w, h, jobs, ...rest } = n;
+    // la place, la taille et l'appartenance ne refont pas l'objet : `place` les suit
+    const { x, y, w, h, jobs, group, ...rest } = n;
     const extra = n.type === 'gen' ? app.gen.cardKey(n) : n.type === 'vgen' ? app.video.cardKey(n) : n.type === 'compose' ? app.composer.cardKey(n) : '';
-    return JSON.stringify(rest) + (it ? `|${it.updated || ''}${it.missing ? 'x' : ''}` : '|?') + extra;
+    return JSON.stringify(rest) + (it ? `|${it.updated || ''}${it.missing ? 'x' : ''}${viewsOf(it)[0]?.url || ''}` : '|?') + extra;
   }
   function place(e, n) {
+    if (n.type === 'group' && cards.has(n.id)) {
+      e.style.left = `${n.x}px`; e.style.top = `${n.y}px`; e.style.width = `${CARD_W}px`; e.style.height = '';
+      return;
+    }
     e.style.left = `${n.x}px`; e.style.top = `${n.y}px`; e.style.width = `${n.w}px`;
     e.style.height = AUTO_H.has(n.type) ? '' : `${n.h}px`;
+    if (n.type === 'frame') e.style.setProperty('--fw', `${n.w}px`);
+    if (e.dataset.g !== (n.group || '')) e.dataset.g = n.group || '';
   }
   // les ports d'un objet (ports.js) : ses entrées à gauche, sa sortie à droite, dans la teinte de ce qu'ils portent
   const accepts = (p) => p.accepts.map((k) => KINDS[k].label).join(' ou ');
@@ -220,8 +395,11 @@ export function createCanvas(app) {
       return el('div', { class: 'fr', 'data-id': n.id },
         el('div', { class: 'fr-h', 'data-id': n.id, title: 'glisser le cadre · double-clic : le renommer' },
           el('b', { class: 'fr-n' }, n.name || 'Cadre'), el('span', { class: 'fr-c' })),
+        // de loin (Ensemble) : le nom en grand, au centre, sur un voile (le prototype de Cal)
+        el('div', { class: 'fr-big' }, el('b', {}, n.name || 'Cadre'), el('span', { class: 'fr-bc' })),
         el('span', { class: 'rz', 'data-rz': '1', title: 'redimensionner' }));
     }
+    if (n.type === 'group') return cards.has(n.id) ? groupCard(n) : el('div', { class: 'gp', 'data-id': n.id }, el('span', { class: 'gp-n' }, n.name || 'Groupe'));
     const cls = ['nd', n.type];
     const style = {};
     let body = [];
@@ -244,7 +422,7 @@ export function createCanvas(app) {
           onclick: () => { navigator.clipboard?.writeText(c).then(() => toast(`${c} copiée`), () => toast(c)); } },
         el('span', {}, c))))];
     }
-    const e = el('div', { class: cls.join(' '), 'data-id': n.id, style }, ...body, el('div', { class: 'jobs' }), ...ports(n));
+    const e = el('div', { class: cls.join(' '), 'data-id': n.id, 'data-g': n.group || '', style }, ...body, el('div', { class: 'jobs' }), ...ports(n));
     if (n.type === 'media' && n.kind === 'video') {
       const v = e.querySelector('video');
       if (v) {
@@ -255,6 +433,54 @@ export function createCanvas(app) {
     return e;
   }
 
+  // un groupe réduit : une carte de 280 px, comme le nœud replié d'un sous-graphe de
+  // ComfyUI — son nom, ce qu'il contient, une mosaïque des quatre premières images, et
+  // ses ports : les fils qui traversent sa frontière (entrées à gauche, sorties à droite)
+  function groupParts(g) {
+    const kids = kidsOf(S.board, g.id);
+    const io = crossing(S.board, new Set(kids.map((k) => k.id)));
+    return { kids, io };
+  }
+  function cardKey(g) {
+    const { kids, io } = groupParts(g);
+    const F = app.flow();
+    const pk = (p) => p.key + p.links.map((l) => (F.state(l.id)?.ok ? 1 : 0)).join('');
+    return JSON.stringify([g.name, g.collapsed, kids.map((k) => k.item || k.type), io.ins.map(pk), io.outs.map(pk),
+      kids.slice(0, 6).map((k) => (k.item ? smallest(S.items.get(k.item)) : '')), kids.map((k) => app.label(k)).join('|').length]);
+  }
+  function groupCard(g) {
+    const { kids, io } = groupParts(g);
+    const F = app.flow();
+    const imgs = kids.filter((k) => k.type === 'media' && k.kind !== 'audio').slice(0, 4);
+    const gens = kids.filter((k) => k.type === 'gen' || k.type === 'vgen').length;
+    const port = (p, side) => {
+      const kind = side === 'out' ? p.port : p.links[0]?.pa || 'text';
+      const bad = p.links.some((l) => !F.state(l.id)?.ok);
+      const lab = portLabel(app, p, side);
+      return el('span', { class: `pt ${side} on${bad ? ' bad' : ''}`, 'data-port': p.port, 'data-side': side, 'data-inner': p.inner,
+        'data-key': `${side}:${p.inner}|${p.port}`, style: { '--k': `var(--${KINDS[kind]?.color || 'ink3'})` },
+        title: `${side === 'out' ? 'sortie' : 'entrée'} · ${lab} — ${p.links.length} fil${p.links.length > 1 ? 's' : ''} · tirer : un fil depuis l’objet intérieur` });
+    };
+    const rows = [];
+    for (let i = 0; i < Math.max(io.ins.length, io.outs.length); i++) {
+      const a = io.ins[i], b = io.outs[i];
+      rows.push(el('div', { class: 'gpr' },
+        el('span', { class: 'gpl' }, a ? portLabel(app, a, 'in') : ''), el('span', { class: 'gpl r' }, b ? portLabel(app, b, 'out') : ''),
+        a ? port(a, 'in') : null, b ? port(b, 'out') : null));
+    }
+    const count = `${kids.length} objet${kids.length > 1 ? 's' : ''}${gens ? ` · ${gens} génération${gens > 1 ? 's' : ''}` : ''}`;
+    return el('div', { class: 'nd grp' + (g.collapsed ? '' : ' lod'), 'data-id': g.id, title: g.collapsed ? 'double-clic : déplier' : 'de loin, ce groupe s’affiche en carte — double-clic : y aller' },
+      el('div', { class: 'ghead' }, el('span', { class: 'k lbl' }, g.collapsed ? 'groupe réduit' : 'groupe · de loin'), el('span', { class: 'sp' }),
+        el('span', { class: 'lbl' }, layoutOf(g).mode === 'flow' ? 'rangée' : 'libre')),
+      el('b', { class: 'gname' }, g.name || 'Groupe'),
+      el('span', { class: 'gcount lbl' }, count),
+      imgs.length ? el('div', { class: 'gmos n' + imgs.length }, ...imgs.map((k) => {
+        const src = smallest(S.items.get(k.item));
+        return el('i', { style: { backgroundImage: src ? `url("${href(src)}")` : null } });
+      })) : null,
+      rows.length ? el('div', { class: 'gprs' }, ...rows) : el('p', { class: 'ghint' }, 'aucun fil ne traverse ce groupe'));
+  }
+
   function media(n) {
     const it = S.items.get(n.item);
     if (!it) return [el('div', { class: 'miss' }, el('span', { class: 'lbl' }, 'chargement'))];
@@ -262,8 +488,15 @@ export function createCanvas(app) {
       return [el('div', { class: 'miss' }, el('b', {}, 'absent'), el('span', {}, 'cet objet a quitté la bibliothèque (corbeille d’Asset ?)'),
         el('small', { class: 'lbl' }, n.title || n.item))];
     }
-    const cap = el('span', { class: 'cap' }, it.title || it.id);
-    if (n.kind === 'image') return [el('img', { src: href(pickSrc(n, it)), alt: it.title || '', draggable: 'false' }), cap];
+    // la légende ; de près (Détail), elle reste sous l'image avec sa taille et son modèle
+    const meta = [it.width && it.height ? `${it.width}×${it.height}` : '', it.duration ? fmtDur(it.duration) : '',
+      (it.origin?.model || it.origin?.tool || '').replace(/-factice$/, ' (factice)')].filter(Boolean).join(' · ');
+    const cap = el('span', { class: 'cap' }, el('span', { class: 'ct' }, it.title || it.id), meta ? el('span', { class: 'cm' }, ` · ${meta}`) : null);
+    if (n.kind === 'image') {
+      // posée hors de la vue : la plus petite copie ; dans la vue : celle de sa taille à l'écran
+      const p = hits(n, cullRect()) ? pickSrc(n, it) : pickView(it, 1);
+      return [el('img', { src: p.url, 'data-vw': String(p.w), decoding: 'async', alt: it.title || '', draggable: 'false' }), cap];
+    }
     if (n.kind === 'video') {
       const v = el('video', { src: href(it.url), poster: it.thumb_url ? href(it.thumb_url) : null, muted: true, loop: true, playsinline: true, preload: 'metadata' });
       v.muted = true;
@@ -279,20 +512,25 @@ export function createCanvas(app) {
         el('div', { class: 'arow' }, b, el('span', { class: 'lbl' }, it.duration ? fmtDur(it.duration) : '')), a];
     }
     const refs = it.element?.refs || [];
+    // ses références : cinq sous l'image, toutes de près (Détail)
     return [el('div', { class: 'eim', style: { backgroundImage: refs[0] || it.thumb_url ? `url("${href(refs[0]?.thumb_url || it.thumb_url)}")` : null } }),
       el('div', { class: 'ecap' }, el('b', {}, it.title || 'élément'),
         el('span', { class: 'lbl' }, `${etypeFr(it.element?.type)} · ${refs.length} réf.`)),
-      el('div', { class: 'estrip' }, ...refs.slice(1, 6).map((r) => el('i', { style: { backgroundImage: `url("${href(r.thumb_url)}")` } })))];
+      el('div', { class: 'estrip' }, ...refs.slice(1).map((r) => el('i', { title: r.label || r.role || '', style: { backgroundImage: `url("${href(r.thumb_url)}")` } })))];
   }
 
   function render() {
     cancelAnimationFrame(soonF);
-    if (!S.board) { framesL.replaceChildren(); nodesL.replaceChildren(); linksS.replaceChildren(); dom.clear(); paintEmpty(); return; }
+    if (!S.board) { framesL.replaceChildren(); groupsL.replaceChildren(); nodesL.replaceChildren(); linksS.replaceChildren(); dom.clear(); paintEmpty(); sel.hide(); return; }
     app.flowNow();            // ce qui passe dans les fils, relu une fois par rendu
+    // les groupes se remettent en forme (rangée, même taille) et prennent la boîte de leurs enfants
+    layoutAll(S.board);
+    computeCards();
     const nodes = S.board.nodes;
     // les grands cadres dessous : un cadre posé dans un autre reste visible
     const frames = nodes.filter((n) => n.type === 'frame').sort((a, b) => b.w * b.h - a.w * a.h);
-    const others = nodes.filter((n) => n.type !== 'frame');
+    const outlines = nodes.filter((n) => n.type === 'group' && !cards.has(n.id));
+    const others = nodes.filter((n) => n.type !== 'frame' && (n.type === 'group' ? cards.has(n.id) : !hidden.has(n.id)));
     const seen = new Set();
     // l'objet où l'on écrit n'est pas refait sous les doigts : il le sera à la sortie. Seul un
     // champ de saisie protège ainsi sa carte — un sélecteur ou un bouton qu'on vient de toucher
@@ -318,17 +556,22 @@ export function createCanvas(app) {
       if (layer.children[i] !== d.el) layer.insertBefore(d.el, layer.children[i] || null);
     });
     sync(framesL, frames);
+    sync(groupsL, outlines);
     sync(nodesL, others);
     for (const [id, d] of dom) if (!seen.has(id)) { d.el.remove(); dom.delete(id); }
     measure();
+    // une hauteur mesurée (une note qui grandit) refait la rangée de son groupe
+    if (layoutAll(S.board)) for (const n of nodes) if (n.group || n.type === 'group') { const d = dom.get(n.id); if (d) place(d.el, n); }
+    measureCards();
     W.placePorts();
     paintFrames();
     paintLinks();
     W.paintPorts();
     paintSel();
     paintEmpty();
-    for (const n of nodes) if (n.jobs) paintJobs(n.id);
+    for (const n of nodes) if (n.jobs) paintJobs(n.id, n);
     paintMini();
+    cull();
   }
   // un rendu à la prochaine image : ce qu'on tape dans une note ou une case suit, en direct,
   // dans les cartes qui la lisent (la note où l'on écrit n'est pas refaite sous les doigts)
@@ -353,19 +596,38 @@ export function createCanvas(app) {
     let changed = false;
     const far = cv.classList.contains('far');
     for (const n of S.board?.nodes || []) {
+      if (n.type === 'group') {
+        if (!cards.has(n.id)) continue;
+        const h = dom.get(n.id)?.el.offsetHeight;
+        if (h) { cardH.set(n.id, h); if (n.collapsed && Math.abs(h - n.h) > 0.5) { n.h = Math.round(h); changed = true; } }
+        continue;
+      }
       if (!AUTO_H.has(n.type) || (far && CARDS.has(n.type))) continue;
       const h = dom.get(n.id)?.el.offsetHeight;
       if (h && Math.abs(h - n.h) > 0.5) { n.h = Math.round(h); changed = true; }
     }
     return changed;
   }
+  // la hauteur de chaque port d'une carte de groupe (le bout de ses fils)
+  function measureCards() {
+    for (const gid of cards) {
+      const e = dom.get(gid)?.el;
+      if (!e || e.offsetParent === null) continue;
+      const m = new Map();
+      for (const p of e.querySelectorAll('.pt[data-key]')) { const r = p.parentElement; m.set(p.dataset.key, r.offsetTop + r.offsetHeight / 2); }
+      cardPortY.set(gid, m);
+    }
+  }
   function paintFrames() {
     const all = S.board?.nodes || [];
     for (const f of all) {
       if (f.type !== 'frame') continue;
-      const c = dom.get(f.id)?.el.querySelector('.fr-c');
-      const k = all.filter((n) => n !== f && inside(n, f)).length;
-      if (c) c.textContent = `${k} objet${k > 1 ? 's' : ''}`;
+      const e = dom.get(f.id)?.el;
+      const k = all.filter((n) => n !== f && n.type !== 'group' && !hidden.has(n.id) && inside(n, f)).length;
+      const t = `${k} objet${k > 1 ? 's' : ''}`;
+      const c = e?.querySelector('.fr-c'), c2 = e?.querySelector('.fr-bc');
+      if (c) c.textContent = t;
+      if (c2) c2.textContent = t;
     }
   }
   function paintSel() {
@@ -373,8 +635,14 @@ export function createCanvas(app) {
     for (const [id, d] of dom) {
       d.el.classList.toggle('sel', S.sel.has(id));
       d.el.classList.toggle('solo', solo && S.sel.has(id));
+      // un enfant d'un groupe fermé : le survol montre son groupe, pas lui
+      const g = d.el.dataset.g;
+      if (g !== undefined) d.el.classList.toggle('ingrp', !!g && g !== S.focus);
     }
+    if (S.focus) dom.get(S.focus)?.el.classList.add('open');
+    for (const [id, d] of dom) if (id !== S.focus && d.el.classList.contains('open')) d.el.classList.remove('open');
     for (const g of linksS.querySelectorAll('g[data-link]')) g.classList.toggle('sel', g.dataset.link === S.link);
+    sel.paint();
   }
   function paintEmpty() {
     const has = !!S.board?.nodes.length;
@@ -399,11 +667,12 @@ export function createCanvas(app) {
   }
 
   // les travaux en cours d'un objet : une barre par travail
-  function paintJobs(id) {
-    const n = app.node(id);
+  function paintJobs(id, node = null) {
+    const n = node || app.node(id);
     const box = dom.get(id)?.el.querySelector('.jobs');
     if (!n || !box) return;
     const list = (n.jobs || []).map((j) => S.jobs.get(j.id) || { id: j.id, state: 'queued', message: 'en file' });
+    if (!list.length && !box.firstChild) return;
     box.replaceChildren(...list.map((j) => el('div', { class: 'jb ' + j.state, title: j.message || '' },
       el('span', { class: 'lbl' }, `${j.state === 'running' ? (j.progress != null ? Math.round(j.progress * 100) + ' %' : 'en cours') : j.state === 'queued' ? 'en file' : j.state} · ${j.message || ''}`),
       el('i', { style: { width: `${Math.round((j.progress ?? (j.state === 'queued' ? 0 : 0.1)) * 100)}%` } }))));
@@ -440,12 +709,12 @@ export function createCanvas(app) {
       c.fillStyle = tok('panel3'); c.fillRect(...R(n));
     }
     for (const n of nodes) {
-      if (n.type === 'frame') continue;
-      c.fillStyle = n.type === 'sticky' ? tok(n.color) || tok('coral-3') : n.type === 'gen' || n.type === 'vgen' ? tok('or') : n.type === 'compose' ? tok('amb')
+      if (n.type === 'frame' || hidden.has(n.id) || (n.type === 'group' && !cards.has(n.id))) continue;
+      c.fillStyle = n.type === 'group' ? tok('ink3') : n.type === 'sticky' ? tok(n.color) || tok('coral-3') : n.type === 'gen' || n.type === 'vgen' ? tok('or') : n.type === 'compose' ? tok('amb')
         : n.type === 'palette' ? (n.colors?.[0] || tok('ink3')) : n.type === 'media' ? (n.kind === 'element' ? tok('coral-2') : tok('ink3'))
           : n.type === 'title' ? tok('ink') : tok('ink2');
       if (S.sel.has(n.id)) c.fillStyle = tok('or');
-      c.fillRect(...R(n));
+      c.fillRect(...R(dispBox(n)));
     }
     c.strokeStyle = tok('cy');
     c.lineWidth = 1;
@@ -482,9 +751,16 @@ export function createCanvas(app) {
   addEventListener('pointerup', (e) => { touches.delete(e.pointerId); if (touches.size < 2) pinch = null; });
   addEventListener('pointercancel', (e) => { touches.delete(e.pointerId); if (touches.size < 2) pinch = null; });
 
+  // la souris (règle de Cal, 29/09, comme le nodal d'ODIO) : le bouton du milieu glissé déplace
+  // la vue partout sur la planche, même au-dessus d'une carte ou d'un champ ; le clic gauche
+  // choisit (Maj : ajoute, Ctrl/⌘ : ajoute ou retire) ; glisser dans le vide : le cadre de
+  // sélection. Espace + glisser et l'outil Main restent.
+  cv.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });   // ni défilement automatique, ni collage
+  cv.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
   cv.addEventListener('pointerdown', (e) => {
     const t = e.target;
-    if (t.closest('.zoombox, .mini, .empty .row, .banner')) return;
+    if (e.button === 1) { e.preventDefault(); return startPan(e); }
+    if (t.closest('.zoombox, .mini, .empty .row, .banner, .sbar, .selbox')) return;
     if (e.pointerType === 'touch') {
       touches.set(e.pointerId, [e.clientX, e.clientY]);
       if (touches.size === 2) { startPinch(); return; }
@@ -492,18 +768,25 @@ export function createCanvas(app) {
     const nodeEl = t.closest('[data-id]');
     if (isControl(t)) {
       if (locked) { e.preventDefault(); return; }
-      if (nodeEl && !S.sel.has(nodeEl.dataset.id)) app.select([nodeEl.dataset.id]);
+      if (nodeEl && !S.sel.has(nodeEl.dataset.id) && e.button === 0) app.select([unitOf(nodeEl.dataset.id)]);
       return;
     }
     if (document.activeElement && document.activeElement !== document.body && cv.contains(document.activeElement)) document.activeElement.blur();
     // figée (canvas.lock : une présentation, la machine temporelle) : on se déplace, rien d'autre
-    if (e.button === 1 || (e.button === 0 && (S.tool === 'hand' || S.space || locked))) { e.preventDefault(); return startPan(e); }
+    if (e.button === 0 && (S.tool === 'hand' || S.space || locked)) { e.preventDefault(); return startPan(e); }
+    // le clic droit sur un objet non choisi le choisit (son menu parle de lui) ; le menu : contextmenu
+    if (e.button === 2) {
+      const rid = nodeEl?.dataset.id;
+      if (rid && !S.sel.has(unitOf(rid)) && !locked) app.select([unitOf(rid)]);
+      return;
+    }
     if (e.button !== 0) return;
     e.preventDefault();
     const id = nodeEl?.dataset.id;
     if (t.closest('[data-rz]') && id) return startResize(e, id);
     const pt = t.closest('.pt[data-port]');
-    if (pt && id) return W.start(e, id, pt.dataset.port, pt.dataset.side);
+    // un port d'une carte de groupe : le fil part de l'objet intérieur (la carte n'est qu'un affichage)
+    if (pt && id) return W.start(e, pt.dataset.inner || id, pt.dataset.port, pt.dataset.side);
     if (S.tool === 'link' && id) return startLink(e, id);
     // un outil de pose pose où l'on clique, par-dessus un objet aussi (une note sur une image)
     if (['note', 'sticky', 'title', 'gen', 'vgen', 'compose', 'frame'].includes(S.tool)) return startCreate(e, S.tool);
@@ -540,34 +823,72 @@ export function createCanvas(app) {
       () => cv.classList.remove('panning'));
   }
 
-  // les objets à emmener : la sélection, et ce que contiennent ses cadres
+  // l'unité qu'un clic choisit : le groupe d'un enfant (sauf dans le groupe ouvert par un double-clic)
+  function unitOf(id) {
+    const n = app.node(id);
+    return n?.group && S.focus !== n.group ? n.group : id;
+  }
+  // les objets à emmener : la sélection, ce que contiennent ses cadres, et les enfants
+  // de ses groupes — un groupe bouge toujours d'un bloc
   function carried() {
     const out = new Map();
+    const K = kidsMap(S.board);
+    const unit = (n) => {
+      out.set(n.id, n);
+      if (n.type === 'group') for (const k of K.get(n.id) || []) out.set(k.id, k);
+    };
     for (const id of S.sel) {
       const n = app.node(id);
       if (!n) continue;
-      out.set(n.id, n);
-      if (n.type === 'frame') for (const m of S.board.nodes) if (m !== n && inside(m, n)) out.set(m.id, m);
+      unit(n);
+      if (n.type === 'frame') {
+        for (const m of S.board.nodes) {
+          if (m === n || !inside(m, n)) continue;
+          const g = m.group && m.group !== S.focus ? app.node(m.group) : null;
+          unit(g || m);
+        }
+      }
     }
     return [...out.values()];
   }
+  // la place d'insertion dans une rangée (un enfant qu'on glisse dans son groupe)
+  function paintSlot(rest, slot, gap) {
+    if (!rest || slot < 0) { slotM.hidden = true; return; }
+    const at = rest[slot] || rest[rest.length - 1];
+    if (!at) { slotM.hidden = true; return; }
+    const x = slot < rest.length ? at.x - gap / 2 : at.x + at.w + gap / 2;
+    Object.assign(slotM.style, { left: `${x}px`, top: `${at.y}px`, height: `${at.h}px` });
+    slotM.hidden = false;
+  }
 
-  function pressNode(e, id) {
-    const add = e.shiftKey || e.ctrlKey || e.metaKey;
+  function pressNode(e, rawId) {
+    const id = unitOf(rawId);
+    // Maj + clic ajoute ; Ctrl/⌘ + clic ajoute ou retire (les standards)
+    const shift = e.shiftKey, toggle = e.ctrlKey || e.metaKey, add = shift || toggle;
     const was = S.sel.has(id);
-    if (add) app.select([id], { toggle: true });
+    if (toggle) app.select([id], { toggle: true });
+    else if (shift) { if (!was) app.select([id], { toggle: true }); }
     else if (!was) app.select([id]);
-    if (add && !S.sel.has(id)) return;
+    if (!S.sel.has(id)) return;
     const moving = carried();
     const orig = moving.map((n) => [n, n.x, n.y]);
     const x0 = e.clientX, y0 = e.clientY, z = V().z;
     let moved = false;
-    // un objet lâché sur un autre (app.dropRules) : la règle se dit après un court arrêt au-dessus
-    const drop = { t: null, since: 0, armed: false, timer: 0, label: '' };
+    // un enfant choisi dans son groupe ouvert : il change de rang (rangée), ou en sort
+    // lâché à plus de 32 px de la boîte (le filet du groupe l'annonce en gris)
+    const inner = S.focus && [...S.sel].every((s) => app.node(s)?.group === S.focus) ? app.node(S.focus) : null;
+    const gbox = inner ? { x: inner.x, y: inner.y, w: inner.w, h: inner.h } : null;
+    const flowIn = !!inner && layoutOf(inner).mode === 'flow';
+    let outNow = false, slot = -1;
+    // un objet lâché sur un autre (app.dropRules, puis le groupe) : la règle se dit après un court arrêt au-dessus
+    const drop = { t: null, rule: null, armed: false, timer: 0, label: '' };
     const disarm = () => {
       clearTimeout(drop.timer);
-      if (drop.t) dom.get(drop.t.id)?.el.classList.remove('drop-to');
-      Object.assign(drop, { t: null, armed: false, label: '' });
+      if (drop.t) {
+        const e2 = dom.get(drop.t.id)?.el;
+        if (e2) { e2.classList.remove('drop-to'); if (drop.rule?.cls) e2.classList.remove(drop.rule.cls); delete e2.dataset.drop; }
+      }
+      Object.assign(drop, { t: null, rule: null, armed: false, label: '' });
       hint.textContent = HINT;
     };
     const overNode = (ev) => {
@@ -576,44 +897,73 @@ export function createCanvas(app) {
       const list = S.board.nodes;
       for (let i = list.length - 1; i >= 0; i--) {
         const n = list[i];
-        if (n.type === 'frame' || mine.has(n.id)) continue;
-        if (wx >= n.x && wx <= n.x + n.w && wy >= n.y && wy <= n.y + n.h) return n;
+        if (n.type === 'frame' || mine.has(n.id) || hidden.has(n.id) || (n.type === 'group' && !cards.has(n.id))) continue;
+        const b = dispBox(n);
+        if (wx >= b.x && wx <= b.x + b.w && wy >= b.y && wy <= b.y + b.h) return n;
       }
       return null;
     };
+    const rules = () => [...(app.dropRules || []), ...(app.dropLast || [])];
     const watchDrop = (ev) => {
-      const t = overNode(ev);
-      let label = '';
-      for (const r of (t && app.dropRules) || []) { label = r.test(moving, t); if (label) break; }
+      // Alt : poser par-dessus, sans règle
+      const t = ev.altKey ? null : overNode(ev);
+      let label = '', rule = null;
+      if (t) for (const r of rules()) { label = r.test(moving, t); if (label) { rule = r; break; } }
       if (!label) { if (drop.t) disarm(); return; }
-      if (drop.t?.id === t.id) return;
+      if (drop.t?.id === t.id && drop.rule === rule) return;
       disarm();
-      Object.assign(drop, { t, label });
+      Object.assign(drop, { t, label, rule });
       drop.timer = setTimeout(() => {
         drop.armed = true;
-        dom.get(t.id)?.el.classList.add('drop-to');
+        const e2 = dom.get(t.id)?.el;
+        if (e2) { e2.classList.add(rule.cls || 'drop-to'); if (rule.tag) e2.dataset.drop = rule.tag; }
         hint.textContent = label;
-      }, DWELL);
+      }, rule.dwell ?? DWELL);
     };
     drag((ev) => {
       if (pinch) return;
       const dx = (ev.clientX - x0) / z, dy = (ev.clientY - y0) / z;
       if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 3) return;
-      if (!moved) { app.snap(); moved = true; cv.classList.add('moving'); }
+      if (!moved) { app.snap(); moved = true; cv.classList.add('moving'); sel.gesture(true); }
       for (const [n, ox, oy] of orig) {
         n.x = Math.round(ox + dx); n.y = Math.round(oy + dy);
         const d = dom.get(n.id);
         if (d) place(d.el, n);
       }
-      watchDrop(ev);
-      paintLinks(); paintMini();
+      if (inner) {
+        const [wx, wy] = toWorld(ev.clientX, ev.clientY);
+        const out = wx < gbox.x - EXIT || wx > gbox.x + gbox.w + EXIT || wy < gbox.y - EXIT || wy > gbox.y + gbox.h + EXIT;
+        if (out !== outNow) { outNow = out; dom.get(inner.id)?.el.classList.toggle('leave', out); }
+        if (!out) {
+          if (drop.t) disarm();
+          if (flowIn) {
+            const rest = kidsOf(S.board, inner.id).filter((k) => !S.sel.has(k.id));
+            slot = slotAt(rest, wx, wy);
+            paintSlot(rest, slot, layoutOf(inner).gap);
+          } else { arrange(inner, kidsOf(S.board, inner.id)); const d = dom.get(inner.id); if (d) place(d.el, inner); }
+        } else { paintSlot(null); watchDrop(ev); }
+      } else watchDrop(ev);
+      paintLinks(); paintMini(); sel.follow();
       app.emit?.('moving', moving.map((n) => n.id));
     }, (ev) => {
       cv.classList.remove('moving');
-      if (moved) app.emit?.('moving', []);
-      const target = drop.armed ? drop.t : null;
+      paintSlot(null);
+      if (inner) dom.get(inner.id)?.el.classList.remove('leave');
+      if (moved) { app.emit?.('moving', []); sel.gesture(false); }
+      const target = drop.armed && !ev.altKey ? drop.t : null;
       disarm();
       if (moved && target && app.dropOnto(moving, target, orig, ev)) return;
+      if (moved && inner) {
+        if (outNow) {
+          for (const s of S.sel) { const n = app.node(s); if (n) delete n.group; }
+          S.focus = null;
+          toast(`sorti du groupe « ${inner.name || 'groupe'} » — ctrl+Z : il y revient`);
+        } else if (flowIn && slot >= 0) {
+          const kids = kidsOf(S.board, inner.id);
+          const mv = kids.filter((k) => S.sel.has(k.id)), rest = kids.filter((k) => !S.sel.has(k.id));
+          setOrder(S.board, inner.id, [...rest.slice(0, slot), ...mv, ...rest.slice(slot)]);
+        }
+      }
       if (moved) { paintFrames(); app.commit(); }
       else if (!add && was && S.sel.size > 1) app.select([id]);
     });
@@ -626,10 +976,11 @@ export function createCanvas(app) {
     const x0 = e.clientX, y0 = e.clientY, z = V().z, w0 = n.w, h0 = n.h;
     const keep = n.type === 'media' && n.kind !== 'audio';
     const auto = AUTO_H.has(n.type);
+    const g = n.group ? app.node(n.group) : null;
     let moved = false;
     drag((ev) => {
       const dx = (ev.clientX - x0) / z, dy = (ev.clientY - y0) / z;
-      if (!moved) { app.snap(); moved = true; }
+      if (!moved) { app.snap(); moved = true; sel.gesture(true); }
       const minW = CARDS.has(n.type) ? 270 : n.type === 'frame' ? 120 : 48;
       n.w = Math.round(Math.max(minW, w0 + dx));
       if (keep && !ev.shiftKey) n.h = Math.round(n.w * h0 / w0);
@@ -637,8 +988,25 @@ export function createCanvas(app) {
       const d = dom.get(id);
       if (d) place(d.el, n);
       if (auto) { measure(); W.placePorts(); }
+      // dans un groupe, les autres se remettent en forme à chaque image
+      if (g) live([n]);
       paintLinks(); paintMini();
-    }, () => { if (moved) { paintFrames(); app.commit(); } });
+    }, () => { if (moved) { sel.gesture(false); paintFrames(); app.commit(); } });
+  }
+  // des objets changés pendant un geste (échelle, organisation, taille) : leurs groupes se
+  // remettent en forme, tout se replace, sans rendu complet
+  function live(list) {
+    const gs = new Set();
+    for (const n of list) { if (n.type === 'group') gs.add(n.id); else if (n.group) gs.add(n.group); }
+    const all = new Set(list);
+    const K = kidsMap(S.board);
+    const again = () => { for (const gid of gs) { const g = app.node(gid); if (g && !g.collapsed) arrange(g, K.get(gid) || []); } };
+    again();
+    for (const gid of gs) { const g = app.node(gid); if (g) all.add(g); for (const k of K.get(gid) || []) all.add(k); }
+    for (const n of all) { const d = dom.get(n.id); if (d) place(d.el, n); }
+    // un texte élargi change de hauteur : sa rangée se refait une fois de plus
+    if ([...all].some((n) => AUTO_H.has(n.type)) && measure()) { again(); for (const n of all) { const d = dom.get(n.id); if (d) place(d.el, n); } }
+    W.placePorts(); paintLinks(); paintMini();
   }
 
   // l'outil L : une flèche d'annotation, droite, qui ne porte rien (les fils partent des sorties)
@@ -649,7 +1017,7 @@ export function createCanvas(app) {
     cv.classList.add('linking');
     const mv = (ev) => {
       const [wx, wy] = toWorld(ev.clientX, ev.clientY);
-      const [p] = edgePts(a, { x: wx, y: wy, w: 0, h: 0 });
+      const [p] = edgePts(dispBox(a), { x: wx, y: wy, w: 0, h: 0 });
       temp.setAttribute('d', `M${p[0]} ${p[1]}L${wx} ${wy}`);
     };
     mv(e);
@@ -695,7 +1063,8 @@ export function createCanvas(app) {
     });
   }
 
-  // le cadre de sélection ; avec Alt, un lasso à main levée
+  // le cadre de sélection ; avec Alt, un lasso à main levée. Un enfant touché prend son
+  // groupe (sauf dans le groupe ouvert), un groupe en carte se prend par sa carte
   function startSelectArea(e) {
     const add = e.shiftKey || e.ctrlKey || e.metaKey;
     const lasso = e.altKey;
@@ -704,25 +1073,34 @@ export function createCanvas(app) {
     const pts = [[x0 - r.left, y0 - r.top]];
     const before = new Set(S.sel);
     let moved = false;
+    const unit = (n) => (n.group && S.focus !== n.group ? n.group : n.id);
     const pick = (ev) => {
-      let ids;
-      if (lasso) {
-        const poly = pts.map(([sx, sy]) => [(sx - V().x) / V().z, (sy - V().y) / V().z]);
-        ids = S.board.nodes.filter((n) => pointIn([n.x + n.w / 2, n.y + n.h / 2], poly)).map((n) => n.id);
-      } else {
+      const ids = [];
+      const test = (n, b) => {
+        if (lasso) {
+          const poly = pts.map(([sx, sy]) => [(sx - V().x) / V().z, (sy - V().y) / V().z]);
+          return pointIn([b.x + b.w / 2, b.y + b.h / 2], poly);
+        }
         const [ax, ay] = toWorld(Math.min(x0, ev.clientX), Math.min(y0, ev.clientY));
         const [bx, by] = toWorld(Math.max(x0, ev.clientX), Math.max(y0, ev.clientY));
         const q = { x: ax, y: ay, w: bx - ax, h: by - ay };
         // un cadre ne se prend que s'il est entièrement dans le tracé : sinon tracer dans un cadre le prendrait toujours
-        ids = S.board.nodes.filter((n) => (n.type === 'frame' ? inside(n, q) : hits(n, q))).map((n) => n.id);
+        return n.type === 'frame' ? inside(n, q) : hits(b, q);
+      };
+      for (const n of S.board.nodes) {
+        if (hidden.has(n.id)) continue;
+        if (n.type === 'group') { if (cards.has(n.id) && test(n, dispBox(n))) ids.push(n.id); continue; }
+        if (test(n, n)) ids.push(unit(n));
       }
       S.sel = new Set(add ? [...before, ...ids] : ids);
+      if (S.focus && ![...S.sel].every((s) => app.node(s)?.group === S.focus)) S.focus = null;
       S.link = null;
       paintSel(); paintMini();
     };
     drag((ev) => {
       if (pinch) return;
       if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;
+      if (!moved) sel.gesture(true);
       moved = true;
       if (lasso) {
         pts.push([ev.clientX - r.left, ev.clientY - r.top]);
@@ -736,7 +1114,8 @@ export function createCanvas(app) {
     }, () => {
       marquee.hidden = true;
       lassoP.setAttribute('points', '');
-      if (!moved && !add) { S.sel.clear(); S.link = null; paintSel(); }
+      if (moved) sel.gesture(false);
+      if (!moved && !add) { S.sel.clear(); S.link = null; S.focus = null; paintSel(); }
       app.selectionChanged();
     });
   }
@@ -757,13 +1136,27 @@ export function createCanvas(app) {
     zoomAt(V().z * Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0016)), e.clientX - r.left, e.clientY - r.top);
   }, { passive: false });
 
+  // le survol d'un enfant montre son groupe (un filet pointillé et son nom)
+  let hovG = '';
+  cv.addEventListener('pointerover', (e) => {
+    const g = e.target.closest?.('.nd[data-id]')?.dataset.g || '';
+    if (g === hovG) return;
+    if (hovG) dom.get(hovG)?.el.classList.remove('hov');
+    hovG = g;
+    if (g) dom.get(g)?.el.classList.add('hov');
+  });
+
   cv.addEventListener('dblclick', (e) => {
     if (locked) return;
     const t = e.target;
-    if (t.closest('.zoombox, .mini, .empty, .banner') || isControl(t)) return;
+    if (t.closest('.zoombox, .mini, .empty, .banner, .sbar, .selbox') || isControl(t)) return;
     const id = t.closest('[data-id]')?.dataset.id;
     const n = id && app.node(id);
     if (n) {
+      // une carte de groupe : déplier (réduit), ou y aller (vu de loin)
+      if (n.type === 'group') { if (n.collapsed) app.groups.collapse(n.id, false); else flyTo(n.id, { zmax: 1 }); return; }
+      // un enfant d'un groupe fermé : le choisir dans son groupe (Miro) ; le double-clic suivant fait le reste
+      if (n.group && S.focus !== n.group) { app.enter(n.id); return; }
       if (['note', 'sticky', 'title'].includes(n.type)) editText(n.id);
       else if (n.type === 'frame') renameFrame(n.id);
       else if (n.type === 'media' && (n.kind === 'image' || n.kind === 'video')) app.lightbox(n);
@@ -771,38 +1164,34 @@ export function createCanvas(app) {
       return;
     }
     const [wx, wy] = toWorld(e.clientX, e.clientY);
-    createMenu(e.clientX, e.clientY, wx, wy);
+    menu(e.clientX, e.clientY, app.menus.board(wx, wy));
   });
 
+  // le clic droit : jamais le menu du navigateur sur la planche (règle de Cal, 29/09) ;
+  // chaque zone a le sien (menus.js)
   cv.addEventListener('contextmenu', (e) => {
-    if (isControl(e.target)) return;
     e.preventDefault();
-    if (locked) return;
-    const id = e.target.closest('[data-id]')?.dataset.id;
+    const t = e.target;
+    const M = app.menus;
+    const at = [e.clientX, e.clientY];
+    // un champ où l'on écrit (une carte, une note en cours) : le presse-papiers
+    const fld = t.closest?.('input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]');
+    if (fld) { menu(...at, M.text(fld)); return; }
+    if (t.closest('.zoombox, .mini')) { menu(...at, M.view()); return; }
+    if (locked) { menu(...at, M.view()); return; }
+    const raw = t.closest('[data-id]')?.dataset.id;
+    const lk = t.closest('[data-link]')?.dataset.link;
+    if (lk && !raw) {
+      const l = S.board?.links.find((x) => x.id === lk);
+      if (l) { app.selectLink(l.id); menu(...at, M.link(l)); return; }
+    }
     const [wx, wy] = toWorld(e.clientX, e.clientY);
-    if (!id) { createMenu(e.clientX, e.clientY, wx, wy); return; }
+    if (!raw || !S.board) { menu(...at, M.board(wx, wy, { more: true })); return; }
+    const id = unitOf(raw);
     if (!S.sel.has(id)) app.select([id]);
-    const n = app.node(id);
-    menu(e.clientX, e.clientY, [
-      { head: S.sel.size > 1 ? `${S.sel.size} objets` : app.label(n) },
-      { label: 'Dupliquer', sub: 'ctrl+D', onclick: () => app.duplicate() },
-      { label: 'Premier plan', sub: ']', onclick: () => app.order(1) },
-      { label: 'Arrière-plan', sub: '[', onclick: () => app.order(-1) },
-      ...(S.sel.size > 1 ? [{ label: 'Encadrer', sub: 'un cadre autour', onclick: () => app.frameAround() }] : []),
-      '-',
-      { label: 'Supprimer', sub: 'Suppr', onclick: () => app.remove() }]);
+    const us = [...S.sel].map((s) => app.node(s)).filter(Boolean);
+    menu(...at, M.forSelection(us) || M.board(wx, wy, { more: true }));
   });
-
-  function createMenu(cx, cy, wx, wy) {
-    const at = (type) => () => app.addAt(type, wx, wy, { edit: ['note', 'sticky', 'title'].includes(type), select: true });
-    menu(cx, cy, [{ head: 'poser ici' },
-      { label: 'Note', key: 'N', onclick: at('note') }, { label: 'Post-it', key: 'S', onclick: at('sticky') },
-      { label: 'Titre', key: 'T', onclick: at('title') }, { label: 'Cadre', key: 'F', onclick: at('frame') },
-      '-', { label: 'Générer image', key: 'G', dot: 'or', onclick: at('gen') },
-      { label: 'Générer vidéo', key: 'M', dot: 'cy', onclick: at('vgen') },
-      { label: 'Composeur de prompt', key: 'P', dot: 'amb', onclick: at('compose') },
-      '-', { label: 'Depuis la bibliothèque…', sub: 'images, vidéos, sons, éléments', onclick: () => app.pickAt(wx, wy) }]);
-  }
 
   // écrire dans une note, un post-it, un titre : sur place
   function editText(id) {
@@ -817,9 +1206,9 @@ export function createCanvas(app) {
     try { txt.contentEditable = 'plaintext-only'; } catch { txt.contentEditable = 'true'; }
     if (txt.contentEditable !== 'plaintext-only') txt.contentEditable = 'true';
     txt.focus({ preventScroll: true });
-    const sel = getSelection();
-    sel.selectAllChildren(txt);
-    sel.collapseToEnd();
+    const sel2 = getSelection();
+    sel2.selectAllChildren(txt);
+    sel2.collapseToEnd();
     const changed = app.editing();
     let wrote = false;
     // ce qu'on écrit part aussitôt dans les cartes qui lisent ce texte (la note elle-même n'est pas refaite)
@@ -880,8 +1269,11 @@ export function createCanvas(app) {
     try { app.placeCf(JSON.parse(raw), ...toWorld(e.clientX, e.clientY)); } catch { /* charge illisible */ }
   });
 
+  // le cadre de sélection et sa barre (selection.js), au-dessus de la planche
+  const sel = createSelection(app, { cv, drag, toWorld, box: dispBox, isCard, isLocked: () => locked, live });
+
   hint.textContent = HINT;
-  new ResizeObserver(() => paintMini()).observe(cv);
+  new ResizeObserver(() => { paintMini(); sel.follow(); scheduleCull(); }).observe(cv);
   document.fonts?.ready?.then(() => { if (measure()) { W.placePorts(); paintLinks(); } });
 
   // ce que les modules greffés lisent et appellent (plugins.js) — des ajouts seulement :
@@ -890,8 +1282,11 @@ export function createCanvas(app) {
   //   zoomAt(z, x, y)                    zoomer autour d'un point du canvas (px depuis son coin)
   //   decorate(fn) → désabonner          fn(n, el) à chaque objet refait, et tout de suite
   //   lock() / unlock() / isLocked()     figer les gestes (la vue se déplace encore)
+  //   level()                            le niveau du zoom sémantique : 'far' | 'work' | 'near'
+  //   isCard(n) · dispBox(n)             un groupe montré en carte · la boîte montrée d'un objet
   return { el: cv, render, renderSoon, reflow, applyView, paintSel, paintLinks, paintJobs, paintMini, paintEmpty, fit, zoomTo, zoomBy, zoomAt,
-    toWorld, toScreen, viewFor, flyTo, center, viewRect, editText, renameFrame, decorate,
-    lock: () => { locked = true; cv.classList.add('locked'); }, unlock: () => { locked = false; cv.classList.remove('locked'); }, isLocked: () => locked,
+    toWorld, toScreen, viewFor, flyTo, center, viewRect, editText, renameFrame, decorate, prime, cull,
+    level: () => level, isCard, dispBox, hiddenIn: (id) => hidden.get(id) || null, sel,
+    lock: () => { locked = true; cv.classList.add('locked'); sel.hide(); }, unlock: () => { locked = false; cv.classList.remove('locked'); paintSel(); }, isLocked: () => locked,
     dom, portPoint: W.portPoint, over: (x, y) => { const r = rect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; } };
 }

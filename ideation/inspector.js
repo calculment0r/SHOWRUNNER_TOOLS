@@ -4,28 +4,18 @@
 // « éditer » (image.edit), « production » (les autres outils du portail,
 // par les adresses qu'ils lisent déjà). Une carte Générer vidéo ou un
 // composeur : leurs panneaux viennent de video.js et composer.js. Un fil :
-// ce qu'il porte, d'où, vers quelle entrée, et s'il va. Plusieurs : aligner,
-// répartir, encadrer, relier, en faire des références ou un élément.
+// ce qu'il porte, d'où, vers quelle entrée, et s'il va. Un groupe : son nom,
+// sa mise en forme, ses objets. Plusieurs : encadrer, relier, en faire des
+// références ou un élément (aligner, distribuer, même taille, grouper : la
+// barre au-dessus de la sélection, selection.js).
 
 import { api, toast, el, href, fmtDate, fmtDur, etypeFr, dropZone } from '../commun/shell.js';
 import { bbox, inside } from './canvas.js';
 import { KINDS, nameOf, portOf } from './ports.js';
 import { inbox } from './gen.js';
+import { kidsOf, layoutOf } from './groups.js';
 
 const ROLES = [['face', 'visage'], ['full body', 'plein pied'], ['outfit', 'tenue'], ['view', 'vue'], ['detail', 'détail'], ['style', 'style'], ['expression', 'expression']];
-const ICONS = {
-  left: 'M4 3v18M8 7h12v4H8zM8 13h7v4H8z', hcenter: 'M12 3v18M6 7h12v4H6zM8 13h8v4H8z', right: 'M20 3v18M4 7h12v4H4zM9 13h7v4H9z',
-  top: 'M3 4h18M7 8v12h4V8zM13 8v7h4V8z', vmiddle: 'M3 12h18M7 6v12h4V6zM13 8v8h4V8z', bottom: 'M3 20h18M7 4v12h4V4zM13 9v7h4V9z',
-  dh: 'M4 4v16M20 4v16M9 8h6v8H9z', dv: 'M4 4h16M4 20h16M8 9h8v6H8z', grid: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
-};
-const icon = (k) => {
-  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  s.setAttribute('viewBox', '0 0 24 24');
-  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  p.setAttribute('d', ICONS[k]);
-  s.append(p);
-  return s;
-};
 
 export function createInspector(app) {
   const { S } = app;
@@ -71,7 +61,13 @@ export function createInspector(app) {
       row(b('Tout voir', () => app.canvas.fit(), { title: 'Maj+1' }),
         b('Exporter en PNG', () => app.exportBoard(''), { title: 'la planche entière, dans la bibliothèque (dossier Idéation)', disabled: !B.nodes.length })),
       !B.nodes.length ? hint('Exporter : posez d’abord quelque chose.') : null));
-    const item = (n) => el('button', { class: 'oline', type: 'button', onclick: () => { app.select([n.id]); app.canvas.fit(bbox([n])); } },
+    // un objet d'un groupe se choisit dans son groupe (le groupe s'ouvre) ; caché dans une carte, on va à la carte
+    const item = (n) => el('button', { class: 'oline' + (n.group ? ' kid' : ''), type: 'button', onclick: () => {
+      const g = app.canvas.hiddenIn(n.id);
+      if (g) { app.select([g]); app.canvas.fit(bbox([app.canvas.dispBox(app.node(g))])); return; }
+      if (n.group) app.enter(n.id); else app.select([n.id]);
+      app.canvas.fit(bbox([app.canvas.dispBox(n)]));
+    } },
       el('i', { class: 'dot t-' + (n.type === 'media' ? n.kind : n.type), style: n.type === 'sticky' ? { background: `var(--${n.color})` } : null }),
       el('span', {}, app.label(n)), el('small', { class: 'lbl' }, app.kindLabel(n)));
     out.push(card('Plan', `${frames.length} cadre${frames.length > 1 ? 's' : ''}`,
@@ -90,6 +86,7 @@ export function createInspector(app) {
     out.push(card('Gestes', null, el('dl', { class: 'keys' }, ...[
       ['molette · pincer', 'zoomer'], ['espace + glisser', 'se déplacer'], ['glisser le fond', 'choisir (Alt : lasso)'],
       ['double-clic', 'poser, écrire'], ['N S T F G', 'note, post-it, titre, cadre, générer'], ['L', 'relier'],
+      ['objet sur objet', 'un groupe (Alt : par-dessus)'], ['ctrl+G · ctrl+maj+G', 'grouper, dégrouper'],
       ['ctrl+Z · ctrl+maj+Z', 'annuler, rétablir'], ['ctrl+D · Suppr', 'dupliquer, supprimer'], ['[ ]', 'arrière, premier plan']]
       .flatMap(([k, v]) => [el('dt', {}, k), el('dd', {}, v)]))));
     return out;
@@ -136,6 +133,7 @@ export function createInspector(app) {
     else if (n.type === 'vgen') out.push(...app.video.panels(n, K));
     else if (n.type === 'compose') out.push(...app.composer.panels(n, K));
     else if (n.type === 'frame') out.push(framePanel(n));
+    else if (n.type === 'group') out.push(groupPanel(n));
     else if (n.type === 'palette') out.push(palettePanel(n));
     else out.push(textPanel(n));
     out.push(card('Disposition', null, row(
@@ -168,7 +166,7 @@ export function createInspector(app) {
         rec ? null : el('p', { class: 'why' }, 'Variations : image sans recette (déposée ou faite ailleurs) — une carte Générer la prend en référence.')));
       const d = drafts.get(n.id) || { prompt: '', model: 'qwen21' };
       drafts.set(n.id, d);
-      const ta = el('textarea', { class: 'fld', rows: 3, placeholder: d.model === 'qwen21' ? 'la consigne, en anglais : « Change the jacket in <image1> to red leather »' : 'la consigne, en anglais : « Recolor the jacket to red leather »' });
+      const ta = el('textarea', { class: 'fld', rows: 3, id: 'insp-edit', placeholder: d.model === 'qwen21' ? 'la consigne, en anglais : « Change the jacket in <image1> to red leather »' : 'la consigne, en anglais : « Recolor the jacket to red leather »' });
       ta.value = d.prompt;
       const run = b('Éditer', () => app.gen.edit(n.id, { tool: 'instruct', model: d.model, prompt: d.prompt }), { disabled: !d.prompt.trim() });
       const why = el('span', { class: 'why' }, d.prompt.trim() ? '' : 'écrivez une consigne');
@@ -243,6 +241,41 @@ export function createInspector(app) {
         { disabled: !imgs.length, title: 'une planche d’ambiance → un élément « style » ou « lieu », pris en référence par Image et Vidéo' })),
       imgs.length ? null : el('p', { class: 'why' }, 'Faire un élément : posez des images dans ce cadre.'),
       hint('Déplacer le cadre emmène ce qu’il contient. Double-clic sur son nom : le renommer.'));
+  }
+
+  // un groupe : une appartenance (pas une zone) — son nom, sa mise en forme, ses objets
+  function groupPanel(g) {
+    const G = app.groups;
+    const kids = kidsOf(S.board, g.id);
+    const L = layoutOf(g);
+    const name = el('input', { class: 'fld', value: g.name || '', maxlength: 120, placeholder: 'le nom du groupe' });
+    let ch = () => {};
+    name.addEventListener('focus', () => { ch = app.editing(); });
+    name.addEventListener('input', () => { ch(); g.name = name.value; app.canvas.renderSoon(); });
+    const seg = (items) => el('div', { class: 'seg' }, ...items.map(([on, label, fn, title]) => el('button', { class: 'tb' + (on ? ' on' : ''), type: 'button', title, onclick: fn }, label)));
+    const gens = kids.filter((k) => k.type === 'gen' || k.type === 'vgen').length;
+    return card('Groupe', `${kids.length} objet${kids.length > 1 ? 's' : ''}${gens ? ` · ${gens} génération${gens > 1 ? 's' : ''}` : ''}`, name,
+      seg([[L.mode !== 'flow', 'Libre', () => G.flow(g.id, false), 'les objets restent où on les pose'],
+        [L.mode === 'flow', 'Rangée', () => G.flow(g.id, true), 'à la suite, à la ligne quand la largeur est atteinte']]),
+      seg([[!L.fit, 'Libres', () => G.setLayout(g.id, { fit: '' }), 'chacun sa taille'],
+        [L.fit === 'h', 'Même hauteur', () => G.setLayout(g.id, { fit: 'h' }), 'la hauteur du premier ; une image garde ses proportions'],
+        [L.fit === 'w', 'Même largeur', () => G.setLayout(g.id, { fit: 'w' }), 'la largeur du premier']]),
+      row(el('span', { class: 'lbl' }, `espacement ${Math.round(L.gap)} px`), el('span', { class: 'sp' }),
+        b('−', () => G.gap(g.id, -8), { disabled: L.mode !== 'flow' || L.gap <= 0, title: L.mode !== 'flow' ? 'en rangée seulement' : '8 px de moins' }),
+        b('+', () => G.gap(g.id, 8), { disabled: L.mode !== 'flow', title: L.mode !== 'flow' ? 'en rangée seulement' : '8 px de plus' })),
+      L.mode !== 'flow' ? el('p', { class: 'why' }, 'Espacement : passez en Rangée (ou tirez la pastille à droite du cadre).') : null,
+      el('label', { class: 'tog' }, (() => {
+        const c = el('input', { type: 'checkbox', checked: g.lod ? true : null });
+        c.addEventListener('change', () => G.lod(g.id));
+        return c;
+      })(), el('span', {}, 'Se réduit de loin'), el('small', { class: 'lbl' }, 'une carte sous 42 %, quand il fait moins de 240 px')),
+      row(g.collapsed ? b('Déplier', () => G.collapse(g.id, false), { title: 'double-clic sur la carte' }) : b('Réduire', () => G.collapse(g.id, true), { title: 'une carte à ports' }),
+        b('Dégrouper', () => G.ungroup([g.id]), { title: 'ctrl+maj+G' })),
+      el('div', { class: 'olist' }, ...kids.map((k) => el('button', { class: 'oline', type: 'button', disabled: g.collapsed ? true : null,
+        title: g.collapsed ? 'dépliez le groupe pour choisir un de ses objets' : 'le choisir dans le groupe (double-clic sur la planche)', onclick: () => app.enter(k.id) },
+      el('i', { class: 'dot t-' + (k.type === 'media' ? k.kind : k.type), style: k.type === 'sticky' ? { background: `var(--${k.color})` } : null }),
+      el('span', {}, app.label(k)), el('small', { class: 'lbl' }, app.kindLabel(k))))),
+      hint('Un clic sur un objet choisit le groupe, un double-clic l’objet (Échap remonte). Lâcher un objet sur un objet du groupe l’y ajoute ; le glisser à plus de 32 px du groupe l’en sort.'));
   }
 
   function palettePanel(n) {
@@ -348,8 +381,9 @@ export function createInspector(app) {
         return s;
       })())));
 
-    // prise de vue : les pastilles de l'outil Image, une liste par groupe
-    out.push(card('Prise de vue', Object.keys(n.looks || {}).length ? `${Object.keys(n.looks).length} réglage${Object.keys(n.looks).length > 1 ? 's' : ''}` : 'aucune',
+    // prise de vue : les pastilles de l'outil Image, une liste par groupe — cachées quand
+    // la case Photographie d'un composeur branché les porte (composer.js, gen.looksFrom)
+    if (app.gen.looksFrom?.(n) !== 'composer') out.push(card('Prise de vue', Object.keys(n.looks || {}).length ? `${Object.keys(n.looks).length} réglage${Object.keys(n.looks).length > 1 ? 's' : ''}` : 'aucune',
       ...cfg.looks.map((g) => {
         const s = el('select', { class: 'fld sm', title: g.about || '' }, el('option', { value: '' }, '—'),
           ...g.items.map((x) => el('option', { value: x.id, selected: n.looks?.[g.id] === x.id ? true : null, title: `source : ${x.src}` },
@@ -369,8 +403,10 @@ export function createInspector(app) {
     const box2 = document.getElementById('insp-go');
     if (!box2) return;
     const w = app.gen.why(n);
+    // le libellé de la carte elle-même (gen.goText : « Générer 3 × 2 » pour un lot)
+    const label = app.gen.goText ? app.gen.goText(n) : `Générer${n.count > 1 ? ' ' + n.count + ' images' : ''}`;
     box2.replaceChildren(el('button', { class: 'tb go block', type: 'button', disabled: w ? true : null, onclick: () => app.gen.generate(n.id) },
-      `Générer${n.count > 1 ? ' ' + n.count + ' images' : ''}`), el('p', { class: w ? 'why' : 'hint' }, w || 'les images se posent à droite de la carte, reliées'));
+      label), el('p', { class: w ? 'why' : 'hint' }, w || 'les images se posent à droite de la carte, reliées'));
   }
   function syncPrompt(id) {
     const ta = document.getElementById('insp-prompt');
@@ -382,17 +418,16 @@ export function createInspector(app) {
   // ── plusieurs objets ────────────────────────────────────────
   function multiPanels() {
     const list = [...S.sel].map((id) => app.node(id)).filter(Boolean);
-    const refable = list.filter((n) => n.type === 'media' && ['image', 'element'].includes(n.kind) && !S.items.get(n.item)?.missing);
+    const all = app.groups.expand(list);
+    const refable = all.filter((n) => n.type === 'media' && ['image', 'element'].includes(n.kind) && !S.items.get(n.item)?.missing);
     const imgs = refable.filter((n) => n.kind === 'image');
-    const al = (k, t) => el('button', { class: 'ic', type: 'button', title: t, onclick: () => app.align(k) }, icon(k));
-    return [card(`${list.length} objets`, null,
-      el('div', { class: 'aligns' }, al('left', 'aligner à gauche'), al('hcenter', 'centrer'), al('right', 'aligner à droite'),
-        al('top', 'aligner en haut'), al('vmiddle', 'au milieu'), al('bottom', 'aligner en bas'),
-        el('button', { class: 'ic', type: 'button', title: 'répartir à l’horizontale', onclick: () => app.distribute('x'), disabled: list.length < 3 ? true : null }, icon('dh')),
-        el('button', { class: 'ic', type: 'button', title: 'répartir à la verticale', onclick: () => app.distribute('y'), disabled: list.length < 3 ? true : null }, icon('dv')),
-        el('button', { class: 'ic', type: 'button', title: 'ranger en grille', onclick: () => app.tidy() }, icon('grid'))),
-      row(b('Encadrer', () => app.frameAround(), { title: 'un cadre autour de la sélection' }),
-        b('Relier dans l’ordre', () => app.chain(), { title: 'des liens de l’un à l’autre, dans l’ordre où vous les avez choisis' }))),
+    const why = app.groups.whyNot(list);
+    return [card(`${list.length} objets`, all.length > list.length ? `${all.length} avec les groupes` : null,
+      hint('Aligner, distribuer, même hauteur ou largeur, ranger, grouper : la barre au-dessus de la sélection. Les coins du cadre mettent à l’échelle, la pastille à droite range.'),
+      row(b('Grouper', () => app.groups.group(), { title: why || 'ctrl+G', disabled: !!why }),
+        b('Encadrer', () => app.frameAround(), { title: 'un cadre autour de la sélection · ctrl+alt+G' }),
+        b('Relier dans l’ordre', () => app.chain(), { title: 'des liens de l’un à l’autre, dans l’ordre où vous les avez choisis' })),
+      why && list.length > 1 ? el('p', { class: 'why' }, `Grouper : ${why}.`) : null),
     card('Faire naître', null,
       row(b(`Carte Générer (${refable.length} réf.)`, () => app.genWith(refable.map((n) => n.id)), { disabled: !refable.length }),
         b(`Faire un élément (${imgs.length})`, () => app.elementModal(imgs.map((n) => n.id)), { disabled: !imgs.length })),
@@ -442,5 +477,15 @@ export function createInspector(app) {
       } }, 'Créer l’élément')]);
   }
 
-  return { render, syncPrompt, elementModal };
+  // « Éditer » depuis la barre de la sélection : la consigne d'édition de l'image, au clavier
+  function focusEdit(id) {
+    if (!S.sel.has(id)) app.select([id]);
+    render();
+    const ta = document.getElementById('insp-edit');
+    if (!ta) return;
+    ta.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    ta.focus({ preventScroll: true });
+  }
+
+  return { render, syncPrompt, elementModal, focusEdit };
 }

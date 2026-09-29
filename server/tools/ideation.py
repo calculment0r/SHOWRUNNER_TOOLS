@@ -24,8 +24,21 @@ Ce qu'une planche porte (`nodes`, dans l'ordre d'empilement) :
            entrée `s:<id>` ; sa sortie est le texte des cases jointes
   palette  un nuancier tiré d'une image (des couleurs de données)
 
-Un objet peut porter `parent` (l'identifiant d'un autre objet de la
-planche : un groupe, à venir) ; un parent absent tombe.
+  group    un groupe (l'étude : docs/etudes/ideation_miro.md § 3) : une
+           appartenance, pas une zone — nom, `collapsed` (réduit : une carte),
+           `lod` (se réduit de loin), `layout` { mode free | flow, width, gap,
+           fit '' | h | w }. Chaque enfant porte `group` (son identifiant) et
+           garde ses coordonnées absolues ; le groupe n'a pas de liste d'enfants.
+
+Les règles des groupes (tenues ici et par la page, ideation/groups.js) : `group`
+pointe vers un nœud `group` présent, sinon il tombe ; pas de groupes imbriqués
+(un groupe n'a pas de `group`), jamais un cadre dans un groupe ; un groupe sans
+enfant disparaît, un groupe à un seul enfant se dissout (ses liens avec lui).
+Le cadre reste une zone : ce qui est entièrement dedans lui appartient.
+
+Un objet peut porter `parent` (l'identifiant d'un autre objet de la planche,
+l'ancienne place prévue pour les groupes) ; un parent absent tombe, un parent
+qui est un groupe devient son `group` (la migration, sans perte).
 
 Des liens (`links`, a → b) de deux familles (ideation/ports.js, la seule
 vérité de ce qui se branche) :
@@ -83,7 +96,11 @@ JOB = re.compile(r"job-\d{4}-\d{6}-[0-9a-f]{4}")
 HEX = re.compile(r"#[0-9a-fA-F]{6}")
 REF_FILE = re.compile(r"ref-\d{2}\.[a-z]{3,4}")
 
-TYPES = ("media", "note", "sticky", "title", "frame", "gen", "vgen", "compose", "palette")
+TYPES = ("media", "note", "sticky", "title", "frame", "gen", "vgen", "compose", "palette", "group")
+# les groupes (ideation/groups.js : la même règle) : libre ou rangée, même hauteur ou largeur
+GROUP_MODES = ("free", "flow")
+GROUP_FITS = ("", "h", "w")
+GROUP_GAP = 24           # l'espacement d'une rangée par défaut (px du monde)
 MEDIA_KINDS = ("image", "video", "audio", "element")
 VERSION = 2              # 2 : les fils (29/09) ; une planche plus ancienne est migrée en la lisant
 PORT = re.compile(r"[a-z]{1,12}(?::[A-Za-z0-9_-]{1,40})?")
@@ -230,7 +247,16 @@ def _node(n) -> dict:
     par = n.get("parent")
     if isinstance(par, str) and NID.fullmatch(par) and par != nid:
         out["parent"] = par          # vérifié dans normalize : un parent absent tombe
-    if t == "media":
+    grp = n.get("group")
+    if t not in ("frame", "group") and isinstance(grp, str) and NID.fullmatch(grp) and grp != nid:
+        out["group"] = grp           # vérifié dans normalize : un groupe absent tombe
+    if t == "group":
+        lay = n.get("layout") if isinstance(n.get("layout"), dict) else {}
+        out.update(name=_s(n.get("name"), 120), collapsed=bool(n.get("collapsed")), lod=bool(n.get("lod")),
+                   layout={"mode": lay.get("mode") if lay.get("mode") in GROUP_MODES else "free",
+                           "width": _num(lay.get("width"), 0, 20000, 0.0), "gap": _num(lay.get("gap"), 0, 400, GROUP_GAP),
+                           "fit": lay.get("fit") if lay.get("fit") in GROUP_FITS else ""})
+    elif t == "media":
         item = str(n.get("item", ""))
         if not ITEM.fullmatch(item):
             raise HttpError(400, f"l'objet {nid} ne pointe vers aucun objet de la bibliothèque")
@@ -306,6 +332,33 @@ def _node(n) -> dict:
     return out
 
 
+def _groups(nodes: list) -> tuple[list, set]:
+    """Les règles des groupes (ideation/groups.js, tidy : la même) : un ancien
+    `parent` qui est un groupe devient `group` ; `group` pointe vers un groupe
+    présent, sinon il tombe ; ni groupe ni cadre dans un groupe (`_node` ne le
+    garde pas) ; un groupe de moins de deux enfants se dissout. Rend les objets
+    gardés et les identifiants des groupes retirés."""
+    groups = {nn["id"] for nn in nodes if nn["type"] == "group"}
+    for nn in nodes:
+        if "group" not in nn and nn.get("parent") in groups and nn["type"] not in ("frame", "group"):
+            nn["group"] = nn.pop("parent")
+        if nn.get("group") not in groups:
+            nn.pop("group", None)
+    count: dict[str, int] = {}
+    for nn in nodes:
+        if nn.get("group"):
+            count[nn["group"]] = count.get(nn["group"], 0) + 1
+    gone = {g for g in groups if count.get(g, 0) < 2}
+    if not gone:
+        return nodes, gone
+    for nn in nodes:
+        if nn.get("group") in gone:
+            nn.pop("group")
+        if nn.get("parent") in gone:
+            nn.pop("parent")
+    return [nn for nn in nodes if nn["id"] not in gone], gone
+
+
 def normalize(b: dict) -> dict:
     """Rend une planche propre, ou lève HttpError(400) en disant pourquoi."""
     if not isinstance(b, dict):
@@ -323,6 +376,8 @@ def normalize(b: dict) -> dict:
     for nn in nodes:
         if nn.get("parent") not in ids:
             nn.pop("parent", None)
+    nodes, gone = _groups(nodes)
+    ids -= gone
     byid = {nn["id"]: nn for nn in nodes}
     try:
         old = int(b.get("v") or 1) < VERSION
@@ -339,6 +394,8 @@ def normalize(b: dict) -> dict:
         if not NID.fullmatch(lid) or lid in lids:
             raise HttpError(400, f"lien sans identifiant valide ou en double : {lid!r}")
         a, z = str(lk.get("a", "")), str(lk.get("b", ""))
+        if a in gone or z in gone:
+            continue              # un lien vers un groupe dissous part avec lui
         if a not in ids or z not in ids:
             raise HttpError(400, f"le lien {lid} relie un objet absent de la planche")
         if a == z:
@@ -812,10 +869,11 @@ def render(b: dict, frame: str = "", check=lambda: None):
             d.text((mx - tw / 2, my - f.size * 0.6), lk["label"].upper(), font=f, fill=T["ink2"])
     check()
 
-    # 3. le reste, dans l'ordre d'empilement
+    # 3. le reste, dans l'ordre d'empilement ; un groupe n'a pas de dessin à lui, et
+    # l'export montre le contenu d'un groupe réduit, déplié (l'export sert à montrer les images)
     for n in shown:
         t = n["type"]
-        if t == "frame":
+        if t in ("frame", "group"):
             continue
         x0, y0, x1, y1 = box(n)
         w, h = x1 - x0, y1 - y0
@@ -1129,6 +1187,76 @@ def selftest(call, ok) -> None:
     _selftest_wires(call, ok, iid)
     _selftest_ports(call, ok)
     _selftest_lot(call, ok, iid)
+    _selftest_groups(call, ok, iid)
+
+
+def _selftest_groups(call, ok, iid: str) -> None:
+    """Les groupes (docs/etudes/ideation_miro.md § 3.1) : l'appartenance sur
+    l'enfant, bornée ; pas d'imbrication, pas de cadre dans un groupe ; un groupe
+    vide disparaît, un groupe à un enfant se dissout avec ses liens ; l'ancien
+    `parent` vers un groupe devient `group` ; l'export montre un groupe réduit déplié."""
+    from PIL import Image
+    b = blank("Essai des groupes")
+    _write(b)
+    nodes = [
+        {"id": "g1", "type": "group", "name": "Casting" * 30, "x": 0, "y": 0, "w": 400, "h": 300, "collapsed": 1, "lod": "oui",
+         "layout": {"mode": "grille", "width": -5, "gap": 9999, "fit": "x"}},
+        {"id": "m1", "type": "media", "item": iid, "kind": "image", "x": 24, "y": 24, "w": 120, "h": 80, "group": "g1"},
+        {"id": "n1", "type": "note", "x": 200, "y": 24, "w": 160, "h": 60, "text": "dans le groupe", "group": "g1"},
+        {"id": "n3", "type": "note", "x": 200, "y": 120, "w": 160, "h": 60, "text": "l'ancien parent", "parent": "g1"},
+        {"id": "f1", "type": "frame", "x": -40, "y": -40, "w": 600, "h": 500, "name": "Zone", "group": "g1"},
+        {"id": "g2", "type": "group", "name": "Seul", "x": 800, "y": 0, "w": 200, "h": 100, "group": "g1",
+         "layout": {"mode": "flow", "width": 300, "gap": 16, "fit": "h"}},
+        {"id": "n2", "type": "note", "x": 824, "y": 24, "w": 160, "h": 60, "text": "seul dans son groupe", "group": "g2"},
+        {"id": "g3", "type": "group", "name": "Vide", "x": 0, "y": 600, "w": 100, "h": 100},
+        {"id": "s1", "type": "sticky", "x": 0, "y": 800, "w": 190, "h": 150, "text": "", "group": "fantome"},
+        {"id": "g4", "type": "group", "name": "Rangée", "x": 0, "y": 1000, "w": 100, "h": 100,
+         "layout": {"mode": "flow", "width": 500, "gap": 16, "fit": "h"}},
+        {"id": "n4", "type": "note", "x": 24, "y": 1024, "w": 160, "h": 60, "text": "a", "group": "g4"},
+        {"id": "n5", "type": "note", "x": 200, "y": 1024, "w": 160, "h": 60, "text": "b", "group": "g4", "parent": "g3"},
+    ]
+    links = [{"id": "l1", "a": "n2", "b": "g2", "kind": "arrow"}, {"id": "l2", "a": "n1", "b": "g1", "kind": "arrow"},
+             {"id": "l3", "a": "g3", "b": "s1", "kind": "line"}]
+    st, sv = call("POST", f"/api/ideation/boards/{b['id']}", {"name": b["name"], "v": VERSION, "nodes": nodes, "links": links, "base_rev": 1})
+    ok(st == 200, f"groupes : une planche à groupes s'enregistre ({st} {sv})")
+    st, got = call("GET", f"/api/ideation/boards/{b['id']}")
+    N = {n["id"]: n for n in got.get("nodes", [])}
+    g1, g4 = N.get("g1", {}), N.get("g4", {})
+    ok(g1.get("layout") == {"mode": "free", "width": 0.0, "gap": 400.0, "fit": ""} and g1.get("collapsed") is True and g1.get("lod") is True
+       and len(g1.get("name", "")) == 120 and g4.get("layout") == {"mode": "flow", "width": 500.0, "gap": 16.0, "fit": "h"},
+       f"groupes : la mise en forme est bornée (mode, largeur, espacement, même taille) ({g1.get('layout')} {g4.get('layout')})")
+    ok(N.get("m1", {}).get("group") == "g1" and N.get("n1", {}).get("group") == "g1",
+       "groupes : l'appartenance est sur l'enfant, gardée quand le groupe est là")
+    ok(N.get("n3", {}).get("group") == "g1" and "parent" not in N.get("n3", {}),
+       f"groupes : un ancien parent qui est un groupe devient son appartenance (sans perte) ({N.get('n3')})")
+    ok("group" not in N.get("f1", {}) and "g2" not in N and "group" not in N.get("n2", {}),
+       "groupes : un cadre n'entre pas dans un groupe ; un groupe dans un groupe n'y reste pas, et, seul avec un enfant, il se dissout")
+    ok("g3" not in N and "group" not in N.get("s1", {}) and "parent" not in N.get("n5", {}),
+       "groupes : un groupe vide disparaît ; une appartenance vers un groupe absent tombe")
+    ok([lk["id"] for lk in got.get("links", [])] == ["l2"],
+       f"groupes : les liens d'un groupe dissous partent avec lui, les autres restent ({[lk['id'] for lk in got.get('links', [])]})")
+    # un groupe réduit à un enfant (un geste qui en retire un) se dissout à l'enregistrement
+    one = [n for n in got["nodes"] if n["id"] != "n5"]
+    st, sv = call("POST", f"/api/ideation/boards/{b['id']}", {**got, "nodes": one, "links": got["links"], "base_rev": got["rev"]})
+    st, again = call("GET", f"/api/ideation/boards/{b['id']}")
+    A = {n["id"]: n for n in again.get("nodes", [])}
+    ok(st == 200 and "g4" not in A and "group" not in A.get("n4", {}) and A.get("g1", {}).get("collapsed") is True,
+       "groupes : un groupe qui n'a plus qu'un enfant se dissout ; les autres restent tels quels")
+    # l'export montre l'intérieur d'un groupe réduit (l'image rouge / bleue, à sa place)
+    st, j = call("POST", f"/api/ideation/boards/{b['id']}/export", {})
+    for _ in range(150):
+        st, j = call("GET", f"/api/jobs/{j['id']}")
+        if j["state"] in ("done", "error", "cancelled"):
+            break
+        time.sleep(0.2)
+    ok(j.get("state") == "done", f"groupes : une planche à groupe réduit s'exporte ({j.get('message')})")
+    if j.get("items"):
+        out = j["items"][0]
+        s = out["params"]["scale"]
+        x0, y0 = min(n["x"] for n in again["nodes"]) - MARGIN, min(n["y"] for n in again["nodes"]) - MARGIN - 28
+        with Image.open(library.path_of(library.get(out["id"]))) as ex:
+            px = ex.convert("RGB").getpixel((round((24 + 30 - x0) * s), round((24 + 40 - y0) * s)))
+        ok(px[0] > 180 and px[2] < 80, f"groupes : l'export montre le contenu du groupe réduit, déplié ({px})")
 
 
 def _selftest_wires(call, ok, iid: str) -> None:
