@@ -56,6 +56,9 @@ mimetypes.add_type("image/webp", ".webp")
 mimetypes.add_type("audio/flac", ".flac")
 
 MAX_BODY = 2 << 30  # 2 Go : une vidéo déposée dans la bibliothèque
+# un corps JSON est lu en mémoire : 32 Mo au plus (le plus gros que les outils
+# acceptent est de 8 Mo : un lot d'Idéation, ideation_collab.OPS_BYTES)
+MAX_JSON = 32 << 20
 
 
 class HttpError(Exception):
@@ -144,7 +147,21 @@ class Request:
         self._body = b""
         return n - left
 
+    def discard(self, chunk: int = 1 << 20) -> None:
+        """Le corps d'une requête refusée avant d'être lu : lu et jeté par
+        morceaux (un dépôt de 2 Go refusé ne passe pas en mémoire), pour que
+        la réponse arrive entière et que la connexion reste bonne."""
+        left = self._length()
+        while left > 0:
+            buf = self._h.rfile.read(min(chunk, left))
+            if not buf:
+                break
+            left -= len(buf)
+        self._body = b""
+
     def json(self) -> dict:
+        if self._body is None and self._length() > MAX_JSON:
+            raise HttpError(413, f"corps trop gros ({MAX_JSON >> 20} Mo au plus)")
         raw = self.body()
         if not raw:
             return {}
@@ -299,8 +316,8 @@ class App:
                 # le corps non lu d'une requête refusée casserait la suivante
                 if req._body is None and method in ("POST", "PUT", "PATCH", "DELETE"):
                     try:
-                        req.body()
-                    except HttpError:
+                        req.discard()   # lu et jeté par morceaux : jamais gardé en mémoire
+                    except (HttpError, OSError):
                         self.close_connection = True
                 try:
                     self._send(out, head=(method == "HEAD"))

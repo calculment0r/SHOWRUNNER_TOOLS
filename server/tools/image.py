@@ -609,7 +609,11 @@ def save_mask(data_url: str) -> str:
     raw = base64.b64decode(m.group(1))
     if len(raw) > 8 << 20:
         raise ValueError("masque trop lourd")
-    im = Image.open(BytesIO(raw)).convert("L")
+    # PNG seulement : sans `formats`, PIL devine au contenu (un EPS partirait vers Ghostscript, audit H2)
+    try:
+        im = Image.open(BytesIO(raw), formats=["PNG"]).convert("L")
+    except Exception as e:  # noqa: BLE001 — PIL lève toutes sortes d'erreurs
+        raise ValueError("masque : ce n'est pas un PNG lisible") from e
     if not im.getbbox():
         raise ValueError("la zone est vide : peignez sur l'image")
     name = f"msk-{secrets.token_hex(6)}.png"

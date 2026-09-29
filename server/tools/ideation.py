@@ -639,6 +639,9 @@ def r_save(req, bid):
             raise HttpError(409, "cette planche a été modifiée ailleurs (un autre onglet ?) : rechargez-la")
         # la version : celle de la page (qui a lu la planche migrée), sinon celle du fichier
         new = normalize({**d, "id": bid, "name": d.get("name", cur.get("name")), "v": d.get("v") or cur.get("v") or 1})
+        from tools import ideation_collab   # un invité ne pose que ce qu'il voit déjà
+        if not ideation_collab.guest_nodes_ok(getattr(req, "user", None), cur.get("nodes") or [], new["nodes"]):
+            raise HttpError(403, "invité : on ne pose ici que des objets déjà sur tes planches")
         new.update(created=cur.get("created"), updated=library.now(), rev=int(cur.get("rev", 1)) + 1)
         _write(new)
     return {"ok": True, "rev": new["rev"], "updated": new["updated"]}
@@ -736,7 +739,7 @@ def r_palette(req, item_id):
     if not ITEM.fullmatch(item_id or ""):
         raise HttpError(400, "objet invalide")
     it = library.get(item_id)
-    if not it:
+    if not it or not library.readable(it):   # comme /api/library : un objet invisible n'existe pas
         raise HttpError(404, f"introuvable : {item_id}")
     path = picture_of(it)
     if not path or not path.exists():

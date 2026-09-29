@@ -210,7 +210,7 @@ export function createInspector(app) {
   }
 
   function textPanel(n) {
-    const ta = el('textarea', { class: 'fld', rows: n.type === 'title' ? 2 : 5, placeholder: 'le texte' });
+    const ta = el('textarea', { class: 'fld', rows: n.type === 'title' ? 2 : 5, placeholder: 'le texte', 'data-reg': 'text' });
     ta.value = n.text || '';
     let ch = () => {};
     ta.addEventListener('focus', () => { ch = app.editing(); });
@@ -231,7 +231,7 @@ export function createInspector(app) {
   function framePanel(n) {
     const inner = S.board.nodes.filter((m) => m !== n && inside(m, n));
     const imgs = inner.filter((m) => m.type === 'media' && m.kind === 'image' && !S.items.get(m.item)?.missing);
-    const name = el('input', { class: 'fld', value: n.name || '', maxlength: 120, placeholder: 'le nom du cadre' });
+    const name = el('input', { class: 'fld', value: n.name || '', maxlength: 120, placeholder: 'le nom du cadre', 'data-reg': 'name' });
     let ch = () => {};
     name.addEventListener('focus', () => { ch = app.editing(); });
     name.addEventListener('input', () => { ch(); n.name = name.value; app.render(); });
@@ -250,7 +250,7 @@ export function createInspector(app) {
     const G = app.groups;
     const kids = kidsOf(S.board, g.id);
     const L = layoutOf(g);
-    const name = el('input', { class: 'fld', value: g.name || '', maxlength: 120, placeholder: 'le nom du groupe' });
+    const name = el('input', { class: 'fld', value: g.name || '', maxlength: 120, placeholder: 'le nom du groupe', 'data-reg': 'name' });
     let ch = () => {};
     name.addEventListener('focus', () => { ch = app.editing(); });
     name.addEventListener('input', () => { ch(); g.name = name.value; app.canvas.renderSoon(); });
@@ -305,7 +305,7 @@ export function createInspector(app) {
       ta = inbox(app, pr, 'la prose est copiée dans le prompt de la carte');
       if (pr.son || pr.musique) ta.append(el('p', { class: 'why' }, 'Son et Musique du composeur ne vont qu’à la vidéo : ignorés ici.'));
     } else {
-      ta = el('textarea', { class: 'fld', rows: 5, id: 'insp-prompt', placeholder: 'le prompt, en anglais — ou branchez un texte, un composeur' });
+      ta = el('textarea', { class: 'fld', rows: 5, id: 'insp-prompt', placeholder: 'le prompt, en anglais — ou branchez un texte, un composeur', 'data-reg': 'prompt' });
       ta.value = n.prompt || '';
       let ch = () => {};
       ta.addEventListener('focus', () => { ch = app.editing(); });

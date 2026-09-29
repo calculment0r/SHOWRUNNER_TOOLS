@@ -228,7 +228,7 @@ export function mindMenu(app, n, I) {
 
 export function mindPanel(app, n, I, K) {
   const { card, row, hint, b } = K;
-  const f = el('input', { class: 'fld', value: n.text || '', maxlength: 300, placeholder: 'le nom du nœud' });
+  const f = el('input', { class: 'fld', value: n.text || '', maxlength: 300, placeholder: 'le nom du nœud', 'data-reg': 'text' });
   let ch = () => {};
   f.addEventListener('focus', () => { ch = app.editing(); });
   f.addEventListener('input', () => { ch(); const c = app.node(n.id); if (c) c.text = f.value.replace(/\s+/g, ' '); app.canvas.renderSoon(); });

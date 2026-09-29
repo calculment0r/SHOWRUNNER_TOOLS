@@ -16,3 +16,19 @@ server/
 tools/
 docs/
 porte/
+# ce qui ne sert qu'aux machines, jamais à une page (relevé du 29/09 : aucune page ne charge un .py, un .sh ni
+# analyse/outils/) : la chaîne de Movie Analysis (Python, shell), ses outils (banc, contrôles, le Worker du dépôt
+# partagé), les notes de provenance
+*.py
+*.sh
+analyse/outils/
+**/PROVENANCE.md
+# au cas où un secret traînerait dans l'arbre de DGX2 (le déploiement publie l'arbre, pas le dernier commit)
+*.key
+*.pem
+.env
+.env.*
+.dev.vars
+*.local.json
+*.log
+*.pid

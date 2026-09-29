@@ -2,14 +2,11 @@
   // La porte d'entrée de Showrunner Tools : le portail, sous https://showrunner.luxigone.workers.dev
   // (le nom du Worker + le sous-domaine workers.dev de Cal, celui de movie-analysis-partage).
   // PRÊT À DÉPLOYER, NON DÉPLOYÉ. L'ordre exact des gestes : docs/etudes/cloudflare.md, « Prêt à déployer ».
-  // En bref, depuis porte/ sur DGX2 (wrangler est dans ~/.local/bin) :
-  //   wrangler r2 bucket create showrunner-bibliotheque
-  //   wrangler vpc service create portail-dgx2 --type http --tunnel-id <id du tunnel dgx2> --ipv4 127.0.0.1 --http-port 9790
-  //   (coller l'identifiant rendu dans vpc_services ci-dessous, et le tag AUD dans vars)
-  //   wrangler deploy --dry-run
-  //   wrangler secret put PORTE_CLE          (la clé HMAC : le contenu de ~/.config/showrunner/porte.key sur DGX2)
-  //   wrangler secret put ADMINS             (les e-mails admin, séparés par des virgules : pas dans ce dépôt public)
-  //   wrangler deploy
+  // Les gestes, dans l'ordre et vérifiés : bash tools/porte.sh (sur DGX2, depuis ~/SHOWRUNNER_TOOLS). Déjà faits le
+  // 29/09 : le bucket R2, le tunnel dgx2, le service VPC portail-dgx2. Reste : son identifiant dans vpc_services, le
+  // tag AUD (POLICY_AUD, après l'application Access), le déploiement (tools/porte.sh deploie refuse tant qu'un
+  // emplacement "<…>" reste), les secrets PORTE_CLE (depuis ~/.config/showrunner/porte.key) et ADMINS (les e-mails
+  // admin : pas dans ce dépôt public).
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "showrunner",
   "main": "worker.js",
@@ -41,7 +38,7 @@
   //                 (Zero Trust → Access controls → Applications → l'application → Configure → Additional settings)
   "vars": {
     "TEAM_DOMAIN": "https://nirvalab.cloudflareaccess.com",
-    "POLICY_AUD": "<tag AUD de l'application Access>"
+    "POLICY_AUD": "1bf6d877f2f6454c6693e85e9c60648dfd148793914ce22447cb04da5c38ff90"
   },
 
   // La bibliothèque publiée : wrangler r2 bucket create showrunner-bibliotheque (avant le premier déploiement).
@@ -59,7 +56,7 @@
   //   { "binding": "PONT_DGX2", "service_id": "<id du service pont-dgx2>" }   tunnel de DGX2, 127.0.0.1:9770
   //   { "binding": "PONT_DGX1", "service_id": "<id du service pont-dgx1>" }   tunnel de DGX1, 127.0.0.1:9770
   "vpc_services": [
-    { "binding": "PORTAIL", "service_id": "<id du service portail-dgx2>" }
+    { "binding": "PORTAIL", "service_id": "01a0edac-6af3-71f2-8f81-e1d56a22de6f" }
   ],
 
   // Limite de débit par e-mail sur ce qui écrit : 30 par minute, compté par lieu Cloudflare (pas global).

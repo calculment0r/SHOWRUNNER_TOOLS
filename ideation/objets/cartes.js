@@ -151,8 +151,9 @@ export function cardPanel(app, n, K) {
   const { card, row, hint, b } = K;
   const d = n.data || {};
   // un champ : chaque frappe suit sur la carte, un seul pas d'annulation pour la saisie
-  const field = (label, value, set, { ph = '', max = 200, area = false, cls = '' } = {}) => {
-    const f = el(area ? 'textarea' : 'input', { class: `fld sm ${cls}`.trim(), placeholder: ph, maxlength: max, rows: area ? 3 : null });
+  // reg : le registre de co-édition que le champ écrit (coedition.js, follow)
+  const field = (label, value, set, { ph = '', max = 200, area = false, cls = '', reg = null } = {}) => {
+    const f = el(area ? 'textarea' : 'input', { class: `fld sm ${cls}`.trim(), placeholder: ph, maxlength: max, rows: area ? 3 : null, 'data-reg': reg });
     f.value = value || '';
     let ch = () => {};
     f.addEventListener('focus', () => { ch = app.editing(); });
@@ -162,7 +163,7 @@ export function cardPanel(app, n, K) {
   const setData = (k2) => (c, v) => { c.data = { ...c.data, [k2]: v }; };
   const seg = (items) => el('div', { class: 'seg' }, ...items.map(([on, label, fn]) => el('button', { class: 'tb' + (on ? ' on' : ''), type: 'button', onclick: fn }, label)));
   const mut = (fn) => () => { const c = app.node(n.id); if (c) app.mutate(() => fn(c)); };
-  const parts = [field('', n.text, (c, v) => { c.text = v; }, { ph: CARD_KINDS[n.kind]?.ph || 'le titre', max: 300 }),
+  const parts = [field('', n.text, (c, v) => { c.text = v; }, { ph: CARD_KINDS[n.kind]?.ph || 'le titre', max: 300, reg: 'text' }),
     seg(CARD_ORDER.map((k) => [n.kind === k, CARD_KINDS[k].name, mut((c) => changeKind(c, k))])),
     swatches(app, n, 'card-color')];
   if (n.kind === 'task') {

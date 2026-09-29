@@ -58,13 +58,24 @@ export function eq(a, b) {
 }
 
 // ── les registres d'un objet ─────────────────────────────────
+// Des registres fins (ideation_collab.py, TEXT_KEYS et SLOT_KEY : la même règle) : les
+// cases d'un composeur ont chacune le sien (`s:<case>` sans son texte, `t:<case>` son
+// texte) et leur ordre un autre (`slots#`) ; un texte libre part avec `b`, la valeur
+// d'où il est parti, et le serveur le fusionne avec ce que d'autres ont écrit entre-temps.
 const geoOf = (o) => (AUTO_H.has(o.type) ? GEO_A : GEO);
+const SLOT_KEY = /^([st]):([A-Za-z0-9_-]{1,40})$/;
+const TEXT_KEYS = { n: new Set(['text', 'prompt', 'name', 'title', 'sound', 'music']), l: new Set(['label']) };
+export const isText = (t, k) => TEXT_KEYS[t]?.has(k) || (t === 'n' && k.startsWith('t:'));
 function regs(t, o, into = new Set()) {
   for (const k of Object.keys(o)) {
     if (k === 'id' || o[k] === undefined) continue;
     if (t === 'n' && GEO.includes(k)) into.add(k === 'h' && AUTO_H.has(o.type) ? 'h' : 'geo');
     else if (t === 'l' && ENDS.includes(k)) into.add('ends');
-    else into.add(k);
+    else if (t === 'n' && k === 'slots' && o.type === 'compose' && Array.isArray(o.slots)) {
+      // chaque case (elle d'abord, son texte ensuite), puis leur ordre : une case neuve existe avant d'être rangée
+      for (const s of o.slots) { into.add('s:' + s.id); into.add('t:' + s.id); }
+      into.add('slots#');
+    } else into.add(k);
   }
   return into;
 }
@@ -74,12 +85,62 @@ function get(t, o, k) {
     for (const g of k === 'geo' ? geoOf(o) : ENDS) if (o[g] !== undefined) v[g] = o[g];
     return v;
   }
+  if (t === 'n' && k === 'slots#') return Array.isArray(o.slots) ? o.slots.map((s) => s.id) : undefined;
+  const m = t === 'n' && SLOT_KEY.exec(k);
+  if (m) {
+    const s = Array.isArray(o.slots) ? o.slots.find((x) => x.id === m[2]) : null;
+    if (!s) return undefined;
+    if (m[1] === 't') return s.text;
+    const { text, ...rest } = s;   // eslint-disable-line no-unused-vars
+    return rest;
+  }
   return o[k];
 }
 function put(t, o, k, v) {
   if (k === 'geo') { for (const [g, x] of Object.entries(v || {})) if (GEO.includes(g)) o[g] = x; return; }
   if (k === 'ends') { for (const g of ENDS) { if (v && v[g] !== undefined) o[g] = v[g]; else delete o[g]; } return; }
+  if (t === 'n' && k === 'slots#') { if (Array.isArray(o.slots) && Array.isArray(v)) reorder(o.slots, v); return; }
+  const m = t === 'n' && SLOT_KEY.exec(k);
+  if (m) {
+    // la case elle-même reste le même objet : le composeur garde ses champs branchés dessus
+    if (!Array.isArray(o.slots)) o.slots = [];
+    const i = o.slots.findIndex((x) => x.id === m[2]);
+    if (m[1] === 't') { if (i >= 0) o.slots[i].text = typeof v === 'string' ? v : ''; return; }
+    if (v === undefined) { if (i >= 0) o.slots.splice(i, 1); return; }
+    if (i < 0) { o.slots.push({ ...clone(v), id: m[2], text: '' }); return; }
+    const s = o.slots[i];
+    for (const x of Object.keys(s)) if (x !== 'id' && x !== 'text') delete s[x];
+    Object.assign(s, clone(v), { id: m[2], text: s.text });
+    return;
+  }
   if (v === undefined) delete o[k]; else o[k] = clone(v);
+}
+// la fusion à trois d'un texte (ideation_collab.py, merge_text : la même) : deux passages
+// disjoints restent tous deux ; le même passage, le dernier écrit gagne
+function region(a, b) {
+  const n = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < n && a[i] === b[i]) i++;
+  if (i > 0 && /[\uDC00-\uDFFF]/.test(a[i] || b[i] || '')) i--;   // jamais au milieu d'une paire (un emoji)
+  let j = 0;
+  while (j < n - i && a[a.length - 1 - j] === b[b.length - 1 - j]) j++;
+  if (j > 0 && /[\uDC00-\uDFFF]/.test(a[a.length - j] || '')) j--;
+  return [i, a.length - j, b.slice(i, b.length - j)];
+}
+export function mergeText(base, theirs, mine) {
+  if (typeof base !== 'string' || typeof theirs !== 'string' || base === theirs || mine === theirs) return mine;
+  if (mine === base) return theirs;
+  const [s1, e1, r1] = region(base, theirs), [s2, e2, r2] = region(base, mine);
+  if (e1 <= s2) return base.slice(0, s1) + r1 + base.slice(e1, s2) + r2 + base.slice(e2);
+  if (e2 <= s1) return base.slice(0, s2) + r2 + base.slice(e2, s1) + r1 + base.slice(e1);
+  return mine;
+}
+// où tombe un curseur quand le texte `was` devient `now`
+function mapPos(was, now, p) {
+  const [s, e, r] = region(was, now);
+  if (p <= s) return p;
+  if (p >= e) return p + now.length - was.length;
+  return s + r.length;
 }
 function keysOf(op) {
   if (op.t === 'b') return ['b||name'];
@@ -181,7 +242,7 @@ export function createCoedition(app, hooks = {}) {
       const [t, , k] = key.split('|');
       if (t === 'b') return 2;
       if (k === '*') return bf.obj ? (t === 'n' ? 0 : 1) : (t === 'l' ? 3 : 4);
-      return k === '#' ? 5 : 2;
+      return k === '#' ? 5 : k === 'slots#' ? 2.5 : 2;   // l'ordre des cases après les cases remises
     };
     const E = [...g.m.entries()].sort((a, b) => phase(...a) - phase(...b));
     for (const [key, bf] of E) {
@@ -233,6 +294,7 @@ export function createCoedition(app, hooks = {}) {
   function emit(t, id, k, v, before, out) {
     const op = { o: 'set', t, id, k };
     if (v !== undefined) op.v = clone(v);
+    if (isText(t, k) && typeof v === 'string' && typeof before === 'string') op.b = before;   // d'où part ce texte
     out.push(op);
     if (!MACHINE.has(k)) rec(`${t}|${id}|${k}`, { v: clone(before) });
   }
@@ -413,11 +475,23 @@ export function createCoedition(app, hooks = {}) {
     for (const op of ops) { const ks = keysOf(op); for (const k of ks) inc(k); K.outKeys.push(...ks); K.out.push(op); }
     send();
   }
-  // un registre changé plusieurs fois dans le lot : sa dernière valeur
+  // un registre changé plusieurs fois dans le lot : sa dernière valeur (un texte : partie
+  // d'où la première était partie — les valeurs d'entre-deux n'ont jamais quitté la page)
   function compact(ops) {
-    const last = new Map();
-    ops.forEach((op, i) => { if (op.o === 'set') last.set(`${op.t}|${op.id}|${op.k}`, i); });
-    return ops.filter((op, i) => op.o !== 'set' || last.get(`${op.t}|${op.id}|${op.k}`) === i);
+    const last = new Map(), first = new Map();
+    ops.forEach((op, i) => {
+      if (op.o !== 'set') return;
+      const key = `${op.t}|${op.id}|${op.k}`;
+      last.set(key, i);
+      if (!first.has(key)) first.set(key, op);
+    });
+    return ops.filter((op, i) => op.o !== 'set' || last.get(`${op.t}|${op.id}|${op.k}`) === i).map((op) => {
+      const f = op.o === 'set' ? first.get(`${op.t}|${op.id}|${op.k}`) : null;
+      if (!f || f === op || !('b' in op)) return op;
+      const o2 = { ...op };
+      if ('b' in f) o2.b = f.b; else delete o2.b;
+      return o2;
+    });
   }
   function paint() {
     if (!K.on) return;
@@ -505,14 +579,57 @@ export function createCoedition(app, hooks = {}) {
 
   // ── les opérations reçues ────────────────────────────────────
   // un registre venu du serveur : sauf si j'ai là un changement non confirmé, ou en cours
+  // (un texte, lui, se fusionne : ma frappe par-dessus la leur, le champ où j'écris suit)
   function putReg(t, o, b, k, v) {
     if (pending(`${t}|${o.id}|${k}`) || pending(`${t}|${o.id}|*`)) { K.stats.skipped++; return false; }
     const cur = get(t, o, k), bc = get(t, b, k);
     put(t, b, k, v);
-    if (!eq(cur, bc)) { K.stats.skipped++; return false; }   // un geste en cours ici : il partira et gagnera
+    const text = isText(t, k) && typeof cur === 'string' && typeof v === 'string';
+    if (!eq(cur, bc)) {
+      if (!text || typeof bc !== 'string') { K.stats.skipped++; return false; }   // un geste en cours ici : il partira et gagnera
+      const m = mergeText(bc, v, cur);
+      if (m === cur) return false;
+      K.stats.merged = (K.stats.merged || 0) + 1;
+      follow(o, k, cur, m);
+      put(t, o, k, m);
+      return true;
+    }
     if (eq(cur, k === 'geo' ? { ...cur, ...v } : v)) return false;
+    if (text) follow(o, k, cur, v);
     put(t, o, k, v);
     return true;
+  }
+  // le champ où j'écris ce registre de cet objet (sur la planche, ou dans l'inspecteur pour
+  // l'objet choisi ; il le dit par data-reg) : il prend le nouveau texte, le curseur reste à
+  // sa place. Un champ qui ne le dit pas n'est pas touché (il se refait quand on le quitte).
+  function follow(o, k, was, now) {
+    const f = document.activeElement;
+    if (!f || f.dataset?.reg !== k || !(f.matches?.('textarea, input') || f.isContentEditable)) return;
+    const host = f.closest?.('[data-id]');
+    if (host ? host.dataset.id !== o.id : !(f.closest?.('#insp') && S.sel.size === 1 && S.sel.has(o.id))) return;
+    if (f.isContentEditable) {
+      const tt = f.style.textTransform;
+      f.style.textTransform = 'none';
+      const shown = f.innerText.replace(/\n$/, '');
+      f.style.textTransform = tt;
+      if (shown !== was) return;
+      const sel = getSelection();
+      let p = now.length;
+      if (sel.rangeCount && f.contains(sel.focusNode)) {
+        const r = document.createRange();
+        r.selectNodeContents(f);
+        r.setEnd(sel.focusNode, sel.focusOffset);
+        p = mapPos(was, now, r.toString().length);
+      }
+      f.textContent = now;
+      const tn = f.firstChild;
+      if (tn) sel.collapse(tn, Math.min(p, tn.length));
+      return;
+    }
+    if (f.value !== was) return;
+    const a = f.selectionStart, z = f.selectionEnd;
+    f.value = now;
+    try { f.setSelectionRange(mapPos(was, now, a), mapPos(was, now, z)); } catch { /* un champ sans sélection */ }
   }
   function putObj(t, v) {
     const o = find(t, v.id), b = baseMap(t).get(v.id);
@@ -633,7 +750,8 @@ export function createCoedition(app, hooks = {}) {
       else B.links = B.links.filter((x) => x.id !== op.id);
     } else if (op.o === 'set') {
       const o = list.find((x) => x.id === op.id);
-      if (o) put(op.t, o, op.k, op.v);
+      // mon texte rejoué sur la planche relue : fusionné avec ce que d'autres y ont écrit
+      if (o) put(op.t, o, op.k, typeof op.b === 'string' ? mergeText(op.b, get(op.t, o, op.k), op.v) : op.v);
     } else if (op.o === 'ord') reorder(list, op.ids);
   }
   function adoptBoard(b) {

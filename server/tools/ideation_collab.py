@@ -419,9 +419,114 @@ def role_of(u: dict | None, bid: str) -> str:
     m = a["members"].get(u["id"])
     if m and m.get("role") in ROLES:
         return m["role"]
-    if u["id"] in _guests():
+    if auth.is_guest(u):   # l'invité : les planches de ses liens, rien d'autre
         return "none"
     return a.get("open") if a.get("open") in OPEN else "editor"
+
+
+# ── l'invité (core/auth.py, `guest_realm`) : ses planches, leurs objets ──
+# Un pseudo neuf qui ouvre un lien devient un invité du portail (rôle `invite`) :
+# il n'atteint que les routes d'Idéation déclarées ici, pour les planches où un
+# lien lui donne un rôle, et ne lit dans la bibliothèque que les objets posés
+# sur elles. Un lien retiré : la planche et ses objets lui sont fermés aussitôt.
+_bitems: dict[str, tuple] = {}
+
+
+def node_items(n: dict) -> set:
+    """Les objets de la bibliothèque qu'un objet de la planche montre : une image,
+    une vidéo, un son, un élément ; l'image d'un nuancier ; le visage d'une carte."""
+    out = set()
+    it = n.get("item")
+    if n.get("type") in ("media", "palette") and isinstance(it, str) and it:
+        out.add(it)
+    d = n.get("data")
+    if n.get("type") == "card" and isinstance(d, dict) and isinstance(d.get("item"), str) and d["item"]:
+        out.add(d["item"])
+    return out
+
+
+def board_items(bid: str) -> frozenset:
+    """Les objets posés sur une planche (celle de la co-édition si elle est en mémoire,
+    sinon le fichier), gardés tant que la planche ne change pas."""
+    ide = _ide()
+    with ide._lock:
+        h = _hot.get(bid)
+        if h is not None:
+            key, nodes = ("mem", id(h), h["b"].get("rev")), h["b"]["nodes"]
+        else:
+            f = ide._path(bid)
+            try:
+                st = f.stat()
+            except OSError:
+                return frozenset()
+            key, nodes = ("disque", st.st_mtime_ns, st.st_size), None
+        c = _bitems.get(bid)
+        if c and c[0] == key:
+            return c[1]
+        if nodes is None:
+            try:
+                nodes = json.loads(f.read_text(encoding="utf-8")).get("nodes") or []
+            except (OSError, ValueError):
+                nodes = []
+        got = frozenset(i for n in nodes if isinstance(n, dict) for i in node_items(n))
+        _bitems[bid] = (key, got)
+        return got
+
+
+def guest_boards(u: dict) -> list[str]:
+    """Les planches d'un invité : celles de ses liens où il a encore un rôle."""
+    ide = _ide()
+    out = []
+    for bid in (_guests().get(u.get("id")) or {}).get("boards", []):
+        if isinstance(bid, str) and ide.BID.fullmatch(bid) and ide._path(bid).exists() \
+                and role_of(u, bid) in ("viewer", "editor"):
+            out.append(bid)
+    return out
+
+
+def guest_items(u: dict) -> set:
+    return {i for bid in guest_boards(u) for i in board_items(bid)}
+
+
+def _guest_home(u: dict) -> str:
+    b = guest_boards(u)
+    return f"/ideation/#{b[0]}" if b else "/ideation/"
+
+
+def guest_nodes_ok(u: dict | None, before: list, after: list) -> bool:
+    """Un invité ne pose sur une planche que des objets de la bibliothèque qu'il voit
+    déjà (copier, coller, dupliquer) : sinon, poser un identifiant deviné lui
+    ouvrirait un objet qu'on ne lui a pas montré."""
+    if not auth.is_guest(u):
+        return True
+    had = {i for n in before for i in node_items(n)}
+    new = {i for n in after for i in node_items(n)} - had
+    return not new or new <= auth.guest_items(u)
+
+
+_BID_RX = r"(?P<bid>ide-\d{8}-\d{6}-[0-9a-f]{4})"
+_ITEM_RX = r"(?P<item>[a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4})"
+
+
+def _is_mine(u: dict, bid: str) -> bool:
+    return bid in guest_boards(u)
+
+
+def _sees(u: dict, item: str) -> bool:
+    return item in auth.guest_items(u)
+
+
+GUEST_ROUTES = [
+    ("GET", r"/api/ideation/meta/?", None),
+    ("GET", r"/api/ideation/boards/?", None),                     # la liste ne rend que ses planches
+    ("GET POST", rf"/api/ideation/boards/{_BID_RX}/?", _is_mine),   # lire ; l'enregistrement de repli (éditeur)
+    ("POST", rf"/api/ideation/boards/{_BID_RX}/rename/?", _is_mine),
+    ("GET", rf"/api/ideation/palette/{_ITEM_RX}/?", _sees),
+    ("GET POST", rf"/api/ideation/collab/{_BID_RX}(?:/[A-Za-z0-9_-]+)*/?", _is_mine),   # flux, présence, fil, opérations
+    ("POST", r"/api/library/batch/?", None),                     # filtré par auth.can_read_item
+    ("GET", rf"/api/library/{_ITEM_RX}(?:/view)?/?", _sees),
+    ("GET", rf"/library/{_ITEM_RX}/.+", _sees),
+]
 
 
 def can_of(role: str, bid: str) -> dict:
@@ -599,13 +704,17 @@ def r_redeem(req, tok):
             raise HttpError(410, "ce lien d'invitation a expiré : demande-en un autre")
         fresh = u.get("state") == "pending"
         if fresh:
-            auth.accept(u["id"], by=rec["by"])
+            # le lien vaut l'accord du propriétaire pour CETTE planche : un invité, pas un ami
+            # du portail (core/auth.py, GUEST) ; Cal en fait un ami dans l'Admin s'il le veut
+            auth.accept(u["id"], by=rec["by"], role=auth.GUEST)
             g = _guests()
             g[u["id"]] = {"boards": [bid], "invite": rec["id"], "by": rec["by"], "t": now}
             _gsave()
-        elif u["id"] in _guests() and bid not in _guests()[u["id"]]["boards"]:
-            _guests()[u["id"]]["boards"].append(bid)
-            _gsave()
+        elif auth.is_guest(u) or u["id"] in _guests():   # un invité qui ouvre un second lien : une planche de plus
+            g = _guests().setdefault(u["id"], {"boards": [], "invite": rec["id"], "by": rec["by"], "t": now})
+            if bid not in g["boards"]:
+                g["boards"].append(bid)
+                _gsave()
         u = auth.user(u["id"]) or u
         # le rôle du lien, sauf si la personne a déjà mieux sur cette planche (jamais de recul)
         if RANK[role_of(u, bid)] < RANK[rec["role"]]:
@@ -616,7 +725,8 @@ def r_redeem(req, tok):
         role = role_of(u, bid)
     auth.journal("idéation · invitation ouverte", user=u["id"], board=bid, invite=rec["id"], role=role, accepte=fresh)
     _reroles(bid)
-    return {"board": bid, "role": role, "role_fr": ROLE_FR[role], "accepted": fresh}
+    return {"board": bid, "role": role, "role_fr": ROLE_FR[role], "accepted": fresh,
+            "guest": auth.is_guest(auth.user(u["id"]))}
 
 
 # ── les routes ───────────────────────────────────────────────
@@ -1262,8 +1372,90 @@ def _result_twice(h: dict, lk: dict, added: set) -> bool:
     return False
 
 
-def _one(ide, h: dict, op, added: set):
-    """Applique une opération ; rend sa forme normalisée (None : sans effet)."""
+# ── des registres fins (29/09) ──────────────────────────────
+# Un registre entier par propriété était trop gros pour deux cas : les cases d'un
+# composeur (une seule liste : deux personnes dans deux cases s'écrasaient) et le
+# texte d'une note (deux personnes dans la même note : la dernière frappe
+# emportait tout). Le composeur a donc un registre par case (`s:<case>` : la case
+# sans son texte ; `t:<case>` : son texte) et un pour leur ordre (`slots#`, fusionné
+# comme l'ordre des objets). Un texte libre (TEXT_KEYS, et `t:<case>`) porte en plus
+# `b`, la valeur que la page avait sous les yeux : le serveur fusionne alors sa
+# modification avec celles arrivées entre-temps (merge_text) ; seules deux
+# modifications du même passage se départagent encore au dernier écrit.
+TEXT_KEYS = {"n": ("text", "prompt", "name", "title", "sound", "music"), "l": ("label",)}
+SLOT_KEY = re.compile(r"([st]):([A-Za-z0-9_-]{1,40})")
+
+
+def _region(a: str, b: str) -> tuple[int, int, str]:
+    """Le passage de `a` que `b` remplace : a[i:j] → le texte rendu (préfixe et suffixe communs ôtés)."""
+    n = min(len(a), len(b))
+    i = 0
+    while i < n and a[i] == b[i]:
+        i += 1
+    j = 0
+    while j < n - i and a[len(a) - 1 - j] == b[len(b) - 1 - j]:
+        j += 1
+    return i, len(a) - j, b[i:len(b) - j]
+
+
+def merge_text(base, theirs: str, mine: str) -> str:
+    """Une fusion à trois (base : ce que la page avait ; theirs : le serveur à présent ;
+    mine : la page) de deux modifications d'un seul passage chacune (une frappe, un
+    collage, un effacement : la page envoie son texte 5 fois par seconde). Deux passages
+    disjoints : les deux restent ; le même passage : le dernier écrit gagne."""
+    if not isinstance(base, str) or not isinstance(theirs, str) or base == theirs or mine == theirs:
+        return mine
+    if mine == base:
+        return theirs
+    s1, e1, r1 = _region(base, theirs)
+    s2, e2, r2 = _region(base, mine)
+    if e1 <= s2:      # le leur avant le mien (à la même place : le premier arrivé d'abord)
+        return base[:s1] + r1 + base[e1:s2] + r2 + base[e2:]
+    if e2 <= s1:
+        return base[:s2] + r2 + base[e2:s1] + r1 + base[e1:]
+    return mine
+
+
+def _set_slots(ide, cur: dict, k: str, op: dict) -> list:
+    """Les cases d'un composeur après une opération sur `slots#`, `s:<case>` ou `t:<case>`."""
+    if cur.get("type") != "compose":
+        raise _Drop("invalide", ("n", cur["id"]))
+    slots = [dict(s) for s in cur.get("slots") or []]
+    if k == "slots#":
+        ids = op.get("v")
+        if not isinstance(ids, list) or len(ids) > ide.MAX_SLOTS * 4:
+            raise _Drop("invalide", ("n", cur["id"]))
+        byid = {s["id"]: s for s in slots}
+        return [byid[i] for i in _merge([str(x) for x in ids], [s["id"] for s in slots])]
+    kind, sid = SLOT_KEY.fullmatch(k).groups()
+    at = next((i for i, s in enumerate(slots) if s["id"] == sid), None)
+    if kind == "t":
+        if at is None:
+            raise _Drop("absent")          # la case retirée avant : le retrait gagne
+        v = op.get("v", "")
+        if not isinstance(v, str):
+            raise _Drop("invalide", ("n", cur["id"]))
+        slots[at]["text"] = merge_text(op.get("b"), slots[at].get("text", ""), v)
+        return slots
+    if "v" not in op:
+        if at is not None:
+            slots.pop(at)
+        return slots
+    v = op["v"]
+    if not isinstance(v, dict):
+        raise _Drop("invalide", ("n", cur["id"]))
+    new = {**{x: y for x, y in v.items() if x not in ("id", "text")}, "id": sid,
+           "text": slots[at].get("text", "") if at is not None else ""}
+    if at is None:
+        slots.append(new)
+    else:
+        slots[at] = new
+    return slots
+
+
+def _one(ide, h: dict, op, added: set, allowed=None):
+    """Applique une opération ; rend sa forme normalisée (None : sans effet).
+    `allowed` : pour un invité, les objets de la bibliothèque qu'il peut poser."""
     if not isinstance(op, dict):
         raise _Drop("invalide")
     o, t = op.get("o"), op.get("t")
@@ -1290,6 +1482,8 @@ def _one(ide, h: dict, op, added: set):
             obj = ide._node(v) if t == "n" else _link(ide, h, v)
         except HttpError as e:
             raise _Drop("invalide", *([fix] if fix else [])) from e
+        if allowed is not None and t == "n" and node_items(obj) - node_items(idx.get(obj["id"]) or {}) - allowed:
+            raise _Drop("invité", fix)       # un objet de la bibliothèque qu'on ne lui a pas montré
         cur = idx.get(obj["id"])
         if cur is not None:              # un renvoi, ou l'annulation d'un retrait déjà rejoué
             cur.clear()
@@ -1328,25 +1522,40 @@ def _one(ide, h: dict, op, added: set):
             raise _Drop("invalide", (t, oid))
         trial = dict(cur)
         group = GEO if (t, k) == ("n", "geo") else ENDS if (t, k) == ("l", "ends") else None
+        slot = t == "n" and (k == "slots#" or SLOT_KEY.fullmatch(k))
         if group:
             v = op.get("v")
             if not isinstance(v, dict):
                 raise _Drop("invalide", (t, oid))
             keys = [g for g in group if g in v]
             trial.update({g: v[g] for g in keys})
+        elif slot:
+            trial["slots"] = _set_slots(ide, cur, k, op)
         elif "v" in op:
-            trial[k] = op["v"]
+            v = op["v"]
+            if k in TEXT_KEYS.get(t, ()) and isinstance(v, str):
+                v = merge_text(op.get("b"), cur.get(k), v)
+            trial[k] = v
         else:
             trial.pop(k, None)
         try:
             obj = ide._node(trial) if t == "n" else _link(ide, h, trial)
         except HttpError as e:
             raise _Drop("invalide", (t, oid)) from e
+        if allowed is not None and t == "n" and node_items(obj) - node_items(cur) - allowed:
+            raise _Drop("invité", (t, oid))
         cur.clear()
         cur.update(obj)
         out = {"o": "set", "t": t, "id": oid, "k": k}
         if group:
             out["v"] = {g: cur[g] for g in keys if g in cur}
+        elif k == "slots#":
+            out["v"] = [s["id"] for s in cur.get("slots", [])]
+        elif slot:
+            kind, sid = SLOT_KEY.fullmatch(k).groups()
+            s = next((x for x in cur.get("slots", []) if x["id"] == sid), None)
+            if s is not None:    # absente (retirée, ou au-delà du plafond) : la retirer partout
+                out["v"] = s["text"] if kind == "t" else {x: y for x, y in s.items() if x != "text"}
         elif k in cur:
             out["v"] = cur[k]
         return out
@@ -1382,9 +1591,10 @@ def _apply(bid: str, h: dict, ops: list, sid: str, n: int, u: dict) -> int:
     acc, fx, drop, fixes = [], [], [], []
     added: set = set()
     order_n = order_l = struct = False
+    allowed = auth.guest_items(u) if auth.is_guest(u) else None
     for i, op in enumerate(ops):
         try:
-            r = _one(ide, h, op, added)
+            r = _one(ide, h, op, added, allowed)
         except _Drop as e:
             drop.append({"i": i, "why": e.why})
             fixes.extend(f for f in e.fix if f)
@@ -1486,6 +1696,10 @@ def r_ops_since(req, bid):
 
 
 def register(app) -> None:
+    # l'invité : ce qu'Idéation lui ouvre (core/auth.py, guest_realm), et où le mener
+    auth.guest_realm("ideation", routes=GUEST_ROUTES, pages=("/ideation/",), items=guest_items, home=_guest_home)
+    app.route("GET", auth.GUEST_HOME, auth.r_guest_home)
+    app.route("HEAD", auth.GUEST_HOME, auth.r_guest_home)
     app.route("GET", "/api/ideation/collab/{bid}", r_state)
     app.route("POST", "/api/ideation/collab/{bid}/ops", r_ops)
     app.route("GET", "/api/ideation/collab/{bid}/ops", r_ops_since)
@@ -1746,6 +1960,8 @@ def selftest(call, ok) -> None:
         config.CFG["auth"] = before
     _selftest_ops(call, ok)
     _selftest_roles(call, ok)
+    _selftest_registres(call, ok)
+    _selftest_invite(call, ok)
 
 
 def _selftest_ops(call, ok) -> None:
@@ -1976,3 +2192,230 @@ def _selftest_roles(call, ok) -> None:
             _boards.clear()
         auth.set_current(None)
         config.CFG["auth"] = before
+
+
+def _selftest_registres(call, ok) -> None:
+    """Les registres fins : deux cases d'un composeur écrites en même temps restent toutes
+    deux ; deux passages d'un même texte aussi ; le même passage, le dernier écrit gagne."""
+    # la fusion elle-même
+    ok(merge_text("bonjour le monde", "bonjour tout le monde", "bonjour le monde entier") == "bonjour tout le monde entier",
+       "registres : deux passages d'un texte, les deux restent")
+    ok(merge_text("x", "xa", "xb") == "xab", "registres : deux frappes au même endroit, les deux (la première arrivée d'abord)")
+    ok(merge_text("abc", "aXc", "aYc") == "aYc", "registres : le même passage, le dernier écrit gagne")
+    ok(merge_text("abc", "ac", "abcd") == "acd", "registres : un effacement ici, une frappe là")
+    ok(merge_text("a😀b", "a😀Xb", "Ya😀b") == "Ya😀Xb", "registres : un texte à emoji")
+    ok(merge_text(None, "serveur", "page") == "page", "registres : sans base (une vieille page), le dernier écrit gagne")
+
+    st, b = call("POST", "/api/ideation/boards", {"name": "Essai des registres"})
+    bid = b.get("id", "")
+    base = f"/api/ideation/collab/{bid}"
+    nodes = [{"id": "c1", "type": "compose", "x": 0, "y": 0, "w": 300, "h": 200,
+              "slots": [{"id": "a", "role": "style", "name": "Style", "text": "un"}, {"id": "b", "role": "decor", "name": "Décor", "text": "deux"}]},
+             {"id": "n1", "type": "note", "x": 400, "y": 0, "w": 200, "h": 80, "text": "bonjour le monde"}]
+    call("POST", f"/api/ideation/boards/{bid}", {"name": "Essai des registres", "nodes": nodes, "links": [], "base_rev": 1})
+    A = lambda n, ops: call("POST", f"{base}/ops", {"sid": "sid-regaaaaa", "n": n, "ops": ops})   # noqa: E731
+    B = lambda n, ops: call("POST", f"{base}/ops", {"sid": "sid-regbbbbb", "n": n, "ops": ops})   # noqa: E731
+    node = lambda i: next((x for x in call("GET", f"/api/ideation/boards/{bid}")[1]["nodes"] if x["id"] == i), None)   # noqa: E731
+    slots = lambda: {s["id"]: s for s in (node("c1") or {}).get("slots", [])}   # noqa: E731
+    try:
+        s1, _ = A(1, [{"o": "set", "t": "n", "id": "c1", "k": "t:a", "v": "un chat", "b": "un"}])
+        s2, r2 = B(1, [{"o": "set", "t": "n", "id": "c1", "k": "t:b", "v": "deux chiens", "b": "deux"}])
+        sl = slots()
+        ok(s1 == 200 and s2 == 200 and sl["a"]["text"] == "un chat" and sl["b"]["text"] == "deux chiens",
+           f"registres : deux cases d'un composeur écrites en même temps, les deux restent ({[(k, v['text']) for k, v in sl.items()]})")
+        A(2, [{"o": "set", "t": "n", "id": "c1", "k": "s:a", "v": {"id": "a", "role": "style", "name": "Style", "lock": True, "off": False}}])
+        sl = slots()
+        ok(sl["a"]["lock"] and sl["a"]["text"] == "un chat", "registres : verrouiller une case ne touche pas son texte")
+        A(3, [{"o": "set", "t": "n", "id": "c1", "k": "s:z", "v": {"id": "z", "role": "libre", "name": "Libre"}},
+              {"o": "set", "t": "n", "id": "c1", "k": "t:z", "v": "neuf", "b": ""},
+              {"o": "set", "t": "n", "id": "c1", "k": "slots#", "v": ["z", "a", "b"]}])
+        B(2, [{"o": "set", "t": "n", "id": "c1", "k": "slots#", "v": ["b", "a"]}])
+        order = [s["id"] for s in (node("c1") or {}).get("slots", [])]
+        ok(order == ["z", "b", "a"] and slots()["z"]["text"] == "neuf",
+           f"registres : une case ajoutée, deux ordres fusionnés comme l'ordre des objets ({order})")
+        A(4, [{"o": "set", "t": "n", "id": "c1", "k": "s:b"}])
+        s, r = B(3, [{"o": "set", "t": "n", "id": "c1", "k": "t:b", "v": "deux chiens au bord", "b": "deux chiens"}])
+        ok("b" not in slots() and s == 200, "registres : une case retirée l'emporte sur son texte écrit ensuite")
+        A(5, [{"o": "set", "t": "n", "id": "n1", "k": "text", "v": "bonjour tout le monde", "b": "bonjour le monde"}])
+        B(4, [{"o": "set", "t": "n", "id": "n1", "k": "text", "v": "bonjour le monde entier", "b": "bonjour le monde"}])
+        ok((node("n1") or {}).get("text") == "bonjour tout le monde entier", f"registres : deux personnes dans la même note ({(node('n1') or {}).get('text')})")
+        B(5, [{"o": "set", "t": "n", "id": "n1", "k": "text", "v": "salut"}])
+        ok((node("n1") or {}).get("text") == "salut", "registres : un texte sans base (une vieille page) : le dernier écrit gagne, comme avant")
+        A(6, [{"o": "set", "t": "n", "id": "c1", "k": "slots", "v": [{"id": "q", "role": "libre", "name": "Libre", "text": "entier"}]}])
+        ok(list(slots()) == ["q"], "registres : la liste entière des cases (une vieille page) s'écrit encore")
+        s, r = A(7, [{"o": "set", "t": "n", "id": "n1", "k": "t:q", "v": "x"}])
+        ok(s == 200 and (node("n1") or {}).get("text") == "salut", "registres : une case d'autre chose qu'un composeur est écartée")
+    finally:
+        with _lock:
+            _boards.clear()
+
+
+def _selftest_invite(call, ok) -> None:
+    """L'invité (core/auth.py, GUEST) : un pseudo neuf qui ouvre le lien de la planche P n'a
+    que P — ni la planche Q, ni la bibliothèque (hors des objets posés sur P), ni l'Admin,
+    ni les rendus, ni les autres outils ; une autre page le ramène à P ; ce qu'il pose est
+    ce qu'il voit ; un lien retiré lui ferme tout ; Cal en fait un ami dans l'Admin. Puis
+    la même chose par la porte publique « demo » (code d'invitation, puis le lien)."""
+    import urllib.parse
+
+    from PIL import Image
+
+    import showrunner
+    from tools import porte_publique as PP
+    from tools.admin import essai_http as H
+    saved = {k: config.CFG.get(k) for k in ("auth", "porte")}
+    config.CFG["auth"] = True
+    auth.startup()
+    home = int(config.get("port"))
+    same = {"Origin": f"http://127.0.0.1:{home}"}
+    flux: list[_Flux] = []
+    try:
+        for k in ("entree:127.0.0.1", "demande:127.0.0.1", "invitation-planche:127.0.0.1"):
+            auth._hits.pop(k, None)
+        s, d, cal = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
+        auth.set_current(auth.user(auth.admin_id()))
+        pics = []
+        for i, c in enumerate(((200, 60, 40), (40, 60, 200))):
+            f = config.data_dir() / f"invite-essai-{i}.png"
+            Image.new("RGB", (32, 24), c).save(f, "PNG")
+            pics.append(library.add_file(f, title=f"invité {i}"))
+        auth.set_current(None)
+        X, Y = pics[0]["id"], pics[1]["id"]
+        xurl, yurl = "/" + library.public(pics[0])["url"], "/" + library.public(pics[1])["url"]
+        s, P, _ = H("POST", "/api/ideation/boards", {"name": "Planche P"}, cookie=cal, headers=same)
+        s, Q, _ = H("POST", "/api/ideation/boards", {"name": "Planche Q"}, cookie=cal, headers=same)
+        p, q = P["id"], Q["id"]
+        H("POST", f"/api/ideation/boards/{p}", {"name": "Planche P", "base_rev": 1, "links": [],
+                                                "nodes": [{"id": "m1", "type": "media", "item": X, "kind": "image", "x": 0, "y": 0, "w": 200, "h": 150},
+                                                          {"id": "t1", "type": "note", "x": 300, "y": 0, "w": 200, "h": 80, "text": "à P"}]},
+          cookie=cal, headers=same)
+        s, inv, _ = H("POST", f"/api/ideation/collab/{p}/invites", {"role": "editor", "hours": 24}, cookie=cal, headers=same)
+        tok = inv.get("token", "")
+        s, dg, gas = H("POST", "/api/auth/enter", {"name": "Gaspard"}, headers=same)
+        s, rd, _ = H("POST", f"/api/auth/ideation-invite/{tok}", {}, cookie=gas, headers=same)
+        s2, me_, _ = H("GET", "/api/auth/me", cookie=gas)
+        ok(s == 200 and rd.get("guest") and rd["role"] == "editor" and me_.get("state") == "active" and me_["user"]["role"] == auth.GUEST,
+           f"invité : le lien accepte Gaspard en invité (rôle « {auth.GUEST} »), éditeur de P ({s} {rd} {me_.get('user')})")
+        G = lambda m, path, body=None: H(m, path, body, cookie=gas, headers=same if m != "GET" else None)[:2]   # noqa: E731
+        s, _ = G("GET", f"/api/ideation/boards/{p}")
+        ok(s == 200, f"invité : il lit P ({s})")
+        s, _ = G("GET", f"/api/ideation/boards/{q}")
+        ok(s == 403, f"invité : pas la planche Q ({s})")
+        s, lst = G("GET", "/api/ideation/boards")
+        ok(s == 200 and [x["id"] for x in lst["boards"]] == [p], "invité : dans la liste, P seule")
+        s, _ = G("GET", f"/api/ideation/collab/{q}")
+        ok(s == 403, f"invité : ni le direct de Q ({s})")
+        s, _ = G("GET", "/api/library")
+        ok(s == 403, f"invité : pas /api/library ({s})")
+        s, got = G("GET", f"/api/library/{X}")
+        ok(s == 200 and got.get("id") == X, f"invité : l'image posée sur P se lit ({s})")
+        s, _ = G("GET", f"/api/library/{Y}")
+        ok(s == 403, f"invité : une image qui n'est pas sur P, non ({s})")
+        s, bt = G("POST", "/api/library/batch", {"ids": [X, Y]})
+        ok(s == 200 and [i["id"] for i in bt["items"]] == [X] and bt["missing"] == [Y], f"invité : le lot rend l'image de P, tait l'autre ({s})")
+        s1, raw, _, _ = PP._req(home, "GET", xurl, cookies={auth.COOKIE: gas})
+        s2, _, _, _ = PP._req(home, "GET", yurl, cookies={auth.COOKIE: gas})
+        ok(s1 == 200 and raw[:4] == b"\x89PNG" and s2 == 403, f"invité : le fichier de l'image de P se sert, pas l'autre ({s1} {s2})")
+        s, _ = G("GET", f"/api/ideation/palette/{X}")
+        s2, _ = G("GET", f"/api/ideation/palette/{Y}")
+        ok(s == 200 and s2 == 403, f"invité : le nuancier, de ses images seulement ({s} {s2})")
+        for m, path, body in (("GET", "/api/admin/state", None), ("GET", "/api/admin/journal", None), ("GET", "/api/jobs", None),
+                              ("GET", "/api/queue", None), ("GET", "/api/system", None), ("POST", "/api/jobs", {"kind": "ideation.export", "params": {}}),
+                              ("POST", "/api/image/generate", {"prompt": "x"}), ("POST", "/api/ideation/lot", {}),
+                              ("POST", "/api/ideation/boards", {"name": "à moi"}), ("POST", f"/api/ideation/boards/{p}/duplicate", {}),
+                              ("POST", f"/api/ideation/boards/{p}/export", {}), ("POST", f"/api/ideation/boards/{p}/delete", {}),
+                              ("GET", "/api/asset/view", None), ("GET", "/api/movie/options", None), ("GET", "/api/image/models", None),
+                              ("GET", "/api/cf/characters", None), ("PUT", "/api/library/upload?name=a.png", None),
+                              ("POST", f"/api/library/{X}", {"title": "à moi"}), ("GET", "/character/api/characters", None)):
+            s, _ = G(m, path, body)
+            ok(s == 403, f"invité : fermé {m} {path} ({s})")
+        s, _ = G("GET", "/api/prefs")
+        ok(s == 200, f"invité : ses préférences (le thème) ({s})")
+        for path in ("/", "/asset/", "/admin/", "/image/"):
+            s, _, _, hd = PP._req(home, "GET", path, cookies={auth.COOKIE: gas})
+            ok(s == 303 and hd.get("Location") == f"/ideation/#{p}", f"invité : {path} le ramène à sa planche ({s} {hd.get('Location')})")
+        for path in ("/ideation/", "/commun/shell.js", "/ideation/barre.js"):
+            s, _, _, _ = PP._req(home, "GET", path, cookies={auth.COOKIE: gas})
+            ok(s == 200, f"invité : {path} se sert ({s})")
+        # co-éditer : ce qu'il voit, oui ; un objet de la bibliothèque qu'on ne lui a pas montré, non
+        fg = _Flux(f"/api/ideation/collab/{p}/stream", gas)
+        flux.append(fg)
+        _, hg = fg.wait(lambda e, dd: e == "hello")
+        ok(hg and hg["me"]["role"] == "editor", "invité : son direct sur P, éditeur")
+        s, _ = G("POST", f"/api/ideation/collab/{p}/ops", {"sid": "sid-gaspard1", "n": 1, "ops": [
+            {"o": "add", "t": "n", "v": {"id": "m2", "type": "media", "item": Y, "kind": "image", "x": 0, "y": 300, "w": 100, "h": 80}},
+            {"o": "add", "t": "n", "v": {"id": "m3", "type": "media", "item": X, "kind": "image", "x": 200, "y": 300, "w": 100, "h": 80}},
+            {"o": "set", "t": "n", "id": "t1", "k": "text", "v": "à P, et à Gaspard", "b": "à P"}]})
+        _, eg = fg.wait(lambda e, dd: e == "op" and dd["sid"] == "sid-gaspard1")
+        ids = [n["id"] for n in H("GET", f"/api/ideation/boards/{p}", cookie=cal)[1]["nodes"]]
+        ok(s == 200 and "m2" not in ids and "m3" in ids and eg and {"i": 0, "why": "invité"} in eg.get("drop", []),
+           f"invité : il colle l'image de P, pas un objet deviné ({ids})")
+        s, _ = G("GET", f"/api/library/{Y}")
+        ok(s == 403, f"invité : l'objet deviné reste fermé ({s})")
+        cur = H("GET", f"/api/ideation/boards/{p}", cookie=gas)[1]
+        bad = {**cur, "base_rev": cur["rev"], "nodes": cur["nodes"] + [{"id": "m4", "type": "media", "item": Y, "kind": "image", "x": 0, "y": 0, "w": 50, "h": 50}]}
+        s, _ = G("POST", f"/api/ideation/boards/{p}", bad)
+        ok(s == 403, f"invité : l'enregistrement entier non plus ({s})")
+        # le lien retiré : P et son image se ferment
+        s, acc, _ = H("GET", f"/api/ideation/collab/{p}/access", cookie=cal)
+        H("POST", f"/api/ideation/collab/{p}/invites/{acc['invites'][0]['id']}/revoke", {}, cookie=cal, headers=same)
+        ev, _ = fg.wait(lambda e, dd: e in ("bye", "eof"), 4)
+        s1, _ = G("GET", f"/api/ideation/boards/{p}")
+        s2, _ = G("GET", f"/api/library/{X}")
+        s3, _, _, _ = PP._req(home, "GET", xurl, cookies={auth.COOKIE: gas})
+        ok(ev == "bye" and s1 == 403 and s2 == 403 and s3 == 403, f"invité : le lien retiré, P et son image se ferment ({ev} {s1} {s2} {s3})")
+        s, _, _, hd = PP._req(home, "GET", "/", cookies={auth.COOKIE: gas})
+        ok(s == 303 and hd.get("Location") == "/ideation/", f"invité sans planche : ramené à Idéation, vide ({hd.get('Location')})")
+        # Cal en fait un ami
+        s, _, _ = H("POST", "/api/admin/users/gaspard", {"role": "ami"}, cookie=cal, headers=same)
+        s2, _ = G("GET", "/api/library")
+        s3, _ = G("GET", f"/api/ideation/boards/{q}")
+        ok(s == 200 and s2 == 200 and s3 == 200, f"invité : Cal en fait un ami (Admin), le portail s'ouvre ({s} {s2} {s3})")
+
+        # ── par la porte publique « demo » ──
+        if PP._APP is None:
+            ok(False, "invité, porte : l'App n'a pas été gardée")
+            return
+        dport = PP._free_port()
+        config.CFG["porte"] = {"mode": "demo", "port": dport}
+        showrunner.serve_door(PP._APP, "demo", "127.0.0.1", dport)
+        ok(PP._wait_port(dport), "invité, porte : la porte « demo » d'essai écoute")
+        codes = auth.demo_codes(renew=True)
+        TUN = {"Host": "essai-invite.trycloudflare.com", "Cf-Connecting-IP": "203.0.113.9", "Cf-Ray": "8c0ffee00001-CDG"}
+        TUNW = {**TUN, "Origin": "https://essai-invite.trycloudflare.com"}
+        s, inv2, _ = H("POST", f"/api/ideation/collab/{p}/invites", {"role": "viewer", "hours": 1}, cookie=cal, headers=same)
+        link = f"/ideation/?invite={inv2['token']}"
+        s, page, _, _ = PP._req(dport, "GET", link, headers=TUN)
+        ok(s == 401 and isinstance(page, bytes) and b'name="next"' in page and inv2["token"].encode() in page,
+           f"invité, porte : sans le code, le lien de la planche montre l'invitation, et la garde pour après ({s})")
+        s, _, jar, hd = PP._req(dport, "POST", "/invitation/", raw=f"code={codes['invitation']}&next={urllib.parse.quote(link, safe='')}".encode(),
+                                headers={**TUNW, "Content-Type": "application/x-www-form-urlencoded"})
+        ick = jar.get(auth.INVITE_COOKIE)
+        ok(s == 303 and hd.get("Location") == link and ick, f"invité, porte : le code donné, retour au lien de la planche ({s} {hd.get('Location')})")
+        s, _, _, hd = PP._req(dport, "POST", "/invitation/", raw=b"code=" + codes["invitation"].encode() + b"&next=%2F%2Fexemple.org",
+                              headers={**TUNW, "Content-Type": "application/x-www-form-urlencoded"})
+        ok(s == 303 and hd.get("Location") == "/", f"invité, porte : jamais un retour vers un autre site ({hd.get('Location')})")
+        s, d, jar, _ = PP._req(dport, "POST", "/api/auth/enter", {"name": "Hortense"}, cookies={auth.INVITE_COOKIE: ick}, headers=TUNW)
+        hck = jar.get(auth.COOKIE)
+        ok(s == 200 and d.get("state") == "pending" and hck, f"invité, porte : un pseudo neuf attend ({s} {d.get('state')})")
+        ck = {auth.INVITE_COOKIE: ick, auth.COOKIE: hck}
+        s, rd, _, _ = PP._req(dport, "POST", f"/api/auth/ideation-invite/{inv2['token']}", {}, cookies=ck, headers=TUNW)
+        ok(s == 200 and rd.get("guest") and rd["role"] == "viewer", f"invité, porte : le lien l'accepte en invitée, spectatrice ({s} {rd})")
+        s1, _, _, _ = PP._req(dport, "GET", f"/api/ideation/boards/{p}", cookies=ck, headers=TUN)
+        s2, _, _, _ = PP._req(dport, "GET", f"/api/ideation/boards/{q}", cookies=ck, headers=TUN)
+        s3, _, _, _ = PP._req(dport, "GET", "/api/library", cookies=ck, headers=TUN)
+        s4, _, _, _ = PP._req(dport, "GET", "/api/admin/state", cookies=ck, headers=TUN)
+        s5, _, _, _ = PP._req(dport, "GET", xurl, cookies=ck, headers=TUN)
+        s6, _, _, hd = PP._req(dport, "GET", "/asset/", cookies=ck, headers=TUN)
+        ok((s1, s2, s3, s4, s5, s6) == (200, 403, 403, 403, 200, 303) and hd.get("Location") == f"/ideation/#{p}",
+           f"invité, porte : P oui ; Q, la bibliothèque, l'Admin non ; l'image de P oui ; Asset ramène à P ({s1} {s2} {s3} {s4} {s5} {s6})")
+        auth.demo_codes(renew=True)
+        s, _, _, _ = PP._req(dport, "GET", f"/api/ideation/boards/{p}", cookies=ck, headers=TUN)
+        ok(s == 401, f"invité, porte : de nouveaux codes ferment sa session, comme toutes ({s})")
+    finally:
+        for f in flux:
+            f.close()
+        with _lock:
+            _boards.clear()
+        auth.set_current(None)
+        config.CFG.update(saved)

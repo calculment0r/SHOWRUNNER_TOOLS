@@ -74,7 +74,8 @@ DEPOT = TOOL / "analyses"
 PARTAGE = "https://movie-analysis-partage.luxigone.workers.dev"
 DIAR_DEFAUT = "https://dgx1.tail6c4306.ts.net:10002/diarisation"
 KIND = "analyse.run"
-NOM = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
+# \Z et non $ : « $ » laisse passer un retour à la ligne final (« abc\n », %0A dans l'adresse)
+NOM = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}\Z")
 # une adresse YouTube : analyse.sh la passe à yt-dlp et range le travail sous l'identifiant de la vidéo
 YT = re.compile(r"^https://(www\.|m\.)?(youtube\.com/(watch\?|shorts/|live/)|youtu\.be/)", re.I)
 YT_ID = re.compile(r"(?:[?&]v=|youtu\.be/|shorts/|live/)([A-Za-z0-9_-]{6,20})")
@@ -234,7 +235,7 @@ REFUS_ECRITURE = {
 # créés vivent dans le dépôt partagé (projets.json) et dans la mémoire du navigateur ; fusion par projet, le plus récent
 # gagne (champ maj) ; une suppression est gardée (supprime: true), et sur une analyse du dépôt elle la retire seulement
 # de l'accueil. Ici, même règle : la liste du dépôt partagé est lue, celle du portail est écrite (le Worker la refuse).
-NOM_PROJET = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
+NOM_PROJET = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}\Z")
 # les identifiants que projets.js ne donne jamais (« projets », « essai ») et les dossiers de l'outil
 RESERVES = {"projets", "essai", "analyses", "runs", "film", "diarisation", "commun", "chaine", "outils", "projet", "nouveau"}
 _store_lock = threading.Lock()
@@ -452,9 +453,24 @@ def projet_creer(req):
         store = _store_lit()
         pid = _slug_projet(nom, pris | {p["id"] for p in store})
         now = library.now()
-        store.append({"id": pid, "nom": nom, "cree": now, "maj": now, "par": auth_id()})
+        # `auteur` : qui l'a créé, posé une fois (`par` suit le dernier geste) — c'est lui (ou Cal) qui le change
+        store.append({"id": pid, "nom": nom, "cree": now, "maj": now, "par": auth_id(), "auteur": auth_id()})
         _store_ecrit(store)
     return {"projet": _un(pid), "enregistre": "portail", "partage": REFUS_ECRITURE}
+
+
+def _peut_ecrire(pid: str, store: list[dict] | None = None) -> bool:
+    """La règle des objets (auth.can_write_item) sur un projet du portail : son
+    `auteur`, ou un admin. Un projet sans auteur — une analyse du dépôt, un
+    projet du dépôt partagé, un projet d'avant le 29/09 — est à Cal."""
+    from core import auth
+    e = next((p for p in (store if store is not None else _store_lit()) if p["id"] == pid), None)
+    return auth.can_write_item({"owner": (e or {}).get("auteur")}, auth.current())
+
+
+def _refuse_ecriture(pid: str) -> None:
+    raise HttpError(403, f"« {pid} » n'est pas à toi : seul son auteur (ou Cal) le renomme, le retire, "
+                         "le corrige ou relance son dépouillement")
 
 
 def projet_modifier(req, pid):
@@ -472,10 +488,13 @@ def projet_modifier(req, pid):
         raise HttpError(400, "le titre d'un de nos films vient de MOVIE_ANALYSE (analyse/analyses/<film>/portail.json) : il ne se renomme pas d'ici")
     with _store_lock:
         store = _store_lit()
+        if not _peut_ecrire(pid, store):
+            _refuse_ecriture(pid)
         e = next((p for p in store if p["id"] == pid), None)
         if e is None:
             base = _fusion(("partage", _partage_projets()["projets"]), ("portail", store)).get(pid) or {"id": pid}
-            e = {k: v for k, v in base.items() if not k.startswith("_")}
+            # l'auteur ne vient jamais d'ailleurs que d'ici (projet_creer)
+            e = {k: v for k, v in base.items() if not k.startswith("_") and k != "auteur"}
             e.setdefault("cree", library.now())
             if cur and cur["sorte"] != "projet":
                 e["depot"] = True   # comme projets.js : un masque sur une analyse, pas un projet créé
@@ -555,6 +574,8 @@ def corrections_ecrire(req, film):
     diffère du fichier et du dépôt partagé. Une correction faite ailleurs sur une autre clé continue donc d'arriver."""
     if not NOM_PROJET.match(film) or _dossier_film(film) is None:
         raise HttpError(404, f"film inconnu : {film}")
+    if not _peut_ecrire(film):   # les corrections d'un film : l'auteur de son projet, ou Cal (nos films : Cal)
+        _refuse_ecriture(film)
     if len(req.body()) > 1 << 20:
         raise HttpError(413, "document trop gros (1 Mo au plus)")
     d = req.json()
@@ -612,7 +633,18 @@ def _relais(req, chemin: str, method: str, timeout: float = 30.0):
     u = urllib.parse.urlsplit(diar_url() + chemin + ("?" + q if q else ""))
     conn_cls = http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection
     conn = conn_cls(u.hostname, u.port, timeout=timeout)
-    n = int(req.headers.get("Content-Length") or 0) if method == "POST" else 0
+    if method != "GET":
+        # écrire sur dgx1 (déposer un son à diariser, retirer un travail) passe hors de la file du
+        # portail — ni quota, ni propriétaire : réservé aux admins (29/09) ; lire reste à tous
+        from core import auth
+        if not auth.is_admin(auth.current()):
+            raise HttpError(403, "la diarisation directe (déposer, retirer) passe hors de la file : réservée à Cal")
+    try:
+        n = int(req.headers.get("Content-Length") or 0) if method == "POST" else 0
+    except ValueError as e:
+        raise HttpError(400, "Content-Length illisible") from e
+    if n < 0:
+        raise HttpError(400, "Content-Length négatif")
     if n > 2 << 30:
         raise HttpError(413, "fichier trop gros (2 Go au plus)")
     try:
@@ -739,6 +771,17 @@ def _slug(t: str) -> str:
 
 
 # ── lancer ──────────────────────────────────────────────────
+def _a_lance(nom: str) -> bool:
+    """Reprendre un dépouillement (il réécrit sa page publiée) : Cal, ou la
+    personne qui a lancé le dernier travail de ce nom (la file en garde 400)."""
+    from core import auth
+    u = auth.current()
+    if u is None or auth.is_admin(u):
+        return True
+    last = next((j for j in jobs.listing(tool="analyse", limit=jobs.KEEP) if (j.get("params") or {}).get("nom") == nom), None)
+    return bool(last) and last.get("owner") == u["id"]
+
+
 def run_submit(req):
     d = req.json()
     langue = str(d.get("langue") or "fr")
@@ -755,6 +798,8 @@ def run_submit(req):
         pr = _un(projet)
         if not pr or pr["sorte"] != "projet":
             raise HttpError(400, f"« {projet} » n'est pas un projet à dépouiller (déjà fait, ou inconnu)")
+        if not _peut_ecrire(projet):
+            _refuse_ecriture(projet)
         titre = titre or pr["nom"]
     if item_id:
         it = library.get(str(item_id))
@@ -787,6 +832,8 @@ def run_submit(req):
         params = {"url": url}
     w = runs() / nom
     reprendre = bool(d.get("reprendre"))
+    if reprendre and not projet and not _a_lance(nom):
+        _refuse_ecriture(nom)
     if w.exists() and not (reprendre and (w / "portail.log").is_file()):
         if (w / "portail.log").is_file():
             raise HttpError(409, f"~/reelbench/runs/{nom}/ existe déjà (une analyse lancée d'ici) : cocher « reprendre » "

@@ -610,7 +610,7 @@ def parse_hald(data: bytes) -> dict:
     from io import BytesIO
     from PIL import Image
     try:
-        im = Image.open(BytesIO(data))
+        im = Image.open(BytesIO(data), formats=["PNG"])   # PIL ne devine rien d'autre (un EPS → Ghostscript, audit H2)
         im.load()
     except Exception as e:  # noqa: BLE001 — PIL lève toutes sortes d'erreurs
         raise ValueError(f"image illisible : {e}") from e
@@ -1684,8 +1684,9 @@ def _lut_or_404(lid: str) -> dict:
 
 
 def _can_edit_lut(m: dict) -> None:
-    u = auth.current()
-    if m.get("owner") and u and m["owner"] != u.get("id") and not auth.is_admin(u):
+    # la règle des objets (auth.can_write_item) : une LUT sans `owner` est d'avant la porte, donc à Cal
+    # (avant le 29/09, une LUT sans auteur se changeait et se jetait par tous)
+    if not auth.can_write_item(m, auth.current()):
         raise HttpError(403, "cette LUT est à quelqu'un d'autre : seul son auteur (ou Cal) la change")
 
 
@@ -1749,7 +1750,10 @@ def register(app) -> None:
             print(f"montage : {len(made)} montage(s) d'avant rangé(s) comme séquences de la bibliothèque")
     except Exception as e:  # noqa: BLE001 — le portail démarre quand même ; la liste réessaiera
         print(f"montage : migration remise à plus tard ({e})")
-    jobs.register("montage.export", run_export, lane="cpu", title="Montage · export")
+    # lancé par la page (montage.js) sur la route commune : la séquence doit se voir (load → 404) ;
+    # `run_export` la relit de même au départ, et ses plans passent par library.get (qui juge la lecture)
+    jobs.register("montage.export", run_export, lane="cpu", title="Montage · export",
+                  direct=lambda p: load(str(p.get("project") or "")))
     app.route("GET", "/api/montage/meta", r_meta)
     app.route("GET", "/api/montage/projects", r_list)
     app.route("POST", "/api/montage/projects", r_create)

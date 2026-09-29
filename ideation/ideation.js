@@ -31,7 +31,7 @@
 // de mind map compte pour tout son arbre quand on le déplace ou l'aligne, pour
 // sa descendance quand on le supprime, le copie ou le duplique.
 
-import { mountHeader, api, jobs, toast, el, $, href, fmtDate, uploadFile, pick } from '../commun/shell.js';
+import { mountHeader, api, jobs, toast, el, $, href, fmtDate, uploadFile, pick, session } from '../commun/shell.js';
 import { menu } from '../commun/menu.js';
 import { createCanvas, bbox, ready as viewsReady } from './canvas.js';
 import { createGroups, tidy as tidyGroups, kidsOf, setSize, readingOrder, setOrder, layoutOf } from './groups.js';
@@ -44,8 +44,12 @@ import { createLibrary, cfElement } from './library.js';
 import { installPlugins } from './plugins.js';
 import { createObjets } from './objets/index.js';
 import { flow, canWire, replaces, portOf, outPort, nameOf, newSlots, newSlot, TEXT_TYPES } from './ports.js';
+import { installBar } from './barre.js';
 
 mountHeader('ideation', { sub: 'planches · idées' });
+// l'invité par un lien (core/auth.py, rôle « invite ») n'a que ses planches : la page ne
+// montre pas ce que le portail lui ferme (planche neuve, bibliothèque, export, rendus, outils)
+session().then((me) => { if (me?.user?.role === 'invite') document.body.classList.add('ide-guest'); });
 
 const S = {
   meta: null, cfg: null, cfgError: '', mopts: null, moptsError: '', board: null, rev: 0,
@@ -182,6 +186,7 @@ function paintSave() {
   const [cls, txt] = S.conflict ? ['err', 'conflit'] : S.saving ? ['work', 'enregistre'] : S.dirty ? ['work', 'modifiée'] : S.board ? ['on', 'enregistrée'] : ['', '—'];
   p.className = 'pill ' + cls;
   p.lastChild.textContent = txt;
+  p.title = `${txt} — la planche s’enregistre seule à chaque geste`;   // étroite, la barre n'en montre que le point
 }
 addEventListener('beforeunload', () => {
   if (app.coed?.on()) { app.coed.unload(); return; }   // collab : les dernières opérations, par sendBeacon
@@ -874,7 +879,9 @@ app.exportBoard = async (frame = '') => {
 function paintBar() {
   const f = S.sel.size === 1 && app.node([...S.sel][0])?.type === 'frame';
   const ex = $('#b-export');
-  ex.textContent = f ? 'Exporter le cadre' : 'Exporter';
+  const exWord = f ? 'Exporter le cadre' : 'Exporter';
+  ex.querySelector('.bt').textContent = exWord;
+  ex.setAttribute('aria-label', exWord.toLowerCase());   // étroite, la barre n'en montre que l'icône (ideation.css)
   ex.title = f ? 'ce cadre en PNG, dans la bibliothèque' : 'la planche en PNG, dans la bibliothèque (dossier Idéation)';
   ex.disabled = !S.board || !S.board.nodes.length;
 }
@@ -1079,6 +1086,8 @@ app.menu = menu;
 app.objets.mount();   // ses outils dans la barre, les modèles et l'aimant sur la planche
 app.setTool('select');
 installPlugins(app);
+// la barre sur une ligne ; ce qui n'y tient plus passe dans ⋯ (barre.js)
+app.bar = installBar();
 // ses commandes dans la palette ⌘K, dès que l'atelier est chargé
 for (const ev of ['board', 'commit', 'selection']) app.on(ev, () => app.objets.commands());
 

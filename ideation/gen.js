@@ -139,7 +139,7 @@ export function createGen(app) {
       field = inbox(app, pr, 'la prose est copiée dans le prompt de la carte');
       if (pr.son || pr.musique) field.append(el('span', { class: 'ghint' }, 'Son et Musique du composeur ne vont qu’à la vidéo : ignorés ici'));
     } else {
-      field = el('textarea', { class: 'fld gp', rows: 4, spellcheck: 'false', placeholder: 'le prompt, en anglais : le sujet, le lieu, la lumière… ou branchez un texte' });
+      field = el('textarea', { class: 'fld gp', rows: 4, spellcheck: 'false', placeholder: 'le prompt, en anglais : le sujet, le lieu, la lumière… ou branchez un texte', 'data-reg': 'prompt' });
       field.value = g.prompt || '';
       let changed = () => {};
       field.addEventListener('focus', () => { changed = app.editing(); });

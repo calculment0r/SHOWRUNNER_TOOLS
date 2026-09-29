@@ -56,6 +56,19 @@ erreur sur 8790 n'ouvre rien.
 Qui voit quoi : réglage d'admin, « tout le monde voit tout » par défaut
 (décision de Cal en attente, docs/REPRISE.md) ; dans les deux cas, seul
 le propriétaire d'un objet (ou un admin) le modifie ou le met à la corbeille.
+
+L'invité (rôle `invite`, 29/09) : quelqu'un qui entre par un lien qu'un
+outil lui a donné (une planche d'Idéation) n'est pas un ami du portail. Son
+pseudo neuf, accepté par le lien, prend le rôle `invite` ; il n'atteint que
+ce que les outils déclarent pour lui (`guest_realm`) : leurs routes, chacune
+avec son juge (la planche est-elle la sienne ?), leurs pages, et les objets
+de la bibliothèque qu'ils lui montrent (`items`) — le juge de lecture de la
+bibliothèque (`can_read_item`) ne connaît alors que ceux-là. Tout le reste
+lui est fermé par défaut (403) : Asset, les rendus, les autres outils,
+l'Admin ; une autre page le ramène chez lui (303). Cela vaut sur les trois
+entrées (la maison, la porte « demo » avec son code, la porte « access ») :
+le rôle est porté par le compte, la porte ne fait que dire qui c'est. Cal
+en fait un ami dans l'Admin s'il le veut (rôle « ami »).
 """
 
 from __future__ import annotations
@@ -99,6 +112,8 @@ DEFAULT_SETTINGS = {
     "total_queued": 50,        # audit H4 : « et au-delà d'un total (par exemple 50) »
     "admin_lan_only": True,    # un pseudo admin n'entre que depuis le réseau de Cal (Cal, 29/09)
 }
+GUEST = "invite"             # le rôle de l'invité par un lien (voir plus haut)
+ROLES = ("admin", "ami", GUEST)
 RESERVED = ("admin", "administrateur", "administratrice", "root", "showrunner", "systeme", "system", "portail",
             "anonyme", "personne")
 # le réseau de Cal : la machine, la maison, le câble direct entre les DGX, Tailscale
@@ -278,6 +293,10 @@ def is_admin(u: dict | None) -> bool:
     return bool(u) and u.get("role") == "admin"
 
 
+def is_guest(u: dict | None) -> bool:
+    return bool(u) and u.get("role") == GUEST
+
+
 def user(uid: str | None) -> dict | None:
     if not uid:
         return None
@@ -310,6 +329,8 @@ def owner_of(it: dict) -> str | None:
 
 
 def can_read_item(it: dict, u: dict | None) -> bool:
+    if is_guest(u):   # un invité : les objets que ses outils lui montrent, rien d'autre
+        return it.get("id") in guest_items(u)
     if u is None or is_admin(u) or settings()["visibility"] == "all":
         return True
     return owner_of(it) == u["id"] or bool(it.get("shared"))
@@ -464,6 +485,104 @@ def _admin_only(req) -> None:
         raise HttpError(403, "réservé aux admins")
 
 
+# ── l'invité : ce que les outils lui ouvrent ────────────────
+# Fermé par défaut : une route n'est ouverte à l'invité que si un outil l'a
+# déclarée (guest_realm), et seulement si son juge dit oui pour cette personne.
+GUEST_HOME = "/api/auth/invite-home"      # une autre page : 303 vers chez lui (r_guest_home)
+GUEST_WHY = "invité : tu n'as accès qu'à ce qu'on t'a partagé par un lien"
+_realms: list[dict] = []
+
+
+def _rules(rules) -> list:
+    out = []
+    for methods, rx, judge in rules:
+        ms = set(methods.upper().split())
+        if "GET" in ms:
+            ms.add("HEAD")
+        out.append((frozenset(ms), re.compile(rx), judge))
+    return out
+
+
+# les siennes, quel que soit l'outil : ses préférences (le thème, la taille)
+_GUEST_BASE = _rules([("GET POST", r"/api/prefs", None), ("GET", r"/api/prefs/schemas", None)])
+
+
+def guest_realm(name: str, *, routes=(), pages=(), items=None, home=None) -> None:
+    """Un outil ouvre à l'invité une part de lui-même :
+      routes : [(« GET POST », motif (expression régulière entière, groupes nommés),
+               juge(personne, **groupes) → bool, ou None : la route juge elle-même)] ;
+      pages  : les préfixes de ses pages (« /ideation/ ») ;
+      items(personne) : les objets de la bibliothèque qu'il lui montre ;
+      home(personne)  : l'adresse où le mener (une autre page du portail y renvoie)."""
+    global _realms
+    _realms = [r for r in _realms if r["name"] != name] + [
+        {"name": name, "routes": _rules(routes), "pages": tuple(pages), "items": items, "home": home}]
+
+
+def guest_items(u: dict) -> frozenset:
+    """Les objets de la bibliothèque qu'un invité peut lire : ceux que ses outils lui
+    montrent. Calculés une fois par requête (une planche de 500 images en demande 500)."""
+    c = getattr(_local, "gitems", None)
+    if c and c[0] == u.get("id"):
+        return c[1]
+    got: set = set()
+    for r in _realms:
+        if r["items"]:
+            got |= set(r["items"](u))
+    v = frozenset(got)
+    _local.gitems = (u.get("id"), v)
+    return v
+
+
+def _guest_gate(req) -> None:
+    u, p, m = req.user, req.path, req.method
+    if p.startswith("/api/auth/"):
+        return   # qui je suis, me déconnecter, ouvrir un lien
+    if not req.protected:
+        if p.startswith("/commun/") or any(p.startswith(x) for r in _realms for x in r["pages"]):
+            return
+        if m in ("GET", "HEAD"):
+            req.path, req.rewritten = GUEST_HOME, True   # une autre page du portail : chez lui
+            return
+        raise HttpError(403, GUEST_WHY)
+    for rules in [_GUEST_BASE] + [r["routes"] for r in _realms]:
+        for methods, rx, judge in rules:
+            mm = rx.fullmatch(p) if m in methods else None
+            if mm:
+                if judge is None or judge(u, **mm.groupdict()):
+                    return
+                raise HttpError(403, GUEST_WHY)
+    raise HttpError(403, GUEST_WHY)
+
+
+def r_guest_home(req):
+    """`GUEST_HOME` : où va un invité qui demande une autre page (la route est posée
+    par l'outil qui déclare le premier royaume, server/tools/ideation_collab.py)."""
+    u = getattr(req, "user", None)
+    to = "/"
+    if is_guest(u):
+        for r in _realms:
+            h = r["home"](u) if r["home"] else None
+            if h and _safe_next(h):
+                to = h
+                break
+    return Response(b"", 303, "text/plain; charset=utf-8", {"Location": to, "Cache-Control": "no-store"})
+
+
+def _safe_next(v) -> bool:
+    """Une adresse de retour : un chemin de ce site, jamais un autre hôte."""
+    return (isinstance(v, str) and 0 < len(v) <= 2048 and v.startswith("/") and not v.startswith("//")
+            and "\\" not in v and not any(c in v for c in "\r\n\t\x00") and not v.startswith("/invitation"))
+
+
+def _next_of(req) -> str:
+    try:
+        raw = req._h.path   # le chemin et la requête tels que reçus
+    except AttributeError:
+        raw = req.path
+    return raw if _safe_next(raw) and raw != "/" else ""
+
+
 # les en-têtes que pose le bord de Cloudflare (https://developers.cloudflare.com/fundamentals/reference/http-headers/)
 EDGE_HEADERS = ("Cf-Ray", "Cf-Connecting-IP", "Cf-Access-Jwt-Assertion", "Cf-Worker", "Cf-Visitor")
 
@@ -482,6 +601,7 @@ def gate(req, app) -> None:
     req.session = None
     req.door = getattr(app, "door", None)
     _local.door = req.door
+    _local.gitems = None
     req.protected = _protected(req, app)
     if req.door:
         return _door_gate(req)
@@ -504,6 +624,8 @@ def gate(req, app) -> None:
                 req.user, req.session = u, h
     if req.method not in ("GET", "HEAD", "OPTIONS"):
         _csrf(req)
+    if is_guest(req.user):
+        return _guest_gate(req)
     if not enabled() or not req.protected or req.path.startswith("/api/auth/"):
         return
     if not req.user:
@@ -526,6 +648,8 @@ def _door_gate(req) -> None:
         req.user = u
         if req.method not in ("GET", "HEAD", "OPTIONS"):
             _csrf(req)
+        if is_guest(u):
+            return _guest_gate(req)
         _admin_only(req)
         return
     if req.door != "demo":
@@ -544,9 +668,14 @@ def _door_gate(req) -> None:
         if req.method in ("GET", "HEAD") and not p.startswith("/api/") and not req.protected:
             if p.startswith("/commun/"):
                 return   # les styles et les fontes de la page d'invitation : le dépôt public
-            req.path, req.rewritten = "/invitation/", True   # toute page montre l'invitation
+            # toute page montre l'invitation ; le code donné, on revient à la page demandée
+            # (le lien d'une planche d'Idéation garde ainsi son jeton)
+            req.next = _next_of(req)
+            req.path, req.rewritten = "/invitation/", True
             return
         raise HttpError(401, "démonstration privée : ouvre d'abord le lien d'invitation de Cal")
+    if is_guest(req.user):
+        return _guest_gate(req)
     if not req.protected:
         return
     if not req.user:
@@ -569,6 +698,7 @@ def after(req, status: int) -> None:
     finally:
         set_current(None)
         _local.door = None
+        _local.gitems = None
 
 
 # ── les limites de débit (en mémoire) ───────────────────────
@@ -716,14 +846,18 @@ def cancel_request(req) -> None:
         journal("demande annulée", user=u["id"])
 
 
-def accept(uid: str, by: str) -> dict:
+def accept(uid: str, by: str, role: str | None = None) -> dict:
+    """Une demande acceptée : par Cal (un ami), ou par le lien d'un outil (`role`
+    = GUEST : un invité, qui n'a que ce que le lien lui donne)."""
     with _lock:
         u = _data()["users"].get(uid)
         if not u or u.get("state") != "pending":
             raise HttpError(404, "pas de demande en attente à ce pseudo")
         u.update(state="active", accepted=now_iso(), by=by)
+        if role == GUEST:
+            u["role"] = GUEST
         _save()
-    journal("accepté", user=uid, by=by)
+    journal("accepté", user=uid, by=by, **({"role": role} if role else {}))
     return dict(u)
 
 
@@ -857,11 +991,11 @@ def set_user(uid: str, patch: dict, by: str) -> dict:
         if not u:
             raise HttpError(404, "personne inconnue")
         if "role" in patch:
-            if patch["role"] not in ("admin", "ami"):
-                raise HttpError(400, "rôle : admin ou ami")
+            if patch["role"] not in ROLES:
+                raise HttpError(400, "rôle : admin, ami ou invite (un invité n'a que ce qu'on lui a partagé)")
             if u.get("state") != "active":
                 raise HttpError(409, "accepte ou réactive d'abord ce compte")
-            if patch["role"] == "ami" and u.get("role") == "admin" and len(admins()) <= 1:
+            if patch["role"] != "admin" and u.get("role") == "admin" and len(admins()) <= 1:
                 raise HttpError(409, "c'est le dernier admin : donne d'abord le rôle à quelqu'un d'autre")
             u["role"] = patch["role"]
         if "state" in patch:
@@ -1034,8 +1168,9 @@ def invite_cookie(level_mark: str | None) -> str:
     return f"{INVITE_COOKIE}={level_mark}; Path=/; HttpOnly; SameSite=Lax; Max-Age={INVITE_DAYS * 86400}; Secure"
 
 
-def _invitation_page(message: str = "", status: int = 200) -> Response:
+def _invitation_page(message: str = "", status: int = 200, next_: str = "") -> Response:
     warn = f'<p class="warn" role="alert">{html.escape(message)}</p>' if message else ""
+    back = f'<input type="hidden" name="next" value="{html.escape(next_)}">' if _safe_next(next_) else ""
     page = f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -1065,7 +1200,7 @@ def _invitation_page(message: str = "", status: int = 200) -> Response:
       <form class="porte-form" method="post" action="/invitation/">
         <div class="row"><input class="fld" name="code" placeholder="le code d’invitation" maxlength="40" autocomplete="off"
           aria-label="le code d’invitation" spellcheck="false" autocapitalize="characters" required autofocus>
-          <button class="tb go" type="submit">Continuer</button></div>
+          <button class="tb go" type="submit">Continuer</button></div>{back}
       </form>
       {warn}
     </section>
@@ -1084,17 +1219,20 @@ def invitation(req, rest: str):
         raise HttpError(404, "introuvable")
     if req.method not in ("GET", "HEAD", "POST"):
         raise HttpError(405, "méthode refusée ici : GET, POST")
-    code = ""
+    code, back = "", ""
     if req.method == "POST":
-        raw = req.body()[:2048].decode("utf-8", "replace")
+        raw = req.body()[:6144].decode("utf-8", "replace")
         ctype = (req.headers.get("Content-Type") or "").split(";")[0].strip().lower()
         if ctype == "application/json":
             try:
-                code = str((json.loads(raw) or {}).get("code") or "")
+                d = json.loads(raw) or {}
+                code, back = str(d.get("code") or ""), str(d.get("next") or "")
             except (ValueError, AttributeError):
                 code = ""
         else:
-            code = (parse_qs(raw).get("code") or [""])[0]
+            form = parse_qs(raw)
+            code, back = (form.get("code") or [""])[0], (form.get("next") or [""])[0]
+        back = back if _safe_next(back) else ""
     elif rest.strip("/") and not getattr(req, "rewritten", False):
         code = unquote(rest.strip("/"))
     if req.method == "POST" or code:
@@ -1103,7 +1241,7 @@ def invitation(req, rest: str):
             _rate(f"code:{ip}", 10, 600)
             _rate("code:tous", 300, 600)
         except HttpError as e:
-            return _invitation_page(e.message, 429)
+            return _invitation_page(e.message, 429, back)
         st = demo_state()
         n = _norm_code(code)
         level = None
@@ -1113,14 +1251,14 @@ def invitation(req, rest: str):
             level = "invitation"
         if not level:
             journal("porte : code refusé", ip=ip)
-            return _invitation_page("ce code n’ouvre pas la porte : vérifie-le auprès de Cal", 403)
+            return _invitation_page("ce code n’ouvre pas la porte : vérifie-le auprès de Cal", 403, back)
         journal("porte : invitation", niveau=level, ip=ip)
         return Response(b"", 303, "text/plain; charset=utf-8",
-                        {"Location": "/", "Set-Cookie": invite_cookie(code_mark(n)), "Cache-Control": "no-store",
+                        {"Location": back or "/", "Set-Cookie": invite_cookie(code_mark(n)), "Cache-Control": "no-store",
                          "X-Porte": "demo"})
     if getattr(req, "invitation", None) and not getattr(req, "rewritten", False):
         return Response(b"", 303, "text/plain; charset=utf-8", {"Location": "/", "Cache-Control": "no-store"})
-    return _invitation_page("", 401 if getattr(req, "rewritten", False) else 200)
+    return _invitation_page("", 401 if getattr(req, "rewritten", False) else 200, getattr(req, "next", ""))
 
 
 # ── la vraie porte : le Worker et Cloudflare Access ─────────

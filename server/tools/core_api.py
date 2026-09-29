@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 import shutil
 import threading
 import time
@@ -125,11 +126,21 @@ def lib_upload(req):
     ext = Path(name).suffix.lower()
     if ext not in library.EXT_KIND:
         raise HttpError(415, f"type non pris : {ext or 'sans extension'} (images PNG/JPEG/WEBP, vidéos MP4/WEBM/MOV, sons WAV/MP3/FLAC/M4A/OGG)")
+    kind = library.EXT_KIND[ext]
+    u = auth.current()
+    if not auth.is_admin(u):   # un ami : la taille de sa sorte (config `upload_max_mb`) ; Cal : 2 Go (core/http.py)
+        mb = (config.get("upload_max_mb") or {}).get(kind)
+        if mb and req._length() > mb * 1_000_000:
+            raise HttpError(413, f"fichier trop gros : {mb} Mo au plus pour {'une image' if kind == 'image' else 'un fichier ' + ext}")
     tmp = config.data_dir() / "uploads"
     tmp.mkdir(exist_ok=True)
-    dest = tmp / f"{int(time.time() * 1000)}_{name}"
+    dest = tmp / f"{int(time.time() * 1000)}_{secrets.token_hex(4)}_{name}"
     req.stream_to(dest)
     try:
+        with open(dest, "rb") as f:
+            head = f.read(16)
+        if not library.sniff(head, ext):   # le contenu doit être ce que dit le nom (PIL, ffmpeg ne devinent rien d'autre)
+            raise HttpError(415, f"ce fichier n'est pas un {ext[1:].upper()} : son contenu ne correspond pas à son nom")
         it = library.add_file(dest, title=req.q("title") or Path(name).stem, folder=req.q("folder"),
                               origin={"tool": req.q("tool") or "upload",
                                       # par où un fichier déposé est entré (sélecteur, montage, odio…)
@@ -141,7 +152,10 @@ def lib_upload(req):
 
 def lib_update(req, item_id):
     _item_or_404(item_id)
-    return library.public(library.update(item_id, req.json()))
+    try:
+        return library.public(library.update(item_id, req.json()))
+    except ValueError as e:
+        raise HttpError(400, str(e)) from e
 
 
 def lib_delete(req, item_id):
@@ -155,11 +169,19 @@ def lib_restore(req, item_id):
         return library.public(library.restore(item_id))
     except KeyError as e:
         raise HttpError(404, f"pas dans la corbeille : {item_id}") from e
+    except ValueError as e:
+        raise HttpError(409, str(e)) from e
 
 
 # ── éléments ────────────────────────────────────────────────
 def el_create(req):
     d = req.json()
+    refs = d.get("refs", [])
+    if not isinstance(refs, list):
+        raise HttpError(400, "refs : une liste")
+    for r in refs:   # une référence est un objet qu'on a le droit de voir (visibility)
+        if isinstance(r, dict) and r.get("item"):
+            _item_or_404(str(r["item"]))
     try:
         it = library.create_element(d.get("title", ""), d.get("type", "character"), d.get("description", ""),
                                     [{"item": r["item"], "role": r.get("role", ""), "label": r.get("label", "")}
@@ -375,10 +397,16 @@ def queue(req):
 
 
 def jobs_submit(req):
+    """POST /api/jobs {kind, params, title, tool} — la route commune : seules
+    les sortes que leur outil déclare `direct` (jobs.register) y passent pour
+    un ami ; les autres partent par la route de leur outil, qui les juge."""
     d = req.json()
     try:
-        j = jobs.submit(d["kind"], d.get("params") or {}, title=d.get("title", ""), tool=d.get("tool", ""))
+        j = jobs.submit_direct(str(d.get("kind") or ""), d.get("params") or {}, title=d.get("title") or "",
+                               tool=d.get("tool") or "")
     except KeyError as e:
+        raise HttpError(400, str(e).strip("'\"")) from e
+    except ValueError as e:
         raise HttpError(400, str(e)) from e
     return jobs.public(j)
 

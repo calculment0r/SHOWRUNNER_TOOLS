@@ -49,6 +49,44 @@ EXT_KIND = {
     # les clips MIDI d'ODIO (extraits d'un son, rangés depuis un motif, importés) : 29/09
     ".mid": "midi", ".midi": "midi",
 }
+# PIL ne lit que ces formats-là : sans cette liste, Image.open devine le format par
+# le contenu, et un « .png » qui serait un EPS partirait vers Ghostscript (audit du 28/09, H2)
+PIL_FORMATS = ("PNG", "JPEG", "WEBP")
+
+
+def sniff(head: bytes, ext: str) -> bool:
+    """Le contenu est-il bien ce que dit l'extension ? Les premiers octets
+    (la « signature » de chaque format, lue dans sa spécification) : un fichier
+    déposé qui n'est pas ce qu'il prétend n'entre pas — ni PIL ni ffmpeg ne
+    devinent alors un autre format (un EPS, une liste de lecture HLS qui
+    lirait des fichiers du disque) sous un nom sage."""
+    ext = ext.lower()
+    riff = head[:4] == b"RIFF"
+    if ext == ".png":
+        return head[:8] == b"\x89PNG\r\n\x1a\n"
+    if ext in (".jpg", ".jpeg"):
+        return head[:3] == b"\xff\xd8\xff"
+    if ext == ".webp":
+        return riff and head[8:12] == b"WEBP"
+    if ext == ".wav":
+        return riff and head[8:12] == b"WAVE"
+    if ext in (".mp4", ".mov", ".m4v", ".m4a"):
+        # ISO BMFF / QuickTime : une première boîte « ftyp » ; un vieux .mov commence par moov, mdat, wide, free
+        return head[4:8] in (b"ftyp", b"moov", b"mdat", b"wide", b"free", b"skip", b"pnot")
+    if ext == ".webm":
+        return head[:4] == b"\x1a\x45\xdf\xa3"   # EBML
+    if ext == ".flac":
+        return head[:4] == b"fLaC" or head[:3] == b"ID3"
+    if ext == ".ogg":
+        return head[:4] == b"OggS"
+    if ext == ".mp3":
+        # une étiquette ID3v2, ou directement une trame MPEG (11 bits de synchronisation)
+        return head[:3] == b"ID3" or (len(head) > 1 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0)
+    if ext in (".mid", ".midi"):
+        return head[:4] == b"MThd"
+    return False
+
+
 ELEMENT_TYPES = ("character", "object", "place", "style", "other")
 AUDIO_EXT = tuple(e for e, k in EXT_KIND.items() if k == "audio")   # la voix d'un élément
 THUMB = 384
@@ -114,13 +152,20 @@ def _owned(origin: dict) -> dict:
     return out
 
 
-def _check_write(it: dict) -> None:
+def check_write(it: dict) -> None:
+    """Le juge de toute écriture : un objet de la bibliothèque, ou un document
+    d'outil qui porte son propriétaire de la même façon (`origin.user` ou
+    `owner` : un projet ODIO…). Son propriétaire ou un admin ; un objet sans
+    propriétaire est d'avant la porte : à Cal. PermissionError → 403."""
     u = auth.current()
     if not auth.can_write_item(it, u):
         owner = auth.display_name(auth.owner_of(it)) or auth.admin_name()
         who = owner if owner == auth.admin_name() else f"{owner} (ou {auth.admin_name()})"
-        raise PermissionError(f"« {it.get('title') or it['id']} » est à {owner} : seul·e {who} peut le modifier "
-                              "ou le mettre à la corbeille")
+        raise PermissionError(f"« {it.get('title') or it.get('name') or it.get('id') or '?'} » est à {owner} : "
+                              f"seul·e {who} peut le modifier ou le mettre à la corbeille")
+
+
+_check_write = check_write   # le nom d'avant (montage.py)
 
 
 def readable(it: dict) -> bool:
@@ -140,7 +185,7 @@ def probe(path: Path) -> dict:
     if kind == "image":
         try:
             from PIL import Image
-            with Image.open(path) as im:
+            with Image.open(path, formats=PIL_FORMATS) as im:
                 return {"width": im.width, "height": im.height}
         except Exception:
             return {}
@@ -171,7 +216,7 @@ def make_thumb(src: Path, dest: Path, kind: str) -> bool:
     try:
         if kind == "image":
             from PIL import Image
-            with Image.open(src) as im:
+            with Image.open(src, formats=PIL_FORMATS) as im:
                 im = im.convert("RGB")
                 im.thumbnail((THUMB, THUMB))
                 im.save(dest, "JPEG", quality=84)
@@ -218,7 +263,7 @@ def make_views(src, d: Path) -> list[int]:
     l'original (EXIF). Rend les tailles faites, de la plus petite à la plus
     grande ; une copie d'avant qui n'a plus lieu d'être s'en va."""
     from PIL import Image, ImageOps
-    with Image.open(BytesIO(src) if isinstance(src, bytes) else src) as im:
+    with Image.open(BytesIO(src) if isinstance(src, bytes) else src, formats=PIL_FORMATS) as im:
         big = max(im.size)
         sizes = [s for s in VIEW_SIZES if s <= big]
         if not sizes or im.mode.startswith(("I", "F")):   # trop petite, ou 16 bits / flottante : l'original sert
@@ -412,6 +457,30 @@ def create_element(title: str, etype: str = "character", description: str = "", 
     return it
 
 
+def _check_patch(patch: dict) -> None:
+    """La forme de ce qu'une page peut changer (ValueError → 400) : rien
+    d'autre qu'un texte, une liste de textes, un booléen, là où on les attend."""
+    if not isinstance(patch, dict):
+        raise ValueError("un objet JSON est attendu")
+    for k, hi in (("title", 200), ("folder", 60), ("prompt", 20000)):
+        if k in patch and not (isinstance(patch[k], str) and len(patch[k]) <= hi):
+            raise ValueError(f"{k} : un texte de {hi} signes au plus")
+    if "folder" in patch and "/" in patch["folder"]:
+        raise ValueError("un dossier ne se range pas dans un autre : pas de « / » dans son nom")
+    if "tags" in patch and not (isinstance(patch["tags"], list) and len(patch["tags"]) <= 64
+                                and all(isinstance(t, str) and len(t) <= 40 for t in patch["tags"])):
+        raise ValueError("tags : une liste de 64 textes de 40 signes au plus")
+    for k in ("fav", "shared"):
+        if k in patch and not isinstance(patch[k], bool):
+            raise ValueError(f"{k} : vrai ou faux")
+    el = patch.get("element")
+    if isinstance(el, dict):
+        if "type" in el and el["type"] not in ELEMENT_TYPES:
+            raise ValueError(f"sorte d'élément inconnue : {el['type']} ({', '.join(ELEMENT_TYPES)})")
+        if "description" in el and not (isinstance(el["description"], str) and len(el["description"]) <= 20000):
+            raise ValueError("description : un texte de 20000 signes au plus")
+
+
 def update(item_id: str, patch: dict) -> dict:
     _load()
     with _lock:
@@ -419,6 +488,7 @@ def update(item_id: str, patch: dict) -> dict:
         if not it:
             raise KeyError(item_id)
         _check_write(it)
+        _check_patch(patch)
         for k in ("title", "tags", "folder", "fav", "prompt"):
             if k in patch:
                 it[k] = patch[k]
@@ -494,6 +564,18 @@ def trash(item_id: str) -> None:
 ID_RE = re.compile(r"[a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4}")
 
 
+def trashed_meta(item_id: str) -> dict:
+    """La fiche d'un objet jeté, pour juger qui peut le rendre ou le voir ; une
+    fiche illisible est sans propriétaire, donc à Cal."""
+    if not ID_RE.fullmatch(item_id or ""):
+        raise KeyError(item_id)
+    try:
+        meta = json.loads((trash_root() / item_id / "item.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        meta = None
+    return meta if isinstance(meta, dict) else {"id": item_id}
+
+
 def restore(item_id: str) -> dict:
     _load()
     with _lock:
@@ -503,10 +585,11 @@ def restore(item_id: str) -> dict:
         src = trash_root() / item_id
         if not src.exists():
             raise KeyError(item_id)
-        try:
-            _check_write(json.loads((src / "item.json").read_text(encoding="utf-8")))
-        except (OSError, ValueError):
-            pass
+        # (avant le 29/09, ce contrôle était dans un `except OSError` qui avalait
+        # le refus — PermissionError en est une sous-classe : chacun rendait tout)
+        check_write(trashed_meta(item_id))
+        if folder_of(item_id).exists():
+            raise ValueError(f"{item_id} est déjà dans la bibliothèque")
         shutil.move(str(src), str(folder_of(item_id)))
         it = json.loads((folder_of(item_id) / "item.json").read_text(encoding="utf-8"))
         _items[item_id] = it
@@ -515,8 +598,16 @@ def restore(item_id: str) -> dict:
 
 # ── lire ────────────────────────────────────────────────────
 def get(item_id: str) -> dict | None:
+    """L'objet — s'il existe et si la personne qui agit a le droit de le voir :
+    celle de la requête, ou le propriétaire du travail en cours (core/jobs.py
+    pose `auth.current` le temps du `run`). Sinon None, comme un objet absent :
+    on ne dit pas qu'un objet invisible existe. Tous les outils lisent par ici,
+    la règle de lecture (`visibility`, auth.can_read_item) n'est jugée qu'à cet
+    endroit : une route ou un travail qui prendrait l'objet d'un autre par son
+    identifiant ne le trouve pas. Sans personne (le socle, le rattrapage) : tout."""
     _load()
-    return _items.get(item_id)
+    it = _items.get(item_id)
+    return it if it is not None and readable(it) else None
 
 
 def path_of(it: dict, name: str | None = None) -> Path:

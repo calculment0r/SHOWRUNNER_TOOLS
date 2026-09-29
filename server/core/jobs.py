@@ -83,14 +83,39 @@ class QuotaError(HttpError):
 
 
 def register(kind: str, fn, lane: str = "image", title: str = "", *, family=UNSET, gpu=UNSET,
-             mem_gb=None) -> None:
+             mem_gb=None, direct=False) -> None:
     """`family` : la famille de modèles du travail (« krea2 », « h3 »…), ou
     une fonction(params) qui la rend ; None : il n'en charge aucun. `gpu` :
     s'il passe par ComfyUI (booléen ou fonction(params)) ; par défaut oui
     dès qu'il a une famille et que sa voie a des instances ComfyUI.
-    `mem_gb` : sa mémoire, sinon celle de sa famille (FAMILY_GB)."""
+    `mem_gb` : sa mémoire, sinon celle de sa famille (FAMILY_GB).
+
+    `direct` : la page peut le lancer par la route commune `POST /api/jobs`
+    (`submit_direct`). Par défaut non : un travail part par la route de son
+    outil, qui juge ses réglages et les droits ; la route commune ne lance
+    alors que ce qu'un admin demande (les essais). `True` : son `run` revalide
+    lui-même tout ce qu'il lit ; une fonction(params) juge de plus à l'entrée,
+    au nom de la personne de la requête (ValueError → 400, PermissionError → 403)."""
     HANDLERS[kind] = (fn, lane, title)
-    _META[kind] = {"family": family, "gpu": gpu, "mem_gb": mem_gb}
+    _META[kind] = {"family": family, "gpu": gpu, "mem_gb": mem_gb, "direct": direct}
+
+
+def submit_direct(kind: str, params, title="", tool="") -> dict:
+    """`POST /api/jobs` : la route commune, pour les seules sortes déclarées
+    `direct` (ou pour un admin). Une sorte inconnue : KeyError (400) ; une sorte
+    qui a sa route : PermissionError (403), qui dit où passer."""
+    if kind not in HANDLERS:
+        raise KeyError(f"travail inconnu : {kind}")
+    if not isinstance(params, dict):
+        raise ValueError("params : un objet")
+    if not isinstance(title, str) or not isinstance(tool, str) or len(title) > 200 or len(tool) > 40:
+        raise ValueError("title (200 signes) et tool (40) : des textes")
+    d = _META.get(kind, {}).get("direct")
+    if not d and not auth.is_admin(auth.current()):
+        raise PermissionError(f"« {kind} » ne se lance pas par la route commune : passe par la page de son outil")
+    if callable(d):
+        d(params)
+    return submit(kind, params, title=title, tool=tool)
 
 
 def _file() -> Path:

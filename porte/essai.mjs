@@ -38,7 +38,10 @@ const enc = new TextEncoder();
 const b64u = (buf) => Buffer.from(buf).toString('base64url');
 const paire = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
 const autre = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
-const jwk = { ...(await crypto.subtle.exportKey('jwk', paire.publicKey)), kid: 'e2e-1', alg: 'RS256', use: 'sig' };
+// un kid neuf à chaque essai : le portail garde les clés d'un essai précédent une heure (et ne relit un kid inconnu
+// qu'une fois par minute) ; relancer l'essai plus d'une fois par minute demande de relancer le portail d'essai
+const KID = `e2e-${Date.now().toString(36)}`;
+const jwk = { ...(await crypto.subtle.exportKey('jwk', paire.publicKey)), kid: KID, alg: 'RS256', use: 'sig' };
 let lectures = 0;
 const certs = createServer((req, res) => {
   lectures += 1;
@@ -49,7 +52,7 @@ await new Promise((ok_) => certs.listen(CERTS, '127.0.0.1', ok_));
 
 async function jeton(email, plus = {}, cle = paire.privateKey) {
   const t = Math.floor(Date.now() / 1000);
-  const tete = b64u(enc.encode(JSON.stringify({ alg: 'RS256', kid: 'e2e-1', typ: 'JWT' })));
+  const tete = b64u(enc.encode(JSON.stringify({ alg: 'RS256', kid: KID, typ: 'JWT' })));
   const corps = b64u(enc.encode(JSON.stringify({ iss: TEAM, aud: [AUD], email, iat: t, nbf: t, exp: t + 600, type: 'app', ...plus })));
   const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', cle, enc.encode(`${tete}.${corps}`));
   return `${tete}.${corps}.${b64u(sig)}`;
@@ -91,6 +94,8 @@ r = await W('/api/library', { jwt: await jeton('ami@e2e.test', {}, autre.private
 ok(r.s === 403, `le Worker, jeton signé par une autre clé : 403 (${r.s})`);
 r = await W('/api/library', { jwt: await jeton('ami@e2e.test', { aud: ['autre-app'] }) });
 ok(r.s === 403, `le Worker, jeton d'une autre application : 403 (${r.s})`);
+r = await W('/api/porte/moi', { email: 'ami@e2e.test', e: { ...env, POLICY_AUD: '<tag AUD de l\'application Access>' } });
+ok(r.s === 503 && !vus.length, `déployé sans tag AUD (l'emplacement de wrangler.jsonc) : 503, rien ne part vers DGX2 (${r.s})`);
 r = await W('/api/porte/moi', { email: 'Ami@E2E.test' });
 ok(r.s === 200 && r.d.email === 'ami@e2e.test' && r.d.role === 'ami', `/api/porte/moi : l'ami, en minuscules (${JSON.stringify(r.d)})`);
 
@@ -142,6 +147,69 @@ ok(r.s === 502 && vus.at(-1).chemin === '/character/api/characters',
   `/character/api/ va au portail (qui relaie au studio ; ici un studio muet : 502) (${r.s})`);
 r = await W('/admin/', { email: 'ami@e2e.test' });
 ok(r.s === 200 && String(r.d).includes('assets'), `une page : servie par les assets (${r.s})`);
+
+// ── le flux SSE d'Idéation (ideation/collab.js : EventSource sur …/collab/<planche>/stream), par le Worker ──
+// Le flux doit arriver morceau par morceau (hello tout de suite, puis chaque événement), rester ouvert, et garder
+// son battement (« : ping » toutes les HEARTBEAT_S du portail) sans que la porte ne le coupe (« bye »).
+const memePage = { origin: PAGE, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' };
+r = await W('/api/ideation/boards', { email: 'cal@e2e.test', method: 'POST', body: Buffer.from('{"name":"par la porte"}'), headers: memePage });
+const planche = r.d && r.d.id;
+ok(r.s === 200 && planche, `une planche d'Idéation, créée par la porte (${r.s})`);
+const dec = new TextDecoder();
+// un Worker qui mettrait la réponse en tampon ne rendrait jamais rien (le flux ne finit pas) : 8 s, puis échec
+const flux = await Promise.race([
+  worker.fetch(new Request(`${PAGE}/api/ideation/collab/${planche}/stream`, {
+    headers: { 'cf-access-jwt-assertion': await jeton('cal@e2e.test'), accept: 'text/event-stream', 'cache-control': 'no-cache', 'last-event-id': '3' },
+  }), env, ctx),
+  new Promise((res) => setTimeout(() => res(null), 8000)),
+]) || (ok(false, 'le flux : aucune réponse du Worker en 8 s (mis en tampon ?)'),
+  new Response(new ReadableStream({ start: (c) => c.close() }), { status: 504 }));
+ok(flux.status === 200 && (flux.headers.get('content-type') || '').startsWith('text/event-stream'),
+  `le flux : 200, text/event-stream (${flux.status} ${flux.headers.get('content-type')})`);
+ok(!flux.headers.get('content-length'), 'le flux : sans longueur (pas mis en tampon)');
+const vuFlux = vus.at(-1).entetes;
+ok(vuFlux.accept === 'text/event-stream' && vuFlux['last-event-id'] === '3' && vuFlux['cache-control'] === 'no-cache',
+  `vers le portail : accept, last-event-id, cache-control d'EventSource (${JSON.stringify([vuFlux.accept, vuFlux['last-event-id'], vuFlux['cache-control']])})`);
+const lecteur = flux.body.getReader();
+let recu = '';
+let enCours = null;
+let fini = false;
+async function jusqua(motif, ms) {   // lit le flux jusqu'à `motif`, au plus `ms` ; faux s'il se tait ou se ferme
+  const fin = Date.now() + ms;
+  while (!motif.test(recu)) {
+    const reste = fin - Date.now();
+    if (reste <= 0 || fini) return false;
+    enCours ??= lecteur.read();
+    const lu = await Promise.race([enCours, new Promise((res) => setTimeout(() => res(null), reste))]);
+    if (!lu) return false;
+    enCours = null;
+    if (lu.done) { fini = true; return motif.test(recu); }
+    recu += dec.decode(lu.value, { stream: true });
+  }
+  return true;
+}
+let t0 = Date.now();
+ok(await jusqua(/event: hello\ndata: .*\n\n/, 5000), `hello arrive tout de suite, flux ouvert (${Date.now() - t0} ms)`);
+const hello = JSON.parse(/event: hello\ndata: (.*)\n/.exec(recu)?.[1] || '{}');
+ok(hello.cid && !fini, `hello donne l'identifiant de connexion (${hello.cid})`);
+t0 = Date.now();
+r = await W(`/api/ideation/collab/${planche}/messages`, { email: 'cal@e2e.test', method: 'POST',
+  body: Buffer.from(JSON.stringify({ text: 'bonjour par la porte', cid: hello.cid })), headers: memePage });
+ok(r.s === 200, `un message posté par la porte (${r.s} ${JSON.stringify(r.d).slice(0, 120)})`);
+ok(await jusqua(/event: msg\ndata: .*bonjour par la porte/, 3000), `… il revient aussitôt par le flux (${Date.now() - t0} ms)`);
+// la limite de débit (écritures) ne compte pas les gestes de la collaboration : sinon la planche se figerait
+const bride = { ...env, LIMITE: { limit: async () => ({ success: false }) } };
+r = await W(`/api/ideation/collab/${planche}/presence`, { email: 'cal@e2e.test', method: 'POST',
+  body: Buffer.from(JSON.stringify({ cid: hello.cid, cursor: [12, 34] })), headers: memePage, e: bride });
+ok(r.s === 200, `limite atteinte : un geste de collaboration (présence) passe encore (${r.s} ${JSON.stringify(r.d).slice(0, 80)})`);
+r = await W('/api/ideation/boards', { email: 'cal@e2e.test', method: 'POST', body: Buffer.from('{"name":"trop"}'), headers: memePage, e: bride });
+ok(r.s === 429, `… une autre écriture est bridée (${r.s})`);
+t0 = Date.now();
+ok(await jusqua(/\n: ping\n/, 20000), `le battement du portail traverse la porte (${Date.now() - t0} ms)`);
+ok(!/event: bye/.test(recu) && !fini, 'le flux tient, la porte ne le ferme pas (pas de « bye »)');
+console.log(`  le flux par le Worker : ${recu.length} octets reçus, ${(recu.match(/^event: /gm) || []).length} événements, ` +
+  `${(recu.match(/^: ping$/gm) || []).length} battement(s), toujours ouvert : ${!fini}`);
+await lecteur.cancel().catch(() => {});
 
 // DGX2 éteinte : la page le dit
 r = await W('/api/jobs', { email: 'ami@e2e.test', e: { ...env, PORTAIL: vpc(PORTE, { morte: true }) } });

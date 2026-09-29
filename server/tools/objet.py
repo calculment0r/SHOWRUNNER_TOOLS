@@ -225,6 +225,7 @@ def attach_mesh(eid: str, glb: Path, meta: dict) -> dict:
         it = library.get(eid)
         if not it or not _is_object(it):
             raise KeyError(eid)
+        library.check_write(it)   # au nom du propriétaire du travail : un mesh ne s'ajoute qu'à son objet
         meshes = it["element"].setdefault("meshes", [])
         n = 1 + max([int(m["file"][5:8]) for m in meshes if m.get("file", "")[5:8].isdigit()] or [0])
         name = f"mesh-{n:03d}.glb"
@@ -240,11 +241,21 @@ def attach_mesh(eid: str, glb: Path, meta: dict) -> dict:
         return entry
 
 
+def check_submit(params: dict) -> None:
+    """À l'entrée de `POST /api/jobs` (jobs.register(…, direct=)) : l'objet
+    existe, se voit, et il est à la personne (ou Cal) — son mesh s'y ajoutera."""
+    it = library.get(str(params.get("element") or ""))
+    if not it or not _is_object(it):
+        raise ValueError(f"objet introuvable : {params.get('element')}")
+    library.check_write(it)
+
+
 def _source(ctx) -> tuple[str, dict, dict]:
-    eid = ctx.params.get("element", "")
+    eid = str(ctx.params.get("element") or "")
     it = library.get(eid)
     if not it or not _is_object(it):
         raise RuntimeError(f"objet introuvable : {eid}")
+    library.check_write(it)   # revalidé au départ : le travail ne compte pas sur la route qui l'a mis en file
     refs = [r for r in it["element"]["refs"] if r.get("role") == "view"] or it["element"]["refs"]
     if not refs:
         raise RuntimeError("cet objet n'a pas d'image")
@@ -335,8 +346,9 @@ def register(app) -> None:
     app.route("GET", "/api/objet/state", state)
     app.route("GET", "/api/objet/objects", objects)
     app.route("POST", "/api/objet/objects", create)
-    jobs.register("objet.mesh", run_mesh, lane="image", title="Objet · 3D")
-    jobs.register("objet.mesh_factice", run_factice, lane="cpu", title="Objet · 3D factice")
+    # lancés par la page (objet.js) sur la route commune : `check_submit` juge à l'entrée, `_source` au départ
+    jobs.register("objet.mesh", run_mesh, lane="image", title="Objet · 3D", direct=check_submit)
+    jobs.register("objet.mesh_factice", run_factice, lane="cpu", title="Objet · 3D factice", direct=check_submit)
 
 
 # ── le contrôle, sans GPU ───────────────────────────────────

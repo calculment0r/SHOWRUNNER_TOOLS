@@ -17,14 +17,49 @@ body.ide-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .ide > .ide-bar, .ide > .conflict { flex: none; }
 
 /* ── la barre ──────────────────────────────────────────── */
-.ide-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+/* Une seule ligne (barre.js) : le nom de la planche rétrécit d'abord, ce qui ne tient
+   plus passe dans ⋯. Sous 1600 px, des icônes au lieu des mots ; sous 1360 px, plus serré. */
+.ide-bar { --bgap: 10px; display: flex; align-items: center; gap: var(--bgap); flex-wrap: nowrap; min-width: 0; }
 .ide-bar .sp { flex: 1; min-width: 8px; }
-.pname { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+/* le nom rétrécit jusqu'à 8 signes (sa taille propre ne compte pas : un champ garde sinon ses 24 signes) */
+.pname { display: flex; align-items: baseline; gap: 10px; flex: 0 1 auto; min-width: 190px; }
 .pname .k { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink3); }
 .pname .nm {
   font-family: var(--f-disp); font-size: 14px; letter-spacing: .08em; text-transform: uppercase;
-  padding: 4px 6px; border-radius: var(--r1); width: 24ch; min-width: 8ch; color: var(--ink);
+  padding: 4px 6px; border-radius: var(--r1); width: 24ch; min-width: 8ch; flex: 0 1 auto; color: var(--ink);
 }
+#save-st { flex: none; white-space: nowrap; }
+.ide-bar > * { flex-shrink: 0; }
+.ide-bar > .pname { flex-shrink: 1; }
+/* un bouton à mot qui devient icône (Nouvelle, Exporter, Inviter) */
+.ide-bar .tb .bi { display: none; }
+.ide-bar .tb .bi svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+/* ce que barre.js a replié dans ⋯ ; un groupe vide garde sa place à zéro (un bouton s'y ancre le temps d'un clic) */
+.ide-bar .fold-out { display: none; }
+.ide-bar .fold-out.fold-anchor { display: inline-flex; position: fixed; visibility: hidden; pointer-events: none; }
+.ide-bar > .fold-empty { width: 0; min-width: 0; gap: 0; overflow: visible; margin-right: calc(-1 * var(--bgap)); }
+.ide-bar .ide-more { background: transparent; font-size: 15px; letter-spacing: .05em; }
+.ide-bar .ide-more[hidden] { display: none; }
+@media (max-width: 1600px) {
+  .pname { min-width: 124px; }
+  .pname .k { display: none; }
+  #save-st > span { display: none; }          /* le point seul : son titre dit l'état */
+  .ide-bar .tb.cmp { width: 34px; height: 30px; padding: 0; }
+  .ide-bar .tb.cmp .bi { display: inline-flex; }
+  .ide-bar .tb.cmp .bt { display: none; }
+}
+@media (max-width: 1360px) {
+  .ide-bar { --bgap: 6px; }
+  .ide-bar .tgrp { gap: 2px; }
+  .ide-bar button.ic, .ide-bar .tb.cmp, .ide-bar .co-ic { width: 30px; }
+}
+/* l'invité (core/auth.py) : ni planche neuve, ni bibliothèque, ni export, ni rendus, ni les autres outils */
+body.ide-guest #b-new, body.ide-guest #b-lib, body.ide-guest #b-export, body.ide-guest #exp-st,
+body.ide-guest .ide-bar [data-tool="gen"], body.ide-guest .ide-bar [data-tool="vgen"],
+body.ide-guest .hdr .tools, body.ide-guest .hdr .tools-btn, body.ide-guest .hdr .tools-menu,
+body.ide-guest #sr-sys, body.ide-guest #sr-queue { display: none; }
+body.ide-guest .ide-main { grid-template-columns: 0 minmax(0, 1fr) 300px; }
+body.ide-guest .lib { visibility: hidden; }
 .pname .nm:hover { box-shadow: inset 0 0 0 1px var(--line); }
 .pname .nm:focus { box-shadow: inset 0 0 0 1px var(--line-cy); background: var(--panel2); }
 .tgrp { display: flex; gap: 4px; align-items: center; }
@@ -37,7 +72,7 @@ button.ic svg { width: 15px; height: 15px; fill: none; stroke: currentColor; str
 button.ic:hover:not(:disabled) { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
 button.ic.on { color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }
 button.ic:disabled { opacity: .3; cursor: default; }
-#exp-st { display: inline-flex; }
+#exp-st:not([hidden]) { display: inline-flex; }
 .conflict { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .conflict span { flex: 1; min-width: 200px; }
 

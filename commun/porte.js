@@ -127,20 +127,31 @@ let menu = null;
 function closeMenu() { if (menu) { menu.remove(); menu = null; document.removeEventListener('pointerdown', outside, true); } }
 function outside(e) { if (menu && !menu.contains(e.target) && !e.target.closest('#sr-me')) closeMenu(); }
 
+// Derrière la vraie porte (porte « access », /api/auth/me le dit), le portail n'a pas de session à lui : c'est
+// Cloudflare Access qui tient la connexion. Se déconnecter, c'est donc fermer la session Access : l'adresse
+// <domaine de l'application>/cdn-cgi/access/logout retire le cookie de l'application et révoque la session sur
+// toutes les applications de l'équipe (https://developers.cloudflare.com/cloudflare-one/access-controls/access-settings/session-management/).
+// Chemin absolu : Access le sert à la racine du nom d'hôte, jamais sous une page d'outil.
+const ACCESS_LOGOUT = '/cdn-cgi/access/logout';
+
 export async function account(me, anchor) {
   await styles();
   if (menu) return closeMenu();
   const adm = me.user.role === 'admin';
+  const access = me.porte === 'access';
   menu = el('div', { class: 'acct', role: 'menu', 'aria-label': 'mon compte' },
     el('div', { class: 'acct-head' }, el('b', {}, me.user.name), el('span', { class: 'lbl' }, adm ? 'admin' : 'ami·e')),
-    el('p', { class: 'acct-note' }, 'Pseudo : ', el('b', { class: 'acct-code' }, me.user.pseudo || me.user.name)),
-    el('p', { class: 'acct-note' }, adm
-      ? 'Pour revenir : retaper ce pseudo, depuis le réseau de Cal (la maison, le câble, Tailscale).'
-      : 'Pour revenir, d’ici ou d’ailleurs : retaper ce pseudo.'),
+    access ? null : el('p', { class: 'acct-note' }, 'Pseudo : ', el('b', { class: 'acct-code' }, me.user.pseudo || me.user.name)),
+    el('p', { class: 'acct-note' }, access
+      ? 'Pour revenir : ton e-mail, puis le code que Cloudflare t’envoie.'
+      : adm
+        ? 'Pour revenir : retaper ce pseudo, depuis le réseau de Cal (la maison, le câble, Tailscale).'
+        : 'Pour revenir, d’ici ou d’ailleurs : retaper ce pseudo.'),
     el('div', { class: 'row' },
       adm ? el('a', { class: 'tb ghost sm', href: href('admin/') }, 'La page d’admin') : null,
       el('span', { class: 'sp' }),
       el('button', { class: 'tb ghost sm', onclick: async () => {
+        if (access) { location.href = ACCESS_LOGOUT; return; }
         try { await api('auth/logout', { method: 'POST' }); } catch (e) { toast(e.message); }
         location.href = href('');
       } }, 'Se déconnecter')));

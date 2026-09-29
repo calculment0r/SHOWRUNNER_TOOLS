@@ -42,7 +42,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from core import config, library
+from core import auth, config, library
 from core.http import FileResponse, HttpError
 from tools import core_api
 
@@ -58,8 +58,10 @@ def _tool(it: dict) -> str:
     return (it.get("origin") or {}).get("tool") or "upload"
 
 
-def _ids(d: dict) -> list[dict]:
-    """Les objets nommés par `ids`, tous présents, sinon 404."""
+def _ids(d: dict, write: bool = False) -> list[dict]:
+    """Les objets nommés par `ids`, tous présents et visibles (library.get),
+    sinon 404. `write` : tous à soi (ou Cal), sinon 403 avant d'en toucher un
+    seul — un geste en lot se fait en entier ou pas du tout."""
     ids = d.get("ids")
     if not isinstance(ids, list) or not ids:
         raise HttpError(400, "ids : la liste des objets")
@@ -70,6 +72,9 @@ def _ids(d: dict) -> list[dict]:
             raise HttpError(404, f"introuvable : {iid}")
         if it not in out:
             out.append(it)
+    if write:
+        for it in out:
+            library.check_write(it)
     return out
 
 
@@ -164,16 +169,8 @@ def view(req):
 # ── ranger ──────────────────────────────────────────────────
 def move(req):
     d = req.json()
-    ids = d.get("ids")
-    if not isinstance(ids, list) or not ids:
-        raise HttpError(400, "ids : la liste des objets à ranger")
     folder = _clean_folder(d.get("folder", ""))
-    moved = []
-    for iid in ids:
-        it = library.get(str(iid))
-        if not it:
-            raise HttpError(404, f"introuvable : {iid}")
-        moved.append({"id": it["id"], "from": it.get("folder") or ""})
+    moved = [{"id": it["id"], "from": it.get("folder") or ""} for it in _ids(d, write=True)]
     for m in moved:
         library.update(m["id"], {"folder": folder})
     return {"moved": moved, "folder": folder}
@@ -187,17 +184,26 @@ def rename_folder(req):
         raise HttpError(400, "quel dossier ?")
     if not new:
         raise HttpError(400, "il lui faut un nom")
-    members = [it for it in _all() if (it.get("folder") or "") == old]
-    if not members:
+    everyone = [it for it in _all() if (it.get("folder") or "") == old]
+    if not everyone:
         raise HttpError(404, f"aucun dossier « {old} »")
+    # un dossier n'est que le champ `folder` de ses objets : chacun renomme les siens
+    # (Cal, tous) ; ceux des autres gardent leur dossier (`kept`)
+    u = auth.current()
+    members = [it for it in everyone if auth.can_write_item(it, u)]
+    if not members:
+        library.check_write(everyone[0])   # 403, qui dit à qui ils sont
     merged = new != old and any((it.get("folder") or "") == new for it in _all())
     for it in members:
         library.update(it["id"], {"folder": new})
-    return {"renamed": len(members), "folder": new, "merged": merged}
+    return {"renamed": len(members), "kept": len(everyone) - len(members), "folder": new, "merged": merged}
 
 
 # ── plusieurs à la fois : favori, tags, corbeille ───────────
-ID_RX = re.compile(r"(ima|vid|aud|ele)-\d{8}-\d{6}-[0-9a-f]{4}")
+# la forme d'un identifiant de la bibliothèque : une seule vérité, library.new_id /
+# library.ID_RE — toutes les sortes (mid-, seq- compris ; avant le 29/09, la
+# restauration en lot ne rendait que ima|vid|aud|ele et taisait les autres)
+ID_RX = library.ID_RE
 
 
 def bulk(req):
@@ -205,14 +211,14 @@ def bulk(req):
     `{restore: before}` remet (l'« annuler » de la page)."""
     d = req.json()
     if isinstance(d.get("restore"), list):
-        n = 0
-        for b in d["restore"]:
-            it = library.get(str((b or {}).get("id", "")))
-            if it:
-                library.update(it["id"], {"fav": bool(b.get("fav")), "tags": [str(t)[:40] for t in b.get("tags") or []]})
-                n += 1
-        return {"restored": n}
-    items = _ids(d)
+        back = [(it, b) for b in d["restore"] if isinstance(b, dict)
+                for it in [library.get(str(b.get("id", "")))] if it]
+        for it, _ in back:
+            library.check_write(it)
+        for it, b in back:
+            library.update(it["id"], {"fav": bool(b.get("fav")), "tags": [str(t)[:40] for t in b.get("tags") or []][:64]})
+        return {"restored": len(back)}
+    items = _ids(d, write=True)
     add = [str(t).strip()[:40] for t in d.get("tags_add") or [] if str(t).strip()]
     rem = {str(t) for t in d.get("tags_remove") or []}
     before = []
@@ -230,7 +236,7 @@ def bulk(req):
 
 
 def trash_many(req):
-    items = _ids(req.json())
+    items = _ids(req.json(), write=True)
     for it in items:
         library.trash(it["id"])
     return {"trashed": [it["id"] for it in items]}
@@ -240,13 +246,16 @@ def restore_many(req):
     ids = req.json().get("ids")
     if not isinstance(ids, list):
         raise HttpError(400, "ids : la liste des objets")
+    # un id se tient à sa forme : rien ne sort de la corbeille par « .. » ; un id
+    # qui n'y est pas est passé sous silence (il en est déjà revenu)
+    todo = [str(i) for i in ids if ID_RX.fullmatch(str(i)) and (library.trash_root() / str(i)).is_dir()]
+    for iid in todo:                     # tout à soi (ou Cal), avant d'en rendre un seul
+        library.check_write(library.trashed_meta(iid))
     back = []
-    for iid in ids:
-        if not ID_RX.fullmatch(str(iid)):
-            continue                      # un id se tient à sa forme : rien ne sort de la corbeille par « .. »
+    for iid in todo:
         try:
-            back.append(library.restore(str(iid))["id"])
-        except KeyError:
+            back.append(library.restore(iid)["id"])
+        except (KeyError, ValueError):
             pass
     return {"restored": back}
 
@@ -392,8 +401,16 @@ def _trashed(folder: Path) -> dict | None:
             "thumb_url": f"api/asset/trash/{folder.name}/thumb" if it.get("thumb") else None}
 
 
+def _mine_in_trash(folder: Path) -> bool:
+    """La corbeille de chacun : ce qu'il peut rendre (le sien ; Cal, tout)."""
+    try:
+        return auth.can_write_item(library.trashed_meta(folder.name), auth.current())
+    except KeyError:
+        return False
+
+
 def trash_list(req):
-    out = [t for t in (_trashed(d) for d in library.trash_root().iterdir() if d.is_dir()) if t]
+    out = [t for t in (_trashed(d) for d in library.trash_root().iterdir() if d.is_dir() and _mine_in_trash(d)) if t]
     out.sort(key=lambda t: t["trashed"], reverse=True)
     return {"items": out}
 
@@ -401,7 +418,7 @@ def trash_list(req):
 def trash_thumb(req, item_id):
     root = library.trash_root().resolve()
     d = (root / item_id).resolve()
-    if not d.is_relative_to(root) or not (d / "item.json").is_file():
+    if not d.is_relative_to(root) or not (d / "item.json").is_file() or not _mine_in_trash(d):
         raise HttpError(404, "pas dans la corbeille")
     try:
         name = json.loads((d / "item.json").read_text(encoding="utf-8")).get("thumb") or ""
@@ -447,6 +464,7 @@ def set_refs(req, item_id):
     it = library.get(item_id)
     if not it or it["kind"] != "element":
         raise HttpError(404, f"élément introuvable : {item_id}")
+    library.check_write(it)   # la planche d'un autre ne se touche pas (avant le 29/09 : aucun contrôle)
     body = req.json()
     refs, voices = body.get("refs"), body.get("voices")
     if refs is None and voices is None:
@@ -502,6 +520,7 @@ def cf_refresh(req):
     it = library.get(iid)
     if not it or it["kind"] != "element":
         raise HttpError(404, f"élément introuvable : {iid}")
+    library.check_write(it)   # avant d'effacer quoi que ce soit (avant le 29/09 : le refus venait après l'effacement)
     src = it["element"].get("source") or {}
     slug = src.get("slug", "")
     if src.get("tool") != "character-factory" or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", slug):

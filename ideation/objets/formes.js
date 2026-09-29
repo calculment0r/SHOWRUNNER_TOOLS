@@ -49,7 +49,7 @@ export function shapeMenu(app, n) {
 
 export function shapePanel(app, n, K) {
   const { card, hint } = K;
-  const ta = el('textarea', { class: 'fld', rows: 3, placeholder: 'le texte de la forme' });
+  const ta = el('textarea', { class: 'fld', rows: 3, placeholder: 'le texte de la forme', 'data-reg': 'text' });
   ta.value = n.text || '';
   let ch = () => {};
   ta.addEventListener('focus', () => { ch = app.editing(); });

@@ -63,6 +63,10 @@ DEFAULTS: dict = {
     "machine_ollama": {"DGX2": "http://127.0.0.1:11434", "DGX1": "http://169.254.110.6:11434"},
     # le journal du serveur (tools/portail.sh), lu par la page admin
     "log_file": str(Path.home() / "showrunner.log"),
+    # la taille d'un dépôt pour qui n'est pas admin, en Mo, par sorte (core_api.lib_upload) :
+    # une image 15 Mo (l'audit, docs/etudes/cloudflare.md § 4.3) ; le reste 100 Mo, la
+    # limite d'une requête d'un Worker gratuit (même page) — au-delà, la porte ne le passerait pas
+    "upload_max_mb": {"image": 15, "video": 100, "audio": 100, "midi": 100},
 }
 
 # Les interrupteurs de câblage que la page admin lit et change : chaque

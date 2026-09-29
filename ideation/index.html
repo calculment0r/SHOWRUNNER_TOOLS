@@ -21,7 +21,7 @@
   <!-- la barre : la planche, les outils, annuler, l'export -->
   <div class="ide-bar">
     <button class="tb ghost sm" id="b-boards" type="button" title="ouvrir, renommer, dupliquer une planche">Planches</button>
-    <button class="tb ghost sm" id="b-new" type="button" title="une planche neuve">Nouvelle</button>
+    <button class="tb ghost sm cmp" id="b-new" type="button" title="une planche neuve" aria-label="nouvelle planche"><span class="bi"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span class="bt">Nouvelle</span></button>
     <label class="pname" title="le nom de la planche (elle s'enregistre seule)">
       <span class="k">planche</span>
       <input id="b-name" class="nm" value="" spellcheck="false" aria-label="nom de la planche" maxlength="120">
@@ -48,7 +48,7 @@
     </div>
     <button class="ic on" id="b-lib" type="button" title="le panneau de la bibliothèque"><svg viewBox="0 0 24 24"><path d="M4 5h5v14H4zM11 5h4v14h-4zM17 6l3 .8-3.2 12.4-3-.8"/></svg></button>
     <span id="exp-st" hidden></span>
-    <button class="tb ghost sm" id="b-export" type="button">Exporter</button>
+    <button class="tb ghost sm cmp" id="b-export" type="button"><span class="bi"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></span><span class="bt">Exporter</span></button>
     <button class="ic" id="b-help" type="button" title="les raccourcis">?</button>
   </div>
 

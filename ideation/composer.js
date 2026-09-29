@@ -296,7 +296,7 @@ export function createComposer(app) {
     } else if (p.values) {
       body = valueEditor(c, s);
     } else {
-      const ta = el('textarea', { class: 'fld ctext', rows: 1, spellcheck: 'false', placeholder: slotHint(s), readonly: s.lock ? true : null });
+      const ta = el('textarea', { class: 'fld ctext', rows: 1, spellcheck: 'false', placeholder: slotHint(s), readonly: s.lock ? true : null, 'data-reg': 't:' + s.id });
       ta.value = s.text || '';
       let changed = () => {};
       const grow = () => { ta.style.height = 'auto'; ta.style.height = `${Math.min(ta.scrollHeight, 4 * 18 + 12)}px`; };
@@ -402,7 +402,7 @@ export function createComposer(app) {
       else if (p.from) body = el('p', { class: 'hint' }, `${fromName(p.from)} : ${p.text.trim() || 'vide'}`);
       else if (p.values) body = valueEditor(c, s, true);
       else {
-        body = el('textarea', { class: 'fld', rows: 2, placeholder: slotHint(s), readonly: s.lock ? true : null });
+        body = el('textarea', { class: 'fld', rows: 2, placeholder: slotHint(s), readonly: s.lock ? true : null, 'data-reg': 't:' + s.id });
         body.value = s.text || '';
         let ch = () => {};
         body.addEventListener('focus', () => { ch = app.editing(); });

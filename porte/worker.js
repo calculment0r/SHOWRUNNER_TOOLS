@@ -39,10 +39,18 @@ const SANS_CORPS = new Set(['GET', 'HEAD']);
 // Ce qui passe de la page aux DGX, et rien d'autre : ni cookie (CF_Authorization), ni en-tête Cf-*, ni x-porte-*
 // forgé par la page. Une liste de ce qui passe plutôt qu'une liste de ce qui ne passe pas : juste par construction.
 // Content-Length n'y est pas : le FixedLengthStream du corps le donne lui-même (corpsDeLongueurFixe).
+// accept, last-event-id, cache-control : ce qu'envoie un EventSource (le flux d'Idéation, ideation/collab.js).
 const EN_TETES_TRANSMIS = new Set([
-  'accept', 'accept-language', 'content-type', 'range', 'if-range',
+  'accept', 'accept-language', 'content-type', 'range', 'if-range', 'cache-control',
   'if-none-match', 'if-modified-since', 'x-filename', 'last-event-id', 'user-agent',
 ]);
+
+// Les gestes de la collaboration d'Idéation (curseur, sélection, lots d'opérations, signalisation de la visio,
+// départ) : de petits POST, un seul à la fois par onglet mais jusqu'à ~20 par seconde pendant un geste
+// (ideation/collab.js, ideation/coedition.js). Ils ne calculent rien : la limite de débit (audit H4, pour le GPU)
+// ne les compte pas, sinon la planche se figerait après 30 gestes. Le portail les borne lui-même (un onglet, une
+// requête en vol ; server/tools/ideation_collab.py).
+const GESTE_COLLAB = /^\/api\/ideation\/collab\/[^/]+\/(presence|ops|signal|leave)$/;
 
 // Ce qui va au portail de DGX2 plutôt qu'aux assets (et figure donc dans run_worker_first de wrangler.jsonc) :
 // les relais du studio (server/tools/character.py) et les rendus de Movie Analysis (server/tools/analyse.py).
@@ -199,6 +207,15 @@ async function joins(req, env, ctx, nom, id, chemin, { delai } = {}) {
 }
 
 // La réponse du DGX telle quelle, en flux (ni texte ni JSON relu ici : pas de limite de taille, pas de mémoire).
+// Le corps de la réponse passe tel quel (jamais de FixedLengthStream ni de TransformStream ici) : c'est aussi ce qui
+// tient le flux SSE d'Idéation (text/event-stream) ouvert, octet par octet, tant que la page reste connectée.
+//   « Any data provided through the ReadableStream will be streamed to the client as it becomes available »
+//     (https://developers.cloudflare.com/workers/runtime-apis/streams/) ;
+//   « There is no hard limit on duration for HTTP-triggered Workers. As long as the client remains connected… »
+//   et attendre un fetch ne compte pas dans les 10 ms de CPU (https://developers.cloudflare.com/workers/platform/limits/).
+// Par Workers VPC, le flux n'est pas documenté ; « connection_read_timeout » (aucune donnée reçue dans le délai,
+// délai non publié : https://developers.cloudflare.com/workers-vpc/reference/troubleshooting/) : le portail envoie
+// un commentaire « : ping » toutes les 15 s (HEARTBEAT_S, server/tools/ideation_collab.py).
 function rends(r) {
   const h = new Headers(r.headers);
   h.delete('server');
@@ -330,6 +347,9 @@ export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     const chemin = url.pathname;
+    // Déployé avant d'avoir son tag AUD (l'emplacement "<…>" de wrangler.jsonc) : aucun jeton ne passerait de toute
+    // façon (aud ≠), mais on le dit plutôt que de laisser croire à un refus d'Access.
+    if (!env.POLICY_AUD || String(env.POLICY_AUD).startsWith('<')) return erreur(503, 'la porte n’a pas encore son tag AUD (wrangler.jsonc, POLICY_AUD)');
     let id;
     try {
       id = await qui(req, env);
@@ -340,7 +360,7 @@ export default {
     if (!id) return erreur(403, 'passe par la porte : cette adresse demande la connexion Cloudflare Access');
     if (!SANS_CORPS.has(req.method) && !memeOrigine(req, url)) return erreur(403, 'requête venue d’une autre page : refusée');
     // Limite de débit par personne sur ce qui écrit (audit H4) ; le quota de GPU, lui, est tenu par la file des DGX.
-    if (env.LIMITE && !SANS_CORPS.has(req.method)) {
+    if (env.LIMITE && !SANS_CORPS.has(req.method) && !GESTE_COLLAB.test(chemin)) {
       const { success } = await env.LIMITE.limit({ key: id.email });
       if (!success) return erreur(429, 'trop de demandes d’un coup : attends une minute');
     }

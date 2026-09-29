@@ -131,7 +131,7 @@ export function createVideo(app) {
     let field;
     if (pr) field = inbox(app, pr, 'la prose (et son Son, sa Musique) est copiée dans la carte');
     else {
-      field = el('textarea', { class: 'fld gp', rows: 4, spellcheck: 'false',
+      field = el('textarea', { class: 'fld gp', rows: 4, spellcheck: 'false', 'data-reg': 'prompt',
         placeholder: v.mode === 'r2v' ? 'ce qu’on voit et entend, en anglais ; les entrées par leur place : @image1 walks…' : 'ce qu’on voit et entend, en anglais… ou branchez un texte' });
       field.value = v.prompt || '';
       let changed = () => {};
@@ -224,7 +224,7 @@ export function createVideo(app) {
     let field;
     if (pr) field = inbox(app, pr, 'la prose (et son Son, sa Musique) est copiée dans la carte');
     else {
-      field = el('textarea', { class: 'fld', rows: 5, placeholder: v.mode === 'r2v' ? 'la description, en anglais : @image1, @element1… par leur place' : 'la description, en anglais' });
+      field = el('textarea', { class: 'fld', rows: 5, 'data-reg': 'prompt', placeholder: v.mode === 'r2v' ? 'la description, en anglais : @image1, @element1… par leur place' : 'la description, en anglais' });
       field.value = v.prompt || '';
       let ch = () => {};
       field.addEventListener('focus', () => { ch = app.editing(); });
@@ -286,7 +286,7 @@ export function createVideo(app) {
     // le son et la musique : les champs à part d'H3 ; d'un composeur branché s'il a ces cases
     const field2 = (k, ph, fromC) => {
       if (fromC) return el('p', { class: 'hint' }, `${k === 'sound' ? 'Son' : 'Musique'} : de la case du composeur — ${fromC}`);
-      const t = el('textarea', { class: 'fld', rows: 2, placeholder: ph });
+      const t = el('textarea', { class: 'fld', rows: 2, placeholder: ph, 'data-reg': k });
       t.value = v[k] || '';
       let c3 = () => {};
       t.addEventListener('focus', () => { c3 = app.editing(); });

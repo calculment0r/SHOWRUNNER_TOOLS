@@ -1541,12 +1541,26 @@ def r_h3_stop(req):
     return stop_h3(ep, "arrêt demandé")
 
 
+def check_submit(mode: str):
+    """À l'entrée de `POST /api/jobs` (la page Vidéo et Idéation y lancent
+    leurs plans) : le plan que `run` referait au départ, ses erreurs → 400.
+    `run` le refait de toute façon : il ne compte sur aucune route."""
+    def check(params: dict) -> None:
+        try:
+            pl = plan(mode, params)
+        except (TypeError, ValueError, KeyError, AttributeError) as e:
+            raise ValueError(f"réglages illisibles : {e}") from e
+        if pl["errors"]:
+            raise ValueError(" ; ".join(pl["errors"]))
+    return check
+
+
 def register(app) -> None:
     global _keeper_on
     lane = "h3" if engine() == "h3" else "cpu"   # le moteur factice tourne sur la voie cpu (ffmpeg)
-    jobs.register("movie.t2v", run_t2v, lane=lane, title="Texte → vidéo")
-    jobs.register("movie.i2v", run_i2v, lane=lane, title="Images → vidéo")
-    jobs.register("movie.r2v", run_r2v, lane=lane, title="Références → vidéo")
+    jobs.register("movie.t2v", run_t2v, lane=lane, title="Texte → vidéo", direct=check_submit("t2v"))
+    jobs.register("movie.i2v", run_i2v, lane=lane, title="Images → vidéo", direct=check_submit("i2v"))
+    jobs.register("movie.r2v", run_r2v, lane=lane, title="Références → vidéo", direct=check_submit("r2v"))
     app.route("GET", "/api/movie/options", r_options)
     app.route("POST", "/api/movie/plan", r_plan)
     app.route("GET", "/api/movie/loras", r_loras)

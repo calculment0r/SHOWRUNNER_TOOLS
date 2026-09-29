@@ -49,7 +49,7 @@ import wave
 from array import array
 from pathlib import Path
 
-from core import config, jobs, library
+from core import auth, config, jobs, library
 from core.comfy import Comfy, ComfyError, fill
 from core.http import HttpError
 
@@ -588,7 +588,7 @@ def empty(name: str) -> dict:
 
 def _summary(p: dict) -> dict:
     return {"id": p["id"], "name": p["name"], "updated": p.get("updated"), "bpm": p.get("bpm"),
-            "tracks": len(p.get("tracks") or []), "clips": len(p.get("clips") or [])}
+            "tracks": len(p.get("tracks") or []), "clips": len(p.get("clips") or []), "owner": auth.owner_of(p)}
 
 
 def _write(p: dict) -> None:
@@ -599,19 +599,31 @@ def _write(p: dict) -> None:
 
 
 def _read(pid: str) -> dict:
+    """Le projet, s'il existe et si la personne peut le voir (la règle de la
+    bibliothèque, `visibility`, sur son `owner`) ; sinon 404 — on ne dit pas
+    qu'un projet invisible existe."""
     f = _path(pid)
     if not f.exists():
         raise HttpError(404, f"projet introuvable : {pid}")
-    return json.loads(f.read_text(encoding="utf-8"))
+    p = json.loads(f.read_text(encoding="utf-8"))
+    if not library.readable(p):
+        raise HttpError(404, f"projet introuvable : {pid}")
+    return p
 
 
 # ── routes des projets ──────────────────────────────────────
+# Un projet est à qui l'a créé (`owner`, posé ici, jamais par la page) ; un
+# projet d'avant le 29/09, sans `owner`, est à Cal. Seul son propriétaire (ou
+# un admin) l'enregistre ou le met à la corbeille : library.check_write, la
+# règle des objets de la bibliothèque (docs/etudes/apps_studio_elements.md § 2.12).
 def list_projects(req):
     out = []
     for f in _dir().glob("mus-*.json"):
         try:
-            out.append(_summary(json.loads(f.read_text(encoding="utf-8"))))
-        except (ValueError, KeyError):
+            p = json.loads(f.read_text(encoding="utf-8"))
+            if library.readable(p):
+                out.append(_summary(p))
+        except (ValueError, KeyError, AttributeError):
             continue
     out.sort(key=lambda s: s.get("updated") or "", reverse=True)
     return {"projects": out}
@@ -626,6 +638,8 @@ def create_project(req):
     p = {"rythme": starter, "session": session, "vide": empty}[tpl](name)
     now = library.now()
     p.update(id=f"mus-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}", rev=1, created=now, updated=now)
+    if auth.current_id():
+        p["owner"] = auth.current_id()
     validate(p)
     with _lock:
         _write(p)
@@ -646,8 +660,14 @@ def save_project(req, pid):
         raise HttpError(400, str(e)) from e
     with _lock:
         cur = _read(pid)
+        library.check_write(cur)   # 403 : le projet d'un autre (avant le 29/09 : aucun contrôle)
         if d.get("rev") != cur.get("rev"):
             raise HttpError(409, "ce projet a changé ailleurs (un autre onglet ?) : il faut le recharger")
+        # le propriétaire et le partage restent ceux du serveur, quoi que la page envoie
+        for k in ("owner", "shared", "origin"):
+            d.pop(k, None)
+            if k in cur:
+                d[k] = cur[k]
         d.update(id=pid, created=cur.get("created"), updated=library.now(), rev=int(cur.get("rev") or 0) + 1)
         _write(d)
     return {"ok": True, "rev": d["rev"], "updated": d["updated"]}
@@ -655,8 +675,7 @@ def save_project(req, pid):
 
 def delete_project(req, pid):
     f = _path(pid)
-    if not f.exists():
-        raise HttpError(404, f"projet introuvable : {pid}")
+    library.check_write(_read(pid))   # 404 s'il est invisible, 403 s'il est à un autre
     trash = _dir() / "corbeille"
     trash.mkdir(exist_ok=True)
     shutil.move(str(f), str(trash / f.name))

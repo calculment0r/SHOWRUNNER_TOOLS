@@ -111,7 +111,9 @@ export function install(app) {
   // suivre : « suit Lina · arrêter », ou « reprendre » après un geste qui a rompu le suivi
   const followPill = el('button', { class: 'co-follow', type: 'button', hidden: true, onclick: () => followClick() }, el('i'), el('span'));
   const roleChip = el('span', { class: 'co-role lbl', hidden: true });
-  const bInvite = el('button', { class: 'tb ghost sm co-inv', type: 'button', hidden: true, title: 'inviter quelqu’un sur cette planche : un lien, un rôle, une durée', onclick: () => inviteModal() }, 'Inviter');
+  // étroite, la barre n'en montre que l'icône (ideation.css, .cmp)
+  const bInvite = el('button', { class: 'tb ghost sm co-inv cmp', type: 'button', hidden: true, 'aria-label': 'inviter', title: 'inviter quelqu’un sur cette planche : un lien, un rôle, une durée', onclick: () => inviteModal() },
+    el('span', { class: 'bi', html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a7 7 0 0 1 14 0v1M19 8v6M16 11h6"/></svg>' }), el('span', { class: 'bt' }, 'Inviter'));
   const barBox = el('div', { class: 'co-bar' }, linkSt, notice, followPill, who, callPill, roleChip, bInvite, bPin, bFil, bVis);
   const ideBar = $('.ide-bar');
   if (ideBar) ideBar.append(barBox); else document.body.append(barBox);

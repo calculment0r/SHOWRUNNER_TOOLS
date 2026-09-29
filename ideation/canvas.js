@@ -1243,6 +1243,7 @@ export function createCanvas(app) {
     if (!n || !txt) return;
     app.select([id]);
     txt.textContent = n.text || '';
+    txt.dataset.reg = 'text';   // le registre qu'il écrit : la co-édition y verse les frappes des autres (coedition.js, follow)
     txt.classList.remove('ph');
     txt.classList.add('editing');
     try { txt.contentEditable = 'plaintext-only'; } catch { txt.contentEditable = 'true'; }
@@ -1285,7 +1286,7 @@ export function createCanvas(app) {
     const b = dom.get(id)?.el.querySelector('.fr-n');
     if (!n || !b) return;
     app.select([id]);
-    const inp = el('input', { class: 'fr-in', value: n.name || '', maxlength: 120, placeholder: 'nom du cadre' });
+    const inp = el('input', { class: 'fr-in', value: n.name || '', maxlength: 120, placeholder: 'nom du cadre', 'data-reg': 'name' });
     b.replaceWith(inp);
     inp.focus({ preventScroll: true }); inp.select();
     const done = (keep) => {
