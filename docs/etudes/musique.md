@@ -265,8 +265,9 @@ onglets (réservés : la page ne les reçoit pas) et peut garder F12.
   non plus ; la table `FACETTES` (ce que chaque réglage a de rythmique,
   d'harmonique, de timbral) est à relire par Cal : nos boîtes à rythme n'ont
   ni swing ni densité, RYTHME ne capte que l'accent de la basse acide. Les
-  couleurs des lanes sont des jetons voisins de celles d'ODIO_01 ; les vraies
-  demanderaient cinq jetons dans `commun/tokens.css`.
+  couleurs des lanes sont, depuis le 29/09 au soir, celles d'ODIO_01 en cinq
+  jetons nommés de `musique/nodal.css` (`--nd-ryt`… : sombre et clair, au
+  contraste AA) — `docs/etudes/musique_theme.md`.
 - Un segment de 40 px ne montre qu'une ligne d'opérateur (comme dans
   ODIO_01) ; zoomer le banc en montre plus.
 - La touche « c » bascule les têtes dans le nodal (ODIO_01) : là, elle ne
@@ -411,7 +412,10 @@ valeur.
 
 - Le cadre n'est plus le sien : titres en Chakra Petch (pas Microgramma),
   nos molettes au lieu de ses trois familles (dial, enc, slider), la
-  lecture des valeurs sans unité (« 62 » et non « 62 % »).
+  lecture des valeurs sans unité (« 62 » et non « 62 % »). Depuis le
+  rhabillage du 29/09 (`musique_theme.md`), les tuiles du nodal portent le
+  même cadre que les jouets : une carte du nodal d'avant ; les ports des
+  jouets et leurs câbles gardent leur taille à l'écran.
 - Deux défauts du Playground corrigés (voir PROVENANCE) : l'anneau de
   `d_pong` (« TN is not defined » à chaque rebond) et le tir de la NAVETTE
   (`ev.button`, le clic ne tirait jamais).

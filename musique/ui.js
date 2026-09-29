@@ -14,8 +14,12 @@ export { el };
 
 const R = 16, C = 2 * Math.PI * R, SWEEP = 0.75;
 
-// knob(spec, valeur, {accent, size, onInput(v), onChange(v)}) → élément
-export function knob(s, value, { accent = 'cy', size = 'md', onInput = () => {}, onChange = () => {}, label = s.label } = {}) {
+// Le cadran d'une molette : la piste de 270°, l'arc de la valeur, l'aiguille —
+// le dessin de toutes les molettes d'ODIO (celles du rack, de la console, des
+// cartes du nodal, des sections de machine : machines/panneau.js). `n` : 0..1.
+// Rend { svg, paint(n) } ; les couleurs sont celles de .kn (musique.css) :
+// la piste en filet, l'arc et l'aiguille dans l'accent --k.
+export function dial() {
   const ns = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(ns, 'svg');
   svg.setAttribute('viewBox', '0 0 40 40');
@@ -32,15 +36,24 @@ export function knob(s, value, { accent = 'cy', size = 'md', onInput = () => {},
   ptr.setAttribute('class', 'pt');
   ptr.setAttribute('x1', 20); ptr.setAttribute('y1', 20); ptr.setAttribute('x2', 20); ptr.setAttribute('y2', 8);
   svg.append(track, arc, ptr);
+  const paint = (n) => {
+    arc.setAttribute('stroke-dasharray', `${(C * SWEEP * n).toFixed(2)} 999`);
+    ptr.setAttribute('transform', `rotate(${(-135 + n * 270).toFixed(1)} 20 20)`);
+  };
+  return { svg, paint };
+}
+
+// knob(spec, valeur, {accent, size, onInput(v), onChange(v)}) → élément
+export function knob(s, value, { accent = 'cy', size = 'md', onInput = () => {}, onChange = () => {}, label = s.label } = {}) {
+  const d = dial();
   const v = el('span', { class: 'v' });
   const box = el('div', { class: `kn ${size}`, tabindex: 0, role: 'slider', 'aria-label': label,
     style: { '--k': `var(--${accent})` } },
-  el('div', { class: 'dial' }, svg), v, size === 'xs' ? null : el('span', { class: 'l' }, label));
+  el('div', { class: 'dial' }, d.svg), v, size === 'xs' ? null : el('span', { class: 'l' }, label));
   let cur = value;
   const paint = () => {
     const n = toNorm(s, cur);
-    arc.setAttribute('stroke-dasharray', `${(C * SWEEP * n).toFixed(2)} 999`);
-    ptr.setAttribute('transform', `rotate(${(-135 + n * 270).toFixed(1)} 20 20)`);
+    d.paint(n);
     v.textContent = fmt(s, cur);
     box.setAttribute('aria-valuetext', `${fmt(s, cur)} ${s.unit || ''}`.trim());
     box.title = `${label} : ${fmt(s, cur)} ${s.unit && !s.opts ? s.unit : ''}`.trim();

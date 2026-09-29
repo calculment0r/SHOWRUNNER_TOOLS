@@ -144,10 +144,21 @@ chaque remise en page de tuile coûte ≤ 5 ms (mesuré : 231 remises en page,
 
 ## 3. Ce qui diffère encore, ce qui n'est pas beau
 
+**29/09 au soir — l'habit.** Cal : « les nodes avaient le bon design et tu as
+mis ceux de l'ancien projet qui était du prototype […] on garde juste le code
+et la logique et on repasse tout dans notre thème ». Tout le rendu de ce
+portage est rhabillé dans le thème du portail, la logique intacte : les tuiles
+sont les cartes du nodal d'avant (4a20f41), les molettes celles du rack, les
+fils ceux de `commun/wire.js` en pixels d'écran, la sélection et les menus
+ceux d'Idéation et de `commun/menu.js`. Le détail, les mesures et les
+captures côte à côte : `docs/etudes/musique_theme.md`. Ce qui suit décrit
+l'état d'avant l'habit quand il parle d'apparence.
+
 - Le panneau de droite (réglages, liaisons, sortie) est celui du portail :
   ODIO_01 n'en a pas.
 - Les cartes des jouets gardent leur dessin (celui du Playground) : ce ne
-  sont pas des tuiles d'ODIO_01 (pas de redimensionnement, pas de sémantique).
+  sont pas des tuiles d'ODIO_01 (pas de redimensionnement, pas de sémantique) ;
+  leur cadre est depuis le 29/09 celui de toutes les tuiles.
 - De loin, un module d'ici sans surface (le délai « TEMPS 1/8 », la
   batterie « NIVEAU ») montre son réglage exposé en très grand : c'est la
   règle d'ODIO_01, mais sur nos modules qui n'ont pas d'exposé choisi, le

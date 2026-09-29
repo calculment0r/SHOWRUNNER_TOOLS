@@ -20,7 +20,7 @@
 
 import { beginDrag } from './interaction/drag.js';
 import { isDrag } from './interaction/gesture.js';
-import { knobAngle, knobNormFromDrag } from './interaction/knob.js';
+import { knobNormFromDrag } from './interaction/knob.js';
 import {
   celluleDe, controlBox, controlKey, formatControlValue, keyNote, labelOf, labelWidth, machineDesignOf,
   namesFit, rankedControls, planPanel, sectionRetouchee, silkscreenSteps,
@@ -34,6 +34,7 @@ import {
 import { assemblageDe, resoudreSection } from './blocks/assemblages.js';
 import { publierMinimum } from './blocks/minima.js';
 import { normToParam, paramToNorm } from './moteur/scale.js';
+import { dial } from '../ui.js';   // le cadran des molettes d'ODIO : une seule vérité avec le rack et les cartes
 
 /** Corps de police d'un libellé de contrôle, en mm — cote du planogramme. */
 const LABEL_MM = 2.8;
@@ -468,24 +469,25 @@ function scaled(style, ratio) {
 }
 
 /**
- * Le knob (Knob.tsx) : cercle 1 px, aiguille du centre au bord, course
- * −135° → +135°. Glisser verticalement règle (140 px, ⇧ fin) ; double-clic :
- * la valeur par défaut ; clic milieu : tirer un lien vers une autre molette.
- * La capture n'est prise qu'une fois le glissé avéré (sinon le double-clic
- * n'arrive jamais) ; aiguille et pivot calculés en px depuis le diamètre.
+ * Le knob (Knob.tsx), dessiné comme les molettes d'ODIO (ui.js, `dial` : la
+ * piste de 270°, l'arc de la valeur et l'aiguille dans l'accent de la carte —
+ * SHOWRUNNER, 29/09 : le thème du portail au lieu du cercle d'un pixel).
+ * La course reste −135° → +135°. Glisser verticalement règle (140 px, ⇧ fin) ;
+ * double-clic : la valeur par défaut ; clic milieu : tirer un lien vers une
+ * autre molette. La capture n'est prise qu'une fois le glissé avéré (sinon le
+ * double-clic n'arrive jamais).
  */
 function knob(style, value, defaultValue, onChange, design, label, readout, bout, onLien, onSurvolLien) {
   const box = h('div', 'machine__ctl'); posee(box, style);
   const size = style.width;
   const k = h('div', 'knob', { width: size, height: size });
   const body = h('div', 'knob__body', { width: size, height: size });
-  const needle = h('div', 'knob__needle');
-  const needleHeight = Math.max(1, (size / 2 - 3) * design.knobNeedle);
-  const pivot = size / 2 - 2;
+  const cadran = dial();
+  cadran.svg.setAttribute('class', 'knob__dial');
   let cur = value;
-  const paint = () => { needle.style.height = `${needleHeight}px`; needle.style.transform = `rotate(${knobAngle(cur)}deg)`; needle.style.transformOrigin = `0.5px ${pivot}px`; };
+  const paint = () => cadran.paint(Math.min(1, Math.max(0, cur)));
   paint();
-  body.append(h('div', 'knob__circle'), needle);
+  body.append(cadran.svg);
   if (label) body.title = label;
   if (bout) {
     body.dataset.bout = bout;
@@ -521,14 +523,25 @@ function knob(style, value, defaultValue, onChange, design, label, readout, bout
   return box;
 }
 
-/** Fader vertical du planogramme : rail 1 px, curseur 90 % × 3 px. */
+/**
+ * Fader vertical du planogramme, dessiné comme le fader de la console d'ODIO
+ * (ui.js `fader`, musique.css .fdr) : un rail arrondi, le trait de la valeur
+ * dans l'accent, un chapeau plein. Le chapeau a au moins la cote du
+ * planogramme (`cursor`) et grandit avec la largeur, pour se saisir.
+ */
 function fader(style, value, defaultNorm, onNorm, cursor, course, label, readout) {
   const e = h('div', 'machine__fader'); posee(e, style);
   const cur = h('span', 'machine__fader-cursor');
+  const fill = h('span', 'machine__fader-fill');
+  const capH = Math.max(cursor, Math.min(10, Math.round(style.width * 0.45)));
   let n = value;
-  const paint = () => Object.assign(cur.style, { top: `${(1 - n) * (style.height - cursor)}px`, height: `${cursor}px`, width: `${style.width * 0.9}px`, left: `${style.width * 0.05}px` });
+  const paint = () => {
+    const y = (1 - n) * (style.height - capH);
+    Object.assign(cur.style, { top: `${y}px`, height: `${capH}px` });
+    fill.style.height = `${Math.max(0, style.height - y - capH / 2)}px`;
+  };
   paint();
-  e.append(h('span', 'machine__fader-rail'), cur);
+  e.append(h('span', 'machine__fader-rail'), fill, cur);
   e.addEventListener('dblclick', (ev) => { ev.stopPropagation(); n = defaultNorm; paint(); onNorm(n); });
   e.addEventListener('pointerdown', (event) => {
     if (event.button !== 0) return;
@@ -602,7 +615,7 @@ function molette(style, norm, spring, onNorm, label, readout) {
   e.title = label;
   const cur = h('span', spring ? 'machine__wheel-cursor machine__wheel-cursor--spring' : 'machine__wheel-cursor');
   let n = norm;
-  const paint = () => { cur.style.top = `calc(${(1 - n) * 100}% - 1px)`; };
+  const paint = () => { cur.style.top = `calc(${(1 - n) * 100}% - 2px)`; };
   paint();
   e.append(h('span', 'machine__wheel-well'), h('span', 'machine__wheel-mid'), cur);
   e.addEventListener('pointerdown', (event) => {

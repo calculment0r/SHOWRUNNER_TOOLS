@@ -62,10 +62,12 @@ function parametresParVoix() {
 
 // ── de petites fabriques DOM ──
 const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
-const bouton = (cls, text, fn, title) => { const b = h('button', cls, text); b.type = 'button'; if (title) b.title = title; b.addEventListener('click', fn); return b; };
+// SHOWRUNNER (29/09, le thème du portail) : les boutons sont ceux du portail
+// (commun/base.css, .tb.ghost.sm), les champs ses champs (.fld)
+const bouton = (cls, text, fn, title) => { const b = h('button', /\bplano__(btn|mini)\b/.test(cls) ? `tb ghost sm ${cls}` : cls, text); b.type = 'button'; if (title) b.title = title; b.addEventListener('click', fn); return b; };
 function champ(label, input, large = false) { const l = h('label', large ? 'plano__champ plano__champ--large' : 'plano__champ', label); l.append(input); return l; }
 function saisie(value, onInput, attrs = {}) {
-  const i = h('input');
+  const i = h('input', 'fld');
   for (const [k, v] of Object.entries(attrs)) i.setAttribute(k, v);
   i.value = value ?? '';
   i.addEventListener('change', () => onInput(i.value));
@@ -73,7 +75,7 @@ function saisie(value, onInput, attrs = {}) {
   return i;
 }
 function liste(value, options, onChange) {
-  const s = h('select');
+  const s = h('select', 'fld');
   for (const [v, t] of options) { const o = h('option', null, t); o.value = v; s.append(o); }
   s.value = value ?? '';
   s.addEventListener('change', () => onChange(s.value));
@@ -241,8 +243,8 @@ export function ouvrirPlano({ projet, onPoser, onGarder, onClose }) {
       g.sections.forEach((section, s) => {
         const bloc = h('div', 'plano__section');
         const tete = h('div', 'plano__section-tete');
-        const nom = saisie(section.nom, (v) => modifier((x) => majSection(x, s, { nom: v })), { title: 'Le nom de la section' }); nom.className = 'plano__nom';
-        const ident = saisie(section.id, (v) => modifier((x) => majSection(x, s, { id: v })), { title: 'L\'identifiant de la section' }); ident.className = 'plano__id';
+        const nom = saisie(section.nom, (v) => modifier((x) => majSection(x, s, { nom: v })), { title: 'Le nom de la section' }); nom.className = 'fld plano__nom';
+        const ident = saisie(section.id, (v) => modifier((x) => majSection(x, s, { id: v })), { title: 'L\'identifiant de la section' }); ident.className = 'fld plano__id';
         const haut = bouton('plano__mini', '↑', () => modifier((x) => deplacerSection(x, s, -1)), 'Monter'); haut.disabled = s === 0;
         const bas = bouton('plano__mini', '↓', () => modifier((x) => deplacerSection(x, s, 1)), 'Descendre'); bas.disabled = s === g.sections.length - 1;
         tete.append(nom, ident,
@@ -350,7 +352,7 @@ export function ouvrirPlano({ projet, onPoser, onGarder, onClose }) {
   // importer un JSON (Plano.tsx, Importer)
   function importer() {
     const bloc = h('div', 'plano__panneau');
-    const t = h('textarea');
+    const t = h('textarea', 'fld');
     t.placeholder = '{ "id": "…", "sections": [ … ] }';
     t.addEventListener('keydown', (e) => e.stopPropagation());
     const champs = h('div', 'plano__champs');

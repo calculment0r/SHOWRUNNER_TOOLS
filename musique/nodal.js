@@ -61,7 +61,8 @@ import { lier as lierBouts, delier, retourner, trameDe, propager, sortieDuBord }
 import { COMPUTER_KEYS } from './machines/interaction/clavier-ordinateur.js';
 import { MIN_K, zoomAt as zoomCamera, plancherCamera } from './machines/canvas/camera.js';
 import { sharedBorders, tileBody, MIN_TILE } from './machines/tile/shape.js';
-import { TILE_NAME_FONT, TILE_NAME_SPACING, engrave, measureText, onFontsReady } from './machines/tile/measure.js';
+import { TILE_NAME_FONT, TILE_NAME_SPACING, CARD_NAME_SPACING, TILE_SUB_FONT, TILE_SUB_SPACING, nomDeCarte, engrave, measureText, onFontsReady } from './machines/tile/measure.js';
+import { wireD, wireAt } from '../commun/wire.js';   // le dessin commun des fils (Idéation s'en sert) — et commun/wire.css
 import { minLegibleSize, minScaleFor } from './machines/tile/legible.js';
 import { getTuning, onTuning } from './machines/design/tuning.js';
 import { onMachineConfig, saveMachineLayout, clearMachineLayout, machineRetouches, clearRetouches } from './machines/design/machines-config.js';
@@ -84,8 +85,10 @@ import { ouvrirCatalogue, ouvrirPalette } from './machines/catalogue.js';
 import { ouvrirPlano, installerGabaritsDu } from './machines/plano.js';
 import { attracteursActifs, blocsDInfluence } from './machines/influence.js';
 
-// le style du nodal : ses tuiles, ses câbles, ses machines (musique/nodal.css)
-{
+// le style du nodal : ses tuiles, ses câbles, ses machines (musique/nodal.css) —
+// posé par index.html avant tout dessin (ses jetons nommés, --nd-*, sont lus
+// par les dessins sur canvas, ui.js `tok`) ; ici pour une page qui ne l'aurait pas
+if (!document.querySelector('link[href$="nodal.css"]')) {
   const l = document.createElement('link');
   l.rel = 'stylesheet';
   l.href = new URL('./nodal.css', import.meta.url).href;
@@ -124,11 +127,14 @@ function ledSize(head, largeur = Infinity) {
   const parH = Math.min(getTuning().ledMax ?? 9, Math.round(head * 0.48));
   return Math.max(4, Math.min(parH, Math.max(4, Math.floor(largeur / 3))));
 }
-/** Ports.tsx, `cablePath` : une cubique qui part à l'horizontale ; `k` rend l'allonge en px écran. */
-function cablePath(a, b, k) {
-  const reach = Math.max(28 / k, Math.abs(b.x - a.x) * 0.42);
-  return `M ${a.x} ${a.y} C ${a.x + reach} ${a.y}, ${b.x - reach} ${b.y}, ${b.x} ${b.y}`;
-}
+/**
+ * Un fil : la courbe commune du portail (commun/wire.js, celle du nodal
+ * d'avant et d'Idéation) — elle part à l'horizontale d'une sortie et arrive à
+ * l'horizontale d'une entrée. SHOWRUNNER (29/09) : au lieu de la cubique
+ * d'ODIO_01 (Ports.tsx, `cablePath`) ; son épaisseur, ses tirets et ses
+ * étiquettes restent en pixels d'écran (nodal.css, --iz).
+ */
+const cablePath = (a, b) => wireD([a.x, a.y], [b.x, b.y]);
 
 export function createNodal(app) {
   const { S } = app;
@@ -211,6 +217,18 @@ export function createNodal(app) {
     return T;
   }
   const porteurDe = (id) => porteurDeTuile(P(), id).owner?.id || id;
+  // L'ACCENT d'une tuile (--k), comme celui des cartes d'avant (4a20f41,
+  // `accentOf`) : la couleur de sa piste, sinon celle de son module, sinon
+  // l'acier. Il colore son témoin, ses molettes, ses curseurs, sa sortie, ses fils.
+  function accentDe(t) {
+    if (!t) return 'cy';
+    if (t.pc) return t.pc;
+    const { owner } = porteurDeTuile(P(), t.id);
+    if (!owner) return 'cy';
+    const tr = owner.track && app.track(owner.track);
+    if (tr?.color) return tr.color;
+    return MODULES[owner.type]?.color || 'cy';
+  }
   const expose = (id) => reglage('expose')[id] ?? null;
   // l'ordre d'exposition TRACÉ au bouton du milieu (tracerOrdreTuile) : ce que la tuile garde en dézoomant
   const ordreDe = (id) => P().nodal?.ordre?.[id] || null;
@@ -278,7 +296,7 @@ export function createNodal(app) {
       if (owner.type !== 'clavier') return null;
       const valeurs = {};
       for (const d of CLAVIER) valeurs[d.id] = owner.params?.[d.id] ?? d.default;
-      return { owner, def: BLOCKS.clavier, nom: noms[t.id] || 'CLAVIER', court: noms[t.id] || 'CLV', parametres: CLAVIER, valeurs, power: true, enabled: owner.on !== false,
+      return { owner, def: BLOCKS.clavier, nom: noms[t.id] || 'Clavier', court: noms[t.id] || 'Clav', sous: 'notes', parametres: CLAVIER, valeurs, power: true, enabled: owner.on !== false,
         onParam: (id, v) => { owner.params = owner.params || {}; owner.params[id] = id === 'octave' ? Math.round(v) : v; app.commit('quiet'); rafraichirApres(t.id); } };
     }
     const m = owner, def = MODULES[m.type];
@@ -287,9 +305,12 @@ export function createNodal(app) {
     const tous = m.type === 'rythme' ? def.params : specs;   // la boîte à rythme : les réglages de voix vont au groove
     const reg = REGISTRE[m.type] ? BLOCKS[REGISTRE[m.type]] : ['strip', 'master', 'bus'].includes(def.role) ? { layout: CONSOLE(specs.map((s) => s.k)), surface: null } : null;
     const tr = m.track && app.track(m.track);
-    const nom = noms[t.id] || engrave(def.role === 'source' && tr ? tr.name : def.role === 'strip' && tr ? `piste ${tr.name}` : def.name);
+    // SHOWRUNNER (29/09, le thème du portail) : une carte dit son nom comme les
+    // cartes d'avant (4a20f41) — le module, en bas de casse, et à droite sa piste
+    const nom = noms[t.id] || def.name;
+    const sous = tr ? tr.name : def.role === 'master' ? 'sortie' : def.role === 'bus' ? 'bus' : def.kind || '';
     return {
-      owner: m, def: reg, nom, court: noms[t.id] || nom.slice(0, 4), parametres: tous.map(descripteurDe),
+      owner: m, def: reg, nom, sous, court: noms[t.id] || nom.slice(0, 4), parametres: tous.map(descripteurDe),
       valeurs: Object.fromEntries(tous.map((s) => [s.k, val(m, s.k)])), power: def.role !== 'master', enabled: m.on !== false,
       twin: reg?.surface ? jumeau(m) : null,
       onParam: (id, v) => { m.params = m.params || {}; m.params[id] = v; app.commit('param', m); if (S.sel.mod === m.id) paintSideParams(); rafraichirApres(t.id); },
@@ -308,6 +329,7 @@ export function createNodal(app) {
       if (!info) continue;
       const d = info.parametres.find((q) => q.id === expose(t.id));
       const valeurTexte = d ? formatValue(d, info.valeurs[d.id] ?? d.default) : '';
+      // le plancher se mesure comme chez ODIO_01 (tile/legible.js, le nom en mono) : l'habit ne le déplace pas
       f = Math.max(f, minScaleFor(t, minLegibleSize(info.court, d?.label ?? null, valeurTexte)));
     }
     const b = T.length ? boundsOf(T) : null;
@@ -346,16 +368,25 @@ export function createNodal(app) {
     // le nœud de départ d'une piste : sa couleur (nodal.css, .tile--piste)
     vue.el.classList.toggle('tile--piste', !!t.pc);
     if (t.pc) s.setProperty('--pc', `var(--${t.pc})`); else s.removeProperty('--pc');
+    // une carte (un bloc) ou une section de machine : deux en-têtes (nodal.css)
+    vue.el.classList.toggle('tile--section', !!t.sec);
+    vue.el.classList.toggle('tile--carte', !t.sec);
+    s.setProperty('--k', `var(--${accentDe(t)})`);
     vue.el.classList.toggle('tile--courante', !!t.piste && t.piste === S.sel.track);
   }
   function grooveSig(m) {
     const tr = m?.track && app.track(m.track), pat = tr && app.pat(tr.pat);
     return pat ? JSON.stringify(pat.lanes || {}) + reglage('voix')[m.id] : '';
   }
+  // une voisine collée à gauche, en haut (sharedBorders ne dit que la droite et le bas) : les coins d'une coque
+  function voisins(t) {
+    const autres = T.filter((o) => o.id !== t.id && !o.jouet);
+    return [autres.some((o) => !sharedBorders(o, [t]).right) ? 1 : 0, autres.some((o) => !sharedBorders(o, [t]).bottom) ? 1 : 0];
+  }
   function signature(t, info) {
     const b = sharedBorders(t, T.filter((o) => o.id !== t.id && !o.jouet));
     const it = influ.get(t.id);
-    return [t.w, t.h, b.right, b.bottom, expose(t.id), (ordreDe(t.id) || []).join(','), partage(t.id), info?.enabled, t.teinte, t.pc, info?.nom, machinePanel === info?.owner?.id,
+    return [t.w, t.h, b.right, b.bottom, voisins(t).join(''), accentDe(t), expose(t.id), (ordreDe(t.id) || []).join(','), partage(t.id), info?.enabled, t.teinte, t.pc, info?.nom, info?.sous, machinePanel === info?.owner?.id,
       prisDansBloc?.bloc === t.id ? prisDansBloc.cles.join(',') : '', JSON.stringify(info?.valeurs || {}), it ? JSON.stringify([...it]) : '',
       t.type === 'rythme' || t.type === 'drums' ? grooveSig(info?.owner) : '', t.bloc && info?.owner?.type === 'clavier' ? held.join(',') : ''].join('|');
   }
@@ -380,14 +411,24 @@ export function createNodal(app) {
     m.style.transform = `scale(${1 / L})`;
     m.classList.toggle('tile--bd-r', borders.right);
     m.classList.toggle('tile--bd-b', borders.bottom);
+    // LES COINS DES CARTES D'AVANT (12 px) : arrondis là où la tuile est libre
+    // des deux côtés — les sections soudées d'une machine font une seule coque
+    const [gauche, haut] = voisins(t), R = Math.max(2, Math.min(12, Math.round(Math.min(rect.w, rect.h) * 0.12)));
+    m.style.borderRadius = [!gauche && !haut, borders.right && !haut, borders.right && borders.bottom, !gauche && borders.bottom].map((libre) => px(libre ? R : 0)).join(' ');
+    // la place du corps est celle d'ODIO_01 (tileBody : même en-tête, mêmes filets) :
+    // l'habit ne retire aucun réglage au zoom sémantique
+    const carte = !t.sec;
     const body = tileBody(rect, borders);
-    const narrow = body.w < 112, padX = narrow ? 4 : 8, gap = narrow ? 4 : 7;
-    const led = ledSize(body.head, body.w - padX * 2);
+    const narrow = body.w < 112;
+    const padX = carte && !narrow ? 10 : narrow ? 4 : 8, gap = narrow ? 4 : 7;
+    const led = carte ? Math.min(8, ledSize(body.head, body.w - padX * 2)) : Math.min(7, ledSize(body.head, body.w - padX * 2));
+    const nameFont = carte ? nomDeCarte(body.head) : TILE_NAME_FONT, nameSpacing = carte ? CARD_NAME_SPACING : TILE_NAME_SPACING;
+    const bw = body.w, bh = body.h;
     const exposedId = expose(t.id), ordre = ordreDe(t.id);
     const valeurs = { ...info.valeurs, ...Object.fromEntries(influ.get(t.id) || []) };
-    const slots = resolveBody(body.w, body.h, info.parametres, info.def, partage(t.id), exposedId, ordre).slots;
+    const slots = resolveBody(bw, bh, info.parametres, info.def, partage(t.id), exposedId, ordre).slots;
     const dExp = info.parametres.find((q) => q.id === exposedId);
-    const bodyNames = slots.length === 0 && dExp !== undefined && promotedName(body.w, body.h, dExp.label).size > 0;
+    const bodyNames = slots.length === 0 && dExp !== undefined && promotedName(bw, bh, dExp.label).size > 0;
     const headerExposed = !dExp || bodyNames ? null : dExp.label;
     vue.el.classList.toggle('tile--off', !info.enabled);
     vue.el.classList.toggle('tile--influe', influ.has(t.id));
@@ -408,18 +449,29 @@ export function createNodal(app) {
       tete.append(b);
     }
     const available = body.w - padX * 2 - (led + gap);
+    let aDroite = false;
+    // l'étiquette de droite (celle des cartes d'avant, .lbl) : le réglage exposé
     const exposedLabel = headerExposed ? engrave(headerExposed) : '';
-    const exposedWidth = headerExposed ? measureText(exposedLabel, TILE_NAME_FONT, TILE_NAME_SPACING) : 0;
-    const cluster = measureText(info.nom, TILE_NAME_FONT, TILE_NAME_SPACING) + (headerExposed ? gap + exposedWidth : 0);
+    const exposedWidth = headerExposed ? measureText(exposedLabel, TILE_SUB_FONT, TILE_SUB_SPACING) : 0;
+    const nameWidth = measureText(carte ? info.nom : engrave(info.nom), nameFont, nameSpacing);
+    const cluster = nameWidth + (headerExposed ? gap + exposedWidth : 0);
     const fits = available >= cluster + FIT_MARGIN, showText = available >= MIN_TEXT_TILE, scrolling = showText && !fits;
     if (showText) {
       const nom = h('span', 'tile__name');
       nom.textContent = info.nom;
+      nom.style.font = nameFont;   // la fonte mesurée est la fonte écrite
+      if (!carte) nom.style.letterSpacing = nameSpacing;
       nom.title = 'Double-clic pour renommer';
       nom.addEventListener('dblclick', (ev) => { ev.stopPropagation(); renommer(t.id, nom); });
-      const ex = headerExposed ? h('span', 'tile__exposed') : null;
+      let ex = headerExposed ? h('span', 'tile__exposed') : null;
       if (ex) { const s = h('span', 'tile__exposed-label'); s.textContent = exposedLabel; ex.append(s); }
-      if (scrolling) {
+      // sans réglage exposé, la carte dit sa piste à droite, comme les cartes d'avant — si la place le permet
+      if (!ex && carte && info.sous && !scrolling) {
+        const sous = engrave(info.sous), ws = measureText(sous, TILE_SUB_FONT, TILE_SUB_SPACING);
+        if (available >= nameWidth + gap * 2 + ws + FIT_MARGIN) { ex = h('span', 'tile__exposed tile__sous'); const s = h('span', 'tile__exposed-label'); s.textContent = sous; ex.append(s); }
+      }
+      if (fits && ex) { tete.append(nom, h('span', 'tile__spacer'), ex); ex = null; aDroite = true; }
+      else if (scrolling) {
         const shift = available - cluster - FIT_MARGIN;
         const sc = h('span', 'tile__scroll');
         sc.style.setProperty('--shift', px(shift)); sc.style.setProperty('--dur', `${(3 + Math.abs(shift) / 15).toFixed(2)}s`);
@@ -430,7 +482,7 @@ export function createNodal(app) {
         tete.append(sc);
       } else tete.append(nom, ...(ex ? [ex] : []));
     }
-    tete.append(h('span', 'tile__spacer'));
+    if (!aDroite) tete.append(h('span', 'tile__spacer'));
     tete.addEventListener('pointerdown', (ev) => startMove(ev, t.id));
     tete.addEventListener('dblclick', (ev) => { ev.stopPropagation(); resetSize(t.id); });
 
@@ -439,7 +491,7 @@ export function createNodal(app) {
     const { owner } = info;
     vue.panneau = null;
     rendreCorps(corps, {
-      width: body.w, height: body.h, parameters: info.parametres, values: valeurs, exposed: exposedId, ordre, def: info.def, twin: info.twin, split: partage(t.id),
+      width: bw, height: bh, parameters: info.parametres, values: valeurs, exposed: exposedId, ordre, def: info.def, twin: info.twin, split: partage(t.id), accent: accentDe(t),
       onParam: (id, v) => info.onParam(id, v),
       onPromote: onPromoteDe(t.id),
       onSplit: (v, fin) => {
@@ -855,7 +907,8 @@ export function createNodal(app) {
     const fin = (garder) => {
       if (!inp.isConnected) return;
       if (garder) {
-        const clean = engrave(inp.value.trim()).slice(0, 18), noms = reglage('noms');
+        // une section de machine a un nom de machine (capitales) ; une carte, un nom (`nom` d'infoTuile)
+        const v = inp.value.trim(), clean = (parId.get(id)?.sec ? engrave(v) : v).slice(0, 18), noms = reglage('noms');
         if (clean) noms[id] = clean; else delete noms[id];
         app.commit('quiet');
       }
@@ -1343,6 +1396,7 @@ export function createNodal(app) {
         const mine = side === 'out' ? [...p.cables.filter((c) => !c.t && c.a === pid), ...liens.filter((l) => l.a === pid)] : p.cables.filter((c) => !c.t && c.b === pid);
         const b = h('span', `port ndx-borne port--${side}${sig === 'notes' ? ' port--notes' : ''}${mine.length ? ' port--live' : ''}`);
         b.style.left = px(pt.x); b.style.top = px(pt.y);
+        b.style.setProperty('--k', `var(--${accentDe(t)})`);   // la borne dans l'accent de sa carte (les ports d'avant)
         b.dataset.porteur = pid; b.dataset.side = side;
         b.title = side === 'out' ? 'Sortie — glisser un câble · clic milieu pour déplacer la borne · double-clic pour la remettre'
           : 'Entrée — clic milieu pour déplacer la borne · double-clic pour la remettre';
@@ -1387,8 +1441,10 @@ export function createNodal(app) {
   function peindreCables() {
     put(saisie); put(cablesSvg);
     const p = P(), k = view().z, hid = caches();
-    const trait = (d, key, cable, notes) => {
-      const hit = sv('path', { class: 'cable__hit', d });
+    // le fil commun du portail (commun/wire.css : .sr-wire .vis, .hit) ; la zone de
+    // clic reste SOUS les tuiles (.ndx-saisie), le trait par-dessus (.ndx-cables)
+    const trait = (d, key, cable, notes, couleur = 'ink3') => {
+      const hit = sv('path', { class: 'cable__hit hit', d });
       hit.addEventListener('pointerenter', () => { hoverCable = key; paintCableClass(); });
       hit.addEventListener('pointerleave', () => { if (hoverCable === key) { hoverCable = null; paintCableClass(); } });
       hit.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.stopPropagation(); S.sel.cable = key; paintCableClass(); paintSide(); });
@@ -1399,12 +1455,15 @@ export function createNodal(app) {
       const tt = sv('title'); tt.textContent = 'Câble — clic pour le désigner (Suppr le retire) · double-clic pour y insérer un bloc · clic droit pour le menu';
       hit.append(tt);
       saisie.append(hit);
-      const g = sv('g', { class: notes ? 'cable cable--notes' : 'cable' });
+      const g = sv('g', { class: notes ? 'cable sr-wire cable--notes' : 'cable sr-wire' });
       g.dataset.key = key;
-      g.append(sv('path', { class: 'cable__line', d }));
+      g.style.setProperty('--k', `var(--${couleur})`);
+      g.append(sv('path', { class: 'cable__line vis', d }));
       cablesSvg.append(g);
       return g;
     };
+    // un fil hors de toute chaîne : l'accent de sa source (les fils d'avant, --k de la carte)
+    const couleurDe = (id) => accentDe(tuileDesPrises(id) || parId.get(id));
     // les fils d'une chaîne ont la couleur de SA piste (projet.js, trajets) ;
     // un fil que deux chaînes empruntent (un effet partagé) est tireté
     const Tj = trajets(p);
@@ -1414,13 +1473,16 @@ export function createNodal(app) {
       if (!a || !b) continue;
       const key = `${c.a}>${c.b}`, jump = hid.get(key);
       if (jump && !(jump.shown || hoverJump === key)) continue;
-      const g = trait(cablePath(a, b, k), key, c, false);
+      const g = trait(cablePath(a, b), key, c, false, couleurDe(c.a));
       const communes = typeof c.send === 'number' ? [] : (Tj.de.get(c.a) || []).filter((x) => (Tj.de.get(c.b) || []).includes(x));
       const tr = communes.length && app.track(communes[0]);
-      if (tr) { g.classList.add('cable--piste'); if (communes.length > 1) g.classList.add('cable--multi'); g.style.color = `var(--${tr.color})`; g.dataset.piste = communes.join(' '); }
-      if (jump) { g.firstChild.classList.add('cable__line--jump'); g.style.color = `var(--${jump.color})`; }
+      if (tr) { g.classList.add('cable--piste'); if (communes.length > 1) g.classList.add('cable--multi'); g.style.color = `var(--${tr.color})`; g.style.setProperty('--k', `var(--${tr.color})`); g.dataset.piste = communes.join(' '); }
+      if (jump) { g.firstChild.classList.add('cable__line--jump'); g.style.color = `var(--${jump.color})`; g.style.setProperty('--k', `var(--${jump.color})`); }
       if (typeof c.send === 'number') {
-        const tx = sv('text', { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, class: 'cable__envoi' });
+        // un envoi de la console : tireté (wire.css, .send), son niveau posé sur le fil
+        g.classList.add('send');
+        const [lx, ly] = wireAt([a.x, a.y], [b.x, b.y]);
+        const tx = sv('text', { x: lx, y: ly, class: 'cable__envoi lab' });
         tx.textContent = `envoi ${c.send > 0 ? '+' : ''}${c.send.toFixed(1)} dB`;
         g.append(tx);
       }
@@ -1429,9 +1491,9 @@ export function createNodal(app) {
     for (const l of liensDe(p)) {
       const a = pointBorne(l.a, 'out'), b = pointNotes(l.b);
       if (!a || !b) continue;
-      const g = trait(cablePath(a, b, k), `L:${l.a}>${l.b}`, null, true);
+      const g = trait(cablePath(a, b), `L:${l.a}>${l.b}`, null, true, couleurDe(l.a));
       const mb = app.mod(l.b), tr = mb?.track && app.track(mb.track);
-      if (tr) { g.classList.add('cable--piste'); g.style.color = `var(--${tr.color})`; }   // les notes vont jouer CETTE piste
+      if (tr) { g.classList.add('cable--piste'); g.style.color = `var(--${tr.color})`; g.style.setProperty('--k', `var(--${tr.color})`); }   // les notes vont jouer CETTE piste
     }
     // le câble qu'on tire, et le CADRE DE PARENTAGE : vert si le lâcher fera la liaison, rouge sinon
     if (cabling) {
@@ -1439,8 +1501,8 @@ export function createNodal(app) {
         const t = parId.get(cabling.vise);
         const fam = t ? (t.machine ? T.filter((o) => o.machine === t.machine) : [t]) : [];
         if (fam.length) {
-          const b = boundsOf(fam), m2 = 2 / k;
-          const r = sv('rect', { class: cabling.refus ? 'cible cible--refusee' : 'cible cible--permise', x: b.x - m2, y: b.y - m2, width: b.w + 2 * m2, height: b.h + 2 * m2 });
+          const b = boundsOf(fam), m2 = 3 / k, rx = 14 / k;   // le cadre suit les coins des cartes, à l'écran
+          const r = sv('rect', { class: cabling.refus ? 'cible cible--refusee' : 'cible cible--permise', x: b.x - m2, y: b.y - m2, width: b.w + 2 * m2, height: b.h + 2 * m2, rx, ry: rx });
           const tt = sv('title'); tt.textContent = cabling.refus || 'la liaison se fera';
           r.append(tt);
           cablesSvg.append(r);
@@ -1450,7 +1512,8 @@ export function createNodal(app) {
       if (a) {
         const b = cabling.over ? (cabling.sig === 'notes' ? pointNotes(cabling.over) : pointBorne(cabling.over, 'in')) : { x: cabling.x, y: cabling.y };
         const blocked = cabling.vise && cabling.refus;
-        cablesSvg.append(sv('path', { class: `cable__line ${blocked ? 'cable__line--refused' : 'cable__line--drawing'}${cabling.sig === 'notes' ? ' cable__line--notes' : ''}`, d: cablePath(a, b || a, k) }));
+        // le fil qu'on tire : celui du portail (wire.css, .sr-wire-temp), plein quand il prendra, en alerte s'il est refusé
+        cablesSvg.append(sv('path', { class: `cable__line sr-wire-temp ${blocked ? 'cable__line--refused bad' : 'cable__line--drawing'}${cabling.over && !blocked ? ' snap' : ''}${cabling.sig === 'notes' ? ' cable__line--notes' : ''}`, d: cablePath(a, b || a) }));
       }
     }
     paintCableClass();

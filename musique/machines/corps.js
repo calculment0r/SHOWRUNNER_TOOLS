@@ -16,7 +16,7 @@
 import { beginDrag } from './interaction/drag.js';
 import { FINE_FACTOR, isDrag, normFromDrag } from './interaction/gesture.js';
 import { resolveSlots, shapeOf, tilePadding } from './tile/shape.js';
-import { measureText, engrave, MONO, DISP } from './tile/measure.js';
+import { measureText, engrave, MONO, DISP, UI } from './tile/measure.js';
 import { getTuning } from './design/tuning.js';
 import { hairlineOffset } from './canvas/camera.js';
 import { formatHz, normToParam, paramToNorm } from './moteur/scale.js';
@@ -26,9 +26,14 @@ export const SURFACE_SLOT = 'surface';
 export const OWN_SLOTS = new Set(['groove', 'touches', 'machine', 'tempo', 'scene', 'vu']);
 export const BODY_GAP = 6;
 const FADER_GAP = 6;
-const ROW_LABEL_FONT = `10px ${MONO}`;
-const ROW_VALUE_FONT = `11px ${MONO}`;
-const FADER_LABEL_FONT = `10px ${MONO}`;
+// SHOWRUNNER (29/09, le thème du portail) : l'écriture des molettes des cartes
+// d'avant (musique.css, .kn) — le nom en étiquette de machine (mono, capitales,
+// espacé), la valeur en --f-ui 600 ; les mesures suivent la même écriture
+const ROW_LABEL_FONT = `8px ${MONO}`;
+const ROW_VALUE_FONT = `600 11px ${UI}`;
+const FADER_LABEL_FONT = `7.5px ${MONO}`;
+const LABEL_SPACING = '0.1em';
+const mesureEtiquette = (texte, font) => measureText(String(texte).toUpperCase(), font, LABEL_SPACING);
 const ROW_GAP = 8;
 const MIN_RAIL = 26;
 const MIN_FADER = 14;
@@ -129,7 +134,7 @@ export function rendreCorps(host, props) {
   const { slots, pad, innerW, innerH, splittable } = resolveBody(width, height, parameters, def, split, exposed, ordre);
   if (slots.length === 0) {
     const b = h('div', 'body body--fallback');
-    promoted(b, { exposed, parameters, values, def, twin, width, height, onParam });
+    promoted(b, { exposed, parameters, values, def, twin, width, height, onParam, accent: props.accent });
     host.replaceChildren(b);
     return;
   }
@@ -138,7 +143,7 @@ export function rendreCorps(host, props) {
   const hasScale = slots.some((s) => s.id === 'scale');
   const scaleHeight = slots.find((s) => s.id === 'scale')?.height ?? 0;
   const surfaceHidden = splittable && Boolean(def?.surface) && !slots.some((s) => s.id === SURFACE_SLOT);
-  const labelWidth = Math.ceil(parameters.reduce((m, p) => Math.max(m, measureText(p.label, ROW_LABEL_FONT)), 0));
+  const labelWidth = Math.ceil(parameters.reduce((m, p) => Math.max(m, mesureEtiquette(p.label, ROW_LABEL_FONT)), 0));
   const valueWidth = Math.ceil(parameters.reduce((m, p) => Math.max(m, measureText(formatValue(p, values[p.id] ?? p.default), ROW_VALUE_FONT)), 0));
   const showRail = innerW >= labelWidth + ROW_GAP + MIN_RAIL + ROW_GAP + valueWidth;
   if (surfaceHidden) b.append(splitHandle(0, innerH, onSplit));
@@ -146,7 +151,7 @@ export function rendreCorps(host, props) {
     if (slot.id === 'scale') continue;
     if (slot.id === SURFACE_SLOT && def?.surface) {
       const sh = slot.height + (hasScale ? scaleHeight : 0);
-      b.append(surface({ twin, spec: def.surface, parameters, values, onParam, width: innerW, height: sh }));
+      b.append(surface({ twin, spec: def.surface, parameters, values, onParam, width: innerW, height: sh, accent: props.accent }));
       if (splittable) b.append(splitHandle(sh, innerH, onSplit));
       continue;
     }
@@ -270,7 +275,7 @@ function faders({ parameters, values, exposed, width, height, onParam, onPromote
   const fit = Math.max(1, Math.floor((width + FADER_GAP) / (MIN_FADER + FADER_GAP)));
   const shown = candidates.slice(0, Math.min(candidates.length, fit));
   const faderWidth = (width - FADER_GAP * (shown.length - 1)) / Math.max(1, shown.length);
-  const longest = shown.reduce((m, p) => Math.max(m, measureText(p.label, FADER_LABEL_FONT)), 0);
+  const longest = shown.reduce((m, p) => Math.max(m, mesureEtiquette(p.label, FADER_LABEL_FONT)), 0);
   const uprightSpace = Math.ceil(longest) + 4;
   const orientation = faderWidth >= longest ? 'flat' : height >= uprightSpace + 30 ? 'upright' : 'none';
   const e = h('div', 'faders', { height });
@@ -282,14 +287,15 @@ function faders({ parameters, values, exposed, width, height, onParam, onPromote
 // ── la surface (BlockSurface.tsx) ────────────────────────────
 // Un écran encastré, un dessin qui vient des vraies données du bloc, deux
 // axes : l'horizontal désigne (absolu au clic, relatif au glissé), le
-// vertical dose. Les couleurs de l'écran : les jetons du portail.
-let TOKS = null;
-const couleurs = () => (TOKS ||= (() => {
+// vertical dose. Les couleurs de l'écran : les jetons du portail, relus à
+// chaque dessin (le thème peut changer) ; la courbe dans l'accent de la carte
+// (`accent`, un nom de jeton — comme les molettes des cartes d'avant).
+const couleurs = (accent = 'cy') => {
   const cs = getComputedStyle(document.documentElement);
   const t = (n) => cs.getPropertyValue(`--${n}`).trim();
-  return { well: t('bg'), ink: t('ink'), mut: t('ink2'), tick: t('line'), tick2: t('ink3'), acc: t('cy'), acc2: t('coral-2') };
-})());
-export function surface({ twin, spec, parameters, values, onParam, width, height }) {
+  return { well: t('bg'), ink: t('ink'), mut: t('ink2'), tick: t('line'), tick2: t('ink3'), acc: t(accent) || t('cy'), acc2: t('coral-2') };
+};
+export function surface({ twin, spec, parameters, values, onParam, width, height, accent = 'cy' }) {
   const w = Math.max(0, Math.round(width)), hh = Math.max(0, Math.round(height));
   const wrap = h('div', 'surface', { width: w, height: hh });
   const cv = h('canvas');
@@ -307,7 +313,7 @@ export function surface({ twin, spec, parameters, values, onParam, width, height
     ctx.clearRect(0, 0, w, hh);
     ctx.translate(half, half);
     ctx.lineWidth = 1; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    const colors = couleurs();
+    const colors = couleurs(accent);
     ctx.fillStyle = colors.well; ctx.fillRect(-half, -half, w, hh);
     try { spec.draw({ ctx, width: w, height: hh, effect: twin, colors, active: hover || drag !== null }); } catch { /* un jumeau qui ne sait pas dire */ }
   };
@@ -399,11 +405,11 @@ function glyph(id, value, width, height) {
   svg.append(p);
   return svg;
 }
-function promoted(host, { exposed, parameters, values, def, twin, width, height, onParam }) {
+function promoted(host, { exposed, parameters, values, def, twin, width, height, onParam, accent }) {
   const wantsSurface = exposed === null;
   const d = parameters.find((p) => p.id === exposed) ?? (wantsSurface ? parameters[0] : undefined);
   if (wantsSurface && def?.surface && width >= 16 && height >= 8) {
-    host.append(surface({ twin, spec: def.surface, parameters, values, onParam, width, height }));
+    host.append(surface({ twin, spec: def.surface, parameters, values, onParam, width, height, accent }));
     return;
   }
   if (!d) return;
@@ -461,7 +467,7 @@ export function groove({ voices, steps, parameters, values, exposed, voice, play
   const showNames = width >= LABEL_W + voices.length * 26;
   const stripsWidth = width - (showNames ? LABEL_W : 0);
   const columnWidth = (stripsWidth - COL_GAP * (voices.length - 1)) / voices.length;
-  const fits = (fn) => voices.every((vo) => measureText(fn(vo), FADER_LABEL_FONT) <= columnWidth);
+  const fits = (fn) => voices.every((vo) => mesureEtiquette(fn(vo), FADER_LABEL_FONT) <= columnWidth);
   const nameOf = fits((vo) => vo.name.toLowerCase()) ? (vo) => vo.name.toLowerCase() : fits((vo) => vo.short) ? (vo) => vo.short : null;
   const matrixHeight = knobRows.length * KNOB_H;
   const faderHeight = showFaders ? Math.max(FADER_H, height - PAD_H - GAP - matrixHeight) : 0;
