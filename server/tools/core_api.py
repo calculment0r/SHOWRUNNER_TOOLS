@@ -50,7 +50,9 @@ def lib_upload(req):
     req.stream_to(dest)
     try:
         it = library.add_file(dest, title=req.q("title") or Path(name).stem, folder=req.q("folder"),
-                              origin={"tool": req.q("tool") or "upload"}, move=True)
+                              origin={"tool": req.q("tool") or "upload",
+                                      # par où un fichier déposé est entré (sélecteur, montage, odio…)
+                                      **({"via": req.q("via")[:40]} if req.q("via") else {})}, move=True)
     finally:
         dest.unlink(missing_ok=True)
     return library.public(it)

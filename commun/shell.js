@@ -91,10 +91,66 @@ export async function api(path, { method = 'GET', body, raw, headers = {}, signa
   return data;
 }
 
-// Un fichier du disque de Cal vers la bibliothèque.
-export async function uploadFile(file, { tool = 'upload', folder = '', title = '' } = {}) {
-  const q = new URLSearchParams({ name: file.name, tool, folder, title: title || file.name.replace(/\.[^.]+$/, '') });
+// Un fichier vers la bibliothèque. Ce que quelqu'un dépose de son disque
+// garde `tool: 'upload'` (la catégorie « Upload » d'Asset, pour le distinguer
+// de ce que les outils fabriquent) et dit par où il est entré (`via`). Un
+// outil qui range sa propre création (un mixage exporté…) passe son nom.
+export async function uploadFile(file, { tool = 'upload', via = '', folder = '', title = '' } = {}) {
+  const q = new URLSearchParams({ name: file.name, tool, via, folder, title: title || file.name.replace(/\.[^.]+$/, '') });
   return api('library/upload?' + q, { method: 'PUT', raw: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
+}
+
+// ── glisser un asset d'un endroit à l'autre ─────────────────
+// Une vignette glissée porte l'objet sous ce type ; tout emplacement
+// `dropZone` l'accepte, comme un fichier venu du disque.
+export const ITEM_MIME = 'application/x-sr-item';
+export function dragItem(node, it) {
+  node.draggable = true;
+  node.addEventListener('dragstart', (e) => {
+    e.dataTransfer.effectAllowed = 'copyMove';
+    e.dataTransfer.setData(ITEM_MIME, JSON.stringify({ id: it.id, kind: it.kind, title: it.title, thumb_url: it.thumb_url }));
+    if (it.url) e.dataTransfer.setData('text/uri-list', href(it.url));
+  });
+  return node;
+}
+const EXT_KIND = { png: 'image', jpg: 'image', jpeg: 'image', webp: 'image', mp4: 'video', webm: 'video', mov: 'video', m4v: 'video',
+  wav: 'audio', mp3: 'audio', flac: 'audio', m4a: 'audio', ogg: 'audio' };
+const kindOfFile = (f) => EXT_KIND[(f.name.split('.').pop() || '').toLowerCase()] || null;
+
+// Tout bloc qui attend un asset accepte un dépôt : un fichier du disque (il
+// entre dans la bibliothèque, catégorie Upload) ou une vignette glissée
+// d'ailleurs dans le portail. onitems(objets) reçoit des objets complets de la
+// bibliothèque, déjà filtrés par `kinds` (un élément compte pour une image
+// quand `kinds` prend 'element').
+export function dropZone(node, { kinds = ['image', 'element'], multiple = true, via = '', onitems = () => {} } = {}) {
+  let depth = 0;
+  const wants = (e) => { const t = e.dataTransfer?.types || []; return t.includes('Files') || t.includes(ITEM_MIME); };
+  node.addEventListener('dragenter', (e) => { if (!wants(e)) return; depth++; node.classList.add('drop-on'); });
+  node.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; node.classList.remove('drop-on'); } });
+  node.addEventListener('dragover', (e) => { if (wants(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+  node.addEventListener('drop', async (e) => {
+    if (!wants(e)) return;
+    e.preventDefault(); e.stopPropagation();
+    depth = 0; node.classList.remove('drop-on'); document.body.classList.remove('dropping');
+    const got = [];
+    const raw = e.dataTransfer.getData(ITEM_MIME);
+    if (raw) {
+      try { got.push(await api('library/' + JSON.parse(raw).id)); } catch (err) { toast(err.message); }
+    }
+    let files = [...(e.dataTransfer.files || [])];
+    const refused = files.filter((f) => !kinds.includes(kindOfFile(f)));
+    files = files.filter((f) => kinds.includes(kindOfFile(f)));
+    if (!multiple) files = files.slice(0, 1);
+    for (let i = 0; i < files.length; i++) {
+      toast(files.length > 1 ? `dépôt ${i + 1} / ${files.length} · ${files[i].name}` : `dépôt · ${files[i].name}`, 60000);
+      try { got.push(await uploadFile(files[i], { tool: 'upload', via })); } catch (err) { toast(`${files[i].name} : ${err.message}`); }
+    }
+    if (refused.length) toast(`pas pris ici : ${refused.map((f) => f.name).join(', ')} (attendu : ${kinds.map(kindFr).join(', ')})`);
+    else if (files.length) toast(files.length > 1 ? `${files.length} fichiers rangés dans la bibliothèque · Upload` : 'rangé dans la bibliothèque · Upload');
+    const ok = got.filter((it) => kinds.includes(it.kind));
+    if (ok.length) onitems(multiple ? ok : ok.slice(0, 1));
+  });
+  return node;
 }
 
 // ── la file ─────────────────────────────────────────────────
@@ -254,8 +310,9 @@ export function thumb(it, { onclick, selected = false, sub } = {}) {
   if (it.duration) im.append(el('span', { class: 'dur' }, fmtDur(it.duration)));
   const s = sub ?? (it.kind === 'element' ? `${it.element?.refs?.length || 0} réf.` :
     [it.width && it.height ? `${it.width}×${it.height}` : '', it.origin?.model || it.origin?.tool || ''].filter(Boolean).join(' · '));
-  return el('button', { class: 'thumb' + (selected ? ' sel' : ''), type: 'button', onclick, title: it.prompt || it.title },
-    im, el('div', { class: 'cap' }, el('div', { class: 't' }, it.title || it.id), el('div', { class: 's' }, s)));
+  // toute vignette se glisse vers un emplacement qui attend un asset (dropZone)
+  return dragItem(el('button', { class: 'thumb' + (selected ? ' sel' : ''), type: 'button', onclick, title: it.prompt || it.title },
+    im, el('div', { class: 'cap' }, el('div', { class: 't' }, it.title || it.id), el('div', { class: 's' }, s))), it);
 }
 
 // ── le sélecteur : choisir dans la bibliothèque ─────────────
@@ -270,10 +327,12 @@ export function pick({ kinds = ['image', 'element'], multiple = false, title = '
     const tabs = el('div', { class: 'seg' });
     const done = el('button', { class: 'tb go', onclick: () => close([...chosen.values()]) }, multiple ? 'Prendre' : 'Prendre');
     const count = el('span', { class: 'lbl' });
-    const fileIn = el('input', { type: 'file', multiple: true, accept: kinds.includes('video') ? 'image/*,video/*' : 'image/*', hidden: true,
+    const accept = [kinds.includes('image') || kinds.includes('element') ? 'image/*' : '', kinds.includes('video') ? 'video/*' : '',
+      kinds.includes('audio') ? 'audio/*' : ''].filter(Boolean).join(',');
+    const fileIn = el('input', { type: 'file', multiple: true, accept, hidden: true,
       onchange: async () => {
         for (const f of fileIn.files) {
-          try { const it = await uploadFile(f); chosen.set(it.id, it); if (!multiple) return close([it]); } catch (e) { toast(e.message); }
+          try { const it = await uploadFile(f, { tool: 'upload', via: 'selecteur' }); chosen.set(it.id, it); if (!multiple) return close([it]); } catch (e) { toast(e.message); }
         }
         load();
       } });
@@ -286,7 +345,14 @@ export function pick({ kinds = ['image', 'element'], multiple = false, title = '
           upload ? el('button', { class: 'tb ghost', onclick: () => fileIn.click() }, 'Déposer un fichier') : null, fileIn,
           count, el('span', { class: 'sp' }),
           el('button', { class: 'tb ghost', onclick: () => close([]) }, 'Annuler'), done)));
-    const TABS = [['all', 'Tout'], ...kinds.map((k) => [k, kindFr(k) + 's']), ...(kinds.includes('element') ? [['cf', 'Character Factory']] : [])];
+    const TABS = [['all', 'Tout'], ...kinds.map((k) => [k, kindFr(k) + 's']), ['upload', 'Uploads'],
+      ...(kinds.includes('element') ? [['cf', 'Character Factory']] : [])];
+    // déposer des fichiers dans la fenêtre : ils entrent (Upload) et sont choisis
+    dropZone(grid, { kinds, via: 'selecteur', onitems: (items) => {
+      if (!multiple) return close(items.slice(0, 1));
+      for (const it of items) chosen.set(it.id, it);
+      paintCount(); load();
+    } });
     for (const [id, lab] of TABS) {
       tabs.append(el('button', { class: 'tb' + (tab === id ? ' on' : ''), onclick: (e) => { tab = id; $$('.tb', tabs).forEach((b) => b.classList.remove('on')); e.target.classList.add('on'); load(); } }, lab));
     }
@@ -297,9 +363,9 @@ export function pick({ kinds = ['image', 'element'], multiple = false, title = '
     async function load() {
       grid.replaceChildren(el('p', { class: 'lbl' }, 'chargement'));
       if (tab === 'cf') return loadCf();
-      const kind = tab === 'all' ? kinds.join(',') : tab;
+      const kind = tab === 'all' || tab === 'upload' ? kinds.join(',') : tab;
       try {
-        const res = await api(`library?kind=${kind}&q=${encodeURIComponent(q)}&limit=300`);
+        const res = await api(`library?kind=${kind}&q=${encodeURIComponent(q)}&limit=300${tab === 'upload' ? '&tool=upload' : ''}`);
         grid.replaceChildren(...(res.items.length ? res.items.map(card) : [el('p', { class: 'lbl' }, 'rien ici — déposez un fichier, ou créez-le dans un outil')]));
       } catch (e) { grid.replaceChildren(el('p', { class: 'warn' }, e.message)); }
     }
@@ -339,9 +405,15 @@ export function pick({ kinds = ['image', 'element'], multiple = false, title = '
   });
 }
 
-// La planche de références d'un outil : des vignettes, un « + » qui ouvre le sélecteur.
-export function refBoard(box, { kinds = ['image', 'element'], max = 3, onchange = () => {}, label = 'réf.' } = {}) {
+// La planche de références d'un outil : des vignettes, un « + » qui ouvre le
+// sélecteur ; on y dépose aussi des fichiers du disque ou des vignettes.
+export function refBoard(box, { kinds = ['image', 'element'], max = 3, onchange = () => {}, label = 'réf.', via = '' } = {}) {
   const refs = [];
+  dropZone(box, { kinds, via, onitems: (items) => {
+    for (const it of items) if (refs.length < max && !refs.some((r) => r.id === it.id)) refs.push(it);
+    if (items.length && refs.length >= max) toast(`${max} références au plus`);
+    paint(); onchange(refs);
+  } });
   const paint = () => {
     box.replaceChildren(...refs.map((it, i) => el('div', { class: 'ref-chip', title: it.title,
       style: { backgroundImage: it.thumb_url ? `url(${href(it.thumb_url)})` : null } },
