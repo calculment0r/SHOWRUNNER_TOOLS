@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Montage · SHOWRUNNER TOOLS</title>
-<meta name="description" content="Le banc de montage : chutier, moniteurs source et programme, timeline multipiste, export MP4.">
+<meta name="description" content="Le banc de montage : chutier, moniteurs source et programme, timeline multipiste, outils de Premiere, LUT, export MP4.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23e0674a'/%3E%3Crect x='12' y='12' width='8' height='8' rx='2' fill='%23170c08'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,19 +18,15 @@
 <body class="mtg-page">
 <main class="mtg" id="mtg">
 
-  <!-- la barre : le projet, les outils, le transport, le temps, l'export -->
+  <!-- la barre : le projet, le transport, le temps, l'export -->
   <div class="mtg-bar">
     <button class="tb ghost sm" id="b-projects" title="ouvrir, créer, dupliquer un montage">Projets</button>
     <label class="pname" title="le nom du montage (il s'enregistre seul)">
       <span class="k">montage</span>
       <input id="p-name" class="nm" value="" spellcheck="false" aria-label="nom du montage">
     </label>
-    <span class="pill" id="save-st" title="le montage s'enregistre seul à chaque geste"><i></i><span>—</span></span>
+    <span class="pill save" id="save-st" title="le montage s'enregistre seul à chaque geste"><i></i><span>—</span></span>
     <span class="sp"></span>
-    <div class="tgrp" role="toolbar" aria-label="outils">
-      <button class="ic on" id="t-select" title="sélection · V"><svg viewBox="0 0 24 24"><path d="M5 3l14 8-6 2-2 6z"/></svg></button>
-      <button class="ic" id="t-blade" title="lame · C ou B (maj + clic : toutes les pistes)"><svg viewBox="0 0 24 24"><path d="M6 3v18M14 5l4 14"/></svg></button>
-    </div>
     <div class="tgrp" role="toolbar" aria-label="annuler">
       <button class="ic" id="b-undo" title="annuler · ctrl+Z"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
       <button class="ic" id="b-redo" title="rétablir · ctrl+maj+Z"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
@@ -42,14 +38,14 @@
       <button class="pb" id="p-next" title="image suivante · →">▶</button>
       <button class="pb" id="p-end" title="fin · Fin">▶|</button>
     </div>
-    <div class="tcbox" title="position de la tête de lecture du programme">
-      <span><small>timecode</small><b id="tc">00:00:00:00</b></span>
+    <div class="tcbox" title="position de la tête de lecture du programme (heures:minutes:secondes:images)">
+      <span><small>timecode</small><b id="tc" class="tcv">00:00:00:00</b></span>
       <i></i>
-      <span><small>cadence</small><b id="fps">25</b></span>
+      <span><small>cadence</small><b id="fps" class="num">25</b></span>
     </div>
-    <span class="pill" id="exp-st" hidden><i></i><span></span></span>
-    <button class="tb go" id="b-export" title="rendre le montage en MP4 (H.264 + AAC) dans la bibliothèque">Exporter</button>
-    <button class="ic" id="b-help" title="les raccourcis">?</button>
+    <span class="pill exp" id="exp-st" hidden><i></i><span></span></span>
+    <button class="tb go" id="b-export" title="rendre le montage en MP4 (H.264 + AAC) dans la bibliothèque · ctrl+M">Exporter</button>
+    <button class="ic" id="b-help" title="les raccourcis (ceux de Premiere Pro)">?</button>
   </div>
 
   <div class="warn conflict" id="conflict" hidden>
@@ -59,11 +55,12 @@
   </div>
 
   <div class="mtg-top">
-    <!-- le chutier : la bibliothèque -->
+    <!-- le chutier : la bibliothèque, rangée dans les dossiers du projet -->
     <section class="pan bin" aria-label="chutier">
       <div class="pan-head">
-        <span class="t">Chutier · <b id="bin-n">0</b></span><span class="sp"></span>
-        <button class="tb ghost sm" id="bin-up" title="ajouter des fichiers du disque à la bibliothèque">Déposer</button>
+        <span class="t">Chutier · <b id="bin-n" class="num">0</b></span><span class="sp"></span>
+        <button class="ic sm" id="bin-new" title="nouveau dossier (dans le dossier choisi) · ctrl+B" aria-label="nouveau dossier"><svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3zM12 12v5M9.5 14.5h5"/></svg></button>
+        <button class="ic sm" id="bin-up" title="importer des fichiers du disque dans la bibliothèque · ctrl+I" aria-label="importer"><svg viewBox="0 0 24 24"><path d="M12 15V4M8 8l4-4 4 4M4 15v5h16v-5"/></svg></button>
         <input type="file" id="bin-file" multiple accept="video/*,image/*,audio/*" hidden>
       </div>
       <div class="bin-tools">
@@ -71,12 +68,12 @@
         <input class="fld" id="bin-q" placeholder="chercher" aria-label="chercher dans le chutier">
       </div>
       <div class="bin-list" id="bin-list"></div>
-      <p class="bin-hint lbl" title="un fichier du disque ou une vignette d'une autre page, déposé ici, entre dans la bibliothèque (catégorie Upload)">déposer ici · glisser vers la timeline</p>
+      <p class="bin-hint lbl" title="un fichier du disque ou une vignette d'une autre page, déposé ici, entre dans la bibliothèque (catégorie Upload) ; glissé sur un dossier, il s'y range">glisser vers la timeline ou un dossier · clic droit</p>
     </section>
 
     <!-- la source -->
     <section class="pan mon src" id="src" aria-label="moniteur source">
-      <div class="mon-head"><span class="t">Source</span><span class="mon-nm" id="src-name">—</span><span class="sp"></span><span class="lbl" id="s-dur"></span><span class="tcv" id="src-tc">00:00:00:00</span></div>
+      <div class="mon-head"><span class="t">Source</span><span class="mon-nm" id="src-name">—</span><span class="sp"></span><span class="lbl dur" id="s-dur"></span><span class="tcv" id="src-tc">00:00:00:00</span></div>
       <div class="screen" id="src-screen" draggable="true">
         <div class="empty"><b>Source</b><span>choisissez un plan dans le chutier</span></div>
       </div>
@@ -96,11 +93,11 @@
     <!-- le programme -->
     <section class="pan mon prg" id="prg" aria-label="moniteur programme">
       <div class="mon-head"><span class="t">Programme</span><span class="mon-nm" id="prg-name">—</span><span class="sp"></span><span class="st" id="prg-state">arrêt</span></div>
-      <div class="screen" id="prg-screen"><div class="stage" id="stage"><div class="empty" id="prg-empty"><b>Programme</b><span>posez des plans sur la timeline</span></div></div></div>
+      <div class="screen" id="prg-screen"><div class="stage" id="stage"><div class="empty" id="prg-empty"><b>Programme</b><span>posez des plans sur la timeline</span></div><div class="safe" id="safe" hidden><i></i><i></i></div></div></div>
       <div class="scrub" id="prg-scrub" title="glisser pour se déplacer dans le montage"><div class="fill" id="prg-fill"></div><div class="pos" id="prg-pos"></div></div>
       <div class="mon-foot">
-        <span class="lbl" id="prg-dur">durée 0:00</span><span class="sp"></span>
-        <span class="lbl note" title="coupes, fondus, fondus enchaînés, volumes, pistes muettes ou masquées : lus comme l'export les rend. L'étalonnage est approché par les filtres du navigateur (mesurés sur ceux de ffmpeg) ; l'export fait foi.">aperçu fidèle aux coupes · étalonnage approché</span>
+        <span class="lbl">durée</span><span class="tcv sm" id="prg-dur">00:00:00:00</span><span class="sp"></span>
+        <span class="lbl note" title="coupes, fondus, fondus enchaînés, vitesses, volumes, LUT, pistes muettes ou masquées : lus comme l'export les rend (la LUT fait le même calcul que ffmpeg lut3d). L'étalonnage est approché par les filtres du navigateur (mesurés sur ceux de ffmpeg) ; l'export fait foi.">aperçu fidèle · étalonnage approché</span>
       </div>
     </section>
 
@@ -111,18 +108,18 @@
   <!-- la timeline -->
   <section class="pan tlw" aria-label="timeline">
     <div class="tl-bar">
-      <span class="t">Timeline · <b id="tl-n">0</b> plans</span>
-      <span class="lbl" id="tl-dur"></span>
+      <div class="tgrp tools" id="tools" role="toolbar" aria-label="outils (Premiere Pro)"></div>
+      <span class="t">Timeline · <b id="tl-n" class="num">0</b> plans · <b id="tl-dur" class="tcv">00:00:00:00</b></span>
       <span class="sp"></span>
-      <button class="tb ghost sm" id="b-cut" title="couper à la tête de lecture (plans choisis, sinon toutes les pistes libres) · ctrl+K">Couper</button>
+      <button class="tb ghost sm" id="b-cut" title="ajouter une coupe à la tête de lecture (plans choisis, sinon toutes les pistes libres) · ctrl+K ; toutes les pistes : ctrl+maj+K">Couper</button>
       <button class="tb ghost sm" id="b-xfade" title="fondu enchaîné d'une seconde à la tête du plan choisi · ctrl+D">Fondu enchaîné</button>
-      <button class="tb ghost sm" id="b-del" title="supprimer · Suppr ; avec raccord : maj+Suppr">Supprimer</button>
-      <button class="tb ghost sm" id="b-ripple" title="supprimer et refermer le vide · maj+Suppr">Raccord</button>
-      <span class="snapper" title="aimant : les bords se collent aux coupes et à la tête de lecture · S">aimant<button class="sw on" id="b-snap" aria-pressed="true"><i></i></button></span>
+      <button class="tb ghost sm" id="b-del" title="effacer · Suppr">Effacer</button>
+      <button class="tb ghost sm" id="b-ripple" title="supprimer et refermer le vide · maj+Suppr">Raccorder</button>
+      <span class="snapper" title="aimant : les bords se collent aux coupes, aux marques et à la tête de lecture · S">aimant<button class="sw on" id="b-snap" aria-pressed="true"><i></i></button></span>
       <div class="zoomer">
         <button id="z-out" title="dézoomer · −">−</button>
-        <span id="z-val">100 %</span>
-        <button id="z-in" title="zoomer · + (ou alt + molette)">+</button>
+        <span id="z-val" class="num">100 %</span>
+        <button id="z-in" title="zoomer · = (ou alt + molette)">+</button>
         <button id="z-fit" title="tout le montage · \">tout</button>
       </div>
     </div>

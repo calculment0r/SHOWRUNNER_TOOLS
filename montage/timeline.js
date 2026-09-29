@@ -1,11 +1,23 @@
-// MONTAGE — la timeline : les pistes, les plans, la règle, la tête de
-// lecture, et les gestes (choisir, déplacer, rogner, couper, poser).
+// MONTAGE — la timeline : les pistes, les plans, la règle (marques, entrée et
+// sortie de séquence), la tête de lecture, et les gestes des outils de
+// Premiere Pro (noms et raccourcis : doc Adobe, voir docs/etudes/montage.md) :
 //
-// Tout geste passe par `app.commit(nom, p => …)` : une seule entrée
-// d'annulation par geste, un seul enregistrement. Pendant un glisser, on
-// ne touche que l'affichage ; le projet change au lâcher.
-// Zoom : alt + molette (ou ctrl + molette), ancré sous le pointeur — comme
-// la timeline des voix du Studio de Movie Analysis (voix.js, vxZoome).
+//   Sélection (V)            déplacer, rogner les bords (maj/ctrl : ajouter à la sélection ; alt : copier)
+//   Sélection de piste (A)   le plan et tout ce qui suit sur sa piste (maj : toutes les pistes), puis glisser
+//   Propagation (B)          rogner un bord en poussant ou tirant la suite de la piste
+//   Déplacement de la coupe (N)  bouger la coupe entre deux plans collés
+//   Modification de la vitesse (R)  tirer un bord change la vitesse, pas la matière
+//   Cutter (C)               couper où l'on clique (maj : toutes les pistes)
+//   Déplacer dessous (Y)     « slip » : le contenu glisse dans le plan, place et durée fixes
+//   Déplacer le plan (U)     « slide » : le plan glisse entre ses voisins, qui s'ajustent
+//   Main (H), Zoom (Z ; alt : dézoomer)
+//
+// Tout geste passe par `app.commit(nom, p => …)` (une entrée d'annulation)
+// ou, pour ceux qui se voient en direct dans le programme (propagation,
+// coupe, vitesse, slip, slide), par `app.gesture` : chaque mouvement repart
+// du projet d'avant le geste et rejoue l'opération du modèle avec le
+// décalage du moment ; le lâcher fait une seule entrée d'annulation.
+// Zoom : alt + molette (ou ctrl + molette), ancré sous le pointeur.
 
 import { el, href, ITEM_MIME } from '../commun/shell.js';
 import * as M from './model.js';
@@ -30,14 +42,17 @@ export class Timeline {
     this.app = app;
     this.pps = 40;
     this.scroll = el('div', { class: 'tl-scroll' });
-    this.marks = el('div', { class: 'tl-marks' });
+    this.ticks = el('div', { class: 'tl-ticks' });
+    this.mlayer = el('div', { class: 'tl-mlayer' });
+    this.marks = el('div', { class: 'tl-marks' }, this.ticks, this.mlayer);
     this.ruler = el('div', { class: 'tl-ruler' }, el('div', { class: 'tl-hd' }, el('span', { class: 'lbl' }, 'pistes')), this.marks);
     this.lanes = el('div', { class: 'tl-lanes' });
     this.ph = el('div', { class: 'tl-ph' }, el('i'));
     this.snapLine = el('div', { class: 'tl-snap', hidden: true });
+    this.rngv = el('div', { class: 'tl-rngv', hidden: true });
     this.ghost = el('div', { class: 'tl-ghost', hidden: true });
     this.tip = el('div', { class: 'tl-tip', hidden: true });
-    this.inner = el('div', { class: 'tl-inner' }, this.ruler, this.lanes, this.ph, this.snapLine);
+    this.inner = el('div', { class: 'tl-inner' }, this.ruler, this.lanes, this.rngv, this.ph, this.snapLine);
     this.scroll.append(this.inner);
     root.append(this.scroll, this.tip);
     this.bind();
@@ -59,7 +74,7 @@ export class Timeline {
     const p = this.p;
     if (!p) return;
     const fps = this.fps;
-    const end = Math.max(M.projectEnd(p), this.app.playhead());
+    const end = Math.max(M.projectEnd(p), this.app.playhead(), ...(p.markers || []).map((m) => m.f), (p.range && p.range.out) || 0);
     const vis = Math.max(200, this.scroll.clientWidth - HEAD);
     this.width = Math.max(vis, this.fx(end + 20 * fps));
     this.inner.style.width = HEAD + this.width + 'px';
@@ -75,18 +90,22 @@ export class Timeline {
         el('div', { class: 'tl-area', style: { width: this.width + 'px' } }, ...clips));
     });
     this.lanes.replaceChildren(...lanes, this.ghost);
+    this.root.dataset.tool = this.app.tool();
     this.paintRuler();
+    this.paintMarks();
     this.paintPlayhead(this.app.playhead());
   }
 
   head(t, isTarget) {
     const act = (k, label) => (e) => { e.stopPropagation(); this.app.toggleTrack(t.id, k, label); };
-    return el('div', { class: 'tl-hd' },
-      el('button', { class: 'tn' + (isTarget ? ' tgt' : ''), title: isTarget ? 'piste cible (Insérer, Écraser, flèche du chutier)' : 'en faire la piste cible', onclick: (e) => { e.stopPropagation(); this.app.setTarget(t); } }, t.id),
-      t.kind === 'video' ? el('button', { class: 'tg' + (t.hide ? ' on' : ''), title: t.hide ? 'piste masquée (ni vue, ni exportée) — la montrer' : 'masquer l’image de cette piste', html: t.hide ? ICON.eyeOff : ICON.eye, onclick: act('hide', 'masquer une piste') }) : null,
-      el('button', { class: 'tg m' + (t.mute ? ' on' : ''), title: t.mute ? 'muette (ni entendue, ni exportée) — rendre le son' : 'couper le son de cette piste', onclick: act('mute', 'couper une piste') }, 'M'),
-      el('button', { class: 'tg s' + (t.solo ? ' on' : ''), title: t.solo ? 'solo : on n’entend que les pistes en solo' : 'n’entendre que cette piste (solo)', onclick: act('solo', 'solo') }, 'S'),
-      el('button', { class: 'tg l' + (t.lock ? ' on' : ''), title: t.lock ? 'verrouillée : rien n’y bouge — déverrouiller' : 'verrouiller la piste', html: t.lock ? ICON.lock : ICON.unlock, onclick: act('lock', 'verrouiller une piste') }));
+    return el('div', { class: 'tl-hd', 'data-head': t.id, title: `${t.id}${t.name ? ' · ' + t.name : ''} — clic droit : ajouter, renommer, supprimer la piste…` },
+      el('div', { class: 'hr' },
+        el('button', { class: 'tn' + (isTarget ? ' tgt' : ''), title: isTarget ? 'piste cible (Insérer, Écraser, Coller)' : 'en faire la piste cible', onclick: (e) => { e.stopPropagation(); this.app.setTarget(t); } }, t.id),
+        t.kind === 'video' ? el('button', { class: 'tg' + (t.hide ? ' on' : ''), title: t.hide ? 'piste masquée (ni vue, ni exportée) — la montrer' : 'masquer l’image de cette piste', html: t.hide ? ICON.eyeOff : ICON.eye, onclick: act('hide', 'masquer une piste') }) : null,
+        el('button', { class: 'tg m' + (t.mute ? ' on' : ''), title: t.mute ? 'muette (ni entendue, ni exportée) — rendre le son' : 'couper le son de cette piste', onclick: act('mute', 'couper une piste') }, 'M'),
+        el('button', { class: 'tg s' + (t.solo ? ' on' : ''), title: t.solo ? 'solo : on n’entend que les pistes en solo' : 'n’entendre que cette piste (solo)', onclick: act('solo', 'solo') }, 'S'),
+        el('button', { class: 'tg l' + (t.lock ? ' on' : ''), title: t.lock ? 'verrouillée : rien n’y bouge — déverrouiller' : 'verrouiller la piste', html: t.lock ? ICON.lock : ICON.unlock, onclick: act('lock', 'verrouiller une piste') })),
+      el('span', { class: 'tnm', title: 'double-clic : renommer la piste' }, t.name || (t.kind === 'video' ? 'vidéo' : 'son')));
   }
 
   clipNode(c, w, selected, t) {
@@ -99,34 +118,38 @@ export class Timeline {
     if (t.kind === 'audio' && it && (it.kind === 'audio' || it.audio)) {
       const wave = el('i', { class: 'wave' });
       const u = `url("${href('api/montage/wave/' + it.id)}")`;
-      const full = (c.src_dur || it.duration || c.dur / fps) * this.pps;
+      const sp = M.spd(c);
+      const full = (c.src_dur || it.duration || c.dur / fps * sp) / sp * this.pps;
       Object.assign(wave.style, { maskImage: u, webkitMaskImage: u, maskSize: `${full}px 100%`, webkitMaskSize: `${full}px 100%`,
-        maskPosition: `${-(c.in || 0) * this.pps}px 0`, webkitMaskPosition: `${-(c.in || 0) * this.pps}px 0` });
+        maskPosition: `${-(c.in || 0) / sp * this.pps}px 0`, webkitMaskPosition: `${-(c.in || 0) / sp * this.pps}px 0` });
       body.append(wave);
     }
     const fin = w ? (w.fin || 0) : 0, fout = w ? (w.fout || 0) : 0;
     if (fin) body.append(el('i', { class: 'fi', style: { width: this.fx(fin) + 'px' } }));
     if (fout) body.append(el('i', { class: 'fo', style: { width: this.fx(fout) + 'px' } }));
     const badges = [];
+    if (!M.isOn(c)) badges.push('désactivé');
     if (c.kind === 'video' && t.kind === 'video' && c.audio) badges.push('son');
-    if (c.vol !== undefined && Math.abs(c.vol - 1) > 0.005 && hasSound) badges.push(`${Math.round(c.vol * 100)} %`);
+    if (Math.abs(M.spd(c) - 1) > 1e-6) badges.push(M.pct(M.spd(c)));
+    if (c.vol !== undefined && Math.abs(c.vol - 1) > 0.005 && hasSound) badges.push(`vol ${Math.round(c.vol * 100)} %`);
     const g = c.grade || M.NEUTRAL;
     if (g.exposure || g.contrast || g.saturation || (g.temperature && g.temperature !== 6500)) badges.push('étal.');
+    if (c.lut && c.lut.mix > 0) badges.push(c.lut.mix < 0.999 ? `LUT ${Math.round(c.lut.mix * 100)} %` : 'LUT');
     body.append(el('span', { class: 'nm' }, c.title || (it ? it.title : c.item)));
     if (badges.length) body.append(el('span', { class: 'bd' }, badges.join(' · ')));
     const node = el('div', {
-      class: `clip ${c.kind}${t.kind === 'audio' ? ' snd' : ''}${selected ? ' sel' : ''}${it && !it.missing ? '' : ' miss'}`,
+      class: `clip ${c.kind}${t.kind === 'audio' ? ' snd' : ''}${selected ? ' sel' : ''}${it && !it.missing ? '' : ' miss'}${M.isOn(c) ? '' : ' off'}`,
       'data-id': c.id,
-      title: `${c.title || ''}\n${M.tc(c.start, fps)} → ${M.tc(M.clipEnd(c), fps)} · ${M.short(c.dur / fps)}${it && it.missing ? '\nobjet introuvable dans la bibliothèque (à la corbeille ?)' : ''}`,
+      title: `${c.title || ''}\n${M.tc(c.start, fps)} → ${M.tc(M.clipEnd(c), fps)} · ${M.short(c.dur / fps)}${Math.abs(M.spd(c) - 1) > 1e-6 ? ` · vitesse ${M.pct(M.spd(c))}` : ''}${it && it.missing ? '\nobjet introuvable dans la bibliothèque (à la corbeille ?)' : ''}\nclic droit : couper, vitesse, LUT, activer…`,
       style: { left: x + 'px', width: wpx + 'px' },
     }, body);
     if (w && w.xin) {
       const h1 = w.xin >> 1;
       node.append(el('i', { class: 'xf', title: `fondu enchaîné · ${w.xin} images`, style: { left: -this.fx(h1) + 'px', width: this.fx(w.xin) + 'px' } }));
     } else if (c.xfade > 0) {
-      node.append(el('i', { class: 'xf off', title: 'fondu enchaîné sans effet : aucun plan ne touche celui-ci à gauche', style: { left: '0px', width: this.fx(Math.min(c.xfade, c.dur)) + 'px' } }));
+      node.append(el('i', { class: 'xf off', title: 'fondu enchaîné sans effet : aucun plan actif ne touche celui-ci à gauche', style: { left: '0px', width: this.fx(Math.min(c.xfade, c.dur)) + 'px' } }));
     }
-    node.append(el('i', { class: 'h l', title: 'rogner le début' }), el('i', { class: 'h r', title: 'rogner la fin' }));
+    node.append(el('i', { class: 'h l' }), el('i', { class: 'h r' }));
     return node;
   }
 
@@ -144,8 +167,31 @@ export class Timeline {
       out.push(el('span', { class: 'mk', style: { left: s * pps + 'px' } }, lab));
       if (step >= 1 && step * pps >= 160) out.push(el('span', { class: 'mk sub', style: { left: (s + step / 2) * pps + 'px' } }));
     }
-    this.marks.replaceChildren(...out);
+    this.ticks.replaceChildren(...out);
     this.marks.style.width = this.width + 'px';
+  }
+
+  // les marques de séquence et la plage entrée → sortie
+  paintMarks() {
+    const p = this.p, fps = this.fps;
+    const out = [];
+    const r = p.range || {};
+    const hasIn = r.in !== null && r.in !== undefined, hasOut = r.out !== null && r.out !== undefined;
+    if (hasIn || hasOut) {
+      const a = hasIn ? r.in : 0, b = hasOut ? r.out : Math.max(M.projectEnd(p), a + 1);
+      out.push(el('i', { class: 'tl-rng', style: { left: this.fx(a) + 'px', width: Math.max(2, this.fx(b - a)) + 'px' },
+        title: `${hasIn ? 'entrée ' + M.tc(a, fps) : 'depuis le début'} → ${hasOut ? 'sortie ' + M.tc(b, fps) : 'jusqu’à la fin'} · clic droit : effacer` }));
+      if (hasIn) out.push(el('i', { class: 'tl-io in', style: { left: this.fx(a) + 'px' } }));
+      if (hasOut) out.push(el('i', { class: 'tl-io out', style: { left: this.fx(b) + 'px' } }));
+      Object.assign(this.rngv.style, { left: HEAD + this.fx(a) + 'px', width: Math.max(2, this.fx(b - a)) + 'px' });
+      this.rngv.hidden = false;
+    } else this.rngv.hidden = true;
+    for (const m of p.markers || []) {
+      out.push(el('b', { class: 'tl-m', 'data-marker': m.id, style: { left: this.fx(m.f) + 'px' },
+        title: `${m.name || 'marque'} · ${M.tc(m.f, fps)}\nclic : y aller · double-clic : renommer · clic droit : supprimer` },
+      m.name ? el('span', {}, m.name) : null));
+    }
+    this.mlayer.replaceChildren(...out);
   }
 
   paintPlayhead(frame) {
@@ -198,21 +244,29 @@ export class Timeline {
       }
     }, { passive: false });
 
-    // la règle : cliquer, glisser = la tête de lecture
+    // la règle : cliquer, glisser = la tête de lecture ; une marque : y aller
     this.ruler.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
       blurField();
       this.app.focus('program');
+      const mk = e.target.closest('.tl-m');
+      if (mk) { const m = (this.p.markers || []).find((x) => x.id === mk.dataset.marker); if (m) this.app.seekFrame(m.f); return; }
       const go = (ev) => this.app.seekFrame(this.frameAt(ev.clientX));
       go(e);
       this.drag(e, go, () => {});
     });
+    this.ruler.addEventListener('dblclick', (e) => {
+      const mk = e.target.closest('.tl-m');
+      if (mk) this.app.renameMarker(mk.dataset.marker);
+    });
 
     this.lanes.addEventListener('pointerdown', (e) => this.down(e));
     this.lanes.addEventListener('dblclick', (e) => {
+      const hd = e.target.closest('.tl-hd');
+      if (hd) { if (e.target.closest('.tnm')) this.app.renameTrack(hd.dataset.head); return; }
       const n = e.target.closest('.clip');
-      if (n) this.app.openClipInSource(n.dataset.id);
+      if (n && this.app.tool() === 'select') this.app.openClipInSource(n.dataset.id);
     });
 
     // poser depuis le chutier ou la source (glisser-déposer HTML, MDN) ou des fichiers du disque
@@ -255,6 +309,14 @@ export class Timeline {
       if (!raw) return;
       try { this.app.placeItem(JSON.parse(raw), track, frame, mode); } catch { /* */ }
     });
+
+    // la main et le zoom agissent aussi sur la règle
+    this.scroll.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || e.target.closest('.tl-hd')) return;
+      const tool = this.app.tool();
+      if (tool === 'hand') { e.preventDefault(); e.stopPropagation(); this.hand(e); }
+      else if (tool === 'zoom') { e.preventDefault(); e.stopPropagation(); this.zoom(e.altKey ? 1 / 1.6 : 1.6, e.clientX); }
+    }, true);
   }
 
   drag(e, move, up) {
@@ -267,8 +329,10 @@ export class Timeline {
       window.removeEventListener('pointercancel', done);
       this.snapLine.hidden = true;
       this.tip.hidden = true;
+      this.root.classList.remove('dragging');
       up(ev);
     };
+    this.root.classList.add('dragging');
     window.addEventListener('pointermove', mv);
     window.addEventListener('pointerup', done);
     window.addEventListener('pointercancel', done);
@@ -288,41 +352,64 @@ export class Timeline {
     this.tip.style.top = (ev.clientY - r.top - 30) + 'px';
   }
 
+  hand(e) {
+    const x0 = e.clientX, y0 = e.clientY, l0 = this.scroll.scrollLeft, t0 = this.scroll.scrollTop;
+    this.drag(e, (ev) => { this.scroll.scrollLeft = l0 - (ev.clientX - x0); this.scroll.scrollTop = t0 - (ev.clientY - y0); }, () => {});
+  }
+
   down(e) {
     if (e.button !== 0 || e.target.closest('.tl-hd')) return;
     const lane = e.target.closest('.tl-lane');
     if (!lane) return;
     blurField();
     this.app.focus('program');
-    const p = this.p, fps = this.fps;
+    const p = this.p;
+    const tool = this.app.tool();
     const node = e.target.closest('.clip');
     const track = p.tracks.find((t) => t.id === lane.dataset.track);
+    const f = this.frameAt(e.clientX);
+    if (tool === 'track') {
+      // Sélection de piste en avant : ce plan (ou ce point) et tout ce qui suit
+      e.preventDefault();
+      const sel = new Set(p.clips.filter((c) => (e.shiftKey ? true : c.track === track.id) && !track.lock && (c.start >= f || (node && c.id === node.dataset.id))).map((c) => c.id));
+      const locked = M.lockedSet(p);
+      for (const id of [...sel]) if (locked.has(M.byId(p, id).track)) sel.delete(id);
+      this.app.select(sel);
+      if (sel.size) this.move(e, sel, lane.dataset.track);
+      return;
+    }
     if (!node) {
-      this.app.select(new Set(), M.gapAt(p, track.id, this.frameAt(e.clientX)));
+      this.app.select(new Set(), M.gapAt(p, track.id, f));
       return;
     }
     const id = node.dataset.id;
     const c = M.byId(p, id);
     if (!c) return;
     e.preventDefault();
-    if (this.app.tool() === 'blade') {
-      let f = this.frameAt(e.clientX);
+    if (tool === 'blade') {
+      let cf = f;
       const ph = this.app.playhead();
-      if (Math.abs(ph - f) <= this.tol()) f = ph;
-      this.app.cut(f, e.shiftKey ? null : id);
+      if (Math.abs(ph - cf) <= this.tol()) cf = ph;
+      this.app.cut(cf, e.shiftKey ? null : id);
       return;
     }
     const sel = new Set(this.app.sel());
-    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+    if (tool === 'select' && (e.shiftKey || e.ctrlKey || e.metaKey)) {
       sel.has(id) ? sel.delete(id) : sel.add(id);
       this.app.select(sel);
       return;
     }
-    if (!sel.has(id)) { sel.clear(); sel.add(id); this.app.select(sel); }
-    if (track.lock) return;
+    if (!sel.has(id) || tool !== 'select') { sel.clear(); sel.add(id); this.app.select(sel); }
+    if (track.lock) return this.app.locked(track.id);
     const handle = e.target.closest('.h');
-    if (handle) return this.trim(e, c, handle.classList.contains('l') ? 'l' : 'r', node);
-    this.move(e, sel);
+    const side = handle ? (handle.classList.contains('l') ? 'l' : 'r') : null;
+    if (tool === 'slip') return this.slip(e, c);
+    if (tool === 'slide') return this.slide(e, c);
+    if (tool === 'select') return side ? this.trim(e, c, side, node) : this.move(e, sel, lane.dataset.track);
+    if (!side) return;                                   // B, N, R : les bords seulement
+    if (tool === 'ripple') return this.ripple(e, c, side);
+    if (tool === 'roll') { const pair = M.rollPair(p, c, side); return pair ? this.roll(e, pair[0], pair[1]) : this.trim(e, c, side, node); }
+    if (tool === 'stretch') return this.stretch(e, c, side);
   }
 
   trim(e, c, side, node) {
@@ -351,15 +438,77 @@ export class Timeline {
     });
   }
 
-  move(e, sel) {
+  // Un geste vu en direct : chaque mouvement rejoue `apply(q, d)` sur le
+  // projet d'avant le geste. `edge(d)` : l'image du bord qui bouge (aimant).
+  live(e, label, [lo, hi], apply, tip, { edge = null, exclude = new Set(), onEnd = null } = {}) {
+    const fps = this.fps;
+    const pts = edge ? M.snapPoints(this.p, exclude, [this.app.playhead()]) : [];
+    const x0 = e.clientX;
+    let d = 0;
+    this.app.gesture.begin(label);
+    this.drag(e, (ev) => {
+      let nd = Math.round((ev.clientX - x0) / this.pps * fps);
+      let snapped = null;
+      if (edge && this.app.snap()) {
+        const sd = M.snapDelta([edge(nd)], pts, this.tol());
+        if (sd !== null) { nd += sd; snapped = edge(nd); }
+      }
+      nd = Math.max(lo, Math.min(hi, nd));
+      this.showSnap(snapped !== null && edge(nd) === snapped ? snapped : null);
+      this.showTip(ev, tip(nd));
+      if (nd === d) return;
+      d = nd;
+      this.app.gesture.apply((q) => apply(q, d));
+    }, () => { this.app.gesture.end(); if (onEnd) onEnd(d); });
+  }
+
+  ripple(e, c, side) {
+    const fps = this.fps;
+    this.live(e, 'rogner avec propagation', M.rippleLimits(this.p, c, side), (q, d) => M.rippleTrim(q, c.id, side, d),
+      (d) => `propagation · ${side === 'l' ? 'tête' : 'queue'} ${d >= 0 ? '+' : '−'}${Math.abs(d)} im. · durée ${M.short((c.dur + (side === 'l' ? -d : d)) / fps)} · la suite ${side === 'l' ? (d > 0 ? 'recule' : 'avance') : (d > 0 ? 'avance' : 'recule')}`,
+      { edge: side === 'r' ? (d) => M.clipEnd(c) + d : null, exclude: new Set([c.id]) });
+  }
+
+  roll(e, a, b) {
+    const fps = this.fps;
+    this.live(e, 'déplacer la coupe', M.rollLimits(this.p, a, b), (q, d) => M.roll(q, a.id, b.id, d),
+      (d) => `coupe ${M.tc(b.start + d, fps)} · ${d >= 0 ? '+' : '−'}${Math.abs(d)} im. · « ${a.title || 'A'} » ${M.short((a.dur + d) / fps)} · « ${b.title || 'B'} » ${M.short((b.dur - d) / fps)}`,
+      { edge: (d) => b.start + d, exclude: new Set([a.id, b.id]) });
+  }
+
+  stretch(e, c, side) {
+    const fps = this.fps;
+    const sp0 = M.spd(c);
+    this.live(e, 'changer la vitesse', M.stretchLimits(this.p, c, side), (q, d) => M.stretch(q, c.id, side, d),
+      (d) => { const nd = c.dur + (side === 'l' ? -d : d); return `vitesse ${c.kind === 'image' ? '—' : M.pct(sp0 * c.dur / nd)} · durée ${M.short(nd / fps)}`; },
+      { edge: side === 'l' ? (d) => c.start + d : (d) => M.clipEnd(c) + d, exclude: new Set([c.id]) });
+  }
+
+  slip(e, c) {
+    if (c.kind === 'image') { this.app.say('une image fixe n’a rien à faire glisser dessous'); return; }
+    const fps = this.fps, sp = M.spd(c);
+    // on montre la première image du plan pendant le geste (Premiere : l'entrée et la sortie au moniteur)
+    const back = this.app.peek(c);
+    this.live(e, 'déplacer dessous', M.slipLimits(this.p, c), (q, d) => M.slip(q, c.id, d),
+      (d) => { const i = Math.max(0, (c.in || 0) - d / fps * sp); return `déplacer dessous · entrée ${M.short(i)} · sortie ${M.short(i + c.dur / fps * sp)}${c.src_dur ? ` / ${M.short(c.src_dur)}` : ''}`; },
+      { onEnd: () => back() });
+  }
+
+  slide(e, c) {
+    const fps = this.fps;
+    this.live(e, 'déplacer le plan', M.slideLimits(this.p, c), (q, d) => M.slide(q, c.id, d),
+      (d) => `déplacer le plan · ${M.tc(c.start + d, fps)} → ${M.tc(M.clipEnd(c) + d, fps)} · ${d >= 0 ? '+' : '−'}${Math.abs(d)} im.`,
+      { edge: (d) => c.start + d, exclude: new Set([c.id]) });
+  }
+
+  move(e, sel, startLane) {
     const p = this.p, fps = this.fps;
-    const locked = new Set(p.tracks.filter((t) => t.lock).map((t) => t.id));
+    const locked = M.lockedSet(p);
     const ids = new Set([...sel].filter((id) => { const c = M.byId(p, id); return c && !locked.has(c.track); }));
     const clips = [...ids].map((id) => M.byId(p, id));
     if (!clips.length) return;
     const nodes = new Map(clips.map((c) => [c.id, this.lanes.querySelector(`.clip[data-id="${c.id}"]`)]));
-    const order = { video: p.tracks.filter((t) => t.kind === 'video').map((t) => t.id), audio: p.tracks.filter((t) => t.kind === 'audio').map((t) => t.id) };
-    const startLane = e.target.closest('.tl-lane').dataset.track;
+    const order = M.trackOrder(p);
     const minStart = Math.min(...clips.map((c) => c.start));
     const pts = M.snapPoints(p, ids, [this.app.playhead()]);
     const x0 = e.clientX, y0 = e.clientY;
@@ -403,21 +552,14 @@ export class Timeline {
         n.style.left = this.fx(c.start + df) + 'px';
         n.classList.add('moving');
       }
-      this.showTip(ev, `${df >= 0 ? '+' : '−'}${M.short(Math.abs(df) / fps)} · ${M.tc(minStart + df, fps)}${dt ? ` · ${dt > 0 ? '↓' : '↑'} ${Math.abs(dt)} piste` : ''}`);
+      this.showTip(ev, `${ev.altKey ? 'copier · ' : ''}${df >= 0 ? '+' : '−'}${M.short(Math.abs(df) / fps)} · ${M.tc(minStart + df, fps)}${dt ? ` · ${dt > 0 ? '↓' : '↑'} ${Math.abs(dt)} piste` : ''}`);
     }, (ev) => {
       if (!moved || (!df && !dt)) { if (moved) this.render(); return; }
       const mode = ev && (ev.ctrlKey || ev.metaKey) ? 'insert' : 'overwrite';
-      this.app.commit('déplacer', (q) => {
-        const moving = [...ids].map((id) => ({ ...M.byId(q, id) }));
-        q.clips = q.clips.filter((c) => !ids.has(c.id));
-        for (const c of moving) {
-          const list = order[M.trackKind(c.track)];
-          c.track = list[list.indexOf(c.track) + dt];
-          c.start = Math.max(0, c.start + df);
-        }
-        moving.sort((a, b) => a.start - b.start);
-        for (const c of moving) M.placeClip(q, c, mode);
-      });
+      const copy = !!(ev && ev.altKey);
+      let placed = [];
+      this.app.commit(copy ? 'copier' : 'déplacer', (q) => { placed = M.moveClips(q, ids, df, dt, mode, copy); });
+      if (copy) this.app.select(new Set(placed));
     });
   }
 }

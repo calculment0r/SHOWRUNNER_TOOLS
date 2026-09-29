@@ -18,9 +18,16 @@
 //     (model.js), le calcul même des filtres fade/afade de l'export.
 // Le son passe par Web Audio (createMediaElementSource + GainNode, MDN)
 // pour qu'un volume au-delà de 100 % s'entende comme à l'export.
+//
+// La vitesse d'un plan (`speed`) règle playbackRate (le son garde sa
+// hauteur, preservesPitch vaut vrai par défaut, MDN — comme atempo à
+// l'export) ; un plan désactivé ne se voit ni ne s'entend. Un plan qui a
+// une LUT se dessine dans un canevas (lut.js : WebGL2, le calcul de lut3d),
+// posé à la place de son élément, qui reste dessous comme source.
 
 import { href } from '../commun/shell.js';
-import { windows, opacityAt, gainAt, audibleTracks, projectEnd } from './model.js';
+import { windows, opacityAt, gainAt, audibleTracks, projectEnd, spd, isOn } from './model.js';
+import { getLut, lutGL } from './lut.js';
 
 // ── étalonnage : l'aperçu par les filtres du navigateur ─────
 // colortemperature de ffmpeg 6.1 mesuré sur DGX2 (28/09) : un blanc
@@ -180,7 +187,7 @@ export class Program {
       this.starting = 0;
       // le temps du montage que disent les médias partis : on prend le plus en retard
       const fps = this.fps;
-      const said = media.filter(({ e }) => !e.el.paused).map(({ e, c }) => e.el.currentTime - (c.in || 0) + c.start / fps);
+      const said = media.filter(({ e }) => !e.el.paused).map(({ e, c }) => (e.el.currentTime - (c.in || 0)) / spd(c) + c.start / fps);
       if (said.length) this.t = Math.max(this.t, Math.min(...said));
       this.t0 = this.t;
       this.n0 = now;
@@ -213,10 +220,44 @@ export class Program {
       el.style.opacity = '0';
       this.stage.append(el);
       e = { el, tag, item: item.id, dur: item.duration || 0, idle: 0 };
+      // une image arrêtée qui change (recherche, chargement) : le canevas LUT se redessine
+      const again = () => { e.drawn = ''; if (!this.playing) this.render(); };
+      el.addEventListener(tag === 'img' ? 'load' : 'seeked', again);
+      if (tag === 'video') el.addEventListener('loadeddata', again);
       route(e);
       this.els.set(c.id, e);
     }
     return e;
+  }
+
+  // Le canevas d'un plan qui a une LUT : la source passée par le shader
+  // (étalonnage puis LUT), à la taille de la source (1920 px de large au plus).
+  paintLut(e, c, lut) {
+    const src = e.el;
+    const vw = e.tag === 'img' ? src.naturalWidth : src.videoWidth, vh = e.tag === 'img' ? src.naturalHeight : src.videoHeight;
+    if (!vw || !vh || (e.tag === 'video' && src.readyState < 2)) return;
+    const s = Math.min(1, 1920 / vw);
+    const w = Math.max(2, Math.round(vw * s)), h = Math.max(2, Math.round(vh * s));
+    const key = `${e.tag === 'img' ? 0 : src.currentTime}|${lut.id}|${c.lut.mix}|${JSON.stringify(c.grade || '')}|${w}`;
+    if (!this.playing && e.drawn === key) return;
+    const gl = lutGL();
+    if (!gl.ok) return;
+    const g = c.grade || {};
+    if (!gl.draw(src, w, h, { lut, mix: c.lut.mix, grade: g, temp: g.temperature && Math.abs(g.temperature - 6500) > 0.5 ? tempGains(g.temperature) : [1, 1, 1] })) return;
+    if (e.cv.width !== w || e.cv.height !== h) { e.cv.width = w; e.cv.height = h; }
+    e.ctx.clearRect(0, 0, w, h);
+    e.ctx.drawImage(gl.cv, 0, 0);
+    e.drawn = key;
+  }
+
+  lutLayer(e, on) {
+    if (on && !e.cv) {
+      e.cv = document.createElement('canvas');
+      e.cv.className = 'layer lut';
+      e.ctx = e.cv.getContext('2d');
+      e.el.after(e.cv);
+      e.drawn = '';
+    } else if (!on && e.cv) { e.cv.remove(); e.cv = null; e.ctx = null; }
   }
 
   drop(id) {
@@ -226,6 +267,7 @@ export class Program {
     e.el.removeAttribute('src');
     if (e.tag !== 'img') e.el.load();
     e.el.remove();
+    if (e.cv) e.cv.remove();
     routed.delete(e);
     this.els.delete(id);
   }
@@ -248,7 +290,7 @@ export class Program {
     const now = performance.now();
     this.visible = [];
     for (const track of order) {
-      const clips = p.clips.filter((c) => c.track === track.id).sort((a, b) => a.start - b.start);
+      const clips = p.clips.filter((c) => c.track === track.id && isOn(c)).sort((a, b) => a.start - b.start);
       for (const c of clips) {
         const w = this.win.get(c.id);
         if (!w) continue;
@@ -261,7 +303,12 @@ export class Program {
         need.add(c.id);
         e.idle = 0;
         e.el.style.zIndex = String(z++);
-        const target = (c.in || 0) + (active ? t : a) - c.start / fps;
+        const sp = spd(c);
+        const target = (c.in || 0) + ((active ? t : a) - c.start / fps) * sp;
+        // une LUT (chargée) : le canevas se montre, l'élément reste dessous comme source
+        const lut = e.tag !== 'audio' && c.lut && c.lut.mix > 0 ? getLut(c.lut.id, () => { e.drawn = ''; this.render(); }) : null;
+        this.lutLayer(e, !!lut);
+        if (e.cv) e.cv.style.zIndex = e.el.style.zIndex;
         if (!active) {                      // en attente : arrêté sur sa première image
           if (e.tag !== 'img') {
             if (!e.el.paused) e.el.pause();
@@ -269,21 +316,29 @@ export class Program {
             if (Math.abs(e.el.currentTime - want) > 0.05) e.el.currentTime = want;
           }
           e.el.style.opacity = '0';
+          if (e.cv) e.cv.style.opacity = '0';
           setGain(e, 0);
           continue;
         }
         if (e.tag !== 'audio') {
           const op = hidden.has(track.id) ? 0 : opacityAt(w, frame);
-          e.el.style.opacity = String(op);
-          e.el.style.filter = gradeCss(c.grade);
+          if (e.cv) {
+            e.el.style.opacity = '0';
+            e.el.style.filter = 'none';
+            e.cv.style.opacity = String(op);
+          } else {
+            e.el.style.opacity = String(op);
+            e.el.style.filter = gradeCss(c.grade);
+          }
           if (op > 0) this.visible.push(c);
         }
         const sound = hear.has(track.id) && (track.kind === 'audio' || c.audio) && c.kind !== 'image';
         setGain(e, sound ? (c.vol ?? 1) * gainAt(w, t, fps) : 0);
         if (e.tag !== 'img') {
-          this.sync(e, target, fwd, fps);
+          this.sync(e, target, fwd, fps, sp);
           if (target >= 0 && (!e.dur || target < e.dur - 0.05)) media.push({ e, c });
         }
+        if (e.cv && lut) this.paintLut(e, c, lut);
       }
     }
     this.media = media;
@@ -291,29 +346,32 @@ export class Program {
       if (need.has(id)) continue;
       if (e.tag !== 'img' && !e.el.paused) e.el.pause();
       e.el.style.opacity = '0';
+      if (e.cv) e.cv.style.opacity = '0';
       setGain(e, 0);
       if (!e.idle) e.idle = now;
       else if (now - e.idle > 8000) this.drop(id);
     }
   }
 
-  sync(e, target, fwd, fps) {
+  sync(e, target, fwd, fps, sp = 1) {
     const el = e.el;
     const D = e.dur || (isFinite(el.duration) ? el.duration : 0);
     const hi = D ? D - 0.5 / fps : Infinity;
     const outside = target < 0 || target > hi;     // tête ou queue figée d'un fondu enchaîné
     const want = Math.max(0, Math.min(hi, target));
+    // playbackRate : 1/16 à 16 dans Chromium (au-delà : NotSupportedError)
+    const rate = Math.max(0.0625, Math.min(16, this.rate * sp));
     if (fwd && !outside) {
       if (el.paused) {
         if (Math.abs(el.currentTime - want) > 0.03) el.currentTime = want;
-        el.playbackRate = this.rate;
+        el.playbackRate = rate;
         el.play().catch(() => {});
         return;
       }
       const drift = el.currentTime - want;
-      if (Math.abs(drift) > 0.3) { el.currentTime = want; el.playbackRate = this.rate; }
-      else if (Math.abs(drift) > 0.5 / fps) el.playbackRate = this.rate * (1 - Math.max(-0.08, Math.min(0.08, drift * 2)));
-      else if (el.playbackRate !== this.rate) el.playbackRate = this.rate;
+      if (Math.abs(drift) > 0.3 * sp) { el.currentTime = want; el.playbackRate = rate; }
+      else if (Math.abs(drift) > 0.5 / fps * sp) el.playbackRate = Math.max(0.0625, Math.min(16, rate * (1 - Math.max(-0.08, Math.min(0.08, drift * 2 / sp)))));
+      else if (el.playbackRate !== rate) el.playbackRate = rate;
       return;
     }
     if (!el.paused) el.pause();
@@ -343,7 +401,7 @@ export class Source {
   get t() { return this.el && this.item && this.item.kind !== 'image' ? this.el.currentTime : 0; }
   get playing() { return !!(this.el && this.item && this.item.kind !== 'image' && (!this.el.paused || this.rev)); }
 
-  load(item, { in: tin = 0, out = null } = {}) {
+  load(item, { in: tin = 0, out = null, at = null } = {}) {
     this.stop();
     if (this.el) { try { this.el.pause(); } catch { /* */ } this.el.remove(); }
     this.item = item;
@@ -367,7 +425,7 @@ export class Source {
       el.addEventListener('play', () => this.tick());
       el.addEventListener('loadedmetadata', () => {
         if (!this.out) this.out = el.duration || 0;
-        if (tin) el.currentTime = tin;
+        if (at !== null || tin) el.currentTime = at !== null ? at : tin;   // `at` : concordance des images (F)
         this.onTick();
       }, { once: true });
     }
@@ -409,4 +467,6 @@ export class Source {
   step(n) { if (!this.el || this.item.kind === 'image') return; this.pause(); this.seek(this.el.currentTime + n / this.fps); }
   markIn() { if (!this.item || this.item.kind === 'image') return; this.in = Math.min(this.t, Math.max(0, this.out - 1 / this.fps)); this.onTick(); }
   markOut() { if (!this.item || this.item.kind === 'image') return; this.out = Math.max(this.t, this.in + 1 / this.fps); this.onTick(); }
+  clearIn() { if (this.item) { this.in = 0; this.onTick(); } }
+  clearOut() { if (this.item) { this.out = this.duration; this.onTick(); } }
 }

@@ -1,10 +1,13 @@
 # Montage — l'étude
 
 Le banc de montage du portail (`montage/`, `server/tools/montage.py`) :
-chutier (la bibliothèque), moniteurs source et programme, timeline
-3 pistes vidéo + 3 pistes son, export MP4 par ffmpeg. Ce qui suit dit
-d'où vient chaque choix : la documentation, et les essais faits sur DGX2
-(ffmpeg 6.1.1, Chromium sans affichage de playwright) le 28/09/2026.
+chutier (la bibliothèque, rangée en dossiers), moniteurs source et
+programme, timeline multipiste (3 + 3 pistes au départ, jusqu'à 20 de
+chaque sorte), les outils de Premiere Pro, des LUT, export MP4 par ffmpeg.
+Ce qui suit dit d'où vient chaque choix : la documentation, et les essais
+faits sur DGX2 (ffmpeg 6.1.1, Chromium sans affichage de playwright) les
+28 et 29/09/2026. La partie « Le 29/09 » répond à la demande de Cal du
+29/09 (panneaux, dossiers, clic droit, timecode, LUT, outils).
 
 ## Le modèle : des images entières
 
@@ -133,12 +136,273 @@ L'**étalonnage** de l'aperçu reprend les filtres de l'export, mesurés :
   (144,109,79) à l'aperçu, (141,109,76) à l'export ; les couleurs vives
   s'écartent davantage. L'interface le dit : « étalonnage approché ».
 
+## Le 29/09 : panneaux, dossiers, clic droit, timecode, outils, LUT
+
+### Les sources Premiere Pro
+
+`helpx.adobe.com` répond 403 aux robots (Akamai, essayé depuis DGX2 en curl
+et en Chromium) : les pages sont lues par leurs instantanés
+`web.archive.org` (date entre parenthèses).
+
+| page | ce qu'on y a pris |
+|---|---|
+| « Default keyboard shortcuts », helpx.adobe.com/premiere/desktop/get-started/keyboard-shortcuts/default-keyboard-shortcuts.html (13/02/2026 ; FR 16/06/2026) | tous les raccourcis de commandes ci-dessous |
+| « Default keyboard shortcuts in Adobe Premiere Pro CC », helpx.adobe.com/premiere-pro/using/default-keyboard-shortcuts-cc.html (22/10/2018 ; FR /fr/… 16/04/2019) | le tableau « Tools » : V A B N R C Y U P H Z (la page de 2026 n'a plus ce tableau : les lettres sont dans les infobulles) |
+| « Tools panel in Premiere », …/get-started/tour-the-workspace/tools-panel-and-options-panel.html (7 janv. 2026 ; FR 21 janv. 2026) | ce que fait chaque outil ; « orient it vertically or horizontally » |
+| …/edit-projects/trim-clips/perform-ripple-edits.html (23 mars 2026), perform-rolling-edits (22 août 2025), perform-slip-edits (22 août 2025), perform-slide-edits (22 août 2025), cut-clips (22 août 2025) ; …/change-clip-speed/change-clip-speed-and-duration-using-the-rate-stretch-tool.html (7 janv. 2026) ; et les mêmes en /fr/ | B, N, Y, U, R confirmés en 2025-2026, le sens du slip, les noms français |
+
+Les noms français viennent des pages françaises d'Adobe de 2025-2026 ;
+Adobe n'est pas constant (le tableau français de 2019 disait « Modification
+compensée » pour N, « Allongement compensé » pour R, « Déplacer dessus »
+pour U). Les noms proposés dans la demande (« Modification par
+déplacement », « Glissement », « Coulissement », « Rasoir ») n'apparaissent
+pas tels quels dans ces pages, sauf « Rasoir » (page Cutter, 2025) : on a
+pris ceux d'Adobe, l'anglais dans l'infobulle.
+
+### Les outils (barre horizontale dans la barre de la timeline)
+
+| lettre | outil (Adobe FR · EN) | ici |
+|---|---|---|
+| V | Sélection · Selection | choisir, déplacer, rogner les bords ; maj/ctrl + clic ajoute ; **alt + glisser copie** |
+| A | Sélection de piste (en avant) · Track Select (Forward) | le plan cliqué et tout ce qui commence après sur sa piste ; maj : toutes les pistes (Adobe : « Shift-click … in all tracks ») ; puis glisser |
+| B | Montage par propagation · Ripple Edit | tirer un bord : la suite de la piste suit, pas de vide (`M.rippleTrim`) ; la tête rognée garde sa place |
+| N | Déplacement de la coupe · Rolling Edit | la coupe entre deux plans collés bouge ; A s'allonge, B commence plus loin dans sa source (`M.roll`) ; sans voisin collé, rogne comme V |
+| R | Modification de la vitesse · Rate Stretch | tirer un bord : durée et vitesse changent, la matière reste (`M.stretch`) ; 10 à 1000 % |
+| C | Cutter (Rasoir) · Razor | couper au clic ; maj : toutes les pistes |
+| Y | Déplacer dessous · **Slip** | le contenu glisse dans le plan, place et durée fixes (`M.slip`) ; « tiré vers la gauche, les points d'entrée et de sortie source avancent » (Adobe) ; le moniteur montre la première image du plan pendant le geste |
+| U | Déplacer le plan · **Slide** | le plan glisse entre ses voisins, dont la sortie et l'entrée s'ajustent ; sa matière ne change pas (`M.slide`) |
+| H | Main · Hand | glisser fait défiler |
+| Z | Zoom · Zoom | clic : zoomer ; alt + clic : dézoomer |
+
+Ce que Cal appelle « roll pour déplacer un footage dans son segment » est le
+**Slip** (Y) ; le **Rolling** de Premiere (N) déplace la coupe entre deux
+plans ; les deux sont faits. Le pinceau (P) n'est pas repris (pas d'images
+clés ici). Propagation, coupe, vitesse, slip et slide se voient en direct
+dans le programme : chaque mouvement repart des plans d'avant le geste
+(`gesture` de montage.js) et le lâcher fait une seule annulation. Chaque
+outil a son curseur, dessiné à l'exécution avec les couleurs des jetons
+(`--ink`, `--bg`) : aucune couleur écrite.
+
+Les raccourcis de commandes, tous du tableau Adobe de 2026 : ctrl+K
+« Ajouter une coupe », ctrl+maj+K « à toutes les pistes », Suppr
+« Effacer », maj+Suppr « Supprimer et raccorder », ctrl+C/V, ctrl+maj+V
+« Coller et insérer », ctrl+R « Vitesse/Durée… », maj+E « Activer »,
+ctrl+L « Lier » (ici : dissocier le son — un aller simple, on ne relie
+pas), F « Concordance des images », virgule/point « Insérer/Remplacer »,
+; « Prélever », ' « Extraire », I/O, maj+I/O « Atteindre l'entrée/la
+sortie », ctrl+maj+I/O/X « Effacer … », M « Ajouter une marque », maj+M,
+ctrl+maj+M marque suivante/précédente, ctrl+alt+M, ctrl+alt+maj+M effacer
+la marque / toutes, ctrl+A, ctrl+maj+A tout / rien, ctrl+B « Nouveau
+chutier », ctrl+I « Importer », ctrl+M « Exporter le média », alt+←/→
+(maj : cinq) décaler, alt+virgule/point déplacer le plan (slide),
+ctrl+alt+←/→ déplacer dessous (slip). Adobe se contredit sur le slip d'une
+image (page slip : alt+maj+←, tableau : ctrl+alt+←) : on suit le tableau.
+Sur un clavier AZERTY, les touches de ponctuation sont celles du caractère
+(point = maj + ;) — non réglé.
+
+### La carte des menus du clic droit (commun/menu.js)
+
+Toutes les entrées marchent ; une entrée impossible reste lisible, grisée,
+et dit pourquoi au clic (`disabled` + `why`). « Réf. » : la commande de
+Premiere du même nom (tableau Adobe) ; « usage » : le menu contextuel de
+Premiere, non vérifié dans la documentation lue.
+
+| zone | entrées | réf. |
+|---|---|---|
+| tête de piste | ajouter une piste vidéo/son au-dessus, au-dessous ; ajouter une piste de l'autre sorte ; renommer la piste ; en faire la piste cible ; choisir tous ses plans ; appliquer une LUT à tous ses plans (vidéo) ; verrouiller, masquer (vidéo), muette, solo ; supprimer la piste (demande si elle porte des plans ; jamais la dernière de sa sorte) | usage (menu de la tête de piste) |
+| zone vide d'une piste | supprimer le vide et raccorder ; coller ici ; coller et insérer ici ; couper toutes les pistes ici ; placer la tête de lecture ; ajouter une piste ▸ ; tout choisir | Ripple Delete, Paste, Paste Insert, Select All |
+| plan | couper ici ; ajouter une coupe à la tête de lecture ; copier ; coller à la tête ; dupliquer à la suite (insère) ; effacer ; supprimer et raccorder ; vitesse/durée… ; LUT ▸ (aucune, chaque LUT, importer…) ; activer ; fondu enchaîné à l'entrée ; dissocier le son ; ouvrir dans le moniteur source ; concordance des images ; renommer le plan ; révéler dans le chutier ; révéler dans Asset ↗ | Add Edit, Copy, Clear, Ripple Delete, Speed/Duration, Enable, Apply Video Transition (ctrl+D), Link, Match Frame ; « Reveal in Project » : usage |
+| règle | ajouter une marque ici ; nommer / effacer la marque ; point d'entrée ici ; point de sortie ici ; effacer l'entrée et la sortie ; prélever, extraire (entrée → sortie) ; marque précédente, suivante ; effacer toutes les marques | Add Marker, Mark In/Out, Clear In and Out, Lift, Extract, Go to Next/Previous Marker, Clear All Markers |
+| marque (sur la règle) | y aller ; nommer… ; effacer | Clear Selected Marker |
+| chutier (fond) | nouveau dossier ; importer… ; trier par (date, nom, durée, sorte) ; afficher (tout, vidéos, images, sons) ; afficher les plans retirés ; tout déplier, replier | New Bin, Import |
+| dossier | déplier/replier ; nouveau sous-dossier ; renommer (F2) ; remonter à la racine ; supprimer le dossier (le contenu remonte) | New Bin, Rename : usage |
+| plan du chutier | ouvrir dans le moniteur source ; insérer, écraser à la tête de lecture ; ajouter au bout de la piste cible ; renommer (F2, titre de la bibliothèque) ; ranger dans ▸ ; retirer du chutier / remettre ; révéler dans Asset ↗ | Open in Source Monitor, Insert, Overwrite ; « Clear » (retirer du projet) : ici l'objet reste dans la bibliothèque, il est seulement caché dans ce montage |
+| moniteur source | lecture/pause ; marquer l'entrée, la sortie ; effacer l'entrée et la sortie ; insérer ; écraser ; ajouter au bout de la piste cible ; révéler dans le chutier ; dans Asset | Mark In/Out, Clear In and Out, Insert, Overwrite |
+| moniteur programme | lecture/pause ; début, fin ; entrée, sortie à la tête de lecture ; effacer ; ajouter une marque ; concordance des images ; ajouter une coupe à toutes les pistes ; zones de sécurité (90 % et 80 %) ; exporter… | Mark In/Out, Add Marker, Match Frame, Add Edit to All Tracks, Export Media ; zones de sécurité : usage |
+| vignette de LUT (inspecteur) | renommer ; l'image qu'elle attend ▸ ; sa grille et son fichier ; supprimer de la bibliothèque | — |
+
+### Les panneaux
+
+`commun/split.js` : une poignée entre deux panneaux voisins d'une boîte
+flex ; glisser, double-clic (toute la rangée reprend ses tailles par
+défaut), flèches au clavier. Les tailles tiennent par visiteur
+(localStorage, dans un try/catch). Un panneau fixe (chutier 236 px,
+inspecteur 286 px) garde ses px, un souple (source, programme ; le haut et
+la timeline) sa part. Piège mesuré : un panneau souple ne descend pas sous
+sa marge intérieure (flex-basis 0 en border-box), la part se donne au-delà ;
+sans la retirer, la poignée partait de 127 px pour 120 px de souris —
+corrigé (`pad`), vérifié à 120,0.
+
+### Le chutier : des dossiers rangés dans le projet
+
+`bins: {folders: [{id, name, parent}], items: {objet: dossier}, hidden: []}`
+dans le projet (serveur : `_bins`, une boucle de parents est rompue, un
+dossier inconnu tombe). Nouveau dossier (bouton, ctrl+B, clic droit),
+renommer sur place (double-clic, F2, clic droit), glisser un plan ou un
+dossier sur un dossier (imbriqués sans limite), un fichier du disque sur un
+dossier l'y range après le dépôt, supprimer un dossier (vide : tout de
+suite ; plein : il demande, le contenu remonte au parent — rien ne quitte
+la bibliothèque). Une recherche montre tout à plat, avec le dossier de
+chacun. « Retirer du chutier » cache l'objet dans ce montage seulement.
+
+### Les pistes
+
+Nommées par leur place, comme dans Premiere (V1 en bas, A1 en haut) :
+ajouter ou retirer une piste renumérote (`renumber`), les plans suivent leur
+piste. Un nom libre s'ajoute (sous l'étiquette, dans la tête de piste). Le
+serveur accepte jusqu'à 20 pistes de chaque sorte et renomme par leur place
+des pistes qui ne le seraient pas.
+
+### Le timecode qui ne bouge plus
+
+Tout nombre qui défile est en Azeret Mono (`--f-mono`), chiffres tabulaires,
+dans une boîte de largeur fixe en `ch` : timecode HH:MM:SS:II (11 ch, format
+inchangé), durée de la source, état du programme (7 signes), pastilles
+d'enregistrement et d'export, zoom (7 ch), bouton Lecture (104 px). Vérifié
+dans Chromium : 25 relevés pendant 2,5 s de lecture, aucun élément de la
+barre ne bouge ; le zoom passe de 100 % à 2000 % sans déplacer « + ».
+
+### Vitesse, activer, marques, entrée et sortie
+
+- `speed` par plan : source lue = (t − début) × vitesse. Export :
+  `setpts=(PTS-STARTPTS)/v` avant `fps`, et `atempo` (0,5 à 100 dans
+  ffmpeg 6.1, `-h filter=atempo` ; en dessous, enchaîné : 20 % =
+  0,5 × 0,5 × 0,8). Aperçu : `playbackRate` = vitesse (mesuré dans le
+  Chromium de DGX2 : 1/16 et 16 acceptés, 0,05 et 16,5 refusés par
+  NotSupportedError ; la page borne donc là), le son garde sa hauteur
+  (`preservesPitch`, MDN) comme atempo.
+  Essai : un plan à ×2 d'une source rouge/vert/bleu d'une seconde chacun
+  montre rouge puis vert dès la moitié du plan.
+- `enabled` : un plan désactivé ne se voit, ne s'entend ni ne s'exporte, et
+  ne fond avec personne (`windows`, JS et Python).
+- `markers` (id, image, nom) et `range` (entrée, sortie de séquence) : l'export
+  peut se borner à la plage (`export_range` ; les passes d'image vont de
+  l'entrée à la sortie, le son est mêlé sur tout le montage puis coupé par
+  `atrim=start_sample:end_sample`). Essai : 25 → 100 donne 75 images.
+
+### La couleur de l'export : la matrice du navigateur
+
+Mesuré le 29/09 dans le Chromium de DGX2 (huit pastilles connues, H.264
+sans étiquette puis étiqueté) : une vidéo **sans étiquette** est décodée en
+**BT.601 sous 720 lignes, en BT.709 à partir de 720** (320×180, 1024×576,
+1280×704 → 601 ; 960×720, 1280×720, 704×896, 720×1280 → 709) ; une vidéo
+étiquetée l'est selon son étiquette ; WebGL (texImage2D) voit les mêmes
+valeurs que le canevas 2D. ffmpeg, lui, convertit RVB ↔ YUV en BT.601 par
+défaut. Avant ce jour, l'export HD sans étiquette passait les images PNG et
+les filtres RVB en 601 et Chromium le relisait en 709 : un rouge (220,40,40)
+se montrait (236,58,37). Désormais chaque plan passe en RVB avec la matrice
+que le navigateur emploie pour sa source (`_video_color` : l'étiquette, sinon
+la règle mesurée), et la sortie est écrite **et annoncée** BT.709
+(`-colorspace bt709 …`). Cette règle est celle du Chromium de DGX2 ; un
+autre navigateur, ou un décodage matériel sous Windows, peut en suivre une
+autre pour une source sans étiquette : non documenté.
+
+Une image entre deux images de la source : une entrée à 0,5 s en 25 i/s
+tombe au milieu de l'image 12. Le navigateur montre l'image qui contient
+l'instant (la 12), `-ss` exact garde la première qui commence après (la 13).
+Mesuré sur une mire animée : 4,9 d'écart moyen entre l'aperçu et l'export,
+avec ou sans LUT. L'export recule donc au début de l'image qui contient
+l'instant (moins un quart d'image) : 0,9 après (`_open`, image seulement ; le
+son reste à l'échantillon).
+
+### Les LUT
+
+**Lecture.** Adobe « Cube LUT Specification 1.0 » : TITLE, LUT_3D_SIZE ou
+LUT_1D_SIZE, DOMAIN_MIN/MAX, les valeurs rouge le plus rapide ; plus les
+LUT_3D_INPUT_RANGE / LUT_1D_INPUT_RANGE de Resolve. Le serveur
+(`parse_cube`) refuse en disant pourquoi : un compte de lignes faux, un
+domaine autre que 0..1 (ffmpeg 6.1, `vf_lut3d.c` `parse_cube`, ne garde que
+`1/(max − min)` et ignore min : il lirait autrement que la page), 1D et 3D
+dans le même fichier, plus de 65 points (3D) ou 4096 entrées (1D). Une
+HaldCLUT PNG (L³ × L³ pixels, L² points, l'ordre de `update_clut_packed`)
+devient une LUT 3D. Chaque LUT est réécrite sous une forme unique (six
+décimales) dans `<data_dir>/luts/` — hors du dépôt public — et la page comme
+ffmpeg lisent ce même fichier.
+
+**Calcul.** Export : `format=gbrpf32le,lut3d=file=…:interp=trilinear` (ou
+`lut1d … interp=linear`) après l'étalonnage ; `lut3d`, `lut1d`, `haldclut`
+et `atempo` sont dans le ffmpeg 6.1.1 de DGX1 et de DGX2 (`ffmpeg -filters`). Trois points lus dans le code de
+ffmpeg 6.1.1 (`libavfilter/vf_lut3d.c`) : l'interpolation par défaut est
+tétraédrique (`-h filter=lut3d`) — on demande trilinéaire, comme le
+shader ; le chemin 8 bits tronque (`av_clip_uint8` d'un flottant) — on passe
+en flottants ; `interp_trilinear` : entrée bornée à 0..1 × (N − 1), voisins
+`(int)x` et `min((int)x + 1, N − 1)`, mélanges sur r puis g puis b.
+Aperçu (`montage/lut.js`) : WebGL2, la LUT dans une texture 3D RGB32F lue
+par `texelFetch` et l'interpolation écrite dans le shader, ligne pour ligne
+celle de ffmpeg (le filtrage linéaire des GPU ne garde que quelques bits de
+poids). Un plan à LUT se dessine dans un canevas posé à la place de son
+élément ; l'étalonnage (les filtres CSS de l'aperçu, mêmes formules que la
+spécification Filter Effects) passe avant la LUT, comme à l'export.
+**Intensité** : l'aperçu mêle l'image et l'image passée par la LUT ;
+l'export lit une LUT réécrite (1 − k)·identité + k·LUT — même résultat,
+l'interpolation étant linéaire en ses valeurs et exacte sur l'identité
+(essai du contrôle : l'inversion à 50 % donne un gris moyen partout).
+
+**Mesure** (29/09, `lutmesure.py` + `lutmesure.mjs`, sur DGX2). La mire
+1280×720 (huit pastilles, rampes grises et R, V, B) :
+
+| LUT | aperçu WebGL2 contre ffmpeg (0..255) |
+|---|---|
+| sarcelle-orange 3D 33, 100 % | moyen 0,064 · max 1 · 93,6 % identiques |
+| la même à 50 % | moyen 0,021 · max 1 |
+| noir et blanc 709, 3D 17 | moyen 0,004 · max 1 |
+| chaud, 3D 33 | moyen 0,048 · max 1 |
+| inversion, 3D 17 | moyen 0,708 · max 1 (sorties entières : l'arrondi de ffmpeg vers rgb24) |
+| courbe en S, 1D 1024 | moyen 0,094 · max 1 |
+
+De bout en bout (le montage exporté par le vrai travail, décodé par
+Chromium, contre le canevas de l'aperçu, 1280×720, écart moyen) : mire PNG
+0,94 avec LUT / 0,76 sans ; vidéo 720p sans étiquette 0,95 / 0,92 ; vidéo
+360p sans étiquette 0,55 / 0,47 ; vidéo générée 704×896 BT.709 1,28 / 1,29 —
+la LUT n'ajoute rien de mesurable à l'erreur de l'encodage H.264 4:2:0 (les
+maxima, sur les bords francs, sont ceux du sous-échantillonnage de la
+chrominance et des mises à l'échelle).
+
+**La bibliothèque.** Importer un .cube ou une HaldCLUT (inspecteur, menu
+LUT d'un plan) en disant l'image qu'elle attend (Rec.709, F-Log, F-Log2,
+F-Log2 C, autre log, non documenté) ; l'étagère de l'inspecteur montre
+chaque LUT sur l'image courante du plan choisi ; poser une LUT faite pour
+du log sur nos vidéos Rec.709 est signalé. Rien n'est téléchargé : la
+« mini bibliothèque » attend le choix de Cal (ci-dessous).
+
+**Les LUT proposées** (recherche du 29/09 ; rien téléchargé, tailles par
+requête HEAD) :
+
+| nom | adresse | taille | licence | entrée | pour nos vidéos |
+|---|---|---|---|---|---|
+| Fujifilm GFX ETERNA 55 3D LUT v1.10 (16/04/2026) : ETERNA, PROVIA, Velvia, ASTIA, CLASSIC CHROME, REALA ACE, PRO Neg. Std, CLASSIC Neg., ETERNA BLEACH BYPASS, ACROS, + Neutral, Natural | dl.fujifilm-x.com/support/lut/gfx-eterna-55-3d-lut-v110.zip (page fujifilm-x.com/global/support/download/lut/) | 45,8 Mo | non dite sur la page ; conditions du site : usage personnel non commercial, pas de modification | F-Log2 / F-Log2 C | avec conversion 709 → F-Log2, approchée (et la licence interdit de modifier) |
+| Fujifilm, LUT par boîtier (X-H2S, X-T5…) | même page | 0,87 à 3,3 Mo | idem | F-Log / F-Log2 | avec conversion |
+| RawTherapee Film Simulation Collection (Pat David) | rawtherapee.com/shared/HaldCLUT.zip | 421,6 Mo | CC BY-SA 4.0 | sRGB (HaldCLUT PNG) | **oui** (l'import HaldCLUT est fait pour elle) |
+| RocketStock 35 Free LUTs | pbblogassets.s3.amazonaws.com/uploads/freebies/RS-35-Free-LUTs.zip | 10,5 Mo | ni revente ni redistribution | sRGB / Rec.709 | **oui** |
+| IWLTBAP Aspen (et Sedona, Kodachrome) | luts.iwltbap.com/free/… | 80,3 Mo | pas de redistribution ; « cannot be included in an application » | Rec.709 et LOG | oui, sous réserve de la clause |
+| Juan Melara, émulations de tirage (Kodak 2383, Fuji 3510…) | juanmelara.com.au/s/Print-Film-Emulation-LUTs.zip | 1,16 Mo | non documentée | log (Cineon) | avec conversion |
+| ARRI Look Library (LogC4 / LogC3) | arri.com, look-files | 189,8 / 31,3 Mo | gratuite ; licence non documentée | LogC | double conversion |
+
+Passer du Rec.709 au F-Log2 : la courbe est publiée (F-Log2 Data Sheet 1.1 :
+`c·log10(a·in + b) + d`, a = 5,555556, b = 0,064829, c = 0,245281,
+d = 0,384316, sous 0,000889 : `e·in + f`, e = 8,799461, f = 0,092864), F-Gamut
+= primaires BT.2020 ; mais il faut supposer comment décoder le 709 affiché
+(inverse BT.1886 ou de l'OETF 709) et où poser le blanc (en « blanc = 100 % »
+on n'atteint que le code 581/1023 : les hautes lumières du look ne serviraient
+presque pas) — non documenté par Fujifilm : une approximation, à valider sur
+une mire avant de la proposer.
+
 ## Les limites connues
 
-- L'aperçu de l'étalonnage est approché ; l'export fait foi.
-- Le son d'une vidéo est attaché à son plan tant qu'on ne le détache pas
-  (« Détacher le son » le pose sur la piste son cible).
-- Pas de vitesse variable, de titres, de clés, de scopes, de roues
-  chromatiques (la maquette de Cal les montre ; pas encore faits).
+- L'aperçu de l'étalonnage est approché ; l'export fait foi (la LUT, elle,
+  est le même calcul).
+- Le son d'une vidéo est attaché à son plan tant qu'on ne le dissocie pas
+  (« Dissocier le son » le pose sur la piste son cible ; on ne relie pas).
+- Pas de piste (ou calque) d'ajustement : une LUT sur tout ce qui est
+  dessous demanderait de composer tout le programme dans un seul canevas
+  WebGL (l'aperçu empile des éléments). « Appliquer une LUT à tous les plans
+  de la piste » pose la LUT sur chacun.
+- Vitesse : un plan dont la cadence diffère du projet (24 i/s dans un
+  projet à 25) peut montrer à l'export l'image voisine de celle de l'aperçu
+  (le filtre `fps` arrondit, le navigateur prend l'image en cours) ; pas de
+  vitesse négative, pas de remappage temporel.
+- Pas de titres, de clés, de scopes, de roues chromatiques.
 - Une passe finale lit tous les sons à la fois : un montage de centaines de
   plans sonores ouvre autant d'entrées (léger, mais non borné).
+- La matrice d'une source sans étiquette suit la règle du Chromium de DGX2
+  (voir plus haut).
