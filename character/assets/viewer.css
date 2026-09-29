@@ -28,7 +28,7 @@
    canevas est transparent, le fond vient des jetons au lieu du noir pur. */
 .vw .monitor {
   aspect-ratio: auto;
-  height: clamp(320px, calc(100vh - 304px), 1400px);   /* 262 px + la sous-barre du portail */
+  height: clamp(320px, calc(100 * var(--vh) - 304px), 1400px);   /* 262 px + la sous-barre du portail */
   background: radial-gradient(120% 90% at 50% 64%, var(--panel2) 0%, var(--panel) 40%, var(--bg) 80%);
   touch-action: none;
 }
@@ -170,14 +170,14 @@ html.embed .hdr, html.embed .cf-bar, html.embed .vw-side, html.embed .transport,
 html.embed .vw .monitor .tag, html.embed .vw .monitor .handle, html.embed .vw .monitor .empty { display: none; }
 html.embed .vw { display: block; max-width: none; padding: 0; }
 html.embed .vw-stage { position: static; }
-html.embed .vw .monitor { height: 100vh; border-radius: 0; }
+html.embed .vw .monitor { height: calc(100 * var(--vh)); border-radius: 0; }
 html.embed .vw .monitor::after { box-shadow: none; }
 
 /* ── écrans étroits ─────────────────────────────────────── */
 @media (max-width: 900px) {
   .vw { grid-template-columns: minmax(0, 1fr); padding: var(--s4) var(--s4) 40px; }
   .vw-stage { position: static; }
-  .vw .monitor { height: clamp(260px, 62vh, 560px); }
+  .vw .monitor { height: clamp(260px, calc(62 * var(--vh)), 560px); }
 }
 @media (max-width: 520px) {
   .cf-bar { padding: 6px var(--s4); gap: var(--s3); }

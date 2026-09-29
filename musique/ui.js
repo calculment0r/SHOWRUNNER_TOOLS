@@ -5,6 +5,7 @@
 // jeton de commun/tokens.css.
 
 import { el, $ } from '../commun/shell.js';
+import { menu as srMenu, closeMenus } from '../commun/menu.js';
 import { toNorm, fromNorm, fmt } from './modules.js';
 
 // el() de shell.js pose les variables CSS (--k, --c) par setProperty et
@@ -157,30 +158,14 @@ export function choice(s, value, { onChange = () => {} } = {}) {
 }
 
 // ── menu contextuel ─────────────────────────────────────────
-let openMenu = null;
-export function closeMenu() { if (openMenu) { openMenu.remove(); openMenu = null; } }
+// Le menu commun du portail (commun/menu.js) : une présentation, un clavier
+// (flèches, Entrée, Échap, la première lettre), les sous-menus (`items`), une
+// entrée désactivée qui dit pourquoi (`why`). Les entrées d'ODIO ont déjà sa
+// forme : { label, sub, dot, onclick, disabled, why } · '-' · { head }.
 export function menu(x, y, items) {
-  closeMenu();
-  const m = el('div', { class: 'mu-menu', role: 'menu' });
-  for (const it of items) {
-    if (it === '-') { m.append(el('div', { class: 'sep' })); continue; }
-    if (it.head) { m.append(el('div', { class: 'head' }, it.head)); continue; }
-    m.append(el('button', { class: 'it', role: 'menuitem', type: 'button', disabled: it.disabled || null, title: it.why || '',
-      onclick: () => { closeMenu(); it.onclick(); } },
-    it.dot ? el('i', { style: { background: `var(--${it.dot})` } }) : null,
-    el('span', {}, it.label), it.sub ? el('small', {}, it.sub) : null));
-  }
-  document.body.append(m);
-  const r = m.getBoundingClientRect();
-  m.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
-  m.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
-  openMenu = m;
-  setTimeout(() => addEventListener('pointerdown', function off(e) {
-    if (!m.contains(e.target)) { closeMenu(); removeEventListener('pointerdown', off, true); }
-  }, true));
-  return m;
+  return srMenu(x, y, items).node || null;
 }
-addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+export const closeMenu = closeMenus;
 
 // ── modales ─────────────────────────────────────────────────
 export function modal({ title, body, foot, wide = false, onclose }) {
@@ -315,6 +300,12 @@ export function tok(name) {
 }
 
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// La lettre d'un raccourci : e.key (le caractère), jamais e.code (la touche
+// physique) — sur un clavier AZERTY, la touche marquée A est KeyQ, Z est KeyW,
+// M est Semicolon. e.code reste pour ce qui est une position : les rangées du
+// clavier MIDI de l'ordinateur (musique.js, KEYS ; machines/clavier-ordinateur.js).
+export const letter = (e) => (e.key && e.key.length === 1 ? e.key.toLowerCase() : '');
 
 // replaceChildren sans les trous (null, false) : le DOM écrirait « null »
 export const put = (node, ...kids) => node.replaceChildren(...kids.flat(9).filter((k) => k !== null && k !== undefined && k !== false));

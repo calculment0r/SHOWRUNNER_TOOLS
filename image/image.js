@@ -27,13 +27,13 @@
 // L'annulation (commun/undo.js) : les réglages de la barre (modèle, format,
 // références, prise de vue, graine, le prompt une fois écrit…) par
 // instantanés ; aimer, ranger dans un dossier, mettre à la corbeille depuis
-// le fil par le pont de la bibliothèque (watchLibrary : le fil écrit lui-même).
+// le fil : le fil les range lui-même dans la pile (commun/fil.js, option undo).
 // Ne s'annulent pas : un rendu lancé, un fichier déposé, un élément créé
 // depuis le menu (il se jette depuis Asset).
 import { mountHeader, api, jobs, pick, toast, el, $, href, fmtDate, dropZone, dragItem } from '../commun/shell.js';
-import { menu } from '../commun/menu.js';
+import { menu, contextMenu, pageMenu } from '../commun/menu.js';
 import { createFil } from '../commun/fil.js';
-import { createUndo, watchLibrary } from '../commun/undo.js';
+import { createUndo } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { scrollBehavior } from '../commun/theme.js';
 
@@ -69,7 +69,6 @@ const U = createUndo({ name: 'image', onapply: (e, { items }) => {
   }
   if (reload) fil?.reload();
 } });
-watchLibrary(U);
 const undoBox = el('span', { class: 'sr-undo pb-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons());
 // la barre, par instantanés : ce que garde le brouillon, les objets entiers
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -262,6 +261,7 @@ function refThumb(it, k, R) {
   el('span', { class: 'n' }, role.replace(/^<image(\d+)>$/, '$1').replace(/^la |^le /, '').replace('personne ou l’objet', 'réf.')));
   // déposer sur une vignette la remplace, à la même place
   dropZone(b, { kinds: ['image', 'element'], multiple: false, via: VIA, onitems: ([x]) => { const l = R.list.slice(); l[k] = x; R.set(l); } });
+  b._menu = () => refMenu(it, k, R);   // le même menu au clic droit
   return b;
 }
 async function addRefs() {
@@ -1063,7 +1063,7 @@ function menuFor(it) {
 
 function mountFil() {
   fil = createFil($('#fil'), {
-    id: 'image', layout: 'grid', title: 'Historique',
+    id: 'image', layout: 'grid', title: 'Historique', undo: U,
     query: () => 'library?kind=image&tool=image',
     jobs: liveJobs, onJob,
     jobLines: (j) => [j.machine, j.message === 'en file' ? '' : j.message],
@@ -1199,4 +1199,26 @@ addEventListener('hashchange', () => {
   const id = location.hash.slice(1);
   if (id && id !== fil?.current()?.id) fil?.open(id);
 });
+
+// ── le clic droit (Cal, 29/09 : jamais le menu du navigateur) ──
+// une référence de la barre : son menu (le même qu'au clic) ; une carte du
+// fil a le sien (commun/fil.js) ; ailleurs, les gestes de la barre en tête du
+// menu commun de repli (commun/menu.js, pageMenu)
+contextMenu($('#pbar'), (e) => e.target.closest('.pb-ref')?._menu?.() || null);
+pageMenu(() => {
+  const go = $('#act .pb-gen');
+  const why = $('#act .why')?.textContent || '';
+  const E = S.edit;
+  return [{ head: S.mode === 'create' ? 'Image · créer' : 'Image · éditer' },
+    { label: go?.querySelector('.gl')?.textContent || (S.mode === 'create' ? 'Générer' : 'Éditer'), icon: '▶', disabled: !go || go.disabled, why: why || 'la barre n’est pas prête',
+      onclick: () => (S.mode === 'create' ? generate() : editRun()) },
+    '-',
+    { label: 'Créer', checked: S.mode === 'create', onclick: () => setMode('create') },
+    { label: 'Éditer', checked: S.mode === 'edit', onclick: () => setMode('edit') },
+    S.mode === 'create' ? { label: 'Ajouter des références…', icon: '+', onclick: addRefs } : { label: S.current ? 'Changer l’image à éditer…' : 'Choisir l’image à éditer…', icon: '▭', onclick: pickSrc },
+    S.mode === 'edit' && E.tool === 'instruct' && S.current ? { label: 'Peindre la zone à éditer…', icon: '✎', onclick: openPaint } : null,
+    '-',
+    { label: 'Le fil en plein écran', icon: '⤢', disabled: !fil?.items().length, why: 'rien dans le fil encore', onclick: () => fil.open(fil.items()[0]) }];
+});
+
 start();

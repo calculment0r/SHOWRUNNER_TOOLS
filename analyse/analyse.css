@@ -16,7 +16,7 @@
   display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: var(--s5); align-items: start;
 }
 @media (max-width: 980px) { .ma-app { grid-template-columns: 1fr; padding: var(--s3) var(--s4) 40px; } }
-.ma-rail { display: flex; flex-direction: column; gap: var(--s3); position: sticky; top: 70px; max-height: calc(100vh - 86px); overflow: auto; }
+.ma-rail { display: flex; flex-direction: column; gap: var(--s3); position: sticky; top: 70px; max-height: calc(100 * var(--vh) - 86px); overflow: auto; }
 @media (max-width: 980px) { .ma-rail { position: static; max-height: none; } }
 .ma-box { background: var(--panel); border-radius: var(--r3); padding: var(--s4); display: flex; flex-direction: column; gap: var(--s3); box-shadow: inset 0 0 0 1px var(--line); }
 .ma-bh { display: flex; align-items: baseline; gap: var(--s3); }

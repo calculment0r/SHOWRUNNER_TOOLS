@@ -8,7 +8,9 @@ rien demander aux autres.
 
 ```
 index.html, accueil.js      l'accueil du portail (cartes des outils, compte, machines)
-commun/                     tokens.css, base.css, shell.css, shell.js, porte.js/.css (la porte), fonts/
+commun/                     tokens.css, base.css, shell.css, shell.js, porte.js/.css (la porte), fonts/ ;
+                            theme.js, prefs.js/.css/.json, theme.html (l'éditeur de thème), undo.js,
+                            proxies.js, menu.js/.css, fil.js/.css, wire.js/.css, entrees.js/.css, split.js (§ 4)
 asset/ image/ movie/ …      une page par outil : index.html + <outil>.js + <outil>.css
 admin/                      la page de Cal (§ 9)
 server/showrunner.py        le serveur (stdlib) : pages, /api, /library/<id>/<fichier>
@@ -23,13 +25,28 @@ docs/                       REPRISE, ARCHITECTURE, études
 ## 2. La bibliothèque (« Asset »)
 
 Un objet = un dossier `<data_dir>/library/<id>/` avec `item.json`, son
-fichier et sa vignette. Quatre sortes : `image`, `video`, `audio`,
-`element`.
+fichier et sa vignette. Six sortes (`library.KINDS`) : `image`, `video`,
+`audio`, `element`, et depuis le 29/09 :
+
+- `midi` (id `mid-…`) : un clip de notes, un fichier MIDI standard (`.mid`,
+  format 0) écrit et lu par le serveur seulement (`server/tools/music_midi.py`,
+  une seule vérité) — rangé par ODIO (un motif, une extraction) ou déposé ;
+  `params` : `bpm`, `sig`, `notes`, `bars`, `lo`, `hi`, `channels`, `drums`,
+  `method`, `engine`. ODIO les range dans le dossier « MIDI ». Ses notes, en
+  noires : `GET /api/music/midi/<id>/notes`. Dans Asset : sa portée, sa fiche
+  (les notes dessinées, une écoute par un synthé de la page, le clip à
+  glisser dans l'arrangement d'ODIO) ;
+- `sequence` (id `seq-…`) : une séquence du Montage, sa timeline dans
+  `sequence.json` (`server/tools/montage.py`) ; `item.json` suit la timeline
+  (titre, taille, cadence, durée, `params.clips`, `params.format`, lignée =
+  les plans employés, vignette = le premier plan qui se voit). Elle se range,
+  se renomme, part à la corbeille comme les autres ; le Montage l'ouvre par
+  `montage/#<id>` (la fiche d'Asset y mène).
 
 ```jsonc
 {
   "id": "ima-20260928-212233-a1b2",
-  "kind": "image",                 // image | video | audio | element
+  "kind": "image",                 // image | video | audio | element | midi | sequence
   "title": "…", "created": "iso", "updated": "iso",
   "file": "main.png", "thumb": "thumb.jpg",
   "width": 1024, "height": 1024, "duration": 5.04, "fps": 24,   // selon la sorte
@@ -61,13 +78,24 @@ rend les fichiers dans l'ordre).
 
 La page reçoit chaque objet par `library.public()` : avec `url`,
 `thumb_url` (relatives à la racine du portail), et pour un élément
-`element.refs[].url`.
+`element.refs[].url`. Une image (et l'affiche d'une vidéo) a aussi ses
+**copies d'affichage** (29/09, `docs/etudes/ideation_fluidite.md`) : des WebP
+de 256, 512, 1024 et 2048 px de grand côté, jamais plus grandes que
+l'original, faites au rangement (et rattrapées au démarrage par le travail
+`library.views`, priorité basse) ; l'objet public dit lesquelles existent :
+`views: [256, 512, …]` et `view_urls: {"256": "library/<id>/view-256.webp?v=…"}`
+(adresses versionnées, gardées un an par le navigateur). Une page ne pose
+jamais une vignette à la main : `commun/proxies.js` choisit la copie qui
+suffit (§ 4).
 
 ### Routes
 
 | | |
 |---|---|
 | `GET /api/library?kind=image,element&q=&folder=&sort=new&limit=&offset=&fav=1&tool=` | `{items, total, counts, folders}` |
+| `POST /api/library/batch {ids: […]}` | les fiches de 2000 objets au plus en une requête, dans l'ordre : `{items, missing}` (absent ou invisible, sans dire lequel) |
+| `GET /api/library/<id>/view?w=256…2048` | la copie d'affichage de cette taille, ou la plus proche au-dessus, ou l'original (ETag, 304) |
+| `POST /api/library/views {ids?, force?}` | relancer le rattrapage des copies (admin) : le travail `library.views` |
 | `GET /api/library/<id>` | l'objet |
 | `PUT /api/library/upload?name=a.png&title=&folder=&tool=` (corps = le fichier) | l'objet créé |
 | `POST /api/library/<id>` `{title, tags, folder, fav, element:{type, description, refs}}` | mise à jour |
@@ -143,7 +171,9 @@ font l'estimation (`durations.json`) et le départ estimé de chacun.
 
 Côté page : `jobs.submit(kind, params, {title, tool})`, `jobs.wait(id, onTick)`,
 `jobs.watch(cb)` ; l'événement `sr:job` part quand un travail se termine.
-`jobRow(j)` dit la place (« 2 devant toi · départ ≈ 4 min »).
+`jobRow(j)` dit la place (« 2 devant toi · départ ≈ 4 min ») ; sa vignette
+est la copie d'affichage de l'objet du travail (`jobItemsFor(liste)` les lit
+d'un coup par `/api/library/batch`).
 
 ## 4. Une page d'outil
 
@@ -178,9 +208,44 @@ copier, télécharger, corbeille avec confirmation) :
 import { createFil } from '../commun/fil.js';
 const fil = createFil($('#fil'), { id: 'image', layout: 'grid', query: () => 'library?kind=image&tool=image',
   jobs: () => liveJobs, onJob: { cancel, retry, forget }, reuse: { run, why }, recreate: { run, why, more },
-  menu: (it) => [entrées], details: (it) => [[clé, valeur]], link: (it) => href('image/#' + it.id) });
+  menu: (it) => [entrées], details: (it) => [[clé, valeur]], link: (it) => href('image/#' + it.id), undo: U });
 fil.add(items) · fil.open(id) · fil.paintJobs()
 ```
+
+Avec `undo: U` (la pile de la page, `commun/undo.js`), aimer, ranger et
+jeter se rangent avec leur contraire (`libPatch`, `libTrash`) ; la page
+repeint le fil dans le `onapply` de sa pile (`items` : les objets rendus,
+`{id, gone: true}` pour un objet reparti à la corbeille).
+
+### Les modules communs
+
+| module | ce qu'il fait | l'API |
+|---|---|---|
+| `shell.js` | l'en-tête, `api`, la file (`jobs`, `jobRow`), `pick`, `thumb`, `refBoard`, `dropZone`, `dragItem`, `uploadFile` ; **le gardien du clic droit** (ci-dessous) | `mountHeader(outil)` pose aussi `data-sr-tool` sur `<html>` |
+| `theme.js` | pose le thème (sombre, clair, « le mien »), la taille de l'interface (`zoom`, `--ui-zoom`) et les animations avant que la page ne se dessine | importé par `shell.js` ; `reducedMotion()`, `scrollBehavior()` |
+| `prefs.js` | les préférences, générales et par outil, rangées par personne (`/api/prefs`, § 7), miroir dans ce navigateur ; le panneau (roue de l'en-tête, Ctrl+,) | `prefs.get/set/on`, `openPrefs(outil)` ; schéma : `<outil>/prefs.json` |
+| `undo.js` | l'annulation : une pile par page, des commandes et leur contraire ou des instantanés, Ctrl+Z / Ctrl+Maj+Z / Ctrl+Y lus par `e.key` (juste en AZERTY), ↶ ↷ et le journal ; la bibliothèque (`libPatch`, `libTrash`, `libBoard`), le contraire lu sur le serveur | `createUndo`, `U.run/record/group/snapshots`, `U.buttons()` ; se déclare dans `window.SR_UNDO` (le menu de repli) — `docs/etudes/preferences.md` § 4 |
+| `proxies.js` | les copies d'affichage : la plus petite qui couvre la taille vue × densité de l'écran | `pickView(it, px)`, `needOf`, `bind(img, it, {fit, box})` (suit la taille réelle, près de l'écran), `swap` |
+| `menu.js` | le menu commun (clic droit, « ⋯ », sous-menus, clavier), le menu de repli | `menu`, `contextMenu(node, build)`, `kebab`, `pageMenu(build)`, `commonItems()`, `fallbackMenu`, `copy` |
+| `fil.js` | le fil d'un outil (ci-dessus) | `createFil`, `copyText`, `ask` |
+| `wire.js` | les fils d'un canvas nodal (ceux d'ODIO, repris par Idéation) | `wire`, `wireD`, `wireAt`, `tempWire` ; couleurs = noms de jetons |
+| `entrees.js` | les entrées d'un plan par place (`@image1`… verts ou rouges) | `createEntrees` (Vidéo) |
+| `split.js` | les panneaux redimensionnables | `split(box, parts, {axis, key})` |
+
+**Le clic droit** (Cal, 29/09 : « ne plus avoir de clic droit du navigateur
+partout dans nos outils ; on a un menu contextuel dédié à où on se trouve au
+survol ») : `shell.js` empêche le menu du navigateur sur toute page, à la
+capture, sauf dans un champ de texte (copier, coller natifs) ou sous
+`[data-native-menu]`. Une zone donne son menu par `contextMenu(node, build)`
+(`build(e)` rend les entrées, ou `null` : le repli) ou par son propre
+gestionnaire qui appelle `preventDefault` ; sinon s'ouvre le **menu de
+repli** : le lien, la sélection, l'image ou la vidéo survolés, les entrées de
+la page (`pageMenu`), puis Annuler / Rétablir / le journal de la pile active,
+Préférences, copier le lien de la page.
+
+**Une hauteur d'écran** s'écrit `calc(100 * var(--vh))` (et une largeur
+`calc(94 * var(--vw))`) : sous la taille de l'interface (`zoom`), `100vh`
+dépasse la fenêtre (`commun/tokens.css`).
 
 ## 5. Les machines
 
@@ -218,13 +283,14 @@ réel est écrit, vérifié à vide, et s'allume par un réglage de
 
 | outil | routes | travaux | interrupteur |
 |---|---|---|---|
-| Asset | `/api/asset/view`, `move`, `folders/rename`, `lineage/<id>`, `trash`, `trash/<id>/thumb`, `refs/<id>`, `cf/refresh` | — | — |
+| Asset | `/api/asset/view`, `move`, `folders/rename`, `lineage/<id>`, `trash` (GET : la corbeille ; POST `{ids}` : y mettre), `restore {ids}`, `trash/<id>/thumb`, `refs/<id>`, `bulk {ids, fav, tags_add, tags_remove}` (rend `before`, que `{restore}` repose), `zip {ids}`, `zip/<jeton>/<nom>`, `cf/refresh` | — | — |
+| Préférences | `GET /api/prefs` (les miennes, avec les schémas), `POST /api/prefs {patch}` (fusion ; `null` retire une clé ; 400 hors schéma, 413 au-delà de 32 Ko), `GET /api/prefs/schemas` — `server/tools/prefs.py`, un fichier `<data_dir>/prefs/<id>.json` par personne | — | — |
 | Image | `/api/image/models`, `compose` (le prompt envoyé), `generate`, `edit`, `redo` | `image.generate`, `image.edit` (voie image) | `"image_backend": "comfyui"` |
 | Vidéo (`movie/`) | `/api/movie/options`, `plan` (le graphe H3), `loras`, `element-image`, `redo` (recréer), `frame` (première / dernière image), `assist`, `h3`, `h3/start`, `h3/stop` | `movie.t2v`, `movie.i2v`, `movie.r2v` (voie h3) | `"movie_engine": "h3"` ; `h3_idle_minutes`, `h3_min_free_gb` |
-| Montage | `/api/montage/meta`, `projects…` (créer, enregistrer, renommer, dupliquer, supprimer, `plan`), `wave/<id>`, `luts` (lister, déposer un `.cube` ou un HaldCLUT, `luts/<id>/cube`, modifier) | `montage.export` (voie cpu, ffmpeg) | — |
-| Musique | `/api/music/projects…`, `engines`, `generate`, `stems` | `music.generate`, `music.stems` | `"music_engine": "ace-step"` |
-| Object Creator | `/api/objet/state`, `objects` | `objet.mesh` (TRELLIS.2), `objet.mesh_factice` | `"objet_trellis": true` |
-| Movie Analysis | `/api/analyse/list`, `projets`, `diarisation`, `chaine`, `nom/<nom>`, `run`, `diar/*` (relais vers DGX1 :10002) | `analyse.run` (voie analyse, une à la fois) | — |
+| Montage | `/api/montage/meta`, `projects` (GET la liste des séquences, POST `{name, settings}` ou `{from_item}`), `projects/<id>` (lire, enregistrer), `projects/<id>/rename`, `duplicate`, `delete`, `plan` (un id `mon-…` d'avant le 29/09 mène à sa séquence `seq-…`), `wave/<id>`, `luts` (GET, PUT un .cube), `luts/<id>` (POST), `luts/<id>/cube`, `mini`, `delete` | `montage.export` (voie cpu, ffmpeg) | — |
+| ODIO (`musique/`) | `/api/music/projects…` (lire, enregistrer, `delete`), `engines`, `generate` ; `gen/engines`, `gen/generate` (`music_gen.py` : les modèles génératifs du schéma `musique/generatif_modeles.json`) ; `midi` (ranger un clip de notes), `midi/options`, `midi/extract`, `midi/<id>/notes` (`music_midi.py`) ; `stems/options`, `stems/plan`, `stems/separate` ; `yue/options`, `yue/plan`, `yue/generate`, `yue/abc`, `yue/abc/check`. Les jouets (`music_jouets.py`) n'ont pas de route : leurs câbles `notes` et `mod` sont jugés dans l'enregistrement du projet (`music.validate`, sans boucle) | `music.generate`, `music.gen.<modèle>`, `music.midi`, `music.midi.abc`, `music.stems`, `music.yue`, `music.yue.abc` | `"music_engine": "ace-step"`, `"music_yue"`, `"music_stems"`, `"music_midi": true` |
+| Object Creator | `/api/objet/state` (les instances ComfyUI de la voie `image` seulement : une entrée `local` n'en est pas une), `objects` | `objet.mesh` (TRELLIS.2), `objet.mesh_factice` | `"objet_trellis": true` |
+| Movie Analysis | `/api/analyse/list`, `projets` (GET la liste fusionnée : nos films, les analyses d'ici, les projets du portail et du dépôt partagé ; POST `{nom}` un projet), `projets/<id>` (POST `{nom}` renommer, `{supprime}` retirer ou restaurer), `corrections/<film>` (GET, PUT : les corrections des voix et du casting, gardées dans le portail), `diarisation`, `chaine`, `nom/<nom>`, `run`, `diar/etat`, `diar/fichiers`, `diar/travaux`, `diar/travail/<id>` (GET, DELETE), `diar/analyse` (relais vers DGX1 :10002) | `analyse.run` (voie analyse, une à la fois) | — |
 | Upscale | `/api/upscale/models`, `plan`, `run` | `upscale.image`, `upscale.video` (voie image ; cpu en factice) | `"upscale_backend": "comfyui"` |
 | Character Factory | `/character/api/*`, `/character/files/*`, `/character/v1/*` : relais en flux vers le studio de DGX1 | (la file du studio, sur DGX1) | — |
 
@@ -275,6 +341,28 @@ créé au démarrage. Un pseudo admin n'entre que depuis le réseau de Cal
 - `"auth": false` (`showrunner.local.json`) coupe la porte : tout se passe
   comme si Cal était connecté (`tools/check.py` ; la porte s'y essaie à
   part, allumée : `server/tools/compte.py`, `admin.py`).
+
+**La porte publique** (29/09, `docs/etudes/cloudflare.md`, « Prêt à
+déployer ») : derrière un tunnel Cloudflare tout arrive de 127.0.0.1, et « le
+réseau de Cal » ne protégerait plus rien. Les tunnels visent donc un second
+point d'écoute, **`127.0.0.1:<port + 1000>`** (9790 pour 8790), ouvert par
+`server/showrunner.py` (`serve_door`) : les mêmes routes, relais et dossiers
+que la maison, mais une App marquée `door` — c'est elle, et non une adresse
+ou un en-tête, qui dit d'où vient la requête. Là, rien n'est du réseau de
+Cal et `"auth": false` n'y vaut rien. Réglage **`porte.mode`** de
+`showrunner.local.json` :
+
+| `porte.mode` | ce qui ouvre |
+|---|---|
+| `demo` (défaut) | un tunnel rapide (trycloudflare) : un code d'invitation d'abord (`/invitation/`, cookie `sr_invitation`), puis le pseudo ; un compte admin n'entre qu'avec le code admin, distinct ; codes dans `<data_dir>/porte-demo.json` (`tools/demo.sh`, `showrunner.py --porte-codes`, `--porte-codes-nouveaux` ferme les sessions de la porte, `--porte-url`) |
+| `access` | la vraie porte (`porte/worker.js`) : la signature HMAC du Worker (`x-porte-*`, clé `~/.config/showrunner/porte.key`) et le jeton Cloudflare Access (`Cf-Access-Jwt-Assertion`, RS256), au même e-mail ; admin seulement si le Worker le signe et si l'e-mail mène à un compte admin (`porte.emails`) |
+| `off` | pas de seconde écoute |
+
+La porte n'écoute jamais ailleurs que sur le loopback (`showrunner.py
+--porte-adresse` : « hôte port mode »). Sur l'écoute de la maison, une requête
+qui porte les en-têtes du bord de Cloudflare (`Cf-Ray`, `Cf-Connecting-IP`…)
+est refusée : un tunnel pointé par erreur sur 8790 n'ouvre rien. Le contrôle :
+`server/tools/porte_publique.py` (sur des ports libres, comme le ferait un tunnel).
 
 | Routes de la porte (`server/tools/compte.py`) | |
 |---|---|

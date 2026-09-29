@@ -67,7 +67,7 @@
 }
 @media (max-width: 1380px) { .studio { grid-template-columns: 320px minmax(0, 1fr); } .studio > .side-r { grid-column: 1 / -1; } }
 @media (max-width: 860px) { .studio { grid-template-columns: 1fr; padding: var(--s4); } }
-.studio .rail { display: flex; flex-direction: column; gap: var(--s3); position: sticky; top: 70px; max-height: calc(100vh - 86px); overflow: auto; }
+.studio .rail { display: flex; flex-direction: column; gap: var(--s3); position: sticky; top: 70px; max-height: calc(100 * var(--vh) - 86px); overflow: auto; }
 .studio .stage { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
 
 .field { display: flex; flex-direction: column; gap: 6px; }
@@ -105,6 +105,9 @@
 .thumb .kind.element { color: var(--or); box-shadow: inset 0 0 0 1px var(--line-or); }
 .thumb .kind.video { color: var(--cy); }
 .thumb .kind.audio { color: var(--grn2); }
+/* un clip MIDI est du son écrit, une séquence de la vidéo montée : la teinte de leur famille, avec un filet */
+.thumb .kind.midi { color: var(--grn2); box-shadow: inset 0 0 0 1px var(--line-gr); }
+.thumb .kind.sequence { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
 .thumb .dur {
   position: absolute; bottom: 6px; right: 6px; padding: 2px 5px; border-radius: var(--r1);
   background: var(--veil); font-family: var(--f-mono); font-size: 8px; letter-spacing: .1em; color: var(--ink);
@@ -143,7 +146,7 @@
 .ref-chip.add:hover { color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }
 
 /* ── sélecteur d'éléments (modale commune) ──────────────── */
-.picker .modal { width: min(1080px, 100%); height: min(760px, 88vh); max-height: none; }
+.picker .modal { width: min(1080px, 100%); height: min(760px, calc(88 * var(--vh))); max-height: none; }
 .picker .modal-body { flex: 1; }
 .picker .tabs { display: flex; gap: 4px; }
 
@@ -153,7 +156,7 @@
   min-height: 420px; display: flex; align-items: center; justify-content: center;
   box-shadow: inset 0 0 0 1px var(--line);
 }
-.viewer img, .viewer video { max-width: 100%; max-height: calc(100vh - 220px); display: block; }
+.viewer img, .viewer video { max-width: 100%; max-height: calc(100 * var(--vh) - 220px); display: block; }
 .viewer .empty { padding: var(--s6); text-align: center; color: var(--ink3); display: flex; flex-direction: column; gap: var(--s3); align-items: center; }
 .viewer .empty b { font-family: var(--f-disp); font-size: 20px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink2); font-weight: 400; }
 .viewer .over { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }

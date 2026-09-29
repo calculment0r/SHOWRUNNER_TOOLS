@@ -10,11 +10,22 @@
 //     et coins = redimensionner avec les voisins collés, double-clic sur
 //     l'en-tête = taille d'origine, sur le nom = renommer ; aimantation
 //     (⌥ la libère) ;
-//   - le fond : glisser = rectangle de sélection (⌃ ajoute, ⌥ retire), clic
-//     milieu glissé = se déplacer, molette = zoom ancré, double-clic = le
-//     catalogue ; G grouper / dégrouper, T ranger (la machine se remonte, un
-//     bloc seul reprend sa taille, sinon on redresse sans réordonner), F cadrer,
-//     Suppr retirer (le câblage se recoud) ;
+//   - la souris (Cal, 29/09) : clic gauche = choisir, Maj+clic = ajouter,
+//     Ctrl/⌘+clic = ajouter ou retirer (⌥ retire, comme ODIO_01) ; glisser le
+//     fond = rectangle de sélection, avec les mêmes touches ; bouton du milieu
+//     glissé = se déplacer, PARTOUT sauf sur les réglages d'une tuile, où il
+//     TRACE l'ordre d'exposition (le tracé d'ODIO_01, MachinePanel.tsx
+//     `tracerOrdre`) : l'ordre de la traversée décide ce que la tuile garde au
+//     zoom sémantique ; molette = zoom ancré, double-clic = le catalogue ; G
+//     grouper / dégrouper, T ranger (la machine se remonte, un bloc seul
+//     reprend sa taille, sinon on redresse sans réordonner), F cadrer, Suppr
+//     retirer (le câblage se recoud, chaîne par chaîne) ; clic droit : le menu
+//     de ce qu'on survole (commun/menu.js), jamais celui du navigateur ;
+//   - les pistes : le nœud de départ d'une piste (sa source) porte sa couleur
+//     et son nom, à taille d'écran constante ; les câbles de sa chaîne ont sa
+//     couleur ; la couleur se change d'un geste, ici ou sur la piste ;
+//     un câble tiré d'un nœud d'une piste vers un effet qu'une autre piste
+//     traverse le fait entrer dans cette chaîne aussi (projet.js) ;
 //   - les câbles partent des bornes et se lâchent SUR le bloc visé (cadre vert
 //     ou rouge avant de lâcher) ; lâchés dans le vide : la liste rapide, le
 //     bloc naît branché ; clic droit : saut ou insertion ;
@@ -34,8 +45,9 @@
 // sont gardés : leurs cartes, leurs ports typés, leurs câbles, leur boucle.
 
 import { toast } from '../commun/shell.js';
-import { MODULES, spec, val, drumVoicesOf } from './modules.js';
-import { el, knob, choice, put } from './ui.js';
+import { MODULES, COLORS, COLOR_FR, spec, val, drumVoicesOf, moduleName } from './modules.js';
+import { el, knob, choice, put, menu, letter, inlineEdit } from './ui.js';
+import { trajets, recoudre, entrerDansLaChaine } from './projet.js';   // le graphe du son : les chaînes des pistes, lues dans les câbles
 import { createBench } from './banc.js';
 import { portsOf } from './jouets/index.js';   // jouets : leurs ports « notes » et « valeur », les mêmes pour les machines
 import { beginDrag } from './machines/interaction/drag.js';
@@ -68,7 +80,7 @@ import {
   sectionsPosees, sectionPorteuse, recalerPorteur, TYPE_DE_VOIX, PISTE_DE_VOIX,
 } from './machines/tuiles.js';
 import { liensDe, jouerNotes } from './machines/liens.js';
-import { ouvrirCatalogue, ouvrirPalette, ouvrirMenuCable } from './machines/catalogue.js';
+import { ouvrirCatalogue, ouvrirPalette } from './machines/catalogue.js';
 import { ouvrirPlano, installerGabaritsDu } from './machines/plano.js';
 import { attracteursActifs, blocsDInfluence } from './machines/influence.js';
 
@@ -179,8 +191,16 @@ export function createNodal(app) {
   app.toys?.attach({ cv, world, view, paintSide: () => paintSide(), paintWires: () => peindreCables() });   // jouets : leurs câbles typés, les billes de la fontaine
 
   // ═════════════════════════════════════════ les tuiles, lues dans le projet
+  // la piste dont cette tuile est le nœud de DÉPART (sa source ; une machine-instrument : chacune de ses sections)
+  function pisteDeDepart(t) {
+    if (t.bloc) return null;
+    const m = app.mod(t.mod), tr = m?.track && app.track(m.track);
+    return tr && tr.src === m.id ? tr : null;
+  }
   function lireTuiles() {
     T = tuilesDe(P(), MODULES).map((t) => {
+      const tr = pisteDeDepart(t);
+      if (tr) { t.piste = tr.id; t.pc = tr.color; }
       const def = MODULES[t.type];
       if (t.bloc || !def?.jouet) return t;
       // jouets : leur carte a la taille de leur scène (jouets/defs.js)
@@ -192,6 +212,8 @@ export function createNodal(app) {
   }
   const porteurDe = (id) => porteurDeTuile(P(), id).owner?.id || id;
   const expose = (id) => reglage('expose')[id] ?? null;
+  // l'ordre d'exposition TRACÉ au bouton du milieu (tracerOrdreTuile) : ce que la tuile garde en dézoomant
+  const ordreDe = (id) => P().nodal?.ordre?.[id] || null;
   const partage = (id) => reglage('split')[id] ?? null;
 
   // la tuile qui porte les prises d'un porteur (la section porteuse pour une machine)
@@ -307,9 +329,9 @@ export function createNodal(app) {
     // en capture : les réglages arrêtent la propagation pour leur propre geste
     e.addEventListener('pointerdown', (ev) => {
       if (ev.button !== 0) return;
-      const mode = ev.altKey ? 'remove' : ev.ctrlKey || ev.metaKey ? 'add' : 'replace';
-      if (mode === 'remove' && ev.target.closest('.grip, .tile__head')) return;
-      selectBlock(t.id, mode);
+      const mode = modeDe(ev);
+      if (mode === 'remove' && ev.target.closest('.grip, .tile__head')) return;   // ⌥ glissé sur l'en-tête : dupliquer
+      choisirAuClic(ev, t.id, mode);
     }, true);
     const vue = { el: e, mise, L: 0, sig: '', type: t.type, sale: true, id: t.id };
     const { owner } = porteurDeTuile(P(), t.id);
@@ -321,6 +343,10 @@ export function createNodal(app) {
     const s = vue.el.style;
     s.left = px(t.x); s.top = px(t.y); s.width = px(t.w);
     if (!t.jouet) s.height = px(t.h);
+    // le nœud de départ d'une piste : sa couleur (nodal.css, .tile--piste)
+    vue.el.classList.toggle('tile--piste', !!t.pc);
+    if (t.pc) s.setProperty('--pc', `var(--${t.pc})`); else s.removeProperty('--pc');
+    vue.el.classList.toggle('tile--courante', !!t.piste && t.piste === S.sel.track);
   }
   function grooveSig(m) {
     const tr = m?.track && app.track(m.track), pat = tr && app.pat(tr.pat);
@@ -329,7 +355,7 @@ export function createNodal(app) {
   function signature(t, info) {
     const b = sharedBorders(t, T.filter((o) => o.id !== t.id && !o.jouet));
     const it = influ.get(t.id);
-    return [t.w, t.h, b.right, b.bottom, expose(t.id), partage(t.id), info?.enabled, t.teinte, info?.nom, machinePanel === info?.owner?.id,
+    return [t.w, t.h, b.right, b.bottom, expose(t.id), (ordreDe(t.id) || []).join(','), partage(t.id), info?.enabled, t.teinte, t.pc, info?.nom, machinePanel === info?.owner?.id,
       prisDansBloc?.bloc === t.id ? prisDansBloc.cles.join(',') : '', JSON.stringify(info?.valeurs || {}), it ? JSON.stringify([...it]) : '',
       t.type === 'rythme' || t.type === 'drums' ? grooveSig(info?.owner) : '', t.bloc && info?.owner?.type === 'clavier' ? held.join(',') : ''].join('|');
   }
@@ -357,9 +383,9 @@ export function createNodal(app) {
     const body = tileBody(rect, borders);
     const narrow = body.w < 112, padX = narrow ? 4 : 8, gap = narrow ? 4 : 7;
     const led = ledSize(body.head, body.w - padX * 2);
-    const exposedId = expose(t.id);
+    const exposedId = expose(t.id), ordre = ordreDe(t.id);
     const valeurs = { ...info.valeurs, ...Object.fromEntries(influ.get(t.id) || []) };
-    const slots = resolveBody(body.w, body.h, info.parametres, info.def, partage(t.id), exposedId).slots;
+    const slots = resolveBody(body.w, body.h, info.parametres, info.def, partage(t.id), exposedId, ordre).slots;
     const dExp = info.parametres.find((q) => q.id === exposedId);
     const bodyNames = slots.length === 0 && dExp !== undefined && promotedName(body.w, body.h, dExp.label).size > 0;
     const headerExposed = !dExp || bodyNames ? null : dExp.label;
@@ -413,7 +439,7 @@ export function createNodal(app) {
     const { owner } = info;
     vue.panneau = null;
     rendreCorps(corps, {
-      width: body.w, height: body.h, parameters: info.parametres, values: valeurs, exposed: exposedId, def: info.def, twin: info.twin, split: partage(t.id),
+      width: body.w, height: body.h, parameters: info.parametres, values: valeurs, exposed: exposedId, ordre, def: info.def, twin: info.twin, split: partage(t.id),
       onParam: (id, v) => info.onParam(id, v),
       onPromote: onPromoteDe(t.id),
       onSplit: (v, fin) => {
@@ -468,8 +494,10 @@ export function createNodal(app) {
       g.addEventListener('pointerdown', (ev) => startResize(ev, t.id, edge));
       return g;
     });
-    const teinte = t.teinte ? h('span', 'tile__teinte') : null;
-    if (teinte) teinte.style.background = `var(--${t.teinte})`;
+    // la teinte : celle de la PISTE pour son nœud de départ (une seule vérité, t.color), sinon celle de l'ensemble
+    const tc = t.pc || t.teinte;
+    const teinte = tc ? h('span', t.pc ? 'tile__teinte tile__teinte--piste' : 'tile__teinte') : null;
+    if (teinte) teinte.style.background = `var(--${tc})`;
     m.replaceChildren(...(teinte ? [teinte] : []), tete, corps, ...grips);
   }
 
@@ -505,7 +533,7 @@ export function createNodal(app) {
     box.append(hd, bd, ft);
     box.addEventListener('pointerdown', (ev) => {
       if (ev.button !== 0) return;
-      selectBlock(t.id, ev.altKey ? 'remove' : ev.ctrlKey || ev.metaKey ? 'add' : 'replace');
+      choisirAuClic(ev, t.id, modeDe(ev));
     }, true);
     hd.addEventListener('pointerdown', (ev) => startMove(ev, t.id));
     app.toys?.decorate(m, box, hd);   // jouets : la scène sous l'en-tête, les ports notes (losange) et valeur (carré)
@@ -725,15 +753,34 @@ export function createNodal(app) {
     const pid = t ? porteurDe(t.id) : null;
     S.sel.mod = pid && app.mod(pid) ? pid : null;
     if (ids.length) S.sel.cable = null;
+    // l'arrangement et le nodal voient le même projet : choisir un nœud d'une piste en fait la piste courante
+    const m = pid && app.mod(pid);
+    const tid = m?.track && app.track(m.track) ? m.track : (m && app.linked(m.id)[0]) || null;
+    if (tid && S.sel.track !== tid) { S.sel.track = tid; S.sel.pat = app.track(tid)?.pat || null; for (const x of T) { const v = vues.get(x.id); if (v) v.el.classList.toggle('tile--courante', !!x.piste && x.piste === tid); } }
     classesSelection(); peindreDessus(); paintSide(); peindreOutils(); paintCableClass();
     // le « bloc pris » d'une section de machine change son T en édition
     if (machinePanel) rafraichir([...new Set([...avant, ...ids])].filter((id) => parId.get(id)?.sec));
+  }
+  // les touches d'un clic (Cal, 29/09 : « les standards en ajout et enlever de la
+  // sélection par clic ») : Maj ajoute, Ctrl/⌘ ajoute ou retire, ⌥ retire (ODIO_01)
+  const modeDe = (e) => (e.altKey ? 'remove' : e.ctrlKey || e.metaKey ? 'toggle' : e.shiftKey ? 'add' : 'replace');
+  // Un clic sans glisser sur une tuile déjà prise dans une sélection plus
+  // large ne garde qu'elle (l'usage des éditeurs) ; appuyer puis glisser
+  // déplace toute la sélection (ODIO_01 : on ne perd pas le lot en le saisissant).
+  function choisirAuClic(ev, id, mode) {
+    const avant = sel.join();
+    selectBlock(id, mode);
+    if (mode !== 'replace' || sel.join() !== avant || sel.length <= familyOf(id).length) return;
+    const x0 = ev.clientX, y0 = ev.clientY;
+    const up = (u) => { removeEventListener('pointerup', up, true); if (Math.hypot(u.clientX - x0, u.clientY - y0) < 4 && sel.includes(id)) setSel(familyOf(id).map((x) => x.id)); };
+    addEventListener('pointerup', up, true);
   }
   function selectBlock(id, mode) {
     const family = familyOf(id).map((t) => t.id);
     let next;
     if (mode === 'remove') next = sel.filter((o) => !family.includes(o));
     else if (mode === 'add') next = sel.includes(id) ? sel : withFamilies([...sel, id]);
+    else if (mode === 'toggle') next = family.every((f) => sel.includes(f)) ? sel.filter((o) => !family.includes(o)) : withFamilies([...sel, id]);
     else {
       // le second clic ENTRE dans l'assemblage : il ne garde que le bloc
       const entiere = family.length > 1 && family.every((f) => sel.includes(f));
@@ -974,13 +1021,11 @@ export function createNodal(app) {
         if (MODULES[m.type]?.role === 'master') continue;
         const tr = m.track && app.track(m.track);
         if (tr && (tr.src === m.id || tr.strip === m.id)) { pistes.add(tr.id); continue; }
-        // on retire en RECOUSANT : ce qui entrait est rebranché sur ce qui sortait
-        const ins = p.cables.filter((c) => c.b === pid && !c.t && typeof c.send !== 'number').map((c) => c.a);
-        const outs = p.cables.filter((c) => c.a === pid && !c.t).map((c) => c.b);
-        p.cables = p.cables.filter((c) => c.a !== pid && c.b !== pid);
+        // on retire en RECOUSANT, chaîne par chaîne : ce qui entrait est rebranché
+        // sur ce qui sortait, le long de la même piste (projet.js, recoudre)
+        recoudre(p, pid, app.wouldCycle);
         p.modules = p.modules.filter((x) => x.id !== pid);
         p.auto = (p.auto || []).filter((L) => L.mod !== pid);
-        for (const a of ins) for (const b of outs) if (!app.wouldCycle(a, b) && !p.cables.some((c) => c.a === a && c.b === b && !c.t)) p.cables.push({ a, b });
         fait = true;
       } else {
         const n = nodalDe(p);
@@ -994,7 +1039,8 @@ export function createNodal(app) {
     sel = [];
     if (S.sel.mod && !app.mod(S.sel.mod)) S.sel.mod = null;
     if (fait) app.commit('graph');
-    for (const id of pistes) app.removeTrack(id);   // une source ou une tranche : toute sa piste (avec confirmation)
+    // une source ou une tranche : toute sa piste — sans confirmation, comme Suppr dans l'arrangement : Ctrl+Z la rend
+    if (pistes.size) app.removeTracks([...pistes], { ask: false });
   }
   // Duplique un lot ; rend les nouveaux identifiants de tuiles, dans l'ordre du lot (App.tsx, `duplicate`)
   function dupliquer(ids) {
@@ -1043,7 +1089,7 @@ export function createNodal(app) {
     }
     const n = nodalDe(p);
     for (const l of [...(n.liens || [])]) if (cloneP.has(l.a)) n.liens.push({ ...l, a: cloneP.get(l.a) });
-    for (const cle of ['expose', 'split', 'noms', 'ports']) { const r = reglage(cle); for (const [a, b] of clone) if (a in r) r[b] = copie(r[a]); }
+    for (const cle of ['expose', 'ordre', 'split', 'noms', 'ports']) { const r = reglage(cle); for (const [a, b] of clone) if (a in r) r[b] = copie(r[a]); }
     lireTuiles();
     return ids.map((id) => clone.get(id)).filter(Boolean);
   }
@@ -1229,7 +1275,7 @@ export function createNodal(app) {
     });
   }
   function startMarquee(event) {
-    const mode = event.altKey ? 'remove' : event.ctrlKey || event.metaKey ? 'add' : 'replace';
+    const mode = modeDe(event);
     const base = mode === 'replace' ? [] : [...sel];
     if (mode === 'replace' && sel.length) setSel([]);
     const o = versMonde(event.clientX, event.clientY);
@@ -1243,7 +1289,10 @@ export function createNodal(app) {
         marquee = box;
         // toute tuile qui INTERSECTE est prise, et effleurer un groupe le prend en entier
         const hits = withFamilies(T.filter((t) => intersects(box, t)).map((t) => t.id));
-        const next = mode === 'remove' ? base.filter((id) => !hits.includes(id)) : withFamilies([...base, ...hits]);
+        // Ctrl : le cadre inverse ce qu'il touche (Explorateur de Windows, Figma) ; Maj : ajoute ; ⌥ : retire
+        const next = mode === 'remove' ? base.filter((id) => !hits.includes(id))
+          : mode === 'toggle' ? withFamilies([...base.filter((id) => !hits.includes(id)), ...hits.filter((id) => !base.includes(id))])
+            : withFamilies([...base, ...hits]);
         if (next.join() !== sel.join()) { sel = next; classesSelection(); }
         peindreDessus();
       },
@@ -1356,6 +1405,9 @@ export function createNodal(app) {
       cablesSvg.append(g);
       return g;
     };
+    // les fils d'une chaîne ont la couleur de SA piste (projet.js, trajets) ;
+    // un fil que deux chaînes empruntent (un effet partagé) est tireté
+    const Tj = trajets(p);
     for (const c of p.cables) {
       if (c.t) continue;   // jouets : les câbles de notes et de valeur ont leur calque (jouets/index.js)
       const a = pointBorne(c.a, 'out'), b = pointBorne(c.b, 'in');
@@ -1363,6 +1415,9 @@ export function createNodal(app) {
       const key = `${c.a}>${c.b}`, jump = hid.get(key);
       if (jump && !(jump.shown || hoverJump === key)) continue;
       const g = trait(cablePath(a, b, k), key, c, false);
+      const communes = typeof c.send === 'number' ? [] : (Tj.de.get(c.a) || []).filter((x) => (Tj.de.get(c.b) || []).includes(x));
+      const tr = communes.length && app.track(communes[0]);
+      if (tr) { g.classList.add('cable--piste'); if (communes.length > 1) g.classList.add('cable--multi'); g.style.color = `var(--${tr.color})`; g.dataset.piste = communes.join(' '); }
       if (jump) { g.firstChild.classList.add('cable__line--jump'); g.style.color = `var(--${jump.color})`; }
       if (typeof c.send === 'number') {
         const tx = sv('text', { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, class: 'cable__envoi' });
@@ -1373,7 +1428,10 @@ export function createNodal(app) {
     // les notes des blocs (clavier, KBD-01, SEQ-01) vers ce qui se joue
     for (const l of liensDe(p)) {
       const a = pointBorne(l.a, 'out'), b = pointNotes(l.b);
-      if (a && b) trait(cablePath(a, b, k), `L:${l.a}>${l.b}`, null, true);
+      if (!a || !b) continue;
+      const g = trait(cablePath(a, b, k), `L:${l.a}>${l.b}`, null, true);
+      const mb = app.mod(l.b), tr = mb?.track && app.track(mb.track);
+      if (tr) { g.classList.add('cable--piste'); g.style.color = `var(--${tr.color})`; }   // les notes vont jouer CETTE piste
     }
     // le câble qu'on tire, et le CADRE DE PARENTAGE : vert si le lâcher fera la liaison, rouge sinon
     if (cabling) {
@@ -1404,13 +1462,30 @@ export function createNodal(app) {
       g.classList.toggle('cable--survol', hoverCable === g.dataset.key);
     }
   }
+  // le menu d'un câble (CableMenu.tsx : « passer en saut », « insérer un bloc
+  // de flux »), par le menu commun ; il dit à quelle(s) chaîne(s) le fil sert
   function menuCable(c, e) {
-    ouvrirMenuCable({ at: { x: e.clientX, y: e.clientY }, saut: !!c.jump,
-      onJump: () => {
+    const Tj = trajets(P());
+    const communes = (Tj.de.get(c.a) || []).filter((x) => (Tj.de.get(c.b) || []).includes(x)).map(app.track).filter(Boolean);
+    menu(e.clientX, e.clientY, [
+      { head: `câble · ${nomCourt(c.a)} → ${nomCourt(c.b)}` },
+      communes.length ? { head: `chaîne de ${communes.map((t) => t.name).join(', ')}` } : null,
+      { label: c.jump ? 'Redessiner le fil' : 'Passer en saut', onclick: () => {
         if (c.jump) { delete c.jump; delete c.shown; } else c.jump = nextJumpColor(P().cables.filter((x) => !x.t).map((x) => ({ from: x.a, to: x.b, jump: x.jump })));
         app.commit('quiet'); peindreCables(); peindreBornes();
-      },
-      onInsert: () => ouvrirSurCable(e, c, 'FLUX') });
+      } },
+      { label: 'Insérer un bloc de flux', onclick: () => ouvrirSurCable(e, c, 'FLUX') },
+      { label: 'Insérer un effet', onclick: () => ouvrirSurCable(e, c, 'EFFETS') },
+      '-',
+      { label: 'Couper le câble', key: 'Suppr', danger: true, onclick: () => app.disconnect(c.a, c.b) },
+    ]);
+  }
+  // le nom d'un porteur pour un menu : son module (et sa piste), sa machine, le clavier
+  function nomCourt(id) {
+    const x = app.mod(id);
+    if (x) { const tr = x.track && app.track(x.track); return `${machineDef(x.mach?.id)?.name || moduleName(x.type)}${tr ? ` (${tr.name})` : ''}`; }
+    const b = (nodalDe().blocs || []).find((y) => y.id === id);
+    return b?.type === 'clavier' ? 'Clavier' : machineDef(b?.mach?.id)?.name || '?';
   }
   function ouvrirSurCable(e, c, only) {
     const at = versMonde(e.clientX, e.clientY);
@@ -1445,9 +1520,30 @@ export function createNodal(app) {
     }
     return app.canConnect(a, b);
   }
+  // Relier deux nœuds. Un câble tiré d'un nœud d'une piste vers un EFFET qui
+  // n'est pas (encore) sur sa chaîne l'y fait entrer, juste après ce nœud :
+  // c'est ainsi qu'un délai que deux pistes traversent est dans les deux
+  // chaînes, et dans les deux racks (demande de Cal, 29/09 ; projet.js,
+  // entrerDansLaChaine). Un jouet qu'on traverse n'entre que dans une chaîne :
+  // sa scène est un seul son.
   function relier(a, b) {
     const p = P();
     if (emetNotes(a)) { const n = nodalDe(p); n.liens = [...(n.liens || []), { a, b, sig: 'notes' }]; return; }
+    const B = app.mod(b), def = B && MODULES[B.type];
+    if (def?.role === 'effect') {
+      const Tj = trajets(p);
+      const tid = (Tj.de.get(a) || []).find((x) => app.track(x)?.strip !== a && !Tj.dedans.get(x).has(b));
+      if (tid && (!def.jouet || !(Tj.de.get(b) || []).length)) {
+        const why = entrerDansLaChaine(p, a, b, tid, app.wouldCycle);
+        if (!why) {
+          if (!B.track) B.track = tid;
+          const tr = app.track(tid), ps = Tj.de.get(b) || [];
+          app.label(`« ${moduleName(B.type)} » dans la chaîne de « ${tr?.name} »`);
+          toast(ps.length ? `${moduleName(B.type)} : aussi dans la chaîne de « ${tr?.name} » — un seul effet, lié dans les racks de ${[...ps, tid].map((x) => app.track(x)?.name).join(' et ')}` : `${moduleName(B.type)} entre dans la chaîne de « ${tr?.name} »`, 4500);
+          return;
+        }
+      }
+    }
     p.cables.push({ a, b });
   }
   // Tirer un câble depuis une sortie (App.tsx, `startCable`) : on lâche sur la TUILE
@@ -1685,6 +1781,32 @@ export function createNodal(app) {
       }
       if (machinePanel === pid) kids.push(posteDeConception(def, pid, b));
     }
+    // LE NOM DES PISTES sur leur nœud de départ (Cal, 29/09 : « le nom d'une
+    // piste de l'arrangement est ce qui doit être bien visible ») : au-dessus
+    // de la source (ou de toute la machine), à taille d'écran constante — il
+    // reste lisible à tous les reculs, là où l'en-tête de la tuile se tait —,
+    // à la couleur de la piste. Sa pastille ouvre la palette ; double-clic sur
+    // le nom : le renommer ; clic : choisir le nœud.
+    const parPiste = new Map();
+    for (const t of T) if (t.piste) { if (!parPiste.has(t.piste)) parPiste.set(t.piste, []); parPiste.get(t.piste).push(t); }
+    for (const [tid, membres] of parPiste) {
+      const tr = app.track(tid);
+      if (!tr) continue;
+      const b = boundsOf(membres);
+      const lab = fixe(h('span', `piste-titre${membres[0].group ? ' piste-titre--groupe' : ''}${tid === S.sel.track ? ' piste-titre--courante' : ''}`), b.x, b.y);
+      lab.dataset.piste = tid;
+      lab.style.setProperty('--c', `var(--${tr.color})`);
+      const past = bouton('piste-titre__couleur', null, `la couleur de « ${tr.name} » — celle de sa piste dans l'arrangement · clic : la palette`, (ev) => menu(ev.clientX, ev.clientY,
+        [{ head: `couleur de « ${tr.name} »` }, ...COLORS.map((c) => ({ label: COLOR_FR[c], dot: c, checked: tr.color === c, onclick: () => app.setTrackColor(tid, c) }))]));
+      const nm = h('span', 'nm');
+      nm.textContent = tr.name;
+      nm.title = `la piste « ${tr.name} » · double-clic : la renommer · clic droit : son menu`;
+      nm.addEventListener('dblclick', (ev) => { ev.stopPropagation(); renommerPiste(tid); });
+      lab.append(past, nm);
+      lab.addEventListener('pointerdown', (ev) => { if (ev.button !== 0 || ev.target.closest('input')) return; ev.stopPropagation(); const ids = withFamilies(membres.map((x) => x.id)); if (ids.join() !== sel.join()) setSel(ids); });
+      lab.addEventListener('contextmenu', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!sel.includes(membres[0].id)) setSel(withFamilies(membres.map((x) => x.id))); const it = menuTuile(membres[0]); if (it) menu(ev.clientX, ev.clientY, it); });
+      kids.push(lab);
+    }
     // une sélection de plusieurs blocs se redimensionne comme un groupe
     if (sel.length > 1) {
       const members = T.filter((t) => sel.includes(t.id)), gs = new Set(members.map((t) => t.group));
@@ -1784,18 +1906,93 @@ export function createNodal(app) {
   }
 
   // ═════════════════════════════════════════════════ le fond : les gestes
+  // LE BOUTON DU MILIEU — déclaré à un seul endroit, comme dans ODIO_01
+  // (App.tsx, `onMiddleDown`, l. 577-606) : il déplace la vue PARTOUT, sauf
+  // là où un geste le revendique et le déclare —
+  //   la borne (on la fait glisser le long du bloc, ODIO_01) ;
+  //   une section de machine en édition (le tracé d'ordre de son panneau, ODIO_01) ;
+  //   une molette de machine hors édition (tirer un lien de molettes, ODIO_01) ;
+  //   les RÉGLAGES d'une tuile (29/09, Cal : « on dessinait avec l'appui de ce
+  //   bouton milieu et on définissait à la volée quel paramètre est le plus
+  //   important à conserver lors du zoom sémantique ») : le tracé d'ordre
+  //   d'ODIO_01, porté sur les nœuds du nodal (tracerOrdreTuile, plus bas).
+  // L'en-tête d'une tuile, ses arêtes, le fond, les câbles : la vue part.
   cv.addEventListener('pointerdown', (e) => {
     const cible = e.target;
     if (!cible.closest('input, textarea, [contenteditable="true"]')) { try { cv.focus({ preventScroll: true }); } catch { /* cadre */ } }
     if (e.button === 1) {
-      // deux gestes revendiquent le clic milieu avant la vue : la borne, et le tracé d'ordre (en édition)
       if (cible.closest('.ndx-borne')) return;
       if (machinePanel && cible.closest('.machine')) return;
       if (!machinePanel && cible.closest('[data-bout]')) return;
+      const tuile = cible.closest('.tile');
+      const t = tuile && parId.get(tuile.dataset.id);
+      if (t && !t.sec && !t.jouet && cible.closest('.tile__body')) { e.preventDefault(); e.stopPropagation(); tracerOrdreTuile(e, t.id); return; }
       e.preventDefault(); e.stopPropagation();
       startPan(e);
     }
   }, true);
+
+  // LE TRACÉ D'ORDRE SUR UNE TUILE — ODIO_01, MachinePanel.tsx, `tracerOrdre`
+  // (l. 830-871 ; porté pour les sections de machine dans machines/panneau.js).
+  // Bouton du milieu enfoncé, on passe une courbe sur les réglages de la
+  // tuile : l'ordre de la TRAVERSÉE devient l'ordre d'exposition. Le premier
+  // traversé est le réglage exposé (en grand quand plus rien ne tient) ; les
+  // suivants passent en tête des rails, dans cet ordre — le zoom sémantique
+  // retire par la fin (corps.js, resolveSlots s'arrête au premier qui ne
+  // rentre plus), donc ce qu'on a tracé en premier reste le plus longtemps.
+  // Un tracé qui ne traverse rien efface l'ordre : la tuile revient à la
+  // disposition de son bloc. Les rangs s'affichent pendant le tracé et le
+  // temps de les relire, 2,6 s (ODIO_01 : « un ordre qu'on vient de tracer et
+  // qui disparaît aussitôt ne s'est pas vu »).
+  function tracerOrdreTuile(e, tileId) {
+    const vue = vues.get(tileId), t = parId.get(tileId), info = t && infoTuile(t);
+    if (!vue || !info) return;
+    const ids = new Set(info.parametres.map((d) => d.id));
+    const cadre = cv.getBoundingClientRect();
+    // les boîtes des réglages rendus (ODIO_01 : `boites`, les contrôles du rendu)
+    const boites = [...vue.el.querySelectorAll('[data-param]')].filter((n) => ids.has(n.dataset.param))
+      .map((n) => ({ id: n.dataset.param, r: n.getBoundingClientRect() }));
+    const vus = [], points = [];
+    const svg = sv('svg', { class: 'machine__courbe ndx-trace', width: cadre.width, height: cadre.height });
+    const pl = sv('polyline');
+    svg.append(pl);
+    const rangs = h('div', 'ndx-rangs');
+    cv.append(svg, rangs);
+    const montrer = () => put(rangs, ...vus.map((id, i) => {
+      const b = boites.find((x) => x.id === id);
+      const s = h('span', 'machine__rang');
+      s.textContent = String(i + 1);
+      s.style.left = px(b.r.left - cadre.left); s.style.top = px(b.r.top - cadre.top);
+      return s;
+    }));
+    let der = null;
+    const toucher = (cx, cy) => {
+      // entre deux événements, la courbe passe par les points intermédiaires (tous les 4 px)
+      const pas = der ? Math.max(1, Math.ceil(Math.hypot(cx - der.x, cy - der.y) / 4)) : 1;
+      for (let i = 1; i <= pas; i++) {
+        const x = der ? der.x + ((cx - der.x) * i) / pas : cx, y = der ? der.y + ((cy - der.y) * i) / pas : cy;
+        for (const b of boites) if (x >= b.r.left && x <= b.r.right && y >= b.r.top && y <= b.r.bottom && !vus.includes(b.id)) { vus.push(b.id); montrer(); }
+      }
+      der = { x: cx, y: cy };
+      points.push(`${cx - cadre.left},${cy - cadre.top}`);
+      pl.setAttribute('points', points.join(' '));
+    };
+    toucher(e.clientX, e.clientY);
+    beginDrag({ currentTarget: null, pointerId: e.pointerId }, {
+      cursor: 'crosshair',
+      move: (m) => toucher(m.clientX, m.clientY),
+      end: () => {
+        svg.remove();
+        const o = reglage('ordre'), x = reglage('expose');
+        if (vus.length) { o[tileId] = [...vus]; x[tileId] = vus[0]; } else { delete o[tileId]; delete x[tileId]; }
+        app.label(vus.length ? `tracer l'ordre de « ${info.nom} » : ${vus.map((id) => info.parametres.find((d) => d.id === id)?.label).join(', ')}` : `effacer l'ordre de « ${info.nom} »`);
+        app.commit('quiet');
+        rafraichir([tileId], true);
+        stats.trace = { tuile: tileId, ordre: [...vus] };
+        setTimeout(() => rangs.remove(), 2600);
+      },
+    });
+  }
   cv.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     if (e.target.closest('.tile, .nd-card, .bn-meta, .bn-atr, .nd-tools, .nd-zoom, .ndx-seuils, .group-menu, .machine-panel, .ndx-borne, .jump, .bounds-edge, .bounds-corner, .divider, .junction, .cable__hit, .lien__signe')) return;
@@ -1824,7 +2021,8 @@ export function createNodal(app) {
   addEventListener('pointerdown', (e) => { actif = cv.contains(e.target); }, true);
   addEventListener('keydown', (e) => {
     if (S.view !== 'nodal' || !S.proj || !actif || !cv.isConnected) return;
-    if (e.target.closest?.('input, textarea, select, [contenteditable]') || document.querySelector('.plano, .cat--fenetre, .scrim')) return;
+    // un menu ouvert (commun/menu.js) garde le clavier : Échap le ferme, Suppr n'y retire rien
+    if (e.target.closest?.('input, textarea, select, [contenteditable]') || document.querySelector('.plano, .cat--fenetre, .scrim, .sr-menu')) return;
     const stop = () => { e.preventDefault(); e.stopImmediatePropagation(); };
     const ctrl = e.ctrlKey || e.metaKey;
     if (e.key === 'Delete' || e.key === 'Backspace') { if (supprimer()) stop(); return; }
@@ -1836,10 +2034,12 @@ export function createNodal(app) {
       if (!e.repeat) { const { owner } = porteurDeTuile(P(), k); strike(k, 48 + Math.round(owner.params?.octave ?? 0) * 12 + COMPUTER_KEYS[e.code]); }
       return;
     }
-    if (e.code === 'KeyG') { stop(); if (e.altKey) ungroupBlocks(); else toggleGroup(); return; }
+    // les lettres par e.key (ui.js, letter) : juste en AZERTY comme en QWERTY ; ⌥G : e.code, ⌥ change la lettre sur Mac
+    const L = letter(e);
+    if (L === 'g' || (e.altKey && e.code === 'KeyG')) { stop(); if (e.altKey) ungroupBlocks(); else toggleGroup(); return; }
     if (e.altKey || e.shiftKey) return;
-    if (e.code === 'KeyF') { stop(); focusOn(); return; }
-    if (e.code === 'KeyT') {
+    if (L === 'f') { stop(); focusOn(); return; }
+    if (L === 't') {
       stop();
       // en mode ÉLÉMENT, T appartient au panneau : il range des contrôles
       if (machinePanel) {
@@ -1851,6 +2051,104 @@ export function createNodal(app) {
       tidySelection();
     }
   }, true);
+  // ═══════════════════════════ le clic droit : le menu de ce qu'on survole
+  // (musique.js l'appelle quand la zone n'a pas ouvert le sien) : le fond, une
+  // tuile (nœud de départ d'une piste, effet, section de machine, clavier), un
+  // jouet, une borne, le banc et ses attracteurs, le panneau de droite
+  function zoneMenu(e) {
+    const tg = e.target;
+    if (bench.el.contains(tg) || tg.closest?.('.bn-meta')) return bench.menuDe?.(e) || null;
+    const at = versMonde(e.clientX, e.clientY);
+    const borne = tg.closest?.('.ndx-borne');
+    if (borne) {
+      const tile = [...T].find((x) => porteurDe(x.id) === borne.dataset.porteur && prisesDeTuile(x)[borne.dataset.side]);
+      return [{ head: borne.dataset.side === 'out' ? 'sortie — glisser : un câble' : 'entrée' },
+        { label: 'Remettre la borne à sa place', onclick: () => { const r = reglage('ports'); if (tile && r[tile.id]) { delete r[tile.id][borne.dataset.side]; app.commit('quiet'); apresGeste(); } } },
+        { label: 'Couper ses câbles', danger: true, onclick: () => { const pid = borne.dataset.porteur, out = borne.dataset.side === 'out'; P().cables = P().cables.filter((c) => c.t || (out ? c.a !== pid : c.b !== pid)); app.commit('graph'); } }];
+    }
+    const card = tg.closest?.('.tile, .nd-card');
+    if (card?.dataset.id) {
+      const t = parId.get(card.dataset.id);
+      if (!t) return null;
+      if (!sel.includes(t.id)) selectBlock(t.id, 'replace');
+      if (t.jouet) return menuJouet(t, tg);
+      return menuTuile(t);
+    }
+    if (side.contains(tg)) return [{ head: 'le panneau de droite' }, { label: 'Le catalogue', onclick: () => ouvrirLeCatalogue(null) }, { label: 'Cadrer toute la scène', key: 'F', onclick: () => focusOn(true) }];
+    // le fond (et les barres d'outils du nodal)
+    return [
+      { head: 'le nodal' },
+      { label: 'Le catalogue…', sub: 'double-clic', onclick: () => ouvrirLeCatalogue(at) },
+      { label: 'Poser ici', items: [
+        ...[['piste:synth:synth', 'Une piste · synthé'], ['piste:synth:acid', 'Une piste · basse acide'], ['piste:drums:rythme', 'Une piste · boîte à rythme']].map(([ty, l]) => ({ label: l, onclick: () => poser(ty, at) })),
+        '-', ...['rtt', 'reverbe', 'filtre', 'satura', 'comp3', 'chorus'].filter((k) => MODULES[k]).map((k) => ({ label: MODULES[k].name, sub: 'effet', dot: MODULES[k].color, onclick: () => poser(`effet:${k}`, at) })),
+        '-', { label: 'Un clavier', onclick: () => poser('bloc:clavier', at) }] },
+      '-',
+      { label: 'Tout choisir', onclick: () => setSel(T.map((x) => x.id)) },
+      { label: 'Ne rien choisir', key: 'Échap', disabled: !sel.length, why: 'rien n\'est choisi', onclick: () => setSel([]) },
+      { label: 'Grouper la sélection', key: 'G', disabled: sel.length < 2, why: 'choisir au moins deux blocs', onclick: () => toggleGroup() },
+      { label: 'Ranger', key: 'T', disabled: !sel.length, why: 'rien n\'est choisi', onclick: () => tidySelection() },
+      { label: sel.length ? 'Cadrer la sélection' : 'Cadrer toute la scène', key: 'F', onclick: () => focusOn() },
+      { label: 'Revenir à 100 %', onclick: () => { const r = cv.getBoundingClientRect(), c = cam(); const cx = c.x + r.width / (2 * c.k), cy = c.y + r.height / (2 * c.k); poserCam({ k: 1, x: cx - r.width / 2, y: cy - r.height / 2 }); gesteVue(); appliquerVue(); app.saveUi(); } },
+      '-',
+      { label: 'PLANO', sub: 'dessiner une machine', onclick: ouvrirLePlano },
+      { label: seuilsOuvert ? 'Fermer les seuils' : 'Les seuils du zoom sémantique', onclick: () => { seuilsOuvert = !seuilsOuvert; peindreSeuils(); peindreOutils(); } },
+    ];
+  }
+  // le menu d'une tuile : ce qu'elle est (nœud de départ d'une piste, effet partagé, section de machine…)
+  function menuTuile(t) {
+    const info = infoTuile(t), { owner } = porteurDeTuile(P(), t.id);
+    if (!info || !owner) return null;
+    const tr = t.piste && app.track(t.piste);
+    const m = app.mod(owner.id), def = m && MODULES[m.type];
+    const ps = m ? app.linked(m.id) : [];
+    const ordre = ordreDe(t.id) || [], ex = expose(t.id);
+    const ids = sel.includes(t.id) ? sel : [t.id];
+    const exposer = (id) => { const o = reglage('ordre'), x = reglage('expose'); if (id) { x[t.id] = id; o[t.id] = [id, ...(o[t.id] || []).filter((q) => q !== id)]; } else { delete x[t.id]; delete o[t.id]; } app.commit('quiet'); rafraichir([t.id], true); };
+    return [
+      { head: tr ? `piste · ${tr.name}` : info.nom },
+      tr ? { label: 'Couleur de la piste', dot: tr.color, items: COLORS.map((c) => ({ label: COLOR_FR[c], dot: c, checked: tr.color === c, onclick: () => app.setTrackColor(tr.id, c) })) } : null,
+      tr ? { label: 'Renommer la piste', onclick: () => renommerPiste(tr.id) } : null,
+      tr ? { label: 'Voir dans l\'arrangement', onclick: () => { app.selectTrack(tr.id); app.setView('timeline'); } } : null,
+      m?.track || ps.length ? { label: 'Instruments et effets de sa piste', onclick: () => { S.sel.track = m.track || ps[0]; S.sel.mod = m.id; app.showDetail('device'); } } : null,
+      ps.length > 1 ? { head: `effet lié · chaînes de ${ps.map((x) => app.track(x)?.name).join(', ')}` } : null,
+      ...(ps.length > 1 ? ps.map((x) => ({ label: `Sortir de la chaîne de « ${app.track(x)?.name} »`, onclick: () => app.removeFromTrack(m.id, x) })) : []),
+      '-',
+      info.parametres.length && !t.sec ? { label: 'Exposer', sub: 'ou tracer au bouton du milieu', items: [
+        ...info.parametres.map((d) => ({ label: d.label, checked: ex === d.id, onclick: () => exposer(ex === d.id ? null : d.id) })),
+        '-', { label: 'Effacer l\'ordre tracé', disabled: !ordre.length && !ex, why: 'aucun ordre tracé', onclick: () => exposer(null) }] } : null,
+      { label: 'Renommer le bloc', sub: 'double-clic sur son nom', onclick: () => { const n = vues.get(t.id)?.el.querySelector('.tile__name'); if (n) renommer(t.id, n); } },
+      { label: 'Taille d\'origine', sub: 'double-clic sur l\'en-tête', onclick: () => resetSize(t.id) },
+      info.power ? { label: info.enabled ? 'Éteindre' : 'Allumer', onclick: () => basculer(t.id) } : null,
+      { label: 'Dupliquer', sub: '⌥ glisser', onclick: () => { const born = dupliquer(ids); for (const id of born) { const b = parId.get(id); if (b) ecrireBoite(P(), id, { ...b, x: b.x + 40, y: b.y + 40 }); } sel = born; app.commit('graph'); } },
+      t.machine ? { label: 'Remonter la machine', key: 'T', onclick: () => reassembleMachine(porteurDe(t.id)) } : null,
+      t.machine ? { label: machinePanel === porteurDe(t.id) ? 'Fin de conception' : 'Poste de conception', sub: 'clic milieu : l\'ordre d\'importance', onclick: () => { const pid = porteurDe(t.id); machinePanel = machinePanel === pid ? null : pid; prisDansBloc = null; render(); } } : null,
+      sel.length > 1 ? { label: 'Grouper', key: 'G', onclick: () => toggleGroup() } : t.group && !t.machine ? { label: 'Dégrouper', key: '⌥G', onclick: () => ungroupBlocks() } : null,
+      !tr ? { label: 'Teinte', items: [...TEINTES.map((c) => ({ label: c, dot: c, checked: t.teinte === c, onclick: () => poserTeinte(ids, c) })), { label: 'Aucune', onclick: () => poserTeinte(ids, null) }] } : null,
+      '-',
+      def?.role === 'master' ? null : { label: tr ? `Retirer la piste « ${tr.name} »` : 'Retirer', key: 'Suppr', danger: true, onclick: () => retirerTuiles(ids) },
+    ];
+  }
+  function menuJouet(t, tg) {
+    const m = app.mod(t.mod), def = m && MODULES[m.type];
+    if (!m) return null;
+    // le FLIPPER et la NAVETTE jouent du bouton droit dans leur scène : pas de menu là
+    if (tg.closest('.jo-cv') && ['pin', 'inv'].includes(m.type)) return [];
+    return [
+      { head: `jouet · ${def?.name || m.type}` },
+      { label: m.on === false ? 'Allumer' : 'Éteindre', onclick: () => { m.on = m.on === false; app.commit('graph'); } },
+      { label: 'Cadrer', key: 'F', onclick: () => focusOn() },
+      '-',
+      { label: 'Retirer', key: 'Suppr', danger: true, onclick: () => { if (!app.toys?.remove(m.id)) app.removeModule(m.id); } },
+    ];
+  }
+  // renommer une piste depuis le nodal : son étiquette devient un champ
+  function renommerPiste(tid) {
+    const tr = app.track(tid), lab = dessusEl.querySelector(`.piste-titre[data-piste="${tid}"] .nm`);
+    if (!tr) return;
+    if (lab) inlineEdit(lab, tr.name, (n) => { tr.name = n.slice(0, 60); app.label(`renommer la piste en « ${tr.name} »`); app.commit('data'); }, { max: 60 });
+  }
+
   function supprimer() {
     if (lienPris) { nodalDe().liensKnob = delier(liensKnob(), lienPris); lienPris = null; app.commit('quiet'); peindreLiensKnob(); return true; }
     if (S.sel.cable) {
@@ -1866,7 +2164,7 @@ export function createNodal(app) {
   }
 
   // ═════════════════════════════════════════════════════ les outils
-  const HINT = 'clic milieu glissé : se déplacer · molette : zoom · glisser le fond : sélectionner · double-clic : le catalogue · ⌥ glissé : dupliquer · T ranger · G grouper · F cadrer · clic droit sur un câble : saut';
+  const HINT = 'clic milieu glissé : se déplacer (sur les réglages d\'une tuile : tracer ce qu\'elle garde au zoom) · molette : zoom · clic : choisir, Maj : ajouter, Ctrl : ajouter ou retirer · glisser le fond : cadre · double-clic : le catalogue · ⌥ glissé : dupliquer · T ranger · G grouper · F cadrer · clic droit : le menu';
   function peindreOutils() {
     const p = P();
     put(tools,
@@ -1920,8 +2218,11 @@ export function createNodal(app) {
           : knob(q, val(m, q.k), { accent, onInput: (v) => { m.params[q.k] = v; app.commit('param', m); rafraichir(tuilesDuPorteur(m.id)); } }))));
       sideParams();
       const tr = m.track && app.track(m.track);
+      const lies = app.linked(m.id).map(app.track).filter(Boolean);
       secs.push(el('div', { class: 'pan nd-sel', style: { '--k': `var(--${accent})` } },
         el('div', { class: 'row' }, el('b', { class: 'venus' }, def.name), el('span', { class: 'sp' }), el('span', { class: 'lbl' }, `${def.kind || ''}${tr ? ` · ${tr.name}` : ''}`)),
+        lies.length > 1 ? el('div', { class: 'dev-lien nd-lien', title: 'un seul effet : le régler ici le règle dans le rack de chaque piste qui le traverse' },
+          el('span', { class: 'lbl' }, 'lié'), ...lies.map((x) => el('span', { class: 'dev-lien-p', style: { '--c': `var(--${x.color})` } }, el('i'), x.name))) : null,
         grid,
         el('div', { class: 'row' },
           def.role === 'effect' || def.role === 'source' ? el('button', { class: `tb sm${m.on !== false ? ' on' : ' ghost'}`, type: 'button', onclick: () => { m.on = m.on === false; app.commit('graph'); } }, m.on !== false ? 'Actif' : 'Bypass') : null,
@@ -2022,6 +2323,16 @@ export function createNodal(app) {
 
   function key() { /* le clavier du nodal passe par l'écouteur en capture, plus haut */ }
   // pour les essais (tools : essais de page)
-  app.nodal = { tuiles: () => T, selection: () => [...sel], choisir: setSel, vue: view, poser, retirer: retirerTuiles, ranger: tidySelection, grouper: toggleGroup, cadrer: focusOn, uiK, plancher: () => plancher, vues, influ: () => influ, stats };
-  return { el: root, render, frame, key, hide: () => bench.hide() };
+  // montrer un module ou le nœud de départ d'une piste (depuis l'arrangement, le rack)
+  function montrer(modId) {
+    if (S.view !== 'nodal' || !P()) return;
+    lireTuiles();
+    const ids = T.filter((t) => porteurDe(t.id) === modId).map((t) => t.id);
+    if (!ids.length) return;
+    setSel(withFamilies(ids));
+    requestAnimationFrame(() => focusOn());
+  }
+  const montrerPiste = (tid) => { const tr = app.track(tid); if (tr) montrer(tr.src); };
+  app.nodal = { tuiles: () => T, selection: () => [...sel], choisir: setSel, vue: view, poser, retirer: retirerTuiles, ranger: tidySelection, grouper: toggleGroup, cadrer: focusOn, uiK, plancher: () => plancher, vues, influ: () => influ, stats, montrer, montrerPiste, relier: (a, b) => { const why = verdictDe(a, b); if (why) return why; relier(a, b); app.commit('graph'); return null; } };
+  return { el: root, render, frame, key, zoneMenu, hide: () => bench.hide() };
 }

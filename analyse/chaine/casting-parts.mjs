@@ -193,6 +193,8 @@ export const TROMBINOSCOPE = `
   const cuites = {};
   ((typeof DATA0 !== 'undefined' && DATA0.cast) || []).forEach((q) => { (q.absorbees || []).forEach((a) => { cuites[a] = true; }); });
   const nomOrigine = (id) => { const q = ((typeof DATA0 !== 'undefined' && DATA0.cast) || []).find((x) => x.id === id); return q ? q.name : id; };
+  // le nom qu'une fiche porte dans la page (corrections comprises), pour les libelles de l'annulation
+  const nomDe = (id) => { const q = DATA.cast.find((x) => x.id === id); return id + ' · ' + (q ? q.name : nomOrigine(id)); };
   const reunies = (p) => {
     const vivantes = (p.absorbees || []).filter((a) => !cuites[a]);
     if (!vivantes.length) return '';
@@ -203,7 +205,7 @@ export const TROMBINOSCOPE = `
   // fausse fiche disparait, ses plans et ses repliques passent a l'autre — et part au depot partage.
   const fusionne = (source, cible) => {
     if (!source || !cible || source === cible) return;
-    if (window.xvMemorise) window.xvMemorise();
+    if (window.xvMemorise) window.xvMemorise('réunir ' + nomDe(source) + ' à ' + nomDe(cible));
     const c = window.xvCorrections();
     c.fusions[source] = cible;
     window.xvPoseCorrections(c);
@@ -214,7 +216,7 @@ export const TROMBINOSCOPE = `
   document.addEventListener('click', (e) => {
     const b = e.target.closest && e.target.closest('#cast-grid button.separer');
     if (!b) return;
-    if (window.xvMemorise) window.xvMemorise();
+    if (window.xvMemorise) window.xvMemorise('séparer ' + b.dataset.id + ' · ' + nomOrigine(b.dataset.id));
     const c = window.xvCorrections();
     c.fusions[b.dataset.id] = b.dataset.id;   // « a part », meme si le depot partage la reunissait
     window.xvPoseCorrections(c);
@@ -240,7 +242,8 @@ export const TROMBINOSCOPE = `
       const por = PORT[p.id]
         ? '<img class="por" alt="' + esc(p.name) + '" src="' + PORT[p.id] + '">'
         : '<span class="por vide">' + esc(p.id) + '</span>';
-      const coul = COUL.length ? COUL[i % COUL.length] : 'var(--hairline-strong)';
+      // la pastille : le jeton lui-meme (var(--pc-N), analyse/film/palette.css), pas sa valeur lue — elle suit le theme
+      const coul = 'var(--pc-' + (i % (COUL.length || 16)) + ')';
       /* « Même personne que … » : la seule chose qu'un oeil sait et que la mesure ignore. */
       const choix = ['<option value="">fiche à part</option>'].concat(
         DATA.cast.filter((q) => q.id !== p.id).map((q) => '<option value="' + esc(q.id) + '">même personne que ' + esc(q.id) + ' · ' + esc(q.name) + '</option>'),
@@ -317,6 +320,11 @@ export const TROMBINOSCOPE = `
 
   $('cast-appliquer').addEventListener('click', () => {
     const a = saisis();
+    // renommer est un geste de la page : il s'annule (Ctrl+Z, les boutons de la barre) ; tant qu'on tape dans le champ,
+    // Ctrl+Z est au navigateur
+    const neufs = DATA.cast.filter((p) => a.noms[p.id] && a.noms[p.id] !== p.name);
+    if (window.xvMemorise) window.xvMemorise(neufs.length === 1 ? 'renommer ' + neufs[0].id + ' en « ' + a.noms[neufs[0].id] + ' »'
+      : neufs.length ? 'renommer ' + neufs.length + ' personnages' : 'appliquer le casting');
     const c = window.xvCorrections();
     DATA.cast.forEach((p) => { if (a.noms[p.id] && a.noms[p.id] !== p.name) c.noms[p.id] = a.noms[p.id]; });
     Object.keys(a.fusions).forEach((id) => { c.fusions[id] = a.fusions[id]; });
@@ -328,7 +336,7 @@ export const TROMBINOSCOPE = `
   // repliques corrigees restent.
   $('cast-defusion').addEventListener('click', () => {
     // celles du depot partage aussi : chaque fiche y est remise « a part »
-    if (window.xvMemorise) window.xvMemorise();
+    if (window.xvMemorise) window.xvMemorise('défaire les fusions');
     const c = window.xvCorrections(); c.fusions = {};
     Object.keys((window.XV_CORR_FICHIER || {}).fusions || {}).forEach((id) => { c.fusions[id] = id; });
     window.xvPoseCorrections(c); rejoue();
@@ -336,6 +344,7 @@ export const TROMBINOSCOPE = `
   });
 
   $('cast-reinit').addEventListener('click', () => {
+    if (window.xvMemorise) window.xvMemorise('repartir de la chaîne');
     try { localStorage.removeItem(window.XV_CLE); localStorage.removeItem(window.XV_CLE_V1); } catch (e) {}
     rejoue();
   });
@@ -448,18 +457,19 @@ export const TROMBINOSCOPE = `
   dessine();
 })();`;
 
-/** Le depouillement est une iframe : document separe, il ne recoit pas le
- *  theme du parent. Le parent le lui pousse. */
+/** Le depouillement d'une ancienne page (recollee par outils/casting.mjs) est une iframe : document separe, il ne
+ *  recoit pas le theme du parent. Le parent lui pousse le SIEN, celui du portail (data-theme sur <html>, pose par
+ *  commun/theme.js) — plus de second choix de theme (l'ancienne cle xverse du navigateur, 29/09). */
 export const THEME_VERS_IFRAME = `
 (function () {
   const cadre = () => document.querySelector('#depouillement iframe');
   function pousse() {
-    const t = document.documentElement.dataset.theme || 'light';
+    const t = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
     const fr = cadre(); if (!fr) return;
     // Meme origine : on pose l'attribut directement. Sous file:// l'acces est
     // refuse, d'ou le postMessage qui suit.
     try { const d = fr.contentDocument; if (d && d.documentElement) d.documentElement.dataset.theme = t; } catch (e) {}
-    try { if (fr.contentWindow) fr.contentWindow.postMessage({ xverseTheme: t }, '*'); } catch (e) {}
+    try { if (fr.contentWindow) fr.contentWindow.postMessage({ srTheme: t }, '*'); } catch (e) {}
   }
   new MutationObserver(pousse).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   const fr = cadre();
@@ -467,14 +477,22 @@ export const THEME_VERS_IFRAME = `
   pousse();
 })();`;
 
-/** A poser dans le depouillement lui-meme : il lit le theme memorise quand on
- *  l'ouvre seul, et ecoute le parent quand il est en cadre. */
+/** A poser dans le depouillement lui-meme : le theme du portail, lu dans son miroir local (commun/theme.js, cle
+ *  sr.prefs.v1 : general.theme, « le mien » sur sa base), ou pousse par le parent quand il est en cadre ; hors du
+ *  portail, le sombre, son defaut. Le meme code que chaine/report.js. */
 export const THEME_DANS_DEPOUILLEMENT = `
 (function () {
-  const pose = (t) => { document.documentElement.dataset.theme = (t === 'dark' ? 'dark' : 'light'); };
-  try { pose(localStorage.getItem('xverse-theme')); } catch (e) { pose('light'); }
-  addEventListener('message', (e) => { if (e && e.data && e.data.xverseTheme) pose(e.data.xverseTheme); });
-  addEventListener('storage', (e) => { if (e.key === 'xverse-theme') pose(e.newValue); });
+  const lit = () => {
+    try {
+      const d = (JSON.parse(localStorage.getItem('sr.prefs.v1') || 'null') || {}).data || {};
+      const t = (d.general || {}).theme;
+      return t === 'custom' ? ((d.theme || {}).base === 'light' ? 'light' : 'dark') : (t === 'light' ? 'light' : 'dark');
+    } catch (e) { return 'dark'; }
+  };
+  const pose = (t) => { document.documentElement.dataset.theme = (t === 'light' ? 'light' : 'dark'); };
+  pose(lit());
+  addEventListener('message', (e) => { if (e && e.data && e.data.srTheme) pose(e.data.srTheme); });
+  addEventListener('storage', (e) => { if (e.key === 'sr.prefs.v1') pose(lit()); });
 })();`;
 
 /** Les noms corriges, cote depouillement, ou le casting s'appelle DOC.cast. */

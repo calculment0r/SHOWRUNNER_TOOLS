@@ -66,8 +66,23 @@ export function paramLayout(ids) {
   const rows = ids.map((id) => ({ id: `p:${id}`, min: { w: 112, h: 19 }, grow: true, max: 26 }));
   return { bande: rows.map((row) => ({ ...row, min: { w: 170, h: 19 } })), colonne: [{ id: 'faders', min: { w: MIN_FADER, h: 56 }, grow: true }], pave: rows };
 }
-/** Le paramètre exposé passe en tête des rails. */
-function promoteExposed(slots, exposed) {
+/**
+ * Le paramètre exposé passe en tête des rails. SHOWRUNNER : `ordre`, l'ordre
+ * d'exposition TRACÉ au bouton du milieu sur la tuile (nodal.js,
+ * tracerOrdreTuile ; ODIO_01 le traçait sur les panneaux de machine,
+ * MachinePanel.tsx `tracerOrdre`) : les rails tracés passent en tête, dans
+ * l'ordre de la traversée, les autres gardent le leur ; comme resolveSlots
+ * s'arrête au premier qui ne rentre plus, c'est l'ordre du RETRAIT au zoom
+ * sémantique. Les places qui ne sont pas des rails (surface, vu…) ne bougent pas.
+ */
+function promoteExposed(slots, exposed, ordre = null) {
+  if (ordre?.length) {
+    const rang = new Map(ordre.map((id, i) => [`p:${id}`, i]));
+    const rails = slots.filter((s) => s.id.startsWith('p:'));
+    const tries = [...rails].sort((a, b) => (rang.get(a.id) ?? 1e3 + rails.indexOf(a)) - (rang.get(b.id) ?? 1e3 + rails.indexOf(b)));
+    let i = 0;
+    return slots.map((s) => (s.id.startsWith('p:') ? tries[i++] : s));
+  }
   if (!exposed) return [...slots];
   const wanted = `p:${exposed}`;
   const index = slots.findIndex((s) => s.id === wanted);
@@ -80,11 +95,11 @@ function promoteExposed(slots, exposed) {
   return next;
 }
 /** Résout la disposition — la même réponse pour la coque (l'en-tête) et le corps. */
-export function resolveBody(width, height, parameters, def, split = null, exposed = null) {
+export function resolveBody(width, height, parameters, def, split = null, exposed = null, ordre = null) {
   const pad = tilePadding(width, height);
   const innerW = Math.max(0, width - pad * 2), innerH = Math.max(0, height - pad * 2);
   const layout = def?.layout ?? paramLayout(parameters.map((p) => p.id));
-  const declared = promoteExposed(layout[shapeOf(width, height)], exposed);
+  const declared = promoteExposed(layout[shapeOf(width, height)], exposed, ordre);
   const surface = declared.find((s) => s.id === SURFACE_SLOT);
   const splittable = Boolean(surface) && innerH >= MIN_SPLITTABLE;
   const usable = splittable ? Math.max(0, innerH - SPLIT_HANDLE) : innerH;
@@ -107,8 +122,11 @@ export function resolveBody(width, height, parameters, def, split = null, expose
  * surface lit), split, onParam, onPromote, onSplit, renderOwn(slot, w, h).
  */
 export function rendreCorps(host, props) {
-  const { width, height, parameters, values, exposed, def, twin, split = null, onParam, onPromote, onSplit, renderOwn } = props;
-  const { slots, pad, innerW, innerH, splittable } = resolveBody(width, height, parameters, def, split, exposed);
+  const { width, height, parameters: params0, values, exposed, ordre = null, def, twin, split = null, onParam, onPromote, onSplit, renderOwn } = props;
+  // les faders (forme colonne) suivent aussi l'ordre tracé
+  const rang = ordre?.length ? new Map(ordre.map((id, i) => [id, i])) : null;
+  const parameters = rang ? [...params0].sort((a, b) => (rang.get(a.id) ?? 1e3 + params0.indexOf(a)) - (rang.get(b.id) ?? 1e3 + params0.indexOf(b))) : params0;
+  const { slots, pad, innerW, innerH, splittable } = resolveBody(width, height, parameters, def, split, exposed, ordre);
   if (slots.length === 0) {
     const b = h('div', 'body body--fallback');
     promoted(b, { exposed, parameters, values, def, twin, width, height, onParam });
@@ -183,6 +201,7 @@ function geste(el, d, getValue, axis, onChange, course) {
 function paramRow({ d, value, promoted, labelWidth, showRail, height, onChange, onPromote }) {
   let v = value;
   const row = h('div', 'row', { height });
+  row.dataset.param = d.id;   // le tracé d'ordre au bouton du milieu le reconnaît (nodal.js)
   const lab = h('button', promoted ? 'row__label row__label--exposed' : 'row__label', { width: labelWidth });
   lab.type = 'button'; lab.textContent = d.label; lab.title = promoted ? 'Ne plus exposer ce paramètre' : 'Exposer ce paramètre';
   lab.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -227,6 +246,7 @@ export function parseValue(d, input) {
 export function paramFader({ d, value, promoted, labelOrientation, labelSpace, onChange, onPromote }) {
   let v = value;
   const e = h('div', 'fader');
+  e.dataset.param = d.id;
   e.title = `${d.label} — glisser pour régler`;
   const track = h('div', 'fader__track'), travel = h('div', 'fader__travel'), cur = h('div', 'fader__cursor');
   track.append(travel, cur);
@@ -394,6 +414,7 @@ function promoted(host, { exposed, parameters, values, def, twin, width, height,
   const showName = heading.size > 0;
   const bodyHeight = Math.max(0, inner.h - (showName ? heading.size + LEAD : 0));
   const e = h('div', 'promoted');
+  e.dataset.param = d.id;
   e.style.padding = `${edge}px`; e.style.gap = `${LEAD}px`;
   e.title = `${d.label} — glisser verticalement pour régler`;
   if (showName) { const n = h('span', 'promoted__name'); n.style.fontSize = `${heading.size}px`; n.style.letterSpacing = heading.spacing; n.textContent = engrave(d.label); e.append(n); }

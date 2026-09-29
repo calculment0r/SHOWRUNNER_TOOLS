@@ -211,6 +211,20 @@ def validate(p: dict) -> None:
     if len(masters) != 1:
         raise ValueError("il faut une et une seule sortie")
 
+    # les groupes de pistes de l'arrangement (29/09, musique/projet.js) : une
+    # étiquette sur des pistes qui se suivent, repliée ou non ; pas de son
+    groups = p.get("groups", [])
+    if not isinstance(groups, list) or len(groups) > 64:
+        raise ValueError("groupes de pistes : une liste de 64 au plus")
+    gids = set()
+    for g in groups:
+        gid = _id((g or {}).get("id"), "groupe de pistes")
+        if gid in gids:
+            raise ValueError(f"groupe de pistes en double : {gid}")
+        gids.add(gid)
+        _str(g.get("name"), 40, "nom de groupe", 1)
+        _bool(g, "fold", f"{g['name']} : replié")
+
     by_track: dict = {}
     for t in tracks:
         tid = _id((t or {}).get("id"), "piste")
@@ -223,6 +237,8 @@ def validate(p: dict) -> None:
             raise ValueError(f"couleur de piste inconnue : {t.get('color')!r}")
         if t.get("sub") is not None:
             _str(t["sub"], 60, "sous-titre de piste")
+        if t.get("grp") is not None and t["grp"] not in gids:
+            raise ValueError(f"{t['name']} : groupe de pistes inconnu ({t['grp']!r})")
         for k in ("mute", "solo", "arm"):
             _bool(t, k, f"{t['name']} : {k}")
         # une piste générative (29/09) : une piste audio qui porte son modèle et
@@ -908,6 +924,11 @@ def selftest(call, ok) -> None:
     good["banc"] = {"segs": [{"id": "g1", "lane": "ryt", "d": 4, "l": 8}], "atts": [], "ten": [[0, 0.5], [8, 0.7]]}
     refused(lambda b: b.update(presets=[{"id": "r1", "name": "X", "type": "theremine", "params": {}}]), "un réglage d'une source inconnue", "source")
     refused(lambda b: b.update(banc={"segs": [], "atts": [], "ten": [[0, 2]]}), "une tension hors de 0..1", "tension")
+    # les groupes de pistes (29/09)
+    refused(lambda b: b["tracks"][0].update(grp="gx"), "une piste dans un groupe absent", "groupe")
+    refused(lambda b: b.update(groups=[{"id": "g1", "name": ""}]), "un groupe sans nom", "groupe")
+    good["groups"] = [{"id": "g1", "name": "Rythmique", "fold": True}]
+    good["tracks"][0]["grp"] = "g1"
     st, r = call("POST", f"/api/music/projects/{pid}", good)
     ok(st == 200 and r.get("rev") == 3, f"sections, marqueurs, arc, automation, tonalité passent ({st} {r})")
     good["rev"] = 3

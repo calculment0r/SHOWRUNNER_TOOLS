@@ -9,15 +9,26 @@
  */
 
 /* ── thème ──
- * Ce rapport est affiché dans un cadre par la page Studio : document séparé,
- * il ne reçoit donc rien du parent. Il lit le choix mémorisé quand on l'ouvre
- * seul, et écoute le parent quand il est en cadre. Clair par défaut, point.
+ * Plus de choix de thème à lui (l'ancienne clé xverse du navigateur, clair par défaut) : celui
+ * du portail (29/09), un seul pour tous les outils. Ouvert d'une page du portail, le
+ * rapport lit son miroir local (commun/theme.js : la clé sr.prefs.v1, general.theme ;
+ * « le mien » sur sa base) ; en cadre, la page parente le lui pousse (srTheme) ; hors
+ * du portail (un fichier ouvert du disque), le sombre, le défaut du portail. Sa
+ * feuille (report.css) n'a qu'une palette, Verdant : le rapport-liste n'est plus
+ * publié par le portail, les pages de nos films le remplacent (analyse/film/).
  */
 (function () {
-  const pose = (t) => { document.documentElement.dataset.theme = (t === 'dark' ? 'dark' : 'light'); };
-  try { pose(localStorage.getItem('xverse-theme')); } catch (e) { pose('light'); }
-  addEventListener('message', (e) => { if (e && e.data && e.data.xverseTheme) pose(e.data.xverseTheme); });
-  addEventListener('storage', (e) => { if (e.key === 'xverse-theme') pose(e.newValue); });
+  const lit = () => {
+    try {
+      const d = (JSON.parse(localStorage.getItem('sr.prefs.v1') || 'null') || {}).data || {};
+      const t = (d.general || {}).theme;
+      return t === 'custom' ? ((d.theme || {}).base === 'light' ? 'light' : 'dark') : (t === 'light' ? 'light' : 'dark');
+    } catch (e) { return 'dark'; }
+  };
+  const pose = (t) => { document.documentElement.dataset.theme = (t === 'light' ? 'light' : 'dark'); };
+  pose(lit());
+  addEventListener('message', (e) => { if (e && e.data && e.data.srTheme) pose(e.data.srTheme); });
+  addEventListener('storage', (e) => { if (e.key === 'sr.prefs.v1') pose(lit()); });
 })();
 
 /* ── noms corrigés au trombinoscope ──

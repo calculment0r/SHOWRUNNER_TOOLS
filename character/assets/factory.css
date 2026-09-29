@@ -23,7 +23,7 @@
 .chat {
   background: var(--panel); border-radius: var(--r3);
   display: flex; flex-direction: column; min-height: 0;
-  height: clamp(340px, calc(100vh - 340px), 760px);
+  height: clamp(340px, calc(100 * var(--vh) - 340px), 760px);
 }
 .chat-log { flex: 1; overflow-y: auto; padding: var(--s4); display: flex; flex-direction: column; gap: var(--s3); }
 
@@ -37,7 +37,7 @@
 .msg-user .msg-body { background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line-cy); }
 .msg-system .msg-body { background: transparent; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink3); font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .08em; line-height: 1.8; }
 .msg-tool .msg-body { background: transparent; color: var(--grn2); font-family: var(--f-mono); font-size: 9px; letter-spacing: .1em; padding: 2px var(--s2); }
-.msg-err .msg-body { background: rgba(224,103,74,.12); box-shadow: inset 0 0 0 1px rgba(224,103,74,.5); color: var(--or); }
+.msg-err .msg-body { background: var(--or-bg); box-shadow: inset 0 0 0 1px var(--line-or); color: var(--or); }
 .msg-images { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .msg-images img { width: 78px; height: 78px; object-fit: cover; border-radius: var(--r1); box-shadow: inset 0 0 0 1px var(--line); }
 
@@ -103,7 +103,7 @@
 }
 .swatch span {
   font-family: var(--f-mono); font-size: 8px; letter-spacing: .08em;
-  background: rgba(10,13,11,.72); color: var(--ink); padding: 2px 4px;
+  background: var(--veil); color: var(--ink); padding: 2px 4px;
   border-radius: 2px; margin-bottom: 4px;
 }
 .swatch-x {
@@ -117,7 +117,7 @@
 
 /* ── fiche d'identité ───────────────────────────────────── */
 .sheet { background: var(--panel); border-radius: var(--r3); display: flex; flex-direction: column; overflow: hidden; }
-.sheet-fields { padding: var(--s3) var(--s4); overflow-y: auto; max-height: clamp(300px, calc(100vh - 400px), 720px); display: flex; flex-direction: column; gap: var(--s4); }
+.sheet-fields { padding: var(--s3) var(--s4); overflow-y: auto; max-height: clamp(300px, calc(100 * var(--vh) - 400px), 720px); display: flex; flex-direction: column; gap: var(--s4); }
 .sheet-section { display: flex; flex-direction: column; gap: 2px; }
 .sheet-section-title {
   font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .22em;
@@ -131,7 +131,7 @@
 .sheet-val.filled { color: var(--ink); }
 .sheet-val.empty { color: var(--panel3); }
 .sheet-val.empty::before { content: "—"; }
-@keyframes flashIn { from { background: rgba(61,138,96,.42); } to { background: transparent; } }
+@keyframes flashIn { from { background: var(--grn-bg2); } to { background: transparent; } }
 .sheet-val.flash { animation: flashIn .8s ease-out; border-radius: 2px; }
 .sheet-actions { padding: var(--s3) var(--s4) var(--s4); display: flex; flex-direction: column; gap: 6px; box-shadow: inset 0 1px 0 var(--line); }
 

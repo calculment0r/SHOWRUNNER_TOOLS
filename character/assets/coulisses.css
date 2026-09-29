@@ -82,7 +82,7 @@
   font-family: var(--f-mono); font-size: 9.5px; line-height: 1.6; color: var(--ink2);
   white-space: pre-wrap; word-break: break-word;
 }
-.cz-pre.tall { max-height: 70vh; }
+.cz-pre.tall { max-height: calc(70 * var(--vh)); }
 .cz-pre:empty::before { content: "…"; color: var(--ink3); }
 
 /* ── grilles d'images de toutes tailles ─────────────────── */

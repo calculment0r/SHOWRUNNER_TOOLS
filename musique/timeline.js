@@ -7,7 +7,12 @@
 //   l'arc        une piste qu'on peint à la souris : elle pilote la sortie
 //                (filtre, volume ou les deux) — et plus bas, sous chaque
 //                piste, ses voies d'automation, une par réglage
-//   les pistes   muet, solo, armer, volume, panoramique, couleur ; clips de
+//   les pistes   choisir un en-tête (Ctrl : ajouter / retirer, Maj : jusqu'à
+//                lui), Suppr les retire ; glisser un en-tête : lâché ENTRE
+//                deux pistes il s'y range (trait d'insertion), SUR une piste il
+//                fait groupe avec elle (elle s'entoure) ; un groupe se replie,
+//                se renomme, se défait (Ctrl+G groupe les pistes choisies) ;
+//                muet, solo, armer, volume, panoramique, couleur ; clips de
 //                motifs (leurs notes dessinées) et clips audio (leur forme
 //                d'onde) ; aimant, sélection multiple, copier / coller,
 //                dupliquer, couper, consolider, rogner par les deux bords
@@ -31,8 +36,8 @@ import { toast, api, ITEM_MIME, uploadFile } from '../commun/shell.js';
 import { MODULES, TRACK_KINDS, COLORS, COLOR_FR, AUTOMATABLE, SECTION_TAGS, SECTION_NAMES, SOURCES_OF,
   spec, val, fmt, toNorm, fromNorm, drumVoicesOf, guessTag, moduleName } from './modules.js';
 import { peaks, projEnd, interp, clipBuffer, audioGeom } from './moteur.js';
-import { el, knob, menu, tok, clamp, put, confirmBox, inlineEdit, splitter } from './ui.js';
-import { sectionAt, duplicateSection, moveSection, swapSection, removeSection, trimStart } from './projet.js';
+import { el, knob, menu, tok, clamp, put, confirmBox, inlineEdit, splitter, letter } from './ui.js';
+import { sectionAt, duplicateSection, moveSection, swapSection, removeSection, trimStart, rangerGroupes } from './projet.js';
 import { createDock } from './editeurs.js';
 import { createBrowser } from './navigateur.js';
 // le génératif (29/09) : la piste générative et ses régions, le MIDI
@@ -63,6 +68,7 @@ export function createTimeline(app) {
   const recBox = el('div', { class: 'ar-rec' }, el('span', {}, 'prise'));
   const marquee = el('div', { class: 'ar-marquee' });
   const dropLine = el('div', { class: 'ar-dropline' });
+  const trackLine = el('div', { class: 'ar-trackline', 'aria-hidden': 'true' });   // le trait d'insertion d'une piste qu'on glisse
   scroll.append(grid);
   const browser = createBrowser(app);
   const dock = createDock(app);
@@ -387,7 +393,9 @@ export function createTimeline(app) {
       if (!columns) { g.fillStyle = tok(color); for (const [b, v] of pts) g.fillRect(X(b) - 2, y(v) - 2, 4, 4); }
     };
     cv.addEventListener('contextmenu', (e) => e.preventDefault());
+    cv.dataset.nomenu = '';   // le bouton droit y efface : c'est un geste, pas un menu
     cv.addEventListener('pointerdown', (e) => {
+      if (e.button === 1) return;   // le bouton du milieu n'y peint pas
       e.preventDefault();
       cv.setPointerCapture(e.pointerId);
       const pts = getPts();
@@ -482,9 +490,10 @@ export function createTimeline(app) {
     const mtr = el('div', { class: 'ar-mtr' }, el('i'));
     meters.push([t.strip, mtr]);
     const nm = el('span', { class: 'nm', title: 'double-clic : renommer (Ctrl+R)', ondblclick: (e) => { e.stopPropagation(); renameTrack(t, nm); } }, t.name);
-    const box = el('div', { class: `ar-head${S.sel.track === t.id ? ' sel' : ''}${t.mute ? ' muted' : ''}${isGenTrack(t) ? ' gen' : ''}`, style: { '--c': `var(--${t.color})`, height: `${th()}px` },
-      'data-track': t.id, onclick: () => app.selectTrack(t.id) },
-    el('i', { class: 'bar', title: 'couleur', onclick: (e) => { e.stopPropagation(); colorMenu(e, t); } }),
+    const picked = (S.sel.tracks || []).includes(t.id);
+    const box = el('div', { class: `ar-head${S.sel.track === t.id ? ' sel' : ''}${picked ? ' pick' : ''}${t.mute ? ' muted' : ''}${isGenTrack(t) ? ' gen' : ''}${t.grp ? ' in-grp' : ''}`, style: { '--c': `var(--${t.color})`, height: `${th()}px` },
+      'data-track': t.id, title: 'clic : choisir (Ctrl : ajouter ou retirer, Maj : jusqu\'à elle) · Suppr : retirer · glisser : déplacer — lâchée ENTRE deux pistes elle s\'y range, SUR une piste elle fait groupe' },
+    el('i', { class: 'bar', title: 'la couleur de la piste — celle de son nœud dans le nodal · clic : la palette', onpointerdown: (e) => e.stopPropagation(), onclick: (e) => { e.stopPropagation(); colorMenu(e, t); } }),
     el('div', { class: 'txt' },
       nm,
       el('span', { class: 'kd', title: moduleName(src?.type) }, t.sub || `${TRACK_KINDS[t.kind].label} · ${moduleName(src?.type)}`),
@@ -498,34 +507,183 @@ export function createTimeline(app) {
         vol,
         knob(spec('strip', 'pan'), val(st, 'pan'), { size: 'xs', accent: t.color, label: 'panoramique',
           onInput: (v) => { st.params.pan = v; app.commit('param', st); }, onChange: () => app.commit('quiet') }))));
-    box.addEventListener('contextmenu', (e) => { e.preventDefault(); trackMenu(e, t, nm); });
+    box.addEventListener('contextmenu', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (!(S.sel.tracks || []).includes(t.id)) app.selectTrack(t.id);
+      trackMenu(e, t, nm);
+    });
+    box.addEventListener('pointerdown', (e) => dragTrack(e, t, box));
     box.addEventListener('dragover', (e) => onDragOver(e, t));
     box.addEventListener('drop', (e) => onDrop(e, t, app.pos()));
     return box;
   }
 
+  // la palette des jetons : la couleur de la piste (et de son nœud de départ dans le nodal)
+  const colorItems = (t) => COLORS.map((c) => ({ label: COLOR_FR[c], dot: c, checked: t.color === c, onclick: () => app.setTrackColor(t.id, c) }));
   function colorMenu(e, t) {
-    menu(e.clientX, e.clientY, [{ head: 'couleur de la piste' }, ...COLORS.map((c) => ({ label: COLOR_FR[c], dot: c, onclick: () => { t.color = c; app.commit('data'); } }))]);
+    menu(e.clientX, e.clientY, [{ head: `couleur de « ${t.name} »` }, ...colorItems(t)]);
   }
 
   function trackMenu(e, t, nm) {
-    const i = P().tracks.indexOf(t);
+    const vis = visTracks(), i = vis.indexOf(t);
+    const picked = (S.sel.tracks || []).length > 1 && S.sel.tracks.includes(t.id) ? S.sel.tracks : [t.id];
+    const g = t.grp && (P().groups || []).find((x) => x.id === t.grp);
     const autos = (AUTOMATABLE[app.mod(t.src)?.type] || []).map((k) => [t.src, k]).concat(
       app.chain(t.id).filter((m) => m.id !== t.src).flatMap((m) => (AUTOMATABLE[m.type] || []).map((k) => [m.id, k])));
+    const shared = app.chain(t.id).filter((m) => app.linked(m.id).length > 1);
     menu(e.clientX, e.clientY, [
-      { head: t.name },
-      { label: 'Renommer', sub: 'Ctrl+R', onclick: () => renameTrack(t, nm) },
-      { label: 'Instruments et effets', sub: 'Maj+Tab', onclick: () => { app.selectTrack(t.id); app.showDetail('device'); } },
-      { label: 'Monter', disabled: i <= 0, onclick: () => { const a = P().tracks; [a[i - 1], a[i]] = [a[i], a[i - 1]]; app.commit('data'); } },
-      { label: 'Descendre', disabled: i >= P().tracks.length - 1, onclick: () => { const a = P().tracks; [a[i + 1], a[i]] = [a[i], a[i + 1]]; app.commit('data'); } },
+      { head: picked.length > 1 ? `${picked.length} pistes` : t.name },
+      { label: 'Renommer', key: 'Ctrl+R', onclick: () => renameTrack(t, nm) },
+      { label: 'Instruments et effets', sub: 'le panneau du bas', onclick: () => { app.selectTrack(t.id); app.showDetail('device'); } },
+      { label: 'Voir son nœud dans le nodal', onclick: () => { app.selectTrack(t.id); app.setView('nodal'); app.nodal?.montrerPiste?.(t.id); } },
+      { label: 'Couleur', dot: t.color, items: colorItems(t) },
+      '-',
+      { label: 'Monter', disabled: i <= 0, why: 'déjà en haut', onclick: () => app.moveTracks(picked, vis[i - 1].id, 'avant') },
+      { label: 'Descendre', disabled: i >= vis.length - 1, why: 'déjà en bas', onclick: () => app.moveTracks(picked, vis[i + 1].id, 'apres') },
+      picked.length > 1 ? { label: `Grouper les ${picked.length} pistes`, key: 'Ctrl+G', onclick: () => groupPicked() }
+        : { label: 'Grouper avec…', disabled: vis.length < 2, why: 'une seule piste', items: vis.filter((x) => x.id !== t.id).map((x) => ({ label: x.name, dot: x.color, onclick: () => app.groupTracks([t.id], x.id) })) },
+      g ? { label: `Sortir du groupe « ${g.name} »`, onclick: () => { for (const id of picked) delete app.track(id)?.grp; rangerGroupes(P()); app.label(`sortir du groupe « ${g.name} »`); app.commit('data'); } } : null,
+      g ? { label: `Défaire le groupe « ${g.name} »`, onclick: () => app.ungroup(g.id) } : null,
       '-', { head: 'instrument' },
       ...(SOURCES_OF[t.kind] || []).filter((x) => x !== 'player' && x !== 'bus').map((type) => ({ label: MODULES[type].name, sub: MODULES[type].kind, dot: MODULES[type].color,
-        disabled: app.mod(t.src)?.type === type, onclick: () => app.setSource(t.id, type) })),
+        disabled: app.mod(t.src)?.type === type, why: 'c\'est déjà son instrument', onclick: () => app.setSource(t.id, type) })),
+      ...(shared.length ? ['-', { head: 'effets partagés (nodal)' }, ...shared.map((m) => ({ label: `Sortir « ${moduleName(m.type)} » de cette chaîne`, sub: `aussi dans ${app.linked(m.id).filter((x) => x !== t.id).map((x) => app.track(x)?.name).join(', ')}`, onclick: () => app.removeFromTrack(m.id, t.id) }))] : []),
       '-', { head: 'automation' },
       ...autos.slice(0, 16).map(([mid, k]) => ({ label: `${moduleName(app.mod(mid).type)} · ${spec(app.mod(mid).type, k).label}`,
-        disabled: P().auto.some((L) => L.mod === mid && L.k === k), onclick: () => app.addAuto(mid, k) })),
+        disabled: P().auto.some((L) => L.mod === mid && L.k === k), why: 'cette voie existe déjà', onclick: () => app.addAuto(mid, k) })),
       '-',
-      { label: 'Retirer la piste', onclick: () => app.removeTrack(t.id) },
+      { label: picked.length > 1 ? `Retirer les ${picked.length} pistes` : 'Retirer la piste', key: 'Suppr', danger: true, onclick: () => app.removeTracks(picked, { ask: false }) },
+    ]);
+  }
+  function groupPicked() {
+    const ids = (S.sel.tracks || []).filter((id) => app.track(id)?.kind !== 'bus');
+    if (ids.length < 2) { toast('Ctrl+G : choisis au moins deux pistes (Ctrl+clic sur leurs en-têtes)'); return; }
+    const order = visTracks().map((x) => x.id).filter((id) => ids.includes(id));
+    app.groupTracks(order.slice(1), order[0]);
+  }
+
+  // ── glisser une piste : la déplacer, ou faire un groupe ──
+  // Le magnétisme est franc : le tiers haut et le tiers bas d'un en-tête sont
+  // « l'entre-pistes » (un trait d'insertion se pose sur la limite, la piste
+  // ira là) ; le cœur de l'en-tête est la piste elle-même (elle s'entoure :
+  // lâchée, la piste glissée fait groupe avec elle). Sur l'en-tête d'un
+  // groupe : son tiers haut place avant le groupe, le reste y fait entrer.
+  const EDGE = 0.3;
+  function dropTarget(clientY, ids) {
+    const rows = [...grid.querySelectorAll('.ar-head[data-track], .ar-ghead[data-grp]')];
+    for (const r of rows) {
+      const b = r.getBoundingClientRect();
+      if (clientY < b.top || clientY >= b.bottom) continue;
+      const rel = (clientY - b.top) / b.height;
+      if (r.dataset.grp) {
+        const members = visTracks().filter((x) => x.grp === r.dataset.grp);
+        if (!members.length || members.every((x) => ids.includes(x.id))) return null;
+        if (rel < EDGE) return { mode: 'move', cible: members[0].id, cote: 'avant', y: b.top, row: r };
+        return { mode: 'group', cible: members.find((x) => !ids.includes(x.id)).id, row: r, grp: r.dataset.grp };
+      }
+      const id = r.dataset.track;
+      if (ids.includes(id)) return { mode: 'none', row: r };
+      if (rel < EDGE) return { mode: 'move', cible: id, cote: 'avant', y: b.top, row: r };
+      if (rel > 1 - EDGE) return { mode: 'move', cible: id, cote: 'apres', y: b.bottom, row: r };
+      return { mode: 'group', cible: id, row: r };
+    }
+    // sous la dernière piste : à la fin
+    const last = rows.at(-1), vis = visTracks();
+    if (last && clientY >= last.getBoundingClientRect().bottom && vis.length) {
+      const tl = vis.filter((x) => !ids.includes(x.id)).at(-1);
+      if (tl) { const hl = grid.querySelector(`.ar-head[data-track="${tl.id}"]`) || last; return { mode: 'move', cible: tl.id, cote: 'apres', y: hl.getBoundingClientRect().bottom, row: hl }; }
+    }
+    return null;
+  }
+  function dragTrack(e, t, box, idsOverride = null) {
+    if (e.button !== 0 || e.target.closest('button, input, select, .kn, .bar, .editing, .mu-inline')) return;
+    const mode = e.ctrlKey || e.metaKey ? 'toggle' : e.shiftKey ? 'range' : 'replace';
+    const x0 = e.clientX, y0 = e.clientY;
+    let started = false, target = null, ghost = null;
+    const ids = idsOverride || ((S.sel.tracks || []).includes(t.id) && mode === 'replace' ? visTracks().map((x) => x.id).filter((id) => S.sel.tracks.includes(id)) : [t.id]);
+    const paintTarget = () => {
+      grid.querySelectorAll('.ar-head.cible, .ar-ghead.cible, .ar-lane.cible, .ar-glane.cible').forEach((n) => n.classList.remove('cible'));
+      trackLine.style.display = 'none';
+      if (!target || target.mode === 'none') return;
+      if (target.mode === 'move') {
+        const g = grid.getBoundingClientRect();
+        Object.assign(trackLine.style, { display: 'block', top: `${target.y - g.top - 1}px` });
+      } else {
+        target.row.classList.add('cible');
+        target.row.nextElementSibling?.classList.add('cible');
+      }
+    };
+    const mv = (ev) => {
+      if (!started) {
+        if (Math.abs(ev.clientY - y0) < 5 && Math.abs(ev.clientX - x0) < 5) return;
+        started = true;
+        box.classList.add('dragging');
+        ghost = el('div', { class: 'ar-ghost', style: { '--c': `var(--${t.color})` } }, ids.length > 1 ? `${ids.length} pistes` : t.name);
+        document.body.append(ghost);
+      }
+      Object.assign(ghost.style, { left: `${ev.clientX + 12}px`, top: `${ev.clientY - 10}px` });
+      target = dropTarget(ev.clientY, ids);
+      ghost.dataset.mode = target?.mode || '';
+      ghost.dataset.what = target?.mode === 'group' ? 'grouper' : target?.mode === 'move' ? 'déplacer' : '';
+      paintTarget();
+      // près des bords : le défilement suit
+      const s = scroll.getBoundingClientRect();
+      if (ev.clientY < s.top + 40) scroll.scrollTop -= 12; else if (ev.clientY > s.bottom - 40) scroll.scrollTop += 12;
+    };
+    const up = (ev) => {
+      removeEventListener('pointermove', mv, true); removeEventListener('pointerup', up, true);
+      box.classList.remove('dragging');
+      ghost?.remove();
+      const tg = started ? dropTarget(ev.clientY, ids) : null;
+      target = null; paintTarget();
+      if (!started) { app.selectTrack(t.id, mode); return; }
+      if (!tg || tg.mode === 'none') return;
+      if (tg.mode === 'move') app.moveTracks(ids, tg.cible, tg.cote);
+      else app.groupTracks(ids, tg.cible);
+    };
+    addEventListener('pointermove', mv, true); addEventListener('pointerup', up, true);
+  }
+
+  // ── un groupe de pistes : son en-tête (replier, renommer, défaire) ──
+  function groupHead(g, members) {
+    const nm = el('span', { class: 'nm', title: 'double-clic : renommer le groupe' }, g.name);
+    nm.addEventListener('dblclick', (e) => { e.stopPropagation(); inlineEdit(nm, g.name, (n) => { g.name = n.slice(0, 40); app.label(`renommer le groupe en « ${g.name} »`); app.commit('data'); }, { max: 40 }); });
+    const c = members[0]?.color || 'cy';
+    const fold = el('button', { class: 'tb ghost sm ar-fold', type: 'button', title: g.fold ? 'déplier le groupe' : 'replier le groupe', 'aria-expanded': String(!g.fold),
+      onpointerdown: (e) => e.stopPropagation(), onclick: (e) => { e.stopPropagation(); g.fold = !g.fold; app.label(g.fold ? `replier « ${g.name} »` : `déplier « ${g.name} »`); app.commit('data'); } }, g.fold ? '▸' : '▾');
+    const box = el('div', { class: `ar-ghead${g.fold ? ' fold' : ''}`, 'data-grp': g.id, style: { '--c': `var(--${c})` },
+      title: 'un groupe de pistes — glisser : le déplacer entier · lâcher une piste dessus : elle y entre · clic droit : replier, renommer, défaire' },
+    el('i', { class: 'bar' }), fold, nm, el('span', { class: 'lbl' }, `${members.length} piste${members.length > 1 ? 's' : ''}`));
+    box.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button, .editing')) return;
+      const first = members[0];
+      if (first) dragTrack(e, first, box, members.map((x) => x.id));
+    });
+    box.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); groupMenu(e, g, members, nm); });
+    return box;
+  }
+  function groupLane(g, members) {
+    const p = P();
+    const ln = el('div', { class: `ar-glane${g.fold ? ' fold' : ''}`, 'data-grp': g.id, style: { width: `${width()}px`, '--bar': `${X(p.sig)}px` } });
+    const n = Math.max(1, members.length), hh = Math.max(2, Math.floor(22 / n));
+    members.forEach((t, r) => {
+      for (const c of p.clips.filter((x) => x.track === t.id)) {
+        ln.append(el('i', { style: { left: `${X(c.start)}px`, width: `${Math.max(2, X(c.len) - 1)}px`, top: `${2 + r * hh}px`, height: `${Math.max(1, hh - 1)}px`, background: `var(--${t.color})` } }));
+      }
+    });
+    ln.addEventListener('dblclick', () => { g.fold = !g.fold; app.commit('data'); });
+    return ln;
+  }
+  function groupMenu(e, g, members, nm) {
+    menu(e.clientX, e.clientY, [
+      { head: `groupe · ${g.name}` },
+      { label: g.fold ? 'Déplier' : 'Replier', onclick: () => { g.fold = !g.fold; app.label(g.fold ? `replier « ${g.name} »` : `déplier « ${g.name} »`); app.commit('data'); } },
+      { label: 'Renommer', onclick: () => nm && inlineEdit(nm, g.name, (n) => { g.name = n.slice(0, 40); app.commit('data'); }, { max: 40 }) },
+      { label: 'Choisir ses pistes', onclick: () => { S.sel.tracks = members.map((x) => x.id); S.sel.track = members[0]?.id || S.sel.track; paintSel(); } },
+      { label: 'Couleur de ses pistes', items: COLORS.map((c) => ({ label: COLOR_FR[c], dot: c, onclick: () => { for (const t of members) t.color = c; app.label(`colorer le groupe « ${g.name} »`); app.commit('data'); } })) },
+      '-',
+      { label: 'Défaire le groupe', sub: 'les pistes restent', onclick: () => app.ungroup(g.id) },
+      { label: `Retirer ses ${members.length} pistes`, danger: true, onclick: () => app.removeTracks(members.map((x) => x.id), { ask: true }) },
     ]);
   }
 
@@ -571,6 +729,13 @@ export function createTimeline(app) {
           onclick: () => { L.on = L.on === false; app.commit('meta'); } }, L.on !== false ? 'Lue' : 'Ignorée'),
         el('button', { class: 'tb ghost sm', type: 'button', title: 'effacer la courbe', onclick: () => { L.pts = []; app.commit('meta'); } }, 'Effacer'),
         el('button', { class: 'tb ghost sm', type: 'button', title: 'retirer la voie', onclick: () => { P().auto = P().auto.filter((x) => x !== L); app.commit('meta'); } }, '×')));
+    hd.addEventListener('contextmenu', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      menu(e.clientX, e.clientY, [{ head: `automation · ${moduleName(m.type)} · ${s.label}` },
+        { label: 'Lue pendant la lecture', checked: L.on !== false, onclick: () => { L.on = L.on === false; app.commit('meta'); } },
+        { label: 'Effacer la courbe', disabled: !L.pts.length, why: 'la courbe est vide', onclick: () => { L.pts = []; app.commit('meta'); } },
+        { label: 'Retirer la voie', danger: true, onclick: () => { P().auto = P().auto.filter((x) => x !== L); app.commit('meta'); } }]);
+    });
     return [hd, ln];
   }
   const fromNormSafe = (s, v) => (v === null ? s.def : fromNorm(s, v));
@@ -683,6 +848,8 @@ export function createTimeline(app) {
     const s = sel();
     for (const b of grid.querySelectorAll('.clip')) b.classList.toggle('sel', s.has(b.dataset.id));
     for (const b of grid.querySelectorAll('.ar-head, .ar-lane')) b.classList.toggle('sel', b.dataset.track === S.sel.track);
+    const picked = new Set(S.sel.tracks || []);
+    for (const b of grid.querySelectorAll('.ar-head')) b.classList.toggle('pick', picked.has(b.dataset.track));
     paintTools();
     if (ui().dock !== false && !keepDock) dock.render();
   }
@@ -821,7 +988,7 @@ export function createTimeline(app) {
       if (!moved) {
         S.sel.clips = []; S.sel.clip = null;
         if (!app.engine.running) app.engine.seek(Math.max(0, snapB(beatAt(ev.clientX), ev)));
-        app.selectTrack(t.id);
+        app.selectTrack(t.id, 'lane');
         return;
       }
       newRegion(app, t, a, b);
@@ -855,7 +1022,7 @@ export function createTimeline(app) {
       if (!moved) {
         S.sel.clips = []; S.sel.clip = null;
         if (!app.engine.running) app.engine.seek(Math.max(0, snapB(beatAt(ev.clientX), ev)));
-        app.selectTrack(t.id);
+        app.selectTrack(t.id, 'lane');
         return;
       }
       app.selectClips(S.sel.clips, true);
@@ -1007,7 +1174,12 @@ export function createTimeline(app) {
     const [ah, al] = arcRow();
     rows.push(ah, al);
     for (const L of (p.auto || []).filter((x) => !app.mod(x.mod)?.track)) rows.push(...autoRows(L));
+    // les pistes, et au-dessus des membres d'un groupe, son en-tête (replié : lui seul)
+    const groups = new Map((p.groups || []).map((g) => [g.id, g])), vus = new Set();
     for (const t of visTracks()) {
+      const g = t.grp && groups.get(t.grp);
+      if (g && !vus.has(g.id)) { vus.add(g.id); const members = visTracks().filter((x) => x.grp === g.id); rows.push(groupHead(g, members), groupLane(g, members)); }
+      if (g?.fold) continue;
       rows.push(head(t), lane(t));
       for (const L of lanesOf(t)) rows.push(...autoRows(L));
     }
@@ -1021,7 +1193,7 @@ export function createTimeline(app) {
     dropLane.addEventListener('dblclick', (e) => { const r = e.currentTarget.getBoundingClientRect(); menu(e.clientX, Math.min(e.clientY, r.bottom), [...app.trackChoices(), '-', ...genTrackChoices(app)]); });
     rows.push(dropHead, dropLane);
     paintZone();
-    put(grid, ...rows, zone, ph, recBox, marquee, dropLine);
+    put(grid, ...rows, zone, ph, recBox, marquee, dropLine, trackLine);
     frame(app.pos());
   }
 
@@ -1073,16 +1245,28 @@ export function createTimeline(app) {
     const k = e.key;
     const ctrl = e.ctrlKey || e.metaKey;
     const has = (S.sel.clips || []).length > 0;
+    const L = letter(e);   // la lettre, pas la touche : juste en AZERTY (ui.js)
     if ((k === 'Delete' || k === 'Backspace') && !ctrl && has) { e.preventDefault(); app.removeSel(); return true; }
-    if (ctrl && !e.shiftKey && e.code === 'KeyD') { e.preventDefault(); app.duplicateSel(); return true; }
-    if (ctrl && e.code === 'KeyC') { e.preventDefault(); app.copySel(); return true; }
-    if (ctrl && e.code === 'KeyX') { e.preventDefault(); app.cutSel(); return true; }
-    if (ctrl && e.code === 'KeyV') { e.preventDefault(); app.paste(); return true; }
-    if (ctrl && e.code === 'KeyE') { e.preventDefault(); app.splitAtPlayhead(); return true; }
-    if (ctrl && !e.shiftKey && e.code === 'KeyJ') { e.preventDefault(); app.consolidateSel(); return true; }
-    if (ctrl && !e.shiftKey && e.code === 'KeyL') { e.preventDefault(); app.loopSelection(); return true; }
-    if (ctrl && e.code === 'KeyA') { e.preventDefault(); app.selectClips(P().clips.map((c) => c.id)); return true; }
-    if (ctrl && e.code === 'KeyR') { e.preventDefault(); renameSelected(); return true; }
+    // Suppr sur des en-têtes choisis : les pistes partent (Ctrl+Z les rend)
+    if ((k === 'Delete' || k === 'Backspace') && !ctrl && (S.sel.tracks || []).length) { e.preventDefault(); app.removeTracks([...S.sel.tracks], { ask: false }); return true; }
+    // Ctrl+G · Ctrl+Maj+G (Live 12, § 42.19 « Commands for Tracks » : Group
+    // Selected Tracks, Ungroup Tracks) : grouper les pistes choisies, défaire leur groupe
+    if (ctrl && !e.shiftKey && L === 'g') { e.preventDefault(); groupPicked(); return true; }
+    if (ctrl && e.shiftKey && L === 'g') {
+      e.preventDefault();
+      const gs = [...new Set((S.sel.tracks || [S.sel.track]).map((id) => app.track(id)?.grp).filter(Boolean))];
+      if (!gs.length) toast('Ctrl+Maj+G : choisis une piste d\'un groupe'); else for (const g of gs) app.ungroup(g);
+      return true;
+    }
+    if (ctrl && !e.shiftKey && L === 'd') { e.preventDefault(); app.duplicateSel(); return true; }
+    if (ctrl && L === 'c') { e.preventDefault(); app.copySel(); return true; }
+    if (ctrl && L === 'x') { e.preventDefault(); app.cutSel(); return true; }
+    if (ctrl && L === 'v') { e.preventDefault(); app.paste(); return true; }
+    if (ctrl && L === 'e') { e.preventDefault(); app.splitAtPlayhead(); return true; }
+    if (ctrl && !e.shiftKey && L === 'j') { e.preventDefault(); app.consolidateSel(); return true; }
+    if (ctrl && !e.shiftKey && L === 'l') { e.preventDefault(); app.loopSelection(); return true; }
+    if (ctrl && L === 'a') { e.preventDefault(); app.selectClips(P().clips.map((c) => c.id)); return true; }
+    if (ctrl && L === 'r') { e.preventDefault(); renameSelected(); return true; }
     if (ctrl && e.code === 'Digit1') { e.preventDefault(); stepGrid(-1); return true; }
     if (ctrl && e.code === 'Digit2') { e.preventDefault(); stepGrid(1); return true; }
     if (ctrl && e.code === 'Digit4') { e.preventDefault(); ui().snap = (ui().snap ?? 1) ? 0 : 1; app.saveUi(); paintTools(); toast(ui().snap ? 'aimant : 1/4' : 'aimant : libre'); return true; }
@@ -1101,12 +1285,12 @@ export function createTimeline(app) {
       if (g.every((c) => c.start + d >= 0)) { for (const c of g) c.start += d; app.commit('data'); }
       return true;
     }
-    if (e.code === 'KeyR' && has) { app.reverseSel(); return true; }
+    if (L === 'r' && has) { app.reverseSel(); return true; }
     if (app.kbdOn()) return false;                     // le clavier MIDI prend les lettres
-    if (e.code === 'KeyZ') { zoomToSelection(); return true; }
-    if (e.code === 'KeyX') { zoomOut(); return true; }
-    if (e.code === 'KeyW') { fit(); return true; }
-    if (e.code === 'KeyH') { fitHeight(); return true; }
+    if (L === 'z') { zoomToSelection(); return true; }
+    if (L === 'x') { zoomOut(); return true; }
+    if (L === 'w') { fit(); return true; }
+    if (L === 'h') { fitHeight(); return true; }
     return false;
   }
   function stepGrid(d) {
@@ -1149,9 +1333,45 @@ export function createTimeline(app) {
     addEventListener('pointermove', mv, true); addEventListener('pointerup', up, true);
   }, true);
   document.addEventListener('mu:buffer', () => { if (S.view === 'timeline') render(); });
+
+  // Le clic droit là où aucune zone n'a ouvert le sien (musique.js le demande) :
+  // la voie d'une piste, la rangée des sections, le coin, les outils, le
+  // navigateur, le panneau du bas.
+  function zoneMenu(e) {
+    const tg = e.target, p = P();
+    if (dock.el.contains(tg)) return dock.zoneMenu?.(e) || null;
+    const ln = tg.closest?.('.ar-lane');
+    if (ln) {
+      const t = app.track(ln.dataset.track);
+      if (!t) return null;
+      const b = Math.max(0, Math.floor(beatAt(e.clientX) / p.sig) * p.sig);
+      return [
+        { head: `${t.name} · mesure ${app.bar(b)}` },
+        isGenTrack(t) ? { label: 'Une région ici', sub: 'quatre mesures', onclick: () => newRegion(app, t, b, b + 4 * p.sig) }
+          : t.kind === 'audio' ? { label: 'Un son de la bibliothèque ici', onclick: () => app.addAudio(t.id, b) }
+            : { label: 'Un clip ici', sub: 'une mesure', onclick: () => { const c = app.newClip(t.id, b); if (c) app.showDetail('clip'); } },
+        { label: 'Coller ici', key: 'Ctrl+V', disabled: !app.board, why: 'rien à coller : Ctrl+C sur des clips', onclick: () => { app.engine.seek(b); app.paste(); } },
+        { label: 'Choisir ses clips', onclick: () => app.selectClips(p.clips.filter((c) => c.track === t.id).map((c) => c.id)) },
+        { label: 'Aller là', onclick: () => app.engine.seek(b) },
+        '-',
+        { label: 'Instruments et effets', onclick: () => { app.selectTrack(t.id); app.showDetail('device'); } },
+        { label: 'Couleur', dot: t.color, items: colorItems(t) },
+        { label: 'Retirer la piste', danger: true, onclick: () => app.removeTracks([t.id], { ask: false }) },
+      ];
+    }
+    if (tg.closest?.('.ar-secs')) {
+      const b = Math.max(0, Math.floor(beatAt(e.clientX) / p.sig) * p.sig);
+      return [{ head: `sections · mesure ${app.bar(b)}` }, { label: 'Une section ici', onclick: () => addSectionAt(b) }, { label: 'Aller là', onclick: () => app.engine.seek(b) }];
+    }
+    if (tg.closest?.('.ar-corner, .ar-droph, .ar-dropz, .ar-tools')) return [{ head: 'l\'arrangement' }, ...app.trackChoices(), '-', ...genTrackChoices(app),
+      '-', { label: 'Tout le morceau dans la fenêtre', key: 'W', onclick: fit }, { label: 'Hauteur des pistes : ajuster', key: 'H', onclick: fitHeight },
+      { label: ui().dock === false ? 'Montrer le panneau du bas' : 'Cacher le panneau du bas', onclick: () => { ui().dock = ui().dock === false; app.saveUi(); render(); } }];
+    if (browser.el.contains(tg)) return [{ head: 'le navigateur' }, { label: ui().nav === false ? 'Déplier le navigateur' : 'Replier le navigateur', key: 'Ctrl+Alt+B', onclick: () => { ui().nav = ui().nav === false; app.saveUi(); render(); } }];
+    return null;
+  }
   // les fichiers lâchés à côté des voies (sur la règle, les en-têtes vides)
   scroll.addEventListener('dragover', (e) => onDragOver(e, null));
   scroll.addEventListener('drop', (e) => onDrop(e, null));
 
-  return { el: root, render, frame, key, paintTools, paintSel, fit, dock };
+  return { el: root, render, frame, key, paintTools, paintSel, fit, dock, zoneMenu };
 }

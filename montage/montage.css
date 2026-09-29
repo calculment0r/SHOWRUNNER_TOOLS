@@ -10,7 +10,7 @@
    la ligne pendant la lecture.
    ============================================================ */
 
-body.mtg-page { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+body.mtg-page { display: flex; flex-direction: column; height: calc(100 * var(--vh)); overflow: hidden; }   /* 100vh dépasse sous le zoom de l'interface (--vh) */
 body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 
 .mtg {

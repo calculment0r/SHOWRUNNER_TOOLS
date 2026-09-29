@@ -16,10 +16,12 @@
 
 import { mountHeader, api, jobs, pick, uploadFile, toast, $, href, fmtDur, stateFr } from '../commun/shell.js';
 import { Engine, renderMix, renderClips, wav24, peakDb, songEnd, peaks } from './moteur.js';
-import { MODULES, TRACK_KINDS, COLORS, PRESETS, SOURCES_OF, DRUM_MODELS, NOTE_MODELS, TONICS, TONICS_FR, MODES,
+import { MODULES, TRACK_KINDS, COLORS, COLOR_FR, PRESETS, SOURCES_OF, DRUM_MODELS, NOTE_MODELS, TONICS, TONICS_FR, MODES,
   kindOfSource, keyLabel, moduleName } from './modules.js';
-import { el, modal, ask, confirmBox, menu, put, tok } from './ui.js';
-import { migrate, History, copyClips, pasteClips, splitClip, consolidatePatterns, clipRate } from './projet.js';
+import { el, modal, ask, confirmBox, menu, put, tok, letter } from './ui.js';
+import { migrate, workOf, describeWork, copyClips, pasteClips, splitClip, consolidatePatterns, clipRate,
+  trajets, pistesDuModule, recoudre, sortirDeLaChaine, entrerDansLaChaine, deplacerPistes, grouperPistes, degrouper, rangerGroupes } from './projet.js';
+import { createUndo, isTextField } from '../commun/undo.js';
 import { createTimeline } from './timeline.js';
 import { createConsole } from './console.js';
 import { createNodal } from './nodal.js';
@@ -34,7 +36,8 @@ mountHeader('music', { sub: 'studio · YuE · stems' });
 // ── l'état ──────────────────────────────────────────────────
 const S = {
   proj: null, list: [], view: 'timeline', engines: null,
-  sel: { track: null, pat: null, clip: null, clips: [], mod: null, cable: null },
+  // tracks : les en-têtes de piste choisis (clic, Ctrl+clic, Maj+clic) — Suppr les retire, Ctrl+G les groupe
+  sel: { track: null, tracks: [], pat: null, clip: null, clips: [], mod: null, cable: null },
   oct: 4, vel: 0.85, kbd: true, midi: null, rec: false, metro: false,
 };
 const items = new Map();   // les objets de la bibliothèque déjà lus
@@ -77,17 +80,30 @@ export const app = {
   kbdOn: () => S.kbd,
   playStop: () => togglePlay(),
 
-  // choisir une piste (clic sur son en-tête) : ses clips ne sont plus choisis
-  selectTrack(id) {
+  // choisir une piste : ses clips ne sont plus choisis. `mode` : 'replace'
+  // (clic sur l'en-tête), 'toggle' (Ctrl+clic : ajouter ou retirer), 'range'
+  // (Maj+clic : jusqu'à elle), 'lane' (un clic dans sa voie : la piste
+  // courante, sans en-tête choisi — Suppr ne la retirera pas)
+  selectTrack(id, mode = 'replace') {
     const t = app.track(id);
     if (!t) return;
-    Object.assign(S.sel, { track: id, pat: t.pat || null, clip: null, clips: [], mod: null });
+    let picked = S.sel.tracks || [];
+    const vis = S.proj.tracks.filter((x) => x.kind !== 'bus').map((x) => x.id);
+    if (mode === 'lane') picked = [];
+    else if (mode === 'toggle') picked = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id];
+    else if (mode === 'range' && picked.length) {
+      const a = vis.indexOf(picked[picked.length - 1]), b = vis.indexOf(id);
+      picked = [...new Set([...picked, ...vis.slice(Math.min(a, b), Math.max(a, b) + 1)])];
+    } else picked = [id];
+    Object.assign(S.sel, { track: id, tracks: picked, pat: t.pat || null, clip: null, clips: [], mod: null });
     if (views[S.view]?.paintSel) views[S.view].paintSel(); else render();
   },
-  // la vue de détail en bas : 'clip' ou 'device' (Live : Clip View, Device View)
+  // la vue de détail en bas, une colonne : aller au clip ('clip') ou à la
+  // chaîne de la piste ('device') — Live : Clip View, Device View
   showDetail(which) {
     S.proj.ui.detail = which;
     S.proj.ui.dock = true;
+    S.dockJump = which;
     saveQuiet();
     if (S.view !== 'timeline') app.setView('timeline'); else render();
   },
@@ -104,6 +120,7 @@ export const app = {
   selectClips(ids, keep = false) {
     S.sel.clips = [...ids];
     S.sel.clip = ids[ids.length - 1] || null;
+    if (ids.length) S.sel.tracks = [];
     const c = app.clip(S.sel.clip);
     if (c) S.sel.track = c.track;
     if (!keep) render();
@@ -223,28 +240,86 @@ export const app = {
     return p;
   },
 
-  async removeTrack(id) {
-    const t = app.track(id);
-    if (!t) return;
-    if (!(await confirmBox('Retirer la piste', `Retirer « ${t.name} », ses modules, ses motifs, ses clips et ses courbes ?`))) return;
-    const P = S.proj;
-    const mods = new Set(P.modules.filter((m) => m.track === id).map((m) => m.id));
+  // Retirer des pistes : leurs modules, motifs, clips et courbes. Un effet
+  // qu'une autre piste traverse encore reste, pour elle (il change de piste
+  // d'attache). `ask` : la confirmation (le menu) ; Suppr n'en demande pas,
+  // Ctrl+Z rend tout.
+  async removeTracks(ids, { ask = true } = {}) {
+    const P = S.proj, list = ids.map(app.track).filter(Boolean);
+    if (!list.length) return;
+    if (ask && !(await confirmBox(list.length > 1 ? 'Retirer les pistes' : 'Retirer la piste',
+      `Retirer ${list.length > 1 ? `les ${list.length} pistes « ${list.map((t) => t.name).join(' », « ')} »` : `« ${list[0].name} »`}, ${list.length > 1 ? 'leurs' : 'ses'} modules, motifs, clips et courbes ?`))) return;
+    const gone = new Set(list.map((t) => t.id));
+    const T = trajets(P);
+    const mods = new Set();
+    for (const m of P.modules) {
+      if (!gone.has(m.track)) continue;
+      const garde = (T.de.get(m.id) || []).filter((tid) => !gone.has(tid));
+      if (MODULES[m.type]?.role === 'effect' && garde.length) m.track = garde[0];   // partagé : il reste à l'autre piste
+      else mods.add(m.id);
+    }
     P.modules = P.modules.filter((m) => !mods.has(m.id));
     P.cables = P.cables.filter((c) => !mods.has(c.a) && !mods.has(c.b));
-    P.patterns = P.patterns.filter((p) => p.track !== id);
-    P.clips = P.clips.filter((c) => c.track !== id);
+    P.patterns = P.patterns.filter((p) => !gone.has(p.track));
+    P.clips = P.clips.filter((c) => !gone.has(c.track));
     P.auto = (P.auto || []).filter((L) => !mods.has(L.mod));
-    P.tracks = P.tracks.filter((x) => x.id !== id);
-    const first = P.tracks.find((x) => x.kind !== 'bus');
-    if (S.sel.track === id) S.sel = { track: first?.id || null, pat: first?.pat || null, clip: null, clips: [], mod: null, cable: null };
+    P.tracks = P.tracks.filter((x) => !gone.has(x.id));
+    rangerGroupes(P);
+    if (gone.has(S.sel.track) || (S.sel.tracks || []).some((x) => gone.has(x))) {
+      const first = P.tracks.find((x) => x.kind !== 'bus');
+      S.sel = { track: first?.id || null, tracks: [], pat: first?.pat || null, clip: null, clips: [], mod: null, cable: null };
+    }
+    app.label(list.length > 1 ? `retirer ${list.length} pistes` : `retirer la piste « ${list[0].name} »`);
     app.commit('graph');
+    if (!ask) toast(`${list.length > 1 ? `${list.length} pistes retirées` : `« ${list[0].name} » retirée`} · Ctrl+Z ${list.length > 1 ? 'les rend' : 'la rend'}`, 4000);
   },
+  removeTrack(id, opts) { return app.removeTracks([id], opts); },
+
+  // ── ranger les pistes : déplacer, grouper (l'arrangement, par glisser) ──
+  moveTracks(ids, cible, cote) {
+    if (!deplacerPistes(S.proj, ids, cible, cote)) return false;
+    app.label(ids.length > 1 ? `déplacer ${ids.length} pistes` : `déplacer « ${app.track(ids[0])?.name} »`);
+    app.commit('data');
+    return true;
+  },
+  groupTracks(ids, cible) {
+    const g = grouperPistes(S.proj, ids, cible, uid);
+    if (!g) return null;
+    app.label(`grouper dans « ${g.name} »`);
+    app.commit('data');
+    return g;
+  },
+  ungroup(gid) {
+    const g = (S.proj.groups || []).find((x) => x.id === gid);
+    degrouper(S.proj, gid);
+    app.label(`défaire le groupe « ${g?.name || ''} »`);
+    app.commit('data');
+  },
+  // la couleur d'une piste : celle de ses clips, de son en-tête, de son nœud de
+  // départ et des câbles de sa chaîne dans le nodal — une seule valeur, t.color
+  setTrackColor(id, c) {
+    const t = app.track(id);
+    if (!t || !COLORS.includes(c) || t.color === c) return;
+    t.color = c;
+    app.label(`colorer « ${t.name} » en ${COLOR_FR[c]}`);
+    app.commit('data');
+  },
+  // les pistes dont la chaîne passe par ce module (un effet partagé : plusieurs)
+  linked: (id) => pistesDuModule(S.proj, id),
+  // le libellé du prochain geste rangé (le journal, les bulles d'annuler)
+  label: (text) => snaps.label(text),
 
   // ── la chaîne d'une piste : source → effets → tranche ──
+  // Lue dans les câbles (projet.js, trajets) : les modules sur un chemin de sa
+  // source à sa tranche, un effet partagé compris. À défaut de chemin
+  // complet, le fil des câbles depuis la source (l'ancienne lecture).
   chain(trackId) {
     const t = app.track(trackId);
     if (!t) return [];
-    const P = S.proj, out = [t.src], seen = new Set(out);
+    const P = S.proj;
+    const seq = trajets(P).ordre.get(t.id);
+    if (seq?.length) return seq.map(app.mod).filter(Boolean);
+    const out = [t.src], seen = new Set(out);
     let cur = t.src;
     for (;;) {
       const next = P.cables.map((c) => c.a === cur && typeof c.send !== 'number' && !c.t && app.mod(c.b)).find((m) => m && m.track === trackId && !seen.has(m.id));   // jouets : !c.t, le son seul
@@ -289,17 +364,36 @@ export const app = {
     return m;
   },
 
+  // retirer un effet : sa place se referme dans CHAQUE chaîne qu'il traversait,
+  // piste par piste (projet.js, recoudre) ; jouets : le son seul se referme
   removeModule(id) {
     const P = S.proj, m = app.mod(id);
     if (!m || MODULES[m.type].role !== 'effect') return;
-    const ins = P.cables.filter((c) => c.b === id && typeof c.send !== 'number' && !c.t).map((c) => c.a);   // jouets : !c.t, le son seul se referme
-    const outs = P.cables.filter((c) => c.a === id && !c.t).map((c) => c.b);   // jouets : idem
-    P.cables = P.cables.filter((c) => c.a !== id && c.b !== id);
+    recoudre(P, id, app.wouldCycle);
     P.modules = P.modules.filter((x) => x.id !== id);
     P.auto = (P.auto || []).filter((L) => L.mod !== id);
-    for (const a of ins) for (const b of outs) if (!app.wouldCycle(a, b) && !P.cables.some((c) => c.a === a && c.b === b)) P.cables.push({ a, b });
     if (S.sel.mod === id) S.sel.mod = null;
     app.commit('graph');
+  },
+  // sortir un effet partagé de la chaîne d'UNE piste (les autres le gardent)
+  removeFromTrack(id, tid) {
+    const m = app.mod(id), t = app.track(tid);
+    if (!m || !t) return;
+    if (!sortirDeLaChaine(S.proj, id, tid, app.wouldCycle)) return;
+    if (m.track === tid) m.track = pistesDuModule(S.proj, id)[0] || null;
+    app.label(`sortir « ${moduleName(m.type)} » de la chaîne de « ${t.name} »`);
+    app.commit('graph');
+  },
+  // faire entrer un effet dans la chaîne d'une piste, après `from` (le nodal :
+  // un câble tiré d'un nœud d'une piste vers un effet d'une autre)
+  joinChain(from, fx, tid) {
+    const why = entrerDansLaChaine(S.proj, from, fx, tid, app.wouldCycle);
+    if (why) { toast(why); return false; }
+    const m = app.mod(fx), t = app.track(tid);
+    if (m && !m.track) m.track = tid;
+    app.label(`« ${moduleName(m?.type)} » dans la chaîne de « ${t?.name} »`);
+    app.commit('graph');
+    return true;
   },
 
   moveInChain(trackId, id, dir) {
@@ -713,19 +807,72 @@ addEventListener('pagehide', () => {
 });
 
 // ── annuler, rétablir ───────────────────────────────────────
-const hist = new History(() => S.proj, (o) => {
-  const p = S.proj;
-  for (const k of Object.keys(o)) p[k] = o[k];
-  const ok = new Set(p.clips.map((c) => c.id));
-  S.sel.clips = (S.sel.clips || []).filter((id) => ok.has(id));
-  if (!ok.has(S.sel.clip)) S.sel.clip = null;
-  if (!app.track(S.sel.track)) S.sel.track = p.tracks[0]?.id || null;
-  engine.setProject(p);
-  save(); overviewSoon();
-  render(true);
+// La pile commune du portail (commun/undo.js ; docs/etudes/preferences.md) :
+// un instantané de l'œuvre (projet.js, workOf) après chaque geste — tout ce
+// qui passe par app.commit : l'arrangement, la console, le nodal et ses
+// attracteurs, les jouets, le génératif. Les gestes d'une même rafale (une
+// molette qu'on tourne, un clip qu'on glisse) se fondent : l'instantané se
+// prend 350 ms après le dernier, comme l'ancien History d'ODIO. Ctrl+Z,
+// Ctrl+Maj+Z et Ctrl+Y sont lus par undo.js, par e.key (juste en AZERTY :
+// la touche Z n'y est pas KeyZ) ; ↶ ↷ et le journal sont ses boutons. La vue
+// (onglet, zoom, panneaux) n'est pas un geste : elle vit dans ui, hors de
+// l'instantané. Un rendu lancé, un export, un fichier envoyé ne s'annulent
+// pas : ils sont partis hors de la page.
+const MOD_NAMES = Object.fromEntries(Object.keys(MODULES).map((k) => [k, moduleName(k)]));
+// Reposer un instantané EN GARDANT les objets : un module, une piste, un
+// clip, un attracteur (tout ce qui a un id) reste le même objet, seules ses
+// valeurs changent. Les vues tiennent ces objets dans leurs gestes (la
+// molette d'une tuile ou d'un jouet écrit dans SON module) : remplacés, elles
+// écriraient dans un objet détaché du projet après une annulation.
+function fondre(cur, nxt) {
+  if (Array.isArray(nxt)) {
+    if (!Array.isArray(cur)) return nxt;
+    const par = new Map(cur.filter((x) => x && typeof x === 'object' && x.id).map((x) => [x.id, x]));
+    return nxt.map((x) => (x && typeof x === 'object' && !Array.isArray(x) && x.id && par.has(x.id) ? fondreObjet(par.get(x.id), x) : x));
+  }
+  if (nxt && typeof nxt === 'object') return cur && typeof cur === 'object' && !Array.isArray(cur) ? fondreObjet(cur, nxt) : nxt;
+  return nxt;
+}
+function fondreObjet(cur, nxt) {
+  for (const k of Object.keys(cur)) if (!(k in nxt)) delete cur[k];
+  for (const k of Object.keys(nxt)) cur[k] = fondre(cur[k], nxt[k]);
+  return cur;
+}
+const undoStack = createUndo({ name: 'music' });
+const snaps = undoStack.snapshots({
+  get: () => workOf(S.proj),
+  set: (o) => {
+    const p = S.proj;
+    // ce que l'instantané n'a pas (p.nodal naît au premier geste du nodal) repart aussi
+    for (const k of Object.keys(workOf(p))) if (!(k in o)) delete p[k];
+    for (const k of Object.keys(o)) p[k] = fondre(p[k], o[k]);
+    const ok = new Set(p.clips.map((c) => c.id));
+    S.sel.clips = (S.sel.clips || []).filter((id) => ok.has(id));
+    if (!ok.has(S.sel.clip)) S.sel.clip = null;
+    if (!app.track(S.sel.track)) S.sel.track = p.tracks[0]?.id || null;
+    S.sel.tracks = (S.sel.tracks || []).filter((id) => app.track(id));
+    if (S.sel.mod && !app.mod(S.sel.mod)) S.sel.mod = null;
+    engine.setProject(p);
+    save(); overviewSoon();
+    render(true);
+  },
+  describe: (a, b) => ({ label: describeWork(a, b, MOD_NAMES) }),
 });
-function undo() { if (!hist.back()) toast('rien à annuler'); }
-function redo() { if (!hist.fwd()) toast('rien à rétablir'); }
+let histT = null;
+const hist = {
+  // un geste vient de finir : l'instantané se prend après la rafale
+  mark() { clearTimeout(histT); histT = setTimeout(() => hist.check(), 350); },
+  check() { clearTimeout(histT); histT = null; if (S.proj) snaps.commit(); },
+  reset() { clearTimeout(histT); histT = null; undoStack.clear(); if (S.proj) snaps.reset(); },
+};
+// annuler dans la rafale : le geste en cours se range d'abord (l'ancien back()
+// faisait check()) — seulement s'il y en a un : ce qu'une vue a pu recréer en
+// se redessinant après une annulation n'est pas un geste, et ne doit pas
+// effacer ce qu'on peut rétablir
+for (const k of ['undo', 'redo']) { const f = undoStack[k]; undoStack[k] = () => { if (histT !== null) hist.check(); return f(); }; }
+{ const f = undoStack.canUndo; undoStack.canUndo = () => histT !== null || f(); }
+const undo = () => undoStack.undo();
+const redo = () => undoStack.redo();
 
 // ── les projets ─────────────────────────────────────────────
 async function openProject(id) {
@@ -734,7 +881,7 @@ async function openProject(id) {
   S.proj = p;
   S.view = MAKERS[p.ui?.view] ? p.ui.view : 'timeline';
   const t0 = p.tracks.find((t) => t.kind !== 'bus');
-  S.sel = { track: t0?.id || null, pat: t0?.pat || null, clip: null, clips: [], mod: null, cable: null };
+  S.sel = { track: t0?.id || null, tracks: [], pat: t0?.pat || null, clip: null, clips: [], mod: null, cable: null };
   engine.pos = 0;
   engine.setProject(p);
   history.replaceState(null, '', `?p=${id}`);
@@ -825,8 +972,7 @@ function paintBar() {
       el('button', { class: 'mu-key', id: 'mu-key', type: 'button', title: 'tonalité et mode de la session', onclick: keyPop }, el('b', {}, keyLabel(P.key)))),
     views,
     el('div', { class: 'grp mu-ovw' }, ov),
-    el('div', { class: 'grp' },
-      ic('↶', 'annuler · Ctrl+Z', undo, 'ghost'), ic('↷', 'rétablir · Ctrl+Y', redo, 'ghost')),
+    el('div', { class: 'grp mu-undo' }, ...undoStack.buttons()),
     el('span', { class: 'sp' }),
     el('div', { class: 'grp' },
       S.midi ? el('span', { class: 'pill on', title: 'Web MIDI : les entrées jouent la piste armée ou choisie' }, el('i'), el('span', {}, `MIDI · ${S.midi}`)) : null,
@@ -1052,11 +1198,12 @@ function srcForPlay() {
 // allumé (M) ; éteint, elles redeviennent des commandes.
 const newTrack = (kind, type) => { app.addTrack(kind, type ? { type } : {}); app.commit('graph'); };
 addEventListener('keydown', async (e) => {
-  if (!S.proj || typing(e) || document.querySelector('.scrim')) return;
+  // une fenêtre, ou un menu ouvert (commun/menu.js : ses flèches, Entrée, Échap, les lettres), garde le clavier
+  if (!S.proj || typing(e) || document.querySelector('.scrim, .sr-menu')) return;
   const ctrl = e.ctrlKey || e.metaKey, c = e.code;
-  // annuler, rétablir (Ctrl+Z ; Ctrl+Y, ou Cmd+Maj+Z sur Mac)
-  if (ctrl && !e.altKey && c === 'KeyZ') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
-  if (ctrl && c === 'KeyY') { e.preventDefault(); redo(); return; }
+  // annuler, rétablir (Ctrl+Z ; Ctrl+Maj+Z, Ctrl+Y ; ⌘ sur Mac) : commun/undo.js les lit, par la
+  // lettre (e.key) et non la touche (e.code, faux en AZERTY) ; ils ne vont pas plus loin
+  if (ctrl && !e.altKey && ['z', 'y'].includes((e.key || '').toLowerCase())) return;
   // les vues : Tab Arrangement ↔ Nodal (Live : Session ↔ Arrangement),
   // Maj+Tab ou F12 : Clip ↔ Instruments, Ctrl+Alt+B : le navigateur,
   // Ctrl+Alt+3 / 4 : la vue Clip / Instruments
@@ -1070,14 +1217,16 @@ addEventListener('keydown', async (e) => {
   if (ctrl && e.altKey && c === 'KeyB') { e.preventDefault(); S.proj.ui.nav = S.proj.ui.nav === false; saveQuiet(); render(); return; }
   if (ctrl && e.altKey && c === 'Digit3') { e.preventDefault(); app.showDetail('clip'); return; }
   if (ctrl && e.altKey && c === 'Digit4') { e.preventDefault(); app.showDetail('device'); return; }
+  // les commandes se lisent par la lettre (ui.js, letter) ; le clavier MIDI, plus bas, par la position (KEYS)
+  const L = letter(e);
   // les pistes : Ctrl+T audio, Ctrl+Maj+T MIDI (un synthé), Ctrl+Alt+T retour (bus)
-  if (ctrl && c === 'KeyT') {
+  if (ctrl && (L === 't' || (e.altKey && c === 'KeyT'))) {
     e.preventDefault();
     if (e.altKey) app.addBus('reverb'); else if (e.shiftKey) newTrack('synth', 'synth'); else newTrack('audio');
     return;
   }
   // Ctrl+Maj+M : un clip MIDI (de motif) à la tête de lecture, sur la piste choisie
-  if (ctrl && e.shiftKey && c === 'KeyM') {
+  if (ctrl && e.shiftKey && L === 'm') {
     e.preventDefault();
     const t = app.track(S.sel.track);
     if (!t || !TRACK_KINDS[t.kind]?.pattern) { toast('Ctrl+Maj+M : choisis une piste de batterie ou de synthé'); return; }
@@ -1089,10 +1238,10 @@ addEventListener('keydown', async (e) => {
   if (c === 'Space') { e.preventDefault(); if (e.repeat) return; if (e.shiftKey) togglePause(); else togglePlay(); return; }
   if (c === 'Home' || c === 'Enter') { e.preventDefault(); engine.seek(0); return; }
   if (c === 'F9') { e.preventDefault(); if (!e.repeat) toggleRec(); return; }
-  if (e.shiftKey && c === 'KeyT' && !ctrl && !e.altKey) { e.preventDefault(); tapTempo(e.timeStamp); return; }
-  if (e.shiftKey && c === 'KeyM' && !ctrl && !e.altKey) { app.addMarker(engine.position()); return; }
+  if (e.shiftKey && L === 't' && !ctrl && !e.altKey) { e.preventDefault(); tapTempo(e.timeStamp); return; }
+  if (e.shiftKey && L === 'm' && !ctrl && !e.altKey) { app.addMarker(engine.position()); return; }
   if (ctrl || e.altKey) { views[S.view]?.key?.(e); return; }
-  if (c === 'KeyM' && !e.repeat) { toggleKbd(); return; }
+  if (L === 'm' && !e.repeat) { toggleKbd(); return; }
   if (S.kbd) {
     if (c === 'KeyZ' || c === 'KeyX') {
       S.oct = Math.max(0, Math.min(8, S.oct + (c === 'KeyZ' ? -1 : 1)));
@@ -1118,10 +1267,10 @@ addEventListener('keydown', async (e) => {
   } else if (!e.repeat) {
     // clavier MIDI éteint : les lettres de Live 12
     const t = app.track(S.sel.track);
-    if (c === 'KeyO') { toggleMetro(); return; }
-    if (c === 'KeyS' && t) { t.solo = !t.solo; app.commit('mute'); return; }
-    if (c === 'KeyC' && t) { t.arm = !t.arm; app.commit('quiet'); render(); return; }
-    if (c === 'KeyA' && t) { S.proj.ui.auto = { ...(S.proj.ui.auto || {}), [t.id]: !S.proj.ui.auto?.[t.id] }; saveQuiet(); render(); return; }
+    if (L === 'o') { toggleMetro(); return; }
+    if (L === 's' && t) { t.solo = !t.solo; app.commit('mute'); return; }
+    if (L === 'c' && t) { t.arm = !t.arm; app.commit('quiet'); render(); return; }
+    if (L === 'a' && t) { S.proj.ui.auto = { ...(S.proj.ui.auto || {}), [t.id]: !S.proj.ui.auto?.[t.id] }; saveQuiet(); render(); return; }
   }
   views[S.view]?.key?.(e);
 });
@@ -1131,6 +1280,42 @@ addEventListener('keyup', (e) => {
   held.delete(e.code);
   if (h) engine.noteOff(h);
   rec.noteOff(e.code);
+});
+
+// ── le clic droit : un menu propre à la zone survolée ───────
+// Jamais le menu du navigateur (Cal, 29/09). Chaque zone ouvre le sien, par
+// le menu commun (commun/menu.js, via ui.js) : une piste, un clip, la règle,
+// une tuile, un câble, un attracteur… Ce qui n'en a pas en propre (une
+// barre, un fond, un panneau) prend celui de sa vue (views[…].zoneMenu),
+// sinon celui d'ODIO. Seul un champ texte garde le menu du navigateur
+// (copier, coller, l'orthographe). Là où le bouton droit est déjà un geste
+// (effacer une courbe peinte, la vélocité d'un pas, ôter une note, le
+// flipper), rien ne s'ouvre : l'élément porte data-nomenu.
+function baseMenu() {
+  const lab = undoStack.labels();
+  return [
+    { head: 'ODIO' },
+    { label: 'Annuler', sub: lab.undo.replace(/^Annuler : /, ''), key: 'Ctrl+Z', disabled: !undoStack.canUndo(), why: 'rien à annuler', onclick: undo },
+    { label: 'Rétablir', sub: lab.redo.replace(/^Rétablir : /, ''), key: 'Ctrl+Maj+Z', disabled: !undoStack.canRedo(), why: 'rien à rétablir', onclick: redo },
+    { label: 'Le journal des gestes', onclick: () => undoStack.showLog() },
+    '-',
+    ...[['timeline', 'Arrangement'], ['console', 'Console'], ['nodal', 'Nodal']].map(([v, l]) => ({ label: l, checked: S.view === v, onclick: () => app.setView(v) })),
+    '-',
+    { label: engine.running ? 'Arrêter' : 'Lire', key: 'Espace', onclick: togglePlay },
+    { label: 'Une piste', items: app.trackChoices() },
+    { label: 'Générer…', onclick: () => openGenerative(app) },
+    { label: 'Exporter…', onclick: openExport },
+    { label: 'Le guide', onclick: () => openGuide(app) },
+  ];
+}
+document.addEventListener('contextmenu', (e) => {
+  if (!S.proj || isTextField(e.target)) return;
+  e.preventDefault();
+  if (document.querySelector('.sr-menu')) return;             // la zone a ouvert le sien
+  if (e.target.closest?.('[data-nomenu]')) return;            // le bouton droit y est un geste
+  const inView = viewBox.contains(e.target);
+  const items = (inView && views[S.view]?.zoneMenu?.(e)) || baseMenu();
+  if (items?.length) menu(e.clientX, e.clientY, items);
 });
 
 // ── Web MIDI (MDN : Navigator.requestMIDIAccess) ────────────
@@ -1335,4 +1520,4 @@ function openExport() {
 })();
 
 // pour les essais pilotés (playwright) : l'état, le moteur, l'export
-window.__mu = { S, app, engine, renderMix, wav24, peakDb, hist, rec, undo, redo, flush, views, tapTempo };
+window.__mu = { S, app, engine, renderMix, wav24, peakDb, hist, undoStack, rec, undo, redo, flush, views, tapTempo };

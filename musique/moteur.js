@@ -25,6 +25,7 @@
 import { MODULES, DRUM_VOICES, WAVES, FILTER_TYPES, DELAY_DIVS, val, spec, fromNorm, dbToGain, drumVoicesOf } from './modules.js';
 import { jouetNode, jouetsAutomate } from './jouets/son.js';   // jouets : le son des jouets du Playground
 import { influer, rendre } from './machines/influence.js';   // attracteurs : ce que les attracteurs du banc font au son (nodal)
+import { trajets } from './projet.js';   // les chaînes des pistes, lues dans les câbles (une seule vérité)
 
 const LOOKAHEAD_MS = 25;      // MDN : « lookahead = 25.0 »
 const AHEAD_S = 0.12;         // MDN : « scheduleAheadTime = 0.1 » (+ 20 ms de marge au démarrage d'onglet)
@@ -620,6 +621,39 @@ function makeNode(ctx, m, env) {
   return { input: sh.input, output: sh.output, ap: fx.ap, update(mm, bpm) { fx.update(mm, bpm); sh.setOn(mm.on !== false); } };
 }
 
+// ── un effet que plusieurs pistes traversent ────────────────
+// Posé une fois dans le nodal, il est dans la chaîne de chaque piste qui passe
+// par lui (projet.js, trajets) : UNE instance pour le projet (un module, ses
+// réglages), une VOIX par piste pour le son — sinon le délai rendrait la
+// basse dans la tranche de la voix. Chaque réglage, chaque automation, chaque
+// attracteur va à toutes les voix ; le graphe relie la voix d'une piste à la
+// suite de SA chaîne (Graph.wire).
+function voixPartagees(premiere, tid) {
+  const par = new Map([[tid, premiere]]);
+  const toutes = () => [...par.values()];
+  const n = {
+    par,
+    get input() { return toutes()[0].input; },
+    get output() { return toutes()[0].output; },
+    get analyser() { return toutes()[0].analyser; },
+    get odio() { return toutes()[0].odio; },
+    update(m, bpm) { for (const v of toutes()) v.update(m, bpm); },
+    flush() { for (const v of toutes()) v.flush?.(); },
+    dispose() { for (const v of toutes()) v.dispose?.(); },
+    ping() { return Promise.all(toutes().map((v) => v.ping?.())); },
+  };
+  // les AudioParam de l'automation : ceux de chaque voix, à la suite (ramp les parcourt)
+  Object.defineProperty(n, 'ap', { get() {
+    const out = {};
+    for (const v of toutes()) for (const [k, list] of Object.entries(v.ap || {})) (out[k] = out[k] || []).push(...list);
+    return out;
+  } });
+  // un effet d'ODIO se règle par setParameter : seulement s'il en a un (influence.js le teste)
+  if (premiere.setAt) n.setAt = (k, v, t) => { for (const x of toutes()) x.setAt?.(k, v, t); };
+  return n;
+}
+const voixDe = (n) => (n?.par ? [...n.par.values()] : n ? [n] : []);
+
 // ── le graphe d'un projet dans un contexte ──────────────────
 export class Graph {
   constructor(ctx, env) {
@@ -633,12 +667,20 @@ export class Graph {
   // boîte à rythme) : l'export l'attend avant de rendre
   ready() { return Promise.all(this.env.pending); }
 
+  // les pistes dont la chaîne traverse un effet, quand il y en a plusieurs
+  partage(p, m) {
+    const def = MODULES[m.type];
+    if (!def || def.role !== 'effect' || def.jouet) return null;   // jouets : une scène, un son
+    const ps = trajets(p).de.get(m.id) || [];
+    return ps.length > 1 ? ps : null;
+  }
+
   sync(p) {
     const ids = new Set(p.modules.map((m) => m.id));
     for (const [id, n] of this.nodes) {
       const m = p.modules.find((x) => x.id === id);
       if (!ids.has(id) || this.types.get(id) !== m?.type) {
-        try { n.output.disconnect(); } catch { /* déjà débranché */ }
+        for (const v of voixDe(n)) { try { v.output.disconnect(); } catch { /* déjà débranché */ } }
         n.dispose?.();
         this.nodes.delete(id); this.types.delete(id);
       }
@@ -646,16 +688,29 @@ export class Graph {
     for (const m of p.modules) {
       let n = this.nodes.get(m.id);
       if (!n) { n = makeNode(this.ctx, m, this.env); this.nodes.set(m.id, n); this.types.set(m.id, m.type); }
+      // une voix par piste qui traverse l'effet ; celles qui restent gardent leur état (la queue d'un délai)
+      const ps = this.partage(p, m);
+      if (ps && !n.par) { n = voixPartagees(n, ps[0]); this.nodes.set(m.id, n); }
+      if (n.par) {
+        const garde = ps || [n.par.keys().next().value];
+        for (const [tid, v] of [...n.par]) if (!garde.includes(tid) && n.par.size > 1) { try { v.output.disconnect(); } catch { /* */ } v.dispose?.(); n.par.delete(tid); }
+        for (const tid of garde) if (!n.par.has(tid)) n.par.set(tid, makeNode(this.ctx, m, this.env));
+        if (!ps) { n = n.par.values().next().value; this.nodes.set(m.id, n); }
+      }
       n.update(m, p.bpm);
     }
     this.wire(p);
     this.mutes(p);
   }
 
+  // La voix d'un module pour une piste : la sienne s'il est partagé, sinon lui.
+  voix(id, tid) { const n = this.nodes.get(id); return n?.par ? (n.par.get(tid) || n.par.values().next().value) : n; }
+
   wire(p) {
-    for (const n of this.nodes.values()) n.output.disconnect();
+    for (const n of this.nodes.values()) for (const v of voixDe(n)) v.output.disconnect();
     for (const g of this.sends.values()) g.disconnect();
     const used = new Set();
+    const T = trajets(p);
     for (const c of p.cables) {
       if (c.t) continue;   // jouets : un câble de notes ou de valeur ne porte pas de son
       const a = this.nodes.get(c.a), b = this.nodes.get(c.b);
@@ -666,6 +721,11 @@ export class Graph {
         let g = this.sends.get(key);
         if (!g) { g = G(this.ctx, dbToGain(c.send)); this.sends.set(key, g); } else setP(this.ctx, g.gain, dbToGain(c.send));
         a.output.connect(g); g.connect(b.input); used.add(key);
+      } else if (a.par || b.par) {
+        // un câble vers ou depuis un effet partagé : par piste, le long de SA chaîne
+        const communes = (T.de.get(c.a) || []).filter((tid) => (T.de.get(c.b) || []).includes(tid));
+        if (communes.length) for (const tid of communes) this.voix(c.a, tid).output.connect(this.voix(c.b, tid).input);
+        else for (const va of voixDe(a)) va.output.connect(voixDe(b)[0].input);   // hors de toute chaîne : le graphe tel quel
       } else a.output.connect(b.input);
     }
     for (const k of [...this.sends.keys()]) if (!used.has(k)) this.sends.delete(k);

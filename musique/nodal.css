@@ -71,6 +71,32 @@ html.dragging * { cursor: inherit !important; }
 .tile--influe > .tile__mise { box-shadow: inset 1px 1px 0 var(--line), inset 0 0 0 1px var(--line-gr); }
 .tile--influe .tile__head { box-shadow: inset 0 -1px 0 var(--line-gr); }
 
+/* LE NŒUD DE DÉPART D'UNE PISTE (29/09) : la couleur de la piste — un bandeau
+   sur l'en-tête, la teinte du corps plus franche ; la piste courante (celle
+   qu'on a choisie ici ou dans l'arrangement) se cerne de sa couleur */
+.tile--piste .tile__head { box-shadow: inset 0 3px 0 var(--pc), inset 0 -1px 0 var(--line); }
+.tile--piste .tile__name { color: var(--ink); }
+.tile__teinte--piste { opacity: 0.2; }
+.tile--piste.tile--courante > .tile__mise { outline: 1px solid var(--pc); outline-offset: 1px; }
+.tile--piste.tile--selected > .tile__mise { outline: 1px solid var(--cy); outline-offset: -1px; }
+/* son nom, à GAUCHE du nœud de départ (comme l'en-tête d'une piste dans
+   l'arrangement), à taille d'écran constante : lisible à tous les reculs,
+   sans couvrir la tuile ni celle du dessus */
+.ndx-dessus .piste-titre {
+  position: absolute; z-index: 11; display: flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer;
+  padding: 2px 8px 2px 3px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--c), 0 2px 8px var(--drop);
+  transform-origin: 0 0; transform: scale(var(--iz)) translate(calc(-100% - 8px), 0);
+}
+.ndx-dessus .piste-titre--courante { background: var(--panel3); }
+.ndx-dessus .piste-titre .nm { font-family: var(--f-disp); font-size: 13px; line-height: 18px; letter-spacing: 0.04em; color: var(--ink); }
+.ndx-dessus .piste-titre__couleur { width: 16px; height: 16px; padding: 0; border: 0; cursor: pointer; background: var(--c); flex: none; }
+.ndx-dessus .piste-titre__couleur:hover { box-shadow: inset 0 0 0 1px var(--ink); }
+
+/* LE TRACÉ D'ORDRE au bouton du milieu sur une tuile (MachinePanel.tsx, tracerOrdre) :
+   la courbe et les rangs vivent dans l'écran, par-dessus le monde */
+.ndx-trace { position: absolute; left: 0; top: 0; z-index: 8; }
+.ndx-rangs { position: absolute; inset: 0; pointer-events: none; z-index: 8; }
+
 /* les poignées */
 .grip { position: absolute; z-index: 3; }
 .grip--n { top: 0; left: 0; right: 0; }
@@ -250,7 +276,11 @@ html.dragging * { cursor: inherit !important; }
 .ndx-bornes .jump--auto { opacity: 0.45; }
 .ndx-bornes .jump--auto:hover { opacity: 0.9; }
 .ndx-cables .cable__line { fill: none; stroke: var(--ink3); stroke-width: 1; vector-effect: non-scaling-stroke; }
+/* un fil d'une chaîne de piste : la couleur de la piste ; emprunté par deux chaînes : tireté */
+.ndx-cables .cable--piste .cable__line { stroke: currentColor; stroke-width: 1.5; }
+.ndx-cables .cable--multi .cable__line { stroke-dasharray: 7 3; }
 .ndx-cables .cable--notes .cable__line, .ndx-cables .cable__line--notes { stroke: var(--grn2); stroke-dasharray: 5 3; }
+.ndx-cables .cable--notes.cable--piste .cable__line { stroke: currentColor; }
 .ndx-cables .cable--survol .cable__line, .ndx-cables .cable--picked .cable__line { stroke: var(--cy); }
 .ndx-cables .cable--picked .cable__line { stroke-width: 2; stroke: var(--or); }
 .ndx-cables .cable__line--jump { stroke: currentColor; stroke-dasharray: 2 3; }

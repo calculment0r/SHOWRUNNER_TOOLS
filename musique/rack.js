@@ -2,12 +2,14 @@
 // Live) : toute la chaîne de la piste choisie (source → effets → tranche),
 // module par module avec ses molettes, de gauche à droite. Les effets
 // s'ajoutent, se déplacent et se retirent ici ; c'est la même chaîne de
-// câbles que dans la vue Nodal. L'instrument d'une piste se change ici, ses
+// câbles que dans la vue Nodal (la chaîne est lue dans les câbles : un effet
+// que plusieurs pistes traversent y est dans le rack de chacune, « lié », une
+// seule instance). L'instrument d'une piste se change ici, ses
 // préréglages aussi, et « Enregistrer le réglage » garde celui de la source
 // dans le projet (navigateur, Préréglages, Les miens).
 
 import { toast, pick, href, dropZone } from '../commun/shell.js';
-import { MODULES, TRACK_KINDS, EFFECT_TYPES, DRUM_VOICES, RHYTHM_VOICES, SOURCES_OF, spec, val, fmt, presetsFor, moduleName } from './modules.js';
+import { MODULES, TRACK_KINDS, EFFECT_TYPES, DRUM_VOICES, RHYTHM_VOICES, SOURCES_OF, AUTOMATABLE, spec, val, fmt, presetsFor, moduleName } from './modules.js';
 import { peaks } from './moteur.js';
 import { el, knob, choice, menu, tok, put, inlineEdit } from './ui.js';
 
@@ -58,11 +60,23 @@ export function createDevices(app) {
       fx ? el('button', { class: 'tb ghost sm', type: 'button', title: 'retirer l\'effet (ses câbles se referment)', onclick: () => app.removeModule(m.id) }, '×') : null);
   }
 
+  // un effet que plusieurs pistes traversent (posé dans le nodal) : le même
+  // module dans chaque rack, ses réglages sont les mêmes partout — il le dit
+  function lien(m, t) {
+    const ps = app.linked(m.id);
+    if (ps.length < 2) return null;
+    const autres = ps.filter((x) => x !== t?.id).map(app.track).filter(Boolean);
+    return el('div', { class: 'dev-lien', title: 'un seul effet, posé dans le nodal : le régler ici le règle pour chaque piste qui le traverse, et le son de chacune reste dans sa piste' },
+      el('span', { class: 'lbl' }, 'lié'), ...autres.map((x) => el('span', { class: 'dev-lien-p', style: { '--c': `var(--${x.color})` } }, el('i'), x.name)));
+  }
+
   function device(m, t) {
     const def = MODULES[m.type];
     const accent = t?.color || def.color;
-    const box = el('div', { class: `dev ${m.type}${m.on === false ? ' off' : ''}${def.odio ? ' odio' : ''}${S.sel.mod === m.id ? ' sel' : ''}`, style: { '--k': `var(--${accent})` }, 'data-mod': m.id,
+    const shared = app.linked(m.id).length > 1;
+    const box = el('div', { class: `dev ${m.type}${m.on === false ? ' off' : ''}${def.odio ? ' odio' : ''}${S.sel.mod === m.id ? ' sel' : ''}${shared ? ' lie' : ''}`, style: { '--k': `var(--${accent})` }, 'data-mod': m.id,
       onpointerdown: () => { S.sel.mod = m.id; } });
+    box.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); S.sel.mod = m.id; const it = menuDe(m.id, t); if (it) menu(e.clientX, e.clientY, it); });
     if (m.type === 'drums') box.append(devHead(m, t), drumBody(m, t, accent));
     else if (m.type === 'rythme') box.append(devHead(m, t), rhythmBody(m, t, accent));
     else if (m.type === 'synth') box.append(devHead(m, t), synthBody(m, accent));
@@ -83,8 +97,33 @@ export function createDevices(app) {
     } else {
       box.append(devHead(m, t), el('div', { class: 'dev-body' }, ...def.params.map((p) => kn(m, p.k, accent))));
     }
+    const l = lien(m, t);
+    if (l) box.firstChild.after(l);
     return box;
   }
+
+  // le clic droit sur un module du rack
+  function menuDe(id, t) {
+    const m = app.mod(id);
+    if (!m) return null;
+    const def = MODULES[m.type], fx = def.role === 'effect';
+    const ch = t ? app.chain(t.id) : [], i = ch.findIndex((x) => x.id === m.id);
+    const ps = app.linked(m.id);
+    return [
+      { head: `${moduleName(m.type)}${t ? ` · ${t.name}` : ''}` },
+      def.role === 'source' || fx ? { label: m.on !== false ? 'Court-circuiter (bypass)' : 'Activer', onclick: () => { m.on = m.on === false; app.commit('graph'); } } : null,
+      fx && t && i > 0 ? { label: 'Plus tôt dans la chaîne', disabled: i <= 1, why: 'juste après la source', onclick: () => app.moveInChain(t.id, m.id, -1) } : null,
+      fx && t && i > 0 ? { label: 'Plus tard dans la chaîne', disabled: i >= ch.length - 2, why: 'juste avant la tranche', onclick: () => app.moveInChain(t.id, m.id, 1) } : null,
+      { label: 'Voir dans le nodal', onclick: () => { app.setView('nodal'); app.nodal?.montrer?.(m.id); } },
+      (AUTOMATABLE[m.type] || []).length ? { label: 'Automation', items: AUTOMATABLE[m.type].map((k) => ({ label: spec(m.type, k).label, disabled: S.proj.auto.some((L) => L.mod === m.id && L.k === k), why: 'cette voie existe déjà', onclick: () => app.addAuto(m.id, k) })) } : null,
+      ps.length > 1 && t ? '-' : null,
+      ps.length > 1 && t ? { label: 'Sortir de cette chaîne seulement', sub: `reste dans ${ps.filter((x) => x !== t.id).map((x) => app.track(x)?.name).join(', ')}`, onclick: () => app.removeFromTrack(m.id, t.id) } : null,
+      fx ? '-' : null,
+      fx ? { label: ps.length > 1 ? `Retirer l'effet de toutes les chaînes (${ps.length})` : 'Retirer l\'effet', key: 'Suppr', danger: true, onclick: () => app.removeModule(m.id) } : null,
+    ];
+  }
+  const fxItems = (trackId) => EFFECT_TYPES.map((k) => ({ label: MODULES[k].name, sub: MODULES[k].odio ? `ODIO · ${MODULES[k].kind}` : MODULES[k].kind, dot: MODULES[k].color,
+    onclick: () => { const m = app.addEffect(trackId, k); if (!trackId) toast(`${MODULES[k].name} ajouté hors piste : câble-le dans la vue Nodal`); return m; } }));
 
   // la DR-9 : huit pads (clic = écouter et régler cette voix)
   function drumBody(m, t, accent) {
@@ -237,8 +276,7 @@ export function createDevices(app) {
 
   function fxMenu(e, trackId) {
     const r = e.currentTarget.getBoundingClientRect();
-    menu(r.left, r.bottom + 4, EFFECT_TYPES.map((k) => ({ label: MODULES[k].name, sub: MODULES[k].odio ? `ODIO · ${MODULES[k].kind}` : MODULES[k].kind, dot: MODULES[k].color,
-      onclick: () => { const m = app.addEffect(trackId, k); if (!trackId) toast(`${MODULES[k].name} ajouté hors piste : câble-le dans la vue Nodal`); return m; } })));
+    menu(r.left, r.bottom + 4, fxItems(trackId));
   }
 
   function frame() {
@@ -257,7 +295,7 @@ export function createDevices(app) {
     return false;
   }
 
-  return { el: root, render, frame, key };
+  return { el: root, render, frame, key, menuDe, fxItems };
 }
 
 export { fmt, moduleName };

@@ -32,6 +32,8 @@ import {
 } from '../commun/shell.js';
 import { createUndo, libPatch, libBoard, keyLabel } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
+import { bind as bindView } from '../commun/proxies.js';
+import { contextMenu, pageMenu, copy } from '../commun/menu.js';
 
 mountHeader('asset');
 
@@ -88,7 +90,10 @@ const undoBox = el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'ann
 const what = (items) => (items.length > 1 ? plural(items.length, 'objet', 'objets') : `« ${items[0]?.title || items[0]?.id || 'l’objet'} »`);
 const titleOf = (id) => S.data?.items.find((x) => x.id === id)?.title || (S.item?.id === id ? S.item.title : '') || id;
 
-const KINDS = [['', 'Tout'], ['image', 'Images'], ['element', 'Éléments'], ['video', 'Vidéos'], ['audio', 'Sons']];
+// les sortes : `sequence` (une séquence du Montage) et `midi` (un clip de
+// notes d'ODIO) depuis le 29/09 (server/core/library.py, KINDS)
+const KINDS = [['', 'Tout'], ['image', 'Images'], ['element', 'Éléments'], ['video', 'Vidéos'], ['audio', 'Sons'],
+  ['sequence', 'Séquences'], ['midi', 'MIDI']];
 const SORTS = [['new', 'récents'], ['old', 'anciens'], ['title', 'titre'], ['updated', 'modifiés']];
 const ETYPES = [['character', 'personnage'], ['object', 'objet'], ['place', 'lieu'], ['style', 'style'], ['other', 'autre']];
 // les rôles en usage (ARCHITECTURE.md §2)
@@ -112,10 +117,11 @@ const toolFr = (t) => TOOL_FR[t] || t || 'upload';
 const ORIGINS = [['', 'Tout'], ['made', 'Créations'], ['upload', 'Uploads']];
 const MEDIA = ['image', 'video', 'audio'];
 const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
-const KIND_N = { image: ['image', 'images'], element: ['élément', 'éléments'], video: ['vidéo', 'vidéos'], audio: ['son', 'sons'] };
+const KIND_N = { image: ['image', 'images'], element: ['élément', 'éléments'], video: ['vidéo', 'vidéos'], audio: ['son', 'sons'],
+  sequence: ['séquence', 'séquences'], midi: ['clip MIDI', 'clips MIDI'] };
 
 // ── l'adresse ────────────────────────────────────────────────
-const ID_RX = /^(ima|vid|aud|ele)-\d{8}-\d{6}-[0-9a-f]{4}$/;
+const ID_RX = /^(ima|vid|aud|ele|seq|mid)-\d{8}-\d{6}-[0-9a-f]{4}$/;
 function parseHash() {
   let h = location.hash.slice(1);
   try { h = decodeURIComponent(h); } catch { /* adresse abîmée : la racine */ }
@@ -330,7 +336,32 @@ function wave(n = 9) {
   return el('span', { class: 'wave', 'aria-hidden': 'true' }, ...Array.from({ length: n }, (_, k) => el('i', { style: { height: `${hs[k % hs.length]}%` } })));
 }
 
+// un clip MIDI sans image : quelques notes sur une portée ; une séquence sans
+// image (aucun plan qui se voie) : la bande d'un film — comme la vague d'un son
+function roll(n = 11) {
+  const ys = [64, 42, 52, 28, 64, 36, 48, 22, 58, 40, 30, 54], ws = [14, 8, 10, 18, 8, 12, 9, 16, 11, 8, 13];
+  let x = 0;
+  return el('span', { class: 'roll', 'aria-hidden': 'true' }, ...Array.from({ length: n }, (_, k) => {
+    const w = ws[k % ws.length], i = el('i', { style: { left: `${x}%`, top: `${ys[k % ys.length]}%`, width: `${w}%` } });
+    x = Math.min(96 - w, x + w * 0.62 + 2);
+    return i;
+  }));
+}
+function strip(n = 5) {
+  return el('span', { class: 'strip', 'aria-hidden': 'true' }, ...Array.from({ length: n }, () => el('i')));
+}
+// ce qu'une vignette montre quand l'objet n'a pas d'image
+function glyph(kind, small = false) {
+  if (kind === 'audio') return wave(small ? 5 : 9);
+  if (kind === 'midi') return roll(small ? 6 : 11);
+  if (kind === 'sequence') return strip(small ? 3 : 5);
+  return null;
+}
+
 function subOf(it) {
+  const p = it.params || {};
+  if (it.kind === 'midi') return [p.bars ? `${p.bars} mes.` : '', p.notes ? `${p.notes} notes` : '', p.bpm ? `${p.bpm} bpm` : '', toolFr(it.origin?.tool)].filter(Boolean).join(' · ');
+  if (it.kind === 'sequence') return [p.clips != null ? plural(p.clips, 'plan', 'plans') : '', it.duration ? fmtDur(it.duration) : '', p.format || ''].filter(Boolean).join(' · ');
   if (it.kind === 'element') return `${plural(it.element?.refs?.length || 0, 'réf.', 'réf.')}${it.element?.voices?.length ? ' · voix' : ''}${it.element?.meshes?.length ? ' · 3D' : ''} · ${toolFr(it.origin?.tool)}`;
   return [it.width && it.height ? `${it.width}×${it.height}` : '', it.origin?.model || toolFr(it.origin?.tool)].filter(Boolean).join(' · ');
 }
@@ -346,7 +377,7 @@ function itemCard(it, { search = false } = {}) {
     if (e.key === ' ') { e.preventDefault(); toggleSel(it.id); }
   });
   const im = $('.im', t);
-  if (it.kind === 'audio' && !it.thumb_url) im.prepend(wave());
+  if (!it.thumb_url && glyph(it.kind)) im.prepend(glyph(it.kind));
   if (it.kind === 'element' && !it.thumb_url) im.prepend(el('span', { class: 'noimg' }, 'sans image'));
   if (it.fav) im.append(el('span', { class: 'star', title: 'favori' }, '★'));
   if (search && it.folder) im.append(el('span', { class: 'where', title: 'dans ce dossier' }, it.folder));
@@ -413,9 +444,11 @@ function paintSel(force = false) {
   paintSelBar(force);
 }
 
+// les cases d'un dossier (≈ 88 px) et du « nouveau dossier » (56 px) : la copie
+// d'affichage qui suffit (commun/proxies.js), suivie à la taille réelle
 function miniOf(m) {
-  const pic = m.thumb_url ? el('img', { src: href(m.thumb_url), alt: '', loading: 'lazy' })
-    : m.kind === 'audio' ? wave(5) : null;
+  const pic = m.thumb_url || m.views?.length ? bindView(el('img', { alt: '', loading: 'lazy', decoding: 'async' }), m, { fit: 'cover', box: [88, 88] })
+    : glyph(m.kind, true);
   return el('span', { class: 'mini' + (m.kind === 'element' ? ' el' : ''), title: m.title }, pic, el('i', {}, m.title));
 }
 
@@ -1189,7 +1222,8 @@ async function paintSheet(id, { keepScroll = false } = {}) {
   }
   S.item = it;
   if (!S.data) api('asset/view?limit=1').then((d) => { S.data = d; paintDatalist(); }).catch(() => {});
-  sheetEl.replaceChildren(...(it.kind === 'element' ? elementSheet(it) : itemSheet(it)));
+  sheetEl.replaceChildren(...(it.kind === 'element' ? elementSheet(it) : it.kind === 'sequence' ? sequenceSheet(it)
+    : it.kind === 'midi' ? midiSheet(it) : itemSheet(it)));
   paintDatalist();
   if (keepScroll) scrollTo({ top: y });
 }
@@ -1251,7 +1285,8 @@ function readout(rows) {
 // une fiche : image, vidéo ou son
 function itemSheet(it) {
   const media = el('div', { class: 'viewer sh-media' });
-  if (it.kind === 'image') media.append(el('img', { src: href(it.url), alt: it.title }));
+  // la copie d'affichage à la taille de la fiche, pas l'original (commun/proxies.js)
+  if (it.kind === 'image') media.append(bindView(el('img', { alt: it.title, decoding: 'async' }), it, { fit: 'contain', box: [960, 720] }));
   if (it.kind === 'video') media.append(el('video', { src: href(it.url), controls: true, playsinline: true, preload: 'metadata', poster: it.thumb_url ? href(it.thumb_url) : null }));
   if (it.kind === 'audio') media.append(el('div', { class: 'audio-box' }, wave(24), el('audio', { src: href(it.url), controls: true, preload: 'metadata' })));
   const size = it.width && it.height ? `${it.width}×${it.height}` : '';
@@ -1276,8 +1311,173 @@ function itemSheet(it) {
     el('section', { class: 'sh-grid' }, media, el('aside', { class: 'sh-side' }, rangement(it), recette(it), lineage(it), fabrication(it)))];
 }
 
+// ── une séquence du Montage ──────────────────────────────────
+// Sa timeline vit dans `sequence.json` (server/tools/montage.py) ; ici, ce
+// qu'on range d'un objet (titre, dossier, tags, corbeille), sa vignette (le
+// premier plan qui se voit), les plans qu'elle emploie (sa lignée), et le
+// chemin vers le Montage, qui l'ouvre par son adresse (montage/#<id>).
+function sequenceSheet(it) {
+  const p = it.params || {};
+  const open = href(`montage/#${encodeURIComponent(it.id)}`);
+  const media = el('div', { class: 'viewer sh-media seq-media' },
+    it.thumb_url
+      ? el('a', { class: 'seq-open', href: open, title: 'ouvrir dans le Montage' },
+        bindView(el('img', { alt: it.title, decoding: 'async' }), it, { fit: 'contain', box: [960, 540] }),
+        el('span', { class: 'seq-tag lbl' }, 'le premier plan'))
+      : el('div', { class: 'seq-empty' }, strip(7), el('p', { class: 'hint' }, 'Aucun plan qui se voie encore : la séquence est vide, ou n’a que du son.')));
+  const kicker = ['séquence', it.width && it.height ? `${it.width}×${it.height}` : '', it.fps ? `${it.fps} i/s` : '',
+    it.duration ? fmtDur(it.duration) : '', 'fait dans Montage'].filter(Boolean).join(' · ');
+  const acts = el('section', { class: 'sh-acts' },
+    link('Ouvrir dans le Montage', open, { go: true, title: 'sa timeline, dans le Montage' }),
+    el('span', { class: 'sp' }),
+    el('a', { class: 'tb ghost', href: href(it.url), download: `${it.title || it.id}.sequence.json`, title: 'la timeline telle que le Montage la range (sequence.json)' }, 'Télécharger la timeline'),
+    btn('Corbeille', () => trashItem(it, { leave: true }), { title: 'mettre à la corbeille — on peut l\'annuler ; le Montage ne la montre plus' }));
+  const facts = blk('la séquence', 'lue dans le Montage', readout([
+    ['plans', p.clips != null ? String(p.clips) : ''], ['durée', it.duration ? fmtDur(it.duration) : ''], ['format', p.format || ''],
+    ['taille', it.width && it.height ? `${it.width} × ${it.height} px` : ''], ['images/s', it.fps],
+  ]), el('p', { class: 'hint' }, 'Les plans qu’elle emploie sont sa lignée, ci-dessous : les ouvrir mène à leur fiche.'));
+  return [sheetHead(it, kicker), acts,
+    el('section', { class: 'sh-grid' }, media, el('aside', { class: 'sh-side' }, facts, rangement(it), lineage(it), fabrication(it)))];
+}
+
+// ── un clip MIDI d'ODIO ──────────────────────────────────────
+// Le fichier MIDI (SMF) s'écrit et se lit au serveur seulement
+// (server/tools/music_midi.py, une seule vérité) : la fiche lit ses notes en
+// noires ([début, durée, hauteur, vélocité, canal] : /api/music/midi/<id>/notes),
+// les dessine, et les fait entendre par un synthé de la page (des hauteurs
+// et un rythme, pas le son d'ODIO). Le clip se glisse dans l'arrangement
+// d'ODIO (le type commun du portail : ODIO pose ses notes, une piste par canal).
+const NOTE_FR = ['do', 'do#', 'ré', 'ré#', 'mi', 'fa', 'fa#', 'sol', 'sol#', 'la', 'la#', 'si'];
+const noteFr = (n) => (n == null ? '' : `${NOTE_FR[((n % 12) + 12) % 12]}${Math.floor(n / 12) - 1}`);
+const CH_TOKEN = { 0: '--cy', 1: '--or', 2: '--grn2', 9: '--amb' };
+let midiAudio = null;   // { ctx, out, t0, end, raf } : ce qui joue
+function stopMidi() {
+  if (!midiAudio) return;
+  cancelAnimationFrame(midiAudio.raf);
+  try { midiAudio.out.disconnect(); } catch { /* déjà coupé */ }
+  for (const n of midiAudio.nodes) { try { n.stop(); } catch { /* fini */ } }
+  midiAudio.done?.();
+  midiAudio = null;
+}
+function playMidi(r, bpm, { onFrame, onEnd }) {
+  stopMidi();
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) { say('ce navigateur ne joue pas de son (Web Audio)'); return; }
+  const ctx = playMidi.ctx || (playMidi.ctx = new Ctx());
+  ctx.resume?.();
+  const spb = 60 / bpm, t0 = ctx.currentTime + 0.08;
+  const out = ctx.createGain();
+  out.gain.value = 0.2;
+  out.connect(ctx.destination);
+  const nodes = [];
+  const notes = r.notes.slice(0, 4000);   // au-delà : le début seulement (dit dans la fiche)
+  let noise = null;
+  for (const [s, l, p, v, ch] of notes) {
+    const a = t0 + s * spb, d = Math.max(0.04, l * spb), g = ctx.createGain();
+    g.connect(out);
+    if (ch === 9) {
+      // la batterie : un souffle bref, plus grave pour les grosses caisses (hauteur General MIDI)
+      if (!noise) { noise = ctx.createBuffer(1, ctx.sampleRate * 0.25, ctx.sampleRate); const x = noise.getChannelData(0); for (let i = 0; i < x.length; i++) x[i] = Math.random() * 2 - 1; }
+      const src = ctx.createBufferSource(); src.buffer = noise;
+      const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = p <= 36 ? 120 : p <= 40 ? 900 : 6000;
+      g.gain.setValueAtTime(v, a); g.gain.exponentialRampToValueAtTime(0.001, a + (p <= 36 ? 0.22 : 0.09));
+      src.connect(f).connect(g); src.start(a); src.stop(a + 0.25); nodes.push(src);
+    } else {
+      const o = ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = 440 * 2 ** ((p - 69) / 12);
+      g.gain.setValueAtTime(0, a); g.gain.linearRampToValueAtTime(v * 0.6, a + 0.01); g.gain.setTargetAtTime(0, a + d, 0.04);
+      o.connect(g); o.start(a); o.stop(a + d + 0.25); nodes.push(o);
+    }
+  }
+  const end = t0 + Math.max(0, ...notes.map((n) => n[0] + n[1])) * spb + 0.3;
+  const A = { ctx, out, nodes, t0, end, raf: 0, done: onEnd };
+  const tick = () => {
+    if (midiAudio !== A) return;
+    const beat = (ctx.currentTime - t0) / spb;
+    onFrame?.(beat);
+    if (ctx.currentTime >= end) { stopMidi(); return; }
+    A.raf = requestAnimationFrame(tick);
+  };
+  midiAudio = A;
+  A.raf = requestAnimationFrame(tick);
+}
+function drawRoll(cv, r, sig, beat = null) {
+  const cs = getComputedStyle(document.documentElement);
+  const tok = (n) => cs.getPropertyValue(n).trim();
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth || 800, H = cv.clientHeight || 260;
+  if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const notes = r?.notes || [];
+  const len = Math.max(sig, Math.ceil(Math.max(0, ...notes.map((n) => n[0] + n[1])) / sig) * sig);
+  const lo = Math.min(...notes.map((n) => n[2]), 60) - 2, hi = Math.max(...notes.map((n) => n[2]), 72) + 2;
+  const x = (b) => 8 + (b / len) * (W - 16), rowH = (H - 16) / (hi - lo + 1), y = (p) => 8 + (hi - p) * rowH;
+  g.fillStyle = tok('--line');
+  for (let b = 0; b <= len; b += 1) g.fillRect(Math.round(x(b)), 8, b % sig ? 0.5 : 1, H - 16);
+  for (const [s, l, p, v, ch] of notes) {
+    g.globalAlpha = 0.45 + 0.55 * (v || 0.8);
+    g.fillStyle = tok(CH_TOKEN[ch] || '--ink2');
+    g.fillRect(x(s), y(p), Math.max(2, x(s + l) - x(s) - 1), Math.max(2, rowH - 1));
+  }
+  g.globalAlpha = 1;
+  if (beat != null && beat >= 0 && beat <= len) { g.fillStyle = tok('--or'); g.fillRect(Math.round(x(beat)), 4, 2, H - 8); }
+}
+function midiSheet(it) {
+  const p = it.params || {};
+  const sig = [2, 3, 4, 6].includes(p.sig) ? p.sig : 4;
+  let data = null;
+  const cv = el('canvas', { class: 'roll-cv', role: 'img', 'aria-label': `les notes de « ${it.title} »` });
+  const note = el('p', { class: 'hint midi-note' }, 'lecture des notes…');
+  const media = el('div', { class: 'viewer sh-media midi-media' }, cv, note);
+  const bpm = () => +p.bpm || +data?.file_bpm || 120;
+  const listen = el('button', { class: 'tb ghost', type: 'button', disabled: true,
+    title: 'un synthé simple de la page : les hauteurs et le rythme du clip, au tempo où il a été rangé — pas le son d’ODIO' }, 'Écouter');
+  const paintListen = () => { listen.textContent = midiAudio ? '■ Arrêter' : '▶ Écouter'; };
+  listen.onclick = () => {
+    if (midiAudio) { stopMidi(); return; }
+    playMidi(data, bpm(), { onFrame: (b) => drawRoll(cv, data, sig, b), onEnd: () => { paintListen(); drawRoll(cv, data, sig); } });
+    paintListen();
+  };
+  paintListen();
+  api(`music/midi/${encodeURIComponent(it.id)}/notes`).then((r) => {
+    data = r;
+    listen.disabled = !r.notes.length;
+    note.textContent = r.notes.length
+      ? `${plural(r.notes.length, 'note', 'notes')} · ${Object.values(r.channels || {}).join(', ')}${r.notes.length > 4000 ? ' · l’écoute s’arrête aux 4000 premières' : ''}`
+      : 'ce clip n’a pas de note';
+    requestAnimationFrame(() => drawRoll(cv, r, sig));
+  }).catch((e) => { note.textContent = `notes illisibles : ${e.message}`; note.className = 'warn'; });
+  // le clip, à glisser dans l'arrangement d'ODIO (un autre onglet) : ses notes s'y posent
+  const chip = dragItem(el('div', { class: 'midi-drag', title: 'glisser sur une piste de l’arrangement d’ODIO' },
+    roll(7), el('span', { class: 'md-t' }, el('b', {}, it.title || it.id), el('span', { class: 'lbl' }, 'glisser dans ODIO'))), it);
+  const kicker = ['clip MIDI', p.bars ? plural(p.bars, 'mesure', 'mesures') : '', p.bpm ? `${p.bpm} bpm` : '', `${sig}/4`,
+    it.origin?.tool === 'upload' ? 'importé' : `fait dans ${toolFr(it.origin?.tool)}`].filter(Boolean).join(' · ');
+  const acts = el('section', { class: 'sh-acts' },
+    link('Ouvrir ODIO ↗', href('musique/'), { go: true, blank: true, title: 'ODIO dans un autre onglet : glisse ensuite ce clip sur une piste' }),
+    listen,
+    el('span', { class: 'sp' }),
+    el('a', { class: 'tb ghost', href: href(it.url), download: `${it.title || it.id}.mid` }, 'Télécharger (.mid)'),
+    btn('Corbeille', () => trashItem(it, { leave: true }), { title: 'mettre à la corbeille — on peut l\'annuler' }));
+  const facts = blk('le clip', 'lu dans le fichier', readout([
+    ['notes', p.notes != null ? String(p.notes) : ''], ['mesures', p.bars != null ? String(p.bars) : ''], ['tempo', p.bpm ? `${p.bpm} bpm` : ''],
+    ['mesure', `${sig}/4`], ['hauteurs', p.lo != null ? `${noteFr(p.lo)} → ${noteFr(p.hi)}` : ''], ['batterie', p.drums ? 'oui (canal 10)' : ''],
+    ['méthode', { notes: 'notes', partition: 'partition', batterie: 'batterie', odio: 'un motif d’ODIO' }[p.method] || p.method || ''],
+    ['moteur', p.engine === 'factice' ? 'moteur d’essai (factice)' : p.engine || ''],
+  ]));
+  const drop = blk('dans ODIO', null, chip,
+    el('p', { class: 'hint' }, 'Ouvre ODIO dans un autre onglet, puis glisse ce clip sur une piste de l’arrangement : ses notes s’y posent (sur une piste d’instrument, tous ses canaux ; ailleurs, une piste neuve par canal). Le navigateur d’ODIO, rubrique MIDI, le propose aussi.'));
+  const sheet = [sheetHead(it, kicker), acts,
+    el('section', { class: 'sh-grid' }, el('div', { class: 'sh-main' }, media, drop), el('aside', { class: 'sh-side' }, facts, rangement(it), lineage(it), fabrication(it)))];
+  // quitter la fiche coupe le son
+  addEventListener('hashchange', stopMidi, { once: true });
+  return sheet;
+}
+
 function rangement(it) {
-  const folder = el('input', { class: 'fld', list: 'dl-folders', value: it.folder || '', placeholder: 'à la racine', maxlength: 60, 'aria-label': 'dossier' });
+  const folder =el('input', { class: 'fld', list: 'dl-folders', value: it.folder || '', placeholder: 'à la racine', maxlength: 60, 'aria-label': 'dossier' });
   folder.addEventListener('keydown', (e) => { if (e.key === 'Enter') folder.blur(); });
   folder.addEventListener('change', async () => {
     const v = folder.value.trim();
@@ -1333,7 +1533,8 @@ function lineage(it) {
   const box = el('div', { class: 'lineage' }, el('p', { class: 'lbl' }, 'lecture'));
   // une vignette de la lignée se glisse vers un emplacement (la planche d'un élément…)
   const lk = (x) => dragItem(el('a', { class: 'lk', href: '#' + x.id, title: x.title },
-    x.thumb_url ? el('img', { src: href(x.thumb_url), alt: '' }) : (x.kind === 'audio' ? wave(5) : null), el('i', {}, x.title)), x);
+    x.thumb_url || x.views?.length ? bindView(el('img', { alt: '', loading: 'lazy', decoding: 'async' }), x, { fit: 'cover', box: [72, 72] }) : glyph(x.kind, true),
+    el('i', {}, x.title)), x);
   api('asset/lineage/' + it.id).then((l) => {
     const parts2 = [];
     parts2.push(el('span', { class: 'lbl' }, `vient de · ${l.parents.length}`),
@@ -1553,7 +1754,7 @@ async function paintTrash() {
   const grid = el('div', { class: 'lib-grid' });
   grid.style.setProperty('--card', `${S.size}px`);
   const card = (t) => {
-    const im = el('div', { class: 'im' }, t.thumb_url ? el('img', { src: href(t.thumb_url), alt: '', loading: 'lazy' }) : (t.kind === 'audio' ? wave() : el('span', { class: 'noimg' }, 'sans image')),
+    const im = el('div', { class: 'im' }, t.thumb_url ? el('img', { src: href(t.thumb_url), alt: '', loading: 'lazy' }) : (glyph(t.kind) || el('span', { class: 'noimg' }, 'sans image')),
       el('span', { class: 'kind ' + t.kind }, t.kind === 'element' ? etypeFr(t.etype) : kindFr(t.kind)));
     const n = el('div', { class: 'acard trash-card', role: 'listitem' },
       el('div', { class: 'thumb' }, im, el('div', { class: 'cap' }, el('div', { class: 't' }, t.title || t.id),
@@ -1590,5 +1791,109 @@ document.addEventListener('keydown', (e) => {
   if (S.route.view === 'sheet' && !e.target.closest?.('input, textarea, select')) go(S.backHash || '#');
 });
 document.addEventListener('sr:job', () => { if (S.route.view === 'lib') loadLib(); });
+
+// ── le clic droit (Cal, 29/09 : « un menu contextuel dédié à où on se trouve ») ──
+// Une carte : ses gestes (ceux de la barre de sélection si elle fait partie
+// d'une sélection) ; un dossier : le sien ; la corbeille : rétablir. Ailleurs
+// (le fond, la fiche) : les entrées de la page, en tête du menu commun de
+// repli (commun/menu.js : pageMenu) — le lien, l'image survolés s'y ajoutent.
+const toItems = (spec) => [{ head: spec.title }, ...spec.items.map((x) => (x === '-' ? '-'
+  : { label: x.label, icon: x.dir ? '▭' : '', disabled: x.disabled, onclick: x.do }))];
+const goTo = (u) => () => { location.href = href(u); };
+function kindItems(it) {
+  const id = encodeURIComponent(it.id);
+  if (it.kind === 'image') {
+    return [{ label: 'Animer', icon: '▶', sub: 'Vidéo', onclick: goTo(`movie/?start=${id}`) },
+      { label: 'Éditer dans Image', icon: '✎', onclick: goTo(`image/?edit=${id}`) },
+      { label: 'Référence vidéo', icon: '◎', onclick: goTo(`movie/?ref=${id}`) },
+      { label: 'Agrandir', icon: '⤢', sub: 'Upscale', onclick: goTo(`upscale/?src=${id}`) },
+      { label: 'Ajouter au montage', icon: '▤', onclick: goTo(`montage/?add=${id}`) },
+      { label: 'Faire un élément', icon: '◆', onclick: () => elementModal({ items: [it], title: it.title, folder: it.folder || '' }) }];
+  }
+  if (it.kind === 'video') return [{ label: 'Agrandir', icon: '⤢', sub: 'Upscale', onclick: goTo(`upscale/?src=${id}`) }, { label: 'Ajouter au montage', icon: '▤', onclick: goTo(`montage/?add=${id}`) }];
+  if (it.kind === 'audio') return [{ label: 'Ajouter au montage', icon: '▤', onclick: goTo(`montage/?add=${id}`) }];
+  if (it.kind === 'element') {
+    return [{ label: 'Référence vidéo', icon: '◎', onclick: goTo(`movie/?ref=${id}`) },
+      it.element?.type === 'object' ? { label: 'Ouvrir dans Object Creator', icon: '◇', onclick: goTo(`objet/#${id}`) } : null];
+  }
+  if (it.kind === 'sequence') return [{ label: 'Ouvrir dans le Montage', icon: '▤', onclick: goTo(`montage/#${id}`) }];
+  if (it.kind === 'midi') return [{ label: 'Ouvrir ODIO', icon: '↗', sub: 'nouvel onglet', onclick: () => window.open(href('musique/'), '_blank', 'noopener') }];
+  return [];
+}
+function cardMenu(it) {
+  const move = itemMenu(it).items.filter((x) => x !== '-' && x.dir || /^Sortir/.test(x.label || ''));
+  return [{ head: `${it.kind === 'element' ? etypeFr(it.element?.type) : kindFr(it.kind)} · ${it.title || it.id}` },
+    { label: 'Ouvrir la fiche', icon: '⤢', key: 'Entrée', onclick: () => go('#' + it.id) },
+    ...kindItems(it), '-',
+    { label: 'Ranger', icon: '▭', items: move.map((x) => ({ label: x.label, onclick: x.do })) },
+    { label: 'Favori', checked: !!it.fav, key: 'F', onclick: () => setFav(it, !it.fav) },
+    { label: 'Tags…', icon: '#', onclick: () => tagsModal([it]) },
+    { label: 'Télécharger', icon: '↓', key: 'T', onclick: () => download([it]) },
+    { label: 'Copier le lien de la fiche', icon: '↗', onclick: () => copy(href('asset/#' + it.id), 'lien copié') },
+    '-',
+    { label: 'Mettre à la corbeille', icon: '×', danger: true, key: 'Suppr', onclick: () => trashItem(it) }];
+}
+function selectionMenu(items) {
+  const imgs = items.filter((i) => i.kind === 'image');
+  const ups = items.filter((i) => i.kind === 'image' || i.kind === 'video');
+  const allFav = items.every((i) => i.fav);
+  return [{ head: `la sélection · ${countLine(items.reduce((c, i) => { c[i.kind] = (c[i.kind] || 0) + 1; return c; }, {}))}` },
+    { label: 'Télécharger', icon: '↓', key: 'T', sub: 'un zip', onclick: () => download(items) },
+    { label: 'Créer un dossier', icon: '+', key: 'N', onclick: () => askFolderName(items) },
+    { label: 'Déplacer', icon: '▭', items: moveMenu(items).items.map((x) => ({ label: x.label, onclick: x.do })) },
+    { label: allFav ? 'Retirer des favoris' : 'Mettre en favori', icon: '★', key: 'F', onclick: () => bulkFav(items, !allFav) },
+    { label: 'Tags…', icon: '#', onclick: () => tagsModal(items) },
+    { label: 'Faire un élément', icon: '◆', disabled: !imgs.length, why: 'aucune image dans la sélection : un élément se fait d’images',
+      onclick: () => elementModal({ items: imgs, title: imgs[0]?.title || '', folder: commonFolder(imgs) }) },
+    { label: 'Agrandir', icon: '⤢', sub: 'Upscale', disabled: !ups.length, why: 'Upscale prend des images et des vidéos', onclick: goTo(`upscale/?src=${ups.map((i) => i.id).join(',')}`) },
+    '-',
+    { label: 'Ne plus rien choisir', key: 'Échap', onclick: clearSel },
+    { label: 'Mettre à la corbeille', icon: '×', danger: true, key: 'Suppr', onclick: () => trashMany(items) }];
+}
+contextMenu(libEl, (e) => {
+  if (drag || mq) return [];
+  const card = e.target.closest('.acard[data-id]');
+  if (card && S.route.view === 'lib') {
+    const it = S.data?.items.find((x) => x.id === card.dataset.id);
+    if (!it) return null;
+    // clic droit sur une carte choisie parmi d'autres : la sélection ; sinon, elle seule (et elle devient la sélection)
+    if (S.sel.has(it.id) && S.sel.size > 1) return selectionMenu(selItems());
+    setSel([it.id], it.id);
+    return cardMenu(it);
+  }
+  const f = e.target.closest('.acard.folder[data-folder]');
+  if (f) {
+    const spec = folderMenu((S.data?.folders || []).find((x) => x.name === f.dataset.folder) || { name: f.dataset.folder, total: 0 });
+    return toItems(spec);
+  }
+  const t = e.target.closest('.trash-card');
+  if (t) { const b = $('.acts2 button', t); return b ? [{ label: 'Rétablir', icon: '↺', onclick: () => b.click() }] : null; }
+  return null;
+});
+// ailleurs : les gestes de la vue, en tête du menu de repli
+pageMenu(() => {
+  if (S.route.view === 'sheet' && S.item) {
+    const it = S.item;
+    return [{ head: `la fiche · ${it.title || it.id}` }, { label: 'Revenir', icon: '‹', key: 'Échap', onclick: () => go(S.backHash || '#') },
+      ...kindItems(it), '-',
+      { label: 'Favori', checked: !!it.fav, onclick: () => setFav(it, !it.fav) },
+      { label: 'Télécharger', icon: '↓', onclick: () => download([it]) },
+      { label: 'Mettre à la corbeille', icon: '×', danger: true, onclick: () => trashItem(it, { leave: true }) }];
+  }
+  if (S.route.view === 'trash') return [{ head: 'la corbeille' }, { label: 'Revenir à Asset', icon: '‹', onclick: () => go('#') }];
+  if (!parts) return null;
+  return [{ head: S.folder ? `dossier · ${S.folder}` : 'Asset' },
+    { label: S.folder ? 'Déposer des fichiers ici…' : 'Déposer des fichiers…', icon: '↑', onclick: () => parts.fileIn.click() },
+    { label: 'Nouvel élément…', icon: '◆', onclick: () => elementModal({}) },
+    !S.folder ? { label: 'Importer de Character Factory…', icon: '↗', onclick: cfModal } : null,
+    S.folder ? { label: 'Renommer le dossier', icon: '✎', onclick: renameInline } : null,
+    S.folder ? { label: 'Revenir à la racine', icon: '‹', onclick: () => go('#') } : null,
+    '-',
+    { label: 'Tout choisir', key: 'Ctrl+A', disabled: !cardIds().length, why: 'rien à choisir ici', onclick: selectAll },
+    S.sel.size ? { label: 'Ne plus rien choisir', key: 'Échap', onclick: clearSel } : null,
+    { label: 'Montrer', icon: '▦', items: KINDS.map(([k, lab]) => ({ label: lab, checked: S.kind === k, onclick: () => { S.kind = k; savePrefs(); loadLib(); } })) },
+    { label: 'Trier', icon: '↕', items: SORTS.map(([k, lab]) => ({ label: lab, checked: S.sort === k, onclick: () => { S.sort = k; savePrefs(); loadLib(); } })) },
+    { label: 'La corbeille', icon: '×', onclick: () => go('#/corbeille') }];
+});
 
 render();

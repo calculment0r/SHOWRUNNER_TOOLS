@@ -34,6 +34,9 @@
 //     menu: (it) => [entrées propres à l'outil],   // placées au milieu du menu « ⋯ »
 //     link: (it) => 'adresse qui rouvre cet objet', empty: 'texte du fil vide',
 //     onLoad: () => {},                   // après chaque chargement du fil
+//     undo: U,                            // la pile de la page (commun/undo.js) : aimer, ranger,
+//                                         // jeter s'y rangent avec leur contraire (libPatch, libTrash) ;
+//                                         // la page repeint le fil dans son onapply (items)
 //   });
 //   fil.reload() · fil.add(items) · fil.update(it) · fil.remove(id) · fil.open(idOuObjet)
 //   fil.close() · fil.paintJobs() · fil.items() · fil.get(id) · fil.current()
@@ -46,6 +49,8 @@ import { menu, kebab, contextMenu, closeMenus } from './menu.js';
 // chaque image à la taille où elle est vue : la copie d'affichage qui suffit,
 // l'original seulement au-delà (docs/etudes/ideation_fluidite.md)
 import { pickView, needOf, swap, bind, ORIGINAL } from './proxies.js';
+// aimer, ranger, jeter : des gestes de la page, avec leur contraire lu sur le serveur
+import { libPatch, libTrash, describeLibPatch } from './undo.js';
 
 // la feuille du fil, chargée une fois, à côté de ce fichier (comme menu.css)
 if (![...document.querySelectorAll('link[rel=stylesheet]')].some((l) => /commun\/fil\.css$/.test(l.href))) {
@@ -288,9 +293,12 @@ export function createFil(box, o = {}) {
   }
 
   // ── les actions communes ──────────────────────────────────
+  // une écriture de la bibliothèque : dans la pile de la page quand elle en a une (o.undo)
+  const write = (it, body) => (o.undo ? libPatch(o.undo, it.id, body, describeLibPatch(it, body))
+    : api('library/' + it.id, { method: 'POST', body }));
   async function like(it) {
     try {
-      const n = await api('library/' + it.id, { method: 'POST', body: { fav: !it.fav } });
+      const n = await write(it, { fav: !it.fav });
       update(n);
       toast(n.fav ? 'aimé' : 'n’est plus aimé');
     } catch (e) { toast(e.message, 6000); }
@@ -308,14 +316,17 @@ export function createFil(box, o = {}) {
     const yes = await ask({ title: 'Mettre à la corbeille', ok: 'À la corbeille', danger: true,
       text: `« ${it.title || it.id} » part à la corbeille de la bibliothèque ; il en revient depuis Asset (Corbeille).` });
     if (!yes) return;
-    try { await api(`library/${it.id}/delete`, { method: 'POST' }); } catch (e) { toast(e.message, 6000); return; }
+    try {
+      if (o.undo) await libTrash(o.undo, it);
+      else await api(`library/${it.id}/delete`, { method: 'POST' });
+    } catch (e) { toast(e.message, 6000); return; }
     remove(it.id);
-    toast('à la corbeille — il revient depuis Asset');
+    toast(o.undo ? 'à la corbeille — Ctrl+Z le rend' : 'à la corbeille — il revient depuis Asset');
     o.onRemoved?.(it);
   }
   async function setFolder(it, folder) {
     try {
-      const n = await api('library/' + it.id, { method: 'POST', body: { folder } });
+      const n = await write(it, { folder });
       if (folder && !S.folders.includes(folder)) S.folders = [...S.folders, folder].sort((a, b) => a.localeCompare(b, 'fr'));
       update(n);
       toast(folder ? `rangé dans « ${folder} »` : 'hors de tout dossier');

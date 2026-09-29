@@ -1,6 +1,7 @@
-// ODIO — la vue de détail, en bas de l'arrangement, comme celle de Live :
-// deux onglets, Clip et Instruments (Maj+Tab ou F12 bascule ; Ctrl+Alt+3 :
-// Clip, Ctrl+Alt+4 : Instruments — les raccourcis de Live 12).
+// ODIO — la vue de détail, en bas de l'arrangement : une seule colonne qui
+// défile (29/09, plus d'onglets) — le clip choisi, puis la chaîne de la piste.
+// Maj+Tab ou F12 passe de l'un à l'autre ; Ctrl+Alt+3 : le clip,
+// Ctrl+Alt+4 : la chaîne (les raccourcis de Live 12, qui y changent d'onglet).
 //   Clip         le clip choisi :
 //     piano roll   notes, longueurs, vélocités (la voie du bas), grille et
 //                  quantification, gamme de la session mise en évidence et
@@ -21,7 +22,7 @@ import { toast } from '../commun/shell.js';
 import { MODULES, TRACK_KINDS, DRUM_MODELS, NOTE_MODELS, drumVoicesOf, noteName, isBlack, inScale, snapToScale, keyLabel,
   MODES, TONICS } from './modules.js';
 import { peaks, peakDb, clipBuffer, audioGeom } from './moteur.js';
-import { el, knob, menu, tok, clamp, put, inlineEdit } from './ui.js';
+import { el, knob, menu, tok, clamp, put, inlineEdit, letter } from './ui.js';
 import { createDevices } from './rack.js';
 // le génératif (29/09) : une région (un clip qui porte `gen`) s'ouvre sur sa
 // génération ; sa prise choisie, sur la vue Clip d'un son
@@ -29,16 +30,24 @@ import { isRegion, isGenTrack, regionPanel, trackPanel } from './generatif_regio
 
 const STEP_MAX = 256;
 
-// ── la vue de détail ────────────────────────────────────────
+// ── la vue de détail : UNE colonne qui défile, sans onglets ─
+// Demande de Cal (29/09) : « tout sans avoir d'onglet clip et instrument, on
+// met tout avec un scroll ». De haut en bas : le clip choisi (ses notes, ses
+// pas, son son — ou, pour une région générative, sa génération), puis la
+// chaîne de la piste (l'instrument et ses effets, rack.js), le génératif
+// étant l'éditeur du clip quand le clip est une région. « Instruments et
+// effets » (menus, Maj+Tab, F12, Ctrl+Alt+3 / 4) fait défiler jusqu'à la
+// partie voulue au lieu de changer d'onglet.
 export function createDock(app) {
   const { S } = app;
   const root = el('section', { class: 'dk', 'aria-label': 'vue de détail' });
-  const tabs = el('div', { class: 'dk-tabs', role: 'tablist' });
+  const head = el('div', { class: 'dk-tabs dk-head' });
   const body = el('div', { class: 'dk-body' });
-  root.append(tabs, body);
+  root.append(head, body);
   const devices = createDevices(app);
+  const clipSec = el('section', { class: 'dk-sec dk-sec-clip', 'data-part': 'clip', 'aria-label': 'le clip choisi' });
+  const chainSec = el('section', { class: 'dk-sec dk-sec-chain', 'data-part': 'device', 'aria-label': 'la chaîne de la piste' });
   let ed = null;
-  const which = () => (S.proj.ui.detail === 'device' ? 'device' : 'clip');
   function target() {
     const c = app.clip(S.sel.clip);
     if (c) return { c, t: app.track(c.track) };
@@ -46,53 +55,71 @@ export function createDock(app) {
     if (t && (TRACK_KINDS[t.kind]?.pattern || isGenTrack(t))) return { c: null, t };
     return null;
   }
-  function paintTabs() {
+  const title = (label, what, ...extra) => el('div', { class: 'dk-title' }, el('span', { class: 'lbl' }, label), what ? el('span', { class: 'dk-what' }, what) : null, el('span', { class: 'sp' }), ...extra);
+  function paintHead() {
     const t = app.track(S.sel.track), c = app.clip(S.sel.clip);
-    // une région qui a une prise : la génération, ou le son de la prise (la vue Clip d'un son)
-    const reg = which() === 'clip' && c && isRegion(c) && c.item;
-    put(tabs,
-      [['clip', 'Clip', 'le clip choisi : ses notes, ses pas ou son son · Ctrl+Alt+3'], ['device', 'Instruments', 'les instruments et effets de la piste choisie · Ctrl+Alt+4']].map(([k, l, ti]) =>
-        el('button', { class: `dk-tab${which() === k ? ' on' : ''}`, type: 'button', role: 'tab', 'aria-selected': which() === k, title: `${ti} · Maj+Tab : basculer`,
-          onclick: () => { S.proj.ui.detail = k; app.saveUi(); render(); } }, l)),
-      reg ? el('div', { class: 'seg dk-gen' }, [['gen', 'Génération'], ['son', 'Son de la prise']].map(([k, l]) => el('button', { class: `tb${(S.proj.ui.genSon ? 'son' : 'gen') === k ? ' on' : ''}`, type: 'button',
-        onclick: () => { S.proj.ui.genSon = k === 'son' || undefined; app.saveUi(); render(); } }, l))) : null,
-      el('span', { class: 'lbl dk-what' }, which() === 'clip'
-        ? (c ? `${t?.name || ''} · ${app.bar(c.start)} → ${app.bar(c.start + c.len)}` : t ? t.name : '')
-        : (t ? `${t.name} · ${app.chain(t.id).length} modules` : '')),
+    put(head,
+      t ? el('i', { class: 'dk-dot', style: { background: `var(--${t.color})` } }) : null,
+      el('b', { class: 'venus dk-name' }, t ? t.name : 'aucune piste'),
+      el('span', { class: 'lbl dk-what' }, c ? `clip · ${app.bar(c.start)} → ${app.bar(c.start + c.len)}` : '', t ? ` · ${app.chain(t.id).length} modules en chaîne` : ''),
       el('span', { class: 'sp' }),
-      el('span', { class: 'lbl' }, 'tirer le filet du haut : la hauteur'));
+      el('span', { class: 'lbl' }, 'le clip, puis la chaîne de la piste : faire défiler · tirer le filet du haut : la hauteur'));
   }
-  function render() {
-    paintTabs();
-    document.body.classList.remove('mu-gen-dock');          // le panneau génératif le remet s'il s'ouvre
-    const top = body.scrollTop;
-    if (which() === 'device') {
-      ed = null;
-      if (body.firstChild !== devices.el) put(body, devices.el);
-      devices.render();
-      body.scrollTop = top;
-      return;
-    }
+  function renderClip() {
     const tg = target();
+    const c = tg?.c;
+    // une région qui a une prise : la génération, ou le son de la prise (la vue Clip d'un son)
+    const reg = c && isRegion(c) && c.item;
+    const seg = reg ? el('div', { class: 'seg dk-gen' }, [['gen', 'Génération'], ['son', 'Son de la prise']].map(([k, l]) => el('button', { class: `tb${(S.proj.ui.genSon ? 'son' : 'gen') === k ? ' on' : ''}`, type: 'button',
+      onclick: () => { S.proj.ui.genSon = k === 'son' || undefined; app.saveUi(); render(); } }, l))) : null;
     const host = el('div', { class: 'dk-clip' });
-    put(body, host);
+    put(clipSec, title(c && isRegion(c) && !(c.item && S.proj.ui.genSon) ? 'génératif · la région' : 'clip', tg?.t ? tg.t.name : '', seg), host);
     if (!tg || !tg.t) {
       ed = null;
-      put(host, el('div', { class: 'dk-empty' }, el('b', { class: 'venus' }, 'Clip'),
+      put(host, el('div', { class: 'dk-empty dk-empty-sm' },
         el('span', {}, 'choisis un clip : ses notes, ses pas ou son son s\'ouvrent ici · double-clic sur une piste vide : un clip neuf')));
       return;
     }
-    if (tg.t.kind === 'audio' && tg.c && isRegion(tg.c) && !(tg.c.item && S.proj.ui.genSon)) { ed = regionPanel(app, host, tg.c, tg.t); body.scrollTop = top; return; }
+    if (tg.t.kind === 'audio' && tg.c && isRegion(tg.c) && !(tg.c.item && S.proj.ui.genSon)) { ed = regionPanel(app, host, tg.c, tg.t); return; }
     if (tg.t.kind === 'audio' && !tg.c && isGenTrack(tg.t)) { ed = trackPanel(app, host, tg.t); return; }
     ed = tg.t.kind === 'audio'
-      ? (tg.c ? audioEditor(app, host, tg.c, tg.t) : (put(host, el('div', { class: 'dk-empty' }, el('b', { class: 'venus' }, 'Clip'), el('span', {}, 'choisis un clip de cette piste audio'))), null))
+      ? (tg.c ? audioEditor(app, host, tg.c, tg.t) : (put(host, el('div', { class: 'dk-empty dk-empty-sm' }, el('span', {}, 'choisis un clip de cette piste audio'))), null))
       : patternEditor(app, host, tg.t, tg.c);
   }
-  function key(e) {
-    if (which() === 'device') return devices.key(e);
-    return ed?.key?.(e) || false;
+  function render() {
+    paintHead();
+    document.body.classList.remove('mu-gen-dock');          // le panneau génératif le remet s'il s'ouvre
+    const top = body.scrollTop;
+    if (clipSec.parentNode !== body || chainSec.parentNode !== body) put(body, clipSec, chainSec);
+    renderClip();
+    if (chainSec.firstChild !== devices.el) put(chainSec, devices.el);
+    devices.render();
+    body.scrollTop = top;
+    // « Instruments et effets », « Ouvrir dans la vue Clip » : on va à la partie voulue
+    const jump = S.dockJump;
+    if (jump) {
+      S.dockJump = null;
+      requestAnimationFrame(() => { const sec = jump === 'device' ? chainSec : clipSec; body.scrollTop = Math.max(0, sec.offsetTop); });
+    }
   }
-  return { el: root, render, frame: (b) => { if (which() === 'device') devices.frame(b); else ed?.frame?.(b); }, key };
+  function key(e) { return ed?.key?.(e) || devices.key(e) || false; }
+  // le clic droit dans le panneau du bas, là où rien n'a le sien
+  function zoneMenu(e) {
+    const t = app.track(S.sel.track), c = app.clip(S.sel.clip);
+    const inChain = chainSec.contains(e.target);
+    const dev = e.target.closest?.('.dev[data-mod]');
+    if (dev) return devices.menuDe?.(dev.dataset.mod, t) || null;
+    return [
+      { head: inChain ? `la chaîne · ${t?.name || ''}` : `le clip · ${t?.name || ''}` },
+      { label: 'Aller au clip', onclick: () => { S.dockJump = 'clip'; render(); } },
+      { label: 'Aller à la chaîne de la piste', onclick: () => { S.dockJump = 'device'; render(); } },
+      t ? { label: 'Un effet dans la chaîne', items: devices.fxItems(t.id) } : null,
+      c ? { label: 'Retirer le clip', danger: true, onclick: () => app.removeSel() } : null,
+      '-',
+      { label: 'Cacher le panneau du bas', onclick: () => { S.proj.ui.dock = false; app.saveUi(); app.renderView(); } },
+    ];
+  }
+  return { el: root, render, frame: (b) => { devices.frame(b); ed?.frame?.(b); }, key, zoneMenu };
 }
 
 // ── l'éditeur de motif (notes ou pas) ───────────────────────
@@ -422,7 +449,7 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
       const ctrl = e.ctrlKey || e.metaKey;
       if (e.target.closest?.('input, textarea, select')) return false;
       if ((e.key === 'Delete' || e.key === 'Backspace') && chosen.size) { e.preventDefault(); p.notes = p.notes.filter((n) => !chosen.has(n)); chosen.clear(); commit(); return true; }
-      if (ctrl && e.code === 'KeyA') { e.preventDefault(); for (const n of p.notes) chosen.add(n); paintNotes(); return true; }
+      if (ctrl && letter(e) === 'a') { e.preventDefault(); for (const n of p.notes) chosen.add(n); paintNotes(); return true; }
       if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && chosen.size) { e.preventDefault(); transpose((e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 12 : 1)); return true; }
       if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && chosen.size) {
         e.preventDefault();
@@ -430,7 +457,7 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
         if ([...chosen].every((n) => n.s + d >= 0 && n.s + d + n.l <= p.steps)) { for (const n of chosen) n.s += d; commit(); }
         return true;
       }
-      if (ctrl && e.code === 'KeyD' && chosen.size) {
+      if (ctrl && letter(e) === 'd' && chosen.size) {
         e.preventDefault();
         const g = [...chosen], a = Math.min(...g.map((n) => n.s)), b = Math.max(...g.map((n) => n.s + n.l));
         chosen.clear();
@@ -438,7 +465,7 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
         commit(); return true;
       }
       // Ctrl+U : « Quantize » de Live 12 ; Q, l'ancien raccourci d'ODIO, reste
-      if ((ctrl && e.code === 'KeyU') || (e.code === 'KeyQ' && !ctrl)) { e.preventDefault(); quantize(gridS()); return true; }
+      if ((ctrl && letter(e) === 'u') || (letter(e) === 'q' && !ctrl)) { e.preventDefault(); quantize(gridS()); return true; }
       return false;
     },
   };

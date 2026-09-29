@@ -24,6 +24,12 @@
 //               une région : sans prise, pas encore d'`item` ; une prise
 //               choisie lui donne son `item` et son `off`
 //   ui        + genSon (la vue de détail : le son de la prise plutôt que la génération)
+// Le nodal et l'arrangement, deux vues du même graphe (29/09, même version) :
+//   groups    [{ id, name, fold }]   les groupes de pistes de l'arrangement ;
+//   tracks[]  + grp                  le groupe d'une piste (ses membres se suivent)
+//   la chaîne d'une piste n'est écrite nulle part : c'est le trajet de sa source
+//   à sa tranche dans les câbles (trajets, plus bas) ; un effet que deux pistes
+//   traversent est dans les deux chaînes
 
 import { guessTag } from './modules.js';
 
@@ -45,6 +51,9 @@ export function migrate(p) {
   for (const c of p.clips) if (c.item && c.loop && c.ls === undefined) c.ls = c.off || 0;
   p.presets = p.presets || [];
   p.banc = p.banc || { segs: [], atts: [] };
+  // les groupes de pistes (29/09) : un groupe se replie, se renomme, se défait
+  p.groups = p.groups || [];
+  rangerGroupes(p);
   // la vue Rack est devenue la vue de détail, en bas de l'arrangement
   if (p.ui.view === 'rack') { p.ui.view = 'timeline'; p.ui.detail = 'device'; }
   p.v = VERSION;
@@ -55,39 +64,244 @@ export function migrate(p) {
 // Un instantané du projet (sans ce qui n'est pas de l'œuvre : version,
 // vue, travaux en cours, brouillon du panneau génératif) après chaque geste
 // terminé. Annuler rend l'instantané d'avant, tout entier : juste par
-// construction, quel que soit le geste.
+// construction, quel que soit le geste. La pile est celle du portail
+// (commun/undo.js, U.snapshots : musique.js) ; ici, ce qu'on y range et le
+// libellé d'un geste.
 const SKIP = new Set(['rev', 'ui', 'pending', 'updated', 'created', 'gen', 'id']);
-export function snapshot(p) {
+// Ce que les vues créent en se dessinant n'est pas un geste : les tables
+// vides du nodal (noms, exposé, bornes…, nodal.js `reglage`) et la tension
+// plate du banc (0,5 partout, banc.js `B`) valent leur absence. Sans cela,
+// annuler le premier geste d'une session les retirait, la vue les recréait,
+// et ce « changement » effaçait la pile de rétablir.
+const vide = (v) => v && typeof v === 'object' && !(Array.isArray(v) ? v.length : Object.keys(v).length);
+export function workOf(p) {
   const o = {};
-  for (const k of Object.keys(p)) if (!SKIP.has(k)) o[k] = p[k];
-  return JSON.stringify(o);
+  for (const k of Object.keys(p || {})) if (!SKIP.has(k)) o[k] = p[k];
+  if (o.nodal && typeof o.nodal === 'object') {
+    const n = Object.fromEntries(Object.entries(o.nodal).filter(([, v]) => !vide(v)));
+    if (Object.keys(n).length) o.nodal = n; else delete o.nodal;
+  }
+  if (o.banc?.ten?.every?.((pt) => pt[1] === 0.5)) { const { ten, ...b } = o.banc; o.banc = b; }
+  return o;
+}
+export const snapshot = (p) => JSON.stringify(workOf(p));
+
+// Le libellé d'un geste, lu dans la différence de deux instantanés : ce qui
+// a changé (une clé du projet), et pour une liste d'objets à id, combien
+// sont venus ou partis. Un verbe, comme partout (« ajouter 2 clips »).
+const NOUN = {
+  clips: ['clip', 'clips'], tracks: ['piste', 'pistes'], modules: ['module', 'modules'], cables: ['câble', 'câbles'],
+  sections: ['section', 'sections'], markers: ['marqueur', 'marqueurs'], patterns: ['motif', 'motifs'],
+  auto: ['voie d’automation', 'voies d’automation'], presets: ['préréglage', 'préréglages'], groups: ['groupe de pistes', 'groupes de pistes'],
+};
+const WHAT = {
+  bpm: 'le tempo', sig: 'la mesure', key: 'la tonalité', loop: 'la boucle', arc: 'l’arc d’énergie', name: 'le nom du projet',
+  banc: 'le banc (attracteurs)', nodal: 'le nodal', clips: 'les clips', tracks: 'les pistes', modules: 'les instruments et effets',
+  cables: 'les câbles', sections: 'les sections', markers: 'les marqueurs', patterns: 'les motifs', auto: 'l’automation', presets: 'les préréglages',
+  groups: 'les groupes de pistes',
+};
+const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
+export function describeWork(a, b, names = {}) {
+  const keys = [...new Set([...Object.keys(a || {}), ...Object.keys(b || {})])].filter((k) => !same(a[k], b[k]));
+  if (!keys.length) return 'modifier le projet';
+  if (keys.length === 1) {
+    const k = keys[0];
+    if (k === 'bpm') return `tempo ${a.bpm} → ${b.bpm}`;
+    if (k === 'name') return `renommer le projet en « ${b.name} »`;
+    const A = Array.isArray(a[k]) ? a[k] : null, B = Array.isArray(b[k]) ? b[k] : null;
+    if (A && B && NOUN[k] && A.every((x) => x && x.id) && B.every((x) => x && x.id)) {
+      const ia = new Set(A.map((x) => x.id)), ib = new Set(B.map((x) => x.id));
+      const plus = B.filter((x) => !ia.has(x.id)).length, moins = A.filter((x) => !ib.has(x.id)).length;
+      const n = (c) => NOUN[k][c > 1 ? 1 : 0];
+      if (plus && !moins) return `ajouter ${plus} ${n(plus)}`;
+      if (moins && !plus) return `retirer ${moins} ${n(moins)}`;
+      if (!plus && !moins) {
+        const ch = B.filter((x) => { const o = A.find((y) => y.id === x.id); return o && !same(o, x); });
+        if (!ch.length && k === 'tracks') return 'changer l’ordre des pistes';
+        if (k === 'modules' && ch.length === 1) return `régler « ${names[ch[0].type] || ch[0].name || ch[0].type} »`;
+        if (k === 'tracks' && ch.length === 1) return `modifier la piste « ${ch[0].name} »`;
+        if (k === 'clips' && ch.length) return `modifier ${ch.length} ${n(ch.length)}`;
+      }
+    }
+    if (WHAT[k]) return `modifier ${WHAT[k]}`;
+  }
+  const lab = keys.map((k) => WHAT[k]).filter(Boolean);
+  return lab.length ? `modifier ${lab.slice(0, 2).join(' et ')}${lab.length > 2 ? '…' : ''}` : 'modifier le projet';
 }
 
-export class History {
-  constructor(get, apply) { this.get = get; this.apply = apply; this.undo = []; this.redo = []; this.cur = null; this.t = null; }
-  reset() { clearTimeout(this.t); this.undo = []; this.redo = []; this.cur = this.get() ? snapshot(this.get()) : null; }
-  mark() { clearTimeout(this.t); this.t = setTimeout(() => this.check(), 350); }
-  check() {
-    clearTimeout(this.t);
-    const p = this.get();
-    if (!p) return;
-    const now = snapshot(p);
-    if (now === this.cur) return;
-    if (this.cur !== null) { this.undo.push(this.cur); if (this.undo.length > 150) this.undo.shift(); }
-    this.cur = now; this.redo = [];
+// ── le graphe du son : une seule vérité, les câbles ─────────
+// Le nodal dessine les câbles ; l'arrangement, la console et le rack lisent
+// les mêmes. La CHAÎNE d'une piste n'est rangée nulle part : c'est l'ensemble
+// des modules qui sont sur un chemin de sa source à sa tranche (atteints
+// depuis la source ET menant à la tranche), dans l'ordre du chemin. Un effet
+// que les nœuds de deux pistes traversent est donc dans les deux chaînes, par
+// construction ; le moteur (moteur.js, Graph) en joue une voix par piste, avec
+// les mêmes réglages : une seule instance, deux passages, le son de chaque
+// piste reste dans sa piste. Câbles de SON seulement : ni les envois de la
+// console (c.send), ni les câbles typés des jouets (c.t).
+export const deSon = (c) => !c.t && typeof c.send !== 'number';
+const TRAJ = { p: null, sig: '', v: null };
+export function trajets(p) {
+  const sig = `${p.tracks.map((t) => `${t.id}:${t.src}:${t.strip}`).join('|')}#${p.cables.map((c) => (deSon(c) ? `${c.a}>${c.b}` : '')).join(',')}`;
+  if (TRAJ.p === p && TRAJ.sig === sig) return TRAJ.v;
+  const outs = new Map(), ins = new Map();
+  for (const c of p.cables) {
+    if (!deSon(c)) continue;
+    if (!outs.has(c.a)) outs.set(c.a, []);
+    if (!ins.has(c.b)) ins.set(c.b, []);
+    outs.get(c.a).push(c.b); ins.get(c.b).push(c.a);
   }
-  back() {
-    this.check();
-    if (!this.undo.length) return false;
-    this.redo.push(this.cur); this.cur = this.undo.pop(); this.apply(JSON.parse(this.cur));
-    return true;
+  const atteint = (from, adj) => {
+    const vu = new Set([from]), pile = [from];
+    while (pile.length) { const n = pile.pop(); for (const x of adj.get(n) || []) if (!vu.has(x)) { vu.add(x); pile.push(x); } }
+    return vu;
+  };
+  const ordre = new Map(), dedans = new Map(), de = new Map();
+  for (const t of p.tracks) {
+    const av = atteint(t.src, outs), ar = atteint(t.strip, ins);
+    const on = new Set([...av].filter((id) => ar.has(id)));
+    if (!on.has(t.src) || !on.has(t.strip)) { ordre.set(t.id, []); dedans.set(t.id, new Set()); continue; }
+    // l'ordre du chemin : un tri topologique restreint au trajet (Kahn), dans l'ordre des câbles
+    const deg = new Map([...on].map((id) => [id, 0]));
+    for (const id of on) for (const x of outs.get(id) || []) if (on.has(x)) deg.set(x, deg.get(x) + 1);
+    const file = [...on].filter((id) => deg.get(id) === 0), seq = [];
+    while (file.length) {
+      const n = file.shift();
+      seq.push(n);
+      for (const x of outs.get(n) || []) if (on.has(x)) { deg.set(x, deg.get(x) - 1); if (!deg.get(x)) file.push(x); }
+    }
+    ordre.set(t.id, seq); dedans.set(t.id, on);
+    for (const id of seq) { if (!de.has(id)) de.set(id, []); de.get(id).push(t.id); }
   }
-  fwd() {
-    this.check();
-    if (!this.redo.length) return false;
-    this.undo.push(this.cur); this.cur = this.redo.pop(); this.apply(JSON.parse(this.cur));
-    return true;
+  TRAJ.p = p; TRAJ.sig = sig;
+  TRAJ.v = { ordre, dedans, de };
+  return TRAJ.v;
+}
+/** Les pistes dont la chaîne passe par ce module (0, 1 ou plusieurs). */
+export const pistesDuModule = (p, id) => trajets(p).de.get(id) || [];
+
+// Retirer un module EN RECOUSANT, piste par piste : ce qui entrait est
+// rebranché sur ce qui sortait, mais seulement le long d'une même chaîne — un
+// délai que deux pistes partagent ne recoud pas la basse sur la tranche de la
+// voix. Un module sur aucun trajet recoud tout (comme avant).
+export function recoudre(p, id, boucle) {
+  const T = trajets(p), pistes = T.de.get(id) || [];
+  const ins = p.cables.filter((c) => deSon(c) && c.b === id).map((c) => c.a);
+  const outs = p.cables.filter((c) => deSon(c) && c.a === id).map((c) => c.b);
+  const paires = [];
+  if (!pistes.length) for (const a of ins) for (const b of outs) paires.push([a, b]);
+  else for (const tid of pistes) { const on = T.dedans.get(tid); for (const a of ins) if (on.has(a)) for (const b of outs) if (on.has(b)) paires.push([a, b]); }
+  p.cables = p.cables.filter((c) => c.a !== id && c.b !== id);
+  for (const [a, b] of paires) if (!boucle(a, b) && !p.cables.some((c) => c.a === a && c.b === b && !c.t)) p.cables.push({ a, b });
+}
+
+// Sortir un module partagé de la chaîne d'UNE piste : ses câbles qui ne
+// servent qu'à elle partent, la chaîne se referme autour ; les autres pistes
+// le gardent.
+export function sortirDeLaChaine(p, id, tid, boucle) {
+  const T = trajets(p), on = T.dedans.get(tid);
+  if (!on?.has(id)) return false;
+  const autres = (T.de.get(id) || []).filter((x) => x !== tid);
+  const partage = (x) => autres.some((o) => T.dedans.get(o).has(x));
+  const ins = p.cables.filter((c) => deSon(c) && c.b === id && on.has(c.a)).map((c) => c.a);
+  const outs = p.cables.filter((c) => deSon(c) && c.a === id && on.has(c.b)).map((c) => c.b);
+  p.cables = p.cables.filter((c) => !(deSon(c) && ((c.b === id && ins.includes(c.a) && !partage(c.a)) || (c.a === id && outs.includes(c.b) && !partage(c.b)))));
+  for (const a of ins) for (const b of outs) if (!boucle(a, b) && !p.cables.some((c) => c.a === a && c.b === b && !c.t)) p.cables.push({ a, b });
+  return true;
+}
+
+// Faire entrer un effet dans la chaîne d'une piste, juste après `from` (un
+// module de cette chaîne) : les câbles de `from` vers la suite de la chaîne
+// passent par l'effet. C'est ce que fait un câble tiré, dans le nodal, d'un
+// nœud d'une piste vers un effet qu'une autre piste traverse déjà. Rend un
+// refus (texte) ou null.
+export function entrerDansLaChaine(p, from, fx, tid, boucle) {
+  const on = trajets(p).dedans.get(tid);
+  if (!on?.has(from)) return 'ce nœud n’est pas sur la chaîne de sa piste';
+  if (on.has(fx)) return 'cet effet est déjà dans la chaîne de cette piste';
+  if (boucle(from, fx)) return 'ce câble ferait une boucle : le son tournerait sans fin';
+  const suite = p.cables.filter((c) => deSon(c) && c.a === from && on.has(c.b)).map((c) => c.b);
+  if (suite.some((b) => boucle(fx, b))) return 'ce câble ferait une boucle : le son tournerait sans fin';
+  p.cables = p.cables.filter((c) => !(deSon(c) && c.a === from && suite.includes(c.b)));
+  p.cables.push({ a: from, b: fx });
+  for (const b of suite) if (!p.cables.some((c) => c.a === fx && c.b === b && !c.t)) p.cables.push({ a: fx, b });
+  return null;
+}
+
+// ── les groupes de pistes (l'arrangement) ───────────────────
+// Un groupe est une étiquette sur des pistes qui se suivent : il se replie,
+// se renomme, se défait ; il ne change pas le son. Ses membres restent
+// contigus (rangerGroupes, après chaque geste) ; un groupe vide s'efface.
+export function rangerGroupes(p) {
+  p.groups = (p.groups || []).filter((g) => g && g.id);
+  const ids = new Set(p.groups.map((g) => g.id));
+  for (const t of p.tracks) if (t.grp && (!ids.has(t.grp) || t.kind === 'bus')) delete t.grp;
+  // les membres d'un groupe rejoignent son premier membre, dans leur ordre
+  const out = [], place = new Set();
+  for (const t of p.tracks) {
+    if (place.has(t.id)) continue;
+    if (!t.grp) { out.push(t); place.add(t.id); continue; }
+    for (const m of p.tracks) if (m.grp === t.grp && !place.has(m.id)) { out.push(m); place.add(m.id); }
   }
+  p.tracks.splice(0, p.tracks.length, ...out);
+  const vivants = new Set(p.tracks.map((t) => t.grp).filter(Boolean));
+  p.groups = p.groups.filter((g) => vivants.has(g.id));
+}
+
+// Déplacer des pistes avant ou après une autre. Le groupe suit la place :
+// entre deux membres d'un groupe, on y entre ; au bord de son propre groupe,
+// on y reste (réordonner dedans) ; ailleurs, on en sort. Un groupe entier
+// qu'on déplace (par son en-tête) reste un groupe.
+export function groupeALaPlace(p, ids, cible, cote) {
+  const reste = p.tracks.filter((t) => !ids.includes(t.id));
+  const tc = reste.find((t) => t.id === cible);
+  if (!tc) return null;
+  const i = reste.indexOf(tc) + (cote === 'apres' ? 1 : 0);
+  const av = reste[i - 1], ap = reste[i];
+  const bouge = p.tracks.filter((t) => ids.includes(t.id));
+  const siens = new Set(bouge.map((t) => t.grp || ''));
+  const g0 = siens.size === 1 ? [...siens][0] : '';
+  if (g0 && p.tracks.filter((t) => t.grp === g0).every((t) => ids.includes(t.id))) return { i, g: g0, reste, bouge };   // un groupe entier
+  if (av?.grp && av.grp === ap?.grp) return { i, g: av.grp, reste, bouge };
+  if (g0 && (av?.grp === g0 || ap?.grp === g0)) return { i, g: g0, reste, bouge };
+  return { i, g: null, reste, bouge };
+}
+export function deplacerPistes(p, ids, cible, cote) {
+  if (ids.includes(cible)) return false;
+  const q = groupeALaPlace(p, ids, cible, cote);
+  if (!q || !q.bouge.length) return false;
+  for (const t of q.bouge) { if (q.g) t.grp = q.g; else delete t.grp; }
+  q.reste.splice(q.i, 0, ...q.bouge);
+  p.tracks.splice(0, p.tracks.length, ...q.reste);
+  rangerGroupes(p);
+  return true;
+}
+
+// Grouper des pistes avec une autre (lâcher une piste sur une autre) : la cible
+// garde son groupe s'il existe, sinon un groupe neuf naît autour des deux.
+export function grouperPistes(p, ids, cible, uid) {
+  const tc = p.tracks.find((t) => t.id === cible);
+  if (!tc || tc.kind === 'bus' || ids.includes(cible)) return null;
+  let g = tc.grp && p.groups.find((x) => x.id === tc.grp);
+  if (!g) {
+    const n = p.groups.length + 1;
+    g = { id: uid('g'), name: `Groupe ${n}`, fold: false };
+    p.groups.push(g);
+    tc.grp = g.id;
+  }
+  const bouge = p.tracks.filter((t) => ids.includes(t.id) && t.kind !== 'bus');
+  const reste = p.tracks.filter((t) => !ids.includes(t.id));
+  const membres = reste.filter((t) => t.grp === g.id);
+  const i = reste.indexOf(membres[membres.length - 1]) + 1;
+  for (const t of bouge) t.grp = g.id;
+  reste.splice(i, 0, ...bouge);
+  p.tracks.splice(0, p.tracks.length, ...reste);
+  rangerGroupes(p);
+  return g;
+}
+export function degrouper(p, gid) {
+  for (const t of p.tracks) if (t.grp === gid) delete t.grp;
+  p.groups = p.groups.filter((g) => g.id !== gid);
 }
 
 // ── les sections ────────────────────────────────────────────

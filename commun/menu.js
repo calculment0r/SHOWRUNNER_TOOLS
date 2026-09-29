@@ -6,6 +6,18 @@
 //   contextMenu(node, build)       clic droit (et touche Menu, Maj+F10) sur node
 //   kebab(build, { title })        un bouton « ⋯ » qui ouvre le menu sous lui
 //   closeMenus()                   ferme tout
+//   pageMenu(build)                les entrées propres à la page, en tête du menu de repli
+//   commonItems(e)                 les entrées communes (annuler, rétablir, journal, préférences…)
+//   copy(texte, dit)               copier (le vieux chemin en http, où le presse-papiers moderne manque)
+//
+// Le clic droit du navigateur n'apparaît nulle part (Cal, 29/09 : « ne plus
+// avoir de clic droit du navigateur partout dans nos outils ; on a un menu
+// contextuel dédié à où on se trouve au survol ») : le gardien de
+// commun/shell.js l'empêche sur toute page, sauf dans un champ de texte
+// (copier, coller natifs) ou sous [data-native-menu] ; une zone qui a son
+// menu (contextMenu) l'ouvre ; ailleurs, le menu de repli (fallbackMenu) :
+// le lien, la sélection, l'image ou la vidéo survolés, les entrées de la
+// page (pageMenu), puis les entrées communes.
 //
 // items : '-' (filet) · { head: 'TITRE' } · une entrée :
 //   { label, onclick, icon?, dot?: 'or' (un jeton), key?: 'Ctrl+K' (raccourci
@@ -144,7 +156,13 @@ function keys(e) {
 
 export function menu(x, y, items, { focusFirst = false } = {}) {
   closeMenus();
-  const list = (items || []).filter(Boolean);
+  // pas de filet en tête, en queue, ni deux de suite
+  const list = [];
+  for (const it of items || []) {
+    if (!it || (it === '-' && (!list.length || list[list.length - 1] === '-'))) continue;
+    list.push(it);
+  }
+  while (list[list.length - 1] === '-') list.pop();
   if (!list.length) return { close: closeMenus };
   restore = document.activeElement;
   const m = build(list, 0);
@@ -183,6 +201,69 @@ export function contextMenu(node, buildItems) {
       open(e, r.left + 8, r.bottom - 4, true);
     }
   });
+}
+
+// ── le menu de repli : là où aucune zone n'a le sien ────────
+let pageBuild = null;
+// les entrées propres à la page (build(e) → items ou null), en tête du repli
+export function pageMenu(build) { pageBuild = build; }
+
+export async function copy(text, said = 'copié') {
+  try { await navigator.clipboard.writeText(text); toast(said); } catch {
+    // http hors localhost : pas de presse-papiers asynchrone, le vieux chemin
+    const t = el('textarea', { style: { position: 'fixed', opacity: '0' } }, text);
+    document.body.append(t); t.select();
+    try { document.execCommand('copy'); toast(said); } catch { toast('copie refusée par ce navigateur'); }
+    t.remove();
+  }
+}
+const cut = (s, n = 56) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+
+// Annuler, rétablir et le journal de la pile active de la page
+// (commun/undo.js, qui se déclare dans window.SR_UNDO), les préférences
+// (Ctrl+,), le lien de la page. Une zone peut les reprendre en fin de son menu.
+export function commonItems(e = null) {
+  const out = [];
+  const U = window.SR_UNDO?.active?.();
+  const inModal = e?.target instanceof Element && e.target.closest('.scrim:not([data-undo-ok])');
+  if (U && !inModal) {
+    const lab = U.labels();
+    const k = window.SR_UNDO.keyLabel || (() => '');
+    out.push(
+      { label: U.canUndo() ? cut(lab.undo) : 'Annuler', icon: '↶', key: k('undo'), disabled: !U.canUndo(), why: 'rien à annuler dans cette page', onclick: () => U.undo() },
+      { label: U.canRedo() ? cut(lab.redo) : 'Rétablir', icon: '↷', key: k('redo'), disabled: !U.canRedo(), why: 'rien à rétablir', onclick: () => U.redo() },
+      { label: 'Le journal des gestes', icon: '↺', onclick: () => U.showLog() }, '-');
+  }
+  const tool = document.documentElement.dataset.srTool || null;
+  out.push({ label: 'Préférences…', icon: '⚙', key: 'Ctrl+,', onclick: () => import('./prefs.js').then((m) => m.openPrefs(tool)) });
+  out.push({ label: 'Copier le lien de la page', icon: '↗', onclick: () => copy(location.href, 'lien copié') });
+  return out;
+}
+
+export function fallbackMenu(e, x, y, kb = false) {
+  const t = e.target instanceof Element ? e.target : e.target?.parentElement || null;
+  const items = [];
+  const sel = String(window.getSelection?.() || '').trim();
+  if (sel) items.push({ label: `Copier « ${cut(sel, 30)} »`, icon: '⧉', key: 'Ctrl+C', onclick: () => copy(sel) }, '-');
+  const a = t?.closest('a[href]');
+  if (a && !/^javascript:/i.test(a.getAttribute('href') || '')) {
+    items.push({ head: 'le lien' },
+      { label: 'Ouvrir', onclick: () => { location.href = a.href; } },
+      { label: 'Ouvrir dans un nouvel onglet', icon: '↗', onclick: () => window.open(a.href, '_blank', 'noopener') },
+      { label: 'Copier le lien', onclick: () => copy(a.href, 'lien copié') }, '-');
+  }
+  const media = t?.closest('img, video');
+  const src = media && (media.currentSrc || media.src);
+  if (media && src && !src.startsWith('data:') && !src.startsWith('blob:')) {
+    const isV = media.tagName === 'VIDEO';
+    if (isV) items.push({ label: media.paused ? 'Lecture' : 'Pause', icon: media.paused ? '▶' : '❚❚', onclick: () => (media.paused ? media.play().catch(() => {}) : media.pause()) });
+    items.push({ label: isV ? 'Ouvrir la vidéo dans un onglet' : 'Ouvrir l’image dans un onglet', icon: '↗', onclick: () => window.open(src, '_blank', 'noopener') },
+      { label: isV ? 'Copier l’adresse de la vidéo' : 'Copier l’adresse de l’image', onclick: () => copy(src, 'adresse copiée') }, '-');
+  }
+  const page = pageBuild ? pageBuild(e) : null;
+  if (page && page.length) items.push(...page, '-');
+  items.push(...commonItems(e));
+  return menu(x, y, items, { focusFirst: kb });
 }
 
 // Le bouton « ⋯ » : il ouvre le menu sous lui, aligné à sa droite.

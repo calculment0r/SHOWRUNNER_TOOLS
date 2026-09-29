@@ -48,10 +48,12 @@
 //            une tête s'attrape n'importe où sur son trait (n° 81)
 //   courbes  aire pleine derrière la tête rouge, ligne et points devant ; un
 //            point devant se tire à la verticale (n° 53)
+//   clic droit  le menu de ce qu'on survole (29/09) : un attracteur, un
+//            segment, une lane, le banc — jamais celui du navigateur
 
 import { toast } from '../commun/shell.js';
 import { songEnd, projEnd } from './moteur.js';
-import { el, put, tok, clamp } from './ui.js';
+import { el, put, tok, clamp, letter } from './ui.js';
 import { attracteursActifs as actifsDuProjet, blocsDInfluence, operateurs, membres, actif, ecartBoite, poids, FACETTES_MODULES } from './machines/influence.js';
 
 /**
@@ -563,7 +565,7 @@ export function createBench(app, nodal) {
       const seg = B().segs.find((s) => s.id === a.segment);
       const parle = seg ? actif(seg, tg) : false;
       const choisi = selection === a.id;
-      const g = el('div', { class: `bn-atr${parle ? '' : ' off'}${choisi ? ' sel' : ''}` });
+      const g = el('div', { class: `bn-atr${parle ? '' : ' off'}${choisi ? ' sel' : ''}`, 'data-atr': a.id });
       const forces = a.anneaux.map((an) => {
         const dedans = membres(a, an, bl);
         const tot = dedans.reduce((s, b) => s + poids(ecartBoite(b.boite, a.x, a.y), an.r, a.loi), 0);
@@ -727,18 +729,68 @@ export function createBench(app, nodal) {
   plan.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
 
   // ── clavier : « c » bascule les têtes, Suppr retire l'attracteur choisi (n° 71, 84) ──
+  // la lettre par e.key (ui.js, letter) : juste en AZERTY comme en QWERTY
+  function retirerAttracteur(id) {
+    const a = B().atts.find((x) => x.id === id);
+    B().atts = B().atts.filter((x) => x.id !== id);
+    for (const s of B().segs) if (s.atr === id) delete s.atr;
+    if (selection === id) selection = null;
+    if (survol === id) survol = null;
+    app.label(`retirer l'attracteur ${a?.nom || ''}`);
+    app.commit('quiet'); renderPlan(); paintMeta();
+  }
   addEventListener('keydown', (e) => {
-    if (S.view !== 'nodal' || !S.proj || !root.isConnected || e.target.closest?.('input, textarea, select, [contenteditable]') || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.code === 'KeyC' && !e.repeat) { e.preventDefault(); e.stopImmediatePropagation(); toggleHeads(); return; }
+    if (S.view !== 'nodal' || !S.proj || !root.isConnected || e.target.closest?.('input, textarea, select, [contenteditable]') || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('.sr-menu')) return;
+    if (letter(e) === 'c' && !e.repeat) { e.preventDefault(); e.stopImmediatePropagation(); toggleHeads(); return; }
     if ((e.key === 'Delete' || e.key === 'Backspace') && selection) {
       e.preventDefault(); e.stopImmediatePropagation();
-      const id = selection;
-      B().atts = B().atts.filter((a) => a.id !== id);
-      for (const s of B().segs) if (s.atr === id) delete s.atr;
-      selection = null; if (survol === id) survol = null;
-      app.commit('quiet'); renderPlan(); paintMeta();
+      retirerAttracteur(selection);
     }
   }, true);
+
+  // ── le clic droit : le menu d'un attracteur, d'un segment, d'une lane, du banc ──
+  function menuDe(e) {
+    const tg = e.target;
+    const atrEl = tg.closest?.('[data-atr]');
+    if (atrEl) {
+      const a = B().atts.find((x) => x.id === atrEl.dataset.atr);
+      if (!a) return null;
+      selection = a.id; paintMeta();
+      const seg = B().segs.find((s) => s.id === a.segment);
+      return [
+        { head: `attracteur · ${a.nom}` },
+        seg ? { label: 'La tête au début de son segment', onclick: () => app.engine.seek(seg.d) } : null,
+        { label: 'Loi de distance ×1', disabled: Math.abs(a.loi - 1) < 1e-6, why: 'déjà ×1', onclick: () => { a.loi = 1; app.commit('quiet'); paintMeta(); } },
+        { label: 'Rayons d\'origine', onclick: () => { a.anneaux.forEach((an, i) => { an.r = RAYONS_ANNEAUX[i] ?? RAYONS_ANNEAUX.at(-1) + i * 120; }); app.commit('quiet'); paintMeta(); } },
+        '-',
+        { label: 'Retirer l\'attracteur', key: 'Suppr', danger: true, onclick: () => retirerAttracteur(a.id) },
+      ];
+    }
+    const segEl = tg.closest?.('[data-seg]');
+    if (segEl) {
+      const seg = B().segs.find((s) => s.id === segEl.dataset.seg);
+      if (!seg) return null;
+      const lane = LANES.find((L) => L.id === seg.lane);
+      return [
+        { head: `segment · ${lane?.nom || seg.lane} · temps ${seg.d} → ${seg.d + seg.l}` },
+        { label: seg.atr ? 'Son attracteur : le déplacer' : 'Un attracteur : tirer au bouton du milieu vers le nodal', disabled: true, why: 'le bouton du milieu, tiré du segment jusque sur le nodal' },
+        seg.atr ? { label: 'Choisir son attracteur', onclick: () => { selection = seg.atr; paintMeta(); } } : null,
+        { label: 'La tête à son début', onclick: () => app.engine.seek(seg.d) },
+        '-',
+        seg.atr ? { label: 'Retirer son attracteur', danger: true, onclick: () => retirerAttracteur(seg.atr) } : null,
+        { label: 'Retirer le segment', danger: true, onclick: () => { if (seg.atr) B().atts = B().atts.filter((x) => x.id !== seg.atr); B().segs = B().segs.filter((s) => s !== seg); app.label('retirer un segment du banc'); app.commit('quiet'); renderPlan(); paintMeta(); } },
+      ];
+    }
+    const laneEl = tg.closest?.('.bn-lane');
+    const lane = laneEl && LANES.find((L) => L.id === laneEl.dataset.lane);
+    const r = plan.getBoundingClientRect(), t0 = Math.max(0, Math.round(versTemps(e.clientX - r.left)));
+    return [
+      { head: lane ? `lane · ${lane.nom} · temps ${t0}` : 'le banc' },
+      lane?.nature === 'matiere' ? { label: 'Un segment ici', sub: 'huit temps', onclick: () => { B().segs.push({ id: nid('g'), lane: lane.id, d: t0, l: 8 }); app.commit('quiet'); renderPlan(); } } : null,
+      { label: heads.gouverne === 'reel' ? 'L\'écoute gouverne' : 'Le temps réel gouverne', key: 'C', onclick: toggleHeads },
+      { label: 'Recadrer le banc', onclick: () => { U().cam = { x: -30, y: -2, k: 1 }; app.saveUi(); demanderPlan(); } },
+    ];
+  }
 
   // ── à chaque image : les têtes glissent ; le plan ne se refait que s'il change ──
   function frame(force = false) {
@@ -769,5 +821,5 @@ export function createBench(app, nodal) {
   }
   function hide() { filSvg.remove(); poseEl.remove(); app.engine.ecoute = undefined; }
 
-  return { el: root, render, frame, paintMeta, renderPlan, hide, suivreVue, tempsGouvernant: gouvernant, state: () => ({ heads, selection }) };
+  return { el: root, render, frame, paintMeta, renderPlan, hide, suivreVue, menuDe, tempsGouvernant: gouvernant, state: () => ({ heads, selection }) };
 }

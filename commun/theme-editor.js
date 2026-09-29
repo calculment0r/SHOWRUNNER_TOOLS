@@ -288,7 +288,7 @@ async function paintPreview() {
       el('span', { class: 'slab t1' }, el('span', { class: 'body' }, el('span', { class: 'line' }, el('span', { class: 'ref' }, 'SR—03'), el('span', { class: 'nm' }, 'Character Factory')), el('span', { class: 'sub' }, '--coral-1 · --on-coral1')), el('span', { class: 'dots' }), el('span', { class: 'go' }, 'Ouvrir'))),
     el('div', { class: 'tiles' }, tile('3', 'SR—05', 'Montage', '--verd-3 · --on-grn'), tile('4', 'SR—06', 'ODIO', '--verd-4'), tile('5', 'SR—08', 'Idéation', '--verd-5')),
     el('div', { class: 'te-cols' },
-      el('span', { class: 'statcard' }, el('span', { class: 'ref' }, 'Asset · la bibliothèque'), el('span', { class: 'n' }, '0042'), el('span', { class: 'foot' }, '--or · --on-light'), el('span', { class: 'dots' })),
+      el('span', { class: 'statcard' }, el('span', { class: 'ref' }, 'Asset · la bibliothèque'), el('span', { class: 'n' }, '0042'), el('span', { class: 'foot' }, '--or · --on-or'), el('span', { class: 'dots' })),
       el('div', { class: 'hero' }, el('span', { class: 'ref' }, '00_PORTAIL'), el('h1', {}, 'Tous nos outils'),
         el('p', {}, 'Norelli ne tient que le logotype et ce titre ; Venus Rising porte l’affichage ; Azeret Mono les étiquettes de la machine.'))));
 }
@@ -296,7 +296,7 @@ async function paintPreview() {
 // ── les contrastes, mesurés sur ce qu'affiche la page ───────
 const INKS = ['--ink', '--ink2', '--ink3', '--cy', '--or', '--grn2', '--amb'];
 const BGS = ['--bg', '--panel', '--panel2', '--panel3', '--sel-bg', '--hdr-bg'];
-const FILLS = [['--or', '--on-or', '« Générer »'], ['--or', '--on-light', 'carte de compte'], ['--grn', '--on-grn', 'bouton engagé'], ['--cy', '--on-cy', 'aplat acier'],
+const FILLS = [['--or', '--on-or', '« Générer »'], ['--or', '--on-or', 'carte de compte'], ['--grn', '--on-grn', 'bouton engagé'], ['--cy', '--on-cy', 'aplat acier'],
   ['--coral-3', '--on-light', 'corail 3'], ['--coral-2', '--on-light', 'corail 2'], ['--coral-1', '--on-coral1', 'corail 1'], ['--verd-3', '--on-grn', 'carte verte'],
   ['--black', '--ink3', 'moniteur vide']];
 function paintContrast() {

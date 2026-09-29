@@ -1,0 +1,91 @@
+/* ============================================================
+   MOVIE ANALYSIS — la palette : personnages, voix, rythme.
+
+   Le seul endroit où Movie Analysis déclare des teintes. Chargée par
+   la page d'un film (analyse/film/film.css l'importe) et par le labo
+   des voix (analyse/diarisation/index.html) : une seule vérité pour
+   les deux. Une teinte d'identité par personnage (dans l'ordre du
+   casting), une par voix Nemotron sans personnage (V1…V8, les mêmes
+   au labo et au Studio), une par rôle de rythme. Chaque fois qu'un
+   jeton du portail (commun/tokens.css) a la même teinte, c'est lui
+   qu'on prend ; les autres sont celles du kit Verdant que le Studio
+   portait déjà (Cal les connaît : Getaround, Wall). Les scripts les
+   lisent à l'exécution (getComputedStyle), pour le canvas, les
+   pastilles et le sous-titre, et les relisent quand le thème change
+   (l'événement sr:theme de commun/theme.js).
+
+   Deux jeux, comme commun/tokens.css : le sombre (:root) est celui
+   du kit, inchangé ; le clair ([data-theme="light"]) ne redonne que
+   les teintes qui ne tenaient pas sur le papier clair. Il est
+   « retourné » comme le reste du portail : même teinte, même
+   saturation (HLS), la clarté choisie pour un contraste mesuré sur
+   le --bg clair — au moins 3:1 (WCAG 2.2, 1.4.11 : une
+   pastille, un trait, une piste) ; la rampe corail, qui se distingue
+   par la clarté dans le sombre, s'étage de 3:1 à 10:1, la plus pâle
+   du sombre devenant la plus profonde. Le texte, lui, reste à
+   l'encre du portail : une teinte d'identité n'est jamais une encre.
+   ============================================================ */
+:root {
+  --pc-0:  var(--or);
+  --pc-1:  var(--cy);
+  --pc-2:  #3f9a6a;
+  --pc-3:  #d9a486;
+  --pc-4:  #f0b49b;
+  --pc-5:  var(--grn);
+  --pc-6:  #e59578;
+  --pc-7:  #8fb3c0;
+  --pc-8:  #d47a5c;
+  --pc-9:  #4f8f6a;
+  --pc-10: #c99b7a;
+  --pc-11: #a3502f;
+  --pc-12: #6fa88c;
+  --pc-13: #e8c4ae;
+  --pc-14: #7a3a22;
+  --pc-15: var(--verd-4);
+
+  /* les voix Nemotron qu'aucun personnage ne porte (V1…V8), celles du labo de diarisation */
+  --pv-0: #3e8ec1;
+  --pv-1: #819341;
+  --pv-2: #ab639c;
+  --pv-3: #389560;
+  --pv-4: #7a6cbc;
+  --pv-5: #00a0a1;
+  --pv-6: #b48c2b;
+  --pv-7: #c76174;
+
+  /* les rôles de rythme (video-shots.mjs, RHYTHM_ROLES) — tous au-dessus de 3:1 sur les deux papiers */
+  --ry-hook:   #a67a16;
+  --ry-setup:  #8c846a;
+  --ry-build:  #2e6e9e;
+  --ry-beat:   #4e7a3b;
+  --ry-turn:   #a85570;
+  --ry-payoff: #b23138;
+  --ry-breath: #2f7e74;
+  --ry-close:  #7d5a76;
+}
+
+/* le clair : le contraste mesuré sur --bg clair, puis sur --panel3 clair (le plus sombre des fonds clairs où une
+   pastille ou une barre se pose), entre parenthèses — aucune sous 3:1 ; --pc-0, 1, 5, 11, 14, 15, --pv-2, 4 et les
+   rythmes build à close tiennent déjà (--pc-0, 1, 5, 15 sont des jetons du portail, qui ont leur valeur claire) */
+[data-theme="light"] {
+  --pc-2:  #3a8d61;   /* 3,32 · 3,01 */
+  --pc-3:  #7f4728;   /* 6,05 · 5,49 */
+  --pc-4:  #712d11;   /* 8,22 · 7,46 */
+  --pc-6:  #be4d25;   /* 4,01 · 3,63 */
+  --pc-7:  #558596;   /* 3,31 · 3,00 */
+  --pc-8:  #cb5d39;   /* 3,32 · 3,01 */
+  --pc-9:  #447c5c;   /* 4,00 · 3,63 */
+  --pc-10: #a66d44;   /* 3,51 · 3,18 */
+  --pc-12: #253d31;   /* 9,58 · 8,68 */
+  --pc-13: #502c17;   /* 10,01 · 9,07 */
+
+  --pv-0: #3a84b4;    /* 3,34 · 3,03 */
+  --pv-1: #75853b;    /* 3,31 · 3,00 */
+  --pv-3: #358e5c;    /* 3,31 · 3,00 */
+  --pv-5: #008c8d;    /* 3,34 · 3,03 */
+  --pv-6: #9c7925;    /* 3,31 · 3,00 */
+  --pv-7: #c55d70;    /* 3,32 · 3,01 */
+
+  --ry-hook:  #a17615;   /* 3,35 · 3,04 */
+  --ry-setup: #857e65;   /* 3,32 · 3,01 */
+}

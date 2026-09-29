@@ -26,7 +26,9 @@
 * { box-sizing: border-box; }
 /* min-height et non height : un corps tenu à la hauteur de la fenêtre
    décroche l'en-tête collante après le premier écran. Les outils plein
-   écran (montage, ODIO, idéation) posent eux-mêmes leur 100vh. */
+   écran (montage, ODIO, idéation) posent eux-mêmes leur hauteur d'écran,
+   calc(100 * var(--vh)) : 100vh dépasse sous le zoom de l'interface
+   (commun/tokens.css, --vh). */
 html { height: 100%; }
 body { min-height: 100%; }
 
@@ -401,7 +403,7 @@ select.fld { cursor: pointer; }
 .scrim[hidden] { display: none; }
 .modal {
   background: var(--panel); border-radius: var(--r4); width: min(560px, 100%);
-  max-height: 84vh; display: flex; flex-direction: column; overflow: hidden;
+  max-height: calc(84 * var(--vh)); display: flex; flex-direction: column; overflow: hidden;
   box-shadow: inset 0 0 0 1px var(--line), 0 24px 60px var(--drop-lg);
 }
 .modal.lg { width: min(860px, 100%); }
@@ -445,7 +447,7 @@ select.fld { cursor: pointer; }
 /* ── carte de compte ────────────────────────────────────── */
 .statcard {
   position: relative; overflow: hidden; border-radius: var(--r4);
-  background: var(--or); color: var(--on-light);
+  background: var(--or); color: var(--on-or);   /* --on-light sur l'orange : 2,96:1 en clair (étude préférences § 5) */
   padding: 22px 26px; display: flex; flex-direction: column; min-height: 210px;
 }
 .statcard .ref { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .2em; text-transform: uppercase; opacity: .72; }

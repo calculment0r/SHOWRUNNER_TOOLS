@@ -4,11 +4,21 @@
 // droit) passent par commun/menu.js. Le Studio lui-même (vidéo, script, timeline, casting, dépouillement) est le
 // script de la page : ce module ne fait que le cadre, commun à tous les films.
 import { mountHeader, $, href } from '../../commun/shell.js';
-import { menu, kebab, contextMenu, closeMenus } from '../../commun/menu.js';
+import { menu, kebab, contextMenu, closeMenus, pageMenu, commonItems, copy } from '../../commun/menu.js';
 import { copyText } from '../../commun/fil.js';
+import { createUndo } from '../../commun/undo.js';
 
-// le script de la page (voix.js) prend le menu commun quand il est là
-window.SR_MENU = { menu, kebab, contextMenu, closeMenus };
+// le script de la page (voix.js, menus.js) prend le menu commun quand il est là : le menu d'une réplique, et celui de
+// chaque zone au clic droit (la scène, la frise, le script, la timeline, la fiche du plan, le casting, le dépouillement)
+window.SR_MENU = { menu, kebab, contextMenu, closeMenus, commonItems, copy };
+
+// l'annulation commune (commun/undo.js) : une pile par page, donc par film. Le script de la page est classique et
+// s'exécute avant ce module : il a posé window.xvBrancheAnnulation, qui prend la pile (des instantanés de ses
+// corrections), remplace ses boutons « ↶ Annuler » par ↶ ↷ et le journal, et laisse le clavier à undo.js (Ctrl+Z,
+// Ctrl+Maj+Z, Ctrl+Y, lus par e.key). Sans ce module (la page ouverte seule), la page garde son repli.
+// (window.SR_UNDO est à undo.js lui-même : le menu de repli de commun/menu.js y lit la pile active — ne pas l'écraser)
+const U = createUndo({ name: 'analyse-film' });
+if (typeof window.xvBrancheAnnulation === 'function') window.xvBrancheAnnulation(U);
 
 const hdr = mountHeader('analyse');
 
@@ -56,4 +66,6 @@ if (place) {
   // le clic droit sur la barre ouvre le même menu
   const bar = $('.fm-bar');
   if (bar) contextMenu(bar, (e) => (e.target.closest('a, button, input') ? null : items()));
+  // et le menu de repli du portail (là où aucune zone n'a le sien) commence par lui
+  pageMenu(() => items());
 }

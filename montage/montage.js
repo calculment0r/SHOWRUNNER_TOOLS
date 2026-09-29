@@ -17,7 +17,7 @@
 // la piste cible du montage ouvert (le dernier ouvert, sinon un nouveau).
 
 import { mountHeader, api, jobs, el, $, $$, toast, href, uploadFile, dropAnywhere, dropZone, dragItem, ITEM_MIME, fmtDate, stateFr } from '../commun/shell.js';
-import { menu, contextMenu } from '../commun/menu.js';
+import { menu, contextMenu, pageMenu } from '../commun/menu.js';
 import { split } from '../commun/split.js';
 import * as M from './model.js';
 import { Program, Source, tempGains } from './player.js';
@@ -1936,6 +1936,17 @@ function wire() {
   contextMenu($('#prg'), programMenu);
   contextMenu($('#insp'), inspMenu);
   contextMenu($('#seq-tabs'), seqTabMenu);
+  // ailleurs (la barre, les outils, les poignées) : les gestes de la séquence, en tête du menu
+  // commun de repli (commun/menu.js, pageMenu) — le navigateur n'a jamais le clic droit (Cal, 29/09)
+  pageMenu(() => (!S.p ? [{ head: 'Montage' }, { label: 'Nouvelle séquence…', icon: '+', onclick: () => newProjectFlow() }, { label: 'Ouvrir une séquence…', icon: '▤', onclick: projectsModal }]
+    : [{ head: `séquence · ${S.p.name}` },
+      { label: 'Exporter en MP4…', icon: '↓', key: 'Ctrl+M', disabled: !S.p.clips.length, why: 'rien à exporter : posez des plans sur la timeline', onclick: exportModal },
+      { label: 'Nouvelle séquence…', icon: '+', onclick: () => newProjectFlow() },
+      { label: 'Ouvrir une séquence…', icon: '▤', onclick: projectsModal },
+      { label: 'La voir dans Asset', icon: '▦', onclick: () => { location.href = href('asset/#' + S.p.id); } },
+      '-',
+      { label: 'Aimant', checked: !!S.snap, onclick: () => $('#b-snap')?.click() },
+      { label: 'Les raccourcis', icon: '?', onclick: helpModal }]));
 
   // moniteurs : le clic donne le clavier
   $('#src').addEventListener('pointerdown', () => focus('source'));

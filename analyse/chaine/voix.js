@@ -15,9 +15,14 @@
    Globales du Studio : DATA, video, D, $ (getElementById), tc, castName, castColor, courtNom, repliquesUniques,
    paint, JETON, PALETTE ; VOIX est posé par studio.mjs (diarisation, mots horodatés, labo). */
 // Les teintes du dessin (le canvas, les pastilles) : les jetons du portail (commun/tokens.css) et la palette des
-// voix (--pv-0…7, déclarée dans analyse/film/film.css), lus à l'exécution — aucune couleur n'est écrite ici.
-const VXC = { ink: JETON('--ink'), ink2: JETON('--ink2'), ink3: JETON('--ink3'), bg: JETON('--bg'), panel3: JETON('--panel3'),
-  grn: JETON('--grn'), cy: JETON('--cy'), amb: JETON('--amb') };
+// voix (--pv-0…7, déclarée dans analyse/film/palette.css), lus à l'exécution — aucune couleur n'est écrite ici. Relues
+// quand le thème change (vxTeintes, appelée par la page sur sr:theme), dans le même objet et le même tableau.
+const VXC = {}, VX_COULEURS_VOIX = [];
+function vxTeintes() {
+  for (const k of ['ink', 'ink2', 'ink3', 'bg', 'panel', 'panel3', 'grn', 'cy', 'amb']) VXC[k] = JETON('--' + k);
+  VX_COULEURS_VOIX.splice(0, VX_COULEURS_VOIX.length, ...PALETTE('--pv-', 8));
+}
+vxTeintes();
 const VX_POST_DEFAUT = { onset: 0.5, offset: 0.5, pad_onset: 0, pad_offset: 0, min_duration_on: 0, min_duration_off: 0 };
 const VX_POST_CHAMPS = [
   ['onset', 'Seuil d’entrée', 0, 1, 0.01, 'une voix commence au-dessus'],
@@ -27,7 +32,6 @@ const VX_POST_CHAMPS = [
   ['pad_onset', 'Marge avant', 0, 1, 0.01, 'ajoutée au début (s)'],
   ['pad_offset', 'Marge après', 0, 1, 0.01, 'ajoutée à la fin (s)'],
 ];
-const VX_COULEURS_VOIX = PALETTE('--pv-', 8);
 const VX_CLE = 'movie-analysis-voix-' + (VOIX.slug || '');
 const vxLit = (k, d) => { try { const v = localStorage.getItem(VX_CLE + '-' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } };
 const vxEcrit = (k, v) => { try { localStorage.setItem(VX_CLE + '-' + k, JSON.stringify(v)); } catch (e) {} };
@@ -205,7 +209,8 @@ function vxCouplage() {
   const forces = vxCorr().voix, vivant = new Set(DATA.cast.map((c) => c.id));
   for (let s = 0; s < V; s++) {
     const tri = Array.from(votes[s].entries()).sort((x, y) => y[1] - x[1]), tot = tri.reduce((t, x) => t + x[1], 0);
-    const k = 'V' + (s + 1), force = Object.prototype.hasOwnProperty.call(forces, k) ? forces[k] : undefined;
+    // null : « revenir à l'automatique » (vxForceVoix '__auto', une annulation) — pas une voix forcée sur personne
+    const k = 'V' + (s + 1), force = forces[k] === null || forces[k] === undefined ? undefined : forces[k];
     const auto = tri.length ? (tri[0][0] || null) : null;   // '' : la main a dit « personne »
     let qui = force !== undefined ? (force || null) : auto;
     if (qui && !vivant.has(qui)) qui = null;
@@ -405,10 +410,11 @@ function vxDessine() {
       for (const sh of DATA.shots) {
         if (sh.end < a || sh.start > b) continue;
         const x0 = X(sh.start), x1 = X(sh.end);
-        // (la teinte d'un plan est une mesure — la moyenne de ses images clés —, pas une couleur du thème)
+        // (la teinte d'un plan est une mesure — la moyenne de ses images clés —, pas une couleur du thème) ; le fond du
+        // thème par-dessus, à 62 % : l'encre y tient 4,5:1 sur un plan noir comme sur un plan blanc, dans les deux thèmes
         ctx.fillStyle = sh.teinte && /^#[0-9a-f]{6}$/i.test(sh.teinte) ? sh.teinte : VXC.panel3;
         ctx.fillRect(x0, y + 16, Math.max(1, x1 - x0 - 1), 12);
-        ctx.fillStyle = vxRgba(VXC.bg, 0.55); ctx.fillRect(x0, y + 16, Math.max(1, x1 - x0 - 1), 12);
+        ctx.fillStyle = vxRgba(VXC.bg, 0.62); ctx.fillRect(x0, y + 16, Math.max(1, x1 - x0 - 1), 12);
         if (x1 - x0 > 26) { ctx.save(); ctx.beginPath(); ctx.rect(x0, y + 16, x1 - x0 - 2, 12); ctx.clip(); ctx.fillStyle = VXC.ink; ctx.font = '8px "Venus Rising", sans-serif'; ctx.fillText(sh.id, x0 + 4, y + 22.5); ctx.restore(); }
       }
       continue;
@@ -653,7 +659,9 @@ function majSousTitre(t) {
   const box = $('st'); if (!box) return;
   const ici = VX.lignes.filter((g) => g.a - 0.12 <= t && t < g.b + 0.25);
   const avance = (g) => (g.mots ? g.mots.filter((m) => m.a <= t).length + (g.mots.some((m) => m.a <= t && t < m.b) ? 'i' : '') : '');
-  const cle = ici.map((g) => VX.lignes.indexOf(g) + ':' + avance(g)).join('|');
+  // (qui parle entre dans la clé : une correction qui arrive après coup — les corrections partagées lues au chargement, une
+  // annulation — change le personnage d'une ligne sans changer sa place ; sans lui, le sous-titre gardait l'ancien)
+  const cle = ici.map((g) => VX.lignes.indexOf(g) + ':' + (g.perso || g.s) + ':' + avance(g)).join('|');
   if (cle === box.dataset.cle) return;
   box.dataset.cle = cle;
   box.textContent = '';
@@ -681,7 +689,8 @@ function vxAjusteST(box) {
 /* ═══════════════════════════════════════════════════ réattribuer une réplique ── */
 // cible : 'P3' (un personnage), '' (personne, voix off), null (revenir à l'automatique).
 function vxAttribueA(g, cible) {
-  window.xvMemorise();
+  window.xvMemorise(cible === null ? 'rendre « ' + g.texte + ' » à l’automatique'
+    : 'réattribuer « ' + g.texte + ' » à ' + (cible === '' ? 'personne' : cible + ' · ' + castName(cible)));
   const c = window.xvCorrections();
   c.locuteurs = c.locuteurs || {};
   const base = (window.XV_CORR_FICHIER || {}).locuteurs || {};
@@ -700,7 +709,9 @@ function vxAttribueA(g, cible) {
   vxEnregistre();
 }
 function vxForceVoix(s, qui) {
-  window.xvMemorise();
+  const v = 'la voix V' + (s + 1);
+  window.xvMemorise(qui === '__auto' ? 'rendre ' + v + ' à l’automatique' : qui === '' ? 'ranger ' + v + ' sous « personne »'
+    : 'donner ' + v + ' à ' + qui + ' · ' + castName(qui));
   const c = window.xvCorrections();
   c.voix = c.voix || {};
   if (qui === '__auto') c.voix['V' + (s + 1)] = null; else c.voix['V' + (s + 1)] = qui;
@@ -745,9 +756,10 @@ function vxEnAttente() {
   const f = window.XV_CORR_FICHIER || {}, l = window.xvCorrections(), out = [];
   for (const k of VX_CLES_CORR) for (const [x, v] of Object.entries(l[k] || {})) {
     let fv = (f[k] || {})[x];
-    // ce que vaut une clé absente du fichier : une fusion « à part » (x → x), une attribution automatique (null)
-    if (fv === undefined) fv = k === 'fusions' ? x : (k === 'locuteurs' || k === 'voix' ? null : undefined);
-    if (JSON.stringify(v) !== JSON.stringify(fv)) out.push(k + ':' + x);
+    // ce que vaut une clé absente du fichier : une fusion « à part » (x → x), l'automatique (null) pour le reste — un
+    // nom ou une réplique remis à null par une annulation n'est pas une modification en attente
+    if (fv === undefined) fv = k === 'fusions' ? x : null;
+    if (JSON.stringify(v === undefined ? null : v) !== JSON.stringify(fv)) out.push(k + ':' + x);
   }
   return out;
 }
@@ -765,38 +777,118 @@ window.xvEtatPartage = function () {
   b.append(n + ' modification' + (n > 1 ? 's' : '') + ' de ce navigateur, pas ' + (window.XV_CORR_PORTAIL ? 'dans le portail' : 'dans le dépôt partagé') + ' : ');
   const bouton = (t, f) => { const x = document.createElement('button'); x.type = 'button'; x.className = 'vx-bouton'; x.textContent = t; x.addEventListener('click', f); b.append(x); };
   bouton('Les partager', () => { window.xvEnregistrePartage(VX_CLES_CORR, $('vx-etat')); });
-  bouton('Les oublier', () => { window.xvMemorise(); window.xvPoseCorrections({}); window.xvRafraichir(); window.xvEtatPartage(); });
+  bouton('Les oublier', () => { window.xvMemorise('oublier ' + n + ' modification' + (n > 1 ? 's' : '') + ' de ce navigateur'); window.xvPoseCorrections({}); window.xvRafraichir(); window.xvEtatPartage(); });
 };
 
-/* ── annuler : chaque geste (réplique déplacée, voix forcée, fiches réunies ou séparées) garde l'état d'avant ── */
-const VX_CLES = ['locuteurs', 'voix', 'fusions'], VX_HIST = [];
+/* ══════════════════════════════════════════════════════ annuler, rétablir ══
+   La pile commune du portail (commun/undo.js), posée par analyse/film/film.js : window.xvBrancheAnnulation(U). film.js
+   est un module, exécuté après ce script — d'où le branchement après coup, comme le menu commun (SR_MENU). Chaque geste
+   est un instantané des corrections (U.snapshots) ; annuler repose l'état d'avant, tout entier, et l'enregistre comme
+   un geste de plus (au portail, pour les clés qui y partent seules). Le clavier (Ctrl+Z, Ctrl+Maj+Z, Ctrl+Y, lus par
+   e.key), les boutons ↶ ↷ et le journal sont ceux d'undo.js ; dans un champ, Ctrl+Z est au navigateur.
+   S'annulent : réattribuer une réplique (menu, glisser), la rendre à l'automatique, forcer une voix, réunir ou séparer
+   des fiches, défaire les fusions, tout remettre, remettre en automatique, « les oublier », renommer (« Appliquer »),
+   corriger le texte d'une réplique (un geste par saisie : du moment où le champ prend la main à celui où il la rend),
+   repartir de la chaîne.
+   Ne s'annulent pas : « Enregistrer » et « Publier sur GitHub » (partis hors de la page, pour tous : on les défait en
+   corrigeant de nouveau) ; les seuils de NeMo et « montrer les voix brutes » (des réglages de lecture gardés par ce
+   navigateur, pas des corrections) ; la vue (onglet, zoom, disposition, son choisi).
+   La page ouverte seule, sans le portail (pas de film.js) : un repli — annuler sans rétablir, 80 états, les boutons
+   « ↶ Annuler » de la page et Ctrl+Z, lu par e.key (la touche Z d'un clavier AZERTY aussi) ; il se tait dès qu'undo.js
+   est là. */
+const VX_CLES = ['locuteurs', 'voix', 'fusions', 'noms', 'repliques'];
+// les clés qui partent seules au portail à chaque geste (un nom attend « Enregistrer », comme avant)
+const VX_PARTAGEES = ['locuteurs', 'voix', 'fusions', 'repliques'];
+// ce que vaut une clé absente : une fusion « à part » (x → x), l'automatique (null) pour le reste
+const vxNeutre = (k, x, v) => v === null || v === undefined || (k === 'fusions' && v === x);
+// l'état des corrections tel que la page le montre (le fichier, le dépôt partagé, le portail, puis ce navigateur),
+// sans les valeurs neutres et dans un ordre fixe : deux états égaux s'écrivent pareil
 function vxEtat() {
   const f = window.XV_CORR_FICHIER || {}, l = window.xvCorrections(), e = {};
-  for (const k of VX_CLES) e[k] = Object.assign({}, f[k] || {}, l[k] || {});
+  for (const k of VX_CLES) {
+    const m = Object.assign({}, f[k] || {}, l[k] || {}), o = {};
+    for (const x of Object.keys(m).sort()) if (!vxNeutre(k, x, m[x])) o[x] = m[x];
+    e[k] = o;
+  }
   return e;
 }
+// reposer un état : ce navigateur ne garde que ce qui diffère de la base ; ce que la base dit en trop est défait
+// explicitement (sinon le fichier, le dépôt partagé ou le portail le rendraient) ; ce qui a changé et part seul au
+// portail y part
 function vxRestaure(e) {
-  const cur = vxEtat(), c = window.xvCorrections();
+  const f = window.XV_CORR_FICHIER || {}, avant = vxEtat(), c = window.xvCorrections(), parties = [];
   for (const k of VX_CLES) {
-    c[k] = Object.assign({}, e[k]);
-    // ce qui n'existait pas avant est explicitement défait (sinon le dépôt partagé le rendrait)
-    for (const x of Object.keys(cur[k])) if (!(x in e[k])) c[k][x] = k === 'fusions' ? x : null;
+    const base = f[k] || {}, voulu = (e && e[k]) || {}, loc = {};
+    for (const [x, v] of Object.entries(voulu)) if (JSON.stringify(base[x]) !== JSON.stringify(v)) loc[x] = v;
+    for (const [x, v] of Object.entries(base)) if (!(x in voulu) && !vxNeutre(k, x, v)) loc[x] = k === 'fusions' ? x : null;
+    c[k] = loc;
+    if (JSON.stringify(avant[k]) !== JSON.stringify(voulu)) parties.push(k);
   }
   window.xvPoseCorrections(c);
   window.xvRafraichir();
-  window.xvEnregistrePartage(VX_CLES, $('vx-etat'));
+  const envoi = parties.filter((k) => VX_PARTAGEES.includes(k));
+  if (envoi.length) window.xvEnregistrePartage(envoi, $('vx-etat'));
+  window.xvEtatPartage();
 }
-function vxMajAnnuler() { const b = $('vx-annuler'), c = $('cast-annuler'); if (b) b.disabled = !VX_HIST.length; if (c) c.disabled = !VX_HIST.length; }
-window.xvMemorise = () => { VX_HIST.push(JSON.stringify(vxEtat())); if (VX_HIST.length > 80) VX_HIST.shift(); vxMajAnnuler(); };
-window.xvAnnule = () => { if (!VX_HIST.length) return; vxRestaure(JSON.parse(VX_HIST.pop())); vxMajAnnuler(); const e = $('vx-etat'); if (e) e.textContent = 'annulé'; };
+const VX_ANNUL = { U: null, T: null, repli: [], avant: null };
+window.xvBrancheAnnulation = (U) => {
+  if (VX_ANNUL.T || !U || typeof U.snapshots !== 'function') return;
+  VX_ANNUL.U = U;
+  VX_ANNUL.T = U.snapshots({ get: vxEtat, set: vxRestaure });
+  VX_ANNUL.T.reset();
+  VX_ANNUL.repli = [];
+  // les boutons de la page cèdent la place à ceux de la pile commune (↶ ↷ journal) : leurs bulles disent le geste
+  for (const id of ['vx-annuler', 'cast-annuler']) {
+    const b = $(id); if (!b) continue;
+    const g = document.createElement('span');
+    g.className = 'sr-undo'; g.setAttribute('role', 'group'); g.setAttribute('aria-label', 'annuler, rétablir');
+    g.append(...U.buttons());
+    b.replaceWith(g);
+  }
+};
+// un geste : son début (l'état d'avant, relu à cet instant — les corrections des autres ont pu arriver depuis), sa fin
+// (l'état d'après, rangé sous son libellé, un verbe). xvMemorise(libellé) : les deux, autour d'un geste immédiat.
+function vxDebut() {
+  if (VX_ANNUL.T) VX_ANNUL.T.reset(); else VX_ANNUL.avant = JSON.stringify(vxEtat());
+}
+function vxFin(label) {
+  if (VX_ANNUL.T) { VX_ANNUL.T.commit(label || 'corriger'); return; }
+  const avant = VX_ANNUL.avant; VX_ANNUL.avant = null;
+  if (avant === null || avant === JSON.stringify(vxEtat())) return;
+  VX_ANNUL.repli.push({ label: label || 'corriger', e: avant });
+  if (VX_ANNUL.repli.length > 80) VX_ANNUL.repli.shift();
+  vxMajAnnuler();
+}
+window.xvGesteDebut = vxDebut;
+window.xvGesteFin = vxFin;
+window.xvMemorise = (label) => { vxDebut(); setTimeout(() => vxFin(label), 0); };
+window.xvAnnule = () => {
+  if (VX_ANNUL.U) return VX_ANNUL.U.undo();
+  const d = VX_ANNUL.repli.pop(); if (!d) return null;
+  vxRestaure(JSON.parse(d.e)); vxMajAnnuler();
+  const e = $('vx-etat'); if (e) e.textContent = 'annulé : ' + d.label;
+  return d;
+};
+window.xvRetablit = () => (VX_ANNUL.U ? VX_ANNUL.U.redo() : null);
+window.xvPeutAnnuler = () => (VX_ANNUL.U ? VX_ANNUL.U.canUndo() : VX_ANNUL.repli.length > 0);
+window.xvPeutRetablir = () => (VX_ANNUL.U ? VX_ANNUL.U.canRedo() : false);
+function vxMajAnnuler() {
+  const n = VX_ANNUL.repli.length;
+  for (const id of ['vx-annuler', 'cast-annuler']) {
+    const b = $(id); if (!b) continue;
+    b.disabled = !n; b.title = n ? 'Annuler : ' + VX_ANNUL.repli[n - 1].label + ' · Ctrl+Z' : 'rien à annuler';
+  }
+}
 // Tout remettre comme le dépôt : les répliques déplacées, les voix forcées, les fiches réunies dans la page sont
-// défaites ; ce que le corrections.json du dépôt attribue (relu, commité) reste, comme les fusions cuites au rendu.
+// défaites ; ce que le corrections.json du dépôt attribue (relu, commité) reste, comme les fusions cuites au rendu ;
+// les noms et les répliques corrigés ne bougent pas.
 window.xvRemetTout = () => {
-  if (!confirm('Tout remettre comme le dépôt ? Les répliques déplacées, les voix forcées et les fiches réunies dans cette page sont défaites, pour tout le monde. « Annuler » reste possible.')) return;
-  window.xvMemorise();
+  if (!confirm('Tout remettre comme le dépôt ? Les répliques déplacées, les voix forcées et les fiches réunies dans cette page sont défaites, pour tout le monde. Ctrl+Z (ou ↶) le défait.')) return;
+  window.xvMemorise('tout remettre comme le dépôt');
   const cuites = {}, depot = window.XV_CORR_DEPOT || {};
   ((typeof DATA0 !== 'undefined' && DATA0.cast) || []).forEach((q) => (q.absorbees || []).forEach((a) => { cuites[a] = true; }));
-  const e = vxEtat(), vide = { locuteurs: Object.assign({}, depot.locuteurs || {}), voix: Object.assign({}, depot.voix || {}), fusions: {} };
+  const e = vxEtat(), vide = { locuteurs: Object.assign({}, depot.locuteurs || {}), voix: Object.assign({}, depot.voix || {}), fusions: {},
+    noms: e.noms, repliques: e.repliques };
   for (const [x, v] of Object.entries(e.fusions)) if (cuites[x]) vide.fusions[x] = v;
   vxRestaure(vide);
 };
@@ -810,6 +902,18 @@ const VX_SOURCE_FR = { main: 'attribuée à la main', 'lèvres': 'vue et entendu
 function vxMenuCommun(g, clientX, clientY) {
   const M = window.SR_MENU;
   VX.choisi = g; vxDessine();
+  const items = vxItemsReplique(g);
+  // en fin, les entrées communes du portail : annuler, rétablir (le geste qu'on vient de faire), le journal…
+  if (M.commonItems) items.push('-', ...M.commonItems());
+  const ouvert = M.menu(clientX, clientY, items);
+  // le menu refermé (entrée choisie, clic ailleurs, Échap) : la réplique n'est plus désignée
+  if (ouvert && ouvert.node) {
+    const obs = new MutationObserver(() => { if (!document.contains(ouvert.node)) { obs.disconnect(); if (VX.choisi === g) { VX.choisi = null; vxDessine(); } } });
+    obs.observe(document.body, { childList: true });
+  }
+}
+// les entrées du menu d'une réplique (la timeline, le script : chaine/menus.js)
+function vxItemsReplique(g) {
   const n = CAST_COLORS.length || 1;
   // l'en-tête du menu de la page : l'instant, d'où vient l'attribution, et ce que dit la réplique
   const dit = String(g.texte || '');
@@ -824,12 +928,7 @@ function vxMenuCommun(g, clientX, clientY) {
     const el = document.querySelector('.sc-say[data-cle="' + g.l.start + '-' + g.l.end + '"]');
     if (el) { el.focus(); const r = document.createRange(); r.selectNodeContents(el); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
   } });
-  const ouvert = M.menu(clientX, clientY, items);
-  // le menu refermé (entrée choisie, clic ailleurs, Échap) : la réplique n'est plus désignée
-  if (ouvert && ouvert.node) {
-    const obs = new MutationObserver(() => { if (!document.contains(ouvert.node)) { obs.disconnect(); if (VX.choisi === g) { VX.choisi = null; vxDessine(); } } });
-    obs.observe(document.body, { childList: true });
-  }
+  return items;
 }
 function vxMenu(g, clientX, clientY) {
   vxFermeMenu();
@@ -958,8 +1057,10 @@ function vxMenu(g, clientX, clientY) {
   }, { passive: false });
   document.addEventListener('pointerdown', (ev) => { if (!ev.target.closest('.vx-menu') && !ev.target.closest('#vx-zone')) { if (document.querySelector('.vx-menu')) { vxFermeMenu(); VX.choisi = null; vxDessine(); } } });
   document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && document.querySelector('.vx-menu')) { vxFermeMenu(); VX.choisi = null; vxDessine(); } });
+  // Ctrl+Z : celui de commun/undo.js. Le repli seul (la page ouverte sans le portail) écoute ici, et se tait dès que la
+  // pile commune est branchée — jamais deux piles au clavier.
   document.addEventListener('keydown', (ev) => {
-    if (!(ev.ctrlKey || ev.metaKey) || ev.shiftKey || ev.key.toLowerCase() !== 'z') return;
+    if (VX_ANNUL.T || ev.defaultPrevented || ev.altKey || ev.shiftKey || !(ev.ctrlKey || ev.metaKey) || (ev.key || '').toLowerCase() !== 'z') return;
     if (/^(INPUT|TEXTAREA|SELECT)$/.test((ev.target || {}).tagName) || (ev.target && ev.target.isContentEditable)) return;
     ev.preventDefault(); window.xvAnnule();
   });
@@ -1039,7 +1140,7 @@ function vxAvance() {
   const actions = el('div', { class: 'rangee' });
   if (nMain) actions.append(el('button', { class: 'btn', type: 'button', text: 'Tout remettre en automatique', onclick: () => {
     if (!confirm('Remettre toutes les répliques réattribuées à la main en automatique ?')) return;
-    window.xvMemorise();
+    window.xvMemorise('remettre ' + nMain + ' réplique' + (nMain > 1 ? 's' : '') + ' en automatique');
     const c = window.xvCorrections(); c.locuteurs = {}; for (const k of Object.keys(loc)) c.locuteurs[k] = null;
     window.xvPoseCorrections(c); window.xvRafraichir(); vxEnregistre(); } }));
   if (VOIX.labo) actions.append(el('a', { class: 'btn', href: VOIX.labo, text: DIAR ? 'Recalculer, direct, micro — le labo' : 'Calculer la diarisation — le labo' }));

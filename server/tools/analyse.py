@@ -1103,17 +1103,32 @@ def selftest(call, ok) -> None:
     st, _ = call("GET", "/analyse/runs/../../jobs.json")
     ok(st == 404, "les pages produites ne sortent pas de leur dossier")
 
-    # le thème (CLAUDE.md) : aucune couleur écrite hors de la palette de film.css — le script des pages lit les jetons
+    # le thème (CLAUDE.md) : aucune couleur écrite hors de la palette de Movie Analysis (film/palette.css, deux jeux :
+    # le sombre et le clair) — les scripts des pages lisent les jetons, et les relisent quand le thème change
     teinte = re.compile(r"#[0-9a-fA-F]{3,8}\b|rgba?\(\s*\d")
+    bordure = re.compile(r"(?<![-\w])border(-(top|right|bottom|left))?(-(width|style|color))?\s*:(?!\s*(0|none)\s*[;}])")
     css = (TOOL / "film" / "film.css").read_text(encoding="utf-8")
-    marque = "/* ── fin de la palette"
-    ok(marque in css and not teinte.search(css.split(marque, 1)[-1]),
-       "film.css : aucune couleur hors de la palette déclarée en tête")
-    ok(not re.search(r"(?<![-\w])border(-(top|right|bottom|left))?(-(width|style|color))?\s*:(?!\s*(0|none)\s*[;}])", css),
-       "film.css : des filets, jamais de bordures")
-    for f in ("voix.js", "son.js", "studio.mjs", "casting-parts.mjs"):
+    ok('@import url("palette.css")' in css and not teinte.search(css), "film.css : aucune couleur, la palette importée")
+    ok(not bordure.search(css), "film.css : des filets, jamais de bordures")
+    pal = (TOOL / "film" / "palette.css").read_text(encoding="utf-8")
+    blocs = re.findall(r"(:root|\[data-theme=\"light\"\])\s*\{([^}]*)\}", pal)
+    ok([b[0] for b in blocs] == [":root", '[data-theme="light"]']
+       and all(re.fullmatch(r"--(pc-\d+|pv-\d|ry-[a-z]+)", n) for _, corps in blocs for n in re.findall(r"(--[\w-]+)\s*:", corps))
+       and not teinte.search(re.sub(r"(:root|\[data-theme=\"light\"\])\s*\{[^}]*\}", "", pal)),
+       "film/palette.css : la palette seule (personnages, voix, rythme), en deux jeux, sombre et clair")
+    for f in ("voix.js", "son.js", "menus.js", "studio.mjs", "casting-parts.mjs"):
         src = (TOOL / "chaine" / f).read_text(encoding="utf-8")
         ok(not re.search(r"['\"]#[0-9a-fA-F]{3,8}['\"]|rgba?\(\s*\d", src), f"chaine/{f} : aucune couleur écrite")
+        ok("xverse-theme" not in src, f"chaine/{f} : pas de second choix de thème (xverse-theme)")
+    # le labo des voix suit le thème du portail : ses noms de teintes renvoient aux jetons, rien d'écrit en dur
+    labo = (TOOL / "diarisation" / "index.html").read_text(encoding="utf-8")
+    ok(not re.search(r"['\"(:, ]#[0-9a-fA-F]{3,8}\b|rgba?\(\s*\d", labo) and not bordure.search(labo.replace("border:0", ""))
+       and 'href="../film/palette.css"' in labo and "sr:theme" in labo,
+       "diarisation/index.html : aucune couleur écrite, des filets, la palette des voix, relue quand le thème change")
+    # la hauteur de l'écran sous la taille de l'interface : calc(N * var(--vh)), jamais Nvh (étude des préférences § 6)
+    for f in ("analyse.css", "film/film.css", "diarisation/index.html"):
+        src = (TOOL / f).read_text(encoding="utf-8")
+        ok(not re.search(r"(?<![\w.])\d+(\.\d+)?vh\b", re.sub(r"url\(data:[^)]*\)", "", src)), f"{f} : pas de vh sous le zoom de l'interface")
 
     # ce qu'on refuse avant de lancer
     st, _ = call("POST", "/api/analyse/run", {"titre": "rien"})

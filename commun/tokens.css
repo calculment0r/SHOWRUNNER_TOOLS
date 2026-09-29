@@ -50,6 +50,7 @@
   --line-amb: rgba(214, 162, 74, .55);
   --amb-bg:  rgba(214, 162, 74, .08);
   --grn-bg:  rgba(47, 107, 74, .18);   /* fond d'une pastille retenue (look porté, pose montrée) */
+  --grn-bg2: rgba(61, 138, 96, .42);   /* l'éclair vert d'un champ qui vient de changer (Character Factory, fiche) */
 
   /* voile posé sur une image, sous une étiquette */
   --veil:    rgba(10, 13, 11, .82);
@@ -128,6 +129,7 @@
      hauteur d'écran s'écrit calc(100 * var(--vh)). */
   --ui-zoom: 1;
   --vh: calc(1vh / var(--ui-zoom));
+  --vw: calc(1vw / var(--ui-zoom));   /* la même chose en largeur : calc(94 * var(--vw)) */
 
   color-scheme: dark;
 }
@@ -169,6 +171,7 @@
   --line-amb: rgba(127, 83, 8, .50);
   --amb-bg:  rgba(214, 162, 74, .16);
   --grn-bg:  rgba(47, 107, 74, .12);
+  --grn-bg2: rgba(35, 105, 63, .26);
 
   /* voile posé sur une image, sous une étiquette */
   --veil:    rgba(246, 247, 245, .88);

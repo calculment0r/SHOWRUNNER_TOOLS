@@ -17,6 +17,7 @@
 import { mountHeader, api, jobs, pick, thumb, toast, el, $, $$, href, fmtDur, fmtDate, uploadFile, dropAnywhere, kindFr, stateFr } from '../commun/shell.js';
 import { createUndo } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
+import { contextMenu, pageMenu } from '../commun/menu.js';
 
 mountHeader('upscale', { sub: 'agrandir · affiner' });
 
@@ -656,10 +657,53 @@ document.addEventListener('keydown', (e) => {
 
 dropAnywhere((files) => addFiles(files));
 
+// ── le clic droit (Cal, 29/09 : jamais le menu du navigateur) ──
+// un fichier de l'entrée, une agrandie de l'historique : leurs gestes ;
+// ailleurs (l'avant/après, la colonne) : ceux de la page, en tête du menu
+// commun de repli (commun/menu.js, pageMenu)
+const goTo = (u) => () => { location.href = href(u); };
+const libItems = (it) => [
+  { label: 'Ouvrir dans la bibliothèque', icon: '▦', onclick: goTo('asset/#' + it.id) },
+  { label: 'Envoyer au montage', icon: '▤', onclick: goTo('montage/?add=' + encodeURIComponent(it.id)) }];
+function rowMenu(e) {
+  const row = e.target.closest('.inrow');
+  if (row) {
+    const k = [...row.parentElement.children].indexOf(row), it = S.items[k];
+    if (!it) return null;
+    return [{ head: `l’entrée · ${it.title || it.id}` }, { label: 'Le voir', icon: '⤢', onclick: () => showSource(it) },
+      { label: 'Retirer de l’entrée', icon: '×', sub: 'reste dans la bibliothèque', onclick: () => setItems(S.items.filter((x) => x.id !== it.id)) },
+      '-', ...libItems(it)];
+  }
+  const t = e.target.closest('#side .thumb[data-id]');
+  if (t) {
+    return [{ head: 'une agrandie' }, { label: 'La voir, avec sa source', icon: '⤢', onclick: () => t.click() },
+      { label: 'Ouvrir dans la bibliothèque', icon: '▦', onclick: goTo('asset/#' + t.dataset.id) },
+      { label: 'Envoyer au montage', icon: '▤', onclick: goTo('montage/?add=' + encodeURIComponent(t.dataset.id)) }];
+  }
+  return null;
+}
+pageMenu(() => {
+  const c = S.cur;
+  const go = $('#act .tb.go');
+  const views = c?.b ? [['wipe', 'Rideau'], ['side', 'Côte à côte'], ['a', 'Avant'], ['b', 'Après']] : [];
+  return [{ head: 'Upscale' },
+    { label: go?.textContent || 'Agrandir', icon: '▶', disabled: !go || go.disabled, why: $('#act .why')?.textContent || 'rien à envoyer', onclick: launch },
+    '-',
+    { label: 'Ajouter depuis la bibliothèque…', icon: '+', onclick: choose },
+    { label: 'Ajouter depuis le disque…', icon: '↑', onclick: () => fileIn.click() },
+    S.items.length ? { label: 'Vider l’entrée', icon: '×', sub: 'reste dans la bibliothèque', onclick: () => setItems([]) } : null,
+    views.length ? '-' : null,
+    ...views.map(([v, lab], i) => ({ label: lab, checked: S.view === v, key: String(i + 1), onclick: () => setView(v) })),
+    c?.b ? { label: 'Loupe 1:1', checked: !!S.loupe, key: 'L', onclick: () => { S.loupe = !S.loupe; saveView(); paintTools(); hideLoupe(); } } : null,
+    c?.b ? '-' : null, ...(c?.b ? libItems(c.b) : [])];
+});
+
 // ── démarrage ───────────────────────────────────────────────
 async function start() {
   skeleton();
   wireViewer();
+  contextMenu($('#rail'), rowMenu);
+  contextMenu($('#side'), rowMenu);
   $('#rail').prepend(el('p', { class: 'lbl', id: 'loading' }, 'chargement'));
   try { S.cfg = await api('upscale/models'); } catch (e) {
     $('#rail').replaceChildren(el('p', { class: 'warn' }, `le portail ne répond pas : ${e.message}`)); return;

@@ -32,14 +32,15 @@
 //
 // L'annulation (commun/undo.js) : le formulaire par instantanés (images,
 // entrées, les trois champs une fois écrits, toile, durée, méthode, LoRA,
-// réglages avancés) ; aimer, ranger, jeter depuis le fil par le pont de la
-// bibliothèque. Ne s'annulent pas : un rendu lancé, une image tirée d'une
+// réglages avancés) ; aimer, ranger, jeter depuis le fil (le fil les range
+// lui-même dans la pile : commun/fil.js, option undo). Ne s'annulent pas : un rendu lancé, une image tirée d'une
 // vidéo, un fichier déposé. Le banc « Comparer » est une vue : il ne s'annule pas.
 import { mountHeader, api, jobs, pick, uploadFile, toast, el, $, $$, href, fmtDate, dropAnywhere, dropZone } from '../commun/shell.js';
 import { createEntrees } from '../commun/entrees.js';
 import { createFil } from '../commun/fil.js';
-import { createUndo, watchLibrary } from '../commun/undo.js';
+import { createUndo } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
+import { pageMenu } from '../commun/menu.js';
 
 mountHeader('movie');
 
@@ -87,7 +88,6 @@ const U = createUndo({ name: 'movie', onapply: (e, { items }) => {
   }
   if (reload) fil?.reload();
 } });
-watchLibrary(U);
 const sameJ = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const FIELD_FR = { desc: 'écrire ce qu’on voit et entend', sound: 'écrire le son d’ambiance', music: 'écrire la musique' };
 const FORM_FR = [['start', 'changer l’image de début'], ['end', 'changer l’image de fin'], ['inputs', 'changer les entrées'],
@@ -682,7 +682,7 @@ const onJob = {
 
 function mountFil() {
   fil = createFil($('#fil'), {
-    id: 'movie', layout: 'list', title: 'Historique',
+    id: 'movie', layout: 'list', title: 'Historique', undo: U,
     scopes: [{ id: 'movie', label: 'Vidéo' }, { id: 'all', label: 'Toute la bibliothèque' }],
     query: ({ scope }) => (scope === 'all' ? 'library?kind=video' : 'library?kind=video&tool=movie'),
     jobs: liveJobs, jobLines, onJob,
@@ -962,4 +962,29 @@ dropAnywhere(async (files) => {
 addEventListener('hashchange', () => {
   const id = location.hash.slice(1);
   if (id && id !== fil?.current()?.id) fil?.open(id);
+});
+
+// ── le clic droit (Cal, 29/09 : jamais le menu du navigateur) ──
+// une vidéo du fil a son menu (commun/fil.js) ; ailleurs, les gestes de la
+// vue en tête du menu commun de repli (commun/menu.js, pageMenu) : la
+// création (lancer, le mode, les images) ou le banc (lecture, image par image, les plans A et B)
+pageMenu(() => {
+  if (S.view === 'cmp') {
+    return [{ head: 'Vidéo · comparer' },
+      { label: playing() ? 'Pause' : 'Lecture', icon: playing() ? '❚❚' : '▶', key: 'Espace', onclick: () => (playing() ? pauseBench() : play()) },
+      { label: 'Image précédente', icon: '‹', onclick: () => step(-1) }, { label: 'Image suivante', icon: '›', onclick: () => step(1) },
+      '-',
+      { label: 'Choisir le plan A…', icon: 'A', onclick: () => chooseAB('A') }, { label: 'Choisir le plan B…', icon: 'B', onclick: () => chooseAB('B') },
+      { label: 'Revenir à la création', icon: '‹', onclick: () => setView('create') }];
+  }
+  const go = $('#go');
+  const why = [...$$('#why > div')].map((n) => n.textContent).join(' · ');
+  return [{ head: `Vidéo · ${MODE_FR[F.mode]}` },
+    { label: go?.textContent || 'Générer la vidéo', icon: '▶', disabled: !go || go.disabled, why: why || 'le plan n’est pas complet', onclick: launch },
+    '-',
+    ...Object.entries(MODE_FR).map(([m, lab]) => ({ label: lab.charAt(0).toUpperCase() + lab.slice(1), checked: F.mode === m, onclick: () => setMode(m) })),
+    F.mode === 'i2v' ? { label: 'Choisir l’image de début…', icon: '▭', onclick: () => chooseImage('start') } : null,
+    F.mode === 'i2v' ? { label: 'Choisir l’image de fin…', icon: '▭', onclick: () => chooseImage('end') } : null,
+    '-',
+    { label: 'Comparer deux plans', icon: '◫', onclick: () => setView('cmp') }];
 });

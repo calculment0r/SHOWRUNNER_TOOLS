@@ -11,7 +11,7 @@
 // avant que la page ne se dessine (commun/theme.js, préférences Général)
 import './theme.js';
 // les copies d'affichage d'une image (thumb) : docs/etudes/ideation_fluidite.md
-import { bind as bindView } from './proxies.js';
+import { bind as bindView, pickView, needOf } from './proxies.js';
 
 export const ROOT = new URL('../', import.meta.url);
 export const href = (p) => (p && /^https?:/.test(p) ? p : new URL(p || '', ROOT).href);
@@ -72,6 +72,46 @@ export function el(tag, attrs = {}, ...kids) {
 }
 export const $ = (s, r = document) => r.querySelector(s);
 export const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+// ── le clic droit : jamais le menu du navigateur ────────────
+// Cal, 29/09 : « d'une façon générale ne plus avoir de clic droit du
+// navigateur partout dans nos outils. on a un menu contextuel dédié à où on
+// se trouve au survol. » Toute page du portail importe ce module. Sauf dans
+// un champ de texte (copier, coller, l'orthographe : natifs) ou sous
+// [data-native-menu], le menu du navigateur n'apparaît jamais :
+//   - une zone qui a son menu (commun/menu.js, contextMenu, ou son propre
+//     gestionnaire) appelle preventDefault : on l'entend (à la capture, sur
+//     window, avant toute zone, on écoute ses appels), et on s'efface ;
+//   - personne ne l'a fait : le menu du navigateur est empêché au bout du
+//     chemin (window, à la remontée), ou dès qu'une zone arrête la remontée
+//     sans l'empêcher, et le menu de repli s'ouvre (menu.js, fallbackMenu).
+// Une zone lit donc `e.defaultPrevented` comme d'habitude : vrai seulement si
+// une autre zone a pris l'événement.
+const NATIVE_TYPES = new Set(['', 'text', 'search', 'url', 'email', 'password', 'tel', 'number']);
+function nativeMenuZone(n) {
+  if (!(n instanceof Element)) return false;
+  if (n.closest('[data-native-menu]') || n.isContentEditable || n.tagName === 'TEXTAREA') return true;
+  return n.tagName === 'INPUT' && NATIVE_TYPES.has((n.getAttribute('type') || '').toLowerCase());
+}
+const BLOCK = Event.prototype.preventDefault;
+addEventListener('contextmenu', (e) => {
+  if (nativeMenuZone(e.target)) return;
+  let zone = false;
+  e.preventDefault = function preventDefault() { zone = true; return BLOCK.call(this); };
+  // une zone qui arrête la remontée sans rien empêcher : le repli prend sa place
+  for (const k of ['stopPropagation', 'stopImmediatePropagation']) {
+    const f = Event.prototype[k];
+    e[k] = function stop() { if (!this.defaultPrevented) BLOCK.call(this); return f.call(this); };
+  }
+  const kb = e.button !== 2 && e.clientX === 0 && e.clientY === 0;
+  let x = e.clientX, y = e.clientY;
+  if (kb && e.target instanceof Element) { const r = e.target.getBoundingClientRect(); x = r.left + 8; y = r.bottom - 4; }
+  // après toutes les zones (celles qui se posent sur window après ce module comprises)
+  setTimeout(() => { if (!zone) import('./menu.js').then((m) => m.fallbackMenu(e, x, y, kb)); }, 0);
+}, true);
+addEventListener('contextmenu', (e) => {
+  if (!e.defaultPrevented && !nativeMenuZone(e.target)) BLOCK.call(e);
+});
 
 let toastT;
 export function toast(msg, ms = 3200) {
@@ -250,6 +290,7 @@ export function mountHeader(toolId, { sub = '' } = {}) {
   document.documentElement.classList.add('sr-wait');
   setTimeout(() => document.documentElement.classList.remove('sr-wait'), 3000);
   const t = TOOLS.find((x) => x.id === toolId) || PAGES[toolId];
+  document.documentElement.dataset.srTool = toolId;   // le menu de repli ouvre les préférences de l'outil
   const nav = el('nav', { class: 'tools' });
   const hdr = el('header', { class: 'hdr' },
     el('a', { class: 'logo', href: href('') , title: 'le portail' },
@@ -357,6 +398,7 @@ async function paintDrawer() {
   let q = null;
   try {
     q = await api('queue');
+    await jobItemsFor([...q.running, ...q.queued, ...q.done]);
     const rows = [];
     if (q.paused) rows.push(el('p', { class: 'why' }, 'la file est en pause : Cal la reprendra'));
     for (const [m, s] of Object.entries(q.machines || {})) {
@@ -381,8 +423,30 @@ export const fmtWait = (s) => {
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`;
 };
 
+// La vignette d'un travail : `j.thumb` est la vignette JPEG (384 px) de son
+// image d'entrée ou de sa première sortie ; sa copie d'affichage à 44 px
+// (commun/proxies.js) vient de l'objet, lu une fois pour tous les travaux
+// de la file (/api/library/batch) et gardé.
+const jobItems = new Map();   // id → objet public (null : absent ou invisible)
+const THUMB_ID = /library\/([a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4})\//;
+const thumbId = (u) => (String(u || '').match(THUMB_ID) || [])[1] || null;
+export async function jobItemsFor(list) {
+  const want = [...new Set((list || []).map((j) => thumbId(j.thumb)).filter((x) => x && !jobItems.has(x)))];
+  if (!want.length) return;
+  try {
+    const r = await api('library/batch', { method: 'POST', body: { ids: want } });
+    for (const it of r.items || []) jobItems.set(it.id, it);
+    for (const m of r.missing || []) jobItems.set(m, null);
+  } catch { /* la vignette JPEG reste */ }
+}
+function jobThumb(j, px = 44) {
+  const it = (j.items || []).find((x) => x && (x.views || x.thumb_url)) || jobItems.get(thumbId(j.thumb));
+  const u = it ? pickView(it, needOf(it, px, px)).url : '';
+  return u || (j.thumb ? href(j.thumb) : '');
+}
+
 export function jobRow(j) {
-  const cls = j.state === 'running' ? 'run' : j.state === 'error' ? 'err' : j.state === 'done' ? 'ok' : '';
+  const cls =j.state === 'running' ? 'run' : j.state === 'error' ? 'err' : j.state === 'done' ? 'ok' : '';
   const acts = el('div', { class: 'row' });
   // `can` (la file, core_api) : le sien, ou Cal ; absent : comme avant
   if (j.can !== false) {
@@ -399,7 +463,7 @@ export function jobRow(j) {
     if (j.eta_s != null) place += j.eta_s < 30 ? ' · part bientôt' : ` · départ ≈ ${fmtWait(j.eta_s)}`;
   }
   return el('div', { class: 'job' + (j.mine ? ' mine' : ''), title: j.message || '' },
-    el('div', { class: 'jt', style: j.thumb ? { backgroundImage: `url(${href(j.thumb)})` } : null }),
+    el('div', { class: 'jt', style: j.thumb || j.items?.length ? { backgroundImage: `url("${jobThumb(j)}")` } : null }),
     el('div', { style: { minWidth: 0 } },
       el('div', { class: 'jn' }, j.title),
       el('div', { class: 'js ' + cls }, `${stateFr(j.state)}${j.machine ? ' · ' + j.machine : ''}${who}${place} — ${j.message || ''}`)),
@@ -408,7 +472,8 @@ export function jobRow(j) {
 }
 
 // ── vignettes ───────────────────────────────────────────────
-const KIND_FR = { image: 'image', video: 'vidéo', audio: 'son', element: 'élément' };
+// midi : un clip de notes d'ODIO ; sequence : une séquence du Montage (29/09)
+const KIND_FR = { image: 'image', video: 'vidéo', audio: 'son', element: 'élément', midi: 'MIDI', sequence: 'séquence' };
 export const kindFr = (k) => KIND_FR[k] || k;
 const ETYPE_FR = { character: 'personnage', object: 'objet', place: 'lieu', style: 'style', other: 'élément' };
 export const etypeFr = (k) => ETYPE_FR[k] || k;
@@ -529,8 +594,10 @@ export function refBoard(box, { kinds = ['image', 'element'], max = 3, onchange 
     paint(); onchange(refs);
   } });
   const paint = () => {
+    // la copie d'affichage de la case (64 px, remplie : commun/proxies.js), pas la vignette de 384
+    const src = (it) => pickView(it, needOf(it, 64, 64)).url;
     box.replaceChildren(...refs.map((it, i) => el('div', { class: 'ref-chip', title: it.title,
-      style: { backgroundImage: it.thumb_url ? `url(${href(it.thumb_url)})` : null } },
+      style: { backgroundImage: src(it) ? `url("${src(it)}")` : null } },
       el('span', { class: 'n' }, `${i + 1} · ${it.title}`),
       el('button', { class: 'x', title: 'retirer', onclick: () => { refs.splice(i, 1); paint(); onchange(refs); } }, '×'))),
     refs.length < max ? el('button', { class: 'ref-chip add', title: 'ajouter une référence', onclick: async () => {

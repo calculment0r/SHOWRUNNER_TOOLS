@@ -6,60 +6,16 @@
    commun/tokens.css, base.css, shell.css, puis cette feuille.
 
    Règles du thème : aucune couleur en dur — tout vient de
-   commun/tokens.css, sauf la palette ci-dessous, déclarée ICI
-   SEULEMENT ; des filets (box-shadow inset), jamais de bordures ; un
-   seul orange d'action par vue (la lecture au Studio, « Appliquer »
-   au Casting) ; les capitales pour la machine (mono, espacé, petit).
+   commun/tokens.css et de la palette de Movie Analysis
+   (analyse/film/palette.css, importée ici : personnages, voix,
+   rythme, dans les deux thèmes) ; des filets (box-shadow inset),
+   jamais de bordures ; un seul orange d'action par vue (la lecture au
+   Studio, « Appliquer » au Casting) ; les capitales pour la machine
+   (mono, espacé, petit). Aucune teinte n'est écrite dans ce fichier.
    ============================================================ */
 
-/* ── la palette : personnages, voix, rythme ─────────────────
-   Le seul endroit où le Studio déclare des teintes. Une teinte
-   d'identité par personnage (dans l'ordre du casting), une par voix
-   Nemotron sans personnage, une par rôle de rythme. Chaque fois
-   qu'un jeton du portail a la même teinte, c'est lui qu'on prend ;
-   les autres sont celles du kit Verdant que le Studio portait déjà
-   (Cal les connaît : Getaround, Wall). Le script de la page les lit
-   ici à l'exécution (getComputedStyle), pour la timeline (canvas),
-   les pastilles et le sous-titre. */
-:root {
-  --pc-0:  var(--or);
-  --pc-1:  var(--cy);
-  --pc-2:  #3f9a6a;
-  --pc-3:  #d9a486;
-  --pc-4:  #f0b49b;
-  --pc-5:  var(--grn);
-  --pc-6:  #e59578;
-  --pc-7:  #8fb3c0;
-  --pc-8:  #d47a5c;
-  --pc-9:  #4f8f6a;
-  --pc-10: #c99b7a;
-  --pc-11: #a3502f;
-  --pc-12: #6fa88c;
-  --pc-13: #e8c4ae;
-  --pc-14: #7a3a22;
-  --pc-15: var(--verd-4);
-
-  /* les voix Nemotron qu'aucun personnage ne porte (V1…V8), celles du labo de diarisation */
-  --pv-0: #3e8ec1;
-  --pv-1: #819341;
-  --pv-2: #ab639c;
-  --pv-3: #389560;
-  --pv-4: #7a6cbc;
-  --pv-5: #00a0a1;
-  --pv-6: #b48c2b;
-  --pv-7: #c76174;
-
-  /* les rôles de rythme (video-shots.mjs, RHYTHM_ROLES) */
-  --ry-hook:   #a67a16;
-  --ry-setup:  #8c846a;
-  --ry-build:  #2e6e9e;
-  --ry-beat:   #4e7a3b;
-  --ry-turn:   #a85570;
-  --ry-payoff: #b23138;
-  --ry-breath: #2f7e74;
-  --ry-close:  #7d5a76;
-}
-/* ── fin de la palette : plus aucune teinte écrite au-delà ── */
+/* la palette, déclarée une fois pour la page d'un film et pour le labo des voix */
+@import url("palette.css");
 
 /* base.css donne au corps la hauteur de la fenêtre : une barre collante ne colle alors que sur le premier écran.
    La page d'un film est longue (le dépouillement de Wall : 45 plans ouverts) — le corps prend la hauteur de la page,
@@ -124,8 +80,10 @@ body.film { height: auto; min-height: 100%; }
    script (poignée du script), gardés par le navigateur ; double-clic sur une poignée : par défaut. */
 .stage-row {
   display: grid; grid-template-columns: minmax(0, 1fr) 12px var(--l-script, 400px);
-  align-items: stretch; height: var(--h-scene, 62vh);
+  align-items: stretch; height: var(--h-scene, calc(62 * var(--vh)));
 }
+/* (les hauteurs d'écran s'écrivent en var(--vh), commun/tokens.css : sous la taille de l'interface, l'unité de la
+   fenêtre est zoomée comme le reste et dépasse l'écran) */
 .player {
   display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden;
   background: var(--panel); border-radius: var(--r3); box-shadow: inset 0 0 0 1px var(--line);
@@ -135,15 +93,17 @@ body.film { height: auto; min-height: 100%; }
 .frise { display: flex; gap: 4px; overflow-x: auto; padding: 8px 8px 6px; flex: none; }
 .frise button {
   flex: 0 0 auto; position: relative; overflow: hidden; padding: 0; border-radius: var(--r1);
-  width: clamp(52px, calc(var(--h-scene, 62vh) * .14), 108px); opacity: .62; transition: opacity .15s;
+  width: clamp(52px, calc(var(--h-scene, calc(62 * var(--vh))) * .14), 108px); opacity: .62; transition: opacity .15s;
 }
 .frise button:hover, .frise button[aria-current="true"] { opacity: 1; }
 .frise button img { display: block; width: 100%; height: auto; aspect-ratio: 108 / 45; object-fit: cover; }
 .frise button::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--line); }
 .frise button[aria-current="true"]::after { box-shadow: inset 0 0 0 2px var(--or); }
+/* le numéro du plan sur sa vignette : une étiquette posée sur une image, sur son voile (--veil, l'encre du thème
+   dessus) — lisible sur une image claire comme sur une sombre, dans les deux thèmes */
 .frise button .n {
-  position: absolute; left: 4px; bottom: 2px; font-family: var(--f-disp); font-size: 10px; color: var(--ink);
-  text-shadow: 0 1px 3px var(--black);
+  position: absolute; left: 3px; bottom: 3px; padding: 1px 4px 0; border-radius: 3px;
+  font-family: var(--f-disp); font-size: 9.5px; line-height: 1.35; color: var(--ink); background: var(--veil);
 }
 
 /* la visionneuse : l'image remplit au mieux son cadre ; le calque des silhouettes par-dessus */
@@ -225,7 +185,7 @@ body.film { height: auto; min-height: 100%; }
 .script-head .suivre { display: flex; gap: 6px; align-items: center; cursor: pointer; margin-left: 6px; }
 .script-head .suivre input { accent-color: var(--grn2); margin: 0; }
 .script-body {
-  flex: 1; min-height: 0; overflow: auto; padding: 10px 22px 40vh;
+  flex: 1; min-height: 0; overflow: auto; padding: 10px 22px calc(40 * var(--vh));
   font-family: var(--f-mono); font-size: 12px; line-height: 1.6;
 }
 .sc-trans {
@@ -419,9 +379,9 @@ body.redim.redim-h { cursor: row-resize; }
   .stage-row { grid-template-columns: 1fr; height: auto; gap: var(--s3); }
   .sep-v, .sep-h { display: none; }
   .script-in { position: static; }
-  .script-body { flex: none; max-height: 40vh; }
+  .script-body { flex: none; max-height: calc(40 * var(--vh)); }
   .visionneuse .scene { flex: none; }
-  .visionneuse .scene video { height: auto; max-height: 50vh; }
+  .visionneuse .scene video { height: auto; max-height: calc(50 * var(--vh)); }
   .shot { grid-template-columns: 1fr; }
   .vx { margin-top: var(--s3); }
 }
@@ -476,6 +436,8 @@ body.redim.redim-h { cursor: row-resize; }
   display: flex; gap: 9px; align-items: center; flex-wrap: wrap;
   background: var(--bg); box-shadow: inset 0 1px 0 var(--line);
 }
+/* ↶ ↷ et le journal (commun/undo.js) : carrés, comme partout dans le portail */
+#casting .sr-ub { width: 28px; min-width: 28px; padding: 0; }
 /* « Appliquer » : l'action de cette vue, l'orange du portail (.tb.go) */
 #casting button.fort { background: var(--or); color: var(--on-or); box-shadow: none; }
 #casting button.fort:hover:not(:disabled) { color: var(--on-or); filter: brightness(1.1); box-shadow: none; }
@@ -588,6 +550,8 @@ body.redim.redim-h { cursor: row-resize; }
 .detail .rq { display: flex; gap: 9px; align-items: baseline; padding: 5px 0; box-shadow: inset 0 -1px 0 var(--line); }
 .detail .rq .h { font-family: var(--f-mono); font-size: 8px; letter-spacing: .1em; color: var(--ink3); white-space: nowrap; }
 .detail .rq .x { font-size: 12.5px; color: var(--ink2); }
+.detail .rq .qui { display: inline-flex; align-items: center; gap: 5px; color: var(--ink2); }
+.detail .rq .qui i { width: 7px; height: 7px; border-radius: 2px; flex: none; }
 .detail .avert { border-radius: var(--r2); box-shadow: inset 0 0 0 1px var(--line-amb); padding: 8px 10px; font-size: 11.5px; color: var(--ink2); line-height: 1.5; }
 .detail .avert b { color: var(--amb); font-weight: 600; }
 .detail .bl > .outil { align-self: flex-start; }

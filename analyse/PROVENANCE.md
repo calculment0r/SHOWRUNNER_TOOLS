@@ -95,6 +95,24 @@ Fins de ligne : le clone du poste est en CRLF ; le `.gitattributes` du portail r
 `video-shots.mjs` était gardé en CRLF dans MOVIE_ANALYSE pour que le rendu y reproduise les pages
 publiées au bit près : ce n'est plus vrai pour la copie d'ici.
 
+### Le 29/09 (finitions) : annuler, le thème clair, le clic droit
+
+- **L'annulation commune** (`commun/undo.js`) : dans un film, `chaine/voix.js` range chaque geste comme un instantané
+  des corrections (réattribuer, forcer une voix, réunir / séparer, défaire les fusions, tout remettre, « les oublier »,
+  renommer par « Appliquer », corriger une réplique — une saisie = un geste), branché par `film/film.js`
+  (`xvBrancheAnnulation`) ; ↶ ↷ et le journal remplacent `#vx-annuler` / `#cast-annuler` ; la page ouverte seule garde
+  un repli (annuler sans rétablir). L'accueil (`accueil.js`) : créer, renommer, retirer, supprimer, restaurer — une
+  commande et son contraire, lu sur le serveur avant le geste. Ce qui ne s'annule pas est dit dans le code.
+- **Le thème clair** : la palette de Movie Analysis sort de `film/film.css` dans `film/palette.css` (sombre et clair,
+  importée par film.css, chargée par le labo) ; les scripts relisent les teintes sur `sr:theme`. Le labo des voix
+  (`diarisation/index.html`) renvoie ses noms de teintes aux jetons du portail — plus aucune couleur écrite, des filets.
+  Plus de second thème (`chaine/report.js`, `casting-parts.mjs` : le thème du portail). `calc(N * var(--vh))` au lieu de
+  `Nvh`.
+- **Le clic droit** : `chaine/menus.js` (posé par `studio.mjs` dans la page) donne un menu à chaque zone d'un film ;
+  l'accueil et le labo ont les leurs, et les entrées de la page dans le menu de repli du portail (`pageMenu`).
+- Les deux pages re-rendues par `outils/rendre-films.sh` : `DATA0`, `FRAMES`, `OVERLAYS`, `PORTRAITS`, `VOIX`, `L`,
+  `PORTES` et les adresses identiques, 41 et 140 images.
+
 ## Le dépôt partagé (Worker Cloudflare) reste celui de MOVIE_ANALYSE
 
 `https://movie-analysis-partage.luxigone.workers.dev` (Worker `movie-analysis-partage`, KV

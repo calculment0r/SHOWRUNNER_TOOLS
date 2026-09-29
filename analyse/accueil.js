@@ -10,11 +10,15 @@
 // Le dépôt partagé refuse l'écriture depuis l'adresse du portail : la page le dit (encadré C), et vérifie ce que CE
 // navigateur en reçoit.
 import { mountHeader, api, jobs, pick, thumb, toast, el, $, $$, href, fmtDur, fmtDate, dropZone } from '../commun/shell.js';
-import { menu, kebab, contextMenu, closeMenus } from '../commun/menu.js';
+import { menu, kebab, contextMenu, closeMenus, pageMenu } from '../commun/menu.js';
 import { copyText, ask } from '../commun/fil.js';
+import { createUndo, keyLabel } from '../commun/undo.js';
 
 mountHeader('analyse');
 favicon();
+
+// l'annulation de l'accueil (commun/undo.js) : renommer, retirer, supprimer, restaurer, créer — plus bas, « les gestes »
+const U = createUndo({ name: 'analyse', onapply: () => charge() });
 
 const S = { projets: [], partage: null, portail: null, runs: '', chaine: null, travaux: [], charge: false, erreur: '',
   // la fenêtre « Nouvelle analyse »
@@ -133,7 +137,7 @@ function entrees(p) {
     p.renommer ? { label: 'Renommer…', icon: '✎', onclick: () => renomme(p) } : null,
     { label: 'Copier le lien', icon: '↗', onclick: () => copyText(lienDe(p), 'lien copié') },
     '-',
-    p.retire ? { label: 'Restaurer', icon: '↺', sub: 'sur l’accueil', onclick: () => modifie(p, { supprime: false }, 'remis sur l’accueil') }
+    p.retire ? { label: 'Restaurer', icon: '↺', sub: 'sur l’accueil', onclick: () => restaure(p) }
       : { label: p.supprimer === 'supprimer' ? 'Supprimer' : 'Retirer de l’accueil', icon: '×', danger: true,
         sub: p.supprimer === 'supprimer' ? 'pour de bon' : 'fichiers gardés', onclick: () => supprime(p) },
   ]);
@@ -160,8 +164,26 @@ const dispo = el('div', { class: 'seg fl-lay', role: 'group', 'aria-label': 'dis
 const corps = el('div', { class: 'fl-body' });
 const vide = el('div', { class: 'fl-empty', hidden: true });
 box.classList.add('fil');
-box.replaceChildren(el('div', { class: 'fl-bar' }, el('h2', {}, 'Projets'), count, filtreBtn, cherche, el('span', { class: 'sp' }), pleinBtn, taille, dispo),
+box.replaceChildren(el('div', { class: 'fl-bar' }, el('h2', {}, 'Projets'), count, filtreBtn, cherche, el('span', { class: 'sp' }),
+  el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons()), pleinBtn, taille, dispo),
   el('div', { class: 'why ma-err', id: 'fil-err', hidden: true }), corps, vide);
+
+// le clic droit hors d'une carte et d'une fiche (le rail, le fil, la barre) : le menu de repli du portail (commun/shell.js)
+// commence par les gestes de la page — créer, lancer, le labo, ce que le fil montre et comment
+pageMenu(() => [
+  { head: 'Movie Analysis' },
+  { label: 'Nouveau projet…', icon: '+', onclick: () => { const i = $('#np-nom'); i.focus(); i.scrollIntoView({ block: 'nearest' }); } },
+  { label: 'Nouvelle analyse…', icon: '▸', sub: S.chaine?.machine || 'DGX2', onclick: () => ouvreNouvelle(null) },
+  { label: 'Le labo des voix', icon: '↗', sub: 'diarisation', onclick: () => va('analyse/diarisation/') },
+  '-',
+  { head: 'Montrer' },
+  ...Object.entries(FILTRES).map(([k, lab]) => ({ label: lab.charAt(0).toUpperCase() + lab.slice(1), checked: P.filtre === k,
+    onclick: () => { P.filtre = k; garde(); peint(); } })),
+  '-',
+  { label: 'En grille', checked: P.layout === 'grid', onclick: () => { P.layout = 'grid'; garde(); peint(); } },
+  { label: 'En liste', checked: P.layout === 'list', onclick: () => { P.layout = 'list'; garde(); peint(); } },
+  { label: 'Relire les projets', icon: '↻', sub: 'et le dépôt partagé', onclick: () => charge(true) },
+]);
 
 function tailles() {
   const [lo, hi] = SIZES[P.layout];
@@ -301,28 +323,66 @@ document.addEventListener('sr:job', (e) => {
   else if (j.state === 'error') { toast('le dépouillement s’est arrêté : le message est sur la carte'); charge(); }
 });
 
-// ── renommer, supprimer, restaurer ──────────────────────────
-async function modifie(p, corpsReq, dit) {
-  try {
-    await api('analyse/projets/' + encodeURIComponent(p.id), { method: 'POST', body: corpsReq });
-    toast(dit + ' — enregistré dans le portail');
-    await charge();
-  } catch (e) { toast(e.message, 6000); }
+// ── renommer, supprimer, restaurer, créer : des gestes qui s'annulent ──
+// Ce qui change sur le serveur est une commande et son contraire (commun/undo.js, l'étude des préférences § 2) : le
+// contraire est lu sur le serveur AVANT le geste (le projet tel qu'il était), et ne s'applique que si le projet est
+// encore tel que le geste l'a laissé — renommé ou retiré ailleurs depuis (un autre onglet, quelqu'un d'autre), le geste
+// tombe et le dit. Annuler est un geste de plus, écrit comme les autres (POST /api/analyse/projets/<id>).
+// « Supprimer » un projet créé ne détruit rien sur le serveur : il y reste marqué (supprime: true, dans projets.json,
+// gardé pour la fusion avec le dépôt partagé, comme commun/projets.js de MOVIE_ANALYSE) et « supprime: false » le rend —
+// il s'annule donc comme « Retirer ». Ne s'annulent pas : lancer, arrêter ou relancer un dépouillement (parti sur la
+// machine : il s'arrête par « Arrêter »), et ce qui n'est que la vue (filtre, recherche, disposition, taille).
+// (la pile, U, est créée en tête : ses boutons sont dans la barre du fil)
+const projetLu = async (id) => ((await api('analyse/projets')).projets || []).find((x) => x.id === id) || null;
+const ecrit = (id, corps) => api('analyse/projets/' + encodeURIComponent(id), { method: 'POST', body: corps });
+async function siEncore(id, tel, corps, quoi) {
+  const p = await projetLu(id);
+  if (!tel(p)) throw new Error(`« ${p?.nom || id} » a changé ailleurs depuis (${quoi})`);
+  return ecrit(id, corps);
 }
+async function geste(spec, dit) {
+  try {
+    await U.run(spec);
+    toast(`${dit} — enregistré dans le portail · ${keyLabel('undo')} le défait`);
+    await charge();
+  } catch (e) { toast(e.message, 6000); await charge(); }
+}
+const present = (x) => !!x && !x.retire;
 async function renomme(p) {
   const nom = await ask({ title: 'Renommer le projet', ok: 'Renommer', field: { value: p.nom, placeholder: 'le nom du projet' } });
-  if (nom && nom !== p.nom) modifie(p, { nom }, 'renommé');
+  if (!nom || nom === p.nom) return;
+  let avant;
+  try { avant = await projetLu(p.id); } catch (e) { toast(e.message, 6000); return; }
+  if (!avant) { toast(`« ${p.nom} » n’est plus dans les projets`, 6000); return; }
+  const ancien = avant.nom;
+  let neuf = nom;   // le nom tel que le serveur l'a gardé (espaces resserrés)
+  await geste({ label: `renommer « ${ancien} » en « ${nom} »`,
+    do: async () => { const r = await ecrit(p.id, { nom }); neuf = r.projet?.nom || nom; return r; },
+    undo: () => siEncore(p.id, (x) => x && x.nom === neuf, { nom: ancien }, 'son nom'),
+    redo: () => siEncore(p.id, (x) => x && x.nom === ancien, { nom: neuf }, 'son nom') }, 'renommé');
 }
 async function supprime(p) {
-  const ok = await ask({ title: p.supprimer === 'supprimer' ? 'Supprimer le projet' : 'Retirer de l’accueil', danger: true,
-    ok: p.supprimer === 'supprimer' ? 'Supprimer' : 'Retirer',
-    // les phrases de projet/index.html de MOVIE_ANALYSE
-    text: p.supprimer === 'supprimer'
-      ? `Supprimer le projet « ${p.nom} » ? Les fichiers déjà sur le DGX ne sont pas touchés.`
+  const pourDeBon = p.supprimer === 'supprimer';
+  const ok = await ask({ title: pourDeBon ? 'Supprimer le projet' : 'Retirer de l’accueil', danger: true,
+    ok: pourDeBon ? 'Supprimer' : 'Retirer',
+    // les phrases de projet/index.html de MOVIE_ANALYSE (et ce que Ctrl+Z y peut)
+    text: pourDeBon
+      ? `Supprimer le projet « ${p.nom} » ? Les fichiers déjà sur le DGX ne sont pas touchés. ${keyLabel('undo')} le rend, tant que cette page est ouverte.`
       : `Retirer « ${p.nom} » de l’accueil ? Il disparaît de l’accueil pour tous ceux qui ouvrent le portail ; l’analyse reste, et « Restaurer » (filtre « retirés ») la remet.` });
   if (!ok) return;
   if (V && V.p.id === p.id) ferme();
-  modifie(p, { supprime: true }, p.supprimer === 'supprimer' ? 'supprimé' : 'retiré de l’accueil');
+  // un projet créé et supprimé n'est plus dans la liste ; une analyse retirée y reste, marquée « retirée »
+  const parti = pourDeBon ? (x) => !x : (x) => !!x && x.retire;
+  await geste({ label: `${pourDeBon ? 'supprimer' : 'retirer de l’accueil'} « ${p.nom} »`,
+    do: () => ecrit(p.id, { supprime: true }),
+    undo: () => siEncore(p.id, parti, { supprime: false }, pourDeBon ? 'il a été rendu' : 'il a été restauré'),
+    redo: () => siEncore(p.id, present, { supprime: true }, 'il a été retiré') }, pourDeBon ? 'supprimé' : 'retiré de l’accueil');
+}
+async function restaure(p) {
+  await geste({ label: `restaurer « ${p.nom} » sur l’accueil`,
+    do: () => ecrit(p.id, { supprime: false }),
+    undo: () => siEncore(p.id, present, { supprime: true }, 'il a été retiré'),
+    redo: () => siEncore(p.id, (x) => !!x && x.retire, { supprime: false }, 'il a été restauré') }, 'remis sur l’accueil');
 }
 
 // ── Nouveau projet (la home de MOVIE_ANALYSE : le nom tout de suite, on crée, on ouvre) ──
@@ -332,10 +392,14 @@ $('#np').addEventListener('submit', async (ev) => {
   if (!nom) { $('#np-why').textContent = 'il faut un nom'; $('#np-nom').focus(); return; }
   $('#np-ok').disabled = true; $('#np-why').textContent = '';
   try {
-    const r = await api('analyse/projets', { method: 'POST', body: { nom } });
+    // créer se défait comme Asset défait un élément créé : le projet repart (supprime: true), et revient d'un Ctrl+Maj+Z
+    const r = await U.run({ label: `créer le projet « ${nom} »`,
+      do: () => api('analyse/projets', { method: 'POST', body: { nom } }),
+      undo: (x) => siEncore(x.projet.id, present, { supprime: true }, 'il a été retiré'),
+      redo: async (x) => { await siEncore(x.projet.id, (p) => !p, { supprime: false }, 'il a été rendu'); } });
     $('#np-nom').value = '';
     await charge();
-    toast(`« ${r.projet.nom} » créé — enregistré dans le portail`);
+    toast(`« ${r.projet.nom} » créé — enregistré dans le portail · ${keyLabel('undo')} le défait`);
     if (P.filtre !== 'tout' && P.filtre !== 'projets') { P.filtre = 'tout'; garde(); peint(); }
     ouvre(r.projet.id);
   } catch (e) { $('#np-why').textContent = e.message; }
@@ -368,6 +432,8 @@ function construit() {
   ov.addEventListener('wheel', molette, { passive: false });
   document.addEventListener('keydown', clavier);
   contextMenu(stage, () => (V ? entrees(V.p) : null));
+  // la fiche elle-même : le même menu (sur un lien, le repli du portail : ouvrir, nouvel onglet, copier le lien)
+  contextMenu(side, (e) => (V && !e.target.closest('a[href]') ? entrees(V.p) : null));
   ov.focus({ preventScroll: true });
 }
 function ferme() {
@@ -501,7 +567,7 @@ function peintV() {
       el('a', { class: 'tb ghost', href: href(p.labo), title: 'le labo des voix' }, 'Voix')),
     el('div', { class: 'fv-row' },
       p.renommer ? el('button', { class: 'tb ghost', type: 'button', onclick: () => renomme(p) }, 'Renommer') : null,
-      p.retire ? el('button', { class: 'tb ghost', type: 'button', onclick: () => modifie(p, { supprime: false }, 'remis sur l’accueil') }, 'Restaurer')
+      p.retire ? el('button', { class: 'tb ghost', type: 'button', onclick: () => restaure(p) }, 'Restaurer')
         : el('button', { class: 'tb ghost fl-danger', type: 'button', onclick: () => supprime(p) }, p.supprimer === 'supprimer' ? 'Supprimer' : 'Retirer'),
       kebab(() => entrees(p), { cls: 'fl-ib', title: 'plus d’actions' })));
   V.side.replaceChildren(head, el('div', { class: 'fv-scroll' },

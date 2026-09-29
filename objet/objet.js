@@ -17,7 +17,8 @@
 // reposée par /api/asset/refs). Ne s'annulent pas : tirer la 3D (un rendu
 // lancé), un fichier déposé.
 import { mountHeader, api, jobs, pick, el, $, $$, href, fmtDate, uploadFile, dropAnywhere, dropZone } from '../commun/shell.js';
-import { createUndo, libPatch, libBoard, keyLabel } from '../commun/undo.js';
+import { createUndo, libPatch, libBoard, libTrash, keyLabel } from '../commun/undo.js';
+import { contextMenu, pageMenu } from '../commun/menu.js';
 import { prefs } from '../commun/prefs.js';
 import { reducedMotion } from '../commun/theme.js';
 
@@ -198,13 +199,23 @@ function objCard(o) {
   const m = lastMesh(o);
   const badge = m ? (m.factice ? st('wait', '3D factice') : st('ok', '3D')) : st('off', 'pas de 3D');
   const named = VIEWS.filter((v) => views.some((r) => r.label === v.label)).length;
-  return el('a', { class: 'ocard', href: '#' + o.id, role: 'listitem', 'aria-label': `objet ${o.title}` },
+  const card = el('a', { class: 'ocard', href: '#' + o.id, role: 'listitem', 'aria-label': `objet ${o.title}` },
     el('div', { class: 'pic' }, o.thumb_url ? el('img', { src: href(o.thumb_url), alt: '', loading: 'lazy' }) : null,
       el('span', { class: 'kind' }, 'objet'), el('span', { class: 'badge' }, badge)),
     el('div', { class: 'cap' }, el('span', { class: 'nm' }, o.title),
       el('div', { class: 'ticks-mini', title: 'image · vues · 3D' }, el('i', { class: views.length ? 'done' : '' }),
         el('i', { class: named >= 4 ? 'done' : named > 1 ? 'wait' : '' }), el('i', { class: m ? (m.factice ? 'wait' : 'done') : '' })),
       el('span', { class: 'lbl' }, `${plural(named, 'vue', 'vues')} sur 4 · ${fmtDate(o.updated)}`)));
+  // le clic droit sur la carte : ses gestes
+  card._menu = () => [{ head: `objet · ${o.title}` },
+    { label: 'Ouvrir', icon: '⤢', onclick: () => { location.hash = '#' + o.id; } },
+    { label: 'Dans la bibliothèque', icon: '▦', onclick: () => { location.href = href(`asset/#${o.id}`); } },
+    { label: 'Référence vidéo', icon: '◎', onclick: () => { location.href = href(`movie/?ref=${encodeURIComponent(o.id)}`); } },
+    '-',
+    { label: 'Mettre à la corbeille', icon: '×', danger: true, sub: 'Ctrl+Z le rend', onclick: async () => {
+      try { await libTrash(U, o, `mettre l’objet « ${o.title} » à la corbeille`); say(`« ${o.title} » est à la corbeille`, true); paintHome(); } catch (err) { say(err.message); }
+    } }];
+  return card;
 }
 
 // ── un objet neuf ────────────────────────────────────────────
@@ -364,6 +375,14 @@ function objectSheet(o, s) {
       if (k === 0) return changeImage(o, main, it);
       return r ? replaceView(o, r, v.label, it) : addView(o, v.label, [it]);
     } });
+    // le clic droit sur une vue : la remplacer, la retirer, l'ajouter
+    n._menu = () => (k === 0
+      ? [{ head: 'l’image choisie' }, { label: 'Changer d’image…', icon: '▭', onclick: () => changeImage(o, main) },
+        main ? { label: 'Ouvrir l’image dans un onglet', icon: '↗', onclick: () => window.open(href(main.url), '_blank', 'noopener') } : null]
+      : r ? [{ head: `vue · ${v.label}` },
+        { label: 'Remplacer depuis la bibliothèque…', icon: '▭', onclick: async () => { const [it] = await pick({ kinds: ['image'], title: `La vue ${v.label}` }); if (it) replaceView(o, r, v.label, it); } },
+        { label: 'Retirer cette vue', icon: '×', danger: true, sub: 'Ctrl+Z la rend', onclick: () => removeRef(o, r) }]
+        : [{ head: `vue · ${v.label}` }, { label: 'Ajouter depuis la bibliothèque…', icon: '+', onclick: () => addView(o, v.label) }]);
     return n;
   };
   const extra = views.filter((r) => r !== main && !VIEWS.some((v) => v.label === r.label));
@@ -427,10 +446,31 @@ function objectSheet(o, s) {
         el('div', { class: 'row-end' }, el('a', { class: 'tb ghost sm', href: '#' }, 'L\'état de la chaîne'), el('a', { class: 'tb ghost sm', href: MAQUETTE, target: '_blank', rel: 'noopener' }, 'La maquette ↗')))));
 
   S.run = { bar: runBar, msg: runMsg, go3d };
+  // le clic droit ailleurs sur la fiche (commun/menu.js, pageMenu) : ses gestes
+  S.sheet = () => {
+    const free = VIEWS.slice(1).find((v) => !views.some((r) => r.label === v.label));
+    return [{ head: `objet · ${o.title}` },
+      { label: go3d.textContent, icon: '▶', disabled: go3d.disabled, why: go3d.title, onclick: () => run3d(o, wired) },
+      '-',
+      { label: 'Changer d’image…', icon: '▭', onclick: () => changeImage(o, main) },
+      free ? { label: `Ajouter la vue ${free.label}…`, icon: '+', onclick: () => addView(o, free.label) } : null,
+      m ? { label: 'Télécharger le GLB', icon: '↓', onclick: () => { const a = el('a', { href: href(`library/${o.id}/${m.file}`), download: `${o.title}-${m.file}` }); document.body.append(a); a.click(); a.remove(); } } : null,
+      { label: 'Dans la bibliothèque', icon: '▦', onclick: () => { location.href = href(`asset/#${o.id}`); } },
+      { label: 'Revenir aux objets', icon: '‹', onclick: () => { location.hash = ''; } }];
+  };
   return [head, el('section', { class: 'o-grid' }, hero, el('div', { class: 'o-mid' }, viewsBlk, threeBlk), side)];
 }
 
-const S = { run: null };
+const S = { run: null, sheet: null };
+
+// ── le clic droit (Cal, 29/09 : jamais le menu du navigateur) ──
+// une carte d'objet, une vue : leur menu ; ailleurs, les gestes de la vue
+// ouverte en tête du menu commun de repli
+contextMenu(app, (e) => e.target.closest('.ocard, .view')?._menu?.() || null);
+pageMenu(() => (ID_RX.test(decodeURIComponent(location.hash.slice(1))) && S.sheet ? S.sheet()
+  : [{ head: 'Object Creator' }, { label: 'Nouvel objet…', icon: '+', onclick: () => newObject() },
+    { label: 'Créer son image dans Image', icon: '↗', onclick: () => { location.href = href('image/?for=object'); } },
+    { label: 'La bibliothèque', icon: '▦', onclick: () => { location.href = href('asset/'); } }]));
 
 // ── les vues, l'image ────────────────────────────────────────
 async function addView(o, label, items = null) {

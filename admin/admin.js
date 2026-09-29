@@ -15,6 +15,7 @@ import { mountHeader, api, el, $, $$, toast, href, fmtDate, stateFr, fmtWait } f
 import { uaShort } from '../commun/porte.js';
 import { createUndo } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
+import { contextMenu, pageMenu } from '../commun/menu.js';
 
 mountHeader('admin', { sub: 'la page de Cal' });
 
@@ -31,6 +32,13 @@ const SECTIONS = [
 const S = { sec: SECTIONS.some(([id]) => id === location.hash.slice(1)) ? location.hash.slice(1) : prefs.get('admin.section', 'demandes'),
   state: null, mach: null, sw: null, store: null, jr: null, t: null, drag: null, dragLane: null, filter: '' };
 const main = $('#adm-main');
+// le clic droit (Cal, 29/09 : jamais le menu du navigateur) : un travail de la
+// file a ses gestes ; ailleurs, les sections et la relecture, en tête du menu
+// commun de repli (commun/menu.js)
+contextMenu(main, (e) => e.target.closest('.qr')?._menu?.() || null);
+pageMenu(() => [{ head: 'Admin' },
+  { label: 'Relire maintenant', icon: '↻', onclick: () => refresh(true) },
+  { label: 'Aller à', icon: '▤', items: SECTIONS.map(([id, k, name]) => ({ label: `${k} · ${name}`, checked: S.sec === id, onclick: () => go(id) })) }]);
 
 const post = (path, body) => api(path, { method: 'POST', body: body || {} });
 async function act(fn, msg) {
@@ -330,6 +338,15 @@ function qrow(j, i) {
     running ? el('div', { class: 'bar' }, el('i', { style: { width: j.progress != null ? `${Math.round(j.progress * 100)}%` : '100%',
       opacity: j.progress != null ? 1 : 0.35 } })) : null);
   if (!running) dragify(row);
+  // le clic droit sur un travail : les mêmes gestes que ses boutons
+  row._menu = () => [{ head: `${running ? 'en cours' : 'en file'} · ${j.title}` },
+    ...(running ? [] : [[1, 'haute'], [0, 'normale'], [-1, 'basse']].map(([p, lab]) => ({ label: `Priorité ${lab}`, checked: pr === p,
+      onclick: () => (pr === p ? null : undoable(`donner la priorité ${lab} à « ${j.title} »`, () => post(`admin/queue/${j.id}`, { priority: p }), () => post(`admin/queue/${j.id}`, { priority: pr }))) }))),
+    running ? null : { label: j.top ? 'Ne plus épingler' : 'Épingler en tête', icon: '⤒',
+      onclick: () => undoable(j.top ? `désépingler « ${j.title} »` : `épingler « ${j.title} » en tête`, () => post(`admin/queue/${j.id}`, { top: !j.top }), () => post(`admin/queue/${j.id}`, { top: !!j.top })) },
+    running ? null : { label: 'En fin de voie', icon: '⤓', onclick: () => moveJob(j.id, { to_end: true }, 'en fin de voie') },
+    '-',
+    { label: running ? 'Arrêter' : 'Retirer de la file', icon: '■', danger: true, sub: 'ne s’annule pas', onclick: () => act(() => post(`jobs/${j.id}/cancel`), running ? 'arrêt demandé' : 'retiré de la file') }];
   return row;
 }
 

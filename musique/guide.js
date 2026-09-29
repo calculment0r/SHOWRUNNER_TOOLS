@@ -9,14 +9,14 @@ import { options, bestStems } from './generatif.js';
 const STEPS = [
   ['La session', 'Le tempo (− / +, la molette, ou « Tap » : le frapper), la tonalité et la mesure sont ceux de tout le morceau : le piano roll éclaire la gamme, les modèles de motifs et la génération les reprennent.', ['#mu-bpm', '#mu-tap', '#mu-key']],
   ['Les sections', 'La règle du haut : double-clic pour une section (intro, couplet, refrain…), double-clic dessus pour la renommer sur place, glisser pour la déplacer avec ses clips, clic droit pour la dupliquer avec ses clips, la colorer, l\'étiqueter pour les paroles.', ['.ar-secs']],
-  ['Les pistes', 'Glisser un instrument du navigateur sous les pistes, ou « + Piste ». Chaque piste : muet (M), solo (S), armer (●), automation (A), volume, panoramique ; double-clic sur son nom : le renommer ; un clic sur sa barre de couleur la recolore.', ['.nv', '.ar-head']],
+  ['Les pistes', 'Glisser un instrument du navigateur sous les pistes, ou « + Piste ». Chaque piste : muet (M), solo (S), armer (●), automation (A), volume, panoramique ; double-clic sur son nom : le renommer ; un clic sur sa barre de couleur la recolore (son nœud du nodal aussi). Un clic sur l\'en-tête la choisit (Ctrl : en ajouter, Maj : jusqu\'à elle), Suppr la retire. Glisser l\'en-tête : lâchée ENTRE deux pistes (un trait), elle s\'y range ; SUR une piste (elle s\'entoure), elles font groupe — un groupe se replie, se renomme, se défait (clic droit).', ['.nv', '.ar-head']],
   ['Les clips', 'Double-clic sur une piste : un clip neuf. Glisser un clip : le déplacer (Ctrl : le copier, Alt : sans aimant). Le bord gauche rogne le début (la fin et le contenu restent en place), le droit la fin. Double-clic sur son titre : le renommer. Ctrl+clic ou un cadre tiré sur le vide : plusieurs.', ['.ar-lane']],
-  ['La vue de détail', 'En bas de l\'arrangement, comme dans Live : « Clip » (les notes, les pas, ou le son d\'un clip audio) et « Instruments » (toute la chaîne de la piste). Maj+Tab bascule ; le filet du haut se tire, sa hauteur reste. Le navigateur, à gauche, se replie (‹ ou Ctrl+Alt+B).', ['.dk', '.nv']],
+  ['La vue de détail', 'En bas de l\'arrangement, une seule colonne qui défile : le clip choisi (les notes, les pas, le son d\'un clip audio, la génération d\'une région), puis toute la chaîne de la piste. Maj+Tab passe de l\'un à l\'autre ; le filet du haut se tire, sa hauteur reste. Un effet posé dans le nodal que deux pistes traversent est dans les deux chaînes, « lié » : le régler ici le règle pour les deux. Le navigateur, à gauche, se replie (‹ ou Ctrl+Alt+B).', ['.dk', '.nv']],
   ['Enregistrer', 'Armer une piste (●), activer « Rec » (F9), puis Lecture : jouer au clavier de l\'ordinateur (« Clavier » allumé : rangée du milieu, Z X l\'octave, C V la vélocité) ou en MIDI (menu ··· du projet). Stop : la prise se pose en clip « Nouveau ». Une piste audio armée prend le micro.', ['#mu-rec', '#mu-kbd', '.ar-head .arm']],
   ['Importer de l\'audio', 'Glisser des fichiers (WAV, MP3, FLAC, M4A, OGG) sur une piste ou sous les pistes, ou « Importer ». Ils entrent dans la bibliothèque (Upload) et se posent à la grille. La vue Clip règle début, fin, boucle, gain, transposition, inversion, fondus, et « Caler » au tempo.', ['[data-imp]']],
   ['L\'arc d\'énergie', 'La piste orange sous la règle : peindre à la souris (Maj : une droite, clic droit : effacer). Elle ouvre et ferme le filtre de la sortie, ou son volume. Chaque piste a aussi ses voies d\'automation (A).', ['.ar-arch', '.ar-arc']],
   ['Mixer', 'La console : un fader, un vu-mètre, des envois vers les bus d\'effets par piste ; un insert s\'ouvre dans la vue Instruments ; le nodal montre les mêmes câbles.', ['[data-view="console"]']],
-  ['Le nodal et son banc', 'Tab : Arrangement ↔ Nodal. Sous le graphe, le banc d\'ODIO_01 : l\'arrangement en petit et ses lanes (RYTHME, HARMONIE, TIMBRE, ÉNERGIE, TENSION). Glisser sur une lane : un segment ; clic milieu tiré d\'un segment jusque sur le graphe : un attracteur, qui lit ce que les modules sous ses anneaux ont de sa facette.', ['[data-view="nodal"]']],
+  ['Le nodal et son banc', 'Tab : Arrangement ↔ Nodal, deux vues du même graphe : le nœud de départ d\'une piste porte son nom et sa couleur, les fils de sa chaîne aussi. Bouton du milieu glissé : se déplacer ; sur les réglages d\'une tuile, il TRACE l\'ordre de ce qu\'elle garde en dézoomant. Clic : choisir, Maj : ajouter, Ctrl : ajouter ou retirer, glisser le fond : un cadre. Un câble tiré d\'une piste vers un effet d\'une autre le met dans les deux chaînes. Sous le graphe, le banc d\'ODIO_01 : glisser sur une lane, un segment ; clic milieu tiré d\'un segment jusque sur le graphe, un attracteur. Clic droit partout : le menu de ce qu\'on survole.', ['[data-view="nodal"]']],
   ['Générer', 'YuE (paroles et voix) ou ACE-Step : le style, les sections de l\'arrangement comme plan des paroles, la durée, la graine. Le morceau se pose sur une piste audio, puis se sépare en voix, batterie, basse, autre — chacune sur sa piste, alignées.', ['#mu-gen']],
   ['Exporter', 'Le mixage en WAV 24 bits, et chaque piste à part (stems) : tout entre dans la bibliothèque ; « Envoyer au montage » ouvre le montage avec le mixage.', ['#mu-exp']],
 ];
@@ -30,8 +30,8 @@ export const LIVE_SOURCE = 'Ableton Live 12 Reference Manual · « Live Keyboard
 const KEYS = [
   ['les vues', [
     ['Tab', 'Arrangement ↔ Nodal (Live : Session ↔ Arrangement)'],
-    ['Maj+Tab · F12', 'vue de détail : Clip ↔ Instruments (Live : Clip View ↔ Device View) ; F12, le navigateur web peut le garder pour ses outils'],
-    ['Ctrl+Alt+3 · Ctrl+Alt+4', 'vue Clip · vue Instruments'],
+    ['Maj+Tab · F12', 'panneau du bas : aller au clip ↔ à la chaîne (Live : Clip View ↔ Device View) ; F12, le navigateur web peut le garder pour ses outils'],
+    ['Ctrl+Alt+3 · Ctrl+Alt+4', 'le clip · la chaîne de la piste'],
     ['Ctrl+Alt+B', 'montrer / cacher le navigateur'],
   ]],
   ['le transport', [
@@ -41,7 +41,7 @@ const KEYS = [
     ['Maj+T', 'frapper le tempo (ODIO : Live n\'a pas de raccourci pour son bouton TAP)'],
   ]],
   ['l\'édition', [
-    ['Ctrl+Z · Ctrl+Y', 'annuler · rétablir (Mac : Cmd+Maj+Z)'], ['Ctrl+X · C · V', 'couper · copier · coller à la tête de lecture'],
+    ['Ctrl+Z · Ctrl+Maj+Z · Ctrl+Y', 'annuler · rétablir (Mac : Cmd+Z, Cmd+Maj+Z) — la lettre Z, en AZERTY comme en QWERTY ; ↺ dans la barre : le journal des gestes'], ['Ctrl+X · C · V', 'couper · copier · coller à la tête de lecture'],
     ['Ctrl+D', 'dupliquer'], ['Suppr', 'retirer la sélection'], ['Ctrl+R', 'renommer (le clip choisi, sinon la piste)'],
     ['Ctrl+A · Échap', 'tout choisir · rien'], ['Ctrl+E', 'couper les clips à la tête de lecture (Live : Split)'],
     ['Ctrl+J', 'consolider en un clip'], ['0 (zéro)', 'activer / désactiver les clips choisis'], ['R', 'inverser les clips audio choisis'],
@@ -52,6 +52,9 @@ const KEYS = [
     ['Ctrl+T · Ctrl+Maj+T', 'une piste audio · MIDI — Chrome garde ces deux-là pour ses onglets (réservés, la page ne les reçoit pas) : « + Piste »'],
     ['Ctrl+Alt+T', 'un bus de retour'],
     ['Ctrl+Maj+M', 'un clip MIDI à la tête de lecture, sur la piste choisie'],
+    ['Suppr', 'sur des en-têtes de piste choisis : les retirer (Ctrl+Z les rend)'],
+    ['Ctrl+G · Ctrl+Maj+G', 'grouper les pistes choisies · défaire leur groupe (Live 12, § 42.19 : Group Selected Tracks, Ungroup Tracks)'],
+    ['glisser un en-tête', 'entre deux pistes : la ranger là · sur une piste : grouper'],
     ['S · C · A', 'solo · armer · automation de la piste choisie (clavier MIDI éteint)'],
     ['Maj+M', 'un marqueur à la tête de lecture (ODIO)'],
   ]],
@@ -69,6 +72,8 @@ const KEYS = [
     ['Piano roll', '↑ ↓ transposer (Maj : octave) · Ctrl+U quantifier · Maj+glisser : choisir · double-clic : ôter'],
     ['Onde d\'un clip audio', 'Ctrl+molette : zoom · molette : défiler · double-clic : tout le son'],
     ['Nodal, le banc', '« c » : quelle tête gouverne (ODIO_01) · Suppr : retirer l\'attracteur choisi'],
+    ['Nodal, la souris', 'bouton du milieu : se déplacer · sur les réglages d\'une tuile : tracer l\'ordre gardé au zoom (ODIO_01) · Maj+clic : ajouter · Ctrl+clic : ajouter ou retirer · ⌥ : retirer'],
+    ['Clic droit', 'partout : le menu de ce qu\'on survole (jamais celui du navigateur, sauf dans un champ texte)'],
   ]],
 ];
 

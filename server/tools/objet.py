@@ -130,12 +130,22 @@ def _missing_on(ep: str) -> list[str]:
     return missing
 
 
+def comfy_endpoints() -> list[str]:
+    """Les instances ComfyUI de la voie « image ». Une entrée `local` (une
+    instance d'essai : `"image": ["local"]`) est l'ouvrier du portail
+    lui-même, sans ComfyUI (`jobs.Ctx` : `comfy = None`) — on ne lui
+    demande pas /object_info (avant le 29/09 : `Comfy("local")`, une URL
+    sans schéma, ValueError de urllib, 500). Même règle qu'Image, Upscale
+    et Vidéo (`e.startswith("http")`)."""
+    return [ep for ep in (config.get("lanes") or {}).get("image", []) if str(ep).startswith("http")]
+
+
 def state(req=None):
     with _state_lock:
         if time.time() - _state_cache["t"] < 60 and _state_cache["v"]:
             return _state_cache["v"]
     machines = []
-    for ep in config.get("lanes", {}).get("image", []):
+    for ep in comfy_endpoints():
         up, why = jobs.endpoint_alive(ep)
         entry = {"machine": jobs.machine_of(ep), "url": ep, "up": up}
         if up:
@@ -303,6 +313,8 @@ def run_mesh(ctx):
         # verrou : aucun rendu tant que Cal n'a pas câblé la voie (28/09 nuit)
         raise RuntimeError("TRELLIS.2 n'est pas encore câblé pour les objets (objet_trellis dans "
                            "showrunner.local.json) : Cal veut d'abord valider l'UX")
+    if ctx.comfy is None:
+        raise RuntimeError(f"la voie « image » n'a pas de ComfyUI ici ({ctx.endpoint}) : TRELLIS.2 ne peut pas partir")
     eid, it, ref = _source(ctx)
     seed = int(ctx.params.get("seed") or secrets.randbelow(2**31))
     ctx.progress(0.03, f"envoi de « {ref.get('label') or ref['file']} » à {ctx.endpoint}")
@@ -344,6 +356,17 @@ def selftest(call, ok) -> None:
     ok(st == 200 and any(x["id"] == o["id"] for x in lst["items"]), "objet : la liste des objets")
     st, s = call("GET", "/api/objet/state")
     ok(st == 200 and "trellis" in s and s["views"]["model"] is None, "objet : l'état de la chaîne (aucun modèle de vues)")
+    # une voie « image » locale (instance d'essai) : pas de ComfyUI à interroger, pas de 500
+    lanes = config.CFG.get("lanes")
+    config.CFG["lanes"] = {**(lanes or {}), "image": ["local"]}
+    _state_cache.update(t=0.0, v=None)
+    try:
+        st, s2 = call("GET", "/api/objet/state")
+    finally:
+        config.CFG["lanes"] = lanes
+        _state_cache.update(t=0.0, v=None)
+    ok(st == 200 and s2["trellis"]["machines"] == [] and s2["trellis"]["ready"] is False,
+       f"objet : une voie image « local » ne fait pas un 500 ({st})")
     if template_path().is_file():
         g = graph("sr_test.png", 7)
         crop = [n for n in g.values() if n["class_type"] == "ImageCropToMask"]

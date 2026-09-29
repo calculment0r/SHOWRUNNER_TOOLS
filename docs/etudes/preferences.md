@@ -414,3 +414,117 @@ Lecture :
 - `server/tools/objet.py` : `/api/objet/state` rend 500 quand une voie
   « image » vaut `local` (instance d'essai) — il prend chaque entrée pour
   une adresse ComfyUI.
+
+## 7. Finitions du 29/09
+
+Ce qui, de la liste du § 6 et des chantiers du 29/09, est fait (copie
+d'essai `/tmp/sr_fin` sur DGX2, port 8822 ; `tools/check.py` passe ; pilote
+Playwright `pilote_fin.mjs`), et ce qui ne l'est pas.
+
+**Le fil** (`commun/fil.js`) prend l'option `undo: U` : aimer, ranger dans
+un dossier et mettre à la corbeille passent par `libPatch` / `libTrash`
+(le contraire lu sur le serveur avant le geste). Image et Vidéo la lui
+donnent ; le pont `watchLibrary` (qui lisait au passage les écritures du fil)
+est retiré de `commun/undo.js`, d'Image et de Vidéo. Vérifié au pilote dans
+Image, Ctrl+Z en AZERTY (touche `key: 'z'`, `code: 'KeyW'`, par CDP) : aimer
+défait puis refait (Ctrl+Maj+Z), ranger dans un dossier défait, la corbeille
+défaite (l'image revient dans le fil) ; le journal nomme le geste.
+
+**ODIO** (`musique/`, repris ensuite par l'agent d'ODIO) : `History`
+(`projet.js`) remplacé par la pile commune — `U.snapshots` sur l'œuvre
+(`workOf`), l'instantané pris 350 ms après la rafale comme avant (une molette
+tournée, cinq clics rapprochés : un geste), Ctrl+Z dans la rafale range
+d'abord le geste en cours ; libellés lus dans la différence (`describeWork` :
+« tempo 112 → 113 », « ajouter 1 piste », « régler « Reverb » ») ; ↶ ↷ et le
+journal dans la barre ; le Ctrl+Z maison (`e.code === 'KeyZ'`) retiré. Un
+défaut de l'ancien `History` corrigé au passage : une clé absente de
+l'instantané (le nodal, né au premier geste) n'était pas retirée en annulant.
+Les raccourcis Ctrl+lettre (et les lettres de Live, clavier MIDI éteint) se
+lisent par la lettre (`letter(e)`, `musique/ui.js`) ; les rangées du clavier
+MIDI restent des positions. Vérifié au pilote en AZERTY : tempo, piste,
+jouet, module du nodal, attracteur du banc, bloc du nodal, région
+générative — chacun fait, défait, refait ; Ctrl+W (la touche KeyZ) n'annule
+rien ; dans un champ, Ctrl+Z reste au navigateur.
+
+**Movie Analysis** (`analyse/`) : dans un film (le Studio), `VX_HIST`
+devient la pile commune, branchée par `analyse/film/film.js` (le script de la
+page est classique ; ouverte seule, la page garde son repli) : réattribuer une
+réplique (menu, glisser), la rendre à l'automatique, forcer une voix, réunir
+ou séparer des fiches, tout remettre, « les oublier », renommer (« Appliquer »),
+corriger une réplique dans le script (une saisie = un geste) — libellés en
+verbes, ↶ ↷ et le journal à la place de `#vx-annuler` et `#cast-annuler`, le
+Ctrl+Z maison retiré (sauf page seule) ; les deux films re-rendus
+(`analyse/outils/rendre-films.sh`). Sur l'accueil : créer, renommer,
+retirer, supprimer (qui ne détruit rien : `supprime: true`), restaurer, le
+contraire lu sur le serveur avant le geste. Ne s'annulent pas : « Enregistrer »
+et « Publier » (partis pour tous), lancer ou arrêter un dépouillement, les
+seuils NeMo. Le labo des voix (`analyse/diarisation/`) passe aux jetons, la
+frise et la bande des plans se lisent en clair, la palette des personnages
+(`analyse/film/palette.css`) a sa version claire (chaque teinte ≥ 3:1), le
+sélecteur `xverse-theme` est retiré (le thème commun seul). Pilote : 62/62,
+Ctrl+Z en AZERTY compris. Reste : en sombre (la palette validée, non
+touchée), `--pc-5`, `--pc-11`, `--pc-14`, `--pc-15`, `--ry-build`,
+`--ry-payoff`, `--ry-close` sont sous 3:1 (jusqu'à 1,88:1) — à Cal de dire.
+
+**Le thème clair** : `.statcard` en `--on-or` (5,99:1 en clair, 5,68 en
+sombre) ; `100vh` et les autres `vh` → `calc(n * var(--vh))` dans
+`commun/shell.css`, `base.css`, `menu.css`, `fil.css`, `porte.css`,
+`montage/montage.css`, et les pages de `character/assets/` (un jeton `--vw`
+pour la largeur : `calc(94 * var(--vw))`) ; `character/assets/factory.css` :
+ses trois `rgba` → `--or-bg`, `--line-or`, `--veil`, et un jeton neuf
+`--grn-bg2` (l'éclair vert d'un champ qui change : `rgba(61,138,96,.42)` en
+sombre, `rgba(35,105,63,.26)` en clair). Captures de chaque page en clair et
+en sombre : accueil, Asset (grille, fiche d'une séquence, d'un clip MIDI,
+corbeille), Image, Vidéo (et son banc), Montage, Upscale, Object Creator
+(et une fiche), Admin (et la file), Character Factory (casting, console,
+coulisses), l'éditeur de thème.
+
+| paire (29/09) | sombre | clair |
+|---|---|---|
+| `--on-or` sur `--or` (carte de compte) | 5,68 | 5,99 |
+| `--ink` sur `--grn-bg2` / `--panel` (éclair de la fiche) | 8,71 | 11,14 |
+| `--or` sur `--or-bg` / `--panel2` (erreur, Character Factory) | 4,39 (AA grand) | 4,85 |
+| `--grn2` sur `--veil` / `--panel` (sorte MIDI) | 4,61 | 6,18 |
+| `--cy` sur `--veil` / `--panel` (sorte séquence) | 11,97 | 7,26 |
+| `--line-gr` sur `--panel` (filet MIDI, 1.4.11) | 2,45 (échec, connu) | 3,14 |
+| `--line-cy` sur `--panel` (filet séquence, 1.4.11) | 3,23 | 3,99 |
+
+**Asset et les sortes neuves** : `sequence` (Montage) et `midi` (ODIO) ont leur
+libellé (`kindFr`, `.kind.sequence`, `.kind.midi`), leur place dans la barre
+des sortes, une vignette dessinée quand elles n'ont pas d'image (la bande
+d'un film, une portée de notes) et leur fiche : la séquence s'ouvre dans le
+Montage (`montage/#<id>`), montre sa vignette, ses chiffres et ses plans (sa
+lignée) ; le clip MIDI montre ses notes (lues au serveur, dessinées aux
+jetons), s'écoute (un synthé de la page : triangle pour les notes, souffle
+filtré pour la batterie — des hauteurs et un rythme, pas le son d'ODIO) et
+se glisse dans l'arrangement d'ODIO (le type commun du portail, qu'ODIO pose
+en notes).
+
+**Les copies d'affichage** (`commun/proxies.js`) : Asset (les cases d'un
+dossier, la lignée, l'image de la fiche), `refBoard` (64 px) et `jobRow`
+(44 px : l'objet de chaque travail lu une fois par `/api/library/batch`)
+ne posent plus de vignette à la main.
+
+**Object Creator** : `/api/objet/state` ne demande `/object_info` qu'aux
+instances ComfyUI (`http…`) de la voie « image » ; une voie `local` (l'ouvrier
+du portail, sans ComfyUI) n'en est pas une — avant : `Comfy("local")`, une
+URL sans schéma, `ValueError` de urllib, 500. Contrôle dans son `selftest`.
+
+**Le clic droit** (Cal, 29/09 : « ne plus avoir de clic droit du navigateur
+partout dans nos outils ») : `commun/shell.js` garde toute page (sauf les
+champs de texte et `[data-native-menu]`) ; une zone sans menu reçoit le menu
+de repli (`commun/menu.js`) ; chaque outil de ce chantier a ses menus de
+zone (Asset : carte, sélection, dossier, corbeille, fond, fiche ; Image : une
+référence de la barre, la barre ; Vidéo : la création, le banc ; Montage : la
+séquence ; Upscale : un fichier de l'entrée, une agrandie ; Object Creator :
+un objet, une vue, la fiche ; Admin : un travail de la file, les sections ;
+Character Factory : une affiche, les étapes d'un personnage). Vérifié au
+pilote sur quinze pages (quatre points chacune) : jamais le menu du navigateur ; une zone d'ODIO
+(le centre de l'arrangement) l'empêche sans ouvrir de menu — à l'agent d'ODIO.
+
+**Ce qui reste** : les jouets (`musique/jouets/jouets.css`, palette `--jo-*` à
+garder à l'intérieur, le cadre à passer aux jetons) et le `100vh` de
+`musique/musique.css` — à l'agent d'ODIO, qui a repris `musique/` ; les cartes
+de dossier d'Asset gardent en clair leur vert très sombre (`--verd-5`, un aplat
+qui porte sa propre encre, inchangé par choix) ; `character/js/*.css` sont des
+copies que rien ne charge (les pages lisent `character/assets/`).

@@ -26,12 +26,12 @@ attracteurs ne faisaient que lire). « Maintenant » : `musique/nodal.js`,
 
 | # | ODIO_01 | fichier | avant | maintenant | écart |
 |---|---|---|---|---|---|
-| 1 | clic milieu glissé : se déplacer, partout (sauf une borne, une molette liable, une machine en édition) | `App.tsx` `startPan`, `onMiddleDown` | glisser le fond (gauche) | porté | — |
+| 1 | clic milieu glissé : se déplacer, partout (sauf une borne, une molette liable, une machine en édition) | `App.tsx` `startPan` (l. 526), `onMiddleDown` (l. 577-606) | glisser le fond (gauche) | porté ; 29/09 : une exception de plus, déclarée au même endroit — les réglages d'une tuile, où il trace (§ 5) | — |
 | 2 | molette : zoom ancré au curseur, `0,9988^deltaY`, bornes 0,05 – 2,8 | `canvas/camera.ts` `zoomAt` | ×1,12 par cran, 0,3 – 2 | porté | — |
 | 3 | plancher de lisibilité : la plus petite échelle où chaque tuile dit son nom, son réglage exposé et sa valeur ; on recule encore ×3 sous le plancher | `App.tsx` `zoomFloor`, `tile/legible.ts`, `camera.ts` `plancherCamera` | — | porté | — |
 | 4 | sous le plancher, la tuile garde sa mise en page et rapetisse (`uiK`, `retrait`) | `App.tsx` | — | porté (calque réduit de `1 / uiK`) | — |
-| 5 | glisser le fond : rectangle de sélection, ⌃ ajoute, ⌥ retire, effleurer un groupe le prend | `App.tsx` `startMarquee` | — | porté | — |
-| 6 | clic : choisir ; le second clic sur un bloc d'un ensemble ENTRE dans l'assemblage | `App.tsx` `selectBlock` | clic = choisir | porté | — |
+| 5 | glisser le fond : rectangle de sélection, ⌃ ajoute, ⌥ retire, effleurer un groupe le prend | `App.tsx` `startMarquee` | — | porté ; 29/09 : Maj ajoute, Ctrl/⌘ inverse ce qu'il touche, ⌥ retire | l'usage demandé par Cal remplace « ⌃ ajoute » |
+| 6 | clic : choisir ; le second clic sur un bloc d'un ensemble ENTRE dans l'assemblage | `App.tsx` `selectBlock` | clic = choisir | porté ; 29/09 : Maj+clic ajoute, Ctrl/⌘+clic ajoute ou retire, ⌥ retire ; un clic sans glisser sur une tuile d'une sélection plus large ne garde qu'elle | — |
 | 7 | en-tête glissé : déplacer la sélection, le groupe, la machine soudée entière (hors édition) | `App.tsx` `startMove`, `Tile.tsx` | glisser la carte seule | porté | — |
 | 8 | ⌥ glissé : dupliquer, les câbles internes suivent, les sorties sont gardées | `App.tsx` `duplicate`, `interaction/patch.ts` `duplicateLinks` | « Dupliquer » d'un effet | porté ; une source duplique sa PISTE | — |
 | 9 | double-clic sur l'en-tête : taille d'origine ; sur le nom : renommer (gravé, 18 signes) | `Tile.tsx`, `App.tsx` `resetSize`, `renameBlock` | — | porté | — |
@@ -43,18 +43,18 @@ attracteurs ne faisaient que lire). « Maintenant » : `musique/nodal.js`,
 | 15 | T : une machine dans la sélection → la REMONTER dans son agencement ; un bloc seul → sa taille d'origine ; sinon `tidyGroup` (redresser, resserrer, combler, jamais réordonner) | `App.tsx` `tidySelection`, `layout.ts` `tidyGroup`, `reassembleMachine` | — | porté | — |
 | 16 | T en édition : optimiser (tout le bloc) ou ranger (les éléments pris) | `components/MachinePanel.tsx`, `interaction/aligner.ts` `optimiserControles`, `rangerControles` | — | porté | — |
 | 17 | F : cadrer la sélection, ou toute la scène, jamais au-delà de 100 % ; cadrage à la naissance | `App.tsx` `focusOn` | « Ajuster » | porté | — |
-| 18 | Suppr : un lien de molettes, sinon un câble, sinon la sélection — le câblage se RECOUD | `App.tsx` onKey, `patch.ts` `removeNodes` | le câble choisi, un effet | porté ; une source ou une tranche retire sa piste (confirmation) | — |
-| 19 | ⌃Z : l'historique de la scène | `App.tsx` `undo` | l'historique du projet | l'historique du projet (il couvre `p.nodal`) | un seul ⌃Z, voulu |
+| 18 | Suppr : un lien de molettes, sinon un câble, sinon la sélection — le câblage se RECOUD | `App.tsx` onKey, `patch.ts` `removeNodes` | le câble choisi, un effet | porté ; une source ou une tranche retire sa piste (sans confirmation depuis le 29/09 : Ctrl+Z la rend) ; le recousu suit chaque chaîne de piste (`projet.js` `recoudre`) | — |
+| 19 | ⌃Z : l'historique de la scène | `App.tsx` `undo` | l'historique du projet | l'annulation commune du portail (`commun/undo.js`), un instantané du projet par geste ; Ctrl+Z, Ctrl+Maj+Z, Ctrl+Y lus par la LETTRE (juste en AZERTY) ; ↶ ↷ et le journal | un seul ⌃Z, voulu |
 | 20 | double-clic sur le fond : le CATALOGUE (fenêtre, rubriques, vignette = plan réel d'une machine, détail entre / sort / taille, double-clic pose au centre, glisser pose où l'on lâche) | `components/Catalogue.tsx`, `blocks/catalogue-entrees.ts` | un menu de modules | porté (`machines/catalogue.js`) : entrées, instruments, 13 machines, Playground, effets, flux, sortie | la table de mix n'y est pas |
 | 21 | un câble part d'une borne de sortie et se lâche SUR le bloc visé ; à défaut, la borne la plus proche dans 74 px ; cadre vert si la liaison se fera, rouge sinon (verdict de `liaisons.ts`) | `App.tsx` `startCable`, `porteurDe`, `verdictLiaison`, `interaction/liaisons.ts` | sortie → entrée, au pixel | porté | — |
 | 22 | lâché dans le vide : la liste rapide, le bloc naît branché | `components/Palette.tsx` | un menu, branché | porté | — |
-| 23 | un câble : clic le désigne, double-clic y insère un bloc, clic droit : saut ou « insérer un bloc de flux » | `App.tsx`, `components/CableMenu.tsx`, `patch.ts` `insertInto` | clic + « Couper » | porté | — |
+| 23 | un câble : clic le désigne, double-clic y insère un bloc, clic droit : saut ou « insérer un bloc de flux » | `App.tsx`, `components/CableMenu.tsx`, `patch.ts` `insertInto` | clic + « Couper » | porté ; 29/09 : par le menu commun (`commun/menu.js`), les deux entrées d'ODIO_01 en tête, puis « insérer un effet », « couper » ; le menu dit la chaîne que le fil sert | — |
 | 24 | sauts : un carré par saut sous la borne ; saut d'office quand deux blocs se touchent ; survol : le fil ; clic : le garder affiché | `components/Ports.tsx`, `interaction/sauts.ts`, `patch.ts` `toggleJump` | — | porté | — |
 | 25 | une borne glisse le long du pourtour au clic milieu, double-clic la remet ; une machine a ses bornes sur l'arête haute (entrée à 0,2, sortie à 0,8) | `App.tsx` `startPortDrag`, `defaultPortU`, `interaction/ports.ts` | bornes fixes | porté | — |
 | 26 | liens entre molettes : clic milieu d'une molette à l'autre, propagation en position, sens + / −, visibles au survol seulement, nœud de 22 px, double-clic retourne, clic droit défait, Suppr | `App.tsx` `tirerLien`, `propagerLien`, `interaction/liens-knob.ts` | — | porté (molettes des machines, comme chez lui) | — |
 | 27 | menu d'un ensemble : témoin (éteindre tout), ranger, remonter, conception, teinte ; machine ouverte : sa commande de remontage reste | `App.tsx`, `components/TeinteBtn.tsx` | — | porté ; teintes = 14 jetons | les SONS par machine (`SonsBtn.tsx`) ne sont pas portés |
 | 28 | le nom d'une machine au-dessus d'elle, à droite, taille constante | `App.tsx` `machine-titre` | — | porté | — |
-| 29 | poste de conception : la machine en édition, bord / écart en mm, enregistrer l'agencement, revenir au planogramme ; clic milieu : tracer l'ordre d'importance | `components/MachineDesignPanel.tsx`, `MachinePanel.tsx` `tracerOrdre` | — | porté | — |
+| 29 | poste de conception : la machine en édition, bord / écart en mm, enregistrer l'agencement, revenir au planogramme ; clic milieu : tracer l'ordre d'importance | `components/MachineDesignPanel.tsx`, `MachinePanel.tsx` `tracerOrdre` (l. 830-871) | — | porté ; 29/09 : le même tracé sur les réglages de chaque tuile, hors édition (§ 5) | — |
 | 30 | curseur de la sémantique dans la barre ; panneau des seuils (présence relative, gel sous ×, planchers par genre de contrôle) | `components/Seuils.tsx`, `blocks/planche.ts` | — | porté | — |
 | 31 | les touches de l'ordinateur jouent QUAND un clavier est désigné seul (Z S X D C V G B H N J M ,) | `App.tsx` onKey, `interaction/clavier-ordinateur.ts` | — | porté (clavier, KBD-01, SEQ-01) | — |
 | 32 | le MIDI entrant joue les claviers posés | `App.tsx` `requestMIDIAccess` | le MIDI de la DAW joue la piste choisie | — | pas porté |
@@ -192,3 +192,89 @@ Copie d'essai `/tmp/sr_odio_nodal` (port 8806, données à part),
   gabarit neuf posé dans le nodal ;
 - côte à côte avec le site d'ODIO_01 : `cote_a_cote_ouvert.png`,
   `cote_a_cote_dezoom.png`.
+
+## 5. Le dessin au bouton du milieu (29/09, troisième tour)
+
+Cal, le 29/09 : « on doit avoir dans ces nodes des paramètres exposés avec la
+fonction clic milieu souris qu'on avait sur le ODIO de référence dans l'autre
+repo : on dessinait avec l'appui de ce bouton milieu et on définissait « à la
+volée » quel paramètre est le plus important à conserver lors du zoom
+sémantique : regarde comment cela était codé dans l'autre projet. »
+
+### Comment ODIO_01 le faisait (`apps/studio/src/`, commit 6d8a7ed)
+
+- **Le geste** : `components/MachinePanel.tsx`, `tracerOrdre` (l. 830-871).
+  Le bouton du milieu enfoncé sur le panneau d'une section de machine, en
+  CAPTURE (`onPointerDownCapture`, l. 891-899 : « le tracé doit pouvoir
+  partir d'un knob », les gabarits arrêtant la propagation pour leur propre
+  geste). Chaque point de la courbe est testé contre les boîtes des contrôles
+  rendus (`boites`) ; un contrôle traversé pour la première fois prend le
+  rang suivant (`vus.push`) ; la courbe se dessine (`setCourbe`), les rangs
+  s'affichent (`setOrdreEnCours`). Au relâché : `savePriorite(section.id,
+  vus)` (l. 867), et les rangs restent 2,6 s (l. 870 : « un ordre qu'on vient
+  de tracer et qui disparaît aussitôt ne s'est pas vu »). Un tracé qui ne
+  traverse rien efface l'ordre et rend la main au constructeur (l. 836-837).
+- **Ce que l'ordre commande** : `blocks/machines.ts`, `rankedControls`
+  (l. 683-714) — « L'ORDRE TRACÉ À LA MAIN PRIME SUR TOUT » : les contrôles
+  tracés d'abord, dans l'ordre de la traversée, puis les autres par
+  importance (la cote √(l × h)) ; l'exposé passe devant. Quand la place
+  manque, la section retire par la FIN de cet ordre
+  (`docs/regle-du-responsif-machine.md`, § 3 l. 127-131 et § 7 l. 178-181) :
+  le premier tracé est ce qui reste au plus loin.
+- **Où c'est rangé** : `design/machines-config.ts`, `priorites[sectionId]`
+  (l. 187-190, `getPriorite` / `savePriorite` l. 388-404), dans le navigateur.
+- **La cohabitation avec le déplacement de la vue** : un seul aiguillage,
+  `App.tsx` `onMiddleDown` (l. 577-606), écouteur natif en capture sur la
+  vue. Le bouton du milieu déplace la vue partout SAUF là où un geste le
+  revendique et le déclare : une borne `.port` (la faire glisser), une
+  `.machine` quand son poste de conception est ouvert (le tracé), et hors
+  édition une molette `[data-bout]` (tirer un lien de molettes). La règle est
+  écrite dans `docs/logique-globale.md`, n° 61 (l. 253) : « un geste
+  appartient à un bouton, et le déclare ». Le tracé avait été réservé à
+  l'édition à la demande de Cal : `docs/demandes.md` F51 (l. 165, « le clic
+  milieu ne trace qu'en mode édition — panoramique libre pour jouer »), après
+  F43 (l. 157, le tracé) et F35 (l. 132, les rangs seulement au clic milieu) ;
+  `docs/organisation-machines.md` l. 380-397.
+- Les blocs simples (pas les machines) n'avaient PAS de tracé : un seul
+  exposé, choisi en cliquant le nom d'un paramètre (`App.tsx`
+  `toggleExposed`, l. 1003-1008 ; `ParamRow.tsx` l. 5), qui passe en tête des
+  rails (`BlockBody.tsx` `promoteExposed`, l. 79) et reste seul, en grand,
+  quand rien d'autre ne tient (`Promoted.tsx`).
+
+### Ce qui est repris ici
+
+- **Les machines** : inchangé — le tracé de leur panneau en édition
+  (`machines/panneau.js` `tracerOrdre`) et l'aiguillage d'ODIO_01.
+- **Les tuiles du nodal** (les nœuds : sources, effets, tranches, clavier) :
+  le même geste, hors édition, « à la volée » (`nodal.js`
+  `tracerOrdreTuile`). Il est déclaré au même aiguillage que chez ODIO_01,
+  comme une quatrième exception : bouton du milieu enfoncé sur les RÉGLAGES
+  d'une tuile (`.tile__body`) → tracé ; sur son en-tête, ses arêtes, le fond,
+  un câble → la vue part. Mêmes règles : l'ordre de la première traversée,
+  les rangs pendant le tracé et 2,6 s après, un tracé vide efface. La courbe
+  touche ce qui porte `data-param` (`machines/corps.js` : rails, faders, le
+  réglage en grand). Un seul écart : entre deux événements, la courbe est
+  suivie tous les 4 px, pour qu'un geste rapide ne saute pas un rail.
+- **L'effet** : l'ordre est rangé dans le projet (`p.nodal.ordre[tuile]`,
+  donc partagé et annulable par Ctrl+Z) ; le premier tracé devient l'exposé
+  (`p.nodal.expose`), le réglage qui reste seul en grand ; `corps.js`
+  `promoteExposed` met les rails tracés en tête, dans l'ordre de la
+  traversée, les autres gardent le leur ; `resolveSlots` s'arrêtant au
+  premier qui ne rentre plus, c'est l'ordre du retrait au zoom sémantique —
+  la règle de `rankedControls`. Le clic sur un nom de réglage (l'exposé
+  d'ODIO_01) reste ; le menu de la tuile (« Exposer », « Effacer l'ordre
+  tracé ») aussi.
+- **Pourquoi hors édition** : F51 craignait qu'un panneau de machine, grand,
+  confisque le déplacement. Les machines gardent cette règle ; sur une tuile
+  seule la zone des réglages trace, et la vue part de partout ailleurs.
+
+Mesuré (DGX2, `/tmp/sr_odio3_essai.mjs`, captures `e04_trace_en_cours`,
+`e05_trace_rangs`, `e06_trace_dezoom` dans `/tmp/sr_odio3_shots`) sur le
+délai de la basse : à 100 %, cinq rails (Temps, Retour, Ton, Mix, Son sec) ;
+avant tout tracé, à 55 % et 35 % il ne reste que « Temps ». Tracé Mix → Ton →
+Retour : ordre [mix, tone, fb], exposé « mix », trois rangs affichés, la vue
+n'a pas bougé ; ensuite, à 55 %, 35 % et 15 %, il reste « Mix » (en grand à
+15 %). Ctrl+Z en AZERTY (`key: 'z'`, `code: 'KeyW'`) efface l'ordre,
+Ctrl+Maj+Z le rend. Le bouton du milieu glissé sur le fond déplace la vue de
+(120, 60) pour un geste de (120, 60), sur l'en-tête d'une tuile de (−80, −30)
+pour (−80, −30), sans toucher au zoom.

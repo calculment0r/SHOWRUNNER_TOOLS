@@ -625,3 +625,114 @@ clip MIDI qui joue.
 - Le panneau est dense sous 1400 px (trois colonnes) ; la partition éditée à
   la main n'a pas de coloration, seul abc_tools la juge (à 700 ms de la
   frappe).
+
+## 9. Troisième tour (29/09) : la souris, les menus, les pistes, un seul graphe
+
+Cal, le 29/09 : « pour les canva comme celui de ODIO on doit avoir une
+interaction avec bouton milieu souris pour le pan et clic gauche pour des
+sélections de node avec les standards en ajout et enlever de la sélection par
+clic. on doit d'une façon générale ne plus avoir de clic droit du browser
+partout dans nos outils.. on a un menu contextuel dédié à où on se trouve au
+survol. il faut qu'on puisse delete des pistes dans l'arrangeur avec la touche
+supprime. il faut dans le panel rack en bas en dessous de l'arrangeur qu'on
+ait tout sans avoir d'onglet clip et instrument. […] si j'ajoute un délai en
+canva mais que je fais passer deux nodes qui appartiennent à deux pistes
+différentes il doit rentrer dans la chaîne de l'une et l'autre […] le nom
+d'une piste de l'arrangeur est ce qui doit être bien visible […] on doit
+pouvoir affecter des couleurs facilement aux pistes ou au node de start dans
+le canva […] il faut pouvoir aussi drag and drop les pistes pour les mettre de
+haut en bas.. et aussi faire des groupes de pistes si je drag sur une autre
+facilement : mets du magnétisme sur « l'entre-piste » et les pistes. »
+
+Et le Ctrl+Z commun du portail (`commun/undo.js`, `docs/etudes/preferences.md`
+§ 4) terminé dans tout ODIO.
+
+### Ce qui est fait
+
+| demande | ce qui est fait | où |
+|---|---|---|
+| Ctrl+Z en AZERTY | la pile commune : un instantané de l'œuvre par geste (tout ce qui passe par `app.commit` : arrangement, console, nodal, attracteurs, jouets, génératif), fondu sur 350 ms ; Ctrl+Z, Ctrl+Maj+Z, Ctrl+Y lus par la LETTRE (`e.key`), les commandes d'ODIO aussi (`ui.js` `letter` ; le clavier MIDI de l'ordinateur reste à la touche physique) ; ↶ ↷ et le journal dans la barre ; un libellé par geste (« retirer la piste « Basse » », « tracer l'ordre de « DÉLAI » : Mix, Ton, Retour »…). Deux fautes trouvées et corrigées en chemin : ce que les vues créent en se dessinant (les tables vides du nodal, la tension plate du banc) comptait comme un geste et effaçait la pile de rétablir (`projet.js` `workOf` les ignore) ; reposer un instantané remplaçait les objets, et une molette de tuile ou de jouet écrivait ensuite dans un module détaché du projet (`musique.js` `fondre` garde chaque objet à id) | `musique.js`, `projet.js`, `ui.js`, `timeline.js`, `editeurs.js`, `nodal.js`, `banc.js` |
+| la souris du nodal | bouton du milieu glissé : la vue, partout — sauf sur les réglages d'une tuile, où il TRACE l'ordre d'exposition (le geste d'ODIO_01, `docs/etudes/musique_odio01.md` § 5) ; clic : choisir, Maj+clic : ajouter, Ctrl/⌘+clic : ajouter ou retirer, ⌥ : retirer (ODIO_01) ; un clic sans glisser sur une tuile d'une sélection plus large ne garde qu'elle ; glisser le fond : le cadre (Maj ajoute, Ctrl inverse, ⌥ retire) | `nodal.js` |
+| plus aucun menu du navigateur | le menu commun du portail (`commun/menu.js`, par `ui.js` `menu`) partout ; un menu propre à chaque zone : en-tête de piste, voie, clip, règle, sections, arc et automation, panneau du bas (clip, module du rack), fond du nodal, tuile (nœud de départ, effet partagé, section de machine, clavier), étiquette de piste, câble, borne, jouet, segment, lane et attracteur du banc ; ce qui n'a pas le sien (barres, console, navigateur) prend celui de sa vue, sinon celui d'ODIO (annuler, vues, lecture, une piste, générer…). Seul un champ texte garde le menu du navigateur (copier, coller). Là où le bouton droit est déjà un geste (effacer une courbe peinte, la vélocité d'un pas, ôter une note, le FLIPPER et la NAVETTE), rien ne s'ouvre (`data-nomenu`). Un menu ouvert garde le clavier (Échap le ferme, Suppr n'y retire rien) | `musique.js` (le filet), les vues (`zoneMenu`), `rack.js`, `banc.js` |
+| Suppr sur une piste | un clic sur l'en-tête la CHOISIT (Ctrl : en ajouter ou retirer, Maj : jusqu'à elle — Live 12, § 42.5 « Select Multiple Items ») ; Suppr retire les pistes choisies sans confirmation (Live 12, § 42.19 « Delete Track from Track Title Bar ») : Ctrl+Z les rend. Un clic dans la voie rend la piste courante sans la choisir : Suppr n'y retire rien | `timeline.js`, `musique.js` `removeTracks` |
+| glisser une piste, grouper | l'en-tête se glisse ; magnétisme franc : le tiers haut et le tiers bas d'un en-tête sont l'ENTRE-PISTES (un trait orange se pose sur la limite : la piste ira là), le cœur est la PISTE (elle s'entoure d'orange : lâchée, elles font groupe) ; le fantôme dit « déplacer » ou « grouper ». Un groupe (`p.groups`, `t.grp`, ses membres se suivent) a son en-tête : replier (▾ / ▸ : un rang, les clips des membres en petit), renommer (double-clic), défaire, choisir ses pistes, les colorer ; il se glisse entier ; Ctrl+G groupe les pistes choisies, Ctrl+Maj+G défait (Live 12, § 42.19). Au bord de son groupe, une piste y reste (réordonner dedans) ; ailleurs, elle en sort | `timeline.js`, `projet.js` (`deplacerPistes`, `grouperPistes`, `rangerGroupes`), `server/tools/music.py` (valide `groups`, `grp`) |
+| le panneau du bas sans onglets | une colonne qui défile : le clip choisi (notes, pas, son, ou la génération d'une région), puis la chaîne de la piste (le rack) ; « Instruments et effets », Maj+Tab, F12, Ctrl+Alt+3 / 4 font défiler jusqu'à la partie voulue | `editeurs.js` `createDock` |
+| un effet dans deux chaînes, lié | la chaîne d'une piste n'est plus rangée : c'est le trajet de sa source à sa tranche dans les câbles (`projet.js` `trajets`), une seule vérité pour le rack, le nodal, le moteur. Un câble tiré, dans le nodal, d'un nœud d'une piste vers un effet qui n'est pas sur sa chaîne l'y fait ENTRER (juste après ce nœud) : le délai de la basse que la batterie traverse est dans les deux chaînes, les deux racks le montrent « lié · Batterie / Basse », une seule instance (un module, ses réglages). Le moteur en joue une VOIX PAR PISTE (`moteur.js` `voixPartagees`) : régler l'effet règle les deux, et le son de chaque piste reste dans sa piste (sa tranche, son muet, son stem). Retirer l'effet recoud chaque chaîne pour elle-même (`recoudre`) ; « sortir de cette chaîne seulement » (menus du rack, de la piste, de la tuile) ; retirer une piste laisse l'effet à l'autre | `projet.js`, `moteur.js`, `musique.js` (`chain`, `removeModule`, `removeFromTrack`, `removeTracks`), `nodal.js` `relier`, `rack.js` |
+| arrangement et nodal, deux vues du même graphe | au-delà des chaînes : choisir un nœud d'une piste en fait la piste courante de l'arrangement (et son rack en bas) ; « voir son nœud dans le nodal » / « voir dans l'arrangement » ; la piste courante se cerne de sa couleur dans le nodal | `nodal.js`, `timeline.js` |
+| le nom et la couleur des pistes sur le nodal | le nœud de départ d'une piste (sa source ; une machine-instrument : chacune de ses sections) porte la couleur de la piste (bandeau d'en-tête, teinte) ; son nom, dans une étiquette à GAUCHE du nœud, à taille d'écran constante : lisible à tous les reculs ; les fils de sa chaîne ont sa couleur (tiretés quand deux chaînes les empruntent) ; les notes d'un clavier, la couleur de la piste qu'elles jouent. La couleur est UNE valeur (`t.color`) : un geste depuis la piste (sa barre de couleur, la palette) ou depuis le nœud (la pastille de l'étiquette, ou « couleur de la piste » dans son menu) ; la palette : les sept jetons des pistes | `nodal.js`, `nodal.css`, `timeline.js`, `musique.js` `setTrackColor` |
+
+### Ce qui a été vu (DGX2, copie `/tmp/sr_odio3`, portail d'essai :8823, `/tmp/sr_odio3_essai.mjs`, captures `/tmp/sr_odio3_shots/e*.png`)
+
+- **Souris** : clic milieu glissé de (120, 60) sur le fond → la vue bouge de
+  (120, 60) ; sur l'en-tête d'une tuile, de (−80, −30) → (−80, −30), zoom
+  inchangé. Clic [m1] ; Maj+clic [m1, m3] ; Ctrl+clic [m1] ; Ctrl+clic
+  [m1, m3] ; clic [m1] ; cadre tiré dans le vide [m1, m3] ; Ctrl+cadre sur m3
+  [m3].
+- **Le tracé** : voir `musique_odio01.md` § 5 (ordre [mix, tone, fb], ce que
+  garde la tuile à 55, 35, 15 %, Ctrl+Z / Ctrl+Maj+Z).
+- **Le délai partagé** (projet « Batterie et basse » ; un câble tiré de la
+  sortie de la batterie SUR le délai de la basse, à la souris) : chaînes
+  `t1 [m1, m2]`, `t2 [m3, m5, m4]` → `t1 [m1, m5, m2]`, `t2 [m3, m5, m4]` ;
+  le rack de la batterie montre le délai « lié · Basse », celui de la basse
+  « lié · Batterie ». Le son (rendu hors temps réel, piste seule, énergie de
+  la queue entre 0,45 et 2,2 s après la fin, délai mix 1, retour 0,72) :
+  | | batterie seule | basse seule |
+  |---|---|---|
+  | avant le câble | −180 dB (pas d'écho) | −33,9 dB |
+  | après le câble | **−35,2 dB** | −33,9 dB |
+  | retour tourné à 0,27 dans le rack de la BATTERIE | −62,5 dB | **−50,7 dB** |
+  | mix remis à 0 depuis la BASSE | −180 dB | −132,4 dB |
+  Les échos de la batterie sont dans SON stem (la tranche de la basse y est
+  muette) : la voix par piste est juste ; le réglage fait d'un côté change
+  le son des deux.
+- **Couleurs** : la barre de la piste Batterie → « corail » : l'étiquette du
+  nœud (#e79b7c), la tuile (`--pc: var(--coral-2)`) et les deux fils de sa
+  chaîne suivent ; la pastille du nœud → « acier » : la piste et son en-tête
+  (`var(--cy)`) suivent ; Ctrl+Z rend « corail ».
+- **Pistes** : clic sur l'en-tête de la Basse, Suppr → [t1] ; le délai
+  partagé reste à la batterie (`t1 [m1, m5, m2]`) ; Ctrl+Z (AZERTY) → [t1, t2].
+  « Voix 1 » glissée dans le tiers bas de la Batterie : trait affiché, rien
+  d'entouré, fantôme « déplacer » → [t1, Voix 1, t2]. Glissée au cœur de la
+  Basse : pas de trait, la Basse entourée, fantôme « grouper » → « Groupe 1 »
+  [t2, Voix 1] ; replié (un seul en-tête de piste visible), Ctrl+Z le déplie ;
+  menu du groupe (Replier, Renommer, Choisir ses pistes, Couleur de ses
+  pistes, Défaire le groupe, Retirer ses 2 pistes) → défait, Ctrl+Z le refait ;
+  Ctrl+Maj+G sur une de ses pistes le défait ; Ctrl+clic sur deux en-têtes
+  [t1, t2], Ctrl+G : les deux groupées.
+- **Panneau du bas** : zéro onglet ; deux parties, le clip puis la chaîne ;
+  « Instruments et effets » défile jusqu'à la chaîne.
+- **Clic droit** : 21 zones essayées (en-tête, voie, clip, règle, sections,
+  panneau du bas, module du rack, barre, arc, fond du nodal, nœud de départ,
+  effet partagé, étiquette, câble, borne, section de machine, jouet, segment,
+  attracteur, lane du banc, console) : le menu du navigateur empêché partout,
+  un menu d'ODIO partout sauf sur l'arc (le bouton droit y efface, voulu) ;
+  dans un champ texte, le menu du navigateur reste.
+- **Ctrl+Z en AZERTY** (`key: 'z'`, `code: 'KeyW'`) : une tuile déplacée
+  (x 360 → 588 → 360, Ctrl+Y → 588), un attracteur déplacé (rendu à sa
+  place), la molette d'un jouet (force 97 → rendue), un clip glissé (16 → 24
+  → 16), une région générative (retirée, la piste reste) ; ↷ la rétablit ; le
+  journal liste les gestes par leur nom.
+- Les pilotes d'avant repassent : `nodal_essai.mjs` (25 tuiles, 107
+  contrôles), `sr_odio_gen_drive.mjs` (menus lus sur `.sr-menu`, copie
+  `sr_odio3_gen_drive.mjs` : toutes les étapes, aucun message d'erreur),
+  `sr_jouets_gestes.mjs` (copie `sr_odio3_jouets_gestes.mjs`, la carte
+  choisie par `app.nodal.choisir` : les quatorze jouets, le transport, les
+  quatre qu'on traverse, le retour, le retrait par Suppr).
+- `python3 tools/check.py` : 1026 passés, 0 en échec.
+
+### Ce qui reste, ou n'est pas beau
+
+- Le tracé sur une tuile ne voit que les réglages rendus : de loin, on ne
+  trace que ce qui tient ; se rapprocher pour tracer plus.
+- Les rangs du tracé couvrent le début du nom des réglages (comme ODIO_01).
+- Les étiquettes de piste gardent leur taille à tous les reculs : sur une
+  scène serrée et très dézoomée, elles se chevauchent.
+- Les bus de retour sont des pistes : leur entrée porte aussi une étiquette.
+- Un jouet que deux pistes traversent n'est pas dédoublé par piste (sa scène
+  est un seul son) : un câble vers un jouet déjà dans une chaîne reste un
+  câble simple.
+- Le banc ne choisit qu'un attracteur à la fois (ODIO_01 aussi).
+- Une chaîne à branches parallèles (un effet en dérivation) se lit dans
+  l'ordre du trajet ; « ← → » du rack la remettent en série.
+- La palette des pistes a sept jetons (`COLORS`, `server/tools/music.py`) ;
+  plus de couleurs demanderaient des jetons dans `commun/tokens.css`.

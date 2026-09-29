@@ -75,6 +75,8 @@ const VOIX = {
 VOIX.son = lisJson(flag('--son', 'son.json'));
 const VOIX_JS = readFileSync(join(ICI, 'voix.js'), 'utf8').replace(/\r\n/g, '\n');
 const SON_JS = readFileSync(join(ICI, 'son.js'), 'utf8').replace(/\r\n/g, '\n');
+// les menus du clic droit, zone par zone (le menu commun du portail, window.SR_MENU posé par analyse/film/film.js)
+const MENUS_JS = readFileSync(join(ICI, 'menus.js'), 'utf8').replace(/\r\n/g, '\n');
 // (voix.css, la feuille de la page autonome, n'est plus posée : analyse/film/film.css porte ces styles dans le thème du portail)
 
 // Les corrections faites dans le trombinoscope — noms, fiches reconnues comme une
@@ -371,13 +373,20 @@ const PORTRAITS = ${JSON.stringify(PORTRAITS)};
 const L = ${JSON.stringify(L)};
 const VOIX = ${JSON.stringify(VOIX).replace(/[⺀-￿]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))};
 // Les teintes : celles du portail (commun/tokens.css), et la palette des personnages, des voix et du rythme,
-// declaree une seule fois dans analyse/film/film.css. Aucune couleur n'est ecrite dans cette page : on les lit
-// (la feuille est chargee avant ce script, qui l'attend). Une palette absente retombe sur l'encre du portail.
+// declaree une seule fois dans analyse/film/palette.css (importee par film.css). Aucune couleur n'est ecrite dans
+// cette page : on les lit (la feuille est chargee avant ce script, qui l'attend). Une palette absente retombe sur
+// l'encre du portail. Le theme (sombre, clair, « le mien ») se pose APRES ce script — commun/theme.js est un module,
+// execute une fois la page lue — puis change avec les preferences : les teintes lues sont relues a chaque fois
+// (l'evenement sr:theme, plus bas), dans les memes tableaux, que le casting et la timeline gardent par reference.
 const JETON = (() => { const cs = getComputedStyle(document.documentElement); return (n) => cs.getPropertyValue(n).trim(); })();
 const PALETTE = (prefixe, n) => { const out = []; for (let i = 0; i < n; i++) { const c = JETON(prefixe + i); if (c) out.push(c); } return out.length ? out : [JETON('--ink2')]; };
-const CAST_COLORS = PALETTE('--pc-', 16);
+const CAST_COLORS = [];
 const RHYTHM_COLORS = {};
-['hook', 'setup', 'build', 'beat', 'turn', 'payoff', 'breath', 'close'].forEach((k) => { RHYTHM_COLORS[k] = JETON('--ry-' + k) || JETON('--ink3'); });
+function relisTeintes() {
+  CAST_COLORS.splice(0, CAST_COLORS.length, ...PALETTE('--pc-', 16));
+  ['hook', 'setup', 'build', 'beat', 'turn', 'payoff', 'breath', 'close'].forEach((k) => { RHYTHM_COLORS[k] = JETON('--ry-' + k) || JETON('--ink3'); });
+}
+relisTeintes();
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const tc = (s) => { const m = Math.floor(s / 60); return String(m).padStart(2, '0') + ':' + (s - m * 60).toFixed(2).padStart(5, '0'); };
@@ -519,23 +528,41 @@ $('script').addEventListener('input', (e) => {
   const el = e.target.closest && e.target.closest('.sc-say');
   if (!el) return;
   clearTimeout(minuteur);
-  minuteur = setTimeout(() => {
-    const cle = el.dataset.cle, txt = el.textContent.replace(/\\s+/g, ' ').trim();
-    let avant = null;
-    DATA.shots.forEach((s) => (s.lines || []).forEach((l) => { if (l.start + '-' + l.end === cle) avant = l.text; }));
-    if (avant === null || !txt || txt === avant) return;
-    const c = window.xvCorrections(); c.repliques[cle] = txt; window.xvPoseCorrections(c);
-    // part aussitot au depot partage, comme les gestes de la timeline : sinon elle restait dans ce navigateur
-    if (window.xvEnregistrePartage) window.xvEnregistrePartage(['repliques'], null);
-    DATA.shots.forEach((s) => (s.lines || []).forEach((l) => { if (l.start + '-' + l.end === cle) l.text = txt; }));
-    // la timeline et la fiche du plan citent la replique : elles suivent, pas le
-    // scenario, ou l'on est en train d'ecrire.
-    rendreTimeline(); if (window.xvRendreDecoupage) window.xvRendreDecoupage(); lastShot = null; paint(video.currentTime || 0, true);
-    // Dire que c'est enregistre : sans retour, on ne sait pas si la correction a pris.
-    const et = $('script-etat');
-    if (et) { et.textContent = 'réplique enregistrée'; clearTimeout(et._t); et._t = setTimeout(() => { et.textContent = ''; }, 2600); }
-  }, 700);
+  minuteur = setTimeout(() => { minuteur = null; enregistreReplique(el); }, 700);
 });
+// Corriger une replique est UN geste, du moment ou le champ prend la main a celui ou il la rend (l'etude des
+// preferences, § fusion des frappes) : tant qu'on ecrit, Ctrl+Z est au navigateur (il defait la frappe) ; le champ
+// quitte, le geste entre dans la pile de la page (« corriger la replique … »), et Ctrl+Z le defait d'un coup.
+let repliqueOuverte = null;
+$('script').addEventListener('focusin', (e) => {
+  const el = e.target.closest && e.target.closest('.sc-say');
+  if (!el || el === repliqueOuverte) return;
+  repliqueOuverte = el;
+  if (window.xvGesteDebut) window.xvGesteDebut();
+});
+$('script').addEventListener('focusout', (e) => {
+  const el = e.target.closest && e.target.closest('.sc-say');
+  if (!el || el !== repliqueOuverte) return;
+  repliqueOuverte = null;
+  if (minuteur) { clearTimeout(minuteur); minuteur = null; enregistreReplique(el); }
+  if (window.xvGesteFin) window.xvGesteFin('corriger la réplique « ' + el.textContent.replace(/\\s+/g, ' ').trim() + ' »');
+});
+function enregistreReplique(el) {
+  const cle = el.dataset.cle, txt = el.textContent.replace(/\\s+/g, ' ').trim();
+  let avant = null;
+  DATA.shots.forEach((s) => (s.lines || []).forEach((l) => { if (l.start + '-' + l.end === cle) avant = l.text; }));
+  if (avant === null || !txt || txt === avant) return;
+  const c = window.xvCorrections(); c.repliques[cle] = txt; window.xvPoseCorrections(c);
+  // part aussitot au depot partage, comme les gestes de la timeline : sinon elle restait dans ce navigateur
+  if (window.xvEnregistrePartage) window.xvEnregistrePartage(['repliques'], null);
+  DATA.shots.forEach((s) => (s.lines || []).forEach((l) => { if (l.start + '-' + l.end === cle) l.text = txt; }));
+  // la timeline et la fiche du plan citent la replique : elles suivent, pas le
+  // scenario, ou l'on est en train d'ecrire.
+  rendreTimeline(); if (window.xvRendreDecoupage) window.xvRendreDecoupage(); lastShot = null; paint(video.currentTime || 0, true);
+  // Dire que c'est enregistre : sans retour, on ne sait pas si la correction a pris.
+  const et = $('script-etat');
+  if (et) { et.textContent = 'réplique enregistrée'; clearTimeout(et._t); et._t = setTimeout(() => { et.textContent = ''; }, 2600); }
+}
 function markScript(s, t) {
   document.querySelectorAll('.sc-shot').forEach((el) => el.classList.toggle('now', !!s && el.dataset.shot === s.id));
   let target = null, suivante = null;
@@ -708,6 +735,17 @@ window.xvRafraichir = () => {
   paint(t, true);
   if (typeof window.xvDessineCasting === 'function') window.xvDessineCasting();
 };
+
+/* ── le thème du portail se pose (commun/theme.js, après ce script) ou change (les préférences) : les teintes lues
+   pour le canvas et les pastilles sont relues, et ce qui les porte se redessine — la timeline, le sous-titre, la
+   fiche du plan, le dépouillement. Le casting n'a rien à refaire : ses pastilles sont des var(--pc-N). ── */
+document.addEventListener('sr:theme', () => {
+  relisTeintes(); vxTeintes();
+  const st = $('st'); if (st) st.dataset.cle = '';
+  VX.cleNoms = ''; rendreTimeline();
+  lastShot = null; paint(video.currentTime || 0, true);
+  if (typeof window.xvRendreDecoupage === 'function') window.xvRendreDecoupage();
+});
 
 /* Le fichier de corrections pose a cote de la page fait foi pour tout le monde ; la
    memoire du navigateur ne vaut que pour celui qui a corrige. On le lit apres coup :
@@ -1017,9 +1055,10 @@ if ($('b-plein')) $('b-plein').addEventListener('click', () => {
       sh.lines.forEach((l) => {
         const b = document.createElement('div'); b.className = 'rq';
         const h = document.createElement('span'); h.className = 'h'; h.textContent = tc(l.start) + ' → ' + tc(l.end);
-        const q = document.createElement('span'); q.className = 'h';
-        q.textContent = l.speaker ? castName(l.speaker) : 'voix off';
-        if (l.speaker) q.style.color = castColor(l.speaker);
+        // qui parle : la pastille de sa teinte, le nom à l'encre (une teinte d'identité n'est jamais une encre)
+        const q = document.createElement('span'); q.className = 'h qui';
+        if (l.speaker) { const pi = document.createElement('i'); pi.style.background = castColor(l.speaker); q.append(pi); }
+        q.append(l.speaker ? castName(l.speaker) : 'voix off');
         const x = document.createElement('span'); x.className = 'x'; x.textContent = l.text;
         b.append(h, q, x); dr.append(b);
       });
@@ -1269,6 +1308,7 @@ if ($('b-plein')) $('b-plein').addEventListener('click', () => {
   if (vues.indexOf(v) > 0) { const b = document.querySelector('#tabs button[data-tab="' + v + '"]'); if (b) b.click(); }
 })();
 
+${MENUS_JS}
 </script>
 </body>
 </html>`;

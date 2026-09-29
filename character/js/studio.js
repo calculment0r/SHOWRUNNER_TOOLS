@@ -2497,5 +2497,39 @@ async function pollSystem() {
   setTimeout(pollSystem, 5000);
 }
 
+/* ── le clic droit (Cal, 29/09 : jamais le menu du navigateur dans le portail) ──
+   Une affiche du casting : ses gestes ; ailleurs, la navigation du studio (les
+   étapes du personnage ouvert, le casting, la Scène) en tête du menu commun de
+   repli du portail (commun/menu.js, pageMenu). */
+import('../../commun/menu.js').then(({ contextMenu, pageMenu }) => {
+  const go = (h) => () => { location.hash = h; };
+  contextMenu($('#app'), (e) => {
+    const p = e.target.closest('article.poster');
+    const a = p?.querySelector('a.poster-img');
+    if (!a) return null;
+    const slug = decodeURIComponent((a.getAttribute('href') || '').replace(/^#\/p\//, ''));
+    const c = (state.list?.characters || []).find((x) => x.slug === slug);
+    if (!c) return null;
+    return [{ head: c.name },
+      { label: 'Ouvrir sa fiche', icon: '⤢', onclick: go(`#/p/${enc(slug)}`) },
+      ...Object.entries(SURFACES).map(([id, lab]) => ({ label: lab.charAt(0).toUpperCase() + lab.slice(1), onclick: go(`#/p/${enc(slug)}/${id}`) })),
+      c.locked ? { label: 'Parler', icon: '◉', sub: 'la Scène', onclick: go(`#/p/${enc(slug)}/scene`) } : null,
+      c.voice ? { label: 'Écouter sa voix', icon: '▶', onclick: () => p.querySelector('[data-play]')?.click() } : null];
+  });
+  pageMenu(() => {
+    const r = state.route;
+    const c = state.detail?.character;
+    if (r.view === 'perso') {
+      return [{ head: c?.name || 'le personnage' },
+        { label: 'Sa fiche', checked: !r.tab, onclick: go(`#/p/${enc(r.slug)}`) },
+        ...Object.entries(SURFACES).map(([id, lab]) => ({ label: lab.charAt(0).toUpperCase() + lab.slice(1), checked: r.tab === id, onclick: go(`#/p/${enc(r.slug)}/${id}`) })),
+        { label: 'Parler', icon: '◉', sub: 'la Scène', checked: r.tab === 'scene', onclick: go(`#/p/${enc(r.slug)}/scene`) },
+        '-', { label: 'Tous les personnages', icon: '‹', onclick: go('#/') }];
+    }
+    return [{ head: 'Character Factory' }, { label: 'Nouveau personnage', icon: '+', onclick: () => $('form[data-form="create"] input[name="name"]')?.focus() },
+      { label: 'Les coulisses', icon: '↗', onclick: () => { location.href = 'coulisses.html'; } }];
+  });
+});
+
 wire();
 onRoute().then(() => { pollJobs(); pollSystem(); });

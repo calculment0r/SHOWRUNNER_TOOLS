@@ -40,6 +40,9 @@ export function keyLabel(which) {
 
 let active = null;
 const all = new Set();
+// le menu de repli du clic droit (commun/menu.js, commonItems) lit la pile
+// active sans importer ce module
+window.SR_UNDO = { active: () => active, keyLabel };
 let seq = 0;
 // un titre cité dans un libellé (souvent un prompt entier) : ses 38 premiers signes
 const short = (label) => String(label || 'modifier').replace(/«\s?([^»]{40,}?)\s?»/g, (m, t) => `« ${t.slice(0, 38).trim()}… »`);
@@ -374,49 +377,6 @@ export function describeLibPatch(it, patch) {
   return `modifier ${t}`;
 }
 
-// Le pont du fil (commun/fil.js aime, range et jette par lui-même, en
-// appelant /api/library) : tant que le fil n'appelle pas l'annulation
-// lui-même, la page lit ces écritures au passage — l'état d'avant sur le
-// serveur, puis l'écriture, puis son contraire rangé. Une seule page, ses
-// propres écritures ; rien d'autre n'est touché. Quand fil.js appellera
-// U.record, retirer ce pont (étude, § Montage, ODIO…).
-const LIB_RX = /\/api\/library\/((?:ima|vid|aud|ele)-\d{8}-\d{6}-[0-9a-f]{4})(\/delete)?$/;
-export function watchLibrary(U) {
-  if (window.__srLibWatch) return;
-  window.__srLibWatch = U;
-  const orig = window.fetch.bind(window);
-  window.fetch = async (input, init = {}) => {
-    const method = String(init.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
-    const url = new URL(input instanceof Request ? input.url : String(input), location.href);
-    const m = method === 'POST' && url.origin === location.origin ? url.pathname.match(LIB_RX) : null;
-    if (!m || U.applying || typeof init.body !== 'string') return orig(input, init);
-    const id = m[1];
-    if (m[2]) {   // à la corbeille
-      let before = null;
-      try { const r = await orig(url.href.replace(/\/delete$/, ''), { method: 'GET' }); before = r.ok ? await r.json() : null; } catch { before = null; }
-      const res = await orig(input, init);
-      if (res.ok) {
-        U.record({ label: `mettre « ${before?.title || id} » à la corbeille`,
-          undo: () => api(`library/${id}/restore`, { method: 'POST' }),
-          redo: async () => { await api(`library/${id}/delete`, { method: 'POST' }); return { id, gone: true }; } });
-      }
-      return res;
-    }
-    let patch;
-    try { patch = JSON.parse(init.body); } catch { return orig(input, init); }
-    if (!patch || typeof patch !== 'object') return orig(input, init);
-    let before = null;
-    try { const r = await orig(url.href, { method: 'GET' }); before = r.ok ? await r.json() : null; } catch { before = null; }
-    const res = await orig(input, init);
-    if (res.ok && before) {
-      const n = await res.clone().json().catch(() => null);
-      if (n) {
-        const old = pickFields(before, patch), neu = pickFields(n, patch);
-        if (JSON.stringify(old) !== JSON.stringify(neu)) {
-          U.record({ label: describeLibPatch(before, patch), undo: () => casWrite(id, neu, old), redo: () => casWrite(id, old, neu) });
-        }
-      }
-    }
-    return res;
-  };
-}
+// (Le pont `watchLibrary`, qui lisait au passage les écritures du fil, est
+// retiré le 29/09 : commun/fil.js prend l'option `undo` et appelle libPatch,
+// libTrash lui-même.)

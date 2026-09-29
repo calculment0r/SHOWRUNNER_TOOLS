@@ -147,7 +147,9 @@ const SCENARIOS = {
       await api.glisse(o.ligne.x, o.ligne.y, o.ligne.x + 3, o.piste.y); faits++;
       const v = await api.ev('__verif()'); if (v.length) fautes.push(`après « ${txt} » → ${piste} : ${v[0]}`);
     }
-    for (let k = 0; k < 80 && !(await api.ev('document.getElementById("vx-annuler").disabled')); k++) { await api.ev('xvAnnule()'); await wait(100); }
+    // la pile commune du portail (commun/undo.js, branchée par film/film.js), ou le repli de la page ouverte seule
+    const peutAnnuler = 'xvPeutAnnuler()';
+    for (let k = 0; k < 80 && (await api.ev(peutAnnuler)); k++) { await api.ev('xvAnnule()'); await wait(100); }
     if (JSON.stringify(await api.ev('__lignes()')) !== JSON.stringify(depart)) fautes.push('tout annuler ne revient pas au départ');
     await api.ev('xvRemetTout()'); await wait(1200);
     const v1 = await api.ev('__verif()'); if (v1.length) fautes.push('après Tout remettre : ' + v1[0]);
