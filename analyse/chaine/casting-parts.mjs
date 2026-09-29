@@ -365,16 +365,19 @@ export const TROMBINOSCOPE = `
     let ecrit = false;
     // Le depot partage d'abord : c'est lui qui rend la correction visible par tout le
     // monde, en ligne, sans que personne ait de jeton a coller.
-    if (window.XV_CORR_URL) {
+    // Dans le portail, le portail d'abord : le depot partage de MOVIE_ANALYSE y refuse l'ecriture (XV_PARTAGE_REFUS).
+    const cible = window.XV_CORR_PORTAIL || window.XV_CORR_URL;
+    if (cible) {
       try {
-        const r = await fetch(window.XV_CORR_URL, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: json });
+        const r = await fetch(cible, { method: 'PUT', headers: { 'content-type': 'application/json' }, credentials: 'same-origin', body: json });
         if (r.ok && (await r.json().catch(() => ({}))).ok === true) {
           window.XV_CORR_FICHIER = c;
           // parti chez tout le monde : ce navigateur n'a plus rien a garder pour lui (sinon, ailleurs, une vieille
           // memoire passerait par-dessus les corrections des autres)
           window.xvPoseCorrections({});
           if (window.xvEtatPartage) window.xvEtatPartage();
-          $('cast-etat').textContent = 'enregistré — visible par tous ceux qui ouvrent cette page.';
+          $('cast-etat').textContent = window.XV_CORR_PORTAIL ? 'enregistré dans le portail — visible par tous ceux qui ouvrent le portail.' : 'enregistré — visible par tous ceux qui ouvrent cette page.';
+          if (window.XV_PARTAGE_REFUS) $('cast-etat').title = window.XV_PARTAGE_REFUS;
           return;
         }
       } catch (e) {}
@@ -402,7 +405,20 @@ export const TROMBINOSCOPE = `
   try { localStorage.removeItem('xverse-jeton-github'); } catch (e) {}   // l'ancien jeton, s'il traînait ici
   if (window.XV_PUBLIER_URL) {
     $('cast-github').hidden = false;
+    // Dans le portail, le depot partage refuse de publier depuis cette adresse (403, avant tout envoi a GitHub) :
+    // le bouton reste, dit pourquoi, et mene a la page de MOVIE_ANALYSE, d'ou la publication marche.
+    if (window.XV_PARTAGE_REFUS) {
+      $('cast-github').title = 'pas depuis le portail : ' + window.XV_PARTAGE_REFUS;
+      $('cast-github').setAttribute('aria-disabled', 'true');
+    }
     $('cast-github').addEventListener('click', async () => {
+      if (window.XV_PARTAGE_REFUS) {
+        const e = $('cast-etat');
+        e.textContent = 'pas publié d’ici : le dépôt partagé de MOVIE_ANALYSE refuse l’adresse du portail (403). Publier depuis sa page : ';
+        if (window.XV_PAGE_MA) { const a = document.createElement('a'); a.href = window.XV_PAGE_MA; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'le Studio sur calculment0r.github.io'; e.append(a); }
+        e.title = window.XV_PARTAGE_REFUS;
+        return;
+      }
       const a = saisis();
       const base = window.XV_CORR_FICHIER || {};
       const c = window.xvCorrections();

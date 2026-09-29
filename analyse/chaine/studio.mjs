@@ -194,7 +194,7 @@ const html = `<!DOCTYPE html>
 <body class="film">
 <!-- l'en-tête du portail se pose au-dessus (film.js → mountHeader('analyse')) ; dessous, la barre du film -->
 <nav class="fm-bar" aria-label="le film">
-  <a class="tb ghost sm" href="${OUTIL}" title="Movie Analysis : nos films, les analyses, la diarisation">← Les films</a>
+  <a class="tb ghost sm" href="${OUTIL}" title="Movie Analysis : les projets (nos films, les analyses faites d’ici, les projets créés)">← Projets</a>
   <div class="fm-t"><b>${esc(TITRE || DATA.title)}</b><span class="lbl">${DATA.shots.length} plans · ${tc(DATA.duration).replace(/\.\d+$/, '')} · ${DATA.meta.width ?? '?'}×${DATA.meta.height ?? '?'}</span></div>
   <div class="fm-onglets" id="tabs" role="tablist" aria-label="les vues du film">
     <button type="button" role="tab" data-tab="studio" aria-pressed="true">Studio</button>
@@ -204,6 +204,8 @@ const html = `<!DOCTYPE html>
   </div>
   <span class="sp"></span>
   <span class="lbl fm-src" title="${esc(video)}">${MEDIA ? 'vidéo sur R2 · repli à côté' : 'vidéo à côté de la page'}</span>
+  <!-- le menu « ⋯ » du portail (commun/menu.js), posé par film.js : la fiche du projet, les vues, les exports, le lien -->
+  <span id="fm-plus" data-film="${esc(slug)}"></span>
 </nav>
 
 <main id="studio" class="fm-vue">
@@ -351,6 +353,12 @@ window.XV_DEPOT = ${depot ? JSON.stringify({ depot, branche, chemin: cheminCorr 
 window.XV_CORR_URL = ${corrUrl ? JSON.stringify(corrUrl.replace(/\/$/, '') + '/' + slug + '.json') : 'null'};
 // publier sur GitHub : le dépôt partagé (outils/partage) le fait avec son propre jeton — rien à coller dans le navigateur
 window.XV_PUBLIER_URL = ${corrUrl ? JSON.stringify(corrUrl.replace(/\/$/, '').replace(/\/corrections$/, '') + '/publier/' + slug) : 'null'};
+// Dans le portail, les corrections s'écrivent chez lui (server/tools/analyse.py, /api/analyse/corrections/<film>) : le
+// dépôt partagé de MOVIE_ANALYSE refuse l'écriture depuis cette adresse (son worker.js, ligne 18 : ORIGINES ; lignes 142
+// et 148 : 403 « origine non autorisée »). La page le lit toujours ; le portail ne garde que sa part.
+window.XV_CORR_PORTAIL = ${JSON.stringify(PORTAIL + 'api/analyse/corrections/' + encodeURIComponent(slug))};
+window.XV_PARTAGE_REFUS = ${corrUrl ? JSON.stringify('le dépôt partagé de MOVIE_ANALYSE n’accepte d’écriture que depuis calculment0r.github.io et 127.0.0.1 (son worker.js, ligne 18 : ORIGINES ; 403 « origine non autorisée ») — les corrections faites ici sont enregistrées dans le portail, pour tous ceux qui l’ouvrent') : 'null'};
+window.XV_PAGE_MA = ${depot ? JSON.stringify('https://' + depot.split('/')[0] + '.github.io/' + depot.split('/')[1] + '/analyses/' + slug + '/') : 'null'};
 // la video et les pistes de son sur R2 (--video-url) ; a cote de la page si R2 ne repond pas
 window.XV_MEDIA = ${JSON.stringify(MEDIA)};
 // les portes qualite du rapport de la chaine, calculees au rendu (video-shots.mjs validate)
@@ -730,6 +738,20 @@ window.xvRafraichir = () => {
         }
       }
     } catch (e) { window.XV_PARTAGE = 'injoignable'; }
+  }
+  // puis ce que le portail a gardé (seulement ce qui y a été corrigé), par-dessus, clé par clé
+  if (window.XV_CORR_PORTAIL) {
+    try {
+      const r = await fetch(window.XV_CORR_PORTAIL, { cache: 'no-store', credentials: 'same-origin' });
+      window.XV_PORTAIL = r.ok ? 'lu' : 'injoignable';
+      if (r.ok) {
+        const d = await r.json();
+        if (d && typeof d === 'object') {
+          c = Object.assign({}, c || {});
+          for (const k of ['noms', 'fusions', 'repliques', 'locuteurs', 'voix']) c[k] = Object.assign({}, c[k] || {}, d[k] || {});
+        }
+      }
+    } catch (e) { window.XV_PORTAIL = 'injoignable'; }
   }
   if (c && typeof c === 'object') { window.XV_CORR_FICHIER = c; window.xvRafraichir(); }
   if (typeof window.xvEtatPartage === 'function') window.xvEtatPartage();

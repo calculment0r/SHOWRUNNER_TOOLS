@@ -20,7 +20,17 @@ Ce module porte trois choses :
   copiées dans les données du portail ;
 - **la diarisation** : l'état du service Nemotron de dgx1 (tailnet,
   :10002) et un relais pour sa page, pour que le poste n'ait pas besoin de
-  Tailscale (le portail, sur DGX2, est dans le tailnet).
+  Tailscale (le portail, sur DGX2, est dans le tailnet) ;
+- **les projets** (refonte du 29/09, la home « Projets » de MOVIE_ANALYSE) :
+  nos films, les analyses faites d'ici, les projets créés dans le portail et
+  ceux du dépôt partagé de MOVIE_ANALYSE (lu, fusionné comme le fait son
+  `commun/projets.js`) — une seule liste ;
+- **les corrections du portail** : le Worker de MOVIE_ANALYSE refuse
+  d'écrire depuis l'adresse du portail (son `worker.js`, ligne 18 : ORIGINES ;
+  lignes 142 et 148 : 403). Ce qu'on corrige dans un Studio du portail est
+  donc gardé ici, pour tous ceux qui ouvrent le portail : seulement ce qui
+  diffère du fichier du film et du dépôt partagé, pour que les corrections
+  faites ailleurs continuent d'arriver.
 
 Réglages (`showrunner.local.json`, tous facultatifs) :
 
@@ -33,6 +43,7 @@ Réglages (`showrunner.local.json`, tous facultatifs) :
     analyse_memoire_max  plafond de mémoire de la chaîne, en Go (64)
     analyse_attente      attendre que DGX2 soit libre avant de lancer (vrai)
     analyse_scope        systemd-run --user --scope pour la limite de mémoire (vrai)
+    analyse_partage      le dépôt partagé lu (défaut : le Worker de MOVIE_ANALYSE ; le contrôle y met un faux)
 """
 
 from __future__ import annotations
@@ -195,19 +206,379 @@ def _get(url: str, timeout: float = 8.0) -> bytes:
         return r.read()
 
 
-def projets(req):
-    """Les projets créés depuis la home de MOVIE_ANALYSE, dans le dépôt
-    partagé (Worker Cloudflare, GET sans jeton). Lecture seule : le
-    Worker n'accepte d'écriture que de calculment0r.github.io et du poste."""
-    try:
-        doc = json.loads(_get(PARTAGE + "/corrections/projets.json"))
-    except (OSError, ValueError) as e:
-        return {"etat": "injoignable", "erreur": str(e)[:200], "projets": [], "source": PARTAGE}
+def partage_url() -> str:
+    return str(config.get("analyse_partage") or PARTAGE).rstrip("/")
+
+
+# Ce que le Worker de MOVIE_ANALYSE fait d'une écriture venue du portail (lu dans son code,
+# C:\claude\MOVIE_ANALYSE\outils\partage\worker.js, commit fa8d9d9) :
+#   l. 18   const ORIGINES = [/^https:\/\/calculment0r\.github\.io$/, /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/];
+#   l. 33   peutEcrire = l'en-tête Origin correspond à l'une d'elles
+#   l. 142  PUT /corrections/<nom>.json : 403 { ok: false, erreur: 'origine non autorisée' }, avant toute écriture
+#   l. 148  POST /publier/<film> : la même réponse
+# La lecture (GET) est ouverte à toutes les origines (l. 24 : access-control-allow-origin = l'origine de la requête ;
+# l. 81 : '*' pour les vidéos). Le portail lit donc tout, et n'écrit rien là-bas.
+REFUS_ECRITURE = {
+    "code": 403, "erreur": "origine non autorisée",
+    "pourquoi": "le dépôt partagé de MOVIE_ANALYSE n'accepte d'écriture que depuis https://calculment0r.github.io "
+                "et http://127.0.0.1 ou localhost — l'adresse du portail n'y est pas",
+    "source": "MOVIE_ANALYSE/outils/partage/worker.js, ligne 18 (ORIGINES) ; lignes 142 et 148 (403)",
+    "remede": "Cal ajoute l'adresse du portail à ORIGINES (/^http:\\/\\/(192\\.168\\.10\\.247|100\\.108\\.108\\.65):8790$/), "
+              "puis « npx wrangler deploy » dans MOVIE_ANALYSE/outils/partage",
+    "ici": "les projets et les corrections faits dans le portail sont gardés sur DGX2, pour tous ceux qui ouvrent le portail",
+}
+
+
+# ── les projets ─────────────────────────────────────────────
+# La home de MOVIE_ANALYSE (index.html, commun/projets.js) : les analyses du dépôt sont des projets d'office, les projets
+# créés vivent dans le dépôt partagé (projets.json) et dans la mémoire du navigateur ; fusion par projet, le plus récent
+# gagne (champ maj) ; une suppression est gardée (supprime: true), et sur une analyse du dépôt elle la retire seulement
+# de l'accueil. Ici, même règle : la liste du dépôt partagé est lue, celle du portail est écrite (le Worker la refuse).
+NOM_PROJET = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
+# les identifiants que projets.js ne donne jamais (« projets », « essai ») et les dossiers de l'outil
+RESERVES = {"projets", "essai", "analyses", "runs", "film", "diarisation", "commun", "chaine", "outils", "projet", "nouveau"}
+_store_lock = threading.Lock()
+_partage_cache: dict = {"t": 0.0, "v": None, "corr": {}}
+
+
+def _dossier() -> Path:
+    p = config.data_dir() / "analyse"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _ecrit_json(p: Path, doc) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name("." + p.name + ".tmp")
+    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    tmp.replace(p)
+
+
+def _store_lit() -> list[dict]:
+    doc = _lit_json(_dossier() / "projets.json") or {}
     liste = doc.get("projets") if isinstance(doc, dict) else None
-    liste = liste if isinstance(liste, list) else []
-    vivants = [p for p in liste if isinstance(p, dict) and not p.get("supprime")]
-    retires = [p.get("id") for p in liste if isinstance(p, dict) and p.get("supprime") and p.get("depot")]
-    return {"etat": "partage", "projets": vivants, "retires": retires, "source": PARTAGE}
+    return [p for p in liste if isinstance(p, dict) and isinstance(p.get("id"), str) and NOM_PROJET.match(p["id"])] \
+        if isinstance(liste, list) else []
+
+
+def _store_ecrit(liste: list[dict]) -> None:
+    _ecrit_json(_dossier() / "projets.json", {"format": "movie-analysis-projets", "version": 1, "projets": liste})
+
+
+def _partage_projets(frais: bool = False) -> dict:
+    """projets.json du dépôt partagé, lu comme le lit commun/projets.js (GET, 6 s au plus), gardé 30 s."""
+    with _verrou:
+        v = _partage_cache["v"]
+        if v and not frais and time.time() - _partage_cache["t"] < 30:
+            return v
+    url = partage_url() + "/corrections/projets.json"
+    try:
+        doc = json.loads(_get(url, timeout=6))
+        liste = doc.get("projets") if isinstance(doc, dict) else None
+        v = {"etat": "lu", "url": url, "lu": library.now(),
+             "projets": [p for p in (liste if isinstance(liste, list) else [])
+                         if isinstance(p, dict) and isinstance(p.get("id"), str) and NOM_PROJET.match(p["id"])],
+             # {} : personne n'a encore créé de projet depuis la home de MOVIE_ANALYSE
+             "vide": not isinstance(liste, list)}
+    except (OSError, ValueError) as e:
+        v = {"etat": "injoignable", "url": url, "lu": library.now(), "projets": [], "erreur": str(e)[:200]}
+    with _verrou:
+        _partage_cache.update(t=time.time(), v=v)
+    return v
+
+
+def _fusion(*listes: tuple[str, list]) -> dict[str, dict]:
+    """commun/projets.js, fusion() : par projet, le plus récent (maj) gagne ; `_de` dit d'où il vient."""
+    m: dict[str, dict] = {}
+    for de, liste in listes:
+        for p in liste:
+            x = m.get(p["id"])
+            if x is None or str(p.get("maj") or "") > str(x.get("maj") or ""):
+                m[p["id"]] = {**p, "_de": de}
+    return m
+
+
+def _slug_projet(nom: str, pris: set) -> str:
+    """commun/projets.js, slug() : sans accents, minuscules, tirets, 48 signes, « -2 » s'il est pris."""
+    import unicodedata
+    s = unicodedata.normalize("NFD", nom)
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn").lower()
+    base = re.sub(r"[^a-z0-9]+", "-", s).strip("-")[:48].strip("-") or "projet"
+    out, n = base, 2
+    while out in pris:
+        suffixe = f"-{n}"
+        out = base[: 48 - len(suffixe)].rstrip("-") + suffixe
+        n += 1
+    return out
+
+
+def _nom_propre(nom) -> str:
+    return re.sub(r"\s+", " ", str(nom or "")).strip()[:80]
+
+
+def _duree_lisible(s) -> str:
+    try:
+        s = int(round(float(s)))
+    except (TypeError, ValueError):
+        return ""
+    return f"{s} s" if s < 60 else f"{s // 60} min {s % 60:02d}"
+
+
+def _films() -> dict[str, Path]:
+    return {d.name: d for d in sorted(DEPOT.iterdir()) if d.is_dir() and (d / "shots.json").is_file()} if DEPOT.is_dir() else {}
+
+
+def _faites() -> dict[str, Path]:
+    p = produites()
+    return {d.name: d for d in sorted(p.iterdir()) if d.is_dir() and not d.name.startswith(".")}
+
+
+ETAT_JOB = {"queued": "en file", "running": "en cours", "error": "échec", "cancelled": "arrêté", "interrupted": "interrompu"}
+
+
+def _projet(pid: str, e: dict | None, d: Path | None, source: str | None, job: dict | None) -> dict:
+    """Un projet tel que la page le montre : une carte, sa visionneuse (la page projet de MOVIE_ANALYSE)."""
+    e = e or {}
+    a = _entree(d, source) if d else None
+    info = (_lit_json(d / "portail.json") or {}) if d else {}
+    c = (a or {}).get("chiffres") or {}
+    sorte = "film" if source == "depot" else "analyse" if (a or job) else "projet"
+    p_job = (job or {}).get("params") or {}
+    nom = (e.get("nom") if sorte != "film" else None) or (a or {}).get("titre") or p_job.get("titre") or pid
+    if a:
+        dep = {"etat": "fait", "resume": f"{nb(c.get('plans'))} plans · {nb(c.get('personnages'))} personnages · {nb(c.get('repliques'))} répliques"}
+    elif job:
+        dep = {"etat": ETAT_JOB.get(job["state"], job["state"]), "job": job["id"], "message": job.get("message") or "",
+               "progress": job.get("progress")}
+    else:
+        dep = {"etat": "à faire"}
+    voix = {"etat": "fait" if c.get("voix") else "à faire", "mots": bool(c.get("mots"))}
+    w, h = c.get("largeur"), c.get("hauteur")
+    video = info.get("video")
+    if sorte == "film" and video:
+        media = f"{PARTAGE}/video/{urllib.parse.quote(pid)}/{urllib.parse.quote(video)}"
+    elif d and video and (d / video).is_file():
+        media = f"analyse/runs/{pid}/{urllib.parse.quote(video)}"
+    else:
+        media = None
+    meta = info.get("meta") or " · ".join(x for x in (info.get("genre") or (a or {}).get("genre"), _duree_lisible(c.get("duree")),
+                                                     f"{w}×{h}" if w and h else "") if x)
+    return {
+        "id": pid, "nom": nom, "sorte": sorte,
+        # d'où vient la fiche : le dépôt de MOVIE_ANALYSE (nos films), le portail (analyse lancée ou projet créé d'ici),
+        # le dépôt partagé (un projet créé depuis la home de MOVIE_ANALYSE)
+        "origine": "depot" if sorte == "film" else "portail" if (a or job or e.get("_de") == "portail") else "partage",
+        "retire": bool(e.get("supprime")), "retire_par": e.get("_de") if e.get("supprime") else None,
+        "cree": e.get("cree") or (a or {}).get("date") or (job or {}).get("created"), "maj": e.get("maj"), "par": e.get("par"),
+        "meta": meta or ("créé le " + str(e.get("cree") or "")[:10] if e.get("cree") else ""),
+        # un dépouillement en cours n'a pas encore d'image clé : la vignette de sa vidéo (celle du travail)
+        "vignette": (a or {}).get("vignette") or (job or {}).get("thumb"), "affiche": (a or {}).get("affiche"), "media": media,
+        "largeur": w, "hauteur": h, "duree": c.get("duree"),
+        "studio": (a or {}).get("studio"), "casting": (a or {}).get("casting"), "depouillement": (a or {}).get("depouillement"),
+        "labo": "analyse/diarisation/?projet=" + urllib.parse.quote(pid),
+        "etapes": {"depouillement": dep, "voix": voix},
+        "chiffres": c or None, "langue": c.get("langue"),
+        "run": (a or {}).get("run") or (str(runs() / p_job["nom"]) if p_job.get("nom") else None),
+        "date": (a or {}).get("date") or e.get("maj") or e.get("cree") or (job or {}).get("created"),
+        "renommer": sorte != "film",
+        # MOVIE_ANALYSE (projet/index.html) : une analyse du dépôt se retire de l'accueil (fichiers gardés, « Restaurer ») ;
+        # un projet créé se supprime pour de bon. Une analyse lancée d'ici se retire comme une analyse du dépôt.
+        "supprimer": "supprimer" if sorte == "projet" else "retirer",
+    }
+
+
+def nb(x) -> str:
+    return "—" if x is None else str(x)
+
+
+def projets_liste(req=None, frais: bool = False) -> dict:
+    partage = _partage_projets(frais or (req is not None and req.q("frais") == "1"))
+    with _store_lock:
+        portail = _store_lit()
+    fus = _fusion(("partage", partage["projets"]), ("portail", portail))
+    films, faites = _films(), _faites()
+    travaux: dict[str, dict] = {}
+    for j in jobs.listing(tool="analyse", limit=200):
+        n = (j.get("params") or {}).get("nom")
+        if j.get("kind") == KIND and n and n not in travaux and j["state"] in ETAT_JOB:
+            travaux[n] = j
+    out, vus = [], set()
+    for pid, d in films.items():
+        out.append(_projet(pid, fus.get(pid), d, "depot", None)); vus.add(pid)
+    for pid, d in faites.items():
+        if pid not in vus:
+            out.append(_projet(pid, fus.get(pid), d, "portail", None)); vus.add(pid)
+    for pid, j in travaux.items():
+        if pid not in vus:
+            out.append(_projet(pid, fus.get(pid), None, None, j)); vus.add(pid)
+    for pid, e in fus.items():
+        # un projet créé puis supprimé l'est pour de bon ; un masque (depot: true) sans analyse ne désigne rien ici
+        if pid in vus or e.get("supprime") or e.get("depot"):
+            continue
+        out.append(_projet(pid, e, None, None, None)); vus.add(pid)
+    # nos films en tête, puis le plus récent d'abord
+    films_l = [p for p in out if p["sorte"] == "film"]
+    autres = sorted((p for p in out if p["sorte"] != "film"), key=lambda p: str(p["date"] or ""), reverse=True)
+    return {"projets": films_l + autres, "runs": str(runs()),
+            "partage": {"etat": partage["etat"], "url": partage["url"], "lu": partage["lu"], "erreur": partage.get("erreur"),
+                        "n": len(partage["projets"]), "vide": partage.get("vide", False),
+                        "video": PARTAGE + "/video/", "ecriture": REFUS_ECRITURE},
+            "portail": {"n": len(portail), "ou": str(_dossier() / "projets.json")}}
+
+
+def _un(pid: str) -> dict | None:
+    return next((p for p in projets_liste()["projets"] if p["id"] == pid), None)
+
+
+def _pris() -> set:
+    with _store_lock:
+        ids = {p["id"] for p in _store_lit()}
+    ids |= {p["id"] for p in _partage_projets()["projets"]} | set(_films()) | set(_faites()) | RESERVES
+    try:
+        ids |= {d.name for d in runs().iterdir()}
+    except OSError:
+        pass
+    ids |= {(j.get("params") or {}).get("nom") for j in jobs.listing(active=True, tool="analyse")}
+    return ids
+
+
+def projet_creer(req):
+    """« Nouveau projet » (index.html de MOVIE_ANALYSE) : le nom tout de suite, le projet créé, la page l'ouvre."""
+    nom = _nom_propre(req.json().get("nom"))
+    if not nom:
+        raise HttpError(400, "il faut un nom")
+    pris = _pris()
+    with _store_lock:
+        store = _store_lit()
+        pid = _slug_projet(nom, pris | {p["id"] for p in store})
+        now = library.now()
+        store.append({"id": pid, "nom": nom, "cree": now, "maj": now, "par": auth_id()})
+        _store_ecrit(store)
+    return {"projet": _un(pid), "enregistre": "portail", "partage": REFUS_ECRITURE}
+
+
+def projet_modifier(req, pid):
+    """Renommer, supprimer (un projet créé) ou retirer de l'accueil (une analyse), restaurer."""
+    if not NOM_PROJET.match(pid):
+        raise HttpError(404, "projet inconnu")
+    d = req.json()
+    cur = _un(pid)
+    if cur is None:
+        # un projet déjà supprimé, ou retiré par le dépôt partagé : on peut encore le restaurer
+        fus = _fusion(("partage", _partage_projets()["projets"]), ("portail", _store_lit()))
+        if pid not in fus:
+            raise HttpError(404, f"projet inconnu : {pid}")
+    elif "nom" in d and not cur["renommer"]:
+        raise HttpError(400, "le titre d'un de nos films vient de MOVIE_ANALYSE (analyse/analyses/<film>/portail.json) : il ne se renomme pas d'ici")
+    with _store_lock:
+        store = _store_lit()
+        e = next((p for p in store if p["id"] == pid), None)
+        if e is None:
+            base = _fusion(("partage", _partage_projets()["projets"]), ("portail", store)).get(pid) or {"id": pid}
+            e = {k: v for k, v in base.items() if not k.startswith("_")}
+            e.setdefault("cree", library.now())
+            if cur and cur["sorte"] != "projet":
+                e["depot"] = True   # comme projets.js : un masque sur une analyse, pas un projet créé
+            store.append(e)
+        if "nom" in d:
+            nom = _nom_propre(d["nom"])
+            if not nom:
+                raise HttpError(400, "il faut un nom")
+            e["nom"] = nom
+        if "supprime" in d:
+            e["supprime"] = bool(d["supprime"])
+        e["maj"], e["par"] = library.now(), auth_id()
+        _store_ecrit(store)
+    return {"projet": _un(pid), "enregistre": "portail"}
+
+
+def auth_id():
+    from core import auth
+    try:
+        return auth.current_id()
+    except Exception:   # hors d'une requête (le contrôle)
+        return None
+
+
+# ── les corrections faites dans un Studio du portail ────────
+CLES_CORR = ("noms", "fusions", "repliques", "locuteurs", "voix")
+
+
+def _dossier_film(film: str) -> Path | None:
+    if (DEPOT / film / "shots.json").is_file():
+        return DEPOT / film
+    d = produites() / film
+    return d if d.is_dir() else None
+
+
+def _partage_corr(film: str) -> dict:
+    """Les corrections du dépôt partagé pour un de nos films (GET, ouvert), gardées 20 s."""
+    with _verrou:
+        t, v = _partage_cache["corr"].get(film, (0.0, None))
+        if v is not None and time.time() - t < 20:
+            return v
+    try:
+        v = json.loads(_get(f"{partage_url()}/corrections/{urllib.parse.quote(film)}.json", timeout=6))
+        v = v if isinstance(v, dict) else {}
+    except (OSError, ValueError):
+        v = {}
+    with _verrou:
+        _partage_cache["corr"][film] = (time.time(), v)
+    return v
+
+
+def _corr_base(film: str) -> dict:
+    """Ce que la page a sous les yeux avant le portail : le fichier du film, puis le dépôt partagé par-dessus, clé
+    par clé (studio.mjs, lecture au chargement)."""
+    d = _dossier_film(film)
+    base = (_lit_json(d / "corrections.json") if d else None) or {}
+    if (DEPOT / film / "shots.json").is_file():
+        w = _partage_corr(film)
+        for k in CLES_CORR:
+            base[k] = {**(base.get(k) or {}), **(w.get(k) or {})}
+    return base
+
+
+def _canon(v) -> str:
+    return json.dumps(v, sort_keys=True, ensure_ascii=False)
+
+
+def corrections_lire(req, film):
+    if not NOM_PROJET.match(film) or _dossier_film(film) is None:
+        raise HttpError(404, f"film inconnu : {film}")
+    doc = _lit_json(_dossier() / "corrections" / f"{film}.json") or {}
+    return {**{k: doc.get(k) or {} for k in CLES_CORR}, "maj": doc.get("maj"), "par": doc.get("par"), "enregistre": "portail"}
+
+
+def corrections_ecrire(req, film):
+    """Le Studio envoie tout ce qu'il a (le fichier, le dépôt partagé, le portail, ses gestes) : on ne garde que ce qui
+    diffère du fichier et du dépôt partagé. Une correction faite ailleurs sur une autre clé continue donc d'arriver."""
+    if not NOM_PROJET.match(film) or _dossier_film(film) is None:
+        raise HttpError(404, f"film inconnu : {film}")
+    if len(req.body()) > 1 << 20:
+        raise HttpError(413, "document trop gros (1 Mo au plus)")
+    d = req.json()
+    base = _corr_base(film)
+    doc = {"format": "portail-corrections", "film": film}
+    n = 0
+    for k in CLES_CORR:
+        v = d.get(k) or {}
+        if not isinstance(v, dict):
+            raise HttpError(400, f"« {k} » : un objet est attendu")
+        b = base.get(k) or {}
+        garde = {}
+        for x, val in v.items():
+            if x in b and _canon(val) == _canon(b[x]):
+                continue
+            # ce que vaut une clé absente : une fusion « à part » (x → x), l'automatique (null) — rien à garder
+            if x not in b and (val is None or (k == "fusions" and val == x)):
+                continue
+            garde[x] = val
+        doc[k] = garde
+        n += len(garde)
+    doc.update(maj=library.now(), par=auth_id())
+    _ecrit_json(_dossier() / "corrections" / f"{film}.json", doc)
+    return {"ok": True, "enregistre": "portail", "entrees": n, "partage": REFUS_ECRITURE}
 
 
 # ── la diarisation : état, et relais pour la page ──────────
@@ -378,14 +749,28 @@ def run_submit(req):
     if bool(item_id) == bool(url):
         raise HttpError(400, "une vidéo de la bibliothèque, ou une adresse YouTube")
     thumb = None
+    # lancée depuis un projet (sa visionneuse, « Lancer le dépouillement ») : le dossier de travail porte son nom
+    projet = str(d.get("projet") or "").strip()
+    if projet:
+        pr = _un(projet)
+        if not pr or pr["sorte"] != "projet":
+            raise HttpError(400, f"« {projet} » n'est pas un projet à dépouiller (déjà fait, ou inconnu)")
+        titre = titre or pr["nom"]
     if item_id:
         it = library.get(str(item_id))
         if not it or it["kind"] != "video":
             raise HttpError(400, "ce n'est pas une vidéo de la bibliothèque")
         titre = titre or it.get("title") or ""
-        nom = str(d.get("nom") or _slug(titre))
+        nom = projet or str(d.get("nom") or _slug(titre))
         if not NOM.match(nom):
             raise HttpError(400, "nom du dossier : minuscules, chiffres et tirets (48 au plus)")
+        if nom in _films():
+            raise HttpError(409, f"« {nom} » est un de nos films (analyse/analyses/{nom}/) : changer le titre")
+        if not projet:
+            with _store_lock:
+                autre = next((p for p in _store_lit() if p["id"] == nom and not p.get("supprime")), None)
+            if autre:
+                raise HttpError(409, f"le projet « {autre.get('nom') or nom} » porte déjà ce nom : le lancer depuis sa fiche, ou changer le titre")
         thumb = library.public(it).get("thumb_url")
         params = {"item": it["id"]}
     else:
@@ -394,8 +779,11 @@ def run_submit(req):
         m = YT_ID.search(url)
         if not m:
             raise HttpError(400, "identifiant de vidéo introuvable dans l'adresse")
-        # analyse.sh range un travail YouTube sous l'identifiant de la vidéo : c'est son nom
-        nom = m.group(1)
+        # analyse.sh range un travail YouTube sous --youtube-id (l'identifiant de la vidéo s'il manque) : c'est son nom ;
+        # lancé depuis un projet, le projet lui donne le sien (analyse.sh : work="$HOME/reelbench/runs/$ytid")
+        nom = projet or m.group(1)
+        if nom in _films():
+            raise HttpError(409, f"« {nom} » est un de nos films : on n'y touche pas")
         params = {"url": url}
     w = runs() / nom
     reprendre = bool(d.get("reprendre"))
@@ -652,7 +1040,12 @@ def register(app) -> None:
     app.mount("analyse/runs", produites())
     jobs.register(KIND, run, lane="analyse", title="Analyse de film")
     app.route("GET", "/api/analyse/list", analyses_list)
-    app.route("GET", "/api/analyse/projets", projets)
+    # les projets (la home de MOVIE_ANALYSE, refonte du 29/09) et les corrections faites dans un Studio du portail
+    app.route("GET", "/api/analyse/projets", projets_liste)
+    app.route("POST", "/api/analyse/projets", projet_creer)
+    app.route("POST", "/api/analyse/projets/{pid}", projet_modifier)
+    app.route("GET", "/api/analyse/corrections/{film}", corrections_lire)
+    app.route("PUT", "/api/analyse/corrections/{film}", corrections_ecrire)
     app.route("GET", "/api/analyse/diarisation", diarisation)
     app.route("GET", "/api/analyse/chaine", chaine_etat)
     app.route("GET", "/api/analyse/nom/{nom}", nom_libre)
@@ -783,8 +1176,119 @@ def selftest(call, ok) -> None:
     st, ch = call("GET", "/api/analyse/chaine?frais=1")
     ok(st == 200 and ch["skill"] == str(FAUX) and isinstance(ch["outils"], list), f"l'état de la chaîne ({st})")
 
-    # le relais de la diarisation, contre un faux service local (on ne touche pas au vrai, sur dgx1)
+    # les projets (refonte du 29/09), contre un faux dépôt partagé : on ne lit ni n'écrit le vrai Worker de MOVIE_ANALYSE
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    ecrits = []
+
+    class FauxPartage(BaseHTTPRequestHandler):
+        DOCS = {
+            "/corrections/projets.json": {"format": "movie-analysis-projets", "version": 1, "projets": [
+                {"id": "bande-annonce-dune", "nom": "Bande-annonce Dune", "cree": "2026-09-27T10:00:00Z", "maj": "2026-09-27T10:00:00Z"},
+                {"id": "wall", "depot": True, "supprime": True, "cree": "2026-09-27T11:00:00Z", "maj": "2026-09-27T11:00:00Z"},
+                {"id": "vieux", "nom": "Vieux", "supprime": True, "cree": "2026-09-20T10:00:00Z", "maj": "2026-09-21T10:00:00Z"}]},
+            "/corrections/getaround.json": {"noms": {"P1": "Commissaire", "P9": "Le livreur"}},
+        }
+
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            b = json.dumps(self.DOCS.get(self.path, {})).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+
+        def do_PUT(self):
+            ecrits.append(self.path)
+            self.send_response(403)
+            self.end_headers()
+
+        do_POST = do_PUT
+
+    fp = ThreadingHTTPServer(("127.0.0.1", 0), FauxPartage)
+    threading.Thread(target=fp.serve_forever, daemon=True).start()
+    config.CFG["analyse_partage"] = f"http://127.0.0.1:{fp.server_address[1]}"
+    st, pl = call("GET", "/api/analyse/projets?frais=1")
+    par = {p["id"]: p for p in pl.get("projets", [])} if st == 200 else {}
+    ok(st == 200 and pl["partage"]["etat"] == "lu" and pl["partage"]["n"] == 3, f"les projets : le dépôt partagé lu ({st} {pl.get('partage')})")
+    ids = [p["id"] for p in pl.get("projets", [])]
+    ok(ids[:2] == ["getaround", "wall"], f"nos films en tête de la liste ({ids})")
+    g2 = par.get("getaround") or {}
+    ok(g2.get("sorte") == "film" and g2.get("nom") == "Évadez-vous avec Getaround" and g2["etapes"]["depouillement"]["etat"] == "fait"
+       and g2["etapes"]["voix"]["etat"] == "fait" and g2.get("studio") == "analyse/analyses/getaround/"
+       and (g2.get("media") or "").endswith("/video/getaround/getaround.mp4"),
+       f"Getaround : un film, dépouillé, ses voix, son Studio, sa vidéo sur R2 ({g2})")
+    ok(g2.get("meta") == "publicité · 30 s · 1920×804", f"Getaround : la ligne de sa carte, celle de MOVIE_ANALYSE ({g2.get('meta')})")
+    ok((par.get("wall") or {}).get("retire") is True and par["wall"].get("retire_par") == "partage",
+       f"Wall retiré de l'accueil par le dépôt partagé : retiré ici aussi, restaurable ({par.get('wall')})")
+    dune = par.get("bande-annonce-dune") or {}
+    ok(dune.get("sorte") == "projet" and dune.get("origine") == "partage" and dune["etapes"]["depouillement"]["etat"] == "à faire",
+       f"un projet créé depuis la home de MOVIE_ANALYSE est là, à dépouiller ({dune})")
+    ok("vieux" not in par, "un projet supprimé du dépôt partagé ne revient pas")
+    ok(pl["partage"]["ecriture"]["code"] == 403 and "worker.js" in pl["partage"]["ecriture"]["source"],
+       "le refus d'écriture du Worker est dit, avec sa source")
+    st, cr = call("POST", "/api/analyse/projets", {"nom": "  Bande-annonce   Dune "})
+    ok(st == 200 and cr["projet"]["id"] == "bande-annonce-dune-2" and cr["projet"]["nom"] == "Bande-annonce Dune"
+       and cr["enregistre"] == "portail", f"Nouveau projet : le nom propre, l'identifiant libre ({st} {cr})")
+    st, _ = call("POST", "/api/analyse/projets", {"nom": "   "})
+    ok(st == 400, "un projet sans nom : refusé")
+    st, r = call("POST", "/api/analyse/projets/bande-annonce-dune-2", {"nom": "Dune, la bande-annonce"})
+    ok(st == 200 and r["projet"]["nom"] == "Dune, la bande-annonce", f"renommer un projet ({st})")
+    st, _ = call("POST", "/api/analyse/projets/getaround", {"nom": "Autre"})
+    ok(st == 400, "un de nos films ne se renomme pas d'ici")
+    st, r = call("POST", "/api/analyse/projets/getaround", {"supprime": True})
+    ok(st == 200 and r["projet"]["retire"] is True and r["projet"]["retire_par"] == "portail", f"retirer Getaround de l'accueil ({st})")
+    st, r = call("POST", "/api/analyse/projets/getaround", {"supprime": False})
+    ok(st == 200 and r["projet"]["retire"] is False, "et le restaurer")
+    st, r = call("POST", "/api/analyse/projets/wall", {"supprime": False})
+    ok(st == 200 and r["projet"]["retire"] is False, "restaurer ici un film retiré par le dépôt partagé (le plus récent gagne)")
+    st, r = call("POST", "/api/analyse/projets/bande-annonce-dune-2", {"supprime": True})
+    st, pl = call("GET", "/api/analyse/projets")
+    ok("bande-annonce-dune-2" not in {p["id"] for p in pl["projets"]}, "un projet créé supprimé : pour de bon")
+    st, _ = call("POST", "/api/analyse/projets/inconnu-du-tout", {"supprime": True})
+    ok(st == 404, "un projet inconnu : 404")
+    # lancer le dépouillement d'un projet : le dossier de travail porte son nom
+    st, pr = call("POST", "/api/analyse/projets", {"nom": "Mon essai"})
+    st, j2 = call("POST", "/api/analyse/run", {"item": vid.get("id"), "projet": "mon-essai", "langue": "fr"})
+    ok(st == 200 and j2["params"]["nom"] == "mon-essai" and j2["params"]["titre"] == "Mon essai",
+       f"le dépouillement d'un projet part sous son nom ({st} {j2})")
+    for _ in range(300):
+        st, j2 = call("GET", f"/api/jobs/{j2['id']}")
+        if j2["state"] in ("done", "error", "cancelled"):
+            break
+        time.sleep(0.1)
+    st, pl = call("GET", "/api/analyse/projets")
+    me = {p["id"]: p for p in pl["projets"]}.get("mon-essai") or {}
+    ok(j2["state"] == "done" and me.get("sorte") == "analyse" and me.get("nom") == "Mon essai"
+       and me["etapes"]["depouillement"]["etat"] == "fait" and me.get("studio") == "analyse/runs/mon-essai/",
+       f"le projet a son dépouillement, sa page, son nom ({j2['state']} {me})")
+    st, _ = call("POST", "/api/analyse/run", {"item": vid.get("id"), "nom": "wall"})
+    ok(st == 409, "une analyse au nom d'un de nos films : refusée")
+    # les corrections d'un Studio du portail : seulement ce qui diffère du fichier et du dépôt partagé
+    st, r = call("PUT", "/api/analyse/corrections/getaround",
+                 {"noms": {"P1": "Commissaire", "P9": "Le livreur", "P2": "Le chef"}, "fusions": {"P4": "P4"}, "locuteurs": {"1.0-2.0": None}})
+    ok(st == 200 and r.get("ok") is True and r["entrees"] == 1 and r["enregistre"] == "portail", f"corrections : enregistrées dans le portail ({st} {r})")
+    st, c = call("GET", "/api/analyse/corrections/getaround")
+    ok(st == 200 and c["noms"] == {"P2": "Le chef"} and c["fusions"] == {} and c["locuteurs"] == {},
+       f"corrections : le portail ne garde que sa part ({c})")
+    st, _ = call("PUT", "/api/analyse/corrections/inconnu", {"noms": {}})
+    ok(st == 404, "corrections d'un film inconnu : 404")
+    st, _ = call("PUT", "/api/analyse/corrections/getaround", {"noms": ["P1"]})
+    ok(st == 400, "corrections mal formées : 400")
+    ok(not ecrits, f"rien n'a été écrit dans le dépôt partagé ({ecrits})")
+    # la page d'un de nos films lit le fichier, le dépôt partagé, puis le portail, et écrit dans le portail
+    st, page = call("GET", "/analyse/analyses/getaround/")
+    txt = page.decode("utf-8", "replace") if isinstance(page, bytes) else ""
+    ok("window.XV_CORR_PORTAIL = \"../../../api/analyse/corrections/getaround\"" in txt and "XV_PARTAGE_REFUS" in txt,
+       "le Studio de Getaround écrit ses corrections dans le portail et dit pourquoi pas dans le dépôt partagé")
+    fp.shutdown()
+    config.CFG.pop("analyse_partage", None)
+    _partage_cache.update(t=0.0, v=None, corr={})
+
+    # le relais de la diarisation, contre un faux service local (on ne touche pas au vrai, sur dgx1)
 
     class Faux(BaseHTTPRequestHandler):
         def log_message(self, *a):

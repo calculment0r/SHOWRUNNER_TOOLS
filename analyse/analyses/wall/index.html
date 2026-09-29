@@ -19,7 +19,7 @@
 <body class="film">
 <!-- l'en-tête du portail se pose au-dessus (film.js → mountHeader('analyse')) ; dessous, la barre du film -->
 <nav class="fm-bar" aria-label="le film">
-  <a class="tb ghost sm" href="../../" title="Movie Analysis : nos films, les analyses, la diarisation">← Les films</a>
+  <a class="tb ghost sm" href="../../" title="Movie Analysis : les projets (nos films, les analyses faites d’ici, les projets créés)">← Projets</a>
   <div class="fm-t"><b>Le Loup de Wall Street</b><span class="lbl">45 plans · 02:19 · 1280×534</span></div>
   <div class="fm-onglets" id="tabs" role="tablist" aria-label="les vues du film">
     <button type="button" role="tab" data-tab="studio" aria-pressed="true">Studio</button>
@@ -29,6 +29,8 @@
   </div>
   <span class="sp"></span>
   <span class="lbl fm-src" title="wall.mp4">vidéo sur R2 · repli à côté</span>
+  <!-- le menu « ⋯ » du portail (commun/menu.js), posé par film.js : la fiche du projet, les vues, les exports, le lien -->
+  <span id="fm-plus" data-film="wall"></span>
 </nav>
 
 <main id="studio" class="fm-vue">
@@ -199,6 +201,12 @@ window.XV_DEPOT = {"depot":"calculment0r/MOVIE_ANALYSE","branche":"claude/new-se
 window.XV_CORR_URL = "https://movie-analysis-partage.luxigone.workers.dev/corrections/wall.json";
 // publier sur GitHub : le dépôt partagé (outils/partage) le fait avec son propre jeton — rien à coller dans le navigateur
 window.XV_PUBLIER_URL = "https://movie-analysis-partage.luxigone.workers.dev/publier/wall";
+// Dans le portail, les corrections s'écrivent chez lui (server/tools/analyse.py, /api/analyse/corrections/<film>) : le
+// dépôt partagé de MOVIE_ANALYSE refuse l'écriture depuis cette adresse (son worker.js, ligne 18 : ORIGINES ; lignes 142
+// et 148 : 403 « origine non autorisée »). La page le lit toujours ; le portail ne garde que sa part.
+window.XV_CORR_PORTAIL = "../../../api/analyse/corrections/wall";
+window.XV_PARTAGE_REFUS = "le dépôt partagé de MOVIE_ANALYSE n’accepte d’écriture que depuis calculment0r.github.io et 127.0.0.1 (son worker.js, ligne 18 : ORIGINES ; 403 « origine non autorisée ») — les corrections faites ici sont enregistrées dans le portail, pour tous ceux qui l’ouvrent";
+window.XV_PAGE_MA = "https://calculment0r.github.io/MOVIE_ANALYSE/analyses/wall/";
 // la video et les pistes de son sur R2 (--video-url) ; a cote de la page si R2 ne repond pas
 window.XV_MEDIA = "https://movie-analysis-partage.luxigone.workers.dev/video/wall/";
 // les portes qualite du rapport de la chaine, calculees au rendu (video-shots.mjs validate)
@@ -514,16 +522,19 @@ document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('cli
     let ecrit = false;
     // Le depot partage d'abord : c'est lui qui rend la correction visible par tout le
     // monde, en ligne, sans que personne ait de jeton a coller.
-    if (window.XV_CORR_URL) {
+    // Dans le portail, le portail d'abord : le depot partage de MOVIE_ANALYSE y refuse l'ecriture (XV_PARTAGE_REFUS).
+    const cible = window.XV_CORR_PORTAIL || window.XV_CORR_URL;
+    if (cible) {
       try {
-        const r = await fetch(window.XV_CORR_URL, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: json });
+        const r = await fetch(cible, { method: 'PUT', headers: { 'content-type': 'application/json' }, credentials: 'same-origin', body: json });
         if (r.ok && (await r.json().catch(() => ({}))).ok === true) {
           window.XV_CORR_FICHIER = c;
           // parti chez tout le monde : ce navigateur n'a plus rien a garder pour lui (sinon, ailleurs, une vieille
           // memoire passerait par-dessus les corrections des autres)
           window.xvPoseCorrections({});
           if (window.xvEtatPartage) window.xvEtatPartage();
-          $('cast-etat').textContent = 'enregistré — visible par tous ceux qui ouvrent cette page.';
+          $('cast-etat').textContent = window.XV_CORR_PORTAIL ? 'enregistré dans le portail — visible par tous ceux qui ouvrent le portail.' : 'enregistré — visible par tous ceux qui ouvrent cette page.';
+          if (window.XV_PARTAGE_REFUS) $('cast-etat').title = window.XV_PARTAGE_REFUS;
           return;
         }
       } catch (e) {}
@@ -551,7 +562,20 @@ document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('cli
   try { localStorage.removeItem('xverse-jeton-github'); } catch (e) {}   // l'ancien jeton, s'il traînait ici
   if (window.XV_PUBLIER_URL) {
     $('cast-github').hidden = false;
+    // Dans le portail, le depot partage refuse de publier depuis cette adresse (403, avant tout envoi a GitHub) :
+    // le bouton reste, dit pourquoi, et mene a la page de MOVIE_ANALYSE, d'ou la publication marche.
+    if (window.XV_PARTAGE_REFUS) {
+      $('cast-github').title = 'pas depuis le portail : ' + window.XV_PARTAGE_REFUS;
+      $('cast-github').setAttribute('aria-disabled', 'true');
+    }
     $('cast-github').addEventListener('click', async () => {
+      if (window.XV_PARTAGE_REFUS) {
+        const e = $('cast-etat');
+        e.textContent = 'pas publié d’ici : le dépôt partagé de MOVIE_ANALYSE refuse l’adresse du portail (403). Publier depuis sa page : ';
+        if (window.XV_PAGE_MA) { const a = document.createElement('a'); a.href = window.XV_PAGE_MA; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'le Studio sur calculment0r.github.io'; e.append(a); }
+        e.title = window.XV_PARTAGE_REFUS;
+        return;
+      }
       const a = saisis();
       const base = window.XV_CORR_FICHIER || {};
       const c = window.xvCorrections();
@@ -1338,18 +1362,20 @@ window.xvEnregistrePartage = function (cles, etat) {
       c[k] = Object.assign({}, base[k] || {}, loc[k] || {});
       for (const [x, v] of Object.entries(c[k])) if (v === null && !(base[k] || {})[x]) delete c[k][x];
     }
-    const dit = (t, local) => { if (etat) { etat.textContent = t; etat.className = local ? 'etat local' : 'etat'; } };
-    if (!window.XV_CORR_URL) { dit('gardé dans ce navigateur', true); return; }
+    const dit = (t, local) => { if (etat) { etat.textContent = t; etat.className = local ? 'etat local' : 'etat'; if (window.XV_PARTAGE_REFUS) etat.title = window.XV_PARTAGE_REFUS; } };
+    // dans le portail, le portail garde les corrections (le dépôt partagé de MOVIE_ANALYSE y refuse l'écriture)
+    const cible = window.XV_CORR_PORTAIL || window.XV_CORR_URL;
+    if (!cible) { dit('gardé dans ce navigateur', true); return; }
     try {
-      const r = await fetch(window.XV_CORR_URL, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(c, null, 2) });
+      const r = await fetch(cible, { method: 'PUT', headers: { 'content-type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(c, null, 2) });
       if (r.ok && (await r.json().catch(() => ({}))).ok === true) {
         window.XV_CORR_FICHIER = c;
         // parti chez tout le monde : ce navigateur ne garde plus ces clés pour lui
         const l = window.xvCorrections(); for (const k of cles) l[k] = {}; window.xvPoseCorrections(l);
-        dit('enregistré pour tous'); window.xvEtatPartage(); return;
+        dit(window.XV_CORR_PORTAIL ? 'enregistré dans le portail, pour tous' : 'enregistré pour tous'); window.xvEtatPartage(); return;
       }
-      throw new Error(String(r.status));
-    } catch (e) { dit('gardé dans ce navigateur — le dépôt partagé ne répond pas', true); }
+      throw new Error('réponse ' + r.status);
+    } catch (e) { dit(window.XV_CORR_PORTAIL ? 'gardé dans ce navigateur — le portail n’a pas enregistré (' + e.message + ')' : 'gardé dans ce navigateur — le dépôt partagé ne répond pas', true); }
   }, 500);
 };
 function vxEnregistre() { window.xvEnregistrePartage(['locuteurs', 'voix'], $('vx-etat')); }
@@ -1369,12 +1395,16 @@ function vxEnAttente() {
 }
 window.xvEtatPartage = function () {
   const b = $('vx-local'), e = $('vx-etat'); if (!b) return;
-  if (e && !e.textContent) e.textContent = window.XV_PARTAGE === 'lu' ? 'corrections partagées : lues' : window.XV_PARTAGE === 'injoignable' ? 'dépôt partagé injoignable : les corrections des autres ne sont pas lues' : '';
+  // dans le portail : on lit le dépôt partagé de MOVIE_ANALYSE, on écrit dans le portail — et on dit pourquoi (XV_PARTAGE_REFUS)
+  const lu = window.XV_PARTAGE === 'lu' ? (window.XV_CORR_PORTAIL ? 'corrections : dépôt partagé lu · enregistrées dans le portail' : 'corrections partagées : lues')
+    : window.XV_PARTAGE === 'injoignable' ? 'dépôt partagé injoignable : les corrections des autres ne sont pas lues'
+      : window.XV_CORR_PORTAIL && window.XV_PORTAIL === 'lu' ? 'corrections : enregistrées dans le portail' : '';
+  if (e && !e.textContent) { e.textContent = lu; if (window.XV_PARTAGE_REFUS) e.title = window.XV_PARTAGE_REFUS; }
   if (e && window.XV_PARTAGE === 'injoignable') e.className = 'etat local';
   const n = vxEnAttente().length;
   b.hidden = !n; b.textContent = '';
   if (!n) return;
-  b.append(n + ' modification' + (n > 1 ? 's' : '') + ' de ce navigateur, pas dans le dépôt partagé : ');
+  b.append(n + ' modification' + (n > 1 ? 's' : '') + ' de ce navigateur, pas ' + (window.XV_CORR_PORTAIL ? 'dans le portail' : 'dans le dépôt partagé') + ' : ');
   const bouton = (t, f) => { const x = document.createElement('button'); x.type = 'button'; x.className = 'vx-bouton'; x.textContent = t; x.addEventListener('click', f); b.append(x); };
   bouton('Les partager', () => { window.xvEnregistrePartage(VX_CLES_CORR, $('vx-etat')); });
   bouton('Les oublier', () => { window.xvMemorise(); window.xvPoseCorrections({}); window.xvRafraichir(); window.xvEtatPartage(); });
@@ -1415,8 +1445,37 @@ window.xvRemetTout = () => {
 
 /* ── le menu d'une réplique : à qui l'attribuer ── */
 function vxFermeMenu() { const m = document.querySelector('.vx-menu'); if (m) m.remove(); }
+// Dans le portail, le menu commun (commun/menu.js, posé par analyse/film/film.js dans window.SR_MENU) : le même qu'au clic
+// droit partout ailleurs — clavier, sous-menus, une entrée désactivée dit pourquoi. Les pastilles sont les jetons des
+// personnages (--pc-N, analyse/film/film.css). Sans lui (la page ouverte seule), le menu de la page.
+const VX_SOURCE_FR = { main: 'attribuée à la main', 'lèvres': 'vue et entendue', voix: 'reconnue à la voix', image: 'l’image seule — Nemotron n’y entend personne', 'chaîne': 'attribution de la chaîne', aucune: 'personne' };
+function vxMenuCommun(g, clientX, clientY) {
+  const M = window.SR_MENU;
+  VX.choisi = g; vxDessine();
+  const n = CAST_COLORS.length || 1;
+  // l'en-tête du menu de la page : l'instant, d'où vient l'attribution, et ce que dit la réplique
+  const dit = String(g.texte || '');
+  const items = [{ head: tc(g.a) + ' → ' + tc(g.b) + ' · ' + (VX_SOURCE_FR[g.source] || g.source) },
+    { label: '« ' + (dit.length > 64 ? dit.slice(0, 63) + '…' : dit) + ' »', disabled: true, why: 'la réplique choisie : l’attribuer ci-dessous' }];
+  DATA.cast.forEach((c, i) => items.push({ label: c.id + ' · ' + c.name, dot: 'pc-' + (i % n), sub: g.perso === c.id ? 'actuel' : '',
+    title: '« ' + g.texte + ' » → ' + c.name, onclick: () => vxAttribueA(g, c.id) }));
+  items.push({ label: 'Personne — voix off, narrateur', dot: 'ink3', sub: !g.perso ? 'actuel' : '', onclick: () => vxAttribueA(g, '') });
+  items.push('-');
+  items.push({ label: 'Revenir à l’automatique', icon: '↺', disabled: g.source !== 'main', why: 'cette réplique n’a pas été attribuée à la main', onclick: () => vxAttribueA(g, null) });
+  items.push({ label: 'Corriger le texte', icon: '✎', sub: 'script', onclick: () => {
+    const el = document.querySelector('.sc-say[data-cle="' + g.l.start + '-' + g.l.end + '"]');
+    if (el) { el.focus(); const r = document.createRange(); r.selectNodeContents(el); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+  } });
+  const ouvert = M.menu(clientX, clientY, items);
+  // le menu refermé (entrée choisie, clic ailleurs, Échap) : la réplique n'est plus désignée
+  if (ouvert && ouvert.node) {
+    const obs = new MutationObserver(() => { if (!document.contains(ouvert.node)) { obs.disconnect(); if (VX.choisi === g) { VX.choisi = null; vxDessine(); } } });
+    obs.observe(document.body, { childList: true });
+  }
+}
 function vxMenu(g, clientX, clientY) {
   vxFermeMenu();
+  if (window.SR_MENU && window.SR_MENU.menu) { vxMenuCommun(g, clientX, clientY); return; }
   VX.choisi = g; vxDessine();
   const plot = document.querySelector('.vx-plot'), rp = plot.getBoundingClientRect();
   const m = document.createElement('div'); m.className = 'vx-menu';
@@ -1524,6 +1583,14 @@ function vxMenu(g, clientX, clientY) {
   zone.addEventListener('pointerup', fin);
   zone.addEventListener('pointercancel', fin);
   zone.addEventListener('pointerleave', () => { croix.hidden = true; bulle.hidden = true; });
+  // le clic droit sur une réplique ouvre le même menu (la grammaire du portail : ⋯ et clic droit, un seul menu)
+  zone.addEventListener('contextmenu', (ev) => {
+    const r = zone.getBoundingClientRect(), q = boite(ev.clientX - r.left, ev.clientY - r.top);
+    if (!q) return;
+    ev.preventDefault(); ev.stopPropagation();
+    bulle.hidden = true;
+    aller(q.g.a + 0.01); vxMenu(q.g, ev.clientX, ev.clientY);
+  });
   zone.addEventListener('scroll', () => vxDessine());
   zone.addEventListener('wheel', (ev) => {
     if (!(ev.altKey || ev.ctrlKey)) return;
@@ -2139,6 +2206,20 @@ window.xvRafraichir = () => {
         }
       }
     } catch (e) { window.XV_PARTAGE = 'injoignable'; }
+  }
+  // puis ce que le portail a gardé (seulement ce qui y a été corrigé), par-dessus, clé par clé
+  if (window.XV_CORR_PORTAIL) {
+    try {
+      const r = await fetch(window.XV_CORR_PORTAIL, { cache: 'no-store', credentials: 'same-origin' });
+      window.XV_PORTAIL = r.ok ? 'lu' : 'injoignable';
+      if (r.ok) {
+        const d = await r.json();
+        if (d && typeof d === 'object') {
+          c = Object.assign({}, c || {});
+          for (const k of ['noms', 'fusions', 'repliques', 'locuteurs', 'voix']) c[k] = Object.assign({}, c[k] || {}, d[k] || {});
+        }
+      }
+    } catch (e) { window.XV_PORTAIL = 'injoignable'; }
   }
   if (c && typeof c === 'object') { window.XV_CORR_FICHIER = c; window.xvRafraichir(); }
   if (typeof window.xvEtatPartage === 'function') window.xvEtatPartage();

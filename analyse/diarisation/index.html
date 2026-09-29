@@ -2579,15 +2579,19 @@ function ouvreProjet() {
   const id = new URLSearchParams(location.search).get('projet');
   if (!id || typeof PROJETS === 'undefined') return;
   const p = PROJETS.duDepot(id) || PROJETS.locaux().find((x) => x.id === id);
-  // portail : pas de page projet, le retour mène à l'accueil de l'outil (les analyses et les projets y sont)
-  $('#retour').href = '../';
+  // portail : la fiche du projet est la visionneuse de l'accueil de l'outil (../?projet=<id>) — le retour y ramène
+  $('#retour').href = '../?projet=' + encodeURIComponent(id);
   $('#retour-txt').textContent = p ? p.nom : 'Projet';
   $('#titre-projet').textContent = p ? p.nom : id;
   const film = FILMS.find((x) => p && x.slug === p.film);
   if (film && film.demo) chargeDemo();
   else if (film) choisitSource(sourceFilm(film));
-  // un projet créé sur un autre poste : son nom arrive du dépôt partagé
-  if (!p) PROJETS.lire().then((r) => { const q = r.liste.find((x) => x.id === id); if (q) { $('#retour-txt').textContent = q.nom; $('#titre-projet').textContent = q.nom; } });
+  // un projet du portail (créé d'ici, ou lu dans le dépôt partagé de MOVIE_ANALYSE) : son nom arrive du portail, qui
+  // les a tous (/api/analyse/projets) — plus de PROJETS.lire() ici : il réécrivait le dépôt partagé, qui refuse le portail
+  if (!p) fetch('../../api/analyse/projets', { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : null)).then((r) => {
+    const q = r && (r.projets || []).find((x) => x.id === id);
+    if (q) { $('#retour-txt').textContent = q.nom; $('#titre-projet').textContent = q.nom; }
+  }).catch(() => {});
 }
 function demarre() {
   $$('.menu button').forEach((b) => b.addEventListener('click', () => va(b.dataset.onglet)));

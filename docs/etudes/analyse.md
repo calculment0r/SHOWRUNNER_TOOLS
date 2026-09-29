@@ -202,3 +202,67 @@ sur le Chromium de playwright) : voir le rapport de la session du 29/09.
   pages de film seulement (`body.film { height: auto }`).
 - La page du labo de diarisation (Voix ↗) garde sa feuille à elle (copiée de MOVIE_ANALYSE), sous
   l'en-tête du portail.
+
+## 7. Refonte du 29/09 (Cal : « pas dans l'interface générale, j'ai pas mes exemples déjà faits »)
+
+### Ce que Cal ne voyait pas — constaté, pas supposé
+
+- Les données sont les mêmes : `C:\claude\MOVIE_ANALYSE` est au commit `fa8d9d9` (copie lue sur DGX2), comme
+  la copie du portail ; tous les `analyses/<film>/*.json` et vignettes ont le même md5 des deux côtés.
+- Chromium sous `nico007`, 1600 / 1366 / 1100 px : les deux films étaient listés et leurs Studios lisaient la
+  vidéo. Mais l'accueil de l'outil n'avait **rien de la grammaire du portail** (une page à sections A–E,
+  un « héros »), et sa section « Les projets » affichait **« 0 projet créé — aucun projet »** : chez
+  MOVIE_ANALYSE, Getaround et Wall **sont** les projets (`commun/projets.js`, `DU_DEPOT`) ; ici ils étaient
+  à part, et la liste des projets disait qu'il n'y en avait pas.
+- Le Worker (`movie-analysis-partage.luxigone.workers.dev`), depuis l'origine `http://192.168.10.247:8790`,
+  dans un vrai navigateur : `GET /corrections/projets.json` → 200 `{}` (personne n'a créé de projet depuis la
+  home de MOVIE_ANALYSE), `GET /corrections/getaround.json` → 200 (5 noms…), `wall.json` → 200 `{}`,
+  `GET /videos` → 23 fichiers, `GET /video/getaround/getaround.mp4` en Range → 206. **La lecture passe.**
+  L'écriture est refusée par son code : `worker.js` ligne 18 (`ORIGINES` : github.io, 127.0.0.1, localhost),
+  ligne 33 (`peutEcrire`), lignes 142 et 148 (403 « origine non autorisée », avant toute écriture). Aucune
+  écriture n'a été tentée pour le vérifier.
+
+### Les écrans, et la page locale dont chacun part
+
+| écran du portail | page locale (MOVIE_ANALYSE) |
+|---|---|
+| l'accueil de l'outil : « Projets », le fil (grille / liste, filtre, recherche, taille), une carte par projet avec son nom, sa ligne et ses étapes **Dépouillement** / **Voix** | `index.html` (`carteDepot`, `carteCreee`, `etape()`) ; la grammaire : `commun/fil.css` (Image, Vidéo) |
+| « Nouveau projet » : le nom tout de suite, créé, ouvert | `index.html` (`#modale`, `PROJETS.creer`) |
+| la fiche d'un projet, dans la visionneuse (molette, flèches, Échap) : 01 Dépouillement (fait, en cours, à lancer ; la commande à la main), 02 Labo des voix, Renommer, Supprimer (projet créé, pour de bon) ou Retirer / Restaurer (une analyse, fichiers gardés) | `projet/index.html` (textes repris, dont ceux de `confirm`) ; `analyse/projet/?id=` renvoie à `?projet=` |
+| « ⋯ » et clic droit sur une carte, sur la barre d'un film, sur une réplique | `commun/menu.js` du portail ; la réplique : le menu de `voix.js` (`vxMenu`), mêmes entrées, plus « Corriger le texte » |
+| le Studio, le Casting, le Dépouillement de chaque film | `analyses/<film>/index.html` (déjà rendus dans la forme du portail, §6) |
+| le labo des voix | `outils/diarisation/index.html` ; le retour mène à la fiche du projet |
+
+Le projet « à dépouiller » se lance **d'ici** (`POST /api/analyse/run {projet}` : le dossier de travail porte son
+nom) — ce que `HANDOFF-MOVIE-ANALYSIS.md` §6.6 notait comme manquant.
+
+### Ce qui s'écrit où (le Worker refusant le portail)
+
+- **Les projets** : `<data_dir>/analyse/projets.json` ; la liste du dépôt partagé est **lue** et fusionnée comme le
+  fait `commun/projets.js` (par projet, le plus récent `maj` gagne ; `supprime` gardé ; un masque `depot: true`
+  retire une analyse de l'accueil). `GET /api/analyse/projets`, `POST /api/analyse/projets`, `POST
+  /api/analyse/projets/<id>`.
+- **Les corrections d'un Studio du portail** : `<data_dir>/analyse/corrections/<film>.json`, **seulement ce qui
+  diffère** du fichier du film et du dépôt partagé (`PUT /api/analyse/corrections/<film>`) : une correction faite
+  sur github.io continue d'arriver. La page lit fichier → dépôt partagé → portail, et dit pourquoi elle n'écrit
+  pas là-bas (`XV_PARTAGE_REFUS`). « Publier sur GitHub » dit qu'il faut la page de MOVIE_ANALYSE, et y mène.
+- Pour écrire aussi au dépôt partagé : à Cal d'ajouter l'adresse du portail à `ORIGINES` et de redéployer
+  (`npx wrangler deploy`) — les corrections gardées ici ne remontent pas seules.
+
+### Écarts dits
+
+- Chez MOVIE_ANALYSE, `DU_DEPOT` marque Wall « Voix » à faire ; son `diarisation.json` existe (160 Ko) : le
+  portail lit le fichier et montre « Voix » faite. Les chiffres (7 et 10 personnages) sont comptés sur les
+  données, fusions comprises (`DU_DEPOT` écrit 8 et 16 : les fiches avant fusion).
+
+### Vérifié (29/09, `/tmp/sr_ma_refonte`, port 8795, Chromium de DGX2, application locale servie sur 127.0.0.1:8811)
+
+`tools/check.py` : 676 passés, 0 en échec (les nouveaux contrôles de `server/tools/analyse.py` : fusion avec un faux
+dépôt partagé, créer / renommer / retirer / restaurer / supprimer, lancer depuis un projet, corrections
+différentielles, rien d'écrit au dépôt partagé).
+Dans la page : accueil à 1600 / 1366 / 1100 ; survol, clic droit ; fiche de Getaround (vidéo R2, readyState 4),
+molette → Wall ; liste ; Nouveau projet → fiche ; « Lancer sur DGX2 » → vidéo de la bibliothèque → carte « en
+cours, étape 5/11 » → faite → son Studio (vidéo à côté) ; Studio Getaround et Wall (vidéo R2 lue, S05), réplique
+réattribuée par le menu commun → « enregistré dans le portail, pour tous », Ctrl+Z → défait, clic droit, EN ;
+Casting (7 et 10 fiches), Dépouillement (12 et 45 plans, portes) ; labo (retour à la fiche, en-tête sur une
+ligne). Aucune requête d'écriture vers le Worker (bloquées et comptées : zéro).

@@ -1,112 +1,120 @@
 /* ============================================================
-   MOVIE ANALYSIS — l'accueil de l'outil dans le portail.
+   MOVIE ANALYSIS — l'accueil de l'outil : les projets.
+   La grammaire du portail (commun/fil.css : la barre du fil, la
+   grille justifiée, la liste, les gestes au survol, la visionneuse)
+   et, par-dessus, ce que la home de MOVIE_ANALYSE montrait sur ses
+   cartes (le nom, la ligne, les étapes Dépouillement et Voix).
    Règles du thème : aucune couleur en dur (tout vient de
    commun/tokens.css), des filets et jamais de bordures, un seul
-   .tb.go par écran (« Nouvelle analyse »), les capitales pour la
-   machine. La page d'un film (Studio, Casting, Dépouillement) a sa
-   feuille, analyse/film/film.css, dans ce même thème ; la page de
-   diarisation garde la sienne, copiée de MOVIE_ANALYSE (PROVENANCE.md).
+   .tb.go par écran (« Créer le projet » ; dans la visionneuse
+   « Ouvrir le Studio »), les capitales pour la machine.
    ============================================================ */
 
-/* ── nos films : en tête, en grand ──────────────────────── */
-.ma-films { display: grid; gap: var(--s4); grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
-@media (max-width: 520px) { .ma-films { grid-template-columns: 1fr; } }
-.ma-film {
-  background: var(--panel); border-radius: var(--r4); overflow: hidden; display: flex; flex-direction: column;
-  box-shadow: inset 0 0 0 1px var(--line); transition: box-shadow .12s;
+/* ── le gabarit : le réglage à gauche, le fil à droite (Vidéo) ── */
+.ma-app {
+  max-width: 1880px; margin: 0 auto; padding: var(--s4) var(--s6) 48px;
+  display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: var(--s5); align-items: start;
 }
-.ma-film:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
-/* l'image au format du film (2,39 : 1) : une image clé à 1280 px, pas la vignette */
-.ma-film-im {
-  position: relative; display: block; aspect-ratio: 2.39 / 1; text-decoration: none;
-  background: var(--black) center / cover no-repeat;
+@media (max-width: 980px) { .ma-app { grid-template-columns: 1fr; padding: var(--s3) var(--s4) 40px; } }
+.ma-rail { display: flex; flex-direction: column; gap: var(--s3); position: sticky; top: 70px; max-height: calc(100vh - 86px); overflow: auto; }
+@media (max-width: 980px) { .ma-rail { position: static; max-height: none; } }
+.ma-box { background: var(--panel); border-radius: var(--r3); padding: var(--s4); display: flex; flex-direction: column; gap: var(--s3); box-shadow: inset 0 0 0 1px var(--line); }
+.ma-bh { display: flex; align-items: baseline; gap: var(--s3); }
+.ma-bh h2 { margin: 0; font-family: var(--f-disp); font-size: 12px; font-weight: 400; letter-spacing: .14em; text-transform: uppercase; color: var(--ink); }
+.ma-bh .k { font-family: var(--f-mono); font-size: 9px; letter-spacing: .2em; color: var(--or); }
+.ma-bh .cnt { margin-left: auto; font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); }
+.ma-np { display: flex; flex-direction: column; gap: var(--s3); }
+.ma-note { margin: 0; color: var(--ink2); font-size: 11.5px; line-height: 1.6; }
+.ma-note b { color: var(--ink); font-weight: 600; }
+.ma-box code, .fv-sec code, .modal code { font-family: var(--f-mono); font-size: 9.5px; color: var(--cy); word-break: break-all; }
+.ma-l { display: flex; flex-direction: column; gap: 4px; }
+.ma-l .pill { letter-spacing: .14em; }
+.ma-box .kv { font-size: 9px; }
+.ma-cmd > summary { cursor: pointer; list-style: none; }
+.ma-cmd > summary::-webkit-details-marker { display: none; }
+.ma-cmd > summary::before { content: "+ "; color: var(--ink3); }
+.ma-cmd[open] > summary::before { content: "− "; }
+.ma-cmd[open] > summary { margin-bottom: 6px; }
+.ma-cmd pre {
+  margin: 6px 0; white-space: pre-wrap; word-break: break-all; font-family: var(--f-mono); font-size: 9.5px; line-height: 1.6;
+  color: var(--ink2); background: var(--panel3); border-radius: var(--r2); padding: 8px 10px;
 }
-.ma-film-im::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, var(--veil), var(--veil-0) 45%); pointer-events: none; }
-.ma-film-im .kind, .ma-film-im .dur, .ma-film-im .go {
-  position: absolute; z-index: 1; padding: 4px 8px; border-radius: var(--r1); background: var(--veil);
-  font-family: var(--f-mono); font-size: 8px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink2);
-}
-.ma-film-im .kind { top: 10px; left: 10px; }
-.ma-film-im .dur { top: 10px; right: 10px; font-size: 9px; letter-spacing: .1em; color: var(--ink); }
-.ma-film-im .go { bottom: 12px; right: 12px; color: var(--ink); opacity: 0; transition: opacity .15s; }
-.ma-film-im:hover .go { opacity: 1; }
-.ma-film-b { padding: var(--s4) var(--s5) var(--s5); display: flex; flex-direction: column; gap: var(--s4); flex: 1; }
-.ma-film-t { display: flex; flex-direction: column; gap: 6px; }
-.ma-film-t h3 { margin: 0; font-family: var(--f-disp); font-size: clamp(18px, 1.7vw, 24px); font-weight: 400; line-height: 1.1; letter-spacing: .04em; text-transform: uppercase; }
-.ma-film .ma-n dd { font-size: 22px; }
-.ma-film-b .row { margin-top: auto; }
-
-.ma { max-width: 1420px; margin: 0 auto; padding: var(--s6) var(--s6) 64px; display: flex; flex-direction: column; gap: var(--s6); }
-@media (max-width: 700px) { .ma { padding: var(--s4) var(--s4) 48px; } }
-
-.ma-top { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: var(--s4); }
-@media (max-width: 900px) { .ma-top { grid-template-columns: 1fr; } }
-/* Norelli ne tient que le logotype et le titre de l'accueil du portail : ici, Venus Rising */
-.hero.ma-hero h1 { font-family: var(--f-disp); font-size: clamp(26px, 3.2vw, 40px); line-height: 1.06; letter-spacing: .03em; }
-.ma-sum { justify-content: flex-start; gap: var(--s4); box-shadow: inset 0 0 0 1px var(--line-gr); }
-.ma-sum .kv { font-size: 10px; row-gap: 7px; }
-.ma-sum .kv dd.big { font-family: var(--f-disp); font-size: 34px; font-weight: 400; line-height: 1; }
-.ma-sum .ma-note { margin-top: auto; font-size: 11.5px; }
-
-/* ── les cartes d'analyse ───────────────────────────────── */
-.ma-cards { display: grid; gap: var(--s4); grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
-.ma-card {
-  background: var(--panel); border-radius: var(--r4); overflow: hidden;
-  display: flex; flex-direction: column; box-shadow: inset 0 0 0 1px transparent; transition: box-shadow .12s;
-}
-.ma-card:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
-.ma-card.run { box-shadow: inset 0 0 0 1px var(--line-gr); }
-.ma-card.err { box-shadow: inset 0 0 0 1px var(--line-or); }
-.ma-im {
-  position: relative; display: block; aspect-ratio: 21 / 9;
-  background: var(--black) center / cover no-repeat; text-decoration: none;
-}
-.ma-im .kind, .ma-im .dur {
-  position: absolute; padding: 3px 6px; border-radius: var(--r1); background: var(--veil);
-  font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink2);
-}
-.ma-im .kind { top: 8px; left: 8px; }
-.ma-im .kind.portail { color: var(--cy); }
-.ma-im .dur { bottom: 8px; right: 8px; font-size: 8px; letter-spacing: .1em; color: var(--ink); }
-.ma-body { padding: var(--s4) var(--s5) var(--s5); display: flex; flex-direction: column; gap: var(--s3); flex: 1; }
-.ma-t { font-family: var(--f-disp); font-size: 15px; line-height: 1.2; letter-spacing: .04em; text-transform: uppercase; }
-.ma-s { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink3); margin-top: -4px; }
-/* « personnages » est le plus long des quatre libellés : sa case est la plus large */
-.ma-n { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr) minmax(0, 1.15fr) minmax(0, .8fr); gap: 5px; margin: 0; }
-.ma-n div { background: var(--panel2); border-radius: var(--r2); padding: 8px 10px 9px; min-width: 0; }
-.ma-n dt { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ma-n dd { margin: 3px 0 0; font-size: 18px; font-weight: 600; line-height: 1.1; color: var(--cy); letter-spacing: .02em; }
-.ma-n dd.ok { color: var(--grn2); font-size: 13px; text-transform: uppercase; letter-spacing: .1em; }
-.ma-n dd.non { color: var(--ink3); font-size: 13px; text-transform: uppercase; letter-spacing: .1em; }
-.ma-body .row { margin-top: auto; }
-.ma-bar { height: 3px; border-radius: 2px; background: var(--panel3); overflow: hidden; }
-.ma-bar i { display: block; height: 100%; background: var(--cy); transition: width .4s; }
-.ma-msg { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink2); line-height: 1.7; }
-.ma-msg.err { color: var(--or); text-transform: none; letter-spacing: .04em; font-size: 9.5px; }
-
-/* ── diarisation, projets, chaîne ───────────────────────── */
-.ma-diar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s5); align-items: start; }
-@media (max-width: 800px) { .ma-diar { grid-template-columns: 1fr; } }
-.ma-diar-t { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
-.ma-diar-t p, .ma-note { margin: 0; color: var(--ink2); font-size: 12.5px; line-height: 1.7; max-width: 92ch; }
-.pan code, .ma-note code, .modal code { font-family: var(--f-mono); font-size: 10px; color: var(--cy); word-break: break-all; }
+.ma-cmd .ma-note { margin-top: 6px; }
 .ma-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; }
 /* des commandes : mono, mais pas en capitales — elles se recopient telles quelles */
-.ma-list li { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .02em; color: var(--ink2); line-height: 1.65; padding-left: 12px; box-shadow: inset 2px 0 0 var(--line-gr); }
-
-.ma-proj { display: flex; align-items: baseline; gap: var(--s3); padding: 8px 0; box-shadow: inset 0 -1px 0 var(--line); }
-.ma-proj b { font-weight: 600; font-size: 13px; }
-#projets { display: flex; flex-direction: column; gap: var(--s3); }
-
-.ma-kv { margin-bottom: var(--s4); font-size: 9.5px; }
-.ma-kv dd { word-break: break-word; }
-.ma-outils { list-style: none; margin: 0 0 var(--s4); padding: 0; display: grid; gap: 5px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
-.ma-outils li { display: flex; align-items: center; gap: 9px; background: var(--panel2); border-radius: var(--r2); padding: 8px 10px; font-size: 12px; }
+.ma-list li { font-family: var(--f-mono); font-size: 9px; letter-spacing: .02em; color: var(--ink2); line-height: 1.6; padding-left: 10px; box-shadow: inset 2px 0 0 var(--line-gr); }
+.ma-outils { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; grid-template-columns: 1fr 1fr; }
+.ma-outils li { display: flex; align-items: center; gap: 7px; background: var(--panel2); border-radius: var(--r2); padding: 6px 8px; font-size: 11px; min-width: 0; }
+.ma-outils li span:nth-of-type(1) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ma-outils li i { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--ink3); }
 .ma-outils li.ok i { background: var(--grn2); }
 .ma-outils li.err i { background: var(--or); }
 .ma-outils li.err { box-shadow: inset 0 0 0 1px var(--line-or); }
-.ma-outils li .lbl { margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ma-outils li .lbl { margin-left: auto; flex: none; }
+.ma-kv dd { word-break: break-word; }
+.ma-err { margin: 0; }
+
+/* ── le fil : ce que fil.css ne fait pas pour une carte de projet ── */
+.ma-fil { min-width: 0; }
+.fl-i.plein svg { fill: currentColor; stroke: none; }
+.ma-card .fl-open img { transition: opacity .15s; }
+.ma-card.retire .fl-open img, .fl-row.retire .fl-stage { opacity: .5; }
+/* un projet sans image : ce que disait la carte de MOVIE_ANALYSE (« à commencer ») */
+.ma-vide {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  background: var(--panel2); background-image: radial-gradient(var(--dot) 1px, transparent 1.2px); background-size: 7px 7px; color: var(--ink3);
+}
+.ma-vide b { font-family: var(--f-disp); font-size: 15px; font-weight: 400; letter-spacing: .1em; text-transform: uppercase; color: var(--ink2); }
+.ma-vide small { font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; }
+.fl-stage .ma-vide { position: absolute; }
+/* la carte de la home de MOVIE_ANALYSE, posée sur l'image : son nom, sa ligne, ses étapes */
+.ma-cap {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; display: flex; flex-direction: column; gap: 4px;
+  padding: 26px 11px 10px; background: linear-gradient(to top, var(--veil), var(--veil-0)); pointer-events: none;
+}
+.ma-cap-l { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.ma-cap-l b { font-size: 13px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ma-cap-d { margin-left: auto; flex: none; font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .08em; color: var(--ink); }
+.ma-cap-m { font-family: var(--f-mono); font-size: 8px; letter-spacing: .1em; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ma-etapes { display: flex; flex-wrap: wrap; gap: 4px; }
+.ma-etape {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 7px; border-radius: var(--r1); background: var(--veil);
+  font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3);
+}
+.ma-etape i { width: 5px; height: 5px; border-radius: 50%; background: var(--ink3); flex: none; }
+.ma-etape.faite { color: var(--ink2); }
+.ma-etape.faite i { background: var(--grn2); }
+.ma-etape.encours { color: var(--cy); }
+.ma-etape.encours i { background: var(--cy); animation: sPulse 1.2s infinite; }
+.ma-etape.err { color: var(--amb); }
+.ma-etape.err i { background: var(--amb); }
+.ma-prog { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ma-bar { display: block; height: 3px; border-radius: 2px; background: var(--panel3); overflow: hidden; }
+.ma-bar i { display: block; height: 100%; background: var(--cy); transition: width .4s; }
+.ma-prog-t { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* la liste : le média à gauche, la carte à droite */
+.ma-info { gap: 8px; }
+.ma-info-t { margin: 0; font-family: var(--f-disp); font-size: 15px; font-weight: 400; line-height: 1.15; letter-spacing: .04em; text-transform: uppercase; }
+.ma-info .ma-etape { background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
+.ma-info .ma-prog-t { white-space: normal; line-height: 1.6; }
+.ma-vues { gap: 5px; }
+.ma-vues .lbl { white-space: normal; line-height: 1.6; }
+.fl-row .fl-stage video { background: var(--black); }
+
+/* ── la visionneuse : la fiche du projet (projet/index.html de MOVIE_ANALYSE) ── */
+.ma-fv-t { font-family: var(--f-disp); font-size: 17px; font-weight: 400; letter-spacing: .05em; text-transform: uppercase; line-height: 1.15; }
+.ma-ix { font-family: var(--f-mono); font-size: 9px; letter-spacing: .22em; color: var(--or); }
+.ma-quoi { margin: 0; font-size: 11.5px; line-height: 1.6; color: var(--ink2); }
+.ma-fiche .ma-etape { background: var(--panel3); }
+/* trois vues sur une ligne (« Dépouillement » est long) : moins d'espacement que les boutons du portail */
+.ma-fiche .fv-acts .fv-row > .tb { letter-spacing: .05em; font-size: 10px; }
+.ma-fiche .kv { font-size: 9px; }
+.ma-fv-vide { display: flex; flex-direction: column; align-items: center; gap: var(--s4); max-width: 520px; text-align: center; color: var(--ink2); }
+.ma-fv-vide b { font-family: var(--f-disp); font-size: 26px; font-weight: 400; letter-spacing: .08em; text-transform: uppercase; color: var(--ink); }
+.ma-fv-vide p { margin: 0; line-height: 1.7; font-size: 12.5px; }
+.ma-fv-err { margin: 0; font-family: var(--f-mono); font-size: 9px; letter-spacing: .06em; line-height: 1.6; color: var(--amb); }
+.fv-media .ma-fv-err { position: absolute; left: 62px; right: 62px; bottom: 22px; text-align: center; }
 
 /* ── la fenêtre « Nouvelle analyse » ────────────────────── */
 #nv .modal { width: min(760px, 100%); }
@@ -119,6 +127,7 @@
 .ma-chemin { display: flex; align-items: center; gap: 0; background: var(--panel2); border-radius: var(--r2); box-shadow: inset 0 0 0 1px var(--line); }
 .ma-chemin > span { padding: 0 0 0 var(--s3); font-family: var(--f-mono); font-size: 10px; color: var(--ink3); white-space: nowrap; }
 .ma-chemin .fld { box-shadow: none; background: transparent; padding-left: 2px; font-family: var(--f-mono); font-size: 11px; }
+.ma-chemin .fld[readonly] { color: var(--ink2); }
 .ma-rep { font-size: 12px; color: var(--ink2); gap: var(--s2); }
 .ma-rep input { accent-color: var(--grn2); }
 #nv .modal-foot .why { max-width: 60%; }

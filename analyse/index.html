@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>MOVIE ANALYSIS — Showrunner Tools</title>
-<meta name="description" content="Le dépouillement d'un film plan par plan : les analyses, leur Studio, la diarisation, et une nouvelle analyse lancée sur DGX2.">
+<meta name="description" content="Les projets de Movie Analysis : nos films (Getaround, Le Loup de Wall Street), les analyses lancées sur DGX2, les projets créés — leur Studio, leur casting, leur dépouillement, leurs voix.">
 <!-- icône vide au chargement : le script la dessine depuis les jetons -->
 <link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -13,63 +13,55 @@
 <link rel="stylesheet" href="../commun/tokens.css">
 <link rel="stylesheet" href="../commun/base.css">
 <link rel="stylesheet" href="../commun/shell.css">
+<link rel="stylesheet" href="../commun/fil.css">
 <link rel="stylesheet" href="./analyse.css">
 </head>
 <body>
-<main class="ma">
-  <!-- nos films d'abord (Cal, 29/09) : les deux analyses déjà faites, en grand, qui ouvrent leur page dans le portail -->
-  <section class="sect">
-    <div class="sect-head"><h2>Nos films</h2><span class="k">A</span><span class="cnt" id="n-films"></span></div>
-    <div class="ma-films" id="films"><p class="lbl">chargement</p></div>
-  </section>
+<!-- La home de MOVIE_ANALYSE (index.html : « Projets », « Nouveau projet », les cartes et leurs étapes Dépouillement / Voix)
+     dans la grammaire du portail (Image, Vidéo) : le réglage à gauche, le fil à droite — grille ou liste, ⋯ et clic droit,
+     la visionneuse plein écran, qui porte la page projet de MOVIE_ANALYSE (projet/index.html). -->
+<main class="ma-app">
+  <aside class="ma-rail" aria-label="créer, et ce qui tourne">
+    <section class="ma-box">
+      <div class="ma-bh"><h2>Nouveau projet</h2><span class="k">A</span></div>
+      <form id="np" class="ma-np" autocomplete="off">
+        <label class="field"><span class="lbl">Nom du projet</span>
+          <input class="fld" id="np-nom" maxlength="80" spellcheck="false" placeholder="ex. Bande-annonce Dune"></label>
+        <button class="tb go block" id="np-ok" type="submit">Créer le projet</button>
+        <span class="why" id="np-why"></span>
+      </form>
+      <p class="ma-note">Le nom tout de suite : le projet se crée et s’ouvre. Son dépouillement se lance depuis sa fiche, sur DGX2.</p>
+    </section>
 
-  <section class="ma-top">
-    <div class="hero ma-hero">
-      <span class="ref">SR—07 · Movie Analysis</span>
-      <h1>Le film plan par plan</h1>
-      <p>Le code mesure, le modèle juge, le code vérifie. Les coupes, les durées et le mouvement sont mesurés ; la
-        transcription, les personnages suivis puis nommés et qui parle sont calculés ; l'échelle, la catégorie, la caméra
-        et le rythme de chaque plan sont jugés par le modèle, puis vérifiés par quinze portes. Tout tourne sur les DGX.</p>
-      <div class="row">
-        <button class="tb go" id="nouvelle" type="button">Nouvelle analyse</button>
-        <a class="tb ghost" href="./diarisation/">Diarisation</a>
-      </div>
+    <section class="ma-box">
+      <div class="ma-bh"><h2>Nouvelle analyse</h2><span class="k">B</span></div>
+      <p class="ma-note">Une vidéo de la bibliothèque ou de YouTube, la chaîne complète sur DGX2 : elle arrive dans les projets, avec son Studio.</p>
+      <button class="tb ghost block" id="nouvelle" type="button">Nouvelle analyse…</button>
       <div class="why" id="why-nouvelle" hidden></div>
-    </div>
-    <div class="meta ma-sum" aria-label="en chiffres">
-      <span class="dots"></span>
-      <span class="lbl">En chiffres</span>
-      <dl class="kv" id="somme"><dt>analyses</dt><dd>—</dd></dl>
-      <p class="ma-note">Nos films lisent leurs vidéos sur Cloudflare R2 et les corrections dans le dépôt partagé de
-        MOVIE_ANALYSE. Une correction faite d'ici n'y arrive pas : le dépôt partagé n'accepte pas encore l'adresse
-        du portail, et la page garde ce qui n'est pas parti dans ce navigateur (analyse/PROVENANCE.md).</p>
-    </div>
-  </section>
+    </section>
 
-  <section class="sect">
-    <div class="sect-head"><h2>Analyses lancées d'ici</h2><span class="k">B</span><span class="cnt" id="n-analyses"></span></div>
-    <div class="ma-cards" id="analyses"><p class="lbl">chargement</p></div>
-  </section>
+    <section class="ma-box" id="partage" aria-label="le dépôt partagé de MOVIE_ANALYSE">
+      <div class="ma-bh"><h2>Dépôt partagé</h2><span class="k">C</span><span class="cnt" id="partage-cnt"></span></div>
+      <div id="partage-corps"><p class="lbl">lecture</p></div>
+    </section>
 
-  <section class="sect">
-    <div class="sect-head"><h2>Diarisation</h2><span class="k">C</span><span class="cnt" id="diar-cnt"></span></div>
-    <div class="pan ma-diar" id="diar"><p class="lbl">on interroge le service</p></div>
-  </section>
+    <section class="ma-box" id="diar" aria-label="la diarisation">
+      <div class="ma-bh"><h2>Diarisation</h2><span class="k">D</span><span class="cnt" id="diar-cnt"></span></div>
+      <div id="diar-corps"><p class="lbl">on interroge le service</p></div>
+    </section>
 
-  <section class="sect">
-    <div class="sect-head"><h2>Les projets</h2><span class="k">D</span><span class="cnt" id="n-projets"></span></div>
-    <div class="pan" id="projets"><p class="lbl">lecture du dépôt partagé</p></div>
-  </section>
+    <section class="ma-box" id="chaine" aria-label="la chaîne">
+      <div class="ma-bh"><h2>La chaîne</h2><span class="k">E</span><span class="cnt" id="chaine-cnt"></span></div>
+      <div id="chaine-corps"><p class="lbl">lecture</p></div>
+    </section>
+  </aside>
 
-  <section class="sect">
-    <div class="sect-head"><h2>La chaîne</h2><span class="k">E</span><span class="cnt" id="chaine-cnt"></span></div>
-    <div class="pan" id="chaine"><p class="lbl">lecture</p></div>
-  </section>
+  <section class="ma-fil" id="fil" aria-label="les projets"></section>
 </main>
 
 <div class="scrim" id="nv" hidden>
   <div class="modal lg" role="dialog" aria-label="nouvelle analyse">
-    <div class="modal-head"><span class="t">Nouvelle analyse</span><span class="sp"></span>
+    <div class="modal-head"><span class="t" id="nv-t">Nouvelle analyse</span><span class="sp"></span>
       <button class="tb ghost sm" type="button" data-ferme>Fermer</button></div>
     <div class="modal-body">
       <div class="field">
@@ -85,7 +77,7 @@
         </div>
         <div class="ma-src" id="nv-yt" hidden>
           <input class="fld" id="nv-url" type="url" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off" spellcheck="false">
-          <span class="lbl">la chaîne la télécharge (yt-dlp, 1080p au plus) et range le travail sous l'identifiant de la vidéo</span>
+          <span class="lbl">la chaîne la télécharge (yt-dlp, 1080p au plus) et range le travail sous l'identifiant de la vidéo (ou du projet)</span>
         </div>
       </div>
       <label class="field"><span class="lbl">Titre</span>

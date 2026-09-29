@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Projet — Movie Analysis · Showrunner Tools</title>
+<!-- L'adresse de la page projet de MOVIE_ANALYSE (projet/?id=<id>) : dans le portail, la fiche du projet est la
+     visionneuse de l'accueil de l'outil (../?projet=<id>). Les liens d'avant y mènent. -->
+<script>
+  (function () {
+    var id = new URLSearchParams(location.search).get('id') || '';
+    location.replace('../' + (id ? '?projet=' + encodeURIComponent(id) : ''));
+  })();
+</script>
+</head>
+<body></body>
+</html>
