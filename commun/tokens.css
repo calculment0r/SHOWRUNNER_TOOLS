@@ -140,9 +140,11 @@
    sont plus clairs que le fond, les champs et les boutons un cran plus
    gris que le panneau qui les porte. Les accents qui servent d'encre
    (acier, orange, vert, ambre) sont assombris jusqu'au contraste AA
-   (4,5:1) sur tous les fonds ; les aplats qui portent leur propre encre
-   (rampe corail, cartes vertes, papier de la planche) ne bougent pas.
-   Mesures : docs/etudes/preferences.md, § contrastes.
+   (4,5:1) sur tous les fonds ; la rampe corail aussi (elle sert de
+   couleur de piste et d'encre), son encre devenant claire ; les cartes
+   vertes et le papier de la planche ne bougent pas. Chaque couleur du
+   sombre est redonnée ici, même inchangée : les deux blocs se comparent
+   nom à nom. Mesures : docs/etudes/preferences.md, § contrastes.
    ============================================================ */
 [data-theme="light"] {
   /* fonds, du plus profond au plus relevé */
@@ -194,6 +196,44 @@
   --on-or:   #fff5f0;
   --on-cy:   #f2f6f8;
   --on-grn:  #eaf4ee;
+
+  /* La rampe corail : elle sert aussi de couleur de piste (ODIO : tuile,
+     fils, étiquettes du nodal écrites en --k) et d'encre (Idéation). Le
+     pâle du sombre (#f2cdb8) faisait 1,25:1 sur --panel2 : les trois sont
+     assombries, chacune gardant sa teinte (pêche, corail, terre), jusqu'à
+     4,5:1 au moins sur tous les fonds clairs (--bg, --panel, --panel2,
+     --panel3, --sel-bg) — l'ordre de la rampe reste, retourné : pêche la
+     plus proche du fond, terre la plus loin. Mesures (29/09, luminance
+     relative WCAG, distance OKLab aux autres couleurs de piste ≥ 0,07) :
+     pêche 4,58 à 5,76 ; corail 5,87 à 7,38 ; terre 7,65 à 9,62. */
+  --coral-3: #82564f;
+  --coral-2: #8a3348;
+  --coral-1: #663214;
+  /* les aplats corail et les accents sont sombres en clair : leur encre
+     devient claire (#fbf7f4 : 5,81 sur pêche, 7,44 corail, 9,70 terre,
+     6,27 ambre, 7,33 acier, 6,74 --ink3 — l'encre sombre du sombre y
+     tombait à 2,4-2,9:1) */
+  --on-light:  #fbf7f4;
+  --on-coral1: #fbf7f4;
+  --dot-on-or: rgba(255, 245, 240, .22);   /* la trame claire sur l'orange sombre */
+  /* les verts portent leur encre (--on-grn, 5,62 à 10,42) et tiennent déjà
+     4,68:1 au moins sur les fonds clairs : les mêmes */
+  --verd-1:  #2a5540;
+  --verd-2:  #35684a;
+  --verd-3:  #2f6b4a;
+  --verd-4:  #24543b;
+  --verd-5:  #1a3f2c;
+
+  /* planche de présentation : un papier de studio clair dans les deux
+     thèmes (le rendu PNG de la variante claire) — les mêmes */
+  --paper:       #e6e6e2;
+  --paper2:      #dadad5;
+  --paper-ink:   #141816;
+  --paper-ink2:  #4c5551;
+  --paper-ink3:  #7d8682;
+  --paper-line:  rgba(20, 24, 22, .18);
+  --paper-shade: rgba(20, 24, 22, .30);
+  --shade:       rgba(0, 0, 0, .55);
 
   color-scheme: light;
 }

@@ -101,7 +101,11 @@ export function createDock(app) {
     const jump = S.dockJump;
     if (jump) {
       S.dockJump = null;
-      requestAnimationFrame(() => { const sec = jump === 'device' ? chainSec : clipSec; body.scrollTop = Math.max(0, sec.offsetTop); });
+      // aller au clip : un piano roll s'y centre sur ses notes (le haut de la partie serait do8)
+      requestAnimationFrame(() => {
+        if (jump !== 'device' && ed?.centrer) { ed.centrer(); return; }
+        const sec = jump === 'device' ? chainSec : clipSec; body.scrollTop = Math.max(0, sec.offsetTop);
+      });
     }
   }
   function key(e) { return ed?.key?.(e) || devices.key(e) || false; }
@@ -265,6 +269,7 @@ function stepGrid(app, p, src, t) {
 
 // ── le piano roll ───────────────────────────────────────────
 const GRIDS = [[0.5, '1/32'], [1, '1/16'], [2, '1/8'], [4, '1/4']];
+const CENTRE = new WeakMap();   // ce qui défile → le motif sur lequel on l'a centré
 function pianoRoll(app, p, src, t, c, ui, tall) {
   const P = app.S.proj;
   // la hauteur d'une rangée (une note) : Ctrl+molette (commun/molette.js), gardée dans ui (P.ui.ed.rh)
@@ -457,14 +462,31 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
     }),
   });
   const ro = new ResizeObserver(() => { layout(); paintNotes(); });
-  requestAnimationFrame(() => {
-    layout(); paintNotes();
+  // Centrer sur les notes CE QUI DÉFILE : le piano roll lui-même en grand
+  // format, sinon la colonne du panneau du bas (.dk-body) — la même règle que
+  // la molette (hauteur, plus haut). La rangée du milieu des notes (ou do4)
+  // vient au milieu de sa fenêtre. Dans la colonne, seulement quand le motif
+  // change : le panneau se redessine à chaque retouche, il garde alors le
+  // défilement qu'on lui a donné.
+  const defile = () => (wrap.scrollHeight > wrap.clientHeight + 1 ? wrap : wrap.closest('.dk-body'));
+  const centrer = () => {
+    const sc = defile();
+    if (!sc) return;
     const ps = p.notes.map((n) => n.p);
     const mid = ps.length ? (Math.min(...ps) + Math.max(...ps)) / 2 : 60;
-    wrap.scrollTop = (HI - mid) * RH - wrap.clientHeight / 2;
+    const y = (HI - mid + 0.5) * RH;                  // dans la grille (.pr-area)
+    const top = area.getBoundingClientRect().top - sc.getBoundingClientRect().top;   // la grille dans la fenêtre de ce qui défile
+    sc.scrollTop += top + y - sc.clientHeight / 2;
+    CENTRE.set(sc, p.id);
+  };
+  requestAnimationFrame(() => {
+    layout(); paintNotes();
+    const sc = defile();
+    if (sc === wrap || (sc && CENTRE.get(sc) !== p.id)) centrer();
     ro.observe(scrollX);
   });
   return {
+    centrer,
     el: el('div', { class: 'pr-wrap', style: { '--k': `var(--${t.color})` } }, tools, wrap, velBox),
     hint: 'clic : une note · glisser : sa longueur · glisser une note : la déplacer · Maj+glisser : choisir · double-clic ou clic droit : l\'ôter · ↑ ↓ transposer · Ctrl+A tout · Suppr · Ctrl+U quantifier · la voie du bas : vélocités · molette : monter, descendre · Maj : le temps · Alt : zoom · Ctrl : hauteur des notes',
     frame() {

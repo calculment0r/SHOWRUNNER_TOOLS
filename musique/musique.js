@@ -15,7 +15,7 @@
 // (moteur.js) le joue ; ce qu'on entend est ce qu'on exporte.
 
 import { mountHeader, api, jobs, pick, uploadFile, toast, $, href, fmtDur, stateFr } from '../commun/shell.js';
-import { Engine, renderMix, renderClips, wav24, peakDb, songEnd, peaks } from './moteur.js';
+import { Engine, renderMix, rendusLibres, renderClips, wav24, peakDb, songEnd, peaks } from './moteur.js';
 import { MODULES, TRACK_KINDS, COLORS, COLOR_FR, PRESETS, SOURCES_OF, DRUM_MODELS, NOTE_MODELS, TONICS, TONICS_FR, MODES,
   kindOfSource, keyLabel, moduleName } from './modules.js';
 import { el, modal, ask, confirmBox, menu, put, tok, letter } from './ui.js';
@@ -1104,21 +1104,47 @@ function tapTempo(at = performance.now()) {
 
 // ── la forme d'onde de la session ───────────────────────────
 // Le mixage rendu hors temps réel (le même graphe qu'à l'export), refait
-// une seconde et demie après la dernière retouche. 44,1 kHz : les filtres
-// d'ODIO montent jusqu'à 20 kHz, un contexte plus lent les écrêterait.
-let ovBuf = null, ovT = null, ovBusy = false, ovAgain = false, ovEnd = 0;
-const OV_W = 120;
-function overviewSoon(ms = 1500) { clearTimeout(ovT); ovT = setTimeout(renderOverview, ms); }
+// une seconde et demie après la dernière retouche. Un rendu DE FOND
+// (renderMix, `fond`) : une retouche l'annule (il s'arrête à sa tranche
+// suivante) avant d'en relancer un ; un export l'annule aussi et passe
+// devant — la forme d'onde se refait quand plus rien n'attend. Tout le
+// morceau, pas seulement ce qui a changé : une retouche s'entend au-delà de
+// son clip (queues de réverbération et d'écho, bus, compresseurs, arc,
+// automation), recoller des morceaux rendus à part ne serait pas juste.
+// OV_SR : 22,05 kHz, la plus basse fréquence où aucun filtre n'est écrêté
+// (à 16 kHz, un rendu de « Verre fumé » donne 1107 avertissements de
+// Chromium, BiquadFilter.frequency au-dessus de la Nyquist : « value will be
+// clamped » ; à 22,05 kHz, aucun) — moitié moins de calcul qu'à
+// 44,1 kHz. Mesuré le 29/09 sur « Verre fumé » (161 s) : 23-24 s de rendu
+// (44,1 kHz : 40 s) ; les 120 colonnes dessinées s'écartent de 1,6 px en
+// moyenne sur 24 du rendu à 48 kHz (44,1 kHz : 1,0 ; deux rendus à 48 kHz
+// entre eux : 0,2, le bruit des caisses).
+let ovBuf = null, ovT = null, ovCtl = null, ovDirty = false, ovEnd = 0;
+const OV_W = 120, OV_SR = 22050;
+function overviewSoon(ms = 1500) {
+  ovDirty = true;
+  clearTimeout(ovT); ovCtl?.abort(); ovCtl = null;
+  ovT = setTimeout(renderOverview, ms);
+}
 async function renderOverview() {
   if (!S.proj) return;
-  if (ovBusy) { ovAgain = true; return; }        // une retouche pendant le rendu : on le refait après
   const end = Math.max(songEnd(S.proj), 1);
   if (end > 2400) return;
-  ovBusy = true;
-  try { ovBuf = await renderMix(engine, S.proj, 0, end, { tail: 0.5, sampleRate: 44100 }); ovEnd = end; } catch { ovBuf = null; }
-  ovBusy = false;
+  ovCtl?.abort();
+  const ctl = ovCtl = new AbortController();
+  try {
+    const buf = await renderMix(engine, S.proj, 0, end, { tail: 0.5, sampleRate: OV_SR, signal: ctl.signal, fond: true });
+    if (ctl !== ovCtl) return;
+    ovBuf = buf; ovEnd = end; ovDirty = false;
+  } catch (e) {
+    if (ctl !== ovCtl) return;                       // une retouche l'a annulé : le suivant est déjà prévu
+    ovCtl = null;
+    if (e?.name === 'AbortError') { rendusLibres().then(() => { if (ovDirty && !ovCtl) overviewSoon(300); }); return; }   // un export est passé devant
+    ovBuf = null; ovDirty = false;
+  }
+  ovCtl = null;
+  window.__muOverview = { end, sr: OV_SR, at: performance.now() };   // essais pilotés
   drawOverview();
-  if (ovAgain) { ovAgain = false; overviewSoon(300); }
 }
 function drawOverview() {
   const w = OV_W, h = 28, dpr = devicePixelRatio || 1;

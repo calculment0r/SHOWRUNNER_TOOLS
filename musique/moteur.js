@@ -29,6 +29,7 @@ import { trajets } from './projet.js';   // les chaînes des pistes, lues dans l
 
 const LOOKAHEAD_MS = 25;      // MDN : « lookahead = 25.0 »
 const AHEAD_S = 0.12;         // MDN : « scheduleAheadTime = 0.1 » (+ 20 ms de marge au démarrage d'onglet)
+const DEPART_S = 0.05;        // la lecture part 50 ms après l'instant présent (playFrom) ; l'export s'y cale (renderMix)
 
 // ── petites aides ───────────────────────────────────────────
 const G = (ctx, gain = 1) => new GainNode(ctx, { gain });
@@ -985,7 +986,7 @@ export class Engine {
     await this.start();
     this.halt();
     const p = this.proj;
-    const t0 = this.ctx.currentTime + 0.05;
+    const t0 = this.ctx.currentTime + DEPART_S;
     this.play = { spb: 60 / p.bpm, cb: beat, ct: t0, from: beat, anchors: [{ time: t0, beat }] };
     const loop = this.loopAt(beat);
     this.graph.resume(p, beat, t0, loop ? loop.b : Infinity);
@@ -1094,26 +1095,120 @@ export function projEnd(p) {
 }
 
 // ── l'export : le même graphe, hors temps réel ──────────────
-// OfflineAudioContext.startRendering (MDN) rend le mixage d'un coup, plus
-// vite que le temps réel. `from`/`to` en noires ; `tail` : les secondes
-// laissées aux réverbérations et aux chutes après la dernière note ;
-// `solo` : une piste seule (un stem), les bus restant ouverts.
-export async function renderMix(engine, p, from, to, { tail = 2, sampleRate = 48000, solo = null } = {}) {
+// OfflineAudioContext (MDN) rend le mixage plus vite que le temps réel,
+// planifié COMME LA LECTURE : par tranches, chacune posée un peu avant de
+// sonner. OfflineAudioContext.suspend(t) arrête le rendu à l'instant t (à une
+// frontière de bloc de 128 images, MDN) ; on pose la tranche — l'automation
+// et les attracteurs relevés à son début (Graph.automate), ses notes — puis
+// resume(). Planifié d'un bloc (avant le 29/09), le morceau avait deux défauts :
+//  - les instruments d'ODIO lisent leurs réglages au moment de la note
+//    (basse acide, Analog) ou les posent « maintenant » (la coupure de Plaits,
+//    à currentTime, figé à 0) : une automation ou un attracteur sur un
+//    instrument prenait partout sa DERNIÈRE valeur ;
+//  - toutes les voix existaient dès le début du rendu, et chaque bloc de 128
+//    images parcourt les nœuds vivants : le rendu ralentissait à mesure que le
+//    morceau s'allongeait (64 temps : 8,8 s ; 128 temps : 66,8 s).
+// La tranche vaut EXPORT_PAS noires, posée AHEAD_S avant de sonner (l'horizon
+// de la lecture) : un réglage lu « maintenant » l'est au même moment qu'en
+// lecture, et une note sur la grille des doubles croches lit la valeur de
+// son propre temps. Mesuré le 29/09 (« Verre fumé », 161 s, DGX2) : 383 s
+// d'un bloc, 40 à 54 s par doubles croches (une ou deux noires : 40-45 s,
+// pour une automation lue moins finement) ; le niveau de chaque mesure est
+// celui de la lecture temps réel enregistrée à 0,13 dB près (moyenne 0,03 :
+// l'écart de deux lectures entre elles ; sans le calage ci-dessous, 1,3 dB).
+// `from`/`to` en noires ; `tail` : les secondes laissées aux
+// réverbérations et aux chutes après la dernière note ; `solo` : une piste
+// seule (un stem), les bus restant ouverts ; `signal` (AbortSignal) : annule
+// le rendu, qui s'arrête à sa tranche suivante (rejet « AbortError ») ;
+// `fond` : un rendu de fond (la forme d'onde de la barre) — voir plus bas.
+export const EXPORT_PAS = 0.25;   // une double croche
+const RQ = 128;                   // le bloc de rendu (render quantum) : 128 images
+const annule = () => new DOMException('rendu annulé', 'AbortError');
+
+async function rendreMix(engine, p, from, to, { tail = 2, sampleRate = 48000, solo = null, signal = null, pas = EXPORT_PAS } = {}) {
+  // `from` tombe dans les blocs de 128 images là où la lecture le pose
+  // (playFrom : un début de bloc + DEPART_S) : rendu à partir d'un début de
+  // bloc, le même morceau sonne autrement — mesuré le 29/09 : la basse acide
+  // et le sub (mêmes fondamentales) s'additionnent ou s'annulent selon cette
+  // place, jusqu'à 3 dB d'une mesure (le mécanisme, dans Chromium, n'est pas
+  // documenté). Les `decale` premières images sont retirées à la fin.
+  const decale = Math.round(DEPART_S * sampleRate) % RQ;
+  if (signal?.aborted) throw annule();
+  // le projet est figé au départ : une retouche pendant le rendu ne s'y mêle pas
+  try { p = structuredClone(p); } catch { p = JSON.parse(JSON.stringify(p)); }
   await engine.need(p);
   // une piste seule : les autres sont muettes (tranche coupée, envois
   // compris) — on ne planifie donc que ses clips, le rendu est le même
   if (solo) p = { ...p, tracks: p.tracks.map((t) => ({ ...t, solo: t.id === solo, mute: t.id === solo ? false : t.mute })), clips: p.clips.filter((c) => c.track === solo) };
-  const spb = 60 / p.bpm;
-  const length = Math.ceil(((to - from) * spb + tail) * sampleRate);
+  const spb = 60 / p.bpm, D = decale / sampleRate;
+  const length = Math.ceil(((to - from) * spb + tail) * sampleRate) + decale;
   const octx = new OfflineAudioContext({ numberOfChannels: 2, length, sampleRate });
   const g = new Graph(octx, { buffers: engine.buffers, live: () => {} });
+  const lacher = () => { for (const n of g.nodes.values()) n.dispose?.(); };
   g.sync(p);
   await g.ready();                    // le worklet de Plaits, le bruit de la boîte à rythme
-  g.resume(p, from, 0, to);
-  g.schedule(p, from, to, 0, to);
+  if (signal?.aborted) { lacher(); throw annule(); }
   for (const n of g.nodes.values()) n.flush?.();                       // la réverbe d'ODIO
-  await Promise.all([...g.nodes.values()].map((n) => n.ping?.()));    // les notes postées au worklet
-  return octx.startRendering();
+  const pings = () => Promise.all([...g.nodes.values()].map((n) => n.ping?.()));   // les notes postées au worklet
+  // les tranches, rangées par le bloc où le rendu s'arrête pour les poser
+  const n = Math.max(1, Math.ceil((to - from) / pas - 1e-9));
+  const poser = (k) => { const b0 = from + k * pas; g.schedule(p, b0, Math.min(to, b0 + pas), D + (b0 - from) * spb, to); };
+  const arrets = new Map(), debut = [];
+  for (let k = 0; k < n; k++) {
+    const f = Math.floor(((D + k * pas * spb - AHEAD_S) * sampleRate) / RQ) * RQ;
+    if (f <= 0 || f + RQ >= length) debut.push(k);
+    else { if (!arrets.has(f)) arrets.set(f, []); arrets.get(f).push(k); }
+  }
+  g.resume(p, from, D, to);           // les clips audio déjà commencés à `from`
+  for (const k of debut) poser(k);
+  await pings();
+  return new Promise((resolve, reject) => {
+    let fini = false;
+    const echec = (e) => { if (!fini) { fini = true; reject(e); } };
+    signal?.addEventListener('abort', () => echec(annule()), { once: true });
+    if (signal?.aborted) { echec(annule()); lacher(); return; }
+    for (const [f, ks] of arrets) {
+      // l'instant au milieu du bloc : qu'il soit arrondi vers le haut ou vers
+      // le bas, deux arrêts ne tombent jamais dans le même bloc
+      octx.suspend((f + RQ / 2) / sampleRate).then(async () => {
+        if (fini) { lacher(); return; }   // annulé : le rendu reste arrêté ici
+        try { for (const k of ks) poser(k); await pings(); } catch (e) { echec(e); }
+        if (fini) { lacher(); return; }
+        octx.resume();
+      }, echec);
+    }
+    octx.startRendering().then((buf) => {
+      if (fini) return;
+      fini = true;
+      if (!decale) { resolve(buf); return; }
+      const out = new AudioBuffer({ numberOfChannels: 2, length: buf.length - decale, sampleRate });
+      for (let c = 0; c < 2; c++) out.copyToChannel(buf.getChannelData(c).subarray(decale), c);
+      resolve(out);
+    }, echec);
+  });
+}
+
+// Un seul rendu à la fois. Ceux qu'on attend (l'export et ses stems, le son
+// d'une région générative) passent l'un après l'autre ; celui de fond (la
+// forme d'onde) s'efface devant eux : il est annulé dès qu'un rendu attendu
+// arrive, et refusé (AbortError) tant qu'il en reste un. `rendusLibres()` :
+// une promesse tenue quand plus aucun rendu attendu ne tourne.
+let file = Promise.resolve(), attendus = 0, fond = null;
+export function rendusLibres() { return file; }
+export function renderMix(engine, p, from, to, opts = {}) {
+  if (opts.fond) {
+    if (attendus) return Promise.reject(annule());
+    fond?.abort();
+    const ctl = new AbortController();
+    fond = ctl;
+    if (opts.signal) { if (opts.signal.aborted) ctl.abort(); else opts.signal.addEventListener('abort', () => ctl.abort(), { once: true }); }
+    return rendreMix(engine, p, from, to, { ...opts, signal: ctl.signal }).finally(() => { if (fond === ctl) fond = null; });
+  }
+  attendus++;
+  fond?.abort();
+  const r = file.then(() => rendreMix(engine, p, from, to, opts));
+  file = r.then(() => {}, () => {});
+  return r.finally(() => { attendus--; });
 }
 
 // Consolider des clips audio (Ctrl+J, « Consolidate » de Live) : leur son
