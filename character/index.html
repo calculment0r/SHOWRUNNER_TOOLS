@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CHARACTER FACTORY — Showrunner Tools</title>
+<meta name="description" content="Le studio : le casting en affiches, et chaque personnage — son identité, son visage, sa garde-robe, sa voix, sa planche — jusqu'à lui parler.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23e0674a'/%3E%3Crect x='12' y='12' width='8' height='8' rx='2' fill='%23170c08'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Azeret+Mono:wght@300;400;500&display=swap">
+<link rel="stylesheet" href="../commun/tokens.css">
+<link rel="stylesheet" href="../commun/base.css">
+<link rel="stylesheet" href="../commun/shell.css">
+<link rel="stylesheet" href="./assets/factory.css">
+<link rel="stylesheet" href="./assets/studio.css">
+<link rel="stylesheet" href="./assets/character.css">
+</head>
+<body>
+
+<!-- l'en-tête du portail se pose au-dessus (js/cf.js → mountHeader) ;
+     cette barre porte ce qui est propre au studio de DGX1 -->
+<nav class="cf-bar" aria-label="le studio">
+  <span class="cf-where"><a class="lbl" href="./#/" title="le casting">Casting</a></span>
+  <span class="sp"></span>
+  <span class="pill" id="sys-pill" title="le studio de Character Factory, sur DGX1"><i></i><span id="sys-text">démarrage</span></span>
+  <a class="tb ghost sm" id="queue-link" href="./coulisses.html#/file" title="la file des rendus du studio (DGX1) : arrêter, relancer — la « File » de l'en-tête est celle du portail">File du studio</a>
+  <a class="tb ghost sm" id="coulisses-link" href="./coulisses.html" title="les coulisses : tout ce que la chaîne fabrique, pour vérifier">Coulisses</a>
+</nav>
+
+<main class="cf-studio" id="app"></main>
+
+<div class="scrim lightbox" id="lightbox" hidden>
+  <div>
+    <img id="lightbox-img" alt="">
+    <div class="cap" id="lightbox-cap"></div>
+  </div>
+</div>
+
+<div class="scrim" id="confirm" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="modal-head"><span class="t" id="confirm-title">confirmer</span></div>
+    <div class="modal-body"><p id="confirm-text"></p></div>
+    <div class="modal-foot"><span class="sp"></span>
+      <button class="tb ghost" id="confirm-no">Pas encore</button>
+      <button class="tb go" id="confirm-yes">Oui</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script type="module" src="./js/studio.js"></script>
+</body>
+</html>

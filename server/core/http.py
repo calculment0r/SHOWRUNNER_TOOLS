@@ -12,6 +12,17 @@ de son dossier (`..`, lien) est refusé — la faille corrigée le 28/09 dans
 le studio de Character Factory (commit 01aea49) ne doit pas renaître ici.
 Les vidéos se lisent avec les requêtes partielles (Range) : sans elles,
 le navigateur ne peut ni lire en continu ni sauter dans une vidéo.
+
+Un relais (le studio de Character Factory, sur DGX1) prend un préfixe
+entier par `app.prefix(préfixe, fonction)`, toutes méthodes, et rend un
+`StreamResponse` : le corps passe par morceaux, au fil de l'eau, sans
+être gardé en mémoire (un GLB de 100 Mo, une réponse longue en SSE).
+
+La porte (core/auth.py) se pose par `app.gate(req, app)`, appelée avant
+chaque requête, et `app.after(req, statut)`, après : le socle juge qui
+entre, les outils n'ont rien à changer. Un dossier monté peut porter son
+propre juge (`mount(…, check=)`) : un fichier qu'on n'a pas le droit de
+lire répond 404. Un `PermissionError` levé par un outil répond 403.
 """
 
 from __future__ import annotations
@@ -62,6 +73,22 @@ class FileResponse:
         self.cache = cache
 
 
+class StreamResponse:
+    """Une réponse lue au fil de l'eau (un relais) : l'en-tête, puis le
+    corps morceau par morceau. `chunks` est un itérable d'octets ;
+    `length` la taille annoncée, ou None — le corps part alors en
+    transfert par morceaux (HTTP/1.1 chunked), chaque morceau dès qu'il
+    arrive. `close` libère la source, lue jusqu'au bout ou non."""
+
+    def __init__(self, status: int, headers: list[tuple[str, str]], chunks, length: int | None = None,
+                 close=None) -> None:
+        self.status = status
+        self.headers = headers
+        self.chunks = chunks
+        self.length = length
+        self.close = close or (lambda: None)
+
+
 class Request:
     def __init__(self, handler: BaseHTTPRequestHandler, method: str, path: str, query: dict) -> None:
         self._h = handler
@@ -75,19 +102,27 @@ class Request:
         v = self.query.get(name)
         return v[0] if v else default
 
+    def _length(self) -> int:
+        # une taille négative ferait lire read(-1) jusqu'à la fermeture (audit du 28/09, M2)
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError as e:
+            raise HttpError(400, "Content-Length illisible") from e
+        if n < 0:
+            raise HttpError(400, "Content-Length négatif")
+        if n > MAX_BODY:
+            raise HttpError(413, "fichier trop gros (2 Go au plus)")
+        return n
+
     def body(self) -> bytes:
         if self._body is None:
-            n = int(self.headers.get("Content-Length") or 0)
-            if n > MAX_BODY:
-                raise HttpError(413, "fichier trop gros (2 Go au plus)")
+            n = self._length()
             self._body = self._h.rfile.read(n) if n else b""
         return self._body
 
     def stream_to(self, dest: Path, chunk: int = 1 << 20) -> int:
         """Écrit le corps dans un fichier sans le garder en mémoire."""
-        n = int(self.headers.get("Content-Length") or 0)
-        if n > MAX_BODY:
-            raise HttpError(413, "fichier trop gros (2 Go au plus)")
+        n = self._length()
         left = n
         with open(dest, "wb") as f:
             while left > 0:
@@ -103,6 +138,11 @@ class Request:
         raw = self.body()
         if not raw:
             return {}
+        # un formulaire d'une autre page envoie du JSON déguisé en text/plain
+        # sans demander la permission (audit du 28/09, H3) : refusé
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype in ("text/plain", "application/x-www-form-urlencoded", "multipart/form-data"):
+            raise HttpError(415, "corps JSON attendu (Content-Type: application/json)")
         try:
             data = json.loads(raw)
         except ValueError as e:
@@ -118,19 +158,37 @@ class App:
         self.routes: list[tuple[str, re.Pattern, callable]] = []
         # préfixe d'URL → dossier servi (la bibliothèque, les rendus…)
         self.mounts: dict[str, Path] = {}
+        # préfixe d'URL → fonction(req, reste) : un relais, toutes méthodes
+        self.prefixes: list[tuple[str, callable]] = []
         # ce qui ne sort jamais du dépôt, même s'il est dans la racine
         self.hidden = re.compile(r"(^|/)(\.|server/|showrunner\.local\.json|node_modules/)")
+        # la porte (core/auth.py) : gate(req, app) avant, after(req, statut) après
+        self.gate = None
+        self.after = None
+        # préfixe monté → fonction(chemin dans le dossier) → bool : le droit de lire
+        self.mount_checks: dict[str, callable] = {}
 
     def route(self, method: str, pattern: str, fn) -> None:
         rx = "^" + re.sub(r"\{(\w+)\}", r"(?P<\1>[^/]+)", pattern.rstrip("/")) + "/?$"
         self.routes.append((method.upper(), re.compile(rx), fn))
 
-    def mount(self, prefix: str, folder: Path) -> None:
+    def mount(self, prefix: str, folder: Path, check=None) -> None:
         self.mounts[prefix.strip("/") + "/"] = folder.resolve()
+        if check:
+            self.mount_checks[prefix.strip("/") + "/"] = check
+
+    def prefix(self, prefix: str, fn) -> None:
+        """Confie tout ce qui commence par `prefix` (« /character/api/ ») à
+        `fn(req, reste)`, quelle que soit la méthode ; `reste` est la suite
+        du chemin telle qu'elle est arrivée, encore encodée."""
+        self.prefixes.append(("/" + prefix.strip("/") + "/", fn))
 
     # ── répartition ─────────────────────────────────────────
     def dispatch(self, req: Request):
         path = req.path
+        for pre, fn in self.prefixes:
+            if path.startswith(pre):
+                return fn(req, path[len(pre):])
         if path.startswith("/api/"):
             allowed = []
             for method, rx, fn in self.routes:
@@ -149,6 +207,9 @@ class App:
         rel = unquote(path).lstrip("/")
         for prefix, folder in self.mounts.items():
             if rel.startswith(prefix):
+                check = self.mount_checks.get(prefix)
+                if check and not check(rel[len(prefix):]):
+                    raise HttpError(404, "introuvable")
                 return self._file(folder, rel[len(prefix):])
         if self.hidden.search(rel):
             raise HttpError(404, "introuvable")
@@ -176,13 +237,27 @@ class App:
             def log_message(self, fmt, *args):  # le journal des requêtes noierait celui des rendus
                 pass
 
+            def end_headers(self):
+                # audit du 28/09, B1 : pas de type deviné, pas d'adresse qui
+                # fuit vers un autre site, pas de page du portail dans le
+                # cadre d'un autre (le bouton « Accepter » de la page admin)
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Referrer-Policy", "same-origin")
+                self.send_header("Content-Security-Policy", "frame-ancestors 'self'")
+                super().end_headers()
+
             def _run(self, method: str) -> None:
                 parts = urlsplit(self.path)
                 req = Request(self, method, parts.path, parse_qs(parts.query))
                 try:
+                    if app.gate:
+                        app.gate(req, app)
                     out = app.dispatch(req)
                 except HttpError as e:
                     out = Response(json.dumps({"error": e.message}, ensure_ascii=False), e.status,
+                                   "application/json; charset=utf-8")
+                except PermissionError as e:  # un droit refusé par le socle (core/library.py)
+                    out = Response(json.dumps({"error": str(e) or "refusé"}, ensure_ascii=False), 403,
                                    "application/json; charset=utf-8")
                 except Exception as e:  # une erreur d'outil ne tombe pas le portail
                     traceback.print_exc()
@@ -198,10 +273,15 @@ class App:
                     self._send(out, head=(method == "HEAD"))
                 except (BrokenPipeError, ConnectionResetError):
                     pass
+                finally:
+                    if app.after:
+                        app.after(req, getattr(out, "status", 200))
 
             def _send(self, out, head: bool = False) -> None:
                 if isinstance(out, FileResponse):
                     return self._send_file(out, head)
+                if isinstance(out, StreamResponse):
+                    return self._send_stream(out, head)
                 if not isinstance(out, Response):
                     out = Response(json.dumps(out, ensure_ascii=False), 200, "application/json; charset=utf-8")
                 self.send_response(out.status)
@@ -254,6 +334,42 @@ class App:
                         self.wfile.write(buf)
                         left -= len(buf)
 
+            def _send_stream(self, s: StreamResponse, head: bool) -> None:
+                # sans corps : HEAD, 204, 304 ; sinon la taille annoncée, ou
+                # des morceaux (chunked) écrits dès qu'ils arrivent
+                bodyless = head or s.status in (204, 304) or 100 <= s.status < 200
+                chunked = s.length is None and not bodyless
+                try:
+                    self.send_response(s.status)
+                    for k, v in s.headers:
+                        self.send_header(k, v)
+                    if s.length is not None:
+                        self.send_header("Content-Length", str(s.length))
+                    elif chunked:
+                        self.send_header("Transfer-Encoding", "chunked")
+                    else:
+                        self.close_connection = True
+                    self.end_headers()
+                    if bodyless:
+                        return
+                    sent = 0
+                    for buf in s.chunks:
+                        if not buf:
+                            continue
+                        self.wfile.write(b"%x\r\n%b\r\n" % (len(buf), buf) if chunked else buf)
+                        sent += len(buf)
+                    if chunked:
+                        self.wfile.write(b"0\r\n\r\n")
+                    elif s.length is not None and sent != s.length:
+                        self.close_connection = True   # la source s'est tue en route
+                except (BrokenPipeError, ConnectionResetError):
+                    self.close_connection = True   # le navigateur est parti
+                except Exception as e:  # la source se tait en route : l'en-tête est parti, on ferme
+                    self.close_connection = True
+                    print(f"relais interrompu : {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+                finally:
+                    s.close()
+
             def do_GET(self):
                 self._run("GET")
 
@@ -268,6 +384,12 @@ class App:
 
             def do_DELETE(self):
                 self._run("DELETE")
+
+            def do_PATCH(self):
+                self._run("PATCH")
+
+            def do_OPTIONS(self):
+                self._run("OPTIONS")
 
         class Server(ThreadingHTTPServer):
             def handle_error(self, request, client_address):

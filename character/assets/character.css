@@ -1,0 +1,27 @@
+/* ============================================================
+   CHARACTER FACTORY dans le portail — la sous-barre du studio
+   L'en-tête est celle du portail (mountHeader) ; sous elle, une
+   barre fine porte ce qui est propre au studio de DGX1 : son état,
+   sa file de rendus, ses coulisses. La « File » de l'en-tête reste
+   celle du portail (ses rendus d'image, de vidéo) : ce sont deux
+   files différentes, sur deux machines, d'où deux noms.
+   Que des jetons ; des filets en box-shadow, jamais de bordure.
+   ============================================================ */
+
+.cf-bar {
+  display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
+  padding: 7px var(--s6); min-height: 42px;
+  background: var(--panel); box-shadow: inset 0 -1px 0 var(--line);
+}
+.cf-bar .sp { flex: 1; min-width: 8px; }
+.cf-bar .pill { min-width: 0; max-width: 46vw; }
+.cf-bar .pill > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf-bar .cf-where { display: flex; align-items: baseline; gap: var(--s3); min-width: 0; }
+.cf-bar .cf-where a { text-decoration: none; }
+.cf-bar .cf-where a:hover { color: var(--ink); }
+.cf-bar .cf-where b { font-family: var(--f-disp); font-size: 12px; font-weight: 400; letter-spacing: .08em; text-transform: uppercase; }
+.cf-bar .clock { font-size: 15px; }
+@media (max-width: 640px) {
+  .cf-bar { padding: 6px 16px; }
+  .cf-bar #sys-text, .cf-bar #engine-text { display: none; }
+}

@@ -196,3 +196,13 @@ a.statcard, a.tile, a.thumb, .sect-head a { text-decoration: none; }
   .hdr .tools a { padding: 6px 5px; letter-spacing: .1em; }
 }
 @media (max-width: 1320px) { .hdr .tool-name .k { display: none; } }
+/* dix outils : la navigation défile sur place plutôt que de passer à la
+   ligne (l'en-tête reste une ligne, à toute largeur au-dessus du téléphone) */
+@media (min-width: 1101px) {
+  .hdr { flex-wrap: nowrap; }
+  .hdr .tools { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .hdr .tools::-webkit-scrollbar { display: none; }
+  .hdr .tools a { white-space: nowrap; flex: none; }
+  .hdr .sp { flex: 0 0 var(--s3); min-width: var(--s3); }
+  .hdr > .logo, .hdr > .tool-name, .hdr > .pill, .hdr > .tb { flex: none; }
+}

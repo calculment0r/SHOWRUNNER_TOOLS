@@ -109,9 +109,16 @@ def _cf_get(path: str, timeout: float = 15.0):
         raise HttpError(502, f"le studio Character Factory ne répond pas ({config.get('cf_api')}) : {e}") from e
 
 
+def _cf_open(slug: str = "") -> str:
+    """La fiche d'un personnage dans le portail (le front du studio vit
+    dans character/ depuis le 29/09). Un chemin depuis la racine, pas une
+    adresse relative : la bibliothèque (asset.js) le pose tel quel dans
+    son lien, depuis asset/."""
+    return "/character/" + (f"#/p/{urllib.parse.quote(slug)}" if slug else "")
+
+
 def cf_characters(req):
     data = json.loads(_cf_get("/api/characters"))
-    base = config.get("cf_public").rstrip("/")
     out = []
     for c in data.get("characters", []):
         out.append({"slug": c["slug"], "name": c.get("name") or c["slug"], "style": c.get("style"),
@@ -119,9 +126,9 @@ def cf_characters(req):
                     "expressions": c.get("expressions", 0), "looks": c.get("looks", 0),
                     "thumb": "api/cf/file?path=" + urllib.parse.quote(c['thumb']) if c.get("thumb") else None,
                     "poster": "api/cf/file?path=" + urllib.parse.quote(c['poster']) if c.get("poster") else None,
-                    "open": f"{base}/studio.html#/p/{c['slug']}",
+                    "open": _cf_open(c["slug"]),
                     "imported": [i["id"] for i in _cf_imports(c["slug"])]})
-    return {"characters": out, "studio": base + "/"}
+    return {"characters": out, "studio": _cf_open()}
 
 
 def cf_file(req):
@@ -172,8 +179,7 @@ def cf_import(req):
         raise HttpError(409, "ce personnage n'a encore aucune image validée (visage verrouillé, plein pied…)")
     desc = _cf_description(c)
     it = library.create_element(c.get("name") or slug, "character", desc, refs,
-                                source={"tool": "character-factory", "slug": slug,
-                                        "open": config.get("cf_public").rstrip("/") + f"/studio.html#/p/{slug}"})
+                                source={"tool": "character-factory", "slug": slug, "open": _cf_open(slug)})
     shutil.rmtree(tmp, ignore_errors=True)
     return library.public(it)
 

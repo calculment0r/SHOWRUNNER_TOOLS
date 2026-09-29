@@ -3,3 +3,5 @@ __pycache__/
 showrunner.local.json
 node_modules/
 .claude/
+# copie ratée du 29/09 (les vraies feuilles sont dans character/assets/) : le PC ne peut pas les effacer
+character/js/*.css
