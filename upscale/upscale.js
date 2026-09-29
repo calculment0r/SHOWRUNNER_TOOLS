@@ -1,563 +1,665 @@
-// Upscale : agrandir et affiner les images et les vidéos de la
-// bibliothèque. Le serveur tient la seule vérité : modèles, tailles, ce
-// qui passe ou non, mémoire et temps estimés viennent de /api/upscale/*
-// (server/tools/upscale.py, étude docs/etudes/upscale.md).
+// Upscale : agrandir une image ou une vidéo, essai après essai, et comparer.
 //
-// Entrée : la bibliothèque (pick), un dépôt de fichiers, ou l'adresse
-// upscale/?src=<id>[,<id>…] — la bibliothèque et les autres outils y
-// envoient. Résultat : avant/après en rideau ou côte à côte, loupe 1:1 qui
-// suit la souris, lecture synchronisée pour une vidéo (le banc A/B de Movie
-// Creator), puis la bibliothèque et le montage.
+// Cal, 29/09 : « il faut une pile par image comme notre banc de comparaison
+// de vidéo avec les settings par essai et aussi la barre de slide pour
+// comparer. et même chose pour les vidéos » ; « au drag and drop, on
+// détermine par le média ce qu'on veut upscale » ; « upscale créatif,
+// upscale précis etc. pas les noms des modèles […] "paramètres avancés" en
+// accordéon ».
 //
-// L'annulation (commun/undo.js) : l'entrée (ajouter, retirer, vider), le
-// modèle, la taille, la couleur, le débruitage, la description, par
-// instantanés. Ne s'annulent pas : un envoi (les travaux sont partis), un
-// fichier déposé, la vue de l'avant/après (rideau, loupe, boucle : des
-// préférences, upscale/prefs.json).
-import { mountHeader, api, jobs, pick, thumb, toast, el, $, $$, href, fmtDur, fmtDate, uploadFile, dropAnywhere, kindFr, stateFr } from '../commun/shell.js';
-import { createUndo } from '../commun/undo.js';
+// - Déposer (ou choisir dans Asset) une image ou une vidéo ouvre sa pile ; le
+//   média choisit seul le chemin (image ou vidéo).
+// - La pile (colonne de droite) : la source, puis chaque essai avec ses
+//   réglages (préréglage, taille, les avancés touchés) ; A et B pour
+//   comparer, rejouer, retirer (corbeille). Lue sur /api/upscale/pile/<id>.
+// - Le moniteur (repris du banc NL de Cal) : rideau glissant, côte à côte, A,
+//   B ; molette = zoom sous le curseur, bouton du milieu = déplacer,
+//   double-clic = ajuster ; le zoom et la position sont les mêmes pour A et
+//   B. Une vidéo : lecture synchronisée des deux.
+// - Les réglages : trois préréglages en mots simples ; « Paramètres avancés »
+//   (fermé) montre le modèle et ses paramètres. La correspondance est sur le
+//   serveur, seule (PRESETS de server/tools/upscale.py) ; toucher un avancé
+//   passe en « Personnalisé ».
+//
+// L'annulation (commun/undo.js) : ouvrir, fermer un média, les réglages
+// (instantanés) ; retirer un essai (corbeille, libTrash). Ne s'annulent pas :
+// un envoi, un fichier déposé, la vue (des préférences, upscale/prefs.json).
+import { mountHeader, api, jobs, pick, toast, el, $, $$, href, fmtDur, uploadFile, dropAnywhere, dropZone, stateFr } from '../commun/shell.js';
+import { createUndo, libTrash } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
-import { contextMenu, pageMenu } from '../commun/menu.js';
+import { contextMenu, pageMenu, kebab } from '../commun/menu.js';
 
-mountHeader('upscale', { sub: 'agrandir · affiner' });
+mountHeader('upscale', { sub: 'agrandir · comparer' });
 
-const KEY = 'sr-upscale';
+const KEY = 'sr-upscale.v2';
 const S = {
   cfg: null,
-  items: [],
-  model: '', mode: 'factor', factor: 2, ti: '4k', tv: '1080p', color: 'lab', denoise: 0.25, prompt: '',
+  piles: [],               // les sources ouvertes, objets de la bibliothèque
+  cur: null,               // l'id de la source montrée
+  trials: new Map(),       // source → ses essais (la pile, lue sur le serveur)
+  sel: new Map(),          // source → { A, B } : ce que le moniteur compare
+  pending: new Map(),      // travail → dernier relevé (en file, en cours, échec)
+  preset: 'precis', base: null, size: 'x2', adv: { model: '', color: 'lab', denoise: 0.25, prompt: '' }, touched: [],
+  advOpen: false,
   plan: null, planErr: '', sending: false,
-  runs: new Map(),   // source → {job, state, item}
-  mine: new Map(),   // travail → dernier relevé
-  cur: null,         // {a: la source, b: l'agrandie ou null}
-  view: 'wipe', wipe: 50, loupe: true, loop: true, listen: 'b',
+  view: 'wipe', wipe: 50, loop: true, listen: 'b',
 };
 
 // ── petites aides ───────────────────────────────────────────
 const M = (id) => S.cfg?.models.find((m) => m.id === id);
+const P = (id) => S.cfg?.presets.find((p) => p.id === id);
 const stub = () => S.cfg?.backend === 'stub';
-const plural = (n, w, pl = w + 's') => `${n} ${n > 1 ? pl : w}`;
 const dims = (w, h) => (w && h ? `${w} × ${h}` : '?');
-const fmtS = (s) => (s == null ? '' : s < 60 ? `${String(Math.max(0.1, Math.round(s * 10) / 10)).replace('.', ',')} s` : s < 3600
+const comma = (x) => String(x).replace('.', ',');
+const fmtS = (s) => (s == null ? '' : s < 60 ? `${comma(Math.max(0.1, Math.round(s * 10) / 10))} s` : s < 3600
   ? `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, '0')}` : `${Math.floor(s / 3600)} h ${String(Math.round((s % 3600) / 60)).padStart(2, '0')}`);
-const fmtGb = (g) => (g == null ? '' : `${g < 10 ? g.toFixed(1).replace('.', ',') : Math.round(g)} Go`);
-const kinds = () => ({ image: S.items.some((i) => i.kind === 'image'), video: S.items.some((i) => i.kind === 'video') });
-const store = {
-  get() { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; } },
-  // le travail en cours (ce navigateur) ; chaque sauvegarde est un geste qu'on annule
-  save() {
-    try {
-      const { model, mode, factor, ti, tv, color, denoise } = S;
-      localStorage.setItem(KEY, JSON.stringify({ model, mode, factor, ti, tv, color, denoise, items: S.items.map((i) => i.id) }));
-    } catch { /* stockage fermé : rien à garder */ }
-    doc?.commit();
-  },
-};
-// la vue de l'avant/après : des préférences de la personne
-const saveView = () => { prefs.set('upscale.view', S.view); prefs.set('upscale.loupe', S.loupe); prefs.set('upscale.loop', S.loop); };
+const fmtGb = (g) => (g == null ? '' : `${g < 10 ? comma(g.toFixed(1)) : Math.round(g)} Go`);
+const curItem = () => S.piles.find((i) => i.id === S.cur) || null;
+const kindCur = () => curItem()?.kind || 'image';
+const trialsOf = (id) => S.trials.get(id) || [];
+const selOf = (id) => { if (!S.sel.has(id)) S.sel.set(id, { A: id, B: null }); return S.sel.get(id); };
+// un objet de la pile courante : la source ou un essai
+const byId = (id) => (id === S.cur ? curItem() : trialsOf(S.cur).find((t) => t.id === id) || null);
+const put = (box, ...kids) => box.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false && k !== ''));
+const head = (label, right) => el('div', { class: 'ipan-h' }, el('span', { class: 'lbl' }, label), right ? el('span', { class: 'r' }, right) : null);
 
-// ── l'annulation ────────────────────────────────────────────
-const U = createUndo({ name: 'upscale' });
+// les tailles proposées : le facteur, ou une cible (les cibles du serveur)
+function sizes(kind) {
+  const t = S.cfg?.targets?.[kind] || [];
+  return [['x2', '×2', { mode: 'factor', factor: 2 }], ['x4', '×4', { mode: 'factor', factor: 4 }],
+    ...t.map((x) => [`t:${x.id}`, x.label.replace(' UHD', ''), { mode: 'target', [kind === 'image' ? 'target_image' : 'target_video']: x.id }, x.sub])];
+}
+function sizeBody(kind = kindCur()) {
+  const got = sizes(kind).find((s) => s[0] === S.size) || sizes(kind)[0];
+  return { mode: 'factor', factor: 2, target_image: '4k', target_video: '1080p', ...got[2] };
+}
+// les réglages d'un préréglage pour une sorte de média (la table du serveur)
+const presetSet = (id, kind = kindCur()) => P(id)?.[kind] || null;
+
+// ── l'annulation, la mémoire de ce navigateur ───────────────
+const U = createUndo({ name: 'upscale', onapply: () => { if (S.cur) loadPile(S.cur); } });
 let doc = null;   // posé au démarrage : l'ouverture n'est pas un geste
 let typing = 0;
-const docState = () => ({ model: S.model, mode: S.mode, factor: S.factor, ti: S.ti, tv: S.tv, color: S.color, denoise: S.denoise, prompt: S.prompt, items: S.items });
+const known = new Map();   // id → objet, pour reposer une pile fermée
+const store = {
+  get() { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; } },
+  save(commit = true) {
+    try {
+      const { preset, base, size, adv, touched, cur, advOpen } = S;
+      localStorage.setItem(KEY, JSON.stringify({ preset, base, size, adv, touched, cur, advOpen, piles: S.piles.map((i) => i.id) }));
+    } catch { /* stockage fermé */ }
+    if (commit) doc?.commit();
+  },
+};
+const docState = () => ({ preset: S.preset, base: S.base, size: S.size, adv: { ...S.adv }, touched: [...S.touched], piles: S.piles.map((i) => i.id) });
 function docRestore(s) {
-  Object.assign(S, s);
-  if (S.cur && !S.cur.b && !S.items.some((x) => x.id === S.cur.a.id)) { S.cur = null; paintViewer(); paintInfo(); }
-  store.save();
-  paintIn(); paintModel(); paintSize(); paintSet(); paintAct(); schedPlan();
+  Object.assign(S, { preset: s.preset, base: s.base, size: s.size, adv: { ...s.adv }, touched: [...s.touched] });
+  S.piles = s.piles.map((id) => known.get(id)).filter(Boolean);
+  if (!S.piles.some((i) => i.id === S.cur)) S.cur = S.piles[0]?.id || null;
+  store.save(false);
+  paintAll();
 }
 function docDescribe(b, a) {
-  if (JSON.stringify(b.items) !== JSON.stringify(a.items)) {
-    const bi = new Set(b.items.map((i) => i.id)), ai = new Set(a.items.map((i) => i.id));
-    const plus = a.items.filter((i) => !bi.has(i.id)), minus = b.items.filter((i) => !ai.has(i.id));
-    const t = (l) => (l.length > 1 ? `${l.length} fichiers` : `« ${l[0].title || l[0].id} »`);
-    return { label: !a.items.length ? 'vider l’entrée' : plus.length && !minus.length ? `ajouter ${t(plus)} à l’entrée` : minus.length && !plus.length ? `retirer ${t(minus)} de l’entrée` : 'changer l’entrée' };
+  if (b.piles.join() !== a.piles.join()) {
+    const plus = a.piles.filter((x) => !b.piles.includes(x)), minus = b.piles.filter((x) => !a.piles.includes(x));
+    const t = (l) => (l.length > 1 ? `${l.length} médias` : `« ${known.get(l[0])?.title || l[0]} »`);
+    return { label: plus.length && !minus.length ? `ouvrir ${t(plus)}` : minus.length && !plus.length ? `fermer ${t(minus)}` : 'changer les médias' };
   }
-  if (b.model !== a.model) return { label: `choisir ${M(a.model)?.name || a.model}` };
-  if (b.mode !== a.mode || b.factor !== a.factor) return { label: a.mode === 'factor' ? `agrandir ×${a.factor}` : 'agrandir jusqu’à une cible' };
-  if (b.ti !== a.ti || b.tv !== a.tv) return { label: 'changer la cible' };
-  if (b.color !== a.color) return { label: 'changer la couleur' };
-  if (b.denoise !== a.denoise) return { label: 'changer le débruitage', merge: 'denoise' };
-  if (b.prompt !== a.prompt) return { label: 'écrire la description', merge: `prompt#${typing}`, mergeMs: Infinity };
+  if (b.preset !== a.preset && a.preset !== 'custom') return { label: `choisir « ${P(a.preset)?.label || a.preset} »` };
+  if (b.size !== a.size) return { label: `taille ${sizes(kindCur()).find((x) => x[0] === a.size)?.[1] || a.size}` };
+  if (b.adv.denoise !== a.adv.denoise) return { label: 'régler le débruitage', merge: 'denoise' };
+  if (b.adv.prompt !== a.adv.prompt) return { label: 'écrire la description', merge: `prompt#${typing}`, mergeMs: Infinity };
+  if (b.adv.model !== a.adv.model) return { label: `choisir ${M(a.adv.model)?.name || a.adv.model}` };
+  if (b.adv.color !== a.adv.color) return { label: 'changer la couleur' };
   return { label: 'modifier les réglages' };
-}
-// replaceChildren écrirait « null » : on ne pose que ce qui existe
-const put = (box, ...kids) => box.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false && k !== ''));
-function head(label, right, cls = '') {
-  return el('div', { class: 'ipan-h ' + cls }, el('span', { class: 'lbl' }, label), right ? el('span', { class: 'r' }, right) : null);
-}
-const planRow = (id) => S.plan?.rows?.find((r) => r.item === id) || null;
-const memTxt = (m) => (!m ? '' : `${m.floor ? '≥ ' : '≈ '}${fmtGb(m.gb)}${m.chunks > 1 ? ` · ${m.chunks} morceaux` : ''}`);
-const estTxt = (e) => (!e ? '' : e.s == null ? 'temps non mesuré' : `≈ ${fmtS(e.s)}`);
-
-// ce que les machines savent faire ; en factice, rien ne bloque
-function modelOff(m) {
-  if (m.off) return m.off;
-  if (stub()) return '';
-  const av = m.availability || {};
-  const need = m.kinds.filter((k) => kinds()[k]);
-  const dead = (need.length ? need : m.kinds).filter((k) => av[k] && !av[k].on.length);
-  if (!dead.length) return '';
-  const miss = Object.entries(av[dead[0]].missing).map(([mm, v]) => `${mm} : ${v.slice(0, 3).join(', ')}`).join(' · ');
-  return `aucune machine ne peut le faire (${miss || 'aucune ne répond'})`;
-}
-function availTxt(m) {
-  if (m.off) return '';
-  if (stub()) return 'factice';
-  const av = Object.values(m.availability || {});
-  if (!av.length) return '';
-  const on = av.map((a) => new Set(a.on)).reduce((x, y) => new Set([...x].filter((v) => y.has(v))));
-  return on.size ? [...on].join(' + ') : '';
 }
 
 // ── le squelette ────────────────────────────────────────────
 const fileIn = el('input', { type: 'file', multiple: true, accept: 'image/*,video/*', hidden: true, onchange: async () => { await addFiles([...fileIn.files]); fileIn.value = ''; } });
 function skeleton() {
   $('#rail').replaceChildren(
-    el('div', { class: 'row up-undo' }, el('span', { class: 'lbl' }, 'les réglages'), el('span', { class: 'sp' }),
+    el('div', { class: 'row up-undo' }, el('span', { class: 'lbl' }, 'Médias'), el('span', { class: 'sp' }),
       el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons())),
-    el('section', { class: 'ipan', id: 'p-in' }), el('section', { class: 'ipan', id: 'p-model' }),
-    el('section', { class: 'ipan', id: 'p-size' }), el('section', { class: 'ipan', id: 'p-set' }),
+    el('div', { class: 'mtiles', id: 'tiles' }),
+    el('section', { class: 'ipan', id: 'p-set' }),
     el('div', { class: 'act', id: 'act' }), fileIn);
-  $('#stage').replaceChildren(
-    el('div', { id: 'banner' }), el('div', { class: 'vtools', id: 'vtools' }), el('div', { class: 'cmpv', id: 'viewer', tabindex: '0' }),
-    el('div', { id: 'transport' }), el('div', { id: 'info' }), el('section', { class: 'queue', id: 'queue' }));
+  $('#stage').replaceChildren(el('div', { class: 'vtools', id: 'vtools' }), el('div', { class: 'monitor upm', id: 'mon', tabindex: '0' }),
+    el('div', { id: 'transport' }));
   $('#side').replaceChildren(el('p', { class: 'lbl' }, 'chargement'));
 }
+function paintAll() { paintTiles(); paintSettings(); paintAct(); paintPile(); paintMonitor(); schedPlan(); }
 
-// ── l'entrée ────────────────────────────────────────────────
-function paintIn() {
-  const box = $('#p-in');
-  box.replaceChildren(
-    head('Entrée', S.items.length ? plural(S.items.length, 'fichier') : ''),
-    S.items.length ? el('div', { class: 'inlist' }, ...S.items.map(inRow))
-      : el('p', { class: 'hint' }, 'Des images ou des vidéos de la bibliothèque, ou déposées ici depuis le disque. Un autre outil les envoie par l’adresse upscale/?src=<id>.'),
-    el('div', { class: 'row' },
-      el('button', { class: 'tb ghost sm', onclick: choose }, 'Bibliothèque'),
-      el('button', { class: 'tb ghost sm', onclick: () => fileIn.click() }, 'Depuis le disque'),
-      el('span', { class: 'sp' }),
-      S.items.length ? el('button', { class: 'tb ghost sm', title: 'retirer tous les fichiers de l’entrée (ils restent dans la bibliothèque)', onclick: () => setItems([]) }, 'Vider') : null));
-}
-function inRow(it) {
-  const pr = planRow(it.id);
-  const run = S.runs.get(it.id);
-  const sub = [kindFr(it.kind), dims(it.width, it.height), it.duration ? fmtDur(it.duration) : '', it.fps ? `${Math.round(it.fps * 100) / 100} i/s` : ''].filter(Boolean).join(' · ');
-  let plan = null;
-  if (pr?.ok) {
-    plan = el('span', { class: 'pl', title: [pr.mem?.how && `mémoire : ${pr.mem.how}`, pr.est?.how && `temps : ${pr.est.how}`].filter(Boolean).join('\n') },
-      el('b', {}, `→ ${dims(pr.out[0], pr.out[1])}`), el('span', {}, [pr.label, memTxt(pr.mem), estTxt(pr.est)].filter(Boolean).join(' · ')));
-  }
-  else if (pr) plan = el('span', { class: 'pl no' }, pr.why);
-  const st = run ? el('span', { class: 'st ' + (run.state || '') }, run.state === 'running' && run.progress != null
-    ? `en cours ${Math.round(run.progress * 100)} %` : stateFr(run.state || 'queued')) : null;
-  return el('div', { class: 'inrow' + (S.cur?.a?.id === it.id ? ' on' : ''), role: 'button', tabindex: '0', title: 'le voir', onclick: () => showSource(it),
-    onkeydown: (e) => { if (e.key === 'Enter') showSource(it); } },
-  el('div', { class: 'th', style: { backgroundImage: it.thumb_url ? `url(${href(it.thumb_url)})` : null } },
-    it.kind === 'video' ? el('span', { class: 'k' }, 'vidéo') : null),
-  el('div', { class: 'tx' }, el('b', {}, it.title || it.id), el('small', {}, sub), plan, st),
-  el('button', { class: 'x', title: 'retirer de l’entrée', onclick: (e) => { e.stopPropagation(); setItems(S.items.filter((x) => x.id !== it.id)); } }, '×'));
+// ── les médias : une pile chacun ────────────────────────────
+function paintTiles() {
+  put($('#tiles'), ...S.piles.map((it) => {
+    const n = trialsOf(it.id).length;
+    return el('button', { class: 'mtile' + (it.id === S.cur ? ' on' : ''), type: 'button', title: it.title || it.id, 'data-id': it.id,
+      style: { backgroundImage: it.thumb_url ? `url("${href(it.thumb_url)}")` : null }, onclick: () => setCur(it.id) },
+    it.kind === 'video' ? el('span', { class: 'k' }, 'vidéo') : null,
+    n ? el('span', { class: 'n' }, String(n)) : null);
+  }), el('button', { class: 'mtile add', type: 'button', title: 'une image ou une vidéo : de la bibliothèque ou du disque (ou déposez-la n’importe où)', onclick: choose }, '+'));
 }
 async function choose() {
-  const got = await pick({ kinds: ['image', 'video'], multiple: true, title: 'Images et vidéos à agrandir' });
-  addItems(got);
+  const got = await pick({ kinds: ['image', 'video'], multiple: true, title: 'Une image ou une vidéo à agrandir' });
+  openItems(got);
 }
+const MEDIA_RX = /\.(png|jpe?g|webp|mp4|webm|mov|m4v)$/i;
 async function addFiles(files) {
+  const ok = files.filter((f) => /^(image|video)\//.test(f.type) || MEDIA_RX.test(f.name));
+  if (ok.length < files.length) toast('seules les images et les vidéos s’agrandissent ici', 5000);
   const got = [];
-  for (const f of files) {
-    try { got.push(await uploadFile(f, { tool: 'upload' })); } catch (e) { toast(`${f.name} : ${e.message}`, 6000); }
+  for (const f of ok) {
+    toast(`dépôt · ${f.name}`, 60000);
+    try { got.push(await uploadFile(f, { tool: 'upload', via: 'upscale' })); } catch (e) { toast(`${f.name} : ${e.message}`, 6000); }
   }
-  if (got.length) toast(`${plural(got.length, 'fichier')} rangé${got.length > 1 ? 's' : ''} dans la bibliothèque`);
-  addItems(got);
+  if (got.length) toast(got.length > 1 ? `${got.length} fichiers rangés dans la bibliothèque` : 'rangé dans la bibliothèque');
+  openItems(got);
 }
-function addItems(list) {
-  const ok = list.filter((it) => it && (it.kind === 'image' || it.kind === 'video'));
-  if (list.length > ok.length) toast('un élément ou un son ne s’agrandit pas : seules les images et les vidéos entrent ici', 6000);
-  const next = [...S.items];
-  for (const it of ok) if (!next.some((x) => x.id === it.id)) next.push(it);
-  const max = S.cfg?.max_items || 50;
-  if (next.length > max) toast(`${max} fichiers au plus par envoi`);
-  setItems(next.slice(0, max));
-  if (ok.length && !S.cur) showSource(ok[0]);
-}
-function setItems(list) {
-  S.items = list;
-  if (S.cur && !S.cur.b && !list.some((x) => x.id === S.cur.a.id)) { S.cur = null; paintViewer(); paintInfo(); }
-  store.save(); paintIn(); paintModel(); paintSize(); paintAct(); schedPlan();
-}
-
-// ── le modèle ───────────────────────────────────────────────
-function paintModel() {
-  const box = $('#p-model');
-  const on = S.cfg.models.filter((m) => m.retained);
-  const off = S.cfg.models.filter((m) => !m.retained);
-  box.replaceChildren(head('Modèle', 'fidèle → créatif'),
-    el('div', { class: 'models' }, ...on.map(card)),
-    el('details', { class: 'more' }, el('summary', {}, el('span', { class: 'lbl' }, `Pas installés · ${off.length}`),
-      el('span', { class: 'r' }, 'ce qui manque')),
-    el('div', { class: 'models' }, ...off.map(card)),
-    el('p', { class: 'hint' }, 'Téléchargements proposés, tailles et licences : ', el('a', { href: href('docs/etudes/upscale.md'), target: '_blank', rel: 'noopener' }, 'l’étude, §7'), '.')));
-}
-function card(m) {
-  const why = modelOff(m);
-  const av = availTxt(m);
-  return el('button', { class: 'opt model' + (S.model === m.id ? ' on' : '') + (why ? ' off' : ''), type: 'button', 'aria-disabled': why ? 'true' : null,
-    title: `${why ? why + '\n' : ''}source : ${m.src}`, onclick: () => (why ? toast(`${m.name} : ${why}`, 7000) : setModel(m.id)) },
-  el('span', { class: 'mk' }, m.k), el('span', { class: 'way w-' + (m.way === 'fidèle' ? 'f' : m.way === 'créatif' ? 'c' : 'n') }, m.way),
-  el('b', {}, m.name), el('span', { class: 'role' }, m.role),
-  why ? el('span', { class: 'reason' }, why) : null,
-  el('span', { class: 'cap' }, m.kinds.map((k) => (k === 'video' ? 'vidéo' : k)).join(' · ') + (av ? ` · ${av}` : '')));
-}
-function setModel(id) {
-  S.model = id;
-  const m = M(id);
-  if (m.id === 'esrgan-x2' && S.factor > 2) S.factor = 2;
-  store.save(); paintModel(); paintSize(); paintSet(); schedPlan();
-}
-
-// ── la taille ───────────────────────────────────────────────
-function paintSize() {
-  const box = $('#p-size');
-  const m = M(S.model);
-  if (!m) return;
-  if (m.fixed) {
-    box.replaceChildren(head('Taille', 'fixée par le gabarit'),
-      el('p', { class: 'hint' }, 'Affiner ramène l’image à 1 Mpx puis la double : environ 4 Mpx (2048 × 2048 pour un carré). Une image déjà plus grande ne passe pas : elle rapetisserait.'));
-    return;
+function openItems(list) {
+  const ok = (list || []).filter((it) => it && (it.kind === 'image' || it.kind === 'video'));
+  if ((list || []).length > ok.length) toast('un élément ou un son ne s’agrandit pas', 5000);
+  if (!ok.length) return;
+  for (const it of ok) {
+    known.set(it.id, it);
+    if (!S.piles.some((x) => x.id === it.id)) S.piles.push(it);
   }
-  const gan = m.id === 'esrgan-x2';
-  const b = (mode, f, lab) => {
-    const off = gan && f === 4;
-    const on = S.mode === mode && (mode === 'target' || S.factor === f);
-    return el('button', { class: 'tb' + (on ? ' on' : ''), type: 'button', disabled: off || null, title: off ? 'RealESRGAN ×2 ne fait que ×2' : null,
-      onclick: () => { S.mode = mode; if (f) S.factor = f; store.save(); paintSize(); schedPlan(); } }, lab);
-  };
-  const k = kinds();
-  const tg = (kind, cur, set) => el('div', { class: 'tgt' }, el('span', { class: 'lbl' }, kind === 'image' ? 'Images' : 'Vidéos'),
-    el('div', { class: 'opts' }, ...S.cfg.targets[kind].map((t) => el('button', { class: 'opt' + (cur === t.id ? ' on' : ''), type: 'button',
-      onclick: () => { set(t.id); store.save(); paintSize(); schedPlan(); } }, t.label, el('small', {}, t.sub)))));
-  const right = S.mode === 'factor' ? `×${S.factor}` : [k.image || !k.video ? S.cfg.targets.image.find((t) => t.id === S.ti)?.label : '', k.video ? S.cfg.targets.video.find((t) => t.id === S.tv)?.label : ''].filter(Boolean).join(' · ');
-  put(box, head('Taille', right),
-    el('div', { class: 'seg sz' }, b('factor', 2, '×2'), b('factor', 4, '×4'), b('target', null, 'Cible')),
-    gan ? el('p', { class: 'why' }, '×4 éteint : il demande RealESRGAN_x4plus (67 Mo), à télécharger — ', el('a', { href: href('docs/etudes/upscale.md'), target: '_blank', rel: 'noopener' }, 'étude §7')) : null,
-    S.mode === 'target' && (k.image || !k.video) ? tg('image', S.ti, (v) => { S.ti = v; }) : null,
-    S.mode === 'target' && k.video ? tg('video', S.tv, (v) => { S.tv = v; }) : null,
-    el('p', { class: 'hint' }, S.mode === 'target'
-      ? 'Une image se règle par son grand côté ; une vidéo tient dans le cadre du format, qu’elle soit large ou verticale. Les proportions sont gardées, les côtés arrondis au pair.'
-      : 'Chaque fichier garde ses proportions ; la taille exacte de sortie s’affiche sous son nom.'));
+  S.cur = ok[0].id;
+  syncKind();
+  store.save();
+  for (const it of ok) loadPile(it.id);
+  resetZoom();
+  paintAll();
+}
+function closePile(id) {
+  S.piles = S.piles.filter((x) => x.id !== id);
+  if (S.cur === id) { S.cur = S.piles[0]?.id || null; resetZoom(); syncKind(); }
+  store.save();
+  paintAll();
+}
+function setCur(id) {
+  if (id === S.cur) return;
+  S.cur = id;
+  syncKind();
+  resetZoom();
+  store.save(false);
+  if (!S.trials.has(id)) loadPile(id);
+  paintAll();
+}
+async function loadPile(id) {
+  let r;
+  try { r = await api('upscale/pile/' + id); } catch (e) { if (id === S.cur) toast(e.message, 6000); return; }
+  known.set(id, r.source);
+  S.piles = S.piles.map((x) => (x.id === id ? r.source : x));
+  const before = trialsOf(id).map((t) => t.id).join();
+  S.trials.set(id, r.trials);
+  const s = selOf(id);
+  const ids = new Set([id, ...r.trials.map((t) => t.id)]);
+  if (!ids.has(s.A)) s.A = id;
+  if (s.B && !ids.has(s.B)) s.B = null;
+  if (!s.B && r.trials.length && !s.chosen) s.B = r.trials[r.trials.length - 1].id;
+  paintTiles();
+  if (id === S.cur) { paintPile(); if (before !== r.trials.map((t) => t.id).join() || !monOk()) paintMonitor(); }
 }
 
-// ── les réglages du modèle ──────────────────────────────────
-function paintSet() {
+// ── les réglages ────────────────────────────────────────────
+// le média a changé de sorte : le préréglage suit (un préréglage sans cette
+// sorte revient à « précis ») ; un modèle personnalisé qui ne la prend pas
+// revient au défaut du serveur pour elle
+function syncKind() {
+  const kind = kindCur();
+  if (!S.cfg) return;
+  if (S.preset !== 'custom') {
+    if (!presetSet(S.preset, kind)) S.preset = 'precis';
+    S.adv = { ...presetSet(S.preset, kind) };
+  } else if (!M(S.adv.model)?.kinds.includes(kind)) {
+    S.adv = { ...S.adv, model: S.cfg.default[kind] };
+  }
+  if (!sizes(kind).some((s) => s[0] === S.size)) S.size = 'x2';
+}
+function setPreset(id) {
+  const why = presetOff(id);
+  if (why) { toast(why, 7000); return; }
+  S.preset = id; S.base = null; S.touched = [];
+  S.adv = { ...presetSet(id) };
+  if (M(S.adv.model)?.max_factor && sizeBody().mode === 'factor' && sizeBody().factor > M(S.adv.model).max_factor) S.size = 'x2';
+  store.save(); paintSettings(); schedPlan();
+}
+// toucher un avancé : le préréglage devient « Personnalisé »
+function setAdv(k, v, repaint = true) {
+  if (S.preset !== 'custom') { S.base = S.preset; S.preset = 'custom'; }
+  S.adv = { ...S.adv, [k]: v };
+  if (!S.touched.includes(k)) S.touched = [...S.touched, k];
+  store.save();
+  if (repaint) paintSettings();
+  schedPlan();
+}
+const presetOff = (id) => (presetSet(id) ? '' : P(id)?.off?.[kindCur()] || 'pas pour ce média');
+// ce que les machines savent faire (câblage réel) ; en factice, rien ne bloque
+function modelOff(m) {
+  if (m.off) return m.off;
+  if (stub()) return '';
+  const a = (m.availability || {})[kindCur()];
+  if (!a || a.on.length) return '';
+  const miss = Object.entries(a.missing).map(([mm, v]) => `${mm} : ${v.slice(0, 3).join(', ')}`).join(' · ');
+  return `aucune machine ne peut le faire (${miss || 'aucune ne répond'})`;
+}
+
+function paintSettings() {
   const box = $('#p-set');
-  const m = M(S.model);
-  if (!m) return;
-  if (m.id.startsWith('seedvr2')) {
-    const c = S.cfg.colors.find((x) => x.id === S.color) || S.cfg.colors[0];
-    box.replaceChildren(head('Couleur', c.name),
-      el('div', { class: 'opts four' }, ...S.cfg.colors.map((x) => el('button', { class: 'opt' + (x.id === S.color ? ' on' : ''), type: 'button', title: x.about,
-        onclick: () => { S.color = x.id; store.save(); paintSet(); schedPlan(); } }, x.name, el('small', {}, x.sub)))),
-      el('p', { class: 'hint' }, c.about + '.'),
-      el('p', { class: 'hint' }, 'SeedVR2 restaure en un pas, sans prompt : pas d’autre réglage utile documenté. Sur une source déjà propre, il peut trop accentuer (sa fiche) : comparez à la loupe.'));
-  } else if (m.id === 'zimage-refine') {
-    const d = S.cfg.denoise;
-    const val = el('span', { class: 'val' }, S.denoise.toFixed(2).replace('.', ','));
-    const ta = el('textarea', { class: 'fld', rows: 3, placeholder: 'Description de l’image, en anglais (facultatif : le prompt d’une image créée dans l’outil Image est repris)',
-      oninput: (e) => { S.prompt = e.target.value; store.save(); schedPlan(); } });
-    ta.value = S.prompt;
-    box.replaceChildren(head('Débruitage', 'fidèle → créatif'),
-      el('div', { class: 'slide' }, el('input', { type: 'range', min: d.min, max: d.max, step: 0.01, value: S.denoise,
-        oninput: (e) => { S.denoise = +e.target.value; val.textContent = S.denoise.toFixed(2).replace('.', ','); store.save(); schedPlan(); } }), val),
-      el('div', { class: 'scale' }, el('span', {}, '0,10 fidèle'), el('span', {}, `conseillé ${String(d.advice[0]).replace('.', ',')}–${String(d.advice[1]).replace('.', ',')}`), el('span', {}, '0,50 créatif')),
-      el('p', { class: 'hint' }, 'Au-delà de 0,35, des défauts (note du gabarit). Une description détaillée tient mieux le résultat.'),
-      ta);
-  } else {
-    box.replaceChildren(head('Réglages', 'aucun'),
-      el('p', { class: 'hint' }, 'RealESRGAN fait ×2, image par image ; une cible plus petite que ×2 est obtenue ensuite en Lanczos (le conseil du gabarit GAN).'));
+  const kind = kindCur();
+  const m = M(S.adv.model);
+  const card = (p) => {
+    const why = presetOff(p.id);
+    return el('button', { class: 'opt preset' + (S.preset === p.id ? ' on' : '') + (why ? ' off' : ''), type: 'button',
+      'aria-disabled': why ? 'true' : null, title: why || null, onclick: () => setPreset(p.id) },
+    el('b', {}, p.label), el('span', {}, why ? `pas pour une ${kindCur() === 'video' ? 'vidéo' : 'image'}` : p.about));
+  };
+  const custom = S.preset === 'custom'
+    ? el('div', { class: 'opt preset on custom' }, el('b', {}, 'Personnalisé'), el('span', {}, S.base ? `d’après « ${P(S.base)?.label} »` : 'réglé à la main'))
+    : null;
+  const gan = m?.max_factor;
+  const size = m?.fixed
+    ? el('p', { class: 'fixed', title: 'l’affinage ramène l’image à 1 Mpx puis la double' }, el('span', { class: 'lbl' }, 'Taille'), el('span', {}, 'fixe · ≈ 4 Mpx'))
+    : el('div', { class: 'seg sz', role: 'group', 'aria-label': 'taille' }, ...sizes(kind).map(([id, lab, b, sub]) => {
+      const off = gan && b.mode === 'factor' && b.factor > gan;
+      return el('button', { class: 'tb' + (S.size === id ? ' on' : ''), type: 'button', disabled: off || null,
+        title: off ? `×${gan} au plus avec ${S.preset === 'custom' ? m.name : 'ce préréglage'}` : sub || null,
+        onclick: () => { S.size = id; store.save(); paintSettings(); schedPlan(); } }, lab);
+    }));
+  put(box,
+    head('Réglages', stub() ? el('span', { class: 'fake', title: 'moteur factice : les essais sont des agrandissements bicubiques étiquetés « FACTICE » — le câblage des modèles se branche dans Admin → Câblage' }, 'factice') : null),
+    el('div', { class: 'presets' }, ...S.cfg.presets.map(card), custom),
+    size,
+    advanced(kind, m));
+}
+function advanced(kind, m) {
+  const d = el('details', { class: 'adv', open: S.advOpen || null });
+  d.addEventListener('toggle', () => { S.advOpen = d.open; store.save(false); });
+  const models = S.cfg.models.filter((x) => x.retained && x.kinds.includes(kind));
+  const kids = [
+    el('span', { class: 'lbl' }, 'Modèle'),
+    el('div', { class: 'models' }, ...models.map((x) => {
+      const why = modelOff(x);
+      return el('button', { class: 'opt model' + (x.id === S.adv.model ? ' on' : '') + (why ? ' off' : ''), type: 'button',
+        'aria-disabled': why ? 'true' : null, title: `${why ? why + '\n' : ''}${x.role}\nsource : ${x.src}`,
+        onclick: () => (why ? toast(`${x.name} : ${why}`, 7000) : setAdv('model', x.id)) },
+      el('b', {}, x.name), el('small', {}, x.way));
+    })),
+  ];
+  if (m?.id.startsWith('seedvr2')) {
+    kids.push(el('span', { class: 'lbl' }, 'Couleur'),
+      el('div', { class: 'opts four' }, ...S.cfg.colors.map((c) => el('button', { class: 'opt' + (c.id === S.adv.color ? ' on' : ''), type: 'button', title: c.about,
+        onclick: () => setAdv('color', c.id) }, c.name))));
   }
+  if (m?.id === 'zimage-refine') {
+    const dn = S.cfg.denoise;
+    const val = el('span', { class: 'val' }, comma(S.adv.denoise.toFixed(2)));
+    const ta = el('textarea', { class: 'fld', rows: 2, placeholder: 'description, en anglais (facultatif)',
+      oninput: (e) => setAdv('prompt', e.target.value, false) });
+    ta.value = S.adv.prompt || '';
+    kids.push(el('span', { class: 'lbl', title: `conseillé ${comma(dn.advice[0])}–${comma(dn.advice[1])} (note du gabarit) : au-delà, des défauts` }, 'Débruitage'),
+      el('div', { class: 'slide' }, el('span', { class: 'end' }, 'fidèle'),
+        el('input', { type: 'range', min: dn.min, max: dn.max, step: 0.01, value: S.adv.denoise, 'aria-label': 'débruitage',
+          oninput: (e) => { val.textContent = comma((+e.target.value).toFixed(2)); setAdv('denoise', +e.target.value, false); } }),
+        el('span', { class: 'end' }, 'créatif'), val),
+      el('span', { class: 'lbl' }, 'Description'), ta);
+  }
+  d.replaceChildren(el('summary', {}, el('span', { class: 'lbl' }, 'Paramètres avancés'),
+    S.preset === 'custom' ? el('span', { class: 'r' }, 'touchés') : null), el('div', { class: 'advin' }, ...kids));
+  return d;
 }
 
 // ── avant l'envoi ───────────────────────────────────────────
-let planT = null;
-let planSeq = 0;
-function schedPlan() { clearTimeout(planT); planT = setTimeout(doPlan, 180); }
-const body = () => ({ items: S.items.map((i) => i.id), model: S.model, mode: S.mode, factor: S.factor, target_image: S.ti, target_video: S.tv,
-  color: S.color, denoise: S.denoise, prompt: S.prompt });
+let planT = null, planSeq = 0;
+function schedPlan() { clearTimeout(planT); planT = setTimeout(doPlan, 160); }
+const body = (items) => ({ items, preset: S.preset, base: S.base, touched: S.touched, ...S.adv, ...sizeBody() });
 async function doPlan() {
   const seq = ++planSeq;
-  if (!S.items.length) { S.plan = null; S.planErr = ''; paintIn(); paintAct(); return; }
+  if (!S.cur || !S.cfg) { S.plan = null; S.planErr = ''; paintAct(); return; }
   try {
-    const p = await api('upscale/plan', { method: 'POST', body: body() });
+    const p = await api('upscale/plan', { method: 'POST', body: body([S.cur]) });
     if (seq !== planSeq) return;
-    S.plan = p; S.planErr = '';
+    S.plan = p.rows[0] || null; S.planErr = '';
   } catch (e) { if (seq !== planSeq) return; S.plan = null; S.planErr = e.message; }
-  paintIn(); paintAct();
+  paintAct();
 }
 function paintAct() {
   const box = $('#act');
-  const pl = S.plan;
-  const okRows = pl ? pl.rows.filter((r) => r.ok) : [];
-  const nI = okRows.filter((r) => r.kind === 'image').length, nV = okRows.filter((r) => r.kind === 'video').length;
-  const why = !S.items.length ? 'choisissez au moins une image ou une vidéo'
-    : S.planErr ? S.planErr
-      : pl && !okRows.length ? 'aucun fichier ne passe avec ces réglages : la raison est sous chaque nom' : '';
-  const label = !okRows.length ? 'Agrandir'
-    : `Agrandir ${[nI ? plural(nI, 'image') : '', nV ? plural(nV, 'vidéo') : ''].filter(Boolean).join(' et ')}`;
-  const peak = okRows.map((r) => r.mem?.gb || 0).reduce((a, b) => Math.max(a, b), 0);
-  const floor = okRows.some((r) => r.mem?.floor);
-  const summary = okRows.length ? el('div', { class: 'sum' },
-    el('span', {}, el('b', {}, pl.total_s != null ? `≈ ${fmtS(pl.total_s)}` : 'temps non mesuré'), pl.total_s != null ? ' en tout' : ' : le premier rendu le mesurera'),
-    el('span', {}, 'pic ', el('b', {}, `${floor ? '≥ ' : '≈ '}${fmtGb(peak)}`), S.cfg.free_gb ? ` · ${fmtGb(S.cfg.free_gb)} libres sur ${S.cfg.free_machine}` : '')) : null;
-  put(box, summary,
-    why ? el('div', { class: 'why' }, why) : null,
-    el('button', { class: 'tb go block', type: 'button', disabled: !!why || !okRows.length || S.sending || null, onclick: launch }, S.sending ? 'Envoi…' : label),
-    stub() ? el('div', { class: 'hint c' }, 'moteur factice : un bicubique, étiqueté') : null);
+  const r = S.plan;
+  const why = !S.cur ? 'déposez une image ou une vidéo' : S.planErr || (r && !r.ok ? r.why : '');
+  const est = r?.ok ? [`→ ${dims(r.out[0], r.out[1])}`, r.est?.s != null ? `≈ ${fmtS(r.est.s)}` : ''].filter(Boolean).join(' · ') : '';
+  const tip = r?.ok ? [r.mem && `mémoire ${r.mem.floor ? '≥' : '≈'} ${fmtGb(r.mem.gb)}${r.mem.chunks > 1 ? ` (${r.mem.chunks} morceaux)` : ''} — ${r.mem.how}`,
+    r.est && `temps : ${r.est.how}`].filter(Boolean).join('\n') : '';
+  put(box,
+    el('button', { class: 'tb go block', type: 'button', disabled: !!why || !r || S.sending || null, onclick: () => launch() }, S.sending ? 'Envoi…' : 'Upscaler'),
+    why ? el('div', { class: 'why' }, why) : est ? el('div', { class: 'est', title: tip }, est) : null);
 }
-
-async function launch() {
+async function launch(b = body([S.cur])) {
   S.sending = true; paintAct();
   let r;
-  try { r = await api('upscale/run', { method: 'POST', body: body() }); } catch (e) { S.sending = false; toast(e.message, 8000); paintAct(); return; }
+  try { r = await api('upscale/run', { method: 'POST', body: b }); } catch (e) { S.sending = false; toast(e.message, 8000); paintAct(); return; }
   S.sending = false;
-  for (const j of r.jobs) follow(j);
-  toast(`${plural(r.jobs.length, 'travail', 'travaux')} en file${r.skipped.length ? ` · ${plural(r.skipped.length, 'laissé')} : ${r.skipped[0].why}` : ''}`, r.skipped.length ? 7000 : 3200);
-  paintAct(); paintIn(); paintQueue();
+  for (const j of r.jobs) follow({ ...j, params: j.params || { source: j.source } });
+  if (r.skipped.length) toast(r.skipped[0].why, 7000);
+  paintAct(); paintPile();
 }
+// rejouer un essai : ses réglages, une nouvelle graine
+function replayBody(t) {
+  const p = t.params || {};
+  return { items: [S.cur], preset: p.preset || 'custom', base: p.base || null, touched: p.touched || [], model: p.model,
+    color: p.color || 'lab', denoise: p.denoise ?? 0.25, prompt: p.prompt || '',
+    mode: p.mode === 'fixed' ? 'factor' : p.mode || 'factor', factor: p.factor || 2, target_image: p.target_image || '4k', target_video: p.target_video || '1080p' };
+}
+function takeSettings(t) {
+  const b = replayBody(t);
+  S.preset = P(b.preset) ? b.preset : 'custom';
+  S.base = b.base; S.touched = [...b.touched];
+  S.adv = S.preset === 'custom' ? { model: b.model, color: b.color, denoise: b.denoise, prompt: b.prompt } : { ...presetSet(S.preset) };
+  S.size = b.mode === 'target' ? `t:${kindCur() === 'image' ? b.target_image : b.target_video}` : `x${b.factor}`;
+  syncKind(); store.save(); paintSettings(); schedPlan();
+  toast('réglages repris');
+}
+
+// ── les travaux ─────────────────────────────────────────────
 function follow(j) {
-  S.mine.set(j.id, j);
-  S.runs.set(j.source || j.params?.source, { job: j.id, state: j.state });
-  jobs.wait(j.id, (t) => tick(t)).then((done) => {
-    tick(done);
+  if (S.pending.has(j.id) && S.pending.get(j.id).following) return;
+  S.pending.set(j.id, { ...j, following: true });
+  jobs.wait(j.id, (t) => { S.pending.set(t.id, { ...t, following: true }); paintPileSoon(); }).then(async (done) => {
     const src = done.params?.source;
-    const out = done.items?.[0];
-    if (done.state === 'done' && out) {
-      S.runs.set(src, { job: done.id, state: 'done', item: out });
-      const a = S.items.find((x) => x.id === src);
-      if (!S.cur || S.cur.a?.id === src) { if (a) showPair(a, out); else showResult(out); }
-      loadHistory();
-    } else if (done.state === 'error') toast(`échec : ${done.message}`, 9000);
-    paintIn();
-    schedPlan();   // un rendu mesuré de plus : le temps estimé se précise
+    if (done.state === 'done') {
+      S.pending.delete(done.id);
+      const out = done.items?.[0];
+      if (src && out) { const s = selOf(src); s.B = out.id; s.chosen = true; if (!s.A) s.A = src; }
+      if (src) await loadPile(src);
+      if (src === S.cur) paintMonitor();
+      schedPlan();   // un rendu mesuré de plus : le temps estimé se précise
+    } else {
+      S.pending.set(done.id, done);
+      if (done.state === 'error') toast(`échec : ${done.message}`, 8000);
+      paintPile();
+    }
   }).catch(() => {});
 }
-function tick(t) {
-  S.mine.set(t.id, t);
-  const src = t.params?.source;
-  if (src) S.runs.set(src, { ...(S.runs.get(src) || {}), job: t.id, state: t.state, progress: t.progress });
-  paintQueue(); paintInRuns();
-}
-let inT = null;
-function paintInRuns() { clearTimeout(inT); inT = setTimeout(paintIn, 250); }
-
-// ── la file de cette page ───────────────────────────────────
-function paintQueue() {
-  const box = $('#queue');
-  const list = [...S.mine.values()].sort((a, b) => (a.created < b.created ? 1 : -1));
-  if (!list.length) { box.replaceChildren(); return; }
-  const live = list.filter((j) => j.state === 'queued' || j.state === 'running').length;
-  box.replaceChildren(head('La file', live ? `${plural(live, 'travail', 'travaux')} en cours` : 'fini'),
-    ...list.map((j) => {
-      const out = j.items?.[0];
-      const cls = j.state === 'running' ? 'run' : j.state === 'error' ? 'err' : j.state === 'done' ? 'ok' : '';
-      return el('div', { class: 'qrow ' + cls, role: out ? 'button' : null, tabindex: out ? '0' : null,
-        title: out ? 'voir l’avant/après' : j.message || '', onclick: () => { if (out) showResult(out); } },
-      el('div', { class: 'jt', style: j.thumb ? { backgroundImage: `url(${href(j.thumb)})` } : null }),
-      el('div', { class: 'tx' }, el('b', {}, j.title),
-        el('small', {}, `${stateFr(j.state)}${j.machine ? ' · ' + j.machine : ''}${j.message ? ' — ' + j.message : ''}`)),
-      el('div', { class: 'acts' },
-        j.state === 'queued' || j.state === 'running' ? el('button', { class: 'tb ghost sm', type: 'button', onclick: (e) => { e.stopPropagation(); jobs.cancel(j.id); } }, 'Arrêter')
-          : j.state === 'error' || j.state === 'cancelled' || j.state === 'interrupted'
-            ? el('button', { class: 'tb ghost sm', type: 'button', onclick: async (e) => { e.stopPropagation(); const n = await jobs.retry(j.id); follow({ ...n, source: j.params?.source }); } }, 'Relancer')
-            : out ? el('span', { class: 'lbl' }, dims(out.width, out.height)) : null),
-      j.state === 'running' ? el('div', { class: 'bar' }, el('i', { style: { width: j.progress != null ? `${Math.round(j.progress * 100)}%` : '100%', opacity: j.progress != null ? 1 : 0.35 } })) : null);
-    }));
-}
 jobs.watch((list) => {
-  let changed = false;
   for (const j of list) {
-    if (j.tool !== 'upscale') continue;
-    if (S.mine.has(j.id) || j.state === 'queued' || j.state === 'running') {
-      const old = S.mine.get(j.id);
-      if (!old || old.state !== j.state || old.progress !== j.progress || old.message !== j.message) { S.mine.set(j.id, { ...old, ...j }); changed = true; }
-    }
+    if (j.tool !== 'upscale' || !['queued', 'running'].includes(j.state)) continue;
+    if (!S.pending.has(j.id) && S.piles.some((x) => x.id === j.params?.source)) follow(j);
   }
-  if (changed) paintQueue();
 });
+let pileT = null;
+function paintPileSoon() { clearTimeout(pileT); pileT = setTimeout(paintPile, 200); }
 
-// ── la scène : avant / après ────────────────────────────────
-async function showSource(it) {
-  const run = S.runs.get(it.id);
-  showPair(it, run?.item || null);
+// ── la pile ─────────────────────────────────────────────────
+// ce qu'un essai a été : le préréglage, la taille, et les avancés touchés
+function recipe(t) {
+  const p = t.params || {};
+  const pr = P(p.preset);
+  const what = pr ? pr.short : p.preset === 'custom' ? (P(p.base) ? `${P(p.base).short}, modifié` : 'Personnalisé') : M(p.model)?.name || p.model || '';
+  const extra = [];
+  const touched = p.preset === 'custom' ? (p.touched || []) : [];
+  if (touched.includes('model') || (p.preset === 'custom' && !p.base)) extra.push(M(p.model)?.name || p.model);
+  if (touched.includes('color')) extra.push(`couleur ${S.cfg.colors.find((c) => c.id === p.color)?.name || p.color}`);
+  if (touched.includes('denoise')) extra.push(`débruitage ${comma(p.denoise)}`);
+  if (touched.includes('prompt') && p.prompt) extra.push('description');
+  return [what, p.label, ...extra].filter(Boolean).join(' · ');
 }
-async function showResult(out) {
-  let a = null;
-  const pid = out.parents?.[0];
-  if (pid) { try { a = await api('library/' + pid); } catch { a = null; } }
-  showPair(a, out);
+const isFake = (t) => /factice/.test(t.origin?.model || '');
+function paintPile() {
+  const side = $('#side');
+  const src = curItem();
+  if (!src) { put(side, head('Pile'), el('p', { class: 'hint' }, 'Chaque média a sa pile : la source, puis ses essais.')); return; }
+  const s = selOf(src.id);
+  const list = trialsOf(src.id);
+  const pend = [...S.pending.values()].filter((j) => j.params?.source === src.id).sort((a, b) => (a.created < b.created ? -1 : 1));
+  const ab = (id, has = true) => [['A', 'isA'], ['B', 'isB']].map(([k, cls]) => el('button', { class: 'ab' + (s[k] === id ? ' ' + cls : ''), type: 'button',
+    disabled: !has || null, title: `montrer en ${k}`, onclick: (e) => { e.stopPropagation(); setSlot(k, id); } }, k));
+  const row = (it, n) => {
+    const trial = n > 0;
+    const sub = trial ? recipe(it) : `source · ${it.kind === 'video' ? 'vidéo' : 'image'}`;
+    const meta = [dims(it.width, it.height), it.duration && !trial ? fmtDur(it.duration) : '', trial && it.render_s ? fmtS(it.render_s) : '', trial && isFake(it) ? 'factice' : ''].filter(Boolean).join(' · ');
+    return el('div', { class: 'prow' + (s.A === it.id ? ' selA' : '') + (s.B === it.id ? ' selB' : ''), role: 'button', tabindex: '0', 'data-id': it.id,
+      onclick: () => setSlot(trial ? 'B' : 'A', it.id), onkeydown: (e) => { if (e.key === 'Enter') setSlot(trial ? 'B' : 'A', it.id); } },
+    el('div', { class: 'th', style: { backgroundImage: it.thumb_url ? `url("${href(it.thumb_url)}")` : null } }),
+    el('div', { class: 'tx' }, el('b', {}, trial ? `Essai ${n}` : 'Source'), el('span', { class: 'rc' }, sub), el('small', {}, meta)),
+    el('div', { class: 'acts' }, ...ab(it.id), kebab(() => rowItems(it, n), { title: 'plus' })));
+  };
+  const prow = (j, n) => {
+    const live = j.state === 'queued' || j.state === 'running';
+    const p = j.params || {};
+    return el('div', { class: 'prow pend' + (j.state === 'error' ? ' err' : '') },
+      el('div', { class: 'th', style: { backgroundImage: src.thumb_url ? `url("${href(src.thumb_url)}")` : null } }),
+      el('div', { class: 'tx' }, el('b', {}, `Essai ${n}`), el('span', { class: 'rc' }, recipe({ params: p })),
+        el('small', {}, live ? (j.state === 'running' && j.progress != null ? `${Math.round(j.progress * 100)} %` : stateFr(j.state)) : `${stateFr(j.state)}${j.message ? ' — ' + j.message : ''}`)),
+      el('div', { class: 'acts' }, live
+        ? el('button', { class: 'tb ghost sm', type: 'button', onclick: () => jobs.cancel(j.id) }, 'Arrêter')
+        : [el('button', { class: 'tb ghost sm', type: 'button', onclick: async () => { S.pending.delete(j.id); follow(await jobs.retry(j.id)); } }, 'Relancer'),
+          el('button', { class: 'x', type: 'button', title: 'l’oublier', onclick: () => { S.pending.delete(j.id); paintPile(); } }, '×')]),
+      live ? el('div', { class: 'bar' }, el('i', { style: { width: j.progress != null ? `${Math.round(j.progress * 100)}%` : '100%', opacity: j.progress != null ? 1 : 0.35 } })) : null);
+  };
+  put(side, head('Pile', `${list.length} essai${list.length > 1 ? 's' : ''}`),
+    el('div', { class: 'ptitle', title: src.title || src.id }, src.title || src.id),
+    el('div', { class: 'plist' }, row(src, 0), ...list.map((t, i) => row(t, i + 1)), ...pend.map((j, i) => prow(j, list.length + i + 1))));
 }
-function showPair(a, b) {
-  if (!a && b) { a = b; b = null; }
-  if (!a) return;
-  S.cur = { a, b };
-  try { history.replaceState(null, '', location.pathname + location.search + (b ? '#' + b.id : '')); } catch { /* sans historique */ }
-  paintViewer(); paintInfo(); paintIn(); markHistory();
+function setSlot(k, id) {
+  const s = selOf(S.cur);
+  s[k] = id;
+  if (k === 'B') s.chosen = true;
+  paintPile(); paintMonitor();
+}
+function download(it) {
+  const ext = (it.file || '.png').slice((it.file || '.png').lastIndexOf('.'));
+  const a = el('a', { href: href(it.url), download: `${(it.title || it.id).replace(/[^\w.-]+/g, '_').slice(0, 60)}${ext}` });
+  document.body.append(a); a.click(); a.remove();
+}
+const goTo = (u) => () => { location.href = href(u); };
+function rowItems(it, n) {
+  const s = selOf(S.cur);
+  const lib = [{ label: 'Ouvrir dans la bibliothèque', icon: '▦', onclick: goTo('asset/#' + it.id) },
+    { label: 'Envoyer au montage', icon: '▤', onclick: goTo('montage/?add=' + encodeURIComponent(it.id)) },
+    { label: 'Télécharger', icon: '↓', onclick: () => download(it) }];
+  if (!n) {
+    return [{ head: 'la source' }, { label: 'Montrer en A', icon: 'A', checked: s.A === it.id, onclick: () => setSlot('A', it.id) }, '-', ...lib, '-',
+      { label: 'Fermer ce média', icon: '×', sub: 'il reste dans la bibliothèque', onclick: () => closePile(it.id) }];
+  }
+  return [{ head: `essai ${n} · ${recipe(it)}` },
+    { label: 'Montrer en A', icon: 'A', checked: s.A === it.id, onclick: () => setSlot('A', it.id) },
+    { label: 'Montrer en B', icon: 'B', checked: s.B === it.id, onclick: () => setSlot('B', it.id) },
+    '-',
+    { label: 'Rejouer', icon: '↻', sub: 'les mêmes réglages', onclick: () => launch(replayBody(it)) },
+    { label: 'Reprendre ces réglages', icon: '⤓', onclick: () => takeSettings(it) },
+    '-', ...lib, '-',
+    { label: 'Retirer de la pile', icon: '×', sub: 'à la corbeille', onclick: () => retire(it, n) }];
+}
+async function retire(it, n) {
+  try { await libTrash(U, it, `retirer l’essai ${n}`); } catch (e) { toast(e.message, 6000); return; }
+  await loadPile(S.cur);
 }
 
+// ── le moniteur (le banc NL de Cal) ─────────────────────────
+// Le zoom et la position sont les mêmes pour A et B : un décalage relatif à
+// la couche (qui fait la moitié du moniteur en côte à côte) et un facteur.
+const Z = { z: 1, x: 0, y: 0 };
+const V = { a: null, b: null, drag: null, toggle: null, step: null, key: '' };
 let raf = 0, syncT = 0;
-const V = { box: null, ma: null, mb: null, lp: null, cv: null, lpbox: null, pos: null, drag: false };
-const LOUPE = 150, GAP = 6;
-function media(it, cls) {
+const mon = () => $('#mon');
+const monOk = () => { const s = S.cur && selOf(S.cur); return !!s && V.key === `${S.cur}|${s.A}|${s.B}`; };
+function resetZoom() { Z.z = 1; Z.x = 0; Z.y = 0; }
+function media(it) {
   if (it.kind === 'video') {
-    const v = el('video', { src: href(it.url), class: cls, playsinline: true, preload: 'auto', loop: S.loop || null });
+    const v = el('video', { src: href(it.url), playsinline: true, preload: 'auto', loop: S.loop || null });
     v.muted = true;
+    v.addEventListener('loadedmetadata', applyZoom);
     return v;
   }
-  return el('img', { src: href(it.url), class: cls, alt: '', draggable: 'false' });
+  const im = el('img', { src: href(it.url), alt: '', draggable: 'false' });
+  im.addEventListener('load', applyZoom);
+  return im;
 }
-function paintViewer() {
+const label = (id) => {
+  if (id === S.cur) return 'Source';
+  const n = trialsOf(S.cur).findIndex((t) => t.id === id);
+  return n < 0 ? '' : `Essai ${n + 1}`;
+};
+function paintMonitor() {
   cancelAnimationFrame(raf); clearInterval(syncT);
-  const box = $('#viewer');
-  const c = S.cur;
-  V.box = box; V.ma = V.mb = null;
-  paintTools();
-  if (!c) {
-    box.className = 'cmpv empty';
-    box.replaceChildren(el('div', { class: 'empty' }, el('b', {}, 'Avant / après'),
-      el('span', {}, S.items.length ? 'Cliquez un fichier à gauche pour le voir ; « Agrandir » pose l’agrandie à côté.'
-        : 'Choisissez à gauche des images ou des vidéos de la bibliothèque, ou déposez-les n’importe où sur la page.')));
-    $('#transport').replaceChildren();
+  const box = mon();
+  const src = curItem();
+  V.a = V.b = null; V.toggle = V.step = null;
+  if (!src) {
+    V.key = '';
+    box.className = 'monitor upm empty';
+    box.replaceChildren(el('div', { class: 'empty' }, el('b', {}, 'Déposez une image ou une vidéo'),
+      el('div', { class: 'row' }, el('button', { class: 'tb ghost', type: 'button', onclick: choose }, 'Bibliothèque'),
+        el('button', { class: 'tb ghost', type: 'button', onclick: () => fileIn.click() }, 'Depuis le disque'))));
+    $('#transport').replaceChildren(); paintTools();
     return;
   }
-  const pair = !!c.b;
-  V.ma = media(c.a, 'm');
-  const la = el('div', { class: 'lay a' }, V.ma);
-  const kids = [la];
-  if (pair) {
-    V.mb = media(c.b, 'm');
-    kids.push(el('div', { class: 'lay b' }, V.mb),
-      el('div', { class: 'handle', role: 'slider', 'aria-label': 'rideau', 'aria-valuemin': '0', 'aria-valuemax': '100' }, el('div', { class: 'grip' }, el('i'), el('i'))));
+  const s = selOf(src.id);
+  const A = byId(s.A) || src, B = s.B && s.B !== A.id ? byId(s.B) : null;
+  const t0 = V.t || 0;
+  V.key = `${src.id}|${s.A}|${s.B}`;
+  V.a = media(A);
+  const kids = [el('div', { class: 'layer a' }, el('div', { class: 'zs' }, V.a))];
+  if (B) {
+    V.b = media(B);
+    kids.push(el('div', { class: 'layer b' }, el('div', { class: 'zs' }, V.b)),
+      el('div', { class: 'handle', role: 'slider', 'aria-label': 'rideau', 'aria-valuemin': '0', 'aria-valuemax': '100' }, el('span', { class: 'grip' }, el('i'), el('i'))));
   }
-  const fac = /factice/.test(c.b?.origin?.model || '');
-  kids.push(el('div', { class: 'tag a' }, el('b', {}, 'Avant'), el('span', {}, dims(c.a.width, c.a.height))));
-  if (pair) kids.push(el('div', { class: 'tag b' }, el('b', {}, 'Après'), el('span', {}, `${dims(c.b.width, c.b.height)} · ${modelName(c.b)}${fac ? ' · factice' : ''}`)));
-  V.lpbox = el('div', { class: 'lpbox', hidden: true });
-  V.cv = el('canvas');
-  V.lp = el('div', { class: 'loupe', hidden: true }, V.cv,
-    el('div', { class: 'lcap' }, el('span', {}, 'avant, agrandi simplement'), el('span', { class: 'b' }, 'après · 1:1')));
-  kids.push(V.lpbox, V.lp);
-  box.className = 'cmpv mode-' + (pair ? S.view : 'solo');
+  const tag = (k, it) => el('div', { class: 'tag ' + k.toLowerCase() }, el('b', {}, k),
+    el('span', {}, [label(it.id), it.id !== src.id ? recipe(it) : '', dims(it.width, it.height)].filter(Boolean).join(' · ')));
+  kids.push(tag('A', A));
+  if (B) kids.push(tag('B', B));
+  box.className = `monitor upm mode-${B ? S.view : 'solo'}`;
   box.replaceChildren(...kids);
-  if (pair) setWipe(S.wipe);
-  if (c.a.kind === 'video') wireVideo(); else $('#transport').replaceChildren();
+  if (B) setWipe(S.wipe);
+  applyZoom();
+  paintTools();
+  if (src.kind === 'video') wireVideo(t0); else $('#transport').replaceChildren();
 }
-const modelName = (it) => {
-  const id = (it.origin?.model || '').replace(/-factice$/, '');
-  return M(id)?.name || id || it.origin?.tool || '';
-};
 function paintTools() {
   const box = $('#vtools');
-  const c = S.cur;
-  if (!c || !c.b) { put(box, c ? el('span', { class: 'lbl' }, 'la source seule — l’agrandie viendra à côté') : null); return; }
-  const modes = [['wipe', 'Rideau', '1'], ['side', 'Côte à côte', '2'], ['a', 'Avant', '3'], ['b', 'Après', '4']];
-  box.replaceChildren(
-    el('div', { class: 'seg' }, ...modes.map(([id, lab, k]) => el('button', { class: 'tb' + (S.view === id ? ' on' : ''), type: 'button', title: `touche ${k}`,
-      onclick: () => setView(id) }, lab))),
-    el('button', { class: 'tb sm ' + (S.loupe ? 'on' : 'ghost'), type: 'button', title: 'une loupe 1:1 suit la souris (touche L)', onclick: () => { S.loupe = !S.loupe; saveView(); paintTools(); hideLoupe(); } }, 'Loupe 1:1'),
+  const s = S.cur ? selOf(S.cur) : null;
+  const pair = !!(s && s.B && s.B !== s.A);
+  const modes = [['wipe', 'Rideau'], ['side', 'Côte à côte'], ['a', 'A'], ['b', 'B']];
+  put(box,
+    pair ? el('div', { class: 'seg', role: 'group', 'aria-label': 'la vue' }, ...modes.map(([id, lab], i) => el('button', { class: 'tb' + (S.view === id ? ' on' : ''), type: 'button',
+      title: `touche ${i + 1}`, onclick: () => setView(id) }, lab))) : null,
     el('span', { class: 'sp' }),
-    el('span', { class: 'lbl keys' }, S.view === 'wipe' ? 'glisser : le rideau · [ ] au clavier' : '1–4 : la vue · L : la loupe'));
+    S.cur ? el('button', { class: 'tb ghost sm zoom', type: 'button', id: 'zoomBtn', onclick: () => { resetZoom(); applyZoom(); },
+      title: 'molette : zoom · bouton du milieu : déplacer · double-clic ou 0 : ajuster' }, zoomTxt()) : null);
 }
+const zoomTxt = () => (Z.z <= 1.0001 ? 'ajusté' : `${Z.z < 10 ? comma(Z.z.toFixed(1)) : Math.round(Z.z)}×`);
 function setView(v) {
-  S.view = v; saveView();
-  if (V.box && S.cur?.b) { V.box.className = 'cmpv mode-' + v; if (v === 'wipe') setWipe(S.wipe); else V.box.querySelector('.lay.b').style.clipPath = ''; }
-  paintTools(); hideLoupe();
+  S.view = v; prefs.set('upscale.view', v);
+  const box = mon();
+  if (box && V.b) { box.className = 'monitor upm mode-' + v; if (v === 'wipe') setWipe(S.wipe); else box.querySelector('.layer.b').style.clipPath = ''; }
+  applyZoom(); paintTools();
 }
 function setWipe(p) {
   S.wipe = Math.max(0, Math.min(100, p));
-  const lb = V.box?.querySelector('.lay.b');
-  const h = V.box?.querySelector('.handle');
+  const box = mon();
+  const lb = box?.querySelector('.layer.b'), h = box?.querySelector('.handle');
   if (!lb || !h) return;
   if (S.view === 'wipe') lb.style.clipPath = `inset(0 0 0 ${S.wipe}%)`;
   h.style.left = S.wipe + '%';
   h.setAttribute('aria-valuenow', Math.round(S.wipe));
 }
-
-// la loupe : la même zone avant et après, à l'échelle 1:1 de l'agrandie
-const natural = (m) => (m ? (m.tagName === 'VIDEO' ? [m.videoWidth, m.videoHeight] : [m.naturalWidth, m.naturalHeight]) : [0, 0]);
-function contentRect(m) {
-  const r = m.getBoundingClientRect();
-  const [nw, nh] = natural(m);
-  if (!nw || !nh) return null;
-  const s = Math.min(r.width / nw, r.height / nh);
-  return { x: r.left + (r.width - nw * s) / 2, y: r.top + (r.height - nh * s) / 2, w: nw * s, h: nh * s, s };
+// l'échelle « ajustée » d'un média dans sa couche, et la couche elle-même
+const natural = (m) => (m.tagName === 'VIDEO' ? [m.videoWidth, m.videoHeight] : [m.naturalWidth, m.naturalHeight]);
+function fitOf(m) {
+  const L = m.parentElement.parentElement.getBoundingClientRect();
+  const [w, h] = natural(m);
+  return w && h ? Math.min(L.width / w, L.height / h) : 0;
 }
-function hideLoupe() { if (V.lp) V.lp.hidden = true; if (V.lpbox) V.lpbox.hidden = true; V.pos = null; }
-function placeLoupe(e) {
-  if (!S.loupe || !S.cur?.b || !V.ma || !V.mb) return hideLoupe();
-  // en côte à côte, la moitié sous la souris donne la position ; sinon l'agrandie
-  const ref = S.view === 'side' && e.clientX < V.box.getBoundingClientRect().left + V.box.clientWidth / 2 ? V.ma : V.mb;
-  const cr = contentRect(ref);
-  if (!cr) return hideLoupe();
-  const u = (e.clientX - cr.x) / cr.w, v = (e.clientY - cr.y) / cr.h;
-  if (u < 0 || u > 1 || v < 0 || v > 1) return hideLoupe();
-  V.pos = { u, v };
-  const b = V.box.getBoundingClientRect();
-  const [NW] = natural(V.mb);
-  // le carré montré dans la vue : la zone que la loupe grossit
-  const side = LOUPE * cr.w / NW;
-  Object.assign(V.lpbox.style, { left: `${e.clientX - b.left - side / 2}px`, top: `${e.clientY - b.top - side / 2}px`, width: `${side}px`, height: `${side}px` });
-  V.lpbox.hidden = side < 6;
-  const W = 2 * LOUPE + GAP, H = LOUPE + 22;
-  let x = e.clientX - b.left + 22, y = e.clientY - b.top + 22;
-  if (x + W > b.width - 6) x = e.clientX - b.left - W - 22;
-  if (y + H > b.height - 6) y = e.clientY - b.top - H - 22;
-  Object.assign(V.lp.style, { left: `${Math.max(6, x)}px`, top: `${Math.max(6, y)}px` });
-  V.lp.hidden = false;
-  drawLoupe();
+function zmax() {
+  // jusqu'à 8 pixels d'écran par pixel du média le plus fin (la source)
+  const f = [V.a, V.b].filter(Boolean).map(fitOf).filter((x) => x > 0);
+  return Math.max(8, f.length ? 8 / Math.min(...f) : 8);
 }
-function drawLoupe() {
-  if (!V.pos || !V.cv || V.lp.hidden) return;
-  const [NW, NH] = natural(V.mb), [nw] = natural(V.ma);
-  if (!NW || !nw) return;
-  const dpr = window.devicePixelRatio || 1;
-  const W = 2 * LOUPE + GAP;
-  if (V.cv.width !== Math.round(W * dpr)) { V.cv.width = Math.round(W * dpr); V.cv.height = Math.round(LOUPE * dpr); V.cv.style.width = W + 'px'; V.cv.style.height = LOUPE + 'px'; }
-  const g = V.cv.getContext('2d');
-  g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  g.clearRect(0, 0, W, LOUPE);
-  const cx = V.pos.u * NW, cy = V.pos.v * NH;
-  const k = nw / NW;
-  try {
-    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-    g.drawImage(V.ma, (cx - LOUPE / 2) * k, (cy - LOUPE / 2) * k, LOUPE * k, LOUPE * k, 0, 0, LOUPE, LOUPE);
-    g.imageSmoothingEnabled = false;
-    g.drawImage(V.mb, cx - LOUPE / 2, cy - LOUPE / 2, LOUPE, LOUPE, LOUPE + GAP, 0, LOUPE, LOUPE);
-  } catch { /* image pas encore prête */ }
+function applyZoom() {
+  const box = mon();
+  if (!box || !V.a) return;
+  if (Z.z <= 1.0001) { Z.z = 1; Z.x = 0; Z.y = 0; }
+  Z.x = Math.max(-(Z.z - 1), Math.min(0, Z.x));
+  Z.y = Math.max(-(Z.z - 1), Math.min(0, Z.y));
+  for (const zs of box.querySelectorAll('.zs')) {
+    const L = zs.parentElement.getBoundingClientRect();
+    zs.style.transform = Z.z === 1 ? '' : `translate(${(Z.x * L.width).toFixed(2)}px, ${(Z.y * L.height).toFixed(2)}px) scale(${Z.z})`;
+  }
+  // au-delà de 4 pixels d'écran par pixel : les pixels tels quels (on inspecte)
+  for (const m of [V.a, V.b]) if (m) m.classList.toggle('px', fitOf(m) * Z.z >= 4);
+  const zbtn = $('#zoomBtn');
+  if (zbtn) zbtn.textContent = zoomTxt();
+  box.classList.toggle('zoomed', Z.z > 1);
 }
-function wireViewer() {
-  const box = $('#viewer');
+// le point sous la souris, dans la couche qu'il touche (la moitié en côte à côte)
+function at(e) {
+  const r = mon().getBoundingClientRect();
+  const side = V.b && S.view === 'side';
+  const W = side ? r.width / 2 : r.width;
+  let x = e.clientX - r.left;
+  if (side && x > W) x -= W;
+  return { x, y: e.clientY - r.top, W, H: r.height };
+}
+function zoomAt(nz, p) {
+  const r = mon().getBoundingClientRect();
+  const side = V.b && S.view === 'side';
+  const q = p || { x: (side ? r.width / 2 : r.width) / 2, y: r.height / 2, W: side ? r.width / 2 : r.width, H: r.height };
+  nz = Math.max(1, Math.min(zmax(), nz));
+  const k = nz / Z.z;
+  Z.x = (q.x - (q.x - Z.x * q.W) * k) / q.W;
+  Z.y = (q.y - (q.y - Z.y * q.H) * k) / q.H;
+  Z.z = nz;
+  applyZoom();
+}
+function wireMonitor() {
+  const box = mon();
+  box.addEventListener('wheel', (e) => {
+    if (!V.a) return;
+    e.preventDefault();
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? box.clientHeight : 1;
+    zoomAt(Z.z * Math.exp(-e.deltaY * unit * 0.0022), at(e));
+  }, { passive: false });
+  // bouton du milieu : déplacer (et jamais le défilement automatique du navigateur)
+  box.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
+  box.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
   box.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || !S.cur?.b || S.view !== 'wipe') return;
-    V.drag = true; box.setPointerCapture(e.pointerId);
-    const r = box.getBoundingClientRect(); setWipe(((e.clientX - r.left) / r.width) * 100);
+    if (!V.a || (e.button !== 0 && e.button !== 1)) return;
+    const r = box.getBoundingClientRect();
+    const wipe = V.b && S.view === 'wipe';
+    if (e.button === 1 || (!wipe && Z.z > 1)) V.drag = { k: 'pan', x: e.clientX, y: e.clientY };
+    else if (wipe) { V.drag = { k: 'wipe' }; setWipe(((e.clientX - r.left) / r.width) * 100); }
+    if (!V.drag) return;
+    e.preventDefault();
+    box.setPointerCapture(e.pointerId);
+    box.classList.toggle('panning', V.drag.k === 'pan');
   });
   box.addEventListener('pointermove', (e) => {
-    if (V.drag) { const r = box.getBoundingClientRect(); setWipe(((e.clientX - r.left) / r.width) * 100); }
-    if (e.pointerType === 'mouse') placeLoupe(e);
+    if (!V.drag) return;
+    const r = box.getBoundingClientRect();
+    if (V.drag.k === 'wipe') { setWipe(((e.clientX - r.left) / r.width) * 100); return; }
+    const W = V.b && S.view === 'side' ? r.width / 2 : r.width;
+    Z.x += (e.clientX - V.drag.x) / W; Z.y += (e.clientY - V.drag.y) / r.height;
+    V.drag.x = e.clientX; V.drag.y = e.clientY;
+    applyZoom();
   });
-  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) => box.addEventListener(ev, () => { V.drag = false; }));
-  box.addEventListener('pointerleave', hideLoupe);
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) => box.addEventListener(ev, () => { V.drag = null; box.classList.remove('panning'); }));
+  box.addEventListener('dblclick', () => { resetZoom(); applyZoom(); });
+  new ResizeObserver(() => applyZoom()).observe(box);
+  dropZone(box, { kinds: ['image', 'video'], via: 'upscale', onitems: openItems });
+  dropZone($('#tiles'), { kinds: ['image', 'video'], via: 'upscale', onitems: openItems });
 }
 
-// la lecture synchronisée des deux vidéos (le banc A/B de Movie Creator)
-function wireVideo() {
-  const a = V.ma, b = V.mb;
+// la lecture synchronisée des deux vidéos (le banc A/B de l'outil Vidéo)
+function wireVideo(t0) {
+  const a = V.a, b = V.b;
   const master = b || a;
-  const both = [a, b].filter(Boolean);
+  const both = [a, b].filter((v) => v && v.tagName === 'VIDEO');
+  const fps = curItem()?.fps || 24;
   const playBtn = el('button', { class: 'tb', type: 'button', title: 'lire · pause (espace)', onclick: () => toggle() });
-  const tc = el('span', { class: 'timecode' }, '0:00.0');
+  const tc = el('span', { class: 'timecode' }, '0:00');
   const fill = el('div', { class: 'fill' });
   const scrub = el('input', { type: 'range', min: 0, max: 1000, value: 0, 'aria-label': 'position' });
-  const fps = S.cur.a.fps || 24;
   const dur = () => { const x = Math.min(...both.map((v) => (isFinite(v.duration) ? v.duration : Infinity))); return isFinite(x) ? x : 0; };
   const seek = (t) => both.forEach((v) => { try { v.currentTime = t; } catch { /* pas prête */ } });
   const playing = () => !master.paused && !master.ended;
@@ -570,178 +672,140 @@ function wireVideo() {
     $$('#transport .aud .tb').forEach((x) => x.classList.toggle('on', x.dataset.a === S.listen));
   };
   const upd = () => {
-    const t = master.currentTime || 0, d0 = dur(), d = isFinite(d0) ? d0 : 0;
+    const t = master.currentTime || 0, d = dur();
+    V.t = t;
     tc.textContent = `${fmtDur(t)} / ${fmtDur(d)} · img ${Math.round(t * fps)}`;
     if (!scrub.matches(':active')) scrub.value = d ? Math.round((t / d) * 1000) : 0;
     fill.style.width = (d ? (t / d) * 100 : 0) + '%';
   };
   scrub.addEventListener('input', () => { seek((scrub.value / 1000) * (dur() || 0)); upd(); });
   master.addEventListener('timeupdate', upd);
+  master.addEventListener('loadedmetadata', upd);
   master.addEventListener('play', icon); master.addEventListener('pause', icon);
   master.addEventListener('ended', () => { if (!S.loop) both.forEach((v) => v.pause()); icon(); });
-  both.forEach((v) => { v.loop = S.loop; });
+  if (t0) master.addEventListener('loadedmetadata', () => seek(t0), { once: true });
   // l'autre suit la maîtresse : écart corrigé au-delà de 0,06 s (banc A/B)
   if (b) syncT = setInterval(() => { if (!playing()) return; if (a.readyState >= 2 && Math.abs(a.currentTime - b.currentTime) > 0.06) a.currentTime = b.currentTime; }, 200);
-  const loop = () => { drawLoupe(); raf = requestAnimationFrame(loop); };
-  raf = requestAnimationFrame(loop);
   $('#transport').replaceChildren(el('div', { class: 'transport' },
     playBtn,
-    el('button', { class: 'tb ghost sm', type: 'button', title: 'image précédente (←)', onclick: () => step(-1) }, '‹ img'),
-    el('button', { class: 'tb ghost sm', type: 'button', title: 'image suivante (→)', onclick: () => step(1) }, 'img ›'),
+    el('button', { class: 'tb ghost sm', type: 'button', title: 'image précédente (←)', onclick: () => step(-1) }, '‹'),
+    el('button', { class: 'tb ghost sm', type: 'button', title: 'image suivante (→)', onclick: () => step(1) }, '›'),
     tc,
-    el('div', { class: 'tl grow' }, el('div', { class: 'track' }, fill), el('div', { class: 'ticks' }), scrub),
-    el('button', { class: 'tb sm ' + (S.loop ? 'on' : 'ghost'), type: 'button', title: 'en boucle', onclick: (e) => { S.loop = !S.loop; both.forEach((v) => { v.loop = S.loop; }); e.target.className = 'tb sm ' + (S.loop ? 'on' : 'ghost'); saveView(); } }, 'Boucle'),
-    el('div', { class: 'seg aud', title: 'le son entendu' }, ...[['b', 'Son après'], ['a', 'avant'], ['0', 'muet']].map(([id, lab]) => {
+    el('div', { class: 'tl grow' }, el('div', { class: 'track' }, fill), scrub),
+    el('button', { class: 'tb sm ' + (S.loop ? 'on' : 'ghost'), type: 'button', title: 'en boucle', onclick: (e) => { S.loop = !S.loop; both.forEach((v) => { v.loop = S.loop; }); e.currentTarget.className = 'tb sm ' + (S.loop ? 'on' : 'ghost'); prefs.set('upscale.loop', S.loop); } }, 'Boucle'),
+    el('div', { class: 'seg aud', role: 'group', 'aria-label': 'le son entendu' }, ...[['a', 'Son A'], ['b', 'B'], ['0', 'muet']].filter(([id]) => b || id !== 'b').map(([id, lab]) => {
       const x = el('button', { class: 'tb', type: 'button', onclick: () => { S.listen = id; audio(); } }, lab);
       x.dataset.a = id;
       return x;
     }))));
+  both.forEach((v) => { v.loop = S.loop; });
   audio(); icon(); upd();
   V.toggle = toggle; V.step = step;
 }
 
-function paintInfo() {
-  const box = $('#info');
-  const c = S.cur;
-  if (!c) { box.replaceChildren(); return; }
-  const it = c.b || c.a;
-  const up = c.b?.upscale || {};
-  const kv = c.b ? [
-    ['avant', dims(c.a.width, c.a.height)], ['après', dims(c.b.width, c.b.height)],
-    ['facteur', c.a.width ? `×${(c.b.width / c.a.width).toFixed(2).replace(/\.?0+$/, '').replace('.', ',')}` : ''],
-    ['modèle', modelName(c.b) + (/factice/.test(c.b.origin?.model || '') ? ' (factice)' : '')],
-    ['réglage', [c.b.params?.color && c.b.params.model?.startsWith('seedvr2') ? `couleur ${c.b.params.color}` : '', c.b.params?.model === 'zimage-refine' ? `débruitage ${c.b.params.denoise}` : ''].filter(Boolean).join(' · ')],
-    ['durée', fmtS(c.b.render_s)], ['machine', c.b.origin?.machine || ''], ['créée', fmtDate(c.b.created)],
-    ['images', up.frames > 1 ? String(up.frames) : ''],
-  ] : [['source', dims(c.a.width, c.a.height)], ['sorte', kindFr(c.a.kind)], ['durée', c.a.duration ? fmtDur(c.a.duration) : '']];
-  const ext = (it.file || '.png').slice((it.file || '.png').lastIndexOf('.'));
-  box.replaceChildren(el('section', { class: 'vbar' },
-    el('div', { class: 'ttl' }, el('span', { class: 'lbl' }, c.b ? 'L’agrandie' : 'La source'), el('b', {}, it.title || it.id)),
-    el('dl', { class: 'kv' }, ...kv.filter(([, v]) => v).flatMap(([k, v]) => [el('dt', {}, k), el('dd', {}, v)])),
-    el('div', { class: 'row acts' },
-      c.b ? el('button', { class: 'tb ghost sm', type: 'button', title: 'voir la source seule', onclick: () => showPair(c.a, null) }, 'Source') : null,
-      el('a', { class: 'tb ghost sm', href: href(it.url), download: `${(it.title || it.id).replace(/[^\w.-]+/g, '_').slice(0, 60)}${ext}` }, 'Télécharger'),
-      el('a', { class: 'tb ghost sm', href: href('asset/#' + it.id) }, 'Ouvrir dans la bibliothèque'),
-      el('a', { class: 'tb ghost sm', href: href('montage/?add=' + encodeURIComponent(it.id)), title: 'la poser au bout de la timeline du montage ouvert' }, 'Envoyer au montage'))));
-}
-
-// ── l'historique ────────────────────────────────────────────
-async function loadHistory() {
-  const side = $('#side');
-  let res;
-  try { res = await api('library?kind=image,video&tool=upscale&limit=120'); } catch (e) { side.replaceChildren(el('p', { class: 'warn' }, e.message)); return; }
-  side.replaceChildren(
-    head('Historique', null, 'hist-h'),
-    el('div', { class: 'r2' }, el('a', { class: 'lbl', href: href('asset/') }, `${res.total} dans Asset`)),
-    res.items.length ? el('div', { class: 'grid sm hist' }, ...res.items.map((it) => {
-      const t = thumb(it, { selected: S.cur?.b?.id === it.id, onclick: () => showResult(it),
-        sub: [modelName(it), dims(it.width, it.height)].filter(Boolean).join(' · ') });
-      t.dataset.id = it.id;
-      return t;
-    })) : el('p', { class: 'hint' }, 'Les agrandies se rangent dans la bibliothèque, avec leur source en lignée, et s’affichent ici.'));
-}
-function markHistory() { for (const b of $$('#side .thumb')) b.classList.toggle('sel', b.dataset.id === S.cur?.b?.id); }
-
 // ── le clavier ──────────────────────────────────────────────
 document.addEventListener('keydown', (e) => {
-  if ($('.scrim') || ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || $('.scrim') || ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
   const k = e.key;
-  if (k >= '1' && k <= '4' && S.cur?.b) setView(['wipe', 'side', 'a', 'b'][+k - 1]);
-  else if ((k === 'l' || k === 'L') && S.cur?.b) { S.loupe = !S.loupe; saveView(); paintTools(); hideLoupe(); }
-  else if (k === '[') setWipe(S.wipe - 2);
-  else if (k === ']') setWipe(S.wipe + 2);
-  else if (k === ' ' && V.toggle && S.cur?.a?.kind === 'video') { e.preventDefault(); V.toggle(); }
-  else if (k === 'ArrowLeft' && V.step && S.cur?.a?.kind === 'video') { e.preventDefault(); V.step(-1); }
-  else if (k === 'ArrowRight' && V.step && S.cur?.a?.kind === 'video') { e.preventDefault(); V.step(1); }
+  const pair = !!V.b;
+  if (k >= '1' && k <= '4' && pair) setView(['wipe', 'side', 'a', 'b'][+k - 1]);
+  else if (k === '0' && V.a) { resetZoom(); applyZoom(); }
+  else if ((k === '+' || k === '=') && V.a) zoomAt(Z.z * 1.25);
+  else if (k === '-' && V.a) zoomAt(Z.z / 1.25);
+  else if (k === '[' && pair) setWipe(S.wipe - 2);
+  else if (k === ']' && pair) setWipe(S.wipe + 2);
+  else if ((k === 's' || k === 'S') && pair) swap();
+  else if (k === ' ' && V.toggle) { e.preventDefault(); V.toggle(); }
+  else if (k === 'ArrowLeft' && V.step) { e.preventDefault(); V.step(-1); }
+  else if (k === 'ArrowRight' && V.step) { e.preventDefault(); V.step(1); }
 });
+function swap() { const s = selOf(S.cur); [s.A, s.B] = [s.B, s.A]; s.chosen = true; paintPile(); paintMonitor(); }
 
 dropAnywhere((files) => addFiles(files));
 
 // ── le clic droit (Cal, 29/09 : jamais le menu du navigateur) ──
-// un fichier de l'entrée, une agrandie de l'historique : leurs gestes ;
-// ailleurs (l'avant/après, la colonne) : ceux de la page, en tête du menu
-// commun de repli (commun/menu.js, pageMenu)
-const goTo = (u) => () => { location.href = href(u); };
-const libItems = (it) => [
-  { label: 'Ouvrir dans la bibliothèque', icon: '▦', onclick: goTo('asset/#' + it.id) },
-  { label: 'Envoyer au montage', icon: '▤', onclick: goTo('montage/?add=' + encodeURIComponent(it.id)) }];
-function rowMenu(e) {
-  const row = e.target.closest('.inrow');
-  if (row) {
-    const k = [...row.parentElement.children].indexOf(row), it = S.items[k];
-    if (!it) return null;
-    return [{ head: `l’entrée · ${it.title || it.id}` }, { label: 'Le voir', icon: '⤢', onclick: () => showSource(it) },
-      { label: 'Retirer de l’entrée', icon: '×', sub: 'reste dans la bibliothèque', onclick: () => setItems(S.items.filter((x) => x.id !== it.id)) },
-      '-', ...libItems(it)];
+function sideMenu(e) {
+  const r = e.target.closest('.prow[data-id]');
+  if (r) {
+    const id = r.dataset.id;
+    const n = id === S.cur ? 0 : trialsOf(S.cur).findIndex((t) => t.id === id) + 1;
+    const it = byId(id);
+    return it ? rowItems(it, n) : null;
   }
-  const t = e.target.closest('#side .thumb[data-id]');
+  const t = e.target.closest('.mtile[data-id]');
   if (t) {
-    return [{ head: 'une agrandie' }, { label: 'La voir, avec sa source', icon: '⤢', onclick: () => t.click() },
-      { label: 'Ouvrir dans la bibliothèque', icon: '▦', onclick: goTo('asset/#' + t.dataset.id) },
-      { label: 'Envoyer au montage', icon: '▤', onclick: goTo('montage/?add=' + encodeURIComponent(t.dataset.id)) }];
+    const it = S.piles.find((x) => x.id === t.dataset.id);
+    return it ? [{ head: it.title || it.id }, { label: 'Voir sa pile', icon: '⤢', onclick: () => setCur(it.id) },
+      { label: 'Fermer ce média', icon: '×', sub: 'il reste dans la bibliothèque', onclick: () => closePile(it.id) }] : null;
   }
   return null;
 }
 pageMenu(() => {
-  const c = S.cur;
   const go = $('#act .tb.go');
-  const views = c?.b ? [['wipe', 'Rideau'], ['side', 'Côte à côte'], ['a', 'Avant'], ['b', 'Après']] : [];
+  const pair = !!V.b;
   return [{ head: 'Upscale' },
-    { label: go?.textContent || 'Agrandir', icon: '▶', disabled: !go || go.disabled, why: $('#act .why')?.textContent || 'rien à envoyer', onclick: launch },
+    { label: 'Upscaler', icon: '▶', disabled: !go || go.disabled, why: $('#act .why')?.textContent || 'rien à envoyer', onclick: () => launch() },
+    { label: 'Ouvrir une image ou une vidéo…', icon: '+', onclick: choose },
     '-',
-    { label: 'Ajouter depuis la bibliothèque…', icon: '+', onclick: choose },
-    { label: 'Ajouter depuis le disque…', icon: '↑', onclick: () => fileIn.click() },
-    S.items.length ? { label: 'Vider l’entrée', icon: '×', sub: 'reste dans la bibliothèque', onclick: () => setItems([]) } : null,
-    views.length ? '-' : null,
-    ...views.map(([v, lab], i) => ({ label: lab, checked: S.view === v, key: String(i + 1), onclick: () => setView(v) })),
-    c?.b ? { label: 'Loupe 1:1', checked: !!S.loupe, key: 'L', onclick: () => { S.loupe = !S.loupe; saveView(); paintTools(); hideLoupe(); } } : null,
-    c?.b ? '-' : null, ...(c?.b ? libItems(c.b) : [])];
+    ...(pair ? [['wipe', 'Rideau'], ['side', 'Côte à côte'], ['a', 'A seul'], ['b', 'B seul']].map(([v, lab], i) => ({ label: lab, checked: S.view === v, key: String(i + 1), onclick: () => setView(v) })) : []),
+    pair ? { label: 'Échanger A et B', icon: '⇄', key: 'S', onclick: swap } : null,
+    V.a ? { label: 'Ajuster à la vue', icon: '⤢', key: '0', disabled: Z.z === 1, why: 'déjà ajustée', onclick: () => { resetZoom(); applyZoom(); } } : null];
 });
 
 // ── démarrage ───────────────────────────────────────────────
 async function start() {
   skeleton();
-  wireViewer();
-  contextMenu($('#rail'), rowMenu);
-  contextMenu($('#side'), rowMenu);
-  $('#rail').prepend(el('p', { class: 'lbl', id: 'loading' }, 'chargement'));
+  wireMonitor();
+  contextMenu($('#side'), sideMenu);
+  contextMenu($('#tiles'), sideMenu);
   try { S.cfg = await api('upscale/models'); } catch (e) {
     $('#rail').replaceChildren(el('p', { class: 'warn' }, `le portail ne répond pas : ${e.message}`)); return;
   }
-  $('#loading')?.remove();
   const d = store.get() || {};
-  for (const k of ['model', 'mode', 'factor', 'ti', 'tv', 'color', 'denoise']) if (d[k] !== undefined && d[k] !== null) S[k] = d[k];
-  // la vue : les préférences (l'ancienne clé de ce navigateur sert une fois de départ)
-  S.view = prefs.get('upscale.view', d.view ?? S.view);
-  S.loupe = prefs.get('upscale.loupe', d.loupe ?? S.loupe);
-  S.loop = prefs.get('upscale.loop', d.loop ?? S.loop);
+  for (const k of ['preset', 'base', 'size', 'touched', 'advOpen']) if (d[k] !== undefined && d[k] !== null) S[k] = d[k];
+  if (d.adv && typeof d.adv === 'object') S.adv = { ...S.cfg.default_set, ...d.adv };
+  if (S.preset !== 'custom' && !P(S.preset)) S.preset = 'precis';
+  S.view = prefs.get('upscale.view', S.view);
+  if (!['wipe', 'side', 'a', 'b'].includes(S.view)) S.view = 'wipe';
+  S.loop = prefs.get('upscale.loop', S.loop);
+  // ?src=<id>[,<id>…] (la bibliothèque et les autres outils y envoient), #<essai> : sa pile, lui en B
   const q = new URLSearchParams(location.search);
   const srcs = q.getAll('src').flatMap((s) => s.split(',')).map((s) => s.trim()).filter(Boolean);
-  const ids = srcs.length ? srcs : (d.items || []);
+  const want = location.hash.slice(1);
+  let ids = [...new Set([...(d.piles || []), ...srcs])];
+  let wantTrial = null;
+  if (want) {
+    try { wantTrial = await api('library/' + want); } catch { wantTrial = null; }
+    const pid = wantTrial?.parents?.[0];
+    if (pid && !ids.includes(pid)) ids.push(pid);
+  }
   const got = (await Promise.all(ids.map((id) => api('library/' + id).catch(() => null)))).filter((it) => it && (it.kind === 'image' || it.kind === 'video'));
-  if (srcs.length && got.length < srcs.length) toast('une source demandée n’est pas une image ou une vidéo de la bibliothèque', 6000);
-  S.items = got;
-  const m = M(S.model);
-  if (!m || m.off) S.model = S.items.length && S.items.every((i) => i.kind === 'video') ? S.cfg.default.video : S.cfg.default.image;
-  put($('#banner'), stub() ? el('div', { class: 'banner' }, el('b', {}, 'Moteur factice'),
-    el('span', {}, 'les agrandies sont des bicubiques étiquetés « FACTICE » — aucun modèle n’est chargé. Le câblage réel est écrit : « upscale_backend » : « comfyui » dans showrunner.local.json.')) : '');
-  paintIn(); paintModel(); paintSize(); paintSet(); paintAct(); paintViewer(); paintInfo();
-  schedPlan();
+  if (srcs.length && srcs.some((id) => !got.some((x) => x.id === id))) toast('une source demandée n’est pas une image ou une vidéo de la bibliothèque', 6000);
+  for (const it of got) known.set(it.id, it);
+  S.piles = got;
+  S.cur = (wantTrial?.parents?.[0] && got.some((x) => x.id === wantTrial.parents[0]) ? wantTrial.parents[0] : null)
+    || (srcs.find((id) => got.some((x) => x.id === id))) || (got.some((x) => x.id === d.cur) ? d.cur : got[0]?.id) || null;
+  if (wantTrial && S.cur === wantTrial.parents?.[0]) { const s = selOf(S.cur); s.B = wantTrial.id; s.chosen = true; }
+  syncKind();
+  if (!S.adv.model) S.adv = { ...(presetSet(S.preset) || S.cfg.default_set), model: presetSet(S.preset)?.model || S.cfg.default[kindCur()] };
+  paintAll();
+  await Promise.all(S.piles.map((it) => loadPile(it.id)));
   doc = U.snapshots({ get: docState, set: docRestore, describe: docDescribe });
   doc.reset();
-  $('#rail').addEventListener('focusin', (e) => { if (e.target.matches?.('textarea, input')) typing++; });
-  // la vue changée ailleurs (le panneau, un autre navigateur) : l'avant/après suit
+  $('#rail').addEventListener('focusin', (e) => { if (e.target.matches?.('textarea')) typing++; });
   prefs.on('upscale.view', (v) => { if (v && v !== S.view) setView(v); });
-  prefs.on('upscale.loupe', (v) => { S.loupe = v !== false; paintTools(); hideLoupe(); });
-  prefs.on('upscale.loop', (v) => { S.loop = v !== false; if (S.cur?.a?.kind === 'video') paintViewer(); });
-  const want = location.hash.slice(1);
-  if (want) { try { await showResult(await api('library/' + want)); } catch { /* introuvable */ } }
-  else if (S.items.length) showSource(S.items[0]);
-  loadHistory();
+  prefs.on('upscale.loop', (v) => { S.loop = v !== false; if (curItem()?.kind === 'video') paintMonitor(); });
   if (S.cfg.availability_error) toast(`machines : ${S.cfg.availability_error}`, 6000);
 }
 addEventListener('hashchange', async () => {
   const id = location.hash.slice(1);
-  if (id && id !== S.cur?.b?.id) { try { showResult(await api('library/' + id)); } catch { /* introuvable */ } }
+  if (!id || id === (S.cur && selOf(S.cur).B)) return;
+  let it;
+  try { it = await api('library/' + id); } catch { return; }
+  const pid = it.parents?.[0];
+  if (!pid) return;
+  if (!S.piles.some((x) => x.id === pid)) { try { openItems([await api('library/' + pid)]); } catch { return; } }
+  setCur(pid);
+  setSlot('B', id);
 });
 start();

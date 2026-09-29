@@ -28,6 +28,12 @@ Deux moteurs (`upscale_backend` dans showrunner.local.json) :
 Les autres modèles vus sur les machines (AuraSR, SUPIR, InvSR) et FlashVSR
 sont montrés éteints, avec ce qui manque (étude §3, §7).
 
+La page parle en préréglages (« Upscale précis », « créatif », « Aperçu
+rapide ») : `PRESETS`, la seule correspondance préréglage → modèle et
+paramètres, rejouée ici à chaque envoi ; les modèles et leurs réglages ne se
+montrent que dans « Paramètres avancés » (préréglage « custom »). Chaque
+média a sa pile (`GET /api/upscale/pile/<id>`) : la source et ses essais.
+
 Travaux : `upscale.image`, `upscale.video` — voie `image` (un ouvrier par
 DGX) en câblage réel, voie `cpu` en factice. Chaque sortie entre dans la
 bibliothèque avec sa lignée (`parents` = la source) et sa recette
@@ -147,6 +153,63 @@ COLORS = [
     {"id": "adain", "name": "AdaIN", "sub": "RAPIDE", "about": "moyenne et écart par canal : une teinte globale, le plus rapide"},
     {"id": "none", "name": "Aucune", "sub": "GABARIT", "about": "la géométrie seule, sans recaler la couleur (le réglage des gabarits)"},
 ]
+# ── les préréglages ─────────────────────────────────────────
+# Cal, 29/09 : « il faut vraiment parler simplement aux gens : upscale
+# créatif, upscale précis etc. pas les noms des modèles […] on met cela en
+# paramètres avancés ». La page montre ces mots ; chaque préréglage règle,
+# par sorte de média, le modèle et ses paramètres. C'est la seule table de
+# correspondance : la page la lit (/api/upscale/models) et le serveur la
+# rejoue à l'envoi — un préréglage ne dépend pas de ce que la page envoie à
+# côté. Ce qu'un préréglage ne nomme pas prend DEFAULT_SET.
+DEFAULT_SET = {"color": "lab", "denoise": 0.25, "prompt": ""}
+PRESETS: dict[str, dict] = {
+    "precis": {
+        "label": "Upscale précis", "short": "Précis", "about": "fidèle, rien d'inventé",
+        "image": {"model": "seedvr2-7b", "color": "lab"},
+        "video": {"model": "seedvr2-3b", "color": "lab"},
+        "src": "SeedVR2 : « conservative upscaling … preserves original structure » (docs.comfy.org/tutorials/utility/seedvr2) ; "
+               "image : le 7B, « higher quality » (même page) ; vidéo : le 3B du gabarit officiel "
+               "utility_seedvr2_3b_int8_upscale_video ; couleur lab, « most faithful », le défaut de "
+               "SeedVR2PostProcessing — étude §3, §4, §6",
+    },
+    "creatif": {
+        "label": "Upscale créatif", "short": "Créatif", "about": "ajoute du détail fin",
+        "image": {"model": "zimage-refine", "denoise": 0.25},
+        "video": None,
+        "off": {"video": "image seulement : aucun modèle créatif pour la vidéo n'est installé (FlashVSR, à télécharger — étude §7)"},
+        "src": "gabarit utility_z_image_turbo_2k_upscaler (Z-Image Turbo, « Affiner » de l'outil Image) : réinvente le "
+               "détail fin ; débruitage conseillé 0,15–0,35, « au-delà, des défauts » : 0,25 au milieu — étude §3, §4",
+    },
+    "rapide": {
+        "label": "Aperçu rapide", "short": "Rapide", "about": "net, en quelques secondes",
+        "image": {"model": "esrgan-x2"},
+        "video": {"model": "esrgan-x2"},
+        "src": "note du gabarit utility-gan_upscaler : « can't create new detail like diffusion can, but it's much "
+               "faster » ; RealESRGAN_x2 fait ×2 au plus — étude §3, §6",
+    },
+}
+ADVANCED = ("model", "color", "denoise", "prompt")   # ce que « Paramètres avancés » règle
+
+
+def settings_for(c: dict, kind: str) -> dict:
+    """Le modèle et ses paramètres pour une sorte de média : ceux du
+    préréglage, ou (« custom ») ceux que la page envoie. `who` : le nom que
+    la personne voit dans une raison (le préréglage, pas le modèle).
+    ValueError : pourquoi ce média ne passe pas."""
+    if c["preset"] == "custom":
+        s = {k: c[k] for k in ADVANCED}
+        who = MODELS[c["model"]]["name"]
+    else:
+        pr = PRESETS[c["preset"]]
+        if not pr.get(kind):
+            raise ValueError(pr["off"][kind])
+        s = {**DEFAULT_SET, **pr[kind]}
+        who = pr["label"]
+    if kind not in MODELS[s["model"]]["kinds"]:
+        raise ValueError(f"{who} n'agrandit pas les {'vidéos' if kind == 'video' else 'images'}")
+    return {**s, "who": who}
+
+
 MAX_FACTOR = 8.0      # ResizeImageMaskNode « scale by multiplier » : max 8,0 (/object_info)
 MAX_IMAGE = 8192      # la limite de l'outil Image pour l'agrandissement
 MAX_VIDEO = (2160, 4096)   # la 4K UHD : petit côté, grand côté — la cible de Cal (1080p/4K)
@@ -287,12 +350,17 @@ def _short(t: str, n: int = 42) -> str:
 def check(d: dict) -> tuple[dict, list[dict]]:
     """Les réglages communs, et une rangée par fichier : ce qui sortira, ou
     pourquoi il ne sera pas traité."""
-    model = d.get("model")
-    if model not in MODELS:
-        raise ValueError(f"modèle inconnu : {model} ({', '.join(RETAINED)})")
-    m = MODELS[model]
-    if m.get("off"):
-        raise ValueError(f"{m['name']} : {m['off']}")
+    preset = d.get("preset") or "custom"
+    if preset != "custom" and preset not in PRESETS:
+        raise ValueError(f"préréglage inconnu : {preset} ({', '.join(PRESETS)}, custom)")
+    model = d.get("model") if preset == "custom" else None
+    m: dict = {}
+    if preset == "custom":
+        if model not in MODELS:
+            raise ValueError(f"modèle inconnu : {model} ({', '.join(RETAINED)})")
+        m = MODELS[model]
+        if m.get("off"):
+            raise ValueError(f"{m['name']} : {m['off']}")
     mode = "fixed" if m.get("fixed") else (d.get("mode") or "factor")
     if mode not in ("factor", "target", "fixed"):
         raise ValueError("taille : un facteur ou une cible")
@@ -304,6 +372,10 @@ def check(d: dict) -> tuple[dict, list[dict]]:
         raise ValueError("facteur : 2 ou 4")
     if mode == "factor" and m.get("max_factor") and factor > m["max_factor"]:
         raise ValueError(f"{m['name']} fait ×2 au plus : le ×4 demande RealESRGAN_x4plus (67 Mo, à télécharger — étude §7)")
+    touched = d.get("touched") or []
+    touched = [k for k in ADVANCED if preset == "custom" and isinstance(touched, list) and k in touched]
+    # le préréglage d'où part un réglage personnalisé (« Précis, modifié ») : de quoi le dire
+    base = d.get("base") if preset == "custom" and d.get("base") in PRESETS else None
     ti, tv = d.get("target_image") or "4k", d.get("target_video") or "1080p"
     if ti not in TARGETS["image"] or tv not in TARGETS["video"]:
         raise ValueError("cible inconnue")
@@ -321,7 +393,8 @@ def check(d: dict) -> tuple[dict, list[dict]]:
         raise ValueError("aucun fichier : choisissez une image ou une vidéo")
     if len(ids) > MAX_ITEMS:
         raise ValueError(f"{MAX_ITEMS} fichiers au plus par envoi")
-    common = {"model": model, "mode": mode, "factor": factor, "target_image": ti, "target_video": tv,
+    common = {"preset": preset, "base": base, "touched": touched, "model": model, "mode": mode, "factor": factor,
+              "target_image": ti, "target_video": tv,
               "color": color, "denoise": round(den, 2), "prompt": str(d.get("prompt") or "").strip()[:6000]}
     free, machine = free_memory()
     rows = []
@@ -334,16 +407,22 @@ def check(d: dict) -> tuple[dict, list[dict]]:
 
 
 def plan_row(it: dict, c: dict, free: float | None = None, machine: str = "") -> dict:
-    m = MODELS[c["model"]]
     kind = it["kind"]
     row = {"item": it["id"], "kind": kind, "title": it.get("title") or it["id"], "ok": False,
            "in": [it.get("width"), it.get("height")]}
     if kind not in ("image", "video"):
         row["why"] = "ni une image ni une vidéo : un élément s'ouvre dans Asset, ses images s'agrandissent une à une"
         return row
-    if kind not in m["kinds"]:
-        row["why"] = f"{m['name']} n'agrandit pas les {'vidéos' if kind == 'video' else 'images'}"
+    try:
+        s = settings_for(c, kind)
+    except ValueError as e:
+        row["why"] = str(e)
         return row
+    model = s["model"]
+    m = MODELS[model]
+    mode = "fixed" if m.get("fixed") else c["mode"]
+    # ce qui partira vraiment : le préréglage rejoué, ou les avancés
+    row.update(model=model, mode=mode, set={k: s[k] for k in ADVANCED})
     w, h = it.get("width") or 0, it.get("height") or 0
     if not w or not h:
         row["why"] = "taille inconnue : le fichier ne se lit pas"
@@ -352,7 +431,7 @@ def plan_row(it: dict, c: dict, free: float | None = None, machine: str = "") ->
     if kind == "video" and not frames:
         row["why"] = "durée ou cadence inconnue : la vidéo ne se lit pas"
         return row
-    W, H, label = out_size(c["model"], kind, w, h, c["mode"], c["factor"],
+    W, H, label = out_size(model, kind, w, h, mode, c["factor"],
                            c["target_image"] if kind == "image" else c["target_video"])
     f = max(W / w, H / h)
     row.update(out=[W, H], label=label, frames=frames, fps=it.get("fps"), duration=it.get("duration"),
@@ -363,17 +442,18 @@ def plan_row(it: dict, c: dict, free: float | None = None, machine: str = "") ->
         # Affiner passe par ImageScaleToTotalPixels (1 Mpx) : la borne ne le concerne pas
         row["why"] = f"×{f:.1f} : au-delà de ×8, le nœud de redimensionnement des gabarits SeedVR2 refuse (max 8,0)"
     elif m.get("max_factor") and f > m["max_factor"] + 0.01:
-        row["why"] = f"{m['name']} fait ×2 au plus (ici ×{f:.1f}) : RealESRGAN_x4plus à télécharger (67 Mo)"
+        row["why"] = f"{s['who']} fait ×2 au plus (ici ×{f:.1f})" + (
+            " : RealESRGAN_x4plus à télécharger (67 Mo)" if c["preset"] == "custom" else "")
     elif kind == "image" and max(W, H) > MAX_IMAGE:
         row["why"] = f"trop grand : {W}×{H} dépasse {MAX_IMAGE} px (la limite de l'outil Image)"
     elif kind == "video" and (min(W, H) > MAX_VIDEO[0] or max(W, H) > MAX_VIDEO[1]):
         row["why"] = f"{W}×{H} dépasse la 4K UHD (petit côté 2160, grand côté 4096)"
     else:
         row["ok"] = True
-    row["mem"] = mem_estimate(c["model"], W, H, frames, free)
+    row["mem"] = mem_estimate(model, W, H, frames, free)
     if machine and row["mem"].get("chunks", 1) > 1:
         row["mem"]["how"] += f" ; {row['mem']['chunks']} morceaux d'après la mémoire libre de {machine}"
-    row["est"] = time_estimate(c["model"], kind, W, H, frames)
+    row["est"] = time_estimate(model, kind, W, H, frames)
     return row
 
 
@@ -683,7 +763,11 @@ def api_models(req) -> dict:
                              for k, v in av.get(mid, {}).items()}
         models.append(e)
     free, machine = free_memory()
-    return {"backend": backend(), "models": models, "default": DEFAULT,
+    presets = [{"id": k, **{kk: vv for kk, vv in v.items() if kk not in ("image", "video")},
+                "image": v.get("image") and {**DEFAULT_SET, **v["image"]},
+                "video": v.get("video") and {**DEFAULT_SET, **v["video"]}} for k, v in PRESETS.items()]
+    return {"backend": backend(), "models": models, "default": DEFAULT, "presets": presets,
+            "default_set": DEFAULT_SET, "advanced": list(ADVANCED),
             "targets": {k: [{"id": i, **{kk: vv for kk, vv in t.items() if kk in ("label", "sub")}} for i, t in v.items()]
                         for k, v in TARGETS.items()},
             "colors": COLORS, "denoise": {"min": 0.10, "max": 0.50, "default": 0.25, "advice": [0.15, 0.35]},
@@ -714,27 +798,41 @@ def api_run(req) -> dict:
     skipped = [{"item": r["item"], "title": r["title"], "why": r.get("why", "")} for r in rows if not r["ok"]]
     if not ok:
         raise HttpError(400, "rien à agrandir : " + "; ".join(f"{s['title']} — {s['why']}" for s in skipped))
-    m = MODELS[common["model"]]
+    # chaque rangée porte ses réglages résolus (le préréglage rejoué pour sa sorte)
+    params = lambda r, **kw: {**common, **r["set"], "model": r["model"], "mode": r["mode"], **kw}  # noqa: E731
     if d.get("dry"):
         out = {"backend": backend(), "rows": rows, "graphs": {}}
         if img.cf_available():
             for r in ok:
-                p = {**common, "seed": seed, "width": r["out"][0], "height": r["out"][1]}
+                p = params(r, seed=seed, width=r["out"][0], height=r["out"][1])
                 src = library.get(r["item"])
-                out["graphs"][r["item"]] = (graph_image(common["model"], "src.png", p, tuple(r["in"]),
-                                                        common["prompt"] or _caption(src) or "")
-                                            if r["kind"] == "image" else graph_video(common["model"], "src.mp4", p))
+                out["graphs"][r["item"]] = (graph_image(r["model"], "src.png", p, tuple(r["in"]),
+                                                        p["prompt"] or _caption(src) or "")
+                                            if r["kind"] == "image" else graph_video(r["model"], "src.mp4", p))
         return out
     submitted = []
     for k, r in enumerate(ok):
-        pin = _pin_for(common["model"], r["kind"])
+        pin = _pin_for(r["model"], r["kind"])
         src = library.get(r["item"])
-        p = {**common, "source": r["item"], "seed": (seed + k) % (2 ** 32), "width": r["out"][0], "height": r["out"][1],
-             "label": r["label"], "frames": r.get("frames", 1)}
-        j = jobs.submit(f"upscale.{r['kind']}", p, title=f"{m['name']} · {_short(r['title'], 36)} · {r['label']}",
+        p = params(r, source=r["item"], seed=(seed + k) % (2 ** 32), width=r["out"][0], height=r["out"][1],
+                   label=r["label"], frames=r.get("frames", 1))
+        who = PRESETS[common["preset"]]["label"] if common["preset"] != "custom" else MODELS[r["model"]]["name"]
+        j = jobs.submit(f"upscale.{r['kind']}", p, title=f"{who} · {_short(r['title'], 36)} · {r['label']}",
                         tool="upscale", pin=pin, thumb=library.public(src).get("thumb_url"))
         submitted.append({**jobs.public(j), "source": r["item"]})
     return {"jobs": submitted, "skipped": skipped}
+
+
+def api_pile(req, item_id) -> dict:
+    """La pile d'un média (Cal, 29/09 : « une pile par image comme notre banc
+    de comparaison ») : la source, puis ses essais — les agrandies de cet
+    outil dont elle est le parent, de la plus ancienne à la plus récente.
+    Un essai retiré est à la corbeille : il n'y est plus."""
+    src = library.get(item_id)
+    if not src:
+        raise HttpError(404, "introuvable dans la bibliothèque")
+    got = library.query(["image", "video"], tool="upscale", sort="old", limit=100000)["items"]
+    return {"source": library.public(src), "trials": [it for it in got if item_id in (it.get("parents") or [])]}
 
 
 def register(app) -> None:
@@ -744,6 +842,7 @@ def register(app) -> None:
     app.route("GET", "/api/upscale/models", api_models)
     app.route("POST", "/api/upscale/plan", api_plan)
     app.route("POST", "/api/upscale/run", api_run)
+    app.route("GET", "/api/upscale/pile/{item_id}", api_pile)
 
 
 # ── le contrôle sans GPU ────────────────────────────────────
@@ -807,6 +906,27 @@ def selftest(call, ok) -> None:
         ok(st == 400 and r.get("error"), f"upscale : refusé — {msg} ({st} {r})")
     st, r = call("POST", "/api/upscale/plan", {"items": [iid], "model": "esrgan-x2", "factor": 4})
     ok("x4plus" in (r or {}).get("error", ""), "upscale : le ×4 GAN dit quoi télécharger")
+
+    # les préréglages : la seule table, rejouée par le serveur quoi que la page envoie à côté
+    pr = {p["id"]: p for p in m.get("presets", [])}
+    ok(set(pr) == set(PRESETS) and all(p.get("src") and p.get("label") for p in pr.values()),
+       f"upscale : les préréglages, chacun avec sa source ({list(pr)})")
+    ok(all(v and v["model"] in RETAINED for p in pr.values() for v in (p["image"], p["video"]) if v),
+       "upscale : un préréglage ne mène qu'à un modèle retenu")
+    st, r = call("POST", "/api/upscale/plan", {"items": [iid], "preset": "precis", "model": "esrgan-x2", "factor": 2})
+    row = r["rows"][0] if st == 200 else {}
+    ok(row.get("ok") and row.get("model") == "seedvr2-7b" and row["set"]["color"] == "lab",
+       f"upscale : « précis » sur une image = SeedVR2 7B, lab — le modèle envoyé à côté ignoré ({row})")
+    st, r = call("POST", "/api/upscale/plan", {"items": [iid], "preset": "creatif"})
+    row = r["rows"][0] if st == 200 else {}
+    ok(row.get("ok") and row.get("model") == "zimage-refine" and row["set"]["denoise"] == 0.25 and row.get("mode") == "fixed",
+       f"upscale : « créatif » sur une image = Affiner, 0,25, taille fixe ({row})")
+    st, r = call("POST", "/api/upscale/plan", {"items": [iid], "preset": "rapide", "factor": 4})
+    row = r["rows"][0] if st == 200 else {}
+    ok(st == 200 and not row.get("ok") and "×2 au plus" in row.get("why", "") and "RealESRGAN" not in row.get("why", ""),
+       f"upscale : « rapide » ×4 refusé, en mots simples ({row})")
+    st, r = call("POST", "/api/upscale/plan", {"items": [iid], "preset": "n-existe-pas"})
+    ok(st == 400, "upscale : préréglage inconnu refusé")
 
     # une vidéo d'essai (ffmpeg), si ffmpeg est là
     vid = None
@@ -896,3 +1016,33 @@ def selftest(call, ok) -> None:
         st, r = call("POST", "/api/upscale/plan", {"items": [vid], "model": "esrgan-x2", "factor": 2})
         est = r["rows"][0].get("est", {}) if st == 200 else {}
         ok(est.get("s") is not None and "rendu" in est.get("how", ""), f"upscale : le temps s'estime sur les rendus mesurés ({est})")
+        st, r = call("POST", "/api/upscale/plan", {"items": [vid], "preset": "precis", "factor": 2})
+        row = r["rows"][0] if st == 200 else {}
+        ok(row.get("ok") and row.get("model") == "seedvr2-3b", f"upscale : « précis » sur une vidéo = SeedVR2 3B ({row})")
+        st, r = call("POST", "/api/upscale/plan", {"items": [vid], "preset": "creatif"})
+        row = r["rows"][0] if st == 200 else {}
+        ok(st == 200 and not row.get("ok") and "image seulement" in row.get("why", ""), f"upscale : « créatif » dit qu'il ne prend pas la vidéo ({row})")
+
+    # un essai par préréglage, puis la pile de la source
+    st, r = call("POST", "/api/upscale/run", {"items": [iid], "preset": "precis", "factor": 2})
+    j = wait(r["jobs"][0]["id"]) if st == 200 else {}
+    it = (j.get("items") or [{}])[0]
+    ok(j.get("state") == "done" and it.get("params", {}).get("preset") == "precis" and it["params"].get("model") == "seedvr2-7b"
+       and it["params"].get("touched") == [], f"upscale : l'essai garde son préréglage et le modèle résolu ({it.get('params')})")
+    st, r = call("POST", "/api/upscale/run", {"items": [iid], "preset": "custom", "model": "seedvr2-3b", "color": "wavelet",
+                                               "touched": ["color", "n-existe-pas"], "base": "precis", "factor": 2})
+    j2 = wait(r["jobs"][0]["id"]) if st == 200 else {}
+    it2 = (j2.get("items") or [{}])[0]
+    ok(j2.get("state") == "done" and it2.get("params", {}).get("touched") == ["color"] and it2["params"].get("color") == "wavelet"
+       and it2["params"].get("base") == "precis",
+       f"upscale : un essai personnalisé garde ce qui a été touché ({it2.get('params')})")
+    st, pile = call("GET", f"/api/upscale/pile/{iid}")
+    ids = [t["id"] for t in pile.get("trials", [])] if st == 200 else []
+    ok(st == 200 and pile["source"]["id"] == iid and it.get("id") in ids and it2.get("id") in ids
+       and ids.index(it["id"]) < ids.index(it2["id"]) and all(iid in t["parents"] for t in pile["trials"]),
+       f"upscale : la pile = la source puis ses essais, dans l'ordre ({st} {ids})")
+    call("POST", f"/api/library/{it2['id']}/delete")
+    st, pile = call("GET", f"/api/upscale/pile/{iid}")
+    ok(st == 200 and it2["id"] not in [t["id"] for t in pile["trials"]], "upscale : un essai retiré (corbeille) quitte la pile")
+    st, _ = call("GET", "/api/upscale/pile/ima-20000101-000000-dead")
+    ok(st == 404, "upscale : la pile d'un média absent : 404")

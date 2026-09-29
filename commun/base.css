@@ -267,8 +267,9 @@ select.fld { cursor: pointer; }
   border-radius: var(--r4); background: var(--black); overflow: hidden;
   box-shadow: inset 0 0 0 1px var(--line); user-select: none;
 }
-.monitor .layer { position: absolute; inset: 0; }
+.monitor .layer { position: absolute; inset: 0; overflow: hidden; }
 .monitor .layer.b { clip-path: inset(0 0 0 50%); }
+.monitor.mode-a .layer.b, .monitor.mode-b .layer.b { clip-path: none; }
 .monitor .layer img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .monitor.mode-side .layer { width: 50%; clip-path: none; }
 .monitor.mode-side .layer.b { left: 50%; }
