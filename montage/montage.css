@@ -219,7 +219,14 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .mon-foot .pb { height: 26px; min-width: 30px; padding: 0 8px; font-size: 10px; }
 .mon-foot .note { color: var(--ink3); cursor: help; }
 
-/* l'inspecteur */
+/* l'inspecteur : son en-tête (le bouton qui le détache), puis ses cartes */
+.mtg .inspw { background: transparent; gap: 6px; overflow: visible; }
+.insp-head { display: flex; align-items: center; gap: 8px; flex: none; min-height: 22px; padding: 0 2px; }
+.insp-head .t { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink3); }
+.insp-head .sp { flex: 1; }
+.inspw > .insp { flex: 1 1 0; }
+/* le bouton « détacher » (commun/fenetre.css) dans les en-têtes des panneaux */
+.mon-head .sr-fen-b, .bin .pan-head .sr-fen-b { align-self: center; }
 .insp { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; overflow-x: hidden; min-height: 0; padding-right: 2px; }
 .card { border-radius: var(--r4); padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; background: var(--panel); flex: none; }
 .card.fxc { background: transparent; box-shadow: inset 0 0 0 1px var(--line-cy); }

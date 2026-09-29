@@ -17,6 +17,7 @@
 // câbles typés `{ a, b, t: 'notes' | 'mod', k }` (musique.js, music_jouets.py).
 
 import { toast } from '../../commun/shell.js';
+import { elementAuPoint } from '../../commun/fenetre.js';
 import { MODULES, AUTOMATABLE, TRACK_KINDS, SOURCES_OF, spec, val, fromNorm, drumVoicesOf } from '../modules.js';
 import { el, menu, put, clamp } from '../ui.js';
 import { JOUET_TYPES, NOTE_SOURCES, CALAGES, SCALES } from './defs.js';
@@ -687,7 +688,7 @@ export function createJouets(app) {
       temp.setAttribute('d', '');
       const L = link;
       link = null;
-      const tgt = document.elementFromPoint(ev.clientX, ev.clientY);
+      const tgt = elementAuPoint(ev.clientX, ev.clientY);   // dans la fenêtre du geste (le nodal détaché : commun/fenetre.js)
       const tp = tgt?.closest?.('[data-tport]'), other = tp?.closest('.nd-card')?.dataset.id;
       if (tp && other && other !== L.id) {
         if (tp.dataset.t !== L.t) { toast(`un câble de ${PORT_FR[L.t]} se branche sur un port de ${PORT_FR[L.t]}`); return; }

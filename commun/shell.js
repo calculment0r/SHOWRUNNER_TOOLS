@@ -12,6 +12,8 @@
 import './theme.js';
 // les copies d'affichage d'une image (thumb) : docs/etudes/ideation_fluidite.md
 import { bind as bindView, pickView, needOf } from './proxies.js';
+// le plein écran de la page : le bouton tout à droite de la barre, Ctrl+Maj+F (commun/pleinecran.js)
+import { boutonPleinEcran, raccourci as raccourciPleinEcran } from './pleinecran.js';
 
 export const ROOT = new URL('../', import.meta.url);
 export const href = (p) => (p && /^https?:/.test(p) ? p : new URL(p || '', ROOT).href);
@@ -317,7 +319,9 @@ export function mountHeader(toolId, { sub = '' } = {}) {
     el('button', { class: 'tb ghost sm sr-gear', id: 'sr-prefs', type: 'button', title: 'préférences · Ctrl+,', 'aria-label': 'préférences',
       html: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>',
       onclick: () => import('./prefs.js').then((m) => m.openPrefs(toolId)) }),
-    el('button', { class: 'tb ghost sm', id: 'sr-queue', title: 'la file des calculs', onclick: () => drawer(true) }, 'File'));
+    el('button', { class: 'tb ghost sm', id: 'sr-queue', title: 'la file des calculs', onclick: () => drawer(true) }, 'File'),
+    // tout à droite : le plein écran (Cal, 29/09) ; l'icône dit l'état
+    boutonPleinEcran(document, el));
   // fenêtre étroite : la navigation passe dans un menu « Outils », jamais cachée
   const menu = el('div', { class: 'tools-menu', hidden: true });
   const menuBtn = el('button', { class: 'tb ghost sm tools-btn', type: 'button', title: 'les outils',
@@ -380,6 +384,7 @@ export function mountHeader(toolId, { sub = '' } = {}) {
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === ',' && !e.altKey) { e.preventDefault(); import('./prefs.js').then((m) => m.openPrefs(toolId)); }
   });
+  raccourciPleinEcran(document);
   return hdr;
 }
 

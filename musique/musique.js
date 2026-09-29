@@ -25,6 +25,8 @@ import { createUndo, isTextField } from '../commun/undo.js';
 import { createTimeline } from './timeline.js';
 import { createConsole } from './console.js';
 import { createNodal } from './nodal.js';
+// le nodal dans sa fenêtre (un 2ᵉ écran) : docs/etudes/fenetres.md § 6
+import { fenetres, $ as $partout, partout, fenetreDuGeste } from '../commun/fenetre.js';
 import { createJouets } from './jouets/index.js';   // jouets : les jouets du Playground de Cal
 import { createRecorder } from './enregistrement.js';
 import { openGenerative, options, bestStems, STEM_FR } from './generatif.js';
@@ -46,7 +48,12 @@ async function loadItem(id) {
   return items.get(id);
 }
 const engine = new Engine({ loadItem });
-engine.onstop = () => { if (rec.active) rec.end(); paintTransport(); views[S.view]?.frame?.(engine.position()); };
+engine.onstop = () => {
+  if (rec.active) rec.end();
+  paintTransport();
+  views[S.view]?.frame?.(engine.position());
+  if (S.view !== 'nodal' && app.nodalDetache?.()) views.nodal?.frame?.(engine.position());   // le nodal dans sa fenêtre
+};
 engine.onplay = () => { if (S.rec) rec.begin(); paintTransport(); };
 
 export const uid = (p) => p + Math.random().toString(36).slice(2, 9);
@@ -129,6 +136,8 @@ export const app = {
   setView(v) {
     // l'ancienne vue Rack est la vue de détail « Instruments » de l'arrangement
     if (v === 'rack') { S.proj.ui = { ...(S.proj.ui || {}), detail: 'device', dock: true }; v = 'timeline'; }
+    // le nodal est dans sa fenêtre : y aller (la page garde sa vue)
+    if (v === 'nodal' && app.nodalDetache?.()) { try { app.fenetres.fenetre('nodal').focus(); } catch { /* fermée */ } return; }
     S.view = v;
     S.proj.ui = { ...(S.proj.ui || {}), view: v };
     saveQuiet();
@@ -927,6 +936,35 @@ async function loadList() {
 const bar = el('div', { class: 'mu-bar' });
 const viewBox = el('div', { class: 'mu-view' });
 document.body.append(el('main', { class: 'mu-app' }, bar, viewBox));
+
+// ── le nodal dans sa fenêtre (commun/fenetre.js ; docs/etudes/fenetres.md § 6) ──
+// Cal, 29/09 : « détacher des panels dans un deuxième écran… celui du nodal dans
+// ODIO ». Le nœud du nodal part dans une fenêtre du portail ; son code, l'état,
+// l'annulation et LE moteur (un seul AudioContext, ici) restent dans la page, qui
+// montre alors l'arrangement (ou la console). Le nodal est une vue sans place fixe
+// (il partage viewBox avec les autres) : `dans: viewBox`. Revenu, il reprend la vue.
+let nodalDehors = false;
+const F = fenetres('music', { onchange: () => {
+  const d = F.detache('nodal');
+  if (nodalDehors && !d && S.proj) S.view = 'nodal';   // rattaché : on le retrouve
+  nodalDehors = d;
+  if (S.proj) render(true);
+} });
+app.nodalDetache = () => F.detache('nodal');
+app.fenetres = F;
+const pastillesFenetres = F.pastilles();   // « ↗ Nodal » dans la barre (clic : sa fenêtre ; clic droit : rattacher)
+let nodalDeclare = null;
+function declarerNodal() {
+  if (!views.nodal || nodalDeclare === views.nodal.el) return;
+  F.panneau('nodal', { node: views.nodal.el, title: 'Nodal', dans: viewBox, corps: { 'data-view': 'nodal' } });
+  nodalDeclare = views.nodal.el;
+}
+// détacher (le bouton du nodal, les menus) : dans le geste, window.open le demande
+app.detacherNodal = () => {
+  if (!views.nodal) views.nodal = createNodal(app);
+  declarerNodal();
+  return F.detacher('nodal');
+};
 const ov = el('canvas', { class: 'mu-ov', title: 'la forme d\'onde de la session (rendu hors temps réel) · clic : aller là' });
 const posEl = el('b', { id: 'mu-pos' });
 const secEl = el('small', { id: 'mu-sec' });
@@ -938,9 +976,12 @@ function paintBar() {
     S.list.map((x) => el('option', { value: x.id, selected: x.id === P.id || null }, x.name)));
   const ic = (label, title, fn, cls = '', attrs = {}) => el('button', { class: `tb sm mu-ic ${cls}`, type: 'button', title, onclick: fn, ...attrs }, label);
   const views = el('div', { class: 'seg mu-views', role: 'tablist' },
-    [['timeline', 'Arrangement', 'Tab : Arrangement ↔ Nodal'], ['console', 'Console', ''], ['nodal', 'Nodal', 'Tab : Arrangement ↔ Nodal']].map(([v, l, ti]) =>
-      el('button', { class: `tb${S.view === v ? ' on' : ''}`, role: 'tab', 'aria-selected': S.view === v, type: 'button', 'data-view': v, title: ti,
-        onclick: () => app.setView(v) }, l)));
+    [['timeline', 'Arrangement', 'Tab : Arrangement ↔ Nodal'], ['console', 'Console', ''], ['nodal', 'Nodal', 'Tab : Arrangement ↔ Nodal']].map(([v, l, ti]) => {
+      const dehors = v === 'nodal' && F.detache('nodal');   // dans sa fenêtre : l'onglet y mène
+      return el('button', { class: `tb${S.view === v ? ' on' : ''}`, role: 'tab', 'aria-selected': S.view === v, type: 'button', 'data-view': v,
+        title: dehors ? 'le nodal est dans sa fenêtre (2ᵉ écran) : clic pour la montrer' : ti,
+        onclick: () => app.setView(v) }, dehors ? `${l} ↗` : l);
+    }));
   const bpm = el('button', { class: 'mu-bpm', id: 'mu-bpm', type: 'button', title: 'tempo · clic : le saisir · molette : ± 1', onclick: editBpm,
     onwheel: (e) => { e.preventDefault(); setBpm(P.bpm + (e.deltaY < 0 ? 1 : -1)); } }, el('b', {}, String(P.bpm)), el('small', {}, 'bpm'));
   const tap = el('button', { class: 'tb ghost sm mu-tap', id: 'mu-tap', type: 'button',
@@ -973,6 +1014,7 @@ function paintBar() {
     views,
     el('div', { class: 'grp mu-ovw' }, ov),
     el('div', { class: 'grp mu-undo' }, ...undoStack.buttons()),
+    pastillesFenetres,
     el('span', { class: 'sp' }),
     el('div', { class: 'grp' },
       S.midi ? el('span', { class: 'pill on', title: 'Web MIDI : les entrées jouent la piste armée ou choisie' }, el('i'), el('span', {}, `MIDI · ${S.midi}`)) : null,
@@ -1175,13 +1217,20 @@ const views = {};
 const MAKERS = { timeline: createTimeline, console: createConsole, nodal: createNodal };
 function render(full = false) {
   if (!S.proj) return;
+  // le nodal est dans sa fenêtre (commun/fenetre.js) : la page montre une autre vue
+  const dehors = F.detache('nodal');
+  if (dehors && S.view === 'nodal') S.view = 'timeline';
   paintBar();
   if (!views[S.view]) views[S.view] = MAKERS[S.view](app);
+  // un autre projet ouvert : les vues sont refaites ; la fenêtre prend le nodal neuf
+  if (dehors && !views.nodal) views.nodal = createNodal(app);
+  declarerNodal();
   const v = views[S.view];
   if (full || viewBox.firstChild !== v.el) put(viewBox, v.el);
-  if (S.view !== 'nodal') views.nodal?.hide?.();
+  if (S.view !== 'nodal' && !dehors) views.nodal?.hide?.();
   document.body.dataset.view = S.view;
   v.render();
+  if (dehors && views.nodal !== v) views.nodal.render();
   app.toys?.wake();   // jouets : un projet qui a des jouets les fait vivre, dans toutes les vues
 }
 
@@ -1192,6 +1241,8 @@ function frame() {
     setCue(posEl, fmtPos(b));
     setCue(secEl, fmtClock(b * 60 / S.proj.bpm));
     views[S.view]?.frame?.(b);
+    // le nodal dans sa fenêtre suit le moteur lui aussi (tête, vu-mètres)
+    if (S.view !== 'nodal' && F.detache('nodal')) views.nodal?.frame?.(b);
     if (ovBuf && ov.dataset.tot) {
       // la tête sur la forme d'onde
       drawOverview();
@@ -1225,8 +1276,11 @@ function srcForPlay() {
 const newTrack = (kind, type) => { app.addTrack(kind, type ? { type } : {}); app.commit('graph'); };
 addEventListener('keydown', async (e) => {
   // une fenêtre, ou un menu ouvert (commun/menu.js : ses flèches, Entrée, Échap, les lettres), garde le clavier
-  if (!S.proj || typing(e) || document.querySelector('.scrim, .sr-menu')) return;
+  if (!S.proj || typing(e) || $partout('.scrim, .sr-menu')) return;
   const ctrl = e.ctrlKey || e.metaKey, c = e.code;
+  // la vue qui reçoit ses touches : le nodal quand on tape dans sa fenêtre (commun/fenetre.js
+  // renvoie ici le clavier d'une fenêtre détachée), sinon celle de la page
+  const vk = F.detache('nodal') && fenetreDuGeste() === F.fenetre('nodal') ? views.nodal : views[S.view];
   // annuler, rétablir (Ctrl+Z ; Ctrl+Maj+Z, Ctrl+Y ; ⌘ sur Mac) : commun/undo.js les lit, par la
   // lettre (e.key) et non la touche (e.code, faux en AZERTY) ; ils ne vont pas plus loin
   if (ctrl && !e.altKey && ['z', 'y'].includes((e.key || '').toLowerCase())) return;
@@ -1266,7 +1320,7 @@ addEventListener('keydown', async (e) => {
   if (c === 'F9') { e.preventDefault(); if (!e.repeat) toggleRec(); return; }
   if (e.shiftKey && L === 't' && !ctrl && !e.altKey) { e.preventDefault(); tapTempo(e.timeStamp); return; }
   if (e.shiftKey && L === 'm' && !ctrl && !e.altKey) { app.addMarker(engine.position()); return; }
-  if (ctrl || e.altKey) { views[S.view]?.key?.(e); return; }
+  if (ctrl || e.altKey) { vk?.key?.(e); return; }
   if (L === 'm' && !e.repeat) { toggleKbd(); return; }
   if (S.kbd) {
     if (c === 'KeyZ' || c === 'KeyX') {
@@ -1298,7 +1352,7 @@ addEventListener('keydown', async (e) => {
     if (L === 'c' && t) { t.arm = !t.arm; app.commit('quiet'); render(); return; }
     if (L === 'a' && t) { S.proj.ui.auto = { ...(S.proj.ui.auto || {}), [t.id]: !S.proj.ui.auto?.[t.id] }; saveQuiet(); render(); return; }
   }
-  views[S.view]?.key?.(e);
+  vk?.key?.(e);
 });
 addEventListener('keyup', (e) => {
   if (!held.has(e.code)) return;
@@ -1332,15 +1386,20 @@ function baseMenu() {
     { label: 'Générer…', onclick: () => openGenerative(app) },
     { label: 'Exporter…', onclick: openExport },
     { label: 'Le guide', onclick: () => openGuide(app) },
+    '-',
+    // le nodal dans une fenêtre (un 2ᵉ écran), ou de retour dans la page
+    F.detache('nodal') ? F.entree('nodal') : { label: 'Détacher le nodal dans une fenêtre', icon: '↗', sub: '2ᵉ écran', onclick: () => app.detacherNodal() },
   ];
 }
-document.addEventListener('contextmenu', (e) => {
+// sur la page ET dans la fenêtre du nodal détaché (commun/fenetre.js, partout)
+partout('contextmenu', (e) => {
   if (!S.proj || isTextField(e.target)) return;
   e.preventDefault();
-  if (document.querySelector('.sr-menu')) return;             // la zone a ouvert le sien
+  if ($partout('.sr-menu')) return;                           // la zone a ouvert le sien
   if (e.target.closest?.('[data-nomenu]')) return;            // le bouton droit y est un geste
-  const inView = viewBox.contains(e.target);
-  const items = (inView && views[S.view]?.zoneMenu?.(e)) || baseMenu();
+  const dansNodal = F.detache('nodal') && !!views.nodal?.el.contains(e.target);
+  const inView = dansNodal || viewBox.contains(e.target);
+  const items = (inView && (dansNodal ? views.nodal : views[S.view])?.zoneMenu?.(e)) || baseMenu();
   if (items?.length) menu(e.clientX, e.clientY, items);
 });
 

@@ -103,14 +103,16 @@ const teinteDe = (e) => (e.module && MODULES[e.module]?.color) || (e.machine ? '
  * La fenêtre du catalogue. `onPick(type)` : poser au centre ; `onDrop(type,
  * {x, y})` : poser au point d'écran ; `onClose()`.
  */
-export function ouvrirCatalogue({ onPick, onDrop, onClose }) {
+export function ouvrirCatalogue({ onPick, onDrop, onClose, doc = document }) {
+  // `doc` : le document du nodal — la page, ou sa fenêtre sur un 2ᵉ écran (commun/fenetre.js)
+  const W = doc.defaultView || window;
   const entrees = entreesDuCatalogue();
   const voile = document.createElement('span');
   voile.className = 'palette__veil cat__voile';   // le voile d'une fenêtre du portail (.scrim)
   const fen = div('cat cat--fenetre');
-  const fermer = () => { voile.remove(); fen.remove(); porte?.remove(); removeEventListener('keydown', echap, true); onClose?.(); };
+  const fermer = () => { voile.remove(); fen.remove(); porte?.remove(); W.removeEventListener('keydown', echap, true); onClose?.(); };
   const echap = (e) => { if (e.key === 'Escape') { e.stopPropagation(); fermer(); } };
-  addEventListener('keydown', echap, true);
+  W.addEventListener('keydown', echap, true);
   voile.addEventListener('pointerdown', fermer);
   voile.addEventListener('contextmenu', (e) => e.preventDefault());
   fen.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -168,18 +170,18 @@ export function ouvrirCatalogue({ onPick, onDrop, onClose }) {
             fen.classList.add('cat--transport');
             porte = div('cat__porte');
             porte.append(vignette(e), div('cat__porte-nom', nomLisible(e)));
-            document.body.append(porte);
+            doc.body.append(porte);
           }
           porte.style.left = `${m.clientX}px`; porte.style.top = `${m.clientY}px`;
         };
         const lache = (u) => {
-          removeEventListener('pointermove', bouge); removeEventListener('pointerup', lache);
+          W.removeEventListener('pointermove', bouge); W.removeEventListener('pointerup', lache);
           if (!transporte) return;
           porte?.remove(); porte = null;
           fermer();
           onDrop(e.type, { x: u.clientX, y: u.clientY });
         };
-        addEventListener('pointermove', bouge); addEventListener('pointerup', lache);
+        W.addEventListener('pointermove', bouge); W.addEventListener('pointerup', lache);
       });
       liste.append(it);
     }
@@ -187,7 +189,7 @@ export function ouvrirCatalogue({ onPick, onDrop, onClose }) {
     corps.append(sec);
   }
   fen.append(tete, corps);
-  document.body.append(voile, fen);
+  doc.body.append(voile, fen);
   return { fermer };
 }
 

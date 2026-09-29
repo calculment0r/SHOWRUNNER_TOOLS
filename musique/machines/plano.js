@@ -120,7 +120,9 @@ const retirerControle = (g, p) => majSection(g, p.s, { rangees: g.sections[p.s].
  * `onPoser(machineId)` pose la machine dans le nodal ; `onGarder()` enregistre
  * le projet (les gabarits y vivent).
  */
-export function ouvrirPlano({ projet, onPoser, onGarder, onClose }) {
+export function ouvrirPlano({ projet, onPoser, onGarder, onClose, doc = document }) {
+  // `doc` : le document du nodal — la page, ou sa fenêtre sur un 2ᵉ écran (commun/fenetre.js)
+  const W = doc.defaultView || window;
   const parametres = parametresParVoix();
   let courant = null, pris = null, message = null, panneau = null, valeurs = {};
   const gabarits = () => { const p = projet(); p.nodal = p.nodal || {}; return (p.nodal.gabarits = p.nodal.gabarits || []); };
@@ -128,9 +130,9 @@ export function ouvrirPlano({ projet, onPoser, onGarder, onClose }) {
   const voile = h('span', 'palette__veil');
   const page = h('section', 'plano');
   page.setAttribute('aria-label', 'PLANO');
-  const fermer = () => { voile.remove(); page.remove(); removeEventListener('keydown', echap, true); onClose?.(); };
+  const fermer = () => { voile.remove(); page.remove(); W.removeEventListener('keydown', echap, true); onClose?.(); };
   const echap = (e) => { if (e.key === 'Escape' && !e.target.closest?.('input, textarea, select')) { e.stopPropagation(); fermer(); } };
-  addEventListener('keydown', echap, true);
+  W.addEventListener('keydown', echap, true);
   voile.addEventListener('pointerdown', fermer);
   page.addEventListener('pointerdown', (e) => e.stopPropagation());
   page.addEventListener('wheel', (e) => e.stopPropagation(), { passive: true });
@@ -371,6 +373,6 @@ export function ouvrirPlano({ projet, onPoser, onGarder, onClose }) {
   }
 
   peindre();
-  document.body.append(voile, page);
+  doc.body.append(voile, page);
   return { fermer };
 }

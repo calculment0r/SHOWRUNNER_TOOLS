@@ -16,7 +16,9 @@
 // Envoi depuis un autre outil : montage/?add=<id> pose l'objet au bout de
 // la piste cible du montage ouvert (le dernier ouvert, sinon un nouveau).
 
-import { mountHeader, api, jobs, el, $, $$, toast, href, uploadFile, dropAnywhere, dropZone, dragItem, ITEM_MIME, fmtDate, stateFr } from '../commun/shell.js';
+import { mountHeader, api, jobs, el, toast, href, uploadFile, dropAnywhere, dropZone, dragItem, ITEM_MIME, fmtDate, stateFr } from '../commun/shell.js';
+// $ et $$ cherchent aussi dans les fenêtres détachées (un panneau sur un 2ᵉ écran : docs/etudes/fenetres.md)
+import { fenetres, $, $$, winOf } from '../commun/fenetre.js';
 import { menu, contextMenu, pageMenu } from '../commun/menu.js';
 import { split } from '../commun/split.js';
 import * as M from './model.js';
@@ -30,6 +32,9 @@ import { createUndo } from '../commun/undo.js';
 import { REGLE as MOLETTE, AIDE as MOLETTE_AIDE } from '../commun/molette.js';
 
 mountHeader('montage');
+// Les panneaux du haut se détachent dans une fenêtre (un 2ᵉ écran) : commun/fenetre.js
+// y déplace le nœud ; le code, l'état, l'annulation et le son restent ici.
+const F = fenetres('montage', { onchange: () => relayout() });
 
 const LS = (k, v) => { try { if (v === undefined) return JSON.parse(localStorage.getItem(k) || 'null'); localStorage.setItem(k, JSON.stringify(v)); } catch { return null; } return null; };
 
@@ -393,6 +398,7 @@ const project = mountProject({
   clearDrag: () => { S.dragging = null; },
   uploadMany: (files) => uploadMany(files),
   pushUndo: (label, undoFn, redoFn) => pushLibUndo(label, undoFn, redoFn),
+  detachItem: () => F.entree('bin'),
 });
 const loadBin = () => project.load();
 const paintBin = () => project.paint();
@@ -1346,9 +1352,10 @@ function fxRowDown(e, owner, id, rows, locked) {
     const ref = rs[to];
     if (ref) ref.before(line); else rows.append(line);
   };
+  const W = winOf(rows);                 // l'inspecteur peut être dans sa fenêtre (commun/fenetre.js)
   const up = (ev) => {
-    removeEventListener('pointermove', mv, true);
-    removeEventListener('pointerup', up, true);
+    W.removeEventListener('pointermove', mv, true);
+    W.removeEventListener('pointerup', up, true);
     line.remove();
     if (moving) {
       const from = list.findIndex((f) => f.id === id);
@@ -1377,8 +1384,8 @@ function fxRowDown(e, owner, id, rows, locked) {
     S.fxFocus = owner.key;
     paintInspector();
   };
-  addEventListener('pointermove', mv, true);
-  addEventListener('pointerup', up, true);
+  W.addEventListener('pointermove', mv, true);
+  W.addEventListener('pointerup', up, true);
 }
 
 // les réglages de l'effet choisi : l'intensité d'une LUT, les curseurs de l'étalonnage
@@ -2054,7 +2061,7 @@ function timelineMenu(e) {
 // une LUT du panneau Effets : poser, favori, renommer, dire l'image attendue, supprimer
 function fxPaneMenu(e) {
   const t = e.target.closest('.fxi.lut');
-  if (!t) return [{ head: 'Effets' }, { label: 'Importer une LUT…', icon: '+', onclick: () => importLutModal() }];
+  if (!t) return [{ head: 'Effets' }, { label: 'Importer une LUT…', icon: '+', onclick: () => importLutModal() }, '-', F.entree('src')];
   const m = lutMeta(t.dataset.lut);
   if (!m) return null;
   const edit = async (patch) => {
@@ -2085,7 +2092,7 @@ function sourceMenu() {
   const np = S.p ? {} : noProject;
   if (S.srcTab === 'fx') return null;
   const none = { disabled: true, why: 'double-cliquez un plan du Projet' };
-  if (!it) return [{ head: 'Source' }, { label: 'Aucun plan', ...none }];
+  if (!it) return [{ head: 'Source' }, { label: 'Aucun plan', ...none }, '-', F.entree('src')];
   const nm = media ? {} : { disabled: true, why: 'une image fixe n’a ni entrée ni sortie' };
   return [
     { head: `Source · ${it.title || ''}` },
@@ -2100,11 +2107,13 @@ function sourceMenu() {
     '-',
     { label: 'Révéler dans le chutier', onclick: () => revealInBin(it.id) },
     { label: 'Révéler dans Asset', sub: '↗', onclick: () => revealInAsset(it.id) },
+    '-',
+    F.entree('src'),
   ];
 }
 
 function programMenu() {
-  if (!S.p) return [{ head: 'Programme' }, { label: 'Ouvrir un montage', onclick: projectsModal }];
+  if (!S.p) return [{ head: 'Programme' }, { label: 'Ouvrir un montage', onclick: projectsModal }, '-', F.entree('prg')];
   const f = program.frame();
   const r = S.p.range || {};
   return [
@@ -2123,6 +2132,8 @@ function programMenu() {
     { label: 'Zones de sécurité', checked: S.safe, sub: '90 % · 80 %', onclick: () => { S.safe = !S.safe; LS('montage-safe', S.safe); $('#safe').hidden = !S.safe; } },
     '-',
     { label: 'Exporter…', key: 'Ctrl+M', disabled: !S.p.clips.length, why: 'rien à exporter : posez des plans sur la timeline', onclick: exportModal },
+    '-',
+    F.entree('prg'),
   ];
 }
 
@@ -2251,6 +2262,36 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// ── les panneaux dans une fenêtre (commun/fenetre.js ; docs/etudes/fenetres.md) ──
+// Les quatre panneaux du haut, dans l'ordre de la rangée, avec leurs tailles
+// de commun/split.js. Un panneau détaché sort de la rangée : la rangée se
+// refait sans lui (ses tailles gardées à part : 'montage-cols-sans-prg'…) et
+// le reprend à sa place quand il revient (fenêtre fermée, « Rattacher »).
+const COLS = [
+  { id: 'bin', sel: '.bin', title: 'Projet', size: 236, min: 170 },
+  { id: 'src', sel: '#src', title: 'Source · Effets', grow: 1, min: 220 },
+  { id: 'prg', sel: '#prg', title: 'Programme', grow: 1.2, min: 240 },
+  { id: 'insp', sel: '#inspw', title: 'Inspecteur', size: 286, min: 230 },
+];
+const rerender = () => { if (S.p) timeline.render(); };
+let cols = null;
+function relayout() {
+  const top = document.querySelector('.mtg-top');
+  if (!top || !COLS[0].node) return;
+  if (cols) for (const g of cols.gutters) g.remove();
+  const stay = COLS.filter((c) => !F.detache(c.id));
+  const gone = COLS.filter((c) => F.detache(c.id)).map((c) => c.id);
+  // plus aucun panneau souple : ceux qui restent se partagent la place
+  const soft = stay.some((c) => c.grow);
+  cols = split(top, stay.map((c) => (soft ? { el: c.node, size: c.size, grow: c.grow, min: c.min } : { el: c.node, grow: 1, min: c.min })),
+    { axis: 'x', key: 'montage-cols' + (gone.length ? '-sans-' + gone.join('-') : ''), onresize: rerender });
+  top.style.display = stay.length ? '' : 'none';
+  // l'horloge du programme bat dans la fenêtre qui le montre (player.js, schedule)
+  program.moved();
+  source.moved();
+  rerender();
+}
+
 // ── les boutons ─────────────────────────────────────────────
 function wire() {
   $('#b-projects').onclick = projectsModal;
@@ -2285,14 +2326,19 @@ function wire() {
   timeline.scroll.addEventListener('scroll', saveView);
   $('#safe').hidden = !S.safe;
 
-  // les panneaux se redimensionnent (commun/split.js) ; la timeline suit sa largeur
-  const rerender = () => { if (S.p) timeline.render(); };
-  split($('.mtg-top'), [
-    { el: $('.bin'), size: 236, min: 170 },
-    { el: $('#src'), grow: 1, min: 220 },
-    { el: $('#prg'), grow: 1.2, min: 240 },
-    { el: $('#insp'), size: 286, min: 230 },
-  ], { axis: 'x', key: 'montage-cols', onresize: rerender });
+  // les panneaux se redimensionnent (commun/split.js) ; la timeline suit sa largeur.
+  // Chacun des quatre du haut se détache dans une fenêtre (commun/fenetre.js) :
+  // la rangée se refait sans lui (relayout), et le reprend quand il revient.
+  for (const c of COLS) {
+    c.node = $(c.sel);
+    F.panneau(c.id, { node: c.node, title: c.title });
+  }
+  $('#bin-up').after(F.bouton('bin'));
+  $('#src .mon-head').append(F.bouton('src'));
+  $('#prg .mon-head').append(F.bouton('prg'));
+  $('#insp-head').append(F.bouton('insp'));
+  $('#fen-pills').replaceWith(F.pastilles());
+  relayout();
   split($('#mtg'), [
     { el: $('.mtg-top'), grow: 1, min: 220 },
     { el: $('.tlw'), grow: 0.82, min: 190 },
@@ -2321,7 +2367,10 @@ function wire() {
       { label: 'La voir dans Asset', icon: '▦', onclick: () => { location.href = href('asset/#' + S.p.id); } },
       '-',
       { label: 'Aimant', checked: !!S.snap, onclick: () => $('#b-snap')?.click() },
-      { label: 'Les raccourcis', icon: '?', onclick: helpModal }]));
+      { label: 'Les raccourcis', icon: '?', onclick: helpModal },
+      '-',
+      { head: 'fenêtres · 2ᵉ écran' },
+      ...COLS.map((c) => F.entree(c.id))]));
 
   // moniteurs : le clic donne le clavier
   $('#src').addEventListener('pointerdown', () => { if (S.srcTab === 'src') focus('source'); });
@@ -2435,6 +2484,6 @@ async function start() {
 start();
 
 // pour les essais (playwright) et le débogage : l'état, en lecture
-window.montage = { S, program, timeline, source, M, commit, placeItem, openProject, flushSave, setTool, lutGL, getLut, loadLuts, focus, select, project, closeSeqTab, undo, redo,
+window.montage = { S, F, program, timeline, source, M, commit, placeItem, openProject, flushSave, setTool, lutGL, getLut, loadLuts, focus, select, project, closeSeqTab, undo, redo,
   effects, dropEffect, selectTrack, moveTracks, groupTracks, ungroupTracks, leaveGroup, copyFx, pasteFx, ownerOf, srcTab, openSource, paintInspector,
   undoLabels: () => ({ done: U.done.map((e) => e.label), undone: U.undone.map((e) => e.label), name: U.name }) };

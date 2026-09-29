@@ -165,8 +165,26 @@ export class Program {
     // jouent vraiment (play() rend la main avant la première image), puis
     // se cale sur eux — sinon ils partent avec 100 à 150 ms de retard.
     this.starting = rate > 0 ? performance.now() : 0;
-    if (!this.raf) this.raf = requestAnimationFrame(this.loop);
+    if (!this.raf) this.schedule();
     this.onTick(this.t, true);
+  }
+
+  // L'horloge bat au rythme de la fenêtre qui MONTRE le programme
+  // (requestAnimationFrame de son document) : détaché sur un 2ᵉ écran
+  // (commun/fenetre.js), il continue même si la page principale est
+  // cachée (le navigateur suspend les images d'une fenêtre cachée : HTML,
+  // « update the rendering »).
+  schedule() {
+    const w = this.stage.ownerDocument.defaultView || window;
+    this.rafWin = w;
+    this.raf = w.requestAnimationFrame(this.loop);
+  }
+
+  // le moniteur a changé de fenêtre : l'image demandée à l'ancienne ne viendra peut-être jamais
+  moved() {
+    if (this.raf && this.rafWin) { try { this.rafWin.cancelAnimationFrame(this.raf); } catch { /* fenêtre fermée */ } }
+    this.raf = 0;
+    if (this.playing) this.schedule(); else this.render();
   }
 
   pause() {
@@ -196,7 +214,7 @@ export class Program {
       const now = performance.now();
       const media = this.media || [];
       const ready = media.every(({ e }) => !e.el.paused && e.el.readyState >= 3 && e.el.currentTime > 0);
-      if (!ready && now - this.starting < 600) { this.raf = requestAnimationFrame(this.loop); return; }
+      if (!ready && now - this.starting < 600) { this.schedule(); return; }
       this.starting = 0;
       // le temps du montage que disent les médias partis : on prend le plus en retard
       const fps = this.fps;
@@ -215,7 +233,7 @@ export class Program {
     this.t = t;
     this.render();
     this.onTick(t, true);
-    this.raf = requestAnimationFrame(this.loop);
+    this.schedule();
   }
 
   entry(c, track) {
@@ -545,8 +563,12 @@ export class Source {
   tick() {
     if (!this.el || this.el.paused) return;
     this.onTick();
-    requestAnimationFrame(() => this.tick());
+    const w = this.box.ownerDocument.defaultView || window;   // la fenêtre qui montre la source (commun/fenetre.js)
+    if (this.tk && this.tkWin) { try { this.tkWin.cancelAnimationFrame(this.tk); } catch { /* */ } }
+    this.tkWin = w;
+    this.tk = w.requestAnimationFrame(() => { this.tk = 0; this.tick(); });
   }
+  moved() { this.tick(); }
 
   stop() { clearInterval(this.rev); this.rev = 0; this.rate = 0; }
 

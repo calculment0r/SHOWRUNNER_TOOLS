@@ -1,0 +1,55 @@
+/* ============================================================
+   SHOWRUNNER TOOLS — les fenêtres détachées (commun/fenetre.js)
+   Le bouton « détacher » d'un en-tête de panneau, les pastilles de la
+   barre d'un outil, et la fenêtre elle-même : sa barre, les ancêtres
+   refaits du panneau, le panneau qui prend toute la place.
+   Jetons seulement, filets inset, capitales mono pour la machine.
+   ============================================================ */
+
+/* le bouton d'un en-tête de panneau : une petite icône, jamais orange */
+.sr-fen-b {
+  flex: none; width: 24px; height: 22px; border-radius: var(--r2);
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--ink3); box-shadow: inset 0 0 0 1px var(--line);
+}
+.sr-fen-b svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.sr-fen-b:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
+/* dans sa fenêtre, le panneau n'a pas à se détacher : la barre de la fenêtre dit « Rattacher » */
+[data-sr-fen] .sr-fen-b { display: none; }
+
+/* les pastilles de la barre d'un outil : ce qui est dans une fenêtre, ce qui est à rouvrir */
+.sr-fen-pills { display: inline-flex; gap: 4px; align-items: center; }
+.sr-fen-pills[hidden] { display: none; }
+.sr-fen-pill { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; padding: 0 7px; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; }
+.tb.ghost.sr-fen-pill.on { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.tb.ghost.sr-fen-pill.x { width: 26px; padding: 0; justify-content: center; }
+
+/* ── la fenêtre ─────────────────────────────────────────── */
+html:has(body.sr-fen), html:has(body.sr-fen-attente) { height: 100%; }
+body.sr-fen, body.sr-fen-attente {
+  margin: 0; height: calc(100 * var(--vh)); min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column; background: var(--bg);
+}
+body.sr-fen-attente { align-items: center; justify-content: center; }
+.sr-fen-msg { font-family: var(--f-mono); font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink3); margin: 0; }
+.sr-fen-bar {
+  flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+  background: var(--panel); box-shadow: inset 0 -1px 0 var(--line);
+}
+.sr-fen-bar .k { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sr-fen-bar .sp { flex: 1; }
+.sr-fen-bar .sr-fen-full { width: 30px; min-width: 30px; padding: 0; }
+.sr-fen-bar .sr-fen-full svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.sr-fen-bar .sr-fen-full.on { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
+/* en plein écran, la fenêtre n'est plus que le panneau : la barre revient au survol du haut */
+:fullscreen body.sr-fen .sr-fen-bar { position: fixed; left: 0; right: 0; top: 0; z-index: 950; opacity: 0; transition: opacity .15s; }
+:fullscreen body.sr-fen .sr-fen-bar:hover, :fullscreen body.sr-fen .sr-fen-bar:focus-within { opacity: 1; }
+
+/* les ancêtres refaits : ils ne font que passer la place au panneau */
+.sr-fen-host { flex: 1 1 0; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.sr-fen-host .sr-fen-a { flex: 1 1 0 !important; min-height: 0 !important; min-width: 0 !important; margin: 0 !important; }
+/* (sa hauteur reste la sienne : le nodal d'ODIO vit en height: 100 % d'un parent bloc) */
+.sr-fen-host [data-sr-fen] {
+  flex: 1 1 0 !important; min-width: 0 !important; min-height: 0 !important;
+  width: auto !important; max-width: none !important;
+}

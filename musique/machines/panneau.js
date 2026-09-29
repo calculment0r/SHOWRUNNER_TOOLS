@@ -35,6 +35,7 @@ import { assemblageDe, resoudreSection } from './blocks/assemblages.js';
 import { publierMinimum } from './blocks/minima.js';
 import { normToParam, paramToNorm } from './moteur/scale.js';
 import { dial } from '../ui.js';   // le cadran des molettes d'ODIO : une seule vérité avec le rack et les cartes
+import { fenetreDuGeste } from '../../commun/fenetre.js';   // la bulle de geste dans la fenêtre du geste (le nodal détaché)
 
 /** Corps de police d'un libellé de contrôle, en mm — cote du planogramme. */
 const LABEL_MM = 2.8;
@@ -71,7 +72,9 @@ function montrerBulle(x, y, label, readout) {
   if (label) { const l = h('span', 'knob__bubble-label'); l.textContent = label; bulle.append(l); }
   if (readout) { const v = h('span', 'knob__bubble-value'); v.textContent = readout; bulle.append(v); }
   bulle.style.left = `${x}px`; bulle.style.top = `${y}px`;
-  if (!bulle.isConnected) document.body.append(bulle);
+  // dans la fenêtre du geste : la page, ou celle du nodal détaché (commun/fenetre.js)
+  const corps = fenetreDuGeste().document.body;
+  if (bulle.parentNode !== corps) corps.append(bulle);
 }
 function majBulle(readout) { const v = bulle?.querySelector('.knob__bubble-value'); if (v) v.textContent = readout; }
 function cacherBulle() { bulle?.remove(); }

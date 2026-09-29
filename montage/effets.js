@@ -16,7 +16,8 @@
 // Un fondu se lâche sur un plan : il se pose au bord le plus proche.
 // Double-clic sur un effet : sur ce qui est choisi (Premiere fait de même).
 
-import { el, $ } from '../commun/shell.js';
+import { el } from '../commun/shell.js';
+import { $, partout } from '../commun/fenetre.js';
 import { getMini, lutGL } from './lut.js';
 import * as M from './model.js';
 
@@ -260,7 +261,8 @@ export function bindEffectDrops(tl, app) {
     app.setFxDrag(null);
     if (t) app.dropEffect(d, t, { add: e.shiftKey });
   }, true);
-  addEventListener('dragend', () => clear());
+  // le glisser peut partir de la fenêtre du panneau Effets (un 2ᵉ écran) : sa fin y arrive
+  partout('dragend', () => clear());
 }
 
 export const effectsRoot = () => $('#fx-pane');

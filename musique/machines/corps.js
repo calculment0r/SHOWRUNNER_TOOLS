@@ -21,6 +21,7 @@ import { getTuning } from './design/tuning.js';
 import { hairlineOffset } from './canvas/camera.js';
 import { formatHz, normToParam, paramToNorm } from './moteur/scale.js';
 import { toNorm, fromNorm, fmt } from '../modules.js';
+import { elementAuPoint } from '../../commun/fenetre.js';   // les pads suivis dans la fenêtre du geste (le nodal détaché)
 
 export const SURFACE_SLOT = 'surface';
 export const OWN_SLOTS = new Set(['groove', 'touches', 'machine', 'tempo', 'scene', 'vu']);
@@ -526,7 +527,7 @@ export function groove({ voices, steps, parameters, values, exposed, voice, play
     const done = new Set();
     const apply = (i) => { if (done.has(i)) return; done.add(i); if ((steps[i] > 0) !== wanted) { onToggle(i, wanted); padEls[i].classList.toggle('pad--on', wanted); } };
     apply(i0);
-    beginDrag(event, { move: (m) => { const el = document.elementFromPoint(m.clientX, m.clientY)?.closest?.('.pad'); if (el?.dataset.index) apply(Number(el.dataset.index)); } });
+    beginDrag(event, { move: (m) => { const el = elementAuPoint(m.clientX, m.clientY)?.closest?.('.pad'); if (el?.dataset.index) apply(Number(el.dataset.index)); } });
   });
   g.append(pads);
   g.pads = padEls;

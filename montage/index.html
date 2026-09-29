@@ -41,6 +41,7 @@
       <span><small>cadence</small><b id="fps" class="num">25</b></span>
     </div>
     <span class="pill exp" id="exp-st" hidden><i></i><span></span></span>
+    <span id="fen-pills"></span>
     <button class="tb go" id="b-export" title="ctrl+M">Exporter</button>
     <button class="ic" id="b-help" title="raccourcis">?</button>
   </div>
@@ -109,7 +110,10 @@
     </section>
 
     <!-- l'inspecteur : le plan choisi, ou le projet -->
-    <aside class="insp" id="insp" aria-label="inspecteur"></aside>
+    <section class="pan inspw" id="inspw" aria-label="inspecteur">
+      <div class="insp-head" id="insp-head"><span class="t">Inspecteur</span><span class="sp"></span></div>
+      <aside class="insp" id="insp"></aside>
+    </section>
   </div>
 
   <!-- la timeline -->

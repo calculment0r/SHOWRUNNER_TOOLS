@@ -52,6 +52,7 @@
 //            segment, une lane, le banc — jamais celui du navigateur
 
 import { toast } from '../commun/shell.js';
+import { $ as $partout } from '../commun/fenetre.js';   // un menu ouvert dans la fenêtre du nodal détaché compte aussi
 import { songEnd, projEnd } from './moteur.js';
 import { el, put, tok, clamp, letter } from './ui.js';
 import { attracteursActifs as actifsDuProjet, blocsDInfluence, operateurs, membres, actif, ecartBoite, poids, FACETTES_MODULES } from './machines/influence.js';
@@ -116,6 +117,10 @@ const sv = (tag, attrs = {}) => { const e = document.createElementNS(NS, tag); f
 // createBench(app, nodal) — nodal : { cv, world, view() → {px, py, z}, tuiles() → les tuiles du nodal }
 export function createBench(app, nodal) {
   const { S } = app;
+  // le nodal se voit : la vue de la page, ou dans sa fenêtre (commun/fenetre.js, musique.js)
+  const vueNodal = () => S.view === 'nodal' || !!app.nodalDetache?.();
+  // les calques posés par-dessus (le fil, la pose) vont dans le document du nodal
+  const corps = () => nodal.cv.ownerDocument.body;
   const P = () => S.proj;
   // 360 px : les pistes en petit et les cinq lanes tiennent sans défiler (ODIO_01 : 240, sans les pistes)
   const U = () => (P().ui.banc = P().ui.banc || { h: 360, cam: { x: -30, y: -2, k: 1 } });
@@ -537,7 +542,7 @@ export function createBench(app, nodal) {
   }
   function paintPose() {
     if (!pose) { poseEl.remove(); return; }
-    if (!poseEl.isConnected) document.body.append(poseEl);
+    if (poseEl.parentNode !== corps()) corps().append(poseEl);
     const [t, d] = poseEl.children;
     t.textContent = pose.nom;
     t.style.left = `${pose.x - (largeur(pose.nom) + MARGE + 8) / 2}px`; t.style.top = `${pose.y - 34}px`;
@@ -729,7 +734,7 @@ export function createBench(app, nodal) {
     if (pose) cible = B().segs.find((s) => s.id === pose.seg);
     else if (survol) { const a = B().atts.find((x) => x.id === survol); cible = a && B().segs.find((s) => s.id === a.segment); }
     const lane = cible && laneAt(layout().lanes, cible.lane);
-    if (!cible || !lane || S.view !== 'nodal') { filSvg.remove(); return; }
+    if (!cible || !lane || !vueNodal()) { filSvg.remove(); return; }
     const cv = nodal.cv.getBoundingClientRect(), pr = plan.getBoundingClientRect(), v = nodal.view();
     if (pose) { x1 = pose.x; y1 = pose.y + 14; couleur = pose.couleur; } else {
       const a = B().atts.find((x) => x.id === survol);
@@ -740,7 +745,7 @@ export function createBench(app, nodal) {
     const sens = y2 >= y1 ? 1 : -1, amp = Math.max(34, Math.abs(y2 - y1) * 0.55);
     filPath.setAttribute('d', `M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${x1.toFixed(1)} ${(y1 + sens * amp).toFixed(1)}, ${x2.toFixed(1)} ${(y2 - sens * amp).toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`);
     filPath.style.stroke = `var(--${couleur})`;
-    if (!filSvg.isConnected) document.body.append(filSvg);
+    if (filSvg.parentNode !== corps()) corps().append(filSvg);
   }
   // la vue du nodal a bougé : le fil suit ; le centre se remet à la taille où on le voit
   let tVue = 0;
@@ -786,7 +791,7 @@ export function createBench(app, nodal) {
     app.commit('quiet'); renderPlan(); paintMeta();
   }
   addEventListener('keydown', (e) => {
-    if (S.view !== 'nodal' || !S.proj || !root.isConnected || e.target.closest?.('input, textarea, select, [contenteditable]') || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('.sr-menu')) return;
+    if (!vueNodal() || !S.proj || !root.isConnected || e.target.closest?.('input, textarea, select, [contenteditable]') || e.ctrlKey || e.metaKey || e.altKey || $partout('.sr-menu')) return;
     if (letter(e) === 'c' && !e.repeat) { e.preventDefault(); e.stopImmediatePropagation(); toggleHeads(); return; }
     if ((e.key === 'Delete' || e.key === 'Backspace') && selection) {
       e.preventDefault(); e.stopImmediatePropagation();
@@ -840,7 +845,7 @@ export function createBench(app, nodal) {
 
   // ── à chaque image : les têtes glissent ; le plan ne se refait que s'il change ──
   function frame(force = false) {
-    if (S.view !== 'nodal' || !P()) return;
+    if (!vueNodal() || !P()) return;
     const now = performance.now();
     if (heads.courtEco) {
       const dt = lastT ? ((now - lastT) / 1000) * (P().bpm / 60) : 0;

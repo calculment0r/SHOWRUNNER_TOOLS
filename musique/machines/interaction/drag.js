@@ -43,6 +43,8 @@
                  
  
 
+import { fenetreDuGeste } from "../../../commun/fenetre.js"
+
 /** Classe posée sur `<html>` le temps du geste — voir app.css. */
 export const DRAGGING_CLASS = "dragging"
 
@@ -69,7 +71,10 @@ export function beginDrag(
     /* pointeur déjà relâché */
   }
 
-  const root = document.documentElement
+  // SHOWRUNNER (29/09) : le curseur du geste sur la fenêtre où il a lieu — la page, ou
+  // celle du nodal détaché (commun/fenetre.js ; ses pointermove, pointerup et
+  // pointercancel sont renvoyés à la page : les écouteurs sur `window`, plus bas, les reçoivent)
+  const root = fenetreDuGeste().document.documentElement
   const previousCursor = root.style.cursor
   if (options.cursor) root.style.cursor = options.cursor
   root.classList.add(DRAGGING_CLASS)

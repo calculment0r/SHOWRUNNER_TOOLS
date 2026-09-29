@@ -47,6 +47,8 @@
 // sont gardés : leurs cartes, leurs ports typés, leurs câbles, leur boucle.
 
 import { toast } from '../commun/shell.js';
+// le nodal peut être dans sa fenêtre (un 2ᵉ écran) : docs/etudes/fenetres.md § 6
+import { $ as $partout, partout, suivreTaille, elementAuPoint } from '../commun/fenetre.js';
 import { MODULES, COLORS, COLOR_FR, spec, val, drumVoicesOf, moduleName } from './modules.js';
 import { el, knob, choice, put, menu, letter, inlineEdit } from './ui.js';
 import { trajets, recoudre, entrerDansLaChaine } from './projet.js';   // le graphe du son : les chaînes des pistes, lues dans les câbles
@@ -141,6 +143,8 @@ const cablePath = (a, b) => wireD([a.x, a.y], [b.x, b.y]);
 export function createNodal(app) {
   const { S } = app;
   const P = () => S.proj;
+  // le nodal se voit : c'est la vue de la page, ou il est dans sa fenêtre (musique.js, app.nodalDetache)
+  const vueNodal = () => S.view === 'nodal' || !!app.nodalDetache?.();
   const nodalDe = (p = P()) => (p.nodal = p.nodal || {});
   const reglage = (cle) => (nodalDe()[cle] = nodalDe()[cle] || {});
 
@@ -1102,6 +1106,7 @@ export function createNodal(app) {
   const centreEcran = () => { const r = cv.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
   function ouvrirLeCatalogue(at) {
     ouvrirCatalogue({
+      doc: cv.ownerDocument,       // dans la fenêtre du nodal s'il est détaché
       onPick: (type) => poser(type, at || versMonde(...centreEcran())),
       onDrop: (type, e) => {
         const r = cv.getBoundingClientRect();
@@ -1111,7 +1116,7 @@ export function createNodal(app) {
     });
   }
   function ouvrirLePlano() {
-    ouvrirPlano({ projet: P, onGarder: () => app.commit('quiet'), onPoser: (id) => { const c = versMonde(...centreEcran()); poser(`machine:${id}`, { x: c.x - 120, y: c.y - 60 }); } });
+    ouvrirPlano({ doc: cv.ownerDocument, projet: P, onGarder: () => app.commit('quiet'), onPoser: (id) => { const c = versMonde(...centreEcran()); poser(`machine:${id}`, { x: c.x - 120, y: c.y - 60 }); } });
   }
 
   // ═════════════════════════════════════════════════════ retirer, dupliquer
@@ -1739,7 +1744,7 @@ export function createNodal(app) {
     const bouge = (e) => { lienEnCours = { ...lienEnCours, x: e.clientX, y: e.clientY }; peindreLiensKnob(); };
     const lache = (e) => {
       removeEventListener('pointermove', bouge); removeEventListener('pointerup', lache);
-      const vise = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-bout]')?.getAttribute('data-bout');
+      const vise = elementAuPoint(e.clientX, e.clientY)?.closest?.('[data-bout]')?.getAttribute('data-bout');   // dans la fenêtre du geste
       if (vise && vise !== cle) { nodalDe().liensKnob = lierBouts(liensKnob(), enBout(cle), enBout(vise)); app.commit('quiet'); }
       lienEnCours = null;
       peindreLiensKnob();
@@ -2148,11 +2153,12 @@ export function createNodal(app) {
   });
 
   // ── le clavier : il revient au canvas dès qu'on y touche (App.tsx) ──
-  addEventListener('pointerdown', (e) => { actif = cv.contains(e.target); }, true);
+  // (partout : la page et la fenêtre du nodal détaché — un clic là-bas lui donne le clavier)
+  partout('pointerdown', (e) => { actif = cv.contains(e.target); }, true);
   addEventListener('keydown', (e) => {
-    if (S.view !== 'nodal' || !S.proj || !actif || !cv.isConnected) return;
+    if (!vueNodal() || !S.proj || !actif || !cv.isConnected) return;
     // un menu ouvert (commun/menu.js) garde le clavier : Échap le ferme, Suppr n'y retire rien
-    if (e.target.closest?.('input, textarea, select, [contenteditable]') || document.querySelector('.plano, .cat--fenetre, .scrim, .sr-menu')) return;
+    if (e.target.closest?.('input, textarea, select, [contenteditable]') || $partout('.plano, .cat--fenetre, .scrim, .sr-menu')) return;
     const stop = () => { e.preventDefault(); e.stopImmediatePropagation(); };
     const ctrl = e.ctrlKey || e.metaKey;
     if (e.key === 'Delete' || e.key === 'Backspace') { if (supprimer()) stop(); return; }
@@ -2224,6 +2230,8 @@ export function createNodal(app) {
       '-',
       { label: 'PLANO', sub: 'dessiner une machine', onclick: ouvrirLePlano },
       { label: seuilsOuvert ? 'Fermer les seuils' : 'Les seuils du zoom sémantique', onclick: () => { seuilsOuvert = !seuilsOuvert; peindreSeuils(); peindreOutils(); } },
+      // le nodal dans une fenêtre (un 2ᵉ écran), ou de retour dans la page (commun/fenetre.js)
+      ...(app.fenetres ? ['-', app.fenetres.entree('nodal')] : []),
     ];
   }
   // le menu d'une tuile : ce qu'elle est (nœud de départ d'une piste, effet partagé, section de machine…)
@@ -2305,7 +2313,9 @@ export function createNodal(app) {
       el('button', { class: `tb sm ndx-aimant ${aimante() ? 'on' : 'ghost'}`, type: 'button', 'aria-pressed': String(aimante()),
         title: aimante() ? 'Aimant : un bloc glissé ou une arête tirée se colle aux arêtes des voisins (⌥ : libre le temps du geste) — un clic, ou Ctrl+4 : libre'
           : 'Libre : rien ne s\'aimante — un clic, ou Ctrl+4 : l\'aimant', onclick: () => basculerAimant() }, aimante() ? 'Aimant' : 'Libre'),
-      el('span', { class: 'lbl' }, `${p.modules.length + (p.nodal?.blocs?.length || 0)} blocs · ${p.cables.length + liensDe(p).length} câbles${sel.length > 1 ? ` · ${sel.length} sélectionnés` : ''}`));
+      el('span', { class: 'lbl' }, `${p.modules.length + (p.nodal?.blocs?.length || 0)} blocs · ${p.cables.length + liensDe(p).length} câbles${sel.length > 1 ? ` · ${sel.length} sélectionnés` : ''}`),
+      // détacher le nodal dans une fenêtre (un 2ᵉ écran) ; caché dans la fenêtre, dont la barre dit « Rattacher »
+      app.fenetres ? app.fenetres.bouton('nodal') : null);
     const pres = getPresenceRelative();
     const sem = el('label', { class: 'ndx-semantique', title: 'La vitesse du zoom sémantique : un élément ne se rend jamais sous cette fraction de sa taille dessinée — plus haut, les blocs se simplifient plus tôt', onpointerdown: (e) => e.stopPropagation() },
       el('span', { class: 'lbl' }, 'sémantique'));
@@ -2442,19 +2452,21 @@ export function createNodal(app) {
 
   // les réglages du zoom sémantique, les fontes, les cotes retouchées : tout se remet en page
   const toutRepeindre = () => {
-    if (S.view !== 'nodal' || !S.proj || !cv.isConnected) return;
+    if (!vueNodal() || !S.proj || !cv.isConnected) return;
     for (const v of vues.values()) v.sale = true;
     lireTuiles(); calculerPlancher(); planifierMiseEnPage(); peindreCables();
   };
   onTuning(toutRepeindre); onPlanchers(toutRepeindre); onFontsReady(toutRepeindre);
   // une cote retouchée (le poste de conception) ne touche que les sections de machine
   onMachineConfig(() => {
-    if (S.view !== 'nodal' || !S.proj || !cv.isConnected) return;
+    if (!vueNodal() || !S.proj || !cv.isConnected) return;
     const ids = T.filter((t) => t.sec).map((t) => t.id);
     for (const id of ids) { const v = vues.get(id); if (v) v.sale = true; }
     planifierMiseEnPage(ids);
   });
-  new ResizeObserver(() => { if (S.view === 'nodal' && S.proj) { calculerPlancher(); planifierMiseEnPage(); bench.paintMeta(); bench.renderPlan(); } }).observe(cv);
+  // suivreTaille (commun/fenetre.js) : un ResizeObserver de la fenêtre où est le nodal — celui de
+  // la page ne voit pas les changements de taille d'un nœud posé dans une autre fenêtre (mesuré)
+  suivreTaille(cv, () => { if (vueNodal() && S.proj) { calculerPlancher(); planifierMiseEnPage(); bench.paintMeta(); bench.renderPlan(); } });
 
   // le clavier du nodal passe par l'écouteur en capture, plus haut ; musique.js
   // passe ici les combinaisons à Ctrl (ou ⌥) : Ctrl+4, l'aimant, comme dans
@@ -2466,7 +2478,7 @@ export function createNodal(app) {
   // pour les essais (tools : essais de page)
   // montrer un module ou le nœud de départ d'une piste (depuis l'arrangement, le rack)
   function montrer(modId) {
-    if (S.view !== 'nodal' || !P()) return;
+    if (!vueNodal() || !P()) return;
     lireTuiles();
     const ids = T.filter((t) => porteurDe(t.id) === modId).map((t) => t.id);
     if (!ids.length) return;

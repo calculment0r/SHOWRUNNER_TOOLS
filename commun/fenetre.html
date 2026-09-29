@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panneau · Nirvalab</title>
+<meta name="description" content="Un panneau d'un outil du portail, détaché dans sa fenêtre (un 2ᵉ écran).">
+<link rel="stylesheet" href="./tokens.css">
+<link rel="stylesheet" href="./base.css">
+<link rel="stylesheet" href="./fenetre.css">
+</head>
+<body class="sr-fen-attente">
+<p class="sr-fen-msg">le panneau arrive…</p>
+<script>
+// Une fenêtre détachée (commun/fenetre.js, docs/etudes/fenetres.md) : elle ne
+// contient rien d'elle-même. Elle se présente à la page qui l'a ouverte
+// (window.opener, même origine) ; la page y déplace son panneau et y pose ses
+// écouteurs. La page se recharge : cette fenêtre reste, et se présente à la
+// page neuve. Personne ne la reprend pendant 20 s (la page fermée, un autre
+// outil) : elle se ferme (une fenêtre ouverte par un script peut se fermer).
+(function () {
+  var k = new URLSearchParams(location.search).get('k') || '';
+  var since = Date.now();
+  function tick() {
+    var o = null, ok = false;
+    try { o = window.opener && !window.opener.closed ? window.opener.SR_FENETRES : null; } catch (e) { o = null; }
+    try { ok = !!(o && (o.owns(window) || o.claim(window, k))); } catch (e) { ok = false; }
+    if (ok) { since = Date.now(); return; }
+    if (Date.now() - since > 20000) window.close();
+  }
+  tick();
+  var t = setInterval(tick, 400);
+  // la fenêtre s'en va (fermée, rechargée) : elle ne se présente plus
+  addEventListener('pagehide', function () { clearInterval(t); });
+})();
+</script>
+</body>
+</html>

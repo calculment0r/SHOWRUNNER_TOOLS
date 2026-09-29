@@ -22,7 +22,9 @@
 // Glisser vers la timeline, la source ou une autre page : le glisser-déposer
 // HTML du portail (dragItem, ITEM_MIME), plusieurs objets sous MULTI_MIME.
 
-import { api, el, $, $$, toast, href, ITEM_MIME, kindMark } from '../commun/shell.js';
+import { api, el, toast, href, ITEM_MIME, kindMark } from '../commun/shell.js';
+// le panneau peut être dans sa fenêtre (un 2ᵉ écran) : $ y cherche aussi, partout y écoute aussi
+import { $, $$, partout } from '../commun/fenetre.js';
 import { contextMenu } from '../commun/menu.js';
 
 export const MULTI_MIME = 'application/x-sr-items';
@@ -278,7 +280,7 @@ export function mountProject(app) {
         app.markDrag(it, ids);
         if (ids.length > 1) {
           const g = el('div', { class: 'drag-count-ghost' }, `${ids.length} objets`);
-          document.body.append(g);
+          root.ownerDocument.body.append(g);   // l'image du glisser, dans la fenêtre du panneau
           e.dataTransfer.setDragImage(g, 10, 10);
           setTimeout(() => g.remove(), 0);
         }
@@ -309,7 +311,7 @@ export function mountProject(app) {
     e.preventDefault();
     const base = e.shiftKey || e.ctrlKey || e.metaKey ? new Set(P.sel) : new Set();
     const box = el('div', { class: 'bin-mq' });
-    document.body.append(box);
+    list.ownerDocument.body.append(box);    // le cadre se dessine dans la fenêtre du panneau (ses coordonnées)
     mq = { x0: e.clientX, y0: e.clientY, base, box };
     try { list.setPointerCapture(e.pointerId); } catch { /* */ }
     if (!base.size) { P.sel.clear(); paint(); }
@@ -390,7 +392,7 @@ export function mountProject(app) {
     return app.newSequence(P.tab);
   };
   root.addEventListener('pointerdown', () => { P.focus = true; }, true);
-  document.addEventListener('pointerdown', (e) => { if (!root.contains(e.target)) P.focus = false; }, true);
+  partout('pointerdown', (e) => { if (!root.contains(e.target)) P.focus = false; }, true);
 
   const selectedIds = () => shown().filter((x) => P.sel.has(x.id)).map((x) => x.id);
   const selectedFolders = () => [...P.sel].filter((k) => k.startsWith('folder:')).map((k) => k.slice(7));
@@ -458,6 +460,8 @@ export function mountProject(app) {
       { label: 'Trier par', items: SORTS.map(([k, lab]) => ({ label: lab, checked: P.sort === k, onclick: () => { P.sort = k; LS('montage-bin-sort', k); paint(); } })) },
       { label: 'Afficher', items: KINDS.map(([k, lab]) => ({ label: lab, checked: P.kind === k, onclick: () => { P.kind = k; LS('montage-bin-kind', k); load(); } })) },
       { label: 'Ouvrir Asset', sub: '↗', onclick: () => window.open(href(P.tab ? 'asset/#/d/' + encodeURIComponent(P.tab) : 'asset/'), '_blank', 'noopener') },
+      // le panneau dans sa fenêtre (commun/fenetre.js), ou de retour dans la page
+      ...(app.detachItem ? ['-', app.detachItem()] : []),
     ];
   }
   contextMenu(root, menuFor);
