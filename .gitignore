@@ -6,6 +6,3 @@ node_modules/
 # copie ratée du 29/09 (les vraies feuilles sont dans character/assets/) : le PC ne peut pas les effacer
 character/js/*.css
 
-# Moteur repris du dépôt PRIVÉ calculment0r/ODIO_01 (6d8a7ed) : gardé hors du dépôt public
-# tant que Cal n’a pas décidé (29/09). Posé à la main sur DGX2 et DGX1 dans musique/odio/.
-musique/odio/
