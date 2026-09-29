@@ -1,6 +1,6 @@
 # Reprise — à lire en premier
 
-État au 29/09/2026, 14 h 15 (commit fe51c35). Portail :
+État au 29/09/2026, 16 h 30 (commit 4e74fb3). Portail :
 **http://192.168.10.247:8790/** (DGX2 ; Tailscale http://100.108.108.65:8790/).
 Entrer : taper le pseudo **`nico007`** (Cal, admin, compte `cal`). Secours si
 plus aucun admin n'entre : `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && python3 server/showrunner.py --admin nico007'`.
@@ -30,7 +30,42 @@ Le point du jour, lisible par Cal : l'artifact « Showrunner · point du 29/09 �
   câblage réel derrière des interrupteurs : Admin → Câblage).
 - Jamais de `pkill -f` par motif (tue la commande ssh) : par PID.
 
-## En ligne (29/09, de 11 h à 14 h 15)
+## PRIORITÉ 1 de la session suivante — ODIO a perdu notre thème (Cal, 29/09 16 h 25, très fâché)
+
+« pourquoi sur ODIO on n'a pas notre thème !!! les nodes avaient le bon design et tu as mis ceux
+de l'ancien projet qui était du prototype ». La traduction d'ODIO_01 (eebbd9f, `musique/nodal.js`,
+`nodal.css`, `machines/**`) a repris l'habillage des tuiles d'ODIO_01. Cal voulait **la logique
+d'ODIO_01 dans NOS cartes du nodal** (celles d'avant eebbd9f : `git show 4a20f41:musique/nodal.js`
+et `musique/musique.css` de ce commit — en-tête, ports, filets, jetons). À faire : rhabiller les
+tuiles, machines et panneaux du nodal dans notre DA (cartes du nodal d'avant, `commun/tokens.css`),
+**sans perdre** la logique (glisser-déposer, T/G/F, planogrammes, attracteurs, tracé au bouton du
+milieu, pistes liées). Les jouets gardent leur intérieur (demande de Cal) dans notre cadre.
+Captures côte à côte avant eebbd9f / maintenant / après, à lui montrer.
+
+## Démo en ligne (lancée le 29/09 à 16 h 20, à la demande de Cal)
+
+`ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && tools/demo.sh status'` — adresse
+https://marc-availability-reality-terrorist.trycloudflare.com (change à chaque `start`),
+invitation `/invitation/<code>`, code admin pour Cal ; les pseudos neufs attendent son accord
+(Admin). Pas de SSE : la collaboration en direct ne passe pas. Arrêt : `tools/demo.sh stop`.
+
+## Prêt sur le PC, pas encore en ligne (sauvegardé dans `wip/travail-en-cours`)
+
+- **Idéation · objets du prototype** (formes, cartes, mind map, crayon, guides, regrouper par
+  couleur, modèles ; `ideation/objets/**` + canvas, menus, selection, groups, inspector,
+  `ideation.py`) : fini, 1090/1090, 80/80 ; **son `ideation.py` appelle
+  `ideation_collab.need`** : il part avec la co-édition. Copie d'essai `/tmp/sr_ide_obj` (:8824).
+- **Idéation · co-édition** (+ rôles propriétaire / éditeur / spectateur, inviter, suivre) :
+  agent en cours au moment de la coupure (`ideation/collab.*`, `coedition.js`,
+  `ideation_collab.py`, `/tmp/sr_ide_coed` :8825). Relire son état sur le PC.
+- **Étude Apps / Studio et éléments liés** : `docs/etudes/apps_studio_elements.md` (source
+  vivante → versions publiées → usages épinglés, pastille « vN+1 », accès apps | studio) ;
+  6 questions à Cal (recommandations : oui, oui, à la main, propriétaire + Cal, Apps par défaut,
+  ACE-Step pour « s'en inspirer »). Signale aussi : `music.save_project` sans contrôle de
+  propriétaire (`music.py:639`), `POST /api/jobs` sans filtre de sorte, restauration en lot
+  d'Asset qui ignore `mid-` / `seq-`.
+
+## En ligne (29/09, de 11 h à 16 h 30)
 
 | commit | quoi |
 |---|---|
@@ -45,6 +80,9 @@ Le point du jour, lisible par Cal : l'artifact « Showrunner · point du 29/09 �
 | f9b95e1 | `commun/undo.js` (Ctrl+Z), préférences (`/api/prefs`, roue, Ctrl+,), thème clair + éditeur (règle 2 réécrite) ; Montage : le chutier devient Asset, séquences (`kind: sequence`), onglets ; copies d'affichage 256…2048 WebP, ETag, `/api/library/batch` |
 | eebbd9f | ODIO : ODIO_01 traduit dans le nodal (glisser-déposer, attracteurs qui agissent, 13 planogrammes, T/G/F, zoom sémantique), les 14 jouets du Playground, le génératif (région, panneau, partition YuE2, Extraire le MIDI, `kind: midi`) |
 | fe51c35 | La porte publique `127.0.0.1:9790` (trou admin fermé), mode démo (codes), mode Access, `porte/` (Worker, R2) |
+| 992b772 | Idéation : groupes façon Miro, barre de sélection, poignées, groupe réduit à ports, zoom sémantique, fluidité (1000 images) |
+| 42b6147 | Movie Analysis : `analyse.js` → `accueil.js` — **EasyPrivacy bloque `/analyse.js`** : chez Cal la page restait vide (cause de « pas mes exemples, pas le menu ») |
+| 4e74fb3 | Plus de menu du navigateur (gardien commun + menus par zone), Ctrl+Z partout (AZERTY), thème clair corrigé, `sequence` / `midi` dans Asset ; ODIO : bouton du milieu, Maj/Ctrl+clic, tracé au bouton du milieu, pistes (Suppr, glisser, groupes), panneau du bas sans onglets, effets partagés entre pistes, couleur et nom de piste sur le nœud |
 
 Données : 21 médias d'essai de Cal dans Asset « Essais » ; 342 LUT importées
 (Fujifilm ETERNA v1.10 en Rec.709 cuit + F-Log2, RawTherapee) sous
@@ -52,26 +90,22 @@ Données : 21 médias d'essai de Cal dans Asset « Essais » ; 342 LUT importée
 compte « nico007 » (rôle ami) fusionné dans `cal` (sauvegarde
 `~/showrunner-data/sauvegarde-fusion-20260929-132539`).
 
-## En cours au moment de cette note
+## À ne pas oublier
 
-- **Idéation · groupes façon Miro** (agent) : `ideation/canvas.js`,
-  `groups.js`, `selection.js`… d'après `docs/etudes/ideation_miro.md` ; plus
-  les crochets du composeur (`inspector.js` : libellé `app.gen.goText(n)`, prise
-  de vue cachée si `looksFrom(n) === 'composer'`).
-- **Finitions transverses** (agent) : Ctrl+Z dans ODIO (AZERTY) et Movie
-  Analysis, `fil.js` branché sur l'annulation, le thème clair qui passe mal
-  (`--vh`, `.statcard`, pages des voix), `sequence` et `midi` dans Asset,
-  `ARCHITECTURE.md`.
-- À lancer ensuite (même fichier que les groupes) : les objets du prototype
-  (formes, cartes, mind map, guides magnétiques — `docs/etudes/ideation_atelier.md` § 3),
-  la co-édition (`docs/etudes/ideation_collab.md`).
+- **Bloqueurs de pub** : aucun fichier du portail ne doit tomber sous EasyPrivacy / EasyList
+  (vérifié le 29/09 après le renommage ; refaire la vérification après chaque nouveau fichier —
+  la méthode : `/tmp/easyprivacy.txt`, règles `/chemin` sans joker, cf. commit 42b6147).
+- Règles de souris et de menus de Cal (tous les canvas) : bouton du milieu = déplacer ; clic =
+  choisir, Maj = ajouter, Ctrl = ajouter / retirer ; jamais le menu du navigateur.
+- Le digest pour Cal : artifact https://claude.ai/artifact/VzaAXMQqEUwQ3MMkVpzP18 (le republier
+  depuis `…\scratchpad\digest\digest.html` de la session du 29/09, ou en refaire un).
 
 ## Ce qui attend Cal
 
 1. **Démo en ligne** : `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && tools/demo.sh start'`
    (tunnel rapide trycloudflare → 127.0.0.1:9790 ; affiche l'adresse, le lien
    et le code d'invitation, le code admin). Pas de SSE : la collaboration en
-   direct ne passe pas. À lancer seulement sur son oui.
+   direct ne passe pas. **Lancée le 29/09 à 16 h 20** (Cal veut l'envoyer à un ami).
 2. **La vraie porte** (`docs/etudes/cloudflare.md`, « Prêt à déployer ») :
    Zero Trust est actif (équipe `nirvalab`), wrangler 4.143.0 est connecté sur
    DGX2 (`~/.local/bin/wrangler`, compte `luxigone@gmail.com`, sans portée
