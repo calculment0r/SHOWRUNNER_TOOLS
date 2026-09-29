@@ -30,7 +30,16 @@ Le point du jour, lisible par Cal : l'artifact « Showrunner · point du 29/09 �
   câblage réel derrière des interrupteurs : Admin → Câblage).
 - Jamais de `pkill -f` par motif (tue la commande ssh) : par PID.
 
-## PRIORITÉ 1 de la session suivante — ODIO a perdu notre thème (Cal, 29/09 16 h 25, très fâché)
+## FAIT (0aa4f7e, 29/09 fin d'après-midi) : ODIO rhabillé dans notre thème, fils en espace écran
+
+Rapport : `docs/etudes/musique_theme.md` ; captures côte à côte (4a20f41 | prototype | après,
+sombre et clair) dans `dgx2:~/showrunner-refs/odio-theme-2909/cote/`. À faire valider par Cal.
+Restes : le corps d'un bloc garde la mise en page d'ODIO_01 (rails, faders) habillée en curseurs
+du portail ; en-tête de 23 px au lieu de 35 (pour le zoom sémantique) ; une tranche de piste à sa
+taille d'origine ne montre que son vumètre ; les fils d'Idéation (`commun/wire.css`,
+`vector-effect`) ont sans doute le même défaut de zoom que ceux d'ODIO avant : à mesurer.
+
+## (historique) ODIO avait perdu notre thème (Cal, 29/09 16 h 25, très fâché)
 
 « pourquoi sur ODIO on n'a pas notre thème !!! les nodes avaient le bon design et tu as mis ceux
 de l'ancien projet qui était du prototype ». La traduction d'ODIO_01 (eebbd9f, `musique/nodal.js`,
