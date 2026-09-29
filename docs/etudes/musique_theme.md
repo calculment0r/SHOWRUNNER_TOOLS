@@ -209,3 +209,175 @@ EasyPrivacy).
    espace écran »), push, puis `cd ~/SHOWRUNNER_TOOLS && git fetch && git reset
    --hard origin/main && tools/portail.sh restart`, et DGX1 suit.
 4. Arrêter les trois portails d'essai par leur PID (`/tmp/sr_th_*.pid`).
+
+## 10. Aimantation, étiquette de piste, netteté (29/09, 17 h 15)
+
+Trois demandes de Cal sur le nodal. Copie d'essai `/tmp/sr_odio5` (DGX2,
+port 8841 = origin/main 7553a54 + ces changements ; `musique/` identique à
+810c1b2), la même sans eux sur 8842 (`/tmp/sr_odio5_avant`), pour comparer.
+Pilotes et mesures : `/tmp/sr_odio5_pilotes/`, `/tmp/sr_odio5_mesures/`.
+
+### 10.1 « Enlever le magnétisme et l'alignement sur la grille »
+
+Ce qui aimante dans le nodal, relevé dans le code :
+
+| quoi | où | l'aimant éteint |
+|---|---|---|
+| déplacer une tuile : son bord sur le bord des voisines (jointure et alignement, 7 px d'écran), guides orange | `layout.js snapBox`, `nodal.js startMove` | coupé |
+| tirer une arête : sur les arêtes des voisines | `snapValue`, `startResize` | coupé |
+| tirer un séparateur de groupe : sur les autres lignes | `snapValue`, `startDividerDrag` | coupé |
+| les voisines collées suivent l'arête tirée (le séparateur) | `resizeCoupled(…, coupled)` | **gardé** : ce n'est pas un aimant, c'est ce qui évite trous et recouvrements ; ⌥ le défait, comme avant |
+| une machine soudée se déplace entière | `isWeldedGroup` (le groupe, pas la proximité) | **gardé**, n'en dépend pas |
+| un câble lâché près d'une entrée la prend (74 px) | `CABLE_SNAP` | gardé : c'est viser, pas ranger |
+
+Il n'y a **pas de grille** : la trame du fond (26 px) est un décor, rien ne s'y
+pose (aucun arrondi à `CELL` dans `ecrireBoite`). « L'alignement sur la
+grille » que voyait Cal, ce sont les guides des arêtes voisines. D'où **un
+seul interrupteur**, « aimant » : le code ne distingue pas deux aimants.
+
+- Barre du nodal : `Aimant` (`.tb.sm.on`, vert, `aria-pressed=true`) ou
+  `Libre` (`.tb.ghost`) — les mots d'Idéation (« Aimant » / « Libre »),
+  l'habit du bouton « gamme » du piano roll ; le titre dit l'état et le geste.
+- Clic droit du fond : « Aimanter aux voisins », case cochée, `Ctrl+4`.
+- **Ctrl+4** : le raccourci de l'aimant de l'arrangement d'ODIO
+  (`timeline.js`, par `e.code` : juste en AZERTY) ; Montage prend `S`, qui
+  est ici le solo de Live ; Idéation n'en a pas.
+- **⌥ en glissant** : libre le temps du geste, inchangé (Idéation, arrangement,
+  Montage font de même).
+- Mémorisé dans l'état d'interface du projet, `ui.aimantNodal` (absent =
+  allumé), par `app.saveUi` comme `ui.snap` de l'arrangement. Hors de
+  l'annulation, comme lui (`projet.js` ne met pas `ui` dans les instantanés).
+- Soudure des machines : intacte (voir le tableau). Seule nuance : en poste de
+  conception, une section glissée aimant éteint ne se recolle plus d'elle-même
+  à ses sœurs ; « Remonter la machine » (T) la remet.
+
+### 10.2 « Déplacer les nodes de piste par la grosse étiquette »
+
+**Retenue : `.piste-titre`**, l'étiquette au nom de la piste (Venus Rising
+capitales, pastille de couleur, à taille d'écran constante) posée à gauche du
+nœud de départ d'une piste — ou de toute la machine-instrument (captures
+`pilote/etiquette_*.png` : « BATTERIE », « BASSE »). C'est la seule
+« grosse » étiquette d'un nœud de piste ; l'en-tête de la tuile, lui, se
+glissait déjà. Avant : un clic la choisissait, rien ne la déplaçait.
+
+Maintenant son `pointerdown` fait ce que fait l'en-tête : le choix (clic :
+elle ; Maj : ajouter ; Ctrl : ajouter ou retirer ; un clic sans glisser sur
+une piste prise dans une sélection plus large ne garde qu'elle) puis
+`startMove` sur le nœud — la même fonction, donc la sélection, le groupe, la
+machine soudée entière, ⌥ duplique, le même aimant, un seul commit donc un
+seul Ctrl+Z. Gardés : la pastille (palette), le double-clic sur le nom
+(renommer), le clic droit (le menu de la piste), le bouton du milieu (la vue
+se déplace). Curseur : `grab`.
+
+Trouvé en route : `startMove` repeignait tout le dessus au relâcher d'un
+clic sans geste ; l'étiquette, remplacée sous le pointeur, perdait son
+`click` et son `dblclick` (le renommage ne s'ouvrait plus). Ce repeint ne
+servait à rien (rien n'avait bougé, le choix repeint déjà) : retiré.
+
+### 10.3 Le texte flou au zoom — mesuré
+
+Le diagnostic à vérifier avait deux moitiés :
+
+1. **« `nettete()` ne produit jamais d'image sans will-change »** : juste. La
+   classe `ndx-net` était posée dans un minuteur et retirée au rappel
+   requestAnimationFrame suivant — qui passe avant le calcul du style et le
+   dessin de cette même image (HTML, « update the rendering »). Mesure : la
+   neutraliser (`SANSNET=1`, will-change jamais levé) ne change **aucun**
+   chiffre.
+2. **« will-change fige l'échelle de rastérisation »** : c'est la règle
+   documentée par Chrome (developer.chrome.com/blog/re-rastering-composite,
+   Chrome 53, 2016 : le contenu est re-rastérisé quand l'échelle change,
+   *sauf* s'il porte `will-change: transform`). Mais **je ne l'ai pas
+   reproduite** avec le Chromium 153 de DGX2 : ni en coquille sans
+   affichage (SwiftShader), ni en Chromium complet (SwiftShader, puis la
+   carte NVIDIA GB10 par EGL), ni à une densité d'écran de 1,5, ni sur une
+   scène de 43 tuiles (6400 × 3200 px de monde) ; ni au repos, ni 63 ms
+   après le dernier cran de molette. Le texte des molettes y est net avant
+   comme après.
+
+La netteté d'une coupe (`sr_odio5_nettete.mjs`) : la moyenne des 1 % plus
+fortes marches entre pixels voisins sur le contraste de la coupe (≈ 1 net,
+≈ 1/z si une image de 100 % était étirée) ; molettes « Champ » / « Boucle »
+du jouet AIMANT, vue posée puis 1,5 s ; 280 % = `MAX_K`, 300 % ne s'atteint pas.
+
+| Chromium 153 | 100 % | 200 % | 280 % |
+|---|---|---|---|
+| coquille, SwiftShader — avant | 0,99 / 1,07 | 0,97 / 1,08 | 0,92 / 0,99 |
+| — après | 1,06 / 1,11 | 0,97 / 1,08 | 0,92 / 0,99 |
+| complet, GPU NVIDIA, 43 tuiles — avant | 0,96 / 1,02 | 0,94 / 1,07 | 0,89 / 0,98 |
+| — après | 1,03 / 1,10 | 0,94 / 1,07 | 0,89 / 0,98 |
+| complet, GPU, densité 1,5 — avant = après | 0,97 / 1,04 | 0,89 / 0,95 | 0,83 / 0,78 |
+
+(Les coupes, par zoom : `nettete_avant/`, `nettete_apres/`, dans les
+captures ; à 1,5 le chiffre baisse par la géométrie des glyphes, l'image
+reste nette.)
+
+Ce qui était **vraiment** sous-résolu : **le canvas des jouets**
+(`jouets/index.js`), plafonné à ×2 — à 280 %, 1036 px de bitmap pour 1450 px
+d'écran (étiré de 40 %), 1036 pour 2175 pixels physiques à densité 1,5.
+
+Ce qui est fait :
+
+- `.ndx-monde` n'est plus promu au repos ; `.ndx-geste` (will-change:
+  transform) est posé au premier événement d'un geste de la vue (molette,
+  bouton du milieu, −, +, 100 %) et **retiré pour de bon** à l'arrêt (160 ms,
+  `repos()` dans `nodal.js`). Au repos, le monde se peint avec la page à
+  l'échelle affichée : net dans tout navigateur, quelle que soit sa règle pour
+  will-change. `nettete()` et `.ndx-net` sont retirés.
+- Les canvas des jouets suivent `zNet` (l'échelle à laquelle le monde est
+  net : figée pendant le geste, celle de la vue au repos) : ils se
+  réallouent une fois, à l'arrêt ; plus de plafond ×2, un budget de 4 Mpx par
+  canvas (l'AIMANT à 280 % sur un écran à 150 % y tient). À 280 % : 1489 px de
+  bitmap pour 1450 d'écran ; la marche de la coupe de scène 24,4 → 26,2.
+
+Fluidité (150 images, un événement par image, depuis le repos — donc avec la
+promotion du premier geste) :
+
+| | zoom : i/s (p95) | déplacement : i/s (p95) |
+|---|---|---|
+| GPU, 43 tuiles — avant (2 passes) | 50,8 · 52,6 (33 ms) | 60 · 60 (17 ms) |
+| — après | 52,3 · 53,9 (33 ms) | 60 · 59,6 (17 ms) |
+| GPU, densité 1,5 — avant (1) · après (2) | 52,3 · 48,9 et 52,9 (33 ms) | 60 · 60 et 60 |
+| coquille SwiftShader, 16 tuiles — avant (2) | 20,9 · 20,7 | 32,5 · 32,5 |
+| — après (2) | 22,2 · 21,4 | 31,3 · 31,0 |
+
+Pas de dégradation hors du bruit d'une passe à l'autre.
+
+**Reste à savoir** : le flou de la capture de Cal ne se reproduit pas ici.
+Il faut son navigateur (Chrome, Edge, Firefox ? version), l'échelle
+d'affichage de Windows, et si le texte redevient net une seconde après
+l'arrêt du zoom. Le remède ne dépend plus de la réponse ; si le flou reste
+avec cette version, la cause est ailleurs et la mesure est à refaire chez lui.
+
+### 10.4 Les preuves
+
+- `python3 tools/check.py` sur la copie : **1108 passés, 0 en échec**.
+- `/tmp/sr_odio5_pilotes/sr_odio5_pilote.mjs` (neuf) : **25 vérifications,
+  0 en échec** — l'aimant allumé colle (380 et non 384) et trace ses guides ;
+  éteint par la barre, une tuile lâchée à 4 px y reste, sans guide ; « Libre »
+  après rechargement (`ui.aimantNodal=false` relu du serveur) ; le clic droit
+  le rallume (il colle de nouveau) puis l'éteint (elle reste) ; Ctrl+4 dans
+  les deux sens ; ⌥ libère le temps d'un geste ; l'étiquette : clic, Maj,
+  Ctrl, glisser (+137, +61 px exacts), Ctrl+Z en un pas, double-clic
+  (renommer), clic droit (menu de la piste), une MINILOGUE XD emportée entière
+  (11 sections, même écart), bouton du milieu = la vue. Journal vide.
+- Les pilotes du rhabillage (`/tmp/sr_th_pilotes.sh`, `odio5_avant` 8842 contre
+  `odio5` 8841, `/tmp/sr_th_compare.py`) : `nodal`, `nodal4` (aux identifiants
+  près), `nodal5` (idem) identiques ; `nodal2` : `rev` 8 contre 9 (varie
+  d'une passe à l'autre du même code : 8, 9, 8 dans les passes du § 3) ;
+  `gen`, `jouets` : graines et physique, comme au § 3 ; `smoke` ouvre le
+  dernier projet de chaque dossier de données. **Un écart voulu** dans
+  `sr_odio3_essai` : son « Ctrl + cadre sur m3 » part à 20 px à gauche de m3,
+  c'est-à-dire **sur l'étiquette BASSE** ; avant, ce Ctrl+clic sur l'étiquette
+  remplaçait la sélection par m3 (`["m3"]`), maintenant Ctrl retire m3 comme
+  sur son en-tête (`["m1"]`, ce que le pilote attendait : « il en sort »),
+  et le geste déplace m3 comme le ferait son en-tête.
+- Netteté et fluidité : `sr_odio5_nettete.mjs` (§ 10.3).
+- Captures (DGX2 `/tmp/sr_odio5_mesures/`, copiées sur le PC) :
+  `pilote/barre_libre`, `clic_droit_libre`, `clic_droit_aimant`,
+  `aimant_allume_pendant` (guides), `aimant_barre_pendant` (aucun),
+  `etiquette_avant` / `_pendant` / `_apres` / `_renommer`, `machine_apres` ;
+  `nettete_avant/`, `nettete_apres/` (`direct_z100|200|280_champ|boucle|scene|vue`).
+
+Fichiers : `musique/nodal.js`, `musique/nodal.css`, `musique/jouets/index.js`,
+`musique/guide.js` (les deux lignes du nodal), ce paragraphe.

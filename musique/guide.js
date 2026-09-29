@@ -72,7 +72,8 @@ const KEYS = [
     ['Piano roll', '↑ ↓ transposer (Maj : octave) · Ctrl+U quantifier · Maj+glisser : choisir · double-clic : ôter'],
     ['Onde d\'un clip audio', 'Ctrl+molette : zoom · molette : défiler · double-clic : tout le son'],
     ['Nodal, le banc', '« c » : quelle tête gouverne (ODIO_01) · Suppr : retirer l\'attracteur choisi'],
-    ['Nodal, la souris', 'bouton du milieu : se déplacer · sur les réglages d\'une tuile : tracer l\'ordre gardé au zoom (ODIO_01) · Maj+clic : ajouter · Ctrl+clic : ajouter ou retirer · ⌥ : retirer'],
+    ['Nodal, la souris', 'bouton du milieu : se déplacer · sur les réglages d\'une tuile : tracer l\'ordre gardé au zoom (ODIO_01) · Maj+clic : ajouter · Ctrl+clic : ajouter ou retirer · ⌥ : retirer · l\'étiquette d\'une piste se glisse comme l\'en-tête de son nœud'],
+    ['Nodal, l\'aimant', 'Ctrl+4 (ou « Aimant » dans la barre, ou le clic droit du fond) : allumé / éteint · ⌥ en glissant : libre le temps du geste'],
     ['Clic droit', 'partout : le menu de ce qu\'on survole (jamais celui du navigateur, sauf dans un champ texte)'],
   ]],
 ];

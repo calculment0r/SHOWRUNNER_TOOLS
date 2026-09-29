@@ -35,6 +35,9 @@ const NS = 'http://www.w3.org/2000/svg';
 const HD = 38;                  // la hauteur de l'en-tête d'une carte de jouet (jouets.css)
 const PORT_Y = [34, 58, 82];    // les ports d'un bord, de haut en bas (le premier est celui du son, s'il y en a)
 const PORT_FR = { audio: 'son', notes: 'notes', mod: 'valeur' };
+// le budget d'un canvas de scène : 4 Mpx (16 Mo) — l'AIMANT (520 × 440) à ×4,2,
+// soit 280 % sur un écran à 150 % ; au-delà, la scène s'étire un peu
+const PIXELS_CANVAS = 4e6;
 const isToy = (m) => !!MODULES[m?.type]?.jouet;
 const hasScene = (m) => isToy(m) && MODULES[m.type].scene !== false;
 
@@ -255,17 +258,22 @@ export function createJouets(app) {
     rt.frames = (rt.frames || 0) + 1;
     const v = view(), cw = nodal.cv.clientWidth, ch = nodal.cv.clientHeight;
     // la définition du canvas suit le zoom : celle de l'écran (net de près,
-    // léger de loin, comme le Playground qui dessinait à la taille affichée) ;
-    // à 100 % elle vaut celle du Playground (DPR plafonné à 2). Par huitièmes :
-    // un cran de molette ne réalloue pas tous les canvas.
+    // léger de loin, comme le Playground qui dessinait à la taille affichée).
+    // SHOWRUNNER (29/09, Cal : le texte « baveux » au zoom) : l'échelle est
+    // celle où le nodal rastérise net (`zNet` : figée pendant un geste de la
+    // vue, celle de la vue au repos) — un canvas ne se réalloue qu'à l'arrêt ;
+    // elle n'est plus plafonnée à 2 (à 280 %, un canvas de 2 était étiré de
+    // 40 %), seulement par un budget de pixels par canvas. Par huitièmes : une
+    // échelle à peine différente ne réalloue rien.
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const s = Math.max(.25, Math.min(2, Math.ceil(dpr * v.z * 8) / 8));
+    const zr = nodal.zNet ? nodal.zNet() : v.z;
+    const s = Math.max(.25, Math.ceil(dpr * zr * 8) / 8);
     rt.zoom = v.z;
     for (const j of inst.values()) {
       if (!j.stage || !j.stage.isConnected) continue;
       const x0 = v.px + (j.m.x + j.off.x) * v.z, y0 = v.py + (j.m.y + j.off.y) * v.z;
       if (x0 > cw || y0 > ch || x0 + j.w * v.z < 0 || y0 + j.h * v.z < 0) continue;   // hors champ : pas dessiné
-      j.draw(s);
+      j.draw(Math.min(s, Math.floor(Math.sqrt(PIXELS_CANVAS / (j.w * j.h)) * 8) / 8));
     }
     drawBalls(v, cw, ch, dpr);
   }

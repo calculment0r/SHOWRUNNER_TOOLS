@@ -48,8 +48,10 @@
 .ndx-vue { cursor: default; touch-action: none; outline: none; }
 .ndx-vue:focus, .ndx-vue:focus-visible { outline: none; }
 .ndx-vue.drag { cursor: grabbing; }
-.ndx-monde { --iz: 1; will-change: transform; }
-.ndx-monde.ndx-net { will-change: auto; }
+/* le monde n'est un calque promu que PENDANT un geste de la vue (nodal.js,
+   gesteVue) : au repos il se peint à l'échelle où on le voit, net */
+.ndx-monde { --iz: 1; }
+.ndx-monde.ndx-geste { will-change: transform; }
 .ndx-cadres, .ndx-tuiles, .ndx-bornes, .ndx-dessus { position: absolute; left: 0; top: 0; width: 0; height: 0; }
 .ndx-saisie, .ndx-cables { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; }
 .ndx-saisie { pointer-events: none; }
@@ -139,7 +141,7 @@ html.dragging * { cursor: inherit !important; }
 /* son nom, à GAUCHE du nœud de départ (comme l'en-tête d'une piste dans
    l'arrangement, .ar-ghost), à taille d'écran constante */
 .ndx-dessus .piste-titre {
-  position: absolute; z-index: 11; display: flex; align-items: center; gap: 7px; white-space: nowrap; cursor: pointer;
+  position: absolute; z-index: 11; display: flex; align-items: center; gap: 7px; white-space: nowrap; cursor: grab;
   padding: 3px 9px 3px 4px; border-radius: var(--r2); background: var(--panel2);
   box-shadow: inset 0 0 0 1px var(--line), inset 3px 0 0 var(--c), 0 6px 18px var(--drop);
   transform-origin: 0 0; transform: scale(var(--iz)) translate(calc(-100% - 10px), 0);

@@ -9,7 +9,9 @@
 //     tout le groupe, toute la machine soudée), ⌥ glissé = dupliquer, arêtes
 //     et coins = redimensionner avec les voisins collés, double-clic sur
 //     l'en-tête = taille d'origine, sur le nom = renommer ; aimantation
-//     (⌥ la libère) ;
+//     aux arêtes des voisines (⌥ la libère le temps d'un geste ; « Aimant »
+//     dans la barre, au clic droit du fond ou Ctrl+4 l'éteint pour de bon) ;
+//     l'étiquette d'une piste se glisse comme l'en-tête de son nœud ;
 //   - la souris (Cal, 29/09) : clic gauche = choisir, Maj+clic = ajouter,
 //     Ctrl/⌘+clic = ajouter ou retirer (⌥ retire, comme ODIO_01) ; glisser le
 //     fond = rectangle de sélection, avec les mêmes touches ; bouton du milieu
@@ -167,6 +169,23 @@ export function createNodal(app) {
     if (!u.nodal || typeof u.nodal.z !== 'number') u.nodal = { z: 0.8, px: 40, py: 40, fitted: u.nodal?.fitted };
     return u.nodal;
   };
+  // L'AIMANT (Cal, 29/09 : « j'arrive pas à enlever le magnétisme et
+  // l'alignement sur la grille… il nous faut l'option quelque part et en clic
+  // droit ») : l'état d'interface du projet, comme l'aimant de l'arrangement
+  // (ui.snap, Ctrl+4) ; absent = allumé. Il n'y a qu'un aimant dans le nodal :
+  // les arêtes des voisines (layout.js snapBox, snapValue — jointure et
+  // alignement, les guides orange n'en sont que le tracé) ; la trame du fond
+  // n'aimante rien. Il ne touche ni à la soudure des machines (un ensemble
+  // soudé se déplace entier, par son groupe) ni au couplage des voisines
+  // collées au redimensionnement (le séparateur : ⌥ le défait, comme avant).
+  const aimante = () => P()?.ui?.aimantNodal !== false;
+  function basculerAimant(on = !aimante()) {
+    const u = (P().ui = P().ui || {});
+    u.aimantNodal = !!on;
+    app.saveUi();
+    peindreOutils();
+    toast(on ? 'aimant : les blocs se collent aux arêtes de leurs voisins' : 'libre : rien ne s\'aimante (Ctrl+4 le rallume)', 1600);
+  }
   const cam = () => { const v = view(); return { x: -v.px / v.z, y: -v.py / v.z, k: v.z }; };
   const poserCam = (c) => { const v = view(); v.z = c.k; v.px = -c.x * c.k; v.py = -c.y * c.k; };
   const versMonde = (cx, cy) => { const r = cv.getBoundingClientRect(), v = view(); return { x: (cx - r.left - v.px) / v.z, y: (cy - r.top - v.py) / v.z }; };
@@ -194,7 +213,7 @@ export function createNodal(app) {
     porteur: (id) => porteurDeTuile(P(), id).owner,
   });
   root.append(el('div', { class: 'nd-main' }, cv, bench.el), side);
-  app.toys?.attach({ cv, world, view, paintSide: () => paintSide(), paintWires: () => peindreCables() });   // jouets : leurs câbles typés, les billes de la fontaine
+  app.toys?.attach({ cv, world, view, zNet: () => zNet ?? view().z, paintSide: () => paintSide(), paintWires: () => peindreCables() });   // jouets : leurs câbles typés, les billes de la fontaine
 
   // ═════════════════════════════════════════ les tuiles, lues dans le projet
   // la piste dont cette tuile est le nœud de DÉPART (sa source ; une machine-instrument : chacune de ses sections)
@@ -742,7 +761,7 @@ export function createNodal(app) {
       // se remettent en page quelques-unes par image, les visibles d'abord
       planifierMiseEnPage();
       clearTimeout(tPlan);
-      tPlan = setTimeout(() => { peindreCables(); peindreLiensKnob(); nettete(); }, 120);
+      tPlan = setTimeout(() => { peindreCables(); peindreLiensKnob(); }, 120);
     }
     cv.style.backgroundSize = `${26 * v.z}px ${26 * v.z}px`;
     cv.style.backgroundPosition = `${v.px}px ${v.py}px`;
@@ -752,18 +771,34 @@ export function createNodal(app) {
     if (seuilsOuvert) peindreSeuils(false);
     bench.suivreVue?.();
   }
-  // Le monde est un calque promu (nodal.css, will-change) : déplacer la vue
-  // ne repeint rien, le compositeur le glisse. Après un zoom, on le fait
-  // rastériser à la nouvelle échelle — une fois, à l'arrêt du geste — pour
-  // que le texte redevienne net.
-  function nettete() {
-    (stats.nettete = stats.nettete || []).push(Math.round(performance.now()));
-    world.classList.add('ndx-net');
-    requestAnimationFrame(() => world.classList.remove('ndx-net'));
-  }
+  // LE MONDE N'EST UN CALQUE PROMU QUE PENDANT UN GESTE DE LA VUE (Cal, 29/09 :
+  // le texte « baveux » au zoom). Pendant qu'on déplace ou qu'on zoome,
+  // `.ndx-geste` (nodal.css : will-change: transform) le donne au compositeur,
+  // qui le glisse sans rien repeindre. À l'arrêt (160 ms sans geste), la classe
+  // part POUR DE BON : le monde se peint avec la page, à l'échelle où on le
+  // voit, et un navigateur n'a plus de rastérisation d'avant à étirer —
+  // Chrome 53 et suivants gardent l'échelle de rastérisation d'un calque
+  // will-change: transform (developer.chrome.com/blog/re-rastering-composite,
+  // C. Harrelson, 2016 ; le Chromium 153 de DGX2 re-rastérise pourtant au
+  // repos : docs/etudes/musique_theme.md § 10, le défaut dépend du navigateur,
+  // le remède ne dépend plus de lui). La remise à net d'avant (`nettete` :
+  // la classe ôtée puis remise à l'image suivante) ne donnait jamais une
+  // image sans will-change : les rappels requestAnimationFrame passent avant
+  // le dessin de la même image (HTML, « update the rendering »).
+  // `zNet` : l'échelle à laquelle le monde est rastérisé net (null au repos :
+  // celle de la vue) — les canvas des jouets s'y tiennent pendant le geste et
+  // se redimensionnent une fois, à l'arrêt (jouets/index.js).
+  let zNet = null;
   function gesteVue() {
+    if (zNet === null) { zNet = view().z; world.classList.add('ndx-geste'); }
     clearTimeout(tGeste);
-    tGeste = setTimeout(rattraper, 160);
+    tGeste = setTimeout(repos, 160);
+  }
+  function repos() {
+    zNet = null;
+    world.classList.remove('ndx-geste');
+    (stats.nettete = stats.nettete || []).push(Math.round(performance.now()));
+    rattraper();
   }
   // les tuiles entrées dans le champ pendant un déplacement
   function rattraper() {
@@ -776,7 +811,7 @@ export function createNodal(app) {
     cv.classList.add('drag');
     beginDrag(e, {
       cursor: 'grabbing',
-      move: (m) => { poserCam({ k: c0.k, x: c0.x - (m.clientX - x0) / c0.k, y: c0.y - (m.clientY - y0) / c0.k }); gesteVue(); demanderVue(); },
+      move: (m) => { gesteVue(); poserCam({ k: c0.k, x: c0.x - (m.clientX - x0) / c0.k, y: c0.y - (m.clientY - y0) / c0.k }); demanderVue(); },
       end: () => { cv.classList.remove('drag'); app.saveUi(); },
     });
   }
@@ -791,8 +826,9 @@ export function createNodal(app) {
   }
   function zoomBouton(f) {
     const r = cv.getBoundingClientRect();
+    gesteVue();
     poserCam(zoomCamera(cam(), f > 1 ? -180 : 180, r.width / 2, r.height / 2, plancherCamera(plancher)));
-    gesteVue(); appliquerVue(); app.saveUi();
+    appliquerVue(); app.saveUi();
   }
 
   // ═════════════════════════════════════════ sélection, groupes (App.tsx)
@@ -825,6 +861,20 @@ export function createNodal(app) {
     if (mode !== 'replace' || sel.join() !== avant || sel.length <= familyOf(id).length) return;
     const x0 = ev.clientX, y0 = ev.clientY;
     const up = (u) => { removeEventListener('pointerup', up, true); if (Math.hypot(u.clientX - x0, u.clientY - y0) < 4 && sel.includes(id)) setSel(familyOf(id).map((x) => x.id)); };
+    addEventListener('pointerup', up, true);
+  }
+  // les mêmes touches sur l'étiquette d'une piste : elle désigne tout son nœud
+  // de départ (une machine-instrument : toutes ses sections)
+  function choisirPiste(ev, ids, mode) {
+    const avant = sel.join(), tous = ids.every((i) => sel.includes(i));
+    const next = mode === 'add' ? withFamilies([...sel, ...ids])
+      : mode === 'toggle' ? (tous ? sel.filter((o) => !ids.includes(o)) : withFamilies([...sel, ...ids]))
+        : tous ? sel : ids;
+    if (next.join() !== sel.join()) setSel(next);
+    else if (S.sel.cable) { S.sel.cable = null; paintCableClass(); paintSide(); }
+    if (mode !== 'replace' || sel.join() !== avant || sel.length <= ids.length) return;
+    const x0 = ev.clientX, y0 = ev.clientY;
+    const up = (u) => { removeEventListener('pointerup', up, true); if (Math.hypot(u.clientX - x0, u.clientY - y0) < 4) setSel(ids); };
     addEventListener('pointerup', up, true);
   }
   function selectBlock(id, mode) {
@@ -1203,7 +1253,8 @@ export function createNodal(app) {
           try { target?.setPointerCapture?.(m.pointerId); } catch { /* window */ }
         }
         const raw = { x: anchor.x + dx / k, y: anchor.y + dy / k, w: anchor.w, h: anchor.h };
-        const snapped = m.altKey && !cloning ? { box: raw, guides: [] } : snapBox(raw, T.filter((t) => !origins.has(t.id) && !t.jouet), SNAP_DISTANCE / k);
+        const libre = !aimante() || (m.altKey && !cloning);
+        const snapped = libre ? { box: raw, guides: [] } : snapBox(raw, T.filter((t) => !origins.has(t.id) && !t.jouet), SNAP_DISTANCE / k);
         guides = snapped.guides;
         const sx = snapped.box.x - anchor.x, sy = snapped.box.y - anchor.y;
         for (const [tid, o] of origins) { const t = parId.get(tid); if (t) { if (t.jouet) { const mm = app.mod(t.mod); mm.x = Math.round(o.x + sx); mm.y = Math.round(o.y + sy); } else ecrireBoite(P(), tid, { ...t, x: o.x + sx, y: o.y + sy }); } }
@@ -1213,7 +1264,9 @@ export function createNodal(app) {
         if (!started && cloning) setSel(sel.filter((s) => s !== id));
         busy = null; guides = [];
         classesSelection();
-        if (started) app.commit('data'); else peindreDessus();
+        // rien n'a bougé : rien à repeindre — repeindre le dessus ici remplaçait
+        // l'étiquette de piste sous le pointeur, et son double-clic se perdait
+        if (started) app.commit('data');
       },
     });
   }
@@ -1254,7 +1307,7 @@ export function createNodal(app) {
         const rules = [];
         for (const part of parts) {
           let delta = part.axis === 'x' ? raw.x : raw.y;
-          if (!m.altKey) {
+          if (!m.altKey && aimante()) {
             const snapped = snapValue(part.at + delta, targets[part.axis], SNAP_DISTANCE / k);
             if (snapped.guide !== null) { delta = snapped.value - part.at; rules.push({ axis: part.axis, at: snapped.guide }); }
           }
@@ -1300,8 +1353,11 @@ export function createNodal(app) {
       cursor: EDGE_CURSOR[edge],
       move: (m) => {
         const raw = { x: (m.clientX - x0) / k, y: (m.clientY - y0) / k }, delta = { ...raw }, rules = [];
-        if (horizontal && !m.altKey) { const s = snapValue(edgeX + raw.x, targetsX, SNAP_DISTANCE / k); if (s.guide !== null) { delta.x = s.value - edgeX; rules.push({ axis: 'x', at: s.guide }); } }
-        if (vertical && !m.altKey) { const s = snapValue(edgeY + raw.y, targetsY, SNAP_DISTANCE / k); if (s.guide !== null) { delta.y = s.value - edgeY; rules.push({ axis: 'y', at: s.guide }); } }
+        // l'aimant éteint : l'arête ne se pose plus sur celles des voisines ;
+        // le couplage (les voisines collées suivent l'arête) reste, ⌥ le défait
+        const aim = aimante();
+        if (horizontal && !m.altKey && aim) { const s = snapValue(edgeX + raw.x, targetsX, SNAP_DISTANCE / k); if (s.guide !== null) { delta.x = s.value - edgeX; rules.push({ axis: 'x', at: s.guide }); } }
+        if (vertical && !m.altKey && aim) { const s = snapValue(edgeY + raw.y, targetsY, SNAP_DISTANCE / k); if (s.guide !== null) { delta.y = s.value - edgeY; rules.push({ axis: 'y', at: s.guide }); } }
         guides = rules;
         let next;
         if (!members || !bounds) next = resizeCoupled(snapshot, id, edge, delta, minGeste, !m.altKey);
@@ -1863,10 +1919,20 @@ export function createNodal(app) {
         [{ head: `couleur de « ${tr.name} »` }, ...COLORS.map((c) => ({ label: COLOR_FR[c], dot: c, checked: tr.color === c, onclick: () => app.setTrackColor(tid, c) }))]));
       const nm = h('span', 'nm');
       nm.textContent = tr.name;
-      nm.title = `la piste « ${tr.name} » · double-clic : la renommer · clic droit : son menu`;
+      nm.title = `la piste « ${tr.name} » · glisser : déplacer son nœud · double-clic : la renommer · clic droit : son menu`;
       nm.addEventListener('dblclick', (ev) => { ev.stopPropagation(); renommerPiste(tid); });
       lab.append(past, nm);
-      lab.addEventListener('pointerdown', (ev) => { if (ev.button !== 0 || ev.target.closest('input')) return; ev.stopPropagation(); const ids = withFamilies(membres.map((x) => x.id)); if (ids.join() !== sel.join()) setSel(ids); });
+      // L'ÉTIQUETTE SE GLISSE (Cal, 29/09 : « il faut qu'on puisse déplacer les
+      // nodes de piste par la grosse étiquette ») : elle vaut l'en-tête de son
+      // nœud — les mêmes touches pour choisir, le même déplacement (la
+      // sélection, le groupe, la machine soudée ; ⌥ duplique), le même
+      // aimant, le même Ctrl+Z (un seul commit, à la fin du geste)
+      lab.addEventListener('pointerdown', (ev) => {
+        if (ev.button !== 0 || ev.target.closest('input')) return;
+        const mode = modeDe(ev);
+        if (mode !== 'remove') choisirPiste(ev, withFamilies(membres.map((x) => x.id)), mode);
+        startMove(ev, membres[0].id);
+      });
       lab.addEventListener('contextmenu', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!sel.includes(membres[0].id)) setSel(withFamilies(membres.map((x) => x.id))); const it = menuTuile(membres[0]); if (it) menu(ev.clientX, ev.clientY, it); });
       kids.push(lab);
     }
@@ -2071,8 +2137,9 @@ export function createNodal(app) {
     e.preventDefault();
     const r = cv.getBoundingClientRect();
     const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+    gesteVue();
     poserCam(zoomCamera(cam(), dy, e.clientX - r.left, e.clientY - r.top, plancherCamera(plancher)));
-    gesteVue(); demanderVue();
+    demanderVue();
     clearTimeout(cv._t); cv._t = setTimeout(() => app.saveUi(), 500);
   }, { passive: false });
   cv.addEventListener('dblclick', (e) => {
@@ -2152,7 +2219,8 @@ export function createNodal(app) {
       { label: 'Grouper la sélection', key: 'G', disabled: sel.length < 2, why: 'choisir au moins deux blocs', onclick: () => toggleGroup() },
       { label: 'Ranger', key: 'T', disabled: !sel.length, why: 'rien n\'est choisi', onclick: () => tidySelection() },
       { label: sel.length ? 'Cadrer la sélection' : 'Cadrer toute la scène', key: 'F', onclick: () => focusOn() },
-      { label: 'Revenir à 100 %', onclick: () => { const r = cv.getBoundingClientRect(), c = cam(); const cx = c.x + r.width / (2 * c.k), cy = c.y + r.height / (2 * c.k); poserCam({ k: 1, x: cx - r.width / 2, y: cy - r.height / 2 }); gesteVue(); appliquerVue(); app.saveUi(); } },
+      { label: 'Revenir à 100 %', onclick: () => { const r = cv.getBoundingClientRect(), c = cam(); const cx = c.x + r.width / (2 * c.k), cy = c.y + r.height / (2 * c.k); gesteVue(); poserCam({ k: 1, x: cx - r.width / 2, y: cy - r.height / 2 }); appliquerVue(); app.saveUi(); } },
+      { label: 'Aimanter aux voisins', key: 'Ctrl+4', checked: aimante(), title: '⌥ en glissant : libre le temps du geste', onclick: () => basculerAimant() },
       '-',
       { label: 'PLANO', sub: 'dessiner une machine', onclick: ouvrirLePlano },
       { label: seuilsOuvert ? 'Fermer les seuils' : 'Les seuils du zoom sémantique', onclick: () => { seuilsOuvert = !seuilsOuvert; peindreSeuils(); peindreOutils(); } },
@@ -2227,12 +2295,16 @@ export function createNodal(app) {
   }
 
   // ═════════════════════════════════════════════════════ les outils
-  const HINT = 'clic milieu glissé : se déplacer (sur les réglages d\'une tuile : tracer ce qu\'elle garde au zoom) · molette : zoom · clic : choisir, Maj : ajouter, Ctrl : ajouter ou retirer · glisser le fond : cadre · double-clic : le catalogue · ⌥ glissé : dupliquer · T ranger · G grouper · F cadrer · clic droit : le menu';
+  const HINT = 'clic milieu glissé : se déplacer (sur les réglages d\'une tuile : tracer ce qu\'elle garde au zoom) · molette : zoom · clic : choisir, Maj : ajouter, Ctrl : ajouter ou retirer · glisser le fond : cadre · double-clic : le catalogue · ⌥ glissé : dupliquer · Ctrl+4 : aimant · T ranger · G grouper · F cadrer · clic droit : le menu';
   function peindreOutils() {
     const p = P();
     put(tools,
       el('button', { class: 'tb ghost sm', type: 'button', title: 'Le catalogue : les blocs, les instruments, les machines, le Playground (double-clic sur le fond)', onclick: () => ouvrirLeCatalogue(null) }, 'Catalogue'),
       el('button', { class: 'tb ghost sm', type: 'button', title: 'PLANO : dessiner une machine en sections, rangées et contrôles — la géométrie suit', onclick: ouvrirLePlano }, 'Plano'),
+      // l'aimant : allumé (vert, « Aimant »), éteint (« Libre ») — Idéation dit de même
+      el('button', { class: `tb sm ndx-aimant ${aimante() ? 'on' : 'ghost'}`, type: 'button', 'aria-pressed': String(aimante()),
+        title: aimante() ? 'Aimant : un bloc glissé ou une arête tirée se colle aux arêtes des voisins (⌥ : libre le temps du geste) — un clic, ou Ctrl+4 : libre'
+          : 'Libre : rien ne s\'aimante — un clic, ou Ctrl+4 : l\'aimant', onclick: () => basculerAimant() }, aimante() ? 'Aimant' : 'Libre'),
       el('span', { class: 'lbl' }, `${p.modules.length + (p.nodal?.blocs?.length || 0)} blocs · ${p.cables.length + liensDe(p).length} câbles${sel.length > 1 ? ` · ${sel.length} sélectionnés` : ''}`));
     const pres = getPresenceRelative();
     const sem = el('label', { class: 'ndx-semantique', title: 'La vitesse du zoom sémantique : un élément ne se rend jamais sous cette fraction de sa taille dessinée — plus haut, les blocs se simplifient plus tôt', onpointerdown: (e) => e.stopPropagation() },
@@ -2244,7 +2316,7 @@ export function createNodal(app) {
     put(zoomBox,
       sem,
       el('button', { class: `tb ghost sm${seuilsOuvert ? ' on' : ''}`, type: 'button', title: 'Les planchers de présence du responsif, réglables en regardant', onclick: () => { seuilsOuvert = !seuilsOuvert; peindreSeuils(); peindreOutils(); } }, 'seuils'),
-      el('button', { class: 'tb ghost sm', type: 'button', title: 'Revenir à 100 %', onclick: () => { const r = cv.getBoundingClientRect(), c = cam(); const cx = c.x + r.width / (2 * c.k), cy = c.y + r.height / (2 * c.k); poserCam({ k: 1, x: cx - r.width / 2, y: cy - r.height / 2 }); gesteVue(); appliquerVue(); app.saveUi(); } }, '100 %'),
+      el('button', { class: 'tb ghost sm', type: 'button', title: 'Revenir à 100 %', onclick: () => { const r = cv.getBoundingClientRect(), c = cam(); const cx = c.x + r.width / (2 * c.k), cy = c.y + r.height / (2 * c.k); gesteVue(); poserCam({ k: 1, x: cx - r.width / 2, y: cy - r.height / 2 }); appliquerVue(); app.saveUi(); } }, '100 %'),
       el('button', { class: 'tb ghost sm', type: 'button', onclick: () => zoomBouton(1 / 1.2) }, '−'),
       el('span', { class: 'pct' }, `${Math.round(view().z * 100)} %`),
       el('button', { class: 'tb ghost sm', type: 'button', onclick: () => zoomBouton(1.2) }, '+'),
@@ -2384,7 +2456,13 @@ export function createNodal(app) {
   });
   new ResizeObserver(() => { if (S.view === 'nodal' && S.proj) { calculerPlancher(); planifierMiseEnPage(); bench.paintMeta(); bench.renderPlan(); } }).observe(cv);
 
-  function key() { /* le clavier du nodal passe par l'écouteur en capture, plus haut */ }
+  // le clavier du nodal passe par l'écouteur en capture, plus haut ; musique.js
+  // passe ici les combinaisons à Ctrl (ou ⌥) : Ctrl+4, l'aimant, comme dans
+  // l'arrangement (timeline.js) — par la touche (e.code), juste en AZERTY
+  function key(e) {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.code === 'Digit4') { e.preventDefault(); basculerAimant(); return true; }
+    return false;
+  }
   // pour les essais (tools : essais de page)
   // montrer un module ou le nœud de départ d'une piste (depuis l'arrangement, le rack)
   function montrer(modId) {
