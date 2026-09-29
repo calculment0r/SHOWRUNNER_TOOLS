@@ -29,9 +29,17 @@
 // soumet à la file (movie.t2v / movie.i2v / movie.r2v) ; /api/movie/redo
 // recrée une vidéo, /api/movie/frame en tire la première ou la dernière image.
 
+//
+// L'annulation (commun/undo.js) : le formulaire par instantanés (images,
+// entrées, les trois champs une fois écrits, toile, durée, méthode, LoRA,
+// réglages avancés) ; aimer, ranger, jeter depuis le fil par le pont de la
+// bibliothèque. Ne s'annulent pas : un rendu lancé, une image tirée d'une
+// vidéo, un fichier déposé. Le banc « Comparer » est une vue : il ne s'annule pas.
 import { mountHeader, api, jobs, pick, uploadFile, toast, el, $, $$, href, fmtDate, dropAnywhere, dropZone } from '../commun/shell.js';
 import { createEntrees } from '../commun/entrees.js';
 import { createFil } from '../commun/fil.js';
+import { createUndo, watchLibrary } from '../commun/undo.js';
+import { prefs } from '../commun/prefs.js';
 
 mountHeader('movie');
 
@@ -54,7 +62,7 @@ const ms = (iso) => Date.parse(iso || '') || 0;
 // ── l'état ──────────────────────────────────────────────────
 const saved = store.get('movie.v2', {});
 const F = {
-  mode: 't2v',
+  mode: prefs.get('movie.mode', 't2v'),   // un formulaire neuf : la préférence (movie/prefs.json)
   p: { t2v: { desc: '', sound: '', music: '' }, i2v: { desc: '', sound: '', music: '' }, r2v: { desc: '', sound: '', music: '' } },
   start: null, end: null, inputs: {}, refSize: 'match',
   canvas: { t2v: [1344, 768], i2v: 'auto', r2v: [1344, 768] }, fam: { t2v: 'paysage', i2v: 'image', r2v: 'paysage' },
@@ -69,7 +77,48 @@ const S = {
   view: 'create', opts: null, plan: null, seq: 0, items: new Map(), jobs: [], allJobs: [], loras: [], loraMachine: '', A: null, B: null, h3: null,
   myJobs: new Set(store.get('movie.myjobs', [])), seen: new Set(), landed: new Set(), gone: new Set(),
 };
-const save = () => store.set('movie.v2', F);
+// ── l'annulation ────────────────────────────────────────────
+const U = createUndo({ name: 'movie', onapply: (e, { items }) => {
+  let reload = false;
+  for (const it of items || []) {
+    if (it.gone) fil?.remove(it.id);
+    else if (fil?.get(it.id)) fil.update(it);
+    else reload = true;
+  }
+  if (reload) fil?.reload();
+} });
+watchLibrary(U);
+const sameJ = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const FIELD_FR = { desc: 'écrire ce qu’on voit et entend', sound: 'écrire le son d’ambiance', music: 'écrire la musique' };
+const FORM_FR = [['start', 'changer l’image de début'], ['end', 'changer l’image de fin'], ['inputs', 'changer les entrées'],
+  ['refSize', 'changer le détail des références'], ['fam', 'changer le format'], ['canvas', 'changer la toile'], ['method', 'changer de méthode'],
+  ['frames', 'changer la durée'], ['steps', 'changer le nombre de pas'], ['seed', 'changer la graine'], ['origSeed', 'changer la graine d’origine'],
+  ['loras', 'changer les LoRA'], ['adv', 'changer un réglage avancé']];
+const TYPED = new Set(['steps', 'seed']);
+let typing = 0;   // chaque passage dans un champ : une saisie, un seul geste
+function formDescribe(b, a) {
+  for (const m of ['t2v', 'i2v', 'r2v']) {
+    for (const k of ['desc', 'sound', 'music']) {
+      if (b.p?.[m]?.[k] !== a.p?.[m]?.[k]) return { label: FIELD_FR[k], merge: `${m}.${k}#${typing}`, mergeMs: Infinity };
+    }
+  }
+  for (const [k, label] of FORM_FR) {
+    if (!sameJ(b[k], a[k])) return { label, merge: TYPED.has(k) || (k === 'adv' && b.adv?.crf !== a.adv?.crf) ? `${k}#${typing}` : k, mergeMs: TYPED.has(k) ? Infinity : undefined };
+  }
+  return { label: 'modifier le formulaire' };
+}
+let form = null;   // posé au démarrage (l'ouverture n'est pas un geste)
+function formRestore(s) {
+  for (const k of Object.keys(s)) F[k] = s[k];
+  if (E) E.set(F.inputs);
+  $('#ref-size').value = F.refSize;
+  if (S.view !== 'create') setView('create');
+  setMode(F.mode);
+}
+
+const save = () => { store.set('movie.v2', F); form?.commit(); };
+// un ajustement que la page fait seule (un LoRA qui ne va pas au mode) : gardé, sans faire un geste
+const quietSave = () => { store.set('movie.v2', F); form?.reset(); };
 function changed() { save(); schedulePlan(); }
 async function item(id) {
   if (!id) return null;
@@ -91,6 +140,9 @@ function setView(v) {
   syncUrl();
 }
 $$('.rail-tabs [data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+// ↶ ↷ et le journal, au bout des onglets de la colonne
+$('.rail-tabs').append(el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons()));
+$('#rail').addEventListener('focusin', (e) => { if (e.target.matches?.('textarea, input')) typing++; });
 
 function setMode(m) {
   F.mode = m;
@@ -259,7 +311,11 @@ function paintCamera() {
 }
 $('#h-cam').addEventListener('click', () => { $('#cam').hidden = !$('#cam').hidden; $('#h-cam').classList.toggle('on', !$('#cam').hidden); });
 $('#h-assist').addEventListener('click', () => { $('#assist').hidden = !$('#assist').hidden; $('#h-assist').classList.toggle('on', !$('#assist').hidden); });
-$('#h-say').addEventListener('click', () => insertAt(descEl, '(S1) says: <d>[French] …</d>', { select: [23, 24] }));
+// la langue de la réplique : la préférence « langue parlée » (Général)
+$('#h-say').addEventListener('click', () => {
+  const pre = `(S1) says: <d>[${prefs.get('general.langue', 'fr') === 'en' ? 'English' : 'French'}] `;
+  insertAt(descEl, pre + '…</d>', { select: [pre.length, pre.length + 1] });
+});
 $('#h-excl').addEventListener('click', () => insertAt(descEl, 'No text, subtitles, logos or watermarks of any kind, keep the live-action texture.'));
 
 // ── LoRA ────────────────────────────────────────────────────
@@ -280,7 +336,7 @@ function paintLoras() {
     const st = F.loras[l.name] || (F.loras[l.name] = { on: false, strength: l.force });
     const fits = l.modes.includes(F.mode);
     const off = l.accel || !fits;
-    if (off && st.on) { st.on = false; save(); }
+    if (off && st.on) { st.on = false; quietSave(); }
     const force = el('input', { class: 'fld force', inputmode: 'decimal', value: st.strength, 'aria-label': 'force', disabled: off || null,
       onchange: (e) => { const v = parseFloat(e.target.value.replace(',', '.')); st.strength = isFinite(v) ? Math.max(0, Math.min(2, v)) : l.force; e.target.value = st.strength; changed(); } });
     return el('div', { class: 'lora' + (st.on ? ' on' : '') + (off ? ' off' : '') },
@@ -695,7 +751,10 @@ setInterval(() => { if (S.jobs.some((j) => j.state === 'running')) fil?.paintJob
 // ── le banc A/B (repris du banc NL de Cal) ──────────────────
 const vA = $('#vA'), vB = $('#vB'), mon = $('#monitor'), layA = $('#layA'), layB = $('#layB'), handle = $('#handle');
 const zsA = $('#zsA'), zsB = $('#zsB'), scrub = $('#scrub'), fill = $('#fill');
-const BS = { mode: store.get('movie.bench.mode', 'wipe'), listen: 'a', zoom: 1, pan: { x: 0, y: 0 }, loop: store.get('movie.bench.loop', true),
+// la vue du banc et la boucle : des préférences de la personne (movie/prefs.json) ;
+// l'ancienne clé de ce navigateur sert une fois de départ
+const BS = { mode: prefs.get('movie.benchMode', store.get('movie.bench.mode', 'wipe')), listen: 'a', zoom: 1, pan: { x: 0, y: 0 },
+  loop: prefs.get('movie.benchLoop', store.get('movie.bench.loop', true)),
   speed: 1, wipe: 50, blinkT: null, seeking: false, volume: 1 };
 function assign(k, id) { S[k] = id; if (S.view !== 'cmp') setView('cmp'); else { benchLoad(); syncUrl(); } }
 function paintSlots() {
@@ -762,7 +821,9 @@ function step(n) { pauseBench(); const m = master(); if (!m) return; seekBoth(Ma
 $('#bPrev').addEventListener('click', () => step(-1));
 $('#bNext').addEventListener('click', () => step(1));
 $('#bLoop').classList.toggle('on', BS.loop);
-$('#bLoop').addEventListener('click', () => { BS.loop = !BS.loop; $('#bLoop').classList.toggle('on', BS.loop); store.set('movie.bench.loop', BS.loop); });
+$('#bLoop').addEventListener('click', () => { BS.loop = !BS.loop; $('#bLoop').classList.toggle('on', BS.loop); prefs.set('movie.benchLoop', BS.loop); });
+prefs.on('movie.benchLoop', (v) => { BS.loop = v !== false; $('#bLoop').classList.toggle('on', BS.loop); });
+prefs.on('movie.benchMode', (v) => { if (v && v !== BS.mode) setBenchMode(v); });
 $('#bSwap').addEventListener('click', () => { [S.A, S.B] = [S.B, S.A]; benchLoad(); syncUrl(); });
 function seg(id, attr, cb) { $$(`#${id} .tb`).forEach((b) => b.addEventListener('click', () => { $$(`#${id} .tb`).forEach((x) => x.classList.remove('on')); b.classList.add('on'); cb(b.dataset[attr]); })); }
 seg('segSpeed', 'v', (v) => { BS.speed = +v; vA.playbackRate = vB.playbackRate = BS.speed; });
@@ -776,7 +837,7 @@ function setBenchMode(m) {
   if (m === 'blink') { let on = false; BS.blinkT = setInterval(() => { on = !on; layB.style.visibility = on ? 'visible' : 'hidden'; layA.style.visibility = on ? 'hidden' : 'visible'; }, 500); }
   if (m === 'wipe') setWipe(BS.wipe); else layB.style.clipPath = '';   // le rideau pose un découpage en ligne
   $$('#segMode .tb').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
-  store.set('movie.bench.mode', m);
+  prefs.set('movie.benchMode', m);
 }
 function applyAudio() {
   const hasA = !!vA.getAttribute('src'), hasB = !!vB.getAttribute('src');
@@ -888,6 +949,9 @@ dropAnywhere(async (files) => {
   if (refId) { const it = await item(refId); if (it && E) E.add([it]); }   // ?ref=<id> : l'objet entre dans sa catégorie
   mountFil();
   setMode(F.mode);
+  // à partir d'ici, chaque changement du formulaire est un geste (le mode suit sans en faire un)
+  form = U.snapshots({ get: () => F, set: formRestore, describe: formDescribe, ignore: ['mode'] });
+  form.reset();
   setView(q.get('view') === 'cmp' || q.get('a') ? 'cmp' : 'create');
   const want = (location.hash || '').slice(1) || q.get('id');
   if (want) fil.open(want);

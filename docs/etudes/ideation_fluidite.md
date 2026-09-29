@@ -694,6 +694,158 @@ diff --git a/server/tools/core_api.py b/server/tools/core_api.py
 
 (Le diff complet, lignes de contexte comprises : `ssh dgx2 'cd /tmp/sr_ide_perf && git diff main perf-proto'`.)
 
+## 6. Fait — le serveur et le commun, pour tout le portail (29/09)
+
+Les points 1 à 4 du § 4.1, et le point 5 du § 4.2 pour les pages communes
+(le fil d'Image et de Vidéo, sa visionneuse, `thumb()`). La planche
+d'Idéation se branche sur le même contrat (les points 5 à 9, dans
+`ideation/`).
+
+### 6.1 Ce qui est en place
+
+- **Le cache** (`server/core/http.py`) : chaque fichier servi (dépôt,
+  bibliothèque) porte un `ETag` faible (`W/"taille-date"`, date à la
+  nanoseconde) et répond **304** sans corps à un `If-None-Match` qui le
+  reconnaît (plusieurs validateurs, `*` compris). Le reste de l'en-tête ne
+  change pas (`no-cache` : le navigateur redemande, le serveur dit « pas
+  changé »). Un dossier monté choisit sa politique fichier par fichier
+  (`mount(…, cache=fonction(chemin, req))`) ; `app.on_start(fonction)` est
+  appelée une fois, quand le serveur écoute.
+- **Les copies d'affichage** (`server/core/library.py`) : `view-256.webp`,
+  `view-512.webp`, `view-1024.webp`, `view-2048.webp` dans le dossier de
+  l'objet, WebP q82, jamais plus grandes que l'original (une image de
+  1024 a sa copie 1024 ; moins de 256 : aucune), chacune tirée de la
+  précédente (un décodage ; un JPEG se décode déjà réduit), tournées selon
+  l'EXIF comme le navigateur montre l'original, l'alpha gardé. Une vidéo
+  les a pour son affiche (une image à sa taille, prise à 0,5 s comme la
+  vignette). Faites **à l'entrée** (`add_file`) ; celles des objets rangés
+  avant, par le travail **`library.views`** (voie `cpu`, priorité basse,
+  4 fils) que le portail **lance seul au démarrage** s'il en manque — juste
+  par construction : un déploiement n'a rien à lancer à la main.
+- **Le cache d'un an** : `private, max-age=31536000, immutable` sur une
+  copie demandée à son adresse versionnée (`?v=`, qui change quand on la
+  refait) ; sans `?v=`, revalidée comme le reste. `private` et non
+  `public` : chacun ne voit que ce que `visibility` lui ouvre, et un cache
+  partagé (la porte Cloudflare, `server/showrunner.py`) servirait l'image
+  de l'un à l'autre sans passer par le juge de `/library/`.
+- **La page** (`commun/proxies.js`, nouveau) : `pickView`, `needOf`,
+  `swap` (décodée avant l'échange ; une image qu'on regarde ne redescend
+  pas), `bind` (la taille réelle suivie par `ResizeObserver`, la montée de
+  copie seulement près de l'écran, `IntersectionObserver`). Branché dans :
+  - **le fil** (`commun/fil.js`) : grille et liste prennent la copie de
+    leur case (le curseur de taille compris) au lieu de la vignette 384 ou
+    de l'original ; l'affiche d'une vidéo, la copie de sa taille ; les
+    références (40 px), la copie 256 ;
+  - **la visionneuse** : sa taille posée d'avance (l'image ne saute pas),
+    d'abord ce que la carte montre déjà, puis la copie qui couvre la scène,
+    puis **l'original quand on s'arrête 400 ms** (feuilleter ne télécharge
+    pas d'originaux) ; les voisins préparés en copie décodée, plus en
+    original ;
+  - **`thumb()`** (`commun/shell.js`) : la copie de la case, suivie ensuite.
+
+### 6.2 Le contrat
+
+| | |
+|---|---|
+| objet public (`library.public`, toutes les routes qui rendent un objet) | `views: [256, 512, 1024, 2048]` — les tailles (grand côté, px) qui existent, de la plus petite à la plus grande ; `[]` : aucune (trop petite, un son, un élément, pas encore rattrapée) · `view_urls: {"256": "library/<id>/view-256.webp?v=…", …}` — leurs adresses versionnées, relatives à la racine comme `url` |
+| `GET /api/library/<id>/view?w=256\|512\|1024\|2048` | le fichier : la copie de cette taille, sinon la plus proche au-dessus, sinon l'original (une vidéo : la plus grande copie de son affiche, sinon sa vignette) ; `w` quelconque > 0 accepté ; 400 sans `w`, 404 si l'objet est absent ou invisible ; revalidé (ETag, 304) |
+| `POST /api/library/batch {ids: [...]}` | `{items: [objets publics], missing: [ids]}` — dans l'ordre demandé, sans doublon ; 2000 ids au plus (400 au-delà) ; absent et invisible sont dans `missing`, sans dire lequel |
+| `POST /api/library/views {ids?, force?}` | admin : relance le rattrapage (`force` refait les copies, et leur `?v=`) ; le travail `library.views` |
+
+Côté page : `import { pickView, needOf, swap, bind } from '../commun/proxies.js'`
+— `pickView(it, cssPx)` rend `{url, w}` (URL absolue ; `w = ORIGINAL` pour
+l'original) : la plus petite copie dont le grand côté couvre `cssPx ×
+devicePixelRatio`, sinon l'original ; sans copie, la vignette tant
+qu'elle suffit (384 px).
+
+### 6.3 Mesuré (DGX2, copie d'essai `/tmp/sr_perf2`, port 8821)
+
+Le fil d'Image avec les 14 images « Essais » de Cal en tête (1567 × 661 à
+6336 × 2688, 1,3 à 17 Mo, 79 Mo en tout) puis les 1000 du banc (§ 3.1) ;
+Chromium sans affichage sur le GPU, 1600 × 1000, un navigateur neuf
+(`/tmp/sr_perf2_fil.mjs`) : ouvrir, curseur de taille au maximum (480 px),
+quatre pages de plus, la liste, recharger ; puis, cache vide, la
+visionneuse sur la première image et 10 fois « suivant » (une image compte
+quand `img.decode()` a résolu ; « nette » : assez de pixels pour sa taille
+à l'écran × densité), puis 10 « suivant » à 100 ms d'écart. « Avant » : le
+code du commit 0782335 (Nagle déjà coupé).
+
+| mesure | avant · local | après · local | avant · Wi-Fi | après · Wi-Fi | avant · densité 2 | après · densité 2 |
+|---|---|---|---|---|---|---|
+| ouvrir : images visibles · Mo | 1,21 s · 1,2 Mo | 0,82 s · 1,1 Mo | 1,12 s · 0,9 Mo | 0,86 s · 0,9 Mo | 0,87 s · 1,2 Mo | 0,87 s · 4,7 Mo |
+| curseur à 480 px : Mo (originaux) | 0 (0) — la vignette 384 étirée, floue | 4,1 (1) | 0 (0), floue | 4,1 (1) | 0 (0), floue | 79,2 (16) |
+| quatre pages de plus : Mo (originaux) | 221,2 (113) | 10,9 (2) | 117,2 (64) | 9,1 (2) | 221,2 (113) | 123,9 (68) |
+| la liste : Mo (originaux) | 306,5 (136) | 0,2 (0) | 398,8 (181) | 0,1 (0) | 306,5 (136) | 0,8 (0) |
+| recharger : Mo · images visibles | 178,9 · 0,18 s | 0,05 · 0,08 s | 178,9 · 2,05 s | 0,05 · 0,10 s | 178,9 · 0,24 s | 0,05 · 0,10 s |
+| mémoire après la liste (RSS) | 1622 Mo | 870 Mo | 1347 Mo | 837 Mo | 1456 Mo | 1322 Mo |
+| visionneuse : ouvrir, nette · originale | 107 · 107 ms | 58 · 526 ms | 561 · 561 ms | 63 · 896 ms | 127 · 127 ms | 157 · 157 ms |
+| visionneuse : « suivant », nette (moyenne · pire) | 71 · 165 ms | 20 · 46 ms | 243 · 1129 ms | 20 · 33 ms | 71 · 180 ms | 59 · 202 ms |
+| feuilleter 10 images à 100 ms : Mo (originaux) | 32,2 (10) | 3,1 (2) | 32,2 (10) | 3,1 (2) | 32,2 (10) | 24,3 (7) |
+| mémoire après la visionneuse (RSS) | 1468 Mo | 1143 Mo | 1492 Mo | 1123 Mo | 1398 Mo | 1514 Mo |
+
+- **Densité 2** : une image vue plus grande que sa plus grande copie prend
+  l'original (la règle du § 4.1 : on regarde ses pixels) ; les sorties de
+  modèles entre 1024 et 2048 px (1216 × 832, 1344 × 768, 1567 × 661…) le
+  font dès 480 px de haut, et la visionneuse prend l'original d'emblée
+  (une scène de 1136 px × 2 dépasse 2048). Le gain y est moindre (quatre
+  pages : 221 → 124 Mo) ; une copie à la taille native de ces images
+  (WebP, ~10 fois plus légère que leur PNG) le relèverait — non fait, les
+  tailles sont celles de l'étude.
+- **Ouvrir** ne change guère : la première page (60 vignettes de 20 ko)
+  était déjà légère ; le temps va ailleurs que dans les images.
+
+La planche d'Idéation de 1000 images (`/tmp/perf_measure.mjs`, la page
+d'aujourd'hui, seul le serveur change) : **rouvrir 1592 → 1,75 Mo**, images
+visibles 2,7 → 1,0 s (les 304) ; ouvrir, zoomer à 200 % ne changent pas
+tant que `ideation/` ne prend pas les copies et les fiches par lot.
+
+Les fiches : 1000 lues une à une, 183 à 194 ms et 1000 requêtes sur une
+connexion gardée ouverte ; par lots de 500, **6 à 11 ms, 2 requêtes**
+(`/tmp/sr_perf2_batch.py`).
+
+Les copies : le rattrapage des 1021 objets de l'essai (images et vidéos)
+en **46 s** (4 fils) ; 158,6 Mo de copies pour ~2 Go d'originaux (+8 %).
+Les Essais de Cal : 290 ms par image en moyenne sur un cœur, 630 ms au
+plus (le PNG de 5376 × 3072, 15,6 Mo), 339 ms par vidéo (ffmpeg compris) ;
+3,3 Mo de copies en tout. Un dépôt attend d'autant plus longtemps sa
+réponse.
+
+`python3 tools/check.py` : 755 passés, 0 en échec ; le `selftest` de
+`server/tools/core_api.py` essaie les copies (tailles, WebP, alpha, EXIF,
+une vidéo), la route `view`, l'ETag et le 304, le cache d'un an seulement
+à l'adresse versionnée, les fiches par lot (ordre, doublons, absents,
+bornes) et le rattrapage par le travail `cpu`.
+
+### 6.4 Au déploiement
+
+Le rattrapage des données en ligne part seul au redémarrage (travail
+« Copies d'affichage · N objets », voie `cpu`, priorité basse) :
+
+```sh
+ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && tools/portail.sh restart'
+# vérifier, une minute après : aucune ligne avant le compte des copies
+# (29 images et vidéos en ligne le 29/09 à 13 h 45, 21 d'entre elles dans « Essais »)
+ssh dgx2 'cd ~/showrunner-data/library && grep -L "\"views\"" $(grep -lE "\"kind\": \"(image|video)\"" */item.json); ls */view-*.webp | wc -l'
+```
+
+Le relancer (un admin, dans la console du navigateur ouvert sur le
+portail) : `fetch('/api/library/views', {method: 'POST', headers:
+{'Content-Type': 'application/json'}, body: '{}'})` ; `'{"force": true}'`
+refait toutes les copies.
+
+### 6.5 Ce qui reste
+
+- `ideation/` : prendre les fiches par lot et les copies (§ 4.2, points 5
+  à 9), l'agent des groupes y branche ce contrat.
+- Les autres pages qui posent encore `thumb_url` ou `url` à la main (Asset
+  et ses cases de 88 px, le sélecteur de `refBoard`, `jobRow`) : les
+  passer par `pickView`.
+- Une copie à la taille native des images entre 1024 et 2048 px (voir
+  densité 2) ; les références des éléments (`element.refs`) n'ont pas de
+  copies.
+- Mesurer sur le PC de Cal (Windows, son GPU, le vrai Wi-Fi) : l'accusé
+  retardé de Windows (§ 2.1) n'est toujours pas mesuré.
+
 ## Sources
 
 1. Evan Wallace, « Building a professional design tool on the web », Figma Blog (07/12/2015), https://www.figma.com/blog/building-a-professional-design-tool-on-the-web/

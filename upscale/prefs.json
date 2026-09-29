@@ -1,0 +1,17 @@
+{
+  "tool": "upscale",
+  "title": "Upscale",
+  "about": "La vue de l’avant / après. Suit aussi ce qu’on choisit au-dessus de l’image (touches 1 à 4, L).",
+  "prefs": [
+    {
+      "key": "view", "label": "Avant / après : la vue", "type": "choice", "default": "wipe",
+      "options": [["wipe", "Rideau"], ["side", "Côte à côte"], ["a", "Avant"], ["b", "Après"]]
+    },
+    {
+      "key": "loupe", "label": "Loupe 1:1 sous la souris", "type": "toggle", "default": true
+    },
+    {
+      "key": "loop", "label": "Vidéos en boucle", "type": "toggle", "default": true
+    }
+  ]
+}

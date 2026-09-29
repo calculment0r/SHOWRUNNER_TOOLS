@@ -11,7 +11,15 @@
 // fait encore les vues d'un objet justes. La page dit ce qui marche et ce
 // qui attend ; la 3D n'est pas câblée (Cal, 28/09 nuit : l'UX d'abord),
 // son bouton lance un cube de contrôle marqué « factice ».
+//
+// L'annulation (commun/undo.js) : créer un objet (il part à la corbeille), le
+// renommer, sa description, ses vues et son image (la planche de l'élément,
+// reposée par /api/asset/refs). Ne s'annulent pas : tirer la 3D (un rendu
+// lancé), un fichier déposé.
 import { mountHeader, api, jobs, pick, el, $, $$, href, fmtDate, uploadFile, dropAnywhere, dropZone } from '../commun/shell.js';
+import { createUndo, libPatch, libBoard, keyLabel } from '../commun/undo.js';
+import { prefs } from '../commun/prefs.js';
+import { reducedMotion } from '../commun/theme.js';
 
 // Un fichier déposé ici entre dans la bibliothèque comme tout dépôt du
 // disque : catégorie Upload, entré par Object Creator (shell.js, uploadFile).
@@ -51,9 +59,18 @@ const VIEWS = [
   $('link[rel="icon"]').href = c.toDataURL();
 })();
 
+// ── l'annulation ─────────────────────────────────────────────
+// après un Ctrl+Z, la vue ouverte se repeint depuis le serveur
+const U = createUndo({ name: 'object', onapply: () => {
+  const h = decodeURIComponent(location.hash.slice(1));
+  if (ID_RX.test(h)) paintObject(h, { keepScroll: true }); else paintHome();
+} });
+const undoGroup = () => el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons());
+
 // ── le bandeau ───────────────────────────────────────────────
+// « annuler » dans le bandeau est Ctrl+Z : le geste qu'il vient d'annoncer (undo = true)
 let toastT;
-function say(msg, undo = null) {
+function say(msg, undo = false) {
   let t = $('.a-toast');
   if (!t) {
     t = el('div', { class: 'a-toast', role: 'status' }, el('span', { class: 't' }), el('button', { class: 'linkish', type: 'button' }, 'annuler'));
@@ -62,8 +79,14 @@ function say(msg, undo = null) {
   $('.t', t).textContent = msg;
   $('.toast.on')?.classList.remove('on');   // un seul bandeau : celui de shell.js (dépôts) s'efface
   const b = $('button', t);
-  b.hidden = !undo;
-  b.onclick = async () => { t.classList.remove('on'); try { await undo(); } catch (e) { say(e.message); } };
+  const top = undo ? U.done[U.done.length - 1] : null;
+  b.hidden = !top;
+  b.title = top ? `${U.labels().undo} · ${keyLabel('undo')}` : '';
+  b.onclick = async () => {
+    t.classList.remove('on');
+    if (U.done[U.done.length - 1] !== top) { say('ce geste n’est plus le dernier : le journal (↺) y ramène'); return; }
+    await U.undo();
+  };
   t.classList.add('on');
   live(msg);
   clearTimeout(toastT);
@@ -113,7 +136,7 @@ async function paintHome() {
         el('div', { class: 'row' },
           el('button', { class: 'tb go', type: 'button', onclick: () => newObject() }, 'Nouvel objet'),
           el('a', { class: 'tb ghost', href: href('image/?for=object') }, 'Créer son image dans Image'),
-          el('a', { class: 'tb ghost', href: href('asset/') }, 'La bibliothèque'))),
+          el('a', { class: 'tb ghost', href: href('asset/') }, 'La bibliothèque'), undoGroup())),
       chain),
     el('div', { class: 'sect-head' }, el('h2', {}, 'Les objets'), el('span', { class: 'cnt' }, plural(objs.items.length, 'objet', 'objets'))),
     el('div', { class: 'objs', role: 'list' }, ...(objs.items.length ? objs.items.map(objCard) : [
@@ -232,9 +255,18 @@ function newObject({ item = null } = {}) {
     e.preventDefault();
     if (create.disabled) return;
     try {
-      const o = await api('objet/objects', { method: 'POST', body: { title: name.value.trim(), description: desc.value.trim(), item: chosen.id } });
+      // créer se défait en mettant l'objet à la corbeille ; le rétablir l'en sort
+      let made = null;
+      const title = name.value.trim(), description = desc.value.trim(), item = chosen.id;
+      const o = await U.run({ label: `créer l’objet « ${title} »`,
+        do: async () => {
+          if (made) { await api(`library/${made.id}/restore`, { method: 'POST' }); return made; }
+          made = await api('objet/objects', { method: 'POST', body: { title, description, item } });
+          return made;
+        },
+        undo: async (x) => { await api(`library/${x.id}/delete`, { method: 'POST' }); if (location.hash === '#' + x.id) location.hash = ''; } });
       m.close();
-      say(`Objet « ${o.title} » créé`);
+      say(`Objet « ${o.title} » créé`, true);
       location.hash = '#' + o.id;
     } catch (err) { say(err.message); }
   };
@@ -282,7 +314,7 @@ function objectSheet(o, s) {
   name.addEventListener('change', async () => {
     const v = name.value.trim();
     if (!v || v === o.title) { name.value = o.title; return; }
-    try { Object.assign(o, await api('library/' + o.id, { method: 'POST', body: { title: v } })); saved.classList.add('on'); setTimeout(() => saved.classList.remove('on'), 1600); } catch (err) { say(err.message); }
+    try { Object.assign(o, await libPatch(U, o.id, { title: v }, `renommer « ${o.title} » en « ${v} »`, { before: o })); saved.classList.add('on'); setTimeout(() => saved.classList.remove('on'), 1600); } catch (err) { say(err.message); }
   });
   const tick = (cls, txt) => el('span', { class: `tick ${cls}` }, el('i'), el('span', {}, txt));
   const go3d = el('button', { class: 'tb go', type: 'button', id: 'go3d', disabled: !main,
@@ -295,7 +327,7 @@ function objectSheet(o, s) {
     el('div', { class: 'o-act' },
       el('div', { class: 'ticks', 'aria-label': 'avancement' }, tick(main ? 'done' : 'wait', 'image'), tick(named >= 4 ? 'done' : 'wait', 'vues'),
         tick(m && !m.factice ? 'done' : m ? 'wait' : '', '3D'), tick('', 'taille')),
-      el('a', { class: 'tb ghost', href: href(`asset/#${o.id}`) }, 'Dans la bibliothèque'), go3d),
+      undoGroup(), el('a', { class: 'tb ghost', href: href(`asset/#${o.id}`) }, 'Dans la bibliothèque'), go3d),
     wired ? null : el('p', { class: 'why', style: { gridColumn: '1 / -1' } },
       'TRELLIS.2 n\'est pas câblé ici (Cal, 28/09 nuit : l\'écran d\'abord) — le bouton fait un cube de contrôle, marqué factice, pour montrer le parcours.'));
 
@@ -373,7 +405,7 @@ function objectSheet(o, s) {
   desc.value = e.description || '';
   const dsaved = el('span', { class: 'saved' }, 'enregistré');
   desc.addEventListener('change', async () => {
-    try { Object.assign(o, await api('library/' + o.id, { method: 'POST', body: { element: { description: desc.value.trim() } } })); dsaved.classList.add('on'); setTimeout(() => dsaved.classList.remove('on'), 1600); } catch (err) { say(err.message); }
+    try { Object.assign(o, await libPatch(U, o.id, { element: { description: desc.value.trim() } }, `réécrire la description de « ${o.title} »`, { before: o })); dsaved.classList.add('on'); setTimeout(() => dsaved.classList.remove('on'), 1600); } catch (err) { say(err.message); }
   });
   const square = main?.width && main.width === main.height;
   const t = s?.trellis || {};
@@ -406,18 +438,20 @@ async function addView(o, label, items = null) {
   const it = got[0];
   if (!it) return;
   try {
-    await api(`elements/${o.id}/refs`, { method: 'POST', body: { item: it.id, role: 'view', label } });
-    say(`vue ${label} ajoutée`);
+    await libBoard(U, o, `ajouter la vue ${label} à « ${o.title} »`,
+      () => api(`elements/${o.id}/refs`, { method: 'POST', body: { item: it.id, role: 'view', label } }));
+    say(`vue ${label} ajoutée`, true);
   } catch (e) { say(e.message); }
   paintObject(o.id, { keepScroll: true });
 }
 
+const refRow = (x) => ({ file: x.file, role: x.role, label: x.label, item: x.item });
 async function removeRef(o, r) {
-  const before = o.element.refs.map((x) => ({ file: x.file, role: x.role, label: x.label, item: x.item }));
-  const list = before.filter((x) => x.file !== r.file);
+  const list = o.element.refs.filter((x) => x.file !== r.file).map(refRow);
   try {
-    await api(`asset/refs/${o.id}`, { method: 'POST', body: { refs: list } });
-    say(`${r.label || 'vue'} retirée`, async () => { await api(`asset/refs/${o.id}`, { method: 'POST', body: { refs: before } }); paintObject(o.id, { keepScroll: true }); });
+    await libBoard(U, o, `retirer ${r.label ? `la vue ${r.label}` : 'une vue'} de « ${o.title} »`,
+      () => api(`asset/refs/${o.id}`, { method: 'POST', body: { refs: list } }));
+    say(`${r.label || 'vue'} retirée`, true);
   } catch (e) { say(e.message); }
   paintObject(o.id, { keepScroll: true });
 }
@@ -425,13 +459,14 @@ async function removeRef(o, r) {
 // une vue pleine remplacée par un dépôt : la nouvelle prend sa place et son libellé
 async function replaceView(o, old, label, it) {
   try {
-    const n = await api(`elements/${o.id}/refs`, { method: 'POST', body: { item: it.id, role: 'view', label } });
-    const refs = n.element.refs;
-    const added = refs[refs.length - 1];
-    const before = refs.slice(0, -1).map((x) => ({ file: x.file, role: x.role, label: x.label, item: x.item }));
-    const list = refs.slice(0, -1).map((x) => (x.file === old.file ? added : x)).map((x) => ({ file: x.file, role: x.role, label: x.label, item: x.item }));
-    await api(`asset/refs/${o.id}`, { method: 'POST', body: { refs: list } });
-    say(`vue ${label} remplacée`, async () => { await api(`asset/refs/${o.id}`, { method: 'POST', body: { refs: before } }); paintObject(o.id, { keepScroll: true }); });
+    await libBoard(U, o, `remplacer la vue ${label} de « ${o.title} »`, async () => {
+      const n = await api(`elements/${o.id}/refs`, { method: 'POST', body: { item: it.id, role: 'view', label } });
+      const refs = n.element.refs;
+      const added = refs[refs.length - 1];
+      const list = refs.slice(0, -1).map((x) => (x.file === old.file ? added : x)).map(refRow);
+      await api(`asset/refs/${o.id}`, { method: 'POST', body: { refs: list } });
+    });
+    say(`vue ${label} remplacée`, true);
   } catch (e) { say(e.message); }
   paintObject(o.id, { keepScroll: true });
 }
@@ -440,14 +475,15 @@ async function changeImage(o, main, given = null) {
   const it = given || (await pick({ kinds: ['image'], title: `Une autre image pour ${o.title}` }))[0];
   if (!it) return;
   try {
-    const n = await api(`elements/${o.id}/refs`, { method: 'POST', body: { item: it.id, role: 'view', label: VIEWS[0].label } });
-    const refs = n.element.refs;
-    const added = refs[refs.length - 1];
-    // la nouvelle en tête ; l'ancienne reste dans l'élément, en « détail »
-    const list = [added, ...refs.slice(0, -1).map((x) => (main && x.file === main.file ? { ...x, role: 'detail', label: 'ancienne image' } : x))]
-      .map((x) => ({ file: x.file, role: x.role, label: x.label, item: x.item }));
-    await api(`asset/refs/${o.id}`, { method: 'POST', body: { refs: list } });
-    say('nouvelle image choisie ; l\'ancienne reste dans l\'élément, en détail');
+    await libBoard(U, o, `changer l’image de « ${o.title} »`, async () => {
+      const n = await api(`elements/${o.id}/refs`, { method: 'POST', body: { item: it.id, role: 'view', label: VIEWS[0].label } });
+      const refs = n.element.refs;
+      const added = refs[refs.length - 1];
+      // la nouvelle en tête ; l'ancienne reste dans l'élément, en « détail »
+      const list = [added, ...refs.slice(0, -1).map((x) => (main && x.file === main.file ? { ...x, role: 'detail', label: 'ancienne image' } : x))].map(refRow);
+      await api(`asset/refs/${o.id}`, { method: 'POST', body: { refs: list } });
+    });
+    say('nouvelle image choisie ; l\'ancienne reste dans l\'élément, en détail', true);
   } catch (e) { say(e.message); }
   paintObject(o.id, { keepScroll: true });
 }
@@ -527,7 +563,8 @@ function preview(box, url) {
     const camera = new THREE.PerspectiveCamera(35, 4 / 3, 0.01, 100);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.autoRotate = true;
+    // la préférence « l'aperçu tourne seul » ; les animations réduites l'arrêtent aussi
+    controls.autoRotate = prefs.get('object.autorotate', true) && !reducedMotion();
     controls.autoRotateSpeed = 1.4;
     controls.addEventListener('start', () => { controls.autoRotate = false; });
     let model;

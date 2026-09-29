@@ -43,6 +43,9 @@
 
 import { el, $$, api, toast, href, fmtDate, dragItem } from './shell.js';
 import { menu, kebab, contextMenu, closeMenus } from './menu.js';
+// chaque image à la taille où elle est vue : la copie d'affichage qui suffit,
+// l'original seulement au-delà (docs/etudes/ideation_fluidite.md)
+import { pickView, needOf, swap, bind, ORIGINAL } from './proxies.js';
 
 // la feuille du fil, chargée une fois, à côté de ce fichier (comme menu.css)
 if (![...document.querySelectorAll('link[rel=stylesheet]')].some((l) => /commun\/fil\.css$/.test(l.href))) {
@@ -388,8 +391,8 @@ export function createFil(box, o = {}) {
       libItem(rid).then((x) => {
         if (!x) { b.remove(); return; }
         b.title = `${x.title || x.id} — ouvrir`;
-        const t = x.thumb_url || (x.kind === 'image' ? x.url : null);
-        if (t) b.style.backgroundImage = `url("${href(t)}")`;
+        const t = pickView(x, needOf(x, 40, 40)).url;   // .fl-ref : 40 px ; un son n'en a pas
+        if (t) b.style.backgroundImage = `url("${t}")`;
         else b.textContent = x.kind === 'audio' ? '♪' : '▶';
         b.onclick = (e) => { e.stopPropagation(); open(x); };
         dragItem(b, x);
@@ -409,13 +412,16 @@ export function createFil(box, o = {}) {
   const arOf = (w, h) => Math.max(0.42, Math.min(2.6, (w || 1) / (h || 1)));
   function gridCard(it) {
     const ar = arOf(it.width, it.height);
-    const big = P.size.grid > 260;
+    // la boîte de la carte avant la mise en page (rangées de --fl-h, à son format) ;
+    // bind() suit ensuite sa taille réelle, le curseur de taille compris
+    const box = [P.size.grid * ar, P.size.grid];
     let media;
     if (it.kind === 'video') {
-      media = el('video', { loop: true, playsinline: true, preload: 'none', poster: it.thumb_url ? href(it.thumb_url) : null });
+      const poster = pickView(it, needOf(it, box[0], box[1])).url;
+      media = el('video', { loop: true, playsinline: true, preload: 'none', poster: poster || null });
       media.muted = true;
     } else if (it.kind === 'image') {
-      media = el('img', { src: href(big ? it.url : (it.thumb_url || it.url)), alt: '', loading: 'lazy', draggable: 'false' });
+      media = bind(el('img', { alt: '', loading: 'lazy', decoding: 'async', draggable: 'false' }), it, { fit: 'cover', box });
     } else {
       media = el('span', { class: 'fl-nomedia' }, it.kind === 'audio' ? '♪' : '◆');
     }
@@ -433,11 +439,14 @@ export function createFil(box, o = {}) {
   }
   function listCard(it) {
     let media;
+    // la scène : toute la largeur moins la carte (290 px), la hauteur de --fl-lh ; le média y est contenu
+    const box = [Math.max(240, (body.clientWidth || 1100) - 290 - 12), P.size.list];
     if (it.kind === 'video') {
-      media = el('video', { src: href(it.url), loop: true, playsinline: true, preload: 'metadata', poster: it.thumb_url ? href(it.thumb_url) : null });
+      const poster = pickView(it, needOf(it, box[0], box[1], 'contain')).url;
+      media = el('video', { src: href(it.url), loop: true, playsinline: true, preload: 'metadata', poster: poster || null });
       media.muted = true;
     } else if (it.kind === 'image') {
-      media = el('img', { src: href(it.url), alt: '', loading: 'lazy', draggable: 'false' });
+      media = bind(el('img', { alt: '', loading: 'lazy', decoding: 'async', draggable: 'false' }), it, { fit: 'contain', box });
     } else media = el('span', { class: 'fl-nomedia' }, '◆');
     const openB = el('button', { class: 'fl-open', type: 'button', title: 'ouvrir en grand', 'aria-label': `ouvrir ${it.title || ''}`, onclick: () => open(it) },
       media, it.kind === 'video' ? el('span', { class: 'fl-play' }, ico('play')) : null);
@@ -577,14 +586,17 @@ export function createFil(box, o = {}) {
     document.documentElement.classList.add('fv-open');
     ov.addEventListener('wheel', onWheel, { passive: false });
     document.addEventListener('keydown', onKey);
+    window.addEventListener('resize', onResize);
     contextMenu(stage, () => (V ? menuItems(V.it) : null));
     ov.focus({ preventScroll: true });
   }
   function close() {
     if (!V) return;
+    clearTimeout(V.origT);
     V.media.querySelector('video')?.pause();
     V.ov.remove();
     document.removeEventListener('keydown', onKey);
+    window.removeEventListener('resize', onResize);
     document.documentElement.classList.remove('fv-open');
     const back = V.restore;
     V = null;
@@ -648,16 +660,61 @@ export function createFil(box, o = {}) {
     V.prev.title = k < 0 ? 'hors du fil : pas de voisin' : k === 0 ? 'le premier du fil' : 'précédent (← ou molette)';
     V.next.title = V.next.disabled ? (k < 0 ? 'hors du fil : pas de voisin' : 'le dernier du fil') : 'suivant (→ ou molette)';
   }
+  // la place de la grande image : la boîte de .fv-media moins ses marges
+  function stageBox() {
+    const cs = getComputedStyle(V.media);
+    return [V.media.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight),
+      V.media.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)];
+  }
+  // le grand côté (px CSS) où `it` se montre : contenue dans la scène, jamais agrandie
+  function shownPx(it) {
+    const [bw, bh] = stageBox();
+    const W = +it.width || 0, H = +it.height || 0;
+    if (!W || !H || bw <= 0 || bh <= 0) return Math.max(bw, bh, 1);
+    return Math.max(W, H) * Math.min(1, bw / W, bh / H);
+  }
+  // sa taille posée d'avance : la vignette du fil, la copie, puis l'original
+  // se succèdent à la même place, sans que l'image ne saute
+  function fitImg(img, it) {
+    const W = +it.width || 0, H = +it.height || 0;
+    if (!W || !H) return;
+    const s = shownPx(it) / Math.max(W, H);
+    img.style.width = `${Math.round(W * s)}px`;
+    img.style.height = `${Math.round(H * s)}px`;
+  }
+  function onResize() {
+    const img = V && !V.custom && V.media.querySelector(':scope > img');
+    if (!img) return;
+    fitImg(img, V.it);
+    const p = pickView(V.it, shownPx(V.it));
+    swap(img, p.url, p.w);
+  }
   function paintMedia() {
     const it = V.it;
+    clearTimeout(V.origT);
     V.media.querySelector('video')?.pause();
     V.media.classList.toggle('alpha', !V.custom && !!o.alpha?.(it));
     if (V.custom) { V.media.replaceChildren(V.custom); return; }
     let m;
     if (it.kind === 'video') {
-      m = el('video', { src: href(it.url), controls: true, autoplay: true, loop: true, playsinline: true, poster: it.thumb_url ? href(it.thumb_url) : null });
+      const poster = pickView(it, shownPx(it)).url;
+      m = el('video', { src: href(it.url), controls: true, autoplay: true, loop: true, playsinline: true, poster: poster || null });
     } else if (it.kind === 'image') {
-      m = el('img', { src: href(it.url), alt: it.title || '' });
+      m = el('img', { alt: it.title || '', decoding: 'async' });
+      fitImg(m, it);
+      // d'abord ce que sa carte du fil montre déjà (décodé : tout de suite), puis la
+      // copie qui couvre la scène (décodée avant l'échange), puis l'original quand
+      // on s'y arrête : on regarde ses pixels. Feuilleter ne télécharge pas d'originaux
+      const card = S.cells.get(`${P.layout}:${it.id}`)?.querySelector('.fl-open img');
+      const view = pickView(it, shownPx(it));
+      if (card?.complete && card.naturalWidth && (+card.dataset.vw || 0) < view.w) {
+        m.src = card.currentSrc || card.src;
+        m.dataset.vw = card.dataset.vw || '0';
+      }
+      swap(m, view.url, view.w).then(() => m.decode()).catch(() => {}).then(() => {
+        if (view.w === ORIGINAL || !it.url || V?.it !== it) return;
+        V.origT = setTimeout(() => { if (V?.it === it && m.isConnected) swap(m, href(it.url), ORIGINAL); }, 400);
+      });
       dragItem(m, it);   // la grande image se glisse vers un emplacement (références, image à éditer…)
     } else if (it.kind === 'audio') {
       m = el('audio', { src: href(it.url), controls: true, autoplay: true });
@@ -674,9 +731,16 @@ export function createFil(box, o = {}) {
     paintPos();
     V.tools.replaceChildren(...(o.viewerTools ? o.viewerTools(it, vapi) : []).filter(Boolean));
     paintSide();
-    // les voisins se préparent : la molette ne fait pas attendre
+    // les voisins se préparent — leur copie à la taille de la scène, décodée : la
+    // molette ne fait pas attendre, et ne télécharge pas leurs originaux
     const l = shown(), k = index();
-    for (const x of [l[k + 1], l[k - 1]]) if (x?.kind === 'image' && x.url) { const im = new Image(); im.src = href(x.url); }
+    for (const x of [l[k + 1], l[k - 1]]) {
+      if (x?.kind !== 'image' || !x.url) continue;
+      const im = new Image();
+      im.decoding = 'async';
+      im.src = pickView(x, shownPx(x)).url;
+      im.decode().catch(() => {});
+    }
   }
   function paintSide() {
     const it = V.it;

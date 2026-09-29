@@ -214,9 +214,11 @@ Premiere, non vérifié dans la documentation lue.
 | plan | couper ici ; ajouter une coupe à la tête de lecture ; copier ; coller à la tête ; dupliquer à la suite (insère) ; effacer ; supprimer et raccorder ; vitesse/durée… ; LUT ▸ (aucune, chaque LUT, importer…) ; activer ; fondu enchaîné à l'entrée ; dissocier le son ; ouvrir dans le moniteur source ; concordance des images ; renommer le plan ; révéler dans le chutier ; révéler dans Asset ↗ | Add Edit, Copy, Clear, Ripple Delete, Speed/Duration, Enable, Apply Video Transition (ctrl+D), Link, Match Frame ; « Reveal in Project » : usage |
 | règle | ajouter une marque ici ; nommer / effacer la marque ; point d'entrée ici ; point de sortie ici ; effacer l'entrée et la sortie ; prélever, extraire (entrée → sortie) ; marque précédente, suivante ; effacer toutes les marques | Add Marker, Mark In/Out, Clear In and Out, Lift, Extract, Go to Next/Previous Marker, Clear All Markers |
 | marque (sur la règle) | y aller ; nommer… ; effacer | Clear Selected Marker |
-| chutier (fond) | nouveau dossier ; importer… ; trier par (date, nom, durée, sorte) ; afficher (tout, vidéos, images, sons) ; afficher les plans retirés ; tout déplier, replier | New Bin, Import |
-| dossier | déplier/replier ; nouveau sous-dossier ; renommer (F2) ; remonter à la racine ; supprimer le dossier (le contenu remonte) | New Bin, Rename : usage |
-| plan du chutier | ouvrir dans le moniteur source ; insérer, écraser à la tête de lecture ; ajouter au bout de la piste cible ; renommer (F2, titre de la bibliothèque) ; ranger dans ▸ ; retirer du chutier / remettre ; révéler dans Asset ↗ | Open in Source Monitor, Insert, Overwrite ; « Clear » (retirer du projet) : ici l'objet reste dans la bibliothèque, il est seulement caché dans ce montage |
+| Projet (fond) | nouvelle séquence… ; nouveau dossier avec la sélection ; importer… ; tout choisir ; trier par (date, nom, durée, sorte) ; afficher (tout, séquences, vidéos, images, sons) ; ouvrir Asset ↗ | New Bin (ctrl+B, ctrl+/), Import, Select All |
+| onglet du panneau | renommer le dossier ; fermer l'onglet ; fermer les autres | « Open and close bins » |
+| dossier | ouvrir dans un onglet (double-clic) ; renommer (F2, double-clic sur le nom) ; nouvelle séquence dans ce dossier ; révéler dans Asset ↗ ; défaire le dossier (le contenu revient à la racine) | « Add and delete bins », « Open and close bins » |
+| objet du Projet | ouvrir dans le moniteur source (une séquence : dans la timeline) ; **nouvelle séquence à partir de l'élément** ; insérer, écraser à la tête de lecture ; ajouter au bout de la piste cible (plusieurs : dans l'ordre) ; dupliquer (séquence) ; renommer (F2) ; ranger dans ▸ ; sortir du dossier ; nouveau dossier avec la sélection ; révéler dans Asset ↗ ; mettre à la corbeille (Suppr) | New Sequence From Clip, Insert, Overwrite, Clear |
+| onglet de séquence (au-dessus de la timeline) | y passer ; renommer… ; dupliquer ; révéler dans le projet ; fermer l'onglet ; fermer les autres | « Navigate sequences in the timeline » |
 | moniteur source | lecture/pause ; marquer l'entrée, la sortie ; effacer l'entrée et la sortie ; insérer ; écraser ; ajouter au bout de la piste cible ; révéler dans le chutier ; dans Asset | Mark In/Out, Clear In and Out, Insert, Overwrite |
 | moniteur programme | lecture/pause ; début, fin ; entrée, sortie à la tête de lecture ; effacer ; ajouter une marque ; concordance des images ; ajouter une coupe à toutes les pistes ; zones de sécurité (90 % et 80 %) ; exporter… | Mark In/Out, Add Marker, Match Frame, Add Edit to All Tracks, Export Media ; zones de sécurité : usage |
 | vignette de LUT (inspecteur) | renommer ; l'image qu'elle attend ▸ ; sa grille et son fichier ; supprimer de la bibliothèque | — |
@@ -233,17 +235,74 @@ sa marge intérieure (flex-basis 0 en border-box), la part se donne au-delà ;
 sans la retirer, la poignée partait de 127 px pour 120 px de souris —
 corrigé (`pad`), vérifié à 120,0.
 
-### Le chutier : des dossiers rangés dans le projet
+### Le panneau Projet, c'est Asset (29/09 au soir)
 
-`bins: {folders: [{id, name, parent}], items: {objet: dossier}, hidden: []}`
-dans le projet (serveur : `_bins`, une boucle de parents est rompue, un
-dossier inconnu tombe). Nouveau dossier (bouton, ctrl+B, clic droit),
-renommer sur place (double-clic, F2, clic droit), glisser un plan ou un
-dossier sur un dossier (imbriqués sans limite), un fichier du disque sur un
-dossier l'y range après le dépôt, supprimer un dossier (vide : tout de
-suite ; plein : il demande, le contenu remonte au parent — rien ne quitte
-la bibliothèque). Une recherche montre tout à plat, avec le dossier de
-chacun. « Retirer du chutier » cache l'objet dans ce montage seulement.
+Décision de Cal : « le chutier devient asset, comme dans Premiere Pro ». Le
+chutier à dossiers propres au montage (29/09 midi, champ `bins` du projet,
+imbriqués) est remplacé par la bibliothèque commune et ses dossiers : le
+champ `folder` de chaque objet, un seul niveau, un dossier n'existe que par
+ce qu'il contient (`server/tools/asset.py`, et la maquette du 28/09). Aucun
+montage enregistré ne portait de `bins` (vérifié sur les données de DGX2) :
+rien à migrer ; `normalize` ne les lit plus. Les gestes (`montage/projet.js`)
+passent par l'API d'Asset (`POST /api/asset/move`, `/asset/folders/rename`,
+`/asset/trash`, `/asset/restore`) : ce qui se range ici se voit dans Asset, et
+l'inverse (vérifié : la page Asset montre le dossier et ses séquences).
+
+- **Un objet lâché sur un autre** (à la racine) : une fenêtre au centre
+  demande le nom d'un dossier neuf qui les prend tous les deux — le geste
+  d'Asset (`asset.js`, « drop-merge » → `askFolderName`).
+- **Une sélection au cadre** (glisser sur le fond de la liste ; maj ou
+  ctrl : ajouter), glissée sur l'icône « nouveau dossier » : la même fenêtre.
+  Premiere : « New Bin » ctrl+B (tableau des raccourcis) ou ctrl+/ (page
+  « Add and delete bins », 22 août 2025) ; ici avec la sélection, un dossier
+  vide n'existant pas dans Asset.
+- **Double-clic sur le nom** d'un dossier : le renommer sur place ; **sur le
+  dossier** : il s'ouvre dans un onglet du panneau — Adobe, « Open and close
+  bins » (7 janv. 2026) : « Double-click to open a bin in its own dockable
+  panel ». L'onglet « Projet » (la racine) reçoit un dépôt : les objets sortent
+  de leur dossier ; l'onglet d'un dossier : ils y entrent.
+- Suppr met à la corbeille d'Asset (en revient par ctrl+Z ou Asset) ; sur un
+  dossier : « défaire le dossier » (son contenu revient à la racine — Asset
+  n'a pas de dossier vide).
+- Ranger, renommer, jeter s'annulent par ctrl+Z comme les gestes de la
+  timeline : l'entrée porte ses deux fonctions (`pushLibUndo`).
+
+### Les séquences : des objets d'Asset, en onglets
+
+Une séquence est un objet de la bibliothèque de sorte **`sequence`** (id
+`seq-…`, `server/core/library.py` : une ligne, la sorte ajoutée à `KINDS`) :
+sa timeline dans `library/<id>/sequence.json`, et dans son `item.json` son
+titre, sa taille, sa cadence, sa durée, sa lignée (les plans employés), sa
+vignette (celle du premier plan qui se voit). Elle se range, se renomme, va
+à la corbeille et en revient comme les autres objets. Les montages d'avant
+(`montage/mon-*.json`) deviennent des séquences au démarrage du portail
+(`migrate`), le fichier d'origine gardé dans `montage/migres/`, son
+identifiant dans `legacy` (l'ancienne adresse `#mon-…` et ses exports y
+mènent). Vérifié sans l'écrire sur le seul montage du portail (« Montage du
+29/09 », 4 plans).
+
+- **Nouvelle séquence à partir de l'élément** (clic droit sur un clip, ou
+  un clip lâché sur l'icône « nouvelle séquence ») : la taille, la cadence, le
+  nom et la durée du clip, le clip entier posé en V1 (son son attaché).
+  Adobe, « How to arrange clips into sequences » (helpx.adobe.com/
+  premiere-pro/how-to/arranging-clips-to-sequence.html) : « right-click a
+  representative clip … and choose New Sequence From Clip … This ensures that
+  the sequence settings match those of your footage. The new sequence will
+  adopt the clip's name too » ; « Create a sequence » (7 janv. 2026) : « drag a
+  clip from the Project panel to the New Item icon ». Une taille hors des
+  préréglages devient un format « sur mesure » (pair, 16 à 8192 px) ; la
+  cadence est la plus proche de 16, 24, 25, 30, 50, 60 (le modèle compte en
+  images entières : 23,976 devient 24, et la séquence le dit). Essai : un clip
+  704×896 à 24 i/s de 5,2 s → séquence 704×896, 24 i/s, 124 images.
+- **Onglets au-dessus de la timeline** : Adobe, « Navigate sequences in the
+  timeline » (7 janv. 2026) : « Each sequence appears as a tab within that
+  timeline » ; « double-click the sequence in the Project panel. The sequence
+  opens in a new tab ». Chaque onglet garde sa tête de lecture et son zoom
+  (`montage-view-<id>`, par visiteur) et ses annulations (en mémoire, le temps
+  de la page) ; fermer un onglet ne supprime rien.
+- Pas encore : une séquence posée dans une autre (imbrication) ; la page
+  Asset les montre avec l'étiquette brute « sequence » et sa fiche ne sait pas
+  les ouvrir (asset/, à reprendre par qui la tient).
 
 ### Les pistes
 
@@ -378,14 +437,81 @@ requête HEAD) :
 | Juan Melara, émulations de tirage (Kodak 2383, Fuji 3510…) | juanmelara.com.au/s/Print-Film-Emulation-LUTs.zip | 1,16 Mo | non documentée | log (Cineon) | avec conversion |
 | ARRI Look Library (LogC4 / LogC3) | arri.com, look-files | 189,8 / 31,3 Mo | gratuite ; licence non documentée | LogC | double conversion |
 
-Passer du Rec.709 au F-Log2 : la courbe est publiée (F-Log2 Data Sheet 1.1 :
-`c·log10(a·in + b) + d`, a = 5,555556, b = 0,064829, c = 0,245281,
-d = 0,384316, sous 0,000889 : `e·in + f`, e = 8,799461, f = 0,092864), F-Gamut
-= primaires BT.2020 ; mais il faut supposer comment décoder le 709 affiché
-(inverse BT.1886 ou de l'OETF 709) et où poser le blanc (en « blanc = 100 % »
-on n'atteint que le code 581/1023 : les hautes lumières du look ne serviraient
-presque pas) — non documenté par Fujifilm : une approximation, à valider sur
-une mire avant de la proposer.
+**Le choix de Cal (29/09 au soir)** : Fujifilm ETERNA (le kit GFX ETERNA 55)
+et RawTherapee Film Simulation ; « on fait du dev donc les licences on s'en
+fout pour l'instant ». Les archives iront dans `~/showrunner-refs/luts/` sur
+DGX2 (hors du dépôt, qui est public), importées dans `<data_dir>/luts/`.
+
+**Importer un pack** (côté serveur, `python3 -m tools.montage luts
+rawtherapee|fujifilm <archive.zip>` depuis `server/`, avec
+`SHOWRUNNER_DATA` ; `import_rawtherapee`, `import_fujifilm`,
+`set_favourites`) : le portail en marche voit les LUT à la requête suivante,
+sans redémarrer ; un pack réimporté n'ajoute rien (même `source`).
+
+- **RawTherapee** : des HaldCLUT PNG sRGB. Une HaldCLUT de niveau 12 (144
+  points) passe les 65 points que la page et le cube tiennent bien : elle est
+  rééchantillonnée à 33³ (trilinéaire, comme ffmpeg la lirait ; lue dans les
+  octets de l'image, sans 9 millions de flottants Python). Famille = la marque
+  (premier mot du fichier, sinon le dossier) ; « · N&B » si elle vient d'un
+  dossier noir et blanc.
+- **Fujifilm** : chaque cube de sortie BT.709 est gardé tel quel (« entrée
+  F-Log2 » ou « F-Log2 C », famille « d'origine »), et une version
+  **« entrée Rec.709 »** est cuite par simulation (une seule, depuis F-Log2 si
+  le kit l'a, sinon F-Log2 C) : la conversion Rec.709 → F-Log2 puis la LUT de
+  Fujifilm, en un seul cube. Les sorties HDR (BT.2100) ne sont pas prises.
+- **La conversion** (`bake_rec709`) : (1) la valeur Rec.709 → lumière de
+  scène : l'inverse de l'OETF de l'UIT-R BT.709-6 (§ 1.2), le blanc (1,0)
+  valant une réflexion de 100 % ; (2) BT.709 → F-Gamut ou F-Gamut C, D65 :
+  la matrice calculée depuis les primaires des fiches (SMPTE RP 177 ; le
+  contrôle vérifie qu'elle redonne la matrice de l'UIT-R BT.2087 à 6·10⁻⁴
+  près, F-Gamut ayant les primaires de BT.2020) ; (3) la courbe F-Log2 :
+  **« F-Log2 Data Sheet Ver.1.1 »** et **« F-Log2 C Data Sheet Ver.1.0 »** de
+  Fujifilm (dl.fujifilm-x.com/technical-data/F-Log2_DataSheet_E_Ver.1.1.pdf,
+  …/F-Log2C_DataSheet_E_Ver.1.0.pdf, § 2-3 ; la même courbe pour les deux) :
+  `out = c·log10(a·in + b) + d` si in ≥ cut1, `e·in + f` sinon, a = 5,555556,
+  b = 0,064829, c = 0,245281, d = 0,384316, e = 8,799461, f = 0,092864,
+  cut1 = 0,000889 ; 0 ≤ out ≤ 1 est la valeur de code (0 % → 95/1023, 18 % →
+  400, 90 % → 570 : le contrôle les retrouve). Primaires F-Gamut C (§ 3 de sa
+  fiche) : R (0,7347 ; 0,2653), G (0,0263 ; 0,9737), B (0,1173 ; −0,0224).
+  **Ce qui est supposé, non documenté** : une vidéo Rec.709 « scène »
+  (inverse de l'OETF, pas de BT.1886), son blanc à 100 % (code 581/1023 : les
+  hautes lumières du look au-delà ne servent pas, les blancs ressortent comme
+  Fujifilm rend un papier blanc, pas un ciel brûlé), la LUT lisant la valeur
+  de code pleine échelle. Une approximation : l'original « entrée F-Log2 »
+  reste à côté.
+- **La grille de la cuite : 65³, pas 33³.** Mesuré (29/09, `bake_err.py`,
+  3 000 couleurs au hasard, une « Neutral » F-Log2 → 709 exacte de 33³ ou 65³
+  en guise de LUT Fujifilm) : la chaîne sans LUT revient à l'image à
+  0,06/255 près ; la cuite **33³** s'écarte de la chaîne exacte (709 → F-Log2
+  → la LUT lue trilinéaire) de **0,19 en moyenne mais jusqu'à 5,3/255** (près
+  du noir, où la courbe log est raide) ; la **65³** de 0,06 en moyenne et
+  **1,1 au plus**. Le cube pèse 7,4 Mo en texte, la texture de l'aperçu 3,3 Mo :
+  on prend 65³ (`FUJI_BAKE`, un réglage).
+- **L'étagère pour des centaines de LUT** : une recherche (titre, famille,
+  pack, espace d'entrée ; sans accents), les **favoris** d'abord (rang
+  `fav`, dans l'ordre ; clic droit sur une vignette : favori oui/non), puis
+  les familles repliables (les cuites Rec.709 de Fujifilm en tête, les
+  « d'origine » en log à la fin ; l'état par visiteur). Les vignettes lisent
+  une version **17³ sur 8 bits** de chaque LUT (route `/mini`, 14 739 octets,
+  mise en cache) et ne se dessinent que quand elles se voient
+  (IntersectionObserver) ; un plan lit toujours le cube entier. Le menu LUT
+  d'un plan (clic droit) : favoris, puis une entrée par famille.
+- **Les favoris** (`FAVS`, le premier titre qui correspond, les cuites avant
+  les d'origine ; une liste de secours remplace un motif sans correspondant) :
+  ETERNA, CLASSIC CHROME, REALA ACE, ETERNA BLEACH BYPASS, CLASSIC Neg.,
+  ACROS (Fujifilm, entrée Rec.709) ; Kodak Portra 400, Kodak Ektar 100,
+  Kodak Kodachrome 64, Fuji Velvia 50, Polaroid 669, Ilford HP5
+  (RawTherapee) ; de secours : PROVIA, Portra 160, Superia 400, Tri-X,
+  Astia 100F, Agfa Vista 200, 400H, Velvia 100. Les noms exacts des fichiers ne
+  se liront qu'une fois les archives là.
+- **Éprouvé sur des packs d'essai** (fabriqués, rien de téléchargé :
+  `fakepacks.py`, la même arborescence et des noms à la manière du kit) :
+  11 HaldCLUT et 6 simulations × F-Log2 / F-Log2 C, grilles 33 et 65, une
+  sortie HLG → 35 LUT, 12 favoris, la HLG sautée, la grille la plus fine
+  gardée ; aperçu contre export (une LUT de chaque famille sur la vidéo
+  générée 704×896, `packmesure.py`) : écart moyen 0,95 à 1,41/255 par
+  famille, 1,27 sans LUT — la LUT n'ajoute rien à l'erreur de l'encodage.
+  La mesure sur les vrais packs se refera dès les archives là.
 
 ## Les limites connues
 

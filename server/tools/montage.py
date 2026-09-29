@@ -80,7 +80,9 @@ FORMATS = {
     "1:1": {"w": 1080, "h": 1080, "label": "1:1 · carré"},
     "scope": {"w": 1920, "h": 804, "label": "2,39:1 · scope"},
 }
-FPS = (24, 25, 30)
+FPS = (16, 24, 25, 30, 50, 60)   # des images entières par seconde (le modèle compte en images) ; 16 : Wan 2.x
+FPS_CHOICE = (24, 25, 30)        # ce que l'inspecteur propose ; les autres viennent d'un clip (« à partir de l'élément »)
+SIZE_MIN, SIZE_MAX = 16, 8192    # un format « sur mesure » (la taille d'un clip), en px pairs
 STILL_DEFAULT = 5.0          # durée d'une image fixe posée, en secondes
 TRACKS_DEFAULT = ["V3", "V2", "V1", "A1", "A2", "A3"]   # de haut en bas, comme à l'écran
 MAX_TRACKS = 20              # par sorte (vidéo, son) ; la page borne pareil (model.js)
@@ -89,11 +91,12 @@ NEUTRAL_K = 6500             # colortemperature : défaut de ffmpeg ; on ne pose
 CHUNK_S = 8.0                # secondes d'image par passe d'export (mémoire bornée)
 SPEED_MIN, SPEED_MAX = 0.1, 10.0
 
-PID = re.compile(r"mon-\d{8}-\d{6}-[0-9a-f]{4}")
+PID = re.compile(r"(?:seq|mon)-\d{8}-\d{6}-[0-9a-f]{4}")    # une séquence ; « mon- » : un montage d'avant le 29/09 au soir
+SID = re.compile(r"seq-\d{8}-\d{6}-[0-9a-f]{4}")
+SEQ_FILE = "sequence.json"
 CID = re.compile(r"[A-Za-z0-9_-]{1,40}")
 TID = re.compile(r"[VA](?:[1-9]|1[0-9]|20)")
 ITEM = re.compile(r"[a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4}")
-FID = re.compile(r"f[A-Za-z0-9_-]{1,30}")
 MID = re.compile(r"m[A-Za-z0-9_-]{1,30}")
 LUT_ID = re.compile(r"lut-\d{8}-\d{6}-[0-9a-f]{4}")
 SAFE_PATH = re.compile(r"[A-Za-z0-9_./@-]+")
@@ -101,35 +104,167 @@ SAFE_PATH = re.compile(r"[A-Za-z0-9_./@-]+")
 _lock = threading.RLock()
 
 
-# ── les fichiers ─────────────────────────────────────────────
+# ── les séquences : des objets de la bibliothèque ────────────
+# Décision de Cal du 29/09 au soir : le panneau Projet de Premiere, c'est
+# Asset. Une séquence est donc un objet de la bibliothèque, de sorte
+# `sequence` (id `seq-…`) : sa timeline dans `library/<id>/sequence.json`,
+# son titre, son dossier, sa vignette, sa lignée (les plans qu'elle
+# emploie) dans son `item.json`, comme tout objet — elle se range, se
+# renomme, part à la corbeille et en revient comme les autres, ici et dans
+# Asset. Les montages d'avant (`<data_dir>/montage/mon-*.json`) deviennent des
+# séquences au démarrage (`migrate`), sans perte : le fichier d'origine est
+# gardé dans `montage/migres/`, son identifiant dans `legacy`.
 def _dir() -> Path:
     p = config.data_dir() / "montage"
     p.mkdir(parents=True, exist_ok=True)
     return p
 
 
-def _path(pid: str) -> Path:
+def _seq_file(sid: str) -> Path:
+    return library.folder_of(sid) / SEQ_FILE
+
+
+def _legacy_map() -> dict:
+    f = _dir() / "migres" / "table.json"
+    try:
+        return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+    except ValueError:
+        return {}
+
+
+def _resolve(pid: str) -> str:
+    """L'identifiant de séquence : un `mon-…` d'avant mène à la séquence qu'il est devenu."""
     if not PID.fullmatch(pid or ""):
-        raise HttpError(400, "identifiant de montage invalide")
-    return _dir() / f"{pid}.json"
+        raise HttpError(400, "identifiant de séquence invalide")
+    if pid.startswith("mon-"):
+        migrate()
+        sid = _legacy_map().get(pid)
+        if not sid:
+            raise HttpError(404, f"montage introuvable : {pid}")
+        return sid
+    return pid
+
+
+def _item(sid: str) -> dict:
+    it = library.get(sid)
+    if not it or it.get("kind") != "sequence" or not library.readable(it):
+        raise HttpError(404, f"séquence introuvable : {sid}")
+    return it
 
 
 def load(pid: str) -> dict:
-    f = _path(pid)
+    sid = _resolve(pid)
+    _item(sid)
+    f = _seq_file(sid)
     if not f.exists():
-        raise HttpError(404, f"montage introuvable : {pid}")
+        raise HttpError(404, f"séquence sans timeline : {sid}")
     return json.loads(f.read_text(encoding="utf-8"))
 
 
+def _thumb_of(p: dict) -> Path | None:
+    """La vignette d'une séquence : celle du premier plan qui se voit."""
+    for c in sorted(p["clips"], key=lambda c: (c["track"][0] != "V", c["start"])):
+        it = library.get(c["item"])
+        if it and it["kind"] in ("video", "image") and it.get("thumb"):
+            return library.folder_of(it["id"]) / it["thumb"]
+        if it and it["kind"] == "image":
+            return library.folder_of(it["id"]) / it["file"]
+    return None
+
+
+def _sync_item(p: dict) -> None:
+    """item.json suit la timeline : titre, taille, cadence, durée, lignée, vignette."""
+    with library._lock:
+        it = library._items.get(p["id"])
+        if not it:
+            return
+        st = p["settings"]
+        it.update(title=p["name"], updated=library.now(), width=st["width"], height=st["height"], fps=st["fps"],
+                  duration=round(project_end(p) / st["fps"], 3),
+                  parents=list(dict.fromkeys(c["item"] for c in p["clips"])))
+        it["params"] = {**(it.get("params") or {}), "format": st["format"], "clips": len(p["clips"])}
+        src = _thumb_of(p)
+        d = library.folder_of(p["id"])
+        if src and src.exists():
+            try:
+                from PIL import Image
+                with Image.open(src) as im:
+                    im = im.convert("RGB")
+                    im.thumbnail((library.THUMB, library.THUMB))
+                    im.save(d / "thumb.jpg", "JPEG", quality=84)
+                it["thumb"] = "thumb.jpg"
+            except Exception:  # noqa: BLE001 — une vignette ratée n'empêche pas d'enregistrer
+                pass
+        elif not p["clips"]:
+            it.pop("thumb", None)
+        library._save(it)
+
+
 def _write(p: dict) -> None:
-    f = _path(p["id"])
+    it = _item(p["id"])
+    try:
+        library._check_write(it)
+    except PermissionError as e:
+        raise HttpError(403, str(e)) from e
+    f = _seq_file(p["id"])
     tmp = f.with_suffix(".tmp")
     tmp.write_text(json.dumps(p, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(f)
+    _sync_item(p)
 
 
-def new_id() -> str:
-    return f"mon-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
+def new_sequence(p: dict, folder: str = "", legacy: str = "") -> dict:
+    """Range une timeline (normalisée) comme un objet neuf de la bibliothèque ;
+    rend la timeline, avec son identifiant `seq-…`."""
+    library.get("")                        # la bibliothèque chargée
+    sid = library.new_id("sequence")
+    while library.get(sid) or library.folder_of(sid).exists():
+        sid = library.new_id("sequence")
+    d = library.folder_of(sid)
+    d.mkdir(parents=True, exist_ok=True)
+    p = {**p, "id": sid}
+    if legacy:
+        p["legacy"] = legacy
+    p.setdefault("created", library.now())
+    p.setdefault("updated", library.now())
+    p.setdefault("rev", 1)
+    (d / SEQ_FILE).write_text(json.dumps(p, ensure_ascii=False, indent=1), encoding="utf-8")
+    it = {"id": sid, "kind": "sequence", "title": p["name"], "created": p["created"], "updated": p["updated"],
+          "file": SEQ_FILE, "origin": library._owned({"tool": "montage"}), "prompt": "",
+          "params": {"legacy": legacy} if legacy else {}, "parents": [], "tags": [],
+          "folder": " ".join(str(folder or "").split())[:60].replace("/", "·"), "fav": False}
+    with library._lock:
+        library._items[sid] = it
+        library._save(it)
+    _sync_item(p)
+    return p
+
+
+_migrating = threading.Lock()
+
+
+def migrate() -> list[str]:
+    """Les montages d'avant (`montage/mon-*.json`) deviennent des séquences."""
+    made = []
+    with _migrating:
+        old = sorted(_dir().glob("mon-*.json"))
+        if not old:
+            return made
+        dest = _dir() / "migres"
+        dest.mkdir(exist_ok=True)
+        table = _legacy_map()
+        for f in old:
+            try:
+                p = normalize(json.loads(f.read_text(encoding="utf-8")))
+            except (ValueError, HttpError):
+                continue
+            mid = f.stem
+            if mid not in table:
+                table[mid] = new_sequence(p, legacy=mid)["id"]
+                made.append(table[mid])
+            (dest / "table.json").write_text(json.dumps(table, ensure_ascii=False, indent=1), encoding="utf-8")
+            shutil.move(str(f), str(dest / f.name))
+    return made
 
 
 def _track(tid: str) -> dict:
@@ -138,14 +273,45 @@ def _track(tid: str) -> dict:
 
 
 def blank(name: str, settings: dict | None = None) -> dict:
-    p = {"id": new_id(), "name": (name or "Sans titre").strip()[:120] or "Sans titre",
+    p = {"id": None, "name": (name or "Sans titre").strip()[:120] or "Sans titre",
          "created": library.now(), "updated": library.now(), "rev": 1,
          "settings": {"format": "1080p", "fps": 25, "still": STILL_DEFAULT},
          "tracks": [_track(t) for t in TRACKS_DEFAULT],
          "clips": []}
     if settings:
-        p["settings"].update({k: v for k, v in settings.items() if k in ("format", "fps", "still")})
+        p["settings"].update({k: v for k, v in settings.items() if k in ("format", "fps", "still", "width", "height")})
     return normalize(p)
+
+
+def from_item(it: dict) -> dict:
+    """« Nouvelle séquence à partir de l'élément » (Premiere, « New Sequence
+    From Clip ») : la séquence prend la taille et la cadence du clip, son nom,
+    et le clip posé en tête, entier — sa durée est celle du clip. Adobe :
+    « This ensures that the sequence settings match those of your footage.
+    The new sequence will adopt the clip's name too » (helpx.adobe.com/
+    premiere-pro/how-to/arranging-clips-to-sequence.html)."""
+    kind = it["kind"]
+    if kind not in ("video", "image", "audio"):
+        raise HttpError(400, "une séquence se fait à partir d'une vidéo, d'une image ou d'un son")
+    fps = it.get("fps") or 0
+    near = min(FPS, key=lambda f: abs(f - fps)) if fps else 25
+    settings = {"fps": near}
+    if kind in ("video", "image") and it.get("width") and it.get("height"):
+        w, h = int(it["width"]), int(it["height"])
+        preset = next((k for k, f in FORMATS.items() if f["w"] == w and f["h"] == h), None)
+        settings.update({"format": preset} if preset else {"format": "custom", "width": w, "height": h})
+    p = blank(it.get("title") or "Séquence", settings)
+    f = p["settings"]["fps"]
+    if kind == "image":
+        dur = round(STILL_DEFAULT * f)
+    else:
+        dur = max(1, math.floor((it.get("duration") or 5) * f + 1e-6))
+    clip = {"id": "k" + secrets.token_hex(4), "track": "A1" if kind == "audio" else "V1", "item": it["id"], "kind": kind,
+            "title": it.get("title", ""), "start": 0, "dur": dur, "in": 0, "src_dur": 0 if kind == "image" else (it.get("duration") or 0),
+            "audio": kind == "audio" or bool(it.get("audio"))}
+    p = normalize({**p, "clips": [clip]})
+    note = "" if not fps or abs(near - fps) < 1e-3 else f"cadence {fps:g} i/s arrondie à {near} (le montage compte en images entières)"
+    return {**p, "note": note}
 
 
 # ── validation : le projet tel qu'il doit être ───────────────
@@ -190,45 +356,6 @@ def _tracks(raw: list) -> tuple[list[dict], dict[str, str]]:
     return out, ren
 
 
-def _bins(b, known_items: set | None = None) -> dict:
-    """Les dossiers du chutier : {folders: [{id, name, parent}], items:
-    {objet: dossier}, hidden: [objets retirés du chutier]}. Ce qui ne tient
-    pas (dossier inconnu, boucle de parents) tombe : c'est du rangement."""
-    b = b if isinstance(b, dict) else {}
-    folders, ids = [], set()
-    for f in (b.get("folders") or [])[:500]:
-        if not isinstance(f, dict):
-            continue
-        fid = str(f.get("id", ""))
-        if not FID.fullmatch(fid) or fid in ids:
-            continue
-        ids.add(fid)
-        name = " ".join(str(f.get("name") or "").split())[:80] or "Dossier"
-        folders.append({"id": fid, "name": name, "parent": f.get("parent") if f.get("parent") else None})
-    parent = {f["id"]: f["parent"] for f in folders}
-    for f in folders:
-        if f["parent"] not in ids:
-            f["parent"] = None
-        # une boucle (a dans b dans a) : le dossier remonte à la racine
-        seen, cur = {f["id"]}, f["parent"]
-        while cur:
-            if cur in seen:
-                f["parent"] = None
-                break
-            seen.add(cur)
-            cur = parent.get(cur)
-        parent[f["id"]] = f["parent"]
-    items = {}
-    for k, v in (b.get("items") or {}).items() if isinstance(b.get("items"), dict) else []:
-        if ITEM.fullmatch(str(k)) and v in ids and len(items) < 20000:
-            items[str(k)] = v
-    hidden = []
-    for k in b.get("hidden") or []:
-        if ITEM.fullmatch(str(k)) and str(k) not in hidden and len(hidden) < 20000:
-            hidden.append(str(k))
-    return {"folders": folders, "items": items, "hidden": hidden}
-
-
 def normalize(p: dict) -> dict:
     """Rend un projet propre ou lève HttpError(400) en disant pourquoi.
     Les nombres sont bornés, les champs inconnus tombent, les champs
@@ -237,9 +364,14 @@ def normalize(p: dict) -> dict:
     if not isinstance(p, dict):
         raise HttpError(400, "un projet est un objet JSON")
     s = p.get("settings") or {}
-    fmt = s.get("format") if s.get("format") in FORMATS else "1080p"
+    fmt = s.get("format") if s.get("format") in FORMATS or s.get("format") == "custom" else "1080p"
     fps = int(s.get("fps")) if str(s.get("fps")) in {str(f) for f in FPS} else 25
-    settings = {"format": fmt, "fps": fps, "width": FORMATS[fmt]["w"], "height": FORMATS[fmt]["h"],
+    if fmt == "custom":                    # la taille d'un clip : des px pairs (H.264 4:2:0)
+        W = _num(s.get("width"), SIZE_MIN, SIZE_MAX, 1920, True) // 2 * 2
+        H = _num(s.get("height"), SIZE_MIN, SIZE_MAX, 1080, True) // 2 * 2
+    else:
+        W, H = FORMATS[fmt]["w"], FORMATS[fmt]["h"]
+    settings = {"format": fmt, "fps": fps, "width": W, "height": H,
                 "still": _num(s.get("still"), 0.2, 600, STILL_DEFAULT)}
     tracks, ren = _tracks(p.get("tracks") or [_track(t) for t in TRACKS_DEFAULT])
     kinds = {t["id"]: t["kind"] for t in tracks}
@@ -307,10 +439,11 @@ def normalize(p: dict) -> dict:
     rout = _num(r.get("out"), 0, 10 ** 8, None, True) if r.get("out") is not None else None
     if rin is not None and rout is not None and rout <= rin:
         rout = None
+    # (les dossiers « bins » propres au montage du 29/09 midi ne sont plus lus : le chutier est Asset,
+    # ses dossiers sont ceux de la bibliothèque ; aucun montage enregistré n'en portait)
     out = {"id": p.get("id"), "name": str(p.get("name") or "Sans titre")[:120], "settings": settings,
-           "tracks": tracks, "clips": clips, "markers": markers, "range": {"in": rin, "out": rout},
-           "bins": _bins(p.get("bins"))}
-    for k in ("created", "updated", "rev"):
+           "tracks": tracks, "clips": clips, "markers": markers, "range": {"in": rin, "out": rout}}
+    for k in ("created", "updated", "rev", "legacy"):
         if k in p:
             out[k] = p[k]
     return out
@@ -382,8 +515,11 @@ def audible(p: dict) -> set[str]:
 # des lignes qu'il comprend. Le domaine d'entrée doit être 0..1 (ffmpeg 6.1
 # ne tient compte que de max − min, pas de min : un autre domaine serait
 # lu autrement par les deux).
-LUT_MAX_3D = 65
+LUT_MAX_3D = 65              # rangée telle quelle jusque-là ; au-delà, rééchantillonnée à LUT_RESAMPLE
+LUT_MAX_3D_IN = 256          # ce qu'on accepte d'un fichier (une HaldCLUT de niveau 12 a 144 points)
+LUT_RESAMPLE = 33
 LUT_MAX_1D = 4096
+LUT_MINI = 17                # les vignettes de l'étagère : 17³, sur 8 bits (route /mini)
 LUT_INPUTS = {"rec709": "Rec.709 / sRGB", "flog": "F-Log", "flog2": "F-Log2", "flog2c": "F-Log2 C",
               "log": "autre log", "inconnu": "non documenté"}
 
@@ -394,11 +530,14 @@ def _luts_dir() -> Path:
     return p
 
 
-def parse_cube(text: str) -> dict:
+def parse_cube(text: str, max3d: int = LUT_MAX_3D, strict_domain: bool = True) -> dict:
     """Lit un fichier .cube (Adobe « Cube LUT Specification 1.0 », et les
     mots de Resolve LUT_3D_INPUT_RANGE / LUT_1D_INPUT_RANGE) : rend
-    {kind: 3d|1d, size, values: [r, g, b, …], title}. Lève ValueError en
-    français si le fichier ne se lit pas comme la spécification le dit."""
+    {kind: 3d|1d, size, values: [r, g, b, …], title, domain: (min, max)}.
+    Lève ValueError en français si le fichier ne se lit pas comme la
+    spécification le dit. `strict_domain=False` : un domaine autre que 0..1
+    est rendu au lieu d'être refusé (le cuiseur s'en sert, la bibliothèque
+    non)."""
     kind = size = None
     title = ""
     lo, hi = [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]
@@ -433,7 +572,7 @@ def parse_cube(text: str) -> dict:
                 size = int(rest)
             except ValueError as e:
                 raise ValueError(f"{head} illisible") from e
-            top = LUT_MAX_3D if kind == "3d" else LUT_MAX_1D
+            top = max3d if kind == "3d" else LUT_MAX_1D
             if not 2 <= size <= top:
                 raise ValueError(f"{head} {size} : de 2 à {top}")
         elif head in ("DOMAIN_MIN", "DOMAIN_MAX"):
@@ -453,18 +592,21 @@ def parse_cube(text: str) -> dict:
         # un autre mot-clé (commentaire d'outil) : la spécification ne le connaît pas, il ne change rien ici
     if not kind:
         raise ValueError("ni LUT_3D_SIZE ni LUT_1D_SIZE : ce n'est pas un fichier .cube")
-    if any(abs(x) > 1e-6 for x in lo) or any(abs(x - 1) > 1e-6 for x in hi):
+    if strict_domain and (any(abs(x) > 1e-6 for x in lo) or any(abs(x - 1) > 1e-6 for x in hi)):
         raise ValueError(f"domaine d'entrée {lo} → {hi} : seul 0..1 est pris en charge (ffmpeg lirait autrement)")
     want = (size ** 3 if kind == "3d" else size) * 3
     if len(vals) != want:
         raise ValueError(f"{len(vals) // 3} lignes de valeurs, {want // 3} attendues pour {kind.upper()} {size}")
-    return {"kind": kind, "size": size, "values": vals, "title": title}
+    return {"kind": kind, "size": size, "values": vals, "title": title, "domain": (tuple(lo), tuple(hi))}
 
 
 def parse_hald(data: bytes) -> dict:
     """Une HaldCLUT en PNG (image carrée de L³ × L³ pixels, L² points par
     côté, rouge le plus rapide puis vert puis bleu — l'ordre même de
-    `update_clut_packed` de ffmpeg vf_lut3d.c) : rendue comme une LUT 3D."""
+    `update_clut_packed` de ffmpeg vf_lut3d.c) : rendue comme une LUT 3D.
+    Les valeurs restent les octets de l'image (`scale` = 1/255) : une
+    HaldCLUT de niveau 12 (144 points, 3 millions de pixels) ne devient pas
+    9 millions de flottants Python."""
     from io import BytesIO
     from PIL import Image
     try:
@@ -476,10 +618,161 @@ def parse_hald(data: bytes) -> dict:
     n = round((w * h) ** (1 / 3))
     if w != h or n ** 3 != w * h:
         raise ValueError(f"{w}×{h} : une HaldCLUT est carrée, de L³ pixels de côté")
-    if n > LUT_MAX_3D:
-        raise ValueError(f"HaldCLUT de {n} points par côté : {LUT_MAX_3D} au plus")
+    if n > LUT_MAX_3D_IN:
+        raise ValueError(f"HaldCLUT de {n} points par côté : {LUT_MAX_3D_IN} au plus")
     px = im.convert("RGB").tobytes()
-    return {"kind": "3d", "size": n, "values": [b / 255 for b in px], "title": ""}
+    return {"kind": "3d", "size": n, "values": px, "scale": 1 / 255, "title": ""}
+
+
+# ── échantillonner une LUT : l'interpolation trilinéaire de ffmpeg ──
+def sample3(lut: dict, r: float, g: float, b: float) -> tuple[float, float, float]:
+    """La LUT 3D à ce point, comme `interp_trilinear` de ffmpeg 6.1.1
+    (vf_lut3d.c) : entrée bornée à 0..1 puis × (N − 1), voisins (int)x et
+    min((int)x + 1, N − 1), mélanges sur r, puis g, puis b."""
+    n = lut["size"]
+    v = lut["values"]
+    k = lut.get("scale", 1.0)
+    m = n - 1
+    sr, sg, sb = (min(max(x, 0.0), 1.0) * m for x in (r, g, b))
+    pr, pg, pb = int(sr), int(sg), int(sb)
+    qr, qg, qb = min(pr + 1, m), min(pg + 1, m), min(pb + 1, m)
+    dr, dg, db = sr - pr, sg - pg, sb - pb
+    n2 = n * n
+
+    def at(i, j, l):
+        o = 3 * (i + j * n + l * n2)
+        return v[o] * k, v[o + 1] * k, v[o + 2] * k
+
+    def lerp(a, c, t):
+        return a[0] + (c[0] - a[0]) * t, a[1] + (c[1] - a[1]) * t, a[2] + (c[2] - a[2]) * t
+    c00 = lerp(at(pr, pg, pb), at(qr, pg, pb), dr)
+    c10 = lerp(at(pr, qg, pb), at(qr, qg, pb), dr)
+    c01 = lerp(at(pr, pg, qb), at(qr, pg, qb), dr)
+    c11 = lerp(at(pr, qg, qb), at(qr, qg, qb), dr)
+    return lerp(lerp(c00, c10, dg), lerp(c01, c11, dg), db)
+
+
+def sample1(lut: dict, x: tuple[float, float, float]) -> tuple[float, float, float]:
+    """Une LUT 1D, comme `interp_1d_linear` de ffmpeg (vf_lut3d.c)."""
+    n, v = lut["size"], lut["values"]
+    out = []
+    for ch in range(3):
+        s = min(max(x[ch], 0.0), 1.0) * (n - 1)
+        p = int(s)
+        q = min(p + 1, n - 1)
+        out.append(v[3 * p + ch] + (v[3 * q + ch] - v[3 * p + ch]) * (s - p))
+    return tuple(out)
+
+
+def grid(n: int, fn) -> dict:
+    """Une LUT 3D de n points par côté : fn(r, g, b) aux nœuds, rouge le plus rapide."""
+    vals = []
+    for b in range(n):
+        for g in range(n):
+            for r in range(n):
+                vals.extend(fn(r / (n - 1), g / (n - 1), b / (n - 1)))
+    return {"kind": "3d", "size": n, "values": vals, "title": ""}
+
+
+def resample(lut: dict, n: int) -> dict:
+    """La même LUT sur une grille de n points (trilinéaire, comme ffmpeg la lirait)."""
+    if lut["kind"] == "1d":
+        return {**grid(n, lambda r, g, b: sample1(lut, (r, g, b))), "title": lut.get("title", "")}
+    return {**grid(n, lambda r, g, b: sample3(lut, r, g, b)), "title": lut.get("title", "")}
+
+
+# ── de Rec.709 à F-Log2 : pour les LUT de Fujifilm ────────────
+# Les LUT de Fujifilm attendent du F-Log2 (ou F-Log2 C) en F-Gamut (ou
+# F-Gamut C). Nos vidéos sont en Rec.709. La conversion, en trois pas :
+#   1. la valeur Rec.709 → lumière de scène linéaire : l'inverse de l'OETF
+#      de l'ITU-R BT.709-6 (§ 1.2 : V = 1,099 L^0,45 − 0,099 si L ≥ 0,018,
+#      4,500 L sinon), le blanc (V = 1) valant une réflexion de 100 % ;
+#   2. les primaires BT.709 → F-Gamut (= celles de BT.2020) ou F-Gamut C,
+#      toutes en D65 : la matrice calculée depuis les coordonnées x, y des
+#      fiches Fujifilm (méthode SMPTE RP 177) ;
+#   3. la courbe F-Log2 : « F-Log2 Data Sheet Ver.1.1 » et « F-Log2 C Data
+#      Sheet Ver.1.0 » de Fujifilm (dl.fujifilm-x.com/technical-data/…,
+#      § 2-3, la même courbe pour les deux) : out = c·log10(a·in + b) + d si
+#      in ≥ cut1, e·in + f sinon ; 0 ≤ out ≤ 1 (0 % → 95/1023, 18 % → 400,
+#      90 % → 570) : la valeur de code normalisée que lit la LUT.
+# Ce qui n'est pas documenté et qu'on suppose : que la vidéo Rec.709 soit
+# « scène » (inverse OETF, pas BT.1886), que son blanc soit une réflexion de
+# 100 % (code 581/1023 : les hautes lumières au-delà ne servent pas) et que
+# la LUT lise la valeur de code pleine échelle (0..1 = 0..1023). Une
+# approximation, donc — la LUT « entrée F-Log2 » d'origine est gardée.
+FLOG2 = {"a": 5.555556, "b": 0.064829, "c": 0.245281, "d": 0.384316, "e": 8.799461, "f": 0.092864,
+         "cut1": 0.000889, "cut2": 0.100686685370811}
+PRIMARIES = {                     # x, y de R, G, B ; blanc D65 (0,3127 ; 0,3290) partout
+    "bt709": ((0.64, 0.33), (0.30, 0.60), (0.15, 0.06)),
+    "fgamut": ((0.708, 0.292), (0.170, 0.797), (0.131, 0.046)),        # F-Log2 Data Sheet § 3 (= BT.2020)
+    "fgamutc": ((0.7347, 0.2653), (0.0263, 0.9737), (0.1173, -0.0224)),  # F-Log2 C Data Sheet § 3
+}
+D65 = (0.3127, 0.3290)
+
+
+def flog2_encode(x: float) -> float:
+    f = FLOG2
+    return f["c"] * math.log10(f["a"] * x + f["b"]) + f["d"] if x >= f["cut1"] else f["e"] * x + f["f"]
+
+
+def flog2_decode(y: float) -> float:
+    f = FLOG2
+    return 10 ** ((y - f["d"]) / f["c"]) / f["a"] - f["b"] / f["a"] if y >= f["cut2"] else (y - f["f"]) / f["e"]
+
+
+def rec709_decode(v: float) -> float:
+    return v / 4.5 if v < 0.081 else ((v + 0.099) / 1.099) ** (1 / 0.45)
+
+
+def rec709_encode(l: float) -> float:
+    return 4.5 * l if l < 0.018 else 1.099 * l ** 0.45 - 0.099
+
+
+def _inv3(m):
+    (a, b, c), (d, e, f), (g, h, i) = m
+    det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+    return [[(e * i - f * h) / det, (c * h - b * i) / det, (b * f - c * e) / det],
+            [(f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det],
+            [(d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det]]
+
+
+def _mul3(a, b):
+    return [[sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+
+
+def npm(prim) -> list:
+    """RVB → XYZ d'après les primaires et le blanc (SMPTE RP 177)."""
+    xyz = [[x / y, 1.0, (1 - x - y) / y] for x, y in prim]
+    p = [[xyz[j][i] for j in range(3)] for i in range(3)]           # colonnes = primaires
+    w = [D65[0] / D65[1], 1.0, (1 - D65[0] - D65[1]) / D65[1]]
+    s = [sum(_inv3(p)[i][k] * w[k] for k in range(3)) for i in range(3)]
+    return [[p[i][j] * s[j] for j in range(3)] for i in range(3)]
+
+
+def gamut_matrix(src: str, dst: str) -> list:
+    return _mul3(_inv3(npm(PRIMARIES[dst])), npm(PRIMARIES[src]))
+
+
+def rec709_to_flog2(rgb, gamut: str = "fgamut"):
+    """Une couleur Rec.709 (0..1) → le code F-Log2 (0..1) qu'aurait écrit le boîtier."""
+    m = gamut_matrix("bt709", gamut)
+    lin = [rec709_decode(x) for x in rgb]
+    return tuple(flog2_encode(max(0.0, sum(m[i][k] * lin[k] for k in range(3)))) for i in range(3))
+
+
+def bake_rec709(lut: dict, gamut: str = "fgamut", n: int = LUT_RESAMPLE) -> dict:
+    """Une LUT « entrée Rec.709 » : la conversion Rec.709 → F-Log2 puis la
+    LUT de Fujifilm (lue trilinéaire, dans son domaine), cuites en un cube
+    de n points."""
+    m = gamut_matrix("bt709", gamut)
+    lo, hi = lut.get("domain", ((0, 0, 0), (1, 1, 1)))
+
+    def fn(r, g, b):
+        lin = (rec709_decode(r), rec709_decode(g), rec709_decode(b))
+        code = [flog2_encode(max(0.0, sum(m[i][k] * lin[k] for k in range(3)))) for i in range(3)]
+        x = [(code[i] - lo[i]) / (hi[i] - lo[i]) for i in range(3)]
+        return sample3(lut, *x) if lut["kind"] == "3d" else sample1(lut, x)
+    return {**grid(n, fn), "title": lut.get("title", "")}
 
 
 def cube_text(lut: dict, title: str = "") -> str:
@@ -524,10 +817,42 @@ def lut_meta(lid: str) -> dict | None:
 
 
 def _lut_public(m: dict) -> dict:
-    return {**m, "url": f"api/montage/luts/{m['id']}/cube", "input_label": LUT_INPUTS.get(m.get("input"), "non documenté")}
+    return {**m, "url": f"api/montage/luts/{m['id']}/cube", "mini_url": f"api/montage/luts/{m['id']}/mini",
+            "input_label": LUT_INPUTS.get(m.get("input"), "non documenté"),
+            "family": m.get("family") or "Importées", "fav": int(m.get("fav") or 0)}
 
 
-def create_lut(data: bytes, name: str, title: str = "", inp: str = "inconnu", source: str = "") -> dict:
+def _clean(s, n: int) -> str:
+    return " ".join(str(s or "").split())[:n]
+
+
+def store_lut(lut: dict, title: str, inp: str = "inconnu", source: str = "", family: str = "", pack: str = "",
+              fav: int = 0, owner: str | None = None, note: str = "") -> dict:
+    """Range une LUT lue (parse_cube, parse_hald, bake_rec709…) sous sa forme
+    unique ; au-delà de 65 points, rééchantillonnée à 33 (trilinéaire)."""
+    orig = lut["size"]
+    if lut["kind"] == "3d" and (lut["size"] > LUT_MAX_3D or "scale" in lut):
+        lut = resample(lut, LUT_RESAMPLE if lut["size"] > LUT_MAX_3D else lut["size"])
+    d = _luts_dir()
+    while True:
+        lid = f"lut-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
+        if not (d / f"{lid}.json").exists():
+            break
+    title = _clean(title or lut.get("title") or "LUT", 80)
+    (d / f"{lid}.cube").write_text(cube_text(lut, title), encoding="utf-8")
+    meta = {"id": lid, "title": title, "kind": lut["kind"], "size": lut["size"],
+            "input": inp if inp in LUT_INPUTS else "inconnu", "source": _clean(source, 240),
+            "family": _clean(family, 60) or "Importées", "pack": _clean(pack, 80), "fav": int(fav or 0),
+            "created": library.now(), "owner": owner if owner is not None else auth.current_id()}
+    if orig != lut["size"]:
+        meta["resampled_from"] = orig
+    if note:
+        meta["note"] = _clean(note, 300)
+    (d / f"{lid}.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+    return meta
+
+
+def create_lut(data: bytes, name: str, title: str = "", inp: str = "inconnu", source: str = "", family: str = "") -> dict:
     ext = Path(name or "").suffix.lower()
     if ext == ".png":
         lut = parse_hald(data)
@@ -536,18 +861,27 @@ def create_lut(data: bytes, name: str, title: str = "", inp: str = "inconnu", so
             text = data.decode("utf-8-sig")
         except UnicodeDecodeError as e:
             raise ValueError("un .cube est un fichier texte (UTF-8)") from e
-        lut = parse_cube(text)
+        lut = parse_cube(text, max3d=LUT_MAX_3D_IN)
     else:
         raise ValueError(f"{ext} : attendu un .cube (ou une HaldCLUT .png)")
-    lid = f"lut-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
-    title = " ".join((title or lut["title"] or Path(name).stem or "LUT").split())[:80]
-    d = _luts_dir()
-    (d / f"{lid}.cube").write_text(cube_text(lut, title), encoding="utf-8")
-    meta = {"id": lid, "title": title, "kind": lut["kind"], "size": lut["size"],
-            "input": inp if inp in LUT_INPUTS else "inconnu", "source": str(source or name)[:200],
-            "created": library.now(), "owner": auth.current_id()}
-    (d / f"{lid}.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
-    return meta
+    return store_lut(lut, title or lut["title"] or Path(name).stem, inp, source or name, family)
+
+
+def mini_bytes(lid: str) -> bytes:
+    """La LUT en 17³ sur 8 bits (14 739 octets, rouge le plus rapide) : de
+    quoi dessiner les vignettes de l'étagère sans charger des centaines de
+    cubes d'un mégaoctet. Seulement pour les vignettes : un plan lit le cube."""
+    cache = _luts_dir() / "mini"
+    cache.mkdir(exist_ok=True)
+    f = cache / f"{lid}.bin"
+    if f.exists():
+        return f.read_bytes()
+    small = resample(read_lut(lid), LUT_MINI)
+    b = bytes(max(0, min(255, round(x * 255))) for x in small["values"])
+    tmp = cache / f"{lid}.{secrets.token_hex(3)}.tmp"
+    tmp.write_bytes(b)
+    tmp.replace(f)
+    return b
 
 
 def read_lut(lid: str) -> dict:
@@ -579,6 +913,182 @@ def prepare_luts(p: dict, workdir: str, write: bool = True) -> dict[str, dict]:
                 path.write_text(cube_text(mixed(read_lut(m["id"]), mix / 1000), m["title"]), encoding="utf-8")
         out[key] = {"path": str(path), "kind": m["kind"], "title": m["title"]}
     return out
+
+
+# ── les packs : RawTherapee Film Simulation, Fujifilm ─────────
+# Importés côté serveur (python3 -m tools.montage luts …, depuis server/),
+# les archives d'origine restant hors du dépôt (~/showrunner-refs/luts/).
+# Une LUT déjà importée (même `source`) ne l'est pas deux fois.
+BRANDS = {"fuji": "Fuji", "fujifilm": "Fuji", "kodak": "Kodak", "eastman": "Kodak", "agfa": "Agfa", "polaroid": "Polaroid",
+          "impossible": "Polaroid", "ilford": "Ilford", "kentmere": "Ilford", "rollei": "Rollei", "lomography": "Lomography",
+          "lomo": "Lomography", "konica": "Konica", "cinestill": "CineStill", "fomapan": "Foma", "foma": "Foma", "adox": "Adox",
+          "efke": "Efke", "ferrania": "Ferrania", "bergger": "Bergger", "orwo": "ORWO", "svema": "Svema", "arista": "Arista",
+          "tasma": "Tasma", "shanghai": "Shanghai", "lucky": "Lucky", "revolog": "Revolog"}
+FUJI_SIMS = [("eternableachbypass", "ETERNA BLEACH BYPASS"), ("eterna", "ETERNA"), ("provia", "PROVIA"), ("velvia", "Velvia"),
+             ("astia", "ASTIA"), ("classicchrome", "CLASSIC CHROME"), ("realaace", "REALA ACE"), ("reala", "REALA ACE"),
+             ("proneghi", "PRO Neg. Hi"), ("pronegstd", "PRO Neg. Std"), ("classicneg", "CLASSIC Neg."),
+             ("nostalgicneg", "NOSTALGIC Neg."), ("acros", "ACROS"), ("monochrome", "MONOCHROME"), ("sepia", "SEPIA"),
+             ("neutral", "Neutral"), ("natural", "Natural")]
+# Les favoris : des pellicules et des simulations réputées, par motif sur le
+# titre (le premier qui correspond ; un motif sans correspondant est sauté,
+# le suivant de la liste de secours prend sa place).
+FAVS = [r"^ETERNA$", r"CLASSIC CHROME", r"REALA ACE", r"ETERNA BLEACH BYPASS", r"CLASSIC Neg", r"^ACROS",
+        r"Portra 400", r"Ektar 100", r"Kodachrome 64", r"Velvia 50", r"Polaroid 669", r"HP5"]
+FAVS_SPARE = [r"PROVIA", r"Portra 160", r"Superia 400", r"Tri-?X", r"Astia 100", r"Agfa Vista 200", r"400H", r"Velvia 100"]
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", s.lower())
+
+
+def _known_sources() -> set:
+    out = set()
+    for f in _luts_dir().glob("lut-*.json"):
+        try:
+            out.add(json.loads(f.read_text(encoding="utf-8")).get("source", ""))
+        except ValueError:
+            continue
+    return out
+
+
+def import_rawtherapee(zip_path: str, owner: str | None = None, log=print) -> list[dict]:
+    """La collection « RawTherapee Film Simulation » (Pat David, CC BY-SA 4.0) :
+    des HaldCLUT PNG (sRGB) rangées par dossiers ; la famille est la marque
+    (premier mot du nom de fichier, sinon le dossier)."""
+    import zipfile
+    zname = Path(zip_path).name
+    known = _known_sources()
+    made = []
+    with zipfile.ZipFile(zip_path) as z:
+        members = sorted(n for n in z.namelist() if n.lower().endswith(".png") and not n.startswith("__MACOSX"))
+        for i, name in enumerate(members):
+            src = f"{zname}:{name}"
+            if src in known:
+                continue
+            parts = [p for p in name.split("/") if p]
+            stem = Path(parts[-1]).stem
+            first = _norm(stem.split()[0]) if stem.split() else ""
+            family = BRANDS.get(first)
+            if not family:
+                for p in reversed(parts[:-1]):
+                    if _norm(p) in BRANDS:
+                        family = BRANDS[_norm(p)]
+                        break
+            family = family or "Autres pellicules"
+            bw = any(re.search(r"black|b ?& ?w|\bbw\b|noir", p, re.I) for p in parts[:-1])
+            try:
+                lut = parse_hald(z.read(name))
+            except ValueError as e:
+                log(f"  sauté {name} : {e}")
+                continue
+            m = store_lut(lut, stem + (" · N&B" if bw and not re.search(r"b ?& ?w|bw\b", stem, re.I) else ""), "rec709", src,
+                          family, "RawTherapee Film Simulation", owner=owner,
+                          note="HaldCLUT sRGB de la collection RawTherapee (Pat David, CC BY-SA 4.0)")
+            made.append(m)
+            if (i + 1) % 25 == 0:
+                log(f"  {i + 1}/{len(members)}")
+    log(f"RawTherapee : {len(made)} LUT importées ({len(members)} HaldCLUT dans l'archive)")
+    return made
+
+
+def _fuji_fields(name: str) -> dict:
+    stem = Path(name).stem
+    s = _norm(name)
+    inp = "flog2c" if re.search(r"flog2c", s) else "flog2" if "flog2" in s else "flog" if "flog" in s else "inconnu"
+    gamut = "fgamutc" if "fgamutc" in s or (inp == "flog2c" and "fgamut" not in s) else "fgamut"
+    hdr = bool(re.search(r"2100|hlg|pq\b|hdr", name, re.I))
+    wdr = bool(re.search(r"wdr", name, re.I))
+    s2 = re.sub(r"(gfx)?eterna55", "", s)           # le boîtier GFX ETERNA 55, pas la simulation
+    sim = next((t for k, t in FUJI_SIMS if k in s2), None)
+    return {"stem": stem, "input": inp, "gamut": gamut, "hdr": hdr, "wdr": wdr, "sim": sim}
+
+
+FUJI_BAKE = 65              # mesuré le 29/09 (étude) : la cuite 33³ s'écarte de la chaîne exacte jusqu'à 5,3/255 près du noir, la 65³ jusqu'à 1,1
+
+
+def import_fujifilm(zip_path: str, owner: str | None = None, log=print, bake_size: int = FUJI_BAKE) -> list[dict]:
+    """Les LUT de Fujifilm (entrée F-Log2 / F-Log2 C) : chaque cube de sortie
+    BT.709 est rangé tel quel (« entrée F-Log2 »), et cuit en une version
+    « entrée Rec.709 » (bake_rec709, 65 points). Les sorties HDR (BT.2100)
+    ne sont pas prises : le banc est en SDR."""
+    import zipfile
+    zname = Path(zip_path).name
+    known = _known_sources()
+    made = []
+    with zipfile.ZipFile(zip_path) as z:
+        cubes = sorted(n for n in z.namelist() if n.lower().endswith(".cube") and not n.startswith("__MACOSX"))
+        log(f"Fujifilm : {len(cubes)} cubes dans l'archive")
+        best: dict = {}
+        for name in cubes:
+            fl = _fuji_fields(name)
+            if fl["hdr"]:
+                log(f"  sauté (HDR) {name}")
+                continue
+            try:
+                lut = parse_cube(z.read(name).decode("utf-8-sig"), max3d=LUT_MAX_3D_IN, strict_domain=False)
+            except (ValueError, UnicodeDecodeError) as e:
+                log(f"  sauté {name} : {e}")
+                continue
+            key = (fl["sim"] or fl["stem"], fl["input"], fl["gamut"], fl["wdr"])
+            # plusieurs grilles d'une même LUT : la plus fine
+            if key not in best or lut["size"] > best[key][1]["size"]:
+                best[key] = (name, lut, fl)
+        # une seule version Rec.709 par simulation : cuite depuis l'entrée F-Log2 (F-Gamut = primaires BT.2020)
+        # s'il y en a une, sinon depuis F-Log2 C (F-Gamut C)
+        bake_from = {}
+        for (simname, inp, gamut, wdr), (name, lut, fl) in best.items():
+            if inp in ("flog2", "flog2c"):
+                k = (simname, wdr)
+                if k not in bake_from or (inp == "flog2" and bake_from[k] != "flog2"):
+                    bake_from[k] = inp
+        for (simname, inp, gamut, wdr), (name, lut, fl) in sorted(best.items(), key=lambda kv: str(kv[0])):
+            label = simname + (" · WDR" if wdr else "")
+            dom_ok = all(abs(x) < 1e-6 for x in lut["domain"][0]) and all(abs(x - 1) < 1e-6 for x in lut["domain"][1])
+            src = f"{zname}:{name}"
+            if src not in known and dom_ok and inp in ("flog2", "flog2c", "flog"):
+                made.append(store_lut(lut, f"{label} · entrée {LUT_INPUTS[inp]}", inp, src, "Fujifilm · entrée F-Log2 (d'origine)",
+                                      "Fujifilm GFX ETERNA 55 3D LUT", owner=owner, note=f"LUT Fujifilm d'origine ({lut['size']} points)"))
+            if inp not in ("flog2", "flog2c"):
+                log(f"  pas de version Rec.709 pour {name} (entrée {inp} : la conversion n'est écrite que pour F-Log2)")
+                continue
+            if bake_from.get((simname, wdr)) != inp:
+                continue
+            srcb = f"{src} · cuit Rec.709"
+            if srcb in known:
+                continue
+            baked = bake_rec709(lut, gamut, bake_size)
+            made.append(store_lut(baked, label, "rec709", srcb, "Fujifilm · entrée Rec.709 (cuites)", "Fujifilm GFX ETERNA 55 3D LUT", owner=owner,
+                                  note=f"Rec.709 → {LUT_INPUTS[inp]} ({'F-Gamut C' if gamut == 'fgamutc' else 'F-Gamut'}, fiches F-Log2 / F-Log2 C "
+                                       f"de Fujifilm) puis la LUT {Path(name).name}, cuites en {bake_size}³ ; approximation (étude montage)"))
+            log(f"  {label} : {lut['size']}³ {inp} → cuite {bake_size}³")
+    log(f"Fujifilm : {len(made)} LUT importées")
+    return made
+
+
+def set_favourites(patterns=FAVS, spare=FAVS_SPARE, log=print) -> list[dict]:
+    """Les favoris de l'étagère, dans l'ordre : pour chaque motif, la LUT dont
+    le titre correspond (les cuites Rec.709 avant les d'origine F-Log2). Les
+    autres LUT perdent leur rang de favori."""
+    metas = [m for m in (lut_meta(f.stem) for f in _luts_dir().glob("lut-*.json")) if m]
+    metas.sort(key=lambda m: (m.get("input") != "rec709", m.get("family", ""), m["title"]))
+    picked, used = [], set()
+    queue = list(patterns) + list(spare)
+    for pat in queue:
+        if len(picked) >= len(patterns):
+            break
+        m = next((x for x in metas if x["id"] not in used and re.search(pat, x["title"], re.I)), None)
+        if not m:
+            log(f"  favori sans correspondant : {pat}")
+            continue
+        used.add(m["id"])
+        picked.append(m)
+    for m in metas:
+        rank = next((i + 1 for i, x in enumerate(picked) if x["id"] == m["id"]), 0)
+        if int(m.get("fav") or 0) != rank:
+            m["fav"] = rank
+            (_luts_dir() / f"{m['id']}.json").write_text(json.dumps(m, ensure_ascii=False, indent=1), encoding="utf-8")
+    log("favoris : " + " · ".join(f"{i + 1}. {m['title']} ({m.get('family')})" for i, m in enumerate(picked)))
+    return picked
 
 
 # ── la commande ffmpeg ───────────────────────────────────────
@@ -1000,41 +1510,53 @@ def run_export(ctx) -> dict:
 # ── les routes ───────────────────────────────────────────────
 def _summary(p: dict) -> dict:
     fps = p["settings"]["fps"]
-    thumb = None
-    for c in sorted(p["clips"], key=lambda c: (c["track"][0] != "V", c["start"])):
-        it = library.get(c["item"])
-        if it and it["kind"] in ("video", "image"):
-            thumb = library.public(it).get("thumb_url")
-            break
+    it = library.get(p["id"]) or {}
+    pub = library.public(it) if it else {}
     return {"id": p["id"], "name": p["name"], "updated": p.get("updated"), "created": p.get("created"),
             "rev": p.get("rev", 1), "clips": len(p["clips"]), "duration": round(project_end(p) / fps, 3),
-            "format": p["settings"]["format"], "fps": fps, "thumb_url": thumb}
+            "format": p["settings"]["format"], "width": p["settings"]["width"], "height": p["settings"]["height"],
+            "fps": fps, "thumb_url": pub.get("thumb_url"), "folder": it.get("folder", ""), "legacy": p.get("legacy")}
 
 
 def r_meta(req):
-    return {"formats": [{"id": k, **v} for k, v in FORMATS.items()], "fps": list(FPS),
+    return {"formats": [{"id": k, **v} for k, v in FORMATS.items()], "fps": list(FPS_CHOICE), "fps_all": list(FPS),
             "still": STILL_DEFAULT, "tracks": TRACKS_DEFAULT, "neutral_k": NEUTRAL_K,
             "max_tracks": MAX_TRACKS, "speed": [SPEED_MIN, SPEED_MAX],
             "lut_inputs": [{"id": k, "label": v} for k, v in LUT_INPUTS.items()]}
 
 
 def r_list(req):
+    """Les séquences qu'on peut lire (les objets `sequence` de la bibliothèque)."""
+    migrate()
     out = []
-    for f in _dir().glob("mon-*.json"):
-        try:
-            out.append(_summary(normalize(json.loads(f.read_text(encoding="utf-8")))))
-        except (ValueError, HttpError):
-            continue
+    for it in library.query(["sequence"], limit=100000)["items"]:
+        st = (it.get("params") or {})
+        out.append({"id": it["id"], "name": it.get("title", ""), "updated": it.get("updated"), "created": it.get("created"),
+                    "clips": st.get("clips", 0), "duration": it.get("duration") or 0, "format": st.get("format", ""),
+                    "width": it.get("width"), "height": it.get("height"), "fps": it.get("fps"),
+                    "thumb_url": it.get("thumb_url"), "folder": it.get("folder", ""), "legacy": st.get("legacy")})
     out.sort(key=lambda s: s.get("updated") or "", reverse=True)
     return {"projects": out}
 
 
 def r_create(req):
+    """Une séquence neuve : vide (nom, réglages), ou « à partir de l'élément »
+    (`from_item` : la taille, la cadence, le nom et la durée du clip). `folder` :
+    le dossier d'Asset où la ranger."""
     d = req.json()
+    folder = d.get("folder") or ""
+    if d.get("from_item"):
+        it = library.get(str(d["from_item"]))
+        if not it or not library.readable(it):
+            raise HttpError(404, f"introuvable : {d['from_item']}")
+        p = from_item(it)
+        note = p.pop("note", "")
+        with _lock:
+            p = new_sequence(p, folder or it.get("folder") or "")
+        return {**p, "note": note}
     p = blank(d.get("name", ""), d.get("settings"))
     with _lock:
-        _write(p)
-    return p
+        return new_sequence(p, folder)
 
 
 def r_get(req, pid):
@@ -1046,12 +1568,13 @@ def r_save(req, pid):
     la version qu'elle avait ; si le fichier a bougé entre-temps (un autre
     onglet), on refuse plutôt que d'écraser en silence."""
     d = req.json()
+    sid = _resolve(pid)
     with _lock:
-        cur = load(pid)
+        cur = load(sid)
         base = d.get("base_rev")
         if base is not None and int(base) != int(cur.get("rev", 1)):
             raise HttpError(409, "ce montage a été modifié ailleurs (un autre onglet ?) : rechargez-le")
-        new = normalize({**d, "id": pid})
+        new = normalize({**d, "id": sid, "legacy": cur.get("legacy")} if cur.get("legacy") else {**d, "id": sid})
         new.update(created=cur.get("created"), updated=library.now(), rev=int(cur.get("rev", 1)) + 1)
         _write(new)
     return {"ok": True, "rev": new["rev"], "updated": new["updated"], "warnings": overlaps(new)}
@@ -1071,20 +1594,21 @@ def r_rename(req, pid):
 def r_duplicate(req, pid):
     with _lock:
         src = normalize(load(pid))
-        p = {**src, "id": new_id(), "name": (src["name"] + " (copie)")[:120],
-             "created": library.now(), "updated": library.now(), "rev": 1}
-        _write(p)
+        it = library.get(src["id"]) or {}
+        p = {**src, "name": (src["name"] + " (copie)")[:120], "created": library.now(), "updated": library.now(), "rev": 1}
+        p.pop("legacy", None)
+        p = new_sequence(p, it.get("folder", ""))
     return _summary(p)
 
 
 def r_delete(req, pid):
-    f = _path(pid)
-    if not f.exists():
-        raise HttpError(404, "montage introuvable")
-    trash = _dir() / "corbeille"
-    trash.mkdir(exist_ok=True)
-    with _lock:
-        shutil.move(str(f), str(trash / f.name))
+    """À la corbeille de la bibliothèque (Asset la montre, et l'en sort)."""
+    sid = _resolve(pid)
+    _item(sid)
+    try:
+        library.trash(sid)
+    except PermissionError as e:
+        raise HttpError(403, str(e)) from e
     return {"ok": True}
 
 
@@ -1133,7 +1657,7 @@ def r_luts(req):
         m = lut_meta(f.stem)
         if m and (_luts_dir() / f"{m['id']}.cube").exists():
             out.append(_lut_public(m))
-    out.sort(key=lambda m: m["title"].lower())
+    out.sort(key=lambda m: (m["family"].lower(), m["title"].lower()))
     return {"luts": out, "inputs": [{"id": k, "label": v} for k, v in LUT_INPUTS.items()]}
 
 
@@ -1146,7 +1670,7 @@ def r_lut_upload(req):
         raise HttpError(413, "LUT trop grosse (40 Mo au plus)")
     try:
         with _lock:
-            m = create_lut(data, name, req.q("title"), req.q("input", "inconnu"), req.q("source"))
+            m = create_lut(data, name, req.q("title"), req.q("input", "inconnu"), req.q("source"), req.q("family"))
     except ValueError as e:
         raise HttpError(400, f"{name} : {e}") from e
     return _lut_public(m)
@@ -1170,6 +1694,15 @@ def r_lut_file(req, lid):
     return FileResponse(_luts_dir() / f"{lid}.cube", "text/plain; charset=utf-8", cache="max-age=86400")
 
 
+def r_lut_mini(req, lid):
+    _lut_or_404(lid)
+    try:
+        mini_bytes(lid)
+    except (ValueError, OSError) as e:
+        raise HttpError(500, f"vignette de LUT impossible : {e}") from e
+    return FileResponse(_luts_dir() / "mini" / f"{lid}.bin", "application/octet-stream", cache="max-age=86400")
+
+
 def r_lut_edit(req, lid):
     d = req.json()
     with _lock:
@@ -1182,6 +1715,16 @@ def r_lut_edit(req, lid):
             m["title"] = t
         if d.get("input") in LUT_INPUTS:
             m["input"] = d["input"]
+        if "family" in d:
+            m["family"] = _clean(d.get("family"), 60) or "Importées"
+        if "fav" in d:
+            # favori : au bout de la liste (rang = le plus grand + 1) ; retiré : 0
+            if d["fav"]:
+                if not int(m.get("fav") or 0):
+                    ranks = [int((lut_meta(f.stem) or {}).get("fav") or 0) for f in _luts_dir().glob("lut-*.json")]
+                    m["fav"] = max(ranks + [0]) + 1
+            else:
+                m["fav"] = 0
         (_luts_dir() / f"{lid}.json").write_text(json.dumps(m, ensure_ascii=False, indent=1), encoding="utf-8")
     return _lut_public(m)
 
@@ -1200,6 +1743,12 @@ def r_lut_delete(req, lid):
 
 
 def register(app) -> None:
+    try:
+        made = migrate()                   # les montages d'avant deviennent des séquences (une fois)
+        if made:
+            print(f"montage : {len(made)} montage(s) d'avant rangé(s) comme séquences de la bibliothèque")
+    except Exception as e:  # noqa: BLE001 — le portail démarre quand même ; la liste réessaiera
+        print(f"montage : migration remise à plus tard ({e})")
     jobs.register("montage.export", run_export, lane="cpu", title="Montage · export")
     app.route("GET", "/api/montage/meta", r_meta)
     app.route("GET", "/api/montage/projects", r_list)
@@ -1214,6 +1763,7 @@ def register(app) -> None:
     app.route("GET", "/api/montage/luts", r_luts)
     app.route("PUT", "/api/montage/luts", r_lut_upload)
     app.route("GET", "/api/montage/luts/{lid}/cube", r_lut_file)
+    app.route("GET", "/api/montage/luts/{lid}/mini", r_lut_mini)
     app.route("POST", "/api/montage/luts/{lid}", r_lut_edit)
     app.route("POST", "/api/montage/luts/{lid}/delete", r_lut_delete)
 
@@ -1250,11 +1800,48 @@ def selftest(call, ok) -> None:
     st, meta = call("GET", "/api/montage/meta")
     ok(st == 200 and "1080p" in [f["id"] for f in meta["formats"]] and meta["fps"] == [24, 25, 30], "montage : réglages")
     st, p = call("POST", "/api/montage/projects", {"name": "Essai montage", "settings": {"format": "720p", "fps": 25}})
-    ok(st == 200 and PID.fullmatch(p.get("id", "")) and p["settings"]["width"] == 1280 and len(p["tracks"]) == 6,
-       f"montage : créer un projet ({st} {str(p)[:200]})")
+    ok(st == 200 and SID.fullmatch(p.get("id", "")) and p["settings"]["width"] == 1280 and len(p["tracks"]) == 6,
+       f"montage : créer une séquence ({st} {str(p)[:200]})")
     pid = p["id"]
     st, lst = call("GET", "/api/montage/projects")
     ok(st == 200 and any(x["id"] == pid for x in lst["projects"]), "montage : la liste")
+    # une séquence est un objet de la bibliothèque : Asset la voit, la range, la renomme, la jette et la rend
+    st, li = call("GET", f"/api/library/{pid}")
+    ok(st == 200 and li.get("kind") == "sequence" and li.get("title") == "Essai montage" and li.get("url", "").endswith("/sequence.json")
+       and li.get("width") == 1280 and li.get("fps") == 25, f"montage : la séquence est un objet « sequence » de la bibliothèque ({st} {str(li)[:160]})")
+    st, lk = call("GET", "/api/library?kind=sequence")
+    ok(st == 200 and any(x["id"] == pid for x in lk["items"]), "montage : la bibliothèque liste ses séquences")
+    st, mv = call("POST", "/api/asset/move", {"ids": [pid], "folder": "Séquences d'essai"})
+    st, lst = call("GET", "/api/montage/projects")
+    ok(any(x["id"] == pid and x["folder"] == "Séquences d'essai" for x in lst["projects"]), "montage : rangée dans un dossier d'Asset")
+    st, av = call("GET", "/api/asset/view?folder=S%C3%A9quences%20d%27essai")
+    ok(st == 200 and any(x["id"] == pid for x in av.get("items", [])), f"montage : la page Asset montre la séquence dans son dossier ({st})")
+    st, rn = call("POST", f"/api/montage/projects/{pid}/rename", {"name": "Essai renommé"})
+    st, li = call("GET", f"/api/library/{pid}")
+    ok(li.get("title") == "Essai renommé", "montage : renommer la séquence renomme l'objet")
+    call("POST", f"/api/montage/projects/{pid}/rename", {"name": "Essai montage"})
+    st, dup = call("POST", f"/api/montage/projects/{pid}/duplicate")
+    ok(st == 200 and SID.fullmatch(dup.get("id", "")) and dup["folder"] == "Séquences d'essai", "montage : dupliquer une séquence (même dossier)")
+    st, _ = call("POST", f"/api/montage/projects/{dup['id']}/delete")
+    st2, gone = call("GET", f"/api/library/{dup['id']}")
+    st3, back = call("POST", f"/api/library/{dup['id']}/restore")
+    st4, again = call("GET", f"/api/montage/projects/{dup['id']}")
+    ok(st == 200 and st2 == 404 and st3 == 200 and st4 == 200 and again.get("name", "").endswith("(copie)"),
+       "montage : une séquence supprimée va à la corbeille d'Asset et en revient entière")
+    call("POST", f"/api/library/{dup['id']}/delete")
+    st, p = call("GET", f"/api/montage/projects/{pid}")
+    # un montage d'avant (montage/mon-*.json) devient une séquence, sans perte ; son ancienne adresse y mène
+    legacy_id = "mon-20260929-080000-beef"
+    (_dir() / f"{legacy_id}.json").write_text(json.dumps({"id": legacy_id, "name": "Montage d'avant", "rev": 3,
+        "settings": {"format": "720p", "fps": 24}, "tracks": [_track(t) for t in TRACKS_DEFAULT], "clips": [],
+        "created": "2026-09-29T08:00:00+00:00", "updated": "2026-09-29T08:30:00+00:00"}), encoding="utf-8")
+    made = migrate()
+    st, lg = call("GET", f"/api/montage/projects/{legacy_id}")
+    ok(len(made) == 1 and st == 200 and SID.fullmatch(lg.get("id", "")) and lg.get("legacy") == legacy_id and lg["rev"] == 3
+       and lg["settings"]["fps"] == 24 and (_dir() / "migres" / f"{legacy_id}.json").exists() and not (_dir() / f"{legacy_id}.json").exists(),
+       f"montage : un montage d'avant devient une séquence (même contenu, l'ancienne adresse y mène, l'original gardé) ({st} {str(lg)[:120]})")
+    ok(not migrate(), "montage : la migration ne se fait qu'une fois")
+    call("POST", f"/api/montage/projects/{lg.get('id')}/delete")
     st, bad = call("POST", f"/api/montage/projects/{pid}", {**p, "base_rev": p["rev"],
                    "clips": [{"id": "k1", "track": "V9", "item": "vid-20260928-000000-abcd", "kind": "video", "dur": 10}]})
     ok(st == 400 and "piste inconnue" in bad.get("error", ""), f"montage : un plan sur une piste inconnue est refusé ({st} {bad})")
@@ -1276,7 +1863,7 @@ def selftest(call, ok) -> None:
     c0 = mig["clips"][0]
     ok(all(c0[k] == old["clips"][0][k] for k in ("id", "track", "item", "start", "dur", "in", "vol", "fade_in", "audio"))
        and c0["speed"] == 1.0 and c0["enabled"] is True and c0["lut"] is None and mig["markers"] == []
-       and mig["range"] == {"in": None, "out": None} and mig["bins"] == {"folders": [], "items": {}, "hidden": []}
+       and mig["range"] == {"in": None, "out": None} and "bins" not in mig
        and mig["tracks"][4]["mute"] is True and mig["rev"] == 7 and normalize(mig) == mig,
        f"montage : un projet d'avant se relit sans perte, les champs neufs à leur défaut ({c0})")
     five = normalize({**old, "tracks": [{"id": f"V{i}"} for i in (5, 4, 3, 2, 1)] + [{"id": "A1", "name": "  voix  off "}]})
@@ -1290,16 +1877,9 @@ def selftest(call, ok) -> None:
         ok(False, "montage : V21 doit être refusée")
     except HttpError:
         ok(True, "montage : pas plus de 20 pistes d'une sorte")
-    bins = normalize({**old, "bins": {"folders": [{"id": "fa", "name": "Plans", "parent": "fb"}, {"id": "fb", "name": "B", "parent": "fa"},
-                                                  {"id": "fc", "name": " Sous  dossier ", "parent": "fa"}, {"id": "bad id", "name": "x"}],
-                                      "items": {"vid-20260928-000000-aaaa": "fc", "vid-20260928-000000-bbbb": "fz"},
-                                      "hidden": ["ima-20260928-000000-cccc", "nimporte"]},
-                           "markers": [{"id": "m1", "f": 50, "name": "  refrain "}, {"id": "m0", "f": 10}],
-                           "range": {"in": 20, "out": 10}})["bins"]
-    ok([f["id"] for f in bins["folders"]] == ["fa", "fb", "fc"] and sum(1 for f in bins["folders"] if f["parent"] is None) >= 1
-       and bins["folders"][2] == {"id": "fc", "name": "Sous dossier", "parent": "fa"}
-       and bins["items"] == {"vid-20260928-000000-aaaa": "fc"} and bins["hidden"] == ["ima-20260928-000000-cccc"],
-       f"montage : les dossiers du chutier (une boucle est rompue, l'inconnu tombe) ({bins})")
+    cu = normalize({**old, "settings": {"format": "custom", "width": 705, "height": 897, "fps": 16}})
+    ok(cu["settings"]["width"] == 704 and cu["settings"]["height"] == 896 and cu["settings"]["fps"] == 16,
+       "montage : un format sur mesure (pair) et 16 i/s")
     mk = normalize({**old, "markers": [{"id": "m1", "f": 50, "name": "  refrain "}, {"id": "m0", "f": 10}], "range": {"in": 20, "out": 10}})
     ok([m["f"] for m in mk["markers"]] == [10, 50] and mk["markers"][1]["name"] == "refrain" and mk["range"] == {"in": 20, "out": None},
        "montage : les marques triées, une sortie avant l'entrée tombe")
@@ -1407,6 +1987,84 @@ def selftest(call, ok) -> None:
     st, ls = call("GET", "/api/montage/luts")
     ok(hl.get("id") not in {x["id"] for x in ls["luts"]}, "montage : une LUT supprimée part à sa corbeille")
 
+    # 2 ter. les packs : F-Log2, la cuisson Rec.709, les HaldCLUT de niveau 12, l'import, les favoris
+    ok(round(flog2_encode(0.0) * 1023) == 95 and round(flog2_encode(0.18) * 1023) == 400 and round(flog2_encode(0.9) * 1023) == 570,
+       "montage : la courbe F-Log2 de la fiche Fujifilm (0 % → 95, 18 % → 400, 90 % → 570 sur 1023)")
+    ok(all(abs(flog2_decode(flog2_encode(x)) - x) < 1e-5 for x in (0.0, 0.0005, 0.01, 0.18, 0.9, 4.0)), "montage : F-Log2, aller et retour")
+    m2020 = gamut_matrix("bt709", "fgamut")
+    bt2087 = [[0.6274, 0.3293, 0.0433], [0.0691, 0.9195, 0.0114], [0.0164, 0.0880, 0.8956]]
+    ok(all(abs(m2020[i][j] - bt2087[i][j]) < 6e-4 for i in range(3) for j in range(3)),
+       f"montage : BT.709 → F-Gamut calculée depuis les primaires = la matrice de l'UIT-R BT.2087 ({[[round(x, 4) for x in r] for r in m2020]})")
+    mc = gamut_matrix("bt709", "fgamutc")
+    ok(all(abs(sum(r) - 1) < 1e-6 for r in mc), "montage : BT.709 → F-Gamut C garde le blanc (lignes de somme 1)")
+    # une « Neutral » d'essai (F-Log2 → Rec.709 exact) cuite en Rec.709 doit rendre l'identité
+    inv = _inv3(gamut_matrix("bt709", "fgamut"))
+
+    def neutral(r, g, b):
+        refl = [flog2_decode(x) for x in (r, g, b)]
+        lin = [sum(inv[i][k] * refl[k] for k in range(3)) for i in range(3)]
+        return tuple(rec709_encode(min(1.0, max(0.0, x))) for x in lin)
+    import random
+    rnd = random.Random(7)
+    pts = [[rnd.random() for _ in range(3)] for _ in range(400)]
+    back = max(max(abs(a - b) for a, b in zip(neutral(*rec709_to_flog2(c)), c)) for c in pts)
+    ok(back * 255 < 0.1, f"montage : 709 → F-Log2 → (F-Log2 → 709) rend l'image, sans LUT (écart max {back * 255:.4f} sur 255)")
+    fake = grid(33, neutral)
+    baked = bake_rec709(fake, "fgamut", 33)
+    errs = [max(abs(a - b) for a, b in zip(sample3(baked, *c), sample3(fake, *rec709_to_flog2(c)))) * 255 for c in pts]
+    ok(sum(errs) / len(errs) < 0.4 and max(errs) < 8,
+       f"montage : la cuite 33³ suit la chaîne 709 → F-Log2 → LUT (écart moyen {sum(errs) / len(errs):.2f}, max {max(errs):.2f} sur 255)")
+    from io import BytesIO
+    from PIL import Image
+    import zipfile
+
+    def hald(level, fn):                     # une HaldCLUT de niveau `level` (level² points)
+        n = level * level
+        im = Image.new("RGB", (level ** 3, level ** 3))
+        im.putdata([tuple(round(255 * x) for x in fn((i % n) / (n - 1), (i // n % n) / (n - 1), (i // (n * n)) / (n - 1))) for i in range(n ** 3)])
+        b = BytesIO()
+        im.save(b, "PNG")
+        return b.getvalue()
+    big = parse_hald(hald(9, lambda r, g, b: (r, g, b)))
+    ok(big["size"] == 81, "montage : une HaldCLUT de niveau 9 se lit (81 points)")
+    zdir = Path(tempfile.mkdtemp(prefix="sr_luts_"))
+    with zipfile.ZipFile(zdir / "HaldCLUT.zip", "w") as z:
+        z.writestr("HaldCLUT/Color/Kodak/Kodak Portra 400.png", hald(9, lambda r, g, b: (r ** 0.9, g, b ** 1.1)))
+        z.writestr("HaldCLUT/Black and White/Ilford/Ilford HP5 Plus 400.png", hald(3, lambda r, g, b: (0.3 * r + 0.59 * g + 0.11 * b,) * 3))
+        z.writestr("HaldCLUT/Color/Misc/Lomo Redscale.png", hald(2, lambda r, g, b: (r, g * 0.5, b * 0.2)))
+    with zipfile.ZipFile(zdir / "fuji.zip", "w") as z:
+        z.writestr("LUT/33grid/ETERNA55_FLog2C_FGamutC_to_BT.709_ETERNA_33grid.cube", cube_text(grid(9, neutral), "e"))
+        z.writestr("LUT/65grid/ETERNA55_FLog2C_FGamutC_to_BT.709_ETERNA_65grid.cube", cube_text(grid(11, neutral), "e"))
+        z.writestr("LUT/33grid/ETERNA55_FLog2_FGamut_to_BT.709_CLASSIC-CHROME_33grid.cube", cube_text(grid(9, neutral), "c"))
+        z.writestr("LUT/33grid/ETERNA55_FLog2_FGamut_to_BT.2100-HLG_ETERNA_33grid.cube", cube_text(grid(5, neutral), "h"))
+    rt = import_rawtherapee(str(zdir / "HaldCLUT.zip"), owner="cal", log=lambda *_: None)
+    fam = {m["title"]: (m["family"], m["size"], m.get("resampled_from")) for m in rt}
+    ok(fam.get("Kodak Portra 400") == ("Kodak", 33, 81) and fam.get("Ilford HP5 Plus 400 · N&B", ("?",))[0] == "Ilford"
+       and fam.get("Lomo Redscale", ("?",))[0] == "Lomography",
+       f"montage : RawTherapee importé par familles (Kodak, Ilford N&B, Lomography), le niveau 9 rééchantillonné à 33 ({fam})")
+    fj = import_fujifilm(str(zdir / "fuji.zip"), owner="cal", log=lambda *_: None, bake_size=9)
+    kinds = sorted((m["title"], m["input"], m["family"]) for m in fj)
+    ok(len(fj) == 4 and [k[0] for k in kinds].count("ETERNA") == 1 and ("ETERNA", "rec709", "Fujifilm · entrée Rec.709 (cuites)") in kinds
+       and ("ETERNA · entrée F-Log2 C", "flog2c", "Fujifilm · entrée F-Log2 (d'origine)") in kinds
+       and ("CLASSIC CHROME", "rec709", "Fujifilm · entrée Rec.709 (cuites)") in kinds and not any("2100" in m["source"] for m in fj)
+       and next(m for m in fj if m["title"] == "ETERNA · entrée F-Log2 C")["size"] == 11,
+       f"montage : Fujifilm : la grille la plus fine, l'originale F-Log2 C et sa cuite Rec.709, pas de HDR ({kinds})")
+    ok(not import_rawtherapee(str(zdir / "HaldCLUT.zip"), log=lambda *_: None) and not import_fujifilm(str(zdir / "fuji.zip"), log=lambda *_: None),
+       "montage : réimporter un pack n'ajoute rien")
+    favs = set_favourites(log=lambda *_: None)
+    ok([m["title"] for m in favs][:3] == ["ETERNA", "CLASSIC CHROME", "Kodak Portra 400"],
+       f"montage : les favoris suivent la liste, un motif sans correspondant est sauté ({[m['title'] for m in favs]})")
+    st, ls = call("GET", "/api/montage/luts")
+    et = next((x for x in ls["luts"] if x["title"] == "ETERNA"), {})
+    ok(st == 200 and et.get("fav") == 1 and et.get("family") == "Fujifilm · entrée Rec.709 (cuites)" and et.get("mini_url"),
+       "montage : la liste dit la famille et le rang de favori")
+    st, mb = call("GET", f"/api/montage/luts/{et.get('id')}/mini")
+    ok(st == 200 and isinstance(mb, bytes) and len(mb) == 17 ** 3 * 3, f"montage : la vignette 17³ sur 8 bits ({len(mb) if isinstance(mb, bytes) else mb})")
+    st, e2 = call("POST", f"/api/montage/luts/{et.get('id')}", {"fav": False})
+    st, e3 = call("POST", f"/api/montage/luts/{et.get('id')}", {"fav": True})
+    ok(e2.get("fav") == 0 and e3.get("fav", 0) > 1, "montage : retirer un favori, le remettre (au bout de la liste)")
+    shutil.rmtree(zdir, ignore_errors=True)
+
     # 3. un vrai export, très court : rouge 2 s | bleu 2 s en fondu enchaîné, un son, une image au-dessus
     if not shutil.which("ffmpeg"):
         ok(False, "montage : ffmpeg absent de cette machine")
@@ -1433,6 +2091,21 @@ def selftest(call, ok) -> None:
     ok(all(isinstance(v, dict) and v.get("id") for v in made.values()), "montage : sources d'essai dans la bibliothèque")
     ok(made["rouge.mp4"].get("audio") is True, "montage : la bibliothèque sait qu'une vidéo a du son")
     r, b, im, snd, rvb = (made[k] for k in ("rouge.mp4", "bleu.mp4", "blanc.png", "note.wav", "rvb.mp4"))
+    # « Nouvelle séquence à partir de l'élément » : la taille, la cadence, le nom et la durée du clip
+    subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "color=c=green:s=704x896:r=24:d=2", "-f", "lavfi",
+                    "-i", "sine=f=330:d=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(tmp / "haut.mp4")],
+                   check=True, timeout=60)
+    st, haut = call("PUT", "/api/library/upload?name=haut.mp4&title=Plan%20haut", raw=(tmp / "haut.mp4").read_bytes())
+    st, fs = call("POST", "/api/montage/projects", {"from_item": haut["id"]})
+    fc = (fs.get("clips") or [{}])[0]
+    ok(st == 200 and fs["settings"] == {"format": "custom", "fps": 24, "width": 704, "height": 896, "still": STILL_DEFAULT}
+       and fs["name"] == "Plan haut" and len(fs["clips"]) == 1 and fc.get("track") == "V1" and fc.get("dur") == 48 and fc.get("audio") is True,
+       f"montage : nouvelle séquence à partir d'un clip 704×896 à 24 i/s : ses réglages, son nom, le clip entier en V1 ({st} {str(fs)[:220]})")
+    st, fs2 = call("POST", "/api/montage/projects", {"from_item": rvb["id"]})
+    ok(st == 200 and fs2["settings"]["format"] == "720p" and fs2["settings"]["fps"] == 25 and fs2["clips"][0]["dur"] == 75,
+       "montage : à partir d'un clip 1280×720 à 25 i/s : le format 720p")
+    for x in (fs, fs2):
+        call("POST", f"/api/montage/projects/{x.get('id')}/delete")
     clips = [
         {"id": "r", "track": "V1", "item": r["id"], "kind": "video", "start": 0, "dur": 50, "in": 0.5, "src_dur": 3, "audio": True},
         {"id": "b", "track": "V1", "item": b["id"], "kind": "video", "start": 50, "dur": 50, "in": 0, "src_dur": 3, "audio": True, "xfade": 10},
@@ -1519,3 +2192,25 @@ def selftest(call, ok) -> None:
         ok(vs and int(vs[0].get("nb_read_frames", 0)) == 75 and red(_pixel(path, 3)),
            f"montage : export borné (25 → 100) : 75 images, commence au plan 2 ({vs[0].get('nb_read_frames') if vs else '?'})")
     shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ── en ligne de commande : importer un pack de LUT ───────────
+#   cd server && SHOWRUNNER_DATA=~/showrunner-data python3 -m tools.montage luts rawtherapee ~/showrunner-refs/luts/HaldCLUT.zip
+#   … luts fujifilm ~/showrunner-refs/luts/gfx-eterna-55-3d-lut-v110.zip
+#   … luts favoris
+# Les fichiers s'écrivent dans <data_dir>/luts/ : le portail en marche les
+# voit à la requête suivante, sans redémarrer.
+if __name__ == "__main__":
+    import sys
+    args = sys.argv[1:]
+    if len(args) < 2 or args[0] != "luts" or args[1] not in ("rawtherapee", "fujifilm", "favoris"):
+        print(__doc__.split("\n")[0])
+        print("usage : python3 -m tools.montage luts rawtherapee|fujifilm <archive.zip> · luts favoris")
+        sys.exit(2)
+    print("données :", config.data_dir())
+    owner = auth.admin_id()
+    if args[1] == "rawtherapee":
+        import_rawtherapee(args[2], owner=owner)
+    elif args[1] == "fujifilm":
+        import_fujifilm(args[2], owner=owner)
+    set_favourites()

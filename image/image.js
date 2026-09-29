@@ -23,9 +23,19 @@
 // Tout emplacement qui attend une image accepte un dépôt (fichier du disque →
 // bibliothèque, catégorie Upload ; ou une vignette glissée) : `dropZone` du
 // socle ; toute vignette d'ici se glisse (`dragItem`).
+//
+// L'annulation (commun/undo.js) : les réglages de la barre (modèle, format,
+// références, prise de vue, graine, le prompt une fois écrit…) par
+// instantanés ; aimer, ranger dans un dossier, mettre à la corbeille depuis
+// le fil par le pont de la bibliothèque (watchLibrary : le fil écrit lui-même).
+// Ne s'annulent pas : un rendu lancé, un fichier déposé, un élément créé
+// depuis le menu (il se jette depuis Asset).
 import { mountHeader, api, jobs, pick, toast, el, $, href, fmtDate, dropZone, dragItem } from '../commun/shell.js';
 import { menu } from '../commun/menu.js';
 import { createFil } from '../commun/fil.js';
+import { createUndo, watchLibrary } from '../commun/undo.js';
+import { prefs } from '../commun/prefs.js';
+import { scrollBehavior } from '../commun/theme.js';
 
 mountHeader('image', { sub: 'créer · éditer' });
 
@@ -48,6 +58,57 @@ const S = {
 };
 let fil = null;
 
+// ── l'annulation ────────────────────────────────────────────
+// le fil : un objet changé se repeint, un objet revenu de la corbeille fait relire le fil
+const U = createUndo({ name: 'image', onapply: (e, { items }) => {
+  let reload = false;
+  for (const it of items || []) {
+    if (it.gone) fil?.remove(it.id);
+    else if (fil?.get(it.id)) fil.update(it);
+    else reload = true;
+  }
+  if (reload) fil?.reload();
+} });
+watchLibrary(U);
+const undoBox = el('span', { class: 'sr-undo pb-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons());
+// la barre, par instantanés : ce que garde le brouillon, les objets entiers
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const BAR_FR = [['model', 'changer de modèle'], ['variant', 'changer la variante de Z-Image'], ['refs', 'changer les références'],
+  ['refChoice', 'changer l’image envoyée d’un élément'], ['current', 'changer l’image à éditer'], ['aspect', 'changer le format'],
+  ['quality', 'changer la taille'], ['realism', 'changer le rendu photo'], ['transparent', 'changer le fond'], ['looks', 'changer la prise de vue'],
+  ['count', 'changer le nombre d’images'], ['seed', 'changer la graine'], ['origSeed', 'changer la graine d’origine'], ['prompt', 'écrire le prompt']];
+const EDIT_FR = [['tool', 'changer d’outil d’édition'], ['model', 'changer de modèle d’édition'], ['refs', 'changer les références'],
+  ['keepFace', 'garder le visage, ou non'], ['looks', 'rééclairer'], ['factor', 'changer le facteur'], ['denoise', 'changer le débruitage'],
+  ['azimuth', 'changer le point de vue'], ['elevation', 'changer la hauteur de vue'], ['distance', 'changer la distance'], ['mask', 'effacer la zone'],
+  ['count', 'changer le nombre d’images'], ['seed', 'changer la graine'], ['prompt', 'écrire la consigne'], ['caption', 'écrire la description']];
+const TYPED = new Set(['prompt', 'seed', 'caption']);   // une saisie : un seul geste tant que le champ garde la main
+let typing = 0;
+function barDescribe(b, a) {
+  for (const [k, label] of BAR_FR) {
+    if (!same(b[k], a[k])) return { label, merge: TYPED.has(k) ? `${k}#${typing}` : k, mergeMs: TYPED.has(k) ? Infinity : undefined };
+  }
+  for (const [k, label] of EDIT_FR) {
+    if (!same(b.edit?.[k], a.edit?.[k])) return { label, merge: TYPED.has(k) ? `e.${k}#${typing}` : `e.${k}`, mergeMs: TYPED.has(k) ? Infinity : undefined };
+  }
+  return { label: 'modifier la barre' };
+}
+let bar = null;   // posé au démarrage, une fois le brouillon relu (l'ouverture n'est pas un geste)
+function barState() {
+  const { model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, origSeed, lookTab, mode } = S;
+  return { model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, origSeed, lookTab, mode,
+    refs: S.refs, edit: S.edit, current: S.current };
+}
+function barRestore(s) {
+  const { refs, edit, current, ...rest } = s;
+  Object.assign(S, rest);
+  S.refs = refs || [];
+  S.edit = { ...S.edit, ...edit, refs: edit?.refs || [] };
+  if (S.paint.for && S.paint.for !== current?.id) clearPaint();
+  S.current = current || null;
+  S.pop = null;
+  saveDraft(); paintBar();
+}
+
 // ── le brouillon : une commodité de ce navigateur ───────────
 function saveDraft() {
   try {
@@ -56,11 +117,17 @@ function saveDraft() {
     localStorage.setItem(KEY, JSON.stringify({ model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, origSeed, lookTab,
       refs: S.refs.map((r) => r.id), edit, mode: S.mode, current: S.current?.id }));
   } catch { /* stockage fermé : rien à garder */ }
+  bar?.commit();   // chaque changement de la barre passe ici : un geste qu'on annule
 }
 async function loadDraft() {
   let d = null;
   try { d = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { d = null; }
-  if (!d) return null;
+  if (!d) {
+    // un brouillon neuf : les préférences de la personne (image/prefs.json)
+    S.model = prefs.get('image.model', S.model);
+    S.count = prefs.get('image.count', S.count);
+    return null;
+  }
   for (const k of ['model', 'variant', 'prompt', 'looks', 'aspect', 'quality', 'count', 'seed', 'realism', 'transparent', 'refChoice', 'origSeed', 'lookTab']) {
     if (d[k] !== undefined && d[k] !== null) S[k] = d[k];
   }
@@ -225,7 +292,7 @@ function paintRefs() {
     }
     if (!m.refs) kids.push(el('span', { class: 'pb-hint', title: m.refs_why }, `${m.name} : texte seul, sans référence`));
     else if (!R.list.length) kids.push(el('span', { class: 'pb-hint' }, m.id === 'qwen21' ? 'des références : <image1>, <image2>… dans le prompt' : '1 référence : la personne ; 2 : la scène puis le sujet'));
-    kids.push(el('span', { class: 'sp' }),
+    kids.push(el('span', { class: 'sp' }), undoBox,
       el('button', { class: 'pb-mode', type: 'button', title: 'éditer une image : consigne, détourer, agrandir, affiner, angle, zone peinte', onclick: () => setMode('edit') },
         el('span', { class: 'ic', 'aria-hidden': 'true' }, '✎'), 'Éditer'));
   } else {
@@ -248,7 +315,7 @@ function paintRefs() {
       R.list.forEach((it, k) => kids.push(refThumb(it, k, R)));
       if (R.list.length < R.max) kids.push(el('button', { class: 'pb-ref add', type: 'button', title: 'une référence : une personne, un objet, une tenue à mettre dans l’image', onclick: addRefs }, '+'));
     }
-    kids.push(el('span', { class: 'sp' }),
+    kids.push(el('span', { class: 'sp' }), undoBox,
       el('button', { class: 'pb-mode', type: 'button', title: 'revenir à la création d’images', onclick: () => setMode('create') },
         el('span', { class: 'ic', 'aria-hidden': 'true' }, '←'), 'Créer'));
   }
@@ -366,6 +433,8 @@ function typeAt() {
 }
 function wireText() {
   const ta = $('#prompt');
+  // chaque passage dans un champ de la barre est une saisie : un seul geste à annuler
+  $('#pbar').addEventListener('focusin', (e) => { if (e.target.matches?.('textarea, input')) typing++; });
   ta.addEventListener('input', () => {
     const f = field();
     if (!f) return;
@@ -801,7 +870,8 @@ async function launch(path, body) {
   toast(r.jobs.length > 1 ? `${r.jobs.length} rendus en file — en tête du fil` : 'en file — en tête du fil');
   paintAct();
   fil?.paintJobs();
-  scrollTo({ top: 0, behavior: 'smooth' });   // la tête du fil, où paraissent les rendus
+  // la tête du fil, où paraissent les rendus (préférence ; doux sauf animations réduites)
+  if (prefs.get('image.scrollTop', true)) scrollTo({ top: 0, behavior: scrollBehavior() });
 }
 // les travaux lancés d'ici : suivis un à un (la file commune ne les voit
 // qu'au relevé suivant) ; leurs images se posent dans le fil en arrivant
@@ -914,6 +984,7 @@ async function reuse(it) {
   S.refs = (await Promise.all((p.refs || []).map((r) => api('library/' + r.item).catch(() => null)))).filter(Boolean);
   for (const r of p.refs || []) if (r.ref) S.refChoice[r.item] = r.ref;
   const lost = (p.refs || []).length - S.refs.length;
+  bar?.label(`réutiliser les réglages de « ${it.title || it.id} »`);
   fixQuality(); saveDraft(); paintBar();
   $('#prompt').focus();
   toast(`réglages repris dans la barre${lost ? ` (${plural(lost, 'référence partie', 'références parties')} de la bibliothèque)` : ''} · graine vidée : « Générer » fait une variante`, 5000);
@@ -933,6 +1004,7 @@ async function reuseEdit(it) {
     azimuth: p.azimuth || S.edit.azimuth, elevation: p.elevation || S.edit.elevation, distance: p.distance || S.edit.distance,
     mask: p.mask || '', refs, seed: '', origSeed: p.seed ?? null };
   if (p.tool === 'refine') { S.edit.caption = p.prompt || ''; S.edit.captionFor = src.id; }
+  bar?.label(`réutiliser l’édition « ${it.title || it.id} »`);
   saveDraft(); paintBar();
   toast(`édition reprise dans la barre (${TOOL_FR[p.tool] || p.tool}, même source${p.mask ? ', même zone' : ''}) · graine vidée : une variante`, 5000);
 }
@@ -941,6 +1013,7 @@ function editWith(it, tool) {
   if (S.paint.for !== it.id) clearPaint();
   S.current = it; S.mode = 'edit'; S.edit.tool = tool; S.edit.mask = ''; S.paint.on = false; S.pop = null;
   fil?.close();
+  bar?.label(`éditer « ${it.title || it.id} » · ${TOOL_FR[tool]}`);
   saveDraft(); paintBar();
   if (!$('#prompt').hidden) $('#prompt').focus();
   toast(`la barre passe en édition · ${TOOL_FR[tool]}`);
@@ -950,6 +1023,7 @@ function useAsRef(it) {
   const max = M(S.model).refs;
   if (!S.refs.some((r) => r.id === it.id)) S.refs = [...S.refs, it].slice(-max);
   S.mode = 'create';
+  bar?.label(`prendre « ${it.title || it.id} » en référence`);
   fixQuality(); saveDraft(); paintBar();
   toast(`« ${it.title} » dans les références de ${M(S.model).name}`);
 }
@@ -1115,6 +1189,9 @@ async function start() {
   mountFil();
   wireBar();
   paintBar();
+  // à partir d'ici, chaque changement de la barre est un geste (le mode et l'onglet des looks suivent sans en faire un)
+  bar = U.snapshots({ get: barState, set: barRestore, describe: barDescribe, ignore: ['mode', 'lookTab'] });
+  bar.reset();
   if (want) fil.open(want);
   if (S.cfg.availability_error) toast(`machines : ${S.cfg.availability_error}`, 6000);
 }

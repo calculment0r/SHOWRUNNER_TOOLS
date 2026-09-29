@@ -22,7 +22,9 @@ import { split } from '../commun/split.js';
 import * as M from './model.js';
 import { Program, Source, tempGains } from './player.js';
 import { Timeline } from './timeline.js';
-import { getLut, lutGL, lutFailed } from './lut.js';
+import { getLut, getMini, lutGL } from './lut.js';
+import { mountProject, MULTI_MIME } from './projet.js';
+import { createUndo } from '../commun/undo.js';
 
 mountHeader('montage');
 
@@ -34,9 +36,7 @@ const S = {
   tool: 'select', snap: true, focus: 'program',
   target: { video: 'V1', audio: 'A1' },
   undo: [], redo: [], pending: null, gesture: null,
-  items: new Map(), bin: [], binKind: '', binQ: '',
-  binSel: null, binFocus: false, renaming: null,
-  binSort: LS('montage-bin-sort') || 'new', showHidden: false, open: LS('montage-bin-open') || {},
+  items: new Map(),
   clip: LS('montage-clipboard'), luts: [], safe: !!LS('montage-safe'),
   dirty: false, saving: null, conflict: false,
   dragging: null, shuttle: 0,
@@ -44,12 +44,12 @@ const S = {
 };
 
 // ── le projet en mémoire ────────────────────────────────────
-const core = (p) => JSON.stringify({ name: p.name, settings: p.settings, tracks: p.tracks, clips: p.clips, markers: p.markers, range: p.range, bins: p.bins });
+const core = (p) => JSON.stringify({ name: p.name, settings: p.settings, tracks: p.tracks, clips: p.clips, markers: p.markers, range: p.range });
 const fps = () => S.p.settings.fps;
 const lockedTracks = (p = S.p) => M.lockedSet(p);
 const itemOf = (id) => { const it = S.items.get(id); return it && !it.missing ? it : undefined; };
-const body = (p, extra = {}) => ({ name: p.name, settings: { format: p.settings.format, fps: p.settings.fps, still: p.settings.still },
-  tracks: p.tracks, clips: p.clips, markers: p.markers, range: p.range, bins: p.bins, ...extra });
+const body = (p, extra = {}) => ({ name: p.name, settings: { format: p.settings.format, fps: p.settings.fps, still: p.settings.still, width: p.settings.width, height: p.settings.height },
+  tracks: p.tracks, clips: p.clips, markers: p.markers, range: p.range, ...extra });
 
 async function ensureItems(ids) {
   const miss = [...new Set(ids)].filter((id) => !S.items.has(id));
@@ -58,14 +58,39 @@ async function ensureItems(ids) {
   }));
 }
 
+// ── l'annulation : commun/undo.js, une pile par séquence ────
+// Chaque séquence ouverte a sa pile (createUndo), activée avec son onglet :
+// ctrl+Z, ctrl+maj+Z / ctrl+Y, les boutons et le journal viennent du
+// gestionnaire commun. Un geste de la timeline s'y range comme l'état d'avant
+// et d'après de la séquence ; un geste de la bibliothèque (ranger, renommer,
+// jeter) comme ses deux fonctions (pushLibUndo).
+const undos = new Map();
+const baseU = createUndo({ name: 'montage', onapply: () => paintBar() });   // sans séquence ouverte : les gestes du Projet
+let U = baseU;
+function undoFor(id) {
+  if (!undos.has(id)) undos.set(id, createUndo({ name: 'montage · ' + id, onapply: () => paintBar() }));
+  return undos.get(id);
+}
+function useUndo(u) {
+  U = u;
+  U.activate();
+  const box = $('#undo-box');
+  if (box) box.replaceChildren(...U.buttons());
+}
+// ranger un geste de la séquence ouverte : on le rejoue sur elle seule
+function recordSeq(label, before, after) {
+  const sid = S.p.id;
+  const go = (s) => { if (!S.p || S.p.id !== sid) throw new Error('cette séquence n’est plus ouverte'); restore(s); };
+  U.record({ label, undo: () => go(before), redo: () => go(after) });
+}
+
 function commit(label, fn) {
   if (!S.p) return;
   const before = core(S.p);
   fn(S.p);
-  if (core(S.p) === before) return;
-  S.undo.push({ label, s: before });
-  if (S.undo.length > 300) S.undo.shift();
-  S.redo = [];
+  const after = core(S.p);
+  if (after === before) return;
+  recordSeq(label, before, after);
   changed();
 }
 
@@ -75,8 +100,7 @@ function endEdit() {
   const pend = S.pending;
   S.pending = null;
   if (!pend || !S.p || core(S.p) === pend.s) return;
-  S.undo.push(pend);
-  S.redo = [];
+  recordSeq(pend.label, pend.s, core(S.p));
   changed({ inspector: false });
 }
 let liveRaf = 0;
@@ -95,8 +119,7 @@ const gesture = {
     S.gesture = null;
     if (!g) return;
     if (core(S.p) === g.s) { program.invalidate(); timeline.render(); return; }
-    S.undo.push({ label: g.label, s: g.s });
-    S.redo = [];
+    recordSeq(g.label, g.s, core(S.p));
     changed();
   },
 };
@@ -128,20 +151,8 @@ function restore(s) {
   applySettings();
   changed();
 }
-function undo() {
-  const u = S.undo.pop();
-  if (!u) return toast('rien à annuler');
-  S.redo.push({ label: u.label, s: core(S.p) });
-  restore(u.s);
-  toast(`annulé : ${u.label}`, 1600);
-}
-function redo() {
-  const r = S.redo.pop();
-  if (!r) return toast('rien à rétablir');
-  S.undo.push({ label: r.label, s: core(S.p) });
-  restore(r.s);
-  toast(`rétabli : ${r.label}`, 1600);
-}
+const undo = () => U.undo();
+const redo = () => U.redo();
 
 // ── l'enregistrement, seul ──────────────────────────────────
 let saveT = 0;
@@ -195,7 +206,7 @@ addEventListener('beforeunload', () => {
 // ── ouvrir, créer ───────────────────────────────────────────
 function applySettings() {
   const st = S.p.settings;
-  const f = (S.meta.formats.find((x) => x.id === st.format) || { w: 1920, h: 1080 });
+  const f = st.format === 'custom' ? { w: st.width || 1920, h: st.height || 1080 } : (S.meta.formats.find((x) => x.id === st.format) || { w: 1920, h: 1080 });
   st.width = f.w; st.height = f.h;
   $('#stage').style.setProperty('--ar', String(f.w / f.h));
   $('#fps').textContent = st.fps;
@@ -204,17 +215,27 @@ function applySettings() {
 }
 
 async function openProject(id) {
-  if (S.p && S.p.id !== id) await flushSave();
+  if (S.p && S.p.id !== id) {
+    await flushSave();
+    clearTimeout(viewT);
+    LS('montage-view-' + S.p.id, { pps: timeline.pps, scroll: timeline.scroll.scrollLeft, t: program.t });
+    targets.set(S.p.id, { ...S.target });
+  }
   const p = await api(`montage/projects/${id}`);
-  await ensureItems(p.clips.map((c) => c.item));
+  id = p.id;                                   // un « mon-… » d'avant mène à sa séquence
+  await ensureItems([id, ...p.clips.map((c) => c.item)]);
   program.pause();
   program.clear();
   S.p = p;
   S.rev = p.rev;
-  S.undo = []; S.redo = []; S.sel = new Set(); S.gap = null; S.conflict = false; S.dirty = false; S.binSel = null;
+  useUndo(undoFor(id));                        // la pile de cette séquence (gardée tant que la page vit)
+  if (targets.has(id)) S.target = { ...targets.get(id) };
+  S.sel = new Set(); S.gap = null; S.conflict = false; S.dirty = false;
+  if (!S.tabs.includes(id)) { S.tabs.push(id); LS('montage-tabs', S.tabs); }
   validTargets();
   $('#conflict').hidden = true;
   applySettings();
+  paintSeqTabs();
   LS('montage-last', id);
   if (location.hash.slice(1) !== id) history.replaceState(null, '', location.pathname + '#' + id);
   const v = LS('montage-view-' + id);
@@ -231,9 +252,10 @@ async function openProject(id) {
   resumeExport();
 }
 
-async function createProject(name, settings) {
-  const p = await api('montage/projects', { method: 'POST', body: { name, settings } });
+async function createProject(name, settings, folder = '') {
+  const p = await api('montage/projects', { method: 'POST', body: { name, settings, folder } });
   await openProject(p.id);
+  loadBin();
   return p;
 }
 
@@ -275,10 +297,11 @@ function confirmBox(title, text, action) {
   });
 }
 
-async function newProjectFlow() {
+async function newProjectFlow(folder = '') {
   const d = new Date();
-  const name = await askName('Nouveau montage', `Montage du ${d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}`);
-  if (name) await createProject(name, S.p ? { format: S.p.settings.format, fps: S.p.settings.fps } : undefined);
+  const name = await askName('Nouvelle séquence', `Séquence du ${d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}`, 'Créer', { placeholder: 'le nom de la séquence' });
+  const st = S.p ? { format: S.p.settings.format, fps: S.p.settings.fps, width: S.p.settings.width, height: S.p.settings.height } : undefined;
+  if (name) await createProject(name, st, typeof folder === 'string' ? folder : '');
   return name;
 }
 
@@ -287,23 +310,24 @@ async function projectsModal() {
   const box = el('div', { class: 'plist' });
   const count = el('span', { class: 'lbl' });
   const paint = () => {
-    count.textContent = `${list.length} montage${list.length > 1 ? 's' : ''}`;
-    box.replaceChildren(...(list.length ? list.map(row) : [el('p', {}, 'Aucun montage encore. Créez-en un : il s’enregistre seul, à chaque geste.')]));
+    count.textContent = `${list.length} séquence${list.length > 1 ? 's' : ''} dans Asset`;
+    box.replaceChildren(...(list.length ? list.map(row) : [el('p', {}, 'Aucune séquence encore. Créez-en une (ou clic droit sur un clip du projet → « Nouvelle séquence à partir de l’élément ») : elle s’enregistre seule, à chaque geste.')]));
   };
   const row = (pr) => {
     const name = el('b', {}, pr.name);
     let armed = false;
-    const del = el('button', { class: 'tb ghost sm', title: 'mettre à la corbeille des montages', onclick: async () => {
+    const del = el('button', { class: 'tb ghost sm', title: 'mettre à la corbeille d’Asset (elle en revient)', onclick: async () => {
       if (!armed) { armed = true; del.textContent = 'Confirmer'; setTimeout(() => { armed = false; del.textContent = 'Supprimer'; }, 3000); return; }
       await api(`montage/projects/${pr.id}/delete`, { method: 'POST' });
       list = list.filter((x) => x.id !== pr.id);
-      if (S.p && S.p.id === pr.id) { S.p = null; program.clear(); location.hash = ''; }
+      await closeSeqTab(pr.id, { quiet: true });
+      loadBin();
       paint();
     } }, 'Supprimer');
     return el('div', { class: 'prow' + (S.p && S.p.id === pr.id ? ' on' : '') },
       el('span', { class: 'th', style: pr.thumb_url ? { backgroundImage: `url("${href(pr.thumb_url)}")` } : null }),
       el('div', { style: { minWidth: 0 } }, name,
-        el('small', {}, `${M.short(pr.duration)} · ${pr.clips} plan${pr.clips > 1 ? 's' : ''} · ${pr.format} · ${pr.fps} i/s · ${fmtDate(pr.updated)}`)),
+        el('small', {}, `${M.short(pr.duration)} · ${pr.clips} plan${pr.clips > 1 ? 's' : ''} · ${pr.width}×${pr.height} · ${pr.fps} i/s${pr.folder ? ' · ' + pr.folder : ''} · ${fmtDate(pr.updated)}`)),
       el('div', { class: 'row' },
         el('button', { class: 'tb ghost sm', onclick: async () => { close(); await openProject(pr.id); } }, 'Ouvrir'),
         el('button', { class: 'tb ghost sm', onclick: async () => {
@@ -316,12 +340,12 @@ async function projectsModal() {
         el('button', { class: 'tb ghost sm', onclick: async () => {
           if (S.p && S.p.id === pr.id) await flushSave();
           const r = await api(`montage/projects/${pr.id}/duplicate`, { method: 'POST' });
-          list.unshift(r); paint(); toast(`« ${r.name} » créé`);
+          list.unshift(r); paint(); loadBin(); toast(`« ${r.name} » créée`);
         } }, 'Dupliquer'),
         del));
   };
-  const close = modal('Les montages', el('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, count, box),
-    (cl) => [el('span', { class: 'sp' }), el('button', { class: 'tb go', onclick: async () => { const n = await newProjectFlow(); if (n) cl(); } }, 'Nouveau montage')],
+  const close = modal('Les séquences', el('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, count, box),
+    (cl) => [el('span', { class: 'sp' }), el('button', { class: 'tb go', onclick: async () => { const n = await newProjectFlow(project.state.tab); if (n) cl(); } }, 'Nouvelle séquence')],
     { cls: 'lg', onclose: () => { if (!S.p) paintEmptyState(); } });
   try { ({ projects: list } = await api('montage/projects')); } catch (e) { box.replaceChildren(el('p', { class: 'warn' }, e.message)); return; }
   paint();
@@ -329,237 +353,54 @@ async function projectsModal() {
 
 function paintEmptyState() {
   $('#p-name').value = '';
+  document.title = 'Montage';
   $('#insp').replaceChildren(el('div', { class: 'card proj' },
-    el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Aucun montage ouvert')),
-    el('p', { class: 'note' }, 'Ouvrez un montage ou créez-en un.'),
-    el('div', { class: 'row' }, el('button', { class: 'tb ghost', onclick: projectsModal }, 'Les montages'),
-      el('button', { class: 'tb ghost', onclick: newProjectFlow }, 'Nouveau'))));
+    el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Aucune séquence ouverte')),
+    el('p', { class: 'note' }, 'Double-cliquez une séquence du projet, créez-en une, ou clic droit sur un clip → « Nouvelle séquence à partir de l’élément » (ses réglages, comme dans Premiere).'),
+    el('div', { class: 'row' }, el('button', { class: 'tb ghost', onclick: projectsModal }, 'Les séquences'),
+      el('button', { class: 'tb ghost', onclick: () => newProjectFlow(project.state.tab) }, 'Nouvelle'))));
 }
 
-// ── le chutier : la bibliothèque, rangée dans les dossiers du projet ──
-const BIN_KINDS = [['', 'Tout'], ['video', 'Vidéos'], ['image', 'Images'], ['audio', 'Sons']];
-const BIN_SORTS = [['new', 'Date (récent d’abord)'], ['name', 'Nom'], ['duration', 'Durée'], ['kind', 'Sorte']];
-const FOLDER_MIME = 'application/x-sr-bin-folder';
-let binT = 0;
-async function loadBin() {
-  const kinds = S.binKind || 'video,image,audio';
-  try {
-    const r = await api(`library?kind=${kinds}&q=${encodeURIComponent(S.binQ)}&limit=400`);
-    S.bin = r.items;
-    for (const it of r.items) S.items.set(it.id, it);
-  } catch (e) { S.bin = []; $('#bin-list').replaceChildren(el('p', { class: 'warn' }, e.message)); return; }
-  paintBin();
-}
-
-function itemMeta(it) {
-  const bits = [];
-  if (it.duration) bits.push(M.short(it.duration));
-  if (it.width && it.height) bits.push(`${it.width}×${it.height}`);
-  if (it.fps) bits.push(`${Math.round(it.fps * 100) / 100} i/s`);
-  if (it.kind === 'video') bits.push(it.audio ? 'son' : 'muet');
-  if (it.kind === 'image') bits.push('image');
-  if (it.kind === 'audio') bits.push('son');
-  return bits.join(' · ');
-}
-
-const bins = () => (S.p && S.p.bins) || { folders: [], items: {}, hidden: [] };
-const folderOf = (id) => bins().folders.find((f) => f.id === id);
-const children = (fid) => bins().folders.filter((f) => (f.parent || null) === (fid || null)).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
-const folderPath = (fid) => { const out = []; let f = folderOf(fid); while (f) { out.unshift(f.name); f = folderOf(f.parent); } return out.join(' / '); };
-const isHidden = (id) => bins().hidden.includes(id);
-function descendants(fid) {
-  const out = new Set([fid]);
-  let grew = true;
-  while (grew) { grew = false; for (const f of bins().folders) if (f.parent && out.has(f.parent) && !out.has(f.id)) { out.add(f.id); grew = true; } }
-  return out;
-}
-function sortItems(list) {
-  const by = S.binSort;
-  if (by === 'name') return [...list].sort((a, b) => (a.title || '').localeCompare(b.title || '', 'fr'));
-  if (by === 'duration') return [...list].sort((a, b) => (b.duration || 0) - (a.duration || 0));
-  if (by === 'kind') return [...list].sort((a, b) => a.kind.localeCompare(b.kind) || (a.title || '').localeCompare(b.title || '', 'fr'));
-  return list;
-}
-function uniqueFolderName(base, parent) {
-  const names = new Set(children(parent).map((f) => f.name));
-  if (!names.has(base)) return base;
-  for (let i = 2; ; i++) if (!names.has(`${base} ${i}`)) return `${base} ${i}`;
-}
-
-function paintBin() {
-  const box = $('#bin-list');
-  const hidden = bins().hidden;
-  const shown = S.bin.filter((it) => S.showHidden || !hidden.includes(it.id));
-  $('#bin-n').textContent = shown.length;
-  const used = new Set(S.p ? S.p.clips.map((c) => c.item) : []);
-  const cur = source.item && source.item.id;
-  const rows = [];
-  const itemRow = (it, depth, path = '') => {
-    const on = S.binSel && S.binSel.type === 'item' && S.binSel.id === it.id;
-    const renaming = S.renaming && S.renaming.type === 'item' && S.renaming.id === it.id;
-    const row = el('div', { class: 'bi' + (it.id === cur ? ' cur' : '') + (on ? ' on' : '') + (isHidden(it.id) ? ' gone' : ''), 'data-id': it.id, style: { '--d': depth },
-      title: `${it.title}\n${itemMeta(it)}${path ? '\ndossier : ' + path : ''}\nclic : dans la source · glisser : sur la timeline, dans un dossier · clic droit : insérer, renommer, ranger…`,
-      onclick: () => { S.binSel = { type: 'item', id: it.id }; openSource(it); } },
-    el('span', { class: 'th' + (it.kind === 'audio' ? ' audio' : ''), style: it.thumb_url ? { backgroundImage: `url("${href(it.thumb_url)}")` } : null }),
-    el('span', { class: 'tx' }, renaming ? renameField(it.title || '', (v) => renameItem(it, v)) : el('b', {}, it.title || it.id),
-      el('small', {}, path ? `${path} · ${itemMeta(it)}` : itemMeta(it))),
-    used.has(it.id) ? el('span', { class: 'used', title: 'déjà dans ce montage' }) : null);
-    if (!renaming) {
-      dragItem(row, it);
-      row.addEventListener('dragstart', () => markDrag(it, 0, it.duration || 0, 'bin'));
-      row.addEventListener('dragend', () => { S.dragging = null; });
-    }
-    return row;
-  };
-  const folderRow = (f, depth) => {
-    const open = !!S.open[f.id];
-    const on = S.binSel && S.binSel.type === 'folder' && S.binSel.id === f.id;
-    const n = shown.filter((it) => bins().items[it.id] === f.id).length + children(f.id).length;
-    const renaming = S.renaming && S.renaming.type === 'folder' && S.renaming.id === f.id;
-    const row = el('div', { class: 'bf' + (on ? ' on' : '') + (open ? ' open' : ''), 'data-folder': f.id, style: { '--d': depth }, draggable: renaming ? null : 'true',
-      title: `${f.name} — clic : ouvrir, fermer · double-clic ou F2 : renommer · glissez-y des plans`,
-      onclick: (e) => { if (e.target.closest('input')) return; S.binSel = { type: 'folder', id: f.id }; S.open[f.id] = !open; LS('montage-bin-open', S.open); paintBin(); } },
-    el('i', { class: 'chev' }), el('i', { class: 'fic' }),
-    renaming ? renameField(f.name, (v) => renameFolder(f.id, v)) : el('b', { ondblclick: (e) => { e.stopPropagation(); startRename('folder', f.id); } }, f.name),
-    el('small', {}, String(n)));
-    row.addEventListener('dragstart', (e) => { e.dataTransfer.setData(FOLDER_MIME, f.id); e.dataTransfer.effectAllowed = 'move'; S.dragging = { folder: f.id, from: 'bin' }; });
-    row.addEventListener('dragend', () => { S.dragging = null; });
-    dropInto(row, f.id);
-    rows.push(row);
-    if (!open) return;
-    for (const c of children(f.id)) folderRow(c, depth + 1);
-    for (const it of sortItems(shown.filter((x) => bins().items[x.id] === f.id))) rows.push(itemRow(it, depth + 1));
-  };
-  if (S.binQ) {                        // une recherche : à plat, avec le dossier de chacun
-    for (const it of sortItems(shown)) rows.push(itemRow(it, 0, folderPath(bins().items[it.id])));
-  } else {
-    for (const f of children(null)) folderRow(f, 0);
-    for (const it of sortItems(shown.filter((x) => !folderOf(bins().items[x.id])))) rows.push(itemRow(it, 0));
-  }
-  if (!rows.length) {
-    box.replaceChildren(el('p', { class: 'lbl' }, S.binQ ? 'rien ne correspond' : 'la bibliothèque est vide : déposez des vidéos, images ou sons (bouton Importer, ou glissez-les sur la page)'));
-    return;
-  }
-  box.replaceChildren(...rows);
-  const inp = box.querySelector('input.ren');
-  if (inp && document.activeElement !== inp) { inp.focus(); inp.select(); }
-}
-
-// un champ de renommage sur place : Entrée garde, Échap annule
-function renameField(value, done) {
-  const inp = el('input', { class: 'fld ren', value, maxlength: 80, spellcheck: 'false' });
-  let over = false;
-  const finish = (keep) => { if (over) return; over = true; S.renaming = null; if (keep && inp.value.trim() && inp.value.trim() !== value) done(inp.value.trim()); else paintBin(); };
-  inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); });
-  inp.addEventListener('blur', () => finish(true));
-  inp.addEventListener('pointerdown', (e) => e.stopPropagation());
-  inp.addEventListener('click', (e) => e.stopPropagation());
-  return inp;
-}
-function startRename(type, id) {
-  if (!S.p && type === 'folder') return;
-  S.renaming = { type, id };
-  S.binSel = { type, id };
-  paintBin();
-}
-function renameFolder(fid, name) { commit('renommer le dossier', (p) => { const f = p.bins.folders.find((x) => x.id === fid); if (f) f.name = name.slice(0, 80); }); }
-async function renameItem(it, title) {
-  try {
-    const r = await api('library/' + it.id, { method: 'POST', body: { title } });
-    S.items.set(it.id, r);
-    const i = S.bin.findIndex((x) => x.id === it.id);
-    if (i >= 0) S.bin[i] = r;
-    toast(`renommé dans la bibliothèque : « ${r.title} »`);
-  } catch (e) { toast(e.status === 403 ? 'cet objet est à quelqu’un d’autre : seul son auteur (ou Cal) le renomme' : e.message); }
-  paintBin();
-}
-
-function newFolder(parent = undefined) {
-  if (!S.p) return toast('ouvrez d’abord un montage : les dossiers sont rangés avec lui');
-  if (parent === undefined) parent = S.binSel && S.binSel.type === 'folder' ? S.binSel.id : null;
-  const f = { id: M.newId('f'), name: uniqueFolderName('Nouveau dossier', parent), parent };
-  commit('nouveau dossier', (p) => { p.bins.folders.push(f); });
-  if (parent) { S.open[parent] = true; LS('montage-bin-open', S.open); }
-  startRename('folder', f.id);
-}
-
-async function deleteFolder(fid) {
-  const f = folderOf(fid);
-  if (!f) return;
-  const inside = descendants(fid);
-  const nItems = Object.values(bins().items).filter((v) => inside.has(v)).length;
-  const nFolders = inside.size - 1;
-  const up = f.parent ? `« ${folderOf(f.parent).name} »` : 'la racine du chutier';
-  if (nItems || nFolders) {
-    const ok = await confirmBox('Supprimer le dossier', `« ${f.name} » contient ${nItems} plan${nItems > 1 ? 's' : ''}${nFolders ? ` et ${nFolders} dossier${nFolders > 1 ? 's' : ''}` : ''}. Son contenu remonte dans ${up} ; rien ne quitte la bibliothèque.`, 'Supprimer, garder le contenu');
-    if (!ok) return;
-  }
-  commit('supprimer le dossier', (p) => {
-    for (const x of p.bins.folders) if (x.parent === fid) x.parent = f.parent || null;
-    for (const [k, v] of Object.entries(p.bins.items)) if (v === fid) { if (f.parent) p.bins.items[k] = f.parent; else delete p.bins.items[k]; }
-    p.bins.folders = p.bins.folders.filter((x) => x.id !== fid);
-  });
-  if (S.binSel && S.binSel.id === fid) S.binSel = null;
-}
-
-function moveToFolder(ids, fid) {
-  if (!S.p) return;
-  commit(fid ? `ranger dans « ${folderOf(fid).name} »` : 'remettre à la racine', (p) => {
-    for (const id of ids) { if (fid) p.bins.items[id] = fid; else delete p.bins.items[id]; }
-    p.bins.hidden = p.bins.hidden.filter((x) => !ids.includes(x));
-  });
-  if (fid) { S.open[fid] = true; LS('montage-bin-open', S.open); paintBin(); }
-}
-function moveFolder(fid, parent) {
-  if (fid === parent || (parent && descendants(fid).has(parent))) return toast('un dossier ne se range pas dans lui-même');
-  commit('déplacer le dossier', (p) => { const f = p.bins.folders.find((x) => x.id === fid); if (f) f.parent = parent || null; });
-}
-function hideItems(ids, hide) {
-  if (!S.p) return;
-  commit(hide ? 'retirer du chutier' : 'remettre dans le chutier', (p) => {
-    const h = new Set(p.bins.hidden);
-    for (const id of ids) hide ? h.add(id) : h.delete(id);
-    p.bins.hidden = [...h];
-  });
-  if (hide) toast('retiré de ce chutier (la bibliothèque le garde) : clic droit dans le chutier → Afficher les plans retirés');
-}
-
-// déposer dans un dossier : un plan du chutier, un dossier, une vignette d'ailleurs, un fichier du disque
-function dropInto(node, fid) {
-  const wants = (e) => { const t = [...(e.dataTransfer?.types || [])]; return t.includes(ITEM_MIME) || t.includes(FOLDER_MIME) || t.includes('Files'); };
-  node.addEventListener('dragover', (e) => { if (!wants(e) || !S.p) return; e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; node.classList.add('drop-on'); });
-  node.addEventListener('dragleave', () => node.classList.remove('drop-on'));
-  node.addEventListener('drop', async (e) => {
-    if (!wants(e) || !S.p) return;
-    e.preventDefault(); e.stopPropagation();
-    node.classList.remove('drop-on');
-    document.body.classList.remove('dropping');
-    const fold = e.dataTransfer.getData(FOLDER_MIME);
-    if (fold) { moveFolder(fold, fid); return; }
-    const raw = e.dataTransfer.getData(ITEM_MIME);
-    if (raw) { try { const d = JSON.parse(raw); await ensureItems([d.id]); moveToFolder([d.id], fid); if (!S.bin.some((x) => x.id === d.id)) loadBin(); } catch { /* */ } return; }
-    const files = [...(e.dataTransfer.files || [])];
-    if (files.length) { const got = await uploadMany(files); if (got.length) moveToFolder(got.map((x) => x.id), fid); }
-  });
-}
-
-function revealInBin(id) {
-  if (S.binQ || S.binKind) { S.binQ = ''; $('#bin-q').value = ''; S.binKind = ''; $$('#bin-kinds .tb').forEach((b, i) => b.classList.toggle('on', i === 0)); }
-  let f = folderOf(bins().items[id]);
-  while (f) { S.open[f.id] = true; f = folderOf(f.parent); }
-  LS('montage-bin-open', S.open);
-  if (isHidden(id)) S.showHidden = true;
-  S.binSel = { type: 'item', id };
-  const go = () => { paintBin(); const row = $(`#bin-list .bi[data-id="${id}"]`); if (row) { row.scrollIntoView({ block: 'center' }); row.classList.add('flash'); setTimeout(() => row.classList.remove('flash'), 1200); } };
-  if (!S.bin.some((x) => x.id === id)) loadBin().then(go); else go();
-}
+// ── le projet : la bibliothèque Asset (projet.js) ───────────
+const project = mountProject({
+  root: $('.bin'),
+  items: S.items,
+  modal, confirmBox,
+  hasSequence: () => !!S.p,
+  usedIds: () => new Set(S.p ? S.p.clips.map((c) => c.item) : []),
+  usedAnywhere: (id) => !!(S.p && S.p.clips.some((c) => c.item === id)),
+  sourceId: () => source.item && source.item.id,
+  openSequenceId: () => S.p && S.p.id,
+  openSource: (it) => openSource(it),
+  openSequence: (id) => openProject(id),
+  closeSequence: (id) => closeSeqTab(id, { quiet: true }),
+  newSequence: (folder) => newProjectFlow(folder),
+  newSequenceFrom: (it) => newSequenceFrom(it),
+  renameSequence: (id, name) => renameSequence(id, name),
+  duplicateSequence: (id) => duplicateSequence(id),
+  fromBin: (it, mode) => fromBin(it, mode),
+  appendMany: (ids) => appendMany(ids),
+  markDrag: (it, ids) => markDrag(it, 0, it.duration || 0, 'bin', ids),
+  clearDrag: () => { S.dragging = null; },
+  uploadMany: (files) => uploadMany(files),
+  pushUndo: (label, undoFn, redoFn) => pushLibUndo(label, undoFn, redoFn),
+});
+const loadBin = () => project.load();
+const paintBin = () => project.paint();
+const revealInBin = (id) => project.reveal(id);
 const revealInAsset = (id) => window.open(href('asset/#' + id), '_blank', 'noopener');
 
+// Un geste de la bibliothèque (ranger, renommer, jeter) s'annule comme les
+// gestes de la timeline (ctrl+Z) : une entrée qui porte ses deux fonctions.
+function pushLibUndo(label, undoFn, redoFn) {
+  U.record({ label, undo: undoFn, redo: redoFn });
+}
+
 // ce qu'on glisse depuis cette page : sa longueur sur la timeline, d'où il part
-function markDrag(it, tin, tout, from) {
+function markDrag(it, tin, tout, from, ids = null) {
   const frames = it.kind === 'image' ? Math.round(S.p ? S.p.settings.still * fps() : 125)
     : Math.max(1, Math.round(((tout || it.duration || 5) - (tin || 0)) * (S.p ? fps() : 25)));
-  S.dragging = { id: it.id, kind: it.kind, frames, from };
+  S.dragging = { id: it.id, kind: it.kind, frames, from, ids };
 }
 
 // la source se glisse avec ses points d'entrée et de sortie (même type que dragItem)
@@ -580,6 +421,82 @@ async function uploadMany(files) {
   }
   if (out.length) { toast(`${out.length} fichier${out.length > 1 ? 's' : ''} dans la bibliothèque`); loadBin(); }
   return out;
+}
+
+async function appendMany(ids) {
+  for (const id of ids) {
+    const it = S.items.get(id);
+    if (it && it.kind === 'sequence') { toast('une séquence ne se pose pas (encore) dans une autre : l’imbrication n’est pas faite'); continue; }
+    await appendItem(id);
+  }
+}
+
+// ── les séquences : des objets d'Asset, en onglets au-dessus de la timeline ──
+// Adobe, « Navigate sequences in the timeline » : « Each sequence appears as a
+// tab within that timeline » ; « double-click the sequence in the Project
+// panel. The sequence opens in a new tab. » Chaque onglet garde sa tête de
+// lecture, son zoom (montage-view-<id>) et ses annulations (en mémoire).
+S.tabs = (LS('montage-tabs') || []).filter((x) => typeof x === 'string');
+const targets = new Map();         // id → les pistes cibles de la séquence (les annulations : undoFor)
+function paintSeqTabs() {
+  const box = $('#seq-tabs');
+  if (!box) return;
+  const cur = S.p && S.p.id;
+  box.replaceChildren(...S.tabs.map((id) => {
+    const it = S.items.get(id);
+    const name = id === cur ? S.p.name : (it && it.title) || '…';
+    const t = el('div', { class: 'stab' + (id === cur ? ' on' : ''), role: 'tab', 'data-seq': id, title: `${name} — clic : y passer · clic du milieu ou × : fermer · clic droit`,
+      onclick: (e) => { if (e.target.closest('.x')) return; if (id !== cur) openProject(id); },
+      onauxclick: (e) => { if (e.button === 1) closeSeqTab(id); } },
+    el('i', { class: 'sq', html: '<svg viewBox="0 0 24 24"><path d="M3 6h18v12H3zM3 10h18M3 14h18M8 6v4M14 10v4M11 14v4"/></svg>' }),
+    el('span', { class: 'nm' }, name), el('button', { class: 'x', title: 'fermer l’onglet', 'aria-label': 'fermer', onclick: (e) => { e.stopPropagation(); closeSeqTab(id); } }, '×'));
+    return t;
+  }), el('button', { class: 'stab add', title: 'nouvelle séquence', onclick: () => newProjectFlow(project.state.tab) }, '+'));
+}
+async function closeSeqTab(id, { quiet = false } = {}) {
+  const i = S.tabs.indexOf(id);
+  if (i < 0) return;
+  S.tabs.splice(i, 1);
+  LS('montage-tabs', S.tabs);
+  targets.delete(id);
+  undos.delete(id);                            // fermer l'onglet oublie ses annulations (comme Premiere en fermant la séquence)
+  if (S.p && S.p.id === id) {
+    await flushSave();
+    const next = S.tabs[Math.min(i, S.tabs.length - 1)];
+    if (next) { S.p = null; await openProject(next); }
+    else closeAll();
+  }
+  paintSeqTabs();
+  if (!quiet) toast('onglet fermé : la séquence reste dans le projet (double-clic pour la rouvrir)', 2000);
+}
+function closeAll() {
+  program.pause(); program.clear();
+  S.p = null; S.sel = new Set(); S.gap = null;
+  useUndo(baseU);
+  history.replaceState(null, '', location.pathname);
+  LS('montage-last', null);
+  timeline.clear();
+  paintEmptyState();
+  paintSeqTabs();
+  paintBin();
+}
+async function newSequenceFrom(it) {
+  if (!it || !['video', 'image', 'audio'].includes(it.kind)) return toast('une séquence se fait à partir d’une vidéo, d’une image ou d’un son');
+  try {
+    const p = await api('montage/projects', { method: 'POST', body: { from_item: it.id, folder: project.state.tab || it.folder || '' } });
+    toast(`séquence « ${p.name} » : ${p.settings.width}×${p.settings.height} · ${p.settings.fps} i/s · ${M.short(M.projectEnd(p) / p.settings.fps)}${p.note ? ' · ' + p.note : ''}`, 4000);
+    await openProject(p.id);
+    loadBin();
+  } catch (e) { toast(e.message); }
+}
+async function renameSequence(id, name) {
+  if (S.p && S.p.id === id) { commit('renommer', (p) => { p.name = name.slice(0, 120); }); applySettings(); await flushSave(); paintSeqTabs(); return; }
+  try { await api(`montage/projects/${id}/rename`, { method: 'POST', body: { name } }); } catch (e) { toast(e.message); }
+  loadBin();
+}
+async function duplicateSequence(id) {
+  if (S.p && S.p.id === id) await flushSave();
+  try { const r = await api(`montage/projects/${id}/duplicate`, { method: 'POST' }); toast(`« ${r.name} » créée`); loadBin(); } catch (e) { toast(e.message); }
 }
 
 // ── la source ───────────────────────────────────────────────
@@ -642,6 +559,7 @@ async function placeItem(desc, tid, frame, mode = 'overwrite') {
   await ensureItems([desc.id]);
   const it = itemOf(desc.id);
   if (!it) return toast('objet introuvable dans la bibliothèque');
+  if (it.kind === 'sequence') return toast('une séquence ne se pose pas (encore) dans une autre : l’imbrication n’est pas faite — double-cliquez-la pour l’ouvrir');
   if (!['video', 'image', 'audio'].includes(it.kind)) return toast('un élément ne se monte pas : prenez une vidéo, une image ou un son');
   let track = trackFor(tid, it.kind);
   if (M.trackKind(track) === 'audio' && it.kind === 'video' && !it.audio) { toast('cette vidéo n’a pas de son : posée sur la piste vidéo cible'); track = S.target.video; }
@@ -743,6 +661,16 @@ const timeline = new Timeline($('#tl'), {
   cut,
   trackFor: (tid, kind) => trackFor(tid, kind),
   placeItem,
+  placeMany: async (ids, tid, frame, mode) => {
+    await ensureItems(ids);
+    let at = frame;
+    for (const id of ids) {
+      const it = itemOf(id);
+      if (!it || it.kind === 'sequence') continue;
+      const c = await placeItem({ id, in: 0, out: it.duration || 0 }, trackFor(tid, it.kind), at, mode);
+      if (c) at = M.clipEnd(c);
+    }
+  },
   dropFiles: async (files, tid, frame, mode) => {
     let at = frame;
     for (const it of await uploadMany(files)) {
@@ -993,9 +921,27 @@ function speedModal(id) {
 
 async function loadLuts() {
   try { const r = await api('montage/luts'); S.luts = r.luts; } catch { S.luts = []; }
+  S.lutById = new Map(S.luts.map((l) => [l.id, l]));
   if (S.sel.size === 1) paintInspector();
 }
-const lutMeta = (id) => S.luts.find((l) => l.id === id);
+const lutMeta = (id) => (S.lutById ? S.lutById.get(id) : S.luts.find((l) => l.id === id));
+
+// Les LUT rangées pour l'étagère : les favoris (par rang), puis les familles —
+// les cuites Rec.709 de Fujifilm d'abord, les marques de pellicules, les
+// LUT d'origine en log à la fin (elles ne vont pas sur nos vidéos).
+const lutFav = () => S.luts.filter((l) => l.fav > 0).sort((a, b) => a.fav - b.fav);
+function lutFamilies() {
+  const by = new Map();
+  for (const l of S.luts) { if (!by.has(l.family)) by.set(l.family, []); by.get(l.family).push(l); }
+  const rank = (f) => (/rec\.?709/i.test(f) && /fuji/i.test(f) ? 0 : /origine|log/i.test(f) ? 3 : /import/i.test(f) ? 2 : 1);
+  return [...by.entries()].sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0], 'fr'))
+    .map(([name, list]) => ({ name, list: list.sort((a, b) => a.title.localeCompare(b.title, 'fr')) }));
+}
+function lutSearch(q) {
+  const words = q.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').split(/\s+/).filter(Boolean);
+  const hay = (l) => `${l.title} ${l.family} ${l.pack || ''} ${l.input_label}`.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+  return S.luts.filter((l) => words.every((w) => hay(l).includes(w)));
+}
 
 function setLut(ids, lutId, mix = null) {
   const list = ids.map((id) => M.byId(S.p, id)).filter((c) => c && M.trackKind(c.track) === 'video');
@@ -1011,6 +957,8 @@ function importLutModal(then) {
   const file = el('input', { type: 'file', accept: '.cube,.png', class: 'fld' });
   const title = el('input', { class: 'fld', placeholder: 'le nom de la LUT (sinon celui du fichier)', maxlength: 80 });
   const inp = el('select', { class: 'fld' }, ...(S.meta.lut_inputs || []).map((x) => el('option', { value: x.id, selected: x.id === 'rec709' ? '' : null }, x.label)));
+  const fam = el('input', { class: 'fld', placeholder: 'la famille sur l’étagère (sinon « Importées »)', maxlength: 60, list: 'lut-families' });
+  const famList = el('datalist', { id: 'lut-families' }, ...lutFamilies().map((f) => el('option', { value: f.name })));
   const why = el('p', { class: 'why', hidden: true });
   let busy = false;
   const go = async (close) => {
@@ -1019,7 +967,7 @@ function importLutModal(then) {
     if (!f) { why.hidden = false; why.textContent = 'choisissez un fichier .cube (ou une HaldCLUT .png)'; return; }
     busy = true;
     try {
-      const q = new URLSearchParams({ name: f.name, title: title.value.trim(), input: inp.value, source: f.name });
+      const q = new URLSearchParams({ name: f.name, title: title.value.trim(), input: inp.value, source: f.name, family: fam.value.trim() });
       const m = await api('montage/luts?' + q, { method: 'PUT', raw: f, headers: { 'Content-Type': 'application/octet-stream' } });
       toast(`LUT « ${m.title} » rangée (${m.kind.toUpperCase()} ${m.size})`);
       close();
@@ -1028,8 +976,8 @@ function importLutModal(then) {
     } catch (e) { why.hidden = false; why.textContent = e.message; busy = false; }
   };
   modal('Importer une LUT', el('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-    el('p', {}, 'Un fichier .cube (3D jusqu’à 65 points, ou 1D jusqu’à 4096 entrées, domaine 0..1 — Adobe « Cube LUT Specification 1.0 ») ou une HaldCLUT en PNG. Elle est rangée dans les données du portail, pas dans le dépôt.'),
-    file, title, el('span', { class: 'lbl' }, 'l’image qu’elle attend'), inp,
+    el('p', {}, 'Un fichier .cube (3D, ou 1D jusqu’à 4096 entrées, domaine 0..1 — Adobe « Cube LUT Specification 1.0 ») ou une HaldCLUT en PNG ; au-delà de 65 points, elle est rééchantillonnée à 33. Elle est rangée dans les données du portail, pas dans le dépôt.'),
+    file, title, fam, famList, el('span', { class: 'lbl' }, 'l’image qu’elle attend'), inp,
     el('p', { class: 'note' }, 'une LUT faite pour du log (F-Log, F-Log2…) donne un rendu faux sur nos vidéos Rec.709 : le banc le dira quand vous la poserez.'), why),
   (close) => [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', onclick: close }, 'Annuler'), el('button', { class: 'tb go', onclick: () => go(close) }, 'Importer')]);
 }
@@ -1193,16 +1141,35 @@ function lutCard(c, locked) {
       el('button', { class: 'lnk', disabled: (!c.lut || locked) ? true : null, onclick: () => setLut([c.id], null) }, 'Retirer')));
   if (c.lut && !cur && S.luts.length) card.append(el('p', { class: 'warn' }, 'cette LUT n’est plus dans la bibliothèque (supprimée ?) : l’export la refusera'));
   if (cur && cur.input !== 'rec709') card.append(el('p', { class: 'why' }, `faite pour du ${cur.input_label} : sur une image Rec.709, le rendu sera faux`));
+  // l'étagère : chercher, les favoris, puis les familles repliables (l'état par visiteur)
   const shelf = el('div', { class: 'shelf', 'data-clip': c.id });
-  const tile = (m) => {
-    const cv = el('canvas', { width: 96, height: 54 });
-    const t = el('button', { class: 'lt' + (cur && cur.id === m.id ? ' on' : ''), 'data-lut': m.id, disabled: locked || null,
-      title: `${m.title} · ${m.kind.toUpperCase()} ${m.size} · attend ${m.input_label}${m.source ? '\nsource : ' + m.source : ''}\nclic : poser sur ce plan · clic droit : renommer, supprimer` ,
-      onclick: () => setLut([c.id], m.id) }, cv, el('span', {}, m.title), m.input !== 'rec709' ? el('i', { class: 'in' }, m.input === 'inconnu' ? '?' : m.input) : null);
-    return t;
+  const tile = (m) => el('button', { class: 'lt' + (cur && cur.id === m.id ? ' on' : ''), 'data-lut': m.id, disabled: locked || null,
+    title: `${m.title} · ${m.family} · ${m.kind.toUpperCase()} ${m.size}${m.resampled_from ? ` (de ${m.resampled_from})` : ''} · attend ${m.input_label}${m.note ? '\n' + m.note : ''}\nclic : poser sur ce plan · clic droit : favori, renommer, supprimer`,
+    onclick: () => setLut([c.id], m.id) }, el('canvas', { width: 96, height: 54 }), el('span', {}, m.title),
+  m.input !== 'rec709' ? el('i', { class: 'in' }, m.input === 'inconnu' ? '?' : m.input) : null, m.fav ? el('i', { class: 'star', title: 'favori' }, '★') : null);
+  const tiles = (list) => el('div', { class: 'tiles' }, ...list.map(tile));
+  const open = LS('montage-lut-open') || { '★': true };
+  if (cur) open[cur.family] = open[cur.family] ?? true;
+  const group = (key, label, list, cap = 400) => {
+    const on = !!open[key];
+    const head = el('button', { class: 'lg' + (on ? ' open' : ''), title: on ? 'replier' : 'déplier',
+      onclick: () => { open[key] = !on; LS('montage-lut-open', open); paintInspector(); } },
+    el('i', { class: 'chev' }), el('span', {}, label), el('small', { class: 'num' }, String(list.length)));
+    return el('div', { class: 'lgrp' }, head, on ? tiles(list.slice(0, cap)) : null, on && list.length > cap ? el('p', { class: 'note' }, `${list.length - cap} de plus : cherchez`) : null);
   };
-  shelf.append(...S.luts.map(tile));
-  if (!S.luts.length) shelf.append(el('p', { class: 'note' }, 'aucune LUT encore : importez un .cube (la liste des LUT proposées attend le choix de Cal).'));
+  const q = el('input', { class: 'fld lq', placeholder: `chercher parmi ${S.luts.length} LUT (Portra, ETERNA, N&B…)`, value: S.lutQ || '', 'aria-label': 'chercher une LUT' });
+  q.addEventListener('input', () => { S.lutQ = q.value; clearTimeout(S.lutQT); S.lutQT = setTimeout(() => { paintInspector(); const n = $('#insp .lq'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }, 200); });
+  q.addEventListener('keydown', (e) => { if (e.key === 'Escape' && q.value) { e.stopPropagation(); S.lutQ = ''; paintInspector(); } });
+  if (S.luts.length > 8) shelf.append(q);
+  if (S.lutQ && S.lutQ.trim()) {
+    const found = lutSearch(S.lutQ.trim());
+    shelf.append(el('span', { class: 'lbl' }, found.length ? `${found.length} trouvée${found.length > 1 ? 's' : ''}${found.length > 60 ? ' · les 60 premières' : ''}` : 'aucune LUT ne correspond'), tiles(found.slice(0, 60)));
+  } else if (S.luts.length > 12) {
+    const fav = lutFav();
+    if (fav.length) shelf.append(group('★', 'Favoris', fav));
+    for (const f of lutFamilies()) shelf.append(group(f.name, f.name, f.list));
+  } else shelf.append(tiles(S.luts));
+  if (!S.luts.length) shelf.append(el('p', { class: 'note' }, 'aucune LUT encore : importez un .cube ou une HaldCLUT.'));
   card.append(shelf);
   if (c.lut) {
     card.append(slider({ label: 'intensité', min: 0, max: 100, step: 1, value: Math.round(c.lut.mix * 100), fmt: (v) => `${v} %`, disabled: locked,
@@ -1213,8 +1180,12 @@ function lutCard(c, locked) {
   return card;
 }
 
-// les vignettes de l'étagère : l'image courante du plan, passée par chaque LUT
-let thumbImg = null;
+// Les vignettes de l'étagère : l'image courante du plan, passée par chaque
+// LUT (sa version 17³ de vignette). Seules les vignettes qui se voient se
+// dessinent (IntersectionObserver, MDN), et chacune est gardée tant que
+// l'image et l'étalonnage du plan ne changent pas.
+let thumbImg = null, shelfIO = null;
+const thumbCache = new Map();
 function paintShelf() {
   const shelf = $('#insp .shelf');
   if (!shelf) return;
@@ -1222,6 +1193,16 @@ function paintShelf() {
   if (!c) return;
   const gl = lutGL();
   if (!gl.ok) { shelf.title = gl.why; return; }
+  if (shelfIO) shelfIO.disconnect();
+  shelfIO = new IntersectionObserver((ents) => {
+    const seen = ents.filter((x) => x.isIntersecting).map((x) => x.target);
+    for (const t of seen) { t.dataset.vis = '1'; shelfIO.unobserve(t); }
+    if (seen.length) drawTiles(c, seen);
+  }, { root: $('#insp'), rootMargin: '120px' });
+  for (const t of shelf.querySelectorAll('.lt')) shelfIO.observe(t);
+}
+function drawTiles(c, list) {
+  const gl = lutGL();
   const e = program.els.get(c.id);
   let src = null;
   if (e && e.tag === 'video' && e.el.readyState >= 2) src = e.el;
@@ -1233,7 +1214,7 @@ function paintShelf() {
     if (!thumbImg || thumbImg.dataset.u !== u) {
       thumbImg = new Image();
       thumbImg.dataset.u = u;
-      thumbImg.onload = () => paintShelf();
+      thumbImg.onload = () => drawTiles(c, list);
       thumbImg.src = href(u);
       return;
     }
@@ -1242,11 +1223,23 @@ function paintShelf() {
   }
   const g = c.grade || {};
   const temp = g.temperature && Math.abs(g.temperature - 6500) > 0.5 ? tempGains(g.temperature) : [1, 1, 1];
-  for (const t of shelf.querySelectorAll('.lt')) {
-    const lut = getLut(t.dataset.lut, () => paintShelf());
+  const srcKey = `${c.id}|${src === thumbImg ? src.dataset.u : (src.currentTime ?? src.src)}|${JSON.stringify(g)}`;
+  for (const t of list) {
+    if (!t.isConnected) continue;
     const cv = t.querySelector('canvas');
-    if (!lut) { if (lutFailed(t.dataset.lut)) t.classList.add('bad'); continue; }
-    if (gl.draw(src, cv.width, cv.height, { lut, mix: 1, grade: g, temp })) cv.getContext('2d').drawImage(gl.cv, 0, 0);
+    const key = srcKey + '|' + t.dataset.lut;
+    const kept = thumbCache.get(key);
+    if (kept) { cv.getContext('2d').drawImage(kept, 0, 0); continue; }
+    const lut = getMini(t.dataset.lut, () => drawTiles(c, [t]));
+    if (!lut) continue;
+    if (gl.draw(src, cv.width, cv.height, { lut, mix: 1, grade: g, temp, srcKey })) {
+      cv.getContext('2d').drawImage(gl.cv, 0, 0);
+      const keep = document.createElement('canvas');
+      keep.width = cv.width; keep.height = cv.height;
+      keep.getContext('2d').drawImage(cv, 0, 0);
+      thumbCache.set(key, keep);
+      if (thumbCache.size > 600) thumbCache.delete(thumbCache.keys().next().value);
+    }
   }
 }
 
@@ -1254,8 +1247,10 @@ function projectCards(f) {
   const st = S.p.settings;
   const cards = [];
   const fmtOpts = el('div', { class: 'opts tight' }, ...S.meta.formats.map((x) => el('button', { class: 'opt' + (x.id === st.format ? ' on' : ''),
-    onclick: () => { commit('format', (p) => { p.settings.format = x.id; }); applySettings(); paintInspector(); } }, x.label, el('small', {}, `${x.w}×${x.h}`))));
-  const fpsOpts = el('div', { class: 'opts tight' }, ...S.meta.fps.map((x) => el('button', { class: 'opt' + (x === st.fps ? ' on' : ''),
+    onclick: () => { commit('format', (p) => { p.settings.format = x.id; }); applySettings(); paintInspector(); } }, x.label, el('small', {}, `${x.w}×${x.h}`))),
+  st.format === 'custom' ? el('button', { class: 'opt on', title: 'la taille du clip dont la séquence est née (« à partir de l’élément »)' }, 'sur mesure', el('small', {}, `${st.width}×${st.height}`)) : null);
+  const fpsList = S.meta.fps.includes(st.fps) ? S.meta.fps : [...S.meta.fps, st.fps].sort((a, b) => a - b);
+  const fpsOpts = el('div', { class: 'opts tight' }, ...fpsList.map((x) => el('button', { class: 'opt' + (x === st.fps ? ' on' : ''),
     onclick: () => {
       if (x === st.fps) return;
       const t = program.t;
@@ -1264,7 +1259,7 @@ function projectCards(f) {
     } }, `${x} i/s`)));
   const dur = M.projectEnd(S.p) / f;
   cards.push(el('div', { class: 'card proj' },
-    el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Projet · ', el('b', {}, S.p.name))),
+    el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Séquence · ', el('b', {}, S.p.name))),
     el('dl', { class: 'props' }, el('dt', {}, 'durée'), el('dd', { class: 'tcv' }, M.tc(M.projectEnd(S.p), f)), el('dt', {}, 'plans'), el('dd', {}, String(S.p.clips.length)),
       el('dt', {}, 'pistes'), el('dd', {}, `${S.p.tracks.filter((t) => t.kind === 'video').length} vidéo · ${S.p.tracks.filter((t) => t.kind === 'audio').length} son`),
       el('dt', {}, 'sortie'), el('dd', {}, `${st.width}×${st.height} · ${st.fps} i/s · BT.709`)),
@@ -1396,7 +1391,7 @@ async function loadExports() {
   if (!S.p) return;
   try {
     const r = await api('library?kind=video&tool=montage&limit=200');
-    S.exports = r.items.filter((it) => it.params && it.params.montage === S.p.id);
+    S.exports = r.items.filter((it) => it.params && (it.params.montage === S.p.id || (S.p.legacy && it.params.montage === S.p.legacy)));
   } catch { S.exports = []; }
   if (!S.sel.size) paintInspector();
 }
@@ -1475,10 +1470,6 @@ function paintBar() {
   $('#tl-n').textContent = S.p.clips.length;
   $('#tl-dur').textContent = M.tc(M.projectEnd(S.p), f);
   $('#prg-dur').textContent = M.tc(M.projectEnd(S.p), f);
-  $('#b-undo').disabled = !S.undo.length;
-  $('#b-undo').title = S.undo.length ? `annuler : ${S.undo[S.undo.length - 1].label} · ctrl+Z` : 'rien à annuler';
-  $('#b-redo').disabled = !S.redo.length;
-  $('#b-redo').title = S.redo.length ? `rétablir : ${S.redo[S.redo.length - 1].label} · ctrl+maj+Z` : 'rien à rétablir';
   const hasSel = S.sel.size > 0;
   $('#b-del').disabled = !hasSel && !S.gap;
   $('#b-ripple').disabled = !hasSel && !S.gap;
@@ -1522,10 +1513,14 @@ function helpModal() {
     ['F', 'concordance des images : le plan sous la tête, dans la source à la même image'],
     ['S · = · − · \\', 'aimant · zoomer · dézoomer · tout le montage'],
     ['glisser + ctrl', 'insérer (pousse la suite) au lieu d’écraser'],
-    ['CHUTIER', ''],
-    ['ctrl + B · ctrl + I', 'nouveau dossier · importer'],
-    ['F2 · double-clic', 'renommer le dossier ou le plan choisi'],
-    ['clic droit', 'partout : les actions de l’endroit'],
+    ['PROJET (ASSET)', ''],
+    ['un objet sur un autre', 'un dossier neuf pour les deux (son nom est demandé) — les dossiers sont ceux d’Asset'],
+    ['cadre sur le fond', 'choisir plusieurs objets (maj : ajouter) ; les glisser sur l’icône dossier : un dossier neuf'],
+    ['ctrl + B · ctrl + /', 'nouveau dossier avec la sélection'],
+    ['double-clic', 'un dossier : dans un onglet · son nom : le renommer · une séquence : dans un onglet de la timeline'],
+    ['F2 · Suppr · Entrée', 'renommer · mettre à la corbeille (un dossier : le défaire) · ouvrir'],
+    ['ctrl + I', 'importer'],
+    ['clic droit', 'partout : les actions de l’endroit (un clip : « Nouvelle séquence à partir de l’élément »)'],
   ];
   modal('Raccourcis (ceux de Premiere Pro)', el('dl', { class: 'keys' }, ...K.flatMap(([k, v]) => (v ? [el('dt', {}, k), el('dd', {}, v)] : [el('dt', { class: 'sec' }, k), el('dd', {})]))), null, { cls: 'lg' });
 }
@@ -1539,11 +1534,16 @@ const noProject = { disabled: true, why: 'ouvrez d’abord un montage' };
 
 function lutItems(ids) {
   const cur = ids.length === 1 ? M.byId(S.p, ids[0]).lut : null;
+  const entry = (m) => ({ label: m.title, sub: m.input === 'rec709' ? '' : m.input, checked: !!cur && cur.id === m.id, onclick: () => setLut(ids, m.id) });
+  const many = S.luts.length > 12;
+  const fav = lutFav();
   return [
     { label: 'Aucune', checked: !cur, onclick: () => setLut(ids, null) },
     ...(S.luts.length ? ['-'] : []),
-    ...S.luts.map((m) => ({ label: m.title, sub: m.input === 'rec709' ? '' : m.input, checked: !!cur && cur.id === m.id, onclick: () => setLut(ids, m.id) })),
+    ...(many ? [...(fav.length ? [{ head: 'Favoris' }, ...fav.map(entry), '-'] : []),
+      ...lutFamilies().map((f) => ({ label: f.name, sub: String(f.list.length), items: f.list.map(entry) }))] : S.luts.map(entry)),
     '-',
+    many ? { label: 'Chercher sur l’étagère…', onclick: () => { if (ids.length === 1) select(new Set(ids)); setTimeout(() => { const n = $('#insp .lq'); if (n) { n.scrollIntoView({ block: 'center' }); n.focus(); } }, 60); } } : null,
     { label: 'Importer une LUT…', icon: '+', onclick: () => importLutModal((m) => setLut(ids, m.id)) },
   ];
 }
@@ -1657,6 +1657,23 @@ function rulerMenu(f) {
   ];
 }
 
+function seqTabMenu(e) {
+  const t = e.target.closest('.stab[data-seq]');
+  if (!t) return [{ head: 'Séquences' }, { label: 'Nouvelle séquence…', onclick: () => newProjectFlow(project.state.tab) }, { label: 'Toutes les séquences…', onclick: projectsModal }];
+  const id = t.dataset.seq;
+  const it = S.items.get(id);
+  return [
+    { head: `Séquence · ${(S.p && S.p.id === id ? S.p.name : it && it.title) || id}` },
+    { label: 'Y passer', disabled: S.p && S.p.id === id, why: 'c’est la séquence ouverte', onclick: () => openProject(id) },
+    { label: 'Renommer…', onclick: async () => { const v = await askName('Renommer la séquence', (S.p && S.p.id === id ? S.p.name : it && it.title) || '', 'Renommer', { placeholder: 'le nom de la séquence' }); if (v) { await renameSequence(id, v); paintSeqTabs(); } } },
+    { label: 'Dupliquer', onclick: () => duplicateSequence(id) },
+    { label: 'Révéler dans le projet', onclick: () => revealInBin(id) },
+    '-',
+    { label: 'Fermer l’onglet', onclick: () => closeSeqTab(id) },
+    { label: 'Fermer les autres onglets', disabled: S.tabs.length < 2, why: 'un seul onglet', onclick: () => { for (const x of [...S.tabs]) if (x !== id) closeSeqTab(x, { quiet: true }); } },
+  ];
+}
+
 function markerMenu(id) {
   const m = (S.p.markers || []).find((x) => x.id === id);
   if (!m) return null;
@@ -1683,65 +1700,6 @@ function timelineMenu(e) {
   return null;
 }
 
-function binMenu(e) {
-  const fr = e.target.closest('.bf');
-  const ir = e.target.closest('.bi');
-  const np = S.p ? {} : noProject;
-  if (fr) {
-    const f = folderOf(fr.dataset.folder);
-    if (!f) return null;
-    S.binSel = { type: 'folder', id: f.id };
-    paintBin();
-    return [
-      { head: `Dossier · ${f.name}` },
-      { label: S.open[f.id] ? 'Replier' : 'Déplier', onclick: () => { S.open[f.id] = !S.open[f.id]; LS('montage-bin-open', S.open); paintBin(); } },
-      { label: 'Nouveau sous-dossier', key: K.newBin, onclick: () => newFolder(f.id) },
-      { label: 'Renommer', key: K.rename, onclick: () => startRename('folder', f.id) },
-      { label: 'Remonter à la racine', disabled: !f.parent, why: 'déjà à la racine', onclick: () => moveFolder(f.id, null) },
-      '-',
-      { label: 'Supprimer le dossier', danger: true, sub: 'le contenu remonte', onclick: () => deleteFolder(f.id) },
-    ];
-  }
-  if (ir) {
-    const it = S.items.get(ir.dataset.id);
-    if (!it) return null;
-    S.binSel = { type: 'item', id: it.id };
-    paintBin();
-    const inF = bins().items[it.id];
-    const hid = isHidden(it.id);
-    const moveItems = [{ label: 'La racine', checked: !folderOf(inF), onclick: () => moveToFolder([it.id], null) },
-      ...(bins().folders.length ? ['-'] : []),
-      ...[...bins().folders].sort((a, b) => folderPath(a.id).localeCompare(folderPath(b.id), 'fr')).map((f) => ({ label: folderPath(f.id), checked: inF === f.id, onclick: () => moveToFolder([it.id], f.id) })),
-      '-', { label: 'Nouveau dossier…', icon: '+', onclick: () => { newFolder(null); const nf = S.p.bins.folders[S.p.bins.folders.length - 1]; if (nf) moveToFolder([it.id], nf.id); startRename('folder', nf.id); } }];
-    return [
-      { head: it.title || it.id },
-      { label: 'Ouvrir dans le moniteur source', onclick: () => openSource(it) },
-      { label: 'Insérer à la tête de lecture', key: K.insert, ...np, onclick: () => fromBin(it, 'insert') },
-      { label: 'Écraser à la tête de lecture', key: K.over, ...np, onclick: () => fromBin(it, 'overwrite') },
-      { label: 'Ajouter au bout de la piste cible', ...np, onclick: () => appendItem(it.id) },
-      '-',
-      { label: 'Renommer', key: K.rename, onclick: () => startRename('item', it.id) },
-      { label: 'Ranger dans', items: moveItems, ...np },
-      hid ? { label: 'Remettre dans le chutier', ...np, onclick: () => hideItems([it.id], false) }
-        : { label: 'Retirer du chutier', sub: 'la bibliothèque le garde', ...np, onclick: () => hideItems([it.id], true) },
-      '-',
-      { label: 'Révéler dans Asset', sub: '↗', onclick: () => revealInAsset(it.id) },
-    ];
-  }
-  const nHid = bins().hidden.length;
-  return [
-    { head: 'Chutier' },
-    { label: 'Nouveau dossier', key: K.newBin, ...np, onclick: () => newFolder(null) },
-    { label: 'Importer…', key: K.importK, onclick: () => $('#bin-file').click() },
-    '-',
-    { label: 'Trier par', items: BIN_SORTS.map(([k, lab]) => ({ label: lab, checked: S.binSort === k, onclick: () => { S.binSort = k; LS('montage-bin-sort', k); paintBin(); } })) },
-    { label: 'Afficher', items: BIN_KINDS.map(([k, lab]) => ({ label: lab, checked: S.binKind === k, onclick: () => setBinKind(k) })) },
-    { label: `Afficher les plans retirés${nHid ? ` (${nHid})` : ''}`, checked: S.showHidden, disabled: !nHid && !S.showHidden, why: 'aucun plan retiré', onclick: () => { S.showHidden = !S.showHidden; paintBin(); } },
-    { label: 'Tout déplier', disabled: !bins().folders.length, why: 'aucun dossier', onclick: () => { for (const f of bins().folders) S.open[f.id] = true; LS('montage-bin-open', S.open); paintBin(); } },
-    { label: 'Tout replier', disabled: !bins().folders.length, why: 'aucun dossier', onclick: () => { for (const f of bins().folders) S.open[f.id] = false; LS('montage-bin-open', S.open); paintBin(); } },
-  ];
-}
-
 // l'étagère de LUT (inspecteur) : renommer, dire l'image attendue, supprimer
 function inspMenu(e) {
   const t = e.target.closest('.lt');
@@ -1755,7 +1713,9 @@ function inspMenu(e) {
   const users = S.p ? S.p.clips.filter((c) => c.lut && c.lut.id === m.id).length : 0;
   return [
     { head: `LUT · ${m.title}` },
+    { label: 'Favori', checked: m.fav > 0, sub: m.fav ? `n° ${m.fav}` : '', onclick: () => edit({ fav: !(m.fav > 0) }) },
     { label: 'Renommer…', onclick: async () => { const v = await askName('Renommer la LUT', m.title, 'Renommer', { placeholder: 'le nom de la LUT', max: 80 }); if (v) edit({ title: v }); } },
+    { label: 'Changer de famille…', sub: m.family, onclick: async () => { const v = await askName('Famille de la LUT', m.family, 'Ranger', { placeholder: 'la famille sur l’étagère', max: 60 }); if (v) edit({ family: v }); } },
     { label: 'L’image qu’elle attend', items: (S.meta.lut_inputs || []).map((x) => ({ label: x.label, checked: m.input === x.id, onclick: () => edit({ input: x.id }) })) },
     { label: `${m.kind.toUpperCase()} ${m.size}${m.source ? ' · ' + m.source : ''}`, disabled: true, why: 'la taille de la grille et le fichier d’origine' },
     '-',
@@ -1854,17 +1814,12 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   const k = e.key, low = k.toLowerCase(), ctrl = e.ctrlKey || e.metaKey, alt = e.altKey, sh = e.shiftKey;
-  // le chutier a le clavier (clic dans le chutier) : F2, Suppr, ctrl+B
-  if (S.binFocus) {
-    if (k === 'F2' && S.binSel) { e.preventDefault(); startRename(S.binSel.type, S.binSel.id); return; }
-    if ((k === 'Delete' || k === 'Backspace') && S.binSel) {
-      e.preventDefault();
-      if (S.binSel.type === 'folder') deleteFolder(S.binSel.id); else hideItems([S.binSel.id], !isHidden(S.binSel.id));
-      return;
-    }
-  }
-  if (ctrl && low === 'b') { e.preventDefault(); newFolder(); return; }
+  // le panneau Projet a le clavier (on a cliqué dedans) : F2, Suppr, Entrée, ctrl+A
+  if (project.key(e)) return;
+  // Premiere : « New Bin » ctrl+B (tableau des raccourcis) ou ctrl+/ (page « Add and delete bins ») — ici, avec la sélection
+  if (ctrl && (low === 'b' || k === '/')) { e.preventDefault(); project.askFolder(project.selectedIds()); return; }
   if (ctrl && low === 'i' && !sh) { e.preventDefault(); $('#bin-file').click(); return; }
+  if (ctrl && !alt && (low === 'z' || low === 'y')) return;   // commun/undo.js s'en charge (la pile active)
   if (!S.p) return;
   const f = fps();
   const ph = program.frame();
@@ -1874,9 +1829,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (ctrl) {
-    if (low === 'z') { e.preventDefault(); sh ? redo() : undo(); }
-    else if (low === 'y') { e.preventDefault(); redo(); }
-    else if (low === 'k') { e.preventDefault(); cutAtPlayhead(sh); }
+    if (low === 'k') { e.preventDefault(); cutAtPlayhead(sh); }
     else if (low === 'd') { e.preventDefault(); dissolve(S.sel.size === 1 ? [...S.sel][0] : null); }
     else if (low === 'c') { if (S.sel.size) { e.preventDefault(); copySel(); } }
     else if (low === 'v') { e.preventDefault(); paste(sh); }
@@ -1931,12 +1884,6 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ── les boutons ─────────────────────────────────────────────
-function setBinKind(k) {
-  S.binKind = k;
-  $$('#bin-kinds .tb').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
-  loadBin();
-}
-
 function wire() {
   $('#b-projects').onclick = projectsModal;
   $('#b-help').onclick = helpModal;
@@ -1949,8 +1896,7 @@ function wire() {
   });
   paintTools();
   toolCursors();
-  $('#b-undo').onclick = undo;
-  $('#b-redo').onclick = redo;
+  useUndo(U);                                  // les boutons ↶ ↷ et le journal de commun/undo.js
   $('#p-home').onclick = () => { focus('program'); program.seek(0); };
   $('#p-end').onclick = () => { focus('program'); program.seek(program.duration()); };
   $('#p-prev').onclick = () => { focus('program'); program.step(-1); };
@@ -1985,13 +1931,11 @@ function wire() {
   new ResizeObserver(() => rerender()).observe(timeline.scroll);
 
   // le clic droit, partout (commun/menu.js)
-  contextMenu($('#tl'), timelineMenu);
-  contextMenu($('.bin'), binMenu);
+  contextMenu($('#tl'), timelineMenu);         // (le panneau Projet a le sien : projet.js)
   contextMenu($('#src'), sourceMenu);
   contextMenu($('#prg'), programMenu);
   contextMenu($('#insp'), inspMenu);
-  // le chutier a le clavier tant qu'on n'a pas cliqué ailleurs
-  document.addEventListener('pointerdown', (e) => { S.binFocus = !!(e.target.closest && e.target.closest('.bin')); }, true);
+  contextMenu($('#seq-tabs'), seqTabMenu);
 
   // moniteurs : le clic donne le clavier
   $('#src').addEventListener('pointerdown', () => focus('source'));
@@ -2012,38 +1956,31 @@ function wire() {
   });
   $('#src-screen').addEventListener('dragend', () => { S.dragging = null; });
 
-  // chutier
-  $('#bin-kinds').replaceChildren(...BIN_KINDS.map(([k, lab]) => el('button', { class: 'tb' + (k === S.binKind ? ' on' : ''), 'data-k': k, onclick: () => setBinKind(k) }, lab)));
-  $('#bin-q').addEventListener('input', (e) => { S.binQ = e.target.value; clearTimeout(binT); binT = setTimeout(loadBin, 220); });
+  // le panneau Projet (projet.js) : importer ; un import dans l'onglet d'un dossier s'y range
   $('#bin-up').onclick = () => $('#bin-file').click();
-  $('#bin-new').onclick = () => newFolder();
   $('#bin-file').addEventListener('change', async (e) => {
     const got = await uploadMany([...e.target.files]);
     e.target.value = '';
-    const fid = S.binSel && S.binSel.type === 'folder' ? S.binSel.id : null;
-    if (fid && got.length) moveToFolder(got.map((x) => x.id), fid);
+    const tab = project.state.tab;
+    if (tab && got.length) await api('asset/move', { method: 'POST', body: { ids: got.map((x) => x.id), folder: tab } }).catch(() => {});
+    loadBin();
   });
   dropAnywhere((files) => uploadMany(files));
-  // la liste elle-même : y lâcher un plan ou un dossier du chutier le remet à la racine
-  dropInto($('#bin-list'), null);
 
   // Tout bloc qui attend un asset prend un dépôt (dropZone du socle) : un
   // fichier du disque (bibliothèque, catégorie Upload, via montage) ou une
   // vignette glissée d'une autre page ou du sélecteur (ITEM_MIME). Les pistes
   // ont le leur (timeline.js) : elles posent à l'endroit du dépôt.
   const MEDIA = ['video', 'image', 'audio'];
-  const own = (node, from) => {       // ce qui part d'un bloc n'y retombe pas (la liste du chutier range, elle)
+  const own = (node, from) => {       // ce qui part d'un bloc n'y retombe pas (la liste, les onglets et les icônes du Projet rangent, eux)
     for (const ev of ['dragenter', 'dragover', 'drop']) {
-      node.addEventListener(ev, (e) => { if (S.dragging && S.dragging.from === from && !(e.target.closest && e.target.closest('.bin-list'))) e.stopImmediatePropagation(); }, true);
+      node.addEventListener(ev, (e) => { if (S.dragging && S.dragging.from === from && !(e.target.closest && e.target.closest('.bin-list, .pan-head'))) e.stopImmediatePropagation(); }, true);
     }
   };
   const bin = $('.bin');
   own(bin, 'bin');
   dropZone(bin, { kinds: MEDIA, via: 'montage', onitems: (items) => {
     for (const it of items) S.items.set(it.id, it);
-    if (S.binQ || (S.binKind && !items.every((i) => i.kind === S.binKind))) {    // qu'on le voie dans la liste
-      S.binQ = ''; $('#bin-q').value = ''; setBinKind('');
-    }
     loadBin();
     openSource(items[items.length - 1]);
   } });
@@ -2088,25 +2025,29 @@ async function start() {
   loadBin();
   loadLuts();
   const add = new URLSearchParams(location.search).get('add');
-  let id = location.hash.slice(1) || LS('montage-last');
+  // les onglets de séquences d'avant : ceux qui existent encore (les autres, jetés, s'en vont)
+  const { projects } = await api('montage/projects').catch(() => ({ projects: [] }));
+  const known = new Set(projects.map((x) => x.id));
+  for (const x of projects) if (x.legacy) known.add(x.legacy);
+  S.tabs = S.tabs.filter((x) => known.has(x));
+  LS('montage-tabs', S.tabs);
+  await ensureItems(S.tabs);
+  let id = location.hash.slice(1) || LS('montage-last') || S.tabs[S.tabs.length - 1];
   if (id) { try { await openProject(id); } catch { id = null; } }
-  if (!S.p && add) {
-    const d = new Date();
-    await createProject(`Montage du ${d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}`);
+  if (!S.p && projects.length && !add) await openProject(projects[0].id).catch(() => {});
+  if (add) {
+    // envoyé d'un autre outil : au bout de la piste cible de la séquence ouverte ; sans séquence, une à ses réglages
+    history.replaceState(null, '', location.pathname + (S.p ? '#' + S.p.id : ''));
+    if (S.p) await appendItem(add);
+    else { await ensureItems([add]); const it = itemOf(add); if (it) await newSequenceFrom(it); }
   }
-  if (!S.p) {
-    const { projects } = await api('montage/projects').catch(() => ({ projects: [] }));
-    if (projects.length) await openProject(projects[0].id);
-    else { paintEmptyState(); await newProjectFlow(); }
-  }
-  if (add && S.p) {
-    history.replaceState(null, '', location.pathname + '#' + S.p.id);
-    await appendItem(add);
-  }
+  if (!S.p) closeAll();
+  paintSeqTabs();
   paintSource();
 }
 
 start();
 
 // pour les essais (playwright) et le débogage : l'état, en lecture
-window.montage = { S, program, timeline, source, M, commit, placeItem, openProject, flushSave, setTool, lutGL, getLut, loadLuts, paintShelf, focus, select };
+window.montage = { S, program, timeline, source, M, commit, placeItem, openProject, flushSave, setTool, lutGL, getLut, loadLuts, paintShelf, focus, select, project, closeSeqTab, undo, redo,
+  undoLabels: () => ({ done: U.done.map((e) => e.label), undone: U.undone.map((e) => e.label), name: U.name }) };

@@ -7,6 +7,12 @@
 // fichier : les pages marchent à la racine d'un serveur comme sous un
 // sous-chemin (un jour derrière la porte Cloudflare).
 
+// le thème (clair, sombre, le mien), la taille et les animations, posés
+// avant que la page ne se dessine (commun/theme.js, préférences Général)
+import './theme.js';
+// les copies d'affichage d'une image (thumb) : docs/etudes/ideation_fluidite.md
+import { bind as bindView } from './proxies.js';
+
 export const ROOT = new URL('../', import.meta.url);
 export const href = (p) => (p && /^https?:/.test(p) ? p : new URL(p || '', ROOT).href);
 // La base de l'API : le portail lui-même, sauf si la page en déclare une autre.
@@ -257,6 +263,10 @@ export function mountHeader(toolId, { sub = '' } = {}) {
     el('a', { class: 'tb ghost sm', id: 'sr-admin', href: href('admin/'), hidden: true, title: 'la page de Cal' }, 'Admin'),
     el('button', { class: 'tb ghost sm', id: 'sr-me', hidden: true, title: 'mon compte',
       onclick: (e) => session().then((me) => me && import('./porte.js').then((m) => m.account(me, e.target.closest('button')))) }, 'compte'),
+    // les préférences, générales et par outil (commun/prefs.js) · Ctrl+,
+    el('button', { class: 'tb ghost sm sr-gear', id: 'sr-prefs', type: 'button', title: 'préférences · Ctrl+,', 'aria-label': 'préférences',
+      html: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>',
+      onclick: () => import('./prefs.js').then((m) => m.openPrefs(toolId)) }),
     el('button', { class: 'tb ghost sm', id: 'sr-queue', title: 'la file des calculs', onclick: () => drawer(true) }, 'File'));
   // fenêtre étroite : la navigation passe dans un menu « Outils », jamais cachée
   const menu = el('div', { class: 'tools-menu', hidden: true });
@@ -282,6 +292,7 @@ export function mountHeader(toolId, { sub = '' } = {}) {
     document.documentElement.classList.remove('sr-wait');
     if (me && me.auth && me.state !== 'active') return showDoor(me);
     paintMe(me);
+    import('./prefs.js').then((m) => m.prefs.ready);   // les préférences de la personne, relues du portail
   });
   setInterval(() => { if (!doorOn) session(true).then(paintMe); }, 20000);
   system().then((sys) => {
@@ -299,6 +310,9 @@ export function mountHeader(toolId, { sub = '' } = {}) {
     if ($('.drawer.on')) paintDrawer(list);
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') drawer(false); });
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === ',' && !e.altKey) { e.preventDefault(); import('./prefs.js').then((m) => m.openPrefs(toolId)); }
+  });
   return hdr;
 }
 
@@ -402,7 +416,10 @@ export const etypeFr = (k) => ETYPE_FR[k] || k;
 export function thumb(it, { onclick, selected = false, sub } = {}) {
   const im = el('div', { class: 'im' });
   if (it.kind === 'video' && it.url && !it.thumb_url) im.append(el('video', { src: href(it.url), muted: true, preload: 'metadata' }));
-  else if (it.thumb_url) im.append(el('img', { src: href(it.thumb_url), alt: '', loading: 'lazy' }));
+  // la copie d'affichage de la case (carrée, remplie ; 180 px en .grid, 118 en
+  // .grid.sm : la plus grande sert d'estimation, le chargement paresseux du
+  // navigateur la prend), suivie ensuite (commun/proxies.js) ; sans copie, la vignette
+  else if (it.thumb_url) im.append(bindView(el('img', { alt: '', loading: 'lazy', decoding: 'async' }), it, { fit: 'cover', box: [180, 180] }));
   im.append(el('span', { class: 'kind ' + it.kind }, it.kind === 'element' ? etypeFr(it.element?.type) : kindFr(it.kind)));
   if (it.duration) im.append(el('span', { class: 'dur' }, fmtDur(it.duration)));
   const s = sub ?? (it.kind === 'element' ? `${it.element?.refs?.length || 0} réf.` :

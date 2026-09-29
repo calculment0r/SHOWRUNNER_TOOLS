@@ -3,8 +3,18 @@
 // le journal. Le serveur juge (server/tools/admin.py, /api/admin/…) : qui
 // n'est pas Cal reçoit 403, et le lit ici.
 
+//
+// L'annulation (commun/undo.js) : les réglages, les quotas, le rôle admin,
+// l'ordre, la priorité et l'épingle d'un travail en file, les pauses, les
+// interrupteurs de câblage — chacun avec son contraire, que le serveur juge
+// encore (un travail parti ne se replace plus : le geste tombe et le dit).
+// Ne s'annulent pas : accepter ou refuser une demande, suspendre (ses travaux
+// en file s'en vont), fermer une connexion, arrêter un travail, décharger une
+// instance, démarrer ou arrêter H3, vider la corbeille.
 import { mountHeader, api, el, $, $$, toast, href, fmtDate, stateFr, fmtWait } from '../commun/shell.js';
 import { uaShort } from '../commun/porte.js';
+import { createUndo } from '../commun/undo.js';
+import { prefs } from '../commun/prefs.js';
 
 mountHeader('admin', { sub: 'la page de Cal' });
 
@@ -17,7 +27,8 @@ const SECTIONS = [
   ['stockage', 'F', 'Stockage', 'bibliothèque · corbeille'],
   ['journal', 'G', 'Journal', 'qui a fait quoi'],
 ];
-const S = { sec: SECTIONS.some(([id]) => id === location.hash.slice(1)) ? location.hash.slice(1) : 'demandes',
+// la section d'ouverture : l'adresse, sinon la préférence (admin/prefs.json)
+const S = { sec: SECTIONS.some(([id]) => id === location.hash.slice(1)) ? location.hash.slice(1) : prefs.get('admin.section', 'demandes'),
   state: null, mach: null, sw: null, store: null, jr: null, t: null, drag: null, dragLane: null, filter: '' };
 const main = $('#adm-main');
 
@@ -26,6 +37,11 @@ async function act(fn, msg) {
   try { await fn(); if (msg) toast(msg); } catch (e) { toast(e.message); }
   refresh(true);
 }
+// un geste qui s'annule : fait, rangé avec son contraire, puis la page se relit
+const U = createUndo({ name: 'admin', onapply: () => refresh(true) });
+const undoable = (label, doFn, undoFn, msg) => act(() => U.run({ label, do: doFn, undo: undoFn }), msg);
+$('.adm-nav').prepend(el('div', { class: 'row adm-undo' }, el('span', { class: 'lbl' }, 'les gestes'), el('span', { class: 'sp' }),
+  el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons())));
 const head = (title, k, cnt) => el('div', { class: 'sect-head' }, el('h2', {}, title), el('span', { class: 'k' }, k),
   cnt != null ? el('span', { class: 'cnt' }, cnt) : null);
 const fmtBytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} Go` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} Mo` : `${Math.round(n / 1e3)} Ko`);
@@ -79,7 +95,9 @@ async function refresh(now = false) {
     if (e.status === 403) return denied();
     if (e.status !== 401) main.replaceChildren(el('p', { class: 'warn' }, e.message));
   }
-  S.t = setTimeout(refresh, S.sec === 'machines' ? 4000 : S.sec === 'journal' ? 6000 : 3000);
+  // le relevé : la préférence (3 s par défaut ; les machines et le journal un peu moins souvent)
+  const base = prefs.get('admin.refresh', 3) * 1000;
+  S.t = setTimeout(refresh, S.sec === 'machines' ? base * 4 / 3 : S.sec === 'journal' ? base * 2 : base);
 }
 
 function denied() {
@@ -120,9 +138,20 @@ function qf(label, value, placeholder, onset, disabled = false) {
       onchange: (e) => onset(e.target.value === '' ? null : Number(e.target.value)) }));
 }
 
+const SET_FR = { visibility: 'qui voit quoi', admin_first: 'la priorité des admins', admin_lan_only: 'l’entrée des admins',
+  total_queued: 'le total en file', running: 'les travaux simultanés', queued: 'les travaux en file', per_day: 'les travaux par jour' };
 function reglages() {
   const s = S.state.settings;
-  const set = (patch, msg = 'enregistré') => act(() => post('admin/settings', patch), msg);
+  // le contraire d'un réglage : sa valeur d'avant, lue dans l'état affiché
+  const set = (patch, msg = 'enregistré') => {
+    const before = {};
+    for (const k of Object.keys(patch)) {
+      if (k === 'quotas') before.quotas = Object.fromEntries(Object.keys(patch.quotas).map((q) => [q, s.quotas[q] ?? null]));
+      else before[k] = s[k] ?? null;
+    }
+    const key = Object.keys(patch)[0] === 'quotas' ? Object.keys(patch.quotas)[0] : Object.keys(patch)[0];
+    return undoable(`changer ${SET_FR[key] || key}`, () => post('admin/settings', patch), () => post('admin/settings', before), msg);
+  };
   const seg = (opts, cur, key) => el('div', { class: 'seg' }, ...opts.map(([v, lab]) =>
     el('button', { class: 'tb' + (cur === v ? ' on' : ''), onclick: () => set({ [key]: v }) }, lab)));
   return el('div', { class: 'card' },
@@ -161,7 +190,11 @@ async function paintDevices(u, box) {
 function personne(u) {
   const adm = u.role === 'admin';
   const def = S.state.settings.quotas;
-  const setQ = (k, label) => (v) => act(() => post(`admin/users/${u.id}`, { quotas: { [k]: v } }), `${u.name} · ${label} : ${v ?? 'par défaut'}`);
+  const setQ = (k, label) => (v) => {
+    const was = u.quotas[k] ?? null;
+    return undoable(`changer le quota « ${label} » de ${u.name}`, () => post(`admin/users/${u.id}`, { quotas: { [k]: v } }),
+      () => post(`admin/users/${u.id}`, { quotas: { [k]: was } }), `${u.name} · ${label} : ${v ?? 'par défaut'}`);
+  };
   const devBox = el('div', { class: 'acct-list', hidden: true });
   const susp = u.state === 'suspended';
   const nAdm = S.state.users.filter((x) => x.role === 'admin' && x.state === 'active').length;
@@ -184,7 +217,8 @@ function personne(u) {
       el('button', { class: 'tb ghost sm', onclick: () => { devBox.hidden = !devBox.hidden; if (!devBox.hidden) paintDevices(u, devBox); } }, 'Connexions'),
       susp ? null : el('button', { class: 'tb ghost sm', disabled: lastAdm,
         title: lastAdm ? 'le dernier admin garde son rôle : donne-le d’abord à quelqu’un d’autre' : '',
-        onclick: () => act(() => post(`admin/users/${u.id}`, { role: adm ? 'ami' : 'admin' }),
+        onclick: () => undoable(adm ? `retirer le rôle admin à ${u.name}` : `donner le rôle admin à ${u.name}`,
+          () => post(`admin/users/${u.id}`, { role: adm ? 'ami' : 'admin' }), () => post(`admin/users/${u.id}`, { role: adm ? 'admin' : 'ami' }),
           adm ? `${u.name} n’est plus admin` : `${u.name} est admin`) }, adm ? 'Retirer le rôle admin' : 'Donner le rôle admin'),
       adm ? null : el('button', { class: 'tb ghost sm', onclick: () => act(() => post(`admin/users/${u.id}`, { state: susp ? 'active' : 'suspended' }),
         susp ? `${u.name} peut revenir` : `${u.name} suspendu·e : ses travaux en file sont retirés`) }, susp ? 'Réactiver' : 'Suspendre')),
@@ -199,16 +233,35 @@ function personnes() {
 }
 
 // ── C · la file ─────────────────────────────────────────────
+const MODE_FR = { active: 'reprendre', paused: 'mettre en pause', draining: 'vidanger' };
 function machineCtl(m, s) {
   const mode = s.mode;
   const label = mode === 'active' ? 'active' : mode === 'draining' ? (s.drained ? 'vidée' : 'vidange') : 'en pause';
+  const to = (next, msg) => undoable(`${MODE_FR[next]} ${m}`, () => post('admin/pause', { machine: m, mode: next }), () => post('admin/pause', { machine: m, mode }), msg);
   return el('div', { class: 'row' },
     el('span', { class: 'chip ' + (mode === 'active' ? 'ok' : 'amb') }, el('i'), `${m} · ${label}`),
     mode === 'active' ? el('button', { class: 'tb ghost sm', title: 'ce qui tourne finit ; rien de neuf ne part sur cette machine',
-      onclick: () => act(() => post('admin/pause', { machine: m, mode: 'paused' }), `${m} en pause`) }, 'Pause') : null,
+      onclick: () => to('paused', `${m} en pause`) }, 'Pause') : null,
     mode === 'active' ? el('button', { class: 'tb ghost sm', title: 'finir ce qui tourne, puis ne plus rien prendre (avant de l’éteindre)',
-      onclick: () => act(() => post('admin/pause', { machine: m, mode: 'draining' }), `${m} en vidange`) }, 'Vidanger') : null,
-    mode !== 'active' ? el('button', { class: 'tb ghost sm', onclick: () => act(() => post('admin/pause', { machine: m, mode: 'active' }), `${m} reprend`) }, 'Reprendre') : null);
+      onclick: () => to('draining', `${m} en vidange`) }, 'Vidanger') : null,
+    mode !== 'active' ? el('button', { class: 'tb ghost sm', onclick: () => to('active', `${m} reprend`) }, 'Reprendre') : null);
+}
+
+// la place d'un travail dans sa voie, pour la lui rendre : le suivant, ou la fin
+function nextInLane(id) {
+  const q = S.state.queue.queued;
+  const me = q.find((j) => j.id === id);
+  if (!me) return null;
+  const lane = q.filter((j) => j.lane === me.lane);
+  const k = lane.findIndex((j) => j.id === id);
+  return lane[k + 1] ? { before: lane[k + 1].id } : { to_end: true };
+}
+const titleOfJob = (id) => S.state.queue.queued.find((j) => j.id === id)?.title || 'un travail';
+function moveJob(id, body, msg) {
+  const back = nextInLane(id);
+  const lab = body.to_end ? `mettre « ${titleOfJob(id)} » en fin de voie` : `déplacer « ${titleOfJob(id)} » dans la file`;
+  if (!back) return act(() => post(`admin/queue/${id}`, body), msg);
+  return undoable(lab, () => post(`admin/queue/${id}`, body), () => post(`admin/queue/${id}`, back), msg);
 }
 
 function dragify(row) {
@@ -230,7 +283,7 @@ function dragify(row) {
   row.addEventListener('drop', (e) => {
     e.preventDefault(); row.classList.remove('over');
     const id = S.drag; S.drag = null;
-    if (id && id !== row.dataset.id) act(() => post(`admin/queue/${id}`, { before: row.dataset.id }), 'déplacé');
+    if (id && id !== row.dataset.id) moveJob(id, { before: row.dataset.id }, 'déplacé');
   });
 }
 
@@ -241,7 +294,7 @@ function endZone(lane) {
   z.addEventListener('drop', (e) => {
     e.preventDefault(); z.classList.remove('over');
     const id = S.drag; S.drag = null;
-    if (id) act(() => post(`admin/queue/${id}`, { to_end: true }), 'en fin de voie');
+    if (id) moveJob(id, { to_end: true }, 'en fin de voie');
   });
   return z;
 }
@@ -266,9 +319,12 @@ function qrow(j, i) {
       el('span', { class: 'chip' }, j.lane)),
     el('div', { class: 'acts' },
       running ? null : el('div', { class: 'seg', role: 'group', 'aria-label': 'priorité' }, ...[[1, '↑', 'haute'], [0, '=', 'normale'], [-1, '↓', 'basse']].map(([p, s, lab]) =>
-        el('button', { class: 'tb' + (pr === p ? ' on' : ''), title: `priorité ${lab}`, onclick: () => act(() => post(`admin/queue/${j.id}`, { priority: p })) }, s))),
+        el('button', { class: 'tb' + (pr === p ? ' on' : ''), title: `priorité ${lab}`,
+          onclick: () => (pr === p ? null : undoable(`donner la priorité ${lab} à « ${j.title} »`, () => post(`admin/queue/${j.id}`, { priority: p }),
+            () => post(`admin/queue/${j.id}`, { priority: pr }))) }, s))),
       running ? null : el('button', { class: 'tb ghost sm' + (j.top ? ' on' : ''), title: j.top ? 'ne plus épingler' : 'épingler en tête de la file',
-        onclick: () => act(() => post(`admin/queue/${j.id}`, { top: !j.top })) }, j.top ? 'épinglé' : 'en tête'),
+        onclick: () => undoable(j.top ? `désépingler « ${j.title} »` : `épingler « ${j.title} » en tête`, () => post(`admin/queue/${j.id}`, { top: !j.top }),
+          () => post(`admin/queue/${j.id}`, { top: !!j.top })) }, j.top ? 'épinglé' : 'en tête'),
       el('button', { class: 'tb ghost sm', onclick: () => act(() => post(`jobs/${j.id}/cancel`), running ? 'arrêt demandé' : 'retiré de la file') },
         running ? 'Arrêter' : 'Annuler')),
     running ? el('div', { class: 'bar' }, el('i', { style: { width: j.progress != null ? `${Math.round(j.progress * 100)}%` : '100%',
@@ -286,8 +342,8 @@ function file() {
       el('div', { class: 'card-head' }, el('span', { class: 'nm' }, q.paused ? 'La file est en pause' : 'La file tourne'),
         q.paused ? el('span', { class: 'chip amb' }, el('i'), 'pause') : el('span', { class: 'chip ok' }, el('i'), 'active'),
         el('span', { class: 'sp' }),
-        q.paused ? el('button', { class: 'tb go', onclick: () => act(() => post('admin/pause', { mode: 'active' }), 'la file reprend') }, 'Reprendre la file')
-          : el('button', { class: 'tb ghost', onclick: () => act(() => post('admin/pause', { mode: 'paused' }), 'file en pause : ce qui tourne finit') }, 'Mettre la file en pause')),
+        q.paused ? el('button', { class: 'tb go', onclick: () => undoable('reprendre la file', () => post('admin/pause', { mode: 'active' }), () => post('admin/pause', { mode: 'paused' }), 'la file reprend') }, 'Reprendre la file')
+          : el('button', { class: 'tb ghost', onclick: () => undoable('mettre la file en pause', () => post('admin/pause', { mode: 'paused' }), () => post('admin/pause', { mode: 'active' }), 'file en pause : ce qui tourne finit') }, 'Mettre la file en pause')),
       el('div', { class: 'row' }, ...Object.entries(q.machines).map(([m, s]) => machineCtl(m, s))),
       el('p', { class: 'adm-note' }, 'L’ordre de départ : les travaux épinglés en tête, puis la priorité, puis le tourniquet entre les personnes. ',
         'Glisse une rangée pour la déplacer dans sa voie. Une pause laisse finir ce qui tourne ; les travaux sur le processeur du portail ',
@@ -399,7 +455,12 @@ function cablage() {
   const d = S.sw;
   if (!d) return [head('Câblage', 'E'), el('p', { class: 'lbl' }, 'lecture…')];
   const pending = d.items.filter((i) => i.pending);
-  const setSw = (key, value) => act(async () => { S.sw = await post('admin/switches', { key, value }); }, `${key} = ${JSON.stringify(value)} : écrit, au redémarrage`);
+  const setSw = (key, value) => {
+    const it = d.items.find((i) => i.key === key) || {};
+    const was = it.file !== undefined ? it.file : it.running;   // pas encore dans le fichier : la valeur en marche
+    return undoable(`${key} = ${JSON.stringify(value)}`, async () => { S.sw = await post('admin/switches', { key, value }); },
+      async () => { S.sw = await post('admin/switches', { key, value: was }); }, `${key} = ${JSON.stringify(value)} : écrit, au redémarrage`);
+  };
   return [head('Câblage', 'E', d.file),
     el('p', { class: 'adm-note' }, 'Les interrupteurs de câblage des modèles. Ils s’écrivent dans showrunner.local.json dès le clic et prennent effet ',
       'au redémarrage du portail : le serveur ne relit ce fichier qu’au démarrage.'),

@@ -20,17 +20,14 @@
 
   <!-- la barre : le projet, le transport, le temps, l'export -->
   <div class="mtg-bar">
-    <button class="tb ghost sm" id="b-projects" title="ouvrir, créer, dupliquer un montage">Projets</button>
-    <label class="pname" title="le nom du montage (il s'enregistre seul)">
-      <span class="k">montage</span>
-      <input id="p-name" class="nm" value="" spellcheck="false" aria-label="nom du montage">
+    <button class="tb ghost sm" id="b-projects" title="toutes les séquences : ouvrir, créer, dupliquer">Séquences</button>
+    <label class="pname" title="le nom de la séquence ouverte (il s'enregistre seul)">
+      <span class="k">séquence</span>
+      <input id="p-name" class="nm" value="" spellcheck="false" aria-label="nom de la séquence">
     </label>
     <span class="pill save" id="save-st" title="le montage s'enregistre seul à chaque geste"><i></i><span>—</span></span>
     <span class="sp"></span>
-    <div class="tgrp" role="toolbar" aria-label="annuler">
-      <button class="ic" id="b-undo" title="annuler · ctrl+Z"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
-      <button class="ic" id="b-redo" title="rétablir · ctrl+maj+Z"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
-    </div>
+    <span class="tgrp sr-undo" id="undo-box" role="group" aria-label="annuler, rétablir, le journal des gestes"></span>
     <div class="tgrp transport-mini" aria-label="lecture du programme">
       <button class="pb" id="p-home" title="début · Origine">|◀</button>
       <button class="pb" id="p-prev" title="image précédente · ←">◀</button>
@@ -55,11 +52,14 @@
   </div>
 
   <div class="mtg-top">
-    <!-- le chutier : la bibliothèque, rangée dans les dossiers du projet -->
-    <section class="pan bin" aria-label="chutier">
+    <!-- le panneau Projet : la bibliothèque Asset, ses dossiers, les séquences (projet.js) -->
+    <section class="pan bin" aria-label="projet (Asset)">
       <div class="pan-head">
-        <span class="t">Chutier · <b id="bin-n" class="num">0</b></span><span class="sp"></span>
-        <button class="ic sm" id="bin-new" title="nouveau dossier (dans le dossier choisi) · ctrl+B" aria-label="nouveau dossier"><svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3zM12 12v5M9.5 14.5h5"/></svg></button>
+        <div class="btabs" id="bin-tabs" role="tablist" aria-label="le projet et les dossiers ouverts"></div>
+        <span class="sp"></span>
+        <span class="lbl num" id="bin-n" title="objets montrés">0</span>
+        <button class="ic sm" id="bin-newseq" title="nouvelle séquence — un clip lâché ici : une séquence à ses réglages (Premiere, icône « Nouvel élément »)" aria-label="nouvelle séquence"><svg viewBox="0 0 24 24"><path d="M3 6h14v12H3zM3 10h14M3 14h14M20 9v6M17 12h6"/></svg></button>
+        <button class="ic sm" id="bin-new" title="nouveau dossier avec la sélection — ou glissez-y des objets · ctrl+B" aria-label="nouveau dossier"><svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3zM12 12v5M9.5 14.5h5"/></svg></button>
         <button class="ic sm" id="bin-up" title="importer des fichiers du disque dans la bibliothèque · ctrl+I" aria-label="importer"><svg viewBox="0 0 24 24"><path d="M12 15V4M8 8l4-4 4 4M4 15v5h16v-5"/></svg></button>
         <input type="file" id="bin-file" multiple accept="video/*,image/*,audio/*" hidden>
       </div>
@@ -68,7 +68,7 @@
         <input class="fld" id="bin-q" placeholder="chercher" aria-label="chercher dans le chutier">
       </div>
       <div class="bin-list" id="bin-list"></div>
-      <p class="bin-hint lbl" title="un fichier du disque ou une vignette d'une autre page, déposé ici, entre dans la bibliothèque (catégorie Upload) ; glissé sur un dossier, il s'y range">glisser vers la timeline ou un dossier · clic droit</p>
+      <p class="bin-hint lbl" title="un objet lâché sur un autre : un dossier neuf pour les deux · un cadre sur le fond : choisir plusieurs objets, puis les glisser sur l'icône dossier · double-clic sur un dossier : un onglet · les dossiers sont ceux d'Asset">un objet sur un autre : un dossier · cadre : plusieurs · clic droit</p>
     </section>
 
     <!-- la source -->
@@ -107,6 +107,7 @@
 
   <!-- la timeline -->
   <section class="pan tlw" aria-label="timeline">
+    <div class="seqtabs" id="seq-tabs" role="tablist" aria-label="les séquences ouvertes"></div>
     <div class="tl-bar">
       <div class="tgrp tools" id="tools" role="toolbar" aria-label="outils (Premiere Pro)"></div>
       <span class="t">Timeline · <b id="tl-n" class="num">0</b> plans · <b id="tl-dur" class="tcv">00:00:00:00</b></span>

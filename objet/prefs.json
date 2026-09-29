@@ -1,0 +1,11 @@
+{
+  "tool": "object",
+  "title": "Object Creator",
+  "about": "La fiche d’un objet.",
+  "prefs": [
+    {
+      "key": "autorotate", "label": "L’aperçu 3D tourne seul", "type": "toggle", "default": true,
+      "help": "Il s’arrête dès qu’on le prend à la souris. Les animations réduites (Général) l’arrêtent aussi."
+    }
+  ]
+}

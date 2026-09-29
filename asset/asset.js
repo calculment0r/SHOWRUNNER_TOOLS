@@ -19,10 +19,19 @@
 // Ce qu'on dépose de son disque entre avec `tool: 'upload'` et `via`
 // (l'onglet « Uploads ») ; une carte-dossier et la planche d'un élément
 // acceptent un dépôt (`dropZone` de shell.js).
+//
+// L'annulation (commun/undo.js, Cal 29/09 : « il en faudra sur l'ensemble de
+// nos outils ») : chaque geste qui modifie — ranger, renommer, aimer, tags,
+// corbeille, la planche d'un élément, sa voix, sa fiche — se range dans la
+// pile de la page ; Ctrl+Z, Ctrl+Maj+Z, les boutons ↶ ↷ et le journal ; le
+// bandeau garde son « annuler », qui est le même geste. Ne s'annulent pas :
+// un dépôt de fichier, un import de Character Factory, un zip.
 import {
   mountHeader, api, pick, thumb, el, $, $$, href, ROOT, fmtDate, fmtDur, kindFr, etypeFr, dropAnywhere,
   dropZone, dragItem,
 } from '../commun/shell.js';
+import { createUndo, libPatch, libBoard, keyLabel } from '../commun/undo.js';
+import { prefs } from '../commun/prefs.js';
 
 mountHeader('asset');
 
@@ -48,15 +57,36 @@ const live = (t) => { $('#live').textContent = t; };
 })();
 
 // ── l'état ───────────────────────────────────────────────────
-const PREF = 'sr.asset.prefs';
-const prefs = (() => { try { return JSON.parse(localStorage.getItem(PREF)) || {}; } catch { return {}; } })();
+// Le tri, la taille et la sorte sont des préférences de la personne
+// (asset/prefs.json, commun/prefs.js) : les mêmes dans tous ses navigateurs.
+// L'ancienne clé de ce navigateur (avant le 29/09) sert une fois de départ.
+const OLD = (() => { try { return JSON.parse(localStorage.getItem('sr.asset.prefs')) || {}; } catch { return {}; } })();
 const S = {
-  kind: prefs.kind || '', sort: prefs.sort || 'new', size: prefs.size || 190,
+  kind: prefs.get('asset.kind', OLD.kind || ''), sort: prefs.get('asset.sort', OLD.sort || 'new'), size: prefs.get('asset.size', OLD.size || 190),
   q: '', fav: false, tool: '', origin: '', folder: '', limit: 300,
   data: null, route: { view: 'lib' }, backHash: '#', item: null,
   sel: new Set(), anchor: null,   // la sélection, et d'où part une plage (maj+clic)
 };
-const savePrefs = () => { try { localStorage.setItem(PREF, JSON.stringify({ kind: S.kind, sort: S.sort, size: S.size })); } catch { /* navigation privée */ } };
+const savePrefs = () => { prefs.set('asset.kind', S.kind || null); prefs.set('asset.sort', S.sort); prefs.set('asset.size', S.size); };
+// changées ailleurs (le panneau, un autre navigateur) : la grille suit
+for (const k of ['kind', 'sort', 'size']) {
+  prefs.on('asset.' + k, (v) => {
+    const nv = v ?? (k === 'kind' ? '' : k === 'sort' ? 'new' : 190);
+    if (S[k] === nv) return;
+    S[k] = nv;
+    if (S.route.view === 'lib' && parts) {
+      if (k === 'size') { parts.grid.style.setProperty('--card', `${S.size}px`); if (parts.size) parts.size.value = S.size; } else loadLib();
+    }
+    if (S.route.view === 'trash') paintTrash();
+  });
+}
+prefs.on('asset.hint', () => { const h = $('.lib-hint'); if (h) h.hidden = !prefs.get('asset.hint', true); });
+
+// ── l'annulation ─────────────────────────────────────────────
+const U = createUndo({ name: 'asset', onapply: () => refresh() });
+const undoBox = el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons());
+const what = (items) => (items.length > 1 ? plural(items.length, 'objet', 'objets') : `« ${items[0]?.title || items[0]?.id || 'l’objet'} »`);
+const titleOf = (id) => S.data?.items.find((x) => x.id === id)?.title || (S.item?.id === id ? S.item.title : '') || id;
 
 const KINDS = [['', 'Tout'], ['image', 'Images'], ['element', 'Éléments'], ['video', 'Vidéos'], ['audio', 'Sons']];
 const SORTS = [['new', 'récents'], ['old', 'anciens'], ['title', 'titre'], ['updated', 'modifiés']];
@@ -119,8 +149,10 @@ async function render() {
 addEventListener('hashchange', render);
 
 // ── le bandeau, avec « annuler » ─────────────────────────────
+// « annuler » dans le bandeau est Ctrl+Z : le dernier geste de la pile
+// (undo = true), celui que le bandeau vient d'annoncer.
 let toastT;
-function say(msg, undo = null, ms = 6000) {
+function say(msg, undo = false, ms = 6000) {
   let t = $('.a-toast');
   if (!t) {
     t = el('div', { class: 'a-toast', role: 'status' }, el('span', { class: 't' }),
@@ -131,10 +163,14 @@ function say(msg, undo = null, ms = 6000) {
   // un seul bandeau à la fois : celui de shell.js (dépôts) s'efface devant le mien
   $('.toast.on')?.classList.remove('on');
   const b = $('button', t);
-  b.hidden = !undo;
+  const top = undo ? U.done[U.done.length - 1] : null;
+  b.hidden = !top;
+  b.title = top ? `${U.labels().undo} · ${keyLabel('undo')}` : '';
   b.onclick = async () => {
     t.classList.remove('on');
-    try { await undo(); live('annulé'); } catch (e) { say(e.message); }
+    if (U.done[U.done.length - 1] !== top) { say('ce geste n’est plus le dernier : le journal (↺) y ramène'); return; }
+    const e = await U.undo();
+    if (e) live('annulé');
   };
   t.classList.add('on');
   live(msg);
@@ -156,8 +192,8 @@ function buildLib() {
     more: el('div', { class: 'row', style: { justifyContent: 'center' } }),
     fileIn,
   };
-  const hint = el('p', { class: 'lib-hint lbl' },
-    'clic : choisir · double-clic : ouvrir · ctrl/⌘ + clic : ajouter · maj + clic : une plage · glisser sur le fond : une zone · ctrl+A : tout · Échap : rien');
+  const hint = el('p', { class: 'lib-hint lbl', hidden: !prefs.get('asset.hint', true) },
+    `clic : choisir · double-clic : ouvrir · ctrl/⌘ + clic : ajouter · maj + clic : une plage · glisser sur le fond : une zone · ctrl+A : tout · Échap : rien · ${keyLabel('undo')} : annuler`);
   libEl.replaceChildren(el('section', { class: 'lib-top' }, parts.who, parts.acts), parts.bar, hint, parts.grid, parts.more, fileIn);
   buildBar();
 }
@@ -181,7 +217,8 @@ function buildBar() {
   parts.search = search; parts.sort = sort; parts.tool = tool; parts.favBtn = fav;
   b.replaceChildren(parts.crumbs, parts.seg, parts.oseg, fav, tool, sort, el('span', { class: 'sp' }), search,
     el('label', { class: 'size', title: 'taille des vignettes' }, el('span', { class: 'lbl' }, 'taille'), size),
-    el('a', { class: 'tb ghost sm', href: '#/corbeille', title: 'les objets jetés, qu\'on peut rétablir' }, 'Corbeille'));
+    el('a', { class: 'tb ghost sm', href: '#/corbeille', title: 'les objets jetés, qu\'on peut rétablir' }, 'Corbeille'), undoBox);
+  parts.size = size;
   parts.grid.style.setProperty('--card', `${S.size}px`);
 }
 
@@ -404,15 +441,22 @@ function folderCard(f) {
 }
 
 // ── ranger ───────────────────────────────────────────────────
-async function moveItems(ids, folder, msg) {
+// Le contraire d'un rangement : chacun retourne d'où il venait (le serveur
+// rend `moved: [{id, from}]`), à condition d'être encore là où on l'a mis.
+async function moveBack(r) {
+  const cur = await Promise.all(r.moved.map((m) => api('library/' + m.id).catch(() => null)));
+  const moved = cur.filter((c) => c && (c.folder || '') !== r.folder);
+  if (moved.length) throw new Error(`${moved.length > 1 ? `${moved.length} objets ont` : `« ${moved[0].title} » a`} changé de dossier ailleurs depuis`);
+  const by = {};
+  for (const m of r.moved) (by[m.from] ||= []).push(m.id);
+  for (const [from, list] of Object.entries(by)) await api('asset/move', { method: 'POST', body: { ids: list, folder: from } });
+}
+async function moveItems(ids, folder, msg, label = null) {
+  const items = ids.map((id) => ({ id, title: titleOf(id) }));
+  const lab = label || (folder ? `ranger ${what(items)} dans « ${folder} »` : `sortir ${what(items)} de leur dossier`);
   try {
-    const r = await api('asset/move', { method: 'POST', body: { ids, folder } });
-    say(msg, async () => {
-      const by = {};
-      for (const m of r.moved) (by[m.from] ||= []).push(m.id);
-      for (const [from, list] of Object.entries(by)) await api('asset/move', { method: 'POST', body: { ids: list, folder: from } });
-      refresh();
-    });
+    await U.run({ label: lab, do: () => api('asset/move', { method: 'POST', body: { ids, folder } }), undo: moveBack });
+    say(msg, true);
   } catch (e) { say(e.message); }
   refresh();
 }
@@ -420,6 +464,7 @@ async function moveItems(ids, folder, msg) {
 function refresh() {
   if (S.route.view === 'lib') loadLib();
   else if (S.route.view === 'sheet') paintSheet(S.route.id, { keepScroll: true });
+  else if (S.route.view === 'trash') paintTrash();
 }
 
 async function folderIds(name) {
@@ -430,7 +475,7 @@ async function folderIds(name) {
 async function emptyFolder(name) {
   const ids = await folderIds(name);
   if (!ids.length) return;
-  await moveItems(ids, '', `« ${name} » vidé : ${plural(ids.length, 'objet remis', 'objets remis')} à la racine`);
+  await moveItems(ids, '', `« ${name} » vidé : ${plural(ids.length, 'objet remis', 'objets remis')} à la racine`, `vider le dossier « ${name} »`);
   if (S.folder === name) go('#');
 }
 
@@ -443,12 +488,18 @@ function renameInline() {
     const v = inp.value.trim();
     if (!v || v === old) return paintTop();
     try {
-      const r = await api('asset/folders/rename', { method: 'POST', body: { from: old, to: v } });
-      // une fusion avec un dossier qui existait ne se défait pas d'un clic : pas d'« annuler »
-      say(r.merged ? `« ${old} » fondu dans « ${r.folder} », qui existait déjà` : `Renommé « ${r.folder} »`, r.merged ? null : async () => {
-        await api('asset/folders/rename', { method: 'POST', body: { from: r.folder, to: old } });
-        go(folderHash(old));
-      });
+      // une fusion avec un dossier qui existait ne se défait pas : on ne
+      // saurait plus lesquels venaient d'où ; elle ne se range pas
+      const merged = (S.data?.all_folders || []).includes(v);
+      if (merged) {
+        const r = await api('asset/folders/rename', { method: 'POST', body: { from: old, to: v } });
+        say(`« ${old} » fondu dans « ${r.folder} », qui existait déjà — une fusion ne s’annule pas`);
+        go(folderHash(r.folder));
+        return;
+      }
+      const ren = (from, to) => async () => { const r = await api('asset/folders/rename', { method: 'POST', body: { from, to } }); go(folderHash(r.folder)); return r; };
+      const r = await U.run({ label: `renommer le dossier « ${old} » en « ${v} »`, do: ren(old, v), undo: (x) => ren(x.folder, old)(), redo: ren(old, v) });
+      say(`Renommé « ${r.folder} »`, true);
       go(folderHash(r.folder));
     } catch (err) { say(err.message); }
   };
@@ -772,11 +823,15 @@ async function download(items) {
   } catch (e) { say(`zip : ${e.message}`); }
 }
 
+// favori et tags d'une sélection : le serveur rend l'état d'avant de chacun
+// (`before`), que `{restore}` repose
+const bulk = (ids, body) => () => api('asset/bulk', { method: 'POST', body: { ids, ...body } });
+const unbulk = (r) => api('asset/bulk', { method: 'POST', body: { restore: r.before } });
 async function bulkFav(items, on) {
   try {
-    const r = await api('asset/bulk', { method: 'POST', body: { ids: items.map((i) => i.id), fav: on } });
-    say(on ? `${plural(items.length, 'objet', 'objets')} en favori` : `${plural(items.length, 'objet retiré', 'objets retirés')} des favoris`,
-      async () => { await api('asset/bulk', { method: 'POST', body: { restore: r.before } }); refresh(); });
+    await U.run({ label: on ? `mettre ${what(items)} en favori` : `retirer ${what(items)} des favoris`,
+      do: bulk(items.map((i) => i.id), { fav: on }), undo: unbulk });
+    say(on ? `${plural(items.length, 'objet', 'objets')} en favori` : `${plural(items.length, 'objet retiré', 'objets retirés')} des favoris`, true);
   } catch (e) { say(e.message); }
   refresh();
 }
@@ -795,11 +850,12 @@ function tagsModal(items) {
   };
   async function change(body, msg) {
     try {
-      const r = await api('asset/bulk', { method: 'POST', body: { ids, ...body } });
+      const lab = body.tags_add ? `ajouter le tag « ${body.tags_add[0]} » à ${what(items)}` : `retirer le tag « ${body.tags_remove[0]} » de ${what(items)}`;
+      await U.run({ label: lab, do: bulk(ids, body), undo: unbulk });
       const fresh = await Promise.all(ids.map((id) => api('library/' + id).catch(() => null)));
       fresh.forEach((f, k) => { if (f) items[k].tags = f.tags; });
       paint();
-      say(msg, async () => { await api('asset/bulk', { method: 'POST', body: { restore: r.before } }); refresh(); });
+      say(msg, true);
     } catch (e) { say(e.message); }
   }
   inp.addEventListener('keydown', (e) => {
@@ -822,12 +878,11 @@ function tagsModal(items) {
 async function trashMany(items) {
   const ids = items.map((i) => i.id);
   try {
-    await api('asset/trash', { method: 'POST', body: { ids } });
+    await U.run({ label: `mettre ${what(items)} à la corbeille`,
+      do: () => api('asset/trash', { method: 'POST', body: { ids } }),
+      undo: () => api('asset/restore', { method: 'POST', body: { ids } }) });
     clearSel();
-    say(`${plural(ids.length, 'objet', 'objets')} à la corbeille`, async () => {
-      await api('asset/restore', { method: 'POST', body: { ids } });
-      refresh();
-    }, 8000);
+    say(`${plural(ids.length, 'objet', 'objets')} à la corbeille`, true, 8000);
   } catch (e) { say(e.message); }
   refresh();
 }
@@ -978,11 +1033,19 @@ function elementModal({ items = [], title = '', etype = 'character', folder = nu
     const t = name.value.trim();
     if (!t) { name.placeholder = 'il lui faut un nom'; name.focus(); return; }
     try {
-      const it = await api('elements', { method: 'POST', body: {
-        title: t, type, description: desc.value.trim(), folder: folder ?? (S.route.view === 'lib' ? S.folder : ''),
-        refs: chosen.map((c, k) => ({ item: c.id, role: role.value, label: type === 'object' && k === 0 ? 'face · 0°' : '' })) } });
+      // créer un élément se défait en le mettant à la corbeille ; le rétablir l'en sort
+      let made = null;
+      const it = await U.run({ label: `créer l’élément « ${t} »`,
+        do: async () => {
+          if (made) { await api(`library/${made.id}/restore`, { method: 'POST' }); return made; }
+          made = await api('elements', { method: 'POST', body: {
+            title: t, type, description: desc.value.trim(), folder: folder ?? (S.route.view === 'lib' ? S.folder : ''),
+            refs: chosen.map((c, k) => ({ item: c.id, role: role.value, label: type === 'object' && k === 0 ? 'face · 0°' : '' })) } });
+          return made;
+        },
+        undo: async (x) => { await api(`library/${x.id}/delete`, { method: 'POST' }); if (location.hash === '#' + x.id) go(S.backHash || '#'); } });
       m.close();
-      say(`Élément « ${it.title} » créé`);
+      say(`Élément « ${it.title} » créé`, true);
       go('#' + it.id);
     } catch (err) { say(err.message); }
   };
@@ -991,18 +1054,23 @@ function elementModal({ items = [], title = '', etype = 'character', folder = nu
 
 // ── favori, corbeille ────────────────────────────────────────
 async function setFav(it, on) {
-  try { await api('library/' + it.id, { method: 'POST', body: { fav: on } }); it.fav = on; say(on ? `${it.title} en favori` : `${it.title} n'est plus en favori`); } catch (e) { say(e.message); }
+  try {
+    await libPatch(U, it.id, { fav: on }, on ? `mettre « ${it.title} » en favori` : `retirer « ${it.title} » des favoris`, { before: it });
+    it.fav = on;
+    say(on ? `${it.title} en favori` : `${it.title} n'est plus en favori`, true);
+  } catch (e) { say(e.message); }
   refresh();
 }
 
+// la corbeille : depuis sa fiche, on la quitte ; l'annuler y ramène
 async function trashItem(it, { leave = false } = {}) {
+  const back = S.backHash || '#';
   try {
-    await api(`library/${it.id}/delete`, { method: 'POST' });
-    say(`« ${it.title} » est à la corbeille`, async () => {
-      await api(`library/${it.id}/restore`, { method: 'POST' });
-      if (leave) go('#' + it.id); else refresh();
-    }, 8000);
-    if (leave) go(S.backHash || '#'); else refresh();
+    await U.run({ label: `mettre « ${it.title} » à la corbeille`,
+      do: async () => { await api(`library/${it.id}/delete`, { method: 'POST' }); if (leave && location.hash === '#' + it.id) go(back); },
+      undo: async () => { const n = await api(`library/${it.id}/restore`, { method: 'POST' }); if (leave) go('#' + it.id); return n; } });
+    say(`« ${it.title} » est à la corbeille`, true, 8000);
+    if (!leave) refresh();
   } catch (e) { say(e.message); }
 }
 
@@ -1064,24 +1132,35 @@ async function uploadFiles(files, { folder = '', then } = {}) {
 async function addRefs(it, items) {
   const imgs = items.filter((x) => x.kind === 'image');
   const snd = items.find((x) => x.kind === 'audio');
-  for (const x of imgs) await api(`elements/${it.id}/refs`, { method: 'POST', body: { item: x.id, role: S.addRole || 'detail', label: '' } });
-  if (snd) await setVoice(it, snd, { repaint: false });
-  if (imgs.length) say(`${plural(imgs.length, 'référence ajoutée', 'références ajoutées')} à ${it.title} · rôle ${roleFr(S.addRole)}`);
+  if (!imgs.length && !snd) {
+    if (items.length) say('une référence est une image, une voix est un son : le reste est rangé dans la bibliothèque');
+    return;
+  }
+  const lab = [imgs.length ? `ajouter ${plural(imgs.length, 'référence', 'références')}` : '', snd ? 'poser sa voix' : ''].filter(Boolean).join(' et ') + ` à « ${it.title} »`;
+  try {
+    await libBoard(U, it, lab, async () => {
+      for (const x of imgs) await api(`elements/${it.id}/refs`, { method: 'POST', body: { item: x.id, role: S.addRole || 'detail', label: '' } });
+      if (snd) await putVoice(it, snd);
+    });
+    say(imgs.length ? `${plural(imgs.length, 'référence ajoutée', 'références ajoutées')} à ${it.title} · rôle ${roleFr(S.addRole)}` : 'voix posée', true);
+  } catch (e) { say(e.message); }
   if (imgs.length + (snd ? 1 : 0) < items.length) say('une référence est une image, une voix est un son : le reste est rangé dans la bibliothèque');
 }
 
-// la voix d'un élément : un son ; s'il en avait une, elle est remplacée (« annuler » la remet)
+// la voix d'un élément : un son ; s'il en avait une, elle est remplacée
+async function putVoice(it, snd) {
+  const had = (it.element.voices || []).length;
+  const n = await api(`elements/${it.id}/refs`, { method: 'POST', body: { item: snd.id, role: 'voice', label: snd.title || 'voix' } });
+  const vs = n.element.voices || [];
+  const added = vs[vs.length - 1];
+  if (had) await api(`asset/refs/${it.id}`, { method: 'POST', body: { voices: [{ file: added.file, label: added.label, item: added.item }] } });
+  return added;
+}
 async function setVoice(it, snd, { repaint = true } = {}) {
-  const before = (it.element.voices || []).map((v) => ({ file: v.file, label: v.label, item: v.item }));
+  const had = (it.element.voices || []).length;
   try {
-    const n = await api(`elements/${it.id}/refs`, { method: 'POST', body: { item: snd.id, role: 'voice', label: snd.title || 'voix' } });
-    const vs = n.element.voices || [];
-    const added = vs[vs.length - 1];
-    if (before.length) await api(`asset/refs/${it.id}`, { method: 'POST', body: { voices: [{ file: added.file, label: added.label, item: added.item }] } });
-    say(before.length ? `voix remplacée : ${added.label}` : `voix ajoutée : ${added.label}`, before.length ? async () => {
-      await api(`asset/refs/${it.id}`, { method: 'POST', body: { voices: before } });
-      paintSheet(it.id, { keepScroll: true });
-    } : null);
+    const { res: added } = await libBoard(U, it, had ? `remplacer la voix de « ${it.title} »` : `donner une voix à « ${it.title} »`, () => putVoice(it, snd));
+    say(had ? `voix remplacée : ${added.label}` : `voix ajoutée : ${added.label}`, true);
   } catch (e) { say(e.message); }
   if (repaint) paintSheet(it.id, { keepScroll: true });
 }
@@ -1123,8 +1202,9 @@ function backLink() {
   return el('a', { class: 'o-back', href: h }, `‹ ${lab} · échap`);
 }
 
-async function patch(it, body) {
-  const n = await api('library/' + it.id, { method: 'POST', body });
+// une modification de la fiche, rangée avec son contraire (commun/undo.js)
+async function patch(it, body, label = null) {
+  const n = await libPatch(U, it.id, body, label || `modifier « ${it.title} »`, { before: it });
   Object.assign(it, n);
   return n;
 }
@@ -1140,19 +1220,19 @@ function sheetHead(it, kicker) {
   title.addEventListener('change', async () => {
     const v = title.value.trim();
     if (!v || v === it.title) { title.value = it.title; return; }
-    try { await patch(it, { title: v }); flash(saved); } catch (e) { say(e.message); title.value = it.title; }
+    try { await patch(it, { title: v }, `renommer « ${it.title} » en « ${v} »`); flash(saved); } catch (e) { say(e.message); title.value = it.title; }
   });
   const star = el('button', { class: 'tb ghost star-btn' + (it.fav ? ' on' : ''), type: 'button', 'aria-pressed': String(!!it.fav), title: 'favori' },
     it.fav ? '★ favori' : '☆ favori');
   star.onclick = async () => {
     try {
-      await patch(it, { fav: !it.fav });
+      await patch(it, { fav: !it.fav }, it.fav ? `retirer « ${it.title} » des favoris` : `mettre « ${it.title} » en favori`);
       star.classList.toggle('on', it.fav); star.setAttribute('aria-pressed', String(it.fav)); star.textContent = it.fav ? '★ favori' : '☆ favori';
     } catch (e) { say(e.message); }
   };
   return el('section', { class: 'sh-head' },
     el('div', { class: 'who' }, backLink(), el('span', { class: 'kicker' }, kicker), title),
-    el('div', { class: 'row' }, saved, star));
+    el('div', { class: 'row' }, saved, star, el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons())));
 }
 
 const link = (label, url, { go: orange = false, title = '', blank = false } = {}) =>
@@ -1204,9 +1284,10 @@ function rangement(it) {
     const from = it.folder || '';
     if (v === from) return;
     try {
-      await api('asset/move', { method: 'POST', body: { ids: [it.id], folder: v } });
+      await U.run({ label: v ? `ranger « ${it.title} » dans « ${v} »` : `sortir « ${it.title} » de « ${from} »`,
+        do: () => api('asset/move', { method: 'POST', body: { ids: [it.id], folder: v } }), undo: moveBack });
       it.folder = v;
-      say(v ? `rangé dans « ${v} »` : 'remis à la racine', async () => { await api('asset/move', { method: 'POST', body: { ids: [it.id], folder: from } }); paintSheet(it.id, { keepScroll: true }); });
+      say(v ? `rangé dans « ${v} »` : 'remis à la racine', true);
     } catch (e) { say(e.message); folder.value = from; }
   });
   const chips = el('div', { class: 'chips' });
@@ -1217,11 +1298,11 @@ function rangement(it) {
       e.preventDefault();
       const v = add.value.trim();
       if (!v || (it.tags || []).includes(v)) { add.value = ''; return; }
-      try { await patch(it, { tags: [...(it.tags || []), v] }); paintTags(); $('input', chips)?.focus(); } catch (err) { say(err.message); }
+      try { await patch(it, { tags: [...(it.tags || []), v] }, `ajouter le tag « ${v} » à « ${it.title} »`); paintTags(); $('input', chips)?.focus(); } catch (err) { say(err.message); }
     });
     chips.replaceChildren(...(it.tags || []).map((t) => el('span', { class: 'chip' }, t,
       el('button', { type: 'button', title: `retirer « ${t} »`, 'aria-label': `retirer ${t}`, onclick: async () => {
-        try { await patch(it, { tags: it.tags.filter((x) => x !== t) }); paintTags(); } catch (err) { say(err.message); }
+        try { await patch(it, { tags: it.tags.filter((x) => x !== t) }, `retirer le tag « ${t} » de « ${it.title} »`); paintTags(); } catch (err) { say(err.message); }
       } }, '×'))), add);
   };
   paintTags();
@@ -1306,25 +1387,27 @@ function elementSheet(it) {
   const addRole = el('select', { class: 'fld', style: { width: 'auto' }, 'aria-label': 'rôle des références ajoutées' },
     ...ROLES.map(([k, l]) => el('option', { value: k, selected: S.addRole === k }, l)));
   addRole.onchange = () => { S.addRole = addRole.value; };
-  const saveRefs = async (list, msg, undoList) => {
+  // toute retouche de la planche (rôle, libellé, ordre, retrait) se range avec son contraire
+  const saveRefs = async (list, msg, label = null) => {
     try {
-      const n = await api('asset/refs/' + it.id, { method: 'POST', body: { refs: list.map((r) => ({ file: r.file, role: r.role, label: r.label, item: r.item })) } });
+      const { item: n } = await libBoard(U, it, label || msg || `retoucher la planche de « ${it.title} »`,
+        () => api('asset/refs/' + it.id, { method: 'POST', body: { refs: list.map((r) => ({ file: r.file, role: r.role, label: r.label, item: r.item })) } }));
       Object.assign(it, n);
       paintBoard();
       $('.kicker', head).textContent = kicker();
-      if (msg) say(msg, undoList ? () => saveRefs(undoList, 'référence remise') : null);
+      if (msg) say(msg, true);
     } catch (err) { say(err.message); paintBoard(); }
   };
   const refCard = (r, i) => {
     const sel = el('select', { class: 'fld', 'aria-label': `rôle de la référence ${i + 1}` }, el('option', { value: '' }, 'rôle ?'),
       ...ROLES.map(([k, l]) => el('option', { value: k, selected: r.role === k }, l)),
       r.role && !ROLES.some(([k]) => k === r.role) ? el('option', { value: r.role, selected: true }, r.role) : null);
-    sel.onchange = () => { const list = it.element.refs.map((x) => ({ ...x })); list[i].role = sel.value; saveRefs(list); };
+    sel.onchange = () => { const list = it.element.refs.map((x) => ({ ...x })); list[i].role = sel.value; saveRefs(list, null, `changer le rôle de la référence ${i + 1} en « ${roleFr(sel.value)} »`); };
     const lab = el('input', { class: 'fld', value: r.label || '', placeholder: 'libellé', maxlength: 80, 'aria-label': `libellé de la référence ${i + 1}` });
     lab.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') lab.blur(); });
-    lab.onchange = () => { const list = it.element.refs.map((x) => ({ ...x })); list[i].label = lab.value.trim(); saveRefs(list); };
+    lab.onchange = () => { const list = it.element.refs.map((x) => ({ ...x })); list[i].label = lab.value.trim(); saveRefs(list, null, `changer le libellé de la référence ${i + 1}`); };
     const x = el('button', { class: 'x', type: 'button', title: 'retirer de l\'élément', 'aria-label': `retirer la référence ${i + 1}`,
-      onclick: () => { const before = it.element.refs.map((y) => ({ ...y })); const list = before.filter((_, k) => k !== i); saveRefs(list, `référence ${i + 1} retirée`, before); } }, '×');
+      onclick: () => { const list = it.element.refs.filter((_, k) => k !== i).map((y) => ({ ...y })); saveRefs(list, `référence ${i + 1} retirée`, `retirer la référence ${i + 1} de « ${it.title} »`); } }, '×');
     return el('div', { class: 'refc' + (r.role ? '' : ' role-none'), 'data-i': i, role: 'listitem' },
       el('div', { class: 'pic', title: 'glisser pour changer l\'ordre' }, el('img', { src: href(r.thumb_url || r.url), alt: r.label || roleFr(r.role) }),
         el('span', { class: 'n' }, `${String(i + 1).padStart(2, '0')} · ${roleFr(r.role)}`), x),
@@ -1334,10 +1417,15 @@ function elementSheet(it) {
     board.replaceChildren(...it.element.refs.map(refCard),
       el('button', { class: 'refc add', type: 'button', onclick: async () => {
         const got = await pick({ kinds: ['image'], multiple: true, title: `Ajouter à ${it.title}` });
-        for (const g of got) {
-          try { Object.assign(it, await api(`elements/${it.id}/refs`, { method: 'POST', body: { item: g.id, role: S.addRole, label: '' } })); } catch (err) { say(err.message); }
-        }
-        if (got.length) { say(`${plural(got.length, 'référence ajoutée', 'références ajoutées')} · rôle ${roleFr(S.addRole)}`); paintBoard(); $('.kicker', head).textContent = kicker(); }
+        if (!got.length) return;
+        try {
+          const { item: n } = await libBoard(U, it, `ajouter ${plural(got.length, 'référence', 'références')} à « ${it.title} »`, async () => {
+            for (const g of got) await api(`elements/${it.id}/refs`, { method: 'POST', body: { item: g.id, role: S.addRole, label: '' } });
+          });
+          Object.assign(it, n);
+          say(`${plural(got.length, 'référence ajoutée', 'références ajoutées')} · rôle ${roleFr(S.addRole)}`, true);
+        } catch (err) { say(err.message); }
+        paintBoard(); $('.kicker', head).textContent = kicker();
       } }, el('b', {}, '+'), el('span', { class: 'lbl' }, 'ajouter depuis la bibliothèque'), el('span', { class: 'hint' }, 'ou déposer ici des images : de ton disque, ou une vignette glissée')));
   };
   paintBoard();
@@ -1355,10 +1443,10 @@ function elementSheet(it) {
     if (snd) setVoice(it, snd);
   };
   const removeVoice = async (v) => {
-    const before = voices.map((x) => ({ file: x.file, label: x.label, item: x.item }));
+    const keep = voices.filter((x) => x.file !== v.file).map((x) => ({ file: x.file, label: x.label, item: x.item }));
     try {
-      await api(`asset/refs/${it.id}`, { method: 'POST', body: { voices: before.filter((x) => x.file !== v.file) } });
-      say('voix retirée', async () => { await api(`asset/refs/${it.id}`, { method: 'POST', body: { voices: before } }); paintSheet(it.id, { keepScroll: true }); });
+      await libBoard(U, it, `retirer la voix de « ${it.title} »`, () => api(`asset/refs/${it.id}`, { method: 'POST', body: { voices: keep } }));
+      say('voix retirée', true);
     } catch (err) { say(err.message); }
     paintSheet(it.id, { keepScroll: true });
   };
@@ -1380,12 +1468,12 @@ function elementSheet(it) {
   const desc = el('textarea', { class: 'fld', rows: 7, placeholder: 'ce qu\'on voit, matières, couleurs, signes distinctifs : la prose que les modèles liront', 'aria-label': 'description' });
   desc.value = e.description || '';
   desc.addEventListener('change', async () => {
-    try { await patch(it, { element: { description: desc.value.trim() } }); flash(saved); } catch (err) { say(err.message); }
+    try { await patch(it, { element: { description: desc.value.trim() } }, `réécrire la description de « ${it.title} »`); flash(saved); } catch (err) { say(err.message); }
   });
   const seg = el('div', { class: 'seg wrap', role: 'radiogroup', 'aria-label': 'sorte' });
   const paintSeg = () => seg.replaceChildren(...ETYPES.map(([k, l]) => el('button', { class: 'tb' + (it.element.type === k ? ' on' : ''), type: 'button', role: 'radio',
     'aria-checked': String(it.element.type === k), onclick: async () => {
-      try { await patch(it, { element: { type: k } }); paintSeg(); $('.kicker', head).textContent = kicker(); } catch (err) { say(err.message); }
+      try { await patch(it, { element: { type: k } }, `faire de « ${it.title} » un ${etypeFr(k)}`); paintSeg(); $('.kicker', head).textContent = kicker(); } catch (err) { say(err.message); }
     } }, l)));
   paintSeg();
   const side = [
@@ -1452,7 +1540,7 @@ function enableRefDrag(board, it, saveRefs) {
     const [moved] = list.splice(d.i, 1);
     list.splice(d.to > d.i ? d.to - 1 : d.to, 0, moved);
     if (list.every((r, k) => r.file === before[k].file)) return;
-    saveRefs(list, `référence déplacée en ${list.indexOf(moved) + 1}ᵉ place`, before);
+    saveRefs(list, `référence déplacée en ${list.indexOf(moved) + 1}ᵉ place`, `déplacer la référence ${d.i + 1} en ${list.indexOf(moved) + 1}ᵉ place`);
   });
 }
 
@@ -1472,8 +1560,10 @@ async function paintTrash() {
         el('div', { class: 's' }, `jeté ${fmtDate(t.trashed)}${t.folder ? ` · de « ${t.folder} »` : ''}`)),
       el('div', { class: 'acts2' }, el('button', { class: 'tb ghost sm', type: 'button', onclick: async () => {
         try {
-          await api(`library/${t.id}/restore`, { method: 'POST' });
-          say(`« ${t.title} » rétabli${t.folder ? ` dans « ${t.folder} »` : ''}`);
+          await U.run({ label: `rétablir « ${t.title} »`,
+            do: () => api(`library/${t.id}/restore`, { method: 'POST' }),
+            undo: () => api(`library/${t.id}/delete`, { method: 'POST' }) });
+          say(`« ${t.title} » rétabli${t.folder ? ` dans « ${t.folder} »` : ''}`, true);
           n.remove();
           if (!$('.trash-card', grid)) paintTrash();
         } catch (e) { say(e.message); }
@@ -1484,7 +1574,8 @@ async function paintTrash() {
     : [el('div', { class: 'empty-state', style: { gridColumn: '1 / -1' } }, el('b', {}, 'La corbeille est vide'), el('p', { class: 'hint' }, 'Ce qu\'on met à la corbeille attend ici, avec son fichier, sa recette et son dossier.'))]));
   libEl.replaceChildren(
     el('section', { class: 'lib-top' }, el('div', { class: 'who' }, el('a', { class: 'o-back', href: '#' }, '‹ Asset'),
-      el('span', { class: 'kicker' }, 'la corbeille'), el('h1', { class: 'lib-h' }, 'Corbeille'), el('span', { class: 'lbl' }, plural(d.items.length, 'objet', 'objets')))),
+      el('span', { class: 'kicker' }, 'la corbeille'), el('h1', { class: 'lib-h' }, 'Corbeille'), el('span', { class: 'lbl' }, plural(d.items.length, 'objet', 'objets'))),
+      el('div', { class: 'acts' }, el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons()))),
     el('p', { class: 'hint' }, 'Un objet jeté garde tout — fichier, recette, dossier — et revient à sa place d\'un clic. Rien ne s\'efface d\'ici.'),
     grid);
 }

@@ -66,7 +66,16 @@ les composants (repris du rack de Character Factory), `commun/shell.css`
 le portail.
 
 1. **Aucune couleur en dur.** Une teinte manque : on ajoute un jeton.
-2. **Sombre, sans bascule.**
+2. **Deux thèmes, par les seuls jetons.** Décision de Cal du 29/09/2026 :
+   « on a l'éditeur de thème par exemple car on devra avoir un thème clair
+   aussi ». Le sombre reste le défaut (`:root` de `commun/tokens.css`) ; le
+   clair redonne les mêmes noms sous `[data-theme="light"]`, dans le même
+   fichier ; « le mien » (l'éditeur, `commun/theme.html`) ne fait que
+   surcharger ces noms, en ligne sur `<html>`. `commun/theme.js` pose le
+   thème au chargement (préférence Général, `commun/prefs.js`). Rien d'autre
+   ne change : aucune couleur en dur, un composant ne sait jamais quel thème
+   est posé ; un jeton neuf se déclare dans les deux blocs, et le clair se
+   tient au contraste AA (`docs/etudes/preferences.md`).
 3. **Filets, jamais de bordures** : `box-shadow: inset 0 0 0 1px`.
 4. **Un seul `.tb.go` orange par écran.** L'orange est l'action.
 5. **Les capitales sont pour la machine** (mono, espacé, petit). La prose

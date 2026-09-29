@@ -29,7 +29,8 @@ from core.http import App  # noqa: E402
 def build() -> App:
     app = App(config.REPO)
     app.gate, app.after = auth.gate, auth.after
-    app.mount("library", library.root(), check=library.readable_path)
+    # les copies d'affichage à leur adresse versionnée se gardent un an (library.cache_policy)
+    app.mount("library", library.root(), check=library.readable_path, cache=library.cache_policy)
     auth.startup()
     import tools
     loaded, failed = [], []

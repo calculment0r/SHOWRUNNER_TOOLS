@@ -14,7 +14,9 @@
 }
 
 /* ── le rail ────────────────────────────────────────────── */
-.up-studio .rail { gap: 8px; padding-bottom: 0; scrollbar-gutter: stable; }
+.up-studio .rail { gap: 8px; padding-bottom: 0; scrollbar-gutter: stable; max-height: calc(100 * var(--vh) - 86px); }
+/* annuler · rétablir · le journal (commun/undo.js), en tête du rail */
+.up-undo { padding: 0 2px 0 var(--s4); flex-wrap: nowrap; }
 .ipan {
   background: var(--panel); border-radius: var(--r3); padding: 10px var(--s4) 12px;
   display: flex; flex-direction: column; gap: 8px; box-shadow: inset 0 0 0 1px var(--line);
@@ -35,7 +37,7 @@
 }
 
 /* l'entrée : un fichier par rangée, avec ce qui en sortira */
-.inlist { display: flex; flex-direction: column; gap: 4px; max-height: 42vh; overflow: auto; }
+.inlist { display: flex; flex-direction: column; gap: 4px; max-height: calc(42 * var(--vh)); overflow: auto; }
 .inrow {
   position: relative; display: grid; grid-template-columns: 46px minmax(0, 1fr) 20px; gap: 9px; align-items: start;
   padding: 6px; border-radius: var(--r2); background: var(--panel2); cursor: pointer; text-align: left;
@@ -137,7 +139,7 @@ details.more[open] .models { margin-bottom: 6px; }
 .vtools .keys { color: var(--ink3); }
 
 .cmpv {
-  position: relative; width: 100%; height: calc(100vh - 330px); min-height: 380px;
+  position: relative; width: 100%; height: calc(100 * var(--vh) - 330px); min-height: 380px;
   border-radius: var(--r4); background: var(--black); overflow: hidden; user-select: none; touch-action: none;
   box-shadow: inset 0 0 0 1px var(--line); outline-offset: -2px;
 }
@@ -203,7 +205,7 @@ details.more[open] .models { margin-bottom: 6px; }
 .qrow .bar i { display: block; height: 100%; background: var(--cy); transition: width .4s; }
 
 /* ── l'historique ───────────────────────────────────────── */
-.up-studio .side-r { position: sticky; top: 70px; max-height: calc(100vh - 86px); overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.up-studio .side-r { position: sticky; top: 70px; max-height: calc(100 * var(--vh) - 86px); overflow: auto; display: flex; flex-direction: column; gap: 6px; }
 .hist-h { padding: 4px 2px 0; }
 .side-r .r2 { padding: 0 2px 4px; }
 .side-r .r2 a { color: var(--cy); text-decoration: none; }

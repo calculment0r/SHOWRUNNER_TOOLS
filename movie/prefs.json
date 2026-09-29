@@ -1,0 +1,19 @@
+{
+  "tool": "movie",
+  "title": "Vidéo",
+  "about": "Le formulaire en cours reste dans ce navigateur ; ces réglages valent pour un formulaire neuf et pour le banc « Comparer ».",
+  "prefs": [
+    {
+      "key": "mode", "label": "Mode d’un formulaire neuf", "type": "choice", "default": "t2v",
+      "options": [["t2v", "Texte"], ["i2v", "Images"], ["r2v", "Références"]]
+    },
+    {
+      "key": "benchMode", "label": "Banc : la vue", "type": "choice", "default": "wipe",
+      "options": [["wipe", "Rideau"], ["side", "Côte à côte"], ["a", "A seul"], ["b", "B seul"], ["blink", "Clignotement"]],
+      "help": "Suit aussi ce qu’on choisit sur le banc (touches 1 à 5)."
+    },
+    {
+      "key": "benchLoop", "label": "Banc : en boucle", "type": "toggle", "default": true
+    }
+  ]
+}

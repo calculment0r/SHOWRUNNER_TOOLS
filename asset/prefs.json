@@ -1,0 +1,23 @@
+{
+  "tool": "asset",
+  "title": "Asset",
+  "about": "La bibliothèque. Le tri, la taille et la sorte suivent aussi ce qu’on choisit dans la barre d’Asset.",
+  "prefs": [
+    {
+      "key": "sort", "label": "Tri", "type": "choice", "default": "new",
+      "options": [["new", "Récents"], ["old", "Anciens"], ["title", "Titre"], ["updated", "Modifiés"]]
+    },
+    {
+      "key": "size", "label": "Taille des vignettes", "type": "number", "default": 190,
+      "min": 120, "max": 340, "step": 10, "unit": "px"
+    },
+    {
+      "key": "kind", "label": "Sorte montrée", "type": "choice", "default": "",
+      "options": [["", "Tout"], ["image", "Images"], ["element", "Éléments"], ["video", "Vidéos"], ["audio", "Sons"]]
+    },
+    {
+      "key": "hint", "label": "L’aide de la sélection sous la barre", "type": "toggle", "default": true,
+      "help": "La ligne « clic : choisir · double-clic : ouvrir · ctrl+clic… »."
+    }
+  ]
+}

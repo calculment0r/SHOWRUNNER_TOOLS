@@ -23,6 +23,16 @@ chaque requête, et `app.after(req, statut)`, après : le socle juge qui
 entre, les outils n'ont rien à changer. Un dossier monté peut porter son
 propre juge (`mount(…, check=)`) : un fichier qu'on n'a pas le droit de
 lire répond 404. Un `PermissionError` levé par un outil répond 403.
+
+Le cache (docs/etudes/ideation_fluidite.md, § 4.1) : chaque fichier servi
+porte un validateur (`ETag`, sa taille et sa date au nanoseconde) et
+répond 304, sans corps, à un `If-None-Match` qui le reconnaît ; il reste
+en `no-cache` (le navigateur redemande, le serveur dit « pas changé »).
+Un dossier monté choisit sa politique fichier par fichier
+(`mount(…, cache=fonction(chemin, req))`) : la bibliothèque garde un an
+ses copies d'affichage, dont l'adresse change avec elles.
+`app.on_start(fonction)` : appelée une fois, quand le serveur écoute
+(après le démarrage de la file) — le rattrapage des copies s'y lance.
 """
 
 from __future__ import annotations
@@ -167,15 +177,24 @@ class App:
         self.after = None
         # préfixe monté → fonction(chemin dans le dossier) → bool : le droit de lire
         self.mount_checks: dict[str, callable] = {}
+        # préfixe monté → fonction(chemin dans le dossier, req) → Cache-Control, ou None (no-cache)
+        self.mount_cache: dict[str, callable] = {}
+        # appelées une fois, quand le serveur écoute
+        self.starters: list[callable] = []
 
     def route(self, method: str, pattern: str, fn) -> None:
         rx = "^" + re.sub(r"\{(\w+)\}", r"(?P<\1>[^/]+)", pattern.rstrip("/")) + "/?$"
         self.routes.append((method.upper(), re.compile(rx), fn))
 
-    def mount(self, prefix: str, folder: Path, check=None) -> None:
+    def mount(self, prefix: str, folder: Path, check=None, cache=None) -> None:
         self.mounts[prefix.strip("/") + "/"] = folder.resolve()
         if check:
             self.mount_checks[prefix.strip("/") + "/"] = check
+        if cache:
+            self.mount_cache[prefix.strip("/") + "/"] = cache
+
+    def on_start(self, fn) -> None:
+        self.starters.append(fn)
 
     def prefix(self, prefix: str, fn) -> None:
         """Confie tout ce qui commence par `prefix` (« /character/api/ ») à
@@ -216,7 +235,11 @@ class App:
                 check = self.mount_checks.get(prefix)
                 if check and not check(rel[len(prefix):]):
                     raise HttpError(404, "introuvable")
-                return self._file(folder, rel[len(prefix):])
+                f = self._file(folder, rel[len(prefix):])
+                policy = self.mount_cache.get(prefix)
+                if policy:
+                    f.cache = policy(rel[len(prefix):], req) or f.cache
+                return f
         if self.hidden.search(rel):
             raise HttpError(404, "introuvable")
         if rel == "" or rel.endswith("/"):
@@ -305,7 +328,18 @@ class App:
                     self.wfile.write(out.body)
 
             def _send_file(self, f: FileResponse, head: bool) -> None:
-                size = f.path.stat().st_size
+                st = f.path.stat()
+                size = st.st_size
+                # un validateur faible (taille, date) : « a-t-il changé ? » se répond
+                # sans le corps. Faible : il ne sert pas à If-Range, rien ne change là
+                etag = f'W/"{size:x}-{st.st_mtime_ns:x}"'
+                inm = self.headers.get("If-None-Match")
+                if inm and (inm.strip() == "*" or etag[2:] in {t.strip().removeprefix("W/") for t in inm.split(",")}):
+                    self.send_response(304)
+                    self.send_header("ETag", etag)
+                    self.send_header("Cache-Control", f.cache)
+                    self.end_headers()
+                    return
                 start, end, status = 0, size - 1, 200
                 rng = self.headers.get("Range")
                 if rng:
@@ -329,6 +363,7 @@ class App:
                 self.send_header("Accept-Ranges", "bytes")
                 self.send_header("Content-Length", str(end - start + 1))
                 self.send_header("Cache-Control", f.cache)
+                self.send_header("ETag", etag)
                 if status == 206:
                     self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
                 self.end_headers()
@@ -413,5 +448,10 @@ class App:
         server = Server((host, port), Handler)
         server.daemon_threads = True
         print(f"showrunner : http://{host}:{port}/", flush=True)
+        for fn in self.starters:   # une fonction qui échoue ne tombe pas le portail
+            try:
+                fn()
+            except Exception:
+                traceback.print_exc()
         threading.current_thread().name = "http"
         server.serve_forever()

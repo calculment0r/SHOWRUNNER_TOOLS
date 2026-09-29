@@ -1,0 +1,37 @@
+{
+  "tool": "general",
+  "title": "Général",
+  "about": "Ce qui vaut pour tous les outils. Rangé pour toi sur le portail : ton pseudo retrouve les mêmes réglages dans un autre navigateur.",
+  "prefs": [
+    {
+      "key": "theme", "label": "Thème", "type": "choice", "default": "dark",
+      "options": [["dark", "Sombre"], ["light", "Clair"], ["custom", "Le mien"]],
+      "help": "« Le mien » part du sombre ou du clair et prend les jetons changés dans l’éditeur.",
+      "link": { "label": "Ouvrir l’éditeur de thème", "href": "commun/theme.html" }
+    },
+    {
+      "key": "scale", "label": "Taille de l’interface", "type": "choice", "default": 100,
+      "options": [[90, "90 %"], [100, "100 %"], [110, "110 %"], [125, "125 %"]],
+      "help": "Tout le portail grandit ou rapetisse d’un coup, textes, boutons et vignettes."
+    },
+    {
+      "key": "motion", "label": "Animations", "type": "choice", "default": "auto",
+      "options": [["auto", "Selon le système"], ["reduce", "Réduites"]],
+      "help": "Réduites : ni transition, ni pulsation, ni défilement doux, même si le système les permet."
+    },
+    {
+      "key": "langue", "label": "Langue parlée par défaut", "type": "choice", "default": "fr",
+      "options": [["fr", "Français"], ["en", "Anglais"]],
+      "help": "La langue des répliques qu’on insère dans Vidéo (H3 : <d>[French] …</d>). Les prompts d’image restent en anglais : les trois modèles sont documentés en anglais (étude Image)."
+    },
+    {
+      "key": "undoKeys", "label": "Raccourci « annuler » affiché", "type": "choice", "default": "auto",
+      "options": [["auto", "Selon la machine"], ["ctrl", "Ctrl+Z · Ctrl+Maj+Z"], ["cmd", "⌘Z · ⌘⇧Z"]],
+      "help": "Ce que disent les bulles des boutons et le journal. Les touches marchent toutes : Ctrl+Z, Ctrl+Maj+Z, Ctrl+Y, et ⌘ sur Mac."
+    },
+    {
+      "key": "undoSay", "label": "Dire ce qui est annulé", "type": "toggle", "default": true,
+      "help": "Un bandeau « annulé : … » après chaque Ctrl+Z."
+    }
+  ]
+}

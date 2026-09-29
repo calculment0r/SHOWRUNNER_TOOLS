@@ -60,6 +60,31 @@ export function getLut(id, onready) {
 }
 export const lutFailed = (id) => !!(cache.get(id) && cache.get(id).err);
 
+// La vignette d'une LUT : la même en 17³ sur 8 bits (route /mini du serveur,
+// 14 739 octets) — des centaines de vignettes sans charger des centaines de
+// cubes. Pour l'étagère seulement : un plan lit toujours le cube entier.
+const minis = new Map();
+export function getMini(id, onready) {
+  const e = minis.get(id);
+  if (e && e.lut) return e.lut;
+  if (e && e.err) return null;
+  if (e) { if (onready) e.wait.push(onready); return null; }
+  const w = { wait: onready ? [onready] : [] };
+  minis.set(id, w);
+  fetch(href(`api/montage/luts/${id}/mini`)).then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+    .then((buf) => {
+      const b = new Uint8Array(buf);
+      if (b.length !== 17 * 17 * 17 * 3) throw new Error('vignette de LUT illisible');
+      const data = new Float32Array(b.length);
+      for (let i = 0; i < b.length; i++) data[i] = b[i] / 255;
+      const lut = { id: id + '#mini', kind: '3d', size: 17, data };
+      minis.set(id, { lut });
+      for (const f of w.wait) f(lut);
+    })
+    .catch((err) => { minis.set(id, { err }); for (const f of w.wait) f(null); });
+  return null;
+}
+
 // ── le rendu ────────────────────────────────────────────────
 const VS = `#version 300 es
 in vec2 a;
@@ -201,17 +226,22 @@ export class LutGL {
     return t;
   }
 
-  // Rend `source` (vidéo, image, canevas) à w×h dans this.cv. opts : { lut, mix, grade, temp: [r,g,b] }
-  draw(source, w, h, { lut = null, mix = 1, grade = null, temp = [1, 1, 1] } = {}) {
+  // Rend `source` (vidéo, image, canevas) à w×h dans this.cv. opts : { lut, mix, grade, temp: [r,g,b], srcKey }
+  // srcKey : la même source qu'au dessin d'avant (une étagère de vignettes) : elle ne remonte pas au GPU.
+  draw(source, w, h, { lut = null, mix = 1, grade = null, temp = [1, 1, 1], srcKey = null } = {}) {
     const gl = this.gl;
     if (!gl) return false;
     if (this.cv.width !== w || this.cv.height !== h) { this.cv.width = w; this.cv.height = h; }
     gl.viewport(0, 0, w, h);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-    try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, source); } catch { gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); return false; }
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    if (!srcKey || srcKey !== this.srcKey || source !== this.src) {
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, source); } catch { gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); this.srcKey = null; return false; }
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      this.src = source;
+      this.srcKey = srcKey;
+    }
     const g = grade || {};
     gl.uniform3f(this.u.grade, Math.pow(2, g.exposure || 0), 1 + (g.contrast || 0) / 100, 1 + (g.saturation || 0) / 100);
     gl.uniform3f(this.u.temp, temp[0], temp[1], temp[2]);

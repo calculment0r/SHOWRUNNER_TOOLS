@@ -1,0 +1,20 @@
+{
+  "tool": "image",
+  "title": "Image",
+  "about": "La barre de prompt garde son brouillon dans ce navigateur ; ces réglages valent pour un brouillon neuf.",
+  "prefs": [
+    {
+      "key": "model", "label": "Modèle d’un brouillon neuf", "type": "choice", "default": "krea2",
+      "options": [["krea2", "Krea 2"], ["qwen21", "Qwen-Image 2.1"], ["zimage", "Z-Image"]],
+      "help": "Krea 2 pour les photos (décision de Cal du 28/09)."
+    },
+    {
+      "key": "count", "label": "Images par envoi, au départ", "type": "number", "default": 2,
+      "min": 1, "max": 4, "step": 1
+    },
+    {
+      "key": "scrollTop", "label": "Remonter en tête du fil à l’envoi", "type": "toggle", "default": true,
+      "help": "Les rendus paraissent en tête du fil."
+    }
+  ]
+}

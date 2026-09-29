@@ -8,7 +8,15 @@
 // envoient. Résultat : avant/après en rideau ou côte à côte, loupe 1:1 qui
 // suit la souris, lecture synchronisée pour une vidéo (le banc A/B de Movie
 // Creator), puis la bibliothèque et le montage.
+//
+// L'annulation (commun/undo.js) : l'entrée (ajouter, retirer, vider), le
+// modèle, la taille, la couleur, le débruitage, la description, par
+// instantanés. Ne s'annulent pas : un envoi (les travaux sont partis), un
+// fichier déposé, la vue de l'avant/après (rideau, loupe, boucle : des
+// préférences, upscale/prefs.json).
 import { mountHeader, api, jobs, pick, thumb, toast, el, $, $$, href, fmtDur, fmtDate, uploadFile, dropAnywhere, kindFr, stateFr } from '../commun/shell.js';
+import { createUndo } from '../commun/undo.js';
+import { prefs } from '../commun/prefs.js';
 
 mountHeader('upscale', { sub: 'agrandir · affiner' });
 
@@ -35,13 +43,44 @@ const fmtGb = (g) => (g == null ? '' : `${g < 10 ? g.toFixed(1).replace('.', ','
 const kinds = () => ({ image: S.items.some((i) => i.kind === 'image'), video: S.items.some((i) => i.kind === 'video') });
 const store = {
   get() { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; } },
+  // le travail en cours (ce navigateur) ; chaque sauvegarde est un geste qu'on annule
   save() {
     try {
-      const { model, mode, factor, ti, tv, color, denoise, view, loupe, loop } = S;
-      localStorage.setItem(KEY, JSON.stringify({ model, mode, factor, ti, tv, color, denoise, view, loupe, loop, items: S.items.map((i) => i.id) }));
+      const { model, mode, factor, ti, tv, color, denoise } = S;
+      localStorage.setItem(KEY, JSON.stringify({ model, mode, factor, ti, tv, color, denoise, items: S.items.map((i) => i.id) }));
     } catch { /* stockage fermé : rien à garder */ }
+    doc?.commit();
   },
 };
+// la vue de l'avant/après : des préférences de la personne
+const saveView = () => { prefs.set('upscale.view', S.view); prefs.set('upscale.loupe', S.loupe); prefs.set('upscale.loop', S.loop); };
+
+// ── l'annulation ────────────────────────────────────────────
+const U = createUndo({ name: 'upscale' });
+let doc = null;   // posé au démarrage : l'ouverture n'est pas un geste
+let typing = 0;
+const docState = () => ({ model: S.model, mode: S.mode, factor: S.factor, ti: S.ti, tv: S.tv, color: S.color, denoise: S.denoise, prompt: S.prompt, items: S.items });
+function docRestore(s) {
+  Object.assign(S, s);
+  if (S.cur && !S.cur.b && !S.items.some((x) => x.id === S.cur.a.id)) { S.cur = null; paintViewer(); paintInfo(); }
+  store.save();
+  paintIn(); paintModel(); paintSize(); paintSet(); paintAct(); schedPlan();
+}
+function docDescribe(b, a) {
+  if (JSON.stringify(b.items) !== JSON.stringify(a.items)) {
+    const bi = new Set(b.items.map((i) => i.id)), ai = new Set(a.items.map((i) => i.id));
+    const plus = a.items.filter((i) => !bi.has(i.id)), minus = b.items.filter((i) => !ai.has(i.id));
+    const t = (l) => (l.length > 1 ? `${l.length} fichiers` : `« ${l[0].title || l[0].id} »`);
+    return { label: !a.items.length ? 'vider l’entrée' : plus.length && !minus.length ? `ajouter ${t(plus)} à l’entrée` : minus.length && !plus.length ? `retirer ${t(minus)} de l’entrée` : 'changer l’entrée' };
+  }
+  if (b.model !== a.model) return { label: `choisir ${M(a.model)?.name || a.model}` };
+  if (b.mode !== a.mode || b.factor !== a.factor) return { label: a.mode === 'factor' ? `agrandir ×${a.factor}` : 'agrandir jusqu’à une cible' };
+  if (b.ti !== a.ti || b.tv !== a.tv) return { label: 'changer la cible' };
+  if (b.color !== a.color) return { label: 'changer la couleur' };
+  if (b.denoise !== a.denoise) return { label: 'changer le débruitage', merge: 'denoise' };
+  if (b.prompt !== a.prompt) return { label: 'écrire la description', merge: `prompt#${typing}`, mergeMs: Infinity };
+  return { label: 'modifier les réglages' };
+}
 // replaceChildren écrirait « null » : on ne pose que ce qui existe
 const put = (box, ...kids) => box.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false && k !== ''));
 function head(label, right, cls = '') {
@@ -75,6 +114,8 @@ function availTxt(m) {
 const fileIn = el('input', { type: 'file', multiple: true, accept: 'image/*,video/*', hidden: true, onchange: async () => { await addFiles([...fileIn.files]); fileIn.value = ''; } });
 function skeleton() {
   $('#rail').replaceChildren(
+    el('div', { class: 'row up-undo' }, el('span', { class: 'lbl' }, 'les réglages'), el('span', { class: 'sp' }),
+      el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons())),
     el('section', { class: 'ipan', id: 'p-in' }), el('section', { class: 'ipan', id: 'p-model' }),
     el('section', { class: 'ipan', id: 'p-size' }), el('section', { class: 'ipan', id: 'p-set' }),
     el('div', { class: 'act', id: 'act' }), fileIn);
@@ -221,7 +262,7 @@ function paintSet() {
     const d = S.cfg.denoise;
     const val = el('span', { class: 'val' }, S.denoise.toFixed(2).replace('.', ','));
     const ta = el('textarea', { class: 'fld', rows: 3, placeholder: 'Description de l’image, en anglais (facultatif : le prompt d’une image créée dans l’outil Image est repris)',
-      oninput: (e) => { S.prompt = e.target.value; schedPlan(); } });
+      oninput: (e) => { S.prompt = e.target.value; store.save(); schedPlan(); } });
     ta.value = S.prompt;
     box.replaceChildren(head('Débruitage', 'fidèle → créatif'),
       el('div', { class: 'slide' }, el('input', { type: 'range', min: d.min, max: d.max, step: 0.01, value: S.denoise,
@@ -420,12 +461,12 @@ function paintTools() {
   box.replaceChildren(
     el('div', { class: 'seg' }, ...modes.map(([id, lab, k]) => el('button', { class: 'tb' + (S.view === id ? ' on' : ''), type: 'button', title: `touche ${k}`,
       onclick: () => setView(id) }, lab))),
-    el('button', { class: 'tb sm ' + (S.loupe ? 'on' : 'ghost'), type: 'button', title: 'une loupe 1:1 suit la souris (touche L)', onclick: () => { S.loupe = !S.loupe; store.save(); paintTools(); hideLoupe(); } }, 'Loupe 1:1'),
+    el('button', { class: 'tb sm ' + (S.loupe ? 'on' : 'ghost'), type: 'button', title: 'une loupe 1:1 suit la souris (touche L)', onclick: () => { S.loupe = !S.loupe; saveView(); paintTools(); hideLoupe(); } }, 'Loupe 1:1'),
     el('span', { class: 'sp' }),
     el('span', { class: 'lbl keys' }, S.view === 'wipe' ? 'glisser : le rideau · [ ] au clavier' : '1–4 : la vue · L : la loupe'));
 }
 function setView(v) {
-  S.view = v; store.save();
+  S.view = v; saveView();
   if (V.box && S.cur?.b) { V.box.className = 'cmpv mode-' + v; if (v === 'wipe') setWipe(S.wipe); else V.box.querySelector('.lay.b').style.clipPath = ''; }
   paintTools(); hideLoupe();
 }
@@ -548,7 +589,7 @@ function wireVideo() {
     el('button', { class: 'tb ghost sm', type: 'button', title: 'image suivante (→)', onclick: () => step(1) }, 'img ›'),
     tc,
     el('div', { class: 'tl grow' }, el('div', { class: 'track' }, fill), el('div', { class: 'ticks' }), scrub),
-    el('button', { class: 'tb sm ' + (S.loop ? 'on' : 'ghost'), type: 'button', title: 'en boucle', onclick: (e) => { S.loop = !S.loop; both.forEach((v) => { v.loop = S.loop; }); e.target.className = 'tb sm ' + (S.loop ? 'on' : 'ghost'); store.save(); } }, 'Boucle'),
+    el('button', { class: 'tb sm ' + (S.loop ? 'on' : 'ghost'), type: 'button', title: 'en boucle', onclick: (e) => { S.loop = !S.loop; both.forEach((v) => { v.loop = S.loop; }); e.target.className = 'tb sm ' + (S.loop ? 'on' : 'ghost'); saveView(); } }, 'Boucle'),
     el('div', { class: 'seg aud', title: 'le son entendu' }, ...[['b', 'Son après'], ['a', 'avant'], ['0', 'muet']].map(([id, lab]) => {
       const x = el('button', { class: 'tb', type: 'button', onclick: () => { S.listen = id; audio(); } }, lab);
       x.dataset.a = id;
@@ -605,7 +646,7 @@ document.addEventListener('keydown', (e) => {
   if ($('.scrim') || ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
   const k = e.key;
   if (k >= '1' && k <= '4' && S.cur?.b) setView(['wipe', 'side', 'a', 'b'][+k - 1]);
-  else if ((k === 'l' || k === 'L') && S.cur?.b) { S.loupe = !S.loupe; store.save(); paintTools(); hideLoupe(); }
+  else if ((k === 'l' || k === 'L') && S.cur?.b) { S.loupe = !S.loupe; saveView(); paintTools(); hideLoupe(); }
   else if (k === '[') setWipe(S.wipe - 2);
   else if (k === ']') setWipe(S.wipe + 2);
   else if (k === ' ' && V.toggle && S.cur?.a?.kind === 'video') { e.preventDefault(); V.toggle(); }
@@ -625,7 +666,11 @@ async function start() {
   }
   $('#loading')?.remove();
   const d = store.get() || {};
-  for (const k of ['model', 'mode', 'factor', 'ti', 'tv', 'color', 'denoise', 'view', 'loupe', 'loop']) if (d[k] !== undefined && d[k] !== null) S[k] = d[k];
+  for (const k of ['model', 'mode', 'factor', 'ti', 'tv', 'color', 'denoise']) if (d[k] !== undefined && d[k] !== null) S[k] = d[k];
+  // la vue : les préférences (l'ancienne clé de ce navigateur sert une fois de départ)
+  S.view = prefs.get('upscale.view', d.view ?? S.view);
+  S.loupe = prefs.get('upscale.loupe', d.loupe ?? S.loupe);
+  S.loop = prefs.get('upscale.loop', d.loop ?? S.loop);
   const q = new URLSearchParams(location.search);
   const srcs = q.getAll('src').flatMap((s) => s.split(',')).map((s) => s.trim()).filter(Boolean);
   const ids = srcs.length ? srcs : (d.items || []);
@@ -638,6 +683,13 @@ async function start() {
     el('span', {}, 'les agrandies sont des bicubiques étiquetés « FACTICE » — aucun modèle n’est chargé. Le câblage réel est écrit : « upscale_backend » : « comfyui » dans showrunner.local.json.')) : '');
   paintIn(); paintModel(); paintSize(); paintSet(); paintAct(); paintViewer(); paintInfo();
   schedPlan();
+  doc = U.snapshots({ get: docState, set: docRestore, describe: docDescribe });
+  doc.reset();
+  $('#rail').addEventListener('focusin', (e) => { if (e.target.matches?.('textarea, input')) typing++; });
+  // la vue changée ailleurs (le panneau, un autre navigateur) : l'avant/après suit
+  prefs.on('upscale.view', (v) => { if (v && v !== S.view) setView(v); });
+  prefs.on('upscale.loupe', (v) => { S.loupe = v !== false; paintTools(); hideLoupe(); });
+  prefs.on('upscale.loop', (v) => { S.loop = v !== false; if (S.cur?.a?.kind === 'video') paintViewer(); });
   const want = location.hash.slice(1);
   if (want) { try { await showResult(await api('library/' + want)); } catch { /* introuvable */ } }
   else if (S.items.length) showSource(S.items[0]);

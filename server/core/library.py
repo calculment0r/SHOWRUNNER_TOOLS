@@ -13,7 +13,8 @@ Quatre sortes d'objets :
            ensuite comme référence dans l'image, la vidéo H3, etc.
 
 Sur disque, sous `<data_dir>/library/<id>/` : `item.json`, le fichier
-principal, sa vignette ; les références d'un élément y sont copiées, pour
+principal, sa vignette, ses copies d'affichage (`view-256.webp`…, plus
+bas) ; les références d'un élément y sont copiées, pour
 qu'il ne dépende de rien d'autre. Une suppression met l'objet à la
 corbeille (`<data_dir>/trash/`), d'où il peut revenir.
 
@@ -30,18 +31,23 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 
 from . import auth, config
 
-KINDS =("image", "video", "audio", "element")
+# "sequence" : une séquence du Montage (sa timeline dans `sequence.json`, écrite par server/tools/montage.py), 29/09
+KINDS =("image", "video", "audio", "element", "midi", "sequence")
 EXT_KIND = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
     ".mp4": "video", ".webm": "video", ".mov": "video", ".m4v": "video",
     ".wav": "audio", ".mp3": "audio", ".flac": "audio", ".m4a": "audio", ".ogg": "audio",
+    # les clips MIDI d'ODIO (extraits d'un son, rangés depuis un motif, importés) : 29/09
+    ".mid": "midi", ".midi": "midi",
 }
 ELEMENT_TYPES = ("character", "object", "place", "style", "other")
 AUDIO_EXT = tuple(e for e, k in EXT_KIND.items() if k == "audio")   # la voix d'un élément
@@ -182,6 +188,136 @@ def make_thumb(src: Path, dest: Path, kind: str) -> bool:
     return False
 
 
+# ── les copies d'affichage ──────────────────────────────────
+# docs/etudes/ideation_fluidite.md (§ 3.3, § 4.1) : une image, et l'affiche
+# d'une vidéo, ont des copies WebP de 256, 512, 1024 et 2048 px de grand
+# côté — jamais plus grandes que l'original. La page prend la plus petite
+# qui couvre la taille où elle est vue × la densité de l'écran
+# (commun/proxies.js), l'original seulement au-delà. WebP q82 : 26 à 38 %
+# plus léger que le JPEG à qualité voisine (mesuré, § 3.3), et il garde
+# l'alpha d'une image détourée. Faites à l'entrée (`add_file`) ; celles des
+# objets rangés avant, par le travail `library.views` (voie cpu).
+VIEW_SIZES = (256, 512, 1024, 2048)
+VIEW_QUALITY = 82
+VIEW_KINDS = ("image", "video")
+# une copie ne change jamais sous son adresse (`?v=` change avec elle) : gardée
+# un an. « private » : un cache partagé (la porte Cloudflare, un jour) ne la
+# servirait pas à quelqu'un que `visibility` n'autorise pas à la voir
+VIEW_CACHE = "private, max-age=31536000, immutable"
+VIEW_RE = re.compile(r"^view-(\d+)\.webp$")
+
+
+def view_name(w: int) -> str:
+    return f"view-{w}.webp"
+
+
+def make_views(src, d: Path) -> list[int]:
+    """Les copies d'une image (un chemin, ou des octets lus) dans le dossier
+    `d`, chacune tirée de la précédente : un seul décodage de l'original (un
+    JPEG se décode déjà réduit). Tournées comme le navigateur montre
+    l'original (EXIF). Rend les tailles faites, de la plus petite à la plus
+    grande ; une copie d'avant qui n'a plus lieu d'être s'en va."""
+    from PIL import Image, ImageOps
+    with Image.open(BytesIO(src) if isinstance(src, bytes) else src) as im:
+        big = max(im.size)
+        sizes = [s for s in VIEW_SIZES if s <= big]
+        if not sizes or im.mode.startswith(("I", "F")):   # trop petite, ou 16 bits / flottante : l'original sert
+            return []
+        im.draft("RGB", (max(1, im.width * sizes[-1] // big), max(1, im.height * sizes[-1] // big)))
+        alpha = im.mode in ("RGBA", "LA", "PA") or "transparency" in im.info
+        cur = ImageOps.exif_transpose(im).convert("RGBA" if alpha else "RGB")
+    made = []
+    for s in reversed(sizes):
+        cur.thumbnail((s, s), Image.LANCZOS)
+        tmp = d / f".{view_name(s)}.tmp"
+        cur.save(tmp, "WEBP", quality=VIEW_QUALITY, method=4)
+        tmp.replace(d / view_name(s))   # jamais une copie à moitié écrite sous son nom
+        made.append(s)
+    for p in d.glob("view-*.webp"):
+        m = VIEW_RE.match(p.name)
+        if m and int(m.group(1)) not in made:
+            p.unlink(missing_ok=True)
+    return sorted(made)
+
+
+def _poster_frame(src: Path) -> bytes | None:
+    """Une image de la vidéo à sa taille (celle de la vignette : 0,5 s, sinon la première), en PNG."""
+    for pre in (["-ss", "0.5"], []):
+        r = subprocess.run(["ffmpeg", "-v", "error", *pre, "-i", str(src), "-frames:v", "1", "-f", "image2pipe",
+                            "-vcodec", "png", "-"], capture_output=True, timeout=120)
+        if r.returncode == 0 and r.stdout:
+            return r.stdout
+    return None
+
+
+def build_views(kind: str, src: Path, d: Path) -> list[int]:
+    """Les copies d'une image, ou de l'affiche d'une vidéo ; [] si rien ne s'y
+    prête (le fichier illisible le dit dans le journal, la page prend l'original)."""
+    try:
+        if kind == "image":
+            return make_views(src, d)
+        if kind == "video":
+            frame = _poster_frame(src)
+            return make_views(frame, d) if frame else []
+    except Exception as e:
+        print(f"copies d'affichage : {src} : {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+    return []
+
+
+def _views_v() -> str:
+    """La version des copies d'un objet : elle change à chaque fois qu'on les refait."""
+    return secrets.token_hex(4)
+
+
+def ensure_views(item_id: str, force: bool = False) -> list[int] | None:
+    """Les copies d'un objet déjà rangé (le rattrapage). Rend ses tailles, ou
+    None : il n'en prend pas, il les a déjà, il a disparu entre-temps."""
+    it = get(item_id)
+    if not it or it["kind"] not in VIEW_KINDS or not it.get("file") or ("views" in it and not force):
+        return None
+    d = folder_of(item_id)
+    views = build_views(it["kind"], d / it["file"], d)
+    with _lock:
+        cur = _items.get(item_id)
+        if cur is None or not d.is_dir():   # mis à la corbeille pendant qu'on les faisait
+            return None
+        cur["views"], cur["views_v"] = views, _views_v()
+        _save(cur)
+    return views
+
+
+def missing_views(everything: bool = False) -> list[str]:
+    """Les images et les vidéos rangées avant leurs copies d'affichage (ou
+    toutes, pour les refaire)."""
+    _load()
+    with _lock:
+        return [i for i, it in _items.items()
+                if it["kind"] in VIEW_KINDS and it.get("file") and (everything or "views" not in it)]
+
+
+def view_path(it: dict, w: int) -> Path | None:
+    """Ce que sert `GET /api/library/<id>/view?w=` : la copie de cette taille,
+    ou la plus proche au-dessus ; sinon l'original d'une image, la plus
+    grande copie de l'affiche d'une vidéo, ou la vignette."""
+    d = folder_of(it["id"])
+    have = [s for s in sorted(it.get("views") or []) if (d / view_name(s)).is_file()]
+    up = [s for s in have if s >= w]
+    if up:
+        return d / view_name(up[0])
+    if it["kind"] == "image" and it.get("file"):
+        return d / it["file"]
+    if have:
+        return d / view_name(have[-1])
+    return d / it["thumb"] if it.get("thumb") else None
+
+
+def cache_policy(rel: str, req) -> str | None:
+    """La politique de cache de /library/ (core/http.py, `mount(…, cache=)`) :
+    une copie d'affichage demandée à son adresse versionnée se garde un an ;
+    le reste se revalide (ETag, 304)."""
+    return VIEW_CACHE if VIEW_RE.match(rel.rsplit("/", 1)[-1]) and req.q("v") else None
+
+
 # ── écrire ──────────────────────────────────────────────────
 def add_file(src: Path, *, kind: str | None = None, title: str = "", origin: dict | None = None,
              prompt: str = "", params: dict | None = None, parents: list | None = None,
@@ -190,7 +326,7 @@ def add_file(src: Path, *, kind: str | None = None, title: str = "", origin: dic
     _load()
     src = Path(src)
     kind = kind or EXT_KIND.get(src.suffix.lower())
-    if kind not in ("image", "video", "audio"):
+    if kind not in ("image", "video", "audio", "midi"):
         raise ValueError(f"type de fichier non pris : {src.suffix}")
     iid = new_id(kind)
     d = folder_of(iid)
@@ -205,6 +341,8 @@ def add_file(src: Path, *, kind: str | None = None, title: str = "", origin: dic
     }
     if make_thumb(d / name, d / "thumb.jpg", kind):
         it["thumb"] = "thumb.jpg"
+    if kind in VIEW_KINDS:   # les copies d'affichage, avant que la page ne la voie
+        it["views"], it["views_v"] = build_views(kind, d / name, d), _views_v()
     with _lock:
         _items[iid] = it
         _save(it)
@@ -409,6 +547,11 @@ def public(it: dict) -> dict:
     if it.get("file"):
         out["url"] = base + it["file"]
     out["thumb_url"] = base + it["thumb"] if it.get("thumb") else (out.get("url") if it["kind"] == "image" else None)
+    # les copies d'affichage qui existent (grand côté, px) et leurs adresses versionnées
+    # (commun/proxies.js choisit) ; [] : la page prend la vignette ou l'original
+    out["views"] = sorted(it.get("views") or [])
+    ver = out.pop("views_v", "")
+    out["view_urls"] = {str(w): f"{base}{view_name(w)}?v={ver}" for w in out["views"]}
     if it["kind"] == "element":
         el = dict(it["element"])
         el["refs"] = [{**r, "url": base + r["file"], "thumb_url": base + r["thumb"] if r.get("thumb") else base + r["file"]}

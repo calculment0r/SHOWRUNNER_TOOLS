@@ -14,6 +14,8 @@
 .adm-nav { position: sticky; top: 70px; }
 @media (max-width: 900px) { .adm-nav { position: static; } .adm-nav .rack { flex-direction: row; overflow-x: auto; } .adm-nav .item { min-width: 150px; } }
 .adm-nav .item { cursor: pointer; }
+/* annuler · rétablir · le journal (commun/undo.js), au-dessus du rack */
+.adm-undo { padding: 0 2px 8px var(--s4); flex-wrap: nowrap; }
 .adm-nav .item .n { margin-left: auto; font-family: var(--f-mono); font-size: 10px; letter-spacing: .1em; color: var(--ink3); position: relative; z-index: 1; }
 .adm-nav .item .n.amb { color: var(--amb); }
 .adm-main { display: flex; flex-direction: column; gap: var(--s4); min-width: 0; }

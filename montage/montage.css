@@ -88,11 +88,13 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .bin { box-shadow: inset 0 0 0 1px var(--line-gr); background: transparent; }
 .bin .pan-head { gap: 6px; padding: 8px 10px; }
 .bin .pan-head .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.mtg .bin .pan-head .ic.sm { width: 28px; height: 26px; flex: none; }
+.mtg .bin .pan-head .ic.sm { width: 26px; height: 24px; flex: none; position: relative; }
+.bin .pan-head { gap: 4px; padding: 6px 8px; }
+.bin .pan-head #bin-n { flex: none; margin-right: 2px; }
 .bin .pan-head .t b { color: var(--ink2); font-weight: 400; }
 .bin-tools { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 4px; }
 .bin-tools .seg { display: flex; }
-.bin-tools .seg .tb { flex: 1; padding: 0 4px; font-size: 9px; letter-spacing: .06em; }
+.bin-tools .seg .tb { flex: 1 1 auto; padding: 0 3px; font-size: 8.5px; letter-spacing: .04em; }
 .bin-tools .fld { padding: 6px 10px; font-size: 11.5px; }
 .bin-list { flex: 1; min-height: 0; overflow: auto; padding: 4px 8px 8px; display: flex; flex-direction: column; gap: 2px; }
 .bin-list.drop-on { box-shadow: inset 0 0 0 1px var(--line-cy); }
@@ -119,15 +121,47 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .bi .tx b { display: block; font-weight: 400; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bi .tx small { display: block; font-family: var(--f-mono); font-size: 8px; letter-spacing: .1em; color: var(--ink3); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bi .used { position: absolute; right: 7px; top: 7px; width: 5px; height: 5px; border-radius: 50%; background: var(--grn2); }
-.bf { cursor: pointer; min-height: 28px; }
-.bf .chev { width: 10px; flex: none; font-style: normal; color: var(--ink3); font-size: 9px; transition: transform .12s; }
-.bf .chev::before { content: "▸"; }
-.bf.open .chev { transform: rotate(90deg); }
-.bf .fic { width: 16px; height: 11px; flex: none; border-radius: 2px; background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line-cy); position: relative; }
+.bf { cursor: pointer; min-height: 32px; }
+.bf .fic { width: 16px; height: 11px; flex: none; border-radius: 2px; background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line-cy); position: relative; margin: 0 14px 0 14px; }
 .bf .fic::before { content: ""; position: absolute; left: 0; top: -3px; width: 7px; height: 4px; border-radius: 2px 2px 0 0; background: var(--line-cy); }
-.bf.open .fic { background: var(--cy-bg); }
-.bf b { flex: 1; min-width: 0; font-weight: 500; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bf b { flex: 1; min-width: 0; font-weight: 500; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: text; }
 .bf small { font-family: var(--f-mono); font-size: 8px; letter-spacing: .1em; color: var(--ink3); flex: none; font-variant-numeric: tabular-nums; }
+.bi.seq .tx b { display: flex; align-items: center; gap: 5px; }
+.bi .sq, .stab .sq { display: inline-flex; width: 12px; height: 12px; flex: none; color: var(--cy); }
+.bi .sq svg, .stab .sq svg, .bi .seqth svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+.bi .th.seqth { display: grid; place-items: center; color: var(--cy); padding: 4px 12px; }
+.bi .drop-say, .bf .drop-say, .btab .drop-say, .ic .drop-say {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%); padding: 1px 5px; border-radius: 2px; pointer-events: none;
+  font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--or); background: var(--veil); white-space: nowrap; z-index: 3;
+}
+.ic .drop-say { top: calc(100% + 12px); right: auto; left: 50%; transform: translateX(-50%); }
+.bi.drop-merge { box-shadow: inset 0 0 0 1px var(--or); background: var(--or-bg); }
+.btab.drop-into, .mtg .ic.drop-into { box-shadow: inset 0 0 0 1px var(--or); background: var(--or-bg); color: var(--or); }
+.bin-list.drop-into { box-shadow: inset 0 0 0 1px var(--line-or); }
+.bin-list { position: relative; user-select: none; }
+.bin-list .empty-bin { padding: 14px 6px; line-height: 1.7; }
+.bin-mq { position: fixed; z-index: 80; pointer-events: none; background: var(--cy-bg); box-shadow: inset 0 0 0 1px var(--line-cy); border-radius: 2px; }
+.drag-count-ghost { position: fixed; left: -400px; top: -400px; padding: 4px 10px; border-radius: var(--r2); background: var(--or); color: var(--on-or);
+  font-family: var(--f-mono); font-size: 9px; letter-spacing: .14em; text-transform: uppercase; }
+/* les onglets du panneau : le projet, les dossiers ouverts (Premiere : un chutier s'ouvre dans son panneau) */
+.btabs { position: relative; display: flex; gap: 2px; min-width: 0; flex: 0 1 auto; overflow-x: auto; scrollbar-width: none; }
+.btabs::-webkit-scrollbar { display: none; }
+.btab { position: relative; display: flex; align-items: center; gap: 4px; padding: 3px 4px 3px 8px; border-radius: var(--r2); cursor: pointer; flex: none; max-width: 104px;
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); }
+.btab .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btab:hover { color: var(--ink); background: var(--panel2); }
+.btab.on { color: var(--ink); box-shadow: inset 0 -2px 0 var(--or); }
+.btab.gone { opacity: .5; }
+.btab .x, .stab .x { width: 14px; height: 14px; border-radius: 3px; color: var(--ink3); font-size: 11px; line-height: 1; flex: none; }
+.btab .x:hover, .stab .x:hover { background: var(--panel3); color: var(--ink); }
+.btab:not([data-tab=""]) { padding-right: 2px; }
+/* la fenêtre « nouveau dossier », au centre */
+.newfolder { display: flex; flex-direction: column; gap: 12px; }
+.newfolder .minis { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.newfolder .mini { display: flex; align-items: center; gap: 6px; max-width: 170px; padding: 3px 8px 3px 3px; border-radius: var(--r2); background: var(--panel2); }
+.newfolder .mini i { width: 34px; height: 22px; border-radius: var(--r1); flex: none; background: var(--panel3) center / cover no-repeat; }
+.newfolder .mini b { font-weight: 400; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.newfolder .big-fld { font-size: 14px; padding: 10px 12px; }
 .bin-list input.ren { padding: 3px 6px; font-size: 11.5px; height: 22px; flex: 1; min-width: 0; }
 .bin-hint { padding: 6px 12px 10px; margin: 0; }
 .bin-list .lbl { padding: 10px 4px; line-height: 1.7; }
@@ -232,8 +266,20 @@ input[type=range].rg.temp::-webkit-slider-runnable-track { background: linear-gr
 .row.chk { align-items: flex-start; gap: 8px; font-size: 11.5px; color: var(--ink2); cursor: pointer; }
 .row.chk input { margin-top: 2px; accent-color: var(--or); }
 
-/* l'étagère de LUT : une vignette par LUT, sur l'image courante du plan */
-.shelf { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 6px; }
+/* l'étagère de LUT : chercher, les favoris, les familles repliables ; une vignette par LUT, sur l'image courante du plan */
+.shelf { display: flex; flex-direction: column; gap: 6px; }
+.shelf .lq { padding: 6px 10px; font-size: 11px; }
+.shelf .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 6px; }
+.lgrp { display: flex; flex-direction: column; gap: 6px; }
+.lg { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: var(--r2); text-align: left; color: var(--ink2);
+  font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; }
+.lg:hover { background: var(--panel2); color: var(--ink); }
+.lg .chev { width: 9px; font-style: normal; color: var(--ink3); transition: transform .12s; }
+.lg .chev::before { content: "▸"; }
+.lg.open .chev { transform: rotate(90deg); }
+.lg span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lg small { color: var(--ink3); letter-spacing: 0; }
+.lt .star { position: absolute; top: 4px; left: 6px; font-style: normal; font-size: 9px; color: var(--amb); text-shadow: 0 0 2px var(--black); }
 .lt { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 3px; border-radius: var(--r2); background: var(--panel2); text-align: left; min-width: 0; }
 .lt:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--line-cy); }
 .lt.on { box-shadow: inset 0 0 0 1px var(--or); }
@@ -244,7 +290,16 @@ input[type=range].rg.temp::-webkit-slider-runnable-track { background: linear-gr
   color: var(--or); background: var(--veil); padding: 1px 3px; border-radius: 2px; }
 
 /* ── la timeline ───────────────────────────────────────── */
-.mtg .tlw { background: var(--panel); padding: 8px 12px 10px; gap: 8px; min-height: 0; }
+.mtg .tlw { background: var(--panel); padding: 6px 12px 10px; gap: 6px; min-height: 0; }
+/* les onglets des séquences ouvertes, au-dessus de la timeline (Premiere : « Each sequence appears as a tab ») */
+.seqtabs { display: flex; gap: 2px; flex: none; overflow-x: auto; scrollbar-width: thin; box-shadow: inset 0 -1px 0 var(--line); }
+.stab { display: flex; align-items: center; gap: 6px; padding: 5px 6px 6px 10px; border-radius: var(--r2) var(--r2) 0 0; cursor: pointer; flex: none; max-width: 220px;
+  font-size: 11px; color: var(--ink3); }
+.stab .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stab:hover { color: var(--ink); background: var(--panel2); }
+.stab.on { color: var(--ink); background: var(--panel2); box-shadow: inset 0 2px 0 var(--or); }
+.stab.add { padding: 4px 10px; font-size: 13px; color: var(--ink3); }
+.tl-none { padding: 18px 14px; margin: 0; color: var(--ink3); font-size: 11.5px; }
 .tl-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: none; }
 .tl-bar .t { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink3); white-space: nowrap; }
 .tl-bar .t b { color: var(--ink2); font-weight: 400; letter-spacing: 0; }

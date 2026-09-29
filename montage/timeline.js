@@ -96,6 +96,15 @@ export class Timeline {
     this.paintPlayhead(this.app.playhead());
   }
 
+  // plus de séquence ouverte : une timeline vide qui dit quoi faire
+  clear() {
+    this.lanes.replaceChildren(el('p', { class: 'tl-none' }, 'aucune séquence ouverte : double-cliquez une séquence du panneau Projet, ou clic droit sur un clip → « Nouvelle séquence à partir de l’élément »'));
+    this.ticks.replaceChildren();
+    this.mlayer.replaceChildren();
+    this.rngv.hidden = true;
+    this.ph.style.visibility = 'hidden';
+  }
+
   head(t, isTarget) {
     const act = (k, label) => (e) => { e.stopPropagation(); this.app.toggleTrack(t.id, k, label); };
     return el('div', { class: 'tl-hd', 'data-head': t.id, title: `${t.id}${t.name ? ' · ' + t.name : ''} — clic droit : ajouter, renommer, supprimer la piste…` },
@@ -304,6 +313,11 @@ export class Timeline {
       this.dropAt = null;
       const mode = (e.ctrlKey || e.metaKey) ? 'insert' : 'overwrite';
       if (e.dataTransfer.files && e.dataTransfer.files.length) { this.app.dropFiles([...e.dataTransfer.files], track, frame, mode); return; }
+      // plusieurs objets du panneau Projet : posés à la suite, dans l'ordre
+      try {
+        const many = JSON.parse(e.dataTransfer.getData('application/x-sr-items') || '[]');
+        if (many.length > 1) { this.app.placeMany(many, track, frame, mode); return; }
+      } catch { /* */ }
       // une vignette de ce chutier, de la source, d'une autre page ou du sélecteur (dragItem du socle)
       const raw = e.dataTransfer.getData(ITEM_MIME);
       if (!raw) return;

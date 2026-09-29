@@ -5,6 +5,13 @@
    rack NL (Station NL Rack
    Verdant / Banc NL Comparatif). Aucune couleur en dur ailleurs :
    tout composant passe par une variable définie ici.
+
+   Deux jeux (décision de Cal du 29/09) : le sombre, sous :root, reste le
+   défaut ; le clair, sous [data-theme="light"] plus bas, redonne les
+   mêmes noms. commun/theme.js pose l'attribut sur <html> au chargement
+   (la préférence « thème », commun/prefs.js) ; l'éditeur de thème
+   (commun/theme.html) ne fait que surcharger ces mêmes noms, en ligne
+   sur <html>. Un composant ne sait jamais quel thème est posé.
    ============================================================ */
 
 :root {
@@ -114,5 +121,76 @@
   --rack-w:  252px;
   --sheet-w: 340px;
 
+  /* la taille de l'interface (préférence Général) : commun/theme.js pose
+     --ui-zoom et « zoom » sur <html>. Sous un zoom, 100vh dépasse l'écran
+     (les unités de la fenêtre sont zoomées comme les autres longueurs,
+     mesuré sous Chromium : 100vh = 1250 px pour 1000 px à 125 %) : une
+     hauteur d'écran s'écrit calc(100 * var(--vh)). */
+  --ui-zoom: 1;
+  --vh: calc(1vh / var(--ui-zoom));
+
   color-scheme: dark;
+}
+
+/* ============================================================
+   LE THÈME CLAIR — les mêmes noms, les mêmes rôles.
+   Un papier gris-vert (la teinte du sombre, retournée) ; les panneaux
+   sont plus clairs que le fond, les champs et les boutons un cran plus
+   gris que le panneau qui les porte. Les accents qui servent d'encre
+   (acier, orange, vert, ambre) sont assombris jusqu'au contraste AA
+   (4,5:1) sur tous les fonds ; les aplats qui portent leur propre encre
+   (rampe corail, cartes vertes, papier de la planche) ne bougent pas.
+   Mesures : docs/etudes/preferences.md, § contrastes.
+   ============================================================ */
+[data-theme="light"] {
+  /* fonds, du plus profond au plus relevé */
+  --bg:      #e6e9e5;
+  --panel:   #f6f7f5;
+  --panel2:  #eaede9;
+  --panel3:  #dadfda;
+
+  /* encres */
+  --ink:     #141a17;
+  --ink2:    #3e4944;
+  --ink3:    #4f5a55;
+
+  /* accents */
+  --cy:      #25586c;   /* acier profond — la voie A, les valeurs lues */
+  --or:      #a8391b;   /* orange brûlé — l'action, la voie B, l'alerte */
+  --grn:     #2f6b4a;   /* vert sourd — l'état engagé */
+  --grn2:    #23693f;   /* vert — la progression */
+  --amb:     #7f5308;   /* ambre sombre — ce qui attend Cal, jamais une action */
+
+  /* traits */
+  --line:    rgba(22, 34, 28, .16);
+  --line-cy: rgba(37, 88, 108, .75);
+  --line-or: rgba(168, 57, 27, .70);
+  --line-gr: rgba(47, 107, 74, .70);
+  --line-amb: rgba(127, 83, 8, .50);
+  --amb-bg:  rgba(214, 162, 74, .16);
+  --grn-bg:  rgba(47, 107, 74, .12);
+
+  /* voile posé sur une image, sous une étiquette */
+  --veil:    rgba(246, 247, 245, .88);
+  --veil-0:  rgba(246, 247, 245, 0);
+  --scrim:   rgba(22, 28, 25, .42);
+
+  /* portail */
+  --hdr-bg:    rgba(238, 241, 237, .94);
+  --sel-bg:    #d4e4e9;
+  --black:     #d5dad4;                /* fond d'un moniteur : un gris neutre en clair */
+  --dot:       rgba(22, 34, 28, .10);
+  --dot-hi:    rgba(22, 34, 28, .14);
+  --or-bg:     rgba(168, 57, 27, .08);
+  --or-bg2:    rgba(168, 57, 27, .45);
+  --cy-bg:     rgba(37, 88, 108, .09);
+  --drop:      rgba(20, 30, 24, .16);
+  --drop-lg:   rgba(20, 30, 24, .22);
+
+  /* encres inversées, posées sur un aplat d'accent */
+  --on-or:   #fff5f0;
+  --on-cy:   #f2f6f8;
+  --on-grn:  #eaf4ee;
+
+  color-scheme: light;
 }

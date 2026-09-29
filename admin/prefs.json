@@ -1,0 +1,17 @@
+{
+  "tool": "admin",
+  "title": "Admin",
+  "about": "La page de Cal.",
+  "prefs": [
+    {
+      "key": "section", "label": "Section à l’ouverture", "type": "choice", "default": "demandes",
+      "options": [["demandes", "Demandes"], ["personnes", "Personnes"], ["file", "La file"], ["machines", "Machines"],
+                  ["cablage", "Câblage"], ["stockage", "Stockage"], ["journal", "Journal"]]
+    },
+    {
+      "key": "refresh", "label": "Relevé de la page", "type": "choice", "default": 3,
+      "options": [[3, "toutes les 3 s"], [10, "toutes les 10 s"], [30, "toutes les 30 s"]],
+      "help": "Les machines et le journal se relèvent un peu moins souvent que le reste."
+    }
+  ]
+}

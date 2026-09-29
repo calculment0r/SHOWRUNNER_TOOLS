@@ -34,6 +34,9 @@
 }
 .hdr .tools-menu a:hover { background: var(--panel2); color: var(--ink); }
 .hdr .tools-menu a.on { color: var(--ink); box-shadow: inset 2px 0 0 var(--or); }
+/* le bouton des préférences (commun/prefs.js) : une roue, pas un mot */
+.hdr .sr-gear { width: 30px; min-width: 30px; padding: 0; }
+.hdr .sr-gear svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
 
 /* ── tiroir de la file des rendus ───────────────────────── */
 .drawer {
