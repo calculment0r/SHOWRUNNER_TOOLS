@@ -29,7 +29,7 @@ Ses documents de reprise y restent et font foi pour l'histoire et les décisions
 | `outils/partage/worker.js`, `wrangler.jsonc`, `videos.mjs` | `outils/partage/` | le Worker du dépôt partagé et l'envoi des vidéos vers R2 — **pour mémoire** (voir plus bas) |
 | `commun/projets.js` | `commun/projets.js` | lu par la page de diarisation (noms des projets) |
 
-Ajouté ici : `index.html`, `analyse.js`, `analyse.css` (l'accueil de l'outil, dans le thème du
+Ajouté ici : `index.html`, `accueil.js` (ex-`analyse.js` : la liste EasyPrivacy bloque tout chemin en `/analyse.js`), `analyse.css` (l'accueil de l'outil, dans le thème du
 portail), `film/film.css` et `film/film.js` (le cadre de la page d'un film, 29/09),
 `outils/rendre-films.sh` (re-rendre nos films), `analyses/<film>/portail.json` (titre accentué et genre, repris de `DU_DEPOT` dans
 `commun/projets.js`), `diarisation/portail.css` (l'en-tête du portail sur la page),
