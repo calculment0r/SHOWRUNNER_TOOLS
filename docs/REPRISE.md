@@ -1,154 +1,131 @@
 # Reprise — à lire en premier
 
-État au 29/09/2026, 16 h 30 (commit 4e74fb3). Portail :
+État au 29/09/2026, soir (commit e1b4351). Portail à la maison :
 **http://192.168.10.247:8790/** (DGX2 ; Tailscale http://100.108.108.65:8790/).
-Entrer : taper le pseudo **`nico007`** (Cal, admin, compte `cal`). Secours si
-plus aucun admin n'entre : `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && python3 server/showrunner.py --admin nico007'`.
-Le point du jour, lisible par Cal : l'artifact « Showrunner · point du 29/09 »
-(https://claude.ai/artifact/VzaAXMQqEUwQ3MMkVpzP18).
+**Adresse publique permanente : https://showrunner.luxigone.workers.dev** —
+les amis tapent le pseudo que Cal leur a créé (Admin → « Ajouter quelqu'un »),
+sans code ni e-mail. Cal : pseudo `nico007` (admin, compte `cal`) ; un compte
+admin n'entre par l'adresse publique qu'avec le lien admin (Admin → « Montrer le
+lien admin », ou `bash tools/porte.sh lien` sur DGX2). Secours si plus aucun
+admin n'entre : `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && python3 server/showrunner.py --admin nico007'`.
 
 ## Travailler ici (règles fermes de Cal)
 
-- **Chaque commande commence par `ssh dgx1 `, `ssh dgx2 ` ou `scp `** (seules
-  commandes autorisées une fois pour toutes ; le reste lui demande « allow
-  once »). Sur le PC : Read, Write, Edit, Glob, Grep seulement. À répéter en
-  tête de chaque brief d'agent (plusieurs l'ont enfreint le 29/09 : `mkdir`,
-  `for`, `grep` locaux).
-- **Git se fait sur DGX2.** Déployer : `/tmp/sr_deploy` (clone), `git reset
-  --hard origin/main`, n'y copier **que les fichiers d'un chantier fini** (le
-  PC est un brouillon partagé par les agents), `python3 tools/check.py`, les
-  pilotes Playwright de l'agent contre un serveur lancé depuis ce clone, commit,
-  push, puis `cd ~/SHOWRUNNER_TOOLS && git fetch && git reset --hard
-  origin/main && tools/portail.sh restart`, et DGX1 suit par
+- **Chaque commande commence par `ssh dgx1 `, `ssh dgx2 ` ou `scp `.** Sur le PC :
+  Read, Write, Edit, Glob, Grep seulement (pas de `mkdir`, ni `cd … &&` en local). À
+  répéter en tête de chaque brief d'agent ; plusieurs l'ont encore enfreint le 29/09.
+- **Git se fait sur DGX2. Un seul intégrateur (la session principale) ; les agents
+  ne poussent jamais.** Chaque agent travaille dans sa copie `/tmp/sr_<nom>` (clone
+  d'origin/main + ses fichiers du PC par scp, serveur d'essai sur son port, données
+  à lui). Déployer : `/tmp/sr_deploy` ← `git reset --hard origin/main`, y copier les
+  fichiers **depuis la copie testée de l'agent** (pas depuis le PC, où d'autres agents
+  écrivent en même temps ; d'un fichier partagé, n'extraire que la part de l'agent),
+  `python3 tools/check.py`, commit, push, puis
+  `cd ~/SHOWRUNNER_TOOLS && git fetch && git reset --hard origin/main && tools/portail.sh restart`,
+  **puis `bash tools/porte.sh deploie`** (l'adresse publique sert les pages depuis
+  Cloudflare : sans ce geste, elle garde les anciennes), et DGX1 suit par
   `ssh dgx@169.254.110.6 "cd ~/SHOWRUNNER_TOOLS && git fetch -q && git reset -q --hard origin/main"`.
-- **Le travail en cours est sauvegardé toutes les 30 min** sur la branche
-  `wip/travail-en-cours` (`/tmp/sr_wip` : main + l'arbre du PC, poussé en
-  force). `main` reste la version en ligne.
-- Un fichier que deux agents touchent en même temps se casse : un agent
-  possède ses fichiers, les autres n'y posent que des accroches marquées.
-- Aucun rendu de modèle tant que Cal ne le demande pas (moteurs factices,
-  câblage réel derrière des interrupteurs : Admin → Câblage).
-- Jamais de `pkill -f` par motif (tue la commande ssh) : par PID.
+- **wrangler : jamais depuis `~` sur DGX2**, toujours depuis `~/SHOWRUNNER_TOOLS/porte`
+  (ou un dossier de projet). Lancé depuis `~`, il crée `~/.wrangler/` et se croit
+  déconnecté (« CLOUDFLARE_API_TOKEN… non-interactive ») : `rm -rf ~/.wrangler` le
+  répare (les identifiants sont dans `~/.config/.wrangler`).
+- Le travail en cours du PC est sauvegardé toutes les 30 min sur la branche
+  `wip/travail-en-cours` (`/tmp/sr_wip`, poussé en force). `main` reste la version en ligne.
+- Un fichier que deux agents touchent en même temps se casse : un agent possède ses
+  fichiers ; partage explicite par message quand il le faut.
+- Aucun rendu de modèle ni téléchargement tant que Cal ne le demande pas (moteurs
+  factices, câblage réel derrière Admin → Câblage).
+- Jamais de `pkill -f` par motif : par PID.
+- **Cal déteste qu'on lui impose une page tierce** : la connexion par e-mail de
+  Cloudflare Access a été mise en place puis retirée le 29/09 à sa demande (très
+  fâché). Montrer l'expérience avant de déployer tout ce qui touche l'entrée.
+- Bloqueurs de pub : aucun fichier ne doit tomber sous EasyPrivacy / EasyList
+  (`/tmp/easyprivacy.txt`, `/tmp/easylist.txt` sur DGX2 ; cf. 42b6147, `analyse.js` bloqué).
+- Souris et menus (tous les canvas) : bouton du milieu = déplacer ; clic = choisir,
+  Maj = ajouter, Ctrl = ajouter / retirer ; jamais le menu du navigateur. Timelines :
+  `commun/molette.js` (molette = défiler, Maj = temps, Alt = zoom, Ctrl = hauteur).
 
-## FAIT (0aa4f7e, 29/09 fin d'après-midi) : ODIO rhabillé dans notre thème, fils en espace écran
+## La porte publique (en place le 29/09)
 
-Rapport : `docs/etudes/musique_theme.md` ; captures côte à côte (4a20f41 | prototype | après,
-sombre et clair) dans `dgx2:~/showrunner-refs/odio-theme-2909/cote/`. À faire valider par Cal.
-Restes : le corps d'un bloc garde la mise en page d'ODIO_01 (rails, faders) habillée en curseurs
-du portail ; en-tête de 23 px au lieu de 35 (pour le zoom sémantique) ; une tranche de piste à sa
-taille d'origine ne montre que son vumètre ; les fils d'Idéation (`commun/wire.css`,
-`vector-effect`) ont sans doute le même défaut de zoom que ceux d'ODIO avant : à mesurer.
+Worker `showrunner` (assets = le dépôt moins `.assetsignore`) → Workers VPC
+`portail-dgx2` (service `01a0edac-…`) → tunnel `dgx2` (`15a096f7-…`,
+`cloudflared.service` sur DGX2) → `127.0.0.1:9790`. Mode **« code »**
+(`PORTE_MODE = code`, `porte.mode = code`) et **`porte.invitation = false`** (phase
+d'essai : un pseudo créé par Cal suffit). Plus d'application Access (supprimée par
+Cal). Bucket R2 `showrunner-bibliotheque` créé, recopie jamais lancée (pas de
+`~/.config/showrunner/r2.json`). Commandes : `tools/porte.sh`
+(`verifie | deploie | lien | ami <pseudo> | invitation on|off | nouveaux-codes | essai`).
+Étude : `docs/etudes/cloudflare.md`. Amis actifs : su007, eric007, mehdi007,
+pilou007, steph007, nico — tous avec `"access": "studio"` (sauvegarde de
+`auth.json` d'avant : `~/showrunner-data/auth.json.avant-studio-*`).
+Le jeton du tunnel est passé dans le chat : proposer à Cal de le régénérer.
+La démo trycloudflare (`tools/demo.sh`) est arrêtée ; la porte est l'une ou l'autre.
 
-## (historique) ODIO avait perdu notre thème (Cal, 29/09 16 h 25, très fâché)
-
-« pourquoi sur ODIO on n'a pas notre thème !!! les nodes avaient le bon design et tu as mis ceux
-de l'ancien projet qui était du prototype ». La traduction d'ODIO_01 (eebbd9f, `musique/nodal.js`,
-`nodal.css`, `machines/**`) a repris l'habillage des tuiles d'ODIO_01. Cal voulait **la logique
-d'ODIO_01 dans NOS cartes du nodal** (celles d'avant eebbd9f : `git show 4a20f41:musique/nodal.js`
-et `musique/musique.css` de ce commit — en-tête, ports, filets, jetons). À faire : rhabiller les
-tuiles, machines et panneaux du nodal dans notre DA (cartes du nodal d'avant, `commun/tokens.css`),
-**sans perdre** la logique (glisser-déposer, T/G/F, planogrammes, attracteurs, tracé au bouton du
-milieu, pistes liées). Les jouets gardent leur intérieur (demande de Cal) dans notre cadre.
-Captures côte à côte avant eebbd9f / maintenant / après, à lui montrer.
-
-Précision de Cal (16 h 40) : « garde les fonctions dedans comme on a mais les cards doivent être
-avec le nouveau design.. les sliders rotatifs etc doivent être avec le nouveau design.. on garde
-juste le code et la logique et on repasse tout dans notre thème qui est plus abouti. »
-Et : « les fils ne sont plus en screen space aussi.. on doit mettre le design de notre canva dans
-notre thème qui est beaucoup mieux réfléchi » : câbles d'épaisseur constante à l'écran (comme
-`commun/wire.js`), fond, trame, sélection, poignées et menus de nos canvas (nodal de 4a20f41,
-Idéation), pas ceux d'ODIO_01.
-**Un agent y travaille depuis 16 h 40** : copie `/tmp/sr_odio_theme` sur DGX2 (port 8828),
-référence `/tmp/sr_odio_avant` (4a20f41, port 8827), fichiers sur le PC dans `musique/**`, son
-rapport écrit dans `docs/etudes/musique_theme.md`. Session suivante : lire ce rapport, repasser
-`tools/check.py` et les pilotes (`/tmp/sr_odio3_essai.mjs`, `/tmp/nodal_essai.mjs`,
-`/tmp/sr_odio3_*.mjs`) sur un assemblage `/tmp/sr_deploy`, montrer les captures à Cal, déployer.
-
-## Démo en ligne (lancée le 29/09 à 16 h 20, à la demande de Cal)
-
-`ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && tools/demo.sh status'` — adresse
-https://infinite-tracks-enjoyed-cooked.trycloudflare.com (change à chaque `start` : **relire les
-mots tirés au hasard avant de la donner** — la première contenait « terrorist », Cal furieux),
-compte simple de Cal pour la démo : pseudo **`nico`** (ami, actif, sans code),
-invitation `/invitation/<code>`, code admin pour Cal ; les pseudos neufs attendent son accord
-(Admin). Pas de SSE : la collaboration en direct ne passe pas. Arrêt : `tools/demo.sh stop`.
-
-## Prêt sur le PC, pas encore en ligne (sauvegardé dans `wip/travail-en-cours`)
-
-- **Idéation · objets du prototype et co-édition : EN LIGNE** (1d70b78, 1108/1108 ; pilotes objets
-  80/80, co-édition 48/48, groupes 41/41, fils 18/18). Restes : un invité par lien devient un ami
-  du portail (il faudrait un état « invité » dans `core/auth.py`) ; registres de co-édition trop
-  larges (cases d'un composeur, texte d'une note) ; la barre d'Idéation passe sur deux lignes.
-- **Étude Apps / Studio et éléments liés** : `docs/etudes/apps_studio_elements.md` (source
-  vivante → versions publiées → usages épinglés, pastille « vN+1 », accès apps | studio) ;
-  6 questions à Cal (recommandations : oui, oui, à la main, propriétaire + Cal, Apps par défaut,
-  ACE-Step pour « s'en inspirer »). Signale aussi : `music.save_project` sans contrôle de
-  propriétaire (`music.py:639`), `POST /api/jobs` sans filtre de sorte, restauration en lot
-  d'Asset qui ignore `mid-` / `seq-`.
-
-## En ligne (29/09, de 11 h à 16 h 30)
+## En ligne le 29/09 au soir
 
 | commit | quoi |
 |---|---|
-| 194ae62 | ODIO, deuxième tour (les onze remarques de Cal) |
-| 1f64157 | Image et Vidéo : le fil façon Higgsfield ; « Movie Creator » devient **Vidéo** ; `commun/menu.js` (clic droit, ⋯) |
-| cd43d4a | Montage : panneaux, chutier en dossiers, clic droit, outils de Premiere (V A B N C Y U R H Z), LUT (.cube, HaldCLUT) |
-| 0cfea9c | Image : la barre de prompt flottante en bas (capture Higgsfield de Cal) |
-| 4a20f41 | Idéation : l'atelier du prototype de Cal (`ideation/atelier/*` : présentation, vote, projecteur, minuteur, machine temporelle, ⌘K, vues Alt+1…4), `ideation/plugins.js` |
-| 0782335 | Idéation : fils typés (`ports.js`, `commun/wire.js`), Générer vidéo, composeur v1, collaboration (présence, fil, visio pair à pair) ; Nagle coupé |
-| b648cc9 | Movie Analysis refait dans l'interface du portail (page Projets) |
-| fef9887 | Idéation : composeur v2 (Varier, lots en cadre) |
-| f9b95e1 | `commun/undo.js` (Ctrl+Z), préférences (`/api/prefs`, roue, Ctrl+,), thème clair + éditeur (règle 2 réécrite) ; Montage : le chutier devient Asset, séquences (`kind: sequence`), onglets ; copies d'affichage 256…2048 WebP, ETag, `/api/library/batch` |
-| eebbd9f | ODIO : ODIO_01 traduit dans le nodal (glisser-déposer, attracteurs qui agissent, 13 planogrammes, T/G/F, zoom sémantique), les 14 jouets du Playground, le génératif (région, panneau, partition YuE2, Extraire le MIDI, `kind: midi`) |
-| fe51c35 | La porte publique `127.0.0.1:9790` (trou admin fermé), mode démo (codes), mode Access, `porte/` (Worker, R2) |
-| 992b772 | Idéation : groupes façon Miro, barre de sélection, poignées, groupe réduit à ports, zoom sémantique, fluidité (1000 images) |
-| 42b6147 | Movie Analysis : `analyse.js` → `accueil.js` — **EasyPrivacy bloque `/analyse.js`** : chez Cal la page restait vide (cause de « pas mes exemples, pas le menu ») |
-| 4e74fb3 | Plus de menu du navigateur (gardien commun + menus par zone), Ctrl+Z partout (AZERTY), thème clair corrigé, `sequence` / `midi` dans Asset ; ODIO : bouton du milieu, Maj/Ctrl+clic, tracé au bouton du milieu, pistes (Suppr, glisser, groupes), panneau du bas sans onglets, effets partagés entre pistes, couleur et nom de piste sur le nœud |
+| 0aa4f7e | ODIO rhabillé dans notre thème, fils en espace écran (`docs/etudes/musique_theme.md`) |
+| 810c1b2 | droits des amis (`library.get` / `check_write`, `POST /api/jobs` filtré, dépôts vérifiés, `droits.py`) ; Idéation : rôle « invite », co-édition fine, barre sur une ligne ; porte prête |
+| 98a7c23 | ODIO : aimant coupable (barre, clic droit, Ctrl+4), étiquette de piste glissable, netteté au zoom |
+| 913a390 | la même molette dans toutes les timelines ; `kindMark()` marque séquences / MIDI / éléments |
+| fc732cc · 27cde72 | porte par pseudo sans Access, puis sans invitation ; Movie Analysis : un clic ouvre le projet ; Image : Qwen 2.1 = 10 réf., Krea 2 = 2 |
+| b3e32c0 | Upscale : pile par média, rideau A/B, zoom lié, préréglages Précis / Créatif / Aperçu |
+| da77232 | app **Transcrire** (factice ; câblage local prêt, sans téléchargement) |
+| 4f8dfc3 | app **Musique** `chanson/` (chanson par prompt ; stems → ODIO réservés au Studio) |
+| d8efa62 | Montage : panneau Effets, calques FX, groupes de pistes, fondus à poignées, LUT sans éclair ; export = ffmpeg 6.1.1 sur DGX2 |
+| b01a463 · 7c1d7c5 · f06c855 | **Accueil Apps / Studio**, l'image et la vidéo de Cal dans les grandes cartes (`media/`), logotype **NIRVALAB**, titre **SHOWRUNNER**, Asset en haut à droite |
+| 796b1a9 | Idéation : bibliothèque repliable (poignée, ×, entrée au clic droit / double-clic) |
+| 6b22136 | références : `commun/refs.js` (places, pas visuels ; grisées au-delà de la limite ; `split_refs` côté serveur) ; cartes Générer d'Idéation réparées ; Vidéo : curseur de durée |
+| fee53b5 · 7bcd857 | ODIO : attracteurs en espace écran ; export par tranches, forme d'onde en fond, piano roll centré, thème clair complet (`tokens.css`) |
+| e1b4351 | plein écran (Ctrl+Maj+F) ; panneaux détachables (`commun/fenetre.js`, étude `fenetres.md`) : Montage et nodal d'ODIO |
 
-Données : 21 médias d'essai de Cal dans Asset « Essais » ; 342 LUT importées
-(Fujifilm ETERNA v1.10 en Rec.709 cuit + F-Log2, RawTherapee) sous
-`~/showrunner-data/luts` ; archives dans `~/showrunner-refs/luts`. Doublon de
-compte « nico007 » (rôle ami) fusionné dans `cal` (sauvegarde
-`~/showrunner-data/sauvegarde-fusion-20260929-132539`).
+Avant 16 h 30 : voir `git log` (ODIO_01 dans le nodal, Idéation atelier et
+co-édition, Montage, Vidéo, préférences, thème clair…). Le morceau vitrine
+**« Verre fumé »** est dans les données de Cal (`musique/?p=mus-20260929-173609-9d87`) ;
+livrables dans `/tmp/sr_morceau_livrables/`.
 
-## À ne pas oublier
+## Les études du soir — sur le PC seulement, PAS commitées
 
-- **Bloqueurs de pub** : aucun fichier du portail ne doit tomber sous EasyPrivacy / EasyList
-  (vérifié le 29/09 après le renommage ; refaire la vérification après chaque nouveau fichier —
-  la méthode : `/tmp/easyprivacy.txt`, règles `/chemin` sans joker, cf. commit 42b6147).
-- Règles de souris et de menus de Cal (tous les canvas) : bouton du milieu = déplacer ; clic =
-  choisir, Maj = ajouter, Ctrl = ajouter / retirer ; jamais le menu du navigateur.
-- Le digest pour Cal : artifact https://claude.ai/artifact/VzaAXMQqEUwQ3MMkVpzP18 (le republier
-  depuis `…\scratchpad\digest\digest.html` de la session du 29/09, ou en refaire un).
+Le dépôt est **public** ; elles contiennent stratégie, prix, alertes de licence.
+Question posée à Cal : les garder hors du dépôt public ? (pas encore de réponse) :
+`docs/etudes/positionnement.md`, `modeles.md`, `pipeline_video.md`,
+`presentations.md`, `agent_brief.md`, `package_export.md`.
+Points qui pèsent : **H3 n'est pas licencié dans l'UE** (écrire à MiniMax ; repli
+LTX-2.5) ; **Qwen-Image 2.1 et YuE2 non commerciaux** ; **Venus Rising et Norelli
+servies en webfonts sur une adresse publique sans licence web** (acheter, ou polices
+OFL) ; Starlight Fast 3 de Topaz n'existe qu'en nuage (API) ; la règle « tout en
+local » de `CLAUDE.md` est à réécrire avec Cal (local d'abord, API fermées avec budget).
 
 ## Ce qui attend Cal
 
-1. **Démo en ligne** : `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && tools/demo.sh start'`
-   (tunnel rapide trycloudflare → 127.0.0.1:9790 ; affiche l'adresse, le lien
-   et le code d'invitation, le code admin). Pas de SSE : la collaboration en
-   direct ne passe pas. **Lancée le 29/09 à 16 h 20** (Cal veut l'envoyer à un ami).
-2. **La vraie porte** (`docs/etudes/cloudflare.md`, « Prêt à déployer ») :
-   Zero Trust est actif (équipe `nirvalab`), wrangler 4.143.0 est connecté sur
-   DGX2 (`~/.local/bin/wrangler`, compte `luxigone@gmail.com`, sans portée
-   Access). Restent à Cal : créer le tunnel Workers VPC `dgx2` et lancer
-   `sudo cloudflared service install <jeton>`, activer One-time PIN, créer
-   l'application Access et donner le tag AUD, le jeton R2, la liste d'e-mails.
-3. **Worker de MOVIE_ANALYSE** : ajouter l'adresse du portail aux `ORIGINES`
-   (diff dans `cloudflare.md`) puis `wrangler deploy`.
-4. **ODIO** : télécharger ACE-Step 1.5 base (4,79 Go), BS-RoFormer SW (699 Mo),
-   ADTOF ; le LoRA « pronostic » sur l'étage partition de YuE2 (oui / non) ;
-   mesure en 6 : 6/4 ou 6/8 dans la partition ; la table des facettes.
-5. **Contrastes sombres** : éclaircir `--grn2` et `--ink3` d'un cran (sous 4,5:1 sur certains panneaux) ?
-6. Plus anciens : câbler les modèles (interrupteurs), téléchargements Image /
-   Upscale, DGX1 (`seconohe`, `tiktoken`, redémarrer ComfyUI), orchestration,
-   décisions Cloudflare (7).
+1. Répondre : études hors du dépôt public ? disque des attracteurs plafonné à 100 % ?
+   références : ajouter au-delà de la limite (grisée) ? « Tasser » de Vidéo ?
+2. Les décisions des études (positionnement 13, modèles 7, pipeline vidéo 10,
+   présentations 11, agent 8, package 10) ; son abonnement Topaz ; un compte Comfy.org.
+3. Allumer le câblage réel de Transcrire et de Musique (aucun téléchargement).
+4. Workers Paid (5 $/mois) si la collaboration à distance d'Idéation s'emballe
+   (quota gratuit : 100 000 requêtes par jour).
+5. Commiter `C:\claude\MOVIE_ANALYSE\outils\partage\worker.js` (origines du portail ;
+   déployé : version 277fe452).
+6. Plus anciens : ACE-Step 1.5 base, BS-RoFormer, ADTOF ; DGX1 (`seconohe`,
+   `tiktoken`) ; la 3090 (`vfx-3090`, hors ligne) ; contrastes sombres `--grn2`, `--ink3`.
+
+## Restes techniques connus
+
+- iPhone / Safari : le Worker répond 200 à une requête `Range` sur les vidéos de
+  l'accueil (pas 206) : lecture à vérifier.
+- Le droit Studio n'est lu que par l'app Musique et l'accueil ; `auth.public_user`
+  ne rend pas `access`, le serveur ne ferme pas les pages Studio, Admin ne sait pas le régler.
+- Fils d'Idéation (`commun/wire.css`, `vector-effect`) : même défaut de zoom que ceux
+  d'ODIO avant, probablement : à mesurer. Menu commun dans une fenêtre détachée : un pont
+  (l'accroche propre est dans `fenetres.md`).
+- `docs/ARCHITECTURE.md` : ajouter `refs.js`, `molette.js`, `fenetre.js`, `pleinecran.js`.
 
 ## Machines
 
 - DGX2 : le portail (`~/SHOWRUNNER_TOOLS`, `tools/portail.sh`, journal
-  `~/showrunner.log`, données `~/showrunner-data`), porte publique 9790 (loopback),
-  ComfyUI :8188, H3 :8189 arrêté au repos. DGX1 : miroir du code, ComfyUI
-  :8188, studio Character Factory :8765, diarisation :10002.
-- Références : `~/showrunner-refs/` sur DGX2 (prototype `atelier-canvas`,
-  `odio-o1-playground`, `luts`) ; ODIO_01 cloné dans `/tmp/odio01` ;
-  H3 Studio `/tmp/h3hf`.
+  `~/showrunner.log`, données `~/showrunner-data`), porte 9790 (loopback),
+  `cloudflared.service`, ComfyUI :8188, H3 :8189 arrêté au repos. DGX1 : miroir du
+  code, ComfyUI :8188, studio Character Factory :8765, diarisation :10002.
+- Références : `~/showrunner-refs/` sur DGX2 (`odio-theme-2909/`, prototypes, `luts`).
