@@ -5,8 +5,20 @@
 // même que dans les autres pages ; un clic la pose au centre de la vue. Un
 // personnage de Character Factory devient un élément (import) au moment où
 // on le pose.
+//
+// Le panneau (demande de Cal, 29/09) : ouvert au départ, à sa taille — qu'on
+// voie qu'il existe ; × le ferme (le bouton de la barre, la poignée, le menu du
+// fond le rouvrent) ; sa poignée l'élargit, le geste de commun/split.js :
+// glisser, double-clic = la taille par défaut, flèches 16 px (maj : 64 px).
+// L'état se garde avec les préférences d'Idéation (app.LS : « nolib », « lib-w »).
 
 import { api, toast, el, href, fmtDur, kindFr, etypeFr, dragItem } from '../commun/shell.js';
+
+// la largeur du panneau, en px : par défaut, au plus étroit, au plus large ;
+// la planche en garde toujours CV_MIN
+// (ideation.css, .lgrid : deux colonnes de vignettes dès min, une de plus tous les ~96 px)
+export const LIB_W = { def: 250, min: 210, max: 640 };
+const CV_MIN = 360;
 
 // la copie d'affichage à la taille d'une vignette (commun/proxies.js), chargée sans être exigée
 let pickView = null;
@@ -33,9 +45,100 @@ export function createLibrary(app) {
     oninput: (e) => { q = e.target.value; clearTimeout(qT); qT = setTimeout(load, 220); } });
   box.replaceChildren(
     el('div', { class: 'lib-h' }, el('span', { class: 't' }, 'Bibliothèque'), count, el('span', { class: 'sp' }),
-      el('button', { class: 'tb ghost sm', type: 'button', title: 'des fichiers du disque : ils entrent dans la bibliothèque (Upload) et se posent sur la planche', onclick: () => fileIn.click() }, 'Déposer'), fileIn),
+      el('button', { class: 'tb ghost sm', type: 'button', title: 'des fichiers du disque : ils entrent dans la bibliothèque (Upload) et se posent sur la planche', onclick: () => fileIn.click() }, 'Déposer'), fileIn,
+      el('button', { class: 'tb ghost sm lib-x', type: 'button', title: 'fermer la bibliothèque', 'aria-label': 'fermer la bibliothèque', onclick: () => setOpen(false) }, '×')),
     tabs, search, grid,
     el('p', { class: 'lib-f lbl' }, 'glisser sur la planche ou dans une carte · clic : au centre'));
+
+  // ── le panneau : ouvert ou fermé, sa largeur ────────────────
+  const body = document.body;
+  const main = box.parentElement;   // .ide-main : la grille bibliothèque | planche | inspecteur
+  const btn = document.getElementById('b-lib');
+  const grip = el('div', { class: 'lib-grip', role: 'separator', tabindex: 0, 'aria-orientation': 'vertical', 'aria-controls': 'lib',
+    'aria-valuemin': LIB_W.min, 'aria-valuemax': LIB_W.max });
+  box.after(grip);
+  const guest = () => body.classList.contains('ide-guest');
+  const isOpen = () => !body.classList.contains('nolib');
+  // la place que la planche peut céder (elle garde CV_MIN)
+  const room = () => {
+    const gap = parseFloat(getComputedStyle(main).columnGap) || 0;
+    const insp = document.getElementById('insp')?.getBoundingClientRect().width || 0;
+    return main.getBoundingClientRect().width - (isOpen() ? 0 : gap) - insp - 2 * gap - CV_MIN;
+  };
+  const clampW = (w) => Math.round(Math.max(LIB_W.min, Math.min(LIB_W.max, room(), Number(w) || LIB_W.def)));
+  let want = Number(app.LS('lib-w')) || LIB_W.def;   // la largeur choisie ; affichée dans les bornes du moment
+  function paintWidth() {
+    const w = clampW(want);
+    main.style.setProperty('--lib-w', w + 'px');
+    grip.setAttribute('aria-valuenow', isOpen() ? w : 0);
+    return w;
+  }
+  function setWidth(w, keep = true) {
+    want = Math.max(LIB_W.min, Math.min(LIB_W.max, Math.round(w)));
+    want = paintWidth();
+    if (keep) app.LS('lib-w', want === LIB_W.def ? null : want);
+  }
+  function setOpen(on) {
+    body.classList.toggle('nolib', !on);
+    app.LS('nolib', !on);
+    btn?.classList.toggle('on', on);
+    grip.title = on ? 'glisser : la largeur · double-clic : par défaut' : 'la bibliothèque · clic : l’ouvrir';
+    paintWidth();
+    setTimeout(() => app.canvas?.paintMini(), 250);
+  }
+  // l'ouvrir, la recherche prête (le menu du fond : « Depuis la bibliothèque »)
+  function open() {
+    if (guest()) return;
+    setOpen(true);
+    requestAnimationFrame(() => search.focus({ preventScroll: true }));
+  }
+  btn?.addEventListener('click', () => setOpen(!isOpen()));
+
+  // la poignée : glisser (fermé, elle l'ouvre en glissant), un clic l'ouvre ; le bouton du milieu
+  // reste à la planche (règle de Cal : il déplace)
+  grip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const was = isOpen();
+    const x0 = e.clientX;
+    const w0 = was ? clampW(want) : 0;
+    let moved = false;
+    try { grip.setPointerCapture(e.pointerId); } catch { /* */ }
+    grip.classList.add('on');
+    main.classList.add('resizing');
+    body.classList.add('lib-resizing');
+    const mv = (ev) => {
+      const d = ev.clientX - x0;
+      if (!moved && Math.abs(d) < 3) return;
+      if (!moved) { moved = true; if (!was) setOpen(true); }
+      setWidth(w0 + d, false);
+    };
+    const up = () => {
+      grip.removeEventListener('pointermove', mv);
+      grip.removeEventListener('pointerup', up);
+      grip.removeEventListener('pointercancel', up);
+      grip.classList.remove('on');
+      main.classList.remove('resizing');
+      body.classList.remove('lib-resizing');
+      if (moved) setWidth(want);
+      else if (!was) open();
+    };
+    grip.addEventListener('pointermove', mv);
+    grip.addEventListener('pointerup', up);
+    grip.addEventListener('pointercancel', up);
+  });
+  grip.addEventListener('dblclick', (e) => { e.preventDefault(); setWidth(LIB_W.def); if (!isOpen()) setOpen(true); });
+  grip.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (isOpen()) setOpen(false); else open(); return; }
+    const d = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
+    if (!d) return;
+    e.preventDefault();
+    if (!isOpen()) { if (d > 0) setOpen(true); return; }
+    setWidth(clampW(want) + d * (e.shiftKey ? 64 : 16));
+  });
+  // la fenêtre change : la largeur choisie reste, affichée dans les bornes du moment
+  new ResizeObserver(() => paintWidth()).observe(main);
+  setOpen(!app.LS('nolib'));
 
   async function load() {
     const my = ++seq;
@@ -110,7 +213,9 @@ export function createLibrary(app) {
   load();
   // un rendu fini, un dépôt : la liste se relit
   document.addEventListener('sr:job', () => load());
-  return { reload: load };
+  // fermé, et pas pour l'invité (le portail lui ferme la bibliothèque) : le menu du fond le propose
+  const closed = () => !guest() && !isOpen();
+  return { reload: load, open, close: () => setOpen(false), isOpen, closed, setWidth };
 }
 
 // un personnage de Character Factory → l'élément (le plus récent s'il est déjà importé)

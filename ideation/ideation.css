@@ -58,8 +58,7 @@ body.ide-guest #b-new, body.ide-guest #b-lib, body.ide-guest #b-export, body.ide
 body.ide-guest .ide-bar [data-tool="gen"], body.ide-guest .ide-bar [data-tool="vgen"],
 body.ide-guest .hdr .tools, body.ide-guest .hdr .tools-btn, body.ide-guest .hdr .tools-menu,
 body.ide-guest #sr-sys, body.ide-guest #sr-queue { display: none; }
-body.ide-guest .ide-main { grid-template-columns: 0 minmax(0, 1fr) 300px; }
-body.ide-guest .lib { visibility: hidden; }
+body.ide-guest .lib, body.ide-guest .lib-grip { visibility: hidden; }
 .pname .nm:hover { box-shadow: inset 0 0 0 1px var(--line); }
 .pname .nm:focus { box-shadow: inset 0 0 0 1px var(--line-cy); background: var(--panel2); }
 .tgrp { display: flex; gap: 4px; align-items: center; }
@@ -77,13 +76,37 @@ button.ic:disabled { opacity: .3; cursor: default; }
 .conflict span { flex: 1; min-width: 200px; }
 
 /* ── bibliothèque | planche | inspecteur ───────────────── */
+/* La largeur de la bibliothèque (--lib-w) : library.js, entre ses bornes (LIB_W). Fermée (ou
+   l'invité) : sa colonne tombe à zéro et la grille recule d'un intervalle — la planche prend
+   toute la place ; la poignée reste au bord, un clic la rouvre. */
 .ide-main {
-  flex: 1; min-height: 0; display: grid; gap: 10px;
-  grid-template-columns: 250px minmax(0, 1fr) 300px; transition: grid-template-columns .2s;
+  --ide-gap: 10px; --lib-w: 250px; --insp-w: 300px;
+  position: relative; flex: 1; min-height: 0; display: grid; gap: var(--ide-gap);
+  grid-template-columns: var(--lib-w) minmax(0, 1fr) var(--insp-w); transition: grid-template-columns .2s, margin-left .2s;
 }
-body.nolib .ide-main { grid-template-columns: 0 minmax(0, 1fr) 300px; }
+body.nolib .ide-main, body.ide-guest .ide-main { grid-template-columns: 0 minmax(0, 1fr) var(--insp-w); margin-left: calc(-1 * var(--ide-gap)); }
 body.nolib .lib { visibility: hidden; }
-@media (max-width: 1100px) { .ide-main { grid-template-columns: 0 minmax(0, 1fr) 280px; } .lib { visibility: hidden; } }
+.ide-main.resizing, .ide-main.resizing > .lib-grip { transition: none; }
+body.at-presenting .ide-main { margin-left: 0; }
+body.at-presenting .lib-grip { display: none; }
+@media (max-width: 1100px) { .ide-main { --insp-w: 280px; } }
+
+/* la poignée : dans l'intervalle entre la bibliothèque et la planche (le trait de commun/split.js) */
+.lib-grip {
+  position: absolute; top: 0; bottom: 0; left: var(--lib-w); width: var(--ide-gap); z-index: 5;
+  cursor: col-resize; touch-action: none; outline: none; transition: left .2s;
+}
+.lib-grip::after {
+  content: ""; position: absolute; top: 12%; bottom: 12%; left: 50%; width: 2px; margin-left: -1px;
+  border-radius: 1px; background: transparent; transition: background .12s;
+}
+.lib-grip:hover::after, .lib-grip:focus-visible::after { background: var(--line-cy); }
+.lib-grip.on::after { background: var(--or); }
+/* fermée : un trait court au bord de la planche, qui se voit sans survol */
+body.nolib .lib-grip { left: 0; cursor: pointer; }
+body.nolib .lib-grip::after { top: calc(50% - 24px); bottom: calc(50% - 24px); width: 4px; margin-left: -2px; border-radius: 2px; background: var(--line-gr); }
+body.nolib .lib-grip:hover::after, body.nolib .lib-grip:focus-visible::after { background: var(--line-cy); }
+body.lib-resizing, body.lib-resizing * { user-select: none !important; cursor: col-resize !important; }
 
 /* ── la bibliothèque ───────────────────────────────────── */
 .lib {
@@ -93,11 +116,14 @@ body.nolib .lib { visibility: hidden; }
 .lib-h { display: flex; align-items: center; gap: 8px; }
 .lib-h .t { font-family: var(--f-mono); font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink2); }
 .lib-h .sp { flex: 1; }
+.lib-h .lib-x { width: 24px; padding: 0; font-size: 14px; }
 .ltabs { display: flex; flex-wrap: wrap; gap: 3px; }
 .ltabs .tb { background: transparent; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink3); height: 22px; font-size: 9px; padding: 0 6px; }
 .ltabs .tb.on { background: var(--grn); color: var(--on-grn); box-shadow: none; }
 /* max-content : des pistes « auto » tomberaient à zéro (vignettes en overflow: hidden) dès que la liste dépasse la hauteur */
-.lgrid { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: max-content; gap: 6px; align-content: start; padding-right: 2px; }
+/* deux colonnes de la plus étroite (LIB_W.min, library.js) à la largeur par défaut ;
+   élargie, la bibliothèque en montre davantage (une colonne de plus tous les ~96 px) */
+.lgrid { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); grid-auto-rows: max-content; gap: 6px; align-content: start; padding-right: 2px; }
 .lt {
   display: flex; flex-direction: column; text-align: left; border-radius: var(--r2); background: var(--panel2); overflow: hidden;
   cursor: grab; touch-action: none; box-shadow: inset 0 0 0 1px transparent;

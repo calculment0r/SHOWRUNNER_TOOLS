@@ -893,13 +893,7 @@ $('#b-export').addEventListener('click', () => {
   const f = S.sel.size === 1 && app.node([...S.sel][0])?.type === 'frame' ? [...S.sel][0] : '';
   app.exportBoard(f);
 });
-$('#b-lib').addEventListener('click', () => {
-  const on = document.body.classList.toggle('nolib');
-  LS('nolib', on);
-  $('#b-lib').classList.toggle('on', !on);
-  setTimeout(() => app.canvas.paintMini(), 250);
-});
-if (LS('nolib')) { document.body.classList.add('nolib'); $('#b-lib').classList.remove('on'); }
+// #b-lib : le panneau de la bibliothèque s'ouvre et se ferme par library.js (avec sa poignée)
 // les outils : un clic le prend (les boutons « poser » n'avaient pas d'écoute : seul le clavier les prenait)
 document.querySelector('.ide-bar')?.addEventListener('click', (e) => { const b = e.target.closest?.('[data-tool]'); if (b) app.setTool(b.dataset.tool); });
 $('#b-help').addEventListener('click', help);

@@ -162,7 +162,8 @@ export function createMenus(app) {
       '-', { label: 'Générer image', key: 'G', dot: 'or', onclick: at('gen') },
       { label: 'Générer vidéo', key: 'M', dot: 'cy', onclick: at('vgen') },
       { label: 'Composeur de prompt', key: 'P', dot: 'amb', onclick: at('compose') },
-      '-', { label: 'Depuis la bibliothèque…', sub: 'images, vidéos, sons, éléments', onclick: () => app.pickAt(wx, wy) }];
+      // le panneau fermé (pas pour l'invité) : l'ouvrir ; ouvert, il est là, l'entrée se tait (Cal, 29/09)
+      ...(app.lib?.closed() ? ['-', { label: 'Depuis la bibliothèque', onclick: () => app.lib.open() }] : [])];
     if (!more) return out;
     const st = (S.board?.nodes || []).filter((n) => n.type === 'sticky').length;
     out.push({ label: 'Coller ici', key: 'ctrl+V', disabled: !S.clip?.length, why: 'rien de copié : ctrl+C sur des objets de la planche', onclick: () => app.pasteAt?.(wx, wy) },

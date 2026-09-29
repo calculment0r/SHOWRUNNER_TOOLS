@@ -68,7 +68,11 @@ espace + glisser pour se déplacer, molette ou pincement pour zoomer,
 - `ideation/` : `index.html`, `ideation.js` (planches, enregistrement,
   annuler/rétablir, clavier, gestes à plusieurs objets), `canvas.js`
   (vue, objets, sélection au cadre et au lasso, liens, mini-carte, dépôts),
-  `library.js` (le panneau de la bibliothèque), `inspector.js` (le panneau
+  `library.js` (le panneau de la bibliothèque : ouvert au départ à 250 px,
+  × le ferme, sa poignée l'élargit de 210 à 640 px — double-clic : 250 —,
+  l'état gardé dans `app.LS` ; fermé, le clic droit et le double-clic du
+  fond proposent « Depuis la bibliothèque », qui le rouvre ; rien pour
+  l'invité — demande de Cal du 29/09), `inspector.js` (le panneau
   de droite), `gen.js` (carte Générer, variations, éditions, pose des
   résultats), `ideation.css`.
 - Glisser-déposer : celui du socle (`dragItem`, `dropZone`, `ITEM_MIME` de
