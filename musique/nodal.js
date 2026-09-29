@@ -150,13 +150,21 @@ export function createNodal(app) {
       const a = portXY(c.a, 'out'), b = portXY(c.b, 'in');
       if (!a || !b) continue;
       const key = `${c.a}>${c.b}`;
+      const send = typeof c.send === 'number';
       const g = document.createElementNS(ns, 'g');
-      g.setAttribute('class', `w${S.sel.cable === key ? ' sel' : ''}`);
+      g.setAttribute('class', `w${S.sel.cable === key ? ' sel' : ''}${send ? ' send' : ''}`);
       g.style.setProperty('--k', `var(--${accentOf(app.mod(c.a))})`);
       const hit = document.createElementNS(ns, 'path'), vis = document.createElementNS(ns, 'path');
       hit.setAttribute('class', 'hit'); vis.setAttribute('class', 'vis');
       const d = curve(a, b);
       hit.setAttribute('d', d); vis.setAttribute('d', d);
+      if (send) {
+        // un envoi de la console : son niveau au milieu du câble
+        const tx = document.createElementNS(ns, 'text');
+        tx.setAttribute('x', (a[0] + b[0]) / 2); tx.setAttribute('y', (a[1] + b[1]) / 2 - 6);
+        tx.setAttribute('class', 'lv'); tx.textContent = `envoi ${c.send > 0 ? '+' : ''}${c.send.toFixed(1)} dB`;
+        g.append(tx);
+      }
       hit.addEventListener('pointerdown', (e) => {
         e.stopPropagation();
         S.sel.cable = key; S.sel.mod = null;
@@ -242,6 +250,7 @@ export function createNodal(app) {
     if (!from) {
       items.push('-', { head: 'une piste (source + tranche)' });
       for (const [k, K] of Object.entries(TRACK_KINDS)) {
+        if (k === 'bus') continue;
         items.push({ label: K.label, sub: MODULES[K.src].name, dot: K.color, onclick: () => {
           const t = app.addTrack(k);
           const s = app.mod(t.src), st = app.mod(t.strip);
@@ -249,6 +258,7 @@ export function createNodal(app) {
           app.commit('graph');
         } });
       }
+      items.push({ label: 'Bus d\'effets', sub: 'retour de la console', dot: 'cy', onclick: () => app.addBus('reverb') });
     }
     menu(cx, cy, items);
   }
@@ -272,14 +282,14 @@ export function createNodal(app) {
       const grid = el('div', { class: 'nd-params' });
       // les cartes se redessinent une fois la molette lâchée : les deux vues d'un même réglage restent d'accord
       sideParams = () => put(grid, ...def.params
-        .filter((p) => m.type !== 'drums' || p.k === 'lvl')
+        .filter((p) => (m.type !== 'drums' || p.k === 'lvl') && (m.type !== 'rythme' || !p.k.includes('.')))
         .map((p) => (p.opts ? choice(p, val(m, p.k), { onChange: (v) => { m.params[p.k] = v; app.commit('param', m); app.commit('data'); } })
           : knob(p, val(m, p.k), { accent, onInput: (v) => { m.params[p.k] = v; app.commit('param', m); },
             onChange: () => refreshCard(m) }))));
       sideParams();
       secs.push(el('div', { class: 'pan nd-sel', style: { '--k': `var(--${accent})` } },
         el('div', { class: 'row' }, el('b', { class: 'venus' }, name), el('span', { class: 'sp' }), el('span', { class: 'lbl' }, `${def.kind} · ${sub}`)),
-        m.type === 'drums' ? el('p', { class: 'lbl' }, 'les huit voix se règlent dans le rack (double-clic sur la carte)') : null,
+        m.type === 'drums' || m.type === 'rythme' ? el('p', { class: 'lbl' }, 'les voix se règlent dans le rack (double-clic sur la carte)') : null,
         grid,
         el('div', { class: 'row' },
           def.role === 'effect' || def.role === 'source' ? el('button', { class: `tb sm${m.on !== false ? ' on' : ' ghost'}`, type: 'button',
@@ -302,7 +312,7 @@ export function createNodal(app) {
         const key = `${c.a}>${c.b}`;
         return el('div', { class: `nd-link${S.sel.cable === key ? ' sel' : ''}`,
           onclick: () => { S.sel.cable = key; S.sel.mod = null; render(); } },
-        el('span', {}, `${nm(c.a)} → ${nm(c.b)}`), el('button', { class: 'cut', type: 'button', onclick: (e) => { e.stopPropagation(); app.disconnect(c.a, c.b); } }, 'Couper'));
+        el('span', {}, `${nm(c.a)} → ${nm(c.b)}${typeof c.send === 'number' ? ` · envoi ${c.send.toFixed(1)} dB` : ''}`), el('button', { class: 'cut', type: 'button', onclick: (e) => { e.stopPropagation(); app.disconnect(c.a, c.b); } }, 'Couper'));
       }) : el('p', { class: 'lbl' }, 'tire depuis une sortie vers une entrée'))));
     const mst = app.master();
     const big = el('b', { class: 'nd-db' }, '—');

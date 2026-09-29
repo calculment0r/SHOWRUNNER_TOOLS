@@ -81,6 +81,72 @@ export function knob(s, value, { accent = 'cy', size = 'md', onInput = () => {},
   return box;
 }
 
+// ── le fader de la console ──────────────────────────────────
+// Course verticale, linéaire en dB (choix de réglage) ; tiré à la verticale,
+// double-clic = 0 dB (le défaut), flèches au clavier, Maj : réglage fin.
+export function fader(s, value, { accent = 'cy', onInput = () => {}, onChange = () => {}, label = s.label } = {}) {
+  const cap = el('i', { class: 'cap' });
+  const fill = el('i', { class: 'fill' });
+  const rail = el('div', { class: 'rail' }, fill, cap);
+  const v = el('span', { class: 'v' });
+  const box = el('div', { class: 'fdr', tabindex: 0, role: 'slider', 'aria-label': label, 'aria-orientation': 'vertical',
+    style: { '--k': `var(--${accent})` } }, rail, v);
+  let cur = value;
+  const paint = () => {
+    const n = toNorm(s, cur);
+    cap.style.bottom = `calc(${(n * 100).toFixed(2)}% - 6px)`;
+    fill.style.height = `${(n * 100).toFixed(2)}%`;
+    v.textContent = fmt(s, cur);
+    box.setAttribute('aria-valuetext', `${fmt(s, cur)} ${s.unit || ''}`.trim());
+    box.title = `${label} : ${fmt(s, cur)} ${s.unit || ''}`.trim();
+  };
+  const set = (nv, commit) => { cur = nv; paint(); onInput(cur); if (commit) onChange(cur); };
+  rail.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    rail.setPointerCapture(e.pointerId);
+    const r = rail.getBoundingClientRect();
+    const grabCap = e.target === cap;
+    const y0 = e.clientY, n0 = toNorm(s, cur);
+    if (!grabCap) set(fromNorm(s, 1 - (e.clientY - r.top) / r.height), false);
+    const n1 = toNorm(s, cur);
+    const mv = (ev) => set(fromNorm(s, (grabCap ? n0 : n1) + (y0 - ev.clientY) / (r.height * (ev.shiftKey ? 4 : 1))), false);
+    const up = () => { rail.removeEventListener('pointermove', mv); rail.removeEventListener('pointerup', up); onChange(cur); };
+    rail.addEventListener('pointermove', mv); rail.addEventListener('pointerup', up);
+  });
+  box.addEventListener('dblclick', (e) => { e.stopPropagation(); set(s.def, true); });
+  box.addEventListener('keydown', (e) => {
+    const d = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[e.key];
+    if (!d) return;
+    e.preventDefault(); e.stopPropagation();
+    set(fromNorm(s, toNorm(s, cur) + d * (e.shiftKey ? 0.005 : 0.02)), true);
+  });
+  box.setValue = (nv) => { cur = nv; paint(); };
+  paint();
+  return box;
+}
+
+// Un vu-mètre : crête en dB (-60..+6), maintien de crête 1,5 s, témoin
+// rouge-orangé au-dessus de -1 dBFS. `set(db)` à chaque image.
+export function vu({ lr = false } = {}) {
+  const mk = () => { const bar = el('i', { class: 'lvl' }), hold = el('i', { class: 'hold' }); return { col: el('div', { class: 'col' }, bar, hold), bar, hold, pk: -Infinity, t: 0 }; };
+  const cols = lr ? [mk(), mk()] : [mk()];
+  const box = el('div', { class: `vu${lr ? ' lr' : ''}` }, cols.map((c) => c.col));
+  const pos = (db) => Math.max(0, Math.min(1, (db + 60) / 66));
+  box.set = (...dbs) => {
+    const now = performance.now();
+    cols.forEach((c, i) => {
+      const db = dbs[i] ?? dbs[0];
+      c.bar.style.height = `${(pos(db) * 100).toFixed(1)}%`;
+      if (db > c.pk || now - c.t > 1500) { c.pk = db; c.t = now; }
+      c.hold.style.bottom = `${(pos(c.pk) * 100).toFixed(1)}%`;
+      c.col.classList.toggle('hot', c.pk > -1);
+    });
+  };
+  box.peak = () => Math.max(...cols.map((c) => c.pk));
+  return box;
+}
+
 // Un choix parmi des libellés (forme d'onde, temps du délai…)
 export function choice(s, value, { onChange = () => {} } = {}) {
   const seg = el('div', { class: 'seg mu-seg', role: 'radiogroup', 'aria-label': s.label });
@@ -131,6 +197,34 @@ export function modal({ title, body, foot, wide = false, onclose }) {
   document.body.append(scrim);
   return { close, root: scrim };
 }
+
+// Un panneau qui glisse de la droite, sans voile : la session reste visible
+// et jouable dessous (le génératif, le guide). Un seul ouvert à la fois.
+let openDrawer = null;
+export function drawer({ title, cls = '', head = [], onclose }) {
+  if (openDrawer) openDrawer.close();
+  const body = el('div', { class: 'mu-dr-body' });
+  const root = el('aside', { class: `mu-drawer ${cls}`, role: 'dialog', 'aria-label': title });
+  const close = () => {
+    root.classList.remove('on');
+    setTimeout(() => root.remove(), 200);
+    removeEventListener('keydown', esc);
+    if (openDrawer === api) { openDrawer = null; document.body.classList.remove('mu-drawer-open'); }
+    if (onclose) onclose();
+  };
+  // un seul orange à l'écran : le panneau porte le sien, le GUIDE s'éteint
+  document.body.classList.add('mu-drawer-open');
+  const esc = (e) => { if (e.key === 'Escape' && !e.target.closest?.('input, textarea, select')) close(); };
+  root.append(el('div', { class: 'mu-dr-head' }, el('span', { class: 't' }, title), ...head, el('span', { class: 'sp' }),
+    el('button', { class: 'tb ghost sm', type: 'button', onclick: close }, 'Fermer')), body);
+  document.body.append(root);
+  requestAnimationFrame(() => root.classList.add('on'));
+  addEventListener('keydown', esc);
+  const api = { root, body, close };
+  openDrawer = api;
+  return api;
+}
+export const drawerOpen = () => openDrawer;
 
 // Un nom demandé dans une petite modale → Promise<texte | null>
 export function ask(title, label, value = '', go = 'Créer') {

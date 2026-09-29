@@ -1,11 +1,13 @@
 // MUSIQUE — le moteur Web Audio.
 //
 // Un projet devient un graphe de nœuds Web Audio : chaque module (source,
-// effet, tranche de piste, sortie) est un petit groupe de nœuds avec une
-// entrée et une sortie ; les câbles du projet sont les connexions. Le même
-// code construit le graphe dans l'AudioContext de la page (on joue) et dans
-// un OfflineAudioContext (on exporte en WAV) : ce qu'on entend est ce qu'on
-// exporte.
+// effet, tranche de piste, entrée de bus, sortie) est un petit groupe de
+// nœuds avec une entrée et une sortie ; les câbles du projet sont les
+// connexions, et un câble qui porte un niveau (`send`, en dB) est un envoi
+// de la console vers un bus. Le même code construit le graphe dans
+// l'AudioContext de la page (on joue) et dans un OfflineAudioContext (on
+// exporte en WAV) : ce qu'on entend est ce qu'on exporte, automation et arc
+// d'énergie compris.
 //
 // Le temps : tout se planifie sur l'horloge audio (AudioContext.currentTime),
 // jamais au setTimeout. Un minuteur réveille seulement le planificateur
@@ -14,21 +16,31 @@
 // (lookahead 25 ms, scheduleAheadTime 0.1 s), d'après « A Tale of Two
 // Clocks » (Chris Wilson). Le minuteur tourne dans un Worker : un onglet en
 // arrière-plan ralentit les setTimeout de la page, pas ceux d'un Worker.
+//
+// L'automation (et l'arc d'énergie) : des points (temps, valeur 0..1) reliés
+// en ligne droite. Chaque tranche planifiée pose sur l'AudioParam une valeur
+// au début (setValueAtTime) puis des rampes linéaires jusqu'à chaque point
+// et à la fin de la tranche (linearRampToValueAtTime) — AudioParam, MDN.
 
-import { MODULES, DRUM_VOICES, WAVES, FILTER_TYPES, DELAY_DIVS, val, dbToGain } from './modules.js';
+import { MODULES, DRUM_VOICES, WAVES, FILTER_TYPES, DELAY_DIVS, val, spec, fromNorm, dbToGain, drumVoicesOf } from './modules.js';
 
 const LOOKAHEAD_MS = 25;      // MDN : « lookahead = 25.0 »
 const AHEAD_S = 0.12;         // MDN : « scheduleAheadTime = 0.1 » (+ 20 ms de marge au démarrage d'onglet)
 
 // ── petites aides ───────────────────────────────────────────
 const G = (ctx, gain = 1) => new GainNode(ctx, { gain });
+// les AudioParam que l'automation tient pendant la lecture : une molette ou
+// un enregistrement du projet ne les reprend pas avant l'arrêt
+const HELD = new WeakSet();
 function setP(ctx, param, v, tc = 0.012) {
+  if (HELD.has(param)) return;
   // une molette qu'on tourne pendant la lecture : on glisse vers la valeur
   // (AudioParam.setTargetAtTime, MDN) plutôt que de sauter, sinon ça claque
   if (ctx instanceof OfflineAudioContext || ctx.state !== 'running') param.value = v;
   else param.setTargetAtTime(v, ctx.currentTime, tc);
 }
 const nyq = (ctx, f) => Math.min(f, ctx.sampleRate * 0.45);
+const same = (v) => v;
 
 // Bruit blanc : un tampon rempli de Math.random() * 2 - 1 (MDN, Advanced
 // techniques, « playNoise »). Un seul par contexte, relu par chaque frappe.
@@ -77,8 +89,33 @@ function release(param, t, r) {
   param.setTargetAtTime(0, t, Math.max(0.002, r / 4));
 }
 
+// La valeur d'une courbe de points [[temps, valeur], …] triés : ligne
+// droite entre deux points, palier avant le premier et après le dernier.
+export function interp(pts, b) {
+  if (!pts?.length) return null;
+  if (b <= pts[0][0]) return pts[0][1];
+  const last = pts[pts.length - 1];
+  if (b >= last[0]) return last[1];
+  let lo = 0, hi = pts.length - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (pts[mid][0] <= b) lo = mid; else hi = mid; }
+  const [xa, ya] = pts[lo], [xb, yb] = pts[hi];
+  return xb === xa ? yb : ya + ((yb - ya) * (b - xa)) / (xb - xa);
+}
+
+// pose une courbe entre b0 et b1 sur des AudioParam : [[param, fn], …]
+function ramp(targets, pts, b0, b1, at, conv) {
+  const seg = [[b0, interp(pts, b0)]];
+  for (const [b, v] of pts) if (b > b0 && b < b1) seg.push([b, v]);
+  seg.push([b1, interp(pts, b1)]);
+  for (const [param, fn] of targets) {
+    HELD.add(param);
+    param.setValueAtTime(fn(conv(seg[0][1])), at(seg[0][0]));
+    for (let i = 1; i < seg.length; i++) param.linearRampToValueAtTime(fn(conv(seg[i][1])), Math.max(at(seg[i][0]), at(seg[0][0])));
+  }
+}
+
 // ── les modules ─────────────────────────────────────────────
-// Chaque fabrique rend { input, output, update(mod, bpm), …actions }.
+// Chaque fabrique rend { input, output, update(mod, bpm), ap: {k: [[AudioParam, fn]]}, …actions }.
 
 function effectShell(ctx, core) {
   const input = G(ctx), output = G(ctx);
@@ -95,10 +132,9 @@ function effectShell(ctx, core) {
   };
 }
 
-function mixPair(ctx, mix) {
-  // fondu à puissance constante entre le son sec et l'effet
-  return [Math.cos(mix * Math.PI / 2), Math.sin(mix * Math.PI / 2)];
-}
+// fondu à puissance constante entre le son sec et l'effet
+const cosMix = (v) => Math.cos(v * Math.PI / 2);
+const sinMix = (v) => Math.sin(v * Math.PI / 2);
 
 const FX = {
   delay(ctx) {
@@ -110,11 +146,13 @@ const FX = {
     dl.connect(lp).connect(fb).connect(dl);   // la boucle de retour : permise car elle passe par un DelayNode (MDN)
     return {
       core: { in: inp, out },
+      ap: { mix: [[wet.gain, same]], fb: [[fb.gain, same]] },
       update(m, bpm) {
         setP(ctx, dl.delayTime, Math.min(4, DELAY_DIVS[val(m, 'div')] * 60 / bpm), 0.05);
         setP(ctx, fb.gain, val(m, 'fb'));
         setP(ctx, lp.frequency, nyq(ctx, val(m, 'tone')));
         setP(ctx, wet.gain, val(m, 'mix'));
+        setP(ctx, dry.gain, val(m, 'dry') ? 0 : 1);
       },
     };
   },
@@ -134,6 +172,7 @@ const FX = {
     };
     return {
       core: { in: inp, out },
+      ap: { mix: [[dry.gain, cosMix], [wet.gain, sinMix]] },
       update(m) {
         const time = val(m, 'time');
         if (!conv) setIR(time);
@@ -144,8 +183,8 @@ const FX = {
         }
         setP(ctx, pre.delayTime, val(m, 'pre'));
         setP(ctx, damp.frequency, nyq(ctx, val(m, 'damp')));
-        const [d, w] = mixPair(ctx, val(m, 'mix'));
-        setP(ctx, dry.gain, d); setP(ctx, wet.gain, w);
+        const mix = val(m, 'mix');
+        setP(ctx, dry.gain, cosMix(mix)); setP(ctx, wet.gain, sinMix(mix));
       },
     };
   },
@@ -154,6 +193,7 @@ const FX = {
     c.connect(g);
     return {
       core: { in: c, out: g },
+      ap: { thr: [[c.threshold, same]], gain: [[g.gain, dbToGain]] },
       update(m) {
         setP(ctx, c.threshold, val(m, 'thr')); setP(ctx, c.ratio, val(m, 'ratio'));
         setP(ctx, c.attack, val(m, 'att')); setP(ctx, c.release, val(m, 'rel'));
@@ -168,6 +208,7 @@ const FX = {
     lo.connect(mid).connect(hi);
     return {
       core: { in: lo, out: hi },
+      ap: { lg: [[lo.gain, same]], mg: [[mid.gain, same]], hg: [[hi.gain, same]] },
       update(m) {
         setP(ctx, lo.frequency, val(m, 'lf')); setP(ctx, lo.gain, val(m, 'lg'));
         setP(ctx, mid.frequency, val(m, 'mf')); setP(ctx, mid.gain, val(m, 'mg'));
@@ -179,6 +220,7 @@ const FX = {
     const f = new BiquadFilterNode(ctx);
     return {
       core: { in: f, out: f },
+      ap: { freq: [[f.frequency, (v) => nyq(ctx, v)]], q: [[f.Q, same]] },
       update(m) {
         f.type = FILTER_TYPES[val(m, 'type')];
         setP(ctx, f.frequency, nyq(ctx, val(m, 'freq'))); setP(ctx, f.Q, val(m, 'q'));
@@ -196,12 +238,13 @@ const FX = {
     let k = -1;
     return {
       core: { in: inp, out },
+      ap: { mix: [[dry.gain, cosMix], [wet.gain, sinMix]] },
       update(m) {
         const d = val(m, 'drive');
         if (d !== k) { sh.curve = distCurve(d); k = d; }
         setP(ctx, tone.frequency, nyq(ctx, val(m, 'tone')));
-        const [a, b] = mixPair(ctx, val(m, 'mix'));
-        setP(ctx, dry.gain, a); setP(ctx, wet.gain, b);
+        const mix = val(m, 'mix');
+        setP(ctx, dry.gain, cosMix(mix)); setP(ctx, wet.gain, sinMix(mix));
         setP(ctx, post.gain, dbToGain(val(m, 'out')));
       },
     };
@@ -283,7 +326,7 @@ function drumVoice(ctx, out, voice, t, vel, m, live, st) {
   } else if (voice === 'ch' || voice === 'oh') {
     const d = (voice === 'ch' ? 0.05 : 0.3) * dec;
     const bp = new BiquadFilterNode(ctx, { type: 'bandpass', frequency: nyq(ctx, 10000) });
-    const hp = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 7000 });
+    const hp = new BiquadFilterNode(ctx, { type: 'highpass', frequency: nyq(ctx, 7000) });
     const g = G(ctx, 0);
     for (const r of [2, 3, 4.16, 5.43, 6.79, 8.21]) osc('square', 40 * tune * r).connect(bp);
     bp.connect(hp).connect(g).connect(out);
@@ -300,7 +343,7 @@ function drumVoice(ctx, out, voice, t, vel, m, live, st) {
     g.gain.setValueAtTime(lvl, t); g.gain.exponentialRampToValueAtTime(1e-4, t + d);
     o.connect(g).connect(out); end = t + d;
   } else if (voice === 'cb') {
-    const bp = new BiquadFilterNode(ctx, { type: 'bandpass', frequency: 2640 * tune, Q: 3.5 });
+    const bp = new BiquadFilterNode(ctx, { type: 'bandpass', frequency: nyq(ctx, 2640 * tune), Q: 3.5 });
     end = t;
     // oramics : env1 gain 0,6 attaque 0,01 déclin 0,05 ; env2 gain 0,8 attaque 0,1 déclin 0,1
     for (const [f, a, att, d] of [[587, 0.6, 0.01, 0.05], [845, 0.8, 0.1, 0.1]]) {
@@ -321,6 +364,7 @@ const SRC = {
     const out = G(ctx), st = {};
     return {
       output: out,
+      ap: { lvl: [[out.gain, dbToGain]] },
       update(mm) { m = mm; setP(ctx, out.gain, mm.on === false ? 0 : dbToGain(val(mm, 'lvl'))); },
       hit(voice, t, vel = 1) { drumVoice(ctx, out, voice, t, vel, m, env.live, st); },
       noteOn(p, t, vel) { const v = DRUM_VOICES[((p % 12) + 12) % 12]; if (v) drumVoice(ctx, out, v.id, t, vel, m, env.live, st); return null; },
@@ -329,23 +373,33 @@ const SRC = {
   },
   synth(ctx, m, env) {
     const out = G(ctx);
-    const voice = (p, t, vel) => {
+    // Deux oscillateurs : A (1 à 3 copies réparties dans le désaccord) et B
+    // (« comme A » : le second oscillateur d'avant, présent si le désaccord
+    // est non nul) → passe-bas à enveloppe → ADSR.
+    const voice = (p, t, vel, over) => {
       const f = 440 * Math.pow(2, (p + 12 * val(m, 'oct') - 69) / 12);
-      const type = WAVES[val(m, 'wave')], det = val(m, 'det');
-      const o1 = new OscillatorNode(ctx, { type, frequency: f, detune: -det / 2 });
-      const o2 = det > 0 ? new OscillatorNode(ctx, { type, frequency: f, detune: det / 2 }) : null;
-      const mix = G(ctx, o2 ? 0.5 : 1);
+      const wA = WAVES[val(m, 'wave')], det = val(m, 'det'), uni = Math.round(val(m, 'uni'));
+      const w2 = Math.round(val(m, 'wave2'));
+      const detA = uni <= 1 ? [-det / 2] : uni === 2 ? [-det / 2, det / 2] : [-det, 0, det];
+      const hasB = w2 === 0 ? det > 0 && uni <= 1 : w2 !== 5;
+      const mix2 = val(m, 'mix2');
+      const mix = G(ctx, 1), oscs = [];
+      const aBus = G(ctx, (hasB ? 1 - mix2 : 1) / Math.sqrt(detA.length));
+      for (const d of detA) { const o = new OscillatorNode(ctx, { type: wA, frequency: f, detune: d }); o.connect(aBus); oscs.push(o); }
+      aBus.connect(mix);
+      if (hasB) {
+        const o = new OscillatorNode(ctx, { type: w2 === 0 ? wA : WAVES[w2 - 1], frequency: f * Math.pow(2, val(m, 'oct2')), detune: det / 2 });
+        o.connect(G(ctx, mix2)).connect(mix); oscs.push(o);
+      }
       const flt = new BiquadFilterNode(ctx, { type: 'lowpass', Q: val(m, 'res') });
       const amp = G(ctx, 0);
-      const a = val(m, 'a'), d = val(m, 'd'), s = val(m, 's'), cut = val(m, 'cut');
+      const a = val(m, 'a'), d = val(m, 'd'), s = val(m, 's'), cut = over?.cut ?? val(m, 'cut');
       flt.frequency.setValueAtTime(nyq(ctx, cut * Math.pow(2, val(m, 'fenv'))), t);
       flt.frequency.setTargetAtTime(nyq(ctx, cut), t + a, val(m, 'fdec') / 4);
       amp.gain.setValueAtTime(0, t);
       amp.gain.linearRampToValueAtTime(vel, t + a);
       amp.gain.setTargetAtTime(s * vel, t + a, d / 4);
-      o1.connect(mix); if (o2) o2.connect(mix);
       mix.connect(flt).connect(amp).connect(out);
-      const oscs = o2 ? [o1, o2] : [o1];
       for (const o of oscs) { o.start(t); env.live(o); }
       return {
         off(tr) {
@@ -357,8 +411,9 @@ const SRC = {
     };
     return {
       output: out,
+      ap: { vol: [[out.gain, dbToGain]] },
       update(mm) { m = mm; setP(ctx, out.gain, mm.on === false ? 0 : dbToGain(val(mm, 'vol'))); },
-      noteOn(p, t, vel = 0.8, dur) { const v = voice(p, t, vel); if (dur !== undefined) v.off(t + dur); return v; },
+      noteOn(p, t, vel = 0.8, dur, over) { const v = voice(p, t, vel, over); if (dur !== undefined) v.off(t + dur); return v; },
       noteOff(v, t) { if (v) v.off(t); },
     };
   },
@@ -379,6 +434,7 @@ const SRC = {
     };
     return {
       output: out,
+      ap: { vol: [[out.gain, dbToGain]] },
       update(mm) { m = mm; setP(ctx, out.gain, mm.on === false ? 0 : dbToGain(val(mm, 'vol'))); },
       noteOn(p, t, vel = 0.8, dur) { const v = voice(p, t, vel); if (v && dur !== undefined) v.off(t + dur); return v; },
       noteOff(v, t) { if (v) v.off(t); },
@@ -388,17 +444,33 @@ const SRC = {
     const out = G(ctx);
     return {
       output: out,
+      ap: { vol: [[out.gain, dbToGain]] },
       update(mm) { m = mm; setP(ctx, out.gain, mm.on === false ? 0 : dbToGain(val(mm, 'vol'))); },
-      // un clip audio : lu à sa vitesse, fondu de 5 ms aux bords (sans clic)
-      clip(buf, t, off, dur) {
-        if (!buf || off >= buf.duration || dur <= 0) return;
-        dur = Math.min(dur, buf.duration - off);
-        const src = new AudioBufferSourceNode(ctx, { buffer: buf }), g = G(ctx, 0);
-        const fade = Math.min(0.005, dur / 4);
-        g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(1, t + fade);
-        g.gain.setValueAtTime(1, t + dur - fade); g.gain.linearRampToValueAtTime(0, t + dur);
+      // Un clip audio lu de `t` à `t + dur`, `off` secondes dans le son.
+      // o : T0 (instant du début du clip), L (sa durée), gain (dB), fi / fo
+      // (fondus, s), loop / ls / llen (la boucle : AudioBufferSourceNode.loop,
+      // loopStart, loopEnd — MDN). Enveloppe : les fondus du clip, et 5 ms
+      // aux bords de ce qu'on joue (sans clic).
+      clip(buf, t, off, dur, o = {}) {
+        if (!buf || dur <= 0) return;
+        const loop = !!o.loop && o.llen > 0.01;
+        if (!loop) { if (off >= buf.duration) return; dur = Math.min(dur, buf.duration - off); }
+        const src = new AudioBufferSourceNode(ctx, { buffer: buf });
+        if (loop) { src.loop = true; src.loopStart = o.ls; src.loopEnd = Math.min(buf.duration, o.ls + o.llen); }
+        const g = G(ctx, 0);
+        const G0 = dbToGain(o.gain || 0), T0 = o.T0 ?? t, L = o.L ?? dur;
+        const fi = Math.max(0, o.fi || 0), fo = Math.max(0, o.fo || 0);
+        const shape = (tau) => G0 * Math.max(0, Math.min(1, fi > 0 ? tau / fi : 1, fo > 0 ? (L - tau) / fo : 1));
+        const a = Math.min(0.005, dur / 4), end = t + dur;
+        const pts = [[t + a, shape(t + a - T0)]];
+        for (const x of [T0 + fi, T0 + L - fo]) if (x > t + a && x < end - a) pts.push([x, shape(x - T0)]);
+        pts.sort((p, q) => p[0] - q[0]);
+        pts.push([end - a, shape(end - a - T0)]);
+        g.gain.setValueAtTime(0, t);
+        for (const [x, v] of pts) g.gain.linearRampToValueAtTime(v, x);
+        g.gain.linearRampToValueAtTime(0, end);
         src.connect(g).connect(out);
-        src.start(t, off, dur);
+        if (loop) { src.start(t, off); src.stop(end); } else src.start(t, off, dur);
         env.live(src);
       },
       noteOn() { return null; }, noteOff() {},
@@ -413,35 +485,122 @@ function strip(ctx) {
   mute.connect(an);
   return {
     input: vol, output, analyser: an,
+    ap: { vol: [[vol.gain, dbToGain]], pan: [[pan.pan, same]] },
     update(m) { setP(ctx, vol.gain, dbToGain(val(m, 'vol'))); setP(ctx, pan.pan, val(m, 'pan')); },
     setMute(on) { setP(ctx, mute.gain, on ? 0 : 1, 0.006); },
   };
 }
 
+// l'entrée d'un bus : là où les envois se rejoignent, avant les effets
+function busIn(ctx) {
+  const g = G(ctx);
+  return { input: g, output: g, ap: { in: [[g.gain, dbToGain]] }, update(m) { setP(ctx, g.gain, dbToGain(val(m, 'in'))); } };
+}
+
+// La sortie : volume → filtre de l'arc (passe-bas, Q de Butterworth
+// 1/√2) → gain de l'arc → haut-parleurs ; deux analyseurs, gauche et
+// droite (ChannelSplitterNode, MDN).
 function master(ctx) {
-  const vol = G(ctx), output = G(ctx);
+  const vol = G(ctx), arcF = new BiquadFilterNode(ctx, { type: 'lowpass', Q: Math.SQRT1_2, frequency: nyq(ctx, 20000) });
+  const arcG = G(ctx), output = G(ctx);
   const an = new AnalyserNode(ctx, { fftSize: 2048 });
-  vol.connect(output); vol.connect(an);
-  return { input: vol, output, analyser: an, update(m) { setP(ctx, vol.gain, dbToGain(val(m, 'vol'))); } };
+  const split = new ChannelSplitterNode(ctx, { numberOfOutputs: 2 });
+  const anL = new AnalyserNode(ctx, { fftSize: 1024 }), anR = new AnalyserNode(ctx, { fftSize: 1024 });
+  vol.connect(arcF).connect(arcG).connect(output);
+  arcG.connect(an); arcG.connect(split); split.connect(anL, 0); split.connect(anR, 1);
+  const hi = nyq(ctx, 20000);
+  return {
+    input: vol, output, analyser: an, anL, anR,
+    ap: { vol: [[vol.gain, dbToGain]] },
+    update(m) { setP(ctx, vol.gain, dbToGain(val(m, 'vol'))); },
+    // ce que l'arc tient, selon sa cible : le filtre, le volume, les deux
+    arcAp(to, m) {
+      const lo = Math.min(hi, val(m, 'arc_lo')), db = val(m, 'arc_db');
+      const t = [];
+      if (to !== 'vol') t.push([arcF.frequency, (v) => lo * Math.pow(hi / lo, v)]);
+      if (to !== 'lpf') t.push([arcG.gain, (v) => dbToGain(db * (1 - v))]);
+      return t;
+    },
+    arcRest() { for (const p of [arcF.frequency, arcG.gain]) HELD.delete(p); setP(ctx, arcF.frequency, hi); setP(ctx, arcG.gain, 1); },
+  };
+}
+
+// ── ODIO : les instruments et effets du prototype, derrière le même contrat ──
+// Un instrument d'ODIO reçoit des notes datées {note, velocity, time,
+// duration, slide, accent} et expose ses réglages (odio/types.js) ; un effet
+// a une entrée, une sortie, setEnabled et setParameter(id, valeur, instant).
+// L'adaptateur les présente comme les modules d'ici. `env.held` : les
+// réglages que l'automation tient pendant la lecture (clés « module:réglage »).
+function odioSource(ctx, m, env) {
+  const def = MODULES[m.type];
+  const inst = new def.cls(ctx);
+  const out = G(ctx), trim = dbToGain(def.trim || 0);
+  inst.output.connect(out);
+  const ready = Promise.resolve(inst.load?.()).catch((e) => console.warn(`${def.name} : ${e.message}`));
+  env.pending?.push(ready);
+  const voices = def.drum ? drumVoicesOf(m.type) : null;
+  const apply = (mm) => { for (const s of def.params) if (!env.held?.has(`${mm.id}:${s.k}`)) inst.setParameter(s.k, val(mm, s.k)); };
+  apply(m);
+  out.gain.value = m.on === false ? 0 : trim;
+  const drum = (v, t, vel) => { if (v) inst.noteOn({ note: v.note, velocity: vel, time: t, duration: 0.1 }); };
+  return {
+    output: out, odio: inst, ready,
+    update(mm) { m = mm; apply(mm); setP(ctx, out.gain, mm.on === false ? 0 : trim); },
+    setAt(k, v) { inst.setParameter(k, v); },
+    hit(voice, t, vel = 1) { drum(voices?.find((x) => x.id === voice), t, vel); },
+    // une note sans durée (clavier, MIDI) part longue et se relâche à noteOff
+    noteOn(p, t, vel = 0.8, dur, over) {
+      if (voices) { drum(voices[((p % 12) + 12) % 12], t, vel); return null; }
+      inst.noteOn({ note: p, velocity: vel, time: t, duration: dur ?? 30, slide: !!over?.sl, accent: !!over?.ac });
+      return dur === undefined ? { note: p } : null;
+    },
+    noteOff(h, t) { if (h && inst.noteOff) inst.noteOff(h.note, t); },
+    ping() { return inst.ping ? inst.ping() : Promise.resolve(true); },
+    dispose() { try { inst.dispose(); } catch { /* déjà défait */ } },
+  };
+}
+function odioEffect(ctx, m, env) {
+  const def = MODULES[m.type];
+  const fx = new def.cls(ctx);
+  const apply = (mm) => {
+    for (const s of def.params) if (!env.held?.has(`${mm.id}:${s.k}`)) fx.setParameter(s.k, val(mm, s.k));
+    fx.setEnabled(mm.on !== false);
+  };
+  apply(m);
+  return {
+    input: fx.input, output: fx.output, odio: fx,
+    update(mm) { apply(mm); },
+    setAt(k, v, t) { fx.setParameter(k, v, t); },
+    flush() { fx.flush?.(); },
+    dispose() { try { fx.dispose(); } catch { /* déjà défait */ } },
+  };
 }
 
 function makeNode(ctx, m, env) {
   const def = MODULES[m.type];
   if (!def) throw new Error(`module inconnu : ${m.type}`);
+  if (def.odio) return def.role === 'source' ? { ...odioSource(ctx, m, env), input: null } : odioEffect(ctx, m, env);
   if (def.role === 'source') { const n = SRC[m.type](ctx, m, env); n.input = null; return n; }
   if (def.role === 'strip') return strip(ctx);
+  if (def.role === 'bus') return busIn(ctx);
   if (def.role === 'master') return master(ctx);
   const fx = FX[m.type](ctx);
   const sh = effectShell(ctx, fx.core);
-  return { input: sh.input, output: sh.output, update(mm, bpm) { fx.update(mm, bpm); sh.setOn(mm.on !== false); } };
+  return { input: sh.input, output: sh.output, ap: fx.ap, update(mm, bpm) { fx.update(mm, bpm); sh.setOn(mm.on !== false); } };
 }
 
 // ── le graphe d'un projet dans un contexte ──────────────────
 export class Graph {
   constructor(ctx, env) {
     this.ctx = ctx; this.env = env; this.nodes = new Map(); this.types = new Map();
+    this.sends = new Map();
+    env.held = new Set(); env.pending = [];
     this.dest = ctx.destination;
   }
+
+  // ce que les modules chargent encore (le worklet de Plaits, le bruit de la
+  // boîte à rythme) : l'export l'attend avant de rendre
+  ready() { return Promise.all(this.env.pending); }
 
   sync(p) {
     const ids = new Set(p.modules.map((m) => m.id));
@@ -449,6 +608,7 @@ export class Graph {
       const m = p.modules.find((x) => x.id === id);
       if (!ids.has(id) || this.types.get(id) !== m?.type) {
         try { n.output.disconnect(); } catch { /* déjà débranché */ }
+        n.dispose?.();
         this.nodes.delete(id); this.types.delete(id);
       }
     }
@@ -463,23 +623,92 @@ export class Graph {
 
   wire(p) {
     for (const n of this.nodes.values()) n.output.disconnect();
+    for (const g of this.sends.values()) g.disconnect();
+    const used = new Set();
     for (const c of p.cables) {
       const a = this.nodes.get(c.a), b = this.nodes.get(c.b);
-      if (a && b && b.input) a.output.connect(b.input);
+      if (!a || !b || !b.input) continue;
+      if (typeof c.send === 'number') {
+        // un envoi : un gain entre la tranche et l'entrée du bus
+        const key = `${c.a}>${c.b}`;
+        let g = this.sends.get(key);
+        if (!g) { g = G(this.ctx, dbToGain(c.send)); this.sends.set(key, g); } else setP(this.ctx, g.gain, dbToGain(c.send));
+        a.output.connect(g); g.connect(b.input); used.add(key);
+      } else a.output.connect(b.input);
     }
+    for (const k of [...this.sends.keys()]) if (!used.has(k)) this.sends.delete(k);
     const m = p.modules.find((x) => x.type === 'master');
     if (m) this.nodes.get(m.id).output.connect(this.dest);
   }
 
+  setSend(a, b, db) { const g = this.sends.get(`${a}>${b}`); if (g) setP(this.ctx, g.gain, dbToGain(db)); }
+
+  // muet et solo ; un bus n'est jamais rendu muet par le solo d'une autre
+  // piste (ce qu'on envoie dans la réverbération doit y rester)
   mutes(p) {
-    const solo = p.tracks.some((t) => t.solo);
+    const solo = p.tracks.some((t) => t.solo && t.kind !== 'bus');
     for (const t of p.tracks) {
       const s = this.nodes.get(t.strip);
-      if (s?.setMute) s.setMute(t.mute || (solo && !t.solo));
+      if (s?.setMute) s.setMute(t.mute || (solo && !t.solo && t.kind !== 'bus'));
     }
   }
 
   update(m, bpm) { const n = this.nodes.get(m.id); if (n) n.update(m, bpm); }
+
+  // les AudioParam d'une voie d'automation : [[param, fn]] et la conversion 0..1 → valeur
+  lane(p, L) {
+    const m = p.modules.find((x) => x.id === L.mod), n = this.nodes.get(L.mod);
+    const tg = n?.ap?.[L.k];
+    if (!m || !tg) return null;
+    const s = spec(m.type, L.k);
+    return { tg, conv: (v) => fromNorm(s, v) };
+  }
+
+  automate(p, b0, b1, at) {
+    for (const L of p.auto || []) {
+      if (L.on === false || !L.pts?.length) continue;
+      const x = this.lane(p, L);
+      if (x) { ramp(x.tg, L.pts, b0, b1, at, x.conv); continue; }
+      // un module d'ODIO : ses réglages se posent par setParameter, relevés
+      // au début de la tranche et à chaque croche qu'elle contient
+      const n = this.nodes.get(L.mod), m = p.modules.find((y) => y.id === L.mod);
+      if (!n?.setAt || !m) continue;
+      const s = spec(m.type, L.k);
+      if (!s || s.opts) continue;
+      this.env.held.add(`${L.mod}:${L.k}`);
+      for (let b = b0; b < b1; b = Math.floor(b * 2 + 1e-9) / 2 + 0.5) n.setAt(L.k, fromNorm(s, interp(L.pts, b)), at(b));
+    }
+    const A = p.arc, mm = p.modules.find((x) => x.type === 'master');
+    const mn = mm && this.nodes.get(mm.id);
+    if (mn && A?.on && A.pts?.length) ramp(mn.arcAp(A.to, mm), A.pts, b0, b1, at, same);
+  }
+
+  // à l'arrêt : l'automation rend la main ; les réglages prennent la valeur
+  // de leur courbe à la tête de lecture (ce qu'on entend en jouant à la main)
+  settle(p, beat) {
+    for (const L of p.auto || []) {
+      const m = p.modules.find((y) => y.id === L.mod), n = this.nodes.get(L.mod);
+      const x = this.lane(p, L);
+      if (!x) {
+        if (!n?.setAt || !m) continue;
+        this.env.held.delete(`${L.mod}:${L.k}`);
+        n.update(m, p.bpm);
+        const s = spec(m.type, L.k);
+        if (s && !s.opts && L.on !== false && L.pts?.length) n.setAt(L.k, fromNorm(s, interp(L.pts, beat)));
+        continue;
+      }
+      for (const [param] of x.tg) { param.cancelScheduledValues(0); HELD.delete(param); }
+      n?.update(m, p.bpm);
+      if (L.on !== false && L.pts?.length) for (const [param, fn] of x.tg) setP(this.ctx, param, fn(x.conv(interp(L.pts, beat))));
+    }
+    const mm = p.modules.find((x) => x.type === 'master'), mn = mm && this.nodes.get(mm.id);
+    if (mn) {
+      for (const [param] of mn.arcAp('both', mm)) param.cancelScheduledValues(0);
+      mn.arcRest();
+      const A = p.arc;
+      if (A?.on && A.pts?.length) for (const [param, fn] of mn.arcAp(A.to, mm)) setP(this.ctx, param, fn(interp(A.pts, beat)));
+    }
+  }
 
   // Pose les événements du morceau entre les temps b0 et b1 (en noires),
   // b0 tombant à l'instant t0 de l'horloge audio. `limit` : un clip audio
@@ -487,9 +716,13 @@ export class Graph {
   schedule(p, b0, b1, t0, limit = Infinity) {
     const spb = 60 / p.bpm;
     const at = (b) => t0 + (b - b0) * spb;
+    this.automate(p, b0, b1, at);
     const trk = new Map(p.tracks.map((t) => [t.id, t]));
     const pats = new Map(p.patterns.map((x) => [x.id, x]));
+    const cutLanes = new Map((p.auto || []).filter((L) => L.k === 'cut' && L.on !== false && L.pts?.length).map((L) => [L.mod, L]));
+    const cutSpec = spec('synth', 'cut');
     for (const c of p.clips) {
+      if (c.mute) continue;
       const tr = trk.get(c.track);
       if (!tr) continue;
       const cs = c.start, ce = c.start + c.len;
@@ -497,13 +730,14 @@ export class Graph {
       const src = this.nodes.get(tr.src);
       if (!src) continue;
       if (tr.kind === 'audio') {
-        if (cs >= b0 && cs < b1) src.clip(this.env.buffers.get(c.item), at(cs), c.off || 0, (Math.min(ce, limit) - cs) * spb);
+        if (cs >= b0 && cs < b1) this.audioClip(src, c, at(cs), cs, cs, limit, spb);
         continue;
       }
       const pat = pats.get(c.pat);
       if (!pat) continue;
       const plen = pat.steps / 4;
       const from = Math.max(b0, cs), to = Math.min(b1, ce);
+      const cutL = cutLanes.get(tr.src);
       // `off` (en noires) : où le motif en est au début du clip — un clip
       // coupé en deux continue son motif au lieu de le reprendre
       const origin = cs - (c.off || 0);
@@ -520,11 +754,29 @@ export class Graph {
         } else {
           for (const n of pat.notes || []) {
             const b = base + n.s / 4;
-            if (b >= from && b < to) src.noteOn(n.p, at(b), n.v ?? 0.8, Math.min(n.l / 4, ce - b) * spb);
+            if (b >= from && b < to) {
+              // la coupure automatisée du synthé, lue à l'attaque ; l'accent et
+              // la liaison d'une note (la basse acide d'ODIO)
+              const over = cutL || n.ac || n.sl ? { cut: cutL ? fromNorm(cutSpec, interp(cutL.pts, b)) : undefined, ac: n.ac, sl: n.sl } : undefined;
+              src.noteOn(n.p, at(b), n.v ?? 0.8, Math.min(n.l / 4, ce - b) * spb, over);
+            }
           }
         }
       }
     }
+  }
+
+  // un clip audio lu à partir du temps `beat` (son début, ou plus loin quand
+  // la lecture part au milieu), qui tombe à l'instant `t`
+  audioClip(src, c, t, beat, cs, limit, spb) {
+    const buf = this.env.buffers.get(c.item);
+    if (!buf) return;
+    const into = (beat - cs) * spb;                    // secondes déjà passées du clip
+    const L = c.len * spb, ls = c.off || 0;
+    const llen = c.loop ? Math.max(0.02, Math.min(c.llen || (buf.duration - ls), buf.duration - ls)) : 0;
+    const off = c.loop ? ls + (into % llen) : ls + into;
+    const dur = (Math.min(cs + c.len, limit) - beat) * spb;
+    src.clip(buf, t, off, dur, { T0: t - into, L, gain: c.gain || 0, fi: c.fi || 0, fo: c.fo || 0, loop: !!c.loop, ls, llen });
   }
 
   // Les clips audio déjà commencés à l'instant où la lecture part (ou
@@ -534,23 +786,27 @@ export class Graph {
     const trk = new Map(p.tracks.map((x) => [x.id, x]));
     for (const c of p.clips) {
       const tr = trk.get(c.track);
-      if (!tr || tr.kind !== 'audio') continue;
+      if (!tr || tr.kind !== 'audio' || c.mute) continue;
       if (c.start < beat && c.start + c.len > beat) {
         const src = this.nodes.get(tr.src);
-        if (src) src.clip(this.env.buffers.get(c.item), t, (c.off || 0) + (beat - c.start) * spb,
-          (Math.min(c.start + c.len, limit) - beat) * spb);
+        if (src) this.audioClip(src, c, t, beat, c.start, limit, spb);
       }
     }
   }
 
-  level(id) {
-    const an = this.nodes.get(id)?.analyser;
+  level(id, an = null) {
+    an = an || this.nodes.get(id)?.analyser;
     if (!an) return -Infinity;
     const d = this._buf && this._buf.length === an.fftSize ? this._buf : (this._buf = new Float32Array(an.fftSize));
     an.getFloatTimeDomainData(d);
     let pk = 0;
     for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > pk) pk = v; }
     return pk > 0 ? 20 * Math.log10(pk) : -Infinity;
+  }
+  levelLR(id) {
+    const n = this.nodes.get(id);
+    if (!n?.anL) return [-Infinity, -Infinity];
+    return [this.level(null, n.anL), this.level(null, n.anR)];
   }
 }
 
@@ -561,7 +817,8 @@ export class Engine {
   constructor({ loadItem } = {}) {
     this.ctx = null; this.graph = null; this.proj = null;
     this.buffers = new Map(); this.loading = new Map(); this.loadItem = loadItem;
-    this.voices = new Set(); this.play = null; this.pos = 0; this.onstop = null;
+    this.voices = new Set(); this.play = null; this.pos = 0; this.onstop = null; this.onplay = null;
+    this.metro = false;
     this.live = (node) => { this.voices.add(node); node.onended = () => this.voices.delete(node); };
     this.timer = null;
   }
@@ -572,16 +829,20 @@ export class Engine {
     if (!this.ctx) {
       this.ctx = new AudioContext({ latencyHint: 'interactive' });
       this.graph = new Graph(this.ctx, { buffers: this.buffers, live: this.live });
-      if (this.proj) this.graph.sync(this.proj);
+      if (this.proj) { this.graph.sync(this.proj); this.graph.settle(this.proj, this.pos); }
     }
     if (this.ctx.state !== 'running') await this.ctx.resume();
+    await this.graph.ready();
   }
 
-  setProject(p) { this.proj = p; if (this.graph) this.graph.sync(p); this.need(p); }
+  setProject(p) { this.proj = p; if (this.graph) { this.graph.sync(p); if (!this.play) this.graph.settle(p, this.pos); } this.need(p); }
   syncGraph() { if (this.graph && this.proj) this.graph.sync(this.proj); }
   updateModule(m) { if (this.graph) this.graph.update(m, this.proj.bpm); }
+  setSend(a, b, db) { if (this.graph) this.graph.setSend(a, b, db); }
   mutes() { if (this.graph && this.proj) this.graph.mutes(this.proj); }
   level(id) { return this.graph ? this.graph.level(id) : -Infinity; }
+  levelLR(id) { return this.graph ? this.graph.levelLR(id) : [-Infinity, -Infinity]; }
+  settle() { if (this.graph && this.proj && !this.play) this.graph.settle(this.proj, this.pos); }
 
   // les sons dont le projet a besoin (échantillonneurs, clips audio)
   need(p) {
@@ -634,6 +895,7 @@ export class Engine {
       this.timer.onmessage = () => this.tick();
     }
     this.timer.postMessage('go');
+    if (this.onplay) this.onplay(beat);
   }
 
   loopAt(beat) {
@@ -652,6 +914,7 @@ export class Engine {
       let end = P.cb + (horizon - P.ct) / P.spb, wrap = false;
       if (loop && end >= loop.b) { end = loop.b; wrap = true; }
       this.graph.schedule(p, P.cb, end, P.ct, loop ? loop.b : Infinity);
+      if (this.metro) this.clicks(P.cb, end, P.ct, P.spb, p.sig);
       P.ct += (end - P.cb) * P.spb;
       P.cb = end;
       if (wrap) {
@@ -661,26 +924,47 @@ export class Engine {
         this.graph.resume(p, loop.a, P.ct, loop.b);
       }
     }
-    if (!this.loopAt(P.cb) && P.cb > songEnd(p) + 2) this.stop(true);
+    if (!this.loopAt(P.cb) && P.cb > songEnd(p) + 2 && !this.keepGoing) this.stop(true);
+  }
+
+  // Le métronome : un bip à chaque temps, plus aigu sur le premier de la
+  // mesure (sinus 1500 / 1000 Hz, 30 ms — choix de réglage). Il part droit
+  // aux haut-parleurs : il ne passe pas par la sortie, ni dans l'export.
+  clicks(b0, b1, t0, spb, sig) {
+    for (let b = Math.ceil(b0 - 1e-9); b < b1; b++) {
+      const t = t0 + (b - b0) * spb;
+      const o = new OscillatorNode(this.ctx, { type: 'sine', frequency: b % sig === 0 ? 1500 : 1000 });
+      const g = G(this.ctx, 0);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.35, t + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.03);
+      o.connect(g).connect(this.ctx.destination);
+      o.start(t); o.stop(t + 0.04); this.live(o);
+    }
   }
 
   halt() {
     if (this.timer) this.timer.postMessage('stop');
     for (const v of this.voices) { try { v.stop(0); } catch { /* pas encore parti */ } }
     this.voices.clear();
+    // les instruments d'ODIO tiennent leurs voix eux-mêmes
+    if (this.graph) for (const n of this.graph.nodes.values()) n.odio?.allNotesOff?.();
   }
 
-  stop(ended = false) {
+  // pause : on reste où l'on est ; stop : on revient où la lecture a commencé
+  stop(ended = false, { stay = false } = {}) {
     const from = this.play ? this.play.from : this.pos;
+    const here = this.position();
     this.halt();
     this.play = null;
-    this.pos = from;
-    if (this.onstop) this.onstop(ended);
+    this.pos = stay ? here : from;
+    if (this.graph && this.proj) this.graph.settle(this.proj, this.pos);
+    if (this.onstop) this.onstop(ended, here);
   }
 
   seek(beat) {
     this.pos = Math.max(0, beat);
     if (this.play) this.playFrom(this.pos);
+    else this.settle();
   }
 
   // ── jouer à la main (clavier, MIDI, pads, piano roll) ──
@@ -704,20 +988,31 @@ export class Engine {
 export function songEnd(p) {
   return p.clips.reduce((e, c) => Math.max(e, c.start + c.len), 0);
 }
+// La fin de ce qu'on voit : clips, sections, marqueurs.
+export function projEnd(p) {
+  return Math.max(songEnd(p), ...(p.sections || []).map((s) => s.b), ...(p.markers || []).map((m) => m.b), 0);
+}
 
 // ── l'export : le même graphe, hors temps réel ──────────────
 // OfflineAudioContext.startRendering (MDN) rend le mixage d'un coup, plus
 // vite que le temps réel. `from`/`to` en noires ; `tail` : les secondes
-// laissées aux réverbérations et aux chutes après la dernière note.
-export async function renderMix(engine, p, from, to, { tail = 2, sampleRate = 48000 } = {}) {
+// laissées aux réverbérations et aux chutes après la dernière note ;
+// `solo` : une piste seule (un stem), les bus restant ouverts.
+export async function renderMix(engine, p, from, to, { tail = 2, sampleRate = 48000, solo = null } = {}) {
   await engine.need(p);
+  // une piste seule : les autres sont muettes (tranche coupée, envois
+  // compris) — on ne planifie donc que ses clips, le rendu est le même
+  if (solo) p = { ...p, tracks: p.tracks.map((t) => ({ ...t, solo: t.id === solo, mute: t.id === solo ? false : t.mute })), clips: p.clips.filter((c) => c.track === solo) };
   const spb = 60 / p.bpm;
   const length = Math.ceil(((to - from) * spb + tail) * sampleRate);
   const octx = new OfflineAudioContext({ numberOfChannels: 2, length, sampleRate });
   const g = new Graph(octx, { buffers: engine.buffers, live: () => {} });
   g.sync(p);
+  await g.ready();                    // le worklet de Plaits, le bruit de la boîte à rythme
   g.resume(p, from, 0, to);
   g.schedule(p, from, to, 0, to);
+  for (const n of g.nodes.values()) n.flush?.();                       // la réverbe d'ODIO
+  await Promise.all([...g.nodes.values()].map((n) => n.ping?.()));    // les notes postées au worklet
   return octx.startRendering();
 }
 
@@ -745,11 +1040,12 @@ export function wav24(buf) {
   return new Blob([dv.buffer], { type: 'audio/wav' });
 }
 
-export function peakDb(buf) {
+export function peakDb(buf, a = 0, b = Infinity) {
   let pk = 0;
   for (let c = 0; c < buf.numberOfChannels; c++) {
     const d = buf.getChannelData(c);
-    for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > pk) pk = v; }
+    const i0 = Math.max(0, Math.floor(a * buf.sampleRate)), i1 = Math.min(d.length, Math.ceil(b * buf.sampleRate));
+    for (let i = i0; i < i1; i++) { const v = Math.abs(d[i]); if (v > pk) pk = v; }
   }
   return pk > 0 ? 20 * Math.log10(pk) : -Infinity;
 }

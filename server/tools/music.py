@@ -1,30 +1,32 @@
-"""Musique : un seul projet, trois vues (timeline, rack, nodal).
+"""ODIO, le studio musique du portail : les projets et la génération ACE-Step.
 
-Le son se fait dans la page (Web Audio) ; le serveur garde les projets et
-porte les deux travaux « IA » :
+Le son se fait dans la page (Web Audio, `musique/`) ; le serveur garde les
+projets, les valide, et porte la génération ACE-Step :
 
-  music.generate   un morceau à partir d'un style et de paroles facultatives
-  music.stems      un son de la bibliothèque découpé en voix, batterie, basse
-                   et reste
+  music.generate      ACE-Step 1.5 : un morceau à partir d'un style et de
+                      paroles facultatives (ci-dessous)
 
-Deux moteurs, choisis par le réglage `music_engine` de
+Les deux autres travaux d'ODIO sont tenus ailleurs, chacun avec son moteur
+d'essai : `music.yue` (YuE2, server/tools/music_yue.py) et `music.stems`
+(la séparation en pistes, server/tools/music_stems.py). Ce module dit
+seulement s'ils sont déclarés (`GET /api/music/engines` → `contracts`) : la
+page ne demande leurs options que dans ce cas.
+
+ACE-Step : deux moteurs, par le réglage `music_engine` de
 `showrunner.local.json` (lu au démarrage) :
 
   "factice"  (défaut)  voie `cpu`, sans modèle : un son d'essai synthétisé
-                       dans la tonalité et au tempo demandés, et une
-                       « séparation » par filtres ffmpeg. De quoi éprouver
-                       tout le parcours (file, bibliothèque, timeline) sans
-                       GPU. Décision de Cal du 28/09 : on met l'interface en
-                       place d'abord, on câble les modèles après.
+                       dans la tonalité et au tempo demandés. Décision de Cal
+                       du 28/09 : l'interface d'abord, les modèles après.
   "ace-step"           voie `audio` (ComfyUI :8188) : ACE-Step 1.5 XL base
                        avec le graphe du gabarit officiel
-                       (`server/workflows/music_ace15_xl_base.json`), et
-                       Demucs « htdemucs_ft » par le nœud AudioSeparateDemucs.
+                       (`server/workflows/music_ace15_xl_base.json`).
                        Essayé une fois sur DGX2 le 28/09 (docs/etudes/musique.md).
 
-Les deux rangent leurs sons dans la bibliothèque (`kind: audio`, la recette
-dans `params`, `params.engine` dit lequel). Un projet :
-`<data_dir>/musique/<id>.json`.
+Tout son créé va dans la bibliothèque (`kind: audio`, la recette dans
+`params`, `params.engine` dit lequel). Un projet :
+`<data_dir>/musique/<id>.json`, version 2 (musique/projet.js en décrit la
+forme ; un projet de version 1 est migré par la page et reste accepté ici).
 
 Les bornes des réglages de génération viennent de la documentation
 d'ACE-Step 1.5 (`~/ACE-Step-1.5/docs/en/INFERENCE.md`, table GenerationParams :
@@ -41,7 +43,6 @@ import random
 import re
 import secrets
 import shutil
-import subprocess
 import threading
 import time
 import wave
@@ -60,14 +61,23 @@ ID_RX = re.compile(r"[a-z][a-z0-9]{0,23}")
 MAX_BYTES = 4 << 20
 
 # ── ce que la page sait jouer (musique/modules.js en est la vérité) ──
-SOURCES = {"drums", "synth", "sampler", "player"}
-EFFECTS = {"delay", "reverb", "comp", "eq", "filter", "dist"}
-MODULE_TYPES = SOURCES | EFFECTS | {"strip", "master"}
-TRACK_SOURCE = {"drums": "drums", "synth": "synth", "sampler": "sampler", "audio": "player"}
+# Les modules d'ODIO (le prototype de Cal, porté dans musique/odio/) : leurs
+# sortes seulement ; leurs réglages sont les leurs.
+ODIO_SOURCES = {"rythme", "analog", "acid", "plaits"}
+ODIO_EFFECTS = {"reverbe", "chorus", "rtt", "comp3", "eq3", "filtre", "satura", "crush", "table", "volume"}
+SOURCES = {"drums", "synth", "sampler", "player"} | ODIO_SOURCES
+EFFECTS = {"delay", "reverb", "comp", "eq", "filter", "dist"} | ODIO_EFFECTS
+MODULE_TYPES = SOURCES | EFFECTS | {"strip", "master", "bus"}
+TRACK_SOURCES = {"drums": {"drums", "rythme"}, "synth": {"synth", "analog", "acid", "plaits"},
+                 "sampler": {"sampler"}, "audio": {"player"}, "bus": {"bus"}}
 COLORS = {"or", "cy", "amb", "grn2", "coral-1", "coral-2", "coral-3"}
-DRUM_VOICES = ("bd", "sd", "cp", "ch", "oh", "lt", "ht", "cb")
-STEPS = (16, 32, 48, 64)
+# les voix de la DR-9 et celles de la boîte à rythme d'ODIO (onze, TR-8S)
+DRUM_VOICES = ("bd", "sd", "cp", "ch", "oh", "lt", "ht", "cb", "mt", "rs", "cc", "rc")
 SIGS = (2, 3, 4, 6)
+MODES = {"major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "locrian", "harmonic",
+         "pentamaj", "pentamin", "blues"}
+ARC_TO = ("lpf", "vol", "both")
+TEMPLATES = ("rythme", "session", "vide")
 
 # ── les listes du nœud TextEncodeAceStepAudio1.5 (object_info, DGX2, 28/09) ──
 _NOTES = ["C", "C#", "Db", "D", "D#", "Eb", "E", "F", "F#", "Gb", "G", "G#", "Ab", "A", "A#", "Bb", "B"]
@@ -75,11 +85,6 @@ KEYSCALES = [f"{n} major" for n in _NOTES] + [f"{n} minor" for n in _NOTES]
 TIMESIGS = ("2", "3", "4", "6")
 LANGS = ("ar az bg bn ca cs da de el en es fa fi fr he hi hr ht hu id is it ja ko la lt ms ne nl no pa pl "
          "pt ro ru sa sk sr sv sw ta te th tl tr uk ur vi yue zh unknown").split()
-
-# Demucs : les sorties du nœud AudioSeparateDemucs, dans l'ordre (README d'AudioSeparation)
-STEMS = (("vocals", "voix"), ("drums", "batterie"), ("bass", "basse"), ("other", "autre"))
-DEMUCS_MODEL = "Hybrid Transformer fine-tuned"   # htdemucs_ft, présent dans models/audio/Demucs
-ON_DISK = "\U0001F4BE"                           # le nœud marque ainsi un modèle déjà sur disque
 
 _lock = threading.Lock()
 
@@ -118,6 +123,21 @@ def _id(v, what) -> str:
     if not isinstance(v, str) or not ID_RX.fullmatch(v):
         raise ValueError(f"{what} : identifiant invalide ({v!r})")
     return v
+
+
+def _bool(d: dict, k: str, what: str) -> None:
+    if k in d and d[k] is not None and not isinstance(d[k], bool):
+        raise ValueError(f"{what} : vrai ou faux")
+
+
+def _curve(pts, what) -> None:
+    if not isinstance(pts, list) or len(pts) > 8192:
+        raise ValueError(f"{what} : une liste de 8192 points au plus")
+    for pt in pts:
+        if not isinstance(pt, list) or len(pt) != 2:
+            raise ValueError(f"{what} : un point est [temps, valeur]")
+        _num(pt[0], 0, 1e5, f"{what} (temps)")
+        _num(pt[1], 0, 1, f"{what} (valeur)")
 
 
 def _cycle(nodes: set, cables: list) -> bool:
@@ -194,12 +214,16 @@ def validate(p: dict) -> None:
         if tid in by_track:
             raise ValueError(f"piste en double : {tid}")
         _str(t.get("name"), 60, "nom de piste", 1)
-        if t.get("kind") not in TRACK_SOURCE:
+        if t.get("kind") not in TRACK_SOURCES:
             raise ValueError(f"sorte de piste inconnue : {t.get('kind')!r}")
         if t.get("color") not in COLORS:
             raise ValueError(f"couleur de piste inconnue : {t.get('color')!r}")
+        if t.get("sub") is not None:
+            _str(t["sub"], 60, "sous-titre de piste")
+        for k in ("mute", "solo", "arm"):
+            _bool(t, k, f"{t['name']} : {k}")
         src, strip = by_mod.get(t.get("src")), by_mod.get(t.get("strip"))
-        if not src or src["type"] != TRACK_SOURCE[t["kind"]]:
+        if not src or src["type"] not in TRACK_SOURCES[t["kind"]]:
             raise ValueError(f"{t['name']} : sa source manque")
         if not strip or strip["type"] != "strip":
             raise ValueError(f"{t['name']} : sa tranche de console manque")
@@ -219,6 +243,8 @@ def validate(p: dict) -> None:
             raise ValueError(f"{by_mod[b]['type']} n'a pas d'entrée")
         if (a, b) in seen:
             raise ValueError("câble en double")
+        if c.get("send") is not None:
+            _num(c["send"], -60, 6, "niveau d'envoi (dB)")
         seen.add((a, b))
     if _cycle(set(by_mod), cables):
         raise ValueError("le câblage fait une boucle : le son tournerait sans fin")
@@ -227,17 +253,18 @@ def validate(p: dict) -> None:
     for pt in pats:
         pid = _id((pt or {}).get("id"), "motif")
         tr = by_track.get(pt.get("track"))
-        if not tr or tr["kind"] == "audio":
+        if not tr or tr["kind"] in ("audio", "bus"):
             raise ValueError(f"{pid} : piste absente ou sans motif")
-        if pt.get("steps") not in STEPS:
-            raise ValueError(f"{pid} : {', '.join(map(str, STEPS))} pas")
+        steps = pt.get("steps")
+        if not isinstance(steps, int) or isinstance(steps, bool) or not (4 <= steps <= 256) or steps % 4:
+            raise ValueError(f"{pid} : de 4 à 256 pas, par quatre")
         _str(pt.get("name", ""), 40, "nom de motif")
         if tr["kind"] == "drums":
             lanes = pt.get("lanes")
             if not isinstance(lanes, dict) or not set(lanes) <= set(DRUM_VOICES):
                 raise ValueError(f"{pid} : voix de batterie inconnues")
             for v in lanes.values():
-                if not isinstance(v, list) or len(v) != pt["steps"]:
+                if not isinstance(v, list) or len(v) != steps:
                     raise ValueError(f"{pid} : une case par pas")
                 for x in v:
                     _num(x, 0, 1, "vélocité")
@@ -246,10 +273,12 @@ def validate(p: dict) -> None:
             if not isinstance(notes, list) or len(notes) > 4000:
                 raise ValueError(f"{pid} : notes invalides")
             for nt in notes:
-                _num((nt or {}).get("s"), 0, pt["steps"] - 1, "départ de note")
-                _num(nt.get("l"), 0.25, pt["steps"], "longueur de note")
+                _num((nt or {}).get("s"), 0, steps - 1e-6, "départ de note")
+                _num(nt.get("l"), 0.0625, steps, "longueur de note")
                 _num(nt.get("p"), 0, 127, "hauteur de note")
                 _num(nt.get("v", 0.8), 0, 1, "vélocité")
+                _bool(nt, "ac", "accent")
+                _bool(nt, "sl", "liaison")
         by_pat[pid] = pt
     cids = set()
     for c in clips:
@@ -258,13 +287,22 @@ def validate(p: dict) -> None:
             raise ValueError(f"clip en double : {cid}")
         cids.add(cid)
         tr = by_track.get(c.get("track"))
-        if not tr:
+        if not tr or tr["kind"] == "bus":
             raise ValueError(f"{cid} : piste absente")
         _num(c.get("start"), 0, 1e5, "début de clip")
         _num(c.get("len"), 0.0625, 1e5, "longueur de clip")
+        for k in ("mute", "loop"):
+            _bool(c, k, f"{cid} : {k}")
+        if c.get("name") is not None:
+            _str(c["name"], 60, "nom de clip")
         if tr["kind"] == "audio":
             _str(c.get("item"), 64, "son du clip", 1)
             _num(c.get("off", 0), 0, 1e5, "décalage du clip")
+            _num(c.get("gain", 0) or 0, -60, 24, "gain du clip (dB)")
+            _num(c.get("fi", 0) or 0, 0, 600, "fondu d'entrée (s)")
+            _num(c.get("fo", 0) or 0, 0, 600, "fondu de sortie (s)")
+            if c.get("llen") is not None:
+                _num(c["llen"], 0, 1e5, "longueur de boucle (s)")
         elif c.get("pat") not in by_pat or by_pat[c["pat"]]["track"] != tr["id"]:
             raise ValueError(f"{cid} : motif absent")
         else:
@@ -273,8 +311,66 @@ def validate(p: dict) -> None:
     if not isinstance(pend, list) or len(pend) > 64:
         raise ValueError("travaux en attente invalides")
 
+    # ── la version 2 : tonalité, sections, marqueurs, arc, automation ──
+    key = p.get("key")
+    if key is not None:
+        if not isinstance(key, dict) or key.get("mode") not in MODES:
+            raise ValueError("tonalité : un mode connu")
+        _num(key.get("tonic"), 0, 11, "tonique")
+    secs = p.get("sections", [])
+    if not isinstance(secs, list) or len(secs) > 128:
+        raise ValueError("sections : une liste de 128 au plus")
+    sids = set()
+    for s in secs:
+        sid = _id((s or {}).get("id"), "section")
+        if sid in sids:
+            raise ValueError(f"section en double : {sid}")
+        sids.add(sid)
+        _str(s.get("name"), 40, "nom de section", 1)
+        sa = _num(s.get("a"), 0, 1e5, "début de section")
+        sb = _num(s.get("b"), 0, 1e5, "fin de section")
+        if sb <= sa:
+            raise ValueError(f"{s['name']} : la section finit avant de commencer")
+        if s.get("color") is not None and s["color"] not in COLORS:
+            raise ValueError(f"{s['name']} : couleur inconnue")
+        if s.get("tag") is not None:
+            _str(s["tag"], 20, "étiquette de section")
+    marks = p.get("markers", [])
+    if not isinstance(marks, list) or len(marks) > 256:
+        raise ValueError("marqueurs : une liste de 256 au plus")
+    for mk in marks:
+        _id((mk or {}).get("id"), "marqueur")
+        _num(mk.get("b"), 0, 1e5, "position du marqueur")
+        _str(mk.get("name", ""), 40, "nom de marqueur")
+    arc = p.get("arc")
+    if arc is not None:
+        if not isinstance(arc, dict) or arc.get("to", "lpf") not in ARC_TO:
+            raise ValueError("arc d'énergie : filtre, volume ou les deux")
+        _bool(arc, "on", "arc d'énergie")
+        _curve(arc.get("pts", []), "arc d'énergie")
+    autos = p.get("auto", [])
+    if not isinstance(autos, list) or len(autos) > 256:
+        raise ValueError("automation : 256 voies au plus")
+    for L in autos:
+        _id((L or {}).get("id"), "voie d'automation")
+        if L.get("mod") not in by_mod:
+            raise ValueError("automation : module absent")
+        _str(L.get("k"), 24, "réglage automatisé", 1)
+        _bool(L, "on", "automation")
+        _curve(L.get("pts", []), "automation")
+    gen = p.get("gen")
+    if gen is not None and (not isinstance(gen, dict) or len(json.dumps(gen)) > 65536):
+        raise ValueError("brouillon du génératif : 64 ko au plus")
 
-# ── un projet neuf : de quoi entendre quelque chose tout de suite ──
+
+# ── les projets de départ ───────────────────────────────────
+def _v2(p: dict, **extra) -> dict:
+    p.update({"v": 2, "key": {"tonic": 9, "mode": "minor"}, "sections": [], "markers": [],
+              "arc": {"on": True, "to": "lpf", "pts": []}, "auto": []})
+    p.update(extra)
+    return p
+
+
 def starter(name: str) -> dict:
     """Une batterie et une basse sur huit mesures, câblées source → tranche
     → sortie. Les réglages absents prennent leur défaut dans la page."""
@@ -283,7 +379,7 @@ def starter(name: str) -> dict:
     hats = [0, 0, 1, 0] * 4
     bass = [{"s": s, "l": 2, "p": p, "v": 0.85} for s, p in
             ((0, 45), (3, 45), (6, 57), (8, 43), (11, 43), (14, 55))]
-    return {
+    return _v2({
         "name": name, "bpm": 110, "sig": 4,
         "loop": {"on": True, "a": 0, "b": 16},
         "tracks": [
@@ -315,7 +411,104 @@ def starter(name: str) -> dict:
         ],
         "pending": [],
         "ui": {"view": "timeline"},
-    }
+    })
+
+
+def _steps(s: str, vel: float = 1.0) -> list:
+    return [vel if ch == "x" else round(vel * 0.55, 2) if ch == "o" else 0 for ch in s]
+
+
+def session(name: str) -> dict:
+    """La session de la maquette « STUDIO · NL—60 » de Cal : 16 mesures en
+    quatre sections (intro, couplet, refrain, final), 112 BPM, fa mineur ;
+    batterie (boîte à rythme d'ODIO), basse acide (ODIO), nappe de trois scies,
+    lead carré et scie ; deux bus (réverbération, RTT-01) et leurs envois.
+    Les notes sont écrites à la main dans la gamme (choix d'écriture)."""
+    kit_intro = {"bd": _steps("x.......x......."), "ch": _steps("x.x.x.x.x.x.x.x.", 0.6)}
+    kit = {"bd": _steps("x.....x.x......."), "sd": _steps("....x.......x..."),
+           "ch": _steps("x.x.x.x.x.x.x.x.", 0.7), "oh": _steps("..............x.", 0.8)}
+    roots = (41, 37, 44, 39)                                  # fa, ré bémol, la bémol, mi bémol
+    bass = []
+    for i, r in enumerate(roots):
+        o = 16 * i
+        bass += [{"s": o, "l": 2, "p": r, "v": 0.9}, {"s": o + 3, "l": 1, "p": r, "v": 0.7},
+                 {"s": o + 6, "l": 2, "p": r + 12, "v": 0.9, "ac": True}, {"s": o + 8, "l": 2, "p": r, "v": 0.8},
+                 {"s": o + 10, "l": 1, "p": r + 7, "v": 0.7}, {"s": o + 11, "l": 1, "p": r + 12, "v": 0.8, "sl": True},
+                 {"s": o + 14, "l": 2, "p": r, "v": 0.8}]
+    chords = ((53, 56, 60), (49, 53, 56), (48, 51, 56), (51, 55, 58))
+    pad = [{"s": 16 * i, "l": 16, "p": n, "v": 0.7} for i, ch in enumerate(chords) for n in ch]
+    lead = [{"s": s, "l": l, "p": p, "v": 0.8} for s, l, p in (
+        (0, 4, 72), (4, 2, 68), (6, 2, 67), (8, 4, 65), (12, 4, 68),
+        (16, 4, 65), (20, 2, 68), (22, 2, 70), (24, 8, 72),
+        (32, 4, 75), (36, 4, 72), (40, 4, 68), (44, 4, 72),
+        (48, 6, 70), (54, 2, 67), (56, 4, 63), (60, 2, 67), (62, 2, 70))]
+    T = [("t1", "Batterie", "drums", "or", "kit · 4 voix", "rythme", {"kit": 0}, 0),
+         ("t2", "Basse", "synth", "grn2", "scie · filtre", "acid", {}, -2),
+         ("t3", "Nappe", "synth", "cy", "3 scies désaccordées", "synth",
+          {"wave": 2, "oct": 0, "uni": 3, "det": 14, "wave2": 5, "cut": 2200, "res": 2, "fenv": 0.5, "fdec": 1.2,
+           "a": 0.35, "d": 1.5, "s": 0.8, "r": 1.4, "vol": -17}, -4),
+         ("t4", "Lead", "synth", "coral-2", "carré · scie", "synth",
+          {"wave": 3, "oct": 0, "uni": 1, "det": 8, "wave2": 3, "oct2": 0, "mix2": 0.45, "cut": 3200, "res": 5,
+           "fenv": 1.5, "fdec": 0.3, "a": 0.005, "d": 0.25, "s": 0.7, "r": 0.2, "vol": -15}, -3)]
+    tracks, mods, cables = [], [], []
+    for i, (tid, nm, kind, color, sub, src, params, vol) in enumerate(T):
+        s, st = f"m{2 * i + 1}", f"m{2 * i + 2}"
+        tracks.append({"id": tid, "name": nm, "kind": kind, "color": color, "sub": sub, "mute": False, "solo": False,
+                       "src": s, "strip": st, "pat": f"p{i + 1}"})
+        mods += [{"id": s, "type": src, "track": tid, "x": 40, "y": 40 + 260 * i, "on": True, "params": params},
+                 {"id": st, "type": "strip", "track": tid, "x": 380, "y": 40 + 260 * i, "on": True, "params": {"vol": vol}}]
+        cables += [{"a": s, "b": st}, {"a": st, "b": "m0"}]
+    # deux bus d'effets : entrée → effet (tout mouillé) → tranche → sortie
+    for j, (tid, nm, color, fx, fxp) in enumerate((("t8", "Réverb", "cy", "reverb", {"mix": 1, "time": 2.6}),
+                                                   ("t9", "RTT-01", "amb", "rtt", {"mix": 100, "time": 400, "fdb": 45}))):
+        b, e, st = f"b{j + 1}", f"e{j + 1}", f"s{j + 1}"
+        y = 40 + 260 * (4 + j)
+        tracks.append({"id": tid, "name": nm, "kind": "bus", "color": color, "mute": False, "solo": False, "src": b, "strip": st})
+        mods += [{"id": b, "type": "bus", "track": tid, "x": 40, "y": y, "on": True, "params": {}},
+                 {"id": e, "type": fx, "track": tid, "x": 380, "y": y, "on": True, "params": fxp},
+                 {"id": st, "type": "strip", "track": tid, "x": 720, "y": y, "on": True, "params": {}}]
+        cables += [{"a": b, "b": e}, {"a": e, "b": st}, {"a": st, "b": "m0"}]
+    cables += [{"a": "m6", "b": "b1", "send": -8}, {"a": "m8", "b": "b1", "send": -12}, {"a": "m8", "b": "b2", "send": -14},
+               {"a": "m2", "b": "b1", "send": -22}]
+    mods.append({"id": "m0", "type": "master", "track": None, "x": 1100, "y": 400, "on": True, "params": {}})
+    secs = [("s1", "Intro", 0, "cy", "intro"), ("s2", "Couplet", 16, "grn2", "verse"),
+            ("s3", "Refrain", 32, "or", "chorus"), ("s4", "Final", 48, "coral-3", "outro")]
+    clips = []
+    n = 0
+
+    def clip(track, start, pat):
+        nonlocal n
+        n += 1
+        clips.append({"id": f"c{n}", "track": track, "start": start, "len": 16, "pat": pat})
+
+    clip("t1", 0, "p5")
+    for a in (16, 32, 48):
+        clip("t1", a, "p1")
+        clip("t2", a, "p2")
+    for a in (0, 16, 32, 48):
+        clip("t3", a, "p3")
+    for a in (32, 48):
+        clip("t4", a, "p4")
+    return _v2({
+        "name": name, "bpm": 112, "sig": 4, "loop": {"on": False, "a": 0, "b": 16},
+        "tracks": tracks, "modules": mods, "cables": cables,
+        "patterns": [
+            {"id": "p1", "track": "t1", "name": "Kit", "steps": 16, "lanes": kit},
+            {"id": "p5", "track": "t1", "name": "Kit", "steps": 16, "lanes": kit_intro},
+            {"id": "p2", "track": "t2", "name": "Basse", "steps": 64, "notes": bass},
+            {"id": "p3", "track": "t3", "name": "Accords", "steps": 64, "notes": pad},
+            {"id": "p4", "track": "t4", "name": "Thème", "steps": 64, "notes": lead},
+        ],
+        "clips": clips, "pending": [], "ui": {"view": "timeline"},
+    }, key={"tonic": 5, "mode": "minor"},
+        sections=[{"id": i, "name": nm, "a": a, "b": a + 16, "color": c, "tag": tg} for i, nm, a, c, tg in secs])
+
+
+def empty(name: str) -> dict:
+    return _v2({"name": name, "bpm": 120, "sig": 4, "loop": {"on": False, "a": 0, "b": 16},
+                "tracks": [], "modules": [{"id": "m0", "type": "master", "track": None, "x": 600, "y": 200,
+                                           "on": True, "params": {}}],
+                "cables": [], "patterns": [], "clips": [], "pending": [], "ui": {"view": "timeline"}})
 
 
 def _summary(p: dict) -> dict:
@@ -352,7 +545,10 @@ def list_projects(req):
 def create_project(req):
     d = req.json()
     name = (d.get("name") or "").strip()[:80] or "Sans titre"
-    p = starter(name)
+    tpl = d.get("template") or "rythme"
+    if tpl not in TEMPLATES:
+        raise HttpError(400, f"départ inconnu : {tpl} ({', '.join(TEMPLATES)})")
+    p = {"rythme": starter, "session": session, "vide": empty}[tpl](name)
     now = library.now()
     p.update(id=f"mus-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}", rev=1, created=now, updated=now)
     validate(p)
@@ -403,40 +599,31 @@ def _audio_endpoint() -> str | None:
     return None
 
 
-def pick_demucs(options: list[str]) -> str:
-    """Le modèle htdemucs_ft s'il est déjà sur disque ; jamais un téléchargement
-    (les options « ⬇️ » en déclencheraient un, que Cal n'a pas accordé)."""
-    for o in options:
-        if o.startswith(ON_DISK) and o.endswith(DEMUCS_MODEL):
-            return o
-    raise ValueError("le modèle Demucs « htdemucs_ft » n'est pas sur disque (models/audio/Demucs) : "
-                     "le télécharger demande l'accord de Cal")
+def contracts() -> dict:
+    """Les travaux tenus par d'autres modules (YuE, la séparation) : sont-ils
+    déclarés ? Lu à chaque appel — ils se chargent après celui-ci."""
+    return {k: k in jobs.HANDLERS for k in ("music.yue", "music.stems")}
 
 
 def engines(req=None):
     if time.time() - _eng_cache["t"] < 60 and _eng_cache["v"]:
-        return _eng_cache["v"]
+        return {**_eng_cache["v"], "contracts": contracts()}
     extra = {"mode": mode(), "keyscales": KEYSCALES, "timesigs": list(TIMESIGS), "languages": LANGS}
     if mode() == "factice":
         cpu = [e for e in config.get("lanes", {}).get("cpu", [])]
         why = "" if cpu else "aucune voie « cpu » dans la configuration du portail"
-        ff = shutil.which("ffmpeg")
         v = {"generate": {"ok": bool(cpu), "model": "son d'essai (factice)", "why": why, "machine": jobs.machine_of("local")},
-             "stems": {"ok": bool(cpu and ff), "model": "filtres ffmpeg (factice)",
-                       "why": why or ("" if ff else "ffmpeg manque sur la machine du portail"),
-                       "machine": jobs.machine_of("local")},
-             "note": "mode essai : ACE-Step 1.5 et Demucs se branchent par \"music_engine\": \"ace-step\"", **extra}
+             "note": "mode essai : ACE-Step 1.5 se branche par \"music_engine\": \"ace-step\"", **extra}
         _eng_cache.update(t=time.time(), v=v)
-        return v
+        return {**v, "contracts": contracts()}
     lanes = config.get("lanes", {}).get("audio", [])
     gen = {"ok": False, "model": "ACE-Step 1.5 XL base", "why": ""}
-    stems = {"ok": False, "model": "Demucs htdemucs_ft", "why": ""}
     if not lanes:
-        gen["why"] = stems["why"] = "aucune voie « audio » dans la configuration du portail"
+        gen["why"] = "aucune voie « audio » dans la configuration du portail"
     else:
         ep = _audio_endpoint()
         if not ep:
-            gen["why"] = stems["why"] = "le ComfyUI de la voie audio ne répond pas (" + ", ".join(lanes) + ")"
+            gen["why"] = "le ComfyUI de la voie audio ne répond pas (" + ", ".join(lanes) + ")"
         else:
             c = Comfy(ep)
             machine = jobs.machine_of(ep)
@@ -451,17 +638,9 @@ def engines(req=None):
                     gen.update(ok=True, machine=machine)
             except (ComfyError, KeyError, IndexError) as e:
                 gen["why"] = f"ComfyUI de {machine} : {e}"[:300]
-            try:
-                opts = c.object_info("AudioSeparateDemucs")["AudioSeparateDemucs"]["input"]["required"]["model"][0]
-                pick_demucs(opts)
-                stems.update(ok=True, machine=machine)
-            except ValueError as e:
-                stems["why"] = str(e)
-            except (ComfyError, KeyError, IndexError) as e:
-                stems["why"] = f"le nœud AudioSeparateDemucs manque au ComfyUI de {machine} ({e})"[:300]
-    v = {"generate": gen, "stems": stems, **extra}
+    v = {"generate": gen, **extra}
     _eng_cache.update(t=time.time(), v=v)
-    return v
+    return {**v, "contracts": contracts()}
 
 
 # ── génération : ACE-Step 1.5 ───────────────────────────────
@@ -606,101 +785,11 @@ def api_generate(req):
     return jobs.public(j)
 
 
-# ── séparation : Demucs ─────────────────────────────────────
-def build_stems_graph(audio_name: str, model: str) -> dict:
-    """Réglages du nœud AudioSeparateDemucs tels que l'exemple « 04_Demucs »
-    du paquet AudioSeparation : shifts 0, overlap 0.25, segment du modèle."""
-    g = {"1": {"class_type": "LoadAudio", "_meta": {"title": "son"}, "inputs": {"audio": audio_name}},
-         "2": {"class_type": "AudioSeparateDemucs", "_meta": {"title": "Demucs"},
-               "inputs": {"input_sound": ["1", 0], "model": model, "shifts": 0, "overlap": 0.25,
-                          "custom_segment": False, "segment": 44, "target_device": "cuda"}}}
-    for k, (stem, fr) in enumerate(STEMS):
-        g[str(10 + k)] = {"class_type": "SaveAudioAdvanced", "_meta": {"title": f"OUT {stem}"},
-                          "inputs": {"audio": ["2", k], "filename_prefix": f"showrunner/stem_{stem}",
-                                     "format": "flac"}}
-    return g
-
-
-def _stem_source(ctx) -> dict:
-    it = library.get(ctx.params.get("item", ""))
-    if not it or it["kind"] != "audio":
-        raise ValueError("le son à séparer n'est plus dans la bibliothèque")
-    return it
-
-
-# mode essai : des filtres ffmpeg (passe-haut / passe-bas, documentation
-# ffmpeg-filters), pas une séparation — de quoi éprouver le parcours
-TEST_FILTERS = {"vocals": "highpass=f=300,lowpass=f=3400", "drums": "highpass=f=4000",
-                "bass": "lowpass=f=160", "other": "highpass=f=160,lowpass=f=4000"}
-
-
-def run_stems_test(ctx):
-    it = _stem_source(ctx)
-    src = library.path_of(it)
-    out = {}
-    fr = dict(STEMS)
-    t0 = time.time()
-    for k, (stem, _) in enumerate(STEMS):
-        ctx.check()
-        ctx.progress(k / len(STEMS), f"filtre {fr[stem]} (mode factice)")
-        dest = ctx.workdir / f"{stem}.flac"
-        r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-af", TEST_FILTERS[stem],
-                            "-c:a", "flac", str(dest)], capture_output=True, text=True, timeout=600)
-        if r.returncode != 0 or not dest.exists():
-            raise RuntimeError(f"ffmpeg : {r.stderr.strip()[:400]}")
-        got = ctx.add(dest, kind="audio", title=f"{it.get('title') or it['id']} · {fr[stem]} (essai)",
-                      parents=[it["id"]], params={"stem": stem, "source": it["id"], "engine": "factice",
-                                                  "filter": TEST_FILTERS[stem]},
-                      origin={"model": "factice"}, tags=["musique", "essai"], folder="Musique")
-        out[stem] = got["id"]
-    secs = round(time.time() - t0, 1)
-    return {"note": f"4 pistes d'essai en {secs:g} s (filtres, mode factice)", "stems": out, "render_seconds": secs}
-
-
-def run_stems_demucs(ctx):
-    it = _stem_source(ctx)
-    ctx.progress(0.05, "envoie le son à ComfyUI")
-    name = ctx.comfy.upload(library.path_of(it))
-    opts = ctx.comfy.object_info("AudioSeparateDemucs")["AudioSeparateDemucs"]["input"]["required"]["model"][0]
-    graph = build_stems_graph(name, pick_demucs(opts))
-    ctx.check()
-    t0 = time.time()
-    pid = ctx.comfy.queue(graph)
-    entry = ctx.comfy.wait(pid, cancelled=ctx.cancelled, report=ctx.comfy_report("Demucs"), timeout=3600)
-    secs = round(time.time() - t0, 1)
-    out = {}
-    fr = dict(STEMS)
-    for f in Comfy.outputs(entry, graph):
-        stem = graph[f["node"]]["_meta"]["title"].split(" ", 1)[1]
-        dest = ctx.comfy.download(f, ctx.workdir / f"{stem}.flac")
-        got = ctx.add(dest, kind="audio", title=f"{it.get('title') or it['id']} · {fr[stem]}",
-                      prompt=it.get("prompt", ""), parents=[it["id"]],
-                      params={"stem": stem, "source": it["id"], "engine": "ace-step", "model": "htdemucs_ft",
-                              "render_seconds": secs},
-                      origin={"model": "demucs-htdemucs_ft"}, tags=["musique", "piste séparée"], folder="Musique")
-        out[stem] = got["id"]
-    if len(out) != len(STEMS):
-        raise ComfyError(f"Demucs n'a rendu que {len(out)} pistes sur {len(STEMS)}")
-    return {"note": f"4 pistes en {secs:g} s", "stems": out, "render_seconds": secs}
-
-
-def api_stems(req):
-    d = req.json()
-    it = library.get(d.get("item", ""))
-    if not it or it["kind"] != "audio":
-        raise HttpError(400, "choisis un son de la bibliothèque")
-    j = jobs.submit("music.stems", {"item": it["id"]}, title=f"Séparer · {it.get('title') or it['id']}"[:90],
-                    tool="music")
-    return jobs.public(j)
-
-
 def register(app) -> None:
     if mode() == "ace-step":
         jobs.register("music.generate", run_generate_ace, lane="audio", title="Musique")
-        jobs.register("music.stems", run_stems_demucs, lane="audio", title="Séparer un son")
     else:
         jobs.register("music.generate", run_generate_test, lane="cpu", title="Musique (essai)")
-        jobs.register("music.stems", run_stems_test, lane="cpu", title="Séparer un son (essai)")
     app.route("GET", "/api/music/projects", list_projects)
     app.route("POST", "/api/music/projects", create_project)
     app.route("GET", "/api/music/projects/{pid}", get_project)
@@ -708,13 +797,12 @@ def register(app) -> None:
     app.route("POST", "/api/music/projects/{pid}/delete", delete_project)
     app.route("GET", "/api/music/engines", engines)
     app.route("POST", "/api/music/generate", api_generate)
-    app.route("POST", "/api/music/stems", api_stems)
 
 
 # ── le contrôle sans GPU (tools/check.py) ───────────────────
 def selftest(call, ok) -> None:
     st, p = call("POST", "/api/music/projects", {"name": "Essai"})
-    ok(st == 200 and PID_RX.fullmatch(p.get("id", "")) and len(p["tracks"]) == 2, f"un projet neuf ({st} {p})")
+    ok(st == 200 and PID_RX.fullmatch(p.get("id", "")) and len(p["tracks"]) == 2 and p.get("v") == 2, f"un projet neuf ({st} {p})")
     pid = p.get("id", "")
     st, lst = call("GET", "/api/music/projects")
     ok(st == 200 and any(x["id"] == pid for x in lst["projects"]), "la liste des projets")
@@ -728,30 +816,50 @@ def selftest(call, ok) -> None:
     ok(st == 409, f"une version dépassée est refusée ({st})")
     got["rev"] = 2
 
-    bad = json.loads(json.dumps(got))
-    bad["cables"].append({"a": "m0", "b": "m2"})
-    st, r = call("POST", f"/api/music/projects/{pid}", bad)
-    ok(st == 400 and "sortie" in r.get("error", ""), f"la sortie ne se câble vers rien ({st} {r})")
-    bad = json.loads(json.dumps(got))
-    bad["cables"].append({"a": "m4", "b": "m5"})
-    st, r = call("POST", f"/api/music/projects/{pid}", bad)
-    ok(st == 400 and "boucle" in r.get("error", ""), f"une boucle est refusée ({st} {r})")
-    bad = json.loads(json.dumps(got))
-    bad["bpm"] = 999
-    st, r = call("POST", f"/api/music/projects/{pid}", bad)
-    ok(st == 400, "un tempo hors bornes est refusé")
-    bad = json.loads(json.dumps(got))
-    bad["modules"].append({"id": "m9", "type": "theremine", "track": None, "x": 0, "y": 0, "params": {}})
-    st, r = call("POST", f"/api/music/projects/{pid}", bad)
-    ok(st == 400 and "inconnu" in r.get("error", ""), "un module inconnu est refusé")
-    bad = json.loads(json.dumps(got))
-    bad["clips"].append({"id": "c9", "track": "t1", "start": 0, "len": 4, "pat": "p2"})
-    st, r = call("POST", f"/api/music/projects/{pid}", bad)
-    ok(st == 400, "un clip qui joue le motif d'une autre piste est refusé")
+    def refused(mut, why, word=""):
+        bad = json.loads(json.dumps(got))
+        mut(bad)
+        st, r = call("POST", f"/api/music/projects/{pid}", bad)
+        ok(st == 400 and word in r.get("error", ""), f"refusé : {why} ({st} {r})")
+
+    refused(lambda b: b["cables"].append({"a": "m0", "b": "m2"}), "la sortie câblée", "sortie")
+    refused(lambda b: b["cables"].append({"a": "m4", "b": "m5"}), "une boucle", "boucle")
+    refused(lambda b: b.update(bpm=999), "un tempo hors bornes")
+    refused(lambda b: b["modules"].append({"id": "m9", "type": "theremine", "track": None, "x": 0, "y": 0, "params": {}}), "un module inconnu", "inconnu")
+    refused(lambda b: b["clips"].append({"id": "c9", "track": "t1", "start": 0, "len": 4, "pat": "p2"}), "un clip qui joue le motif d'une autre piste")
+    # la version 2
+    refused(lambda b: b["sections"].append({"id": "s1", "name": "Intro", "a": 8, "b": 4}), "une section à l'envers", "section")
+    refused(lambda b: b.update(key={"tonic": 3, "mode": "mixolydien"}), "un mode inconnu", "mode")
+    refused(lambda b: b["arc"].update(pts=[[0, 1.4]]), "un point d'arc hors de 0..1", "arc")
+    refused(lambda b: b["auto"].append({"id": "a1", "mod": "m99", "k": "vol", "pts": []}), "une automation sans module", "automation")
+    refused(lambda b: b["cables"].append({"a": "m2", "b": "m5", "send": 12}), "un envoi au-dessus de +6 dB", "envoi")
+    refused(lambda b: b["patterns"][0].update(steps=18), "un motif de 18 pas", "pas")
+    good = json.loads(json.dumps(got))
+    good["sections"] = [{"id": "s1", "name": "Intro", "a": 0, "b": 16, "color": "cy", "tag": "intro"}]
+    good["markers"] = [{"id": "k1", "b": 4, "name": "Repère"}]
+    good["arc"] = {"on": True, "to": "both", "pts": [[0, 0.2], [8, 1.0]]}
+    good["auto"] = [{"id": "a1", "mod": "m4", "k": "vol", "on": True, "pts": [[0, 0.5], [4, 0.9]]}]
+    good["key"] = {"tonic": 5, "mode": "dorian"}
+    good["clips"][0].update(mute=True, name="Intro · kit")
+    st, r = call("POST", f"/api/music/projects/{pid}", good)
+    ok(st == 200 and r.get("rev") == 3, f"sections, marqueurs, arc, automation, tonalité passent ({st} {r})")
+    good["rev"] = 3
+
+    st, s = call("POST", "/api/music/projects", {"name": "Session", "template": "session"})
+    ok(st == 200 and len(s.get("sections", [])) == 4 and s["bpm"] == 112 and s["key"] == {"tonic": 5, "mode": "minor"}
+       and sum(1 for t in s["tracks"] if t["kind"] == "bus") == 2
+       and sum(1 for c in s["cables"] if "send" in c) == 4, f"la session de la maquette : 4 sections, 2 bus, 4 envois ({st})")
+    ok(any(m["type"] == "rythme" for m in s.get("modules", [])) and any(m["type"] == "acid" for m in s.get("modules", [])),
+       "la session joue la boîte à rythme et la basse acide d'ODIO")
+    st, e = call("POST", "/api/music/projects", {"name": "Vide", "template": "vide"})
+    ok(st == 200 and not e["tracks"] and len(e["modules"]) == 1, "un projet vide")
+    st, r = call("POST", "/api/music/projects", {"name": "X", "template": "orchestre"})
+    ok(st == 400, "un départ inconnu est refusé")
 
     st, eng = call("GET", "/api/music/engines")
     ok(st == 200 and eng.get("mode") == "factice" and eng["generate"]["ok"], f"mode essai par défaut ({eng})")
     ok(len(eng.get("keyscales", [])) == 34, "les 34 tonalités du nœud ACE-Step")
+    ok(isinstance(eng.get("contracts"), dict) and set(eng["contracts"]) == {"music.yue", "music.stems"}, "les contrats YuE et séparation sont dits")
 
     p1 = gen_params({"tags": "synthwave, basse analogique", "duration": 30, "bpm": 110, "keyscale": "A minor",
                      "timesignature": "4", "language": "fr", "seed": 7})
@@ -776,6 +884,7 @@ def selftest(call, ok) -> None:
     ok(st == 400 and r.get("error"), "une génération sans style est refusée à l'entrée")
 
     def wait(jid):
+        jj = {}
         for _ in range(300):
             s, jj = call("GET", f"/api/jobs/{jid}")
             if jj.get("state") in ("done", "error", "cancelled"):
@@ -791,26 +900,12 @@ def selftest(call, ok) -> None:
     ok(j.get("state") == "done" and len(items) == 1 and items[0]["kind"] == "audio"
        and abs((items[0].get("duration") or 0) - 12) < 0.05 and items[0]["params"]["engine"] == "factice"
        and items[0]["params"]["bpm"] == 120, f"le son d'essai rentre dans la bibliothèque ({j.get('state')} {j.get('message')})")
-    if items and shutil.which("ffmpeg"):
-        st, sj = call("POST", "/api/music/stems", {"item": items[0]["id"]})
-        sj = wait(sj["id"]) if st == 200 else {}
-        stems = (sj.get("result") or {}).get("stems") or {}
-        ok(sj.get("state") == "done" and set(stems) == {"vocals", "drums", "bass", "other"}
-           and all(i["parents"] == [items[0]["id"]] for i in sj.get("items", [])),
-           f"quatre pistes d'essai, filles du son ({sj.get('state')} {sj.get('message')})")
-    st, r = call("POST", "/api/music/stems", {"item": "aud-nexiste-pas"})
-    ok(st == 400, "séparer un son absent est refusé")
 
-    sg = build_stems_graph("x.flac", ON_DISK + " " + DEMUCS_MODEL)
-    outs = [v["_meta"]["title"] for v in sg.values() if v["_meta"]["title"].startswith("OUT")]
-    ok(outs == ["OUT vocals", "OUT drums", "OUT bass", "OUT other"], "quatre sorties Demucs dans l'ordre du nœud")
-    ok(pick_demucs(["⬇️  Hybrid Transformer", ON_DISK + " Hybrid Transformer fine-tuned"]).startswith(ON_DISK),
-       "le modèle Demucs sur disque est choisi")
-    try:
-        pick_demucs(["⬇️  Hybrid Transformer fine-tuned"])
-        ok(False, "un modèle à télécharger est refusé")
-    except ValueError:
-        ok(True, "un modèle à télécharger est refusé")
+    # YuE2 et la séparation sont tenus ailleurs (music_yue.py, music_stems.py) : ce module n'en déclare aucun
+    ok(all(k not in jobs.HANDLERS or jobs.HANDLERS[k][0].__module__ != __name__ for k in ("music.yue", "music.stems")),
+       "music.yue et music.stems ne sont pas tenus ici")
+    st, r = call("POST", "/api/music/stems", {"item": items[0]["id"] if items else ""})
+    ok(st in (404, 405), f"l'ancienne route /api/music/stems a disparu ({st})")
 
     st, r = call("POST", f"/api/music/projects/{pid}/delete")
     st2, _ = call("GET", f"/api/music/projects/{pid}")

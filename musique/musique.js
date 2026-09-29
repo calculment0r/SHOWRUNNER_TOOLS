@@ -1,26 +1,37 @@
-// MUSIQUE — l'outil : un projet, trois vues de la même chose.
-//   Timeline  l'arrangement : pistes, clips, tempo, boucle
-//   Rack      les instruments et effets d'une piste, et l'éditeur de motifs
-//   Nodal     le graphe des modules et de leurs câbles
-// Un câble changé dans le nodal change le son partout : les trois vues
-// lisent et écrivent le même projet, et le moteur (moteur.js) le joue.
-// Le projet s'enregistre seul sur le serveur (server/tools/music.py).
+// ODIO — le studio musique du portail : une DAW.
+//   Arrangement  sections, arc d'énergie, pistes, clips, automation ; en
+//                bas l'éditeur du clip choisi, à gauche le navigateur
+//   Console      faders, panoramiques, envois vers les bus, vu-mètres, sortie
+//   Rack         les instruments et effets d'une piste, et son motif
+//   Nodal        le graphe des modules et de leurs câbles (le même projet)
+// Autour : le transport (retour, lecture, stop, prise, boucle, métronome),
+// la position mesure.temps.double-croche, le tempo, la tonalité, la forme
+// d'onde de la session, annuler / rétablir, Générer (YuE, ACE-Step,
+// séparation en pistes), Exporter (mixage et stems), et le GUIDE.
+// Le projet s'enregistre seul (server/tools/music.py) ; le moteur
+// (moteur.js) le joue ; ce qu'on entend est ce qu'on exporte.
 
 import { mountHeader, api, jobs, pick, uploadFile, toast, $, href, fmtDur, stateFr } from '../commun/shell.js';
-import { Engine, renderMix, wav24, peakDb, songEnd } from './moteur.js';
-import { MODULES, TRACK_KINDS, COLORS, DRUM_VOICES } from './modules.js';
-import { el, modal, ask, confirmBox, menu, put } from './ui.js';
+import { Engine, renderMix, wav24, peakDb, songEnd, peaks } from './moteur.js';
+import { MODULES, TRACK_KINDS, COLORS, PRESETS, SOURCES_OF, DRUM_MODELS, NOTE_MODELS, TONICS, TONICS_FR, MODES,
+  kindOfSource, keyLabel, moduleName } from './modules.js';
+import { el, modal, ask, confirmBox, menu, put, tok } from './ui.js';
+import { migrate, History, copyClips, pasteClips, splitClip } from './projet.js';
 import { createTimeline } from './timeline.js';
+import { createConsole } from './console.js';
 import { createRack } from './rack.js';
 import { createNodal } from './nodal.js';
+import { createRecorder } from './enregistrement.js';
+import { openGenerative, options, bestStems, STEM_FR } from './generatif.js';
+import { openGuide } from './guide.js';
 
-mountHeader('music', { sub: 'rack · nodal · timeline' });
+mountHeader('music', { sub: 'studio · YuE · stems' });
 
 // ── l'état ──────────────────────────────────────────────────
 const S = {
   proj: null, list: [], view: 'timeline', engines: null,
-  sel: { track: null, pat: null, clip: null, mod: null, cable: null },
-  oct: 4, midi: null,
+  sel: { track: null, pat: null, clip: null, clips: [], mod: null, cable: null },
+  oct: 4, midi: null, rec: false, metro: false,
 };
 const items = new Map();   // les objets de la bibliothèque déjà lus
 async function loadItem(id) {
@@ -28,14 +39,14 @@ async function loadItem(id) {
   return items.get(id);
 }
 const engine = new Engine({ loadItem });
-engine.onstop = () => { paintTransport(); views[S.view]?.frame(engine.position()); };
+engine.onstop = () => { if (rec.active) rec.end(); paintTransport(); views[S.view]?.frame?.(engine.position()); };
+engine.onplay = () => { if (S.rec) rec.begin(); paintTransport(); };
 
 export const uid = (p) => p + Math.random().toString(36).slice(2, 9);
-const beatsPerBar = () => S.proj.sig;
 
 // ── l'application, telle que les vues la voient ────────────
 export const app = {
-  S, engine, items, loadItem, uid,
+  S, engine, items, loadItem, uid, board: null,
   track: (id) => S.proj.tracks.find((t) => t.id === id),
   mod: (id) => S.proj.modules.find((m) => m.id === id),
   pat: (id) => S.proj.patterns.find((p) => p.id === id),
@@ -51,18 +62,29 @@ export const app = {
     if (kind === 'param' && m) engine.updateModule(m);
     else if (kind === 'mute') engine.mutes();
     else if (kind === 'graph' || kind === 'meta') engine.setProject(S.proj);
-    else if (kind === 'data') engine.need(S.proj);
+    else if (kind === 'data') { engine.need(S.proj); engine.settle(); }
     save();
+    hist.mark();
+    overviewSoon();
     if (kind !== 'param' && kind !== 'quiet') render();
   },
+  saveUi() { saveQuiet(); },
 
   select(patch) {
     Object.assign(S.sel, patch);
     if (patch.track && !patch.pat) {
       const t = app.track(patch.track);
       if (t?.pat) S.sel.pat = t.pat;
+      if (!patch.clip) { S.sel.clip = null; S.sel.clips = []; }
     }
     render();
+  },
+  selectClips(ids, keep = false) {
+    S.sel.clips = [...ids];
+    S.sel.clip = ids[ids.length - 1] || null;
+    const c = app.clip(S.sel.clip);
+    if (c) S.sel.track = c.track;
+    if (!keep) render();
   },
 
   setView(v) {
@@ -82,17 +104,19 @@ export const app = {
   },
 
   // ── pistes ──
-  addTrack(kind, { name, color, at } = {}) {
+  addTrack(kind, { name, color, at, type, params, sub } = {}) {
     const P = S.proj, K = TRACK_KINDS[kind];
     const n = P.tracks.filter((t) => t.kind === kind).length + 1;
     const y = Math.max(0, ...P.modules.filter((m) => m.track).map((m) => m.y)) + 260;
+    const src = type || K.src;
     const t = {
-      id: uid('t'), name: name || `${K.label} ${n}`, kind,
-      color: color || (kind === 'audio' ? 'grn2' : COLORS[P.tracks.length % COLORS.length]),
+      id: uid('t'), name: name || `${kind === 'bus' ? 'Bus' : kind === 'audio' ? 'Audio' : MODULES[src].name} ${n}`.slice(0, 60), kind,
+      color: color || (kind === 'audio' ? 'grn2' : MODULES[src].color || COLORS[P.tracks.length % COLORS.length]),
       mute: false, solo: false, src: uid('m'), strip: uid('m'),
     };
+    if (sub) t.sub = sub.slice(0, 60);
     const mst = app.master();
-    P.modules.push({ id: t.src, type: K.src, track: t.id, x: 40, y, on: true, params: {} },
+    P.modules.push({ id: t.src, type: src, track: t.id, x: 40, y, on: true, params: { ...(params || {}) } },
       { id: t.strip, type: 'strip', track: t.id, x: 380, y, on: true, params: {} });
     P.cables.push({ a: t.src, b: t.strip }, { a: t.strip, b: mst.id });
     if (K.pattern) {
@@ -102,24 +126,75 @@ export const app = {
       P.patterns.push(p);
       t.pat = p.id;
     }
-    if (at === undefined) P.tracks.push(t);
-    else P.tracks.splice(at, 0, t);
-    S.sel.track = t.id; S.sel.pat = t.pat || null;
+    if (at === undefined) {
+      // les bus restent en bas de la liste
+      const firstBus = kind === 'bus' ? -1 : P.tracks.findIndex((x) => x.kind === 'bus');
+      if (firstBus >= 0) P.tracks.splice(firstBus, 0, t); else P.tracks.push(t);
+    } else P.tracks.splice(at, 0, t);
+    if (kind !== 'bus') { S.sel.track = t.id; S.sel.pat = t.pat || null; }
     return t;
+  },
+
+  // les pistes qu'on peut ajouter, pour un menu
+  trackChoices() {
+    const out = [{ head: 'une piste' }];
+    for (const [k, list] of Object.entries(SOURCES_OF)) {
+      if (k === 'bus') continue;
+      for (const type of list) out.push({ label: k === 'audio' ? 'Audio' : `${TRACK_KINDS[k].label} · ${MODULES[type].name}`, sub: k === 'audio' ? 'clips, import, micro' : MODULES[type].kind,
+        dot: MODULES[type].color, onclick: () => { app.addTrack(k, { type }); app.commit('graph'); } });
+    }
+    out.push('-', { label: 'Bus d\'effets (réverbération)', sub: 'retour de la console', dot: 'cy', onclick: () => app.addBus('reverb') });
+    return out;
+  },
+
+  // un bus d'effets : entrée → effet → tranche → sortie ; les pistes y envoient
+  addBus(fx) {
+    const t = app.addTrack('bus', { name: fx ? `${MODULES[fx].name}` : 'Bus', color: fx ? MODULES[fx].color : 'cy' });
+    if (fx) {
+      // un retour ne rend que l'effet : le son sec est déjà dans la piste
+      const m = app.addEffect(t.id, fx, { quiet: true });
+      m.params = MODULES[fx].odio ? { mix: 100 } : fx === 'delay' ? { mix: 1, dry: 1 } : { mix: 1 };
+    }
+    toast(`bus « ${t.name} » : ses envois sont dans la console`);
+    app.commit('graph');
+    return t;
+  },
+
+  // changer l'instrument d'une piste : la source garde son identifiant et
+  // ses câbles ; ses réglages repartent de zéro (ils ne se traduisent pas)
+  setSource(trackId, type, params = {}) {
+    const t = app.track(trackId), m = t && app.mod(t.src);
+    if (!m || !(SOURCES_OF[t.kind] || []).includes(type)) return;
+    m.type = type; m.params = { ...params };
+    t.sub = undefined;
+    toast(`${t.name} : ${MODULES[type].name}`);
+    app.commit('graph');
+  },
+  applyPreset(trackId, presetId) {
+    const t = app.track(trackId), p = PRESETS.find((x) => x.id === presetId);
+    if (!t || !p) return;
+    const m = app.mod(t.src);
+    if (m.type !== p.type) m.type = p.type;
+    m.params = { ...p.params };
+    t.sub = p.sub;
+    toast(`${t.name} : ${p.name}`);
+    app.commit('graph');
   },
 
   async removeTrack(id) {
     const t = app.track(id);
     if (!t) return;
-    if (!(await confirmBox('Retirer la piste', `Retirer « ${t.name} », ses modules, ses motifs et ses clips ?`))) return;
+    if (!(await confirmBox('Retirer la piste', `Retirer « ${t.name} », ses modules, ses motifs, ses clips et ses courbes ?`))) return;
     const P = S.proj;
     const mods = new Set(P.modules.filter((m) => m.track === id).map((m) => m.id));
     P.modules = P.modules.filter((m) => !mods.has(m.id));
     P.cables = P.cables.filter((c) => !mods.has(c.a) && !mods.has(c.b));
     P.patterns = P.patterns.filter((p) => p.track !== id);
     P.clips = P.clips.filter((c) => c.track !== id);
+    P.auto = (P.auto || []).filter((L) => !mods.has(L.mod));
     P.tracks = P.tracks.filter((x) => x.id !== id);
-    if (S.sel.track === id) S.sel = { track: P.tracks[0]?.id || null, pat: P.tracks[0]?.pat || null, clip: null, mod: null, cable: null };
+    const first = P.tracks.find((x) => x.kind !== 'bus');
+    if (S.sel.track === id) S.sel = { track: first?.id || null, pat: first?.pat || null, clip: null, clips: [], mod: null, cable: null };
     app.commit('graph');
   },
 
@@ -130,7 +205,7 @@ export const app = {
     const P = S.proj, out = [t.src], seen = new Set(out);
     let cur = t.src;
     for (;;) {
-      const next = P.cables.map((c) => c.a === cur && app.mod(c.b)).find((m) => m && m.track === trackId && !seen.has(m.id));
+      const next = P.cables.map((c) => c.a === cur && typeof c.send !== 'number' && app.mod(c.b)).find((m) => m && m.track === trackId && !seen.has(m.id));
       if (!next) break;
       out.push(next.id); seen.add(next.id);
       if (next.type === 'strip') break;
@@ -151,7 +226,7 @@ export const app = {
     }
   },
 
-  addEffect(trackId, type, { x, y } = {}) {
+  addEffect(trackId, type, { x, y, quiet = false } = {}) {
     const P = S.proj;
     const m = { id: uid('m'), type, track: trackId || null, x: x ?? 0, y: y ?? 0, on: true, params: {} };
     P.modules.push(m);
@@ -168,17 +243,18 @@ export const app = {
       }
     }
     S.sel.mod = m.id;
-    app.commit('graph');
+    if (!quiet) app.commit('graph');
     return m;
   },
 
   removeModule(id) {
     const P = S.proj, m = app.mod(id);
     if (!m || MODULES[m.type].role !== 'effect') return;
-    const ins = P.cables.filter((c) => c.b === id).map((c) => c.a);
+    const ins = P.cables.filter((c) => c.b === id && typeof c.send !== 'number').map((c) => c.a);
     const outs = P.cables.filter((c) => c.a === id).map((c) => c.b);
     P.cables = P.cables.filter((c) => c.a !== id && c.b !== id);
     P.modules = P.modules.filter((x) => x.id !== id);
+    P.auto = (P.auto || []).filter((L) => L.mod !== id);
     for (const a of ins) for (const b of outs) if (!app.wouldCycle(a, b) && !P.cables.some((c) => c.a === a && c.b === b)) P.cables.push({ a, b });
     if (S.sel.mod === id) S.sel.mod = null;
     app.commit('graph');
@@ -227,20 +303,25 @@ export const app = {
     app.commit('graph');
   },
 
-  // ── motifs ──
-  newPattern(trackId, from = null) {
+  // ── motifs et clips ──
+  newPattern(trackId, from = null, { name, quiet = false } = {}) {
     const t = app.track(trackId), P = S.proj;
     const n = P.patterns.filter((p) => p.track === trackId).length + 1;
     const base = from ? JSON.parse(JSON.stringify(from)) : (TRACK_KINDS[t.kind].pattern === 'drums'
-      ? { steps: 16, lanes: {} } : { steps: 16, notes: [] });
-    const p = { ...base, id: uid('p'), track: trackId, name: from ? `${from.name} bis`.slice(0, 40) : `Motif ${n}` };
+      ? { steps: P.sig * 4, lanes: {} } : { steps: P.sig * 4, notes: [] });
+    const p = { ...base, id: uid('p'), track: trackId, name: name || (from ? `${from.name} bis`.slice(0, 40) : `Motif ${n}`) };
     P.patterns.push(p);
     t.pat = p.id; S.sel.pat = p.id;
-    app.commit('data');
+    if (!quiet) app.commit('data');
     return p;
   },
-
-  // ── clips ──
+  // un clip neuf d'une mesure, sur un motif vide « Nouveau »
+  newClip(trackId, b) {
+    const t = app.track(trackId);
+    if (!t || !TRACK_KINDS[t.kind].pattern) return null;
+    const p = app.newPattern(trackId, null, { name: 'Nouveau', quiet: true });
+    return app.addClip(trackId, b, { pat: p.id, len: S.proj.sig });
+  },
   addClip(trackId, start, extra = {}) {
     const t = app.track(trackId);
     const c = { id: uid('c'), track: trackId, start: Math.max(0, start), ...extra };
@@ -250,39 +331,217 @@ export const app = {
       c.len = extra.len || p.steps / 4;
     }
     S.proj.clips.push(c);
-    S.sel.clip = c.id; S.sel.track = trackId;
+    S.sel.clip = c.id; S.sel.clips = [c.id]; S.sel.track = trackId;
     app.commit('data');
     return c;
+  },
+  uniqueClip(id) {
+    const c = app.clip(id);
+    if (!c?.pat) return;
+    const p = app.newPattern(c.track, app.pat(c.pat), { quiet: true });
+    c.pat = p.id;
+    toast(`ce clip joue maintenant « ${p.name} »`);
+    app.commit('data');
   },
 
   async addAudio(trackId, at) {
     const got = await pick({ kinds: ['audio'], multiple: true, title: 'Des sons de la bibliothèque' });
-    if (!got.length) return;
-    let t = trackId && app.track(trackId);
-    if (!t || t.kind !== 'audio') t = app.addTrack('audio');
-    let start = at ?? engine.position();
-    for (const it of got) {
-      items.set(it.id, Promise.resolve({ ...it, href: href(it.url) }));
-      const len = Math.max(0.25, (it.duration || 4) * S.proj.bpm / 60);
-      S.proj.clips.push({ id: uid('c'), track: t.id, start, len, item: it.id, off: 0 });
-      start += len;
-    }
-    app.commit('graph');
+    if (got.length) app.placeItems(got, { track: trackId, at: at ?? engine.position() });
   },
 
-  // ── les travaux « IA » ──
-  generate: () => openGenerate(),
-  stems: (clipId) => runStems(clipId),
+  // Des sons de la bibliothèque sur l'arrangement. `track` : une piste audio
+  // (ils s'y suivent) ; sinon une piste audio neuve (ou une par son, `perTrack`).
+  async placeItems(list, { track = null, at = 0, perTrack = false, names = null } = {}) {
+    const P = S.proj;
+    const its = await Promise.all(list.map((x) => (typeof x === 'string' ? loadItem(x) : Promise.resolve({ ...x, href: href(x.url) }))));
+    let t = track && app.track(track);
+    if (t && t.kind !== 'audio') t = null;
+    let start = at;
+    const placed = [];
+    for (const [i, it] of its.entries()) {
+      items.set(it.id, Promise.resolve(it));
+      let dur = it.duration;
+      if (!dur) { try { dur = (await engine.buffer(it.id)).duration; } catch { dur = 4; } }
+      const len = Math.max(0.25, dur * P.bpm / 60);
+      if (!t || perTrack) t = app.addTrack('audio', { name: (names?.[i] || it.title || 'Audio').slice(0, 60) });
+      const c = { id: uid('c'), track: t.id, start: perTrack ? at : start, len, item: it.id, off: 0 };
+      P.clips.push(c);
+      placed.push(c);
+      if (!perTrack) start += len;
+    }
+    if (placed.length) app.selectClips(placed.map((c) => c.id), true);
+    app.commit('graph');
+    document.dispatchEvent(new CustomEvent('mu:placed'));
+    return placed;
+  },
+
+  // Des fichiers du disque : la bibliothèque (catégorie Upload), puis l'arrangement
+  async importFiles(files, { track = null, at = 0, perTrack = false } = {}) {
+    const got = [];
+    for (const [i, f] of files.entries()) {
+      toast(files.length > 1 ? `import ${i + 1} / ${files.length} · ${f.name}` : `import · ${f.name}`, 60000);
+      try { got.push(await uploadFile(f, { tool: 'upload', via: 'odio', folder: '' })); } catch (e) { toast(`${f.name} : ${e.message}`, 6000); }
+    }
+    if (!got.length) return;
+    const audio = got.filter((it) => it.kind === 'audio');
+    if (audio.length < got.length) toast('un fichier n\'est pas un son : il reste dans la bibliothèque', 5000);
+    if (audio.length) {
+      await app.placeItems(audio, { track, at, perTrack });
+      toast(`${audio.length} son${audio.length > 1 ? 's' : ''} importé${audio.length > 1 ? 's' : ''} · rangé${audio.length > 1 ? 's' : ''} dans la bibliothèque (Upload)`);
+    }
+  },
+
+  // ce qu'on lâche depuis le navigateur (ou un son glissé du portail)
+  async dropItem(d, trackId, at) {
+    const P = S.proj;
+    const t = trackId && app.track(trackId);
+    if (d.t === 'inst') {
+      if (d.kind === 'audio') { const n = app.addTrack('audio'); app.commit('graph'); return n; }
+      if (t && t.kind === d.kind) { app.setSource(t.id, d.type); return t; }
+      app.addTrack(d.kind, { type: d.type }); app.commit('graph'); return null;
+    }
+    if (d.t === 'fx') { if (!t) { toast('glisser l\'effet sur une piste'); return null; } return app.addEffect(t.id, d.type); }
+    if (d.t === 'bus') return app.addBus(d.fx);
+    if (d.t === 'preset') {
+      const p = PRESETS.find((x) => x.id === d.id);
+      if (!p) return null;
+      if (t && app.mod(t.src)?.type === p.type) { app.applyPreset(t.id, p.id); return t; }
+      const k = kindOfSource(p.type);
+      if (t && t.kind === k) { app.applyPreset(t.id, p.id); return t; }
+      const n = app.addTrack(k, { type: p.type, params: p.params, name: p.name, sub: p.sub });
+      app.commit('graph'); return n;
+    }
+    if (d.t === 'son') {
+      if (t?.kind === 'sampler') {
+        const m = app.mod(t.src);
+        items.set(d.item.id, Promise.resolve({ ...d.item, href: href(d.item.url) }));
+        m.params.item = d.item.id;
+        await engine.buffer(d.item.id).catch(() => {});
+        toast(`${t.name} joue « ${d.item.title} »`);
+        app.commit('graph'); return t;
+      }
+      return app.placeItems([d.item], { track: t?.kind === 'audio' ? t.id : null, at });
+    }
+    if (d.t === 'motif') {
+      const p = app.pat(d.pat);
+      if (!p) return null;
+      if (!t || t.id === p.track) return app.addClip(p.track, at, { pat: p.id });
+      const src = app.track(p.track);
+      if (TRACK_KINDS[t.kind].pattern !== TRACK_KINDS[src.kind].pattern) { toast('ce motif ne va que sur une piste de la même sorte'); return null; }
+      const cp = app.newPattern(t.id, p, { quiet: true, name: p.name });
+      return app.addClip(t.id, at, { pat: cp.id });
+    }
+    if (d.t === 'modele') {
+      const want = d.kind === 'drums' ? 'drums' : 'notes';
+      let tt = t && TRACK_KINDS[t.kind].pattern === want ? t : null;
+      if (!tt) tt = app.addTrack(d.kind === 'drums' ? 'drums' : 'synth', { type: d.kind === 'drums' ? 'rythme' : 'synth' });
+      const m = d.kind === 'drums' ? DRUM_MODELS.find((x) => x.id === d.id) : NOTE_MODELS.find((x) => x.id === d.id);
+      const g = d.kind === 'drums' ? { steps: 16, lanes: JSON.parse(JSON.stringify(m.lanes)) } : m.make(P.key, P.sig);
+      const p = app.newPattern(tt.id, null, { quiet: true, name: m.name });
+      Object.assign(p, g);
+      return app.addClip(tt.id, at, { pat: p.id });
+    }
+    return null;
+  },
+
+  // ── la sélection de clips ──
+  selected: () => S.proj.clips.filter((c) => (S.sel.clips || []).includes(c.id)),
+  splitAtPlayhead() {
+    const pos = Math.round(engine.position() * 4) / 4;
+    const g = app.selected().length ? app.selected() : S.proj.clips.filter((c) => c.track === S.sel.track);
+    const made = [];
+    for (const c of g) { const n = splitClip(S.proj, c, pos, uid); if (n) made.push(n); }
+    if (!made.length) { toast('la tête de lecture n\'est dans aucun clip choisi'); return; }
+    S.sel.clips = made.map((c) => c.id); S.sel.clip = made[0].id;
+    app.commit('data');
+  },
+  duplicateSel() {
+    const g = app.selected();
+    if (!g.length) return;
+    const b = copyClips(S.proj, g.map((c) => c.id));
+    const made = pasteClips(S.proj, b, b.base + b.len, uid);
+    S.sel.clips = made.map((c) => c.id); S.sel.clip = made[made.length - 1]?.id || null;
+    app.commit('data');
+  },
+  copySel() { const b = copyClips(S.proj, S.sel.clips || []); if (b) { app.board = b; toast(`${b.items.length} clip${b.items.length > 1 ? 's' : ''} copié${b.items.length > 1 ? 's' : ''}`); } },
+  cutSel() { app.copySel(); app.removeSel(); },
+  paste() {
+    if (!app.board) { toast('rien à coller : Ctrl+C sur des clips'); return; }
+    const at = Math.round(engine.position() * 4) / 4;
+    const made = pasteClips(S.proj, app.board, at, uid, S.sel.track);
+    if (!made.length) { toast('rien à coller ici : les pistes d\'origine ont disparu'); return; }
+    S.sel.clips = made.map((c) => c.id); S.sel.clip = made[made.length - 1].id;
+    app.commit('data');
+  },
+  removeSel() {
+    const ids = new Set(S.sel.clips || []);
+    if (!ids.size) return;
+    S.proj.clips = S.proj.clips.filter((c) => !ids.has(c.id));
+    S.sel.clips = []; S.sel.clip = null;
+    app.commit('data');
+  },
+  muteSel() {
+    const g = app.selected();
+    const to = !g.every((c) => c.mute);
+    for (const c of g) c.mute = to || undefined;
+    app.commit('data');
+  },
+  async toggleLoop(id) {
+    const c = app.clip(id);
+    if (!c?.item) return;
+    if (c.loop) { c.loop = undefined; const buf = engine.buffers.get(c.item); if (buf) c.len = Math.min(c.len, (buf.duration - (c.off || 0)) * S.proj.bpm / 60); }
+    else {
+      const buf = await engine.buffer(c.item).catch(() => null);
+      c.loop = true;
+      c.llen = Math.round(Math.min(c.len * 60 / S.proj.bpm, buf ? buf.duration - (c.off || 0) : 4) * 1000) / 1000;
+      toast('en boucle : tirer le bord droit du clip répète le son');
+    }
+    app.commit('data');
+  },
+
+  addMarker(b) {
+    const P = S.proj;
+    const m = { id: uid('k'), b: Math.max(0, Math.round(b * 4) / 4), name: `Repère ${P.markers.length + 1}` };
+    P.markers.push(m);
+    app.commit('data');
+    return m;
+  },
+  addAuto(modId, k) {
+    const P = S.proj, m = app.mod(modId);
+    if (!m || P.auto.some((L) => L.mod === modId && L.k === k)) return;
+    P.auto.push({ id: uid('a'), mod: modId, k, on: true, pts: [] });
+    if (m.track) P.ui.auto = { ...(P.ui.auto || {}), [m.track]: true };
+    toast(`automation : ${moduleName(m.type)} · ${MODULES[m.type].params.find((x) => x.k === k)?.label} — peindre la courbe`);
+    app.commit('data');
+  },
+
+  // ── la génération et la séparation ──
+  generate: () => openGenerative(app),
+  engines,
+  stems: (clipId) => {
+    const c = app.clip(clipId);
+    if (c?.item) runStems(c.item, { track: c.track, start: c.start, len: c.len, off: c.off || 0, gain: c.gain, clip: c.id });
+  },
+  stemsItem: (itemId) => runStems(itemId, null),
   exportMix: () => openExport(),
+  paintTransport: () => paintTransport(),
 };
+const rec = createRecorder(app);
+app.rec = rec;
 
 function fmtBar(beat) {
-  const b = Math.max(0, beat), bpb = beatsPerBar();
+  const b = Math.max(0, beat), bpb = S.proj?.sig || 4;
   const bar = Math.floor(b / bpb) + 1, bt = Math.floor(b % bpb) + 1;
   return `${String(bar).padStart(2, '0')}.${bt}`;
 }
+// la position comme sur le transport : mesure.temps.double-croche
+function fmtPos(beat) {
+  const b = Math.max(0, beat + 1e-9), sig = S.proj?.sig || 4;
+  const bar = Math.floor(b / sig) + 1, bt = Math.floor(b % sig) + 1, six = Math.floor((b % 1) * 4) + 1;
+  return `${String(bar).padStart(3, '0')}.${bt}.${six}`;
+}
 
-// ── l'enregistrement ────────────────────────────────────────
+// ── l'enregistrement du projet ──────────────────────────────
 let saveT = null, saving = false, again = false;
 function status(txt, err = false) {
   const s = $('#mu-save');
@@ -315,89 +574,158 @@ addEventListener('pagehide', () => {
   }
 });
 
+// ── annuler, rétablir ───────────────────────────────────────
+const hist = new History(() => S.proj, (o) => {
+  const p = S.proj;
+  for (const k of Object.keys(o)) p[k] = o[k];
+  const ok = new Set(p.clips.map((c) => c.id));
+  S.sel.clips = (S.sel.clips || []).filter((id) => ok.has(id));
+  if (!ok.has(S.sel.clip)) S.sel.clip = null;
+  if (!app.track(S.sel.track)) S.sel.track = p.tracks[0]?.id || null;
+  engine.setProject(p);
+  save(); overviewSoon();
+  render(true);
+});
+function undo() { if (!hist.back()) toast('rien à annuler'); }
+function redo() { if (!hist.fwd()) toast('rien à rétablir'); }
+
 // ── les projets ─────────────────────────────────────────────
 async function openProject(id) {
   if (engine.running) engine.stop();
-  const p = await api(`music/projects/${id}`);
+  const p = migrate(await api(`music/projects/${id}`));
   S.proj = p;
-  for (const k of ['pending', 'patterns', 'clips', 'cables', 'modules', 'tracks']) p[k] = p[k] || [];
-  S.view = p.ui?.view || 'timeline';
-  const t0 = p.tracks[0];
-  S.sel = { track: t0?.id || null, pat: t0?.pat || null, clip: null, mod: null, cable: null };
+  S.view = MAKERS[p.ui?.view] ? p.ui.view : 'timeline';
+  const t0 = p.tracks.find((t) => t.kind !== 'bus');
+  S.sel = { track: t0?.id || null, pat: t0?.pat || null, clip: null, clips: [], mod: null, cable: null };
   engine.pos = 0;
   engine.setProject(p);
   history.replaceState(null, '', `?p=${id}`);
   try { localStorage.setItem('mu:last', id); } catch { /* stockage refusé */ }
   status('enregistré');
+  hist.reset();
+  for (const k of Object.keys(views)) delete views[k];
   render(true);
   watchPending();
+  overviewSoon(100);
 }
 
 async function newProject() {
-  const name = await ask('Nouveau projet', 'Nom du projet', '');
-  if (!name) return;
-  const p = await api('music/projects', { method: 'POST', body: { name } });
-  S.list.unshift({ id: p.id, name: p.name });
-  await openProject(p.id);
+  const name = el('input', { class: 'fld', maxlength: 80, value: '', placeholder: 'Nom du projet' });
+  let tpl = 'session';
+  const cards = el('div', { class: 'mu-tpls' });
+  const T = [['session', 'Session', '16 mesures en 4 sections (intro, couplet, refrain, final), batterie, basse acide, nappe, lead, deux bus — comme la maquette NL—60'],
+    ['rythme', 'Batterie et basse', 'huit mesures qui tournent : de quoi entendre tout de suite'], ['vide', 'Vide', 'rien que la sortie']];
+  const paintT = () => put(cards, ...T.map(([k, t, s]) => el('button', { class: `mu-tpl${tpl === k ? ' on' : ''}`, type: 'button', onclick: () => { tpl = k; paintT(); } }, el('b', {}, t), el('span', {}, s))));
+  paintT();
+  const go = el('button', { class: 'tb go', type: 'button' }, 'Créer');
+  const m = modal({ title: 'Nouveau projet', wide: true,
+    body: [el('label', { class: 'field' }, el('span', { class: 'lbl' }, 'Nom'), name), el('div', { class: 'field' }, el('span', { class: 'lbl' }, 'Départ'), cards)],
+    foot: [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', type: 'button', onclick: () => m.close() }, 'Annuler'), go] });
+  setTimeout(() => name.focus(), 30);
+  go.addEventListener('click', async () => {
+    const n = name.value.trim() || 'Sans titre';
+    go.disabled = true;
+    try {
+      const p = await api('music/projects', { method: 'POST', body: { name: n, template: tpl } });
+      S.list.unshift({ id: p.id, name: p.name });
+      m.close();
+      await openProject(p.id);
+    } catch (e) { toast(e.message); go.disabled = false; }
+  });
 }
 
 async function loadList() {
   S.list = (await api('music/projects')).projects;
 }
 
-// ── la barre : projet, vues, transport ──────────────────────
+// ── la barre : projet, transport, tempo, tonalité, vues ─────
 const bar = el('div', { class: 'mu-bar' });
 const viewBox = el('div', { class: 'mu-view' });
 document.body.append(el('main', { class: 'mu-app' }, bar, viewBox));
+const ov = el('canvas', { class: 'mu-ov', title: 'la forme d\'onde de la session (rendu hors temps réel) · clic : aller là' });
+const posEl = el('b', { id: 'mu-pos' }, '001.1.1');
+const secEl = el('small', { id: 'mu-sec' }, '');
 
 function paintBar() {
   const P = S.proj;
   const sel = el('select', { class: 'fld mu-proj', 'aria-label': 'projet', onchange: (e) => openProject(e.target.value) },
     S.list.map((x) => el('option', { value: x.id, selected: x.id === P.id || null }, x.name)));
-  const views = el('div', { class: 'seg', role: 'tablist' },
-    [['timeline', 'Timeline'], ['rack', 'Rack'], ['nodal', 'Nodal']].map(([v, l]) =>
-      el('button', { class: `tb${S.view === v ? ' on' : ''}`, role: 'tab', 'aria-selected': S.view === v, type: 'button',
+  const ic = (label, title, fn, cls = '', attrs = {}) => el('button', { class: `tb sm mu-ic ${cls}`, type: 'button', title, onclick: fn, ...attrs }, label);
+  const views = el('div', { class: 'seg mu-views', role: 'tablist' },
+    [['timeline', 'Arrangement'], ['console', 'Console'], ['rack', 'Rack'], ['nodal', 'Nodal']].map(([v, l]) =>
+      el('button', { class: `tb${S.view === v ? ' on' : ''}`, role: 'tab', 'aria-selected': S.view === v, type: 'button', 'data-view': v,
         onclick: () => app.setView(v) }, l)));
-  const bpm = el('input', { class: 'fld mu-num', type: 'number', min: 20, max: 300, step: 1, value: P.bpm, 'aria-label': 'tempo',
-    onchange: (e) => {
-      const v = Math.round(+e.target.value);
-      if (!(v >= 20 && v <= 300)) { e.target.value = P.bpm; toast('tempo : de 20 à 300'); return; }
-      P.bpm = v;
-      const was = engine.running, at = engine.position();
-      app.commit('meta');
-      if (was) engine.playFrom(at);
-    } });
-  const sig = el('select', { class: 'fld mu-num', 'aria-label': 'temps par mesure',
-    onchange: (e) => { P.sig = +e.target.value; app.commit('meta'); } },
-  [2, 3, 4, 6].map((n) => el('option', { value: n, selected: n === P.sig || null }, `${n} temps`)));
+  const bpm = el('button', { class: 'mu-bpm', id: 'mu-bpm', type: 'button', title: 'tempo · clic : le saisir · molette : ± 1', onclick: editBpm,
+    onwheel: (e) => { e.preventDefault(); setBpm(P.bpm + (e.deltaY < 0 ? 1 : -1)); } }, el('b', {}, String(P.bpm)), el('small', {}, 'bpm'));
   const pend = (P.pending || []).length;
   put(bar,
+    el('div', { class: 'grp mu-brand', title: 'ODIO · le studio musique · le projet s\'enregistre seul' }, el('b', { class: 'venus' }, 'ODIO'),
+      el('span', { class: 'lbl mu-save', id: 'mu-save' }, 'enregistré')),
     el('div', { class: 'grp' }, sel,
-      el('button', { class: 'tb ghost sm', type: 'button', onclick: newProject, title: 'un projet neuf' }, 'Nouveau'),
-      el('button', { class: 'tb ghost sm', type: 'button', title: 'renommer, corbeille', onclick: (e) => projMenu(e) }, '···')),
+      el('button', { class: 'tb ghost sm', type: 'button', title: 'nouveau projet, renommer, corbeille', onclick: (e) => projMenu(e) }, '···')),
+    el('div', { class: 'grp mu-tr' },
+      ic('⏮', 'retour au début · Entrée', () => engine.seek(0)),
+      ic(engine.running ? '❚❚' : '▶', engine.running ? 'pause (on reste là)' : 'lecture · Espace', togglePause, 'play', { id: 'mu-play' }),
+      ic('■', 'stop : retour où la lecture a commencé (à l\'arrêt : au début)', stopBtn),
+      el('button', { class: `tb sm mu-rec${S.rec ? ' on' : ''}${rec.active ? ' live' : ''}`, id: 'mu-rec', type: 'button', title: 'prise : armée, la lecture enregistre les pistes armées · R',
+        onclick: toggleRec }, el('i'), 'Rec'),
+      el('button', { class: `tb sm${P.loop.on ? ' on' : ' ghost'}`, type: 'button', title: 'boucle · B', onclick: () => { P.loop.on = !P.loop.on; app.commit('meta'); } }, 'Boucle'),
+      el('button', { class: `tb sm${S.metro ? ' on' : ' ghost'}`, type: 'button', title: 'métronome · C', onclick: toggleMetro }, 'Clic')),
+    el('div', { class: 'mu-tc' }, posEl, secEl),
+    el('div', { class: 'grp mu-tempo' },
+      ic('−', 'tempo − 1 (Maj : − 10)', (e) => setBpm(P.bpm - (e.shiftKey ? 10 : 1))), bpm, ic('+', 'tempo + 1 (Maj : + 10)', (e) => setBpm(P.bpm + (e.shiftKey ? 10 : 1))),
+      el('select', { class: 'fld mu-mini', 'aria-label': 'mesure', title: 'temps par mesure', onchange: (e) => { P.sig = +e.target.value; app.commit('meta'); } },
+        [2, 3, 4, 6].map((n) => el('option', { value: n, selected: n === P.sig || null }, n === 6 ? '6/8' : `${n}/4`))),
+      el('button', { class: 'mu-key', id: 'mu-key', type: 'button', title: 'tonalité et mode de la session', onclick: keyPop }, el('b', {}, keyLabel(P.key)))),
     views,
+    el('div', { class: 'grp mu-ovw' }, ov),
     el('div', { class: 'grp' },
-      el('button', { class: 'tb go', id: 'mu-play', type: 'button', onclick: togglePlay, title: 'espace' }, 'Lecture'),
-      el('button', { class: `tb ghost${P.loop.on ? ' on' : ''}`, type: 'button', title: 'boucle',
-        onclick: () => { P.loop.on = !P.loop.on; app.commit('meta'); } }, 'Boucle'),
-      el('div', { class: 'mu-tc' }, el('b', { id: 'mu-pos' }, fmtBar(engine.position())), el('small', { id: 'mu-sec' }, ''))),
-    el('div', { class: 'grp' }, el('label', { class: 'mu-lab' }, el('span', { class: 'lbl' }, 'bpm'), bpm),
-      el('label', { class: 'mu-lab' }, el('span', { class: 'lbl' }, 'mesure'), sig)),
+      ic('↶', 'annuler · Ctrl+Z', undo, 'ghost'), ic('↷', 'rétablir · Ctrl+Y', redo, 'ghost')),
     el('span', { class: 'sp' }),
     el('div', { class: 'grp' },
-      el('span', { class: 'lbl mu-kb', id: 'mu-kb', title: 'jouer au clavier de l\'ordinateur : la rangée du milieu (touches physiques A S D F… d\'un clavier QWERTY, Q S D F… en AZERTY) ; les touches Z et X physiques (W et X en AZERTY) changent d\'octave' }, `oct ${S.oct}`),
-      el('button', { class: 'tb ghost sm', type: 'button', onclick: startMidi, title: 'brancher un clavier MIDI (Web MIDI)' },
-        S.midi ? `MIDI · ${S.midi}` : 'MIDI'),
+      S.midi ? el('span', { class: 'pill on', title: 'Web MIDI : les entrées jouent la piste armée ou choisie' }, el('i'), el('span', {}, `MIDI · ${S.midi}`)) : null,
       pend ? el('span', { class: 'pill work', title: 'travaux en cours pour ce projet' }, el('i'), el('span', {}, `${pend} en cours`)) : null,
-      el('button', { class: 'tb ghost', type: 'button', onclick: openGenerate }, 'Générer'),
-      el('button', { class: 'tb ghost', type: 'button', onclick: openExport }, 'Exporter'),
-      el('span', { class: 'lbl mu-save', id: 'mu-save' }, 'enregistré')));
+      el('button', { class: 'tb ghost sm', id: 'mu-gen', type: 'button', title: 'YuE2, ACE-Step, séparation en pistes', onclick: () => openGenerative(app) }, 'Générer'),
+      el('button', { class: 'tb ghost sm', id: 'mu-exp', type: 'button', title: 'le mixage et les pistes en WAV, vers la bibliothèque', onclick: openExport }, 'Exporter'),
+      el('button', { class: 'tb go', id: 'mu-guide', type: 'button', title: 'l\'aide, à côté de la session', onclick: () => openGuide(app) }, 'Guide')));
   paintTransport();
+  drawOverview();
+}
+
+function setBpm(v) {
+  const P = S.proj;
+  v = Math.round(v);
+  if (!(v >= 20 && v <= 300)) { toast('tempo : de 20 à 300'); return; }
+  if (v === P.bpm) return;
+  const was = engine.running, at = engine.position();
+  P.bpm = v;
+  app.commit('meta');
+  if (was) engine.playFrom(at);
+}
+async function editBpm() {
+  const v = await ask('Tempo', 'Battements par minute (20 à 300)', String(S.proj.bpm), 'Régler');
+  if (v !== null && !isNaN(+v)) setBpm(+v);
+}
+function keyPop(e) {
+  const P = S.proj;
+  const r = e.currentTarget.getBoundingClientRect();
+  const pop = el('div', { class: 'mu-menu mu-keypop', role: 'dialog' },
+    el('div', { class: 'head' }, 'tonique'),
+    el('div', { class: 'kp-t' }, TONICS.map((n, i) => el('button', { class: `tb sm${P.key.tonic === i ? ' on' : ' ghost'}`, type: 'button', title: TONICS_FR[i],
+      onclick: () => { P.key = { ...P.key, tonic: i }; app.commit('meta'); pop.remove(); } }, n))),
+    el('div', { class: 'head' }, 'mode'),
+    el('div', { class: 'kp-m' }, Object.entries(MODES).map(([k, m]) => el('button', { class: `tb sm${P.key.mode === k ? ' on' : ' ghost'}`, type: 'button',
+      onclick: () => { P.key = { ...P.key, mode: k }; app.commit('meta'); pop.remove(); } }, m.label))));
+  document.body.append(pop);
+  pop.style.left = `${Math.min(r.left, innerWidth - 340)}px`; pop.style.top = `${r.bottom + 6}px`;
+  setTimeout(() => addEventListener('pointerdown', function off(ev) { if (!pop.contains(ev.target)) { pop.remove(); removeEventListener('pointerdown', off, true); } }, true));
 }
 
 function projMenu(e) {
   const r = e.currentTarget.getBoundingClientRect();
   menu(r.left, r.bottom + 4, [
+    { label: 'Nouveau projet', sub: 'session, rythme, vide', onclick: newProject },
+    { label: S.midi ? `MIDI · ${S.midi}` : 'Brancher un clavier MIDI', sub: 'Web MIDI', onclick: startMidi },
     { label: 'Renommer', onclick: async () => {
       const n = await ask('Renommer le projet', 'Nom du projet', S.proj.name, 'Renommer');
       if (n) { S.proj.name = n; const it = S.list.find((x) => x.id === S.proj.id); if (it) it.name = n; app.commit('meta'); }
@@ -408,7 +736,7 @@ function projMenu(e) {
       clearTimeout(saveT);
       await loadList();
       if (!S.list.length) {
-        const p = await api('music/projects', { method: 'POST', body: { name: 'Premier projet' } });
+        const p = await api('music/projects', { method: 'POST', body: { name: 'Premier projet', template: 'session' } });
         S.list = [{ id: p.id, name: p.name }];
       }
       await openProject(S.list[0].id);
@@ -418,35 +746,105 @@ function projMenu(e) {
 
 function paintTransport() {
   const b = $('#mu-play');
-  if (b) b.textContent = engine.running ? 'Stop' : 'Lecture';
+  if (b) { b.textContent = engine.running ? '❚❚' : '▶'; b.classList.toggle('on', engine.running); }
+  const r = $('#mu-rec');
+  if (r) { r.classList.toggle('on', S.rec); r.classList.toggle('live', rec.active); }
 }
-
+async function togglePause() {
+  if (engine.running) engine.stop(false, { stay: true });
+  else await engine.playFrom(engine.pos);
+  paintTransport();
+}
 async function togglePlay() {
   if (engine.running) engine.stop();
   else await engine.playFrom(engine.pos);
   paintTransport();
 }
+function stopBtn() {
+  if (engine.running) engine.stop();
+  else engine.seek(0);
+  paintTransport();
+}
+function toggleRec() {
+  S.rec = !S.rec;
+  if (S.rec && engine.running) rec.begin();
+  if (!S.rec && rec.active) rec.end();
+  if (S.rec && !engine.running) toast('prise armée : Lecture pour enregistrer les pistes armées (●)', 4000);
+  paintTransport();
+}
+function toggleMetro() {
+  S.metro = !S.metro; engine.metro = S.metro;
+  paintBar();
+}
+
+// ── la forme d'onde de la session ───────────────────────────
+// Le mixage rendu hors temps réel (le même graphe qu'à l'export), refait
+// une seconde et demie après la dernière retouche. 44,1 kHz : les filtres
+// d'ODIO montent jusqu'à 20 kHz, un contexte plus lent les écrêterait.
+let ovBuf = null, ovT = null, ovBusy = false, ovAgain = false, ovEnd = 0;
+const OV_W = 120;
+function overviewSoon(ms = 1500) { clearTimeout(ovT); ovT = setTimeout(renderOverview, ms); }
+async function renderOverview() {
+  if (!S.proj) return;
+  if (ovBusy) { ovAgain = true; return; }        // une retouche pendant le rendu : on le refait après
+  const end = Math.max(songEnd(S.proj), 1);
+  if (end > 2400) return;
+  ovBusy = true;
+  try { ovBuf = await renderMix(engine, S.proj, 0, end, { tail: 0.5, sampleRate: 44100 }); ovEnd = end; } catch { ovBuf = null; }
+  ovBusy = false;
+  drawOverview();
+  if (ovAgain) { ovAgain = false; overviewSoon(300); }
+}
+function drawOverview() {
+  const w = OV_W, h = 28, dpr = devicePixelRatio || 1;
+  ov.width = w * dpr; ov.height = h * dpr; ov.style.width = `${w}px`; ov.style.height = `${h}px`;
+  const g = ov.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  if (!ovBuf || !S.proj) { g.fillStyle = tok('line'); g.fillRect(0, h / 2, w, 1); return; }
+  const spb = 60 / S.proj.bpm, tot = ovEnd * spb, pk = peaks(ovBuf, 340);
+  const L = S.proj.loop;
+  if (L.on) { g.fillStyle = tok('cy-bg'); g.fillRect((L.a * spb / tot) * w, 0, ((L.b - L.a) * spb / tot) * w, h); }
+  g.fillStyle = tok('cy');
+  for (let x = 0; x < w; x++) {
+    const i = Math.floor(((x / w) * tot / ovBuf.duration) * pk.length);
+    const v = Math.min(1, pk[Math.min(pk.length - 1, i)] || 0), hh = Math.max(1, v * (h - 4));
+    g.fillRect(x, (h - hh) / 2, 1, hh);
+  }
+  ov.dataset.tot = tot;
+}
+ov.addEventListener('pointerdown', (e) => {
+  if (!ovBuf) return;
+  const r = ov.getBoundingClientRect();
+  engine.seek(((e.clientX - r.left) / r.width) * ovEnd);
+});
 
 // ── les vues ────────────────────────────────────────────────
 const views = {};
+const MAKERS = { timeline: createTimeline, console: createConsole, rack: createRack, nodal: createNodal };
 function render(full = false) {
   if (!S.proj) return;
   paintBar();
-  if (!views[S.view]) views[S.view] = { timeline: createTimeline, rack: createRack, nodal: createNodal }[S.view](app);
+  if (!views[S.view]) views[S.view] = MAKERS[S.view](app);
   const v = views[S.view];
   if (full || viewBox.firstChild !== v.el) put(viewBox, v.el);
   document.body.dataset.view = S.view;
   v.render();
 }
 
-// la tête de lecture et les vu-mètres : à chaque image
+// la tête de lecture, les vu-mètres, la position : à chaque image
 function frame() {
   if (S.proj) {
     const b = engine.position();
-    const pos = $('#mu-pos'), sec = $('#mu-sec');
-    if (pos) pos.textContent = fmtBar(b);
-    if (sec) sec.textContent = fmtDur(b * 60 / S.proj.bpm);
+    posEl.textContent = fmtPos(b);
+    secEl.textContent = fmtDur(b * 60 / S.proj.bpm);
     views[S.view]?.frame?.(b);
+    if (ovBuf && ov.dataset.tot) {
+      // la tête sur la forme d'onde
+      drawOverview();
+      const g = ov.getContext('2d'), w = OV_W, x = ((b * 60 / S.proj.bpm) / +ov.dataset.tot) * w;
+      g.fillStyle = tok('or'); g.fillRect(Math.min(w - 1, x), 0, 1.5, 28);
+    }
   }
   requestAnimationFrame(frame);
 }
@@ -462,19 +860,26 @@ const held = new Map();
 const typing = (e) => e.target.closest?.('input, textarea, select, [contenteditable]');
 
 function srcForPlay() {
-  const t = app.track(S.sel.track) || S.proj.tracks.find((x) => x.kind !== 'audio');
-  return t && t.kind !== 'audio' ? t : null;
+  const armed = S.proj.tracks.find((x) => x.arm && TRACK_KINDS[x.kind]?.pattern);
+  const t = armed || app.track(S.sel.track) || S.proj.tracks.find((x) => TRACK_KINDS[x.kind]?.pattern);
+  return t && TRACK_KINDS[t.kind]?.pattern ? t : null;
 }
 
 addEventListener('keydown', async (e) => {
-  if (!S.proj || typing(e) || e.metaKey || e.ctrlKey || e.altKey) {
-    if (S.proj && !typing(e) && (e.ctrlKey || e.metaKey) && e.code === 'KeyD') { e.preventDefault(); views[S.view]?.key?.(e); }
-    return;
-  }
+  if (!S.proj || typing(e) || document.querySelector('.scrim')) return;
+  const ctrl = e.ctrlKey || e.metaKey;
+  if (ctrl && e.code === 'KeyZ') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+  if (ctrl && e.code === 'KeyY') { e.preventDefault(); redo(); return; }
+  if (ctrl || e.altKey) { views[S.view]?.key?.(e); return; }
   if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) togglePlay(); return; }
+  if (e.code === 'Enter' || e.code === 'Home') { e.preventDefault(); engine.seek(0); return; }
+  if (e.code === 'KeyR' && !e.repeat) { toggleRec(); return; }
+  if (e.code === 'KeyC' && !e.repeat) { toggleMetro(); return; }
+  if (e.code === 'KeyB' && !e.repeat) { S.proj.loop.on = !S.proj.loop.on; app.commit('meta'); return; }
+  if (e.code === 'KeyM' && !e.repeat) { app.addMarker(engine.position()); return; }
   if (e.code === 'KeyZ' || e.code === 'KeyX') {
     S.oct = Math.max(0, Math.min(8, S.oct + (e.code === 'KeyZ' ? -1 : 1)));
-    const k = $('#mu-kb'); if (k) k.textContent = `oct ${S.oct}`;
+    toast(`clavier : octave ${S.oct} (do${S.oct})`, 1200);
     return;
   }
   if (e.code in KEYS) {
@@ -484,8 +889,8 @@ addEventListener('keydown', async (e) => {
     const pitch = t.kind === 'drums' ? KEYS[e.code] : 12 * (S.oct + 1) + KEYS[e.code];
     held.set(e.code, null);
     const h = await engine.noteOn(t.src, pitch, 0.85);
+    rec.noteOn(t, pitch, 0.85, e.code);
     if (held.has(e.code)) held.set(e.code, h); else engine.noteOff(h);
-    views[S.view]?.played?.(t, pitch);
     return;
   }
   views[S.view]?.key?.(e);
@@ -495,6 +900,7 @@ addEventListener('keyup', (e) => {
   const h = held.get(e.code);
   held.delete(e.code);
   if (h) engine.noteOff(h);
+  rec.noteOff(e.code);
 });
 
 // ── Web MIDI (MDN : Navigator.requestMIDIAccess) ────────────
@@ -511,8 +917,9 @@ async function startMidi() {
           const [st, d1, d2] = m.data, cmd = st & 0xf0;
           const t = srcForPlay();
           if (!t) return;
-          if (cmd === 0x90 && d2 > 0) notes.set(d1, await engine.noteOn(t.src, t.kind === 'drums' ? d1 - 36 : d1, d2 / 127));
-          else if (cmd === 0x80 || (cmd === 0x90 && d2 === 0)) { engine.noteOff(notes.get(d1)); notes.delete(d1); }
+          const pitch = t.kind === 'drums' ? d1 - 36 : d1;
+          if (cmd === 0x90 && d2 > 0) { notes.set(d1, await engine.noteOn(t.src, pitch, d2 / 127)); rec.noteOn(t, pitch, d2 / 127, `midi${d1}`); }
+          else if (cmd === 0x80 || (cmd === 0x90 && d2 === 0)) { engine.noteOff(notes.get(d1)); notes.delete(d1); rec.noteOff(`midi${d1}`); }
         };
       }
       S.midi = n ? `${n} entrée${n > 1 ? 's' : ''}` : 'aucune entrée';
@@ -523,88 +930,32 @@ async function startMidi() {
   } catch (err) { toast(`MIDI refusé : ${err.message}`); }
 }
 
-// ── générer (ACE-Step 1.5, ou le son d'essai) ───────────────
+// ── générer, séparer : les travaux et leur retour ───────────
 async function engines() {
   try { S.engines = await api('music/engines'); } catch (e) { S.engines = { error: e.message }; }
   return S.engines;
 }
 
-async function openGenerate() {
-  const E = await engines();
-  const P = S.proj;
-  const g = E.generate || { ok: false, why: E.error };
-  const at = engine.position();
-  const f = {
-    title: el('input', { class: 'fld', maxlength: 80, placeholder: 'le titre dans la bibliothèque' }),
-    tags: el('textarea', { class: 'fld', maxlength: 512, rows: 3,
-      placeholder: 'genre, instruments, ambiance, voix… (anglais conseillé par la doc ACE-Step)' }),
-    lyrics: el('textarea', { class: 'fld', maxlength: 4096, rows: 5, placeholder: '[Verse]\n…\n[Chorus]\n…' }),
-    inst: el('input', { type: 'checkbox' }),
-    dur: el('input', { class: 'fld', type: 'number', min: 10, max: 600, step: 1,
-      value: Math.round(Math.min(600, Math.max(10, P.loop.on ? (P.loop.b - P.loop.a) * 60 / P.bpm : 30))) }),
-    bpm: el('input', { class: 'fld', type: 'number', min: 30, max: 300, value: Math.min(300, Math.max(30, P.bpm)) }),
-    key: el('select', { class: 'fld' }, (E.keyscales || []).map((k) => el('option', { value: k, selected: k === 'A minor' || null }, k))),
-    ts: el('select', { class: 'fld' }, (E.timesigs || ['4']).map((k) => el('option', { value: k, selected: +k === P.sig || null }, k === '6' ? '6/8' : `${k}/4`))),
-    lang: el('select', { class: 'fld' }, (E.languages || ['fr']).map((k) => el('option', { value: k, selected: k === 'fr' || null }, k))),
-    seed: el('input', { class: 'fld', type: 'number', min: 0, placeholder: 'aléatoire' }),
-  };
-  const count = el('span', { class: 'lbl' }, '0 / 512');
-  f.tags.addEventListener('input', () => { count.textContent = `${f.tags.value.length} / 512`; });
-  const syncInst = () => { f.lyrics.disabled = f.inst.checked; };
-  f.inst.addEventListener('change', syncInst);
-  const lab = (t, n, extra) => el('label', { class: 'field' }, el('span', { class: 'lbl' }, t, extra ? el('b', {}, ` · ${extra}`) : null), n);
-  const go = el('button', { class: 'tb go', type: 'button', disabled: !g.ok || null }, 'Lancer');
-  const why = g.ok ? null : el('p', { class: 'why' }, `génération indisponible : ${g.why || 'raison inconnue'}`);
-  const m = modal({
-    title: 'Générer un morceau', wide: true,
-    body: [
-      el('div', { class: `mu-engine${E.mode === 'factice' ? ' essai' : ''}` },
-        el('b', {}, g.model || 'ACE-Step 1.5'), el('span', {}, g.ok ? `prêt${g.machine ? ` · ${g.machine}` : ''}` : 'indisponible'),
-        E.mode === 'factice' ? el('span', { class: 'lbl' }, 'mode essai : un son synthétisé dans la tonalité et au tempo demandés, pour éprouver le parcours ; le modèle se branche plus tard') : null),
-      why,
-      lab('Titre', f.title),
-      el('label', { class: 'field' }, el('span', { class: 'row' }, el('span', { class: 'lbl' }, 'Style'), el('span', { class: 'sp' }), count), f.tags),
-      el('div', { class: 'row' }, el('label', { class: 'opt mu-check' }, f.inst, ' Instrumental (sans paroles)')),
-      lab('Paroles', f.lyrics, 'facultatives, [Verse] [Chorus]…'),
-      el('div', { class: 'mu-form4' }, lab('Durée (s)', f.dur, '10 à 600'), lab('Tempo', f.bpm), lab('Tonalité', f.key), lab('Mesure', f.ts),
-        lab('Langue', f.lang), lab('Graine', f.seed)),
-      el('p', { class: 'lbl' }, `le son se pose sur une piste audio neuve, à la mesure ${fmtBar(at)}, et entre dans la bibliothèque (dossier Musique)`),
-    ],
-    foot: [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', type: 'button', onclick: () => m.close() }, 'Annuler'), go],
-  });
-  go.addEventListener('click', async () => {
-    const body = {
-      title: f.title.value.trim(), tags: f.tags.value.trim(), lyrics: f.inst.checked ? '' : f.lyrics.value.trim(),
-      instrumental: f.inst.checked, duration: +f.dur.value, bpm: +f.bpm.value, keyscale: f.key.value,
-      timesignature: f.ts.value, language: f.lang.value, seed: f.seed.value === '' ? null : +f.seed.value,
-    };
-    go.disabled = true;
-    try {
-      const j = await api('music/generate', { method: 'POST', body });
-      P.pending.push({ job: j.id, kind: 'generate', at, title: j.params.title });
-      app.commit('data');
-      m.close();
-      toast(`en file : ${j.title}`);
-      jobs.poll(true);
-    } catch (e) { toast(e.message, 5000); go.disabled = false; }
-  });
-}
-
-async function runStems(clipId) {
-  const c = app.clip(clipId);
-  if (!c?.item) return;
-  const E = await engines();
-  if (!E.stems?.ok) { toast(`séparation indisponible : ${E.stems?.why || E.error}`, 5000); return; }
+// La séparation : le contrat `music.stems` (server/tools/music_stems.py),
+// avec le modèle choisi dans le panneau génératif, sinon celui que ses
+// options recommandent (le meilleur prêt).
+async function runStems(itemId, clip, want = null) {
+  const s = await options('music/stems/options', 'music.stems');
+  if (!s.ok) { toast(`séparation indisponible : ${s.why}`, 6000); return; }
+  const best = bestStems(s.o, want || S.proj.gen?.stemModel);
+  if (!best) { toast('séparation : aucun modèle prêt (voir le guide, Moteurs)', 6000); return; }
+  let title = itemId;
+  try { title = (await loadItem(itemId)).title || itemId; } catch { /* le titre n'est qu'une étiquette */ }
   try {
-    const j = await api('music/stems', { method: 'POST', body: { item: c.item } });
-    S.proj.pending.push({ job: j.id, kind: 'stems', clip: { track: c.track, start: c.start, len: c.len, off: c.off || 0 } });
+    const j = await api('music/stems/separate', { method: 'POST', body: { src: itemId, model: best.id, stems: best.stems } });
+    S.proj.pending.push({ job: j.id, kind: 'stems', clip, item: itemId, title: `Séparer · ${title}` });
     app.commit('data');
-    toast(`en file : ${j.title}${E.mode === 'factice' ? ' (mode essai : des filtres, pas une vraie séparation)' : ''}`, 5000);
+    toast(`en file : séparation · ${best.name}${s.o.engine === 'factice' ? ' (moteur d\'essai : des filtres, pas une séparation)' : ''}`, 5000);
     jobs.poll(true);
-  } catch (e) { toast(e.message, 5000); }
+  } catch (e) { toast(e.message, 6000); }
 }
 
-// Les travaux du projet : quand l'un finit, son son se pose sur la timeline.
+const STEM_COLOR = { vocals: 'coral-3', drums: 'or', bass: 'grn2', other: 'cy', guitar: 'amb', piano: 'coral-2', instrumental: 'cy' };
 const handled = new Set();
 let unwatch = null;
 function watchPending() {
@@ -620,40 +971,59 @@ function watchPending() {
       handled.add(pd.job);
       if (P !== S.proj) return;
       P.pending = P.pending.filter((x) => x.job !== pd.job);
-      if (j.state !== 'done') { toast(`${j.title || 'travail'} : ${stateFr(j.state)} — ${j.message || ''}`, 6000); app.commit('data'); continue; }
+      if (j.state !== 'done') { toast(`${j.title || 'travail'} : ${stateFr(j.state)} — ${j.message || ''}`, 8000); app.commit('data'); continue; }
       const full = await api(`jobs/${pd.job}`);
       for (const it of full.items || []) items.set(it.id, Promise.resolve({ ...it, href: href(it.url) }));
       if (pd.kind === 'generate') {
-        for (const it of full.items || []) {
-          const t = app.addTrack('audio', { name: (it.title || 'Généré').slice(0, 60) });
-          P.clips.push({ id: uid('c'), track: t.id, start: pd.at || 0, len: Math.max(0.25, (it.duration || 10) * P.bpm / 60), item: it.id, off: 0 });
+        const its = full.items || [];
+        const placed = [];
+        for (const it of its) {
+          const t = app.addTrack('audio', { name: (it.title || 'Généré').slice(0, 60), color: 'coral-2' });
+          const c = { id: uid('c'), track: t.id, start: pd.at || 0, len: Math.max(0.25, (it.duration || 10) * P.bpm / 60), item: it.id, off: 0 };
+          P.clips.push(c);
+          placed.push(c);
         }
-        toast(`posé sur la timeline : ${full.title}`);
+        P.gen = P.gen || {};
+        P.gen.hist = [...(P.gen.hist || []), { job: pd.job, engine: pd.engine, title: pd.title || full.title, items: its.map((x) => x.id) }].slice(-12);
+        toast(`posé dans l'arrangement : ${full.title}${pd.split && placed[0] ? ' · séparation en pistes lancée' : ''}`, 5000);
+        app.commit('graph');
+        if (pd.split && placed[0]) { const c = placed[0]; runStems(c.item, { track: c.track, start: c.start, len: c.len, off: 0, clip: c.id }, pd.stemModel); }
       } else if (pd.kind === 'stems') {
-        const FR = { vocals: 'Voix', drums: 'Batterie', bass: 'Basse', other: 'Autre' };
-        const src = app.track(pd.clip.track);
-        let at = src ? P.tracks.indexOf(src) + 1 : P.tracks.length;
-        for (const [stem, id] of Object.entries(full.result?.stems || {})) {
-          const it = (full.items || []).find((x) => x.id === id);
-          const t = app.addTrack('audio', { name: `${FR[stem] || stem}${src ? ` · ${src.name}` : ''}`.slice(0, 60), at: at++ });
-          P.clips.push({ id: uid('c'), track: t.id, start: pd.clip.start, len: pd.clip.len, item: id, off: pd.clip.off });
-          if (it) items.set(id, Promise.resolve({ ...it, href: href(it.url) }));
+        const src = pd.clip && app.track(pd.clip.track);
+        let at = src ? P.tracks.indexOf(src) + 1 : P.tracks.filter((t) => t.kind !== 'bus').length;
+        const byStem = new Map();
+        for (const it of full.items || []) byStem.set(it.params?.stem || it.title, it);
+        for (const [stem, id] of Object.entries(full.result?.stems || {})) if (!byStem.has(stem)) byStem.set(stem, (full.items || []).find((x) => x.id === id) || { id });
+        const start = pd.clip ? pd.clip.start : Math.round(engine.position());
+        const made = [];
+        for (const [stem, it] of byStem) {
+          const t = app.addTrack('audio', { name: `${STEM_FR[stem] || stem}${src ? ` · ${src.name}` : ''}`.slice(0, 60), color: STEM_COLOR[stem] || 'cy', at: at++ });
+          let len = pd.clip?.len;
+          if (!len) len = Math.max(0.25, (it.duration || 10) * P.bpm / 60);
+          const c = { id: uid('c'), track: t.id, start, len, item: it.id, off: pd.clip?.off || 0 };
+          if (pd.clip?.gain) c.gain = pd.clip.gain;
+          P.clips.push(c);
+          made.push(c);
         }
-        if (src) src.mute = true;
-        toast('quatre pistes posées sous l\'original, qui est coupé');
+        const orig = pd.clip && app.clip(pd.clip.clip);
+        if (orig) orig.mute = true;
+        S.sel.clips = made.map((c) => c.id); S.sel.clip = made[0]?.id || null;
+        toast(`${made.length} pistes posées sous l'original, alignées ; l'original est rendu muet`, 6000);
+        app.commit('graph');
       }
-      app.commit('graph');
+      document.dispatchEvent(new CustomEvent('mu:placed'));
     }
   });
 }
 
-// ── exporter le mixage en WAV → la bibliothèque ─────────────
+// ── exporter : le mixage et les pistes en WAV → la bibliothèque ──
 function openExport() {
   const P = S.proj;
   const end = songEnd(P);
   let range = P.loop.on ? 'loop' : 'song';
   const tail = el('input', { class: 'fld', type: 'number', min: 0, max: 20, step: 0.5, value: 2 });
   const title = el('input', { class: 'fld', maxlength: 80, value: `${P.name} · mixage` });
+  const stemsBox = el('input', { type: 'checkbox' });
   const seg = el('div', { class: 'seg' });
   const opts = [['loop', `Boucle (${fmtBar(P.loop.a)} → ${fmtBar(P.loop.b)})`], ['song', `Morceau (01.1 → ${fmtBar(end)})`]];
   const paintSeg = () => put(seg, ...opts.map(([k, l]) => el('button', { class: `tb${range === k ? ' on' : ''}`, type: 'button',
@@ -662,14 +1032,15 @@ function openExport() {
   const out = el('div', { class: 'mu-export' });
   const empty = end <= 0 && !P.loop.on;
   const go = el('button', { class: 'tb go', type: 'button', disabled: empty || null,
-    title: empty ? 'rien à exporter : pose un clip sur la timeline, ou règle une boucle' : '' }, 'Exporter');
+    title: empty ? 'rien à exporter : pose un clip dans l\'arrangement, ou règle une boucle' : '' }, 'Exporter');
   const m = modal({
-    title: 'Exporter le mixage', wide: true,
+    title: 'Exporter', wide: true,
     body: [
-      el('p', {}, 'Le mixage est rendu dans la page, hors temps réel, par le même graphe que la lecture (OfflineAudioContext) : WAV 24 bits, 48 kHz, stéréo. Il entre dans la bibliothèque, prêt pour le montage.'),
+      el('p', {}, 'Le mixage est rendu dans la page, hors temps réel, par le même graphe que la lecture (OfflineAudioContext) — arc d\'énergie et automation compris : WAV 24 bits, 48 kHz, stéréo. Il entre dans la bibliothèque (dossier Musique), prêt pour le montage.'),
       el('div', { class: 'field' }, el('span', { class: 'lbl' }, 'Étendue'), seg),
       el('div', { class: 'mu-form4' }, el('label', { class: 'field' }, el('span', { class: 'lbl' }, 'Queue (s)', el('b', {}, ' · réverbérations, chutes')), tail),
         el('label', { class: 'field wide' }, el('span', { class: 'lbl' }, 'Titre'), title)),
+      el('label', { class: 'opt mu-check' }, stemsBox, ' et chaque piste à part (stems) : une piste seule, ses envois aux bus compris'),
       out,
     ],
     foot: [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', type: 'button', onclick: () => m.close() }, 'Fermer'), go],
@@ -679,26 +1050,33 @@ function openExport() {
     if (b <= a) { toast('rien à exporter : pas de clip'); return; }
     go.disabled = true;
     const say = (t) => put(out, el('p', { class: 'lbl' }, t));
-    try {
-      say('rendu du mixage…');
-      const t0 = performance.now();
-      const buf = await renderMix(engine, P, a, b, { tail: Math.max(0, +tail.value || 0) });
+    const results = [];
+    const one = async (label, solo) => {
+      const buf = await renderMix(engine, P, a, b, { tail: Math.max(0, +tail.value || 0), solo });
       const pk = peakDb(buf);
-      say('encodage WAV…');
-      const blob = wav24(buf);
-      say('dépôt dans la bibliothèque…');
-      const name = `${(title.value.trim() || P.name).replace(/[^A-Za-z0-9._ -]+/g, '_').slice(0, 60)}.wav`;
-      const it = await uploadFile(new File([blob], name, { type: 'audio/wav' }), { tool: 'music', folder: 'Musique', title: title.value.trim() || P.name });
+      const name = `${label.replace(/[^A-Za-z0-9._ -]+/g, '_').slice(0, 60)}.wav`;
+      const it = await uploadFile(new File([wav24(buf)], name, { type: 'audio/wav' }), { tool: 'music', folder: 'Musique', title: label });
       items.set(it.id, Promise.resolve({ ...it, href: href(it.url) }));
+      return { it, pk, dur: buf.duration };
+    };
+    try {
+      const t0 = performance.now();
+      say('rendu du mixage…');
+      const mix = await one(title.value.trim() || P.name, null);
+      results.push(['Mixage', mix]);
+      if (stemsBox.checked) {
+        const tr = P.tracks.filter((t) => t.kind !== 'bus' && P.clips.some((c) => c.track === t.id && !c.mute));
+        for (const [i, t] of tr.entries()) { say(`stem ${i + 1} / ${tr.length} · ${t.name}…`); results.push([t.name, await one(`${P.name} · ${t.name}`, t.id)]); }
+      }
       const secs = ((performance.now() - t0) / 1000).toFixed(1);
-      window.__muLastExport = { id: it.id, url: it.url, peak: pk, duration: buf.duration, secs: +secs };
+      window.__muLastExport = { id: mix.it.id, url: mix.it.url, peak: mix.pk, duration: mix.dur, secs: +secs, stems: results.slice(1).map(([n, r]) => ({ name: n, id: r.it.id, peak: r.pk })) };
       put(out,
         el('div', { class: 'mu-done' },
-          el('div', {}, el('b', {}, it.title), el('span', { class: 'lbl' }, ` ${fmtDur(buf.duration)} · crête ${pk.toFixed(1)} dBFS · rendu en ${secs} s`)),
-          pk > -0.1 ? el('p', { class: 'warn' }, 'la crête touche 0 dBFS : le mixage sature, baisse la sortie ou les pistes') : null,
-          el('audio', { src: href(it.url), controls: true, preload: 'metadata' }),
+          el('div', {}, el('b', {}, mix.it.title), el('span', { class: 'lbl' }, ` ${fmtDur(mix.dur)} · crête ${mix.pk.toFixed(1)} dBFS · ${results.length} fichier${results.length > 1 ? 's' : ''} en ${secs} s`)),
+          mix.pk > -0.1 ? el('p', { class: 'warn' }, 'la crête touche 0 dBFS : le mixage sature, baisse la sortie ou les pistes') : null,
+          results.map(([n, r]) => el('div', { class: 'mu-exp-row' }, el('span', { class: 'lbl' }, `${n} · ${r.pk.toFixed(1)} dBFS`), el('audio', { src: href(r.it.url), controls: true, preload: 'metadata' }))),
           el('div', { class: 'row' },
-            el('a', { class: 'tb ghost', href: href(`montage/?add=${encodeURIComponent(it.id)}`) }, 'Envoyer au montage'),
+            el('a', { class: 'tb ghost', href: href(`montage/?add=${encodeURIComponent(mix.it.id)}`) }, 'Envoyer au montage'),
             el('a', { class: 'tb ghost', href: href('asset/') }, 'Voir dans Asset'))));
       go.disabled = false;
     } catch (e) { say(''); toast(`export : ${e.message}`, 6000); go.disabled = false; }
@@ -710,7 +1088,7 @@ function openExport() {
   try {
     await loadList();
     if (!S.list.length) {
-      const p = await api('music/projects', { method: 'POST', body: { name: 'Premier projet' } });
+      const p = await api('music/projects', { method: 'POST', body: { name: 'Première session', template: 'session' } });
       S.list = [{ id: p.id, name: p.name }];
     }
     const q = new URLSearchParams(location.search).get('p');
@@ -725,5 +1103,4 @@ function openExport() {
 })();
 
 // pour les essais pilotés (playwright) : l'état, le moteur, l'export
-window.__mu = { S, app, engine, renderMix, wav24, peakDb };
-export { DRUM_VOICES };
+window.__mu = { S, app, engine, renderMix, wav24, peakDb, hist, rec, undo, redo, flush };

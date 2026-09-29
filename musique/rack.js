@@ -1,13 +1,15 @@
-// MUSIQUE — la vue Rack : la chaîne d'une piste (source → effets →
-// tranche), module par module avec ses molettes, et l'éditeur de motifs
-// (séquenceur à pas pour la DR-9, piano roll pour le synthé et
-// l'échantillonneur). Les effets s'ajoutent, se déplacent et se retirent
-// ici ; c'est la même chaîne de câbles que dans la vue Nodal.
+// ODIO — la vue Rack : la chaîne d'une piste (source → effets → tranche),
+// module par module avec ses molettes, et l'éditeur de son motif. Les
+// effets s'ajoutent, se déplacent et se retirent ici ; c'est la même chaîne
+// de câbles que dans la vue Nodal. L'instrument d'une piste se change ici
+// (DR-9 ou boîte à rythme ODIO ; synthé, Analog, basse acide ou numérique),
+// ses préréglages aussi.
 
-import { toast, pick, href } from '../commun/shell.js';
-import { MODULES, TRACK_KINDS, EFFECT_TYPES, DRUM_VOICES, spec, val, noteName, isBlack, fmt } from './modules.js';
+import { toast, pick, href, dropZone } from '../commun/shell.js';
+import { MODULES, TRACK_KINDS, EFFECT_TYPES, DRUM_VOICES, RHYTHM_VOICES, SOURCES_OF, spec, val, fmt, presetsFor, moduleName } from './modules.js';
 import { peaks } from './moteur.js';
-import { el, knob, choice, menu, ask, tok, put } from './ui.js';
+import { el, knob, choice, menu, tok, put } from './ui.js';
+import { patternEditor } from './editeurs.js';
 
 const BUS = '__bus';
 
@@ -19,6 +21,7 @@ export function createRack(app) {
   root.append(side, main);
   let padSel = 'bd';
   const meters = [];
+  let ed = null;
 
   // ── la liste des pistes ──
   function paintSide() {
@@ -35,12 +38,11 @@ export function createRack(app) {
         el('span', { class: 'dots' })))),
       el('li', {}, el('button', { class: `item${S.sel.track === BUS ? ' sel' : ''}`, type: 'button', onclick: () => app.select({ track: BUS, mod: null }) },
         el('i', { class: 'st ok' }),
-        el('span', { class: 'txt' }, el('span', { class: 'ref' }, 'bus'), el('span', { class: 'nm' }, 'Bus et sortie'),
+        el('span', { class: 'txt' }, el('span', { class: 'ref' }, 'hors piste'), el('span', { class: 'nm' }, 'Modules libres et sortie'),
           el('span', { class: 'sub' }, `${P.modules.filter((m) => !m.track).length} module(s) · la sortie`))))),
       el('button', { class: 'tb ghost block', type: 'button', onclick: (e) => {
         const r = e.currentTarget.getBoundingClientRect();
-        menu(r.left, r.bottom + 4, Object.entries(TRACK_KINDS).map(([k, K]) => ({ label: K.label, dot: K.color, sub: MODULES[K.src].name,
-          onclick: () => { app.addTrack(k); app.commit('graph'); } })));
+        menu(r.left, r.bottom + 4, app.trackChoices());
       } }, '+ Piste'));
   }
 
@@ -53,18 +55,29 @@ export function createRack(app) {
     if (s.opts && size !== 'xs') return choice(s, val(m, k), { onChange: (v) => { m.params[k] = v; app.commit('param', m); app.commit('data'); } });
     return knob(s, val(m, k), { accent, size, onInput: (v) => { m.params[k] = v; app.commit('param', m); },
       // les dessins (enveloppe, filtre, départ du son) suivent une fois la molette lâchée
-      onChange: () => { if (m.type === 'synth' || m.type === 'sampler') paintMain(); } });
+      onChange: () => { app.commit('quiet'); if (m.type === 'synth' || m.type === 'sampler') paintMain(); } });
   }
 
   function devHead(m, t, extra = []) {
     const def = MODULES[m.type], fx = def.role === 'effect';
     const ch = t ? app.chain(t.id) : [];
     const i = ch.findIndex((x) => x.id === m.id);
+    const src = def.role === 'source' && t;
+    const pres = src ? presetsFor(m.type) : [];
     return el('div', { class: 'dev-head' },
       el('i', { class: 'dot' }),
-      el('b', { class: 'venus' }, def.name), el('span', { class: 'lbl' }, def.kind),
+      el('b', { class: 'venus' }, def.name), el('span', { class: 'lbl' }, def.odio ? `ODIO · ${def.kind}` : def.kind),
       ...extra,
       el('span', { class: 'sp' }),
+      src && (SOURCES_OF[t.kind] || []).length > 1 ? el('button', { class: 'tb ghost sm', type: 'button', title: 'changer l\'instrument de la piste (ses motifs restent)', onclick: (e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        menu(r.left, r.bottom + 4, SOURCES_OF[t.kind].map((type) => ({ label: MODULES[type].name, sub: MODULES[type].kind, dot: MODULES[type].color,
+          disabled: type === m.type, onclick: () => app.setSource(t.id, type) })));
+      } }, 'Instrument') : null,
+      pres.length ? el('button', { class: 'tb ghost sm', type: 'button', title: 'des réglages nommés', onclick: (e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        menu(r.left, r.bottom + 4, pres.map((p) => ({ label: p.name, sub: p.sub, onclick: () => app.applyPreset(t.id, p.id) })));
+      } }, 'Préréglages') : null,
       fx && t && i > 0 ? el('button', { class: 'tb ghost sm', type: 'button', title: 'plus tôt dans la chaîne', disabled: i <= 1 || null, onclick: () => app.moveInChain(t.id, m.id, -1) }, '↑') : null,
       fx && t && i > 0 ? el('button', { class: 'tb ghost sm', type: 'button', title: 'plus tard dans la chaîne', disabled: i >= ch.length - 2 || null, onclick: () => app.moveInChain(t.id, m.id, 1) }, '↓') : null,
       def.role === 'source' || fx ? onoff(m) : null,
@@ -74,8 +87,9 @@ export function createRack(app) {
   function device(m, t) {
     const def = MODULES[m.type];
     const accent = t?.color || def.color;
-    const box = el('div', { class: `dev ${m.type}${m.on === false ? ' off' : ''}`, style: { '--k': `var(--${accent})` }, 'data-mod': m.id });
+    const box = el('div', { class: `dev ${m.type}${m.on === false ? ' off' : ''}${def.odio ? ' odio' : ''}`, style: { '--k': `var(--${accent})` }, 'data-mod': m.id });
     if (m.type === 'drums') box.append(devHead(m, t), drumBody(m, t, accent));
+    else if (m.type === 'rythme') box.append(devHead(m, t), rhythmBody(m, t, accent));
     else if (m.type === 'synth') box.append(devHead(m, t), synthBody(m, accent));
     else if (m.type === 'sampler') box.append(devHead(m, t), samplerBody(m, t, accent));
     else if (m.type === 'player') {
@@ -90,7 +104,7 @@ export function createRack(app) {
         ...def.params.map((p) => kn(m, p.k, accent)), mt,
         t ? el('div', { class: 'row' },
           el('button', { class: `tb sm${t.mute ? ' on' : ' ghost'}`, type: 'button', onclick: () => { t.mute = !t.mute; app.commit('mute'); } }, 'Muet'),
-          el('button', { class: `tb sm${t.solo ? ' on' : ' ghost'}`, type: 'button', onclick: () => { t.solo = !t.solo; app.commit('mute'); } }, 'Solo')) : null));
+          t.kind === 'bus' ? null : el('button', { class: `tb sm${t.solo ? ' on' : ' ghost'}`, type: 'button', onclick: () => { t.solo = !t.solo; app.commit('mute'); } }, 'Solo')) : null));
     } else {
       box.append(devHead(m, t), el('div', { class: 'dev-body' }, ...def.params.map((p) => kn(m, p.k, accent))));
     }
@@ -112,11 +126,27 @@ export function createRack(app) {
         el('i', { class: 'vsep' }), kn(m, 'lvl', 'cy')));
   }
 
+  // la boîte à rythme d'ODIO : onze pads, quatre réglages par voix (accord,
+  // chute, le troisième bouton propre à la voix, niveau), la machine
+  function rhythmBody(m, t, accent) {
+    const v = RHYTHM_VOICES.find((x) => x.id === padSel) || RHYTHM_VOICES[0];
+    const pads = el('div', { class: 'pads r11' }, RHYTHM_VOICES.map((x, i) => el('button', {
+      class: `pad${x.id === v.id ? ' on' : ''}`, type: 'button', title: `${x.name} — clic : écouter`,
+      onpointerdown: () => { padSel = x.id; app.engine.hit(m.id, x.id, 1); paintMain(); },
+    }, el('span', { class: 'no' }, `${String(i + 1).padStart(2, '0')} · ${x.short}`), el('span', { class: 'nm' }, x.name))));
+    return el('div', { class: 'dev-body dr9' },
+      el('div', { class: 'padsel' }, el('span', { class: 'lbl' }, 'pad choisi'),
+        el('b', { class: 'venus' }, v.short), el('span', {}, v.name)),
+      pads,
+      el('div', { class: 'kns' }, ['tune', 'decay', 'ctrl', 'niv'].map((k) => kn(m, `${v.id}.${k}`, accent)),
+        el('i', { class: 'vsep' }), kn(m, 'kit', 'cy'), kn(m, 'drive', 'cy'), kn(m, 'gain', 'cy')));
+  }
+
   function synthBody(m, accent) {
     const def = MODULES.synth;
     return el('div', { class: 'dev-body synth' }, def.sections.map(([name, keys]) => el('div', { class: 'sec' },
       el('span', { class: 'lbl' }, name),
-      name === 'Oscillateur' ? waveSvg(val(m, 'wave')) : name === 'Enveloppe' ? adsrSvg(m) : name === 'Filtre' ? filterSvg(m) : null,
+      name === 'Oscillateur A' ? waveSvg(val(m, 'wave')) : name === 'Enveloppe' ? adsrSvg(m) : name === 'Filtre' ? filterSvg(m) : null,
       el('div', { class: 'kns' }, keys.map((k) => kn(m, k, k === keys[0] ? accent : 'cy'))))));
   }
 
@@ -124,22 +154,25 @@ export function createRack(app) {
     const id = m.params.item;
     const cv = el('canvas', { class: 'wave' });
     const title = el('span', { class: 'sn' }, id ? '…' : 'aucun son');
+    const setItem = async (it) => {
+      app.items.set(it.id, Promise.resolve({ ...it, href: href(it.url) }));
+      m.params.item = it.id;
+      await app.engine.buffer(it.id).catch((e) => toast(e.message));
+      app.commit('graph');
+    };
     if (id) {
       app.loadItem(id).then((it) => { title.textContent = it.title; }).catch(() => { title.textContent = 'son introuvable'; });
       app.engine.buffer(id).then((buf) => drawWave(cv, buf, val(m, 'start'))).catch(() => {});
     }
-    return el('div', { class: 'dev-body sampler' },
-      el('div', { class: 'snd' }, el('span', { class: 'lbl' }, 'son'), title,
-        el('button', { class: 'tb ghost sm', type: 'button', onclick: async () => {
-          const [it] = await pick({ kinds: ['audio'], title: 'Un son pour l\'échantillonneur' });
-          if (!it) return;
-          app.items.set(it.id, Promise.resolve({ ...it, href: href(it.url) }));
-          m.params.item = it.id;
-          await app.engine.buffer(it.id).catch((e) => toast(e.message));
-          app.commit('graph');
-        } }, id ? 'Changer' : 'Choisir un son'),
-        id ? el('button', { class: 'tb ghost sm', type: 'button', title: 'jouer la note racine', onclick: () => app.engine.preview(m.id, val(m, 'root')) }, 'Écouter') : null),
-      cv,
+    const zone = el('div', { class: 'snd' }, el('span', { class: 'lbl' }, 'son'), title,
+      el('button', { class: 'tb ghost sm', type: 'button', onclick: async () => {
+        const [it] = await pick({ kinds: ['audio'], title: 'Un son pour l\'échantillonneur' });
+        if (it) setItem(it);
+      } }, id ? 'Changer' : 'Choisir un son'),
+      id ? el('button', { class: 'tb ghost sm', type: 'button', title: 'jouer la note racine', onclick: () => app.engine.preview(m.id, val(m, 'root')) }, 'Écouter') : null,
+      el('span', { class: 'lbl' }, 'ou déposer un son ici'));
+    dropZone(zone, { kinds: ['audio'], multiple: false, via: 'odio', onitems: ([it]) => setItem(it) });
+    return el('div', { class: 'dev-body sampler' }, zone, cv,
       el('div', { class: 'kns' }, MODULES.sampler.params.map((p) => kn(m, p.k, p.k === 'root' ? accent : 'cy'))));
   }
 
@@ -186,182 +219,16 @@ export function createRack(app) {
     g.fillRect(Math.round(start * w), 0, 2, h);
   }
 
-  // ── l'éditeur de motifs ──
-  function editor(t) {
-    const P = S.proj;
-    const pats = P.patterns.filter((p) => p.track === t.id);
-    let p = app.pat(S.sel.pat);
-    if (!p || p.track !== t.id) p = app.pat(t.pat) || pats[0];
-    if (!p) return el('div', {});
-    S.sel.pat = p.id; t.pat = p.id;
-    const src = app.mod(t.src);
-    const head = el('div', { class: 'pe-head' },
-      el('span', { class: 'lbl' }, 'motifs'),
-      el('div', { class: 'pe-pats' }, pats.map((x) => el('button', {
-        class: `tb sm${x.id === p.id ? ' on' : ' ghost'}`, type: 'button', title: 'double-clic : renommer',
-        onclick: () => { t.pat = x.id; S.sel.pat = x.id; app.commit('data'); },
-        ondblclick: async () => { const n = await ask('Renommer le motif', 'Nom', x.name, 'Renommer'); if (n) { x.name = n.slice(0, 40); app.commit('data'); } },
-      }, x.name))),
-      el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.newPattern(t.id) }, '+ Motif'),
-      el('button', { class: 'tb ghost sm', type: 'button', title: 'une copie de ce motif', onclick: () => app.newPattern(t.id, p) }, 'Copier'),
-      el('span', { class: 'sp' }),
-      el('div', { class: 'seg' }, [16, 32, 64].map((n) => el('button', { class: `tb${p.steps === n ? ' on' : ''}`, type: 'button',
-        onclick: () => { resize(p, n); app.commit('data'); } }, `${n} pas`))),
-      el('button', { class: 'tb ghost sm', type: 'button', title: 'répéter le motif sur une longueur double', disabled: p.steps * 2 > 64 || null,
-        onclick: () => { double(p); app.commit('data'); } }, 'Doubler'),
-      el('button', { class: 'tb ghost sm', type: 'button', onclick: () => { clear(p); app.commit('data'); } }, 'Effacer'),
-      el('button', { class: 'tb ghost sm', type: 'button', title: 'poser ce motif en clip à la tête de lecture',
-        onclick: () => { app.addClip(t.id, Math.floor(app.pos()), { pat: p.id }); toast('clip posé sur la timeline'); } }, 'Vers la timeline'));
-    const body = t.kind === 'drums' ? stepGrid(p, src) : pianoRoll(p, src);
-    return el('div', { class: 'pe' }, head, body,
-      el('p', { class: 'lbl pe-hint' }, t.kind === 'drums'
-        ? 'clic : poser ou ôter un coup · Alt+clic : coup léger · glisser : peindre · la colonne claire suit la lecture'
-        : 'clic sur la grille : une note · glisser : sa longueur · glisser une note : la déplacer · clic sur une note : l\'ôter · clavier de l\'ordinateur : jouer'));
-  }
-
-  function resize(p, n) {
-    if (p.lanes) for (const k of Object.keys(p.lanes)) p.lanes[k] = Array.from({ length: n }, (_, i) => p.lanes[k][i] || 0);
-    if (p.notes) p.notes = p.notes.filter((x) => x.s < n).map((x) => ({ ...x, l: Math.min(x.l, n) }));
-    p.steps = n;
-  }
-  function double(p) {
-    const n = p.steps;
-    if (p.lanes) for (const k of Object.keys(p.lanes)) p.lanes[k] = [...p.lanes[k], ...p.lanes[k]];
-    if (p.notes) p.notes = [...p.notes, ...p.notes.map((x) => ({ ...x, s: x.s + n }))];
-    p.steps = n * 2;
-  }
-  function clear(p) { if (p.lanes) p.lanes = {}; if (p.notes) p.notes = []; }
-
-  let stepCells = null, curPat = null;
-  function stepGrid(p, src) {
-    curPat = p;
-    stepCells = [];
-    const g = el('div', { class: 'sq', style: { '--n': p.steps } });
-    let paint = null;
-    for (const v of DRUM_VOICES) {
-      const lane = p.lanes[v.id] || Array(p.steps).fill(0);
-      const row = el('div', { class: 'sq-row' },
-        el('button', { class: 'sq-lab', type: 'button', title: 'écouter', onpointerdown: () => app.engine.hit(src.id, v.id, 1) },
-          el('b', {}, v.short), el('span', {}, v.name)));
-      const cells = el('div', { class: 'sq-cells' });
-      for (let s = 0; s < p.steps; s++) {
-        const c = el('span', { class: `sq-c${s % 4 === 0 ? ' b4' : ''}${lane[s] >= 0.75 ? ' on' : lane[s] > 0 ? ' soft' : ''}`, 'data-s': s });
-        const set = (vel) => {
-          if (!p.lanes[v.id]) p.lanes[v.id] = Array(p.steps).fill(0);
-          p.lanes[v.id][s] = vel;
-          c.classList.toggle('on', vel >= 0.75); c.classList.toggle('soft', vel > 0 && vel < 0.75);
-        };
-        c.addEventListener('pointerdown', (e) => {
-          e.preventDefault();
-          const cur = (p.lanes[v.id] || [])[s] || 0;
-          const vel = cur ? 0 : e.altKey ? 0.5 : 1;
-          paint = { lane: v.id, vel };
-          set(vel);
-          if (vel) app.engine.hit(src.id, v.id, vel);
-          const up = () => { removeEventListener('pointerup', up); paint = null; if (!p.lanes[v.id].some(Boolean)) delete p.lanes[v.id]; app.commit('quiet'); };
-          addEventListener('pointerup', up);
-        });
-        c.addEventListener('pointerenter', () => { if (paint && paint.lane === v.id) set(paint.vel); });
-        cells.append(c);
-      }
-      stepCells.push(cells);
-      row.append(cells);
-      g.append(row);
-    }
-    // les cellules d'une voie peinte doivent recevoir pointerenter : pas de capture
-    return g;
-  }
-
-  let roll = null, ro = null;
-  function pianoRoll(p, src) {
-    curPat = p;
-    const LO = 24, HI = 96, RH = 14;
-    const wrap = el('div', { class: 'pr' });
-    const keys = el('div', { class: 'pr-keys' });
-    const area = el('div', { class: 'pr-area' });
-    const notes = el('div', { class: 'pr-notes' });
-    const nowCol = el('i', { class: 'pr-now' });
-    area.append(notes, nowCol);
-    wrap.append(keys, area);
-    for (let q = HI; q >= LO; q--) {
-      keys.append(el('button', { class: `pr-k${isBlack(q) ? ' blk' : ''}${q % 12 === 0 ? ' c' : ''}`, type: 'button', style: { height: `${RH}px` },
-        onpointerdown: () => app.engine.preview(src.id, q) }, q % 12 === 0 ? noteName(q) : ''));
-    }
-    area.style.height = `${(HI - LO + 1) * RH}px`;
-    const cw = () => area.clientWidth / p.steps;
-    const paintNotes = () => {
-      const w = cw();
-      area.style.setProperty('--cw', `${w}px`); area.style.setProperty('--rh', `${RH}px`);
-      put(notes, ...p.notes.map((n, i) => el('div', { class: 'pr-n', 'data-i': i,
-        style: { left: `${n.s * w}px`, top: `${(HI - n.p) * RH}px`, width: `${Math.max(3, n.l * w - 1)}px`, height: `${RH - 1}px` } },
-      el('i', { class: 'rs' }))));
-    };
-    let lastLen = 1;
-    area.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      area.setPointerCapture(e.pointerId);
-      const r = area.getBoundingClientRect(), w = cw();
-      const at = (ev) => ({ s: Math.floor((ev.clientX - r.left) / w), p: HI - Math.floor((ev.clientY - r.top) / RH) });
-      const hitEl = e.target.closest('.pr-n');
-      const a0 = at(e);
-      let moved = false, n;
-      if (hitEl) {
-        n = p.notes[+hitEl.dataset.i];
-        const resize = e.target.classList.contains('rs');
-        const s0 = n.s, p0 = n.p, l0 = n.l;
-        const mv = (ev) => {
-          const a = at(ev);
-          if (a.s !== a0.s || a.p !== a0.p) moved = true;
-          if (resize) n.l = Math.max(1, Math.min(p.steps, l0 + a.s - a0.s));
-          else {
-            n.s = Math.max(0, Math.min(p.steps - 1, s0 + a.s - a0.s));
-            const np = Math.max(LO, Math.min(HI, p0 + a.p - a0.p));
-            if (np !== n.p) { n.p = np; app.engine.preview(src.id, np); }
-          }
-          paintNotes();
-        };
-        const up = () => {
-          area.removeEventListener('pointermove', mv); area.removeEventListener('pointerup', up);
-          if (!moved) p.notes.splice(p.notes.indexOf(n), 1);
-          else lastLen = n.l;
-          paintNotes(); app.commit('quiet');
-        };
-        area.addEventListener('pointermove', mv); area.addEventListener('pointerup', up);
-        return;
-      }
-      if (a0.s < 0 || a0.s >= p.steps || a0.p < LO || a0.p > HI) return;
-      n = { s: a0.s, l: Math.min(lastLen, p.steps), p: a0.p, v: 0.8 };
-      p.notes.push(n);
-      app.engine.preview(src.id, n.p);
-      paintNotes();
-      const mv = (ev) => { const a = at(ev); n.l = Math.max(1, Math.min(p.steps, a.s - n.s + 1)); paintNotes(); };
-      const up = () => { area.removeEventListener('pointermove', mv); area.removeEventListener('pointerup', up); lastLen = n.l; app.commit('quiet'); };
-      area.addEventListener('pointermove', mv); area.addEventListener('pointerup', up);
-    });
-    roll = { area, nowCol, p, cw };
-    requestAnimationFrame(() => {
-      paintNotes();
-      const ps = p.notes.map((n) => n.p);
-      const mid = ps.length ? (Math.min(...ps) + Math.max(...ps)) / 2 : 60;
-      wrap.scrollTop = (HI - mid) * RH - wrap.clientHeight / 2;
-    });
-    if (ro) ro.disconnect();
-    ro = new ResizeObserver(() => paintNotes());
-    ro.observe(area);
-    return wrap;
-  }
-
   // ── l'ensemble ──
   function paintMain() {
     const P = S.proj;
     meters.length = 0;
-    stepCells = null; roll = null; curPat = null;
+    ed = null;
     if (S.sel.track === BUS) {
       const mods = P.modules.filter((m) => !m.track);
       put(main,
-        el('div', { class: 'rk-head' }, el('span', { class: 'k' }, 'bus'), el('b', { class: 'venus' }, 'Bus et sortie'),
-          el('span', { class: 'lbl' }, 'les effets partagés et la sortie ; leurs câbles se tirent dans la vue Nodal'),
+        el('div', { class: 'rk-head' }, el('span', { class: 'k' }, 'hors piste'), el('b', { class: 'venus' }, 'Modules libres et sortie'),
+          el('span', { class: 'lbl' }, 'les effets sans piste et la sortie ; leurs câbles se tirent dans la vue Nodal · les bus d\'effets de la console sont des pistes'),
           el('span', { class: 'sp' }),
           el('button', { class: 'tb ghost sm', type: 'button', onclick: (e) => fxMenu(e, null) }, '+ Effet')),
         el('div', { class: 'rk-chain' }, mods.map((m) => device(m, null))));
@@ -372,6 +239,7 @@ export function createRack(app) {
     S.sel.track = t.id;
     const ch = app.chain(t.id);
     const loose = P.modules.filter((m) => m.track === t.id && !ch.includes(m));
+    const edHost = el('div', { class: 'rk-ed' });
     put(main,
       el('div', { class: 'rk-head', style: { '--c': `var(--${t.color})` } },
         el('span', { class: 'k' }, TRACK_KINDS[t.kind].label), el('b', { class: 'venus' }, t.name),
@@ -382,13 +250,16 @@ export function createRack(app) {
       el('div', { class: 'rk-chain' }, ch.map((m, i) => [i ? el('i', { class: 'rk-arrow', 'aria-hidden': 'true' }, '→') : null, device(m, t)])),
       loose.length ? el('div', { class: 'rk-loose' }, el('span', { class: 'why' }, 'hors chaîne : ces modules de la piste ne sont pas sur le trajet source → tranche ; câble-les dans la vue Nodal'),
         el('div', { class: 'rk-chain' }, loose.map((m) => device(m, t)))) : null,
-      TRACK_KINDS[t.kind].pattern ? editor(t) : el('p', { class: 'lbl pe-hint' }, 'une piste audio joue des clips de la bibliothèque : « + Son », ou « Générer » en haut'));
+      TRACK_KINDS[t.kind].pattern ? edHost : el('p', { class: 'lbl pe-hint' }, t.kind === 'bus'
+        ? 'un bus reçoit les envois des pistes (console) et les rend à la sortie'
+        : 'une piste audio joue des clips : « Importer », « + Son », un fichier glissé sur l\'arrangement, ou « Générer »'));
+    if (TRACK_KINDS[t.kind].pattern) ed = patternEditor(app, edHost, t, null, { tall: true });
   }
 
   function fxMenu(e, trackId) {
     const r = e.currentTarget.getBoundingClientRect();
-    menu(r.left, r.bottom + 4, EFFECT_TYPES.map((k) => ({ label: MODULES[k].name, sub: MODULES[k].kind, dot: MODULES[k].color,
-      onclick: () => { const m = app.addEffect(trackId, k); if (!trackId) toast(`${MODULES[k].name} ajouté au bus : câble-le dans la vue Nodal`); return m; } })));
+    menu(r.left, r.bottom + 4, EFFECT_TYPES.map((k) => ({ label: MODULES[k].name, sub: MODULES[k].odio ? `ODIO · ${MODULES[k].kind}` : MODULES[k].kind, dot: MODULES[k].color,
+      onclick: () => { const m = app.addEffect(trackId, k); if (!trackId) toast(`${MODULES[k].name} ajouté hors piste : câble-le dans la vue Nodal`); return m; } })));
   }
 
   function render() { paintSide(); paintMain(); }
@@ -399,42 +270,20 @@ export function createRack(app) {
       mt.firstChild.style.width = `${Math.max(0, Math.min(100, (db + 60) / 60 * 100)).toFixed(1)}%`;
       mt.classList.toggle('hot', db > -1);
     }
-    if (!curPat) return;
-    // la colonne jouée : le clip de ce motif sous la tête de lecture
-    let step = -1;
-    if (app.engine.running) {
-      const c = S.proj.clips.find((x) => x.pat === curPat.id && beat >= x.start && beat < x.start + x.len);
-      if (c) {
-        const plen = curPat.steps / 4;
-        step = Math.floor((((beat - c.start + (c.off || 0)) % plen) + plen) % plen * 4);
-      }
-    }
-    if (stepCells) {
-      for (const cells of stepCells) {
-        const prev = cells.querySelector('.now');
-        if (prev && +prev.dataset.s !== step) prev.classList.remove('now');
-        if (step >= 0) cells.children[step]?.classList.add('now');
-      }
-    }
-    if (roll) {
-      roll.nowCol.style.display = step >= 0 ? 'block' : 'none';
-      if (step >= 0) roll.nowCol.style.transform = `translateX(${step * roll.cw()}px)`;
-      roll.nowCol.style.width = `${roll.cw()}px`;
-    }
+    ed?.frame?.(beat);
   }
 
   function key(e) {
+    if (ed?.key?.(e)) return;
     if ((e.key === 'Delete' || e.key === 'Backspace') && S.sel.mod) {
       const m = app.mod(S.sel.mod);
       if (m && MODULES[m.type].role === 'effect') { e.preventDefault(); app.removeModule(m.id); }
     }
   }
 
-  function played(t) { if (t.kind === 'drums') { /* rien à montrer de plus */ } }
-
   document.addEventListener('mu:buffer', () => { if (S.view === 'rack') paintMain(); });
 
-  return { el: root, render, frame, key, played };
+  return { el: root, render, frame, key };
 }
 
-export { fmt };
+export { fmt, moduleName };
