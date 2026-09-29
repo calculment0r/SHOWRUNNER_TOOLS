@@ -1727,7 +1727,8 @@ def _selftest_wires(call, ok, iid: str) -> None:
        and [s["role"] for s in c1["slots"]] == ["action", "libre"] and c1["slots"][1]["name"] == "case" and c1["slots"][1]["off"] is True,
        f"idéation : les cases du composeur sont bornées (doublon et identifiant hors motif retirés) ({c1.get('slots')})")
     ok([s["id"] for s in c2.get("slots", [])] == [i for i, _ in SLOTS], "idéation : un composeur sans cases reçoit les cinq de Cal")
-    ok(v1.get("mode") == "i2v" and v1.get("frames") == 175 and v1.get("canvas") == "auto" and v1.get("method") == "turbo"
+    # 200 images : le pas le plus proche de la grille 17k+5 d'H3 (movie.FRAMES), 192
+    ok(v1.get("mode") == "i2v" and v1.get("frames") == 192 and v1.get("canvas") == "auto" and v1.get("method") == "turbo"
        and v1.get("seed") == "123", f"idéation : la carte vidéo est bornée ({v1})")
     ok(N.get("m1", {}).get("parent") == "c1" and "parent" not in c2, "idéation : un parent présent reste, un parent absent tombe")
     ok(N.get("f1", {}).get("slide") == 2 and "slide" not in N.get("f2", {}), "idéation : un cadre garde son ordre de présentation (slide), un ordre illisible tombe")
@@ -1781,6 +1782,8 @@ W('r3', 'm3', 'image', 'g1', 'refs'); W('p1', 'n1', 'text', 'g1', 'prompt');
 const st = () => ['r1', 'r2', 'r3'].map((id) => P.flow(B, caps, items).state(id));
 R.krea_states = st().map((s) => s.ok);
 R.krea_why3 = st()[2].why;
+// la règle commune des références : la 3e est gardée (grisée, sa place 3), pas en alerte
+R.krea_held = [st()[2].held === true, st()[2].idx, P.flow(B, caps, items).bad('g1').length];
 gen().model = 'zimage';
 R.zimage_states = st().map((s) => s.ok);
 R.zimage_why = st()[0].why;
@@ -1862,6 +1865,8 @@ def _selftest_ports(call, ok) -> None:
     ok(R["zimage_refs"] == zwhy and zwhy, f"ports : impossible de relier une référence à Z-Image, avec la raison de l'outil Image ({R['zimage_refs']})")
     ok(R["krea_third"].startswith("Krea 2 prend 2") and R["krea_states"] == [True, True, False] and "3e" in R["krea_why3"],
        f"ports : Krea 2 prend deux références, la troisième est refusée, et marquée si elle est là ({R['krea_third']} · {R['krea_why3']})")
+    ok(R["krea_held"] == [True, 2, 0],
+       f"ports : la règle commune — au-delà de ce que prend Krea 2, la 3e référence est gardée à sa place, grisée, pas en alerte ({R['krea_held']})")
     ok(R["zimage_states"] == [False, False, False] and R["zimage_why"] == zwhy,
        f"ports : passer à Z-Image met les trois fils en alerte à l'instant, avec la raison ({R['zimage_states']})")
     ok(R["qwen_states"] == [True, True, True] and R["refs_items"] == [True, True, True] and R["prompt"] == "a man runs",

@@ -40,6 +40,7 @@ import { createFil } from '../commun/fil.js';
 import { createUndo } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { scrollBehavior } from '../commun/theme.js';
+import { sortable, moveItem, isHeld, heldTitle, sentLabel } from '../commun/refs.js';
 
 mountHeader('image', { sub: 'créer · éditer' });
 
@@ -169,7 +170,7 @@ function avail(cap) {
 }
 function capCreate() {
   if (S.model === 'zimage') return 'zimage:' + S.variant;
-  if (S.model === 'krea2' && S.refs.length) return 'krea2:edit';
+  if (S.model === 'krea2' && S.refs.length) return 'krea2:edit';   // Krea 2 prend au moins une place
   return S.model;
 }
 function capEdit() {
@@ -226,26 +227,37 @@ function setMode(m) {
   if (!ta.hidden) ta.focus();
 }
 
-// ligne 1 : les références (ou, en édition, l'image source et ses références)
+// ligne 1 : les références (ou, en édition, l'image source et ses références).
+// La règle commune (commun/refs.js) : un carrousel ordonné ; l'adresse d'une
+// référence est sa place (<image1>, « la scène ») ; le modèle envoie les N
+// premières, les suivantes restent grisées ; changer de modèle n'en retire
+// aucune ; on les réordonne en les glissant.
 function roleOf(model, k, n, edit) {
   if (model === 'qwen21') return `<image${(edit ? 2 : 1) + k}>`;
   if (edit) return 'le sujet';   // Krea : l'image éditée est la scène
   return n > 1 ? (k === 0 ? 'la scène' : 'le sujet') : 'la personne ou l’objet';
 }
-const swap = (list, k) => { const l = list.slice(); [l[k - 1], l[k]] = [l[k], l[k - 1]]; return l; };
+const swap = (list, k) => moveItem(list, k, k - 1);
+// le carrousel prend ce que prend le plus grand des modèles (l'image éditée compte en édition)
+const CAP = () => Math.max(...S.cfg.models.map((m) => m.refs));
+// `max` : ce que le modèle choisi envoie ; `sent` : combien partent
 function refsOf() {
-  if (S.mode === 'create') return { list: S.refs, max: M(S.model).refs, model: S.model, edit: false, set: (l) => { S.refs = l.slice(0, M(S.model).refs); afterRefs(); } };
-  const E = S.edit;
-  return { list: E.refs, max: M(E.model).refs - 1, model: E.model, edit: true, set: (l) => { E.refs = l.slice(0, M(E.model).refs - 1); afterRefs(); } };
+  const R = S.mode === 'create'
+    ? { list: S.refs, max: M(S.model).refs, model: S.model, edit: false, set: (l) => { S.refs = l.slice(0, CAP()); afterRefs(); } }
+    : { list: S.edit.refs, max: M(S.edit.model).refs - 1, model: S.edit.model, edit: true, set: (l) => { S.edit.refs = l.slice(0, CAP() - 1); afterRefs(); } };
+  R.sent = Math.min(R.list.length, Math.max(0, R.max));
+  return R;
 }
 function afterRefs() { saveDraft(); schedCompose(); paintRefs(); paintChips(); paintAct(); }
 function refMenu(it, k, R) {
   const els = it.kind === 'element' ? (it.element?.refs || []) : [];
   const cur = S.refChoice[it.id] || els[0]?.file;
+  const place = (j) => (isHeld(j, R.max) ? `place ${j + 1} · non envoyée` : roleOf(R.model, j, R.sent, R.edit));
   return [
-    { head: `${roleOf(R.model, k, R.list.length, R.edit)} · ${it.title || it.id}` },
-    k > 0 ? { label: 'Passer avant', sub: roleOf(R.model, k - 1, R.list.length, R.edit), onclick: () => R.set(swap(R.list, k)) } : null,
-    k < R.list.length - 1 ? { label: 'Passer après', sub: roleOf(R.model, k + 1, R.list.length, R.edit), onclick: () => R.set(swap(R.list, k + 1)) } : null,
+    { head: `${place(k)} · ${it.title || it.id}` },
+    isHeld(k, R.max) ? { head: maxWhy(R) } : null,
+    k > 0 ? { label: 'Passer avant', sub: place(k - 1), onclick: () => R.set(swap(R.list, k)) } : null,
+    k < R.list.length - 1 ? { label: 'Passer après', sub: place(k + 1), onclick: () => R.set(swap(R.list, k + 1)) } : null,
     els.length ? '-' : null,
     els.length ? { head: 'l’image de l’élément envoyée' } : null,
     ...els.map((r) => ({ label: r.label || r.role || r.file, sub: r.role || '', checked: cur === r.file,
@@ -257,9 +269,11 @@ function refMenu(it, k, R) {
 }
 function refThumb(it, k, R) {
   const t = it.kind === 'element' ? (it.element?.refs?.find((r) => r.file === S.refChoice[it.id])?.thumb_url || it.thumb_url) : (it.thumb_url || it.url);
-  const role = roleOf(R.model, k, R.list.length, R.edit);
-  const b = el('button', { class: 'pb-ref' + (it.kind === 'element' ? ' element' : ''), type: 'button',
-    title: `${role} · ${it.title || ''}`,
+  // au-delà de ce que prend le modèle : grisée, gardée, non envoyée (sa place reste son numéro)
+  const held = isHeld(k, R.max);
+  const role = held ? String(k + 1) : roleOf(R.model, k, R.sent, R.edit);
+  const b = el('button', { class: 'pb-ref r' + (it.kind === 'element' ? ' element' : '') + (held ? ' held' : ''), type: 'button', 'data-k': k,
+    title: held ? `${heldTitle(maxWhy(R))} · ${it.title || ''}` : `${role} · ${it.title || ''} — glisser pour changer sa place`,
     style: t ? { backgroundImage: `url(${href(t)})` } : null,
     onclick: (e) => up(e.currentTarget, refMenu(it, k, R)) },
   el('span', { class: 'n' }, role.replace(/^<image(\d+)>$/, '$1').replace(/^la |^le /, '').replace('personne ou l’objet', 'réf.')));
@@ -393,7 +407,8 @@ function atChoices() {
     return { why: R.model === 'krea2' ? 'Krea 2 ne nomme pas ses références : l’ordre suffit (la scène, puis le sujet)'
       : M(R.model).refs_why || `${M(R.model).name} ne prend pas de référence` };
   }
-  const toks = (R.edit ? [{ title: 'l’image éditée', url: S.current?.thumb_url || S.current?.url }] : []).concat(R.list);
+  // les places envoyées seulement : une grisée n'a pas d'adresse chez le modèle
+  const toks = (R.edit ? [{ title: 'l’image éditée', url: S.current?.thumb_url || S.current?.url }] : []).concat(R.list.slice(0, R.sent));
   if (!toks.length) return { why: 'aucune référence : ajoutez-en par « + »' };
   return { toks: toks.map((it, k) => ({ tag: `<image${k + 1}>`, title: it.title || '', thumb: it.thumb_url || it.url })) };
 }
@@ -535,8 +550,7 @@ function paintChips() {
         off: !m.refs || S.refs.length >= m.refs ? maxWhy(R) : '', onclick: addRefs }),
       chip('@', { cls: 'ic', title: 'nommer une référence', off: at.why || '', onclick: typeAt }),
       chip('', { value: m.name, dot: DOT[m.id], title: m.role, onclick: (a) => up(a, modelItems(['zimage', 'qwen21', 'krea2'], S.model, (id) => {
-        S.model = id;
-        if (S.refs.length > M(id).refs) S.refs = S.refs.slice(0, M(id).refs);
+        S.model = id;   // aucune référence retirée : celles de trop se grisent (commun/refs.js)
         fixQuality(); saveDraft(); paintBar();
       })) }),
       chip('', { value: S.aspect, title: `format · ${sizes[S.aspect]?.join(' × ') || ''}`, onclick: (a) => up(a, [{ head: `Format · ${qLabel}` }, ...S.cfg.aspects.map((x) => {
@@ -569,8 +583,7 @@ function paintChips() {
     const at = atChoices();
     kids.push(
       chip('', { value: M(E.model).name, dot: DOT[E.model], title: M(E.model).role, onclick: (a) => up(a, modelItems(['qwen21', 'krea2', 'zimage'], E.model, (id) => {
-        E.model = id;
-        if (E.refs.length > M(id).refs - 1) E.refs = E.refs.slice(0, M(id).refs - 1);
+        E.model = id;   // aucune référence retirée : celles de trop se grisent
         saveDraft(); paintBar();
       }, { zimage: 'n’édite pas par consigne (Z-Image-Edit n’est pas publié) — il sait affiner : outil « Affiner ×2 »' })) }),
       chip('Zone', { value: painted ? 'peinte' : E.mask ? 'reprise' : 'toute l’image', cls: painted || E.mask ? 'set' : '', title: 'la zone qui change',
@@ -748,10 +761,15 @@ function paintAct() {
     const prefix = { instruct: `${E.model}-edit`, matte: 'birefnet', upscale: 'seedvr2', refine: 'zimage-refine', angle: 'qwen-edit-2511-angles' }[E.tool] || E.tool;
     est = measured(prefix, 'image.edit');
   }
+  // combien de références partent, quand toutes ne partent pas (commun/refs.js)
+  const R = S.mode === 'create' || S.edit.tool === 'instruct' ? refsOf() : null;
+  const sent = R ? sentLabel(R.list.length, R.max) : '';
   // replaceChildren(null) écrirait « null » : on ne passe que des nœuds
   box.replaceChildren(...[
-    el('button', { class: 'tb go pb-gen', type: 'button', disabled: why ? true : null, title: `${info}\n${est.long}`.trim(), onclick: S.mode === 'create' ? generate : editRun },
-      el('span', { class: 'gl' }, label), el('small', {}, `${n > 1 ? `${n} × ` : ''}${est.short}`)),
+    el('button', { class: 'tb go pb-gen', type: 'button', disabled: why ? true : null,
+      title: `${info}\n${est.long}${sent ? `\nréférences : ${sent} — ${maxWhy(R)}` : ''}`.trim(), onclick: S.mode === 'create' ? generate : editRun },
+      el('span', { class: 'gl' }, label), el('small', {}, `${n > 1 ? `${n} × ` : ''}${est.short}`),
+      sent ? el('small', { class: 'sent' }, sent) : null),
     why ? el('p', { class: 'why' }, why) : null].filter(Boolean));
 }
 
@@ -989,9 +1007,11 @@ async function reuse(it) {
   Object.assign(S, { model: M(p.model) ? p.model : S.model, prompt: p.prompt || '', looks: { ...(p.looks || {}) }, aspect: p.aspect || S.aspect,
     quality: p.quality || S.quality, variant: p.variant || S.variant, realism: p.realism ?? S.realism, transparent: !!p.transparent,
     seed: '', origSeed: p.seed ?? null, mode: 'create', pop: null });
-  S.refs = (await Promise.all((p.refs || []).map((r) => api('library/' + r.item).catch(() => null)))).filter(Boolean);
-  for (const r of p.refs || []) if (r.ref) S.refChoice[r.item] = r.ref;
-  const lost = (p.refs || []).length - S.refs.length;
+  // le carrousel entier, dans son ordre : les places envoyées, puis celles restées grisées
+  const all = [...(p.refs || []), ...(p.refs_held || [])];
+  S.refs = (await Promise.all(all.map((r) => api('library/' + r.item).catch(() => null)))).filter(Boolean);
+  for (const r of all) if (r.ref) S.refChoice[r.item] = r.ref;
+  const lost = all.length - S.refs.length;
   bar?.label(`réutiliser les réglages de « ${it.title || it.id} »`);
   fixQuality(); saveDraft(); paintBar();
   $('#prompt').focus();
@@ -1001,8 +1021,9 @@ async function reuseEdit(it) {
   const p = it.params || {};
   const src = await api('library/' + p.source).catch(() => null);
   if (!src || src.kind !== 'image') { toast('l’image source de cette édition a quitté la bibliothèque', 6000); return; }
-  const refs = (await Promise.all((p.refs || []).map((r) => api('library/' + r.item).catch(() => null)))).filter(Boolean);
-  for (const r of p.refs || []) if (r.ref) S.refChoice[r.item] = r.ref;
+  const all = [...(p.refs || []), ...(p.refs_held || [])];
+  const refs = (await Promise.all(all.map((r) => api('library/' + r.item).catch(() => null)))).filter(Boolean);
+  for (const r of all) if (r.ref) S.refChoice[r.item] = r.ref;
   if (S.paint.for !== src.id) clearPaint();
   S.current = src;
   S.mode = 'edit';
@@ -1026,11 +1047,17 @@ function editWith(it, tool) {
   if (!$('#prompt').hidden) $('#prompt').focus();
   toast(`la barre passe en édition · ${TOOL_FR[tool]}`);
 }
-function useAsRef(it) {
+// une référence de plus, à la suite du carrousel ; jamais au prix d'une autre (commun/refs.js)
+function pushRef(it) {
   if (!M(S.model).refs) S.model = 'krea2';
-  const max = M(S.model).refs;
-  if (!S.refs.some((r) => r.id === it.id)) S.refs = [...S.refs, it].slice(-max);
+  if (S.refs.some((r) => r.id === it.id)) return true;
+  if (S.refs.length >= M(S.model).refs) { toast(maxWhy({ model: S.model, max: M(S.model).refs, edit: false }), 5000); return false; }
+  S.refs = [...S.refs, it];
+  return true;
+}
+function useAsRef(it) {
   S.mode = 'create';
+  if (!pushRef(it)) { saveDraft(); paintBar(); return; }
   bar?.label(`prendre « ${it.title || it.id} » en référence`);
   fixQuality(); saveDraft(); paintBar();
   toast(`« ${it.title} » dans les références de ${M(S.model).name}`);
@@ -1122,6 +1149,11 @@ function wireBar() {
     }
     addItems(items);
   } });
+  // le carrousel se réordonne en glissant : la référence prend l'adresse de sa nouvelle place
+  sortable($('#pb-refs'), { item: '.pb-ref.r', onmove: (a, b) => {
+    const R = refsOf();
+    R.set(moveItem(R.list, a, b));
+  } });
   const setH = () => document.documentElement.style.setProperty('--pbar-h', `${Math.ceil(bar.getBoundingClientRect().height)}px`);
   if ('ResizeObserver' in window) new ResizeObserver(setH).observe(bar);
   setH();
@@ -1184,8 +1216,7 @@ async function start() {
     try {
       const it = await api('library/' + encodeURIComponent(qs.get('ref')));
       S.mode = 'create';
-      if (!M(S.model).refs) S.model = 'krea2';
-      if (!S.refs.some((r) => r.id === it.id)) S.refs = [...S.refs, it].slice(-M(S.model).refs);
+      pushRef(it);
     } catch (e) { toast(`référence : ${e.message}`, 7000); }
   }
   const want = (location.hash || '').slice(1);

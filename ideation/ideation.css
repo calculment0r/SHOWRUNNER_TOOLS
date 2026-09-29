@@ -388,13 +388,23 @@ body.lib-resizing, body.lib-resizing * { user-select: none !important; cursor: c
 .gbad b { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .14em; text-transform: uppercase; font-weight: 400; color: var(--or); }
 .gbad .gcut { margin-left: auto; }
 .grefs { display: flex; flex-wrap: wrap; gap: 5px; min-height: 22px; align-items: center; }
-.gchip { position: relative; width: 40px; height: 40px; border-radius: var(--r2); background: var(--panel3) center / cover no-repeat; box-shadow: inset 0 0 0 1px var(--line-cy); }
+.gchip { position: relative; flex: none; width: 40px; height: 40px; padding: 0; border-radius: var(--r2); background: var(--panel3) center / cover no-repeat;
+  box-shadow: inset 0 0 0 1px var(--line-cy); cursor: grab; touch-action: none; }
 .gchip b { position: absolute; left: 2px; top: 2px; min-width: 13px; height: 13px; padding: 0 2px; border-radius: 2px; background: var(--cy); color: var(--on-cy);
   font-family: var(--f-mono); font-size: 8px; font-weight: 400; line-height: 13px; text-align: center; font-style: normal; }
 .gchip.bad { box-shadow: inset 0 0 0 2px var(--or); opacity: .55; }
 .gchip.bad b { background: var(--or); color: var(--on-or); }
 .gchip.wait { box-shadow: inset 0 0 0 1px var(--line-amb); background-image: none !important; }
 .gchip.wait b { background: var(--amb); color: var(--on-light); }
+/* le carrousel (commun/refs.js) : au-delà de ce que prend le modèle, grisée, gardée,
+   non envoyée ; on glisse une vignette pour changer sa place */
+.gchip.held { opacity: .38; filter: grayscale(1); box-shadow: inset 0 0 0 1px var(--line); }
+.gchip.held b { background: var(--panel3); color: var(--ink2); }
+.gchip.dragging { opacity: .5; cursor: grabbing; }
+.gchip.drop-before { box-shadow: inset 3px 0 0 var(--cy), inset 0 0 0 1px var(--line-cy); }
+.gchip.drop-after { box-shadow: inset -3px 0 0 var(--cy), inset 0 0 0 1px var(--line-cy); }
+.rrow.held { opacity: .55; }
+.rrow.held .rn { background: var(--panel3); color: var(--ink2); }
 .grefs.shut { opacity: .7; }
 .vmodes { align-self: flex-start; }
 .vmodes .tb { height: 22px; padding: 0 9px; font-size: 9px; }
@@ -407,10 +417,27 @@ body.lib-resizing, body.lib-resizing * { user-select: none !important; cursor: c
 }
 .gadd:hover:not(:disabled), .grefs.drop-on .gadd { color: var(--grn2); box-shadow: inset 0 0 0 1px var(--grn2); }
 .gadd:disabled { opacity: .3; cursor: default; }
-.gform textarea.gp { min-height: 76px; font-size: 12px; resize: none; }
-.grow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.grow select { width: auto; flex: 1; min-width: 0; padding: 5px 6px; font-size: 11px; }
+/* le prompt de la carte : `gprompt` (la classe `gp` est celle des groupes, posée en absolu) */
+.gform textarea.gprompt { display: block; width: 100%; min-width: 0; min-height: 76px; font-size: 12px; resize: none; }
+.gform > * { min-width: 0; }
+.grow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.grow select { width: auto; flex: 1 1 90px; min-width: 0; max-width: 100%; padding: 5px 6px; font-size: 11px; text-overflow: ellipsis; }
+.grow.gmodel select { flex: 1 1 100%; }
+.grow > .lbl { flex: none; }
+.grow .seg { flex: none; }
 .grow .seg .tb { height: 24px; min-width: 24px; padding: 0 6px; }
+.gcut.still { cursor: default; align-self: flex-start; }
+/* la durée : un curseur aux pas d'H3, la valeur en clair, le nombre d'images en petit */
+.dur { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.dur-h { display: flex; align-items: baseline; gap: 6px; }
+.dur-h .sp { flex: 1; }
+.dur-v { font-size: 12px; font-weight: 600; color: var(--ink); }
+.dur-n { font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
+.dur-r { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; margin: 0; background: transparent; cursor: pointer; }
+.dur-r::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line); }
+.dur-r::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -4px; border-radius: 50%; background: var(--cy); }
+.dur-r::-moz-range-track { height: 4px; border-radius: 2px; background: var(--panel3); }
+.dur-r::-moz-range-thumb { width: 12px; height: 12px; border: none; border-radius: 50%; background: var(--cy); }
 .gform .opts { gap: 4px; }
 .chip { padding: 3px 7px; border-radius: var(--r1); background: var(--grn-bg); box-shadow: inset 0 0 0 1px var(--line-gr); font-size: 10px; color: var(--ink2); }
 .lbl.dim { opacity: .75; }
@@ -473,7 +500,7 @@ body.lib-resizing, body.lib-resizing * { user-select: none !important; cursor: c
 .cv.near .nd.media .cap { opacity: 1; }
 .cv.near .nd.media .cap .cm { display: inline; }
 .cv.near .nd.media:has(.jobs:not(:empty)) .cap { display: none; }
-.cv.near .nd.gen textarea.gp { field-sizing: content; min-height: 76px; }
+.cv.near .nd.gen textarea.gprompt { field-sizing: content; min-height: 76px; }
 .cv.near .gin-t, .cv.near .cprev { max-height: none; }
 .estrip i:nth-child(n + 6) { display: none; }
 .cv.near .estrip { flex-wrap: wrap; }

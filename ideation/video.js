@@ -23,7 +23,7 @@
 
 import { api, jobs, toast, el, href, dropZone, fmtDur, pick } from '../commun/shell.js';
 import { KINDS, VMODES, inPorts, nameOf, cleanLooks } from './ports.js';
-import { plab, inbox, badList, chip, lotCheck, composeBtn } from './gen.js';
+import { plab, inbox, badList, chip, lotCheck, composeBtn, refStrip, placesLabel } from './gen.js';
 
 const SLOTS_R2V = ['image', 'element', 'video', 'audio'];
 
@@ -109,18 +109,34 @@ export function createVideo(app) {
 
   const cardKey = (v) => '|' + app.flow().sig(v.id) + (O() ? '|o' : '') + '|' + (O()?.engine || '');
 
-  // une entrée de la carte : son étiquette (le port la vise) et ce qui y arrive
+  // une entrée de la carte : son étiquette (le port la vise) et ce qui y arrive ; les entrées
+  // à plusieurs places sont un carrousel (commun/refs.js) : glisser une vignette change sa
+  // place, donc son jeton (@image1…) — le texte du prompt, lui, ne bouge pas
   function slot(v, port, all) {
-    const ok = all.filter((e) => e.ok);
     const multi = port.max !== 1;
     const tok = port.token;
     const body = el('div', { class: 'grefs' + (port.max === 0 ? ' shut' : '') },
-      ...all.map((e) => chip(app, e, e.ok ? e.idx + 1 : 0, { token: tok && e.ok ? `@${tok}${e.idx + 1}` : '' })),
-      !all.length ? el('span', { class: 'ghint' }, port.id === 'start' ? 'branchez ou déposez l’image d’où part le plan'
-        : port.id === 'end' ? 'facultatif : l’image où il finit' : `branchez ou déposez : @${tok}1, @${tok}2… dans le prompt`) : null);
+      ...all.map((e) => chip(app, e, e.ok || e.held ? e.idx + 1 : 0, { token: tok && (e.ok || e.held) ? `@${tok}${e.idx + 1}` : '' })),
+      !all.length ? el('span', { class: 'ghint' }, port.id === 'start' ? 'déposez ou branchez l’image de départ'
+        : port.id === 'end' ? 'facultatif' : `déposez ou branchez · @${tok}1…`) : null);
+    if (multi) refStrip(app, v.id, port.id, all, body);
     dropZone(body, { kinds: port.accepts, via: 'ideation', multiple: multi, onitems: (items) => app.feed(v.id, port.id, items) });
-    const count = multi && port.max ? `${ok.length}/${port.max}` : '';
+    const count = multi && port.max ? placesLabel(all, port.max) : '';
     return el('div', { class: 'prow', 'data-row': port.id }, plab('in', port.id, port.label, count), body);
+  }
+  // la durée : un curseur en secondes, pas aux valeurs permises par H3 (la grille 17k+5 à
+  // 24 i/s de /api/movie/options) — la valeur en clair, le nombre d'images en petit
+  function durationRow(v, frames, onset) {
+    const list = frames?.length ? frames : [{ frames: v.frames, seconds: v.frames / 24 }];
+    let k = Math.max(0, list.findIndex((f) => f.frames === v.frames));
+    const val = el('b', { class: 'dur-v' }), sub = el('small', { class: 'dur-n' });
+    const show = () => { val.textContent = `${String(list[k].seconds.toFixed(1)).replace('.', ',')} s`; sub.textContent = `${list[k].frames} images`; };
+    const r = el('input', { type: 'range', class: 'dur-r', min: 0, max: list.length - 1, step: 1, value: k, 'aria-label': 'durée',
+      title: 'la durée : les pas d’H3 (17 images de plus à chaque cran, 24 i/s)' });
+    r.addEventListener('input', () => { k = Number(r.value); show(); });
+    r.addEventListener('change', () => onset(list[Number(r.value)].frames));
+    show();
+    return el('div', { class: 'dur' }, el('div', { class: 'dur-h' }, el('span', { class: 'lbl' }, 'durée'), el('span', { class: 'sp' }), val, sub), r);
   }
 
   function card(v) {
@@ -131,7 +147,7 @@ export function createVideo(app) {
     let field;
     if (pr) field = inbox(app, pr, 'la prose (et son Son, sa Musique) est copiée dans la carte');
     else {
-      field = el('textarea', { class: 'fld gp', rows: 4, spellcheck: 'false', 'data-reg': 'prompt',
+      field = el('textarea', { class: 'fld gprompt', rows: 4, spellcheck: 'false', 'data-reg': 'prompt',
         placeholder: v.mode === 'r2v' ? 'ce qu’on voit et entend, en anglais ; les entrées par leur place : @image1 walks…' : 'ce qu’on voit et entend, en anglais… ou branchez un texte' });
       field.value = v.prompt || '';
       let changed = () => {};
@@ -140,14 +156,11 @@ export function createVideo(app) {
     }
     const seg = el('div', { class: 'seg vmodes' }, ...modes().map((m) => el('button', { class: 'tb' + (v.mode === m.id ? ' on' : ''), type: 'button',
       title: m.sub || '', onclick: () => { if (v.mode !== m.id) app.mutate(() => { v.mode = m.id; }); } }, m.label)));
-    const frames = el('select', { class: 'fld sm', title: 'la durée : la grille d’H3 (17k+5 images à 24 i/s)' },
-      ...(o?.frames || [{ frames: v.frames, seconds: v.frames / 24 }]).map((f) => el('option', { value: f.frames, selected: f.frames === v.frames ? true : null },
-        `${String(f.seconds.toFixed(1)).replace('.', ',')} s`)));
-    frames.addEventListener('change', () => app.mutate(() => { v.frames = Number(frames.value); }));
+    const frames = durationRow(v, o?.frames, (f) => app.mutate(() => { v.frames = f; }));
     const cur = Array.isArray(canvasOf(v)) ? canvasOf(v).join('x') : 'auto';
     const canv = el('select', { class: 'fld sm', title: 'la toile (les toiles d’H3 Studio et du banc de Cal)' },
       v.mode === 'i2v' ? el('option', { value: 'auto', selected: cur === 'auto' ? true : null }, 'd’après l’image') : null,
-      ...(o?.canvases || []).map((c) => el('option', { value: `${c.w}x${c.h}`, selected: `${c.w}x${c.h}` === cur ? true : null }, `${c.w}×${c.h} · ${c.family}`)));
+      ...(o?.canvases || []).map((c) => el('option', { value: `${c.w}x${c.h}`, selected: `${c.w}x${c.h}` === cur ? true : null, title: c.label }, `${c.w}×${c.h} · ${c.family}`)));
     canv.addEventListener('change', () => app.mutate(() => { v.canvas = canv.value; }));
     const btn = el('button', { class: 'gbtn', type: 'button', onclick: () => generate(v.id) }, 'Générer');
     const w = el('div', { class: 'gwhy why' });
@@ -161,10 +174,11 @@ export function createVideo(app) {
       el('div', { class: 'gform' }, seg,
         el('div', { class: 'prow', 'data-row': 'prompt' }, el('div', { class: 'prow-h' }, plab('in', 'prompt', v.mode === 'r2v' ? 'prompt · @image1…' : 'prompt', pr ? 'fil' : ''),
           el('span', { class: 'sp' }), pr ? null : composeBtn(app, v.id)), field),
-        Object.keys(lk).length ? el('span', { class: 'ghint', title: 'le guide d’H3 : le mouvement de caméra s’écrit dans la description, avec son vocabulaire' },
-          'pastilles de prise de vue du composeur : ignorées par H3 (seule la ligne libre de Photographie passe)') : null,
+        Object.keys(lk).length ? el('span', { class: 'gcut still', title: 'les pastilles de prise de vue du composeur ne vont pas à H3 : seule la ligne libre de Photographie passe (le guide d’H3 : la caméra s’écrit dans la description)' },
+          'pastilles ignorées par H3') : null,
         ...ports.filter((p) => p.id !== 'prompt').map((p) => slot(v, p, F.inputs(v.id)[p.id] || [])),
-        el('div', { class: 'grow' }, frames, canv),
+        el('div', { class: 'grow' }, el('span', { class: 'lbl' }, 'toile'), canv),
+        frames,
         el('div', { class: 'grow' }, btn, w),
         el('span', { class: 'ghint vest' }),
         badList(app, v.id)),
@@ -252,8 +266,8 @@ export function createVideo(app) {
           const itemId = F.itemOf(e.from);
           const it = itemId ? S.items.get(itemId) : null;
           const k = list.filter((x) => x.ok).indexOf(e);
-          return el('div', { class: 'rrow' + (e.ok ? '' : ' bad') },
-            el('b', { class: 'rn' }, e.ok ? (p.token ? `@${p.token}${e.idx + 1}` : String(e.idx + 1)) : '×'),
+          return el('div', { class: 'rrow' + (e.ok ? '' : e.held ? ' held' : ' bad') },
+            el('b', { class: 'rn' }, e.ok || e.held ? (p.token ? `@${p.token}${e.idx + 1}` : String(e.idx + 1)) : '×'),
             el('span', { class: 'rim', style: { backgroundImage: it?.thumb_url ? `url("${href(it.thumb_url)}")` : null } }),
             el('div', { class: 'rt' }, el('span', {}, it?.title || nameOf(e.from)), !e.ok ? el('small', { class: 'why' }, e.why) : e.pending ? el('small', { class: 'hint' }, e.pending) : null),
             e.ok && k > 0 ? b('↑', () => app.moveWire(e.link.id, -1), { title: 'passer avant : l’ordre fait les jetons' }) : null,
@@ -271,8 +285,7 @@ export function createVideo(app) {
     }
     // durée, toile, méthode, graine, son
     const pl = planOf(v);
-    const frames = el('select', { class: 'fld sm' }, ...o.frames.map((f) => el('option', { value: f.frames, selected: f.frames === v.frames ? true : null }, `${fmtDur(f.seconds)} · ${f.frames} images`)));
-    frames.addEventListener('change', () => app.mutate(() => { v.frames = Number(frames.value); }));
+    const frames = durationRow(v, o.frames, (f) => app.mutate(() => { v.frames = f; }));
     const cur = Array.isArray(canvasOf(v)) ? canvasOf(v).join('x') : 'auto';
     const canv = el('select', { class: 'fld sm' }, v.mode === 'i2v' ? el('option', { value: 'auto', selected: cur === 'auto' ? true : null }, 'd’après l’image') : null,
       ...o.canvases.map((c) => el('option', { value: `${c.w}x${c.h}`, selected: `${c.w}x${c.h}` === cur ? true : null, title: c.source }, `${c.w}×${c.h} · ${c.family} · ${c.label}`)));
@@ -297,7 +310,7 @@ export function createVideo(app) {
       field2('sound', 'le son : ce qu’on entend (facultatif — sinon le son naturel de la scène)', pr?.son),
       field2('music', 'la musique hors champ (facultatif)', pr?.musique));
     out.push(cardP('Plan', pl ? `${pl.width} × ${pl.height} · ${String(pl.seconds.toFixed(1)).replace('.', ',')} s` : '',
-      el('label', { class: 'look' }, el('span', { class: 'lbl' }, 'durée'), frames),
+      frames,
       el('label', { class: 'look' }, el('span', { class: 'lbl' }, 'toile'), canv),
       el('label', { class: 'look' }, el('span', { class: 'lbl' }, 'méthode'), meth),
       el('label', { class: 'look' }, el('span', { class: 'lbl' }, 'graine'), seed),

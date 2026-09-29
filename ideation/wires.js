@@ -100,10 +100,11 @@ export function createWires(app, env) {
       if (l.kind === 'wire') {
         const st = F.state(l.id) || { ok: false, why: 'fil illisible' };
         const kind = KINDS[l.pa] ? l.pa : 'text';
-        const cls = [st.ok ? (st.off || st.pending ? 'idle' : '') : 'bad', sel ? 'sel' : ''].filter(Boolean).join(' ');
+        // gardé (au-delà de ce que prend le modèle, commun/refs.js) : au repos, pas en alerte
+        const cls = [st.ok ? (st.off || st.pending ? 'idle' : '') : st.held ? 'idle' : 'bad', sel ? 'sel' : ''].filter(Boolean).join(' ');
         const tok = b.type === 'vgen' && ['image', 'element', 'video', 'audio'].includes(l.pb);
-        const label = l.label || (st.ok && l.pb === 'refs' ? `réf. ${st.idx + 1}` : st.ok && tok ? `@${l.pb}${st.idx + 1}` : !st.ok ? 'ignoré' : '');
-        const why = !st.ok ? `ignoré : ${st.why}` : st.pending ? `en attente : ${st.pending}` : st.off ? 'la case est coupée : ce fil ne compte pas'
+        const label = l.label || (st.ok && l.pb === 'refs' ? `réf. ${st.idx + 1}` : st.ok && tok ? `@${l.pb}${st.idx + 1}` : st.held ? 'non envoyé' : !st.ok ? 'ignoré' : '');
+        const why = st.held ? `non envoyé : ${st.why}` : !st.ok ? `ignoré : ${st.why}` : st.pending ? `en attente : ${st.pending}` : st.off ? 'la case est coupée : ce fil ne compte pas'
           : `${KINDS[kind].label} · ${nameOf(a)} → ${nameOf(b)}`;
         layer.append(wire(portPoint(a, l.pa, 'out'), portPoint(b, l.pb, 'in'), { color: KINDS[kind].color, id: l.id, cls, why, label }));
       } else if (l.kind === 'out') {
@@ -138,7 +139,7 @@ export function createWires(app, env) {
     for (const l of S.board.links) {
       if (l.kind !== 'wire') continue;
       const st = F.state(l.id);
-      if (st?.ok) { on.add(`${l.b}|in:${l.pb}`); on.add(`${l.a}|out:${l.pa}`); } else bad.add(`${l.b}|in:${l.pb}`);
+      if (st?.ok) { on.add(`${l.b}|in:${l.pb}`); on.add(`${l.a}|out:${l.pa}`); } else if (!st?.held) bad.add(`${l.b}|in:${l.pb}`);
     }
     for (const [id, d] of dom) {
       for (const p of d.el.querySelectorAll(':scope > .pt')) {

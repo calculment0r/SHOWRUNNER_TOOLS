@@ -25,6 +25,7 @@
 // lien de lignée (`out`, marqué `lot` : le cadre), la carte un lien vers le cadre.
 
 import { api, jobs, toast, el, href, dropZone } from '../commun/shell.js';
+import { sortable, moveItem, heldTitle, sentLabel } from '../commun/refs.js';
 import { KINDS, nameOf, fromName, short, inPorts, newSlots, DEFAULT_ROLES, cleanLooks } from './ports.js';
 
 // ── ce que les cartes partagent (video.js aussi) ──────────────
@@ -80,15 +81,39 @@ export function badList(app, id) {
     el('button', { class: 'gcut', type: 'button', title: list.length > 1 ? 'couper ces fils' : 'couper ce fil', onclick: () => app.cutLink(list.map((e) => e.link.id)) },
       list.length > 1 ? 'les couper' : 'couper'))));
 }
-// une vignette d'entrée : numérotée, en alerte ou en attente
+// une vignette d'entrée : numérotée par sa place (la règle commune, commun/refs.js),
+// grisée au-delà de ce que prend le modèle (`held`), en alerte, ou en attente ;
+// on la glisse pour changer sa place (`refStrip`)
 export function chip(app, e, n, { token = '' } = {}) {
   const id = e.item !== undefined ? e.item : app.flow().itemOf(e.from);
   const it = id ? app.S.items.get(id) : null;
   const src = it && !it.missing ? (it.kind === 'element' ? it.element?.refs?.[0]?.thumb_url || it.thumb_url : it.thumb_url) : null;
-  const cls = e.ok === false ? ' bad' : e.pending ? ' wait' : '';
-  const title = e.ok === false ? `ignoré : ${e.why}` : e.pending ? `en attente : ${e.pending}` : `${token || 'référence ' + n} : ${it?.title || nameOf(e.from)}`;
-  return el('i', { class: 'gchip' + cls, title, style: { backgroundImage: src ? `url("${href(src)}")` : null } },
-    el('b', {}, e.ok === false ? '×' : token || String(n)));
+  const cls = e.held ? ' held' : e.ok === false ? ' bad' : e.pending ? ' wait' : '';
+  const name = it?.title || nameOf(e.from);
+  const title = e.held ? `${token || 'place ' + n} · ${name} — ${heldTitle(e.why)}` : e.ok === false ? `ignoré : ${e.why}`
+    : e.pending ? `en attente : ${e.pending}` : `${token || 'référence ' + n} : ${name} — glisser pour changer sa place`;
+  return el('button', { class: 'gchip' + cls, type: 'button', title, style: { backgroundImage: src ? `url("${href(src)}")` : null } },
+    el('b', {}, e.ok === false && !e.held ? '×' : token || String(n)));
+}
+// le carrousel d'une entrée : ses vignettes dans l'ordre des fils ; glisser l'une
+// change sa place (et son adresse : réf. 1, @image1…), le texte du prompt ne bouge pas
+export function refStrip(app, id, pb, all, strip) {
+  sortable(strip, { item: '.gchip', onmove: (a, b) => {
+    const order = moveItem(all.map((e) => e.link.id), a, b);
+    app.mutate((B) => {
+      const at = new Map(order.map((lid, k) => [lid, k]));
+      const mine = B.links.filter((l) => at.has(l.id)).sort((x, y) => at.get(x.id) - at.get(y.id));
+      let k = 0;
+      B.links = B.links.map((l) => (at.has(l.id) ? mine[k++] : l));
+    });
+  } });
+  return strip;
+}
+// ce qu'une entrée dit de ses places : « 2 sur 5 envoyées » quand toutes ne partent pas
+export function placesLabel(all, max) {
+  const n = all.filter((e) => e.ok || e.held).length;
+  const sent = all.filter((e) => e.ok).length;
+  return sent < n ? sentLabel(n, sent) : max ? `${sent}/${max}` : String(sent);
 }
 
 export function createGen(app) {
@@ -139,7 +164,8 @@ export function createGen(app) {
       field = inbox(app, pr, 'la prose est copiée dans le prompt de la carte');
       if (pr.son || pr.musique) field.append(el('span', { class: 'ghint' }, 'Son et Musique du composeur ne vont qu’à la vidéo : ignorés ici'));
     } else {
-      field = el('textarea', { class: 'fld gp', rows: 4, spellcheck: 'false', placeholder: 'le prompt, en anglais : le sujet, le lieu, la lumière… ou branchez un texte', 'data-reg': 'prompt' });
+      // `gprompt` (pas `gp` : c'est la classe des groupes, posée en absolu — le champ sortait de la carte)
+      field = el('textarea', { class: 'fld gprompt', rows: 4, spellcheck: 'false', placeholder: 'le prompt, en anglais : le sujet, le lieu, la lumière… ou branchez un texte', 'data-reg': 'prompt' });
       field.value = g.prompt || '';
       let changed = () => {};
       field.addEventListener('focus', () => { changed = app.editing(); });
@@ -155,21 +181,26 @@ export function createGen(app) {
     const aspects = S.cfg ? S.cfg.aspects.map((a) => [a, a, m ? !m.sizes[quality(g)]?.[a] : false]) : [[g.aspect, g.aspect]];
     const count = el('div', { class: 'seg' }, ...[1, 2, 3, 4].map((k) => el('button', { class: 'tb' + (g.count === k ? ' on' : ''), type: 'button',
       title: pr?.lot && !pr.lot.conflict ? `${k} image${k > 1 ? 's' : ''} par valeur` : `${k} image${k > 1 ? 's' : ''}`, onclick: () => app.mutate(() => { g.count = k; }) }, String(k))));
-    // la prise de vue : celle de la case Photographie du composeur branché, sinon celle de la carte
+    // la prise de vue : celle de la case Photographie du composeur branché, sinon celle de la carte ;
+    // aucune pastille : une puce qui ouvre le panneau de la carte (pas de phrase d'aide)
     const fromC = !!pr?.looks;
     const looks = Object.entries(looksOf(g, pr || promptOf(g, F))).map(([gid, lid]) => {
       const it = S.cfg?.looks.find((x) => x.id === gid)?.items.find((x) => x.id === lid);
       return el('span', { class: 'chip', title: it?.sub || '' }, it ? it.name : lid);
     });
-    // les références : on y branche, on y dépose (fichier du disque ou vignette), on y ajoute
+    const shot = fromC ? null : el('button', { class: 'gcut', type: 'button', title: 'caméra, objectif, pellicule, lumière : dans le panneau de droite',
+      onclick: () => app.select([g.id]) }, looks.length ? 'prise de vue ›' : '+ prise de vue');
+    // les références : un carrousel (commun/refs.js) — on y branche, on y dépose (fichier du
+    // disque ou vignette), on y ajoute, on glisse une vignette pour changer sa place ; au-delà
+    // de ce que prend le modèle, grisées, non envoyées, jamais retirées
     const shut = port && port.max === 0;
-    const full = port && port.max !== null && refs.length >= port.max;
-    const strip = el('div', { class: 'grefs' + (shut ? ' shut' : ''), title: shut ? port.why : 'déposez ici des images ou des éléments : les références de la carte' },
-      ...all.map((e) => chip(app, e, e.ok ? e.idx + 1 : 0)),
-      shut ? null : el('button', { class: 'gadd', type: 'button', disabled: full ? true : null,
-        title: full ? `${m.name} : ${m.refs} au plus` : 'ajouter une référence depuis la bibliothèque', onclick: () => app.pickRefs(g.id) }, '+'),
-      all.length ? null : el('span', { class: 'ghint', title: shut ? port.why : null }, shut ? `texte seul : ${short(port.why)}`
-        : m ? `branchez ou déposez des images, des éléments (${m.refs} au plus)` : 'branchez ou déposez des images'));
+    const full = port && port.max !== null && all.length >= port.max;
+    const strip = refStrip(app, g.id, 'refs', all, el('div', { class: 'grefs' + (shut ? ' shut' : ''), title: shut ? port.why : null },
+      ...all.map((e) => chip(app, e, e.ok || e.held ? e.idx + 1 : 0)),
+      // plein : pas de « + » (comme la barre d'Image) — l'étiquette dit combien partent, une grisée dit pourquoi
+      shut || full ? null : el('button', { class: 'gadd', type: 'button', 'data-nodrag': '',
+        title: 'ajouter une référence depuis la bibliothèque', onclick: () => app.pickRefs(g.id) }, '+'),
+      all.length ? null : el('span', { class: 'ghint', title: shut ? port.why : null }, shut ? `texte seul · ${short(port.why)}` : 'déposez ou branchez des images')));
     // fermée aussi, elle reçoit le dépôt : pour dire pourquoi elle le refuse (app.feed → canWire)
     dropZone(strip, { kinds: ['image', 'element'], via: 'ideation', onitems: (items) => app.addRefs(g.id, items) });
     const btn = el('button', { class: 'gbtn', type: 'button', onclick: () => generate(g.id) }, goText(g, pr || promptOf(g, F)));
@@ -183,11 +214,10 @@ export function createGen(app) {
       el('div', { class: 'gform' },
         el('div', { class: 'prow', 'data-row': 'prompt' }, el('div', { class: 'prow-h' }, plab('in', 'prompt', 'prompt', pr ? 'fil' : ''), el('span', { class: 'sp' }),
           pr ? null : composeBtn(app, g.id)), field),
-        el('div', { class: 'prow', 'data-row': 'refs' }, plab('in', 'refs', 'références', shut ? 'fermé' : m ? `${refs.length}/${m.refs}` : String(refs.length)), strip),
-        el('div', { class: 'grow' }, sel(models, g.model, (v) => app.mutate(() => { g.model = v; app.LS('gen-model', v); }), 'le modèle : ses entrées suivent'),
-          sel(aspects, g.aspect, (v) => app.mutate(() => { g.aspect = v; }), 'le format'), count),
-        looks.length ? el('div', { class: 'opts' }, fromC ? el('span', { class: 'lbl dim', title: 'les pastilles de la case Photographie du composeur : celles de la carte ne comptent pas' }, 'du composeur') : null, ...looks)
-          : el('span', { class: 'ghint' }, fromC ? 'prise de vue : la case Photographie du composeur (aucune pastille)' : 'prise de vue (caméra, objectif, pellicule, lumière) : panneau de droite'),
+        el('div', { class: 'prow', 'data-row': 'refs' }, plab('in', 'refs', 'références', shut && !all.length ? 'fermé' : placesLabel(all, m?.refs)), strip),
+        el('div', { class: 'grow gmodel' }, sel(models, g.model, (v) => app.mutate(() => { g.model = v; app.LS('gen-model', v); }), 'le modèle : il envoie ses N premières références, les autres restent grisées')),
+        el('div', { class: 'grow' }, sel(aspects, g.aspect, (v) => app.mutate(() => { g.aspect = v; }), 'le format'), count, shot),
+        looks.length ? el('div', { class: 'opts' }, fromC ? el('span', { class: 'lbl dim', title: 'les pastilles de la case Photographie du composeur : celles de la carte ne comptent pas' }, 'du composeur') : null, ...looks) : null,
         el('div', { class: 'grow' }, btn, w),
         badList(app, g.id)),
       g.error ? el('p', { class: 'gerr' }, g.error) : null,
@@ -202,7 +232,10 @@ export function createGen(app) {
     const w = why(g);
     const btn = e.querySelector('.gbtn'), wy = e.querySelector('.gwhy'), sum = e.querySelector('.gsum');
     if (btn) { btn.disabled = !!w; btn.textContent = goText(g); }
-    if (wy) wy.textContent = w;
+    // rien ne bloque : combien de références partent, quand toutes ne partent pas
+    const all = app.flowNow().inputs(id).refs || [];
+    const sent = sentLabel(all.filter((x) => x.ok || x.held).length, all.filter((x) => x.ok).length);
+    if (wy) { wy.textContent = w || (sent ? `réf. ${sent}` : ''); wy.className = 'gwhy ' + (w ? 'why' : 'hint'); }
     if (sum) sum.textContent = promptOf(g).text || '—';
   }
 

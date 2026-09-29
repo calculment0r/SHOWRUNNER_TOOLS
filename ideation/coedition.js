@@ -238,15 +238,18 @@ export function createCoedition(app, hooks = {}) {
   function applyGroup(g) {
     const back = { m: new Map(), t: Date.now() };
     const B = S.board;
+    // une clé : « t|id|registre », ou « t|# » pour l'ordre d'une liste (deux morceaux :
+    // sans ce cas, l'ordre des liens ou des objets ne s'annulait jamais)
+    const parse = (key) => { const p = key.split('|'); return p.length === 2 && p[1] === '#' ? [p[0], '', '#'] : p; };
     const phase = (key, bf) => {
-      const [t, , k] = key.split('|');
+      const [t, , k] = parse(key);
       if (t === 'b') return 2;
       if (k === '*') return bf.obj ? (t === 'n' ? 0 : 1) : (t === 'l' ? 3 : 4);
       return k === '#' ? 5 : k === 'slots#' ? 2.5 : 2;   // l'ordre des cases après les cases remises
     };
     const E = [...g.m.entries()].sort((a, b) => phase(...a) - phase(...b));
     for (const [key, bf] of E) {
-      const [t, id, k] = key.split('|');
+      const [t, id, k] = parse(key);
       if (t === 'b') { back.m.set(key, { v: B.name }); B.name = bf.v; nameUi(); continue; }
       const list = t === 'n' ? B.nodes : B.links;
       if (k === '#') { back.m.set(key, { ids: list.map((x) => x.id) }); reorder(list, bf.ids); continue; }

@@ -8,6 +8,9 @@
 //   - Les places sont stables : déposer sur une vignette la remplace à la
 //     même place ; retirer laisse la place vide (son jeton passe au rouge) ;
 //     « tasser » renumérote et réécrit les jetons des champs liés.
+//   - Glisser une vignette la change de place (la règle commune des
+//     références, commun/refs.js) : son jeton devient celui de sa nouvelle
+//     place, le texte des champs liés ne change pas.
 //   - Une catégorie n'apparaît que si elle a du contenu ; pas de places
 //     vides affichées d'avance ; un compteur par sorte, et un refus clair
 //     quand c'est plein (« plus de place pour une image : 9 / 9 »).
@@ -28,6 +31,7 @@
 //   E.bindField(textarea) · E.get() · E.set(state) · E.badTokens([textes]) · E.tokens()
 
 import { api, el, toast, href, pick, dropZone, kindFr, etypeFr } from './shell.js';
+import { sortable, moveItem } from './refs.js';
 
 export const CATS = [   // l'ordre d'affichage ; `token` fait le jeton, `kinds` ce qui s'y range
   { id: 'image', label: 'Images', token: 'image', kinds: ['image'] },
@@ -196,7 +200,10 @@ export function createEntrees(box, { limits = { image: 9, video: 3, audio: 3, fi
     return el('div', { class: 'ent-cat' },
       el('div', { class: 'ent-cat-head' }, el('span', { class: 'lbl' }, c.label), el('span', { class: 'lbl n' + (c.id !== 'element' && u[c.id] >= limits[c.id] ? ' full' : '') }, count),
         el('span', { class: 'sp' }), holes ? el('button', { class: 'tb ghost sm', type: 'button', title: 'retirer les places vides et renuméroter ; les jetons du prompt suivent', onclick: pack }, 'Tasser') : null),
-      el('div', { class: 'ent-slots' }, ...S[c.id].map((p, i) => slot(c, p, i))));
+      // la règle commune des références (commun/refs.js) : glisser une vignette change sa
+      // place, donc son jeton ; le texte des champs liés ne change pas (c'est la place qui compte)
+      sortable(el('div', { class: 'ent-slots' }, ...S[c.id].map((p, i) => slot(c, p, i))), { item: '.ent-slot',
+        onmove: (a, b) => { S[c.id] = moveItem(S[c.id], a, b); changed(); } }));
   }
   function slot(c, p, i) {
     const tok = tokenOf(c.id, i);

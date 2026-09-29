@@ -131,9 +131,11 @@ MODELS: dict[str, dict] = {
         # (« Up to 3 references were used in training ») ; « edits with 5,
         # 6 and 10 reference images work … but are not measured » (sa carte,
         # huggingface.co/Viggle/Qwen-Image-2.1-viggle-turbo) : au-delà de
-        # `refs_trained`, une note le dit, rien n'est bloqué.
+        # `refs_trained`, une note le dit, rien n'est bloqué. La note du
+        # gabarit officiel ComfyUI (image_qwen_image_2_1_image_edit, relue le
+        # 29/09) : « Up to 10 reference images (image_1 to image_10) ».
         "refs": 10, "refs_trained": 3,
-        "refs_max_why": "Qwen-Image 2.1 prend 10 références au plus (sa limite publiée)",
+        "refs_max_why": "Qwen-Image 2.1 prend 10 références (sa limite publiée)",
         "sizes": {"1": {a: size_for(a, 1.0, 32) for a in ASPECTS}, "2k": QWEN_2K},
         "quality_labels": {"1": "1 Mpx", "2k": "2K natif"},
     },
@@ -143,8 +145,10 @@ MODELS: dict[str, dict] = {
         # Identity Edit v1.2 : deux entrées, la scène puis le sujet
         # (Krea2EditModelPatch : source_latent, source_latent_b ; README
         # github.com/lbouaraba/comfyui-krea2edit)
+        # (README relu le 29/09 : « Two-input edits: scene image → source_latent,
+        # subject image → source_latent_b »)
         "refs": 2,
-        "refs_max_why": "Krea 2 prend 2 références au plus : la scène, puis le sujet (Identity Edit)",
+        "refs_max_why": "Krea 2 prend 2 références : la scène, puis le sujet",
         "sizes": {"1": {a: size_for(a, 1.0, 16) for a in ASPECTS}, "2": {a: size_for(a, 2.0, 16) for a in ASPECTS}},
         "quality_labels": {"1": "1 Mpx", "2": "2 Mpx"},
     },
@@ -547,9 +551,12 @@ def compose(model: str, prompt: str, looks: dict | None = None, refs: list[dict]
             names = " ".join(told) if len(told) <= 3 else f"{told[0]} … {told[-1]}"
             s = "s" if len(told) > 1 else ""
             notes.append(f"{names} non nommée{s} : présentée{s} d'office")
+        # pas une limite : Qwen 2.1 en prend 10 ; le turbo Viggle a appris sur
+        # 3, et sa carte dit qu'à 5, 6 et 10 « ça marche », non mesuré
         n_img = len(refs) + (1 if mode == "edit" else 0)
-        if n_img > MODELS["qwen21"]["refs_trained"]:
-            notes.append(f"{n_img} images : le turbo a appris sur {MODELS['qwen21']['refs_trained']} au plus, non mesuré")
+        t = MODELS["qwen21"]["refs_trained"]
+        if n_img > t:
+            notes.append(f"{n_img} images : au-delà de {t}, hors de l'apprentissage du turbo — ça marche, non mesuré")
     if transparent and model == "qwen21" and mode == "generate":
         # le gabarit de la note officielle ComfyUI (image_qwen_image_2_1_t2i)
         # et du README Qwen-Image 2.1 : l'alpha est natif, sans détourage
@@ -705,7 +712,21 @@ def _looks(d) -> dict:
     return out
 
 
-def _refs(d, n_max: int, why: str = "") -> list[dict]:
+def split_refs(refs: list, send: int) -> tuple[list, list]:
+    """La règle commune des références (commun/refs.js) : le carrousel entier
+    arrive dans l'ordre ; le modèle reçoit les `send` premières places, les
+    suivantes restent (grisées dans la page, gardées dans la recette sous
+    `refs_held`) et ne partent pas. Une seule vérité : la page grise d'après le
+    même nombre (`refs` de /api/image/models)."""
+    send = max(0, send)
+    return refs[:send], refs[send:]
+
+
+# le carrousel prend ce que prend le plus grand des modèles ; chacun envoie les siennes
+REFS_CAP = max(m["refs"] for m in MODELS.values())
+
+
+def _refs(d, n_max: int = REFS_CAP, why: str = "") -> list[dict]:
     out = []
     for r in d or []:
         if isinstance(r, str):
@@ -742,9 +763,11 @@ def check_generate(d: dict) -> dict:
     variant = d.get("variant") or "turbo"
     if model == "zimage" and variant not in m["variants"]:
         raise ValueError(f"Z-Image : variante inconnue {variant}")
-    refs = _refs(d.get("refs"), m["refs"], m.get("refs_why") or m.get("refs_max_why", ""))
+    refs, held = split_refs(_refs(d.get("refs"), REFS_CAP, f"{REFS_CAP} références au plus"), m["refs"])
     out = {"model": model, "prompt": prompt, "looks": _looks(d.get("looks")), "aspect": aspect, "quality": quality,
            "width": wh[0], "height": wh[1], "seed": _seed(d.get("seed")), "refs": refs}
+    if held:
+        out["refs_held"] = held
     if model == "zimage":
         out["variant"] = variant
     if model == "krea2":
@@ -773,9 +796,10 @@ def check_edit(d: dict) -> dict:
         if not prompt:
             raise ValueError("la consigne est vide")
         n_max = MODELS[model]["refs"] - 1  # l'image éditée compte
-        out.update(model=model, prompt=prompt[:6000], looks=_looks(d.get("looks")), keep_face=bool(d.get("keep_face")),
-                   refs=_refs(d.get("refs"), n_max, f"{MODELS[model]['name']} : {n_max} référence"
-                              f"{'s' if n_max > 1 else ''} en plus de l'image éditée"))
+        refs, held = split_refs(_refs(d.get("refs"), REFS_CAP - 1, f"{REFS_CAP - 1} références au plus en plus de l'image éditée"), n_max)
+        out.update(model=model, prompt=prompt[:6000], looks=_looks(d.get("looks")), keep_face=bool(d.get("keep_face")), refs=refs)
+        if held:
+            out["refs_held"] = held
         if d.get("mask"):
             out["mask"] = d["mask"] if MASK_RX.fullmatch(str(d["mask"])) else save_mask(d["mask"])
             mask_path(out["mask"])
@@ -1339,7 +1363,9 @@ def api_compose(req) -> dict:
         model = d.get("model")
         if model not in MODELS:
             raise ValueError(f"modèle inconnu : {model}")
-        refs = [_ref(r) for r in _refs(d.get("refs"), max(m["refs"] for m in MODELS.values()))]
+        # le carrousel entier arrive ; le prompt ne présente que les places envoyées
+        send = MODELS[model]["refs"] - (1 if mode == "edit" else 0)
+        refs = [_ref(r) for r in split_refs(_refs(d.get("refs")), send)[0]]
         out = compose(model, d.get("prompt") or "", _looks(d.get("looks")), refs, mode=mode,
                       keep_face=bool(d.get("keep_face")), transparent=bool(d.get("transparent")))
     except ValueError as e:
@@ -1508,14 +1534,27 @@ def selftest(call, ok) -> None:
     st, r = call("POST", "/api/image/edit", {"source": iid, "tool": "instruct", "model": "qwen21", "prompt": "x",
                                              "refs": [iid] * 9, "dry": True})
     ok(st == 200, f"image : Qwen édite avec 9 références en plus de l'image éditée ({st})")
+    # la règle commune : le carrousel entier arrive, le modèle prend les N premières places
+    st, r = call("POST", "/api/image/generate", {"model": "krea2", "prompt": "x", "refs": [eid, iid, eid, iid, iid], "dry": True})
+    pr = r.get("params", {}) if st == 200 else {}
+    ok(st == 200 and [x["item"] for x in pr.get("refs", [])] == [eid, iid] and len(pr.get("refs_held", [])) == 3,
+       f"image : Krea 2 reçoit 5 références, envoie les 2 premières, garde les 3 autres ({st} {str(r)[:200]})")
+    st, r = call("POST", "/api/image/generate", {"model": "zimage", "prompt": "x", "refs": [iid], "dry": True})
+    ok(st == 200 and not r.get("params", {}).get("refs") and len(r.get("params", {}).get("refs_held", [])) == 1,
+       f"image : Z-Image garde la référence sans l'envoyer ({st})")
+    st, c = call("POST", "/api/image/compose", {"model": "krea2", "prompt": "x", "refs": [iid] * 4})
+    st2, c2 = call("POST", "/api/image/compose", {"model": "qwen21", "prompt": "x", "refs": [iid] * 4})
+    ok(st == 200 and "<image" not in c["prompt"] and st2 == 200 and "<image4> shows" in c2["prompt"],
+       f"image : le prompt envoyé suit le modèle, pas le carrousel ({c['prompt'][:80]!r})")
+    st, r = call("POST", "/api/image/edit", {"source": iid, "tool": "instruct", "model": "krea2", "prompt": "x", "refs": [iid] * 3, "dry": True})
+    ok(st == 200 and len(r.get("params", {}).get("refs", [])) == 1 and len(r.get("params", {}).get("refs_held", [])) == 2,
+       f"image : Krea 2 édite avec 1 référence en plus de l'image, les autres gardées ({st})")
 
-    bad = [({"model": "zimage", "prompt": "x", "refs": [iid]}, "Z-Image refuse une référence"),
-           ({"model": "dall-e", "prompt": "x"}, "modèle inconnu refusé"),
+    bad = [({"model": "dall-e", "prompt": "x"}, "modèle inconnu refusé"),
            ({"model": "krea2", "prompt": ""}, "prompt vide refusé"),
            ({"model": "krea2", "prompt": "x", "aspect": "5:4"}, "format inconnu refusé"),
            ({"model": "krea2", "prompt": "x", "quality": "4"}, "Krea 4 Mpx refusé"),
            ({"model": "qwen21", "prompt": "x", "quality": "2k", "aspect": "21:9"}, "Qwen 2K 21:9 refusé (non documenté)"),
-           ({"model": "krea2", "prompt": "x", "refs": [iid, iid, iid]}, "Krea : 3 références refusées"),
            ({"model": "qwen21", "prompt": "x", "refs": [iid] * 11}, "Qwen : 11 références refusées"),
            ({"model": "qwen21", "prompt": "x", "refs": ["ima-rien"]}, "référence introuvable refusée")]
     for body, msg in bad:

@@ -97,7 +97,11 @@ FPS = 24
 CANVAS_MULTIPLE = 32
 BASE_SHORT_EDGE = 768
 MAX_PIXELS = 768 * 1344
-FRAMES = (124, 175, 226, 294, 362)          # 17k+5 dans la plage entraînée (124-362) ; H3 Studio
+# toute la grille 17k+5 dans la plage entraînée : « Frame count at 24 fps, snapped up to the
+# model's 17k+5 grid (124 = ~5s; trained range is ~124-362) » (le nœud, relu le 29/09) —
+# les pas du curseur de durée (Cal, 29/09 : « on veut un curseur pour la durée ») ; H3 Studio
+# n'en proposait que cinq (124, 175, 226, 294, 362)
+FRAMES = tuple(range(124, 363, 17))
 LIMITS = {"image": 9, "video": 3, "audio": 3, "files": 12, "seconds": 15.0, "min_seconds": 2.0}
 
 MODES = {

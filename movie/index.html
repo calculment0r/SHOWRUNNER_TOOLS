@@ -55,7 +55,7 @@
       <!-- Entrées : par sorte, appelées par position (@image1, @element1…) -->
       <section class="card" data-for="r2v">
         <div id="entrees"></div>
-        <span class="hint">dans le prompt, chaque entrée s'appelle par son jeton — <b>@image1</b>, <b>@element1</b>, <b>@video1</b>, <b>@audio1</b> ; tapez <b>@</b> pour la liste. Vert : la place est remplie ; rouge : rien à cette place.</span>
+        <span class="hint">une entrée s'appelle par sa place — <b>@image1</b>, <b>@element1</b>… (tapez <b>@</b>) ; glissez une vignette pour changer sa place : le jeton suit la place, le prompt ne change pas.</span>
       </section>
 
       <!-- Le prompt : les trois champs d'H3 -->
@@ -91,13 +91,16 @@
         <span class="hint" id="format-hint"></span>
       </section>
 
-      <!-- Format et durée -->
-      <section class="card">
-        <div class="row"><h3>Format</h3><span class="sp"></span><span class="lbl" id="estimate-short"></span></div>
+      <!-- Format et durée : la famille, la toile (une ligne par toile, son temps estimé à droite),
+           la durée au curseur (les pas d'H3) -->
+      <section class="card fmt">
+        <div class="row"><h3>Format</h3><span class="sp"></span><span class="lbl" id="estimate-short" title="le temps estimé du plan, sur H3"></span></div>
         <div class="seg fam" id="fam"></div>
-        <div class="grid2">
-          <label class="field"><span class="lbl">Toile · temps estimé</span><select class="fld" id="canvas"></select></label>
-          <label class="field"><span class="lbl">Durée</span><select class="fld" id="frames"></select></label>
+        <div class="field"><span class="lbl">Toile</span><div class="canvases" id="canvas" role="radiogroup" aria-label="toile"></div></div>
+        <div class="field dur">
+          <div class="dur-h"><label class="lbl" for="frames">Durée</label><span class="sp"></span><b class="dur-v" id="dur-v"></b><small class="dur-n" id="dur-n"></small></div>
+          <input type="range" class="dur-r" id="frames" min="0" max="0" step="1" value="0">
+          <div class="dur-ends"><span id="dur-lo"></span><span id="dur-hi"></span></div>
         </div>
       </section>
 

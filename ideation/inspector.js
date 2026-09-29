@@ -311,7 +311,7 @@ export function createInspector(app) {
       ta.addEventListener('focus', () => { ch = app.editing(); });
       ta.addEventListener('input', () => {
         ch(); n.prompt = ta.value;
-        const c = app.canvas.dom.get(n.id)?.el.querySelector('textarea.gp');
+        const c = app.canvas.dom.get(n.id)?.el.querySelector('textarea.gprompt');
         if (c) c.value = n.prompt;
         G.refresh(n.id); paintGo(n);
       });
@@ -334,8 +334,9 @@ export function createInspector(app) {
         const itemId = F.itemOf(e.from);
         const it = itemId ? S.items.get(itemId) : null;
         const erefs = it?.kind === 'element' ? it.element?.refs || [] : [];
-        return el('div', { class: 'rrow' + (e.ok ? '' : ' bad') },
-          el('b', { class: 'rn' }, e.ok ? String(e.idx + 1) : '×'),
+        // gardée (au-delà de ce que prend le modèle) : sa place, grisée — pas une alerte
+        return el('div', { class: 'rrow' + (e.ok ? '' : e.held ? ' held' : ' bad') },
+          el('b', { class: 'rn' }, e.ok || e.held ? String(e.idx + 1) : '×'),
           el('span', { class: 'rim', style: { backgroundImage: it?.thumb_url ? `url("${href(it.thumb_url)}")` : null } }),
           el('div', { class: 'rt' }, el('span', {}, it?.title || nameOf(e.from)),
             !e.ok ? el('small', { class: 'why' }, e.why) : e.pending ? el('small', { class: 'hint' }, e.pending) : null,
@@ -346,7 +347,7 @@ export function createInspector(app) {
               s.addEventListener('change', () => app.mutate(() => { n.refChoice = { ...(n.refChoice || {}), [itemId]: s.value }; }));
               return s;
             })() : null),
-          e.ok && e.idx > 0 ? b('↑', () => app.moveWire(e.link.id, -1), { title: 'passer avant (l’ordre des références compte)' }) : null,
+          (e.ok || e.held) && e.idx > 0 ? b('↑', () => app.moveWire(e.link.id, -1), { title: 'passer avant (l’ordre des références compte)' }) : null,
           b('×', () => app.cutLink(e.link.id), { title: 'couper ce fil' }));
       })) : null,
       hint(n.model === 'qwen21' ? 'dans l’ordre : <image1>, <image2>, <image3> — nommez-les dans le prompt'

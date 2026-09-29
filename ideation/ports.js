@@ -14,7 +14,9 @@
 // droites), `out` (la lignée : a a produit b). Plusieurs fils peuvent partir
 // d'une sortie ; une entrée à une place (prompt, première image, une case)
 // n'en reçoit qu'un ; l'ordre des fils d'une entrée est leur ordre dans la
-// planche (réf. 1, 2… ; @image1, @image2…).
+// planche (réf. 1, 2… ; @image1, @image2…) : une adresse est une place, et le
+// modèle prend les N premières — les suivantes sont gardées (`held`), grisées,
+// pas envoyées (la règle commune des références, commun/refs.js).
 //
 // Les capacités viennent des outils : caps.image = /api/image/models,
 // caps.movie = /api/movie/options. Tant qu'elles ne sont pas lues, une entrée
@@ -178,6 +180,8 @@ function who(B, caps) {
 }
 function fullWhy(port, B, caps) {
   if (port.max === 1) return `${port.label} : une seule entrée`;
+  // la raison du modèle, dite par l'outil Image (« Krea 2 prend 2 références : la scène, puis le sujet »)
+  if (B.type === 'gen' && port.id === 'refs' && imageModel(caps, B.model)?.refs_max_why) return imageModel(caps, B.model).refs_max_why;
   const k = port.accepts.length > 1 ? 'références' : KINDS[port.accepts[0]]?.plural || '';
   return `${who(B, caps)} prend ${port.max} ${k} au plus`;
 }
@@ -306,6 +310,7 @@ export function flow(board, caps = {}, items = null) {
   const into = new Map();
   const count = new Map();
   const pics = new Map();
+  const over = new Set();   // les entrées déjà pleines (judge, ci-dessous)
   const add = (b, pb, e) => {
     if (!into.has(b)) into.set(b, {});
     const o = into.get(b);
@@ -319,8 +324,13 @@ export function flow(board, caps = {}, items = null) {
     state.set(l.id, st);
     add(B.id, l.pb, { link: l, from: A, ...st });
   }
+  // la règle commune des références (commun/refs.js) : au-delà de ce que prend le modèle, un
+  // fil est gardé (`held`), grisé, pas envoyé — il se rallume avec un modèle qui en prend plus ;
+  // une fois une place gardée, les suivantes le sont aussi (le modèle prend les N premières).
+  // (`over` : déclaré avant la boucle qui juge les fils, plus haut)
   function judge(l, A, B) {
     const bad = (why) => ({ ok: false, why });
+    const held = (why, k) => { over.add(B.id + '|' + l.pb); return { ok: false, held: true, why, idx: k }; };
     const out = outPort(A);
     if (!out || out.id !== l.pa) return bad(`${nameOf(A)} ne donne plus ${KINDS[l.pa] ? 'de ' + KINDS[l.pa].label : 'rien'}`);
     if (A.type === 'media' && get(items, A.item)?.missing) return bad('cet objet a quitté la bibliothèque (corbeille d’Asset ?)');
@@ -330,20 +340,25 @@ export function flow(board, caps = {}, items = null) {
       if (B.type === 'compose') return bad('cette case a été retirée du composeur');
       return bad(`${nameOf(B)} n’a pas d’entrée « ${PORT_LABEL[l.pb] || l.pb} »`);
     }
-    if (port.max === 0) return bad(port.why || `${port.label} : fermée`);
     if (!port.accepts.includes(out.kind)) return bad(acceptWhy({ ...port, lock: false }, out.kind, B, caps));
     if (reaches(board, B.id, A.id)) return bad('une boucle : ce qui sort d’ici y revient');
     const key = B.id + '|' + l.pb;
     const k = count.get(key) || 0;
+    if (port.max === 0) { count.set(key, k + 1); return held(port.why || `${port.label} : fermée`, k); }
     if (port.max !== null && k >= port.max) {
-      return bad(port.max === 1 ? `${port.label} : une seule entrée, ce fil est en trop`
-        : `${fullWhy(port, B, caps)} — ce fil est le ${k + 1}e`);
+      if (port.max === 1) return bad(`${port.label} : une seule entrée, ce fil est en trop`);
+      count.set(key, k + 1);
+      return held(`${fullWhy(port, B, caps)} — ce fil est le ${k + 1}e`, k);
     }
     if (B.type === 'vgen' && B.mode === 'r2v' && (l.pb === 'image' || l.pb === 'element')) {
       const limit = caps?.movie?.limits?.image;
       const cost = A.type === 'media' && A.kind === 'element' ? elementPictures(get(items, A.item)) : 1;
       const used = pics.get(B.id) || 0;
-      if (limit && used + cost > limit) return bad(`H3 prend ${limit} images au plus (un personnage en envoie deux)`);
+      if (limit && (used + cost > limit || over.has(B.id + '|pics'))) {
+        over.add(B.id + '|pics');
+        count.set(key, k + 1);
+        return held(`H3 prend ${limit} images au plus (un personnage en envoie deux)`, k);
+      }
       pics.set(B.id, used + cost);
     }
     count.set(key, k + 1);
@@ -446,8 +461,9 @@ export function flow(board, caps = {}, items = null) {
     return Object.keys(o).sort().map((pb) => pb + ':' + o[pb].map((e) => [e.link.id, e.ok ? 1 : 0, e.why, e.pending || '', e.off ? 1 : 0,
       e.ok ? itemOf(e.from) || '' : '', e.ok && outPort(e.from)?.kind === 'text' ? textOf(e.from.id) + JSON.stringify(extras(e.from.id)) + brief(lot(e.from.id)) : ''].join('~')).join(',')).join('|');
   };
+  // `bad` : les fils en alerte (pas ceux gardés au-delà de ce que prend le modèle : grisés sur la carte)
   return { state: (lid) => state.get(lid) || null, inputs, take, prompt, text: textOf, textAt, parts, extras, lot, sig, itemOf,
-    bad: (id) => Object.values(inputs(id)).flat().filter((e) => !e.ok) };
+    bad: (id) => Object.values(inputs(id)).flat().filter((e) => !e.ok && !e.held) };
 }
 
 // les composeurs reliés à celui-ci par des fils de composeur à composeur (dans les deux

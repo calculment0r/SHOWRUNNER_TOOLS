@@ -639,31 +639,8 @@ export function pick({ kinds = ['image', 'element'], multiple = false, title = '
   });
 }
 
-// La planche de références d'un outil : des vignettes, un « + » qui ouvre le
-// sélecteur ; on y dépose aussi des fichiers du disque ou des vignettes.
-export function refBoard(box, { kinds = ['image', 'element'], max = 3, onchange = () => {}, label = 'réf.', via = '' } = {}) {
-  const refs = [];
-  dropZone(box, { kinds, via, onitems: (items) => {
-    for (const it of items) if (refs.length < max && !refs.some((r) => r.id === it.id)) refs.push(it);
-    if (items.length && refs.length >= max) toast(`${max} références au plus`);
-    paint(); onchange(refs);
-  } });
-  const paint = () => {
-    // la copie d'affichage de la case (64 px, remplie : commun/proxies.js), pas la vignette de 384
-    const src = (it) => pickView(it, needOf(it, 64, 64)).url;
-    box.replaceChildren(...refs.map((it, i) => el('div', { class: 'ref-chip', title: it.title,
-      style: { backgroundImage: src(it) ? `url("${src(it)}")` : null } },
-      el('span', { class: 'n' }, `${i + 1} · ${it.title}`),
-      el('button', { class: 'x', title: 'retirer', onclick: () => { refs.splice(i, 1); paint(); onchange(refs); } }, '×'))),
-    refs.length < max ? el('button', { class: 'ref-chip add', title: 'ajouter une référence', onclick: async () => {
-      const got = await pick({ kinds, multiple: true, title: `Références (${max} au plus)` });
-      for (const it of got) if (refs.length < max && !refs.some((r) => r.id === it.id)) refs.push(it);
-      paint(); onchange(refs);
-    } }, '+') : null);
-  };
-  paint();
-  return { get: () => refs.slice(), set: (list) => { refs.splice(0, refs.length, ...list.slice(0, max)); paint(); onchange(refs); }, paint };
-}
+// La planche de références et la règle commune des références : commun/refs.js
+export { refBoard, sortable, moveItem, sentCount, sentLabel, isHeld, heldTitle } from './refs.js';
 
 // Dépôt par glisser sur toute la page : cb(fichiers)
 export function dropAnywhere(cb) {

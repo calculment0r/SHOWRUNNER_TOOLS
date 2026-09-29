@@ -365,20 +365,28 @@ function paintOutput() {
       F.canvas[F.mode] = f === 'image' ? 'auto' : first ? [first.w, first.h] : F.canvas[F.mode];
       changed(); paintOutput();
     } }, FAM_FR[f])));
+  // la toile : une ligne par toile de la famille — sa taille, son nom, son temps estimé à droite ;
+  // ce qui est coché est ce qui part
   const rows = (pl?.canvases || o.canvases.map((c) => ({ ...c, estimate: null }))).filter((c) => c.family === F.fam[F.mode]);
   const cur = F.canvas[F.mode];
   const key = (c) => (c.family === 'image' ? 'auto' : `${c.w}x${c.h}`);
-  const sel = $('#canvas');
-  sel.replaceChildren(...rows.map((c) => el('option', { value: key(c), title: c.source }, `${c.w}×${c.h} · ${c.label}${c.estimate ? ' · ' + rng(c.estimate) : ''}`)));
   const curKey = cur === 'auto' ? 'auto' : Array.isArray(cur) ? `${cur[0]}x${cur[1]}` : '';
-  if (rows.some((c) => key(c) === curKey)) sel.value = curKey;
-  else if (rows.length) { sel.value = key(rows[0]); }
+  if (rows.length && !rows.some((c) => key(c) === curKey)) {
+    const c = rows[0];
+    F.canvas[F.mode] = c.family === 'image' ? 'auto' : [c.w, c.h];
+    quietSave(); schedulePlan();
+  }
+  const on = (c) => key(c) === (rows.some((x) => key(x) === curKey) ? curKey : key(rows[0]));
+  $('#canvas').replaceChildren(...rows.map((c) => el('button', { class: 'cv-row' + (on(c) ? ' on' : ''), type: 'button', role: 'radio',
+    'aria-checked': on(c) ? 'true' : 'false', title: c.source,
+    onclick: () => { F.canvas[F.mode] = c.family === 'image' ? 'auto' : [c.w, c.h]; changed(); paintOutput(); } },
+  el('b', {}, c.family === 'image' && !c.w ? 'd’après l’image' : `${c.w} × ${c.h}`), el('span', { class: 'cv-l' }, c.label || ''),
+  el('span', { class: 'cv-e' }, c.estimate ? rngShort(c.estimate) : ''))));
   $('#estimate-short').textContent = pl ? `≈ ${rng(pl.estimate)}` : '';
   $('#adv-sum').textContent = pl ? `${o.methods.find((m) => m.id === F.method)?.label.split(' · ')[0].toLowerCase()} · ${pl.steps} pas${F.seed ? ' · graine ' + F.seed : ''}${pl.loras.length ? ` · ${pl.loras.length} LoRA` : ''}` : '';
   $('#method').replaceChildren(...o.methods.map((m) => el('option', { value: m.id }, m.label)));
   $('#method').value = F.method;
-  $('#frames').replaceChildren(...o.frames.map((f) => el('option', { value: f.frames }, `${String(f.seconds).replace('.', ',')} s · ${f.frames} images`)));
-  $('#frames').value = F.frames;
+  paintDuration();
   const meth = o.methods.find((m) => m.id === F.method);
   const steps = pl?.steps;
   $('#step-presets').replaceChildren(...meth.steps.map((s, i) => el('button', { class: 'tb' + (Number(F.steps || steps) === s ? ' on' : ''), type: 'button',
@@ -397,13 +405,36 @@ function paintSeedOrig() {
   b.hidden = F.origSeed === null || F.origSeed === undefined;
   b.title = b.hidden ? '' : `la graine de la vidéo réutilisée : ${F.origSeed} — la même recette refait le même plan`;
 }
-$('#canvas').addEventListener('change', (e) => {
-  const v = e.target.value;
-  F.canvas[F.mode] = v === 'auto' ? 'auto' : v.split('x').map(Number);
-  changed();
-});
+// la durée : un curseur en secondes, aux pas permis par H3 (la grille 17k+5 à 24 i/s, lue dans
+// /api/movie/options) ; la valeur en clair, le nombre d'images en petit
+const secFr = (s) => `${String(Math.round(s * 10) / 10).replace('.', ',')} s`;
+function durIndex() {
+  const fr = S.opts?.frames || [];
+  let k = 0;
+  fr.forEach((f, i) => { if (Math.abs(f.frames - F.frames) < Math.abs(fr[k].frames - F.frames)) k = i; });
+  return k;
+}
+function paintDuration(k = durIndex()) {
+  const fr = S.opts?.frames || [];
+  if (!fr.length) return;
+  const r = $('#frames');
+  r.max = String(fr.length - 1);
+  r.value = String(k);
+  $('#dur-v').textContent = secFr(fr[k].seconds);
+  $('#dur-n').textContent = `${fr[k].frames} images`;
+  $('#dur-lo').textContent = secFr(fr[0].seconds);
+  $('#dur-hi').textContent = secFr(fr[fr.length - 1].seconds);
+}
+$('#frames').addEventListener('input', (e) => paintDuration(Number(e.target.value)));
+$('#frames').addEventListener('change', (e) => { F.frames = S.opts.frames[Number(e.target.value)].frames; changed(); });
+// un temps court pour une ligne de toile : « 3–4 min », « 40–55 s »
+function rngShort(e) {
+  if (!e) return '';
+  if (e.high < 90) return `${Math.round(e.low)}–${Math.round(e.high)} s`;
+  const lo = Math.round(e.low / 60), hi = Math.round(e.high / 60);
+  return lo === hi ? `≈ ${lo} min` : `${lo}–${hi} min`;
+}
 $('#method').addEventListener('change', (e) => { F.method = e.target.value; F.steps = ''; changed(); paintOutput(); });
-$('#frames').addEventListener('change', (e) => { F.frames = Number(e.target.value); changed(); });
 $('#steps').addEventListener('input', (e) => { F.steps = e.target.value.replace(/[^0-9]/g, ''); if (e.target.value !== F.steps) e.target.value = F.steps; changed(); });
 $('#seed').addEventListener('input', (e) => { F.seed = e.target.value.replace(/[^0-9]/g, ''); if (e.target.value !== F.seed) e.target.value = F.seed; changed(); });
 $('#seed-rand').addEventListener('click', () => { F.seed = String(Math.floor(Math.random() * 2 ** 31)); $('#seed').value = F.seed; changed(); });
