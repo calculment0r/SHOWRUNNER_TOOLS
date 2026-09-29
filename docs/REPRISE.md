@@ -45,6 +45,10 @@ Captures côte à côte avant eebbd9f / maintenant / après, à lui montrer.
 Précision de Cal (16 h 40) : « garde les fonctions dedans comme on a mais les cards doivent être
 avec le nouveau design.. les sliders rotatifs etc doivent être avec le nouveau design.. on garde
 juste le code et la logique et on repasse tout dans notre thème qui est plus abouti. »
+Et : « les fils ne sont plus en screen space aussi.. on doit mettre le design de notre canva dans
+notre thème qui est beaucoup mieux réfléchi » : câbles d'épaisseur constante à l'écran (comme
+`commun/wire.js`), fond, trame, sélection, poignées et menus de nos canvas (nodal de 4a20f41,
+Idéation), pas ceux d'ODIO_01.
 **Un agent y travaille depuis 16 h 40** : copie `/tmp/sr_odio_theme` sur DGX2 (port 8828),
 référence `/tmp/sr_odio_avant` (4a20f41, port 8827), fichiers sur le PC dans `musique/**`, son
 rapport écrit dans `docs/etudes/musique_theme.md`. Session suivante : lire ce rapport, repasser
