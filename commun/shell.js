@@ -21,6 +21,8 @@ export const TOOLS = [
   { id: 'montage',   k: 'SR—05', name: 'Montage',           path: 'montage/',  sub: 'timeline · découpe · export' },
   { id: 'music',     k: 'SR—06', name: 'Musique',           path: 'musique/',  sub: 'rack · nodal · timeline' },
   { id: 'analyse',   k: 'SR—07', name: 'Movie Analysis',    path: 'analyse/',  sub: 'dépouillement · diarisation' },
+  { id: 'ideation',  k: 'SR—08', name: 'Idéation',          path: 'ideation/', sub: 'canvas · planches · idées' },
+  { id: 'upscale',   k: 'SR—09', name: 'Upscale',           path: 'upscale/',  sub: 'images · vidéos · netteté' },
 ];
 
 // ── DOM ─────────────────────────────────────────────────────
