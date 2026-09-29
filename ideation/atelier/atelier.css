@@ -1,0 +1,221 @@
+/* ============================================================
+   IDÉATION · ATELIER — présentation par cadres, vote par points,
+   projecteur, minuteur, machine temporelle, palette de commandes, vues
+   ancrées (le prototype de Cal, repris dans le thème du portail).
+   Règles du thème : les jetons seulement, des filets (inset) et jamais de
+   bordures, un seul .tb.go par écran (« Restaurer cet état », « Présenter »
+   dans l'ordre des diapositives), les capitales pour la machine. Les
+   valeurs lues (voix, numéros) sont en acier (--cy) ; l'orange reste à
+   l'action et à l'alerte (la dernière minute du minuteur).
+   Chargée par socle.js, après ideation.css.
+   ============================================================ */
+
+@keyframes atUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes atUpC { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes atFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes atBlink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: .25; } }
+
+/* ── le groupe de la barre ─────────────────────────────── */
+.at-grp .ic.at-k { width: auto; padding: 0 8px 0 9px; gap: 7px; }
+.at-grp .ic.at-k kbd {
+  font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase;
+  padding: 2px 5px; border-radius: 3px; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink3);
+}
+/* une barre étroite : la palette et un bouton « atelier » qui ouvre le reste en menu */
+.at-grp .ic.at-more { display: none; }
+@media (max-width: 1480px) {
+  .at-grp > .ic:not(.at-more):not(.at-k) { display: none; }
+  .at-grp .ic.at-more { display: inline-flex; }
+  .at-grp .ic.at-k { width: 34px; padding: 0; }
+  .at-grp .ic.at-k kbd { display: none; }
+}
+
+/* le menu commun (commun/menu.js) nomme « .ic » la case de son icône ;
+   ideation.css habille tout « .ic » en bouton de barre (34 × 30, filet
+   vert) : dans l'Idéation, chaque entrée de menu portait une case vide.
+   On rend la case à menu.css (à régler à la source : voir l'étude). */
+.sr-menu .mi .ic { width: 14px; height: auto; display: inline-block; border-radius: 0; box-shadow: none; font-family: inherit; font-size: inherit; }
+
+/* ── ce qui se pose sur la planche ─────────────────────── */
+.at-panel { position: absolute; z-index: 8; }
+.at-panel[hidden] { display: none; }
+.at-tr { position: absolute; top: 12px; right: 12px; z-index: 8; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; pointer-events: none; }
+.at-tr > .at-panel { position: static; pointer-events: auto; }
+.at-shield { position: absolute; inset: 0; z-index: 5; }
+.at-shield.replay { cursor: grab; }
+.at-shield.replay.panning { cursor: grabbing; }
+
+/* éteindre ce qui n'est pas éclairé (présentation, projecteur) : les objets
+   éclairés reçoivent leur opacité d'une feuille vivante, par data-id */
+.cv.at-pres .nd, .cv.at-pres .fr, .cv.at-spot .nd, .cv.at-spot .fr,
+.cv.at-pres .links g.lk, .cv.at-spot .links g.lk { transition: opacity .35s; }
+.cv.at-pres .nd, .cv.at-pres .fr, .cv.at-pres .links g.lk { opacity: .07; }
+.cv.at-spot .nd, .cv.at-spot .links g.lk { opacity: .12; }
+.cv.at-spot .fr { opacity: .35; }
+
+/* ── la présentation ───────────────────────────────────── */
+body.at-presenting .hdr, body.at-presenting .ide-bar, body.at-presenting .ide > .conflict,
+body.at-presenting .lib, body.at-presenting .insp { display: none; }
+body.at-presenting .ide { padding: 0; gap: 0; }
+body.at-presenting .ide-main { grid-template-columns: minmax(0, 1fr); gap: 0; transition: none; }
+body.at-presenting .cv { border-radius: 0; box-shadow: none; }
+body.at-presenting .cv > .zoombox, body.at-presenting .cv > .mini, body.at-presenting .cv > .hint,
+body.at-presenting .cv > .banner, body.at-presenting .cv > .empty, body.at-presenting .cv > .at-views,
+body.at-presenting .cv > .at-hist, body.at-presenting .at-tr > .at-vote { display: none; }
+/* le nom du cadre, au-dessus de la diapositive, lisible sans rien de plus */
+.cv.at-pres .fr-h b { color: var(--ink); }
+.cv.at-idle, .cv.at-idle .at-shield { cursor: none; }
+
+.at-pbar {
+  left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 9;
+  display: flex; align-items: center; gap: 4px; padding: 5px; border-radius: var(--r4);
+  background: var(--veil); box-shadow: inset 0 0 0 1px var(--line); transition: opacity .35s;
+  animation: atUpC .3s both;
+}
+.cv.at-idle .at-pbar:not(:hover) { opacity: 0; }
+.at-pbar .nav { width: 34px; height: 30px; border-radius: var(--r2); color: var(--ink2); font-size: 17px; line-height: 1; }
+.at-pbar .nav:hover { background: var(--panel3); color: var(--ink); }
+.at-pbar .no { font-family: var(--f-disp); font-size: 11px; letter-spacing: .06em; color: var(--cy); padding: 0 6px; white-space: nowrap; }
+.at-pbar .tt {
+  font-family: var(--f-disp); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink);
+  padding-right: 6px; max-width: 38vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.at-pbar .sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+
+/* l'ordre des diapositives */
+.at-sorter { display: flex; flex-direction: column; gap: 4px; }
+.at-srow {
+  display: grid; grid-template-columns: 16px 26px minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  padding: 6px 8px; border-radius: var(--r3); background: var(--panel2);
+}
+.at-srow.cur { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.at-srow.off .no, .at-srow.off .nm { opacity: .4; }
+.at-srow.drag { opacity: .35; }
+.at-srow.over-t { box-shadow: inset 0 2px 0 var(--cy); }
+.at-srow.over-b { box-shadow: inset 0 -2px 0 var(--cy); }
+.at-srow .grip { cursor: grab; color: var(--ink3); font-family: var(--f-mono); font-size: 10px; letter-spacing: -.1em; user-select: none; }
+.at-srow .no { font-family: var(--f-disp); font-size: 10px; color: var(--cy); }
+.at-srow .nm {
+  min-width: 0; text-align: left; display: flex; flex-direction: column; gap: 2px;
+  font-family: var(--f-disp); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.at-srow .nm:hover { color: var(--cy); }
+.at-srow .nm small { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .16em; color: var(--ink3); }
+.at-srow .row { gap: 4px; flex-wrap: nowrap; }
+.at-srow .tb.sm { height: 24px; min-width: 24px; padding: 0 6px; }
+.at-srow .tb.vis { min-width: 72px; }
+
+/* ── le vote ───────────────────────────────────────────── */
+.at-vote {
+  width: 264px; padding: 12px 14px; display: flex; flex-direction: column; gap: 9px;
+  background: var(--panel); border-radius: var(--r4); box-shadow: inset 0 0 0 1px var(--line-cy), 0 14px 36px var(--drop);
+  animation: atUp .22s both;
+}
+.at-vote .h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.at-vote .h b { font-family: var(--f-disp); font-weight: 400; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
+.at-vote .h .lbl { color: var(--cy); }
+.at-vote p { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--ink3); }
+.at-rank { display: flex; flex-direction: column; gap: 1px; }
+.at-rank .ri {
+  display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 8px; align-items: center;
+  padding: 5px 6px; border-radius: var(--r2); text-align: left;
+}
+.at-rank .ri:hover { background: var(--panel2); }
+.at-rank .no { font-family: var(--f-disp); font-size: 8.5px; color: var(--ink3); }
+.at-rank .nm { font-size: 12px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.at-rank .n { font-family: var(--f-disp); font-size: 10px; color: var(--cy); }
+.at-rank .none { padding: 4px 6px; font-size: 11px; color: var(--ink3); font-style: italic; }
+.cv.at-voting .nd, .cv.at-voting .nd *, .cv.at-voting .fr-h { cursor: copy; }
+/* la pastille : sur l'objet, à taille d'écran constante quel que soit le zoom */
+.at-vbadge {
+  position: absolute; top: calc(-9px / var(--z)); right: calc(-9px / var(--z)); z-index: 4;
+  min-width: calc(20px / var(--z)); height: calc(20px / var(--z)); padding: 0 calc(5px / var(--z));
+  border-radius: calc(5px / var(--z)); background: var(--cy); color: var(--on-cy);
+  font-family: var(--f-disp); font-size: calc(9px / var(--z)); line-height: 1;
+  display: flex; align-items: center; justify-content: center; pointer-events: none;
+  box-shadow: 0 calc(3px / var(--z)) calc(10px / var(--z)) var(--drop); animation: atFade .25s both;
+}
+.cv.at-pres .at-vbadge { display: none; }
+
+/* ── le minuteur ───────────────────────────────────────── */
+.at-timer {
+  display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 5px 0 12px; border-radius: var(--r4);
+  background: var(--veil); box-shadow: inset 0 0 0 1px var(--line-gr); animation: atUp .22s both;
+}
+.at-timer .t { font-family: var(--f-disp); font-size: 13px; letter-spacing: .06em; color: var(--ink); min-width: 60px; text-align: center; }
+.at-timer.paused .t { color: var(--ink3); }
+.at-timer.last { box-shadow: inset 0 0 0 1px var(--line-or); }
+.at-timer.last .t { color: var(--or); }
+.at-timer.end { box-shadow: inset 0 0 0 1px var(--or); }
+.at-timer.end .t { color: var(--or); animation: atBlink 1s steps(1) infinite; }
+.at-timer .tb.sm { height: 24px; min-width: 24px; padding: 0 7px; }
+
+/* ── la machine temporelle ─────────────────────────────── */
+.at-hist {
+  left: 50%; bottom: 12px; transform: translateX(-50%);
+  width: min(580px, calc(100% - 430px)); min-width: 320px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;
+  background: var(--panel); border-radius: var(--r4); box-shadow: inset 0 0 0 1px var(--line-cy), 0 14px 36px var(--drop);
+  animation: atUpC .25s both;
+}
+.at-hist .h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.at-hist .h b { font-family: var(--f-disp); font-weight: 400; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; }
+.at-hist .pos { font-family: var(--f-disp); font-size: 10px; letter-spacing: .06em; color: var(--cy); white-space: nowrap; }
+.at-hist .info { margin-top: -4px; letter-spacing: .14em; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.at-hist .row { flex-wrap: nowrap; }
+.at-hist .row .tb { white-space: nowrap; flex: none; }
+.at-hist .keys { letter-spacing: .14em; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.at-track { position: relative; height: 24px; cursor: pointer; touch-action: none; border-radius: var(--r1); }
+.at-track:focus-visible { outline-offset: 3px; }
+.at-track .ln { position: absolute; left: 0; right: 0; top: 11px; height: 1px; background: var(--line-cy); }
+.at-track .fill { position: absolute; left: 0; top: 11px; height: 1px; background: var(--cy); }
+.at-track .ticks i { position: absolute; top: 15px; width: 1px; height: 5px; background: var(--line); }
+.at-track .knob {
+  position: absolute; top: 4px; width: 10px; height: 16px; margin-left: -5px; border-radius: 3px;
+  background: var(--bg); box-shadow: inset 0 0 0 1.5px var(--or);
+}
+.cv.at-replay > .hint { visibility: hidden; }
+/* un état passé : un filet d'acier autour de la planche le dit */
+.cv.at-past { box-shadow: inset 0 0 0 2px var(--line-cy); }
+
+/* ── les vues ancrées ──────────────────────────────────── */
+.at-views {
+  left: 12px; bottom: 42px; z-index: 7; display: flex; align-items: center; gap: 3px; height: 30px; padding: 0 4px;
+  border-radius: var(--r3); background: var(--veil); box-shadow: inset 0 0 0 1px var(--line);
+}
+.at-views .lbl { padding: 0 6px 0 5px; }
+.at-views button {
+  width: 22px; height: 22px; border-radius: var(--r1); font-family: var(--f-disp); font-size: 9px; color: var(--ink3);
+  box-shadow: inset 0 0 0 1px var(--line); transition: background .15s, color .15s;
+}
+.at-views button:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.at-views button.set { background: var(--verd-5); color: var(--on-grn); box-shadow: none; }
+.at-views button.set:hover { box-shadow: inset 0 0 0 1px var(--grn2); }
+.at-views button.now { box-shadow: inset 0 0 0 1px var(--cy); }
+
+/* ── la palette de commandes ───────────────────────────── */
+.scrim.at-pal-scrim { align-items: flex-start; padding-top: 12vh; animation: atFade .15s both; }
+.at-pal {
+  width: min(560px, 92vw); border-radius: var(--r4); background: var(--panel); overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--line), 0 30px 80px var(--drop-lg); animation: atUp .2s both;
+}
+.at-pal-h { display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 16px; box-shadow: inset 0 -1px 0 var(--line); }
+.at-pal-h svg { width: 16px; height: 16px; fill: none; stroke: var(--ink3); stroke-width: 1.5; stroke-linecap: round; flex: none; }
+.at-pal-in { flex: 1; min-width: 0; height: 100%; font-size: 14px; color: var(--ink); caret-color: var(--or); }
+.at-pal-in::placeholder { color: var(--ink3); }
+.at-pal-in:focus-visible { outline: none; }
+.at-pal-l { padding: 6px; max-height: 360px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.at-pi { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: var(--r3); cursor: pointer; }
+.at-pi.on { background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.at-pi .k { width: 70px; flex: none; font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); }
+.at-pi.cmd .k { color: var(--or); }
+.at-pi .t { flex: 1; min-width: 0; font-size: 13px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.at-pi .h { flex: none; max-width: 45%; font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.at-pi.off { cursor: default; }
+.at-pi.off .t, .at-pi.off .k { opacity: .45; }
+.at-pal-empty { padding: 14px 12px; font-size: 12px; color: var(--ink3); }
+
+@media (prefers-reduced-motion: reduce) {
+  .at-pbar, .at-vote, .at-timer, .at-hist, .at-pal, .scrim.at-pal-scrim, .at-vbadge { animation: none; }
+  .cv.at-pres .nd, .cv.at-pres .fr, .cv.at-spot .nd, .cv.at-spot .fr { transition: none; }
+}

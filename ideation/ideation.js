@@ -15,6 +15,7 @@ import { createCanvas, bbox, menu } from './canvas.js';
 import { createGen } from './gen.js';
 import { createInspector } from './inspector.js';
 import { createLibrary, cfElement } from './library.js';
+import { installPlugins } from './plugins.js';
 
 mountHeader('ideation', { sub: 'planches · idées' });
 
@@ -688,6 +689,7 @@ app.elementModal = (ids, name) => app.insp.elementModal(ids, name);
 app.lib = createLibrary(app);
 app.menu = menu;
 app.setTool('select');
+installPlugins(app);
 
 async function start() {
   app.canvas.render();
