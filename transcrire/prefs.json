@@ -1,0 +1,14 @@
+{
+  "tool": "transcrire",
+  "title": "Transcrire",
+  "about": "Ce que montre le texte, et s’il suit la lecture.",
+  "prefs": [
+    {
+      "key": "view", "label": "Le texte montré", "type": "choice", "default": "both",
+      "options": [["src", "Original"], ["tr", "Traduction"], ["both", "Les deux"]]
+    },
+    {
+      "key": "follow", "label": "Le texte suit la lecture", "type": "toggle", "default": true
+    }
+  ]
+}
