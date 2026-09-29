@@ -125,6 +125,11 @@ const kindOfFile = (f) => EXT_KIND[(f.name.split('.').pop() || '').toLowerCase()
 export function dropZone(node, { kinds = ['image', 'element'], multiple = true, via = '', onitems = () => {} } = {}) {
   let depth = 0;
   const wants = (e) => { const t = e.dataTransfer?.types || []; return t.includes('Files') || t.includes(ITEM_MIME); };
+  // un dépôt dans une zone intérieure ne passe pas par la zone qui la contient :
+  // chaque zone se remet à zéro à tout dépôt ou fin de glisser, où qu'il ait lieu
+  const reset = () => { depth = 0; node.classList.remove('drop-on'); };
+  addEventListener('drop', reset, true);
+  addEventListener('dragend', reset, true);
   node.addEventListener('dragenter', (e) => { if (!wants(e)) return; depth++; node.classList.add('drop-on'); });
   node.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; node.classList.remove('drop-on'); } });
   node.addEventListener('dragover', (e) => { if (wants(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
