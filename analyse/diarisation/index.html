@@ -419,7 +419,7 @@ pre.cmd{margin:0;background:var(--well);border-radius:10px;padding:11px 13px;fon
       <div class="tete">
         <span class="lab">Frise · une ligne de dialogue par voix, et sous elle sa probabilité de parole</span><span class="sep"></span>
         <label class="lab" style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="tl-toutes"> les 8 canaux</label>
-        <span class="lab">zoom · alt + molette</span>
+        <span class="lab" id="tl-aide-molette">zoom · alt + molette</span>
         <div class="rangee" id="tl-zooms"></div>
       </div>
       <div class="frise-corps">
@@ -1468,17 +1468,33 @@ function brancheLecteur() {
 }
 
 /* ═══════════════════════════════════════════════════════════════ la frise ── */
-const TL = { zoom: 1, cleNoms: '' };
+const TL = { zoom: 1, cleNoms: '', h: garde.lit('hauteurs', {}) };
+// La hauteur d'une piste : Ctrl + molette (la règle commune des timelines, commun/molette.js, branchée plus bas) — sur
+// son nom, elle seule ; ailleurs, toutes. Gardée dans ce navigateur (garde : xverse-diar-hauteurs), bornée pour que ce
+// qu'elle dessine y tienne (une voix qui porte sa ligne de dialogue : 40 px de texte au-dessus de l'aire).
+const H_PISTE = { onde: [60, 24, 240], ref: [36, 24, 240], voix: [46, 30, 240], voixDial: [80, 60, 240] };
+function hPiste(cle, type) { const [d, lo, hi] = H_PISTE[type]; return Math.max(lo, Math.min(hi, TL.h[cle] || d)); }
 function pistes() {
-  const L = [{ type: 'regle', h: 22 }, { type: 'onde', h: 60 }];
+  const L = [{ type: 'regle', h: 22 }, { type: 'onde', cle: 'onde', h: hPiste('onde', 'onde') }];
   // chaque voix porte sa ligne de dialogue au-dessus de sa probabilité : deux voix ensemble, deux lignes
   const dial = S.qdq.length > 0;
-  for (const s of voixAffichees()) L.push({ type: 'voix', s, h: dial ? 80 : 46, dial });
+  for (const s of voixAffichees()) L.push({ type: 'voix', s, cle: 'voix:' + s, h: hPiste('voix:' + s, dial ? 'voixDial' : 'voix'), dial });
   // les répliques sous lesquelles le modèle n'entend personne gardent une ligne à part
-  if (S.qdq.some((d) => d.s < 0)) L.push({ type: 'ref', h: 36 });
+  if (S.qdq.some((d) => d.s < 0)) L.push({ type: 'ref', cle: 'ref', h: hPiste('ref', 'ref') });
   let y = 0;
   for (const l of L) { l.y = y; y += l.h; }
   return { L, H: y };
+}
+// Ctrl + molette : une piste (sa clé) ou toutes (null) ; la règle du temps ne change pas de hauteur
+function hauteursFrise(f, cle) {
+  if (!S.R) return;
+  for (const l of pistes().L) {
+    if (!l.cle || (cle && l.cle !== cle)) continue;
+    const [, lo, hi] = H_PISTE[l.type === 'voix' && l.dial ? 'voixDial' : l.type];
+    TL.h[l.cle] = Math.round(Math.max(lo, Math.min(hi, l.h * f)) * 10) / 10;
+  }
+  garde.ecrit('hauteurs', TL.h);
+  dessineFrise();
 }
 function vue() {
   const R = S.R, z = $('#tl-zone');
@@ -1533,13 +1549,13 @@ function dessineFrise() {
   const [a, b] = vue();
   const X = (t) => (t - a) / (b - a) * w;
   // noms, à gauche : refaits seulement quand les pistes changent
-  const cle = L.map((l) => l.type + (l.s != null ? l.s : '') + ':' + (l.s != null ? nomVoix(l.s) + ':' + (personnageDe(l.s) || '') + ':' + l.h : '')).join('|');
+  const cle = L.map((l) => l.type + (l.s != null ? l.s : '') + ':' + l.h + (l.s != null ? ':' + nomVoix(l.s) + ':' + (personnageDe(l.s) || '') : '')).join('|');
   if (cle !== TL.cleNoms) {
     TL.cleNoms = cle;
     const noms = $('#tl-noms');
     noms.textContent = '';
     for (const l of L) {
-      const d = el('div', { style: 'height:' + l.h + 'px' });
+      const d = el('div', { style: 'height:' + l.h + 'px', 'data-piste': l.cle || null, title: l.cle ? 'ctrl + molette : la hauteur de cette piste' : null });
       if (l.type === 'regle') d.textContent = 'temps';
       else if (l.type === 'onde') d.textContent = 'signal';
       else if (l.type === 'ref') d.append(el('span', { class: 'nv' }, el('b', { text: 'Sans voix' }), el('small', { text: 'personne dessous' })));
@@ -1780,14 +1796,7 @@ function brancheFrise() {
   let glisse = false;
   const tDe = (ev) => { const r = zone.getBoundingClientRect(), [a, b] = vue(); return a + (ev.clientX - r.left) / r.width * (b - a); };
   zone.addEventListener('scroll', () => dessineFrise());
-  zone.addEventListener('wheel', (ev) => {
-    if (!S.R) return;
-    if (ev.altKey || ev.ctrlKey) {
-      ev.preventDefault();
-      const r = zone.getBoundingClientRect();
-      zoome(TL.zoom * (ev.deltaY < 0 ? 1.25 : 0.8), ev.clientX - r.left);
-    }
-  }, { passive: false });
+  // la molette : la règle commune des timelines (commun/molette.js), branchée par le module en bas de la page
   zone.addEventListener('pointerdown', (ev) => { if (!S.R || ev.button !== 0) return; glisse = true; zone.setPointerCapture(ev.pointerId); allerA(tDe(ev)); });
   zone.addEventListener('pointerup', (ev) => { glisse = false; try { zone.releasePointerCapture(ev.pointerId); } catch (e) {} });
   zone.addEventListener('pointerleave', () => { croix.hidden = true; bulle.hidden = true; });
@@ -2643,6 +2652,7 @@ demarre();
 // L'en-tête commune du portail (logo → accueil, outils, machines, file des rendus), posée au-dessus de la barre de la page.
 import { mountHeader } from '../../commun/shell.js';
 import { contextMenu, pageMenu, copy } from '../../commun/menu.js';
+import { brancher, AIDE } from '../../commun/molette.js';
 mountHeader('analyse', { sub: 'diarisation' });
 
 // Le clic droit (Cal, 29/09 : « un menu contextuel dédié à où on se trouve au survol », jamais celui du navigateur) : la
@@ -2666,8 +2676,17 @@ pageMenu(() => {
     { label: document.getElementById('retour-txt')?.textContent || 'Movie Analysis', icon: '←', onclick: clic('#retour') },
   ];
 });
-// la frise : un instant, le zoom, les huit canaux
+// la frise : la molette commune de toutes les timelines (seule : la page défile ; Maj : le temps ; Alt : zoom sous le
+// curseur ; Ctrl : hauteur des pistes, sur un nom à gauche : la sienne)
 const zone = document.getElementById('tl-zone');
+brancher(document.querySelector('.frise-corps'), {
+  scroller: zone,
+  zoom: (f, cx) => { if (!S.R) return; const r = zone.getBoundingClientRect(); zoome(TL.zoom * f, Math.max(0, Math.min(r.width, cx - r.left))); },
+  hauteur: (f, cle) => hauteursFrise(f, cle),
+});
+const aide = document.getElementById('tl-aide-molette');
+if (aide) aide.textContent = AIDE;
+// la frise : un instant, le zoom, les huit canaux
 contextMenu(zone, (e) => {
   if (!S.R) return null;
   const r = zone.getBoundingClientRect(), [a, b] = vue(), t = a + (e.clientX - r.left) / r.width * (b - a);

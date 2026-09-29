@@ -261,7 +261,7 @@ const html = `<!DOCTYPE html>
       <button class="vx-bouton" id="vx-annuler" type="button" title="Annuler le dernier geste (Ctrl+Z)" disabled>↶ Annuler</button>
       <button class="vx-bouton" id="vx-remise" type="button" title="Défaire toutes les corrections faites dans la page">Tout remettre</button>
       <div class="vx-son" id="vx-son"></div>
-      <span class="aide">zoom de la timeline : alt + molette</span>
+      <span class="aide" id="vx-aide-molette">zoom de la timeline : alt + molette</span>
     </div>
     <div class="vx-corps">
       <div class="vx-noms" id="vx-noms"></div>

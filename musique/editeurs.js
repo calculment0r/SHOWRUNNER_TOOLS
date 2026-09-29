@@ -24,6 +24,8 @@ import { MODULES, TRACK_KINDS, DRUM_MODELS, NOTE_MODELS, drumVoicesOf, noteName,
 import { peaks, peakDb, clipBuffer, audioGeom } from './moteur.js';
 import { el, knob, menu, tok, clamp, put, inlineEdit, letter } from './ui.js';
 import { createDevices } from './rack.js';
+// la molette : la règle commune de toutes les timelines du portail (29/09)
+import { brancher, borne, tenirY } from '../commun/molette.js';
 // le génératif (29/09) : une région (un clip qui porte `gen`) s'ouvre sur sa
 // génération ; sa prise choisie, sur la vue Clip d'un son
 import { isRegion, isGenTrack, regionPanel, trackPanel } from './generatif_region.js';
@@ -265,7 +267,10 @@ function stepGrid(app, p, src, t) {
 const GRIDS = [[0.5, '1/32'], [1, '1/16'], [2, '1/8'], [4, '1/4']];
 function pianoRoll(app, p, src, t, c, ui, tall) {
   const P = app.S.proj;
-  const LO = 24, HI = 108, RH = tall ? 14 : 12;
+  // la hauteur d'une rangée (une note) : Ctrl+molette (commun/molette.js), gardée dans ui (P.ui.ed.rh)
+  const LO = 24, HI = 108, RH0 = tall ? 14 : 12, RH_MIN = 8, RH_MAX = 36;
+  let RH = borne(ui.rh || RH0, RH_MIN, RH_MAX);
+  const zx = () => borne(ui.zx || 1, 1, 16);          // le zoom du temps : 1 = le motif tient dans la largeur
   const acid = src?.type === 'acid';
   const chosen = new Set();
   let lastLen = 2;
@@ -288,15 +293,20 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
   for (let q = HI; q >= LO; q--) {
     const inS = inScale(P.key, q), root = ((q - P.key.tonic) % 12 + 12) % 12 === 0;
     keys.append(el('button', { class: `pr-k${isBlack(q) ? ' blk' : ''}${q % 12 === 0 ? ' c' : ''}${inS ? ' in' : ''}${root ? ' root' : ''}`, type: 'button',
-      style: { height: `${RH}px` }, onpointerdown: () => app.engine.preview(src.id, q) }, q % 12 === 0 || root ? noteName(q) : ''));
-    rows.append(el('i', { class: `${inS ? 'in' : 'out'}${root ? ' root' : ''}`, style: { top: `${(HI - q) * RH}px`, height: `${RH}px` } }));
+      onpointerdown: () => app.engine.preview(src.id, q) }, q % 12 === 0 || root ? noteName(q) : ''));
+    rows.append(el('i', { class: `${inS ? 'in' : 'out'}${root ? ' root' : ''}` }));
   }
-  const H = (HI - LO + 1) * RH;
-  area.style.height = `${H}px`;
+  // les rangées à la hauteur RH (au départ, et à chaque Ctrl+molette)
+  const layoutRows = () => {
+    [...keys.children].forEach((k) => { k.style.height = `${RH}px`; });
+    [...rows.children].forEach((r, i) => { r.style.top = `${i * RH}px`; r.style.height = `${RH}px`; });
+    area.style.height = `${(HI - LO + 1) * RH}px`;
+  };
+  layoutRows();
   let cw = 14;
   const layout = () => {
     const avail = Math.max(200, scrollX.clientWidth - 2);
-    cw = Math.max(avail / p.steps, 9);
+    cw = Math.max(avail / p.steps, 9) * zx();
     area.style.width = `${p.steps * cw}px`;
     velLane.style.width = `${p.steps * cw}px`;
     area.style.setProperty('--cw', `${cw}px`); area.style.setProperty('--bar', `${cw * P.sig * 4}px`); area.style.setProperty('--rh', `${RH}px`);
@@ -428,6 +438,24 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
     acid ? el('button', { class: 'tb ghost sm', type: 'button', title: 'liaison : la note glisse depuis la précédente (la 303)', onclick: () => { for (const n of selOrAll()) n.sl = !n.sl || undefined; commit(); } }, 'Liaison') : null,
     el('span', { class: 'sp' }),
     el('span', { class: 'lbl' }, `${p.notes.length} note${p.notes.length > 1 ? 's' : ''}`));
+  // la molette : la règle commune (commun/molette.js) — seule : monter / descendre
+  // dans les notes ; Maj : le temps ; Alt : zoom du temps sous le curseur ;
+  // Ctrl : la hauteur des rangées — toutes, même sur le clavier de gauche (une
+  // touche n'est pas une piste : une rangée seule plus haute fausserait la gamme)
+  brancher(wrap, {
+    scroller: scrollX,
+    zoom: (f, cx) => {
+      const r = scrollX.getBoundingClientRect(), x = cx - r.left, s = (scrollX.scrollLeft + x) / cw;
+      ui.zx = Math.round(borne(zx() * f, 1, 16) * 1000) / 1000; app.saveUi();
+      layout(); paintNotes();
+      scrollX.scrollLeft = s * cw - x;
+    },
+    // ce qui défile en hauteur : le piano roll lui-même (grand format), sinon la colonne du panneau du bas
+    hauteur: (f, _piste, e) => tenirY(wrap.scrollHeight > wrap.clientHeight + 1 ? wrap : (wrap.closest('.dk-body') || wrap), e.clientY, () => {
+      RH = Math.round(borne(RH * f, RH_MIN, RH_MAX) * 10) / 10; ui.rh = RH; app.saveUi();
+      layoutRows(); layout(); paintNotes();
+    }),
+  });
   const ro = new ResizeObserver(() => { layout(); paintNotes(); });
   requestAnimationFrame(() => {
     layout(); paintNotes();
@@ -438,7 +466,7 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
   });
   return {
     el: el('div', { class: 'pr-wrap', style: { '--k': `var(--${t.color})` } }, tools, wrap, velBox),
-    hint: 'clic : une note · glisser : sa longueur · glisser une note : la déplacer · Maj+glisser : choisir · double-clic ou clic droit : l\'ôter · ↑ ↓ transposer · Ctrl+A tout · Suppr · Ctrl+U quantifier · la voie du bas : vélocités',
+    hint: 'clic : une note · glisser : sa longueur · glisser une note : la déplacer · Maj+glisser : choisir · double-clic ou clic droit : l\'ôter · ↑ ↓ transposer · Ctrl+A tout · Suppr · Ctrl+U quantifier · la voie du bas : vélocités · molette : monter, descendre · Maj : le temps · Alt : zoom · Ctrl : hauteur des notes',
     frame() {
       const st = playingStep(app, p, c);
       nowCol.style.display = st >= 0 ? 'block' : 'none';
@@ -485,8 +513,12 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
 //                suit (AudioBufferSourceNode.playbackRate, MDN). Un étirement
 //                qui garde la hauteur demanderait un algorithme de plus
 //                (vocodeur de phase, WSOLA) dans un AudioWorklet : pas fait.
-// L'onde : Ctrl+molette zoome autour du curseur, la molette la fait défiler,
-// double-clic : tout le son.
+// L'onde, avec la molette commune (commun/molette.js) : Alt+molette zoome
+// autour du curseur, Maj+molette (ou glisser) la fait défiler, double-clic :
+// tout le son. Seule, la molette fait défiler le panneau (une seule voie :
+// rien à défiler en hauteur) ; Ctrl+molette n'a pas de hauteur à changer ici
+// (et ne zoome pas la page). Avant le 29/09 : Ctrl zoomait, la molette seule
+// défilait l'onde.
 function audioEditor(app, host, c, t) {
   const P = app.S.proj;
   const spb = () => 60 / P.bpm;
@@ -601,23 +633,23 @@ function audioEditor(app, host, c, t) {
     cv.style.cursor = (y < BR && c.loop && (near(ra) || near(rb))) || (y >= BR && (near(c.off || 0) || (!c.loop && near(rb)))) ? 'ew-resize'
       : y < BR && c.loop ? 'grab' : 'default';
   });
-  cv.addEventListener('wheel', (e) => {
-    if (!view) return;
-    e.preventDefault();
-    const r = cv.getBoundingClientRect(), w = r.width, Dd = D();
-    const span = view[1] - view[0];
-    if (e.ctrlKey || e.metaKey) {
-      const s = sOf(e.clientX - r.left, w), k = Math.pow(1.0015, e.deltaY);
-      const ns = clamp(span * k, 0.05, Dd);
+  brancher(cv, {
+    zoom: (f, cx) => {
+      if (!view) return;
+      const r = cv.getBoundingClientRect(), w = r.width, Dd = D(), span = view[1] - view[0];
+      const s = sOf(cx - r.left, w), ns = clamp(span / f, 0.05, Dd);
       const a = clamp(s - (s - view[0]) * (ns / span), 0, Math.max(0, Dd - ns));
       view = [a, a + ns];
-    } else {
-      const d = ((e.deltaY || e.deltaX) / w) * span;
-      const a = clamp(view[0] + d, 0, Math.max(0, Dd - span));
+      draw();
+    },
+    defilerX: (px) => {
+      if (!view) return;
+      const w = cv.getBoundingClientRect().width || 1, Dd = D(), span = view[1] - view[0];
+      const a = clamp(view[0] + (px / w) * span, 0, Math.max(0, Dd - span));
       view = [a, a + span];
-    }
-    draw();
-  }, { passive: false });
+      draw();
+    },
+  });
   cv.addEventListener('dblclick', () => { view = [0, D()]; draw(); });
 
   // ── les réglages ──
@@ -694,7 +726,7 @@ function audioEditor(app, host, c, t) {
         el('div', { class: 'row' }, tog(c.loop ? 'Boucle' : 'Sans boucle', !!c.loop, 'le son tourne dans l\'accolade ; tirer le bord droit du clip le répète', () => app.toggleLoop(c.id))),
         el('div', { class: 'kns' }, K('Entrée', 'fi', 0, 10, 0, 's'), K('Sortie', 'fo', 0, 10, 0, 's')))),
     el('div', { class: 'ae-w' }, el('div', { class: 'ae-cv' }, cv, now), nums, info,
-      el('p', { class: 'lbl pe-hint' }, 'fanions DÉBUT et FIN : où le clip commence et finit dans le son · la bande du haut : l\'accolade de la boucle (bords : sa longueur ; milieu : sa place) · Ctrl+molette : zoomer · molette ou glisser : défiler · double-clic : tout le son'))));
+      el('p', { class: 'lbl pe-hint' }, 'fanions DÉBUT et FIN : où le clip commence et finit dans le son · la bande du haut : l\'accolade de la boucle (bords : sa longueur ; milieu : sa place) · Alt+molette : zoomer · Maj+molette ou glisser : défiler · double-clic : tout le son'))));
   requestAnimationFrame(draw);
   const ro = new ResizeObserver(() => draw());
   requestAnimationFrame(() => ro.observe(cv));

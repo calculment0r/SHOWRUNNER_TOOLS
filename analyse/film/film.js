@@ -7,6 +7,7 @@ import { mountHeader, $, href } from '../../commun/shell.js';
 import { menu, kebab, contextMenu, closeMenus, pageMenu, commonItems, copy } from '../../commun/menu.js';
 import { copyText } from '../../commun/fil.js';
 import { createUndo } from '../../commun/undo.js';
+import * as Molette from '../../commun/molette.js';
 
 // le script de la page (voix.js, menus.js) prend le menu commun quand il est là : le menu d'une réplique, et celui de
 // chaque zone au clic droit (la scène, la frise, le script, la timeline, la fiche du plan, le casting, le dépouillement)
@@ -19,6 +20,10 @@ window.SR_MENU = { menu, kebab, contextMenu, closeMenus, commonItems, copy };
 // (window.SR_UNDO est à undo.js lui-même : le menu de repli de commun/menu.js y lit la pile active — ne pas l'écraser)
 const U = createUndo({ name: 'analyse-film' });
 if (typeof window.xvBrancheAnnulation === 'function') window.xvBrancheAnnulation(U);
+
+// la molette commune de toutes les timelines (commun/molette.js) : le script de la page (voix.js) a posé
+// window.xvBrancheMolette, qui la branche sur sa timeline — même chemin que l'annulation
+if (typeof window.xvBrancheMolette === 'function') window.xvBrancheMolette(Molette);
 
 const hdr = mountHeader('analyse');
 

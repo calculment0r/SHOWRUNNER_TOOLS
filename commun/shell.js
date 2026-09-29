@@ -478,6 +478,35 @@ export const kindFr = (k) => KIND_FR[k] || k;
 const ETYPE_FR = { character: 'personnage', object: 'objet', place: 'lieu', style: 'style', other: 'élément' };
 export const etypeFr = (k) => ETYPE_FR[k] || k;
 
+// La marque de la sorte d'un objet — UNE fonction, partout où un objet se
+// montre : les vignettes (Asset, le sélecteur, la corbeille : thumb), le
+// chutier du Montage (vue liste). Cal, 29/09 : « on repère pas bien les
+// séquences dans les assets du montage… il faut une icône lisible dessus car
+// c'est comme dans Premiere Pro : on confond avec un clip qui a la même
+// première image ». Premiere pose l'icône de la sorte dans le coin de la
+// vignette (vue icônes) et devant le nom (vue liste). Ici : la pastille du
+// coin porte l'icône des sortes qu'on confondrait à l'image (séquence ≠ clip
+// vidéo, clip MIDI ≠ son, élément ≠ image), et la séquence est PLEINE (fond
+// acier, --cy / --on-cy) quand le clip vidéo reste un simple voile : la
+// différence se voit à toutes les tailles, sans lire. `compact` : l'icône
+// seule, pour une vignette de quelques dizaines de pixels.
+export const KIND_ICON = {
+  // trois pistes, des coupes décalées : l'icône de séquence du Montage (onglets, chutier)
+  sequence: '<svg viewBox="0 0 24 24"><path d="M3 6h18v12H3zM3 10h18M3 14h18M8 6v4M14 10v4M11 14v4"/></svg>',
+  // deux croches : des notes écrites, pas un son
+  midi: '<svg viewBox="0 0 24 24"><path d="M9 17V6l10-2v11M9 17a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0zM19 15a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z"/></svg>',
+  // deux fiches l'une sur l'autre : un élément (ses références), pas une image
+  element: '<svg viewBox="0 0 24 24"><path d="M4 9h11v11H4zM9 4h11v11h-5"/></svg>',
+};
+export function kindMark(it, { compact = false } = {}) {
+  const k = it.kind;
+  const label = k === 'element' ? etypeFr(it.element?.type || it.etype) : kindFr(k);
+  const ico = KIND_ICON[k];
+  return el('span', { class: `kind kmark ${k}${compact ? ' compact' : ''}`, title: label },
+    ico ? el('i', { class: 'ki', 'aria-hidden': 'true', html: ico }) : null,
+    compact && ico ? null : el('b', { class: 'kt' }, label));
+}
+
 export function thumb(it, { onclick, selected = false, sub } = {}) {
   const im = el('div', { class: 'im' });
   if (it.kind === 'video' && it.url && !it.thumb_url) im.append(el('video', { src: href(it.url), muted: true, preload: 'metadata' }));
@@ -485,7 +514,7 @@ export function thumb(it, { onclick, selected = false, sub } = {}) {
   // .grid.sm : la plus grande sert d'estimation, le chargement paresseux du
   // navigateur la prend), suivie ensuite (commun/proxies.js) ; sans copie, la vignette
   else if (it.thumb_url) im.append(bindView(el('img', { alt: '', loading: 'lazy', decoding: 'async' }), it, { fit: 'cover', box: [180, 180] }));
-  im.append(el('span', { class: 'kind ' + it.kind }, it.kind === 'element' ? etypeFr(it.element?.type) : kindFr(it.kind)));
+  im.append(kindMark(it));
   if (it.duration) im.append(el('span', { class: 'dur' }, fmtDur(it.duration)));
   const s = sub ?? (it.kind === 'element' ? `${it.element?.refs?.length || 0} réf.` :
     [it.width && it.height ? `${it.width}×${it.height}` : '', it.origin?.model || it.origin?.tool || ''].filter(Boolean).join(' · '));

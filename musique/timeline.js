@@ -44,6 +44,8 @@ import { createBrowser } from './navigateur.js';
 import { isGenTrack, isRegion, genTrackChoices, addGenTrack, newRegion, drawRegion, regionMenuItems, genTarget, soundSlotsOf, useSound, injectFrom } from './generatif_region.js';
 import { openExtract, placeMidi, saveClipMidi } from './generatif_midi.js';
 import { schemaNow } from './generatif_modeles.js';
+// la molette : la règle commune de toutes les timelines du portail (29/09)
+import { brancher, borne, tenirY, AIDE as MOLETTE } from '../commun/molette.js';
 
 const HEAD_W = 224;
 const SEC_H = 22, BAR_H = 30, RULER_H = SEC_H + BAR_H, ARC_H = 58, AUTO_H = 46;
@@ -55,7 +57,10 @@ export function createTimeline(app) {
   const P = () => S.proj;
   const ui = () => S.proj.ui;
   const ppb = () => ui().ppb || 83 / 4;                 // pixels par noire
-  const th = () => ui().th || 88;                       // hauteur d'une piste
+  const th = () => ui().th || 88;                       // hauteur des pistes (toutes)
+  // la hauteur d'UNE piste : la sienne (Ctrl+molette sur son en-tête, ui().thT), sinon celle de toutes
+  const TH_MIN = 48, TH_MAX = 180;
+  const thOf = (t) => ui().thT?.[t.id] || th();
   const snapU = () => { const s = ui().snap ?? 1; return s === 'bar' ? P().sig : s; };
   const navW = () => (ui().nav === false ? 30 : clamp(ui().navW || 214, 160, 420));
   const dockH = () => (ui().dock === false ? 0 : clamp(ui().dockH || 300, 120, Math.max(160, innerHeight - 300)));
@@ -121,12 +126,12 @@ export function createTimeline(app) {
       el('span', { class: 'sp' }),
       el('span', { class: 'lbl ar-info' }, n > 1 ? `${n} clips choisis` : c ? `${t.name} · ${app.bar(c.start)} → ${app.bar(c.start + c.len)}` : 'double-clic sur une piste : un clip · glisser : choisir'),
       el('i', { class: 'ar-sep' }),
-      el('button', { class: 'tb ghost sm', type: 'button', title: 'dézoomer · − (Ctrl+molette)', onclick: () => setZoom(ppb() / 1.25) }, '−'),
+      el('button', { class: 'tb ghost sm', type: 'button', title: 'dézoomer · − (Alt+molette)', onclick: () => setZoom(ppb() / 1.25) }, '−'),
       el('span', { class: 'ar-zoom', title: 'pixels par mesure' }, el('b', {}, String(Math.round(ppb() * P().sig))), ' px/mes'),
-      el('button', { class: 'tb ghost sm', type: 'button', title: 'zoomer · + (Ctrl+molette)', onclick: () => setZoom(ppb() * 1.25) }, '+'),
+      el('button', { class: 'tb ghost sm', type: 'button', title: 'zoomer · + (Alt+molette)', onclick: () => setZoom(ppb() * 1.25) }, '+'),
       el('button', { class: 'tb ghost sm', type: 'button', title: 'tout le morceau dans la fenêtre · W', onclick: fit }, 'Ajuster'),
-      el('div', { class: 'seg', title: 'hauteur des pistes · Alt+molette sur une piste, Alt + / Alt − · H : ajuster' }, [[60, 'S'], [88, 'M'], [124, 'L']].map(([h, l]) =>
-        el('button', { class: `tb${th() === h ? ' on' : ''}`, type: 'button', onclick: () => { ui().th = h; app.saveUi(); render(); } }, l))),
+      el('div', { class: 'seg', title: 'hauteur des pistes (toutes) · Ctrl+molette ; sur le nom d\'une piste : la sienne · Alt + / Alt − · H : ajuster' }, [[60, 'S'], [88, 'M'], [124, 'L']].map(([h, l]) =>
+        el('button', { class: `tb${th() === h ? ' on' : ''}`, type: 'button', onclick: () => { ui().th = h; delete ui().thT; app.saveUi(); render(); } }, l))),
       el('i', { class: 'ar-sep' }),
       el('button', { class: `tb sm${ui().dock !== false ? ' on' : ' ghost'}`, type: 'button', title: 'la vue de détail en bas : le clip ou les instruments · Ctrl+Alt+3 / Ctrl+Alt+4',
         onclick: () => { ui().dock = ui().dock === false; app.saveUi(); render(); } }, 'Détail'));
@@ -157,9 +162,27 @@ export function createTimeline(app) {
   function fitHeight() {
     const n = visTracks().length || 1;
     const avail = scroll.clientHeight - RULER_H - ARC_H - 70;
-    ui().th = clamp(Math.floor(avail / n), 48, 180);
+    ui().th = clamp(Math.floor(avail / n), TH_MIN, TH_MAX);
+    delete ui().thT;                                    // toutes à la même hauteur
     app.saveUi();
     render();
+  }
+  // Ctrl+molette (commun/molette.js) : une piste (son id), ou toutes — les
+  // hauteurs propres suivent le même rapport ; toutes : ce qui est sous le
+  // curseur y reste
+  function scaleHeights(f, id, clientY) {
+    const t = id && app.track(id);
+    const k = (h) => Math.round(borne(h * f, TH_MIN, TH_MAX) * 10) / 10;
+    const go = () => {
+      if (t) ui().thT = { ...(ui().thT || {}), [t.id]: k(thOf(t)) };
+      else {
+        ui().th = k(th());
+        if (ui().thT) ui().thT = Object.fromEntries(Object.entries(ui().thT).map(([i, h]) => [i, k(h)]));
+      }
+      app.saveUi();
+      render();
+    };
+    if (t || clientY === undefined) go(); else tenirY(scroll, clientY, go);
   }
   // Z : zoomer sur la sélection (les clips choisis, sinon la boucle) ; X : revenir
   let zoomBack = null;
@@ -491,8 +514,8 @@ export function createTimeline(app) {
     meters.push([t.strip, mtr]);
     const nm = el('span', { class: 'nm', title: 'double-clic : renommer (Ctrl+R)', ondblclick: (e) => { e.stopPropagation(); renameTrack(t, nm); } }, t.name);
     const picked = (S.sel.tracks || []).includes(t.id);
-    const box = el('div', { class: `ar-head${S.sel.track === t.id ? ' sel' : ''}${picked ? ' pick' : ''}${t.mute ? ' muted' : ''}${isGenTrack(t) ? ' gen' : ''}${t.grp ? ' in-grp' : ''}`, style: { '--c': `var(--${t.color})`, height: `${th()}px` },
-      'data-track': t.id, title: 'clic : choisir (Ctrl : ajouter ou retirer, Maj : jusqu\'à elle) · Suppr : retirer · glisser : déplacer — lâchée ENTRE deux pistes elle s\'y range, SUR une piste elle fait groupe' },
+    const box = el('div', { class: `ar-head${S.sel.track === t.id ? ' sel' : ''}${picked ? ' pick' : ''}${t.mute ? ' muted' : ''}${isGenTrack(t) ? ' gen' : ''}${t.grp ? ' in-grp' : ''}`, style: { '--c': `var(--${t.color})`, height: `${thOf(t)}px` },
+      'data-track': t.id, 'data-piste': t.id, title: 'clic : choisir (Ctrl : ajouter ou retirer, Maj : jusqu\'à elle) · Suppr : retirer · glisser : déplacer — lâchée ENTRE deux pistes elle s\'y range, SUR une piste elle fait groupe · Ctrl+molette : sa hauteur' },
     el('i', { class: 'bar', title: 'la couleur de la piste — celle de son nœud dans le nodal · clic : la palette', onpointerdown: (e) => e.stopPropagation(), onclick: (e) => { e.stopPropagation(); colorMenu(e, t); } }),
     el('div', { class: 'txt' },
       nm,
@@ -690,7 +713,7 @@ export function createTimeline(app) {
   function lane(t) {
     const p = P();
     const ln = el('div', { class: `ar-lane${S.sel.track === t.id ? ' sel' : ''}`, 'data-track': t.id,
-      style: { width: `${width()}px`, height: `${th()}px`, '--bar': `${X(p.sig)}px`, '--beat': `${X(1)}px`, '--c': `var(--${t.color})` } });
+      style: { width: `${width()}px`, height: `${thOf(t)}px`, '--bar': `${X(p.sig)}px`, '--beat': `${X(1)}px`, '--c': `var(--${t.color})` } });
     for (const c of p.clips.filter((x) => x.track === t.id)) ln.append(clipEl(c, t));
     if (isGenTrack(t)) ln.classList.add('gen');
     ln.addEventListener('dblclick', (e) => {
@@ -1032,7 +1055,7 @@ export function createTimeline(app) {
   }
 
   function drawClip(cv, c, t, pat) {
-    const w = Math.max(4, Math.min(8000, Math.round(X(c.len)))), h = Math.max(10, th() - 28);
+    const w = Math.max(4, Math.min(8000, Math.round(X(c.len)))), h = Math.max(10, thOf(t) - 28);
     const dpr = devicePixelRatio || 1;
     cv.width = w * dpr; cv.height = h * dpr;
     cv.style.width = `${w}px`; cv.style.height = `${h}px`;
@@ -1169,7 +1192,7 @@ export function createTimeline(app) {
     grid.style.setProperty('--head', `${HEAD_W}px`);
     grid.style.setProperty('--ruler', `${RULER_H}px`);
     grid.style.width = `${HEAD_W + Wd}px`;
-    const rows = [el('div', { class: 'ar-corner' }, el('span', { class: 'lbl' }, 'pistes'),
+    const rows = [el('div', { class: 'ar-corner', title: MOLETTE }, el('span', { class: 'lbl' }, 'pistes'),
       el('span', { class: 'lbl' }, `${visTracks().length} · ${p.sections.length} sections`)), ruler()];
     const [ah, al] = arcRow();
     rows.push(ah, al);
@@ -1271,8 +1294,8 @@ export function createTimeline(app) {
     if (ctrl && e.code === 'Digit2') { e.preventDefault(); stepGrid(1); return true; }
     if (ctrl && e.code === 'Digit4') { e.preventDefault(); ui().snap = (ui().snap ?? 1) ? 0 : 1; app.saveUi(); paintTools(); toast(ui().snap ? 'aimant : 1/4' : 'aimant : libre'); return true; }
     if (ctrl) return false;
-    if (e.altKey && (k === '+' || k === '=' || e.code === 'NumpadAdd')) { e.preventDefault(); ui().th = clamp(th() + 12, 48, 180); app.saveUi(); render(); return true; }
-    if (e.altKey && (k === '-' || e.code === 'NumpadSubtract')) { e.preventDefault(); ui().th = clamp(th() - 12, 48, 180); app.saveUi(); render(); return true; }
+    if (e.altKey && (k === '+' || k === '=' || e.code === 'NumpadAdd')) { e.preventDefault(); scaleHeights((th() + 12) / th()); return true; }
+    if (e.altKey && (k === '-' || e.code === 'NumpadSubtract')) { e.preventDefault(); scaleHeights((th() - 12) / th()); return true; }
     if (e.altKey) return false;
     if (k === '+' || k === '=' || e.code === 'NumpadAdd') { e.preventDefault(); setZoom(ppb() * 1.25); return true; }
     if (k === '-' || e.code === 'NumpadSubtract') { e.preventDefault(); setZoom(ppb() / 1.25); return true; }
@@ -1309,20 +1332,15 @@ export function createTimeline(app) {
     if (n) renameTrack(t, n);
   }
 
-  // la molette (Live 12, « Arrangement View ») : Ctrl = zoom horizontal
-  // ancré au curseur, Maj = défiler à l'horizontale, Alt sur une piste = sa
-  // hauteur ; seule, elle défile à la verticale
-  scroll.addEventListener('wheel', (e) => {
-    if (e.altKey) {
-      e.preventDefault();
-      ui().th = clamp(th() + (e.deltaY < 0 ? 12 : -12), 48, 180); app.saveUi(); render(); return;
-    }
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      const mx = e.clientX - scroll.getBoundingClientRect().left;
-      zoomAround(ppb() * Math.pow(0.9985, e.deltaY), mx);
-    } else if (e.shiftKey) { e.preventDefault(); scroll.scrollLeft += e.deltaY || e.deltaX; }
-  }, { passive: false });
+  // la molette : la règle commune de toutes les timelines du portail
+  // (commun/molette.js, Cal 29/09) — seule : défiler haut / bas ; Maj : dans
+  // le temps ; Alt : zoom horizontal ancré au curseur ; Ctrl : hauteur de
+  // toutes les pistes, sur l'en-tête d'une piste (à gauche) : la sienne.
+  // (Avant : Ctrl zoomait le temps et Alt la hauteur, comme Live 12.)
+  brancher(scroll, {
+    zoom: (f, cx) => zoomAround(ppb() * f, cx - scroll.getBoundingClientRect().left),
+    hauteur: (f, id, e) => scaleHeights(f, id, e.clientY),
+  });
   // Ctrl+Alt+glisser : déplacer la vue (Live)
   scroll.addEventListener('pointerdown', (e) => {
     if (!(e.ctrlKey && e.altKey) || e.button !== 0) return;

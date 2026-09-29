@@ -5,6 +5,7 @@
 import { api } from '../commun/shell.js';
 import { el, drawer, put } from './ui.js';
 import { options, bestStems } from './generatif.js';
+import { REGLE as MOLETTE } from '../commun/molette.js';
 
 const STEPS = [
   ['La session', 'Le tempo (− / +, la molette, ou « Tap » : le frapper), la tonalité et la mesure sont ceux de tout le morceau : le piano roll éclaire la gamme, les modèles de motifs et la génération les reprennent.', ['#mu-bpm', '#mu-tap', '#mu-key']],
@@ -58,9 +59,9 @@ const KEYS = [
     ['S · C · A', 'solo · armer · automation de la piste choisie (clavier MIDI éteint)'],
     ['Maj+M', 'un marqueur à la tête de lecture (ODIO)'],
   ]],
+  ['la molette (la même dans toutes les timelines du portail)', MOLETTE],
   ['le zoom (chapitre « Arrangement View »)', [
-    ['+ · −', 'zoomer · dézoomer'], ['Ctrl+molette', 'zoom horizontal, autour du curseur'], ['Maj+molette', 'défiler à l\'horizontale'],
-    ['Alt+molette', 'hauteur des pistes (sur une piste) ; Alt + / Alt − aussi'], ['Ctrl+Alt+glisser', 'déplacer la vue'],
+    ['+ · −', 'zoomer · dézoomer'], ['Alt + / Alt −', 'hauteur de toutes les pistes'], ['Ctrl+Alt+glisser', 'déplacer la vue'],
     ['règle des temps', 'glisser à l\'horizontale : chercher · à la verticale : zoomer · double-clic : zoomer sur la sélection'],
     ['Z · X', 'zoomer sur la sélection · revenir (clavier MIDI éteint)'], ['W · H', 'tout le morceau en largeur · toutes les pistes en hauteur'],
   ]],
@@ -69,8 +70,8 @@ const KEYS = [
     ['Z · X', 'octave − / +'], ['C · V', 'vélocité − / +'],
   ]],
   ['les éditeurs', [
-    ['Piano roll', '↑ ↓ transposer (Maj : octave) · Ctrl+U quantifier · Maj+glisser : choisir · double-clic : ôter'],
-    ['Onde d\'un clip audio', 'Ctrl+molette : zoom · molette : défiler · double-clic : tout le son'],
+    ['Piano roll', '↑ ↓ transposer (Maj : octave) · Ctrl+U quantifier · Maj+glisser : choisir · double-clic : ôter · Alt+molette : zoom du temps · Ctrl+molette : hauteur des notes'],
+    ['Onde d\'un clip audio', 'Alt+molette : zoom · Maj+molette ou glisser : défiler · double-clic : tout le son'],
     ['Nodal, le banc', '« c » : quelle tête gouverne (ODIO_01) · Suppr : retirer l\'attracteur choisi'],
     ['Nodal, la souris', 'bouton du milieu : se déplacer · sur les réglages d\'une tuile : tracer l\'ordre gardé au zoom (ODIO_01) · Maj+clic : ajouter · Ctrl+clic : ajouter ou retirer · ⌥ : retirer · l\'étiquette d\'une piste se glisse comme l\'en-tête de son nœud'],
     ['Nodal, l\'aimant', 'Ctrl+4 (ou « Aimant » dans la barre, ou le clic droit du fond) : allumé / éteint · ⌥ en glissant : libre le temps du geste'],

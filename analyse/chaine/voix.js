@@ -36,7 +36,8 @@ const VX_CLE = 'movie-analysis-voix-' + (VOIX.slug || '');
 const vxLit = (k, d) => { try { const v = localStorage.getItem(VX_CLE + '-' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } };
 const vxEcrit = (k, v) => { try { localStorage.setItem(VX_CLE + '-' + k, JSON.stringify(v)); } catch (e) {} };
 const VX = { zoom: 1, post: Object.assign({}, VX_POST_DEFAUT, vxLit('post', {})), brutes: !!vxLit('brutes', false),
-  segs: [], voixPerso: [], voixOff: [], cpl: [], lignes: [], pistes: [], boites: [], lignesFrise: [], H: 0, cleNoms: '', choisi: null };
+  segs: [], voixPerso: [], voixOff: [], cpl: [], lignes: [], pistes: [], boites: [], lignesFrise: [], H: 0, cleNoms: '', choisi: null,
+  hauteurs: vxLit('hauteurs', {}) };   // clé de piste → hauteur (Ctrl + molette, la règle commune des timelines)
 
 /* ── la diarisation gardée pour ce film : les probabilités, voix × trames, en octets ── */
 const DIAR = (() => {
@@ -373,10 +374,16 @@ function vxFenetre() {
   const z = $('vx-zone'), w = z.clientWidth || 1, total = w * VX.zoom, a = z.scrollLeft / total * D;
   return [a, a + D / VX.zoom];
 }
+// La hauteur d'une piste : celle que la piste se donne (r.h0, selon ce qu'elle porte), sinon celle que Ctrl + molette
+// lui a donnée (VX.hauteurs, gardée dans ce navigateur), bornée ; la règle du temps ne change pas de hauteur.
+const VX_H_MIN = 20, VX_H_MAX = 240;
 function vxRangs() {
-  const R = [{ type: 'regle', h: 30 }, { type: 'onde', h: 56 }].concat(VX.pistes);
+  const R = [{ type: 'regle', h: 30 }, VX.onde || (VX.onde = { type: 'onde', cle: 'onde', h: 56 })].concat(VX.pistes);
   let y = 0;
-  for (const r of R) { r.y = y; y += r.h; }
+  for (const r of R) {
+    if (r.cle) { if (r.h0 == null) r.h0 = r.h; const v = VX.hauteurs[r.cle]; r.h = v ? Math.max(VX_H_MIN, Math.min(VX_H_MAX, v)) : r.h0; }
+    r.y = y; y += r.h;
+  }
   VX.lignesFrise = R; VX.H = y;
   return R;
 }
@@ -479,6 +486,7 @@ function vxNoms(R) {
   for (const r of R) {
     const d = document.createElement('div');
     d.style.height = r.h + 'px';
+    if (r.cle) d.dataset.piste = r.cle;   // son en-tête : Ctrl + molette dessus change sa seule hauteur
     if (VX.glisse && VX.glisse.cible === r.cle) d.className = 'cible';
     // le son : un personnage qui a sa piste de voix se coupe d'un clic (son.js)
     if (r.cle && typeof SON !== 'undefined' && SON) {
@@ -1049,12 +1057,27 @@ function vxMenu(g, clientX, clientY) {
     aller(q.g.a + 0.01); vxMenu(q.g, ev.clientX, ev.clientY);
   });
   zone.addEventListener('scroll', () => vxDessine());
-  zone.addEventListener('wheel', (ev) => {
-    if (!(ev.altKey || ev.ctrlKey)) return;
-    ev.preventDefault();
-    const r = zone.getBoundingClientRect();
-    vxZoome(VX.zoom * (ev.deltaY < 0 ? 1.25 : 0.8), ev.clientX - r.left);
-  }, { passive: false });
+  // La molette : la règle commune de toutes les timelines du portail (commun/molette.js). Le script de la page est
+  // classique : le module du portail (analyse/film/film.js) la lui passe, comme la pile d'annulation. Seule : la page
+  // défile ; Maj : le temps ; Alt : zoom sous le curseur ; Ctrl : la hauteur des pistes, sur un nom à gauche : la sienne.
+  // Sans le portail (la page ouverte seule), la molette reste celle du navigateur.
+  window.xvBrancheMolette = (M) => {
+    const corps = zone.closest('.vx-corps') || zone;
+    M.brancher(corps, {
+      scroller: zone,
+      zoom: (f, cx) => { const r = zone.getBoundingClientRect(); vxZoome(VX.zoom * f, Math.max(0, Math.min(r.width, cx - r.left))); },
+      hauteur: (f, cle) => {
+        for (const r of VX.lignesFrise) {
+          if (!r.cle || (cle && r.cle !== cle)) continue;
+          VX.hauteurs[r.cle] = Math.round(Math.max(VX_H_MIN, Math.min(VX_H_MAX, r.h * f)) * 10) / 10;
+        }
+        vxEcrit('hauteurs', VX.hauteurs);
+        vxDessine();
+      },
+    });
+    const aide = $('vx-aide-molette');
+    if (aide) aide.textContent = M.AIDE;
+  };
   document.addEventListener('pointerdown', (ev) => { if (!ev.target.closest('.vx-menu') && !ev.target.closest('#vx-zone')) { if (document.querySelector('.vx-menu')) { vxFermeMenu(); VX.choisi = null; vxDessine(); } } });
   document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && document.querySelector('.vx-menu')) { vxFermeMenu(); VX.choisi = null; vxDessine(); } });
   // Ctrl+Z : celui de commun/undo.js. Le repli seul (la page ouverte sans le portail) écoute ici, et se tait dès que la

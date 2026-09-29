@@ -27,7 +27,7 @@
 // bandeau garde son « annuler », qui est le même geste. Ne s'annulent pas :
 // un dépôt de fichier, un import de Character Factory, un zip.
 import {
-  mountHeader, api, pick, thumb, el, $, $$, href, ROOT, fmtDate, fmtDur, kindFr, etypeFr, dropAnywhere,
+  mountHeader, api, pick, thumb, kindMark, el, $, $$, href, ROOT, fmtDate, fmtDur, kindFr, etypeFr, dropAnywhere,
   dropZone, dragItem,
 } from '../commun/shell.js';
 import { createUndo, libPatch, libBoard, keyLabel } from '../commun/undo.js';
@@ -1755,7 +1755,7 @@ async function paintTrash() {
   grid.style.setProperty('--card', `${S.size}px`);
   const card = (t) => {
     const im = el('div', { class: 'im' }, t.thumb_url ? el('img', { src: href(t.thumb_url), alt: '', loading: 'lazy' }) : (glyph(t.kind) || el('span', { class: 'noimg' }, 'sans image')),
-      el('span', { class: 'kind ' + t.kind }, t.kind === 'element' ? etypeFr(t.etype) : kindFr(t.kind)));
+      kindMark(t));   // la marque de la sorte commune (commun/shell.js)
     const n = el('div', { class: 'acard trash-card', role: 'listitem' },
       el('div', { class: 'thumb' }, im, el('div', { class: 'cap' }, el('div', { class: 't' }, t.title || t.id),
         el('div', { class: 's' }, `jeté ${fmtDate(t.trashed)}${t.folder ? ` · de « ${t.folder} »` : ''}`)),
