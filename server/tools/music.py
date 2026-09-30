@@ -592,6 +592,12 @@ def _summary(p: dict) -> dict:
 
 
 def _write(p: dict) -> None:
+    """Le seul écrivain d'un projet. Ce qu'il pose (sons des clips, prises, cases « son »
+    d'une région, l'échantillonneur, ses réglages gardés) est de son Workspace (409, qui
+    mène au rapatriement) ; aucun élément dans sa propre descendance (400) — le même
+    garde que le Montage et Idéation (tools/elements.py, ID_FIELDS)."""
+    from tools import elements
+    elements.check_doc(p["id"], p, library.space_of(p))
     f = _path(p["id"])
     tmp = f.with_suffix(".tmp")
     tmp.write_text(json.dumps(p, ensure_ascii=False), encoding="utf-8")
@@ -666,13 +672,10 @@ def save_project(req, pid):
         library.check_write(cur)   # 403 : le projet d'un autre (avant le 29/09 : aucun contrôle)
         if d.get("rev") != cur.get("rev"):
             raise HttpError(409, "ce projet a changé ailleurs (un autre onglet ?) : il faut le recharger")
-        # éléments : poser un élément de sa propre descendance est refusé, la chaîne nommée (tools/elements.py, 30/09)
-        from tools import elements
-        elements.check_doc(pid, [c["item"] for c in d.get("clips") or [] if isinstance(c, dict) and isinstance(c.get("item"), str)])
         # le propriétaire, le partage, le Workspace restent ceux du serveur, quoi que la page envoie
         library.keep(d, cur)
         d.update(id=pid, created=cur.get("created"), updated=library.now(), rev=int(cur.get("rev") or 0) + 1)
-        _write(d)
+        _write(d)   # le Workspace de ce qu'il pose, les boucles d'éléments : elements.check_doc
     return {"ok": True, "rev": d["rev"], "updated": d["updated"]}
 
 
