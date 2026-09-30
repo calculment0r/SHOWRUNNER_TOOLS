@@ -32,7 +32,6 @@ export function createLibrary(app) {
   const center = () => app.canvas.center();
   dock.configure({
     clickPlaces: true,
-    defaultOpen: true,   // qu'on voie qu'il existe (Cal, 29/09)
     label: 'la planche',
     placeLabel: 'Poser au centre de la vue',
     hint: 'glisser sur la planche ou dans une carte · clic : au centre',
