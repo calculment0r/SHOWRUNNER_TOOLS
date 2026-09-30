@@ -46,6 +46,8 @@ import { openExtract, placeMidi, saveClipMidi } from './generatif_midi.js';
 import { schemaNow } from './generatif_modeles.js';
 // la molette : la règle commune de toutes les timelines du portail (29/09)
 import { brancher, borne, tenirY, AIDE as MOLETTE } from '../commun/molette.js';
+// LA tête de lecture du portail (30/09, Cal : « toutes nos timelines [avec] la même cue […] celle du montage vidéo »)
+import { tete, poser, suivre } from '../commun/tete.js';
 
 const HEAD_W = 224;
 const SEC_H = 22, BAR_H = 30, RULER_H = SEC_H + BAR_H, ARC_H = 58, AUTO_H = 46;
@@ -68,7 +70,9 @@ export function createTimeline(app) {
   const tools = el('div', { class: 'ar-tools' });
   const scroll = el('div', { class: 'ar-scroll' });
   const grid = el('div', { class: 'ar-grid' });
-  const ph = el('div', { class: 'ar-ph' });
+  // commun/tete.js : au-dessus de la règle (5), sous le coin (7) ; sous les en-têtes collés, cachée
+  const ph = tete({ z: 6 });
+  let phX = null;
   const zone = el('div', { class: 'ar-zone' });
   const recBox = el('div', { class: 'ar-rec' }, el('span', {}, 'prise'));
   const marquee = el('div', { class: 'ar-marquee' });
@@ -218,8 +222,8 @@ export function createTimeline(app) {
       if (b % every) continue;
       nums.append(el('span', { style: { left: `${X(b * p.sig)}px` } }, String(b + 1)));
     }
-    const tri = el('i', { class: 'ar-tri' });
-    barRow.append(band, nums, tri);
+    // (plus de triangle dans la règle : l'onglet de LA tête de lecture la marque, commun/tete.js)
+    barRow.append(band, nums);
     for (const m of p.markers) barRow.append(markerEl(m));
     r.append(secRow, barRow);
 
@@ -1228,13 +1232,9 @@ export function createTimeline(app) {
   }
 
   function frame(beat) {
-    const x = HEAD_W + X(beat);
-    ph.style.transform = `translateX(${x}px)`;
-    const tri = grid.querySelector('.ar-tri');
-    if (tri) tri.style.transform = `translateX(${X(beat)}px)`;
-    if (app.engine.running) {
-      if (x > scroll.scrollLeft + scroll.clientWidth - 60 || x < scroll.scrollLeft + HEAD_W) scroll.scrollLeft = x - HEAD_W - 60;
-    }
+    // LA tête (commun/tete.js) : sa place, cachée sous les en-têtes collés ; en lecture, la vue la suit (comme le Montage)
+    phX = poser(ph, X(beat), { decal: HEAD_W, sous: scroll.scrollLeft });
+    if (app.engine.running) suivre(scroll, phX, { tete: HEAD_W });
     for (const [id, mt] of meters) {
       const db = app.engine.level(id);
       mt.firstChild.style.width = `${Math.max(0, Math.min(100, (db + 60) / 66 * 100)).toFixed(1)}%`;
@@ -1351,6 +1351,8 @@ export function createTimeline(app) {
     addEventListener('pointermove', mv, true); addEventListener('pointerup', up, true);
   }, true);
   document.addEventListener('mu:buffer', () => { if (S.view === 'timeline') render(); });
+  // défiler : la tête se cache sous les en-têtes collés, ou y reparaît (commun/tete.js)
+  scroll.addEventListener('scroll', () => { if (phX !== null) poser(ph, phX, { decal: HEAD_W, sous: scroll.scrollLeft }); }, { passive: true });
 
   // Le clic droit là où aucune zone n'a ouvert le sien (musique.js le demande) :
   // la voie d'une piste, la rangée des sections, le coin, les outils, le

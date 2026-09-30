@@ -479,6 +479,8 @@ def add_file(src: Path, *, kind: str | None = None, title: str = "", origin: dic
         from tools import apercu_son; apercu_son.soon(d / name, it.get("duration"))
     if kind in VIEW_KINDS:   # les copies d'affichage, avant que la page ne la voie
         it["views"], it["views_v"] = build_views(kind, d / name, d), _views_v()
+    if kind == "video":   # la copie de défilement, à la suite (server/tools/defilement.py, commun/lecteur.js)
+        from tools import defilement; defilement.soon(d / name, it.get("duration"))
     with _lock:
         _items[iid] = it
         _save(it)

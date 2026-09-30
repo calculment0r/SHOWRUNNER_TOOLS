@@ -1,0 +1,17 @@
+/* ============================================================
+   LA tête de lecture et LA règle des temps (commun/tete.js) : le
+   dessin du Montage (montage.css, .tl-ph et .tl-marks .mk, 29/09),
+   repris tel quel pour toutes les timelines. Jetons seulement.
+   ============================================================ */
+
+/* la tête : un trait orange, un onglet en haut */
+.sr-ph { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; background: var(--or); pointer-events: none; z-index: var(--sr-ph-z, 9); }
+.sr-ph i { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 11px; height: 11px; border-radius: 0 0 4px 4px; background: var(--or); }
+
+/* la règle : les graduations en timecode */
+.sr-mk {
+  position: absolute; top: 0; bottom: 0; padding-left: 5px; display: flex; align-items: center;
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .06em; color: var(--ink3);
+  box-shadow: inset 1px 0 0 var(--line); white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums;
+}
+.sr-mk.sub { top: 16px; box-shadow: inset 1px 0 0 var(--line); }

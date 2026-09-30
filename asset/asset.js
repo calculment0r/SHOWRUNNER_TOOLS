@@ -34,6 +34,7 @@ import { createUndo, libPatch, libBoard, keyLabel } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { bind as bindView } from '../commun/proxies.js';
 import { contextMenu, pageMenu, copy } from '../commun/menu.js';
+import { lecteur } from '../commun/lecteur.js';   // LE lecteur (30/09) : la vidéo ou le son d'une fiche, sa frise, sa tête
 
 mountHeader('asset');
 
@@ -1314,13 +1315,20 @@ function readout(rows) {
   return el('dl', { class: 'facts' }, ...r.flatMap(([k, v]) => [el('dt', {}, k), el('dd', {}, v)]));
 }
 
+// Une vidéo ou un son d'une fiche : LE lecteur (commun/lecteur.js), dans le
+// thème, l'image qui remplit le cadre dès l'ouverture, la frise et la tête du
+// Montage (Cal, 30/09). Quitter la fiche l'arrête.
+function mediaPlayer(it) {
+  const L = lecteur(it, { clavier: 'page' });
+  addEventListener('hashchange', () => L.detruire(), { once: true });
+  return el('div', { class: 'sh-media sh-lect' }, L.el);
+}
+
 // une fiche : image, vidéo ou son
 function itemSheet(it) {
-  const media = el('div', { class: 'viewer sh-media' });
   // la copie d'affichage à la taille de la fiche, pas l'original (commun/proxies.js)
+  const media = it.kind === 'video' || it.kind === 'audio' ? mediaPlayer(it) : el('div', { class: 'viewer sh-media' });
   if (it.kind === 'image') media.append(bindView(el('img', { alt: it.title, decoding: 'async' }), it, { fit: 'contain', box: [960, 720] }));
-  if (it.kind === 'video') media.append(el('video', { src: href(it.url), controls: true, playsinline: true, preload: 'metadata', poster: it.thumb_url ? href(it.thumb_url) : null }));
-  if (it.kind === 'audio') media.append(el('div', { class: 'audio-box' }, wave(24), el('audio', { src: href(it.url), controls: true, preload: 'metadata' })));
   const size = it.width && it.height ? `${it.width}×${it.height}` : '';
   const tool = it.origin?.tool;
   const from = it.origin?.model || (!tool || tool === 'upload' ? `upload${it.origin?.via ? ` · par ${toolFr(it.origin.via)}` : ''}` : `fait dans ${toolFr(tool)}`);
@@ -1741,10 +1749,9 @@ function livingSheet(d) {
     el('span', { class: 'sp' }),
     btn('Télécharger', () => download([d]), { title: 'la dernière version' }),
     btn('Corbeille', () => trashItem(d, { leave: true }), { title: 'mettre l’élément à la corbeille — ses versions restent des objets, ses usages ne cassent pas' }));
-  const media = el('div', { class: 'viewer sh-media' });
+  const media = o?.kind === 'video' || o?.kind === 'audio' ? mediaPlayer(o) : el('div', { class: 'viewer sh-media' });
   if (o?.kind === 'image') media.append(bindView(el('img', { alt: o.title, decoding: 'async' }), o, { fit: 'contain', box: [960, 720] }));
-  else if (o?.kind === 'video') media.append(el('video', { src: href(o.url), controls: true, playsinline: true, preload: 'metadata', poster: o.thumb_url ? href(o.thumb_url) : null }));
-  else if (o?.kind === 'audio') media.append(el('div', { class: 'audio-box' }, wave(24), el('audio', { src: href(o.url), controls: true, preload: 'metadata' })));
+  else if (o?.kind === 'video' || o?.kind === 'audio') { /* le lecteur, ci-dessus */ }
   else if (o?.kind === 'element') media.append(el('a', { class: 'seq-open', href: '#' + o.id }, o.thumb_url ? bindView(el('img', { alt: o.title }), o, { fit: 'contain', box: [960, 720] }) : 'la planche'));
   else media.append(el('div', { class: 'seq-empty' }, el('p', { class: 'hint' }, e.count ? 'Aucune version prête : elles sont retirées ou à la corbeille.' : 'Pas encore de version : publie la première depuis la source, ou range un objet comme v1.')));
   const pile = blk('les versions', `${plural(e.count || 0, 'version', 'versions')} · la plus récente devant`,

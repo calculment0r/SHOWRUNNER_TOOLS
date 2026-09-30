@@ -129,15 +129,20 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
 .tr-player.audio .cap { bottom: auto; top: 50%; transform: translate(-50%, -38%); }
 .tr-player.audio .cap span { background: transparent; font-size: 17px; }
 
-/* le transport : lire, le temps, la frise des répliques (une couleur par voix) */
-#transport .transport { gap: 8px; }
-#transport .timecode { font-size: 12px; min-width: 104px; }
-.tr-strip {
-  position: relative; flex: 1; min-width: 160px; height: 26px; border-radius: var(--r2); background: var(--panel2);
-  box-shadow: inset 0 0 0 1px var(--line); cursor: pointer; overflow: hidden;
-}
-.tr-strip .sg { position: absolute; top: 6px; bottom: 6px; border-radius: 2px; background: var(--c, var(--cy)); opacity: .75; }
-.tr-strip .ph { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--ink); pointer-events: none; }
+/* LE lecteur (commun/lecteur.js) : l'image ou l'onde, sa barre, sa frise et sa tête ; le cadre est le sien */
+.tr-player.lect { height: auto; min-height: 0; background: none; box-shadow: none; overflow: visible; border-radius: 0;
+  display: flex; flex-direction: column; gap: 6px; --sr-lect-h: calc(40 * var(--vh)); }
+.tr-player.lect .tr-wait-media { padding: var(--s5); text-align: center; }
+.tr-player.lect.audio .aud { position: static; min-height: 44px; flex-wrap: wrap; padding: 0 2px; }
+.tr-player.lect.audio .cap { position: static; transform: none; width: auto; flex: 1; align-items: flex-start; text-align: left; }
+.tr-player.lect.audio .cap span { padding: 0; font-size: 15px; }
+
+/* sous la barre du lecteur : les répliques précédente, suivante */
+#transport .tr-nav { gap: 8px; padding: 6px var(--s4); }
+/* la piste des répliques dans la frise du lecteur (une couleur par voix) ; la lue s'éclaire */
+.tr-strip { height: 22px; border-radius: var(--r2); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+.tr-strip .sg { position: absolute; top: 5px; bottom: 5px; border-radius: 2px; background: var(--c, var(--cy)); opacity: .6; pointer-events: none; }
+.tr-strip .sg.on { opacity: 1; box-shadow: 0 0 0 1px var(--ink); }
 
 /* une teinte par voix : des jetons du portail (l'orange reste l'action) */
 .v0 { --c: var(--cy); }
@@ -171,7 +176,7 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
 
 /* les répliques : le temps, la voix, le texte, la traduction */
 .tr-lines {
-  display: flex; flex-direction: column; gap: 2px; max-height: calc(100 * var(--vh) - 40 * var(--vh) - 330px); min-height: 280px;
+  display: flex; flex-direction: column; gap: 2px; max-height: calc(100 * var(--vh) - 40 * var(--vh) - 440px); min-height: 280px;
   overflow: auto; padding: 4px; border-radius: var(--r3); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
   scroll-behavior: smooth;
 }

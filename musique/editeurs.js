@@ -26,6 +26,7 @@ import { el, knob, menu, tok, clamp, put, inlineEdit, letter } from './ui.js';
 import { createDevices } from './rack.js';
 // la molette : la règle commune de toutes les timelines du portail (29/09)
 import { brancher, borne, tenirY } from '../commun/molette.js';
+import { tete, poser } from '../commun/tete.js';   // LA tête de lecture du portail (30/09) : le piano roll, l'éditeur audio
 // le génératif (29/09) : une région (un clip qui porte `gen`) s'ouvre sur sa
 // génération ; sa prise choisie, sur la vue Clip d'un son
 import { isRegion, isGenTrack, regionPanel, trackPanel } from './generatif_region.js';
@@ -286,12 +287,14 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
   const rows = el('div', { class: 'pr-rows' });
   const notes = el('div', { class: 'pr-notes' });
   const nowCol = el('i', { class: 'pr-now' });
+  const nowPh = tete({ z: 3 });            // la tête, à l'endroit exact ; la colonne jouée reste dessous
+  nowPh.style.display = 'none';
   const box = el('i', { class: 'pr-box' });
   const velLane = el('div', { class: 'pr-vel', title: 'vélocité : glisser une barre' });
   const velScroll = el('div', { class: 'pr-vsx' }, velLane);
   // la voie des vélocités reste sous la grille, hors du défilement vertical
   const velBox = el('div', { class: 'pr-velbox' }, el('span', { class: 'lbl' }, 'vél.'), velScroll);
-  area.append(rows, notes, nowCol, box);
+  area.append(rows, notes, nowCol, box, nowPh);
   scrollX.append(area);
   wrap.append(keys, scrollX);
   scrollX.addEventListener('scroll', () => { velScroll.scrollLeft = scrollX.scrollLeft; });
@@ -494,6 +497,8 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
       nowCol.style.display = st >= 0 ? 'block' : 'none';
       if (st >= 0) nowCol.style.transform = `translateX(${Math.floor(st) * cw}px)`;
       nowCol.style.width = `${cw}px`;
+      nowPh.style.display = st >= 0 ? '' : 'none';
+      if (st >= 0) poser(nowPh, st * cw);
     },
     key(e) {
       const ctrl = e.ctrlKey || e.metaKey;
@@ -545,7 +550,8 @@ function audioEditor(app, host, c, t) {
   const P = app.S.proj;
   const spb = () => 60 / P.bpm;
   const cv = el('canvas', { class: 'ae-wave' });
-  const now = el('i', { class: 'ae-now' });
+  const now = tete({ z: 3 });              // LA tête de lecture (commun/tete.js), sur l'onde
+  now.style.display = 'none';
   const info = el('span', { class: 'lbl ae-info' }, '…');
   const title = el('span', { class: 'sn' }, '…');
   const cname = el('b', { class: 'venus ae-name', title: 'double-clic : renommer le clip' }, c.name || 'clip');
@@ -759,8 +765,8 @@ function audioEditor(app, host, c, t) {
       let pos = gm.off + into * gm.rate;
       if (gm.loop && pos >= gm.ls + gm.llen) pos = gm.ls + ((pos - gm.ls) % gm.llen);
       const w = cv.clientWidth;
-      now.style.display = 'block';
-      now.style.transform = `translateX(${xOf(pos, w).toFixed(1)}px)`;
+      now.style.display = '';
+      poser(now, xOf(pos, w));
     },
     key() { return false; },
   };

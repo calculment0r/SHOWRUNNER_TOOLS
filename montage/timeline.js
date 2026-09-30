@@ -21,6 +21,7 @@
 
 import { el, href, ITEM_MIME } from '../commun/shell.js';
 import { brancher, borne, tenirY } from '../commun/molette.js';   // molette commune
+import { tete, poser, suivre, peindreRegle, brancherRegle } from '../commun/tete.js';   // LA tête et LA règle (30/09 : extraites d'ici, communes)
 import * as M from './model.js';
 
 export const HEAD = 124;           // la tête de piste, collée à gauche (même largeur que .tl-hd)
@@ -49,7 +50,7 @@ export class Timeline {
     this.marks = el('div', { class: 'tl-marks' }, this.ticks, this.mlayer);
     this.ruler = el('div', { class: 'tl-ruler' }, el('div', { class: 'tl-hd' }, el('span', { class: 'lbl' }, 'pistes')), this.marks);
     this.lanes = el('div', { class: 'tl-lanes' });
-    this.ph = el('div', { class: 'tl-ph' }, el('i'));
+    this.ph = tete();                // commun/tete.js : le trait et l'onglet (au-dessus de la règle, sous les en-têtes)
     this.snapLine = el('div', { class: 'tl-snap', hidden: true });
     this.rngv = el('div', { class: 'tl-rngv', hidden: true });
     this.ghost = el('div', { class: 'tl-ghost', hidden: true });
@@ -245,21 +246,10 @@ export class Timeline {
     return node;
   }
 
+  // la règle des temps : commun/tete.js (la même partout)
   paintRuler() {
-    const fps = this.fps, pps = this.pps;
-    const steps = [1 / fps, 2 / fps, 5 / fps, 10 / fps, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200];
-    const step = steps.find((s) => s * pps >= 84) || 1800;
-    const left = this.scroll.scrollLeft, right = left + this.scroll.clientWidth;
-    const from = Math.max(0, Math.floor(left / pps / step) - 1), to = Math.ceil(right / pps / step) + 1;
-    const out = [];
-    for (let i = from; i <= to; i++) {
-      const s = i * step;
-      const f = Math.round(s * fps);
-      const lab = step < 1 ? M.tc(f, fps).slice(3) : M.tc(f, fps).slice(s >= 3600 ? 0 : 3, s >= 3600 ? 8 : 8);
-      out.push(el('span', { class: 'mk', style: { left: s * pps + 'px' } }, lab));
-      if (step >= 1 && step * pps >= 160) out.push(el('span', { class: 'mk sub', style: { left: (s + step / 2) * pps + 'px' } }));
-    }
-    this.ticks.replaceChildren(...out);
+    const left = this.scroll.scrollLeft;
+    peindreRegle(this.ticks, { pps: this.pps, fps: this.fps, gauche: left, droite: left + this.scroll.clientWidth });
     this.marks.style.width = this.width + 'px';
   }
 
@@ -286,16 +276,10 @@ export class Timeline {
     this.mlayer.replaceChildren(...out);
   }
 
+  // la tête de lecture : commun/tete.js — sous les têtes de piste (défilement), elle ne se dessine pas par-dessus
   paintPlayhead(frame) {
-    const x = this.fx(frame);
-    this.phX = x;
-    this.ph.style.transform = `translateX(${HEAD + x}px)`;
-    // sous les têtes de piste (défilement), la tête de lecture ne se dessine pas par-dessus
-    this.ph.style.visibility = x < this.scroll.scrollLeft - 1 ? 'hidden' : 'visible';
-    if (this.app.playing()) {
-      const left = this.scroll.scrollLeft, w = this.scroll.clientWidth - HEAD;
-      if (x > left + w - 30 || x < left) this.scroll.scrollLeft = Math.max(0, x - 60);
-    }
+    this.phX = poser(this.ph, this.fx(frame), { decal: HEAD, sous: this.scroll.scrollLeft });
+    if (this.app.playing()) suivre(this.scroll, this.phX, { tete: HEAD });
   }
 
   // ── zoom ─────────────────────────────────────────────────
@@ -338,7 +322,7 @@ export class Timeline {
   bind() {
     this.scroll.addEventListener('scroll', () => {
       this.paintRuler();
-      if (this.phX !== undefined) this.ph.style.visibility = this.phX < this.scroll.scrollLeft - 1 ? 'hidden' : 'visible';
+      if (this.phX !== undefined) poser(this.ph, this.phX, { decal: HEAD, sous: this.scroll.scrollLeft });
     });
     // molette commune (commun/molette.js) ; les en-têtes portent data-piste
     brancher(this.scroll, {
@@ -347,16 +331,20 @@ export class Timeline {
     });
 
     // la règle : cliquer, glisser = la tête de lecture ; une marque : y aller
-    this.ruler.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      blurField();
-      this.app.focus('program');
-      const mk = e.target.closest('.tl-m');
-      if (mk) { const m = (this.p.markers || []).find((x) => x.id === mk.dataset.marker); if (m) this.app.seekFrame(m.f); return; }
-      const go = (ev) => this.app.seekFrame(this.frameAt(ev.clientX));
-      go(e);
-      this.drag(e, go, () => {});
+    // (le geste commun : commun/tete.js)
+    brancherRegle(this.ruler, {
+      avant: (e) => {
+        e.preventDefault();
+        blurField();
+        this.app.focus('program');
+        const mk = e.target.closest('.tl-m');
+        if (mk) { const m = (this.p.markers || []).find((x) => x.id === mk.dataset.marker); if (m) this.app.seekFrame(m.f); return false; }
+        return true;
+      },
+      temps: (x) => this.frameAt(x),
+      aller: (f) => this.app.seekFrame(f),
+      debut: () => this.root.classList.add('dragging'),
+      fin: () => { this.snapLine.hidden = true; this.tip.hidden = true; this.root.classList.remove('dragging'); },
     });
     this.ruler.addEventListener('dblclick', (e) => {
       const mk = e.target.closest('.tl-m');

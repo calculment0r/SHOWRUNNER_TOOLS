@@ -214,6 +214,9 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .sh-media audio { width: min(560px, 90%); }
 .sh-media .audio-box { display: flex; flex-direction: column; align-items: center; gap: var(--s5); padding: var(--s6); width: 100%; }
 .sh-media .audio-box .wave { position: relative; inset: auto; width: 60%; height: 120px; }
+/* une vidéo, un son : LE lecteur (commun/lecteur.js) ; l'écran prend la hauteur de la fenêtre moins la fiche */
+.sh-media.sh-lect { min-height: 0; --sr-lect-h: max(300px, calc(100 * var(--vh) - 400px)); }
+.sh-media.sh-lect video { max-height: none; }
 /* la fiche d'une séquence : sa vignette mène au Montage */
 .seq-media { position: relative; }
 .seq-open { display: block; position: relative; }

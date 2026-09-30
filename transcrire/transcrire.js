@@ -15,6 +15,7 @@ import { mountHeader, api, pick, toast, el, $, $$, href, fmtDur, fmtDate, upload
 import { createUndo } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { menu, contextMenu, pageMenu, copy } from '../commun/menu.js';
+import { lecteur } from '../commun/lecteur.js';
 
 mountHeader('transcrire', { sub: 'transcrire · traduire' });
 
@@ -193,12 +194,16 @@ async function poll() {
 }
 
 // ── la lecture ──────────────────────────────────────────────
-const V = { media: null, cap: null, raf: 0, active: null };
+// LE lecteur du portail (commun/lecteur.js, 30/09) : l'image (ou l'onde du
+// son importé), la règle des temps et la tête de lecture du Montage ; les
+// répliques sont une piste de sa frise (une teinte par voix), sous l'onde.
+const V = { L: null, cap: null, active: null, strip: null, n: 0 };
 function paintPlayer() {
-  cancelAnimationFrame(V.raf);
+  V.L?.detruire();
   const box = $('#player');
   const it = S.doc ? { id: S.doc.item, kind: S.doc.kind, title: S.doc.title, url: null } : S.item;
-  V.media = null; V.active = null;
+  V.L = null; V.active = null; V.strip = null;
+  const n = ++V.n;
   if (!it) {
     box.className = 'tr-player empty';
     box.replaceChildren(el('div', { class: 'empty' }, el('b', {}, 'Transcrire'),
@@ -206,64 +211,52 @@ function paintPlayer() {
     $('#transport').replaceChildren();
     return;
   }
-  const url = it.url || `library/${it.id}/`;   // l'adresse exacte vient de la fiche, lue plus bas
-  const m = it.kind === 'video' ? el('video', { playsinline: true, preload: 'auto' }) : el('audio', { preload: 'auto' });
-  V.media = m;
-  V.cap = el('div', { class: 'cap', 'aria-live': 'off' });
-  box.className = 'tr-player ' + it.kind;
-  box.replaceChildren(m, it.kind === 'audio' ? el('div', { class: 'aud' }, el('span', { class: 'lbl' }, 'son'), el('b', {}, it.title || '')) : null, V.cap);
-  if (it.url) m.src = href(url);
-  else api('library/' + it.id).then((full) => { if (V.media === m) m.src = href(full.url); }).catch(() => toast('le média a quitté la bibliothèque'));
-  m.addEventListener('click', toggle);
-  wireTransport(m);
-}
-function toggle() { const m = V.media; if (!m) return; if (m.paused) m.play().catch(() => {}); else m.pause(); }
-function seek(t, play = true) { const m = V.media; if (!m) return; try { m.currentTime = Math.max(0, t); } catch { /* pas prêt */ } if (play) m.play().catch(() => {}); tick(); }
-function wireTransport(m) {
-  const playBtn = el('button', { class: 'tb', type: 'button', title: 'lire · pause (espace)', onclick: toggle }, 'Lire');
-  const tc = el('span', { class: 'timecode' }, '00:00');
-  const strip = el('div', { class: 'tr-strip', title: 'cliquer : aller à ce moment' });
-  const head = el('i', { class: 'ph' });
-  strip.addEventListener('click', (e) => { const r = strip.getBoundingClientRect(); const d = dur(); if (d) seek(((e.clientX - r.left) / r.width) * d, !m.paused); });
-  m.addEventListener('play', () => { playBtn.textContent = 'Pause'; loop(); });
-  m.addEventListener('pause', () => { playBtn.textContent = 'Lire'; tick(); });
-  m.addEventListener('loadedmetadata', paintStrip);
-  m.addEventListener('timeupdate', tick);
-  $('#transport').replaceChildren(el('div', { class: 'transport' }, playBtn, tc, strip,
+  box.className = 'tr-player lect ' + it.kind;
+  box.replaceChildren(el('p', { class: 'lbl tr-wait-media' }, 'chargement du média'));
+  // l'objet entier (adresse, cadence, copies d'affichage) vient de la bibliothèque
+  (it.url ? Promise.resolve(it) : api('library/' + it.id)).then((full) => {
+    if (n !== V.n) return;
+    V.cap = el('div', { class: 'cap', 'aria-live': 'off' });
+    const L = lecteur(full, { clavier: 'page', sur: full.kind === 'video' ? V.cap : null, onTemps: tick });
+    V.L = L;
+    V.strip = L.piste(el('div', { class: 'tr-strip', title: 'les répliques · clic, glisser : la tête de lecture' }));
+    box.replaceChildren(full.kind === 'audio' ? el('div', { class: 'aud' }, el('span', { class: 'lbl' }, 'son'), el('b', {}, full.title || ''), V.cap) : null, L.el);
+    L.media.addEventListener('loadedmetadata', paintStrip);
+    paintStrip();
+  }).catch(() => { if (n === V.n) box.replaceChildren(el('p', { class: 'warn' }, 'le média a quitté la bibliothèque')); });
+  $('#transport').replaceChildren(el('div', { class: 'transport tr-nav' }, el('span', { class: 'lbl' }, 'répliques'),
     el('button', { class: 'tb ghost sm', type: 'button', title: 'réplique précédente (↑)', onclick: () => step(-1) }, '‹'),
     el('button', { class: 'tb ghost sm', type: 'button', title: 'réplique suivante (↓)', onclick: () => step(1) }, '›')));
-  V.tc = tc; V.strip = strip; V.head = head;
-  paintStrip();
 }
-const dur = () => (V.media && isFinite(V.media.duration) && V.media.duration) || S.doc?.duration || S.item?.duration || 0;
+function seek(t, play = true) { const L = V.L; if (!L) return; L.seek(Math.max(0, t)); if (play && !L.lecture) L.play(); }
+const dur = () => V.L?.duree || S.doc?.duration || S.item?.duration || 0;
 function paintStrip() {
   if (!V.strip) return;
   const d = dur();
   const segs = S.doc?.segments || [];
-  V.strip.replaceChildren(...(d ? segs.map((s) => el('span', { class: `sg v${voiceIndex(s.spk)}`, style: { left: `${(s.a / d) * 100}%`, width: `${Math.max(0.15, ((s.b - s.a) / d) * 100)}%` } })) : []), V.head);
-  tick();
+  V.strip.replaceChildren(...(d ? segs.map((s) => el('span', { class: `sg v${voiceIndex(s.spk)}`, 'data-id': s.id, style: { left: `${(s.a / d) * 100}%`, width: `${Math.max(0.15, ((s.b - s.a) / d) * 100)}%` } })) : []));
+  V.active = undefined;
+  tick(V.L?.t || 0, V.L?.lecture);
 }
-function loop() { cancelAnimationFrame(V.raf); const f = () => { tick(); if (V.media && !V.media.paused) V.raf = requestAnimationFrame(f); }; V.raf = requestAnimationFrame(f); }
 function segAt(t) {
   const segs = S.doc?.segments || [];
   let lo = 0, hi = segs.length - 1, hit = null;
   while (lo <= hi) { const mid = (lo + hi) >> 1; if (segs[mid].a <= t) { hit = mid; lo = mid + 1; } else hi = mid - 1; }
   return hit !== null && t < segs[hit].b + 0.25 ? segs[hit] : null;
 }
-function tick() {
-  const m = V.media;
-  if (!m) return;
-  const t = m.currentTime || 0, d = dur();
-  if (V.tc) V.tc.textContent = `${clock(t)} / ${clock(d)}`;
-  if (V.head) V.head.style.left = d ? `${(t / d) * 100}%` : '0';
+// le lecteur dit où est la tête (à chaque image en lecture, à chaque geste) : la réplique, le sous-titre
+function tick(t = V.L?.t || 0, playing = false) {
+  if (!V.L) return;
   const s = segAt(t);
   if (s?.id === V.active) return;
   V.active = s?.id || null;
   $$('#lines .ln.on').forEach((x) => x.classList.remove('on'));
+  $$('#player .tr-strip .sg.on').forEach((x) => x.classList.remove('on'));
   if (s) {
     const row = $(`#lines .ln[data-id="${s.id}"]`);
     row?.classList.add('on');
-    if (row && S.follow && !$('.tx[contenteditable="true"]') && !m.paused) scrollInto(row);
+    V.strip?.querySelector(`.sg[data-id="${s.id}"]`)?.classList.add('on');
+    if (row && S.follow && !$('.tx[contenteditable="true"]') && playing) scrollInto(row);
   }
   paintCap(s);
 }
@@ -280,11 +273,11 @@ function paintCap(s) {
 }
 function step(n) {
   const segs = S.doc?.segments || [];
-  if (!segs.length || !V.media) return;
-  const t = V.media.currentTime || 0;
+  if (!segs.length || !V.L) return;
+  const t = V.L.t || 0;
   const k = n > 0 ? segs.findIndex((s) => s.a > t + 0.05) : segs.map((s) => s.a < t - 0.6).lastIndexOf(true);
   const s = segs[k < 0 ? (n > 0 ? segs.length - 1 : 0) : k];
-  seek(s.a, !V.media.paused);
+  seek(s.a, V.L.lecture);
 }
 
 // ── la barre du texte ───────────────────────────────────────
@@ -310,7 +303,7 @@ function paintBar() {
     d.state === 'done' ? el('button', { class: 'tb ghost sm', type: 'button', onclick: () => copyText() }, 'Copier le texte') : null,
     d.state === 'done' ? el('button', { class: 'tb ghost sm', type: 'button', 'aria-haspopup': 'menu', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); menu(r.left, r.bottom + 4, exportItems(), { focusFirst: e.detail === 0 }); } }, 'Exporter') : null);
 }
-function setView(v) { S.view = v; prefs.set('transcrire.view', v); paintBar(); paintLines(); paintCap(segAt(V.media?.currentTime || 0)); }
+function setView(v) { S.view = v; prefs.set('transcrire.view', v); paintBar(); paintLines(); paintCap(segAt(V.L?.t || 0)); }
 async function translate(to, all = false) {
   try { const r = await api(`transcrire/docs/${S.doc.id}/translate`, { method: 'POST', body: { to, all } }); openDoc(r.doc, { keepMedia: true }); toast(`traduction en ${L(to).toLowerCase()} en file`); }
   catch (e) { toast(e.message, 7000); }
@@ -414,7 +407,7 @@ function startEdit(tx) {
   const s = S.doc.segments.find((x) => x.id === row.dataset.id);
   const f = tx.dataset.f;
   const before = f === 'src' ? s.text : s.tr?.[f] || '';
-  V.media?.pause();
+  V.L?.pause();
   editText(tx, before, (after) => setField(s.id, f, before, after, true));
 }
 // un champ édité sur place : Entrée garde, Échap rend, sortir garde
@@ -445,7 +438,7 @@ function setField(id, f, before, after, record) {
     if (!s) return;
     if (f === 'src') { s.text = v; s.edited = true; } else { (s.tr ||= {})[f] = v; }
     queue({ seg: { id, f, v } });
-    paintLines(); paintCap(segAt(V.media?.currentTime || 0));
+    paintLines(); paintCap(segAt(V.L?.t || 0));
   };
   apply(after);
   if (record) U.record({ label: `corriger la réplique ${clock(S.doc.segments.find((x) => x.id === id)?.a)}`, undo: () => apply(before), redo: () => apply(after) });
@@ -521,8 +514,8 @@ async function removeDoc(id) {
 // ── le clavier, le clic droit ───────────────────────────────
 document.addEventListener('keydown', (e) => {
   if ($('.scrim') || ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
-  if (e.key === ' ' && V.media) { e.preventDefault(); toggle(); }
-  else if (e.key === 'ArrowDown' && S.doc?.segments?.length) { e.preventDefault(); step(1); }
+  // Espace, J K L, ← →, Début, Fin : le lecteur (commun/lecteur.js, le clavier du Montage) ; ↑ ↓ : les répliques
+  if (e.key === 'ArrowDown' && S.doc?.segments?.length) { e.preventDefault(); step(1); }
   else if (e.key === 'ArrowUp' && S.doc?.segments?.length) { e.preventDefault(); step(-1); }
 });
 function linesMenu(e) {

@@ -38,6 +38,9 @@
 import { href } from '../commun/shell.js';
 import { windows, opacityAt, gainAt, audibleTracks, projectEnd, spd, isOn, chainOf } from './model.js';
 import { getLut, lutFailed, lutGL, passesOf } from './lut.js';
+// un saut ne s'empile jamais sur un saut en cours (commun/tete.js, mesuré le 30/09) :
+// la tête glissée à l'arrêt, l'image suit au lieu d'attendre la fin du geste
+import { sauter, cible } from '../commun/tete.js';
 
 // la signature d'une chaîne : ce qui change l'image
 const sigOf = (steps) => JSON.stringify(steps.map((f) => (f.type === 'lut' ? ['l', f.lut, f.mix] : ['g', f.exposure || 0, f.contrast || 0, f.saturation || 0, f.temperature || 6500])));
@@ -434,7 +437,7 @@ export class Program {
           if (e.tag !== 'img') {
             if (!e.el.paused) e.el.pause();
             const want = Math.max(0, target) + 0.001;
-            if (Math.abs(e.el.currentTime - want) > 0.05) e.el.currentTime = want;
+            if (Math.abs(cible(e.el) - want) > 0.05) sauter(e.el, want);
           }
           e.el.style.opacity = '0';
           if (e.cv) e.cv.style.opacity = '0';
@@ -491,20 +494,20 @@ export class Program {
     const rate = Math.max(0.0625, Math.min(16, this.rate * sp));
     if (fwd && !outside) {
       if (el.paused) {
-        if (Math.abs(el.currentTime - want) > 0.03) el.currentTime = want;
+        if (Math.abs(cible(el) - want) > 0.03) sauter(el, want);
         el.playbackRate = rate;
         el.play().catch(() => {});
         return;
       }
       const drift = el.currentTime - want;
-      if (Math.abs(drift) > 0.3 * sp) { el.currentTime = want; el.playbackRate = rate; }
+      if (Math.abs(drift) > 0.3 * sp) { sauter(el, want); el.playbackRate = rate; }
       else if (Math.abs(drift) > 0.5 / fps * sp) el.playbackRate = Math.max(0.0625, Math.min(16, rate * (1 - Math.max(-0.08, Math.min(0.08, drift * 2 / sp)))));
       else if (el.playbackRate !== rate) el.playbackRate = rate;
       return;
     }
     if (!el.paused) el.pause();
     const at = want + (outside ? 0 : 0.001);       // + 1 ms : l'image qui commence à cet instant, pas la précédente
-    if (Math.abs(el.currentTime - at) > 0.3 / fps && el.readyState >= 1) el.currentTime = at;
+    if (Math.abs(cible(el) - at) > 0.3 / fps && el.readyState >= 1) sauter(el, at);
   }
 }
 
@@ -580,23 +583,23 @@ export class Source {
     if (rate < 0) {
       this.el.pause();
       this.rev = setInterval(() => {
-        const t = this.el.currentTime + rate / 30;
-        if (t <= 0) { this.el.currentTime = 0; this.stop(); }
-        else this.el.currentTime = t;
+        const t = cible(this.el) + rate / 30;
+        if (t <= 0) { sauter(this.el, 0); this.stop(); }
+        else sauter(this.el, t);
         this.onTick();
       }, 1000 / 30);
       this.onTick();
       return;
     }
-    if (this.el.ended || this.el.currentTime >= this.duration - 0.05) this.el.currentTime = this.in || 0;
+    if (this.el.ended || cible(this.el) >= this.duration - 0.05) sauter(this.el, this.in || 0);
     this.el.playbackRate = rate;
     this.el.play().catch(() => {});
   }
 
   pause() { this.stop(); if (this.el && this.el.pause) this.el.pause(); this.onTick(); }
   toggle() { this.playing ? this.pause() : this.play(1); }
-  seek(t) { if (this.el && this.item.kind !== 'image') { this.el.currentTime = Math.max(0, Math.min(this.duration, t)); this.onTick(); } }
-  step(n) { if (!this.el || this.item.kind === 'image') return; this.pause(); this.seek(this.el.currentTime + n / this.fps); }
+  seek(t) { if (this.el && this.item.kind !== 'image') { sauter(this.el, Math.max(0, Math.min(this.duration, t))); this.onTick(); } }
+  step(n) { if (!this.el || this.item.kind === 'image') return; this.pause(); this.seek(cible(this.el) + n / this.fps); }
   markIn() { if (!this.item || this.item.kind === 'image') return; this.in = Math.min(this.t, Math.max(0, this.out - 1 / this.fps)); this.onTick(); }
   markOut() { if (!this.item || this.item.kind === 'image') return; this.out = Math.max(this.t, this.in + 1 / this.fps); this.onTick(); }
   clearIn() { if (this.item) { this.in = 0; this.onTick(); } }
