@@ -292,11 +292,14 @@ def selftest(call, ok) -> None:
                     headers={**same, "Content-Type": "text/plain"})
         ok(s == 415, f"du JSON déguisé en text/plain (formulaire d'une autre page) : refusé ({s})")
 
-        # à qui : seul le propriétaire (ou un admin) modifie
+        # à qui (equipes_espaces.md, décision 9) : Noé, ami avec le Studio, est éditeur de Général (la
+        # Team de l'instance) ; dans un Workspace partagé, tout éditeur modifie ; la corbeille reste à l'auteur
         s, d, _ = H("POST", f"/api/library/{cal_item['id']}", {"title": "Volé"}, cookie=tok, headers=same)
-        ok(s == 403 and "Cal" in (d or {}).get("error", ""), f"Noé ne modifie pas l'objet de Cal ({s} {d})")
-        s, _, _ = H("POST", f"/api/library/{cal_item['id']}/delete", cookie=tok, headers=same)
-        ok(s == 403 and library.get(cal_item["id"]), f"ni ne le met à la corbeille ({s})")
+        ok(s == 200 and d.get("space") == "esp-general", f"Noé, éditeur de Général, modifie l'objet de Cal ({s} {d})")
+        H("POST", f"/api/library/{cal_item['id']}", {"title": cal_item.get("title") or ""}, cookie=adm, headers=same)
+        s, d, _ = H("POST", f"/api/library/{cal_item['id']}/delete", cookie=tok, headers=same)
+        ok(s == 403 and library.get(cal_item["id"]) and "Cal" in (d or {}).get("error", ""),
+           f"mais ne le met pas à la corbeille : l'auteur, ou un admin du Workspace ({s} {d})")
         s, _, _ = H("POST", f"/api/library/{nid}", {"title": "Vu par Cal"}, cookie=adm, headers=same)
         ok(s == 200, f"Cal modifie tout ({s})")
 

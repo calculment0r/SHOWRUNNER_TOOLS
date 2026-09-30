@@ -180,7 +180,7 @@ def state(it: dict, ask: bool = True) -> dict:
 
 
 def r_state(req, iid):
-    it = library.get(iid)
+    it = library.see(iid)   # montrer : jugé par l'objet, pas par le Workspace courant (comme /library/)
     if not it:
         raise HttpError(404, f"introuvable : {iid}")
     return state(it)

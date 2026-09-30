@@ -406,22 +406,36 @@ def _gsave() -> None:
 
 
 def role_of(u: dict | None, bid: str) -> str:
-    """owner | editor | viewer | none."""
+    """owner | editor | viewer | none.
+
+    Teams et Workspaces (étape 2, equipes_espaces.md § 2.3) : une planche est à son
+    Workspace (ideation.board_space). Dans une requête d'un autre Workspace, elle
+    n'existe pas (comme library.get). Le Workspace borne la planche : `open` y
+    devient le rôle d'espace — on peut resserrer une planche, pas l'ouvrir au-delà
+    du Workspace (un lecteur, un guest viewer : spectateur au plus ; qui n'est pas
+    dans le Workspace : aucun accès), sauf un rôle donné explicitement (un lien de
+    partage, `members`)."""
     if not auth.enabled():
         return "owner"
     if not u:
         return "none"
+    here = auth.current_space()
+    sp = _ide().board_space(bid) if here or not auth.is_guest(u) else None
+    if here and sp != here:
+        return "none"
     if auth.is_admin(u):
         return "owner"
     a = _access(bid)
-    if a.get("owner") == u["id"]:
-        return "owner"
     m = a["members"].get(u["id"])
-    if m and m.get("role") in ROLES:
+    if m and m.get("role") in ROLES and a.get("owner") != u["id"]:
         return m["role"]
     if auth.is_guest(u):   # l'invité : les planches de ses liens, rien d'autre
         return "none"
-    return a.get("open") if a.get("open") in OPEN else "editor"
+    cap = "editor" if auth.can_edit(u, sp) else "viewer" if auth.can_view(u, sp) else "none"
+    if a.get("owner") == u["id"]:
+        return "owner" if cap == "editor" else cap
+    r = a.get("open") if a.get("open") in OPEN else "editor"
+    return r if RANK[r] <= RANK[cap] else cap
 
 
 # ── l'invité (core/auth.py, `guest_realm`) : ses planches, leurs objets ──

@@ -222,10 +222,14 @@ def _write(p: dict) -> None:
     _sync_item(p)
 
 
-def new_sequence(p: dict, folder: str = "", legacy: str = "") -> dict:
+def new_sequence(p: dict, folder: str = "", legacy: str = "", source: dict | None = None) -> dict:
     """Range une timeline (normalisée) comme un objet neuf de la bibliothèque ;
-    rend la timeline, avec son identifiant `seq-…`."""
+    rend la timeline, avec son identifiant `seq-…`. Son Workspace : celui de
+    `source` (la séquence dupliquée, le clip d'où elle part), sinon celui de la
+    requête (library.new_space ; 403 si l'on ne peut pas créer ici)."""
     library.get("")                        # la bibliothèque chargée
+    origin = library._owned({"tool": "montage"})
+    space = library.new_space(origin, source=source)
     sid = library.new_id("sequence")
     while library.get(sid) or library.folder_of(sid).exists():
         sid = library.new_id("sequence")
@@ -239,7 +243,7 @@ def new_sequence(p: dict, folder: str = "", legacy: str = "") -> dict:
     p.setdefault("rev", 1)
     (d / SEQ_FILE).write_text(json.dumps(p, ensure_ascii=False, indent=1), encoding="utf-8")
     it = {"id": sid, "kind": "sequence", "title": p["name"], "created": p["created"], "updated": p["updated"],
-          "file": SEQ_FILE, "origin": library._owned({"tool": "montage"}), "prompt": "",
+          "file": SEQ_FILE, "origin": origin, "space": space, "prompt": "",
           "params": {"legacy": legacy} if legacy else {}, "parents": [], "tags": [],
           "folder": " ".join(str(folder or "").split())[:60].replace("/", "·"), "fav": False}
     with library._lock:
@@ -954,11 +958,12 @@ def store_lut(lut: dict, title: str, inp: str = "inconnu", source: str = "", fam
         if not (d / f"{lid}.json").exists():
             break
     title = _clean(title or lut.get("title") or "LUT", 80)
+    space = library.new_space({"user": owner})   # son Workspace, celui de la requête (403 si l'on n'y crée pas)
     (d / f"{lid}.cube").write_text(cube_text(lut, title), encoding="utf-8")
     meta = {"id": lid, "title": title, "kind": lut["kind"], "size": lut["size"],
             "input": inp if inp in LUT_INPUTS else "inconnu", "source": _clean(source, 240),
             "family": _clean(family, 60) or "Importées", "pack": _clean(pack, 80), "fav": int(fav or 0),
-            "created": library.now(), "owner": owner if owner is not None else auth.current_id()}
+            "created": library.now(), "owner": owner if owner is not None else auth.current_id(), "space": space}
     if orig != lut["size"]:
         meta["resampled_from"] = orig
     if note:
@@ -1710,7 +1715,7 @@ def r_create(req):
         p = from_item(it)
         note = p.pop("note", "")
         with _lock:
-            p = new_sequence(p, folder or it.get("folder") or "")
+            p = new_sequence(p, folder or it.get("folder") or "", source=it)
         return {**p, "note": note}
     p = blank(d.get("name", ""), d.get("settings"))
     with _lock:
@@ -1758,7 +1763,7 @@ def r_duplicate(req, pid):
         it = library.get(src["id"]) or {}
         p = {**src, "name": (src["name"] + " (copie)")[:120], "created": library.now(), "updated": library.now(), "rev": 1}
         p.pop("legacy", None)
-        p = new_sequence(p, it.get("folder", ""))
+        p = new_sequence(p, it.get("folder", ""), source=it or None)
     return _summary(p)
 
 
@@ -1811,12 +1816,14 @@ def r_plan(req, pid):
             **{k: pl[k] for k in ("graph", "duration", "frames", "inputs", "items")}}
 
 
-# les LUT : une bibliothèque commune, rangée dans les données (pas dans le dépôt)
+# les LUT : une bibliothèque commune au Workspace, rangée dans les données (pas dans le
+# dépôt) ; chacune porte son Workspace (`space`, posé par store_lut), l'étagère est celle
+# du Workspace courant (library.readable)
 def r_luts(req):
     out = []
     for f in _luts_dir().glob("lut-*.json"):
         m = lut_meta(f.stem)
-        if m and (_luts_dir() / f"{m['id']}.cube").exists():
+        if m and (_luts_dir() / f"{m['id']}.cube").exists() and library.readable(m):
             out.append(_lut_public(m))
     out.sort(key=lambda m: (m["family"].lower(), m["title"].lower()))
     return {"luts": out, "inputs": [{"id": k, "label": v} for k, v in LUT_INPUTS.items()]}
@@ -1837,27 +1844,32 @@ def r_lut_upload(req):
     return _lut_public(m)
 
 
-def _lut_or_404(lid: str) -> dict:
+def _lut_or_404(lid: str, show: bool = False) -> dict:
+    """La LUT, si elle est du Workspace courant (`show` : si on la voit, où qu'elle soit —
+    pour montrer son fichier, sa vignette) ; sinon 404, comme une LUT absente."""
     m = lut_meta(lid)
-    if not m:
+    if not m or not (library.visible(m) if show else library.readable(m)):
         raise HttpError(404, f"LUT introuvable : {lid}")
     return m
 
 
-def _can_edit_lut(m: dict) -> None:
-    # la règle des objets (auth.can_write_item) : une LUT sans `owner` est d'avant la porte, donc à Cal
-    # (avant le 29/09, une LUT sans auteur se changeait et se jetait par tous)
-    if not auth.can_write_item(m, auth.current()):
-        raise HttpError(403, "cette LUT est à quelqu'un d'autre : seul son auteur (ou Cal) la change")
+def _can_edit_lut(m: dict, trash: bool = False) -> None:
+    # la règle des objets (library.check_write / check_trash) : un éditeur de son Workspace la
+    # change ; son auteur ou un admin du Workspace la jette ; une LUT sans `owner` est d'avant la
+    # porte : elle ne se jette que par un admin (avant le 29/09, une LUT sans auteur se jetait par tous)
+    try:
+        (library.check_trash if trash else library.check_write)({**m, "title": m.get("title") or m.get("id")})
+    except PermissionError as e:
+        raise HttpError(403, f"cette LUT : {e}") from e
 
 
 def r_lut_file(req, lid):
-    _lut_or_404(lid)
+    _lut_or_404(lid, show=True)
     return FileResponse(_luts_dir() / f"{lid}.cube", "text/plain; charset=utf-8", cache="max-age=86400")
 
 
 def r_lut_mini(req, lid):
-    _lut_or_404(lid)
+    _lut_or_404(lid, show=True)
     try:
         mini_bytes(lid)
     except (ValueError, OSError) as e:
@@ -1894,7 +1906,7 @@ def r_lut_edit(req, lid):
 def r_lut_delete(req, lid):
     with _lock:
         m = _lut_or_404(lid)
-        _can_edit_lut(m)
+        _can_edit_lut(m, trash=True)
         trash = _luts_dir() / "corbeille"
         trash.mkdir(exist_ok=True)
         for ext in (".cube", ".json"):

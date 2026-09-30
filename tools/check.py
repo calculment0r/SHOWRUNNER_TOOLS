@@ -281,7 +281,14 @@ def compute_guard_checks() -> None:
             _, _, tok = H("POST", "/api/auth/enter", {"name": name}, headers=same)
             toks[uid], people[uid] = tok, auth.user(uid)
             ok(s == 200 and tok, f"garde : {name} ({role} {mode or ''}) entre ({s} {err(d)})")
+            if mode:   # guests aussi de Général : les requêtes rejouées y nomment ce que les selftests y ont rangé
+                s, d, _ = P(f"/api/equipes/{espaces.NIRVALAB}/membres", {**body, "spaces": [espaces.GENERAL]})
+                ok(s == 200, f"garde : {name}, guest {mode} de Général ({s} {err(d)})")
         guests = ("gv-calcul", "ga-calcul")
+        # le Workspace des requêtes rejouées : un outil n'atteint que son Workspace (étape 2) ; les objets
+        # et documents qu'elles nomment sont dans Général, où Cal a fait tourner les selftests
+        here = espaces.GENERAL
+        ROLE = espaces.WHY["role"].split(" (")[0]   # « ton rôle dans ce Workspace » : un viewer ne modifie ni ne crée
         mo = people["mo-calcul"]
         s, img, _ = H("PUT", "/api/library/upload?name=garde.png&title=Garde", raw=tiny_png(), cookie=cal,
                       headers={**same, "Content-Type": "image/png"})
@@ -328,9 +335,12 @@ def compute_guard_checks() -> None:
                     seen = []
                     for method, path, raw, ctype in tool_requests(kind, fixture, g):
                         s, d, _ = H(method, path, raw=raw, cookie=toks[g],
-                                    headers={**same, "X-SR-Espace": s1, **({"Content-Type": ctype} if ctype else {})})
+                                    headers={**same, "X-SR-Espace": here, **({"Content-Type": ctype} if ctype else {})})
                         seen.append((s, f"{method} {path.split('?')[0]}", err(d)))
-                    ok(not any(200 <= x[0] < 300 for x in seen) and any(x[0] == 403 and GUEST in x[2] for x in seen),
+                    # l'acteur atteint la garde du calcul ; le viewer peut être refusé avant, par son rôle
+                    # (modifier ou créer : étape 2) — jamais un travail dans les deux cas
+                    ok(not any(200 <= x[0] < 300 for x in seen)
+                       and any(x[0] == 403 and (GUEST in x[2] or (g == "gv-calcul" and ROLE in x[2])) for x in seen),
                        f"garde : la route de l'outil refuse « {kind} » au guest {g}, par la garde du calcul "
                        f"({[(x[0], x[1], x[2][:80]) for x in seen]})")
             elif not (jobs._META.get(kind, {}).get("direct") or kind in SANS_ROUTE_OUTIL):
@@ -436,6 +446,11 @@ def compute_guard_checks() -> None:
 
 
 def main() -> int:
+    # des données jetables comme celles de DGX2 depuis le 30/09 : migrées (equipes_espaces.md
+    # § 5.1), la Team « Nirvalab » et son Workspace « Général », l'espace par défaut — ce qu'on
+    # crée sans Workspace dit y va, et Cal y travaille
+    from core import espaces
+    espaces.migrate(DATA)
     app = showrunner.build()
     record_routes(app)
     jobs.start()

@@ -612,10 +612,14 @@ def _read(pid: str) -> dict:
 
 
 # ── routes des projets ──────────────────────────────────────
-# Un projet est à qui l'a créé (`owner`, posé ici, jamais par la page) ; un
-# projet d'avant le 29/09, sans `owner`, est à Cal. Seul son propriétaire (ou
-# un admin) l'enregistre ou le met à la corbeille : library.check_write, la
-# règle des objets de la bibliothèque (docs/etudes/apps_studio_elements.md § 2.12).
+# Un projet est à qui l'a créé (`owner`) et à son Workspace (`space`), posés
+# ici (library.stamp), jamais par la page, et gardés à chaque enregistrement
+# (library.keep). Un projet d'avant le 29/09, sans `owner`, est à Cal. Qui
+# l'enregistre : un éditeur de son Workspace (library.check_write, décision 9) ;
+# qui le met à la corbeille : son auteur ou un admin du Workspace
+# (library.check_trash) — la règle des objets de la bibliothèque
+# (apps_studio_elements.md § 2.12, equipes_espaces.md § 2.4). La liste est
+# celle du Workspace courant (library.readable).
 def list_projects(req):
     out = []
     for f in _dir().glob("mus-*.json"):
@@ -638,8 +642,7 @@ def create_project(req):
     p = {"rythme": starter, "session": session, "vide": empty}[tpl](name)
     now = library.now()
     p.update(id=f"mus-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}", rev=1, created=now, updated=now)
-    if auth.current_id():
-        p["owner"] = auth.current_id()
+    library.stamp(p)   # son auteur et son Workspace (403 si l'on ne peut pas créer ici)
     validate(p)
     with _lock:
         _write(p)
@@ -666,11 +669,8 @@ def save_project(req, pid):
         # éléments : poser un élément de sa propre descendance est refusé, la chaîne nommée (tools/elements.py, 30/09)
         from tools import elements
         elements.check_doc(pid, [c["item"] for c in d.get("clips") or [] if isinstance(c, dict) and isinstance(c.get("item"), str)])
-        # le propriétaire et le partage restent ceux du serveur, quoi que la page envoie
-        for k in ("owner", "shared", "origin"):
-            d.pop(k, None)
-            if k in cur:
-                d[k] = cur[k]
+        # le propriétaire, le partage, le Workspace restent ceux du serveur, quoi que la page envoie
+        library.keep(d, cur)
         d.update(id=pid, created=cur.get("created"), updated=library.now(), rev=int(cur.get("rev") or 0) + 1)
         _write(d)
     return {"ok": True, "rev": d["rev"], "updated": d["updated"]}
@@ -678,7 +678,7 @@ def save_project(req, pid):
 
 def delete_project(req, pid):
     f = _path(pid)
-    library.check_write(_read(pid))   # 404 s'il est invisible, 403 s'il est à un autre
+    library.check_trash(_read(pid))   # 404 s'il est invisible (ou d'un autre Workspace), 403 s'il est à un autre
     trash = _dir() / "corbeille"
     trash.mkdir(exist_ok=True)
     shutil.move(str(f), str(trash / f.name))

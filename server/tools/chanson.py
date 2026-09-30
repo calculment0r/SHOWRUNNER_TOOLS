@@ -670,8 +670,7 @@ def api_odio(req):
     p = odio_project(song, stems)
     now = library.now()
     p.update(id=f"mus-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}", rev=1, created=now, updated=now)
-    if auth.current_id():
-        p["owner"] = auth.current_id()
+    library.stamp(p, source=song)   # son auteur ; son Workspace : celui de la chanson (403 si l'on n'y crée pas)
     try:
         music.validate(p)
     except ValueError as e:

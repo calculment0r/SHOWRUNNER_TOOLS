@@ -79,10 +79,12 @@ def _tool(it: dict) -> str:
     return (it.get("origin") or {}).get("tool") or "upload"
 
 
-def _ids(d: dict, write: bool = False) -> list[dict]:
-    """Les objets nommés par `ids`, tous présents et visibles (library.get),
-    sinon 404. `write` : tous à soi (ou Cal), sinon 403 avant d'en toucher un
-    seul — un geste en lot se fait en entier ou pas du tout."""
+def _ids(d: dict, write: bool = False, trash: bool = False) -> list[dict]:
+    """Les objets nommés par `ids`, tous présents et visibles dans ce Workspace
+    (library.get), sinon 404. `write` : tous modifiables par la personne (un
+    éditeur du Workspace, Cal) ; `trash` : tous jetables par elle (les siens, ou
+    tout pour un admin du Workspace) — sinon 403 avant d'en toucher un seul : un
+    geste en lot se fait en entier ou pas du tout."""
     ids = d.get("ids")
     if not isinstance(ids, list) or not ids:
         raise HttpError(400, "ids : la liste des objets")
@@ -96,6 +98,9 @@ def _ids(d: dict, write: bool = False) -> list[dict]:
     if write:
         for it in out:
             library.check_write(it)
+    if trash:
+        for it in out:
+            library.check_trash(it)
     return out
 
 
@@ -257,7 +262,7 @@ def bulk(req):
 
 
 def trash_many(req):
-    items = _ids(req.json(), write=True)
+    items = _ids(req.json(), trash=True)
     for it in items:
         library.trash(it["id"])
     return {"trashed": [it["id"] for it in items]}
@@ -269,9 +274,11 @@ def restore_many(req):
         raise HttpError(400, "ids : la liste des objets")
     # un id se tient à sa forme : rien ne sort de la corbeille par « .. » ; un id
     # qui n'y est pas est passé sous silence (il en est déjà revenu)
-    todo = [str(i) for i in ids if ID_RX.fullmatch(str(i)) and (library.trash_root() / str(i)).is_dir()]
-    for iid in todo:                     # tout à soi (ou Cal), avant d'en rendre un seul
-        library.check_write(library.trashed_meta(iid))
+    # (la corbeille est par Workspace : celle d'un autre n'existe pas ici, passée sous silence)
+    todo = [str(i) for i in ids if ID_RX.fullmatch(str(i)) and (library.trash_root() / str(i)).is_dir()
+            and library.readable(library.trashed_meta(str(i)))]
+    for iid in todo:                     # tout jetable par soi, avant d'en rendre un seul
+        library.check_trash(library.trashed_meta(iid))
     back = []
     for iid in todo:
         try:
@@ -425,11 +432,14 @@ def _trashed(folder: Path) -> dict | None:
 
 
 def _mine_in_trash(folder: Path) -> bool:
-    """La corbeille de chacun : ce qu'il peut rendre (le sien ; Cal, tout)."""
+    """La corbeille du Workspace courant (une par Workspace, equipes_espaces.md § 3.4 :
+    l'`item.json` jeté dit le sien), et dans elle ce que la personne peut rendre (le
+    sien ; un admin du Workspace, Cal : tout)."""
     try:
-        return auth.can_write_item(library.trashed_meta(folder.name), auth.current())
+        meta = library.trashed_meta(folder.name)
     except KeyError:
         return False
+    return library.readable(meta) and auth.can_trash_item(meta, auth.current())
 
 
 def trash_list(req):

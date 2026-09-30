@@ -197,7 +197,9 @@ def _source(it: dict, voice: str) -> tuple[Path, Path, float | None]:
 
 
 def r_wave(req, iid):
-    it = library.get(iid)
+    # montrer : l'aperçu d'un son se juge par l'objet (can_read_item), pas par le Workspace courant —
+    # une page (Asset, le panneau) montre tous les Workspaces qu'on voit, sans X-SR-Espace (étape 2)
+    it = library.see(iid)
     if not it:
         raise HttpError(404, f"introuvable : {iid}")
     src, dest, dur = _source(it, req.q("voix"))
@@ -210,7 +212,7 @@ def r_wave(req, iid):
 
 def register(app) -> None:
     app.route("GET", "/api/son/apercu/{iid}", r_wave)
-    # l'invité d'Idéation voit la forme des sons de ses planches : `library.get` le juge
+    # l'invité d'Idéation voit la forme des sons de ses planches : `library.see` le juge
     auth.guest_realm("apercu_son", routes=[("GET", r"/api/son/apercu/(?P<iid>[a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4})", None)])
 
 

@@ -404,19 +404,30 @@ def projets_liste(req=None, frais: bool = False) -> dict:
         if j.get("kind") == KIND and n and n not in travaux and j["state"] in ETAT_JOB:
             travaux[n] = j
     out, vus = [], set()
+    # les projets du Workspace courant (Teams et Workspaces, étape 2) : ceux sans Workspace
+    # (nos films, le dépôt partagé, d'avant le 30/09) sont dans Général (library.space_of)
+    ici = lambda pid, e, j=None: library.readable(_doc({**(e or {}), "id": pid}, j))   # noqa: E731
     for pid, d in films.items():
-        out.append(_projet(pid, fus.get(pid), d, "depot", None)); vus.add(pid)
+        vus.add(pid)
+        if ici(pid, fus.get(pid)):
+            out.append(_projet(pid, fus.get(pid), d, "depot", None))
     for pid, d in faites.items():
         if pid not in vus:
-            out.append(_projet(pid, fus.get(pid), d, "portail", None)); vus.add(pid)
+            vus.add(pid)
+            if ici(pid, fus.get(pid)):
+                out.append(_projet(pid, fus.get(pid), d, "portail", None))
     for pid, j in travaux.items():
         if pid not in vus:
-            out.append(_projet(pid, fus.get(pid), None, None, j)); vus.add(pid)
+            vus.add(pid)
+            if ici(pid, fus.get(pid), j):
+                out.append(_projet(pid, fus.get(pid), None, None, j))
     for pid, e in fus.items():
         # un projet créé puis supprimé l'est pour de bon ; un masque (depot: true) sans analyse ne désigne rien ici
         if pid in vus or e.get("supprime") or e.get("depot"):
             continue
-        out.append(_projet(pid, e, None, None, None)); vus.add(pid)
+        vus.add(pid)
+        if ici(pid, e):
+            out.append(_projet(pid, e, None, None, None))
     # nos films en tête, puis le plus récent d'abord
     films_l = [p for p in out if p["sorte"] == "film"]
     autres = sorted((p for p in out if p["sorte"] != "film"), key=lambda p: str(p["date"] or ""), reverse=True)
@@ -453,19 +464,29 @@ def projet_creer(req):
         store = _store_lit()
         pid = _slug_projet(nom, pris | {p["id"] for p in store})
         now = library.now()
-        # `auteur` : qui l'a créé, posé une fois (`par` suit le dernier geste) — c'est lui (ou Cal) qui le change
-        store.append({"id": pid, "nom": nom, "cree": now, "maj": now, "par": auth_id(), "auteur": auth_id()})
+        # `auteur` : qui l'a créé, posé une fois (`par` suit le dernier geste) ; `space` : son Workspace,
+        # celui de la requête (library.new_space : 403 si l'on n'y crée pas) — ses éditeurs le changent
+        store.append({"id": pid, "nom": nom, "cree": now, "maj": now, "par": auth_id(), "auteur": auth_id(),
+                      "space": library.new_space()})
         _store_ecrit(store)
     return {"projet": _un(pid), "enregistre": "portail", "partage": REFUS_ECRITURE}
 
 
+def _doc(e: dict | None, job: dict | None = None) -> dict:
+    """Un projet vu comme un document de la bibliothèque : son auteur, son Workspace
+    (sans le champ — une analyse du dépôt, du dépôt partagé, d'avant le 30/09 :
+    l'espace par défaut, Général)."""
+    e = e or {}
+    return {"id": e.get("id"), "owner": e.get("auteur"), "space": e.get("space") or (job or {}).get("space")}
+
+
 def _peut_ecrire(pid: str, store: list[dict] | None = None) -> bool:
-    """La règle des objets (auth.can_write_item) sur un projet du portail : son
-    `auteur`, ou un admin. Un projet sans auteur — une analyse du dépôt, un
-    projet du dépôt partagé, un projet d'avant le 29/09 — est à Cal."""
+    """La règle des objets (auth.can_write_item) sur un projet du portail : un éditeur
+    de son Workspace (décision 9), ou Cal. Un projet sans auteur — une analyse du dépôt,
+    un projet du dépôt partagé, un projet d'avant le 29/09 — est à Cal, dans Général."""
     from core import auth
     e = next((p for p in (store if store is not None else _store_lit()) if p["id"] == pid), None)
-    return auth.can_write_item({"owner": (e or {}).get("auteur")}, auth.current())
+    return library.in_here(_doc(e)) and auth.can_write_item(_doc(e), auth.current())
 
 
 def _refuse_ecriture(pid: str) -> None:

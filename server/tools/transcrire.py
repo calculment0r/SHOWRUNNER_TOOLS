@@ -996,8 +996,7 @@ def api_run(req) -> dict:
          "kind": it["kind"], "duration": it.get("duration"), "thumb_url": pub.get("thumb_url"),
          "lang": c["lang"], "detected": None, "mode": c["mode"], "speakers_on": c["speakers"], "state": "queued",
          "settings": {"cpl": c["cpl"], "max_s": c["max_s"]}, "segments": [], "speakers": [], "translations": {}}
-    if auth.current_id():
-        d["owner"] = auth.current_id()
+    library.stamp(d, source=it)   # son auteur ; son Workspace : celui du média (403 si l'on n'y crée pas)
     with _lock:
         _write(d)
     a = ASR[c["asr"]]
@@ -1142,7 +1141,7 @@ def api_asset(req, tid) -> dict:
 def api_delete(req, tid) -> dict:
     with _lock:
         d = _read(tid)
-        library.check_write(d)
+        library.check_trash(d)   # l'auteur, ou un admin du Workspace
         live = _live(d.get("job"))
         if live and live["state"] in ("queued", "running"):
             raise HttpError(409, "une transcription en cours : l'arrêter d'abord (File)")

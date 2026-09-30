@@ -465,8 +465,10 @@ def selftest(call, ok) -> None:
         s, _, _, _ = _req(dport, "POST", f"/api/library/{cal_item['id']}", {"title": "x"}, cookies=zc,
                           headers={**TUN, "Origin": "https://evil.example"})
         ok(s == 403, f"une écriture venue d'une autre page : refusée ({s})")
-        s, d, _, _ = _req(dport, "POST", f"/api/library/{cal_item['id']}", {"title": "Volé"}, cookies=zc, headers=TUNW)
-        ok(s == 403, f"l'objet de Cal reste à Cal ({s})")
+        # Zazie, amie avec le Studio, est éditrice de Général (décision 9 : tout éditeur modifie) ; la corbeille
+        # reste à l'auteur (equipes_espaces.md § 2.4)
+        s, d, _, _ = _req(dport, "POST", f"/api/library/{cal_item['id']}/delete", {}, cookies=zc, headers=TUNW)
+        ok(s == 403, f"l'objet de Cal ne part pas à la corbeille par Zazie ({s})")
 
         # ── le code admin : Cal entre, admin ──
         s, _, jar, _ = _req(dport, "POST", "/invitation/", raw=f"code={urllib.parse.quote(adm)}".encode(),

@@ -20,8 +20,22 @@ corbeille (`<data_dir>/trash/`), d'où il peut revenir.
 
 Chaque objet porte qui l'a fait (`origin.user`), posé ici d'après la
 personne de la requête ou du travail en cours (core/auth.py) : les outils
-n'ont rien à changer. Seul son propriétaire (ou Cal) le modifie ou le met
-à la corbeille ; qui voit quoi suit le réglage d'admin (`visibility`).
+n'ont rien à changer.
+
+Teams et Workspaces (30/09, docs/etudes/equipes_espaces.md, étape 2) : chaque
+objet porte aussi son Workspace (`space`), posé ici à sa naissance
+(`new_space` : celui du travail qui le range, sinon celui de la requête),
+jamais par la page ; les documents des outils (projet ODIO, transcription,
+planche, LUT, analyse) le reçoivent par `stamp` et le gardent à chaque
+réécriture (`keep`, OWNED). Qui voit, qui modifie, qui jette : le rôle de
+la personne dans ce Workspace (auth.can_read_item / can_write_item /
+can_trash_item, la matrice de core/espaces.py ; décision 9 : tout éditeur
+modifie, la corbeille reste à l'auteur et aux admins du Workspace). Et un
+outil n'atteint que son Workspace : dans une requête ou un travail, `get`,
+`readable` et `query` ne rendent que les objets du Workspace courant — une
+séquence de B ne pose pas une image de A, un rendu de B ne lit pas une
+référence de A, par construction. Montrer tous les Workspaces (Asset, étape
+5) passe par `see` et `query(spaces="*")`, qui ne servent qu'à montrer.
 
 Les éléments versionnés (30/09, docs/etudes/apps_studio_elements.md) : un
 élément « vivant » relie une source (un projet ODIO, une séquence, la
@@ -48,7 +62,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 
-from . import auth, config
+from . import auth, config, espaces
 
 # "sequence" : une séquence du Montage (sa timeline dans `sequence.json`, écrite par server/tools/montage.py), 29/09
 KINDS =("image", "video", "audio", "element", "midi", "sequence")
@@ -148,6 +162,11 @@ def _load() -> None:
 def _save(it: dict) -> None:
     d = root() / it["id"]
     d.mkdir(parents=True, exist_ok=True)
+    if not it.get("space"):
+        # le seul écrivain d'item.json : un objet n'y est jamais « sans Workspace ». Un
+        # objet d'avant (sans le champ) garde celui qu'il avait déjà (space_of : Général) ;
+        # un neuf qu'un outil aurait rangé sans passer par add_file : celui de sa naissance
+        it["space"] = space_of(it) if (d / "item.json").exists() else new_space(it.get("origin"), check=False)
     tmp = d / "item.json.tmp"
     tmp.write_text(json.dumps(it, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(d / "item.json")
@@ -231,7 +250,12 @@ def _frozen(it: dict, what: str) -> None:
 TRASH_GUARDS: list = []
 
 
-# ── à qui ───────────────────────────────────────────────────
+# ── à qui, dans quel Workspace ──────────────────────────────
+# ce qu'un document d'outil tient du serveur et garde à chaque réécriture, quoi que
+# la page envoie (music.save_project…) : son auteur, son partage, son origine, son Workspace
+OWNED = ("owner", "shared", "origin", "space")
+
+
 def _owned(origin: dict) -> dict:
     """`origin.user` : la personne de la requête, ou du travail qui range."""
     out = dict(origin)
@@ -241,30 +265,130 @@ def _owned(origin: dict) -> dict:
     return out
 
 
+def space_of(doc: dict | None) -> str | None:
+    """Le Workspace d'un objet ou d'un document ; sans le champ : l'espace par défaut
+    de l'instance (Général), jamais « sans Workspace » (core/espaces.py)."""
+    return auth.space_of(doc)
+
+
+def here() -> str | None:
+    """Le Workspace de la requête (posé par la porte), ou du travail en cours (posé par
+    la file le temps du `run`) ; None : le socle, ou un invité de planche."""
+    return auth.current_space()
+
+
+def in_here(doc: dict | None) -> bool:
+    """Le document est-il du Workspace courant ? Sans Workspace courant : oui."""
+    h = here()
+    return not h or space_of(doc) == h
+
+
+def check_create(space: str | None) -> None:
+    """Créer dans ce Workspace (planche, séquence, projet, dépôt de fichier) : la
+    matrice, `create` (un lecteur, un commentateur, un guest viewer : non).
+    PermissionError (403) qui dit pourquoi et à qui demander. Le socle : oui."""
+    u = auth.current()
+    if u is None or (auth.is_admin(u) and espaces.space(space) is None):
+        return   # le socle ; Cal hors de tout Workspace connu (teams.json absent ou illisible)
+    ok, why = espaces.judge(u, space, "create")
+    if not ok:
+        raise PermissionError(f"créer dans ce Workspace : {why}")
+
+
+def new_space(origin: dict | None = None, *, source: dict | None = None, check: bool = True) -> str | None:
+    """Le Workspace d'un objet ou d'un document neuf (equipes_espaces.md § 2.3) : celui
+    du document source s'il y en a un ; celui du travail qui le range (`origin.job`,
+    ctx.add), jamais celui de la page ; sinon celui de la requête ; sinon (le socle)
+    l'espace par défaut de son auteur. `check` : la personne peut-elle y créer."""
+    s = space_of(source) if source is not None else None
+    jid = (origin or {}).get("job")
+    if not s and jid:
+        from . import jobs
+        s = (jobs.get(str(jid)) or {}).get("space")
+    s = s or here() or space_of({"origin": {"user": (origin or {}).get("user") or auth.current_id()}})
+    if check:
+        check_create(s)
+    return s
+
+
+def stamp(doc: dict, *, source: dict | None = None) -> dict:
+    """Un document d'outil neuf (projet ODIO, transcription, LUT, analyse…) : son
+    auteur (`owner`, la personne de la requête ou du travail) et son Workspace
+    (`space`, new_space), posés ici, jamais par la page. PermissionError (403) si la
+    personne ne peut pas créer dans ce Workspace. Rend le document."""
+    doc["space"] = new_space(source=source)
+    uid = auth.current_id()
+    if uid and not doc.get("owner"):
+        doc["owner"] = uid
+    return doc
+
+
+def keep(new: dict, cur: dict) -> dict:
+    """Une réécriture d'un document d'outil : ce qu'il tient du serveur (OWNED) reste
+    celui du document enregistré, quoi que la page envoie ; son Workspace aussi (un
+    document d'avant, sans le champ : celui qu'il avait déjà, space_of)."""
+    for k in OWNED:
+        new.pop(k, None)
+        if k in cur:
+            new[k] = cur[k]
+    new["space"] = space_of(cur)
+    return new
+
+
+def _refusal(it: dict, what: str) -> str:
+    u = auth.current()
+    name = f"« {it.get('title') or it.get('name') or it.get('nom') or it.get('id') or '?'} »"
+    if not auth.is_guest(u) and auth.can_read_item(it, u):
+        ok, why = espaces.judge(u, space_of(it), "edit")
+        if not ok:   # le rôle dans ce Workspace (lecteur, commentateur, guest viewer, archivé)
+            return f"{name} : {why}"
+    owner = auth.display_name(auth.owner_of(it)) or auth.admin_name()
+    if what == "trash":
+        return (f"{name} est à {owner} : seul·e {owner} (ou un admin du Workspace) peut le mettre à la corbeille "
+                "ou l'en sortir")
+    who = owner if owner == auth.admin_name() else f"{owner} (ou {auth.admin_name()})"
+    return f"{name} est à {owner} : seul·e {who} peut le modifier"
+
+
 def check_write(it: dict) -> None:
     """Le juge de toute écriture : un objet de la bibliothèque, ou un document
-    d'outil qui porte son propriétaire de la même façon (`origin.user` ou
-    `owner` : un projet ODIO…). Son propriétaire ou un admin ; un objet sans
-    propriétaire est d'avant la porte : à Cal. PermissionError → 403."""
-    u = auth.current()
-    if not auth.can_write_item(it, u):
-        owner = auth.display_name(auth.owner_of(it)) or auth.admin_name()
-        who = owner if owner == auth.admin_name() else f"{owner} (ou {auth.admin_name()})"
-        raise PermissionError(f"« {it.get('title') or it.get('name') or it.get('id') or '?'} » est à {owner} : "
-                              f"seul·e {who} peut le modifier ou le mettre à la corbeille")
+    d'outil qui porte son propriétaire et son Workspace de la même façon
+    (`origin.user` ou `owner`, `space` : un projet ODIO…). Un éditeur de son
+    Workspace (décision 9 : dans un Workspace partagé, tout éditeur modifie ; un
+    guest acteur aussi ; un lecteur, un guest viewer, jamais) ; Cal, tout.
+    PermissionError → 403, qui dit pourquoi."""
+    if not auth.can_write_item(it, auth.current()):
+        raise PermissionError(_refusal(it, "edit"))
+
+
+def check_trash(it: dict) -> None:
+    """Le juge de la corbeille (y mettre, en sortir) : l'auteur s'il peut modifier dans
+    ce Workspace, un admin du Workspace, Cal (espaces.can_trash_doc). Un objet sans
+    auteur (d'avant la porte) : les admins seulement."""
+    if not auth.can_trash_item(it, auth.current()):
+        raise PermissionError(_refusal(it, "trash"))
 
 
 _check_write = check_write   # le nom d'avant (montage.py)
 
 
-def readable(it: dict) -> bool:
+def visible(it: dict) -> bool:
+    """Voir l'objet, tous Workspaces confondus : pour MONTRER seulement (Asset, une
+    vignette). Un outil qui s'en sert lit par `readable` / `get`."""
     return auth.can_read_item(it, auth.current())
 
 
+def readable(it: dict) -> bool:
+    """Lire pour s'en servir : visible, et du Workspace courant — les listes de
+    documents des outils (ODIO, transcriptions…) passent par ici : elles sont par
+    Workspace, par construction."""
+    return in_here(it) and visible(it)
+
+
 def readable_path(rel: str) -> bool:
-    """Le juge des fichiers servis sous /library/ : `<id>/<fichier>`."""
-    it = get(rel.split("/", 1)[0])
-    return bool(it) and readable(it)
+    """Le juge des fichiers servis sous /library/ : `<id>/<fichier>` — montrer (une
+    vignette d'un autre Workspace qu'on voit se montre ; un outil n'y lit rien)."""
+    return see(rel.split("/", 1)[0]) is not None
 
 
 # ── les médias ──────────────────────────────────────────────
@@ -462,6 +586,8 @@ def add_file(src: Path, *, kind: str | None = None, title: str = "", origin: dic
     kind = kind or EXT_KIND.get(src.suffix.lower())
     if kind not in ("image", "video", "audio", "midi"):
         raise ValueError(f"type de fichier non pris : {src.suffix}")
+    org = _owned(origin or {"tool": "upload"})
+    space = new_space(org)   # avant de rien copier : qui ne peut pas créer ici ne laisse rien derrière lui
     iid = new_id(kind)
     d = folder_of(iid)
     d.mkdir(parents=True, exist_ok=True)
@@ -469,9 +595,9 @@ def add_file(src: Path, *, kind: str | None = None, title: str = "", origin: dic
     (shutil.move if move else shutil.copyfile)(str(src), str(d / name))
     it = {
         "id": iid, "kind": kind, "title": title or src.stem, "created": now(), "updated": now(),
-        "file": name, "origin": _owned(origin or {"tool": "upload"}), "prompt": prompt, "params": params or {},
+        "file": name, "origin": org, "prompt": prompt, "params": params or {},
         "parents": list(parents or []), "tags": list(tags or []), "folder": folder, "fav": False,
-        **probe(d / name), **(extra or {}),
+        **probe(d / name), **{k: v for k, v in (extra or {}).items() if k != "space"}, "space": space,
     }
     if make_thumb(d / name, d / "thumb.jpg", kind):
         it["thumb"] = "thumb.jpg"
@@ -509,6 +635,8 @@ def create_element(title: str, etype: str = "character", description: str = "", 
     _load()
     if etype not in ELEMENT_TYPES:
         raise ValueError(f"sorte d'élément inconnue : {etype} ({', '.join(ELEMENT_TYPES)})")
+    org = _owned({"tool": (source or {}).get("tool", "asset")})
+    space = new_space(org)
     iid = new_id("element")
     d = folder_of(iid)
     d.mkdir(parents=True, exist_ok=True)
@@ -538,7 +666,7 @@ def create_element(title: str, etype: str = "character", description: str = "", 
         out_refs.append(ref)
     it = {
         "id": iid, "kind": "element", "title": title or "élément", "created": now(), "updated": now(),
-        "origin": _owned({"tool": (source or {}).get("tool", "asset")}), "tags": list(tags or []), "folder": folder,
+        "origin": org, "space": space, "tags": list(tags or []), "folder": folder,
         "fav": False, "parents": [r["item"] for r in out_refs + voices if r.get("item")],
         "element": {"type": etype, "description": description, "refs": out_refs, "source": source or {},
                     **({"voices": voices} if voices else {})},
@@ -558,11 +686,13 @@ def create_living(title: str, etype: str, source: dict, *, media: str | None = N
     _load()
     if etype not in ELEMENT_TYPES_ALL:
         raise ValueError(f"sorte d'élément inconnue : {etype} ({', '.join(ELEMENT_TYPES_ALL)})")
+    org = _owned({"tool": source.get("tool", "asset")})
+    space = new_space(org)
     iid = new_id("element")
     folder_of(iid).mkdir(parents=True, exist_ok=True)
     it = {
         "id": iid, "kind": "element", "title": (title or "élément")[:200], "created": now(), "updated": now(),
-        "origin": _owned({"tool": source.get("tool", "asset")}), "tags": list(tags or []), "folder": folder, "fav": False,
+        "origin": org, "space": space, "tags": list(tags or []), "folder": folder, "fav": False,
         "parents": [], "element": {"type": etype, "description": description, "refs": [], "source": source,
                                    "media": media, "versions": []},
     }
@@ -600,7 +730,7 @@ def update(item_id: str, patch: dict) -> dict:
     _load()
     with _lock:
         it = _items.get(item_id)
-        if not it:
+        if not it or not readable(it):   # un objet d'un autre Workspace n'existe pas ici
             raise KeyError(item_id)
         _check_write(it)
         _check_patch(patch)
@@ -641,7 +771,7 @@ def add_ref(item_id: str, src: Path, role: str = "", label: str = "", from_item:
     _load()
     with _lock:
         it = _items.get(item_id)
-        if not it or it["kind"] != "element":
+        if not it or it["kind"] != "element" or not readable(it):
             raise KeyError(item_id)
         _check_write(it)
         _frozen(it, "ses références")
@@ -672,9 +802,9 @@ def trash(item_id: str) -> None:
     _load()
     with _lock:
         it = _items.get(item_id)
-        if not it:
+        if not it or not readable(it):   # un objet d'un autre Workspace n'existe pas ici
             raise KeyError(item_id)
-        _check_write(it)
+        check_trash(it)
         for guard in TRASH_GUARDS:       # une version utilisée ne part pas (server/tools/elements.py)
             guard(it)
         _items.pop(item_id, None)
@@ -710,7 +840,10 @@ def restore(item_id: str) -> dict:
             raise KeyError(item_id)
         # (avant le 29/09, ce contrôle était dans un `except OSError` qui avalait
         # le refus — PermissionError en est une sous-classe : chacun rendait tout)
-        check_write(trashed_meta(item_id))
+        meta = trashed_meta(item_id)
+        if not readable(meta):   # la corbeille est par Workspace (§ 3.4) : celle d'un autre n'existe pas ici
+            raise KeyError(item_id)
+        check_trash(meta)
         if folder_of(item_id).exists():
             raise ValueError(f"{item_id} est déjà dans la bibliothèque")
         shutil.move(str(src), str(folder_of(item_id)))
@@ -721,16 +854,27 @@ def restore(item_id: str) -> dict:
 
 # ── lire ────────────────────────────────────────────────────
 def get(item_id: str) -> dict | None:
-    """L'objet — s'il existe et si la personne qui agit a le droit de le voir :
-    celle de la requête, ou le propriétaire du travail en cours (core/jobs.py
-    pose `auth.current` le temps du `run`). Sinon None, comme un objet absent :
-    on ne dit pas qu'un objet invisible existe. Tous les outils lisent par ici,
-    la règle de lecture (`visibility`, auth.can_read_item) n'est jugée qu'à cet
-    endroit : une route ou un travail qui prendrait l'objet d'un autre par son
-    identifiant ne le trouve pas. Sans personne (le socle, le rattrapage) : tout."""
+    """L'objet — s'il existe, s'il est du Workspace courant et si la personne qui
+    agit a le droit de le voir : celle de la requête, ou le propriétaire du travail
+    en cours (core/jobs.py pose `auth.current`, et le Workspace du travail, le
+    temps du `run`). Sinon None, comme un objet absent : on ne dit pas qu'un objet
+    invisible existe. Tous les outils lisent par ici, la règle de lecture (le rôle
+    dans le Workspace, `visibility` : auth.can_read_item) et la borne du Workspace
+    ne sont jugées qu'à cet endroit : une route ou un travail qui prendrait l'objet
+    d'un autre Workspace par son identifiant ne le trouve pas — il faut le
+    rapatrier (étape 5). Sans personne ni Workspace (le socle, le rattrapage) : tout."""
     _load()
     it = _items.get(item_id)
     return it if it is not None and readable(it) else None
+
+
+def see(item_id: str) -> dict | None:
+    """L'objet s'il existe et si la personne le voit, TOUS Workspaces confondus —
+    pour montrer seulement (une vignette, la carte d'Asset) : un outil qui s'en
+    sert passe par `get`, borné au Workspace courant."""
+    _load()
+    it = _items.get(item_id)
+    return it if it is not None and visible(it) else None
 
 
 def path_of(it: dict, name: str | None = None) -> Path:
@@ -807,15 +951,25 @@ def public(it: dict) -> dict:
 
 
 def query(kinds: list[str] | None = None, q: str = "", folder: str | None = None, sort: str = "new",
-          limit: int = 200, offset: int = 0, fav: bool = False, tool: str = "", versions: bool = True) -> dict:
+          limit: int = 200, offset: int = 0, fav: bool = False, tool: str = "", versions: bool = True,
+          spaces=None) -> dict:
     """`versions=False` : les versions d'un élément présent restent sous lui (Asset
-    les empile) ; celles d'un élément à la corbeille redeviennent des objets à part."""
+    les empile) ; celles d'un élément à la corbeille redeviennent des objets à part.
+    `spaces` : None, le Workspace courant (ce que les outils listent : un outil
+    n'atteint que son Workspace) ; une liste de Workspaces, ou « * » (tous ceux que
+    la personne voit) : pour MONTRER seulement (Asset tous Workspaces, étape 5) —
+    chaque objet rendu dit le sien (`space`)."""
     _load()
     with _lock:
         items = list(_items.values())
-    u = auth.current()
-    if u and not auth.is_admin(u) and auth.settings()["visibility"] != "all":
-        items = [i for i in items if auth.can_read_item(i, u)]
+    if spaces is None:
+        want = {here()} if here() else None
+    elif spaces == "*":
+        want = None
+    else:
+        want = {str(s) for s in spaces}
+    sees = auth.item_reader(auth.current())
+    items = [i for i in items if (want is None or space_of(i) in want) and sees(i)]
     if not versions:
         items = [i for i in items if not (isinstance(i.get("version"), dict) and i["version"].get("of") in _items)]
     visible = items
@@ -840,3 +994,9 @@ def query(kinds: list[str] | None = None, q: str = "", folder: str | None = None
     folders = sorted({i.get("folder") for i in visible if i.get("folder")})
     return {"total": len(items), "items": [public(i) for i in items[offset:offset + limit]],
             "counts": counts, "folders": folders}
+
+
+# l'étape 2 des Teams et Workspaces est en place (ci-dessus : `space` à la naissance,
+# les juges par rôle de Workspace, la borne du Workspace courant) : core/espaces.py
+# peut faire des guests dès que la garde du calcul (étape 1) l'est aussi
+espaces.garde_prete("bibliotheque")

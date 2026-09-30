@@ -61,9 +61,10 @@ erreur sur 8790 n'ouvre rien.
   - `"auth": false` dans `showrunner.local.json` coupe la porte (essais,
     `tools/check.py`) : tout se passe alors comme si Cal était connecté.
 
-Qui voit quoi : réglage d'admin, « tout le monde voit tout » par défaut
-(décision de Cal en attente, docs/REPRISE.md) ; dans les deux cas, seul
-le propriétaire d'un objet (ou un admin) le modifie ou le met à la corbeille.
+Qui voit quoi, qui modifie : le rôle de la personne dans le Workspace de
+l'objet (étape 2 des Teams et Workspaces, plus bas : can_read_item,
+can_write_item, can_trash_item) ; le réglage d'admin `visibility: own`
+resserre encore la lecture à ce qui est à soi ou partagé.
 
 L'invité (rôle `invite`, 29/09) : quelqu'un qui entre par un lien qu'un
 outil lui a donné (une planche d'Idéation) n'est pas un ami du portail. Son
@@ -476,19 +477,59 @@ def owner_of(it: dict) -> str | None:
     return (it.get("origin") or {}).get("user") or it.get("owner")
 
 
-def can_read_item(it: dict, u: dict | None) -> bool:
+# Teams et Workspaces, étape 2 (docs/etudes/equipes_espaces.md § 2.3, § 2.4) : un objet
+# ou un document est à son Workspace (`space`, space_of) ; son auteur (owner_of) reste
+# l'auteur. Qui le voit, qui le modifie, qui le jette : le rôle de la personne dans ce
+# Workspace (core/espaces.py, la matrice) ; `visibility: own` (réglage d'admin) resserre
+# encore la lecture à ce qui est à soi ou partagé. Cal voit et fait tout ; le socle (aucune
+# personne) aussi ; l'invité d'une planche ne voit que ce que ses outils lui montrent.
+# Ces juges disent « où qu'il soit » : la borne du Workspace courant (un outil n'atteint
+# que son Workspace) est à part, dans core/library.py (readable, get, query).
+def can_read_item(it: dict, u: dict | None, _view=None) -> bool:
     if is_guest(u):   # un invité : les objets que ses outils lui montrent, rien d'autre
         return it.get("id") in guest_items(u)
-    if u is None or is_admin(u) or settings()["visibility"] == "all":
+    if u is None or is_admin(u):
         return True
-    return owner_of(it) == u["id"] or bool(it.get("shared"))
+    if not (_view(space_of(it)) if _view else can_view(u, space_of(it))):
+        return False
+    return settings()["visibility"] == "all" or owner_of(it) == u["id"] or bool(it.get("shared"))
+
+
+def item_reader(u: dict | None):
+    """can_read_item pour une liste : l'avis de chaque Workspace pris une fois (une liste
+    de 10 000 objets ne rejuge pas 10 000 fois le même Workspace)."""
+    memo: dict = {}
+
+    def view(space):
+        if space not in memo:
+            memo[space] = can_view(u, space)
+        return memo[space]
+    return lambda it: can_read_item(it, u, view)
 
 
 def can_write_item(it: dict, u: dict | None) -> bool:
-    """Seul le propriétaire (ou un admin) modifie ; un objet d'avant la porte est à Cal."""
+    """Modifier : un éditeur du Workspace du document (décision 9 : dans un Workspace
+    partagé, tout éditeur modifie ; un guest acteur aussi ; un lecteur, un commentateur,
+    un guest viewer, jamais ; un Workspace archivé : personne) ; Cal, tout. L'invité
+    d'une planche : ce qui est à lui."""
     if u is None or is_admin(u):
         return True
-    return owner_of(it) == u["id"]
+    if is_guest(u):
+        return owner_of(it) == u["id"] and can_read_item(it, u)
+    from . import espaces
+    return can_read_item(it, u) and espaces.can_write_doc(u, it)
+
+
+def can_trash_item(it: dict, u: dict | None) -> bool:
+    """Mettre à la corbeille, en sortir : l'auteur s'il peut modifier dans ce Workspace,
+    un admin du Workspace (ou de sa Team), Cal. Un objet sans auteur (d'avant la porte) :
+    les admins."""
+    if u is None or is_admin(u):
+        return True
+    if is_guest(u):
+        return owner_of(it) == u["id"] and can_read_item(it, u)
+    from . import espaces
+    return can_read_item(it, u) and espaces.can_trash_doc(u, it)
 
 
 # ── le Studio : le droit `access`, à côté du rôle ───────────
@@ -1245,7 +1286,31 @@ def accept(uid: str, by: str, role: str | None = None, *, access: str | None = N
             u["via"] = via
         _save()
     journal("accepté", user=uid, by=by, **({"role": role} if role else {}), **({"via": via} if via else {}))
+    if role != GUEST and access is None and perso is not False:   # Cal accepte un ami à la porte
+        _join_instance_team(u)
     return dict(u)
+
+
+def _join_instance_team(u: dict) -> None:
+    """Un ami que Cal accepte à la porte, crée d'avance, fait ami (un invité de planche)
+    ou à qui il ouvre le Studio dans l'Admin — avec le Studio — devient membre de la
+    Team de l'instance — celle de l'espace par défaut, « Nirvalab » —, donc éditeur
+    de « Général » (un admin du portail aussi : membre ; ses pouvoirs viennent du
+    portail, et s'en vont avec lui). C'est la règle 2
+    de la migration (equipes_espaces.md § 5.1), tenue pour chaque nouvel ami : « tout
+    le monde est dans Général » reste vrai après le 30/09, un ami d'aujourd'hui voit
+    et fait ce qu'il faisait. Un compte Apps n'a que sa Team personnelle ; qui entre
+    par le lien d'une Team (un membre, un guest), un invité de planche : ce que leur
+    lien leur donne (core/espaces.py, redeem)."""
+    from . import espaces
+    tid = espaces.team_of_space(espaces.default_space())
+    if not tid or u.get("id") == admin_id() or u.get("state") != "active" or u.get("perso") is False \
+            or u.get("via") == "equipe" or (u.get("role") != "admin" and u.get("access") != "studio"):
+        return
+    try:   # membre, jamais admin de Team : un admin du portail a déjà tout (il redevient ami : un membre)
+        espaces.add_member(None, tid, u["name"], "member")
+    except HttpError as e:   # une Team archivée, teams.json illisible : l'ami reste accepté, Cal le met à la main
+        journal("team de l'instance : pas ajouté", user=u.get("id"), why=e.message)
 
 
 def find_pseudo(name) -> dict | None:
@@ -1388,6 +1453,7 @@ def create_friend(pseudo, by: str, role: str = "ami", access: str | None = None)
         db["users"][key] = u
         _save()
     journal("ajouté d'avance", user=key, by=by, role=role, access=access)
+    _join_instance_team(u)
     return dict(u)
 
 
@@ -1497,6 +1563,8 @@ def set_user(uid: str, patch: dict, by: str) -> dict:
         _save()
         out = dict(u)
     journal("personne", user=uid, by=by, patch=patch)
+    if ("role" in patch or patch.get("access") == "studio") and out.get("role") != GUEST:
+        _join_instance_team(out)   # Cal en fait un ami (ou lui ouvre le Studio) : dans Général, comme les autres
     return out
 
 

@@ -270,8 +270,34 @@ def load(bid: str) -> dict:
     return json.loads(f.read_text(encoding="utf-8"))
 
 
+# Teams et Workspaces (étape 2) : une planche est à son Workspace (`space`), posé à sa
+# naissance (celui de la requête : library.new_space, qui juge « créer ») et gardé par
+# `_write`, le seul écrivain des planches — la page, la co-édition, `normalize` n'y
+# touchent pas. Retenu en mémoire : seul `_write` l'écrit (la migration, portail arrêté).
+_spaces: dict[str, str] = {}
+
+
+def board_space(bid: str) -> str | None:
+    """Le Workspace d'une planche (sans le champ : celui qu'elle a déjà, space_of)."""
+    s = _spaces.get(bid)
+    if s:
+        return s
+    try:
+        d = json.loads(_path(bid).read_text(encoding="utf-8"))
+    except (OSError, ValueError, HttpError):
+        return None
+    from tools import ideation_collab   # l'auteur d'une planche est dans son fichier d'accès
+    s = library.space_of({"space": d.get("space") if isinstance(d, dict) else None,
+                          "owner": ideation_collab._access(bid).get("owner")})
+    _spaces[bid] = s
+    return s
+
+
 def _write(b: dict) -> None:
     f = _path(b["id"])
+    # le Workspace : celui du fichier (jamais celui de la page) ; une planche neuve, celui de la requête
+    b["space"] = board_space(b["id"]) if f.exists() else library.new_space()
+    _spaces[b["id"]] = b["space"]
     tmp = f.with_suffix(".tmp")
     tmp.write_text(json.dumps(b, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(f)
@@ -1465,13 +1491,15 @@ def _lot_values(d: dict) -> list[dict]:
 
 
 def _submit_all(todo: list) -> list:
-    """Met en file tous les travaux d'un lot ; un quota atteint en route retire
-    ceux qui y sont déjà (un lot à moitié parti n'aurait pas de sens)."""
+    """Met en file tous les travaux d'un lot ; un refus en route (un quota
+    atteint, la garde du calcul : un coût que la personne ne peut pas dans ce
+    Workspace) retire ceux qui y sont déjà — un lot à moitié parti n'aurait pas
+    de sens, et rien ne reste d'un envoi refusé."""
     out = []
     try:
         for kind, params, title, tool, pin, extra in todo:
             out.append({**jobs.public(jobs.submit(kind, params, title=title, tool=tool, pin=pin)), **extra})
-    except jobs.QuotaError:
+    except Exception:
         for j in out:
             jobs.cancel(j["id"])
         raise

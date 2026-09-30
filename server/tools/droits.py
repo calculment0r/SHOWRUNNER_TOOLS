@@ -2,23 +2,39 @@
 
 Ce module n'a pas de route : il prouve, par l'API comme une page le ferait,
 les règles d'écriture et de lecture du portail quand des amis entrent
-(docs/etudes/apps_studio_elements.md § 2.12, audit du 29/09) :
+(docs/etudes/apps_studio_elements.md § 2.12, audit du 29/09 ; Teams et
+Workspaces, docs/etudes/equipes_espaces.md, étape 2, le 30/09) :
 
-  - un objet, un projet ODIO, un projet d'analyse, une LUT : seul son
-    propriétaire (ou Cal) l'écrit ; sans propriétaire, il est à Cal
-    (library.check_write, auth.can_write_item) ;
-  - lire : `library.get` juge la visibilité (`visibility` = own : chacun le
-    sien et ce qui est partagé) pour toutes les routes et tous les travaux ;
+  - un objet, un projet ODIO, une séquence, une planche, une transcription, un
+    projet d'analyse, une LUT sont à leur Workspace (`space`, posé à la
+    création, jamais par la page, gardé à chaque réécriture) ; leur auteur
+    reste l'auteur ;
+  - voir : le rôle dans ce Workspace (lecteur et au-dessus, guest viewer
+    compris) ; `visibility: own` resserre à ce qui est à soi ou partagé ;
+  - modifier : un éditeur du Workspace (décision 9 : tout éditeur modifie ; un
+    guest acteur aussi ; un guest viewer, jamais) ; créer, de même ; la
+    corbeille : l'auteur, ou un admin du Workspace ; sans auteur : les admins ;
+  - un outil n'atteint que son Workspace : dans une requête ou un travail,
+    `library.get` et les listes ne rendent que le Workspace courant ; montrer
+    (un fichier sous /library/, l'aperçu d'un son) se juge par l'objet ;
   - `POST /api/jobs` : une sorte inconnue → 400 ; une sorte qui a sa route
     (non `direct`) → 403 pour un ami ; une sorte `direct` juge ses réglages
     à l'entrée (jobs.register(…, direct=)) ;
-  - la corbeille : chacun la sienne ; le retour en lot prend toutes les
-    sortes (mid-, seq-) ; un geste en lot se fait en entier ou pas du tout ;
+  - la corbeille : par Workspace, chacun la sienne ; le retour en lot prend
+    toutes les sortes (mid-, seq-) ; un geste en lot se fait en entier ou pas
+    du tout ;
   - un dépôt : le contenu doit être ce que dit son nom ; la taille d'un ami
     est bornée (config `upload_max_mb`) ; un corps JSON, à 32 Mo.
+
+Les personnes : Cal ; A (Albane) et B (Bastien), amis que Cal accepte, donc
+éditeurs de Général (la Team de l'instance, auth._join_instance_team) ; B'
+(Gil) guest viewer et B'' (Gaël) guest acteur de Général ; C (Cyril),
+membre d'une autre Team.
 """
 
 from __future__ import annotations
+
+GENERAL = "esp-general"
 
 
 def selftest(call, ok) -> None:
@@ -42,8 +58,10 @@ def selftest(call, ok) -> None:
 
     before = config.CFG.get("auth")
     max_mb = config.CFG.get("upload_max_mb")
+    essai = config.CFG.get("equipes_guests_essai")
     max_json = getattr(http, "MAX_JSON", None)   # getattr : le contrôle tourne aussi sur le code d'avant (trous rouverts)
     config.CFG["auth"] = True
+    config.CFG["equipes_guests_essai"] = True    # une copie d'essai : la garde du calcul peut y manquer
     auth.startup()
     with auth._lock:
         auth._hits.clear()   # les limites de débit des contrôles d'avant (compte.py) : un autre essai
@@ -71,37 +89,60 @@ def selftest(call, ok) -> None:
             toks[uid] = t
             ok(s1 == 200 and s2 == 200 and t, f"droits : {name} entre, Cal l'accepte ({s1} {s2} {d1})")
         A, B = toks["albane"], toks["bastien"]
+        for uid in ("albane", "bastien"):
+            m = (auth.user(uid) or {})
+            ok(m.get("access") == "studio" and _space_role(uid, GENERAL) == "editor",
+               f"droits : {uid}, ami accepté avec le Studio, est éditeur de Général (la Team de l'instance) "
+               f"({m.get('access')} {_space_role(uid, GENERAL)})")
+        # B' guest viewer, B'' guest acteur de Général ; C membre d'une autre Team
+        s1, _, _ = H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": "Gil Viewer", "role": "guest", "guest": "viewer",
+                                                                   "spaces": [GENERAL]}, cookie=cal, headers=same)
+        s2, _, _ = H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": "Gael Acteur", "role": "guest", "guest": "acteur",
+                                                                   "spaces": [GENERAL]}, cookie=cal, headers=same)
+        s3, tc, _ = H("POST", "/api/equipes", {"name": "Droits Ailleurs"}, cookie=cal, headers=same)
+        wsc = ((tc or {}).get("spaces") or [{}])[0].get("id") if isinstance(tc, dict) else None
+        s4, _, _ = H("POST", f"/api/equipes/{(tc or {}).get('id')}/membres", {"pseudo": "Cyril Ailleurs", "role": "member"},
+                     cookie=cal, headers=same)
+        GV = H("POST", "/api/auth/enter", {"name": "Gil Viewer"}, headers=same)[2]
+        GA = H("POST", "/api/auth/enter", {"name": "Gael Acteur"}, headers=same)[2]
+        C = H("POST", "/api/auth/enter", {"name": "Cyril Ailleurs"}, headers=same)[2]
+        ok((s1, s2, s3, s4) == (200, 200, 200, 200) and GV and GA and C and wsc,
+           f"droits : Gil (guest viewer), Gaël (guest acteur) de Général, Cyril d'une autre Team entrent ({s1} {s2} {s3} {s4})")
 
-        def a(method, path, body=None, **kw):
-            return H(method, path, body, cookie=A, headers={**same, **kw.pop("headers", {})}, **kw)[:2]
+        def who(tok):
+            def req(method, path, body=None, **kw):
+                return H(method, path, body, cookie=tok, headers={**same, **kw.pop("headers", {})}, **kw)[:2]
+            return req
 
-        def b(method, path, body=None, **kw):
-            return H(method, path, body, cookie=B, headers={**same, **kw.pop("headers", {})}, **kw)[:2]
-
-        def c(method, path, body=None, **kw):
-            return H(method, path, body, cookie=cal, headers={**same, **kw.pop("headers", {})}, **kw)[:2]
+        a, b, c, gv, ga, cy = who(A), who(B), who(cal), who(GV), who(GA), who(C)
 
         # ── ODIO : le projet de A ────────────────────────────
         s, p = a("POST", "/api/music/projects", {"name": "Projet d'Albane"})
-        ok(s == 200 and p.get("owner") == "albane", f"ODIO : le projet est à qui le crée ({s} {p.get('owner') if isinstance(p, dict) else p})")
+        ok(s == 200 and p.get("owner") == "albane" and p.get("space") == GENERAL,
+           f"ODIO : le projet est à qui le crée, dans son Workspace ({s} {p.get('owner') if isinstance(p, dict) else p} "
+           f"{p.get('space') if isinstance(p, dict) else ''})")
         pid = p.get("id", "")
         s, got = b("GET", f"/api/music/projects/{pid}")
-        ok(s == 200, f"ODIO : B le lit (visibility = all) ({s})")
-        s, d = b("POST", f"/api/music/projects/{pid}", got)
-        ok(s == 403 and "Albane" in err(d), f"ODIO : B ne l'enregistre pas ({s} {d})")
-        s, _ = b("POST", f"/api/music/projects/{pid}/delete")
-        ok(s == 403 and music._path(pid).exists(), f"ODIO : B ne le met pas à la corbeille ({s})")
-        got["owner"] = "bastien"
-        s, d = a("POST", f"/api/music/projects/{pid}", got)
+        ok(s == 200, f"ODIO : B le lit (Général, visibility = all) ({s})")
+        s, d = b("POST", f"/api/music/projects/{pid}", {**got, "owner": "bastien", "space": "esp-ailleurs", "shared": True})
         s2, again = a("GET", f"/api/music/projects/{pid}")
-        ok(s == 200 and again.get("owner") == "albane", f"ODIO : A l'enregistre ; le propriétaire ne vient pas de la page ({s} {again.get('owner')})")
+        ok(s == 200 and again.get("owner") == "albane" and again.get("space") == GENERAL and not again.get("shared"),
+           f"ODIO : B, éditeur de Général, l'enregistre (décision 9) ; l'auteur, le Workspace, le partage restent ceux "
+           f"du serveur, quoi que la page envoie ({s} {again.get('owner')} {again.get('space')})")
+        s, d = b("POST", f"/api/music/projects/{pid}/delete")
+        ok(s == 403 and music._path(pid).exists() and "Albane" in err(d),
+           f"ODIO : B ne le met pas à la corbeille : son auteur, ou un admin du Workspace ({s} {err(d)})")
         s, d = c("POST", f"/api/music/projects/{pid}", again)
         ok(s == 200, f"ODIO : Cal enregistre tout ({s})")
         old = music.empty("D'avant la porte")
         old.update(id="mus-20260101-000000-0a0a", rev=1, created=library.now(), updated=library.now())
         music._write(old)
         s, _ = a("POST", f"/api/music/projects/{old['id']}", old)
-        ok(s == 403, f"ODIO : un projet sans propriétaire est à Cal ({s})")
+        s2, _ = a("POST", f"/api/music/projects/{old['id']}/delete")
+        kept = json.loads(music._path(old["id"]).read_text(encoding="utf-8"))
+        ok(s == 200 and s2 == 403 and kept.get("space") == GENERAL,
+           f"ODIO : un projet sans propriétaire (dans Général) s'enregistre par un éditeur, ne se jette que par un admin ; "
+           f"son Workspace est écrit à la réécriture ({s} {s2} {kept.get('space')})")
         auth.set_settings({"visibility": "own"}, by="cal")
         s, _ = b("GET", f"/api/music/projects/{pid}")
         s2, lst = b("GET", "/api/music/projects")
@@ -132,33 +173,42 @@ def selftest(call, ok) -> None:
         s, _ = b("POST", f"/api/jobs/{j.get('id')}/cancel")
         ok(s == 403, f"file : B n'arrête pas le travail de A ({s})")
 
-        # ── Object Creator : un mesh ne s'ajoute qu'à son objet ──
+        # ── Object Creator : un mesh ne s'ajoute qu'à un objet qu'on peut modifier ──
         s, img = a("PUT", "/api/library/upload?name=botte.png&title=Botte", raw=png(), headers={"Content-Type": "image/png"})
         s2, obj = a("POST", "/api/objet/objects", {"title": "Botte", "item": img.get("id")})
         ok(s == 200 and s2 == 200 and obj.get("owner") == "albane", f"objet : A fait un objet ({s} {s2})")
-        s, d = b("POST", "/api/jobs", {"kind": "objet.mesh_factice", "params": {"element": obj.get("id")}})
-        ok(s == 403, f"objet : B ne lance pas de mesh sur l'objet de A ({s} {d})")
-        s, j = a("POST", "/api/jobs", {"kind": "objet.mesh_factice", "params": {"element": obj.get("id")}})
-        ok(s == 200, f"objet : A, oui ({s} {j})")
+        s, d = gv("POST", "/api/jobs", {"kind": "objet.mesh_factice", "params": {"element": obj.get("id")}})
+        ok(s == 403, f"objet : Gil, guest viewer, ne lance pas de mesh sur l'objet de A ({s} {err(d)[:80]})")
+        s, j = b("POST", "/api/jobs", {"kind": "objet.mesh_factice", "params": {"element": obj.get("id")}})
+        ok(s == 200, f"objet : B, éditeur de Général, oui (décision 9) ({s} {err(j)})")
         queued.append(j.get("id"))
 
         # ── Asset : la planche, CF, les lots ──────────────────
         s, bimg = b("PUT", "/api/library/upload?name=b.png&title=De+Bastien", raw=png((9, 9, 200)), headers={"Content-Type": "image/png"})
         s, el = a("POST", "/api/elements", {"title": "Perso A", "type": "character", "refs": [{"item": img["id"], "role": "face"}]})
         ref0 = (el.get("element") or {}).get("refs", [{}])[0].get("file", "")
-        s, d = b("POST", f"/api/asset/refs/{el.get('id')}", {"refs": []})
-        ok(s == 403 and library.get(el["id"])["element"]["refs"], f"asset : B ne vide pas la planche de A ({s})")
-        s, d = b("POST", "/api/asset/cf/refresh", {"id": el.get("id")})
-        ok(s == 403 and (library.folder_of(el["id"]) / ref0).is_file(), f"asset : B ne remet pas à jour l'élément de A, rien n'est effacé ({s})")
-        s, d = b("POST", "/api/asset/bulk", {"ids": [bimg["id"], img["id"]], "fav": True})
-        ok(s == 403 and not library.get(bimg["id"]).get("fav"), f"asset : un lot qui touche l'objet de A : rien n'est fait ({s})")
-        s, d = b("POST", "/api/asset/move", {"ids": [bimg["id"], img["id"]], "folder": "Volé"})
+        s, d = gv("POST", f"/api/asset/refs/{el.get('id')}", {"refs": []})
+        ok(s == 403 and library.get(el["id"])["element"]["refs"], f"asset : Gil (viewer) ne vide pas la planche de A ({s})")
+        s, d = gv("POST", "/api/asset/cf/refresh", {"id": el.get("id")})
+        ok(s == 403 and (library.folder_of(el["id"]) / ref0).is_file(), f"asset : Gil ne remet pas à jour l'élément de A, rien n'est effacé ({s})")
+        s, d = gv("POST", "/api/asset/bulk", {"ids": [bimg["id"], img["id"]], "fav": True})
+        ok(s == 403 and not library.get(bimg["id"]).get("fav"), f"asset : un lot de Gil : rien n'est fait ({s})")
+        s, d = gv("POST", "/api/asset/move", {"ids": [bimg["id"], img["id"]], "folder": "Volé"})
         ok(s == 403 and not library.get(bimg["id"]).get("folder"), f"asset : ranger en lot, de même ({s})")
+        s, d = b("POST", "/api/asset/bulk", {"ids": [bimg["id"], img["id"]], "fav": True})
+        s2, seen = a("GET", f"/api/library/{img['id']}")
+        s3, seen2 = gv("GET", f"/api/library/{img['id']}")
+        ok(s == 200 and seen.get("fav") and seen2.get("fav"),
+           f"asset : B met en favori, A et Gil le voient — les favoris sont partagés par le Workspace ({s} {s2} {s3})")
+        b("POST", "/api/asset/bulk", {"ids": [bimg["id"], img["id"]], "fav": False})
         a("POST", "/api/asset/move", {"ids": [img["id"]], "folder": "Commun"})
         b("POST", "/api/asset/move", {"ids": [bimg["id"]], "folder": "Commun"})
+        s, d = gv("POST", "/api/asset/folders/rename", {"from": "Commun", "to": "Chez Gil"})
+        ok(s == 403 and library.get(img["id"])["folder"] == "Commun", f"asset : Gil ne renomme pas un dossier ({s})")
         s, d = b("POST", "/api/asset/folders/rename", {"from": "Commun", "to": "Chez Bastien"})
-        ok(s == 200 and d.get("renamed") == 1 and d.get("kept") == 1 and library.get(img["id"])["folder"] == "Commun",
-           f"asset : renommer un dossier renomme les siens, pas ceux de A ({s} {d})")
+        ok(s == 200 and d.get("renamed") == 2 and d.get("kept") == 0 and library.get(img["id"])["folder"] == "Chez Bastien",
+           f"asset : B, éditeur, renomme le dossier entier du Workspace (décision 9) ({s} {d})")
+        a("POST", "/api/asset/move", {"ids": [img["id"]], "folder": ""})
         s, d = a("POST", f"/api/library/{img['id']}", {"tags": "pas une liste"})
         ok(s == 400, f"bibliothèque : une modification mal formée est refusée ({s})")
 
@@ -213,6 +263,7 @@ def selftest(call, ok) -> None:
         ok(s == 413 and "1 Mo" in err(d) and s2 == 200, f"dépôt : un ami, borné par upload_max_mb ({s} {d})")
         s, d = c("PUT", "/api/library/upload?name=grosse.png", raw=big, headers={"Content-Type": "image/png"})
         ok(s == 200, f"dépôt : Cal, non ({s})")
+        config.CFG["upload_max_mb"] = max_mb
         http.MAX_JSON = 2000
         s, d = a("POST", "/api/music/projects", {"name": "x" * 3000})
         ok(s == 413, f"un corps JSON au-delà de MAX_JSON : 413 ({s})")
@@ -222,22 +273,30 @@ def selftest(call, ok) -> None:
         # ── Movie Analysis ────────────────────────────────────
         s, pr = a("POST", "/api/analyse/projets", {"nom": "Film d'Albane"})
         apid = ((pr or {}).get("projet") or {}).get("id", "")
-        s1, _ = b("POST", f"/api/analyse/projets/{apid}", {"nom": "Renommé par B"})
-        s2, _ = a("POST", f"/api/analyse/projets/{apid}", {"nom": "Renommé par A"})
-        ok(s == 200 and s1 == 403 and s2 == 200, f"analyse : un projet est à son auteur ({s} {s1} {s2})")
+        s1, _ = gv("POST", f"/api/analyse/projets/{apid}", {"nom": "Renommé par Gil"})
+        s2, _ = b("POST", f"/api/analyse/projets/{apid}", {"nom": "Renommé par B"})
+        s3, _ = a("POST", f"/api/analyse/projets/{apid}", {"nom": "Renommé par A"})
+        s4, lst = cy("GET", "/api/analyse/projets")
+        mine = next((x for x in analyse._store_lit() if x["id"] == apid), {})
+        ok(s == 200 and s1 == 403 and s2 == 200 and s3 == 200 and mine.get("space") == GENERAL
+           and all(x["id"] != apid for x in (lst or {}).get("projets", [])),
+           f"analyse : un projet est à son Workspace — Gil ne le renomme pas, B (éditeur) et A oui, Cyril ne le voit pas "
+           f"({s} {s1} {s2} {s3} {mine.get('space')})")
         s, _ = b("POST", "/api/analyse/diar/analyse", raw=b"x", headers={"Content-Type": "audio/wav"})
         ok(s == 403, f"analyse : la diarisation directe (hors file) est à Cal ({s})")
         ok(analyse.NOM.match("abc\n") is None and analyse.NOM_PROJET.match("abc\n") is None,
            "analyse : un nom ne finit pas par un retour à la ligne")
 
-        # ── Montage : une LUT sans auteur est à Cal ───────────
-        auth.set_current(auth.user("bastien"))
-        try:
-            montage._can_edit_lut({"id": "lut-x"})
-            ok(False, "montage : une LUT sans auteur n'est pas à tous")
-        except http.HttpError as e:
-            ok(e.status == 403, "montage : une LUT sans auteur est à Cal")
-        auth.set_current(None)
+        # ── Montage : une LUT sans auteur (d'avant la porte) : les éditeurs la changent, un admin la jette ──
+        for uid, trash, want in (("bastien", False, None), ("bastien", True, 403), ("gil-viewer", False, 403)):
+            auth.set_current(auth.user(uid))
+            try:
+                montage._can_edit_lut({"id": "lut-x"}, trash=trash)
+                ok(want is None, f"montage : une LUT sans auteur, {uid} {'la jette' if trash else 'la change'} : refusé attendu")
+            except http.HttpError as e:
+                ok(e.status == want, f"montage : une LUT sans auteur, {uid} {'la jette' if trash else 'la change'} ({e.status})")
+            finally:
+                auth.set_current(None)
 
         # ── PIL ne devine rien : un masque EPS déguisé ─────────
         try:
@@ -248,6 +307,9 @@ def selftest(call, ok) -> None:
         sniff = getattr(library, "sniff", None)
         ok(sniff and sniff(png()[:16], ".png") and not sniff(eps[:16], ".png"), "library.sniff : la signature PNG")
         ok(json.loads(json.dumps(getattr(library, "PIL_FORMATS", []))) == ["PNG", "JPEG", "WEBP"], "PIL ne lit que PNG, JPEG, WEBP")
+
+        # ── Teams et Workspaces : qui voit, qui écrit, par Asset et par chaque outil ──
+        _workspaces(ok, err, png, a, b, c, gv, ga, cy, wsc)
     finally:
         for jid in queued:
             try:
@@ -255,9 +317,189 @@ def selftest(call, ok) -> None:
             except (KeyError, TypeError):
                 pass
         auth.set_current(None)
+        auth.set_current_space(None)
         jobs.set_mode(None, "active")
         auth.set_settings({"visibility": "all"}, by="cal")
         config.CFG["auth"] = before
         config.CFG["upload_max_mb"] = max_mb
+        if essai is None:
+            config.CFG.pop("equipes_guests_essai", None)
+        else:
+            config.CFG["equipes_guests_essai"] = essai
         if max_json is not None:
             http.MAX_JSON = max_json
+
+
+def _space_role(uid: str, space: str) -> str | None:
+    from core import auth, espaces
+    return espaces.space_role(auth.user(uid), space)
+
+
+def _wav(freq: int = 330, secs: float = 0.4) -> bytes:
+    import io
+    import math
+    import struct
+    import wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"".join(struct.pack("<h", int(9000 * math.sin(2 * math.pi * freq * k / 16000)))
+                               for k in range(int(16000 * secs))))
+    return buf.getvalue()
+
+
+def _workspaces(ok, err, png, a, b, c, gv, ga, cy, wsc) -> None:
+    """A dans Général ; B' guest viewer (Gil), B'' guest acteur (Gaël) ; C d'une autre Team (Cyril) —
+    pour Asset et chaque outil qui a des documents : le Workspace posé à la création, qui voit, qui
+    écrit, qui crée, qui jette ; la borne du Workspace courant ; montrer, jugé par l'objet."""
+    import json
+
+    from core import auth, library
+    from tools import ideation, montage, music, transcrire
+
+    hc = {"X-SR-Espace": wsc}
+
+    # ── ce que A crée, dans Général ──
+    s1, im = a("PUT", "/api/library/upload?name=w.png&title=Image+de+G%C3%A9n%C3%A9ral", raw=png((200, 30, 30)),
+               headers={"Content-Type": "image/png"})
+    s2, pj = a("POST", "/api/music/projects", {"name": "ODIO de Général"})
+    s3, sq = a("POST", "/api/montage/projects", {"name": "Séquence de Général"})
+    s4, bd = a("POST", "/api/ideation/boards", {"name": "Planche de Général"})
+    cube = montage._test_cube(2, lambda r, g, bl: (r, g, bl)).encode()
+    s5, lut = a("PUT", "/api/montage/luts?name=essai.cube&title=LUT+de+G%C3%A9n%C3%A9ral", raw=cube,
+                headers={"Content-Type": "application/octet-stream"})
+    tid = "trn-20260930-120000-7e57"
+    with transcrire._lock:
+        transcrire._write({"id": tid, "rev": 1, "created": library.now(), "updated": library.now(), "title": "Transcription de Général",
+                           "item": im.get("id"), "kind": "audio", "duration": 1.0, "thumb_url": None, "lang": "fr", "detected": "fr",
+                           "mode": "rapide", "speakers_on": False, "state": "done", "settings": {"cpl": 42, "max_s": 7.0},
+                           "segments": [{"id": "s0001", "a": 0.0, "b": 1.0, "text": "bonjour", "spk": None, "words": []}],
+                           "speakers": [], "translations": {}, "owner": "albane", "space": GENERAL})
+    seq_it = library._items.get(sq.get("id", ""), {})
+    board_file = json.loads(ideation._path(bd.get("id", "ide-00000000-000000-0000")).read_text(encoding="utf-8")) if s4 == 200 else {}
+    ok((s1, s2, s3, s4, s5) == (200,) * 5 and im.get("space") == GENERAL and pj.get("space") == GENERAL
+       and seq_it.get("space") == GENERAL and board_file.get("space") == GENERAL and lut.get("space") == GENERAL,
+       f"espaces : ce que A crée porte son Workspace — image, projet ODIO, séquence, planche, LUT "
+       f"({s1} {s2} {s3} {s4} {s5} · {im.get('space')} {pj.get('space')} {seq_it.get('space')} {board_file.get('space')} "
+       f"{lut.get('space') if isinstance(lut, dict) else lut})")
+    iid, pid, sid, bid, lid = im.get("id"), pj.get("id"), sq.get("id"), bd.get("id"), lut.get("id")
+
+    # ── qui voit ──
+    for nom, r in (("Gil (guest viewer)", gv), ("Gaël (guest acteur)", ga)):
+        got = (r("GET", f"/api/library/{iid}")[0], r("GET", f"/api/music/projects/{pid}")[0],
+               r("GET", f"/api/montage/projects/{sid}")[0], r("GET", f"/api/ideation/boards/{bid}")[0],
+               r("GET", f"/api/transcrire/docs/{tid}")[0])
+        luts = [x["id"] for x in r("GET", "/api/montage/luts")[1].get("luts", [])]
+        ok(got == (200,) * 5 and lid in luts, f"espaces : {nom} voit l'image, le projet, la séquence, la planche, "
+                                              f"la transcription, la LUT de Général ({got} {lid in luts})")
+    got = (cy("GET", f"/api/library/{iid}")[0], cy("GET", f"/api/music/projects/{pid}")[0],
+           cy("GET", f"/api/montage/projects/{sid}")[0], cy("GET", f"/api/ideation/boards/{bid}")[0],
+           cy("GET", f"/api/transcrire/docs/{tid}")[0])
+    lists = {"asset": [x["id"] for x in cy("GET", "/api/library")[1].get("items", [])],
+             "odio": [x["id"] for x in cy("GET", "/api/music/projects")[1].get("projects", [])],
+             "montage": [x["id"] for x in cy("GET", "/api/montage/projects")[1].get("projects", [])],
+             "ideation": [x["id"] for x in cy("GET", "/api/ideation/boards")[1].get("boards", [])],
+             "transcrire": [x["id"] for x in cy("GET", "/api/transcrire/docs")[1].get("docs", [])],
+             "luts": [x["id"] for x in cy("GET", "/api/montage/luts")[1].get("luts", [])]}
+    ok(got[:3] == (404, 404, 404) and got[3] in (403, 404) and got[4] == 404
+       and not any(x in v for v in lists.values() for x in (iid, pid, sid, bid, tid, lid)),
+       f"espaces : Cyril (une autre Team) ne voit rien de Général, ni par son adresse, ni dans aucune liste ({got})")
+    s, d = cy("GET", "/api/library", headers={"X-SR-Espace": GENERAL})
+    ok(s == 403, f"espaces : … et demander Général par l'en-tête : 403 ({s})")
+    s, d = cy("GET", f"/library/{iid}/main.png")
+    ok(s == 404, f"espaces : … ni son fichier sous /library/ ({s})")
+
+    # ── qui écrit, qui crée ──
+    cur = lambda r, path: r("GET", path)[1]   # noqa: E731
+    pj1, sq1, bd1 = cur(a, f"/api/music/projects/{pid}"), cur(a, f"/api/montage/projects/{sid}"), cur(a, f"/api/ideation/boards/{bid}")
+    viewer = (gv("POST", f"/api/library/{iid}", {"title": "par Gil"})[0],
+              gv("POST", f"/api/music/projects/{pid}", pj1)[0],
+              gv("POST", f"/api/montage/projects/{sid}", {**sq1, "base_rev": sq1.get("rev")})[0],
+              gv("POST", f"/api/ideation/boards/{bid}", {**bd1, "base_rev": bd1.get("rev")})[0],
+              gv("POST", f"/api/transcrire/docs/{tid}", {"rev": 1, "title": "par Gil"})[0],
+              gv("POST", f"/api/montage/luts/{lid}", {"title": "par Gil"})[0])
+    s, d = gv("POST", f"/api/library/{iid}", {"title": "par Gil"})
+    ok(viewer == (403,) * 6 and "viewer" in err(d),
+       f"espaces : Gil, guest viewer, ne modifie rien — image, projet, séquence, planche, transcription, LUT ({viewer} {err(d)[:80]})")
+    made = (gv("PUT", "/api/library/upload?name=g.png&title=De+Gil", raw=png((1, 2, 3)), headers={"Content-Type": "image/png"})[0],
+            gv("POST", "/api/music/projects", {"name": "de Gil"})[0], gv("POST", "/api/montage/projects", {"name": "de Gil"})[0],
+            gv("POST", "/api/ideation/boards", {"name": "de Gil"})[0], gv("POST", "/api/analyse/projets", {"nom": "de Gil"})[0])
+    ok(made == (403,) * 5, f"espaces : … ni ne crée — dépôt, projet, séquence, planche, analyse ({made})")
+    acteur = (ga("POST", f"/api/library/{iid}", {"title": "Image de Général"})[0],
+              ga("POST", f"/api/music/projects/{pid}", pj1)[0],
+              ga("POST", f"/api/montage/projects/{sid}", {**sq1, "base_rev": sq1.get("rev")})[0],
+              ga("POST", f"/api/ideation/boards/{bid}", {**bd1, "base_rev": bd1.get("rev")})[0],
+              ga("POST", f"/api/transcrire/docs/{tid}", {"rev": 1, "title": "par Gaël"})[0],
+              ga("POST", f"/api/montage/luts/{lid}", {"title": "LUT de Général"})[0])
+    ok(acteur == (200,) * 6, f"espaces : Gaël, guest acteur, modifie — image, projet, séquence, planche, transcription, LUT ({acteur})")
+    s, up = ga("PUT", "/api/library/upload?name=ga.png&title=De+Ga%C3%ABl", raw=png((4, 5, 6)), headers={"Content-Type": "image/png"})
+    s2, pg = ga("POST", "/api/music/projects", {"name": "de Gaël"})
+    ok(s == 200 and up.get("space") == GENERAL and up.get("owner") == "gael-acteur" and s2 == 200 and pg.get("space") == GENERAL,
+       f"espaces : … crée dans Général, à son nom ({s} {s2} {up.get('space') if isinstance(up, dict) else ''})")
+    jet = (ga("POST", f"/api/library/{iid}/delete")[0], ga("POST", f"/api/music/projects/{pid}/delete")[0],
+           ga("POST", f"/api/transcrire/docs/{tid}/delete")[0], ga("POST", f"/api/montage/luts/{lid}/delete")[0])
+    s, _ = ga("POST", f"/api/library/{up.get('id')}/delete")
+    ok(jet == (403,) * 4 and s == 200 and library.get(iid) is not None,
+       f"espaces : … ne jette pas ce qui est à A (l'auteur, ou un admin du Workspace), jette le sien ({jet} {s})")
+    wr = (cy("POST", f"/api/library/{iid}", {"title": "par Cyril"})[0], cy("POST", f"/api/music/projects/{pid}", pj1)[0],
+          cy("POST", f"/api/transcrire/docs/{tid}", {"rev": 2, "title": "x"})[0])
+    ok(wr == (404, 404, 404), f"espaces : Cyril n'écrit rien dans Général : pour lui, rien n'existe ({wr})")
+    raw_board = json.loads(ideation._path(bid).read_text(encoding="utf-8"))
+    kept = json.loads(music._path(pid).read_text(encoding="utf-8"))
+    ok(raw_board.get("space") == GENERAL and kept.get("space") == GENERAL and kept.get("owner") == "albane",
+       f"espaces : réécrits par d'autres, planche et projet gardent leur Workspace et leur auteur "
+       f"({raw_board.get('space')} {kept.get('space')} {kept.get('owner')})")
+
+    # ── la borne du Workspace courant ; montrer, jugé par l'objet ──
+    s, ic = cy("PUT", "/api/library/upload?name=c.png&title=De+Cyril", raw=png((7, 7, 7)), headers={"Content-Type": "image/png"})
+    s2, sc = cy("PUT", "/api/library/upload?name=c.wav&title=Son+de+Cyril", raw=_wav(), headers={"Content-Type": "audio/wav"})
+    ok(s == 200 and s2 == 200 and ic.get("space") == wsc and sc.get("space") == wsc,
+       f"espaces : ce que Cyril crée est dans son Workspace ({s} {s2} {ic.get('space') if isinstance(ic, dict) else ic})")
+    cid, sid2 = ic.get("id"), sc.get("id")
+    got = (c("GET", f"/api/library/{cid}")[0], c("GET", f"/api/library/{cid}", headers=hc)[0])
+    ok(got == (404, 200), f"espaces : Cal lui-même n'atteint un objet que dans son Workspace (sans en-tête : Général ; "
+                          f"avec celui de Cyril : oui) ({got})")
+    shown = (c("GET", f"/library/{cid}/main.png")[0], c("GET", f"/api/son/apercu/{sid2}?v=1")[0],
+             a("GET", f"/library/{cid}/main.png")[0], a("GET", f"/api/son/apercu/{sid2}?v=1")[0])
+    ok(shown[0] == 200 and shown[1] in (200, 422) and shown[2:] == (404, 404),
+       f"espaces : montrer (un fichier sous /library/, l'aperçu d'un son) se juge par l'objet, sans en-tête : Cal qui "
+       f"voit tout, oui ; A, qui n'est pas dans ce Workspace, non ({shown})")
+    auth.set_current(auth.user("cal"))
+    auth.set_current_space(GENERAL)
+    try:
+        here = {x["id"] for x in library.query(limit=100000)["items"]}
+        everywhere = {x["id"] for x in library.query(limit=100000, spaces="*")["items"]}
+        ok(iid in here and cid not in here and {iid, cid} <= everywhere,
+           "espaces : library.query liste le Workspace courant ; spaces=\"*\" (pour montrer) : tous ceux qu'on voit")
+    finally:
+        auth.set_current(None)
+        auth.set_current_space(None)
+    auth.set_current(auth.user("albane"))
+    auth.set_current_space(GENERAL)
+    try:
+        ok(cid not in {x["id"] for x in library.query(limit=100000, spaces="*")["items"]},
+           "espaces : … jamais un Workspace qu'on ne voit pas")
+    finally:
+        auth.set_current(None)
+        auth.set_current_space(None)
+    # un travail de Cyril (la file pose sa personne et son Workspace le temps du run) : il ne lit pas Général
+    auth.set_current(auth.user("cyril-ailleurs"))
+    auth.set_current_space(wsc)
+    try:
+        ok(library.get(iid) is None and library.get(cid) is not None and library.new_space({"tool": "essai"}) == wsc,
+           "espaces : un travail n'atteint que son Workspace, et ce qu'il range y va")
+    finally:
+        auth.set_current(None)
+        auth.set_current_space(None)
+
+    # ── la corbeille, par Workspace ──
+    s, _ = cy("POST", "/api/asset/trash", {"ids": [cid]})
+    t1 = [x["id"] for x in c("GET", "/api/asset/trash")[1].get("items", [])]
+    t2 = [x["id"] for x in c("GET", "/api/asset/trash", headers=hc)[1].get("items", [])]
+    s2, _ = c("POST", f"/api/library/{cid}/restore")
+    ok(s == 200 and cid not in t1 and cid in t2 and s2 == 404,
+       f"espaces : une corbeille par Workspace — celle de Cyril n'est pas dans celle de Général ({s} {s2})")
+    s, r = cy("POST", "/api/asset/restore", {"ids": [cid]})
+    ok(s == 200 and r.get("restored") == [cid], f"espaces : Cyril rend le sien, dans son Workspace ({s} {r})")

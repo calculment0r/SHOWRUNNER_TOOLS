@@ -43,7 +43,7 @@ import shutil
 import threading
 from pathlib import Path
 
-from core import auth, config, library
+from core import auth, config, espaces, library
 from core.http import HttpError
 
 # ce qu'une version donne, selon la sorte de l'objet ; « refs » : une planche
@@ -57,7 +57,7 @@ NOTE_MAX = 400
 STATES = ("ready", "withdrawn")
 # ce qui, dans un projet ODIO, ne change pas le rendu (l'étude, § 2.4) : la vue, la
 # version, le brouillon du panneau génératif, les réglages rangés, les marques, la boucle
-MUS_SKIP = {"id", "name", "rev", "created", "updated", "owner", "shared", "origin", "ui", "pending", "gen", "presets",
+MUS_SKIP = {"id", "name", "rev", "created", "updated", "owner", "shared", "origin", "space", "ui", "pending", "gen", "presets",
             "markers", "loop"}
 SEQ_KEEP = ("settings", "tracks", "groups", "clips", "range")
 
@@ -115,16 +115,20 @@ def _doc_meta(doc: str, d: dict) -> dict:
     if kind == "seq":
         it = library._items.get(doc) or {}
         return {"title": it.get("title") or d.get("name") or doc, "owner": auth.owner_of(it), "shared": bool(it.get("shared")),
-                "open": f"montage/#{doc}", "tool": "montage", "what": "séquence"}
+                "space": library.space_of(it), "open": f"montage/#{doc}", "tool": "montage", "what": "séquence"}
     if kind == "mus":
         return {"title": d.get("name") or doc, "owner": auth.owner_of(d), "shared": bool(d.get("shared")),
-                "open": f"musique/?p={doc}", "tool": "music", "what": "projet ODIO"}
+                "space": library.space_of(d), "open": f"musique/?p={doc}", "tool": "music", "what": "projet ODIO"}
     return {"title": d.get("name") or doc, "owner": auth.owner_of(d), "shared": bool(d.get("shared")),
-            "open": f"ideation/#{doc}", "tool": "ideation", "what": "planche d'Idéation"}
+            "space": library.space_of(d), "open": f"ideation/#{doc}", "tool": "ideation", "what": "planche d'Idéation"}
 
 
 def _doc_readable(meta: dict, doc: str) -> bool:
-    return auth.can_read_item({"id": doc, "origin": {"user": meta.get("owner")}, "shared": meta.get("shared")}, auth.current())
+    """Le document se lit-il ici : visible, et du Workspace courant (les usages ne
+    traversent plus les Workspaces, equipes_espaces.md § 3.4 : l'index se lit par
+    Workspace ; ailleurs, un usage est compté sans être nommé)."""
+    return library.readable({"id": doc, "origin": {"user": meta.get("owner")}, "shared": meta.get("shared"),
+                             "space": meta.get("space")})
 
 
 def _refs_in(doc: str, d: dict) -> list[tuple[str, str]]:
@@ -181,8 +185,8 @@ def _summaries() -> list[dict]:
                                                   "rev": d.get("rev"), **_doc_meta(doc, d)})
                 _docs[key] = c
             s = c[2]
-            if doc[:3] == "seq":   # le titre et le propriétaire d'une séquence vivent dans item.json
-                s = {**s, **{k: v for k, v in _doc_meta(doc, {}).items() if k in ("title", "owner", "shared")}}
+            if doc[:3] == "seq":   # le titre, le propriétaire, le Workspace d'une séquence vivent dans item.json
+                s = {**s, **{k: v for k, v in _doc_meta(doc, {}).items() if k in ("title", "owner", "shared", "space")}}
             out.append(s)
         for k in [k for k in _docs if k not in seen]:
             _docs.pop(k, None)
@@ -274,7 +278,7 @@ def uses_of(item_ids: set[str] | None = None) -> dict[str, list[dict]]:
 
 def _use_name(u: dict) -> str:
     if u.get("hidden"):
-        return f"un·e {u['what']} d'une autre personne"
+        return f"un·e {u['what']} que tu ne vois pas ici (d'une autre personne, ou d'un autre Workspace)"
     return f"{u['what']} « {u['title']} » ({u['where']})"
 
 
@@ -403,11 +407,15 @@ def _last_seq(p: Path) -> int:
 
 
 def emit(ev: str, **kw) -> int:
-    """Une ligne de plus au journal, numérotée ; rend son numéro."""
+    """Une ligne de plus au journal, numérotée ; rend son numéro. Chaque ligne porte le
+    Workspace de son élément (`space`, equipes_espaces.md § 3.4) : une page ne reçoit
+    que ceux de son Workspace (`changes`)."""
     p = _jpath()
+    el = library._items.get(str(kw.get("el") or ""))
+    space = library.space_of(el) if el else (library.here() or library.space_of({}))
     with _jlock:
         seq = _last_seq(p) + 1
-        line = {"seq": seq, "at": library.now(), "ev": ev, "by": auth.current_id(), **kw}
+        line = {"seq": seq, "at": library.now(), "ev": ev, "by": auth.current_id(), "space": space, **kw}
         with open(p, "a", encoding="utf-8") as f:
             f.write(json.dumps(line, ensure_ascii=False) + "\n")
         _jseq[str(p)] = seq
@@ -426,7 +434,10 @@ def changes(since: int) -> dict:
             ev = json.loads(line)
         except ValueError:
             continue
-        if int(ev.get("seq") or 0) > since and (not ev.get("el") or library.get(ev["el"])):
+        # une ligne d'un autre Workspace ne se voit pas ici (son `space` ; une ligne d'avant
+        # le 30/09, sans lui : celui de son élément, par library.get, borné au Workspace courant)
+        if int(ev.get("seq") or 0) > since and (not ev.get("el") or library.get(ev["el"])) \
+                and (not ev.get("space") or library.readable({"space": ev["space"], "shared": True})):
             out.append(ev)
     with _jlock:
         last = _last_seq(p)
@@ -512,7 +523,11 @@ def publish(eid: str, item_id: str, note: str = "", rev=None, quiet: bool = Fals
     que la page a rendue — si la source a bougé depuis, 409."""
     with library._lock:
         e = _element_or_404(eid)
-        library.check_write(e)                   # le propriétaire de l'élément, ou Cal (question 4)
+        library.check_write(e)                   # un éditeur de son Workspace, ou Cal (question 4 ; décision 9)
+        u = auth.current()
+        ok, why = (True, None) if u is None or auth.is_admin(u) else espaces.judge(u, library.space_of(e), "publish")
+        if not ok:                               # publier calcule sa source : jamais un guest (§ 2.4, décision 2)
+            raise HttpError(403, f"publier une version : {why}")
         it = library.get(str(item_id))
         if not it:
             raise HttpError(404, f"introuvable : {item_id}")
@@ -945,13 +960,16 @@ def selftest(call, ok) -> None:
     st, ch2 = call("GET", f"/api/elements/changes?since={ch['seq']}")
     ok(ch2.get("events") == [] and ch2["seq"] == ch["seq"], "éléments : rien de neuf après le dernier numéro")
 
-    # ── les droits : seul le propriétaire de l'élément, ou Cal, publie ──
+    # ── les droits (Teams et Workspaces, étape 2) : un éditeur de son Workspace publie (décision 9),
+    #    un guest jamais (publier calcule sa source) ; le journal est par Workspace ──
     from core import auth as _auth
     from tools.admin import essai_http as H
     before = config.CFG.get("auth")
+    essai = config.CFG.get("equipes_guests_essai")
     same = {"Origin": f"http://127.0.0.1:{config.get('port')}"}
     try:
         config.CFG["auth"] = True
+        config.CFG["equipes_guests_essai"] = True   # la garde du calcul peut manquer dans une copie d'essai
         _auth.startup()
         with _auth._lock:
             _auth._hits.clear()
@@ -968,22 +986,51 @@ def selftest(call, ok) -> None:
         def as_(tok, method, path, body=None, raw=None):
             return H(method, path, body, cookie=tok, headers={**same, **({"Content-Type": "audio/wav"} if raw else {})}, raw=raw)[:2]
 
+        # un guest acteur de Général (Gaël) ; Cyril, d'une autre Team
+        _, _, _ = H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": "Gael Essai", "role": "guest", "guest": "acteur",
+                                                                  "spaces": ["esp-general"]}, cookie=cal, headers=same)
+        _, t2, _ = H("POST", "/api/equipes", {"name": "Éléments Ailleurs"}, cookie=cal, headers=same)
+        H("POST", f"/api/equipes/{(t2 or {}).get('id')}/membres", {"pseudo": "Cyril Essai", "role": "member"}, cookie=cal, headers=same)
+        G = H("POST", "/api/auth/enter", {"name": "Gael Essai"}, headers=same)[2]
+        C = H("POST", "/api/auth/enter", {"name": "Cyril Essai"}, headers=same)[2]
+        ok(bool(G and C), "éléments, droits : Gaël (guest acteur de Général) et Cyril (une autre Team) entrent")
+
         s1, sa = as_(A, "PUT", "/api/library/upload?name=a.wav&title=Son%20d%27Albane", raw=wav(220, 1))
         s2, ea = as_(A, "POST", "/api/elements", {"from_item": sa.get("id")})
         s3, sb = as_(B, "PUT", "/api/library/upload?name=b.wav&title=Son%20de%20Bastien", raw=wav(260, 1))
-        ok(s2 == 200 and ea.get("owner") == "albane", f"éléments, droits : Albane fait son élément ({s1} {s2} {err(ea)})")
+        ok(s2 == 200 and ea.get("owner") == "albane" and ea.get("space") == "esp-general",
+           f"éléments, droits : Albane fait son élément, dans Général ({s1} {s2} {err(ea)})")
+        s, sg = as_(G, "PUT", "/api/library/upload?name=g.wav&title=Son%20de%20Ga%C3%ABl", raw=wav(300, 1))
+        s4, d = as_(G, "POST", f"/api/elements/{ea.get('id')}/versions", {"item": sg.get("id")})
+        ok(s == 200 and s4 == 403 and "guest" in err(d) and library.get(sg.get("id", "x")).get("version") is None,
+           f"éléments, droits : Gaël, guest acteur, dépose mais ne publie pas (publier calcule sa source) ({s} {s4} {err(d)})")
         s4, d = as_(B, "POST", f"/api/elements/{ea.get('id')}/versions", {"item": sb.get("id")})
-        ok(s4 == 403 and library.get(sb.get("id", "x")).get("version") is None, f"éléments, droits : Bastien ne publie pas sur l'élément d'Albane ({s4} {err(d)})")
+        ok(s4 == 200 and d["version"]["n"] == 2, f"éléments, droits : Bastien, éditeur de Général, publie sur l'élément d'Albane "
+                                                 f"(décision 9) ({s4} {err(d)})")
         s5, d = as_(B, "POST", "/api/elements", {"from_item": sa.get("id")})
-        ok(s5 in (403, 409), f"éléments, droits : Bastien ne fait pas un élément de l'objet d'Albane ({s5})")
+        ok(s5 == 409, f"éléments, droits : l'objet d'Albane est déjà sa v1 ({s5})")
         s6, d = as_(B, "POST", f"/api/elements/{ea.get('id')}/versions/1", {"state": "withdrawn"})
-        ok(s6 == 403, f"éléments, droits : Bastien ne retire pas la version d'Albane ({s6})")
+        s6b, d = as_(G, "POST", f"/api/elements/{ea.get('id')}/versions/1", {"state": "ready"})
+        ok(s6 == 200 and s6b == 200, f"éléments, droits : retirer, remettre une version : les éditeurs, un guest acteur ({s6} {s6b})")
         s7, sa2 = as_(A, "PUT", "/api/library/upload?name=a2.wav&title=Son%202", raw=wav(240, 1))
         s8, d = as_(A, "POST", f"/api/elements/{ea.get('id')}/versions", {"item": sa2.get("id")})
-        ok(s8 == 200 and d["version"]["n"] == 2, f"éléments, droits : Albane publie sa v2 ({s8} {err(d)})")
+        ok(s8 == 200 and d["version"]["n"] == 3, f"éléments, droits : Albane publie sa v3 ({s8} {err(d)})")
         s9, sc = as_(cal, "PUT", "/api/library/upload?name=c.wav&title=Son%20de%20Cal", raw=wav(280, 1))
         s10, d = as_(cal, "POST", f"/api/elements/{ea.get('id')}/versions", {"item": sc.get("id")})
-        ok(s10 == 200 and d["version"]["n"] == 3, f"éléments, droits : Cal publie partout ({s10} {err(d)})")
+        ok(s10 == 200 and d["version"]["n"] == 4, f"éléments, droits : Cal publie partout ({s10} {err(d)})")
+        # une autre Team : ni l'élément, ni ses lignes du journal (chacune porte son Workspace)
+        s11, _ = as_(C, "GET", f"/api/elements/{ea.get('id')}")
+        s12, chc = as_(C, "GET", "/api/elements/changes?since=0")
+        s13, cha = as_(A, "GET", "/api/elements/changes?since=0")
+        mine = [x for x in (cha or {}).get("events", []) if x.get("el") == ea.get("id")]
+        ok(s11 == 404 and s12 == 200 and not any(x.get("el") == ea.get("id") for x in chc.get("events", []))
+           and mine and all(x.get("space") == "esp-general" for x in mine),
+           f"éléments : le journal est par Workspace — Cyril ne voit rien de Général, chaque ligne porte `space` "
+           f"({s11} {len(mine)})")
     finally:
         _auth.set_current(None)
         config.CFG["auth"] = before
+        if essai is None:
+            config.CFG.pop("equipes_guests_essai", None)
+        else:
+            config.CFG["equipes_guests_essai"] = essai
