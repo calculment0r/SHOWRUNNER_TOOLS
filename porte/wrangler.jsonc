@@ -32,7 +32,7 @@
     "binding": "ASSETS",
     "run_worker_first": [
       "/api/*", "/library/*", "/character/api/*", "/character/files/*", "/character/v1/*", "/analyse/runs/*",
-      "/pont/*", "/agents/*", "/invitation", "/invitation/*",
+      "/pont/*", "/agents/*", "/invitation", "/invitation/*", "/strategie", "/strategie/*",
       "/media/*", "/*.mp4", "/*.m4v", "/*.mov", "/*.webm", "/*.mp3", "/*.m4a", "/*.aac", "/*.wav", "/*.ogg",
       "/*.oga", "/*.opus", "/*.flac"
     ]

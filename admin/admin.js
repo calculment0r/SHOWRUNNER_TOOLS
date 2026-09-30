@@ -62,7 +62,20 @@ const U = createUndo({ name: 'admin', onapply: () => refresh(true) });
 const undoable = (label, doFn, undoFn, msg) => act(() => U.run({ label, do: doFn, undo: undoFn }), msg);
 $('.adm-nav').prepend(el('div', { class: 'row adm-undo' }, el('span', { class: 'lbl' }, 'les gestes'), el('span', { class: 'sp' }),
   el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons())));
-const head = (title, k, cnt) => el('div', { class: 'sect-head' }, el('h2', {}, title), el('span', { class: 'k' }, k),
+// le kit de présentation de Cal (server/tools/strategie.py, contenu dans <data>/strategie/, jamais dans le dépôt) :
+// Cal seul — le serveur juge (403 à tout autre compte, admin compris) et la carte ne se montre alors pas
+api('strategie/moi').then((d) => {
+  if (!d || !d.cal) return;
+  $('.adm-nav').append(el('ul', { class: 'rack adm-kit', style: { marginTop: 'var(--s5)' } }, el('li', {},
+    el('a', { class: 'item', href: href('strategie/'), target: '_blank', rel: 'noopener', style: { textDecoration: 'none' },
+      title: d.pret ? 'le positionnement, le deck, les discours : pour toi seul' : 'le dossier strategie/ manque dans les données du portail' },
+    el('span', { class: 'st' + (d.pret ? ' ok' : ' err') }),
+    el('span', { class: 'txt' }, el('span', { class: 'ref' }, 'CAL · STRATÉGIE'),
+      el('span', { class: 'nm' }, 'Positionnement et kit de présentation'),
+      el('span', { class: 'sub' }, d.pret ? 'deck · discours · offres · pour toi seul' : 'pas encore posé : ~/showrunner-data/strategie/')),
+    el('span', { class: 'dots' })))));
+}).catch(() => { /* pas Cal : rien à montrer */ });
+const head =(title, k, cnt) => el('div', { class: 'sect-head' }, el('h2', {}, title), el('span', { class: 'k' }, k),
   cnt != null ? el('span', { class: 'cnt' }, cnt) : null);
 const fmtBytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} Go` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} Mo` : `${Math.round(n / 1e3)} Ko`);
 const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;

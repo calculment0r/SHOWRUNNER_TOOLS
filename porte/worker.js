@@ -68,8 +68,9 @@ const EN_TETES_TRANSMIS = new Set([
 const GESTE_COLLAB = /^\/api\/ideation\/collab\/[^/]+\/(presence|ops|signal|leave)$/;
 
 // Ce qui va au portail de DGX2 plutôt qu'aux assets (et figure donc dans run_worker_first de wrangler.jsonc) :
-// les relais du studio (server/tools/character.py) et les rendus de Movie Analysis (server/tools/analyse.py).
-const VERS_PORTAIL = /^\/(character\/(api|files|v1)|analyse\/runs)\//;
+// les relais du studio (server/tools/character.py), les rendus de Movie Analysis (server/tools/analyse.py) et le kit
+// de Cal (server/tools/strategie.py : servi de <data>/strategie/, hors du dépôt, donc jamais un asset ; Cal seul).
+const VERS_PORTAIL = /^\/(character\/(api|files|v1)\/|analyse\/runs\/|strategie(\/|$))/;
 
 // L'hôte de l'URL ne sert qu'à l'en-tête Host : c'est le service VPC qui décide où va la requête
 // (https://developers.cloudflare.com/workers-vpc/configuration/vpc-services/).
@@ -468,7 +469,10 @@ export default {
       }
       if (!id) return erreur(403, 'passe par la porte : cette adresse demande la connexion Cloudflare Access');
     }
-    if (code && !SANS_COOKIE(chemin) && !cookiesPortail(req)) return erreur(401, 'sur invitation : ouvre d’abord le lien d’invitation de Cal');
+    // Une PAGE relayée sans cookie (le kit de Cal, /strategie/) va quand même au portail : c'est lui qui rend la porte
+    // (commun/porte.js : le code, puis le pseudo, puis retour à la page), jamais le kit (server/tools/strategie.py).
+    const pageRelayee = req.method === 'GET' && /^\/strategie(\/|$)/.test(chemin);
+    if (code && !SANS_COOKIE(chemin) && !cookiesPortail(req) && !pageRelayee) return erreur(401, 'sur invitation : ouvre d’abord le lien d’invitation de Cal');
     if (!SANS_CORPS.has(req.method) && !memeOrigine(req, url)) return erreur(403, 'requête venue d’une autre page : refusée');
     // Les essais de code d'invitation et de pseudo, par adresse (10 par minute) : le portail les compte aussi
     // (10 codes par 10 min et par adresse, 300 en tout), mais le Worker arrête les robots avant DGX2.
