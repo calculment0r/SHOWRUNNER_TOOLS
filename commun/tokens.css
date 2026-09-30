@@ -81,6 +81,12 @@
   --or-bg:     rgba(224, 103, 74, .14);
   --or-bg2:    rgba(224, 103, 74, .55);
   --cy-bg:     rgba(185, 207, 216, .10);
+  /* le surligneur d'un texte d'Idéation (ideation/objets/texte.js), et ses fonds : sous le
+     texte, assez francs pour se voir, assez transparents pour que l'encre se lise (AA) */
+  --hl-amb:    rgba(214, 162, 74, .34);
+  --hl-or:     rgba(224, 103, 74, .34);
+  --hl-cy:     rgba(185, 207, 216, .26);
+  --hl-grn:    rgba(61, 138, 96, .40);
   --on-coral1: #fdf1ea;                /* encre sur la teinte corail la plus sourde */
   --drop:      rgba(0, 0, 0, .5);      /* ombre portée d'un élément qui flotte */
   --drop-lg:   rgba(0, 0, 0, .6);
@@ -189,6 +195,10 @@
   --or-bg:     rgba(168, 57, 27, .08);
   --or-bg2:    rgba(168, 57, 27, .45);
   --cy-bg:     rgba(37, 88, 108, .09);
+  --hl-amb:    rgba(236, 178, 60, .45);   /* le surligneur (ideation/objets/texte.js) */
+  --hl-or:     rgba(232, 120, 90, .38);
+  --hl-cy:     rgba(90, 160, 190, .30);
+  --hl-grn:    rgba(80, 170, 110, .34);
   --drop:      rgba(20, 30, 24, .16);
   --drop-lg:   rgba(20, 30, 24, .22);
 

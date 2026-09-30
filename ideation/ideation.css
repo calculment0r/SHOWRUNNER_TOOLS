@@ -233,6 +233,9 @@ body.at-presenting > .sr-dock, body.at-presenting > .sr-dock-grip, body.at-prese
 /* une image, une vidéo */
 .nd.media.image, .nd.media.video { background: var(--panel2); }
 .nd.media img, .nd.media video { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: inherit; pointer-events: none; }
+/* l'image dans sa boîte ; recadrée (objets/recadrer.js), l'image entière déborde, la boîte la coupe */
+.nd.media .imc { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; }
+.nd.media .imc img.cr { position: absolute; max-width: none; object-fit: fill; border-radius: 0; }
 .nd.media .cap {
   position: absolute; left: 0; top: 100%; margin-top: 4px; max-width: 100%; opacity: 0; transition: opacity .12s;
   font-family: var(--f-mono); font-size: calc(9px / max(var(--z), .6)); letter-spacing: .12em; text-transform: uppercase; color: var(--ink3);
@@ -438,8 +441,25 @@ body.at-presenting > .sr-dock, body.at-presenting > .sr-dock-grip, body.at-prese
 .cv.far .nd .cap, .cv.far .estrip, .cv.far .jobs { display: none; }
 .cv.far .fr-h { visibility: hidden; }
 .cv.far .fr-big { display: flex; }
-/* (sauf celle où l'on écrit : un texte caché ne prend pas le clavier) */
-.cv.far .nd.sticky .txt:not(.editing), .cv.far .nd.note .txt:not(.editing) { visibility: hidden; }
+/* Le pavé (Cal, 30/09 : « des barres de la couleur du texte qui font comme le pavé, pour
+   qu'on n'ait pas un cadre vide »). De loin, un texte trop petit pour se lire (une note, un
+   post-it, un texte, une forme, un nœud de mind map) se dessine en barres : une par ligne,
+   de la longueur de la ligne, dans la couleur de ses mots. Juste par construction, dans le
+   rendu commun des textes (.txt), sans mesure ni script : le texte reste en place (même
+   police, même césure) et un trait barré d'un cadratin d'épaisseur (centré sur les lettres)
+   le couvre ligne par ligne, sur la longueur réelle de chaque ligne ; il est de la couleur
+   du texte (`currentColor`), les lettres s'y fondent — et chaque élément (un mot en couleur,
+   un lien) le reprend dans sa couleur. (Essai du 30/09 sur DGX2 : des lettres rendues
+   transparentes par -webkit-text-fill-color emportent leur trait avec elles dans Chromium.)
+   Ce qui garde un rendu lisible de loin (un titre, une carte, la racine d'une mind map) n'y
+   passe pas ; la consigne d'un texte vide non plus (elle se tait) ; celui où l'on écrit
+   reste lisible. */
+.cv.far .nd:not(.title):not(.card):not(.m0) .txt:not(.editing):not(.ph),
+.cv.far .nd:not(.title):not(.card):not(.m0) .txt:not(.editing):not(.ph) * {
+  text-decoration-line: line-through; text-decoration-style: solid; text-decoration-color: currentColor;
+  text-decoration-thickness: 1em; text-decoration-skip-ink: none;
+}
+.cv.far .nd .txt.ph:not(.editing) { visibility: hidden; }
 .cv.far .nd.note:has(.editing) { background: var(--panel2); }
 .cv.far .nd.note { background: var(--panel3); }
 .cv.far .links text { display: none; }

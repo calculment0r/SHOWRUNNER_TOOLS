@@ -40,7 +40,7 @@ const FAR = 0.42;    // Ensemble : un texte de 13 px y fait moins de 5,5 px à l
 const NEAR = 1.3;    // Détail : le seuil du prototype de Cal
 const CULL = 0.25;   // la marge du culling : un quart d'écran (tldraw)
 // les objets dont la hauteur suit le contenu : la page la mesure et l'écrit
-export const AUTO_H = new Set(['note', 'sticky', 'title', 'gen', 'vgen', 'compose']);
+export const AUTO_H = new Set(['note', 'sticky', 'title', 'gen', 'vgen', 'compose', 'text']);
 const CARDS = new Set(['gen', 'vgen', 'compose']);
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const svg = (tag, attrs = {}) => {
@@ -48,7 +48,8 @@ const svg = (tag, attrs = {}) => {
   for (const [k, v] of Object.entries(attrs)) if (v !== null && v !== undefined) n.setAttribute(k, v);
   return n;
 };
-const isControl = (t) => t?.closest?.('input, textarea, select, button, a, .editing, audio');
+// (un lien dans un objet texte n'en est pas un : un clic choisit le texte, ctrl+clic l'ouvre — objets/texte.js)
+const isControl = (t) => t?.closest?.('input, textarea, select, button, a:not(.rt a), .editing, audio');
 export const inside = (n, f) => n.x >= f.x && n.y >= f.y && n.x + n.w <= f.x + f.w && n.y + n.h <= f.y + f.h;
 const hits = (n, r) => n.x < r.x + r.w && n.x + n.w > r.x && n.y < r.y + r.h && n.y + n.h > r.y;
 export function bbox(list) {
@@ -284,7 +285,8 @@ export function createCanvas(app) {
   // redescend pas (pas de va-et-vient au seuil), une image qui sort de la vue
   // retombe à la plus petite (la mémoire suit ce qu'on voit). Sans copies (rangée
   // avant elles) : la vignette tant qu'elle suffit, sinon l'original.
-  const pickSrc = (n, it, z = V().z) => pickView(it, Math.max(n.w, n.h) * z);
+  // (recadrée : l'image entière est plus grande que l'objet, de 1 / crop.w et 1 / crop.h)
+  const pickSrc = (n, it, z = V().z) => pickView(it, Math.max(n.w / (n.crop?.w || 1), n.h / (n.crop?.h || 1)) * z);
   function swapRes() {
     for (const n of S.board?.nodes || []) {
       if (n.type !== 'media' || n.kind !== 'image') continue;
@@ -370,6 +372,8 @@ export function createCanvas(app) {
     e.style.left = `${n.x}px`; e.style.top = `${n.y}px`; e.style.width = `${n.w}px`;
     e.style.height = AUTO_H.has(n.type) ? '' : `${n.h}px`;
     if (n.type === 'frame') e.style.setProperty('--fw', `${n.w}px`);
+    // un texte mis à l'échelle pendant un geste : sa taille et sa largeur suivent sans qu'il soit refait
+    if (n.type === 'text') { e.style.setProperty('--ts', `${n.size || 14}px`); e.classList.toggle('wrap', !!n.wrap); e.classList.toggle('auto', !n.wrap); }
     if (e.dataset.g !== (n.group || '')) e.dataset.g = n.group || '';
   }
   // les ports d'un objet (ports.js) : ses entrées à gauche, sa sortie à droite, dans la teinte de ce qu'ils portent
@@ -516,7 +520,10 @@ export function createCanvas(app) {
     if (n.kind === 'image') {
       // posée hors de la vue : la plus petite copie ; dans la vue : celle de sa taille à l'écran
       const p = hits(n, cullRect()) ? pickSrc(n, it) : pickView(it, 1);
-      return [el('img', { src: p.url, 'data-vw': String(p.w), decoding: 'async', alt: it.title || '', draggable: 'false' }), cap];
+      // recadrée (objets/recadrer.js) : l'image entière, posée pour que le rectangle `crop` remplisse l'objet
+      const c = n.crop;
+      const style = c ? { width: `${100 / c.w}%`, height: `${100 / c.h}%`, left: `${-100 * c.x / c.w}%`, top: `${-100 * c.y / c.h}%` } : null;
+      return [el('div', { class: 'imc' }, el('img', { class: c ? 'cr' : null, src: p.url, 'data-vw': String(p.w), decoding: 'async', alt: it.title || '', draggable: 'false', style })), cap];
     }
     if (n.kind === 'video') {
       const v = el('video', { src: href(it.url), poster: it.thumb_url ? href(it.thumb_url) : null, muted: true, loop: true, playsinline: true, preload: 'metadata' });
@@ -569,7 +576,9 @@ export function createCanvas(app) {
         d.held = true;
         typing.addEventListener('blur', () => { d.held = false; renderSoon(); }, { once: true });
       }
-      if (!d || (d.key !== key && !(typing && d.el.contains(typing)))) {
+      // un objet texte en cours d'écriture (objets/texte.js) ne se refait pas non plus quand le focus
+      // est parti à un menu de sa barre (police, couleur) : sa sélection y est gardée ; il se refait à la fin
+      if (!d || (d.key !== key && !(typing && d.el.contains(typing)) && !(n.type === 'text' && app.texte?.editing(n.id)))) {
         const e = build(n);
         if (d) d.el.replaceWith(e);
         d = { el: e, key };
@@ -626,6 +635,11 @@ export function createCanvas(app) {
         continue;
       }
       if (!AUTO_H.has(n.type) || (far && CARDS.has(n.type))) continue;
+      // un texte en largeur auto (objets/texte.js) : sa boîte suit ce qu'on tape, en largeur aussi
+      if (n.type === 'text' && !n.wrap) {
+        const w = dom.get(n.id)?.el.offsetWidth;
+        if (w && Math.abs(w - n.w) > 0.5) { n.w = Math.round(w); changed = true; }
+      }
       const h = dom.get(n.id)?.el.offsetHeight;
       if (h && Math.abs(h - n.h) > 0.5) { n.h = Math.round(h); changed = true; }
     }
@@ -817,7 +831,7 @@ export function createCanvas(app) {
     if (pt && id) return W.start(e, pt.dataset.inner || id, pt.dataset.port, pt.dataset.side);
     if (S.tool === 'link' && id) return startLink(e, id);
     // un outil de pose pose où l'on clique, par-dessus un objet aussi (une note sur une image)
-    if (['note', 'sticky', 'title', 'gen', 'vgen', 'compose', 'frame', 'shape', 'card', 'mind'].includes(S.tool)) return startCreate(e, S.tool);
+    if (['note', 'sticky', 'title', 'gen', 'vgen', 'compose', 'frame', 'shape', 'card', 'mind', 'text'].includes(S.tool)) return startCreate(e, S.tool);
     const lk = t.closest('[data-link]');
     if (lk && !id) { app.selectLink(lk.dataset.link); return; }
     if (id) return pressNode(e, id);
@@ -1022,6 +1036,7 @@ export function createCanvas(app) {
     if (!n) return;
     app.select([id]);
     if (n.deck) return;   // une diapositive a la taille de sa scène (diapo/) : son format la change
+    if (n.type === 'text') return resizeText(e, n, axis);
     const x0 = e.clientX, y0 = e.clientY, z = V().z, w0 = n.w, h0 = n.h;
     const keep = n.type === 'media' && n.kind !== 'audio';
     const auto = AUTO_H.has(n.type);
@@ -1063,6 +1078,26 @@ export function createCanvas(app) {
       if (g) live([n]);
       paintLinks(); paintMini();
     }, () => { paintGuides(over, V(), cv.clientWidth, cv.clientHeight, null); if (moved) { sel.gesture(false); paintFrames(); app.commit(); } });
+  }
+  // un texte (objets/texte.js), comme dans Miro : le coin change sa taille (« dragging the white
+  // dot »), la boîte suit ; le bord droit lui donne une largeur — il passe à la ligne, sa taille reste
+  function resizeText(e, n, axis) {
+    const x0 = e.clientX, z = V().z, w0 = n.w, s0 = n.size || 14;
+    let moved = false;
+    drag((ev) => {
+      const dx = (ev.clientX - x0) / z;
+      if (!moved) { if (Math.abs(dx) < 1) return; app.snap(); moved = true; sel.gesture(true); }
+      if (axis === 'x') { n.wrap = true; n.w = Math.max(24, Math.round(w0 + dx)); }
+      else {
+        const k = Math.max(0.05, (w0 + dx) / w0);
+        n.size = clamp(Math.round(s0 * k * 2) / 2, 6, 400);
+        if (n.wrap) n.w = Math.max(24, Math.round(w0 * k));
+      }
+      const d = dom.get(n.id);
+      if (d) place(d.el, n);
+      measure(); W.placePorts(); paintLinks(); paintMini(); sel.follow();
+      if (n.group) live([n]);
+    }, () => { if (moved) { sel.gesture(false); app.commit(); } });
   }
   // des objets changés pendant un geste (échelle, organisation, taille) : leurs groupes se
   // remettent en forme, tout se replace, sans rendu complet
@@ -1243,6 +1278,8 @@ export function createCanvas(app) {
       if (n.group && S.focus !== n.group) { app.enter(n.id); return; }
       if (['note', 'sticky', 'title'].includes(n.type) || app.objets?.writable(n)) editText(n.id);
       else if (n.type === 'frame') renameFrame(n.id);
+      // une image : la recadrer, comme dans Miro (objets/recadrer.js) ; « Voir en grand » reste au menu et à droite
+      else if (n.type === 'media' && n.kind === 'image' && app.objets?.crop && !app.objets.crop.whyNot(n)) app.objets.crop.start(n.id);
       else if (n.type === 'media' && (n.kind === 'image' || n.kind === 'video')) app.lightbox(n);
       else if (CARDS.has(n.type)) dom.get(n.id)?.el.querySelector('textarea:not([readonly])')?.focus({ preventScroll: true });
       return;
@@ -1282,6 +1319,8 @@ export function createCanvas(app) {
   // écrire dans une note, un post-it, un titre : sur place
   function editText(id) {
     const n = app.node(id);
+    // un objet texte : l'édition riche (objets/texte.js)
+    if (n?.type === 'text') { app.texte?.edit(id); return; }
     const d = dom.get(id);
     const txt = d?.el.querySelector('.txt');
     if (!n || !txt) return;

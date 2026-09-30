@@ -124,7 +124,8 @@ REF_FILE = re.compile(r"ref-\d{2}\.[a-z]{3,4}")
 
 TYPES = ("media", "note", "sticky", "title", "frame", "gen", "vgen", "compose", "palette", "group",
          "shape", "card", "mind", "ink",
-         "web")   # web : l'objet « Web » (server/tools/web_apercu.py), 30/09
+         "web",   # web : l'objet « Web » (server/tools/web_apercu.py), 30/09
+         "text")  # idéation, 30/09 : l'objet texte (ideation/objets/texte.js, _text_node)
 # les objets d'atelier (ideation/objets/ : les mêmes listes ; une valeur inconnue revient au défaut)
 SHAPES = ("rect", "round", "ellipse", "diamond", "hex", "para")
 PALETTE = ("cy", "or", "grn2", "amb", "ink")          # formes, cartes, traits : acier, orange, vert, ambre, encre
@@ -373,6 +374,128 @@ def _slot_lot(s: dict, role: str) -> dict:
     return out
 
 
+# ── idéation (agent « idéation », 30/09) : le recadrage et l'objet texte ──
+# Le recadrage (ideation/objets/recadrer.js) est non destructif, comme celui de Miro (« you
+# can always revert your cropped image to its original ») : l'image reste entière dans la
+# bibliothèque, l'objet garde le rectangle montré, en fractions de l'image (0 à 1). Un
+# rectangle illisible, trop petit ou débordant tombe ; l'image entière n'a pas de `crop`.
+CROP_MIN = 0.02
+
+
+def _crop(c) -> dict | None:
+    if not isinstance(c, dict):
+        return None
+    try:
+        v = {k: float(c.get(k)) for k in ("x", "y", "w", "h")}
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(x) for x in v.values()):
+        return None
+    x, y = max(0.0, min(1.0, v["x"])), max(0.0, min(1.0, v["y"]))
+    w, h = min(v["w"], 1.0 - x), min(v["h"], 1.0 - y)
+    if w < CROP_MIN or h < CROP_MIN:
+        return None
+    if x < 1e-4 and y < 1e-4 and w > 1 - 1e-4 and h > 1 - 1e-4:
+        return None
+    return {k: round(val, 5) for k, val in (("x", x), ("y", y), ("w", w), ("h", h))}
+
+
+# L'objet texte (ideation/objets/texte.js), le modèle du SDK de Miro (developers.miro.com,
+# « Text ») : un contenu HTML restreint à `p a strong b em i u s span ol ul li br` (le
+# reste s'échappe), un fond transparent par défaut (`fillColor`), police, taille, couleur et
+# alignement pour toute la boîte. Les couleurs sont des jetons du thème (commun/tokens.css) :
+# `data-c` (la couleur d'un passage) et `data-h` (le surligneur) sur un <span>, jamais une
+# valeur. La page nettoie avec la même liste ; ici, ce qui n'y est pas tombe.
+TEXT_FONTS = ("chakra", "venus", "azeret")
+TEXT_COLORS = ("ink", "ink2", "ink3", "or", "cy", "grn2", "amb", "coral-2")
+TEXT_HL = ("hl-amb", "hl-or", "hl-cy", "hl-grn")
+TEXT_BG = ("panel", "panel2", "panel3", "sel-bg") + TEXT_HL
+TEXT_TAGS = ("p", "a", "strong", "b", "em", "i", "u", "s", "span", "ol", "ul", "li", "br")
+TEXT_DROP = ("script", "style", "template", "noscript", "iframe", "object", "textarea", "title")
+TEXT_HTML_MAX = 20000
+TEXT_SIZE = (6, 400)
+
+
+def text_html(raw) -> str:
+    """Le contenu d'un objet texte, nettoyé : les balises de TEXT_TAGS, un lien http(s) ou
+    mailto, les couleurs en jetons ; le reste de la balise tombe, son texte reste."""
+    import html as _h
+    from html.parser import HTMLParser
+
+    class P(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.out, self.open, self.skip = [], [], 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag in TEXT_DROP:        # un script, un style : ni la balise ni ce qu'elle contient
+                self.skip += 1
+                return
+            if tag not in TEXT_TAGS:
+                return
+            a = dict(attrs)
+            if tag == "br":
+                self.out.append("<br>")
+                return
+            extra = ""
+            if tag == "a":
+                href = (a.get("href") or "").strip()
+                if not re.match(r"^(https?://|mailto:)", href, re.I) or len(href) > 2048:
+                    return
+                extra = f' href="{_h.escape(href, quote=True)}"'
+            elif tag == "span":
+                if a.get("data-c") in TEXT_COLORS:
+                    extra += f' data-c="{a["data-c"]}"'
+                if a.get("data-h") in TEXT_HL:
+                    extra += f' data-h="{a["data-h"]}"'
+                if not extra:
+                    return
+            self.out.append(f"<{tag}{extra}>")
+            self.open.append(tag)
+
+        def handle_endtag(self, tag):
+            if tag in TEXT_DROP:
+                self.skip = max(0, self.skip - 1)
+                return
+            if tag in self.open:
+                while self.open:
+                    t = self.open.pop()
+                    self.out.append(f"</{t}>")
+                    if t == tag:
+                        break
+
+        def handle_data(self, data):
+            if not self.skip:
+                self.out.append(_h.escape(data, quote=False))
+
+    p = P()
+    p.feed(str(raw or "")[:TEXT_HTML_MAX * 2])
+    p.close()
+    out = "".join(p.out) + "".join(f"</{t}>" for t in reversed(p.open))
+    if len(out) > TEXT_HTML_MAX:
+        raise HttpError(400, f"un texte de plus de {TEXT_HTML_MAX} signes")
+    return out
+
+
+def text_plain(html_s: str) -> str:
+    """Le texte d'un objet texte, sans balises : un paragraphe, une puce par ligne."""
+    import html as _h
+    s = re.sub(r"<br>", "\n", html_s or "")
+    s = re.sub(r"<li>", "\n• ", s)
+    s = re.sub(r"</(p|li|ul|ol)>", "\n", s)
+    s = re.sub(r"<[^>]+>", "", s)
+    return re.sub(r"\n{2,}", "\n", _h.unescape(s)).strip("\n")
+
+
+def _text_node(n: dict) -> dict:
+    return {"html": text_html(n.get("html")), "font": n.get("font") if n.get("font") in TEXT_FONTS else "chakra",
+            "size": round(_num(n.get("size"), *TEXT_SIZE, 14.0), 2),
+            "color": n.get("color") if n.get("color") in TEXT_COLORS else "ink",
+            "bg": n.get("bg") if n.get("bg") in TEXT_BG else "",
+            "align": n.get("align") if n.get("align") in TEXT_ALIGN else "left", "wrap": bool(n.get("wrap"))}
+# ── fin idéation ──
+
+
 def _node(n) -> dict:
     if not isinstance(n, dict):
         raise HttpError(400, "un objet de la planche est un objet JSON")
@@ -407,6 +530,11 @@ def _node(n) -> dict:
         if n.get("kind") not in MEDIA_KINDS:
             raise HttpError(400, f"l'objet {nid} n'est ni image, ni vidéo, ni son, ni élément")
         out.update(item=item, kind=n["kind"], title=_s(n.get("title"), 200), jobs=_jobs(n.get("jobs")))
+        # ── idéation (agent « idéation », 30/09) : le recadrage d'une image ──
+        crop = _crop(n.get("crop")) if n["kind"] == "image" else None
+        if crop:
+            out["crop"] = crop
+        # ── fin idéation ──
     elif t in ("note", "sticky", "title"):
         out["text"] = _s(n.get("text"), 5000)
         if t == "sticky":
@@ -503,6 +631,8 @@ def _node(n) -> dict:
             raise HttpError(400, f"le trait {nid} n'a pas de points lisibles (des paires x, y de 0 à 1000, {INK_MAX // 2} au plus)")
         out.update(pts=[int(max(0, min(1000, round(v)))) for v in pts],
                    color=n.get("color") if n.get("color") in PALETTE else "or", width=_num(n.get("width"), 0.5, 12, 2.2))
+    elif t == "text":  # idéation, 30/09 : l'objet texte
+        out.update(_text_node(n))
     elif t == "web":   # web : l'adresse (http, https) et ce que l'aperçu en a lu — server/tools/web_apercu.py
         from tools import web_apercu
         out.update(web_apercu.node_fields(n))
@@ -1143,7 +1273,13 @@ def render(b: dict, frame: str = "", check=lambda: None):
             return None
         try:
             with Image.open(p) as im:
-                im = ImageOps.fit(im.convert("RGB"), (max(1, round(w)), max(1, round(h))), Image.LANCZOS)
+                im = im.convert("RGB")
+                c = n.get("crop")   # idéation, 30/09 : le rectangle montré (recadrage non destructif)
+                if c:
+                    im = im.crop((round(c["x"] * im.width), round(c["y"] * im.height),
+                                  max(round(c["x"] * im.width) + 1, round((c["x"] + c["w"]) * im.width)),
+                                  max(round(c["y"] * im.height) + 1, round((c["y"] + c["h"]) * im.height))))
+                im = ImageOps.fit(im, (max(1, round(w)), max(1, round(h))), Image.LANCZOS)
         except OSError:
             return None
         mask = Image.new("L", im.size, 0)
@@ -1274,6 +1410,20 @@ def render(b: dict, frame: str = "", check=lambda: None):
         elif t == "title":
             size = TITLE_SIZES.get(n.get("size"), 34)
             text(n, _font("disp", size * s), T["ink"], 0, 1.15)
+        elif t == "text":
+            # idéation, 30/09 : l'objet texte — sa boîte, sa police, sa couleur, son alignement
+            # (ideation/objets/texte.css : marges .3em .4em, interligne 1.4) ; les passages en
+            # gras ou en couleur s'exportent dans la couleur de la boîte
+            fs = (n.get("size") or 14) * s
+            if n.get("bg"):
+                d.rounded_rectangle([x0, y0, x1, y1], radius=rad(4), fill=T.get(n["bg"], T["panel2"]))
+            f = _font({"venus": "disp", "azeret": "mono"}.get(n.get("font"), "ui"), fs)
+            px, py, lh = 0.4 * fs, 0.3 * fs, fs * 1.4
+            inner = max(1.0, x1 - x0 - 2 * px)
+            for k, line in enumerate(_wrap(d, text_plain(n.get("html", "")), f, inner, max(1, round((y1 - y0 - 2 * py) / lh)))):
+                tw = d.textlength(line, font=f)
+                dx = {"center": (inner - tw) / 2, "right": inner - tw}.get(n.get("align"), 0)
+                d.text((x0 + px + dx, y0 + py + k * lh), line, font=f, fill=T.get(n.get("color"), T["ink"]))
         elif t in ("gen", "vgen"):
             d.rounded_rectangle([x0, y0, x1, y1], radius=rad(9), fill=T["panel"], outline=T["line-or"], width=max(1, rad(1)))
             if t == "gen":
@@ -1715,6 +1865,65 @@ def selftest(call, ok) -> None:
     _selftest_groups(call, ok, iid)
     _selftest_objets(call, ok, iid)
     _selftest_deck(call, ok, iid)
+    _selftest_texte_recadrage(call, ok, iid)   # idéation, 30/09
+
+
+# ── idéation (agent « idéation », 30/09) : le recadrage et l'objet texte ──
+def _selftest_texte_recadrage(call, ok, iid: str) -> None:
+    """Le recadrage non destructif (un rectangle en fractions, borné ; l'export ne montre que
+    lui) et l'objet texte (HTML restreint, jetons, fond transparent par défaut)."""
+    from PIL import Image
+    st, b = call("POST", "/api/ideation/boards", {"name": "Essai texte et recadrage"})
+    bid = b["id"]
+    bad = '<p onclick="x()">Bon<script>alert(1)</script>jour <b>gras</b> <span data-c="or" style="color:red">orange</span> ' \
+          '<span data-c="#ff0000">rouge</span> <a href="javascript:alert(1)">piège</a> <a href="https://miro.com">lien</a></p>' \
+          '<ul><li>un</li><li><span data-h="hl-amb">deux</span></li></ul><div>bloc</div><img src=x>'
+    nodes = [
+        {"id": "f1", "type": "frame", "x": 0, "y": 0, "w": 400, "h": 300, "name": "Recadrage"},
+        # l'image rouge | bleue (120 × 80), recadrée sur sa moitié droite : le bleu seul
+        {"id": "m1", "type": "media", "item": iid, "kind": "image", "x": 40, "y": 40, "w": 60, "h": 80, "title": "Idee",
+         "crop": {"x": 0.5, "y": 0, "w": 0.5, "h": 1}},
+        {"id": "m2", "type": "media", "item": iid, "kind": "image", "x": 200, "y": 40, "w": 120, "h": 80, "crop": {"x": 0.9, "y": -3, "w": 5, "h": 0.001}},
+        {"id": "m3", "type": "media", "item": iid, "kind": "image", "x": 200, "y": 160, "w": 120, "h": 80, "crop": {"x": 0, "y": 0, "w": 1, "h": 1}},
+        {"id": "x1", "type": "text", "x": 40, "y": 160, "w": 150, "h": 60, "html": bad, "size": 18, "color": "or", "font": "venus"},
+        {"id": "x2", "type": "text", "x": 40, "y": 240, "w": 150, "h": 30, "html": "<p>défauts</p>", "bg": "#ffffff", "color": "red", "size": 9999},
+    ]
+    st, sv = call("POST", f"/api/ideation/boards/{bid}", {"name": "Essai", "nodes": nodes, "links": [], "base_rev": 1})
+    ok(st == 200, f"idéation · texte : enregistrer ({st} {sv})")
+    st, got = call("GET", f"/api/ideation/boards/{bid}")
+    by = {n["id"]: n for n in got.get("nodes", [])}
+    ok(by.get("m1", {}).get("crop") == {"x": 0.5, "y": 0.0, "w": 0.5, "h": 1.0}, f"recadrage : le rectangle est gardé ({by.get('m1', {}).get('crop')})")
+    ok("crop" not in by.get("m2", {}), f"recadrage : un rectangle trop mince tombe ({by.get('m2', {}).get('crop')})")
+    ok("crop" not in by.get("m3", {}), "recadrage : l'image entière n'a pas de rectangle")
+    h = by.get("x1", {}).get("html", "")
+    ok("<script" not in h and "alert" not in h and "onclick" not in h and "javascript:" not in h and "style=" not in h and "<div" not in h and "<img" not in h,
+       f"texte : le contenu est nettoyé ({h})")
+    ok('<span data-c="or">orange</span>' in h and '<a href="https://miro.com">lien</a>' in h and '<span data-h="hl-amb">deux</span>' in h
+       and "<b>gras</b>" in h and "<li>un</li>" in h and "rouge" in h and "bloc" in h, f"texte : le permis reste, le texte des balises tombées aussi ({h})")
+    x1, x2 = by.get("x1", {}), by.get("x2", {})
+    ok(x1.get("font") == "venus" and x1.get("color") == "or" and x1.get("size") == 18 and x1.get("bg") == "",
+       f"texte : police, couleur, taille ; fond transparent par défaut ({x1})")
+    ok(x2.get("bg") == "" and x2.get("color") == "ink" and x2.get("size") == 400 and x2.get("font") == "chakra" and x2.get("align") == "left",
+       f"texte : une couleur hors des jetons revient au défaut, la taille est bornée ({x2})")
+    ok(text_plain(h).startswith("Bonjour gras orange") and "• deux" in text_plain(h), f"texte : sa version sans balises ({text_plain(h)!r})")
+    st, j = call("POST", f"/api/ideation/boards/{bid}/export", {"frame": "f1"})
+    for _ in range(150):
+        st, j = call("GET", f"/api/jobs/{j['id']}")
+        if j["state"] in ("done", "error", "cancelled"):
+            break
+        time.sleep(0.2)
+    ok(j.get("state") == "done", f"recadrage : l'export passe ({j.get('message')})")
+    if j.get("items"):
+        out = j["items"][0]
+        s = out["params"]["scale"]
+        with Image.open(library.path_of(library.get(out["id"]))) as ex:
+            ex = ex.convert("RGB")
+            left = ex.getpixel((round(50 * s), round(80 * s)))    # le bord gauche de l'objet recadré
+            full = ex.getpixel((round(210 * s), round(200 * s)))  # l'image entière : son rouge à gauche
+        ok(left[2] > 180 and left[0] < 80, f"recadrage : l'export ne montre que le rectangle (le bleu à gauche : {left})")
+        ok(full[0] > 180 and full[2] < 80, f"recadrage : sans rectangle, l'image entière ({full})")
+    call("POST", f"/api/ideation/boards/{bid}/delete")
+# ── fin idéation ──
 
 
 def _selftest_deck(call, ok, iid: str) -> None:

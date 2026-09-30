@@ -281,3 +281,22 @@ body.co-viewer #insp [contenteditable] { pointer-events: none; opacity: .45; }
   content: "cliquer pour entendre"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   background: var(--veil); color: var(--ink); font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; cursor: pointer;
 }
+
+/* ── l'enregistrement du son de l'appel (enregistrer.js) : le voyant, chez chacun ── */
+.co-recpill {
+  display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; border-radius: 999px; white-space: nowrap;
+  color: var(--on-or); background: var(--or); max-width: 280px; overflow: hidden;
+}
+.co-recpill .lbl { color: inherit; overflow: hidden; text-overflow: ellipsis; }
+.co-recpill i { width: 7px; height: 7px; border-radius: 50%; background: var(--on-or); animation: sPulse 1.2s infinite; flex: none; }
+.co-recpill[hidden] { display: none; }
+.co-recrow { flex: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.co-recrow .co-recst { color: var(--ink3); }
+.co-recb .co-recdot { width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--or); flex: none; }
+.co-recb.on { color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }
+.co-recb.on .co-recdot { background: var(--or); animation: sPulse 1.2s infinite; }
+/* le bandeau de l'appel et l'onglet Visio : un filet orange tant que quelqu'un enregistre */
+.co-strip.rec .co-fold { box-shadow: inset 0 0 0 1px var(--or); }
+.co-strip.rec .co-fold .lbl:first-child { color: var(--or); }
+.co-tab.rec::after { content: ''; display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--or); vertical-align: middle; animation: sPulse 1.2s infinite; }
+.co-recdone p { margin: 0; }

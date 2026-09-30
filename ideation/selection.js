@@ -94,7 +94,9 @@ export function createSelection(app, env) {
     if (n.type === 'group') return isCard(n) ? 'card' : 'group';
     if (n.type === 'frame') return 'frame';
     if (n.type === 'media' && n.kind === 'image') return 'image';
-    return null;   // un seul objet autre qu'une image : l'inspecteur suffit
+    // un texte : sa barre (objets/texte.js), comme Miro — les réglages depuis le texte
+    if (n.type === 'text' && app.texte) return 'text';
+    return null;   // un seul objet autre qu'une image ou un texte : l'inspecteur suffit
   }
   const selBox = (us) => bboxOf(us.map(box));
 
@@ -173,10 +175,15 @@ export function createSelection(app, env) {
       out.push(btn('Renommer', () => app.canvas.renameFrame(one.id), { title: 'double-clic sur son nom' }),
         btn('Présenter d’ici', () => P.start(one.id), { why: P ? '' : 'la présentation (atelier) n’est pas chargée', title: 'plein écran, de cadre en cadre, depuis celui-ci' }),
         btn('Exporter en PNG', () => app.exportBoard(one.id), { title: 'ce cadre, dans la bibliothèque (dossier Idéation)' }));
+    } else if (mode === 'text') {
+      out.push(...app.texte.barItems(one, { btn, sub, sep }));
     } else if (mode === 'image') {
       const it = S.items.get(one.item);
       const rec = it && !it.missing ? app.gen.recipe(it) : null;
-      out.push(btn('Variations', () => app.gen.variations(one.id, 4), { why: rec ? '' : 'image sans recette (déposée ou faite ailleurs) : une carte Générer la prend en référence', title: 'la même recette, quatre autres graines' }),
+      // recadrer (objets/recadrer.js) : Miro met « Crop » en tête de la barre d'une image
+      const cw = app.objets?.crop?.whyNot(one) ?? 'le recadrage n’est pas chargé';
+      out.push(btn('Recadrer', () => app.objets.crop.start(one.id), { why: cw, title: 'double-clic aussi · poignées, formats ; Entrée applique, Échap annule — l’image reste entière' }),
+        btn('Variations', () => app.gen.variations(one.id, 4), { why: rec ? '' : 'image sans recette (déposée ou faite ailleurs) : une carte Générer la prend en référence', title: 'la même recette, quatre autres graines' }),
         btn('Éditer', () => app.insp.focusEdit?.(one.id), { title: 'la consigne d’édition, dans le panneau de droite' }),
         btn('Nuancier', () => app.palette(one.id), { title: 'les couleurs dominantes, posées dessous' }),
         btn('Carte Générer', () => app.genWith([one.id]), { title: 'une carte qui prend cette image en référence' }));
@@ -237,6 +244,7 @@ export function createSelection(app, env) {
     org.hidden = !cur.frame;
     // ne refaire la barre que si ce qu'elle montre a changé (un bouton refait sous le pointeur perdrait son clic)
     const k = mode + '|' + JSON.stringify(us.map((n) => [n.id, n.type, n.kind, n.name, n.layout, n.lod, n.collapsed, n.color, isCard(n)]))
+      + (mode === 'text' ? '|' + app.texte.barKey(us[0]) : '')
       + '|' + (app.atelier?.presentation ? 1 : 0) + (us.length === 1 && us[0].item ? '|' + (app.gen.recipe(S.items.get(us[0].item) || {}) ? 1 : 0) : '');
     // (sauf pendant qu'on renomme le groupe dans la barre)
     const naming = bar.contains(document.activeElement) && document.activeElement.matches('input');
@@ -278,7 +286,7 @@ export function createSelection(app, env) {
     const ax = c.includes('w') ? cb.x + cb.w : cb.x, ay = c.includes('n') ? cb.y + cb.h : cb.y;
     const sgx = c.includes('w') ? -1 : 1, sgy = c.includes('n') ? -1 : 1;
     const x0 = e.clientX, y0 = e.clientY, z0 = V().z;
-    const orig = list.map((n) => [n, n.x, n.y, n.w, n.h, n.layout ? { ...layoutOf(n) } : null]);
+    const orig = list.map((n) => [n, n.x, n.y, n.w, n.h, n.layout ? { ...layoutOf(n) } : null, n.size]);
     let moved = false;
     drag((ev) => {
       const dx = ((ev.clientX - x0) / z0) * sgx, dy = ((ev.clientY - y0) / z0) * sgy;
@@ -286,7 +294,7 @@ export function createSelection(app, env) {
       const k = clamp(Math.max((b0.w + dx) / b0.w, (b0.h + dy) / b0.h), 0.05, 20);
       if (!moved) { app.snap(); moved = true; gesture(true); cv.classList.add('scaling'); }
       const P = (x, y) => [Math.round(ax + (x - ax) * k), Math.round(ay + (y - ay) * k)];
-      for (const [n, x, y, w, h, L] of orig) {
+      for (const [n, x, y, w, h, L, size] of orig) {
         if (n.type === 'group') {
           // l'origine de sa rangée suit le coin, sa largeur et son espacement l'échelle
           if (L) n.layout = { ...L, width: Math.round(L.width * k), gap: Math.round(L.gap * k) };
@@ -299,6 +307,8 @@ export function createSelection(app, env) {
         [n.x, n.y] = P(x, y);
         // une diapositive garde la taille de sa scène (diapo/)
         if (n.deck) continue;
+        // un objet texte se met à l'échelle, sa taille avec lui (Miro : la poignée de la sélection est une échelle)
+        if (n.type === 'text') { n.size = clamp(Math.round((size || 14) * k * 2) / 2, 6, 400); if (n.wrap) n.w = Math.max(24, Math.round(w * k)); continue; }
         // un texte garde sa police : sa boîte s'élargit, sa hauteur suit
         if (AUTO.has(n.type)) n.w = Math.max(minW(n), Math.round(w * k));
         else { n.w = Math.max(16, Math.round(w * k)); n.h = Math.max(16, Math.round(h * k)); }

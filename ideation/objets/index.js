@@ -32,6 +32,8 @@ import * as G from './guides.js';
 import { regroup as regroupStickies } from './couleurs.js';
 import { TEMPLATES, insertTemplate, TOOL_ICON as TPL_ICON } from './modeles.js';
 import { extendWeb } from './web.js';   // web : l'objet « Web » (YouTube, Vimeo, un site), 30/09
+import { extendTexte, textTool } from './texte.js';   // l'objet texte, comme celui de Miro (30/09)
+import { createCrop } from './recadrer.js';           // recadrer une image, comme Miro (30/09)
 
 if (!document.querySelector('link[data-ide-objets]')) {
   document.head.append(el('link', { rel: 'stylesheet', href: new URL('./objets.css', import.meta.url).href, 'data-ide-objets': '' }));
@@ -84,7 +86,9 @@ export function createObjets(app) {
     const p = { ...(preset || {}) };
     if (type === 'shape') Object.assign(p, { ...F.shapeDefaults(p.kind || shapeKind), color: shapeColor(p.kind || shapeKind) }, preset || {});
     if (type === 'card') Object.assign(p, C.cardDefaults(p.kind || cardKind), preset || {});
-    return app.addAt(type, wx, wy, { preset: p, at: type === 'mind' ? 'left' : 'center', select: true, edit: type === 'shape' || type === 'mind', ...opts });
+    // un texte : il commence où l'on clique, et s'écrit aussitôt (texte.js)
+    return app.addAt(type, wx, wy, { preset: p, at: type === 'mind' || type === 'text' ? 'left' : 'center', select: true,
+      edit: type === 'shape' || type === 'mind' || type === 'text', ...opts });
   }
 
   // ── les menus ────────────────────────────────────────────
@@ -151,6 +155,8 @@ export function createObjets(app) {
 
   // ── les raccourcis ───────────────────────────────────────
   function onKey(e) {
+    // T : un texte, comme Miro (« selecting Text on the toolbar or pressing T ») ; Maj+T : le titre d'avant
+    if (e.key === 't' || e.key === 'T') { pickTool(e.key === 't' ? 'text' : 'title', true); return true; }
     const t = TOOLS[e.key.toLowerCase()];
     if (!t) return false;
     pickTool(t, true);
@@ -200,6 +206,12 @@ export function createObjets(app) {
     setTimeout(() => { addEventListener('pointerdown', outside, true); addEventListener('keydown', esc, true); });
   }
   function mountTools() {
+    // le texte, juste avant le titre (qui garde son bouton, sous Maj+T)
+    const title = document.querySelector('.ide-bar [data-tool="title"]');
+    if (title && !document.querySelector('.ide-bar [data-tool="text"]')) {
+      title.before(textTool());
+      title.title = 'un titre · Maj+T';
+    }
     const frame = document.querySelector('.ide-bar [data-tool="frame"]');
     if (!frame || document.querySelector('.ide-bar [data-tool="shape"]')) return;
     const mk = (tool, title, d) => {
@@ -301,8 +313,9 @@ export function createObjets(app) {
   // les objets de la bibliothèque qu'une planche montre hors des médias : les visages des cartes personne
   const items = (board) => (board?.nodes || []).filter((n) => n.type === 'card' && n.data?.item).map((n) => n.data.item);
 
-  // web : extendWeb (web.js) ajoute la sorte « web » et prend ses objets dans build, key, menu, panels, mini, boardItems
-  return extendWeb(app, {
+  // web : extendWeb (web.js) ajoute la sorte « web » et prend ses objets dans build, key, menu, panels, mini, boardItems ;
+  // texte : extendTexte (texte.js), la sorte « text », de même ; crop : recadrer une image (recadrer.js)
+  return extendWeb(app, extendTexte(app, {
     TYPES, has: (t) => TYPES.has(t), defs, build, key, layout, folded: () => L.folded, info: (id) => L.info.get(id), paint, mini,
     place, menu, boardItems, selectionItems, linkItems, panels, writable, editKey, cleanText,
     onKey, mindKey, pickTool, closeSub, mount, commands, items, snapper, setSnap,
@@ -311,5 +324,6 @@ export function createObjets(app) {
     trees: (list) => M.withTrees(S.board, list), subtrees: (list) => M.withSubtrees(S.board, list), roots: (list) => M.asRoots(S.board, list),
     rootOf: (n) => M.rootOf(S.board, n), addMind: (n, child) => M.addMind(app, n, child),
     regroup, toMind, insert, faceRule: () => C.faceRule(app), annot: (n) => !!n && ANNOT.has(n.type),
-  });
+    crop: createCrop(app),
+  }));
 }

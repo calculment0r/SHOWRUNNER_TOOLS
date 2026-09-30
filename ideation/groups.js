@@ -35,7 +35,7 @@ export const CARD_W = 280;    // un groupe réduit : une carte de 280 px de larg
 export const LOD_PX = 240;    // « se réduit de loin » : une carte quand sa boîte fait moins de 240 px à l'écran
 export const EXIT = 32;       // un enfant lâché à plus de 32 px hors de la boîte en sort (tldraw onDragShapesOut)
 const CARDS = new Set(['gen', 'vgen', 'compose']);
-const AUTO = new Set(['note', 'sticky', 'title', 'gen', 'vgen', 'compose']);   // leur hauteur suit leur contenu (canvas.js, AUTO_H)
+const AUTO = new Set(['note', 'sticky', 'title', 'gen', 'vgen', 'compose', 'text']);   // leur hauteur suit leur contenu (canvas.js, AUTO_H)
 const keeps = (n) => (n.type === 'media' && n.kind !== 'audio') || n.type === 'ink';   // une image, un trait gardent leurs proportions
 const minW = (n) => (CARDS.has(n.type) ? 270 : n.type === 'frame' ? 120 : 48);
 
@@ -75,6 +75,8 @@ export function setSize(n, axis, v) {
     n.h = Math.max(n.type === 'frame' ? 90 : 16, Math.round(v));
   } else {
     if (n.type === 'group') return;
+    // un texte à qui l'on donne une largeur la garde : il passe à la ligne (objets/texte.js)
+    if (n.type === 'text') n.wrap = true;
     const w = Math.max(minW(n), Math.round(v));
     if (keeps(n) && n.w > 0) n.h = Math.max(16, Math.round(w * n.h / n.w));
     n.w = w;

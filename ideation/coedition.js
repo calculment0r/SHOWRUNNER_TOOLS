@@ -556,10 +556,25 @@ export function createCoedition(app, hooks = {}) {
     if (f.gen !== K.gen) return;
     K.fly = null; K.fails = 0;
     K.serverRev = Math.max(K.serverRev, r.rev);
+    // des opérations écartées ([{i, why}]) : un objet d'un autre Workspace, un invité qui pose
+    // ce qu'on ne lui a pas montré… Le serveur a remis ces objets tels qu'il les a (`fx` du
+    // lot, rejoué ici par apply : le geste se défait chez moi) ; la phrase dit pourquoi et
+    // mène à ce qui débloque (le rapatriement), une ligne en bas, une fois par lot (règle 7)
+    if (Array.isArray(r.drop) && r.drop.length) dropped(r.drop);
     // l'écho arrive par le flux ; sans flux, ou s'il tarde, on relit ce qui manque
     if (!K.stream) pull();
     else setTimeout(() => { if (f.gen === K.gen && S.rev < r.rev) pull(); }, ECHO_MS);
     send();
+  }
+  const DROP_FR = { invalide: 'un geste illisible pour le serveur a été défait', 'invité': 'invité : on ne pose ici que des objets déjà sur tes planches — le geste est défait' };
+  function dropped(list) {
+    const why = [...new Set(list.map((d) => DROP_FR[d.why] || String(d.why || 'refusé')))];
+    K.stats.dropped = (K.stats.dropped || 0) + list.length;
+    K.lastDrop = why.join(' · ');
+    toast(why.length > 1 ? `${list.length} gestes défaits : ${K.lastDrop}` : K.lastDrop, 12000);
+    hooks.status?.();
+    // l'écho du lot (flux) porte la remise en état ; sans flux, on la relit tout de suite
+    if (!K.stream) pull();
   }
   // un refus franc (le serveur ne connaît pas ces routes, un lot illisible…) : l'enregistrement entier
   function die(why) {

@@ -1,0 +1,51 @@
+/* ============================================================
+   IDÉATION · OBJETS — recadrer une image (objets/recadrer.js).
+   L'image entière en voile, le rectangle net, huit poignées ; la barre
+   des formats au-dessus (celle de la sélection : .sbar, .sbt).
+   Jetons seulement, des filets (inset), aucune couleur en dur.
+   ============================================================ */
+
+/* sous la barre des outils de gauche (barres.css, z-index 8) et la barre de la sélection (7) */
+.crop-ov { position: absolute; inset: 0; z-index: 6; pointer-events: none; overflow: hidden; }
+.crop-ghost { position: absolute; max-width: none; opacity: .32; pointer-events: none; user-select: none; object-fit: fill; }
+.crop-win {
+  position: absolute; pointer-events: auto; cursor: move; overflow: visible;
+  box-shadow: inset 0 0 0 1px var(--or), 0 0 0 1px var(--veil);
+}
+/* l'image nette, coupée au rectangle (dans son propre calque : les poignées débordent du rectangle) */
+.crop-clip { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.crop-img { position: absolute; max-width: none; object-fit: fill; pointer-events: none; user-select: none; }
+/* les tiers, pour composer (comme la grille d'un viseur) */
+.crop-win::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background:
+    linear-gradient(to right, transparent calc(33.333% - .5px), var(--line-cy) calc(33.333% - .5px), var(--line-cy) calc(33.333% + .5px), transparent calc(33.333% + .5px),
+      transparent calc(66.666% - .5px), var(--line-cy) calc(66.666% - .5px), var(--line-cy) calc(66.666% + .5px), transparent calc(66.666% + .5px)),
+    linear-gradient(to bottom, transparent calc(33.333% - .5px), var(--line-cy) calc(33.333% - .5px), var(--line-cy) calc(33.333% + .5px), transparent calc(33.333% + .5px),
+      transparent calc(66.666% - .5px), var(--line-cy) calc(66.666% - .5px), var(--line-cy) calc(66.666% + .5px), transparent calc(66.666% + .5px));
+}
+.crop-h {
+  position: absolute; z-index: 2; width: 12px; height: 12px; border-radius: 2px; transform: translate(-50%, -50%);
+  background: var(--bg); box-shadow: inset 0 0 0 2px var(--or); pointer-events: auto;
+}
+.crop-h:hover { background: var(--or); }
+.crop-h.h-nw { left: 0; top: 0; cursor: nwse-resize; }
+.crop-h.h-n { left: 50%; top: 0; cursor: ns-resize; width: 22px; height: 7px; border-radius: 99px; }
+.crop-h.h-ne { left: 100%; top: 0; cursor: nesw-resize; }
+.crop-h.h-e { left: 100%; top: 50%; cursor: ew-resize; width: 7px; height: 22px; border-radius: 99px; }
+.crop-h.h-se { left: 100%; top: 100%; cursor: nwse-resize; }
+.crop-h.h-s { left: 50%; top: 100%; cursor: ns-resize; width: 22px; height: 7px; border-radius: 99px; }
+.crop-h.h-sw { left: 0; top: 100%; cursor: nesw-resize; }
+.crop-h.h-w { left: 0; top: 50%; cursor: ew-resize; width: 7px; height: 22px; border-radius: 99px; }
+.crop-dim {
+  position: absolute; left: 0; top: 100%; margin-top: 8px; padding: 2px 6px; border-radius: var(--r1);
+  background: var(--veil); color: var(--ink2); font-size: 8px; white-space: nowrap; pointer-events: none;
+}
+.crop-dim:empty { display: none; }
+.crop-bar { pointer-events: auto; flex-wrap: nowrap; }
+.crop-bar .crop-k { padding: 0 6px 0 4px; color: var(--or); }
+.crop-rat .sbt { padding: 0 6px; }
+/* Appliquer : un filet (le vert est au format choisi ; l'orange reste à Générer) */
+.crop-bar .crop-ok { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
+/* l'objet recadré se cache le temps du recadrage (l'image entière est au-dessus) */
+.nd.cropping { visibility: hidden; }

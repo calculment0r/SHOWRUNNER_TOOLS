@@ -22,7 +22,7 @@
   padding: 0 18px; font-size: 14px; font-weight: 500; line-height: 1.3; color: var(--ink); overflow: hidden;
 }
 .nd.shape .txt.ph:not(.editing) { visibility: hidden; }
-.cv.far .nd.shape .txt:not(.editing) { visibility: hidden; }
+/* de loin : le pavé, comme tout texte (ideation.css, le zoom sémantique) */
 
 /* ── les cartes ────────────────────────────────────────── */
 .nd.card {
@@ -129,7 +129,6 @@
 /* de loin : deux rangs ; le nom de la racine en pastille à taille d'écran, avec son nombre de
    branches (le prototype : les noms du premier rang n'y ont pas la place, leurs boîtes restent) */
 .cv.far .nd.mind.m2, .cv.far .links .mbr .b2, .cv.far .links .mbr .b3, .cv.far .mfold { display: none; }
-.cv.far .nd.mind.m1 .txt:not(.editing) { visibility: hidden; }
 .cv.far .nd.mind.m0 { overflow: visible; background: none; box-shadow: none; }
 .cv.far .nd.mind.m0 .txt:not(.editing) {
   position: absolute; left: 0; top: 50%; transform: translateY(-50%); max-width: none; overflow: visible; z-index: 4;

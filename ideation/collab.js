@@ -32,6 +32,7 @@
 import { api, el, toast, href, $ } from '../commun/shell.js';
 import { menu } from '../commun/menu.js';
 import { createCoedition } from './coedition.js';
+import { createRecorder } from './enregistrer.js';
 
 const API = window.SR_API ? new URL(window.SR_API, location.href) : new URL(href('api/'));
 const url = (p) => new URL(p, API).href;
@@ -98,6 +99,8 @@ export function install(app) {
   // la co-édition : ses opérations passent par ce flux ; elle prend l'enregistrement de la planche
   const CO = createCoedition(app, { url, moved: () => schedule(), status: () => paintNotice() });
   app.coed = CO;
+  // l'enregistrement du son de l'appel (enregistrer.js) : son voyant se voit chez chacun (call.rec)
+  const REC = createRecorder(app, { K, C, sendCall: () => sendCall(), repaint: () => paintRec() });
 
   // ── la barre : qui est là, l'appel, le fil, la visio ─────────
   const linkSt = el('span', { class: 'pill co-link', hidden: true, role: 'status' }, el('i'), el('span'));
@@ -114,7 +117,9 @@ export function install(app) {
   // étroite, la barre n'en montre que l'icône (ideation.css, .cmp)
   const bInvite = el('button', { class: 'tb ghost sm co-inv cmp', type: 'button', hidden: true, 'aria-label': 'inviter', title: 'inviter quelqu’un sur cette planche : un lien, un rôle, une durée', onclick: () => inviteModal() },
     el('span', { class: 'bi', html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a7 7 0 0 1 14 0v1M19 8v6M16 11h6"/></svg>' }), el('span', { class: 'bt' }, 'Inviter'));
-  const barBox = el('div', { class: 'co-bar' }, linkSt, notice, followPill, who, callPill, roleChip, bInvite, bPin, bFil, bVis);
+  // le voyant ENREGISTREMENT : chez chacun, tant que quelqu'un enregistre l'appel
+  const recPill = el('button', { class: 'co-recpill', type: 'button', hidden: true, role: 'status', onclick: () => openDock('visio') }, el('i'), el('span', { class: 'lbl' }));
+  const barBox = el('div', { class: 'co-bar' }, linkSt, notice, followPill, recPill, who, callPill, roleChip, bInvite, bPin, bFil, bVis);
   const ideBar = $('.ide-bar');
   if (ideBar) ideBar.append(barBox); else document.body.append(barBox);
 
@@ -162,10 +167,17 @@ export function install(app) {
   const bScr = ctl('screen', 'Écran', () => toggleScreen());
   const stripTog = el('button', { class: 'co-tog', type: 'button', title: 'le bandeau des vignettes, au-dessus de la planche', onclick: () => fold(!C.fold) }, 'vignettes');
   const visNote = el('p', { class: 'co-note' });
+  // enregistrer le son de l'appel (enregistrer.js) : le bouton, l'état, le voyant de qui enregistre
+  const bRec = el('button', { class: 'co-ctlb co-recb', type: 'button', 'aria-pressed': 'false', onclick: () => (REC.on() ? REC.stop() : REC.start()) },
+    el('i', { class: 'co-recdot' }), el('span', {}, 'Enregistrer'));
+  bRec.addEventListener('click', (e) => { if (bRec.getAttribute('aria-disabled') === 'true') { e.stopImmediatePropagation(); if (bRec.title) toast(bRec.title, 7000); } }, true);
+  const recSt = el('span', { class: 'co-recst lbl' });
+  const recRow = el('div', { class: 'co-recrow' }, bRec, recSt);
   visPane.append(
     el('div', { class: 'co-fhead' }, el('span', { class: 'lbl' }, 'visio · pair à pair'), el('span', { class: 'sp' }), stripTog),
     visWarn, visList,
     el('div', { class: 'co-vrow' }, bJoin, el('div', { class: 'co-ctl' }, bMic, bCam, bScr)),
+    recRow,
     visNote);
 
   // le bandeau des vignettes : au-dessus de la planche, jamais sur les outils
@@ -373,7 +385,8 @@ export function install(app) {
     const v = S.view;
     return [-v.x / v.z, -v.y / v.z, cv.clientWidth / v.z, cv.clientHeight / v.z].map((k) => Math.round(k * 10) / 10);
   };
-  const callState = () => ({ on: K.on, mic: !!audioTrack()?.enabled, cam: K.cam && !!K.local?.getVideoTracks()[0], screen: !!K.screen, recv: !K.local?.getTracks().length });
+  const callState = () => ({ on: K.on, mic: !!audioTrack()?.enabled, cam: K.cam && !!K.local?.getVideoTracks()[0], screen: !!K.screen, recv: !K.local?.getTracks().length,
+    rec: !!REC?.on() });
   function sendFull() {
     C.selKey = [...S.sel].join(',');
     C.rev = S.rev ?? null;
@@ -475,6 +488,9 @@ export function install(app) {
           onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); menu(r.left, r.bottom + 4, [{ head: 'aussi sur la planche' }, ...rest.map(({ best }) => ({ label: best.name, dot: best.color, onclick: () => goView(best) }))]); } }, `+${rest.length}`) : null);
     }
     paintCallPill();
+    // qui enregistre : le voyant, et une ligne quand quelqu'un commence (enregistrer.js)
+    REC.watch();
+    paintRec();
   }
   function personMenu(e, p, me) {
     const r = e.currentTarget.getBoundingClientRect();
@@ -1087,6 +1103,8 @@ export function install(app) {
     reconcile(true); paintWho(); paintCall();
   }
   function leaveCall(silent = false) {
+    // quitter l'appel arrête l'enregistrement : ce qui est pris se range (enregistrer.js)
+    if (REC.on()) REC.stop();
     for (const cid of [...K.pcs.keys()]) closePeer(cid);
     stopLocal();
     K.on = false;
@@ -1162,11 +1180,12 @@ export function install(app) {
     const key = `${K.on}|${[...K.pcs.entries()].map(([cid, Q]) => `${cid}:${Q.pc.connectionState}:${JSON.stringify(C.peers.get(cid)?.call)}`).join(';')}`;
     if (force || key !== C.callKey) { C.callKey = key; paintTiles(); paintCall(); }
     paintCallPill();
+    REC.sync();   // une personne arrivée pendant l'enregistrement entre dans le mélange
   }
   function newPeer(cid, offerer) {
     const pc = new RTCPeerConnection({ iceServers: C.ice || [] });
     const Q = { cid, pc, offerer, stream: new MediaStream(), t: Date.now() };
-    pc.ontrack = (e) => { Q.stream.addTrack(e.track); e.track.addEventListener('unmute', () => paintTiles()); paintTiles(); };
+    pc.ontrack = (e) => { Q.stream.addTrack(e.track); e.track.addEventListener('unmute', () => paintTiles()); paintTiles(); REC.sync(); };
     pc.onconnectionstatechange = () => { Q.t = Date.now(); reconcile(true); };
     K.pcs.set(cid, Q);
     return Q;
@@ -1318,17 +1337,37 @@ export function install(app) {
     stripTog.classList.toggle('on', !C.fold);
     stripTog.hidden = !K.on;
     paintCallPill();
+    paintRec();
   }
   // un contrôle désactivé reste cliquable : il dit pourquoi
   for (const b of [bMic, bCam, bScr]) b.addEventListener('click', (e) => { if (b.getAttribute('aria-disabled') === 'true') { e.stopImmediatePropagation(); if (b.title) toast(b.title, 7000); } }, true);
 
+  // l'enregistrement : le bouton (qui dit pourquoi s'il est éteint), le temps, l'état de la
+  // transcription ; le voyant de qui enregistre, dans la barre et le bandeau, chez chacun
+  function paintRec() {
+    const on = REC.on(), why = on ? '' : REC.why();
+    bRec.setAttribute('aria-pressed', String(on));
+    bRec.setAttribute('aria-disabled', why ? 'true' : 'false');
+    bRec.classList.toggle('on', on);
+    bRec.classList.toggle('why', !!why);
+    bRec.title = why || (on ? 'arrêter : le son se range dans la bibliothèque, une carte son se pose sur la planche' : 'enregistrer le son de l’appel (le mélange de tous) : chacun verra le voyant ENREGISTREMENT');
+    bRec.lastChild.textContent = on ? `Arrêter · ${REC.clock(REC.seconds())}` : 'Enregistrer';
+    const L = REC.last();
+    recSt.textContent = on ? 'chacun voit le voyant' : L?.state || (L?.it ? `rangé : ${L.it.title}` : '');
+    const ws = REC.who();
+    recPill.hidden = !ws.length;
+    recPill.lastChild.textContent = ws.length ? `enregistrement · ${ws.join(', ')}` : '';
+    recPill.title = ws.length ? `${ws.join(', ')} enregistre${ws.length > 1 ? 'nt' : ''} le son de l’appel` : '';
+    strip.classList.toggle('rec', !!ws.length);
+    tabVis.classList.toggle('rec', !!ws.length);
+  }
   function paintAll() {
     C.whoKey = '';
-    paintWho(); paintNotice(); paintDots(); paintFil(); paintComposer(); paintTiles(); paintCall(); paintRole(); paintFollow(); schedule();
+    paintWho(); paintNotice(); paintDots(); paintFil(); paintComposer(); paintTiles(); paintCall(); paintRole(); paintFollow(); paintRec(); schedule();
   }
 
   // pour les essais (playwright) et le module de présentation
-  app.collab = { C, K, CO, open: openDock, close: closeDock, present: setCompact, pin: pinMode, stream: { open, close: closeStream },
+  app.collab = { C, K, CO, rec: REC, open: openDock, close: closeDock, present: setCompact, pin: pinMode, stream: { open, close: closeStream },
     follow: startFollow, unfollow: stopFollow, lead, invite: inviteModal };
   const t0 = LS('co-tab');
   if (t0 === 'fil' || t0 === 'visio') openDock(t0);

@@ -171,8 +171,14 @@ async function flushSave() {
   paintSave();
   S.saving = api(`ideation/boards/${b.id}`, { method: 'POST', body }).then((r) => {
     if (S.board?.id === b.id) { S.rev = r.rev; b.updated = r.updated; b.rev = r.rev; }
+    S.refused = '';   // ── idéation, 30/09 : un refus de Workspace levé ──
   }).catch((e) => {
-    if (e.status === 409) { S.conflict = true; $('#conflict').hidden = false; }
+    // ── idéation, 30/09 : un objet d'un autre Workspace (elements.check_doc, 409) n'est pas un
+    // conflit de version : la phrase du serveur dit lequel et mène au rapatriement (règle 7) ;
+    // la planche reste « modifiée », le prochain geste réessaie ──
+    if (e.status === 409 && /Workspace/i.test(e.message || '')) { S.dirty = true; if (S.refused !== e.message) toast(e.message, 12000); S.refused = e.message; }
+    // ── fin idéation ──
+    else if (e.status === 409) { S.conflict = true; $('#conflict').hidden = false; }
     else { S.dirty = true; toast(`enregistrement impossible : ${e.message}`, 7000); }
   }).finally(() => {
     S.saving = null;
@@ -185,10 +191,10 @@ app.flushSave = flushSave;
 app.paintSave = () => paintSave();   // collab : la co-édition dit où en sont ses envois
 function paintSave() {
   const p = $('#save-st');
-  const [cls, txt] = S.conflict ? ['err', 'conflit'] : S.saving ? ['work', 'enregistre'] : S.dirty ? ['work', 'modifiée'] : S.board ? ['on', 'enregistrée'] : ['', '—'];
+  const [cls, txt] = S.conflict ? ['err', 'conflit'] : S.refused && S.dirty ? ['err', 'refusée'] : S.saving ? ['work', 'enregistre'] : S.dirty ? ['work', 'modifiée'] : S.board ? ['on', 'enregistrée'] : ['', '—'];
   p.className = 'pill ' + cls;
   p.lastChild.textContent = txt;
-  p.title = `${txt} — la planche s’enregistre seule à chaque geste`;   // étroite, la barre n'en montre que le point
+  p.title = S.refused && S.dirty ? S.refused : `${txt} — la planche s’enregistre seule à chaque geste`;   // étroite, la barre n'en montre que le point
 }
 addEventListener('beforeunload', () => {
   if (app.coed?.on()) { app.coed.unload(); return; }   // collab : les dernières opérations, par sendBeacon
@@ -770,7 +776,7 @@ app.boardsModal = async () => {
       if (S.board?.id === bd.id) closeBoard();
       paint();
     } }, 'Supprimer');
-    const kinds = Object.entries(bd.kinds || {}).map(([k, v]) => `${v} ${({ image: 'image', video: 'vidéo', audio: 'son', element: 'élément', note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', group: 'groupe', gen: 'carte image', vgen: 'carte vidéo', compose: 'composeur', palette: 'nuancier', shape: 'forme', card: 'carte', mind: 'nœud', ink: 'trait' })[k] || k}${v > 1 && !['son'].includes(k) ? 's' : ''}`).join(' · ');
+    const kinds = Object.entries(bd.kinds || {}).map(([k, v]) => `${v} ${({ image: 'image', video: 'vidéo', audio: 'son', element: 'élément', note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', group: 'groupe', gen: 'carte image', vgen: 'carte vidéo', compose: 'composeur', palette: 'nuancier', shape: 'forme', card: 'carte', mind: 'nœud', ink: 'trait', text: 'texte' })[k] || k}${v > 1 && !['son'].includes(k) ? 's' : ''}`).join(' · ');
     return el('div', { class: 'brow' + (S.board?.id === bd.id ? ' on' : '') },
       el('span', { class: 'th', style: bd.thumb_url ? { backgroundImage: `url("${href(bd.thumb_url)}")` } : null }),
       el('div', { class: 'bt' }, el('b', {}, bd.name), el('small', {}, `${kinds || 'vide'} · ${fmtDate(bd.updated)}`)),
@@ -912,7 +918,8 @@ for (const [id, fn] of [['#b-son', 'son'], ['#b-web', 'web']]) {
   $(id)?.addEventListener('click', () => { if (app.medias?.[fn]) app.medias[fn](); else toast('les médias (son, web) se chargent encore : un instant'); });
 }
 function help() {
-  const K = [['V', 'choisir'], ['H · espace', 'se déplacer'], ['L', 'une flèche d’annotation'], ['N', 'note'], ['S', 'post-it'], ['T', 'titre'], ['F', 'cadre (tracer)'],
+  const K = [['V', 'choisir'], ['H · espace', 'se déplacer'], ['L', 'une flèche d’annotation'], ['N', 'note'], ['S', 'post-it'], ['T · Maj+T', 'texte (fond transparent, sa barre au-dessus) · titre'], ['F', 'cadre (tracer)'],
+    ['double-clic sur une image', 'la recadrer (Entrée applique, Échap annule ; l’image reste entière)'],
     ['G', 'carte Générer image'], ['M', 'carte Générer vidéo'], ['P', 'composeur de prompt'],
     ['R', 'forme (la grille des six contours)'], ['K', 'carte : tâche, lien, mesure, personne'], ['B', 'mind map'], ['D', 'crayon (Échap : le reposer)'],
     ['Tab · Entrée', 'sur un nœud de mind map : un enfant · un frère'], ['Entrée · F2', 'écrire dans l’objet choisi'],

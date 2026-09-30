@@ -1013,7 +1013,9 @@ def r_presence(req, bid):
         if not v or not isinstance(v, dict) or not v.get("on"):
             call = None
         else:
-            call = {k: bool(v.get(k)) for k in ("on", "mic", "cam", "screen", "recv")}
+            # « rec » (idéation, 30/09) : cette personne enregistre le son de l'appel — chacun
+            # voit le voyant (ideation/enregistrer.js) ; le consentement est visible de tous
+            call = {k: bool(v.get(k)) for k in ("on", "mic", "cam", "screen", "recv", "rec")}
             if not (c.call or {}).get("on"):
                 with _lock:
                     n = sum(1 for x in _boards.get(bid, {}).values() if x is not c and (x.call or {}).get("on"))
@@ -1959,6 +1961,10 @@ def selftest(call, ok) -> None:
         ok(s == 413, f"collab : un signal trop gros ({s})")
         s, _, _ = H("POST", base + "/signal", {"cid": ccid, "to": lcid, "kind": "offer", "data": offer}, cookie=lina, headers=same)
         ok(s == 403, f"collab : pas de signal au nom d'un autre ({s})")
+        # idéation, 30/09 : le voyant « enregistrement » part chez les autres
+        H("POST", base + "/presence", {"cid": lcid, "call": {"on": True, "mic": True, "rec": True}}, cookie=lina, headers=same)
+        _, rp = fc.wait(lambda e, d: e == "p" and any(x["cid"] == lcid and (x.get("call") or {}).get("rec") for x in d), 3)
+        ok(rp is not None, "collab : qui enregistre l'appel, les autres le voient (call.rec)")
         LIMITS["call"] = 2
         fc2 = _Flux(base + "/stream", cal)   # un second onglet de Cal
         flux.append(fc2)

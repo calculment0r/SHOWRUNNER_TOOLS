@@ -65,7 +65,13 @@ export function createMenus(app) {
     if (n.type === 'media') {
       const it = S.items.get(n.item);
       const gone = !it || it.missing;
-      if (n.kind === 'image' || n.kind === 'video') out.push({ label: 'Voir en grand', sub: 'double-clic', disabled: gone, why: 'cet objet a quitté la bibliothèque', onclick: () => app.lightbox(n) });
+      // une image : recadrer au double-clic (Miro, objets/recadrer.js) ; une vidéo : la voir en grand
+      if (n.kind === 'image') {
+        const cw = app.objets?.crop?.whyNot(n) ?? 'le recadrage n’est pas chargé';
+        out.push({ label: 'Recadrer', sub: 'double-clic', disabled: !!cw, why: cw, onclick: () => app.objets.crop.start(n.id) });
+        if (n.crop) out.push({ label: 'Image entière', sub: 'défaire le recadrage', onclick: () => app.mutate(() => { const F = app.objets.crop.fullOf(n); Object.assign(n, { x: Math.round(F.x), y: Math.round(F.y), w: Math.round(F.w), h: Math.round(F.h) }); delete n.crop; }) });
+      }
+      if (n.kind === 'image' || n.kind === 'video') out.push({ label: 'Voir en grand', sub: n.kind === 'video' ? 'double-clic' : '', disabled: gone, why: 'cet objet a quitté la bibliothèque', onclick: () => app.lightbox(n) });
       if (n.kind === 'image') {
         const rec = !gone && app.gen.recipe(it);
         out.push({ label: 'Variations ×4', disabled: !rec, why: 'image sans recette (déposée ou faite ailleurs) : une carte Générer la prend en référence', onclick: () => app.gen.variations(n.id, 4) },
@@ -86,6 +92,11 @@ export function createMenus(app) {
       out.push({ label: 'Écrire', key: 'Entrée', onclick: () => C().editText(n.id) });
       if (n.type === 'sticky') out.push({ label: 'Couleur', items: colorItems([n]) });
       if (n.type === 'title') out.push({ label: 'Taille', items: [['s', 'Petit'], ['m', 'Moyen'], ['l', 'Grand']].map(([k, v]) => ({ label: v, checked: n.size === k, onclick: () => app.mutate(() => { n.size = k; }) })) });
+      // une note, un titre en objet texte (objets/texte.js) : ses lignes deviennent des paragraphes
+      if (app.texte && n.type !== 'sticky') {
+        const why = app.texte.whyNotText(n);
+        out.push({ label: 'En texte', sub: 'police, couleur, listes…', disabled: !!why, why, onclick: () => app.texte.fromNote(n) });
+      }
     } else if (n.type === 'frame') {
       const P = app.atelier?.presentation;
       const inner = S.board.nodes.filter((m) => m !== n && m.type !== 'group' && m.x >= n.x && m.y >= n.y && m.x + m.w <= n.x + n.w && m.y + m.h <= n.y + n.h);
@@ -161,7 +172,7 @@ export function createMenus(app) {
     const at = (type) => () => app.addAt(type, wx, wy, { edit: ['note', 'sticky', 'title'].includes(type), select: true });
     const out = [{ head: 'poser ici' },
       { label: 'Note', key: 'N', onclick: at('note') }, { label: 'Post-it', key: 'S', onclick: at('sticky') },
-      { label: 'Titre', key: 'T', onclick: at('title') }, { label: 'Cadre', key: 'F', onclick: at('frame') },
+      { label: 'Titre', key: 'Maj+T', onclick: at('title') }, { label: 'Cadre', key: 'F', onclick: at('frame') },
       // forme, carte, mind map, modèle d'atelier (objets/)
       ...(app.objets?.boardItems(wx, wy) || []),
       ...(app.diapo?.boardItems(wx, wy) || []),

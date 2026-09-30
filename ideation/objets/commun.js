@@ -25,9 +25,9 @@ export const PALETTE = [
 export const colorName = (id) => PALETTE.find((c) => c.id === id)?.name || id;
 
 // les objets d'annotation : ils portent les quatre poignées des connecteurs
-export const ANNOT = new Set(['note', 'sticky', 'title', 'shape', 'card', 'mind']);
-// les objets qu'on écrit sur place (double-clic, Entrée)
-export const WRITABLE = new Set(['note', 'sticky', 'title', 'shape', 'card', 'mind']);
+export const ANNOT = new Set(['note', 'sticky', 'title', 'shape', 'card', 'mind', 'text']);
+// les objets qu'on écrit sur place (double-clic, Entrée) ; le texte (texte.js) en édition riche
+export const WRITABLE = new Set(['note', 'sticky', 'title', 'shape', 'card', 'mind', 'text']);
 // ce qui se convertit en mind map (étude § 3.3)
 export const TO_MIND = new Set(['note', 'sticky', 'title', 'shape', 'card']);
 
