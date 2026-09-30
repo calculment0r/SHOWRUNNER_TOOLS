@@ -2754,7 +2754,8 @@ async function paintTrash() {
   grid.style.setProperty('--card', `${S.size}px`);
   const restore = (t) => api(`library/${t.id}/restore`, { method: 'POST', espace: t.space });
   const card = (t) => {
-    const im = el('div', { class: 'im' }, t.thumb_url ? el('img', { src: href(t.thumb_url), alt: '', loading: 'lazy' }) : (glyph(t.kind) || el('span', { class: 'noimg' }, 'sans image')),
+    const im = el('div', { class: 'im' }, t.thumb_url ? el('img', { src: href(t.thumb_url), alt: '', loading: 'lazy' })
+      : (glyph(t.kind) || (t.kind === 'audio' ? wave() : el('span', { class: 'noimg' }, 'sans image'))),
       kindMark(t));   // la marque de la sorte commune (commun/shell.js)
     const n = el('div', { class: 'acard trash-card', role: 'listitem', 'data-trash': t.id },
       el('div', { class: 'thumb' }, im, el('div', { class: 'cap' }, el('div', { class: 't' }, t.title || t.id),
