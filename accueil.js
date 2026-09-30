@@ -2,7 +2,8 @@
 // apps_studio_elements.md § 3, décision de Cal du 29/09) : le titre et la
 // seule action orange, la bibliothèque ; « Reprendre » (Studio) ; A les
 // Apps (faire vite, seul) ; B le Studio (les outils liés par les éléments) ;
-// C les derniers assets ; les machines en pied. Les outils viennent de TOOLS
+// C les derniers assets ; les machines et les crédits (le GPU du mois de la
+// Team, étape 8) en pied. Les outils viennent de TOOLS
 // (commun/shell.js), la seule liste : une carte dont l'outil n'y est pas
 // encore est « bientôt » — elle s'allume seule le jour où l'outil y entre
 // avec sa page.
@@ -72,7 +73,7 @@ const toolOf = (id) => TOOLS.find((t) => t.id === id && (t.path || t.external)) 
 // où l'outil calcule : `local` (nos DGX) ; `api` s'ajoutera dans TOOLS
 // (`engines`) le jour où un modèle fermé sera branché — pas avant
 const enginesOf = (t) => (t && t.engines) || ['local'];
-const S = { access: 'studio', asked: null, sys: null };
+const S = { access: 'studio', asked: null, sys: null, budget: null };
 
 // une carte : un lien, un bouton fermé (qui dit pourquoi), ou « bientôt »
 function card(cls, def, t, locked, soon, kids) {
@@ -234,9 +235,72 @@ function paintSys(sys) {
   pills.push(pill(h3 ? 'on' : '', h3 ? 'H3' : 'H3 au repos', h3 ? 'H3 démarré' : 'H3 se démarre à la demande'));
   if (sys.cf_studio) pills.push(pill(sys.cf_studio.up ? 'on' : 'err', 'Character Factory', sys.cf_studio.up ? 'le studio répond' : 'le studio ne répond pas'));
   pills.push(el('span', { class: 'pill' }, el('span', {}, sys.queued ? `${sys.queued} en file` : 'file vide')));
+  const credits = budgetPills(pill);
+  pills.push(...credits);
   // les modèles fermés (positionnement.md § 5.3, règle 8) : rien n'est branché
-  pills.push(el('span', { class: 'pill', title: 'tout calcule sur nos DGX' }, el('span', {}, 'API : pas encore branchées')));
+  if (!credits.length) pills.push(el('span', { class: 'pill', title: 'tout calcule sur nos DGX' }, el('span', {}, 'API : pas encore branchées')));
   box.replaceChildren(...pills);
+}
+
+// ── les crédits : la consommation du mois de la Team du Workspace courant ──
+// (étape 8, equipes_espaces.md § 2.6 ; GET /api/budget, server/tools/equipes.py) : les
+// secondes de GPU mesurées (conso.jsonl) et réservées par les travaux en cours ; la part
+// utilisée s'il y a un plafond ; plafond atteint, la pastille le dit et mène à qui
+// débloque (règle 7). Un guest ne calcule pas : rien.
+const fmtS = (s) => {
+  s = Math.max(0, Math.round(s || 0));
+  if (s < 60) return `${s} s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h} h ${String(r).padStart(2, '0')}` : `${h} h`;
+};
+async function loadBudget() {
+  try { S.budget = await api('budget'); } catch { S.budget = null; }
+  if (S.sys !== null) paintSys(S.sys);
+}
+function meter(spent, cap) {
+  const pc = cap > 0 ? Math.min(100, Math.round((spent / cap) * 100)) : 100;
+  return el('span', { class: 'acc-meter', role: 'meter', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pc),
+    'aria-label': `${pc} % du plafond` }, el('span', { style: `width:${pc}%` }));
+}
+function budgetPills(pill) {
+  const b = S.budget;
+  if (!b || !b.team || b.hidden || !b.total) return [];
+  const t = b.total;
+  const who = b.personal ? 'chez moi' : b.name;
+  const spent = t.gpu_used_s + t.gpu_held_s;
+  const unblock = (what) => (b.manage
+    ? el('a', { class: 'acc-fix', href: href('admin/#teams') }, what)
+    : el('span', { class: 'acc-fix' }, `demande à ${b.unblock}`));
+  const out = [];
+  const detail = [`${b.month_fr} : ${fmtS(t.gpu_used_s)} de GPU mesurées`,
+    t.gpu_held_s ? `${fmtS(t.gpu_held_s)} réservées par les travaux en cours` : null,
+    t.gpu_cap_s == null ? 'sans plafond' : `plafond ${fmtS(t.gpu_cap_s)}`].filter(Boolean).join(' · ');
+  if (t.gpu_cap_s == null) {
+    out.push(pill('on', `GPU · ${who} · ${fmtS(t.gpu_used_s)} ce mois`, detail));
+  } else {
+    const full = spent >= t.gpu_cap_s;
+    const p = pill(full ? 'err' : 'on', `GPU · ${who} · ${fmtS(spent)} / ${fmtS(t.gpu_cap_s)}`, detail);
+    p.append(meter(spent, t.gpu_cap_s));
+    out.push(p);
+    if (full) out.push(unblock('relever le plafond'));
+  }
+  // la part de la personne, s'il y en a une
+  const me = b.me;
+  if (me && me.gpu_cap_s != null) {
+    const mine = me.gpu_used_s + me.gpu_held_s;
+    const full = mine >= me.gpu_cap_s;
+    const p = pill(full ? 'err' : '', `ta part · ${fmtS(mine)} / ${fmtS(me.gpu_cap_s)}`, `${b.month_fr} : ta part de GPU dans ${who}`);
+    p.append(meter(mine, me.gpu_cap_s));
+    out.push(p);
+    if (full && !(t.gpu_cap_s != null && spent >= t.gpu_cap_s)) out.push(unblock('agrandir la part'));
+  }
+  // l'API payante : coupée par défaut, sans crédit (décision 6)
+  const off = !b.api_open || !t.credits_cap;
+  out.push(pill('', off ? 'API : coupée · 0 crédit' : `API · ${t.credits_used + t.credits_held} / ${t.credits_cap} crédits`,
+    off ? 'aucun modèle payant n’est branché ; un admin de la Team ouvre l’API et pose des crédits' : `${b.month_fr} : 1 crédit = 0,01 €`));
+  return out;
 }
 
 async function paint() {
@@ -250,6 +314,7 @@ async function paint() {
   paintSys(sys);
   paintAssets();
   loadProjects();
+  loadBudget();
 }
 
 dropAnywhere(async (files) => {
@@ -259,5 +324,5 @@ dropAnywhere(async (files) => {
   paintAssets();
 });
 
-setInterval(() => system().then(paintSys), 20000);
+setInterval(() => system().then((sys) => { S.sys = sys; paintSys(sys); loadBudget(); }), 20000);
 paint();

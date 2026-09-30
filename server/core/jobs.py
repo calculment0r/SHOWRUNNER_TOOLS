@@ -48,11 +48,26 @@ viewer ou acteur, ne calcule jamais, `cpu` compris), puis le Studio
 (`auth.need_studio_kind`). Refus : 403 qui dit pourquoi et qui débloque. Le
 travail garde son Workspace (`space`) ; la file le pose (`current_space()`)
 le temps du `run`, avec la personne : ce qu'un travail lance reste à eux.
+
+Le budget (équipes_espaces.md § 2.6, étape 8 ; décision 6 : il est à la Team du
+Workspace ; le réglage : core/espaces.py, `budget_of`). `submit`, sous le verrou de
+la file, **réserve** l'estimation (secondes de GPU d'un travail `gpu` ; le prix
+déclaré, en crédits, d'un travail `api`) et la juge contre le plafond du mois de la
+Team, la part de la personne et celle du Workspace : au-delà, 429 qui le dit et
+nomme qui débloque. La réservation n'est pas un compteur à part : c'est le champ
+`budget` des travaux encore en file ou en cours — un travail qui en sort (fini,
+annulé, en échec, interrompu) ne réserve plus rien, par construction. À sa sortie
+(`_settle`, sous le même verrou que le changement d'état), un travail fini compte
+sa mesure (`_t0` → fin) ; annulé, en échec ou interrompu, rien. Chaque réservation
+et chaque sortie s'écrivent dans `<data_dir>/conso.jsonl`, une ligne d'un bloc :
+c'est la seule vérité de la consommation du mois (relue au démarrage). `retry`
+passe par `submit` : il réserve à nouveau.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import shutil
 import statistics
@@ -102,7 +117,7 @@ COSTS = ("none", "cpu", "gpu", "api")   # core/espaces.py, COSTS : ce que la mat
 
 
 def register(kind: str, fn, lane: str = "image", title: str = "", *, family=UNSET, gpu=UNSET,
-             mem_gb=None, direct=False, cost=UNSET) -> None:
+             mem_gb=None, direct=False, cost=UNSET, price=None) -> None:
     """`family` : la famille de modèles du travail (« krea2 », « h3 »…), ou
     une fonction(params) qui la rend ; None : il n'en charge aucun. `gpu` :
     s'il passe par ComfyUI (booléen ou fonction(params)) ; par défaut oui
@@ -119,11 +134,30 @@ def register(kind: str, fn, lane: str = "image", title: str = "", *, family=UNSE
     `cost` : ce que le travail consomme — « gpu » (un modèle local), « api » (un
     fournisseur payant), « cpu » (ffmpeg, PIL), « none » (rien) — ou une
     fonction(params) qui le rend. jobs.submit le juge (la garde du calcul) ;
-    tools/check.py échoue pour toute sorte qui ne le déclare pas."""
+    tools/check.py échoue pour toute sorte qui ne le déclare pas.
+
+    `price` : le prix d'un travail `api`, en crédits (1 crédit = 0,01 €), ou une
+    fonction(params) qui le rend — celui qu'on montre avant de lancer. Sans prix, un
+    travail `api` ne part pas (la réservation ne sait pas quoi réserver)."""
     if not (cost is UNSET or callable(cost) or cost in COSTS):
         raise ValueError(f"{kind} : cost = gpu, api, cpu, none ou une fonction(params), pas {cost!r}")
+    if not (price is None or callable(price) or (isinstance(price, (int, float)) and not isinstance(price, bool) and price >= 0)):
+        raise ValueError(f"{kind} : price = des crédits (0 ou plus) ou une fonction(params), pas {price!r}")
     HANDLERS[kind] = (fn, lane, title)
-    _META[kind] = {"family": family, "gpu": gpu, "mem_gb": mem_gb, "direct": direct, "cost": cost}
+    _META[kind] = {"family": family, "gpu": gpu, "mem_gb": mem_gb, "direct": direct, "cost": cost, "price": price}
+
+
+def price_of(kind: str, params: dict | None = None) -> int | None:
+    """Le prix déclaré d'un travail, en crédits (arrondi au crédit supérieur), ou None."""
+    pr = _META.get(kind, {}).get("price")
+    if callable(pr):
+        try:
+            pr = pr(params if isinstance(params, dict) else {})
+        except Exception:  # noqa: BLE001 — un prix illisible : pas de prix, le travail payant ne part pas
+            return None
+    if isinstance(pr, bool) or not isinstance(pr, (int, float)) or pr != pr or pr < 0:
+        return None
+    return int(-(-pr // 1))
 
 
 def cost_declared(kind: str) -> bool:
@@ -242,6 +276,8 @@ def _load() -> None:
             if j["state"] in ("running", "queued"):
                 # le serveur s'est arrêté pendant le travail : on le dit, on ne le relance pas seul
                 j.update(state="interrupted", message="interrompu par un redémarrage du portail")
+                with _cv:
+                    _settle(j)   # sa réservation est rendue, le journal le dit
             _jobs[j["id"]] = j
             _order.append(j["id"])
     except (ValueError, KeyError):
@@ -409,12 +445,246 @@ def _check_quota(u: dict | None) -> None:
         raise QuotaError(f"la file est pleine ({_n(total, 'travail', 'travaux')} en attente) : réessaie quand elle aura avancé")
 
 
+# ── le budget (étape 8) : réserver, mesurer, écrire ─────────
+ACTIVE = ("queued", "running")
+MOIS_FR = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
+           "novembre", "décembre")
+# la réservation d'un travail `gpu` dont on n'a encore aucune mesure (ni médiane, ni estimation
+# de l'outil) : non documenté par les modèles — un réglage de Cal (config `budget_estime_defaut_s`)
+DEFAULT_RESERVE_S = 600
+_conso: dict = {"file": None, "agg": {}}
+
+
+def _month(t: float | None = None) -> str:
+    return time.strftime("%Y-%m", time.localtime(t))
+
+
+def month_fr(m: str) -> str:
+    try:
+        y, mo = m.split("-")
+        return f"{MOIS_FR[int(mo) - 1]} {y}"
+    except (ValueError, IndexError):
+        return m
+
+
+def fmt_s(s: float | None) -> str:
+    """Des secondes de GPU, pour une phrase : « 45 s », « 12 min », « 3 h 05 »."""
+    s = max(0, int(round(float(s or 0))))
+    if s < 60:
+        return f"{s} s"
+    mins = int(round(s / 60))
+    if mins < 60:
+        return f"{mins} min"
+    h, m = divmod(mins, 60)
+    return f"{h} h {m:02d}" if m else f"{h} h"
+
+
+def _conso_file() -> Path:
+    return config.data_dir() / "conso.jsonl"
+
+
+def _zero() -> dict:
+    return {"gpu_s": 0.0, "credits": 0, "n": 0}
+
+
+def _add_to(rows, gpu: float, credits: int) -> None:
+    for r in rows:
+        r["gpu_s"] += gpu
+        r["credits"] += credits
+        r["n"] += 1
+
+
+def _tally(agg: dict, rec: dict) -> None:
+    """Une ligne de sortie comptée dans le mois de sa Team : la Team, la personne, le Workspace."""
+    team = rec.get("team")
+    if not team:
+        return
+    m = agg.setdefault(rec.get("mois") or "?", {}).setdefault(team, {**_zero(), "users": {}, "spaces": {}})
+    _add_to((m, m["users"].setdefault(rec.get("qui") or "-", _zero()), m["spaces"].setdefault(rec.get("workspace") or "-", _zero())),
+            float(rec.get("gpu_s_compte") or 0), int(rec.get("credits_comptes") or 0))
+
+
+def _agg() -> dict:
+    """La consommation comptée, par mois et par Team : relue de conso.jsonl (la seule vérité)
+    la première fois, puis tenue à jour ligne par ligne. Sous le verrou de la file."""
+    f = _conso_file()
+    if _conso["file"] != str(f):
+        agg: dict = {}
+        try:
+            with open(f, encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue   # une ligne coupée (disque plein) : les autres comptent
+                    if isinstance(rec, dict) and rec.get("fin"):
+                        _tally(agg, rec)
+        except FileNotFoundError:
+            pass
+        _conso.update(file=str(f), agg=agg)
+    return _conso["agg"]
+
+
+def _held(team: str) -> dict:
+    """Ce que réservent les travaux encore en file ou en cours de la Team — lu sur eux,
+    jamais tenu à part : un travail qui sort de la file ne réserve plus rien."""
+    out = {**_zero(), "users": {}, "spaces": {}}
+    for x in _jobs.values():
+        b = x.get("budget")
+        if x["state"] in ACTIVE and isinstance(b, dict) and b.get("team") == team:
+            _add_to((out, out["users"].setdefault(x.get("owner") or "-", _zero()),
+                     out["spaces"].setdefault(x.get("space") or "-", _zero())), float(b.get("gpu_s") or 0), int(b.get("credits") or 0))
+    return out
+
+
+def _line(j: dict) -> dict:
+    b = j["budget"]
+    fin = bool(b.get("fin"))
+    rec = {"t": library.now(), "mois": _month(), "job": j["id"], "qui": j.get("owner"), "workspace": j.get("space"),
+           "team": b.get("team"), "sorte": j["kind"], "cout": j.get("cost"), "etat": j["state"] if fin else "réservé",
+           "fin": fin, "est_s": j.get("est_s"), "gpu_s_reserve": b.get("gpu_s"), "credits_reserves": b.get("credits")}
+    if fin:
+        rec.update(mesure_s=b.get("mesure_s"), gpu_s_compte=b.get("gpu_s_compte"), credits_comptes=b.get("credits_comptes"))
+    return rec
+
+
+def _conso_write(rec: dict) -> None:
+    """Une ligne, d'un bloc : un seul write() en ajout (O_APPEND) — deux travaux qui finissent
+    ensemble ne mêlent pas leurs lignes."""
+    data = (json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+    fd = os.open(_conso_file(), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        if os.write(fd, data) != len(data):
+            raise OSError("conso.jsonl : ligne écrite en partie")
+    finally:
+        os.close(fd)
+
+
+def _settle(j: dict) -> None:
+    """Sous le verrou, au moment où le travail sort de la file : fini, il compte sa mesure
+    (`_t0` → fin) ; annulé, en échec, interrompu, il ne compte rien. Sa réservation tombe
+    d'elle-même (il n'est plus en file). Une fois par travail."""
+    b = j.get("budget")
+    if not isinstance(b, dict) or b.get("fin") or j["state"] in ACTIVE:
+        return
+    t0 = j.get("_t0")
+    measured = round(time.time() - t0, 1) if t0 else None
+    done = j["state"] == "done"
+    b.update(fin=True, mesure_s=measured,
+             gpu_s_compte=(measured or 0.0) if done and j.get("cost") == "gpu" else 0.0,
+             credits_comptes=int(b.get("credits") or 0) if done and j.get("cost") == "api" else 0)
+    rec = _line(j)
+    _tally(_agg(), rec)   # _agg() d'abord : s'il relit le fichier, la ligne n'y est pas encore
+    try:
+        _conso_write(rec)
+    except OSError as e:   # la mémoire compte ; le journal le dit au prochain démarrage (en moins)
+        print(f"conso.jsonl : {e}", flush=True)
+
+
+def _reserve(j: dict, u) -> None:
+    """Sous le verrou : la réservation du travail sur le budget de la Team de son Workspace,
+    jugée contre le plafond du mois, la part de la personne, la part du Workspace.
+    QuotaError (429) qui dit où on en est et qui débloque ; rien n'est réservé alors."""
+    team = espaces.team_of_space(j.get("space"))
+    cost = j.get("cost")
+    est = j.get("est_s")
+    gpu = float(est if est else config.get("budget_estime_defaut_s", DEFAULT_RESERVE_S)) if cost == "gpu" else 0.0
+    b = {"team": team, "gpu_s": round(gpu, 1), "credits": 0, "est": bool(est)}
+    if team:
+        cfg = espaces.budget_of(team)
+        month = _month()
+        used = (_agg().get(month) or {}).get(team) or {**_zero(), "users": {}, "spaces": {}}
+        held = _held(team)
+        uid, sid = j.get("owner") or "-", j.get("space") or "-"
+
+        def spent(key: str, scope: str | None = None, k: str = "") -> float:
+            a = used if scope is None else (used[scope].get(k) or _zero())
+            h = held if scope is None else (held[scope].get(k) or _zero())
+            return a[key] + h[key]
+
+        tname = (espaces.team(team) or {}).get("name") or team
+        sname = (espaces.space(sid) or {}).get("name") or sid
+        mine = auth.current_id() == uid
+        pname = "ta part" if mine else f"la part de {(u or {}).get('name') or uid}"
+        admins = espaces.unblockers(team)
+        fix = lambda verb: f"un admin de la Team ({admins}) {verb} : Admin → Teams, « budget »"   # noqa: E731
+        when = month_fr(month)
+        if cost == "gpu":
+            for cap, s, what, verb in (
+                    (cfg["gpu_s"], spent("gpu_s"), f"le plafond GPU de la Team « {tname} »", "relève le plafond"),
+                    ((cfg["users"].get(uid) or {}).get("gpu_s"), spent("gpu_s", "users", uid), f"{pname} de GPU dans « {tname} »", "agrandit la part"),
+                    ((cfg["spaces"].get(sid) or {}).get("gpu_s"), spent("gpu_s", "spaces", sid), f"la part de GPU du Workspace « {sname} »", "agrandit la part")):
+                if cap is not None and s + gpu > cap:
+                    raise QuotaError(f"{what} est atteint pour {when} : {fmt_s(s)} utilisées ou réservées sur {fmt_s(cap)}, "
+                                     f"ce calcul en demande ≈ {fmt_s(gpu)} — {fix(verb)}")
+        elif cost == "api":
+            if cfg["api_credits"] <= 0:
+                raise QuotaError(f"API payante : la Team « {tname} » n'a aucun crédit pour {when} (0 : coupée par défaut) — "
+                                 + fix("en pose"))
+            price = price_of(j["kind"], j.get("params"))
+            if price is None:
+                raise HttpError(409, f"« {j['kind']} » : son prix n'est pas déclaré — un calcul payant ne part pas sans son prix vu avant")
+            for cap, s, what in (
+                    (cfg["api_credits"], spent("credits"), f"les crédits API de la Team « {tname} »"),
+                    ((cfg["users"].get(uid) or {}).get("api_credits"), spent("credits", "users", uid), f"{pname} de crédits API dans « {tname} »"),
+                    ((cfg["spaces"].get(sid) or {}).get("api_credits"), spent("credits", "spaces", sid), f"la part de crédits API du Workspace « {sname} »")):
+                if cap is not None and s + price > cap:
+                    raise QuotaError(f"{what} : {int(s)} utilisés ou réservés sur {cap} pour {when}, ce calcul en coûte {price} — "
+                                     + fix("en ajoute"))
+            b["credits"] = price
+    j["budget"] = b
+
+
+def budget_view(team: str, u=None, space: str | None = None, detail: bool = False) -> dict:
+    """La consommation du mois d'une Team (ce que montrent l'accueil et Admin → Teams) :
+    comptée (conso.jsonl) et réservée (les travaux en cours), contre le plafond ; la part
+    de la personne et celle du Workspace ; `detail` (qui gère) : par personne, par Workspace."""
+    cfg = espaces.budget_of(team)
+    month = _month()
+    with _cv:
+        a = json.loads(json.dumps((_agg().get(month) or {}).get(team) or {**_zero(), "users": {}, "spaces": {}}))
+        h = _held(team)
+
+    def row(x: dict, y: dict, cap_s, cap_c) -> dict:
+        return {"gpu_used_s": round(x["gpu_s"], 1), "gpu_held_s": round(y["gpu_s"], 1), "gpu_cap_s": cap_s,
+                "credits_used": x["credits"], "credits_held": y["credits"], "credits_cap": cap_c, "n": x["n"], "running": y["n"]}
+
+    t = espaces.team(team) or {}
+    out = {"team": team, "name": t.get("name"), "personal": bool(t.get("personal")), "month": month, "month_fr": month_fr(month),
+           "api_open": cfg["api"], "unblock": espaces.unblockers(team),
+           "total": row(a, h, cfg["gpu_s"], cfg["api_credits"])}
+    if u:
+        uid = u.get("id")
+        p = cfg["users"].get(uid) or {}
+        out["me"] = row(a["users"].get(uid) or _zero(), h["users"].get(uid) or _zero(), p.get("gpu_s"), p.get("api_credits"))
+    if space:
+        p = cfg["spaces"].get(space) or {}
+        out["space"] = {"id": space, "name": (espaces.space(space) or {}).get("name"),
+                        **row(a["spaces"].get(space) or _zero(), h["spaces"].get(space) or _zero(), p.get("gpu_s"), p.get("api_credits"))}
+    if detail:
+        out["settings"] = cfg
+        members = t.get("members") or {}
+        out["users"] = [{"id": k, "name": auth.display_name(k) or k, "role": m.get("role"),
+                         **row(a["users"].get(k) or _zero(), h["users"].get(k) or _zero(),
+                               (cfg["users"].get(k) or {}).get("gpu_s"), (cfg["users"].get(k) or {}).get("api_credits"))}
+                        for k, m in members.items() if m.get("role") != "guest"]
+        out["spaces"] = []
+        for s in espaces.spaces_of_team(team):
+            p = cfg["spaces"].get(s["id"]) or {}
+            out["spaces"].append({"id": s["id"], "name": s["name"], "archived": s.get("archived"),
+                                  **row(a["spaces"].get(s["id"]) or _zero(), h["spaces"].get(s["id"]) or _zero(),
+                                        p.get("gpu_s"), p.get("api_credits"))})
+    return out
+
+
 def submit(kind: str, params: dict, *, title: str = "", tool: str = "", pin: str | None = None,
            thumb: str | None = None, owner=UNSET, family=UNSET, gpu=UNSET, mem_gb=None,
            priority: int | None = None, space=UNSET) -> dict:
     """Met un travail en file, au nom de la personne de la requête (ou du
     travail qui le lance), dans son Workspace. La garde du calcul (`_guard`) :
-    403 qui dit pourquoi ; QuotaError (429) au-delà de ses quotas."""
+    403 qui dit pourquoi ; QuotaError (429) au-delà de ses quotas ou du budget de
+    la Team (`_reserve`, sous le même verrou que la mise en file : deux demandes
+    simultanées ne passent pas toutes deux sous un plafond qui n'en tient qu'une)."""
     if kind not in HANDLERS:
         raise KeyError(f"travail inconnu : {kind}")
     _, lane, default_title = HANDLERS[kind]
@@ -434,12 +704,17 @@ def submit(kind: str, params: dict, *, title: str = "", tool: str = "", pin: str
     with _cv:
         if not auth.is_admin(by):
             _check_quota(u)
+        j["est_s"] = estimate(j)
+        _reserve(j, u)   # 429 : rien n'est mis en file, rien n'est réservé
+        try:
+            _conso_write(_line(j))
+        except OSError as e:
+            raise HttpError(503, f"le journal de consommation ne s'écrit pas ({e}) : rien n'est lancé — vois avec Cal") from e
         j["seq"] = _fair_seq(j)
         _jobs[jid] = j
         _order.append(jid)
         if u:
             _state["daily"][u["id"]] = {"date": _today(), "n": day_count(u["id"]) + 1}
-        j["est_s"] = estimate(j)
         _tidy()
         _persist()
         _cv.notify_all()
@@ -474,6 +749,7 @@ def cancel(jid: str) -> dict:
             raise KeyError(jid)
         if j["state"] == "queued":
             j.update(state="cancelled", message="retiré de la file", finished=library.now())
+            _settle(j)   # sa réservation est rendue
         elif j["state"] == "running":
             _cancel.add(jid)
             j["message"] = "arrêt demandé"
@@ -878,6 +1154,7 @@ def _worker(lane: str, ep: str, key: tuple) -> None:
                 continue
             if fail:
                 j.update(state="error", message=fail, finished=library.now())
+                _settle(j)
                 _persist()
                 _cv.notify_all()
                 continue
@@ -905,23 +1182,27 @@ def _run(j: dict, ep: str) -> None:
     auth.set_current(auth.user(j.get("owner")))
     auth.set_current_space(j.get("space"))
     ctx = None
+    # l'issue se pose sous le verrou, avec la mesure (`_settle`) : entre les deux, aucune
+    # demande ne voit un travail sorti de la file dont la consommation ne compte pas encore
+    end = {"state": "error", "message": "arrêté net (le portail s'arrête)"}
     try:
         ctx = Ctx(j, ep)
         extra = fn(ctx)
         if isinstance(extra, dict):
             j["result"].update(extra)
-        j.update(state="done", message="fini", progress=1.0)
+        end = {"state": "done", "message": "fini", "progress": 1.0}
     except Cancelled:
-        j.update(state="cancelled", message="arrêté")
+        end = {"state": "cancelled", "message": "arrêté"}
     except Exception as e:  # le message remonte tel quel à la page
         traceback.print_exc()
-        j.update(state="error", message=str(e)[:1200] or type(e).__name__)
+        end = {"state": "error", "message": str(e)[:1200] or type(e).__name__}
     finally:
         auth.set_current(None)
         auth.set_current_space(None)
         _cancel.discard(j["id"])
-        j["finished"] = library.now()
         with _cv:
+            j.update(end, finished=library.now())
+            _settle(j)
             _record(j)
             _persist()
             _cv.notify_all()

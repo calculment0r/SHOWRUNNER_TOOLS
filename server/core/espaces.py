@@ -41,11 +41,14 @@ L'API interne (pour les étapes suivantes ; auth.py en reprend l'essentiel)
   garde_prete(nom)                   l'étape 1 (« calcul ») et l'étape 2 (« bibliotheque »)
                                      déclarent leur garde ; sans les deux, on ne fait pas de guest
   migrate(root, dry) → rapport       la migration (étape 3), idempotente
+  budget_of(team) / set_budget(u, team, patch) / unblockers(team)
+                                     le réglage du budget (étape 8) ; la réservation : core/jobs.py
 
 Stockage : `<data_dir>/teams.json` (relu s'il change, écrit d'un bloc) :
   {"v": 1, "default": "esp-general",
    "teams":  {id: {id, name, plan, personal, owner, api, created, by, archived,
-                   members: {uid: {role, guest?, since, by, via?}}}},
+                   members: {uid: {role, guest?, since, by, via?}},
+                   budget?: {gpu_s, api_credits, users: {uid: part}, spaces: {sid: part}}}},
    "spaces": {id: {id, team, name, default_role, created, by, archived,
                    members: {uid: {role} | {guest: true}}}},
    "invites": {id: {id, h, team, role, guest, spaces, hours, created, exp, by, revoked, uses}},
@@ -239,6 +242,13 @@ def team(tid: str | None) -> dict | None:
     with _lock:
         t = _data()["teams"].get(tid or "")
         return dict(t) if t else None
+
+
+def spaces_of_team(tid: str | None) -> list[dict]:
+    """Les Workspaces d'une Team (copies), du plus ancien au plus récent."""
+    with _lock:
+        out = [dict(sp) for sp in _data()["spaces"].values() if sp.get("team") == tid]
+    return sorted(out, key=lambda s: s.get("created") or "")
 
 
 def team_of_space(sid: str | None) -> str | None:
@@ -604,8 +614,9 @@ def _team_public(db: dict, u, tid: str, detail: bool) -> dict:
         order = {r: i for i, r in enumerate(TEAM_ROLES)}
         out["members"] = sorted(rows, key=lambda r: (order.get(r["role"], 9), r["name"].lower()))
     if detail and manage:
+        out["budget_edit"] = not t.get("personal") or auth.is_admin(u)
         now = time.time()
-        out["invites"] = [_invite_public(i) for i in db["invites"].values()
+        out["invites"] =[_invite_public(i) for i in db["invites"].values()
                           if i.get("team") == tid and not i.get("revoked") and i.get("exp", 0) > now]
     return out
 
@@ -1023,6 +1034,124 @@ def set_space_member(u, sid: str, uid: str, role: str | None) -> dict:
         out = _space_public(db, u, sid, True)
     auth.journal("workspace : rôle", user=_uid(u), space=sid, membre=uid, role=role)
     return out
+
+
+# ── le budget (étape 8 ; décision 6 : le budget est à la Team) ──
+# Le réglage seul vit ici (teams.json, `team["budget"]`) ; la réservation, la mesure et
+# le journal `conso.jsonl` sont dans la file (core/jobs.py), l'endroit par où tout
+# calcul passe. Sans réglage : GPU illimité (Nirvalab, et toute Team tant qu'on ne pose
+# rien), API payante à zéro crédit.
+#   {"gpu_s": plafond mensuel en secondes de GPU | null (illimité),
+#    "api_credits": crédits API du mois (1 crédit = 0,01 €) — 0 par défaut : coupée,
+#    "users":  {uid: {"gpu_s": n | null, "api_credits": n | null}},   parts facultatives
+#    "spaces": {sid: {"gpu_s": n | null, "api_credits": n | null}}}
+BUDGET_MAX_S = 10 ** 8          # un garde-fou de saisie (plus de trois ans de GPU par mois)
+BUDGET_MAX_CREDITS = 10 ** 8
+PART_KEYS = ("gpu_s", "api_credits")
+
+
+def _part(p) -> dict:
+    p = p if isinstance(p, dict) else {}
+    return {k: (int(p[k]) if isinstance(p.get(k), (int, float)) and not isinstance(p.get(k), bool) else None)
+            for k in PART_KEYS}
+
+
+def budget_of(tid: str | None) -> dict:
+    """Le réglage du budget d'une Team, complété : ce que la file juge (jobs._reserve)."""
+    with _lock:
+        db = _data()
+        t = db["teams"].get(tid or "") or {}
+        b = t.get("budget") if isinstance(t.get("budget"), dict) else {}
+        members = t.get("members") or {}
+        spaces = {s for s, sp in db["spaces"].items() if sp.get("team") == tid}
+    cap = b.get("gpu_s")
+    cr = b.get("api_credits")
+    users = {k: _part(v) for k, v in (b.get("users") or {}).items() if k in members}
+    parts = {k: _part(v) for k, v in (b.get("spaces") or {}).items() if k in spaces}
+    return {"gpu_s": int(cap) if isinstance(cap, (int, float)) and not isinstance(cap, bool) else None,
+            "api_credits": int(cr) if isinstance(cr, (int, float)) and not isinstance(cr, bool) and cr > 0 else 0,
+            "api": bool(t.get("api")),
+            "users": {k: v for k, v in users.items() if any(x is not None for x in v.values())},
+            "spaces": {k: v for k, v in parts.items() if any(x is not None for x in v.values())}}
+
+
+def unblockers(tid: str | None) -> str:
+    """Qui débloque un budget : le propriétaire et les admins de la Team (règle 7 du thème)."""
+    with _lock:
+        t = _data()["teams"].get(tid or "") or {}
+        ids = [k for k, m in (t.get("members") or {}).items() if m.get("role") in ("owner", "admin")]
+    names = [auth.display_name(k) or k for k in sorted(ids, key=lambda k: (t["members"][k].get("role") != "owner", k))]
+    return ", ".join(names[:3]) or "Cal"
+
+
+def _amount(v, what: str, top: int, allow_none: bool = True):
+    if v is None or v == "":
+        if allow_none:
+            return None
+        raise HttpError(400, f"{what} : un nombre (0 ou plus)")
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v or not 0 <= v <= top:
+        raise HttpError(400, f"{what} : un nombre de 0 à {top}" + (", ou vide (sans limite)" if allow_none else ""))
+    return int(v)
+
+
+def set_budget(u, tid: str, patch: dict) -> dict:
+    """Régler le budget d'une Team : le propriétaire ou un admin de la Team, ou Cal ; « Chez
+    moi » : Cal seul (on ne relève pas son propre plafond). `gpu_s` (vide : illimité),
+    `api_credits` (0 : coupée), `users` / `spaces` : {id: {gpu_s, api_credits} | null}."""
+    if not isinstance(patch, dict):
+        raise HttpError(400, "le budget : un objet")
+    with _lock:
+        db = _data()
+        t = _team_or_404(db, tid)
+        _see_team(u, tid)
+        _need(can_manage(u, tid), "le budget de la Team : son propriétaire ou un de ses admins")
+        if t.get("personal"):
+            _need(u is None or auth.is_admin(u), "le budget de « Chez moi » : Cal le règle")
+        b = dict(t.get("budget") or {}) if isinstance(t.get("budget"), dict) else {}
+        done: dict = {}
+        if "gpu_s" in patch:
+            b["gpu_s"] = done["gpu_s"] = _amount(patch["gpu_s"], "le plafond GPU du mois (secondes)", BUDGET_MAX_S)
+        if "api_credits" in patch:
+            b["api_credits"] = done["api_credits"] = _amount(patch["api_credits"], "les crédits API du mois",
+                                                             BUDGET_MAX_CREDITS, allow_none=False)
+        for key, label in (("users", "personne"), ("spaces", "Workspace")):
+            if key not in patch:
+                continue
+            p = patch[key]
+            if not isinstance(p, dict) or len(p) > 500:
+                raise HttpError(400, f"les parts par {label} : un objet {{id: {{gpu_s, api_credits}} | null}}")
+            cur = {k: dict(v) for k, v in (b.get(key) or {}).items() if isinstance(v, dict)}
+            for k, v in p.items():
+                if key == "users":
+                    m = t["members"].get(k) if isinstance(k, str) else None
+                    if not m:
+                        raise HttpError(400, f"pas dans cette Team : {k}")
+                    if m.get("role") == "guest":
+                        raise HttpError(400, "un guest ne calcule jamais : pas de part pour lui")
+                elif (db["spaces"].get(k) or {}).get("team") != tid:
+                    raise HttpError(400, f"Workspace inconnu dans cette Team : {k}")
+                if v is None:
+                    cur.pop(k, None)
+                    continue
+                if not isinstance(v, dict) or not set(v) <= set(PART_KEYS):
+                    raise HttpError(400, f"une part : {{gpu_s, api_credits}} (vide : sans part)")
+                row = dict(cur.get(k) or {})
+                if "gpu_s" in v:
+                    row["gpu_s"] = _amount(v["gpu_s"], f"la part GPU ({label})", BUDGET_MAX_S)
+                if "api_credits" in v:
+                    row["api_credits"] = _amount(v["api_credits"], f"la part de crédits API ({label})", BUDGET_MAX_CREDITS)
+                row = {x: y for x, y in row.items() if y is not None}
+                if row:
+                    cur[k] = row
+                else:
+                    cur.pop(k, None)
+            b[key] = done[key] = cur
+        if done:
+            t["budget"] = b
+            _save()
+    if done:
+        auth.journal("team : budget", user=_uid(u), team=tid, patch=done)
+    return budget_of(tid)
 
 
 # ── les liens d'invitation ──────────────────────────────────
