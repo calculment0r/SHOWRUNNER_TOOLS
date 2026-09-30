@@ -1,43 +1,48 @@
-// ASSET — la bibliothèque commune du portail.
+// ASSET — la page de gestion de la bibliothèque commune du portail.
 //
-// Trois vues, portées par l'adresse :
-//   asset/                la racine : dossiers et objets rangés nulle part
-//   asset/#/d/<dossier>   un dossier ouvert
-//   asset/#/corbeille     la corbeille
-//   asset/#<id>           la fiche d'un objet (l'accueil y envoie)
+// Cal, 30/09 : « une page dédiée aux assets pour gérer l'organisation, les
+// glisser-déposer pour faire les groupes, trier par Team et Workspace : c'est
+// TOUS les assets d'un user. Toutes les fonctions de gestion et d'organisation
+// sont dans cette page » (le panneau Asset des outils n'est plus qu'un
+// visualiseur). La page tient donc tout ce que la personne voit, dans toutes
+// ses Teams et tous ses Workspaces :
 //
-// Les dossiers reprennent la maquette du 28/09 (Character_Factory,
-// docs/img/maquettes/objets.html) et la demande de Cal : glisser une carte
-// sur une autre crée un dossier (une fenêtre demande son nom), sur un
-// dossier l'y range, sur « Asset » en haut l'en sort. Un dossier n'existe
-// que par ses objets (champ `folder`, ARCHITECTURE.md §2), sur un niveau.
+//   à gauche, l'arbre   Tout · Récents · Favoris · Corbeille, puis chaque Team,
+//                       ses Workspaces (celui de l'onglet en tête, le point),
+//                       leurs dossiers — les comptes à chaque nœud ;
+//   en haut             chercher, les sortes, l'auteur, la date, l'origine,
+//                       le tri (date, nom, sorte, poids, Workspace), la grille
+//                       ou la liste, la taille des vignettes (LE curseur) ;
+//   au centre           les dossiers et les objets du lieu choisi.
 //
-// La sélection (Cal, 29/09 : « les standards de sélection ») : clic pour
-// choisir, double-clic pour ouvrir, ctrl/⌘+clic pour ajouter ou retirer,
-// maj+clic pour une plage, glisser sur le fond pour une zone, ctrl+A,
-// Échap. Dès qu'il y a une sélection, une barre d'outils s'ouvre en bas.
-// Ce qu'on dépose de son disque entre avec `tool: 'upload'` et `via`
-// (l'onglet « Uploads ») ; une carte-dossier et la planche d'un élément
-// acceptent un dépôt (`dropZone` de shell.js).
+// Les adresses (le lieu est dans l'adresse) :
+//   asset/                  Tout              asset/#/recents  asset/#/favoris
+//   asset/#/t/<team>        une Team          asset/#/w/<esp>  un Workspace
+//   asset/#/d/<esp>/<nom>   un dossier        asset/#/corbeille
+//   asset/#<id>             la fiche d'un objet (l'accueil y envoie)
+//   (asset/#/d/<nom> : un dossier du Workspace de l'onglet, l'adresse d'avant)
 //
-// L'annulation (commun/undo.js, Cal 29/09 : « il en faudra sur l'ensemble de
-// nos outils ») : chaque geste qui modifie — ranger, renommer, aimer, tags,
-// corbeille, la planche d'un élément, sa voix, sa fiche — se range dans la
-// pile de la page ; Ctrl+Z, Ctrl+Maj+Z, les boutons ↶ ↷ et le journal ; le
-// bandeau garde son « annuler », qui est le même geste. Ne s'annulent pas :
-// un dépôt de fichier, un import de Character Factory, un zip.
+// Organiser (le glisser de la page, Pointer Events : souris, doigt, stylet) :
+// des cartes choisies (clic, Maj, Ctrl, le lasso) se lâchent
+//   · sur un dossier (une carte-dossier, une ligne de l'arbre) : rangées dedans ;
+//     la cible s'allume en vert (l'état « accepte » du thème, .drop-on) ;
+//   · sur un Workspace : sorties de leur dossier — ou, venues d'un autre
+//     Workspace, COPIÉES dedans (rapatrier, POST /api/espaces/<B>/rapatrier),
+//     après une confirmation qui dit « copie dans … » : l'original ne bouge pas ;
+//   · sur la Corbeille : jetées (jamais effacées ; « Vider la corbeille » est le
+//     seul geste qui efface, par l'auteur ou un admin du Workspace) ;
+//   · sur Favoris : en favori ; sur une autre carte : un dossier neuf.
+// Chaque geste part DANS le Workspace de l'objet (l'en-tête X-SR-Espace) : le
+// serveur y juge le rôle de la personne (server/tools/asset.py). Chaque geste
+// se range dans la pile de la page (commun/undo.js) : Ctrl+Z, Ctrl+Maj+Z.
+// Ne s'annulent pas : un dépôt de fichier, un import de Character Factory, un
+// zip, vider la corbeille.
 //
-// Teams et Workspaces (étape 5, docs/etudes/equipes_espaces.md § 3.1, § 3.2) :
-// Asset montre tout ce que la personne voit, tous Workspaces confondus — chaque
-// carte dit le sien (la pastille, en capitales mono), un filtre par Workspace,
-// celui de l'onglet en tête. On ne touche (ranger, aimer, taguer, jeter) que
-// celui de l'onglet ; un objet d'ailleurs se regarde, se télécharge, et se
-// RAPATRIE : une copie neuve ici, l'original ne bouge jamais (POST
-// /api/espaces/<ici>/rapatrier). Le geste : « Rapatrier ici » (la carte, son
-// menu, le clic droit, la barre de sélection, sa fiche), ou le glisser — une
-// carte d'ailleurs lâchée sur un dossier d'ici, sur la pastille de ce
-// Workspace, ou une vignette venue du panneau ou d'un autre onglet. Ctrl+Z
-// met la copie à la corbeille.
+// Un dossier : un nom, dans un Workspace, sur un niveau (ARCHITECTURE.md §2) ;
+// « Nouveau dossier » le déclare vide (il reste jusqu'à « Supprimer » ou
+// « Dégrouper »). La fiche d'un objet (plus bas, « LA FICHE ») est celle
+// d'avant : versions, lignée, planche, voix ; un objet d'un autre Workspace que
+// celui de l'onglet s'y regarde et se rapatrie.
 import {
   mountHeader, api, pick, thumb, kindMark, el, $, $$, href, ROOT, fmtDate, fmtDur, kindFr, etypeFr, dropAnywhere,
   dropZone, dragItem, dock, espace, espaceDocument, enTeteEspace, surEspace, ITEM_MIME, MULTI_MIME,
@@ -49,16 +54,18 @@ import { contextMenu, pageMenu, copy } from '../commun/menu.js';
 import { lecteur } from '../commun/lecteur.js';   // LE lecteur (30/09) : la vidéo ou le son d'une fiche, sa frise, sa tête
 
 mountHeader('asset');
-// le panneau Asset commun (commun/dock.js), ici aussi (Ctrl+Espace) : toutes les sortes ; clic :
-// choisir, double-clic ou Entrée : la fiche ; glisser une vignette sur un dossier l'y range
+// le panneau Asset commun (commun/dock.js), ici aussi (Ctrl+Espace) : un visualiseur ; clic :
+// choisir, double-clic ou Entrée : la fiche
 dock.configure({ kinds: ['image', 'video', 'audio', 'midi', 'sequence', 'element'], label: 'Asset',
   placeLabel: 'Ouvrir la fiche', place: (items) => { go('#' + items[0].id); }, fiche: (it) => go('#' + it.id),
-  hint: 'clic : choisir · double-clic : la fiche · glisser sur un dossier : l’y ranger' });
+  hint: 'clic : choisir · double-clic : la fiche' });
 
 // La même base d'API que shell.js (window.SR_API, sinon le portail) : le
 // dépôt passe par XMLHttpRequest, seul moyen de suivre l'envoi d'un fichier.
 const API = window.SR_API ? new URL(window.SR_API, location.href) : new URL('api/', ROOT);
 
+const amEl = $('#am');
+const sideEl = $('#side');
 const libEl = $('#lib');
 const sheetEl = $('#sheet');
 const live = (t) => { $('#live').textContent = t; };
@@ -77,73 +84,86 @@ const live = (t) => { $('#live').textContent = t; };
 })();
 
 // ── l'état ───────────────────────────────────────────────────
-// Le tri, la taille et la sorte sont des préférences de la personne
-// (asset/prefs.json, commun/prefs.js) : les mêmes dans tous ses navigateurs.
-// L'ancienne clé de ce navigateur (avant le 29/09) sert une fois de départ.
+// Le tri, la taille, la sorte et la vue (grille, liste) sont des préférences de la
+// personne (asset/prefs.json, commun/prefs.js) : les mêmes dans tous ses navigateurs.
 const OLD = (() => { try { return JSON.parse(localStorage.getItem('sr.asset.prefs')) || {}; } catch { return {}; } })();
 const S = {
   kind: prefs.get('asset.kind', OLD.kind || ''), sort: prefs.get('asset.sort', OLD.sort || 'new'), size: prefs.get('asset.size', OLD.size || 190),
-  q: '', fav: false, tool: '', origin: '', folder: '', limit: 300,
-  data: null, route: { view: 'lib' }, backHash: '#', item: null,
+  view: prefs.get('asset.view', 'grid'),
+  q: '', tool: '', origin: '', author: '', since: '', limit: 300,
+  data: null, tree: null, route: { view: 'lib' }, place: { k: 'all' }, folder: '', backHash: '#', item: null,
   sel: new Set(), anchor: null,   // la sélection, et d'où part une plage (maj+clic)
-  space: '',     // le filtre par Workspace ('' : tous ceux qu'on voit)
-  fspace: null,  // le Workspace du dossier ouvert, quand il n'est pas celui de l'onglet
-  spaces: [],    // les Workspaces qu'on voit (GET /api/asset/view → spaces, /api/asset/espaces)
+  spaces: [],    // les Workspaces qu'on voit (l'arbre, la vue)
 };
 
 // ── les Workspaces : où est chaque objet ─────────────────────
-// `here` : le Workspace de l'onglet, tel que le portail l'a pris (la vue le rend) ;
-// un objet d'ailleurs se montre, ne se touche pas d'ici : il se rapatrie
-const here = () => S.data?.here || espace();
-const spaceInfo = (id) => (S.data?.spaces || S.spaces || []).find((s) => s.id === id) || null;
+// `here` : le Workspace de l'onglet, tel que le portail l'a pris ; les outils n'atteignent que
+// lui (un objet d'ailleurs s'y rapatrie). La page, elle, range chaque objet dans le sien.
+const here = () => S.tree?.here || S.data?.here || espace();
+const spaceInfo = (id) => (S.spaces || []).find((s) => s.id === id) || null;
 const hereInfo = () => spaceInfo(here());
 const spaceShort = (id) => spaceInfo(id)?.name || (id || '').replace(/^esp-/, '');
-const spaceLong = (id) => { const s = spaceInfo(id); return s ? `${s.team_name} / ${s.name}` : id || '?'; };
+const spaceLong = (id) => { const s = spaceInfo(id); return s ? (s.team_name ? `${s.team_name} / ${s.name}` : s.name) : id || '?'; };
 const isForeign = (it) => !!(it?.space && here() && it.space !== here());
-const manySpaces = () => (S.data?.spaces || S.spaces || []).length > 1;
+const manySpaces = () => (S.spaces || []).length > 1;
+// ce qu'un outil ne prend que dans le Workspace de l'onglet (Upscale, le Montage, un élément)
 const foreignWhy = (items) => {
   const n = items.filter(isForeign).length;
-  return n ? `${n > 1 ? `${n} objets sont` : 'un objet est'} d’un autre Workspace : on ne le touche pas d’ici — rapatrie-le d’abord (« Rapatrier ici »)` : '';
+  return n ? `${n > 1 ? `${n} objets sont` : 'un objet est'} d’un autre Workspace que celui de l’onglet : un outil ne le prend pas — rapatrie-le d’abord` : '';
 };
-// pourquoi un objet ne se rapatrie pas ici (le serveur juge pareil : library.import_refusal,
-// check_import) ; '' : il se rapatrie
-function importWhy(it) {
-  if (!isForeign(it)) return `« ${it.title || it.id} » est déjà dans ce Workspace`;
-  const h = hereInfo();
-  if (h && !h.import) return `rapatrier dans « ${spaceLong(here())} » : ${h.import_why || 'ton rôle ne le permet pas'}`;
+// pourquoi un objet ne se copie pas dans `dest` (le serveur juge pareil : library.import_refusal,
+// check_import) ; '' : il se copie
+function importWhy(it, dest = here()) {
+  if (it.space === dest || (!it.space && dest === here())) return `« ${it.title || it.id} » est déjà dans « ${spaceLong(dest)} »`;
+  const h = spaceInfo(dest);
+  if (h && h.import === false) return `copier dans « ${spaceLong(dest)} » : ${h.import_why || 'ton rôle ne le permet pas'}`;
   if (isLiving(it)) return 'un élément versionné se rapatrie avec l’étape 9 (sa version figée) — en attendant, rapatrie sa dernière version';
   if (it.kind === 'sequence') return 'une séquence pose d’autres objets de son Workspace : rapatrie ses plans';
   return '';
 }
+// créer dans un Workspace (déposer, un dossier, un élément) : son rôle le dit
+function createWhy(space) {
+  const h = spaceInfo(space);
+  return h && h.create === false ? `créer dans « ${spaceLong(space)} » : ${h.create_why || 'ton rôle ne le permet pas'}` : '';
+}
 // la pastille d'un Workspace (capitales mono, règle 5) ; `ailleurs` : pas celui de l'onglet
 const wsBadge = (id, extra = '') => el('span', { class: 'wsb' + (id && id !== here() ? ' ailleurs' : '') + extra,
   title: `Workspace · ${spaceLong(id)}${id === here() ? ' · celui de cet onglet' : ''}` }, spaceShort(id));
-const savePrefs = () => { prefs.set('asset.kind', S.kind || null); prefs.set('asset.sort', S.sort); prefs.set('asset.size', S.size); };
-// changées ailleurs (le panneau, un autre navigateur) : la grille suit
-for (const k of ['kind', 'sort', 'size']) {
+const savePrefs = () => { prefs.set('asset.kind', S.kind || null); prefs.set('asset.sort', S.sort); prefs.set('asset.size', S.size); prefs.set('asset.view', S.view); };
+// changées ailleurs (le panneau, un autre navigateur) : la page suit
+for (const k of ['kind', 'sort', 'size', 'view']) {
   prefs.on('asset.' + k, (v) => {
-    const nv = v ?? (k === 'kind' ? '' : k === 'sort' ? 'new' : 190);
+    const nv = v ?? ({ kind: '', sort: 'new', size: 190, view: 'grid' })[k];
     if (S[k] === nv) return;
     S[k] = nv;
     if (S.route.view === 'lib' && parts) {
       if (k === 'size') { parts.grid.style.setProperty('--card', `${S.size}px`); if (parts.size) parts.size.value = S.size; } else loadLib();
     }
-    if (S.route.view === 'trash') paintTrash();
   });
 }
 prefs.on('asset.hint', () => { const h = $('.lib-hint'); if (h) h.hidden = !prefs.get('asset.hint', true); });
 
 // ── l'annulation ─────────────────────────────────────────────
-const U = createUndo({ name: 'asset', onapply: () => refresh() });
-const undoBox = el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons());
+// un geste annulé ou rétabli : la page se relit, et le bandeau d'avant (« … à la corbeille ») s'efface
+// devant celui de commun/undo.js (« annulé : … »)
+const U = createUndo({ name: 'asset', onapply: () => { $('.a-toast')?.classList.remove('on'); refresh(); } });
+const undoBox = () => el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons());
 const what = (items) => (items.length > 1 ? plural(items.length, 'objet', 'objets') : `« ${items[0]?.title || items[0]?.id || 'l’objet'} »`);
 const titleOf = (id) => S.data?.items.find((x) => x.id === id)?.title || (S.item?.id === id ? S.item.title : '') || id;
+// les objets rangés par Workspace : chaque geste part dans le sien
+const bySpace = (items) => {
+  const m = new Map();
+  for (const it of items) { const k = it.space || here() || ''; if (!m.has(k)) m.set(k, []); m.get(k).push(it); }
+  return [...m];
+};
 
 // les sortes : `sequence` (une séquence du Montage) et `midi` (un clip de
 // notes d'ODIO) depuis le 29/09 (server/core/library.py, KINDS)
 const KINDS = [['', 'Tout'], ['image', 'Images'], ['element', 'Éléments'], ['video', 'Vidéos'], ['audio', 'Sons'],
   ['sequence', 'Séquences'], ['midi', 'MIDI']];
-const SORTS = [['new', 'récents'], ['old', 'anciens'], ['title', 'titre'], ['updated', 'modifiés']];
+// les tris (server/tools/asset.py, SORTS)
+const SORTS = [['new', 'récents'], ['old', 'anciens'], ['updated', 'modifiés'], ['title', 'nom'], ['kind', 'sorte'], ['size', 'poids'], ['space', 'Workspace']];
+const DATES = [['', 'toutes dates'], ['1', 'aujourd’hui'], ['7', '7 derniers jours'], ['30', '30 derniers jours'], ['365', 'cette année']];
 const ETYPES = [['character', 'personnage'], ['object', 'objet'], ['place', 'lieu'], ['style', 'style'], ['other', 'autre']];
 // les rôles en usage (ARCHITECTURE.md §2)
 const ROLES = [['face', 'visage'], ['full body', 'plein pied'], ['expression', 'expression'], ['outfit', 'tenue'],
@@ -163,7 +183,6 @@ const TOOL_FR = {
   analyse: 'Movie Analysis', upscale: 'Upscale', ideation: 'Idéation', selecteur: 'le sélecteur',
 };
 const toolFr = (t) => TOOL_FR[t] || t || 'upload';
-const ORIGINS = [['', 'Tout'], ['made', 'Créations'], ['upload', 'Uploads']];
 const MEDIA = ['image', 'video', 'audio'];
 const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
 const KIND_N = { image: ['image', 'images'], element: ['élément', 'éléments'], video: ['vidéo', 'vidéos'], audio: ['son', 'sons'],
@@ -176,26 +195,46 @@ const isLiving = (it) => it?.kind === 'element' && Array.isArray(it.element?.ver
 const MEDIA_KINDS = { audio: ['audio'], image: ['image'], video: ['video'], midi: ['midi'], refs: ['element'] };
 const STATE_FR = { 'à jour': 'à jour', modifiée: 'modifiée', perdue: 'source perdue', 'sans version': 'pas encore publié', 'non suivie': 'source non suivie' };
 const stateLine = (s) => (!s ? '' : s.state === 'modifiée' ? `modifiée depuis la v${s.since}` : STATE_FR[s.state] || s.state);
+const fmtSize = (b) => (!b ? '—' : b < 1048576 ? `${Math.max(1, Math.round(b / 1024))} Ko` : b < 1073741824 ? `${(b / 1048576).toFixed(1).replace('.', ',')} Mo` : `${(b / 1073741824).toFixed(2).replace('.', ',')} Go`);
 
-// ── l'adresse ────────────────────────────────────────────────
+// ── l'adresse : le lieu ──────────────────────────────────────
 const ID_RX = /^(ima|vid|aud|ele|seq|mid)-\d{8}-\d{6}-[0-9a-f]{4}$/;
-function parseHash() {
-  let h = location.hash.slice(1);
-  try { h = decodeURIComponent(h); } catch { /* adresse abîmée : la racine */ }
-  if (!h) return { view: 'lib', folder: '' };
+const ESP = /^(esp-[a-z0-9][a-z0-9-]{1,47})$/;
+function parseHash(raw = location.hash) {
+  let h = raw.slice(1);
+  try { h = decodeURIComponent(h); } catch { /* adresse abîmée : Tout */ }
+  if (!h) return { view: 'lib', place: { k: 'all' } };
+  if (h === '/recents') return { view: 'lib', place: { k: 'recent' } };
+  if (h === '/favoris') return { view: 'lib', place: { k: 'fav' } };
+  if (h === '/corbeille') return { view: 'trash', place: { k: 'trash' } };
+  if (h.startsWith('/t/')) return { view: 'lib', place: { k: 'team', team: h.slice(3) } };
+  if (h.startsWith('/w/') && ESP.test(h.slice(3))) return { view: 'lib', place: { k: 'space', space: h.slice(3) } };
   if (h.startsWith('/d/')) {
-    // le dossier d'un autre Workspace : #/d/<esp-…>/<nom> (un nom de dossier n'a pas de « / »)
+    // le dossier d'un Workspace : #/d/<esp-…>/<nom> (un nom de dossier n'a pas de « / ») ; #/d/<nom> : celui de l'onglet
     const m = /^(esp-[a-z0-9][a-z0-9-]{1,47})\/(.+)$/.exec(h.slice(3));
-    return m ? { view: 'lib', folder: m[2], fspace: m[1] } : { view: 'lib', folder: h.slice(3) };
+    return { view: 'lib', place: m ? { k: 'folder', space: m[1], name: m[2] } : { k: 'folder', space: null, name: h.slice(3) } };
   }
-  if (h === '/corbeille') return { view: 'trash' };
   if (ID_RX.test(h)) return { view: 'sheet', id: h };
-  return { view: 'lib', folder: '' };
+  return { view: 'lib', place: { k: 'all' } };
 }
-const folderHash = (name, space = null) => (!name ? '#'
-  : space && space !== here() ? `#/d/${space}/${encodeURIComponent(name)}` : '#/d/' + encodeURIComponent(name));
-// le dossier ouvert est-il d'un autre Workspace ?
-const foreignFolder = () => !!(S.folder && S.fspace && S.fspace !== here());
+function placeHash(p) {
+  if (p.k === 'recent') return '#/recents';
+  if (p.k === 'fav') return '#/favoris';
+  if (p.k === 'trash') return '#/corbeille';
+  if (p.k === 'team') return '#/t/' + encodeURIComponent(p.team);
+  if (p.k === 'space') return '#/w/' + p.space;
+  if (p.k === 'folder') return `#/d/${p.space || here()}/${encodeURIComponent(p.name)}`;
+  return '#';
+}
+const folderHash = (name, space = null) => (!name ? (space ? placeHash({ k: 'space', space }) : '#') : placeHash({ k: 'folder', space: space || here(), name }));
+const samePlace = (a, b) => a.k === b.k && (a.team || '') === (b.team || '') && (a.space || '') === (b.space || '') && (a.name || '') === (b.name || '');
+// le Workspace du lieu (un Workspace, un de ses dossiers) ; null : plusieurs
+const placeSpace = (p = S.place) => (p.k === 'space' || p.k === 'folder' ? p.space || here() : null);
+// où va ce qu'on crée depuis ce lieu (déposer, un élément, un dossier) : son Workspace, sinon celui de l'onglet
+const target = () => placeSpace() || here();
+// compat : la fiche et ses fenêtres lisent le dossier ouvert
+const foreignFolder = () => false;
+const teamOf = (id) => (S.tree?.teams || []).find((t) => t.id === id) || null;
 function go(hash) {
   if (S.route.view !== 'sheet' && hash.length > 1 && ID_RX.test(hash.slice(1))) S.backHash = location.hash || '#';
   if (location.hash === hash || (hash === '#' && !location.hash)) render();
@@ -204,26 +243,26 @@ function go(hash) {
 
 async function render() {
   const r = parseHash();
+  if (r.place?.k === 'folder' && !r.place.space) r.place.space = here();
   S.route = r;
   closeMenu();
-  libEl.hidden = r.view === 'sheet';
+  document.body.classList.remove('side-open');
+  amEl.hidden = r.view === 'sheet';
   sheetEl.hidden = r.view !== 'sheet';
   paintSel();                                  // la barre de sélection ne vit que sur la grille
   if (r.view === 'sheet') { window.scrollTo({ top: 0 }); return paintSheet(r.id); }
   espaceDocument(null);                        // plus de fiche ouverte : l'en-tête ne dit plus son Workspace
+  if (!samePlace(S.place, r.place)) { S.sel = new Set(); S.anchor = null; }
+  S.place = r.place;
+  S.folder = r.place.k === 'folder' ? r.place.name : '';
+  loadTree();
   if (r.view === 'trash') return paintTrash();
-  if (S.folder !== r.folder || S.fspace !== (r.fspace || null)) { S.q = ''; S.sel = new Set(); }
-  S.folder = r.folder;
-  S.fspace = r.fspace || null;
   buildLib();
   return loadLib();
 }
 addEventListener('hashchange', render);
 // l'onglet change de Workspace (le sélecteur de l'en-tête) : la page suit, sans se recharger
-surEspace(() => {
-  S.sel = new Set(); S.space = ''; S.fspace = null; S.data = null;
-  if (S.route.view === 'lib' && S.folder) go('#'); else render();
-});
+surEspace(() => { S.sel = new Set(); S.data = null; S.tree = null; render(); });
 
 // ── le bandeau, avec « annuler » ─────────────────────────────
 // « annuler » dans le bandeau est Ctrl+Z : le dernier geste de la pile
@@ -255,23 +294,125 @@ function say(msg, undo = false, ms = 6000) {
   toastT = setTimeout(() => t.classList.remove('on'), ms);
 }
 
+// ══ L'ARBRE : Teams → Workspaces → dossiers ═════════════════
+// GET /api/asset/tree. Replié ou déplié : une commodité de ce navigateur (localStorage).
+const TREE_KEY = 'sr.asset.tree';
+const closed = (() => { try { return new Set(JSON.parse(localStorage.getItem(TREE_KEY)) || []); } catch { return new Set(); } })();
+const saveClosed = () => { try { localStorage.setItem(TREE_KEY, JSON.stringify([...closed])); } catch { /* sans stockage : pour cette visite */ } };
+let treeSeq = 0;
+async function loadTree() {
+  const seq = ++treeSeq;
+  let t;
+  try { t = await api('asset/tree'); } catch (e) { if (!S.tree) sideEl.replaceChildren(el('p', { class: 'warn' }, `l’arbre ne répond pas : ${e.message}`)); return; }
+  if (seq !== treeSeq) return;
+  S.tree = t;
+  const nodes = t.teams.flatMap((tm) => tm.spaces);
+  if (nodes.length) S.spaces = nodes;
+  paintTree();
+  if (S.route.view === 'lib' && parts && S.data) { paintTop(); paintCrumbs(); }
+}
+let newFolderIn = null;   // le Workspace où l'on tape le nom d'un dossier neuf
+function paintTree() {
+  const t = S.tree;
+  if (!t) return;
+  const P = S.place;
+  const row = ({ cls = '', depth = 0, label, count = null, hash, on = false, drop = null, caret = null, lead = null, tail = null, title = '', data = {} }) => {
+    const a = el('a', { class: `tr ${cls}${on ? ' on' : ''}`, href: hash, style: { '--d': depth }, title: title || null,
+      'aria-current': on ? 'page' : null, 'data-drop': drop, ...data },
+    caret, lead, el('span', { class: 'tn' }, label), tail, count === null ? null : el('span', { class: 'n' }, String(count)));
+    return a;
+  };
+  const caretBtn = (key, name) => el('button', { class: 'cv' + (closed.has(key) ? '' : ' open'), type: 'button', 'aria-expanded': String(!closed.has(key)),
+    'aria-label': `${closed.has(key) ? 'déplier' : 'replier'} ${name}`, onclick: (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (closed.has(key)) closed.delete(key); else closed.add(key);
+      saveClosed(); paintTree();
+    } });
+  const out = [
+    el('div', { class: 'side-head' }, el('span', { class: 'kicker' }, 'la bibliothèque'), el('span', { class: 'lbl' }, plural(t.total, 'objet', 'objets'))),
+    row({ cls: 'q', label: 'Tout', count: t.total, hash: '#', on: P.k === 'all', lead: el('i', { class: 'ico all', 'aria-hidden': 'true' }), title: 'tout ce que tu vois, dans toutes tes Teams' }),
+    row({ cls: 'q', label: 'Récents', count: t.recent, hash: '#/recents', on: P.k === 'recent', lead: el('i', { class: 'ico recent', 'aria-hidden': 'true' }), title: 'touchés ces 7 derniers jours' }),
+    row({ cls: 'q', label: 'Favoris', count: t.fav, hash: '#/favoris', on: P.k === 'fav', drop: 'fav', lead: el('i', { class: 'ico fav', 'aria-hidden': 'true' }, '★'), title: 'glisser ici : en favori' }),
+    row({ cls: 'q', label: 'Corbeille', count: t.trash, hash: '#/corbeille', on: P.k === 'trash', drop: 'trash', lead: el('i', { class: 'ico trash', 'aria-hidden': 'true' }), title: 'glisser ici : à la corbeille (rien ne s’efface)' }),
+    el('div', { class: 'side-sec' }, el('span', { class: 'lbl' }, 'Teams · Workspaces')),
+  ];
+  for (const tm of t.teams) {
+    const tkey = 't:' + tm.id;
+    const many = t.teams.length > 1 || tm.spaces.length > 1;
+    if (tm.id && many) {
+      out.push(row({ cls: 'team', label: tm.name || 'Team', count: tm.count, hash: placeHash({ k: 'team', team: tm.id }), on: P.k === 'team' && P.team === tm.id,
+        caret: caretBtn(tkey, tm.name), title: `la Team ${tm.name}${tm.personal ? ' (personnelle)' : ''} : tous ses Workspaces` }));
+      if (closed.has(tkey)) continue;
+    }
+    for (const s of tm.spaces) {
+      const skey = 's:' + s.id;
+      const depth = tm.id && many ? 1 : 0;
+      const plus = el('button', { class: 'plus', type: 'button', title: createWhy(s.id) || `un dossier neuf dans « ${s.name} »`, 'aria-label': `nouveau dossier dans ${s.name}`,
+        disabled: !!createWhy(s.id), onclick: (e) => { e.preventDefault(); e.stopPropagation(); closed.delete(skey); newFolderIn = s.id; paintTree(); } }, '+');
+      out.push(row({ cls: 'ws' + (s.here ? ' here' : ''), depth, label: s.name, count: s.count, hash: placeHash({ k: 'space', space: s.id }),
+        on: P.k === 'space' && P.space === s.id, drop: 'space', data: { 'data-space': s.id },
+        caret: s.folders.length || newFolderIn === s.id ? caretBtn(skey, s.name) : el('span', { class: 'cv none' }),
+        lead: el('i', { class: 'dot' + (s.here ? ' on' : ''), 'aria-hidden': 'true' }), tail: plus,
+        title: `${s.team_name ? `${s.team_name} / ` : ''}${s.name}${s.here ? ' · le Workspace de cet onglet' : ''} — glisser ici : sortir d’un dossier, ou copier d’un autre Workspace` }));
+      if (closed.has(skey)) continue;
+      for (const f of s.folders) {
+        const on = P.k === 'folder' && P.space === s.id && P.name === f.name;
+        out.push(row({ cls: 'fo', depth: depth + 1, label: f.name, count: f.count, hash: placeHash({ k: 'folder', space: s.id, name: f.name }), on, drop: 'folder',
+          data: { 'data-space': s.id, 'data-folder': f.name }, lead: el('i', { class: 'dir', 'aria-hidden': 'true' }),
+          title: `${f.name} · ${plural(f.count, 'objet', 'objets')} — glisser ici pour y ranger ; double-clic : renommer` }));
+      }
+      if (newFolderIn === s.id) out.push(newFolderRow(s, depth + 1));
+    }
+  }
+  sideEl.replaceChildren(el('nav', { class: 'tree', 'aria-label': 'les lieux de la bibliothèque' }, ...out));
+  // des fichiers du disque lâchés sur un dossier, un Workspace de l'arbre : déposés là
+  for (const r of $$('[data-drop="folder"], [data-drop="space"]', sideEl)) {
+    fileDrop(r, (files) => uploadFiles(files, { folder: r.dataset.folder || '', space: r.dataset.space }));
+  }
+  $('.nf input', sideEl)?.focus();
+}
+// le nom d'un dossier neuf, tapé dans l'arbre ; Entrée crée (Ctrl+Z l'oublie), Échap renonce
+function newFolderRow(s, depth) {
+  const inp = el('input', { class: 'fld', maxlength: 60, placeholder: 'nom du dossier', 'aria-label': `nom du dossier neuf dans ${s.name}`, spellcheck: 'false' });
+  const done = () => { newFolderIn = null; paintTree(); };
+  inp.addEventListener('keydown', async (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); done(); }
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const name = inp.value.trim();
+    if (!name) { inp.placeholder = 'il lui faut un nom'; return; }
+    newFolderIn = null;
+    await createFolder(name, s.id);
+  });
+  inp.addEventListener('blur', () => setTimeout(() => { if (newFolderIn === s.id && !inp.value.trim()) done(); }, 150));
+  return el('div', { class: 'tr nf', style: { '--d': depth } }, el('i', { class: 'dir', 'aria-hidden': 'true' }), inp);
+}
+// renommer un dossier dans l'arbre (double-clic sur sa ligne)
+sideEl.addEventListener('dblclick', (e) => {
+  const r = e.target.closest('.tr.fo');
+  if (!r) return;
+  e.preventDefault();
+  renameFolderInline(r.dataset.folder, r.dataset.space, r);
+});
+
 // ══ LA BIBLIOTHÈQUE ═════════════════════════════════════════
 let parts = null;
 function buildLib() {
   if (parts && libEl.contains(parts.grid)) return;
   const fileIn = el('input', { type: 'file', multiple: true, hidden: true, accept: 'image/*,video/*,audio/*',
-    onchange: () => { uploadFiles([...fileIn.files], { folder: S.folder }); fileIn.value = ''; } });
+    onchange: () => { uploadFiles([...fileIn.files], { folder: S.folder, space: target() }); fileIn.value = ''; } });
   parts = {
+    crumbs: el('nav', { class: 'crumbs', 'aria-label': 'où' }),
     who: el('div', { class: 'who' }),
     acts: el('div', { class: 'acts' }),
-    bar: el('div', { class: 'lib-bar', role: 'toolbar', 'aria-label': 'trier, filtrer' }),
+    bar: el('div', { class: 'lib-bar', role: 'toolbar', 'aria-label': 'chercher, filtrer, trier' }),
     grid: el('div', { class: 'lib-grid', role: 'listbox', 'aria-multiselectable': 'true', 'aria-label': 'les objets' }),
-    more: el('div', { class: 'row', style: { justifyContent: 'center' } }),
+    more: el('div', { class: 'row more-row' }),
     fileIn,
   };
   const hint = el('p', { class: 'lib-hint lbl', hidden: !prefs.get('asset.hint', true) },
-    `clic : choisir · double-clic : ouvrir · ctrl/⌘ + clic : ajouter · maj + clic : une plage · glisser sur le fond : une zone · ctrl+A : tout · Échap : rien · ${keyLabel('undo')} : annuler`);
-  libEl.replaceChildren(el('section', { class: 'lib-top' }, parts.who, parts.acts), parts.bar, hint, parts.grid, parts.more, fileIn);
+    `clic : choisir · double-clic : ouvrir · ctrl / maj + clic : ajouter, une plage · glisser sur le fond : une zone · glisser des cartes sur un dossier, un Workspace, la corbeille · ${keyLabel('undo')} : annuler`);
+  libEl.replaceChildren(el('section', { class: 'lib-top' }, el('div', { class: 'who-col' }, parts.crumbs, parts.who), parts.acts), parts.bar, hint, parts.grid, parts.more, fileIn);
   buildBar();
 }
 
@@ -282,36 +423,60 @@ function buildBar() {
   search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { S.q = search.value.trim(); loadLib(); }, 220); });
   const sort = el('select', { class: 'fld', 'aria-label': 'trier' }, ...SORTS.map(([v, l]) => el('option', { value: v, selected: S.sort === v }, `tri · ${l}`)));
   sort.onchange = () => { S.sort = sort.value; savePrefs(); loadLib(); };
-  const tool = el('select', { class: 'fld', 'aria-label': 'outil d\'origine' });
-  tool.onchange = () => { S.tool = tool.value; loadLib(); };
+  const author = el('select', { class: 'fld', 'aria-label': 'auteur' });
+  author.onchange = () => { S.author = author.value; loadLib(); };
+  const date = el('select', { class: 'fld', 'aria-label': 'date' }, ...DATES.map(([v, l]) => el('option', { value: v, selected: S.since === v }, l)));
+  date.onchange = () => { S.since = date.value; loadLib(); };
+  // l'origine : créé dans un outil ou déposé, et l'outil (un seul menu)
+  const origin = el('select', { class: 'fld', 'aria-label': 'origine' });
+  origin.onchange = () => {
+    const [k, v] = origin.value.split(':');
+    S.origin = k === 'o' ? v : ''; S.tool = k === 't' ? v : '';
+    loadLib();
+  };
   const size = el('input', { type: 'range', min: 120, max: 340, step: 10, value: S.size, 'aria-label': 'taille des vignettes' });
   size.oninput = () => { S.size = +size.value; parts.grid.style.setProperty('--card', `${S.size}px`); savePrefs(); };
-  const fav = el('button', { class: 'tb ghost sm', type: 'button', 'aria-pressed': 'false', title: 'seulement les favoris' }, '★ Favoris');
-  fav.onclick = () => { S.fav = !S.fav; loadLib(); };
-  parts.crumbs = el('nav', { class: 'crumbs', 'aria-label': 'où' });
-  parts.seg = el('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'sorte' });
-  parts.oseg = el('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'origine : créé dans un outil ou déposé' });
-  // le filtre par Workspace : tous ceux qu'on voit, celui de l'onglet en tête (§ 3.1)
-  parts.wseg = el('div', { class: 'seg wseg', role: 'radiogroup', 'aria-label': 'Workspace', hidden: true });
-  parts.search = search; parts.sort = sort; parts.tool = tool; parts.favBtn = fav;
-  b.replaceChildren(parts.crumbs, parts.wseg, parts.seg, parts.oseg, fav, tool, sort, el('span', { class: 'sp' }), search,
-    el('label', { class: 'size', title: 'taille des vignettes' }, el('span', { class: 'lbl' }, 'taille'), size),
-    el('a', { class: 'tb ghost sm', href: '#/corbeille', title: 'les objets jetés, qu\'on peut rétablir' }, 'Corbeille'), undoBox);
-  parts.size = size;
+  const viewSeg = el('div', { class: 'seg vseg', role: 'radiogroup', 'aria-label': 'la vue' },
+    ...[['grid', 'Grille', 'des vignettes'], ['list', 'Liste', 'une ligne par objet : Workspace, dossier, auteur, poids, date']].map(([v, l, tt]) => el('button', {
+      class: 'tb' + (S.view === v ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': String(S.view === v), title: tt, 'data-view': v,
+      onclick: () => { S.view = v; savePrefs(); paintGrid(); paintBar(); } }, el('i', { class: `vi ${v}`, 'aria-hidden': 'true' }), l)));
+  const clear = el('button', { class: 'tb ghost sm clear', type: 'button', title: 'retirer la recherche et tous les filtres', hidden: true,
+    onclick: () => { S.q = ''; S.kind = ''; S.author = ''; S.since = ''; S.origin = ''; S.tool = ''; search.value = ''; savePrefs(); loadLib(); } }, 'Effacer les filtres');
+  const lieux = el('button', { class: 'tb ghost sm lieux', type: 'button', 'aria-controls': 'side', title: 'les Teams, les Workspaces, les dossiers',
+    onclick: () => document.body.classList.toggle('side-open') }, 'Lieux');
+  parts.seg = el('div', { class: 'seg kseg', role: 'radiogroup', 'aria-label': 'sorte' });
+  Object.assign(parts, { search, sort, author, date, origin, size, viewSeg, clear });
+  const sizeBox = el('label', { class: 'size', title: 'taille des vignettes' }, el('span', { class: 'lbl' }, 'taille'), size);
+  parts.sizeBox = sizeBox;
+  b.replaceChildren(
+    el('div', { class: 'bar-row' }, lieux, search, parts.seg),
+    el('div', { class: 'bar-row' }, sort, author, date, origin, clear, el('span', { class: 'sp' }), viewSeg, sizeBox));
   parts.grid.style.setProperty('--card', `${S.size}px`);
 }
 
-let loadSeq = 0;
-async function loadLib({ append = false } = {}) {
-  const p = new URLSearchParams({ sort: S.sort, limit: S.limit, offset: append ? S.data.items.length : 0 });
+// les paramètres de la vue pour le lieu et les filtres
+function viewParams(extra = {}) {
+  const P = S.place;
+  const p = new URLSearchParams({ sort: S.sort, limit: S.limit, ...extra });
   if (S.kind) p.set('kind', S.kind);
   if (S.q) p.set('q', S.q);
-  if (S.fav) p.set('fav', '1');
   if (S.tool) p.set('tool', S.tool);
   if (S.origin) p.set('origin', S.origin);
-  if (S.folder) p.set('folder', S.folder);
-  if (S.folder && S.fspace) p.set('fspace', S.fspace);
-  if (S.space) p.set('space', S.space);
+  if (S.author) p.set('author', S.author);
+  if (S.since) p.set('since', S.since);
+  if (P.k === 'recent') { p.set('flat', '1'); if (!S.since || +S.since > 7) p.set('since', '7'); }
+  if (P.k === 'fav') { p.set('flat', '1'); p.set('fav', '1'); }
+  if (P.k === 'team') { const tm = teamOf(P.team); if (tm) p.set('space', tm.spaces.map((s) => s.id).join(',')); }
+  if (P.k === 'space') p.set('space', P.space);
+  if (P.k === 'folder') { p.set('folder', P.name); p.set('fspace', P.space); }
+  return p;
+}
+let loadSeq = 0;
+async function loadLib({ append = false } = {}) {
+  if (!parts) return;
+  // une Team : l'arbre dit ses Workspaces ; attendre qu'il soit là
+  if (S.place.k === 'team' && !S.tree) { await loadTree(); }
+  const p = viewParams({ offset: append ? S.data.items.length : 0 });
   const seq = ++loadSeq;
   let d;
   try { d = await api('asset/view?' + p); } catch (e) {
@@ -320,122 +485,148 @@ async function loadLib({ append = false } = {}) {
   }
   if (seq !== loadSeq) return;
   if (append) { S.data.items.push(...d.items); S.data.total = d.total; } else S.data = d;
-  S.spaces = d.spaces || S.spaces;
+  if (!S.tree && d.spaces?.length) S.spaces = d.spaces;
   // la sélection ne garde que ce qui est encore à l'écran
   const shown = new Set(S.data.items.map((i) => i.id));
   S.sel = new Set([...S.sel].filter((id) => shown.has(id)));
-  paintTop(); paintBar(); paintGrid(); paintSel(true);
-}
-
-function paintTop() {
-  const d = S.data;
-  const n = Object.values(d.counts).reduce((a, b) => a + b, 0);
-  if (foreignFolder()) {
-    // le dossier d'un autre Workspace : on le regarde, on le rapatrie ; il ne se renomme ni ne se vide d'ici
-    const why = importWhy({ space: S.fspace, title: S.folder, kind: 'image' });
-    parts.who.replaceChildren(
-      el('span', { class: 'kicker' }, `dossier · ${plural(n, 'objet', 'objets')} · ailleurs`),
-      el('h1', { class: 'lib-h' }, S.folder),
-      el('span', { class: 'lbl row' }, wsBadge(S.fspace), ` dans ${spaceLong(S.fspace)} · ${countLine(d.counts)}`));
-    parts.acts.replaceChildren(
-      el('a', { class: 'tb ghost', href: otherTab(S.fspace, folderHash(S.folder)), title: `ouvrir ce dossier dans son Workspace, où il se range` }, 'Y aller'),
-      parts.dropBtn = el('button', { class: 'tb go', type: 'button', disabled: !!why, title: why || `une copie de chaque objet dans « ${spaceLong(here())} », dans un dossier du même nom ; l’original ne bouge pas`,
-        onclick: () => rapatrierDossier(S.folder, S.fspace) }, `Rapatrier le dossier ici`));
-    return;
-  }
-  // créer ici (déposer, un élément, un personnage) : le rôle dans le Workspace de l'onglet le dit
-  const h = hereInfo();
-  const noCreate = h && h.create === false ? `créer dans « ${spaceLong(here())} » : ${h.create_why || 'ton rôle ne le permet pas'}` : '';
-  if (S.folder) {
-    parts.who.replaceChildren(
-      el('span', { class: 'kicker' }, `dossier · ${plural(n, 'objet', 'objets')}`),
-      el('h1', { class: 'lib-h', 'data-rename': '', title: 'renommer', tabindex: 0, onclick: renameInline,
-        onkeydown: (e) => { if (e.key === 'Enter') renameInline(); } }, S.folder),
-      el('span', { class: 'lbl' }, countLine(d.counts)));
-    parts.acts.replaceChildren(
-      el('button', { class: 'tb ghost', type: 'button', onclick: renameInline }, 'Renommer'),
-      el('button', { class: 'tb ghost', type: 'button', title: 'remettre ses objets à la racine ; le dossier disparaît', onclick: () => emptyFolder(S.folder) }, 'Vider le dossier'),
-      parts.dropBtn = el('button', { class: 'tb go', type: 'button', disabled: !!noCreate, onclick: () => parts.fileIn.click(), title: noCreate || 'ou glisser des fichiers n\'importe où sur la page' }, 'Déposer ici'));
-    if (S.renameOnLoad === S.folder) { S.renameOnLoad = null; renameInline(); }
-  } else {
-    parts.who.replaceChildren(
-      el('span', { class: 'kicker' }, 'SR—00 · la bibliothèque'),
-      el('h1', { class: 'lib-h' }, 'Asset'),
-      el('span', { class: 'lbl' }, `${plural(d.library_total, 'objet', 'objets')} · ${plural(d.all_folders.length, 'dossier', 'dossiers')} · ${countLine(d.counts)}`
-        + (manySpaces() ? ` · ${S.space ? `dans ${spaceLong(S.space)}` : plural(d.spaces.length, 'Workspace', 'Workspaces')}` : '')));
-    parts.acts.replaceChildren(
-      el('button', { class: 'tb ghost', type: 'button', disabled: !!noCreate, onclick: cfModal, title: noCreate || 'un personnage du studio devient un élément' }, 'Importer de Character Factory'),
-      el('button', { class: 'tb ghost', type: 'button', disabled: !!noCreate, title: noCreate || null, onclick: () => elementModal({}) }, 'Nouvel élément'),
-      parts.dropBtn = el('button', { class: 'tb go', type: 'button', disabled: !!noCreate, onclick: () => parts.fileIn.click(), title: noCreate || 'ou glisser des fichiers n\'importe où sur la page' }, 'Déposer des fichiers'));
-    if (noCreate) parts.acts.append(el('p', { class: 'hint why-line' }, noCreate));
-  }
+  paintTop(); paintCrumbs(); paintBar(); paintGrid(); paintSel(true);
 }
 
 function countLine(c) {
   return Object.entries(KIND_N).filter(([k]) => c[k]).map(([k, [one, many]]) => plural(c[k], one, many)).join(' · ') || 'vide';
 }
+function placeTitle(p = S.place) {
+  if (p.k === 'recent') return 'Récents';
+  if (p.k === 'fav') return 'Favoris';
+  if (p.k === 'trash') return 'Corbeille';
+  if (p.k === 'team') return teamOf(p.team)?.name || 'Team';
+  if (p.k === 'space') return spaceShort(p.space);
+  if (p.k === 'folder') return p.name;
+  return 'Asset';
+}
+// le fil : Asset / Team / Workspace / dossier — un Workspace du fil reçoit aussi un glisser
+function paintCrumbs() {
+  const P = S.place;
+  if (P.k === 'all') { parts.crumbs.replaceChildren(el('span', { class: 'kicker' }, 'SR—00 · la bibliothèque · toutes tes Teams')); return; }
+  const c = [el('a', { class: 'crumb', href: '#' }, 'Asset')];
+  const sp = placeSpace(P);
+  const info = sp ? spaceInfo(sp) : null;
+  const sep = () => el('span', { class: 'lbl' }, '/');
+  if (P.k === 'team') c.push(sep(), el('span', { class: 'crumb cur' }, placeTitle(P)));
+  if (sp) {
+    if (info?.team) c.push(sep(), el('a', { class: 'crumb', href: placeHash({ k: 'team', team: info.team }) }, info.team_name || 'Team'));
+    c.push(sep(), P.k === 'folder'
+      ? el('a', { class: 'crumb', href: placeHash({ k: 'space', space: sp }), 'data-drop': 'space', 'data-space': sp, title: 'glisser ici : sortir du dossier' }, spaceShort(sp))
+      : el('span', { class: 'crumb cur' }, spaceShort(sp)));
+  }
+  if (P.k === 'folder') c.push(sep(), el('span', { class: 'crumb cur' }, P.name));
+  if (P.k === 'recent' || P.k === 'fav' || P.k === 'trash') c.push(sep(), el('span', { class: 'crumb cur' }, placeTitle(P)));
+  parts.crumbs.replaceChildren(...c);
+}
+
+function paintTop() {
+  const d = S.data;
+  const P = S.place;
+  const sp = target();
+  const noCreate = createWhy(sp);
+  const where = `dans « ${spaceLong(sp)} »`;
+  const drop = (label) => (parts.dropBtn = el('button', { class: 'tb go', type: 'button', disabled: !!noCreate, onclick: () => parts.fileIn.click(),
+    title: noCreate || `${where}${S.folder ? `, dossier « ${S.folder} »` : ''} — ou glisser des fichiers n’importe où sur la page` }, label));
+  const more = el('button', { class: 'tb ghost more-btn', type: 'button', 'aria-haspopup': 'menu', title: 'les gestes de ce lieu', 'aria-label': 'plus',
+    onclick: (e) => { e.stopPropagation(); toggleMenu(e.currentTarget, placeMenu()); } }, '⋯');
+  const all = Object.values(d.counts).reduce((a, b) => a + b, 0);
+  let sub = `${plural(all, 'objet', 'objets')}${d.folders?.length ? ` · ${plural(d.folders.length, 'dossier', 'dossiers')}` : ''} · ${countLine(d.counts)}`;
+  if (P.k === 'all' && manySpaces()) sub += ` · ${plural(S.spaces.length, 'Workspace', 'Workspaces')}`;
+  if (P.k === 'recent') sub += ' · touchés ces 7 derniers jours';
+  const h1 = el('h1', { class: 'lib-h' }, placeTitle(P));
+  if (P.k === 'folder') {
+    h1.setAttribute('data-rename', ''); h1.title = 'renommer'; h1.tabIndex = 0;
+    h1.onclick = () => renameFolderInline(P.name, P.space, h1);
+    h1.onkeydown = (e) => { if (e.key === 'Enter') renameFolderInline(P.name, P.space, h1); };
+  }
+  parts.who.replaceChildren(h1, el('span', { class: 'lbl' }, sub));
+  if (P.k === 'folder') {
+    parts.acts.replaceChildren(undoBox(),
+      el('button', { class: 'tb ghost', type: 'button', onclick: () => renameFolderInline(P.name, P.space, h1) }, 'Renommer'),
+      el('button', { class: 'tb ghost', type: 'button', title: 'ses objets reviennent au Workspace, hors dossier ; le dossier disparaît', onclick: () => ungroupFolder(P.name, P.space) }, 'Dégrouper'),
+      el('button', { class: 'tb ghost', type: 'button', title: 'ses objets vont à la corbeille (ils reviennent d’un clic, dans ce dossier)', onclick: () => deleteFolderAsk(P.name, P.space) }, 'Supprimer'),
+      drop('Déposer ici'));
+  } else {
+    const nf = el('button', { class: 'tb ghost', type: 'button', disabled: !!noCreate, title: noCreate || `un dossier vide ${where}`,
+      onclick: () => { closed.delete('s:' + sp); newFolderIn = sp; paintTree(); document.body.classList.add('side-open'); } }, 'Nouveau dossier');
+    parts.acts.replaceChildren(undoBox(), nf,
+      el('button', { class: 'tb ghost', type: 'button', disabled: !!noCreate, title: noCreate || `${where} : une planche de références`, onclick: () => elementModal({ space: sp }) }, 'Nouvel élément'),
+      more, drop('Déposer des fichiers'));
+    if (noCreate) parts.acts.append(el('p', { class: 'hint why-line' }, noCreate));
+  }
+  if (S.renameOnLoad && P.k === 'folder' && S.renameOnLoad === P.name) { S.renameOnLoad = null; renameFolderInline(P.name, P.space, h1); }
+}
+// les gestes du lieu qui ne méritent pas un bouton
+function placeMenu() {
+  const sp = target();
+  const noCreate = createWhy(sp);
+  return { title: `${placeTitle()} · ${spaceShort(sp)}`, items: [
+    { label: 'Importer de Character Factory…', disabled: !!noCreate, why: noCreate, do: cfModal },
+    { label: 'Tout choisir · Ctrl+A', do: selectAll },
+    { label: S.view === 'grid' ? 'Voir en liste' : 'Voir en grille', do: () => { S.view = S.view === 'grid' ? 'list' : 'grid'; savePrefs(); paintGrid(); paintBar(); } },
+    '-',
+    { label: 'La corbeille', do: () => go('#/corbeille') },
+  ] };
+}
 
 function paintBar() {
   const d = S.data;
-  const crumbs = [];
-  if (S.folder || S.q) {
-    crumbs.push(el('a', { class: 'crumb', href: '#', 'data-drop-root': foreignFolder() ? null : '', title: S.folder && !foreignFolder() ? 'la racine — glisser une carte ici pour la sortir du dossier' : 'la racine',
-      onclick: (e) => { e.preventDefault(); S.q = ''; parts.search.value = ''; go('#'); } }, 'Asset'));
-    if (foreignFolder()) crumbs.push(el('span', { class: 'lbl' }, '/'), wsBadge(S.fspace));
-    if (S.folder) crumbs.push(el('span', { class: 'lbl' }, '/'), el('span', { class: 'crumb cur' }, S.folder));
-    if (S.q) crumbs.push(el('span', { class: 'lbl' }, '/'), el('span', { class: 'crumb cur' }, `« ${S.q} »`));
-  } else crumbs.push(el('span', { class: 'crumb cur' }, 'Asset'));
-  parts.crumbs.replaceChildren(...crumbs);
   const total = Object.values(d.counts).reduce((a, b) => a + b, 0);
   parts.seg.replaceChildren(...KINDS.map(([k, lab]) => el('button', {
     class: 'tb' + (S.kind === k ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': String(S.kind === k),
     onclick: () => { S.kind = k; savePrefs(); loadLib(); },
   }, lab, el('b', {}, String(k ? d.counts[k] : total)))));
-  const sps = d.spaces || [];
-  parts.wseg.hidden = sps.length < 2 || foreignFolder() || !!(S.folder && !S.fspace && !S.q);
-  const all = sps.reduce((a, s) => a + (s.count || 0), 0);
-  parts.wseg.replaceChildren(
-    el('button', { class: 'tb' + (!S.space ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': String(!S.space),
-      title: 'tous les Workspaces que tu vois', onclick: () => { S.space = ''; loadLib(); } }, 'Tous', el('b', {}, String(all))),
-    ...sps.map((s) => el('button', {
-      class: 'tb ws' + (S.space === s.id ? ' on' : '') + (s.here ? ' here' : ''), type: 'button', role: 'radio', 'aria-checked': String(S.space === s.id),
-      // la pastille de CE Workspace reçoit une carte d'ailleurs qu'on y glisse : elle s'y rapatrie
-      'data-drop-here': s.here ? '' : null,
-      title: `${s.team_name} / ${s.name}${s.here ? ' · celui de cet onglet — glisser ici une carte d’ailleurs la rapatrie' : ''}`,
-      onclick: () => { S.space = S.space === s.id ? '' : s.id; loadLib(); },
-    }, s.here ? el('i', { class: 'dot', 'aria-hidden': 'true' }) : null, s.name, el('b', {}, String(s.count || 0)))));
+  const au = d.authors || [];
+  parts.author.replaceChildren(el('option', { value: '' }, 'tous les auteurs'),
+    ...au.map((a) => el('option', { value: a.id, selected: S.author === a.id }, `${a.name} · ${a.count}`)));
+  if (S.author && !au.some((a) => a.id === S.author)) parts.author.append(el('option', { value: S.author, selected: true }, S.author));
   const o = d.origins || { upload: 0, made: 0 };
-  parts.oseg.replaceChildren(...ORIGINS.map(([k, lab]) => el('button', {
-    class: 'tb' + (S.origin === k ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': String(S.origin === k),
-    title: k === 'upload' ? 'ce qu\'on a déposé de son disque' : k === 'made' ? 'ce que les outils ont fabriqué' : 'tout',
-    onclick: () => { S.origin = k; loadLib(); },
-  }, lab, el('b', {}, String(k ? o[k] : o.upload + o.made)))));
-  parts.favBtn.classList.toggle('on', S.fav);
-  parts.favBtn.setAttribute('aria-pressed', String(S.fav));
-  const tools = Object.entries(d.tools).sort((a, b) => b[1] - a[1]);
-  parts.tool.replaceChildren(el('option', { value: '' }, 'tous les outils'),
-    ...tools.map(([t, n]) => el('option', { value: t, selected: S.tool === t }, `${toolFr(t)} · ${n}`)));
-  if (S.tool && !d.tools[S.tool]) parts.tool.append(el('option', { value: S.tool, selected: true }, toolFr(S.tool)));
+  const tools = Object.entries(d.tools).filter(([t]) => t !== 'upload').sort((a, b) => b[1] - a[1]);
+  const cur = S.origin ? `o:${S.origin}` : S.tool ? `t:${S.tool}` : '';
+  parts.origin.replaceChildren(el('option', { value: '' }, `toutes origines · ${o.upload + o.made}`),
+    el('option', { value: 'o:made', selected: cur === 'o:made' }, `créations · ${o.made}`),
+    el('option', { value: 'o:upload', selected: cur === 'o:upload' }, `uploads · ${o.upload}`),
+    tools.length ? el('optgroup', { label: 'par outil' }, ...tools.map(([t, k]) => el('option', { value: `t:${t}`, selected: cur === `t:${t}` }, `${toolFr(t)} · ${k}`))) : null);
   if (parts.sort.value !== S.sort) parts.sort.value = S.sort;
+  if (parts.date.value !== S.since) parts.date.value = S.since;
   if (document.activeElement !== parts.search && parts.search.value.trim() !== S.q) parts.search.value = S.q;
+  parts.clear.hidden = !(S.q || S.kind || S.author || S.since || S.origin || S.tool);
+  for (const bt of $$('[data-view]', parts.viewSeg)) { const on = bt.dataset.view === S.view; bt.classList.toggle('on', on); bt.setAttribute('aria-checked', String(on)); }
+  // la taille : les vignettes de la grille ; la liste a ses lignes (le curseur dit pourquoi il attend)
+  parts.size.disabled = S.view === 'list';
+  parts.sizeBox.title = S.view === 'list' ? 'la liste a des lignes de taille fixe : la taille vaut pour la grille' : 'taille des vignettes';
 }
 
 function paintGrid() {
   const d = S.data;
-  const cards = [...d.folders.map(folderCard), ...d.items.map((it) => itemCard(it, { search: !!S.q }))];
-  if (!cards.length) {
-    const filtered = S.kind || S.fav || S.tool || S.q || S.origin;
+  const list = S.view === 'list';
+  parts.grid.className = list ? 'lib-list' : 'lib-grid';
+  const cards = list
+    ? [listHead(), ...d.folders.map(folderRow), ...d.items.map(listRow)]
+    : [...d.folders.map(folderCard), ...d.items.map((it) => itemCard(it))];
+  if (!d.folders.length && !d.items.length) {
+    const filtered = S.kind || S.q || S.author || S.since || S.tool || S.origin;
+    const P = S.place;
     cards.push(el('div', { class: 'empty-state', style: { gridColumn: '1 / -1' } },
-      el('b', {}, S.origin === 'upload' && !S.kind && !S.q ? 'Aucun upload ici' : filtered ? 'Rien avec ces filtres' : S.folder ? 'Ce dossier est vide' : 'La bibliothèque est vide'),
-      el('p', { class: 'hint' }, S.origin === 'upload' ? 'Ce qu\'on dépose de son disque — ici ou dans n\'importe quel outil — arrive dans cet onglet.'
-        : filtered ? 'Change de sorte ou d\'origine, retire les favoris ou la recherche.'
-        : 'Dépose des fichiers n\'importe où sur la page, importe un personnage de Character Factory, ou crée une image dans Image.')));
+      el('b', {}, filtered ? 'Rien avec ces filtres' : P.k === 'folder' ? 'Ce dossier est vide' : P.k === 'fav' ? 'Aucun favori'
+        : P.k === 'recent' ? 'Rien de touché ces 7 jours' : 'Rien ici'),
+      el('p', { class: 'hint' }, filtered ? 'Change de sorte, d’auteur ou de date, ou efface les filtres.'
+        : P.k === 'folder' ? 'Glisse des cartes sur ce dossier (dans l’arbre, à gauche), ou dépose des fichiers ici.'
+          : P.k === 'fav' ? 'Glisse des cartes sur « Favoris », ou F sur une sélection.'
+            : 'Dépose des fichiers n’importe où sur la page, importe un personnage de Character Factory, ou crée une image dans Image.'),
+      filtered ? el('button', { class: 'tb ghost sm', type: 'button', onclick: () => parts.clear.click() }, 'Effacer les filtres') : null));
   }
   parts.grid.replaceChildren(...cards);
   const shown = d.items.length;
   parts.more.replaceChildren(...(d.total > shown ? [
     el('span', { class: 'lbl' }, `${shown} sur ${d.total}`),
     el('button', { class: 'tb ghost sm', type: 'button', onclick: () => loadLib({ append: true }) }, 'Voir la suite')] : []));
+  paintSel();
 }
 
 // ── les cartes ───────────────────────────────────────────────
@@ -474,8 +665,10 @@ function subOf(it) {
   if (it.kind === 'element') return `${plural(it.element?.refs?.length || 0, 'réf.', 'réf.')}${it.element?.voices?.length ? ' · voix' : ''}${it.element?.meshes?.length ? ' · 3D' : ''} · ${toolFr(it.origin?.tool)}`;
   return [it.width && it.height ? `${it.width}×${it.height}` : '', it.origin?.model || toolFr(it.origin?.tool)].filter(Boolean).join(' · ');
 }
+// montrer le Workspace de chaque carte : quand le lieu en mêle plusieurs
+const showSpace = () => manySpaces() && !placeSpace();
 
-function itemCard(it, { search = false } = {}) {
+function itemCard(it) {
   const t = thumb(it, { sub: subOf(it), onclick: (e) => onCardClick(e, it) });
   // le glisser d'une carte est celui de la page (ranger, dossiers), pas celui du navigateur
   t.draggable = false;
@@ -502,7 +695,7 @@ function itemCard(it, { search = false } = {}) {
   if (it.version?.of) im.append(el('span', { class: 'verb of', title: it.version.of_present ? `v${it.version.n} de « ${it.version.of_title} »` : 'son élément est à la corbeille' }, `v${it.version.n}`));
   if (it.kind === 'element' && !it.thumb_url && !(living && glyph(it.element.head_kind))) im.prepend(el('span', { class: 'noimg' }, living && !it.element.head ? 'pas encore publié' : 'sans image'));
   if (it.fav) im.append(el('span', { class: 'star', title: 'favori' }, '★'));
-  if (search && it.folder) im.append(el('span', { class: 'where', title: 'dans ce dossier' }, it.folder));
+  if (it.folder && S.place.k !== 'folder') im.append(el('span', { class: 'where', title: 'dans ce dossier' }, it.folder));
   // un élément qui a une voix le montre : la même voix d'un plan à l'autre
   const voice = it.kind === 'element' ? it.element?.voices?.[0] : null;
   if (voice) im.append(el('span', { class: 'vbadge', title: `sa voix · ${voice.label || 'voix'}` }, el('i', { 'aria-hidden': 'true' }), el('i'), el('i'),
@@ -514,16 +707,70 @@ function itemCard(it, { search = false } = {}) {
   }
   const on = S.sel.has(it.id);
   if (on) t.classList.add('sel');
-  // son Workspace, en tête de la ligne du bas : chaque carte le dit (étape 5)
-  const away = isForeign(it);
-  if (manySpaces() && it.space) $('.cap .s', t)?.prepend(wsBadge(it.space));
-  if (away) t.setAttribute('aria-label', `${t.getAttribute('aria-label')}, dans ${spaceLong(it.space)}`);
-  return el('div', { class: 'acard' + (on ? ' sel' : '') + (living && it.element.count > 1 ? ' stack' : '') + (away ? ' ailleurs' : ''),
+  // son Workspace, en tête de la ligne du bas, quand le lieu en mêle plusieurs
+  if (showSpace() && it.space) $('.cap .s', t)?.prepend(wsBadge(it.space));
+  if (isForeign(it)) t.setAttribute('aria-label', `${t.getAttribute('aria-label')}, dans ${spaceLong(it.space)}`);
+  return el('div', { class: 'acard' + (on ? ' sel' : '') + (living && it.element.count > 1 ? ' stack' : ''),
     'data-id': it.id, 'data-space': it.space || null, role: 'option', 'aria-selected': String(on) }, t,
     el('button', { class: 'chk', type: 'button', 'aria-pressed': String(on), title: 'choisir (ctrl/⌘ + clic)', 'aria-label': `choisir ${it.title}`,
       onclick: (e) => { e.stopPropagation(); toggleSel(it.id); } }),
-    el('button', { class: 'menu-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', title: away ? 'rapatrier ici, télécharger' : 'ranger',
-      'aria-label': `${away ? 'rapatrier' : 'ranger'} ${it.title}`, onclick: (e) => { e.stopPropagation(); toggleMenu(e.currentTarget, itemMenu(it)); } }, '⋯'));
+    el('button', { class: 'menu-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', title: 'ranger, copier, jeter',
+      'aria-label': `ranger ${it.title}`, onclick: (e) => { e.stopPropagation(); toggleMenu(e.currentTarget, itemMenu(it)); } }, '⋯'));
+}
+
+// ── la liste : une ligne par objet ───────────────────────────
+// les colonnes se trient d'un clic (les mêmes tris que le menu)
+const COLS = [['', ''], ['', ''], ['title', 'nom'], ['kind', 'sorte'], ['space', 'Workspace'], ['', 'dossier'], ['', 'auteur'], ['size', 'poids'], ['updated', 'modifié'], ['', '']];
+function listHead() {
+  return el('div', { class: 'lrow lhead', role: 'presentation' }, ...COLS.map(([k, l]) => (k
+    ? el('button', { class: 'lh' + (S.sort === k ? ' on' : ''), type: 'button', title: `trier par ${l}`, onclick: () => { S.sort = k; savePrefs(); loadLib(); } }, l, S.sort === k ? ' ↓' : '')
+    : el('span', { class: 'lh' }, l))));
+}
+const authorName = (id) => (S.data?.authors || []).find((a) => a.id === (id || ''))?.name || id || '—';
+function lthumb(it) {
+  const pic = it.thumb_url || it.views?.length ? bindView(el('img', { alt: '', loading: 'lazy', decoding: 'async' }), it, { fit: 'cover', box: [44, 44] })
+    : glyph(it.kind, true) || kindMark(it, { compact: true });
+  return el('span', { class: 'lt' }, pic);
+}
+function listRow(it) {
+  const on = S.sel.has(it.id);
+  const kind = it.kind === 'element' ? typeFr(it.element?.type) : kindFr(it.kind);
+  const r = el('div', { class: 'acard lrow' + (on ? ' sel' : ''), 'data-id': it.id, 'data-space': it.space || null, role: 'option', 'aria-selected': String(on), tabindex: 0,
+    'aria-label': `${kind} ${it.title}` },
+  el('button', { class: 'chk', type: 'button', 'aria-pressed': String(on), 'aria-label': `choisir ${it.title}`, onclick: (e) => { e.stopPropagation(); toggleSel(it.id); } }),
+  lthumb(it),
+  el('span', { class: 'c-t' }, el('b', {}, it.title || it.id, it.fav ? el('i', { class: 'st', title: 'favori' }, ' ★') : null), el('small', {}, subOf(it))),
+  el('span', { class: 'c-k lbl' }, kind),
+  el('span', { class: 'c-w' }, wsBadge(it.space)),
+  el('span', { class: 'c-f' }, it.folder || el('span', { class: 'lbl' }, '—')),
+  el('span', { class: 'c-a' }, authorName(it.owner)),
+  el('span', { class: 'c-s lbl' }, fmtSize(it.bytes)),
+  el('span', { class: 'c-d lbl' }, fmtDate(it.updated || it.created)),
+  el('button', { class: 'menu-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', title: 'ranger, copier, jeter', 'aria-label': `ranger ${it.title}`,
+    onclick: (e) => { e.stopPropagation(); toggleMenu(e.currentTarget, itemMenu(it)); } }, '⋯'));
+  r.addEventListener('click', (e) => { if (!e.target.closest('button')) onCardClick(e, it); });
+  r.addEventListener('dblclick', (e) => { if (!e.target.closest('button')) go('#' + it.id); });
+  r.addEventListener('keydown', (e) => {
+    if (e.target !== r) return;
+    if (e.key === 'Enter') { e.preventDefault(); go('#' + it.id); }
+    if (e.key === ' ') { e.preventDefault(); toggleSel(it.id); }
+  });
+  return r;
+}
+function folderRow(f) {
+  const r = el('div', { class: 'acard folder lrow', 'data-folder': f.name, 'data-space': f.space || null, role: 'option', 'aria-selected': 'false', tabindex: 0,
+    'aria-label': `dossier ${f.name}, ${plural(f.total, 'objet', 'objets')}` },
+  el('span', {}), el('span', { class: 'lt fo' }, el('i', { class: 'dir big', 'aria-hidden': 'true' })),
+  el('span', { class: 'c-t' }, el('b', {}, f.name), el('small', {}, countLine(f.kinds) === 'vide' ? 'vide' : countLine(f.kinds))),
+  el('span', { class: 'c-k lbl' }, 'dossier'), el('span', { class: 'c-w' }, wsBadge(f.space)), el('span', { class: 'c-f' }, ''),
+  el('span', { class: 'c-a' }, ''), el('span', { class: 'c-s lbl' }, plural(f.total, 'objet', 'objets')), el('span', { class: 'c-d lbl' }, f.updated ? fmtDate(f.updated) : '—'),
+  el('button', { class: 'menu-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', title: 'le dossier', 'aria-label': `dossier ${f.name}`,
+    onclick: (e) => { e.stopPropagation(); toggleMenu(e.currentTarget, folderMenu(f)); } }, '⋯'));
+  const open = () => { if (!suppressClick) go(folderHash(f.name, f.space)); };
+  r.addEventListener('click', (e) => { if (!e.target.closest('button')) open(); });
+  r.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === r) open(); });
+  folderDrops(r, f);
+  return r;
 }
 
 // ── la sélection ─────────────────────────────────────────────
@@ -575,7 +822,7 @@ function paintSel(force = false) {
 // d'affichage qui suffit (commun/proxies.js), suivie à la taille réelle
 function miniOf(m) {
   const pic = m.thumb_url || m.views?.length ? bindView(el('img', { alt: '', loading: 'lazy', decoding: 'async' }), m, { fit: 'cover', box: [88, 88] })
-    : glyph(m.kind, true);
+    : glyph(m.kind, true) || (m.kind === 'audio' ? wave(7) : null);
   return el('span', { class: 'mini' + (m.kind === 'element' ? ' el' : ''), title: m.title }, pic, el('i', {}, m.title));
 }
 
@@ -585,42 +832,54 @@ function folderCard(f) {
   if (f.count > 4) cells.push(el('span', { class: 'mini more' }, `+${f.count - 3}`));
   while (cells.length < 4) cells.push(el('span', { class: 'mini empty' }));
   const kinds = Object.entries(KIND_N).filter(([k]) => f.kinds[k]).map(([k, [one, many]]) => plural(f.kinds[k], one, many)).join(' · ');
-  const away = !!(f.space && f.space !== here());
-  const sub = el('div', { class: 's' }, kinds || plural(f.total, 'objet', 'objets'));
-  if (manySpaces() && f.space) sub.prepend(wsBadge(f.space));
-  const b = el('button', { class: 'thumb folder', type: 'button', title: `ouvrir « ${f.name} »${away ? ` · dans ${spaceLong(f.space)}` : ''}`,
-    'aria-label': `dossier ${f.name}, ${plural(f.total, 'objet', 'objets')}${away ? `, dans ${spaceLong(f.space)}` : ''}`,
+  const sub = el('div', { class: 's' }, kinds || (f.total ? plural(f.total, 'objet', 'objets') : 'vide'));
+  if (showSpace() && f.space) sub.prepend(wsBadge(f.space));
+  const b = el('button', { class: 'thumb folder', type: 'button', title: `ouvrir « ${f.name} » · ${spaceLong(f.space)}`,
+    'aria-label': `dossier ${f.name}, ${plural(f.total, 'objet', 'objets')}, dans ${spaceLong(f.space)}`,
     onclick: () => { if (!suppressClick) go(folderHash(f.name, f.space)); } },
   el('div', { class: 'im' }, ...cells),
   el('div', { class: 'cap' }, el('div', { class: 't' }, f.name), sub));
-  const card = el('div', { class: 'acard folder' + (away ? ' ailleurs' : ''), 'data-folder': f.name, 'data-space': f.space || null,
-    role: 'option', 'aria-selected': 'false' },
+  const card = el('div', { class: 'acard folder', 'data-folder': f.name, 'data-space': f.space || null, role: 'option', 'aria-selected': 'false' },
     el('span', { class: 'ftab kicker' }, 'dossier'), b,
     el('button', { class: 'menu-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', title: 'le dossier',
       'aria-label': `dossier ${f.name}`, onclick: (e) => { e.stopPropagation(); toggleMenu(e.currentTarget, folderMenu(f)); } }, '⋯'));
-  if (away) return card;   // le dossier d'un autre Workspace ne reçoit rien d'ici
-  // une vignette glissée (le panneau, un autre onglet) : la page la prend avant dropZone — d'un
-  // autre Workspace, elle s'y rapatrie ; d'ici, elle s'y range
-  itemDrop(card, (items) => landItems(items, f.name));
-  // un fichier lâché sur un dossier y entre (catégorie Upload)
-  dropZone(card, { kinds: ['image', 'video', 'audio', 'element'], via: 'asset',
-    onitems: (items) => moveItems(items.map((i) => i.id), f.name, `${plural(items.length, 'objet rangé', 'objets rangés')} dans « ${f.name} »`) });
+  folderDrops(card, f);
   return card;
 }
+// un dossier reçoit : une vignette glissée (le panneau, un autre onglet) — rangée, ou copiée si elle
+// est d'un autre Workspace ; un fichier du disque (catégorie Upload), déposé dans son Workspace
+function folderDrops(node, f) {
+  itemDrop(node, (items) => landOn({ kind: 'folder', space: f.space, folder: f.name }, items));
+  fileDrop(node, (files) => uploadFiles(files, { folder: f.name, space: f.space }));
+}
+// des fichiers du disque lâchés sur une cible : elle s'allume (l'état « accepte »), et les prend
+// avant le dépôt de la page (dropAnywhere)
+function fileDrop(node, cb) {
+  let depth = 0;
+  const has = (e) => e.dataTransfer?.types?.includes('Files');
+  node.addEventListener('dragenter', (e) => { if (has(e)) { depth++; node.classList.add('drop-on'); } });
+  node.addEventListener('dragleave', (e) => { if (has(e) && --depth <= 0) { depth = 0; node.classList.remove('drop-on'); } });
+  node.addEventListener('dragover', (e) => { if (has(e)) e.preventDefault(); });
+  node.addEventListener('drop', (e) => {
+    if (!has(e) || !e.dataTransfer.files?.length) return;
+    e.preventDefault(); e.stopPropagation();
+    depth = 0; node.classList.remove('drop-on'); document.body.classList.remove('dropping');
+    cb([...e.dataTransfer.files]);
+  });
+}
 
-// ── rapatrier : une copie neuve ici, l'original ne bouge pas ─
-// POST /api/espaces/<ici>/rapatrier (server/tools/equipes.py → core/library.py) ; tout ou
+// ── rapatrier : une copie neuve dans un Workspace, l'original ne bouge pas ─
+// POST /api/espaces/<dest>/rapatrier (server/tools/equipes.py → core/library.py) ; tout ou
 // rien. Ctrl+Z met les copies à la corbeille ; rétablir les en sort (pas une copie de plus).
-async function rapatrier(items, { folder = '' } = {}) {
-  const dest = here();
+async function rapatrier(items, { dest = here(), folder = '' } = {}) {
   if (!items.length || !dest) return null;
-  const why = items.map(importWhy).find(Boolean);
+  const why = items.map((it) => importWhy(it, dest)).find(Boolean);
   if (why) { say(why); return null; }
   const where = spaceLong(dest);
   const from = [...new Set(items.map((i) => spaceLong(i.space)))].join(', ');
   let made = null;
   try {
-    const r = await U.run({ label: `rapatrier ${what(items)} dans « ${where} »`,
+    const r = await U.run({ label: `copier ${what(items)} dans « ${where} »`,
       do: async () => {
         if (made) { await api('asset/restore', { method: 'POST', body: { ids: made.map((x) => x.id) }, espace: dest }); return made; }
         const d = await api(`espaces/${dest}/rapatrier`, { method: 'POST', body: { items: items.map((i) => i.id), folder }, espace: dest });
@@ -630,17 +889,48 @@ async function rapatrier(items, { folder = '' } = {}) {
       },
       undo: (x) => api('asset/trash', { method: 'POST', body: { ids: x.map((i) => i.id) }, espace: dest }) });
     clearSel();
-    say(`${items.length > 1 ? plural(items.length, 'copie', 'copies') : `« ${items[0].title} »`} rapatrié${items.length > 1 ? 'es' : ''} dans « ${where} »${folder ? `, dossier « ${folder} »` : ''} · l’original reste dans « ${from} »`
-      + (r?.earlier ? ` · ${r.earlier > 1 ? `${r.earlier} en avaient` : 'il en avait'} déjà une copie ici` : ''), true, 8000);
+    say(`${items.length > 1 ? plural(items.length, 'copie', 'copies') : `« ${items[0].title} »`} dans « ${where} »${folder ? `, dossier « ${folder} »` : ''} · l’original reste dans « ${from} »`
+      + (r?.earlier ? ` · ${r.earlier > 1 ? `${r.earlier} en avaient` : 'il en avait'} déjà une copie là` : ''), true, 8000);
     refresh();
     return r;
   } catch (e) { say(e.message); refresh(); return null; }
 }
-async function rapatrierDossier(name, space) {
+// la confirmation d'une copie vers un autre Workspace : elle dit « copie dans … », d'où, et ce
+// qui ne se copie pas (et pourquoi) ; rend true si la personne copie
+function confirmCopy(items, dest, folder = '') {
+  const ok = items.filter((it) => !importWhy(it, dest));
+  const no = items.filter((it) => importWhy(it, dest));
+  const from = [...new Set(items.map((i) => spaceLong(i.space)))].join(', ');
+  return new Promise((resolve) => {
+    let answered = false;
+    const end = (v) => { if (answered) return; answered = true; m.close(); resolve(v ? ok : null); };
+    const m = modal({
+      title: 'copier dans un autre Workspace',
+      body: [
+        el('p', { class: 'new-q' }, `Copier ${ok.length > 1 ? `ces ${ok.length} objets` : 'cet objet'} dans « ${spaceLong(dest)} »${folder ? ` / ${folder}` : ''} ?`),
+        el('div', { class: 'pending' }, ...ok.slice(0, 8).map(miniOf), ok.length > 8 ? el('span', { class: 'arrow' }, `+${ok.length - 8}`) : null),
+        el('p', { class: 'prose' }, 'Une ', el('b', {}, 'copie neuve'), ' arrive dans ', el('b', {}, spaceLong(dest)), ' : titre, recette, tags suivent. ',
+          'L’original reste dans ', el('b', {}, from), ' ; modifier l’un ne touche jamais l’autre. Ctrl+Z met la copie à la corbeille.'),
+        no.length ? el('p', { class: 'hint warn-line' }, `${plural(no.length, 'objet reste', 'objets restent')} : ${importWhy(no[0], dest)}`) : null,
+      ],
+      foot: [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', type: 'button', onclick: () => end(false) }, 'Pas maintenant'),
+        el('button', { class: 'tb go', type: 'button', disabled: !ok.length, title: ok.length ? '' : importWhy(no[0], dest), onclick: () => end(true) },
+          `Copier dans « ${spaceShort(dest)} »`)],
+      onclose: () => { if (!answered) { answered = true; resolve(null); } },
+    });
+    setTimeout(() => $('.modal-foot .tb.go', m.scrim)?.focus(), 30);
+  });
+}
+async function copyTo(items, dest, folder = '') {
+  const ok = await confirmCopy(items, dest, folder);
+  if (ok?.length) return rapatrier(ok, { dest, folder });
+  return null;
+}
+async function rapatrierDossier(name, space, dest = here()) {
   let d;
   try { d = await api('asset/view?' + new URLSearchParams({ folder: name, fspace: space, limit: 2000 })); } catch (e) { say(e.message); return; }
   if (!d.items.length) { say(`« ${name} » est vide`); return; }
-  await rapatrier(d.items, { folder: name });
+  await copyTo(d.items, dest, name);
 }
 // l'adresse d'Asset dans un autre Workspace (l'onglet le prend : ?e=, commun/shell.js)
 function otherTab(space, hash = '') {
@@ -651,9 +941,8 @@ function otherTab(space, hash = '') {
 }
 
 // Une vignette lâchée (ITEM_MIME, plusieurs : MULTI_MIME — le panneau, un autre onglet, la
-// lignée) : ses objets relus où qu'ils soient (spaces=*) ; d'un autre Workspace, ils se
-// rapatrient ; d'ici, ils se rangent. `node` prend le dépôt avant ses autres écouteurs
-// (dropZone) ; sans `node`, toute la page (hors des zones, qui arrêtent le leur).
+// lignée) : ses objets relus où qu'ils soient (spaces=*), puis posés comme un glisser de la page.
+// `node` prend le dépôt avant ses autres écouteurs (dropZone) ; sans `node`, toute la page.
 const dragIds = (dt) => {
   try { const many = JSON.parse(dt.getData(MULTI_MIME) || '[]'); if (Array.isArray(many) && many.length) return many.map(String); } catch { /* un seul */ }
   try { const one = JSON.parse(dt.getData(ITEM_MIME) || 'null'); return one?.id ? [String(one.id)] : []; } catch { return []; }
@@ -664,7 +953,7 @@ function itemDrop(node, cb, { capture = true } = {}) {
     if (!carriesItems(e.dataTransfer) || e.defaultPrevented) return;
     e.preventDefault();
     e.stopImmediatePropagation();
-    node.classList.remove('drop-on');
+    node.classList?.remove('drop-on');
     document.body.classList.remove('dropping');
     const ids = dragIds(e.dataTransfer);
     if (!ids.length) return;
@@ -674,135 +963,224 @@ function itemDrop(node, cb, { capture = true } = {}) {
     else say('ces objets ne sont pas (ou plus) visibles pour toi');
   }, capture);
 }
-async function landItems(items, folder = '') {
-  const away = items.filter(isForeign);
-  const mine = items.filter((it) => !isForeign(it) && folder && (it.folder || '') !== folder);
-  if (mine.length) await moveItems(mine.map((i) => i.id), folder, `${plural(mine.length, 'objet rangé', 'objets rangés')} dans « ${folder} »`);
-  if (away.length) await rapatrier(away, { folder });
-}
-// la page : une vignette lâchée hors d'un dossier (la grille, le haut) — dans le dossier ouvert
-// s'il est d'ici, sinon à la racine
+// la page : une vignette lâchée hors d'une cible — dans le lieu ouvert s'il est un Workspace ou un
+// dossier, sinon dans le Workspace de l'onglet
 addEventListener('dragover', (e) => { if (S.route.view === 'lib' && carriesItems(e.dataTransfer)) e.preventDefault(); });
-// (à la remontée : un dossier, la planche d'un élément ont déjà pris le leur)
-itemDrop(document, (items) => { if (S.route.view === 'lib') landItems(items, foreignFolder() ? '' : S.folder); }, { capture: false });
+itemDrop(document, (items) => {
+  if (S.route.view !== 'lib') return;
+  const P = S.place;
+  landOn(P.k === 'folder' ? { kind: 'folder', space: P.space, folder: P.name } : { kind: 'space', space: target() }, items);
+}, { capture: false });
+
+// ── poser : la cible d'un glisser, et ce qu'elle fait ────────
+// dossier (Workspace X) : ceux de X y sont rangés, les autres y sont copiés (confirmation) ;
+// Workspace X : ceux de X sortent de leur dossier, les autres y sont copiés ; corbeille : jetés ;
+// favoris : aimés ; une carte : un dossier neuf avec elle.
+function planOf(t, items) {
+  if (!t) return null;
+  if (t.kind === 'trash') return { ok: true, say: `à la corbeille · ${what(items)}` };
+  if (t.kind === 'fav') return { ok: true, say: `en favori · ${what(items)}` };
+  if (t.kind === 'merge') return { ok: true, say: 'un dossier neuf avec cette carte' };
+  const dest = t.space;
+  const folder = t.folder || '';
+  const move = items.filter((it) => (it.space || here()) === dest && (it.folder || '') !== folder);
+  const copyN = items.filter((it) => (it.space || here()) !== dest).length;
+  if (!move.length && !copyN) return { ok: false, say: folder ? `déjà dans « ${folder} »` : 'déjà hors dossier ici' };
+  const parts2 = [];
+  if (move.length) parts2.push(folder ? `ranger dans « ${folder} »` : `sortir du dossier${move.length > 1 ? ` · ${move.length}` : ''}`);
+  if (copyN) parts2.push(`copier dans « ${spaceShort(dest)} »${copyN < items.length ? ` · ${copyN}` : ''}`);
+  return { ok: true, say: parts2.join(' · ') };
+}
+async function landOn(t, items) {
+  if (!t || !items.length) return;
+  if (t.kind === 'trash') return trashMany(items);
+  if (t.kind === 'fav') return bulkFav(items, true);
+  if (t.kind === 'merge') {
+    const other = S.data.items.find((x) => x.id === t.id);
+    return askFolderName([other, ...items], other.space);
+  }
+  const dest = t.space;
+  const folder = t.folder || '';
+  const move = items.filter((it) => (it.space || here()) === dest && (it.folder || '') !== folder);
+  const away = items.filter((it) => (it.space || here()) !== dest);
+  if (move.length) {
+    await moveItems(move, folder, { space: dest, msg: folder ? `${what(move)} rangé${move.length > 1 ? 's' : ''} dans « ${folder} »` : `${what(move)} hors dossier, dans « ${spaceShort(dest)} »` });
+    clearSel();
+  }
+  if (away.length) await copyTo(away, dest, folder);
+}
 
 // ── ranger ───────────────────────────────────────────────────
 // Le contraire d'un rangement : chacun retourne d'où il venait (le serveur
 // rend `moved: [{id, from}]`), à condition d'être encore là où on l'a mis.
 async function moveBack(r) {
-  const cur = await Promise.all(r.moved.map((m) => api('library/' + m.id).catch(() => null)));
+  const cur = await Promise.all(r.moved.map((m) => api('library/' + m.id, { espace: r.space }).catch(() => null)));
   const moved = cur.filter((c) => c && (c.folder || '') !== r.folder);
   if (moved.length) throw new Error(`${moved.length > 1 ? `${moved.length} objets ont` : `« ${moved[0].title} » a`} changé de dossier ailleurs depuis`);
   const by = {};
   for (const m of r.moved) (by[m.from] ||= []).push(m.id);
-  for (const [from, list] of Object.entries(by)) await api('asset/move', { method: 'POST', body: { ids: list, folder: from } });
+  for (const [from, list] of Object.entries(by)) await api('asset/move', { method: 'POST', body: { ids: list, folder: from }, espace: r.space });
 }
-async function moveItems(ids, folder, msg, label = null) {
-  const items = ids.map((id) => ({ id, title: titleOf(id) }));
-  const lab = label || (folder ? `ranger ${what(items)} dans « ${folder} »` : `sortir ${what(items)} de leur dossier`);
+// ranger des objets (d'un même Workspace, `space`) dans un dossier ('' : hors dossier)
+async function moveItems(items, folder, { space = null, msg = '', label = null } = {}) {
+  const sp = space || items[0]?.space || here();
+  const ids = items.map((i) => (typeof i === 'string' ? i : i.id));
+  const named = items.map((i) => (typeof i === 'string' ? { id: i, title: titleOf(i) } : i));
+  const lab = label || (folder ? `ranger ${what(named)} dans « ${folder} »` : `sortir ${what(named)} de leur dossier`);
   try {
-    await U.run({ label: lab, do: () => api('asset/move', { method: 'POST', body: { ids, folder } }), undo: moveBack });
-    say(msg, true);
+    await U.run({ label: lab, do: async () => { const r = await api('asset/move', { method: 'POST', body: { ids, folder }, espace: sp }); r.space = sp; return r; }, undo: moveBack });
+    say(msg || (folder ? `${what(named)} dans « ${folder} »` : `${what(named)} hors dossier`), true);
   } catch (e) { say(e.message); }
   refresh();
 }
 
 function refresh() {
+  loadTree();
   if (S.route.view === 'lib') loadLib();
   else if (S.route.view === 'sheet') paintSheet(S.route.id, { keepScroll: true });
   else if (S.route.view === 'trash') paintTrash();
 }
 
-async function folderIds(name) {
-  const d = await api('asset/view?' + new URLSearchParams({ folder: name, limit: 2000 }));
-  return d.items.map((i) => i.id);
+// ── les dossiers : créer, renommer, dégrouper, supprimer ─────
+async function folderItems(name, space) {
+  const d = await api('asset/view?' + new URLSearchParams({ folder: name, fspace: space, limit: 2000 }));
+  return d.items;
 }
-
-async function emptyFolder(name) {
-  const ids = await folderIds(name);
-  if (!ids.length) return;
-  await moveItems(ids, '', `« ${name} » vidé : ${plural(ids.length, 'objet remis', 'objets remis')} à la racine`, `vider le dossier « ${name} »`);
-  if (S.folder === name) go('#');
+// un dossier vide, déclaré dans son Workspace (POST /api/asset/folders) ; Ctrl+Z l'oublie
+async function createFolder(name, space, { open = true } = {}) {
+  try {
+    const r = await U.run({ label: `créer le dossier « ${name} »`,
+      do: () => api('asset/folders', { method: 'POST', body: { name }, espace: space }),
+      undo: (x) => api('asset/folders/forget', { method: 'POST', body: { name: x.folder }, espace: space }) });
+    say(`Dossier « ${r.folder} » créé dans « ${spaceShort(space)} » · glisse-lui des cartes`, true);
+    if (open) go(folderHash(r.folder, space)); else refresh();
+    return r;
+  } catch (e) { say(e.message); paintTree(); return null; }
 }
-
-function renameInline() {
-  const old = S.folder;
+// dégrouper : ses objets hors dossier, le nom oublié ; Ctrl+Z les y remet et le redéclare
+async function ungroupFolder(name, space) {
+  let items;
+  try { items = await folderItems(name, space); } catch (e) { say(e.message); return; }
+  const ids = items.map((i) => i.id);
+  try {
+    await U.run({ label: `dégrouper le dossier « ${name} »`,
+      do: async () => {
+        const r = ids.length ? await api('asset/move', { method: 'POST', body: { ids, folder: '' }, espace: space }) : { moved: [], folder: '' };
+        await api('asset/folders/forget', { method: 'POST', body: { name }, espace: space });
+        r.space = space;
+        return r;
+      },
+      undo: async (r) => { await api('asset/folders', { method: 'POST', body: { name }, espace: space }); if (r.moved.length) await moveBack(r); } });
+    say(`« ${name} » dégroupé : ${plural(ids.length, 'objet', 'objets')} hors dossier, dans « ${spaceShort(space)} »`, true);
+    if (S.place.k === 'folder' && S.place.name === name && S.place.space === space) go(placeHash({ k: 'space', space }));
+    else refresh();
+  } catch (e) { say(e.message); }
+}
+// supprimer : ses objets à la corbeille (tout ou rien, POST /api/asset/folders/delete) ; Ctrl+Z les
+// rétablit (la corbeille garde leur dossier) et redéclare le nom
+function deleteFolderAsk(name, space) {
+  const n = S.tree?.teams.flatMap((t) => t.spaces).find((s) => s.id === space)?.folders.find((f) => f.name === name)?.count ?? null;
+  const m = modal({
+    title: 'supprimer un dossier',
+    body: [el('p', { class: 'new-q' }, `Supprimer « ${name} » ?`),
+      el('p', { class: 'prose' }, n ? [`Ses ${plural(n, 'objet va', 'objets vont')} à la `, el('b', {}, 'corbeille'), ' de « ', spaceLong(space), ' » : rien ne s’efface, ils reviennent d’un clic — dans ce dossier. Ctrl+Z annule tout.']
+        : 'Il est vide : son nom disparaît. Ctrl+Z le rend.'),
+      el('p', { class: 'hint' }, 'Pour garder les objets et défaire seulement le dossier : « Dégrouper ».')],
+    foot: [el('button', { class: 'tb ghost', type: 'button', onclick: () => { m.close(); ungroupFolder(name, space); } }, 'Dégrouper plutôt'),
+      el('span', { class: 'sp' }), el('button', { class: 'tb ghost', type: 'button', onclick: () => m.close() }, 'Pas maintenant'),
+      el('button', { class: 'tb go', type: 'button', onclick: () => { m.close(); deleteFolder(name, space); } }, n ? `Supprimer · ${plural(n, 'objet', 'objets')} à la corbeille` : 'Supprimer le dossier')],
+  });
+  setTimeout(() => $('.modal-foot .tb.go', m.scrim)?.focus(), 30);
+}
+async function deleteFolder(name, space) {
+  try {
+    const r = await U.run({ label: `supprimer le dossier « ${name} »`,
+      do: () => api('asset/folders/delete', { method: 'POST', body: { name }, espace: space }),
+      undo: async (x) => {
+        if (x.trashed.length) await api('asset/restore', { method: 'POST', body: { ids: x.trashed }, espace: space });
+        if (x.declared || !x.trashed.length) await api('asset/folders', { method: 'POST', body: { name }, espace: space });
+      } });
+    say(`« ${name} » supprimé · ${plural(r.trashed.length, 'objet', 'objets')} à la corbeille`, true, 8000);
+    if (S.place.k === 'folder' && S.place.name === name && S.place.space === space) go(placeHash({ k: 'space', space }));
+    else refresh();
+  } catch (e) { say(e.message); }
+}
+// renommer : dans l'arbre (double-clic) ou le titre du dossier ouvert ; `node` est remplacé par le champ
+function renameFolderInline(old, space, node) {
+  if (!node) return;
   const inp = el('input', { class: 'fld', value: old, maxlength: 60, 'aria-label': 'nom du dossier', spellcheck: 'false' });
-  const f = el('form', { class: 'rename-f' }, inp, el('button', { class: 'tb ghost sm', type: 'submit' }, 'OK'));
+  const f = el('form', { class: node.classList.contains('tr') ? 'tr nf' : 'rename-f', style: node.classList.contains('tr') ? { '--d': node.style.getPropertyValue('--d') } : null },
+    inp, node.classList.contains('tr') ? null : el('button', { class: 'tb ghost sm', type: 'submit' }, 'OK'));
+  let gone = false;
+  const back = () => { if (gone) return; gone = true; f.replaceWith(node); };
   f.onsubmit = async (e) => {
     e.preventDefault();
     const v = inp.value.trim();
-    if (!v || v === old) return paintTop();
+    if (!v || v === old) return back();
+    gone = true;
     try {
       // une fusion avec un dossier qui existait ne se défait pas : on ne
       // saurait plus lesquels venaient d'où ; elle ne se range pas
-      const merged = (S.data?.all_folders || []).includes(v);
-      if (merged) {
-        const r = await api('asset/folders/rename', { method: 'POST', body: { from: old, to: v } });
+      const known = S.data?.folders_by_space?.[space] || S.tree?.teams.flatMap((t) => t.spaces).find((s) => s.id === space)?.folders.map((x) => x.name) || [];
+      const moveHere = S.place.k === 'folder' && S.place.name === old && S.place.space === space;
+      if (known.includes(v)) {
+        const r = await api('asset/folders/rename', { method: 'POST', body: { from: old, to: v }, espace: space });
         say(`« ${old} » fondu dans « ${r.folder} », qui existait déjà — une fusion ne s’annule pas`);
-        go(folderHash(r.folder));
+        if (moveHere) go(folderHash(r.folder, space)); else refresh();
         return;
       }
-      const ren = (from, to) => async () => { const r = await api('asset/folders/rename', { method: 'POST', body: { from, to } }); go(folderHash(r.folder)); return r; };
+      const ren = (from, to) => async () => {
+        const r = await api('asset/folders/rename', { method: 'POST', body: { from, to }, espace: space });
+        if (S.place.k === 'folder' && S.place.name === from && S.place.space === space) go(folderHash(r.folder, space));
+        return r;
+      };
       const r = await U.run({ label: `renommer le dossier « ${old} » en « ${v} »`, do: ren(old, v), undo: (x) => ren(x.folder, old)(), redo: ren(old, v) });
       say(`Renommé « ${r.folder} »`, true);
-      go(folderHash(r.folder));
-    } catch (err) { say(err.message); }
+      if (!moveHere) refresh();
+    } catch (err) { say(err.message); refresh(); }
   };
-  inp.addEventListener('keydown', (e) => { if (e.key === 'Escape') paintTop(); });
-  $('.lib-h', parts.who)?.replaceWith(f);
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); back(); } });
+  inp.addEventListener('blur', () => setTimeout(() => { if (!gone && document.activeElement !== inp) back(); }, 120));
+  node.replaceWith(f);
   inp.focus(); inp.select();
 }
 
 // ── le menu d'une carte (ranger sans glisser) ────────────────
 let menuFor = null;
+// les dossiers où l'on peut ranger des objets d'un Workspace
+const foldersOf = (space) => S.data?.folders_by_space?.[space] || S.tree?.teams.flatMap((t) => t.spaces).find((s) => s.id === space)?.folders.map((f) => f.name) || [];
+// les autres Workspaces, où l'on peut copier
+const otherSpaces = (space) => (S.spaces || []).filter((s) => s.id !== space);
 function itemMenu(it) {
-  if (isForeign(it)) {
-    const why = importWhy(it);
-    return {
-      title: `${spaceShort(it.space)} · ${it.title}`,
-      items: [
-        { label: 'Ouvrir la fiche', do: () => go('#' + it.id) },
-        '-',
-        { label: `Rapatrier dans « ${spaceShort(here())} »`, disabled: !!why, why, do: () => rapatrier([it], { folder: foreignFolder() ? '' : S.folder }) },
-        { label: 'Télécharger', do: () => download([it]) },
-      ],
-    };
-  }
-  const here = it.folder || '';
-  const others = (S.data?.all_folders || []).filter((f) => f !== here);
+  const sp = it.space || here();
+  const cur = it.folder || '';
+  const others = foldersOf(sp).filter((f) => f !== cur);
   return {
-    title: `ranger · ${it.title}`,
+    title: `${spaceShort(sp)} · ${it.title}`,
     items: [
       { label: 'Ouvrir la fiche', do: () => go('#' + it.id) },
       '-',
-      ...others.map((f) => ({ label: `Dans « ${f} »`, dir: true, do: () => moveItems([it.id], f, `${it.title} rangé dans « ${f} »`) })),
-      { label: 'Dans un nouveau dossier…', dir: true, do: () => askFolderName([it]) },
-      here ? { label: `Sortir de « ${here} »`, do: () => moveItems([it.id], '', `${it.title} sorti de « ${here} »`) } : null,
+      ...others.map((f) => ({ label: `Dans « ${f} »`, dir: true, do: () => moveItems([it], f, { space: sp }) })),
+      { label: 'Dans un nouveau dossier…', dir: true, do: () => askFolderName([it], sp) },
+      cur ? { label: `Sortir de « ${cur} »`, do: () => moveItems([it], '', { space: sp }) } : null,
+      ...otherSpaces(sp).map((s) => { const why = importWhy(it, s.id); return { label: `Copier dans « ${s.name} »`, disabled: !!why, why, do: () => copyTo([it], s.id) }; }),
       '-',
-      { label: it.fav ? 'Retirer des favoris' : 'Mettre en favori', do: () => setFav(it, !it.fav) },
-      { label: 'Mettre à la corbeille', do: () => trashItem(it) },
+      { label: it.fav ? 'Retirer des favoris' : 'Mettre en favori', do: () => bulkFav([it], !it.fav) },
+      { label: 'Mettre à la corbeille', do: () => trashMany([it]) },
     ].filter(Boolean),
   };
 }
 function folderMenu(f) {
-  if (f.space && f.space !== here()) {
-    const why = importWhy({ space: f.space, title: f.name, kind: 'image' });
-    return {
-      title: `dossier · ${spaceShort(f.space)} · ${f.name}`,
-      items: [
-        { label: 'Ouvrir', do: () => go(folderHash(f.name, f.space)) },
-        { label: `Rapatrier le dossier dans « ${spaceShort(here())} »`, disabled: !!why, why, do: () => rapatrierDossier(f.name, f.space) },
-      ],
-    };
-  }
   return {
-    title: `dossier · ${f.name}`,
+    title: `dossier · ${spaceShort(f.space)} · ${f.name}`,
     items: [
-      { label: 'Ouvrir', do: () => go(folderHash(f.name)) },
-      { label: 'Renommer', do: () => { S.renameOnLoad = f.name; go(folderHash(f.name)); } },
+      { label: 'Ouvrir', do: () => go(folderHash(f.name, f.space)) },
+      { label: 'Renommer', do: () => { S.renameOnLoad = f.name; go(folderHash(f.name, f.space)); } },
+      ...otherSpaces(f.space).map((s) => { const why = s.import === false ? `copier dans « ${spaceLong(s.id)} » : ${s.import_why || 'ton rôle ne le permet pas'}` : '';
+        return { label: `Copier le dossier dans « ${s.name} »`, disabled: !!why, why, do: () => rapatrierDossier(f.name, f.space, s.id) }; }),
       '-',
-      { label: `Vider le dossier · ${plural(f.total, 'objet', 'objets')} à la racine`, do: () => emptyFolder(f.name) },
+      { label: `Dégrouper · ${plural(f.total, 'objet', 'objets')} hors dossier`, do: () => ungroupFolder(f.name, f.space) },
+      { label: 'Supprimer…', do: () => deleteFolderAsk(f.name, f.space) },
     ],
   };
 }
@@ -842,71 +1220,88 @@ document.addEventListener('click', (e) => { if (menuFor && !e.target.closest('.c
 
 // ── glisser-déposer : Pointer Events, souris, doigt, stylet ───
 // Souris : on part après 6 px. Doigt : appui long de 350 ms, sinon la page
-// défile. Sur une carte : un nouveau dossier ; sur un dossier : dedans ;
-// sur « Asset » en haut : hors du dossier. Échap annule. (maquette du 28/09)
+// défile. Les cibles : une carte-dossier, une ligne de l'arbre (dossier,
+// Workspace, Favoris, Corbeille), un Workspace du fil, une autre carte (un
+// dossier neuf). La cible qui accepte s'allume en vert ; l'étiquette sous le
+// curseur dit ce qui va se passer. Échap annule.
 let drag = null;
 let suppressClick = false;
 
 function clearMarks() {
-  $$('.drop-into, .drop-merge').forEach((n) => n.classList.remove('drop-into', 'drop-merge'));
-  $$('.drop-say').forEach((n) => n.remove());
-  $$('.crumb.drop-ok, .wseg .drop-ok').forEach((n) => n.classList.remove('drop-ok'));
+  $$('.drop-into, .drop-merge, .drop-on, .drop-no').forEach((n) => n.classList.remove('drop-into', 'drop-merge', 'drop-on', 'drop-no'));
 }
 
 function startDrag(e) {
   drag.started = true;
   const r = drag.card.getBoundingClientRect();
-  const g = drag.card.cloneNode(true);
+  const g = drag.card.classList.contains('lrow')
+    ? el('div', { class: 'drag-ghost lghost' }, el('b', {}, drag.title))
+    : drag.card.cloneNode(true);
   g.classList.add('drag-ghost');
   g.removeAttribute('data-id');
   $$('video', g).forEach((v) => v.remove());
-  const w = Math.min(r.width, 150);
-  g.style.width = `${r.width}px`;
-  g.style.transformOrigin = '0 0';
-  g.style.transform = `scale(${w / r.width}) rotate(-2.5deg)`;
+  if (!drag.card.classList.contains('lrow')) {
+    const w = Math.min(r.width, 140);
+    g.style.width = `${r.width}px`;
+    g.style.transformOrigin = '0 0';
+    g.style.transform = `scale(${w / r.width}) rotate(-2.5deg)`;
+  }
   $$('.chk, .menu-btn', g).forEach((n) => n.remove());
   if (drag.ids.length > 1) g.append(el('span', { class: 'drag-count' }, String(drag.ids.length)));
-  document.body.append(g);
-  drag.ghost = g;
+  const act = el('div', { class: 'drag-act', 'aria-hidden': 'true' }, 'où poser ?');
+  document.body.append(g, act);
+  drag.ghost = g; drag.act = act;
   for (const id of drag.ids) $(`.acard[data-id="${id}"]`, parts.grid)?.classList.add('lifting');
   document.body.classList.add('dragging');
-  if (drag.away) $$('.wseg [data-drop-here]').forEach((c) => c.classList.add('drop-armed'));
-  else $$('.crumb[data-drop-root]').forEach((c) => c.classList.add('drop-armed'));
-  live(drag.away
-    ? `${drag.ids.length > 1 ? plural(drag.ids.length, 'objet', 'objets') : drag.title} d’un autre Workspace saisi. Relâche sur un dossier d’ici ou sur la pastille de ce Workspace pour le rapatrier, ou Échap.`
-    : `${drag.ids.length > 1 ? plural(drag.ids.length, 'objet', 'objets') : drag.title} saisi. Relâche sur une carte, un dossier, ou Échap pour annuler.`);
+  live(`${drag.ids.length > 1 ? plural(drag.ids.length, 'objet', 'objets') : drag.title} saisi. Relâche sur un dossier, un Workspace, Favoris ou la Corbeille, ou Échap pour annuler.`);
   moveDrag(e);
+}
+
+function targetAt(x, y) {
+  const at = document.elementFromPoint(x, y);
+  if (!at) return null;
+  const tr = at.closest('[data-drop]');
+  if (tr) {
+    const k = tr.dataset.drop;
+    if (k === 'folder') return { kind: 'folder', space: tr.dataset.space, folder: tr.dataset.folder, node: tr };
+    if (k === 'space') return { kind: 'space', space: tr.dataset.space, node: tr };
+    if (k === 'trash' || k === 'fav') return { kind: k, node: tr };
+  }
+  const f = at.closest('.acard.folder');
+  if (f) return { kind: 'folder', space: f.dataset.space || here(), folder: f.dataset.folder, node: f, card: true };
+  const t = at.closest('.acard[data-id]');
+  if (t && !drag.ids.includes(t.dataset.id) && S.view === 'grid') {
+    const other = S.data.items.find((x) => x.id === t.dataset.id);
+    // une carte : un dossier neuf, quand tout est du même Workspace
+    if (other && drag.items.every((x) => x.space === other.space)) return { kind: 'merge', id: other.id, space: other.space, node: t, merge: true };
+  }
+  return null;
 }
 
 function moveDrag(e) {
   drag.ghost.style.left = `${e.clientX + 14}px`;
   drag.ghost.style.top = `${e.clientY + 14}px`;
+  drag.act.style.left = `${e.clientX + 16}px`;
+  drag.act.style.top = `${e.clientY - 30}px`;
   clearMarks();
   drag.target = null;
-  const at = document.elementFromPoint(e.clientX, e.clientY);
-  // des cartes d'un autre Workspace : elles se rapatrient — sur un dossier d'ici, sur la pastille
-  // de ce Workspace ; elles ne se rangent ni ne font de dossier (on ne les touche pas d'ici)
-  const away = drag.away;
-  const chip = at?.closest('.wseg [data-drop-here]');
-  if (chip && away) { chip.classList.add('drop-ok'); drag.target = { kind: 'bring' }; return; }
-  const crumb = at?.closest('.crumb[data-drop-root]');
-  if (crumb && S.folder && !away) { crumb.classList.add('drop-ok'); drag.target = { kind: 'out' }; return; }
-  const f = at?.closest('.acard.folder');
-  if (f && !f.classList.contains('ailleurs')) {
-    f.classList.add('drop-into');
-    f.append(el('span', { class: 'drop-say' }, away ? 'rapatrier ici' : 'ranger ici'));
-    drag.target = { kind: 'into', folder: f.dataset.folder };
-  } else if (!away) {
-    const t = at?.closest('.acard[data-id]');
-    if (t && !t.classList.contains('ailleurs') && !drag.ids.includes(t.dataset.id) && !S.folder && !S.q) {
-      t.classList.add('drop-merge');
-      t.append(el('span', { class: 'drop-say' }, 'nouveau dossier'));
-      drag.target = { kind: 'merge', id: t.dataset.id };
-    }
+  const t = targetAt(e.clientX, e.clientY);
+  const plan = planOf(t, drag.items);
+  if (t && plan?.ok) {
+    drag.target = t;
+    t.node.classList.add(t.merge ? 'drop-merge' : t.card ? 'drop-into' : 'drop-on');
+    drag.act.textContent = plan.say;
+    drag.act.classList.add('ok');
+  } else {
+    if (t && plan) t.node.classList.add('drop-no');
+    drag.act.textContent = plan ? plan.say : 'où poser ?';
+    drag.act.classList.remove('ok');
   }
   const edge = 70;
-  if (e.clientY < edge) scrollBy(0, -14);
-  else if (e.clientY > innerHeight - edge) scrollBy(0, 14);
+  const inSide = e.clientX < sideEl.getBoundingClientRect().right;
+  const sc = inSide ? sideEl : window;
+  if (e.clientY < edge + 40) sc.scrollBy(0, -14);
+  else if (e.clientY > innerHeight - edge) sc.scrollBy(0, 14);
 }
 
 function endDrag(cancel) {
@@ -914,22 +1309,13 @@ function endDrag(cancel) {
   drag = null;
   clearMarks();
   d.ghost?.remove();
+  d.act?.remove();
   $$('.acard.lifting').forEach((n) => n.classList.remove('lifting'));
   document.body.classList.remove('dragging');
-  $$('.crumb.drop-armed, .wseg .drop-armed').forEach((c) => c.classList.remove('drop-armed'));
   suppressClick = true;
   setTimeout(() => { suppressClick = false; }, 80);
   if (cancel || !d.target) { live('déplacement annulé'); return; }
-  const items = d.ids.map((id) => S.data.items.find((x) => x.id === id)).filter(Boolean);
-  const what = items.length > 1 ? plural(items.length, 'objet', 'objets') : items[0].title;
-  const t = d.target;
-  if (d.away) {   // d'un autre Workspace : rapatrier (dans le dossier d'ici, ou à la racine)
-    landItems(items, t.kind === 'into' ? t.folder : '');
-    return;
-  }
-  if (t.kind === 'into') moveItems(d.ids, t.folder, `${what} rangé${items.length > 1 ? 's' : ''} dans « ${t.folder} »`);
-  if (t.kind === 'out') moveItems(d.ids, '', `${what} sorti${items.length > 1 ? 's' : ''} de « ${S.folder} »`);
-  if (t.kind === 'merge') askFolderName([S.data.items.find((x) => x.id === t.id), ...items]);
+  landOn(d.target, d.items);
 }
 
 document.addEventListener('pointerdown', (e) => {
@@ -941,10 +1327,8 @@ document.addEventListener('pointerdown', (e) => {
   const it = S.data?.items.find((x) => x.id === card.dataset.id);
   // glisser une carte choisie emporte toute la sélection ; une autre part seule
   const ids = S.sel.has(card.dataset.id) && S.sel.size > 1 ? cardIds().filter((id) => S.sel.has(id)) : [card.dataset.id];
-  // une carte d'ailleurs part avec les seules cartes d'ailleurs (d'ici, on range ; d'ailleurs, on rapatrie)
-  const away = isForeign(it);
-  const pick2 = ids.filter((id) => isForeign(S.data?.items.find((x) => x.id === id)) === away);
-  drag = { id: card.dataset.id, ids: pick2, away, title: it?.title || '', card, x0: e.clientX, y0: e.clientY, started: false, touch: e.pointerType !== 'mouse' };
+  const items = ids.map((id) => S.data.items.find((x) => x.id === id)).filter(Boolean);
+  drag = { id: card.dataset.id, ids, items, title: it?.title || '', card, x0: e.clientX, y0: e.clientY, started: false, touch: e.pointerType !== 'mouse' };
   if (drag.touch) drag.timer = setTimeout(() => { if (drag && !drag.started) { navigator.vibrate?.(12); startDrag(e); } }, 350);
 });
 document.addEventListener('pointermove', (e) => {
@@ -969,6 +1353,28 @@ document.addEventListener('pointercancel', () => {
   if (mq) return endMarquee(true);
   if (drag?.started) endDrag(true); else drag = null;
 });
+
+// une vignette venue d'ailleurs (le panneau, un autre onglet) survole l'arbre : la ligne s'allume
+sideEl.addEventListener('dragover', (e) => {
+  if (!carriesItems(e.dataTransfer)) return;
+  const tr = e.target.closest('[data-drop]');
+  $$('.drop-on', sideEl).forEach((n) => n !== tr && n.classList.remove('drop-on'));
+  if (tr) { e.preventDefault(); tr.classList.add('drop-on'); }
+});
+sideEl.addEventListener('dragleave', (e) => { e.target.closest?.('[data-drop]')?.classList.remove('drop-on'); });
+sideEl.addEventListener('drop', async (e) => {
+  if (!carriesItems(e.dataTransfer)) return;
+  const tr = e.target.closest('[data-drop]');
+  if (!tr) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  tr.classList.remove('drop-on');
+  const ids = dragIds(e.dataTransfer);
+  let got = [];
+  try { got = (await api('library/batch', { method: 'POST', body: { ids, spaces: '*' } })).items; } catch (err) { say(err.message); return; }
+  const k = tr.dataset.drop;
+  landOn(k === 'folder' ? { kind: 'folder', space: tr.dataset.space, folder: tr.dataset.folder } : k === 'space' ? { kind: 'space', space: tr.dataset.space } : { kind: k }, got);
+}, true);
 
 // ── la zone de sélection : glisser sur le fond ───────────────
 // À la souris et au stylet ; au doigt, glisser fait défiler la page.
@@ -1030,7 +1436,7 @@ function paintSelBar(force = false) {
   let bar = $('.selbar');
   if (!on) { bar?.remove(); selSig = ''; return; }
   const items = selItems();
-  const sig = `${items.map((i) => `${i.id}${i.fav ? '*' : ''}`).join(',')}|${(S.data?.all_folders || []).join('/')}`;
+  const sig = `${items.map((i) => `${i.id}${i.fav ? '*' : ''}`).join(',')}|${JSON.stringify(S.data?.folders_by_space || {})}`;
   if (bar && sig === selSig && !force) return;
   selSig = sig;
   const n = items.length;
@@ -1040,34 +1446,31 @@ function paintSelBar(force = false) {
   const ups = items.filter((i) => i.kind === 'image' || i.kind === 'video');
   const one = n === 1 ? items[0] : null;
   const allFav = n > 0 && items.every((i) => i.fav);
-  // des objets d'un autre Workspace dans la sélection : ils se regardent, se téléchargent et se
-  // rapatrient ; tout ce qui modifie attend (et dit pourquoi) — « Rapatrier ici » prend l'orange
-  const away = items.filter(isForeign);
+  const spaces = bySpace(items);
+  const oneSpace = spaces.length === 1 ? spaces[0][0] : null;
+  const mixWhy = oneSpace ? '' : `la sélection est dans ${spaces.length} Workspaces : un dossier, un élément sont dans un seul`;
+  // ce que les outils prennent : le Workspace de l'onglet seulement
   const fw = foreignWhy(items);
-  const bringWhy = away.map(importWhy).find(Boolean) || '';
   const b = (label, onclick, { key = '', title = '', disabled = false, go: orange = false } = {}) =>
     el('button', { class: `tb ${orange ? 'go' : 'ghost'} sm`, type: 'button', disabled, onclick,
       title: `${title}${key ? ` · ${key}` : ''}`, 'aria-keyshortcuts': key || null }, label);
   // le clic ne remonte pas : la page fermerait aussitôt le menu qu'il ouvre
-  const moveBtn = b('Déplacer ▾', (e) => { e.stopPropagation(); toggleMenu(e.currentTarget, moveMenu(items)); }, { title: fw || 'vers un dossier, ou à la racine', disabled: !!fw });
+  const moveBtn = b('Déplacer ▾', (e) => { e.stopPropagation(); toggleMenu(e.currentTarget, moveMenu(items)); }, { title: 'vers un dossier, hors dossier, ou une copie dans un autre Workspace' });
   moveBtn.setAttribute('aria-haspopup', 'menu');
   const nextBar = el('div', { class: 'selbar', role: 'toolbar', 'aria-label': 'la sélection' },
     el('div', { class: 'cnt' }, el('b', {}, String(n)),
-      el('span', { class: 'lbl' }, `${n > 1 ? 'choisis' : 'choisi'}${countLine(counts) !== 'vide' ? ` · ${countLine(counts)}` : ''}${away.length ? ` · ${away.length} d’ailleurs` : ''}`)),
+      el('span', { class: 'lbl' }, `${n > 1 ? 'choisis' : 'choisi'}${countLine(counts) !== 'vide' ? ` · ${countLine(counts)}` : ''}${spaces.length > 1 ? ` · ${spaces.length} Workspaces` : ''}`)),
     b('Tout', selectAll, { key: 'Ctrl+A', title: 'choisir tout ce qui est affiché' }),
     el('span', { class: 'sep' }),
-    away.length ? b(`Rapatrier ici${away.length < n ? ` · ${away.length}` : ''}`, () => rapatrier(away, { folder: foreignFolder() ? '' : S.folder }), {
-      go: true, key: 'R', disabled: !!bringWhy,
-      title: bringWhy || `une copie neuve de ${away.length > 1 ? `ces ${away.length} objets` : 'cet objet'} dans « ${spaceLong(here())} » ; l’original ne bouge pas · Ctrl+Z l’annule` }) : null,
-    b('Télécharger', () => download(items), { go: !away.length, key: 'T',
+    b('Télécharger', () => download(items), { go: true, key: 'T',
       title: one && one.kind !== 'element' ? 'le fichier' : 'un zip, fait par DGX2 qui a les fichiers ; un élément apporte ses références' }),
-    b('Créer un dossier', () => askFolderName(items), { key: 'N', disabled: !!fw, title: fw || 'un dossier neuf avec la sélection ; son nom est demandé' }),
+    b('Créer un dossier', () => askFolderName(items, oneSpace), { key: 'N', disabled: !!mixWhy || !!createWhy(oneSpace), title: mixWhy || createWhy(oneSpace) || 'un dossier neuf avec la sélection ; son nom est demandé' }),
     moveBtn,
-    b(allFav ? '☆ Retirer des favoris' : '★ Favori', () => bulkFav(items, !allFav), { key: 'F', disabled: !!fw, title: fw }),
-    b('Tags', () => tagsModal(items), { disabled: !!fw, title: fw || 'ajouter ou retirer un tag sur toute la sélection' }),
-    b('Faire un élément', () => elementModal({ items: imgs, title: imgs[0]?.title || '', folder: commonFolder(imgs) }), {
-      disabled: !imgs.length || !!fw,
-      title: fw || (imgs.length ? `un élément avec ${plural(imgs.length, 'image', 'images')} en références` : 'aucune image dans la sélection : un élément se fait d\'images') }),
+    b(allFav ? '☆ Retirer des favoris' : '★ Favori', () => bulkFav(items, !allFav), { key: 'F' }),
+    b('Tags', () => tagsModal(items), { title: 'ajouter ou retirer un tag sur toute la sélection' }),
+    b('Faire un élément', () => elementModal({ items: imgs, title: imgs[0]?.title || '', folder: commonFolder(imgs), space: oneSpace }), {
+      disabled: !imgs.length || !!mixWhy,
+      title: mixWhy || (imgs.length ? `un élément avec ${plural(imgs.length, 'image', 'images')} en références, dans « ${spaceShort(oneSpace)} »` : 'aucune image dans la sélection : un élément se fait d\'images') }),
     b('Agrandir', () => { location.href = href(`upscale/?src=${ups.map((i) => i.id).join(',')}`); }, {
       disabled: !ups.length || !!fw,
       title: fw || (!ups.length ? 'Upscale prend des images et des vidéos : il n\'y en a pas dans la sélection'
@@ -1077,7 +1480,7 @@ function paintSelBar(force = false) {
       title: fw || (one && MEDIA.includes(one.kind) ? 'Montage : au bout de la piste' : n > 1
         ? 'le montage prend un objet à la fois par son adresse (?add=) : n\'en choisis qu\'un' : 'une image, une vidéo ou un son') }),
     one ? b('Ouvrir', () => go('#' + one.id), { key: 'Entrée', title: 'sa fiche' }) : null,
-    b('Corbeille', () => trashMany(items), { key: 'Suppr', disabled: !!fw, title: fw || 'à la corbeille ; « annuler » dans le bandeau' }),
+    b('Corbeille', () => trashMany(items), { key: 'Suppr', title: 'à la corbeille ; Ctrl+Z la reprend' }),
     el('button', { class: 'x', type: 'button', title: 'ne plus rien choisir · Échap', 'aria-label': 'vider la sélection', onclick: clearSel }, '×'));
   if (bar) bar.replaceWith(nextBar); else document.body.append(nextBar);
 }
@@ -1088,18 +1491,26 @@ function commonFolder(items) {
 }
 
 function moveMenu(items) {
-  const here = new Set(items.map((i) => i.folder || ''));
-  const ids = items.map((i) => i.id);
-  const what = plural(items.length, 'objet', 'objets');
-  return {
-    title: `déplacer · ${what}`,
-    items: [
-      ...(S.data?.all_folders || []).filter((f) => !(here.size === 1 && here.has(f)))
-        .map((f) => ({ label: `Dans « ${f} »`, dir: true, do: () => moveItems(ids, f, `${what} dans « ${f} »`).then(clearSel) })),
-      { label: 'Dans un nouveau dossier…', dir: true, do: () => askFolderName(items) },
-      [...here].some(Boolean) ? { label: 'À la racine', do: () => moveItems(ids, '', `${what} remis à la racine`).then(clearSel) } : null,
-    ].filter(Boolean),
-  };
+  const spaces = bySpace(items);
+  const one = spaces.length === 1 ? spaces[0][0] : null;
+  const cur = new Set(items.map((i) => i.folder || ''));
+  const w = plural(items.length, 'objet', 'objets');
+  const out = [];
+  if (one) {
+    out.push(...foldersOf(one).filter((f) => !(cur.size === 1 && cur.has(f)))
+      .map((f) => ({ label: `Dans « ${f} »`, dir: true, do: () => moveItems(items, f, { space: one, msg: `${w} dans « ${f} »` }).then(clearSel) })));
+    out.push({ label: 'Dans un nouveau dossier…', dir: true, do: () => askFolderName(items, one) });
+    if ([...cur].some(Boolean)) out.push({ label: 'Hors dossier', do: () => moveItems(items, '', { space: one, msg: `${w} hors dossier` }).then(clearSel) });
+  } else {
+    out.push({ label: 'Hors dossier, chacun dans son Workspace', do: async () => { for (const [sp, list] of spaces) { const inF = list.filter((i) => i.folder); if (inF.length) await moveItems(inF, '', { space: sp }); } clearSel(); } });
+  }
+  for (const s of S.spaces || []) {
+    const away = items.filter((i) => (i.space || here()) !== s.id);
+    if (!away.length) continue;
+    const why = away.map((it) => importWhy(it, s.id)).find(Boolean) || '';
+    out.push({ label: `Copier dans « ${s.name} »${away.length < items.length ? ` · ${away.length}` : ''}`, disabled: why && away.every((it) => importWhy(it, s.id)), why, do: () => copyTo(away, s.id) });
+  }
+  return { title: `déplacer · ${w}`, items: out };
 }
 
 const saveUrl = (url, name) => { const a = el('a', { href: url, download: name || '' }); document.body.append(a); a.click(); a.remove(); };
@@ -1115,21 +1526,31 @@ async function download(items) {
   } catch (e) { say(`zip : ${e.message}`); }
 }
 
-// favori et tags d'une sélection : le serveur rend l'état d'avant de chacun
-// (`before`), que `{restore}` repose
-const bulk = (ids, body) => () => api('asset/bulk', { method: 'POST', body: { ids, ...body } });
-const unbulk = (r) => api('asset/bulk', { method: 'POST', body: { restore: r.before } });
+// Un geste en lot sur plusieurs Workspaces : un appel par Workspace, dans l'ordre ; si l'un
+// échoue, ceux déjà faits sont défaits (`back`) avant de dire pourquoi — tout ou rien.
+async function perSpace(items, doIt, back) {
+  const done = [];
+  try {
+    for (const [sp, list] of bySpace(items)) done.push({ sp, list, r: await doIt(sp, list) });
+  } catch (e) {
+    for (const d of done.reverse()) { try { await back(d); } catch { /* le journal le dira */ } }
+    throw e;
+  }
+  return done;
+}
+const unbulkAll = async (done) => { for (const d of done) await api('asset/bulk', { method: 'POST', body: { restore: d.r.before }, espace: d.sp }); };
 async function bulkFav(items, on) {
   try {
     await U.run({ label: on ? `mettre ${what(items)} en favori` : `retirer ${what(items)} des favoris`,
-      do: bulk(items.map((i) => i.id), { fav: on }), undo: unbulk });
-    say(on ? `${plural(items.length, 'objet', 'objets')} en favori` : `${plural(items.length, 'objet retiré', 'objets retirés')} des favoris`, true);
+      do: () => perSpace(items, (sp, list) => api('asset/bulk', { method: 'POST', body: { ids: list.map((i) => i.id), fav: on }, espace: sp }),
+        (d) => api('asset/bulk', { method: 'POST', body: { restore: d.r.before }, espace: d.sp })),
+      undo: unbulkAll });
+    say(on ? `${what(items)} en favori` : `${what(items)} hors des favoris`, true);
   } catch (e) { say(e.message); }
   refresh();
 }
 
 function tagsModal(items) {
-  const ids = items.map((i) => i.id);
   const box = el('div', { class: 'chips' });
   const inp = el('input', { class: 'fld', id: 'tg-add', placeholder: 'un tag pour toute la sélection', maxlength: 40, 'aria-label': 'ajouter un tag' });
   const paint = () => {
@@ -1143,8 +1564,11 @@ function tagsModal(items) {
   async function change(body, msg) {
     try {
       const lab = body.tags_add ? `ajouter le tag « ${body.tags_add[0]} » à ${what(items)}` : `retirer le tag « ${body.tags_remove[0]} » de ${what(items)}`;
-      await U.run({ label: lab, do: bulk(ids, body), undo: unbulk });
-      const fresh = await Promise.all(ids.map((id) => api('library/' + id).catch(() => null)));
+      await U.run({ label: lab,
+        do: () => perSpace(items, (sp, list) => api('asset/bulk', { method: 'POST', body: { ids: list.map((i) => i.id), ...body }, espace: sp }),
+          (d) => api('asset/bulk', { method: 'POST', body: { restore: d.r.before }, espace: d.sp })),
+        undo: unbulkAll });
+      const fresh = await Promise.all(items.map((it) => api(`library/${it.id}?spaces=*`).catch(() => null)));
       fresh.forEach((f, k) => { if (f) items[k].tags = f.tags; });
       paint();
       say(msg, true);
@@ -1160,21 +1584,22 @@ function tagsModal(items) {
   const m = modal({
     title: `tags · ${plural(items.length, 'objet', 'objets')}`,
     body: [el('span', { class: 'lbl' }, 'les tags de la sélection · combien l\'ont'), box, el('label', { class: 'new-q', for: 'tg-add' }, 'Ajouter un tag à tous'), inp,
-      el('p', { class: 'hint' }, 'Entrée ajoute ; × retire de toute la sélection. Chaque geste s\'annule dans le bandeau.')],
+      el('p', { class: 'hint' }, 'Entrée ajoute ; × retire de toute la sélection. Chaque geste s\'annule (Ctrl+Z).')],
     foot: [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', type: 'button', onclick: () => m.close() }, 'Fermer')],
     onclose: refresh,
   });
   setTimeout(() => inp.focus(), 30);
 }
 
+// la corbeille : chaque Workspace la sienne (le serveur jette tout ou rien, par Workspace)
 async function trashMany(items) {
-  const ids = items.map((i) => i.id);
   try {
     await U.run({ label: `mettre ${what(items)} à la corbeille`,
-      do: () => api('asset/trash', { method: 'POST', body: { ids } }),
-      undo: () => api('asset/restore', { method: 'POST', body: { ids } }) });
+      do: () => perSpace(items, (sp, list) => api('asset/trash', { method: 'POST', body: { ids: list.map((i) => i.id) }, espace: sp }),
+        (d) => api('asset/restore', { method: 'POST', body: { ids: d.list.map((i) => i.id) }, espace: d.sp })),
+      undo: async (done) => { for (const d of done) await api('asset/restore', { method: 'POST', body: { ids: d.list.map((i) => i.id) }, espace: d.sp }); } });
     clearSel();
-    say(`${plural(ids.length, 'objet', 'objets')} à la corbeille`, true, 8000);
+    say(`${what(items)} à la corbeille`, true, 8000);
   } catch (e) { say(e.message); }
   refresh();
 }
@@ -1188,12 +1613,10 @@ document.addEventListener('keydown', (e) => {
   if (mod && k === 'a') { e.preventDefault(); selectAll(); return; }
   if (!S.sel.size || mod || e.altKey) return;
   const items = selItems();
-  const fw = foreignWhy(items);
-  if (k === 'r' && items.some(isForeign)) { e.preventDefault(); rapatrier(items.filter(isForeign), { folder: foreignFolder() ? '' : S.folder }); return; }
-  if (fw && (e.key === 'Delete' || e.key === 'Backspace' || k === 'n' || k === 'f')) { e.preventDefault(); say(fw); return; }
+  const spaces = bySpace(items);
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); trashMany(items); }
   else if (k === 't') download(items);
-  else if (k === 'n') { e.preventDefault(); askFolderName(items); }
+  else if (k === 'n') { e.preventDefault(); if (spaces.length === 1) askFolderName(items, spaces[0][0]); else say('la sélection est dans plusieurs Workspaces : un dossier est dans un seul'); }
   else if (k === 'f') bulkFav(items, !items.every((i) => i.fav));
   else if (e.key === 'Enter' && items.length === 1 && !e.target.closest?.('button, a')) go('#' + items[0].id);
 });
@@ -1217,13 +1640,16 @@ function modal({ title, body, foot, wide = false, onclose }) {
   return { close, scrim };
 }
 
-function askFolderName(items) {
+// un dossier neuf avec des objets (d'un même Workspace, `space`) : déclaré, puis ils y sont rangés
+function askFolderName(items, space = null) {
+  const sp = space || items[0]?.space || here();
   const inp = el('input', { class: 'fld big-fld', maxlength: 60, placeholder: 'Planches MJ, Lycée, affaires de Seed…', spellcheck: 'false', 'aria-label': 'nom du dossier' });
-  const pending = el('div', { class: 'pending' }, ...items.flatMap((it, k) => [k ? el('span', { class: 'arrow' }, '+') : null, miniOf(it)]),
-    el('span', { class: 'arrow' }, '→ un dossier'));
+  const pending = el('div', { class: 'pending' }, ...items.slice(0, 8).flatMap((it, k) => [k ? el('span', { class: 'arrow' }, '+') : null, miniOf(it)]),
+    items.length > 8 ? el('span', { class: 'arrow' }, `+${items.length - 8}`) : null,
+    el('span', { class: 'arrow' }, `→ un dossier de « ${spaceShort(sp)} »`));
   const form = el('form', { id: 'mf-form', autocomplete: 'off', style: { display: 'contents' } },
     el('label', { class: 'new-q', for: 'mf-name' }, 'Comment s\'appelle ce dossier ?'), pending, inp,
-    el('p', { class: 'hint' }, 'Le nom se change ensuite d\'un clic sur le titre du dossier. Un dossier tient des images, des éléments, des vidéos et des sons — pas d\'autre dossier.'));
+    el('p', { class: 'hint' }, 'Le nom se change ensuite d\'un double-clic dans l’arbre, ou sur le titre du dossier. Un dossier tient des images, des éléments, des vidéos et des sons — pas d\'autre dossier.'));
   inp.id = 'mf-name';
   const m = modal({
     title: 'nouveau dossier', body: [form],
@@ -1235,7 +1661,20 @@ function askFolderName(items) {
     const name = inp.value.trim();
     if (!name) { inp.placeholder = 'il lui faut un nom'; inp.focus(); return; }
     m.close();
-    await moveItems(items.map((i) => i.id), name, `Dossier « ${name} » créé avec ${plural(items.length, 'objet', 'objets')}`);
+    // un seul geste : déclarer le dossier et y ranger ; Ctrl+Z les remet et l'oublie
+    try {
+      await U.run({ label: `créer le dossier « ${name} » avec ${what(items)}`,
+        do: async () => {
+          await api('asset/folders', { method: 'POST', body: { name }, espace: sp });
+          const r = await api('asset/move', { method: 'POST', body: { ids: items.map((i) => i.id), folder: name }, espace: sp });
+          r.space = sp;
+          return r;
+        },
+        undo: async (r) => { await moveBack(r); await api('asset/folders/forget', { method: 'POST', body: { name }, espace: sp }); } });
+      clearSel();
+      say(`Dossier « ${name} » créé avec ${what(items)}`, true);
+    } catch (err) { say(err.message); }
+    refresh();
   };
   setTimeout(() => inp.focus(), 30);
 }
@@ -1289,7 +1728,10 @@ async function cfModal() {
 }
 
 // ── un élément neuf ──────────────────────────────────────────
-function elementModal({ items = [], title = '', etype = 'character', folder = null }) {
+// `space` : le Workspace où il naît (le lieu ouvert, celui des images choisies) ; ses
+// références doivent en être (le serveur le juge : un objet d'ailleurs se rapatrie d'abord)
+function elementModal({ items = [], title = '', etype = 'character', folder = null, space = null }) {
+  const sp = space || items[0]?.space || target();
   let type = etype;
   const chosen = [...items];
   const name = el('input', { class: 'fld big-fld', id: 'me-name', maxlength: 80, value: title, placeholder: 'Seed, bottes LED, la cuisine…', spellcheck: 'false' });
@@ -1332,15 +1774,15 @@ function elementModal({ items = [], title = '', etype = 'character', folder = nu
       let made = null;
       const it = await U.run({ label: `créer l’élément « ${t} »`,
         do: async () => {
-          if (made) { await api(`library/${made.id}/restore`, { method: 'POST' }); return made; }
-          made = await api('elements', { method: 'POST', body: {
-            title: t, type, description: desc.value.trim(), folder: folder ?? (S.route.view === 'lib' && !foreignFolder() ? S.folder : ''),
+          if (made) { await api(`library/${made.id}/restore`, { method: 'POST', espace: sp }); return made; }
+          made = await api('elements', { method: 'POST', espace: sp, body: {
+            title: t, type, description: desc.value.trim(), folder: folder ?? (S.route.view === 'lib' && placeSpace() === sp ? S.folder : ''),
             refs: chosen.map((c, k) => ({ item: c.id, role: role.value, label: type === 'object' && k === 0 ? 'face · 0°' : '' })) } });
           return made;
         },
-        undo: async (x) => { await api(`library/${x.id}/delete`, { method: 'POST' }); if (location.hash === '#' + x.id) go(S.backHash || '#'); } });
+        undo: async (x) => { await api(`library/${x.id}/delete`, { method: 'POST', espace: sp }); if (location.hash === '#' + x.id) go(S.backHash || '#'); } });
       m.close();
-      say(`Élément « ${it.title} » créé`, true);
+      say(`Élément « ${it.title} » créé dans « ${spaceShort(sp)} »`, true);
       go('#' + it.id);
     } catch (err) { say(err.message); }
   };
@@ -1384,17 +1826,17 @@ function upRow(file) {
     fail: (msg) => { row.classList.add('err'); st.textContent = msg; },
   };
 }
-const fmtSize = (b) => (b < 1048576 ? `${Math.max(1, Math.round(b / 1024))} Ko` : `${(b / 1048576).toFixed(1).replace('.', ',')} Mo`);
-
-function xhrUpload(file, folder, onprog) {
+function xhrUpload(file, folder, onprog, space = null) {
   return new Promise((resolve, reject) => {
     // un dépôt du disque : catégorie Upload, entré par Asset (shell.js : uploadFile, même contrat)
     const q = new URLSearchParams({ name: file.name, tool: 'upload', via: 'asset', folder, title: file.name.replace(/\.[^.]+$/, '') });
     const x = new XMLHttpRequest();
     x.open('PUT', new URL('library/upload?' + q, API));
     x.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
-    // le Workspace de l'onglet (api() le pose ; un XMLHttpRequest à la main le prend ici) : le dépôt y entre
-    for (const [k, v] of Object.entries(enTeteEspace())) x.setRequestHeader(k, v);
+    // le Workspace de l'onglet (api() le pose ; un XMLHttpRequest à la main le prend ici) : le dépôt y
+    // entre — ou celui du lieu ouvert dans la page (un Workspace, un de ses dossiers)
+    const h = space && space !== espace() ? { 'X-SR-Espace': space } : enTeteEspace();
+    for (const [k, v] of Object.entries(h)) x.setRequestHeader(k, v);
     x.upload.onprogress = (e) => { if (e.lengthComputable) onprog(e.loaded / e.total); };
     x.onload = () => {
       let d;
@@ -1407,19 +1849,16 @@ function xhrUpload(file, folder, onprog) {
 }
 
 let upClear;
-async function uploadFiles(files, { folder = '', then } = {}) {
-  // le dossier ouvert est d'un autre Workspace : un dépôt entre dans celui de l'onglet, jamais là-bas
-  if (S.route.view === 'lib' && foreignFolder()) {
-    say(`ce dossier est dans « ${spaceLong(S.fspace)} » : on n’y dépose pas d’ici — dépose à la racine d’Asset (dans « ${spaceLong(here())} »), ou « Y aller »`);
-    return;
-  }
+async function uploadFiles(files, { folder = '', then, space = null } = {}) {
+  const why = createWhy(space || here());
+  if (why) { say(why); return; }
   clearTimeout(upClear);
   const done = [];
   for (const f of files) {
     const r = upRow(f);
     try {
-      const it = await xhrUpload(f, folder, r.prog);
-      r.done(`rangé${folder ? ` dans « ${folder} »` : ''}`);
+      const it = await xhrUpload(f, folder, r.prog, space);
+      r.done(`rangé${folder ? ` dans « ${folder} »` : ''}${space && space !== here() ? ` · ${spaceShort(space)}` : ''}`);
       done.push(it);
     } catch (e) { r.fail(e.message); }
   }
@@ -1478,7 +1917,7 @@ dropAnywhere((files) => {
     const it = S.item;
     return uploadFiles(files, { folder: it.folder || '', then: (items) => addRefs(it, items) });
   }
-  return uploadFiles(files, { folder: S.route.view === 'lib' ? S.folder : '' });
+  return uploadFiles(files, S.route.view === 'lib' ? { folder: S.folder, space: target() } : {});
 });
 
 // ══ LA FICHE ════════════════════════════════════════════════
@@ -1531,9 +1970,9 @@ async function paintSheet(id, { keepScroll = false } = {}) {
 
 function backLink() {
   const h = S.backHash || '#';
-  let lab = 'Asset';
-  if (h.startsWith('#/d/')) { try { lab = `Asset / ${decodeURIComponent(h.slice(4))}`; } catch { /* rien */ } }
-  if (h === '#/corbeille') lab = 'Corbeille';
+  // le lieu d'où l'on vient (le même lecteur que l'adresse : parseHash)
+  const p = parseHash(h).place;
+  const lab = p && p.k !== 'all' ? `Asset / ${placeTitle(p)}` : 'Asset';
   return el('a', { class: 'o-back', href: h }, `‹ ${lab} · échap`);
 }
 
@@ -2298,26 +2737,35 @@ function enableRefDrag(board, it, saveRefs) {
   });
 }
 
+
 // ══ LA CORBEILLE ════════════════════════════════════════════
+// Celle de chaque Workspace qu'on voit (GET /api/asset/trash?spaces=*) : ce que la personne peut
+// rendre (le sien ; tout, pour un admin du Workspace). Rétablir le remet à sa place, dans son
+// dossier. « Vider » est le seul geste qui efface : il le dit, et ne s'annule pas.
 async function paintTrash() {
-  libEl.replaceChildren(el('p', { class: 'lbl' }, 'chargement'));
   parts = null;
+  document.body.classList.remove('has-selbar', 'selecting');
+  $('.selbar')?.remove();
+  libEl.replaceChildren(el('p', { class: 'lbl' }, 'chargement'));
   let d;
-  try { d = await api('asset/trash'); } catch (e) { libEl.replaceChildren(el('p', { class: 'warn' }, e.message)); return; }
+  try { d = await api('asset/trash?spaces=*'); } catch (e) { libEl.replaceChildren(el('p', { class: 'warn' }, e.message)); return; }
+  if (S.route.view !== 'trash') return;
   const grid = el('div', { class: 'lib-grid' });
   grid.style.setProperty('--card', `${S.size}px`);
+  const restore = (t) => api(`library/${t.id}/restore`, { method: 'POST', espace: t.space });
   const card = (t) => {
-    const im = el('div', { class: 'im' }, t.thumb_url ? el('img', { src: href(t.thumb_url), alt: '', loading: 'lazy' }) : (glyph(t.kind) || el('span', { class: 'noimg' }, 'sans image')),
+    const im = el('div', { class: 'im' }, t.thumb_url ? el('img', { src: href(t.thumb_url), alt: '', loading: 'lazy' })
+      : (glyph(t.kind) || (t.kind === 'audio' ? wave() : el('span', { class: 'noimg' }, 'sans image'))),
       kindMark(t));   // la marque de la sorte commune (commun/shell.js)
-    const n = el('div', { class: 'acard trash-card', role: 'listitem' },
+    const n = el('div', { class: 'acard trash-card', role: 'listitem', 'data-trash': t.id },
       el('div', { class: 'thumb' }, im, el('div', { class: 'cap' }, el('div', { class: 't' }, t.title || t.id),
-        el('div', { class: 's' }, `jeté ${fmtDate(t.trashed)}${t.folder ? ` · de « ${t.folder} »` : ''}`)),
+        el('div', { class: 's' }, manySpaces() ? wsBadge(t.space) : null, `jeté ${fmtDate(t.trashed)}${t.folder ? ` · de « ${t.folder} »` : ''}`)),
       el('div', { class: 'acts2' }, el('button', { class: 'tb ghost sm', type: 'button', onclick: async () => {
         try {
-          await U.run({ label: `rétablir « ${t.title} »`,
-            do: () => api(`library/${t.id}/restore`, { method: 'POST' }),
-            undo: () => api(`library/${t.id}/delete`, { method: 'POST' }) });
-          say(`« ${t.title} » rétabli${t.folder ? ` dans « ${t.folder} »` : ''}`, true);
+          await U.run({ label: `rétablir « ${t.title} »`, do: () => restore(t),
+            undo: () => api(`library/${t.id}/delete`, { method: 'POST', espace: t.space }) });
+          say(`« ${t.title} » rétabli${t.folder ? ` dans « ${t.folder} »` : ''} · ${spaceShort(t.space)}`, true);
+          loadTree();
           n.remove();
           if (!$('.trash-card', grid)) paintTrash();
         } catch (e) { say(e.message); }
@@ -2326,12 +2774,49 @@ async function paintTrash() {
   };
   grid.replaceChildren(...(d.items.length ? d.items.map(card)
     : [el('div', { class: 'empty-state', style: { gridColumn: '1 / -1' } }, el('b', {}, 'La corbeille est vide'), el('p', { class: 'hint' }, 'Ce qu\'on met à la corbeille attend ici, avec son fichier, sa recette et son dossier.'))]));
+  const all = d.items;
+  const restoreAll = el('button', { class: 'tb ghost', type: 'button', disabled: !all.length, title: all.length ? 'chacun revient à sa place, dans son dossier' : 'la corbeille est vide',
+    onclick: async () => {
+      try {
+        await U.run({ label: `rétablir ${plural(all.length, 'objet', 'objets')}`,
+          do: () => perSpace(all, (sp, list) => api('asset/restore', { method: 'POST', body: { ids: list.map((t) => t.id) }, espace: sp }),
+            (x) => api('asset/trash', { method: 'POST', body: { ids: x.list.map((t) => t.id) }, espace: x.sp })),
+          undo: async (done) => { for (const x of done) await api('asset/trash', { method: 'POST', body: { ids: x.list.map((t) => t.id) }, espace: x.sp }); } });
+        say(`${plural(all.length, 'objet rétabli', 'objets rétablis')}`, true);
+        refresh();
+      } catch (e) { say(e.message); }
+    } }, 'Tout rétablir');
+  const empty = el('button', { class: 'tb ghost danger', type: 'button', disabled: !all.length, title: all.length ? 'effacer pour de bon : le seul geste qui ne s’annule pas' : 'la corbeille est vide : rien à effacer',
+    onclick: () => emptyTrashAsk(all) }, 'Vider la corbeille…');
   libEl.replaceChildren(
-    el('section', { class: 'lib-top' }, el('div', { class: 'who' }, el('a', { class: 'o-back', href: '#' }, '‹ Asset'),
-      el('span', { class: 'kicker' }, 'la corbeille'), el('h1', { class: 'lib-h' }, 'Corbeille'), el('span', { class: 'lbl' }, plural(d.items.length, 'objet', 'objets'))),
-      el('div', { class: 'acts' }, el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons()))),
-    el('p', { class: 'hint' }, 'Un objet jeté garde tout — fichier, recette, dossier — et revient à sa place d\'un clic. Rien ne s\'efface d\'ici.'),
+    el('section', { class: 'lib-top' }, el('div', { class: 'who-col' },
+      el('nav', { class: 'crumbs', 'aria-label': 'où' }, el('a', { class: 'crumb', href: '#' }, 'Asset'), el('span', { class: 'lbl' }, '/'), el('span', { class: 'crumb cur' }, 'Corbeille')),
+      el('div', { class: 'who' }, el('h1', { class: 'lib-h' }, 'Corbeille'),
+        el('span', { class: 'lbl' }, all.length ? `${plural(all.length, 'objet', 'objets')}${manySpaces() ? ` · ${plural(new Set(all.map((t) => t.space)).size, 'Workspace', 'Workspaces')}` : ''}` : 'vide'))),
+    el('div', { class: 'acts' }, undoBox(), restoreAll, empty)),
+    el('p', { class: 'hint' }, 'Un objet jeté garde tout — fichier, recette, dossier — et revient à sa place d\'un clic. Rien ne s\'efface, sauf par « Vider la corbeille » (l’auteur, ou un admin du Workspace).'),
     grid);
+}
+function emptyTrashAsk(all) {
+  const groups = bySpace(all);
+  const m = modal({
+    title: 'vider la corbeille',
+    body: [el('p', { class: 'new-q' }, `Effacer pour de bon ${plural(all.length, 'objet', 'objets')} ?`),
+      el('p', { class: 'prose' }, 'Leurs fichiers, leurs recettes disparaissent du disque. ', el('b', {}, 'Ce geste ne s’annule pas'), ' (Ctrl+Z ne le reprend pas).'),
+      el('p', { class: 'hint' }, groups.map(([sp, list]) => `${spaceLong(sp)} · ${list.length}`).join(' — ')),
+      el('p', { class: 'hint' }, 'Une copie rapatriée dans un autre Workspace garde son fichier.')],
+    foot: [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', type: 'button', onclick: () => m.close() }, 'Garder'),
+      el('button', { class: 'tb go', type: 'button', onclick: async () => {
+        m.close();
+        let gone = 0;
+        try {
+          for (const [sp, list] of groups) gone += (await api('asset/trash/empty', { method: 'POST', body: { ids: list.map((t) => t.id) }, espace: sp })).removed.length;
+          say(`${plural(gone, 'objet effacé', 'objets effacés')} pour de bon`);
+        } catch (e) { say(e.message); }
+        refresh();
+      } }, `Effacer ${plural(all.length, 'objet', 'objets')}`)],
+  });
+  setTimeout(() => $('.modal-foot .tb.ghost', m.scrim)?.focus(), 30);   // le bouton sûr d'abord
 }
 
 // ── clavier, travaux finis ───────────────────────────────────
@@ -2340,18 +2825,22 @@ document.addEventListener('keydown', (e) => {
   if (drag?.started) { endDrag(true); return; }
   if (mq) { endMarquee(true); return; }
   if ($('.scrim') || menuFor) return;
+  if (document.body.classList.contains('side-open')) { document.body.classList.remove('side-open'); return; }
   if (S.route.view === 'lib' && S.sel.size && !e.target.closest?.('input, textarea, select')) { clearSel(); live('plus rien de choisi'); return; }
   if (S.route.view === 'sheet' && !e.target.closest?.('input, textarea, select')) go(S.backHash || '#');
 });
-document.addEventListener('sr:job', () => { if (S.route.view === 'lib') loadLib(); });
+document.addEventListener('sr:job', () => { if (S.route.view === 'lib') refresh(); });
+// l'arbre en tiroir (téléphone) : un lieu choisi le referme
+sideEl.addEventListener('click', (e) => { if (e.target.closest('a.tr')) document.body.classList.remove('side-open'); });
+$('#side-scrim')?.addEventListener('click', () => document.body.classList.remove('side-open'));
 
 // ── le clic droit (Cal, 29/09 : « un menu contextuel dédié à où on se trouve ») ──
 // Une carte : ses gestes (ceux de la barre de sélection si elle fait partie
-// d'une sélection) ; un dossier : le sien ; la corbeille : rétablir. Ailleurs
-// (le fond, la fiche) : les entrées de la page, en tête du menu commun de
-// repli (commun/menu.js : pageMenu) — le lien, l'image survolés s'y ajoutent.
+// d'une sélection) ; un dossier : le sien ; la corbeille : rétablir ; une ligne
+// de l'arbre : la sienne. Ailleurs : les entrées de la page, en tête du menu
+// commun de repli (commun/menu.js : pageMenu).
 const toItems = (spec) => [{ head: spec.title }, ...spec.items.map((x) => (x === '-' ? '-'
-  : { label: x.label, icon: x.dir ? '▭' : '', disabled: x.disabled, onclick: x.do }))];
+  : { label: x.label, icon: x.dir ? '▭' : '', disabled: x.disabled, why: x.why, onclick: x.do }))];
 const goTo = (u) => () => { location.href = href(u); };
 function kindItems(it) {
   const id = encodeURIComponent(it.id);
@@ -2361,7 +2850,7 @@ function kindItems(it) {
       { label: 'Référence vidéo', icon: '◎', onclick: goTo(`movie/?ref=${id}`) },
       { label: 'Agrandir', icon: '⤢', sub: 'Upscale', onclick: goTo(`upscale/?src=${id}`) },
       { label: 'Ajouter au montage', icon: '▤', onclick: goTo(`montage/?add=${id}`) },
-      { label: 'Faire une planche de références', icon: '▦', onclick: () => elementModal({ items: [it], title: it.title, folder: it.folder || '' }) },
+      { label: 'Faire une planche de références', icon: '▦', onclick: () => elementModal({ items: [it], title: it.title, folder: it.folder || '', space: it.space }) },
       ...versionItems(it)];
   }
   if (it.kind === 'video') return [{ label: 'Agrandir', icon: '⤢', sub: 'Upscale', onclick: goTo(`upscale/?src=${id}`) }, { label: 'Ajouter au montage', icon: '▤', onclick: goTo(`montage/?add=${id}`) }, ...versionItems(it)];
@@ -2386,52 +2875,48 @@ function versionItems(it) {
     { label: 'Publier comme version de…', icon: '◆', onclick: () => publishInto(it) }];
 }
 function cardMenu(it) {
-  if (isForeign(it)) {
-    // d'un autre Workspace : la regarder, la rapatrier, la télécharger ; rien qui la modifie d'ici
-    const why = importWhy(it);
-    return [{ head: `${spaceShort(it.space)} · ${it.kind === 'element' ? typeFr(it.element?.type) : kindFr(it.kind)} · ${it.title || it.id}` },
-      { label: 'Ouvrir la fiche', icon: '⤢', key: 'Entrée', onclick: () => go('#' + it.id) },
-      { label: `Rapatrier dans « ${spaceShort(here())} »`, icon: '↓', key: 'R', sub: 'une copie neuve', disabled: !!why, why,
-        onclick: () => rapatrier([it], { folder: foreignFolder() ? '' : S.folder }) },
-      { label: 'Y aller', icon: '↗', sub: spaceShort(it.space), onclick: () => { location.href = otherTab(it.space, '#' + it.id); } },
-      '-',
-      { label: 'Télécharger', icon: '↓', key: 'T', onclick: () => download([it]) },
-      { label: 'Copier le lien de la fiche', icon: '↗', onclick: () => copy(otherTab(it.space, '#' + it.id), 'lien copié') }];
-  }
-  const move = itemMenu(it).items.filter((x) => x !== '-' && x.dir || /^Sortir/.test(x.label || ''));
-  return [{ head: `${it.kind === 'element' ? typeFr(it.element?.type) : kindFr(it.kind)} · ${it.title || it.id}` },
+  const spec = itemMenu(it);
+  const move = spec.items.filter((x) => x !== '-' && (x.dir || /^Sortir/.test(x.label || '')));
+  const copies = spec.items.filter((x) => x !== '-' && /^Copier dans/.test(x.label || ''));
+  // les outils ne prennent que le Workspace de l'onglet : d'ailleurs, on rapatrie d'abord
+  const tools = isForeign(it)
+    ? [{ label: `Rapatrier dans « ${spaceShort(here())} »`, icon: '↓', sub: 'une copie neuve', disabled: !!importWhy(it), why: importWhy(it), onclick: () => copyTo([it], here()) },
+      { label: 'Y aller', icon: '↗', sub: spaceShort(it.space), onclick: () => { location.href = otherTab(it.space, '#' + it.id); } }]
+    : kindItems(it);
+  return [{ head: `${spaceShort(it.space)} · ${it.kind === 'element' ? typeFr(it.element?.type) : kindFr(it.kind)} · ${it.title || it.id}` },
     { label: 'Ouvrir la fiche', icon: '⤢', key: 'Entrée', onclick: () => go('#' + it.id) },
-    ...kindItems(it), '-',
+    ...tools, '-',
     { label: 'Ranger', icon: '▭', items: move.map((x) => ({ label: x.label, onclick: x.do })) },
-    { label: 'Favori', checked: !!it.fav, key: 'F', onclick: () => setFav(it, !it.fav) },
+    copies.length ? { label: 'Copier dans un Workspace', icon: '⇉', items: copies.map((x) => ({ label: x.label, disabled: x.disabled, why: x.why, onclick: x.do })) } : null,
+    { label: 'Favori', checked: !!it.fav, key: 'F', onclick: () => bulkFav([it], !it.fav) },
     { label: 'Tags…', icon: '#', onclick: () => tagsModal([it]) },
     { label: 'Télécharger', icon: '↓', key: 'T', onclick: () => download([it]) },
-    { label: 'Copier le lien de la fiche', icon: '↗', onclick: () => copy(href('asset/#' + it.id), 'lien copié') },
+    { label: 'Copier le lien de la fiche', icon: '↗', onclick: () => copy(isForeign(it) ? otherTab(it.space, '#' + it.id) : href('asset/#' + it.id), 'lien copié') },
     '-',
-    { label: 'Mettre à la corbeille', icon: '×', danger: true, key: 'Suppr', onclick: () => trashItem(it) }];
+    { label: 'Mettre à la corbeille', icon: '×', danger: true, key: 'Suppr', onclick: () => trashMany([it]) }].filter(Boolean);
 }
 function selectionMenu(items) {
   const imgs = items.filter((i) => i.kind === 'image');
   const ups = items.filter((i) => i.kind === 'image' || i.kind === 'video');
   const allFav = items.every((i) => i.fav);
-  const away = items.filter(isForeign);
+  const spaces = bySpace(items);
+  const one = spaces.length === 1 ? spaces[0][0] : null;
+  const mixWhy = one ? '' : `la sélection est dans ${spaces.length} Workspaces : un dossier, un élément sont dans un seul`;
   const fw = foreignWhy(items);
-  const bringWhy = away.map(importWhy).find(Boolean) || '';
-  return [{ head: `la sélection · ${countLine(items.reduce((c, i) => { c[i.kind] = (c[i.kind] || 0) + 1; return c; }, {}))}${away.length ? ` · ${away.length} d’ailleurs` : ''}` },
-    away.length ? { label: `Rapatrier ici · ${away.length}`, icon: '↓', key: 'R', sub: spaceShort(here()), disabled: !!bringWhy, why: bringWhy,
-      onclick: () => rapatrier(away, { folder: foreignFolder() ? '' : S.folder }) } : null,
+  const mv = moveMenu(items).items;
+  return [{ head: `la sélection · ${countLine(items.reduce((c, i) => { c[i.kind] = (c[i.kind] || 0) + 1; return c; }, {}))}${spaces.length > 1 ? ` · ${spaces.length} Workspaces` : ''}` },
     { label: 'Télécharger', icon: '↓', key: 'T', sub: 'un zip', onclick: () => download(items) },
-    { label: 'Créer un dossier', icon: '+', key: 'N', disabled: !!fw, why: fw, onclick: () => askFolderName(items) },
-    fw ? { label: 'Déplacer', icon: '▭', disabled: true, why: fw }
-      : { label: 'Déplacer', icon: '▭', items: moveMenu(items).items.map((x) => ({ label: x.label, onclick: x.do })) },
-    { label: allFav ? 'Retirer des favoris' : 'Mettre en favori', icon: '★', key: 'F', disabled: !!fw, why: fw, onclick: () => bulkFav(items, !allFav) },
-    { label: 'Tags…', icon: '#', disabled: !!fw, why: fw, onclick: () => tagsModal(items) },
-    { label: 'Faire un élément', icon: '◆', disabled: !imgs.length || !!fw, why: fw || 'aucune image dans la sélection : un élément se fait d’images',
-      onclick: () => elementModal({ items: imgs, title: imgs[0]?.title || '', folder: commonFolder(imgs) }) },
+    { label: 'Créer un dossier', icon: '+', key: 'N', disabled: !!mixWhy, why: mixWhy, onclick: () => askFolderName(items, one) },
+    { label: 'Déplacer', icon: '▭', items: mv.filter((x) => !/^Copier/.test(x.label)).map((x) => ({ label: x.label, onclick: x.do })) },
+    { label: 'Copier dans un Workspace', icon: '⇉', items: mv.filter((x) => /^Copier/.test(x.label)).map((x) => ({ label: x.label, disabled: x.disabled, why: x.why, onclick: x.do })) },
+    { label: allFav ? 'Retirer des favoris' : 'Mettre en favori', icon: '★', key: 'F', onclick: () => bulkFav(items, !allFav) },
+    { label: 'Tags…', icon: '#', onclick: () => tagsModal(items) },
+    { label: 'Faire un élément', icon: '◆', disabled: !imgs.length || !!mixWhy, why: mixWhy || 'aucune image dans la sélection : un élément se fait d’images',
+      onclick: () => elementModal({ items: imgs, title: imgs[0]?.title || '', folder: commonFolder(imgs), space: one }) },
     { label: 'Agrandir', icon: '⤢', sub: 'Upscale', disabled: !ups.length || !!fw, why: fw || 'Upscale prend des images et des vidéos', onclick: goTo(`upscale/?src=${ups.map((i) => i.id).join(',')}`) },
     '-',
     { label: 'Ne plus rien choisir', key: 'Échap', onclick: clearSel },
-    { label: 'Mettre à la corbeille', icon: '×', danger: true, key: 'Suppr', disabled: !!fw, why: fw, onclick: () => trashMany(items) }].filter(Boolean);
+    { label: 'Mettre à la corbeille', icon: '×', danger: true, key: 'Suppr', onclick: () => trashMany(items) }];
 }
 contextMenu(libEl, (e) => {
   if (drag || mq) return [];
@@ -2447,11 +2932,32 @@ contextMenu(libEl, (e) => {
   const f = e.target.closest('.acard.folder[data-folder]');
   if (f) {
     const spec = folderMenu((S.data?.folders || []).find((x) => x.name === f.dataset.folder && (x.space || '') === (f.dataset.space || ''))
-      || { name: f.dataset.folder, space: f.dataset.space || null, total: 0 });
+      || { name: f.dataset.folder, space: f.dataset.space || here(), total: 0 });
     return toItems(spec);
   }
   const t = e.target.closest('.trash-card');
   if (t) { const b = $('.acts2 button', t); return b ? [{ label: 'Rétablir', icon: '↺', onclick: () => b.click() }] : null; }
+  return null;
+});
+// une ligne de l'arbre : les gestes de son lieu
+contextMenu(sideEl, (e) => {
+  const r = e.target.closest('.tr');
+  if (!r) return null;
+  if (r.classList.contains('fo')) {
+    const f = { name: r.dataset.folder, space: r.dataset.space, total: +($('.n', r)?.textContent || 0) };
+    const spec = folderMenu(f);
+    spec.items.splice(1, 1, { label: 'Renommer', do: () => renameFolderInline(f.name, f.space, r) });
+    return toItems(spec);
+  }
+  if (r.classList.contains('ws')) {
+    const sp = r.dataset.space;
+    const why = createWhy(sp);
+    return [{ head: `Workspace · ${spaceLong(sp)}` },
+      { label: 'Ouvrir', icon: '⤢', onclick: () => go(placeHash({ k: 'space', space: sp })) },
+      { label: 'Nouveau dossier', icon: '+', disabled: !!why, why, onclick: () => { closed.delete('s:' + sp); newFolderIn = sp; paintTree(); } },
+      sp !== here() ? { label: 'Passer l’onglet dans ce Workspace', icon: '↗', sub: 'les outils y lisent', onclick: () => { location.href = otherTab(sp, location.hash); } } : null].filter(Boolean);
+  }
+  if (r.dataset.drop === 'trash') return [{ head: 'la corbeille' }, { label: 'Ouvrir', icon: '⤢', onclick: () => go('#/corbeille') }];
   return null;
 });
 // ailleurs : les gestes de la vue, en tête du menu de repli
@@ -2474,20 +2980,21 @@ pageMenu(() => {
   }
   if (S.route.view === 'trash') return [{ head: 'la corbeille' }, { label: 'Revenir à Asset', icon: '‹', onclick: () => go('#') }];
   if (!parts) return null;
-  return [{ head: S.folder ? `dossier · ${S.folder}` : 'Asset' },
-    { label: S.folder ? 'Déposer des fichiers ici…' : 'Déposer des fichiers…', icon: '↑', onclick: () => parts.fileIn.click(),
-      disabled: foreignFolder(), why: foreignFolder() ? `ce dossier est dans « ${spaceLong(S.fspace)} » : on n’y dépose pas d’ici` : '' },
-    { label: 'Nouvel élément…', icon: '◆', onclick: () => elementModal({}) },
-    !S.folder ? { label: 'Importer de Character Factory…', icon: '↗', onclick: cfModal } : null,
-    S.folder && !foreignFolder() ? { label: 'Renommer le dossier', icon: '✎', onclick: renameInline } : null,
-    foreignFolder() ? { label: 'Rapatrier le dossier ici', icon: '↓', onclick: () => rapatrierDossier(S.folder, S.fspace) } : null,
-    S.folder ? { label: 'Revenir à la racine', icon: '‹', onclick: () => go('#') } : null,
+  const sp = target();
+  const why = createWhy(sp);
+  return [{ head: `${placeTitle()} · ${spaceShort(sp)}` },
+    { label: S.folder ? 'Déposer des fichiers ici…' : 'Déposer des fichiers…', icon: '↑', disabled: !!why, why, onclick: () => parts.fileIn.click() },
+    { label: 'Nouveau dossier…', icon: '+', disabled: !!why, why, onclick: () => { closed.delete('s:' + sp); newFolderIn = sp; paintTree(); } },
+    { label: 'Nouvel élément…', icon: '◆', disabled: !!why, why, onclick: () => elementModal({ space: sp }) },
+    { label: 'Importer de Character Factory…', icon: '↗', disabled: !!why, why, onclick: cfModal },
+    S.place.k === 'folder' ? { label: 'Renommer le dossier', icon: '✎', onclick: () => renameFolderInline(S.place.name, S.place.space, $('.lib-h', libEl)) } : null,
     '-',
     { label: 'Tout choisir', key: 'Ctrl+A', disabled: !cardIds().length, why: 'rien à choisir ici', onclick: selectAll },
     S.sel.size ? { label: 'Ne plus rien choisir', key: 'Échap', onclick: clearSel } : null,
     { label: 'Montrer', icon: '▦', items: KINDS.map(([k, lab]) => ({ label: lab, checked: S.kind === k, onclick: () => { S.kind = k; savePrefs(); loadLib(); } })) },
     { label: 'Trier', icon: '↕', items: SORTS.map(([k, lab]) => ({ label: lab, checked: S.sort === k, onclick: () => { S.sort = k; savePrefs(); loadLib(); } })) },
-    { label: 'La corbeille', icon: '×', onclick: () => go('#/corbeille') }];
+    { label: S.view === 'grid' ? 'Voir en liste' : 'Voir en grille', icon: '☰', onclick: () => { S.view = S.view === 'grid' ? 'list' : 'grid'; savePrefs(); paintGrid(); paintBar(); } },
+    { label: 'La corbeille', icon: '×', onclick: () => go('#/corbeille') }].filter(Boolean);
 });
 
 render();

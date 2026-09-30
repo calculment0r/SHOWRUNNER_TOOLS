@@ -38,9 +38,26 @@
 }
 .hdr .tools-menu a:hover { background: var(--panel2); color: var(--ink); }
 .hdr .tools-menu a.on { color: var(--ink); box-shadow: inset 2px 0 0 var(--or); }
-/* le bouton des préférences (commun/prefs.js) : une roue, pas un mot */
+/* ── à droite : ASSET · la roue · le plein écran · TEAM / WORKSPACE · le nom (commun/shell.js, mountHeader) ──
+   Un seul groupe, serré : la barre respire à gauche (le nom de l'outil, la navigation) */
+.hdr .sr-droite { flex: none; display: flex; align-items: center; gap: var(--s2); min-width: 0; }
+/* la page Asset : une grille et ASSET en capitales mono ; sur la page Asset, le filet acier (jamais l'orange) */
+.hdr .sr-asset-btn { gap: 7px; padding: 0 9px; font-family: var(--f-mono); font-size: 9px; font-weight: 400; letter-spacing: .2em; text-transform: uppercase; }
+.hdr .sr-asset-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; }
+.hdr .sr-asset-btn[aria-current="page"] { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.hdr .sr-asset-btn[hidden] { display: none; }
+/* le bouton des préférences (commun/prefs.js) : un engrenage, pas un mot */
 .hdr .sr-gear { width: 30px; min-width: 30px; padding: 0; }
-.hdr .sr-gear svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+.hdr .sr-gear svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+/* le nom : le compte ; son menu (commun/porte.js, account ; les lignes : .sr-ml plus bas) */
+.hdr .sr-me { position: relative; gap: 6px; max-width: 200px; }
+.hdr .sr-me[hidden] { display: none; }
+.hdr .sr-me .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ce qui attend dans le menu : un calcul en file (acier), une demande pour Cal (ambre) */
+.hdr .sr-me .dq, .hdr .sr-me .da { flex: none; width: 6px; height: 6px; border-radius: 50%; }
+.hdr .sr-me .dq { background: var(--cy); }
+.hdr .sr-me .da { background: var(--amb); }
+.hdr .sr-me .dq[hidden], .hdr .sr-me .da[hidden] { display: none; }
 /* le plein écran (commun/pleinecran.js), tout à droite : quatre coins, rentrés quand on y est */
 .hdr .sr-full { width: 30px; min-width: 30px; padding: 0; }
 .hdr .sr-full svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
@@ -48,18 +65,12 @@
 .hdr .sr-full[aria-disabled="true"] { opacity: .35; cursor: help; }
 /* le plein écran quitté par le changement de page (commun/pleinecran.js) : il attend Cal (ambre), un clic y ramène */
 .hdr .sr-full.relance { color: var(--amb); box-shadow: inset 0 0 0 1px var(--line-amb); }
-/* le bouton du panneau Asset (commun/dock.js), tout à gauche : une icône et ASSET en capitales mono ;
-   ouvert, le filet acier du plein écran — jamais l'orange, qui reste l'action de l'outil */
-.hdr .sr-dock-btn { gap: 7px; padding: 0 9px; font-family: var(--f-mono); font-size: 9px; font-weight: 400; letter-spacing: .2em; }
-.hdr .sr-dock-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
-.hdr .sr-dock-btn[aria-pressed="true"] { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
-.hdr .sr-dock-btn[hidden] { display: none; }
-
 /* ── la Team et le Workspace de l'onglet (commun/shell.js, le sélecteur ; equipes_espaces.md § 4.3) ──
-   À côté du logotype, « TEAM / WORKSPACE » en capitales mono, discret : l'encre faible, un filet au
-   survol seulement. Le menu reprend le tiroir des outils ; le Workspace courant porte le filet acier
-   de l'appareil courant (porte.css, .acct-dev.cur) — l'orange reste l'action de l'outil. */
-.hdr .sr-ws { position: relative; flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: var(--s2); margin-left: calc(-1 * var(--s2)); }
+   À droite, collé au nom (c'est de l'administration), « TEAM / WORKSPACE » en capitales mono, discret :
+   l'encre faible, un filet au survol seulement. Le menu reprend le tiroir des outils ; le Workspace
+   courant porte le filet acier de l'appareil courant (porte.css, .acct-dev.cur) — l'orange reste
+   l'action de l'outil. */
+.hdr .sr-ws { position: relative; flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: var(--s2); margin-left: var(--s2); }
 .hdr .sr-ws[hidden] { display: none; }
 .hdr .sr-ws-btn {
   display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 320px; height: 26px; padding: 0 8px;
@@ -71,18 +82,33 @@
 .hdr .sr-ws-btn .sl { flex: none; opacity: .6; }
 .hdr .sr-ws-btn .ws { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink2); }
 .hdr .sr-ws-btn:hover .ws, .hdr .sr-ws-btn[aria-expanded="true"] .ws { color: var(--ink); }
-.hdr .sr-ws-btn .cv { flex: none; display: inline-flex; width: 10px; height: 10px; }
-.hdr .sr-ws-btn .cv svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+/* (sr-cv, pas « cv » : c'est la planche d'Idéation, ideation.css) */
+.hdr .sr-ws-btn .sr-cv { flex: none; display: inline-flex; width: 10px; height: 10px; }
+.hdr .sr-ws-btn .sr-cv svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 /* un document ouvert d'un autre Workspace le dit (espaceDocument) */
 .hdr .sr-ws .doc { font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--amb); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
 .hdr .sr-ws .doc[hidden] { display: none; }
-/* étroit : le Workspace seul (la Team est dans le menu et la bulle) */
+/* étroit : le Workspace seul (la Team est dans le menu et la bulle) ; au téléphone, il passe au menu du nom */
 @media (max-width: 1320px) { .hdr .sr-ws .doc { display: none; } }
-@media (max-width: 700px) {
-  .hdr .sr-ws { margin-left: 0; }
-  .hdr .sr-ws-btn { max-width: 38vw; padding: 0 6px; }
-  .hdr .sr-ws-btn .tm, .hdr .sr-ws-btn .sl { display: none; }
+@media (max-width: 1100px) { .hdr .sr-ws-btn .tm, .hdr .sr-ws-btn .sl { display: none; } .hdr .sr-ws-btn { max-width: 160px; } }
+
+/* ── les lignes du menu du nom (commun/shell.js, lignesDuNom ; le menu : commun/porte.js, account) ── */
+.sr-ml { display: flex; flex-direction: column; gap: 1px; margin: 0 calc(-1 * var(--s2)); padding: 4px 0; box-shadow: inset 0 1px 0 var(--line), inset 0 -1px 0 var(--line); }
+.sr-ml-i {
+  display: flex; align-items: center; gap: var(--s2); width: 100%; padding: 8px 10px; border-radius: var(--r1);
+  text-align: left; text-decoration: none; font-size: 12.5px; color: var(--ink2);
 }
+.sr-ml-i .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-ml-i .r { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--f-mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink3); }
+.sr-ml-i:hover, .sr-ml-i:focus-visible { background: var(--panel2); color: var(--ink); }
+.sr-ml-i.amb .r { color: var(--amb); }
+/* le Workspace : au téléphone seulement (la barre n'a plus sa place) */
+.sr-ml-ws { display: none; }
+@media (max-width: 700px) { .sr-ml-ws { display: flex; } }
+/* l'état des machines : une note, pas une action */
+.sr-ml-sys { padding: 8px 10px 6px; gap: 8px; font-size: 8px; letter-spacing: .16em; }
+.sr-ml-sys .n { flex: 1; }
+.sr-ml-sys .r { flex: none; }
 .sr-ws-menu {
   position: fixed; z-index: 80; width: min(300px, calc(100vw - 16px)); max-height: calc(70 * var(--vh)); overflow: auto;
   padding: 6px; display: flex; flex-direction: column; border-radius: var(--r3);
@@ -321,10 +347,9 @@ body.dropping::after {
 a.statcard, a.tile, a.thumb, .sect-head a { text-decoration: none; }
 .sect-head a.cnt:hover { color: var(--ink); }
 
-/* l'en-tête tient sur une ligne : le sous-titre d'un outil s'efface avant
-   que la navigation ne passe dessous */
-.hdr .tool-name .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 26ch; }
-@media (max-width: 1720px) { .hdr .tool-name .lbl { display: none; } }
+/* l'en-tête tient sur une ligne. Plus de sous-titre sous le nom de l'outil (mountHeader ignore
+   `sub`) : une page qui en poserait un elle-même ne le montre pas davantage */
+.hdr .tool-name .lbl { display: none; }
 @media (max-width: 1480px) {
   .hdr { gap: var(--s3); }
   .hdr .tools a { padding: 6px 5px; letter-spacing: .1em; }
@@ -338,11 +363,33 @@ a.statcard, a.tile, a.thumb, .sect-head a { text-decoration: none; }
   .hdr .tools::-webkit-scrollbar { display: none; }
   .hdr .tools a { white-space: nowrap; flex: none; }
   .hdr .sp { flex: 0 0 var(--s3); min-width: var(--s3); }
-  .hdr > .logo, .hdr > .tool-name, .hdr > .pill, .hdr > .tb { flex: none; }
+  .hdr > .logo, .hdr > .tool-name, .hdr > .tb { flex: none; }
   /* les noms n'y tiennent pas entiers (mesuré par shell.js, mountHeader) : le menu « Outils » */
   .hdr.squeeze .tools { display: none; }
   .hdr.squeeze .tools-btn { display: inline-flex; }
   .hdr.squeeze .sp { flex: 1; }
+}
+/* sous 1101 px : une ligne encore, la navigation dans « Outils » */
+@media (max-width: 1100px) {
+  .hdr { flex-wrap: nowrap; gap: var(--s3); }
+  .hdr > .logo, .hdr > .tb { flex: none; }
+  .hdr .tool-name { flex: 0 1 auto; min-width: 0; }
+  .hdr .tool-name b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hdr .sp { min-width: 0; }
+}
+/* le téléphone : le carré du logotype, le nom de l'outil (coupé s'il le faut), « Outils », puis la
+   grille d'Asset, la roue et le nom — le Workspace passe au menu du nom, le plein écran s'en va
+   (l'iPhone ne l'a pas : pleinecran.js) */
+@media (max-width: 700px) {
+  .hdr { gap: var(--s2); padding: 10px 12px; }
+  .hdr .logo > span:not(.sq) { display: none; }
+  .hdr .tool-name b { font-size: 13px; }
+  .hdr .tools-menu { left: 12px; }
+  .hdr .sr-droite { gap: 4px; flex: 0 1 auto; }
+  .hdr .sr-asset-btn { width: 30px; min-width: 30px; padding: 0; }
+  .hdr .sr-asset-btn span { display: none; }
+  .hdr .sr-full, .hdr .sr-ws { display: none; }
+  .hdr .sr-me { max-width: 28vw; padding: 0 8px; }
 }
 
 /* la porte (commun/porte.js) : la page reste cachée le temps de savoir

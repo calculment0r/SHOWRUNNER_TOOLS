@@ -7,7 +7,7 @@
 // (commun/shell.js), la seule liste : une carte dont l'outil n'y est pas
 // encore est « bientôt » — elle s'allume seule le jour où l'outil y entre
 // avec sa page.
-import { TOOLS, api, el, $, href, mountHeader, system, session, thumb, toolHref, toast, uploadFile, dropAnywhere, jobs, stateFr, fmtDate } from './commun/shell.js';
+import { TOOLS, api, el, $, href, mountHeader, system, session, thumb, toolHref, toast, uploadFile, dropAnywhere, jobs, stateFr, fmtDate, ouvrirFile } from './commun/shell.js';
 import { bind } from './commun/proxies.js';
 
 mountHeader(null);
@@ -197,7 +197,7 @@ async function loadProjects() {
   paintResume();
 }
 function paintResume() {
-  const openQueue = () => $('#sr-queue')?.click();
+  const openQueue = () => ouvrirFile();   // la file : le menu du nom (commun/shell.js), plus un bouton de la barre
   const chips = [
     ...R.jobs.map((j) => el('button', { class: 'acc-chip job', type: 'button', onclick: openQueue, title: 'la file des calculs' },
       el('span', { class: 'acc-ck' + (j.state === 'running' ? ' run' : '') }, stateFr(j.state)),

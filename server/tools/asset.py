@@ -14,6 +14,22 @@
        dit le sien (`space`), le courant vient en tête. Un dossier est à un
        Workspace (`fspace`, par défaut le courant) : ceux d'ailleurs se
        montrent, marqués, et ne se touchent pas d'ici.
+       La page de gestion (30/09, « asset-page ») y ajoute : `space=a,b` (une
+       Team : ses Workspaces), `flat=1` (tout, dossiers traversés : Favoris,
+       Récents, un filtre), `author=<uid>`, `since=<jours>`, et les tris
+       `kind`, `size`, `space` (en plus de new, old, updated, title) ; chaque
+       objet dit son poids (`bytes`), la vue rend les auteurs (`authors`) et
+       les dossiers de chaque Workspace (`folders_by_space`, déclarés compris).
+  GET  /api/asset/tree                           l'arbre de la page : Teams → Workspaces →
+       dossiers, avec leurs comptes ; favoris, récents (7 jours), corbeille
+  POST /api/asset/folders {name}                 déclarer un dossier (vide) dans le Workspace
+       de la requête ; POST /api/asset/folders/forget {name} l'oublie (ses objets restent)
+  POST /api/asset/folders/delete {name}          supprimer un dossier : ses objets à la
+       corbeille (tout ou rien), le nom oublié ; rend `trashed` (l'annuler les rend)
+  GET  /api/asset/trash?spaces=*                 la corbeille de chaque Workspace qu'on voit
+  POST /api/asset/trash/empty {ids?}             vider la corbeille du Workspace de la requête
+       (ou ces objets-là) : ce que la personne peut jeter (l'auteur, un admin
+       du Workspace, Cal) — le seul geste qui efface, jamais annulable
   GET  /api/asset/espaces                        les Workspaces que la personne voit (le filtre, le panneau)
   POST /api/espaces/<B>/rapatrier {items, folder?}   (server/tools/equipes.py) : une copie neuve dans B
   POST /api/asset/move {ids, folder}             ranger (ou sortir : folder "")
@@ -37,16 +53,22 @@
        défaut le Workspace courant, `space=` un autre qu'on voit (« Autres
        workspaces »), `spaces=*` tous
 
-Un dossier n'existe que par ses objets (le champ `folder` de chacun,
-ARCHITECTURE.md §2) : un dossier vide disparaît de lui-même. Un seul
-niveau, comme dans la maquette du 28/09 (« un dossier tient des
-personnages et des objets, pas d'autre dossier »).
+Un dossier existe par ses objets (le champ `folder` de chacun,
+ARCHITECTURE.md §2) ; un dossier créé dans la page (« Nouveau dossier »)
+est aussi DÉCLARÉ (`asset_folders.json` des données, par Workspace) : il
+reste, vide, jusqu'à ce qu'on le supprime ou le dégroupe — comme un
+dossier du Finder. Un seul niveau, comme dans la maquette du 28/09 (« un
+dossier tient des personnages et des objets, pas d'autre dossier »).
 
 Montrer et toucher (étape 5) : la page montre tous les Workspaces qu'on voit
 (library.query(spaces=…), library.see) ; ranger, aimer, taguer, jeter ne
 touchent que le Workspace courant (library.get) — un objet d'ailleurs répond
 409, qui dit où il est et qu'on le rapatrie (core_api.elsewhere_or_404).
-Télécharger (un zip, la lignée) montre : où qu'il soit.
+Télécharger (un zip, la lignée) montre : où qu'il soit. La page de gestion
+(asset/asset.js) envoie donc chaque geste DANS le Workspace de l'objet
+(l'en-tête X-SR-Espace de la requête) : le serveur y juge le rôle de la
+personne, comme si l'onglet y était ; passer d'un Workspace à un autre reste
+une copie (rapatrier), jamais un déplacement.
 """
 
 from __future__ import annotations
@@ -56,11 +78,12 @@ import os
 import re
 import secrets
 import shutil
+import threading
 import time
 import unicodedata
 import urllib.parse
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from core import auth, config, espaces, library
@@ -190,47 +213,168 @@ def _mini(it: dict) -> dict:
             "etype": (it.get("element") or {}).get("type")}
 
 
+# ══ asset-page (30/09) : la page de gestion — dossiers déclarés, tris, filtres, l'arbre ══
+# Les dossiers déclarés : un par Workspace et par nom, dans les données (hors du dépôt).
+# Une écriture complète et atomique (un fichier voisin, puis os.replace), sous un verrou.
+_FOLDERS_LOCK = threading.Lock()
+
+
+def _folders_file() -> Path:
+    return config.data_dir() / "asset_folders.json"
+
+
+def _declared_all() -> dict[str, list[str]]:
+    try:
+        d = json.loads(_folders_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(k): [str(n) for n in v if isinstance(n, str)] for k, v in d.items() if isinstance(v, list)} if isinstance(d, dict) else {}
+
+
+def declared(space: str | None) -> list[str]:
+    """Les dossiers déclarés d'un Workspace (None : le socle, sans Workspace)."""
+    return _declared_all().get(space or "", [])
+
+
+def _declare(space: str | None, name: str, *, on: bool = True, to: str | None = None) -> None:
+    """Déclarer (`on`), oublier (`on=False`) ou renommer (`to`) un dossier d'un Workspace."""
+    with _FOLDERS_LOCK:
+        d = _declared_all()
+        cur = [n for n in d.get(space or "", []) if n != name]
+        if to:
+            if name in d.get(space or "", []) and to not in cur:
+                cur.append(to)
+        elif on:
+            cur.append(name)
+        d[space or ""] = sorted(set(cur), key=str.lower)
+        f = _folders_file()
+        tmp = f.with_name(f.name + ".tmp")
+        tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(tmp, f)
+
+
+# Le poids d'un objet : son fichier principal, ou (un élément) ses références et sa voix ;
+# lu sur le disque, gardé par (id, date de modification).
+_SIZES: dict[tuple, int] = {}
+
+
+def _bytes(it: dict) -> int:
+    key = (it["id"], it.get("updated") or it.get("created"))
+    if key in _SIZES:
+        return _SIZES[key]
+    d = library.folder_of(it["id"])
+    names = [it["file"]] if it.get("file") else [r.get("file") for r in ((it.get("element") or {}).get("refs") or [])
+                                                  + ((it.get("element") or {}).get("voices") or [])]
+    n = 0
+    for name in names:
+        try:
+            n += (d / str(name)).stat().st_size if name else 0
+        except OSError:
+            pass
+    _SIZES[key] = n
+    return n
+
+
+KIND_ORDER = {k: n for n, k in enumerate(("image", "element", "video", "audio", "sequence", "midi"))}
+SORTS = ("new", "old", "updated", "title", "kind", "size", "space")
+
+
+def _sorted(items: list[dict], sort: str, order: list[str]) -> list[dict]:
+    """Les tris que library.query ne fait pas : par sorte (puis titre), par poids (le plus
+    lourd d'abord), par Workspace (dans l'ordre de l'arbre : le courant, puis les Teams ;
+    dans chacun, du plus récent au plus ancien). `items` arrive trié par date (new)."""
+    if sort == "kind":
+        return sorted(items, key=lambda i: (KIND_ORDER.get(i["kind"], 9), (i.get("title") or "").lower()))
+    if sort == "size":
+        return sorted(items, key=lambda i: -_bytes(i))
+    if sort == "space":
+        rank = {s: n for n, s in enumerate(order)}
+        return sorted(items, key=lambda i: rank.get(i.get("space"), len(rank)))
+    return items
+
+
+def _since(days: str) -> str | None:
+    """La date limite d'un filtre « depuis N jours » (ISO, comparable à `updated`)."""
+    if not days:
+        return None
+    try:
+        n = max(1, min(3650, int(days)))
+    except ValueError as e:
+        raise HttpError(400, "since : un nombre de jours") from e
+    return (datetime.now(timezone.utc) - timedelta(days=n)).isoformat(timespec="seconds")
+
+
+def _touched(it: dict) -> str:
+    return it.get("updated") or it.get("created") or ""
+
+
 # ── la vue de la page ───────────────────────────────────────
 def view(req):
     kinds = [k for k in req.q("kind").split(",") if k in library.KINDS]
     q = req.q("q").strip()
     folder = req.q("folder")
     sort = req.q("sort", "new")
+    if sort not in SORTS:
+        sort = "new"
     fav = req.q("fav") == "1"
     tool = req.q("tool")
     origin = req.q("origin")
+    flat = req.q("flat") == "1"       # tout, dossiers traversés (Favoris, Récents, un filtre)
+    author = req.q("author")
+    since = _since(req.q("since"))
     try:
         limit = max(1, min(2000, int(req.q("limit", "400") or 400)))
         offset = max(0, int(req.q("offset", "0") or 0))
     except ValueError as e:
         raise HttpError(400, "limit et offset sont des nombres") from e
 
-    # les Workspaces : tous ceux qu'on voit, ou un seul (`space=`) ; un dossier est à un Workspace
+    # les Workspaces : tous ceux qu'on voit, un seul (`space=`), ou ceux d'une Team (`space=a,b`) ;
+    # un dossier est à un Workspace
     here = library.here()
     seen = spaces_seen()
     known = {s["id"] for s in seen}
-    want = req.q("space")
-    if want and seen and want not in known:
-        raise HttpError(404, f"Workspace {want} : inconnu, ou pas pour toi")
-    scope_spaces = [want] if want else _space_ids(seen)
+    wants = [w for w in req.q("space").split(",") if w]
+    for w in wants:
+        if seen and w not in known:
+            raise HttpError(404, f"Workspace {w} : inconnu, ou pas pour toi")
+    want = wants[0] if len(wants) == 1 else None
+    scope_spaces = wants or _space_ids(seen)
     fspace = (req.q("fspace") or here) if folder else None
     if fspace and seen and fspace not in known:
         raise HttpError(404, f"Workspace {fspace} : inconnu, ou pas pour toi")
+    qsort = sort if sort in ("new", "old", "updated", "title") else "new"
 
-    everything = _all("", sort, spaces=scope_spaces)
+    all_seen = _all("", qsort, spaces=_space_ids(seen))
+    everything = [it for it in all_seen if not wants or it.get("space") in wants]
     tools: dict[str, int] = {}
     for it in everything:
         t = _tool(it)
         tools[t] = tools.get(t, 0) + 1
     # les dossiers où l'on peut ranger : ceux du Workspace courant (ranger ne touche que lui)
-    all_folders = sorted({it.get("folder") for it in everything if it.get("folder") and (not here or it.get("space") == here)},
-                         key=str.lower)
+    all_folders = sorted({it.get("folder") for it in all_seen if it.get("folder") and (not here or it.get("space") == here)}
+                         | set(declared(here)), key=str.lower)
+    # et ceux de chaque Workspace qu'on voit (la page de gestion range dans le Workspace de l'objet)
+    by_space: dict[str, set] = {s["id"]: set(declared(s["id"])) for s in seen}
+    for it in all_seen:
+        if it.get("folder"):
+            by_space.setdefault(it.get("space") or "", set()).add(it["folder"])
+    folders_by_space = {k: sorted(v, key=str.lower) for k, v in by_space.items()}
 
-    every_space = _all(q, sort, fav, tool, spaces=_space_ids(seen))
+    every_space = [it for it in _all(q, qsort, fav, tool, spaces=_space_ids(seen)) if not since or _touched(it) >= since]
+    # les auteurs : dans le périmètre de la vue, avant leur propre filtre
+    who: dict[str, int] = {}
+    for it in every_space:
+        if not wants or it.get("space") in wants:
+            o = auth.owner_of(it) or ""
+            who[o] = who.get(o, 0) + 1
+    authors = sorted(({"id": k, "name": auth.display_name(k) if k else "sans auteur", "count": n} for k, n in who.items()),
+                     key=lambda a: -a["count"])
+    if author:
+        every_space = [it for it in every_space if (auth.owner_of(it) or "") == author]
     per_space: dict[str, int] = {}
     for it in every_space:
         per_space[it.get("space")] = per_space.get(it.get("space"), 0) + 1
-    before_origin = every_space if not want else [it for it in every_space if it.get("space") == want]
+    before_origin = every_space if not wants else [it for it in every_space if it.get("space") in wants]
     in_folder = lambda it: (it.get("folder") or "") == folder and (not fspace or it.get("space") == fspace)   # noqa: E731
     # les comptes des onglets d'origine : dans le même périmètre que la vue
     if folder:
@@ -242,48 +386,184 @@ def view(req):
     matching = [it for it in before_origin if not origin or (_tool(it) == "upload") == (origin == "upload")]
     if folder:
         scope = [it for it in matching if in_folder(it)]
-    elif q:
-        scope = matching                       # une recherche traverse les dossiers
+    elif q or flat:
+        scope = matching                       # une recherche, Favoris, Récents : à travers les dossiers
     else:
         scope = [it for it in matching if not it.get("folder")]
     # les comptes : dans un dossier, les siens ; à la racine, toute la bibliothèque
-    counted = scope if (folder or q) else matching
+    counted = scope if (folder or q or flat) else matching
     counts = {k: 0 for k in library.KINDS}
     for it in counted:
         counts[it["kind"]] += 1
 
-    items = _here_first([it for it in scope if not kinds or it["kind"] in kinds], here)
+    order = [s["id"] for s in seen]
+    items = _sorted([it for it in scope if not kinds or it["kind"] in kinds], sort, order)
+    if sort == "space":
+        items = _here_first(items, here)
 
     folders = []
-    if not folder and not q:
+    if not folder and not q and not flat:
         # un dossier par Workspace et par nom : « Lycée » de A et « Lycée » de B sont deux dossiers
         groups: dict[tuple, list[dict]] = {}
         for it in matching:
             if it.get("folder"):
                 groups.setdefault((it.get("space"), it["folder"]), []).append(it)
+        # les dossiers déclarés, vides compris, quand aucun filtre ne trie les objets
+        if not (kinds or fav or tool or origin or author or since):
+            for sp in (wants or order or [here]):
+                for name in declared(sp):
+                    groups.setdefault((sp, name), [])
         for (sp, name), group in groups.items():
             shown = [it for it in group if not kinds or it["kind"] in kinds]
-            if not shown:
+            if group and not shown:
                 continue
             by_kind = {k: 0 for k in library.KINDS}
             for it in group:
                 by_kind[it["kind"]] += 1
             folders.append({"name": name, "space": sp, "count": len(shown), "total": len(group), "kinds": by_kind,
-                            "updated": max(it.get("updated") or it["created"] for it in group),
+                            "updated": max((_touched(it) for it in group), default=""),
                             "preview": [_mini(it) for it in shown[:4]]})
-        if sort == "title":
+        rank = {s: n for n, s in enumerate(order)}
+        if sort in ("title", "kind"):
             folders.sort(key=lambda f: f["name"].lower())
         elif sort == "old":
             folders.sort(key=lambda f: f["updated"])
+        elif sort == "space":
+            folders.sort(key=lambda f: (rank.get(f["space"], len(rank)), f["name"].lower()))
+        elif sort == "size":
+            folders.sort(key=lambda f: -f["total"])
         else:
             folders.sort(key=lambda f: f["updated"], reverse=True)
-        folders = _here_first(folders, here)
 
-    return {"items": _with_state(items[offset:offset + limit]), "total": len(items), "offset": offset,
-            "counts": counts, "folders": folders, "all_folders": all_folders, "tools": tools, "origins": origins,
-            "library_total": len(everything), "folder": folder, "fspace": fspace, "q": q,
-            "here": here, "space": want or None,
+    page = [{**it, "bytes": _bytes(it)} for it in items[offset:offset + limit]]
+    return {"items": _with_state(page), "total": len(items), "offset": offset,
+            "counts": counts, "folders": folders, "all_folders": all_folders, "folders_by_space": folders_by_space,
+            "tools": tools, "origins": origins, "authors": authors,
+            "library_total": len(everything), "folder": folder, "fspace": fspace, "q": q, "sort": sort,
+            "here": here, "space": want or None, "spaces_in": wants,
             "spaces": [{**s, "count": per_space.get(s["id"], 0)} for s in seen]}
+
+
+def tree(req):
+    """GET /api/asset/tree — l'arbre de la page : chaque Team que la personne voit, ses
+    Workspaces (le courant en tête), dans chacun les objets hors dossier (`root`) et ses
+    dossiers (déclarés compris) avec leurs comptes ; en tête, les favoris, les récents
+    (touchés depuis 7 jours) et la corbeille de chaque Workspace (ce qu'on peut en rendre)."""
+    here = library.here()
+    seen = spaces_seen()
+    items = _all("", "new", spaces=_space_ids(seen))
+    cut = _since("7")
+    per: dict[str, dict] = {}
+    for it in items:
+        p = per.setdefault(it.get("space") or "", {"count": 0, "root": 0, "folders": {}})
+        p["count"] += 1
+        if it.get("folder"):
+            p["folders"][it["folder"]] = p["folders"].get(it["folder"], 0) + 1
+        else:
+            p["root"] += 1
+    trash = _trash_counts({s["id"] for s in seen} or None)
+    teams: list[dict] = []
+    # sans Teams (le socle, la maison sans teams.json) : un nœud par Workspace des objets
+    bare = [{"id": k, "name": k.replace("esp-", "") or "Asset", "team": None, "team_name": "", "here": k == (here or ""),
+             "import": True, "create": True} for k in sorted(per, key=lambda k: k != (here or ""))] or \
+           [{"id": here or "", "name": "Asset", "team": None, "team_name": "", "here": True, "import": True, "create": True}]
+    for s in seen or bare:
+        p = per.get(s["id"], {"count": 0, "root": 0, "folders": {}})
+        names = set(p["folders"]) | set(declared(s["id"] or None))
+        node = {**s, "count": p["count"], "root": p["root"], "trash": trash.get(s["id"], 0),
+                "folders": [{"name": n, "count": p["folders"].get(n, 0)} for n in sorted(names, key=str.lower)]}
+        t = next((t for t in teams if t["id"] == s.get("team")), None)
+        if t is None:
+            t = {"id": s.get("team"), "name": s.get("team_name") or "", "personal": bool(s.get("personal")), "count": 0, "spaces": []}
+            teams.append(t)
+        t["spaces"].append(node)
+        t["count"] += node["count"]
+    return {"here": here, "teams": teams, "total": len(items), "fav": sum(1 for it in items if it.get("fav")),
+            "recent": sum(1 for it in items if _touched(it) >= cut), "trash": sum(trash.values())}
+
+
+# ── les dossiers : créer (déclarer), oublier, supprimer ─────
+def folder_create(req):
+    """Un dossier neuf, vide, dans le Workspace de la requête : il faut pouvoir y créer."""
+    name = _clean_folder(req.json().get("name", ""))
+    if not name:
+        raise HttpError(400, "il lui faut un nom")
+    library.check_create(library.here())
+    _declare(library.here(), name)
+    return {"folder": name, "space": library.here()}
+
+
+def folder_forget(req):
+    """Oublier un dossier déclaré (ses objets, s'il en a, gardent leur champ `folder`) :
+    le contraire de folder_create, et la fin d'un « dégrouper »."""
+    name = _clean_folder(req.json().get("name", ""))
+    library.check_create(library.here())
+    _declare(library.here(), name, on=False)
+    return {"folder": name, "space": library.here()}
+
+
+def folder_delete(req):
+    """Supprimer un dossier : ses objets à la corbeille — tous jetables par la personne, sinon
+    rien (403) — puis le nom oublié. La corbeille garde le champ `folder` : rétablir les rend
+    à leur dossier (l'annuler de la page les rétablit et redéclare le nom)."""
+    name = _clean_folder(req.json().get("name", ""))
+    if not name:
+        raise HttpError(400, "quel dossier ?")
+    members = [it for it in _all() if (it.get("folder") or "") == name]
+    if not members and name not in declared(library.here()):
+        raise HttpError(404, f"aucun dossier « {name} »")
+    library.check_create(library.here())
+    for it in members:                   # tout jetable (le rôle, une version en usage), avant d'en jeter un seul
+        library.check_trash(it)
+        for guard in library.TRASH_GUARDS:
+            guard(it)
+    gone = []
+    for it in members:
+        library.trash(it["id"])
+        gone.append(it["id"])
+    was = name in declared(library.here())
+    _declare(library.here(), name, on=False)
+    return {"folder": name, "trashed": gone, "declared": was}
+
+
+def _trash_space(meta: dict) -> str:
+    return library.space_of(meta) or ""
+
+
+def _trash_counts(spaces: set | None) -> dict[str, int]:
+    """Ce que la personne peut rendre, dans la corbeille de chaque Workspace qu'elle voit."""
+    u = auth.current()
+    out: dict[str, int] = {}
+    for d in library.trash_root().iterdir():
+        if not d.is_dir():
+            continue
+        try:
+            meta = library.trashed_meta(d.name)
+        except KeyError:
+            continue
+        sp = _trash_space(meta)
+        if (spaces is None or sp in spaces) and auth.can_read_item(meta, u) and auth.can_trash_item(meta, u):
+            out[sp] = out.get(sp, 0) + 1
+    return out
+
+
+def trash_empty(req):
+    """POST /api/asset/trash/empty {ids?} — effacer pour de bon ce que la corbeille du
+    Workspace de la requête tient et que la personne peut jeter (`ids` : ceux-là
+    seulement). Le seul geste qui efface ; le journal le garde. Un fichier principal
+    rapatrié ailleurs (un lien dur) vit tant que la copie le porte (§ 3.2)."""
+    ids = req.json().get("ids")
+    root = library.trash_root()
+    todo = []
+    for d in root.iterdir():
+        if d.is_dir() and _mine_in_trash(d) and (not isinstance(ids, list) or d.name in {str(i) for i in ids}):
+            todo.append(d)
+    for d in todo:
+        shutil.rmtree(d, ignore_errors=True)
+    u = auth.current()
+    auth.journal("corbeille vidée (Asset)", by=(u or {}).get("id"), space=library.here(), items=len(todo))
+    return {"removed": [d.name for d in todo]}
+# ══ fin asset-page ══
 
 
 # ── ranger ──────────────────────────────────────────────────
@@ -305,17 +585,22 @@ def rename_folder(req):
     if not new:
         raise HttpError(400, "il lui faut un nom")
     everyone = [it for it in _all() if (it.get("folder") or "") == old]
-    if not everyone:
+    decl = old in declared(library.here())   # asset-page : un dossier déclaré, vide ou non, se renomme aussi
+    if not everyone and not decl:
         raise HttpError(404, f"aucun dossier « {old} »")
     # un dossier n'est que le champ `folder` de ses objets : chacun renomme les siens
     # (Cal, tous) ; ceux des autres gardent leur dossier (`kept`)
     u = auth.current()
     members = [it for it in everyone if auth.can_write_item(it, u)]
-    if not members:
+    if everyone and not members:
         library.check_write(everyone[0])   # 403, qui dit à qui ils sont
-    merged = new != old and any((it.get("folder") or "") == new for it in _all())
+    if not everyone:
+        library.check_create(library.here())
+    merged = new != old and (any((it.get("folder") or "") == new for it in _all()) or new in declared(library.here()))
     for it in members:
         library.update(it["id"], {"folder": new})
+    if decl:
+        _declare(library.here(), old, to=new)
     return {"renamed": len(members), "kept": len(everyone) - len(members), "folder": new, "merged": merged}
 
 
@@ -532,7 +817,8 @@ def _trashed(folder: Path) -> dict | None:
     # le renommage vers la corbeille met à jour le ctime du dossier (Linux) : l'heure du geste
     when = datetime.fromtimestamp(folder.stat().st_ctime, timezone.utc).isoformat(timespec="seconds")
     return {"id": it.get("id", folder.name), "kind": it.get("kind"), "title": it.get("title", ""),
-            "created": it.get("created"), "trashed": when, "folder": it.get("folder", ""),
+            "created": it.get("created"), "trashed": when, "folder": it.get("folder", ""), "space": library.space_of(it),
+            "owner": auth.owner_of(it),
             "etype": (it.get("element") or {}).get("type"), "duration": it.get("duration"),
             "thumb_url": f"api/asset/trash/{folder.name}/thumb" if it.get("thumb") else None}
 
@@ -548,8 +834,24 @@ def _mine_in_trash(folder: Path) -> bool:
     return library.readable(meta) and auth.can_trash_item(meta, auth.current())
 
 
+def _seen_in_trash(folder: Path, spaces: set | None = None) -> bool:
+    """asset-page : la corbeille de CHAQUE Workspace qu'on voit (`spaces`, None : tous) —
+    montrer ; rendre et vider passent toujours par le Workspace de la requête."""
+    try:
+        meta = library.trashed_meta(folder.name)
+    except KeyError:
+        return False
+    u = auth.current()
+    return (spaces is None or _trash_space(meta) in spaces) and auth.can_read_item(meta, u) and auth.can_trash_item(meta, u)
+
+
 def trash_list(req):
-    out = [t for t in (_trashed(d) for d in library.trash_root().iterdir() if d.is_dir() and _mine_in_trash(d)) if t]
+    if req.q("spaces") == "*":
+        seen = {s["id"] for s in spaces_seen()} or None
+        keep = lambda d: _seen_in_trash(d, seen)   # noqa: E731
+    else:
+        keep = _mine_in_trash
+    out = [t for t in (_trashed(d) for d in library.trash_root().iterdir() if d.is_dir() and keep(d)) if t]
     out.sort(key=lambda t: t["trashed"], reverse=True)
     return {"items": out}
 
@@ -557,7 +859,7 @@ def trash_list(req):
 def trash_thumb(req, item_id):
     root = library.trash_root().resolve()
     d = (root / item_id).resolve()
-    if not d.is_relative_to(root) or not (d / "item.json").is_file() or not _mine_in_trash(d):
+    if not d.is_relative_to(root) or not (d / "item.json").is_file() or not _seen_in_trash(d):
         raise HttpError(404, "pas dans la corbeille")
     try:
         name = json.loads((d / "item.json").read_text(encoding="utf-8")).get("thumb") or ""
@@ -821,6 +1123,11 @@ def register(app) -> None:
     app.route("GET", "/api/asset/dock", dock_list)   # le panneau Asset commun (ci-dessus)
     app.route("GET", "/api/asset/espaces", espaces_list)
     app.route("GET", "/api/asset/view", view)
+    app.route("GET", "/api/asset/tree", tree)                       # asset-page
+    app.route("POST", "/api/asset/folders", folder_create)          # asset-page
+    app.route("POST", "/api/asset/folders/forget", folder_forget)   # asset-page
+    app.route("POST", "/api/asset/folders/delete", folder_delete)   # asset-page
+    app.route("POST", "/api/asset/trash/empty", trash_empty)        # asset-page
     app.route("POST", "/api/asset/move", move)
     app.route("POST", "/api/asset/folders/rename", rename_folder)
     app.route("GET", "/api/asset/lineage/{item_id}", lineage)
@@ -967,10 +1274,80 @@ def selftest(call, ok) -> None:
        and not dock_match({"kind": "element", "element": {"type": "object"}}, ["element"], ["character"], []),
        "asset : le panneau, media= compte l'élément versionné par sa dernière version")
 
+    _page_selftest(call, ok, a, b)
+
     # Teams et Workspaces, étape 5 : Asset montre tout ce qu'on voit ; rapatrier
     bad = in_place_writers()
     ok(not bad, f"rapatrier : aucun code n'écrit dans le fichier principal d'un objet (lecture du code) {bad}")
     _rapatrier_selftest(ok)
+
+
+# ── le contrôle de la page de gestion (asset-page, 30/09) ─────────────────────
+def _page_selftest(call, ok, a: dict, b: dict) -> None:
+    """Les dossiers déclarés (créer vide, renommer, supprimer = corbeille, oublier),
+    l'arbre, les tris et filtres neufs de la vue, vider la corbeille."""
+    st, f = call("POST", "/api/asset/folders", {"name": "  Groupe   vide "})
+    ok(st == 200 and f["folder"] == "Groupe vide", f"asset-page : un dossier vide se crée ({st} {f})")
+    st, t = call("GET", "/api/asset/tree")
+    nodes = [s for tm in t.get("teams", []) for s in tm["spaces"]]
+    fl = [x for s in nodes for x in s["folders"] if x["name"] == "Groupe vide"]
+    ok(st == 200 and fl and fl[0]["count"] == 0 and t["total"] >= 2 and "trash" in t and "recent" in t,
+       f"asset-page : l'arbre montre le dossier vide ({st} {fl})")
+    st, v = call("GET", "/api/asset/view")
+    ok(any(x["name"] == "Groupe vide" and x["total"] == 0 for x in v["folders"]) and "Groupe vide" in v["all_folders"],
+       "asset-page : la racine montre le dossier vide, où l'on peut ranger")
+    st, r = call("POST", "/api/asset/folders/rename", {"from": "Groupe vide", "to": "Groupe 2"})
+    st2, t = call("GET", "/api/asset/tree")
+    names = {x["name"] for tm in t["teams"] for s in tm["spaces"] for x in s["folders"]}
+    ok(st == 200 and "Groupe 2" in names and "Groupe vide" not in names, f"asset-page : un dossier vide se renomme ({st} {r})")
+    call("POST", "/api/asset/move", {"ids": [a["id"]], "folder": "Groupe 2"})
+    call("POST", "/api/asset/move", {"ids": [a["id"]], "folder": "Renommé"})
+    st, v = call("GET", "/api/asset/view")
+    ok(any(x["name"] == "Groupe 2" and x["total"] == 0 for x in v["folders"]), "asset-page : vidé par un glisser, le dossier déclaré reste")
+    call("POST", "/api/asset/move", {"ids": [a["id"]], "folder": "Groupe 2"})
+    st, d = call("POST", "/api/asset/folders/delete", {"name": "Groupe 2"})
+    st2, gone = call("GET", f"/api/library/{a['id']}")
+    st3, tr = call("GET", "/api/asset/trash")
+    ok(st == 200 and d["trashed"] == [a["id"]] and d["declared"] and st2 == 404
+       and any(x["id"] == a["id"] and x["folder"] == "Groupe 2" for x in tr["items"]),
+       f"asset-page : supprimer un dossier met ses objets à la corbeille, avec leur dossier ({st} {d})")
+    st, back = call("POST", "/api/asset/restore", {"ids": d["trashed"]})
+    call("POST", "/api/asset/folders", {"name": "Groupe 2"})
+    st2, got = call("GET", f"/api/library/{a['id']}")
+    ok(st == 200 and got.get("folder") == "Groupe 2", "asset-page : l'annuler rétablit les objets dans leur dossier")
+    call("POST", "/api/asset/move", {"ids": [a["id"]], "folder": "Renommé"})
+    st, _ = call("POST", "/api/asset/folders/forget", {"name": "Groupe 2"})
+    st2, t = call("GET", "/api/asset/tree")
+    ok(st == 200 and "Groupe 2" not in {x["name"] for tm in t["teams"] for s in tm["spaces"] for x in s["folders"]},
+       "asset-page : un dossier vide oublié disparaît")
+    st, _ = call("POST", "/api/asset/folders/delete", {"name": "Personne"})
+    ok(st == 404, "asset-page : supprimer un dossier qui n'existe pas : 404")
+
+    # les tris et les filtres neufs
+    st, v = call("GET", "/api/asset/view?flat=1&sort=size")
+    sizes = [x["bytes"] for x in v["items"]]
+    ok(st == 200 and sizes == sorted(sizes, reverse=True) and any(x["id"] == a["id"] for x in v["items"]),
+       f"asset-page : à plat (dossiers traversés), du plus lourd au plus léger ({sizes[:5]})")
+    st, v = call("GET", "/api/asset/view?flat=1&sort=kind")
+    ks = [KIND_ORDER.get(x["kind"], 9) for x in v["items"]]
+    ok(st == 200 and ks == sorted(ks), "asset-page : le tri par sorte")
+    st, v = call("GET", "/api/asset/view?flat=1&sort=space")
+    ok(st == 200 and v["sort"] == "space", "asset-page : le tri par Workspace")
+    st, v = call("GET", "/api/asset/view?flat=1&since=1")
+    st2, v2 = call("GET", "/api/asset/view?flat=1&since=abc")
+    ok(st == 200 and any(x["id"] == a["id"] for x in v["items"]) and st2 == 400, "asset-page : le filtre de date (depuis N jours)")
+    st, v = call("GET", "/api/asset/view?flat=1&author=personne-inconnue")
+    ok(st == 200 and v["total"] == 0 and isinstance(v["authors"], list), "asset-page : le filtre par auteur")
+    st, v = call("GET", "/api/asset/view?sort=nimporte")
+    ok(st == 200 and v["sort"] == "new", "asset-page : un tri inconnu revient au plus récent")
+
+    # vider la corbeille : le seul geste qui efface ; ids= : ceux-là seulement
+    call("POST", "/api/asset/trash", {"ids": [b["id"]]})
+    st, e = call("POST", "/api/asset/trash/empty", {"ids": [b["id"]]})
+    st2, tr = call("GET", "/api/asset/trash?spaces=*")
+    st3, r = call("POST", "/api/asset/restore", {"ids": [b["id"]]})
+    ok(st == 200 and e["removed"] == [b["id"]] and all(x["id"] != b["id"] for x in tr["items"]) and r["restored"] == [],
+       f"asset-page : vider la corbeille efface pour de bon ({st} {e})")
 
 
 # ── le contrôle de l'étape 5 : montrer tous les Workspaces, rapatrier ─────────

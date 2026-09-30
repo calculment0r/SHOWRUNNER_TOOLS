@@ -1,11 +1,15 @@
 {
   "tool": "asset",
   "title": "Asset",
-  "about": "La bibliothèque. Le tri, la taille et la sorte suivent aussi ce qu’on choisit dans la barre d’Asset.",
+  "about": "La page de gestion de la bibliothèque. Le tri, la vue, la taille et la sorte suivent aussi ce qu’on choisit dans la barre d’Asset.",
   "prefs": [
     {
       "key": "sort", "label": "Tri", "type": "choice", "default": "new",
-      "options": [["new", "Récents"], ["old", "Anciens"], ["title", "Titre"], ["updated", "Modifiés"]]
+      "options": [["new", "Récents"], ["old", "Anciens"], ["updated", "Modifiés"], ["title", "Nom"], ["kind", "Sorte"], ["size", "Poids"], ["space", "Workspace"]]
+    },
+    {
+      "key": "view", "label": "Vue", "type": "choice", "default": "grid",
+      "options": [["grid", "Grille"], ["list", "Liste"]]
     },
     {
       "key": "size", "label": "Taille des vignettes", "type": "number", "default": 190,
@@ -13,7 +17,7 @@
     },
     {
       "key": "kind", "label": "Sorte montrée", "type": "choice", "default": "",
-      "options": [["", "Tout"], ["image", "Images"], ["element", "Éléments"], ["video", "Vidéos"], ["audio", "Sons"]]
+      "options": [["", "Tout"], ["image", "Images"], ["element", "Éléments"], ["video", "Vidéos"], ["audio", "Sons"], ["sequence", "Séquences"], ["midi", "MIDI"]]
     },
     {
       "key": "hint", "label": "L’aide de la sélection sous la barre", "type": "toggle", "default": true,
