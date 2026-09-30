@@ -384,7 +384,7 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
   }
   const onKey = (e) => {
     if (!root.isConnected) { detruire(); return; }
-    if (e.defaultPrevented || champ(e.target) || doc.querySelector('.scrim, .sr-menu')) return;
+    if (e.defaultPrevented || champ(e.target) || doc.querySelector('.scrim:not([hidden]), .sr-menu')) return;
     if (clavier !== 'page' && !root.contains(doc.activeElement)) return;
     if (e.key === ' ' && e.target.matches && e.target.matches('button, input[type=range]')) e.target.blur();
     cle(e);

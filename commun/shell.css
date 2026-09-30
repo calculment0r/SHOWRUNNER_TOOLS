@@ -53,6 +53,61 @@
 .hdr .sr-dock-btn[aria-pressed="true"] { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
 .hdr .sr-dock-btn[hidden] { display: none; }
 
+/* ── la Team et le Workspace de l'onglet (commun/shell.js, le sélecteur ; equipes_espaces.md § 4.3) ──
+   À côté du logotype, « TEAM / WORKSPACE » en capitales mono, discret : l'encre faible, un filet au
+   survol seulement. Le menu reprend le tiroir des outils ; le Workspace courant porte le filet acier
+   de l'appareil courant (porte.css, .acct-dev.cur) — l'orange reste l'action de l'outil. */
+.hdr .sr-ws { position: relative; flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: var(--s2); margin-left: calc(-1 * var(--s2)); }
+.hdr .sr-ws[hidden] { display: none; }
+.hdr .sr-ws-btn {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 320px; height: 26px; padding: 0 8px;
+  border-radius: var(--r1); color: var(--ink3); box-shadow: inset 0 0 0 1px transparent;
+  font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .18em; text-transform: uppercase; white-space: nowrap;
+}
+.hdr .sr-ws-btn:hover, .hdr .sr-ws-btn[aria-expanded="true"] { color: var(--ink2); box-shadow: inset 0 0 0 1px var(--line); }
+.hdr .sr-ws-btn .tm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.hdr .sr-ws-btn .sl { flex: none; opacity: .6; }
+.hdr .sr-ws-btn .ws { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink2); }
+.hdr .sr-ws-btn:hover .ws, .hdr .sr-ws-btn[aria-expanded="true"] .ws { color: var(--ink); }
+.hdr .sr-ws-btn .cv { flex: none; display: inline-flex; width: 10px; height: 10px; }
+.hdr .sr-ws-btn .cv svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+/* un document ouvert d'un autre Workspace le dit (espaceDocument) */
+.hdr .sr-ws .doc { font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--amb); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.hdr .sr-ws .doc[hidden] { display: none; }
+/* étroit : le Workspace seul (la Team est dans le menu et la bulle) */
+@media (max-width: 1320px) { .hdr .sr-ws .doc { display: none; } }
+@media (max-width: 700px) {
+  .hdr .sr-ws { margin-left: 0; }
+  .hdr .sr-ws-btn { max-width: 38vw; padding: 0 6px; }
+  .hdr .sr-ws-btn .tm, .hdr .sr-ws-btn .sl { display: none; }
+}
+.sr-ws-menu {
+  position: fixed; z-index: 80; width: min(300px, calc(100vw - 16px)); max-height: calc(70 * var(--vh)); overflow: auto;
+  padding: 6px; display: flex; flex-direction: column; border-radius: var(--r3);
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line), 0 16px 40px var(--drop);
+}
+.sr-ws-team {
+  display: flex; align-items: baseline; gap: var(--s2); padding: 9px 10px 3px;
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .22em; text-transform: uppercase; color: var(--ink3);
+}
+.sr-ws-team:not(:first-child) { margin-top: 4px; box-shadow: inset 0 1px 0 var(--line); }
+.sr-ws-team .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink2); }
+.sr-ws-team .r, .sr-ws-item .r { flex: none; font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink3); }
+.sr-ws-item {
+  display: flex; align-items: center; gap: var(--s2); width: 100%; padding: 8px 10px; border-radius: var(--r1);
+  text-align: left; font-size: 12px; color: var(--ink2);
+}
+.sr-ws-item .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-ws-item:hover, .sr-ws-item:focus-visible { background: var(--panel2); color: var(--ink); }
+.sr-ws-item.on { color: var(--ink); box-shadow: inset 2px 0 0 var(--cy); }
+.sr-ws-new { color: var(--ink3); font-size: 11.5px; }
+.sr-ws-add { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 4px 6px 6px; }
+.sr-ws-add .fld { flex: 1; min-width: 0; padding: 6px var(--s2); }
+.sr-ws-add .why { flex-basis: 100%; margin: 0; }
+.sr-ws-add .why[hidden] { display: none; }
+.sr-ws-menu > .why { margin: 6px 10px; }
+.sr-ws-foot { display: flex; justify-content: flex-end; margin-top: 6px; padding: 8px 4px 2px; box-shadow: inset 0 1px 0 var(--line); }
+
 /* ── le panneau Asset pousse la page (commun/dock.js ; panneau_asset.md § 2.4) ── */
 /* Ouvert : le corps recule de la largeur du panneau, la barre du haut garde toute la largeur.
    La page est un conteneur : sa mise en page répond à la place qu'elle a VRAIMENT (@container

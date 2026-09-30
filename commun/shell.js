@@ -42,12 +42,83 @@ export const TOOLS = [
 // les pages du portail qui ne sont pas des outils (pas de carte à l'accueil)
 const PAGES = { admin: { id: 'admin', k: 'SR—AD', name: 'Admin' } };
 
+// ── le Workspace de l'onglet (docs/etudes/equipes_espaces.md § 4.3, § 4.4) ──
+// Chaque onglet est dans UN Workspace : pris de `?e=esp-…` à l'ouverture, sinon
+// de sessionStorage (l'onglet, pas le navigateur : deux onglets, deux Workspaces),
+// sinon celui que le portail donne à la première lecture de /api/auth/me (le dernier
+// de la personne, sinon Général), qui l'y fixe. `api()` le pose sur chaque requête
+// (en-tête X-SR-Espace, que lit la porte : core/espaces.py, wanted) ; ce qui ne
+// passe pas par api() — un flux SSE (EventSource), sendBeacon, un fetch ou un
+// XMLHttpRequest à la main — prend `avecEspace(url)` (`?e=`, que la porte lit aussi)
+// ou `enTeteEspace()`. Les médias (/library/…, les vignettes) n'en ont pas besoin :
+// le portail les juge par l'objet (auth.can_read_item), pas par l'espace de la
+// requête, et une même adresse garde son cache d'un espace à l'autre.
+const ESP_RX = /^esp-[a-z0-9][a-z0-9-]{1,47}$/;   // core/espaces.py, SPACE_RX
+const ESP_KEY = 'sr-espace', ESP_MSG = 'sr-espace-msg';
+const ss = {
+  get: (k) => { try { return sessionStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { if (v) sessionStorage.setItem(k, v); else sessionStorage.removeItem(k); } catch { /* stockage fermé : l'URL garde ?e= */ } },
+};
+let ESPACE = (() => {
+  const q = new URLSearchParams(location.search).get('e');
+  if (q && ESP_RX.test(q)) { ss.set(ESP_KEY, q); return q; }
+  const s = ss.get(ESP_KEY);
+  return s && ESP_RX.test(s) ? s : null;
+})();
+/** Le Workspace de l'onglet (`esp-…`), ou null tant que le portail ne l'a pas dit. */
+export const espace = () => ESPACE;
+/** Une adresse qui ne passe pas par api() (EventSource, sendBeacon, fetch à la main) : + `e=`. */
+export function avecEspace(u) {
+  if (!ESPACE) return u;
+  const abs = new URL(u, location.href);
+  if (!abs.searchParams.has('e')) abs.searchParams.set('e', ESPACE);
+  return abs.href;
+}
+/** Les en-têtes d'un fetch ou d'un XMLHttpRequest fait à la main. */
+export const enTeteEspace = () => (ESPACE ? { 'X-SR-Espace': ESPACE } : {});
+function fixeEspace(id) { ESPACE = id || null; ss.set(ESP_KEY, ESPACE); }
+// Un Workspace qu'on ne voit pas (plus) : le portail le refuse (403 sur une route protégée,
+// `workspace_refused` dans /api/auth/me). On l'oublie, et la page repart dans celui que le
+// portail donne — rechargée, pour qu'aucune liste ne reste d'un espace et l'en-tête d'un autre.
+let oubli = false;
+function oublieEspace(id) {
+  if (oubli || !id || id !== ESPACE) return;
+  oubli = true;
+  fixeEspace(null);
+  ss.set(ESP_MSG, 'ce Workspace n’est pas (ou plus) pour toi : retour à ton Workspace habituel');
+  const u = new URL(location.href);
+  u.searchParams.delete('e');
+  location.replace(u.href);
+}
+// L'outil qui sait recharger ses listes sans quitter la page (un document ouvert reste
+// ouvert, dans son espace) : surEspace(cb) ; sans lui, changer de Workspace recharge la page.
+const espaceCbs = new Set();
+export function surEspace(cb) { espaceCbs.add(cb); return () => espaceCbs.delete(cb); }
+// Un document ouvert dit toujours son espace (§ 4.3) : l'outil le déclare, l'en-tête le montre
+// quand ce n'est pas le Workspace de l'onglet. null : plus de document.
+let docEspace = null;
+export function espaceDocument(id) { docEspace = id && ESP_RX.test(id) ? id : null; paintEspace(); }
+
 // ── la porte (core/auth.py, commun/porte.js) ────────────────
-// qui je suis : { auth, state: anonymous | pending | active | refused | suspended, user }
+// qui je suis : { auth, state: anonymous | pending | active | refused | suspended, user,
+//   teams, workspace, workspace_refused } — les Teams et le Workspace : core/espaces.py, me_payload
 let meP = null;
 let doorOn = false;
+let lastMe = null;
 export const session = (fresh = false) => {
-  if (!meP || fresh) meP = api('auth/me').catch(() => null);
+  if (!meP || fresh) {
+    meP = api('auth/me').catch(() => null).then((me) => {
+      if (me && me.user) {
+        if (me.workspace_refused && me.workspace_refused === ESPACE) oublieEspace(ESPACE);
+        // l'onglet se fixe au Workspace que donne le portail : un changement fait dans un
+        // autre onglet (le « dernier » de la personne) ne le déplace plus
+        else if (!ESPACE && me.workspace && me.workspace.id) fixeEspace(me.workspace.id);
+      }
+      lastMe = me;
+      paintEspace();
+      return me;
+    });
+  }
   return meP;
 };
 export function showDoor(me) {
@@ -183,7 +254,8 @@ addEventListener('keydown', (e) => {
   if (!ctrlSpace && !quote) return;
   const k = readLocal().general?.dockKey || 'ctrl-space';
   const wanted = (ctrlSpace && (k === 'ctrl-space' || k === 'both')) || (quote && (k === 'backquote' || k === 'both'));
-  const modal = !!document.querySelector('.scrim');
+  // une fenêtre OUVERTE : une .scrim cachée (Movie Analysis garde la sienne, hidden) ne compte pas
+  const modal = !!document.querySelector('.scrim:not([hidden])');
   if (quote && (!wanted || !DOCK.on || modal)) return;   // ² reste alors une touche comme une autre
   e.preventDefault();
   e.stopImmediatePropagation();
@@ -214,8 +286,11 @@ export const fmtDate = (iso) => {
 };
 
 // ── serveur ─────────────────────────────────────────────────
-export async function api(path, { method = 'GET', body, raw, headers = {}, signal } = {}) {
+// `espace` : le Workspace de cette requête — par défaut celui de l'onglet ; un document ouvert
+// passe le sien (il ne change pas d'espace parce que l'en-tête change) ; null : aucun.
+export async function api(path, { method = 'GET', body, raw, headers = {}, signal, espace: esp = ESPACE } = {}) {
   const opts = { method, headers: { ...headers }, signal };
+  if (esp && !Object.keys(opts.headers).some((k) => k.toLowerCase() === 'x-sr-espace')) opts.headers['X-SR-Espace'] = esp;
   if (raw !== undefined) opts.body = raw;
   else if (body !== undefined) { opts.body = JSON.stringify(body); opts.headers['Content-Type'] = 'application/json'; }
   const r = await fetch(new URL(path.replace(/^\/?(api\/)?/, ''), API), opts);
@@ -225,6 +300,10 @@ export async function api(path, { method = 'GET', body, raw, headers = {}, signa
   if (!r.ok) {
     // plus de session (retirée, suspendue, jamais ouverte) : la porte
     if (r.status === 401 && !/^\/?(api\/)?auth\//.test(path)) showDoor();
+    // le Workspace de l'onglet refusé (on n'y est plus) : la porte le dit dans /api/auth/me
+    if (r.status === 403 && esp && esp === ESPACE && !oubli) {
+      api('auth/me', { espace: esp }).then((me) => { if (me && me.workspace_refused === esp) oublieEspace(esp); }).catch(() => {});
+    }
     const e = new Error((data && data.error) || `${r.status} ${r.statusText}`);
     e.status = r.status;
     throw e;
@@ -235,10 +314,11 @@ export async function api(path, { method = 'GET', body, raw, headers = {}, signa
 // Un fichier vers la bibliothèque. Ce que quelqu'un dépose de son disque
 // garde `tool: 'upload'` (la catégorie « Upload » d'Asset, pour le distinguer
 // de ce que les outils fabriquent) et dit par où il est entré (`via`). Un
-// outil qui range sa propre création (un mixage exporté…) passe son nom.
-export async function uploadFile(file, { tool = 'upload', via = '', folder = '', title = '' } = {}) {
+// outil qui range sa propre création (un mixage exporté…) passe son nom. Il entre dans le
+// Workspace de l'onglet (api()), ou dans `espace` (celui du document ouvert).
+export async function uploadFile(file, { tool = 'upload', via = '', folder = '', title = '', espace: esp = ESPACE } = {}) {
   const q = new URLSearchParams({ name: file.name, tool, via, folder, title: title || file.name.replace(/\.[^.]+$/, '') });
-  return api('library/upload?' + q, { method: 'PUT', raw: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
+  return api('library/upload?' + q, { method: 'PUT', raw: file, espace: esp, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
 }
 
 // ── glisser un asset d'un endroit à l'autre ─────────────────
@@ -385,7 +465,161 @@ export async function system() {
 export function toolHref(t, sys) {
   // le studio (la page des personnages), pas la page d'état à la racine du site
   if (t.external === 'cf') return ((sys && sys.cf_studio && sys.cf_studio.url) || 'http://192.168.10.247:8765/') + 'studio.html';
-  return href(t.path);
+  // `?e=` : ouvert dans un nouvel onglet (clic du milieu), l'outil reste dans ce Workspace
+  return avecEspace(href(t.path));
+}
+
+// ── le sélecteur de Workspace (en haut à gauche, à côté du logotype) ──
+// « TEAM / WORKSPACE » en capitales mono (mots de Cal, 30/09) ; le menu : ses Teams et
+// leurs Workspaces tels que le portail les rend (/api/auth/me → teams : un guest n'y a
+// que les siens, par construction), « + Nouveau Workspace » dans une Team qu'on gère,
+// « Réglages de la Team » (admin/#teams). Discret : il ne prend la couleur qu'au survol.
+const WS_ROLE = { admin: 'admin', editor: 'éditeur', commenter: 'commentateur', viewer: 'viewer' };
+let wsMenu = null;
+function espaceCourant(me = lastMe) {
+  if (!me || !Array.isArray(me.teams)) return null;
+  for (const t of me.teams) for (const s of t.spaces || []) if (s.id === ESPACE) return { t, s };
+  const w = me.workspace;
+  return w ? { t: { name: w.team_name, id: w.team }, s: w } : null;
+}
+function nomEspace(id, me = lastMe) {
+  for (const t of (me && me.teams) || []) for (const s of t.spaces || []) if (s.id === id) return `${t.name} / ${s.name}`;
+  return id;
+}
+function paintEspace() {
+  const box = document.getElementById('sr-ws');
+  if (!box) return;
+  const cur = espaceCourant();
+  box.hidden = !cur;
+  if (!cur) return;
+  const btn = box.querySelector('.sr-ws-btn');
+  btn.querySelector('.tm').textContent = cur.t.name || '';
+  btn.querySelector('.ws').textContent = cur.s.name || '';
+  const doc = docEspace && docEspace !== ESPACE ? nomEspace(docEspace) : '';
+  btn.title = `Team ${cur.t.name} · Workspace ${cur.s.name}${cur.s.role ? ` · ${WS_ROLE[cur.s.role] || cur.s.role}` : ''}`
+    + (doc ? `\nle document ouvert est dans ${doc}` : '') + '\nchanger de Workspace';
+  const note = box.querySelector('.doc');
+  note.hidden = !doc;
+  note.textContent = doc ? `document · ${doc}` : '';
+  // les liens de l'en-tête gardent le Workspace de l'onglet (ouverts dans un nouvel onglet compris)
+  for (const a of ESPACE ? document.querySelectorAll('.hdr a.logo, .hdr #sr-admin, .hdr .tools a, .hdr .tools-menu a') : []) {
+    const u = new URL(a.href, location.href);
+    if (u.origin !== ROOT.origin || u.searchParams.get('e') === ESPACE) continue;
+    u.searchParams.set('e', ESPACE);
+    a.href = u.href;
+  }
+  if (wsMenu) paintMenu();
+}
+function closeWsMenu() {
+  wsAdd = null;
+  if (!wsMenu) return;
+  wsMenu.remove();
+  wsMenu = null;
+  document.removeEventListener('pointerdown', wsOutside, true);
+  document.removeEventListener('keydown', wsKey, true);
+  const b = document.querySelector('#sr-ws .sr-ws-btn');
+  if (b) b.setAttribute('aria-expanded', 'false');
+}
+function wsOutside(e) { if (wsMenu && !wsMenu.contains(e.target) && !e.target.closest('#sr-ws')) closeWsMenu(); }
+function wsKey(e) {
+  if (!wsMenu || (e.target instanceof Element && e.target.closest('.sr-ws-add'))) return;   // la saisie a ses touches
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeWsMenu(); document.querySelector('#sr-ws .sr-ws-btn')?.focus(); return; }
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  const items = [...wsMenu.querySelectorAll('[role^="menuitem"]')];
+  if (!items.length) return;
+  e.preventDefault();
+  const i = items.indexOf(document.activeElement);
+  items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
+}
+function openWsMenu(btn) {
+  if (wsMenu) return closeWsMenu();
+  wsMenu = el('div', { class: 'sr-ws-menu', role: 'menu', 'aria-label': 'Teams et Workspaces' });
+  document.body.append(wsMenu);
+  paintMenu();
+  const r = btn.getBoundingClientRect();
+  wsMenu.style.top = `${r.bottom + 6}px`;
+  wsMenu.style.left = `${Math.max(8, Math.min(r.left, innerWidth - wsMenu.offsetWidth - 8))}px`;
+  btn.setAttribute('aria-expanded', 'true');
+  document.addEventListener('pointerdown', wsOutside, true);
+  document.addEventListener('keydown', wsKey, true);
+  (wsMenu.querySelector('[aria-checked="true"]') || wsMenu.querySelector('[role^="menuitem"]'))?.focus();
+  session(true);   // la liste fraîche (un Workspace créé ailleurs) : repeinte à l'arrivée
+}
+let wsAdd = null;   // la ligne « nouveau Workspace » ouverte : { tid, v }
+function paintMenu() {
+  const me = lastMe;
+  if (!wsMenu || !me) return;
+  const inp = wsMenu.querySelector('.sr-ws-add input');
+  const focus = !!inp && document.activeElement === inp;
+  const rows = [];
+  for (const t of me.teams || []) {
+    if (t.archived) continue;
+    const spaces = (t.spaces || []).filter((s) => !s.archived || s.id === ESPACE);
+    if (!spaces.length && !t.manage) continue;
+    const role = t.role === 'guest' ? `guest · ${t.guest || 'viewer'}` : t.personal ? '' : ({ owner: 'propriétaire', admin: 'admin', member: 'membre' }[t.role] || '');
+    rows.push(el('div', { class: 'sr-ws-team' }, el('span', { class: 'n' }, t.name), role ? el('span', { class: 'r' }, role) : null));
+    for (const s of spaces) {
+      const on = s.id === ESPACE;
+      const lim = s.can && !s.can.edit ? (WS_ROLE[s.role] || s.role || 'lecture') : '';
+      rows.push(el('button', { class: 'sr-ws-item' + (on ? ' on' : ''), type: 'button', role: 'menuitemradio', 'aria-checked': on ? 'true' : 'false',
+        title: lim && s.why && s.why.edit ? s.why.edit : null, 'data-ws': s.id, onclick: () => changeEspace(s.id) },
+      el('span', { class: 'n' }, s.name), s.archived ? el('span', { class: 'r' }, 'archivé') : lim ? el('span', { class: 'r' }, lim) : null));
+    }
+    // créer un Workspace : qui gère la Team (core/espaces.py, create_space) ; les autres n'ont pas la ligne
+    if (t.manage) {
+      rows.push(wsAdd && wsAdd.tid === t.id ? addRow(t) : el('button', { class: 'sr-ws-item sr-ws-new', type: 'button', role: 'menuitem', 'data-team': t.id,
+        onclick: () => { wsAdd = { tid: t.id, v: '' }; paintMenu(); wsMenu.querySelector('.sr-ws-add input')?.focus(); } },
+      el('span', { class: 'n' }, '+ Nouveau Workspace')));
+    }
+  }
+  if (me.teams_error) rows.push(el('p', { class: 'why' }, me.teams_error));
+  rows.push(el('div', { class: 'sr-ws-foot' },
+    el('a', { class: 'tb ghost sm', role: 'menuitem', href: avecEspace(href('admin/#teams')) }, 'Réglages de la Team')));
+  wsMenu.replaceChildren(...rows);
+  if (focus) wsMenu.querySelector('.sr-ws-add input')?.focus();
+}
+function addRow(t) {
+  const inp = el('input', { class: 'fld', maxlength: 40, placeholder: 'nom du Workspace', 'aria-label': `le nom du nouveau Workspace de ${t.name}`,
+    oninput: () => { wsAdd.v = inp.value; } });
+  inp.value = wsAdd.v || '';
+  const err = el('p', { class: 'why', hidden: true });
+  const go = el('button', { class: 'tb ghost sm', type: 'submit' }, 'Créer');
+  const f = el('form', { class: 'sr-ws-add', onsubmit: async (e) => {
+    e.preventDefault();
+    const name = inp.value.trim();
+    if (!name) { err.hidden = false; err.textContent = 'un nom, d’abord'; inp.focus(); return; }
+    go.disabled = true;
+    try {
+      const sp = await api(`equipes/${t.id}/espaces`, { method: 'POST', body: { name } });
+      await changeEspace(sp.id);
+    } catch (x) { go.disabled = false; err.hidden = false; err.textContent = x.message; }
+  } }, inp, go, err);
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); wsAdd = null; paintMenu(); wsMenu?.querySelector(`.sr-ws-new[data-team="${t.id}"]`)?.focus(); }
+  });
+  return f;
+}
+// Changer : le portail le retient (le « dernier » de la personne : un nouvel onglet s'y ouvre),
+// l'onglet le prend ; l'outil recharge ses listes (surEspace), sinon la page se recharge
+// — l'adresse garde son #document : un document rouvert dit son espace.
+async function changeEspace(id) {
+  if (id === ESPACE) return closeWsMenu();
+  try { await api('espaces/courant', { method: 'POST', body: { workspace: id } }); } catch (e) { toast(e.message); return; }
+  fixeEspace(id);
+  closeWsMenu();
+  const u = new URL(location.href);
+  u.searchParams.set('e', id);
+  if (espaceCbs.size) {
+    // l'adresse suit (un ?e= resté d'avant l'emporterait au rechargement)
+    history.replaceState(history.state, '', u.href);
+    await session(true);
+    for (const cb of espaceCbs) { try { cb(id); } catch (e) { console.error('surEspace', e); } }
+    DOCK.mod?.reload();
+    jobs.poll(true);
+    toast(`Workspace · ${nomEspace(id)}`);
+    return;
+  }
+  location.replace(u.href);
 }
 
 // `dock: false` : une page d'outil sans le panneau Asset (les pages hors outils, Admin, ne l'ont jamais)
@@ -404,9 +638,16 @@ export function mountHeader(toolId, { sub = '', dock: useDock = true } = {}) {
   const nav = el('nav', { class: 'tools' });
   const hdr = el('header', { class: 'hdr' },
     dockBtn,
-    el('a', { class: 'logo', href: href('') , title: 'le portail' },
+    el('a', { class: 'logo', href: avecEspace(href('')), title: 'le portail' },
       el('span', { class: 'sq' }, el('i')),
       el('span', {}, el('b', {}, 'Nirvalab'))),
+    // la Team et le Workspace de l'onglet (caché tant que le portail ne les a pas dits)
+    el('div', { class: 'sr-ws', id: 'sr-ws', hidden: true },
+      el('button', { class: 'sr-ws-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false',
+        onclick: (e) => openWsMenu(e.currentTarget) },
+      el('span', { class: 'tm' }), el('span', { class: 'sl', 'aria-hidden': 'true' }, '/'), el('span', { class: 'ws' }),
+      el('i', { class: 'cv', 'aria-hidden': 'true', html: '<svg viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5"/></svg>' })),
+      el('span', { class: 'doc', hidden: true })),
     t ? el('span', { class: 'tool-name' }, el('span', { class: 'k' }, t.k), el('b', {}, t.name),
       sub ? el('span', { class: 'lbl' }, sub) : null) : null,
     nav,
@@ -464,10 +705,14 @@ export function mountHeader(toolId, { sub = '', dock: useDock = true } = {}) {
     && x && x.tier === 'studio' && !x.open);
   const askStudio = (me, x) => (e) => { e.preventDefault(); menu.hidden = true; import('./porte.js').then((m) => m.studioDoor(me, x, { closable: true })); };
   const LOCK = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+  // le Workspace oublié avant le rechargement (oublieEspace) : le dire ici
+  const msg = ss.get(ESP_MSG);
+  if (msg) { ss.set(ESP_MSG, null); setTimeout(() => toast(msg, 6000), 400); }
   session().then((me) => {
     document.documentElement.classList.remove('sr-wait');
     if (me && me.auth && me.state !== 'active') return showDoor(me);
     paintMe(me);
+    paintEspace();
     if (studioOff(me, t)) import('./porte.js').then((m) => m.studioDoor(me, t));
     import('./prefs.js').then((m) => m.prefs.ready);   // les préférences de la personne, relues du portail
   });
