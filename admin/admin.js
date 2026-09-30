@@ -16,7 +16,7 @@
 // en file s'en vont), fermer une connexion, arrêter un travail, décharger une
 // instance, démarrer ou arrêter H3, vider la corbeille. Dans les Teams, s'annulent :
 // un rôle, le mode d'un guest (viewer, acteur), ses Workspaces, un rôle de Workspace,
-// renommer, archiver, l'API, l'offre ; ne s'annulent pas : créer une Team, un
+// renommer, archiver, l'API, l'offre, le budget (plafond, crédits, parts) ; ne s'annulent pas : créer une Team, un
 // Workspace, mettre quelqu'un dans une Team (on le retire), un lien (on le retire).
 import { mountHeader, api, el, $, $$, toast, href, fmtDate, stateFr, fmtWait } from '../commun/shell.js';
 import { uaShort } from '../commun/porte.js';
@@ -540,6 +540,61 @@ function inviteBlock(t) {
       el('button', { class: 'tb ghost sm', type: 'button', onclick: () => act(() => post(`equipes/${t.id}/invitations/${i.id}/retirer`), 'lien retiré : il ne s’ouvre plus') }, 'Retirer'))));
 }
 
+// le budget de la Team (étape 8 ; décision 6) : les secondes de GPU du mois, mesurées
+// (conso.jsonl) et réservées par les travaux en cours ; le plafond (vide : illimité), les
+// crédits API (0 : coupée), des parts facultatives par personne et par Workspace — en heures
+// ici, en secondes au serveur (/api/equipes/<t>/budget). Chaque réglage s'annule.
+const fmtS = (s) => {
+  s = Math.max(0, Math.round(s || 0));
+  if (s < 60) return `${s} s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h} h ${String(r).padStart(2, '0')}` : `${h} h`;
+};
+const hoursOf = (s) => (s == null ? '' : String(Math.round((s / 3600) * 100) / 100));
+const secsOf = (v) => (v === '' || v == null ? null : Math.round(Number(v) * 3600));
+const budBar = (spent, cap) => el('span', { class: 'bud-bar' + (spent >= cap ? ' full' : ''), role: 'meter', 'aria-valuemin': '0', 'aria-valuemax': '100',
+  'aria-valuenow': String(cap > 0 ? Math.min(100, Math.round((spent / cap) * 100)) : 100) },
+el('span', { style: `width:${cap > 0 ? Math.min(100, Math.round((spent / cap) * 100)) : 100}%` }));
+const budUse = (r) => `${fmtS(r.gpu_used_s)}${r.gpu_held_s ? ` + ${fmtS(r.gpu_held_s)} réservées` : ''}${r.gpu_cap_s != null ? ` / ${fmtS(r.gpu_cap_s)}` : ''}`;
+function budgetBlock(t) {
+  const b = t.conso;
+  if (!b || !b.total) return null;
+  const T = b.total;
+  const line = el('div', { class: 'row bud-tot' }, el('span', { class: 'lbl' }, `gpu · ${b.month_fr}`), el('span', { class: 'bud-n' }, budUse(T)),
+    T.gpu_cap_s != null ? budBar(T.gpu_used_s + T.gpu_held_s, T.gpu_cap_s) : el('span', { class: 'chip' }, 'sans plafond'),
+    el('span', { class: 'sp' }),
+    el('span', { class: 'chip' + (b.api_open && T.credits_cap ? ' ok' : '') }, el('i'),
+      b.api_open && T.credits_cap ? `api · ${T.credits_used + T.credits_held} / ${T.credits_cap} crédits` : 'api coupée · 0 crédit'));
+  if (!b.manage) {
+    return [el('span', { class: 'lbl' }, 'budget'), line,
+      t.manage && b.manage_why ? el('p', { class: 'why' }, b.manage_why)
+        : el('p', { class: 'why' }, `le plafond et les parts : ${b.unblock} (Admin → Teams)`)];
+  }
+  const set0 = b.settings;
+  const setB = (label, patch, before) => undoable(label, () => post(`equipes/${t.id}/budget`, patch), () => post(`equipes/${t.id}/budget`, before), 'budget enregistré');
+  const num = (label, value, placeholder, step, onset) => el('label', { class: 'qf' }, el('span', { class: 'lbl' }, label),
+    el('input', { class: 'fld', type: 'number', min: 0, step, value, placeholder, onchange: (e) => onset(e.target.value) }));
+  const part = (key, r) => el('div', { class: 'bud-row', 'data-part': r.id },
+    el('span', { class: 'nm-s' }, r.name), el('span', { class: 'lbl' }, budUse(r)),
+    r.gpu_cap_s != null ? budBar(r.gpu_used_s + r.gpu_held_s, r.gpu_cap_s) : el('span'),
+    el('input', { class: 'fld sm', type: 'number', min: 0, step: 0.5, value: hoursOf(r.gpu_cap_s), placeholder: 'sans part',
+      'aria-label': `la part de GPU de ${r.name}, en heures par mois`,
+      onchange: (e) => setB(`part de GPU de ${r.name}`, { [key]: { [r.id]: { gpu_s: secsOf(e.target.value) } } }, { [key]: { [r.id]: { gpu_s: r.gpu_cap_s } } }) }));
+  return [el('span', { class: 'lbl' }, 'budget'), line,
+    el('div', { class: 'qfs' },
+      num('plafond gpu du mois · heures', hoursOf(set0.gpu_s), 'illimité', 0.5, (v) => setB(`plafond GPU de ${t.name}`, { gpu_s: secsOf(v) }, { gpu_s: set0.gpu_s })),
+      num('crédits api du mois', String(set0.api_credits || 0), '0', 1, (v) => setB(`crédits API de ${t.name}`, { api_credits: Math.max(0, Math.round(Number(v) || 0)) }, { api_credits: set0.api_credits || 0 }))),
+    el('p', { class: 'adm-note' }, 'Le budget est à la Team. Chaque calcul réserve son estimation avant de partir ; à la fin, la mesure la remplace ; ',
+      'annulé ou en échec, il rend tout. Plafond vide : illimité. L’API payante reste coupée tant qu’elle n’a pas de crédits (1 crédit = 0,01 €). ',
+      'Une part, par personne ou par Workspace, est facultative (vide : sans part).'),
+    (b.users || []).length ? el('span', { class: 'lbl' }, 'parts · personnes') : null,
+    el('div', { class: 'bud-list' }, ...(b.users || []).map((r) => part('users', r))),
+    (b.spaces || []).length ? el('span', { class: 'lbl' }, 'parts · workspaces') : null,
+    el('div', { class: 'bud-list' }, ...(b.spaces || []).filter((s) => !s.archived).map((r) => part('spaces', r)))];
+}
+
 function teamCard(t) {
   const f = tf(t);
   const canArchive = t.role === 'owner' || isCal();
@@ -575,6 +630,7 @@ function teamCard(t) {
       el('span', { class: 'lbl' }, 'offre'),
       segOf([['apps', 'Apps'], ['studio', 'Studio']], t.plan, (v) => undoable(`${t.name} : offre ${v}`, () => post(`equipes/${t.id}`, { plan: v }),
         () => post(`equipes/${t.id}`, { plan: t.plan })), { label: 'l’offre', why: isCal() ? {} : { apps: 'l’offre : Cal la règle', studio: 'l’offre : Cal la règle' } })) : null,
+    ...[].concat(budgetBlock(t) || []),
     el('span', { class: 'lbl' }, 'workspaces'),
     el('div', { class: 'ws-list' }, ...t.spaces.map((sp) => wsRow(t, sp))),
     t.manage && !t.archived ? el('form', { class: 'row', onsubmit: (e) => {

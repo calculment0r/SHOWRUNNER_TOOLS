@@ -35,7 +35,9 @@ outil n'atteint que son Workspace : dans une requête ou un travail, `get`,
 `readable` et `query` ne rendent que les objets du Workspace courant — une
 séquence de B ne pose pas une image de A, un rendu de B ne lit pas une
 référence de A, par construction. Montrer tous les Workspaces (Asset, étape
-5) passe par `see` et `query(spaces="*")`, qui ne servent qu'à montrer.
+5) passe par `see` et `query(spaces="*")`, qui ne servent qu'à montrer ;
+s'en servir dans un autre Workspace, c'est le rapatrier (`rapatrier` : un objet
+neuf, jamais un lien vivant, plus bas).
 
 Les éléments versionnés (30/09, docs/etudes/apps_studio_elements.md) : un
 élément « vivant » relie une source (un projet ODIO, une séquence, la
@@ -50,6 +52,7 @@ L'identité mondiale `uid` = `sr:<uuid de l'instance>/<id>` (package_export.md
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import shutil
@@ -852,6 +855,173 @@ def restore(item_id: str) -> dict:
         return it
 
 
+# ── rapatrier : copier un objet d'un Workspace dans un autre ─
+# docs/etudes/equipes_espaces.md § 3.2 (étape 5). Un outil n'atteint que son Workspace
+# (`get`) : pour se servir dans B d'un objet de A, on le rapatrie — un objet NEUF dans B,
+# jamais un lien vivant : un autre id, un autre `uid` (package_export.md § 2.6 : même uid =
+# le même objet ; la copie peut diverger), `space: B`, `origin.user` = qui rapatrie,
+# `origin.from = {space: A, item, uid, at}`. Le titre, la recette (prompt, params), les
+# tags, les dimensions suivent ; la lignée (`parents`, l'image d'origine des références)
+# garde ses ids, et `parents_space` dit où chacun est (on ne rapatrie pas la lignée).
+#
+# Les fichiers (décision 8) : `main.*` par un lien dur — le fichier principal n'est jamais
+# réécrit en place (le contrôle d'asset.py le prouve : il passe chaque écriture de la
+# bibliothèque et regarde l'inode) ; un lien dur vit tant qu'un nom le porte, la corbeille
+# ou le vidage d'un côté laisse donc l'autre intact. Tout le reste (vignette, copies
+# d'affichage, références et voix d'un élément, copie de défilement, onde) : une copie
+# pleine — petit, et réécrit en place par certains (make_thumb, montage._sync_item).
+IMPORT_KINDS = ("image", "video", "audio", "midi", "element")
+IMPORT_MAX = 200
+MAIN_RX = re.compile(r"^main\.[a-z0-9]{1,5}$")
+# ce qui ne suit pas : la fiche (réécrite), l'instantané de la source d'une version
+# (server/tools/elements.py : la copie n'est la version de rien dans B)
+IMPORT_SKIP = ("item.json", "source.json")
+# ce que la copie ne garde pas de l'original : son identité mondiale, sa marque de version
+# (elle n'est la version d'aucun élément de B), son partage, son favori (les favoris sont
+# ceux du Workspace), ce que la copie reçoit à neuf
+IMPORT_DROP = ("uid", "version", "shared", "fav", "id", "space", "origin", "created", "updated", "folder", "parents_space")
+
+
+def space_name(sid: str | None) -> str:
+    """« Team / Workspace », pour les phrases qui disent où est un objet."""
+    sp = espaces.space(sid)
+    if not sp:
+        return sid or "?"
+    t = espaces.team(sp.get("team")) or {}
+    return f"{t['name']} / {sp['name']}" if t.get("name") else sp["name"]
+
+
+def check_import(space: str | None) -> None:
+    """Rapatrier DANS ce Workspace : la matrice, `import` (un éditeur, un guest acteur ;
+    un lecteur, un commentateur, un guest viewer : non). PermissionError (403) qui dit
+    pourquoi. Le socle (aucune personne) : oui."""
+    u = auth.current()
+    if u is None:
+        return
+    ok, why = espaces.judge(u, space, "import")
+    if not ok:
+        raise PermissionError(f"rapatrier dans « {space_name(space)} » : {why}")
+
+
+def import_refusal(it: dict, dest: str | None) -> str | None:
+    """Pourquoi cet objet ne se rapatrie pas dans `dest` (une phrase qui mène à ce qui
+    débloque), ou None. Juge la sorte, pas la personne (check_import)."""
+    name = f"« {it.get('title') or it.get('id')} »"
+    if space_of(it) == dest:
+        return f"{name} est déjà dans « {space_name(dest)} » : rien à rapatrier"
+    if is_living(it):
+        return (f"{name} est un élément versionné : le rapatrier (sa version figée, § 3.3 de l'étude) vient avec "
+                f"l'étape 9 — en attendant, rapatrie sa dernière version (sa fiche, « les versions »)")
+    if it.get("kind") not in IMPORT_KINDS:
+        return (f"{name} est une séquence : elle pose d'autres objets de son Workspace — la dupliquer ailleurs viendra "
+                f"avec les documents (§ 3.5) ; en attendant, rapatrie ses plans")
+    return None
+
+
+def _link_or_copy(src: Path, dst: Path) -> None:
+    """Le fichier principal : un lien dur (même disque, ext4) ; sinon une copie pleine
+    (un autre disque, un système qui n'en fait pas) — le résultat est le même pour qui lit."""
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copyfile(src, dst)
+
+
+def _import_one(src: dict, dest: str, folder: str, at: str) -> dict:
+    """Une copie de `src` dans `dest`, fichiers compris, pas encore dans `_items`."""
+    a = space_of(src)
+    kind = src["kind"]
+    iid = new_id(kind)
+    while iid in _items or folder_of(iid).exists():
+        iid = new_id(kind)
+    d = folder_of(iid)
+    d.mkdir(parents=True)
+    sd = folder_of(src["id"])
+    main = src.get("file") if MAIN_RX.fullmatch(src.get("file") or "") else None
+    try:
+        for p in sorted(sd.iterdir()):
+            if p.name in IMPORT_SKIP or p.name.startswith(".") or p.name.endswith(".tmp"):
+                continue
+            if p.is_dir():
+                shutil.copytree(p, d / p.name)
+            elif p.name == main:
+                _link_or_copy(p, d / p.name)
+            elif p.is_file():
+                shutil.copyfile(p, d / p.name)
+        it = json.loads(json.dumps(src))   # une copie profonde : rien de partagé, en mémoire non plus
+        for k in IMPORT_DROP:
+            it.pop(k, None)
+        el = it.get("element") or {}
+        lineage = list(dict.fromkeys([str(x) for x in src.get("parents") or []]
+                                     + [str(r["item"]) for r in (el.get("refs") or []) + (el.get("voices") or [])
+                                        if isinstance(r, dict) and r.get("item")]))
+        before = src.get("parents_space") if isinstance(src.get("parents_space"), dict) else {}
+        where = {}
+        for pid in lineage:
+            p = _items.get(pid)
+            where[pid] = space_of(p) if p is not None else before.get(pid) or a
+        org = {k: v for k, v in (src.get("origin") or {}).items() if k not in ("user", "job", "from")}
+        org.pop("user", None)
+        org = _owned(org)
+        org["from"] = {"space": a, "item": src["id"], "uid": uid_of(src), "at": at}
+        v = src.get("version")
+        if isinstance(v, dict) and v.get("of"):
+            org["from"]["version"] = {"of": v["of"], "n": v.get("n")}
+        it.update(id=iid, space=dest, origin=org, created=at, updated=at, folder=folder, fav=False,
+                  parents=list(src.get("parents") or []))
+        if where:
+            it["parents_space"] = where
+        return it
+    except BaseException:
+        shutil.rmtree(d, ignore_errors=True)
+        raise
+
+
+def rapatrier(ids: list, dest: str, *, folder: str = "") -> list[dict]:
+    """Rapatrie les objets `ids` (vus par la personne, où qu'ils soient : `see`) dans le
+    Workspace `dest`. Tout ou rien : chaque objet est jugé avant d'en copier un seul, et
+    une copie qui échoue défait les précédentes. KeyError : un objet ou le Workspace
+    inconnu (ou invisible) ; PermissionError : on ne peut pas rapatrier dans `dest` ;
+    ValueError : un objet qui ne se rapatrie pas (import_refusal). Rend les copies."""
+    _load()
+    if espaces.space(dest) is None:
+        raise KeyError(dest)
+    check_import(dest)
+    srcs = []
+    for iid in dict.fromkeys(str(i) for i in ids):
+        src = see(iid)
+        if src is None:
+            raise KeyError(iid)
+        why = import_refusal(src, dest)
+        if why:
+            raise ValueError(why)
+        srcs.append(src)
+    at = now()
+    made: list[dict] = []
+    try:
+        for src in srcs:   # hors du verrou : les copies de fichiers ne bloquent pas la bibliothèque
+            made.append(_import_one(src, dest, folder, at))
+        with _lock:
+            for it in made:
+                _items[it["id"]] = it
+                _save(it)
+    except BaseException:
+        with _lock:
+            for it in made:
+                _items.pop(it["id"], None)
+                shutil.rmtree(folder_of(it["id"]), ignore_errors=True)
+        raise
+    return made
+
+
+def copies_of(src: dict, dest: str) -> list[dict]:
+    """Les copies de `src` déjà rapatriées dans `dest` (présentes) : `origin.from.uid`."""
+    _load()
+    u = uid_of(src)
+    with _lock:
+        return [i for i in _items.values() if space_of(i) == dest and ((i.get("origin") or {}).get("from") or {}).get("uid") == u]
+
+
 # ── lire ────────────────────────────────────────────────────
 def get(item_id: str) -> dict | None:
     """L'objet — s'il existe, s'il est du Workspace courant et si la personne qui
@@ -906,6 +1076,7 @@ def public(it: dict) -> dict:
     base = f"library/{it['id']}/"
     out = dict(it)
     out["owner"] = auth.owner_of(it)
+    out["space"] = space_of(it)   # chaque carte dit son Workspace (Asset tous Workspaces, étape 5)
     if it.get("file"):
         out["url"] = base + it["file"]
     out["thumb_url"] = base + it["thumb"] if it.get("thumb") else (out.get("url") if it["kind"] == "image" else None)
@@ -941,7 +1112,7 @@ def public(it: dict) -> dict:
         # une version sait de quel élément elle est la n-ième, et quelle est la dernière :
         # la pastille « vN+1 » de toute page qui la pose, sans requête de plus
         e = _items.get(v["of"])
-        e = e if e is not None and readable(e) else None
+        e = e if e is not None and visible(e) else None   # montrer : la version d'un autre Workspace dit le sien
         h = head_entry(e) if e else None
         mine = next((x for x in (e or {}).get("element", {}).get("versions", []) if x.get("item") == it["id"]), {})
         out["version"] = {"of": v["of"], "n": v.get("n"), "of_title": e.get("title") if e else None, "of_present": bool(e),

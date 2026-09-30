@@ -31,7 +31,14 @@ corbeille tant qu'un document la pose (le garde de library.trash, qui nomme
 les usages) ; publier = le propriétaire de l'élément ou Cal (question 4) ;
 poser un élément dans sa propre descendance est refusé en nommant la chaîne,
 par la page (check-use) et par l'enregistrement du document (check_doc,
-appelé par montage.py et music.py).
+appelé par montage.py, music.py et ideation.py).
+
+Les documents dans un Workspace (equipes_espaces.md § 3.1, étape 6) : chaque
+identifiant qu'un document pose est lu par UNE table, `ID_FIELDS`, et doit être
+du Workspace du document — à l'enregistrement (check_doc, 409 qui dit lequel et
+mène au rapatriement), à chaque opération de co-édition d'une planche, et au
+départ d'un travail lancé d'un document (l'export d'une séquence, le rendu d'une
+planche : check_space).
 """
 
 from __future__ import annotations
@@ -363,9 +370,9 @@ def check_use(eid: str, doc: str) -> dict:
     return {"ok": False, "why": why, "chain": ch}
 
 
-def check_doc(doc: str, items) -> None:
-    """Le garde des enregistrements (montage.r_save, music.save_project) : un document
-    qui poserait un élément de sa propre descendance est refusé (400), la chaîne nommée."""
+def check_loops(doc: str, items) -> None:
+    """Un document qui poserait un élément de sa propre descendance est refusé (400),
+    la chaîne nommée."""
     library._load()
     done = set()
     for item in items:
@@ -377,6 +384,190 @@ def check_doc(doc: str, items) -> None:
         r = check_use(x, doc)
         if not r["ok"]:
             raise HttpError(400, r["why"])
+
+
+# ── ce qu'un document pose : ID_FIELDS, et le Workspace ─────
+# Chaque identifiant qu'un document pose, par sorte de document : UNE table, la seule
+# vérité (docs/etudes/package_export.md § 2.3, equipes_espaces.md § 3.1). La lisent le
+# garde des enregistrements (check_doc : chaque identifiant posé est du Workspace du
+# document), les travaux lancés d'un document (l'export d'une séquence, le rendu d'une
+# planche : check_space), la co-édition d'une planche (ideation_collab._one), et le
+# paquet la lira (exporter la fermeture, renuméroter à l'import) : un champ oublié ici
+# serait oublié partout — le contrôle `closure_gaps` le voit (selftest, et les vraies
+# données). Un chemin : `a.b` une clé, `a[]` chaque élément d'une liste, `a.*` chaque
+# valeur d'un objet, `a.{}` chaque clé d'un objet. Une valeur n'est un identifiant que
+# si elle en a la forme (library.ID_RE, montage.LUT_ID) : le plan d'un calque d'effet
+# (`item: ""`), une case vide, un texte, ne comptent pas. Relevé dans le code le 30/09 :
+#   seq  montage.normalize (plans, leurs effets) ; montage.chain_of (effets de piste, de groupe)
+#   mus  music.validate ; musique/generatif_region.js (prises `gen.takes`, cases « son »
+#        `gen.v`) ; musique/moteur.js (l'échantillonneur : `params.item`) ; musique.js
+#        savePreset (un réglage gardé recopie les `params` du module)
+#   ide  ideation._node (média, nuancier), ideation._card_data (le visage d'une carte),
+#        la carte Générer (`refChoice` : l'élément → la référence choisie)
+#   item library.py (lignée, éléments, versions), elements.publish (`deps`), les recettes
+#        (image.check_generate `refs`, image.check_edit `source`, movie._inputs `inputs`)
+ID_FIELDS = {
+    "seq": ("clips[].item", "clips[].fx[].lut", "tracks[].fx[].lut", "groups[].fx[].lut"),
+    "mus": ("clips[].item", "clips[].gen.takes[].item", "clips[].gen.v.*", "modules[].params.item",
+            "presets[].params.item"),
+    "ide": ("nodes[].item", "nodes[].data.item", "nodes[].refChoice.{}"),
+    "item": ("parents[]", "version.of", "element.refs[].item", "element.voices[].item", "element.versions[].item",
+             "element.versions[].deps[].el", "element.versions[].deps[].item", "params.refs[].item", "params.source",
+             "params.inputs.*[].item"),
+}
+# ce qui, dans un document, a la forme d'un identifiant sans être posé : le sien, celui
+# d'avant (un montage `mon-…` devenu séquence). Le contrôle `closure_gaps` ne juge que les
+# documents (seq, mus, ide) : la ligne `item` n'y est pas encore soumise (la recette d'un
+# export du Montage garde la timeline entière, `params.project` ; le paquet la tranchera)
+SELF_FIELDS = {"seq": ("id", "legacy"), "mus": ("id",), "ide": ("id",), "item": ("id",)}
+LUT_RX = re.compile(r"lut-\d{8}-\d{6}-[0-9a-f]{4}")
+_TOK = re.compile(r"\[\]|\{\}|\*|[^.\[\]{}*]+")
+
+
+def _walk(x, parts: list, path: str):
+    if not parts:
+        yield x, path
+        return
+    p, rest = parts[0], parts[1:]
+    if p == "[]":
+        if isinstance(x, list):
+            for k, v in enumerate(x):
+                yield from _walk(v, rest, f"{path}[{k}]")
+    elif p == "*":
+        if isinstance(x, dict):
+            for k, v in x.items():
+                yield from _walk(v, rest, f"{path}.{k}")
+    elif p == "{}":
+        if isinstance(x, dict):
+            for k in x:
+                yield from _walk(k, rest, f"{path}.{{{k}}}")
+    elif isinstance(x, dict) and p in x:
+        yield from _walk(x[p], rest, f"{path}.{p}" if path else p)
+
+
+def is_id(v) -> bool:
+    return isinstance(v, str) and bool(ITEM_RX.fullmatch(v))
+
+
+def ids_in(kind: str, d: dict) -> list[tuple[str, str]]:
+    """(identifiant, champ) pour chaque identifiant que le document `d` pose, lus par
+    ID_FIELDS (`kind` : seq, mus, ide, item), dans l'ordre, le premier champ de chacun."""
+    out, seen = [], set()
+    for field in ID_FIELDS[kind]:
+        for v, _ in _walk(d, _TOK.findall(field), ""):
+            if is_id(v) and v not in seen:
+                seen.add(v)
+                out.append((v, field))
+    return out
+
+
+def closure_gaps(kind: str, d: dict) -> list[str]:
+    """Le contrôle de la table : chaque valeur qui a la forme d'un identifiant dans `d`
+    et qu'aucun champ d'ID_FIELDS (ni SELF_FIELDS) ne lit — un champ neuf d'un outil
+    qu'on aurait oublié d'y écrire. Rend les chemins ; [] : la table couvre le document."""
+    known = set()
+    for field in ID_FIELDS[kind] + SELF_FIELDS[kind]:
+        for _, path in _walk(d, _TOK.findall(field), ""):
+            known.add(path)
+    out = []
+
+    def scan(x, path):
+        if isinstance(x, dict):
+            for k, v in x.items():
+                if is_id(k) and f"{path}.{{{k}}}" not in known:
+                    out.append(f"{path}.{{{k}}}")
+                scan(v, f"{path}.{k}" if path else k)
+        elif isinstance(x, list):
+            for k, v in enumerate(x):
+                scan(v, f"{path}[{k}]")
+        elif is_id(x) and path not in known:
+            out.append(path)
+    scan(d, "")
+    return out
+
+
+def space_of_id(x: str) -> tuple[str | None, dict | None]:
+    """Le Workspace d'un identifiant posé, et sa fiche : un objet de la bibliothèque (ou
+    de sa corbeille), une LUT. (None, None) : inconnu (un objet disparu : rien à juger)."""
+    if LUT_RX.fullmatch(x or ""):
+        from tools import montage
+        m = montage.lut_meta(x)
+        return (library.space_of(m), m) if m else (None, None)
+    if not is_id(x):
+        return None, None
+    library._load()
+    it = library._items.get(x)
+    if it is None and (library.trash_root() / x / "item.json").is_file():
+        it = library.trashed_meta(x)
+    return (library.space_of(it), it) if it else (None, None)
+
+
+def doc_space(doc: str, d: dict | None = None) -> str | None:
+    """Le Workspace d'un document : celui de son item.json (une séquence), de son
+    fichier (une planche : ideation.board_space), sinon son champ (space_of)."""
+    kind = doc[:3]
+    if kind == "seq":
+        library._load()
+        it = library._items.get(doc)
+        return library.space_of(it) if it else library.space_of(d)
+    if kind == "ide":
+        from tools import ideation
+        return ideation.board_space(doc) or library.space_of(d)
+    return library.space_of(d)
+
+
+def _space_name(sid: str | None, u) -> str | None:
+    """Le nom d'un Workspace, si la personne le voit ; sinon None (on ne nomme pas ce
+    qu'elle ne voit pas)."""
+    if not sid or (u is not None and not auth.can_view(u, sid)):
+        return None
+    return (espaces.space(sid) or {}).get("name") or sid
+
+
+def check_space(doc: str, d: dict, space: str | None = None, only=None) -> None:
+    """Chaque identifiant que le document pose (ID_FIELDS) est de son Workspace : sinon
+    409, qui dit lequel, où, d'où il vient, et mène au rapatriement. Le jugement ne
+    dépend que du document et des objets, jamais de qui enregistre (un travail, la
+    co-édition l'appellent aussi). `only` : ne juger que ces identifiants (les neufs
+    d'une opération de co-édition)."""
+    space = space or doc_space(doc, d)
+    if not space:
+        return
+    kind = doc[:3]
+    bad = []
+    for x, field in ids_in(kind, d):
+        if only is not None and x not in only:
+            continue
+        s, meta = space_of_id(x)
+        if s is not None and s != space:
+            bad.append((x, field, s, meta or {}))
+    if not bad:
+        return
+    x, field, s, meta = bad[0]
+    u = auth.current()
+    where = dict(_refs_in(doc, d)).get(x) if kind in TOOL_OF_DOC else None
+    here = _space_name(space, u) or space
+    there = _space_name(s, u)
+    if LUT_RX.fullmatch(x):
+        what = f"la LUT « {meta.get('title') or x} » ({x})" if there else f"une LUT ({x})"
+        fix = ("importe-la d'abord dans ce Workspace (Montage, LUT : importer le .cube), puis pose-la")
+    else:
+        see = library.see(x) if there else None
+        what = f"« {(see or {}).get('title') or x} » ({x}{' · ' + where if where else ''})" if see else \
+            f"un objet ({x}{' · ' + where if where else ''})"
+        fix = ("rapatrie-le d'abord dans ce Workspace — glisse-le depuis Asset ou le panneau Asset : une copie "
+               "neuve s'y range — puis pose la copie")
+    more = f" ({len(bad) - 1} autre{'s' if len(bad) > 2 else ''} aussi : {', '.join(b[0] for b in bad[1:6])})" if len(bad) > 1 else ""
+    src = f"du Workspace « {there} »" if there else "d'un autre Workspace"
+    raise HttpError(409, f"{what} est {src}, pas de celui de ce document (« {here} ») : {fix}.{more}")
+
+
+def check_doc(doc: str, d: dict, space: str | None = None) -> None:
+    """Le garde des enregistrements (montage._write, music._write, ideation.r_save) :
+    chaque identifiant posé est du Workspace du document (409, check_space) ; aucun
+    élément n'est posé dans sa propre descendance (400, check_loops)."""
+    check_space(doc, d, space)
+    check_loops(doc, [i for i, _ in _refs_in(doc, d)])
 
 
 # ── le journal ──────────────────────────────────────────────
@@ -1027,6 +1218,10 @@ def selftest(call, ok) -> None:
            and mine and all(x.get("space") == "esp-general" for x in mine),
            f"éléments : le journal est par Workspace — Cyril ne voit rien de Général, chaque ligne porte `space` "
            f"({s11} {len(mine)})")
+
+        # ── les documents dans un Workspace (étape 6) ; la garde du calcul avant d'écrire ──
+        _selftest_documents(ok, err, H, same, cal, wav)
+        _selftest_guard_first(ok, err, H, same, G, (sg or {}).get("id", ""))
     finally:
         _auth.set_current(None)
         config.CFG["auth"] = before
@@ -1034,3 +1229,188 @@ def selftest(call, ok) -> None:
             config.CFG.pop("equipes_guests_essai", None)
         else:
             config.CFG["equipes_guests_essai"] = essai
+
+
+def _selftest_documents(ok, err, H, same, cal, wav) -> None:
+    """Étape 6 (equipes_espaces.md § 3.1, § 3.5) : une séquence, un projet ODIO, une
+    planche d'un Workspace B qui posent un objet (ou une LUT) de A : 409 qui le nomme et
+    mène au rapatriement ; du même Workspace : ils passent. La co-édition écarte
+    l'opération ; un travail lancé d'un document lit dans le Workspace du document."""
+    import time
+    from io import BytesIO
+
+    from PIL import Image
+
+    from tools import ideation, montage
+    A = "esp-general"
+    st, sp, _ = H("POST", "/api/equipes/tea-nirvalab/espaces", {"name": "Essai documents"}, cookie=cal, headers=same)
+    B = (sp or {}).get("id") if isinstance(sp, dict) else None
+    ok(st == 200 and bool(B), f"documents : Cal fait un second Workspace ({st} {err(sp)})")
+    if not B:
+        return
+
+    def at(ws, method, path, body=None, raw=None, ctype=None):
+        hd = {**same, "X-SR-Espace": ws, **({"Content-Type": ctype} if ctype else {})}
+        return H(method, path, body, cookie=cal, headers=hd, raw=raw)[:2]
+
+    def png(c) -> bytes:
+        buf = BytesIO()
+        Image.new("RGB", (32, 24), c).save(buf, "PNG")
+        return buf.getvalue()
+    cube = ("LUT_3D_SIZE 2\n" + "".join(f"{r} {g} {b}\n" for b in (0, 1) for g in (0, 1) for r in (0, 1))).encode()
+    _, sa = at(A, "PUT", "/api/library/upload?name=a.wav&title=Son%20de%20A", raw=wav(310, 1), ctype="audio/wav")
+    _, sb = at(B, "PUT", "/api/library/upload?name=b.wav&title=Son%20de%20B", raw=wav(370, 1), ctype="audio/wav")
+    _, ia = at(A, "PUT", "/api/library/upload?name=a.png&title=Image%20de%20A", raw=png((200, 60, 60)), ctype="image/png")
+    _, ib = at(B, "PUT", "/api/library/upload?name=b.png&title=Image%20de%20B", raw=png((60, 60, 200)), ctype="image/png")
+    _, la = at(A, "PUT", "/api/montage/luts?name=a.cube&title=LUT%20de%20A", raw=cube, ctype="text/plain")
+    _, lb = at(B, "PUT", "/api/montage/luts?name=b.cube&title=LUT%20de%20B", raw=cube, ctype="text/plain")
+    got = [(x or {}).get("space") if isinstance(x, dict) else None for x in (sa, sb, ia, ib, la, lb)]
+    ok(got == [A, B, A, B, A, B], f"documents : un son, une image, une LUT dans chaque Workspace ({got})")
+    sa, sb, ia, ib = (x.get("id", "") if isinstance(x, dict) else "" for x in (sa, sb, ia, ib))
+    la, lb = (x.get("id", "") if isinstance(x, dict) else "" for x in (la, lb))
+    ok(ids_in("seq", {"clips": [{"item": sa, "fx": [{"lut": la}]}], "tracks": [{"fx": [{"lut": lb}]}]})
+       == [(sa, "clips[].item"), (la, "clips[].fx[].lut"), (lb, "tracks[].fx[].lut")],
+       "documents : ID_FIELDS lit les plans, leurs LUT et celles des pistes")
+
+    # ── la séquence de B ──
+    st, s = at(B, "POST", "/api/montage/projects", {"name": "Séquence de B"})
+    sid = s.get("id", "") if isinstance(s, dict) else ""
+    st, g = at(B, "GET", f"/api/montage/projects/{sid}")
+    ok(st == 200 and g.get("space") == B, f"documents : une séquence rend son Workspace (space), comme ODIO ({st} {g.get('space')})")
+
+    def clip(item, kind="audio", lut=None):
+        c = {"id": "k1" if kind == "audio" else "k2", "track": "A1" if kind == "audio" else "V1", "item": item, "kind": kind,
+             "title": "plan", "start": 0, "dur": 25, "in": 0, "src_dur": 1.0}
+        if lut:
+            c["fx"] = [{"id": "f1", "type": "lut", "lut": lut, "mix": 1}]
+        return c
+
+    def save_seq(*clips):
+        cur = at(B, "GET", f"/api/montage/projects/{sid}")[1]
+        return at(B, "POST", f"/api/montage/projects/{sid}", {**cur, "clips": list(clips), "base_rev": cur.get("rev")})
+    s1, d1 = save_seq(clip(sa))
+    s2, d2 = save_seq(clip(ib, "image", la))
+    s3, d3 = save_seq(clip(sb), clip(ib, "image", lb))
+    ok(s1 == 409 and sa in err(d1) and "Son de A" in err(d1) and "Essai documents" in err(d1) and "rapatrie" in err(d1),
+       f"documents : une séquence de B qui pose un son de A : 409 qui le nomme et mène au rapatriement ({s1} {err(d1)})")
+    ok(s2 == 409 and la in err(d2) and "LUT" in err(d2), f"documents : … une LUT de A : 409 ({s2} {err(d2)})")
+    ok(s3 == 200, f"documents : une séquence de B qui pose un son, une image, une LUT de B : passe ({s3} {err(d3)})")
+    st, dup = at(B, "POST", f"/api/montage/projects/{sid}/duplicate", {})
+    ok(st == 200 and library.space_of(library._items.get(dup.get("id", ""))) == B,
+       f"documents : dupliquer une séquence de B : la copie est dans B ({st} {err(dup)})")
+
+    # un travail lancé d'un document : l'export lit dans le Workspace de la séquence ; une timeline
+    # d'avant ce garde, écrite hors de lui (une LUT de A), fait échouer l'export en le disant
+    f = library.folder_of(sid) / "sequence.json"
+    raw = json.loads(f.read_text(encoding="utf-8"))
+    raw["clips"] = [clip(ib, "image", la)]
+    f.write_text(json.dumps(montage.normalize(raw), ensure_ascii=False), encoding="utf-8")
+    st, j = at(B, "POST", "/api/jobs", {"kind": "montage.export", "params": {"project": sid, "draft": True}, "title": "essai"})
+    for _ in range(150):
+        if not isinstance(j, dict) or j.get("state") in ("done", "error", "cancelled") or "id" not in j:
+            break
+        time.sleep(0.2)
+        j = at(B, "GET", f"/api/jobs/{j['id']}")[1]
+    ok(st == 200 and j.get("space") == B and j.get("state") == "error" and la in str(j.get("message") or j.get("error") or ""),
+       f"documents : l'export d'une séquence de B est de B, et refuse une LUT de A en la nommant "
+       f"({st} {j.get('space')} {j.get('state')} {str(j.get('message') or j.get('error'))[:160]})")
+    f.write_text(json.dumps(montage.normalize({**raw, "clips": [clip(sb)]}), ensure_ascii=False), encoding="utf-8")
+
+    # ── le projet ODIO de B ──
+    st, p = at(B, "POST", "/api/music/projects", {"name": "Projet de B", "template": "vide"})
+    pid = p.get("id", "") if isinstance(p, dict) else ""
+
+    def odio(item=None, preset=None):
+        q = at(B, "GET", f"/api/music/projects/{pid}")[1]
+        q["tracks"] = [{"id": "t1", "name": "Son", "kind": "audio", "color": "or", "mute": False, "solo": False,
+                        "src": "m1", "strip": "m2"}]
+        q["modules"] = [m for m in q["modules"] if m["type"] == "master"] + [
+            {"id": "m1", "type": "player", "track": "t1", "x": 0, "y": 0, "on": True, "params": {}},
+            {"id": "m2", "type": "strip", "track": "t1", "x": 200, "y": 0, "on": True, "params": {}}]
+        q["cables"] = [{"a": "m1", "b": "m2"}, {"a": "m2", "b": "m0"}]
+        q["clips"] = [{"id": "c1", "track": "t1", "start": 0, "len": 4, "item": item, "off": 0}] if item else []
+        if preset:
+            q["presets"] = [{"id": "r1", "name": "Mon son", "type": "sampler", "params": {"item": preset}}]
+        return at(B, "POST", f"/api/music/projects/{pid}", q)
+    s1, d1 = odio(sa)
+    s2, d2 = odio(sb, preset=sa)
+    s3, d3 = odio(sb, preset=sb)
+    ok(s1 == 409 and sa in err(d1) and "rapatrie" in err(d1), f"documents : un projet ODIO de B qui pose un son de A : 409 ({s1} {err(d1)})")
+    ok(s2 == 409 and sa in err(d2), f"documents : … un réglage gardé de l'échantillonneur qui lit un son de A : 409 ({s2} {err(d2)})")
+    ok(s3 == 200, f"documents : un projet ODIO de B qui pose un son de B : passe ({s3} {err(d3)})")
+
+    # ── la planche de B ──
+    st, b = at(B, "POST", "/api/ideation/boards", {"name": "Planche de B"})
+    bid = b.get("id", "") if isinstance(b, dict) else ""
+    media = lambda it, nid="m1": {"id": nid, "type": "media", "item": it, "kind": "image", "x": 0, "y": 0, "w": 120, "h": 80}  # noqa: E731
+    card = {"id": "c1", "type": "card", "kind": "person", "x": 200, "y": 0, "w": 240, "h": 140, "text": "Qui",
+            "data": {"who": "", "role": "Responsable", "item": ia}}
+
+    def save_board(nodes):
+        cur = at(B, "GET", f"/api/ideation/boards/{bid}")[1]
+        return at(B, "POST", f"/api/ideation/boards/{bid}", {"name": cur.get("name"), "v": ideation.VERSION, "nodes": nodes,
+                                                              "links": [], "base_rev": cur.get("rev")})
+    s1, d1 = save_board([media(ia)])
+    s2, d2 = save_board([media(ib), card])
+    s3, d3 = save_board([media(ib)])
+    g = at(B, "GET", f"/api/ideation/boards/{bid}")[1]
+    ok(s1 == 409 and ia in err(d1) and "rapatrie" in err(d1), f"documents : une planche de B qui pose une image de A : 409 ({s1} {err(d1)})")
+    ok(s2 == 409 and ia in err(d2), f"documents : … le visage d'une carte, une image de A : 409 ({s2} {err(d2)})")
+    ok(s3 == 200 and g.get("space") == B, f"documents : une planche de B qui pose une image de B : passe, et rend son Workspace "
+                                          f"({s3} {err(d3)} {g.get('space')})")
+    # la co-édition : l'opération qui pose un objet de A est écartée, avec la phrase ; le reste du lot passe
+    st, r = at(B, "POST", f"/api/ideation/collab/{bid}/ops", {"sid": "essai-documents", "n": 1, "ops": [
+        {"o": "add", "t": "n", "v": media(ia, "m2")}, {"o": "add", "t": "n", "v": media(ib, "m3")},
+        {"o": "set", "t": "n", "id": "m1", "k": "item", "v": ia}]})
+    g = at(B, "GET", f"/api/ideation/boards/{bid}")[1]
+    items = {n["id"]: n.get("item") for n in g.get("nodes", [])}
+    whys = [x.get("why", "") for x in (r or {}).get("drop", [])] if isinstance(r, dict) else []
+    ok(st == 200 and [x.get("i") for x in r.get("drop", [])] == [0, 2] and all(ia in w and "rapatrie" in w for w in whys)
+       and items == {"m1": ib, "m3": ib}, f"documents : la co-édition écarte l'opération qui pose un objet de A, la phrase "
+                                         f"dite à qui l'envoie ; le reste passe ({st} {whys} {items})")
+    # le rendu de la planche : un travail de B, qui range son image dans B
+    st, j = at(B, "POST", f"/api/ideation/boards/{bid}/export", {})
+    for _ in range(150):
+        if not isinstance(j, dict) or j.get("state") in ("done", "error", "cancelled") or "id" not in j:
+            break
+        time.sleep(0.2)
+        j = at(B, "GET", f"/api/jobs/{j['id']}")[1]
+    out = (j.get("items") or [{}])[0] if isinstance(j, dict) else {}
+    ok(st == 200 and j.get("space") == B and j.get("state") == "done" and out.get("space") == B,
+       f"documents : le rendu d'une planche de B est un travail de B, son image dans B ({st} {j.get('space')} "
+       f"{j.get('state')} {out.get('space')} {j.get('message')})")
+
+    # ── la table couvre ce que les outils écrivent : aucun identifiant hors d'ID_FIELDS ──
+    gaps = []
+    for doc, path in ((sid, library.folder_of(sid) / "sequence.json"), (pid, config.data_dir() / "musique" / f"{pid}.json"),
+                      (bid, config.data_dir() / "ideation" / f"{bid}.json")):
+        d = _read_json(path) or {}
+        gaps += [f"{doc}:{x}" for x in closure_gaps(doc[:3], d)]
+    ok(not gaps, f"documents : chaque identifiant des documents de l'essai est lu par ID_FIELDS ({gaps})")
+    ok(closure_gaps("ide", {"nodes": [{"item": ia, "extra": {"k": ib}}]}) == ["nodes[0].extra.k"],
+       "documents : le contrôle de la table voit un identifiant posé hors d'ID_FIELDS")
+
+
+def _selftest_guard_first(ok, err, H, same, G, gitem: str) -> None:
+    """La garde du calcul avant d'écrire : un guest refusé ne laisse ni masque
+    (image.api_edit), ni transcription « en file » (transcrire.api_run)."""
+    import base64
+    from io import BytesIO
+
+    from PIL import Image
+
+    from tools import image
+    buf = BytesIO()
+    Image.new("L", (16, 16), 255).save(buf, "PNG")
+    durl = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    before = sorted(p.name for p in image.masks_dir().glob("msk-*.png"))
+    st, d, _ = H("POST", "/api/image/edit", {"source": gitem, "tool": "instruct", "model": "qwen21", "prompt": "x", "mask": durl},
+                 cookie=G, headers=same)
+    after = sorted(p.name for p in image.masks_dir().glob("msk-*.png"))
+    ok(st == 403 and before == after, f"garde : un guest refusé par l'édition d'image ne laisse aucun masque ({st} {err(d)} "
+                                      f"{len(after) - len(before)})")
+    tdir = config.data_dir() / "transcrire"
+    before = sorted(p.name for p in tdir.glob("trn-*.json")) if tdir.is_dir() else []
+    st, d, _ = H("POST", "/api/transcrire/run", {"item": gitem}, cookie=G, headers=same)
+    after = sorted(p.name for p in tdir.glob("trn-*.json")) if tdir.is_dir() else []
+    ok(st == 403 and before == after, f"garde : un guest refusé par Transcrire ne laisse aucun document ({st} {err(d)})")

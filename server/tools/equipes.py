@@ -19,13 +19,26 @@ Team (pas seulement Cal) y règle la sienne ; chaque route juge qui gère quoi.
     POST /api/espaces/<e> {name, default_role, archived}
     POST /api/espaces/<e>/membres/<id> {role}            le rôle d'un membre dans ce Workspace ; un guest : « guest »
                                                          (dedans) ou null (dehors)
+    POST /api/espaces/<e>/rapatrier {items, folder?}     rapatrier des objets d'autres Workspaces dans <e> (étape 5,
+                                                         § 3.2) : une copie neuve chacun (core/library.py, rapatrier) ;
+                                                         rend {items: les copies, dans l'ordre, earlier: combien
+                                                         de copies de chacun <e> avait déjà} ; une LUT du Montage
+                                                         (`lut-…`) aussi : son .cube copié, une LUT neuve (`luts`)
     GET  /api/auth/equipe/<jeton>                        ce que dit un lien (sans session)
     POST /api/auth/equipe/<jeton>                        l'ouvrir : une session qui attend (pseudo neuf) passe
+
+  Le budget (étape 8 ; la réservation et conso.jsonl : core/jobs.py) :
+    GET  /api/budget                                     la consommation du mois de la Team du Workspace
+                                                         courant (l'accueil) ; un guest : rien (il ne calcule pas)
+    GET  /api/equipes/<t>/budget                         la même, d'une Team ; qui gère : par personne, par Workspace
+    POST /api/equipes/<t>/budget {gpu_s, api_credits, users: {uid: {gpu_s, api_credits} | null},
+                                  spaces: {sid: …}}      le régler : le propriétaire, un admin de la Team, ou Cal
+                                                         (« Chez moi » : Cal) ; gpu_s vide = illimité
 """
 
 from __future__ import annotations
 
-from core import auth, espaces
+from core import auth, espaces, jobs
 from core.http import HttpError
 
 
@@ -39,7 +52,11 @@ def _who(req) -> dict:
 def r_list(req):
     u = _who(req)
     every = req.q("toutes") in ("1", "true") and auth.is_admin(u)
-    return {"teams": espaces.teams_of(u, detail=True, everyone=every), "workspace": req.workspace,
+    teams = espaces.teams_of(u, detail=True, everyone=every)
+    for t in teams:   # le budget du mois (étape 8) : ses membres le voient, qui gère le règle ; un guest, rien
+        if t.get("manage") or t.get("role") in ("owner", "admin", "member"):
+            t["conso"] = _budget_out(u, t["id"])
+    return {"teams": teams, "workspace": req.workspace,
             "roles": {"team": espaces.TEAM_FR, "space": espaces.SPACE_FR, "guest": espaces.GUEST_FR},
             "hours": list(espaces.HOURS), "can_create": auth.is_admin(u) or (auth.has_studio(u) and espaces._eligible(u))}
 
@@ -97,6 +114,90 @@ def r_space_member(req, sid, uid):
     return espaces.set_space_member(_who(req), sid, uid, d["role"])
 
 
+def r_rapatrier(req, sid):
+    """Rapatrier : lire l'objet où il est (le voir : library.see), créer dans <sid> (la
+    matrice, `import`). Tout ou rien ; jamais un lien vivant (core/library.py)."""
+    from core import library
+    u = _who(req)
+    d = req.json()
+    ids = d.get("items")
+    if not isinstance(ids, list) or not ids or len(ids) > library.IMPORT_MAX or not all(isinstance(i, str) for i in ids):
+        raise HttpError(400, f"items : la liste des objets à rapatrier ({library.IMPORT_MAX} au plus)")
+    if d.get("avec_source"):
+        raise HttpError(409, "rapatrier avec sa source (un élément versionné et son document) vient avec l'étape 9 : "
+                             "pour l'instant, la copie seule")
+    folder = d.get("folder") or ""
+    if not isinstance(folder, str) or len(folder) > 60 or "/" in folder:
+        raise HttpError(400, "folder : un nom de dossier (60 signes, sans « / »)")
+    folder = " ".join(folder.split())
+    if not espaces.can_view(u, sid):
+        raise HttpError(404, f"Workspace {sid} : inconnu, ou pas pour toi")
+    lut_ids = [i for i in dict.fromkeys(ids) if i.startswith("lut-")]
+    ids = [i for i in dict.fromkeys(ids) if not i.startswith("lut-")]
+    library.check_import(sid)
+    luts = _luts_to_import(lut_ids, sid)   # jugées avant toute copie : tout ou rien
+    earlier = {}
+    for i in ids:
+        src = library.see(i)
+        if src is not None:
+            earlier[i] = len(library.copies_of(src, sid))
+    try:
+        made = library.rapatrier(ids, sid, folder=folder) if ids else []
+    except KeyError as e:
+        raise HttpError(404, f"introuvable : {str(e).strip(chr(39))}") from e
+    except ValueError as e:
+        raise HttpError(409, str(e)) from e
+    made_luts = [_import_lut(m, sid) for m in luts]
+    auth.journal("asset : rapatrier", space=sid, items=[{"from": ((x.get("origin") or {}).get("from") or {}).get("item"),
+                                                          "to": x["id"]} for x in made]
+                 + [{"from": m["from"]["item"], "to": m["id"]} for m in made_luts])
+    from tools import montage
+    return {"items": [library.public(x) for x in made], "luts": [montage._lut_public(m) for m in made_luts],
+            "space": sid, "space_name": library.space_name(sid), "earlier": sum(1 for v in earlier.values() if v)}
+
+
+# Une LUT du Montage (server/tools/montage.py : `<data>/luts/<id>.cube` et `<id>.json`, avec
+# `owner` et `space`) se rapatrie comme un objet : une LUT neuve dans B (un autre id), son
+# .cube copié (quelques centaines de Ko, jamais réécrit ; une copie pleine suffit), `from`
+# dit d'où elle vient ; l'original ne bouge pas. Les vignettes (`mini/`) se refont à la demande.
+def _luts_to_import(lids: list[str], sid: str) -> list[dict]:
+    from core import library
+    from tools import montage
+    out = []
+    for lid in lids:
+        m = montage.lut_meta(lid)
+        if not m or not (montage._luts_dir() / f"{lid}.cube").exists() or not library.visible(m):
+            raise HttpError(404, f"introuvable : {lid}")
+        if library.space_of(m) == sid:
+            raise HttpError(409, f"la LUT « {m.get('title') or lid} » est déjà dans « {library.space_name(sid)} » : rien à rapatrier")
+        out.append(m)
+    return out
+
+
+def _import_lut(m: dict, sid: str) -> dict:
+    import json
+    import secrets
+    import shutil
+    import time
+
+    from core import library
+    from tools import montage
+    d = montage._luts_dir()
+    while True:
+        lid = f"lut-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
+        if not (d / f"{lid}.json").exists():
+            break
+    shutil.copyfile(d / f"{m['id']}.cube", d / f"{lid}.cube")
+    at = library.now()
+    meta = {**{k: v for k, v in m.items() if k not in ("id", "space", "owner", "created", "fav", "from")},
+            "id": lid, "created": at, "fav": 0, "owner": auth.current_id(), "space": sid,
+            "from": {"space": library.space_of(m), "item": m["id"], "at": at}}
+    tmp = d / f"{lid}.json.tmp"
+    tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(d / f"{lid}.json")
+    return meta
+
+
 def r_invite(req, tid):
     d = req.json()
     return espaces.create_invite(_who(req), tid, str(d.get("role") or "member"), d.get("guest"), d.get("spaces"),
@@ -122,7 +223,58 @@ def r_redeem(req, tok):
     return espaces.redeem(u, tok)
 
 
+# ── le budget ───────────────────────────────────────────────
+GUEST_BUDGET_WHY = "guest : tu ne lances pas de calcul — la consommation de la Team est à ses membres"
+
+
+def _budget_out(u, tid: str, space: str | None = None) -> dict:
+    manage = espaces.can_manage(u, tid)
+    out = jobs.budget_view(tid, u, space, detail=manage)
+    t = espaces.team(tid) or {}
+    out["manage"] = manage and (not t.get("personal") or auth.is_admin(u))
+    if manage and not out["manage"]:
+        out["manage_why"] = "le budget de « Chez moi » : Cal le règle"
+    return out
+
+
+def _member_or_404(u, tid: str) -> None:
+    """Le budget d'une Team : ses membres (pas ses guests) et qui la gère ; les autres : 404."""
+    role = espaces.team_role(u, tid)
+    if espaces.team(tid) is None or not (espaces.can_manage(u, tid) or role in ("owner", "admin", "member")):
+        if role == "guest":
+            raise HttpError(403, GUEST_BUDGET_WHY)
+        raise HttpError(404, f"Team inconnue : {tid}")
+
+
+def r_budget_here(req):
+    u = _who(req)
+    sp = getattr(req, "workspace", None) or auth.current_space()
+    tid = espaces.team_of_space(sp)
+    if not tid:
+        return {"team": None, "why": "aucun Workspace : rien à compter"}
+    if espaces.team_role(u, tid) == "guest" and not auth.is_admin(u):
+        return {"team": tid, "hidden": True, "why": GUEST_BUDGET_WHY}
+    _member_or_404(u, tid)
+    return _budget_out(u, tid, sp)
+
+
+def r_budget(req, tid):
+    u = _who(req)
+    _member_or_404(u, tid)
+    return _budget_out(u, tid)
+
+
+def r_budget_set(req, tid):
+    u = _who(req)
+    d = req.json()
+    espaces.set_budget(u, tid, {k: d[k] for k in ("gpu_s", "api_credits", "users", "spaces") if k in d})
+    return _budget_out(u, tid)
+
+
 def register(app) -> None:
+    app.route("GET", "/api/budget", r_budget_here)
+    app.route("GET", "/api/equipes/{tid}/budget", r_budget)
+    app.route("POST", "/api/equipes/{tid}/budget", r_budget_set)
     app.route("GET", "/api/equipes", r_list)
     app.route("POST", "/api/equipes", r_create)
     app.route("GET", "/api/equipes/{tid}", r_team)
@@ -136,6 +288,7 @@ def register(app) -> None:
     app.route("POST", "/api/espaces/courant", r_current)   # avant /api/espaces/{sid} : le premier motif gagne
     app.route("POST", "/api/espaces/{sid}", r_space_set)
     app.route("POST", "/api/espaces/{sid}/membres/{uid}", r_space_member)
+    app.route("POST", "/api/espaces/{sid}/rapatrier", r_rapatrier)
     app.route("GET", "/api/auth/equipe/{tok}", r_invite_info)
     app.route("POST", "/api/auth/equipe/{tok}", r_redeem)
 
@@ -194,6 +347,7 @@ def selftest(call, ok) -> None:
         auth._hits.clear()
     try:
         _http(ok, H, same)
+        _budget(ok, H, same)
         _migration(ok, tempfile, shutil, json, hashlib, Path)
     finally:
         config.CFG["auth"] = before["auth"]
@@ -406,6 +560,274 @@ def _http(ok, H, same) -> None:
     s, d, _ = P(f"/api/equipes/{tid}/membres/cal/retirer")
     ok(s == 409, f"équipes : le propriétaire ne part pas ({s})")
     ok(any(e["event"] == "team : rôle" for e in auth.journal_tail(300)), "équipes : les gestes vont au journal")
+
+
+def _budget(ok, H, same) -> None:
+    """Étape 8 : la réservation dans jobs.submit, la mesure, ce qui rend, le plafond (429),
+    les parts, Nirvalab illimité, l'API coupée ; conso.jsonl, la seule vérité."""
+    import json
+    import threading
+    import time
+
+    from core import config
+    from core.http import HttpError
+
+    err = lambda d: d.get("error", "") if isinstance(d, dict) else str(d)[:80]   # noqa: E731
+    _, _, adm = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
+    P = lambda path, body=None, tok=adm, hd=None: H("POST", path, body if body is not None else {}, cookie=tok,   # noqa: E731
+                                                     headers={**same, **(hd or {})})
+    G = lambda path, tok=adm, hd=None: H("GET", path, cookie=tok, headers=hd or {})   # noqa: E731
+    cal = auth.user("cal")
+
+    s, t, _ = P("/api/equipes", {"name": "Budget Essai"})
+    tid, s1 = t["id"], t["spaces"][0]["id"]
+    s2 = P(f"/api/equipes/{tid}/espaces", {"name": "Client B"})[1]["id"]
+    P(f"/api/equipes/{tid}/membres", {"pseudo": "Bea Essai", "role": "member"})
+    bea = auth.user("bea-essai")
+    _, _, B = H("POST", "/api/auth/enter", {"name": "Bea Essai"}, headers=same)
+
+    gates: dict[str, threading.Event] = {}
+
+    def slow(ctx):   # attend sa barrière (annulable), puis dure `s` secondes
+        g = gates.setdefault(ctx.params.get("g", ""), threading.Event())
+        while not g.is_set():
+            ctx.check()
+            time.sleep(0.02)
+        time.sleep(float(ctx.params.get("s", 0)))
+
+    def boom(ctx):
+        raise RuntimeError("panne voulue")
+
+    jobs.register("budget.essai", slow, lane="cpu", cost="gpu", direct=True)
+    jobs.register("budget.panne", boom, lane="cpu", cost="gpu")
+    jobs.register("budget.api", slow, lane="cpu", cost="api")
+    jobs.register("budget.api_prix", slow, lane="cpu", cost="api", price=12)
+
+    def est(kind: str, secs: float) -> None:   # l'estimation : la médiane des mesures de la sorte
+        for k in [k for k in jobs._dur if k == kind or k.startswith(kind + "|")]:
+            del jobs._dur[k]
+        jobs._dur[kind] = [float(secs)]
+
+    def sub(kind, who, space, secs=60.0, **params):
+        est(kind, secs)
+        auth.set_current(who)
+        auth.set_current_space(space)
+        try:
+            return jobs.submit(kind, params, title="budget", tool="check")
+        except HttpError as e:
+            return e
+        finally:
+            auth.set_current(None)
+            auth.set_current_space(None)
+
+    def wait(j, states=("done", "cancelled", "error"), n=250):
+        for _ in range(n):
+            if j["state"] in states:
+                return True
+            time.sleep(0.02)
+        return False
+
+    def view(space=None, who=None):
+        return jobs.budget_view(tid, who, space, detail=True)
+
+    def lines(jid):
+        f = config.data_dir() / "conso.jsonl"
+        return [r for r in (json.loads(x) for x in f.read_text(encoding="utf-8").splitlines()) if r.get("job") == jid]
+
+    started = []
+    try:
+        # Nirvalab : illimité, rien ne change — une estimation de 115 jours passe
+        nv = jobs.budget_view("tea-nirvalab")
+        ok(nv["total"]["gpu_cap_s"] is None and espaces.budget_of("tea-nirvalab")["gpu_s"] is None,
+           f"budget : Nirvalab sans plafond GPU ({nv['total']})")
+        j = sub("budget.essai", cal, "esp-general", 1e7, g="nv")
+        started.append(j)
+        ok(isinstance(j, dict) and j["budget"]["team"] == "tea-nirvalab" and j["budget"]["gpu_s"] == 1e7,
+           f"budget : Nirvalab illimité, 115 jours de GPU se réservent ({getattr(j, 'message', '')})")
+        jobs.cancel(j["id"])
+        ok(wait(j) and jobs.budget_view("tea-nirvalab")["total"]["gpu_held_s"] == 0, "budget : … annulé, plus rien de réservé")
+
+        # le réglage : l'admin de la Team (ici Cal) ; un membre non ; des valeurs jugées
+        s, d, _ = P(f"/api/equipes/{tid}/budget", {"gpu_s": 300})
+        ok(s == 200 and d["total"]["gpu_cap_s"] == 300, f"budget : Cal pose un plafond de 300 s ({s} {err(d)})")
+        s, d, _ = P(f"/api/equipes/{tid}/budget", {"gpu_s": 1e9}, tok=B)
+        ok(s == 403 and "admin" in err(d), f"budget : un membre ne le règle pas ({s} {err(d)[:60]})")
+        s, d, _ = P(f"/api/equipes/{tid}/budget", {"gpu_s": -5})
+        ok(s == 400, f"budget : un plafond négatif est refusé ({s})")
+        s, d, _ = P(f"/api/equipes/{tid}/budget", {"api_credits": None})
+        ok(s == 400, f"budget : des crédits API vides sont refusés (0 : coupée) ({s})")
+        s, d, _ = P("/api/equipes/tea-perso-bea-essai/budget", {"gpu_s": 99999}, tok=B)
+        ok(s == 403 and "Cal" in err(d), f"budget : « Chez moi » : Cal seul ({s} {err(d)[:60]})")
+
+        # la réservation, puis la mesure
+        j = sub("budget.essai", bea, s1, 60, g="m", s=0.3)
+        started.append(j)
+        v = view()
+        ok(isinstance(j, dict) and v["total"]["gpu_held_s"] == 60 and v["total"]["gpu_used_s"] == 0,
+           f"budget : submit réserve l'estimation (60 s) ({v['total']})")
+        gates.setdefault("m", threading.Event()).set()
+        ok(wait(j) and j["state"] == "done", f"budget : le travail finit ({j['state']})")
+        v = view()
+        used = v["total"]["gpu_used_s"]
+        ok(0.25 <= used < 20 and v["total"]["gpu_held_s"] == 0,
+           f"budget : la fin remplace la réservation par la mesure ({used} s mesurées, 60 réservées)")
+        me = next(x for x in v["users"] if x["id"] == "bea-essai")
+        sp = next(x for x in v["spaces"] if x["id"] == s1)
+        ok(me["gpu_used_s"] == used and sp["gpu_used_s"] == used, "budget : compté à la personne et au Workspace")
+        ln = lines(j["id"])
+        ok([r["etat"] for r in ln] == ["réservé", "done"] and ln[1]["est_s"] == 60 and ln[1]["mesure_s"] == used
+           and ln[1]["team"] == tid and ln[1]["qui"] == "bea-essai" and ln[1]["workspace"] == s1 and ln[1]["cout"] == "gpu",
+           f"budget : conso.jsonl — qui, Workspace, Team, sorte, coût, estimé / mesuré, état ({ln})")
+
+        # annulé (en cours, puis en file) : la réservation est rendue, rien n'est compté
+        a = sub("budget.essai", bea, s1, 60, g="a")
+        started.append(a)
+        wait(a, ("running",))
+        q = sub("budget.essai", bea, s1, 60, g="q")
+        started.append(q)
+        ok(view()["total"]["gpu_held_s"] == 120, f"budget : deux réservations ({view()['total']['gpu_held_s']})")
+        jobs.cancel(q["id"])
+        ok(q["state"] == "cancelled" and view()["total"]["gpu_held_s"] == 60, "budget : annulé en file, rendu")
+        jobs.cancel(a["id"])
+        ok(wait(a) and a["state"] == "cancelled" and view()["total"]["gpu_held_s"] == 0 and view()["total"]["gpu_used_s"] == used,
+           f"budget : annulé en cours, rendu, rien de compté ({a['state']})")
+        ok(lines(a["id"])[-1]["etat"] == "cancelled" and lines(a["id"])[-1]["gpu_s_compte"] == 0, "budget : … et le journal le dit")
+
+        # en échec : rendu
+        e = sub("budget.panne", bea, s1, 60)
+        started.append(e)
+        ok(wait(e) and e["state"] == "error" and view()["total"]["gpu_held_s"] == 0 and view()["total"]["gpu_used_s"] == used,
+           f"budget : un travail en échec rend sa réservation ({e['state']})")
+
+        # interrompu (le portail redémarre : jobs._load) : rendu
+        a = sub("budget.essai", bea, s1, 60, g="i")
+        started.append(a)
+        wait(a, ("running",))
+        i2 = sub("budget.essai", bea, s1, 60, g="i2")
+        with jobs._cv:
+            i2["state"] = "interrupted"
+            jobs._settle(i2)
+        ok(view()["total"]["gpu_held_s"] == 60 and lines(i2["id"])[-1]["etat"] == "interrupted",
+           "budget : un travail interrompu rend sa réservation")
+        gates.setdefault("i", threading.Event()).set()
+        wait(a)
+        used = view()["total"]["gpu_used_s"]
+
+        # le plafond : 300 s ; quelques secondes comptées ; 200 de plus passent, 200 encore non
+        b1 = sub("budget.essai", bea, s1, 200, g="b1")
+        started.append(b1)
+        b2 = sub("budget.essai", bea, s1, 200, g="b2")
+        msg = getattr(b2, "message", "")
+        ok(isinstance(b2, HttpError) and b2.status == 429 and "plafond GPU" in msg and "Budget Essai" in msg
+           and "admin de la Team (Cal)" in msg and "Admin → Teams" in msg,
+           f"budget : plafond atteint → 429 qui le dit et nomme qui débloque ({getattr(b2, 'status', '')} {msg})")
+        est("budget.essai", 200)
+        s, d, _ = P("/api/jobs", {"kind": "budget.essai", "params": {"g": "http"}}, tok=B, hd={"X-SR-Espace": s1})
+        ok(s == 429 and "plafond GPU" in err(d), f"budget : … par la route aussi ({s} {err(d)[:70]})")
+        n_before = sum(1 for x in jobs._jobs.values() if x["state"] in jobs.ACTIVE)
+        jobs.cancel(b1["id"])
+        wait(b1)
+        r = None
+        auth.set_current(bea)
+        try:
+            est("budget.essai", 200)
+            r = jobs.retry(b1["id"])
+            started.append(r)
+            r2 = None
+            try:
+                jobs.retry(b1["id"])
+            except HttpError as x:
+                r2 = x
+        finally:
+            auth.set_current(None)
+        ok(r["budget"]["gpu_s"] == 200 and r["space"] == s1 and view()["total"]["gpu_held_s"] == 200,
+           f"budget : retry réserve à nouveau ({view()['total']['gpu_held_s']})")
+        ok(r2 is not None and r2.status == 429, f"budget : … et un second retry bute sur le plafond ({getattr(r2, 'status', '')})")
+        ok(sum(1 for x in jobs._jobs.values() if x["state"] in jobs.ACTIVE) == n_before,
+           "budget : un 429 ne laisse rien en file")
+        jobs.cancel(r["id"])
+        wait(r)
+
+        # les parts : par personne, par Workspace
+        s, d, _ = P(f"/api/equipes/{tid}/budget", {"users": {"bea-essai": {"gpu_s": 100}}, "spaces": {s2: {"gpu_s": 50}}})
+        ok(s == 200 and d["settings"]["users"]["bea-essai"]["gpu_s"] == 100, f"budget : des parts posées ({s} {err(d)})")
+        x = sub("budget.essai", bea, s1, 150, g="p")
+        ok(isinstance(x, HttpError) and x.status == 429 and "ta part de GPU" in x.message,
+           f"budget : la part de la personne → 429 ({getattr(x, 'message', x)})")
+        y = sub("budget.essai", cal, s1, 150, g="p")
+        started.append(y)
+        ok(isinstance(y, dict), f"budget : … Cal, sans part, passe dans le plafond de la Team ({getattr(y, 'message', '')})")
+        if isinstance(y, dict):
+            jobs.cancel(y["id"])
+            wait(y)
+        z = sub("budget.essai", cal, s2, 60, g="p")
+        ok(isinstance(z, HttpError) and z.status == 429 and "Workspace « Client B »" in z.message,
+           f"budget : la part du Workspace → 429 ({getattr(z, 'message', z)})")
+        s, d, _ = P(f"/api/equipes/{tid}/budget", {"users": {"gpu-x": None}})
+        ok(s == 400, f"budget : une part pour quelqu'un hors de la Team est refusée ({s})")
+        s, d, _ = P(f"/api/equipes/{tid}/budget", {"users": {"bea-essai": None}, "spaces": {s2: None}, "gpu_s": None})
+        ok(s == 200 and not d["settings"]["users"] and d["total"]["gpu_cap_s"] is None, f"budget : parts retirées, illimité ({s})")
+
+        # ce que voit la page : /api/budget, la Team du Workspace courant
+        s, d, _ = G("/api/budget", B, {"X-SR-Espace": s1})
+        ok(s == 200 and d.get("team") == tid and "me" in d and d["me"]["gpu_used_s"] == used and not d.get("manage"),
+           f"budget : l'accueil lit la consommation du mois ({s} {err(d) or d.get('total')})")
+        s, d, _ = G(f"/api/equipes/{tid}/budget", B)
+        ok(s == 200 and "users" not in d, f"budget : un membre voit le total, pas le détail ({s})")
+        s, d, _ = G("/api/budget", adm, {"X-SR-Espace": "esp-general"})
+        ok(s == 200 and d.get("team") == "tea-nirvalab" and d["total"]["gpu_cap_s"] is None and d.get("manage"),
+           f"budget : Cal, dans Général : Nirvalab, illimité ({s})")
+
+        # l'API : coupée par défaut — refusée, et le refus dit pourquoi
+        x = sub("budget.api", bea, s1, 0, g="api")
+        ok(isinstance(x, HttpError) and x.status == 403 and "API" in x.message, f"budget : API coupée, un membre → 403 ({getattr(x, 'message', x)})")
+        x = sub("budget.api", cal, s1, 0, g="api")
+        ok(isinstance(x, HttpError) and x.status == 429 and "aucun crédit" in x.message and "admin de la Team" in x.message,
+           f"budget : API sans crédit, même Cal → 429 ({getattr(x, 'message', x)})")
+        x = sub("budget.api_prix", cal, "esp-general", 0, g="api")
+        ok(isinstance(x, HttpError) and x.status == 429 and "Nirvalab" in x.message,
+           f"budget : Nirvalab n'a aucun crédit API non plus ({getattr(x, 'message', x)})")
+        P(f"/api/equipes/{tid}", {"api": True})
+        x = sub("budget.api", bea, s1, 0, g="api")
+        ok(isinstance(x, HttpError) and x.status == 429 and "aucun crédit" in x.message, "budget : API ouverte, 0 crédit → 429")
+        s, d, _ = P(f"/api/equipes/{tid}/budget", {"api_credits": 100})
+        x = sub("budget.api", bea, s1, 0, g="api")
+        ok(isinstance(x, HttpError) and x.status == 409 and "prix" in x.message, f"budget : un travail payant sans prix ne part pas ({getattr(x, 'message', x)})")
+        x = sub("budget.api_prix", bea, s1, 0, g="apip")
+        started.append(x)
+        ok(isinstance(x, dict) and x["budget"]["credits"] == 12 and view()["total"]["credits_held"] == 12,
+           f"budget : crédits réservés au prix déclaré ({getattr(x, 'message', '')})")
+        gates.setdefault("apip", threading.Event()).set()
+        ok(wait(x) and view()["total"]["credits_used"] == 12 and view()["total"]["credits_held"] == 0, "budget : … et comptés à la fin")
+        P(f"/api/equipes/{tid}/budget", {"users": {"bea-essai": {"api_credits": 10}}})
+        x = sub("budget.api_prix", bea, s1, 0, g="apip")
+        ok(isinstance(x, HttpError) and x.status == 429 and "ta part de crédits API" in x.message,
+           f"budget : la part de crédits de la personne ({getattr(x, 'message', x)})")
+
+        # conso.jsonl est la seule vérité : relu, il redonne la même consommation
+        before = view()["total"]
+        with jobs._cv:
+            jobs._conso["file"] = None
+        after = view()["total"]
+        ok(before == after, f"budget : relu de conso.jsonl, le même compte ({before} / {after})")
+        raw = (config.data_dir() / "conso.jsonl").read_bytes().splitlines()
+        ok(all(isinstance(json.loads(x), dict) for x in raw), f"budget : conso.jsonl, une ligne JSON entière par écriture ({len(raw)})")
+    finally:
+        for g in list(gates.values()) + [gates.setdefault(k, threading.Event()) for k in ("nv", "a", "q", "i", "i2", "b1", "p")]:
+            g.set()
+        for j in started:
+            if isinstance(j, dict) and j["state"] in ("queued", "running"):
+                jobs.cancel(j["id"])
+        for j in started:
+            if isinstance(j, dict):
+                wait(j, ("done", "cancelled", "error", "interrupted"))
+        auth.set_current(None)
+        auth.set_current_space(None)
+        for k in ("budget.essai", "budget.panne", "budget.api", "budget.api_prix"):   # des sortes d'essai : elles s'en vont
+            jobs.HANDLERS.pop(k, None)
+            jobs._META.pop(k, None)
+            for d in [d for d in jobs._dur if d == k or d.startswith(k + "|")]:
+                jobs._dur.pop(d, None)
 
 
 def _migration(ok, tempfile, shutil, json, hashlib, Path) -> None:

@@ -56,7 +56,7 @@ import threading
 import time
 from pathlib import Path
 
-from core import config, jobs, library
+from core import auth, config, jobs, library
 from core.comfy import Comfy, ComfyError
 from core.http import HttpError
 
@@ -1704,6 +1704,10 @@ def _batch() -> str:
 
 def api_edit(req) -> dict:
     d = req.json()
+    # la garde du calcul (celle de jobs.submit) avant toute écriture : check_edit range la
+    # zone peinte dans image_masks/ — un guest refusé n'y laisse rien (l'aperçu `dry` aussi)
+    me = auth.current()
+    jobs._guard("image.edit", d if isinstance(d, dict) else {}, me, me, jobs._space_for(me))
     try:
         p = check_edit(d)
         count = _int(d.get("count", 1), 1, 4, "nombre d'images")

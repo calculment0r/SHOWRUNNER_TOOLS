@@ -989,6 +989,11 @@ def api_run(req) -> dict:
     except ValueError as e:
         raise HttpError(400, str(e)) from e
     it = c["item"]
+    # la garde du calcul (celle de jobs.submit) avant d'écrire le document : un guest refusé
+    # ne laisse pas une transcription « en file » sans travail (le retrait ci-dessous ne
+    # reste que pour ce que la file refuse après, un quota)
+    me = auth.current()
+    jobs._guard("transcrire.transcribe", {"asr": c["asr"], "mode": c["mode"]}, me, me, jobs._space_for(me))
     now = library.now()
     tid = f"trn-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
     pub = library.public(it)
@@ -1031,6 +1036,9 @@ def api_translate(req, tid) -> dict:
         _, why = mt_state(d.get("mode") or "rapide")
         if why:
             raise HttpError(409, f"traduire : {why}")
+        # la garde du calcul (celle de jobs.submit) avant d'écrire « en file » dans le document
+        me = auth.current()
+        jobs._guard("transcrire.translate", {"mode": d.get("mode") or "rapide"}, me, me, jobs._space_for(me))
         # « en file » avant l'envoi : le travail peut finir avant qu'on revienne ici
         _update(tid, lambda x: x.setdefault("translations", {}).__setitem__(to, {**cur, "state": "queued", "error": None}))
     try:

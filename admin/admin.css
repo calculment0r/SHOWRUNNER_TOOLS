@@ -125,6 +125,17 @@
 .adm-tm { flex-wrap: wrap; }
 .adm-tm .tm { display: inline-flex; gap: 6px; align-items: center; }
 .fld.sm { padding: 4px 8px; font-size: 11px; }
+/* le budget d'une Team (étape 8) : le mois, un filet qui se remplit, des parts en heures */
+.bud-tot { flex-wrap: wrap; }
+.bud-n { font-family: var(--f-mono); font-size: 11px; color: var(--ink); }
+.bud-bar { display: block; flex: none; width: 90px; height: 5px; border-radius: 3px; background: var(--panel3); overflow: hidden; }
+.bud-bar > span { display: block; height: 100%; background: var(--grn2); }
+.bud-bar.full > span { background: var(--or); }
+.bud-list { display: flex; flex-direction: column; gap: 5px; }
+.bud-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 90px 104px; gap: var(--s3); align-items: center;
+  padding: 6px var(--s3); border-radius: var(--r2); background: var(--panel2); }
+.bud-row .lbl { white-space: nowrap; }
+@media (max-width: 700px) { .bud-row { grid-template-columns: minmax(0, 1fr) auto; } .bud-row .bud-bar { display: none; } }
 @media (max-width: 700px) { .ws { grid-template-columns: 1fr; grid-template-areas: "l" "a" "r"; } .ws .acts { justify-content: flex-start; } }
 
 /* le journal */

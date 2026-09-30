@@ -210,11 +210,16 @@ def _sync_item(p: dict) -> None:
 
 
 def _write(p: dict) -> None:
+    """Le seul écrivain d'une timeline existante (enregistrer, renommer)."""
     it = _item(p["id"])
     try:
         library._check_write(it)
     except PermissionError as e:
         raise HttpError(403, str(e)) from e
+    # chaque objet, chaque LUT posés sont du Workspace de la séquence (409, qui mène au
+    # rapatriement) ; aucun élément dans sa propre descendance (400) — tools/elements.py
+    from tools import elements
+    elements.check_doc(p["id"], p, library.space_of(it))
     f = _seq_file(p["id"])
     tmp = f.with_suffix(".tmp")
     tmp.write_text(json.dumps(p, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -230,6 +235,8 @@ def new_sequence(p: dict, folder: str = "", legacy: str = "", source: dict | Non
     library.get("")                        # la bibliothèque chargée
     origin = library._owned({"tool": "montage"})
     space = library.new_space(origin, source=source)
+    from tools import elements             # ce qu'elle pose est de son Workspace (409), comme à chaque écriture
+    elements.check_space("seq", p, space)
     sid = library.new_id("sequence")
     while library.get(sid) or library.folder_of(sid).exists():
         sid = library.new_id("sequence")
@@ -1627,7 +1634,15 @@ def _ffmpeg(ctx, args: list[str], name: str, on_time) -> None:
 
 def run_export(ctx) -> dict:
     pid = ctx.params.get("project", "")
+    # le travail lit ses entrées dans le Workspace de la séquence : `load` ne la trouve que
+    # dans celui du travail (library.get, la file pose `current_space()`), et chaque plan,
+    # chaque LUT qu'elle pose en est (elements.check_space) — une LUT se lit par son fichier
     p = normalize(load(pid))
+    from tools import elements
+    try:
+        elements.check_space(p["id"], p)
+    except HttpError as e:
+        raise RuntimeError(e.message) from e
     preset = "veryfast" if ctx.params.get("draft") else "medium"
     chunk_s = _num(ctx.params.get("chunk"), 0.5, 120, CHUNK_S)
     rng = export_range(p, bool(ctx.params.get("range")))
@@ -1666,6 +1681,7 @@ def run_export(ctx) -> dict:
                  params={"montage": p["id"], "rev": p.get("rev"), "project": snap, "preset": preset,
                          "range": list(rng) if rng else None},
                  parents=pl["items"], origin={"model": "ffmpeg"})
+    _projet("put", [it["id"]], _projet("folder_of", p["id"]) or "", check=False)   # le Projet : à côté de sa séquence
     return {"note": f"{T:.2f} s rendues en {time.time() - t0:.0f} s ({n} passe{'s' if n > 1 else ''})",
             "montage": p["id"], "item": it["id"], "passes": n}
 
@@ -1679,6 +1695,17 @@ def _summary(p: dict) -> dict:
             "rev": p.get("rev", 1), "clips": len(p["clips"]), "duration": round(project_end(p) / fps, 3),
             "format": p["settings"]["format"], "width": p["settings"]["width"], "height": p["settings"]["height"],
             "fps": fps, "thumb_url": pub.get("thumb_url"), "folder": it.get("folder", ""), "legacy": p.get("legacy")}
+
+
+# ── le Projet (server/tools/montage_projet.py, 30/09) : ce que le montage crée ou pose y entre ──
+def _projet(fn: str, *a, **kw):
+    try:
+        from tools import montage_projet
+        return getattr(montage_projet, fn)(*a, **kw)
+    except Exception as e:  # noqa: BLE001 — le Projet ne bloque jamais une séquence ni un export
+        print(f"montage : le Projet n'a pas suivi ({fn} : {e})")
+        return None
+# ── fin du Projet ──
 
 
 def r_meta(req):
@@ -1716,14 +1743,20 @@ def r_create(req):
         note = p.pop("note", "")
         with _lock:
             p = new_sequence(p, folder or it.get("folder") or "", source=it)
+        _projet("put", [p["id"]], d.get("bin") or "", check=False)   # le Projet : dans le dossier où on l'a créée
         return {**p, "note": note}
     p = blank(d.get("name", ""), d.get("settings"))
     with _lock:
-        return new_sequence(p, folder)
+        p = new_sequence(p, folder)
+    _projet("put", [p["id"]], d.get("bin") or "", check=False)       # le Projet : dans le dossier où on l'a créée
+    return p
 
 
 def r_get(req, pid):
-    return normalize(load(pid))
+    """La timeline, et son Workspace (`space`, celui de son item.json, comme ODIO le
+    rend) : la page l'envoie avec ce qu'elle fait de ce document."""
+    p = normalize(load(pid))
+    return {**p, "space": library.space_of(_item(p["id"]))}
 
 
 def r_save(req, pid):
@@ -1738,11 +1771,12 @@ def r_save(req, pid):
         if base is not None and int(base) != int(cur.get("rev", 1)):
             raise HttpError(409, "ce montage a été modifié ailleurs (un autre onglet ?) : rechargez-le")
         new = normalize({**d, "id": sid, "legacy": cur.get("legacy")} if cur.get("legacy") else {**d, "id": sid})
-        # éléments : poser un élément de sa propre descendance est refusé, la chaîne nommée (tools/elements.py, 30/09)
-        from tools import elements
-        elements.check_doc(sid, [c["item"] for c in new["clips"] if c.get("item")])
+        # le Workspace de ce qu'elle pose, les boucles d'éléments : jugés par `_write` (elements.check_doc)
         new.update(created=cur.get("created"), updated=library.now(), rev=int(cur.get("rev", 1)) + 1)
         _write(new)
+    # le Projet : un objet posé pour la première fois dans cette séquence y entre (à la racine)
+    had = {c.get("item") for c in cur.get("clips", [])}
+    _projet("ensure", [c["item"] for c in new["clips"] if c.get("item") and c["item"] not in had])
     return {"ok": True, "rev": new["rev"], "updated": new["updated"], "warnings": overlaps(new)}
 
 
@@ -1764,6 +1798,7 @@ def r_duplicate(req, pid):
         p = {**src, "name": (src["name"] + " (copie)")[:120], "created": library.now(), "updated": library.now(), "rev": 1}
         p.pop("legacy", None)
         p = new_sequence(p, it.get("folder", ""), source=it or None)
+    _projet("put", [p["id"]], _projet("folder_of", src["id"]) or "", check=False)   # le Projet : à côté de l'originale
     return _summary(p)
 
 

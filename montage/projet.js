@@ -1,26 +1,40 @@
-// MONTAGE — le panneau Projet. Décision de Cal du 29/09 au soir : le panneau
-// Projet de Premiere, c'est Asset. Les mêmes objets (bibliothèque commune) et
-// les mêmes dossiers (le champ `folder` de chaque objet : un seul niveau, un
-// dossier n'existe que par ce qu'il contient — server/tools/asset.py) : ce
-// qu'on range ici se retrouve dans Asset, et l'inverse. Les séquences sont
-// des objets comme les autres (sorte `sequence`, server/tools/montage.py).
+// MONTAGE — le panneau Projet : ce que le montage a pris dans la bibliothèque.
 //
-// Les gestes, comme dans Asset et dans Premiere :
-//   - un objet lâché sur un autre : une fenêtre au centre demande le nom d'un
-//     dossier neuf qui les prend tous les deux (Asset, glisser-déposer) ;
-//   - une sélection au cadre (glisser sur le fond de la liste, maj : ajouter),
-//     glissée sur l'icône « nouveau dossier » : la même fenêtre ;
-//   - lâché sur un dossier : dedans ; sur l'onglet « Projet » : hors du dossier ;
+// Demande de Cal du 30/09 : un asset glissé du panneau Asset dans la fenêtre
+// Projet y ENTRE (à la racine, ou dans le dossier sur lequel on le lâche) ; le
+// retirer du Projet ne le retire que du montage — il reste dans la bibliothèque
+// générale. Le Projet est donc à lui (server/tools/montage_projet.py, un par
+// Workspace) : ses objets (séquences, vidéos, images, sons de la bibliothèque) et
+// ses dossiers (un seul niveau, un dossier n'existe que par ce qu'il contient).
+// Ranger ici ne touche plus le dossier d'Asset. Premiere a de même un panneau
+// Projet à côté de ses Bibliothèques (docs/etudes/panneau_asset.md, [PR1][PR3]).
+// Jusqu'au 30/09, le Projet montrait toute la bibliothèque (décision du 29/09) et
+// « Suppr » l'envoyait à la corbeille d'Asset : la première lecture reprend ce
+// qu'il montrait, chacun dans son dossier d'Asset.
+//
+// Les gestes :
+//   - lâcher dans le panneau (un objet du panneau Asset, d'une autre page, du
+//     Projet lui-même, un fichier du disque ; plusieurs d'un coup) : sur le fond,
+//     dans le dossier ouvert (la racine dans l'onglet « Projet ») — le panneau
+//     s'entoure de vert ; sur un dossier (sa ligne ou son onglet) : dedans — le
+//     dossier passe en vert, le cadre du panneau s'éteint ; survolé un moment
+//     (comme les dossiers à ressort du Finder : « how long an item has to be over
+//     a folder before the folder opens », Apple, Mouse & Trackpad), le dossier
+//     s'ouvre dans son onglet ; sur l'icône « nouveau dossier » : la fenêtre qui
+//     demande son nom ; sur l'icône « nouvelle séquence » : une séquence à ses
+//     réglages (Adobe, « Create a sequence » : « drag a clip from the Project panel
+//     to the New Item icon ») ; ctrl+Z défait ;
+//   - une sélection au cadre (glisser sur le fond de la liste, maj : ajouter) ;
 //   - double-clic sur le nom d'un dossier : le renommer ; sur le dossier : il
 //     s'ouvre dans un onglet du panneau (Adobe, « Open and close bins » :
 //     « Double-click to open a bin in its own dockable panel ») ;
-//   - double-clic sur une séquence : elle s'ouvre dans un onglet au-dessus de
-//     la timeline (Adobe, « Navigate sequences in the timeline ») ;
-//   - un clip lâché sur l'icône « nouvelle séquence » : une séquence à ses
-//     réglages (Adobe, « Create a sequence » : « drag a clip from the Project
-//     panel to the New Item icon »).
+//   - double-clic sur une séquence : elle s'ouvre dans un onglet au-dessus de la
+//     timeline (Adobe, « Navigate sequences in the timeline ») ;
+//   - Suppr, « Retirer du projet » : l'objet quitte le Projet, la bibliothèque le
+//     garde ; posé sur une timeline, on le dit et on demande (garder les plans, ou
+//     les retirer aussi de la séquence ouverte).
 // Glisser vers la timeline, la source ou une autre page : le glisser-déposer
-// HTML du portail (dragItem, ITEM_MIME), plusieurs objets sous MULTI_MIME.
+// HTML du portail (ITEM_MIME), plusieurs objets sous MULTI_MIME.
 
 import { api, el, toast, href, ITEM_MIME, kindMark } from '../commun/shell.js';
 // le panneau peut être dans sa fenêtre (un 2ᵉ écran) : $ y cherche aussi, partout y écoute aussi
@@ -30,17 +44,17 @@ import { contextMenu } from '../commun/menu.js';
 export const MULTI_MIME = 'application/x-sr-items';
 const KINDS = [['', 'Tout'], ['sequence', 'Séquences'], ['video', 'Vidéos'], ['image', 'Images'], ['audio', 'Sons']];
 const SORTS = [['new', 'Date (récent d’abord)'], ['name', 'Nom'], ['duration', 'Durée'], ['kind', 'Sorte']];
-const KIND_FR = { sequence: 'séquence', video: 'vidéo', image: 'image', audio: 'son' };
 const LS = (k, v) => { try { if (v === undefined) return JSON.parse(localStorage.getItem(k) || 'null'); localStorage.setItem(k, JSON.stringify(v)); } catch { return null; } return null; };
 const short = (sec) => { sec = Math.max(0, sec || 0); const m = Math.floor(sec / 60), s = sec - m * 60; return `${m}:${s < 10 ? '0' : ''}${s.toFixed(s < 10 && m === 0 ? 1 : 0)}`; };
 const cleanFolder = (s) => ' '.concat(s || '').split(/\s+/).filter(Boolean).join(' ').slice(0, 60);
+const SPRING_MS = 700;    // le délai du Finder se règle (Apple ne donne pas sa valeur par défaut) : le nôtre
 
 const SEQ_ICON = '<svg viewBox="0 0 24 24"><path d="M3 6h18v12H3zM3 10h18M3 14h18M8 6v4M14 10v4M11 14v4"/></svg>';
 
 export function mountProject(app) {
   const root = app.root;
   const P = {
-    all: [], kind: LS('montage-bin-kind') || '', q: '', sort: LS('montage-bin-sort') || 'new',
+    every: [], all: [], kind: LS('montage-bin-kind') || '', q: '', sort: LS('montage-bin-sort') || 'new',
     tabs: LS('montage-bin-tabs') || [''], tab: LS('montage-bin-tab') || '', sel: new Set(), anchor: null,
     renaming: null, focus: false, dragIds: null,
   };
@@ -50,21 +64,28 @@ export function mountProject(app) {
   const tabsBox = $('#bin-tabs', root);
   const saveTabs = () => { LS('montage-bin-tabs', P.tabs); LS('montage-bin-tab', P.tab); };
 
-  // ── les données ────────────────────────────────────────────
+  // ── les données : le Projet (GET /api/montage/bin) ─────────
   let loadT = 0;
+  function filter() {
+    const q = P.q.trim().toLowerCase();
+    P.all = P.every.filter((it) => (!P.kind || it.kind === P.kind)
+      && (!q || `${it.title || ''} ${it.prompt || ''} ${(it.tags || []).join(' ')}`.toLowerCase().includes(q)));
+  }
   async function load() {
     try {
-      const r = await api(`library?kind=${P.kind || 'sequence,video,image,audio'}&q=${encodeURIComponent(P.q)}&limit=5000`);
-      P.all = r.items;
+      const r = await api('montage/bin');
+      P.every = r.items;
       for (const it of r.items) app.items.set(it.id, it);
-    } catch (e) { P.all = []; list.replaceChildren(el('p', { class: 'warn' }, e.message)); return; }
+    } catch (e) { P.every = []; P.all = []; list.replaceChildren(el('p', { class: 'warn' }, e.message)); return; }
+    filter();
     paint();
   }
   const soon = () => { clearTimeout(loadT); loadT = setTimeout(load, 120); };
-  const byId = (id) => P.all.find((x) => x.id === id) || app.items.get(id);
+  const byId = (id) => P.every.find((x) => x.id === id);
+  const inProject = (id) => !!byId(id);
   const folders = () => {
     const m = new Map();
-    for (const it of P.all) if (it.folder) m.set(it.folder, (m.get(it.folder) || 0) + 1);
+    for (const it of P.all) if (it.bin) m.set(it.bin, (m.get(it.bin) || 0) + 1);
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], 'fr'));
   };
   function sorted(items) {
@@ -88,29 +109,46 @@ export function mountProject(app) {
   // ce qui se voit dans l'onglet courant, dans l'ordre de l'écran
   function shown() {
     if (P.q) return sorted(P.all);
-    if (P.tab) return sorted(P.all.filter((it) => it.folder === P.tab));
-    return sorted(P.all.filter((it) => !it.folder));
+    return sorted(P.all.filter((it) => (it.bin || '') === P.tab));
   }
 
-  // ── ranger : l'API d'Asset, avec l'annulation du montage ───
+  // ── les gestes : l'API du Projet, avec l'annulation du montage ─
+  const restoreBin = (before) => api('montage/bin/restore', { method: 'POST', body: { before } });
+  const where = (f) => (f ? `« ${f} »` : 'la racine');
+  // entrer dans le Projet, ou y changer de dossier : un seul geste (POST /api/montage/bin/put)
   async function move(ids, folder, label) {
     folder = cleanFolder(folder);
     if (folder.includes('/')) { toast('un dossier ne se range pas dans un autre : pas de « / » dans son nom'); return; }
-    try {
-      const r = await api('asset/move', { method: 'POST', body: { ids, folder } });
-      const back = r.moved;
-      app.pushUndo(label || (folder ? `ranger dans « ${folder} »` : 'sortir du dossier'),
-        async () => { for (const f of new Set(back.map((m) => m.from))) await api('asset/move', { method: 'POST', body: { ids: back.filter((m) => m.from === f).map((m) => m.id), folder: f } }); load(); },
-        async () => { await api('asset/move', { method: 'POST', body: { ids, folder } }); load(); });
-      toast(folder ? `${ids.length > 1 ? `${ids.length} objets rangés` : 'rangé'} dans « ${folder} » (Asset le voit aussi)` : `${ids.length > 1 ? `${ids.length} objets sortis` : 'sorti'} du dossier`, 2200);
-    } catch (e) { toast(e.status === 403 ? 'un de ces objets est à quelqu’un d’autre : seul son auteur (ou Cal) le range' : e.message); }
+    let r;
+    try { r = await api('montage/bin/put', { method: 'POST', body: { ids, folder } }); } catch (e) { toast(e.message); await load(); return; }
+    const back = r.before;
+    const entered = back.filter((b) => b.folder === null).length, moved = back.length - entered;
+    if (back.length) {
+      app.pushUndo(label || (entered ? `entrer dans le Projet (${where(folder)})` : `ranger dans ${where(folder)}`),
+        async () => { await restoreBin(back); await load(); },
+        async () => { await api('montage/bin/put', { method: 'POST', body: { ids: back.map((b) => b.id), folder } }); await load(); });
+    }
+    const n = (k, one, many) => (k > 1 ? `${k} ${many}` : one);
+    const said = [entered ? `${n(entered, 'entré', 'objets entrés')} dans le Projet` : '', moved ? `${n(moved, 'rangé', 'objets rangés')}` : ''].filter(Boolean).join(', ');
+    const why = r.refused.length ? ` · pas pris : ${r.refused.map((x) => `${(byId(x.id) || app.items.get(x.id) || {}).title || x.id} (${x.why})`).join(' ; ')}` : '';
+    if (said) toast(`${said} · ${folder ? `dossier « ${folder} »` : 'à la racine'} · ctrl+Z${why}`, why ? 6000 : 2400);
+    else if (why) toast(why.slice(3), 6000);
+    else if (r.ids.length) toast(`déjà dans ${where(folder)}`, 1600);
     await load();
+    // ce qui vient d'arriver se voit : choisi, et la ligne éclaire
+    const here = new Set(shown().map((x) => x.id));
+    const got = r.ids.filter((id) => here.has(id));
+    if (got.length) {
+      P.sel = new Set(got); paint();
+      const row = list.querySelector(`.bi[data-id="${got[0]}"]`);
+      if (row) { row.scrollIntoView({ block: 'nearest' }); for (const id of got) list.querySelector(`.bi[data-id="${id}"]`)?.classList.add('flash'); setTimeout(() => $$('.bi.flash', root).forEach((x) => x.classList.remove('flash')), 1200); }
+    }
   }
   function askFolder(ids) {
     ids = [...new Set(ids)].filter(Boolean);
-    if (!ids.length) { toast('choisissez d’abord des objets (un cadre à la souris sur le fond de la liste) : un dossier d’Asset existe par ce qu’il contient'); return; }
+    if (!ids.length) { toast('choisissez d’abord des objets (un cadre à la souris sur le fond de la liste) : un dossier existe par ce qu’il contient'); return; }
     const inp = el('input', { class: 'fld big-fld', maxlength: 60, placeholder: 'Rushes, Plans larges, Musiques…', spellcheck: 'false', 'aria-label': 'nom du dossier' });
-    const minis = ids.slice(0, 8).map((id) => { const it = byId(id) || {}; return el('span', { class: 'mini' }, el('i', { style: it.thumb_url ? { backgroundImage: `url("${href(it.thumb_url)}")` } : null }), el('b', {}, it.title || id)); });
+    const minis = ids.slice(0, 8).map((id) => { const it = byId(id) || app.items.get(id) || {}; return el('span', { class: 'mini' }, el('i', { style: it.thumb_url ? { backgroundImage: `url("${href(it.thumb_url)}")` } : null }), el('b', {}, it.title || id)); });
     const ok = async (close) => {
       const name = cleanFolder(inp.value);
       if (!name) { inp.placeholder = 'il lui faut un nom'; inp.focus(); return; }
@@ -120,9 +158,9 @@ export function mountProject(app) {
     };
     inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); ok(closer); } });
     const closer = app.modal('Nouveau dossier', el('div', { class: 'newfolder' },
-      el('p', {}, `Comment s’appelle ce dossier ? Il prend ${ids.length > 1 ? `ces ${ids.length} objets` : 'cet objet'} ; il sera aussi dans Asset.`),
+      el('p', {}, `Comment s’appelle ce dossier du Projet ? Il prend ${ids.length > 1 ? `ces ${ids.length} objets` : 'cet objet'}.`),
       el('div', { class: 'minis' }, ...minis, ids.length > 8 ? el('span', { class: 'lbl' }, `+ ${ids.length - 8}`) : null), inp,
-      el('p', { class: 'note' }, 'Un dossier tient des séquences, des vidéos, des images et des sons — pas d’autre dossier (la règle d’Asset).')),
+      el('p', { class: 'note' }, 'Un dossier tient des séquences, des vidéos, des images et des sons — pas d’autre dossier (un seul niveau). Il est au Projet du Montage : Asset garde son rangement.')),
     (close) => [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', onclick: close }, 'Annuler'), el('button', { class: 'tb go', onclick: () => ok(close) }, 'Créer le dossier')],
     { cls: 'center' });
     inp.focus();
@@ -132,25 +170,21 @@ export function mountProject(app) {
     to = cleanFolder(to);
     if (!to || to === from) return;
     if (to.includes('/')) { toast('pas de « / » dans le nom d’un dossier'); return; }
-    let members = [];
-    try { members = (await api(`library?folder=${encodeURIComponent(from)}&limit=10000`)).items.map((x) => x.id); } catch { /* */ }
+    const retab = (a, b) => { P.tabs = P.tabs.map((t) => (t === a ? b : t)); if (P.tab === a) P.tab = b; saveTabs(); };
     try {
-      const r = await api('asset/folders/rename', { method: 'POST', body: { from, to } });
-      P.tabs = P.tabs.map((t) => (t === from ? to : t));
-      if (P.tab === from) P.tab = to;
-      saveTabs();
+      const r = await api('montage/bin/folder', { method: 'POST', body: { from, to } });
+      retab(from, to);
       app.pushUndo(`renommer le dossier « ${from} »`,
-        async () => { if (members.length) await api('asset/move', { method: 'POST', body: { ids: members, folder: from } }); P.tabs = P.tabs.map((t) => (t === to ? from : t)); if (P.tab === to) P.tab = from; saveTabs(); load(); },
-        async () => { await api('asset/folders/rename', { method: 'POST', body: { from, to } }); P.tabs = P.tabs.map((t) => (t === from ? to : t)); if (P.tab === from) P.tab = to; saveTabs(); load(); });
+        async () => { await restoreBin(r.before); retab(to, from); await load(); },
+        async () => { await api('montage/bin/folder', { method: 'POST', body: { from, to } }); retab(from, to); await load(); });
       toast(r.merged ? `« ${from} » fondu dans « ${to} », qui existait déjà` : `dossier renommé « ${to} »`, 2200);
     } catch (e) { toast(e.message); }
     await load();
   }
   async function dissolve(name) {
-    let ids = [];
-    try { ids = (await api(`library?folder=${encodeURIComponent(name)}&limit=10000`)).items.map((x) => x.id); } catch { /* */ }
+    const ids = P.every.filter((x) => x.bin === name).map((x) => x.id);
     if (!ids.length) return;
-    if (!(await app.confirmBox('Défaire le dossier', `« ${name} » tient ${ids.length} objet${ids.length > 1 ? 's' : ''} : ${ids.length > 1 ? 'ils reviennent' : 'il revient'} à la racine, rien n’est supprimé. Le dossier disparaît d’Asset aussi (un dossier n’existe que par ce qu’il contient).`, 'Défaire le dossier'))) return;
+    if (!(await app.confirmBox('Défaire le dossier', `« ${name} » tient ${ids.length} objet${ids.length > 1 ? 's' : ''} : ${ids.length > 1 ? 'ils reviennent' : 'il revient'} à la racine du Projet, rien n’est retiré.`, 'Défaire le dossier'))) return;
     closeTab(name);
     await move(ids, '', `défaire le dossier « ${name} »`);
   }
@@ -159,22 +193,55 @@ export function mountProject(app) {
     try {
       const old = it.title;
       const r = await api('library/' + it.id, { method: 'POST', body: { title } });
-      app.items.set(it.id, r);
+      app.items.set(it.id, { ...r, bin: it.bin });
       app.pushUndo('renommer', async () => { await api('library/' + it.id, { method: 'POST', body: { title: old } }); load(); },
         async () => { await api('library/' + it.id, { method: 'POST', body: { title } }); load(); });
     } catch (e) { toast(e.status === 403 ? 'cet objet est à quelqu’un d’autre : seul son auteur (ou Cal) le renomme' : e.message); }
     await load();
   }
-  async function trash(ids) {
-    const items = ids.map(byId).filter(Boolean);
-    const used = items.filter((it) => app.usedAnywhere(it.id));
-    if (!(await app.confirmBox('Mettre à la corbeille', `${items.length > 1 ? `${items.length} objets partent` : `« ${items[0].title} » part`} à la corbeille d’Asset (on l’en sort depuis Asset, ou ctrl+Z).${used.length ? ` ${used.length} ${used.length > 1 ? 'sont employés' : 'est employé'} dans la séquence ouverte : l’export les refusera.` : ''}`, 'Mettre à la corbeille'))) return;
-    try {
-      await api('asset/trash', { method: 'POST', body: { ids } });
-      for (const id of ids) app.closeSequence(id);
-      app.pushUndo('mettre à la corbeille', async () => { await api('asset/restore', { method: 'POST', body: { ids } }); load(); },
-        async () => { await api('asset/trash', { method: 'POST', body: { ids } }); load(); });
-    } catch (e) { toast(e.status === 403 ? 'un de ces objets est à quelqu’un d’autre' : e.message); }
+  // une question à plusieurs issues : [libellé, valeur, go?] ; rend la valeur, ou null (Annuler, Échap)
+  function choose(title, text, choices) {
+    return new Promise((resolve) => {
+      let done = false;
+      const pick = (v, close) => { done = true; close(); resolve(v); };
+      app.modal(title, el('div', { class: 'newfolder' }, ...[].concat(text).map((t) => el('p', {}, t))),
+        (close) => [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', onclick: close }, 'Annuler'),
+          ...choices.map(([lab, v, go]) => el('button', { class: 'tb ' + (go ? 'go' : 'ghost'), onclick: () => pick(v, close) }, lab))],
+        { cls: 'center', onclose: () => { if (!done) resolve(null); } });
+    });
+  }
+  // Retirer du Projet : l'objet quitte le montage, la bibliothèque le garde (POST /api/montage/bin/remove).
+  // Posé sur une timeline : on le dit, et on demande (Premiere, « Clear » d'un clip employé, prévient aussi).
+  async function removeFromProject(ids) {
+    ids = [...new Set(ids)].filter(inProject);
+    if (!ids.length) return;
+    const items = ids.map(byId);
+    const one = items.length === 1;
+    const who = one ? `« ${items[0].title || items[0].id} »` : `${items.length} objets`;
+    const openId = app.openSequenceId();
+    const clips = app.clipsUsing(ids);
+    const others = P.every.filter((s) => s.kind === 'sequence' && s.id !== openId && !ids.includes(s.id) && (s.parents || []).some((x) => ids.includes(x)));
+    const elsewhere = others.length ? `${one ? 'Il est' : 'Ils sont'} aussi ${one ? 'posé' : 'posés'} dans ${others.length > 1 ? 'les séquences' : 'la séquence'} ${others.map((s) => `« ${s.title} »`).join(', ')} : ${others.length > 1 ? 'leurs' : 'ses'} plans y restent.` : '';
+    let strip = false;
+    const keep = `${one ? 'Il reste' : 'Ils restent'} dans la bibliothèque (Asset, le panneau Asset) : rien n’est supprimé.`;
+    if (clips.n) {
+      const ans = await choose('Retirer du projet', [
+        `${who} ${one ? 'est posé' : 'sont posés'} dans la séquence ouverte : ${clips.n} plan${clips.n > 1 ? 's' : ''}${clips.locked ? `, dont ${clips.locked} sur une piste verrouillée (${clips.locked > 1 ? 'ils restent' : 'il reste'})` : ''}.`,
+        keep, elsewhere].filter(Boolean),
+      [['Garder les plans', 'keep'], ['Retirer aussi les plans', 'strip', true]]);
+      if (!ans) return;
+      strip = ans === 'strip';
+    } else if (others.length) {
+      if (!(await choose('Retirer du projet', [elsewhere, keep], [['Retirer du projet', 'go', true]]))) return;
+    }
+    let r;
+    try { r = await api('montage/bin/remove', { method: 'POST', body: { ids } }); } catch (e) { toast(e.message); return; }
+    const cut = strip ? app.stripClips(ids) : null;
+    for (const it of items) if (it.kind === 'sequence') app.closeSequence(it.id);
+    app.pushUndo(`retirer du projet ${who}`,
+      async () => { if (cut) cut.undo(); await restoreBin(r.before); await load(); },
+      async () => { await api('montage/bin/remove', { method: 'POST', body: { ids } }); if (cut) cut.redo(); await load(); });
+    toast(`${who} ${one ? 'retiré' : 'retirés'} du Projet${cut ? ` avec ${cut.n} plan${cut.n > 1 ? 's' : ''}` : ''} — ${one ? 'il reste' : 'ils restent'} dans Asset · ctrl+Z`, 3600);
     P.sel.clear();
     await load();
   }
@@ -183,7 +250,7 @@ export function mountProject(app) {
   function openTab(name) {
     if (!P.tabs.includes(name)) P.tabs.push(name);
     P.tab = name; P.q = ''; $('#bin-q', root).value = '';
-    P.sel.clear(); saveTabs(); paint();
+    P.sel.clear(); saveTabs(); filter(); paint();
   }
   function closeTab(name) {
     if (!name) return;
@@ -193,15 +260,11 @@ export function mountProject(app) {
   }
   function paintTabs() {
     const f = new Set(folders().map(([n]) => n));
-    tabsBox.replaceChildren(...P.tabs.map((t) => {
-      const b = el('div', { class: 'btab' + (t === P.tab ? ' on' : '') + (t && !f.has(t) && !P.q ? ' gone' : ''), role: 'tab', 'data-tab': t, tabindex: '0',
-        title: t ? `dossier « ${t} » — double-clic : renommer · y glisser des objets : les y ranger` : 'le projet : la bibliothèque Asset — y glisser des objets : les sortir de leur dossier',
-        onclick: (e) => { if (e.target.closest('.x')) return; P.tab = t; P.sel.clear(); saveTabs(); paint(); } },
-      el('span', { class: 'nm', ondblclick: (e) => { if (t) { e.stopPropagation(); startRename('folder', t); } } }, t || 'Projet'),
-      t ? el('button', { class: 'x', title: 'fermer l’onglet', 'aria-label': 'fermer', onclick: (e) => { e.stopPropagation(); closeTab(t); } }, '×') : null);
-      dropOn(b, () => (t ? { into: t } : { out: true }));
-      return b;
-    }));
+    tabsBox.replaceChildren(...P.tabs.map((t) => el('div', { class: 'btab' + (t === P.tab ? ' on' : '') + (t && !f.has(t) && !P.q ? ' gone' : ''), role: 'tab', 'data-tab': t, tabindex: '0',
+      title: t ? `dossier « ${t} » du Projet — double-clic : renommer · y lâcher des objets : les y ranger` : 'le Projet du Montage — y lâcher des objets : à la racine',
+      onclick: (e) => { if (e.target.closest('.x')) return; P.tab = t; P.sel.clear(); saveTabs(); paint(); } },
+    el('span', { class: 'nm', ondblclick: (e) => { if (t) { e.stopPropagation(); startRename('folder', t); } } }, t || 'Projet'),
+    t ? el('button', { class: 'x', title: 'fermer l’onglet', 'aria-label': 'fermer', onclick: (e) => { e.stopPropagation(); closeTab(t); } }, '×') : null)));
     // l'onglet ouvert se voit, même quand le panneau est étroit
     const on = tabsBox.querySelector('.btab.on');
     if (on) {
@@ -213,6 +276,7 @@ export function mountProject(app) {
 
   // ── le dessin ──────────────────────────────────────────────
   function paint() {
+    hot = null;                                     // les nœuds se refont : la marque du dépôt se repose au prochain survol
     paintTabs();
     $('#bin-n', root).textContent = P.all.length;
     $$('#bin-kinds .tb', root).forEach((b) => b.classList.toggle('on', b.dataset.k === P.kind));
@@ -224,7 +288,8 @@ export function mountProject(app) {
     const items = shown();
     for (const it of items) rows.push(itemRow(it, used, cur, open));
     if (!rows.length) {
-      list.replaceChildren(el('p', { class: 'lbl empty-bin' }, P.q ? 'rien ne correspond' : P.tab ? `le dossier « ${P.tab} » est vide (ou a été renommé) : fermez l’onglet, ou glissez-y des objets` : 'la bibliothèque est vide : importez des vidéos, images ou sons (bouton Importer, ou glissez-les sur la page)'));
+      list.replaceChildren(el('p', { class: 'lbl empty-bin' }, P.q ? 'rien ne correspond' : P.tab ? `le dossier « ${P.tab} » est vide (ou a été renommé) : fermez l’onglet, ou lâchez-y des objets`
+        : 'le Projet est vide : lâchez-y des objets du panneau Asset (ctrl+espace), des fichiers du disque, ou importez-les (bouton Importer)'));
       return;
     }
     list.replaceChildren(...rows);
@@ -245,20 +310,18 @@ export function mountProject(app) {
 
   function folderRow(name, n) {
     const renaming = P.renaming && P.renaming.type === 'folder' && P.renaming.id === name;
-    const row = el('div', { class: 'bf' + (P.sel.has('folder:' + name) ? ' on' : ''), 'data-folder': name,
-      title: name,
+    return el('div', { class: 'bf' + (P.sel.has('folder:' + name) ? ' on' : ''), 'data-folder': name,
+      title: `${name} — double-clic : l’ouvrir · y lâcher des objets : les y ranger`,
       onclick: (e) => { if (e.target.closest('input')) return; selectRow('folder:' + name, e); },
       ondblclick: (e) => { if (e.target.closest('input')) return; if (e.target.closest('b')) startRename('folder', name); else openTab(name); } },
     el('i', { class: 'fic' }), renaming ? renameField(name, (v) => renameFolder(name, v)) : el('b', {}, name), el('small', { class: 'num' }, String(n)));
-    dropOn(row, () => ({ into: name }));
-    return row;
   }
 
   function itemRow(it, used, cur, open) {
     const renaming = P.renaming && P.renaming.type === 'item' && P.renaming.id === it.id;
     const seq = it.kind === 'sequence';
     const row = el('div', { class: 'bi' + (seq ? ' seq' : '') + (it.id === cur || it.id === open ? ' cur' : '') + (P.sel.has(it.id) ? ' on' : ''), 'data-id': it.id,
-      title: `${it.title}\n${meta(it)}${P.q && it.folder ? '\ndossier : ' + it.folder : ''}`,
+      title: `${it.title}\n${meta(it)}${P.q && it.bin ? '\ndossier : ' + it.bin : ''}`,
       // clic : chargé dans la source sans quitter l'onglet Effets ; double-clic : l'onglet Source
       onclick: (e) => { if (e.target.closest('input')) return; selectRow(it.id, e); if (!seq && !e.shiftKey && !e.ctrlKey && !e.metaKey) app.openSource(it, { show: false }); },
       ondblclick: (e) => { if (e.target.closest('input')) return; if (seq) app.openSequence(it.id); else app.openSource(it); } },
@@ -266,7 +329,7 @@ export function mountProject(app) {
       // une séquence porte la marque commune dans le coin (on ne la confond plus avec le clip de même première image)
       seq ? kindMark(it, { compact: true }) : null),
     el('span', { class: 'tx' }, renaming ? renameField(it.title || '', (v) => renameItem(it, v)) : el('b', {}, seq ? el('i', { class: 'sq', html: SEQ_ICON }) : null, it.title || it.id),
-      el('small', {}, P.q && it.folder ? `${it.folder} · ${meta(it)}` : meta(it))),
+      el('small', {}, P.q && it.bin ? `${it.bin} · ${meta(it)}` : meta(it))),
     used.has(it.id) ? el('span', { class: 'used', title: 'employé dans la séquence ouverte' }) : null);
     if (!renaming) {
       row.draggable = true;
@@ -285,9 +348,7 @@ export function mountProject(app) {
           setTimeout(() => g.remove(), 0);
         }
       });
-      row.addEventListener('dragend', () => { P.dragIds = null; app.clearDrag(); clearMarks(); });
-      // un objet lâché sur un autre (à la racine, comme dans Asset) : un dossier neuf pour les deux
-      dropOn(row, () => (!P.tab && !P.q && !(P.dragIds || []).includes(it.id) ? { merge: it.id } : null));
+      row.addEventListener('dragend', endDrag);
     }
     return row;
   }
@@ -334,57 +395,91 @@ export function mountProject(app) {
   list.addEventListener('pointerup', endMq);
   list.addEventListener('pointercancel', endMq);
 
-  // ── déposer : sur un objet, un dossier, un onglet, l'icône « nouveau dossier » ──
-  const dragged = (e) => {
-    const t = [...(e.dataTransfer?.types || [])];
-    if (t.includes(MULTI_MIME) || t.includes(ITEM_MIME) || t.includes('Files')) return true;
-    return false;
-  };
-  function clearMarks() { $$('.drop-into, .drop-merge', root).forEach((n) => n.classList.remove('drop-into', 'drop-merge')); $$('.drop-say', root).forEach((n) => n.remove()); }
-  function dropOn(node, what) {
-    node.addEventListener('dragover', (e) => {
-      if (!dragged(e)) return;
-      const w = what();
-      if (!w) return;
-      e.preventDefault(); e.stopPropagation();
-      e.dataTransfer.dropEffect = 'move';
-      if (!node.classList.contains(w.merge ? 'drop-merge' : 'drop-into')) {
-        clearMarks();
-        node.classList.add(w.merge ? 'drop-merge' : 'drop-into');
-        node.append(el('span', { class: 'drop-say' }, w.merge ? 'nouveau dossier' : w.out ? 'sortir du dossier' : w.newSeq ? 'séquence à ses réglages' : w.newFolder ? 'nouveau dossier' : 'ranger ici'));
-      }
-    });
-    node.addEventListener('dragleave', (e) => { if (!node.contains(e.relatedTarget)) { node.classList.remove('drop-into', 'drop-merge'); node.querySelector(':scope > .drop-say')?.remove(); } });
-    node.addEventListener('drop', async (e) => {
-      if (!dragged(e)) return;
-      const w = what();
-      if (!w) return;
-      e.preventDefault(); e.stopPropagation();
-      clearMarks();
-      document.body.classList.remove('dropping');
-      let ids = [];
-      try { ids = JSON.parse(e.dataTransfer.getData(MULTI_MIME) || '[]'); } catch { ids = []; }
-      if (!ids.length) { try { const d = JSON.parse(e.dataTransfer.getData(ITEM_MIME) || 'null'); if (d && d.id) ids = [d.id]; } catch { /* */ } }
-      const files = [...(e.dataTransfer.files || [])];
-      if (!ids.length && files.length) ids = (await app.uploadMany(files)).map((x) => x.id);
-      if (!ids.length) return;
-      if (w.newSeq) { const it = byId(ids[0]) || (await api('library/' + ids[0])); return app.newSequenceFrom(it); }
-      if (w.newFolder) return askFolder(ids);
-      if (w.merge) return askFolder([w.merge, ...ids.filter((id) => id !== w.merge)]);
-      if (w.into) return move(ids, w.into);
-      if (w.out) return move(ids, '');
-    });
+  // ── déposer : une seule règle pour tout le panneau ─────────
+  // La cible se lit sous la souris : l'icône « nouveau dossier » ou « nouvelle séquence », un
+  // onglet, une ligne de dossier — sinon le fond, c'est-à-dire le dossier ouvert (la racine dans
+  // l'onglet « Projet »). Une ligne d'objet n'est pas une cible : elle fait partie du fond (avant
+  // le 30/09, un objet lâché sur un autre ouvrait « nouveau dossier » — le geste d'Asset, pris ici
+  // pour un bogue). Vert = ce qui va recevoir : le dossier visé, sinon le cadre du panneau.
+  const dragged = (e) => { const t = [...(e.dataTransfer?.types || [])]; return t.includes(MULTI_MIME) || t.includes(ITEM_MIME) || t.includes('Files'); };
+  let hot = null;       // la cible marquée : { key, node }
+  let spring = null;    // { key, t } : le dossier survolé qui va s'ouvrir
+  function targetOf(e) {
+    const n = e.target instanceof Element ? e.target : e.target?.parentElement;
+    if (!n || !root.contains(n)) return null;
+    const ic = n.closest('#bin-new, #bin-newseq');
+    if (ic) return ic.id === 'bin-new' ? { newFolder: true, node: ic, key: 'new', say: 'nouveau dossier' } : { newSeq: true, node: ic, key: 'newseq', say: 'séquence à ses réglages' };
+    const tab = n.closest('.btab');
+    if (tab) return { folder: tab.dataset.tab, node: tab, key: 'tab:' + tab.dataset.tab, say: tab.dataset.tab ? 'dans ce dossier' : 'à la racine', open: tab.dataset.tab !== P.tab };
+    const f = n.closest('.bf');
+    if (f) return { folder: f.dataset.folder, node: f, key: 'f:' + f.dataset.folder, say: 'dans ce dossier', open: true };
+    return { folder: P.tab, node: null, key: 'bg:' + P.tab };
   }
-  dropOn($('#bin-new', root), () => ({ newFolder: true }));
-  dropOn($('#bin-newseq', root), () => ({ newSeq: true }));
-  // le fond de la liste : dans l'onglet d'un dossier, y ranger ; à la racine, sortir du dossier
-  dropOn(list, () => (P.q ? null : P.tab ? { into: P.tab } : (P.dragIds && P.dragIds.some((id) => (byId(id) || {}).folder) ? { out: true } : null)));
+  // un glisser parti du Projet, lâché là où il est déjà : rien à faire, rien ne s'allume
+  const noop = (w) => !!(P.dragIds && w.folder !== undefined && P.dragIds.every((id) => (byId(id) || {}).bin === w.folder));
+  function unmark() {
+    root.classList.remove('drop-on');
+    $$('.drop-on', root).forEach((n) => n.classList.remove('drop-on'));
+    $$('.drop-say', root).forEach((n) => n.remove());
+    hot = null;
+  }
+  function mark(w) {
+    if (hot && hot.key === w.key && (!w.node || w.node.classList.contains('drop-on'))) return;
+    unmark();
+    hot = w;
+    if (!w.node) { root.classList.add('drop-on'); return; }   // le fond : le cadre du panneau
+    w.node.classList.add('drop-on');                         // un dossier, un onglet, une icône : lui seul, le cadre éteint
+    if (w.say) w.node.append(el('span', { class: 'drop-say' }, w.say));
+  }
+  function stopSpring() { if (spring) { clearTimeout(spring.t); spring = null; } }
+  function springFor(w) {
+    if (!w.open) { stopSpring(); return; }
+    if (spring && spring.key === w.key) return;
+    stopSpring();
+    spring = { key: w.key, t: setTimeout(() => { spring = null; unmark(); if (w.key.startsWith('f:')) openTab(w.folder); else { P.tab = w.folder; P.sel.clear(); saveTabs(); paint(); } }, SPRING_MS) };
+  }
+  function endDrag() { P.dragIds = null; app.clearDrag(); unmark(); stopSpring(); }
+  root.addEventListener('dragover', (e) => {
+    if (!dragged(e)) return;
+    const w = targetOf(e);
+    if (!w) return;
+    e.preventDefault(); e.stopPropagation();
+    if (noop(w) && !w.open) { unmark(); stopSpring(); e.dataTransfer.dropEffect = 'none'; return; }
+    e.dataTransfer.dropEffect = P.dragIds ? 'move' : 'copy';
+    mark(w);
+    springFor(w);
+  });
+  root.addEventListener('dragleave', (e) => { if (!e.relatedTarget || !root.contains(e.relatedTarget)) { unmark(); stopSpring(); } });
+  // la fin d'un glisser, où qu'elle ait lieu (la ligne de départ a pu être redessinée : son dragend ne vient plus)
+  for (const ev of ['dragend', 'drop']) root.ownerDocument.addEventListener(ev, () => { setTimeout(() => { if (ev === 'dragend') endDrag(); else { unmark(); stopSpring(); } }, 0); }, true);
+  root.addEventListener('drop', async (e) => {
+    if (!dragged(e)) return;
+    const w = targetOf(e);
+    unmark(); stopSpring();
+    if (!w) return;
+    e.preventDefault(); e.stopPropagation();
+    document.body.classList.remove('dropping'); root.ownerDocument.body.classList.remove('dropping');
+    const inside = P.dragIds;
+    P.dragIds = null;
+    let ids = [];
+    try { ids = JSON.parse(e.dataTransfer.getData(MULTI_MIME) || '[]'); } catch { ids = []; }
+    if (!Array.isArray(ids)) ids = [];
+    if (!ids.length) { try { const d = JSON.parse(e.dataTransfer.getData(ITEM_MIME) || 'null'); if (d && d.id) ids = [d.id]; } catch { /* */ } }
+    const files = [...(e.dataTransfer.files || [])];
+    // un fichier du disque : dans la bibliothèque (catégorie Upload), puis dans le Projet, là où on l'a lâché
+    if (!ids.length && files.length) ids = (await app.uploadMany(files, { bin: false })).map((x) => x.id);
+    if (!ids.length) return;
+    if (w.newSeq) { const it = byId(ids[0]) || app.items.get(ids[0]) || (await api('library/' + ids[0]).catch(() => null)); return it ? app.newSequenceFrom(it) : null; }
+    if (w.newFolder) return askFolder(ids);          // ce qui n'était pas au Projet y entre, dans le dossier neuf
+    if (inside && noop(w)) return;
+    return move(ids, w.folder);
+  });
 
   // ── les boutons, la recherche ──────────────────────────────
   $('#bin-kinds', root).replaceChildren(...KINDS.map(([k, lab]) => el('button', { class: 'tb' + (k === P.kind ? ' on' : ''), 'data-k': k,
-    onclick: () => { P.kind = k; LS('montage-bin-kind', k); load(); } }, lab)));
+    onclick: () => { P.kind = k; LS('montage-bin-kind', k); filter(); paint(); } }, lab)));
   let qT = 0;
-  $('#bin-q', root).addEventListener('input', (e) => { P.q = e.target.value; clearTimeout(qT); qT = setTimeout(load, 220); });
+  $('#bin-q', root).addEventListener('input', (e) => { clearTimeout(qT); qT = setTimeout(() => { P.q = e.target.value; filter(); paint(); }, 160); });
   $('#bin-new', root).onclick = () => askFolder(selectedIds());
   $('#bin-newseq', root).onclick = () => {
     const ids = selectedIds().filter((id) => ['video', 'image', 'audio'].includes((byId(id) || {}).kind));
@@ -417,9 +512,8 @@ export function mountProject(app) {
         { label: 'Ouvrir dans un onglet', sub: 'double-clic', onclick: () => openTab(name) },
         { label: 'Renommer', key: 'F2', onclick: () => startRename('folder', name) },
         { label: 'Nouvelle séquence dans ce dossier…', onclick: () => app.newSequence(name) },
-        { label: 'Révéler dans Asset', sub: '↗', onclick: () => window.open(href('asset/#/d/' + encodeURIComponent(name)), '_blank', 'noopener') },
         '-',
-        { label: 'Défaire le dossier', sub: 'le contenu revient à la racine', danger: true, onclick: () => dissolve(name) }];
+        { label: 'Défaire le dossier', sub: 'le contenu revient à la racine', onclick: () => dissolve(name) }];
     }
     if (ir) {
       const it = byId(ir.dataset.id);
@@ -428,8 +522,8 @@ export function mountProject(app) {
       const ids = selectedIds();
       const many = ids.length > 1;
       const seq = it.kind === 'sequence';
-      const fold = [{ label: 'La racine', checked: !it.folder, onclick: () => move(ids, '') }, ...(folders().length ? ['-'] : []),
-        ...folders().map(([n]) => ({ label: n, checked: it.folder === n, onclick: () => move(ids, n) })), '-',
+      const fold = [{ label: 'La racine', checked: !it.bin, onclick: () => move(ids, '') }, ...(folders().length ? ['-'] : []),
+        ...folders().map(([n]) => ({ label: n, checked: it.bin === n, onclick: () => move(ids, n) })), '-',
         { label: 'Nouveau dossier…', icon: '+', onclick: () => askFolder(ids) }];
       return [
         { head: many ? `${ids.length} objets` : it.title || it.id },
@@ -443,23 +537,23 @@ export function mountProject(app) {
         '-',
         { label: 'Renommer', key: 'F2', disabled: many, why: 'un seul objet à la fois', onclick: () => startRename('item', it.id) },
         { label: 'Ranger dans', items: fold },
-        it.folder ? { label: 'Sortir du dossier', onclick: () => move(ids, '') } : null,
+        it.bin ? { label: 'Sortir du dossier', onclick: () => move(ids, '') } : null,
         { label: 'Nouveau dossier avec la sélection…', key: 'Ctrl+B', onclick: () => askFolder(ids) },
         '-',
         { label: 'Révéler dans Asset', sub: '↗', disabled: many, why: 'un seul objet à la fois', onclick: () => window.open(href('asset/#' + it.id), '_blank', 'noopener') },
-        { label: 'Mettre à la corbeille', key: 'Suppr', danger: true, onclick: () => trash(ids) },
+        { label: 'Retirer du projet', key: 'Suppr', sub: 'reste dans Asset', danger: true, onclick: () => removeFromProject(ids) },
       ];
     }
     return [
-      { head: P.tab ? `Dossier · ${P.tab}` : 'Projet · Asset' },
+      { head: P.tab ? `Dossier · ${P.tab}` : 'Projet' },
       { label: 'Nouvelle séquence…', onclick: () => app.newSequence(P.tab) },
       { label: 'Nouveau dossier avec la sélection…', key: 'Ctrl+B', disabled: !selectedIds().length, why: 'choisissez d’abord des objets (un cadre sur le fond de la liste)', onclick: () => askFolder(selectedIds()) },
       { label: 'Importer…', key: 'Ctrl+I', onclick: () => $('#bin-file').click() },
       '-',
       { label: 'Tout choisir', key: 'Ctrl+A', onclick: () => { P.sel = new Set(shown().map((x) => x.id)); paint(); } },
       { label: 'Trier par', items: SORTS.map(([k, lab]) => ({ label: lab, checked: P.sort === k, onclick: () => { P.sort = k; LS('montage-bin-sort', k); paint(); } })) },
-      { label: 'Afficher', items: KINDS.map(([k, lab]) => ({ label: lab, checked: P.kind === k, onclick: () => { P.kind = k; LS('montage-bin-kind', k); load(); } })) },
-      { label: 'Ouvrir Asset', sub: '↗', onclick: () => window.open(href(P.tab ? 'asset/#/d/' + encodeURIComponent(P.tab) : 'asset/'), '_blank', 'noopener') },
+      { label: 'Afficher', items: KINDS.map(([k, lab]) => ({ label: lab, checked: P.kind === k, onclick: () => { P.kind = k; LS('montage-bin-kind', k); filter(); paint(); } })) },
+      { label: 'Ouvrir Asset', sub: '↗', onclick: () => window.open(href('asset/'), '_blank', 'noopener') },
       // le panneau dans sa fenêtre (commun/fenetre.js), ou de retour dans la page
       ...(app.detachItem ? ['-', app.detachItem()] : []),
     ];
@@ -479,7 +573,7 @@ export function mountProject(app) {
     }
     if (k === 'Delete' || k === 'Backspace') {
       e.preventDefault();
-      if (ids.length) trash(ids); else if (fs.length === 1) dissolve(fs[0]);
+      if (ids.length) removeFromProject(ids); else if (fs.length === 1) dissolve(fs[0]);
       return true;
     }
     if (k === 'Enter' && ids.length === 1) {
@@ -494,12 +588,16 @@ export function mountProject(app) {
 
   function reveal(id) {
     const it = byId(id);
+    if (!it) { toast('cet objet n’est pas dans le Projet (il est dans Asset) : glissez-le du panneau Asset pour l’y mettre'); return; }
     P.q = ''; $('#bin-q', root).value = '';
-    if (it && it.folder) openTab(it.folder); else { P.tab = ''; saveTabs(); }
+    P.kind = ''; LS('montage-bin-kind', '');
+    filter();
+    if (it.bin) openTab(it.bin); else { P.tab = ''; saveTabs(); }
     P.sel = new Set([id]);
-    const go = () => { paint(); const row = list.querySelector(`.bi[data-id="${id}"]`); if (row) { row.scrollIntoView({ block: 'center' }); row.classList.add('flash'); setTimeout(() => row.classList.remove('flash'), 1200); } };
-    if (!P.all.some((x) => x.id === id) || P.kind) { P.kind = ''; load().then(go); } else go();
+    paint();
+    const row = list.querySelector(`.bi[data-id="${id}"]`);
+    if (row) { row.scrollIntoView({ block: 'center' }); row.classList.add('flash'); setTimeout(() => row.classList.remove('flash'), 1200); }
   }
 
-  return { load, soon, paint, reveal, key, askFolder, selectedIds, get focus() { return P.focus; }, state: P };
+  return { load, soon, paint, reveal, key, askFolder, selectedIds, removeFromProject, move, get focus() { return P.focus; }, state: P };
 }

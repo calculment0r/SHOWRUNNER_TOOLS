@@ -110,7 +110,7 @@ import threading
 import time
 from pathlib import Path
 
-from core import config, jobs, library
+from core import auth, config, jobs, library
 from core.http import HttpError
 
 REPO = Path(__file__).resolve().parents[2]
@@ -297,6 +297,12 @@ def _write(b: dict) -> None:
     f = _path(b["id"])
     # le Workspace : celui du fichier (jamais celui de la page) ; une planche neuve, celui de la requête
     b["space"] = board_space(b["id"]) if f.exists() else library.new_space()
+    # ce qu'elle pose est de son Workspace (409 qui mène au rapatriement, tools/elements.py,
+    # ID_FIELDS) : par ici passent l'enregistrement, la co-édition (qui écarte déjà chaque
+    # opération qui poserait un objet d'ailleurs), renommer, dupliquer. Le jugement ne
+    # dépend que de la planche et des objets : il vaut aussi dans le fil de la co-édition
+    from tools import elements
+    elements.check_space(b["id"], b, b["space"])
     _spaces[b["id"]] = b["space"]
     tmp = f.with_suffix(".tmp")
     tmp.write_text(json.dumps(b, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -779,8 +785,9 @@ def r_create(req):
 
 
 def r_get(req, bid):
+    """La planche, et son Workspace (`space`, comme ODIO et le Montage le rendent)."""
     _need(req, bid, "see")
-    return normalize(load(bid))
+    return {**normalize(load(bid)), "space": board_space(bid)}
 
 
 def r_save(req, bid):
@@ -799,6 +806,9 @@ def r_save(req, bid):
         from tools import ideation_collab   # un invité ne pose que ce qu'il voit déjà
         if not ideation_collab.guest_nodes_ok(getattr(req, "user", None), cur.get("nodes") or [], new["nodes"]):
             raise HttpError(403, "invité : on ne pose ici que des objets déjà sur tes planches")
+        # le Workspace de ce qu'elle pose (409), les boucles d'éléments (400) : tools/elements.py
+        from tools import elements
+        elements.check_doc(bid, new, board_space(bid))
         new.update(created=cur.get("created"), updated=library.now(), rev=int(cur.get("rev", 1)) + 1)
         _write(new)
     return {"ok": True, "rev": new["rev"], "updated": new["updated"]}
@@ -856,8 +866,10 @@ def r_export(req, bid):
         title = f"{b['name']} · {fr['name'] or 'cadre'}"
     elif not b["nodes"]:
         raise HttpError(409, "la planche est vide : posez quelque chose avant de l'exporter")
+    # le travail est du Workspace de la planche : il y lit ses objets (library.get, borné au
+    # Workspace du travail), et la garde du calcul le juge là
     j = jobs.submit("ideation.export", {"board": bid, "frame": fid, "rev": b.get("rev")},
-                    title=f"Export · {title}", tool="ideation")
+                    title=f"Export · {title}", tool="ideation", space=board_space(bid))
     return jobs.public(j)
 
 
@@ -1454,6 +1466,15 @@ def _card(d, img, n: dict, bx: tuple, T: dict, s: float, rad, picture, parents: 
 def run_export(ctx) -> dict:
     bid = ctx.params.get("board", "")
     b = normalize(load(bid))
+    # ses entrées : les objets de la planche, lus dans le Workspace du travail (celui de la
+    # planche, r_export) ; chacun en est (elements.check_space), sinon un objet manquerait en silence
+    from tools import elements
+    if auth.current_space() and auth.current_space() != board_space(bid):
+        raise RuntimeError("ce rendu n'est pas du Workspace de la planche : relance-le depuis la planche")
+    try:
+        elements.check_space(bid, b, board_space(bid))
+    except HttpError as e:
+        raise RuntimeError(e.message) from e
     fid = ctx.params.get("frame") or ""
     ctx.progress(0.1, "compose la planche")
     try:
@@ -1494,7 +1515,12 @@ def _submit_all(todo: list) -> list:
     """Met en file tous les travaux d'un lot ; un refus en route (un quota
     atteint, la garde du calcul : un coût que la personne ne peut pas dans ce
     Workspace) retire ceux qui y sont déjà — un lot à moitié parti n'aurait pas
-    de sens, et rien ne reste d'un envoi refusé."""
+    de sens, et rien ne reste d'un envoi refusé. La garde du calcul (celle de
+    jobs.submit) juge d'abord chaque travail : un refus n'en met aucun en file
+    (sinon des travaux « arrêtés » resteraient dans la file de la personne)."""
+    me = auth.current()
+    for kind, params, *_ in todo:
+        jobs._guard(kind, params, me, me, jobs._space_for(me))
     out = []
     try:
         for kind, params, title, tool, pin, extra in todo:

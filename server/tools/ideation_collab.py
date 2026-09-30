@@ -1468,6 +1468,26 @@ def _set_slots(ide, cur: dict, k: str, op: dict) -> list:
     return slots
 
 
+def _posable(B: dict, obj: dict, cur: dict | None, fix) -> None:
+    """Les identifiants qu'une opération pose de neuf sur la planche (ID_FIELDS, ceux
+    que l'objet n'avait pas) : chacun est du Workspace de la planche, et aucun élément
+    n'y entre dans sa propre descendance — le garde des enregistrements
+    (elements.check_doc), opération par opération : l'opération est écartée, avec la
+    phrase qui dit lequel et mène au rapatriement, rien d'autre du lot ne bouge."""
+    from tools import elements
+    new = {x for x, _ in elements.ids_in("ide", {"nodes": [obj]})}
+    if cur:
+        new -= {x for x, _ in elements.ids_in("ide", {"nodes": [cur]})}
+    if not new:
+        return
+    bid = str(B.get("id") or "")
+    try:
+        elements.check_space(bid, {"nodes": [obj]}, _ide().board_space(bid) or B.get("space"), only=new)
+        elements.check_loops(bid, [i for i in node_items(obj) if i in new])
+    except HttpError as e:
+        raise _Drop(e.message, fix) from e
+
+
 def _one(ide, h: dict, op, added: set, allowed=None):
     """Applique une opération ; rend sa forme normalisée (None : sans effet).
     `allowed` : pour un invité, les objets de la bibliothèque qu'il peut poser."""
@@ -1507,6 +1527,8 @@ def _one(ide, h: dict, op, added: set, allowed=None):
             raise _Drop("invalide", *([fix] if fix else [])) from e
         if allowed is not None and t == "n" and node_items(obj) - node_items(idx.get(obj["id"]) or {}) - allowed:
             raise _Drop("invité", fix)       # un objet de la bibliothèque qu'on ne lui a pas montré
+        if t == "n":
+            _posable(B, obj, idx.get(obj["id"]), fix)
         cur = idx.get(obj["id"])
         if cur is not None:              # un renvoi, ou l'annulation d'un retrait déjà rejoué
             cur.clear()
@@ -1567,6 +1589,8 @@ def _one(ide, h: dict, op, added: set, allowed=None):
             raise _Drop("invalide", (t, oid)) from e
         if allowed is not None and t == "n" and node_items(obj) - node_items(cur) - allowed:
             raise _Drop("invité", (t, oid))
+        if t == "n":
+            _posable(B, obj, cur, (t, oid))
         cur.clear()
         cur.update(obj)
         out = {"o": "set", "t": t, "id": oid, "k": k}
@@ -1606,9 +1630,10 @@ def _structure(ide, h: dict, fx: list) -> None:
         h["l"] = {x["id"]: x for x in B["links"]}
 
 
-def _apply(bid: str, h: dict, ops: list, sid: str, n: int, u: dict) -> int:
+def _apply(bid: str, h: dict, ops: list, sid: str, n: int, u: dict) -> list:
     """Un lot : chaque opération dans l'ordre, les règles de structure, un numéro,
-    le journal des lots, et l'événement à tous (sous ideation._lock)."""
+    le journal des lots, et l'événement à tous (sous ideation._lock). Rend les
+    opérations écartées ([{i, why}]), que la réponse redit à qui les a envoyées."""
     ide = _ide()
     B = h["b"]
     acc, fx, drop, fixes = [], [], [], []
@@ -1654,7 +1679,7 @@ def _apply(bid: str, h: dict, ops: list, sid: str, n: int, u: dict) -> int:
         h["logb"] -= len(log.popleft()[1])
     h["dirty"] = True
     _broadcast(bid, _op_bytes(raw))
-    return B["rev"]
+    return drop
 
 
 def r_ops(req, bid):
@@ -1683,8 +1708,9 @@ def r_ops(req, bid):
             raise HttpError(429, "trop de gestes à la fois")
         h["rate"][sid] = (now, tokens - 1)
         dup = n <= h["seen"].get(sid, 0)     # un renvoi (réponse perdue) : déjà appliqué
+        drop = []
         if not dup:
-            _apply(bid, h, ops, sid, n, u)
+            drop = _apply(bid, h, ops, sid, n, u)
             h["seen"].pop(sid, None)
             h["seen"][sid] = n
             while len(h["seen"]) > 512:
@@ -1700,7 +1726,10 @@ def r_ops(req, bid):
     # écritures ; le lot qui le termine, et tout le reste, y sont (voir r_presence)
     if live:
         req.protected = False
-    return {"ok": True, "rev": rev, "dup": dup}
+    out = {"ok": True, "rev": rev, "dup": dup}
+    if drop:   # les opérations écartées, et pourquoi (un objet d'un autre Workspace : la phrase qui mène au rapatriement)
+        out["drop"] = drop
+    return out
 
 
 def r_ops_since(req, bid):

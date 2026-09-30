@@ -1,13 +1,21 @@
 """La page « Asset » : ce que la bibliothèque commune (`core/library.py`,
 `tools/core_api.py`) ne sait pas encore faire pour elle.
 
-  GET  /api/asset/view?kind=&q=&folder=&sort=&fav=1&tool=&origin=&limit=&offset=
+  GET  /api/asset/view?kind=&q=&folder=&fspace=&space=&sort=&fav=1&tool=&origin=&limit=&offset=
        une vue de la page : les objets d'un niveau (la racine ou un
        dossier), les dossiers de la racine avec leurs vignettes en petit,
        les comptes par sorte et par origine, les outils d'origine. Une
        recherche (`q`) parcourt tous les dossiers. `origin=upload` : ce
        qu'on a déposé de son disque (`origin.tool == "upload"`, la
        catégorie « Uploads ») ; `origin=made` : ce que les outils ont fait.
+       Teams et Workspaces (étape 5, equipes_espaces.md § 3.1) : tous les
+       Workspaces que la personne voit (`spaces` : ses Teams, le courant en
+       tête, le compte de chacun) ; `space=` n'en montre qu'un. Chaque objet
+       dit le sien (`space`), le courant vient en tête. Un dossier est à un
+       Workspace (`fspace`, par défaut le courant) : ceux d'ailleurs se
+       montrent, marqués, et ne se touchent pas d'ici.
+  GET  /api/asset/espaces                        les Workspaces que la personne voit (le filtre, le panneau)
+  POST /api/espaces/<B>/rapatrier {items, folder?}   (server/tools/equipes.py) : une copie neuve dans B
   POST /api/asset/move {ids, folder}             ranger (ou sortir : folder "")
   POST /api/asset/folders/rename {from, to}      renommer un dossier = ses objets
   POST /api/asset/bulk {ids, fav?, tags_add?, tags_remove?}   plusieurs à la fois ;
@@ -23,14 +31,22 @@
                                                  un élément versionné (ou l'une de ses
                                                  planches) : une version de plus (30/09)
   POST /api/asset/refs/<id> {refs}               la planche d'un élément, dans l'ordre
-  GET  /api/asset/dock?kind=&etype=&media=&q=&folder=&fav=1&limit=&offset=
+  GET  /api/asset/dock?kind=&etype=&media=&q=&folder=&fav=1&space=&spaces=*&limit=&offset=
        le panneau Asset commun (commun/dock.js) : une page d'objets, les
-       comptes des pastilles ; etype= et media= : voir `dock_list`
+       comptes des pastilles ; etype= et media= : voir `dock_list` ; par
+       défaut le Workspace courant, `space=` un autre qu'on voit (« Autres
+       workspaces »), `spaces=*` tous
 
 Un dossier n'existe que par ses objets (le champ `folder` de chacun,
 ARCHITECTURE.md §2) : un dossier vide disparaît de lui-même. Un seul
 niveau, comme dans la maquette du 28/09 (« un dossier tient des
 personnages et des objets, pas d'autre dossier »).
+
+Montrer et toucher (étape 5) : la page montre tous les Workspaces qu'on voit
+(library.query(spaces=…), library.see) ; ranger, aimer, taguer, jeter ne
+touchent que le Workspace courant (library.get) — un objet d'ailleurs répond
+409, qui dit où il est et qu'on le rapatrie (core_api.elsewhere_or_404).
+Télécharger (un zip, la lignée) montre : où qu'il soit.
 """
 
 from __future__ import annotations
@@ -47,22 +63,72 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from core import auth, config, library
+from core import auth, config, espaces, library
 from core.http import FileResponse, HttpError
 from tools import core_api
 
 FOLDER_MAX = 60
 
 
-def _all(q: str = "", sort: str = "new", fav: bool = False, tool: str = "", versions: bool = False) -> list[dict]:
+def _all(q: str = "", sort: str = "new", fav: bool = False, tool: str = "", versions: bool = False,
+         spaces=None) -> list[dict]:
     """Les objets de la page ; les versions d'un élément restent empilées sous lui
-    (`versions=False`, library.query) — la lignée, elle, les voit toutes."""
-    return library.query(None, q, None, sort, 1_000_000, 0, fav, tool, versions=versions)["items"]
+    (`versions=False`, library.query) — la lignée, elle, les voit toutes. `spaces` :
+    None, le Workspace courant (ranger, renommer : on ne touche que lui) ; une liste,
+    ou « * » : montrer (library.query)."""
+    return library.query(None, q, None, sort, 1_000_000, 0, fav, tool, versions=versions, spaces=spaces)["items"]
+
+
+def spaces_seen() -> list[dict]:
+    """Les Workspaces que la personne voit, pour MONTRER (equipes_espaces.md § 3.1) : ceux
+    de ses Teams (le menu de l'en-tête : espaces.teams_of — Cal n'y a pas les « Chez moi »
+    des autres, qu'il pourrait voir mais qui ne sont pas les siens), plus le courant s'il
+    n'y est pas ; le courant en tête. Chacun : son nom, sa Team, s'il est le courant, si
+    l'on peut y rapatrier (et pourquoi pas). [] : pas de personne (le socle), pas de Teams."""
+    u = auth.current()
+    here = library.here()
+    out, seen = [], set()
+
+    def add(s: dict, t: dict) -> None:
+        if s["id"] in seen or not (s.get("can") or {}).get("view"):
+            return
+        seen.add(s["id"])
+        out.append({"id": s["id"], "name": s["name"], "team": t.get("id"), "team_name": t.get("name"),
+                    "personal": bool(t.get("personal")), "archived": bool(s.get("archived")), "here": s["id"] == here,
+                    "import": bool((s.get("can") or {}).get("import")), "import_why": (s.get("why") or {}).get("import"),
+                    "create": bool((s.get("can") or {}).get("create")), "create_why": (s.get("why") or {}).get("create")})
+    if u is not None:
+        for t in espaces.teams_of(u):
+            for s in t.get("spaces") or []:
+                add(s, t)
+        if here and here not in seen:
+            cur = espaces.space_public(u, here)
+            if cur:
+                add(cur, {"id": cur.get("team"), "name": cur.get("team_name"), "personal": cur.get("personal")})
+    out.sort(key=lambda s: not s["here"])   # le courant en tête ; les autres dans l'ordre des Teams
+    return out
+
+
+def _space_ids(seen: list[dict]):
+    """Ce que `library.query(spaces=)` reçoit pour « tout ce qu'on voit » : la liste, ou « * »
+    sans Teams (le socle, la maison sans teams.json : tout ce que `can_read_item` laisse voir)."""
+    return [s["id"] for s in seen] if seen else "*"
+
+
+def _here_first(items: list[dict], here: str | None, key=lambda it: it.get("space")) -> list[dict]:
+    """Le Workspace courant en tête, chaque groupe dans l'ordre demandé (tri stable)."""
+    return sorted(items, key=lambda it: key(it) != here) if here else items
+
+
+def espaces_list(req):
+    """GET /api/asset/espaces — les Workspaces que la personne voit (spaces_seen)."""
+    return {"spaces": spaces_seen(), "here": library.here()}
 
 
 def _with_state(items: list[dict]) -> list[dict]:
     """Un élément versionné dit l'état de sa source (« modifiée depuis la v2 »…) :
-    seulement pour ceux de la page, relu chez tools/elements.py."""
+    seulement pour ceux de la page, relu chez tools/elements.py — et du Workspace courant
+    (la source d'un élément d'ailleurs n'est pas lue d'ici)."""
     from tools import elements
     out = []
     for it in items:
@@ -79,20 +145,24 @@ def _tool(it: dict) -> str:
     return (it.get("origin") or {}).get("tool") or "upload"
 
 
-def _ids(d: dict, write: bool = False, trash: bool = False) -> list[dict]:
+def _ids(d: dict, write: bool = False, trash: bool = False, show: bool = False) -> list[dict]:
     """Les objets nommés par `ids`, tous présents et visibles dans ce Workspace
-    (library.get), sinon 404. `write` : tous modifiables par la personne (un
-    éditeur du Workspace, Cal) ; `trash` : tous jetables par elle (les siens, ou
-    tout pour un admin du Workspace) — sinon 403 avant d'en toucher un seul : un
-    geste en lot se fait en entier ou pas du tout."""
+    (library.get), sinon 404 — ou 409 pour un objet qu'on voit dans un autre Workspace
+    (il se rapatrie). `show` : où qu'ils soient, s'ils se voient (un zip : montrer).
+    `write` : tous modifiables par la personne (un éditeur du Workspace, Cal) ; `trash` :
+    tous jetables par elle (les siens, ou tout pour un admin du Workspace) — sinon 403
+    avant d'en toucher un seul : un geste en lot se fait en entier ou pas du tout."""
     ids = d.get("ids")
     if not isinstance(ids, list) or not ids:
         raise HttpError(400, "ids : la liste des objets")
     out = []
     for iid in ids:
-        it = library.get(str(iid))
-        if not it:
-            raise HttpError(404, f"introuvable : {iid}")
+        if show:
+            it = library.see(str(iid))
+            if not it:
+                raise HttpError(404, f"introuvable : {iid}")
+        else:
+            it = core_api.elsewhere_or_404(str(iid))
         if it not in out:
             out.append(it)
     if write:
@@ -115,6 +185,7 @@ def _clean_folder(name) -> str:
 
 def _mini(it: dict) -> dict:
     return {"id": it["id"], "kind": it["kind"], "title": it.get("title", ""), "thumb_url": it.get("thumb_url"),
+            "views": it.get("views"), "view_urls": it.get("view_urls"), "space": it.get("space"),
             "url": it.get("url") if it["kind"] == "video" else None,
             "etype": (it.get("element") or {}).get("type")}
 
@@ -134,24 +205,43 @@ def view(req):
     except ValueError as e:
         raise HttpError(400, "limit et offset sont des nombres") from e
 
-    everything = _all("", sort)
+    # les Workspaces : tous ceux qu'on voit, ou un seul (`space=`) ; un dossier est à un Workspace
+    here = library.here()
+    seen = spaces_seen()
+    known = {s["id"] for s in seen}
+    want = req.q("space")
+    if want and seen and want not in known:
+        raise HttpError(404, f"Workspace {want} : inconnu, ou pas pour toi")
+    scope_spaces = [want] if want else _space_ids(seen)
+    fspace = (req.q("fspace") or here) if folder else None
+    if fspace and seen and fspace not in known:
+        raise HttpError(404, f"Workspace {fspace} : inconnu, ou pas pour toi")
+
+    everything = _all("", sort, spaces=scope_spaces)
     tools: dict[str, int] = {}
     for it in everything:
         t = _tool(it)
         tools[t] = tools.get(t, 0) + 1
-    all_folders = sorted({it.get("folder") for it in everything if it.get("folder")}, key=str.lower)
+    # les dossiers où l'on peut ranger : ceux du Workspace courant (ranger ne touche que lui)
+    all_folders = sorted({it.get("folder") for it in everything if it.get("folder") and (not here or it.get("space") == here)},
+                         key=str.lower)
 
-    before_origin = _all(q, sort, fav, tool)
+    every_space = _all(q, sort, fav, tool, spaces=_space_ids(seen))
+    per_space: dict[str, int] = {}
+    for it in every_space:
+        per_space[it.get("space")] = per_space.get(it.get("space"), 0) + 1
+    before_origin = every_space if not want else [it for it in every_space if it.get("space") == want]
+    in_folder = lambda it: (it.get("folder") or "") == folder and (not fspace or it.get("space") == fspace)   # noqa: E731
     # les comptes des onglets d'origine : dans le même périmètre que la vue
     if folder:
-        o_scope = [it for it in before_origin if (it.get("folder") or "") == folder]
+        o_scope = [it for it in before_origin if in_folder(it)]
     else:
         o_scope = before_origin
     origins = {"upload": sum(1 for it in o_scope if _tool(it) == "upload")}
     origins["made"] = len(o_scope) - origins["upload"]
     matching = [it for it in before_origin if not origin or (_tool(it) == "upload") == (origin == "upload")]
     if folder:
-        scope = [it for it in matching if (it.get("folder") or "") == folder]
+        scope = [it for it in matching if in_folder(it)]
     elif q:
         scope = matching                       # une recherche traverse les dossiers
     else:
@@ -162,22 +252,23 @@ def view(req):
     for it in counted:
         counts[it["kind"]] += 1
 
-    items = [it for it in scope if not kinds or it["kind"] in kinds]
+    items = _here_first([it for it in scope if not kinds or it["kind"] in kinds], here)
 
     folders = []
     if not folder and not q:
-        groups: dict[str, list[dict]] = {}
+        # un dossier par Workspace et par nom : « Lycée » de A et « Lycée » de B sont deux dossiers
+        groups: dict[tuple, list[dict]] = {}
         for it in matching:
             if it.get("folder"):
-                groups.setdefault(it["folder"], []).append(it)
-        for name, group in groups.items():
+                groups.setdefault((it.get("space"), it["folder"]), []).append(it)
+        for (sp, name), group in groups.items():
             shown = [it for it in group if not kinds or it["kind"] in kinds]
             if not shown:
                 continue
             by_kind = {k: 0 for k in library.KINDS}
             for it in group:
                 by_kind[it["kind"]] += 1
-            folders.append({"name": name, "count": len(shown), "total": len(group), "kinds": by_kind,
+            folders.append({"name": name, "space": sp, "count": len(shown), "total": len(group), "kinds": by_kind,
                             "updated": max(it.get("updated") or it["created"] for it in group),
                             "preview": [_mini(it) for it in shown[:4]]})
         if sort == "title":
@@ -186,10 +277,13 @@ def view(req):
             folders.sort(key=lambda f: f["updated"])
         else:
             folders.sort(key=lambda f: f["updated"], reverse=True)
+        folders = _here_first(folders, here)
 
     return {"items": _with_state(items[offset:offset + limit]), "total": len(items), "offset": offset,
             "counts": counts, "folders": folders, "all_folders": all_folders, "tools": tools, "origins": origins,
-            "library_total": len(everything), "folder": folder, "q": q}
+            "library_total": len(everything), "folder": folder, "fspace": fspace, "q": q,
+            "here": here, "space": want or None,
+            "spaces": [{**s, "count": per_space.get(s["id"], 0)} for s in seen]}
 
 
 # ── ranger ──────────────────────────────────────────────────
@@ -332,7 +426,7 @@ def zip_make(req):
     fait par la DGX qui a les fichiers, le Worker ne fait que le relayer ;
     ou, DGX éteintes, par le navigateur en flux depuis R2.
     """
-    items = _ids(req.json())
+    items = _ids(req.json(), show=True)   # exporter un fichier déjà fait : tout profil qui voit (§ 2.4)
     _zip_clean()
     token = secrets.token_hex(8)
     d = _zip_dir() / token
@@ -409,12 +503,24 @@ def _parent_ids(it: dict) -> list[str]:
 
 
 def lineage(req, item_id):
-    it = library.get(item_id)
+    """Montrer : la lignée d'un objet où qu'il soit, parents et enfants de tous les
+    Workspaces qu'on voit (chacun dit le sien, `space`) ; un parent resté dans A d'une
+    copie rapatriée dans B se montre, marqué — invisible, il est tu (`hidden`)."""
+    it = library.see(item_id)
     if not it:
         raise HttpError(404, f"introuvable : {item_id}")
-    parents = [library.public(p) for p in (library.get(x) for x in _parent_ids(it)) if p]
-    children = [c for c in _all(versions=True) if item_id in _parent_ids(c)]
-    return {"parents": parents, "children": children}
+    ids = _parent_ids(it)
+    parents = [library.public(p) for p in (library.see(x) for x in ids) if p]
+    every = _all(versions=True, spaces=_space_ids(spaces_seen()))
+    children = [c for c in every if item_id in _parent_ids(c)]
+    # une copie rapatriée : l'original d'où elle vient (origin.from), s'il se voit encore ; un
+    # original : ses copies rapatriées ailleurs (celles qu'on voit)
+    frm = (it.get("origin") or {}).get("from") or {}
+    source = library.see(str(frm.get("item") or "")) if frm.get("item") else None
+    copies = [c for c in every if ((c.get("origin") or {}).get("from") or {}).get("item") == item_id]
+    return {"parents": parents, "children": children, "hidden": len(ids) - len(parents),
+            "source": library.public(source) if source else None, "source_gone": bool(frm.get("item")) and source is None,
+            "copies": copies}
 
 
 # ── la corbeille ────────────────────────────────────────────
@@ -494,8 +600,8 @@ def set_refs(req, item_id):
     vient de retirer (son fichier reste dans le dossier de l'élément ;
     `POST /api/library/<id>` ne sait pas la faire revenir). `voices`, s'il
     est donné, pose de même la voix de l'élément."""
-    it = library.get(item_id)
-    if not it or it["kind"] != "element":
+    it = core_api.elsewhere_or_404(item_id)   # d'un autre Workspace : 409, il se rapatrie
+    if it["kind"] != "element":
         raise HttpError(404, f"élément introuvable : {item_id}")
     library.check_write(it)   # la planche d'un autre ne se touche pas (avant le 29/09 : aucun contrôle)
     library._frozen(it, "sa planche")   # la planche publiée d'un élément ne change plus (30/09)
@@ -683,7 +789,17 @@ def dock_list(req):
         offset = max(0, int(req.q("offset", "0") or 0))
     except ValueError as e:
         raise HttpError(400, "limit et offset sont des nombres") from e
-    base = _all(req.q("q").strip(), req.q("sort", "new"), req.q("fav") == "1")
+    # le Workspace courant par défaut (ce que l'outil pose, il le lit : library.get) ; « Autres
+    # workspaces » : `space=` un autre qu'on voit, `spaces=*` tous — chaque objet dit le sien
+    # (`space`), et le poser dans l'outil passe par POST /api/espaces/<courant>/rapatrier
+    want, every = req.q("space"), req.q("spaces") == "*"
+    spaces = None
+    if want or every:
+        seen = spaces_seen()
+        if want and seen and want not in {s["id"] for s in seen}:
+            raise HttpError(404, f"Workspace {want} : inconnu, ou pas pour toi")
+        spaces = [want] if want else _space_ids(seen)
+    base = _all(req.q("q").strip(), req.q("sort", "new"), req.q("fav") == "1", spaces=spaces)
     scope = base if folder is None else [it for it in base if (it.get("folder") or "") == folder]
     counts = {k: 0 for k in library.KINDS}
     by_etype: dict[str, int] = {}
@@ -703,6 +819,7 @@ def dock_list(req):
 
 def register(app) -> None:
     app.route("GET", "/api/asset/dock", dock_list)   # le panneau Asset commun (ci-dessus)
+    app.route("GET", "/api/asset/espaces", espaces_list)
     app.route("GET", "/api/asset/view", view)
     app.route("POST", "/api/asset/move", move)
     app.route("POST", "/api/asset/folders/rename", rename_folder)
@@ -849,3 +966,382 @@ def selftest(call, ok) -> None:
     ok(dock_match(song, ["audio"], [], ["audio"]) and not dock_match(song, ["audio"], [], []) and sorte_effective(song) == "audio"
        and not dock_match({"kind": "element", "element": {"type": "object"}}, ["element"], ["character"], []),
        "asset : le panneau, media= compte l'élément versionné par sa dernière version")
+
+    # Teams et Workspaces, étape 5 : Asset montre tout ce qu'on voit ; rapatrier
+    bad = in_place_writers()
+    ok(not bad, f"rapatrier : aucun code n'écrit dans le fichier principal d'un objet (lecture du code) {bad}")
+    _rapatrier_selftest(ok)
+
+
+# ── le contrôle de l'étape 5 : montrer tous les Workspaces, rapatrier ─────────
+# Le lien dur de `main.*` (décision 8) n'est juste que si aucun code ne réécrit le fichier
+# principal EN PLACE : une écriture en place changerait les deux objets à la fois. Deux
+# preuves : la lecture du code (in_place_writers : tout appel qui écrit — write_bytes,
+# write_text, open en écriture, PIL save, shutil/os vers une destination, une sortie
+# ffmpeg — dont la cible nomme le fichier principal : `path_of(it)`, `it["file"]`,
+# « main.* ») ; et l'essai (_rapatrier_selftest : chaque écriture de la bibliothèque passée
+# sur l'original et sur la copie, l'inode et le contenu relus après chacune).
+_MAIN_TARGET = re.compile(r"path_of\(\s*[^,()]+\)\s*\)?$|\[\s*['\"]file['\"]\s*\]|\.get\(\s*['\"]file['\"]|['\"]main\.")
+# des écritures de « main.* » qui ne sont pas un objet de la bibliothèque : les données
+# jetables d'un contrôle (la migration essayée sur une copie, server/tools/equipes.py)
+_MAIN_ALLOWED = {("server/tools/equipes.py", "_migration")}
+
+
+def in_place_writers() -> list[str]:
+    import ast
+    root = config.REPO
+    out = []
+    for f in sorted((root / "server").rglob("*.py")):
+        rel = f.relative_to(root).as_posix()
+        try:
+            src = f.read_text(encoding="utf-8")
+            tree = ast.parse(src)
+        except (OSError, SyntaxError, ValueError):
+            continue
+        seg = lambda n: ast.get_source_segment(src, n) or ""   # noqa: E731
+
+        def visit(node, stack):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                stack = stack + [node.name]
+            if isinstance(node, ast.Call):
+                fn = node.func
+                name = fn.attr if isinstance(fn, ast.Attribute) else fn.id if isinstance(fn, ast.Name) else ""
+                targets = []
+                if name in ("write_bytes", "write_text", "touch") and isinstance(fn, ast.Attribute):
+                    targets.append(fn.value)
+                elif name in ("replace", "rename", "hardlink_to", "symlink_to") and isinstance(fn, ast.Attribute) and node.args \
+                        and not (isinstance(fn.value, ast.Name) and fn.value.id in ("os",)) and len(node.args) == 1:
+                    targets.append(node.args[0])                        # Path.replace(cible)
+                elif name == "save" and node.args:
+                    targets.append(node.args[0])                        # PIL : im.save(cible, …)
+                elif name == "open" and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) \
+                        and any(c in str(node.args[1].value) for c in "wa+"):
+                    targets.append(node.args[0])
+                elif name in ("copyfile", "copy", "copy2", "move", "copytree", "link", "symlink", "replace", "rename") \
+                        and len(node.args) >= 2:
+                    targets.append(node.args[1])                        # shutil / os : (source, destination)
+                elif name in ("run", "Popen", "check_call", "check_output", "call") and node.args \
+                        and isinstance(node.args[0], (ast.List, ast.Tuple)):
+                    elts = node.args[0].elts
+                    for k, e in enumerate(elts):   # une sortie de ffmpeg : tout sauf ce qui suit « -i »
+                        prev = elts[k - 1] if k else None
+                        if not (isinstance(prev, ast.Constant) and prev.value == "-i"):
+                            targets.append(e)
+                for t in targets:
+                    if _MAIN_TARGET.search(seg(t).strip()) and not any((rel, s) in _MAIN_ALLOWED for s in stack):
+                        out.append(f"{rel}:{node.lineno} {seg(node)[:90]}")
+            for ch in ast.iter_child_nodes(node):
+                visit(ch, stack)
+        visit(tree, [])
+    return out
+
+
+def _rapatrier_selftest(ok) -> None:
+    import hashlib
+    import io
+    import shutil as _sh
+    import subprocess
+    import tempfile
+
+    from PIL import Image
+
+    from tools.admin import essai_http as H
+
+    def err(d) -> str:
+        return d.get("error", "") if isinstance(d, dict) else str(d)[:80]
+
+    def png(color, size=(300, 200)) -> bytes:
+        buf = io.BytesIO()
+        Image.new("RGB", size, color).save(buf, "PNG")
+        return buf.getvalue()
+
+    before = {k: config.CFG.get(k) for k in ("auth",)}
+    config.CFG["auth"] = True
+    auth.startup()
+    with auth._lock:
+        auth._hits.clear()
+    same = {"Origin": f"http://127.0.0.1:{config.get('port')}"}
+    try:
+        _, d, cal = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
+
+        def who(tok, space=None):
+            def req(method, path, body=None, *, raw=None, hd=None):
+                h = {**same, **({"X-SR-Espace": space} if space else {}), **(hd or {})}
+                return H(method, path, body, cookie=tok, headers=h, raw=raw)[:2]
+            return req
+
+        C = who(cal)
+        s, t = C("POST", "/api/equipes", {"name": "Rapatrier Essai"})
+        ok(s == 200, f"rapatrier : une Team d'essai ({s} {err(t)})")
+        tid, A = t["id"], t["spaces"][0]["id"]
+        s, sp = C("POST", f"/api/equipes/{tid}/espaces", {"name": "Client Rapatrier"})
+        B = sp.get("id")
+        s1, _ = C("POST", f"/api/equipes/{tid}/membres", {"pseudo": "Rea Rapatrie", "role": "member"})
+        s2, _ = C("POST", f"/api/equipes/{tid}/membres", {"pseudo": "Vio Rapatrie", "role": "guest", "guest": "viewer", "spaces": [A, B]})
+        s3, _ = C("POST", f"/api/equipes/{tid}/membres", {"pseudo": "Gab Rapatrie", "role": "guest", "guest": "acteur", "spaces": [A, B]})
+        s4, _ = C("POST", "/api/admin/users", {"name": "Xen Rapatrie", "access": "studio"})
+        _, _, REA = H("POST", "/api/auth/enter", {"name": "Rea Rapatrie"}, headers=same)
+        _, _, VIO = H("POST", "/api/auth/enter", {"name": "Vio Rapatrie"}, headers=same)
+        _, _, GAB = H("POST", "/api/auth/enter", {"name": "Gab Rapatrie"}, headers=same)
+        _, _, XEN = H("POST", "/api/auth/enter", {"name": "Xen Rapatrie"}, headers=same)
+        X = who(XEN)
+        s5, tx = X("POST", "/api/equipes", {"name": "Ailleurs Rapatrie"})
+        XS = ((tx or {}).get("spaces") or [{}])[0].get("id") if isinstance(tx, dict) else None
+        ok((s1, s2, s3, s4, s5) == (200,) * 5 and B and REA and VIO and GAB and XEN and XS,
+           f"rapatrier : Rea (membre), Vio (guest viewer), Gab (guest acteur), Xen (une autre Team) ({s1} {s2} {s3} {s4} {s5})")
+        ra, rb = who(REA, A), who(REA, B)
+
+        # ── ce que Rea fait dans A : une image, un son, une vidéo, une planche ──
+        s, img = ra("PUT", "/api/library/upload?name=a.png&title=Image+de+A&folder=Planches", raw=png((200, 40, 40)),
+                    hd={"Content-Type": "image/png"})
+        ra("POST", f"/api/library/{img.get('id')}", {"tags": ["rouge", "essai"], "prompt": "une image rouge"})
+        wav = Path(tempfile.mkdtemp(prefix="sr_rap_")) / "a.wav"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=1", str(wav)],
+                       capture_output=True, timeout=60)
+        s2, snd = ra("PUT", "/api/library/upload?name=a.wav&title=Son+de+A", raw=wav.read_bytes(), hd={"Content-Type": "audio/wav"})
+        mp4 = wav.with_suffix(".mp4")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10", "-t", "1",
+                        "-pix_fmt", "yuv420p", str(mp4)], capture_output=True, timeout=60)
+        s3, vid = ra("PUT", "/api/library/upload?name=a.mp4&title=Film+de+A", raw=mp4.read_bytes(), hd={"Content-Type": "video/mp4"})
+        s4, el = ra("POST", "/api/elements", {"title": "Planche de A", "type": "object", "refs": [{"item": img.get("id"), "role": "view"}]})
+        ok((s, s2, s3, s4) == (200,) * 4 and img.get("space") == A and el.get("space") == A,
+           f"rapatrier : Rea crée dans A ({s} {s2} {s3} {s4} {img.get('space')})")
+        from tools import defilement
+        for _ in range(200):   # la copie de défilement de la vidéo, faite à l'entrée (server/tools/defilement.py)
+            if (library.folder_of(vid["id"]) / defilement.name()).exists():
+                break
+            time.sleep(0.05)
+        rb("GET", f"/api/son/apercu/{snd['id']}?v=1")   # l'onde du son, rangée à côté (montrer : jugé par l'objet)
+
+        # ── Asset montre tous les Workspaces ; le courant en tête ; un filtre par Workspace ──
+        s, v = rb("GET", "/api/asset/view?q=de+A")
+        ids = [x["id"] for x in v.get("items", [])]
+        spaces = v.get("spaces") or []
+        ok(s == 200 and img["id"] in ids and spaces and spaces[0]["id"] == B and spaces[0]["here"]
+           and any(x["id"] == A and not x["here"] and x["count"] >= 3 for x in spaces) and v.get("here") == B,
+           f"rapatrier : Asset dans B montre les objets de A, B en tête ({s} {[(x['id'], x.get('count')) for x in spaces]})")
+        mine = next((x for x in v["items"] if x["id"] == img["id"]), {})
+        ok(mine.get("space") == A, "rapatrier : chaque carte dit son Workspace")
+        s, v2 = rb("GET", f"/api/asset/view?space={B}")
+        ok(s == 200 and img["id"] not in [x["id"] for x in v2["items"]], "rapatrier : le filtre ne montre qu'un Workspace")
+        s, v3 = rb("GET", "/api/asset/view")
+        fl = [f for f in v3.get("folders", []) if f["name"] == "Planches"]
+        ok(s == 200 and fl and fl[0]["space"] == A and "Planches" not in v3["all_folders"],
+           f"rapatrier : un dossier de A se montre, marqué ; on n'y range pas depuis B ({[(f['name'], f['space']) for f in fl]})")
+        s, v4 = rb("GET", f"/api/asset/view?folder=Planches&fspace={A}")
+        ok(s == 200 and [x["id"] for x in v4["items"]] == [img["id"]], "rapatrier : ouvrir le dossier de A depuis B")
+        s, _ = X("GET", f"/api/asset/view?space={A}")
+        ok(s == 404, f"rapatrier : Xen ne filtre pas un Workspace qu'il ne voit pas ({s})")
+        s, dk = rb("GET", "/api/asset/dock?spaces=*")
+        s_, dk2 = rb("GET", "/api/asset/dock")
+        ok(s == 200 and img["id"] in [x["id"] for x in dk["items"]] and img["id"] not in [x["id"] for x in dk2["items"]],
+           "rapatrier : le panneau lit son Workspace ; « spaces=* » montre les autres")
+
+        # ── montrer sans toucher : lire par see, écrire par get ──
+        got = (rb("GET", f"/api/library/{img['id']}")[0], rb("GET", f"/api/library/{img['id']}?spaces=*")[0],
+               rb("GET", f"/api/library/{img['id']}/view?w=256")[0], rb("GET", f"/api/asset/lineage/{img['id']}")[0])
+        s, bt = rb("POST", "/api/library/batch", {"ids": [img["id"]], "spaces": "*"})
+        s_, bt2 = rb("POST", "/api/library/batch", {"ids": [img["id"]]})
+        ok(got == (404, 200, 200, 200) and [x["id"] for x in bt["items"]] == [img["id"]] and bt2["missing"] == [img["id"]],
+           f"rapatrier : depuis B, l'objet de A se montre (spaces=*, view, lot, lignée), un outil ne l'atteint pas ({got})")
+        writes = (rb("POST", f"/api/library/{img['id']}", {"title": "par B"}), rb("POST", "/api/asset/trash", {"ids": [img["id"]]}),
+                  rb("POST", "/api/asset/move", {"ids": [img["id"]], "folder": "x"}),
+                  rb("POST", "/api/elements", {"title": "x", "refs": [{"item": img["id"], "role": "face"}]}))
+        ok(all(w[0] == 409 and "rapatrie" in err(w[1]) for w in writes) and library.see(img["id"])["title"] == "Image de A",
+           f"rapatrier : depuis B, toucher l'objet de A répond 409 et dit de le rapatrier ({[w[0] for w in writes]})")
+        s, zp = rb("POST", "/api/asset/zip", {"ids": [img["id"]]})
+        ok(s == 200 and zp.get("files") == 1, f"rapatrier : télécharger un objet d'un autre Workspace (montrer) ({s})")
+
+        # ── rapatrier ──
+        before_b = {x["id"] for x in library.query(limit=10**6, spaces=[B])["items"]}
+        src = {k: library.see(x["id"]) for k, x in (("img", img), ("snd", snd), ("vid", vid), ("el", el))}
+        uids = {k: library.uid_of(x) for k, x in src.items()}
+        s, r = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [img["id"], snd["id"], vid["id"], el["id"]], "folder": "Reçus"})
+        cp = dict(zip(("img", "snd", "vid", "el"), r.get("items", []))) if s == 200 else {}
+        ok(s == 200 and len(cp) == 4 and r.get("earlier") == 0, f"rapatrier : quatre objets de A dans B ({s} {err(r)})")
+        if len(cp) != 4:
+            return
+        rea = auth.user("rea-rapatrie")
+        inst = library.instance()["uuid"]
+        for k, c in cp.items():
+            o = src[k]
+            frm = (c.get("origin") or {}).get("from") or {}
+            ok(c["id"] != o["id"] and c["id"] not in before_b and c["space"] == B and c.get("uid") == f"sr:{inst}/{c['id']}"
+               and c["uid"] != uids[k] and (c.get("origin") or {}).get("user") == rea["id"]
+               and frm.get("space") == A and frm.get("item") == o["id"] and frm.get("uid") == uids[k] and frm.get("at")
+               and c.get("folder") == "Reçus" and not c.get("fav"),
+               f"rapatrier : {k} — un objet neuf dans B, id et uid neufs, origin.user et origin.from ({c['id']} {c.get('uid')} {frm})")
+            same_keys = [x for x in ("kind", "title", "prompt", "params", "tags", "width", "height", "duration", "fps", "parents") if x in o]
+            ok(all(c.get(x) == o.get(x) for x in same_keys), f"rapatrier : {k} — titre, recette, tags, dimensions, lignée suivent")
+        ok(cp["el"].get("parents") == [img["id"]] and (cp["el"].get("parents_space") or {}).get(img["id"]) == A,
+           f"rapatrier : la lignée garde ses ids, marqués « dans A » ({cp['el'].get('parents_space')})")
+        ok(len(cp["el"]["element"]["refs"]) == 1 and cp["el"]["element"]["refs"][0]["item"] == img["id"],
+           "rapatrier : la planche garde ses références")
+
+        # les fichiers : main.* par un lien dur, le reste en copie pleine
+        def files(iid):
+            d = library.folder_of(iid)
+            return {p.name: p for p in d.iterdir() if p.is_file() and p.name not in library.IMPORT_SKIP}
+        linked, apart = True, True
+        for k in cp:
+            fa, fb = files(src[k]["id"]), files(cp[k]["id"])
+            for name, pa in fa.items():
+                pb = fb.get(name)
+                if pb is None or pa.read_bytes() != pb.read_bytes():
+                    apart = False
+                    continue
+                if library.MAIN_RX.fullmatch(name):
+                    linked &= pa.stat().st_ino == pb.stat().st_ino and pa.stat().st_nlink == 2
+                else:
+                    apart &= pa.stat().st_ino != pb.stat().st_ino
+        ok(linked, "rapatrier : le fichier principal (main.*) est un lien dur — le même inode, deux noms")
+        ok(apart, "rapatrier : vignette, copies d'affichage, références, onde, défilement : des copies pleines, mêmes octets")
+        ok(sorted(files(cp["el"]["id"])) == sorted(files(src["el"]["id"])) and not any(p.stat().st_ino == q.stat().st_ino
+           for p in files(cp["el"]["id"]).values() for q in files(src["el"]["id"]).values()),
+           "rapatrier : un élément — ses références copiées, aucune partagée")
+
+        # le contrôle qui fonde le lien dur : chaque écriture de la bibliothèque, sur l'original
+        # et sur la copie ; après chacune, le même inode et les mêmes octets pour main.*
+        mains = []
+        for k in ("img", "snd", "vid"):
+            pa = library.path_of(src[k])
+            mains.append((k, pa.name, hashlib.sha256(pa.read_bytes()).hexdigest()))
+        broken = []
+
+        def loc(iid, name):   # dans la bibliothèque, ou à la corbeille
+            p = library.folder_of(iid) / name
+            return p if p.exists() else library.trash_root() / iid / name
+
+        def check(step):
+            for k, name, h in mains:
+                pa, pb = loc(src[k]["id"], name), loc(cp[k]["id"], name)
+                try:
+                    sa, sb = pa.stat(), pb.stat()
+                    good = sa.st_ino == sb.st_ino and hashlib.sha256(pa.read_bytes()).hexdigest() == h \
+                        and hashlib.sha256(pb.read_bytes()).hexdigest() == h
+                except OSError:
+                    good = False
+                if not good:
+                    broken.append(f"{step} ({k})")
+
+        for who_, sid, ids_ in ((ra, A, [src[k]["id"] for k in ("img", "snd", "vid")]), (rb, B, [cp[k]["id"] for k in ("img", "snd", "vid")])):
+            for iid in ids_:
+                who_("POST", f"/api/library/{iid}", {"title": "retitré", "tags": ["t"], "prompt": "autre", "fav": True})
+                check("modifier la fiche")
+            who_("POST", "/api/asset/move", {"ids": ids_, "folder": "Rangés"}); check("ranger")
+            who_("POST", "/api/asset/folders/rename", {"from": "Rangés", "to": "Rangés 2"}); check("renommer un dossier")
+            who_("POST", "/api/asset/bulk", {"ids": ids_, "fav": False, "tags_add": ["lot"]}); check("en lot")
+            who_("POST", "/api/asset/zip", {"ids": ids_}); check("zip")
+            who_("GET", f"/api/son/apercu/{ids_[1]}?v=1"); check("l'onde d'un son")
+            who_("GET", f"/api/defil/{ids_[2]}"); check("la copie de défilement")
+            s, e2 = who_("POST", "/api/elements", {"title": "réf", "type": "object", "refs": [{"item": ids_[0], "role": "view"}]})
+            check("en faire une référence")
+            if s == 200:
+                who_("POST", f"/api/elements/{e2['id']}/refs", {"item": ids_[0], "role": "detail"}); check("ajouter une référence")
+                who_("POST", f"/api/asset/refs/{e2['id']}", {"refs": []}); check("retoucher la planche")
+            who_("POST", "/api/elements", {"from_item": ids_[0], "note": "v1"}); check("en faire la v1 d'un élément")
+            auth.set_current(None)
+            auth.set_current_space(None)
+            for iid in ids_:
+                library.ensure_views(iid, force=True)
+            check("refaire les copies d'affichage")
+            who_("POST", "/api/asset/trash", {"ids": ids_[:1]}); check("la corbeille")
+            who_("POST", "/api/asset/restore", {"ids": ids_[:1]}); check("en revenir")
+        s, j = C("POST", "/api/library/views", {"ids": [src["img"]["id"], cp["img"]["id"]], "force": True})
+        for _ in range(100):
+            s, j = C("GET", f"/api/jobs/{j.get('id')}")
+            if j.get("state") in ("done", "error", "cancelled"):
+                break
+            time.sleep(0.1)
+        check("le rattrapage des copies d'affichage (la file)")
+        ok(not broken, f"rapatrier : aucune écriture de la bibliothèque ne réécrit main.* en place — inode et octets gardés {broken}")
+
+        # éditer B ne touche pas A, et inversement
+        rb("POST", f"/api/library/{cp['img']['id']}", {"title": "Copie retouchée", "tags": ["b"]})
+        ra("POST", f"/api/library/{img['id']}", {"title": "Original retouché"})
+        a_now, b_now = library.see(img["id"]), library.see(cp["img"]["id"])
+        ok(a_now["title"] == "Original retouché" and b_now["title"] == "Copie retouchée" and b_now["tags"] == ["b"]
+           and a_now["tags"] != ["b"], "rapatrier : éditer la copie ne touche pas l'original, ni l'inverse")
+        rb("POST", f"/api/asset/refs/{cp['el']['id']}", {"refs": []})
+        ok(len(library.see(el["id"])["element"]["refs"]) == 1, "rapatrier : retoucher la planche copiée laisse celle de A")
+
+        # la corbeille et le vidage d'un côté laissent l'autre intact
+        k, _name, h = mains[0]
+        rb("POST", "/api/asset/trash", {"ids": [cp["img"]["id"]]})
+        ok(hashlib.sha256(library.path_of(library.see(img["id"])).read_bytes()).hexdigest() == h,
+           "rapatrier : la copie à la corbeille, l'original intact")
+        rb("POST", "/api/asset/restore", {"ids": [cp["img"]["id"]]})
+        s, _ = ra("POST", "/api/asset/trash", {"ids": [img["id"]]})
+        _sh.rmtree(library.trash_root() / img["id"])   # vider la corbeille de A
+        pbn = library.path_of(library.see(cp["img"]["id"]))
+        ok(s == 200 and pbn.is_file() and hashlib.sha256(pbn.read_bytes()).hexdigest() == h and pbn.stat().st_nlink == 1
+           and rb("GET", f"/library/{cp['img']['id']}/{pbn.name}")[0] == 200,
+           "rapatrier : l'original jeté et la corbeille vidée, la copie de B garde son fichier (le lien dur vit par son nom)")
+        s, lin = rb("GET", f"/api/asset/lineage/{cp['el']['id']}")
+        ok(s == 200 and lin.get("source", {}).get("id") == el["id"], "rapatrier : la lignée d'une copie mène à son original")
+
+        # annuler (Ctrl+Z de la page) : la copie à la corbeille, par qui l'a rapatriée
+        s, r2 = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [snd["id"]]})
+        cid = (r2.get("items") or [{}])[0].get("id")
+        s2, t = rb("POST", "/api/asset/trash", {"ids": [cid]})
+        ok(s == 200 and r2.get("earlier") == 1 and s2 == 200 and not library.see(cid) and library.see(snd["id"]),
+           f"rapatrier : une seconde copie (B en avait une) ; l'annuler la met à la corbeille, l'original reste ({s} {s2})")
+
+        # une LUT du Montage : son .cube copié, une LUT neuve dans B
+        from tools import montage
+        cube = montage._test_cube(2, lambda r, g, bl: (1 - r, 1 - g, 1 - bl)).encode()
+        s, lut = ra("PUT", "/api/montage/luts?name=inv.cube&title=Inversion+de+A", raw=cube, hd={"Content-Type": "application/octet-stream"})
+        s2, r3 = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [lut.get("id", "x")]})
+        nl = (r3.get("luts") or [{}])[0] if isinstance(r3, dict) else {}
+        in_b = {x["id"]: x for x in rb("GET", "/api/montage/luts")[1].get("luts", [])}
+        in_a = {x["id"] for x in ra("GET", "/api/montage/luts")[1].get("luts", [])}
+        d_ = montage._luts_dir()
+        ok(s == 200 and s2 == 200 and nl.get("id") in in_b and nl["id"] != lut["id"] and lut["id"] in in_a and nl["id"] not in in_a
+           and (nl.get("from") or {}).get("item") == lut["id"] and nl.get("space") == B
+           and (d_ / f"{nl['id']}.cube").read_bytes() == (d_ / f"{lut['id']}.cube").read_bytes()
+           and (d_ / f"{nl['id']}.cube").stat().st_ino != (d_ / f"{lut['id']}.cube").stat().st_ino,
+           f"rapatrier : une LUT — une LUT neuve dans B, son .cube copié, l'original reste dans A ({s} {s2} {err(r3)})")
+        s, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [nl.get("id", "x")]})
+        ok(s == 409, f"rapatrier : une LUT déjà dans B ({s})")
+
+        # ── les refus ──
+        n0 = len(library.query(limit=10**6, spaces=[B])["items"])
+        s, d = who(VIO, B)("POST", f"/api/espaces/{B}/rapatrier", {"items": [el["id"]]})
+        ok(s == 403 and "viewer" in err(d), f"rapatrier : un guest viewer ne rapatrie pas ({s} {err(d)[:80]})")
+        s, d = who(GAB, B)("POST", f"/api/espaces/{B}/rapatrier", {"items": [el["id"]]})
+        gab_copy = (d.get("items") or [{}])[0] if isinstance(d, dict) else {}
+        ok(s == 200 and gab_copy.get("space") == B, f"rapatrier : un guest acteur rapatrie (créer, pas calculer) ({s} {err(d)[:60]})")
+        s, d = X("POST", f"/api/espaces/{XS}/rapatrier", {"items": [el["id"]]})
+        s2, d2 = X("POST", f"/api/espaces/{B}/rapatrier", {"items": [el["id"]]})
+        ok(s == 404 and s2 == 404, f"rapatrier : une autre Team — ni l'objet, ni le Workspace ({s} {s2})")
+        s, lv = ra("POST", "/api/elements", {"from_item": snd["id"], "note": "v1"})
+        s2, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [snd["id"], lv.get("id", "x")]})
+        ok(s == 200 and s2 == 409 and "versionné" in err(d), f"rapatrier : un élément versionné, pas encore (étape 9) ({s} {s2})")
+        s, sq = ra("POST", "/api/montage/projects", {"name": "Séquence de A"})
+        s2, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [sq.get("id", "x")]})
+        ok(s2 == 409 and "séquence" in err(d), f"rapatrier : une séquence, pas encore ({s} {s2} {err(d)[:50]})")
+        s, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [cp["vid"]["id"]]})
+        ok(s == 409 and "déjà" in err(d), f"rapatrier : un objet déjà dans B ({s})")
+        s, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": []})
+        s2, _ = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": ["ima-20000101-000000-dead"]})
+        s3, _ = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [snd["id"]], "folder": "a/b"})
+        ok((s, s2, s3) == (400, 404, 400), f"rapatrier : une liste vide, un objet inconnu, un dossier dans un dossier ({s} {s2} {s3})")
+        n1 = len(library.query(limit=10**6, spaces=[B])["items"])
+        ok(n1 == n0 + 1, f"rapatrier : tout ou rien — un refus ne laisse aucune copie ({n0} → {n1}, la seule : celle de Gab)")
+        # un outil de B se sert de la copie, pas de l'original
+        s, e3 = rb("POST", "/api/elements", {"title": "Dans B", "refs": [{"item": cp["vid"]["id"], "role": "view"}]})
+        s2, _ = rb("POST", "/api/elements", {"title": "Dans B", "refs": [{"item": vid["id"], "role": "view"}]})
+        ok(s2 == 409, f"rapatrier : dans B, un outil n'atteint pas l'objet de A — il se rapatrie ({s2})")
+        auth.set_current(rea)
+        auth.set_current_space(B)
+        try:
+            ok(library.get(cp["vid"]["id"]) is not None and library.get(vid["id"]) is None,
+               "rapatrier : library.get dans B rend la copie, jamais l'original")
+        finally:
+            auth.set_current(None)
+            auth.set_current_space(None)
+        _sh.rmtree(wav.parent, ignore_errors=True)
+    finally:
+        auth.set_current(None)
+        auth.set_current_space(None)
+        config.CFG["auth"] = before["auth"]

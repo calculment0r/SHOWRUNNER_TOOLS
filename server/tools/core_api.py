@@ -21,11 +21,34 @@ from core.http import FileResponse, HttpError, Response
 SAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
 
 
-def _item_or_404(item_id: str) -> dict:
-    it = library.get(item_id)
-    if not it or not library.readable(it):   # on ne dit pas qu'un objet invisible existe
+def _item_or_404(item_id: str, show: bool = False) -> dict:
+    """L'objet, ou 404 — on ne dit pas qu'un objet invisible existe. Par défaut, borné au
+    Workspace courant (library.get : ce dont un outil se sert) ; `show` : où qu'il soit,
+    s'il se voit (library.see : pour MONTRER seulement — la fiche d'Asset, une copie
+    d'affichage ; docs/etudes/equipes_espaces.md § 3.1). Rien ne s'écrit par `show`."""
+    it = library.see(item_id) if show else library.get(item_id)
+    if not it:
         raise HttpError(404, f"introuvable : {item_id}")
     return it
+
+
+def elsewhere_or_404(item_id: str) -> dict:
+    """Pour s'en SERVIR (modifier, jeter, en faire une référence) : l'objet du Workspace
+    courant. Un objet qu'on voit mais qui est dans un autre Workspace : 409 qui dit où, et
+    ce qui débloque (y passer, ou le rapatrier) ; invisible ou absent : 404."""
+    it = library.get(item_id)
+    if it:
+        return it
+    other = library.see(item_id)
+    if other:
+        raise HttpError(409, f"« {other.get('title') or item_id} » est dans le Workspace « {library.space_name(library.space_of(other))} » : "
+                             f"on ne s'en sert que là — passe dans ce Workspace, ou rapatrie-le ici (Asset, « Rapatrier »)")
+    raise HttpError(404, f"introuvable : {item_id}")
+
+
+def _wants_all(v) -> bool:
+    """`spaces=*` : montrer où qu'il soit (library.query(spaces="*"), see)."""
+    return str(v or "") == "*"
 
 
 # ── bibliothèque ────────────────────────────────────────────
@@ -37,7 +60,9 @@ def lib_list(req):
 
 
 def lib_get(req, item_id):
-    return library.public(_item_or_404(item_id))
+    """GET /api/library/<id>[?spaces=*] — `spaces=*` : la fiche d'un objet d'un autre
+    Workspace qu'on voit (montrer : Asset, le dépôt d'une vignette qui va la rapatrier)."""
+    return library.public(_item_or_404(item_id, show=_wants_all(req.q("spaces"))))
 
 
 BATCH_MAX = 2000
@@ -48,14 +73,16 @@ def lib_batch(req):
     une requête (une planche de 1000 images en lisait 1000 : 1004 requêtes
     → 6, docs/etudes/ideation_fluidite.md). Dans l'ordre demandé, sans
     doublon ; un objet absent ou invisible est dans `missing`, sans dire
-    lequel des deux."""
-    ids = req.json().get("ids")
+    lequel des deux. `spaces: "*"` : où qu'ils soient, s'ils se voient (montrer)."""
+    d = req.json()
+    ids = d.get("ids")
     if not isinstance(ids, list) or len(ids) > BATCH_MAX or not all(isinstance(i, str) for i in ids):
         raise HttpError(400, f"ids : une liste de {BATCH_MAX} identifiants au plus")
+    read = library.see if _wants_all(d.get("spaces")) else library.get
     items, missing = [], []
     for i in dict.fromkeys(ids):
-        it = library.get(i)
-        if it and library.readable(it):
+        it = read(i)
+        if it:
             items.append(library.public(it))
         else:
             missing.append(i)
@@ -66,8 +93,9 @@ def lib_view(req, item_id):
     """GET /api/library/<id>/view?w=256|512|1024|2048 — la copie d'affichage
     de cette taille (grand côté, px), ou la plus proche au-dessus, ou
     l'original (library.view_path). Revalidée à chaque fois (ETag, 304) :
-    les adresses versionnées de `view_urls` se gardent, elles, un an."""
-    it = _item_or_404(item_id)
+    les adresses versionnées de `view_urls` se gardent, elles, un an. Montrer : jugé
+    par l'objet, où qu'il soit (comme les fichiers servis sous /library/)."""
+    it = _item_or_404(item_id, show=True)
     try:
         w = int(req.q("w"))
     except ValueError:
@@ -151,7 +179,7 @@ def lib_upload(req):
 
 
 def lib_update(req, item_id):
-    _item_or_404(item_id)
+    elsewhere_or_404(item_id)
     try:
         return library.public(library.update(item_id, req.json()))
     except ValueError as e:
@@ -159,7 +187,7 @@ def lib_update(req, item_id):
 
 
 def lib_delete(req, item_id):
-    _item_or_404(item_id)
+    elsewhere_or_404(item_id)
     library.trash(item_id)
     return {"ok": True, "trashed": item_id}
 
@@ -179,9 +207,9 @@ def el_create(req):
     refs = d.get("refs", [])
     if not isinstance(refs, list):
         raise HttpError(400, "refs : une liste")
-    for r in refs:   # une référence est un objet qu'on a le droit de voir (visibility)
+    for r in refs:   # une référence est un objet qu'on a le droit de voir, de ce Workspace
         if isinstance(r, dict) and r.get("item"):
-            _item_or_404(str(r["item"]))
+            elsewhere_or_404(str(r["item"]))
     try:
         it = library.create_element(d.get("title", ""), d.get("type", "character"), d.get("description", ""),
                                     [{"item": r["item"], "role": r.get("role", ""), "label": r.get("label", "")}
@@ -194,7 +222,7 @@ def el_create(req):
 
 def el_add_ref(req, item_id):
     d = req.json()
-    src = _item_or_404(d.get("item", ""))
+    src = elsewhere_or_404(str(d.get("item", "")))
     if src["kind"] not in ("image", "audio"):
         raise HttpError(400, "une référence est une image, ou un son pour la voix")
     try:

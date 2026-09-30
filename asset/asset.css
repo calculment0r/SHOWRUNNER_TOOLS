@@ -353,4 +353,41 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .empty-state { padding: var(--s6); text-align: center; color: var(--ink3); display: flex; flex-direction: column; gap: var(--s3); align-items: center; background: var(--panel); border-radius: var(--r4); }
 .empty-state b { font-family: var(--f-disp); font-size: 18px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink2); font-weight: 400; }
 
+/* ── les Workspaces (étape 5) : la pastille, le filtre, ce qui est d'ailleurs ── */
+/* la pastille d'un Workspace : capitales mono (la machine), un filet ; d'ailleurs : le cyan */
+.wsb { display: inline-block; vertical-align: 1px; max-width: 12em; margin-right: 6px; padding: 1px 5px; border-radius: var(--r1);
+  font-family: var(--f-mono); font-size: 7.5px; line-height: 1.5; letter-spacing: .14em; text-transform: uppercase; font-weight: 400;
+  color: var(--ink2); box-shadow: inset 0 0 0 1px var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wsb.ailleurs { color: var(--cy); background: var(--cy-bg); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.lbl.row .wsb { margin-right: 2px; }
+.crumbs .wsb { margin: 0; }
+/* une carte d'ailleurs : un filet cyan autour de sa vignette — elle se regarde, se rapatrie */
+.acard.ailleurs > .thumb { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.acard.ailleurs.sel > .thumb { box-shadow: inset 0 0 0 2px var(--or); }
+.acard.folder.ailleurs .thumb { box-shadow: inset 0 0 0 1px var(--line-cy), 6px 6px 0 -2px var(--panel2), 6px 6px 0 -1px var(--line-cy); }
+.acard.folder.ailleurs::before { box-shadow: inset 1px 1px 0 var(--line-cy), inset -1px 0 0 var(--line-cy); }
+/* le filtre : « Tous » puis chaque Workspace, celui de l'onglet en tête (le point) */
+.lib-bar .wseg[hidden] { display: none; }
+.lib-bar .wseg .tb { max-width: 18em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-bar .wseg .tb .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: var(--grn2); }
+.lib-bar .wseg .tb.on .dot { background: var(--on-grn); }
+.lib-bar .wseg .tb.drop-armed { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.lib-bar .wseg .tb.drop-ok { box-shadow: inset 0 0 0 2px var(--cy); color: var(--cy); }
+/* la fiche d'un objet d'ailleurs : le bandeau qui dit où il est et ce qu'on en fait */
+.wsbanner { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; padding: var(--s3) var(--s4); border-radius: var(--r3);
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line-cy); color: var(--ink2); font-size: 12.5px; line-height: 1.55; }
+.wsbanner .wsb { font-size: 9px; padding: 3px 7px; }
+.wsbanner .txt { flex: 1; min-width: 240px; }
+.wsbanner b { color: var(--ink); font-weight: 600; }
+.wsbanner .why { flex-basis: 100%; color: var(--amb); font-size: 12px; }
+.lib-top .acts .why-line { flex-basis: 100%; text-align: right; }
+.sh-title.ro { cursor: default; }
+.sh-title.ro:hover { box-shadow: none; }
+.board.ro .refc .pic { cursor: default; }
+.lineage .lk .lkws { position: absolute; top: 3px; left: 3px; max-width: calc(100% - 6px); background: var(--veil); margin: 0; }
+/* une entrée de menu désactivée dit pourquoi, lisible (pas l'opacité de .35) */
+.cmenu button:disabled:has(.why) { opacity: 1; color: var(--ink3); }
+.cmenu .mi { display: flex; flex-direction: column; gap: 3px; }
+.cmenu .mi .why { font-size: 10.5px; line-height: 1.45; color: var(--ink2); white-space: normal; }
+
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
