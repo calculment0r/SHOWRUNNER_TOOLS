@@ -119,6 +119,14 @@ const MEDIA = ['image', 'video', 'audio'];
 const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
 const KIND_N = { image: ['image', 'images'], element: ['élément', 'éléments'], video: ['vidéo', 'vidéos'], audio: ['son', 'sons'],
   sequence: ['séquence', 'séquences'], midi: ['clip MIDI', 'clips MIDI'] };
+// les éléments versionnés (30/09, docs/etudes/apps_studio_elements.md) : une source,
+// une pile de versions ; leurs sortes s'ajoutent à celles des planches
+const VTYPE_FR = { music: 'musique', sound: 'son', sequence: 'séquence', picture: 'image' };
+const typeFr = (t) => VTYPE_FR[t] || etypeFr(t);
+const isLiving = (it) => it?.kind === 'element' && Array.isArray(it.element?.versions);
+const MEDIA_KINDS = { audio: ['audio'], image: ['image'], video: ['video'], midi: ['midi'], refs: ['element'] };
+const STATE_FR = { 'à jour': 'à jour', modifiée: 'modifiée', perdue: 'source perdue', 'sans version': 'pas encore publié', 'non suivie': 'source non suivie' };
+const stateLine = (s) => (!s ? '' : s.state === 'modifiée' ? `modifiée depuis la v${s.since}` : STATE_FR[s.state] || s.state);
 
 // ── l'adresse ────────────────────────────────────────────────
 const ID_RX = /^(ima|vid|aud|ele|seq|mid)-\d{8}-\d{6}-[0-9a-f]{4}$/;
@@ -362,6 +370,7 @@ function subOf(it) {
   const p = it.params || {};
   if (it.kind === 'midi') return [p.bars ? `${p.bars} mes.` : '', p.notes ? `${p.notes} notes` : '', p.bpm ? `${p.bpm} bpm` : '', toolFr(it.origin?.tool)].filter(Boolean).join(' · ');
   if (it.kind === 'sequence') return [p.clips != null ? plural(p.clips, 'plan', 'plans') : '', it.duration ? fmtDur(it.duration) : '', p.format || ''].filter(Boolean).join(' · ');
+  if (isLiving(it)) return [it.element.head ? `v${it.element.head}` : 'sans version', plural(it.element.count || 0, 'version', 'versions'), stateLine(it.source_state)].filter(Boolean).join(' · ');
   if (it.kind === 'element') return `${plural(it.element?.refs?.length || 0, 'réf.', 'réf.')}${it.element?.voices?.length ? ' · voix' : ''}${it.element?.meshes?.length ? ' · 3D' : ''} · ${toolFr(it.origin?.tool)}`;
   return [it.width && it.height ? `${it.width}×${it.height}` : '', it.origin?.model || toolFr(it.origin?.tool)].filter(Boolean).join(' · ');
 }
@@ -370,15 +379,28 @@ function itemCard(it, { search = false } = {}) {
   const t = thumb(it, { sub: subOf(it), onclick: (e) => onCardClick(e, it) });
   // le glisser d'une carte est celui de la page (ranger, dossiers), pas celui du navigateur
   t.draggable = false;
-  t.setAttribute('aria-label', `${it.kind === 'element' ? etypeFr(it.element?.type) : kindFr(it.kind)} ${it.title}`);
+  t.setAttribute('aria-label', `${it.kind === 'element' ? typeFr(it.element?.type) : kindFr(it.kind)} ${it.title}`);
   t.addEventListener('dblclick', () => go('#' + it.id));
   t.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); go('#' + it.id); }
     if (e.key === ' ') { e.preventDefault(); toggleSel(it.id); }
   });
   const im = $('.im', t);
-  if (!it.thumb_url && glyph(it.kind)) im.prepend(glyph(it.kind));
-  if (it.kind === 'element' && !it.thumb_url) im.prepend(el('span', { class: 'noimg' }, 'sans image'));
+  const living = isLiving(it);
+  if (living) {
+    // un élément versionné : sa sorte en français sur la pastille commune, la vague de sa
+    // dernière version si elle est un son, et la pile (vN, le nombre de versions, l'état de sa source)
+    const kt = $('.kmark .kt', im);
+    if (kt) kt.textContent = typeFr(it.element.type);
+    if (!it.thumb_url && glyph(it.element.head_kind)) im.prepend(glyph(it.element.head_kind));
+    if (it.element.head_duration && !$('.dur', im)) im.append(el('span', { class: 'dur' }, fmtDur(it.element.head_duration)));
+    const s = it.source_state;
+    im.append(el('span', { class: 'verb' + (s?.state === 'modifiée' ? ' dirty' : '') + (it.element.head ? '' : ' none'),
+      title: [it.element.head ? `la dernière version : v${it.element.head}` : 'pas encore de version', stateLine(s)].filter(Boolean).join(' · ') },
+    it.element.head ? `v${it.element.head}` : 'v—', it.element.count > 1 ? el('i', {}, `/${it.element.count}`) : null));
+  } else if (!it.thumb_url && glyph(it.kind)) im.prepend(glyph(it.kind));
+  if (it.version?.of) im.append(el('span', { class: 'verb of', title: it.version.of_present ? `v${it.version.n} de « ${it.version.of_title} »` : 'son élément est à la corbeille' }, `v${it.version.n}`));
+  if (it.kind === 'element' && !it.thumb_url && !(living && glyph(it.element.head_kind))) im.prepend(el('span', { class: 'noimg' }, living && !it.element.head ? 'pas encore publié' : 'sans image'));
   if (it.fav) im.append(el('span', { class: 'star', title: 'favori' }, '★'));
   if (search && it.folder) im.append(el('span', { class: 'where', title: 'dans ce dossier' }, it.folder));
   // un élément qui a une voix le montre : la même voix d'un plan à l'autre
@@ -392,7 +414,7 @@ function itemCard(it, { search = false } = {}) {
   }
   const on = S.sel.has(it.id);
   if (on) t.classList.add('sel');
-  return el('div', { class: 'acard' + (on ? ' sel' : ''), 'data-id': it.id, role: 'option', 'aria-selected': String(on) }, t,
+  return el('div', { class: 'acard' + (on ? ' sel' : '') + (living && it.element.count > 1 ? ' stack' : ''), 'data-id': it.id, role: 'option', 'aria-selected': String(on) }, t,
     el('button', { class: 'chk', type: 'button', 'aria-pressed': String(on), title: 'choisir (ctrl/⌘ + clic)', 'aria-label': `choisir ${it.title}`,
       onclick: (e) => { e.stopPropagation(); toggleSel(it.id); } }),
     el('button', { class: 'menu-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', title: 'ranger',
@@ -1222,6 +1244,16 @@ async function paintSheet(id, { keepScroll = false } = {}) {
   }
   S.item = it;
   if (!S.data) api('asset/view?limit=1').then((d) => { S.data = d; paintDatalist(); }).catch(() => {});
+  if (isLiving(it)) {
+    // un élément versionné : sa pile, sa source, ses usages (GET /api/elements/<id>)
+    let d;
+    try { d = await api('elements/' + id); } catch (e) { sheetEl.replaceChildren(backLink(), el('p', { class: 'warn' }, e.message)); return; }
+    S.item = d;
+    sheetEl.replaceChildren(...livingSheet(d));
+    paintDatalist();
+    if (keepScroll) scrollTo({ top: y });
+    return;
+  }
   sheetEl.replaceChildren(...(it.kind === 'element' ? elementSheet(it) : it.kind === 'sequence' ? sequenceSheet(it)
     : it.kind === 'midi' ? midiSheet(it) : itemSheet(it)));
   paintDatalist();
@@ -1300,14 +1332,16 @@ function itemSheet(it) {
       link('Éditer dans Image', href(`image/?edit=${id}`)),
       link('Référence vidéo', href(`movie/?ref=${id}`), { title: 'Vidéo : cette image en référence d\'un plan' }),
       link('Ajouter au montage', href(`montage/?add=${id}`)),
-      btn('Faire un élément', () => elementModal({ items: [it], title: it.title, folder: it.folder || '' })));
+      btn('Faire une planche de références', () => elementModal({ items: [it], title: it.title, folder: it.folder || '' }),
+        { title: 'un élément de références (personnage, objet, lieu…) : l’image y est copiée' }));
   } else {
     acts.append(link('Ajouter au montage', href(`montage/?add=${id}`), { go: true }));
   }
+  acts.append(...versionActs(it));
   acts.append(el('span', { class: 'sp' }),
     el('a', { class: 'tb ghost', href: href(it.url), download: `${it.title || it.id}${(it.file || '').replace(/^main/, '')}` }, 'Télécharger'),
     btn('Corbeille', () => trashItem(it, { leave: true }), { title: 'mettre à la corbeille — on peut l\'annuler' }));
-  return [sheetHead(it, kicker), acts,
+  return [sheetHead(it, kicker), ...versionBanner(it), acts,
     el('section', { class: 'sh-grid' }, media, el('aside', { class: 'sh-side' }, rangement(it), recette(it), lineage(it), fabrication(it)))];
 }
 
@@ -1469,7 +1503,8 @@ function midiSheet(it) {
   ]));
   const drop = blk('dans ODIO', null, chip,
     el('p', { class: 'hint' }, 'Ouvre ODIO dans un autre onglet, puis glisse ce clip sur une piste de l’arrangement : ses notes s’y posent (sur une piste d’instrument, tous ses canaux ; ailleurs, une piste neuve par canal). Le navigateur d’ODIO, rubrique MIDI, le propose aussi.'));
-  const sheet = [sheetHead(it, kicker), acts,
+  acts.querySelector('.sp').before(...versionActs(it));
+  const sheet = [sheetHead(it, kicker), ...versionBanner(it), acts,
     el('section', { class: 'sh-grid' }, el('div', { class: 'sh-main' }, media, drop), el('aside', { class: 'sh-side' }, facts, rangement(it), lineage(it), fabrication(it)))];
   // quitter la fiche coupe le son
   addEventListener('hashchange', stopMidi, { once: true });
@@ -1557,6 +1592,175 @@ function fabrication(it) {
   ]));
 }
 
+// ══ LES ÉLÉMENTS VERSIONNÉS ═════════════════════════════════
+// (30/09, docs/etudes/apps_studio_elements.md) Un élément relie une source
+// vivante (un projet ODIO, une séquence, la recette d'un objet) à une pile de
+// versions : des objets immuables, marqués `version: {of, n}`. Ici : « Faire un
+// élément » d'un objet (il en devient la v1, sans copie), publier un objet comme
+// version suivante, la fiche d'un élément (sa pile, sa source, ses usages).
+// Les routes : server/tools/elements.py.
+
+// l'objet est une version : de quel élément, et s'il y en a une plus récente
+function versionBanner(it) {
+  const v = it.version;
+  if (!v?.of) return [];
+  const newer = v.head && v.head !== v.n;
+  return [el('section', { class: 'vbanner' + (newer ? ' newer' : '') },
+    el('span', { class: 'vnum' }, `v${v.n}`),
+    el('span', {}, v.of_present ? ['version ', el('b', {}, `${v.n}`), ' de ', el('a', { href: '#' + v.of }, `« ${v.of_title} »`),
+      v.state === 'withdrawn' ? ' · retirée' : newer ? ` · la v${v.head} existe` : ' · la dernière'] : 'version d’un élément qui est à la corbeille'),
+    el('span', { class: 'sp' }),
+    el('span', { class: 'lbl' }, 'une version publiée ne change plus : titre, dossier et tags restent libres'))];
+}
+
+// « Faire un élément » (l'objet en devient la v1) ou « Publier comme version de… »
+function versionActs(it) {
+  if (it.version?.of || isLiving(it) || !['image', 'video', 'audio', 'midi', 'element'].includes(it.kind)) return [];
+  return [btn('Faire un élément (v1)', () => makeElementFrom(it), { title: 'un élément versionné dont cet objet est la v1 — rien n’est recopié' }),
+    btn('Publier comme version de…', () => publishInto(it), { title: 'ranger cet objet comme version suivante d’un élément à toi' })];
+}
+
+async function makeElementFrom(it) {
+  try {
+    let made = null;
+    const d = await U.run({ label: `faire de « ${it.title} » la v1 d’un élément`,
+      do: async () => {
+        if (made) { await api(`library/${made.id}/restore`, { method: 'POST' }); return made; }
+        made = await api('elements', { method: 'POST', body: { from_item: it.id, note: 'v1' } });
+        return made;
+      },
+      undo: async (x) => { await api(`library/${x.id}/delete`, { method: 'POST' }); if (location.hash === '#' + x.id) go(S.backHash || '#'); } });
+    say(`« ${d.title} » est un élément : cet objet en est la v1`, true);
+    go('#' + d.id);
+  } catch (e) { say(e.message); }
+}
+
+// publier : l'objet devient la version n+1 ; l'annuler la retire (elle reste dans la pile)
+async function publishVersion(elId, item, note) {
+  const r = await U.run({ label: `publier « ${item.title} » comme version`,
+    do: async (again) => {
+      if (again?.version) { await api(`elements/${elId}/versions/${again.version.n}`, { method: 'POST', body: { state: 'ready' } }); return again; }
+      return api(`elements/${elId}/versions`, { method: 'POST', body: { item: item.id, note } });
+    },
+    undo: (x) => api(`elements/${elId}/versions/${x.version.n}`, { method: 'POST', body: { state: 'withdrawn' } }) });
+  say(`publié : v${r.version.n} de « ${r.element.title} »`, true);
+  return r;
+}
+
+// choisir l'élément (les siens, de la bonne sorte), puis la note
+async function publishInto(it) {
+  let list = [];
+  try { list = (await api('elements')).items || []; } catch (e) { say(e.message); return; }
+  const media = { image: 'image', video: 'video', audio: 'audio', midi: 'midi', element: 'refs' }[it.kind];
+  const fit = list.filter((e) => !e.element.media || e.element.media === media);
+  const note = el('input', { class: 'fld', maxlength: 400, placeholder: 'ce qui change : refrain court, nouvelle lumière…', 'aria-label': 'note de publication' });
+  let chosen = null;
+  const rows = el('div', { class: 'vpick' }, ...(fit.length ? fit.map((e) => {
+    const b = el('button', { class: 'vpick-row', type: 'button', 'aria-pressed': 'false', onclick: () => {
+      chosen = e; $$('.vpick-row', rows).forEach((n) => n.setAttribute('aria-pressed', String(n === b))); ok.disabled = false; ok.title = ''; } },
+    el('b', {}, e.title), el('span', { class: 'lbl' }, `${typeFr(e.element.type)} · ${e.element.head ? `v${e.element.head}` : 'sans version'} → v${(e.element.count || 0) + 1}`));
+    return b;
+  }) : [el('p', { class: 'hint' }, `Aucun élément à toi qui prenne ${kindFr(it.kind)} comme version. « Faire un élément (v1) » en crée un.`)]));
+  const ok = el('button', { class: 'tb go', type: 'button', disabled: true, title: 'choisis d’abord l’élément' }, 'Publier');
+  const m = modal({ title: 'publier comme version', wide: true,
+    body: [el('p', {}, `« ${it.title} » devient la version suivante de l’élément choisi. Les endroits qui posent une version plus ancienne la gardent, et voient qu’une nouvelle existe.`),
+      rows, el('label', { class: 'field' }, el('span', { class: 'lbl' }, 'note de publication'), note)],
+    foot: [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', type: 'button', onclick: () => m.close() }, 'Pas encore'), ok] });
+  ok.onclick = async () => {
+    if (!chosen) return;
+    try { await publishVersion(chosen.id, it, note.value.trim()); m.close(); go('#' + chosen.id); } catch (e) { say(e.message); }
+  };
+}
+
+// depuis la fiche d'un élément : choisir l'objet qui sera la version suivante
+async function publishFrom(d) {
+  const kinds = MEDIA_KINDS[d.element.media] || ['image', 'video', 'audio'];
+  const [got] = await pick({ kinds, title: `La v${(d.element.count || 0) + 1} de ${d.title}` });
+  if (!got) return;
+  if (got.version?.of) { say(`« ${got.title} » est déjà la v${got.version.n} d’un élément`); return; }
+  const note = el('input', { class: 'fld', maxlength: 400, placeholder: 'ce qui change', 'aria-label': 'note de publication' });
+  const ok = el('button', { class: 'tb go', type: 'button' }, `Publier la v${(d.element.count || 0) + 1}`);
+  const m = modal({ title: 'publier une version',
+    body: [el('div', { class: 'pending' }, miniOf(got), el('span', { class: 'arrow' }, `→ v${(d.element.count || 0) + 1} de « ${d.title} »`)),
+      el('label', { class: 'field' }, el('span', { class: 'lbl' }, 'note de publication'), note)],
+    foot: [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', type: 'button', onclick: () => m.close() }, 'Pas encore'), ok] });
+  setTimeout(() => note.focus(), 30);
+  note.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok.click(); });
+  ok.onclick = async () => {
+    try { await publishVersion(d.id, got, note.value.trim()); m.close(); paintSheet(d.id, { keepScroll: true }); } catch (e) { say(e.message); }
+  };
+}
+
+const useLine = (u) => (u.hidden ? el('li', { class: 'hint' }, `${u.what} d’une autre personne`)
+  : el('li', {}, el('a', { href: href(u.open), title: `ouvrir ${u.what}` }, `${u.what} « ${u.title} »`), el('span', { class: 'lbl' }, ` ${u.where}`),
+    u.n != null ? el('span', { class: 'vchip' + (u.latest ? '' : ' old') }, `v${u.n}${u.latest ? '' : ' · pas la dernière'}`) : null));
+
+function versionRow(d, v) {
+  const o = v.object;
+  const pic = o && (o.thumb_url || o.views?.length) ? bindView(el('img', { alt: '', loading: 'lazy', decoding: 'async' }), o, { fit: 'cover', box: [96, 96] })
+    : glyph(o?.kind || (d.element.media === 'audio' ? 'audio' : ''), true) || el('span', { class: 'noimg' }, '—');
+  const chips = [v.head ? el('span', { class: 'vchip on' }, 'la dernière') : null,
+    v.state === 'withdrawn' ? el('span', { class: 'vchip' }, 'retirée') : null,
+    v.trashed ? el('span', { class: 'vchip' }, 'à la corbeille') : null,
+    el('span', { class: 'vchip' + (v.uses.length ? ' used' : '') }, v.uses.length ? plural(v.uses.length, 'usage', 'usages') : 'posée nulle part')].filter(Boolean);
+  const acts = [];
+  if (o) acts.push(el('a', { class: 'tb ghost sm', href: '#' + o.id }, 'Fiche'));
+  if (v.present) {
+    acts.push(btn(v.state === 'withdrawn' ? 'Remettre' : 'Retirer', async () => {
+      const st = v.state === 'withdrawn' ? 'ready' : 'withdrawn';
+      try {
+        await U.run({ label: `${st === 'ready' ? 'remettre' : 'retirer'} la v${v.n} de « ${d.title} »`,
+          do: () => api(`elements/${d.id}/versions/${v.n}`, { method: 'POST', body: { state: st } }),
+          undo: () => api(`elements/${d.id}/versions/${v.n}`, { method: 'POST', body: { state: v.state } }) });
+        say(st === 'ready' ? `v${v.n} remise` : `v${v.n} retirée : elle ne se propose plus ; ses usages la gardent`, true);
+      } catch (e) { say(e.message); }
+      paintSheet(d.id, { keepScroll: true });
+    }, { title: v.state === 'withdrawn' ? 'la remettre dans les versions proposées' : 'une version ratée : elle ne se propose plus, ses usages la gardent' }));
+  }
+  if (o?.url && ['audio'].includes(o.kind)) acts.push(el('audio', { src: href(o.url), controls: true, preload: 'none' }));
+  return el('li', { class: 'vrow' + (v.head ? ' head' : '') + (v.state === 'withdrawn' || v.trashed ? ' off' : ''), 'data-n': v.n },
+    el('div', { class: 'vpic' }, pic),
+    el('div', { class: 'vn' }, `v${v.n}`),
+    el('div', { class: 'vmeta' }, el('b', {}, v.note || (o?.title ?? v.item)),
+      el('span', { class: 'lbl' }, [v.by_name, fmtDate(v.at), o?.duration ? fmtDur(o.duration) : '', o && v.note ? o.title : ''].filter(Boolean).join(' · ')),
+      el('div', { class: 'chips' }, ...chips),
+      v.uses.length ? el('ul', { class: 'vuses' }, ...v.uses.map(useLine)) : null),
+    el('div', { class: 'vacts' }, ...acts));
+}
+
+function livingSheet(d) {
+  const e = d.element;
+  const s = d.source_state || {};
+  const kicker = ['élément', typeFr(e.type), e.head ? `v${e.head}` : 'pas encore publié', plural(e.count || 0, 'version', 'versions')].join(' · ');
+  const head = sheetHead(d, kicker);
+  const cur = d.versions.find((v) => v.head);
+  const o = cur?.object;
+  const acts = el('section', { class: 'sh-acts' },
+    el('button', { class: 'tb go', type: 'button', onclick: () => publishFrom(d), title: 'ranger un objet de la bibliothèque comme version suivante' }, `Publier la v${(e.count || 0) + 1}…`),
+    s.open ? link(`Ouvrir la source · ${s.what || toolFr(s.tool)}`, href(s.open), { title: s.title || '' }) : null,
+    el('span', { class: 'sp' }),
+    btn('Télécharger', () => download([d]), { title: 'la dernière version' }),
+    btn('Corbeille', () => trashItem(d, { leave: true }), { title: 'mettre l’élément à la corbeille — ses versions restent des objets, ses usages ne cassent pas' }));
+  const media = el('div', { class: 'viewer sh-media' });
+  if (o?.kind === 'image') media.append(bindView(el('img', { alt: o.title, decoding: 'async' }), o, { fit: 'contain', box: [960, 720] }));
+  else if (o?.kind === 'video') media.append(el('video', { src: href(o.url), controls: true, playsinline: true, preload: 'metadata', poster: o.thumb_url ? href(o.thumb_url) : null }));
+  else if (o?.kind === 'audio') media.append(el('div', { class: 'audio-box' }, wave(24), el('audio', { src: href(o.url), controls: true, preload: 'metadata' })));
+  else if (o?.kind === 'element') media.append(el('a', { class: 'seq-open', href: '#' + o.id }, o.thumb_url ? bindView(el('img', { alt: o.title }), o, { fit: 'contain', box: [960, 720] }) : 'la planche'));
+  else media.append(el('div', { class: 'seq-empty' }, el('p', { class: 'hint' }, e.count ? 'Aucune version prête : elles sont retirées ou à la corbeille.' : 'Pas encore de version : publie la première depuis la source, ou range un objet comme v1.')));
+  const pile = blk('les versions', `${plural(e.count || 0, 'version', 'versions')} · la plus récente devant`,
+    d.versions.length ? el('ol', { class: 'vpile' }, ...d.versions.map((v) => versionRow(d, v))) : el('p', { class: 'hint' }, 'Aucune encore.'));
+  const srcBlk = blk('source', STATE_FR[s.state] ? stateLine(s) : '',
+    readout([['outil', toolFr(s.tool)], ['document', s.title], ['état', stateLine(s)], ['rev', s.rev != null ? String(s.rev) : '']]),
+    s.state === 'modifiée' ? el('p', { class: 'hint' }, `La source a changé depuis la v${s.since} : publie la v${(e.count || 0) + 1} depuis son outil (ODIO : menu ⋯ → Publier comme élément), ou range ici un objet rendu.`) : null,
+    s.state === 'non suivie' ? el('p', { class: 'hint' }, 'Cette source n’a pas encore d’empreinte : on ne sait pas dire si elle a changé.') : null);
+  const usesBlk = blk('usages', d.uses.length ? plural(d.uses.length, 'endroit', 'endroits') : 'aucun',
+    d.uses.length ? el('ul', { class: 'vuses' }, ...d.uses.map(useLine)) : el('p', { class: 'hint' }, 'Aucun document ne pose encore une de ses versions.'));
+  const side = [srcBlk, usesBlk];
+  if (d.contains?.length) side.push(blk('contient', null, el('ul', { class: 'vuses' }, ...d.contains.map((c) => el('li', {}, el('a', { href: '#' + c.el }, `« ${c.title} »`))))));
+  side.push(rangement(d), fabrication(d));
+  return [head, acts, el('section', { class: 'sh-grid' }, el('div', { class: 'sh-main' }, media, pile), el('aside', { class: 'sh-side' }, ...side))];
+}
+
 // une fiche d'élément : la planche de références
 function elementSheet(it) {
   const e = it.element;
@@ -1572,9 +1776,9 @@ function elementSheet(it) {
       btn('Mettre à jour depuis le studio', async (ev) => {
         const b = ev.currentTarget; b.disabled = true; b.textContent = 'lecture du studio…';
         try { const n = await api('asset/cf/refresh', { method: 'POST', body: { id: it.id } }); say(`${n.title} mis à jour : ${plural(n.element.refs.length, 'référence', 'références')}`); paintSheet(it.id, { keepScroll: true }); } catch (err) { say(err.message); b.disabled = false; b.textContent = 'Mettre à jour depuis le studio'; }
-      }, { title: 'relire le personnage et remplacer ses images sur place' }));
+      }, { title: it.version?.of ? 'relire le personnage : une planche neuve, publiée comme version suivante de son élément' : 'relire le personnage et remplacer ses images sur place' }));
   }
-  acts.append(el('span', { class: 'sp' }),
+  acts.append(...versionActs(it), el('span', { class: 'sp' }),
     btn('Télécharger', () => download([it]), { title: 'un zip : ses références dans l\'ordre, sa 3D, sa description' }),
     btn('Corbeille', () => trashItem(it, { leave: true }), { title: 'mettre à la corbeille — on peut l\'annuler' }));
 
@@ -1693,7 +1897,7 @@ function elementSheet(it) {
   }
   side.push(rangement(it), lineage(it), fabrication(it));
 
-  return [head, acts, el('section', { class: 'sh-grid' },
+  return [head, ...versionBanner(it), acts, el('section', { class: 'sh-grid' },
     el('div', { class: 'sh-main' },
       blk('références', 'dans l\'ordre où un modèle les lit',
         el('div', { class: 'row' }, el('span', { class: 'hint' }, `${ORDER_HINT[e.type] || ORDER_HINT.other} Glisser une image pour la déplacer.`),
@@ -1808,21 +2012,33 @@ function kindItems(it) {
       { label: 'Référence vidéo', icon: '◎', onclick: goTo(`movie/?ref=${id}`) },
       { label: 'Agrandir', icon: '⤢', sub: 'Upscale', onclick: goTo(`upscale/?src=${id}`) },
       { label: 'Ajouter au montage', icon: '▤', onclick: goTo(`montage/?add=${id}`) },
-      { label: 'Faire un élément', icon: '◆', onclick: () => elementModal({ items: [it], title: it.title, folder: it.folder || '' }) }];
+      { label: 'Faire une planche de références', icon: '▦', onclick: () => elementModal({ items: [it], title: it.title, folder: it.folder || '' }) },
+      ...versionItems(it)];
   }
-  if (it.kind === 'video') return [{ label: 'Agrandir', icon: '⤢', sub: 'Upscale', onclick: goTo(`upscale/?src=${id}`) }, { label: 'Ajouter au montage', icon: '▤', onclick: goTo(`montage/?add=${id}`) }];
-  if (it.kind === 'audio') return [{ label: 'Ajouter au montage', icon: '▤', onclick: goTo(`montage/?add=${id}`) }];
+  if (it.kind === 'video') return [{ label: 'Agrandir', icon: '⤢', sub: 'Upscale', onclick: goTo(`upscale/?src=${id}`) }, { label: 'Ajouter au montage', icon: '▤', onclick: goTo(`montage/?add=${id}`) }, ...versionItems(it)];
+  if (it.kind === 'audio') return [{ label: 'Ajouter au montage', icon: '▤', onclick: goTo(`montage/?add=${id}`) }, ...versionItems(it)];
+  if (isLiving(it)) {
+    const src = it.element.source || {};
+    return [{ label: `Publier la v${(it.element.count || 0) + 1}…`, icon: '◆', onclick: async () => publishFrom(await api('elements/' + it.id)) },
+      src.open ? { label: 'Ouvrir la source', icon: '↗', onclick: goTo(src.open) } : null];
+  }
   if (it.kind === 'element') {
     return [{ label: 'Référence vidéo', icon: '◎', onclick: goTo(`movie/?ref=${id}`) },
-      it.element?.type === 'object' ? { label: 'Ouvrir dans Object Creator', icon: '◇', onclick: goTo(`objet/#${id}`) } : null];
+      it.element?.type === 'object' ? { label: 'Ouvrir dans Object Creator', icon: '◇', onclick: goTo(`objet/#${id}`) } : null, ...versionItems(it)];
   }
   if (it.kind === 'sequence') return [{ label: 'Ouvrir dans le Montage', icon: '▤', onclick: goTo(`montage/#${id}`) }];
-  if (it.kind === 'midi') return [{ label: 'Ouvrir ODIO', icon: '↗', sub: 'nouvel onglet', onclick: () => window.open(href('musique/'), '_blank', 'noopener') }];
+  if (it.kind === 'midi') return [{ label: 'Ouvrir ODIO', icon: '↗', sub: 'nouvel onglet', onclick: () => window.open(href('musique/'), '_blank', 'noopener') }, ...versionItems(it)];
   return [];
+}
+// le menu d'un objet ordinaire : il devient la v1 d'un élément, ou la version suivante d'un des siens
+function versionItems(it) {
+  if (it.version?.of) return [{ label: `v${it.version.n} de « ${it.version.of_title || '…'} »`, icon: '◆', disabled: !it.version.of_present, why: 'son élément est à la corbeille', onclick: () => go('#' + it.version.of) }];
+  return [{ label: 'Faire un élément (v1)', icon: '◆', onclick: () => makeElementFrom(it) },
+    { label: 'Publier comme version de…', icon: '◆', onclick: () => publishInto(it) }];
 }
 function cardMenu(it) {
   const move = itemMenu(it).items.filter((x) => x !== '-' && x.dir || /^Sortir/.test(x.label || ''));
-  return [{ head: `${it.kind === 'element' ? etypeFr(it.element?.type) : kindFr(it.kind)} · ${it.title || it.id}` },
+  return [{ head: `${it.kind === 'element' ? typeFr(it.element?.type) : kindFr(it.kind)} · ${it.title || it.id}` },
     { label: 'Ouvrir la fiche', icon: '⤢', key: 'Entrée', onclick: () => go('#' + it.id) },
     ...kindItems(it), '-',
     { label: 'Ranger', icon: '▭', items: move.map((x) => ({ label: x.label, onclick: x.do })) },

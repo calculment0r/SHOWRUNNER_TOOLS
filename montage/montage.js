@@ -29,6 +29,7 @@ import { mountProject, MULTI_MIME } from './projet.js';
 import { mountEffects, bindEffectDrops, fxOfDesc, lutFamilies } from './effets.js';
 import { bindTrackDrag } from './pistes.js';
 import { createUndo } from '../commun/undo.js';
+import { createElements } from './elements.js';   // éléments : la pastille « vN+1 » (30/09)
 import { REGLE as MOLETTE, AIDE as MOLETTE_AIDE } from '../commun/molette.js';
 
 mountHeader('montage');
@@ -147,6 +148,7 @@ function changed({ inspector = true } = {}) {
   paintBar();
   paintBin();
   scheduleSave();
+  EL.changed();                                // éléments : un objet de plus ou de moins, les pastilles relues
 }
 
 // la piste cible existe toujours (après une piste supprimée, une annulation…)
@@ -265,6 +267,7 @@ async function openProject(id) {
   paintSave();
   loadExports();
   resumeExport();
+  EL.refresh();                                // éléments : les pastilles de version de cette séquence
 }
 
 async function createProject(name, settings, folder = '') {
@@ -832,6 +835,12 @@ async function placeItem(desc, tid, frame, mode = 'overwrite') {
   await ensureItems([desc.id]);
   const it = itemOf(desc.id);
   if (!it) return toast('objet introuvable dans la bibliothèque');
+  // éléments : un élément pose sa dernière version ; un élément de sa propre descendance est refusé
+  if (it.version?.of || (it.kind === 'element' && Array.isArray(it.element?.versions))) {
+    const v = await EL.resolve(it, S.p.id);
+    if (!v) return undefined;
+    if (v.id !== it.id) return placeItem({ id: v.id, in: 0, out: 0 }, tid, frame, mode);
+  }
   if (it.kind === 'sequence') return toast('une séquence ne se pose pas dans une autre');
   if (!['video', 'image', 'audio'].includes(it.kind)) return toast('seulement une vidéo, une image ou un son');
   let track = trackFor(tid, it.kind);
@@ -916,10 +925,14 @@ function focus(which) {
   $('#prg').classList.toggle('focus', which === 'program');
 }
 
+// ── éléments : la pastille « vN+1 » des plans qui posent une version (montage/elements.js, 30/09) ──
+const EL = createElements({ getP: () => S.p, commit, ensureItems, itemOf, rerender: () => { timeline.render(); } });
+
 // ── la timeline ─────────────────────────────────────────────
 const timeline = new Timeline($('#tl'), {
   p: () => S.p,
   sel: () => S.sel,
+  elementBadge: (c) => EL.badge(c),            // éléments : la pastille de version d'un plan
   gap: () => S.gap,
   tool: () => S.tool,
   snap: () => S.snap,
@@ -1966,6 +1979,7 @@ function clipMenu(id, f) {
     { label: c.kind === 'adjust' ? 'Renommer le calque…' : 'Renommer le plan…', onclick: () => renameClip(id) },
     c.kind !== 'adjust' ? { label: 'Révéler dans le chutier', onclick: () => revealInBin(c.item) } : null,
     c.kind !== 'adjust' ? { label: 'Révéler dans Asset', sub: '↗', onclick: () => revealInAsset(c.item) } : null,
+    ...(EL.items(c).length ? ['-', ...EL.items(c)] : []),   // éléments : mettre à jour, les versions, la source
   ];
 }
 
@@ -2484,6 +2498,6 @@ async function start() {
 start();
 
 // pour les essais (playwright) et le débogage : l'état, en lecture
-window.montage = { S, F, program, timeline, source, M, commit, placeItem, openProject, flushSave, setTool, lutGL, getLut, loadLuts, focus, select, project, closeSeqTab, undo, redo,
+window.montage = { S, F, EL, program, timeline, source, M, commit, placeItem, openProject, flushSave, setTool, lutGL, getLut, loadLuts, focus, select, project, closeSeqTab, undo, redo,
   effects, dropEffect, selectTrack, moveTracks, groupTracks, ungroupTracks, leaveGroup, copyFx, pasteFx, ownerOf, srcTab, openSource, paintInspector,
   undoLabels: () => ({ done: U.done.map((e) => e.label), undone: U.undone.map((e) => e.label), name: U.name }) };

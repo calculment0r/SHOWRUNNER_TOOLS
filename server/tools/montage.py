@@ -1733,6 +1733,9 @@ def r_save(req, pid):
         if base is not None and int(base) != int(cur.get("rev", 1)):
             raise HttpError(409, "ce montage a été modifié ailleurs (un autre onglet ?) : rechargez-le")
         new = normalize({**d, "id": sid, "legacy": cur.get("legacy")} if cur.get("legacy") else {**d, "id": sid})
+        # éléments : poser un élément de sa propre descendance est refusé, la chaîne nommée (tools/elements.py, 30/09)
+        from tools import elements
+        elements.check_doc(sid, [c["item"] for c in new["clips"] if c.get("item")])
         new.update(created=cur.get("created"), updated=library.now(), rev=int(cur.get("rev", 1)) + 1)
         _write(new)
     return {"ok": True, "rev": new["rev"], "updated": new["updated"], "warnings": overlaps(new)}

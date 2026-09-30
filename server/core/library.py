@@ -22,6 +22,15 @@ Chaque objet porte qui l'a fait (`origin.user`), posé ici d'après la
 personne de la requête ou du travail en cours (core/auth.py) : les outils
 n'ont rien à changer. Seul son propriétaire (ou Cal) le modifie ou le met
 à la corbeille ; qui voit quoi suit le réglage d'admin (`visibility`).
+
+Les éléments versionnés (30/09, docs/etudes/apps_studio_elements.md) : un
+élément « vivant » relie une source (un projet ODIO, une séquence, la
+recette d'un objet) à ses versions, `element.versions` ; une version est un
+objet ordinaire et immuable marqué `version: {of, n}`. Ici, ce que tout
+lecteur doit savoir (la dernière version, le gel d'une version, le garde de
+la corbeille) ; publier, les usages et le journal : server/tools/elements.py.
+L'identité mondiale `uid` = `sr:<uuid de l'instance>/<id>` (package_export.md
+§ 2.1) se déduit ; un objet reçu d'ailleurs garde la sienne dans `item.json`.
 """
 
 from __future__ import annotations
@@ -34,6 +43,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -88,6 +98,11 @@ def sniff(head: bytes, ext: str) -> bool:
 
 
 ELEMENT_TYPES = ("character", "object", "place", "style", "other")
+# les sortes d'un élément versionné, en plus des planches (une chanson, un son,
+# une séquence, une image) ; à part pour que les pages qui font des planches
+# (Idéation lit ELEMENT_TYPES) ne changent pas
+VERSIONED_TYPES = ("music", "sound", "sequence", "picture")
+ELEMENT_TYPES_ALL = ELEMENT_TYPES + VERSIONED_TYPES
 AUDIO_EXT = tuple(e for e, k in EXT_KIND.items() if k == "audio")   # la voix d'un élément
 THUMB = 384
 
@@ -140,6 +155,80 @@ def _save(it: dict) -> None:
 
 def folder_of(item_id: str) -> Path:
     return root() / item_id
+
+
+# ── l'instance : l'identité mondiale d'un objet ─────────────
+_instance: dict | None = None
+
+
+def instance() -> dict:
+    """`<data_dir>/instance.json` : un UUID tiré une fois (uuid4), un nom lisible
+    (docs/etudes/package_export.md § 2.1). Écrit au premier besoin, jamais réécrit."""
+    global _instance
+    f = config.data_dir() / "instance.json"
+    if _instance is not None and _instance.get("_file") == str(f):
+        return _instance
+    try:
+        d = json.loads(f.read_text(encoding="utf-8"))
+        uuid.UUID(str(d.get("uuid")))
+    except (OSError, ValueError, AttributeError, TypeError):
+        d = {"uuid": str(uuid.uuid4()), "name": "Showrunner", "created": now()}
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+        if not f.exists():          # deux fils au premier démarrage : le premier écrit gagne
+            tmp.replace(f)
+        else:
+            tmp.unlink(missing_ok=True)
+            d = json.loads(f.read_text(encoding="utf-8"))
+    _instance = {**d, "_file": str(f)}
+    return _instance
+
+
+def uid_of(it: dict) -> str:
+    """`sr:<uuid de l'instance>/<id local>` ; un objet reçu d'ailleurs garde le sien."""
+    return it.get("uid") or f"sr:{instance()['uuid']}/{it['id']}"
+
+
+# ── les éléments versionnés : ce que tout lecteur doit savoir ─
+def is_living(it: dict | None) -> bool:
+    """Un élément qui a des versions (`element.versions`), par opposition à une planche."""
+    return bool(it) and it.get("kind") == "element" and isinstance((it.get("element") or {}).get("versions"), list)
+
+
+def head_entry(it: dict | None) -> dict | None:
+    """La dernière version d'un élément : prête (pas retirée) et présente (pas à
+    la corbeille). Calculée à chaque lecture, jamais rangée : elle ne peut pas
+    mentir quand une version part à la corbeille ou en revient."""
+    if not is_living(it):
+        return None
+    _load()
+    for v in reversed(it["element"]["versions"]):
+        if v.get("state", "ready") == "ready" and v.get("item") in _items:
+            return v
+    return None
+
+
+def resolve(it: dict | None) -> dict | None:
+    """Ce qu'un outil doit lire d'un objet : lui-même, ou la dernière version d'un
+    élément vivant (None s'il n'en a pas encore)."""
+    if not is_living(it):
+        return it
+    h = head_entry(it)
+    return _items.get(h["item"]) if h else None
+
+
+def _frozen(it: dict, what: str) -> None:
+    """Une version publiée ne change pas (juste par construction : un usage pointe
+    un fichier que rien ne réécrit). Titre, dossier, tags, favori restent libres."""
+    v = it.get("version")
+    if isinstance(v, dict) and v.get("of"):
+        raise PermissionError(f"« {it.get('title') or it['id']} » est la v{v.get('n')} d'un élément : une version publiée "
+                              f"ne change pas ({what}) — publie une nouvelle version")
+
+
+# la corbeille demande d'abord à chacun (server/tools/elements.py : une version
+# utilisée ne part pas) ; un garde lève une erreur qui dit pourquoi
+TRASH_GUARDS: list = []
 
 
 # ── à qui ───────────────────────────────────────────────────
@@ -457,6 +546,27 @@ def create_element(title: str, etype: str = "character", description: str = "", 
     return it
 
 
+def create_living(title: str, etype: str, source: dict, *, media: str | None = None, folder: str = "",
+                  tags: list | None = None, description: str = "") -> dict:
+    """Un élément versionné, encore sans version : sa source, sa pile vide. Les
+    versions s'y rangent par server/tools/elements.py (`publish`)."""
+    _load()
+    if etype not in ELEMENT_TYPES_ALL:
+        raise ValueError(f"sorte d'élément inconnue : {etype} ({', '.join(ELEMENT_TYPES_ALL)})")
+    iid = new_id("element")
+    folder_of(iid).mkdir(parents=True, exist_ok=True)
+    it = {
+        "id": iid, "kind": "element", "title": (title or "élément")[:200], "created": now(), "updated": now(),
+        "origin": _owned({"tool": source.get("tool", "asset")}), "tags": list(tags or []), "folder": folder, "fav": False,
+        "parents": [], "element": {"type": etype, "description": description, "refs": [], "source": source,
+                                   "media": media, "versions": []},
+    }
+    with _lock:
+        _items[iid] = it
+        _save(it)
+    return it
+
+
 def _check_patch(patch: dict) -> None:
     """La forme de ce qu'une page peut changer (ValueError → 400) : rien
     d'autre qu'un texte, une liste de textes, un booléen, là où on les attend."""
@@ -475,8 +585,8 @@ def _check_patch(patch: dict) -> None:
             raise ValueError(f"{k} : vrai ou faux")
     el = patch.get("element")
     if isinstance(el, dict):
-        if "type" in el and el["type"] not in ELEMENT_TYPES:
-            raise ValueError(f"sorte d'élément inconnue : {el['type']} ({', '.join(ELEMENT_TYPES)})")
+        if "type" in el and el["type"] not in ELEMENT_TYPES_ALL:
+            raise ValueError(f"sorte d'élément inconnue : {el['type']} ({', '.join(ELEMENT_TYPES_ALL)})")
         if "description" in el and not (isinstance(el["description"], str) and len(el["description"]) <= 20000):
             raise ValueError("description : un texte de 20000 signes au plus")
 
@@ -489,6 +599,11 @@ def update(item_id: str, patch: dict) -> dict:
             raise KeyError(item_id)
         _check_write(it)
         _check_patch(patch)
+        if "prompt" in patch or isinstance(patch.get("element"), dict):
+            _frozen(it, "sa recette, sa planche")
+        el_patch = patch.get("element") if isinstance(patch.get("element"), dict) else {}
+        if "type" in el_patch and el_patch["type"] not in (ELEMENT_TYPES_ALL if is_living(it) else ELEMENT_TYPES):
+            raise ValueError(f"sorte d'élément inconnue pour une planche : {el_patch['type']} ({', '.join(ELEMENT_TYPES)})")
         for k in ("title", "tags", "folder", "fav", "prompt"):
             if k in patch:
                 it[k] = patch[k]
@@ -524,6 +639,7 @@ def add_ref(item_id: str, src: Path, role: str = "", label: str = "", from_item:
         if not it or it["kind"] != "element":
             raise KeyError(item_id)
         _check_write(it)
+        _frozen(it, "ses références")
         d = folder_of(item_id)
         if EXT_KIND.get(src.suffix.lower()) == "audio":
             # un son : la voix de l'élément, rangée à côté de ses images (`voices`)
@@ -554,6 +670,8 @@ def trash(item_id: str) -> None:
         if not it:
             raise KeyError(item_id)
         _check_write(it)
+        for guard in TRASH_GUARDS:       # une version utilisée ne part pas (server/tools/elements.py)
+            guard(it)
         _items.pop(item_id, None)
         dest = trash_root() / item_id
         if dest.exists():
@@ -615,7 +733,11 @@ def path_of(it: dict, name: str | None = None) -> Path:
 
 
 def ref_paths(it: dict, roles: list[str] | None = None) -> list[tuple[Path, dict]]:
-    """Les fichiers d'un élément (ou l'image elle-même), dans l'ordre."""
+    """Les fichiers d'un élément (ou l'image elle-même), dans l'ordre. Un élément
+    versionné : ceux de sa dernière version."""
+    if is_living(it):
+        head = resolve(it)
+        return ref_paths(head, roles) if head else []
     if it["kind"] == "image":
         return [(path_of(it), {"role": "", "label": it.get("title", "")})]
     if it["kind"] != "element":
@@ -643,6 +765,7 @@ def public(it: dict) -> dict:
     out["views"] = sorted(it.get("views") or [])
     ver = out.pop("views_v", "")
     out["view_urls"] = {str(w): f"{base}{view_name(w)}?v={ver}" for w in out["views"]}
+    out["uid"] = uid_of(it)
     if it["kind"] == "element":
         el = dict(it["element"])
         el["refs"] = [{**r, "url": base + r["file"], "thumb_url": base + r["thumb"] if r.get("thumb") else base + r["file"]}
@@ -650,17 +773,46 @@ def public(it: dict) -> dict:
         if it["element"].get("voices"):
             el["voices"] = [{**v, "url": base + v["file"]} for v in it["element"]["voices"]]
         out["element"] = el
+        if is_living(it):
+            # un élément versionné : sa dernière version, et son image (celle de la dernière)
+            h = head_entry(it)
+            hi = _items.get(h["item"]) if h else None
+            el["head"], el["head_item"] = (h["n"], h["item"]) if h else (None, None)
+            el["count"] = len(it["element"]["versions"])
+            if hi and not it.get("thumb"):
+                hp = public(hi)
+                for k in ("thumb_url", "views", "view_urls"):
+                    out[k] = hp.get(k)
+                if hi["kind"] == "element":
+                    el["refs"], el["voices"] = hp["element"]["refs"], hp["element"].get("voices")
+            if hi:
+                el["head_kind"], el["head_duration"] = hi["kind"], hi.get("duration")
+    v = it.get("version")
+    if isinstance(v, dict) and v.get("of"):
+        # une version sait de quel élément elle est la n-ième, et quelle est la dernière :
+        # la pastille « vN+1 » de toute page qui la pose, sans requête de plus
+        e = _items.get(v["of"])
+        e = e if e is not None and readable(e) else None
+        h = head_entry(e) if e else None
+        mine = next((x for x in (e or {}).get("element", {}).get("versions", []) if x.get("item") == it["id"]), {})
+        out["version"] = {"of": v["of"], "n": v.get("n"), "of_title": e.get("title") if e else None, "of_present": bool(e),
+                          "head": h["n"] if h else None, "head_item": h["item"] if h else None,
+                          "state": mine.get("state", "ready") if mine else None}
     return out
 
 
 def query(kinds: list[str] | None = None, q: str = "", folder: str | None = None, sort: str = "new",
-          limit: int = 200, offset: int = 0, fav: bool = False, tool: str = "") -> dict:
+          limit: int = 200, offset: int = 0, fav: bool = False, tool: str = "", versions: bool = True) -> dict:
+    """`versions=False` : les versions d'un élément présent restent sous lui (Asset
+    les empile) ; celles d'un élément à la corbeille redeviennent des objets à part."""
     _load()
     with _lock:
         items = list(_items.values())
     u = auth.current()
     if u and not auth.is_admin(u) and auth.settings()["visibility"] != "all":
         items = [i for i in items if auth.can_read_item(i, u)]
+    if not versions:
+        items = [i for i in items if not (isinstance(i.get("version"), dict) and i["version"].get("of") in _items)]
     visible = items
     if kinds:
         items = [i for i in items if i["kind"] in kinds]

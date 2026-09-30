@@ -663,6 +663,9 @@ def save_project(req, pid):
         library.check_write(cur)   # 403 : le projet d'un autre (avant le 29/09 : aucun contrôle)
         if d.get("rev") != cur.get("rev"):
             raise HttpError(409, "ce projet a changé ailleurs (un autre onglet ?) : il faut le recharger")
+        # éléments : poser un élément de sa propre descendance est refusé, la chaîne nommée (tools/elements.py, 30/09)
+        from tools import elements
+        elements.check_doc(pid, [c["item"] for c in d.get("clips") or [] if isinstance(c, dict) and isinstance(c.get("item"), str)])
         # le propriétaire et le partage restent ceux du serveur, quoi que la page envoie
         for k in ("owner", "shared", "origin"):
             d.pop(k, None)

@@ -1,6 +1,9 @@
 # Apps et Studio, les éléments liés — étude du 29/09/2026
 
-**Statut** : étude seulement. Rien n'est codé, rien n'est lancé. Le code du
+**Statut** : étude du 29/09 ; **le socle est codé le 30/09** (étapes 1 et 6
+en partie, accroches de 3, 4 et 5 : voir « Fait le 30/09 » juste après § 0).
+Les six questions du § 5 sont tranchées par Cal le 30/09 (« on avance ») :
+ses recommandations s'appliquent (§ 5). Le code du
 portail est lu tel qu'il est le 29/09 au soir (les numéros de ligne bougent :
 des agents travaillent dans `musique/` et `ideation/`) ; la documentation des
 logiciels cités est lue le 29/09/2026. Chaque affirmation technique porte sa
@@ -69,6 +72,168 @@ La demande de Cal (29/09), ses mots :
    un objet ; en Studio, « Faire un élément » en fait la v1 d'un élément sans
    rien recopier. La porte distingue les deux par un droit `access` posé à côté
    du rôle, jamais par une autre base.
+
+---
+
+## Fait le 30/09 — le socle des éléments versionnés
+
+Livré sur une copie d'essai de DGX2 (`/tmp/sr_elements`, clone de
+`origin/main` f3d2a32 + les fichiers du PC ; portail d'essai :8873, données
+jetables). Rien n'est poussé ; le portail en ligne n'est pas touché.
+
+### Le modèle, tel qu'il est codé
+
+| quoi | où | ce qui est rangé |
+|---|---|---|
+| **élément** | `item.json` d'un `ele-…`, `kind: element` | `element: {type, media, description, refs: [], source: {tool, doc \| slug, open}, versions: [...]}` ; `type` : les planches (`character object place style other`) **ou** `music sound sequence picture` (`library.VERSIONED_TYPES`, à part de `ELEMENT_TYPES` que lit Idéation) ; `media` : `audio image video midi refs`, posé par la v1 |
+| **version** (entrée de la pile) | `element.versions[]`, dans l'ordre | `{n, item, at, by, note, fp, rev, src, deps, state}` ; seuls `state` (`ready` / `withdrawn`) et `note` se réécrivent |
+| **la dernière** | calculée, **jamais rangée** (`library.head_entry`) | la plus haute prête **et présente** (pas à la corbeille) : elle ne peut pas mentir quand une version part à la corbeille ou en revient ; `library.public` la rend (`element.head`, `head_item`, `count`, `head_kind`, `head_duration`), avec la vignette et les copies d'affichage de la dernière |
+| **objet version** | l'objet ordinaire (son, image, vidéo, MIDI, planche) | `version: {of, n}` dans son `item.json` ; à côté de son fichier, `source.json` = la source telle qu'elle a été rendue (le projet ODIO, la timeline ; pour un objet d'app, sa recette `{prompt, params}`) ; `public()` ajoute `of_title`, `of_present`, `head`, `head_item`, `state` : **toute page sait « la v4 existe » sans requête de plus** |
+| **usage** | les documents eux-mêmes | `clips[].item` des séquences, `clips[].item` des projets ODIO (pas les prises `gen.takes`), `nodes[].item` des planches d'Idéation ; relus seulement quand leur fichier change (cache par date et taille, `elements._summaries`) ; aucun document ne change de forme |
+| **empreinte** | `fp` de chaque version, `sha256:` du JSON canonique | ODIO : tout le projet sauf `id name rev created updated owner shared origin ui pending gen presets markers loop` ; séquence : `settings tracks groups clips range` ; recette : `prompt params`. **Canonique** : 1.0 = 1, champ vide = champ absent (relevé à l'essai : ODIO ouvert puis enregistré sans geste disait « modifié », la page écrivant `1` pour `1.0` et `banc: {segs: [], atts: []}` pour `null`) |
+| **journal** | `<data_dir>/elements/journal.jsonl` | une ligne par événement, numéro `seq` croissant : `el.created`, `el.published`, `el.withdrawn`, `el.ready` |
+| **uid** | déduit (`library.uid_of`) | `sr:<uuid de l'instance>/<id>` (`package_export.md` § 2.1) ; `<data_dir>/instance.json` tiré une fois (`uuid4`) ; un objet reçu d'ailleurs garderait le sien dans `item.json` ; `public()` le rend sur **chaque** objet |
+
+### Les routes (`server/tools/elements.py`)
+
+| route | ce qu'elle fait |
+|---|---|
+| `POST /api/elements {title?, type?, source: {tool, doc}, from_item?, note?, folder?}` | faire un élément. `source` seule : sans version (« pas encore publié ») ; `from_item` : l'objet en devient la v1, **rien n'est recopié** (le dossier de l'élément ne contient que `item.json`) ; sans `source` ni `from_item` : la planche d'avant (`core_api.el_create`, inchangée — la route neuve passe devant et lui rend la main). Une source n'a qu'un élément (409) |
+| `GET /api/elements?source=&tool=` | les éléments visibles (d'une source), avec `source_state` |
+| `GET /api/elements/<id>` | l'élément, la pile (la plus récente devant ; chaque entrée : l'objet, qui, quand, note, présente, à la corbeille, ses usages), `source_state` (`à jour`, `modifiée` + `since`, `perdue`, `sans version`, `non suivie`), les usages, ce qu'il contient |
+| `POST /api/elements/<id>/versions {item, rev?, note?}` | publier : l'objet (déjà rendu) devient la v n+1 ; même sorte que les versions d'avant ; pas déjà une version ; `rev` vérifiée contre la source (409 « la source a changé pendant le rendu ») ; `deps` = les versions d'autres éléments que la source pose |
+| `POST /api/elements/<id>/versions/<n> {state?, note?}` | retirer (`withdrawn`), remettre (`ready`), annoter |
+| `POST /api/elements/status {items}` | pour une page : de quel élément chaque objet est la version, la dernière, sa note, sa durée, les versions prêtes ; et le `seq` du journal |
+| `GET /api/elements/uses?doc=` | les usages d'un document, avec `update` (une plus récente existe) |
+| `POST /api/elements/check-use {el \| item, doc}` | `{ok}` ou `{ok: false, why, chain}` |
+| `GET /api/elements/changes?since=` | le journal après `seq` (les éléments visibles) |
+
+### Juste par construction
+
+- **Une version ne change plus** : `library._frozen` refuse (403, en le
+  disant) recette, planche, références, voix d'un objet marqué `version` —
+  `library.update`, `library.add_ref`, `asset.set_refs` ; titre, dossier,
+  tags, favori restent libres.
+- **Rien d'utilisé ne se supprime en silence** : `library.trash` demande à
+  ses gardes (`library.TRASH_GUARDS`, une ligne) ; celui des éléments refuse
+  (409) une version posée dans un document, **en nommant** où (« séquence
+  « Pub 30 s » (A1 · Pluie) »). Toutes les corbeilles passent par là (fiche,
+  lot d'Asset, `core_api`). Une version libre part ; la dernière redevient la
+  précédente ; rendue, elle redevient la dernière. Un élément à la corbeille :
+  ses versions restent des objets (ses usages ne cassent pas) et reparaissent
+  seules dans Asset, marquées « v2 » (notre choix, plus simple que « à la
+  corbeille avec lui » du § 2.9).
+- **La boucle refusée, la chaîne nommée** : `check_use` (la page, avant de
+  poser) et `check_doc`, appelé par l'enregistrement d'une séquence
+  (`montage.r_save`) et d'un projet ODIO (`music.save_project`) — une ligne
+  marquée `# éléments :` dans chacun. Publier refuse aussi une source qui pose
+  une version de son propre élément.
+- **Publier** = le propriétaire de l'élément ou Cal (`library.check_write`),
+  et écrire l'objet qu'on marque. Un élément neuf dont la v1 échoue
+  disparaît : rien ne reste à moitié.
+- **Personnage de Character Factory** (question 1) : « Mettre à jour depuis
+  le studio » sur un élément versionné, ou sur une planche qui en est une
+  version, range une **planche neuve comme version suivante**
+  (`asset._cf_new_version`) ; une planche qui n'est pas encore un élément garde
+  la mise à jour sur place d'avant (« Faire un élément (v1) » l'y fait entrer).
+
+### Ce qui est branché
+
+- **Asset** (`asset/asset.js`, `asset.css`, `server/tools/asset.py`) : la
+  racine range les versions sous leur élément (`library.query(versions=False)`) ;
+  la carte d'un élément dit sa sorte en français sur la pastille commune
+  (`kindMark` : « musique »), sa dernière (« v3 », « /3 » versions), l'état de
+  sa source (filet ambre si « modifiée »), la pile en filets derrière la
+  vignette ; sa fiche : la dernière (lecteur), **la pile** (vN, note, qui,
+  quand, durée, « la dernière », « retirée », « à la corbeille », ses usages,
+  Fiche, Retirer / Remettre), la source et son état, les usages, ce qu'il
+  contient ; « Publier la vN+1… » (le seul orange) choisit un objet de la
+  bonne sorte et une note. Sur un objet ordinaire (image, vidéo, son, MIDI,
+  planche) : **« Faire un élément (v1) »** et **« Publier comme version de… »**
+  (fiche et clic droit) ; sur une version : le bandeau « v2 de « … » · la v3
+  existe ». L'ancien « Faire un élément » d'une image (une planche de
+  références, qui copie l'image) s'appelle désormais « Faire une planche de
+  références ». Annuler : faire un élément ↔ le mettre à la corbeille ;
+  publier ↔ retirer la version.
+- **Montage** (`montage/elements.js` neuf ; accroches marquées dans
+  `montage.js`, `timeline.js`, `montage.css`) : un plan qui pose une version
+  porte sa pastille (« ◆ v1 », filet orange « v1 → v2 » quand une plus récente
+  existe) ; clic : « Mettre à jour vers la v2 » (note de la version),
+  « Tout mettre à jour », Versions ▸, Ouvrir la source, l'élément dans Asset ;
+  aussi au clic droit du plan. Mettre à jour = un `commit` (ctrl+Z le défait),
+  enregistré par la route habituelle ; le plan garde début et entrée, sa
+  durée suit la nouvelle version si elle est plus courte (le dit). Glisser un
+  élément pose sa dernière version ; poser un élément de sa propre descendance
+  est refusé avant de poser. Le journal est relu toutes les 5 s
+  (`/api/elements/changes`) : une publication ailleurs fait paraître la
+  pastille et un bandeau, sans recharger.
+- **ODIO** (`musique/element.js` neuf ; accroches marquées dans
+  `musique/musique.js`) : « Publier » dans la barre (et « Publier comme
+  élément… » au menu) : enregistre, rend le morceau entier hors temps réel
+  (`renderMix`, le graphe de la lecture), le dépose, fait l'élément du projet
+  au premier geste, range la v n+1 avec la `rev` rendue ; la fenêtre dit
+  « v2 · à jour » ou « modifié depuis la v2 ».
+
+### Preuves
+
+- `python3 tools/check.py` sur la copie : **tout passe** (1469 contrôles,
+  0 échec), dont les
+  contrôles neufs de `elements.selftest` : faire un élément d'un projet ODIO
+  sans version, une source = un élément, publier v1 (la source copiée à côté),
+  « modifiée depuis la v1 », la vue n'entre pas dans l'empreinte, une rev
+  périmée refusée, un usage trouvé dans une séquence, **la v2 publiée et
+  l'usage resté sur la v1 qui voit « v2 »**, mettre à jour puis annuler
+  (enregistrements de la séquence), **une version utilisée refusée à la
+  corbeille** (fiche et lot) en nommant la séquence, une version libre qui
+  part et revient, une version figée, pas deux fois une version, la bonne
+  sorte, retirer / remettre, faire un élément d'une image (v1 sans copie,
+  `ref_paths` lit la dernière, Asset l'empile), l'`uid`, **les boucles**
+  (séquence → chanson → projet de la chanson : refusé, chaîne nommée ; une
+  séquence dans elle-même : refusé, à la page et à l'enregistrement), le
+  journal, **les droits** (porte allumée : Albane fait son élément, Bastien
+  ne publie ni ne retire sur le sien, Albane publie sa v2, Cal publie
+  partout).
+- Pilote Playwright sur :8873 (`/tmp/sr_elements_pilote.mjs`) : **21 sur
+  21**. Asset : la carte « v1 · musique », la version empilée, faire un élément
+  d'une image, publier la v2 par la fiche (sélecteur, note), la pile v2 · v1,
+  la corbeille refusée, les usages ; Montage : la pastille v1, la v2 publiée
+  ailleurs → « v1 → v2 » sans recharger, le plan resté sur la v1, mettre à jour
+  (le plan passe de 8 s à 6 s), l'enregistrement, ctrl+Z (v1, durée
+  d'avant), glisser l'élément pose sa dernière ; ODIO : ouvert sans geste,
+  « v2 · à jour » ; Publier rend le morceau dans la page et range la v3, la
+  source « à jour ».
+- Captures sombre et clair : `01_asset_racine` … `10_odio_publie`
+  (`*_sombre.png`, `*_clair.png`, dossier de captures du chantier).
+
+### Ce qui reste (l'étude, § 4)
+
+- **Étape 2, les adaptateurs de rendu** : `element.publish` (séquence →
+  `montage.run_export` → MP4 ; cadre d'Idéation → `ideation.run_export` ;
+  personnage CF en travail) ; sans eux, **« la première pose calcule »
+  (question 2) n'est pas branchée** : poser un élément sans version le dit
+  (« publie la v1 depuis sa source »).
+- **Étape 3, le signal commun** : `ev_seq` dans `GET /api/jobs`
+  (`core_api.jobs_list`, pas à ce chantier) — le Montage relit en attendant
+  `/api/elements/changes` toutes les 5 s ; le flux SSE ; un `commun/elements.js`
+  (la pastille, pour Idéation et les autres) ; `commun/shell.js` : les noms
+  français des sortes neuves dans `ETYPE_FR` (ailleurs qu'Asset, la pastille
+  dit « music »), `dropZone` et `pick` qui rendent la dernière version d'un
+  élément déposé.
+- **Les lecteurs de références** (`image.py`, `movie.py`, `ideation.py`,
+  `objet.py`) lisent `element.refs` directement : un élément versionné de
+  planches (un personnage CF promu) n'en a pas lui-même — ils doivent passer
+  par `library.resolve(it)` (la dernière version) avant qu'un tel élément leur
+  soit proposé. `library.ref_paths` le fait déjà ; la fiche publique montre
+  les références de la dernière.
+- Le chutier du Montage (`projet.js`) ne liste pas encore les éléments ; le
+  Montage ne se pose pas encore comme source (une séquence en élément : son
+  MP4, étape 2) ; la piste générative (étape 8).
+- Idéation (étape 7 : pastille sur les nœuds, Faire un élément sur un
+  résultat) ; `move` et `restore-source` (§ 2.10) ; la porte Apps / Studio
+  (question 5, étape 9) ; l'app Musique et « S'en inspirer » par ACE-Step
+  (question 6, étape 10).
+- `docs/ARCHITECTURE.md` § 2 et § 7 : y reporter ces routes et `version`
+  (fichier d'un autre chantier ce soir).
 
 ---
 
@@ -935,6 +1100,15 @@ chantiers en cours**, hors les accroches marquées de `library.py` et de
 ---
 
 ## 5. Les questions à Cal
+
+**Tranchées le 30/09** : Cal, « on avance », sans répondre point par point ;
+ses recommandations s'appliquent — 1 **oui** (un personnage versionné reçoit
+une version de plus, rien n'est réécrit sur place : codé, `asset._cf_new_version`) ;
+2 **oui aux deux** (à brancher avec les adaptateurs de l'étape 2) ; 3 **à la
+main seulement** (codé : la pastille, un clic) ; 4 **le propriétaire et Cal**
+(codé : `library.check_write` sur l'élément) ; 5 **Apps par défaut**, le
+Studio sur le geste de Cal (étape 9) ; 6 **ACE-Step 1.5** pour « s'en
+inspirer », le bouton grisé et disant pourquoi d'ici là (étape 10).
 
 1. **Personnages de Character Factory** : en Studio, « remettre à jour » un
    personnage importé fait une **nouvelle version** (les plans et planches qui

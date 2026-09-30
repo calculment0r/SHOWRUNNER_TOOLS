@@ -16,6 +16,7 @@
 
 import { mountHeader, api, jobs, pick, uploadFile, toast, $, href, fmtDur, stateFr } from '../commun/shell.js';
 import { Engine, renderMix, rendusLibres, renderClips, wav24, peakDb, songEnd, peaks } from './moteur.js';
+import { openPublish } from './element.js';   // éléments : « Publier comme élément » (30/09)
 import { MODULES, TRACK_KINDS, COLORS, COLOR_FR, PRESETS, SOURCES_OF, DRUM_MODELS, NOTE_MODELS, TONICS, TONICS_FR, MODES,
   kindOfSource, keyLabel, moduleName } from './modules.js';
 import { el, modal, ask, confirmBox, menu, put, tok, letter } from './ui.js';
@@ -807,6 +808,14 @@ async function flush() {
   saving = false;
   if (again) { again = false; flush(); }
 }
+// éléments (30/09) : publier attend que le projet soit enregistré (le serveur vérifie la rev rendue)
+async function whenSaved() {
+  clearTimeout(saveT);
+  await flush();
+  while (saving) await new Promise((r) => setTimeout(r, 40));
+}
+const pubCtx = () => ({ S, engine, renderMix, wav24, songEnd, whenSaved, modal, fmtDur });
+
 addEventListener('pagehide', () => {
   if (saveT && S.proj) {
     clearTimeout(saveT);
@@ -1021,6 +1030,8 @@ function paintBar() {
       pend ? el('span', { class: 'pill work', title: 'travaux en cours pour ce projet' }, el('i'), el('span', {}, `${pend} en cours`)) : null,
       el('button', { class: 'tb ghost sm', id: 'mu-gen', type: 'button', title: 'YuE2, ACE-Step, séparation en pistes', onclick: () => openGenerative(app) }, 'Générer'),
       el('button', { class: 'tb ghost sm', id: 'mu-exp', type: 'button', title: 'le mixage et les pistes en WAV, vers la bibliothèque', onclick: openExport }, 'Exporter'),
+      // éléments (30/09) : le morceau devient la version suivante de l'élément du projet (musique/element.js)
+      el('button', { class: 'tb ghost sm', id: 'mu-pub', type: 'button', title: 'le morceau, rendu, devient la version suivante de l’élément de ce projet : le Montage voit la pastille', onclick: () => openPublish(pubCtx()) }, 'Publier'),
       el('button', { class: 'tb go', id: 'mu-guide', type: 'button', title: 'l\'aide, à côté de la session', onclick: () => openGuide(app) }, 'Guide')));
   paintTransport();
   drawOverview();
@@ -1385,6 +1396,7 @@ function baseMenu() {
     { label: 'Une piste', items: app.trackChoices() },
     { label: 'Générer…', onclick: () => openGenerative(app) },
     { label: 'Exporter…', onclick: openExport },
+    { label: 'Publier comme élément…', onclick: () => openPublish(pubCtx()) },   // éléments (30/09)
     { label: 'Le guide', onclick: () => openGuide(app) },
     '-',
     // le nodal dans une fenêtre (un 2ᵉ écran), ou de retour dans la page

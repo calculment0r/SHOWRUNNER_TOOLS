@@ -19,7 +19,9 @@
   GET  /api/asset/trash                          la corbeille
   GET  /api/asset/trash/<id>/thumb               la vignette d'un objet jeté
   POST /api/asset/cf/refresh {id}                un personnage déjà importé,
-                                                 remis à jour sur place
+                                                 remis à jour sur place ; s'il est
+                                                 un élément versionné (ou l'une de ses
+                                                 planches) : une version de plus (30/09)
   POST /api/asset/refs/<id> {refs}               la planche d'un élément, dans l'ordre
 
 Un dossier n'existe que par ses objets (le champ `folder` de chacun,
@@ -49,8 +51,24 @@ from tools import core_api
 FOLDER_MAX = 60
 
 
-def _all(q: str = "", sort: str = "new", fav: bool = False, tool: str = "") -> list[dict]:
-    return library.query(None, q, None, sort, 1_000_000, 0, fav, tool)["items"]
+def _all(q: str = "", sort: str = "new", fav: bool = False, tool: str = "", versions: bool = False) -> list[dict]:
+    """Les objets de la page ; les versions d'un élément restent empilées sous lui
+    (`versions=False`, library.query) — la lignée, elle, les voit toutes."""
+    return library.query(None, q, None, sort, 1_000_000, 0, fav, tool, versions=versions)["items"]
+
+
+def _with_state(items: list[dict]) -> list[dict]:
+    """Un élément versionné dit l'état de sa source (« modifiée depuis la v2 »…) :
+    seulement pour ceux de la page, relu chez tools/elements.py."""
+    from tools import elements
+    out = []
+    for it in items:
+        if it.get("kind") == "element" and isinstance((it.get("element") or {}).get("versions"), list):
+            raw = library.get(it["id"])
+            if raw:
+                it = {**it, "source_state": elements.source_state(raw)}
+        out.append(it)
+    return out
 
 
 def _tool(it: dict) -> str:
@@ -161,7 +179,7 @@ def view(req):
         else:
             folders.sort(key=lambda f: f["updated"], reverse=True)
 
-    return {"items": items[offset:offset + limit], "total": len(items), "offset": offset,
+    return {"items": _with_state(items[offset:offset + limit]), "total": len(items), "offset": offset,
             "counts": counts, "folders": folders, "all_folders": all_folders, "tools": tools, "origins": origins,
             "library_total": len(everything), "folder": folder, "q": q}
 
@@ -325,8 +343,10 @@ def zip_make(req):
     files = 0
     with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
         for it in items:
-            src = library.folder_of(it["id"])
             title = _safe(it.get("title"), it["id"])
+            if library.is_living(it):   # un élément versionné : sa dernière version, sous son titre à lui
+                it = library.resolve(it) or {"id": it["id"], "kind": "none"}
+            src = library.folder_of(it["id"])
             if it["kind"] == "element":
                 top = arc(title)
                 el = it["element"]
@@ -383,7 +403,7 @@ def lineage(req, item_id):
     if not it:
         raise HttpError(404, f"introuvable : {item_id}")
     parents = [library.public(p) for p in (library.get(x) for x in _parent_ids(it)) if p]
-    children = [c for c in _all() if item_id in _parent_ids(c)]
+    children = [c for c in _all(versions=True) if item_id in _parent_ids(c)]
     return {"parents": parents, "children": children}
 
 
@@ -465,6 +485,7 @@ def set_refs(req, item_id):
     if not it or it["kind"] != "element":
         raise HttpError(404, f"élément introuvable : {item_id}")
     library.check_write(it)   # la planche d'un autre ne se touche pas (avant le 29/09 : aucun contrôle)
+    library._frozen(it, "sa planche")   # la planche publiée d'un élément ne change plus (30/09)
     body = req.json()
     refs, voices = body.get("refs"), body.get("voices")
     if refs is None and voices is None:
@@ -521,31 +542,17 @@ def cf_refresh(req):
     if not it or it["kind"] != "element":
         raise HttpError(404, f"élément introuvable : {iid}")
     library.check_write(it)   # avant d'effacer quoi que ce soit (avant le 29/09 : le refus venait après l'effacement)
+    # éléments (30/09, question 1 de l'étude : oui) : un personnage déjà versionné — l'élément, ou
+    # l'une de ses planches publiées — reçoit une version de plus ; rien n'est réécrit sur place
+    ver = it.get("version") if isinstance(it.get("version"), dict) else None
+    living = it if library.is_living(it) else (library.get(ver["of"]) if ver else None)
+    if living is not None:
+        return _cf_new_version(living)
     src = it["element"].get("source") or {}
     slug = src.get("slug", "")
     if src.get("tool") != "character-factory" or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", slug):
         raise HttpError(400, "cet élément ne vient pas de Character Factory")
-    c = json.loads(core_api._cf_get(f"/api/characters/{slug}")).get("character") or {}
-    tmp = config.data_dir() / "cf_import" / f"refresh-{slug}"
-    shutil.rmtree(tmp, ignore_errors=True)
-    tmp.mkdir(parents=True, exist_ok=True)
-    got: list[dict] = []
-
-    def fetch(rel, role: str, label: str = "") -> None:
-        # même lecture que core_api.cf_import : un chemin relatif au dossier du personnage
-        if not rel or not isinstance(rel, str) or ".." in rel:
-            return
-        ext = Path(rel).suffix.lower() or ".png"
-        if ext not in (".png", ".jpg", ".jpeg", ".webp") and not (role == "voice" and ext in library.AUDIO_EXT):
-            return
-        dest = tmp / f"{len(got):02d}{ext}"
-        try:
-            dest.write_bytes(core_api._cf_get(urllib.parse.quote(f"/files/{slug}/{rel}"), timeout=60))
-        except HttpError:
-            return
-        got.append({"path": dest, "role": role, "label": label})
-
-    core_api._walk_cf(c, fetch)            # les images, puis la voix s'il en a une
+    c, got, tmp = _cf_fetch(slug)
     if not any(r["role"] != "voice" for r in got):
         shutil.rmtree(tmp, ignore_errors=True)
         raise HttpError(409, "le studio ne rend aucune image validée pour ce personnage : l'élément reste tel quel")
@@ -568,6 +575,56 @@ def cf_refresh(req):
         library._save(it)
     shutil.rmtree(tmp, ignore_errors=True)
     return library.public(it)
+
+
+def _cf_new_version(e: dict):
+    """Le personnage relu dans le studio devient une planche neuve, rangée comme
+    version n+1 de son élément : les plans et les planches qui posaient la
+    précédente la gardent et voient la pastille."""
+    from tools import elements
+    library.check_write(e)
+    src = e["element"].get("source") or {}
+    head = library.resolve(e) or {}
+    slug = src.get("slug") or ((head.get("element") or {}).get("source") or {}).get("slug", "")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", slug or ""):
+        raise HttpError(400, "cet élément ne vient pas de Character Factory")
+    c, got, tmp = _cf_fetch(slug)
+    try:
+        if not any(r["role"] != "voice" for r in got):
+            raise HttpError(409, "le studio ne rend aucune image validée pour ce personnage : rien n'est publié")
+        planche = library.create_element(c.get("name") or e["title"], "character", core_api._cf_description(c), got,
+                                         source={"tool": "character-factory", "slug": slug, "open": core_api._cf_open(slug)},
+                                         folder=e.get("folder") or "")
+        elements.publish(e["id"], planche["id"], note="relu dans le studio Character Factory")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return library.public(library.get(e["id"]))
+
+
+def _cf_fetch(slug: str):
+    """(la fiche du personnage, ses images et sa voix rapatriées, le dossier de travail)."""
+    c = json.loads(core_api._cf_get(f"/api/characters/{slug}")).get("character") or {}
+    tmp = config.data_dir() / "cf_import" / f"refresh-{slug}"
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True, exist_ok=True)
+    got: list[dict] = []
+
+    def fetch(rel, role: str, label: str = "") -> None:
+        # même lecture que core_api.cf_import : un chemin relatif au dossier du personnage
+        if not rel or not isinstance(rel, str) or ".." in rel:
+            return
+        ext = Path(rel).suffix.lower() or ".png"
+        if ext not in (".png", ".jpg", ".jpeg", ".webp") and not (role == "voice" and ext in library.AUDIO_EXT):
+            return
+        dest = tmp / f"{len(got):02d}{ext}"
+        try:
+            dest.write_bytes(core_api._cf_get(urllib.parse.quote(f"/files/{slug}/{rel}"), timeout=60))
+        except HttpError:
+            return
+        got.append({"path": dest, "role": role, "label": label})
+
+    core_api._walk_cf(c, fetch)            # les images, puis la voix s'il en a une
+    return c, got, tmp
 
 
 def register(app) -> None:

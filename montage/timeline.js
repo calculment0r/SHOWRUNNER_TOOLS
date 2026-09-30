@@ -192,6 +192,8 @@ export class Timeline {
       title: `${c.title || ''}\n${M.tc(c.start, fps)} → ${M.tc(M.clipEnd(c), fps)} · ${M.short(c.dur / fps)}${it && it.missing ? '\nintrouvable dans la bibliothèque' : ''}`,
       style: { left: x + 'px', width: wpx + 'px' },
     }, body);
+    const eb = this.app.elementBadge?.(c);      // éléments : la pastille de version (montage/elements.js, 30/09)
+    if (eb) node.append(eb);
     if (w && w.xin) {
       const h1 = w.xin >> 1;
       node.append(el('i', { class: 'xf', title: `fondu enchaîné · ${w.xin} images`, style: { left: -this.fx(h1) + 'px', width: this.fx(w.xin) + 'px' } }));
