@@ -103,11 +103,14 @@ function remember(id, patch) {
 
 // ── la page principale : ce qui la suit dans chaque fenêtre ─
 const COPY_ATTRS = ['lang', 'data-theme', 'style', 'data-motion', 'data-sr-tool', 'class'];
+// la classe, sans ce qui ne vaut que pour la page principale : l'attente de la porte (sr-wait) et le
+// panneau Asset (sr-dock-on, sr-dock-anim… : il pousserait le corps d'une fenêtre qui n'a pas de panneau)
+const pageOnly = (c) => c === 'sr-wait' || c.startsWith('sr-dock-');
 function copyHtml(d) {
   const a = document.documentElement, b = d.documentElement;
   for (const n of COPY_ATTRS) {
     const v = a.getAttribute(n);
-    if (v === null) b.removeAttribute(n); else b.setAttribute(n, n === 'class' ? v.replace(/\bsr-wait\b/, '').trim() : v);
+    if (v === null) b.removeAttribute(n); else b.setAttribute(n, n === 'class' ? v.split(/\s+/).filter((c) => c && !pageOnly(c)).join(' ') : v);
   }
 }
 const sheet = (n) => n.matches && n.matches('link[rel~="stylesheet"], style');

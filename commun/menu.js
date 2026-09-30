@@ -23,8 +23,8 @@
 //   { label, onclick, icon?, dot?: 'or' (un jeton), key?: 'Ctrl+K' (raccourci
 //     affiché), sub?: 'petit texte', danger?, checked?, items?: [...] (sous-menu),
 //     disabled?, why?: 'ce qui manque' }
-// Une entrée désactivée reste lisible : au clic, elle dit pourquoi (why)
-// au lieu de ne rien faire. `build` peut rendre null (pas de menu ici).
+// Une entrée désactivée reste lisible et dit pourquoi (why) : écrit sous
+// elle, et redit au clic au lieu de ne rien faire (règle 7 du thème). `build` peut rendre null (pas de menu ici).
 
 import { el, toast } from './shell.js';
 
@@ -89,7 +89,10 @@ function build(items, depth) {
     it.dot ? el('i', { class: 'dot', style: { background: `var(--${it.dot})` } })
       : el('span', { class: 'ic' }, it.checked === undefined ? (it.icon || '') : (it.checked ? '✓' : '')),
     el('span', { class: 'lb' }, it.label),
-    it.items ? el('span', { class: 'arr' }, '›') : it.key ? el('span', { class: 'key' }, it.key) : it.sub ? el('span', { class: 'sub' }, it.sub) : null);
+    it.items ? el('span', { class: 'arr' }, '›') : it.key ? el('span', { class: 'key' }, it.key) : it.sub ? el('span', { class: 'sub' }, it.sub) : null,
+    // désactivée : pourquoi, écrit dessous, lisible sans survol (règle 7 du thème) — le clic le redit
+    off && it.why ? el('span', { class: 'why' }, it.why) : null);
+    if (off && it.why) b.setAttribute('aria-description', it.why);
     b._it = it;
     b.addEventListener('pointerenter', () => {
       mark(m, entries(m).indexOf(b));

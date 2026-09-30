@@ -2,10 +2,13 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="../../commun/theme-tot.js"></script>
+<link rel="preload" href="../../commun/fonts/norelli-black.otf" as="font" type="font/otf" crossorigin>
 <title>Diarisation · Movie Analysis</title>
 <!-- portail Showrunner : ses jetons, son en-tête (portail.css borne ce qu'il reprend de base.css) ; la palette des voix,
      la même qu'au Studio (analyse/film/palette.css) -->
 <link rel="stylesheet" href="../../commun/tokens.css">
+<link rel="stylesheet" href="../../commun/curseur.css">
 <link rel="stylesheet" href="../film/palette.css">
 <link rel="stylesheet" href="../../commun/shell.css">
 <link rel="stylesheet" href="./portail.css">
@@ -214,7 +217,7 @@ code{font:400 11px/1.5 var(--mono);background:var(--surface-3);padding:1px 5px;b
 /* ── post-traitement, mesures ── */
 .reglage{display:flex;flex-direction:column;gap:4px;min-width:0}
 .reglage .rt{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
-.reglage input[type=range]{width:100%;margin:2px 0;accent-color:var(--cy)}
+.reglage input[type=range]{width:100%;margin:2px 0}
 .reglage output{font:400 12px/1 var(--mono)}
 .reglage .aide{font-size:10.5px;line-height:1.3;color:var(--ink-3)}
 .reglages{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px 18px}
@@ -307,6 +310,10 @@ pre.cmd{margin:0;background:var(--well);border-radius:10px;padding:11px 13px;fon
   .script .r{grid-template-columns:52px minmax(0,1fr)}.script .dit{grid-column:1/-1}.demo{flex-direction:column;align-items:stretch}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
+<script type="module" blocking="render">
+import { mountHeader } from '../../commun/shell.js';
+mountHeader('analyse', { sub: 'diarisation' });
+</script>
 </head>
 <body>
 <header class="bar">

@@ -59,7 +59,7 @@
 }
 .te-ctl input[type=color]::-webkit-color-swatch-wrapper { padding: 3px; }
 .te-ctl input[type=color]::-webkit-color-swatch { border: none; border-radius: 3px; }
-.te-a { width: 90px; accent-color: var(--cy); }
+.te-a { width: 90px; }   /* le curseur du thème (curseur.css) */
 .te-txt { flex: 1; min-width: 0; font-family: var(--f-mono); font-size: 10.5px; padding: 5px 8px; }
 .te-ctl .tb[aria-disabled="true"] { opacity: .35; cursor: default; }
 .te-fixed { margin-top: var(--s2); }

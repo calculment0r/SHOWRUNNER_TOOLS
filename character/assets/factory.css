@@ -87,11 +87,8 @@
 
 .slider-wrap { display: flex; flex-direction: column; gap: 6px; }
 .slider-value { font-family: var(--f-disp); font-size: 20px; letter-spacing: .06em; color: var(--cy); }
-.slider { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; background: transparent; cursor: pointer; }
-.slider::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--panel3); }
-.slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%; background: var(--or); }
-.slider::-moz-range-track { height: 4px; border-radius: 2px; background: var(--panel3); }
-.slider::-moz-range-thumb { width: 14px; height: 14px; border: none; border-radius: 50%; background: var(--or); }
+/* le curseur du thème du portail (commun/curseur.css) : l'orange reste l'action, pas une valeur */
+.slider { width: 100%; }
 .slider-ticks { display: flex; justify-content: space-between; font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .16em; color: var(--ink3); }
 
 .swatches-row { display: flex; flex-wrap: wrap; gap: 6px; }

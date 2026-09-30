@@ -43,7 +43,7 @@
 .sr-lect-ic svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .sr-lect-ic.on { background: var(--grn); color: var(--on-grn); box-shadow: none; }
 .sr-lect-ic[aria-disabled="true"] { opacity: .35; cursor: default; }
-.sr-lect-vol { width: 76px; accent-color: var(--cy); }
+.sr-lect-vol { width: 76px; }   /* le curseur du thème (curseur.css) */
 
 /* la frise : la règle, la bande (images ou onde), les pistes de la page, la tête */
 .sr-lect-frise { position: relative; background: var(--bg); }

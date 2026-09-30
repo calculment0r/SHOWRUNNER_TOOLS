@@ -44,22 +44,44 @@ export function raccourci(doc = document) {
   });
 }
 
+// D'une page à l'autre : le plein écran de la Fullscreen API est celui d'un DOCUMENT ; changer d'outil
+// charge un autre document, et le navigateur le quitte (WHATWG Fullscreen, « unloading document
+// cleanup steps » : fully exit fullscreen) ; la page suivante ne peut pas y rentrer seule
+// (requestFullscreen demande un geste : MDN, Element.requestFullscreen, « transient activation »).
+// Ce qu'on fait : la page d'avant le note pour l'onglet ; la suivante allume son bouton (ambre : ce
+// qui attend Cal) et dit pourquoi — un clic, ou Ctrl+Maj+F, y ramène. F11 (le plein écran de la
+// FENÊTRE, au navigateur) reste, lui, d'un outil à l'autre.
+const QUITTE = 'sr-plein-ecran-quitte';
+const ss = { get: () => { try { return sessionStorage.getItem(QUITTE); } catch { return null; } },
+  set: (v) => { try { if (v) sessionStorage.setItem(QUITTE, '1'); else sessionStorage.removeItem(QUITTE); } catch { /* */ } } };
+if (typeof addEventListener === 'function') {
+  addEventListener('pagehide', () => { if (document.fullscreenElement) ss.set(true); });
+  // un lien suivi en plein écran (le navigateur a pu le quitter avant pagehide)
+  addEventListener('click', (e) => { if (document.fullscreenElement && e.target.closest?.('a[href]')) ss.set(true); }, true);
+}
+
 // `el` : la fabrique de shell.js (passée pour ne rien importer : shell.js importe ce module)
 export function boutonPleinEcran(doc, el, { cls = 'tb ghost sm sr-full' } = {}) {
   const b = el('button', { class: cls, type: 'button', id: doc === document ? 'sr-full' : null });
+  let quitte = doc === document && ss.get() === '1';
+  if (quitte) ss.set(false);
   const paint = () => {
     const on = enPleinEcran(doc);
     const ok = permis(doc);
+    if (on) quitte = false;
     b.innerHTML = on ? ICON_OUT : ICON_IN;
     b.setAttribute('aria-pressed', String(on));
     b.setAttribute('aria-label', on ? 'quitter le plein écran' : 'plein écran');
     b.classList.toggle('on', on);
+    b.classList.toggle('relance', quitte && ok);
     // une action impossible dit pourquoi, et ce qui la débloque (règle 7)
     b.title = !ok ? 'ce navigateur refuse le plein écran à cette page — F11 met toute la fenêtre en plein écran'
-      : on ? 'quitter le plein écran · Échap ou Ctrl+Maj+F' : 'plein écran · Ctrl+Maj+F (Échap pour sortir)';
+      : on ? 'quitter le plein écran · Échap ou Ctrl+Maj+F'
+        : quitte ? 'le plein écran s’arrête à chaque changement de page (le navigateur le quitte) — clic ou Ctrl+Maj+F pour y revenir ; F11 le garde d’un outil à l’autre'
+          : 'plein écran · Ctrl+Maj+F (Échap pour sortir) — F11 le garde d’un outil à l’autre';
     b.setAttribute('aria-disabled', String(!ok));
   };
-  b.addEventListener('click', () => { if (permis(doc) || enPleinEcran(doc)) basculer(doc); });
+  b.addEventListener('click', () => { quitte = false; if (permis(doc) || enPleinEcran(doc)) basculer(doc); paint(); });
   doc.addEventListener('fullscreenchange', paint);
   paint();
   return b;

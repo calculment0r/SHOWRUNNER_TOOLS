@@ -14,11 +14,18 @@
   position: fixed; left: 0; top: var(--sr-hdr-h, 52px); bottom: 0; z-index: 38;
   width: var(--sr-dock-w, 250px); display: flex; flex-direction: column; gap: 7px;
   padding: 10px 10px 8px; background: var(--panel); box-shadow: inset -1px 0 0 var(--line);
-  transform: translateX(-100%); visibility: hidden; transition: transform .2s, visibility 0s linear .2s;
+  transform: translateX(-100%); visibility: hidden;
 }
-/* ouvert : visible tout de suite (la recherche prend le focus), caché seulement après le glissement */
-html.sr-dock-on .sr-dock, html.sr-dock-over .sr-dock { transform: none; visibility: visible; transition: transform .2s, visibility 0s; }
-html.sr-dock-resizing .sr-dock { transition: none; }
+html.sr-dock-on .sr-dock, html.sr-dock-over .sr-dock { transform: none; visibility: visible; }
+/* le glissement : seulement pendant un geste de la personne (html.sr-dock-anim, dock.js : anime()) —
+   jamais au chargement d'une page. Ouvert : visible tout de suite (la recherche prend le focus) ;
+   fermé : caché seulement après le glissement */
+html.sr-dock-anim .sr-dock { transition: transform .2s, visibility 0s linear .2s; }
+html.sr-dock-anim.sr-dock-on .sr-dock, html.sr-dock-anim.sr-dock-over .sr-dock { transition: transform .2s, visibility 0s; }
+/* fermé, rien ne bouge dedans (le chevron d'une section qu'on prépare au montage) */
+html:not(.sr-dock-on):not(.sr-dock-over) .sr-dock *,
+html:not(.sr-dock-on):not(.sr-dock-over) .sr-dock *::before,
+html:not(.sr-dock-on):not(.sr-dock-over) .sr-dock *::after { transition: none; }
 /* sous 860 px de page, pousser ne laisse plus rien : par-dessus, avec un voile */
 html.sr-dock-over .sr-dock { box-shadow: inset -1px 0 0 var(--line), 20px 0 50px var(--drop); z-index: 62; }
 .sr-dock-veil { position: fixed; inset: var(--sr-hdr-h, 52px) 0 0 0; z-index: 61; background: var(--scrim); }
@@ -128,15 +135,15 @@ html.sr-dock-over .sr-dock { box-shadow: inset -1px 0 0 var(--line), 20px 0 50px
 /* la poignée : dans l'intervalle entre le panneau et la page (le geste d'Idéation, de commun/split.js) */
 .sr-dock-grip {
   position: fixed; top: var(--sr-hdr-h, 52px); bottom: 0; left: var(--sr-dock-w, 250px); width: 10px; z-index: 39;
-  cursor: col-resize; touch-action: none; outline: none; transition: left .2s;
+  cursor: col-resize; touch-action: none; outline: none;
 }
+html.sr-dock-anim .sr-dock-grip { transition: left .2s; }
 .sr-dock-grip::after {
   content: ""; position: absolute; top: 12%; bottom: 12%; left: 50%; width: 2px; margin-left: -1px;
   border-radius: 1px; background: transparent; transition: background .12s;
 }
 .sr-dock-grip:hover::after, .sr-dock-grip:focus-visible::after { background: var(--line-cy); }
 .sr-dock-grip.on::after { background: var(--or); }
-html.sr-dock-resizing .sr-dock-grip { transition: none; }
 html.sr-dock-resizing, html.sr-dock-resizing * { user-select: none !important; cursor: col-resize !important; }
 /* fermé : un trait court au bord, qui se voit sans survol ; un clic l'ouvre */
 html:not(.sr-dock-on):not(.sr-dock-over) .sr-dock-grip { left: 0; cursor: pointer; }

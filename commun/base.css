@@ -8,6 +8,10 @@
    faute de chiffres et d'accents dans son jeu de 54 glyphes.
    ============================================================ */
 
+/* LE curseur (input type=range) : une feuille à part, que les pages sans
+   base.css (Movie Analysis, diarisation) chargent aussi */
+@import url('./curseur.css');
+
 @font-face {
   font-family: 'Venus Rising';
   src: url('./fonts/venus-rising.otf') format('opentype');
@@ -163,6 +167,8 @@ select:focus-visible, textarea:focus-visible,
 .fld::placeholder { color: var(--ink3); }
 textarea.fld { resize: vertical; min-height: 58px; line-height: 1.55; }
 select.fld { cursor: pointer; }
+
+/* les curseurs (input type=range) : LE curseur du thème, commun/curseur.css (importé en tête) */
 
 /* ── le banc : rack | scène | fiche ─────────────────────── */
 .bench {
@@ -335,8 +341,11 @@ select.fld { cursor: pointer; }
   position: absolute; inset: 0; width: 100%; height: 100%; margin: 0;
   -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; z-index: 3;
 }
-.tl input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 4px; height: 28px; border-radius: 2px; background: var(--or); }
-.tl input[type=range]::-moz-range-thumb { width: 4px; height: 28px; border: none; border-radius: 2px; background: var(--or); }
+/* la tête de lecture : la piste est la .track dessous, le curseur n'en dessine pas */
+.tl input[type=range]::-webkit-slider-runnable-track { height: 100%; background: transparent; box-shadow: none; }
+.tl input[type=range]::-moz-range-track { height: 100%; background: transparent; box-shadow: none; }
+.tl input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 4px; height: 28px; margin-top: 0; border-radius: 2px; background: var(--or); transform: none; }
+.tl input[type=range]::-moz-range-thumb { width: 4px; height: 28px; border: none; border-radius: 2px; background: var(--or); transform: none; }
 .tl .track { position: absolute; left: 0; right: 0; top: 10px; height: 8px; border-radius: var(--r1); background: var(--panel3); overflow: hidden; }
 .tl .fill { height: 100%; width: 0; background: var(--grn2); }
 .tl .ticks {

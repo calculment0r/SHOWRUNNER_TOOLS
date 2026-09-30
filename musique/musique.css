@@ -285,11 +285,7 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 .ar-mtr { height: 3px; border-radius: 2px; background: var(--bg); overflow: hidden; width: 100%; max-width: 150px; }
 .ar-mtr i { display: block; height: 100%; width: 0; background: var(--c); opacity: .85; }
 .ar-mtr.hot i { background: var(--or); }
-.ar-vol { -webkit-appearance: none; appearance: none; width: 58px; height: 14px; background: transparent; margin: 0 2px; cursor: ew-resize; }
-.ar-vol::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: var(--panel3); }
-.ar-vol::-webkit-slider-thumb { -webkit-appearance: none; width: 8px; height: 12px; border-radius: 2px; background: var(--c); margin-top: -4.5px; }
-.ar-vol::-moz-range-track { height: 3px; border-radius: 2px; background: var(--panel3); }
-.ar-vol::-moz-range-thumb { width: 8px; height: 12px; border: none; border-radius: 2px; background: var(--c); }
+.ar-vol { width: 58px; height: 14px; margin: 0 2px; }   /* le curseur du thème (commun/curseur.css) */
 .ar-head .kn.xs { width: 24px; }
 .ar-head .kn.xs .dial { width: 18px; height: 18px; }
 .ar-head .kn.xs .v { display: none; }

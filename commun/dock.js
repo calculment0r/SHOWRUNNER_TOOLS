@@ -12,8 +12,11 @@
 //     860 px de page, il passe par-dessus avec un voile ;
 //   - la géométrie de la bibliothèque d'Idéation : poignée dans l'intervalle,
 //     glisser = largeur, double-clic = largeur par défaut, flèches 16 px (Maj 64),
-//     Entrée = replier ; fermé → un trait court au bord, un clic l'ouvre ; ouvert
-//     et largeur retenus par outil et par personne (Préférences, Général : cachées) ;
+//     Entrée = replier ; fermé → un trait court au bord, un clic l'ouvre ; la
+//     largeur retenue par outil et par personne (Préférences, Général : cachées) ;
+//   - FERMÉ à l'arrivée sur toute page, sans rien qui glisse (Cal, 30/09 : « changer
+//     de page = faire autre chose ») : ouvert ne se garde pas ; seuls les gestes de
+//     la personne l'ouvrent et le ferment, et seuls eux l'animent (anime()) ;
 //   - en tête : la recherche, les SORTES en pastilles (quoi), puis cinq SECTIONS
 //     en accordéon (d'où) — Ce workspace, Récents, Favoris, Autres workspaces,
 //     Character Factory (Studio) —, une seule ouverte, qui prend la hauteur ;
@@ -41,7 +44,6 @@
 //     kinds: ['image', …]       le filtre de l'outil (sinon : l'union des zones inscrites)
 //     label: 'la planche'       le nom de ce filtre (« filtres de : la planche »)
 //     dockMin: px | () => px    la place que la page garde toujours (720 par défaut)
-//     defaultOpen: bool         ouvert au premier passage (Idéation : oui ; les autres : non)
 //     upload(files)             « Déposer » : l'outil range et pose lui-même (sinon : rangés, pas posés)
 //     fiche(it)                 « Fiche dans Asset » (sinon : asset/#<id> dans un autre onglet)
 //     hint: '…'                 la ligne d'aide du bas
@@ -51,17 +53,20 @@
 //   dock.open({ focus }) · close() · toggle() · isOpen() · closed() · reload() · recent(items)
 //   l'événement `sr:dock` (document) : { open, w } à chaque changement
 //
-// Les workspaces (docs/etudes/equipes_espaces.md) ne sont pas encore là :
-// « Ce workspace » liste tout ce que la personne voit ; la section « Autres
-// workspaces » est montrée désactivée et dit pourquoi. L'accroche : `workspaces()`
-// ci-dessous (le socle, server/core/espaces.py, dira la liste et le nom du
-// workspace courant) ; le glisser d'un autre workspace portera en plus les types
-// vides `application/x-sr-space-<espace>` et le dépôt passera par
-// `POST /api/espaces/<courant>/rapatrier` (panneau_asset.md § 5).
+// Les Workspaces (docs/etudes/equipes_espaces.md, étape 5) : « Ce workspace » liste
+// celui de l'onglet ; « Autres workspaces » ceux que la personne voit ailleurs
+// (GET /api/asset/espaces), un à la fois (une pastille par Workspace ;
+// GET /api/asset/dock?space=<id>). Chaque objet dit le sien (`space`). En poser un
+// d'ailleurs dans l'outil passe par `rapatrier` (commun/shell.js : une copie neuve
+// dans le Workspace de l'onglet, POST /api/espaces/<courant>/rapatrier ; l'original
+// ne bouge jamais) : l'outil reçoit la copie ; un refus (viewer, élément versionné,
+// séquence) dit pourquoi. Le glisser porte en plus le type vide
+// `application/x-sr-space-<espace>` (panneau_asset.md § 5) ; la zone qui reçoit
+// (dropZone) rapatrie de même.
 
 import {
   api, el, href, toast, kindFr, etypeFr, fmtDur, session, kindMark, ITEM_MIME, MULTI_MIME, CF_MIME, uploadFile,
-  dockState, dockKeyLabel, sorteEffective, TOOLS,
+  dockState, dockKeyLabel, sorteEffective, TOOLS, espace, rapatrier, SPACE_MIME,
 } from './shell.js';
 import { pickView } from './proxies.js';
 import { prefs } from './prefs.js';
@@ -82,18 +87,33 @@ const ETYPES = ['character', 'object', 'place', 'style', 'other'];
 const KIND_PL = { image: 'images', video: 'vidéos', audio: 'sons', midi: 'MIDI', sequence: 'séquences', element: 'éléments' };
 const ETYPE_PL = { character: 'personnages', object: 'objets 3D', place: 'lieux', style: 'styles', other: 'autres' };
 const SECS = [['here', 'Ce workspace'], ['recent', 'Récents'], ['fav', 'Favoris'], ['other', 'Autres workspaces'], ['cf', 'Character Factory']];
-const WHY_OTHER = 'Un seul workspace pour l’instant : les Teams et les Workspaces arrivent. Ceux où tu as un rôle viendront ici ; '
-  + 'glisser un asset de l’un d’eux en fera une copie dans ce workspace (l’original ne bouge jamais).';
+const WHY_OTHER = 'aucun autre Workspace où tu as un rôle : une Team t’en ouvre (Admin, Teams) ; '
+  + 'poser un asset de l’un d’eux en fait une copie dans ce Workspace (l’original ne bouge jamais)';
 
-// ── les workspaces : l'accroche ─────────────────────────────
-// null : pas encore de workspaces (le socle est en construction) ; ensuite, la
-// liste de ceux que la personne voit, hors du courant : [{ id, team, name }]
-function workspaces() { return null; }
+// ── les Workspaces que la personne voit (GET /api/asset/espaces) ──
+// null : pas encore lus ; sinon { list: [{ id, name, team_name, here, import, import_why }], here }
+let SPACES = null;
+async function loadSpaces() {
+  try { const r = await api('asset/espaces'); SPACES = { list: r.spaces || [], here: r.here || espace() }; } catch (e) { SPACES = { list: [], here: espace(), error: e.message }; }
+  const others = workspaces();
+  if (!others.some((s) => s.id === S.space)) S.space = others[0]?.id || null;
+  paintSecs();
+  if (S.sec === 'other') { S.lists.other = null; if (S.open && S.space) fetchPage(list('other'), 0); paintAll(); }
+}
+// ceux d'ailleurs (hors de l'onglet) ; [] : aucun, ou pas encore lus
+const workspaces = () => (SPACES ? SPACES.list.filter((s) => !s.here && s.id !== (SPACES.here || espace())) : []);
+const spaceName = (id) => { const s = SPACES?.list.find((x) => x.id === id); return s ? `${s.team_name ? s.team_name + ' / ' : ''}${s.name}` : id; };
+// ce Workspace-ci prend-il une copie ? (la matrice : `import` du courant) — sinon pourquoi
+function importWhy() {
+  const h = SPACES?.list.find((s) => s.here || s.id === espace());
+  return h && !h.import ? (h.import_why || 'ce Workspace ne prend pas de copie d’ailleurs') : '';
+}
+const away = (it) => !!(it && !it._cf && it.space && espace() && it.space !== espace());
 
 let T = null;              // l'outil
 let N = {};                // les nœuds
 const S = {
-  open: false, want: W.def, sec: 'here', q: '', folder: null,
+  open: false, want: W.def, sec: 'here', q: '', folder: null, space: null,
   userKinds: null, etypes: [], types: false, studio: true, who: false,
   lists: {}, sel: new Map(), anchor: -1, focus: 0, lastFocus: null,
   dirty: true, geo: { w: 0, over: false, open: null }, dragging: false,
@@ -107,7 +127,6 @@ const P = (k) => `general.${k}_${T}`;
 // ranger une préférence d'ici, sans que son écho (prefs.on) ne relise l'état au milieu d'un geste
 let own = 0;
 const setPref = (k, v) => { own++; try { prefs.set(k, v); } finally { own--; } };
-const defOpen = () => (D.cfg.defaultOpen ?? T === 'ideation');
 const zoomOf = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ui-zoom')) || 1;
 const pageW = () => document.documentElement.clientWidth / zoomOf();
 const toolName = () => (TOOLS.find((x) => x.id === T)?.name || T || '').replace(/­/g, '');
@@ -154,13 +173,24 @@ function setWant(w, keep = true) {
   S.want = geometry().w;   // la largeur choisie, telle qu'elle a pu se montrer
   if (keep) setPref(P('dockW'), S.want === W.def ? null : S.want);
 }
-function setOpen(on, { focus = false, keep = true } = {}) {
+// Ouvrir, fermer : toujours un geste de la personne (le bouton, le raccourci, la poignée, ×, le voile),
+// jamais le chargement — le panneau glisse alors (html.sr-dock-anim, le temps du glissement ; dock.css,
+// shell.css), et seulement alors. `anim: false` : la poignée qu'on tire suit déjà la main.
+let animT = 0;
+function anime() {
+  const root = document.documentElement;
+  root.classList.add('sr-dock-anim');
+  clearTimeout(animT);
+  animT = setTimeout(() => root.classList.remove('sr-dock-anim'), 260);
+}
+function setOpen(on, { focus = false, anim = true } = {}) {
   if (!D.on || !N.aside) return;
   on = !!on;
-  if (on && !S.open) S.lastFocus = document.activeElement;
+  const change = on !== S.open;
+  if (on && change) S.lastFocus = document.activeElement;
   const wasIn = N.aside.contains(document.activeElement);
   S.open = on;
-  if (keep) setPref(P('dockOpen'), on === defOpen() ? null : on);
+  if (anim && change) anime();
   applyLayout();
   if (on) {
     if (S.dirty) reload();
@@ -214,6 +244,7 @@ function reload(keep = false) {
   clearGrid();
   if (!keep) { S.sel.clear(); S.anchor = -1; S.focus = 0; N.scroll.scrollTop = 0; }
   for (const sec of ['here', 'fav']) fetchPage(list(sec), 0);
+  if (S.space) fetchPage(list('other'), 0);
   list('recent'); loadRecent(S.lists.recent);
   if (S.sec === 'cf' && S.studio) loadCf(list('cf'));
   paintAll();
@@ -228,11 +259,12 @@ function queryFor(sec, offset) {
   if (S.etypes.length && kinds.includes('element')) p.set('etype', S.etypes.join(','));
   if (sec === 'fav') p.set('fav', '1');
   if (sec === 'here' && S.folder !== null) p.set('folder', S.folder);
+  if (sec === 'other') p.set('space', S.space || '');
   return 'asset/dock?' + p;
 }
 async function fetchPage(L, pg) {
   if (L.pages.has(pg) || L.loading.has(pg)) return;
-  if (!activeKinds().length) { L.total = 0; L.pages.add(pg); return; }
+  if (!activeKinds().length || (L.sec === 'other' && !S.space)) { L.total = 0; L.pages.add(pg); return; }
   L.loading.add(pg);
   try {
     const r = await api(queryFor(L.sec, pg * PAGE));
@@ -311,7 +343,7 @@ function targetsFor(it) {
 async function versionAPoser(it) {
   const kinds = context().kinds;
   if (it.kind !== 'element' || kinds.includes('element') || !kinds.includes(sorteEffective(it)) || !it.element?.head_item) return it;
-  return api('library/' + it.element.head_item);
+  return api('library/' + it.element.head_item + '?spaces=*');   // la dernière version, où qu'elle soit
 }
 async function place(items, how = 'place') {
   if (!items.length) return;
@@ -319,17 +351,20 @@ async function place(items, how = 'place') {
     toast(`pour la poser : glisse la vignette sur une zone de ${toolName()} qui la prend`);
     return;
   }
-  const out = [];
+  if (items.some(away) && importWhy()) { toast(importWhy(), 7000); return; }
+  let out = [];
   for (const it of items) {
     try { out.push(it._cf ? await cfItem(it) : await versionAPoser(it)); } catch (e) { toast(`${it._cf ? 'Character Factory' : it.title || it.id} : ${e.message}`, 7000); }
   }
   if (!out.length) return;
+  // d'un autre Workspace : la copie d'ici d'abord (commun/shell.js, rapatrier) ; un refus dit pourquoi
+  try { out = await rapatrier(out); } catch (e) { toast(e.message, 7000); return; }
   const r = await D.cfg.place(out, { how });
   if (r === false) return;
   live(out.length > 1 ? `${out.length} posés` : `posé : ${out[0].title || out[0].id}`);
   recent(out);
-  if (S.geo.over) setOpen(false, { keep: false });
-  if (items.some((it) => it._cf)) reload();
+  if (S.geo.over) setOpen(false);
+  if (items.some((it) => it._cf || away(it))) reload(true);   // l'élément importé, la copie : dans « Ce workspace »
 }
 function recent(items) {
   const ids = items.map((it) => it?.id).filter(Boolean);
@@ -415,7 +450,8 @@ function tile(it, i, tw) {
   if (it.kind === 'element' && it.element?.count) im.append(el('span', { class: 'ver' }, `v${it.element.head || it.element.count}`));
   const name = it.title || it.id;
   const n = el('div', { class: 'lt', role: 'option', tabindex: '-1', 'aria-selected': 'false', draggable: 'true', 'data-i': i,
-    'data-id': it._cf ? null : it.id, title: `${name}${it.prompt ? '\n' + it.prompt.slice(0, 200) : ''}${it._cf ? '\nposé, il devient un élément de la bibliothèque' : ''}`,
+    'data-id': it._cf ? null : it.id, title: `${name}${it.prompt ? '\n' + it.prompt.slice(0, 200) : ''}${it._cf ? '\nposé, il devient un élément de la bibliothèque' : ''}`
+      + (away(it) ? `\ndans ${spaceName(it.space)} : posé ici, il en devient une copie` : ''),
     'aria-label': `${name}, ${it._cf ? 'personnage' : it.kind === 'element' ? etypeFr(it.element?.type) : kindFr(it.kind)}` },
   im, el('span', { class: 't' }, name), el('span', { class: 's' }, sub(it)));
   return n;
@@ -429,11 +465,11 @@ function paintGrid() {
   if (!N.aside || !S.open) return;
   const L = cur();
   N.empty.hidden = true;
-  if (S.sec === 'other') {
+  if (S.sec === 'other' && !S.space) {
     clearGrid(); N.space.style.height = '0px';
-    const ws = workspaces();
-    if (!ws) return emptyState('Bientôt', WHY_OTHER);
-    return emptyState('Rien ici', 'aucun autre workspace où tu as un rôle');
+    if (!SPACES) return emptyState('Les Workspaces', 'lecture…');
+    if (SPACES.error) return emptyState('Les Workspaces ne répondent pas', SPACES.error, [el('button', { class: 'tb ghost sm', type: 'button', onclick: () => loadSpaces() }, 'Réessayer')]);
+    return emptyState('Rien ici', WHY_OTHER);
   }
   if (S.sec === 'cf' && !S.studio) { clearGrid(); return emptyState('Réservé au Studio', 'Character Factory est un outil du Studio : le demander à Cal.'); }
   if (!activeKinds().length) {
@@ -451,6 +487,8 @@ function paintGrid() {
     if (S.sec === 'recent') return emptyState('Rien de récent', 'ce que tu poses ou déposes vient ici, de tous les outils');
     if (S.sec === 'fav') return emptyState('Aucun favori', 'le clic droit sur une vignette : Aimer');
     if (S.sec === 'cf') return emptyState('Aucun personnage', S.q ? 'rien ne répond' : 'aucun personnage au visage verrouillé dans Character Factory');
+    if (S.sec === 'other' && !S.q.trim()) return emptyState('Rien ici', `rien dans ${spaceName(S.space)}${activeKinds().length < KINDS.length ? ' avec ces filtres' : ''}`,
+      activeKinds().length < KINDS.length ? [el('button', { class: 'tb ghost sm', type: 'button', onclick: widen }, 'Élargir à toutes les sortes')] : []);
     if (S.q.trim()) return emptyState('Rien ne répond', `« ${S.q.trim()} » dans ${KINDS.length === activeKinds().length ? 'toutes les sortes' : activeKinds().map((k) => KIND_PL[k]).join(', ')}`,
       activeKinds().length < KINDS.length ? [el('button', { class: 'tb ghost sm', type: 'button', onclick: widen }, 'Élargir à toutes les sortes')] : []);
     const any = L.counts && Object.values(L.counts).some((x) => x > 0);
@@ -554,7 +592,15 @@ function paintKinds() {
 }
 function paintFolders() {
   if (!N.aside) return;
-  const on =S.sec === 'here' && S.folders?.length;
+  // « Autres workspaces » : une pastille par Workspace, un seul montré à la fois
+  if (S.sec === 'other') {
+    const ws = workspaces();
+    N.folders.hidden = ws.length < 1;
+    N.folders.replaceChildren(...ws.map((s) => el('button', { class: `dk-k${S.space === s.id ? ' on' : ''}`, type: 'button', 'data-w': s.id,
+      'aria-pressed': String(S.space === s.id), title: `Team ${s.team_name || '—'} · Workspace ${s.name}` }, s.name)));
+    return;
+  }
+  const on = S.sec === 'here' && S.folders?.length;
   N.folders.hidden = !on;
   if (!on) return;
   N.folders.replaceChildren(
@@ -567,7 +613,7 @@ function paintHeads() {
     const h = N.heads[id];
     if (!h) continue;
     const L = S.lists[id];
-    const c = id === 'other' ? '—' : L && L.total !== null ? String(L.total) : '';
+    const c = id === 'other' && !workspaces().length ? '—' : L && L.total !== null ? String(L.total) : '';
     h.btn.querySelector('.c').textContent = c;
     h.btn.setAttribute('aria-expanded', String(S.sec === id));
     h.box.classList.toggle('open', S.sec === id);
@@ -578,6 +624,10 @@ function paintSecs() {
   if (!N.aside) return;
   N.heads.cf.box.hidden = !S.studio;
   if (S.sec === 'cf' && !S.studio) S.sec = 'here';
+  // « Autres workspaces » : désactivée et dit pourquoi tant qu'il n'y en a pas (règle 7) ; ouverte, elle le redit
+  const none = !workspaces().length;
+  N.heads.other.btn.setAttribute('aria-disabled', none ? 'true' : 'false');
+  N.heads.other.btn.title = none ? WHY_OTHER : 'les assets des autres Workspaces que tu vois ; posé ici, un asset en devient une copie';
   const h = N.heads[S.sec];
   h.box.append(N.body);
   N.body.setAttribute('aria-labelledby', h.btn.id);
@@ -598,15 +648,24 @@ function openSection(id) {
   clearGrid(); N.scroll.scrollTop = 0;
   if (id === 'cf' && S.studio && !S.lists.cf) loadCf(list('cf'));
   if (id === 'recent' && !S.lists.recent) loadRecent(list('recent'));
-  if ((id === 'here' || id === 'fav') && !S.lists[id]) fetchPage(list(id), 0);
+  if ((id === 'here' || id === 'fav' || (id === 'other' && S.space)) && !S.lists[id]) fetchPage(list(id), 0);
   paintAll();
 }
 
 // ── le montage ──────────────────────────────────────────────
-function build() {
-  if (!document.querySelector('link[data-sr-dock]')) {
-    document.head.append(el('link', { rel: 'stylesheet', href: new URL('./dock.css', import.meta.url).href, 'data-sr-dock': '' }));
+// La feuille d'abord : un panneau posé avant elle se montrait nu, en travers de la page, puis
+// glissait hors de vue à son arrivée (le « ouvert puis refermé » de Vidéo et de Character Factory,
+// mesuré le 30/09 : 10 à 14 images visibles au chargement de chaque outil).
+function cssReady() {
+  let link = document.querySelector('link[data-sr-dock]');
+  if (!link) {
+    link = el('link', { rel: 'stylesheet', href: new URL('./dock.css', import.meta.url).href, 'data-sr-dock': '' });
+    document.head.append(link);
   }
+  if (link.sheet) return Promise.resolve();
+  return new Promise((ok) => { link.addEventListener('load', ok, { once: true }); link.addEventListener('error', ok, { once: true }); });
+}
+function build() {
   N.btn = document.getElementById('sr-dock-btn');
   N.file = el('input', { type: 'file', multiple: true, accept: 'image/*,video/*,audio/*,.mid,.midi', hidden: true });
   N.file.addEventListener('change', () => { const f = [...N.file.files]; N.file.value = ''; upload(f); });
@@ -644,7 +703,7 @@ function build() {
     N.q, N.kinds, N.etypes, N.ctx, secs, N.foot, N.live);
   N.grip = el('div', { class: 'sr-dock-grip', role: 'separator', tabindex: '0', 'aria-orientation': 'vertical', 'aria-controls': 'sr-dock',
     'aria-valuemin': W.min, 'aria-valuemax': W.max, 'aria-label': 'la largeur du panneau Asset' });
-  N.veil = el('div', { class: 'sr-dock-veil', hidden: true, onclick: () => setOpen(false, { keep: false }) });
+  N.veil = el('div', { class: 'sr-dock-veil', hidden: true, onclick: () => setOpen(false) });
   document.body.append(N.aside, N.grip, N.veil);
   wire();
 }
@@ -694,6 +753,15 @@ function wire() {
   });
   N.ctx.addEventListener('click', () => { S.userKinds = null; S.etypes = []; reload(); });
   N.folders.addEventListener('click', (e) => {
+    const w = e.target.closest('[data-w]');
+    if (w) {
+      if (S.space === w.dataset.w) return;
+      S.space = w.dataset.w;
+      S.sel.clear(); S.anchor = -1; S.focus = 0;
+      S.lists.other = freshList('other'); clearGrid(); N.scroll.scrollTop = 0;
+      fetchPage(S.lists.other, 0); paintFolders(); paintGrid();
+      return;
+    }
     const b = e.target.closest('[data-f]');
     if (!b) return;
     S.folder = b.dataset.f || null;
@@ -733,8 +801,10 @@ function wire() {
     }
     const many = targetsFor(it).filter((x) => !x._cf);
     e.dataTransfer.effectAllowed = 'copyMove';
-    e.dataTransfer.setData(ITEM_MIME, JSON.stringify({ id: it.id, kind: it.kind, title: it.title, thumb_url: it.thumb_url }));
+    e.dataTransfer.setData(ITEM_MIME, JSON.stringify({ id: it.id, kind: it.kind, title: it.title, thumb_url: it.thumb_url, space: it.space || null }));
     if (many.length > 1) e.dataTransfer.setData(MULTI_MIME, JSON.stringify(many.map((x) => x.id)));
+    // d'un autre Workspace : un type vide qui le dit dès le survol (le contenu ne se lit qu'au dépôt)
+    for (const sp of new Set(many.filter(away).map((x) => x.space))) e.dataTransfer.setData(SPACE_MIME + sp, '1');
     if (it.url) e.dataTransfer.setData('text/uri-list', href(it.url));
   });
   addEventListener('dragend', () => { S.dragging = false; }, true);
@@ -746,12 +816,14 @@ function wire() {
     const many = tg.length > 1;
     const extra = typeof D.cfg.menu === 'function' ? (D.cfg.menu(it, tg) || []) : [];
     menu(x, y, [{ head: many ? `${tg.length} objets` : (it.title || it.id) },
-      { label: D.cfg.placeLabel || 'Poser', sub: D.cfg.clickPlaces ? 'clic' : 'double-clic', disabled: typeof D.cfg.place !== 'function',
-        why: `pour la poser : glisse la vignette sur une zone de ${toolName()} qui la prend`, onclick: () => place(tg, 'menu') },
+      { label: D.cfg.placeLabel || 'Poser', sub: D.cfg.clickPlaces ? 'clic' : 'double-clic',
+        disabled: typeof D.cfg.place !== 'function' || (tg.some(away) && !!importWhy()),
+        why: typeof D.cfg.place !== 'function' ? `pour la poser : glisse la vignette sur une zone de ${toolName()} qui la prend` : importWhy(),
+        onclick: () => place(tg, 'menu') },
       ...extra,
       '-',
       !it._cf && it.kind === 'audio' ? { label: audio && audio._id === it.id && !audio.paused ? 'Arrêter l’écoute' : 'Écouter', icon: '▶', onclick: () => listen(it) } : null,
-      !it._cf && !many ? { label: it.fav ? 'Ne plus aimer' : 'Aimer', icon: it.fav ? '★' : '☆', onclick: () => toggleFav(it) } : null,
+      !it._cf && !many && !away(it) ? { label: it.fav ? 'Ne plus aimer' : 'Aimer', icon: it.fav ? '★' : '☆', onclick: () => toggleFav(it) } : null,
       !it._cf && !many ? { label: 'Fiche dans Asset', icon: '↗', onclick: () => fiche(it) } : null], { focusFirst: kb });
   };
   space.addEventListener('contextmenu', (e) => {
@@ -838,14 +910,14 @@ function wire() {
     const mv = (ev) => {
       const d = (ev.clientX - x0) / z;
       if (!moved && Math.abs(d) < 3) return;
-      if (!moved) { moved = true; if (!was) setOpen(true, { keep: false }); }
+      if (!moved) { moved = true; if (!was) setOpen(true, { anim: false }); }
       setWant(w0 + d, false);
     };
     const up = () => {
       grip.removeEventListener('pointermove', mv); grip.removeEventListener('pointerup', up); grip.removeEventListener('pointercancel', up);
       grip.classList.remove('on');
       document.documentElement.classList.remove('sr-dock-resizing');
-      if (moved) { if (!was) setPref(P('dockOpen'), defOpen() ? null : true); setWant(S.want); }
+      if (moved) setWant(S.want);
       else if (!was) setOpen(true, { focus: true });
     };
     grip.addEventListener('pointermove', mv);
@@ -877,12 +949,13 @@ function wire() {
   // relire : un rendu fini, le choix d'un autre navigateur, les récents rangés ailleurs
   let jT = 0;
   document.addEventListener('sr:job', () => { clearTimeout(jT); jT = setTimeout(() => { S.dirty = true; if (S.open) reload(true); }, 300); });
-  for (const k of [P('dockOpen'), P('dockW')]) prefs.on(k, () => { if (!own) { readState(); applyLayout(); } });
+  prefs.on(P('dockW'), () => { if (!own) { readState(); applyLayout(); } });
   prefs.on('general.dockKey', () => applyLayout());
 }
 
+// Ouvert ou fermé ne se garde pas : chaque page arrive panneau FERMÉ (Cal, 30/09 : « changer de page =
+// faire autre chose, on n'a plus besoin du panneau »). Seule la largeur choisie se garde, par outil.
 function readState() {
-  S.open = !!prefs.get(P('dockOpen'), defOpen());
   S.want = clamp(Number(prefs.get(P('dockW'), W.def)) || W.def, W.min, W.max);
 }
 
@@ -892,25 +965,30 @@ const M = {
   close: () => setOpen(false),
   toggle: (o = {}) => setOpen(!S.open, o),
   isOpen: () => S.open,
-  reload: () => { S.dirty = true; reload(true); },
+  // (un changement de Workspace passe par ici : la liste des autres change avec lui)
+  reload: () => { S.dirty = true; if (S.who) loadSpaces(); reload(true); },
   recent,
   refresh: () => { if (!N.aside) return; paintAll(); applyLayout(); if (filtersMoved()) reload(); },
   contexte: () => { S.userKinds = null; S.etypes = []; if (!N.aside) return; if (filtersMoved()) reload(); else paintKinds(); },
   zones: () => { queueMicrotask(() => { if (!N.aside || D.ctx || S.userKinds) return; if (filtersMoved()) reload(); else paintKinds(); }); },
 };
 
-export function mount(tool) {
-  if (D.mod || !tool) return;
+let mounting = false;
+export async function mount(tool) {
+  if (D.mod || !tool || mounting) return;
+  mounting = true;
+  await cssReady();
   T = tool;
   build();
   D.mod = M; D.on = true;
+  mounting = false;
   readState();
   const sec = prefs.get('general.dockSec', 'here');
   S.sec = SECS.some(([k]) => k === sec) ? sec : 'here';
   applyLayout();
   paintAll();
   for (const fn of D.wait.splice(0)) { try { fn(M); } catch (e) { console.error('panneau Asset', e); } }
-  // les préférences relues du portail (un autre navigateur a pu fermer le panneau)
+  // la largeur relue du portail (un autre navigateur a pu la changer)
   prefs.ready.then(() => { readState(); applyLayout(); });
   // qui entre : l'invité d'une planche n'a pas le panneau ; Character Factory est au Studio
   session().then((me) => {
@@ -919,6 +997,7 @@ export function mount(tool) {
     if (me?.auth && me.state !== 'active') return;
     S.studio = !(me?.user && me.user.access === 'apps');
     S.who = true;
+    loadSpaces();
     paintSecs();
     if (S.open) reload();
   });
