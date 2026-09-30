@@ -23,7 +23,8 @@ body.mu-page { display: flex; flex-direction: column; height: 100vh; overflow: h
 .mu-bar > .mu-ovw { flex: 0 1 128px; min-width: 0; overflow: hidden; }
 .mu-bar > .grp:nth-child(2) { flex: 0 1 auto; min-width: 0; }
 .mu-bar .mu-proj { min-width: 84px; flex: 0 1 138px; }
-@media (max-width: 1440px) { .mu-bar { flex-wrap: wrap; } }
+/* la place de la page, pas la fenêtre (le panneau Asset ouvert en prend) : @container sr-page, commun/shell.css */
+@container sr-page (max-width: 1440px) { .mu-bar { flex-wrap: wrap; } }
 .mu-bar .sp { flex: 1; min-width: 0; }
 .mu-bar .tb.sm { padding: 0 7px; }
 .mu-brand { padding-right: 2px; flex-direction: column; align-items: flex-start !important; gap: 1px !important; }
@@ -201,13 +202,16 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 
 /* ── l'arrangement ──────────────────────────────────────── */
 .ar { height: 100%; display: flex; flex-direction: column; gap: 8px; }
-.ar-tools { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; background: var(--panel); border-radius: var(--r3); padding: 6px var(--s3); min-width: 0; }
+/* elle passe à la ligne quand ses outils ne tiennent plus (la page a moins de place : le panneau
+   Asset ouvert, une fenêtre étroite) — juste quelle que soit la largeur, sans seuil deviné ;
+   l'état (« 2 clips choisis ») ne réserve que 60 px pour cela et s'étire ensuite */
+.ar-tools { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; background: var(--panel); border-radius: var(--r3); padding: 6px var(--s3); min-width: 0; }
 .ar-tools > * { flex: none; }
 .ar-tools .tb.sm { padding: 0 6px; }
 .ar-tools .sp { flex: 1 1 0; min-width: 0; }
 .ar-sep { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
 .ar-lab { display: flex; align-items: center; gap: 6px; }
-.ar-tools .ar-info { flex: 0 1 auto; min-width: 0; max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ar-tools .ar-info { flex: 1 1 60px; min-width: 0; max-width: 300px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ar-zoom { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .14em; color: var(--ink3); text-transform: uppercase; }
 .ar-zoom b { font-family: var(--f-disp); font-weight: 400; font-size: 11px; color: var(--or); letter-spacing: .04em; }
 .ar-tools .seg .tb { height: 22px; min-width: 24px; padding: 0 6px; }
@@ -758,17 +762,21 @@ body.mu-page input, body.mu-page textarea, body.mu-page [contenteditable="true"]
 .gd-src { margin: 0; color: var(--ink2); font-size: 11px; line-height: 1.6; }
 .gd-kh { margin: 8px 0 0; font-family: var(--f-mono); font-weight: 400; font-size: 8.5px; letter-spacing: .18em; text-transform: uppercase; color: var(--or); }
 
-@media (max-width: 1280px) {
+/* La place de la page, pas la fenêtre : le panneau Asset ouvert en prend (@container sr-page,
+   commun/shell.css). Une requête de conteneur ne touche pas le conteneur lui-même (body) : sous
+   1100 px, c'est .mu-app qui défile, la barre du portail reste en haut. */
+@container sr-page (max-width: 1280px) {
   .ar-body { grid-template-columns: min(var(--nav-w, 214px), 180px) 8px minmax(0, 1fr); }
   .mu-ovw { display: none; }
 }
-@media (max-width: 1100px) {
+@container sr-page (max-width: 1100px) {
   .nd { grid-template-columns: 1fr; grid-template-rows: minmax(420px, 1fr) auto; }
   .dr9 { grid-template-columns: 1fr; }
   .ar-body { grid-template-columns: 1fr; }
   .ar-body > .mu-split.x { display: none; }
   .ar-body > .nv { max-height: 180px; }
-  body.mu-page { height: auto; overflow: auto; }
-  .mu-app { min-height: 100vh; }
+  .mu-app { overflow: auto; }
+  .mu-app > * { flex-shrink: 0; }
+  .mu-view { flex: none; }
   .ar { min-height: 80vh; }
 }

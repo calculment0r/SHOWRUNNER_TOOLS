@@ -32,7 +32,9 @@
 // avant que le panneau ne soit chargé attend) :
 //
 //   dock.configure({
-//     place(items, { how }) → false si rien n'a été posé   poser (double-clic, Entrée, menu ; un clic si clickPlaces)
+//     place(items, { how }) → false si rien n'a été posé   poser (double-clic, Entrée, menu ; un clic si clickPlaces) ;
+//                               un élément versionné arrive en sa dernière version quand l'outil ne prend
+//                               pas d'élément mais sa sorte (comme dropZone) ; sinon, l'élément lui-même
 //     clickPlaces: bool         un clic pose au lieu de choisir (Idéation)
 //     placeLabel: 'Poser …'     l'entrée du menu
 //     menu(it, choisis) → [entrées de commun/menu.js]      les entrées propres à l'outil
@@ -302,6 +304,15 @@ function targetsFor(it) {
   const k = keyOf(it);
   return S.sel.has(k) && S.sel.size > 1 ? [...S.sel.values()] : [it];
 }
+// Un élément versionné là où l'outil ne prend pas d'élément, mais la sorte de sa dernière version
+// (une chanson d'ODIO pour Transcrire, une image versionnée pour Upscale) : l'outil reçoit cette
+// dernière version, comme au dépôt (dropZone, commun/shell.js). Là où l'outil prend les éléments
+// (Idéation, Image, le Montage), il reçoit l'élément, et choisit lui-même sa version.
+async function versionAPoser(it) {
+  const kinds = context().kinds;
+  if (it.kind !== 'element' || kinds.includes('element') || !kinds.includes(sorteEffective(it)) || !it.element?.head_item) return it;
+  return api('library/' + it.element.head_item);
+}
 async function place(items, how = 'place') {
   if (!items.length) return;
   if (typeof D.cfg.place !== 'function') {
@@ -310,7 +321,7 @@ async function place(items, how = 'place') {
   }
   const out = [];
   for (const it of items) {
-    try { out.push(it._cf ? await cfItem(it) : it); } catch (e) { toast(`Character Factory : ${e.message}`, 7000); }
+    try { out.push(it._cf ? await cfItem(it) : await versionAPoser(it)); } catch (e) { toast(`${it._cf ? 'Character Factory' : it.title || it.id} : ${e.message}`, 7000); }
   }
   if (!out.length) return;
   const r = await D.cfg.place(out, { how });

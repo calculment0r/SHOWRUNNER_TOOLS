@@ -16,7 +16,8 @@
 // Envoi depuis un autre outil : montage/?add=<id> pose l'objet au bout de
 // la piste cible du montage ouvert (le dernier ouvert, sinon un nouveau).
 
-import { mountHeader, api, jobs, el, toast, href, uploadFile, dropAnywhere, dropZone, dragItem, ITEM_MIME, fmtDate, stateFr } from '../commun/shell.js';
+import { mountHeader, api, jobs, el, toast, href, uploadFile, dropAnywhere, dropZone, dragItem, ITEM_MIME, fmtDate, stateFr, dock, declareZone,
+  session, espace, avecEspace, espaceDocument, surEspace } from '../commun/shell.js';
 // $ et $$ cherchent aussi dans les fenêtres détachées (un panneau sur un 2ᵉ écran : docs/etudes/fenetres.md)
 import { fenetres, $, $$, winOf } from '../commun/fenetre.js';
 import { menu, contextMenu, pageMenu } from '../commun/menu.js';
@@ -183,7 +184,7 @@ async function save(force = false) {
   S.dirty = false;
   const p = S.p;
   paintSave('work');
-  S.saving = api(`montage/projects/${p.id}`, { method: 'POST', body: body(p, { base_rev: force ? undefined : S.rev }) });
+  S.saving = api(`montage/projects/${p.id}`, { method: 'POST', body: body(p, { base_rev: force ? undefined : S.rev }), ...espaceDe(p) });
   try {
     const r = await S.saving;
     if (S.p && S.p.id === p.id) { S.rev = r.rev; S.p.updated = r.updated; }
@@ -211,11 +212,24 @@ function paintSave(state, msg) {
     `enregistré${S.p && S.p.updated ? ' · ' + fmtDate(S.p.updated).split(' ')[1] : ''}`;
   pill.title = msg || (st === 'err' ? 'le serveur ne répond pas : nouvel essai dans 4 s' : 'le montage s’enregistre seul à chaque geste');
 }
+// Le Workspace (commun/shell.js, docs/etudes/equipes_espaces.md § 4.3) : une séquence ouverte reste
+// dans le sien — ses lectures et ses écritures le disent, même si l'onglet change de Workspace.
+// Le sien : son `space`, sinon celui où on l'a ouverte (une séquence d'avant les Workspaces) ;
+// chaque onglet de séquence le retient (tabEsp, posé par openProject) : la rouvrir la relit là.
+const tabEsp = new Map();
+const espaceDeTab = (id) => (tabEsp.get(id) ? { espace: tabEsp.get(id) } : {});
+const espaceDe = (p) => (p ? espaceDeTab(p.id) : {});
 addEventListener('beforeunload', () => {
   if (!S.dirty || !S.p || S.conflict) return;
   const p = S.p;
-  try { navigator.sendBeacon(href(`api/montage/projects/${p.id}`), new Blob([JSON.stringify(body(p, { base_rev: S.rev }))], { type: 'application/json' })); } catch { /* */ }
+  // sendBeacon n'a pas d'en-tête : le Workspace passe par ?e= (celui de la séquence, sinon de l'onglet)
+  const u = new URL(avecEspace(href(`api/montage/projects/${p.id}`)), location.href);
+  if (tabEsp.get(p.id)) u.searchParams.set('e', tabEsp.get(p.id));
+  try { navigator.sendBeacon(u.href, new Blob([JSON.stringify(body(p, { base_rev: S.rev }))], { type: 'application/json' })); } catch { /* */ }
 });
+// changer de Workspace (l'en-tête) ne recharge pas le Montage : les séquences ouvertes restent
+// ouvertes, dans le leur ; le Projet (le chutier) et les LUT se relisent dans le nouveau
+surEspace(() => { loadBin(); loadLuts(); });
 
 // ── ouvrir, créer ───────────────────────────────────────────
 function applySettings() {
@@ -235,8 +249,13 @@ async function openProject(id) {
     LS('montage-view-' + S.p.id, viewOf());
     targets.set(S.p.id, { ...S.target });
   }
-  const p = await api(`montage/projects/${id}`);
+  const lu = espaceDeTab(id);
+  const p = await api(`montage/projects/${id}`, lu);
+  if (!p.space && !lu.espace && !espace()) await session();   // le Workspace de l'onglet : dit par /api/auth/me
+  const esp = p.space || lu.espace || espace() || null;
   id = p.id;                                   // un « mon-… » d'avant mène à sa séquence
+  if (esp) tabEsp.set(id, esp);
+  espaceDocument(esp);                         // l'en-tête dit l'espace de la séquence quand ce n'est pas celui de l'onglet
   await ensureItems([id, ...M.mediaIds(p)]);
   program.pause();
   program.clear();
@@ -489,6 +508,7 @@ async function closeSeqTab(id, { quiet = false } = {}) {
 function closeAll() {
   program.pause(); program.clear();
   S.p = null; S.sel = new Set(); S.gap = null;
+  espaceDocument(null);
   useUndo(baseU);
   history.replaceState(null, '', location.pathname);
   LS('montage-last', null);
@@ -508,12 +528,12 @@ async function newSequenceFrom(it) {
 }
 async function renameSequence(id, name) {
   if (S.p && S.p.id === id) { commit('renommer', (p) => { p.name = name.slice(0, 120); }); applySettings(); await flushSave(); paintSeqTabs(); return; }
-  try { await api(`montage/projects/${id}/rename`, { method: 'POST', body: { name } }); } catch (e) { toast(e.message); }
+  try { await api(`montage/projects/${id}/rename`, { method: 'POST', body: { name }, ...espaceDeTab(id) }); } catch (e) { toast(e.message); }
   loadBin();
 }
 async function duplicateSequence(id) {
   if (S.p && S.p.id === id) await flushSave();
-  try { const r = await api(`montage/projects/${id}/duplicate`, { method: 'POST' }); toast(`« ${r.name} » créée`); loadBin(); } catch (e) { toast(e.message); }
+  try { const r = await api(`montage/projects/${id}/duplicate`, { method: 'POST', ...espaceDeTab(id) }); toast(`« ${r.name} » créée`); loadBin(); } catch (e) { toast(e.message); }
 }
 
 // ── la source ───────────────────────────────────────────────
@@ -1281,6 +1301,7 @@ function slider({ label, min, max, step, value, fmt, color = 'var(--cy)', cls = 
 const dB = (v) => (v <= 0 ? '−∞ dB' : `${(20 * Math.log10(v)).toFixed(1)} dB`);
 
 function paintInspector() {
+  suivrePanneau();   // la piste choisie fait les filtres du panneau Asset (tout changement de choix repasse ici)
   const box = $('#insp');
   if (!S.p) return paintEmptyState();
   const keep = box.scrollTop;
@@ -2466,8 +2487,67 @@ function scrubber(bar, go) {
   });
 }
 
+// ── le panneau Asset commun (commun/dock.js, docs/etudes/panneau_asset.md) ──
+// Le Projet (le chutier) reste le panneau du montage : Premiere garde son panneau Projet à côté
+// de ses Bibliothèques (décision 9 de l'étude). Le panneau Asset, à gauche (Ctrl+Espace), fermé
+// au premier passage, sert à toute la bibliothèque : les éléments, les récents, les favoris.
+//   - glisser pose là où l'on lâche : la timeline (timeline.js, au point du dépôt ; Ctrl : insérer),
+//     le programme (au bout de la piste cible), la source, le Projet ;
+//   - double-clic, Entrée : à la tête de lecture, sur les pistes cibles (écraser), à la suite ;
+//     une séquence : l'ouvrir ; un élément : sa dernière version (placeItem) ;
+//   - le clic droit : la source, insérer, au bout de la piste cible ;
+//   - la piste choisie (son en-tête) fait les filtres : V → vidéos, images ; A → sons.
+const PANNEAU_KINDS = ['video', 'image', 'audio', 'sequence', 'element'];
+// la place que la page garde : le Projet, les effets, le programme, l'inspecteur, lisibles
+const PANNEAU_GARDE = 980;
+async function headOf(it) {
+  if (it?.kind !== 'element' || !it.element?.head_item) return it;
+  try { return await api('library/' + it.element.head_item); } catch { return it; }
+}
+async function poserIci(items, mode = 'overwrite') {
+  const seqs = items.filter((it) => it.kind === 'sequence');
+  if (seqs.length && seqs.length === items.length) { await openProject(seqs[0].id); return true; }
+  if (!S.p) { toast('ouvrez d’abord une séquence : Séquences, ou double-clic sur une séquence du panneau'); return false; }
+  let at = program.frame(), n = 0;
+  for (const it of items) {
+    if (it.kind === 'sequence') continue;
+    const c = await placeItem({ id: it.id, in: 0, out: it.duration || 0 }, it.kind === 'audio' ? S.target.audio : S.target.video, at, mode);
+    if (c) { at = M.clipEnd(c); n++; }
+  }
+  return n > 0;
+}
+function suivrePanneau() {
+  const tid = S.p && S.selTrack && !S.selTrack.startsWith('g:') ? S.selTrack : null;
+  const k = tid ? M.trackKind(tid) : null;
+  if (k === 'video') dock.contexte({ kinds: ['video', 'image'], label: `piste ${tid}` });
+  else if (k === 'audio') dock.contexte({ kinds: ['audio'], label: `piste ${tid}` });
+  else if (k === 'fx') dock.contexte({ kinds: [], label: `piste ${tid}`, why: 'un calque d’effets ne prend pas d’asset' });
+  else dock.contexte(null);
+}
+function branchePanneau() {
+  dock.configure({
+    kinds: PANNEAU_KINDS,
+    dockMin: PANNEAU_GARDE,
+    placeLabel: 'Poser à la tête de lecture',
+    hint: 'glisser sur la timeline, le programme ou le Projet · double-clic : à la tête de lecture',
+    place: (items) => poserIci(items),
+    menu: (it, chosen) => {
+      const media = chosen.filter((x) => x.kind !== 'sequence');
+      return [
+        !media.length ? null : { label: 'Insérer à la tête de lecture', sub: 'ctrl au dépôt', onclick: () => poserIci(media, 'insert') },
+        chosen.length === 1 && it.kind !== 'sequence' ? { label: 'Au bout de la piste cible', onclick: async () => { const v = await headOf(it); if (v) appendItem(v.id); } } : null,
+        chosen.length === 1 && it.kind !== 'sequence' ? { label: 'Ouvrir dans le moniteur source', onclick: async () => { const v = await headOf(it); if (v && ['video', 'image', 'audio'].includes(v.kind)) openSource(v); else toast('seulement une vidéo, une image ou un son'); } } : null,
+        chosen.length === 1 && it.kind === 'sequence' ? { label: 'Ouvrir la séquence', onclick: () => openProject(it.id) } : null,
+      ];
+    },
+  });
+  // la timeline a son propre dépôt (timeline.js) : elle le dit au panneau
+  declareZone($('#tl'), { kinds: ['video', 'image', 'audio', 'element'], label: 'la timeline' });
+}
+
 // ── le départ ───────────────────────────────────────────────
 async function start() {
+  branchePanneau();
   wire();
   focus('program');
   try { S.meta = await api('montage/meta'); } catch (e) { toast('le portail ne répond pas : ' + e.message); return; }

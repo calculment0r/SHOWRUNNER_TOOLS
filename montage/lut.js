@@ -21,7 +21,9 @@
 // sans LUT (player.js, gradeCss) : brightness, contrast, saturate (matrice
 // de la spécification Filter Effects), puis la température (gains RVB).
 
-import { href } from '../commun/shell.js';
+// un fetch à la main (le texte du cube, les octets de la vignette : api() lit du JSON) porte
+// l'en-tête du Workspace de l'onglet, comme api() (commun/shell.js, enTeteEspace)
+import { href, enTeteEspace } from '../commun/shell.js';
 
 // ── la lecture ──────────────────────────────────────────────
 export function parseCube(text) {
@@ -53,7 +55,7 @@ export function getLut(id, onready) {
   if (e) { if (onready) e.wait.push(onready); return null; }
   const w = { wait: onready ? [onready] : [] };
   cache.set(id, w);
-  fetch(href(`api/montage/luts/${id}/cube`)).then((r) => { if (!r.ok) throw new Error(r.status); return r.text(); })
+  fetch(href(`api/montage/luts/${id}/cube`), { headers: enTeteEspace() }).then((r) => { if (!r.ok) throw new Error(r.status); return r.text(); })
     .then((t) => { const lut = { id, ...parseCube(t) }; cache.set(id, { lut }); for (const f of w.wait) f(lut); })
     .catch((err) => { cache.set(id, { err }); for (const f of w.wait) f(null); });
   return null;
@@ -71,7 +73,7 @@ export function getMini(id, onready) {
   if (e) { if (onready) e.wait.push(onready); return null; }
   const w = { wait: onready ? [onready] : [] };
   minis.set(id, w);
-  fetch(href(`api/montage/luts/${id}/mini`)).then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+  fetch(href(`api/montage/luts/${id}/mini`), { headers: enTeteEspace() }).then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
     .then((buf) => {
       const b = new Uint8Array(buf);
       if (b.length !== 17 * 17 * 17 * 3) throw new Error('vignette de LUT illisible');

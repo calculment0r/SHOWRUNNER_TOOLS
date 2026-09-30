@@ -32,7 +32,8 @@
 // « Live Keyboard Shortcuts » et « Arrangement View », ableton.com/en/manual,
 // relevés le 29/09/2026) — le détail dans guide.js.
 
-import { toast, api, ITEM_MIME, uploadFile } from '../commun/shell.js';
+import { toast, api, ITEM_MIME, MULTI_MIME, uploadFile, declareZone } from '../commun/shell.js';
+import { poserObjets } from './panneau.js';
 import { MODULES, TRACK_KINDS, COLORS, COLOR_FR, AUTOMATABLE, SECTION_TAGS, SECTION_NAMES, SOURCES_OF,
   spec, val, fmt, toNorm, fromNorm, drumVoicesOf, guessTag, moduleName } from './modules.js';
 import { peaks, projEnd, interp, clipBuffer, audioGeom } from './moteur.js';
@@ -89,6 +90,8 @@ export function createTimeline(app) {
   const main = el('div', { class: 'ar-main' }, scroll, dockSplit, dock.el);
   const body = el('div', { class: 'ar-body' }, browser.el, navSplit, main);
   root.append(tools, body);
+  // l'arrangement prend un asset (onDrop, plus bas) : il le dit au panneau Asset, dont il fait les filtres
+  declareZone(scroll, { kinds: ['audio', 'midi'], label: 'l’arrangement' });
 
   const X = (b) => b * ppb();
   const beatAt = (clientX) => (clientX - grid.getBoundingClientRect().left - HEAD_W) / ppb();
@@ -1150,11 +1153,15 @@ export function createTimeline(app) {
     const od = e.dataTransfer.getData('application/x-odio');
     const raw = od ? '' : e.dataTransfer.getData(ITEM_MIME);
     if (raw) {
+      // un son, un clip MIDI (ses notes), un élément (sa dernière version) ; plusieurs d'un coup (le
+      // panneau Asset, le chutier : MULTI_MIME) : à la suite (panneau.js, poserObjets)
       try {
-        const it = await api(`library/${JSON.parse(raw).id}`);
-        if (it.kind === 'midi') { await placeMidi(app, it.id, t?.id || null, at); return; }       // un clip MIDI : ses notes
-        if (it.kind !== 'audio') { toast(`ODIO prend des sons et des clips MIDI ; « ${it.title} » est ${it.kind === 'image' ? 'une image' : it.kind === 'video' ? 'une vidéo' : 'un élément'}`); return; }
-        app.dropItem({ t: 'son', item: it }, t?.id || null, at);
+        let ids = [];
+        try { ids = JSON.parse(e.dataTransfer.getData(MULTI_MIME) || '[]'); } catch { ids = []; }
+        const list = Array.isArray(ids) && ids.length > 1
+          ? (await api('library/batch', { method: 'POST', body: { ids: ids.map(String) } })).items
+          : [await api(`library/${JSON.parse(raw).id}`)];
+        await poserObjets(app, list, t?.id || null, at);
       } catch (err) { toast(err.message); }
       return;
     }

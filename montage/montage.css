@@ -38,13 +38,25 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .pname .nm:hover { box-shadow: inset 0 0 0 1px var(--line); }
 .pname .nm:focus { box-shadow: inset 0 0 0 1px var(--line-cy); background: var(--panel2); }
 .pill.save { width: calc(19 * (1ch + .2em) + 15px); overflow: hidden; white-space: nowrap; }
-/* une fenêtre de portable (1366 px) : la barre tient sur une ligne */
-@media (max-width: 1480px) {
+/* La place de la page, pas la fenêtre : le panneau Asset ouvert en prend (@container sr-page,
+   commun/shell.css). Une fenêtre de portable (1366 px), ou 1440 panneau ouvert : la barre tient
+   sur une ligne ; plus étroit, elle passe à la ligne (flex-wrap), rien ne sort de la page. */
+@container sr-page (max-width: 1480px) {
   .pname .k { display: none; }
   .pname .nm { width: 15ch; }
   .mtg-bar { gap: 8px; }
   .mon-foot .tb.sm { padding: 0 5px; letter-spacing: .05em; }
   .mon-foot .pb { min-width: 26px; padding: 0 6px; }
+}
+@container sr-page (max-width: 1300px) {
+  .pname .nm { width: 11ch; }
+  .mtg-bar { gap: 6px; }
+  .tcbox { gap: 8px; padding: 4px 10px; }
+}
+/* sous la place de ses quatre panneaux (leurs minimums, COLS de montage.js), le haut défile au
+   lieu de sortir de la page */
+@container sr-page (max-width: 940px) {
+  .mtg-top { overflow-x: auto; }
 }
 .pill.exp { width: calc(14 * (1ch + .2em) + 15px); overflow: hidden; white-space: nowrap; }
 

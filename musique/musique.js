@@ -14,7 +14,7 @@
 // Le projet s'enregistre seul (server/tools/music.py) ; le moteur
 // (moteur.js) le joue ; ce qu'on entend est ce qu'on exporte.
 
-import { mountHeader, api, jobs, pick, uploadFile, toast, $, href, fmtDur, stateFr } from '../commun/shell.js';
+import { mountHeader, api, jobs, pick, uploadFile, toast, $, href, fmtDur, stateFr, session, espace, enTeteEspace, espaceDocument, surEspace } from '../commun/shell.js';
 import { Engine, renderMix, rendusLibres, renderClips, wav24, peakDb, songEnd, peaks } from './moteur.js';
 import { openPublish } from './element.js';   // éléments : « Publier comme élément » (30/09)
 import { MODULES, TRACK_KINDS, COLORS, COLOR_FR, PRESETS, SOURCES_OF, DRUM_MODELS, NOTE_MODELS, TONICS, TONICS_FR, MODES,
@@ -33,6 +33,7 @@ import { createRecorder } from './enregistrement.js';
 import { openGenerative, options, bestStems, STEM_FR } from './generatif.js';
 import { GEN_KINDS, genJobDone } from './generatif_region.js';   // génératif : les prises d'une région, sa partition, le MIDI extrait
 import { openGuide } from './guide.js';
+import { branchePanneau } from './panneau.js';   // le panneau Asset commun (commun/dock.js) : sons et MIDI de la bibliothèque
 
 mountHeader('music', { sub: 'studio · YuE · stems' });
 
@@ -754,6 +755,9 @@ export const app = {
 const rec = createRecorder(app);
 app.rec = rec;
 app.toys = createJouets(app);   // jouets : les jouets posés, leur boucle, leurs câbles de notes et de valeur
+// le panneau Asset : ses gestes (poser = ceux du navigateur) ; `suivrePanneau`, à chaque image : ses
+// filtres suivent la piste choisie, quel que soit le chemin qui l'a choisie (panneau.js)
+const suivrePanneau = branchePanneau(app);
 
 function fmtBar(beat) {
   const b = Math.max(0, beat), bpb = S.proj?.sig || 4;
@@ -796,13 +800,13 @@ async function flush() {
   if (saving) { again = true; return; }
   saving = true; status('enregistrement');
   try {
-    const r = await api(`music/projects/${S.proj.id}`, { method: 'POST', body: S.proj });
+    const r = await api(`music/projects/${S.proj.id}`, { method: 'POST', body: S.proj, ...espaceDuProjet() });
     S.proj.rev = r.rev;
     status('enregistré');
     const it = S.list.find((x) => x.id === S.proj.id);
     if (it) it.name = S.proj.name;
   } catch (e) {
-    if (e.status === 409) { toast(e.message, 6000); await openProject(S.proj.id); }
+    if (e.status === 409) { toast(e.message, 6000); await openProject(S.proj.id, espaceDuProjet()); }
     else status(`non enregistré : ${e.message}`, true);
   }
   saving = false;
@@ -816,12 +820,26 @@ async function whenSaved() {
 }
 const pubCtx = () => ({ S, engine, renderMix, wav24, songEnd, whenSaved, modal, fmtDur });
 
+// Le Workspace (commun/shell.js, docs/etudes/equipes_espaces.md § 4.3) : le projet ouvert reste
+// dans le sien — ses lectures et ses écritures le disent, même si l'onglet change de Workspace.
+// Le sien : son `space`, sinon celui où on l'a ouvert (un projet d'avant les Workspaces) ; retenu à
+// l'ouverture (openProject), pas relu à chaque écriture.
+let espProjet = null;
+const espaceDuProjet = () => (espProjet ? { espace: espProjet } : {});
 addEventListener('pagehide', () => {
   if (saveT && S.proj) {
     clearTimeout(saveT);
+    // un fetch à la main (keepalive : il part pendant que la page s'en va) : l'en-tête du Workspace aussi
     fetch(href(`api/music/projects/${S.proj.id}`), { method: 'POST', keepalive: true,
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(S.proj) });
+      headers: { 'Content-Type': 'application/json', ...(espProjet ? { 'X-SR-Espace': espProjet } : enTeteEspace()) }, body: JSON.stringify(S.proj) });
   }
+});
+// changer de Workspace (l'en-tête) ne recharge pas ODIO : le projet ouvert reste ouvert, dans le
+// sien ; la liste des projets, les sons et le MIDI du navigateur se relisent dans le nouveau
+surEspace(async () => {
+  try { await loadList(); } catch (e) { toast(e.message); }
+  if (S.proj) paintBar();
+  document.dispatchEvent(new CustomEvent('mu:espace'));
 });
 
 // ── annuler, rétablir ───────────────────────────────────────
@@ -893,10 +911,14 @@ const undo = () => undoStack.undo();
 const redo = () => undoStack.redo();
 
 // ── les projets ─────────────────────────────────────────────
-async function openProject(id) {
+// `esp` : { espace } — le projet ouvert qu'on relit (un conflit) reste lu dans son Workspace
+async function openProject(id, esp = {}) {
   if (engine.running) engine.stop();
-  const p = migrate(await api(`music/projects/${id}`));
+  const p = migrate(await api(`music/projects/${id}`, esp));
+  if (!p.space && !esp.espace && !espace()) await session();   // le Workspace de l'onglet : dit par /api/auth/me
   S.proj = p;
+  espProjet = p.space || esp.espace || espace() || null;
+  espaceDocument(espProjet);   // l'en-tête dit l'espace du projet quand ce n'est pas celui de l'onglet
   S.view = MAKERS[p.ui?.view] ? p.ui.view : 'timeline';
   const t0 = p.tracks.find((t) => t.kind !== 'bus');
   S.sel = { track: t0?.id || null, tracks: [], pat: t0?.pat || null, clip: null, clips: [], mod: null, cable: null };
@@ -1077,7 +1099,7 @@ function projMenu(e) {
     } },
     { label: 'Mettre à la corbeille', onclick: async () => {
       if (!(await confirmBox('Corbeille', `Mettre « ${S.proj.name} » à la corbeille du serveur ?`, 'Mettre à la corbeille'))) return;
-      await api(`music/projects/${S.proj.id}/delete`, { method: 'POST' });
+      await api(`music/projects/${S.proj.id}/delete`, { method: 'POST', ...espaceDuProjet() });
       clearTimeout(saveT);
       await loadList();
       if (!S.list.length) {
@@ -1252,6 +1274,7 @@ function frame() {
     setCue(posEl, fmtPos(b));
     setCue(secEl, fmtClock(b * 60 / S.proj.bpm));
     views[S.view]?.frame?.(b);
+    suivrePanneau();
     // le nodal dans sa fenêtre suit le moteur lui aussi (tête, vu-mètres)
     if (S.view !== 'nodal' && F.detache('nodal')) views.nodal?.frame?.(b);
     if (ovBuf && ov.dataset.tot) {
@@ -1326,7 +1349,8 @@ addEventListener('keydown', async (e) => {
   }
   // le transport : Espace lecture / stop, Maj+Espace reprendre là où l'on
   // s'est arrêté, Origine au début (Entrée aussi, l'ancien d'ODIO), F9 prise
-  if (c === 'Space') { e.preventDefault(); if (e.repeat) return; if (e.shiftKey) togglePause(); else togglePlay(); return; }
+  // (Ctrl+Espace est au panneau Asset, commun/shell.js : il ne réveille jamais la lecture)
+  if (c === 'Space' && !ctrl) { e.preventDefault(); if (e.repeat) return; if (e.shiftKey) togglePause(); else togglePlay(); return; }
   if (c === 'Home' || c === 'Enter') { e.preventDefault(); engine.seek(0); return; }
   if (c === 'F9') { e.preventDefault(); if (!e.repeat) toggleRec(); return; }
   if (e.shiftKey && L === 't' && !ctrl && !e.altKey) { e.preventDefault(); tapTempo(e.timeStamp); return; }

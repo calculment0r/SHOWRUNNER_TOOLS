@@ -18,8 +18,10 @@
 //                 les fichiers .mid déposés ; glisser sur une piste
 //                 d'instrument : ses notes (29/09)
 // Clic sur un élément = le poser sur la piste choisie (ou une piste neuve).
+// Sons et MIDI sont aussi dans le panneau Asset commun (Ctrl+Espace, panneau.js) :
+// un bouton les y mène tant qu'il est fermé.
 
-import { api, href, toast, dragItem, dropZone, fmtDur, uploadFile } from '../commun/shell.js';
+import { api, href, toast, dragItem, dropZone, fmtDur, uploadFile, dock, dockKeyLabel } from '../commun/shell.js';
 import { MODULES, SOURCES_OF, EFFECT_TYPES, PRESETS, DRUM_MODELS, NOTE_MODELS, TRACK_KINDS, keyLabel } from './modules.js';
 import { el, put, menu, inlineEdit } from './ui.js';
 import { listMidi, midiSub, placeMidi, saveClipMidi } from './generatif_midi.js';
@@ -58,6 +60,11 @@ export function createBrowser(app) {
     return n;
   };
   const group = (label) => el('div', { class: 'nv-g' }, label);
+  // les sons et le MIDI sont aussi dans le panneau Asset commun (commun/dock.js) : toute la bibliothèque,
+  // ses filtres, ses Récents, ses Favoris ; ce bouton l'ouvre (il est monté pour qui l'a : l'invité non)
+  const versPanneau = () => (dock.closed() ? el('button', { class: 'tb ghost sm nv-wide', type: 'button',
+    title: 'la bibliothèque du portail, à gauche : chercher, filtrer, glisser sur une piste', onclick: () => dock.open({ focus: true }) },
+  `Le panneau Asset${dockKeyLabel() ? ` · ${dockKeyLabel()}` : ''}`) : null);
 
   function instruments() {
     const out = [];
@@ -151,7 +158,7 @@ export function createBrowser(app) {
     dropZone(drop, { kinds: ['audio'], via: 'odio', onitems: () => loadSounds() });
     if (!sounds && !loading) loadSounds();
     paintSounds();
-    return [search, drop, soundBox];
+    return [versPanneau(), search, drop, soundBox];
   }
 
   function motifs() {
@@ -219,7 +226,7 @@ export function createBrowser(app) {
     });
     if (!mids && !mloading) loadMidi();
     paintMidi();
-    return [msearch, save, drop, midBox];
+    return [versPanneau(), msearch, save, drop, midBox];
   }
   document.addEventListener('mu:midi', () => { mids = null; if (isOpen('midi')) loadMidi(); });
 
@@ -255,5 +262,20 @@ export function createBrowser(app) {
     acc.scrollTop = scrollTop;
   }
   document.addEventListener('sr:job', () => { if (isOpen('son')) loadSounds(); if (isOpen('midi')) loadMidi(); });
+  // un autre Workspace (l'en-tête, musique.js : surEspace) : les sons et le MIDI se relisent
+  document.addEventListener('mu:espace', () => {
+    if (!root.isConnected) return;
+    sounds = null; mids = null;
+    if (isOpen('son')) loadSounds();
+    if (isOpen('midi')) loadMidi();
+  });
+  // le panneau Asset s'ouvre ou se ferme : le bouton qui l'ouvre paraît ou s'en va (pas à chaque largeur)
+  let panneauOuvert = null;
+  document.addEventListener('sr:dock', (e) => {
+    const o = !!e.detail?.open;
+    if (o === panneauOuvert) return;
+    panneauOuvert = o;
+    if (root.isConnected && ui().nav !== false && (isOpen('son') || isOpen('midi'))) render();
+  });
   return { el: root, render, refresh: () => { sounds = null; if (isOpen('son')) render(); } };
 }
