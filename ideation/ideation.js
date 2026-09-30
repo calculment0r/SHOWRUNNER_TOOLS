@@ -902,7 +902,7 @@ $('#b-export').addEventListener('click', () => {
   const f = S.sel.size === 1 && app.node([...S.sel][0])?.type === 'frame' ? [...S.sel][0] : '';
   app.exportBoard(f);
 });
-// #b-lib : le panneau de la bibliothèque s'ouvre et se ferme par library.js (avec sa poignée)
+// #b-lib : le panneau Asset commun (commun/dock.js) s'ouvre et se ferme par library.js ; Ctrl+Espace partout
 // les outils : un clic le prend (les boutons « poser » n'avaient pas d'écoute : seul le clavier les prenait)
 // (les deux barres : celle du haut, et celle des outils à gauche, sur la planche — barres.css)
 for (const bar of document.querySelectorAll('.ide-bar')) bar.addEventListener('click', (e) => { const b = e.target.closest?.('[data-tool]'); if (b) app.setTool(b.dataset.tool); });
@@ -927,7 +927,8 @@ function help() {
     ['molette · pincer', 'zoomer'], ['Maj+1 · Maj+0', 'tout voir · 100 %'], ['glisser le fond', 'cadre de sélection'], ['Alt + glisser', 'lasso'],
     ['Maj + clic', 'ajouter, retirer'], ['ctrl+A', 'tout choisir'], ['ctrl+D', 'dupliquer'], ['ctrl+C · ctrl+V', 'copier, coller (et coller une image)'],
     ['Suppr', 'supprimer'], ['[ · ]', 'arrière-plan · premier plan'], ['flèches', 'déplacer (Maj : 10)'], ['Entrée · double-clic', 'écrire'],
-    ['ctrl+Z · ctrl+maj+Z', 'annuler · rétablir'], ['Échap', 'remonter au groupe, puis rien choisi']];
+    ['ctrl+Z · ctrl+maj+Z', 'annuler · rétablir'], ['Échap', 'remonter au groupe, puis rien choisi'],
+    ['ctrl+Espace', 'le panneau Asset (la bibliothèque) : l’ouvrir, le fermer']];
   app.modal('Raccourcis', el('dl', { class: 'keys' }, ...K.flatMap(([k, v]) => [el('dt', {}, k), el('dd', {}, v)])));
 }
 
@@ -1094,6 +1095,8 @@ app.menu = menu;
 app.objets.mount();   // ses outils dans la barre, les modèles et l'aimant sur la planche
 app.setTool('select');
 installPlugins(app);
+// les filtres du panneau Asset suivent la carte choisie (library.js, commun/dock.js)
+app.lib.follow();
 // la barre sur une ligne ; ce qui n'y tient plus passe dans ⋯ (barre.js)
 app.bar = installBar();
 // ses commandes dans la palette ⌘K, dès que l'atelier est chargé

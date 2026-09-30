@@ -172,8 +172,9 @@ select.fld { cursor: pointer; }
   grid-template-columns: var(--rack-w) minmax(0, 1fr) var(--sheet-w);
   gap: var(--s4); align-items: start;
 }
-@media (max-width: 1280px) { .bench { grid-template-columns: var(--rack-w) minmax(0, 1fr); } }
-@media (max-width: 900px)  { .bench { grid-template-columns: 1fr; } }
+/* la place de la page (le panneau Asset ouvert en prend) : @container sr-page, commun/shell.css */
+@container sr-page (max-width: 1280px) { .bench { grid-template-columns: var(--rack-w) minmax(0, 1fr); } }
+@container sr-page (max-width: 900px)  { .bench { grid-template-columns: 1fr; } }
 
 .col { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
 

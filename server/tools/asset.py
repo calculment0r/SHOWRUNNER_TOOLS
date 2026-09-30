@@ -23,6 +23,9 @@
                                                  un élément versionné (ou l'une de ses
                                                  planches) : une version de plus (30/09)
   POST /api/asset/refs/<id> {refs}               la planche d'un élément, dans l'ordre
+  GET  /api/asset/dock?kind=&etype=&media=&q=&folder=&fav=1&limit=&offset=
+       le panneau Asset commun (commun/dock.js) : une page d'objets, les
+       comptes des pastilles ; etype= et media= : voir `dock_list`
 
 Un dossier n'existe que par ses objets (le champ `folder` de chacun,
 ARCHITECTURE.md §2) : un dossier vide disparaît de lui-même. Un seul
@@ -627,7 +630,69 @@ def _cf_fetch(slug: str):
     return c, got, tmp
 
 
+# ── accroche du panneau Asset commun (commun/dock.js, docs/etudes/panneau_asset.md § 2.3, § 4.1) ──
+# Deux filtres que `library.query` (server/core, un autre chantier) ne sait pas encore :
+#   etype=character,object   les éléments de ces types seulement (les autres sortes ne bougent pas) ;
+#   media=audio,image…       compte aussi l'élément versionné dont la DERNIÈRE version est de ces
+#                            sortes (`element.head_kind`, library.public) : une chanson d'ODIO est un
+#                            son pour le panneau, même si `element` n'est pas dans `kind`.
+# La sorte effective d'un objet : `sorte_effective` ici, sa jumelle `sorteEffective` dans
+# commun/shell.js. Le tout passe par `_all` (tous les objets visibles, comme la vue d'Asset), puis
+# se découpe en pages : à descendre dans `library.query` quand son propriétaire le voudra.
+DOCK_MEDIA = ("image", "video", "audio", "midi", "sequence")
+
+
+def sorte_effective(it: dict) -> str:
+    """La sorte d'un objet pour les filtres : `kind`, sauf l'élément versionné, qui vaut sa dernière version."""
+    if it.get("kind") == "element":
+        return (it.get("element") or {}).get("head_kind") or "element"
+    return it.get("kind") or ""
+
+
+def dock_match(it: dict, kinds: list[str], etypes: list[str], media: list[str]) -> bool:
+    k = it.get("kind")
+    if k == "element":
+        if kinds and "element" in kinds and (not etypes or (it.get("element") or {}).get("type") in etypes):
+            return True
+        head = (it.get("element") or {}).get("head_kind")
+        return bool(media and head in media and head != "element")
+    return not kinds or k in kinds
+
+
+def dock_list(req):
+    """GET /api/asset/dock?kind=&etype=&media=&q=&folder=&fav=1&sort=&limit=&offset=
+    → {items, total, counts, etypes, folders} ; `counts` et `etypes` comptent dans la recherche
+    (et le dossier, les favoris), toutes sortes confondues : les pastilles du panneau."""
+    csv = lambda name, allowed=None: [x for x in req.q(name).split(",") if x and (allowed is None or x in allowed)]
+    kinds = csv("kind", library.KINDS)
+    etypes = csv("etype")
+    media = csv("media", DOCK_MEDIA)
+    folder = req.query.get("folder", [None])[0]
+    try:
+        limit = max(1, min(600, int(req.q("limit", "120") or 120)))
+        offset = max(0, int(req.q("offset", "0") or 0))
+    except ValueError as e:
+        raise HttpError(400, "limit et offset sont des nombres") from e
+    base = _all(req.q("q").strip(), req.q("sort", "new"), req.q("fav") == "1")
+    scope = base if folder is None else [it for it in base if (it.get("folder") or "") == folder]
+    counts = {k: 0 for k in library.KINDS}
+    by_etype: dict[str, int] = {}
+    for it in scope:
+        counts[it["kind"]] = counts.get(it["kind"], 0) + 1
+        s = sorte_effective(it)
+        if it["kind"] == "element":
+            t = (it.get("element") or {}).get("type") or "other"
+            by_etype[t] = by_etype.get(t, 0) + 1
+            if s in DOCK_MEDIA:
+                counts[s] = counts.get(s, 0) + 1   # la pastille « sons » compte la chanson versionnée
+    items = [it for it in scope if dock_match(it, kinds, etypes, media)]
+    folders = sorted({it.get("folder") for it in base if it.get("folder")}, key=str.lower)
+    return {"items": items[offset:offset + limit], "total": len(items), "counts": counts,
+            "etypes": by_etype, "folders": folders}
+
+
 def register(app) -> None:
+    app.route("GET", "/api/asset/dock", dock_list)   # le panneau Asset commun (ci-dessus)
     app.route("GET", "/api/asset/view", view)
     app.route("POST", "/api/asset/move", move)
     app.route("POST", "/api/asset/folders/rename", rename_folder)
@@ -762,3 +827,15 @@ def selftest(call, ok) -> None:
     ok("Él/voix · voix grave.wav" in names, f"asset : le zip d'un élément apporte sa voix ({names})")
     st, lin = call("GET", f"/api/asset/lineage/{snd['id']}")
     ok(any(x["id"] == c["id"] for x in lin["children"]), "asset : la lignée d'un son mène à l'élément qui le porte")
+
+    # le panneau Asset commun (commun/dock.js) : etype=, media=, la sorte effective, les pages
+    st, d = call("GET", "/api/asset/dock?kind=element&etype=character")
+    ok(st == 200 and any(i["id"] == e3["id"] for i in d["items"])
+       and all((i.get("element") or {}).get("type") == "character" for i in d["items"]), "asset : le panneau, etype= ne garde que ce type d'élément")
+    st, d = call("GET", "/api/asset/dock?kind=image,element&etype=character&limit=1")
+    ok(st == 200 and len(d["items"]) == 1 and d["total"] >= 2 and d["counts"]["image"] >= 1 and d["etypes"].get("character", 0) >= 1,
+       f"asset : le panneau, une page et les comptes des pastilles ({st} {d.get('total')} {d.get('etypes')})")
+    song = {"kind": "element", "element": {"type": "other", "head_kind": "audio"}}
+    ok(dock_match(song, ["audio"], [], ["audio"]) and not dock_match(song, ["audio"], [], []) and sorte_effective(song) == "audio"
+       and not dock_match({"kind": "element", "element": {"type": "object"}}, ["element"], ["character"], []),
+       "asset : le panneau, media= compte l'élément versionné par sa dernière version")

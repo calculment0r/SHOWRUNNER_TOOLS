@@ -9,7 +9,7 @@
 
 // le thème (clair, sombre, le mien), la taille et les animations, posés
 // avant que la page ne se dessine (commun/theme.js, préférences Général)
-import './theme.js';
+import { readLocal } from './theme.js';
 // les copies d'affichage d'une image (thumb) : docs/etudes/ideation_fluidite.md
 import { bind as bindView, pickView, needOf } from './proxies.js';
 // le plein écran de la page : le bouton tout à droite de la barre, Ctrl+Maj+F (commun/pleinecran.js)
@@ -122,6 +122,74 @@ addEventListener('contextmenu', (e) => {
   if (!e.defaultPrevented && !nativeMenuZone(e.target)) BLOCK.call(e);
 });
 
+// ── le panneau Asset commun (commun/dock.js, docs/etudes/panneau_asset.md) ──
+// La bibliothèque à gauche de chaque outil, sous la barre : elle pousse la page.
+// `mountHeader` la monte (le bouton ASSET tout à gauche de la barre) ; ici, ce
+// qui doit exister avant qu'elle ne soit chargée : la façade `dock` (un appel
+// fait trop tôt attend le panneau), le registre des zones qui prennent un asset
+// (`declareZone` ; `dropZone` s'y inscrit seul), la sorte effective, le raccourci.
+//
+//   dock.configure({ place, clickPlaces, placeLabel, menu, kinds, label, dockMin, hint, upload, fiche })
+//   dock.contexte({ kinds, label, why }) · dock.contexte(null)     les filtres de la zone active
+//   dock.open({ focus }) · close() · toggle() · isOpen() · closed() · reload() · recent(items)
+//   declareZone(node, { kinds, label }) → de quoi la retirer
+// Le détail de chaque option : l'en-tête de commun/dock.js.
+const DOCK = { page: null, on: false, cfg: {}, ctx: null, zones: new Set(), mod: null, wait: [] };
+export const dockState = () => DOCK;   // pour commun/dock.js seulement
+const withDock = (fn) => { if (DOCK.mod) fn(DOCK.mod); else if (DOCK.page) DOCK.wait.push(fn); };
+export const dock = {
+  configure(o = {}) { Object.assign(DOCK.cfg, o); DOCK.mod?.refresh(); return dock; },
+  contexte(c = null) {
+    const next = c && Array.isArray(c.kinds) ? { kinds: [...c.kinds], label: String(c.label || ''), why: String(c.why || '') } : null;
+    if (JSON.stringify(next) === JSON.stringify(DOCK.ctx)) return;
+    DOCK.ctx = next;
+    DOCK.mod?.contexte();
+  },
+  open(o) { withDock((m) => m.open(o)); },
+  close() { withDock((m) => m.close()); },
+  toggle(o) { withDock((m) => m.toggle(o)); },
+  isOpen: () => !!DOCK.mod?.isOpen(),
+  // monté, et fermé (un menu propose alors de l'ouvrir) ; faux pour qui n'a pas le panneau (l'invité)
+  closed: () => DOCK.on && !!DOCK.mod && !DOCK.mod.isOpen(),
+  reload() { DOCK.mod?.reload(); },
+  recent(items) { if (items?.length) withDock((m) => m.recent(items)); },
+};
+export function declareZone(node, { kinds = [], label = '' } = {}) {
+  const z = { node, kinds: [...kinds], label };
+  DOCK.zones.add(z);
+  DOCK.mod?.zones();
+  return () => { DOCK.zones.delete(z); DOCK.mod?.zones(); };
+}
+// La sorte effective d'un objet (sa jumelle : server/tools/asset.py, sorte_effective) : `kind`, sauf
+// l'élément versionné, qui vaut la sorte de sa dernière version (une chanson d'ODIO est un son)
+export const sorteEffective = (it) => (it?.kind === 'element' ? it.element?.head_kind || 'element' : it?.kind || '');
+// Le raccourci en vigueur (Préférences → Général, commun/prefs.json : dockKey), pour les bulles
+export function dockKeyLabel() {
+  const k = readLocal().general?.dockKey || 'ctrl-space';
+  return { 'ctrl-space': 'Ctrl+Espace', backquote: '²', both: 'Ctrl+Espace ou ²', none: '' }[k] ?? 'Ctrl+Espace';
+}
+// Un seul écouteur, à la capture sur window : il passe avant ceux des outils (ODIO, Idéation et
+// Transcrire prennent Espace sans regarder Ctrl) et arrête l'événement — Ctrl+Espace est réservé
+// au panneau, aucun outil n'en voit l'Espace (ni la lecture d'ODIO, ni la main d'Idéation). Une
+// saisie IME en cours (isComposing) passe son chemin ; ² (la touche sous Échap, `code` Backquote,
+// juste en AZERTY comme en QWERTY) ne se prend jamais dans un champ de texte ; une fenêtre (.scrim)
+// garde le clavier. Le clavier d'une fenêtre détachée (commun/fenetre.js) arrive ici aussi.
+const typingIn = (t) => !!(t instanceof Element && (t.isContentEditable || t.closest('input, textarea, select, [contenteditable]')));
+addEventListener('keydown', (e) => {
+  if (!DOCK.page || e.isComposing || e.keyCode === 229) return;
+  const bare = !e.altKey && !e.metaKey && !e.shiftKey;
+  const ctrlSpace = e.code === 'Space' && e.ctrlKey && bare;
+  const quote = e.code === 'Backquote' && !e.ctrlKey && bare && !typingIn(e.target);
+  if (!ctrlSpace && !quote) return;
+  const k = readLocal().general?.dockKey || 'ctrl-space';
+  const wanted = (ctrlSpace && (k === 'ctrl-space' || k === 'both')) || (quote && (k === 'backquote' || k === 'both'));
+  const modal = !!document.querySelector('.scrim');
+  if (quote && (!wanted || !DOCK.on || modal)) return;   // ² reste alors une touche comme une autre
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (wanted && !e.repeat && DOCK.on && !modal) dock.toggle({ focus: true });
+}, true);
+
 let toastT;
 export function toast(msg, ms = 3200) {
   let t = $('.toast');
@@ -177,6 +245,12 @@ export async function uploadFile(file, { tool = 'upload', via = '', folder = '',
 // Une vignette glissée porte l'objet sous ce type ; tout emplacement
 // `dropZone` l'accepte, comme un fichier venu du disque.
 export const ITEM_MIME = 'application/x-sr-item';
+// plusieurs objets d'un coup (le chutier du Montage, le panneau Asset) : leurs ids, en plus
+// d'ITEM_MIME (le premier) que toute zone comprend
+export const MULTI_MIME = 'application/x-sr-items';
+// un personnage de Character Factory pas encore importé ({slug, imported}) : la planche d'Idéation
+// l'importe au dépôt (ideation/canvas.js) ; déjà importé, le panneau Asset le glisse en ITEM_MIME
+export const CF_MIME = 'application/x-sr-cf';
 export function dragItem(node, it) {
   node.draggable = true;
   node.addEventListener('dragstart', (e) => {
@@ -194,8 +268,12 @@ const kindOfFile = (f) => EXT_KIND[(f.name.split('.').pop() || '').toLowerCase()
 // entre dans la bibliothèque, catégorie Upload) ou une vignette glissée
 // d'ailleurs dans le portail. onitems(objets) reçoit des objets complets de la
 // bibliothèque, déjà filtrés par `kinds` (un élément compte pour une image
-// quand `kinds` prend 'element').
-export function dropZone(node, { kinds = ['image', 'element'], multiple = true, via = '', onitems = () => {} } = {}) {
+// quand `kinds` prend 'element'). La zone s'inscrit au registre du panneau
+// Asset (declareZone) : ses `kinds` font les filtres du panneau dans l'outil.
+// Un élément versionné lâché là où l'on attend la sorte de sa dernière version
+// (un son, pour une chanson d'ODIO) y pose cette dernière version.
+export function dropZone(node, { kinds = ['image', 'element'], multiple = true, via = '', label = '', onitems = () => {} } = {}) {
+  declareZone(node, { kinds, label: label || via });
   let depth = 0;
   const wants = (e) => { const t = e.dataTransfer?.types || []; return t.includes('Files') || t.includes(ITEM_MIME); };
   // un dépôt dans une zone intérieure ne passe pas par la zone qui la contient :
@@ -212,9 +290,21 @@ export function dropZone(node, { kinds = ['image', 'element'], multiple = true, 
     depth = 0; node.classList.remove('drop-on'); document.body.classList.remove('dropping');
     const got = [];
     const raw = e.dataTransfer.getData(ITEM_MIME);
-    if (raw) {
+    let many = [];
+    try { many = JSON.parse(e.dataTransfer.getData(MULTI_MIME) || '[]'); } catch { many = []; }
+    if (multiple && Array.isArray(many) && many.length > 1) {
+      try { got.push(...(await api('library/batch', { method: 'POST', body: { ids: many.map(String) } })).items); } catch (err) { toast(err.message); }
+    } else if (raw) {
       try { got.push(await api('library/' + JSON.parse(raw).id)); } catch (err) { toast(err.message); }
     }
+    for (let i = 0; i < got.length; i++) {
+      const it = got[i];
+      if (it.kind === 'element' && !kinds.includes('element') && kinds.includes(sorteEffective(it)) && it.element?.head_item) {
+        try { got[i] = await api('library/' + it.element.head_item); } catch { /* la dernière version n'est plus là : l'élément sera refusé */ }
+      }
+    }
+    const gone = got.filter((it) => !kinds.includes(it.kind));
+    if (gone.length) toast(`pas pris ici : ${gone.map((it) => it.title || it.id).join(', ')} (attendu : ${kinds.map(kindFr).join(', ')})`);
     let files = [...(e.dataTransfer.files || [])];
     const refused = files.filter((f) => !kinds.includes(kindOfFile(f)));
     files = files.filter((f) => kinds.includes(kindOfFile(f)));
@@ -226,7 +316,11 @@ export function dropZone(node, { kinds = ['image', 'element'], multiple = true, 
     if (refused.length) toast(`pas pris ici : ${refused.map((f) => f.name).join(', ')} (attendu : ${kinds.map(kindFr).join(', ')})`);
     else if (files.length) toast(files.length > 1 ? `${files.length} fichiers rangés dans la bibliothèque · Upload` : 'rangé dans la bibliothèque · Upload');
     const ok = got.filter((it) => kinds.includes(it.kind));
-    if (ok.length) onitems(multiple ? ok : ok.slice(0, 1));
+    if (ok.length) {
+      const used = multiple ? ok : ok.slice(0, 1);
+      onitems(used);
+      dock.recent(used);   // les Récents du panneau Asset : ce qu'on a posé ou déposé
+    }
   });
   return node;
 }
@@ -294,14 +388,22 @@ export function toolHref(t, sys) {
   return href(t.path);
 }
 
-export function mountHeader(toolId, { sub = '' } = {}) {
+// `dock: false` : une page d'outil sans le panneau Asset (les pages hors outils, Admin, ne l'ont jamais)
+export function mountHeader(toolId, { sub = '', dock: useDock = true } = {}) {
   // la page reste cachée le temps de savoir qui entre (3 s au plus)
   document.documentElement.classList.add('sr-wait');
   setTimeout(() => document.documentElement.classList.remove('sr-wait'), 3000);
   const t = TOOLS.find((x) => x.id === toolId) || PAGES[toolId];
   document.documentElement.dataset.srTool = toolId;   // le menu de repli ouvre les préférences de l'outil
+  // le panneau Asset (commun/dock.js) : son bouton tout à gauche de la barre, au-dessus du panneau
+  // qu'il ouvre (Resolve : le Media Pool, premier bouton de sa barre ; panneau_asset.md § 2.2)
+  DOCK.page = useDock && TOOLS.some((x) => x.id === toolId) ? toolId : null;
+  const dockBtn = DOCK.page ? el('button', { class: 'tb ghost sm sr-dock-btn', id: 'sr-dock-btn', type: 'button',
+    'aria-controls': 'sr-dock', 'aria-pressed': 'false', title: 'la bibliothèque', onclick: () => dock.toggle({ focus: true }),
+    html: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M9.5 4.5v15"/></svg><span>Asset</span>' }) : null;
   const nav = el('nav', { class: 'tools' });
   const hdr = el('header', { class: 'hdr' },
+    dockBtn,
     el('a', { class: 'logo', href: href('') , title: 'le portail' },
       el('span', { class: 'sq' }, el('i')),
       el('span', {}, el('b', {}, 'Nirvalab'))),
@@ -309,8 +411,8 @@ export function mountHeader(toolId, { sub = '' } = {}) {
       sub ? el('span', { class: 'lbl' }, sub) : null) : null,
     nav,
     el('span', { class: 'sp' }),
-    // Asset, la bibliothèque commune : en haut à droite, hors des Apps et du Studio (Cal, 29/09)
-    el('a', { class: `tb ghost sm${toolId === 'asset' ? ' on' : ''}`, id: 'sr-asset', href: href('asset/'), title: 'la bibliothèque' }, 'Asset'),
+    // (le bouton Asset d'en haut à droite est parti le 30/09 : le panneau s'ouvre tout à gauche,
+    // la page Asset plein écran se joint par « ↗ » en tête du panneau et par l'accueil)
     el('span', { class: 'pill', id: 'sr-sys', title: 'les machines' }, el('i'), el('span', {}, 'machines')),
     el('a', { class: 'tb ghost sm', id: 'sr-admin', href: href('admin/'), hidden: true, title: 'la page de Cal' }, 'Admin'),
     el('button', { class: 'tb ghost sm', id: 'sr-me', hidden: true, title: 'mon compte',
@@ -329,6 +431,8 @@ export function mountHeader(toolId, { sub = '' } = {}) {
   nav.after(menuBtn, menu);
   document.addEventListener('click', () => { menu.hidden = true; });
   document.body.prepend(hdr);
+  // le panneau (et sa place, dès maintenant : la page est encore cachée, rien ne saute)
+  if (DOCK.page) import('./dock.js').then((m) => m.mount(DOCK.page)).catch((e) => console.error('panneau Asset', e));
   // la barre ne se coupe jamais : si les noms n'y tiennent pas entiers (douze
   // outils, le nom de l'outil, le compte…), elle passe dans le menu « Outils ».
   // Mesurée, pas devinée par une largeur : juste quel que soit le contenu.
@@ -371,7 +475,7 @@ export function mountHeader(toolId, { sub = '' } = {}) {
   Promise.all([system(), session()]).then(([sys, me]) => {
     let tier = null;
     for (const x of TOOLS) {
-      if (x.id === 'asset') continue;   // son bouton est à droite (#sr-asset)
+      if (x.id === 'asset') continue;   // Asset : le bouton du panneau, tout à gauche (commun/dock.js)
       // Apps | Studio : un filet dans la barre, un intitulé dans le menu
       if (x.tier !== tier) {
         if (tier !== null) nav.append(el('i', { class: 'sep', 'aria-hidden': 'true' }));

@@ -32,6 +32,38 @@
     {
       "key": "undoSay", "label": "Dire ce qui est annulé", "type": "toggle", "default": true,
       "help": "Un bandeau « annulé : … » après chaque Ctrl+Z."
-    }
+    },
+    {
+      "key": "dockKey", "label": "Panneau Asset : le raccourci", "type": "choice", "default": "ctrl-space",
+      "options": [["ctrl-space", "Ctrl+Espace"], ["backquote", "²"], ["both", "Les deux"], ["none", "Aucun"]],
+      "help": "Ouvrir et fermer le panneau Asset, dans tous les outils. ² : la touche sous Échap, hors d’un champ de texte — le repli quand le système prend Ctrl+Espace (une deuxième langue de saisie sur Mac, l’IME chinois sous Windows). Aucun : le bouton ASSET de la barre seulement."
+    },
+    { "key": "dockSec", "label": "Panneau Asset : la section ouverte", "type": "choice", "default": "here", "hidden": true,
+      "options": ["here", "recent", "fav", "other", "cf"] },
+    { "key": "dockRecent", "label": "Panneau Asset : les récents", "type": "text", "default": "", "maxlength": 1600, "hidden": true },
+    { "key": "dockOpen_image", "label": "Panneau Asset ouvert · Image", "type": "toggle", "default": false, "hidden": true },
+    { "key": "dockOpen_movie", "label": "Panneau Asset ouvert · Vidéo", "type": "toggle", "default": false, "hidden": true },
+    { "key": "dockOpen_upscale", "label": "Panneau Asset ouvert · Upscale", "type": "toggle", "default": false, "hidden": true },
+    { "key": "dockOpen_transcrire", "label": "Panneau Asset ouvert · Transcrire", "type": "toggle", "default": false, "hidden": true },
+    { "key": "dockOpen_chanson", "label": "Panneau Asset ouvert · Musique", "type": "toggle", "default": false, "hidden": true },
+    { "key": "dockOpen_asset", "label": "Panneau Asset ouvert · Asset", "type": "toggle", "default": false, "hidden": true },
+    { "key": "dockOpen_music", "label": "Panneau Asset ouvert · ODIO", "type": "toggle", "default": false, "hidden": true },
+    { "key": "dockOpen_montage", "label": "Panneau Asset ouvert · Montage", "type": "toggle", "default": false, "hidden": true },
+    { "key": "dockOpen_ideation", "label": "Panneau Asset ouvert · Idéation", "type": "toggle", "default": true, "hidden": true },
+    { "key": "dockOpen_character", "label": "Panneau Asset ouvert · Character Factory", "type": "toggle", "default": false, "hidden": true },
+    { "key": "dockOpen_object", "label": "Panneau Asset ouvert · Object Creator", "type": "toggle", "default": false, "hidden": true },
+    { "key": "dockOpen_analyse", "label": "Panneau Asset ouvert · Movie Analysis", "type": "toggle", "default": false, "hidden": true },
+    { "key": "dockW_image", "label": "Panneau Asset, largeur · Image", "type": "number", "default": 250, "min": 210, "max": 640, "hidden": true },
+    { "key": "dockW_movie", "label": "Panneau Asset, largeur · Vidéo", "type": "number", "default": 250, "min": 210, "max": 640, "hidden": true },
+    { "key": "dockW_upscale", "label": "Panneau Asset, largeur · Upscale", "type": "number", "default": 250, "min": 210, "max": 640, "hidden": true },
+    { "key": "dockW_transcrire", "label": "Panneau Asset, largeur · Transcrire", "type": "number", "default": 250, "min": 210, "max": 640, "hidden": true },
+    { "key": "dockW_chanson", "label": "Panneau Asset, largeur · Musique", "type": "number", "default": 250, "min": 210, "max": 640, "hidden": true },
+    { "key": "dockW_asset", "label": "Panneau Asset, largeur · Asset", "type": "number", "default": 250, "min": 210, "max": 640, "hidden": true },
+    { "key": "dockW_music", "label": "Panneau Asset, largeur · ODIO", "type": "number", "default": 250, "min": 210, "max": 640, "hidden": true },
+    { "key": "dockW_montage", "label": "Panneau Asset, largeur · Montage", "type": "number", "default": 250, "min": 210, "max": 640, "hidden": true },
+    { "key": "dockW_ideation", "label": "Panneau Asset, largeur · Idéation", "type": "number", "default": 250, "min": 210, "max": 640, "hidden": true },
+    { "key": "dockW_character", "label": "Panneau Asset, largeur · Character Factory", "type": "number", "default": 250, "min": 210, "max": 640, "hidden": true },
+    { "key": "dockW_object", "label": "Panneau Asset, largeur · Object Creator", "type": "number", "default": 250, "min": 210, "max": 640, "hidden": true },
+    { "key": "dockW_analyse", "label": "Panneau Asset, largeur · Movie Analysis", "type": "number", "default": 250, "min": 210, "max": 640, "hidden": true }
   ]
 }

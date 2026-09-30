@@ -46,6 +46,24 @@
 .hdr .sr-full svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .hdr .sr-full.on { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
 .hdr .sr-full[aria-disabled="true"] { opacity: .35; cursor: help; }
+/* le bouton du panneau Asset (commun/dock.js), tout à gauche : une icône et ASSET en capitales mono ;
+   ouvert, le filet acier du plein écran — jamais l'orange, qui reste l'action de l'outil */
+.hdr .sr-dock-btn { gap: 7px; padding: 0 9px; font-family: var(--f-mono); font-size: 9px; font-weight: 400; letter-spacing: .2em; }
+.hdr .sr-dock-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+.hdr .sr-dock-btn[aria-pressed="true"] { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.hdr .sr-dock-btn[hidden] { display: none; }
+
+/* ── le panneau Asset pousse la page (commun/dock.js ; panneau_asset.md § 2.4) ── */
+/* Ouvert : le corps recule de la largeur du panneau, la barre du haut garde toute la largeur.
+   La page est un conteneur : sa mise en page répond à la place qu'elle a VRAIMENT (@container
+   sr-page), plus à la largeur de la fenêtre. `container-type: inline-size` « applies style and
+   inline-size containment » (MDN, container-type) : pas de confinement de mise en page, les menus
+   et bulles en position: fixed gardent la fenêtre pour repère — l'essai l'a vérifié (pilote du panneau). */
+body { container: sr-page / inline-size; }
+html.sr-dock-on body { padding-left: var(--sr-dock-w); }
+html.sr-dock-on body > .hdr { margin-left: calc(-1 * var(--sr-dock-w)); }
+body, body > .hdr { transition: padding-left .2s, margin-left .2s; }
+html.sr-dock-resizing body, html.sr-dock-resizing body > .hdr { transition: none; }
 
 /* ── tiroir de la file des rendus ───────────────────────── */
 .drawer {
@@ -74,8 +92,9 @@
   max-width: 1880px; margin: 0 auto; padding: var(--s5) var(--s6) 48px;
   display: grid; grid-template-columns: 340px minmax(0, 1fr) 300px; gap: var(--s4); align-items: start;
 }
-@media (max-width: 1380px) { .studio { grid-template-columns: 320px minmax(0, 1fr); } .studio > .side-r { grid-column: 1 / -1; } }
-@media (max-width: 860px) { .studio { grid-template-columns: 1fr; padding: var(--s4); } }
+/* la place de la page, pas la fenêtre (le panneau Asset ouvert lui en prend) : @container sr-page */
+@container sr-page (max-width: 1380px) { .studio { grid-template-columns: 320px minmax(0, 1fr); } .studio > .side-r { grid-column: 1 / -1; } }
+@container sr-page (max-width: 860px) { .studio { grid-template-columns: 1fr; padding: var(--s4); } }
 .studio .rail { display: flex; flex-direction: column; gap: var(--s3); position: sticky; top: 70px; max-height: calc(100 * var(--vh) - 86px); overflow: auto; }
 .studio .stage { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
 
@@ -105,9 +124,9 @@
 .thumb:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
 .thumb.sel { box-shadow: inset 0 0 0 2px var(--or); }
 .thumb .im { position: relative; aspect-ratio: 1 / 1; background: var(--panel2); }
+.thumb .im img, .thumb .im video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 /* le visuel d’un son : un masque (server/tools/apercu_son.py) peint dans les jetons */
 .thumb .im .swave { position: absolute; inset: 24% 8%; background: var(--grn2); -webkit-mask: var(--wave) center / 100% 100% no-repeat; mask: var(--wave) center / 100% 100% no-repeat; }
-.thumb .im img, .thumb .im video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 /* la marque de la sorte (commun/shell.js kindMark) : la même partout où un objet se montre.
    Une séquence est PLEINE (l'acier du portail, --cy / --on-cy dans les deux thèmes) : un clip vidéo à la même
    première image ne porte qu'un voile — la différence se voit sans lire, à toutes les tailles. Le MIDI et

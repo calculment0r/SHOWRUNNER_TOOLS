@@ -40,7 +40,8 @@ body.ide-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .ide-bar > .fold-empty { width: 0; min-width: 0; gap: 0; overflow: visible; margin-right: calc(-1 * var(--bgap)); }
 .ide-bar .ide-more { background: transparent; font-size: 15px; letter-spacing: .05em; }
 .ide-bar .ide-more[hidden] { display: none; }
-@media (max-width: 1600px) {
+/* la place de la page, pas la fenêtre : le panneau Asset ouvert en prend (@container sr-page, commun/shell.css) */
+@container sr-page (max-width: 1600px) {
   .pname { min-width: 124px; }
   .pname .k { display: none; }
   #save-st > span { display: none; }          /* le point seul : son titre dit l'état */
@@ -48,7 +49,7 @@ body.ide-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
   .ide-bar .tb.cmp .bi { display: inline-flex; }
   .ide-bar .tb.cmp .bt { display: none; }
 }
-@media (max-width: 1360px) {
+@container sr-page (max-width: 1360px) {
   .ide-bar { --bgap: 6px; }
   .ide-bar .tgrp { gap: 2px; }
   .ide-bar button.ic, .ide-bar .tb.cmp, .ide-bar .co-ic { width: 30px; }
@@ -58,7 +59,7 @@ body.ide-guest #b-new, body.ide-guest #b-lib, body.ide-guest #b-export, body.ide
 body.ide-guest .ide-bar [data-tool="gen"], body.ide-guest .ide-bar [data-tool="vgen"],
 body.ide-guest .hdr .tools, body.ide-guest .hdr .tools-btn, body.ide-guest .hdr .tools-menu,
 body.ide-guest #sr-sys, body.ide-guest #sr-queue { display: none; }
-body.ide-guest .lib, body.ide-guest .lib-grip { visibility: hidden; }
+/* (le panneau Asset ne se monte pas pour l'invité : commun/dock.js) */
 .pname .nm:hover { box-shadow: inset 0 0 0 1px var(--line); }
 .pname .nm:focus { box-shadow: inset 0 0 0 1px var(--line-cy); background: var(--panel2); }
 .tgrp { display: flex; gap: 4px; align-items: center; }
@@ -75,74 +76,19 @@ button.ic:disabled { opacity: .3; cursor: default; }
 .conflict { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .conflict span { flex: 1; min-width: 200px; }
 
-/* ── bibliothèque | planche | inspecteur ───────────────── */
-/* La largeur de la bibliothèque (--lib-w) : library.js, entre ses bornes (LIB_W). Fermée (ou
-   l'invité) : sa colonne tombe à zéro et la grille recule d'un intervalle — la planche prend
-   toute la place ; la poignée reste au bord, un clic la rouvre. */
+/* ── planche | inspecteur ──────────────────────────────── */
+/* La bibliothèque est le panneau Asset commun (commun/dock.js, dock.css), à gauche de la page :
+   ouvert, il pousse toute la page (la barre d'Idéation comprise) ; sa poignée est dans
+   l'intervalle, fermé il laisse un trait au bord. */
 .ide-main {
-  --ide-gap: 10px; --lib-w: 250px; --insp-w: 300px;
+  --ide-gap: 10px; --insp-w: 300px;
   position: relative; flex: 1; min-height: 0; display: grid; gap: var(--ide-gap);
-  grid-template-columns: var(--lib-w) minmax(0, 1fr) var(--insp-w); transition: grid-template-columns .2s, margin-left .2s;
+  grid-template-columns: minmax(0, 1fr) var(--insp-w);
 }
-body.nolib .ide-main, body.ide-guest .ide-main { grid-template-columns: 0 minmax(0, 1fr) var(--insp-w); margin-left: calc(-1 * var(--ide-gap)); }
-body.nolib .lib { visibility: hidden; }
-.ide-main.resizing, .ide-main.resizing > .lib-grip { transition: none; }
-body.at-presenting .ide-main { margin-left: 0; }
-body.at-presenting .lib-grip { display: none; }
-@media (max-width: 1100px) { .ide-main { --insp-w: 280px; } }
-
-/* la poignée : dans l'intervalle entre la bibliothèque et la planche (le trait de commun/split.js) */
-.lib-grip {
-  position: absolute; top: 0; bottom: 0; left: var(--lib-w); width: var(--ide-gap); z-index: 5;
-  cursor: col-resize; touch-action: none; outline: none; transition: left .2s;
-}
-.lib-grip::after {
-  content: ""; position: absolute; top: 12%; bottom: 12%; left: 50%; width: 2px; margin-left: -1px;
-  border-radius: 1px; background: transparent; transition: background .12s;
-}
-.lib-grip:hover::after, .lib-grip:focus-visible::after { background: var(--line-cy); }
-.lib-grip.on::after { background: var(--or); }
-/* fermée : un trait court au bord de la planche, qui se voit sans survol */
-body.nolib .lib-grip { left: 0; cursor: pointer; }
-body.nolib .lib-grip::after { top: calc(50% - 24px); bottom: calc(50% - 24px); width: 4px; margin-left: -2px; border-radius: 2px; background: var(--line-gr); }
-body.nolib .lib-grip:hover::after, body.nolib .lib-grip:focus-visible::after { background: var(--line-cy); }
-body.lib-resizing, body.lib-resizing * { user-select: none !important; cursor: col-resize !important; }
-
-/* ── la bibliothèque ───────────────────────────────────── */
-.lib {
-  min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 8px;
-  background: var(--panel); border-radius: var(--r4); padding: 10px;
-}
-.lib-h { display: flex; align-items: center; gap: 8px; }
-.lib-h .t { font-family: var(--f-mono); font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink2); }
-.lib-h .sp { flex: 1; }
-.lib-h .lib-x { width: 24px; padding: 0; font-size: 14px; }
-.ltabs { display: flex; flex-wrap: wrap; gap: 3px; }
-.ltabs .tb { background: transparent; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink3); height: 22px; font-size: 9px; padding: 0 6px; }
-.ltabs .tb.on { background: var(--grn); color: var(--on-grn); box-shadow: none; }
-/* max-content : des pistes « auto » tomberaient à zéro (vignettes en overflow: hidden) dès que la liste dépasse la hauteur */
-/* deux colonnes de la plus étroite (LIB_W.min, library.js) à la largeur par défaut ;
-   élargie, la bibliothèque en montre davantage (une colonne de plus tous les ~96 px) */
-.lgrid { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); grid-auto-rows: max-content; gap: 6px; align-content: start; padding-right: 2px; }
-.lt {
-  display: flex; flex-direction: column; text-align: left; border-radius: var(--r2); background: var(--panel2); overflow: hidden;
-  cursor: grab; touch-action: none; box-shadow: inset 0 0 0 1px transparent;
-}
-.lt:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
-.lt .im { position: relative; aspect-ratio: 1 / 1; background: var(--panel3); overflow: hidden; }
-.lt .im img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
-.lt .im .kind { z-index: 1; }
-.lt .kind {
-  position: absolute; top: 4px; left: 4px; padding: 2px 5px; border-radius: var(--r1); background: var(--veil);
-  font-family: var(--f-mono); font-size: 7px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink2);
-}
-.lt .kind.element { color: var(--or); }
-.lt .kind.video { color: var(--cy); }
-.lt .kind.audio { color: var(--grn2); }
-.lt .t { font-size: 10.5px; padding: 5px 7px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lt .s { padding: 0 7px 6px; font-size: 7.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lib-f { text-align: center; }
-.lt:focus-visible { outline: 2px solid var(--or); outline-offset: 1px; }
+@container sr-page (max-width: 1100px) { .ide-main { --insp-w: 280px; } }
+/* présenter (atelier/presentation.js) : ni le panneau, ni sa place */
+html.sr-dock-on body.at-presenting { padding-left: 0; }
+body.at-presenting > .sr-dock, body.at-presenting > .sr-dock-grip, body.at-presenting > .sr-dock-veil { display: none; }
 
 /* ── la planche ────────────────────────────────────────── */
 /* la trame bouge à chaque image d'un déplacement : la page pose background-size et

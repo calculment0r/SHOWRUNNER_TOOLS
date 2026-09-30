@@ -1,0 +1,149 @@
+/* ============================================================
+   SHOWRUNNER TOOLS — le panneau Asset commun (commun/dock.js)
+   La bibliothèque à gauche de chaque outil, sous la barre du haut ; elle
+   pousse la page (commun/shell.css : html.sr-dock-on). La géométrie de la
+   bibliothèque d'Idéation (poignée dans l'intervalle, fermé → un trait
+   court au bord). Règles du thème : jetons seulement, filets (inset),
+   jamais de .tb.go ici (l'orange reste l'action de l'outil), capitales
+   mono pour la machine, les titres d'objets en bas de casse.
+   Deux mesures qui ne sont pas des couleurs : --sr-dock-w (la largeur
+   montrée), --sr-hdr-h (la hauteur de la barre), posées par dock.js.
+   ============================================================ */
+
+.sr-dock {
+  position: fixed; left: 0; top: var(--sr-hdr-h, 52px); bottom: 0; z-index: 38;
+  width: var(--sr-dock-w, 250px); display: flex; flex-direction: column; gap: 7px;
+  padding: 10px 10px 8px; background: var(--panel); box-shadow: inset -1px 0 0 var(--line);
+  transform: translateX(-100%); visibility: hidden; transition: transform .2s, visibility 0s linear .2s;
+}
+/* ouvert : visible tout de suite (la recherche prend le focus), caché seulement après le glissement */
+html.sr-dock-on .sr-dock, html.sr-dock-over .sr-dock { transform: none; visibility: visible; transition: transform .2s, visibility 0s; }
+html.sr-dock-resizing .sr-dock { transition: none; }
+/* sous 860 px de page, pousser ne laisse plus rien : par-dessus, avec un voile */
+html.sr-dock-over .sr-dock { box-shadow: inset -1px 0 0 var(--line), 20px 0 50px var(--drop); z-index: 62; }
+.sr-dock-veil { position: fixed; inset: var(--sr-hdr-h, 52px) 0 0 0; z-index: 61; background: var(--scrim); }
+.sr-dock-veil[hidden] { display: none; }
+
+/* l'en-tête : ASSET · le compte · Déposer · ↗ · × */
+.sr-dock .dk-h { display: flex; align-items: center; gap: 6px; flex: none; }
+.sr-dock .dk-h .t { font-family: var(--f-mono); font-size: 9px; letter-spacing: .22em; text-transform: uppercase; color: var(--ink2); }
+.sr-dock .dk-h .n { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; color: var(--ink3); }
+.sr-dock .dk-h .sp { flex: 1; }
+.sr-dock .dk-h .tb.sm { height: 22px; font-size: 9px; padding: 0 7px; }
+.sr-dock .dk-h .dk-x, .sr-dock .dk-h .dk-go { width: 22px; min-width: 22px; padding: 0; font-size: 12px; }
+.sr-dock .dk-q { flex: none; padding: 6px 9px; font-size: 11.5px; }
+
+/* les sortes en pastilles (quoi), la ligne des types d'élément, la pastille du contexte */
+.sr-dock .dk-kinds, .sr-dock .dk-etypes { display: flex; flex-wrap: wrap; gap: 3px; flex: none; }
+.sr-dock .dk-k {
+  display: inline-flex; align-items: center; gap: 4px; height: 21px; padding: 0 6px; border-radius: var(--r1);
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ink3); box-shadow: inset 0 0 0 1px var(--line); background: transparent;
+}
+.sr-dock .dk-k i { font-style: normal; color: var(--ink3); opacity: .8; }
+.sr-dock .dk-k:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.sr-dock .dk-k.on { background: var(--grn); color: var(--on-grn); box-shadow: none; }
+.sr-dock .dk-k.on i { color: var(--on-grn); }
+.sr-dock .dk-k.zero:not(.on) { opacity: .45; }
+/* « types » : déplie les types d'élément (personnages, objets 3D, lieux…) sous les sortes */
+.sr-dock .dk-more { box-shadow: none; padding: 0 4px; }
+.sr-dock .dk-more[aria-expanded="true"]::after { transform: rotate(90deg); background: var(--cy); }
+.sr-dock .dk-more.on { background: transparent; color: var(--cy); }
+.sr-dock .dk-etypes .dk-k { height: 19px; font-size: 7.5px; }
+.sr-dock .dk-etypes[hidden], .sr-dock .dk-ctx[hidden] { display: none; }
+.sr-dock .dk-ctx {
+  flex: none; align-self: flex-start; max-width: 100%; padding: 2px 6px; border-radius: var(--r1); text-align: left;
+  font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sr-dock .dk-ctx.reset { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.sr-dock .dk-ctx.reset:hover { color: var(--ink); }
+
+/* les sections en accordéon (d'où) : une seule ouverte, qui prend la hauteur */
+.sr-dock .dk-secs { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 2px; }
+.sr-dock .dk-sec { display: flex; flex-direction: column; min-height: 0; flex: none; }
+.sr-dock .dk-sec.open { flex: 1; }
+.sr-dock .dk-sec > h3 { margin: 0; font: inherit; }
+.sr-dock .dk-sh {
+  width: 100%; display: flex; align-items: center; gap: 6px; padding: 6px 4px; border-radius: var(--r1); text-align: left;
+  font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink2);
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+/* le chevron : un triangle découpé (les fontes du thème n'ont pas ▸), tourné quand la section est ouverte */
+.sr-dock .dk-sh::before, .sr-dock .dk-more::after {
+  content: ""; flex: none; width: 5px; height: 7px; background: var(--ink3); clip-path: polygon(0 0, 100% 50%, 0 100%); transition: transform .15s;
+}
+.sr-dock .dk-sec.open .dk-sh::before { background: var(--cy); transform: rotate(90deg); }
+.sr-dock .dk-sh .c { margin-left: auto; color: var(--ink3); letter-spacing: .1em; }
+.sr-dock .dk-sh:hover { color: var(--ink); }
+.sr-dock .dk-sh[aria-disabled="true"] { color: var(--ink3); cursor: help; }
+.sr-dock .dk-sh[aria-disabled="true"]::before { opacity: .5; }
+.sr-dock .dk-sb { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
+.sr-dock .dk-sb[hidden] { display: none; }
+.sr-dock .dk-folders { display: flex; flex-wrap: wrap; gap: 3px; flex: none; }
+.sr-dock .dk-folders[hidden] { display: none; }
+.sr-dock .dk-folders .dk-k { text-transform: none; letter-spacing: .04em; font-size: 9px; }
+
+/* la grille fenêtrée : seules les lignes visibles existent, un espaceur donne la hauteur */
+.sr-dock .dk-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; padding-right: 2px; outline: none; }
+.sr-dock .dk-scroll.panning { cursor: grabbing; }
+.sr-dock .dk-space { position: relative; width: 100%; }
+.sr-dock .lt {
+  position: absolute; display: flex; flex-direction: column; text-align: left; border-radius: var(--r2); background: var(--panel2); overflow: hidden;
+  cursor: grab; touch-action: none; box-shadow: inset 0 0 0 1px transparent; outline: none;
+}
+.sr-dock .lt:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.sr-dock .lt.sel { box-shadow: inset 0 0 0 2px var(--or); }
+.sr-dock .lt:focus-visible { box-shadow: inset 0 0 0 2px var(--line-cy); }
+.sr-dock .lt.sel:focus-visible { box-shadow: inset 0 0 0 2px var(--or), inset 0 0 0 4px var(--line-cy); }
+.sr-dock .lt.ph { cursor: default; background: var(--panel2); }
+.sr-dock .lt.ph .im { background: var(--panel2); }
+.sr-dock .lt.pending { opacity: .5; }
+.sr-dock .lt .im { position: relative; flex: none; background: var(--panel3); overflow: hidden; }
+.sr-dock .lt .im img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.sr-dock .lt .im .swave { position: absolute; inset: 24% 8%; background: var(--grn2); -webkit-mask: var(--wave) center / 100% 100% no-repeat; mask: var(--wave) center / 100% 100% no-repeat; }
+.sr-dock .lt .im .kmark { position: absolute; top: 4px; left: 4px; z-index: 1; padding: 2px 5px; font-size: 7px; }
+.sr-dock .lt .im .ver {
+  position: absolute; top: 4px; right: 4px; padding: 1px 4px; border-radius: var(--r1); background: var(--veil);
+  font-family: var(--f-mono); font-size: 7px; letter-spacing: .1em; color: var(--ink2);
+}
+.sr-dock .lt .t { font-size: 10.5px; padding: 4px 7px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sr-dock .lt .s { padding: 0 7px 5px; font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* les états : vide, rien avec ces filtres, erreur, une section qui attend (règle 7 : dire pourquoi) */
+.sr-dock .dk-empty { display: flex; flex-direction: column; gap: 7px; align-items: flex-start; padding: 10px 4px; }
+.sr-dock .dk-empty b { font-family: var(--f-disp); font-weight: 400; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink2); }
+.sr-dock .dk-empty p { margin: 0; font-size: 11px; color: var(--ink3); line-height: 1.45; }
+.sr-dock .dk-empty .tb { height: 22px; font-size: 9px; }
+
+/* en bas : la sélection (« 2 choisis · Poser »), puis l'aide des gestes */
+.sr-dock .dk-selbar { flex: none; display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: var(--r2); background: var(--panel2); }
+.sr-dock .dk-selbar[hidden] { display: none; }
+.sr-dock .dk-selbar .n { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink2); flex: 1; }
+.sr-dock .dk-selbar .tb { height: 22px; font-size: 9px; padding: 0 7px; }
+.sr-dock .dk-f { flex: none; text-align: center; font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); }
+.sr-dock .dk-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.sr-dock.drop-on { box-shadow: inset 0 0 0 2px var(--grn2); }
+
+/* la poignée : dans l'intervalle entre le panneau et la page (le geste d'Idéation, de commun/split.js) */
+.sr-dock-grip {
+  position: fixed; top: var(--sr-hdr-h, 52px); bottom: 0; left: var(--sr-dock-w, 250px); width: 10px; z-index: 39;
+  cursor: col-resize; touch-action: none; outline: none; transition: left .2s;
+}
+.sr-dock-grip::after {
+  content: ""; position: absolute; top: 12%; bottom: 12%; left: 50%; width: 2px; margin-left: -1px;
+  border-radius: 1px; background: transparent; transition: background .12s;
+}
+.sr-dock-grip:hover::after, .sr-dock-grip:focus-visible::after { background: var(--line-cy); }
+.sr-dock-grip.on::after { background: var(--or); }
+html.sr-dock-resizing .sr-dock-grip { transition: none; }
+html.sr-dock-resizing, html.sr-dock-resizing * { user-select: none !important; cursor: col-resize !important; }
+/* fermé : un trait court au bord, qui se voit sans survol ; un clic l'ouvre */
+html:not(.sr-dock-on):not(.sr-dock-over) .sr-dock-grip { left: 0; cursor: pointer; }
+html:not(.sr-dock-on):not(.sr-dock-over) .sr-dock-grip::after {
+  top: calc(50% - 24px); bottom: calc(50% - 24px); left: 3px; width: 4px; margin-left: 0; border-radius: 2px; background: var(--line-gr);
+}
+html:not(.sr-dock-on):not(.sr-dock-over) .sr-dock-grip:hover::after,
+html:not(.sr-dock-on):not(.sr-dock-over) .sr-dock-grip:focus-visible::after { background: var(--line-cy); }
+html.sr-dock-over .sr-dock-grip { z-index: 63; }
+.sr-dock-grip[hidden] { display: none; }

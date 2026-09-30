@@ -28,7 +28,7 @@
 // un dépôt de fichier, un import de Character Factory, un zip.
 import {
   mountHeader, api, pick, thumb, kindMark, el, $, $$, href, ROOT, fmtDate, fmtDur, kindFr, etypeFr, dropAnywhere,
-  dropZone, dragItem,
+  dropZone, dragItem, dock,
 } from '../commun/shell.js';
 import { createUndo, libPatch, libBoard, keyLabel } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
@@ -37,6 +37,11 @@ import { contextMenu, pageMenu, copy } from '../commun/menu.js';
 import { lecteur } from '../commun/lecteur.js';   // LE lecteur (30/09) : la vidéo ou le son d'une fiche, sa frise, sa tête
 
 mountHeader('asset');
+// le panneau Asset commun (commun/dock.js), ici aussi (Ctrl+Espace) : toutes les sortes ; clic :
+// choisir, double-clic ou Entrée : la fiche ; glisser une vignette sur un dossier l'y range
+dock.configure({ kinds: ['image', 'video', 'audio', 'midi', 'sequence', 'element'], label: 'Asset',
+  placeLabel: 'Ouvrir la fiche', place: (items) => { go('#' + items[0].id); }, fiche: (it) => go('#' + it.id),
+  hint: 'clic : choisir · double-clic : la fiche · glisser sur un dossier : l’y ranger' });
 
 // La même base d'API que shell.js (window.SR_API, sinon le portail) : le
 // dépôt passe par XMLHttpRequest, seul moyen de suivre l'envoi d'un fichier.
