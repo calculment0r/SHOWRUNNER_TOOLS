@@ -148,6 +148,15 @@ async function paintHome() {
 
 function st(cls, txt) { return el('span', { class: `st ${cls}` }, txt); }
 
+// pourquoi TRELLIS.2, câblé, ne peut pas partir : le gabarit, puis chaque machine
+function notReady(s) {
+  const t = s?.trellis || {};
+  if (s?.error) return `l'état de la chaîne est illisible (${s.error})`;
+  if (!t.template_ok) return `le graphe TRELLIS.2 de Character Factory est introuvable (${t.template})`;
+  if (!(t.machines || []).length) return 'aucune machine ComfyUI dans la voie « image »';
+  return t.machines.map((m) => (m.up ? `${m.machine} : il manque ${(m.missing || []).join(', ')}` : `${m.machine} ne répond pas`)).join(' ; ');
+}
+
 function chainPanel(s) {
   const t = s?.trellis || {};
   const machines = (t.machines || []).map((m) => (m.up ? (m.missing?.length ? `${m.machine} : il manque ${m.missing.join(', ')}` : `${m.machine} : modèles présents`) : `${m.machine} : ne répond pas`));
@@ -159,10 +168,11 @@ function chainPanel(s) {
     step('02', 'Ses vues', st('wait', 'aucun modèle'),
       'Il en faudrait quatre à 90°, à hauteur d\'œil, à la même échelle. Aucun modèle installé ne les fait justes (essai botte du 28/09 : Krea 2 1/4, Qwen-Image 2.1 turbo 0/4, ',
       el('a', { href: SRC.orbit, target: '_blank', rel: 'noopener' }, 'LoRA d\'orbite'), ' chargé à moitié 1/3). En attendant : à la main, depuis la bibliothèque.'),
-    step('03', 'Sa 3D · TRELLIS.2', t.wired ? st('ok', 'câblé') : st('wait', 'pas câblé'),
+    step('03', 'Sa 3D · TRELLIS.2', t.wired ? (t.ready ? st('ok', 'câblé') : st('wait', 'câblé · attend')) : st('wait', 'pas câblé'),
       'Une seule image, carrée, détourée, 1024 px, sans marge : la seule entrée documentée (',
       el('a', { href: SRC.pipe, target: '_blank', rel: 'noopener' }, 'pipeline'), '). ',
-      t.wired ? 'Le bouton lance TRELLIS.2 sur ComfyUI.' : 'Pas encore lancé ici : Cal valide d\'abord l\'écran (28/09, nuit). Le bouton fait un cube de contrôle, marqué factice.',
+      t.wired ? (t.ready ? 'Le bouton lance TRELLIS.2 sur ComfyUI : ≈ 2 min 40 sur DGX1 (30/09), un travail GPU à la fois par machine.' : `Câblé, mais ${notReady(s)}.`)
+        : 'Pas encore câblé ici (Admin → Câblage) : le bouton fait un cube de contrôle, marqué factice.',
       machines.length ? el('span', { class: 'lbl', style: { display: 'block', marginTop: '6px' } }, machines.join(' · ')) : null),
     step('04', 'Sa taille · à qui il est', st('off', 'plus tard'),
       'Mesurée sur le plein pied de son personnage, puis l\'attache : dessinées dans la maquette, pas commencées.'),
@@ -328,8 +338,10 @@ function objectSheet(o, s) {
     try { Object.assign(o, await libPatch(U, o.id, { title: v }, `renommer « ${o.title} » en « ${v} »`, { before: o })); saved.classList.add('on'); setTimeout(() => saved.classList.remove('on'), 1600); } catch (err) { say(err.message); }
   });
   const tick = (cls, txt) => el('span', { class: `tick ${cls}` }, el('i'), el('span', {}, txt));
-  const go3d = el('button', { class: 'tb go', type: 'button', id: 'go3d', disabled: !main,
-    title: !main ? 'il lui faut une image' : wired ? 'TRELLIS.2 sur l\'image choisie' : 'un cube de contrôle : TRELLIS.2 n\'est pas encore câblé ici',
+  // câblé mais aucune machine prête : le bouton dit pourquoi (règle 7)
+  const blocked = !main ? 'il lui faut une image' : wired && !s?.trellis?.ready ? notReady(s) : '';
+  const go3d = el('button', { class: 'tb go', type: 'button', id: 'go3d', disabled: !!blocked,
+    title: blocked || (wired ? 'TRELLIS.2 sur l\'image choisie' : 'un cube de contrôle : TRELLIS.2 n\'est pas encore câblé ici'),
     onclick: () => run3d(o, wired) }, wired ? 'Tirer la 3D' : 'Tirer la 3D · factice');
   const head = el('section', { class: 'o-head' },
     el('div', { class: 'who' }, el('a', { class: 'o-back', href: '#' }, '‹ objets'), name,
@@ -339,8 +351,11 @@ function objectSheet(o, s) {
       el('div', { class: 'ticks', 'aria-label': 'avancement' }, tick(main ? 'done' : 'wait', 'image'), tick(named >= 4 ? 'done' : 'wait', 'vues'),
         tick(m && !m.factice ? 'done' : m ? 'wait' : '', '3D'), tick('', 'taille')),
       undoGroup(), el('a', { class: 'tb ghost', href: href(`asset/#${o.id}`) }, 'Dans la bibliothèque'), go3d),
-    wired ? null : el('p', { class: 'why', style: { gridColumn: '1 / -1' } },
-      'TRELLIS.2 n\'est pas câblé ici (Cal, 28/09 nuit : l\'écran d\'abord) — le bouton fait un cube de contrôle, marqué factice, pour montrer le parcours.'));
+    wired ? (blocked && main ? el('p', { class: 'why', style: { gridColumn: '1 / -1' } }, `Tirer la 3D attend : ${blocked}. `,
+      el('a', { href: href('admin/#machines') }, 'Admin → Machines')) : null)
+      : el('p', { class: 'why', style: { gridColumn: '1 / -1' } },
+        'TRELLIS.2 n\'est pas câblé ici — le bouton fait un cube de contrôle, marqué factice, pour montrer le parcours. ',
+        el('a', { href: href('admin/#cablage') }, 'Admin → Câblage')));
 
   // l'image choisie
   const hero = el('figure', { class: 'blk', style: { margin: 0 } },
@@ -398,10 +413,12 @@ function objectSheet(o, s) {
   const three = el('div', { class: 'three' });
   const runBar = el('div', { class: 'run-bar', hidden: true }, el('i', { style: { width: '0%' } }));
   const runMsg = el('span', { class: 'lbl', id: 'run-msg' });
+  const runStop = el('button', { class: 'tb ghost sm', type: 'button', id: 'run-stop', hidden: true }, 'Arrêter');
   const meshesRow = el('div', { class: 'row-end' });
   if (m) {
-    three.append(el('span', { class: 'lbl tl' }, m.factice ? 'cube de contrôle · glisser pour tourner' : 'glisser pour tourner'),
-      m.factice ? el('span', { class: 'st wait tr' }, 'factice · pas TRELLIS.2') : null);
+    // append(null) écrirait « null » : l'étiquette factice seulement quand elle existe
+    three.append(el('span', { class: 'lbl tl' }, m.factice ? 'cube de contrôle · glisser pour tourner' : 'glisser pour tourner'));
+    if (m.factice) three.append(el('span', { class: 'st wait tr' }, 'factice · pas TRELLIS.2'));
     viewer = preview(three, href(`library/${o.id}/${m.file}`));
     meshesRow.append(el('a', { class: 'tb ghost sm', href: href(`library/${o.id}/${m.file}`), download: `${o.title}-${m.file}` }, 'Télécharger le GLB'),
       el('span', { class: 'lbl' }, `${m.file} · ${fmtDate(m.created)}${(e.meshes || []).length > 1 ? ` · ${e.meshes.length} versions` : ''}`));
@@ -414,10 +431,11 @@ function objectSheet(o, s) {
     el('span', {}, el('b', {}, (m.vertices ?? '?').toLocaleString('fr-FR')), ' sommets'),
     m.extent ? el('span', {}, 'boîte ', el('b', {}, m.extent.map((x) => x.toLocaleString('fr-FR', { maximumFractionDigits: 3 })).join(' × '))) : null,
     el('span', {}, el('b', {}, String(m.textures ?? 0)), ' textures'),
+    m.secs ? el('span', {}, el('b', {}, `${Math.round(m.secs)} s`), m.machine ? ` sur ${m.machine}` : '') : null,
     el('span', {}, el('b', {}, m.model || '?'))) : null;
   const threeBlk = el('div', { class: 'blk' },
     el('div', { class: 'blk-head' }, el('span', { class: 'ttl' }, 'en 3D'), el('span', { class: 'lbl' }, m ? (m.factice ? 'factice' : 'TRELLIS.2 · image unique') : 'pas encore')),
-    el('div', { class: 'blk-body' }, three, runBar, runMsg, stats, meshesRow));
+    el('div', { class: 'blk-body' }, three, runBar, el('div', { class: 'row-end' }, runMsg, runStop), stats, meshesRow));
 
   // la colonne : ce que c'est, ce qu'on lit pour la 3D
   const desc = el('textarea', { class: 'fld', rows: 5, placeholder: 'ce que c\'est : matières, couleurs, taille, détails', 'aria-label': 'description' });
@@ -442,10 +460,10 @@ function objectSheet(o, s) {
         el('dt', {}, 'machines'), el('dd', {}, mach || 'aucune voie « image » déclarée'),
         el('dt', {}, 'câblage'), el('dd', {}, wired ? el('b', {}, 'câblé') : el('span', { class: 'flag' }, 'pas encore : cube de contrôle'))))),
     el('div', { class: 'blk' }, el('div', { class: 'blk-head' }, el('span', { class: 'ttl' }, 'la chaîne'), el('span', { class: 'lbl' }, 'où on en est')),
-      el('div', { class: 'blk-body' }, el('p', { class: 'hint' }, 'Image : prête. Vues : aucun modèle retenu. 3D : TRELLIS.2 image unique, documenté, pas câblé. Taille et attache : plus tard.'),
+      el('div', { class: 'blk-body' }, el('p', { class: 'hint' }, `Image : prête. Vues : aucun modèle retenu. 3D : TRELLIS.2 image unique, ${wired ? (s?.trellis?.ready ? 'câblé' : 'câblé, en attente d’une machine') : 'pas câblé'}. Taille et attache : plus tard.`),
         el('div', { class: 'row-end' }, el('a', { class: 'tb ghost sm', href: '#' }, 'L\'état de la chaîne'), el('a', { class: 'tb ghost sm', href: MAQUETTE, target: '_blank', rel: 'noopener' }, 'La maquette ↗')))));
 
-  S.run = { bar: runBar, msg: runMsg, go3d };
+  S.run = { bar: runBar, msg: runMsg, stop: runStop, go3d };
   // le clic droit ailleurs sur la fiche (commun/menu.js, pageMenu) : ses gestes
   S.sheet = () => {
     const free = VIEWS.slice(1).find((v) => !views.some((r) => r.label === v.label));
@@ -555,6 +573,12 @@ async function followJob(o, j = null) {
     S.run.msg.textContent = `${x.state === 'queued' ? 'en file' : 'en cours'} · ${x.message || ''}`;
     S.run.go3d.disabled = true;
     S.run.go3d.title = 'un travail 3D tourne déjà pour cet objet';
+    // arrêter : le sien (ou Cal) ; ComfyUI est interrompu, le GLB n'est pas rangé
+    S.run.stop.hidden = x.can === false;
+    S.run.stop.onclick = async () => {
+      S.run.stop.disabled = true;
+      try { await jobs.cancel(j.id); S.run.msg.textContent = 'arrêt demandé'; } catch (e) { say(e.message); S.run.stop.disabled = false; }
+    };
   };
   const done = await jobs.wait(j.id, paint);
   following = null;

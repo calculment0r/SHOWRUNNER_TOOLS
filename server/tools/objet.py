@@ -29,13 +29,24 @@ Ce qui tourne aujourd'hui, et seulement ça :
   GET  /api/objet/objects      les éléments objet, avec leurs meshes
   POST /api/objet/objects {title, description, item}   un nouvel objet
 
-**Pas câblé pour l'instant** (Cal, 28/09 nuit : « ne lance pas de test de
-vidéo ou image, on câblera après, mets d'abord tout en place avec mon
-brief pour l'UX et l'UI »). Tant que `objet_trellis` ne vaut pas `true`
-dans `showrunner.local.json`, `objet.mesh` refuse de partir sur ComfyUI
-et la page lance `objet.mesh_factice` (voie `cpu`) : un cube de contrôle,
-inscrit `factice: true`, pour que tout le parcours se voie — file,
-progression, GLB rangé, aperçu 3D — sans toucher un GPU.
+Le câblage : l'interrupteur `objet_trellis` (Admin → Câblage, écrit dans
+`showrunner.local.json`, pris au redémarrage). Tant qu'il ne vaut pas
+`true`, `objet.mesh` refuse de partir sur ComfyUI et la page lance
+`objet.mesh_factice` (voie `cpu`) : un cube de contrôle, inscrit
+`factice: true`, pour que tout le parcours se voie sans GPU.
+
+Câblé, `objet.mesh` part sur la voie « image » (famille `trellis` : la
+file du portail vide ComfyUI si une autre famille y est, attend la
+mémoire de FAMILY_GB, un seul travail GPU par machine — core/jobs.py) ;
+il dépose l'image, juge le graphe contre /object_info de l'instance
+avant l'envoi, suit le websocket de ComfyUI pour la progression (l'étape
+de chaque nœud, les pas des KSampler), s'arrête par /interrupt, et range
+le GLB avec sa durée et celle de chaque étape. Premier rendu réel le
+30/09 sur DGX1 : 159 s, 49 614 faces, 3 textures, 35 Mo ; mémoire
+disponible de la machine 99,3 → 86,3 Go au plus bas (relevé toutes les
+2 s), soit ≈ 13 Go pour TRELLIS.2, sous les 40 Go que FAMILY_GB lui
+prête (estimé d'après les poids) ; 45,5 Go avant que la file ne vide
+ComfyUI (le Krea 2 du studio, file vide).
 """
 
 from __future__ import annotations
@@ -319,27 +330,160 @@ def run_factice(ctx):
     return {"element": eid, "mesh": entry["file"], "note": "factice : un cube, pas TRELLIS.2"}
 
 
+def validate(c: Comfy, g: dict) -> list[str]:
+    """Le graphe contre le schéma réel de l'instance (/object_info), avant
+    l'envoi : un nœud, une entrée ou un poids absent se dit tout de suite,
+    pas après le chargement de TRELLIS.2. L'image d'entrée n'est pas jugée :
+    elle vient d'être déposée, sous le nom que ComfyUI a rendu."""
+    problems, cache = [], {}
+    for nid, node in g.items():
+        ct = node["class_type"]
+        if ct not in cache:
+            try:
+                cache[ct] = c.object_info(ct).get(ct)
+            except ComfyError:
+                cache[ct] = None
+        spec = cache[ct]
+        if not spec:
+            problems.append(f"nœud absent : {ct}")
+            continue
+        req = (spec.get("input") or {}).get("required") or {}
+        for name, conf in req.items():
+            if name not in node["inputs"]:
+                problems.append(f"{ct} : entrée « {name} » manquante")
+                continue
+            val = node["inputs"][name]
+            if isinstance(val, list) or (ct == "LoadImage" and name == "image"):
+                continue
+            opts = None
+            if isinstance(conf, list) and conf and isinstance(conf[0], list):
+                opts = conf[0]
+            elif isinstance(conf, list) and conf and conf[0] == "COMBO" and len(conf) > 1 and isinstance(conf[1], dict):
+                opts = conf[1].get("options")
+            if opts is not None and val not in opts and str(val) not in [str(o) for o in opts]:
+                problems.append(f"{ct} : « {val} » absent de cette machine ({name})")
+        for name, val in node["inputs"].items():
+            if isinstance(val, list) and len(val) == 2 and isinstance(val[0], str) and val[0] not in g:
+                problems.append(f"{ct} : « {name} » lié au nœud {val[0]}, absent du graphe")
+    return problems
+
+
+def stages(g: dict) -> dict[str, tuple[str, str]]:
+    """Ce que fait chaque nœud long du graphe, lu dans le graphe lui-même :
+    un KSampler se reconnaît à l'étage qui lui fournit son latent (structure,
+    forme, forme fine, texture), les autres à leur sorte."""
+    feed = {"EmptyTrellis2LatentStructure": ("structure", "échantillonne la structure"),
+            "Trellis2ShapeStage": ("forme", "échantillonne la forme"),
+            "Trellis2UpsampleStage": ("forme fine", "affine la forme (1536)"),
+            "Trellis2TextureStage": ("texture", "échantillonne la texture")}
+    kinds = {"LoadBackgroundRemovalModel": ("détourage", "charge BiRefNet"),
+             "RemoveBackground": ("détourage", "détoure l'objet (BiRefNet)"),
+             "ImageCropToMask": ("détourage", "recadre en carré, 1024 px"),
+             "CLIPVisionLoader": ("chargement", "charge DINOv3"),
+             "Trellis2Conditioning": ("chargement", "lit l'image (DINOv3)"),
+             "UNETLoader": ("chargement", "charge TRELLIS.2"),
+             "VAELoader": ("chargement", "charge les VAE de TRELLIS.2"),
+             "VaeDecodeStructureTrellis2": ("structure", "décode la structure"),
+             "VaeDecodeShapeTrellis": ("forme fine", "décode la forme"),
+             "VaeDecodeTextureTrellis": ("texture", "décode la texture"),
+             "RemeshMesh": ("mesh", "remaille (768)"),
+             "DecimateMesh": ("mesh", f"décime à {FACES:,} faces".replace(",", " ")),
+             "UnwrapMesh": ("mesh", "déplie les UV"),
+             "BakeTextureFromVoxel": ("cuisson", "cuit la couleur, le métal, la rugosité"),
+             "BakeNormalMapFromMesh": ("cuisson", "cuit les normales"),
+             "BakeAmbientOcclusion": ("cuisson", "cuit l'occlusion"),
+             "ApplyTextureToMesh": ("cuisson", "applique les textures"),
+             "SaveGLB": ("mesh", "écrit le GLB")}
+    out = {}
+    for nid, n in g.items():
+        ct = n["class_type"]
+        if ct == "KSampler":
+            src = (n["inputs"].get("latent_image") or [None])[0]
+            out[nid] = feed.get((g.get(src) or {}).get("class_type"), ("échantillonnage", "échantillonne"))
+        elif ct in kinds:
+            out[nid] = kinds[ct]
+    return out
+
+
+# la part de chaque étape dans le temps d'un rendu, relevée sur le premier
+# rendu réel (DGX1, 30/09, 159 s, poids déjà dans le cache disque : départs
+# de chaque étape à 1,7 · 3,0 · 5,0 · 12,3 · 18,9 · 66,2 · 95,4 · 109,0 s,
+# GLB écrit à 151 s ; chaque mesh garde les siens dans `stages_s`). L'ordre
+# est celui où ComfyUI les a exécutées ; la barre ne recule jamais.
+SHARE = {"détourage": 0.02, "chargement": 0.03, "structure": 0.05, "forme": 0.04, "forme fine": 0.30,
+         "texture": 0.18, "mesh": 0.09, "cuisson": 0.29}
+ORDER = ("détourage", "chargement", "structure", "forme", "forme fine", "texture", "mesh", "cuisson")
+
+
 def run_mesh(ctx):
     if not wired():
-        # verrou : aucun rendu tant que Cal n'a pas câblé la voie (28/09 nuit)
-        raise RuntimeError("TRELLIS.2 n'est pas encore câblé pour les objets (objet_trellis dans "
-                           "showrunner.local.json) : Cal veut d'abord valider l'UX")
+        # verrou : aucun rendu tant que Cal n'a pas câblé la voie (Admin → Câblage)
+        raise RuntimeError("TRELLIS.2 n'est pas câblé pour les objets : Admin → Câblage → "
+                           "« Object Creator · TRELLIS.2 » (objet_trellis)")
     if ctx.comfy is None:
         raise RuntimeError(f"la voie « image » n'a pas de ComfyUI ici ({ctx.endpoint}) : TRELLIS.2 ne peut pas partir")
+    from tools.movie import watch_progress   # le websocket de ComfyUI, lu comme Vidéo le lit (une seule vérité)
+
     eid, it, ref = _source(ctx)
+    machine = jobs.machine_of(ctx.endpoint)
     seed = int(ctx.params.get("seed") or secrets.randbelow(2**31))
-    ctx.progress(0.03, f"envoi de « {ref.get('label') or ref['file']} » à {ctx.endpoint}")
-    name = ctx.comfy.upload(library.path_of(it, ref["file"]))
+    t0 = time.time()
+    ctx.progress(0.01, f"envoie « {ref.get('label') or ref['file']} » à {machine}")
+    name = ctx.comfy.upload(library.path_of(it, ref["file"]), f"sr_objet_{ctx.job['id']}{Path(ref['file']).suffix.lower()}")
     ctx.check()
     g = graph(name, seed)
-    outs = [p for p in ctx.run_graph(g, prefix="trellis2", label="TRELLIS.2", timeout=3600)
-            if p.suffix.lower() == ".glb"]
-    if not outs:
-        raise RuntimeError("TRELLIS.2 n'a rendu aucun GLB")
-    entry = attach_mesh(eid, outs[0], {"seed": seed, "job": ctx.job["id"], "machine": jobs.machine_of(ctx.endpoint),
-                                       "from": ref["file"], "model": "TRELLIS.2 · image unique", "pad_factor": 1.0,
-                                       "target_faces": FACES})
-    return {"element": eid, "mesh": entry["file"], "note": f"{entry.get('faces', '?')} faces"}
+    ctx.progress(0.02, f"vérifie le graphe contre ComfyUI de {machine}")
+    problems = validate(ctx.comfy, g)
+    if problems:
+        raise RuntimeError(f"TRELLIS.2 ne peut pas partir sur {machine} : " + " · ".join(problems[:6]))
+    st = stages(g)
+    ksteps = {nid for nid, n in g.items() if n["class_type"] == "KSampler"}
+    seen: dict[str, float] = {}      # étape → secondes depuis le départ, quand elle commence
+
+    def frac(stage: str, inner: float = 0.0) -> float:
+        k = ORDER.index(stage) if stage in ORDER else 0
+        before = 0.03 + sum(SHARE[s] for s in ORDER[:k]) * 0.94
+        return before + SHARE.get(stage, 0) * 0.94 * max(0.0, min(1.0, inner))
+
+    def on_msg(m):
+        d = m.get("data") or {}
+        nid = str(d.get("node") or "")
+        if m.get("type") == "executing" and nid in st:
+            stage, label = st[nid]
+            seen.setdefault(stage, round(time.time() - t0, 1))
+            f = frac(stage)
+            ctx.progress(max(f, ctx.job.get("progress") or 0), f"{label} · {machine}")
+        elif m.get("type") == "progress" and nid in ksteps and nid in st:
+            stage, label = st[nid]
+            v, mx = d.get("value") or 0, d.get("max") or 1
+            ctx.progress(max(frac(stage, v / mx), ctx.job.get("progress") or 0), f"{label} · pas {v}/{mx} · {machine}")
+
+    def report(state, ahead):
+        if state == "wait":
+            ctx.progress(message=f"attend ComfyUI de {machine} · {ahead} devant")
+
+    stop = threading.Event()
+    threading.Thread(target=watch_progress, args=(ctx.endpoint, ctx.comfy.client_id, on_msg, stop),
+                     daemon=True, name="objet-ws").start()
+    time.sleep(0.3)
+    try:
+        pid = ctx.comfy.queue(g)
+        entry = ctx.comfy.wait(pid, cancelled=ctx.cancelled, report=report, timeout=3600)
+    except ComfyError as e:
+        raise RuntimeError(f"TRELLIS.2 sur {machine} : {e}") from e
+    finally:
+        stop.set()
+    files = [f for f in Comfy.outputs(entry, g) if f["filename"].lower().endswith(".glb")]
+    if not files:
+        raise RuntimeError(f"TRELLIS.2 n'a rendu aucun GLB sur {machine} (voir le journal de ComfyUI)")
+    ctx.progress(0.98, "rapatrie le GLB")
+    glb = ctx.comfy.download(files[0], ctx.workdir / "trellis2.glb")
+    secs = round(time.time() - t0, 1)
+    entry = attach_mesh(eid, glb, {"seed": seed, "job": ctx.job["id"], "machine": machine,
+                                   "from": ref["file"], "model": "TRELLIS.2 · image unique", "pad_factor": 1.0,
+                                   "target_faces": FACES, "secs": secs, "stages_s": seen})
+    return {"element": eid, "mesh": entry["file"], "secs": secs,
+            "note": f"{entry.get('faces', '?')} faces · {secs:.0f} s sur {machine}"}
 
 
 def register(app) -> None:
@@ -387,6 +531,21 @@ def selftest(call, ok) -> None:
            "objet : l'image entre par REF 1")
         ok(all("{{" not in json.dumps(n) for n in g.values()), "objet : le gabarit est rempli")
         ok(any(n["class_type"] == "KSampler" and n["inputs"]["seed"] == 7 for n in g.values()), "objet : la graine")
+        stg = stages(g)
+        ks = sorted(stg[nid][0] for nid, n in g.items() if n["class_type"] == "KSampler")
+        ok(ks == sorted(["structure", "forme", "forme fine", "texture"]),
+           f"objet : chaque KSampler reconnu par l'étage qui le nourrit ({ks})")
+
+        class _Faux:   # un /object_info réduit : le nœud UNETLoader absent, un poids VAE absent
+            def object_info(self, node):
+                if node == "UNETLoader":
+                    return {}
+                if node == "VAELoader":
+                    return {node: {"input": {"required": {"vae_name": [["trellis_2_shape_vae_bf16.safetensors"]]}}}}
+                return {node: {"input": {"required": {}}}}
+        probs = validate(_Faux(), g)
+        ok(any("UNETLoader" in p for p in probs) and any("trellis_2_texture_vae_bf16" in p for p in probs)
+           and not any("LoadImage" in p for p in probs), f"objet : le graphe jugé contre /object_info avant l'envoi ({probs})")
     else:
         print(f"  (gabarit absent ici : {template_path()} — le graphe n'est pas contrôlé)")
     # un GLB minimal : un triangle, POSITION avec min/max
