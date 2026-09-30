@@ -927,7 +927,7 @@ def run_test(ctx):
 def register(app) -> None:
     if mode() == "comfyui":
         jobs.register("music.yue", run_real, lane="audio", title="YuE2")
-        jobs.register("music.yue.abc", run_abc_real, lane="audio", title="YuE2 · partition")
+        jobs.register("music.yue.abc", run_abc_real, lane="audio", title="YuE2 · partition", family="yue", gpu=True)
     else:
         jobs.register("music.yue", run_test, lane="cpu", title="YuE2 (essai)")
         jobs.register("music.yue.abc", run_abc_test, lane="cpu", title="YuE2 · partition (essai)")

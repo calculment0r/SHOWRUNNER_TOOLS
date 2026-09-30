@@ -579,8 +579,12 @@ def api_extract(req):
         p = extract_params(d)
     except (ValueError, TypeError) as e:
         raise HttpError(400, str(e)) from e
-    kind = "music.midi.abc" if p["engine"] == "sheetsage2" else "music.midi"
-    j = jobs.submit(kind, d, title=f"Extraire le MIDI · {p['title']}"[:90], tool="music")
+    # SheetSage2 par ComfyUI ; le piano de ByteDance sur le GPU de la machine du
+    # portail (un sous-processus : épinglé au ComfyUI local de la voie audio, qui
+    # sert de jeton GPU) ; basic-pitch sur le processeur (ONNX)
+    kind = {"sheetsage2": "music.midi.abc", "bytedance": "music.midi.gpu"}.get(p["engine"], "music.midi")
+    pin = music_stems._local_audio_endpoint() if kind == "music.midi.gpu" and mode() == "reel" else None
+    j = jobs.submit(kind, d, title=f"Extraire le MIDI · {p['title']}"[:90], tool="music", pin=pin)
     return jobs.public(j)
 
 
@@ -598,7 +602,10 @@ def register(app) -> None:
     real = mode() == "reel"
     jobs.register("music.midi", run_real if real else run_test, lane="cpu", title="Extraire le MIDI" + ("" if real else " (essai)"))
     jobs.register("music.midi.abc", run_abc_real if real else run_abc_test, lane="audio" if real else "cpu",
-                  title="Extraire la partition" + ("" if real else " (essai)"))
+                  title="Extraire la partition" + ("" if real else " (essai)"), family="sheetsage2" if real else None, gpu=real)
+    jobs.register("music.midi.gpu", run_real if real else run_test, lane="audio" if real else "cpu",
+                  title="Extraire le MIDI (piano)" + ("" if real else " (essai)"), family="piano-bytedance" if real else None,
+                  gpu=real)
     app.route("POST", "/api/music/midi", api_save)
     app.route("GET", "/api/music/midi/options", api_options)
     app.route("POST", "/api/music/midi/extract", api_extract)

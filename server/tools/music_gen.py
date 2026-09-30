@@ -579,8 +579,11 @@ def api_generate(req):
 def register(app) -> None:
     for model in ("ace", "yue"):
         real = mode(model) == "reel"
+        # la famille de modèles : l'ordonnanceur garde ComfyUI chargé entre deux
+        # prises du même modèle et le vide avant un autre (core/jobs.py, _preflight)
         jobs.register(f"music.gen.{model}", run_real if real else run_test, lane="audio" if real else "cpu",
-                      title=f"Région · {schema()['modeles'][model]['nom']}" + ("" if real else " (essai)"))
+                      title=f"Région · {schema()['modeles'][model]['nom']}" + ("" if real else " (essai)"),
+                      family=("ace-step" if model == "ace" else "yue") if real else None, gpu=real)
     app.route("GET", "/api/music/gen/engines", api_schema)
     app.route("POST", "/api/music/gen/generate", api_generate)
 

@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import queue
 import random
 import re
 import secrets
@@ -55,6 +56,7 @@ import urllib.request
 from pathlib import Path
 
 from core import auth, config, jobs, library
+from core.comfy import Cancelled
 from core.http import HttpError, Response
 
 REPO = Path(__file__).resolve().parents[2]
@@ -250,17 +252,37 @@ def _stale(seg: dict, lang: str) -> bool:
     return lang not in (seg.get("tr") or {}) or (seg.get("trh") or {}).get(lang) != _h(seg.get("text", ""))
 
 
+ACTIVE = ("queued", "running")
+
+
 def _live(jid: str | None) -> dict | None:
+    """Le travail en cours d'un document : seulement tant qu'il est en file ou
+    qu'il tourne (fini, arrêté ou perdu, c'est l'état du document qui parle)."""
     j = jobs.get(jid) if jid else None
-    if not j:
+    if not j or j.get("state") not in ACTIVE:
         return None
     return {k: j.get(k) for k in ("id", "state", "progress", "message", "position", "eta_s", "machine")}
 
 
+def _settled(x: dict) -> dict:
+    """Un document (ou une traduction) « en file » ou « en cours » dont le
+    travail est fini sans l'avoir dit — arrêté, perdu à un redémarrage du
+    portail — se montre en échec, avec la raison : jamais « en file » pour
+    toujours. Le travail écrit l'état du document avant de finir : un travail
+    réussi ne passe pas par ici."""
+    if x.get("state") not in ACTIVE or not x.get("job"):      # sans numéro : le travail est en train d'être posé
+        return x
+    j = jobs.get(x["job"])
+    if j and j.get("state") in ACTIVE:
+        return x
+    why = {"cancelled": "arrêté", "interrupted": "interrompu par un redémarrage du portail"}.get((j or {}).get("state"))
+    return {**x, "state": "error", "error": x.get("error") or why or (j or {}).get("message") or "travail perdu (le portail a redémarré)"}
+
+
 def public(d: dict) -> dict:
-    out = dict(d)
+    out = _settled(dict(d))
     out["live"] = _live(d.get("job"))
-    out["translations"] = {k: {**v, "live": _live(v.get("job"))} for k, v in (d.get("translations") or {}).items()}
+    out["translations"] = {k: {**_settled(v), "live": _live(v.get("job"))} for k, v in (d.get("translations") or {}).items()}
     # une traduction à refaire : manquante, ou le texte a changé depuis (le hachage du texte traduit)
     out["stale_ids"] = {k: [s["id"] for s in d.get("segments", []) if _stale(s, k)] for k in (d.get("translations") or {})}
     out["stale"] = {k: len(v) for k, v in out["stale_ids"].items()}
@@ -269,6 +291,7 @@ def public(d: dict) -> dict:
 
 
 def summary(d: dict) -> dict:
+    d = _settled(d)
     return {k: d.get(k) for k in ("id", "title", "item", "created", "updated", "state", "mode", "lang", "detected",
                                   "duration", "kind", "thumb_url", "engine")} | {
         "to": sorted((d.get("translations") or {}).keys()), "segments": len(d.get("segments") or []),
@@ -323,12 +346,29 @@ def seg_text(seg: dict, which: str) -> str:
     return (seg.get("text") if which == "src" else (seg.get("tr") or {}).get(which)) or ""
 
 
+def on_text(text: str, ws: list[tuple[str, float, float]]) -> list[tuple[str, float, float]] | None:
+    """Les mots horodatés du moteur remis sur les mots du texte : Whisper
+    découpe « qu'est-ce » en « qu », « 'est », « -ce » (mesuré sur Getaround,
+    30/09) ; recollés tels que le texte les écrit, du début du premier à la fin
+    du dernier. None si le texte et les mots ne concordent pas."""
+    out, k = [], 0
+    for tw in text.split():
+        acc, a, b = "", None, None
+        while k < len(ws) and len(acc) < len(tw):
+            w, x, y = ws[k]
+            acc, a, b, k = acc + w, x if a is None else a, y, k + 1
+        if acc != tw:
+            return None
+        out.append((tw, a, b))
+    return out if k == len(ws) else None
+
+
 def seg_words(seg: dict, which: str) -> list[tuple[str, float, float]]:
     a, b = float(seg["a"]), float(seg["b"])
     if which == "src" and seg.get("words") and not seg.get("edited"):
         ws = [(str(w).strip(), float(x), float(y)) for w, x, y in seg["words"] if str(w).strip()]
         if ws:
-            return ws
+            return on_text(seg_text(seg, which), ws) or ws
     return spread(seg_text(seg, which), a, b)
 
 
@@ -497,6 +537,25 @@ def ollama_url() -> str:
     return str(config.get("transcrire_ollama") or config.get("llm_url") or "http://127.0.0.1:11434").rstrip("/")
 
 
+_LOOP = {"127.0.0.1", "localhost", "::1"}
+
+
+def pin_for(url: str | None = None) -> str | None:
+    """Le ComfyUI de la voie audio qui est sur la même machine que le calcul :
+    le texte (un sous-processus, sur la machine du portail) ou la traduction
+    (l'Ollama de `url`). Il sert de jeton GPU : un seul travail GPU du portail
+    par machine (core/jobs.py) — sans lui, une voie audio à deux DGX donnerait
+    le jeton de l'une à un calcul qui tourne sur l'autre. En factice : aucun."""
+    if engine() != "local":
+        return None
+    host = urllib.parse.urlparse(url).hostname if url else "127.0.0.1"
+    for ep in config.get("lanes", {}).get("audio", []):
+        h = urllib.parse.urlparse(ep).hostname if ep != "local" else None
+        if h and (h == host or (h in _LOOP and host in _LOOP)):
+            return ep
+    return None
+
+
 def diar_url() -> str:
     from tools import analyse   # une seule vérité : l'adresse du service que Movie Analysis emploie
     return analyse.diar_url()
@@ -572,19 +631,36 @@ def run_worker(ctx, aid: str, wav: Path, lang: str, beam: int, duration: float) 
     cmd = [st["python"], str(WORKER), "--engine", aid, "--weights", st["weights"], "--audio", str(wav),
            "--lang", lang, "--beam", str(beam), "--out", str(out), "--duration", str(duration)]
     log = ctx.workdir / "moteur.log"
+    lines: queue.Queue = queue.Queue()
     with open(log, "wb") as lf:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=lf, text=True)
+        # la sortie lue à part : l'arrêt se voit chaque demi-seconde, même
+        # quand le moteur ne dit rien (une longue fenêtre de décodage)
+        reader = threading.Thread(target=lambda: [lines.put(x) for x in proc.stdout], daemon=True)
+        reader.start()
         try:
-            for line in proc.stdout:
-                if ctx.cancelled():
-                    proc.kill()
-                    raise RuntimeError("arrêté")
+            while True:
+                try:
+                    line = lines.get(timeout=0.5)
+                except queue.Empty:
+                    if ctx.cancelled():
+                        raise Cancelled("arrêté")
+                    if proc.poll() is not None and not reader.is_alive():
+                        break
+                    continue
                 if line.startswith("ETAPE "):
                     ctx.progress(None, line[6:].strip())
+                elif line.startswith("PROGRES "):
+                    try:
+                        f = float(line.split()[1])
+                    except (IndexError, ValueError):
+                        continue
+                    ctx.progress(0.1 + 0.65 * f, f"{ASR[aid]['name']} : {int(100 * f)} %")
             proc.wait()
         finally:
-            if proc.poll() is None:
+            if proc.poll() is None:                # arrêt par son PID, jamais par motif
                 proc.kill()
+                proc.wait(timeout=10)
     if proc.returncode != 0 or not out.exists():
         raise RuntimeError(f"{ASR[aid]['name']} a échoué : " + log.read_text(encoding="utf-8", errors="replace")[-600:])
     return json.loads(out.read_text(encoding="utf-8"))
@@ -600,10 +676,11 @@ def diarize(ctx, wav: Path) -> list[list]:
     t0 = time.time()
     while True:
         if ctx.cancelled():
-            try:
+            try:   # le travail du service est retiré (sa route DELETE) ; s'il ne répond pas, on s'arrête quand même
                 urllib.request.urlopen(urllib.request.Request(diar_url() + "/travail/" + jid, method="DELETE"), timeout=10)
-            finally:
-                raise RuntimeError("arrêté")
+            except OSError:
+                pass
+            raise Cancelled("arrêté")
         st = _get_json(diar_url() + "/travail/" + jid, timeout=90)
         if st.get("resultat"):
             return st["resultat"].get("segments_nemo") or []
@@ -642,20 +719,46 @@ def _thinks(model: str) -> bool:
         return False
 
 
-def ollama_translate(model: str, src: str, dst: str, batch: list[tuple[int, str]], before: list[str], after: list[str],
-                     last: bool, thinks: bool) -> dict[int, str]:
-    """Un lot de répliques ; la réponse doit porter exactement les numéros
-    envoyés (schéma JSON), sinon le lot échoue en le disant."""
+def mt_messages(src: str, dst: str, batch: list[tuple[int, str]], before: list[str], after: list[str]) -> list[dict]:
     sys_msg = (f"You translate film subtitles from {LANG_EN.get(src, src)} to {LANG_EN[dst]}. Translate every line, "
                "keep names, register and punctuation, do not merge or split lines. Answer only the JSON asked for, "
                "with exactly the same line numbers.")
     user = {"context_before": before, "lines": [{"i": i, "text": t} for i, t in batch], "context_after": after}
-    body = {"model": model, "stream": False, "format": SCHEMA, "options": {"temperature": 0},
-            "keep_alive": 0 if last else "2m",
-            "messages": [{"role": "system", "content": sys_msg}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}]}
+    return [{"role": "system", "content": sys_msg}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}]
+
+
+CTX_STEP = 4096
+
+
+def mt_context(lots: list[list[dict]]) -> int:
+    """La fenêtre de contexte d'une traduction, la même pour tous ses lots
+    (Ollama recharge le modèle quand `num_ctx` change). Sans elle, Ollama la
+    règle d'après la mémoire vue — 256k au-delà de 48 Gio (docs.ollama.com/
+    context-length) : 43 Go mesurés pour qwen3:30b-a3b sur DGX2 le 30/09, au
+    lieu des ~18 du modèle. Borne haute, par construction : un jeton pour un
+    signe à l'entrée (la plupart des jetons en couvrent plusieurs) ; la sortie,
+    les mêmes répliques traduites, comptées au double de leur texte, plus le
+    JSON ; arrondi aux 4096 du dessus."""
+    need = 0
+    for msgs in lots:
+        chars_in = sum(len(m["content"]) for m in msgs)
+        lines = json.loads(msgs[-1]["content"])["lines"]
+        chars_out = sum(2 * len(x["text"]) + 24 for x in lines) + 16
+        need = max(need, chars_in + chars_out + 256)
+    return max(CTX_STEP, -(-need // CTX_STEP) * CTX_STEP)
+
+
+def ollama_translate(model: str, msgs: list[dict], batch: list[tuple[int, str]], last: bool, thinks: bool,
+                     num_ctx: int) -> dict[int, str]:
+    """Un lot de répliques ; la réponse doit porter exactement les numéros
+    envoyés (schéma JSON), sinon le lot échoue en le disant."""
+    body = {"model": model, "stream": False, "format": SCHEMA, "options": {"temperature": 0, "num_ctx": num_ctx},
+            "keep_alive": 0 if last else "2m", "messages": msgs}
     if thinks:
         body["think"] = False
     r = _get_json(ollama_url() + "/api/chat", timeout=600, body=body)
+    if r.get("done_reason") == "length":
+        raise RuntimeError(f"traduction : la réponse dépasse la fenêtre de {num_ctx} jetons (lot coupé, rien n'est rangé)")
     got = json.loads((r.get("message") or {}).get("content") or "{}").get("t") or []
     out = {int(x["i"]): str(x["text"]).strip() for x in got if isinstance(x, dict) and "i" in x and "text" in x}
     want = {i for i, _ in batch}
@@ -683,7 +786,7 @@ def run_transcribe(ctx) -> dict:
             segs, voices = fake_transcribe(src, dur, detected, p["speakers"], p["item"] + p["mode"])
             for k in range(6):   # le temps d'un vrai calcul, pour voir la page attendre
                 if ctx.cancelled():
-                    raise RuntimeError("arrêté")
+                    raise Cancelled("arrêté")
                 ctx.progress(0.2 + 0.12 * k, f"transcrit (factice) {int(100 * (k + 1) / 6)} %")
                 time.sleep(0.15)
             used = {"asr": "factice", "diar": "factice" if p["speakers"] else None}
@@ -719,7 +822,7 @@ def run_transcribe(ctx) -> dict:
             who = {"owner": ctx.job["owner"]} if ctx.job.get("owner") else {}   # la traduction est à qui a transcrit
             j = jobs.submit("transcrire.translate", {"doc": tid, "to": p["to"], "mode": p["mode"], "all": False},
                             title=f"Traduire · {LANGS[p['to']]} · {d.get('title', '')[:40]}", tool="transcrire",
-                            thumb=ctx.job.get("thumb"), **who)
+                            thumb=ctx.job.get("thumb"), pin=pin_for(ollama_url()), **who)
             _update(tid, lambda x: x["translations"][p["to"]].update(job=j["id"]))
         return {"note": f"{len(segs)} répliques · {secs} s", "doc": tid, "seconds": secs}
     except Exception as e:
@@ -751,17 +854,29 @@ def run_translate(ctx) -> dict:
             ctxn = MT[model]["context"]
             thinks = _thinks(model)
             order = {s["id"]: k for k, s in enumerate(d["segments"])}
+            lots = []
             for b0 in range(0, len(todo), BATCH):
-                if ctx.cancelled():
-                    raise RuntimeError("arrêté")
                 chunk = todo[b0:b0 + BATCH]
                 ks = [order[s["id"]] for s in chunk]
                 before = [x.get("text", "") for x in d["segments"][max(0, ks[0] - ctxn):ks[0]]] if ctxn else []
                 after = [x.get("text", "") for x in d["segments"][ks[-1] + 1:ks[-1] + 1 + ctxn]] if ctxn else []
-                ctx.progress(0.05 + 0.9 * b0 / max(1, len(todo)), f"{MT[model]['name']} : {b0}/{len(todo)}")
-                res = ollama_translate(model, src, to, [(n, s["text"]) for n, s in enumerate(chunk)], before, after,
-                                       last=b0 + BATCH >= len(todo), thinks=thinks)
-                got.update({s["id"]: res[n] for n, s in enumerate(chunk)})
+                batch = [(n, s["text"]) for n, s in enumerate(chunk)]
+                lots.append((b0, chunk, batch, mt_messages(src, to, batch, before, after)))
+            num_ctx = mt_context([m for *_, m in lots])
+            try:
+                for b0, chunk, batch, msgs in lots:
+                    if ctx.cancelled():
+                        raise Cancelled("arrêté")
+                    ctx.progress(0.05 + 0.9 * b0 / max(1, len(todo)), f"{MT[model]['name']} : {b0}/{len(todo)}")
+                    res = ollama_translate(model, msgs, batch, last=b0 + BATCH >= len(todo), thinks=thinks, num_ctx=num_ctx)
+                    got.update({s["id"]: res[n] for n, s in enumerate(chunk)})
+            except Exception:
+                # arrêt ou lot refusé : le modèle ne reste pas chargé pour rien (keep_alive 0, docs.ollama.com/api/chat)
+                try:
+                    _get_json(ollama_url() + "/api/generate", timeout=30, body={"model": model, "keep_alive": 0})
+                except (OSError, ValueError):
+                    pass
+                raise
         secs = round(time.time() - t0, 1)
         skipped = []
 
@@ -891,7 +1006,7 @@ def api_run(req) -> dict:
               "family": a["family"], "mem_gb": a["mem_gb"]}
     try:
         j = jobs.submit("transcrire.transcribe", params, title=f"Transcrire · {d['title'][:48]}", tool="transcrire",
-                        thumb=pub.get("thumb_url"))
+                        thumb=pub.get("thumb_url"), pin=pin_for())
     except Exception:
         _path(tid).unlink(missing_ok=True)
         raise
@@ -921,7 +1036,8 @@ def api_translate(req, tid) -> dict:
         _update(tid, lambda x: x.setdefault("translations", {}).__setitem__(to, {**cur, "state": "queued", "error": None}))
     try:
         j = jobs.submit("transcrire.translate", {"doc": tid, "to": to, "mode": d.get("mode") or "rapide", "all": bool(b.get("all"))},
-                        title=f"Traduire · {LANGS[to]} · {d.get('title', '')[:40]}", tool="transcrire", thumb=d.get("thumb_url"))
+                        title=f"Traduire · {LANGS[to]} · {d.get('title', '')[:40]}", tool="transcrire", thumb=d.get("thumb_url"),
+                        pin=pin_for(ollama_url()))
     except Exception:
         _update(tid, lambda x: x["translations"].__setitem__(to, cur) if cur else x["translations"].pop(to, None))
         raise
@@ -1115,6 +1231,23 @@ def parse_vtt(text: str) -> list[str]:
 def selftest(call, ok) -> None:
     import os
     import tempfile
+
+    small = mt_messages("fr", "en", [(n, "Tu peux même déverrouiller ta voiture avec ton tél ?") for n in range(30)], ["avant"] * 3, [])
+    big = mt_messages("fr", "en", [(n, "x" * MAX_TEXT) for n in range(30)], [], [])
+    c1, c2 = mt_context([small]), mt_context([small, big])
+    ok(c1 == 8192 and c2 >= len(big[1]["content"]) + 30 * 2 * MAX_TEXT and c2 % CTX_STEP == 0,
+       f"traduction : une fenêtre de contexte bornée par le lot le plus long, la même pour tous ({c1}, {c2})")
+    ok(pin_for() is None, "factice : aucun jeton GPU épinglé")
+    lost = _settled({"state": "running", "job": "job-0000-000000-dead"})
+    ok(lost["state"] == "error" and "perdu" in lost["error"] and _settled({"state": "queued"})["state"] == "queued"
+       and _settled({"state": "done", "job": "job-x"})["state"] == "done",
+       f"un document dont le travail a disparu se montre en échec, pas « en file » pour toujours ({lost})")
+    wd = {"segments": [{"id": "s1", "a": 3.4, "b": 5.3, "text": "qu'est-ce que vous voulez ?",
+                        "words": [["qu", 3.4, 3.5], ["'est", 3.5, 3.6], ["-ce", 3.6, 3.7], ["que", 3.7, 3.8], ["vous", 3.8, 4.0],
+                                  ["voulez", 4.0, 5.1], ["?", 5.1, 5.3]]}]}
+    cw = cues(wd)
+    ok(len(cw) == 1 and cw[0]["lines"] == ["qu'est-ce que vous voulez ?"] and cw[0]["a"] == 3.4 and cw[0]["b"] == 5.3,
+       f"sous-titres : les morceaux de mots de Whisper recollés comme le texte les écrit ({cw})")
 
     st, o = call("GET", "/api/transcrire/options")
     ok(st == 200 and o.get("engine") == "factice" and {m["id"] for m in o.get("modes", [])} == set(MODES),

@@ -493,13 +493,15 @@ def run_lyrics_real(ctx):
     t0 = time.time()
     out = err = ""
     try:
-        proc.stdin.write(json.dumps(req))
-        proc.stdin.close()
+        # la demande part par communicate (une seule fois : il ferme lui-même
+        # l'entrée) ; les appels suivants ne font qu'attendre
+        payload = json.dumps(req)
         while True:
             try:
-                out, err = proc.communicate(timeout=1.0)
+                out, err = proc.communicate(input=payload, timeout=1.0)
                 break
             except subprocess.TimeoutExpired:
+                payload = None
                 if ctx.cancelled():
                     raise Cancelled("arrêté")
                 if time.time() - t0 > 900:

@@ -40,8 +40,35 @@ def step(msg: str) -> None:
     print("ETAPE " + msg, flush=True)
 
 
+class _Progress:
+    """À la place de la barre tqdm de `whisper.transcribe` (transcribe.py :
+    `tqdm.tqdm(total=content_frames, unit="frames")`, puis `pbar.update(…)`
+    à chaque fenêtre de 30 s décodée) : la part faite, en lignes « PROGRES »
+    que le portail lit — la vraie progression d'un long film."""
+
+    def __init__(self, total=None, **_):
+        self.total, self.n, self.last = max(1, int(total or 1)), 0, -1.0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def update(self, k=1):
+        self.n += k
+        f = min(1.0, self.n / self.total)
+        if f - self.last >= 0.02 or f >= 1.0:
+            self.last = f
+            print(f"PROGRES {f:.3f}", flush=True)
+
+
 def whisper_run(a) -> dict:
+    import types
+
     import whisper
+    # le module (whisper.transcribe est la fonction, que __init__ réexporte)
+    sys.modules["whisper.transcribe"].tqdm = types.SimpleNamespace(tqdm=_Progress)
     step("chargement de Whisper")
     m = whisper.load_model(a.weights, device="cuda")
     audio = whisper.load_audio(a.audio)

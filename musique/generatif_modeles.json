@@ -40,7 +40,7 @@
           "nom": "morceau", "doc": "une musique neuve à la longueur de la région, au tempo, à la mesure et dans la tonalité du projet",
           "sortie": "region",
           "params": ["caption", "instrumental", "lyrics", "language", "bpm", "keyscale", "timesignature", "duration", "seed", "n", "style_audio", "inference_steps", "guidance_scale", "shift", "thinking", "lm_temperature", "lm_cfg_scale", "lm_top_p"],
-          "reel": { "ok": true, "voie": "comfyui", "doc": "graphe du gabarit officiel ; n = batch_size ; l'audio de style par ReferenceTimbreAudio (nœud expérimental, nodes_ace.py:109-131) — écrit, jugé à vide, jamais rendu" }
+          "reel": { "ok": true, "voie": "comfyui", "doc": "graphe du gabarit officiel ; n = batch_size ; l'audio de style par ReferenceTimbreAudio (nœud expérimental, nodes_ace.py:109-131) — rendu sur DGX2 le 30/09 (30 s en 21 à 31 s ; l'effet du timbre : à écouter)" }
         },
         "lego": {
           "nom": "une piste", "doc": "une seule piste (la batterie, une guitare…) dans le contexte de ce qui joue autour : elle entend le reste, au tempo et dans la tonalité du projet ; la sortie a la durée du contexte envoyé (inference.py:606-610), calée par construction",
