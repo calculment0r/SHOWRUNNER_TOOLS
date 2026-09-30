@@ -22,13 +22,19 @@
   // ../.assetsignore écarte server/, tools/, docs/, porte/, .git… Les requêtes d'assets sont gratuites et ne passent
   // pas par le Worker ; Access les garde quand même (application sur le nom d'hôte).
   // run_worker_first : ce que sert le portail de DGX2, et non les assets (le Worker le relaie, signé).
+  // Puis les médias (/media/*, les vidéos et les sons publiés) : des assets, mais le Worker y ajoute les requêtes
+  // partielles (Range → 206), que les assets ne font pas et que Safari exige (worker.js, media()). Chaque requête d'un
+  // média compte donc comme une requête du Worker (quota gratuit : 100 000 par jour).
+  // Motifs : « * » va jusqu'au bout du chemin, « / » compris (« /*.mp4 » = tout .mp4 de l'arbre) ; sensibles à la casse.
   // Limites : 20 000 fichiers (Workers Free), 25 Mio par fichier ; run_worker_first : 100 motifs au plus.
   "assets": {
     "directory": "..",
     "binding": "ASSETS",
     "run_worker_first": [
       "/api/*", "/library/*", "/character/api/*", "/character/files/*", "/character/v1/*", "/analyse/runs/*",
-      "/pont/*", "/agents/*", "/invitation", "/invitation/*"
+      "/pont/*", "/agents/*", "/invitation", "/invitation/*",
+      "/media/*", "/*.mp4", "/*.m4v", "/*.mov", "/*.webm", "/*.mp3", "/*.m4a", "/*.aac", "/*.wav", "/*.ogg",
+      "/*.oga", "/*.opus", "/*.flac"
     ]
   },
 

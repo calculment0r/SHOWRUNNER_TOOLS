@@ -19,6 +19,8 @@
 //   GET  /library/<id>/<fichier>        → R2 d'abord (Range ; droit lu dans item.json), sinon DGX2
 //   *    /pont/<dgx1|dgx2>/<action>     → le pont de la machine (état, préparer, libérer) ; il décide seul des droits
 //   *    /agents/*                      → réservé (étude § 6)
+//   GET  /media/*, *.mp4, *.webm…       → les assets, mais par le Worker : il y ajoute les requêtes partielles (Range),
+//                                         que les assets statiques ne font pas et que Safari exige (media(), plus bas)
 //   le reste                            → les pages du portail (assets statiques : le dépôt, sans server/ ni docs/)
 //
 // En mode studio (MODE = "studio"), tout chemin va au studio de DGX1 tel quel : ses pages y demandent /api/…, /files/…
@@ -41,7 +43,7 @@
 //                       Aucun jeton Access n'y est lu ni transmis, Cal compris (le code admin, puis nico007) :
 //                       l'application Access du nom d'hôte est à supprimer (étude, « La porte par code »).
 
-const VERSION = 'porte du 29/09/2026 (code)';
+const VERSION = 'porte du 30/09/2026 (code, plages des médias)';
 const COOKIES_PORTAIL = ['sr_session', 'sr_invitation'];
 const JETON_COOKIE = /^[A-Za-z0-9_-]{1,200}$/;   // secrets.token_urlsafe, empreintes hexadécimales
 const INVITATION = /^\/invitation(\/|$)/;
@@ -370,12 +372,83 @@ async function listeHorsLigne(env, id, url) {
   return json({ items, total: items.length, counts, folders: [], hors_ligne: true, publie: index.at || null });
 }
 
+// ── les médias des assets, par plages ────────────────────────────────────────────────────────────────────────────
+// Safari (iPhone compris) ne lit une vidéo que si le serveur répond aux requêtes partielles : « HTTP servers hosting
+// media files for iOS must support byte-range requests » (Apple, Safari Web Content Guide, « Configuring Your Server »,
+// https://developer.apple.com/library/archive/documentation/AppleApplications/Reference/SafariWebContent/CreatingVideoforSafarioniPhone/CreatingVideoforSafarioniPhone.html).
+// Les assets statiques d'un Worker ne le font pas : la documentation n'en dit rien (static-assets/, binding/,
+// headers/ : Range n'y figure que pour dire qu'une réponse à Range n'a pas de Cache-Control), le code de l'asset-worker
+// (workers-sdk, packages/workers-shared/asset-worker) n'a ni 206 ni Content-Range, et l'adresse publique répond 200
+// avec tout le fichier à « Range: bytes=0-99 » (30/09/2026). Ces chemins sont donc dans run_worker_first
+// (wrangler.jsonc) : le Worker demande le fichier aux assets (env.ASSETS.fetch, ETag et 304 compris) et n'en rend
+// que la plage demandée.
+// Sans Range, le corps passe tel quel, en flux. Avec Range, le fichier est lu en entier puis découpé : la réponse des
+// assets, vue du Worker, n'a pas de Content-Length (essayé dans wrangler dev, 30/09), et Content-Range exige la taille
+// avant le premier octet. Un asset fait au plus 25 Mio, sous les 128 Mo de mémoire d'un Worker
+// (https://developers.cloudflare.com/workers/platform/limits/).
+// Les chemins servis par le Worker lui-même (bibliothèque, rendus de Movie Analysis…) ne sont jamais des assets.
+const MEDIA = /^\/media\/|\.(mp4|m4v|mov|webm|mp3|m4a|aac|wav|ogg|oga|opus|flac)$/i;
+const ROUTES_DU_WORKER = /^\/(api|library|pont|agents|invitation)(\/|$)|^\/(character\/(api|files|v1)|analyse\/runs)\//;
+const assetMedia = (chemin) => MEDIA.test(chemin) && !ROUTES_DU_WORKER.test(chemin);
+
+async function media(req, env) {
+  if (!SANS_CORPS.has(req.method)) return erreur(405, 'lecture seule');
+  const range = req.headers.get('range');
+  // aux assets : sans Range ni If-Range (ils ne les lisent pas, et Range leur ôte Cache-Control) ; avec une plage,
+  // un GET même pour un HEAD, pour connaître la taille
+  const demande = new Headers(req.headers);
+  demande.delete('range');
+  demande.delete('if-range');
+  const methode = range ? 'GET' : req.method;
+  const r = await env.ASSETS.fetch(new Request(req.url, { method: methode, headers: demande }));
+  // 304, 404, redirection : tels quels
+  if (r.status !== 200) return r;
+  const h = new Headers(r.headers);
+  h.set('accept-ranges', 'bytes');
+  // If-Range : la plage seulement si le fichier est celui qu'on croit, sinon tout (RFC 9110 § 13.1.5)
+  const ir = req.headers.get('if-range');
+  if (!range || (ir && ir !== r.headers.get('etag'))) {
+    if (req.method === 'HEAD' && methode === 'GET') { await r.body?.cancel(); return new Response(null, { status: 200, headers: h }); }
+    return new Response(r.body, { status: 200, headers: h });
+  }
+  const octets = new Uint8Array(await r.arrayBuffer());
+  const taille = octets.byteLength;
+  h.delete('content-length');   // celui du corps qu'on rend, que le moteur pose lui-même
+  const p = plage(range, taille);
+  if (p === 'hors') {
+    h.set('content-range', `bytes */${taille}`);
+    return new Response(null, { status: 416, headers: h });
+  }
+  // une plage illisible (plusieurs plages, autre unité) : le fichier entier, permis par la RFC 9110 § 14.2
+  if (!p) {
+    if (req.method === 'HEAD') h.set('content-length', String(taille));
+    return new Response(req.method === 'HEAD' ? null : octets, { status: 200, headers: h });
+  }
+  h.set('content-range', `bytes ${p.debut}-${p.debut + p.long - 1}/${taille}`);
+  const corps = octets.subarray(p.debut, p.debut + p.long);
+  if (req.method === 'HEAD') {
+    h.set('content-length', String(p.long));
+    return new Response(null, { status: 206, headers: h });
+  }
+  return new Response(corps, { status: 206, headers: h });
+}
+
 // ── l'entrée ─────────────────────────────────────────────────────────────────────────────────────────────────────
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     const chemin = url.pathname;
     const code = env.PORTE_MODE === 'code' && env.MODE !== 'studio';
+    // Un média des assets : ce que les assets serviraient à tous sans passer par ici (la vidéo de l'accueil, avant la
+    // porte), plus les plages. Ni identité ni cookie : la page d'accueil le montre avant qu'on entre.
+    if (env.MODE !== 'studio' && env.ASSETS && assetMedia(chemin)) {
+      try {
+        return await media(req, env);
+      } catch (e) {
+        console.log(JSON.stringify({ evenement: 'media', chemin, raison: String((e && e.message) || e) }));
+        return erreur(500, 'la porte a trébuché');
+      }
+    }
     // l'adresse du visiteur, telle que Cloudflare la pose (https://developers.cloudflare.com/fundamentals/reference/http-headers/)
     const ip = req.headers.get('cf-connecting-ip') || 'inconnue';
     let id = null;

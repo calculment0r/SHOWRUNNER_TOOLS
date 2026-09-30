@@ -18,6 +18,7 @@
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { crc32, deflateSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
 import worker from './worker.js';
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((a, v, i, all) => (v.startsWith('--') ? [...a, [v.slice(2), all[i + 1]]] : a), []));
@@ -73,9 +74,32 @@ const vpc = (base, { morte = false } = {}) => ({
     return fetch(base + u.pathname + u.search, { method: init.method, headers: init.headers, body: corps, redirect: 'manual' });
   },
 });
+// Les assets simulés comme l'asset-worker de Cloudflare (workers-sdk, packages/workers-shared/asset-worker) : le
+// fichier du dépôt entier, ETag, 304 sur If-None-Match, AUCUNE plage (Range ignoré, comme l'adresse publique le
+// 30/09) ; le corps en morceaux de 7919 octets, pour que les plages tombent au milieu d'un morceau. Les pages : un texte.
+const RACINE = new URL('../', import.meta.url);
+const assetsDuDepot = {
+  async fetch(req) {
+    const { pathname } = new URL(req.url);
+    if (!/^\/media\//.test(pathname)) return new Response('une page des assets', { status: 200 });
+    let octets;
+    try { octets = readFileSync(new URL(`.${pathname}`, RACINE)); } catch { return new Response('introuvable', { status: 404 }); }
+    const etag = `"${createHash('sha256').update(octets).digest('hex').slice(0, 32)}"`;
+    // pas de Content-Length : vue du Worker, la réponse des assets n'en a pas (wrangler dev, 30/09)
+    const h = { etag, 'content-type': pathname.endsWith('.mp4') ? 'video/mp4' : 'application/octet-stream' };
+    if (!req.headers.has('range')) h['cache-control'] = 'public, max-age=0, must-revalidate';
+    if ([etag, `W/${etag}`].includes(req.headers.get('if-none-match') || '')) return new Response(null, { status: 304, headers: { etag } });
+    if (req.method === 'HEAD') return new Response(null, { status: 200, headers: h });
+    let i = 0;
+    const corps = new ReadableStream({
+      pull(c) { if (i >= octets.length) { c.close(); return; } c.enqueue(new Uint8Array(octets.subarray(i, i + 7919))); i += 7919; },
+    });
+    return new Response(corps, { status: 200, headers: h });
+  },
+};
 const env = {
   TEAM_DOMAIN: TEAM, POLICY_AUD: AUD, PORTE_CLE: CLE, ADMINS: 'cal@e2e.test',
-  PORTAIL: vpc(PORTE), ASSETS: { fetch: () => new Response('une page des assets', { status: 200 }) },
+  PORTAIL: vpc(PORTE), ASSETS: assetsDuDepot,
 };
 const attente = [];
 const ctx = { waitUntil: (p) => attente.push(p), passThroughOnException() {} };
@@ -105,8 +129,67 @@ const png = (() => {
     bloc('IEND', Buffer.alloc(0))]);
 })();
 
-// ── les essais de la porte « access » (le portail d'essai en porte.mode = "access" ; sans --codes) ──
 let r;
+
+// ── les médias des assets, par plages (Safari les exige) : dans les deux modes, sans DGX2 ni identité ──
+{
+  const VID = '/media/accueil-video.mp4';
+  const fichier = readFileSync(new URL(`.${VID}`, RACINE));
+  const N = fichier.length;
+  const envCode = { ...env, PORTE_MODE: 'code' };
+  const M = (chemin, headers = {}, o = {}) => W(chemin, { jwt: null, e: envCode, headers, ...o });
+  const pareil = (d, debut, fin) => Buffer.isBuffer(d) && d.equals(fichier.subarray(debut, fin));
+  console.log(`  les médias par plages (${VID}, ${N} octets) :`);
+  const n0 = vus.length;
+  r = await M(VID);
+  ok(r.s === 200 && pareil(r.d, 0, N) && r.h.get('accept-ranges') === 'bytes' && r.h.get('cache-control'),
+    `sans Range : 200, le fichier entier, Accept-Ranges: bytes (${r.s} ${r.d.length} ${r.h.get('accept-ranges')})`);
+  r = await M(VID, { range: 'bytes=0-1' });
+  ok(r.s === 206 && pareil(r.d, 0, 2) && r.h.get('content-range') === `bytes 0-1/${N}` && r.h.get('accept-ranges') === 'bytes'
+    && r.h.get('cache-control') === 'public, max-age=0, must-revalidate',
+    `bytes=0-1 (la première question de Safari) : 206, 2 octets, Content-Range bytes 0-1/${N} (${r.s} ${r.h.get('content-range')})`);
+  r = await M(VID, { range: 'bytes=0-99' });
+  ok(r.s === 206 && pareil(r.d, 0, 100) && r.h.get('content-range') === `bytes 0-99/${N}`,
+    `bytes=0-99 (le test d'Apple) : 206, 100 octets (${r.s} ${r.d.length})`);
+  r = await M(VID, { range: 'bytes=12345-99999' });
+  ok(r.s === 206 && pareil(r.d, 12345, 100000) && r.h.get('content-range') === `bytes 12345-99999/${N}`,
+    `bytes=12345-99999 : au milieu des morceaux, les octets justes (${r.s} ${r.d.length})`);
+  r = await M(VID, { range: `bytes=${N - 1000}-` });
+  ok(r.s === 206 && pareil(r.d, N - 1000, N) && r.h.get('content-range') === `bytes ${N - 1000}-${N - 1}/${N}`,
+    `bytes=${N - 1000}- : la fin (${r.s} ${r.h.get('content-range')})`);
+  r = await M(VID, { range: 'bytes=-500' });
+  ok(r.s === 206 && pareil(r.d, N - 500, N), `bytes=-500 : les 500 derniers (${r.s} ${r.h.get('content-range')})`);
+  r = await M(VID, { range: `bytes=0-${N + 5000}` });
+  ok(r.s === 206 && pareil(r.d, 0, N) && r.h.get('content-range') === `bytes 0-${N - 1}/${N}`, `une fin au-delà du fichier : bornée (${r.s})`);
+  r = await M(VID, { range: `bytes=${N}-` });
+  ok(r.s === 416 && r.h.get('content-range') === `bytes */${N}`, `une plage hors du fichier : 416, bytes */${N} (${r.s})`);
+  r = await M(VID, { range: 'bytes=0-1,5-6' });
+  ok(r.s === 200 && pareil(r.d, 0, N), `plusieurs plages : le fichier entier, 200 (permis par la RFC 9110) (${r.s})`);
+  const etag = r.h.get('etag');
+  r = await M(VID, { range: 'bytes=0-9', 'if-range': etag });
+  ok(r.s === 206 && r.d.length === 10, `If-Range = l'ETag : la plage (${r.s})`);
+  r = await M(VID, { range: 'bytes=0-9', 'if-range': '"un-autre"' });
+  ok(r.s === 200 && r.d.length === N, `If-Range d'un autre fichier : le fichier entier (${r.s})`);
+  r = await M(VID, { 'if-none-match': etag });
+  ok(r.s === 304, `If-None-Match : 304 des assets (${r.s})`);
+  r = await M(VID, { range: 'bytes=0-9' }, { method: 'HEAD' });
+  ok(r.s === 206 && r.d.length === 0 && r.h.get('content-range') === `bytes 0-9/${N}`, `HEAD avec Range : 206 sans corps (${r.s})`);
+  r = await M(VID, { range: 'bytes=0-9' }, { e: env });
+  ok(r.s === 206 && r.d.length === 10, `porte « access » aussi (ni jeton lu : c'est un asset) (${r.s})`);
+  r = await M('/media/absent.mp4', { range: 'bytes=0-9' });
+  ok(r.s === 404, `un média absent : le 404 des assets (${r.s})`);
+  ok(vus.length === n0, 'les médias ne partent jamais vers DGX2');
+  r = await M(VID, {}, { method: 'POST', body: Buffer.from('x') });
+  ok(r.s === 405, `écrire sur un média : 405 (${r.s})`);
+  r = await M('/library/img-20260930-120000-abcd/main.mp4', { range: 'bytes=0-9' });
+  ok(r.s === 401, `une vidéo de la bibliothèque n'est pas un asset : la porte la garde (sans cookie, 401) (${r.s})`);
+  r = await M('/analyse/runs/x/rendu.mp4', { range: 'bytes=0-9' });
+  ok(r.s === 401, `… ni un rendu de Movie Analysis (${r.s})`);
+  r = await M(VID, { range: 'bytes=0-9' }, { e: { ...envCode, MODE: 'studio', STUDIO: vpc(PORTE, { morte: true }) } });
+  ok(r.s !== 206, `en mode studio, rien de tout cela : tout va au studio (${r.s})`);
+}
+
+// ── les essais de la porte « access » (le portail d'essai en porte.mode = "access" ; sans --codes) ──
 if (!args.codes) {
 r = await W('/api/library', { jwt: null });
 ok(r.s === 403, `le Worker, sans jeton Access : 403 (${r.s})`);

@@ -10,9 +10,12 @@ rien demander aux autres.
 index.html, accueil.js      l'accueil du portail (cartes des outils, compte, machines)
 commun/                     tokens.css, base.css, shell.css, shell.js, porte.js/.css (la porte), fonts/ ;
                             theme.js, prefs.js/.css/.json, theme.html (l'éditeur de thème), undo.js,
-                            proxies.js, menu.js/.css, fil.js/.css, wire.js/.css, entrees.js/.css, split.js (§ 4)
+                            proxies.js, menu.js/.css, fil.js/.css, wire.js/.css, entrees.js/.css, split.js,
+                            refs.js, molette.js, fenetre.js/.html/.css, pleinecran.js (§ 4)
 asset/ image/ movie/ …      une page par outil : index.html + <outil>.js + <outil>.css
 admin/                      la page de Cal (§ 9)
+media/                      l'image et la vidéo des grandes cartes de l'accueil
+porte/                      le Worker de l'adresse publique, sa configuration, son essai (§ 8)
 server/showrunner.py        le serveur (stdlib) : pages, /api, /library/<id>/<fichier>
 server/core/                config, http, auth, library, jobs, machines, comfy — le socle
 server/tools/<outil>.py     les routes et les travaux d'un outil : register(app)
@@ -221,7 +224,11 @@ repeint le fil dans le `onapply` de sa pile (`items` : les objets rendus,
 
 | module | ce qu'il fait | l'API |
 |---|---|---|
-| `shell.js` | l'en-tête, `api`, la file (`jobs`, `jobRow`), `pick`, `thumb`, `refBoard`, `dropZone`, `dragItem`, `uploadFile` ; **le gardien du clic droit** (ci-dessous) | `mountHeader(outil)` pose aussi `data-sr-tool` sur `<html>` |
+| `shell.js` | l'en-tête (avec le bouton plein écran), `api`, la file (`jobs`, `jobRow`), `pick`, `thumb`, `dropZone`, `dragItem`, `uploadFile` ; **le gardien du clic droit** (ci-dessous) ; `kindMark` : la pastille de la sorte au coin d'une vignette, avec une icône pour les sortes qu'on confondrait à l'image (séquence ≠ clip vidéo, MIDI ≠ son, élément ≠ image), la séquence pleine | `mountHeader(outil)` pose aussi `data-sr-tool` sur `<html>` ; `kindMark(it, {compact})` (posée par `thumb`, reprise par Asset et le chutier du Montage) ; ré-exporte `refBoard` et la règle de `refs.js` |
+| `refs.js` | **la règle des références** (Image, Vidéo, les cartes Générer d'Idéation) : un carrousel ordonné ; `@image1` désigne une **place**, jamais un visuel (réordonner change qui est `@image1`, le prompt ne bouge pas) ; le modèle envoie les N premières places, les suivantes restent **grisées**, non envoyées, la raison au survol ; changer de modèle ne retire rien ; le « + » s'éteint à la limite et dit pourquoi. Le serveur tient la même règle : il reçoit le carrousel entier, `split_refs(refs, send)` (`server/tools/image.py`) n'envoie que les N premières et garde les autres sous `refs_held` ; N vient d'un seul endroit (`refs` de `/api/image/models`) | `sentCount`, `isHeld`, `sentLabel`, `heldTitle`, `moveItem`, `sortable(box, {item, onmove, stop})` (glisser, Alt + ← →), `refBoard` ; les états sont des classes (`held`, `dragging`, `drop-before`, `drop-after`) |
+| `molette.js` | **la molette de toutes les timelines** (Montage, ODIO, Movie Analysis) : molette = défiler les pistes, Maj = le temps, Alt (ou pincer) = zoom du temps sous le curseur, Ctrl = la hauteur de toutes les pistes (sur un en-tête `data-piste` : la sienne) ; Ctrl + molette ne zoome jamais la page ; `deltaMode` converti | `brancher(zone, {zoom, hauteur, defilerX, defilerY, scroller, piste})` rend de quoi débrancher ; `lire(ev, el)`, `REGLE`, `AIDE` (le texte d'aide) |
+| `fenetre.js` + `fenetre.html`, `fenetre.css` | **les panneaux détachés** (un 2ᵉ écran : Montage, le nodal d'ODIO) : une page, un état, un moteur. `fenetre.html` est une page vide qui se présente à la page qui l'a ouverte (`window.opener.SR_FENETRES`) ; la page y **déplace** le nœud du panneau : écouteurs, annulation, son, données restent ceux de la page. Styles, thème, ancêtres du panneau, clavier et glisser suivent ; fermer la fenêtre rattache le panneau ; sa place est retenue par visiteur (`docs/etudes/fenetres.md`) | `fenetres(outil, {onchange})` puis `F.panneau(id, {node, title})`, `detacher`, `rattacher`, `bouton(id)`, `entree(id)`, `pastilles()` ; `$`, `$$`, `winOf`, `partout`, `suivreTaille`, `fenetreDuGeste` pour un code qui doit voir aussi les fenêtres |
+| `pleinecran.js` | le plein écran de la page entière (`<html>` : menus et bulles restent visibles), Ctrl+Maj+F, Échap pour sortir ; là où il est refusé (l'iPhone), le bouton le dit | `boutonPleinEcran(doc, el)`, `basculer(doc)`, `raccourci(doc)` ; posé par `mountHeader` et par chaque fenêtre détachée |
 | `theme.js` | pose le thème (sombre, clair, « le mien »), la taille de l'interface (`zoom`, `--ui-zoom`) et les animations avant que la page ne se dessine | importé par `shell.js` ; `reducedMotion()`, `scrollBehavior()` |
 | `prefs.js` | les préférences, générales et par outil, rangées par personne (`/api/prefs`, § 7), miroir dans ce navigateur ; le panneau (roue de l'en-tête, Ctrl+,) | `prefs.get/set/on`, `openPrefs(outil)` ; schéma : `<outil>/prefs.json` |
 | `undo.js` | l'annulation : une pile par page, des commandes et leur contraire ou des instantanés, Ctrl+Z / Ctrl+Maj+Z / Ctrl+Y lus par `e.key` (juste en AZERTY), ↶ ↷ et le journal ; la bibliothèque (`libPatch`, `libTrash`, `libBoard`), le contraire lu sur le serveur | `createUndo`, `U.run/record/group/snapshots`, `U.buttons()` ; se déclare dans `window.SR_UNDO` (le menu de repli) — `docs/etudes/preferences.md` § 4 |
@@ -300,14 +307,36 @@ de `commun/shell.js` (fichier du disque → bibliothèque avec `tool: upload`,
 vignettes se glissent par `dragItem()`. Ce qu'un outil fabrique garde son
 nom d'outil ; seul ce que quelqu'un dépose est « Upload ».
 
-## 8. Plus tard : la porte Cloudflare
+## 8. L'adresse publique : le Worker de Cloudflare
 
-Les pages n'ont que des chemins relatifs et une base d'API réglable
-(`window.SR_API`) : elles pourront être servies par Cloudflare (Pages ou
-Workers, sous *.workers.dev — Cal n'a pas de domaine) pendant que l'API
-reste sur DGX2 derrière un tunnel sortant. Rien n'est ouvert sur internet
-tant que l'audit de sécurité n'est pas soldé (`docs/etudes/cloudflare.md`,
-squelette de Worker non déployé dans `porte/`).
+**https://showrunner.luxigone.workers.dev** (en place le 29/09,
+`docs/etudes/cloudflare.md`) : le Worker `showrunner` (`porte/worker.js`,
+`porte/wrangler.jsonc`). Ses assets statiques sont le dépôt moins
+`.assetsignore` (ni `server/`, ni `tools/`, ni `docs/`, ni `porte/`) : les
+pages n'ont que des chemins relatifs, Cloudflare les sert sans DGX2. Ce qui
+doit calculer ou juger passe par le Worker (`run_worker_first`) : `/api/*`,
+`/library/*`, les relais du studio, `/analyse/runs/*`, `/invitation` — relayé
+à DGX2 par Workers VPC (tunnel sortant `dgx2` → `127.0.0.1:9790`, la porte du
+§ 9), signé HMAC (`x-porte-*`, secret `PORTE_CLE`).
+
+Variable **`PORTE_MODE`** du Worker (et `porte.mode` du portail, les deux
+ensemble) :
+
+- `code` (en service) : pas de Cloudflare Access ; le Worker signe le rôle
+  `code` et l'adresse du visiteur (`Cf-Connecting-IP`), ne transmet que les
+  cookies du portail (`sr_session`, `sr_invitation`) ; sans l'un d'eux, il
+  répond 401 lui-même (seuls `/api/auth/…`, `/api/porte/…` et `/invitation`
+  passent) ; les essais de code et de pseudo sont bornés par adresse
+  (`ESSAIS`, 10 par minute). Le portail juge le reste (§ 9, `porte.invitation`).
+- `access` : le jeton Cloudflare Access (RS256) revérifié par le Worker et
+  par le portail ; admin selon le secret `ADMINS`.
+
+Les **médias** des assets (`/media/*`, `*.mp4`, `*.webm`, `*.mp3`…) passent
+aussi par le Worker, sans identité (ce sont des assets publics) : il y
+ajoute les requêtes partielles (`Range` → 206, `Content-Range`,
+`Accept-Ranges`), que les assets statiques ne font pas et sans lesquelles
+Safari ne lit pas une vidéo. Déployer : `bash tools/porte.sh deploie` sur
+DGX2 ; l'essai sans Cloudflare : `node porte/essai.mjs`.
 
 ## 9. La porte du portail et la page de Cal
 
@@ -356,6 +385,7 @@ Cal et `"auth": false` n'y vaut rien. Réglage **`porte.mode`** de
 |---|---|
 | `demo` (défaut) | un tunnel rapide (trycloudflare) : un code d'invitation d'abord (`/invitation/`, cookie `sr_invitation`), puis le pseudo ; un compte admin n'entre qu'avec le code admin, distinct ; codes dans `<data_dir>/porte-demo.json` (`tools/demo.sh`, `showrunner.py --porte-codes`, `--porte-codes-nouveaux` ferme les sessions de la porte, `--porte-url`) |
 | `access` | la vraie porte (`porte/worker.js`) : la signature HMAC du Worker (`x-porte-*`, clé `~/.config/showrunner/porte.key`) et le jeton Cloudflare Access (`Cf-Access-Jwt-Assertion`, RS256), au même e-mail ; admin seulement si le Worker le signe et si l'e-mail mène à un compte admin (`porte.emails`) |
+| `code` (en service depuis le 29/09) | la vraie porte à l'adresse fixe (`porte.url`), sans e-mail ni Access : la signature du Worker (rôle `code`, l'adresse du visiteur) — seul le Worker entre —, puis la mécanique de la démo : le code d'invitation, puis le pseudo ; un pseudo créé d'avance par Cal (Admin, ou `showrunner.py --ami <pseudo>`) entre aussitôt, un pseudo neuf attend Cal ; un compte admin n'entre qu'avec le code admin. **`porte.invitation`** (vrai par défaut) : `false` (la phase d'essai, en place) ôte le code d'invitation — on tape le pseudo qu'on a reçu, un pseudo inconnu est refusé (`auth.open_door`) ; le code admin reste exigé pour un admin. `tools/porte.sh code`, `invitation on\|off`, `lien`, `ami <pseudo>`, `nouveaux-codes` (ferme toutes les sessions de la porte) |
 | `off` | pas de seconde écoute |
 
 La porte n'écoute jamais ailleurs que sur le loopback (`showrunner.py
