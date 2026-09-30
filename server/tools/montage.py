@@ -1681,6 +1681,7 @@ def run_export(ctx) -> dict:
                  params={"montage": p["id"], "rev": p.get("rev"), "project": snap, "preset": preset,
                          "range": list(rng) if rng else None},
                  parents=pl["items"], origin={"model": "ffmpeg"})
+    _projet("put", [it["id"]], _projet("folder_of", p["id"]) or "", check=False)   # le Projet : à côté de sa séquence
     return {"note": f"{T:.2f} s rendues en {time.time() - t0:.0f} s ({n} passe{'s' if n > 1 else ''})",
             "montage": p["id"], "item": it["id"], "passes": n}
 
@@ -1694,6 +1695,17 @@ def _summary(p: dict) -> dict:
             "rev": p.get("rev", 1), "clips": len(p["clips"]), "duration": round(project_end(p) / fps, 3),
             "format": p["settings"]["format"], "width": p["settings"]["width"], "height": p["settings"]["height"],
             "fps": fps, "thumb_url": pub.get("thumb_url"), "folder": it.get("folder", ""), "legacy": p.get("legacy")}
+
+
+# ── le Projet (server/tools/montage_projet.py, 30/09) : ce que le montage crée ou pose y entre ──
+def _projet(fn: str, *a, **kw):
+    try:
+        from tools import montage_projet
+        return getattr(montage_projet, fn)(*a, **kw)
+    except Exception as e:  # noqa: BLE001 — le Projet ne bloque jamais une séquence ni un export
+        print(f"montage : le Projet n'a pas suivi ({fn} : {e})")
+        return None
+# ── fin du Projet ──
 
 
 def r_meta(req):
@@ -1731,10 +1743,13 @@ def r_create(req):
         note = p.pop("note", "")
         with _lock:
             p = new_sequence(p, folder or it.get("folder") or "", source=it)
+        _projet("put", [p["id"]], d.get("bin") or "", check=False)   # le Projet : dans le dossier où on l'a créée
         return {**p, "note": note}
     p = blank(d.get("name", ""), d.get("settings"))
     with _lock:
-        return new_sequence(p, folder)
+        p = new_sequence(p, folder)
+    _projet("put", [p["id"]], d.get("bin") or "", check=False)       # le Projet : dans le dossier où on l'a créée
+    return p
 
 
 def r_get(req, pid):
@@ -1759,6 +1774,9 @@ def r_save(req, pid):
         # le Workspace de ce qu'elle pose, les boucles d'éléments : jugés par `_write` (elements.check_doc)
         new.update(created=cur.get("created"), updated=library.now(), rev=int(cur.get("rev", 1)) + 1)
         _write(new)
+    # le Projet : un objet posé pour la première fois dans cette séquence y entre (à la racine)
+    had = {c.get("item") for c in cur.get("clips", [])}
+    _projet("ensure", [c["item"] for c in new["clips"] if c.get("item") and c["item"] not in had])
     return {"ok": True, "rev": new["rev"], "updated": new["updated"], "warnings": overlaps(new)}
 
 
@@ -1780,6 +1798,7 @@ def r_duplicate(req, pid):
         p = {**src, "name": (src["name"] + " (copie)")[:120], "created": library.now(), "updated": library.now(), "rev": 1}
         p.pop("legacy", None)
         p = new_sequence(p, it.get("folder", ""), source=it or None)
+    _projet("put", [p["id"]], _projet("folder_of", src["id"]) or "", check=False)   # le Projet : à côté de l'originale
     return _summary(p)
 
 

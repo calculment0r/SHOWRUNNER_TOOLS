@@ -3,9 +3,9 @@
 // Un montage = un projet sur le serveur (server/tools/montage.py), écrit
 // seul après chaque geste : pas de bouton « enregistrer ». Chaque geste
 // passe par `commit(nom, p => …)` : une entrée d'annulation (ctrl+Z /
-// ctrl+maj+Z), un enregistrement, un redessin. Le chutier est la
-// bibliothèque commune (vidéos, images, sons), rangée dans les dossiers du
-// projet ; l'export est un travail de la file (`montage.export`, voie cpu,
+// ctrl+maj+Z), un enregistrement, un redessin. Le chutier (le Projet) tient
+// ce que le montage a pris dans la bibliothèque commune (vidéos, images,
+// sons, séquences), dans ses propres dossiers (projet.js) ; l'export est un travail de la file (`montage.export`, voie cpu,
 // ffmpeg) qui range la vidéo dans la bibliothèque.
 //
 // Les outils, les raccourcis et les menus du clic droit reprennent ceux de
@@ -193,11 +193,30 @@ async function save(force = false) {
     if (r.warnings && r.warnings.length) toast('plans qui se chevauchent : ' + r.warnings.join(' ; '));
   } catch (e) {
     S.dirty = true;
+    // 409 d'un objet d'un autre Workspace (server/tools/elements.py, check_space) : la phrase, et le geste à défaire
+    if (e.status === 409 && /Workspace/.test(e.message || '')) { S.saving = null; paintSave('err', e.message); foreignRefused(e.message); return; }
     if (e.status === 409) { S.conflict = true; $('#conflict').hidden = false; }
     else { paintSave('err', e.message); clearTimeout(saveT); saveT = setTimeout(save, 4000); S.saving = null; return; }
   }
   S.saving = null;
   paintSave();
+}
+// Enregistrer une séquence qui pose un objet (ou une LUT) d'un autre Workspace : refusé, la phrase
+// du serveur dit lequel, d'où, et qu'il faut le rapatrier. Rien n'est perdu : la séquence garde son
+// état d'avant sur le serveur ; ici, on défait le geste, ou on va le rapatrier dans Asset.
+// (L'étape 5, « Rapatrier » — POST /api/espaces/<B>/rapatrier —, n'est pas encore là : Asset y mène.)
+let foreignOpen = false;
+function foreignRefused(msg) {
+  if (foreignOpen) return;
+  foreignOpen = true;
+  const id = (msg.match(/\(([a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4})/) || [])[1];
+  const lut = /^la LUT|une LUT/.test(msg);
+  modal('Pas de ce Workspace', el('div', { class: 'newfolder' }, el('p', {}, msg),
+    el('p', { class: 'note' }, 'La séquence n’est pas enregistrée tant qu’elle le pose ; sur le serveur, elle garde son état d’avant.')),
+  (close) => [el('span', { class: 'sp' }),
+    el('button', { class: 'tb ghost', onclick: () => { close(); undo(); } }, 'Défaire le geste'),
+    id && !lut ? el('button', { class: 'tb go', onclick: () => { close(); window.open(href('asset/#' + id), '_blank', 'noopener'); } }, 'Le voir dans Asset ↗') : null],
+  { cls: 'center', onclose: () => { foreignOpen = false; } });
 }
 async function flushSave() {
   clearTimeout(saveT);
@@ -289,8 +308,9 @@ async function openProject(id) {
   EL.refresh();                                // éléments : les pastilles de version de cette séquence
 }
 
-async function createProject(name, settings, folder = '') {
-  const p = await api('montage/projects', { method: 'POST', body: { name, settings, folder } });
+// `bin` : le dossier du Projet où la séquence entre (server/tools/montage_projet.py)
+async function createProject(name, settings, bin = '') {
+  const p = await api('montage/projects', { method: 'POST', body: { name, settings, bin } });
   await openProject(p.id);
   loadBin();
   return p;
@@ -397,7 +417,7 @@ function paintEmptyState() {
       el('button', { class: 'tb ghost', onclick: () => newProjectFlow(project.state.tab) }, 'Nouvelle'))));
 }
 
-// ── le projet : la bibliothèque Asset (projet.js) ───────────
+// ── le Projet : ce que le montage a pris dans la bibliothèque (projet.js) ──
 const project = mountProject({
   root: $('.bin'),
   items: S.items,
@@ -418,7 +438,15 @@ const project = mountProject({
   appendMany: (ids) => appendMany(ids),
   markDrag: (it, ids) => markDrag(it, 0, it.duration || 0, 'bin', ids),
   clearDrag: () => { S.dragging = null; },
-  uploadMany: (files) => uploadMany(files),
+  uploadMany: (files, opts) => uploadMany(files, opts),
+  // retirer du Projet un objet posé : combien de plans dans la séquence ouverte, et les ôter (un geste)
+  clipsUsing: (ids) => {
+    if (!S.p) return { n: 0, locked: 0 };
+    const set = new Set(ids), locked = lockedTracks();
+    const cs = S.p.clips.filter((c) => set.has(c.item));
+    return { n: cs.length, locked: cs.filter((c) => locked.has(c.track)).length };
+  },
+  stripClips: (ids) => stripClips(ids),
   pushUndo: (label, undoFn, redoFn) => pushLibUndo(label, undoFn, redoFn),
   detachItem: () => F.entree('bin'),
 });
@@ -449,15 +477,35 @@ function startDrag(e, it, tin, tout) {
 }
 
 // un fichier du disque, déposé où que ce soit dans le montage : catégorie
-// Upload de la bibliothèque, entré par le montage (seul l'export garde `montage`)
-async function uploadMany(files) {
+// Upload de la bibliothèque, entré par le montage (seul l'export garde `montage`),
+// et dans le Projet (`bin` : son dossier, « » la racine ; false : l'appelant l'y range)
+async function uploadMany(files, { bin = '' } = {}) {
   const out = [];
   for (const f of files) {
     try { toast(`dépôt de ${f.name}…`, 1500); const it = await uploadFile(f, { tool: 'upload', via: 'montage' }); S.items.set(it.id, it); out.push(it); }
     catch (e) { toast(`${f.name} : ${e.message}`); }
   }
-  if (out.length) { toast(`${out.length} fichier${out.length > 1 ? 's' : ''} dans la bibliothèque`); loadBin(); }
+  if (out.length && bin !== false) {
+    await api('montage/bin/put', { method: 'POST', body: { ids: out.map((x) => x.id), folder: bin } }).catch((e) => toast(e.message));
+    toast(`${out.length} fichier${out.length > 1 ? 's' : ''} dans la bibliothèque et le Projet${bin ? ` (« ${bin} »)` : ''}`);
+    loadBin();
+  }
   return out;
+}
+
+// ôter de la séquence ouverte les plans de ces objets (hors pistes verrouillées) ; rend de
+// quoi défaire et refaire, rangé par l'appelant dans le même geste que le retrait du Projet
+function stripClips(ids) {
+  if (!S.p) return null;
+  const set = new Set(ids), locked = lockedTracks(), sid = S.p.id;
+  const gone = new Set(S.p.clips.filter((c) => set.has(c.item) && !locked.has(c.track)).map((c) => c.id));
+  if (!gone.size) return null;
+  const before = core(S.p);
+  M.deleteClips(S.p, gone);
+  const after = core(S.p);
+  changed();
+  const go = (s) => { if (!S.p || S.p.id !== sid) throw new Error('cette séquence n’est plus ouverte'); restore(s); };
+  return { n: gone.size, undo: () => go(before), redo: () => go(after) };
 }
 
 async function appendMany(ids) {
@@ -520,7 +568,7 @@ function closeAll() {
 async function newSequenceFrom(it) {
   if (!it || !['video', 'image', 'audio'].includes(it.kind)) return toast('une séquence se fait à partir d’une vidéo, d’une image ou d’un son');
   try {
-    const p = await api('montage/projects', { method: 'POST', body: { from_item: it.id, folder: project.state.tab || it.folder || '' } });
+    const p = await api('montage/projects', { method: 'POST', body: { from_item: it.id, bin: project.state.tab || '' } });
     toast(`séquence « ${p.name} » : ${p.settings.width}×${p.settings.height} · ${p.settings.fps} i/s · ${M.short(M.projectEnd(p) / p.settings.fps)}${p.note ? ' · ' + p.note : ''}`, 4000);
     await openProject(p.id);
     loadBin();
@@ -2429,11 +2477,9 @@ function wire() {
   // le panneau Projet (projet.js) : importer ; un import dans l'onglet d'un dossier s'y range
   $('#bin-up').onclick = () => $('#bin-file').click();
   $('#bin-file').addEventListener('change', async (e) => {
-    const got = await uploadMany([...e.target.files]);
+    const files = [...e.target.files];
     e.target.value = '';
-    const tab = project.state.tab;
-    if (tab && got.length) await api('asset/move', { method: 'POST', body: { ids: got.map((x) => x.id), folder: tab } }).catch(() => {});
-    loadBin();
+    await uploadMany(files, { bin: project.state.tab || '' });
   });
   dropAnywhere((files) => uploadMany(files));
 
@@ -2449,11 +2495,9 @@ function wire() {
   };
   const bin = $('.bin');
   own(bin, 'bin');
-  dropZone(bin, { kinds: MEDIA, via: 'montage', onitems: (items) => {
-    for (const it of items) S.items.set(it.id, it);
-    loadBin();
-    openSource(items[items.length - 1], null, { show: false });
-  } });
+  // le Projet reçoit lui-même (projet.js, « déposer ») : l'objet y entre, à la racine ou dans le dossier
+  // visé — il ne s'ouvre plus dans la source (Cal, 30/09) ; déclaré au panneau Asset pour ses filtres
+  declareZone(bin, { kinds: [...MEDIA, 'sequence', 'element'], label: 'le Projet' });
   own($('#src'), 'source');
   dropZone($('#src'), { kinds: MEDIA, multiple: false, via: 'montage', onitems: ([it]) => { loadBin(); openSource(it); } });
   // sur le programme : au bout de la piste cible (la source y garde ses points d'entrée et de sortie)

@@ -235,6 +235,20 @@ sa marge intérieure (flex-basis 0 en border-box), la part se donne au-delà ;
 sans la retirer, la poignée partait de 127 px pour 120 px de souris —
 corrigé (`pad`), vérifié à 120,0.
 
+### Le Projet redevient propre au montage (30/09)
+
+Cal, le 30/09 : « quand je supprime un fichier dans le projet du montage, on ne le
+détruit pas complètement ? il est encore dans nos assets généraux et il est détruit
+uniquement pour le montage vidéo ». Or « supprimer » appelait `/asset/trash`
+(`montage/projet.js`, ancienne ligne 173) : l'objet partait à la corbeille d'Asset,
+donc de partout. Le Projet est désormais un ensemble du montage, un par Workspace
+(`<data>/montage/projet/<workspace>.json`, `server/tools/montage_projet.py`) :
+« Retirer du projet · reste dans Asset » ne jette rien ; ses dossiers ne touchent plus
+ceux d'Asset. Au premier passage, il reprend la bibliothèque du Workspace et ses
+dossiers : rien ne disparaît à l'écran. Y entrent seuls : une séquence neuve ou
+dupliquée, un export, un import, un objet posé pour la première fois sur une timeline.
+Ce qui suit (29/09) est remplacé.
+
 ### Le panneau Projet, c'est Asset (29/09 au soir)
 
 Décision de Cal : « le chutier devient asset, comme dans Premiere Pro ». Le

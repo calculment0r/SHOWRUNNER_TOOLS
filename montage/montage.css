@@ -109,7 +109,6 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .bin-tools .seg .tb { flex: 1 1 auto; padding: 0 3px; font-size: 8.5px; letter-spacing: .04em; }
 .bin-tools .fld { padding: 6px 10px; font-size: 11.5px; }
 .bin-list { flex: 1; min-height: 0; overflow: auto; padding: 4px 8px 8px; display: flex; flex-direction: column; gap: 2px; }
-.bin-list.drop-on { box-shadow: inset 0 0 0 1px var(--line-cy); }
 .bi, .bf {
   display: flex; align-items: center; gap: 8px; border-radius: var(--r3); padding: 5px 8px 5px calc(8px + var(--d, 0) * 14px);
   text-align: left; width: 100%; position: relative; user-select: none; flex: none;
@@ -120,7 +119,6 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .bi.on, .bf.on { background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line-cy); }
 .bi.gone { opacity: .45; }
 .bi.flash { box-shadow: inset 0 0 0 1px var(--or); }
-.bf.drop-on, .bi.drop-on { box-shadow: inset 0 0 0 1px var(--or); background: var(--or-bg); }
 .bi .th { width: 44px; height: 26px; border-radius: var(--r1); flex: none; background: var(--panel3) center / cover no-repeat; position: relative; }
 .bi .th.audio { background: var(--grn-bg); box-shadow: inset 0 0 0 1px var(--line-gr); }
 .bi .th.audio::after {
@@ -144,14 +142,16 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .bi .th.seqth { display: grid; place-items: center; color: var(--cy); padding: 4px 12px; }
 /* une séquence : la marque commune (commun/shell.js, kindMark) dans le coin de sa vignette */
 .bi .th .kmark { position: absolute; left: 2px; bottom: 2px; }
-.bi .drop-say, .bf .drop-say, .btab .drop-say, .ic .drop-say {
+/* déposer dans le Projet (projet.js) : ce qui va recevoir passe au vert de l'état « accepte »
+   (.drop-on, commun/shell.css) — le dossier ou l'onglet visé, sinon le cadre du panneau (.bin) ;
+   son étiquette dit où l'objet atterrit */
+.bf .drop-say, .btab .drop-say, .ic .drop-say {
   position: absolute; right: 6px; top: 50%; transform: translateY(-50%); padding: 1px 5px; border-radius: 2px; pointer-events: none;
-  font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--or); background: var(--veil); white-space: nowrap; z-index: 3;
+  font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--grn2); background: var(--veil); white-space: nowrap; z-index: 3;
 }
 .ic .drop-say { top: calc(100% + 12px); right: auto; left: 50%; transform: translateX(-50%); }
-.bi.drop-merge { box-shadow: inset 0 0 0 1px var(--or); background: var(--or-bg); }
-.btab.drop-into, .mtg .ic.drop-into { box-shadow: inset 0 0 0 1px var(--or); background: var(--or-bg); color: var(--or); }
-.bin-list.drop-into { box-shadow: inset 0 0 0 1px var(--line-or); }
+.btab.drop-on { position: relative; }
+.btab.drop-on .drop-say { position: static; transform: none; margin-left: 6px; }
 .bin-list { position: relative; user-select: none; }
 .bin-list .empty-bin { padding: 14px 6px; line-height: 1.7; }
 .bin-mq { position: fixed; z-index: 80; pointer-events: none; background: var(--cy-bg); box-shadow: inset 0 0 0 1px var(--line-cy); border-radius: 2px; }
@@ -257,13 +257,6 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .slider > span { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; color: var(--ink3); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .slider output { font-family: var(--f-mono); font-size: 10px; text-align: right; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .slider.off { opacity: .35; }
-input[type=range].rg { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; background: transparent; cursor: ew-resize; margin: 0; }
-input[type=range].rg::-webkit-slider-runnable-track { height: 5px; border-radius: 999px; background: linear-gradient(90deg, var(--rg-c, var(--cy)) 0 var(--rg-p, 50%), var(--panel3) var(--rg-p, 50%)); }
-input[type=range].rg::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 11px; margin-top: -3px; border-radius: 50%; background: var(--ink); }
-input[type=range].rg::-moz-range-track { height: 5px; border-radius: 999px; background: var(--panel3); }
-input[type=range].rg::-moz-range-progress { height: 5px; border-radius: 999px; background: var(--rg-c, var(--cy)); }
-input[type=range].rg::-moz-range-thumb { width: 11px; height: 11px; border: none; border-radius: 50%; background: var(--ink); }
-input[type=range].rg.temp::-webkit-slider-runnable-track { background: linear-gradient(90deg, var(--or), var(--panel3) 50%, var(--cy)); }
 .card .row .tb { flex: 1; }
 .card .row .tb.sm { flex: 1 1 auto; }
 .card .why { margin: 0; }
