@@ -3,7 +3,7 @@
 // dessous, l'icône, et la grammaire commune — le menu « ⋯ » de la barre et le menu d'une réplique (clic, clic
 // droit) passent par commun/menu.js. Le Studio lui-même (vidéo, script, timeline, casting, dépouillement) est le
 // script de la page : ce module ne fait que le cadre, commun à tous les films.
-import { mountHeader, $, href } from '../../commun/shell.js';
+import { mountHeader, $, href, dock, toast } from '../../commun/shell.js';
 import { menu, kebab, contextMenu, closeMenus, pageMenu, commonItems, copy } from '../../commun/menu.js';
 import { copyText } from '../../commun/fil.js';
 import { createUndo } from '../../commun/undo.js';
@@ -27,11 +27,36 @@ if (typeof window.xvBrancheMolette === 'function') window.xvBrancheMolette(Molet
 
 const hdr = mountHeader('analyse');
 
+// le panneau Asset (commun/dock.js) : la page d'un film ne prend pas d'asset — elle le dit, et dit où aller
+const DOCK_WHY = 'la page d’un film ne prend pas d’asset : une vidéo se dépouille depuis les projets (« Nouvelle analyse »)';
+dock.configure({
+  kinds: ['video'], label: 'le film',
+  hint: 'une vidéo se dépouille depuis les projets (« Nouvelle analyse »)',
+  place: () => { toast(DOCK_WHY, 6000); return false; },
+});
+dock.contexte({ kinds: [], label: 'la page du film', why: 'elle ne prend pas d’asset' });
+
 // la barre du film colle sous l'en-tête du portail, dont la hauteur change (il passe sur deux lignes quand la
 // fenêtre rétrécit)
 const pose = () => document.documentElement.style.setProperty('--hdr-h', hdr.offsetHeight + 'px');
 pose();
 if (window.ResizeObserver) new ResizeObserver(pose).observe(hdr);
+
+// le panneau Asset (commun/dock.js, Ctrl+Espace) pousse la page sans changer la fenêtre : le script de la page, qui
+// mesure ses zones (la timeline des voix, la scène) sur l'événement `resize` de la fenêtre, n'en saurait rien — sa
+// timeline garderait l'ancienne largeur et déborderait. La largeur de la page change : on le lui dit, une fois par
+// image. (Le panneau écoute aussi `resize` : il relit sa géométrie, identique, et n'émet rien de plus.)
+if (window.ResizeObserver) {
+  // la boîte de contenu du corps : sa largeur est celle de la page (le panneau ouvert, le corps recule de sa largeur)
+  let w = -1, raf = 0;
+  new ResizeObserver(([e]) => {
+    const now = Math.round(e.contentRect.width);
+    if (w < 0) { w = now; return; }
+    if (now === w || raf) return;
+    w = now;
+    raf = requestAnimationFrame(() => { raf = 0; dispatchEvent(new Event('resize')); });
+  }).observe(document.body);
+}
 
 // l'icône, dessinée depuis les jetons (aucune couleur écrite ici), comme l'accueil de l'outil
 try {

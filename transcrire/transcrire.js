@@ -11,7 +11,7 @@
 // traduction, d'un nom de voix, avec son contraire (réenregistré). Ne
 // s'annulent pas : lancer une transcription ou une traduction (partie dans la
 // file), un fichier déposé, les réglages.
-import { mountHeader, api, pick, toast, el, $, $$, href, fmtDur, fmtDate, uploadFile, dropZone, dropAnywhere } from '../commun/shell.js';
+import { mountHeader, api, pick, toast, el, $, $$, href, fmtDur, fmtDate, uploadFile, dropZone, dropAnywhere, dock, sorteEffective, avecEspace } from '../commun/shell.js';
 import { createUndo } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { menu, contextMenu, pageMenu, copy } from '../commun/menu.js';
@@ -94,10 +94,27 @@ async function addFiles(files) {
   try { setItem(await uploadFile(f, { tool: 'upload', via: 'transcrire' })); toast('rangé dans la bibliothèque · Upload'); } catch (e) { toast(`${f.name} : ${e.message}`, 7000); }
 }
 function setItem(it) {
-  if (it && !['audio', 'video'].includes(it.kind)) { toast('seuls les sons et les vidéos se transcrivent', 6000); return; }
+  if (it && !['audio', 'video'].includes(it.kind)) { toast('seuls les sons et les vidéos se transcrivent', 6000); return false; }
   S.item = it; store.save(); paintIn(); paintAct();
   if (it && !S.doc) paintPlayer();
+  return true;
 }
+
+// le panneau Asset (commun/dock.js, Ctrl+Espace) : poser prend le média, comme un
+// dépôt sur « Le média » ; un élément versionné (une chanson d'ODIO) donne sa
+// dernière version, comme le fait dropZone (commun/shell.js)
+const MEDIA = ['audio', 'video'];
+async function lastVersion(it) {
+  if (it.kind !== 'element' || !MEDIA.includes(sorteEffective(it)) || !it.element?.head_item) return it;
+  try { return await api('library/' + it.element.head_item); } catch { return it; }
+}
+dock.configure({
+  kinds: MEDIA,
+  label: 'le média à transcrire',
+  placeLabel: 'Transcrire ce média',
+  hint: 'double-clic : le média à transcrire · glisser : sur « Le média »',
+  place: async (items) => setItem(await lastVersion(items[0])),
+});
 
 // ── les langues, la vitesse, les avancés ────────────────────
 function select(opts, cur, onchange, label) {
@@ -220,7 +237,8 @@ function paintPlayer() {
     const L = lecteur(full, { clavier: 'page', sur: full.kind === 'video' ? V.cap : null, onTemps: tick });
     V.L = L;
     V.strip = L.piste(el('div', { class: 'tr-strip', title: 'les répliques · clic, glisser : la tête de lecture' }));
-    box.replaceChildren(full.kind === 'audio' ? el('div', { class: 'aud' }, el('span', { class: 'lbl' }, 'son'), el('b', {}, full.title || ''), V.cap) : null, L.el);
+    // replaceChildren(null) écrirait « null » : on ne passe que des nœuds
+    box.replaceChildren(...(full.kind === 'audio' ? [el('div', { class: 'aud' }, el('span', { class: 'lbl' }, 'son'), el('b', {}, full.title || ''), V.cap)] : []), L.el);
     L.media.addEventListener('loadedmetadata', paintStrip);
     paintStrip();
   }).catch(() => { if (n === V.n) box.replaceChildren(el('p', { class: 'warn' }, 'le média a quitté la bibliothèque')); });
@@ -308,7 +326,8 @@ async function translate(to, all = false) {
   try { const r = await api(`transcrire/docs/${S.doc.id}/translate`, { method: 'POST', body: { to, all } }); openDoc(r.doc, { keepMedia: true }); toast(`traduction en ${L(to).toLowerCase()} en file`); }
   catch (e) { toast(e.message, 7000); }
 }
-const exportUrl = (fmt, which) => href(`api/transcrire/docs/${S.doc.id}/export?format=${fmt}&which=${which}${fmt === 'txt' && S.stamps ? '&stamps=1' : ''}`);
+// une adresse de l'API prise hors d'api() (un lien de téléchargement, un fetch) : elle porte le Workspace (avecEspace)
+const exportUrl = (fmt, which) => avecEspace(href(`api/transcrire/docs/${S.doc.id}/export?format=${fmt}&which=${which}${fmt === 'txt' && S.stamps ? '&stamps=1' : ''}`));
 function download(fmt, which) { const a = el('a', { href: exportUrl(fmt, which), download: '' }); document.body.append(a); a.click(); a.remove(); }
 function exportItems() {
   const d = S.doc;

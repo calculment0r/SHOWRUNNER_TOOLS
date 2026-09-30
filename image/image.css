@@ -10,7 +10,8 @@
 .img-page { max-width: 1880px; margin: 0 auto; padding: var(--s4) var(--s6) 0; }
 /* la dernière rangée du fil n'est jamais sous la barre */
 #fil { padding-bottom: calc(var(--pbar-h, 180px) + 40px); }
-@media (max-width: 700px) { .img-page { padding: var(--s3) var(--s3) 0; } }
+/* la place de la page, pas la fenêtre : le panneau Asset ouvert lui en prend (@container sr-page, commun/shell.css) */
+@container sr-page (max-width: 700px) { .img-page { padding: var(--s3) var(--s3) 0; } }
 
 .hint { margin: 0; font-size: 11px; line-height: 1.5; color: var(--ink3); }
 .banner {
@@ -23,9 +24,13 @@
 .toast { bottom: calc(var(--pbar-h, 160px) + 30px); }
 
 /* ── la barre de prompt, flottante au-dessus des images ─── */
+/* Centrée sur la page, pas sur la fenêtre : le panneau Asset ouvert pousse la page
+   de --sr-dock-w (commun/dock.js) ; 100cqw est la largeur de la page (le corps est
+   le conteneur sr-page, commun/shell.css). */
+html.sr-dock-on .pbar { --pb-dk: var(--sr-dock-w); }
 .pbar {
-  position: fixed; left: 50%; bottom: 18px; z-index: 50; transform: translateX(-50%);
-  width: min(940px, calc(100vw - 32px));
+  position: fixed; left: calc(var(--pb-dk, 0px) + 50cqw); bottom: 18px; z-index: 50; transform: translateX(-50%);
+  width: min(940px, calc(100cqw - 32px));
   display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; align-items: end;
   padding: 12px 14px; border-radius: var(--r4);
   background: var(--veil); backdrop-filter: blur(16px);
@@ -151,9 +156,9 @@
 .pp-angle .compass { flex: none; width: 230px; margin: 0; }
 .pp-angle .stack { flex: 1; min-width: 220px; gap: 10px; }
 
-@media (max-width: 700px) {
+@container sr-page (max-width: 700px) {
   .pbar {
-    left: 0; bottom: 0; transform: none; width: 100%; grid-template-columns: minmax(0, 1fr);
+    left: var(--pb-dk, 0px); bottom: 0; transform: none; width: 100cqw; grid-template-columns: minmax(0, 1fr);
     padding: 10px 10px calc(10px + env(safe-area-inset-bottom)); border-radius: var(--r4) var(--r4) 0 0;
   }
   .pb-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }

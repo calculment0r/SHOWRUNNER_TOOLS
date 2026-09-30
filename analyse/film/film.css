@@ -45,11 +45,12 @@ body.film { height: auto; min-height: 100%; }
 .fm-onglets button[aria-pressed="true"] { color: var(--ink); box-shadow: inset 0 -2px 0 var(--or); border-radius: 0; }
 .fm-onglets a { box-shadow: inset 1px 0 0 var(--line); margin-left: 6px; border-radius: 0 var(--r1) var(--r1) 0; }
 .fm-src { white-space: nowrap; }
-@media (max-width: 900px) { .fm-bar { padding: 8px var(--s4); } .fm-src { display: none; } .fm-t .lbl { display: none; } }
+/* la place de la page, pas la fenêtre : le panneau Asset ouvert lui en prend (@container sr-page, commun/shell.css) */
+@container sr-page (max-width: 900px) { .fm-bar { padding: 8px var(--s4); } .fm-src { display: none; } .fm-t .lbl { display: none; } }
 
 /* les trois vues (le Casting garde la classe .wrap que lui donne casting-parts.mjs) */
 .fm-vue, .film #casting { max-width: 1880px; margin: 0 auto; padding: var(--s4) var(--s6) 48px; }
-@media (max-width: 860px) { .fm-vue, .film #casting { padding: var(--s3) var(--s4) 40px; } }
+@container sr-page (max-width: 860px) { .fm-vue, .film #casting { padding: var(--s3) var(--s4) 40px; } }
 .film .lab { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink3); }
 .film .lab-s { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); }
 .film .aide { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .08em; color: var(--ink3); }
@@ -334,7 +335,7 @@ body.redim.redim-h { cursor: row-resize; }
 .vx-avance .info dt { font-family: var(--f-mono); font-size: 8.5px; line-height: 1.6; letter-spacing: .1em; text-transform: uppercase; color: var(--ink3); }
 .vx-avance .info dd { margin: 0; color: var(--ink2); }
 .vx-avance .dim { color: var(--ink3); }
-@media (max-width: 760px) { .vx-corps { grid-template-columns: 96px minmax(0, 1fr); } }
+@container sr-page (max-width: 760px) { .vx-corps { grid-template-columns: 96px minmax(0, 1fr); } }
 
 /* ── la fiche du plan : tout ce qu'on sait ─────────────── */
 .shot { margin-top: var(--s4); display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: var(--s4); }
@@ -375,7 +376,7 @@ body.redim.redim-h { cursor: row-resize; }
 .rh i { width: 8px; height: 8px; border-radius: 2px; }
 .shot .note { font-size: 11px; color: var(--ink3); }
 
-@media (max-width: 1100px) {
+@container sr-page (max-width: 1100px) {
   .stage-row { grid-template-columns: 1fr; height: auto; gap: var(--s3); }
   .sep-v, .sep-h { display: none; }
   .script-in { position: static; }
@@ -448,7 +449,7 @@ body.redim.redim-h { cursor: row-resize; }
 }
 #casting .avis b { color: var(--ink); }
 #casting .avis code, #casting .avis .mono { font-family: var(--f-mono); font-size: 10px; color: var(--cy); }
-@media (max-width: 560px) { #casting .cast-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
+@container sr-page (max-width: 560px) { #casting .cast-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
 
 /* ============================================================
    LE DÉPOUILLEMENT (la table des plans, et ce que montrait le
@@ -474,7 +475,7 @@ body.redim.redim-h { cursor: row-resize; }
 .dp-chiffres > div { background: var(--panel); padding: 11px 14px 12px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .dp-chiffres b { font-family: var(--f-disp); font-size: 19px; font-weight: 400; letter-spacing: .02em; color: var(--ink); white-space: nowrap; }
 .dp-chiffres small { font-family: var(--f-mono); font-size: 9px; letter-spacing: .1em; color: var(--ink3); margin-left: 4px; }
-@media (max-width: 900px) { .dp-chiffres { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container sr-page (max-width: 900px) { .dp-chiffres { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 
 /* la bande de rythme : un plan = un trait de sa durée, de sa teinte mesurée */
 .dp-bande { padding: 12px 14px; border-radius: var(--r3); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); display: flex; flex-direction: column; gap: 8px; }
@@ -546,7 +547,7 @@ body.redim.redim-h { cursor: row-resize; }
 .detail .paire > div { background: var(--bg); border-radius: var(--r2); padding: 7px 9px; min-width: 0; }
 /* des valeurs lues (temps, échelle, caméra) : la fonte d'interface, Venus Rising est trop large pour ces cases */
 .detail .paire .v { font-size: 12.5px; font-weight: 600; color: var(--ink); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-@media (max-width: 1300px) { .detail .paire { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container sr-page (max-width: 1300px) { .detail .paire { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .detail .rq { display: flex; gap: 9px; align-items: baseline; padding: 5px 0; box-shadow: inset 0 -1px 0 var(--line); }
 .detail .rq .h { font-family: var(--f-mono); font-size: 8px; letter-spacing: .1em; color: var(--ink3); white-space: nowrap; }
 .detail .rq .x { font-size: 12.5px; color: var(--ink2); }
@@ -561,12 +562,12 @@ body.redim.redim-h { cursor: row-resize; }
 .dp .tete span { font-size: 11.5px; color: var(--ink2); white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
 .dp .tete b { font-family: var(--f-disp); font-size: 11px; font-weight: 400; }
 .pied-dp { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-top: 11px; box-shadow: inset 0 1px 0 var(--line); }
-@media (max-width: 1020px) { .detail { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 760px) { .lg { grid-template-columns: 14px 44px minmax(0, 1fr) 62px; } .lg .cat, .lg .tai, .lg .pts { display: none; } }
+@container sr-page (max-width: 1020px) { .detail { grid-template-columns: minmax(0, 1fr); } }
+@container sr-page (max-width: 760px) { .lg { grid-template-columns: 14px 44px minmax(0, 1fr) 62px; } .lg .cat, .lg .tai, .lg .pts { display: none; } }
 
 /* répartitions et portes qualité, côte à côte */
 .dp-deux { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--s4); align-items: start; margin-top: var(--s3); }
-@media (max-width: 1100px) { .dp-deux { grid-template-columns: 1fr; } }
+@container sr-page (max-width: 1100px) { .dp-deux { grid-template-columns: 1fr; } }
 .dp-pan { background: var(--panel); border-radius: var(--r3); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
 .dp-pan-t { display: flex; align-items: baseline; gap: 12px; padding: 10px 14px; box-shadow: inset 0 -1px 0 var(--line); flex-wrap: wrap; }
 .dp-note { margin: 0; padding: 12px 14px 0; font-size: 12.5px; line-height: 1.7; color: var(--ink2); }

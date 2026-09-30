@@ -16,7 +16,7 @@
 // renommer, sa description, ses vues et son image (la planche de l'élément,
 // reposée par /api/asset/refs). Ne s'annulent pas : tirer la 3D (un rendu
 // lancé), un fichier déposé.
-import { mountHeader, api, jobs, pick, el, $, $$, href, fmtDate, uploadFile, dropAnywhere, dropZone } from '../commun/shell.js';
+import { mountHeader, api, jobs, pick, el, $, $$, href, fmtDate, uploadFile, dropAnywhere, dropZone, dock } from '../commun/shell.js';
 import { createUndo, libPatch, libBoard, libTrash, keyLabel } from '../commun/undo.js';
 import { contextMenu, pageMenu } from '../commun/menu.js';
 import { prefs } from '../commun/prefs.js';
@@ -123,6 +123,8 @@ addEventListener('hashchange', render);
 
 // ══ L'ACCUEIL : la chaîne, les objets ═══════════════════════
 async function paintHome() {
+  S.obj = null;
+  dock.contexte(null);   // les filtres de l'outil : images, « un nouvel objet »
   app.replaceChildren(el('p', { class: 'lbl' }, 'chargement'));
   let objs;
   try { objs = await api('objet/objects'); } catch (e) { app.replaceChildren(el('p', { class: 'warn' }, `le portail ne répond pas : ${e.message}`)); return; }
@@ -464,6 +466,9 @@ function objectSheet(o, s) {
         el('div', { class: 'row-end' }, el('a', { class: 'tb ghost sm', href: '#' }, 'L\'état de la chaîne'), el('a', { class: 'tb ghost sm', href: MAQUETTE, target: '_blank', rel: 'noopener' }, 'La maquette ↗')))));
 
   S.run = { bar: runBar, msg: runMsg, stop: runStop, go3d };
+  // le panneau Asset : ce qu'il pose va dans cet objet
+  S.obj = { o, main, views };
+  dock.contexte({ kinds: ['image'], label: `l’objet « ${o.title} »` });
   // le clic droit ailleurs sur la fiche (commun/menu.js, pageMenu) : ses gestes
   S.sheet = () => {
     const free = VIEWS.slice(1).find((v) => !views.some((r) => r.label === v.label));
@@ -479,7 +484,7 @@ function objectSheet(o, s) {
   return [head, el('section', { class: 'o-grid' }, hero, el('div', { class: 'o-mid' }, viewsBlk, threeBlk), side)];
 }
 
-const S = { run: null, sheet: null };
+const S = { run: null, sheet: null, obj: null };
 
 // ── le clic droit (Cal, 29/09 : jamais le menu du navigateur) ──
 // une carte d'objet, une vue : leur menu ; ailleurs, les gestes de la vue
@@ -670,19 +675,55 @@ function preview(box, url) {
 }
 
 // ── déposer une image : un objet neuf, ou une vue de l'objet ouvert ─
-dropAnywhere(async (files) => {
-  const f = files.find((x) => /^image\//.test(x.type)) || files[0];
-  let it;
-  try { it = await uploadFile(f, UP); } catch (e) { say(e.message); return; }
+// Le même geste pour un fichier lâché n'importe où et pour « poser » depuis le
+// panneau Asset : sur l'accueil, un objet neuf ; sur une fiche, la première vue
+// libre. Faux si rien n'a été posé.
+async function placeImage(it, full) {
   const h = decodeURIComponent(location.hash.slice(1));
   if (ID_RX.test(h)) {
     const o = await api('library/' + h);
     const have = viewsOf(o).map((r) => r.label);
     const free = VIEWS.find((v) => !have.includes(v.label));
-    if (!free) { say('les quatre vues sont là : l\'image est rangée dans la bibliothèque'); return; }
-    return addView(o, free.label, [it]);
+    if (!free) { say(full); return false; }
+    await addView(o, free.label, [it]);
+    return true;
   }
   newObject({ item: it });
+  return true;
+}
+dropAnywhere(async (files) => {
+  const f = files.find((x) => /^image\//.test(x.type)) || files[0];
+  let it;
+  try { it = await uploadFile(f, UP); } catch (e) { say(e.message); return; }
+  placeImage(it, 'les quatre vues sont là : l\'image est rangée dans la bibliothèque');
+});
+
+// ── le panneau Asset (commun/dock.js, Ctrl+Espace) ────────────
+// Poser (double-clic, Entrée) : comme un fichier lâché sur la page. Le clic droit
+// d'une vignette : l'image choisie, ou une vue précise, sur la fiche ouverte.
+// Ses filtres : les images (un objet part d'une image).
+const onSheet = () => ID_RX.test(decodeURIComponent(location.hash.slice(1))) && S.obj;
+dock.configure({
+  kinds: ['image'],
+  label: 'un nouvel objet',
+  placeLabel: 'Poser',
+  hint: 'double-clic : un objet neuf, ou la première vue libre · glisser : sur l’image ou sur une vue',
+  place: (items) => {
+    const it = items.find((x) => x.kind === 'image');
+    if (!it) { say('un objet part d’une image'); return false; }
+    return placeImage(it, 'les quatre vues sont là : glisse l’image sur une vue pour la remplacer');
+  },
+  menu: (it, chosen) => {
+    if (chosen.length !== 1 || it.kind !== 'image') return [];
+    const sh = onSheet();
+    if (!sh) return [{ label: 'Nouvel objet avec cette image', icon: '+', onclick: () => newObject({ item: it }) }];
+    const { o, main, views } = sh;
+    return [{ label: 'En image choisie', sub: 'face · 0°', onclick: () => changeImage(o, main, it) },
+      ...VIEWS.slice(1).map((v) => {
+        const r = views.find((x) => x.label === v.label);
+        return { label: `En vue ${v.label}`, sub: r ? 'la remplace' : '', onclick: () => (r ? replaceView(o, r, v.label, it) : addView(o, v.label, [it])) };
+      })];
+  },
 });
 
 render();

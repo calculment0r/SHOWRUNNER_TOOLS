@@ -28,13 +28,18 @@
 // bibliothèque, catégorie Upload ; ou une vignette glissée) : `dropZone` du
 // socle ; toute vignette d'ici se glisse (`dragItem`).
 //
+// Le panneau Asset (commun/dock.js, Ctrl+Espace) : poser (double-clic, Entrée)
+// fait ce que fait un dépôt sur la barre (`toBar`) ; ses filtres suivent la
+// barre (`followDock`) — les références (images, éléments), ou l'image à
+// éditer (images) ; un modèle sans référence le dit.
+//
 // L'annulation (commun/undo.js) : les réglages de la barre (modèle, format,
 // références, prise de vue, graine, le prompt une fois écrit…) par
 // instantanés ; aimer, ranger dans un dossier, mettre à la corbeille depuis
 // le fil : le fil les range lui-même dans la pile (commun/fil.js, option undo).
 // Ne s'annulent pas : un rendu lancé, un fichier déposé, un élément créé
 // depuis le menu (il se jette depuis Asset).
-import { mountHeader, api, jobs, pick, toast, el, $, href, fmtDate, dropZone, dragItem } from '../commun/shell.js';
+import { mountHeader, api, jobs, pick, toast, el, $, href, fmtDate, dropZone, dragItem, dock } from '../commun/shell.js';
 import { menu, contextMenu, pageMenu } from '../commun/menu.js';
 import { createFil } from '../commun/fil.js';
 import { createUndo } from '../commun/undo.js';
@@ -221,6 +226,7 @@ function paintBar() {
   paintAct();
   paintNote();
   schedCompose();
+  followDock();
 }
 function setMode(m) {
   S.mode = m; S.pop = null; S.paint.on = false;
@@ -1131,7 +1137,7 @@ function mountFil() {
     empty: 'Écrivez un prompt en bas, puis « Générer ».',
   });
   // une image déposée sur le fil (fichier ou vignette) s'ouvre en grand
-  dropZone($('#fil'), { kinds: ['image'], multiple: false, via: VIA, onitems: ([it]) => fil.open(it) });
+  dropZone($('#fil'), { kinds: ['image'], multiple: false, via: VIA, label: 'le fil', onitems: ([it]) => fil.open(it) });
 }
 
 function paintBanner() {
@@ -1143,14 +1149,7 @@ function paintBanner() {
 function wireBar() {
   const bar = $('#pbar');
   // une image, un élément déposés sur la barre : des références (en édition hors consigne : l'image à éditer)
-  dropZone(bar, { kinds: ['image', 'element'], multiple: true, via: VIA, onitems: (items) => {
-    if (S.mode === 'edit' && (S.edit.tool !== 'instruct' || !S.current)) {
-      const img = items.find((x) => x.kind === 'image');
-      if (img) setSource(img); else toast('l’image à éditer est une image, pas un élément');
-      return;
-    }
-    addItems(items);
-  } });
+  dropZone(bar, { kinds: ['image', 'element'], multiple: true, via: VIA, label: 'la barre', onitems: toBar });
   // le carrousel se réordonne en glissant : la référence prend l'adresse de sa nouvelle place
   sortable($('#pb-refs'), { item: '.pb-ref.r', onmove: (a, b) => {
     const R = refsOf();
@@ -1169,6 +1168,49 @@ function wireBar() {
     S.pop = null; paintPop(); paintChips();
   });
   wireText();
+}
+
+// ce que la barre prend : un dépôt sur elle, ou « poser » depuis le panneau Asset.
+// Faux si rien n'a changé (le panneau ne le compte alors pas dans les Récents).
+const needsSource = () => S.mode === 'edit' && (S.edit.tool !== 'instruct' || !S.current);
+function toBar(items) {
+  if (needsSource()) {
+    const img = items.find((x) => x.kind === 'image');
+    if (img) { setSource(img); return true; }
+    toast('l’image à éditer est une image, pas un élément');
+    return false;
+  }
+  const n = refsOf().list.length;
+  addItems(items);
+  return refsOf().list.length > n;
+}
+
+// ── le panneau Asset (commun/dock.js) ───────────────────────
+// ses filtres suivent la barre : les références, ou l'image à éditer ; un modèle
+// qui ne prend pas de référence le dit (le panneau garde alors les images)
+function followDock() {
+  if (!S.cfg) return;
+  if (needsSource()) { dock.contexte({ kinds: ['image'], label: 'l’image à éditer' }); return; }
+  const R = refsOf();
+  const label = R.edit ? 'les références de l’édition' : 'les références';
+  dock.contexte(R.max > 0 ? { kinds: ['image', 'element'], label } : { kinds: [], label, why: maxWhy(R) });
+}
+function wireDock() {
+  dock.configure({
+    label: 'la barre',
+    placeLabel: 'Poser dans la barre',
+    hint: 'double-clic : dans la barre · glisser : sur la barre, ou sur le fil',
+    place: (items) => toBar(items),
+    menu: (it, chosen) => {
+      const img = chosen.length === 1 && it.kind === 'image' ? it : null;
+      return [
+        img && S.mode === 'create' ? { label: 'Éditer cette image', sub: 'la barre en édition', onclick: () => setSource(img) } : null,
+        img && S.mode === 'edit' && !needsSource() ? { label: 'En image à éditer', onclick: () => setSource(img) } : null,
+        img ? { label: 'Voir en grand', icon: '⤢', onclick: () => fil.open(img) } : null,
+      ];
+    },
+  });
+  followDock();
 }
 
 let paintT = null;
@@ -1230,6 +1272,7 @@ async function start() {
   paintBanner();
   mountFil();
   wireBar();
+  wireDock();
   paintBar();
   // à partir d'ici, chaque changement de la barre est un geste (le mode et l'onglet des looks suivent sans en faire un)
   bar = U.snapshots({ get: barState, set: barRestore, describe: barDescribe, ignore: ['mode', 'lookTab'] });

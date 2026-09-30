@@ -12,7 +12,7 @@
 // projets créés dans le portail et ceux du dépôt partagé de MOVIE_ANALYSE, fusionnés comme le fait son commun/projets.js.
 // Le dépôt partagé refuse l'écriture depuis l'adresse du portail : la page le dit (encadré C), et vérifie ce que CE
 // navigateur en reçoit.
-import { mountHeader, api, jobs, pick, thumb, toast, el, $, $$, href, fmtDur, fmtDate, dropZone } from '../commun/shell.js';
+import { mountHeader, api, jobs, pick, thumb, toast, el, $, $$, href, fmtDur, fmtDate, dropZone, dock } from '../commun/shell.js';
 import { menu, kebab, contextMenu, closeMenus, pageMenu } from '../commun/menu.js';
 import { copyText, ask } from '../commun/fil.js';
 import { createUndo, keyLabel } from '../commun/undo.js';
@@ -761,7 +761,24 @@ function prendVideo(it) {
 }
 $('#nv-choisir').onclick = async () => { const [it] = await pick({ kinds: ['video'], title: 'Une vidéo à dépouiller' }); prendVideo(it); };
 // la règle de Cal (29/09) : tout bloc qui attend un asset accepte un dépôt (commun/shell.js, dropZone)
-dropZone($('#nv-bib'), { kinds: ['video'], multiple: false, via: 'analyse', onitems: ([it]) => prendVideo(it) });
+dropZone($('#nv-bib'), { kinds: ['video'], multiple: false, via: 'analyse', label: 'le film à dépouiller', onitems: ([it]) => prendVideo(it) });
+// le panneau Asset (commun/dock.js, Ctrl+Espace) : poser une vidéo ouvre « Nouvelle
+// analyse » sur elle (source : la bibliothèque) ; la fenêtre ouverte, il la remplace.
+// Ses filtres : les vidéos, les films qu'on dépouille.
+dock.configure({
+  kinds: ['video'],
+  label: 'le film à dépouiller',
+  placeLabel: 'Dépouiller cette vidéo',
+  hint: 'double-clic : une nouvelle analyse sur cette vidéo',
+  place: (items) => {
+    const it = items.find((x) => x.kind === 'video');
+    if (!it) { toast('une analyse part d’une vidéo'); return false; }
+    if (S.source !== 'bib') $('#nv-src .tb[data-src="bib"]').click();
+    if ($('#nv').hidden) ouvreNouvelle(null);
+    prendVideo(it);
+    return true;
+  },
+});
 $('#nv-titre').oninput = () => { if (S.source === 'bib' && !$('#nv-nom').dataset.touche) $('#nv-nom').value = slug($('#nv-titre').value); verifieNom(); majLancer(); };
 $('#nv-nom').oninput = () => { $('#nv-nom').dataset.touche = $('#nv-nom').value ? '1' : ''; verifieNom(); majLancer(); };
 $('#nv-url').oninput = () => { verifieNom(); majLancer(); };

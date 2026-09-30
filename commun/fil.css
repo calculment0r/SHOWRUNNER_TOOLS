@@ -21,7 +21,9 @@
 .fl-q { width: 170px; padding: 5px 9px; font-size: 11px; }
 .fl-size { width: 110px; accent-color: var(--or); cursor: pointer; }
 .fl-lay .tb { height: 22px; font-size: 9px; padding: 0 9px; }
-@media (max-width: 700px) { .fl-q { width: 120px; } .fl-size { display: none; } }
+/* la place de la page, pas la fenêtre : le panneau Asset ouvert lui en prend (@container sr-page,
+   commun/shell.css) ; la visionneuse, elle, couvre la fenêtre : ses règles restent en @media */
+@container sr-page (max-width: 700px) { .fl-q { width: 120px; } .fl-size { display: none; } }
 
 /* un bouton-icône : au survol d'une vignette, dans la visionneuse */
 .fl-ib {
@@ -120,7 +122,7 @@
   font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .06em; color: var(--ink2); white-space: nowrap;
 }
 .fl-date { margin-top: auto; }
-@media (max-width: 1100px) { .fl-row { grid-template-columns: 1fr; } .fl-info { height: auto; } }
+@container sr-page (max-width: 1100px) { .fl-row { grid-template-columns: 1fr; } .fl-info { height: auto; } }
 
 /* ── un rendu en file, en cours, en échec ───────────────── */
 .fl-jm {

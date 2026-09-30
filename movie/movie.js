@@ -35,7 +35,7 @@
 // réglages avancés) ; aimer, ranger, jeter depuis le fil (le fil les range
 // lui-même dans la pile : commun/fil.js, option undo). Ne s'annulent pas : un rendu lancé, une image tirée d'une
 // vidéo, un fichier déposé. Le banc « Comparer » est une vue : il ne s'annule pas.
-import { mountHeader, api, jobs, pick, uploadFile, toast, el, $, $$, href, fmtDate, dropAnywhere, dropZone } from '../commun/shell.js';
+import { mountHeader, api, jobs, pick, uploadFile, toast, el, $, $$, href, fmtDate, dropAnywhere, dropZone, dock } from '../commun/shell.js';
 import { createEntrees } from '../commun/entrees.js';
 import { createFil } from '../commun/fil.js';
 import { createUndo } from '../commun/undo.js';
@@ -147,6 +147,7 @@ function setView(v) {
   $('#bench').hidden = v !== 'cmp';
   if (v === 'cmp') benchLoad(); else pauseBench();
   syncUrl();
+  followDock();
 }
 $$('.rail-tabs [data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
 // ↶ ↷ et le journal, au bout des onglets de la colonne
@@ -167,6 +168,7 @@ function setMode(m) {
   paintAdv();
   save(); schedulePlan();
   syncUrl();
+  followDock();
 }
 $$('#modes [data-mode]').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
 
@@ -665,6 +667,55 @@ function toBench(k, it) {
   fil.close();
   assign(k, it.id);
 }
+
+// ── le panneau Asset (commun/dock.js, Ctrl+Espace) ──────────
+// Poser (double-clic, Entrée) va là où la vue ouverte prend un asset : Images →
+// le début, puis la fin ; Références → les entrées, chacune dans sa catégorie ;
+// Comparer → A, puis B. Texte ne prend rien : il le dit. Les filtres suivent.
+const DOCK_CTX = {
+  t2v: { kinds: [], label: 'le mode Texte', why: 'le prompt seul — passer en Images ou en Références pour poser un asset' },
+  i2v: { kinds: ['image', 'element'], label: 'la première image' },
+  r2v: { kinds: ['image', 'element', 'video', 'audio'], label: 'les entrées' },
+  cmp: { kinds: ['video'], label: 'le banc A/B' },
+};
+function followDock() { dock.contexte(DOCK_CTX[S.view === 'cmp' ? 'cmp' : F.mode] || null); }
+async function dockPlace(items) {
+  if (S.view === 'cmp') {
+    const v = items.find((x) => x.kind === 'video');
+    if (!v) { toast('le banc compare des vidéos'); return false; }
+    toBench(!S.A ? 'A' : 'B', v);
+    return true;
+  }
+  if (F.mode === 'i2v') {
+    const it = items.find((x) => x.kind === 'image' || x.kind === 'element');
+    if (!it) { toast('le début et la fin sont des images (ou l’image d’un élément)'); return false; }
+    const before = [F.start, F.end].join();
+    await setImage(!F.start ? 'start' : 'end', it);
+    return [F.start, F.end].join() !== before;
+  }
+  if (F.mode === 'r2v') return E ? E.add(items) > 0 : false;
+  toast(DOCK_CTX.t2v.why, 5000);
+  return false;
+}
+dock.configure({
+  placeLabel: 'Poser dans le plan',
+  hint: 'double-clic : dans le plan · glisser : sur une image, une entrée, A ou B',
+  place: (items) => dockPlace(items),
+  menu: (it, chosen) => {
+    const one = chosen.length === 1;
+    if (S.view === 'cmp') {
+      return it.kind === 'video' && one ? [{ label: 'En A', onclick: () => toBench('A', it) }, { label: 'En B', onclick: () => toBench('B', it) }] : [];
+    }
+    const img = one && (it.kind === 'image' || it.kind === 'element');
+    return [
+      img && F.mode === 'i2v' ? { label: 'En image de début', onclick: () => setImage('start', it) } : null,
+      img && F.mode === 'i2v' ? { label: 'En image de fin', onclick: () => setImage('end', it) } : null,
+      img && F.mode !== 'i2v' ? { label: 'En image de début', sub: 'mode Images', onclick: () => { setMode('i2v'); setImage('start', it); } } : null,
+      F.mode !== 'r2v' ? { label: 'En entrée', sub: 'mode Références', onclick: () => { setMode('r2v'); E?.add(chosen); } } : null,
+      it.kind === 'video' && one ? { label: 'Comparer', sub: 'en A', onclick: () => toBench('A', it) } : null,
+    ];
+  },
+});
 const go = (path) => () => { location.href = href(path); };
 function menuFor(it) {
   const id = it.id;

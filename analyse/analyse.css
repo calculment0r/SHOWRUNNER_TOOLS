@@ -15,9 +15,10 @@
   max-width: 1880px; margin: 0 auto; padding: var(--s4) var(--s6) 48px;
   display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: var(--s5); align-items: start;
 }
-@media (max-width: 980px) { .ma-app { grid-template-columns: 1fr; padding: var(--s3) var(--s4) 40px; } }
+/* la place de la page, pas la fenêtre : le panneau Asset ouvert lui en prend (@container sr-page, commun/shell.css) */
+@container sr-page (max-width: 980px) { .ma-app { grid-template-columns: 1fr; padding: var(--s3) var(--s4) 40px; } }
 .ma-rail { display: flex; flex-direction: column; gap: var(--s3); position: sticky; top: 70px; max-height: calc(100 * var(--vh) - 86px); overflow: auto; }
-@media (max-width: 980px) { .ma-rail { position: static; max-height: none; } }
+@container sr-page (max-width: 980px) { .ma-rail { position: static; max-height: none; } }
 .ma-box { background: var(--panel); border-radius: var(--r3); padding: var(--s4); display: flex; flex-direction: column; gap: var(--s3); box-shadow: inset 0 0 0 1px var(--line); }
 .ma-bh { display: flex; align-items: baseline; gap: var(--s3); }
 .ma-bh h2 { margin: 0; font-family: var(--f-disp); font-size: 12px; font-weight: 400; letter-spacing: .14em; text-transform: uppercase; color: var(--ink); }

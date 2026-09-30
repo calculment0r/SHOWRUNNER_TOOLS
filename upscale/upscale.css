@@ -7,8 +7,9 @@
    ============================================================ */
 
 .up-studio { grid-template-columns: 300px minmax(0, 1fr) 320px; }
-@media (max-width: 1380px) { .up-studio { grid-template-columns: 300px minmax(0, 1fr); } }
-@media (max-width: 860px) {
+/* la place de la page, pas la fenêtre : le panneau Asset ouvert lui en prend (@container sr-page, commun/shell.css) */
+@container sr-page (max-width: 1380px) { .up-studio { grid-template-columns: 300px minmax(0, 1fr); } }
+@container sr-page (max-width: 860px) {
   .up-studio { grid-template-columns: 1fr; }
   .up-studio .rail { position: static; max-height: none; overflow: visible; }
 }
@@ -126,7 +127,7 @@ details.adv > summary .r {
 
 /* ── la pile ────────────────────────────────────────────── */
 .up-studio .side-r { position: sticky; top: 70px; max-height: calc(100 * var(--vh) - 86px); overflow: auto; display: flex; flex-direction: column; gap: 6px; }
-@media (max-width: 1380px) { .up-studio .side-r { position: static; max-height: none; } }
+@container sr-page (max-width: 1380px) { .up-studio .side-r { position: static; max-height: none; } }
 .side-r .ipan-h { padding: 4px 2px 0; }
 .ptitle { padding: 0 2px 2px; font-size: 12px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .plist { display: flex; flex-direction: column; gap: 4px; }

@@ -24,7 +24,7 @@
 // L'annulation (commun/undo.js) : ouvrir, fermer un média, les réglages
 // (instantanés) ; retirer un essai (corbeille, libTrash). Ne s'annulent pas :
 // un envoi, un fichier déposé, la vue (des préférences, upscale/prefs.json).
-import { mountHeader, api, jobs, pick, toast, el, $, $$, href, fmtDur, uploadFile, dropAnywhere, dropZone, stateFr } from '../commun/shell.js';
+import { mountHeader, api, jobs, pick, toast, el, $, $$, href, fmtDur, uploadFile, dropAnywhere, dropZone, stateFr, dock, sorteEffective } from '../commun/shell.js';
 import { createUndo, libTrash } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { contextMenu, pageMenu, kebab } from '../commun/menu.js';
@@ -170,6 +170,26 @@ function openItems(list) {
   resetZoom();
   paintAll();
 }
+// le panneau Asset (commun/dock.js, Ctrl+Espace) : poser ouvre la pile du média,
+// comme un dépôt sur le moniteur ou sur les médias ; ses filtres : images, vidéos.
+// Un élément versionné dont la dernière version est une image ou une vidéo donne
+// cette version, comme le fait dropZone (commun/shell.js).
+const MEDIA = ['image', 'video'];
+async function lastVersion(it) {
+  if (it.kind !== 'element' || !MEDIA.includes(sorteEffective(it)) || !it.element?.head_item) return it;
+  try { return await api('library/' + it.element.head_item); } catch { return it; }
+}
+dock.configure({
+  kinds: MEDIA,
+  label: 'les médias à agrandir',
+  placeLabel: 'Ouvrir sa pile',
+  hint: 'double-clic : ouvrir sa pile · glisser : sur le moniteur ou sur les médias',
+  place: async (items) => {
+    const got = await Promise.all(items.map(lastVersion));
+    openItems(got);
+    return got.some((it) => MEDIA.includes(it.kind));
+  },
+});
 function closePile(id) {
   S.piles = S.piles.filter((x) => x.id !== id);
   if (S.cur === id) { S.cur = S.piles[0]?.id || null; resetZoom(); syncKind(); }
