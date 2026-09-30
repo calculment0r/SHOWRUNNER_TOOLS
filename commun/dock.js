@@ -4,20 +4,33 @@
 // « la page Asset devient un panel accordéon à gauche … comme dans le canva
 // Idéation où la bibliothèque est à gauche … qui resize le reste ; Control+Espace
 // pour l'afficher et le cacher ». UN composant, monté par `mountHeader`
-// (commun/shell.js) dans chaque outil ; la page Asset plein écran reste pour la
-// gestion lourde (« ↗ » en tête du panneau).
+// (commun/shell.js) dans chaque outil.
+//
+// Un VISUALISEUR (Cal, 30/09 : « c'est JUSTE un visualiseur avec des filtres et
+// des outils de tri pour retrouver un asset ; toutes les fonctions de gestion et
+// d'organisation sont dans la page Asset dédiée ») : chercher, filtrer, trier, lire
+// les favoris, poser (double-clic, menu, glisser). Rien ne s'y range, ne s'y jette,
+// ne s'y renomme ni ne s'y dépose : « Gérer dans Asset ↗ » mène à la page.
+//
+// LA LANGUETTE (Cal, 30/09) : sur le bord où vit le panneau (le bord gauche fermé,
+// le bord du panneau ouvert), quand la souris s'en approche, une étiquette verte
+// glisse, ASSET écrit à la verticale ; c'est la poignée : clic = ouvrir ou fermer,
+// glisser = la largeur. Elle se range quand la souris s'éloigne ; rien ne glisse au
+// chargement (elle n'apparaît qu'à un vrai mouvement de la souris). Sans survol
+// (un écran tactile), elle reste sortie, immobile.
 //
 //   - il POUSSE la page (html.sr-dock-on, commun/shell.css) ; la mise en page des
 //     outils répond à la place qu'elle a vraiment (@container sr-page) ; sous
 //     860 px de page, il passe par-dessus avec un voile ;
 //   - la géométrie de la bibliothèque d'Idéation : poignée dans l'intervalle,
 //     glisser = largeur, double-clic = largeur par défaut, flèches 16 px (Maj 64),
-//     Entrée = replier ; fermé → un trait court au bord, un clic l'ouvre ; la
+//     Entrée = replier ; fermé → un trait court au bord et sa languette ; la
 //     largeur retenue par outil et par personne (Préférences, Général : cachées) ;
 //   - FERMÉ à l'arrivée sur toute page, sans rien qui glisse (Cal, 30/09 : « changer
 //     de page = faire autre chose ») : ouvert ne se garde pas ; seuls les gestes de
 //     la personne l'ouvrent et le ferment, et seuls eux l'animent (anime()) ;
-//   - en tête : la recherche, les SORTES en pastilles (quoi), puis cinq SECTIONS
+//   - en tête : la recherche et le TRI (récents, anciens, nom, modifiés ; retenu
+//     pour la personne), les SORTES en pastilles (quoi), puis cinq SECTIONS
 //     en accordéon (d'où) — Ce workspace, Récents, Favoris, Autres workspaces,
 //     Character Factory (Studio) —, une seule ouverte, qui prend la hauteur ;
 //   - les filtres à l'ouverture viennent de l'outil : les `kinds` des zones qui
@@ -44,7 +57,7 @@
 //     kinds: ['image', …]       le filtre de l'outil (sinon : l'union des zones inscrites)
 //     label: 'la planche'       le nom de ce filtre (« filtres de : la planche »)
 //     dockMin: px | () => px    la place que la page garde toujours (720 par défaut)
-//     upload(files)             « Déposer » : l'outil range et pose lui-même (sinon : rangés, pas posés)
+//     (upload : ignoré depuis le 30/09 — le panneau ne prend plus de fichier ; les zones de l'outil, si)
 //     fiche(it)                 « Fiche dans Asset » (sinon : asset/#<id> dans un autre onglet)
 //     hint: '…'                 la ligne d'aide du bas
 //   })
@@ -65,7 +78,7 @@
 // (dropZone) rapatrie de même.
 
 import {
-  api, el, href, toast, kindFr, etypeFr, fmtDur, session, kindMark, ITEM_MIME, MULTI_MIME, CF_MIME, uploadFile,
+  api, el, href, toast, kindFr, etypeFr, fmtDur, session, kindMark, ITEM_MIME, MULTI_MIME, CF_MIME,
   dockState, dockKeyLabel, sorteEffective, TOOLS, espace, rapatrier, SPACE_MIME,
 } from './shell.js';
 import { pickView } from './proxies.js';
@@ -87,7 +100,10 @@ const ETYPES = ['character', 'object', 'place', 'style', 'other'];
 const KIND_PL = { image: 'images', video: 'vidéos', audio: 'sons', midi: 'MIDI', sequence: 'séquences', element: 'éléments' };
 const ETYPE_PL = { character: 'personnages', object: 'objets 3D', place: 'lieux', style: 'styles', other: 'autres' };
 const SECS = [['here', 'Ce workspace'], ['recent', 'Récents'], ['fav', 'Favoris'], ['other', 'Autres workspaces'], ['cf', 'Character Factory']];
-const WHY_OTHER = 'aucun autre Workspace où tu as un rôle : une Team t’en ouvre (Admin, Teams) ; '
+// le tri : ceux de la bibliothèque (server/core/library.py, query : new, old, title, updated)
+const SORTS = [['new', 'Les plus récents', 'récents'], ['old', 'Les plus anciens', 'anciens'], ['title', 'Par nom', 'nom'], ['updated', 'Modifiés récemment', 'modifiés']];
+const TAB_NEAR = 24;       // la languette sort quand la souris est à moins de 24 px du bord
+const WHY_OTHER ='aucun autre Workspace où tu as un rôle : une Team t’en ouvre (Admin, Teams) ; '
   + 'poser un asset de l’un d’eux en fait une copie dans ce Workspace (l’original ne bouge jamais)';
 
 // ── les Workspaces que la personne voit (GET /api/asset/espaces) ──
@@ -113,7 +129,7 @@ const away = (it) => !!(it && !it._cf && it.space && espace() && it.space !== es
 let T = null;              // l'outil
 let N = {};                // les nœuds
 const S = {
-  open: false, want: W.def, sec: 'here', q: '', folder: null, space: null,
+  open: false, want: W.def, sec: 'here', q: '', sort: 'new', folder: null, space: null,
   userKinds: null, etypes: [], types: false, studio: true, who: false,
   lists: {}, sel: new Map(), anchor: -1, focus: 0, lastFocus: null,
   dirty: true, geo: { w: 0, over: false, open: null }, dragging: false,
@@ -154,12 +170,9 @@ function applyLayout() {
   N.aside.setAttribute('aria-hidden', String(!S.open));
   N.aside.inert = !S.open;
   const k = dockKeyLabel();
-  if (N.btn) {
-    N.btn.setAttribute('aria-pressed', String(S.open));
-    N.btn.title = `la bibliothèque${k ? ' · ' + k : ''}`;
-  }
   N.grip.setAttribute('aria-valuenow', S.open ? g.w : 0);
-  N.grip.title = S.open ? 'glisser : la largeur · double-clic : par défaut · Entrée : replier' : `la bibliothèque · clic : l’ouvrir${k ? ' · ' + k : ''}`;
+  N.grip.title = S.open ? `Asset · clic : fermer · glisser : la largeur · double-clic : par défaut${k ? ' · ' + k : ''}`
+    : `Asset, la bibliothèque · clic : l’ouvrir · glisser : l’ouvrir à la largeur voulue${k ? ' · ' + k : ''}`;
   const changed = g.w !== S.geo.w || g.over !== S.geo.over || S.open !== S.geo.open;
   S.geo = { ...g, open: S.open };
   if (changed) {
@@ -253,7 +266,7 @@ const list = (sec) => S.lists[sec] || (S.lists[sec] = freshList(sec));
 
 function queryFor(sec, offset) {
   const kinds = activeKinds();
-  const p = new URLSearchParams({ kind: kinds.join(','), q: S.q, sort: 'new', limit: String(PAGE), offset: String(offset) });
+  const p = new URLSearchParams({ kind: kinds.join(','), q: S.q, sort: S.sort, limit: String(PAGE), offset: String(offset) });
   const media = kinds.filter((k) => MEDIA.includes(k));
   if (media.length) p.set('media', media.join(','));
   if (S.etypes.length && kinds.includes('element')) p.set('etype', S.etypes.join(','));
@@ -298,8 +311,17 @@ async function loadRecent(L) {
   if (S.lists.recent !== L) return;
   refilterLocal(L);
 }
+// les listes lues d'un coup (Récents, Character Factory) : triées ici, comme le portail trie les autres ;
+// « récents » garde leur ordre (le dernier posé d'abord, pour les Récents)
+const sortKey = { old: (it) => it.created || '', title: (it) => String(it.title || it.name || '').toLowerCase(), updated: (it) => it.updated || it.created || '' };
+function sortLocal(list) {
+  const k = sortKey[S.sort];
+  if (!k) return list;
+  const out = [...list].sort((a, b) => (k(a) < k(b) ? -1 : k(a) > k(b) ? 1 : 0));
+  return S.sort === 'updated' ? out.reverse() : out;
+}
 function refilterLocal(L) {
-  L.items = (L.all || []).filter(L.sec === 'cf' ? cfMatches : matches);
+  L.items = sortLocal((L.all || []).filter(L.sec === 'cf' ? cfMatches : matches));
   L.total = L.items.length;
   L.pages = new Set([0]);
   paintHeads();
@@ -373,14 +395,6 @@ function recent(items) {
   while (next.join(' ').length > 1600) next = next.slice(0, -1);
   prefs.set('general.dockRecent', next.join(' '));
   if (S.lists.recent) { S.lists.recent = freshList('recent'); if (S.open) loadRecent(S.lists.recent); }
-}
-async function toggleFav(it) {
-  try {
-    const got = await api('library/' + it.id, { method: 'POST', body: { fav: !it.fav } });
-    it.fav = got.fav;
-    toast(got.fav ? 'aimé : dans les Favoris' : 'retiré des Favoris');
-    S.lists.fav = freshList('fav'); fetchPage(S.lists.fav, 0);
-  } catch (e) { toast(e.message); }
 }
 function fiche(it) {
   if (typeof D.cfg.fiche === 'function') { D.cfg.fiche(it); return; }
@@ -457,8 +471,11 @@ function tile(it, i, tw) {
   return n;
 }
 function placeholder(i) { return el('div', { class: 'lt ph', 'aria-hidden': 'true', 'data-i': i }, el('span', { class: 'im' })); }
+// la gestion (ranger, grouper, jeter, renommer, déposer, aimer) : à la page Asset, jamais ici
+const manage = (label = 'Gérer dans Asset ↗') => (T === 'asset' ? null
+  : el('a', { class: 'tb ghost sm dk-manage', href: href('asset/'), title: 'la page Asset : ranger, grouper, jeter, renommer, déposer, les favoris, les Teams et Workspaces' }, label));
 function emptyState(title, text, actions = []) {
-  N.empty.replaceChildren(el('b', {}, title), text ? el('p', {}, text) : null, ...actions);
+  N.empty.replaceChildren(...[el('b', {}, title), text ? el('p', {}, text) : null, ...actions].filter(Boolean));
   N.empty.hidden = false;
 }
 function paintGrid() {
@@ -485,7 +502,7 @@ function paintGrid() {
   if (L.total === 0) {
     clearGrid(); N.space.style.height = '0px';
     if (S.sec === 'recent') return emptyState('Rien de récent', 'ce que tu poses ou déposes vient ici, de tous les outils');
-    if (S.sec === 'fav') return emptyState('Aucun favori', 'le clic droit sur une vignette : Aimer');
+    if (S.sec === 'fav') return emptyState('Aucun favori', 'les favoris se marquent dans la page Asset (« Gérer dans Asset », en bas)');
     if (S.sec === 'cf') return emptyState('Aucun personnage', S.q ? 'rien ne répond' : 'aucun personnage au visage verrouillé dans Character Factory');
     if (S.sec === 'other' && !S.q.trim()) return emptyState('Rien ici', `rien dans ${spaceName(S.space)}${activeKinds().length < KINDS.length ? ' avec ces filtres' : ''}`,
       activeKinds().length < KINDS.length ? [el('button', { class: 'tb ghost sm', type: 'button', onclick: widen }, 'Élargir à toutes les sortes')] : []);
@@ -495,7 +512,7 @@ function paintGrid() {
     if (any && (activeKinds().length < KINDS.length || S.etypes.length)) {
       return emptyState('Rien avec ces filtres', '', [el('button', { class: 'tb ghost sm', type: 'button', onclick: widen }, 'Élargir à toutes les sortes')]);
     }
-    return emptyState('Rien ici', 'dépose un fichier ici, ou crée-le dans un outil', [el('button', { class: 'tb ghost sm', type: 'button', onclick: () => N.file.click() }, 'Déposer')]);
+    return emptyState('Rien ici', 'crée-le dans un outil, ou dépose un fichier sur l’outil ou dans la page Asset');
   }
   const rows = Math.ceil(n / cols);
   N.space.style.height = rows ? `${rows * (rh + GAP) - GAP}px` : '0px';
@@ -639,6 +656,24 @@ function paintAll() {
   N.foot.textContent = D.cfg.hint || (D.cfg.clickPlaces ? 'glisser : là où l’on lâche · clic : poser'
     : 'clic : choisir · double-clic : poser · glisser : là où l’on lâche');
   N.go.hidden = T === 'asset';
+  paintSort();
+}
+function paintSort() {
+  const s = SORTS.find(([k]) => k === S.sort) || SORTS[0];
+  N.sort.querySelector('.v').textContent = s[2];
+  N.sort.title = `trier : ${s[1].toLowerCase()} — clic : changer`;
+}
+function setSort(k) {
+  if (k === S.sort || !SORTS.some(([x]) => x === k)) return;
+  S.sort = k;
+  prefs.set('general.dockSort', k === 'new' ? null : k);
+  paintSort();
+  reload();
+}
+function sortMenu(kb = false) {
+  const r = N.sort.getBoundingClientRect();
+  menu(r.left, r.bottom + 4, [{ head: 'Trier' },
+    ...SORTS.map(([k, label]) => ({ label, checked: S.sort === k, onclick: () => setSort(k) }))], { focusFirst: kb });
 }
 function openSection(id) {
   if (S.sec === id) return;
@@ -666,12 +701,11 @@ function cssReady() {
   return new Promise((ok) => { link.addEventListener('load', ok, { once: true }); link.addEventListener('error', ok, { once: true }); });
 }
 function build() {
-  N.btn = document.getElementById('sr-dock-btn');
-  N.file = el('input', { type: 'file', multiple: true, accept: 'image/*,video/*,audio/*,.mid,.midi', hidden: true });
-  N.file.addEventListener('change', () => { const f = [...N.file.files]; N.file.value = ''; upload(f); });
   N.count = el('span', { class: 'n' });
-  N.go = el('a', { class: 'tb ghost sm dk-go', href: href('asset/'), title: 'la page Asset : dossiers, corbeille, lots, fiches', 'aria-label': 'la page Asset' }, '↗');
   N.q = el('input', { class: 'fld dk-q', type: 'search', placeholder: 'chercher', 'aria-label': 'chercher dans la bibliothèque', spellcheck: 'false' });
+  N.sort = el('button', { class: 'dk-sort', type: 'button', 'aria-haspopup': 'menu' },
+    el('i', { 'aria-hidden': 'true', html: '<svg viewBox="0 0 16 16"><path d="M5 3v10M2.5 10.5 5 13l2.5-2.5M11 13V3M8.5 5.5 11 3l2.5 2.5"/></svg>' }),
+    el('span', { class: 'v' }, 'récents'));
   N.kinds = el('div', { class: 'dk-kinds', role: 'group', 'aria-label': 'les sortes' });
   N.etypes = el('div', { class: 'dk-etypes', role: 'group', 'aria-label': 'les types d’élément', hidden: true });
   N.ctx = el('button', { class: 'dk-ctx', type: 'button', hidden: true });
@@ -694,33 +728,22 @@ function build() {
     secs.append(box);
   }
   N.foot = el('p', { class: 'dk-f' });
+  N.go = manage() || el('span', { hidden: true });
   N.live = el('div', { class: 'dk-live', 'aria-live': 'polite' });
   N.aside = el('aside', { class: 'sr-dock', id: 'sr-dock', 'aria-label': 'Asset, la bibliothèque' },
     el('div', { class: 'dk-h' }, el('span', { class: 't' }, 'Asset'), N.count, el('span', { class: 'sp' }),
-      el('button', { class: 'tb ghost sm', type: 'button', title: 'des fichiers du disque : ils entrent dans la bibliothèque (Upload)', onclick: () => N.file.click() }, 'Déposer'),
-      N.file, N.go,
-      el('button', { class: 'tb ghost sm dk-x', type: 'button', title: 'fermer le panneau', 'aria-label': 'fermer le panneau', onclick: () => setOpen(false) }, '×')),
-    N.q, N.kinds, N.etypes, N.ctx, secs, N.foot, N.live);
+      el('button', { class: 'tb ghost sm dk-x', type: 'button', title: 'fermer le panneau (Échap)', 'aria-label': 'fermer le panneau', onclick: () => setOpen(false) }, '×')),
+    el('div', { class: 'dk-qs' }, N.q, N.sort), N.kinds, N.etypes, N.ctx, secs,
+    el('div', { class: 'dk-bas' }, N.go, N.foot), N.live);
+  // la poignée, et sa languette : l'étiquette verte ASSET, à la verticale (dock.css)
+  // (la fenêtre de la languette la cache tant qu'elle est rentrée : rien ne dépasse sur le panneau ouvert)
+  N.tab = el('span', { class: 'sr-dock-tab' }, el('b', {}, 'Asset'));
   N.grip = el('div', { class: 'sr-dock-grip', role: 'separator', tabindex: '0', 'aria-orientation': 'vertical', 'aria-controls': 'sr-dock',
-    'aria-valuemin': W.min, 'aria-valuemax': W.max, 'aria-label': 'la largeur du panneau Asset' });
+    'aria-valuemin': W.min, 'aria-valuemax': W.max, 'aria-label': 'Asset : la poignée du panneau (Entrée : ouvrir ou fermer ; flèches : la largeur)' },
+  el('span', { class: 'sr-dock-tabclip', 'aria-hidden': 'true' }, N.tab));
   N.veil = el('div', { class: 'sr-dock-veil', hidden: true, onclick: () => setOpen(false) });
   document.body.append(N.aside, N.grip, N.veil);
   wire();
-}
-
-async function upload(files) {
-  if (!files.length) return;
-  if (typeof D.cfg.upload === 'function') { await D.cfg.upload(files); S.dirty = true; reload(); return; }
-  const got = [];
-  for (let i = 0; i < files.length; i++) {
-    toast(files.length > 1 ? `dépôt ${i + 1} / ${files.length} · ${files[i].name}` : `dépôt · ${files[i].name}`, 60000);
-    try { got.push(await uploadFile(files[i], { tool: 'upload', via: T })); } catch (e) { toast(`${files[i].name} : ${e.message}`, 7000); }
-  }
-  if (got.length) {
-    toast(got.length > 1 ? `${got.length} fichiers rangés dans la bibliothèque · Upload` : 'rangé dans la bibliothèque · Upload');
-    recent(got);
-    reload();
-  }
 }
 
 function wire() {
@@ -729,9 +752,11 @@ function wire() {
   let qT = 0;
   N.q.addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(() => { S.q = N.q.value; reload(); }, 220); });
   N.q.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); if (N.q.value) { N.q.value = ''; S.q = ''; reload(); } else N.q.blur(); }
+    // Échap : vider la recherche ; vide, le panneau se ferme (plus bas)
+    if (e.key === 'Escape' && N.q.value) { e.preventDefault(); e.stopPropagation(); N.q.value = ''; S.q = ''; reload(); }
     if (e.key === 'ArrowDown') { e.preventDefault(); focusTile(S.focus); }
   });
+  N.sort.addEventListener('click', (e) => sortMenu(e.detail === 0));
   // les pastilles : clic = ajouter / retirer, Ctrl+clic = elle seule ; l'élargissement tient jusqu'au prochain contexte
   N.kinds.addEventListener('click', (e) => {
     if (e.target.closest('[data-more]')) { S.types = !S.types; paintKinds(); return; }
@@ -823,8 +848,8 @@ function wire() {
       ...extra,
       '-',
       !it._cf && it.kind === 'audio' ? { label: audio && audio._id === it.id && !audio.paused ? 'Arrêter l’écoute' : 'Écouter', icon: '▶', onclick: () => listen(it) } : null,
-      !it._cf && !many && !away(it) ? { label: it.fav ? 'Ne plus aimer' : 'Aimer', icon: it.fav ? '★' : '☆', onclick: () => toggleFav(it) } : null,
-      !it._cf && !many ? { label: 'Fiche dans Asset', icon: '↗', onclick: () => fiche(it) } : null], { focusFirst: kb });
+      // un visualiseur : la gestion (aimer, ranger, jeter, renommer) est à la page Asset, sur sa fiche
+      !it._cf && !many ? { label: 'Fiche dans Asset', icon: '↗', sub: 'gérer', onclick: () => fiche(it) } : null], { focusFirst: kb });
   };
   space.addEventListener('contextmenu', (e) => {
     const h = at(e);
@@ -876,32 +901,24 @@ function wire() {
     }
     if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); const r = h.n.getBoundingClientRect(); openMenu(h, r.left + 8, r.bottom - 4, true); }
   });
-  // Échap dans le panneau : vider la sélection, puis rendre la main à la page (le panneau reste ouvert)
+  // Échap dans le panneau : vider la sélection, sinon (la recherche vide) fermer le panneau — le focus
+  // revient où il était (setOpen)
   aside.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !document.querySelector('.sr-menu')) {
-      if (S.sel.size) { S.sel.clear(); paintSel(); live('plus rien de choisi'); } else if (e.target !== N.q) { document.activeElement?.blur?.(); }
+      if (S.sel.size) { S.sel.clear(); paintSel(); live('plus rien de choisi'); } else if (!(e.target === N.q && N.q.value)) setOpen(false);
     }
     // le panneau garde les touches qu'il traite : l'Espace qui choisit ne lance pas la lecture d'ODIO,
-    // Suppr ne jette pas la sélection d'Asset ; Ctrl+Z et les autres raccourcis Ctrl vont à l'outil
+    // Suppr ne jette rien (un visualiseur) ; Ctrl+Z et les autres raccourcis Ctrl vont à l'outil
     if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() === 'a') e.stopPropagation();
   });
-  // des fichiers du disque lâchés sur le panneau : ils entrent dans la bibliothèque (Upload)
-  let depth = 0;
-  const files = (e) => !S.dragging && (e.dataTransfer?.types || []).includes('Files');
-  aside.addEventListener('dragenter', (e) => { if (files(e)) { depth++; aside.classList.add('drop-on'); } });
-  aside.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; aside.classList.remove('drop-on'); } });
-  aside.addEventListener('dragover', (e) => { if (files(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
-  aside.addEventListener('drop', (e) => {
-    if (!files(e)) return;
-    e.preventDefault(); e.stopPropagation();
-    depth = 0; aside.classList.remove('drop-on'); document.body.classList.remove('dropping');
-    upload([...e.dataTransfer.files]);
-  });
-  // la poignée : glisser (fermé, elle l'ouvre en glissant), un clic l'ouvre, double-clic = par défaut
+  // la poignée et sa languette : glisser = la largeur (fermé, elle l'ouvre en glissant) ; un clic sur la
+  // languette ouvre ou ferme, sur le trait seul il ouvre (ouvert, le trait n'est qu'une largeur) ;
+  // double-clic = la largeur par défaut
   grip.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
     const was = S.open, x0 = e.clientX, z = zoomOf();
+    const onTab = !!e.target.closest?.('.sr-dock-tab');
     const w0 = was ? geometry().w : 0;
     let moved = false;
     try { grip.setPointerCapture(e.pointerId); } catch { /* */ }
@@ -919,13 +936,42 @@ function wire() {
       document.documentElement.classList.remove('sr-dock-resizing');
       if (moved) setWant(S.want);
       else if (!was) setOpen(true, { focus: true });
+      else if (onTab) setOpen(false);
+      setNear(false);
     };
     grip.addEventListener('pointermove', mv);
     grip.addEventListener('pointerup', up);
     grip.addEventListener('pointercancel', up);
   });
   grip.addEventListener('dblclick', (e) => { e.preventDefault(); setWant(W.def); if (!S.open) setOpen(true); });
+  // la languette : elle sort quand la souris approche du bord (TAB_NEAR px de part et d'autre du bord du
+  // panneau ; fermé, du bord de la fenêtre), et sur elle-même ; à un vrai mouvement seulement — rien au
+  // chargement, rien sous un doigt (dock.css : sans survol, elle reste sortie) — ; elle se range 300 ms
+  // après que la souris s'éloigne, jamais pendant un geste. Aucun voile : la page garde ses clics.
+  let nearT = 0, nearEv = null;
+  function setNear(on) {
+    clearTimeout(nearT);
+    if (on) grip.classList.add('near');
+    else if (grip.classList.contains('near')) nearT = setTimeout(() => { if (!grip.classList.contains('on')) grip.classList.remove('near'); }, 300);
+  }
+  const nearCheck = () => {
+    const e = nearEv;
+    nearEv = null;
+    if (!e || !N.grip) return;
+    const r = grip.getBoundingClientRect();
+    const t = N.tab.getBoundingClientRect();
+    const onTab = grip.classList.contains('near') && e.clientX >= t.left - 4 && e.clientX <= t.right + 4 && e.clientY >= t.top - 4 && e.clientY <= t.bottom + 4;
+    const byEdge = e.clientY >= r.top && e.clientY <= r.bottom && Math.abs(e.clientX - r.left) <= TAB_NEAR;
+    setNear(onTab || byEdge);
+  };
+  addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'touch' || (!e.movementX && !e.movementY)) return;
+    if (!nearEv) requestAnimationFrame(nearCheck);
+    nearEv = e;
+  }, { passive: true });
+  document.documentElement.addEventListener('pointerleave', () => setNear(false));
   grip.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && S.open) { e.preventDefault(); e.stopPropagation(); setOpen(false); return; }
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); setOpen(!S.open, { focus: !S.open }); return; }
     if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); if (!S.open) setOpen(true); setWant(e.key === 'Home' ? W.min : W.max); return; }
     const d = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
@@ -985,11 +1031,13 @@ export async function mount(tool) {
   readState();
   const sec = prefs.get('general.dockSec', 'here');
   S.sec = SECS.some(([k]) => k === sec) ? sec : 'here';
+  const readSort = () => { const s = prefs.get('general.dockSort', 'new'); S.sort = SORTS.some(([k]) => k === s) ? s : 'new'; };
+  readSort();
   applyLayout();
   paintAll();
   for (const fn of D.wait.splice(0)) { try { fn(M); } catch (e) { console.error('panneau Asset', e); } }
-  // la largeur relue du portail (un autre navigateur a pu la changer)
-  prefs.ready.then(() => { readState(); applyLayout(); });
+  // la largeur et le tri relus du portail (un autre navigateur a pu les changer)
+  prefs.ready.then(() => { readState(); applyLayout(); const was = S.sort; readSort(); if (S.sort !== was) { paintSort(); S.dirty = true; if (S.open) reload(); } });
   // qui entre : l'invité d'une planche n'a pas le panneau ; Character Factory est au Studio
   session().then((me) => {
     if (me?.user?.role === 'invite') { unmount(); return; }
@@ -1006,7 +1054,6 @@ function unmount() {
   for (const n of [N.aside, N.grip, N.veil]) n?.remove();
   const root = document.documentElement;
   root.classList.remove('sr-dock-on', 'sr-dock-over');
-  if (N.btn) N.btn.hidden = true;
   N = {};
   S.lists = {};
   D.on = false;

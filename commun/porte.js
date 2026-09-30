@@ -215,8 +215,27 @@ function paintStudio(me, tool, closable) {
 
 // ── le menu de son compte ───────────────────────────────────
 let menu = null;
-function closeMenu() { if (menu) { menu.remove(); menu = null; document.removeEventListener('pointerdown', outside, true); } }
+let menuFrom = null;
+function closeMenu() {
+  if (!menu) return;
+  menu.remove(); menu = null;
+  document.removeEventListener('pointerdown', outside, true);
+  document.removeEventListener('keydown', menuKey, true);
+  menuFrom?.setAttribute('aria-expanded', 'false');
+}
 function outside(e) { if (menu && !menu.contains(e.target) && !e.target.closest('#sr-me')) closeMenu(); }
+function menuKey(e) {
+  if (!menu) return;
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); const b = menuFrom; closeMenu(); b?.focus(); return; }
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  const items = [...menu.querySelectorAll('[role="menuitem"]')].filter((n) => n.offsetParent !== null);
+  if (!items.length) return;
+  e.preventDefault();
+  const i = items.indexOf(document.activeElement);
+  items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
+}
+/** Fermer le menu du compte (une de ses lignes a servi). */
+export const fermerCompte = () => closeMenu();
 
 // Derrière la vraie porte (porte « access », /api/auth/me le dit), le portail n'a pas de session à lui : c'est
 // Cloudflare Access qui tient la connexion. Se déconnecter, c'est donc fermer la session Access : l'adresse
@@ -225,24 +244,29 @@ function outside(e) { if (menu && !menu.contains(e.target) && !e.target.closest(
 // Chemin absolu : Access le sert à la racine du nom d'hôte, jamais sous une page d'outil.
 const ACCESS_LOGOUT = '/cdn-cgi/access/logout';
 
-export async function account(me, anchor) {
+// Le menu du nom, en haut à droite (Cal, 30/09) : `lignes` (commun/shell.js, lignesDuNom) — la file de
+// rendu, les Teams et Workspaces, l'Admin, les machines — puis ce qui est au compte : le pseudo, comment
+// revenir, se déconnecter (rien de cela sans porte : le portail n'a alors pas de compte à quitter).
+export async function account(me, anchor, lignes = []) {
   await styles();
   if (menu) return closeMenu();
   const adm = me.user.role === 'admin';
   const access = me.porte === 'access';
+  const door = !!me.auth;
+  const rows = (lignes || []).filter(Boolean);
   menu = el('div', { class: 'acct', role: 'menu', 'aria-label': 'mon compte' },
-    el('div', { class: 'acct-head' }, el('b', {}, me.user.name), el('span', { class: 'lbl' }, adm ? 'admin' : 'ami·e')),
-    access ? null : el('p', { class: 'acct-note' }, 'Pseudo : ', el('b', { class: 'acct-code' }, me.user.pseudo || me.user.name)),
-    el('p', { class: 'acct-note' }, access
+    el('div', { class: 'acct-head' }, el('b', {}, me.user.name), el('span', { class: 'lbl' }, adm ? 'admin' : me.user.role === 'invite' ? 'invité·e' : 'ami·e')),
+    rows.length ? el('div', { class: 'sr-ml', role: 'group' }, ...rows) : null,
+    !door || access ? null : el('p', { class: 'acct-note' }, 'Pseudo : ', el('b', { class: 'acct-code' }, me.user.pseudo || me.user.name)),
+    !door ? null : el('p', { class: 'acct-note' }, access
       ? 'Pour revenir : ton e-mail, puis le code que Cloudflare t’envoie.'
       : adm
         ? (me.porte ? 'Pour revenir par cette adresse : le code admin, puis ce pseudo.'
           : 'Pour revenir : retaper ce pseudo, depuis le réseau de Cal (la maison, le câble, Tailscale).')
         : 'Pour revenir, d’ici ou d’ailleurs : retaper ce pseudo.'),
-    el('div', { class: 'row' },
-      adm ? el('a', { class: 'tb ghost sm', href: href('admin/') }, 'La page d’admin') : null,
+    !door ? null : el('div', { class: 'row' },
       el('span', { class: 'sp' }),
-      el('button', { class: 'tb ghost sm', onclick: async () => {
+      el('button', { class: 'tb ghost sm', role: 'menuitem', onclick: async () => {
         if (access) { location.href = ACCESS_LOGOUT; return; }
         try { await api('auth/logout', { method: 'POST' }); } catch (e) { toast(e.message); }
         location.href = href('');
@@ -251,7 +275,11 @@ export async function account(me, anchor) {
   menu.style.top = `${r.bottom + 6}px`;
   menu.style.right = `${Math.max(8, innerWidth - r.right)}px`;
   document.body.append(menu);
+  menuFrom = anchor;
+  anchor.setAttribute('aria-expanded', 'true');
   document.addEventListener('pointerdown', outside, true);
+  document.addEventListener('keydown', menuKey, true);
+  menu.querySelector('[role="menuitem"]')?.focus({ preventScroll: true });
 }
 
 export function uaShort(ua = '') {

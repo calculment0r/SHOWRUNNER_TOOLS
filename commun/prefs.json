@@ -36,10 +36,12 @@
     {
       "key": "dockKey", "label": "Panneau Asset : le raccourci", "type": "choice", "default": "ctrl-space",
       "options": [["ctrl-space", "Ctrl+Espace"], ["backquote", "²"], ["both", "Les deux"], ["none", "Aucun"]],
-      "help": "Ouvrir et fermer le panneau Asset, dans tous les outils. ² : la touche sous Échap, hors d’un champ de texte — le repli quand le système prend Ctrl+Espace (une deuxième langue de saisie sur Mac, l’IME chinois sous Windows). Aucun : le bouton ASSET de la barre seulement."
+      "help": "Ouvrir et fermer le panneau Asset, dans tous les outils. ² : la touche sous Échap, hors d’un champ de texte — le repli quand le système prend Ctrl+Espace (une deuxième langue de saisie sur Mac, l’IME chinois sous Windows). Aucun : sa languette seulement (approcher la souris du bord gauche)."
     },
     { "key": "dockSec", "label": "Panneau Asset : la section ouverte", "type": "choice", "default": "here", "hidden": true,
       "options": ["here", "recent", "fav", "other", "cf"] },
+    { "key": "dockSort", "label": "Panneau Asset : le tri", "type": "choice", "default": "new", "hidden": true,
+      "options": ["new", "old", "title", "updated"] },
     { "key": "dockRecent", "label": "Panneau Asset : les récents", "type": "text", "default": "", "maxlength": 1600, "hidden": true },
     { "key": "dockW_image", "label": "Panneau Asset, largeur · Image", "type": "number", "default": 250, "min": 210, "max": 640, "hidden": true },
     { "key": "dockW_movie", "label": "Panneau Asset, largeur · Vidéo", "type": "number", "default": 250, "min": 210, "max": 640, "hidden": true },
