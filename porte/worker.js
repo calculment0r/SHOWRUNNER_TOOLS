@@ -57,7 +57,7 @@ const SANS_CORPS = new Set(['GET', 'HEAD']);
 // accept, last-event-id, cache-control : ce qu'envoie un EventSource (le flux d'Idéation, ideation/collab.js).
 const EN_TETES_TRANSMIS = new Set([
   'accept', 'accept-language', 'content-type', 'range', 'if-range', 'cache-control',
-  'if-none-match', 'if-modified-since', 'x-filename', 'last-event-id', 'user-agent',
+  'if-none-match', 'if-modified-since', 'x-filename', 'x-sr-espace', 'last-event-id', 'user-agent',
 ]);
 
 // Les gestes de la collaboration d'Idéation (curseur, sélection, lots d'opérations, signalisation de la visio,

@@ -86,6 +86,18 @@ lui répondent 403 (`STUDIO_TOOLS`, `_studio_only`, `need_studio_kind`). Il
 demande le Studio (`request_studio`, `POST /api/auth/studio`) ; Cal l'ouvre dans
 Admin. Un compte neuf reçoit le réglage `new_access` (« studio » pendant
 l'essai).
+
+Teams et Workspaces (30/09, docs/etudes/equipes_espaces.md, étape 0 ; le modèle
+et sa matrice : core/espaces.py). La porte pose sur chaque requête le Workspace
+courant (`req.workspace`, et `current_space()` pour le fil) : l'en-tête
+`X-SR-Espace` que posera `api()` (commun/shell.js), sinon `?e=`, vérifié —
+demander un Workspace qu'on ne voit pas répond 403 sur une route protégée (sauf
+`/api/auth/…`, pour que la page se reprenne) ; sans rien, le dernier Workspace
+de la personne, sinon Général. Rien ne se ferme encore : les outils le liront
+aux étapes suivantes (1 : `can_compute` dans jobs.submit ; 2 : la bibliothèque).
+Le droit `access` passe à la Team (`access_of(u, espace)` = l'offre de la Team du
+Workspace ; la Team personnelle a celle du compte) ; d'ici l'étape 2, la porte
+prend le meilleur des deux : rien de ce qui est ouvert ne se ferme.
 """
 
 from __future__ import annotations
@@ -315,6 +327,57 @@ def current_id() -> str | None:
     return u["id"] if u else None
 
 
+# le Workspace de la requête (posé par gate), ou du travail en cours (la file le posera
+# le temps du `run`, étape 1 : `set_current_space(job["space"])`) — core/espaces.py
+def current_space() -> str | None:
+    return getattr(_local, "space", None)
+
+
+def set_current_space(space: str | None) -> None:
+    _local.space = space
+
+
+# l'API des étapes suivantes (le juge : core/espaces.py, sa matrice MATRIX)
+def can_view(u: dict | None, space: str | None) -> bool:
+    from . import espaces
+    return espaces.can_view(u, space)
+
+
+def can_edit(u: dict | None, space: str | None) -> bool:
+    from . import espaces
+    return espaces.can_edit(u, space)
+
+
+def can_compute(u: dict | None, space: str | None, cost: str = "gpu") -> bool:
+    """Étape 1 : jobs.submit l'appelle avec l'espace du travail et le coût de sa sorte
+    (gpu, api, cpu, none). Un guest de Team, viewer ou acteur : jamais (décision 2)."""
+    from . import espaces
+    return espaces.can_compute(u, space, cost)
+
+
+def compute_why(u: dict | None, space: str | None, cost: str = "gpu") -> str | None:
+    """Pourquoi pas (la phrase du 403, qui mène à qui débloque), ou None."""
+    from . import espaces
+    if cost == "none":
+        return espaces.judge(u, space, "create")[1]
+    return espaces.judge(u, space, f"compute_{cost if cost in espaces.COSTS else 'gpu'}")[1]
+
+
+def can_publish(u: dict | None, space: str | None) -> bool:
+    from . import espaces
+    return espaces.can_publish(u, space)
+
+
+def can_invite(u: dict | None, space: str | None) -> bool:
+    from . import espaces
+    return espaces.can_invite(u, space)
+
+
+def space_of(doc: dict | None) -> str | None:
+    from . import espaces
+    return espaces.space_of(doc)
+
+
 def is_admin(u: dict | None) -> bool:
     return bool(u) and u.get("role") == "admin"
 
@@ -395,14 +458,27 @@ STUDIO_WHY = ("{name} fait partie du Studio ; ton compte ouvre les Apps et Asset
               "Demande le Studio à Cal (bouton « Demander le Studio »)")
 
 
-def access_of(u: dict | None) -> str:
+def access_of(u: dict | None, space: str | None = None) -> str:
+    """Sans espace : le droit du compte (l'offre de sa Team personnelle « Chez moi »).
+    Avec un Workspace : l'offre de sa Team (Teams et Workspaces : le droit passe à la
+    Team), s'il y entre ; sinon celle du compte."""
     if u is None or is_admin(u):
         return "studio"
+    if space:
+        from . import espaces
+        if espaces.can_view(u, space):
+            return espaces.plan_of_space(space) or "apps"
     return "studio" if u.get("access") == "studio" else "apps"
 
 
-def has_studio(u: dict | None) -> bool:
-    return access_of(u) == "studio"
+def has_studio(u: dict | None, space: str | None = None) -> bool:
+    return access_of(u, space) == "studio"
+
+
+def _studio_here(u: dict | None, space: str | None) -> bool:
+    """Le Studio pour cette requête. D'ici l'étape 2, le meilleur du compte et de la Team
+    du Workspace : rien de ce qui est ouvert aujourd'hui ne se ferme."""
+    return has_studio(u) or bool(space and has_studio(u, space))
 
 
 def studio_asked(u: dict | None) -> str | None:
@@ -445,7 +521,7 @@ def need_studio_kind(kind: str, u: dict | None = None) -> None:
     """`POST /api/jobs` : un compte Apps ne lance pas un travail d'un outil Studio (403)."""
     u = current() if u is None else u
     name = studio_kind(kind)
-    if name and not has_studio(u):
+    if name and not _studio_here(u, current_space()):
         raise HttpError(403, STUDIO_WHY.format(name=f"« {kind} » ({name})"))
 
 
@@ -481,7 +557,7 @@ def _studio_only(req) -> None:
     des assets du Worker, sans passer ici : l'en-tête (commun/shell.js, mountHeader)
     les ferme aussi ; les écritures, elles, arrivent toujours ici."""
     u = getattr(req, "user", None)
-    if not u or has_studio(u) or is_guest(u):
+    if not u or is_guest(u) or _studio_here(u, _space(req)):
         return
     p = req.path
     if req.protected:
@@ -750,8 +826,46 @@ def _from_edge(req) -> bool:
 
 
 def gate(req, app) -> None:
-    """Posée devant chaque requête par core/http.py (`app.gate`). `app.door`
-    (« demo », « access ») : l'App de la porte publique, qui a reçu la requête."""
+    """Posée devant chaque requête par core/http.py (`app.gate`) : qui entre
+    (`_gate`), puis dans quel Workspace (`_bind_space`)."""
+    set_current_space(None)
+    _gate(req, app)
+    _bind_space(req)
+
+
+def _space(req) -> str | None:
+    """Le Workspace courant de la requête, calculé une fois : l'en-tête X-SR-Espace,
+    sinon ?e=, vérifié (core/espaces.py, resolve) ; sans rien, le dernier de la
+    personne, sinon Général. Un Workspace demandé qu'on ne voit pas n'est jamais pris."""
+    if getattr(req, "_space_done", False):
+        return req.workspace
+    req._space_done = True
+    req.workspace, req.workspace_refused, req.workspace_why = None, None, None
+    u = getattr(req, "user", None)
+    if not u:
+        return None
+    from . import espaces
+    want = espaces.wanted(req)
+    try:
+        ws, why = espaces.resolve(u, want)
+    except HttpError as e:   # teams.json illisible : on ne tombe pas, on ne prend rien
+        ws, why = None, e.message
+    req.workspace = ws
+    if want and why:
+        req.workspace_refused, req.workspace_why = want, why
+    return ws
+
+
+def _bind_space(req) -> None:
+    ws = _space(req)
+    set_current_space(ws)
+    if req.workspace_refused and req.protected and not req.path.startswith("/api/auth/"):
+        raise HttpError(403, req.workspace_why)
+
+
+def _gate(req, app) -> None:
+    """Qui entre. `app.door` (« demo », « access », « code ») : l'App de la porte
+    publique, qui a reçu la requête."""
     set_current(None)
     req.user = None
     req.session = None
@@ -859,11 +973,14 @@ def after(req, status: int) -> None:
         if req.method not in ("GET", "HEAD", "OPTIONS") and getattr(req, "protected", False):
             u = getattr(req, "user", None)
             extra = {"porte": req.door} if getattr(req, "door", None) else {}
+            if getattr(req, "workspace", None):
+                extra["space"] = req.workspace
             journal("http", user=u["id"] if u else None, method=req.method, path=req.path, status=status, **extra)
     except Exception:
         pass
     finally:
         set_current(None)
+        set_current_space(None)
         _local.door = None
         _local.gitems = None
 
@@ -905,7 +1022,7 @@ def me(req) -> dict:
         if not u:
             return {"auth": True, "state": "anonymous", "porte": d}
         out = {"auth": True, "state": "active", "user": public_user(u), "since": u.get("created"), "porte": d,
-               "visibility": settings()["visibility"]}
+               "visibility": settings()["visibility"], **_spaces_of(req, u)}
         if is_admin(u):
             out["pending_requests"] = _waiting()
         return out
@@ -915,9 +1032,22 @@ def me(req) -> dict:
     return _me(req)
 
 
+def _spaces_of(req, u: dict) -> dict:
+    """Ses Teams, ses Workspaces (et ses droits dans chacun), le Workspace courant
+    de la requête ; `workspace_refused` : celui demandé qu'on ne lui donne pas."""
+    from . import espaces
+    try:
+        cur = _space(req) if getattr(req, "user", None) and req.user.get("id") == u.get("id") else espaces.default_for(u)
+        return espaces.me_payload(u, cur, getattr(req, "workspace_refused", None))
+    except HttpError as e:   # teams.json illisible : la page le dit, rien ne tombe
+        return {"teams": [], "workspace": None, "teams_error": e.message}
+
+
 def _me(req) -> dict:
     if not enabled() and not door_of(req):
-        return {"auth": False, "state": "active", "user": public_user(pseudo_admin()), "visibility": settings()["visibility"]}
+        u = pseudo_admin()
+        return {"auth": False, "state": "active", "user": public_user(u), "visibility": settings()["visibility"],
+                **_spaces_of(req, u)}
     h, s, u = session_of(req)
     if not s:
         return {"auth": True, "state": "anonymous"}
@@ -931,6 +1061,7 @@ def _me(req) -> dict:
                 "message": OFFNET.format(p=u.get("pseudo") or u["name"])}
     if u["state"] == "active":
         out["visibility"] = settings()["visibility"]
+        out.update(_spaces_of(req, u))
         if is_admin(u):
             out["pending_requests"] = _waiting()
     return out
@@ -1029,9 +1160,12 @@ def cancel_request(req) -> None:
         journal("demande annulée", user=u["id"])
 
 
-def accept(uid: str, by: str, role: str | None = None) -> dict:
+def accept(uid: str, by: str, role: str | None = None, *, access: str | None = None, perso: bool | None = None,
+           via: str | None = None) -> dict:
     """Une demande acceptée : par Cal (un ami), ou par le lien d'un outil (`role`
-    = GUEST : un invité, qui n'a que ce que le lien lui donne)."""
+    = GUEST : un invité, qui n'a que ce que le lien lui donne). Le lien d'une Team
+    (core/espaces.py, redeem) passe `access` (« apps » : c'est la Team qui a le
+    Studio) et `perso` (False pour un guest : ni Team personnelle, ni calcul)."""
     with _lock:
         u = _data()["users"].get(uid)
         if not u or u.get("state") != "pending":
@@ -1039,10 +1173,54 @@ def accept(uid: str, by: str, role: str | None = None) -> dict:
         u.update(state="active", accepted=now_iso(), by=by)
         if role == GUEST:
             u["role"] = GUEST
+        elif access in ACCESS:
+            u["access"] = access
         else:   # un compte neuf : le droit Studio du réglage (phase d'essai : studio)
             u.setdefault("access", settings()["new_access"])
+        if perso is False:
+            u["perso"] = False
+        if via:
+            u["via"] = via
         _save()
-    journal("accepté", user=uid, by=by, **({"role": role} if role else {}))
+    journal("accepté", user=uid, by=by, **({"role": role} if role else {}), **({"via": via} if via else {}))
+    return dict(u)
+
+
+def find_pseudo(name) -> dict | None:
+    """Le compte qui porte ce pseudo (tapé comme à la porte : casse, accents, espaces), ou None."""
+    key = slug(clean_name(name))
+    if len(key) < 2:
+        return None
+    with _lock:
+        u = _find(key)
+        return dict(u) if u else None
+
+
+def create_invited(pseudo, by: str, guest: bool) -> dict:
+    """Un pseudo neuf mis dans une Team par son admin (core/espaces.py, add_member) :
+    déjà accepté, comme un pseudo que Cal ajoute (il entre en le tapant), mais sans le
+    Studio du compte (c'est la Team qui l'a) ; un guest n'a pas de Team personnelle
+    (`perso: false`) : il ne calcule nulle part."""
+    name = clean_name(pseudo)
+    if not valid_name(name):
+        raise HttpError(400, "le pseudo : de 2 à 24 lettres ou chiffres (espace, trait d'union, point permis)")
+    key = slug(name)
+    with _lock:
+        db = _data()
+        if _find(key) or key in db["users"]:
+            raise HttpError(409, f"« {name} » existe déjà")
+        why = _imitation(key)
+        if why == "réservé":
+            raise HttpError(409, f"« {name} » est réservé : choisis un autre pseudo")
+        if why:
+            raise HttpError(409, f"« {name} » ressemble trop à un pseudo qui existe déjà : choisis-en un autre")
+        u = {"id": key, "name": name, "pseudo": name, "role": "ami", "access": "apps", "state": "active",
+             "created": now_iso(), "accepted": now_iso(), "by": by, "via": "equipe", "quotas": {}}
+        if guest:
+            u["perso"] = False
+        db["users"][key] = u
+        _save()
+    journal("ajouté par une Team", user=key, by=by, guest=guest)
     return dict(u)
 
 
@@ -1203,7 +1381,9 @@ def users_public() -> list[dict]:
                         "seen": max((s.get("seen") or "" for s in ss), default=""),
                         # le droit Studio : l'effectif (un admin l'a toujours), et la demande qui attend
                         "access": access_of(u),
-                        "studio_asked": (u.get("studio_request") or None) if not has_studio(u) else None})
+                        "studio_asked": (u.get("studio_request") or None) if not has_studio(u) else None,
+                        # Teams et Workspaces : un compte entré comme guest n'a pas de « Chez moi »
+                        "perso": u.get("perso", True) is not False and u.get("role") != GUEST, "via": u.get("via")})
     return sorted(out, key=lambda x: (x["role"] != "admin", x["state"] != "pending", x["name"].lower()))
 
 

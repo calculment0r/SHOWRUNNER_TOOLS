@@ -20,7 +20,8 @@ entier par `app.prefix(préfixe, fonction)`, toutes méthodes, et rend un
 
 La porte (core/auth.py) se pose par `app.gate(req, app)`, appelée avant
 chaque requête, et `app.after(req, statut)`, après : le socle juge qui
-entre, les outils n'ont rien à changer. Un dossier monté peut porter son
+entre, les outils n'ont rien à changer ; elle pose aussi `req.workspace`, le
+Workspace courant (Teams et Workspaces). Un dossier monté peut porter son
 propre juge (`mount(…, check=)`) : un fichier qu'on n'a pas le droit de
 lire répond 404. Un `PermissionError` levé par un outil répond 403.
 
@@ -110,6 +111,10 @@ class Request:
         self.query = query
         self.headers = handler.headers
         self._body: bytes | None = None
+        # le Workspace courant (Teams et Workspaces, core/espaces.py) : posé par la porte
+        # (core/auth.py, gate) d'après l'en-tête X-SR-Espace ou ?e=, vérifié ; None sans
+        # personne. Un outil le lit ici (ou auth.current_space() hors de la requête).
+        self.workspace: str | None = None
 
     def q(self, name: str, default: str = "") -> str:
         v = self.query.get(name)

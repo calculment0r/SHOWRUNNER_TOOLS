@@ -99,6 +99,34 @@
 .cmd { display: flex; gap: 6px; align-items: center; background: var(--panel2); border-radius: var(--r2); padding: 6px var(--s3); box-shadow: inset 0 0 0 1px var(--line-amb); }
 .cmd code { flex: 1; overflow-x: auto; white-space: nowrap; }
 
+/* les Teams : une carte par Team ; ses Workspaces, ses membres, ses liens */
+.chip.no { color: var(--ink3); background: transparent; }
+.chip.no i { background: transparent; box-shadow: inset 0 0 0 1px var(--ink3); }
+.seg.wrap { flex-wrap: wrap; }
+.card.team { gap: var(--s3); }
+.ws-list, .mem-list { display: flex; flex-direction: column; gap: 5px; }
+.ws {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "l a" "r r"; gap: var(--s2) var(--s3); align-items: center;
+  padding: 8px var(--s3); border-radius: var(--r2); background: var(--panel2);
+}
+.ws .ws-l { grid-area: l; } .ws .ws-r { grid-area: r; } .ws .acts { grid-area: a; }
+.team-mini .ws-names { display: flex; gap: 5px; flex-wrap: wrap; }
+.ws.off { opacity: .6; }
+.ws-nm, .mem-row .nm-s { font-size: 13px; color: var(--ink); }
+.ws-l { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ws-r { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ws-rights { display: flex; gap: 4px; flex-wrap: wrap; }
+.ws .acts, .mem-row .acts { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.mem-row { display: flex; flex-direction: column; gap: 5px; padding: 8px var(--s3); border-radius: var(--r2); background: var(--panel2); }
+.mem-row .row, .sub-card .row { flex-wrap: wrap; }
+.sub-card { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s3); border-radius: var(--r2); box-shadow: inset 0 0 0 1px var(--line); }
+.sub-card .acct-code { font-size: 11px; word-break: break-all; }
+.inv-row .lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.adm-tm { flex-wrap: wrap; }
+.adm-tm .tm { display: inline-flex; gap: 6px; align-items: center; }
+.fld.sm { padding: 4px 8px; font-size: 11px; }
+@media (max-width: 700px) { .ws { grid-template-columns: 1fr; grid-template-areas: "l" "a" "r"; } .ws .acts { justify-content: flex-start; } }
+
 /* le journal */
 .jr { display: grid; grid-template-columns: 128px 150px 90px minmax(0, 1fr); gap: var(--s3); padding: 5px var(--s3); border-radius: var(--r1);
   font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .04em; color: var(--ink2); }

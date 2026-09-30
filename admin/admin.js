@@ -1,7 +1,11 @@
 // SHOWRUNNER TOOLS — la page de Cal : les demandes d'accès, les
-// personnes, la file des calculs, les machines, le câblage, le stockage,
-// le journal. Le serveur juge (server/tools/admin.py, /api/admin/…) : qui
-// n'est pas Cal reçoit 403, et le lit ici.
+// personnes, les Teams, la file des calculs, les machines, le câblage, le
+// stockage, le journal. Le serveur juge (server/tools/admin.py, /api/admin/…) :
+// qui n'est pas Cal reçoit 403, et le lit ici. Les Teams (server/tools/equipes.py,
+// /api/equipes/…, core/espaces.py) : l'admin d'une Team y règle la sienne — pour
+// lui, la page n'a que cette section (#teams) ; tout compte y voit ses Teams, ses
+// Workspaces et ce qu'il peut y faire. Un lien d'invitation de Team mène ici
+// (admin/?rejoindre=<jeton>) : la porte d'abord (un pseudo), puis la Team.
 
 //
 // L'annulation (commun/undo.js) : les réglages, les quotas, le rôle admin,
@@ -10,7 +14,10 @@
 // encore (un travail parti ne se replace plus : le geste tombe et le dit).
 // Ne s'annulent pas : accepter ou refuser une demande, suspendre (ses travaux
 // en file s'en vont), fermer une connexion, arrêter un travail, décharger une
-// instance, démarrer ou arrêter H3, vider la corbeille.
+// instance, démarrer ou arrêter H3, vider la corbeille. Dans les Teams, s'annulent :
+// un rôle, le mode d'un guest (viewer, acteur), ses Workspaces, un rôle de Workspace,
+// renommer, archiver, l'API, l'offre ; ne s'annulent pas : créer une Team, un
+// Workspace, mettre quelqu'un dans une Team (on le retire), un lien (on le retire).
 import { mountHeader, api, el, $, $$, toast, href, fmtDate, stateFr, fmtWait } from '../commun/shell.js';
 import { uaShort } from '../commun/porte.js';
 import { createUndo } from '../commun/undo.js';
@@ -21,16 +28,19 @@ mountHeader('admin', { sub: 'la page de Cal' });
 
 const SECTIONS = [
   ['demandes', 'A', 'Demandes', 'accès · studio'],
-  ['personnes', 'B', 'Personnes', 'apps ou studio · quotas · appareils'],
-  ['file', 'C', 'La file', 'ordre · priorités · pauses'],
-  ['machines', 'D', 'Machines', 'ComfyUI · mémoire · H3 · studio'],
-  ['cablage', 'E', 'Câblage', 'les interrupteurs'],
-  ['stockage', 'F', 'Stockage', 'bibliothèque · corbeille'],
-  ['journal', 'G', 'Journal', 'qui a fait quoi'],
+  ['personnes', 'B', 'Personnes', 'apps ou studio · teams · quotas'],
+  ['teams', 'C', 'Teams', 'workspaces · membres · guests'],
+  ['file', 'D', 'La file', 'ordre · priorités · pauses'],
+  ['machines', 'E', 'Machines', 'ComfyUI · mémoire · H3 · studio'],
+  ['cablage', 'F', 'Câblage', 'les interrupteurs'],
+  ['stockage', 'G', 'Stockage', 'bibliothèque · corbeille'],
+  ['journal', 'H', 'Journal', 'qui a fait quoi'],
 ];
 // la section d'ouverture : l'adresse, sinon la préférence (admin/prefs.json)
+// `limited` : qui n'est pas admin du portail (403 sur admin/state) n'a que les Teams
 const S = { sec: SECTIONS.some(([id]) => id === location.hash.slice(1)) ? location.hash.slice(1) : prefs.get('admin.section', 'demandes'),
-  state: null, mach: null, sw: null, store: null, jr: null, t: null, drag: null, dragLane: null, filter: '' };
+  state: null, mach: null, sw: null, store: null, jr: null, t: null, drag: null, dragLane: null, filter: '',
+  limited: false, teams: null, tf: {}, fresh: {} };
 const main = $('#adm-main');
 // le clic droit (Cal, 29/09 : jamais le menu du navigateur) : un travail de la
 // file a ses gestes ; ailleurs, les sections et la relecture, en tête du menu
@@ -38,7 +48,9 @@ const main = $('#adm-main');
 contextMenu(main, (e) => e.target.closest('.qr')?._menu?.() || null);
 pageMenu(() => [{ head: 'Admin' },
   { label: 'Relire maintenant', icon: '↻', onclick: () => refresh(true) },
-  { label: 'Aller à', icon: '▤', items: SECTIONS.map(([id, k, name]) => ({ label: `${k} · ${name}`, checked: S.sec === id, onclick: () => go(id) })) }]);
+  { label: 'Aller à', icon: '▤', items: shown().map(([id, k, name]) => ({ label: `${k} · ${name}`, checked: S.sec === id, onclick: () => go(id) })) }]);
+// les sections qu'on voit : toutes pour un admin du portail, les Teams seulement sinon
+function shown() { return S.limited ? SECTIONS.filter(([id]) => id === 'teams') : SECTIONS; }
 
 const post = (path, body) => api(path, { method: 'POST', body: body || {} });
 async function act(fn, msg) {
@@ -59,13 +71,14 @@ const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
 // les demandes de Studio (core/auth.py : `studio_request`, un compte Apps qui demande le Studio)
 const studioAsks = () => (S.state ? S.state.users.filter((u) => u.state === 'active' && u.access === 'apps' && u.studio_asked) : []);
 function nav() {
-  const st = S.state;
+  const st = S.limited ? null : S.state;
   const waiting = st ? st.requests.length + studioAsks().length : 0;
   const counts = st ? { demandes: waiting, personnes: st.users.length,
     file: st.queue.running.length + st.queue.queued.length } : {};
+  if (S.teams) counts.teams = S.teams.teams.filter((t) => !t.personal || !S.teams.everyone).length;
   const badge = $('#sr-admin');   // l'en-tête suit sans attendre son propre relevé
   if (badge && st) badge.textContent = waiting ? `Admin · ${waiting}` : 'Admin';
-  $('#adm-nav').replaceChildren(...SECTIONS.map(([id, k, name, sub]) => el('li', {},
+  $('#adm-nav').replaceChildren(...shown().map(([id, k, name, sub]) => el('li', {},
     el('button', { class: 'item' + (S.sec === id ? ' sel' : ''), onclick: () => go(id) },
       el('span', { class: 'st' + (id === 'demandes' && counts.demandes ? ' run' : '') }),
       el('span', { class: 'txt' }, el('span', { class: 'ref' }, `${k} · ${name}`), el('span', { class: 'nm' }, name),
@@ -75,15 +88,24 @@ function nav() {
 }
 
 async function go(id) {
+  if (S.limited) id = 'teams';
   S.sec = id;
-  history.replaceState(null, '', '#' + id);
+  history.replaceState(null, '', location.search + '#' + id);
   render(true);
   await loadSection();
   render(true);
 }
 
+// les Teams : les miennes ; Cal les voit toutes (?toutes=1), celles des autres comprises
+async function loadTeams() {
+  const everyone = !S.limited && !!S.state;
+  const d = await api(`equipes${everyone ? '?toutes=1' : ''}`);
+  S.teams = { ...d, everyone };
+}
+
 async function loadSection() {
   try {
+    if (S.sec === 'teams' || S.sec === 'personnes') await loadTeams();
     if (S.sec === 'demandes' && S.porte === undefined) await loadPorte();
     if (S.sec === 'machines') S.mach = await api('admin/machines');
     if (S.sec === 'cablage') S.sw = await api('admin/switches');
@@ -100,11 +122,18 @@ function busy() {
 async function refresh(now = false) {
   clearTimeout(S.t);
   try {
-    S.state = await api('admin/state');
-    if (['machines', 'journal'].includes(S.sec)) await loadSection();
+    if (!S.limited) {
+      try { S.state = await api('admin/state'); } catch (e) {
+        if (e.status !== 403 || /réseau de Cal/.test(e.message)) throw e;
+        // pas admin du portail : la page d'administration de ses Teams
+        S.limited = true; S.state = null;
+        if (S.sec !== 'teams') { S.sec = 'teams'; history.replaceState(null, '', location.search + '#teams'); }
+      }
+    }
+    if (['machines', 'journal', 'teams', 'personnes'].includes(S.sec)) await loadSection();
     render(now);
   } catch (e) {
-    if (e.status === 403) return denied();
+    if (e.status === 403) return denied(e.message);
     if (e.status !== 401) main.replaceChildren(el('p', { class: 'warn' }, e.message));
   }
   // le relevé : la préférence (3 s par défaut ; les machines et le journal un peu moins souvent)
@@ -112,18 +141,18 @@ async function refresh(now = false) {
   S.t = setTimeout(refresh, S.sec === 'machines' ? base * 4 / 3 : S.sec === 'journal' ? base * 2 : base);
 }
 
-function denied() {
+function denied(why = '') {
   $('#adm-nav').replaceChildren();
   main.replaceChildren(head('Réservé aux admins', '—'),
-    el('p', { class: 'adm-note' }, 'Cette page est la page d’administration du portail : Cal, et ceux à qui il a donné le rôle admin.'),
+    el('p', { class: 'adm-note' }, why || 'Cette page est la page d’administration du portail : Cal, et ceux à qui il a donné le rôle admin.'),
     el('div', { class: 'row' }, el('a', { class: 'tb ghost', href: href('') }, 'Retour à l’accueil')));
 }
 
 function render(force = false) {
-  if (!S.state) return;
+  if (!S.state && !(S.limited && S.teams)) return;
   nav();
   if (!force && busy()) return;   // on ne repeint pas sous les doigts de Cal
-  const fn = { demandes, personnes, file, machines: machinesSec, cablage, stockage, journal: journalSec }[S.sec];
+  const fn = { demandes, personnes, teams: teamsSec, file, machines: machinesSec, cablage, stockage, journal: journalSec }[S.sec];
   main.replaceChildren(...[].concat(fn()).filter(Boolean));
 }
 
@@ -302,6 +331,8 @@ function personne(u) {
         ...[['apps', 'Apps'], ['studio', 'Studio']].map(([v, lab]) => el('button', { class: 'tb' + (u.access === v ? ' on' : ''), type: 'button',
           'aria-pressed': u.access === v ? 'true' : 'false', disabled: susp || null,
           onclick: () => { if (u.access !== v) setAccess(u, v); } }, lab)))),
+    // ses Teams ; un guest : viewer ou acteur se règle ici (décision 2 de Cal, 30/09)
+    u.role === 'invite' ? null : teamLine(u),
     el('div', { class: 'cmeta' }, 'pseudo ', el('b', {}, u.pseudo || u.name), ` · entré ${fmtDate(u.accepted || u.created)} · vu ${u.seen ? fmtDate(u.seen) : 'jamais'} · `,
       el('b', {}, plural(u.devices, 'connexion', 'connexions'))),
     el('div', { class: 'cmeta' }, el('b', {}, `${u.running} en cours · ${u.queued} en file · ${u.today} aujourd’hui`),
@@ -331,7 +362,297 @@ function personnes() {
     el('div', { class: 'grid2' }, ...us.map(personne))];
 }
 
-// ── C · la file ─────────────────────────────────────────────
+// ── C · les Teams ───────────────────────────────────────────
+// Teams et Workspaces (core/espaces.py, docs/etudes/equipes_espaces.md) : une Team décide
+// et paie, ses Workspaces possèdent ce qu'on y crée. Rôles de Team : propriétaire, admin,
+// membre, guest ; un guest n'entre que dans les Workspaces où on le met, et il est
+// « viewer » (voit) ou « acteur » (modifie) — décision 2 de Cal ; il ne calcule jamais.
+// Le serveur juge chaque geste : un bouton grisé dit pourquoi (son titre, et la ligne dessous).
+const TR = { owner: 'propriétaire', admin: 'admin', member: 'membre', guest: 'guest' };
+const WR = { admin: 'admin', editor: 'éditeur', commenter: 'commentateur', viewer: 'lecteur', none: 'sur invitation' };
+const GM = [['viewer', 'viewer · voit'], ['acteur', 'acteur · modifie']];
+const HOURS_FR = { 24: '24 h', 72: '3 jours', 168: '7 jours', 720: '30 jours' };
+const RIGHTS = [['view', 'voir'], ['comment', 'commenter'], ['edit', 'modifier'], ['compute', 'calculer'], ['publish', 'publier'], ['invite', 'inviter']];
+const isCal = () => !S.limited && !!S.state;
+const tf = (t) => (S.tf[t.id] ||= { pseudo: '', role: 'member', guest: 'viewer', spaces: [], irole: 'guest', iguest: 'viewer', ispaces: [], hours: 72, name: '', ws: '', ren: null });
+const segOf = (opts, cur, pick, { label = '', why = {} } = {}) => el('div', { class: 'seg', role: 'group', 'aria-label': label },
+  ...opts.map(([v, lab]) => el('button', { class: 'tb' + (cur === v ? ' on' : ''), type: 'button', 'aria-pressed': cur === v ? 'true' : 'false',
+    disabled: why[v] ? true : null, title: why[v] || '', onclick: () => { if (cur !== v) pick(v); } }, lab)));
+const wsToggles = (t, cur, pick, label) => el('div', { class: 'seg wrap', role: 'group', 'aria-label': label },
+  ...t.spaces.filter((s) => !s.archived).map((s) => el('button', { class: 'tb sm' + (cur.includes(s.id) ? ' on' : ''), type: 'button',
+    'aria-pressed': cur.includes(s.id) ? 'true' : 'false',
+    onclick: () => pick(cur.includes(s.id) ? cur.filter((x) => x !== s.id) : [...cur, s.id]) }, s.name)));
+
+// ce que la personne peut faire dans un Workspace : une pastille par droit ; ce qui manque dit pourquoi
+function rights(sp) {
+  const lack = RIGHTS.filter(([k]) => !sp.can[k]);
+  const why = [...new Set(lack.map(([k]) => sp.why[k]).filter(Boolean))];
+  return [el('div', { class: 'ws-rights', 'aria-label': 'tes droits ici' }, ...RIGHTS.map(([k, lab]) =>
+    el('span', { class: 'chip ' + (sp.can[k] ? 'ok' : 'no'), title: sp.can[k] ? '' : (sp.why[k] || '') }, el('i'), lab))),
+  why.length && (!sp.can.edit || !sp.can.compute) ? el('p', { class: 'why' }, why.slice(0, 2).join(' · ')) : null];
+}
+
+// le mode d'un guest (décision 2) : un geste qui s'annule
+function setGuestMode(t, m, to) {
+  return undoable(`${m.name} : guest ${to}`, () => post(`equipes/${t.id}/membres/${m.id}`, { guest: to }),
+    () => post(`equipes/${t.id}/membres/${m.id}`, { guest: m.guest }), `${m.name} est guest ${to === 'acteur' ? 'acteur : il modifie, ne calcule pas' : 'viewer : il voit seulement'}`);
+}
+function guestSeg(t, m) {
+  const why = t.manage ? {} : { viewer: 'le propriétaire ou un admin de la Team', acteur: 'le propriétaire ou un admin de la Team' };
+  return segOf(GM, m.guest, (v) => setGuestMode(t, m, v), { label: `guest ${m.name} : viewer ou acteur`, why });
+}
+
+// Personnes : la ligne « teams » d'une carte
+function teamLine(u) {
+  const T = S.teams && S.teams.everyone ? S.teams.teams : [];
+  const rows = [];
+  for (const t of T) {
+    if (t.personal) continue;
+    const m = (t.members || []).find((x) => x.id === u.id);
+    if (m) rows.push([t, m]);
+  }
+  return el('div', { class: 'row adm-tm', 'data-teams-of': u.id }, el('span', { class: 'lbl' }, 'teams'),
+    ...(rows.length ? rows.map(([t, m]) => (m.role === 'guest'
+      ? el('span', { class: 'tm' }, el('span', { class: 'chip amb' }, `${t.name} · guest`), guestSeg(t, m))
+      : el('span', { class: 'chip' }, `${t.name} · ${TR[m.role] || m.role}`))) : [el('span', { class: 'lbl' }, S.teams ? 'aucune' : '…')]),
+    u.perso === false ? el('span', { class: 'chip', title: 'entré comme guest : ni Team personnelle, ni calcul' }, 'sans « chez moi »') : null);
+}
+
+function wsRow(t, sp) {
+  const f = tf(t);
+  const renaming = f.ren === sp.id;
+  const inp = el('input', { class: 'fld sm', value: sp.name, maxlength: 40, 'aria-label': 'le nom du Workspace' });
+  const title = renaming
+    ? el('form', { class: 'row', onsubmit: (e) => {
+      e.preventDefault(); f.ren = null;
+      const v = inp.value.trim();
+      if (!v || v === sp.name) return render(true);
+      undoable(`renommer « ${sp.name} »`, () => post(`espaces/${sp.id}`, { name: v }), () => post(`espaces/${sp.id}`, { name: sp.name }), 'renommé');
+    } }, inp, el('button', { class: 'tb sm', type: 'submit' }, 'OK'), el('button', { class: 'tb ghost sm', type: 'button', onclick: () => { f.ren = null; render(true); } }, 'Annuler'))
+    : el('span', { class: 'ws-nm' }, sp.name);
+  const lastOpen = t.spaces.filter((s) => !s.archived).length <= 1 && !sp.archived;
+  return el('div', { class: 'ws' + (sp.archived ? ' off' : ''), 'data-ws': sp.id },
+    el('div', { class: 'ws-l' }, title,
+      el('div', { class: 'cmeta' }, `membres : ${WR[sp.default_role] || sp.default_role}`,
+        t.role === 'guest' ? ` · toi : guest ${t.guest}` : sp.role ? ` · toi : ${WR[sp.role]}` : '',
+        sp.archived ? ' · archivé' : '')),
+    el('div', { class: 'ws-r' }, ...rights(sp)),
+    t.manage ? el('div', { class: 'acts' },
+      el('select', { class: 'fld sm', title: 'le rôle des membres de la Team ici', 'aria-label': `rôle par défaut dans ${sp.name}`,
+        onchange: (e) => { const was = sp.default_role; const to = e.target.value;
+          undoable(`rôle par défaut de « ${sp.name} » : ${WR[to]}`, () => post(`espaces/${sp.id}`, { default_role: to }), () => post(`espaces/${sp.id}`, { default_role: was })); } },
+      ...Object.entries(WR).map(([v, lab]) => el('option', { value: v, selected: sp.default_role === v ? true : null }, `membres : ${lab}`))),
+      renaming ? null : el('button', { class: 'tb ghost sm', type: 'button', onclick: () => { f.ren = sp.id; render(true); setTimeout(() => inp.focus(), 0); } }, 'Renommer'),
+      el('button', { class: 'tb ghost sm', type: 'button', disabled: !sp.archived && lastOpen ? true : null,
+        title: !sp.archived && lastOpen ? 'le dernier Workspace ouvert de la Team ne s’archive pas : crée-en un autre d’abord' : '',
+        onclick: () => undoable(sp.archived ? `rouvrir « ${sp.name} »` : `archiver « ${sp.name} »`, () => post(`espaces/${sp.id}`, { archived: !sp.archived }),
+          () => post(`espaces/${sp.id}`, { archived: !!sp.archived }), sp.archived ? 'rouvert' : 'archivé : lecture seule') }, sp.archived ? 'Rouvrir' : 'Archiver')) : null);
+}
+
+function memberRow(t, m) {
+  const canAdmin = t.role === 'owner' || isCal();
+  const owner = m.role === 'owner';
+  const noAdmin = canAdmin ? {} : { admin: 'le rôle admin : le propriétaire de la Team, ou Cal' };
+  const setRole = (to) => undoable(`${m.name} : ${TR[to]}`,
+    () => post(`equipes/${t.id}/membres/${m.id}`, { role: to, ...(to === 'guest' ? { guest: 'viewer' } : {}) }),
+    () => post(`equipes/${t.id}/membres/${m.id}`, { role: m.role, ...(m.role === 'guest' ? { guest: m.guest, spaces: m.spaces } : {}) }),
+    `${m.name} : ${TR[to]}`);
+  const role = owner ? el('span', { class: 'chip adm-role' }, 'propriétaire')
+    : t.manage ? segOf([['admin', 'admin'], ['member', 'membre'], ['guest', 'guest']], m.role, setRole,
+      { label: `rôle de ${m.name}`, why: m.role === 'admin' ? { member: noAdmin.admin, guest: noAdmin.admin } : noAdmin })
+      : el('span', { class: 'chip' }, TR[m.role]);
+  const perWs = !owner && m.role !== 'admin' && t.manage && m.role !== 'guest' ? el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'par workspace'),
+    ...t.spaces.filter((s) => !s.archived).map((s) => {
+      const cur = (s.members && s.members[m.id] && s.members[m.id].role) || '';
+      return el('select', { class: 'fld sm', 'aria-label': `rôle de ${m.name} dans ${s.name}`,
+        onchange: (e) => { const to = e.target.value || null;
+          undoable(`${m.name} dans « ${s.name} » : ${to ? WR[to] : 'par défaut'}`, () => post(`espaces/${s.id}/membres/${m.id}`, { role: to }),
+            () => post(`espaces/${s.id}/membres/${m.id}`, { role: cur || null })); } },
+      el('option', { value: '', selected: !cur ? true : null }, `${s.name} : par défaut (${WR[s.default_role]})`),
+      ...Object.entries(WR).map(([v, lab]) => el('option', { value: v, selected: cur === v ? true : null }, `${s.name} : ${lab}`)));
+    })) : null;
+  return el('div', { class: 'mem-row', 'data-member': m.id },
+    el('div', { class: 'row' }, el('span', { class: 'nm-s' }, m.name), el('span', { class: 'lbl' }, m.pseudo !== m.name ? m.pseudo : ''),
+      m.state && m.state !== 'active' ? el('span', { class: 'chip err' }, el('i'), m.state === 'suspended' ? 'suspendu' : m.state) : null,
+      el('span', { class: 'sp' }), role,
+      owner ? null : el('button', { class: 'tb ghost sm', type: 'button',
+        disabled: !t.manage || (m.role === 'admin' && !canAdmin) ? true : null,
+        title: !t.manage ? 'retirer : le propriétaire ou un admin de la Team' : m.role === 'admin' && !canAdmin ? 'retirer un admin : le propriétaire, ou Cal' : '',
+        onclick: () => confirmBox(`Retirer ${m.name}`, `${m.name} quitte « ${t.name} » : il ne voit plus ses Workspaces. Ce qu’il y a fait reste à la Team. Pour le remettre : l’ajouter de nouveau.`,
+          'Retirer', () => act(() => post(`equipes/${t.id}/membres/${m.id}/retirer`), `${m.name} retiré de ${t.name}`)) }, 'Retirer')),
+    m.role === 'guest' ? el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'guest'), guestSeg(t, m),
+      el('span', { class: 'lbl' }, 'dans'), t.manage ? wsToggles(t, m.spaces, (list) => undoable(`les Workspaces de ${m.name}`,
+        () => post(`equipes/${t.id}/membres/${m.id}`, { spaces: list }), () => post(`equipes/${t.id}/membres/${m.id}`, { spaces: m.spaces })), `les Workspaces de ${m.name}`)
+        : el('span', { class: 'lbl' }, t.spaces.filter((s) => m.spaces.includes(s.id)).map((s) => s.name).join(' · ') || 'aucun')) : null,
+    perWs);
+}
+
+function addForm(t) {
+  const f = tf(t);
+  const canAdmin = t.role === 'owner' || isCal();
+  const name = el('input', { class: 'fld', placeholder: 'pseudo', maxlength: 24, autocomplete: 'off', spellcheck: 'false', autocapitalize: 'none',
+    'aria-label': `le pseudo à mettre dans ${t.name}`, value: f.pseudo, oninput: (e) => { f.pseudo = e.target.value; } });
+  const guest = f.role === 'guest';
+  return el('form', { class: 'sub-card', 'data-add': t.id, onsubmit: (e) => {
+    e.preventDefault();
+    const v = name.value.trim();
+    if (!v) { name.focus(); return; }
+    if (guest && !f.spaces.length) { toast('un guest n’entre que dans les Workspaces où on le met : choisis-en au moins un'); return; }
+    f.pseudo = '';
+    act(async () => {
+      const r = await post(`equipes/${t.id}/membres`, { pseudo: v, role: f.role, ...(guest ? { guest: f.guest, spaces: f.spaces } : {}) });
+      toast(r.added && r.added.created ? `« ${r.added.pseudo} » créé : il entre en tapant ce pseudo` : `${r.added ? r.added.name : v} est dans ${t.name}`, 6000);
+    });
+  } },
+  el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'mettre quelqu’un'), name,
+    segOf([['member', 'membre'], ['guest', 'guest'], ['admin', 'admin']], f.role, (v) => { f.role = v; render(true); },
+      { label: 'son rôle', why: canAdmin ? {} : { admin: 'faire un admin : le propriétaire de la Team, ou Cal' } }),
+    el('button', { class: 'tb', type: 'submit' }, 'Ajouter')),
+  guest ? el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'guest'), segOf(GM, f.guest, (v) => { f.guest = v; render(true); }, { label: 'viewer ou acteur' }),
+    el('span', { class: 'lbl' }, 'dans'), wsToggles(t, f.spaces, (l) => { f.spaces = l; render(true); }, 'ses Workspaces')) : null,
+  el('p', { class: 'adm-note' }, 'Un pseudo qui n’existe pas encore est créé ici, déjà accepté : il entre en le tapant. ',
+    'Un guest n’entre que dans les Workspaces choisis ; viewer, il voit ; acteur, il modifie ; il ne lance jamais de calcul, et n’a pas de « Chez moi ».'));
+}
+
+function inviteBlock(t) {
+  const f = tf(t);
+  const guest = f.irole === 'guest';
+  const fresh = S.fresh[t.id];
+  const link = fresh ? new URL(`admin/?rejoindre=${encodeURIComponent(fresh.token)}`, href('')).href : '';
+  return el('div', { class: 'sub-card', 'data-invite': t.id },
+    el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'un lien'),
+      segOf([['member', 'membre'], ['guest', 'guest']], f.irole, (v) => { f.irole = v; render(true); }, { label: 'le rôle du lien' }),
+      guest ? segOf(GM, f.iguest, (v) => { f.iguest = v; render(true); }, { label: 'viewer ou acteur' }) : null,
+      segOf(Object.entries(HOURS_FR).map(([h, lab]) => [Number(h), lab]), f.hours, (v) => { f.hours = v; render(true); }, { label: 'sa durée' }),
+      el('button', { class: 'tb', type: 'button', disabled: guest && !f.ispaces.length ? true : null,
+        title: guest && !f.ispaces.length ? 'un guest n’entre que dans les Workspaces choisis : choisis-en au moins un' : '',
+        onclick: () => act(async () => {
+          S.fresh[t.id] = await post(`equipes/${t.id}/invitations`, { role: f.irole, hours: f.hours, ...(guest ? { guest: f.iguest, spaces: f.ispaces } : {}) });
+        }, 'lien créé : il ne se montre qu’une fois') }, 'Créer le lien')),
+    guest ? el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'dans'), wsToggles(t, f.ispaces, (l) => { f.ispaces = l; render(true); }, 'les Workspaces du lien')) : null,
+    link ? el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'à envoyer'), el('b', { class: 'acct-code' }, link), el('span', { class: 'sp' }), copier(link, 'lien')) : null,
+    link ? el('p', { class: 'why' }, 'Ce lien ne se montre qu’une fois. Qui l’ouvre tape son pseudo : un pseudo neuf est accepté par le lien. ',
+      'Sur l’adresse publique sans code d’invitation, un pseudo neuf est refusé : ajoute-le plutôt par son pseudo, ci-dessus.') : null,
+    ...(t.invites || []).map((i) => el('div', { class: 'row inv-row' },
+      el('span', { class: 'chip' + (i.role === 'guest' ? ' amb' : '') }, i.role === 'guest' ? `guest · ${i.guest}` : TR[i.role]),
+      el('span', { class: 'lbl' }, `${i.spaces.length ? t.spaces.filter((s) => i.spaces.includes(s.id)).map((s) => s.name).join(', ') + ' · ' : ''}jusqu’au ${fmtDate(new Date(i.exp * 1000).toISOString())} · ouvert ${i.uses} fois · par ${i.by_name}`),
+      el('span', { class: 'sp' }),
+      el('button', { class: 'tb ghost sm', type: 'button', onclick: () => act(() => post(`equipes/${t.id}/invitations/${i.id}/retirer`), 'lien retiré : il ne s’ouvre plus') }, 'Retirer'))));
+}
+
+function teamCard(t) {
+  const f = tf(t);
+  const canArchive = t.role === 'owner' || isCal();
+  const renaming = f.ren === t.id;
+  const inp = el('input', { class: 'fld sm', value: t.name, maxlength: 40, 'aria-label': 'le nom de la Team' });
+  const newWs = el('input', { class: 'fld sm', placeholder: 'nouveau workspace', maxlength: 40, 'aria-label': 'le nom du nouveau Workspace',
+    value: f.ws, oninput: (e) => { f.ws = e.target.value; } });
+  const why = t.invite_why;
+  return el('div', { class: 'card team' + (t.archived ? ' off' : ''), 'data-team': t.id },
+    el('div', { class: 'card-head' },
+      renaming ? el('form', { class: 'row', onsubmit: (e) => {
+        e.preventDefault(); f.ren = null;
+        const v = inp.value.trim();
+        if (!v || v === t.name) return render(true);
+        undoable(`renommer la Team « ${t.name} »`, () => post(`equipes/${t.id}`, { name: v }), () => post(`equipes/${t.id}`, { name: t.name }), 'renommée');
+      } }, inp, el('button', { class: 'tb sm', type: 'submit' }, 'OK')) : el('span', { class: 'nm' }, t.personal && t.role !== 'owner' ? `Chez ${t.owner_name}` : t.name),
+      el('span', { class: 'chip' + (t.plan === 'studio' ? ' fam' : '') }, t.plan),
+      t.personal ? el('span', { class: 'chip' }, 'personnelle') : null,
+      t.role ? el('span', { class: 'chip' + (t.role === 'guest' ? ' amb' : t.role === 'owner' ? ' adm-role' : '') }, t.role === 'guest' ? `toi : guest · ${t.guest}` : `toi : ${TR[t.role]}`) : null,
+      t.archived ? el('span', { class: 'chip err' }, el('i'), 'archivée') : null,
+      el('span', { class: 'sp' }),
+      t.manage && !t.personal && !renaming ? el('button', { class: 'tb ghost sm', type: 'button', onclick: () => { f.ren = t.id; render(true); setTimeout(() => inp.focus(), 0); } }, 'Renommer') : null,
+      t.manage && !t.personal ? el('button', { class: 'tb ghost sm', type: 'button', disabled: canArchive ? null : true,
+        title: canArchive ? '' : 'archiver une Team : son propriétaire, ou Cal',
+        onclick: () => undoable(t.archived ? `rouvrir « ${t.name} »` : `archiver « ${t.name} »`, () => post(`equipes/${t.id}`, { archived: !t.archived }),
+          () => post(`equipes/${t.id}`, { archived: !!t.archived }), t.archived ? 'rouverte' : 'archivée : lecture seule') }, t.archived ? 'Rouvrir' : 'Archiver') : null),
+    el('div', { class: 'cmeta' }, `propriétaire `, el('b', {}, t.owner_name || '—'), ` · ${t.spaces.length} workspace${t.spaces.length > 1 ? 's' : ''}`,
+      t.members ? ` · ${t.members.length} personne${t.members.length > 1 ? 's' : ''}` : ''),
+    t.manage && !t.personal ? el('div', { class: 'row' },
+      el('span', { class: 'lbl' }, 'api payante'),
+      segOf([[false, 'coupée'], [true, 'ouverte']], t.api, (v) => undoable(v ? `ouvrir l’API à ${t.name}` : `couper l’API de ${t.name}`,
+        () => post(`equipes/${t.id}`, { api: v }), () => post(`equipes/${t.id}`, { api: t.api })), { label: 'l’API payante' }),
+      el('span', { class: 'lbl' }, 'offre'),
+      segOf([['apps', 'Apps'], ['studio', 'Studio']], t.plan, (v) => undoable(`${t.name} : offre ${v}`, () => post(`equipes/${t.id}`, { plan: v }),
+        () => post(`equipes/${t.id}`, { plan: t.plan })), { label: 'l’offre', why: isCal() ? {} : { apps: 'l’offre : Cal la règle', studio: 'l’offre : Cal la règle' } })) : null,
+    el('span', { class: 'lbl' }, 'workspaces'),
+    el('div', { class: 'ws-list' }, ...t.spaces.map((sp) => wsRow(t, sp))),
+    t.manage && !t.archived ? el('form', { class: 'row', onsubmit: (e) => {
+      e.preventDefault();
+      const v = newWs.value.trim();
+      if (!v) { newWs.focus(); return; }
+      f.ws = '';
+      act(() => post(`equipes/${t.id}/espaces`, { name: v }), `Workspace « ${v} » créé`);
+    } }, newWs, el('button', { class: 'tb sm', type: 'submit' }, '+ Workspace')) : null,
+    t.members && !t.personal ? el('span', { class: 'lbl' }, 'membres') : null,
+    t.members && !t.personal ? el('div', { class: 'mem-list' }, ...t.members.map((m) => memberRow(t, m))) : null,
+    t.manage && t.invite ? addForm(t) : null,
+    t.manage && t.invite ? inviteBlock(t) : null,
+    !t.invite && why && (t.manage || t.personal) ? el('p', { class: 'why' }, `inviter : ${why}`) : null);
+}
+
+function teamsSec() {
+  if (!S.teams) return [head('Teams', 'C'), el('p', { class: 'lbl' }, 'lecture…')];
+  const all = S.teams.teams;
+  const mine = all.filter((t) => !t.personal || t.role === 'owner');
+  const others = all.filter((t) => t.personal && t.role !== 'owner');
+  const f = S.tf._new ||= { name: '' };
+  const nm = el('input', { class: 'fld', placeholder: 'le nom de la Team', maxlength: 40, 'aria-label': 'le nom de la nouvelle Team',
+    value: f.name, oninput: (e) => { f.name = e.target.value; } });
+  return [head('Teams', 'C', `${mine.length} team${mine.length > 1 ? 's' : ''}`),
+    el('p', { class: 'adm-note' }, 'Une Team décide et paie ; ses Workspaces possèdent ce qu’on y crée. Un membre entre dans les Workspaces de la Team ',
+      'avec leur rôle par défaut ; un guest n’entre que dans ceux où on l’a mis, viewer (il voit) ou acteur (il modifie) — il ne lance jamais de calcul. ',
+      isCal() ? 'Tu vois toutes les Teams, celles de chacun comprises.' : 'Tu vois tes Teams ; celles que tu gères ont leurs réglages ici.'),
+    S.teams.can_create ? el('form', { class: 'row', onsubmit: (e) => {
+      e.preventDefault();
+      const v = nm.value.trim();
+      if (!v) { nm.focus(); return; }
+      f.name = '';
+      act(() => post('equipes', { name: v }), `Team « ${v} » créée, avec un Workspace « Général »`);
+    } }, nm, el('button', { class: 'tb', type: 'submit' }, '+ Team'))
+      : el('p', { class: 'why' }, all.some((t) => t.personal && t.role === 'owner')
+        ? 'créer une Team : le Studio (ton compte ouvre les Apps) — ta Team « Chez moi » a ses Workspaces'
+        : 'créer une Team : un compte du Studio — tu es ici comme guest : demande à Cal'),
+    el('div', { class: 'grid2 wide' }, ...mine.map(teamCard)),
+    others.length ? el('span', { class: 'lbl' }, `les « chez moi » des autres · ${others.length}`) : null,
+    others.length ? el('div', { class: 'grid2' }, ...others.map(teamMini)) : null];
+}
+
+// la Team personnelle d'un autre (Cal les voit toutes) : en bref ; ses réglages sont à son propriétaire
+function teamMini(t) {
+  return el('div', { class: 'card team-mini', 'data-team': t.id },
+    el('div', { class: 'card-head' }, el('span', { class: 'nm' }, `Chez ${t.owner_name}`),
+      el('span', { class: 'chip' + (t.plan === 'studio' ? ' fam' : '') }, t.plan)),
+    el('div', { class: 'ws-names' }, ...t.spaces.map((s) => el('span', { class: 'chip' + (s.archived ? ' no' : '') }, s.name))));
+}
+
+// un lien d'invitation de Team (admin/?rejoindre=<jeton>) : la porte d'abord (un pseudo), puis la Team ;
+// une demande neuve est acceptée par le lien (qui l'a fait a vouché pour elle)
+async function rejoindre(tok) {
+  for (let i = 0; i < 400; i++) {
+    let me = null;
+    try { me = await api('auth/me'); } catch { /* le portail ne répond pas : on réessaie */ }
+    if (me && (me.state === 'active' || me.state === 'pending')) {
+      try {
+        const r = await api(`auth/equipe/${encodeURIComponent(tok)}`, { method: 'POST', body: {} });
+        toast(`bienvenue dans ${r.team_name} : ${r.role === 'guest' ? `guest ${r.guest}` : r.role_fr}`, 6000);
+        setTimeout(() => location.replace(`${location.pathname}#teams`), 900);
+        return;
+      } catch (e) {
+        if ([404, 409, 410, 403].includes(e.status)) {
+          toast(e.message, 12000);
+          history.replaceState(null, '', location.pathname + location.hash);
+          return;
+        }
+      }
+    }
+    await new Promise((res) => setTimeout(res, 1500));
+  }
+}
+const joinTok = new URLSearchParams(location.search).get('rejoindre');
+if (joinTok) { S.sec = 'teams'; rejoindre(joinTok); }
+
+// ── D · la file ─────────────────────────────────────────────
 const MODE_FR = { active: 'reprendre', paused: 'mettre en pause', draining: 'vidanger' };
 function machineCtl(m, s) {
   const mode = s.mode;
@@ -445,7 +766,7 @@ function file() {
   const q = S.state.queue;
   const lanes = {};
   for (const j of q.queued) (lanes[j.lane] ||= []).push(j);
-  const out = [head('La file des calculs', 'C', `${q.running.length} en cours · ${q.queued.length} en file`),
+  const out = [head('La file des calculs', 'D',`${q.running.length} en cours · ${q.queued.length} en file`),
     el('div', { class: 'card' },
       el('div', { class: 'card-head' }, el('span', { class: 'nm' }, q.paused ? 'La file est en pause' : 'La file tourne'),
         q.paused ? el('span', { class: 'chip amb' }, el('i'), 'pause') : el('span', { class: 'chip ok' }, el('i'), 'active'),
@@ -545,9 +866,9 @@ function cfCard(cf, relay) {
 
 function machinesSec() {
   const M = S.mach;
-  if (!M) return [head('Les machines', 'D'), el('p', { class: 'lbl' }, 'relevé des machines…')];
+  if (!M) return [head('Les machines', 'E'), el('p', { class: 'lbl' }, 'relevé des machines…')];
   const fam = Object.entries(M.families.gb || {}).map(([k, v]) => `${k} ${v} Go`).join(' · ');
-  return [head('Les machines', 'D', M.paused ? 'file en pause' : ''),
+  return [head('Les machines', 'E', M.paused ? 'file en pause' : ''),
     el('div', { class: 'grid2 wide' }, ...M.machines.map(machineCard), h3Card(M.h3), cfCard(M.cf, M.relay)),
     el('div', { class: 'card' }, el('span', { class: 'nm' }, 'Les règles de la file'),
       el('p', { class: 'adm-note' }, `Un seul travail GPU du portail par machine (${M.rules.gpu_jobs_per_machine}) ; rien sous le rendu d’un autre `,
@@ -561,7 +882,7 @@ function machinesSec() {
 // ── E · le câblage ──────────────────────────────────────────
 function cablage() {
   const d = S.sw;
-  if (!d) return [head('Câblage', 'E'), el('p', { class: 'lbl' }, 'lecture…')];
+  if (!d) return [head('Câblage', 'F'), el('p', { class: 'lbl' }, 'lecture…')];
   const pending = d.items.filter((i) => i.pending);
   const setSw = (key, value) => {
     const it = d.items.find((i) => i.key === key) || {};
@@ -569,7 +890,7 @@ function cablage() {
     return undoable(`${key} = ${JSON.stringify(value)}`, async () => { S.sw = await post('admin/switches', { key, value }); },
       async () => { S.sw = await post('admin/switches', { key, value: was }); }, `${key} = ${JSON.stringify(value)} : écrit, au redémarrage`);
   };
-  return [head('Câblage', 'E', d.file),
+  return [head('Câblage', 'F', d.file),
     el('p', { class: 'adm-note' }, 'Les interrupteurs de câblage des modèles. Ils s’écrivent dans showrunner.local.json dès le clic et prennent effet ',
       'au redémarrage du portail : le serveur ne relit ce fichier qu’au démarrage.'),
     pending.length ? el('div', { class: 'cmd' }, el('span', { class: 'why' }, 'à relancer'), el('code', {}, d.restart),
@@ -601,11 +922,11 @@ function confirmBox(title, text, go, action) {
 
 function stockage() {
   const d = S.store;
-  if (!d) return [head('Stockage', 'F'), el('p', { class: 'lbl' }, 'mesure…')];
+  if (!d) return [head('Stockage', 'G'), el('p', { class: 'lbl' }, 'mesure…')];
   const total = d.parts.reduce((a, p) => a + p.bytes, 0);
   const trash = d.parts.find((p) => p.name === 'trash') || { bytes: 0 };
   const disk = d.disk;
-  return [head('Stockage', 'F', d.data_dir),
+  return [head('Stockage', 'G', d.data_dir),
     disk ? el('div', { class: 'card' }, el('div', { class: 'mem' },
       el('span', { class: 'lbl' }, `disque : ${fmtBytes(disk.free)} libres sur ${fmtBytes(disk.total)} · le portail en garde ${fmtBytes(total)}`),
       el('div', { class: 'bar' }, el('i', { style: { width: `${Math.round(100 * (disk.total - disk.free) / disk.total)}%` } })))) : null,
@@ -627,12 +948,12 @@ function stockage() {
 const BAD = new Set(['code refusé', 'refusé', 'appareil retiré']);
 function journalSec() {
   const d = S.jr;
-  if (!d) return [head('Journal', 'G'), el('p', { class: 'lbl' }, 'lecture…')];
+  if (!d) return [head('Journal', 'H'), el('p', { class: 'lbl' }, 'lecture…')];
   const f = S.filter.toLowerCase();
   const rows = d.events.filter((e) => !f || JSON.stringify(e).toLowerCase().includes(f)).slice(0, 250);
   const detail = (e) => Object.entries(e).filter(([k]) => !['t', 'event', 'user'].includes(k) && !(k === 'by' && !e.user))
     .map(([k, v]) => (k === 'by' ? `par ${v}` : `${k} ${typeof v === 'object' ? JSON.stringify(v) : v}`)).join(' · ');
-  return [head('Journal', 'G', `${d.events.length} événements`),
+  return [head('Journal', 'H', `${d.events.length} événements`),
     el('div', { class: 'row' }, el('input', { class: 'fld', placeholder: 'filtrer (un nom, un chemin, un événement)', value: S.filter, style: { maxWidth: '420px' },
       oninput: (e) => {
         S.filter = e.target.value;
