@@ -11,8 +11,10 @@ Deux moteurs (`image_backend` dans showrunner.local.json) :
            les réglages, le prompt envoyé — ou l'image source transformée
            de façon visible. Aucun modèle n'est chargé, rien n'est envoyé à
            ComfyUI. Toute l'interface se teste de bout en bout.
-  comfyui  le câblage réel, en place mais pas encore essayé : les graphes
-           ci-dessous, rendus par l'instance ComfyUI de l'ouvrier.
+  comfyui  le câblage réel : les graphes ci-dessous, rendus par l'instance
+           ComfyUI de l'ouvrier — essayé fonction par fonction le 30/09 sur
+           DGX2 (et Z-Image base sur DGX1), avec la vraie progression (la
+           websocket de ComfyUI, `live_run`) et des erreurs lisibles.
 
 Les graphes de Krea 2 et de Qwen-Image 2.1 sont ceux de Character
 Factory, importés depuis `cf_repo` (`factory/krea2.py`, `qwen21.py`), pas
@@ -417,6 +419,7 @@ def _requires() -> dict[str, list[tuple[str, str | None, str | None]]]:
 
 _avail: dict[str, tuple[float, dict]] = {}
 _avail_lock = threading.Lock()
+DOWN_RETRY_S = 10.0   # une machine injoignable : relue au bout de 10 s, pas de 2 min
 
 
 def _endpoint_caps(url: str) -> dict[str, list[str]]:
@@ -427,10 +430,10 @@ def _endpoint_caps(url: str) -> dict[str, list[str]]:
     info: dict = {}
     c = Comfy(url, timeout=20)
     for n in nodes:
-        try:
-            info.update(c.object_info(n))
-        except ComfyError:
-            pass
+        # un nœud inconnu rend {} ; une erreur (délai dépassé pendant qu'elle
+        # charge un modèle, connexion coupée) n'est pas un nœud absent : elle
+        # remonte, et la machine est « injoignable », pas « sans ce modèle »
+        info.update(c.object_info(n))
     out = {}
     for cap, need in reqs.items():
         missing = []
@@ -459,7 +462,9 @@ def availability(max_age: float = 120.0) -> dict:
     for ep in eps:
         with _avail_lock:
             t, got = _avail.get(ep, (0.0, None))
-        if got is None or time.time() - t > max_age:
+        # une machine injoignable est relue vite : ce n'est souvent qu'un moment
+        age = max_age if got and "_down" not in got and "_error" not in got else min(max_age, DOWN_RETRY_S)
+        if got is None or time.time() - t > age:
             ok, why = jobs.endpoint_alive(ep)
             if ok:
                 try:
@@ -472,9 +477,10 @@ def availability(max_age: float = 120.0) -> dict:
                 _avail[ep] = (time.time(), got)
         m = jobs.machine_of(ep)
         for cap in _requires():
-            c = caps.setdefault(cap, {"on": [], "missing": {}})
+            c = caps.setdefault(cap, {"on": [], "missing": {}, "down": []})
             if "_down" in got or "_error" in got:
                 c["missing"][m] = ["ne répond pas"]
+                c["down"].append(ep)
             elif got.get(cap):
                 c["missing"][m] = got[cap]
             else:
@@ -498,7 +504,12 @@ def _pin_for(cap: str) -> str | None:
     if not av["on"]:
         miss = "; ".join(f"{m} : {', '.join(v)}" for m, v in av["missing"].items())
         raise HttpError(409, f"aucune machine ne peut le faire ({miss})")
-    return None if len(av["on"]) == len(eps) else av["on"][0]
+    # épingler, c'est écarter une machine à qui il MANQUE le modèle ; une machine
+    # qui ne répond pas à l'instant n'est pas écartée (la file ne lui donne rien
+    # tant qu'elle ne répond pas) — relevé du 30/09 : un /object_info trop lent
+    # pendant un rendu épinglait tout sur l'autre machine, en pause
+    able = [e for e in eps if e in av["on"] or e in av.get("down", [])]
+    return None if len(able) == len(eps) else av["on"][0]
 
 
 # ── le prompt ───────────────────────────────────────────────
@@ -578,24 +589,44 @@ ROLE_EN = {"face": "the face of", "full body": "the full body of", "expression":
            "outfit": "the outfit of", "view": "a view of"}
 
 
+def _resolve(it: dict) -> dict | None:
+    """Un élément versionné (`element.versions`, server/tools/elements.py) n'a
+    pas de références à lui : sa matière est sa dernière version publiée
+    (`library.resolve`) — une image, ou une planche de références. Une planche
+    d'avant (un personnage importé de Character Factory, ses `refs` propres)
+    est rendue telle quelle. Un socle sans éléments versionnés : l'objet."""
+    res = getattr(library, "resolve", None)
+    return res(it) if res else it
+
+
 def _ref(r: dict) -> dict:
     """{item, ref?} → {path, label, item, role}. Un élément donne la
-    référence choisie (`ref` : son fichier), sinon sa première."""
-    it = library.get((r or {}).get("item", ""))
-    if not it:
+    référence choisie (`ref` : son fichier), sinon sa première ; un élément
+    versionné, sa dernière version (`item` : la version réellement envoyée,
+    épinglée dans la lignée)."""
+    it0 = library.get((r or {}).get("item", ""))
+    if not it0:
         raise ValueError(f"référence introuvable : {(r or {}).get('item')}")
+    it = _resolve(it0)
+    if it is None:
+        raise ValueError(f"l'élément « {it0.get('title') or it0['id']} » n'a pas encore de version publiée : rien à envoyer")
+    if it is not it0 and it["kind"] not in ("image", "element"):
+        raise ValueError(f"l'élément « {it0.get('title') or it0['id']} » est un {it['kind']} (sa dernière version) : "
+                         "une référence d'image est une image ou une planche")
+    who0 = it0.get("title") or it0["id"]
     if it["kind"] == "image":
-        return {"path": library.path_of(it), "label": f"“{it.get('title') or it['id']}”", "item": it["id"], "role": "",
-                "title": it.get("title") or it["id"]}
+        name = who0 if it is not it0 else (it.get("title") or it["id"])
+        return {"path": library.path_of(it), "label": f"“{name}”", "item": it["id"], "role": "", "title": name}
     if it["kind"] != "element":
         raise ValueError(f"une référence est une image ou un élément : {it['id']}")
     refs = it["element"].get("refs") or []
     if not refs:
-        raise ValueError(f"l'élément {it.get('title')} n'a aucune image")
+        raise ValueError(f"l'élément {it0.get('title')} n'a aucune image")
     pick = next((x for x in refs if x["file"] == r.get("ref")), refs[0])
     role = pick.get("role") or ""
-    who = it.get("title") or "the element"
-    label = f"{ROLE_EN.get(role, '')} {who}".strip() if it["element"].get("type") == "character" else who
+    who = it0.get("title") or it.get("title") or "the element"   # un élément versionné garde son nom, pas celui de sa version
+    etype = (it0.get("element") or {}).get("type") or it["element"].get("type")
+    label = f"{ROLE_EN.get(role, '')} {who}".strip() if etype == "character" else who
     return {"path": library.path_of(it, pick["file"]), "label": label, "item": it["id"], "role": role,
             "title": f"{who} · {pick.get('label') or role}"}
 
@@ -1135,6 +1166,235 @@ def stub_edit(ctx, p: dict, src_path: Path, out: Path, prompt: str, refs: list[d
     return out
 
 
+# ── le rendu réel : la vraie progression, des erreurs lisibles ──
+# ComfyUI ne donne la progression fine que par sa websocket (/ws?clientId=…,
+# `server.py`) : « progress_state » (l'état de chaque nœud : running,
+# finished, avec value/max — `comfy_execution/progress.py`), « executing »
+# (le nœud en cours), « progress » (le pas d'un échantillonneur, `main.py`
+# hijack_progress), « execution_cached ». Tout est envoyé au seul client
+# qui a mis le graphe en file (`client_id` de /prompt) : celui de
+# `ctx.comfy`. La barre = les nœuds finis + la part du nœud en cours, sur
+# le nombre de nœuds du graphe ; le message dit ce que fait ComfyUI.
+# Bibliothèque standard seulement (RFC 6455 : poignée de main, trames).
+_WHAT = (("Loader", "charge les poids"), ("SamplerCustom", "calcule"), ("KSamplerSelect", "règle l'échantillonnage"),
+         ("KSampler", "calcule"), ("SeedVR2", "restaure"), ("TextEncode", "lit le prompt"),
+         ("Krea2EditGrounded", "lit le prompt et les références"), ("Conditioning", "lit le prompt"), ("Krea2EditModelPatch", "prépare les références"), ("ReferenceLatent", "prépare les références"),
+         ("VAEEncode", "encode"), ("VAEDecode", "décode"), ("RemoveBackground", "détoure"), ("MaskToImage", "détoure"),
+         ("UpscaleWithModel", "agrandit (GAN)"), ("SaveImage", "enregistre"),
+         ("LoadImage", "lit l'image"), ("EmptySD3Latent", "prépare la toile"), ("EmptyLatent", "prépare la toile"),
+         ("ModelSampling", "règle l'échantillonnage"), ("Sigmas", "règle l'échantillonnage"), ("Guider", "règle l'échantillonnage"),
+         ("RandomNoise", "règle l'échantillonnage"), ("CFGNorm", "règle l'échantillonnage"), ("QwenImage21Cache", "règle l'échantillonnage"),
+         ("Scale", "redimensionne"), ("Resize", "redimensionne"))
+
+
+def _what(cls: str) -> str:
+    return next((w for k, w in _WHAT if k in cls), cls)
+
+
+class _Live:
+    """La websocket de ComfyUI, lue dans un fil pendant le rendu."""
+
+    def __init__(self, ctx, graph: dict, label: str, lo: float, hi: float) -> None:
+        self.ctx, self.label, self.lo, self.hi = ctx, label, lo, hi
+        self.nodes = {k: v.get("class_type", "") for k, v in graph.items() if not k.startswith("_")}
+        self.done: set[str] = set()
+        self.cur, self.sub = None, 0.0
+        self.ok = False
+        self.ready = threading.Event()
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+
+    # une trame du client est masquée (RFC 6455 § 5.3)
+    @staticmethod
+    def _frame(op: int, payload: bytes = b"") -> bytes:
+        import os
+        import struct
+        n = len(payload)
+        head = bytes([0x80 | op]) + (bytes([0x80 | n]) if n < 126 else bytes([0x80 | 126]) + struct.pack(">H", n))
+        mask = os.urandom(4)
+        return head + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+
+    def _loop(self) -> None:
+        import os
+        import socket
+        import struct
+        import urllib.parse
+        sock = None
+        try:
+            u = urllib.parse.urlparse(self.ctx.comfy.url)
+            sock = socket.create_connection((u.hostname, u.port or 80), timeout=5)
+            key = base64.b64encode(os.urandom(16)).decode()
+            sock.sendall((f"GET /ws?clientId={self.ctx.comfy.client_id} HTTP/1.1\r\nHost: {u.hostname}:{u.port or 80}\r\n"
+                          f"Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+                          "Sec-WebSocket-Version: 13\r\n\r\n").encode())
+            buf = b""
+            while b"\r\n\r\n" not in buf:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    raise OSError("websocket fermée")
+                buf += chunk
+            head, _, buf = buf.partition(b"\r\n\r\n")
+            if b" 101" not in head.split(b"\r\n", 1)[0]:
+                raise OSError(head.split(b"\r\n", 1)[0].decode("latin-1"))
+            self.ok = True
+        except OSError:
+            self.ok = False
+            if sock:
+                sock.close()
+            return
+        finally:
+            self.ready.set()
+        sock.settimeout(1.0)
+        msg, op0 = b"", 0
+
+        def need(n: int) -> bytes:
+            nonlocal buf
+            while len(buf) < n:
+                if self.stop.is_set():
+                    raise EOFError
+                try:
+                    chunk = sock.recv(65536)
+                except socket.timeout:
+                    continue
+                if not chunk:
+                    raise EOFError
+                buf += chunk
+            out, buf = buf[:n], buf[n:]
+            return out
+
+        try:
+            while not self.stop.is_set():
+                b0, b1 = need(2)
+                fin, op, n = b0 & 0x80, b0 & 0x0F, b1 & 0x7F
+                if n == 126:
+                    n = struct.unpack(">H", need(2))[0]
+                elif n == 127:
+                    n = struct.unpack(">Q", need(8))[0]
+                mask = need(4) if b1 & 0x80 else None
+                data = need(n)
+                if mask:
+                    data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+                if op == 8:
+                    break
+                if op == 9:
+                    sock.sendall(self._frame(10, data))
+                    continue
+                if op in (1, 2):
+                    msg, op0 = data, op
+                elif op == 0:
+                    msg += data
+                if fin and op0 == 1 and op in (0, 1):
+                    try:
+                        self._on(json.loads(msg.decode("utf-8")))
+                    except (ValueError, UnicodeDecodeError):
+                        pass
+        except (EOFError, OSError):
+            pass
+        finally:
+            try:
+                sock.sendall(self._frame(8))
+            except OSError:
+                pass
+            sock.close()
+
+    def _on(self, m: dict) -> None:
+        t, d = m.get("type"), m.get("data") or {}
+        if t == "execution_cached":
+            self.done |= {str(n) for n in d.get("nodes") or []}
+        elif t == "progress_state":
+            for nid, s in (d.get("nodes") or {}).items():
+                if s.get("state") == "finished":
+                    self.done.add(str(nid))
+                elif s.get("state") == "running":
+                    self.cur = str(nid)
+                    mx = s.get("max") or 0
+                    self.sub = (s.get("value") or 0) / mx if mx else 0.0
+        elif t == "executing":
+            if self.cur and d.get("node") != self.cur:
+                self.done.add(self.cur)
+            self.cur, self.sub = (str(d["node"]) if d.get("node") else None), 0.0
+        elif t == "progress":
+            mx = d.get("max") or 0
+            self.sub = (d.get("value") or 0) / mx if mx else 0.0
+            if d.get("node"):
+                self.cur = str(d["node"])
+            cls = self.nodes.get(self.cur or "", "")
+            self._paint(f"{self.label} · {_what(cls)} {d.get('value')}/{mx}")
+            return
+        else:
+            return
+        cls = self.nodes.get(self.cur or "", "")
+        what = "monte le modèle sur le GPU, puis calcule" if cls in self.SAMPLERS and not self.sub else _what(cls)
+        self._paint(f"{self.label} · {what}" if self.cur else None)
+
+    # un échantillonneur pèse autant que tout le reste du graphe : ComfyUI
+    # n'y monte les poids sur le GPU qu'en y entrant (relevé du 30/09 : Krea 2
+    # à froid, 13 s dans le KSampler avant son premier pas, les chargeurs en
+    # moins d'une seconde) et y passe l'essentiel du rendu
+    SAMPLERS = ("KSampler", "KSamplerAdvanced", "SamplerCustom", "SamplerCustomAdvanced")
+
+    def _weight(self, nid: str) -> float:
+        return max(1.0, float(len(self.nodes) - 1)) if self.nodes.get(nid, "") in self.SAMPLERS else 1.0
+
+    def _paint(self, message: str | None) -> None:
+        total = sum(self._weight(n) for n in self.nodes) or 1.0
+        done = sum(self._weight(n) for n in self.done & set(self.nodes))
+        sub = self.sub * self._weight(self.cur) if self.cur and self.cur not in self.done else 0.0
+        frac = min(1.0, (done + sub) / total)
+        prev = self.ctx.job.get("progress") or 0.0
+        self.ctx.progress(max(prev, self.lo + (self.hi - self.lo) * frac), message)
+
+
+def _readable(e: Exception, ctx, label: str) -> str:
+    """Ce que ComfyUI refuse ou rate, dit en clair (la page montre le
+    message tel quel)."""
+    s = str(e)
+    m = jobs.machine_of(ctx.endpoint)
+    if "graphe refusé" in s:
+        try:
+            errs = json.loads(s.split(":", 1)[1].strip())
+            parts = []
+            for nid, ne in errs.items():
+                for x in ne.get("errors", [])[:2]:
+                    parts.append(f"{ne.get('class_type', nid)} : {x.get('message', '')} {x.get('details', '')[:160]}".strip())
+            if parts:
+                return f"{label} : ComfyUI de {m} refuse le graphe — " + " ; ".join(parts)
+        except (ValueError, IndexError, AttributeError):
+            pass
+    low = s.lower()
+    if "out of memory" in low or "allocation on device" in low or "cuda error: out of memory" in low:
+        return f"{label} : mémoire insuffisante sur {m} ({s[-300:]})"
+    if "ne répond pas" in s:
+        return f"{label} : {m} ne répond plus — ComfyUI arrêté ou machine éteinte ({s[-200:]})"
+    return f"{label} ({m}) : {s}"
+
+
+def live_run(ctx, graph: dict, *, label: str, prefix: str = "out", lo: float = 0.1, hi: float = 0.95,
+             timeout: float = 7200) -> list[Path]:
+    """`ctx.run_graph`, avec la vraie progression (la websocket de ComfyUI)
+    et une erreur lisible. Arrêter (`ctx.cancelled`) interrompt le rendu :
+    `Comfy.wait` le relit chaque seconde."""
+    if not ctx.comfy:
+        raise RuntimeError("ce travail n'a pas d'instance ComfyUI")
+    live = _Live(ctx, graph, label, lo, hi)
+    live.thread.start()
+    live.ready.wait(6)
+
+    def report(state: str, ahead: int) -> None:
+        if state == "wait":
+            ctx.progress(message=f"{label} · attend ComfyUI ({ahead} devant)")
+        elif not live.ok:
+            ctx.progress(message=f"{label} en cours")
+
+    try:
+        return ctx.comfy.run(graph, ctx.workdir, cancelled=ctx.cancelled, report=report, prefix=prefix, timeout=timeout)
+    except ComfyError as e:
+        raise RuntimeError(_readable(e, ctx, label)) from e
+    finally:
+        live.stop.set()
+        live.thread.join(3)
+
+
 # ── les travaux ─────────────────────────────────────────────
 def _title(prompt: str, n: int = 8) -> str:
     words = prompt.replace("\n", " ").split()
@@ -1164,7 +1424,9 @@ def run_generate(ctx) -> dict:
             names.append(ctx.comfy.upload(local))
         wf = graph_generate(p, names, comp["prompt"])
         ctx.progress(0.1, f"{MODELS[model]['name']} rend {p['width']}×{p['height']}")
-        out = ctx.run_graph(wf, label=MODELS[model]["name"])[0]
+        out = live_run(ctx, wf, label=MODELS[model]["name"])[0]
+        if not p.get("transparent"):
+            out = _opaque(out, ctx.workdir / "opaque.png")
         model_id = model + (f"-{p['variant']}" if model == "zimage" else "")
     secs = round(time.time() - t0, 1)
     it = ctx.add(out, kind="image", title=_title(p["prompt"]), prompt=comp["prompt"],
@@ -1221,7 +1483,8 @@ def run_edit(ctx) -> dict:
 
 
 def _real_edit(ctx, p: dict, src_path: Path, size: tuple[int, int], refs: list[dict], prompt: str) -> Path:
-    """Le câblage réel d'une édition : pas encore essayé (voir l'étude §8)."""
+    """Le câblage réel d'une édition (rendus d'essai du 30/09 : consigne Qwen
+    et Krea, zone peinte, rééclairer, détourer, agrandir, affiner, angle)."""
     from PIL import Image
     cf = _cf()
     tool = p["tool"]
@@ -1250,7 +1513,7 @@ def _real_edit(ctx, p: dict, src_path: Path, size: tuple[int, int], refs: list[d
         with Image.open(src_in) as im:
             wf, osz = graph_instruct(p, im.size, names, prompt)
         ctx.progress(0.1, f"{MODELS[p['model']]['name']} édite {osz[0]}×{osz[1]}")
-        out = ctx.run_graph(wf, label=MODELS[p["model"]]["name"])[0]
+        out = _opaque(live_run(ctx, wf, label=MODELS[p["model"]]["name"])[0], ctx.workdir / "opaque.png")
         if box:
             out = paste_zone(Image.open(src_path), Image.open(out), mask, box, ctx.workdir / "zone.png")
         return out
@@ -1264,10 +1527,35 @@ def _real_edit(ctx, p: dict, src_path: Path, size: tuple[int, int], refs: list[d
         _rgb(src_path, local)
     wf = edit_graph(p, size, [ctx.comfy.upload(local)], prompt)
     ctx.progress(0.1, EDIT_TOOLS[tool]["name"])
-    out = ctx.run_graph(wf, prefix="mask" if tool == "matte" else "out", label=EDIT_TOOLS[tool]["name"])[0]
+    out = live_run(ctx, wf, prefix="mask" if tool == "matte" else "out", label=EDIT_TOOLS[tool]["name"])[0]
     if tool == "matte":
         out = _apply_matte(local, out, ctx.workdir / "matte.png")
+    else:
+        out = _opaque(out, ctx.workdir / "opaque.png")
+        if tool in ("upscale", "refine"):
+            # une image détourée garde sa transparence : l'alpha de la source,
+            # agrandi en Lanczos (comme l'outil Upscale et le JoinImageWithAlpha des gabarits)
+            with Image.open(src_path) as s:
+                if s.mode in ("RGBA", "LA") or (s.mode == "P" and "transparency" in s.info):
+                    a = s.convert("RGBA").split()[-1]
+                    with Image.open(out) as r:
+                        r = r.convert("RGBA")
+                        r.putalpha(a.resize(r.size, Image.LANCZOS))
+                        r.save(ctx.workdir / "alpha.png")
+                    out = ctx.workdir / "alpha.png"
     return out
+
+
+def _opaque(path: Path, dest: Path) -> Path:
+    """Le VAE de Qwen-Image 2.1 rend toujours du RVBA (son fond transparent
+    est natif) : sur une image demandée opaque, son alpha n'est pas tout à
+    fait plein (relevé du 30/09 : 250 à 255). Une image opaque sort en RVB."""
+    from PIL import Image
+    with Image.open(path) as im:
+        if im.mode in ("RGBA", "LA", "P"):
+            im.convert("RGB").save(dest)
+            return dest
+    return path
 
 
 def _apply_matte(src: Path, mask_file: Path, dest: Path) -> Path:
@@ -1311,8 +1599,18 @@ def _cap_edit(p: dict) -> str:
 
 
 # la famille de modèles de chaque travail, pour la file (core/jobs.py) : les
-# noms de FAMILY_GB (Character_Factory/factory/memory.py) ; SeedVR2 n'y est pas
-EDIT_FAMILY = {"refine": "zimage", "angle": "qwenedit", "matte": "birefnet", "upscale": "seedvr2"}
+# noms de FAMILY_GB (Character_Factory/factory/memory.py) ; SeedVR2 n'y est pas :
+# le même nom que l'outil Upscale (le même 7B), sa mémoire par la loi de ComfyUI
+EDIT_FAMILY = {"refine": "zimage", "angle": "qwenedit", "matte": "birefnet", "upscale": "seedvr2-7b"}
+
+
+def _mem_edit(p: dict) -> float | None:
+    if p.get("tool") != "upscale":
+        return None
+    from tools import upscale as up   # à l'appel : upscale importe ce module
+    src = library.get(p.get("source") or "") or {}
+    w, h = src.get("width") or 0, src.get("height") or 0
+    return up.mem_image({"model": "seedvr2-7b", "width": w * p.get("factor", 2), "height": h * p.get("factor", 2)}) if w and h else None
 
 
 def _family_generate(p: dict) -> str:
@@ -1463,17 +1761,19 @@ def api_redo(req) -> dict:
                                              f"Variation · {title}", pin) for k in range(n)]}
 
 
-def _register_job(kind: str, fn, title: str, family) -> None:
+def _register_job(kind: str, fn, title: str, family, mem_gb=None) -> None:
     """`family` et `gpu` (la règle de mémoire de la file) n'existent que dans
     le socle qui les porte ; un socle plus ancien enregistre sans eux."""
     import inspect
     extra = {"family": family, "gpu": _uses_comfy} if "family" in inspect.signature(jobs.register).parameters else {}
+    if extra and mem_gb:
+        extra["mem_gb"] = mem_gb
     jobs.register(kind, fn, lane="image", title=title, **extra)
 
 
 def register(app) -> None:
     _register_job("image.generate", run_generate, "Image", _family_generate)
-    _register_job("image.edit", run_edit, "Édition", _family_edit)
+    _register_job("image.edit", run_edit, "Édition", _family_edit, _mem_edit)
     app.route("GET", "/api/image/models", api_models)
     app.route("POST", "/api/image/compose", api_compose)
     app.route("POST", "/api/image/generate", api_generate)
@@ -1549,6 +1849,22 @@ def selftest(call, ok) -> None:
     st, r = call("POST", "/api/image/edit", {"source": iid, "tool": "instruct", "model": "krea2", "prompt": "x", "refs": [iid] * 3, "dry": True})
     ok(st == 200 and len(r.get("params", {}).get("refs", [])) == 1 and len(r.get("params", {}).get("refs_held", [])) == 2,
        f"image : Krea 2 édite avec 1 référence en plus de l'image, les autres gardées ({st})")
+    # un élément versionné (server/tools/elements.py) : sa matière est sa dernière
+    # version (library.resolve) ; la planche d'avant (« Maren ») marche telle quelle
+    if hasattr(library, "resolve"):
+        st, liv = call("POST", "/api/elements", {"title": "Pochette", "from_item": iid})
+        lid = (liv or {}).get("id")
+        ok(st == 200 and bool(lid) and library.is_living(library.get(lid)), f"image : un élément versionné fait d'une image ({st} {str(liv)[:160]})")
+        if lid:
+            got = _ref({"item": lid})
+            ok(got["item"] == iid and got["path"] == library.path_of(library.get(iid)) and got["label"] == "“Pochette”",
+               f"image : un élément versionné envoie sa dernière version ({got})")
+            st, c = call("POST", "/api/image/compose", {"model": "qwen21", "prompt": "a poster", "refs": [{"item": lid}, {"item": eid}]})
+            ok(st == 200 and "<image1> shows “Pochette”." in c["prompt"] and "<image2> shows the face of Maren." in c["prompt"],
+               f"image : Qwen présente l'élément versionné et la planche ({c})")
+            st, r = call("POST", "/api/image/generate", {"model": "krea2", "prompt": "x", "refs": [lid, eid], "dry": True})
+            ok(st == 200 and [x["item"] for x in r.get("params", {}).get("refs", [])] == [lid, eid],
+               f"image : Krea 2 prend l'élément versionné en place 1 ({st} {str(r)[:160]})")
 
     bad = [({"model": "dall-e", "prompt": "x"}, "modèle inconnu refusé"),
            ({"model": "krea2", "prompt": ""}, "prompt vide refusé"),
@@ -1619,6 +1935,41 @@ def selftest(call, ok) -> None:
         call("POST", f"/api/jobs/{j['id']}/cancel")
     st, _ = call("POST", "/api/image/redo", {"item": iid})
     ok(st == 409, f"image : Recréer une image déposée (sans recette) est refusé avec la raison ({st})")
+
+    # la vraie progression : les messages de la websocket de ComfyUI, rejoués sans GPU
+    class _FakeCtx:
+        job = {"id": "job-essai", "progress": 0.1}
+        endpoint = "http://127.0.0.1:8188"
+
+        def progress(self, frac=None, message=None):
+            if frac is not None:
+                self.job["progress"] = frac
+            if message is not None:
+                self.job["message"] = message
+    fc = _FakeCtx()
+    g = {"1": {"class_type": "UNETLoader"}, "2": {"class_type": "CLIPTextEncode"}, "3": {"class_type": "KSampler"},
+         "4": {"class_type": "VAEDecode"}, "5": {"class_type": "SaveImage"}}
+    lv = _Live(fc, g, "Krea 2", 0.1, 0.95)
+    seen = []
+    for msg in ({"type": "execution_cached", "data": {"nodes": []}}, {"type": "executing", "data": {"node": "1"}},
+                {"type": "executing", "data": {"node": "2"}}, {"type": "executing", "data": {"node": "3"}},
+                {"type": "progress", "data": {"value": 4, "max": 8, "node": "3"}}, {"type": "progress", "data": {"value": 8, "max": 8, "node": "3"}},
+                {"type": "executing", "data": {"node": "4"}}, {"type": "executing", "data": {"node": "5"}}):
+        lv._on(msg)
+        seen.append((fc.job["progress"], fc.job.get("message")))
+    fr = [s[0] for s in seen]
+    ok(fr == sorted(fr) and 0.1 <= fr[0] and fr[-1] <= 0.95, f"image : la progression ne recule jamais ({fr})")
+    ok(any(m == "Krea 2 · calcule 4/8" for _, m in seen) and 0.4 < seen[4][0] < 0.7,
+       f"image : le pas de l'échantillonneur se lit, et pèse la moitié de la barre ({seen[4]})")
+    ok(seen[3][1] == "Krea 2 · monte le modèle sur le GPU, puis calcule", f"image : l'entrée dans l'échantillonneur est dite ({seen[3]})")
+    err = ComfyError('graphe refusé : {"3": {"class_type": "UNETLoader", "errors": [{"message": "Value not in list", '
+                     '"details": "unet_name: \'x.safetensors\' not in []"}]}}')
+    ok(_readable(err, fc, "Krea 2").startswith("Krea 2 : ComfyUI de ") and "Value not in list" in _readable(err, fc, "Krea 2"),
+       f"image : un graphe refusé se dit en clair ({_readable(err, fc, 'Krea 2')})")
+    ok("mémoire insuffisante" in _readable(ComfyError("ComfyUI a échoué : Allocation on device 0 would exceed allowed memory"), fc, "Qwen"),
+       "image : un manque de mémoire se dit")
+    ok("ne répond plus" in _readable(ComfyError("http://127.0.0.1:8188 ne répond pas (refused)"), fc, "Qwen"),
+       "image : une machine éteinte se dit")
 
     if not cf_available():
         print("  (Character Factory absent : graphes Krea 2 / Qwen 2.1 non construits)")

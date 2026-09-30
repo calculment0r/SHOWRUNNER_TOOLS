@@ -9,19 +9,31 @@ Trois travaux dans la file commune, comme les trois modes de la page :
                           une dernière, ou les deux ; le plan part de l'une et
                           finit sur l'autre.
   movie.r2v  Références   MiniMaxH3ReferenceToVideo (poids ref2va) : des
-                          images, des éléments (un personnage de Character
-                          Factory donne son visage et son plein pied), des
+                          images, des éléments (un personnage : les images
+                          que le préréglage demande, voir plus bas), des
                           vidéos et des sons, chacun nommé `@nom` dans le
                           prompt ; les mentions deviennent les étiquettes H3.
 
 H3 rend l'image et le son ensemble : le son est gardé.
 
+Deux préréglages, LES réglages de l'outil (Cal, 30/09 : sa recette,
+RECETTE-DRAFT-QUALITE.md, et le graphe de ses scripts test-meteorite*.py,
+repris dans server/workflows/h3_recette.json) — tout le reste est avancé :
+
+  brouillon  768 × 320 puis l'agrandisseur latent → 1536 × 640, deux étages,
+             8 pas ; un personnage donne sa planche « corps 3 vues, visage
+             masqué » et ses gros plans du visage (≈ 6 min 46 s chez Cal, 192 images).
+  qualite    1920 × 800, un étage, 8 pas ; un personnage donne les 5 images
+             de la méthode « .char » (visage face, visage 3/4, tenue haut,
+             tenue bas, corps de dos) (≈ 16 min chez Cal, 192 images).
+
+La recette tourne sur les ComfyUI :8188 (ComfyUI 0.37.2 : les nœuds Turbo,
+BlockSparseAttention, l'agrandisseur latent y sont ; ComfyUI-H3TEST :8189 ne
+les a pas) : la voie `h3` pointe vers eux (réglage `lanes.h3`).
+
 D'où vient chaque réglage (le détail : docs/etudes/movie.md) :
-  - les graphes : les gabarits du banc H3 de Cal (SHOWRUNNER_SANDBOX, run
-    R5 : Sol-Attn, Spectrum, LoRA turbo, res_multistep, planning simple
-    complet) ; la branche « origine » est le gabarit officiel Comfy-Org
-    (20 steps, sans LoRA) ; les références vidéo et son suivent GRAPH_MAP.md
-    de H3 Studio (LoadVideo → GetVideoComponents, LoadAudio) ;
+  - le graphe : la recette de Cal ci-dessus ; les références vidéo et son
+    suivent GRAPH_MAP.md de H3 Studio (LoadVideo → GetVideoComponents, LoadAudio) ;
   - 24 i/s, la grille 17k+5, 124 à 362 images : comfy_extras/nodes_minimax_h3.py
     (FPS = 24 ; « trained range is ~124-362 ») ; le banc écrivait 25 i/s,
     ce qui raccourcit l'image sous un son resté à 24 ;
@@ -31,8 +43,9 @@ D'où vient chaque réglage (le détail : docs/etudes/movie.md) :
     vidéos de 2 à 15 s) et H3 Studio (12 fichiers, 15 s par type) ;
   - les prompts : les guides officiels MiniMax (VIDEO_PROMPT_WRITING_GUIDE
     base et ref) et leur résumé dans corpus/h3_*style_rules.md de H3 Studio ;
-  - le temps estimé : un ajustement sur cinq rendus mesurés sur DGX1
-    (R0, R3, R5, banc i2v, banc ref2v), puis les rendus H3 de l'outil.
+  - le temps estimé : les rendus mesurés par Cal (DRAFT, Q1080), mis à
+    l'échelle par la forme d'un ajustement sur cinq rendus de DGX1 (R0, R3,
+    R5, banc i2v, banc ref2v), puis les rendus H3 de l'outil.
 
 Des morceaux viennent de H3 Studio (github.com/underworldhistory1-ctrl/
 minimax-h3-higgsfield, licence MIT, Copyright (c) 2026 Charles Mod) : la
@@ -50,19 +63,19 @@ Deux moteurs (réglage `movie_engine`) :
            rangée dans la bibliothèque avec sa recette : toute la page se
            teste de bout en bout sans GPU. Le graphe H3 est tout de même
            construit, et rangé dans la recette.
-  h3       le câblage ci-dessous, voie `h3`. **Jamais essayé sur H3** :
-           graphes, validation contre /object_info, progression par le
-           websocket et gardien sont contrôlés sans GPU (selftest), pas par
-           un rendu. À reprendre avec le câblage de Cal.
+  h3       le câblage ci-dessous, voie `h3` : rendus réels le 30/09 sur
+           DGX2 (les trois modes, références image / vidéo / son,
+           annulation, les deux préréglages avec le personnage d'essai de Cal).
 
-H3 à la demande (moteur h3 seulement) : l'instance :8189 est arrêtée au
-repos (elle garde ~50 Go). Dès qu'un travail H3 attend et qu'aucune
-instance ne répond, le gardien la démarre (systemctl, en local ou par ssh
-sur le câble direct) ; il l'arrête après `h3_idle_minutes` sans rendu —
-seulement une instance qu'il a démarrée lui-même. Avant chaque rendu, la
+Une instance H3 à la demande (ComfyUI-H3TEST, port `h3_service_port`, 8189)
+reste gérée si la voie en déclare une : arrêtée au repos, démarrée par le
+gardien dès qu'un travail H3 attend et qu'aucune instance ne répond
+(systemctl, en local ou par ssh sur le câble direct), arrêtée après
+`h3_idle_minutes` sans rendu — seulement une instance qu'il a démarrée. Les
+ComfyUI :8188 ne sont jamais démarrés ni arrêtés ici. Avant chaque rendu, la
 mémoire libre de la machine est lue ; sous `h3_min_free_gb`, on décharge
-H3 puis le ComfyUI :8188 de la même machine, et on refuse s'il manque
-encore de la place.
+l'instance, le modèle de texte d'Ollama, puis l'autre ComfyUI de la machine
+s'il ne calcule pas, et on refuse s'il manque encore de la place.
 """
 
 from __future__ import annotations
@@ -81,7 +94,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from core import config, jobs, library
+from core import config, jobs, library, machines
 from core.comfy import Comfy, ComfyError, fill
 from core.http import HttpError
 
@@ -105,38 +118,51 @@ FRAMES = tuple(range(124, 363, 17))
 LIMITS = {"image": 9, "video": 3, "audio": 3, "files": 12, "seconds": 15.0, "min_seconds": 2.0}
 
 MODES = {
-    "t2v": {"label": "Texte", "sub": "le prompt seul", "workflow": "h3_i2v.json", "weights": "fl2va"},
-    "i2v": {"label": "Images", "sub": "début · fin", "workflow": "h3_i2v.json", "weights": "fl2va"},
-    "r2v": {"label": "Références", "sub": "images · vidéos · sons", "workflow": "h3_r2v.json", "weights": "ref2va"},
+    "t2v": {"label": "Texte", "sub": "le prompt seul", "workflow": "h3_recette.json", "weights": "fl2va"},
+    "i2v": {"label": "Images", "sub": "début · fin", "workflow": "h3_recette.json", "weights": "fl2va"},
+    "r2v": {"label": "Références", "sub": "images · vidéos · sons", "workflow": "h3_recette.json", "weights": "ref2va"},
 }
 UNETS = {
     "fl2va": [
         {"f": "minimax_h3_fl2va_pruned_int8_convrot.safetensors", "nom": "fl2va élagué int8", "defaut": True,
-         "note": "le modèle du banc H3 et du gabarit officiel"},
+         "note": "le modèle du banc H3 et du gabarit officiel ; la recette de Cal ne nomme que le ref2va"},
         {"f": "minimax_h3_fl2va_int8_convrot.safetensors", "nom": "fl2va complet int8 (34 Go)"},
     ],
     "ref2va": [
-        {"f": "minimax_h3_ref2va_pruned_int8_convrot.safetensors", "nom": "ref2va élagué int8", "defaut": True,
-         "note": "le modèle de R5"},
-        {"f": "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors", "nom": "Singularity ref2va v1.3 (R9, R10)"},
+        {"f": "Minimax-h3_Singularity_ref2va_v1.3_int8.safetensors", "nom": "Singularity ref2va v1.3 int8", "defaut": True,
+         "note": "la recette de Cal (30/09)"},
+        {"f": "minimax_h3_ref2va_pruned_int8_convrot.safetensors", "nom": "ref2va élagué int8 (R5)"},
+        {"f": "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors", "nom": "Singularity ref2va v1.3 élagué (R9, R10)"},
     ],
 }
-TURBO = {   # le LoRA turbo de chaque poids : ceux du banc H3 de Cal
-    "fl2va": "Minimax_H3/minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors",
-    "ref2va": "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+# la pile de LoRA de la recette, dans cet ordre précis (Cal : « People → LoRA cinéma DY → Turbo »)
+PEOPLE = "h3-realism-people-t2v-i2v-r2v.safetensors"
+CINE = "h3-cinematic-texture-DY-v0.1.safetensors"
+TURBO_V4 = "minimax_h3_turbo_v4_step600_ema.safetensors"
+RECIPE_LORAS = (PEOPLE, CINE, TURBO_V4)
+QUALITY_TAG = "r34l1sm. DY."   # en tête de la description (Cal) : les déclencheurs de People et du LoRA cinéma
+LATENT_UP = "minimax_h3_latent_upscaler_3d_bf16.safetensors"
+DRAFT_SIGMAS = "0.8000, 0.6316, 0.3158, 0.0000"
+METHODS = {   # les préréglages : `canvas` la toile, `stages` 2 = brouillon puis l'agrandisseur latent
+    "brouillon": {"label": "Brouillon", "sub": "rapide · 1536 × 640 en deux étages", "canvas": (1536, 640), "stages": 2,
+                  "steps": (4, 6, 8), "default_steps": 8, "refs": "planche",
+                  "cal": {"seconds": 406, "frames": 192, "what": "DRAFT, 6 min 46 s pour 192 images"},
+                  "note": "768 × 320, puis l'agrandisseur latent H3 → 1536 × 640 (sigmas 0,8 / 0,63 / 0,32). Un personnage "
+                          "donne sa planche corps 3 vues visage masqué et ses gros plans du visage (validé à l'œil par Cal). "
+                          "Pour la prévis, les essais de prompt et de mise en scène."},
+    "qualite": {"label": "Qualité", "sub": "1920 × 800 en un étage", "canvas": (1920, 800), "stages": 1,
+                "steps": (4, 6, 8), "default_steps": 8, "refs": "char",
+                "cal": {"seconds": 960, "frames": 192, "what": "Q1080, ≈ 16 min pour 192 images"},
+                "note": "1920 × 800 direct, 8 pas. Un personnage donne les 5 images de la méthode « .char » (visage face, "
+                        "visage 3/4, tenue haut, tenue bas, corps de dos) : la planche masquée y fait régresser l'identité "
+                        "(80 % → 50 %). Pour le rendu final, les plans clés."},
 }
-METHODS = {
-    "turbo": {"label": "Turbo · banc de Cal", "steps": (4, 8), "default_steps": None,
-              "note": "LoRA turbo, Sol-Attn et Spectrum : les réglages du banc H3 (R0 en 4 steps, R5 en 8). "
-                      "Au-delà de 1,4 Mpx, 8 steps : à 4, le visage se dédouble (R3)."},
-    "origine": {"label": "Origine · 20 steps", "steps": (20, 30, 50), "default_steps": 20,
-                "note": "le chemin du gabarit officiel Comfy-Org : sans LoRA ni Spectrum (Sol-Attn gardé, "
-                        "l'attention de ces machines). 30 et 50 : des essais, pas une promesse de mieux."},
-    "spectrum": {"label": "Spectrum seul", "steps": (20, 30, 50), "default_steps": 20,
-                 "note": "Spectrum prédit une partie des passes (gain annoncé ≈ 30 %) : une approximation, "
-                         "à comparer au chemin d'origine."},
-}
+DEFAULT_METHOD = "brouillon"
+OLD_METHODS = ("turbo", "origine", "spectrum")   # l'ancien banc (ComfyUI-H3TEST) : relu comme un Brouillon
 CANVASES = [   # (largeur, hauteur, famille, libellé, source)
+    (1536, 640, "2,4:1", "Brouillon", "la recette de Cal (30/09) : 768 × 320 agrandi ×2"),
+    (1920, 800, "2,4:1", "Qualité", "la recette de Cal (30/09) : Q1080, un étage"),
+    (1280, 544, "2,4:1", "720p", "Q720 et F720 des essais de Cal (test-meteorite.py)"),
     (1344, 768, "paysage", "détail natif", "toile par défaut du nœud H3, plafond 768 × 1344 de la note officielle"),
     (1280, 704, "paysage", "≈ 720p", "toiles H3 Base de H3 Studio (docs/GRAPH_MAP.md)"),
     (1024, 576, "paysage", "compact", "toiles H3 Base de H3 Studio"),
@@ -151,9 +177,7 @@ CANVASES = [   # (largeur, hauteur, famille, libellé, source)
     (768, 768, "carré", "détail natif", "768 de petit côté : visage de Character Factory, essais d'expression"),
     (1024, 1024, "carré", "grand", "carré de la liste du banc H3"),
 ]
-FAMILIES = ["paysage", "21:9", "portrait", "carré"]
-SAMPLERS = ["res_multistep", "euler", "euler_ancestral", "dpmpp_2m", "ddim"]   # liste du banc H3
-SCHEDULERS = ["simple", "beta", "normal"]   # simple = R5 ; beta/normal : note du gabarit officiel r2v
+FAMILIES = ["2,4:1", "paysage", "21:9", "portrait", "carré"]
 ROLES = {   # « utiliser comme » : les rôles de H3 Studio ; « auto » laisse le prompt dire ce que c'est
     "image": [("auto", "auto"), ("character", "personnage"), ("location", "lieu"), ("style", "look"), ("object", "objet")],
     "video": [("motion", "mouvement"), ("camera", "caméra"), ("action", "action"), ("scene", "scène entière")],
@@ -218,37 +242,64 @@ def frame_count(seconds: float) -> int:
     return n
 
 
-def default_steps(method: str, w: int, h: int) -> int:
-    if METHODS[method]["default_steps"]:
-        return METHODS[method]["default_steps"]
-    return 4 if w * h <= 1.4e6 else 8     # R0 propre à 1,38 Mpx en 4 ; R3 dédoublé à 2,15 en 4, R5 en 8
+def default_steps(method: str, w: int = 0, h: int = 0) -> int:
+    return METHODS[method]["default_steps"]
+
+
+def draft_canvas(w: int, h: int) -> tuple[int, int]:
+    """Le premier étage d'un Brouillon : la moitié de la toile, alignée sur 32
+    (768 × 320 pour 1536 × 640, la recette ; l'agrandisseur fait ×2 en
+    « target dimensions », align 32)."""
+    return _r32(w / 2), _r32(h / 2)
 
 
 # ── le temps estimé ─────────────────────────────────────────
-# Ajusté sur cinq rendus mesurés sur DGX1, turbo + Sol-Attn + Spectrum :
-# R0 (1792×768, 124 img, 4 steps) 300 s ; R3 (2240×960, 4) 510 s ;
-# R5 (2240×960, 8) 691 s ; banc i2v (1792×768, 243 img, 8) 1024 s ;
-# banc ref2v (1344×576, 243 img, 8) 481 s. P = Mpx × images / 124 ;
-# t ≈ 40 + 135·P + 9,8·P²·steps (écarts −12 % à +5 % sur ces cinq).
+# La forme : un ajustement sur cinq rendus mesurés sur DGX1 (R0 1792×768 124 img
+# 4 pas 300 s ; R3 2240×960 4 pas 510 s ; R5 2240×960 8 pas 691 s ; banc i2v
+# 1792×768 243 img 8 pas 1024 s ; banc ref2v 1344×576 243 img 8 pas 481 s) :
+# P = Mpx × images / 124, u ≈ 40 + 135·P + 9,8·P²·pas (écarts −12 % à +5 %).
+# L'échelle : les rendus de Cal avec sa recette (DRAFT 406 s, Q1080 ≈ 960 s,
+# 192 images) — le Brouillon compte ses deux étages (la demi-toile à `steps`
+# pas, puis la toile à 3 sigmas). Puis les rendus H3 de l'outil, même préréglage.
+# Les vidéos de référence : H3 les lit à la taille du plan, et elles comptent
+# presque comme autant d'images du plan. Relevé le 30/09 sur DGX2 (journal de
+# Sol-Attn, 864 × 480, 124 images) : 15 527 jetons en texte seul, 17 214 avec
+# deux images, 34 812 avec une image et une vidéo de 5,17 s — et 401 s de
+# rendu contre 95. `ref_frames` : leurs images à 24 i/s, ajoutées à celles du plan.
+def _units(method: str, w: int, h: int, frames: int, steps: int, stages: int | None = None) -> float:
+    def u(ww, hh, n):
+        p = (ww * hh / 1e6) * (frames / 124)
+        return 135 * p + 9.8 * p * p * n
+    if (stages or METHODS[method]["stages"]) == 2:
+        dw, dh = draft_canvas(w, h)
+        return 40 + u(dw, dh, steps) + u(w, h, 3)
+    return 40 + u(w, h, steps)
+
+
+def _cal_rate(method: str) -> float:
+    m = METHODS[method]
+    w, h = m["canvas"]
+    return m["cal"]["seconds"] / _units(method, w, h, m["cal"]["frames"], m["default_steps"])
+
+
 def estimate(method: str, w: int, h: int, frames: int, steps: int, *, ref_max: bool = False,
-             samples: list | None = None) -> dict:
-    p = (w * h / 1e6) * (frames / 124)
-    units = 40 + 135 * p + 9.8 * p * p * steps
+             samples: list | None = None, ref_frames: int = 0, stages: int | None = None) -> dict:
+    units = _units(method, w, h, frames + ref_frames, steps, stages)
     own = [s for s in (samples or []) if s["method"] == method and s["units"] > 0]
     if own:
         rates = sorted(s["seconds"] / s["units"] for s in own[-12:])
         r = rates[len(rates) // 2]
         low, high = units * r * (0.8 if len(own) > 1 else 0.65), units * r * (1.25 if len(own) > 1 else 1.6)
-        basis = f"d'après {len(own)} rendu{'s' if len(own) > 1 else ''} H3 de l'outil, même méthode"
-    elif method == "turbo":
-        low, high = units * 0.85, units * 1.2
-        basis = "d'après cinq rendus mesurés sur DGX1 (R0, R3, R5, banc i2v et ref2v)"
+        basis = f"d'après {len(own)} rendu{'s' if len(own) > 1 else ''} H3 de l'outil, même préréglage"
     else:
-        low, high = units * 0.6, units * 1.9
-        basis = "ordre de grandeur : aucun rendu mesuré sans turbo sur les DGX"
+        r = _cal_rate(method)
+        low, high = units * r * 0.85, units * r * 1.2
+        basis = f"d'après le rendu de Cal ({METHODS[method]['cal']['what']}), à l'échelle de la toile et de la durée"
     if ref_max:
         high *= 3
         basis += " ; références « max » : jusqu'à plusieurs fois plus lent (infobulle du nœud)"
+    if ref_frames:
+        basis += f" ; les vidéos de référence comptées comme {ref_frames} images de plus (jetons relevés le 30/09)"
     return {"low": round(low), "high": round(high), "units": round(units, 2), "basis": basis}
 
 
@@ -280,24 +331,84 @@ def _image(item_id: str, what: str, errors: list) -> dict | None:
     return it
 
 
-def element_parts(el: dict) -> tuple[list, list]:
-    """Ce qu'un élément envoie : son premier visage et son premier plein pied
-    (sans eux, ses deux premières images), et sa voix quand sa carte en porte
-    une (une référence son). movie.js fait le même compte pour la capacité."""
+# Les images d'un personnage que chaque préréglage demande (Cal, 30/09,
+# RECETTE-DRAFT-QUALITE.md) — leur ordre est celui de ses scripts :
+#   « .char » (Qualité)   visage face, visage 3/4, tenue haut, tenue bas, corps de dos
+#   planche (Brouillon)   corps 3 vues visage masqué, puis les gros plans du visage :
+#                         face, 3/4 sourire, 3/4 neutre, profil
+# Une référence d'élément dit ce qu'elle est par son rôle et son libellé
+# (`_ref_kind`) ; un personnage à qui une pièce manque envoie ce qu'il a, et
+# le plan le dit (`notes`).
+CHAR_SET = ("face_front", "face_34", "outfit_top", "outfit_bottom", "back")
+SHEET_SET = ("sheet", "face_front", "face_34_smile", "face_34", "face_profile")
+KIND_FR = {"face_front": "visage de face", "face_34": "visage 3/4", "face_34_smile": "visage 3/4 sourire",
+           "face_profile": "visage de profil", "outfit_top": "tenue haut", "outfit_bottom": "tenue bas",
+           "back": "corps de dos", "sheet": "planche corps 3 vues visage masqué"}
+
+
+def _ref_kind(r: dict) -> str:
+    role = (r.get("role") or "").lower()
+    txt = f"{r.get('label') or ''} {r.get('file') or ''}".lower()
+    if role == "sheet" or "masqu" in txt or "masked" in txt:
+        return "sheet"
+    if role in ("face", "expression"):
+        if "profil" in txt:
+            return "face_profile"
+        if re.search(r"3/4|\b34\b|-34|trois|three", txt):
+            return "face_34_smile" if re.search(r"sourire|smil", txt) else "face_34"
+        return "face_front" if role == "face" else "expression"
+    if role == "outfit" or re.search(r"tenue", txt):
+        if re.search(r"haut|\btop\b", txt):
+            return "outfit_top"
+        if re.search(r"\bbas\b|bottom", txt):
+            return "outfit_bottom"
+    if re.search(r"\bdos\b|\bback\b", txt) and role in ("view", "full body", "outfit", ""):
+        return "back"
+    return role.replace(" ", "_") or "other"
+
+
+def element_parts(el: dict, method: str = DEFAULT_METHOD) -> tuple[list, list, str]:
+    """Ce qu'un élément envoie pour ce préréglage : les images de sa méthode
+    (planche pour Brouillon, « .char » pour Qualité) quand il les a ; sinon
+    son premier visage et son premier plein pied (sans eux, ses deux
+    premières images) ; et sa voix quand sa carte en porte une. Rend aussi
+    ce que le plan doit dire (une pièce manque). movie.js fait le même compte
+    pour la capacité. `el` : le contenu d'élément déjà résolu (library.resolve)."""
     refs = el.get("refs") or []
     imgs = [r for r in refs if not r.get("file", "").lower().endswith(AUDIO_EXT)]
     # la voix est rangée à part (element.voices, library.py) ; un son dans refs
     # (ancienne forme) compte aussi
     voices = list(el.get("voices") or []) + [r for r in refs if r.get("file", "").lower().endswith(AUDIO_EXT)]
+    want = SHEET_SET if METHODS.get(method, METHODS[DEFAULT_METHOD])["refs"] == "planche" else CHAR_SET
+    # Cal prend des gros plans du visage à part pour la planche (ref-visage-*.png) et les crops
+    # .char pour Qualité (ref-1-visage-face.png…) : un « gros plan » passe d'abord pour la planche, après sinon
+    close = lambda r: ("gros plan" in (r.get("label") or "").lower()) != (want == SHEET_SET)  # noqa: E731
+    by = {}
+    for r in sorted(imgs, key=close):
+        by.setdefault(_ref_kind(r), r)
+    got = [dict(by[k], _kind=k) for k in want if k in by]
+    note = ""
+    if want == SHEET_SET and "sheet" not in by:
+        # pas de planche : la méthode « .char » si elle est là (Cal : elle vaut mieux qu'un mélange)
+        char = [dict(by[k], _kind=k) for k in CHAR_SET if k in by]
+        if len(char) >= 3:
+            missing = [KIND_FR[k] for k in CHAR_SET if k not in by]
+            return char, voices[:1], ("pas de planche « corps 3 vues visage masqué » : la méthode .char à la place"
+                                      + (f" (manquent : {', '.join(missing)})" if missing else ""))
+        got = []
+    if len(got) >= 3 and (want != SHEET_SET or "sheet" in by):
+        missing = [KIND_FR[k] for k in want if k not in by and k != "face_34_smile"]
+        return got, voices[:1], (f"manquent : {', '.join(missing)}" if missing else "")
     chosen = [r for role in REF_ROLES for r in [next((x for x in imgs if x.get("role") == role), None)] if r]
-    return (chosen or imgs[:2]), voices[:1]
+    need = "la planche masquée et les gros plans du visage" if want == SHEET_SET else "les 5 images de la méthode .char"
+    return (chosen or imgs[:2]), voices[:1], f"n'a pas {need} : son visage et son plein pied à la place"
 
 
 def token_key(kind: str, num: str) -> str:
     return f"{kind.lower()}{num}"
 
 
-def _inputs(inputs: dict, errors: list) -> dict:
+def _inputs(inputs: dict, errors: list, method: str = DEFAULT_METHOD, notes: list | None = None) -> dict:
     """Les entrées par position : {image: [{item, role}|None…], element: […],
     video: [{item, role, sound}|None…], audio: […]}. Une place vide garde sa
     position (son jeton est rouge). L'ordre d'H3 : les images (celles de la
@@ -338,25 +449,38 @@ def _inputs(inputs: dict, errors: list) -> dict:
         if not got:
             continue
         it, role = got
+        # un élément versionné n'a pas de références lui-même : sa matière est dans sa
+        # dernière version (library.resolve) ; une planche (personnage importé de
+        # Character Factory, `refs` propres) se lit telle quelle
+        src = library.resolve(it)
+        if not src:
+            errors.append(f"@element{pos + 1} « {it['title']} » n'a pas encore de version publiée")
+            continue
         el = it["element"]
-        imgs, voices = element_parts(el)
+        if src["kind"] == "image":   # une version qui est une image
+            imgs, voices, why = [{"file": src["file"], "role": "", "label": src.get("title") or ""}], [], ""
+        else:
+            imgs, voices, why = element_parts(src["element"], method)
         if not imgs:
             errors.append(f"@element{pos + 1} « {it['title']} » n'a aucune image")
             continue
-        pub_refs = {r["file"]: r for r in library.public(it)["element"]["refs"]}
+        if why and notes is not None:
+            notes.append(f"@element{pos + 1} « {it['title']} » : {why}")
+        pub_refs = {r["file"]: r for r in (library.public(src).get("element") or {}).get("refs", [])}
         nums = {}
         for r in imgs:
-            pictures.append(_pic(library.path_of(it, r["file"]), it,
-                                 f"{it['title']} · {r.get('label') or ROLE_FR.get(r.get('role'), r.get('role') or 'réf.')}",
-                                 r.get("role", ""), pub_refs.get(r["file"], {}).get("thumb_url")))
-            nums.setdefault(r.get("role") or "other", []).append(len(pictures))
+            pictures.append(_pic(library.path_of(src, r["file"]), it,
+                                 f"{it['title']} · {r.get('label') or KIND_FR.get(r.get('_kind'), '') or ROLE_FR.get(r.get('role'), r.get('role') or 'réf.')}",
+                                 r.get("role", ""), pub_refs.get(r["file"], {}).get("thumb_url")
+                                 or (library.public(src).get("thumb_url") if src["kind"] == "image" else None)))
+            nums.setdefault(r.get("_kind") or r.get("role") or "other", []).append(len(pictures))
         subjects.append({"kind": "element", "etype": el.get("type"), "title": it["title"], "token": f"element{pos + 1}",
                          "role": "character" if el.get("type") in (None, "character") else "object",
-                         "description": (el.get("description") or "").strip(), "nums": nums,
-                         "pics": [n for v in nums.values() for n in v], "item": it["id"]})
+                         "description": ((src.get("element") or el).get("description") or el.get("description") or "").strip(),
+                         "nums": nums, "pics": [n for v in nums.values() for n in v], "item": it["id"]})
         tags[f"element{pos + 1}"] = f"<Subject {len(subjects)}>"
         for r in voices:
-            element_voices.append({"path": library.path_of(it, r["file"]), "item": it["id"], "token": None,
+            element_voices.append({"path": library.path_of(src, r["file"]), "item": it["id"], "token": None,
                                    "role": "voice", "duration": r.get("duration") or 0, "subject": len(subjects)})
     for pos, p in enumerate(slots["video"]):
         got = entry("video", pos, p, ("video",))
@@ -446,8 +570,24 @@ def _sound(sound: str, music: str) -> tuple[str, str]:
     return sound, music
 
 
+def _shots(body: str) -> str:
+    """Les plans que la description découpe (« [Shot 1], [Shot 2]… »), pour
+    `appears in` de la rétention — comme Cal les liste ; « [Shot 1] » sinon."""
+    got = list(dict.fromkeys(re.findall(r"\[Shot \d+\]", body)))
+    return ", ".join(got) if got else "[Shot 1]"
+
+
+def _story(body: str) -> str:
+    """La phrase du résumé : la première du premier plan (une ligne de look
+    placée avant [Shot 1] n'est pas l'histoire)."""
+    m = re.search(r"\[Shot \d+\]\s*(.*)", body, re.S)
+    return _first_sentence(m.group(1) if m else body)
+
+
 def _shot(desc: str) -> str:
-    return desc if desc.lstrip().startswith("[Shot") else "[Shot 1] " + desc
+    # une description découpée en plans ([Shot 1]…[Shot 5], précédés ou non d'une ligne de look,
+    # comme celle de Cal) part telle quelle ; sinon, c'est un plan unique
+    return desc if "[Shot" in desc else "[Shot 1] " + desc
 
 
 def compose_base(desc: str, sound: str, music: str, *, first: bool, last: bool, seconds: float) -> str:
@@ -466,7 +606,7 @@ def compose_base(desc: str, sound: str, music: str, *, first: bool, last: bool, 
         body = ("Begin with <Picture 1> and end with <Picture 2>. " if first and last else
                 "Begin with <Picture 1>. " if first else "End with <Picture 1>. ") + desc
     snd, mus = _sound(sound, music)
-    text = f"integrated_multimodal_description:\n{_shot(body)}\n\noverall_soundscape:\n{snd}\n\nnon_diegetic_music:\n{mus}"
+    text = f"integrated_multimodal_description:\n{_tagged(_shot(body))}\n\noverall_soundscape:\n{snd}\n\nnon_diegetic_music:\n{mus}"
     return ("\n".join(head) + "\n\n" + text) if head else text
 
 
@@ -479,16 +619,32 @@ def compose_ref(desc: str, sound: str, music: str, R: dict) -> str:
     test-r2v-h3.py), le reste est fully_preserved (le guide). Les jetons
     (@image1, @element1…) deviennent les étiquettes."""
     defs, keep, notes = [], [], []
+    shots = _shots(_shot(desc))
     for k, s in enumerate(R["subjects"], start=1):
         subj = f"<Subject {k}>"
         if s["kind"] == "element":
             nums = s["nums"]
             src = []
-            if nums.get("face"):
-                src.append(f"whose face, hair, age and identity come from {_tags(nums['face'])}")
+
+            def tg(keys):
+                return [n for k in keys for n in nums.get(k, [])]
+            faces = tg(("face", "face_front", "face_34_smile", "face_34", "face_profile"))
+            sheet, outfit, back = tg(("sheet",)), tg(("outfit_top", "outfit_bottom")), tg(("back",))
+            # la forme des définitions de Cal (test-meteorite*.py) : d'où vient chaque partie du personnage
+            if sheet:
+                src.append(f"whose body, outfit and pose are shown in {_tags(sheet)} (front, back and side views, face "
+                           "blanked out -- ignore the blank grey oval, do not reproduce it)")
+            if faces:
+                src.append(f"whose face, hair, age and identity come from {_tags(faces)}")
+            if outfit:
+                src.append(f"whose outfit is shown in {_tags(outfit)}")
+            if back:
+                src.append(f"whose body from behind is shown in {_tags(back)}")
             if nums.get("full body"):
                 src.append(f"whose body proportions and outfit come from {_tags(nums['full body'])}")
-            others = [n for r, v in nums.items() if r not in REF_ROLES for n in v]
+            known = {"face", "face_front", "face_34_smile", "face_34", "face_profile", "sheet", "outfit_top",
+                     "outfit_bottom", "back", "full body"}
+            others = [n for r, v in nums.items() if r not in known for n in v]
             if others:
                 src.append(f"shown in {_tags(others)}")
             d = s["description"].rstrip(".")
@@ -499,15 +655,17 @@ def compose_ref(desc: str, sound: str, music: str, R: dict) -> str:
             defs.append(f"{subj} is the {ROLE_EN[s['role']]} shown in {_tags(s['pics'])}. Keep its visible defining details.")
         pics = _tags(s["pics"])
         if s["role"] == "style":
-            keep.append(f"{subj} (appears in [Shot 1]): attribute_transfer - the look, palette, light and texture of {pics} carry over.")
+            keep.append(f"{subj} (appears in {shots}): attribute_transfer - the look, palette, light and texture of {pics} carry over.")
         elif s["role"] == "location":
-            keep.append(f"{subj} (appears in [Shot 1]): partially_preserved - its terrain, key features, light and atmosphere "
+            keep.append(f"{subj} (appears in {shots}): partially_preserved - its terrain, key features, light and atmosphere "
                         f"are retained; the framing and camera position of {pics} are not reproduced.")
         elif s["kind"] == "element" and s.get("etype") in (None, "character"):
-            keep.append(f"{subj} (appears in [Shot 1]): fully_preserved - the face, hair, age, identity, body proportions and "
-                        "outfit are retained; the backgrounds, poses and framing of its reference images are not reproduced.")
+            sheet = "the multi-view sheet layout and white studio background" if s["nums"].get("sheet") else \
+                "the backgrounds, poses and framing"
+            keep.append(f"{subj} (appears in {shots}): fully_preserved - the face, hair, age, identity, body proportions and "
+                        f"outfit are retained; {sheet} of its reference images are not reproduced.")
         else:
-            keep.append(f"{subj} (appears in [Shot 1]): fully_preserved - the defining visual attributes shown in {pics} are retained.")
+            keep.append(f"{subj} (appears in {shots}): fully_preserved - the defining visual attributes shown in {pics} are retained.")
     for n, v in enumerate(R["videos"], start=1):
         tag = f"<Video {n}>"
         if v.get("audio_tag"):
@@ -526,10 +684,16 @@ def compose_ref(desc: str, sound: str, music: str, R: dict) -> str:
     body = swap_tokens(desc, R["tags"])
     snd, mus = _sound(swap_tokens(sound, R["tags"]), swap_tokens(music, R["tags"]))
     return ("subject_definitions:\n" + ("\n".join(defs) or "No separate still-image subject is defined.")
-            + "\n\nsummary:\n[reference generation] " + _first_sentence(body) + ((" " + " ".join(notes)) if notes else "")
+            + "\n\nsummary:\n[reference generation] " + _story(body) + ((" " + " ".join(notes)) if notes else "")
             + "\n\nretention_analysis:\n" + ("\n".join(keep) or "Preserve the motion and sound qualities of the cited references.")
-            + "\n\ndetailed_description:\n" + _shot(body)
+            + "\n\ndetailed_description:\n" + _tagged(_shot(body))
             + f"\n\noverall_soundscape:\n{snd}\n\nnon_diegetic_music:\n{mus}")
+
+
+def _tagged(text: str) -> str:
+    """Le tag de la recette en tête de la description (Cal : « r34l1sm. DY. ») —
+    les déclencheurs des LoRA People et cinéma de la pile ; pas deux fois."""
+    return text if text.lstrip().startswith(QUALITY_TAG) else f"{QUALITY_TAG} {text}"
 
 
 # ── le plan d'un rendu ──────────────────────────────────────
@@ -554,7 +718,10 @@ def plan(mode: str, p: dict, *, with_graph: bool = False) -> dict:
     frames = _num(p.get("frames"), int, 124)
     frames = min(FRAMES, key=lambda f: abs(f - frames))
     seconds = frames / FPS
-    method = p.get("method") if p.get("method") in METHODS else "turbo"
+    method = p.get("method") if p.get("method") in METHODS else DEFAULT_METHOD
+    if p.get("method") in OLD_METHODS:
+        notes.append(f"la méthode « {p['method']} » de l'ancien banc (ComfyUI-H3TEST) est relue comme un "
+                     f"{METHODS[method]['label']} : la recette de Cal (30/09) la remplace")
     start = end = None
     pictures, parents = [], []
     R = {"inputs": None, "pictures": [], "subjects": [], "videos": [], "audios": [], "tags": {}, "parents": []}
@@ -572,7 +739,7 @@ def plan(mode: str, p: dict, *, with_graph: bool = False) -> dict:
         if anchor and anchor.get("width") and anchor.get("height"):
             auto = adapt_canvas(anchor["width"], anchor["height"])
     if mode == "r2v":
-        R = _inputs(p.get("inputs") if isinstance(p.get("inputs"), dict) else {}, errors)
+        R = _inputs(p.get("inputs") if isinstance(p.get("inputs"), dict) else {}, errors, method, notes)
         pictures, parents = R["pictures"], R["parents"]
         if not R["tags"]:
             errors.append("ajoutez une entrée : une image, un élément (un personnage), une vidéo ou un son")
@@ -587,51 +754,60 @@ def plan(mode: str, p: dict, *, with_graph: bool = False) -> dict:
         if idle and desc:
             notes.append(f"{', '.join(idle)} {'ne sont' if len(idle) > 1 else 'n’est'} pas dans le prompt : H3 "
                          f"{'les' if len(idle) > 1 else 'la'} reçoit quand même, définie{'s' if len(idle) > 1 else ''} dans subject_definitions")
-    # la toile
+    # la toile : celle du préréglage, sauf si « Paramètres avancés » en pose une
     canvas = p.get("canvas")
-    if canvas == "auto" or (canvas in (None, "") and auto):
-        if auto:
-            width, height = auto
-            fam = "image"
-        else:
-            width, height, fam = 1344, 768, "paysage"
+    preset_wh = METHODS[method]["canvas"]
+    if canvas == "auto" and auto:
+        width, height = auto
+        fam = "image"
+    elif canvas in (None, "", "auto", "preset"):
+        width, height = preset_wh
+        fam = "2,4:1"
     else:
         try:
             width, height = int(canvas[0]), int(canvas[1])
             fam = next((c[2] for c in CANVASES if (c[0], c[1]) == (width, height)), "libre")
         except (TypeError, ValueError, IndexError, KeyError):
-            width, height, fam = 1344, 768, "paysage"
+            width, height = preset_wh
+            fam = "2,4:1"
         if width % 32 or height % 32 or min(width, height) < 256 or width * height > 2688 * 1152:
             errors.append("toile : des multiples de 32, 256 au moins, 2688 × 1152 au plus (liste du banc H3)")
+    stages = METHODS[method]["stages"]
+    if mode == "i2v" and stages == 2:
+        # les images clés d'H3 vivent sur la grille du premier étage : posées sur la demi-toile,
+        # l'agrandisseur latent les interpole (première et dernière image hachées) ; posées à la
+        # toile, le premier étage refuse (« shape mismatch… [1920, 96] … [480, 96] ») — rendus du
+        # 30/09 sur DGX2. En Images, le Brouillon fait donc un seul étage, à sa toile
+        stages = 1
+        notes.append("en mode Images, le Brouillon rend en un seul étage : l'agrandisseur latent abîme la première "
+                     "et la dernière image (essai du 30/09)")
+    draft = draft_canvas(width, height) if stages == 2 else None
     if mode == "i2v" and start and start.get("width"):
         r_img, r_can = start["width"] / start["height"], width / height
         if abs(math.log(r_img / r_can)) > 0.01:
             notes.append(f"la première image ({start['width']}×{start['height']}) sera recadrée au centre au rapport "
                          f"{width}×{height} : H3 l'étirerait sinon (« plain stretch to canvas »)")
-    steps = _num(p.get("steps"), int, None) or default_steps(method, width, height)
+    steps = _num(p.get("steps"), int, None) or default_steps(method)
     steps = max(1, min(100, steps))
-    if method == "turbo" and width * height > 1.4e6 and steps < 8:
-        notes.append("turbo au-delà de 1,4 Mpx en moins de 8 steps : le visage se dédouble (R3)")
+    if not 4 <= steps <= 8:
+        notes.append(f"{steps} pas : le LoRA Turbo v4 est fait pour 4 à 8 (« past 8 steps it stops helping », "
+                     "README de ComfyUI-MiniMax-H3-Turbo) ; la recette de Cal : 8")
     seed = _num(p.get("seed"), int, None)
-    loras = []
+    loras = []   # les LoRA ajoutés dans « Paramètres avancés », après la pile de la recette
     for l in p.get("loras") or []:
         if isinstance(l, dict) and l.get("name"):
             name = str(l["name"])
+            if name.split("/")[-1] in RECIPE_LORAS or ACCEL_RX.search(name.split("/")[-1]):
+                continue   # déjà dans la pile, ou un autre accélérateur (on n'en cumule pas deux)
             other = "ref2v" if weights == "fl2va" else "fl2v"
             if other in name.lower() and not ("fl2v" in name.lower() and "ref2v" in name.lower()):
                 errors.append(f"{name} vise l'autre modèle ({'ref2va' if weights == 'fl2va' else 'fl2va'}) : il ne va pas avec ce mode")
-            if "realism-people" in name and "r34l1sm" not in desc:
-                errors.append("Realism People veut son déclencheur r34l1sm dans le prompt")
-            if "cinematic-texture-DY" in name and not re.search(r"(^|\W)DY(\W|$)", desc):
-                notes.append("le LoRA cinéma se déclenche avec DY en tête du prompt (V5 du banc)")
             loras.append({"name": name, "strength": max(0.0, min(2.0, _num(l.get("strength"), float, 1.0)))})
     adv = p.get("adv") if isinstance(p.get("adv"), dict) else {}
     unets = UNETS[weights]
     unet = adv.get("unet") if adv.get("unet") in [u["f"] for u in unets] else _defaut(unets)
-    sampler = adv.get("sampler") if adv.get("sampler") in SAMPLERS else "res_multistep"
-    scheduler = adv.get("scheduler") if adv.get("scheduler") in SCHEDULERS else "simple"
     ref_size = p.get("ref_image_size") if p.get("ref_image_size") in ("match", "max") else "match"
-    crf = max(10, min(30, _num(adv.get("crf"), int, 19)))
+    crf = max(10, min(30, _num(adv.get("crf"), int, 12)))   # 12 : la recette de Cal
     raw = any(h in desc for h in SECTION_HEADS)
     if raw:
         sent = swap_tokens(desc, R["tags"])
@@ -645,25 +821,32 @@ def plan(mode: str, p: dict, *, with_graph: bool = False) -> dict:
         notes.append(f"{words} mots : les guides MiniMax visent 350 à 500 mots pour la description — l'échec "
                      "documenté est le manque de précision, pas l'excès")
     samples = _samples()
-    est = estimate(method, width, height, frames, steps, ref_max=(mode == "r2v" and ref_size == "max"), samples=samples)
+    ref_frames = round(sum(min(v["duration"] or 0, LIMITS["seconds"]) for v in R["videos"]) * FPS)
+    est = estimate(method, width, height, frames, steps, ref_max=(mode == "r2v" and ref_size == "max"), samples=samples,
+                   ref_frames=ref_frames, stages=stages)
     rows = []
     for w, h, family, label, src in CANVASES:
         rows.append({"w": w, "h": h, "family": family, "label": label, "source": src,
-                     "estimate": estimate(method, w, h, frames, _num(p.get("steps"), int, None) or default_steps(method, w, h),
-                                          samples=samples)})
+                     "estimate": estimate(method, w, h, frames, steps, samples=samples, ref_frames=ref_frames, stages=stages)})
     if auto:
         rows.insert(0, {"w": auto[0], "h": auto[1], "family": "image", "label": "d'après l'image",
                         "source": "la règle du nœud : 768 de petit côté, aire ≤ 768 × 1344",
-                        "estimate": estimate(method, auto[0], auto[1], frames,
-                                             _num(p.get("steps"), int, None) or default_steps(method, *auto), samples=samples)})
+                        "estimate": estimate(method, auto[0], auto[1], frames, steps, samples=samples, ref_frames=ref_frames,
+                                             stages=stages)})
+    # chaque préréglage à sa toile, pour les deux boutons de la page (le temps de chacun)
+    presets = {k: estimate(k, *m["canvas"], frames, default_steps(k), samples=samples, ref_frames=ref_frames,
+                           stages=1 if mode == "i2v" else m["stages"])
+               for k, m in METHODS.items()}
     out = {
         "mode": mode, "errors": errors, "notes": notes, "ok": not errors, "engine": engine(),
         "desc": desc, "sound": sound, "music": music, "prompt_sent": sent, "raw": raw,
         "method": method, "width": width, "height": height, "family": fam, "frames": frames,
-        "seconds": round(seconds, 3), "fps": FPS, "steps": steps, "seed": seed, "sampler": sampler,
-        "scheduler": scheduler, "unet": unet, "unet_nom": next((u["nom"] for u in unets if u["f"] == unet), unet),
-        "turbo": TURBO[weights] if method == "turbo" else "", "loras": loras, "ref_image_size": ref_size, "crf": crf,
-        "estimate": est, "canvases": rows, "weights": weights,
+        "seconds": round(seconds, 3), "fps": FPS, "steps": steps, "seed": seed,
+        "sampler": "MiniMaxH3TurboSampler", "scheduler": "simple", "stages": stages, "draft": list(draft) if draft else None,
+        "unet": unet, "unet_nom": next((u["nom"] for u in unets if u["f"] == unet), unet),
+        "recipe_loras": [{"name": PEOPLE, "strength": 0.6}, {"name": CINE, "strength": 0.6}, {"name": TURBO_V4, "strength": 1.0}],
+        "loras": loras, "ref_image_size": ref_size, "crf": crf,
+        "estimate": est, "presets": presets, "canvases": rows, "weights": weights,
         "pictures": [{k: v for k, v in x.items() if k != "path"} | {"tag": f"<Picture {n}>"}
                      for n, x in enumerate(pictures, start=1)],
         "subjects": [{"tag": f"<Subject {k}>", "token": "@" + s["token"], "title": s["title"], "role": s["role"],
@@ -691,36 +874,36 @@ def public_plan(pl: dict) -> dict:
 # ── le graphe ───────────────────────────────────────────────
 def build_graph(mode: str, pl: dict, names: list[str], prefix: str, *, videos: list[str] | None = None,
                 audios: list[str] | None = None) -> dict:
-    """Le graphe ComfyUI du plan. `names` : les images montées (dans
+    """Le graphe ComfyUI du plan : la recette de Cal (h3_recette.json), le
+    préréglage posé (Brouillon : les nœuds 30 à 34 du second étage, comme
+    graphe() de test-meteorite.py). `names` : les images montées (dans
     l'ordre des `<Picture n>`), `videos`, `audios` : les fichiers montés."""
     tpl = json.loads((WF_DIR / MODES[mode]["workflow"]).read_text(encoding="utf-8"))
     tpl = {k: v for k, v in tpl.items() if not k.startswith("_")}
+    seed = pl["seed"] if pl["seed"] is not None else 0
     values = {"prompt": pl["prompt_sent"], "width": pl["width"], "height": pl["height"], "length": pl["frames"],
-              "steps": pl["steps"], "seed": pl["seed"] if pl["seed"] is not None else 0,
-              "sampler": pl["sampler"], "scheduler": pl["scheduler"], "unet": pl["unet"],
-              "lora": pl["turbo"] or "", "lora_strength": 1.0, "crf": pl["crf"], "prefix": prefix,
-              "image_1": names[0] if names else "", "ref_image_size": pl["ref_image_size"]}
+              "steps": pl["steps"], "seed": seed, "unet": pl["unet"], "crf": pl["crf"], "prefix": prefix,
+              "ref_image_size": pl["ref_image_size"]}
     g = fill(tpl, values)
+    inp = g["6"]["inputs"]
     if mode in ("t2v", "i2v"):
-        inp = g["136"]["inputs"]
-        inp.pop("first_frame", None)
-        g.pop("240", None)
+        # le nœud Turbo documente « t2v et i2v » : MiniMaxH3ImageToVideo, sans audio_vae ni ref_image_size
+        g["6"] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": {k: v for k, v in inp.items()
+                                                                     if k not in ("audio_vae", "ref_image_size")}}
+        inp = g["6"]["inputs"]
         if mode == "i2v":
             k = 0
             for key, has in (("first_frame", pl["start"]), ("last_frame", pl["end"])):
                 if has:
-                    nid = str(240 + k)
+                    nid = str(20 + k)
                     g[nid] = {"class_type": "LoadImage", "inputs": {"image": names[k]},
                               "_meta": {"title": "première image" if key == "first_frame" else "dernière image"}}
                     inp[key] = [nid, 0]
                     k += 1
     if mode == "r2v":
-        inp = g["136"]["inputs"]
-        if not names:
-            g.pop("240", None)
-            inp.pop("ref_images.ref_image_0", None)
-        for k, nm in enumerate(names[1:], start=1):
-            nid = str(240 + k)
+        # les images dans l'ordre des places (@image1 = la première) : nœuds 20, 21… comme les scripts de Cal
+        for k, nm in enumerate(names):
+            nid = str(20 + k)
             g[nid] = {"class_type": "LoadImage", "inputs": {"image": nm}, "_meta": {"title": f"<Picture {k + 1}>"}}
             inp[f"ref_images.ref_image_{k}"] = [nid, 0]
         # vidéos (LoadVideo → GetVideoComponents) et sons (LoadAudio) : GRAPH_MAP.md de H3 Studio
@@ -736,22 +919,33 @@ def build_graph(mode: str, pl: dict, names: list[str], prefix: str, *, videos: l
             g[str(nid)] = {"class_type": "LoadAudio", "inputs": {"audio": fname}, "_meta": {"title": f"son {k + 1}"}}
             inp[f"ref_audios.ref_audio_{k}"] = [str(nid), 0]
             nid += 1
-    # la méthode : turbo (tout le banc), spectrum (sans LoRA turbo), origine (ni l'un ni l'autre)
-    if pl["method"] != "turbo":
-        g.pop("148", None)
-        src = ["201", 0] if pl["method"] == "spectrum" else ["202", 0]
-        g["259"]["inputs"]["model"] = src
-        g["281"]["inputs"]["model"] = src
-        if pl["method"] == "origine":
-            g.pop("201", None)
-    # les LoRA choisis, dans l'ordre affiché, juste après le modèle (comme test-r2v-h3.py)
-    prev = ["127", 0]
+    # Brouillon : la demi-toile, puis l'agrandisseur latent qui refait trois sigmas à la toile
+    # (graphe() de test-meteorite.py : nœuds 30 à 34, graine + 1 pour le second bruit)
+    if pl.get("stages") == 2 and pl.get("draft"):
+        dw, dh = pl["draft"]
+        # le conditionnement reste à la toile, le premier étage part d'un latent vide à la
+        # demi-toile : le nœud 6 de Cal (test-meteorite.py). Pas en mode Images (plan() : un étage)
+        g["30"] = {"class_type": "EmptyMiniMaxH3LatentAV", "inputs": {"width": dw, "height": dh, "length": pl["frames"]}}
+        g["11"]["inputs"]["latent_image"] = ["30", 0]
+        g["31"] = {"class_type": "ManualSigmas", "inputs": {"sigmas": DRAFT_SIGMAS}}
+        g["32"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}}
+        g["33"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": seed + 1}}
+        g["34"] = {"class_type": "MinimaxH3LatentUpscaler3DRefineHandoff", "inputs": {
+            "latent": ["11", 0], "noise": ["33", 0], "sampler": ["32", 0], "sigmas": ["31", 0],
+            "model_name": LATENT_UP, "mode": "target dimensions", "scale": 2.0, "width": pl["width"], "height": pl["height"],
+            "megapixels": 1.0, "align": 32, "keep_proportion": True, "lock_audio": True, "cfg": 1.0, "device": "cuda",
+            "precision": "bf16", "offload_after_upscale": False, "model": ["5", 0], "positive": ["6", 0]},
+            "_meta": {"title": "agrandisseur latent · second étage"}}
+        g["12"]["inputs"]["samples"] = ["34", 0]
+        g["13"]["inputs"]["samples"] = ["34", 0]
+    # les LoRA ajoutés (avancé), après la pile People → DY, avant le Turbo
+    prev = ["102", 0]
     for k, l in enumerate(pl["loras"]):
         nid = str(50 + k)
         g[nid] = {"class_type": "LoraLoaderModelOnly", "inputs": {"model": prev, "lora_name": l["name"],
                                                                   "strength_model": l["strength"]}, "_meta": {"title": "LoRA"}}
         prev = [nid, 0]
-    g["200"]["inputs"]["model"] = prev
+    g["101"]["inputs"]["model"] = prev
     return g
 
 
@@ -805,11 +999,14 @@ PHASES = {
     "LoadVideo": (0.11, "lit les vidéos de référence"),
     "LoadAudio": (0.11, "lit les sons de référence"),
     "LoraLoaderModelOnly": (0.12, "applique les LoRA"),
+    "MiniMaxH3TurboLoRA": (0.12, "applique le LoRA Turbo"),
     "MiniMaxH3ImageToVideo": (0.14, "lit le prompt et les images"),
     "MiniMaxH3ReferenceToVideo": (0.14, "lit le prompt et les références"),
     "SamplerCustomAdvanced": (0.20, "échantillonne"),
+    "MinimaxH3LatentUpscaler3DRefineHandoff": (0.56, "second étage : agrandit et affine"),
+    # l'ordre relevé le 30/09 sur DGX2 : le son (≈ 2 s), puis l'image (≈ 20 s à 864 × 480)
+    "VAEDecodeAudio": (0.87, "décode le son"),
     "VAEDecode": (0.88, "décode la vidéo"),
-    "VAEDecodeAudio": (0.93, "décode le son"),
     "VHS_VideoCombine": (0.96, "assemble le mp4"),
 }
 SAMPLE_SPAN = (0.20, 0.86)
@@ -909,9 +1106,37 @@ def _free_gb(c: Comfy) -> float:
 
 
 def neighbour(endpoint: str) -> str:
-    """Le ComfyUI :8188 de la machine qui porte cette instance H3."""
+    """L'autre ComfyUI de la machine qui porte cette instance H3 : le :8188
+    d'une instance H3TEST, l'instance H3TEST (:8189) d'un :8188."""
     u = urlsplit(endpoint)
-    return f"{u.scheme}://{u.hostname}:{config.get('h3_neighbour_port', 8188)}"
+    port = int(config.get("h3_neighbour_port", 8188))
+    if u.port == port:
+        port = int(config.get("h3_service_port", 8189))
+    return f"{u.scheme}://{u.hostname}:{port}"
+
+
+def unload_ollama(machine: str) -> list[str]:
+    """Les modèles de texte qu'Ollama garde sur la machine, déchargés
+    (`keep_alive: 0`) : comme `unload_llm` de Character_Factory/factory/memory.py.
+    Un modèle de 30 Go gardé à côté d'H3 (~100 Go) sature un Spark
+    (docs/etudes/orchestration.md § 3.1)."""
+    import urllib.request
+    url = str((config.get("machine_ollama") or {}).get(machine) or "").rstrip("/")
+    if not url:
+        return []
+    gone = []
+    try:
+        with urllib.request.urlopen(url + "/api/ps", timeout=5) as r:
+            names = [m["name"] for m in json.loads(r.read()).get("models", [])]
+        for name in names:
+            req = urllib.request.Request(url + "/api/generate", data=json.dumps({"model": name, "keep_alive": 0}).encode(),
+                                         method="POST", headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                r.read()
+            gone.append(name)
+    except (OSError, ValueError, KeyError):
+        pass
+    return gone
 
 
 def memory_guard(ctx) -> float:
@@ -925,22 +1150,31 @@ def memory_guard(ctx) -> float:
         ctx.comfy.free()
     except ComfyError:
         pass
-    nb = Comfy(neighbour(ctx.endpoint), timeout=10)
-    busy = None
-    try:   # 2. le ComfyUI :8188 de la même machine : /free n'interrompt rien, il décharge quand sa file est vide
-        q = nb.queue_state()
-        busy = len(q.get("queue_running", [])) + len(q.get("queue_pending", []))
-        nb.free()
-    except ComfyError:
-        pass
+    gone = unload_ollama(machine)   # 2. le modèle de texte de la machine
+    if gone:
+        ctx.progress(message=f"modèle de texte déchargé sur {machine} : {', '.join(gone)}")
+    busy = []
+    for url in dict.fromkeys([neighbour(ctx.endpoint)] + machines.instances_of(machine)):
+        if url == ctx.endpoint:
+            continue
+        # 3. les autres ComfyUI de la même machine, seulement si leur file est vide :
+        # on ne décharge jamais sous le travail d'un autre (core/machines.py, free_instance)
+        try:
+            q = Comfy(url, timeout=10).queue_state()
+            n = len(q.get("queue_running", [])) + len(q.get("queue_pending", []))
+            if n:
+                busy.append(f"le ComfyUI :{urlsplit(url).port} de {machine} calcule encore ({n} en file)")
+            else:
+                Comfy(url, timeout=10).free()
+        except ComfyError:
+            pass
     for _ in range(20):
         time.sleep(3)
         ctx.check()
         free = _free_gb(ctx.comfy)
         if free >= need:
             return free
-    why = (f"le ComfyUI :8188 de {machine} calcule encore ({busy} en file) : relancez quand il aura fini"
-           if busy else "un autre programme occupe la mémoire")
+    why = (" ; ".join(busy) + " : relancez quand il aura fini") if busy else "un autre programme occupe la mémoire"
     raise RuntimeError(f"Mémoire insuffisante sur {machine} : {free:.0f} Go libres après déchargement, "
                        f"H3 en demande {need:.0f}. {why[0].upper() + why[1:]}.")
 
@@ -981,7 +1215,7 @@ def request_of(rec: dict) -> dict:
             "method": rec.get("method"), "frames": rec.get("frames"), "steps": rec.get("steps"), "seed": rec.get("seed"),
             "canvas": "auto" if rec.get("family") == "image" else [rec.get("width"), rec.get("height")],
             "loras": rec.get("loras") or [],
-            "adv": {"unet": rec.get("unet"), "sampler": rec.get("sampler"), "scheduler": rec.get("scheduler"), "crf": rec.get("crf")},
+            "adv": {"unet": rec.get("unet"), "crf": rec.get("crf")},
             "start": rec.get("start"), "end": rec.get("end"), "inputs": rec.get("inputs") or {},
             "ref_image_size": rec.get("ref_image_size")}
 
@@ -990,8 +1224,8 @@ def _recipe(pl: dict, eng: str) -> dict:
     """De quoi refaire le plan : ce que « Reprendre ces réglages » relit et
     ce que le banc compare ; le graphe H3 y est rangé tel qu'il partirait."""
     r = {k: pl[k] for k in ("mode", "method", "width", "height", "family", "frames", "seconds", "fps", "steps", "seed",
-                            "sampler", "scheduler", "unet", "turbo", "loras", "ref_image_size", "crf", "desc", "sound",
-                            "music", "raw", "start", "end", "inputs", "estimate", "weights")}
+                            "sampler", "scheduler", "stages", "draft", "unet", "recipe_loras", "loras", "ref_image_size",
+                            "crf", "desc", "sound", "music", "raw", "start", "end", "inputs", "estimate", "weights")}
     r["engine"] = eng
     r["prompt_sent"] = pl["prompt_sent"]
     r["pictures"] = [{"tag": x["tag"], "item": x["item"], "label": x["label"], "role": x["role"]} for x in pl["pictures"]]
@@ -1101,17 +1335,31 @@ def run(ctx, mode: str) -> dict:
     if problems:
         raise RuntimeError("graphe refusé avant l'envoi : " + " | ".join(problems[:6]))
     kinds = {nid: n["class_type"] for nid, n in graph.items()}
+    seen = {"frac": 0.03}
+
+    def forward(frac, label):
+        # ComfyUI décode le son avant ou après l'image selon l'ordre du graphe
+        # (relevé le 30/09 : le son d'abord) : la barre ne recule jamais
+        seen["frac"] = max(seen["frac"], frac)
+        ctx.progress(seen["frac"], label)
+
+    two = pl.get("stages") == 2
+    spans = {"SamplerCustomAdvanced": ((0.20, 0.55) if two else SAMPLE_SPAN,
+                                       "premier étage" if two else "échantillonne"),
+             "MinimaxH3LatentUpscaler3DRefineHandoff": ((0.56, 0.86), "second étage")}
 
     def on_msg(m):
         d = m.get("data") or {}
         if m.get("type") == "executing" and d.get("node"):
             frac, label = PHASES.get(kinds.get(str(d["node"]), ""), (None, None))
             if label:
-                ctx.progress(frac, label)
-        elif m.get("type") == "progress" and kinds.get(str(d.get("node"))) == "SamplerCustomAdvanced":
+                forward(frac, label)
+        elif m.get("type") == "progress" and kinds.get(str(d.get("node"))) in spans:
+            (a, b), label = spans[kinds[str(d["node"])]]
             v, mx = d.get("value") or 0, d.get("max") or 1
-            a, b = SAMPLE_SPAN
-            ctx.progress(a + (b - a) * v / mx, f"échantillonne · step {v}/{mx}")
+            # le compte de l'échantillonneur n'est pas toujours celui des pas (8 pour 4
+            # pas avec Spectrum, relevé le 30/09) — on dit « passe », pas « pas »
+            forward(a + (b - a) * v / mx, f"{label} · passe {v}/{mx}")
 
     def report(state, ahead):
         if state == "wait":
@@ -1129,11 +1377,12 @@ def run(ctx, mode: str) -> dict:
     files = [f for f in Comfy.outputs(entry, graph) if f["filename"].lower().endswith(".mp4")]
     files.sort(key=lambda f: "-audio" not in f["filename"])   # la version avec le son d'abord
     if not files:
-        raise RuntimeError("H3 n'a rendu aucun mp4 (voir le journal de comfyui-h3test)")
+        raise RuntimeError(f"H3 n'a rendu aucun mp4 (voir le journal du ComfyUI de {machine})")
     ctx.progress(0.98, "rapatrie le mp4")
     dest = ctx.comfy.download(files[0], ctx.workdir / "plan.mp4")
-    loras = " + ".join([l["name"] for l in pl["loras"]] + ([pl["turbo"]] if pl["turbo"] else []))
-    model = f"MiniMax H3 {pl['weights']} · {pl['unet_nom']}" + (f" + {loras}" if loras else "")
+    loras = " + ".join([l["name"].split("/")[-1].replace(".safetensors", "") for l in pl["loras"]])
+    model = (f"MiniMax H3 {pl['weights']} · {pl['unet_nom']} · recette de Cal, {METHODS[pl['method']]['label']}"
+             + (f" + {loras}" if loras else ""))
     return _store(ctx, pl, dest, secs=round(time.time() - t0, 1), machine=machine, model=model, eng="h3", graph=graph)
 
 
@@ -1199,16 +1448,21 @@ def r_loras(req):
             continue
         known = LORA_NOTES.get(base, {})
         accel = bool(ACCEL_RX.search(base)) and not known
+        if base in RECIPE_LORAS:
+            out.append({"name": n, "nom": known.get("nom") or base.replace(".safetensors", ""), "modes": ["t2v", "i2v", "r2v"],
+                        "force": {PEOPLE: 0.6, CINE: 0.6}.get(base, 1.0), "note": "dans la recette de Cal : toujours posé",
+                        "accel": base == TURBO_V4, "warn": False, "recipe": True})
+            continue
         if accel:
             modes, note = (["r2v"] if "ref2v" in low else ["t2v", "i2v"] if ("fl2v" in low or "flf2v" in low) else ["t2v", "i2v", "r2v"]), \
-                "accélérateur : la méthode de rendu « turbo » pose celui du banc ; ne pas en cumuler deux"
+                "accélérateur : la recette pose le Turbo v4 ; on n'en cumule pas deux"
         else:
             modes = known.get("modes") or (["r2v"] if "ref2v" in low else ["t2v", "i2v"] if ("fl2v" in low or "flf2v" in low)
                                             else ["t2v", "i2v", "r2v"])
             note = known.get("note") or "compatibilité inconnue tant qu'elle n'est pas essayée sur la machine"
         out.append({"name": n, "nom": known.get("nom") or base.replace(".safetensors", ""), "modes": modes,
                     "force": known.get("force", 1.0), "note": note, "accel": accel, "warn": bool(known.get("warn"))})
-    out.sort(key=lambda x: (x["accel"], x["warn"], x["nom"].lower()))
+    out.sort(key=lambda x: (not x.get("recipe"), x["accel"], x["warn"], x["nom"].lower()))
     return {"loras": out, "machine": machine,
             "why": "" if machine else "aucune instance ComfyUI ne répond : la liste se lit sur /object_info"}
 
@@ -1244,6 +1498,16 @@ def _load_state() -> None:
 def h3_endpoints() -> list[str]:
     """Les instances ComfyUI de la voie h3 (« local » n'en est pas une)."""
     return [ep for ep in ((config.get("lanes") or {}).get("h3") or []) if ep.startswith("http")]
+
+
+def managed(endpoint: str) -> bool:
+    """Une instance que le gardien démarre et arrête : ComfyUI-H3TEST
+    (`h3_service`, sur `h3_service_port`). Les ComfyUI :8188, où tourne la
+    recette de Cal, ne sont jamais démarrés ni arrêtés ici."""
+    try:
+        return urlsplit(endpoint).port == int(config.get("h3_service_port", 8189))
+    except ValueError:
+        return False
 
 
 def _on_host(endpoint: str, cmd: str, timeout: float = 40) -> subprocess.CompletedProcess:
@@ -1285,9 +1549,10 @@ def start_h3(endpoint: str | None = None) -> dict:
     qui a le plus de mémoire libre."""
     if engine() != "h3":
         raise HttpError(409, "moteur factice : H3 n'est pas câblé ici (movie_engine), on ne le démarre pas")
-    eps = h3_endpoints()
+    eps = [ep for ep in h3_endpoints() if managed(ep)]
     if not eps:
-        raise HttpError(409, "aucune instance H3 déclarée (lanes.h3)")
+        raise HttpError(409, "aucune instance H3 à démarrer : la voie h3 ne compte que des ComfyUI toujours allumés "
+                             f"({', '.join(jobs.machine_of(e) + ' :' + str(urlsplit(e).port) for e in h3_endpoints()) or 'aucun'})")
     if endpoint and endpoint not in eps:
         raise HttpError(400, f"instance inconnue : {endpoint}")
     with _h3_lock:
@@ -1348,12 +1613,17 @@ def _keeper_tick() -> None:
                 _h3["last_busy"][ep] = now
     queued = [j for j in active if j["state"] == "queued"]
     if queued and not any(up.values()):
-        try:
-            got = start_h3()
-            t_start = _h3["starting"].get(got["endpoint"], now)
-            msg = f"H3 démarre sur {got['machine']} · {_mmss(now - t_start)}"
-        except HttpError as e:
-            msg = e.message
+        if not any(managed(ep) for ep in eps):
+            # rien à démarrer : les ComfyUI de la voie sont éteints (machine arrêtée, service tombé)
+            msg = ("en attente : aucune instance H3 ne répond (" + ", ".join(f"{jobs.machine_of(ep)} :{urlsplit(ep).port}"
+                                                                          for ep in eps) + ") — machine éteinte ou ComfyUI arrêté")
+        else:
+            try:
+                got = start_h3()
+                t_start = _h3["starting"].get(got["endpoint"], now)
+                msg = f"H3 démarre sur {got['machine']} · {_mmss(now - t_start)}"
+            except HttpError as e:
+                msg = e.message
         for j in queued:
             real = jobs.get(j["id"])
             if real and real["state"] == "queued":
@@ -1400,8 +1670,8 @@ def h3_status(req=None) -> dict:
     out = []
     for ep in h3_endpoints():
         ok, _ = jobs.endpoint_alive(ep, max_age=4)
-        e = {"url": ep, "machine": jobs.machine_of(ep), "up": ok, "started_here": ep in _h3["started"],
-             "error": _h3["errors"].get(ep)}
+        e = {"url": ep, "machine": jobs.machine_of(ep), "port": urlsplit(ep).port, "managed": managed(ep), "up": ok,
+             "started_here": ep in _h3["started"], "error": _h3["errors"].get(ep)}
         if ep in _h3["starting"]:
             e["starting_for"] = round(now - _h3["starting"][ep])
         if ok:
@@ -1423,12 +1693,19 @@ def h3_status(req=None) -> dict:
 def r_options(req):
     return {
         "modes": [{"id": k, "label": m["label"], "sub": m["sub"], "weights": m["weights"]} for k, m in MODES.items()],
-        "methods": [{"id": k, "label": m["label"], "steps": list(m["steps"]), "note": m["note"]} for k, m in METHODS.items()],
+        "methods": [{"id": k, "label": m["label"], "sub": m["sub"], "steps": list(m["steps"]), "note": m["note"],
+                     "canvas": list(m["canvas"]), "stages": m["stages"], "refs": m["refs"], "cal": m["cal"]}
+                    for k, m in METHODS.items()],
+        "default_method": DEFAULT_METHOD,
+        "recipe": {"loras": [{"name": PEOPLE, "strength": 0.6}, {"name": CINE, "strength": 0.6}, {"name": TURBO_V4, "strength": 1.0}],
+                   "tag": QUALITY_TAG, "sampler": "MiniMaxH3TurboSampler", "scheduler": "simple", "shift": [12, 3],
+                   "attention": "comfy kitchen attention + Sol-Attn (tau 1,3)",
+                   "source": "Cal, 30/09 : RECETTE-DRAFT-QUALITE.md, test-meteorite*.py"},
         "canvases": [{"w": w, "h": h, "family": f, "label": l, "source": s} for w, h, f, l, s in CANVASES],
         "families": FAMILIES, "frames": [{"frames": f, "seconds": round(f / FPS, 2)} for f in FRAMES], "fps": FPS,
         "roles": {k: [{"id": r, "label": lab} for r, lab in v] for k, v in ROLES.items()},
         "limits": LIMITS, "camera": [{"id": a, "phrase": b} for a, b in CAMERA],
-        "unets": UNETS, "samplers": SAMPLERS, "schedulers": SCHEDULERS,
+        "unets": UNETS,
         "min_free_gb": config.get("h3_min_free_gb", 45), "idle_minutes": config.get("h3_idle_minutes", 10),
         "engine": engine(), "llm": False,
     }
@@ -1593,32 +1870,56 @@ def selftest(call, ok) -> None:
     ok(adapt_canvas(832, 1216) == (768, 1120), f"la toile du nœud pour une image quelconque ({adapt_canvas(832, 1216)})")
     ok(all(w % 32 == 0 and h % 32 == 0 for w, h, *_ in CANVASES), "toutes les toiles sont des multiples de 32")
     ok(all(f % 17 == 5 and 124 <= f <= 362 for f in FRAMES) and frame_count(5) == 124, "durées sur la grille 17k+5, plage entraînée")
-    for (w, h, fr, st, mesure) in ((1792, 768, 124, 4, 300), (2240, 960, 124, 4, 510), (2240, 960, 124, 8, 691),
-                                   (1792, 768, 243, 8, 1024), (1344, 576, 243, 8, 481)):
-        e = estimate("turbo", w, h, fr, st)
-        ok(e["low"] <= mesure <= e["high"], f"estimation turbo {w}×{h} {fr} img {st} steps contient la mesure {mesure} s ({e['low']}–{e['high']})")
-    ok(default_steps("turbo", 1344, 768) == 4 and default_steps("turbo", 2240, 960) == 8 and default_steps("origine", 864, 480) == 20,
-       "steps par défaut : 4 sous 1,4 Mpx, 8 au-dessus (R0, R3, R5), 20 sans turbo")
+    # le temps : les rendus de Cal avec sa recette (192 images, 8 pas) tombent dans la fourchette
+    for meth, (w, h), mesure in (("brouillon", (1536, 640), 406), ("qualite", (1920, 800), 960)):
+        e = estimate(meth, w, h, 192, 8)
+        ok(e["low"] <= mesure <= e["high"], f"estimation {meth} {w}×{h} 192 img contient le rendu de Cal {mesure} s ({e['low']}–{e['high']})")
+    ok(default_steps("brouillon") == 8 and default_steps("qualite") == 8 and draft_canvas(1536, 640) == (768, 320),
+       "préréglages : 8 pas, le Brouillon part de 768 × 320 (la recette de Cal)")
+    ok(estimate("brouillon", 1536, 640, 192, 8)["high"] < estimate("qualite", 1920, 800, 192, 8)["low"],
+       "le Brouillon s'annonce plus court que la Qualité")
 
     st, opts = call("GET", "/api/movie/options")
     ok(st == 200 and [m["id"] for m in opts.get("modes", [])] == ["t2v", "i2v", "r2v"] and opts["fps"] == 24
        and opts["limits"]["image"] == 9 and len(opts["camera"]) == 20, f"les options ({st})")
+    ok([m["id"] for m in opts.get("methods", [])] == ["brouillon", "qualite"] and opts.get("default_method") == "brouillon"
+       and [x["name"] for x in opts["recipe"]["loras"]] == [PEOPLE, CINE, TURBO_V4], "deux préréglages, la pile de LoRA de Cal dans l'ordre")
 
     # Texte
     st, bad = call("POST", "/api/movie/plan", {"mode": "t2v", "params": {}})
     ok(st == 200 and not bad["ok"] and any("description" in e for e in bad["errors"]), "texte sans rien : ce qui manque est dit")
     st, pt = call("POST", "/api/movie/plan", {"mode": "t2v", "graph": True, "params": {
         "desc": "A lighthouse keeper climbs the stairs at dawn. The camera pushes in with small amplitude at slow speed.",
-        "music": "Sparse piano, slow tempo.", "canvas": [864, 480], "frames": 175, "method": "origine", "seed": 5}})
+        "music": "Sparse piano, slow tempo.", "frames": 175, "seed": 5}})
     s = pt.get("prompt_sent", "")
-    ok(st == 200 and pt["ok"] and s.startswith("integrated_multimodal_description:\n[Shot 1] A lighthouse")
+    ok(st == 200 and pt["ok"] and s.startswith("integrated_multimodal_description:\nr34l1sm. DY. [Shot 1] A lighthouse")
        and "overall_soundscape:\nNatural diegetic" in s and "non_diegetic_music:\nSparse piano" in s,
-       "texte : les trois champs du guide")
+       "texte : les trois champs du guide, le tag de la recette en tête")
     g = pt.get("graph") or {}
-    ok(pt["steps"] == 20 and pt["frames"] == 175 and "148" not in g and "201" not in g and "240" not in g
-       and "first_frame" not in g.get("136", {}).get("inputs", {}) and g["259"]["inputs"]["model"] == ["202", 0]
-       and g["136"]["inputs"]["length"] == 175 and g["205"]["inputs"]["frame_rate"] == 24,
-       "graphe texte, méthode origine : ni LoRA turbo ni Spectrum, pas d'image, 175 images à 24 i/s")
+    ok(pt["method"] == "brouillon" and (pt["width"], pt["height"]) == (1536, 640) and pt["draft"] == [768, 320]
+       and g["6"]["class_type"] == "MiniMaxH3ImageToVideo" and "audio_vae" not in g["6"]["inputs"]
+       and "first_frame" not in g["6"]["inputs"] and g["6"]["inputs"]["length"] == 175
+       and g["30"]["inputs"] == {"width": 768, "height": 320, "length": 175} and g["11"]["inputs"]["latent_image"] == ["30", 0]
+       and g["34"]["class_type"] == "MinimaxH3LatentUpscaler3DRefineHandoff" and g["34"]["inputs"]["width"] == 1536
+       and g["33"]["inputs"]["noise_seed"] == 6 and g["31"]["inputs"]["sigmas"] == DRAFT_SIGMAS
+       and g["12"]["inputs"]["samples"] == ["34", 0] and g["13"]["inputs"]["samples"] == ["34", 0]
+       and g["15"]["inputs"]["frame_rate"] == 24 and g["15"]["inputs"]["crf"] == 12 and g["9"]["inputs"]["steps"] == 8
+       and g["2"]["inputs"]["unet_name"] == _defaut(UNETS["fl2va"]),
+       "graphe texte, Brouillon : 768 × 320 puis l'agrandisseur latent → 1536 × 640, graine + 1, 175 images à 24 i/s")
+    ok(g["100"]["inputs"]["lora_name"] == PEOPLE and g["100"]["inputs"]["model"] == ["2", 0]
+       and g["102"]["inputs"]["lora_name"] == CINE and g["102"]["inputs"]["model"] == ["100", 0]
+       and g["101"]["class_type"] == "MiniMaxH3TurboLoRA" and g["101"]["inputs"]["model"] == ["102", 0]
+       and g["40"]["inputs"]["model"] == ["101", 0] and g["41"]["inputs"]["selection.tau"] == 1.3
+       and g["5"]["inputs"]["model"] == ["41", 0] and g["5"]["inputs"]["shift_video"] == 12 and g["10"]["class_type"] == "MiniMaxH3TurboSampler",
+       "la pile de Cal : People 0,6 → DY 0,6 → Turbo v4, attention kitchen + Sol-Attn, shift 12, TurboSampler")
+    st, pq = call("POST", "/api/movie/plan", {"mode": "t2v", "graph": True, "params": {"desc": "A quiet sea.", "method": "qualite", "seed": 9}})
+    gq = pq.get("graph") or {}
+    ok(pq["ok"] and (pq["width"], pq["height"]) == (1920, 800) and pq["stages"] == 1 and "30" not in gq and "34" not in gq
+       and gq["11"]["inputs"]["latent_image"] == ["6", 1] and gq["12"]["inputs"]["samples"] == ["11", 0],
+       "Qualité : 1920 × 800, un étage direct")
+    st, po = call("POST", "/api/movie/plan", {"mode": "t2v", "params": {"desc": "x", "method": "origine"}})
+    ok(po["ok"] and po["method"] == "brouillon" and any("ancien banc" in n for n in po["notes"]),
+       "une méthode de l'ancien banc est relue comme un Brouillon, et c'est dit")
 
     # Images : début · fin
     st, up = call("PUT", "/api/library/upload?name=plein-pied.png&title=Plein+pied", raw=png(832, 1216, (90, 80, 70)))
@@ -1626,24 +1927,27 @@ def selftest(call, ok) -> None:
     st, up2 = call("PUT", "/api/library/upload?name=fin.png&title=Fin", raw=png(1344, 768, (20, 30, 40)))
     fid = up2.get("id")
     st, pl = call("POST", "/api/movie/plan", {"mode": "i2v", "graph": True, "params": {
-        "start": sid, "end": fid, "desc": "He walks toward the camera and smiles.", "frames": 124}})
+        "start": sid, "end": fid, "desc": "He walks toward the camera and smiles.", "frames": 124, "canvas": "auto"}})
     sent = pl.get("prompt_sent", "")
-    ok(st == 200 and pl["ok"] and (pl["width"], pl["height"]) == (768, 1120) and pl["steps"] == 4 and pl["method"] == "turbo",
-       f"images : toile d'après l'image, turbo 4 steps ({pl.get('width')}×{pl.get('height')} {pl.get('errors')})")
+    ok(st == 200 and pl["ok"] and (pl["width"], pl["height"]) == (768, 1120) and pl["steps"] == 8 and pl["method"] == "brouillon",
+       f"images : toile d'après l'image (avancé), Brouillon 8 pas ({pl.get('width')}×{pl.get('height')} {pl.get('errors')})")
     ok(sent.startswith("For the target video, at 0.00 seconds into the target video, <Picture 1>")
        and "<Picture 2> (from [Shot 1]) aligns with the 5.17-second mark" in sent
        and "[Shot 1] Begin with <Picture 1> and end with <Picture 2>. He walks" in sent,
        "images : ancrage de la première et de la dernière image (guide officiel)")
     g = pl.get("graph") or {}
-    ok(g.get("136", {}).get("inputs", {}).get("first_frame") == ["240", 0] and g["136"]["inputs"].get("last_frame") == ["241", 0]
-       and g["148"]["inputs"]["lora_name"] == TURBO["fl2va"] and g["127"]["inputs"]["unet_name"] == _defaut(UNETS["fl2va"]),
-       "graphe images : première et dernière, LoRA turbo fl2va")
+    ok(g.get("6", {}).get("inputs", {}).get("first_frame") == ["20", 0] and g["6"]["inputs"].get("last_frame") == ["21", 0]
+       and (g["6"]["inputs"]["width"], g["6"]["inputs"]["height"]) == (768, 1120) and pl["stages"] == 1
+       and "30" not in g and "34" not in g and g["11"]["inputs"]["latent_image"] == ["6", 1]
+       and any("un seul étage" in n for n in pl["notes"]),
+       "graphe images, Brouillon : un seul étage (l'agrandisseur latent abîme les images clés), et c'est dit")
     st, pe = call("POST", "/api/movie/plan", {"mode": "i2v", "graph": True, "params": {"end": fid, "desc": "x y", "canvas": [1344, 768]}})
     ge = pe.get("graph") or {}
-    ok(pe["ok"] and "first_frame" not in ge["136"]["inputs"] and ge["136"]["inputs"].get("last_frame") == ["240", 0]
+    ok(pe["ok"] and "first_frame" not in ge["6"]["inputs"] and ge["6"]["inputs"].get("last_frame") == ["20", 0]
        and "<Picture 1> (from [Shot 1]) aligns with the 5.17-second mark" in pe["prompt_sent"], "images : la dernière seule")
-    st, p16 = call("POST", "/api/movie/plan", {"mode": "i2v", "params": {"start": sid, "desc": "x", "canvas": [1344, 768]}})
-    ok(any("recadrée" in n for n in p16.get("notes", [])), "toile imposée : le recadrage de la première image est annoncé")
+    st, p16 = call("POST", "/api/movie/plan", {"mode": "i2v", "params": {"start": sid, "desc": "x"}})
+    ok((p16["width"], p16["height"]) == (1536, 640) and any("recadrée" in n for n in p16.get("notes", [])),
+       "la toile du préréglage : le recadrage de la première image est annoncé")
 
     # Références : les entrées par position, appelées par jeton (@image1, @element1…)
     st, el = call("POST", "/api/elements", {"title": "MJ Survêt", "type": "character", "description": "male, 28, athletic",
@@ -1692,8 +1996,8 @@ def selftest(call, ok) -> None:
     pv = plan("r2v", {"inputs": {**ins, "video": [{"item": vid.get("id"), "role": "motion", "sound": True}]},
                       "desc": "@element1 runs through @image1 like @video1."})
     gv = build_graph("r2v", pv, ["f.png", "b.png", "i.png"], "p", videos=["v.mp4"], audios=[]) if pv["ok"] else {}
-    ok(pv["ok"] and gv["136"]["inputs"].get("ref_videos.ref_video_0") == ["301", 0] and gv["300"]["class_type"] == "LoadVideo"
-       and gv["136"]["inputs"].get("ref_video_audios.ref_video_audio_0") == ["301", 1]
+    ok(pv["ok"] and gv["6"]["inputs"].get("ref_videos.ref_video_0") == ["301", 0] and gv["300"]["class_type"] == "LoadVideo"
+       and gv["6"]["inputs"].get("ref_video_audios.ref_video_audio_0") == ["301", 1]
        and "<Video 1> is a motion reference." in pv["prompt_sent"] and "<Audio 1> is the soundtrack paired with <Video 1>." in pv["prompt_sent"],
        f"références : une vidéo et sa bande-son passent par LoadVideo → GetVideoComponents ({pv['errors']})")
     ev = library.create_element("Voix", "character", "", [{"path": library.path_of(library.get(fid)), "role": "face"},
@@ -1703,25 +2007,58 @@ def selftest(call, ok) -> None:
        and "<Audio 1> is the voice reference of <Subject 1>" in pw["prompt_sent"],
        f"un élément qui porte une voix l'envoie en <Audio> ({pw.get('errors')})")
     g2 = pr.get("graph") or {}
-    ok(g2.get("136", {}).get("class_type") == "MiniMaxH3ReferenceToVideo" and g2["136"]["inputs"]["ref_images.ref_image_2"] == ["242", 0]
-       and g2["148"]["inputs"]["lora_name"] == TURBO["ref2va"] and g2["136"]["inputs"]["ref_image_size"] == "match",
-       "graphe références : trois images, LoRA turbo ref2va, taille match")
+    ok(g2.get("6", {}).get("class_type") == "MiniMaxH3ReferenceToVideo" and g2["6"]["inputs"]["ref_images.ref_image_0"] == ["20", 0]
+       and g2["6"]["inputs"]["ref_images.ref_image_2"] == ["22", 0] and g2["101"]["inputs"]["lora_name"] == TURBO_V4
+       and g2["6"]["inputs"]["ref_image_size"] == "match" and g2["2"]["inputs"]["unet_name"] == _defaut(UNETS["ref2va"])
+       and "r34l1sm. DY. [Shot 1]" in pr["prompt_sent"],
+       "graphe références : trois images dans l'ordre des places, la recette (Singularity, Turbo v4), taille match")
+    ok(any("son visage et son plein pied" in n for n in pr["notes"]),
+       "un personnage sans planche ni crops .char envoie visage et plein pied, et le plan le dit")
+    # un personnage qui a tout : la planche masquée pour Brouillon, les 5 crops .char pour Qualité (Cal, 30/09)
+    kinds = [("face", "visage face"), ("face", "visage 3/4"), ("outfit", "tenue haut"), ("outfit", "tenue bas"),
+             ("view", "corps dos"), ("view", "planche corps 3 vues visage masqué"), ("face", "visage 3/4 sourire"),
+             ("face", "visage profil"), ("full body", "tenue entière")]
+    st, eira = call("POST", "/api/elements", {"title": "Eira", "type": "character", "description": "a 15-year-old girl",
+                                              "refs": [{"item": sid, "role": r, "label": lab} for r, lab in kinds]})
+    ein = {"element": [{"item": eira.get("id")}]}
+    pb = plan("r2v", {"inputs": ein, "desc": "@element1 runs.", "method": "brouillon"})
+    pq2 = plan("r2v", {"inputs": ein, "desc": "@element1 runs.", "method": "qualite"})
+    lab = lambda p: [x["label"].split(" · ", 1)[1] for x in p["pictures"]]  # noqa: E731
+    ok(pb["ok"] and lab(pb) == ["planche corps 3 vues visage masqué", "visage face", "visage 3/4 sourire", "visage 3/4", "visage profil"]
+       and "(front, back and side views, face blanked out" in pb["prompt_sent"] and "multi-view sheet layout" in pb["prompt_sent"],
+       f"Brouillon : la planche masquée puis les 4 gros plans du visage ({lab(pb)})")
+    ok(pq2["ok"] and lab(pq2) == ["visage face", "visage 3/4", "tenue haut", "tenue bas", "corps dos"]
+       and "whose outfit is shown in <Picture 3> and <Picture 4>" in pq2["prompt_sent"]
+       and "whose body from behind is shown in <Picture 5>" in pq2["prompt_sent"] and "blanked out" not in pq2["prompt_sent"],
+       f"Qualité : les 5 crops de la méthode .char, dans l'ordre de Cal ({lab(pq2)})")
+    # un élément versionné : sa matière est dans sa dernière version (library.resolve) ; sans version, c'est dit
+    st, liv = call("POST", "/api/elements", {"from_item": eira.get("id"), "title": "Eira vivante"})
+    pvv = plan("r2v", {"inputs": {"element": [{"item": liv.get("id")}]}, "desc": "@element1 runs.", "method": "qualite"})
+    ok(st == 200 and library.is_living(library.get(liv.get("id"))) and pvv["ok"] and lab(pvv) == lab(pq2),
+       f"un élément versionné envoie les images de sa dernière version ({st} {pvv.get('errors')})")
+    empty = library.create_living("Sans version", "character", {"tool": "asset"})
+    pne = plan("r2v", {"inputs": {"element": [{"item": empty["id"]}]}, "desc": "@element1"})
+    ok(not pne["ok"] and any("pas encore de version" in e for e in pne["errors"]), "un élément sans version publiée : dit")
     st, raw = call("POST", "/api/movie/plan", {"mode": "r2v", "params": {"inputs": {"element": [{"item": eid}]}, "desc": "subject_definitions:\n@element1"}})
     ok(raw.get("raw") and raw.get("prompt_sent") == "subject_definitions:\n<Subject 1>", "un prompt au format H3 part tel quel, jetons remplacés")
     st, lo = call("POST", "/api/movie/plan", {"mode": "r2v", "params": {"inputs": {"element": [{"item": eid}]}, "desc": "@element1",
                                                                          "loras": [{"name": "Minimax_H3/minimax_h3_fl2v_x.safetensors"}]}})
     ok(not lo["ok"] and any("l'autre modèle" in e for e in lo["errors"]), "un LoRA fl2v est refusé en références")
-    pg = plan("t2v", {"desc": "x", "loras": [{"name": "h3-realism-people-t2v-i2v-r2v.safetensors", "strength": 0.6}]})
-    ok(not pg["ok"] and any("r34l1sm" in e for e in pg["errors"]), "Realism People réclame son déclencheur")
-    pg = plan("t2v", {"desc": "r34l1sm. x", "loras": [{"name": "h3-realism-people-t2v-i2v-r2v.safetensors", "strength": 0.6}]})
+    pg = plan("t2v", {"desc": "x", "loras": [{"name": PEOPLE, "strength": 1.0}, {"name": "Minimax_H3/minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors"},
+                                             {"name": "minimax_h3_flf2v_orbit360_v1.safetensors", "strength": 0.8}]})
     gg = build_graph("t2v", pg, [], "p")
-    ok(gg["50"]["inputs"]["model"] == ["127", 0] and gg["200"]["inputs"]["model"] == ["50", 0]
-       and gg["50"]["inputs"]["strength_model"] == 0.6, "un LoRA choisi se pose juste après le modèle")
+    ok(pg["ok"] and [l["name"] for l in pg["loras"]] == ["minimax_h3_flf2v_orbit360_v1.safetensors"]
+       and gg["50"]["inputs"]["model"] == ["102", 0] and gg["101"]["inputs"]["model"] == ["50", 0]
+       and gg["50"]["inputs"]["strength_model"] == 0.8,
+       "un LoRA ajouté se pose après People → DY, avant le Turbo ; ni doublon de la pile ni second accélérateur")
 
     st, h3 = call("GET", "/api/movie/h3")
     ok(st == 200 and isinstance(h3.get("instances"), list), "l'état d'H3 se lit")
     st, _ = call("POST", "/api/movie/h3/start", {})
     ok(st == 409 or engine() == "h3", "moteur factice : H3 ne démarre pas")
+    ok(managed("http://127.0.0.1:8189") and not managed("http://169.254.110.6:8188")
+       and neighbour("http://127.0.0.1:8188") == "http://127.0.0.1:8189" and neighbour("http://127.0.0.1:8189") == "http://127.0.0.1:8188",
+       "le gardien ne démarre ni n'arrête un ComfyUI :8188 ; l'autre instance de la machine se trouve")
     st, _ = call("POST", "/api/movie/assist", {"brief": "x"})
     ok(st == 501, "l'assistant dit qu'il n'est pas câblé")
     st, lr = call("GET", "/api/movie/loras")
@@ -1774,7 +2111,7 @@ def selftest(call, ok) -> None:
             pp = v.get("params", {})
             ok(j["state"] == "done" and v.get("kind") == "video" and v.get("audio") and v.get("fps") == 24
                and pp.get("engine") == "factice" and v.get("origin", {}).get("tool") == "movie"
-               and set(v.get("parents", [])) == parents and "136" in (pp.get("graph") or {})
+               and set(v.get("parents", [])) == parents and "6" in (pp.get("graph") or {})
                and (v.get("width"), v.get("height")) == (pp.get("width"), pp.get("height")),
                f"{kind} factice : mp4 avec son, recette, lignée, graphe H3 rangé ({j['state']} {j.get('message')})")
             ok(pp.get("request", {}).get("desc") == params["desc"] and pp["request"].get("seed") == params["seed"],

@@ -91,12 +91,13 @@
         <span class="hint" id="format-hint"></span>
       </section>
 
-      <!-- Format et durée : la famille, la toile (une ligne par toile, son temps estimé à droite),
-           la durée au curseur (les pas d'H3) -->
-      <section class="card fmt">
-        <div class="row"><h3>Format</h3><span class="sp"></span><span class="lbl" id="estimate-short" title="le temps estimé du plan, sur H3"></span></div>
-        <div class="seg fam" id="fam"></div>
-        <div class="field"><span class="lbl">Toile</span><div class="canvases" id="canvas" role="radiogroup" aria-label="toile"></div></div>
+      <!-- Les deux préréglages de Cal (30/09) : Brouillon, Qualité — la toile, les étages, la pile de LoRA
+           et la façon de prendre un personnage suivent ; le temps estimé de chacun. La durée au curseur
+           (les pas d'H3). La toile se change dans « Réglages avancés ». -->
+      <section class="card preset">
+        <div class="row"><h3>Préréglage</h3><span class="sp"></span><span class="lbl" id="estimate-short" title="le temps estimé du plan, sur H3"></span></div>
+        <div class="presets-pick" id="presets" role="radiogroup" aria-label="préréglage"></div>
+        <span class="hint" id="preset-note"></span>
         <div class="field dur">
           <div class="dur-h"><label class="lbl" for="frames">Durée</label><span class="sp"></span><b class="dur-v" id="dur-v"></b><small class="dur-n" id="dur-n"></small></div>
           <input type="range" class="dur-r" id="frames" min="0" max="0" step="1" value="0">
@@ -107,8 +108,10 @@
       <details class="card adv" id="adv">
         <summary><span class="lbl">Réglages avancés</span><span class="lbl custom" id="adv-sum"></span></summary>
         <div class="adv-body">
-          <label class="field"><span class="lbl">Méthode de rendu</span><select class="fld" id="method"></select></label>
           <div class="profile" id="profile"></div>
+          <div class="field fmt"><span class="lbl">Toile</span>
+            <div class="seg fam" id="fam"></div>
+            <div class="canvases" id="canvas" role="radiogroup" aria-label="toile"></div></div>
           <div class="grid2">
             <div class="field"><label class="lbl" for="steps">Pas</label><input class="fld" id="steps" inputmode="numeric" placeholder="auto"></div>
             <div class="field"><label class="lbl" for="seed">Graine</label>
@@ -128,9 +131,7 @@
             <div class="loras" id="loras"></div></div>
           <label class="field"><span class="lbl">Modèle</span><select class="fld" id="a-unet"></select></label>
           <div class="grid2">
-            <label class="field"><span class="lbl">Sampler</span><select class="fld" id="a-sampler"></select></label>
-            <label class="field"><span class="lbl">Planning</span><select class="fld" id="a-scheduler"></select></label>
-            <label class="field"><span class="lbl">Compression (crf)</span><input class="fld" id="a-crf" inputmode="numeric" placeholder="19"></label>
+            <label class="field"><span class="lbl">Compression (crf)</span><input class="fld" id="a-crf" inputmode="numeric" placeholder="12"></label>
           </div>
           <div class="field"><span class="lbl">Le prompt envoyé à H3</span><pre class="sent" id="sent"></pre></div>
           <details class="sentbox"><summary class="lbl">Le graphe H3 (construit, pas envoyé)</summary><pre class="sent" id="graph"></pre></details>

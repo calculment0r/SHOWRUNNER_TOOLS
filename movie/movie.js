@@ -49,7 +49,8 @@ const store = {   // commodité du navigateur : le formulaire en cours
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* navigation privée */ } },
 };
 const MODE_FR = { t2v: 'texte', i2v: 'images', r2v: 'références' };
-const METH_FR = { turbo: 'turbo', origine: 'origine', spectrum: 'spectrum' };
+const METH_FR = { brouillon: 'brouillon', qualite: 'qualité', turbo: 'turbo · ancien banc', origine: 'origine · ancien banc', spectrum: 'spectrum · ancien banc' };
+const PRESETS = ['brouillon', 'qualite'];   // la recette de Cal (30/09) : server/tools/movie.py, METHODS
 const ROLE_FR = { face: 'visage', 'full body': 'plein pied', expression: 'expression' };
 const mmss = (s) => { if (s == null || !isFinite(s)) return '—'; s = Math.max(0, Math.round(s)); return s >= 60 ? `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')}` : `${s} s`; };
 const p2 = (n) => String(n).padStart(2, '0');
@@ -66,11 +67,19 @@ const F = {
   mode: prefs.get('movie.mode', 't2v'),   // un formulaire neuf : la préférence (movie/prefs.json)
   p: { t2v: { desc: '', sound: '', music: '' }, i2v: { desc: '', sound: '', music: '' }, r2v: { desc: '', sound: '', music: '' } },
   start: null, end: null, inputs: {}, refSize: 'match',
-  canvas: { t2v: [1344, 768], i2v: 'auto', r2v: [1344, 768] }, fam: { t2v: 'paysage', i2v: 'image', r2v: 'paysage' },
-  method: 'turbo', frames: 124, steps: '', seed: '', origSeed: null, loras: {}, adv: {},
+  // la toile : null = celle du préréglage (Brouillon 1536 × 640, Qualité 1920 × 800) ; une autre se choisit en avancé
+  canvas: { t2v: null, i2v: null, r2v: null }, fam: { t2v: '2,4:1', i2v: '2,4:1', r2v: '2,4:1' },
+  method: 'brouillon', frames: 124, steps: '', seed: '', origSeed: null, loras: {}, adv: {},
   ...saved,
 };
 for (const k of ['t2v', 'i2v', 'r2v']) F.p[k] = { desc: '', sound: '', music: '', ...((saved.p || {})[k] || {}) };
+// un formulaire gardé d'avant les préréglages (méthodes turbo / origine / spectrum de l'ancien banc) :
+// le Brouillon, la toile du préréglage, les pas par défaut — les prompts restent
+if (!PRESETS.includes(F.method)) {
+  F.method = 'brouillon'; F.steps = '';
+  F.canvas = { t2v: null, i2v: null, r2v: null }; F.fam = { t2v: '2,4:1', i2v: '2,4:1', r2v: '2,4:1' };
+  delete F.adv.sampler; delete F.adv.scheduler;
+}
 delete F.refs; delete F.refKind;   // l'ancienne forme (références nommées)
 let E = null;   // le cadre des entrées, créé quand les options sont là
 let fil = null; // le fil des vidéos (commun/fil.js)
@@ -203,7 +212,7 @@ async function setImage(which, it) {
   if (!img) return;
   S.items.set(img.id, img);
   F[which] = img.id;
-  if (which === 'start' || !F.start) { F.canvas.i2v = 'auto'; F.fam.i2v = 'image'; }
+  // la toile reste celle du préréglage (le plan annonce le recadrage) ; « d'après l'image » se choisit en avancé
   changed(); paintSlot(which);
 }
 // un élément comme image de départ : laquelle de ses images ? (le plein pied d'abord)
@@ -331,8 +340,13 @@ async function loadLoras() {
 $('#lora-refresh').addEventListener('click', loadLoras);
 function paintLoras() {
   if (!S.loras.length) return;
-  const accel = S.loras.filter((l) => l.accel);
-  put($('#loras'), ...S.loras.filter((l) => !l.accel).map((l) => {
+  const accel = S.loras.filter((l) => l.accel && !l.recipe);
+  // la pile de la recette (People 0,6 → DY 0,6 → Turbo v4) : toujours posée, montrée cochée et figée
+  const pile = S.loras.filter((l) => l.recipe).map((l) => el('div', { class: 'lora on recipe' },
+    el('label', { class: 'lh' }, el('input', { type: 'checkbox', checked: true, disabled: true }), el('b', {}, l.nom),
+      el('input', { class: 'fld force', value: l.force, disabled: true, 'aria-label': 'force' })),
+    el('span', { class: 'hint' }, l.note)));
+  put($('#loras'), ...pile, ...S.loras.filter((l) => !l.accel && !l.recipe).map((l) => {
     const st = F.loras[l.name] || (F.loras[l.name] = { on: false, strength: l.force });
     const fits = l.modes.includes(F.mode);
     const off = l.accel || !fits;
@@ -343,58 +357,65 @@ function paintLoras() {
       el('label', { class: 'lh' },
         el('input', { type: 'checkbox', checked: st.on || null, disabled: off || null, onchange: (e) => { st.on = e.target.checked; changed(); paintLoras(); } }),
         el('b', {}, l.nom), force),
-      el('span', { class: 'hint' }, l.accel ? 'accélérateur : la méthode « turbo » pose celui du banc' : l.note),
+      el('span', { class: 'hint' }, l.note),
       !fits && !l.accel ? el('span', { class: 'why' }, `pas pour ce mode : ${l.modes.map((m) => MODE_FR[m]).join(', ')}`) : null,
       l.warn ? el('span', { class: 'warn-t' }, 'décision de Cal : exclu pour ses personnages') : null);
   }), accel.length ? el('details', { class: 'accel' },
-    el('summary', {}, el('span', { class: 'lbl' }, `${accel.length} accélérateurs · la méthode « turbo » pose celui du banc`)),
+    el('summary', {}, el('span', { class: 'lbl' }, `${accel.length} autres accélérateurs · la recette pose le Turbo v4`)),
     el('div', { class: 'accel-list' }, ...accel.map((l) => el('span', { title: l.name }, l.nom)))) : null);
 }
 
-// ── Sortie : toile, méthode, durée, pas, graine ─────────────
+// ── Sortie : préréglage, durée ; en avancé : toile, pas, graine ─
 function paintOutput() {
   const o = S.opts, pl = S.plan;
   if (!o) return;
-  const fams = (F.mode === 'i2v' && pl?.canvases?.[0]?.family === 'image' ? ['image'] : []).concat(o.families);
-  if (!fams.includes(F.fam[F.mode])) F.fam[F.mode] = fams[0];
-  const FAM_FR = { image: 'image', paysage: 'paysage', '21:9': '21:9', portrait: 'portrait', 'carré': 'carré' };
-  $('#fam').replaceChildren(...fams.map((f) => el('button', { class: 'tb' + (F.fam[F.mode] === f ? ' on' : ''), type: 'button',
+  if (!o.methods.some((m) => m.id === F.method)) F.method = o.default_method || o.methods[0].id;
+  const meth = o.methods.find((m) => m.id === F.method);
+  // les deux préréglages : le mot, ce qu'il fait, son temps estimé pour ce plan (le temps de Cal sinon)
+  $('#presets').replaceChildren(...o.methods.map((m) => el('button', { class: F.method === m.id ? 'on' : '', type: 'button', role: 'radio',
+    'aria-checked': F.method === m.id ? 'true' : 'false', title: m.note,
+    onclick: () => { if (F.method !== m.id) { F.method = m.id; F.steps = ''; changed(); paintOutput(); } } },
+  el('b', {}, m.label), el('span', {}, m.sub),
+  el('i', {}, pl?.presets?.[m.id] ? `≈ ${rng(pl.presets[m.id])}` : `chez Cal : ${m.cal.what}`))));
+  $('#preset-note').textContent = meth.note;
+  // la toile (avancé) : celle du préréglage d'abord ; sinon une famille, puis sa toile
+  const fams = ['préréglage'].concat(F.mode === 'i2v' && pl?.canvases?.[0]?.family === 'image' ? ['image'] : [], o.families);
+  const famNow = F.canvas[F.mode] == null ? 'préréglage' : F.canvas[F.mode] === 'auto' ? 'image' : F.fam[F.mode];
+  $('#fam').replaceChildren(...fams.map((f) => el('button', { class: 'tb' + (famNow === f ? ' on' : ''), type: 'button',
     onclick: () => {   // une famille : sa première toile, pour que l'affiché soit l'envoyé
-      F.fam[F.mode] = f;
-      const first = o.canvases.find((c) => c.family === f);
-      F.canvas[F.mode] = f === 'image' ? 'auto' : first ? [first.w, first.h] : F.canvas[F.mode];
+      if (f === 'préréglage') F.canvas[F.mode] = null;
+      else {
+        F.fam[F.mode] = f;
+        const first = o.canvases.find((c) => c.family === f);
+        F.canvas[F.mode] = f === 'image' ? 'auto' : first ? [first.w, first.h] : null;
+      }
       changed(); paintOutput();
-    } }, FAM_FR[f])));
-  // la toile : une ligne par toile de la famille — sa taille, son nom, son temps estimé à droite ;
-  // ce qui est coché est ce qui part
-  const rows = (pl?.canvases || o.canvases.map((c) => ({ ...c, estimate: null }))).filter((c) => c.family === F.fam[F.mode]);
+    } }, f === 'préréglage' ? 'recette' : f)));
+  // une ligne par toile de la famille — sa taille, son nom, son temps estimé à droite ; ce qui est coché part
+  const [pw, ph] = meth.canvas;
+  const rows = famNow === 'préréglage'
+    ? [{ w: pw, h: ph, family: 'préréglage', label: `${meth.label} · la recette`, source: 'la toile du préréglage', estimate: pl?.presets?.[F.method] }]
+    : (pl?.canvases || o.canvases.map((c) => ({ ...c, estimate: null }))).filter((c) => c.family === famNow);
   const cur = F.canvas[F.mode];
-  const key = (c) => (c.family === 'image' ? 'auto' : `${c.w}x${c.h}`);
-  const curKey = cur === 'auto' ? 'auto' : Array.isArray(cur) ? `${cur[0]}x${cur[1]}` : '';
-  if (rows.length && !rows.some((c) => key(c) === curKey)) {
-    const c = rows[0];
-    F.canvas[F.mode] = c.family === 'image' ? 'auto' : [c.w, c.h];
-    quietSave(); schedulePlan();
-  }
-  const on = (c) => key(c) === (rows.some((x) => key(x) === curKey) ? curKey : key(rows[0]));
-  $('#canvas').replaceChildren(...rows.map((c) => el('button', { class: 'cv-row' + (on(c) ? ' on' : ''), type: 'button', role: 'radio',
-    'aria-checked': on(c) ? 'true' : 'false', title: c.source,
-    onclick: () => { F.canvas[F.mode] = c.family === 'image' ? 'auto' : [c.w, c.h]; changed(); paintOutput(); } },
+  const key = (c) => (c.family === 'préréglage' ? 'preset' : c.family === 'image' ? 'auto' : `${c.w}x${c.h}`);
+  const curKey = cur == null ? 'preset' : cur === 'auto' ? 'auto' : Array.isArray(cur) ? `${cur[0]}x${cur[1]}` : '';
+  $('#canvas').replaceChildren(...rows.map((c) => el('button', { class: 'cv-row' + (key(c) === curKey ? ' on' : ''), type: 'button', role: 'radio',
+    'aria-checked': key(c) === curKey ? 'true' : 'false', title: c.source,
+    onclick: () => { F.canvas[F.mode] = c.family === 'préréglage' ? null : c.family === 'image' ? 'auto' : [c.w, c.h]; changed(); paintOutput(); } },
   el('b', {}, c.family === 'image' && !c.w ? 'd’après l’image' : `${c.w} × ${c.h}`), el('span', { class: 'cv-l' }, c.label || ''),
   el('span', { class: 'cv-e' }, c.estimate ? rngShort(c.estimate) : ''))));
-  $('#estimate-short').textContent = pl ? `≈ ${rng(pl.estimate)}` : '';
-  $('#adv-sum').textContent = pl ? `${o.methods.find((m) => m.id === F.method)?.label.split(' · ')[0].toLowerCase()} · ${pl.steps} pas${F.seed ? ' · graine ' + F.seed : ''}${pl.loras.length ? ` · ${pl.loras.length} LoRA` : ''}` : '';
-  $('#method').replaceChildren(...o.methods.map((m) => el('option', { value: m.id }, m.label)));
-  $('#method').value = F.method;
+  $('#estimate-short').textContent = pl ? `${pl.width}×${pl.height} · ≈ ${rng(pl.estimate)}` : '';
+  $('#adv-sum').textContent = pl ? `${meth.label.toLowerCase()} · ${pl.steps} pas${F.seed ? ' · graine ' + F.seed : ''}${pl.loras.length ? ` · ${pl.loras.length} LoRA de plus` : ''}${F.canvas[F.mode] != null ? ` · ${pl.width}×${pl.height}` : ''}` : '';
   paintDuration();
-  const meth = o.methods.find((m) => m.id === F.method);
   const steps = pl?.steps;
-  $('#step-presets').replaceChildren(...meth.steps.map((s, i) => el('button', { class: 'tb' + (Number(F.steps || steps) === s ? ' on' : ''), type: 'button',
+  $('#step-presets').replaceChildren(...meth.steps.map((s) => el('button', { class: 'tb' + (Number(F.steps || steps) === s ? ' on' : ''), type: 'button',
     onclick: () => { F.steps = String(s); $('#steps').value = F.steps; changed(); paintOutput(); } },
-  `${s}${F.method === 'turbo' ? (i ? ' · final' : ' · brouillon') : (i ? '' : ' · conseillé')}`)));
+  `${s}${s === 8 ? ' · la recette' : ''}`)));
   $('#steps').value = F.steps;
   $('#steps').placeholder = steps ? `auto · ${steps}` : 'auto';
-  $('#profile').replaceChildren(el('b', {}, `${meth.label}${steps ? ' · ' + steps + ' pas' : ''}`), el('span', {}, meth.note));
+  const rec = o.recipe || {};
+  $('#profile').replaceChildren(el('b', {}, `${meth.label}${pl ? ` · ${pl.width} × ${pl.height}` : ''}${pl?.draft ? ` (depuis ${pl.draft[0]} × ${pl.draft[1]})` : ''}${steps ? ' · ' + steps + ' pas' : ''}`),
+    el('span', {}, `La recette de Cal : ${(rec.loras || []).map((l) => `${l.name.replace('.safetensors', '')} ${String(l.strength).replace('.', ',')}`).join(' → ')} ; ${rec.attention || ''} ; ${rec.sampler || ''}, planning ${rec.scheduler || ''} ; « ${rec.tag || ''} » en tête de la description.`));
   $('#seed').value = F.seed;
   paintSeedOrig();
   if (pl) $('#estimate').replaceChildren(el('b', {}, `Estimé ${pl.width}×${pl.height} : ${rng(pl.estimate)}`),
@@ -434,7 +455,6 @@ function rngShort(e) {
   const lo = Math.round(e.low / 60), hi = Math.round(e.high / 60);
   return lo === hi ? `≈ ${lo} min` : `${lo}–${hi} min`;
 }
-$('#method').addEventListener('change', (e) => { F.method = e.target.value; F.steps = ''; changed(); paintOutput(); });
 $('#steps').addEventListener('input', (e) => { F.steps = e.target.value.replace(/[^0-9]/g, ''); if (e.target.value !== F.steps) e.target.value = F.steps; changed(); });
 $('#seed').addEventListener('input', (e) => { F.seed = e.target.value.replace(/[^0-9]/g, ''); if (e.target.value !== F.seed) e.target.value = F.seed; changed(); });
 $('#seed-rand').addEventListener('click', () => { F.seed = String(Math.floor(Math.random() * 2 ** 31)); $('#seed').value = F.seed; changed(); });
@@ -448,13 +468,9 @@ function paintAdv() {
   const a = F.adv;
   const sel = (id, list, cur) => { const s = $(id); s.replaceChildren(...list.map((x) => el('option', { value: x.v, title: x.t || '' }, x.n))); s.value = cur ?? list[0].v; };
   sel('#a-unet', o.unets[w].map((u) => ({ v: u.f, n: u.nom, t: u.note })), a['unet_' + w]);
-  sel('#a-sampler', o.samplers.map((s) => ({ v: s, n: s })), a.sampler);
-  sel('#a-scheduler', o.schedulers.map((s) => ({ v: s, n: s + (s === 'simple' ? ' · R5' : '') })), a.scheduler);
   $('#a-crf').value = a.crf || '';
 }
 $('#a-unet').addEventListener('change', (e) => { F.adv['unet_' + S.opts.modes.find((m) => m.id === F.mode).weights] = e.target.value; changed(); });
-$('#a-sampler').addEventListener('change', (e) => { F.adv.sampler = e.target.value; changed(); });
-$('#a-scheduler').addEventListener('change', (e) => { F.adv.scheduler = e.target.value; changed(); });
 $('#a-crf').addEventListener('input', (e) => { F.adv.crf = e.target.value.replace(/[^0-9]/g, ''); changed(); });
 
 function params(mode = F.mode) {
@@ -465,7 +481,7 @@ function params(mode = F.mode) {
     steps: F.steps ? Number(F.steps) : null, seed: F.seed === '' ? null : Number(F.seed),
     canvas: F.canvas[mode],
     loras: S.loras.filter((l) => F.loras[l.name]?.on && l.modes.includes(mode) && !l.accel).map((l) => ({ name: l.name, strength: F.loras[l.name].strength })),
-    adv: { unet: F.adv['unet_' + w], sampler: F.adv.sampler, scheduler: F.adv.scheduler, crf: F.adv.crf || null },
+    adv: { unet: F.adv['unet_' + w], crf: F.adv.crf || null },
   };
   if (mode === 'i2v') { out.start = F.start; out.end = F.end; }
   if (mode === 'r2v') { out.inputs = E ? E.get() : F.inputs; out.ref_image_size = F.refSize; }
@@ -540,8 +556,10 @@ async function paintEngine() {
   if (h?.engine === 'factice') { cls = 'pill work'; txt = 'moteur factice · pas H3'; tip = 'une vidéo d’essai (mire, vos images, un bip) : le câblage d’H3 vient ensuite'; }
   else if (h) {
     const up = h.instances.filter((i) => i.up), st = h.instances.find((i) => i.starting_for != null);
+    const sleeper = h.instances.some((i) => i.managed);   // une instance H3TEST que le gardien démarre
     cls = 'pill ' + (up.length ? 'on' : st ? 'work' : '');
-    txt = up.length ? `H3 prêt · ${up.map((i) => i.machine).join(' + ')}` : st ? `H3 démarre · ${st.machine}` : 'H3 dort · démarre au rendu';
+    txt = up.length ? `H3 prêt · ${up.map((i) => i.machine).join(' + ')}` : st ? `H3 démarre · ${st.machine}`
+      : sleeper ? 'H3 dort · démarre au rendu' : `H3 ne répond pas · ${h.instances.map((i) => `${i.machine} :${i.port}`).join(', ') || 'aucune instance (lanes.h3)'}`;
     tip = up.map((i) => `${i.machine} : ${Math.round(i.free_gb ?? 0)} Go libres${i.stops_in != null ? ` · s’arrête dans ${mmss(i.stops_in)}` : ''}`).join('\n');
   }
   pill.className = cls; pill.lastChild.textContent = txt; pill.title = tip;
@@ -554,13 +572,14 @@ function recipeRows(it) {
   const unet = o && p.weights ? (o.unets[p.weights]?.find((u) => u.f === p.unet)?.nom || p.unet) : p.unet;
   return [
     ['Mode', MODE_FR[p.mode]],
-    ['Méthode', p.method ? `${o?.methods.find((m) => m.id === p.method)?.label || p.method}` : null],
-    ['Toile', it.width ? `${it.width} × ${it.height}${p.family ? ' · ' + p.family : ''}` : null],
+    ['Préréglage', p.method ? `${o?.methods.find((m) => m.id === p.method)?.label || METH_FR[p.method] || p.method}` : null],
+    ['Toile', it.width ? `${it.width} × ${it.height}${p.draft ? ` · depuis ${p.draft[0]} × ${p.draft[1]}` : ''}${p.family ? ' · ' + p.family : ''}` : null],
     ['Durée', it.duration ? `${it.duration.toFixed(2)} s${p.frames ? ` · ${p.frames} images` : ''}${it.fps ? ` · ${it.fps} i/s` : ''}` : null],
     ['Pas', p.steps], ['Graine', p.seed],
     ['Sampler', p.sampler ? `${p.sampler} · ${p.scheduler}` : null],
     ['Modèle', unet],
-    ['LoRA', p.method !== undefined ? [...(p.loras || []).map((l) => `${l.name.split('/').pop().replace('.safetensors', '')} × ${l.strength}`), p.turbo ? 'turbo du banc' : null].filter(Boolean).join(' + ') || 'aucun' : null],
+    ['LoRA', p.method !== undefined ? [...(p.recipe_loras || []), ...(p.loras || [])].map((l) => `${l.name.split('/').pop().replace('.safetensors', '')} × ${l.strength}`)
+      .concat(p.turbo ? ['turbo du banc'] : []).join(' → ') || 'aucun' : null],
     ['Entrées', p.mode === 'r2v' ? Object.entries(p.mentions || {}).map(([k, v]) => `${k} → ${v}`).join(' · ') + ` · détail ${p.ref_image_size}` : null],
     ['Images', p.mode === 'i2v' ? [p.start ? 'début' : null, p.end ? 'fin' : null].filter(Boolean).join(' + ') : null],
     ['Son', it.audio ? 'oui, rendu avec l’image' : 'non'],
@@ -576,7 +595,7 @@ function requestOf(p) {
   if (p.request && typeof p.request === 'object') return p.request;
   return { desc: p.desc, sound: p.sound, music: p.music, method: p.method, frames: p.frames, steps: p.steps, seed: p.seed,
     canvas: p.family === 'image' ? 'auto' : [p.width, p.height], loras: p.loras || [],
-    adv: { unet: p.unet, sampler: p.sampler, scheduler: p.scheduler, crf: p.crf }, start: p.start, end: p.end,
+    adv: { unet: p.unet, crf: p.crf }, start: p.start, end: p.end,
     inputs: p.inputs || {}, ref_image_size: p.ref_image_size };
 }
 const noRecipe = (it) => (it.params?.mode && MODE_FR[it.params.mode] ? '' : 'vidéo sans recette de l’outil Vidéo : déposée, ou faite ailleurs');
@@ -586,21 +605,23 @@ function reuse(it) {
   if (!MODE_FR[mode]) { toast(noRecipe(it)); return; }
   const r = requestOf(p);
   F.p[mode] = { desc: r.desc ?? it.prompt ?? '', sound: r.sound || '', music: r.music || '' };
-  F.method = r.method || 'turbo'; F.frames = r.frames || 124; F.steps = r.steps ? String(r.steps) : '';
+  // une vidéo de l'ancien banc (turbo, origine, spectrum) se reprend en Brouillon, à la toile du préréglage
+  const old = !PRESETS.includes(r.method);
+  F.method = old ? 'brouillon' : r.method; F.frames = r.frames || 124; F.steps = !old && r.steps ? String(r.steps) : '';
   F.seed = ''; F.origSeed = p.seed ?? r.seed ?? null;
   const cv = r.canvas;
-  F.canvas[mode] = cv === 'auto' || (!Array.isArray(cv) && p.family === 'image') ? 'auto' : Array.isArray(cv) ? cv.map(Number) : [p.width, p.height];
-  F.fam[mode] = F.canvas[mode] === 'auto' ? 'image'
+  F.canvas[mode] = old || cv == null || cv === 'preset' ? null : cv === 'auto' ? 'auto' : Array.isArray(cv) ? cv.map(Number) : null;
+  F.fam[mode] = F.canvas[mode] === 'auto' ? 'image' : !Array.isArray(F.canvas[mode]) ? '2,4:1'
     : (S.opts?.canvases.find((c) => c.w === F.canvas[mode][0] && c.h === F.canvas[mode][1])?.family || p.family || 'paysage');
+  if (old) toast('vidéo de l’ancien banc : ses réglages sont repris en Brouillon, la recette de Cal', 6000);
   if (mode === 'i2v') { F.start = r.start || null; F.end = r.end || null; }
   if (mode === 'r2v') { F.inputs = r.inputs || {}; E?.set(F.inputs); F.refSize = r.ref_image_size || 'match'; $('#ref-size').value = F.refSize; }
   for (const k of Object.keys(F.loras)) F.loras[k].on = false;
   for (const l of r.loras || []) F.loras[l.name] = { on: true, strength: l.strength };
   const adv = r.adv || {};
-  if (p.weights) F.adv['unet_' + p.weights] = adv.unet || p.unet;
-  F.adv.sampler = adv.sampler || p.sampler; F.adv.scheduler = adv.scheduler || p.scheduler;
+  if (p.weights) F.adv['unet_' + p.weights] = old ? undefined : adv.unet || p.unet;
   const crf = adv.crf ?? p.crf;
-  F.adv.crf = crf && Number(crf) !== 19 ? String(crf) : '';
+  F.adv.crf = crf && Number(crf) !== 12 ? String(crf) : '';
   if (S.view !== 'create') setView('create');
   setMode(mode);
   $('#rail .rail-scroll').scrollTop = 0;
@@ -969,7 +990,7 @@ dropAnywhere(async (files) => {
 // l'ouvre en grand, ?view=cmp&a=<id>&b=<id> le banc.
 (async function boot() {
   const q = new URLSearchParams(location.search);
-  if (q.get('start')) { F.start = q.get('start'); F.mode = 'i2v'; F.canvas.i2v = 'auto'; F.fam.i2v = 'image'; }
+  if (q.get('start')) { F.start = q.get('start'); F.mode = 'i2v'; }
   const refId = q.get('ref');
   if (refId) F.mode = 'r2v';
   if (q.get('mode') && ['t2v', 'i2v', 'r2v'].includes(q.get('mode'))) F.mode = q.get('mode');

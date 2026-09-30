@@ -38,14 +38,24 @@ export function createVideo(app) {
   // et son Son, sa Musique à part), sinon le champ
   const promptOf = (v, F = app.flowNow(), k = null) => F.prompt(v.id, k) || { text: v.prompt || '', from: null, link: null, son: '', musique: '', lot: null, looks: null };
   const lotOf = (v, F = app.flowNow()) => promptOf(v, F).lot;
+  // la toile : null = celle du préréglage (Brouillon 1536 × 640, Qualité 1920 × 800, la recette de Cal) ;
+  // « d'après l'image » en mode Images ; une autre toile choisie à la main
   const canvasOf = (v) => (v.mode === 'i2v' && v.canvas === 'auto' ? 'auto'
-    : (v.canvas && v.canvas !== 'auto' ? v.canvas : '1344x768').split('x').map(Number));
+    : v.canvas && !['auto', 'preset'].includes(v.canvas) ? v.canvas.split('x').map(Number) : null);
+  // le préréglage : Brouillon ou Qualité (une carte d'avant, « turbo », part en Brouillon)
+  const methodOf = (v) => ((O()?.methods || []).some((m) => m.id === v.method) ? v.method : (O()?.default_method || 'brouillon'));
+  const canvOpts = (v, cur, full) => [
+    el('option', { value: 'preset', selected: cur === 'preset' ? true : null, title: 'la toile du préréglage' }, 'celle du préréglage'),
+    v.mode === 'i2v' ? el('option', { value: 'auto', selected: cur === 'auto' ? true : null }, 'd’après l’image') : null,
+    ...(O()?.canvases || []).map((c) => el('option', { value: `${c.w}x${c.h}`, selected: `${c.w}x${c.h}` === cur ? true : null, title: full ? c.source : c.label },
+      `${c.w}×${c.h} · ${c.family}${full ? ' · ' + c.label : ''}`))];
+  const canvKey = (v) => { const c = canvasOf(v); return Array.isArray(c) ? c.join('x') : c === 'auto' ? 'auto' : 'preset'; };
 
   // ce que la page Vidéo enverrait pour cette carte (movie.js, params) ; `k` : la valeur du lot
   function params(v, F = app.flowNow(), k = null) {
     const take = (pb) => F.take(v.id, pb).filter((e) => e.item);
     const pr = promptOf(v, F, k);
-    const p = { desc: pr.text, sound: pr.son || v.sound || '', music: pr.musique || v.music || '', method: v.method || 'turbo', frames: v.frames,
+    const p = { desc: pr.text, sound: pr.son || v.sound || '', music: pr.musique || v.music || '', method: methodOf(v), frames: v.frames,
       steps: null, seed: v.seed ? Number(v.seed) : null, canvas: canvasOf(v), loras: [], adv: {} };
     if (v.mode === 'i2v') { p.start = take('start')[0]?.item || ''; p.end = take('end')[0]?.item || ''; }
     if (v.mode === 'r2v') {
@@ -157,11 +167,11 @@ export function createVideo(app) {
     const seg = el('div', { class: 'seg vmodes' }, ...modes().map((m) => el('button', { class: 'tb' + (v.mode === m.id ? ' on' : ''), type: 'button',
       title: m.sub || '', onclick: () => { if (v.mode !== m.id) app.mutate(() => { v.mode = m.id; }); } }, m.label)));
     const frames = durationRow(v, o?.frames, (f) => app.mutate(() => { v.frames = f; }));
-    const cur = Array.isArray(canvasOf(v)) ? canvasOf(v).join('x') : 'auto';
-    const canv = el('select', { class: 'fld sm', title: 'la toile (les toiles d’H3 Studio et du banc de Cal)' },
-      v.mode === 'i2v' ? el('option', { value: 'auto', selected: cur === 'auto' ? true : null }, 'd’après l’image') : null,
-      ...(o?.canvases || []).map((c) => el('option', { value: `${c.w}x${c.h}`, selected: `${c.w}x${c.h}` === cur ? true : null, title: c.label }, `${c.w}×${c.h} · ${c.family}`)));
+    const canv = el('select', { class: 'fld sm', title: 'la toile : celle du préréglage, ou une autre' }, ...canvOpts(v, canvKey(v), false));
     canv.addEventListener('change', () => app.mutate(() => { v.canvas = canv.value; }));
+    // les deux préréglages de Cal, comme sur la page Vidéo
+    const presets = el('div', { class: 'seg vmodes' }, ...(o?.methods || []).map((m) => el('button', { class: 'tb' + (methodOf(v) === m.id ? ' on' : ''),
+      type: 'button', title: `${m.sub} — ${m.note}`, onclick: () => { if (methodOf(v) !== m.id) app.mutate(() => { v.method = m.id; }); } }, m.label)));
     const btn = el('button', { class: 'gbtn', type: 'button', onclick: () => generate(v.id) }, 'Générer');
     const w = el('div', { class: 'gwhy why' });
     const stub = o && o.engine !== 'h3';
@@ -177,6 +187,7 @@ export function createVideo(app) {
         Object.keys(lk).length ? el('span', { class: 'gcut still', title: 'les pastilles de prise de vue du composeur ne vont pas à H3 : seule la ligne libre de Photographie passe (le guide d’H3 : la caméra s’écrit dans la description)' },
           'pastilles ignorées par H3') : null,
         ...ports.filter((p) => p.id !== 'prompt').map((p) => slot(v, p, F.inputs(v.id)[p.id] || [])),
+        el('div', { class: 'grow' }, el('span', { class: 'lbl' }, 'préréglage'), presets),
         el('div', { class: 'grow' }, el('span', { class: 'lbl' }, 'toile'), canv),
         frames,
         el('div', { class: 'grow' }, btn, w),
@@ -286,11 +297,11 @@ export function createVideo(app) {
     // durée, toile, méthode, graine, son
     const pl = planOf(v);
     const frames = durationRow(v, o.frames, (f) => app.mutate(() => { v.frames = f; }));
-    const cur = Array.isArray(canvasOf(v)) ? canvasOf(v).join('x') : 'auto';
-    const canv = el('select', { class: 'fld sm' }, v.mode === 'i2v' ? el('option', { value: 'auto', selected: cur === 'auto' ? true : null }, 'd’après l’image') : null,
-      ...o.canvases.map((c) => el('option', { value: `${c.w}x${c.h}`, selected: `${c.w}x${c.h}` === cur ? true : null, title: c.source }, `${c.w}×${c.h} · ${c.family} · ${c.label}`)));
+    const canv = el('select', { class: 'fld sm' }, ...canvOpts(v, canvKey(v), true));
     canv.addEventListener('change', () => app.mutate(() => { v.canvas = canv.value; }));
-    const meth = el('select', { class: 'fld sm' }, ...o.methods.map((m) => el('option', { value: m.id, selected: m.id === v.method ? true : null, title: m.note }, m.label)));
+    // le préréglage en mots simples, avec son temps estimé pour ce plan (celui de Cal sinon)
+    const meth = el('select', { class: 'fld sm' }, ...o.methods.map((m) => el('option', { value: m.id, selected: m.id === methodOf(v) ? true : null, title: m.note },
+      `${m.label} · ${m.sub}${pl?.presets?.[m.id] ? ` · ≈ ${fmtDur(pl.presets[m.id].low)} à ${fmtDur(pl.presets[m.id].high)}` : ''}`)));
     meth.addEventListener('change', () => app.mutate(() => { v.method = meth.value; }));
     const seed = el('input', { class: 'fld seed', value: v.seed || '', placeholder: 'graine au hasard', inputmode: 'numeric' });
     let c2 = () => {};
@@ -310,9 +321,9 @@ export function createVideo(app) {
       field2('sound', 'le son : ce qu’on entend (facultatif — sinon le son naturel de la scène)', pr?.son),
       field2('music', 'la musique hors champ (facultatif)', pr?.musique));
     out.push(cardP('Plan', pl ? `${pl.width} × ${pl.height} · ${String(pl.seconds.toFixed(1)).replace('.', ',')} s` : '',
+      el('label', { class: 'look' }, el('span', { class: 'lbl' }, 'préréglage'), meth),
       frames,
       el('label', { class: 'look' }, el('span', { class: 'lbl' }, 'toile'), canv),
-      el('label', { class: 'look' }, el('span', { class: 'lbl' }, 'méthode'), meth),
       el('label', { class: 'look' }, el('span', { class: 'lbl' }, 'graine'), seed),
       sound,
       pl?.estimate ? hint(estimate(v)) : null,

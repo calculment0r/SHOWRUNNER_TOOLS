@@ -70,6 +70,23 @@
 .modes button.on { background: var(--grn-bg); box-shadow: inset 0 0 0 1px var(--line-gr); }
 .modes button.on b { color: var(--grn2); }
 
+/* les deux préréglages (la recette de Cal, 30/09) : le mot, ce qu'il fait, son temps */
+.presets-pick { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.presets-pick button {
+  min-height: 64px; padding: 8px 10px; border-radius: var(--r2); background: var(--panel3); text-align: left;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  box-shadow: inset 0 0 0 1px var(--line); color: var(--ink2);
+}
+.presets-pick button b { font-family: var(--f-disp); font-weight: 400; font-size: 11px; text-transform: uppercase; color: var(--ink); }
+.presets-pick button span { font-size: 10.5px; line-height: 1.35; color: var(--ink2); }
+.presets-pick button i { font-style: normal; font-family: var(--f-mono); font-size: 9px; letter-spacing: .08em; color: var(--cy); }
+.presets-pick button:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.presets-pick button.on { background: var(--grn-bg); box-shadow: inset 0 0 0 1px var(--line-gr); }
+.presets-pick button.on b { color: var(--grn2); }
+.fmt .seg.fam { display: flex; flex-wrap: wrap; gap: 2px; }
+.preset #estimate-short { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cy); }
+.lora.recipe { box-shadow: inset 0 0 0 1px var(--line-gr); }
+
 /* les cartes du rail */
 .card { border-radius: var(--r3); background: var(--panel2); padding: 12px 13px; display: flex; flex-direction: column; gap: var(--s2); min-width: 0; }
 .card h3 { margin: 0; font-family: var(--f-disp); font-weight: 400; font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; }

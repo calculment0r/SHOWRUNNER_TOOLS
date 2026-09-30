@@ -10,7 +10,9 @@ Deux moteurs (`upscale_backend` dans showrunner.local.json) :
            « FACTICE » dans l'image et dans `origin.model`. Aucun modèle
            n'est chargé, rien n'est envoyé à ComfyUI.
   comfyui  le câblage réel, écrit et validé à vide contre /object_info des
-           deux ComfyUI (`GET /api/upscale/models`, « availability ») :
+           deux ComfyUI (`GET /api/upscale/models`, « availability ») ; les
+           images rendues pour de vrai le 30/09 (les quatre modèles retenus,
+           sur DGX2), avec la vraie progression (`image.live_run`) :
 
   SeedVR2 7B / 3B   restauration en un pas (ByteDance-Seed, Apache-2.0),
                     nœuds natifs de ComfyUI. Image : le graphe de Character
@@ -528,10 +530,9 @@ def _endpoint_check(url: str) -> dict:
     info: dict = {}
     c = Comfy(url, timeout=20)
     for n in classes:
-        try:
-            info.update(c.object_info(n))
-        except ComfyError:
-            pass
+        # une erreur (délai dépassé pendant un rendu, connexion coupée) n'est pas un
+        # nœud absent : elle remonte, la machine est « injoignable » (comme l'outil Image)
+        info.update(c.object_info(n))
     validate = img._cf().comfy.validate
     return {mid: {kind: validate(g, info) for kind, g in per.items()} for mid, per in graphs.items()}
 
@@ -546,7 +547,8 @@ def availability(max_age: float = 120.0) -> dict:
     for ep in eps:
         with _avail_lock:
             t, got = _avail.get(ep, (0.0, None))
-        if got is None or time.time() - t > max_age:
+        age = max_age if got and "_down" not in got and "_error" not in got else min(max_age, img.DOWN_RETRY_S)
+        if got is None or time.time() - t > age:
             ok, why = jobs.endpoint_alive(ep)
             if ok:
                 try:
@@ -560,11 +562,13 @@ def availability(max_age: float = 120.0) -> dict:
         machine = jobs.machine_of(ep)
         for mid in RETAINED:
             for kind in MODELS[mid]["kinds"]:
-                a = out.setdefault(mid, {}).setdefault(kind, {"on": [], "missing": {}})
+                a = out.setdefault(mid, {}).setdefault(kind, {"on": [], "missing": {}, "down": []})
                 if "_down" in got:
                     a["missing"][machine] = ["ne répond pas"]
+                    a["down"].append(ep)
                 elif "_error" in got:
-                    a["missing"][machine] = [got["_error"][:200]]
+                    a["missing"][machine] = [f"ne répond pas bien ({got['_error'][:160]})"]
+                    a["down"].append(ep)
                 elif got.get(mid, {}).get(kind):
                     a["missing"][machine] = got[mid][kind]
                 else:
@@ -587,7 +591,10 @@ def _pin_for(model: str, kind: str) -> str | None:
     if not a["on"]:
         miss = "; ".join(f"{mm} : {', '.join(v)}" for mm, v in a["missing"].items())
         raise HttpError(409, f"aucune machine ne peut le faire ({miss})")
-    return None if len(a["on"]) == len(eps) else a["on"][0]
+    # n'écarter que la machine à qui il manque quelque chose, pas celle qui ne répond
+    # pas à l'instant (la file ne lui donne rien tant qu'elle ne répond pas)
+    able = [e for e in eps if e in a["on"] or e in a.get("down", [])]
+    return None if len(able) == len(eps) else a["on"][0]
 
 
 # ── le moteur factice ───────────────────────────────────────
@@ -715,9 +722,10 @@ def run_image(ctx) -> dict:
         prompt = p.get("prompt") or _caption(src) or ""
         p["prompt_sent"] = prompt
     name = ctx.comfy.upload(local, f"sr_upscale_{ctx.job['id']}.png")
-    ctx.progress(None, f"{MODELS[p['model']]['name']} : {w0}×{h0} → {W}×{H}")
-    res = ctx.run_graph(graph_image(p["model"], name, p, (w0, h0), prompt), prefix="up",
-                        label=MODELS[p["model"]]["name"])[0]
+    ctx.progress(0.05, f"{MODELS[p['model']]['name']} : {w0}×{h0} → {W}×{H}")
+    # la vraie progression (websocket de ComfyUI) et une erreur lisible : le même rendu que l'outil Image
+    res = img.live_run(ctx, graph_image(p["model"], name, p, (w0, h0), prompt), prefix="up",
+                       label=MODELS[p["model"]]["name"], lo=0.05, hi=0.95)[0]
     with Image.open(res) as r:
         r = r.convert("RGB")
         if r.size != (W, H):
@@ -739,9 +747,10 @@ def run_video(ctx) -> dict:
         return _finish(ctx, out, src, p, "video", t0)
     name = ctx.comfy.upload(src_path, f"sr_upscale_{ctx.job['id']}{src_path.suffix.lower()}")
     wf = graph_video(p["model"], name, p)
-    ctx.progress(None, f"{MODELS[p['model']]['name']} : {p['frames']} images → {p['width']}×{p['height']}")
+    ctx.progress(0.05, f"{MODELS[p['model']]['name']} : {p['frames']} images → {p['width']}×{p['height']}")
+    # la vraie progression (websocket de ComfyUI) et une erreur lisible, comme pour une image ;
     # une vidéo 4K peut être longue : 4 h avant d'abandonner (garde-fou, pas une mesure)
-    res = ctx.run_graph(wf, prefix="up", label=MODELS[p["model"]]["name"], timeout=4 * 3600)[0]
+    res = img.live_run(ctx, wf, prefix="up", label=MODELS[p["model"]]["name"], lo=0.05, hi=0.95, timeout=4 * 3600)[0]
     return _finish(ctx, res, src, p, "video", t0)
 
 
@@ -835,10 +844,44 @@ def api_pile(req, item_id) -> dict:
     return {"source": library.public(src), "trials": [it for it in got if item_id in (it.get("parents") or [])]}
 
 
+# La famille de chaque modèle pour la file (core/jobs.py : la famille déjà
+# chargée d'abord, /free quand on en change) : Affiner charge les poids de
+# Z-Image Turbo, la famille « zimage » de FAMILY_GB (Character_Factory/
+# factory/memory.py) ; SeedVR2 et RealESRGAN n'y sont pas. La mémoire d'une
+# image SeedVR2 : la loi de ComfyUI (mem_estimate) ; les autres : la famille,
+# sinon le seuil par défaut de la file (`min_free_gb`) — rien d'inventé.
+FAMILY = {"seedvr2-7b": "seedvr2-7b", "seedvr2-3b": "seedvr2-3b", "esrgan-x2": "esrgan", "zimage-refine": "zimage"}
+
+
+def family_of(p: dict) -> str:
+    return FAMILY.get(p.get("model") or "", "?")
+
+
+def mem_image(p: dict) -> float | None:
+    m = p.get("model") or ""
+    if m.startswith("seedvr2") and p.get("width") and p.get("height"):
+        return mem_estimate(m, int(p["width"]), int(p["height"]), 1, None)["gb"]
+    return None
+
+
+def mem_video(p: dict) -> float | None:
+    """Une vidéo SeedVR2 : ce qu'il faut pour partir, un morceau d'une image
+    latente (la loi de ComfyUI) — SeedVR2TemporalChunk en mode « auto »
+    découpe ensuite à la mémoire libre (« predict the largest chunk that fits
+    free VRAM », gabarit officiel). Relevé le 30/09 sur DGX2 : 1728 × 960,
+    124 images, pic de 27 Gio sur le GPU. Les autres : la famille."""
+    return mem_image(p)
+
+
+config.declare_switch("upscale_backend", ["stub", "comfyui"], label="Upscale · moteur", default="stub",
+                      doc="server/tools/upscale.py, backend() : stub (bicubique factice, voie cpu) ou comfyui "
+                          "(SeedVR2 7B/3B, RealESRGAN ×2, Z-Image Affiner sur la voie image)")
+
+
 def register(app) -> None:
     lane = "image" if backend() == "comfyui" else "cpu"
-    jobs.register("upscale.image", run_image, lane=lane, title="Agrandir une image")
-    jobs.register("upscale.video", run_video, lane=lane, title="Agrandir une vidéo")
+    jobs.register("upscale.image", run_image, lane=lane, title="Agrandir une image", family=family_of, mem_gb=mem_image)
+    jobs.register("upscale.video", run_video, lane=lane, title="Agrandir une vidéo", family=family_of, mem_gb=mem_video)
     app.route("GET", "/api/upscale/models", api_models)
     app.route("POST", "/api/upscale/plan", api_plan)
     app.route("POST", "/api/upscale/run", api_run)

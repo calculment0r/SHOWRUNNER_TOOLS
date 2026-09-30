@@ -166,7 +166,9 @@ function avail(cap) {
   const why = a && !a.on.length ? (Object.entries(a.missing).map(([m, v]) => `${m} : ${v.join(', ')}`).join(' · ') || 'aucune machine') : '';
   if (stub()) return { ok: true, on: ['factice'], why };
   if (!a) return { ok: true, on: [] };
-  return a.on.length ? { ok: true, on: a.on } : { ok: false, why };
+  // aucune machine ne répond : ce n'est pas un modèle absent (le dire juste)
+  const down = Object.values(a.missing).every((v) => v.some((x) => String(x).startsWith('ne répond')));
+  return a.on.length ? { ok: true, on: a.on } : { ok: false, why, head: down ? 'machine injoignable' : 'modèle absent' };
 }
 function capCreate() {
   if (S.model === 'zimage') return 'zimage:' + S.variant;
@@ -742,7 +744,7 @@ function paintAct() {
   if (S.mode === 'create') {
     const m = M(S.model);
     const a = avail(capCreate());
-    why = !S.prompt.trim() ? 'écrivez un prompt' : !a.ok ? `modèle absent — ${a.why}` : '';
+    why = !S.prompt.trim() ? 'écrivez un prompt' : !a.ok ? `${a.head} — ${a.why}` : '';
     label = 'Générer';
     n = S.count;
     const wh = m.sizes[S.quality]?.[S.aspect];
@@ -754,7 +756,7 @@ function paintAct() {
     const tool = S.cfg.edit_tools.find((t) => t.id === E.tool);
     label = { instruct: (E.mask || (S.paint.dirty && S.paint.for === S.current?.id)) ? 'Éditer la zone' : 'Éditer', matte: 'Détourer', upscale: `Agrandir ×${E.factor}`,
       refine: 'Affiner ×2', angle: 'Tourner' }[E.tool] || 'Éditer';
-    why = !S.current ? 'choisissez l’image à éditer' : tool?.off ? `${tool.name} : indisponible` : !a.ok ? `modèle absent — ${a.why}`
+    why = !S.current ? 'choisissez l’image à éditer' : tool?.off ? `${tool.name} : indisponible` : !a.ok ? `${a.head} — ${a.why}`
       : (E.tool === 'instruct' && !E.prompt.trim()) ? 'écrivez une consigne' : '';
     n = ['instruct', 'angle', 'refine'].includes(E.tool) ? E.count : 1;
     info = a.on?.length ? `sur ${a.on.join(' + ')}` : '';
@@ -1192,6 +1194,8 @@ addEventListener('drop', (e) => { if (e.dataTransfer?.files?.length) { e.prevent
 async function resolveImage(id) {
   const it = await api('library/' + encodeURIComponent(id));
   if (it.kind === 'image') return it;
+  // un élément versionné : sa dernière version (library.resolve), si c'est une image ou une planche
+  if (it.element?.head_item && it.element.head_item !== it.id) return resolveImage(it.element.head_item);
   // un élément : l'image d'où vient sa première référence, s'il y en a une
   const src = (it.element?.refs || []).find((r) => r.item);
   if (src) return api('library/' + src.item);
