@@ -9,13 +9,17 @@
 // qu'on tire orange en tirets 5 5, les envois en tirets 6 5. ODIO n'a pas
 // d'animation de flux : il n'y en a pas ici non plus.
 // Ce qui s'ajoute pour un canvas qui zoome loin (Idéation : 8 % à 400 %) : le
-// trait garde son épaisseur à l'écran (vector-effect), le survol l'éclaire,
-// un fil qui ne va plus (`bad`) passe à l'orange d'alerte en pointillés et dit
-// pourquoi au survol (`why`), un fil au repos (`idle`) s'efface à moitié.
+// trait, ses tirets, son étiquette et sa zone de clic gardent leur taille à
+// l'écran — le canvas pose --iz = 1 / zoom sur ce qui porte les fils
+// (wire.css ; `vector-effect` ne tient pas sous une transformation CSS,
+// mesuré) —, le survol l'éclaire, un fil qui ne va plus (`bad`) passe à
+// l'orange d'alerte en pointillés et dit pourquoi au survol (`why`), un fil au
+// repos (`idle`) s'efface à moitié.
 //
 //   import { wire, wireD, wireAt, tempWire } from '../commun/wire.js';
 //   svg.append(wire([x1, y1], [x2, y2], { color: 'amb', id: 'l1', cls: 'bad', why: '…', label: 'réf. 1' }));
 //   temp.setAttribute('d', wireD(a, b));
+//   svg.style.setProperty('--iz', 1 / zoom);   // à chaque image de la vue
 //
 // Les couleurs sont des noms de jetons (commun/tokens.css), jamais des teintes.
 
@@ -60,8 +64,9 @@ export function wire(a, b, { color = 'ink3', id = null, cls = '', why = '', labe
   if (why) { const t = node('title'); t.textContent = why; g.append(t); }
   g.append(node('path', { class: 'vis', d }), node('path', { class: 'hit', d, 'data-link': id }));
   if (label) {
+    // posée sur le fil, levée de 7 px d'écran par wire.css (.lab.over), pas de 7 unités du monde
     const [x, y] = wireAt(a, b, labelAt);
-    const t = node('text', { class: 'lab', x, y: y - 7 });
+    const t = node('text', { class: 'lab over', x, y });
     t.textContent = label;
     g.append(t);
   }

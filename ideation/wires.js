@@ -78,12 +78,29 @@ export function createWires(app, env) {
   }
 
   // ── dessiner ──────────────────────────────────────────────
+  // ── la vue : les liens en pixels d'ÉCRAN à tout zoom ──────
+  // Le trait, ses tirets, ses étiquettes, sa zone de clic : calc(… * var(--iz)) dans
+  // commun/wire.css et ideation.css (.links), --iz = 1 / zoom posé ici sur le seul <svg>
+  // des liens, à chaque image (canvas.js applyView) — pas sur la planche, dont les
+  // objets se restyleraient. La pointe d'une flèche : 11 px d'écran, une taille
+  // d'attribut (markerWidth) qu'aucune règle CSS ne porte, remise ici à 11 / zoom ;
+  // indépendante du trait, elle ne bouge pas quand la flèche est choisie.
+  const PTE = 11;
+  let marks = [];
+  const pte = () => String(+(PTE / (S.view?.z || 1)).toFixed(4));
+  function zoom(z) {
+    layer.style.setProperty('--iz', (1 / z).toFixed(5));
+    const s = pte();
+    for (const m of marks) { m.setAttribute('markerWidth', s); m.setAttribute('markerHeight', s); }
+  }
   function defs() {
     const d = svg('defs');
+    marks = [];
     for (const [id, cls] of [['ar', ''], ['ar-sel', 'sel']]) {
-      const m = svg('marker', { id, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 11, markerHeight: 11, markerUnits: 'userSpaceOnUse', orient: 'auto' });
+      const m = svg('marker', { id, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: pte(), markerHeight: pte(), markerUnits: 'userSpaceOnUse', orient: 'auto' });
       m.append(svg('path', { d: 'M0 0L10 5L0 10z', class: 'mk ' + cls }));
       d.append(m);
+      marks.push(m);
     }
     return d;
   }
@@ -300,5 +317,5 @@ export function createWires(app, env) {
     }
   }
 
-  return { paint, paintPorts, placePorts, portPoint, start, temp };
+  return { paint, paintPorts, placePorts, portPoint, start, temp, zoom };
 }

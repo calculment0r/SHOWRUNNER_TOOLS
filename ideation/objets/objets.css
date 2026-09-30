@@ -120,11 +120,12 @@
 }
 .nd.mind:hover .mfold, .nd.mind.sel .mfold, .mfold.on, .cv.near .mfold { display: flex; }
 .mfold:hover { background: var(--k); color: var(--bg); }
-/* les branches (sous les objets, dans le calque des liens), à épaisseur d'écran */
-.links .mbr path { fill: none; stroke-linecap: round; vector-effect: non-scaling-stroke; }
-.links .mbr .b1 { stroke-width: 2.6; }
-.links .mbr .b2 { stroke-width: 1.7; }
-.links .mbr .b3 { stroke-width: 1.2; }
+/* les branches (sous les objets, dans le calque des liens), à épaisseur d'écran : --iz = 1 / zoom,
+   posé sur ce calque (wires.js zoom) ; vector-effect ne tient pas sous la transformation de la planche */
+.links .mbr path { fill: none; stroke-linecap: round; }
+.links .mbr .b1 { stroke-width: calc(2.6px * var(--iz, 1)); }
+.links .mbr .b2 { stroke-width: calc(1.7px * var(--iz, 1)); }
+.links .mbr .b3 { stroke-width: calc(1.2px * var(--iz, 1)); }
 /* de loin : deux rangs ; le nom de la racine en pastille à taille d'écran, avec son nombre de
    branches (le prototype : les noms du premier rang n'y ont pas la place, leurs boîtes restent) */
 .cv.far .nd.mind.m2, .cv.far .links .mbr .b2, .cv.far .links .mbr .b3, .cv.far .mfold { display: none; }
@@ -151,7 +152,7 @@
 .overlay .ink-live { fill: none; stroke-linecap: round; stroke-linejoin: round; }
 
 /* ── les flèches en pointillé ──────────────────────────── */
-.links .lk.dash .vis { stroke-dasharray: 6 5; }
+.links .lk.dash .vis { stroke-dasharray: calc(6px * var(--iz, 1)) calc(5px * var(--iz, 1)); }
 
 /* ── les guides magnétiques ────────────────────────────── */
 .overlay .guides line { stroke: var(--or); stroke-width: 1; stroke-dasharray: 3 3; }

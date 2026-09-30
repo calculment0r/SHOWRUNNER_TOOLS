@@ -3,30 +3,39 @@
    Le dessin des câbles du nodal d'ODIO (musique/musique.css, .nd-wires) :
    trait de 2 dans la teinte de la source à 75 %, zone de clic de 16, fil
    choisi orange à 3, fil tiré orange en tirets 5 5, envoi en tirets 6 5.
-   L'épaisseur reste celle de l'écran quel que soit le zoom.
+   En pixels d'ÉCRAN à tout zoom : l'épaisseur, les tirets, l'étiquette et la
+   zone de clic sont en calc(… * var(--iz)), --iz = 1 / zoom, posé par le canvas
+   sur ce qui porte les fils (Idéation : canvas.js, sur le <svg> des liens ;
+   ODIO : nodal.js, sur le monde). `vector-effect: non-scaling-stroke` ne tient
+   pas sous une transformation CSS dans Chromium — mesuré (musique_theme.md § 4 ;
+   Idéation : 0,26 px à 8 %, 8,2 px à 400 %) — : il n'est plus employé. Sans
+   --iz (un canvas qui ne zoome pas) : 1. Pas de transition sur l'épaisseur :
+   elle suivrait le zoom avec retard.
    Chargé par wire.js ; le <svg> qui les porte n'a qu'à laisser passer les
    clics (pointer-events: none), la zone de clic les reprend.
    ============================================================ */
 
 .sr-wire .vis {
-  fill: none; stroke: var(--k, var(--ink3)); stroke-width: 2; opacity: .75;
-  vector-effect: non-scaling-stroke; stroke-linecap: round; transition: opacity .12s, stroke-width .12s;
+  fill: none; stroke: var(--k, var(--ink3)); stroke-width: calc(2px * var(--iz, 1)); opacity: .75;
+  stroke-linecap: round; transition: opacity .12s;
 }
-.sr-wire .hit { fill: none; stroke: transparent; stroke-width: 16; pointer-events: stroke; cursor: pointer; vector-effect: non-scaling-stroke; }
-.sr-wire:hover .vis { opacity: 1; stroke-width: 2.6; }
-.sr-wire.send .vis, .sr-wire.lineage .vis { stroke-dasharray: 6 5; }
-.sr-wire.lineage .vis { stroke-width: 1.5; opacity: .55; }
-.sr-wire.idle .vis { opacity: .32; stroke-dasharray: 6 5; }
-.sr-wire.bad .vis { stroke: var(--or); stroke-dasharray: 2 5; opacity: .95; }
-.sr-wire.sel .vis { stroke: var(--or); stroke-width: 3; opacity: 1; stroke-dasharray: none; }
+.sr-wire .hit { fill: none; stroke: transparent; stroke-width: calc(16px * var(--iz, 1)); pointer-events: stroke; cursor: pointer; }
+.sr-wire:hover .vis { opacity: 1; stroke-width: calc(2.6px * var(--iz, 1)); }
+.sr-wire.send .vis, .sr-wire.lineage .vis { stroke-dasharray: calc(6px * var(--iz, 1)) calc(5px * var(--iz, 1)); }
+.sr-wire.lineage .vis { stroke-width: calc(1.5px * var(--iz, 1)); opacity: .55; }
+.sr-wire.idle .vis { opacity: .32; stroke-dasharray: calc(6px * var(--iz, 1)) calc(5px * var(--iz, 1)); }
+.sr-wire.bad .vis { stroke: var(--or); stroke-dasharray: calc(2px * var(--iz, 1)) calc(5px * var(--iz, 1)); opacity: .95; }
+.sr-wire.sel .vis { stroke: var(--or); stroke-width: calc(3px * var(--iz, 1)); opacity: 1; stroke-dasharray: none; }
 .sr-wire .lab {
-  font-family: var(--f-mono); font-size: 9px; letter-spacing: .12em; text-transform: uppercase; fill: var(--ink2);
+  font-family: var(--f-mono); font-size: calc(9px * var(--iz, 1)); letter-spacing: .12em; text-transform: uppercase; fill: var(--ink2);
   text-anchor: middle; dominant-baseline: middle; pointer-events: none;
-  paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round;
+  paint-order: stroke; stroke: var(--bg); stroke-width: calc(4px * var(--iz, 1)); stroke-linejoin: round;
 }
+/* l'étiquette posée au-dessus du fil (wire.js, label) : 7 px d'écran plus haut */
+.sr-wire .lab.over { transform: translateY(calc(-7px * var(--iz, 1))); }
 .sr-wire.bad .lab { fill: var(--or); }
 .sr-wire-temp {
-  fill: none; stroke: var(--k, var(--or)); stroke-width: 2; stroke-dasharray: 5 5; opacity: .9;
-  vector-effect: non-scaling-stroke; pointer-events: none;
+  fill: none; stroke: var(--k, var(--or)); stroke-width: calc(2px * var(--iz, 1));
+  stroke-dasharray: calc(5px * var(--iz, 1)) calc(5px * var(--iz, 1)); opacity: .9; pointer-events: none;
 }
 .sr-wire-temp.snap { stroke-dasharray: none; opacity: 1; }

@@ -160,6 +160,8 @@ export function createCanvas(app) {
   function applyView() {
     const v = V();
     world.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.z})`;
+    // les liens en pixels d'écran, à chaque image : --iz = 1 / zoom sur leur seul <svg> (wires.js zoom)
+    W.zoom(v.z);
     if (zShown === null) showZ(v.z);
     else if (v.z !== zShown) { clearTimeout(zT); zT = setTimeout(() => showZ(V().z), 150); }
     // la trame posée sur le fond lui-même, sans variable héritée par les objets
