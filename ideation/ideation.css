@@ -381,11 +381,7 @@ body.at-presenting > .sr-dock, body.at-presenting > .sr-dock-grip, body.at-prese
 .dur-h .sp { flex: 1; }
 .dur-v { font-size: 12px; font-weight: 600; color: var(--ink); }
 .dur-n { font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
-.dur-r { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; margin: 0; background: transparent; cursor: pointer; }
-.dur-r::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line); }
-.dur-r::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -4px; border-radius: 50%; background: var(--cy); }
-.dur-r::-moz-range-track { height: 4px; border-radius: 2px; background: var(--panel3); }
-.dur-r::-moz-range-thumb { width: 12px; height: 12px; border: none; border-radius: 50%; background: var(--cy); }
+.dur-r { width: 100%; }   /* le curseur du thème (commun/curseur.css) */
 .gform .opts { gap: 4px; }
 .chip { padding: 3px 7px; border-radius: var(--r1); background: var(--grn-bg); box-shadow: inset 0 0 0 1px var(--line-gr); font-size: 10px; color: var(--ink2); }
 .lbl.dim { opacity: .75; }

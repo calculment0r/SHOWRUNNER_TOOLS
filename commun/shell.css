@@ -46,6 +46,8 @@
 .hdr .sr-full svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .hdr .sr-full.on { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
 .hdr .sr-full[aria-disabled="true"] { opacity: .35; cursor: help; }
+/* le plein écran quitté par le changement de page (commun/pleinecran.js) : il attend Cal (ambre), un clic y ramène */
+.hdr .sr-full.relance { color: var(--amb); box-shadow: inset 0 0 0 1px var(--line-amb); }
 /* le bouton du panneau Asset (commun/dock.js), tout à gauche : une icône et ASSET en capitales mono ;
    ouvert, le filet acier du plein écran — jamais l'orange, qui reste l'action de l'outil */
 .hdr .sr-dock-btn { gap: 7px; padding: 0 9px; font-family: var(--f-mono); font-size: 9px; font-weight: 400; letter-spacing: .2em; }

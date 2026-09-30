@@ -33,7 +33,7 @@
 .lib-bar select.fld { width: auto; height: 30px; padding: 0 var(--s3); font-size: 11px; }
 .lib-bar input.fld[type=search] { width: 200px; height: 30px; }
 .lib-bar .size { display: flex; align-items: center; gap: 8px; }
-.lib-bar input[type=range] { width: 96px; accent-color: var(--grn2); }
+.lib-bar input[type=range] { width: 96px; }   /* le curseur du thème (commun/curseur.css) */
 .lib-bar .tb.ghost.on { background: var(--grn); color: var(--on-grn); box-shadow: none; }
 @media (max-width: 700px) {
   .lib-bar { position: static; }

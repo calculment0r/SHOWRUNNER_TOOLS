@@ -19,7 +19,7 @@
 .fl-count { color: var(--ink2); }
 .fl-filter.set { color: var(--or); box-shadow: inset 0 0 0 1px var(--line-or); }
 .fl-q { width: 170px; padding: 5px 9px; font-size: 11px; }
-.fl-size { width: 110px; accent-color: var(--or); cursor: pointer; }
+.fl-size { width: 110px; }   /* le curseur du thème (curseur.css) */
 .fl-lay .tb { height: 22px; font-size: 9px; padding: 0 9px; }
 /* la place de la page, pas la fenêtre : le panneau Asset ouvert lui en prend (@container sr-page,
    commun/shell.css) ; la visionneuse, elle, couvre la fenêtre : ses règles restent en @media */
