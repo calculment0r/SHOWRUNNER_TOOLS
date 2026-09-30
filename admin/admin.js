@@ -5,7 +5,7 @@
 
 //
 // L'annulation (commun/undo.js) : les réglages, les quotas, le rôle admin,
-// l'ordre, la priorité et l'épingle d'un travail en file, les pauses, les
+// Apps ou Studio d'une personne (et sa demande de Studio, ouverte ou écartée), l'ordre, la priorité et l'épingle d'un travail en file, les pauses, les
 // interrupteurs de câblage — chacun avec son contraire, que le serveur juge
 // encore (un travail parti ne se replace plus : le geste tombe et le dit).
 // Ne s'annulent pas : accepter ou refuser une demande, suspendre (ses travaux
@@ -20,8 +20,8 @@ import { contextMenu, pageMenu } from '../commun/menu.js';
 mountHeader('admin', { sub: 'la page de Cal' });
 
 const SECTIONS = [
-  ['demandes', 'A', 'Demandes', 'les demandes d’accès'],
-  ['personnes', 'B', 'Personnes', 'quotas · appareils · suspendre'],
+  ['demandes', 'A', 'Demandes', 'accès · studio'],
+  ['personnes', 'B', 'Personnes', 'apps ou studio · quotas · appareils'],
   ['file', 'C', 'La file', 'ordre · priorités · pauses'],
   ['machines', 'D', 'Machines', 'ComfyUI · mémoire · H3 · studio'],
   ['cablage', 'E', 'Câblage', 'les interrupteurs'],
@@ -56,12 +56,15 @@ const fmtBytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} Go` : n >= 1e6 ? `$
 const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
 
 // ── le rack des sections ────────────────────────────────────
+// les demandes de Studio (core/auth.py : `studio_request`, un compte Apps qui demande le Studio)
+const studioAsks = () => (S.state ? S.state.users.filter((u) => u.state === 'active' && u.access === 'apps' && u.studio_asked) : []);
 function nav() {
   const st = S.state;
-  const counts = st ? { demandes: st.requests.length, personnes: st.users.length,
+  const waiting = st ? st.requests.length + studioAsks().length : 0;
+  const counts = st ? { demandes: waiting, personnes: st.users.length,
     file: st.queue.running.length + st.queue.queued.length } : {};
   const badge = $('#sr-admin');   // l'en-tête suit sans attendre son propre relevé
-  if (badge && st) badge.textContent = st.requests.length ? `Admin · ${st.requests.length}` : 'Admin';
+  if (badge && st) badge.textContent = waiting ? `Admin · ${waiting}` : 'Admin';
   $('#adm-nav').replaceChildren(...SECTIONS.map(([id, k, name, sub]) => el('li', {},
     el('button', { class: 'item' + (S.sec === id ? ' sel' : ''), onclick: () => go(id) },
       el('span', { class: 'st' + (id === 'demandes' && counts.demandes ? ' run' : '') }),
@@ -141,6 +144,11 @@ function inviter() {
     autocapitalize: 'none', 'aria-label': 'le pseudo', value: S.addName || '', oninput: (e) => { S.addName = e.target.value; } });
   const role = el('div', { class: 'seg' }, ...[['ami', 'ami·e'], ['admin', 'admin']].map(([v, lab]) =>
     el('button', { class: 'tb' + (S.addRole === v ? ' on' : ''), type: 'button', onclick: () => { S.addRole = v; render(true); } }, lab)));
+  // Apps ou Studio (un admin a toujours le Studio) ; par défaut, le réglage « un compte neuf »
+  const acc = S.addAccess || S.state.settings.new_access || 'studio';
+  const access = S.addRole === 'admin' ? el('span', { class: 'chip' }, 'studio · admin')
+    : el('div', { class: 'seg', role: 'group', 'aria-label': 'ce qu’il ouvre' }, ...[['apps', 'Apps'], ['studio', 'Studio']].map(([v, lab]) =>
+      el('button', { class: 'tb' + (acc === v ? ' on' : ''), type: 'button', onclick: () => { S.addAccess = v; render(true); } }, lab)));
   const lien = p.lien || '';
   const admLine = el('div', { class: 'row', hidden: true }, el('span', { class: 'lbl' }, 'lien admin'),
     el('b', { class: 'acct-code' }, p.lien_admin || ''), el('span', { class: 'sp' }), copier(p.lien_admin || '', 'lien admin'));
@@ -156,9 +164,9 @@ function inviter() {
       if (!v) { name.focus(); return; }
       const r = S.addRole;
       S.addName = '';
-      act(() => post('admin/users', { name: v, role: r }), r === 'admin'
-        ? `« ${v} » ajouté, admin : donne-lui le lien admin` : `« ${v} » peut entrer`);
-    } }, name, role, el('button', { class: 'tb', type: 'submit' }, 'Ajouter')),
+      act(() => post('admin/users', { name: v, role: r, access: r === 'admin' ? 'studio' : acc }), r === 'admin'
+        ? `« ${v} » ajouté, admin : donne-lui le lien admin` : `« ${v} » peut entrer · ${acc === 'studio' ? 'Studio' : 'Apps'}`);
+    } }, name, role, access, el('button', { class: 'tb', type: 'submit' }, 'Ajouter')),
     lien
       ? el('div', { class: 'row' }, el('span', { class: 'lbl' }, p.invitation_requise === false ? 'l’adresse à lui envoyer' : 'le lien à lui envoyer'),
         el('b', { class: 'acct-code' }, lien), el('span', { class: 'sp' }), copier(lien, 'lien'))
@@ -169,6 +177,29 @@ function inviter() {
       el('button', { class: 'tb ghost sm', type: 'button', onclick: (e) => { admLine.hidden = !admLine.hidden;
         e.target.textContent = admLine.hidden ? 'Montrer le lien admin' : 'Cacher le lien admin'; } }, 'Montrer le lien admin')) : null,
     admLine);
+}
+
+// ouvrir le Studio d'une personne, ou le lui retirer : un geste qui s'annule (Ctrl+Z), sa demande comprise
+function setAccess(u, to) {
+  const was = { access: u.access, studio_request: u.studio_asked || null };
+  return undoable(to === 'studio' ? `ouvrir le Studio à ${u.name}` : `fermer le Studio à ${u.name}`,
+    () => post(`admin/users/${u.id}`, { access: to }), () => post(`admin/users/${u.id}`, was),
+    to === 'studio' ? `${u.name} a le Studio` : `${u.name} : les Apps seulement`);
+}
+function studioDemandes(goFirst) {
+  const r = studioAsks();
+  return [head('Demandes de Studio', 'A · S', `${r.length} en attente`),
+    el('p', { class: 'adm-note' }, 'Un compte Apps ouvre les Apps et Asset ; il demande le Studio depuis l’accueil, l’en-tête ou une page Studio. ',
+      'Accepté, sa page s’ouvre seule ; écartée, la demande disparaît et il peut redemander. Les deux s’annulent (Ctrl+Z).'),
+    r.length ? el('div', { class: 'grid2' }, ...r.map((u, i) => el('div', { class: 'card amb', 'data-studio-ask': u.id },
+      el('div', { class: 'card-head' }, el('span', { class: 'nm' }, u.name), el('span', { class: 'chip amb' }, el('i'), 'studio demandé')),
+      el('div', { class: 'cmeta' }, `demandé ${fmtDate(u.studio_asked)} · pseudo `, el('b', {}, u.pseudo || u.name), ' · apps aujourd’hui'),
+      el('div', { class: 'row' },
+        el('button', { class: goFirst && i === 0 ? 'tb go' : 'tb', onclick: () => setAccess(u, 'studio') }, 'Ouvrir le Studio'),
+        el('button', { class: 'tb ghost', onclick: () => undoable(`écarter la demande de Studio de ${u.name}`,
+          () => post(`admin/users/${u.id}`, { studio_request: null }), () => post(`admin/users/${u.id}`, { studio_request: u.studio_asked }),
+          `demande de ${u.name} écartée`) }, 'Écarter')))))
+      : el('p', { class: 'lbl' }, 'aucune demande de Studio')];
 }
 
 function demandes() {
@@ -183,7 +214,9 @@ function demandes() {
       el('div', { class: 'row' },
         el('button', { class: i === 0 ? 'tb go' : 'tb', onclick: () => act(() => post(`admin/requests/${u.id}/accept`), `${u.name} peut entrer`) }, 'Accepter'),
         el('button', { class: 'tb ghost', onclick: () => act(() => post(`admin/requests/${u.id}/refuse`), `demande de ${u.name} refusée`) }, 'Refuser')))))
-      : el('p', { class: 'lbl' }, 'aucune demande en attente')];
+      : el('p', { class: 'lbl' }, 'aucune demande en attente'),
+    // un seul orange par écran : la première demande d'accès, sinon la première demande de Studio
+    ...studioDemandes(!r.length)];
 }
 
 // ── B · les personnes ───────────────────────────────────────
@@ -193,7 +226,7 @@ function qf(label, value, placeholder, onset, disabled = false) {
       onchange: (e) => onset(e.target.value === '' ? null : Number(e.target.value)) }));
 }
 
-const SET_FR = { visibility: 'qui voit quoi', admin_first: 'la priorité des admins', admin_lan_only: 'l’entrée des admins',
+const SET_FR = { visibility: 'qui voit quoi', admin_first: 'la priorité des admins', admin_lan_only: 'l’entrée des admins', new_access: 'ce qu’ouvre un compte neuf',
   total_queued: 'le total en file', running: 'les travaux simultanés', queued: 'les travaux en file', per_day: 'les travaux par jour' };
 function reglages() {
   const s = S.state.settings;
@@ -222,6 +255,10 @@ function reglages() {
       seg([[true, 'depuis le réseau de Cal'], [false, 'de partout']], s.admin_lan_only, 'admin_lan_only')),
     el('p', { class: 'adm-note' }, 'Le réseau de Cal : la maison (192.168.10.x), le câble des DGX, Tailscale. Hors de lui, ',
       'un pseudo admin est refusé — c’est la seule précaution d’une porte sans mot de passe.'),
+    el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'un compte neuf ouvre'),
+      seg([['studio', 'le Studio (phase d’essai)'], ['apps', 'les Apps seulement']], s.new_access, 'new_access')),
+    el('p', { class: 'adm-note' }, 'Ajouté ici, accepté, ou créé par la porte. Les comptes qui existent gardent le leur : ',
+      'Apps ou Studio se règle par personne, plus bas. Un compte Apps ouvre les Apps et Asset, et peut demander le Studio.'),
     el('span', { class: 'lbl' }, 'quotas par défaut d’un·e ami·e — vide : sans limite'),
     el('div', { class: 'qfs' },
       qf('simultanés', s.quotas.running, 'sans limite', (v) => set({ quotas: { running: v } })),
@@ -257,12 +294,19 @@ function personne(u) {
   return el('div', { class: 'card' + (susp ? ' off' : '') },
     el('div', { class: 'card-head' }, el('span', { class: 'nm' }, u.name),
       adm ? el('span', { class: 'chip adm-role' }, 'admin') : el('span', { class: 'chip' }, 'ami·e'),
-      susp ? el('span', { class: 'chip err' }, el('i'), 'suspendu') : el('span', { class: 'chip ok' }, el('i'), 'actif')),
+      susp ? el('span', { class: 'chip err' }, el('i'), 'suspendu') : el('span', { class: 'chip ok' }, el('i'), 'actif'),
+      u.studio_asked ? el('span', { class: 'chip amb' }, el('i'), 'studio demandé') : null),
+    // Apps ou Studio : le droit `access` (un admin a toujours le Studio) ; s'annule (Ctrl+Z) comme le rôle
+    adm || u.role === 'invite' ? null : el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'ouvre'),
+      el('div', { class: 'seg', role: 'group', 'aria-label': `ce qu’ouvre ${u.name}`, 'data-access': u.id },
+        ...[['apps', 'Apps'], ['studio', 'Studio']].map(([v, lab]) => el('button', { class: 'tb' + (u.access === v ? ' on' : ''), type: 'button',
+          'aria-pressed': u.access === v ? 'true' : 'false', disabled: susp || null,
+          onclick: () => { if (u.access !== v) setAccess(u, v); } }, lab)))),
     el('div', { class: 'cmeta' }, 'pseudo ', el('b', {}, u.pseudo || u.name), ` · entré ${fmtDate(u.accepted || u.created)} · vu ${u.seen ? fmtDate(u.seen) : 'jamais'} · `,
       el('b', {}, plural(u.devices, 'connexion', 'connexions'))),
     el('div', { class: 'cmeta' }, el('b', {}, `${u.running} en cours · ${u.queued} en file · ${u.today} aujourd’hui`),
       ` · ${plural(u.items, 'objet', 'objets')} dans la bibliothèque`),
-    adm ? el('p', { class: 'adm-note' }, 'Admin : pas de quota, la page d’admin, entre depuis le réseau de Cal.') : el('div', { class: 'qfs' },
+    adm ? el('p', { class: 'adm-note' }, 'Admin : le Studio, pas de quota, la page d’admin, entre depuis le réseau de Cal.') : el('div', { class: 'qfs' },
       qf('simultanés', u.quotas.running, `défaut ${def.running ?? '∞'}`, setQ('running', 'simultanés')),
       qf('en file', u.quotas.queued, `défaut ${def.queued ?? '∞'}`, setQ('queued', 'en file')),
       qf('par jour', u.quotas.per_day, `défaut ${def.per_day ?? '∞'}`, setQ('per_day', 'par jour'))),
@@ -598,7 +642,7 @@ function journalSec() {
       } })),
     el('div', {}, ...rows.map((e) => el('div', { class: 'jr' },
       el('span', {}, fmtDate(e.t)),
-      el('span', { class: 'ev' + (BAD.has(e.event) || (e.status >= 400) ? ' bad' : e.event === 'demande' ? ' amb' : '') },
+      el('span', { class: 'ev' + (BAD.has(e.event) || (e.status >= 400) ? ' bad' : e.event === 'demande' || e.event === 'demande de Studio' ? ' amb' : '') },
         e.event === 'http' ? `${e.method} ${e.status}` : e.event),
       el('span', {}, e.user || e.by || '—'),
       el('span', { class: 'd', title: detail(e) }, e.event === 'http' ? e.path : detail(e))))),

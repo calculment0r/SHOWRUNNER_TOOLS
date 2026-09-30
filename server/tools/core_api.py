@@ -399,8 +399,10 @@ def queue(req):
 def jobs_submit(req):
     """POST /api/jobs {kind, params, title, tool} — la route commune : seules
     les sortes que leur outil déclare `direct` (jobs.register) y passent pour
-    un ami ; les autres partent par la route de leur outil, qui les juge."""
+    un ami ; les autres partent par la route de leur outil, qui les juge. Un
+    compte Apps ne lance pas une sorte d'un outil Studio (auth.STUDIO_TOOLS) : 403."""
     d = req.json()
+    auth.need_studio_kind(str(d.get("kind") or ""))
     try:
         j = jobs.submit_direct(str(d.get("kind") or ""), d.get("params") or {}, title=d.get("title") or "",
                                tool=d.get("tool") or "")

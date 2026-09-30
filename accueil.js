@@ -55,23 +55,18 @@ const STUDIO = [
   { id: 'package', icon: 'pack', name: 'Package', sub: 'le paquet pour les agences' },
 ];
 
-// Le droit Studio : `access: "studio"` sur la personne (auth.json,
-// apps_studio_elements.md § 3.6) ; un admin l'a toujours ; la maison sans
-// porte (auth: false), c'est Cal. /api/auth/me ne le rend pas encore
-// (auth.public_user) : on le lit où le serveur le juge déjà, l'état Studio
-// de l'app Musique (GET /api/chanson/options → studio {ok, asked}), qui garde
-// aussi la demande (POST /api/chanson/studio/demande). Sans l'un ni l'autre :
-// le Studio ouvert, comme avant.
-async function accessOf(me) {
+// Le droit Studio : jugé par la porte (core/auth.py, « le Studio » ;
+// apps_studio_elements.md § 3.6), rendu par /api/auth/me (`user.access`,
+// `user.studio_asked`) — un admin l'a toujours, la maison sans porte (auth:
+// false) c'est Cal. La demande : POST /api/auth/studio, que Cal voit dans
+// Admin. Sans réponse du portail : rien à fermer ici (le serveur juge).
+function accessOf(me) {
   const u = me && me.user;
-  if (!me || me.auth === false || !u || u.role === 'admin') return { access: 'studio' };
-  if (u.access) return { access: u.access === 'studio' ? 'studio' : 'apps' };
-  try {
-    const s = (await api('chanson/options')).studio;
-    if (s) return { access: s.ok ? 'studio' : 'apps', asked: s.asked || null };
-  } catch { /* pas d'app Musique sur ce portail */ }
-  return { access: 'studio' };
+  if (!u) return { access: 'studio', asked: null };
+  return { access: u.access === 'apps' ? 'apps' : 'studio', asked: u.studio_asked || null };
 }
+// une carte d'outil fermée à ce compte : un outil Studio de TOOLS (sauf `open`), pour un compte Apps
+const lockedFor = (t) => !!t && S.access === 'apps' && t.tier === 'studio' && !t.open;
 
 const toolOf = (id) => TOOLS.find((t) => t.id === id && (t.path || t.external)) || null;
 // où l'outil calcule : `local` (nos DGX) ; `api` s'ajoutera dans TOOLS
@@ -100,7 +95,12 @@ function showWhy(flash = false) {
   if (w.hidden) return;
   const ask = el('button', { class: 'tb ghost sm', type: 'button', onclick: async () => {
     ask.disabled = true;
-    try { S.asked = (await api('chanson/studio/demande', { method: 'POST', body: {} })).asked || new Date().toISOString(); showWhy(); } catch (e) { ask.disabled = false; toast(e.message); }
+    try {
+      const r = await api('auth/studio', { method: 'POST', body: {} });
+      if (r.ok) { location.reload(); return; }
+      S.asked = r.asked || new Date().toISOString();
+      showWhy();
+    } catch (e) { ask.disabled = false; toast(e.message); }
   } }, 'Demander le Studio');
   w.replaceChildren('réservé au Studio · ', S.asked ? `demandé le ${fmtDate(S.asked)} : Cal l’ouvre depuis Admin` : ask);
   if (flash) { w.classList.remove('flash'); void w.offsetWidth; w.classList.add('flash'); }
@@ -132,7 +132,8 @@ function paintApps() {
     const t = toolOf(a.tool);
     const vis = el('span', { class: 'acc-vis' }, el('span', { class: 'acc-ico', html: ICON[a.icon] }));
     const txt = el('span', { class: 'acc-txt' }, el('b', { class: 'acc-verb' }, a.verb), el('span', { class: 'acc-line' }, a.sub));
-    const c = card(`acc-app ${a.big ? 'big' : tones[n++ % 3]}`, { ...a, label: a.verb }, t, false, !t, [vis, txt]);
+    // une app dont l'outil est encore au Studio (Object Creator, avant l'app 3D : étude § 4, étape 11) se ferme de même
+    const c = card(`acc-app ${a.big ? 'big' : tones[n++ % 3]}`, { ...a, label: a.verb }, t, lockedFor(t), !t, [vis, txt]);
     if (a.img || a.video) {
       let m;
       if (a.video) {
@@ -165,7 +166,7 @@ function paintStudio() {
   $('#acc-studio').replaceChildren(...STUDIO.map((s, i) => {
     const t = toolOf(s.id);
     const name = s.name || (t && t.name) || s.id;
-    return card(`acc-tool ${tones[i % 3]}`, { ...s, label: name }, t, !!t && S.access === 'apps' && !t.open, !t, [
+    return card(`acc-tool ${tones[i % 3]}`, { ...s, label: name }, t, lockedFor(t), !t, [
       el('span', { class: 'acc-top-l' }, el('span', { class: 'acc-ico', html: ICON[s.icon] }), t ? el('span', { class: 'acc-code' }, t.k) : null),
       el('span', { class: 'acc-txt' }, el('b', { class: 'acc-name' }, name), el('span', { class: 'acc-line' }, s.sub || (t && t.sub) || ''))]);
   }));
@@ -241,7 +242,7 @@ function paintSys(sys) {
 async function paint() {
   const [sys, me] = await Promise.all([system(), session()]);
   S.sys = sys;
-  Object.assign(S, await accessOf(me));
+  Object.assign(S, accessOf(me));
   document.documentElement.dataset.access = S.access;
   paintActs();
   paintApps();

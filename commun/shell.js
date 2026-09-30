@@ -350,14 +350,22 @@ export function mountHeader(toolId, { sub = '' } = {}) {
     mine.hidden = !(me.auth && me.user);
     if (me.user) mine.textContent = me.user.name;
   };
+  // Le droit Studio (core/auth.py, « le Studio » ; /api/auth/me → user.access) : un compte Apps voit les
+  // outils Studio fermés — grisés, un cadenas, un clic mène à la demande ; sur une page Studio (servie par le
+  // Worker de la porte, que le portail ne voit pas), la porte « réservé au Studio » la couvre. Le serveur juge
+  // de son côté (pages, écritures, travaux) : ceci ne fait que le montrer.
+  const studioOff = (me, x) => !!(me && me.user && me.user.access === 'apps' && x && x.tier === 'studio' && !x.open);
+  const askStudio = (me, x) => (e) => { e.preventDefault(); menu.hidden = true; import('./porte.js').then((m) => m.studioDoor(me, x, { closable: true })); };
+  const LOCK = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
   session().then((me) => {
     document.documentElement.classList.remove('sr-wait');
     if (me && me.auth && me.state !== 'active') return showDoor(me);
     paintMe(me);
+    if (studioOff(me, t)) import('./porte.js').then((m) => m.studioDoor(me, t));
     import('./prefs.js').then((m) => m.prefs.ready);   // les préférences de la personne, relues du portail
   });
   setInterval(() => { if (!doorOn) session(true).then(paintMe); }, 20000);
-  system().then((sys) => {
+  Promise.all([system(), session()]).then(([sys, me]) => {
     let tier = null;
     for (const x of TOOLS) {
       if (x.id === 'asset') continue;   // son bouton est à droite (#sr-asset)
@@ -367,9 +375,16 @@ export function mountHeader(toolId, { sub = '' } = {}) {
         menu.append(el('span', { class: 'grp' }, x.tier === 'app' ? 'Apps' : 'Studio'));
         tier = x.tier;
       }
-      nav.append(el('a', { href: toolHref(x, sys), class: x.id === toolId ? 'on' : null,
-        target: x.external ? '_blank' : null, rel: x.external ? 'noopener' : null }, x.name));
-      menu.append(el('a', { href: toolHref(x, sys), class: x.id === toolId ? 'on' : null }, x.name));
+      const off = studioOff(me, x);
+      const cls = [x.id === toolId ? 'on' : '', off ? 'lock' : ''].filter(Boolean).join(' ') || null;
+      const why = off ? `${x.name} · réservé au Studio : le demander à Cal` : null;
+      // fermé : le lien ouvre la demande (un dialogue), il ne part pas
+      nav.append(el('a', { href: toolHref(x, sys), class: cls, title: why, 'aria-haspopup': off ? 'dialog' : null,
+        onclick: off ? askStudio(me, x) : null,
+        target: x.external && !off ? '_blank' : null, rel: x.external ? 'noopener' : null },
+      off ? el('span', { class: 'lk', html: LOCK }) : null, x.name));
+      menu.append(el('a', { href: toolHref(x, sys), class: cls, title: why, 'aria-haspopup': off ? 'dialog' : null,
+        onclick: off ? askStudio(me, x) : null }, off ? el('span', { class: 'lk', html: LOCK }) : null, x.name));
     }
     paintSys(sys);
     fit();

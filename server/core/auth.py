@@ -77,6 +77,15 @@ l'Admin ; une autre page le ramène chez lui (303). Cela vaut sur les trois
 entrées (la maison, la porte « demo » avec son code, la porte « access ») :
 le rôle est porté par le compte, la porte ne fait que dire qui c'est. Cal
 en fait un ami dans l'Admin s'il le veut (rôle « ami »).
+
+Apps et Studio (30/09, docs/etudes/apps_studio_elements.md § 3.6) : un droit
+`access` (« apps » | « studio ») à côté du rôle, jugé ici seulement. Un compte
+Apps ouvre les Apps et Asset ; une page d'un outil Studio lui montre « réservé
+au Studio » (qui mène à la demande), une écriture Studio et un travail Studio
+lui répondent 403 (`STUDIO_TOOLS`, `_studio_only`, `need_studio_kind`). Il
+demande le Studio (`request_studio`, `POST /api/auth/studio`) ; Cal l'ouvre dans
+Admin. Un compte neuf reçoit le réglage `new_access` (« studio » pendant
+l'essai).
 """
 
 from __future__ import annotations
@@ -119,9 +128,14 @@ DEFAULT_SETTINGS = {
     "quotas": {"running": 1, "queued": 3, "per_day": None},
     "total_queued": 50,        # audit H4 : « et au-delà d'un total (par exemple 50) »
     "admin_lan_only": True,    # un pseudo admin n'entre que depuis le réseau de Cal (Cal, 29/09)
+    # le droit `access` d'un compte neuf (Cal l'ajoute, accepte sa demande, ou Access le crée) : « studio » pendant la
+    # phase d'essai (Cal, 30/09 : ses amis voient tout) ; « apps » ensuite (étude apps_studio_elements.md § 5,
+    # question 5) — Admin → Personnes → Réglages, sans toucher au code
+    "new_access": "studio",
 }
 GUEST = "invite"             # le rôle de l'invité par un lien (voir plus haut)
 ROLES = ("admin", "ami", GUEST)
+ACCESS = ("apps", "studio")  # le droit Studio, à côté du rôle (plus bas, « le Studio »)
 RESERVED = ("admin", "administrateur", "administratrice", "root", "showrunner", "systeme", "system", "portail",
             "anonyme", "personne")
 # le réseau de Cal : la machine, la maison, le câble direct entre les DGX, Tailscale
@@ -266,6 +280,10 @@ def set_settings(patch: dict, by: str = "") -> dict:
         for k in ("admin_first", "admin_lan_only"):
             if k in patch:
                 s[k] = bool(patch[k])
+        if "new_access" in patch:
+            if patch["new_access"] not in ACCESS:
+                raise HttpError(400, "un compte neuf : apps ou studio")
+            s["new_access"] = patch["new_access"]
         if "total_queued" in patch:
             s["total_queued"] = _quota_value(patch["total_queued"], "total en file")
         if isinstance(patch.get("quotas"), dict):
@@ -349,6 +367,134 @@ def can_write_item(it: dict, u: dict | None) -> bool:
     if u is None or is_admin(u):
         return True
     return owner_of(it) == u["id"]
+
+
+# ── le Studio : le droit `access`, à côté du rôle ───────────
+# docs/etudes/apps_studio_elements.md § 3.6 : le rôle dit qui administre,
+# `access` (« apps » | « studio ») quels outils on ouvre. Un admin a toujours
+# le Studio ; la maison sans porte (`"auth": false`) et le socle (aucune
+# personne : un travail système) valent Cal. Un compte sans le champ : « apps »
+# (le défaut d'un compte NEUF est le réglage `new_access`, posé à sa création).
+# La table : les outils `tier: 'studio'` de commun/shell.js (TOOLS), sauf ceux
+# `open` (Asset, la bibliothèque commune) — leurs pages, leurs routes
+# d'écriture (les lectures restent : Asset lit les notes d'un MIDI, la forme
+# d'onde d'un son), les sortes de leurs travaux. tools/check.py (compte.py)
+# vérifie que cette table et TOOLS disent la même chose.
+STUDIO_TOOLS = {
+    "music":     {"name": "ODIO", "page": "/musique/", "write": ("/api/music/",), "kinds": ("music.",)},
+    "montage":   {"name": "Montage", "page": "/montage/", "write": ("/api/montage/",), "kinds": ("montage.",)},
+    "ideation":  {"name": "Idéation", "page": "/ideation/", "write": ("/api/ideation/",), "kinds": ("ideation.",)},
+    "character": {"name": "Character Factory", "page": "/character/", "write": ("/character/",), "kinds": ()},
+    "object":    {"name": "Object Creator", "page": "/objet/", "write": ("/api/objet/",), "kinds": ("objet.",)},
+    "analyse":   {"name": "Movie Analysis", "page": "/analyse/", "write": ("/api/analyse/",), "kinds": ("analyse.",)},
+}
+# les gestes Studio d'une app : l'app Musique sépare les pistes et ouvre dans ODIO (musique_app.md § 4)
+STUDIO_ROUTES = {"/api/chanson/stems": "ODIO", "/api/chanson/odio": "ODIO"}
+STUDIO_PAGE = "/api/auth/studio-ferme"   # une page Studio demandée par un compte Apps (compte.py, r_studio_page)
+STUDIO_WHY = ("{name} fait partie du Studio ; ton compte ouvre les Apps et Asset. "
+              "Demande le Studio à Cal (bouton « Demander le Studio »)")
+
+
+def access_of(u: dict | None) -> str:
+    if u is None or is_admin(u):
+        return "studio"
+    return "studio" if u.get("access") == "studio" else "apps"
+
+
+def has_studio(u: dict | None) -> bool:
+    return access_of(u) == "studio"
+
+
+def studio_asked(u: dict | None) -> str | None:
+    """La date de sa demande de Studio, tant qu'elle attend."""
+    if u is None or has_studio(u):
+        return None
+    with _lock:
+        x = _data()["users"].get(u.get("id") or "")
+    return (x or {}).get("studio_request") or None
+
+
+def studio_page(path: str) -> str | None:
+    """L'outil Studio dont `path` est une page (« /montage/ », « /montage/montage.js »), ou None."""
+    for tid, t in STUDIO_TOOLS.items():
+        if path.startswith(t["page"]) or path == t["page"].rstrip("/"):
+            return tid
+    return None
+
+
+def studio_write(path: str) -> str | None:
+    """Le nom de l'outil Studio d'une route d'écriture, ou None."""
+    p = path.rstrip("/")
+    if p in STUDIO_ROUTES:
+        return STUDIO_ROUTES[p]
+    for t in STUDIO_TOOLS.values():
+        if any(path.startswith(w) for w in t["write"]):
+            return t["name"]
+    return None
+
+
+def studio_kind(kind: str) -> str | None:
+    """Le nom de l'outil Studio d'une sorte de travail (« montage.export »), ou None."""
+    for t in STUDIO_TOOLS.values():
+        if any(str(kind or "").startswith(k) for k in t["kinds"]):
+            return t["name"]
+    return None
+
+
+def need_studio_kind(kind: str, u: dict | None = None) -> None:
+    """`POST /api/jobs` : un compte Apps ne lance pas un travail d'un outil Studio (403)."""
+    u = current() if u is None else u
+    name = studio_kind(kind)
+    if name and not has_studio(u):
+        raise HttpError(403, STUDIO_WHY.format(name=f"« {kind} » ({name})"))
+
+
+def request_studio(u: dict | None) -> dict:
+    """`POST /api/auth/studio` : demander le Studio. Gardée sur le compte (auth.json,
+    `studio_request`) jusqu'à ce que Cal l'accepte ou l'écarte (Admin → Demandes) ;
+    redemander ne fait rien de plus."""
+    if u is None or has_studio(u):
+        return {"ok": True, "access": "studio", "asked": None}
+    if is_guest(u):
+        raise HttpError(403, GUEST_WHY)
+    new = False
+    with _lock:
+        x = _data()["users"].get(u.get("id") or "")
+        if not x or x.get("state") != "active":
+            raise HttpError(403, "compte inactif : vois avec Cal")
+        if has_studio(x):
+            return {"ok": True, "access": "studio", "asked": None}
+        asked = x.get("studio_request")
+        if not asked:
+            asked = x["studio_request"] = now_iso()
+            _save()
+            new = True
+    if new:
+        journal("demande de Studio", user=u["id"], name=u.get("name", ""))
+    return {"ok": False, "access": "apps", "asked": asked}
+
+
+def _studio_only(req) -> None:
+    """Après la porte, pour une personne connue sans le Studio : une page d'un outil
+    Studio devient la page « réservé au Studio » (STUDIO_PAGE, qui mène à la demande) ;
+    une écriture sur une route Studio, 403. Sur la porte « code », les pages viennent
+    des assets du Worker, sans passer ici : l'en-tête (commun/shell.js, mountHeader)
+    les ferme aussi ; les écritures, elles, arrivent toujours ici."""
+    u = getattr(req, "user", None)
+    if not u or has_studio(u) or is_guest(u):
+        return
+    p = req.path
+    if req.protected:
+        if req.method not in ("GET", "HEAD", "OPTIONS"):
+            name = studio_write(p)
+            if name:
+                raise HttpError(403, STUDIO_WHY.format(name=name))
+        return
+    if req.method in ("GET", "HEAD"):
+        tid = studio_page(p)
+        if tid:
+            req.studio_tool = tid
+            req.path, req.rewritten = STUDIO_PAGE, True
 
 
 # ── les sessions ────────────────────────────────────────────
@@ -636,6 +782,7 @@ def gate(req, app) -> None:
         _csrf(req)
     if is_guest(req.user):
         return _guest_gate(req)
+    _studio_only(req)
     if not enabled() or not req.protected or req.path.startswith("/api/auth/"):
         return
     if not req.user:
@@ -669,6 +816,7 @@ def _door_gate(req) -> None:
         if is_guest(u):
             return _guest_gate(req)
         _admin_only(req)
+        _studio_only(req)
         return
     if req.door not in PSEUDO_DOORS:
         raise HttpError(503, f"porte publique : mode inconnu « {req.door} »")
@@ -694,6 +842,7 @@ def _door_gate(req) -> None:
         raise HttpError(401, NO_INVITE)
     if is_guest(req.user):
         return _guest_gate(req)
+    _studio_only(req)
     if not req.protected:
         return
     if not req.user:
@@ -732,7 +881,21 @@ def _rate(key: str, n: int, window: float) -> None:
 
 # ── ce que voit la page ─────────────────────────────────────
 def public_user(u: dict) -> dict:
-    return {"id": u["id"], "name": u["name"], "pseudo": u.get("pseudo") or u["name"], "role": u.get("role", "ami")}
+    """`access` : « apps » ou « studio » (un admin : toujours studio) ; `studio_asked` :
+    la date de sa demande de Studio, tant qu'elle attend."""
+    out = {"id": u["id"], "name": u["name"], "pseudo": u.get("pseudo") or u["name"], "role": u.get("role", "ami"),
+           "access": access_of(u)}
+    if out["access"] == "apps" and u.get("studio_request"):
+        out["studio_asked"] = u["studio_request"]
+    return out
+
+
+def _waiting() -> int:
+    """Ce qui attend Cal : les pseudos neufs, les demandes de Studio."""
+    with _lock:
+        us = _data()["users"].values()
+        return sum(1 for x in us if x.get("state") == "pending"
+                   or (x.get("state") == "active" and x.get("studio_request") and not has_studio(x)))
 
 
 def me(req) -> dict:
@@ -744,8 +907,7 @@ def me(req) -> dict:
         out = {"auth": True, "state": "active", "user": public_user(u), "since": u.get("created"), "porte": d,
                "visibility": settings()["visibility"]}
         if is_admin(u):
-            with _lock:
-                out["pending_requests"] = sum(1 for x in _data()["users"].values() if x.get("state") == "pending")
+            out["pending_requests"] = _waiting()
         return out
     if d in PSEUDO_DOORS:
         return {**_me(req), "porte": d, "invitation": getattr(req, "invitation", None) or False,
@@ -770,8 +932,7 @@ def _me(req) -> dict:
     if u["state"] == "active":
         out["visibility"] = settings()["visibility"]
         if is_admin(u):
-            with _lock:
-                out["pending_requests"] = sum(1 for x in _data()["users"].values() if x.get("state") == "pending")
+            out["pending_requests"] = _waiting()
     return out
 
 
@@ -878,6 +1039,8 @@ def accept(uid: str, by: str, role: str | None = None) -> dict:
         u.update(state="active", accepted=now_iso(), by=by)
         if role == GUEST:
             u["role"] = GUEST
+        else:   # un compte neuf : le droit Studio du réglage (phase d'essai : studio)
+            u.setdefault("access", settings()["new_access"])
         _save()
     journal("accepté", user=uid, by=by, **({"role": role} if role else {}))
     return dict(u)
@@ -954,14 +1117,19 @@ def cli_admin(pseudo: str) -> dict:
     return out
 
 
-def create_friend(pseudo, by: str, role: str = "ami") -> dict:
+def create_friend(pseudo, by: str, role: str = "ami", access: str | None = None) -> dict:
     """Un pseudo créé d'avance par Cal (Admin, ou `showrunner.py --ami`), déjà
     accepté : celui qui le tape entre aussitôt, sans attendre (Cal, 29/09 : « un
     login simple genre su007 »). Mêmes règles qu'un pseudo tapé à la porte : ni
     imitation d'un admin, ni mot réservé, ni pseudo trop proche d'un autre.
-    `role` : ami ou admin (un admin, sur la porte publique, entre avec le code admin)."""
+    `role` : ami ou admin (un admin, sur la porte publique, entre avec le code admin).
+    `access` : apps ou studio ; rien : le réglage `new_access`."""
     if role not in ("ami", "admin"):
         raise HttpError(400, "rôle : ami ou admin")
+    if access in (None, ""):
+        access = settings()["new_access"]
+    if access not in ACCESS:
+        raise HttpError(400, "accès : apps ou studio")
     name = clean_name(pseudo)
     if not valid_name(name):
         raise HttpError(400, "le pseudo : de 2 à 24 lettres ou chiffres (espace, trait d'union, point permis)")
@@ -975,11 +1143,11 @@ def create_friend(pseudo, by: str, role: str = "ami") -> dict:
             raise HttpError(409, f"« {name} » est réservé : choisis un autre pseudo")
         if why:
             raise HttpError(409, f"« {name} » ressemble trop à un pseudo qui existe déjà : choisis-en un autre")
-        u = {"id": key, "name": name, "pseudo": name, "role": role, "state": "active", "created": now_iso(),
-             "accepted": now_iso(), "by": by, "via": "admin", "quotas": {}}
+        u = {"id": key, "name": name, "pseudo": name, "role": role, "access": access, "state": "active",
+             "created": now_iso(), "accepted": now_iso(), "by": by, "via": "admin", "quotas": {}}
         db["users"][key] = u
         _save()
-    journal("ajouté d'avance", user=key, by=by, role=role)
+    journal("ajouté d'avance", user=key, by=by, role=role, access=access)
     return dict(u)
 
 
@@ -1032,7 +1200,10 @@ def users_public() -> list[dict]:
                         "created": u.get("created"), "accepted": u.get("accepted"), "ip": u.get("ip", ""),
                         "ua": u.get("ua", ""), "quotas": {k: (u.get("quotas") or {}).get(k) for k in QUOTA_FR},
                         "effective": quotas_for(u["id"]), "devices": len(ss),
-                        "seen": max((s.get("seen") or "" for s in ss), default="")})
+                        "seen": max((s.get("seen") or "" for s in ss), default=""),
+                        # le droit Studio : l'effectif (un admin l'a toujours), et la demande qui attend
+                        "access": access_of(u),
+                        "studio_asked": (u.get("studio_request") or None) if not has_studio(u) else None})
     return sorted(out, key=lambda x: (x["role"] != "admin", x["state"] != "pending", x["name"].lower()))
 
 
@@ -1049,6 +1220,26 @@ def set_user(uid: str, patch: dict, by: str) -> dict:
             if patch["role"] != "admin" and u.get("role") == "admin" and len(admins()) <= 1:
                 raise HttpError(409, "c'est le dernier admin : donne d'abord le rôle à quelqu'un d'autre")
             u["role"] = patch["role"]
+            if patch["role"] != GUEST:   # un admin qui redevient ami, sans droit posé : celui d'un compte neuf
+                u.setdefault("access", settings()["new_access"])
+        if "access" in patch:
+            if patch["access"] not in ACCESS:
+                raise HttpError(400, "accès : apps ou studio")
+            if u.get("state") == "pending":
+                raise HttpError(409, "accepte d'abord ce compte")
+            u["access"] = patch["access"]
+            if patch["access"] == "studio":
+                u.pop("studio_request", None)   # le Studio ouvert : la demande est servie
+        if "studio_request" in patch:
+            # écarter une demande (null), ou la rendre (Ctrl+Z dans Admin : sa date d'origine)
+            v = patch["studio_request"]
+            if v in (None, ""):
+                u.pop("studio_request", None)
+            elif isinstance(v, str) and len(v) <= 40 and re.fullmatch(r"[0-9T:+.Z-]+", v):
+                if not has_studio(u):
+                    u["studio_request"] = v
+            else:
+                raise HttpError(400, "demande de Studio : une date, ou null pour l'écarter")
         if "state" in patch:
             if patch["state"] not in ("active", "suspended") or u.get("state") == "pending":
                 raise HttpError(400, "état : active ou suspended (une demande s'accepte ou se refuse)")
@@ -1504,6 +1695,7 @@ def _user_for_email(email: str, mapping: dict) -> dict:
         while uid in db["users"]:
             uid = f"{slug(name)[:26]}-{secrets.token_hex(2)}"
         u = {"id": uid, "name": name, "pseudo": name, "email": email, "role": "ami", "state": "active",
+             "access": settings()["new_access"],
              "created": now_iso(), "accepted": now_iso(), "by": "access", "via": "access", "quotas": {}}
         db["users"][uid] = u
         _save()

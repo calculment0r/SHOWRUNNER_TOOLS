@@ -143,19 +143,17 @@ def paroles_engine() -> str:
 
 
 # ── le Studio : qui peut séparer et ouvrir dans ODIO ─────────
-# Le droit proposé par l'étude (apps_studio_elements.md § 3.6) : `access:
-# "studio"` sur la personne (auth.json), un admin l'a toujours. La porte ne le
-# pose pas encore (ni Admin, ni la demande) : ce module le lit, et garde la
-# demande de la personne en attendant (studio_demandes.json + le journal).
+# Le droit `access` de la porte (core/auth.py, « le Studio » ; étude
+# apps_studio_elements.md § 3.6) : lu là, une seule vérité — un admin l'a
+# toujours, la porte coupée (essais) vaut Cal. La porte ferme aussi les deux
+# routes (auth.STUDIO_ROUTES) ; `need_studio` le redit au plus près du geste.
+# La demande est celle du portail (POST /api/auth/studio, visible dans Admin).
 def studio_state(u: dict | None = None, *, current: bool = True) -> dict:
     u = auth.current() if current and u is None else u
-    if u is None:                       # la porte coupée (essais) : comme Cal
+    if auth.has_studio(u):
         return {"ok": True, "why": "", "asked": None}
-    if auth.is_admin(u) or u.get("access") == "studio":
-        return {"ok": True, "why": "", "asked": None}
-    asked = _read_json("studio_demandes.json").get(u.get("id") or "")
-    return {"ok": False, "why": STUDIO_WHY, "asked": asked,
-            "how": "Cal ouvre le Studio d'une personne ; la demande lui arrive dans le journal d'Admin"}
+    return {"ok": False, "why": STUDIO_WHY, "asked": auth.studio_asked(u),
+            "how": "Cal ouvre le Studio d'une personne dans Admin (Demandes, ou Personnes)"}
 
 
 def need_studio() -> None:
@@ -748,17 +746,9 @@ def api_stems(req):
 
 
 def api_studio_ask(req):
-    u = auth.current()
-    s = studio_state()
-    if s["ok"] or not u:
-        return {"ok": True, "asked": None}
-    with _lock:
-        d = _read_json("studio_demandes.json")
-        if not d.get(u["id"]):
-            d[u["id"]] = library.now()
-            _write_json("studio_demandes.json", d)
-            auth.journal("demande de Studio (app Musique)", user=u["id"], name=u.get("name", ""))
-    return {"ok": False, "asked": d[u["id"]]}
+    """L'ancienne route de l'app Musique : la demande du portail (POST /api/auth/studio)."""
+    r = auth.request_studio(auth.current())
+    return {"ok": r["ok"], "asked": r["asked"]}
 
 
 def api_wave(req, item_id):

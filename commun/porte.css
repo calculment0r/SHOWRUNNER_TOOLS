@@ -41,6 +41,25 @@ body.porte-on { overflow: hidden; }
   animation: porteSlide 2.2s ease-in-out infinite; }
 @keyframes porteSlide { 0% { left: -28%; } 100% { left: 100%; } }
 
+/* ── réservé au Studio (porte.js, studioDoor) ─────────────
+   Venus Rising pour le titre (Norelli n'est qu'au logotype et à l'accueil) ;
+   la seule action orange : « Demander le Studio » ; l'ambre quand elle attend Cal. */
+.studio-door { z-index: 96; }
+.studio-door .studio-t {
+  margin: 0; font-family: var(--f-disp); font-weight: 400; font-size: clamp(20px, 2.6vw, 30px);
+  line-height: 1.15; letter-spacing: .05em; text-transform: uppercase; color: var(--ink);
+}
+.studio-door p b { color: var(--ink); font-weight: 500; }
+.studio-ask { display: flex; flex-direction: column; gap: var(--s3); }
+.studio-ask .tb.go { height: 40px; padding: 0 var(--s5); }
+
+/* les outils Studio fermés d'un compte Apps, dans l'en-tête : grisés, un cadenas ; un clic mène à la demande */
+.hdr .tools a.lock, .hdr .tools-menu a.lock { color: var(--ink3); opacity: .6; display: inline-flex; align-items: center; gap: 5px; }
+.hdr .tools a.lock:hover, .hdr .tools-menu a.lock:hover { opacity: 1; color: var(--amb); background: var(--amb-bg); }
+.hdr .tools-menu a.lock { display: flex; }
+.hdr a.lock .lk { display: inline-flex; width: 10px; height: 10px; flex: none; }
+.hdr a.lock .lk svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
 /* ── le menu du compte (en-tête) ─────────────────────────── */
 .acct {
   position: fixed; z-index: 80; width: min(340px, calc(100vw - 16px)); padding: var(--s4);

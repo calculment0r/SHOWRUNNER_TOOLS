@@ -6,7 +6,7 @@
 // une page d'outil n'a rien à faire pour être gardée. Le serveur juge
 // (core/auth.py) ; cette page ne fait que demander et attendre.
 
-import { api, el, toast, href } from './shell.js';
+import { api, el, toast, href, TOOLS } from './shell.js';
 
 let box = null;
 let pollT = null;
@@ -128,6 +128,89 @@ function paintSuspended(me) {
       try { await api('auth/logout', { method: 'POST' }); } catch { /* */ }
       paintAsk({ state: 'anonymous' });
     } }, 'Taper un autre pseudo'))));
+}
+
+// ── réservé au Studio ───────────────────────────────────────
+// Un compte Apps (core/auth.py : `access`) devant un outil Studio : ce qui est
+// fermé, pourquoi, et la seule action qui le débloque, « Demander le Studio »
+// (règle 7). La page d'un outil Studio la pose d'office (mountHeader, et la page
+// que le portail sert à la place : /api/auth/studio-ferme) ; un outil fermé de
+// l'en-tête l'ouvre au clic (`closable`). Tant que la demande attend, la page
+// relit /api/auth/me : Cal ouvre le Studio dans Admin, elle s'ouvre seule.
+let sBox = null;
+let sPoll = null;
+const fmtDay = (iso) => (iso ? new Date(iso).toLocaleString('fr-FR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : '');
+
+export async function studioDoor(me, tool, { closable = false } = {}) {
+  await styles();
+  document.documentElement.classList.remove('sr-wait');
+  if (!sBox) {
+    sBox = el('div', { class: 'porte studio-door', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'réservé au Studio' });
+    document.body.append(sBox);
+  }
+  document.body.classList.add('porte-on');
+  sBox.hidden = false;
+  paintStudio(me, tool, closable);
+  clearInterval(sPoll);
+  sPoll = setInterval(async () => {
+    try {
+      const m = await api('auth/me');
+      if (m.user && m.user.access === 'studio') { clearInterval(sPoll); location.reload(); }
+    } catch { /* le portail redémarre : on réessaie */ }
+  }, 5000);
+}
+
+function closeStudio() {
+  clearInterval(sPoll);
+  if (sBox) sBox.hidden = true;
+  if (!document.querySelector('.porte:not([hidden]):not(.studio-door)')) document.body.classList.remove('porte-on');
+}
+
+function paintStudio(me, tool, closable) {
+  const asked = me.user && me.user.studio_asked;
+  const studio = TOOLS.filter((x) => x.tier === 'studio' && !x.open).map((x) => x.name.replace(/­/g, ''));
+  const apps = TOOLS.filter((x) => x.tier === 'app' || x.open).map((x) => x.name.replace(/­/g, ''));
+  const state = el('div', { class: 'studio-ask' });
+  const paintAsk = (when) => {
+    if (when) {
+      state.replaceChildren(
+        el('span', { class: 'porte-state' }, el('i'), `demandé le ${fmtDay(when)} · en attente de Cal`),
+        el('p', {}, 'Cal ouvre le Studio depuis sa page d’admin ; cette page s’ouvrira toute seule, tu peux la laisser ouverte.'));
+      return;
+    }
+    const go = el('button', { class: 'tb go', type: 'button', onclick: async () => {
+      go.disabled = true;
+      try {
+        const r = await api('auth/studio', { method: 'POST', body: {} });
+        if (r.ok) { location.reload(); return; }
+        if (me.user) me.user.studio_asked = r.asked;
+        paintAsk(r.asked);
+        toast('demande envoyée à Cal');
+      } catch (e) { go.disabled = false; toast(e.message); }
+    } }, 'Demander le Studio');
+    state.replaceChildren(el('div', { class: 'row' }, go));
+  };
+  paintAsk(asked);
+  sBox.replaceChildren(el('div', { class: 'porte-in' },
+    el('div', { class: 'porte-top' },
+      el('span', { class: 'logo' }, el('span', { class: 'sq' }, el('i')), el('span', {}, el('b', {}, 'Nirvalab'))),
+      el('span', { class: 'sp' }),
+      el('span', { class: 'lbl' }, `${tool.k || 'SR'} · réservé au Studio`)),
+    el('section', { class: 'hero porte-card' },
+      el('span', { class: 'ref' }, '00_STUDIO'),
+      el('h2', { class: 'studio-t' }, `${tool.name.replace(/­/g, '')} fait partie du Studio`),
+      el('p', {}, 'Le Studio, ce sont les outils liés entre eux par les éléments : ', el('b', {}, studio.join(' · ')), '. ',
+        `Ton compte${me.user ? ` (${me.user.name})` : ''} ouvre les Apps et la bibliothèque : `, el('b', {}, apps.join(' · ')), '.'),
+      state,
+      el('div', { class: 'row' },
+        el('a', { class: 'tb ghost sm', href: href('') }, 'Retour à l’accueil'),
+        el('a', { class: 'tb ghost sm', href: href('asset/') }, 'Ouvrir Asset'),
+        el('span', { class: 'sp' }),
+        closable ? el('button', { class: 'tb ghost sm', type: 'button', onclick: closeStudio }, 'Fermer') : null))));
+  if (closable) {
+    const esc = (e) => { if (e.key === 'Escape') { closeStudio(); removeEventListener('keydown', esc); } };
+    addEventListener('keydown', esc);
+  }
 }
 
 // ── le menu de son compte ───────────────────────────────────
