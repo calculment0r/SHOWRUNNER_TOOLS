@@ -1,13 +1,17 @@
 /* ============================================================
    IMAGE — le fil sur toute la largeur (commun/fil.css) et la barre de
    prompt flottante en bas, sur le modèle de la page image de Higgsfield
-   (capture 2 de Cal, 29/09). Les règles du thème : aucune couleur en dur
+   (capture 2 de Cal, 29/09). La création seulement : l'édition est un
+   atelier à part (image/atelier/atelier.css). Les règles du thème : aucune couleur en dur
    (tout vient de commun/tokens.css), des filets et jamais de bordures, un
    seul .tb.go par écran (« Générer », à droite de la barre), les capitales
    pour la machine, la prose en bas de casse.
    ============================================================ */
 
 .img-page { max-width: 1880px; margin: 0 auto; padding: var(--s4) var(--s6) 0; }
+/* Créer / Éditer : le passage entre la création (ici) et l'atelier d'édition (image/atelier/) */
+.im-mode { margin-bottom: var(--s3); }
+.im-mode .tb { min-width: 84px; }
 /* la dernière rangée du fil n'est jamais sous la barre */
 #fil { padding-bottom: calc(var(--pbar-h, 180px) + 40px); }
 /* la place de la page, pas la fenêtre : le panneau Asset ouvert lui en prend (@container sr-page, commun/shell.css) */
@@ -39,7 +43,7 @@ html.sr-dock-on .pbar { --pb-dk: var(--sr-dock-w); }
 .pb-main { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .pb-note { margin: 0; font-size: 10.5px; line-height: 1.4; color: var(--amb); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* ligne 1 : les références, l'image source, le passage en édition */
+/* ligne 1 : les références */
 .pb-refs { display: flex; align-items: center; gap: 6px; min-height: 44px; flex-wrap: wrap; }
 .pb-refs .sp { flex: 1; }
 .pb-ref {
@@ -64,13 +68,6 @@ html.sr-dock-on .pbar { --pb-dk: var(--sr-dock-w); }
 .pb-ref.drop-after { box-shadow: inset -3px 0 0 var(--cy), inset 0 0 0 1px var(--line-cy); }
 .pb-ref.add { display: grid; place-items: center; color: var(--ink3); font-family: var(--f-mono); font-size: 18px; box-shadow: inset 0 0 0 1px var(--line-gr); }
 .pb-ref.add:hover { color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }
-.pb-mode {
-  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border-radius: var(--r2); flex: none;
-  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); font-size: 11.5px; color: var(--ink2);
-}
-.pb-mode:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
-.pb-mode .ic { font-size: 13px; color: var(--ink3); }
-
 /* ligne 2 : le prompt, d'une à trois lignes ; le menu « @ » */
 .pb-text { position: relative; }
 .pb-ta {
@@ -81,7 +78,6 @@ html.sr-dock-on .pbar { --pb-dk: var(--sr-dock-w); }
 /* la barre entière dit qu'on y tape, pas un cadre orange autour du champ */
 .pb-ta:focus-visible { outline: none; }
 .pbar:focus-within { box-shadow: inset 0 0 0 1px var(--line-cy), 0 18px 48px var(--drop-lg); }
-.pb-fixed { margin: 0; padding: 4px 2px; font-size: 12px; line-height: 1.55; color: var(--ink2); }
 .pb-at {
   position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 3; min-width: 260px; max-width: 100%; max-height: 220px; overflow: auto;
   padding: 4px; border-radius: var(--r3); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line-cy), 0 12px 30px var(--drop);
@@ -152,9 +148,6 @@ html.sr-dock-on .pbar { --pb-dk: var(--sr-dock-w); }
 .pp-acc[open] > summary::before { transform: rotate(90deg); }
 .pp-acc[open] > summary { margin-bottom: 6px; }
 .pp-acc > summary:hover { color: var(--ink); }
-.pp-angle { flex-direction: row; flex-wrap: wrap; align-items: flex-start; gap: 18px; }
-.pp-angle .compass { flex: none; width: 230px; margin: 0; }
-.pp-angle .stack { flex: 1; min-width: 220px; gap: 10px; }
 
 @container sr-page (max-width: 700px) {
   .pbar {
@@ -255,33 +248,8 @@ html.sr-dock-on .pbar { --pb-dk: var(--sr-dock-w); }
 .sw[data-id=highkey]::before { background: var(--ink); }
 .sw[data-id=practicals] { background: radial-gradient(circle at 20% 70%, var(--or-bg2), transparent 40%), radial-gradient(circle at 85% 25%, var(--line-cy), transparent 40%), var(--panel); --lx: 30%; --ly: 70%; }
 
-/* ── l'édition : débruitage, boussole des angles, graine ── */
+/* la graine (paramètres avancés) */
 .fld.seed { width: 130px; padding: 5px 8px; font-family: var(--f-mono); font-size: 11px; letter-spacing: .06em; }
-.slide { display: flex; align-items: center; gap: 10px; }
-.slide input { flex: 1; accent-color: var(--or); }
-.slide .val { font-family: var(--f-disp); font-size: 15px; color: var(--cy); min-width: 44px; text-align: right; }
-.scale { display: flex; justify-content: space-between; font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink3); }
-.brush { display: flex; align-items: center; gap: 6px; }
-.brush input { width: 110px; accent-color: var(--or); }
-
-/* la boussole des angles : le sujet vu de dessus */
-.compass {
-  position: relative; width: 100%; max-width: 250px; aspect-ratio: 1; margin: 4px auto 2px; border-radius: 50%;
-  box-shadow: inset 0 0 0 1px var(--line), inset 0 0 0 38px var(--panel2), inset 0 0 0 39px var(--line);
-}
-.compass .who {
-  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 44px; height: 44px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center; background: var(--panel3);
-  font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink3);
-}
-/* le trait : le sujet regarde la caméra « face », en haut */
-.compass .who::after { content: ""; position: absolute; top: -9px; left: 50%; width: 1px; height: 8px; background: var(--or); }
-.compass .pt {
-  position: absolute; transform: translate(-50%, -50%); padding: 3px 6px; border-radius: var(--r1); background: var(--panel2);
-  font-size: 9.5px; line-height: 1.25; text-align: center; color: var(--ink2); white-space: nowrap; box-shadow: inset 0 0 0 1px var(--line);
-}
-.compass .pt:hover { color: var(--ink); }
-.compass .pt.on { color: var(--on-or); background: var(--or); box-shadow: none; }
 
 /* le prompt envoyé */
 pre.sent {
@@ -289,6 +257,9 @@ pre.sent {
   font-family: var(--f-mono); font-size: 10px; line-height: 1.6; color: var(--ink2);
   background: var(--panel2); border-radius: var(--r2); padding: 8px 10px;
 }
+
+/* les essais enchaînés d'une image validée dans l'atelier (visionneuse) */
+.fv-steps { margin: 4px 0 0; padding-left: 18px; font-size: 11.5px; line-height: 1.5; color: var(--ink2); }
 
 /* avant / après, dans la visionneuse */
 .cmpbox { display: flex; align-items: center; justify-content: center; max-width: 100%; max-height: 100%; }
@@ -300,11 +271,3 @@ pre.sent {
   font-family: var(--f-mono); font-size: 8px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink2);
 }
 .cmp .cap.a { left: 12px; margin-top: 30px; } .cmp .cap.b { right: 12px; margin-top: 30px; color: var(--or); }
-
-/* la zone peinte : la grande fenêtre du pinceau */
-.paintm .modal { width: min(1200px, 100%); }
-.pm-body { align-items: center; justify-content: center; background: var(--black); }
-.imwrap { position: relative; display: inline-flex; max-width: 100%; }
-.imwrap img { max-width: 100%; max-height: calc(84 * var(--vh) - 150px); display: block; user-select: none; }
-canvas.paint { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .5; pointer-events: none; }
-canvas.paint.on { pointer-events: auto; cursor: crosshair; }

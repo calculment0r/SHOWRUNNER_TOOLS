@@ -1,8 +1,14 @@
 {
   "tool": "transcrire",
   "title": "Transcrire",
-  "about": "Ce que montre le texte, et s’il suit la lecture.",
+  "about": "La traduction proposée, ce que montre le texte, et s’il suit la lecture.",
   "prefs": [
+    {
+      "key": "to", "label": "Traduire par défaut en", "type": "choice", "default": "",
+      "help": "Rien par défaut : la transcription seule. Une langue ici la propose à chaque nouvelle transcription.",
+      "options": [["", "Pas de traduction"], ["fr", "Français"], ["en", "Anglais"], ["es", "Espagnol"], ["de", "Allemand"],
+                  ["it", "Italien"], ["pt", "Portugais"], ["nl", "Néerlandais"]]
+    },
     {
       "key": "view", "label": "Le texte montré", "type": "choice", "default": "both",
       "options": [["src", "Original"], ["tr", "Traduction"], ["both", "Les deux"]]

@@ -145,15 +145,8 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
 .tr-strip .sg { position: absolute; top: 5px; bottom: 5px; border-radius: 2px; background: var(--c, var(--cy)); opacity: .6; pointer-events: none; }
 .tr-strip .sg.on { opacity: 1; box-shadow: 0 0 0 1px var(--ink); }
 
-/* une teinte par voix : des jetons du portail (l'orange reste l'action) */
-.v0 { --c: var(--cy); }
-.v1 { --c: var(--coral-2); }
-.v2 { --c: var(--grn2); }
-.v3 { --c: var(--amb); }
-.v4 { --c: var(--coral-3); }
-.v5 { --c: var(--ink2); }
-.v6 { --c: var(--coral-1); }
-.v7 { --c: var(--verd-2); }
+/* une teinte par voix : --c, posée par la page (commun/voix.js, teinte) — les huit teintes des voix de
+   Movie Analysis (--pv-0…7, analyse/film/palette.css, liée par index.html), sinon des jetons du portail */
 
 /* la barre du texte */
 .tr-bar {
@@ -164,7 +157,24 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
 .tr-bar .ttl b { font-family: var(--f-disp); font-size: 14px; font-weight: 400; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40ch; }
 .tr-bar .sp { flex: 1; }
 
-.tr-voices { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 2px; }
+/* les voix : LE seul endroit où l'on renomme (une carte par voix, son nom, son temps de parole) */
+.tr-voices { display: flex; flex-direction: column; gap: 6px; }
+.tr-voices-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 0 2px; }
+.tr-vcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px; }
+.vcard {
+  display: grid; grid-template-columns: 14px minmax(0, 1fr); grid-template-rows: auto auto; gap: 2px 8px; align-items: center;
+  padding: 6px 8px; border-radius: var(--r2); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
+}
+.vcard:focus-within { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.vcard i { grid-row: 1 / 3; width: 14px; height: 14px; border-radius: var(--r1); background: var(--c, var(--ink3)); }
+.vcard .fld { height: 26px; padding: 0 6px; font-size: 12.5px; font-weight: 600; background: transparent; box-shadow: none; }
+.vcard .fld:hover { box-shadow: inset 0 0 0 1px var(--line); }
+.vcard .fld:focus { box-shadow: inset 0 0 0 1px var(--line-cy); background: var(--panel2); }
+.vcard small { padding-left: 6px; font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
+
+/* la frise des voix (commun/voix.js) : sous le lecteur, en mode complet */
+.tr-frise[hidden], .tr-lines[hidden], .tr-carnet[hidden] { display: none; }
+
 .who {
   display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 2px 8px 2px 6px; border-radius: var(--r1);
   font-size: 11px; color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -172,8 +182,8 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
 .who::before { content: ""; width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--c, var(--ink3)); }
 .who.none { box-shadow: none; padding: 0; }
 .who.none::before { display: none; }
-.tr-voices .who { cursor: text; }
-.who.editing { outline: none; box-shadow: inset 0 0 0 1px var(--line-cy); background: var(--panel3); }
+/* une voix nommée dans une phrase du carnet */
+.who.inl { display: inline-flex; vertical-align: baseline; padding: 0 6px 0 5px; margin: 0 1px; font-size: .92em; line-height: 1.45; }
 
 /* les répliques : le temps, la voix, le texte, la traduction */
 .tr-lines {
@@ -191,6 +201,13 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
 .ln .tc { font-family: var(--f-mono); font-size: 10px; letter-spacing: .06em; color: var(--ink3); padding-top: 2px; text-align: left; }
 .ln.on .tc { color: var(--cy); }
 .ln .who { justify-self: start; margin-top: 1px; }
+/* rapide : ni voix ni mots — le temps et le texte */
+.tr-lines.sans-voix .ln { grid-template-columns: 52px minmax(0, 1fr); }
+/* complet : chaque mot à son instant ; dans la réplique lue, les mots dits pâlissent, celui qu'on entend se souligne */
+.tx .w { border-radius: 2px; cursor: pointer; transition: color .08s; }
+.tx .w:hover { background: var(--panel3); }
+.ln.on .tx .w.dit { color: var(--ink2); }
+.ln.on .tx .w.ici { color: var(--ink); text-decoration: underline 2px var(--cy); text-underline-offset: 4px; }
 .txs { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .tx { font-size: 13.5px; line-height: 1.5; color: var(--ink); border-radius: var(--r1); padding: 0 4px; margin: 0 -4px; overflow-wrap: anywhere; }
 .tx.tr { color: var(--ink2); font-size: 12.5px; }
@@ -209,6 +226,59 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
 .tr-wait .bar { width: 100%; height: 3px; border-radius: 2px; background: var(--panel3); overflow: hidden; }
 .tr-wait.slim .bar { width: 120px; }
 .tr-wait .bar i { display: block; height: 100%; background: var(--cy); transition: width .4s; }
+
+/* ── le carnet (à la NotebookLM) ────────────────────────── */
+.tr-panes .tb { min-width: 64px; }
+.tr-carnet { display: flex; flex-direction: column; gap: 8px; }
+.cn-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; border-radius: var(--r3);
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
+}
+.cn-head .sp { flex: 1; }
+.cn-about { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cn-about b { font-family: var(--f-disp); font-size: 13px; font-weight: 400; letter-spacing: .06em; text-transform: uppercase; }
+.cn-about span { font-size: 11px; color: var(--ink3); }
+.cn-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: start; }
+@container sr-page (max-width: 1100px) { .cn-grid { grid-template-columns: minmax(0, 1fr); } }
+.cn-card {
+  display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-radius: var(--r3); min-width: 0;
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
+}
+.cn-card-h, .cn-qq { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 26px; }
+.cn-card-h .sp, .cn-qq .sp { flex: 1; }
+.cn-card-h .lbl { color: var(--ink2); }
+.cn-st { font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
+.cn-st.run { color: var(--cy); }
+.cn-st.err { color: var(--or); text-transform: none; letter-spacing: 0; font-family: var(--f-ui); font-size: 11px; }
+.cn-st.old { color: var(--amb); }
+.cn-body { display: flex; flex-direction: column; gap: 8px; }
+.cn-p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--ink); }
+.cn-refs { display: flex; flex-wrap: wrap; gap: 4px; }
+.ref {
+  display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: var(--r1); flex: none;
+  font-family: var(--f-mono); font-size: 9px; letter-spacing: .06em; color: var(--cy); box-shadow: inset 0 0 0 1px var(--line);
+}
+.ref:hover { box-shadow: inset 0 0 0 1px var(--line-cy); background: var(--cy-bg); }
+.cn-sub { display: flex; flex-direction: column; gap: 4px; }
+.cn-list { margin: 0; padding: 0 0 0 16px; display: flex; flex-direction: column; gap: 5px; }
+.cn-list li { font-size: 12.5px; line-height: 1.5; color: var(--ink); }
+.cn-list li .ref { margin-left: 4px; vertical-align: 1px; }
+.cn-who { color: var(--ink2); }
+.cn-chap { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.cn-chap li { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 8px; align-items: start; }
+.cn-chap li > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cn-chap b { font-weight: 600; font-size: 12.5px; }
+.cn-chap span { font-size: 12px; line-height: 1.5; color: var(--ink2); }
+.cn-qa { grid-column: 1 / -1; }
+.cn-ask { display: flex; gap: 6px; }
+.cn-ask .fld { flex: 1; min-width: 0; }
+.cn-qas { display: flex; flex-direction: column; gap: 6px; }
+.cn-q { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: var(--r2); background: var(--panel2); }
+.cn-q.nf .cn-p { color: var(--ink2); }
+.cn-qq b { font-weight: 600; font-size: 12.5px; }
+.cn-qa-a { display: flex; flex-direction: column; gap: 6px; }
+.cn-q .x { width: 20px; height: 20px; border-radius: 50%; color: var(--ink3); font-size: 13px; line-height: 20px; text-align: center; }
+.cn-q .x:hover { color: var(--ink); background: var(--panel3); }
 
 /* ── mes transcriptions ─────────────────────────────────── */
 .tr-studio .side-r { position: sticky; top: 70px; max-height: calc(100 * var(--vh) - 86px); overflow: auto; display: flex; flex-direction: column; gap: 6px; }

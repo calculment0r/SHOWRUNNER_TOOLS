@@ -7,7 +7,7 @@
 <link rel="preload" href="../commun/fonts/norelli-black.otf" as="font" type="font/otf" crossorigin>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>IMAGE · SHOWRUNNER TOOLS</title>
-<meta name="description" content="Créer et éditer des images photo : Z-Image, Qwen-Image 2.1, Krea 2 ; caméra, objectif, pellicule, lumière ; le fil des images et sa barre de prompt.">
+<meta name="description" content="Créer des images photo : Z-Image, Qwen-Image 2.1, Krea 2 ; caméra, objectif, pellicule, lumière ; le fil des images et sa barre de prompt. Éditer : l'atelier.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23e0674a'/%3E%3Crect x='12' y='12' width='8' height='8' rx='2' fill='%23170c08'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -24,6 +24,11 @@
 <!-- Sur le modèle de la page image de Higgsfield (capture 2 de Cal, 29/09) : le fil
      en grille sur toute la largeur, la barre de prompt flottante en bas. -->
 <main class="img-page" aria-label="le fil des images">
+  <!-- Créer / Éditer : la page arrive toujours en Créer ; Éditer ouvre l'atelier (image/atelier/) -->
+  <nav class="im-mode seg" aria-label="créer ou éditer">
+    <a class="tb on" aria-current="page" href="./">Créer</a>
+    <a class="tb" id="mode-edit" href="atelier/">Éditer</a>
+  </nav>
   <div id="banner"></div>
   <div id="fil"></div>
 </main>
@@ -34,7 +39,6 @@
     <div class="pb-refs" id="pb-refs"></div>
     <div class="pb-text" id="pb-text">
       <textarea class="pb-ta" id="prompt" rows="1" spellcheck="false" aria-label="le prompt"></textarea>
-      <p class="pb-fixed" id="pb-fixed" hidden></p>
       <div class="pb-at" id="pb-at" hidden></div>
     </div>
     <div class="pb-chips" id="pb-chips"></div>

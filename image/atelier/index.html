@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>IMAGE · ÉDITER · SHOWRUNNER TOOLS</title>
+<meta name="description" content="L'atelier d'édition d'Image : l'image en grand, ses essais à droite, une consigne en langage naturel, le pinceau, des références ; on valide la bonne version.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23e0674a'/%3E%3Crect x='12' y='12' width='8' height='8' rx='2' fill='%23170c08'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Azeret+Mono:wght@300;400;500&display=swap">
+<link rel="stylesheet" href="../../commun/tokens.css">
+<link rel="stylesheet" href="../../commun/base.css">
+<link rel="stylesheet" href="../../commun/shell.css">
+<link rel="stylesheet" href="../../commun/menu.css" data-sr-menu>
+<link rel="stylesheet" href="./atelier.css">
+</head>
+<body>
+<!-- L'atelier (Cal, 30/09) : l'image toujours sous les yeux, en grand ; à droite
+     le carrousel vertical des essais ; en bas, la consigne en langage naturel. -->
+<main class="atl" id="atl" hidden aria-label="l'atelier d'édition">
+  <div class="atl-top">
+    <nav class="seg" aria-label="créer ou éditer">
+      <a class="tb" href="../">Créer</a>
+      <a class="tb on" aria-current="page" href="./">Éditer</a>
+    </nav>
+    <div class="atl-src" id="src"></div>
+    <span class="sp"></span>
+    <div id="banner"></div>
+    <a class="tb ghost sm" id="other" href="./" title="les autres images en cours d'édition, ou une nouvelle">Autre image</a>
+  </div>
+  <section class="atl-stage" id="stage" aria-label="l'image">
+    <div class="st-top" id="st-top"></div>
+    <div class="st-box" id="st-box"></div>
+    <div class="st-foot" id="st-foot"></div>
+  </section>
+  <aside class="atl-rail" id="rail" aria-label="les essais"></aside>
+  <section class="atl-bar" id="bar" aria-label="la consigne">
+    <div class="ab-row" id="ab-row"></div>
+    <div class="ab-intents" id="intents" role="group" aria-label="intentions (facultatives)"></div>
+    <div class="ab-main">
+      <div class="ab-text">
+        <textarea class="ab-ta" id="prompt" rows="2" spellcheck="false" aria-label="la consigne"></textarea>
+        <p class="ab-fixed" id="fixed" hidden></p>
+      </div>
+      <div class="ab-go" id="act"></div>
+    </div>
+    <p class="ab-note" id="note" hidden></p>
+  </section>
+</main>
+<main class="atl-home" id="home" hidden aria-label="choisir l'image à éditer">
+  <div class="atl-top">
+    <nav class="seg" aria-label="créer ou éditer">
+      <a class="tb" href="../">Créer</a>
+      <a class="tb on" aria-current="page" href="./">Éditer</a>
+    </nav>
+  </div>
+  <section class="ah-drop" id="drop">
+    <h1 class="ah-t">Éditer</h1>
+    <p class="ah-p">Déposez une image ici, ou choisissez-la : elle s'ouvre en grand, vos essais se rangent à droite, vous validez la bonne.</p>
+    <button class="tb go" id="pick" type="button">Choisir une image</button>
+  </section>
+  <section class="ah-list">
+    <div class="c-head"><h2>Reprendre</h2><span class="cnt" id="count"></span></div>
+    <div class="ah-grid" id="sessions"></div>
+  </section>
+</main>
+<script type="module" src="./atelier.js"></script>
+</body>
+</html>
