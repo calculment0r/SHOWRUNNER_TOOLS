@@ -414,7 +414,8 @@ export function install(app) {
   app.on('present', (v) => setCompact(v === true || !!v?.on));
   document.addEventListener('fullscreenchange', () => {
     const f = document.fullscreenElement;
-    setCompact(!!f && f !== document.documentElement && f !== document.body && f.contains(cv));
+    // la présentation met toute la page en plein écran (commun/pleinecran.js) : elle reste réduite
+    setCompact(!!app.atelier?.presenting || (!!f && f !== document.documentElement && f !== document.body && f.contains(cv)));
   });
   document.addEventListener('visibilitychange', () => {
     if (!C.bid) return;

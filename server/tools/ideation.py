@@ -38,6 +38,14 @@ Ce qu'une planche porte (`nodes`, dans l'ordre d'empilement) :
   ink      un trait de crayon : `pts` (x, y entiers de 0 à 1000 dans sa boîte),
            `color`, `width` (px d'écran)
 
+  Les diapositives (docs/etudes/presentations.md, 30/09) : un cadre porte `slide`
+  (sa place dans la présentation), `skip` (masqué), et, s'il est une diapositive,
+  `deck` { ratio 16:9 | 4:3 | 1:1 | 9:16, trans fade | push | morph | cut | fly } —
+  sa taille est alors celle de sa scène (DECK_RATIOS), toujours. Un titre ou une
+  note porte `style` (TEXT_STYLES) et `align` ; un objet, `mid` (le même objet d'une
+  diapositive à l'autre : le morph). La planche porte `pres` { styles } : ce que la
+  présentation change aux styles par défaut (_pres).
+
   group    un groupe (l'étude : docs/etudes/ideation_miro.md § 3) : une
            appartenance, pas une zone — nom, `collapsed` (réduit : une carte),
            `lod` (se réduit de loin), `layout` { mode free | flow, width, gap,
@@ -46,7 +54,7 @@ Ce qu'une planche porte (`nodes`, dans l'ordre d'empilement) :
 
 Les règles des groupes (tenues ici et par la page, ideation/groups.js) : `group`
 pointe vers un nœud `group` présent, sinon il tombe ; pas de groupes imbriqués
-(un groupe n'a pas de `group`), jamais un cadre dans un groupe ; un groupe sans
+(un groupe n'a pas de `group`) ; un cadre peut être dans un groupe (30/09) ; un groupe sans
 enfant disparaît, un groupe à un seul enfant se dissout (ses liens avec lui).
 Le cadre reste une zone : ce qui est entièrement dedans lui appartient.
 
@@ -148,6 +156,68 @@ STICKY = {"coral-3": "on-light", "coral-2": "on-light", "coral-1": "on-coral1", 
 STICKY_NAMES = {"coral-3": "corail clair", "coral-2": "corail", "coral-1": "corail sourd", "amb": "ambre",
                 "verd-3": "vert", "verd-4": "vert sourd", "cy": "acier", "paper": "papier"}
 TITLE_SIZES = {"s": 22, "m": 34, "l": 52}
+# ── les diapositives (docs/etudes/presentations.md § 2.4, étapes 1 à 3) ─────
+# Un cadre qui porte `deck` {ratio, trans} est une diapositive : une scène de
+# taille fixe, en px du monde (le cadre sur la planche EST la scène, que le zoom
+# réduit) ; sa taille suit son format, rien d'autre (juste par construction).
+DECK_RATIOS = {"16:9": (1920, 1080), "4:3": (1440, 1080), "1:1": (1080, 1080), "9:16": (1080, 1920)}
+DECK_TRANS = ("fade", "push", "morph", "cut", "fly")
+DECK_GRID = {"cols": 12, "margin": 96, "gutter": 24, "baseline": 8}   # px de la scène (notre choix, § 2.5)
+TEXT_ALIGN = ("left", "center", "right")
+# les styles de texte nommés (Figma Slides : une gamme ; § 2.5) : leurs valeurs
+# par défaut, en px de la scène ; la planche peut les changer (`pres.styles`)
+TEXT_STYLES = {
+    "display": {"name": "Display", "font": "venus", "size": 120, "weight": 400, "lh": 1.0, "track": 0.02, "upper": True},
+    "h1": {"name": "H1", "font": "venus", "size": 72, "weight": 400, "lh": 1.08, "track": 0.03, "upper": True},
+    "h2": {"name": "H2", "font": "chakra", "size": 52, "weight": 600, "lh": 1.12, "track": 0.0, "upper": False},
+    "body": {"name": "Corps", "font": "chakra", "size": 34, "weight": 400, "lh": 1.45, "track": 0.0, "upper": False},
+    "caption": {"name": "Légende", "font": "chakra", "size": 24, "weight": 400, "lh": 1.4, "track": 0.01, "upper": False},
+    "label": {"name": "Étiquette", "font": "azeret", "size": 18, "weight": 400, "lh": 1.4, "track": 0.18, "upper": True},
+}
+# la bibliothèque de polices de présentation : chaque police déclare sa licence
+# (§ 2.5, décision 3). `web` / `pdf` : ce que la licence permet à la publication
+# et au PDF (étapes 6 et 7, à venir : ils refuseront une police qui ne le permet
+# pas, en disant pourquoi). `portail` : servie aujourd'hui par le portail
+# (commun/base.css, Google Fonts de index.html) ; `google` : chargée à la demande
+# depuis Google Fonts (css2), seulement si un style la prend. Licences relues le
+# 30/09 dans les METADATA.pb de github.com/google/fonts (ofl/<nom>) ; Venus Rising
+# et Norelli : l'étude, [30] [31].
+_OFL = "SIL Open Font License 1.1"
+FONTS = [
+    {"id": "venus", "family": "Venus Rising", "name": "Venus Rising", "src": "portail", "weights": [400], "gen": "sans-serif",
+     "licence": "Typodermic Desktop License", "web": False, "pdf": False, "use": True,
+     "note": "la licence web + PDF est en vente (MyFonts, Fontspring)",
+     "url": "https://typodermicfonts.com/venus-rising-font/"},
+    {"id": "chakra", "family": "Chakra Petch", "name": "Chakra Petch", "src": "portail", "weights": [400, 500, 600, 700], "gen": "sans-serif",
+     "licence": _OFL, "web": True, "pdf": True, "use": True, "note": "Cadson Demak", "url": "https://github.com/google/fonts/tree/main/ofl/chakrapetch"},
+    {"id": "azeret", "family": "Azeret Mono", "name": "Azeret Mono", "src": "portail", "weights": [300, 400, 500], "gen": "monospace",
+     "licence": _OFL, "web": True, "pdf": True, "use": True, "note": "Displaay", "url": "https://github.com/google/fonts/tree/main/ofl/azeretmono"},
+    {"id": "norelli", "family": "Norelli", "name": "Norelli Black", "src": "portail", "weights": [400], "gen": "sans-serif",
+     "licence": "usage personnel seulement", "web": False, "pdf": False, "use": False,
+     "note": "54 signes, ni accents ni chiffres : le logotype seulement, jamais un style", "url": "https://www.dafont.com/norelli-black.font"},
+    # les proposées (OFL, aucune n'est imposée) : deux pour les titres qui remplaceraient Venus Rising
+    # une fois publiés (Unbounded, Syne : larges, géométriques), deux sérifs de caractère (Fraunces,
+    # Instrument Serif), deux linéales de texte (Inter Tight, Space Grotesk)
+    {"id": "unbounded", "family": "Unbounded", "name": "Unbounded", "src": "google", "css": "Unbounded:wght@300;400;600;800",
+     "weights": [300, 400, 600, 800], "gen": "sans-serif", "licence": _OFL, "web": True, "pdf": True, "use": True, "proposed": True,
+     "note": "NaN, 2022 — large et géométrique, le plus proche de Venus Rising", "url": "https://github.com/google/fonts/tree/main/ofl/unbounded"},
+    {"id": "syne", "family": "Syne", "name": "Syne", "src": "google", "css": "Syne:wght@400;600;800", "weights": [400, 600, 800],
+     "gen": "sans-serif", "licence": _OFL, "web": True, "pdf": True, "use": True, "proposed": True,
+     "note": "Bonjour Monde, 2020 — s'élargit en graissant : des titres d'affiche", "url": "https://github.com/google/fonts/tree/main/ofl/syne"},
+    {"id": "fraunces", "family": "Fraunces", "name": "Fraunces", "src": "google", "css": "Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,800",
+     "weights": [300, 400, 600, 800], "gen": "serif", "licence": _OFL, "web": True, "pdf": True, "use": True, "proposed": True,
+     "note": "Undercase Type, 2020 — sérif « old style » à taille optique : le grand titre éditorial", "url": "https://github.com/google/fonts/tree/main/ofl/fraunces"},
+    {"id": "instrument", "family": "Instrument Serif", "name": "Instrument Serif", "src": "google", "css": "Instrument+Serif",
+     "weights": [400], "gen": "serif", "licence": _OFL, "web": True, "pdf": True, "use": True, "proposed": True,
+     "note": "Instrument, 2023 — sérif étroite et fine : un Display élégant, une seule graisse", "url": "https://github.com/google/fonts/tree/main/ofl/instrumentserif"},
+    {"id": "intertight", "family": "Inter Tight", "name": "Inter Tight", "src": "google", "css": "Inter+Tight:wght@300;400;500;600;700",
+     "weights": [300, 400, 500, 600, 700], "gen": "sans-serif", "licence": _OFL, "web": True, "pdf": True, "use": True, "proposed": True,
+     "note": "Rasmus Andersson, 2022 — l'Inter serrée pour les grandes tailles : corps et titres nets", "url": "https://github.com/google/fonts/tree/main/ofl/intertight"},
+    {"id": "spacegrotesk", "family": "Space Grotesk", "name": "Space Grotesk", "src": "google", "css": "Space+Grotesk:wght@300;400;500;700",
+     "weights": [300, 400, 500, 700], "gen": "sans-serif", "licence": _OFL, "web": True, "pdf": True, "use": True, "proposed": True,
+     "note": "Florian Karsten, 2020 — linéale à accent technique, proche de Chakra Petch", "url": "https://github.com/google/fonts/tree/main/ofl/spacegrotesk"},
+]
+FONT_IDS = {f["id"]: f for f in FONTS}
 ETYPE_FR = {"character": "personnage", "object": "objet", "place": "lieu", "style": "style", "other": "élément"}
 LINK_KINDS = ("wire", "arrow", "line", "out")
 MAX_NODES = 3000
@@ -286,8 +356,12 @@ def _node(n) -> dict:
     if isinstance(par, str) and NID.fullmatch(par) and par != nid:
         out["parent"] = par          # vérifié dans normalize : un parent absent tombe
     grp = n.get("group")
-    if t not in ("frame", "group") and isinstance(grp, str) and NID.fullmatch(grp) and grp != nid:
+    # un cadre entre dans un groupe comme les autres objets (Cal, 30/09 : « on ne peut pas les grouper ? »)
+    if t != "group" and isinstance(grp, str) and NID.fullmatch(grp) and grp != nid:
         out["group"] = grp           # vérifié dans normalize : un groupe absent tombe
+    mid = n.get("mid")
+    if t not in ("frame", "group") and isinstance(mid, str) and NID.fullmatch(mid):
+        out["mid"] = mid             # le « morph » d'une diapositive à l'autre : le même objet (dupliquer la diapositive)
     if t == "group":
         lay = n.get("layout") if isinstance(n.get("layout"), dict) else {}
         out.update(name=_s(n.get("name"), 120), collapsed=bool(n.get("collapsed")), lod=bool(n.get("lod")),
@@ -307,12 +381,25 @@ def _node(n) -> dict:
             out["color"] = n.get("color") if n.get("color") in STICKY else next(iter(STICKY))
         if t == "title":
             out["size"] = n.get("size") if n.get("size") in TITLE_SIZES else "m"
+        if t != "sticky":
+            # un style de texte nommé (diapositives) et l'alignement ; un style inconnu tombe
+            if n.get("style") in TEXT_STYLES:
+                out["style"] = n["style"]
+            if n.get("align") in TEXT_ALIGN[1:]:
+                out["align"] = n["align"]
     elif t == "frame":
         out["name"] = _s(n.get("name"), 120)
         # l'ordre de présentation (atelier : présentation par cadres) ; un nombre, sinon rien
         sl = n.get("slide")
         if isinstance(sl, (int, float)) and not isinstance(sl, bool) and math.isfinite(sl):
             out["slide"] = int(max(0, min(9999, sl))) if float(sl).is_integer() else round(max(0.0, min(9999.0, float(sl))), 3)
+        if n.get("skip") is True:
+            out["skip"] = True       # masquée dans la présentation (le cadre reste sur la planche)
+        dk = n.get("deck")
+        if isinstance(dk, dict) and dk.get("ratio") in DECK_RATIOS:
+            # une diapositive : la scène de son format, toujours (le cadre ne se redimensionne pas)
+            out["deck"] = {"ratio": dk["ratio"], "trans": dk.get("trans") if dk.get("trans") in DECK_TRANS else "fade"}
+            out["w"], out["h"] = (float(v) for v in DECK_RATIOS[dk["ratio"]])
     elif t == "gen":
         img = _image()
         model = n.get("model") if n.get("model") in img.MODELS else "krea2"
@@ -388,6 +475,41 @@ def _node(n) -> dict:
         from tools import web_apercu
         out.update(web_apercu.node_fields(n))
     return out
+
+
+def _pres(p) -> dict | None:
+    """Le design de la présentation (`pres` de la planche) : les styles de texte
+    changés par rapport aux défauts (TEXT_STYLES). Une valeur hors bornes revient
+    au défaut ; une police inconnue ou hors des styles (Norelli) tombe. Rien de
+    changé : None (la planche ne porte pas `pres`)."""
+    if not isinstance(p, dict):
+        return None
+    styles = {}
+    raw = p.get("styles") if isinstance(p.get("styles"), dict) else {}
+    for sid, st in raw.items():
+        if sid not in TEXT_STYLES or not isinstance(st, dict):
+            continue
+        o = {}
+        f = st.get("font")
+        if isinstance(f, str) and f in FONT_IDS and FONT_IDS[f]["use"]:
+            o["font"] = f
+        for k, lo, hi in (("size", 6, 400), ("lh", 0.7, 3.0), ("track", -0.2, 1.0)):
+            v = st.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
+                o[k] = round(max(lo, min(hi, float(v))), 3)
+        w = st.get("weight")
+        if isinstance(w, (int, float)) and not isinstance(w, bool) and math.isfinite(w):
+            o["weight"] = int(max(100, min(900, round(w / 100) * 100)))
+        if isinstance(st.get("upper"), bool):
+            o["upper"] = st["upper"]
+        if o:
+            styles[sid] = o
+    return {"styles": styles} if styles else None
+
+
+def style_of(b: dict, sid: str) -> dict:
+    """Un style de texte tel que la planche le montre : le défaut, puis ce que `pres` en change."""
+    return {**TEXT_STYLES[sid], **((b.get("pres") or {}).get("styles") or {}).get(sid, {})}
 
 
 def _card_data(kind: str, d) -> dict:
@@ -471,8 +593,8 @@ def _mind_info(nodes: list) -> dict:
 def _groups(nodes: list) -> tuple[list, set]:
     """Les règles des groupes (ideation/groups.js, tidy : la même) : un ancien
     `parent` qui est un groupe devient `group` ; `group` pointe vers un groupe
-    présent, sinon il tombe ; ni groupe ni cadre dans un groupe (`_node` ne le
-    garde pas) ; un groupe de moins de deux enfants se dissout. Rend les objets
+    présent, sinon il tombe ; pas de groupe dans un groupe (`_node` ne le garde
+    pas ; un cadre, lui, y entre) ; un groupe de moins de deux enfants se dissout. Rend les objets
     gardés et les identifiants des groupes retirés."""
     groups = {nn["id"] for nn in nodes if nn["type"] == "group"}
     for nn in nodes:
@@ -561,6 +683,9 @@ def normalize(b: dict) -> dict:
         links.append(entry)
     out = {"id": b.get("id"), "name": _s(b.get("name") or "Sans titre", 120).strip() or "Sans titre",
            "v": VERSION, "nodes": nodes, "links": links}
+    pres = _pres(b.get("pres"))
+    if pres:
+        out["pres"] = pres
     for k in ("created", "updated", "rev"):
         if k in b:
             out[k] = b[k]
@@ -597,7 +722,9 @@ def r_meta(req):
             "link_kinds": list(LINK_KINDS), "types": list(TYPES), "version": VERSION,
             "limits": {"nodes": MAX_NODES, "links": MAX_LINKS, "slots": MAX_SLOTS},
             "lot": {"max": LOT_MAX, "values": MAX_VALUES},
-            "element_types": list(library.ELEMENT_TYPES), "backend": img.backend(), "movie_engine": _movie().engine()}
+            "element_types": list(library.ELEMENT_TYPES), "backend": img.backend(), "movie_engine": _movie().engine(),
+            "deck": {"ratios": {k: list(v) for k, v in DECK_RATIOS.items()}, "trans": list(DECK_TRANS), "grid": DECK_GRID,
+                     "align": list(TEXT_ALIGN), "styles": TEXT_STYLES, "fonts": FONTS}}
 
 
 def r_list(req):
@@ -941,7 +1068,9 @@ def render(b: dict, frame: str = "", check=lambda: None):
     T = tokens()
     r = region_of(b, frame)
     W, H = r[2] - r[0], r[3] - r[1]
-    s = min(EXPORT_SCALE, MAX_SIDE / max(W, H, 1))
+    # une diapositive s'exporte à la taille de sa scène (1920 × 1080 en 16:9), pas au double
+    deck = next((n for n in b["nodes"] if n["id"] == frame and n.get("deck")), None) if frame else None
+    s = 1.0 if deck else min(EXPORT_SCALE, MAX_SIDE / max(W, H, 1))
     size = (max(16, round(W * s)), max(16, round(H * s)))
     img = Image.new("RGB", size, T["bg"])
     d = ImageDraw.Draw(img)
@@ -995,6 +1124,9 @@ def render(b: dict, frame: str = "", check=lambda: None):
     # 1. les cadres, dessous, les grands d'abord (comme la page : un cadre dans un autre reste visible)
     for n in sorted((m for m in shown if m["type"] == "frame"), key=lambda m: -m["w"] * m["h"]):
         x0, y0, x1, y1 = box(n)
+        if n is deck:            # la scène seule : ni coins ronds, ni filet
+            d.rectangle([x0, y0, x1, y1], fill=T["panel"])
+            continue
         d.rounded_rectangle([x0, y0, x1, y1], radius=rad(9), fill=T["panel"], outline=T["line"], width=max(1, rad(1)))
         name = (n.get("name") or "cadre").upper()
         d.text((x0 + rad(4), y0 - rad(22)), name, font=_font("disp", 13 * s), fill=T["ink2"])
@@ -1092,6 +1224,8 @@ def render(b: dict, frame: str = "", check=lambda: None):
                 d.rounded_rectangle([x0, y0, x1, y1], radius=rad(9), fill=T["panel2"], outline=T["line"], width=max(1, rad(1)))
                 d.text((x0 + rad(14), y0 + rad(12)), "SON", font=_font("mono", 8.5 * s), fill=T["grn2"])
                 d.text((x0 + rad(14), y0 + rad(30)), (n.get("title") or "")[:40], font=_font("ui", 13 * s), fill=T["ink"])
+        elif t in ("note", "title") and n.get("style") in TEXT_STYLES:
+            _styled(d, n, style_of(b, n["style"]), (x0, y0, x1, y1), s, T["ink"])
         elif t == "note":
             d.rounded_rectangle([x0, y0, x1, y1], radius=rad(7), fill=T["panel2"], outline=T["line"], width=max(1, rad(1)))
             text(n, _font("ui", 13 * s), T["ink"], rad(12))
@@ -1203,6 +1337,22 @@ def _dashed(d, q0, q1, dash: float, gap: float, fill, width: int) -> None:
         e = min(L, t + dash)
         d.line([(q0[0] + ux * t, q0[1] + uy * t), (q0[0] + ux * e, q0[1] + uy * e)], fill=fill, width=width)
         t = e + gap
+
+
+def _styled(d, n: dict, st: dict, bx: tuple, s: float, fill) -> None:
+    """Un texte à style nommé (diapositives) : sa taille de scène, son interlignage,
+    ses capitales, son alignement. Le serveur n'a que les polices du dépôt
+    (commun/fonts) : Venus Rising, Azeret Mono, sinon Chakra Petch."""
+    font = _font({"venus": "disp", "azeret": "mono"}.get(st.get("font"), "ui"), st["size"] * s)
+    txt = n.get("text", "")
+    if st.get("upper"):
+        txt = txt.upper()
+    x0, y0, x1, _ = bx
+    lh = font.size * st["lh"]
+    for k, line in enumerate(_wrap(d, txt, font, x1 - x0, 400)):
+        tw = d.textlength(line, font=font)
+        x = x0 if n.get("align") not in ("center", "right") else (x0 + (x1 - x0 - tw) / 2 if n["align"] == "center" else x1 - tw)
+        d.text((x, y0 + k * lh + (lh - font.size) / 2), line, font=font, fill=fill)
 
 
 def _centered(d, text: str, font, box: tuple, fill, one: bool = False, lh_k: float = 1.3) -> None:
@@ -1510,11 +1660,74 @@ def selftest(call, ok) -> None:
     _selftest_lot(call, ok, iid)
     _selftest_groups(call, ok, iid)
     _selftest_objets(call, ok, iid)
+    _selftest_deck(call, ok, iid)
+
+
+def _selftest_deck(call, ok, iid: str) -> None:
+    """Les diapositives (docs/etudes/presentations.md § 2.4, étapes 1 à 3) : un cadre
+    garde son format (la scène), son ordre et son masque ; un texte, son style ; la
+    planche, ses styles changés ; l'export d'une diapositive est sa scène."""
+    from PIL import Image
+    st, meta = call("GET", "/api/ideation/meta")
+    dk = meta.get("deck") or {}
+    ok(st == 200 and dk.get("ratios", {}).get("16:9") == [1920, 1080] and set(dk.get("styles", {})) == set(TEXT_STYLES)
+       and all(f["licence"] and isinstance(f["web"], bool) for f in dk.get("fonts", [])),
+       "diapositives : les formats, les styles et les polices (avec leur licence) dans les réglages")
+    ok(all(TEXT_STYLES[s]["font"] in FONT_IDS and FONT_IDS[TEXT_STYLES[s]["font"]]["use"] for s in TEXT_STYLES)
+       and sum(1 for f in FONTS if f.get("proposed") and f["licence"] == _OFL) >= 4,
+       "diapositives : chaque style a une police de la bibliothèque ; des polices OFL proposées")
+    b = blank("Essai des diapositives")
+    _write(b)
+    nodes = [
+        {"id": "f1", "type": "frame", "x": 0, "y": 0, "w": 400, "h": 300, "name": "Ouverture", "deck": {"ratio": "16:9", "trans": "morph"}, "slide": 2},
+        {"id": "f2", "type": "frame", "x": 2200, "y": 0, "w": 400, "h": 300, "name": "Constat", "deck": {"ratio": "5:4"}, "skip": True},
+        {"id": "f3", "type": "frame", "x": 0, "y": 1400, "w": 500, "h": 500, "deck": {"ratio": "4:3", "trans": "tornade"}, "skip": "oui"},
+        {"id": "t1", "type": "title", "x": 96, "y": 96, "w": 1144, "h": 90, "text": "Réponse au brief", "style": "h1", "align": "center"},
+        {"id": "n1", "type": "note", "x": 96, "y": 400, "w": 700, "h": 90, "text": "trois lignes de corps", "style": "gras", "align": "left"},
+        {"id": "m1", "type": "media", "item": iid, "kind": "image", "x": 1000, "y": 300, "w": 600, "h": 400, "mid": "m-a"},
+        {"id": "s1", "type": "sticky", "x": 3000, "y": 0, "w": 150, "h": 150, "text": "x", "style": "h1"},
+    ]
+    pres = {"styles": {"h1": {"font": "fraunces", "size": 900, "weight": 640, "upper": False}, "body": {"font": "norelli"},
+                       "zz": {"size": 10}}}
+    st, sv = call("POST", f"/api/ideation/boards/{b['id']}", {"name": b["name"], "v": VERSION, "nodes": nodes, "links": [], "pres": pres, "base_rev": 1})
+    st, got = call("GET", f"/api/ideation/boards/{b['id']}")
+    N = {n["id"]: n for n in got.get("nodes", [])}
+    f1, f2, f3 = N.get("f1", {}), N.get("f2", {}), N.get("f3", {})
+    ok((f1.get("w"), f1.get("h")) == (1920, 1080) and f1.get("deck") == {"ratio": "16:9", "trans": "morph"} and f1.get("slide") == 2,
+       f"diapositives : un cadre 16:9 prend la scène 1920 × 1080, garde sa transition et son ordre ({f1})")
+    ok("deck" not in f2 and (f2.get("w"), f2.get("h")) == (400, 300) and f2.get("skip") is True,
+       "diapositives : un format inconnu laisse un cadre libre ; masquée, elle le reste")
+    ok((f3.get("w"), f3.get("h")) == (1440, 1080) and f3["deck"]["trans"] == "fade" and "skip" not in f3,
+       "diapositives : 4:3 = 1440 × 1080, une transition inconnue revient au fondu, un masque illisible tombe")
+    ok(N.get("t1", {}).get("style") == "h1" and N["t1"].get("align") == "center" and "style" not in N.get("n1", {})
+       and "align" not in N["n1"] and "style" not in N.get("s1", {}) and N.get("m1", {}).get("mid") == "m-a",
+       "diapositives : un texte garde son style et son alignement (un style inconnu tombe, un post-it n'en a pas) ; un objet, son mid")
+    ok(got.get("pres") == {"styles": {"h1": {"font": "fraunces", "size": 400.0, "weight": 600, "upper": False}}},
+       f"diapositives : les styles de la planche sont bornés, Norelli n'est pas une police de style ({got.get('pres')})")
+    ok(style_of(got, "h1")["size"] == 400.0 and style_of(got, "h1")["lh"] == TEXT_STYLES["h1"]["lh"] and style_of(got, "body") == TEXT_STYLES["body"],
+       "diapositives : un style lu = son défaut, puis ce que la planche en change")
+    # l'export d'une diapositive : sa scène, à l'échelle 1
+    st, j = call("POST", f"/api/ideation/boards/{b['id']}/export", {"frame": "f1"})
+    for _ in range(150):
+        st, j = call("GET", f"/api/jobs/{j['id']}")
+        if j["state"] in ("done", "error", "cancelled"):
+            break
+        time.sleep(0.2)
+    it = (j.get("items") or [{}])[0]
+    ok(j.get("state") == "done" and (it.get("width"), it.get("height")) == (1920, 1080),
+       f"diapositives : l'export PNG d'une diapositive = la scène ({it.get('width')} × {it.get('height')})")
+    if it.get("id"):
+        with Image.open(library.path_of(library.get(it["id"]))) as ex:
+            px = ex.convert("RGB").getpixel((1150, 500))   # la moitié gauche (rouge) de l'image posée à (1000, 300)
+        ok(px[0] > 180 and px[2] < 80, f"diapositives : l'image posée est à sa place dans la scène exportée ({px})")
+    st, _ = call("POST", f"/api/ideation/boards/{b['id']}", {**got, "pres": None, "base_rev": got["rev"]})
+    st, got = call("GET", f"/api/ideation/boards/{b['id']}")
+    ok("pres" not in got, "diapositives : des styles revenus aux défauts ne laissent rien sur la planche")
 
 
 def _selftest_groups(call, ok, iid: str) -> None:
     """Les groupes (docs/etudes/ideation_miro.md § 3.1) : l'appartenance sur
-    l'enfant, bornée ; pas d'imbrication, pas de cadre dans un groupe ; un groupe
+    l'enfant, bornée ; pas d'imbrication (un cadre, lui, y entre depuis le 30/09) ; un groupe
     vide disparaît, un groupe à un enfant se dissout avec ses liens ; l'ancien
     `parent` vers un groupe devient `group` ; l'export montre un groupe réduit déplié."""
     from PIL import Image
@@ -1551,8 +1764,8 @@ def _selftest_groups(call, ok, iid: str) -> None:
        "groupes : l'appartenance est sur l'enfant, gardée quand le groupe est là")
     ok(N.get("n3", {}).get("group") == "g1" and "parent" not in N.get("n3", {}),
        f"groupes : un ancien parent qui est un groupe devient son appartenance (sans perte) ({N.get('n3')})")
-    ok("group" not in N.get("f1", {}) and "g2" not in N and "group" not in N.get("n2", {}),
-       "groupes : un cadre n'entre pas dans un groupe ; un groupe dans un groupe n'y reste pas, et, seul avec un enfant, il se dissout")
+    ok(N.get("f1", {}).get("group") == "g1" and "g2" not in N and "group" not in N.get("n2", {}),
+       "groupes : un cadre entre dans un groupe (Cal, 30/09) ; un groupe dans un groupe n'y reste pas, et, seul avec un enfant, il se dissout")
     ok("g3" not in N and "group" not in N.get("s1", {}) and "parent" not in N.get("n5", {}),
        "groupes : un groupe vide disparaît ; une appartenance vers un groupe absent tombe")
     ok([lk["id"] for lk in got.get("links", [])] == ["l2"],

@@ -1,0 +1,64 @@
+/* ============================================================
+   IDÉATION — les deux barres (Cal, 30/09 : « séparer les outils en
+   deux barres comme Miro : en haut à droite les trucs de gestion de
+   board, et sur le côté à gauche les outils sur la board »).
+   Miro (help.miro.com, « Toolbars », relu le 30/09) : le menu de la
+   planche en haut à gauche ; la collaboration, les personnes et la
+   présentation en haut à droite ; la barre de création, verticale, à
+   gauche de la planche, annuler / rétablir dessous ; le zoom en bas à
+   droite. La barre du haut : ideation.css et barre.js ; celle-ci, sur
+   la planche (index.html, .ide-bar.ide-side) ; barre.js tient ses gestes.
+   Jetons seulement, des filets (inset), aucune couleur en dur.
+   ============================================================ */
+
+/* la largeur de la barre des outils, marge comprise : ce qui est posé à gauche de la planche se range à sa droite */
+.cv { --side-w: 64px; }
+
+/* Cal, 30/09 : « plus sombre, icônes plus grosses — c'est trop petit sur un écran 13 pouces ;
+   j'aime pas beaucoup le cadre vert autour des icônes ». Le fond le plus profond du thème
+   (--bg : plus sombre que la planche en sombre, un gris sous le papier en clair), des cibles de
+   40 px (36 sur un écran bas), des icônes de 21 px ; plus de filet vert : le survol et l'outil
+   pris se lisent au fond (--panel3, --sel-bg) */
+.ide-bar.ide-side {
+  position: absolute; left: 8px; top: 8px; z-index: 8;
+  flex-direction: column; align-items: center; gap: 6px; padding: 5px;
+  max-height: calc(100% - 16px); overflow-y: auto; overflow-x: hidden; scrollbar-width: none;
+  border-radius: var(--r4); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line), 0 10px 26px var(--drop);
+}
+.ide-bar.ide-side::-webkit-scrollbar { display: none; }
+.ide-bar.ide-side .tgrp { flex-direction: column; gap: 2px; }
+/* un filet entre deux groupes */
+.ide-bar.ide-side > .tgrp + .tgrp { padding-top: 6px; box-shadow: inset 0 1px 0 var(--line); }
+.ide-bar.ide-side button.ic { width: 40px; height: 40px; border-radius: var(--r3); box-shadow: none; color: var(--ink2); }
+.ide-bar.ide-side button.ic svg { width: 21px; height: 21px; }
+.ide-bar.ide-side button.ic:hover:not(:disabled) { background: var(--panel3); color: var(--ink); box-shadow: none; }
+.ide-bar.ide-side button.ic.on, .ide-bar.ide-side button.ic.on:hover:not(:disabled) { background: var(--sel-bg); color: var(--ink); box-shadow: none; }
+.ide-bar.ide-side button.ic:focus-visible { outline: 2px solid var(--line-cy); outline-offset: -2px; }
+@media (max-height: 860px) {
+  .cv { --side-w: 60px; }
+  .ide-bar.ide-side { gap: 4px; padding: 4px; }
+  .ide-bar.ide-side button.ic { width: 36px; height: 36px; }
+  .ide-bar.ide-side button.ic svg { width: 20px; height: 20px; }
+  .ide-bar.ide-side > .tgrp + .tgrp { padding-top: 4px; }
+}
+body.at-presenting .ide-side { display: none; }
+
+/* ce qui est posé à gauche de la planche (le bandeau du moteur, le panneau Diapositives, le
+   rappel des gestes, les vues, les modèles et l'aimant) passe à droite de la barre */
+.cv > .banner, .cv > .dp-panel, .cv > .hint, .cv > .at-views, .cv > .ob-dock { left: calc(4px + var(--side-w)); }
+
+/* les poignées d'un cadre choisi : le coin (ideation.css, .rz), le bord droit et le bas
+   (un côté seulement), à taille d'écran constante (canvas.js, startResize) */
+.fr .rz.rz-e, .fr .rz.rz-s { border-radius: 99px; }
+.fr .rz.rz-e { top: 50%; bottom: auto; width: calc(7px / var(--z)); height: calc(30px / var(--z)); transform: translate(50%, -50%); cursor: ew-resize; }
+.fr .rz.rz-s { left: 50%; right: auto; width: calc(30px / var(--z)); height: calc(7px / var(--z)); transform: translate(-50%, 50%); cursor: ns-resize; }
+
+/* la barre du haut : les outils partis à gauche, elle a la place de dire Présenter et
+   Exporter en mots jusqu'à 1180 px (ideation.css les réduisait à leur icône sous 1600) */
+@media (min-width: 1181px) {
+  .ide-bar .tb.cmp.at-present, .ide-bar .tb.cmp#b-export { width: auto; padding: 0 10px; }
+  .ide-bar .tb.cmp.at-present .bi, .ide-bar .tb.cmp#b-export .bi { display: none; }
+  .ide-bar .tb.cmp.at-present .bt, .ide-bar .tb.cmp#b-export .bt { display: inline; }
+}
+.ide-bar .at-grp .tb.at-present { margin-right: 4px; }
+.ide-bar .at-grp .tb.at-present.on { color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }

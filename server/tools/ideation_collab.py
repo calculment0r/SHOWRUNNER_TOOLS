@@ -1151,6 +1151,7 @@ def r_signal(req, bid):
 #                          d'un objet, k = ends : {a, b, pa, pb} d'un lien (un geste ne se
 #                          mélange pas) ; un objet absent : ignoré (le retrait gagne)
 #   {o: set, t: b, k: name, v}
+#   {o: set, t: b, k: pres, v}   le design de la présentation (ideation._pres ; `v` absent : les défauts)
 #   {o: ord, t, ids}       l'ordre (l'empilement, l'ordre des fils) tel que la page le voit :
 #                          ce qu'elle ne connaissait pas reste après son voisin d'avant
 # Chaque lot devient un événement `op` : {rev, sid, n, user, name, ops (acceptées,
@@ -1464,6 +1465,14 @@ def _one(ide, h: dict, op, added: set, allowed=None):
         if o == "set" and op.get("k") == "name":
             B["name"] = ide._s(op.get("v"), 120).strip() or "Sans titre"
             return {"o": "set", "t": "b", "k": "name", "v": B["name"]}
+        if o == "set" and op.get("k") == "pres":
+            # le design de la présentation (les styles de texte) : un registre de la planche
+            pres = ide._pres(op.get("v"))
+            if pres:
+                B["pres"] = pres
+                return {"o": "set", "t": "b", "k": "pres", "v": pres}
+            B.pop("pres", None)
+            return {"o": "set", "t": "b", "k": "pres"}
         raise _Drop("invalide")
     if t not in ("n", "l"):
         raise _Drop("invalide")
@@ -2003,6 +2012,14 @@ def _selftest_ops(call, ok) -> None:
         A(2, [{"o": "set", "t": "n", "id": "s1", "k": "color", "v": "amb"}])
         B(2, [{"o": "set", "t": "n", "id": "s1", "k": "color", "v": "cy"}])
         ok((node("s1") or {}).get("color") == "cy", "co-édition : la même propriété, le dernier écrit gagne")
+        # les diapositives : le design de la présentation est un registre de la planche (borné comme l'enregistrement)
+        s_p, _ = call("POST", f"{base}/ops", {"sid": "sid-cccccccc", "n": 1, "ops": [{"o": "set", "t": "b", "k": "pres", "v": {"styles": {"h1": {"size": 88, "font": "inconnue"}}}}]})
+        _, ep = fb.wait(lambda e, d: e == "op" and d["sid"] == "sid-cccccccc")
+        st, got = call("GET", f"/api/ideation/boards/{bid}")
+        ok(s_p == 200 and got.get("pres") == {"styles": {"h1": {"size": 88.0}}} and ep and ep["ops"] == [{"o": "set", "t": "b", "k": "pres", "v": {"styles": {"h1": {"size": 88.0}}}}],
+           f"co-édition : les styles de la présentation passent par le flux, bornés ({got.get('pres')})")
+        call("POST", f"{base}/ops", {"sid": "sid-cccccccc", "n": 2, "ops": [{"o": "set", "t": "b", "k": "pres"}]})
+        ok("pres" not in call("GET", f"/api/ideation/boards/{bid}")[1], "co-édition : des styles retirés, la planche revient aux défauts")
         # le retrait gagne : A retire s1 (son lien part avec lui), B le modifie ensuite
         A(3, [{"o": "del", "t": "n", "id": "s1"}])
         B(3, [{"o": "set", "t": "n", "id": "s1", "k": "text", "v": "trop tard"}])

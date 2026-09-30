@@ -143,7 +143,7 @@ function mapPos(was, now, p) {
   return s + r.length;
 }
 function keysOf(op) {
-  if (op.t === 'b') return ['b||name'];
+  if (op.t === 'b') return ['b||' + (op.k || 'name')];
   if (op.o === 'ord') return [`${op.t}|#`];
   if (op.o === 'add') return [`${op.t}|${op.v.id}|*`, `${op.t}|#`];
   if (op.o === 'del') return [`${op.t}|${op.id}|*`];
@@ -168,8 +168,10 @@ function appended(now, was) {
   }
   return true;
 }
+// le design de la présentation d'une planche (absent : les styles par défaut)
+const setPres = (B, v) => { if (v === undefined || v === null) delete B.pres; else B.pres = clone(v); };
 const snapshot = (b) => ({
-  name: b.name, N: new Map(b.nodes.map((n) => [n.id, clone(n)])), L: new Map(b.links.map((l) => [l.id, clone(l)])),
+  name: b.name, pres: clone(b.pres), N: new Map(b.nodes.map((n) => [n.id, clone(n)])), L: new Map(b.links.map((l) => [l.id, clone(l)])),
   no: b.nodes.map((n) => n.id), lo: b.links.map((l) => l.id),
 });
 
@@ -250,6 +252,7 @@ export function createCoedition(app, hooks = {}) {
     const E = [...g.m.entries()].sort((a, b) => phase(...a) - phase(...b));
     for (const [key, bf] of E) {
       const [t, id, k] = parse(key);
+      if (t === 'b' && k === 'pres') { back.m.set(key, { v: clone(B.pres) }); setPres(B, bf.v); continue; }
       if (t === 'b') { back.m.set(key, { v: B.name }); B.name = bf.v; nameUi(); continue; }
       const list = t === 'n' ? B.nodes : B.links;
       if (k === '#') { back.m.set(key, { ids: list.map((x) => x.id) }); reorder(list, bf.ids); continue; }
@@ -355,6 +358,14 @@ export function createCoedition(app, hooks = {}) {
       rec('b||name', { v: K.base.name });
       K.base.name = B.name;
     }
+    // le design de la présentation (diapo/) : un registre de la planche
+    if (!eq(B.pres, K.base.pres)) {
+      const op = { o: 'set', t: 'b', k: 'pres' };
+      if (B.pres !== undefined) op.v = clone(B.pres);
+      out.push(op);
+      rec('b||pres', { v: clone(K.base.pres) });
+      K.base.pres = clone(B.pres);
+    }
     return out;
   }
   // pendant un geste : la géométrie seulement (quelques comparaisons de nombres par objet)
@@ -392,6 +403,7 @@ export function createCoedition(app, hooks = {}) {
     const B = S.board;
     const why = (w) => { K.stats.why = w; return true; };
     if (B.name !== K.base.name || B.nodes.length !== K.base.N.size || B.links.length !== K.base.L.size) return why('taille');
+    if (!eq(B.pres, K.base.pres)) return why('présentation');
     const flow = new Set(B.nodes.filter((g) => g.type === 'group' && g.layout?.mode === 'flow').map((g) => g.id));
     for (const o of B.nodes) { const b = K.base.N.get(o.id); if (!b || !eq(strip(o, flow), strip(b, flow))) return why(`objet ${o.id}`); }
     for (const l of B.links) { const b = K.base.L.get(l.id); if (!b || !eq(l, b)) return why(`lien ${l.id}`); }
@@ -413,6 +425,7 @@ export function createCoedition(app, hooks = {}) {
     B.nodes = fit(B.nodes, b.no, b.N);
     B.links = fit(B.links, b.lo, b.L);
     B.name = b.name;
+    setPres(B, b.pres);
     nameUi();
     full();
     K.stats.restored = (K.stats.restored || 0) + 1;
@@ -673,6 +686,15 @@ export function createCoedition(app, hooks = {}) {
     K.base[t === 'n' ? 'no' : 'lo'] = now;
     return now.join('|') !== before;
   }
+  // les styles de la présentation venus d'un autre : sauf si j'y ai un changement non confirmé
+  function putPres(v) {
+    if (pending('b||pres')) return false;
+    const dirty = !eq(S.board.pres, K.base.pres);
+    K.base.pres = clone(v);
+    if (dirty || eq(S.board.pres, v)) return false;
+    setPres(S.board, v);
+    return true;
+  }
   function putName(v) {
     if (pending('b||name')) return false;
     const dirty = S.board.name !== K.base.name;
@@ -689,7 +711,11 @@ export function createCoedition(app, hooks = {}) {
     else K.stats.got++;
     const R = { full: false, geo: new Set(), items: [] };
     for (const op of [...(ev.ops || []), ...(ev.fx || [])]) {
-      if (op.t === 'b') { if (op.k === 'name' && putName(op.v)) R.full = true; continue; }
+      if (op.t === 'b') {
+        if (op.k === 'name' && putName(op.v)) R.full = true;
+        if (op.k === 'pres' && putPres(op.v)) R.full = true;
+        continue;
+      }
       if (op.t !== 'n' && op.t !== 'l') continue;
       if (op.o === 'set') {
         const o = find(op.t, op.id), b = baseMap(op.t).get(op.id);
@@ -743,7 +769,7 @@ export function createCoedition(app, hooks = {}) {
   // ── se recaler : la planche relue, mes gestes rejoués dessus ─
   function replay(op) {
     const B = S.board;
-    if (op.t === 'b') { if (op.k === 'name') B.name = op.v; return; }
+    if (op.t === 'b') { if (op.k === 'name') B.name = op.v; if (op.k === 'pres') setPres(B, op.v); return; }
     const list = op.t === 'n' ? B.nodes : B.links;
     if (op.o === 'add') {
       const o = list.find((x) => x.id === op.v.id);
@@ -771,6 +797,7 @@ export function createCoedition(app, hooks = {}) {
     B.nodes = fit(B.nodes, b.nodes);
     B.links = fit(B.links, b.links);
     B.name = b.name; B.rev = b.rev; B.updated = b.updated;
+    setPres(B, b.pres);
     S.rev = b.rev;
     K.base = snapshot(b);
     nameUi();

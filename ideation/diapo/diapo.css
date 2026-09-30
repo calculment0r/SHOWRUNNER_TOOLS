@@ -1,0 +1,107 @@
+/* ============================================================
+   IDÉATION · DIAPOSITIVES — le cadre-diapositive, sa grille, les
+   textes à style, le panneau Diapositives, le dialogue des styles.
+   Règles du thème : les jetons seulement, des filets (inset), aucun
+   .tb.go ici (l'orange reste à Générer), les capitales pour la machine.
+   Les polices des styles sont des données de la présentation (feuille
+   vivante, polices.js), pas des jetons du thème.
+   Chargée par diapo/index.js, après ideation.css et atelier.css.
+   ============================================================ */
+
+/* ── le cadre-diapositive ─────────────────────────────────── */
+.fr.deck { border-radius: 0; }
+.fr.deck .rz { display: none !important; }          /* sa taille est celle de sa scène : son format la change */
+.fr-h .dp-no { font-family: var(--f-mono); font-size: .62em; letter-spacing: .12em; color: var(--cy); }
+.fr-h .dp-no:empty { display: none; }
+.fr-h .dp-fmt { font-family: var(--f-mono); font-size: .56em; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); }
+/* de loin, une diapositive reste lisible : pas de nom en grand par-dessus sa scène */
+.cv.far .fr.deck .fr-big { display: none; }
+.cv.far .fr.deck .fr-h { visibility: visible; }
+/* les 12 colonnes, entre les marges : sur la diapositive choisie, et pendant qu'on y déplace un objet */
+.dp-grid {
+  position: absolute; top: 0; bottom: 0; left: var(--dp-m); right: var(--dp-m); pointer-events: none;
+  opacity: 0; transition: opacity .15s;
+  background: repeating-linear-gradient(to right, var(--cy-bg) 0 var(--dp-cw), transparent var(--dp-cw) calc(var(--dp-cw) + var(--dp-g)));
+  box-shadow: inset calc(1px / var(--z)) 0 0 var(--line-cy), inset calc(-1px / var(--z)) 0 0 var(--line-cy);
+}
+.fr.deck.sel .dp-grid, .fr.deck.dp-on .dp-grid { opacity: .7; }
+/* le panneau posé à gauche : le bandeau du moteur factice passe à sa droite */
+.cv:has(> .dp-panel:not([hidden])) > .banner { left: calc(256px + var(--side-w, 0px)); }
+
+/* ── un texte à style : la police de la présentation, sans la boîte d'une note ── */
+.cv .nd.note[data-st] { background: none; box-shadow: none; padding: 0; min-height: 0; }
+.cv .nd.note[data-st].sel { box-shadow: 0 0 0 calc(2px / var(--z)) var(--or); }
+.cv .nd[data-st] > .txt { color: var(--ink); }
+.cv .nd[data-st="display"] > .txt, .cv .nd[data-st="h1"] > .txt, .cv .nd[data-st="h2"] > .txt { text-wrap: balance; }
+.cv .nd[data-st="body"] > .txt, .cv .nd[data-st="caption"] > .txt { text-wrap: pretty; }
+.cv .nd[data-al="center"] > .txt { text-align: center; }
+.cv .nd[data-al="right"] > .txt { text-align: right; }
+.cv.far .nd.note[data-st] .txt:not(.editing), .cv.far .nd.title[data-st] .txt:not(.editing) { visibility: visible; }
+.cv.far .nd.note[data-st] { background: none; }
+
+/* ── le panneau Diapositives ──────────────────────────────── */
+.dp-panel {
+  left: 12px; top: 12px; bottom: 118px; width: 232px; z-index: 7;   /* au-dessus des modèles et des vues (coin bas gauche) */
+  display: flex; flex-direction: column; border-radius: var(--r4); overflow: hidden;
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line), 0 14px 36px var(--drop);
+}
+.dp-panel[hidden] { display: none; }
+body.at-presenting .dp-panel { display: none; }
+.dp-h { display: flex; align-items: center; gap: 6px; padding: 8px 8px 8px 12px; box-shadow: inset 0 -1px 0 var(--line); }
+.dp-h .dp-n { color: var(--cy); }
+.dp-h .tb.sm { height: 24px; padding: 0 8px; }
+.dp-h .dp-x { width: 24px; padding: 0; }
+.dp-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.dp-row {
+  position: relative; display: grid; grid-template-columns: 20px minmax(0, 1fr); grid-template-rows: auto auto; gap: 4px 6px;
+  padding: 6px; border-radius: var(--r3); cursor: grab; user-select: none; touch-action: none;
+}
+.dp-row:hover { background: var(--panel2); }
+.dp-row.sel { box-shadow: inset 0 0 0 1px var(--line-or); background: var(--panel2); }
+.dp-row.drag { opacity: .35; cursor: grabbing; }
+.dp-row.over-t { box-shadow: inset 0 2px 0 var(--cy); }
+.dp-row.over-b { box-shadow: inset 0 -2px 0 var(--cy); }
+.dp-row .no { grid-row: 1; font-family: var(--f-mono); font-size: 9px; letter-spacing: .08em; color: var(--cy); padding-top: 2px; }
+.dp-row .dp-th { grid-row: 1; grid-column: 2; width: 100%; max-height: 150px; display: block; border-radius: var(--r1); box-shadow: inset 0 0 0 1px var(--line); }
+.dp-row .dp-th.free { max-width: 70%; }
+.dp-row .nm { grid-row: 2; grid-column: 2; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.dp-row .nm b { font-weight: 500; font-size: 11.5px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dp-row .nm small { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); }
+.dp-row.off .dp-th, .dp-row.off .nm, .dp-row.off .no { opacity: .4; }
+.dp-row .ops {
+  position: absolute; right: 10px; top: 10px; display: flex; gap: 3px; opacity: 0; transition: opacity .12s;
+}
+.dp-row:hover .ops, .dp-row:focus-within .ops { opacity: 1; }
+.dp-row .ops .tb.sm { height: 22px; min-width: 22px; padding: 0 5px; background: var(--veil); }
+.dp-empty { margin: 8px 6px; font-size: 11.5px; line-height: 1.5; color: var(--ink3); }
+.dp-f { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px; box-shadow: inset 0 1px 0 var(--line); }
+.dp-f .tb.sm { height: 24px; padding: 0 8px; }
+
+/* ── l'inspecteur : des segments qui passent à la ligne ───── */
+.seg.dp-seg { flex-wrap: wrap; }
+
+/* ── le dialogue des styles ───────────────────────────────── */
+.dp-styles { display: flex; flex-direction: column; gap: 10px; }
+.dp-srow { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--r3); background: var(--panel2); }
+.dp-sh { display: flex; align-items: baseline; gap: 10px; }
+.dp-sh b { font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.dp-sh .sp { flex: 1; }
+.dp-sample { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 2px 0; }
+.dp-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dp-ctl select.fld { width: auto; min-width: 0; }
+.dp-num { display: inline-flex; align-items: center; gap: 5px; }
+.dp-num input { width: 74px; }
+.dp-chk { display: inline-flex; align-items: center; gap: 5px; }
+.dp-fonts { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.dp-font { display: grid; grid-template-columns: minmax(120px, auto) auto 1fr auto; align-items: baseline; gap: 10px; padding: 5px 2px; box-shadow: inset 0 -1px 0 var(--line); }
+.dp-font b { font-weight: 400; font-size: 15px; color: var(--ink); white-space: nowrap; }
+.dp-font.off b { color: var(--ink3); }
+.dp-font small { font-size: 10.5px; line-height: 1.4; color: var(--ink3); }
+.dp-lic { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .16em; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; white-space: nowrap; }
+.dp-lic.ok { color: var(--grn2); box-shadow: inset 0 0 0 1px var(--line-gr); }
+.dp-lic.no { color: var(--amb); box-shadow: inset 0 0 0 1px var(--line-amb); }
+.dp-src { font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--cy); white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dp-grid, .dp-row .ops { transition: none; }
+}

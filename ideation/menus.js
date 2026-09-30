@@ -33,8 +33,8 @@ export function createMenus(app) {
     const refs = refable(flat);
     const stickies = flat.filter((n) => n.type === 'sticky');
     const why = G().whyNot(us);
-    const sized = us.filter((n) => n.type !== 'group' && n.type !== 'frame');
-    const noSize = sized.length < 2 ? 'choisissez au moins deux objets (un groupe ou un cadre ne se met pas à la taille d’un autre)' : '';
+    const sized = us.filter((n) => n.type !== 'group' && !n.deck);   // les cadres aussi (30/09) ; une diapositive garde sa scène
+    const noSize = sized.length < 2 ? 'choisissez au moins deux objets (un groupe ou une diapositive ne se met pas à la taille d’un autre)' : '';
     return [{ head: `${us.length} objets` },
       { label: 'Grouper', key: 'ctrl+G', disabled: !!why, why, onclick: () => G().group() },
       us.some((n) => n.type === 'group') ? { label: 'Dégrouper', key: 'ctrl+maj+G', onclick: () => G().ungroup() } : null,
@@ -45,6 +45,7 @@ export function createMenus(app) {
         { label: 'À la verticale', key: 'Alt+maj+V', onclick: () => app.distribute('y') }] },
       { label: 'Même hauteur', sub: 'le premier choisi', disabled: !!noSize, why: noSize, onclick: () => app.sameSize('h') },
       { label: 'Même largeur', sub: 'le premier choisi', disabled: !!noSize, why: noSize, onclick: () => app.sameSize('w') },
+      { label: 'Même taille', sub: 'le premier choisi', disabled: !!noSize, why: noSize, onclick: () => app.sameSize('wh') },
       { label: 'Ranger', key: 'ctrl+alt+T', onclick: () => app.tidy() },
       '-',
       { label: 'Encadrer', key: 'ctrl+alt+G', onclick: () => app.frameAround() },
@@ -53,6 +54,8 @@ export function createMenus(app) {
       stickies.length ? { label: 'Couleur des post-it', items: colorItems(stickies) } : null,
       // regrouper par couleur, convertir en mind map (objets/)
       ...(app.objets?.selectionItems(us) || []),
+      // des cadres choisis : en faire des diapositives (diapo/)
+      ...(app.diapo?.selItems(us) || []),
       '-', ...order, remove];
   }
 
@@ -114,6 +117,8 @@ export function createMenus(app) {
       // formes, cartes, nœuds de mind map, traits (objets/)
       out.push(...app.objets.menu(n));
     }
+    // un cadre : sa diapositive (format, transition) ; un texte : son style (diapo/)
+    out.push(...(app.diapo?.nodeItems(n) || []));
     // un post-it, une note, une forme, une carte : en mind map ; des post-it : par couleur
     if (['note', 'sticky', 'title', 'shape', 'card'].includes(n.type) && app.objets) out.push({ label: 'Convertir en mind map', onclick: () => app.objets.toMind() });
     // un objet choisi dans son groupe : l'en sortir (une mind map sort tout entière)
@@ -159,6 +164,7 @@ export function createMenus(app) {
       { label: 'Titre', key: 'T', onclick: at('title') }, { label: 'Cadre', key: 'F', onclick: at('frame') },
       // forme, carte, mind map, modèle d'atelier (objets/)
       ...(app.objets?.boardItems(wx, wy) || []),
+      ...(app.diapo?.boardItems(wx, wy) || []),
       '-', { label: 'Générer image', key: 'G', dot: 'or', onclick: at('gen') },
       { label: 'Générer vidéo', key: 'M', dot: 'cy', onclick: at('vgen') },
       { label: 'Composeur de prompt', key: 'P', dot: 'amb', onclick: at('compose') },

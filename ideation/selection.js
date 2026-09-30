@@ -125,10 +125,10 @@ export function createSelection(app, env) {
     const one = us[0];
     if (mode === 'multi') {
       const flat = G().expand(us);
-      const sized = us.filter((n) => n.type !== 'group' && n.type !== 'frame');
+      const sized = us.filter((n) => n.type !== 'group' && !n.deck);   // les cadres aussi (30/09) ; une diapositive garde sa scène
       const refable = flat.filter((n) => n.type === 'media' && ['image', 'element'].includes(n.kind) && !S.items.get(n.item)?.missing);
       const stickies = flat.filter((n) => n.type === 'sticky');
-      const noSize = sized.length < 2 ? 'choisissez au moins deux objets (un groupe ou un cadre ne se met pas à la taille d’un autre)' : '';
+      const noSize = sized.length < 2 ? 'choisissez au moins deux objets (un groupe ou une diapositive ne se met pas à la taille d’un autre)' : '';
       out.push(btn('Grouper', () => G().group(), { title: 'ctrl+G · le groupe garde les places', why: G().whyNot(us) }), sep(),
         sub('Aligner', alignItems, { title: 'aligner les bords ou les centres' }),
         sub('Distribuer', () => [{ head: 'des écarts égaux' },
@@ -136,6 +136,7 @@ export function createSelection(app, env) {
           { label: 'À la verticale', key: 'Alt+Maj+V', onclick: () => app.distribute('y') }], { why: us.length < 3 ? 'distribuer : trois objets au moins' : '' }),
         btn('Même hauteur', () => app.sameSize('h'), { title: 'la hauteur du premier choisi ; une image garde ses proportions', why: noSize }),
         btn('Même largeur', () => app.sameSize('w'), { title: 'la largeur du premier choisi ; une image garde ses proportions', why: noSize }),
+        btn('Même taille', () => app.sameSize('wh'), { title: 'la largeur et la hauteur du premier choisi (des cadres aussi)', why: noSize }),
         btn('Ranger', () => app.tidy(), { title: 'en rangées, dans l’ordre de lecture · ctrl+alt+T' }), sep(),
         btn('Encadrer', () => app.frameAround(), { title: 'un cadre autour · ctrl+alt+G' }));
       if (refable.length) out.push(btn('Carte Générer', () => app.genWith(refable.map((n) => n.id)), { title: `une carte qui prend ${refable.length > 1 ? 'ces ' + refable.length + ' objets' : 'cet objet'} en référence` }));
@@ -213,7 +214,9 @@ export function createSelection(app, env) {
       if (h && h.offsetParent !== null) { const r = h.getBoundingClientRect(), c = cv.getBoundingClientRect(); const top = r.top - c.top; sh += sy - top; sy = top; }
     }
     const W = cv.clientWidth, H = cv.clientHeight, bw = bar.offsetWidth, bh = bar.offsetHeight;
-    const x = clamp(sx + sw / 2 - bw / 2, 8, Math.max(8, W - bw - 8));
+    // jamais sous la barre des outils, posée à gauche de la planche (barres.css, --side-w)
+    const x0 = 8 + (parseFloat(getComputedStyle(cv).getPropertyValue('--side-w')) || 0);
+    const x = clamp(sx + sw / 2 - bw / 2, x0, Math.max(x0, W - bw - 8));
     let y = sy - 10 - bh;
     // pas la place au-dessus : dessous ; ni l'un ni l'autre (la sélection couvre la vue) : en haut de la planche
     if (y < 8) { y = sy + sh + 10; if (y + bh > H - 8) y = 8; }
@@ -294,6 +297,8 @@ export function createSelection(app, env) {
         // une mind map : sa racine suit l'échelle, l'arbre se range depuis elle (ses nœuds gardent leur taille)
         if (n.type === 'mind') { if (!n.parent) [n.x, n.y] = P(x, y); continue; }
         [n.x, n.y] = P(x, y);
+        // une diapositive garde la taille de sa scène (diapo/)
+        if (n.deck) continue;
         // un texte garde sa police : sa boîte s'élargit, sa hauteur suit
         if (AUTO.has(n.type)) n.w = Math.max(minW(n), Math.round(w * k));
         else { n.w = Math.max(16, Math.round(w * k)); n.h = Math.max(16, Math.round(h * k)); }

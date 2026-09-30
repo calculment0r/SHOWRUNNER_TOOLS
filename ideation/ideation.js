@@ -101,7 +101,8 @@ app.kindLabel = (n) => (n.type === 'media' ? { image: 'image', video: 'vidéo', 
       shape: 'forme', mind: 'mind map', ink: 'trait' }[n.type]);
 
 // ── annuler, rétablir, enregistrer ─────────────────────────
-const snapshot = () => JSON.stringify({ name: S.board.name, nodes: S.board.nodes, links: S.board.links });
+// `pres` : le design de la présentation (les styles de texte, diapo/) — annulé comme le reste
+const snapshot = () => JSON.stringify({ name: S.board.name, nodes: S.board.nodes, links: S.board.links, pres: S.board.pres ?? null });
 app.snap = () => {
   if (!S.board) return;
   S.undo.push(snapshot());
@@ -147,6 +148,7 @@ function pruneFocus() {
 function restore(json) {
   const o = JSON.parse(json);
   S.board.name = o.name; S.board.nodes = o.nodes; S.board.links = o.links;
+  if (o.pres) S.board.pres = o.pres; else delete S.board.pres;
   $('#b-name').value = o.name;
   pruneSel();
   app.commit();
@@ -164,7 +166,7 @@ async function flushSave() {
   if (!S.board || !S.dirty || S.conflict) return;
   if (S.saving) { S.again = true; return S.saving; }
   const b = S.board;
-  const body = { name: b.name, v: b.v, nodes: b.nodes, links: b.links, base_rev: S.rev };
+  const body = { name: b.name, v: b.v, nodes: b.nodes, links: b.links, pres: b.pres ?? null, base_rev: S.rev };
   S.dirty = false;
   paintSave();
   S.saving = api(`ideation/boards/${b.id}`, { method: 'POST', body }).then((r) => {
@@ -192,7 +194,7 @@ addEventListener('beforeunload', () => {
   if (app.coed?.on()) { app.coed.unload(); return; }   // collab : les dernières opérations, par sendBeacon
   if (!S.dirty || !S.board || S.conflict) return;
   const b = S.board;
-  const body = JSON.stringify({ name: b.name, v: b.v, nodes: b.nodes, links: b.links, base_rev: S.rev });
+  const body = JSON.stringify({ name: b.name, v: b.v, nodes: b.nodes, links: b.links, pres: b.pres ?? null, base_rev: S.rev });
   try { navigator.sendBeacon(href(`api/ideation/boards/${b.id}`), new Blob([body], { type: 'application/json' })); } catch { /* */ }
 });
 $('#c-reload').addEventListener('click', async () => { S.conflict = false; $('#conflict').hidden = true; await openBoard(S.board.id, { force: true }); });
@@ -682,13 +684,20 @@ app.tidy = () => {
 };
 // même hauteur, même largeur (PureRef « Normalize ») : une fois, d'après le premier choisi ;
 // sur un groupe, elle reste (groups.js, fit)
+// `axis` : 'h', 'w', ou 'wh' (même taille : les deux). Les cadres aussi (Cal, 30/09), sauf une
+// diapositive, qui garde sa scène
 app.sameSize = (axis) => {
   const list = selected();
-  if (list.length === 1 && list[0].type === 'group') { app.groups.fit(list[0].id, axis); return; }
-  const objs = list.filter((n) => n.type !== 'group' && n.type !== 'frame');
-  if (objs.length < 2) { toast('choisissez au moins deux objets'); return; }
-  const ref = axis === 'h' ? objs[0].h : objs[0].w;
-  app.mutate(() => { for (const n of objs.slice(1)) setSize(n, axis, ref); });
+  if (list.length === 1 && list[0].type === 'group' && axis !== 'wh') { app.groups.fit(list[0].id, axis); return; }
+  const objs = list.filter((n) => n.type !== 'group' && !n.deck);
+  if (objs.length < 2) { toast('choisissez au moins deux objets (une diapositive garde la taille de sa scène)'); return; }
+  const ref = objs[0];
+  app.mutate(() => {
+    for (const n of objs.slice(1)) {
+      if (axis !== 'h') setSize(n, 'w', ref.w);
+      if (axis !== 'w') setSize(n, 'h', ref.h);
+    }
+  });
 };
 app.chain = () => {
   const ids = [...S.sel];
@@ -895,8 +904,13 @@ $('#b-export').addEventListener('click', () => {
 });
 // #b-lib : le panneau de la bibliothèque s'ouvre et se ferme par library.js (avec sa poignée)
 // les outils : un clic le prend (les boutons « poser » n'avaient pas d'écoute : seul le clavier les prenait)
-document.querySelector('.ide-bar')?.addEventListener('click', (e) => { const b = e.target.closest?.('[data-tool]'); if (b) app.setTool(b.dataset.tool); });
+// (les deux barres : celle du haut, et celle des outils à gauche, sur la planche — barres.css)
+for (const bar of document.querySelectorAll('.ide-bar')) bar.addEventListener('click', (e) => { const b = e.target.closest?.('[data-tool]'); if (b) app.setTool(b.dataset.tool); });
 $('#b-help').addEventListener('click', help);
+// les médias de la barre de gauche : objets/medias.js (chargé avec les modules) ; pas encore là, il le dit
+for (const [id, fn] of [['#b-son', 'son'], ['#b-web', 'web']]) {
+  $(id)?.addEventListener('click', () => { if (app.medias?.[fn]) app.medias[fn](); else toast('les médias (son, web) se chargent encore : un instant'); });
+}
 function help() {
   const K = [['V', 'choisir'], ['H · espace', 'se déplacer'], ['L', 'une flèche d’annotation'], ['N', 'note'], ['S', 'post-it'], ['T', 'titre'], ['F', 'cadre (tracer)'],
     ['G', 'carte Générer image'], ['M', 'carte Générer vidéo'], ['P', 'composeur de prompt'],

@@ -1,7 +1,25 @@
-// IDÉATION — la barre tient sur une ligne. De 1280 px à 1920 px tout y est (ideation.css
+// IDÉATION — les deux barres, comme Miro (Cal, 30/09 ; help.miro.com, « Toolbars » :
+// le menu de la planche en haut à gauche, la collaboration et Présenter en haut à droite,
+// la barre de création verticale à gauche de la planche, annuler / rétablir dessous, la
+// navigation — zoom, mini-carte — en bas à droite) :
+//   - en haut (.ide-bar) : la planche (Planches, Nouvelle, son nom, l'enregistrement,
+//     annuler et rétablir), puis l'export, les raccourcis, l'atelier (Présenter,
+//     Diapositives, vote, projecteur, minuteur, machine temporelle, palette ⌘K :
+//     atelier/socle.js y pose son groupe), la collaboration (collab.js) ;
+//   - à gauche, sur la planche (.ide-bar.ide-side, barres.css) : les outils qui posent
+//     (choisir, main, flèche ; note, post-it, titre, cadre, formes, cartes, mind map,
+//     crayon — objets/ — composeur, générer image et vidéo), les médias (son, web :
+//     objets/medias.js), la bibliothèque. Un module qui y ajoute un outil le pose dans le
+//     groupe « poser » (`.ide-side .tgrp[aria-label="poser"]`), avec `data-tool` : la
+//     délégation des clics (ideation.js) et le clavier le prennent comme les autres ; une
+//     action (pas un outil), dans le groupe « médias ». Annuler et rétablir sont en haut :
+//     sur un écran de 13 pouces (1280 × 800), la barre de gauche n'aurait pas tout montré.
+//
+// La barre du haut tient sur une ligne. De 1280 px à 1920 px tout y est (ideation.css
 // la resserre d'abord : des icônes au lieu des mots, des boutons plus étroits) ; plus
 // étroite, ou si la collaboration y ajoute des pastilles, ce qui ne tient plus passe
-// dans le menu ⋯ (commun/menu.js, kebab), le moins utile d'abord.
+// dans le menu ⋯ (commun/menu.js, kebab), le moins utile d'abord. La barre de gauche,
+// plus haute que la planche (un écran très bas), défile (barres.css).
 //
 // Juste par construction : pas de seuils à tenir à jour. La barre ne passe jamais à
 // la ligne (flex-wrap: nowrap) ; le nom de la planche rétrécit le premier, puis, tant
@@ -14,8 +32,7 @@ import { kebab } from '../commun/menu.js';
 // du premier replié au dernier ; dans un groupe, le dernier bouton part d'abord
 const FOLD = [
   ['#b-help', 90], ['#b-export', 88], ['.co-bar .co-ic', 86], ['#b-new', 84], ['.co-bar .co-inv', 82],
-  ['.at-grp > button', 80], ['.tgrp[aria-label="annuler"] > button', 70], ['#b-lib', 60],
-  ['.tgrp[aria-label="poser"] > button', 50], ['#tools > button', 40],
+  ['.at-grp > button', 80], ['.tgrp[aria-label="annuler"] > button', 70],
 ];
 // une action grisée dit pourquoi (règle 7 du thème)
 const WHY = { 'b-undo': 'rien à annuler', 'b-redo': 'rien à rétablir', 'b-export': 'la planche est vide : posez quelque chose d’abord' };
@@ -23,8 +40,9 @@ const WHY = { 'b-undo': 'rien à annuler', 'b-redo': 'rien à rétablir', 'b-exp
 const shown = (e) => !e.hidden && e.getClientRects().length > 0;
 
 export function installBar() {
-  const bar = document.querySelector('.ide-bar');
+  const bar = document.querySelector('.ide-bar:not(.ide-side)');
   if (!bar) return null;
+  installSide();
   const more = kebab(() => items(), { title: 'la suite de la barre', cls: 'ic ide-more' });
   more.hidden = true;
   bar.append(more);
@@ -106,4 +124,26 @@ export function installBar() {
   }
   soon();
   return { fit, more };
+}
+
+// la barre des outils, sur la planche : ses gestes restent à elle (le bouton du milieu passe
+// à la planche : il déplace la vue partout) ; la grille d'un outil (formes, cartes : objets/)
+// s'ouvre à sa droite, pas dessous
+function installSide() {
+  const side = document.querySelector('.ide-side');
+  if (!side) return;
+  // (le clic droit remonte au menu de la page : canvas.js le laisse passer)
+  side.addEventListener('pointerdown', (e) => { if (e.button !== 1) e.stopPropagation(); });
+  side.addEventListener('dblclick', (e) => { e.preventDefault(); e.stopPropagation(); });
+  side.addEventListener('wheel', (e) => e.stopPropagation(), { passive: true });
+  new MutationObserver((recs) => {
+    for (const r of recs) for (const n of r.addedNodes) {
+      if (!n.classList?.contains('ob-sub')) continue;
+      const b = side.querySelector(`[data-tool="${n.dataset.kind}"]`);
+      if (!b) continue;
+      const rb = b.getBoundingClientRect();
+      n.style.left = `${Math.round(rb.right + 8)}px`;
+      n.style.top = `${Math.round(Math.max(8, Math.min(rb.top, innerHeight - n.offsetHeight - 8)))}px`;
+    }
+  }).observe(document.body, { childList: true });
 }

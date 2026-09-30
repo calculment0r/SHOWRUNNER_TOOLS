@@ -13,12 +13,15 @@
 <link rel="stylesheet" href="../commun/base.css">
 <link rel="stylesheet" href="../commun/shell.css">
 <link rel="stylesheet" href="./ideation.css">
+<link rel="stylesheet" href="./barres.css">
 <script type="module" src="./ideation.js"></script>
 </head>
 <body class="ide-page">
 <main class="ide">
 
-  <!-- la barre : la planche, les outils, annuler, l'export -->
+  <!-- deux barres, comme Miro (Cal, 30/09 ; help.miro.com, « Toolbars ») : en haut, la
+       gestion de la planche (son nom, l'export, présenter, l'atelier, la collaboration) ;
+       à gauche, sur la planche, les outils qui y posent (ideation/barres.css) -->
   <div class="ide-bar">
     <button class="tb ghost sm" id="b-boards" type="button" title="ouvrir, renommer, dupliquer une planche">Planches</button>
     <button class="tb ghost sm cmp" id="b-new" type="button" title="une planche neuve" aria-label="nouvelle planche"><span class="bi"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span class="bt">Nouvelle</span></button>
@@ -27,7 +30,29 @@
       <input id="b-name" class="nm" value="" spellcheck="false" aria-label="nom de la planche" maxlength="120">
     </label>
     <span class="pill" id="save-st" title="la planche s'enregistre seule à chaque geste"><i></i><span>—</span></span>
+    <!-- annuler, rétablir : avec la planche (Miro les pose sous sa barre de création ; sur un
+         écran de 13 pouces, la barre de gauche n'aurait plus la place de tout montrer) -->
+    <div class="tgrp" role="toolbar" aria-label="annuler">
+      <button class="ic" id="b-undo" type="button" title="annuler · ctrl+Z"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+      <button class="ic" id="b-redo" type="button" title="rétablir · ctrl+maj+Z"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
+    </div>
     <span class="sp"></span>
+    <span id="exp-st" hidden></span>
+    <button class="tb ghost sm cmp" id="b-export" type="button"><span class="bi"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></span><span class="bt">Exporter</span></button>
+    <button class="ic" id="b-help" type="button" title="les raccourcis">?</button>
+  </div>
+
+  <div class="warn conflict" id="conflict" hidden>
+    <span>cette planche a été modifiée ailleurs (un autre onglet ?) — vos derniers gestes ne sont pas enregistrés.</span>
+    <button class="tb ghost sm" id="c-reload" type="button">Recharger celle du serveur</button>
+    <button class="tb ghost sm" id="c-force" type="button">Garder la mienne</button>
+  </div>
+
+  <div class="ide-main">
+    <aside class="lib" id="lib" aria-label="bibliothèque"></aside>
+    <section class="cv" id="cv" aria-label="la planche" tabindex="-1">
+  <!-- la barre des outils, verticale, sur la planche -->
+  <nav class="ide-bar ide-side" aria-label="outils de la planche">
     <div class="tgrp" id="tools" role="toolbar" aria-label="outils">
       <button class="ic" data-tool="select" type="button" title="choisir, déplacer · V"><svg viewBox="0 0 24 24"><path d="M5 3l14 8-6 2-2 6z"/></svg></button>
       <button class="ic" data-tool="hand" type="button" title="se déplacer · H (ou espace + glisser)"><svg viewBox="0 0 24 24"><path d="M7 11V6a1.5 1.5 0 0 1 3 0v5V4a1.5 1.5 0 0 1 3 0v7V6a1.5 1.5 0 0 1 3 0v9a5 5 0 0 1-5 5H9l-4-5"/></svg></button>
@@ -42,25 +67,16 @@
       <button class="ic" data-tool="gen" type="button" title="une carte Générer image · G"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg></button>
       <button class="ic" data-tool="vgen" type="button" title="une carte Générer vidéo · M"><svg viewBox="0 0 24 24"><path d="M3 6h13v12H3zM16 10l5-3v10l-5-3"/></svg></button>
     </div>
-    <div class="tgrp" role="toolbar" aria-label="annuler">
-      <button class="ic" id="b-undo" type="button" title="annuler · ctrl+Z"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
-      <button class="ic" id="b-redo" type="button" title="rétablir · ctrl+maj+Z"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
+    <!-- les médias (objets/medias.js) : un son de la bibliothèque ou du disque, une adresse web -->
+    <div class="tgrp" role="toolbar" aria-label="médias">
+      <button class="ic" id="b-son" type="button" title="un son : la bibliothèque, ou le disque · A"><svg viewBox="0 0 24 24"><path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 7v10M21 12h0"/></svg></button>
+      <button class="ic" id="b-web" type="button" title="une adresse web : YouTube, Vimeo, un site · W"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg></button>
     </div>
-    <button class="ic on" id="b-lib" type="button" title="le panneau de la bibliothèque"><svg viewBox="0 0 24 24"><path d="M4 5h5v14H4zM11 5h4v14h-4zM17 6l3 .8-3.2 12.4-3-.8"/></svg></button>
-    <span id="exp-st" hidden></span>
-    <button class="tb ghost sm cmp" id="b-export" type="button"><span class="bi"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></span><span class="bt">Exporter</span></button>
-    <button class="ic" id="b-help" type="button" title="les raccourcis">?</button>
-  </div>
-
-  <div class="warn conflict" id="conflict" hidden>
-    <span>cette planche a été modifiée ailleurs (un autre onglet ?) — vos derniers gestes ne sont pas enregistrés.</span>
-    <button class="tb ghost sm" id="c-reload" type="button">Recharger celle du serveur</button>
-    <button class="tb ghost sm" id="c-force" type="button">Garder la mienne</button>
-  </div>
-
-  <div class="ide-main">
-    <aside class="lib" id="lib" aria-label="bibliothèque"></aside>
-    <section class="cv" id="cv" aria-label="la planche" tabindex="-1"></section>
+    <div class="tgrp" role="toolbar" aria-label="bibliothèque">
+      <button class="ic on" id="b-lib" type="button" title="le panneau de la bibliothèque"><svg viewBox="0 0 24 24"><path d="M4 5h5v14H4zM11 5h4v14h-4zM17 6l3 .8-3.2 12.4-3-.8"/></svg></button>
+    </div>
+  </nav>
+    </section>
     <aside class="insp" id="insp" aria-label="inspecteur"></aside>
   </div>
 </main>

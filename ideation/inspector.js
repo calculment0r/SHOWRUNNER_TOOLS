@@ -138,6 +138,8 @@ export function createInspector(app) {
     // formes, cartes, nœuds de mind map, traits (objets/)
     else if (app.objets?.has(n.type)) out.push(...app.objets.panels(n, K));
     else out.push(textPanel(n));
+    // un cadre : sa diapositive ; un texte : son style (diapo/)
+    out.push(...(app.diapo?.panels(n, K) || []));
     out.push(card('Disposition', null, row(
       b('Dupliquer', () => app.duplicate(), { title: 'ctrl+D' }), b('Premier plan', () => app.order(1), { title: ']' }),
       b('Arrière-plan', () => app.order(-1), { title: '[' }), el('span', { class: 'sp' }), b('Supprimer', () => app.remove(), { title: 'Suppr' }))));

@@ -10,8 +10,10 @@
 //     layout: { mode: 'free' | 'flow', width, gap, fit: '' | 'h' | 'w' } }
 //   { id, type: 'media', …, group: 'g1' }            coordonnées absolues
 //
-// Pas de groupes imbriqués (un groupe n'a pas de `group`), pas de cadre dans
-// un groupe ; un groupe sans enfant disparaît, un groupe à un enfant se dissout
+// Pas de groupes imbriqués (un groupe n'a pas de `group`) ; un cadre entre dans
+// un groupe comme un autre objet (Cal, 30/09 : « on ne peut pas les grouper ? ») et
+// emmène ce qu'il contient partout où le groupe le déplace (rangée, alignement,
+// glisser) ; un groupe sans enfant disparaît, un groupe à un enfant se dissout
 // (tldraw). L'ordre des enfants est leur ordre d'empilement dans `nodes`.
 // Déplié, la boîte d'un groupe est celle de ses enfants + 24 px (refaite à
 // chaque rendu, comme la hauteur des notes : ce n'est pas un geste) ; réduit,
@@ -66,12 +68,13 @@ export const readingOrder = (list) => [...list].sort((a, b) => (Math.abs(a.y - b
 // carte : leur hauteur suit leur texte, seule leur largeur se règle
 export function setSize(n, axis, v) {
   if (n.type === 'mind') return;   // un nœud de mind map prend la taille de son nom
+  if (n.deck) return;              // une diapositive a la taille de sa scène (diapo/)
   if (axis === 'h') {
-    if (AUTO.has(n.type) || n.type === 'frame' || n.type === 'group') return;
+    if (AUTO.has(n.type) || n.type === 'group') return;
     if (keeps(n) && n.h > 0) n.w = Math.max(16, Math.round(v * n.w / n.h));
-    n.h = Math.max(16, Math.round(v));
+    n.h = Math.max(n.type === 'frame' ? 90 : 16, Math.round(v));
   } else {
-    if (n.type === 'frame' || n.type === 'group') return;
+    if (n.type === 'group') return;
     const w = Math.max(minW(n), Math.round(v));
     if (keeps(n) && n.w > 0) n.h = Math.max(16, Math.round(w * n.h / n.w));
     n.w = w;
@@ -102,10 +105,18 @@ export function fitBox(g, kids) {
 const sig = (kids) => kids.map((k) => `${k.x},${k.y},${k.w},${k.h}`).join('|');
 // un groupe déplié se remet en forme : même taille (d'après le premier), puis la
 // rangée depuis son coin ; sa boîte suit. Rend true si un enfant a bougé.
-export function arrange(g, kids) {
+// ce qu'un cadre contient (entièrement dedans), hors des enfants du groupe et des nœuds de groupe
+export const insideBox = (m, f) => m !== f && m.x >= f.x && m.y >= f.y && m.x + m.w <= f.x + f.w && m.y + m.h <= f.y + f.h;
+export function contentsOf(B, f, skip = new Set()) {
+  return (B?.nodes || []).filter((m) => m.type !== 'group' && !skip.has(m) && insideBox(m, f));
+}
+// `B` : la planche — un cadre enfant emmène ce qu'il contient quand la rangée le déplace
+export function arrange(g, kids, B = null) {
   if (!kids.length) return false;
   const L = layoutOf(g);
   const before = sig(kids);
+  const kidSet = new Set(kids);
+  const frames = B ? kids.filter((k) => k.type === 'frame').map((f) => [f, f.x, f.y, contentsOf(B, f, kidSet)]) : [];
   const sized = kids.filter((k) => k.type !== 'mind');
   if (L.fit && sized.length > 1) {
     const ref = L.fit === 'h' ? sized[0].h : sized[0].w;
@@ -119,6 +130,10 @@ export function arrange(g, kids) {
       const dx = b.x - b.x0, dy = b.y - b.y0;
       if (dx || dy) for (const m of b.members) { m.x = Math.round(m.x + dx); m.y = Math.round(m.y + dy); }
     }
+  }
+  for (const [f, x, y, inner] of frames) {
+    const dx = f.x - x, dy = f.y - y;
+    if (dx || dy) for (const m of inner) { m.x = Math.round(m.x + dx); m.y = Math.round(m.y + dy); }
   }
   fitBox(g, kids);
   return sig(kids) !== before;
@@ -145,12 +160,12 @@ export function layoutAll(B) {
   for (const g of B?.nodes || []) {
     if (g.type !== 'group' || g.collapsed) continue;
     const kids = K.get(g.id);
-    if (kids?.length) moved = arrange(g, kids) || moved;
+    if (kids?.length) moved = arrange(g, kids, B) || moved;
   }
   return moved;
 }
 // la structure, après chaque geste : une appartenance vers un groupe absent tombe ;
-// ni groupe ni cadre dans un groupe ; un groupe de moins de deux enfants se
+// pas de groupe dans un groupe ; un groupe de moins de deux enfants se
 // dissout (ses liens avec lui) — la même règle que le serveur
 export function tidy(B) {
   if (!B) return false;
@@ -166,7 +181,7 @@ export function tidy(B) {
   for (const n of B.nodes) {
     if (!n.group) continue;
     const g = byId.get(n.group);
-    if (!g || g.type !== 'group' || n.type === 'group' || n.type === 'frame' || n.group === n.id) { delete n.group; changed = true; }
+    if (!g || g.type !== 'group' || n.type === 'group' || n.group === n.id) { delete n.group; changed = true; }
   }
   const K = kidsMap(B);
   const gone = new Set();
@@ -252,7 +267,14 @@ export function createGroups(app) {
     if (!dx && !dy) return;
     // un groupe emmène ses enfants ; un nœud de mind map, son arbre
     const list = n.type === 'group' ? [n, ...kidsOf(B(), n.id)] : n.type === 'mind' ? treeOf(B(), n) : [n];
-    for (const m of list) { m.x = Math.round(m.x + dx); m.y = Math.round(m.y + dy); }
+    const all = new Set(list);
+    // un cadre emmène ce qu'il contient — sauf ce qui est choisi, qui bouge pour son compte
+    // (lui-même, ou son groupe)
+    for (const f of list) {
+      if (f.type !== 'frame') continue;
+      for (const m of contentsOf(B(), f, all)) if (!S.sel.has(m.id) && !(m.group && S.sel.has(m.group))) all.add(m);
+    }
+    for (const m of all) { m.x = Math.round(m.x + dx); m.y = Math.round(m.y + dy); }
   }
   const count = () => B().nodes.filter((n) => n.type === 'group').length;
   function make(kids, { flow = false, name = '' } = {}) {
@@ -268,10 +290,9 @@ export function createGroups(app) {
   }
   // ce qui empêche de grouper la sélection ('' : rien)
   function whyNot(list = units()) {
-    const u = list.filter((n) => n.type !== 'frame');
-    const gs = u.filter((n) => n.type === 'group');
+    const gs = list.filter((n) => n.type === 'group');
     if (gs.length > 1) return 'un groupe ne se met pas dans un groupe : dégroupez d’abord';
-    if (u.length < 2) return list.some((n) => n.type === 'frame') ? 'un cadre n’entre pas dans un groupe (c’est une zone) : choisissez des objets' : 'choisissez au moins deux objets';
+    if (list.length < 2) return 'choisissez au moins deux objets (des cadres aussi)';
     return '';
   }
   // ctrl+G : grouper la sélection ; le groupe garde les places (libre). Un seul groupe
@@ -283,7 +304,7 @@ export function createGroups(app) {
     if (why) { toast(why, 5000); return null; }
     let g = null;
     app.mutate(() => {
-      const u = list.filter((n) => n.type !== 'frame');
+      const u = list;
       const host = u.find((n) => n.type === 'group');
       // un nœud de mind map entre avec tout son arbre
       const loose = withTrees(B(), u.filter((n) => n.type !== 'group'));

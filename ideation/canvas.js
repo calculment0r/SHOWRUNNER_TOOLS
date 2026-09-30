@@ -26,6 +26,8 @@ import { createWires, edgePts } from './wires.js';
 import { KINDS, outPort, inPorts } from './ports.js';
 import { CARD_W, LOD_PX, EXIT, kidsMap, kidsOf, layoutAll, arrange, layoutOf, crossing, portLabel, slotAt, setOrder } from './groups.js';
 import { createSelection } from './selection.js';
+// les repères et les lignes de l'aimant (le déplacement s'en sert par objets/ ; le redimensionnement ici)
+import { targets as guideTargets, paintGuides, SNAP_PX } from './objets/guides.js';
 
 export { menu, edgePts };
 const NS = 'http://www.w3.org/2000/svg';
@@ -323,7 +325,11 @@ export function createCanvas(app) {
     for (const [id, by] of app.objets?.folded() || []) hidden.set(id, by);
     if (!cards.size) return;
     const K = kidsMap(S.board);
-    for (const gid of cards) for (const k of K.get(gid) || []) hidden.set(k.id, gid);
+    for (const gid of cards) for (const k of K.get(gid) || []) {
+      hidden.set(k.id, gid);
+      // un cadre du groupe réduit cache aussi ce qu'il contient
+      if (k.type === 'frame') for (const m of S.board.nodes) if (m !== k && m.type !== 'group' && inside(m, k)) hidden.set(m.id, gid);
+    }
   }
   // un fil dont un bout est caché dans un groupe réduit part du port de la carte (wires.js)
   function alias(id, port, side) {
@@ -403,7 +409,10 @@ export function createCanvas(app) {
           el('b', { class: 'fr-n' }, n.name || 'Cadre'), el('span', { class: 'fr-c' })),
         // de loin (Ensemble) : le nom en grand, au centre, sur un voile (le prototype de Cal)
         el('div', { class: 'fr-big' }, el('b', {}, n.name || 'Cadre'), el('span', { class: 'fr-bc' })),
-        el('span', { class: 'rz', 'data-rz': '1', title: 'redimensionner' }));
+        // le coin, et les deux bords (un côté seulement) : un cadre se redimensionne comme dans Miro
+        el('span', { class: 'rz', 'data-rz': '1', title: 'redimensionner · Alt : sans aimant' }),
+        el('span', { class: 'rz rz-e', 'data-rz': 'x', title: 'la largeur · Alt : sans aimant' }),
+        el('span', { class: 'rz rz-s', 'data-rz': 'y', title: 'la hauteur · Alt : sans aimant' }));
     }
     if (n.type === 'group') return cards.has(n.id) ? groupCard(n) : el('div', { class: 'gp', 'data-id': n.id }, el('span', { class: 'gp-n' }, n.name || 'Groupe'));
     // les objets d'atelier (objets/) : formes, cartes, nœuds de mind map, traits de crayon
@@ -542,7 +551,7 @@ export function createCanvas(app) {
     computeCards();
     const nodes = S.board.nodes;
     // les grands cadres dessous : un cadre posé dans un autre reste visible
-    const frames = nodes.filter((n) => n.type === 'frame').sort((a, b) => b.w * b.h - a.w * a.h);
+    const frames = nodes.filter((n) => n.type === 'frame' && !hidden.has(n.id)).sort((a, b) => b.w * b.h - a.w * a.h);
     const outlines = nodes.filter((n) => n.type === 'group' && !cards.has(n.id));
     const others = nodes.filter((n) => n.type !== 'frame' && (n.type === 'group' ? cards.has(n.id) : !hidden.has(n.id)));
     const seen = new Set();
@@ -802,7 +811,7 @@ export function createCanvas(app) {
     // le crayon trace partout, par-dessus les objets aussi (objets/crayon.js)
     if (S.tool === 'ink' && app.objets) return app.objets.startInk(e, { cv, over, drag, toWorld });
     const id = nodeEl?.dataset.id;
-    if (t.closest('[data-rz]') && id) return startResize(e, id);
+    if (t.closest('[data-rz]') && id) return startResize(e, id, t.closest('[data-rz]').dataset.rz);
     const pt = t.closest('.pt[data-port]');
     // un port d'une carte de groupe : le fil part de l'objet intérieur (la carte n'est qu'un affichage)
     if (pt && id) return W.start(e, pt.dataset.inner || id, pt.dataset.port, pt.dataset.side);
@@ -858,17 +867,20 @@ export function createCanvas(app) {
       if (n.type === 'group') for (const k of K.get(n.id) || []) out.set(k.id, k);
       if (n.type === 'mind') minds.push(n);
     };
+    // un cadre emmène ce qu'il contient ; un groupe, ses enfants — et un cadre de ce groupe, son contenu
+    const frameOf = (n) => {
+      for (const m of S.board.nodes) {
+        if (m === n || !inside(m, n)) continue;
+        const g = m.group && m.group !== S.focus ? app.node(m.group) : null;
+        unit(g || m);
+      }
+    };
     for (const id of S.sel) {
       const n = app.node(id);
       if (!n) continue;
       unit(n);
-      if (n.type === 'frame') {
-        for (const m of S.board.nodes) {
-          if (m === n || !inside(m, n)) continue;
-          const g = m.group && m.group !== S.focus ? app.node(m.group) : null;
-          unit(g || m);
-        }
-      }
+      if (n.type === 'frame') frameOf(n);
+      if (n.type === 'group') for (const k of K.get(n.id) || []) if (k.type === 'frame') frameOf(k);
     }
     // un nœud de mind map emmène tout son arbre (le prototype : déplacer un nœud déplace l'arbre)
     if (minds.length) for (const m of app.objets.trees(minds)) out.set(m.id, m);
@@ -1000,29 +1012,57 @@ export function createCanvas(app) {
     });
   }
 
-  function startResize(e, id) {
+  // redimensionner : le coin (les deux côtés), ou un bord d'un cadre (`axis` : 'x' le bord droit,
+  // 'y' le bas). L'aimant (Cal, 30/09, la règle du nodal d'ODIO) : le bord qu'on tire se cale sur
+  // les bords des objets affichés, ou la taille sur celle d'un voisin (même largeur, même
+  // hauteur), sous 6 px d'écran, avec les guides du déplacement (objets/guides.js) ; Alt : libre
+  // le temps du geste ; l'aimant éteint (S.snap) : libre.
+  function startResize(e, id, axis = '1') {
     const n = app.node(id);
     if (!n) return;
     app.select([id]);
+    if (n.deck) return;   // une diapositive a la taille de sa scène (diapo/) : son format la change
     const x0 = e.clientX, y0 = e.clientY, z = V().z, w0 = n.w, h0 = n.h;
     const keep = n.type === 'media' && n.kind !== 'audio';
     const auto = AUTO_H.has(n.type);
     const g = n.group ? app.node(n.group) : null;
+    const T = S.snap ? guideTargets(app, new Set([id])) : null;
+    // les tailles des voisins affichés (le même relevé que les repères)
+    const sizes = { w: [], h: [] };
+    if (T) for (const m of S.board.nodes) { const dd = dom.get(m.id); if (m !== n && dd && !dd.off && m.type !== 'group') { sizes.w.push(m.w); sizes.h.push(m.h); } }
+    const best = (cands, v, th) => { let b = null; for (const [c, guide] of cands) { const d = c - v; if (Math.abs(d) < th && (!b || Math.abs(d) < Math.abs(b.d))) b = { d, guide }; } return b; };
     let moved = false;
     drag((ev) => {
       const dx = (ev.clientX - x0) / z, dy = (ev.clientY - y0) / z;
       if (!moved) { app.snap(); moved = true; sel.gesture(true); }
       const minW = CARDS.has(n.type) ? 270 : n.type === 'frame' ? 120 : 48;
-      n.w = Math.round(Math.max(minW, w0 + dx));
+      const minH = n.type === 'frame' ? 90 : 36;
+      let w = axis === 'y' ? w0 : Math.max(minW, w0 + dx);
+      let h = axis === 'x' ? h0 : Math.max(minH, h0 + dy);
+      const guide = { gx: null, gy: null };
+      if (T && !ev.altKey) {
+        const th = SNAP_PX / V().z;
+        if (axis !== 'y') {
+          // le bord droit sur un repère, ou la largeur sur celle d'un voisin
+          const bx = best([...T.xs.map((x) => [x - n.x, x]), ...sizes.w.map((s) => [s, n.x + s])], w, th);
+          if (bx && w + bx.d >= minW) { w += bx.d; guide.gx = bx.guide; }
+        }
+        if (axis !== 'x' && !auto && !(keep && !ev.shiftKey)) {
+          const by = best([...T.ys.map((y) => [y - n.y, y]), ...sizes.h.map((s) => [s, n.y + s])], h, th);
+          if (by && h + by.d >= minH) { h += by.d; guide.gy = by.guide; }
+        }
+      }
+      paintGuides(over, V(), cv.clientWidth, cv.clientHeight, guide.gx === null && guide.gy === null ? null : guide);
+      n.w = Math.round(w);
       if (keep && !ev.shiftKey) n.h = Math.round(n.w * h0 / w0);
-      else if (!auto) n.h = Math.round(Math.max(n.type === 'frame' ? 90 : 36, h0 + dy));
+      else if (!auto) n.h = Math.round(h);
       const d = dom.get(id);
       if (d) place(d.el, n);
       if (auto) { measure(); W.placePorts(); }
       // dans un groupe, les autres se remettent en forme à chaque image
       if (g) live([n]);
       paintLinks(); paintMini();
-    }, () => { if (moved) { sel.gesture(false); paintFrames(); app.commit(); } });
+    }, () => { paintGuides(over, V(), cv.clientWidth, cv.clientHeight, null); if (moved) { sel.gesture(false); paintFrames(); app.commit(); } });
   }
   // des objets changés pendant un geste (échelle, organisation, taille) : leurs groupes se
   // remettent en forme, tout se replace, sans rendu complet
@@ -1036,7 +1076,7 @@ export function createCanvas(app) {
     for (const n of list) { if (n.type === 'group') gs.add(n.id); else if (n.group) gs.add(n.group); }
     const all = new Set(list);
     const K = kidsMap(S.board);
-    const again = () => { for (const gid of gs) { const g = app.node(gid); if (g && !g.collapsed) arrange(g, K.get(gid) || []); } };
+    const again = () => { for (const gid of gs) { const g = app.node(gid); if (g && !g.collapsed) arrange(g, K.get(gid) || [], S.board); } };
     again();
     for (const gid of gs) { const g = app.node(gid); if (g) all.add(g); for (const k of K.get(gid) || []) all.add(k); }
     for (const n of all) { const d = dom.get(n.id); if (d) place(d.el, n); }
@@ -1214,6 +1254,8 @@ export function createCanvas(app) {
   // le clic droit : jamais le menu du navigateur sur la planche (règle de Cal, 29/09) ;
   // chaque zone a le sien (menus.js)
   cv.addEventListener('contextmenu', (e) => {
+    // la barre des outils, posée sur la planche : le menu de la page (ideation.js), pas celui du fond
+    if (e.target.closest?.('.ide-side')) return;
     e.preventDefault();
     const t = e.target;
     const M = app.menus;

@@ -21,9 +21,11 @@
   font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase;
   padding: 2px 5px; border-radius: 3px; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink3);
 }
-/* une barre étroite : la palette et un bouton « atelier » qui ouvre le reste en menu */
+/* une barre étroite : la palette et un bouton « atelier » qui ouvre le reste en menu (sous
+   1100 px : depuis le 30/09, les outils de pose sont dans la barre de gauche, celle du haut a
+   la place de montrer l'atelier jusque-là ; barre.js replie encore ce qui dépasserait) */
 .at-grp .ic.at-more { display: none; }
-@media (max-width: 1480px) {
+@media (max-width: 1100px) {
   .at-grp > .ic:not(.at-more):not(.at-k) { display: none; }
   .at-grp .ic.at-more { display: inline-flex; }
   .at-grp .ic.at-k { width: 34px; padding: 0; }
@@ -64,6 +66,34 @@ body.at-presenting .cv > .banner, body.at-presenting .cv > .empty, body.at-prese
 body.at-presenting .cv > .at-hist, body.at-presenting .at-tr > .at-vote { display: none; }
 /* le nom du cadre, au-dessus de la diapositive, lisible sans rien de plus */
 .cv.at-pres .fr-h b { color: var(--ink); }
+/* en présentation, ni fils ni lignée (commun/wire.js : g.sr-wire), ni ports (Cal, 30/09 :
+   « en mode présentation, les fils disparaissent ») ; les flèches d'annotation restent */
+.cv.at-pres .links .sr-wire, .cv.at-pres .pt { display: none; }
+/* une diapositive (diapo/) : sa scène seule, bandes autour ; ni trame, ni poignée,
+   ni légende, ni port — ce qui n'est pas dans la scène ne se voit pas */
+.cv.at-pres.at-deck { background-image: none; background-color: var(--black); }
+.cv.at-deck .nd, .cv.at-deck .fr, .cv.at-deck .links g.lk { opacity: 0; transition: none; }
+.cv.at-deck .fr { border-radius: 0; box-shadow: none; }
+.cv.at-deck .fr-h, .cv.at-deck .fr-big, .cv.at-deck .pt, .cv.at-deck .rz, .cv.at-deck .nd .cap, .cv.at-deck .nd .badge,
+.cv.at-deck .jobs, .cv.at-deck .dp-grid { display: none !important; }
+.cv.at-deck .nd { box-shadow: none !important; }
+.at-mask { position: absolute; z-index: 4; pointer-events: none; box-shadow: 0 0 0 100vmax var(--black); }
+.at-mask[hidden] { display: none; }
+
+/* les transitions d'une diapositive à l'autre (View Transitions : la page en deux
+   instantanés, l'ancien et le nouveau). Fondu : celui du navigateur, allongé ;
+   poussée : l'ancienne sort, la nouvelle entre (en arrière : l'inverse) ; morph :
+   les objets appariés (view-transition-name) voyagent pendant le fondu du reste */
+@keyframes vtOutL { to { transform: translateX(-100%); } }
+@keyframes vtInR { from { transform: translateX(100%); } }
+@keyframes vtOutR { to { transform: translateX(100%); } }
+@keyframes vtInL { from { transform: translateX(-100%); } }
+html.vt-fade::view-transition-old(root), html.vt-fade::view-transition-new(root) { animation-duration: .42s; }
+html.vt-push::view-transition-old(root) { animation: .56s cubic-bezier(.65, 0, .35, 1) both vtOutL; }
+html.vt-push::view-transition-new(root) { animation: .56s cubic-bezier(.65, 0, .35, 1) both vtInR; }
+html.vt-push.vt-back::view-transition-old(root) { animation-name: vtOutR; }
+html.vt-push.vt-back::view-transition-new(root) { animation-name: vtInL; }
+html.vt-morph::view-transition-group(*) { animation-duration: .7s; animation-timing-function: cubic-bezier(.65, 0, .35, 1); }
 .cv.at-idle, .cv.at-idle .at-shield { cursor: none; }
 
 .at-pbar {
