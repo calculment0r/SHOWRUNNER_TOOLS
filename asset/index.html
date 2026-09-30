@@ -7,7 +7,7 @@
 <link rel="preload" href="../commun/fonts/norelli-black.otf" as="font" type="font/otf" crossorigin>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>ASSET — Showrunner Tools</title>
-<meta name="description" content="La bibliothèque commune : images, éléments, vidéos, sons ; rangés en dossiers, triés, réutilisés dans tous les outils.">
+<meta name="description" content="La bibliothèque commune et sa page de gestion : tous les assets de toutes tes Teams et tous tes Workspaces, rangés en dossiers par glisser-déposer, triés, filtrés.">
 <!-- icône vide au chargement : le script la dessine depuis les jetons -->
 <link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -20,7 +20,12 @@
 <script type="module" blocking="render" src="./asset.js"></script>
 </head>
 <body>
-<main class="lib" id="lib" aria-label="la bibliothèque"></main>
+<!-- la page de gestion : l'arbre (Teams → Workspaces → dossiers) à gauche, le lieu choisi à droite -->
+<div class="am" id="am">
+  <aside class="am-side" id="side" aria-label="les lieux : Teams, Workspaces, dossiers"></aside>
+  <div class="side-scrim" id="side-scrim" aria-hidden="true"></div>
+  <main class="lib" id="lib" aria-label="la bibliothèque"></main>
+</div>
 <main class="sheet" id="sheet" aria-label="la fiche" hidden></main>
 <div class="sr" aria-live="assertive" id="live"></div>
 <script type="module" src="./asset.js"></script>
