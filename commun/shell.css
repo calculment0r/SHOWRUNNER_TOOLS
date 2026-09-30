@@ -105,6 +105,8 @@
 .thumb:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
 .thumb.sel { box-shadow: inset 0 0 0 2px var(--or); }
 .thumb .im { position: relative; aspect-ratio: 1 / 1; background: var(--panel2); }
+/* le visuel d’un son : un masque (server/tools/apercu_son.py) peint dans les jetons */
+.thumb .im .swave { position: absolute; inset: 24% 8%; background: var(--grn2); -webkit-mask: var(--wave) center / 100% 100% no-repeat; mask: var(--wave) center / 100% 100% no-repeat; }
 .thumb .im img, .thumb .im video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 /* la marque de la sorte (commun/shell.js kindMark) : la même partout où un objet se montre.
    Une séquence est PLEINE (l'acier du portail, --cy / --on-cy dans les deux thèmes) : un clip vidéo à la même

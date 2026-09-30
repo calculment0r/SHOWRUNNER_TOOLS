@@ -475,6 +475,8 @@ def add_file(src: Path, *, kind: str | None = None, title: str = "", origin: dic
     }
     if make_thumb(d / name, d / "thumb.jpg", kind):
         it["thumb"] = "thumb.jpg"
+    if kind == "audio":   # le visuel du son (server/tools/apercu_son.py)
+        from tools import apercu_son; apercu_son.soon(d / name, it.get("duration"))
     if kind in VIEW_KINDS:   # les copies d'affichage, avant que la page ne la voie
         it["views"], it["views_v"] = build_views(kind, d / name, d), _views_v()
     with _lock:
@@ -491,6 +493,7 @@ def _add_voice(d: Path, voices: list, src: Path, label: str = "", item: str | No
     name = f"voice-{n:02d}{src.suffix.lower()}"
     shutil.copyfile(src, d / name)
     v = {"file": name, "role": "voice", "label": label or "voix", **probe(d / name)}
+    from tools import apercu_son; apercu_son.soon(d / name, v.get("duration"), voice=True)   # le visuel du son
     if item:
         v["item"] = item
     voices.append(v)

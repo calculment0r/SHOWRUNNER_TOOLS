@@ -13,6 +13,7 @@
 // L'état se garde avec les préférences d'Idéation (app.LS : « nolib », « lib-w »).
 
 import { api, toast, el, href, fmtDur, kindFr, etypeFr, dragItem } from '../commun/shell.js';
+import { waveMark } from './objets/son.js';   // médias : la forme d'onde d'un son en vignette (30/09)
 
 // la largeur du panneau, en px : par défaut, au plus étroit, au plus large ;
 // la planche en garde toujours CV_MIN
@@ -188,6 +189,7 @@ export function createLibrary(app) {
     const c = tile(`${it.title || it.id}${it.prompt ? '\n' + it.prompt.slice(0, 200) : ''}`, pic,
       it.kind === 'element' ? etypeFr(it.element?.type) : kindFr(it.kind), it.kind, it.title || it.id, sub,
       () => { if (!S.board) { toast('ouvrez ou créez d’abord une planche'); return; } app.placeItem(it, ...app.canvas.center(), { free: true }); });
+    if (it.kind === 'audio') c.querySelector('.im').prepend(waveMark(it));   // médias : le visuel du son (objets/son.js)
     tileMenu(c, it.title || it.id, () => c.click(), () => {
       const sel1 = S.sel.size === 1 ? app.node([...S.sel][0]) : null;
       return [sel1?.type === 'gen' && ['image', 'element'].includes(it.kind) ? { label: 'En référence de la carte choisie', dot: 'or', onclick: () => app.addRefs(sel1.id, [it]) } : null,

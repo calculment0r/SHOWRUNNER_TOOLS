@@ -26,6 +26,8 @@ const PLUGINS = [
   ['atelier · palette de commandes', () => import('./atelier/commandes.js')],
   ['atelier · vues ancrées', () => import('./atelier/vues.js')],
   ['collab', () => import('./collab.js')],
+  // médias : le bloc son (forme d'onde, mini-timeline) et les gestes de l'objet Web (30/09)
+  ['médias · son, web', () => import('./objets/medias.js')],
 ];
 
 export function installPlugins(app) {

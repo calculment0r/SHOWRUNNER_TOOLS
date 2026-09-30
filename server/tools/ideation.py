@@ -115,7 +115,8 @@ HEX = re.compile(r"#[0-9a-fA-F]{6}")
 REF_FILE = re.compile(r"ref-\d{2}\.[a-z]{3,4}")
 
 TYPES = ("media", "note", "sticky", "title", "frame", "gen", "vgen", "compose", "palette", "group",
-         "shape", "card", "mind", "ink")
+         "shape", "card", "mind", "ink",
+         "web")   # web : l'objet « Web » (server/tools/web_apercu.py), 30/09
 # les objets d'atelier (ideation/objets/ : les mêmes listes ; une valeur inconnue revient au défaut)
 SHAPES = ("rect", "round", "ellipse", "diamond", "hex", "para")
 PALETTE = ("cy", "or", "grn2", "amb", "ink")          # formes, cartes, traits : acier, orange, vert, ambre, encre
@@ -383,6 +384,9 @@ def _node(n) -> dict:
             raise HttpError(400, f"le trait {nid} n'a pas de points lisibles (des paires x, y de 0 à 1000, {INK_MAX // 2} au plus)")
         out.update(pts=[int(max(0, min(1000, round(v)))) for v in pts],
                    color=n.get("color") if n.get("color") in PALETTE else "or", width=_num(n.get("width"), 0.5, 12, 2.2))
+    elif t == "web":   # web : l'adresse (http, https) et ce que l'aperçu en a lu — server/tools/web_apercu.py
+        from tools import web_apercu
+        out.update(web_apercu.node_fields(n))
     return out
 
 

@@ -360,7 +360,7 @@ function strip(n = 5) {
 }
 // ce qu'une vignette montre quand l'objet n'a pas d'image
 function glyph(kind, small = false) {
-  if (kind === 'audio') return wave(small ? 5 : 9);
+  if (kind === 'audio') return null;   // la vraie onde vient de thumb() (api/son/apercu)
   if (kind === 'midi') return roll(small ? 6 : 11);
   if (kind === 'sequence') return strip(small ? 3 : 5);
   return null;

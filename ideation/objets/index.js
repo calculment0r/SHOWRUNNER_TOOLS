@@ -31,6 +31,7 @@ import * as I from './crayon.js';
 import * as G from './guides.js';
 import { regroup as regroupStickies } from './couleurs.js';
 import { TEMPLATES, insertTemplate, TOOL_ICON as TPL_ICON } from './modeles.js';
+import { extendWeb } from './web.js';   // web : l'objet « Web » (YouTube, Vimeo, un site), 30/09
 
 if (!document.querySelector('link[data-ide-objets]')) {
   document.head.append(el('link', { rel: 'stylesheet', href: new URL('./objets.css', import.meta.url).href, 'data-ide-objets': '' }));
@@ -300,7 +301,8 @@ export function createObjets(app) {
   // les objets de la bibliothèque qu'une planche montre hors des médias : les visages des cartes personne
   const items = (board) => (board?.nodes || []).filter((n) => n.type === 'card' && n.data?.item).map((n) => n.data.item);
 
-  return {
+  // web : extendWeb (web.js) ajoute la sorte « web » et prend ses objets dans build, key, menu, panels, mini, boardItems
+  return extendWeb(app, {
     TYPES, has: (t) => TYPES.has(t), defs, build, key, layout, folded: () => L.folded, info: (id) => L.info.get(id), paint, mini,
     place, menu, boardItems, selectionItems, linkItems, panels, writable, editKey, cleanText,
     onKey, mindKey, pickTool, closeSub, mount, commands, items, snapper, setSnap,
@@ -309,5 +311,5 @@ export function createObjets(app) {
     trees: (list) => M.withTrees(S.board, list), subtrees: (list) => M.withSubtrees(S.board, list), roots: (list) => M.asRoots(S.board, list),
     rootOf: (n) => M.rootOf(S.board, n), addMind: (n, child) => M.addMind(app, n, child),
     regroup, toMind, insert, faceRule: () => C.faceRule(app), annot: (n) => !!n && ANNOT.has(n.type),
-  };
+  });
 }

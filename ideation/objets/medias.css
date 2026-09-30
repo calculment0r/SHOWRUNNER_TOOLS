@@ -1,0 +1,100 @@
+/* IDÉATION · OBJETS — le bloc son (son.js) et l'objet « Web » (web.js), 30/09.
+   Les jetons seulement (commun/tokens.css) : le masque de l'onde est blanc, la
+   page le peint ; filets en box-shadow inset ; capitales en mono pour la machine. */
+
+/* ── le son ─────────────────────────────────────────────── */
+.nd.media.audio .sn { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.sn-h { display: flex; align-items: center; gap: 9px; min-width: 0; flex: none; }
+.sn-go {
+  flex: none; width: 26px; height: 26px; border-radius: 999px; display: grid; place-items: center;
+  color: var(--ink2); box-shadow: inset 0 0 0 1px var(--line-gr);
+}
+.sn-go svg { width: 11px; height: 11px; fill: currentColor; }
+.sn-go:hover, .sn.on .sn-go { color: var(--grn2); box-shadow: inset 0 0 0 1px var(--grn2); }
+.sn-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.sn-k { font-family: var(--f-mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--grn2); line-height: 1.2; }
+.sn-n { font-size: 13px; font-weight: 500; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+.sn-c { flex: none; font-family: var(--f-mono); font-size: 9px; letter-spacing: .06em; color: var(--ink3); font-variant-numeric: tabular-nums; }
+.sn.cur .sn-c { color: var(--ink2); }
+/* la timeline : l'onde (un masque) peinte en deux teintes, le joué et le reste, et la tête */
+.sn-w { position: relative; flex: 1; min-height: 18px; width: 100%; padding: 0; border-radius: var(--r1); cursor: pointer; touch-action: none; }
+.sn-w:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--line-gr); }
+.sn-z { position: absolute; left: 0; right: 0; top: 50%; height: max(1px, calc(1px / var(--z))); background: var(--line); pointer-events: none; }
+.sn-m {
+  position: absolute; inset: 0; pointer-events: none; display: none;
+  background: linear-gradient(to right, var(--grn2) 0 var(--p, 0%), var(--ink3) var(--p, 0%) 100%);
+  -webkit-mask: var(--wave) center / 100% 100% no-repeat; mask: var(--wave) center / 100% 100% no-repeat;
+}
+.sn-m[style*="--wave"] { display: block; }
+.sn-hd {
+  position: absolute; top: -2px; bottom: -2px; left: var(--p, 0%); width: max(1px, calc(1.5px / var(--z))); translate: -50% 0;
+  background: var(--ink); opacity: 0; pointer-events: none;
+}
+.sn.cur .sn-hd { opacity: 1; }
+.sn-w:hover .sn-m { filter: brightness(1.15); }
+.cv.far .sn-h { visibility: hidden; }
+
+/* la vignette d'un son dans le panneau de la bibliothèque (son.js, waveMark) */
+.lt .im .swave {
+  position: absolute; inset: 26% 10%; background: var(--grn2); pointer-events: none;
+  -webkit-mask: var(--wave) center / 100% 100% no-repeat; mask: var(--wave) center / 100% 100% no-repeat;
+}
+.lt .im .swave:not([style*="--wave"]) { visibility: hidden; }   /* pas display: none : il faut une boîte pour être vu (IntersectionObserver) */
+
+/* ── le web ─────────────────────────────────────────────── */
+.nd.web {
+  display: flex; flex-direction: column; overflow: hidden; border-radius: 10px;
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line), 0 4px 16px var(--drop);
+}
+.nd.web.sel { box-shadow: inset 0 0 0 1px var(--line), 0 0 0 calc(2px / var(--z)) var(--or); }
+.cv:not(.moving) .nd.web:hover:not(.sel):not(.ingrp) { box-shadow: inset 0 0 0 1px var(--line-cy), 0 4px 16px var(--drop); }
+.nd.web.on { box-shadow: inset 0 0 0 1px var(--line-cy), 0 0 0 calc(2px / var(--z)) var(--cy); }
+.wb { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.wb-bar {
+  flex: none; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 12px;
+  box-shadow: inset 0 -1px 0 var(--line); background: var(--panel3);
+}
+.wb-k { font-family: var(--f-mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--cy); flex: none; }
+.nd.web.wb-lien .wb-k { color: var(--ink3); }
+.wb-h { font-family: var(--f-mono); font-size: 9px; letter-spacing: .04em; color: var(--ink3); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wb-bar .sp { flex: 1; }
+.wb-b, .wb-out {
+  flex: none; height: 20px; padding: 0 9px; border-radius: 999px; display: inline-flex; align-items: center;
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink2);
+  box-shadow: inset 0 0 0 1px var(--line); text-decoration: none;
+}
+.wb-out { padding: 0 7px; font-size: 11px; letter-spacing: 0; }
+.wb-b:hover, .wb-out:hover { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.wb-act, .wb-back { display: none; }
+.nd.web.live .wb-back { display: inline-flex; }
+.nd.web.live:not(.on) .wb-act { display: inline-flex; }
+.wb-body { position: relative; flex: 1; min-height: 0; }
+/* la carte : l'image (lue et rangée par le portail), le titre, ce qui empêche l'intégration */
+.wb-card { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.wb-img { position: relative; flex: 1; min-height: 0; background: var(--panel3); display: grid; place-items: center; overflow: hidden; }
+.wb-img img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.wb-glyph { width: 40px; height: 40px; fill: none; stroke: var(--ink3); stroke-width: 1.2; }
+.wb-play {
+  position: relative; width: 56px; height: 56px; border-radius: 999px; display: grid; place-items: center;
+  background: var(--veil); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line);
+}
+.wb-play svg { width: 22px; height: 22px; fill: currentColor; translate: 2px 0; }
+.wb-play:hover { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.wb-meta { flex: none; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px 12px; }
+.wb-t { font-size: 13px; font-weight: 500; line-height: 1.3; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.wb-d { font-size: 11.5px; line-height: 1.4; color: var(--ink3); display: none; }
+.cv.near .wb-d { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.wb-why { font-size: 11px; line-height: 1.4; color: var(--amb); }
+.wb-open { align-self: flex-start; margin-top: 2px; }
+.nd.web.wb-lien .wb-card:not(.noimg) .wb-img { flex: 0 0 46%; }
+.nd.web.wb-lien .wb-card.noimg .wb-img { flex: 0 0 34%; }
+/* le cadre : sur la carte ; il ne prend la souris qu'activé (un clic hors de lui la rend) */
+.wb-if { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--panel3); pointer-events: none; }
+.nd.web.on .wb-if { pointer-events: auto; }
+.cv.moving .wb-if, .cv.panning .wb-if { pointer-events: none !important; }
+.cv.far .wb-meta { display: none; }
+.cv.far .wb-bar { height: calc(30px / max(var(--z), .3)); }
+
+/* ── la fenêtre « Intégrer une adresse web » ─────────────── */
+.wb-ask { display: flex; flex-direction: column; gap: 12px; min-width: min(560px, 80vw); }
+.wb-ask-m.err { color: var(--amb); }

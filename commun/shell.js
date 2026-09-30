@@ -354,7 +354,10 @@ export function mountHeader(toolId, { sub = '' } = {}) {
   // outils Studio fermés — grisés, un cadenas, un clic mène à la demande ; sur une page Studio (servie par le
   // Worker de la porte, que le portail ne voit pas), la porte « réservé au Studio » la couvre. Le serveur juge
   // de son côté (pages, écritures, travaux) : ceci ne fait que le montrer.
-  const studioOff = (me, x) => !!(me && me.user && me.user.access === 'apps' && x && x.tier === 'studio' && !x.open);
+  // un invité de planche (rôle `invite`) n'a pas le Studio, mais sa planche d'Idéation lui est ouverte :
+  // le serveur l'exempte (_studio_only), l'en-tête aussi
+  const studioOff = (me, x) => !!(me && me.user && me.user.access === 'apps' && me.user.role !== 'invite'
+    && x && x.tier === 'studio' && !x.open);
   const askStudio = (me, x) => (e) => { e.preventDefault(); menu.hidden = true; import('./porte.js').then((m) => m.studioDoor(me, x, { closable: true })); };
   const LOCK = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
   session().then((me) => {
@@ -560,6 +563,7 @@ export function thumb(it, { onclick, selected = false, sub } = {}) {
   // .grid.sm : la plus grande sert d'estimation, le chargement paresseux du
   // navigateur la prend), suivie ensuite (commun/proxies.js) ; sans copie, la vignette
   else if (it.thumb_url) im.append(bindView(el('img', { alt: '', loading: 'lazy', decoding: 'async' }), it, { fit: 'cover', box: [180, 180] }));
+  else if (it.kind === 'audio' && it.id) im.append(el('i', { class: 'swave', 'aria-hidden': 'true', style: { '--wave': `url("${href(`api/son/apercu/${it.id}?v=1`)}")` } }));   // le visuel du son (server/tools/apercu_son.py)
   im.append(kindMark(it));
   if (it.duration) im.append(el('span', { class: 'dur' }, fmtDur(it.duration)));
   const s = sub ?? (it.kind === 'element' ? `${it.element?.refs?.length || 0} réf.` :
