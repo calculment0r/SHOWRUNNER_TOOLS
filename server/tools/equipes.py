@@ -19,6 +19,11 @@ Team (pas seulement Cal) y règle la sienne ; chaque route juge qui gère quoi.
     POST /api/espaces/<e> {name, default_role, archived}
     POST /api/espaces/<e>/membres/<id> {role}            le rôle d'un membre dans ce Workspace ; un guest : « guest »
                                                          (dedans) ou null (dehors)
+    POST /api/espaces/<e>/rapatrier {items, folder?}     rapatrier des objets d'autres Workspaces dans <e> (étape 5,
+                                                         § 3.2) : une copie neuve chacun (core/library.py, rapatrier) ;
+                                                         rend {items: les copies, dans l'ordre, earlier: combien
+                                                         de copies de chacun <e> avait déjà} ; une LUT du Montage
+                                                         (`lut-…`) aussi : son .cube copié, une LUT neuve (`luts`)
     GET  /api/auth/equipe/<jeton>                        ce que dit un lien (sans session)
     POST /api/auth/equipe/<jeton>                        l'ouvrir : une session qui attend (pseudo neuf) passe
 
@@ -107,6 +112,90 @@ def r_space_member(req, sid, uid):
     if "role" not in d:
         raise HttpError(400, "le rôle : admin, editor, commenter, viewer, none, guest, ou null")
     return espaces.set_space_member(_who(req), sid, uid, d["role"])
+
+
+def r_rapatrier(req, sid):
+    """Rapatrier : lire l'objet où il est (le voir : library.see), créer dans <sid> (la
+    matrice, `import`). Tout ou rien ; jamais un lien vivant (core/library.py)."""
+    from core import library
+    u = _who(req)
+    d = req.json()
+    ids = d.get("items")
+    if not isinstance(ids, list) or not ids or len(ids) > library.IMPORT_MAX or not all(isinstance(i, str) for i in ids):
+        raise HttpError(400, f"items : la liste des objets à rapatrier ({library.IMPORT_MAX} au plus)")
+    if d.get("avec_source"):
+        raise HttpError(409, "rapatrier avec sa source (un élément versionné et son document) vient avec l'étape 9 : "
+                             "pour l'instant, la copie seule")
+    folder = d.get("folder") or ""
+    if not isinstance(folder, str) or len(folder) > 60 or "/" in folder:
+        raise HttpError(400, "folder : un nom de dossier (60 signes, sans « / »)")
+    folder = " ".join(folder.split())
+    if not espaces.can_view(u, sid):
+        raise HttpError(404, f"Workspace {sid} : inconnu, ou pas pour toi")
+    lut_ids = [i for i in dict.fromkeys(ids) if i.startswith("lut-")]
+    ids = [i for i in dict.fromkeys(ids) if not i.startswith("lut-")]
+    library.check_import(sid)
+    luts = _luts_to_import(lut_ids, sid)   # jugées avant toute copie : tout ou rien
+    earlier = {}
+    for i in ids:
+        src = library.see(i)
+        if src is not None:
+            earlier[i] = len(library.copies_of(src, sid))
+    try:
+        made = library.rapatrier(ids, sid, folder=folder) if ids else []
+    except KeyError as e:
+        raise HttpError(404, f"introuvable : {str(e).strip(chr(39))}") from e
+    except ValueError as e:
+        raise HttpError(409, str(e)) from e
+    made_luts = [_import_lut(m, sid) for m in luts]
+    auth.journal("asset : rapatrier", space=sid, items=[{"from": ((x.get("origin") or {}).get("from") or {}).get("item"),
+                                                          "to": x["id"]} for x in made]
+                 + [{"from": m["from"]["item"], "to": m["id"]} for m in made_luts])
+    from tools import montage
+    return {"items": [library.public(x) for x in made], "luts": [montage._lut_public(m) for m in made_luts],
+            "space": sid, "space_name": library.space_name(sid), "earlier": sum(1 for v in earlier.values() if v)}
+
+
+# Une LUT du Montage (server/tools/montage.py : `<data>/luts/<id>.cube` et `<id>.json`, avec
+# `owner` et `space`) se rapatrie comme un objet : une LUT neuve dans B (un autre id), son
+# .cube copié (quelques centaines de Ko, jamais réécrit ; une copie pleine suffit), `from`
+# dit d'où elle vient ; l'original ne bouge pas. Les vignettes (`mini/`) se refont à la demande.
+def _luts_to_import(lids: list[str], sid: str) -> list[dict]:
+    from core import library
+    from tools import montage
+    out = []
+    for lid in lids:
+        m = montage.lut_meta(lid)
+        if not m or not (montage._luts_dir() / f"{lid}.cube").exists() or not library.visible(m):
+            raise HttpError(404, f"introuvable : {lid}")
+        if library.space_of(m) == sid:
+            raise HttpError(409, f"la LUT « {m.get('title') or lid} » est déjà dans « {library.space_name(sid)} » : rien à rapatrier")
+        out.append(m)
+    return out
+
+
+def _import_lut(m: dict, sid: str) -> dict:
+    import json
+    import secrets
+    import shutil
+    import time
+
+    from core import library
+    from tools import montage
+    d = montage._luts_dir()
+    while True:
+        lid = f"lut-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
+        if not (d / f"{lid}.json").exists():
+            break
+    shutil.copyfile(d / f"{m['id']}.cube", d / f"{lid}.cube")
+    at = library.now()
+    meta = {**{k: v for k, v in m.items() if k not in ("id", "space", "owner", "created", "fav", "from")},
+            "id": lid, "created": at, "fav": 0, "owner": auth.current_id(), "space": sid,
+            "from": {"space": library.space_of(m), "item": m["id"], "at": at}}
+    tmp = d / f"{lid}.json.tmp"
+    tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(d / f"{lid}.json")
+    return meta
 
 
 def r_invite(req, tid):
@@ -199,6 +288,7 @@ def register(app) -> None:
     app.route("POST", "/api/espaces/courant", r_current)   # avant /api/espaces/{sid} : le premier motif gagne
     app.route("POST", "/api/espaces/{sid}", r_space_set)
     app.route("POST", "/api/espaces/{sid}/membres/{uid}", r_space_member)
+    app.route("POST", "/api/espaces/{sid}/rapatrier", r_rapatrier)
     app.route("GET", "/api/auth/equipe/{tok}", r_invite_info)
     app.route("POST", "/api/auth/equipe/{tok}", r_redeem)
 
