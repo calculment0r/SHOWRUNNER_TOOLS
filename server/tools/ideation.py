@@ -636,6 +636,11 @@ def _node(n) -> dict:
     elif t == "web":   # web : l'adresse (http, https) et ce que l'aperçu en a lu — server/tools/web_apercu.py
         from tools import web_apercu
         out.update(web_apercu.node_fields(n))
+    # ── présentation (agent « présentations », 30/09) : `motion` et `tone` d'un objet, `motion` d'une
+    # diapositive — la règle est dans server/tools/presentation.py (le schéma du motion) ──
+    from tools import presentation as _pm
+    out.update(_pm.node_fields(n, t))
+    # ── fin présentation ──
     return out
 
 
@@ -666,7 +671,13 @@ def _pres(p) -> dict | None:
             o["upper"] = st["upper"]
         if o:
             styles[sid] = o
-    return {"styles": styles} if styles else None
+    out = {"styles": styles} if styles else {}
+    # ── présentation (agent « présentations », 30/09) : `pres.template`, le modèle appliqué
+    # (server/tools/presentation.py : un fichier de ideation/presentation/modeles/, sinon rien) ──
+    from tools import presentation as _pm
+    out.update(_pm.pres_fields(p))
+    # ── fin présentation ──
+    return out or None
 
 
 def style_of(b: dict, sid: str) -> dict:

@@ -1,0 +1,78 @@
+{
+  "id": "revue",
+  "name": "Revue",
+  "kind": "statique",
+  "direction": "éditorial magazine",
+  "line": "Papier chaud, grand sérif à taille optique, filet d'encre et folio : une revue d'auteur, pas un tableau de bord.",
+  "brand": "Nirvalab — Revue n° 07",
+  "palette": { "bg": "#f3eee5", "surface": "#e7dfd1", "ink": "#17130e", "muted": "#675e52", "accent": "#c8361d", "accent2": "#1e3a5c", "inverse": "#f7f3ec", "line": "#17130e", "veil": "#120e0a" },
+  "styles": {
+    "display": { "font": "fraunces", "size": 176, "weight": 300, "lh": 0.92, "track": -0.02, "upper": false },
+    "h1": { "font": "fraunces", "size": 96, "weight": 400, "lh": 1.0, "track": -0.015, "upper": false },
+    "h2": { "font": "fraunces", "size": 56, "weight": 300, "lh": 1.12, "track": -0.01, "upper": false },
+    "body": { "font": "intertight", "size": 30, "weight": 400, "lh": 1.5, "track": 0, "upper": false },
+    "caption": { "font": "intertight", "size": 21, "weight": 400, "lh": 1.4, "track": 0.01, "upper": false },
+    "label": { "font": "intertight", "size": 16, "weight": 600, "lh": 1.3, "track": 0.22, "upper": true }
+  },
+  "slideBg": { "title": "bg", "section": "bg", "image": "ink", "quote": "surface", "numbers": "bg", "grid": "bg", "content": "bg", "end": "ink" },
+  "decor": [
+    { "kind": "rule", "x": 96, "y": 118, "w": 1728, "h": 2, "tone": "auto", "not": ["image"] },
+    { "kind": "mark", "x": 96, "y": 72, "w": 900, "style": "label", "tone": "auto", "not": ["image"] },
+    { "kind": "folio", "x": 1424, "y": 72, "w": 400, "align": "right", "style": "label", "tone": "auto", "not": ["image"] },
+    { "kind": "num", "on": ["section"], "x": 1060, "y": 150, "w": 764, "size": 400, "style": "display", "tone": "accent", "align": "right", "layer": "back" },
+    { "kind": "rule", "on": ["quote"], "x": 242, "y": 300, "w": 120, "h": 6, "tone": "accent" }
+  ],
+  "motion": { "rhythm": 0, "trans": { "default": { "kind": "fade", "dur": 600, "ease": "in-out" } }, "parts": {} },
+  "example": {
+    "name": "Revue d'automne — La lumière comme personnage",
+    "slides": [
+      { "name": "Ouverture", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 184, "w": 1000, "h": 24, "text": "Réponse au brief · Maison Lumière · automne 2026" },
+        { "type": "title", "style": "display", "x": 96, "y": 420, "w": 1144, "h": 490, "text": "La lumière comme personnage" },
+        { "type": "media", "kind": "image", "item": "ima-20260929-084520-5f36", "x": 1264, "y": 184, "w": 560, "h": 760 },
+        { "type": "note", "style": "caption", "x": 1264, "y": 956, "w": 560, "h": 30, "text": "Photogramme — essai de lumière, septembre 2026" }
+      ] },
+      { "name": "Le constat", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 360, "w": 600, "h": 24, "text": "Premier chapitre" },
+        { "type": "title", "style": "h1", "x": 96, "y": 400, "w": 900, "h": 100, "text": "Le constat" },
+        { "type": "note", "style": "body", "x": 96, "y": 560, "w": 858, "h": 140, "text": "Les marques de lumière se ressemblent toutes : du blanc, du verre, des reflets. Personne ne raconte ce que la lumière fait aux gens." }
+      ] },
+      { "name": "La brume rouge", "objects": [
+        { "type": "media", "kind": "image", "item": "ima-20260929-130041-4297", "x": 0, "y": 0, "w": 1920, "h": 1080, "tone": "veil" },
+        { "type": "note", "style": "label", "x": 96, "y": 788, "w": 800, "h": 24, "text": "Planche 03 — la brume rouge" },
+        { "type": "title", "style": "h2", "x": 96, "y": 828, "w": 1144, "h": 130, "text": "Une lumière qui retient, plutôt qu’elle ne montre." }
+      ] },
+      { "name": "Citation", "objects": [
+        { "type": "title", "style": "h1", "x": 242, "y": 340, "w": 1436, "h": 300, "text": "« On ne filme pas la lumière. On filme ce qu’elle choisit de montrer. »" },
+        { "type": "note", "style": "label", "x": 242, "y": 700, "w": 900, "h": 24, "text": "— Carnet de tournage, Nirvalab" }
+      ] },
+      { "name": "En chiffres", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 184, "w": 600, "h": 24, "text": "En chiffres" },
+        { "type": "title", "style": "h2", "x": 96, "y": 224, "w": 1144, "h": 64, "text": "Ce que la lumière a changé" },
+        { "type": "title", "style": "display", "x": 96, "y": 440, "w": 560, "h": 170, "text": "12" },
+        { "type": "title", "style": "display", "x": 680, "y": 440, "w": 560, "h": 170, "text": "48 h" },
+        { "type": "title", "style": "display", "x": 1264, "y": 440, "w": 560, "h": 170, "text": "3" },
+        { "type": "note", "style": "body", "x": 96, "y": 660, "w": 480, "h": 90, "text": "films tournés en lumière naturelle, sans projecteur ajouté" },
+        { "type": "note", "style": "body", "x": 680, "y": 660, "w": 480, "h": 90, "text": "entre le brief et la première image montrée" },
+        { "type": "note", "style": "body", "x": 1264, "y": 660, "w": 480, "h": 90, "text": "continents, une seule équipe" }
+      ] },
+      { "name": "Planches", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 184, "w": 600, "h": 24, "text": "Planches" },
+        { "type": "title", "style": "h2", "x": 96, "y": 224, "w": 1144, "h": 64, "text": "Quatre heures, quatre lumières" },
+        { "type": "media", "kind": "image", "item": "ima-20260929-130041-9542", "x": 96, "y": 376, "w": 414, "h": 540 },
+        { "type": "media", "kind": "image", "item": "ima-20260929-130040-316d", "x": 534, "y": 376, "w": 414, "h": 540 },
+        { "type": "media", "kind": "image", "item": "ima-20260929-130040-365c", "x": 972, "y": 376, "w": 414, "h": 540 },
+        { "type": "media", "kind": "image", "item": "ima-20260929-130041-4297", "x": 1410, "y": 376, "w": 414, "h": 540 },
+        { "type": "note", "style": "caption", "x": 96, "y": 932, "w": 414, "h": 30, "text": "06:12 — aube" },
+        { "type": "note", "style": "caption", "x": 534, "y": 932, "w": 414, "h": 30, "text": "11:40 — zénith" },
+        { "type": "note", "style": "caption", "x": 972, "y": 932, "w": 414, "h": 30, "text": "17:55 — néon froid" },
+        { "type": "note", "style": "caption", "x": 1410, "y": 932, "w": 414, "h": 30, "text": "22:03 — brume" }
+      ] },
+      { "name": "Merci", "objects": [
+        { "type": "title", "style": "display", "x": 96, "y": 380, "w": 1144, "h": 170, "text": "Merci." },
+        { "type": "note", "style": "body", "x": 96, "y": 600, "w": 858, "h": 50, "text": "Nirvalab · studio de création · Showrunner" },
+        { "type": "note", "style": "label", "x": 96, "y": 940, "w": 858, "h": 24, "text": "Revue d’automne 2026 — tous les rendus sont locaux" }
+      ] }
+    ]
+  }
+}

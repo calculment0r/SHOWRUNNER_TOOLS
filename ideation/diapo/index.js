@@ -361,7 +361,9 @@ export function install(app) {
     el('div', { class: 'dp-f' },
       el('button', { class: 'tb ghost sm', type: 'button', title: 'une diapositive 16:9, à droite de la dernière', onclick: () => newSlide() }, '+ Diapositive'),
       el('button', { class: 'tb ghost sm', type: 'button', title: 'les styles de texte et les polices de la présentation', onclick: () => stylesModal() }, 'Styles'),
-      el('button', { class: 'tb ghost sm dp-ro', type: 'button', title: 'revenir à l’ordre de lecture de la planche (par rangées, de gauche à droite)', onclick: () => readingReset(app) }, 'Ordre de lecture')));
+      el('button', { class: 'tb ghost sm dp-ro', type: 'button', title: 'revenir à l’ordre de lecture de la planche (par rangées, de gauche à droite)', onclick: () => readingReset(app) }, 'Ordre de lecture'),
+      // le mode Présentation (ideation/presentation/mode.js) : chargé seulement quand on y entre
+      el('button', { class: 'tb ghost sm dp-pm', type: 'button', title: 'le mode Présentation : modèles, motion, passe assistée (sa propre vue ; Échap rend l’Idéation telle quelle)', onclick: () => enterMode() }, 'Mode présentation')));
   panel.hidden = true;
   cv.append(panel);
   const isOpen = () => !panel.hidden;
@@ -374,10 +376,12 @@ export function install(app) {
   const syncBtn = () => btn.classList.toggle('on', isOpen());
 
   let rowsKey = '', thumbs = [];
+  const looks = new Map();   // présentation : l'habit du modèle de chaque diapositive (paintLook, plus bas)
   function rowMenu(f) {
     const hidden = !!f.skip;
     return [{ head: f.name || 'Cadre' },
       { label: 'Présenter d’ici', onclick: () => P()?.start(f.id) },
+      { label: 'Mode présentation d’ici', sub: 'motion', disabled: !isSlide(f), why: 'un cadre libre n’a pas de scène : choisissez un format (16:9…)', onclick: () => enterMode(f.id) },
       { label: 'Voir sur la planche', onclick: () => goTo(f) },
       { label: 'Dupliquer la diapositive', sub: 'morph', onclick: () => duplicateSlide(f.id) },
       { label: hidden ? 'Montrer' : 'Masquer', sub: 'dans la présentation', onclick: () => setSkip(app, f.id, !hidden) },
@@ -468,7 +472,7 @@ export function install(app) {
   function drawThumbs(later = false) {
     if (later) { clearTimeout(thumbT); thumbT = setTimeout(() => drawThumbs(), 260); return; }
     if (!isOpen()) return;
-    for (const t of thumbs) { const f = app.node(t.id); if (f) drawSlide(t.th, app, f, (sid) => styleOf(app, sid), () => drawThumbs(true)); }
+    for (const t of thumbs) { const f = app.node(t.id); if (f) drawSlide(t.th, app, f, (sid) => styleOf(app, sid), () => drawThumbs(true), (x) => looks.get(x.id) || null); }
   }
 
   // ── l'inspecteur, les menus (inspector.js, menus.js les appellent) ─
@@ -534,6 +538,46 @@ export function install(app) {
     A.command({ order: 18, label: `Style : ${name}`, sub: 'les textes choisis', when: () => (texts(selected()).length ? true : 'choisissez un titre ou une note'), run: () => setStyle(selected(), sid) });
   }
 
+  // ── présentation (agent « présentations », 30/09) ─────────
+  // le mode Présentation, chargé à la demande (il ne pèse rien tant qu'on n'y entre pas)
+  function enterMode(from = null) {
+    import('../presentation/mode.js').then((m) => m.enter(app, { from })).catch((e) => { console.error('présentation · mode', e); toast(`le mode Présentation ne se charge pas : ${e.message}`); });
+  }
+  A.command({ order: 19, label: 'Mode présentation', sub: 'modèles, motion, passe assistée', run: () => enterMode(oneFrame()?.id || null) });
+  // la planche montre l'habit du modèle appliqué : le fond de chaque diapositive, la couleur de ses
+  // textes (les mêmes règles que la scène : presentation/scene.js, lookOf) ; les polices viennent
+  // déjà des styles (pres.styles). Des données du modèle, posées dans une feuille vivante.
+  const lookSheet = A.style('pm-look');
+  let lookSeq = 0;
+  async function paintLook() {
+    const id = S.board?.pres?.template;
+    const my = ++lookSeq;
+    if (!id) { if (looks.size) { looks.clear(); drawThumbs(true); } lookSheet(''); return; }
+    const [{ modele }, { lookOf }] = await Promise.all([import('../presentation/modeles.js'), import('../presentation/scene.js')]);
+    const tpl = await modele(id);
+    if (my !== lookSeq) return;
+    if (!tpl) { lookSheet(''); return; }
+    const pal = tpl.palette;
+    const fs = deckOf(S.board).seq.filter((f) => isSlide(f) && !f.skip);
+    const q = (x) => `"${String(x).replace(/["\\]/g, '\\$&')}"`;
+    let css = '';
+    looks.clear();
+    fs.forEach((f, i) => {
+      const L = lookOf(S.board, f, tpl, i, fs.length);
+      const colors = new Map();
+      css += `.cv .fr.deck[data-id=${q(f.id)}] { background: ${pal[L.bgKey] || pal.bg}; }\n`;
+      for (const [nid, tone] of L.tones) if (pal[tone]) { colors.set(nid, pal[tone]); css += `.cv .nd[data-id=${q(nid)}] > .txt { color: ${pal[tone]}; }\n`; }
+      looks.set(f.id, { bg: pal[L.bgKey] || pal.bg, colors });
+    });
+    lookSheet(css);
+    drawThumbs(true);
+  }
+  let lookT = 0;
+  const lookSoon = () => { clearTimeout(lookT); lookT = setTimeout(() => paintLook().catch(() => {}), 160); };
+  app.on('commit', lookSoon); app.on('quiet', lookSoon); app.on('board', lookSoon);
+  lookSoon();
+  // ── fin présentation ──
+
   // ── l'ordre gardé dans ce navigateur (avant le 30/09) passe sur la planche, une fois ─
   function migrate(b) {
     if (!b) return;
@@ -575,5 +619,5 @@ export function install(app) {
   document.fonts?.addEventListener?.('loadingdone', () => { app.render(); drawThumbs(true); });
   if (S.board) { paintStyles(); app.render(); }
 
-  app.diapo = { panels, nodeItems, selItems, boardItems, open, close, toggle, makeSlides, newSlide, duplicateSlide, stylesModal, setStyle, setAlign, isOpen, grid };
+  app.diapo = { panels, nodeItems, selItems, boardItems, open, close, toggle, makeSlides, newSlide, duplicateSlide, stylesModal, setStyle, setAlign, isOpen, grid, enterMode };
 }

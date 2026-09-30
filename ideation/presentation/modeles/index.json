@@ -1,0 +1,4 @@
+{
+  "about": "Les modèles de présentation d'Idéation, dans l'ordre de la galerie : cinq en motion, cinq statiques. Chaque fichier <id>.json est contrôlé contre ../schema.json (server/tools/presentation.py, selftest). Les images des exemples sont des identifiants de la bibliothèque de Cal (rien n'est copié dans ce dépôt) ; absentes d'un portail, la scène pose un aplat du modèle à leur place.",
+  "modeles": ["generique", "lumiere", "metronome", "signal", "toile", "revue", "grille", "brut", "atelier", "affiche"]
+}

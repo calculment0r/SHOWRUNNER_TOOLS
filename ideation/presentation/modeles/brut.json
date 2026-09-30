@@ -1,0 +1,73 @@
+{
+  "id": "brut",
+  "name": "Brut",
+  "kind": "statique",
+  "direction": "brutaliste mono",
+  "line": "Gris béton, grotesque capitale et chasse fixe, orange de chantier, un filet autour de tout : le rapport tel qu’il sort du banc.",
+  "brand": "Rapport de banc / image → vidéo / 30.09.2026",
+  "palette": { "bg": "#d9d9d2", "surface": "#c8c8c0", "ink": "#0a0a0a", "muted": "#43433f", "accent": "#ff3b00", "accent2": "#0a0a0a", "inverse": "#d9d9d2", "line": "#0a0a0a", "veil": "#0a0a0a" },
+  "styles": {
+    "display": { "font": "spacegrotesk", "size": 168, "weight": 700, "lh": 0.88, "track": -0.04, "upper": true },
+    "h1": { "font": "spacegrotesk", "size": 88, "weight": 700, "lh": 0.92, "track": -0.03, "upper": true },
+    "h2": { "font": "azeret", "size": 44, "weight": 500, "lh": 1.15, "track": -0.02, "upper": false },
+    "body": { "font": "azeret", "size": 26, "weight": 400, "lh": 1.5, "track": 0, "upper": false },
+    "caption": { "font": "azeret", "size": 18, "weight": 400, "lh": 1.4, "track": 0.02, "upper": false },
+    "label": { "font": "azeret", "size": 16, "weight": 500, "lh": 1.3, "track": 0.12, "upper": true }
+  },
+  "slideBg": { "title": "bg", "section": "ink", "image": "ink", "quote": "accent", "numbers": "bg", "grid": "bg", "content": "bg", "end": "ink" },
+  "decor": [
+    { "kind": "border", "inset": 32, "tone": "auto" },
+    { "kind": "mark", "x": 96, "y": 64, "w": 1000, "style": "label", "tone": "auto" },
+    { "kind": "folio", "x": 1424, "y": 64, "w": 400, "align": "right", "style": "label", "tone": "auto" },
+    { "kind": "rule", "x": 32, "y": 112, "w": 1856, "h": 2, "tone": "auto" },
+    { "kind": "block", "on": ["title", "numbers"], "x": 32, "y": 1016, "w": 1856, "h": 32, "tone": "accent" }
+  ],
+  "motion": { "rhythm": 0, "trans": { "default": { "kind": "cut", "dur": 0, "ease": "linear" } }, "parts": {} },
+  "example": {
+    "name": "Rapport de banc #07 — H3 contre le reste",
+    "slides": [
+      { "name": "Banc #07", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 168, "w": 900, "h": 22, "text": "Banc n° 07 · douze plans · trois moteurs" },
+        { "type": "title", "style": "display", "x": 96, "y": 240, "w": 960, "h": 450, "text": "Banc\nvidéo\n#07" },
+        { "type": "media", "kind": "video", "item": "vid-20260929-130042-d77c", "x": 1118, "y": 168, "w": 706, "h": 397 },
+        { "type": "note", "style": "body", "x": 1118, "y": 600, "w": 706, "h": 160, "text": "Douze plans, trois moteurs, un seul juge : l’œil. Méthode, chiffres, verdict." }
+      ] },
+      { "name": "Méthode", "objects": [
+        { "type": "title", "style": "h1", "x": 96, "y": 420, "w": 1436, "h": 90, "text": "01 / Méthode" },
+        { "type": "note", "style": "body", "x": 96, "y": 560, "w": 1000, "h": 80, "text": "Même image de départ, même durée, même graine. On change le moteur, rien d’autre." }
+      ] },
+      { "name": "Plan 07", "objects": [
+        { "type": "media", "kind": "video", "item": "vid-20260929-130042-9401", "x": 0, "y": 0, "w": 1920, "h": 1080, "tone": "veil" },
+        { "type": "note", "style": "label", "x": 96, "y": 900, "w": 1200, "h": 22, "text": "Plan 07 — éclatement, 5 s, 24 i/s, H3" }
+      ] },
+      { "name": "Règle 1", "objects": [
+        { "type": "title", "style": "h1", "x": 96, "y": 380, "w": 1582, "h": 170, "text": "« Un banc qui ne peut pas se tromper ne mesure rien. »" },
+        { "type": "note", "style": "label", "x": 96, "y": 640, "w": 800, "h": 22, "text": "— Règle n° 1 du banc" }
+      ] },
+      { "name": "Résultats", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 184, "w": 600, "h": 22, "text": "Résultats (exemple)" },
+        { "type": "title", "style": "h2", "x": 96, "y": 222, "w": 1144, "h": 52, "text": "À l’aveugle, sur douze plans" },
+        { "type": "title", "style": "display", "x": 96, "y": 420, "w": 560, "h": 150, "text": "12" },
+        { "type": "title", "style": "display", "x": 680, "y": 420, "w": 560, "h": 150, "text": "3" },
+        { "type": "title", "style": "display", "x": 1264, "y": 420, "w": 560, "h": 150, "text": "87 %" },
+        { "type": "note", "style": "body", "x": 96, "y": 620, "w": 480, "h": 80, "text": "plans tournés par moteur" },
+        { "type": "note", "style": "body", "x": 680, "y": 620, "w": 480, "h": 80, "text": "moteurs comparés à l’aveugle" },
+        { "type": "note", "style": "body", "x": 1264, "y": 620, "w": 480, "h": 80, "text": "des plans H3 choisis au premier regard" }
+      ] },
+      { "name": "Les trois", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 184, "w": 600, "h": 22, "text": "Les trois moteurs, même plan" },
+        { "type": "title", "style": "h1", "x": 96, "y": 222, "w": 1436, "h": 90, "text": "A · B · C" },
+        { "type": "media", "kind": "video", "item": "vid-20260929-130043-850c", "x": 96, "y": 420, "w": 560, "h": 315 },
+        { "type": "media", "kind": "video", "item": "vid-20260929-130042-020b", "x": 680, "y": 420, "w": 560, "h": 315 },
+        { "type": "media", "kind": "video", "item": "vid-20260929-130042-9401", "x": 1264, "y": 420, "w": 560, "h": 315 },
+        { "type": "note", "style": "caption", "x": 96, "y": 752, "w": 560, "h": 26, "text": "A — H3, recette Qualité" },
+        { "type": "note", "style": "caption", "x": 680, "y": 752, "w": 560, "h": 26, "text": "B — moteur 2" },
+        { "type": "note", "style": "caption", "x": 1264, "y": 752, "w": 560, "h": 26, "text": "C — moteur 3" }
+      ] },
+      { "name": "Fin", "objects": [
+        { "type": "title", "style": "display", "x": 96, "y": 360, "w": 1436, "h": 300, "text": "Fin\ndu banc." },
+        { "type": "note", "style": "body", "x": 96, "y": 740, "w": 1000, "h": 80, "text": "Les fichiers bruts sont dans Asset, dossier « Banc #07 »." }
+      ] }
+    ]
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "id": "affiche",
+  "name": "Affiche",
+  "kind": "statique",
+  "direction": "affiche pop",
+  "line": "Bleu électrique, rose, jaune, une grotesque extra-large qui déborde presque : chaque diapositive est une affiche de soirée.",
+  "brand": "Nirvalab Club · projection · jeudi 16 octobre · 20 h",
+  "palette": { "bg": "#2b35f0", "surface": "#ff5fa2", "ink": "#fff4e6", "muted": "#d9dbff", "accent": "#ffd23f", "accent2": "#ff5fa2", "inverse": "#15162e", "line": "#fff4e6", "veil": "#15162e" },
+  "styles": {
+    "display": { "font": "syne", "size": 140, "weight": 800, "lh": 0.88, "track": -0.03, "upper": true },
+    "h1": { "font": "syne", "size": 84, "weight": 800, "lh": 0.92, "track": -0.02, "upper": true },
+    "h2": { "font": "syne", "size": 56, "weight": 600, "lh": 1.05, "track": -0.01, "upper": false },
+    "body": { "font": "spacegrotesk", "size": 30, "weight": 500, "lh": 1.4, "track": 0, "upper": false },
+    "caption": { "font": "spacegrotesk", "size": 20, "weight": 500, "lh": 1.35, "track": 0.02, "upper": false },
+    "label": { "font": "spacegrotesk", "size": 18, "weight": 700, "lh": 1.2, "track": 0.14, "upper": true }
+  },
+  "slideBg": { "title": "bg", "section": "surface", "image": "bg", "quote": "accent", "numbers": "bg", "grid": "surface", "content": "bg", "end": "accent" },
+  "decor": [
+    { "kind": "ring", "on": ["title"], "x": 1540, "y": 250, "r": 330, "width": 3, "tone": "accent", "layer": "back" },
+    { "kind": "ring", "on": ["numbers"], "x": 1790, "y": 1010, "r": 300, "width": 3, "tone": "accent2", "layer": "back" },
+    { "kind": "ticker", "on": ["title", "end"], "y": 1016, "h": 64, "style": "label", "tone": "auto" },
+    { "kind": "folio", "x": 1424, "y": 64, "w": 400, "align": "right", "style": "label", "tone": "auto", "not": ["image"] }
+  ],
+  "motion": { "rhythm": 0, "trans": { "default": { "kind": "cut", "dur": 0, "ease": "linear" }, "end": { "kind": "fade", "dur": 500, "ease": "in-out" } }, "parts": {} },
+  "example": {
+    "name": "Nirvalab Club — soirée de projection",
+    "slides": [
+      { "name": "Club", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 150, "w": 1144, "h": 22, "text": "Soirée de projection · jeudi 16 octobre · 20 h" },
+        { "type": "title", "style": "display", "x": 96, "y": 300, "w": 1144, "h": 250, "text": "Club\nNirvalab" },
+        { "type": "note", "style": "body", "x": 96, "y": 700, "w": 800, "h": 90, "text": "Courts métrages, essais, ratés magnifiques. Entrée libre, places comptées." },
+        { "type": "media", "kind": "image", "item": "ima-20260929-123310-8bbe", "x": 1264, "y": 150, "w": 560, "h": 800 }
+      ] },
+      { "name": "Au programme", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 330, "w": 900, "h": 22, "text": "03 films · 01 débat" },
+        { "type": "title", "style": "h1", "x": 96, "y": 380, "w": 1436, "h": 200, "text": "Au programme" }
+      ] },
+      { "name": "SEED", "objects": [
+        { "type": "media", "kind": "image", "item": "ima-20260929-130041-9542", "x": 0, "y": 0, "w": 1920, "h": 1080, "tone": "veil" },
+        { "type": "note", "style": "label", "x": 96, "y": 740, "w": 800, "h": 22, "text": "Court métrage · 7 min" },
+        { "type": "title", "style": "display", "x": 96, "y": 790, "w": 1436, "h": 180, "text": "Seed" }
+      ] },
+      { "name": "L’équipe", "objects": [
+        { "type": "title", "style": "h1", "x": 96, "y": 380, "w": 1600, "h": 240, "text": "« On a raté exprès, pour voir ce qui restait. »" },
+        { "type": "note", "style": "label", "x": 96, "y": 720, "w": 900, "h": 22, "text": "— L’équipe de Seed" }
+      ] },
+      { "name": "La soirée", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 184, "w": 600, "h": 22, "text": "La soirée" },
+        { "type": "title", "style": "display", "x": 96, "y": 400, "w": 560, "h": 180, "text": "3" },
+        { "type": "title", "style": "display", "x": 680, "y": 400, "w": 560, "h": 180, "text": "7" },
+        { "type": "title", "style": "display", "x": 1264, "y": 400, "w": 560, "h": 180, "text": "120" },
+        { "type": "note", "style": "body", "x": 96, "y": 620, "w": 480, "h": 45, "text": "films" },
+        { "type": "note", "style": "body", "x": 680, "y": 620, "w": 480, "h": 90, "text": "minutes chacun, pas une de plus" },
+        { "type": "note", "style": "body", "x": 1264, "y": 620, "w": 480, "h": 90, "text": "places, pas une de plus non plus" }
+      ] },
+      { "name": "Les films", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 184, "w": 600, "h": 22, "text": "Les films" },
+        { "type": "media", "kind": "image", "item": "ima-20260929-123310-8bbe", "x": 96, "y": 280, "w": 560, "h": 620 },
+        { "type": "media", "kind": "image", "item": "ima-20260929-130041-562b", "x": 680, "y": 280, "w": 560, "h": 620 },
+        { "type": "media", "kind": "image", "item": "ima-20260929-130041-4fc4", "x": 1264, "y": 280, "w": 560, "h": 620 },
+        { "type": "note", "style": "label", "x": 96, "y": 924, "w": 560, "h": 22, "text": "Seed" },
+        { "type": "note", "style": "label", "x": 680, "y": 924, "w": 560, "h": 22, "text": "Le visiteur" },
+        { "type": "note", "style": "label", "x": 1264, "y": 924, "w": 560, "h": 22, "text": "Poids lourd" }
+      ] },
+      { "name": "On vous attend", "objects": [
+        { "type": "title", "style": "display", "x": 96, "y": 260, "w": 1436, "h": 380, "text": "On\nvous\nattend" },
+        { "type": "note", "style": "label", "x": 96, "y": 880, "w": 900, "h": 22, "text": "Entrée libre · Nirvalab Club" }
+      ] }
+    ]
+  }
+}

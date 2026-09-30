@@ -1,0 +1,90 @@
+{
+  "id": "metronome",
+  "name": "Métronome",
+  "kind": "motion",
+  "direction": "typographie cinétique suisse",
+  "line": "Des mots qui sortent de leur masque sur le temps, des filets qui se tracent, des images qui s’ouvrent comme des volets : la mise en page bat la mesure.",
+  "brand": "Nirvalab — manifeste",
+  "palette": { "bg": "#f2f0eb", "surface": "#e4e1d9", "ink": "#0d0d0d", "muted": "#55534e", "accent": "#ff3b1f", "accent2": "#0d0d0d", "inverse": "#f2f0eb", "line": "#0d0d0d", "veil": "#0d0d0d" },
+  "styles": {
+    "display": { "font": "spacegrotesk", "size": 196, "weight": 700, "lh": 0.88, "track": -0.05, "upper": false },
+    "h1": { "font": "spacegrotesk", "size": 100, "weight": 700, "lh": 0.92, "track": -0.04, "upper": false },
+    "h2": { "font": "spacegrotesk", "size": 54, "weight": 500, "lh": 1.05, "track": -0.02, "upper": false },
+    "body": { "font": "intertight", "size": 30, "weight": 400, "lh": 1.45, "track": 0, "upper": false },
+    "caption": { "font": "spacegrotesk", "size": 20, "weight": 400, "lh": 1.35, "track": 0, "upper": false },
+    "label": { "font": "azeret", "size": 16, "weight": 500, "lh": 1.3, "track": 0.14, "upper": true }
+  },
+  "slideBg": { "title": "bg", "section": "accent", "image": "ink", "quote": "bg", "numbers": "bg", "grid": "bg", "content": "bg", "end": "ink" },
+  "decor": [
+    { "kind": "rule", "x": 96, "y": 132, "w": 1728, "h": 3, "tone": "auto", "not": ["image"], "motion": { "in": { "fx": "draw", "dur": 900, "delay": 0, "ease": "in-out-expo" } } },
+    { "kind": "folio", "x": 1424, "y": 84, "w": 400, "align": "right", "style": "label", "tone": "auto", "not": ["image"], "motion": { "in": { "fx": "type", "dur": 40, "delay": 300, "stagger": 30 } } },
+    { "kind": "mark", "x": 96, "y": 84, "w": 900, "style": "label", "tone": "auto", "not": ["image"], "motion": { "in": { "fx": "type", "dur": 40, "delay": 200, "stagger": 22 } } },
+    { "kind": "block", "on": ["title"], "x": 1560, "y": 250, "w": 264, "h": 264, "tone": "accent", "motion": { "in": { "fx": "scale", "dur": 900, "delay": 600, "ease": "spring" }, "loop": { "fx": "spin", "dur": 24000 } } },
+    { "kind": "block", "on": ["quote", "numbers"], "x": 0, "y": 1040, "w": 1920, "h": 40, "tone": "accent", "motion": { "in": { "fx": "mask-right", "dur": 900, "delay": 200, "ease": "in-out-expo" } } }
+  ],
+  "motion": {
+    "rhythm": 90,
+    "trans": {
+      "default": { "kind": "push", "dur": 800, "ease": "in-out-expo" },
+      "section": { "kind": "wipe", "dur": 900, "ease": "in-out-expo" },
+      "image": { "kind": "wipe", "dur": 900, "ease": "in-out-expo" },
+      "end": { "kind": "curtain", "dur": 1300, "ease": "in-out" }
+    },
+    "parts": {
+      "kicker": { "in": { "fx": "type", "dur": 40, "delay": 150, "stagger": 26 } },
+      "title": { "in": { "fx": "reveal", "dur": 900, "delay": 200, "ease": "out-expo", "by": "word", "stagger": 85 } },
+      "body": { "in": { "fx": "reveal", "dur": 800, "delay": 350, "ease": "out-expo", "by": "line", "stagger": 110 } },
+      "caption": { "in": { "fx": "mask-up", "dur": 700, "delay": 300, "ease": "out-expo" } },
+      "figure": { "in": { "fx": "count", "dur": 1400, "delay": 150, "ease": "out-expo", "stagger": 70 } },
+      "quote": { "in": { "fx": "reveal", "dur": 700, "delay": 150, "ease": "out-expo", "by": "word", "stagger": 55 } },
+      "image": { "in": { "fx": "mask-right", "dur": 1100, "delay": 0, "ease": "in-out-expo" } },
+      "hero": { "in": { "fx": "mask-up", "dur": 1200, "delay": 0, "ease": "in-out-expo" }, "loop": { "fx": "drift", "dur": 16000, "amp": 30 } },
+      "stroke": { "in": { "fx": "draw", "dur": 900, "delay": 700, "ease": "in-out" } }
+    }
+  },
+  "example": {
+    "name": "Le rythme — manifeste de Nirvalab",
+    "slides": [
+      { "name": "Manifeste", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 220, "w": 900, "h": 22, "text": "Manifeste · 7 règles" },
+        { "type": "title", "style": "display", "x": 96, "y": 290, "w": 1436, "h": 520, "text": "Tout est\nune question\nde rythme." },
+        { "type": "note", "style": "body", "x": 96, "y": 880, "w": 858, "h": 45, "text": "Sept règles pour des films qui respirent." }
+      ] },
+      { "name": "Règle 01", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 380, "w": 600, "h": 22, "text": "Règle 01" },
+        { "type": "title", "style": "display", "x": 96, "y": 430, "w": 1436, "h": 180, "text": "Couper tôt." },
+        { "type": "note", "style": "body", "x": 96, "y": 660, "w": 858, "h": 90, "text": "Un plan qui a tout dit n’a plus rien à faire à l’écran." }
+      ] },
+      { "name": "Règle 02", "objects": [
+        { "type": "media", "kind": "image", "item": "ima-20260929-084520-5f36", "x": 0, "y": 0, "w": 1920, "h": 1080, "tone": "veil" },
+        { "type": "note", "style": "label", "x": 96, "y": 740, "w": 600, "h": 22, "text": "Règle 02" },
+        { "type": "title", "style": "h1", "x": 96, "y": 780, "w": 1290, "h": 190, "text": "Laisser le visage finir sa phrase." }
+      ] },
+      { "name": "Règle 03", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 190, "w": 600, "h": 22, "text": "Règle 03 — compter" },
+        { "type": "title", "style": "h2", "x": 96, "y": 228, "w": 1144, "h": 60, "text": "Le montage est une partition." },
+        { "type": "title", "style": "display", "x": 96, "y": 440, "w": 560, "h": 175, "text": "24" },
+        { "type": "title", "style": "display", "x": 680, "y": 440, "w": 560, "h": 175, "text": "8" },
+        { "type": "title", "style": "display", "x": 1264, "y": 440, "w": 560, "h": 175, "text": "90" },
+        { "type": "note", "style": "caption", "x": 96, "y": 650, "w": 460, "h": 60, "text": "images par seconde, jamais moins" },
+        { "type": "note", "style": "caption", "x": 680, "y": 650, "w": 460, "h": 60, "text": "temps par mesure, pas un de trop" },
+        { "type": "note", "style": "caption", "x": 1264, "y": 650, "w": 460, "h": 60, "text": "minutes : la durée juste d’un film" }
+      ] },
+      { "name": "Règle 05", "objects": [
+        { "type": "title", "style": "h1", "x": 96, "y": 360, "w": 1582, "h": 190, "text": "« Le silence est un plan comme un autre. »" },
+        { "type": "ink", "x": 96, "y": 590, "w": 980, "h": 64, "color": "or", "width": 4, "pts": [0, 520, 70, 330, 150, 610, 240, 360, 330, 640, 420, 330, 520, 620, 610, 360, 700, 610, 800, 350, 890, 600, 1000, 450] },
+        { "type": "note", "style": "label", "x": 96, "y": 700, "w": 600, "h": 22, "text": "— Règle 05" }
+      ] },
+      { "name": "Règle 06", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 190, "w": 900, "h": 22, "text": "Règle 06 — cadrer serré" },
+        { "type": "media", "kind": "image", "item": "ima-20260929-130040-365c", "x": 96, "y": 260, "w": 560, "h": 724 },
+        { "type": "media", "kind": "image", "item": "ima-20260929-111624-2c85", "x": 680, "y": 260, "w": 560, "h": 724 },
+        { "type": "media", "kind": "image", "item": "ima-20260929-130041-4fc4", "x": 1264, "y": 260, "w": 560, "h": 724 }
+      ] },
+      { "name": "Règle 07", "objects": [
+        { "type": "title", "style": "display", "x": 96, "y": 330, "w": 1436, "h": 350, "text": "Règle 07 :\nrecommencer." },
+        { "type": "note", "style": "label", "x": 96, "y": 900, "w": 900, "h": 22, "text": "Nirvalab — manifeste" }
+      ] }
+    ]
+  }
+}

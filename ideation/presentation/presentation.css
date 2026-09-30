@@ -1,0 +1,211 @@
+/* ============================================================
+   IDÉATION · PRÉSENTATION — la scène, le lecteur, le mode
+   (docs/etudes/presentations.md § 10).
+   Deux mondes :
+   - l'INTERFACE (le mode, la barre du lecteur) : les jetons du thème
+     seulement, des filets (inset), une seule action orange (la passe
+     assistée), les capitales pour la machine ;
+   - la SCÈNE d'une diapositive : les couleurs de son MODÈLE, du contenu
+     déclaré dans son JSON et posé en variables --t-* sur la scène. Sans
+     modèle, ces variables renvoient aux jetons du thème (ci-dessous).
+   Rien d'animé ici : le moteur (moteur.js) anime transform et opacity.
+   ============================================================ */
+
+/* ── la scène ─────────────────────────────────────────────── */
+.pm-scene {
+  --t-bg: var(--panel); --t-surface: var(--panel2); --t-ink: var(--ink); --t-muted: var(--ink2);
+  --t-accent: var(--or); --t-accent2: var(--cy); --t-inverse: var(--bg); --t-line: var(--line); --t-veil: var(--black);
+  position: absolute; left: 0; top: 0; overflow: hidden; contain: layout paint style;
+  color: var(--t-ink); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; font-kerning: normal;
+  font-optical-sizing: auto; user-select: none;
+}
+.pm-bg, .pm-decor { position: absolute; inset: 0; pointer-events: none; }
+.pm-o { position: absolute; transform-origin: 0 0; }
+.pm-p, .pm-e, .pm-m, .pm-l, .pm-c { position: relative; width: 100%; height: 100%; }
+.pm-e.pm-clip { overflow: hidden; }
+.pm-o[data-tone="ink"] { color: var(--t-ink); }
+.pm-o[data-tone="muted"] { color: var(--t-muted); }
+.pm-o[data-tone="accent"] { color: var(--t-accent); }
+.pm-o[data-tone="accent2"] { color: var(--t-accent2); }
+.pm-o[data-tone="inverse"] { color: var(--t-inverse); }
+.pm-o[data-tone="surface"] { color: var(--t-surface); }
+.pm-o[data-tone="bg"] { color: var(--t-bg); }
+/* le texte : vrai texte, dans la police du style */
+.pm-txt { white-space: pre-wrap; overflow-wrap: break-word; font-feature-settings: "kern", "liga"; }
+.pm-txt[data-st="display"], .pm-txt[data-st="h1"], .pm-txt[data-st="h2"] { text-wrap: balance; }
+.pm-txt[data-st="body"], .pm-txt[data-st="caption"] { text-wrap: pretty; }
+.pm-o[data-part="figure"] .pm-txt { font-variant-numeric: tabular-nums lining-nums; }
+.pm-w, .pm-ch { display: inline-block; }
+.pm-um { display: inline-block; overflow: hidden; vertical-align: top; padding-bottom: .14em; margin-bottom: -.14em; }
+.pm-ui { display: inline-block; }
+/* le compteur mécanique : une fenêtre d'un chiffre, une colonne 0-9 dedans */
+.pm-odo { display: inline-flex; align-items: flex-start; font-variant-numeric: tabular-nums lining-nums; }
+.pm-dg { display: inline-block; height: 1.1em; line-height: 1.1em; overflow: hidden; }
+.pm-ds { display: block; white-space: pre; line-height: 1.1em; }
+.pm-dx { display: inline-block; line-height: 1.1em; white-space: pre; }
+/* les images, les vidéos : dans leur boîte, comme sur la planche */
+.pm-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.pm-ph {
+  position: absolute; inset: 0; display: flex; align-items: flex-end; padding: 24px;
+  background: linear-gradient(135deg, var(--t-surface), color-mix(in srgb, var(--t-accent) 38%, var(--t-surface)));
+}
+.pm-phl { font-family: var(--f-mono); font-size: 18px; letter-spacing: .24em; text-transform: uppercase; color: var(--t-muted); }
+.pm-veil {
+  position: absolute; inset: 0;
+  background: linear-gradient(to top, color-mix(in srgb, var(--t-veil) 82%, transparent) 0%, color-mix(in srgb, var(--t-veil) 38%, transparent) 52%, color-mix(in srgb, var(--t-veil) 12%, transparent) 100%);
+}
+.pm-sticky .pm-c { background: var(--t-surface); padding: 28px; }
+.pm-note .pm-c { background: var(--t-surface); padding: 12px; }
+.pm-other { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--t-surface); color: var(--t-muted);
+  font-family: var(--f-mono); font-size: 18px; letter-spacing: .2em; text-transform: uppercase; }
+.pm-shp, .pm-ink, .pm-ring { display: block; width: 100%; height: 100%; overflow: visible; }
+.pm-shp path { fill: currentColor; }
+.pm-shtxt { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; color: var(--t-inverse); padding: 16px; }
+.pm-ink path, .pm-ring circle { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 0; }
+
+/* ── le décor des modèles ─────────────────────────────────── */
+.pm-dc { pointer-events: none; }
+.pm-lb { position: absolute; left: 0; right: 0; display: block; background: currentColor; }
+.pm-lb-t { top: 0; } .pm-lb-b { bottom: 0; }
+.pm-rule, .pm-block { display: block; width: 100%; height: 100%; background: currentColor; transform-origin: 0 50%; }
+.pm-grain {
+  position: absolute; inset: -12%; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+.pm-glow { width: 100%; height: 100%; border-radius: 50%;
+  background: radial-gradient(circle, currentColor 0%, color-mix(in srgb, currentColor 42%, transparent) 32%, transparent 70%); }
+.pm-gridlines { position: absolute; inset: 0; background: repeating-linear-gradient(to right, currentColor 0 1px, transparent 1px calc((100% + 24px) / 12)); box-shadow: inset -1px 0 0 currentColor; }
+.pm-scan { position: absolute; inset: 0; background: repeating-linear-gradient(to bottom, color-mix(in srgb, currentColor 16%, transparent) 0 2px, transparent 2px 6px); }
+.pm-sweep { position: absolute; left: 0; right: 0; top: 0; height: 34%; background: linear-gradient(to bottom, transparent, color-mix(in srgb, currentColor 20%, transparent), transparent); }
+.pm-border { position: absolute; inset: 0; box-shadow: inset 0 0 0 2px currentColor; }
+.pm-outline .pm-txt { -webkit-text-fill-color: transparent; -webkit-text-stroke: 2px currentColor; }
+.pm-dc-ticker .pm-c { overflow: hidden; display: flex; align-items: center; }
+.pm-tick { white-space: nowrap; display: inline-block; }
+
+/* ── le lecteur ───────────────────────────────────────────── */
+.pm-player { position: fixed; inset: 0; z-index: 90; background: var(--black); outline: none; }
+.pm-player .pm-stage { position: absolute; inset: 0; overflow: hidden; }
+.pm-fit { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.pm-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.pm-world > .pm-scene { position: absolute; }
+.pm-world > .pm-scene.pm-far { opacity: .5; }
+.pm-curtain { position: absolute; inset: 0; z-index: 5; }
+.pm-wipe { position: absolute; inset: 0; overflow: hidden; }
+.pm-pbar {
+  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 6;
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--r4);
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line), 0 12px 32px var(--drop);
+  transition: opacity .3s;
+}
+.pm-pbar .no { font-family: var(--f-mono); font-size: 10px; letter-spacing: .14em; color: var(--cy); }
+.pm-pbar .tt { font-size: 12px; color: var(--ink2); max-width: 32ch; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pm-pbar .nav { width: 28px; height: 28px; border-radius: var(--r2); color: var(--ink); font-size: 18px; }
+.pm-pbar .nav:hover { background: var(--panel2); }
+.pm-pbar .sep { width: 1px; height: 20px; background: var(--line); }
+.pm-player.idle .pm-pbar { opacity: 0; pointer-events: none; }
+.pm-player.idle { cursor: none; }
+
+/* ── le mode Présentation ─────────────────────────────────── */
+.pm-mode {
+  position: fixed; inset: 0; z-index: 70; background: var(--bg); color: var(--ink);
+  display: grid; grid-template-columns: 216px minmax(0, 1fr) 328px; grid-template-rows: 48px minmax(0, 1fr) 196px;
+  grid-template-areas: "top top top" "out view insp" "out tl insp";
+}
+.pm-mode[hidden] { display: none; }
+.pm-top { grid-area: top; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--panel); box-shadow: inset 0 -1px 0 var(--line); }
+.pm-top .sp { flex: 1; }
+.pm-top .pm-bname { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 28ch; }
+.pm-tplname { font-family: var(--f-mono); font-size: 9px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink3); }
+.pm-tplname.try { color: var(--amb); }
+/* le plan */
+.pm-out { grid-area: out; overflow-y: auto; background: var(--panel); box-shadow: inset -1px 0 0 var(--line); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.pm-oh { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 4px; }
+.pm-oh .pm-n { color: var(--cy); }
+.pm-row { display: grid; grid-template-columns: 18px 1fr; gap: 4px 6px; padding: 6px; border-radius: var(--r3); text-align: left; color: var(--ink2); }
+.pm-row:hover { background: var(--panel2); }
+.pm-row.on { background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line-or); color: var(--ink); }
+.pm-row .no { font-family: var(--f-mono); font-size: 9px; letter-spacing: .08em; color: var(--cy); padding-top: 2px; }
+.pm-row .nm { grid-column: 2; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pm-mini { position: relative; width: 176px; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--r1); box-shadow: inset 0 0 0 1px var(--line); }
+.pm-mini > .pm-scene, .pm-poster > .pm-scene { transform-origin: 0 0; pointer-events: none; }
+.pm-empty, .pm-hint { font-size: 11.5px; line-height: 1.55; color: var(--ink3); margin: 4px 2px; }
+/* la scène */
+.pm-view { grid-area: view; position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.pm-stage.pm-edit { position: relative; flex: 1; overflow: hidden; background: var(--bg); }
+.pm-edit .pm-fit { box-shadow: 0 0 0 1px var(--line); }
+.pm-edit .pm-o:not(.pm-dc) { cursor: pointer; }
+.pm-selbox { position: absolute; pointer-events: none; box-shadow: 0 0 0 1px var(--or), 0 0 0 4px var(--or-bg); border-radius: 2px; }
+.pm-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 3; padding: 5px 12px; border-radius: var(--r2);
+  font-family: var(--f-mono); font-size: 9px; letter-spacing: .16em; text-transform: uppercase; color: var(--amb); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-amb); }
+.pm-banner[hidden] { display: none; }
+.pm-split { position: absolute; top: 0; bottom: 0; width: 0; z-index: 4; cursor: ew-resize; display: flex; align-items: center; justify-content: center; }
+.pm-split[hidden] { display: none; }
+.pm-split i { position: absolute; top: 0; bottom: 0; left: -1px; width: 2px; background: var(--or); }
+.pm-split::before { content: ""; position: absolute; top: 0; bottom: 0; left: -12px; width: 24px; }
+.pm-split .lbl { position: absolute; top: 14px; padding: 3px 7px; border-radius: var(--r1); background: var(--panel); color: var(--ink2); box-shadow: inset 0 0 0 1px var(--line); white-space: nowrap; }
+.pm-split .lbl:first-child { right: 10px; }
+.pm-split .lbl:last-of-type { left: 10px; }
+/* la minuterie de motion */
+.pm-tl { grid-area: tl; --pm-lab: 150px; display: flex; flex-direction: column; background: var(--panel); box-shadow: inset 0 1px 0 var(--line); min-width: 0; }
+.pm-tlh { display: flex; align-items: center; gap: 8px; padding: 6px 10px; box-shadow: inset 0 -1px 0 var(--line); }
+.pm-tlh .sp { flex: 1; }
+.pm-time { font-family: var(--f-mono); font-size: 10px; letter-spacing: .08em; color: var(--cy); min-width: 12ch; }
+.pm-tlb { position: relative; flex: 1; overflow-y: auto; overflow-x: hidden; }
+.pm-ruler { position: sticky; top: 0; z-index: 2; height: 20px; background: var(--panel); box-shadow: inset 0 -1px 0 var(--line); cursor: col-resize; }
+.pm-ruler i { position: absolute; bottom: 0; width: 1px; height: 5px; background: var(--line); }
+.pm-ruler i.mj { height: 9px; background: var(--ink3); }
+.pm-ruler i span { position: absolute; left: 4px; bottom: 6px; font-family: var(--f-mono); font-size: 8px; color: var(--ink3); }
+.pm-stepmark { position: absolute; top: 2px; font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--amb); padding-left: 3px; box-shadow: inset 1px 0 0 var(--amb); }
+.pm-lanes { display: flex; flex-direction: column; }
+.pm-lane { display: grid; grid-template-columns: var(--pm-lab) 1fr; min-height: 26px; box-shadow: inset 0 -1px 0 var(--line); }
+.pm-lane.on { background: var(--sel-bg); }
+.pm-lab { display: flex; align-items: center; gap: 6px; padding: 0 8px; text-align: left; min-width: 0; color: var(--ink2); }
+.pm-lab .lbl { flex: none; width: 58px; overflow: hidden; text-overflow: ellipsis; }
+.pm-lab .tx { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pm-track { position: relative; }
+.pm-bar { position: absolute; top: 5px; bottom: 5px; border-radius: 3px; background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line-cy); cursor: grab; display: flex; align-items: center; overflow: hidden; }
+.pm-bar span { font-family: var(--f-mono); font-size: 8px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink2); padding: 0 6px; white-space: nowrap; }
+.pm-bar.on { box-shadow: inset 0 0 0 1px var(--line-or); }
+.pm-bar.pm-k-image, .pm-bar.pm-k-video, .pm-bar.pm-k-element { box-shadow: inset 0 0 0 1px var(--line-amb); }
+.pm-bar .pm-rz { position: absolute; right: 0; top: 0; bottom: 0; width: 7px; cursor: ew-resize; background: var(--line-cy); }
+.pm-head { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--or); pointer-events: none; z-index: 3; }
+/* l'inspecteur */
+.pm-insp { grid-area: insp; display: flex; flex-direction: column; min-height: 0; background: var(--panel); box-shadow: inset 1px 0 0 var(--line); }
+.pm-tabs { margin: 8px; }
+.pm-tabs .tb { flex: 1; }
+.pm-ib { flex: 1; overflow-y: auto; padding: 4px 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+.pm-f { display: flex; flex-direction: column; gap: 5px; }
+.pm-seg { flex-wrap: wrap; }
+.pm-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: end; }
+.pm-num { display: flex; align-items: center; gap: 6px; }
+.pm-num input { width: 86px; flex: none; }
+.pm-num .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pm-range { display: flex; flex-direction: column; gap: 3px; }
+.pm-range input { width: 100%; accent-color: var(--or); }
+.pm-h2 { display: flex; align-items: baseline; gap: 8px; padding: 4px 0 2px; }
+.pm-h2 b { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pm-gh { margin-top: 4px; }
+.pm-cards { display: flex; flex-direction: column; gap: 8px; }
+.pm-card { display: grid; grid-template-columns: 128px 1fr; gap: 10px; padding: 8px; border-radius: var(--r3); cursor: pointer; background: var(--panel2); }
+.pm-card:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.pm-card.try { box-shadow: inset 0 0 0 1px var(--line-amb); }
+.pm-card.ap { box-shadow: inset 0 0 0 1px var(--line-gr); }
+.pm-poster { position: relative; width: 128px; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--r1); }
+.pm-ci { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.pm-ci b { font-size: 12.5px; font-weight: 600; }
+.pm-ci small { font-size: 10.5px; line-height: 1.4; color: var(--ink3); }
+.pm-sw { display: flex; gap: 3px; }
+.pm-sw i { width: 14px; height: 8px; border-radius: 2px; box-shadow: inset 0 0 0 1px var(--line); }
+.pm-cops { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.pm-ap { color: var(--grn2); }
+.pm-rep { background: var(--panel2); border-radius: var(--r2); padding: 6px 8px; }
+.pm-rep summary { display: flex; align-items: baseline; gap: 6px; cursor: pointer; font-size: 12px; }
+.pm-rep summary .no { font-family: var(--f-mono); font-size: 9px; color: var(--cy); }
+.pm-rep ul { margin: 6px 0 2px 16px; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.pm-rep li { font-size: 11px; line-height: 1.45; color: var(--ink2); }
+@media (max-width: 1180px) {
+  .pm-mode { grid-template-columns: 216px minmax(0, 1fr) 284px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pm-pbar { transition: none; }
+}
