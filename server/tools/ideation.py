@@ -1542,7 +1542,7 @@ def r_lot(req):
 
 
 def register(app) -> None:
-    jobs.register("ideation.export", run_export, lane="cpu", title="Idéation · export")
+    jobs.register("ideation.export", run_export, lane="cpu", title="Idéation · export", cost="cpu")
     app.route("POST", "/api/ideation/lot", r_lot)
     app.route("GET", "/api/ideation/meta", r_meta)
     app.route("GET", "/api/ideation/boards", r_list)

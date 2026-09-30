@@ -176,7 +176,7 @@ def selftest(call, ok) -> None:
     config.CFG["auth"] = True
     auth.startup()
     same = {"Origin": f"http://127.0.0.1:{config.get('port')}"}
-    jobs.register("compte.essai", lambda ctx: {"note": "ok"}, lane="cpu", title="Essai de la porte")
+    jobs.register("compte.essai", lambda ctx: {"note": "ok"}, lane="cpu", title="Essai de la porte", cost="cpu")
     real_ip = auth._ip
     try:
         # sans session : les pages se servent, rien d'autre

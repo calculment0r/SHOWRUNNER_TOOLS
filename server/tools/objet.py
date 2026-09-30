@@ -491,8 +491,8 @@ def register(app) -> None:
     app.route("GET", "/api/objet/objects", objects)
     app.route("POST", "/api/objet/objects", create)
     # lancés par la page (objet.js) sur la route commune : `check_submit` juge à l'entrée, `_source` au départ
-    jobs.register("objet.mesh", run_mesh, lane="image", title="Objet · 3D", direct=check_submit)
-    jobs.register("objet.mesh_factice", run_factice, lane="cpu", title="Objet · 3D factice", direct=check_submit)
+    jobs.register("objet.mesh", run_mesh, lane="image", title="Objet · 3D", direct=check_submit, cost="gpu")
+    jobs.register("objet.mesh_factice", run_factice, lane="cpu", title="Objet · 3D factice", direct=check_submit, cost="cpu")
 
 
 # ── le contrôle, sans GPU ───────────────────────────────────

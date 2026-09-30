@@ -1839,9 +1839,9 @@ def check_submit(mode: str):
 def register(app) -> None:
     global _keeper_on
     lane = "h3" if engine() == "h3" else "cpu"   # le moteur factice tourne sur la voie cpu (ffmpeg)
-    jobs.register("movie.t2v", run_t2v, lane=lane, title="Texte → vidéo", direct=check_submit("t2v"))
-    jobs.register("movie.i2v", run_i2v, lane=lane, title="Images → vidéo", direct=check_submit("i2v"))
-    jobs.register("movie.r2v", run_r2v, lane=lane, title="Références → vidéo", direct=check_submit("r2v"))
+    jobs.register("movie.t2v", run_t2v, lane=lane, title="Texte → vidéo", direct=check_submit("t2v"), cost="gpu" if lane == "h3" else "cpu")
+    jobs.register("movie.i2v", run_i2v, lane=lane, title="Images → vidéo", direct=check_submit("i2v"), cost="gpu" if lane == "h3" else "cpu")
+    jobs.register("movie.r2v", run_r2v, lane=lane, title="Références → vidéo", direct=check_submit("r2v"), cost="gpu" if lane == "h3" else "cpu")
     app.route("GET", "/api/movie/options", r_options)
     app.route("POST", "/api/movie/plan", r_plan)
     app.route("GET", "/api/movie/loras", r_loras)

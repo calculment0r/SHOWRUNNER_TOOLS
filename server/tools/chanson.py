@@ -816,10 +816,10 @@ def register(app) -> None:
               ("yue", False): run_yue_test, ("yue", True): run_yue_real}[(model, real)]
         jobs.register(f"chanson.{model}", fn, lane="audio" if real else "cpu",
                       title=f"Chanson · {MODELS[model]['name']}" + ("" if real else " (essai)"),
-                      family="ace-step" if model == "ace" else "yue", gpu=real)
+                      family="ace-step" if model == "ace" else "yue", gpu=real, cost="gpu" if real else "cpu")
     lreal = paroles_engine() == "reel"
     jobs.register("chanson.paroles", run_lyrics_real if lreal else run_lyrics_test, lane="audio" if lreal else "cpu",
-                  title="Paroles" + ("" if lreal else " (essai)"), family="ace-step-lm" if lreal else None, gpu=lreal)
+                  title="Paroles" + ("" if lreal else " (essai)"), family="ace-step-lm" if lreal else None, gpu=lreal, cost="gpu" if lreal else "cpu")
     app.route("GET", "/api/chanson/options", api_options)
     app.route("GET", "/api/chanson/list", api_list)
     app.route("POST", "/api/chanson/create", api_create)

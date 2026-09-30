@@ -121,7 +121,7 @@ def core_checks() -> None:
         ctx.add(p, kind="image", title="sortie", parents=[ctx.params["src"]])
         return {"note": "fini"}
 
-    jobs.register("check.echo", echo, lane="cpu")
+    jobs.register("check.echo", echo, lane="cpu", cost="cpu")
     st, j = call("POST", "/api/jobs", {"kind": "check.echo", "params": {"src": iid}, "title": "écho"})
     ok(st == 200 and j["state"] == "queued", "un travail en file")
     for _ in range(50):
@@ -139,8 +139,305 @@ def core_checks() -> None:
     ok(st == 200 and back["id"] == iid, "retour de la corbeille")
 
 
+# ── la garde du calcul (docs/etudes/equipes_espaces.md § 2.5, point 5) ──
+# Les routes d'outils qui lancent chaque sorte : relevées pendant les contrôles des
+# outils (la première requête qui a mené à jobs.submit pour cette sorte), puis
+# rejouées telles quelles par un guest. Un outil neuf qui lance une sorte par sa
+# route et l'essaie dans son selftest est couvert sans rien écrire ici.
+_REQ = threading.local()
+ROUTES: dict[str, list] = {}   # sorte → les requêtes (distinctes, 8 au plus) qui l'ont lancée
+# une sorte que le selftest de son outil ne lance pas : la requête d'une sœur, un réglage changé
+VARIANTES = {"music.gen.yue": ("music.gen.ace", {"model": "yue", "task": "chanson", "v": {"tags": "pop", "n": 1}}),
+             "music.midi.gpu": ("music.midi", {"engine": "bytedance"}),
+             # le selftest d'analyse laisse son dossier de sortie : un autre titre, un autre dossier
+             "analyse.run": ("analyse.run", {"titre": "Garde du calcul"})}
+# les sortes qui n'ont pas d'autre route que la route commune (en plus des sortes
+# `direct`, dont la page passe par POST /api/jobs) — chacune avec sa raison
+SANS_ROUTE_OUTIL = {
+    "library.views": "sa route (POST /api/library/views) est à Cal ; sinon le rattrapage au démarrage, sans personne",
+    "check.echo": "essai du socle",
+    "check.chaine": "essai de la garde : un travail qui en lance un autre",
+    "compte.essai": "essai de la porte",
+    "droits.route": "essai des droits : une sorte qui a sa route",
+    "essai.krea2": "essai de l'ordonnanceur", "essai.qwen21": "essai de l'ordonnanceur",
+    "essai.zimage": "essai de l'ordonnanceur", "essai.h3": "essai de l'ordonnanceur",
+}
+# un chemin d'essai pour chaque motif de auth.COMPUTE_ROUTES
+COMPUTE_SAMPLES = {r"/character/.*": "/character/api/essai-garde", r"/api/movie/h3/start": "/api/movie/h3/start",
+                   r"/api/analyse/diar/analyse": "/api/analyse/diar/analyse"}
+
+
+# écrites ici : une sorte que rien ne lance dans les selftests (l'édition d'image n'y est essayée
+# qu'à blanc, `dry`) ; une traduction, sur un document du guest (celui de Cal lui est fermé avant)
+ECRITES = {"image.edit": lambda fx, g: ("POST", "/api/image/edit",
+                                        {"source": fx["image"], "tool": "instruct", "model": "qwen21", "prompt": "un chapeau"}),
+           "transcrire.translate": lambda fx, g: fx["trn"].get(g)}
+
+
+def tool_requests(kind: str, fx: dict, g: str) -> list:
+    """Les requêtes de la route de l'outil qui lancent `kind` : relevées, dérivées d'une sœur
+    (VARIANTES), ou écrites ici (ECRITES) pour le guest `g`."""
+    recs = list(ROUTES.get(kind, []))
+    if kind in VARIANTES:
+        src, patch = VARIANTES[kind]
+        for method, path, raw, ctype in ROUTES.get(src, []):
+            try:
+                body = json.loads(raw or b"{}")
+            except ValueError:
+                continue
+            recs.append((method, path, json.dumps({**body, **patch}).encode(), ctype or "application/json"))
+    if kind in ECRITES:
+        w = ECRITES[kind](fx, g)
+        if w:
+            method, path, body = w
+            recs.append((method, path, json.dumps(body).encode(), "application/json"))
+    return recs
+
+
+def record_routes(app) -> None:
+    gate0, after0, submit0 = app.gate, app.after, jobs.submit
+
+    def gate(req, a):
+        _REQ.r = req
+        return gate0(req, a)
+
+    def after(req, status):
+        _REQ.r = None
+        return after0(req, status)
+
+    def submit(kind, *a, **kw):
+        r = getattr(_REQ, "r", None)
+        if r is not None and r.method in ("POST", "PUT") and not r.path.startswith("/api/jobs"):
+            rec = (r.method, r._h.path, r._body or b"", r.headers.get("Content-Type") or "")
+            got = ROUTES.setdefault(kind, [])
+            if rec not in got and len(got) < 8:
+                got.append(rec)
+        return submit0(kind, *a, **kw)
+
+    app.gate, app.after, jobs.submit = gate, after, submit
+
+
+def compute_guard_checks() -> None:
+    """Pour CHAQUE sorte de jobs.HANDLERS : un coût déclaré ; un guest (viewer et
+    acteur) refusé (403 qui dit pourquoi) par jobs.submit, par la route commune et
+    par la route de son outil. Puis : l'invité d'une planche, un membre (son
+    Workspace sur le travail, le travail lancé par un travail), retry, les calculs
+    hors file (auth.COMPUTE_ROUTES), et le message de _gpu_block."""
+    from core import auth, espaces
+    from core.http import HttpError
+    from tools.admin import essai_http as H
+
+    err = lambda d: d.get("error", "") if isinstance(d, dict) else str(d)[:120]   # noqa: E731
+    GUEST = espaces.WHY["guest_compute"]
+    kinds = sorted(jobs.HANDLERS)
+
+    # 1. chaque sorte déclare son coût ; une sorte sans coût fait échouer le contrôle
+    for kind in kinds:
+        ok(jobs.cost_declared(kind), f"garde : « {kind} » déclare son coût (jobs.register(…, cost=))")
+        ok(jobs.cost_of(kind, {}) in jobs.COSTS, f"garde : « {kind} » a un coût connu ({jobs.cost_of(kind, {})})")
+    ok(espaces.GARDES.get("calcul") is True, "garde : espaces.garde_prete(\"calcul\") est déclarée par la file")
+    ok(not jobs.cost_declared("n.existe.pas") and jobs.cost_of("n.existe.pas") == "gpu",
+       "garde : une sorte sans coût vaut gpu hors de la voie cpu (l'oubli est refusé)")
+
+    before = {k: config.CFG.get(k) for k in ("auth", "equipes_guests_essai")}
+    config.CFG["auth"] = True
+    config.CFG["equipes_guests_essai"] = True   # la garde de la bibliothèque (étape 2) n'est pas de ce contrôle
+    auth.startup()
+    with auth._lock:
+        auth._hits.clear()
+    same = {"Origin": BASE}
+    queued: list[str] = []
+
+    def drop() -> None:
+        for jid in queued:
+            try:
+                if jid:
+                    jobs.cancel(jid)
+            except (KeyError, TypeError):
+                pass
+        queued.clear()
+
+    def chaine(ctx):
+        child = jobs.submit("check.echo", {"src": ctx.params.get("src", "")}, title="enfant", tool="check")
+        return {"child": child["id"]}
+
+    jobs.register("check.chaine", chaine, lane="cpu", title="Essai : un travail qui en lance un autre", cost="cpu")
+    jobs.register("check.direct", lambda ctx: {"note": "ok"}, lane="cpu", title="Essai : direct", direct=True, cost="cpu")
+    try:
+        jobs.set_mode(None, "paused")   # rien ne part : on juge l'entrée
+        _, d, cal = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
+        P = lambda path, body=None, tok=cal, hd=None: H("POST", path, body if body is not None else {}, cookie=tok,   # noqa: E731
+                                                         headers={**same, **(hd or {})})
+        s, t, _ = P("/api/equipes", {"name": "Garde Calcul"})
+        ok(s == 200 and t.get("plan") == "studio", f"garde : Cal crée une Team ({s} {err(t)})")
+        tid, s1 = t["id"], t["spaces"][0]["id"]
+        s, sp2, _ = P(f"/api/equipes/{tid}/espaces", {"name": "Second"})
+        s2 = sp2.get("id")
+        toks, people = {}, {}
+        for name, uid, role, mode in (("Gv Calcul", "gv-calcul", "guest", "viewer"), ("Ga Calcul", "ga-calcul", "guest", "acteur"),
+                                      ("Mo Calcul", "mo-calcul", "member", None)):
+            body = {"pseudo": name, "role": role, **({"guest": mode, "spaces": [s1]} if mode else {})}
+            s, d, _ = P(f"/api/equipes/{tid}/membres", body)
+            _, _, tok = H("POST", "/api/auth/enter", {"name": name}, headers=same)
+            toks[uid], people[uid] = tok, auth.user(uid)
+            ok(s == 200 and tok, f"garde : {name} ({role} {mode or ''}) entre ({s} {err(d)})")
+        guests = ("gv-calcul", "ga-calcul")
+        mo = people["mo-calcul"]
+        s, img, _ = H("PUT", "/api/library/upload?name=garde.png&title=Garde", raw=tiny_png(), cookie=cal,
+                      headers={**same, "Content-Type": "image/png"})
+        ok(s == 200, f"garde : une image de Cal pour les essais ({s})")
+        fixture = {"image": img.get("id", "") if isinstance(img, dict) else "", "trn": {}}
+        # un document de transcription fini, à chaque guest (copie de celui qu'a traduit le selftest)
+        trn = ROUTES.get("transcrire.translate") or []
+        if trn:
+            import secrets
+            from tools import transcrire as T
+            method, path, raw, _ = trn[0]
+            d0 = T._read(path.split("/docs/")[1].split("/")[0])
+            for k, g in enumerate(guests):
+                nid = f"trn-20260930-00000{k}-{secrets.token_hex(2)}"
+                with T._lock:
+                    T._write({**d0, "id": nid, "owner": g, "translations": {}, "rev": 1})
+                fixture["trn"][g] = (method, f"/api/transcrire/docs/{nid}/translate", json.loads(raw or b"{}"))
+
+        # 2. par jobs.submit (l'endroit par où tout passe), par la route commune, par la route de l'outil
+        covered, missing = 0, []
+        for kind in kinds:
+            cost = jobs.cost_of(kind, {})
+            if cost == "none":
+                ok(True, f"garde : « {kind} » ne calcule rien (none)")
+                continue
+            for g in guests:
+                auth.set_current(people[g])
+                auth.set_current_space(s1)
+                try:
+                    jobs.submit(kind, {}, title="guest", tool="check")
+                    ok(False, f"garde : jobs.submit refuse « {kind} » ({cost}) au guest {g}")
+                except HttpError as e:
+                    ok(e.status == 403 and GUEST in e.message, f"garde : jobs.submit refuse « {kind} » au guest {g} ({e.status} {e.message[:90]})")
+                finally:
+                    auth.set_current(None)
+                    auth.set_current_space(None)
+                s, d, _ = P("/api/jobs", {"kind": kind, "params": {}}, tok=toks[g], hd={"X-SR-Espace": s1})
+                ok(s == 403 and GUEST in err(d), f"garde : la route commune refuse « {kind} » ({cost}) au guest {g} ({s} {err(d)[:90]})")
+            if any(tool_requests(kind, fixture, g) for g in guests) and kind not in SANS_ROUTE_OUTIL:
+                # chaque requête rejouée : jamais un travail ; l'une au moins atteint la garde (les
+                # autres peuvent être refusées plus tôt par l'outil : un objet qui n'est pas au guest…)
+                covered += 1
+                for g in guests:
+                    seen = []
+                    for method, path, raw, ctype in tool_requests(kind, fixture, g):
+                        s, d, _ = H(method, path, raw=raw, cookie=toks[g],
+                                    headers={**same, "X-SR-Espace": s1, **({"Content-Type": ctype} if ctype else {})})
+                        seen.append((s, f"{method} {path.split('?')[0]}", err(d)))
+                    ok(not any(200 <= x[0] < 300 for x in seen) and any(x[0] == 403 and GUEST in x[2] for x in seen),
+                       f"garde : la route de l'outil refuse « {kind} » au guest {g}, par la garde du calcul "
+                       f"({[(x[0], x[1], x[2][:80]) for x in seen]})")
+            elif not (jobs._META.get(kind, {}).get("direct") or kind in SANS_ROUTE_OUTIL):
+                missing.append(kind)
+        ok(not missing, f"garde : chaque sorte a sa route d'outil essayée (selftest) ou sa raison (SANS_ROUTE_OUTIL) — "
+                        f"manquent : {missing}")
+        print(f"  garde : {len(kinds)} sortes, {covered} routes d'outils rejouées par un guest")
+        mine = [x["id"] for x in jobs._jobs.values() if x.get("owner") in guests]
+        ok(not mine, f"garde : aucun travail au nom d'un guest, après tout cela ({mine})")
+
+        # 3. l'invité d'une planche (rôle « invite ») : jamais, sans Workspace ni Team
+        auth.set_current({"id": "planche-essai", "name": "Planche", "role": auth.GUEST, "state": "active"})
+        try:
+            jobs.submit("check.echo", {}, tool="check")
+            ok(False, "garde : l'invité d'une planche ne calcule pas")
+        except HttpError as e:
+            ok(e.status == 403 and e.message.startswith(auth.GUEST_COMPUTE_WHY), f"garde : l'invité d'une planche, 403 ({e.message[:80]})")
+        finally:
+            auth.set_current(None)
+
+        # 4. un membre : le travail porte son Workspace et son coût ; le travail qu'il lance les garde
+        espaces.set_last(mo, s2)   # son Workspace par défaut n'est pas celui du travail
+        s, j, _ = P("/api/jobs", {"kind": "check.direct", "params": {}}, tok=toks["mo-calcul"], hd={"X-SR-Espace": s1})
+        ok(s == 200 and j.get("space") == s1 and j.get("cost") == "cpu" and j.get("owner") == "mo-calcul",
+           f"garde : un membre lance, dans le Workspace de sa page ({s} {j.get('space') if isinstance(j, dict) else j} {err(j)})")
+        queued.append(j.get("id"))
+        auth.set_current(mo)
+        auth.set_current_space(s1)
+        try:
+            parent = jobs.submit("check.chaine", {}, title="parent", tool="check")
+        finally:
+            auth.set_current(None)
+            auth.set_current_space(None)
+        jobs._run(parent, "local")   # comme un ouvrier : la personne et le Workspace posés le temps du run
+        child = jobs.get((parent.get("result") or {}).get("child") or "")
+        ok(parent["state"] == "done" and child and child.get("owner") == "mo-calcul" and child.get("space") == s1,
+           f"garde : le travail lancé par un travail garde la personne et le Workspace ({parent.get('message')} "
+           f"{child and (child.get('owner'), child.get('space'))})")
+        if child:
+            queued.append(child["id"])
+        ok(auth.current() is None and auth.current_space() is None, "garde : après le run, ni personne ni Workspace ne restent")
+
+        # 5. retry : la même garde ; le Workspace d'origine
+        auth.set_current(people["ga-calcul"])
+        auth.set_current_space(s1)
+        try:
+            jobs.retry(parent["id"])
+            ok(False, "garde : un guest ne relance pas")
+        except HttpError as e:
+            ok(e.status == 403 and GUEST in e.message, f"garde : retry passe par la garde ({e.status} {e.message[:80]})")
+        finally:
+            auth.set_current(None)
+            auth.set_current_space(None)
+        s, d, _ = P(f"/api/jobs/{parent['id']}/retry", tok=toks["ga-calcul"], hd={"X-SR-Espace": s1})
+        ok(s == 403, f"garde : POST …/retry d'un guest : 403 ({s} {err(d)[:80]})")
+        s, j2, _ = P(f"/api/jobs/{parent['id']}/retry")
+        ok(s == 200 and j2.get("owner") == "mo-calcul" and j2.get("space") == s1,
+           f"garde : Cal relance au nom du membre, dans le Workspace d'origine ({s} {j2.get('space') if isinstance(j2, dict) else ''})")
+        queued.append(j2.get("id") if isinstance(j2, dict) else None)
+        drop()   # son quota de travaux en file (3) : on vide ce qui attend
+        s, d, _ = P("/api/jobs", {"kind": "check.direct", "params": {}}, tok=toks["mo-calcul"], hd={"X-SR-Espace": s2})
+        queued.append(d.get("id") if isinstance(d, dict) else None)
+        ok(s == 200 and d.get("space") == s2, f"garde : l'en-tête X-SR-Espace choisit le Workspace du travail ({s})")
+        P(f"/api/espaces/{s2}/membres/mo-calcul", {"role": "viewer"})
+        s, d, _ = P("/api/jobs", {"kind": "check.direct", "params": {}}, tok=toks["mo-calcul"], hd={"X-SR-Espace": s2})
+        ok(s == 403 and "lecteur" in err(d), f"garde : lecteur dans un Workspace, il n'y calcule pas ({s} {err(d)[:80]})")
+
+        # 6. les calculs hors file : auth.COMPUTE_ROUTES, jugés par la porte
+        for methods, rx, cost in auth.COMPUTE_ROUTES:
+            path = COMPUTE_SAMPLES.get(rx)
+            ok(bool(path), f"garde : COMPUTE_ROUTES « {rx} » a son chemin d'essai (COMPUTE_SAMPLES)")
+            if not path:
+                continue
+            for m in methods.split():
+                for g in guests:
+                    s, d, _ = H(m, path, {}, cookie=toks[g], headers={**same, "X-SR-Espace": s1})
+                    ok(s == 403 and GUEST in err(d), f"garde : {m} {path} (hors file, {cost}) refusé au guest {g} ({s} {err(d)[:80]})")
+        s, d, _ = P("/api/movie/h3/start", {}, tok=toks["mo-calcul"], hd={"X-SR-Espace": s1})
+        ok(not (s == 403 and "calcul" in err(d)), f"garde : un membre passe la porte de h3/start ({s} {err(d)[:60]})")
+
+        # 7. _gpu_block : un travail qui se prépare ne s'attend pas lui-même
+        fake = {"id": "job-essai-soi", "kind": "check.echo", "lane": "image", "title": "Moi-même", "state": "queued",
+                "gpu": True, "_claim": "http://10.255.0.1:8188", "params": {}, "seq": 0.0}
+        m = jobs.machine_of(fake["_claim"])
+        with jobs._cv:
+            jobs._jobs[fake["id"]] = fake
+            try:
+                own, other = jobs._gpu_block(fake["_claim"], m, fake), jobs._gpu_block(fake["_claim"], m)
+            finally:
+                jobs._jobs.pop(fake["id"], None)
+        ok("Moi-même" not in own, f"file : un travail pris ne se bloque pas lui-même ({own!r})")
+        ok("prépare « Moi-même »" in other and "calcule déjà" not in other, f"file : les autres lisent qu'il se prépare ({other!r})")
+    finally:
+        auth.set_current(None)
+        auth.set_current_space(None)
+        drop()
+        jobs.set_mode(None, "active")
+        config.CFG["auth"] = before["auth"]
+        if before["equipes_guests_essai"] is None:
+            config.CFG.pop("equipes_guests_essai", None)
+        else:
+            config.CFG["equipes_guests_essai"] = before["equipes_guests_essai"]
+
+
 def main() -> int:
     app = showrunner.build()
+    record_routes(app)
     jobs.start()
     threading.Thread(target=app.serve, args=("127.0.0.1", PORT), daemon=True).start()
     for _ in range(50):
@@ -161,6 +458,13 @@ def main() -> int:
                 m.selftest(call, ok)
             except Exception as e:  # un selftest qui plante est un échec, pas un arrêt
                 ok(False, f"{mod.name} : selftest a planté : {type(e).__name__}: {e}")
+    print("la garde du calcul")
+    try:
+        compute_guard_checks()
+    except Exception as e:  # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        ok(False, f"la garde du calcul : le contrôle a planté : {type(e).__name__}: {e}")
     print(f"\n{passed} passés, {len(failed)} en échec — données dans {DATA}")
     return 1 if failed else 0
 

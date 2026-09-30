@@ -48,7 +48,7 @@ def selftest(call, ok) -> None:
     with auth._lock:
         auth._hits.clear()   # les limites de débit des contrôles d'avant (compte.py) : un autre essai
     same = {"Origin": f"http://127.0.0.1:{config.get('port')}"}
-    jobs.register("droits.route", lambda ctx: {"note": "ok"}, lane="cpu", title="Essai : une sorte qui a sa route")
+    jobs.register("droits.route", lambda ctx: {"note": "ok"}, lane="cpu", title="Essai : une sorte qui a sa route", cost="cpu")
 
     def direct_check(p):
         if not isinstance(p.get("n"), int):
@@ -56,7 +56,7 @@ def selftest(call, ok) -> None:
 
     try:
         jobs.register("droits.direct", lambda ctx: {"note": "ok"}, lane="cpu", title="Essai : une sorte directe",
-                      direct=direct_check)
+                      direct=direct_check, cost="cpu")
     except TypeError:
         jobs.register("droits.direct", lambda ctx: {"note": "ok"}, lane="cpu", title="Essai : une sorte directe")
         ok(False, "file : jobs.register ne connaît pas `direct`")

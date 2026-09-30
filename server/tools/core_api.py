@@ -399,10 +399,11 @@ def queue(req):
 def jobs_submit(req):
     """POST /api/jobs {kind, params, title, tool} — la route commune : seules
     les sortes que leur outil déclare `direct` (jobs.register) y passent pour
-    un ami ; les autres partent par la route de leur outil, qui les juge. Un
-    compte Apps ne lance pas une sorte d'un outil Studio (auth.STUDIO_TOOLS) : 403."""
+    un ami ; les autres partent par la route de leur outil, qui les juge. La
+    garde du calcul (la personne, le Workspace, le coût ; puis le Studio d'un
+    compte Apps) est dans jobs.submit_direct et jobs.submit, par où passe tout
+    travail : rien à juger ici qui pourrait manquer ailleurs."""
     d = req.json()
-    auth.need_studio_kind(str(d.get("kind") or ""))
     try:
         j = jobs.submit_direct(str(d.get("kind") or ""), d.get("params") or {}, title=d.get("title") or "",
                                tool=d.get("tool") or "")
@@ -514,7 +515,7 @@ def register(app) -> None:
     app.route("POST", "/api/jobs/{job_id}/retry", jobs_retry)
     app.route("POST", "/api/jobs/{job_id}/forget", jobs_forget)
     app.route("GET", "/api/system", system)
-    jobs.register("library.views", views_job, lane="cpu", title="Copies d'affichage")
+    jobs.register("library.views", views_job, lane="cpu", title="Copies d'affichage", cost="cpu")
     app.on_start(_views_on_start)
 
 

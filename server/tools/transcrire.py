@@ -1156,10 +1156,10 @@ def register(app) -> None:
     real = engine() == "local"
     jobs.register("transcrire.transcribe", run_transcribe, lane="audio" if real else "cpu", title="Transcrire",
                   family=(lambda p: p.get("family")) if real else None, gpu=real,
-                  mem_gb=(lambda p: p.get("mem_gb")) if real else None)
+                  mem_gb=(lambda p: p.get("mem_gb")) if real else None, cost="gpu" if real else "cpu")
     jobs.register("transcrire.translate", run_translate, lane="audio" if real else "cpu", title="Traduire",
                   family="ollama-mt" if real else None, gpu=real,
-                  mem_gb=(lambda p: MT[MODES[p.get("mode") or "rapide"]["mt"]]["mem_gb"]) if real else None)
+                  mem_gb=(lambda p: MT[MODES[p.get("mode") or "rapide"]["mt"]]["mem_gb"]) if real else None, cost="gpu" if real else "cpu")
     app.route("GET", "/api/transcrire/options", api_options)
     app.route("GET", "/api/transcrire/docs", api_list)
     app.route("POST", "/api/transcrire/run", api_run)

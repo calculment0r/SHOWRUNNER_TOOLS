@@ -880,8 +880,10 @@ config.declare_switch("upscale_backend", ["stub", "comfyui"], label="Upscale · 
 
 def register(app) -> None:
     lane = "image" if backend() == "comfyui" else "cpu"
-    jobs.register("upscale.image", run_image, lane=lane, title="Agrandir une image", family=family_of, mem_gb=mem_image)
-    jobs.register("upscale.video", run_video, lane=lane, title="Agrandir une vidéo", family=family_of, mem_gb=mem_video)
+    jobs.register("upscale.image", run_image, lane=lane, title="Agrandir une image", family=family_of, mem_gb=mem_image,
+                  cost="gpu" if lane == "image" else "cpu")
+    jobs.register("upscale.video", run_video, lane=lane, title="Agrandir une vidéo", family=family_of, mem_gb=mem_video,
+                  cost="gpu" if lane == "image" else "cpu")
     app.route("GET", "/api/upscale/models", api_models)
     app.route("POST", "/api/upscale/plan", api_plan)
     app.route("POST", "/api/upscale/run", api_run)

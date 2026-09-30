@@ -600,12 +600,13 @@ def api_options(req):
 
 def register(app) -> None:
     real = mode() == "reel"
-    jobs.register("music.midi", run_real if real else run_test, lane="cpu", title="Extraire le MIDI" + ("" if real else " (essai)"))
+    jobs.register("music.midi", run_real if real else run_test, lane="cpu", title="Extraire le MIDI" + ("" if real else " (essai)"),
+                  cost=lambda p: "gpu" if real and p.get("engine") == "bytedance" else "cpu")   # basic-pitch : ONNX sur le processeur
     jobs.register("music.midi.abc", run_abc_real if real else run_abc_test, lane="audio" if real else "cpu",
-                  title="Extraire la partition" + ("" if real else " (essai)"), family="sheetsage2" if real else None, gpu=real)
+                  title="Extraire la partition" + ("" if real else " (essai)"), family="sheetsage2" if real else None, gpu=real, cost="gpu" if real else "cpu")
     jobs.register("music.midi.gpu", run_real if real else run_test, lane="audio" if real else "cpu",
                   title="Extraire le MIDI (piano)" + ("" if real else " (essai)"), family="piano-bytedance" if real else None,
-                  gpu=real)
+                  gpu=real, cost="gpu" if real else "cpu")
     app.route("POST", "/api/music/midi", api_save)
     app.route("GET", "/api/music/midi/options", api_options)
     app.route("POST", "/api/music/midi/extract", api_extract)

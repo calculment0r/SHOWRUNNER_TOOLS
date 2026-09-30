@@ -1914,7 +1914,7 @@ def register(app) -> None:
     # lancé par la page (montage.js) sur la route commune : la séquence doit se voir (load → 404) ;
     # `run_export` la relit de même au départ, et ses plans passent par library.get (qui juge la lecture)
     jobs.register("montage.export", run_export, lane="cpu", title="Montage · export",
-                  direct=lambda p: load(str(p.get("project") or "")))
+                  direct=lambda p: load(str(p.get("project") or "")), cost="cpu")   # ffmpeg
     app.route("GET", "/api/montage/meta", r_meta)
     app.route("GET", "/api/montage/projects", r_list)
     app.route("POST", "/api/montage/projects", r_create)

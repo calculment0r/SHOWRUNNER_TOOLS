@@ -1085,7 +1085,7 @@ def _publie(w: Path, log: Path, nom: str, titre: str, video_nom: str, p: dict, j
 # ── l'enregistrement ────────────────────────────────────────
 def register(app) -> None:
     app.mount("analyse/runs", produites())
-    jobs.register(KIND, run, lane="analyse", title="Analyse de film")
+    jobs.register(KIND, run, lane="analyse", title="Analyse de film", cost="gpu")   # Whisper, VLM, pyannote sur DGX2
     app.route("GET", "/api/analyse/list", analyses_list)
     # les projets (la home de MOVIE_ANALYSE, refonte du 29/09) et les corrections faites dans un Studio du portail
     app.route("GET", "/api/analyse/projets", projets_liste)
@@ -1192,7 +1192,7 @@ def selftest(call, ok) -> None:
     config.CFG.update(analyse_skill=str(FAUX), analyse_runs=str(tmp / "runs"), analyse_attente=False, analyse_scope=False,
                       analyse_releve=0.1)
     (tmp / "runs" / "deja").mkdir(parents=True)
-    jobs.register(KIND, run, lane="cpu", title="Analyse de film")   # le contrôle n'a que la voie cpu
+    jobs.register(KIND, run, lane="cpu", title="Analyse de film", cost="gpu")   # le contrôle n'a que la voie cpu
     os.environ["FAUX_PAUSE"] = "0.25"
     os.environ.pop("FAUX_DEPUIS", None)
     st, vid = call("PUT", "/api/library/upload?name=essai.mp4&title=Essai%20de%20film", raw=b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64)

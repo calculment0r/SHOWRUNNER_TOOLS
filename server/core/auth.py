@@ -98,6 +98,12 @@ aux étapes suivantes (1 : `can_compute` dans jobs.submit ; 2 : la bibliothèque
 Le droit `access` passe à la Team (`access_of(u, espace)` = l'offre de la Team du
 Workspace ; la Team personnelle a celle du compte) ; d'ici l'étape 2, la porte
 prend le meilleur des deux : rien de ce qui est ouvert ne se ferme.
+
+La garde du calcul (étape 1) : jobs.submit juge chaque travail
+(`compute_refusal` : la personne, le Workspace du travail, le coût déclaré de
+sa sorte) ; les calculs hors file sont déclarés dans `COMPUTE_ROUTES` et jugés
+ici, dans `gate`. Un guest, viewer ou acteur, et l'invité d'une planche ne
+calculent jamais, `cpu` compris.
 """
 
 from __future__ import annotations
@@ -363,6 +369,59 @@ def compute_why(u: dict | None, space: str | None, cost: str = "gpu") -> str | N
     return espaces.judge(u, space, f"compute_{cost if cost in espaces.COSTS else 'gpu'}")[1]
 
 
+# ── la garde du calcul (étape 1) : jobs.submit (_guard) et COMPUTE_ROUTES (gate) ──
+GUEST_COMPUTE_WHY = ("invité : les calculs sont réservés aux membres d'une Team — tu vois ce qu'on t'a partagé ; "
+                     "demande à Cal ou à celui qui t'a invité")
+NO_SPACE_WHY = "aucun Workspace pour ce calcul (teams.json illisible, ou tu n'es dans aucune Team) — vois avec Cal"
+
+
+def compute_refusal(u: dict | None, space: str | None, cost: str = "gpu") -> str | None:
+    """Pourquoi cette personne ne peut pas lancer ce calcul dans ce Workspace, ou None.
+    Personne (le socle : un travail système, la maison sans porte) : oui. L'invité d'une
+    planche (rôle `invite`) : jamais. Sans Workspace : Cal seul (il n'y a rien à juger).
+    Sinon la matrice (core/espaces.py) : un guest de Team, viewer ou acteur, jamais,
+    `cpu` compris (décision de Cal du 30/09) ; l'API payante si la Team l'a ouverte."""
+    if u is None:
+        return None
+    if is_guest(u):
+        return GUEST_COMPUTE_WHY
+    if space is None:
+        return None if is_admin(u) and u.get("state", "active") == "active" else NO_SPACE_WHY
+    if can_compute(u, space, cost):
+        return None
+    return compute_why(u, space, cost) or "calcul refusé dans ce Workspace — demande à un admin de la Team"
+
+
+# les calculs hors file, déclarés une fois : (méthodes, chemin (expression entière), coût), jugés
+# dans `gate` comme ADMIN_ROUTES, avec le Workspace de la requête (docs/etudes/equipes_espaces.md § 2.5)
+COMPUTE_ROUTES = (
+    ("POST PUT PATCH DELETE", r"/character/.*", "gpu"),        # le relais du studio CF en écriture (DGX1)
+    ("POST", r"/api/movie/h3/start", "gpu"),                   # réveiller H3 : charge le modèle sur un GPU
+    ("POST", r"/api/analyse/diar/analyse", "gpu"),             # la diarisation directe (le service de DGX1)
+)
+_COMPUTE_RULES = [(frozenset(m.split()), re.compile(rx), c) for m, rx, c in COMPUTE_ROUTES]
+
+
+def compute_route(method: str, path: str) -> str | None:
+    """Le coût d'une route de calcul hors file, ou None."""
+    for methods, rx, cost in _COMPUTE_RULES:
+        if method in methods and rx.fullmatch(path):
+            return cost
+    return None
+
+
+def _compute_gate(req) -> None:
+    cost = compute_route(req.method, req.path)
+    if cost is None:
+        return
+    u = getattr(req, "user", None)
+    if u is None and enabled():
+        raise HttpError(401, "connexion requise : tape ton pseudo à l'accueil du portail")
+    why = compute_refusal(u, getattr(req, "workspace", None), cost)
+    if why:
+        raise HttpError(403, f"{why} ({req.path}, calcul {cost})")
+
+
 def can_publish(u: dict | None, space: str | None) -> bool:
     from . import espaces
     return espaces.can_publish(u, space)
@@ -517,11 +576,12 @@ def studio_kind(kind: str) -> str | None:
     return None
 
 
-def need_studio_kind(kind: str, u: dict | None = None) -> None:
-    """`POST /api/jobs` : un compte Apps ne lance pas un travail d'un outil Studio (403)."""
+def need_studio_kind(kind: str, u: dict | None = None, space=False) -> None:
+    """jobs.submit (la garde du calcul, toutes routes) : un compte Apps ne lance pas un
+    travail d'un outil Studio (403). `space` : le Workspace du travail (défaut : le courant)."""
     u = current() if u is None else u
     name = studio_kind(kind)
-    if name and not _studio_here(u, current_space()):
+    if name and not _studio_here(u, current_space() if space is False else space):
         raise HttpError(403, STUDIO_WHY.format(name=f"« {kind} » ({name})"))
 
 
@@ -827,10 +887,12 @@ def _from_edge(req) -> bool:
 
 def gate(req, app) -> None:
     """Posée devant chaque requête par core/http.py (`app.gate`) : qui entre
-    (`_gate`), puis dans quel Workspace (`_bind_space`)."""
+    (`_gate`), puis dans quel Workspace (`_bind_space`), puis un calcul hors
+    file (`COMPUTE_ROUTES`, `_compute_gate`) : la même garde que jobs.submit."""
     set_current_space(None)
     _gate(req, app)
     _bind_space(req)
+    _compute_gate(req)
 
 
 def _space(req) -> str | None:

@@ -406,7 +406,7 @@ def selftest(call, ok) -> None:
         return {"note": ctx.params["k"]}
 
     for fam in ("krea2", "qwen21", "zimage", "h3"):
-        jobs.register(f"essai.{fam}", run, lane="essai", title=f"Essai {fam}", family=fam)
+        jobs.register(f"essai.{fam}", run, lane="essai", title=f"Essai {fam}", family=fam, cost="gpu")
     with auth._lock:
         db = auth._data()
         for uid, name in (("lea", "Léa"), ("zoe", "Zoé")):

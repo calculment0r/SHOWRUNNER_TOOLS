@@ -583,9 +583,9 @@ def register(app) -> None:
     # « music.stems » était déclaré par music.py : ce module est chargé après
     # lui (ordre alphabétique) et le remplace, en gardant son paramètre « item »
     if mode() == "reel":
-        jobs.register("music.stems", run_real, lane="audio", title="Séparer un son")
+        jobs.register("music.stems", run_real, lane="audio", title="Séparer un son", cost="gpu")
     else:
-        jobs.register("music.stems", run_test, lane="cpu", title="Séparer un son (essai)")
+        jobs.register("music.stems", run_test, lane="cpu", title="Séparer un son (essai)", cost="cpu")
     app.route("GET", "/api/music/stems/options", api_options)
     app.route("POST", "/api/music/stems/plan", api_plan)
     app.route("POST", "/api/music/stems/separate", api_separate)

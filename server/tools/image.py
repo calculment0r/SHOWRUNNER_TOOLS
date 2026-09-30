@@ -1768,7 +1768,7 @@ def _register_job(kind: str, fn, title: str, family, mem_gb=None) -> None:
     extra = {"family": family, "gpu": _uses_comfy} if "family" in inspect.signature(jobs.register).parameters else {}
     if extra and mem_gb:
         extra["mem_gb"] = mem_gb
-    jobs.register(kind, fn, lane="image", title=title, **extra)
+    jobs.register(kind, fn, lane="image", title=title, cost=lambda p: "gpu" if _uses_comfy(p) else "cpu", **extra)
 
 
 def register(app) -> None:

@@ -888,9 +888,9 @@ def api_generate(req):
 
 def register(app) -> None:
     if mode() == "ace-step":
-        jobs.register("music.generate", run_generate_ace, lane="audio", title="Musique")
+        jobs.register("music.generate", run_generate_ace, lane="audio", title="Musique", cost="gpu")
     else:
-        jobs.register("music.generate", run_generate_test, lane="cpu", title="Musique (essai)")
+        jobs.register("music.generate", run_generate_test, lane="cpu", title="Musique (essai)", cost="cpu")
     app.route("GET", "/api/music/projects", list_projects)
     app.route("POST", "/api/music/projects", create_project)
     app.route("GET", "/api/music/projects/{pid}", get_project)

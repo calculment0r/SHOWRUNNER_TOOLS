@@ -36,6 +36,18 @@ mesurées par sorte de travail, famille et taille sont gardées
 `ctx.check()` qui lève `Cancelled` si le travail est arrêté, et
 `ctx.add(chemin, …)` qui range un fichier dans la bibliothèque (au nom
 de la personne qui a lancé le travail) et l'ajoute au résultat.
+
+La garde du calcul (docs/etudes/equipes_espaces.md § 2.5, étape 1) : chaque
+sorte déclare son coût (`register(…, cost="gpu" | "api" | "cpu" | "none"`,
+ou une fonction(params)) ; une sorte qui l'oublie vaut `gpu` hors de la voie
+cpu (l'oubli est refusé, jamais permis). `submit` — par où passent toutes les
+routes d'outils, la route commune, `retry` et les travaux lancés par un
+travail — juge (`_guard`) la personne de la requête et celle du travail, dans
+le Workspace du travail, pour ce coût : `auth.compute_refusal` (un guest,
+viewer ou acteur, ne calcule jamais, `cpu` compris), puis le Studio
+(`auth.need_studio_kind`). Refus : 403 qui dit pourquoi et qui débloque. Le
+travail garde son Workspace (`space`) ; la file le pose (`current_space()`)
+le temps du `run`, avec la personne : ce qu'un travail lance reste à eux.
 """
 
 from __future__ import annotations
@@ -50,9 +62,13 @@ import traceback
 from datetime import date
 from pathlib import Path
 
-from . import auth, config, library, machines
+from . import auth, config, espaces, library, machines
 from .comfy import Cancelled, Comfy, ComfyError
 from .http import HttpError
+
+# submit juge le calcul (`_guard`) : la garde de l'étape 1 est en place dès que la file l'est
+# (sans elle et celle de la bibliothèque, core/espaces.py refuse de faire un guest)
+espaces.garde_prete("calcul")
 
 HANDLERS: dict[str, tuple] = {}
 _META: dict[str, dict] = {}
@@ -82,8 +98,11 @@ class QuotaError(HttpError):
         super().__init__(429, message)
 
 
+COSTS = ("none", "cpu", "gpu", "api")   # core/espaces.py, COSTS : ce que la matrice sait juger
+
+
 def register(kind: str, fn, lane: str = "image", title: str = "", *, family=UNSET, gpu=UNSET,
-             mem_gb=None, direct=False) -> None:
+             mem_gb=None, direct=False, cost=UNSET) -> None:
     """`family` : la famille de modèles du travail (« krea2 », « h3 »…), ou
     une fonction(params) qui la rend ; None : il n'en charge aucun. `gpu` :
     s'il passe par ComfyUI (booléen ou fonction(params)) ; par défaut oui
@@ -95,21 +114,89 @@ def register(kind: str, fn, lane: str = "image", title: str = "", *, family=UNSE
     outil, qui juge ses réglages et les droits ; la route commune ne lance
     alors que ce qu'un admin demande (les essais). `True` : son `run` revalide
     lui-même tout ce qu'il lit ; une fonction(params) juge de plus à l'entrée,
-    au nom de la personne de la requête (ValueError → 400, PermissionError → 403)."""
+    au nom de la personne de la requête (ValueError → 400, PermissionError → 403).
+
+    `cost` : ce que le travail consomme — « gpu » (un modèle local), « api » (un
+    fournisseur payant), « cpu » (ffmpeg, PIL), « none » (rien) — ou une
+    fonction(params) qui le rend. jobs.submit le juge (la garde du calcul) ;
+    tools/check.py échoue pour toute sorte qui ne le déclare pas."""
+    if not (cost is UNSET or callable(cost) or cost in COSTS):
+        raise ValueError(f"{kind} : cost = gpu, api, cpu, none ou une fonction(params), pas {cost!r}")
     HANDLERS[kind] = (fn, lane, title)
-    _META[kind] = {"family": family, "gpu": gpu, "mem_gb": mem_gb, "direct": direct}
+    _META[kind] = {"family": family, "gpu": gpu, "mem_gb": mem_gb, "direct": direct, "cost": cost}
+
+
+def cost_declared(kind: str) -> bool:
+    """La sorte a-t-elle déclaré son coût ? (le contrôle, tools/check.py)"""
+    return _META.get(kind, {}).get("cost", UNSET) is not UNSET
+
+
+def cost_of(kind: str, params: dict | None = None) -> str:
+    """Le coût d'un travail : celui que sa sorte déclare ; sans déclaration, `gpu`
+    hors de la voie cpu (ou si la file le fait passer par ComfyUI), `cpu` sinon ;
+    une fonction qui échoue ou rend autre chose : `gpu`. Jamais moins que le vrai."""
+    c = _META.get(kind, {}).get("cost", UNSET)
+    p = params if isinstance(params, dict) else {}
+    if callable(c):
+        try:
+            c = c(p)
+        except Exception:  # noqa: BLE001 — des réglages illisibles ne rendent pas le calcul gratuit
+            c = "gpu"
+    if c is UNSET:
+        lane = HANDLERS[kind][1] if kind in HANDLERS else ""
+        try:
+            via_comfy = bool(_resolve(kind, lane, p, UNSET, UNSET, None)[1])
+        except Exception:  # noqa: BLE001
+            via_comfy = True
+        c = "cpu" if lane == "cpu" and not via_comfy else "gpu"
+    return c if c in COSTS else "gpu"
+
+
+def _space_for(u, space=UNSET) -> str | None:
+    """Le Workspace d'un travail : celui qu'on donne (retry : celui du travail
+    d'origine), sinon celui de la requête ou du travail qui le lance
+    (`current_space()`), sinon — hors requête — celui de sa personne."""
+    if space is not UNSET:
+        return space
+    sp = auth.current_space()
+    if sp is None and u:
+        try:
+            sp = espaces.default_for(u)
+        except HttpError:   # teams.json illisible : pas de Workspace, la garde en juge
+            sp = None
+    return sp
+
+
+def _guard(kind: str, params: dict, by, u, space: str | None) -> str:
+    """La garde du calcul : la personne de la requête (`by`) et celle du travail
+    (`u`), dans le Workspace du travail, pour le coût de la sorte ; puis le
+    Studio. HttpError 403 qui dit pourquoi, ou le coût."""
+    cost = cost_of(kind, params)
+    people = [x for x in (by, u) if x]
+    if by and u and by.get("id") == u.get("id"):
+        people = [u]
+    for p in people:
+        why = auth.compute_refusal(p, space, cost)
+        if why:
+            raise HttpError(403, f"{why} (« {kind} », calcul {cost})")
+    for p in people:
+        auth.need_studio_kind(kind, p, space)
+    return cost
 
 
 def submit_direct(kind: str, params, title="", tool="") -> dict:
     """`POST /api/jobs` : la route commune, pour les seules sortes déclarées
-    `direct` (ou pour un admin). Une sorte inconnue : KeyError (400) ; une sorte
-    qui a sa route : PermissionError (403), qui dit où passer."""
+    `direct` (ou pour un admin). Une sorte inconnue : KeyError (400) ; la garde
+    du calcul d'abord (403) ; une sorte qui a sa route : PermissionError (403),
+    qui dit où passer."""
     if kind not in HANDLERS:
         raise KeyError(f"travail inconnu : {kind}")
     if not isinstance(params, dict):
         raise ValueError("params : un objet")
     if not isinstance(title, str) or not isinstance(tool, str) or len(title) > 200 or len(tool) > 40:
         raise ValueError("title (200 signes) et tool (40) : des textes")
+    me = auth.current()
+    _guard(kind, params, me, me, _space_for(me))   # avant tout jugement des réglages : rien n'en fuit
     d = _META.get(kind, {}).get("direct")
     if not d and not auth.is_admin(auth.current()):
         raise PermissionError(f"« {kind} » ne se lance pas par la route commune : passe par la page de son outil")
@@ -324,14 +411,17 @@ def _check_quota(u: dict | None) -> None:
 
 def submit(kind: str, params: dict, *, title: str = "", tool: str = "", pin: str | None = None,
            thumb: str | None = None, owner=UNSET, family=UNSET, gpu=UNSET, mem_gb=None,
-           priority: int | None = None) -> dict:
+           priority: int | None = None, space=UNSET) -> dict:
     """Met un travail en file, au nom de la personne de la requête (ou du
-    travail qui le lance). Lève QuotaError (429) au-delà de ses quotas."""
+    travail qui le lance), dans son Workspace. La garde du calcul (`_guard`) :
+    403 qui dit pourquoi ; QuotaError (429) au-delà de ses quotas."""
     if kind not in HANDLERS:
         raise KeyError(f"travail inconnu : {kind}")
     _, lane, default_title = HANDLERS[kind]
     by = auth.current()
     u = by if owner is UNSET else (auth.user(owner) if isinstance(owner, str) else owner)
+    sp = _space_for(u, space)
+    cost = _guard(kind, params, by, u, sp)
     fam, uses_gpu, mem = _resolve(kind, lane, params, family, gpu, mem_gb)
     if priority not in PRIORITIES:
         priority = 1 if (auth.is_admin(u) and auth.settings().get("admin_first")) else 0
@@ -340,7 +430,7 @@ def submit(kind: str, params: dict, *, title: str = "", tool: str = "", pin: str
          "params": params, "state": "queued", "created": library.now(), "progress": None,
          "message": "en file", "result": {"items": []}, "pin": pin, "thumb": thumb,
          "owner": u["id"] if u else None, "owner_name": u["name"] if u else "", "priority": priority, "top": False,
-         "family": fam, "gpu": uses_gpu, "mem_gb": mem, "overtaken": 0}
+         "family": fam, "gpu": uses_gpu, "mem_gb": mem, "overtaken": 0, "space": sp, "cost": cost}
     with _cv:
         if not auth.is_admin(by):
             _check_quota(u)
@@ -392,13 +482,15 @@ def cancel(jid: str) -> dict:
 
 
 def retry(jid: str) -> dict:
-    """Relance : au nom de la même personne quand c'est Cal qui relance."""
+    """Relance : au nom de la même personne quand c'est Cal qui relance, dans le
+    Workspace du travail d'origine ; la même garde que tout travail (submit)."""
     j = _jobs.get(jid)
     if not j:
         raise KeyError(jid)
     owner = j["owner"] if (auth.is_admin(auth.current()) and j.get("owner")) else UNSET
     return submit(j["kind"], j["params"], title=j["title"], tool=j["tool"], pin=j.get("pin"), thumb=j.get("thumb"),
-                  owner=owner, priority=j.get("priority") if owner is not UNSET else None)
+                  owner=owner, priority=j.get("priority") if owner is not UNSET else None,
+                  space=j["space"] if j.get("space") else UNSET)
 
 
 def forget(jid: str) -> None:
@@ -623,14 +715,21 @@ def _foreign_block(machine: str, fresh: bool = False, first: dict | None = None)
     return ""
 
 
-def _gpu_block(ep: str, machine: str) -> str:
+def _gpu_block(ep: str, machine: str, me: dict | None = None) -> str:
     """Un seul travail GPU du portail par machine (factory/memory.py : « un
-    seul gros travail GPU à la fois »), et rien sous le rendu d'un autre."""
+    seul gros travail GPU à la fois »), et rien sous le rendu d'un autre.
+    `me` : le travail dont on parle ne se bloque pas lui-même — pris par un
+    ouvrier (`_claim`), il se prépare (mémoire, instance) et `annotate`
+    disait « DGX2 calcule déjà pour la file (« lui-même ») » (REPRISE.md)."""
     per = int(config.get("gpu_jobs_per_machine", 1))
-    busy = [x for x in _jobs.values() if x.get("gpu") and str(_where(x) or "").startswith("http")
+    busy = [x for x in _jobs.values() if x is not me and x.get("gpu") and str(_where(x) or "").startswith("http")
             and machines.machine_of(_where(x)) == machine]
     if len(busy) >= per:
-        return f"attend : {machine} calcule déjà pour la file (« {busy[0]['title']} »)"
+        b = busy[0]
+        if b["state"] == "running":
+            return f"attend : {machine} calcule déjà pour la file (« {b['title']} »)"
+        # pris, pas encore parti : il vérifie l'instance et libère la mémoire — départ inconnu
+        return f"attend : {machine} prépare « {b['title']} » pour la file"
     return _foreign_block(machine)
 
 
@@ -645,7 +744,7 @@ def _better_elsewhere(j: dict, ep: str) -> bool:
         if (j.get("pin") and j["pin"] != other) or not _idle(other):
             continue
         m = machines.machine_of(other)
-        if _mode(m) != "active" or not machines.cached(other).get("up") or _gpu_block(other, m):
+        if _mode(m) != "active" or not machines.cached(other).get("up") or _gpu_block(other, m, j):
             continue
         return True
     return False
@@ -802,7 +901,9 @@ def _worker(lane: str, ep: str, key: tuple) -> None:
 
 def _run(j: dict, ep: str) -> None:
     fn = HANDLERS[j["kind"]][0]
-    auth.set_current(auth.user(j.get("owner")))   # ce que le travail range est à la personne qui l'a lancé
+    # ce que le travail range, et ce qu'il lance, est à la personne et au Workspace qui l'ont lancé
+    auth.set_current(auth.user(j.get("owner")))
+    auth.set_current_space(j.get("space"))
     ctx = None
     try:
         ctx = Ctx(j, ep)
@@ -817,6 +918,7 @@ def _run(j: dict, ep: str) -> None:
         j.update(state="error", message=str(e)[:1200] or type(e).__name__)
     finally:
         auth.set_current(None)
+        auth.set_current_space(None)
         _cancel.discard(j["id"])
         j["finished"] = library.now()
         with _cv:
@@ -891,7 +993,7 @@ def annotate(force: bool = False) -> None:
                     msg = j["waiting"]
                     stuck = True
                 if not msg and j.get("gpu"):
-                    blocks = [_gpu_block(e, machines.machine_of(e)) for e in avail if e.startswith("http")]
+                    blocks = [_gpu_block(e, machines.machine_of(e), j) for e in avail if e.startswith("http")]
                     if blocks and all(blocks):
                         msg = blocks[0]
                         stuck = stuck or not any(b.startswith(f"attend : {machines.machine_of(e)} calcule déjà")
