@@ -148,7 +148,7 @@ function install(app) {
         sc.el.style.transform = `scale(${176 / f.w})`;
         return row;
       }),
-      fs.length ? null : el('p', { class: 'pm-empty' }, 'Aucune diapositive 16:9 ici. Le panneau Diapositives en fait (+ Diapositive), ou un modèle charge son exemple (à droite).'));
+      ...(fs.length ? [] : [el('p', { class: 'pm-empty' }, 'Aucune diapositive 16:9 ici. Le panneau Diapositives en fait (+ Diapositive), ou un modèle charge son exemple (à droite).')]));
   }
 
   // ── la sélection d'un objet sur la scène ─────────────────
@@ -231,7 +231,7 @@ function install(app) {
         el('button', { class: 'pm-lab', type: 'button', title: t.label, onclick: () => { sel = t.id.startsWith('decor:') ? null : t.id; paintSel(); paintInsp(sel ? 'objet' : null); paintTimeline(); } },
           el('span', { class: 'lbl' }, PART_FR[scene?.all.find((o) => o.id === t.id)?.part] || t.kind), el('span', { class: 'tx' }, t.label)),
         el('div', { class: 'pm-track' }, bar));
-    }), tracks.length ? null : el('p', { class: 'pm-empty' }, tplNow()?.kind === 'statique' ? 'Un modèle statique : rien n’entre, tout est là. Un modèle motion, ou l’onglet Objet, donne des entrées.' : 'Aucune entrée sur cette diapositive : choisissez un objet sur la scène, puis son entrée (onglet Objet).'));
+    }), ...(tracks.length ? [] : [el('p', { class: 'pm-empty' }, tplNow()?.kind === 'statique' ? 'Un modèle statique : rien n’entre, tout est là. Un modèle motion, ou l’onglet Objet, donne des entrées.' : 'Aucune entrée sur cette diapositive : choisissez un objet sur la scène, puis son entrée (onglet Objet).')]));
     paintHead(run ? run.time() : 0);
     paintPlay();
   }
