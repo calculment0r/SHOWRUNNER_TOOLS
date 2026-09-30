@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Présentation · Idéation</title>
+<!-- la lecture seule d'une présentation d'Idéation, et sa page d'impression (?print : une page par
+     diapositive, dans son état final — le PDF du navigateur ou de Chromium sans affichage).
+     docs/etudes/presentations.md § 10. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Azeret+Mono:wght@300;400;500&display=swap">
+<link rel="stylesheet" href="../../commun/tokens.css">
+<link rel="stylesheet" href="../../commun/base.css">
+<link rel="stylesheet" href="presentation.css" data-pm>
+<!-- le thème (commun/theme.js) est posé par commun/shell.js, que lecture.js importe -->
+<style>
+  html, body { margin: 0; background: var(--black); }
+  .pl-msg { font-family: var(--f-mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink3); padding: 40px; }
+  .pl-print .pl-page { position: relative; overflow: hidden; break-after: page; page-break-after: always; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .pl-print .pl-bar { position: fixed; right: 16px; top: 16px; z-index: 5; display: flex; gap: 8px; }
+  @media print { .pl-print .pl-bar { display: none; } html, body { background: none; } }
+</style>
+</head>
+<body>
+<p class="pl-msg" id="msg">lecture…</p>
+<script type="module" src="lecture.js"></script>
+</body>
+</html>

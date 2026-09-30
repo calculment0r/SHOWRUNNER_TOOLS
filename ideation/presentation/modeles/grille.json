@@ -1,0 +1,72 @@
+{
+  "id": "grille",
+  "name": "Grille",
+  "kind": "statique",
+  "direction": "suisse typographique",
+  "line": "Linéale grasse et serrée, fer à gauche, rouge signal, les douze colonnes visibles : la grille comme ornement.",
+  "brand": "Showrunner Tools — système 2026",
+  "palette": { "bg": "#f4f4f1", "surface": "#e6e6e1", "ink": "#111111", "muted": "#55554f", "accent": "#e3241b", "accent2": "#0047bb", "inverse": "#f4f4f1", "line": "#111111", "veil": "#111111" },
+  "styles": {
+    "display": { "font": "intertight", "size": 190, "weight": 700, "lh": 0.9, "track": -0.045, "upper": false },
+    "h1": { "font": "intertight", "size": 92, "weight": 700, "lh": 0.96, "track": -0.03, "upper": false },
+    "h2": { "font": "intertight", "size": 52, "weight": 500, "lh": 1.08, "track": -0.015, "upper": false },
+    "body": { "font": "intertight", "size": 30, "weight": 400, "lh": 1.42, "track": -0.005, "upper": false },
+    "caption": { "font": "intertight", "size": 20, "weight": 500, "lh": 1.35, "track": 0, "upper": false },
+    "label": { "font": "intertight", "size": 17, "weight": 600, "lh": 1.25, "track": 0.08, "upper": true }
+  },
+  "slideBg": { "title": "bg", "section": "accent", "image": "ink", "quote": "bg", "numbers": "bg", "grid": "bg", "content": "bg", "end": "accent" },
+  "decor": [
+    { "kind": "grid", "tone": "auto", "opacity": 0.09, "layer": "back", "not": ["image"] },
+    { "kind": "mark", "x": 1118, "y": 72, "w": 706, "align": "right", "style": "label", "tone": "auto", "not": ["image"] },
+    { "kind": "folio", "x": 96, "y": 72, "w": 300, "style": "label", "tone": "auto", "total": false, "not": ["image"] },
+    { "kind": "num", "on": ["section", "end"], "x": 972, "y": 96, "w": 852, "size": 400, "style": "display", "tone": "auto", "align": "right", "stroke": true, "layer": "back" },
+    { "kind": "block", "on": ["quote"], "x": 96, "y": 340, "w": 16, "h": 270, "tone": "accent" },
+    { "kind": "block", "on": ["title"], "x": 1702, "y": 862, "w": 122, "h": 122, "tone": "accent" }
+  ],
+  "motion": { "rhythm": 0, "trans": { "default": { "kind": "cut", "dur": 0, "ease": "linear" }, "section": { "kind": "push", "dur": 500, "ease": "in-out-expo" }, "end": { "kind": "push", "dur": 500, "ease": "in-out-expo" } }, "parts": {} },
+  "example": {
+    "name": "Showrunner — un portail, huit outils",
+    "slides": [
+      { "name": "Titre", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 200, "w": 1144, "h": 22, "text": "Showrunner Tools — le système, septembre 2026" },
+        { "type": "title", "style": "display", "x": 96, "y": 300, "w": 1436, "h": 520, "text": "Un portail.\nHuit outils.\nDeux machines." },
+        { "type": "note", "style": "body", "x": 96, "y": 880, "w": 858, "h": 90, "text": "Le studio de Nirvalab, de l’idée à l’image, calculé en local sur deux DGX." }
+      ] },
+      { "name": "Le principe", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 600, "w": 600, "h": 22, "text": "Chapitre 2" },
+        { "type": "title", "style": "h1", "x": 96, "y": 640, "w": 1000, "h": 180, "text": "Une bibliothèque commune" },
+        { "type": "note", "style": "body", "x": 96, "y": 860, "w": 858, "h": 45, "text": "Chaque outil lit et écrit au même endroit : Asset." }
+      ] },
+      { "name": "Character Factory", "objects": [
+        { "type": "media", "kind": "image", "item": "ima-20260929-130041-6cb6", "x": 0, "y": 0, "w": 1920, "h": 1080, "tone": "veil" },
+        { "type": "note", "style": "label", "x": 96, "y": 820, "w": 800, "h": 22, "text": "Character Factory" },
+        { "type": "title", "style": "h2", "x": 96, "y": 860, "w": 1144, "h": 120, "text": "Un personnage, sept vues, une seule vérité." }
+      ] },
+      { "name": "Principe", "objects": [
+        { "type": "title", "style": "h1", "x": 242, "y": 340, "w": 1290, "h": 270, "text": "« La grille n’est pas une contrainte. C’est ce qui laisse la place au reste. »" },
+        { "type": "note", "style": "label", "x": 242, "y": 680, "w": 900, "h": 22, "text": "— Principe de mise en page, Showrunner" }
+      ] },
+      { "name": "En chiffres", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 184, "w": 600, "h": 22, "text": "Le portail en chiffres" },
+        { "type": "title", "style": "h2", "x": 96, "y": 220, "w": 1144, "h": 60, "text": "Deux machines, un seul lien" },
+        { "type": "title", "style": "display", "x": 96, "y": 430, "w": 560, "h": 180, "text": "8" },
+        { "type": "title", "style": "display", "x": 680, "y": 430, "w": 560, "h": 180, "text": "2" },
+        { "type": "title", "style": "display", "x": 1264, "y": 430, "w": 560, "h": 180, "text": "128" },
+        { "type": "note", "style": "body", "x": 96, "y": 650, "w": 414, "h": 90, "text": "outils réunis dans un seul portail" },
+        { "type": "note", "style": "body", "x": 680, "y": 650, "w": 414, "h": 90, "text": "DGX qui calculent, reliées en Wi-Fi 5 GHz" },
+        { "type": "note", "style": "body", "x": 1264, "y": 650, "w": 414, "h": 90, "text": "Go de mémoire unifiée sur chacune" }
+      ] },
+      { "name": "La distribution", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 184, "w": 600, "h": 22, "text": "La distribution" },
+        { "type": "title", "style": "h2", "x": 96, "y": 220, "w": 1144, "h": 60, "text": "Ce qu’on fabrique" },
+        { "type": "media", "kind": "image", "item": "ima-20260929-111624-2c85", "x": 96, "y": 380, "w": 560, "h": 604 },
+        { "type": "media", "kind": "image", "item": "ima-20260929-123310-8bbe", "x": 680, "y": 380, "w": 560, "h": 604 },
+        { "type": "media", "kind": "image", "item": "ima-20260929-130041-562b", "x": 1264, "y": 380, "w": 560, "h": 604 }
+      ] },
+      { "name": "Merci", "objects": [
+        { "type": "title", "style": "display", "x": 96, "y": 600, "w": 1000, "h": 180, "text": "Merci." },
+        { "type": "note", "style": "body", "x": 96, "y": 820, "w": 858, "h": 45, "text": "Showrunner Tools · Nirvalab" }
+      ] }
+    ]
+  }
+}

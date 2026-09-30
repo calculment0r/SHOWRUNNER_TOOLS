@@ -1,0 +1,99 @@
+{
+  "id": "lumiere",
+  "name": "Lumière",
+  "kind": "motion",
+  "direction": "keynote produit, lumineux",
+  "line": "Noir d’écran, halos qui flottent, titres qui montent mot à mot sur un ressort, chiffres qui roulent, une image qui grandit d’une diapositive à l’autre.",
+  "brand": "Showrunner 2",
+  "palette": { "bg": "#06070b", "surface": "#10131c", "ink": "#f5f7ff", "muted": "#9aa3b8", "accent": "#8c9aff", "accent2": "#3fe0c5", "inverse": "#06070b", "line": "#f5f7ff", "veil": "#06070b" },
+  "styles": {
+    "display": { "font": "intertight", "size": 180, "weight": 600, "lh": 0.95, "track": -0.045, "upper": false },
+    "h1": { "font": "intertight", "size": 96, "weight": 600, "lh": 1.0, "track": -0.035, "upper": false },
+    "h2": { "font": "intertight", "size": 54, "weight": 500, "lh": 1.1, "track": -0.02, "upper": false },
+    "body": { "font": "intertight", "size": 32, "weight": 400, "lh": 1.45, "track": -0.005, "upper": false },
+    "caption": { "font": "intertight", "size": 22, "weight": 400, "lh": 1.4, "track": 0, "upper": false },
+    "label": { "font": "intertight", "size": 18, "weight": 600, "lh": 1.3, "track": 0.16, "upper": true }
+  },
+  "slideBg": { "title": "bg", "section": "bg", "image": "bg", "quote": "bg", "numbers": "bg", "grid": "bg", "content": "bg", "end": "bg" },
+  "decor": [
+    { "kind": "glow", "on": ["title", "end", "section"], "x": 1500, "y": 260, "r": 760, "opacity": 0.5, "tone": "accent", "layer": "back",
+      "motion": { "in": { "fx": "scale", "dur": 2400, "ease": "out-expo" }, "loop": { "fx": "float", "dur": 9000, "amp": 90 }, "depth": -0.5 } },
+    { "kind": "glow", "on": ["title", "numbers", "end", "quote"], "x": 260, "y": 960, "r": 560, "opacity": 0.32, "tone": "accent2", "layer": "back",
+      "motion": { "in": { "fx": "fade", "dur": 2000, "delay": 300, "ease": "in-out" }, "loop": { "fx": "float", "dur": 11000, "amp": 70 }, "depth": -0.3 } },
+    { "kind": "glow", "on": ["numbers", "grid", "content"], "x": 1650, "y": 900, "r": 620, "opacity": 0.36, "tone": "accent", "layer": "back",
+      "motion": { "in": { "fx": "fade", "dur": 1800, "ease": "in-out" }, "loop": { "fx": "float", "dur": 10000, "amp": 80 }, "depth": -0.4 } }
+  ],
+  "motion": {
+    "rhythm": 120,
+    "trans": {
+      "default": { "kind": "fade", "dur": 900, "ease": "in-out" },
+      "image": { "kind": "zoom", "dur": 1000, "ease": "in-out-expo" },
+      "numbers": { "kind": "push", "dur": 900, "ease": "in-out-expo" },
+      "section": { "kind": "wipe", "dur": 1000, "ease": "in-out-expo" },
+      "grid": { "kind": "push", "dur": 900, "ease": "in-out-expo" },
+      "end": { "kind": "zoom", "dur": 1200, "ease": "in-out-expo" }
+    },
+    "parts": {
+      "kicker": { "in": { "fx": "rise", "dur": 800, "delay": 0, "ease": "out-expo", "dist": 20 } },
+      "title": { "in": { "fx": "rise", "dur": 1100, "delay": 60, "ease": "spring", "by": "word", "stagger": 70, "dist": 70 } },
+      "body": { "in": { "fx": "rise", "dur": 900, "delay": 200, "ease": "out-expo", "by": "line", "stagger": 110, "dist": 30 } },
+      "caption": { "in": { "fx": "fade", "dur": 700, "delay": 300, "ease": "in-out" } },
+      "figure": { "in": { "fx": "count", "dur": 1800, "delay": 100, "ease": "out-expo", "stagger": 90 } },
+      "quote": { "in": { "fx": "blur", "dur": 900, "delay": 100, "ease": "out-quint", "by": "word", "stagger": 60 } },
+      "image": { "in": { "fx": "scale", "dur": 1100, "delay": 0, "ease": "spring" }, "depth": 0.25 },
+      "hero": { "in": { "fx": "zoom", "dur": 1800, "delay": 0, "ease": "out-quint" }, "loop": { "fx": "drift", "dur": 16000, "amp": 36 } },
+      "stroke": { "in": { "fx": "draw", "dur": 1200, "delay": 300, "ease": "in-out" } }
+    }
+  },
+  "example": {
+    "name": "Showrunner 2 — le lancement",
+    "slides": [
+      { "name": "Showrunner 2", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 360, "w": 900, "h": 24, "text": "Présentation · 30 septembre 2026" },
+        { "type": "title", "style": "display", "x": 96, "y": 410, "w": 1436, "h": 175, "text": "Showrunner 2" },
+        { "type": "note", "style": "body", "x": 96, "y": 640, "w": 1000, "h": 50, "text": "Tout votre studio. Deux machines. Un seul portail." }
+      ] },
+      { "name": "Chapitre 01", "objects": [
+        { "type": "note", "style": "label", "align": "center", "x": 96, "y": 400, "w": 1728, "h": 24, "text": "Chapitre 01" },
+        { "type": "title", "style": "h1", "align": "center", "x": 96, "y": 450, "w": 1728, "h": 200, "text": "Tout commence par une image." }
+      ] },
+      { "name": "Pensé pour l’image", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 280, "w": 600, "h": 24, "text": "01 — Image" },
+        { "type": "title", "style": "h1", "x": 96, "y": 320, "w": 860, "h": 200, "text": "Pensé pour l’image." },
+        { "type": "note", "style": "body", "x": 96, "y": 560, "w": 800, "h": 140, "text": "Z-Image, Qwen-Image, Krea : trois moteurs, une même bibliothèque, chaque rendu rangé à sa place." },
+        { "type": "media", "kind": "image", "item": "ima-20260929-130040-316d", "mk": "neige", "x": 1040, "y": 250, "w": 784, "h": 441 }
+      ] },
+      { "name": "Nette jusqu’au grain", "trans": "morph", "tdur": 1300, "objects": [
+        { "type": "media", "kind": "image", "item": "ima-20260929-130040-316d", "mk": "neige", "x": 0, "y": 0, "w": 1920, "h": 1080, "tone": "veil" },
+        { "type": "note", "style": "label", "x": 96, "y": 820, "w": 800, "h": 24, "text": "Rendu local · 2048 px" },
+        { "type": "title", "style": "h1", "x": 96, "y": 860, "w": 1290, "h": 100, "text": "Nette jusqu’au grain." }
+      ] },
+      { "name": "Les performances", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 180, "w": 600, "h": 24, "text": "Les performances" },
+        { "type": "title", "style": "h1", "x": 96, "y": 220, "w": 1290, "h": 100, "text": "Plus vite. Partout." },
+        { "type": "title", "style": "display", "x": 96, "y": 470, "w": 560, "h": 175, "text": "128" },
+        { "type": "title", "style": "display", "x": 680, "y": 470, "w": 560, "h": 175, "text": "2" },
+        { "type": "title", "style": "display", "x": 1264, "y": 470, "w": 560, "h": 175, "text": "60" },
+        { "type": "note", "style": "caption", "x": 96, "y": 680, "w": 460, "h": 60, "text": "Go de mémoire unifiée par machine" },
+        { "type": "note", "style": "caption", "x": 680, "y": 680, "w": 460, "h": 60, "text": "DGX qui se partagent le calcul" },
+        { "type": "note", "style": "caption", "x": 1264, "y": 680, "w": 460, "h": 60, "text": "images par seconde, du premier au dernier plan" }
+      ] },
+      { "name": "Ce qu’on en dit", "objects": [
+        { "type": "title", "style": "h1", "align": "center", "x": 242, "y": 380, "w": 1436, "h": 200, "text": "« On ne choisit plus entre aller vite et bien faire. »" },
+        { "type": "note", "style": "caption", "align": "center", "x": 242, "y": 660, "w": 1436, "h": 30, "text": "— Cal, Nirvalab" }
+      ] },
+      { "name": "La galerie", "objects": [
+        { "type": "note", "style": "label", "x": 96, "y": 180, "w": 600, "h": 24, "text": "La galerie" },
+        { "type": "title", "style": "h2", "x": 96, "y": 220, "w": 1144, "h": 60, "text": "Ce que Showrunner a fabriqué cette semaine" },
+        { "type": "media", "kind": "image", "item": "ima-20260929-130041-6cb6", "x": 96, "y": 380, "w": 414, "h": 560 },
+        { "type": "media", "kind": "image", "item": "ima-20260929-130041-bb48", "x": 534, "y": 380, "w": 414, "h": 560 },
+        { "type": "media", "kind": "image", "item": "ima-20260929-130042-5f25", "x": 972, "y": 380, "w": 414, "h": 560 },
+        { "type": "media", "kind": "image", "item": "ima-20260929-130041-9542", "x": 1410, "y": 380, "w": 414, "h": 560 }
+      ] },
+      { "name": "Disponible", "objects": [
+        { "type": "title", "style": "display", "align": "center", "x": 96, "y": 400, "w": 1728, "h": 175, "text": "Showrunner 2" },
+        { "type": "note", "style": "body", "align": "center", "x": 96, "y": 630, "w": 1728, "h": 50, "text": "Disponible dès aujourd’hui, sur vos deux DGX." }
+      ] }
+    ]
+  }
+}
