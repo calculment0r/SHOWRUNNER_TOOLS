@@ -111,6 +111,7 @@ def studio_page(req):
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
+<script src="/commun/theme-tot.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
 <title>SHOWRUNNER TOOLS · {html.escape(name.upper())} · STUDIO</title>

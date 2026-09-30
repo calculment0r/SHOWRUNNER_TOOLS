@@ -340,6 +340,27 @@ export const MULTI_MIME = 'application/x-sr-items';
 // un personnage de Character Factory pas encore importé ({slug, imported}) : la planche d'Idéation
 // l'importe au dépôt (ideation/canvas.js) ; déjà importé, le panneau Asset le glisse en ITEM_MIME
 export const CF_MIME = 'application/x-sr-cf';
+// un objet d'un autre Workspace : le type vide `application/x-sr-space-<espace>` s'ajoute au glisser
+// (panneau_asset.md § 5) — il se lit au survol, quand le contenu ne se lit pas encore
+export const SPACE_MIME = 'application/x-sr-space-';
+
+// Un objet d'un autre Workspace (it.space ≠ celui de l'onglet) ne se pose jamais tel quel : il est
+// d'abord rapatrié — une copie neuve dans le Workspace de l'onglet, jamais un lien vivant
+// (POST /api/espaces/<courant>/rapatrier, server/tools/equipes.py ; equipes_espaces.md, étape 5) —
+// et l'outil reçoit la copie, à la place de l'original, dans le même ordre. Tout ou rien : un refus
+// (un viewer, un élément versionné, une séquence) lève l'erreur du portail, qui dit pourquoi.
+export async function rapatrier(items) {
+  const here = ESPACE;
+  const away = (items || []).filter((it) => it && it.id && it.space && here && it.space !== here);
+  if (!away.length) return items;
+  const ids = [...new Set(away.map((it) => it.id))];
+  const r = await api(`espaces/${here}/rapatrier`, { method: 'POST', body: { items: ids } });
+  const made = r.items || [];
+  // chaque copie dit d'où elle vient (origin.from.item) ; sinon, l'ordre des ids
+  const copy = new Map(ids.map((id, i) => [id, made.find((x) => x?.origin?.from?.item === id) || made[i]]));
+  toast(ids.length > 1 ? `${ids.length} assets copiés dans ce Workspace` : `copié dans ce Workspace : ${made[0]?.title || ids[0]}`);
+  return items.map((it) => (it && copy.get(it.id)) || it);
+}
 export function dragItem(node, it) {
   node.draggable = true;
   node.addEventListener('dragstart', (e) => {
@@ -381,15 +402,16 @@ export function dropZone(node, { kinds = ['image', 'element'], multiple = true, 
     const raw = e.dataTransfer.getData(ITEM_MIME);
     let many = [];
     try { many = JSON.parse(e.dataTransfer.getData(MULTI_MIME) || '[]'); } catch { many = []; }
+    // lus où qu'ils soient (`spaces=*` : montrer) ; d'un autre Workspace, ils seront rapatriés plus bas
     if (multiple && Array.isArray(many) && many.length > 1) {
-      try { got.push(...(await api('library/batch', { method: 'POST', body: { ids: many.map(String) } })).items); } catch (err) { toast(err.message); }
+      try { got.push(...(await api('library/batch', { method: 'POST', body: { ids: many.map(String), spaces: '*' } })).items); } catch (err) { toast(err.message); }
     } else if (raw) {
-      try { got.push(await api('library/' + JSON.parse(raw).id)); } catch (err) { toast(err.message); }
+      try { got.push(await api('library/' + JSON.parse(raw).id + '?spaces=*')); } catch (err) { toast(err.message); }
     }
     for (let i = 0; i < got.length; i++) {
       const it = got[i];
       if (it.kind === 'element' && !kinds.includes('element') && kinds.includes(sorteEffective(it)) && it.element?.head_item) {
-        try { got[i] = await api('library/' + it.element.head_item); } catch { /* la dernière version n'est plus là : l'élément sera refusé */ }
+        try { got[i] = await api('library/' + it.element.head_item + '?spaces=*'); } catch { /* la dernière version n'est plus là : l'élément sera refusé */ }
       }
     }
     const gone = got.filter((it) => !kinds.includes(it.kind));
@@ -406,7 +428,9 @@ export function dropZone(node, { kinds = ['image', 'element'], multiple = true, 
     else if (files.length) toast(files.length > 1 ? `${files.length} fichiers rangés dans la bibliothèque · Upload` : 'rangé dans la bibliothèque · Upload');
     const ok = got.filter((it) => kinds.includes(it.kind));
     if (ok.length) {
-      const used = multiple ? ok : ok.slice(0, 1);
+      let used = multiple ? ok : ok.slice(0, 1);
+      // d'un autre Workspace : la copie d'ici, à sa place (sinon l'outil ne le trouverait pas) ; un refus dit pourquoi
+      try { used = await rapatrier(used); } catch (err) { toast(err.message, 7000); return; }
       onitems(used);
       dock.recent(used);   // les Récents du panneau Asset : ce qu'on a posé ou déposé
     }

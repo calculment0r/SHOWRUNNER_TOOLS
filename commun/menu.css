@@ -23,7 +23,13 @@
 }
 .sr-menu .mi:hover:not([aria-disabled="true"]),
 .sr-menu .mi.on:not([aria-disabled="true"]) { background: var(--panel3); }
-.sr-menu .mi[aria-disabled="true"] { opacity: .38; cursor: default; }
+/* désactivée : l'entrée pâlit, son pourquoi (.why) reste lisible dessous (règle 7) */
+.sr-menu .mi[aria-disabled="true"] { cursor: default; flex-wrap: wrap; row-gap: 2px; }
+.sr-menu .mi[aria-disabled="true"] > :not(.why) { opacity: .45; }
+.sr-menu .mi .why {
+  flex-basis: 100%; padding-left: 23px; white-space: normal; line-height: 1.4;
+  font-size: 10.5px; color: var(--ink3);
+}
 .sr-menu .mi .ic { width: 14px; flex: none; text-align: center; color: var(--ink2); }
 .sr-menu .mi .dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
 .sr-menu .mi .lb { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
