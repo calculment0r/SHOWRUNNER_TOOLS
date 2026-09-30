@@ -1,0 +1,26 @@
+{
+  "about": "Le schéma du motion des présentations d'Idéation (docs/etudes/presentations.md § 10). Une seule vérité : lu par le moteur (ideation/presentation/moteur.js), par le serveur qui garde le champ `motion` d'un objet (server/tools/presentation.py) et par le contrôle (tools/check.py, selftest de presentation). Des données, jamais du code.",
+  "version": 1,
+  "fx_in": ["none", "fade", "rise", "drop", "left", "right", "scale", "zoom", "blur", "tilt", "mask-up", "mask-down", "mask-left", "mask-right", "reveal", "draw", "count", "type"],
+  "fx_out": ["none", "fade", "sink", "blur", "scale", "mask-up", "mask-left"],
+  "fx_loop": ["none", "drift", "float", "pulse", "spin", "sway"],
+  "by": ["all", "line", "word", "letter"],
+  "ease": ["linear", "standard", "out-quint", "out-expo", "in-out", "in-out-expo", "back", "spring"],
+  "trans": ["cut", "fade", "push", "wipe", "curtain", "zoom", "morph", "toile"],
+  "tone": ["ink", "muted", "accent", "accent2", "inverse", "surface", "bg", "veil"],
+  "bg": ["bg", "surface", "ink", "accent", "accent2"],
+  "roles": ["title", "section", "image", "quote", "numbers", "grid", "content", "end"],
+  "parts": ["kicker", "title", "body", "caption", "figure", "quote", "image", "hero", "stroke", "shape"],
+  "palette": ["bg", "surface", "ink", "muted", "accent", "accent2", "inverse", "line", "veil"],
+  "decor": ["bars", "rule", "folio", "mark", "grain", "glow", "grid", "block", "ring", "scan", "border", "num", "ticker"],
+  "limits": {
+    "dur": [0, 6000],
+    "delay": [0, 20000],
+    "stagger": [0, 1000],
+    "dist": [0, 600],
+    "depth": [-1, 1],
+    "step": [0, 9],
+    "auto": [0, 120],
+    "tdur": [0, 4000]
+  }
+}

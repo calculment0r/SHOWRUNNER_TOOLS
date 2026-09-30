@@ -20,7 +20,7 @@
 //     prefers-reduced-motion : le fondu seul (l'étude, § 3.4).
 // Ce qu'on voit est la planche elle-même : une seule vérité du rendu.
 
-import { el, toast } from '../../commun/shell.js';
+import { el, toast, href } from '../../commun/shell.js';
 import { menu } from '../../commun/menu.js';
 import { basculer, enPleinEcran, permis } from '../../commun/pleinecran.js';
 import { atelier, within } from './socle.js';
@@ -50,6 +50,14 @@ export function install(app) {
   function start(fromId = null) {
     if (!S.board) { toast('ouvrez d’abord une planche'); return; }
     if (on) return;
+    // ── présentation (agent « présentations », 30/09) : une présentation qui a un modèle ou du motion
+    // se lit dans le lecteur de scènes (ideation/presentation/lecteur.js), chargé à la demande ; la
+    // planche n'est pas touchée (ni caméra, ni sélection). Sans motion : la présentation ci-dessous. ──
+    if (S.board.pres?.template || S.board.nodes.some((n) => n.motion)) {
+      const fs = shown().filter(isSlide);
+      if (fs.length) { motionPlay(fs, fromId); return; }
+    }
+    // ── fin présentation ──
     const list = shown();
     if (!list.length) {
       const k = S.board.nodes.filter((n) => n.type === 'frame').length;
@@ -152,6 +160,7 @@ export function install(app) {
   }
   function stop() {
     if (!on) return;
+    if (player) { player.stop(); return; }   // présentation : le lecteur de scènes se ferme lui-même
     on = false; A.presenting = false;
     clearTimeout(idleT);
     document.body.classList.remove('at-presenting');
@@ -272,6 +281,25 @@ export function install(app) {
   });
   // une autre planche s'ouvre : la présentation s'arrête
   app.on('board', () => { if (on) { before = null; stop(); } });
+
+  // ── présentation (agent « présentations », 30/09) : le lecteur de scènes, en plein écran ──
+  let player = null;
+  async function motionPlay(fs, fromId) {
+    const [{ createPlayer }, { modele }] = await Promise.all([import('../presentation/lecteur.js'), import('../presentation/modeles.js')]);
+    const tpl = await modele(S.board.pres?.template);
+    on = true; A.presenting = true;
+    app.emit('atelier:present', true);
+    const start0 = Math.max(0, fromId ? fs.findIndex((f) => f.id === fromId) : 0);
+    player = createPlayer({ board: S.board, frames: fs, items: S.items, meta: S.meta?.deck, tpl, href,
+      labelOf: app.label, name: S.board.name,
+      keys: (fn) => { let live = true; A.key(15, (e, c) => (live && !c.overlay ? fn(e) : false)); return () => { live = false; }; },
+      fullscreen: permis() ? { toggle: () => basculer(), on: () => enPleinEcran() } : null,
+      onexit: () => { player = null; on = false; A.presenting = false; if (fsMine && enPleinEcran()) basculer(); fsMine = false; fs = false; app.emit('atelier:present', false); } });
+    if (permis() && !enPleinEcran()) { fsMine = true; basculer().then(() => { fs = enPleinEcran(); if (!fs) fsMine = false; }); }
+    player.start(start0);
+    A.player = player;
+  }
+  // ── fin présentation ──
 
   // pour les essais
   A.presentation = { start, stop, go, sorter, slides, get index() { return idx; }, get ids() { return [...ids]; }, get last() { return last; } };

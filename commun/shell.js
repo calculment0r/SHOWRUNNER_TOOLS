@@ -204,7 +204,9 @@ addEventListener('contextmenu', (e) => {
 
 // ── le panneau Asset commun (commun/dock.js, docs/etudes/panneau_asset.md) ──
 // La bibliothèque à gauche de chaque outil, sous la barre : elle pousse la page.
-// `mountHeader` la monte (le bouton ASSET tout à gauche de la barre) ; ici, ce
+// Un VISUALISEUR (Cal, 30/09) : chercher, filtrer, trier, poser ; la gestion est à la
+// page Asset (le bouton ASSET, à droite de la barre). `mountHeader` la monte ; elle
+// s'ouvre par sa languette (la poignée au bord gauche) ou le raccourci ; ici, ce
 // qui doit exister avant qu'elle ne soit chargée : la façade `dock` (un appel
 // fait trop tôt attend le panneau), le registre des zones qui prennent un asset
 // (`declareZone` ; `dropZone` s'y inscrit seul), la sorte effective, le raccourci.
@@ -502,7 +504,7 @@ export function toolHref(t, sys) {
   return avecEspace(href(t.path));
 }
 
-// ── le sélecteur de Workspace (en haut à gauche, à côté du logotype) ──
+// ── le sélecteur de Workspace (à droite, collé au nom : c'est de l'administration) ──
 // « TEAM / WORKSPACE » en capitales mono (mots de Cal, 30/09) ; le menu : ses Teams et
 // leurs Workspaces tels que le portail les rend (/api/auth/me → teams : un guest n'y a
 // que les siens, par construction), « + Nouveau Workspace » dans une Team qu'on gère,
@@ -535,7 +537,7 @@ function paintEspace() {
   note.hidden = !doc;
   note.textContent = doc ? `document · ${doc}` : '';
   // les liens de l'en-tête gardent le Workspace de l'onglet (ouverts dans un nouvel onglet compris)
-  for (const a of ESPACE ? document.querySelectorAll('.hdr a.logo, .hdr #sr-admin, .hdr .tools a, .hdr .tools-menu a') : []) {
+  for (const a of ESPACE ? document.querySelectorAll('.hdr a.logo, .hdr #sr-asset, .hdr .tools a, .hdr .tools-menu a') : []) {
     const u = new URL(a.href, location.href);
     if (u.origin !== ROOT.origin || u.searchParams.get('e') === ESPACE) continue;
     u.searchParams.set('e', ESPACE);
@@ -664,8 +666,19 @@ async function changeEspace(id) {
 // render-blocking (<script type="module" blocking="render">) : il est dans la première peinture, et
 // la transition entre pages (commun/shell.css, @view-transition) le garde immobile.
 // Un deuxième appel rend la barre déjà posée (un <head> peut la monter avant le script de la page).
+//
+// Épurée (Cal, 30/09 : « on simplifie le header général des trucs qui polluent visuellement ») :
+// à gauche le logotype, le NOM de l'outil en gros, la navigation ; à droite ASSET (la page
+// dédiée : l'organisation de la bibliothèque), les préférences (la roue), le plein écran, la
+// Team / le Workspace, puis le NOM (le compte), dont le menu porte la file de rendu, les Teams et
+// Workspaces, l'Admin et l'état des machines. Plus rien sous le nom de l'outil : l'option `sub`
+// des pages est ignorée ici, par construction (tous les onglets d'un coup) — une page peut la
+// passer encore, elle ne se dessine plus.
 let HDR = null;
-export function mountHeader(toolId, { sub = '', dock: useDock = true } = {}) {
+// la roue des préférences (un engrenage : pas le soleil d'un thème) et la grille d'Asset — trait currentColor
+const GEAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>';
+const GRID = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1"/></svg>';
+export function mountHeader(toolId, { dock: useDock = true } = {}) {
   if (HDR && HDR.isConnected) return HDR;
   // la page reste cachée le temps de savoir qui entre (3 s au plus) — sauf si l'onglet est déjà entré
   if (!entre(lastMe)) {
@@ -674,42 +687,39 @@ export function mountHeader(toolId, { sub = '', dock: useDock = true } = {}) {
   }
   const t = TOOLS.find((x) => x.id === toolId) || PAGES[toolId];
   document.documentElement.dataset.srTool = toolId;   // le menu de repli ouvre les préférences de l'outil
-  // le panneau Asset (commun/dock.js) : son bouton tout à gauche de la barre, au-dessus du panneau
-  // qu'il ouvre (Resolve : le Media Pool, premier bouton de sa barre ; panneau_asset.md § 2.2)
+  // le panneau Asset (commun/dock.js) : il s'ouvre par sa languette, au bord gauche, et le raccourci
   DOCK.page = useDock && TOOLS.some((x) => x.id === toolId) ? toolId : null;
-  const dockBtn = DOCK.page ? el('button', { class: 'tb ghost sm sr-dock-btn', id: 'sr-dock-btn', type: 'button',
-    'aria-controls': 'sr-dock', 'aria-pressed': 'false', title: 'la bibliothèque', onclick: () => dock.toggle({ focus: true }),
-    html: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M9.5 4.5v15"/></svg><span>Asset</span>' }) : null;
+  const assetT = TOOLS.find((x) => x.id === 'asset');
   const nav = el('nav', { class: 'tools' });
   const hdr = el('header', { class: 'hdr' },
-    dockBtn,
     el('a', { class: 'logo', href: avecEspace(href('')), title: 'le portail' },
       el('span', { class: 'sq' }, el('i')),
       el('span', {}, el('b', {}, 'Nirvalab'))),
-    // la Team et le Workspace de l'onglet (caché tant que le portail ne les a pas dits)
+    t ? el('span', { class: 'tool-name' }, el('span', { class: 'k' }, t.k), el('b', {}, t.name)) : null,
+    nav,
+    el('span', { class: 'sp' }),
+    el('div', { class: 'sr-droite' },
+    // la page Asset : tous les assets de la personne, leur organisation (groupes, glisser, Teams et Workspaces)
+    el('a', { class: 'tb ghost sm sr-asset-btn', id: 'sr-asset', href: avecEspace(href(assetT.path)),
+      'aria-current': toolId === 'asset' ? 'page' : null, title: 'Asset : la bibliothèque et son organisation',
+      html: `${GRID}<span>Asset</span>` }),
+    // les préférences, générales et par outil (commun/prefs.js) · Ctrl+,
+    el('button', { class: 'tb ghost sm sr-gear', id: 'sr-prefs', type: 'button', title: 'préférences · Ctrl+,', 'aria-label': 'préférences',
+      html: GEAR, onclick: () => import('./prefs.js').then((m) => m.openPrefs(toolId)) }),
+    // le plein écran (Cal, 29/09) ; l'icône dit l'état
+    boutonPleinEcran(document, el),
+    // la Team et le Workspace de l'onglet, collés au nom (cachés tant que le portail ne les a pas dits)
     el('div', { class: 'sr-ws', id: 'sr-ws', hidden: true },
+      el('span', { class: 'doc', hidden: true }),
       el('button', { class: 'sr-ws-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false',
         onclick: (e) => openWsMenu(e.currentTarget) },
       el('span', { class: 'tm' }), el('span', { class: 'sl', 'aria-hidden': 'true' }, '/'), el('span', { class: 'ws' }),
-      el('i', { class: 'cv', 'aria-hidden': 'true', html: '<svg viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5"/></svg>' })),
-      el('span', { class: 'doc', hidden: true })),
-    t ? el('span', { class: 'tool-name' }, el('span', { class: 'k' }, t.k), el('b', {}, t.name),
-      sub ? el('span', { class: 'lbl' }, sub) : null) : null,
-    nav,
-    el('span', { class: 'sp' }),
-    // (le bouton Asset d'en haut à droite est parti le 30/09 : le panneau s'ouvre tout à gauche,
-    // la page Asset plein écran se joint par « ↗ » en tête du panneau et par l'accueil)
-    el('span', { class: 'pill', id: 'sr-sys', title: 'les machines' }, el('i'), el('span', {}, 'machines')),
-    el('a', { class: 'tb ghost sm', id: 'sr-admin', href: href('admin/'), hidden: true, title: 'la page de Cal' }, 'Admin'),
-    el('button', { class: 'tb ghost sm', id: 'sr-me', hidden: true, title: 'mon compte',
-      onclick: (e) => session().then((me) => me && import('./porte.js').then((m) => m.account(me, e.target.closest('button')))) }, 'compte'),
-    // les préférences, générales et par outil (commun/prefs.js) · Ctrl+,
-    el('button', { class: 'tb ghost sm sr-gear', id: 'sr-prefs', type: 'button', title: 'préférences · Ctrl+,', 'aria-label': 'préférences',
-      html: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>',
-      onclick: () => import('./prefs.js').then((m) => m.openPrefs(toolId)) }),
-    el('button', { class: 'tb ghost sm', id: 'sr-queue', title: 'la file des calculs', onclick: () => drawer(true) }, 'File'),
-    // tout à droite : le plein écran (Cal, 29/09) ; l'icône dit l'état
-    boutonPleinEcran(document, el));
+      el('i', { class: 'sr-cv', 'aria-hidden': 'true', html: '<svg viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5"/></svg>' }))),
+    // tout à droite : le nom ; son menu (commun/porte.js, account) : la file, les Teams, l'Admin, les machines
+    el('button', { class: 'tb ghost sm sr-me', id: 'sr-me', type: 'button', hidden: true, 'aria-haspopup': 'menu',
+      onclick: (e) => menuDuNom(e.currentTarget) },
+    el('span', { class: 'nm' }, 'compte'),
+    el('i', { class: 'dq', hidden: true, 'aria-hidden': 'true' }), el('i', { class: 'da', hidden: true, 'aria-hidden': 'true' }))));
   // fenêtre étroite : la navigation passe dans un menu « Outils », jamais cachée
   const menu = el('div', { class: 'tools-menu', hidden: true });
   const menuBtn = el('button', { class: 'tb ghost sm tools-btn', type: 'button', title: 'les outils',
@@ -731,15 +741,19 @@ export function mountHeader(toolId, { sub = '', dock: useDock = true } = {}) {
   if (!document.querySelector('link[data-porte]')) {
     document.head.append(el('link', { rel: 'stylesheet', href: href('commun/porte.css'), 'data-porte': '' }));
   }
+  // le nom : celui du compte (sans porte, le pseudo-admin du portail : le menu reste le même) ;
+  // deux points discrets disent ce qui attend dans son menu — un calcul en cours (acier), une
+  // demande à traiter pour Cal (ambre)
   const paintMe = (me) => {
-    const adm = $('#sr-admin'), mine = $('#sr-me');
-    if (!me || !adm) return;
-    const isAdmin = me.user && me.user.role === 'admin';
-    adm.hidden = !isAdmin;
-    adm.textContent = isAdmin && me.pending_requests ? `Admin · ${me.pending_requests}` : 'Admin';
-    adm.classList.toggle('on', toolId === 'admin');
-    mine.hidden = !(me.auth && me.user);
-    if (me.user) mine.textContent = me.user.name;
+    const mine = $('#sr-me', hdr);
+    if (!me || !mine) return;
+    mine.hidden = !me.user;
+    if (!me.user) return;
+    mine.querySelector('.nm').textContent = me.user.name;
+    const pend = me.user.role === 'admin' ? me.pending_requests || 0 : 0;
+    mine.querySelector('.da').hidden = !pend;
+    $('#sr-asset', hdr).hidden = me.user.role === 'invite';   // l'invité d'une planche n'a pas la bibliothèque
+    paintFile();
   };
   // Le droit Studio (core/auth.py, « le Studio » ; /api/auth/me → user.access) : un compte Apps voit les
   // outils Studio fermés — grisés, un cadenas, un clic mène à la demande ; sur une page Studio (servie par le
@@ -788,10 +802,7 @@ export function mountHeader(toolId, { sub = '', dock: useDock = true } = {}) {
   // la première image : ce que l'onglet sait déjà (la dernière réponse du portail, l'état des machines, la file)
   paintNav(lastMe, null);
   if (entre(lastMe)) { paintMe(lastMe); paintEspace(); }
-  const pill = lu(SYS_KEY);
-  if (pill) { const p = $('#sr-sys', hdr); p.className = pill.c; p.lastChild.textContent = pill.t; p.title = pill.title; }
-  const fileN = ss.get(FILE_KEY);
-  if (fileN) $('#sr-queue', hdr).textContent = fileN;
+  paintFile();
   session().then((me) => {
     document.documentElement.classList.remove('sr-wait');
     if (me && me.auth && me.state !== 'active') return showDoor(me);
@@ -805,12 +816,10 @@ export function mountHeader(toolId, { sub = '', dock: useDock = true } = {}) {
     paintNav(me, sys);
     paintSys(sys);
   });
-  setInterval(() => { sysInfo = null; system().then(paintSys); }, 20000);
   jobs.watch((list) => {
-    const n = list.filter((j) => j.state === 'queued' || j.state === 'running').length;
-    const txt = n ? `File · ${n}` : 'File';
-    $('#sr-queue').textContent = txt;
-    ss.set(FILE_KEY, txt === 'File' ? null : txt);
+    FILE_N = list.filter((j) => j.state === 'queued' || j.state === 'running').length;
+    ss.set(FILE_KEY, FILE_N ? String(FILE_N) : null);
+    paintFile();
     if ($('.drawer.on')) paintDrawer(list);
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') drawer(false); });
@@ -821,21 +830,65 @@ export function mountHeader(toolId, { sub = '', dock: useDock = true } = {}) {
   return hdr;
 }
 
-// l'état des machines et la file, gardés pour l'onglet : la page suivante les montre dès sa première image
+// ── le menu du nom ──────────────────────────────────────────
+// Ce qui a quitté la barre (Cal, 30/09) : la file de rendu (une ligne, son compte en cours), les
+// Teams et Workspaces (l'administration : admin/#teams), l'Admin (pour Cal), l'état des machines ;
+// au téléphone, le Workspace aussi (la barre n'a plus sa place). Le reste du menu — le pseudo, se
+// déconnecter — est celui du compte (commun/porte.js, account), qui reçoit ces lignes.
+// L'état des machines et la file sont gardés pour l'onglet : la page suivante les a dès sa première image.
 const SYS_KEY = 'sr-sys', FILE_KEY = 'sr-file';
-function paintSys(sys) {
-  const p = $('#sr-sys');
-  if (!p) return;
-  if (!sys) { p.className = 'pill err'; p.lastChild.textContent = 'portail injoignable'; ss.set(SYS_KEY, null); return; }
-  const img = (sys.lanes.image || []);
-  const up = img.filter((e) => e.up).map((e) => e.machine);
-  const h3 = (sys.lanes.h3 || []).filter((e) => e.up).length;
-  p.className = 'pill ' + (up.length ? 'on' : 'err');
-  p.lastChild.textContent = up.length ? `${up.join(' + ')}${h3 ? ' · H3' : ''}` : 'aucune machine';
-  p.title = img.map((e) => `${e.machine} ${e.up ? `prête · ${e.ram_free_gb ?? '?'} Go libres` : 'ne répond pas'}`).join('\n')
-    + `\nH3 : ${h3 ? 'démarré' : 'arrêté (il se démarre à la demande)'}`;
-  ss.set(SYS_KEY, JSON.stringify({ c: p.className, t: p.lastChild.textContent, title: p.title }));
+let SYS = lu(SYS_KEY);
+let FILE_N = Number(ss.get(FILE_KEY)) || 0;
+function paintFile() {
+  const b = document.getElementById('sr-me');
+  if (!b) return;
+  b.querySelector('.dq').hidden = !FILE_N;
+  const pend = lastMe?.user?.role === 'admin' ? lastMe.pending_requests || 0 : 0;
+  b.title = ['mon compte · la file, les Teams et Workspaces', FILE_N ? `${FILE_N} calcul${FILE_N > 1 ? 's' : ''} en file` : '',
+    pend ? `${pend} demande${pend > 1 ? 's' : ''} à traiter (Admin)` : ''].filter(Boolean).join('\n');
 }
+function paintSys(sys, node = null) {
+  if (sys !== undefined) {
+    if (!sys) SYS = { c: 'err', t: 'portail injoignable', title: 'le portail ne répond pas' };
+    else {
+      const img = (sys.lanes.image || []);
+      const up = img.filter((e) => e.up).map((e) => e.machine);
+      const h3 = (sys.lanes.h3 || []).filter((e) => e.up).length;
+      SYS = { c: up.length ? 'on' : 'err', t: up.length ? `${up.join(' + ')}${h3 ? ' · H3' : ''}` : 'aucune machine',
+        title: img.map((e) => `${e.machine} ${e.up ? `prête · ${e.ram_free_gb ?? '?'} Go libres` : 'ne répond pas'}`).join('\n')
+          + `\nH3 : ${h3 ? 'démarré' : 'arrêté (il se démarre à la demande)'}` };
+    }
+    ss.set(SYS_KEY, JSON.stringify(SYS));
+  }
+  if (node && SYS) { node.className = `sr-ml-sys pill ${SYS.c}`; node.querySelector('.r').textContent = SYS.t; node.title = SYS.title; }
+}
+/** Ouvrir la file de rendu (le tiroir) : le menu du nom, l'accueil. */
+export function ouvrirFile() { drawer(true); }
+function menuDuNom(btn) {
+  session().then((me) => {
+    if (!me || !me.user) return;
+    import('./porte.js').then((m) => m.account(me, btn, lignesDuNom(me, m.fermerCompte)));
+  });
+}
+function lignesDuNom(me, fermer) {
+  const invite = me.user.role === 'invite';
+  const pend = me.user.role === 'admin' ? me.pending_requests || 0 : 0;
+  const ligne = (tag, attrs, label, r = '', cls = '') => el(tag, { class: `sr-ml-i${cls ? ' ' + cls : ''}`, role: 'menuitem', ...attrs },
+    el('span', { class: 'n' }, label), r ? el('span', { class: 'r' }, r) : null);
+  const cur = espaceCourant(me);
+  const mach = invite ? null : el('div', { class: 'sr-ml-sys pill', role: 'note' }, el('i'), el('span', { class: 'n' }, 'Machines'), el('span', { class: 'r' }, '…'));
+  if (mach) { paintSys(undefined, mach); sysInfo = null; system().then((s) => paintSys(s, mach)); }
+  return [
+    invite ? null : ligne('button', { type: 'button', onclick: () => { fermer(); drawer(true); } }, 'File de rendu', FILE_N ? `${FILE_N} en cours` : ''),
+    // au téléphone seulement (shell.css) : le sélecteur de la barre n'y tient plus
+    cur ? ligne('button', { type: 'button', 'aria-haspopup': 'menu', onclick: () => { fermer(); openWsMenu(btnNom()); } },
+      'Workspace', `${cur.t.name ? cur.t.name + ' / ' : ''}${cur.s.name}`, 'sr-ml-ws') : null,
+    invite ? null : ligne('a', { href: avecEspace(href('admin/#teams')) }, 'Teams et Workspaces'),
+    me.user.role === 'admin' ? ligne('a', { href: avecEspace(href('admin/')) }, 'Admin', pend ? `${pend} à traiter` : '', pend ? 'amb' : '') : null,
+    mach,
+  ];
+}
+const btnNom = () => document.getElementById('sr-me');
 
 // ── le tiroir de la file ────────────────────────────────────
 // La file de tous (GET /api/queue) : ce qui tourne, ce qui attend dans

@@ -40,7 +40,7 @@ function lines(c, text, width) {
 }
 
 // dessine le cadre `f` dans le canvas `cv` (sa taille CSS × densité) ; `again` : redessiner (une image arrive)
-export function drawSlide(cv, app, f, style, again) {
+export function drawSlide(cv, app, f, style, again, lookFor = null) {
   const { S } = app;
   const dpr = devicePixelRatio || 1;
   const W = cv.clientWidth || 128, H = cv.clientHeight || 72;
@@ -52,7 +52,9 @@ export function drawSlide(cv, app, f, style, again) {
   const k = Math.min(W / f.w, H / f.h);
   const ox = (W - f.w * k) / 2, oy = (H - f.h * k) / 2;
   c.clearRect(0, 0, W, H);
-  c.fillStyle = tok('panel');
+  // l'habit du modèle appliqué (presentation/scene.js, lookOf : le fond, la couleur de chaque texte), s'il y en a un
+  const look = typeof lookFor === 'function' ? lookFor(f) : null;
+  c.fillStyle = look?.bg || tok('panel');
   c.fillRect(ox, oy, f.w * k, f.h * k);
   c.save();
   c.beginPath(); c.rect(ox, oy, f.w * k, f.h * k); c.clip();
@@ -72,9 +74,9 @@ export function drawSlide(cv, app, f, style, again) {
       const st = style(n.style);
       if (!st) continue;
       const px = st.size * k;
-      if (px < 1.2) { c.fillStyle = tok('ink3'); c.fillRect(x, y + h / 3, w * 0.7, Math.max(1, h / 3)); continue; }
+      if (px < 1.2) { c.fillStyle = look?.colors.get(n.id) || tok('ink3'); c.fillRect(x, y + h / 3, w * 0.7, Math.max(1, h / 3)); continue; }
       c.font = `${st.weight} ${px}px ${st.css}`;
-      c.fillStyle = tok('ink');
+      c.fillStyle = look?.colors.get(n.id) || tok('ink');
       c.textBaseline = 'top';
       const L = lines(c, st.upper ? String(n.text || '').toUpperCase() : n.text, w);
       L.forEach((t, i) => {

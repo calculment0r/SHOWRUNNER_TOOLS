@@ -200,6 +200,9 @@ const NAME = () => Object.fromEntries([['general', 'Général'], ...TOOLS.map((t
 const DIR = () => Object.fromEntries(TOOLS.map((t) => [t.id, t.path]));
 
 let panel = null;
+// les icônes de l'interrupteur du thème : trait currentColor
+const MOON = '<svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>';
+const SUN = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></svg>';
 function paintStatus() {
   const s = panel && $('.pf-status', panel.node);
   if (!s) return;
@@ -228,12 +231,24 @@ export async function openPrefs(tab = null) {
   const nav = el('nav', { class: 'pf-tabs', role: 'tablist', 'aria-label': 'les onglets' });
   const body = el('div', { class: 'pf-pane', role: 'tabpanel' });
   const status = el('span', { class: 'lbl pf-status' });
+  // Sombre / Clair en accès direct, en haut à droite, de n'importe quel onglet (Cal, 30/09) : la même
+  // préférence que Général → Thème (general.theme), posée tout de suite (set → applyTheme) ; « le mien »
+  // (l'éditeur) : ni l'un ni l'autre allumé, un clic y revient
+  const themeSw = el('div', { class: 'seg pf-theme', role: 'radiogroup', 'aria-label': 'le thème' });
+  const paintTheme = () => {
+    const v = get('general.theme', 'dark');
+    themeSw.replaceChildren(...[['dark', 'Sombre', MOON], ['light', 'Clair', SUN]].map(([val, lab, ico]) => el('button', {
+      class: 'tb' + (v === val ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': String(v === val),
+      title: v === 'custom' ? `le thème est « le mien » (l’éditeur) : revenir au ${lab.toLowerCase()}` : `le thème ${lab.toLowerCase()}`,
+      onclick: () => set('general.theme', same(val, defaultOf('general', 'theme') ?? 'dark') ? null : val),
+    }, el('i', { 'aria-hidden': 'true', html: ico }), lab)));
+  };
   const close = () => { scrim.remove(); document.removeEventListener('keydown', esc, true); unsub(); panel = null; last?.focus?.(); };
   const esc = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
   const last = document.activeElement;
   const scrim = el('div', { class: 'scrim sr-prefs', onclick: (e) => { if (e.target === scrim) close(); } },
     el('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'préférences' },
-      el('div', { class: 'modal-head' }, el('span', { class: 't' }, 'Préférences'), el('span', { class: 'sp' }), status,
+      el('div', { class: 'modal-head' }, el('span', { class: 't' }, 'Préférences'), el('span', { class: 'sp' }), status, themeSw,
         el('button', { class: 'tb ghost sm', type: 'button', onclick: close, title: 'fermer (Échap)' }, 'Fermer')),
       el('div', { class: 'pf-body' }, nav, body)));
   const paintNav = () => nav.replaceChildren(...tabs.map((id) => el('button', {
@@ -254,11 +269,11 @@ export async function openPrefs(tab = null) {
       s.about ? el('p', { class: 'hint pf-about' }, s.about) : null,
       ...s.prefs.filter((p) => !p.hidden).map((p) => row(cur, p)));
   };
-  const unsub = on('*', () => { if (panel) { paintPane(); paintNav(); } });
+  const unsub = on('*', () => { if (panel) { paintPane(); paintNav(); paintTheme(); } });
   document.addEventListener('keydown', esc, true);
   document.body.append(scrim);
   panel = { node: scrim, close };
-  paintNav(); paintPane(); paintStatus();
+  paintNav(); paintPane(); paintStatus(); paintTheme();
   nav.querySelector('.pf-tab.on')?.focus();
 }
 
