@@ -2,6 +2,9 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
+<script src="../commun/theme-tot.js"></script>
+<link rel="preload" href="../commun/fonts/venus-rising.otf" as="font" type="font/otf" crossorigin>
+<link rel="preload" href="../commun/fonts/norelli-black.otf" as="font" type="font/otf" crossorigin>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>CHARACTER FACTORY · VIEWER — Showrunner Tools</title>
 <meta name="description" content="Viewer 3D local : GLB, canaux PBR, cinq éclairages, comparaison A/B, clips et poses de contrôle. Tout tourne sur la machine.">
@@ -17,13 +20,6 @@
 <link rel="stylesheet" href="../commun/shell.css">
 <link rel="stylesheet" href="./assets/viewer.css">
 <link rel="stylesheet" href="./assets/character.css">
-<!-- l'en-tête du portail, sauf dans la fiche (?embed=1) : chargé à part, le
-     viewer lui-même reste un script de la page, sans dépendance -->
-<script type="module">
-if (!document.documentElement.classList.contains('embed')) {
-  import('./js/cf.js').then((m) => m.mount()).catch(() => {});
-}
-</script>
 <!-- Chrome refuse un module en fichier ouvert depuis file:// : le script
      est donc écrit dans la page, et three.js vient du CDN par cette carte. -->
 <script type="importmap">
@@ -33,6 +29,14 @@ if (!document.documentElement.classList.contains('embed')) {
     "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
   }
 }
+</script>
+<!-- l'en-tête du portail, sauf dans la fiche (?embed=1) : le viewer lui-même reste un script de la page,
+     sans dépendance. Après la carte des imports (un module chargé avant elle la ferait ignorer) ;
+     render-blocking et importé d'emblée (un import() attendu ne retient pas la première peinture,
+     mesuré le 30/09) : l'en-tête est dans la première image. -->
+<script type="module" blocking="render">
+import { mount } from './js/cf.js';
+if (!document.documentElement.classList.contains('embed')) mount();
 </script>
 </head>
 <body>

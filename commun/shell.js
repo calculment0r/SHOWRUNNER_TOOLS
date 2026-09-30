@@ -104,7 +104,15 @@ export function espaceDocument(id) { docEspace = id && ESP_RX.test(id) ? id : nu
 //   teams, workspace, workspace_refused } — les Teams et le Workspace : core/espaces.py, me_payload
 let meP = null;
 let doorOn = false;
-let lastMe = null;
+// La dernière réponse de /api/auth/me, gardée pour l'ONGLET (sessionStorage) : la page suivante
+// dessine son en-tête (le compte, le Workspace, les outils fermés) dès sa première image, sans
+// attendre le portail — changer d'outil ne fait plus clignoter la barre ; la réponse fraîche la
+// corrige ensuite. Rien n'en dépend côté droits : le serveur juge chaque requête.
+const ME_KEY = 'sr-me';
+const lu = (k) => { try { return JSON.parse(ss.get(k) || 'null'); } catch { return null; } };
+let lastMe = lu(ME_KEY);
+// entré dans cet onglet (ou la maison sans porte) : la page n'a pas à se cacher en attendant la porte
+const entre = (me) => !!(me && (!me.auth || me.state === 'active'));
 export const session = (fresh = false) => {
   if (!meP || fresh) {
     meP = api('auth/me').catch(() => null).then((me) => {
@@ -115,6 +123,7 @@ export const session = (fresh = false) => {
         else if (!ESPACE && me.workspace && me.workspace.id) fixeEspace(me.workspace.id);
       }
       lastMe = me;
+      ss.set(ME_KEY, me ? JSON.stringify(me) : null);
       paintEspace();
       return me;
     });
@@ -623,10 +632,22 @@ async function changeEspace(id) {
 }
 
 // `dock: false` : une page d'outil sans le panneau Asset (les pages hors outils, Admin, ne l'ont jamais)
+//
+// La barre est ENTIÈRE dès sa pose (Cal, 30/09 : « quand je change d'atelier, toute la page se repeint
+// et ça clignote ») : les outils sont une liste fixe (TOOLS), le compte, le Workspace, les outils fermés
+// et l'état des machines viennent de la dernière réponse gardée pour l'onglet ; les réponses fraîches
+// ne font que la corriger. La page monte l'en-tête dans son module, que le <head> charge
+// render-blocking (<script type="module" blocking="render">) : il est dans la première peinture, et
+// la transition entre pages (commun/shell.css, @view-transition) le garde immobile.
+// Un deuxième appel rend la barre déjà posée (un <head> peut la monter avant le script de la page).
+let HDR = null;
 export function mountHeader(toolId, { sub = '', dock: useDock = true } = {}) {
-  // la page reste cachée le temps de savoir qui entre (3 s au plus)
-  document.documentElement.classList.add('sr-wait');
-  setTimeout(() => document.documentElement.classList.remove('sr-wait'), 3000);
+  if (HDR && HDR.isConnected) return HDR;
+  // la page reste cachée le temps de savoir qui entre (3 s au plus) — sauf si l'onglet est déjà entré
+  if (!entre(lastMe)) {
+    document.documentElement.classList.add('sr-wait');
+    setTimeout(() => document.documentElement.classList.remove('sr-wait'), 3000);
+  }
   const t = TOOLS.find((x) => x.id === toolId) || PAGES[toolId];
   document.documentElement.dataset.srTool = toolId;   // le menu de repli ouvre les préférences de l'outil
   // le panneau Asset (commun/dock.js) : son bouton tout à gauche de la barre, au-dessus du panneau
@@ -672,6 +693,7 @@ export function mountHeader(toolId, { sub = '', dock: useDock = true } = {}) {
   nav.after(menuBtn, menu);
   document.addEventListener('click', () => { menu.hidden = true; });
   document.body.prepend(hdr);
+  HDR = hdr;
   // le panneau (et sa place, dès maintenant : la page est encore cachée, rien ne saute)
   if (DOCK.page) import('./dock.js').then((m) => m.mount(DOCK.page)).catch((e) => console.error('panneau Asset', e));
   // la barre ne se coupe jamais : si les noms n'y tiennent pas entiers (douze
@@ -708,16 +730,15 @@ export function mountHeader(toolId, { sub = '', dock: useDock = true } = {}) {
   // le Workspace oublié avant le rechargement (oublieEspace) : le dire ici
   const msg = ss.get(ESP_MSG);
   if (msg) { ss.set(ESP_MSG, null); setTimeout(() => toast(msg, 6000), 400); }
-  session().then((me) => {
-    document.documentElement.classList.remove('sr-wait');
-    if (me && me.auth && me.state !== 'active') return showDoor(me);
-    paintMe(me);
-    paintEspace();
-    if (studioOff(me, t)) import('./porte.js').then((m) => m.studioDoor(me, t));
-    import('./prefs.js').then((m) => m.prefs.ready);   // les préférences de la personne, relues du portail
-  });
-  setInterval(() => { if (!doorOn) session(true).then(paintMe); }, 20000);
-  Promise.all([system(), session()]).then(([sys, me]) => {
+  // les outils : posés tout de suite ; refaits seulement si ce qu'ils montrent change (un outil fermé,
+  // une adresse) — la même barre ne se redessine pas
+  let navSig = null;
+  const paintNav = (me, sys) => {
+    const sig = JSON.stringify(TOOLS.map((x) => [toolHref(x, sys), studioOff(me, x)]));
+    if (sig === navSig) return;
+    navSig = sig;
+    nav.replaceChildren();
+    menu.replaceChildren();
     let tier = null;
     for (const x of TOOLS) {
       if (x.id === 'asset') continue;   // Asset : le bouton du panneau, tout à gauche (commun/dock.js)
@@ -738,13 +759,34 @@ export function mountHeader(toolId, { sub = '', dock: useDock = true } = {}) {
       menu.append(el('a', { href: toolHref(x, sys), class: cls, title: why, 'aria-haspopup': off ? 'dialog' : null,
         onclick: off ? askStudio(me, x) : null }, off ? el('span', { class: 'lk', html: LOCK }) : null, x.name));
     }
-    paintSys(sys);
     fit();
+  };
+  // la première image : ce que l'onglet sait déjà (la dernière réponse du portail, l'état des machines, la file)
+  paintNav(lastMe, null);
+  if (entre(lastMe)) { paintMe(lastMe); paintEspace(); }
+  const pill = lu(SYS_KEY);
+  if (pill) { const p = $('#sr-sys', hdr); p.className = pill.c; p.lastChild.textContent = pill.t; p.title = pill.title; }
+  const fileN = ss.get(FILE_KEY);
+  if (fileN) $('#sr-queue', hdr).textContent = fileN;
+  session().then((me) => {
+    document.documentElement.classList.remove('sr-wait');
+    if (me && me.auth && me.state !== 'active') return showDoor(me);
+    paintMe(me);
+    paintEspace();
+    if (studioOff(me, t)) import('./porte.js').then((m) => m.studioDoor(me, t));
+    import('./prefs.js').then((m) => m.prefs.ready);   // les préférences de la personne, relues du portail
+  });
+  setInterval(() => { if (!doorOn) session(true).then(paintMe); }, 20000);
+  Promise.all([system(), session()]).then(([sys, me]) => {
+    paintNav(me, sys);
+    paintSys(sys);
   });
   setInterval(() => { sysInfo = null; system().then(paintSys); }, 20000);
   jobs.watch((list) => {
     const n = list.filter((j) => j.state === 'queued' || j.state === 'running').length;
-    $('#sr-queue').textContent = n ? `File · ${n}` : 'File';
+    const txt = n ? `File · ${n}` : 'File';
+    $('#sr-queue').textContent = txt;
+    ss.set(FILE_KEY, txt === 'File' ? null : txt);
     if ($('.drawer.on')) paintDrawer(list);
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') drawer(false); });
@@ -755,10 +797,12 @@ export function mountHeader(toolId, { sub = '', dock: useDock = true } = {}) {
   return hdr;
 }
 
+// l'état des machines et la file, gardés pour l'onglet : la page suivante les montre dès sa première image
+const SYS_KEY = 'sr-sys', FILE_KEY = 'sr-file';
 function paintSys(sys) {
   const p = $('#sr-sys');
   if (!p) return;
-  if (!sys) { p.className = 'pill err'; p.lastChild.textContent = 'portail injoignable'; return; }
+  if (!sys) { p.className = 'pill err'; p.lastChild.textContent = 'portail injoignable'; ss.set(SYS_KEY, null); return; }
   const img = (sys.lanes.image || []);
   const up = img.filter((e) => e.up).map((e) => e.machine);
   const h3 = (sys.lanes.h3 || []).filter((e) => e.up).length;
@@ -766,6 +810,7 @@ function paintSys(sys) {
   p.lastChild.textContent = up.length ? `${up.join(' + ')}${h3 ? ' · H3' : ''}` : 'aucune machine';
   p.title = img.map((e) => `${e.machine} ${e.up ? `prête · ${e.ram_free_gb ?? '?'} Go libres` : 'ne répond pas'}`).join('\n')
     + `\nH3 : ${h3 ? 'démarré' : 'arrêté (il se démarre à la demande)'}`;
+  ss.set(SYS_KEY, JSON.stringify({ c: p.className, t: p.lastChild.textContent, title: p.title }));
 }
 
 // ── le tiroir de la file ────────────────────────────────────
@@ -873,8 +918,12 @@ export function jobRow(j) {
 // midi : un clip de notes d'ODIO ; sequence : une séquence du Montage (29/09)
 const KIND_FR = { image: 'image', video: 'vidéo', audio: 'son', element: 'élément', midi: 'MIDI', sequence: 'séquence' };
 export const kindFr = (k) => KIND_FR[k] || k;
-const ETYPE_FR = { character: 'personnage', object: 'objet', place: 'lieu', style: 'style', other: 'élément' };
-export const etypeFr = (k) => ETYPE_FR[k] || k;
+// les sortes d'un élément : les planches (server/core/library.py, ELEMENT_TYPES), puis les sortes d'un
+// élément versionné (VERSIONED_TYPES : une chanson, un son, une séquence, une image) — jamais le nom
+// anglais du serveur à l'écran (« SOUND » sur la marque d'un élément versionné, relevé le 30/09)
+const ETYPE_FR = { character: 'personnage', object: 'objet', place: 'lieu', style: 'style', other: 'élément',
+  music: 'musique', sound: 'son', sequence: 'séquence', picture: 'image' };
+export const etypeFr = (k) => ETYPE_FR[k] || 'élément';   // une sorte que le portail ne connaît pas encore : « élément », pas son nom anglais
 
 // La marque de la sorte d'un objet — UNE fonction, partout où un objet se
 // montre : les vignettes (Asset, le sélecteur, la corbeille : thumb), le

@@ -12,8 +12,11 @@
 //     860 px de page, il passe par-dessus avec un voile ;
 //   - la géométrie de la bibliothèque d'Idéation : poignée dans l'intervalle,
 //     glisser = largeur, double-clic = largeur par défaut, flèches 16 px (Maj 64),
-//     Entrée = replier ; fermé → un trait court au bord, un clic l'ouvre ; ouvert
-//     et largeur retenus par outil et par personne (Préférences, Général : cachées) ;
+//     Entrée = replier ; fermé → un trait court au bord, un clic l'ouvre ; la
+//     largeur retenue par outil et par personne (Préférences, Général : cachées) ;
+//   - FERMÉ à l'arrivée sur toute page, sans rien qui glisse (Cal, 30/09 : « changer
+//     de page = faire autre chose ») : ouvert ne se garde pas ; seuls les gestes de
+//     la personne l'ouvrent et le ferment, et seuls eux l'animent (anime()) ;
 //   - en tête : la recherche, les SORTES en pastilles (quoi), puis cinq SECTIONS
 //     en accordéon (d'où) — Ce workspace, Récents, Favoris, Autres workspaces,
 //     Character Factory (Studio) —, une seule ouverte, qui prend la hauteur ;
@@ -41,7 +44,6 @@
 //     kinds: ['image', …]       le filtre de l'outil (sinon : l'union des zones inscrites)
 //     label: 'la planche'       le nom de ce filtre (« filtres de : la planche »)
 //     dockMin: px | () => px    la place que la page garde toujours (720 par défaut)
-//     defaultOpen: bool         ouvert au premier passage (Idéation : oui ; les autres : non)
 //     upload(files)             « Déposer » : l'outil range et pose lui-même (sinon : rangés, pas posés)
 //     fiche(it)                 « Fiche dans Asset » (sinon : asset/#<id> dans un autre onglet)
 //     hint: '…'                 la ligne d'aide du bas
@@ -107,7 +109,6 @@ const P = (k) => `general.${k}_${T}`;
 // ranger une préférence d'ici, sans que son écho (prefs.on) ne relise l'état au milieu d'un geste
 let own = 0;
 const setPref = (k, v) => { own++; try { prefs.set(k, v); } finally { own--; } };
-const defOpen = () => (D.cfg.defaultOpen ?? T === 'ideation');
 const zoomOf = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ui-zoom')) || 1;
 const pageW = () => document.documentElement.clientWidth / zoomOf();
 const toolName = () => (TOOLS.find((x) => x.id === T)?.name || T || '').replace(/­/g, '');
@@ -154,13 +155,24 @@ function setWant(w, keep = true) {
   S.want = geometry().w;   // la largeur choisie, telle qu'elle a pu se montrer
   if (keep) setPref(P('dockW'), S.want === W.def ? null : S.want);
 }
-function setOpen(on, { focus = false, keep = true } = {}) {
+// Ouvrir, fermer : toujours un geste de la personne (le bouton, le raccourci, la poignée, ×, le voile),
+// jamais le chargement — le panneau glisse alors (html.sr-dock-anim, le temps du glissement ; dock.css,
+// shell.css), et seulement alors. `anim: false` : la poignée qu'on tire suit déjà la main.
+let animT = 0;
+function anime() {
+  const root = document.documentElement;
+  root.classList.add('sr-dock-anim');
+  clearTimeout(animT);
+  animT = setTimeout(() => root.classList.remove('sr-dock-anim'), 260);
+}
+function setOpen(on, { focus = false, anim = true } = {}) {
   if (!D.on || !N.aside) return;
   on = !!on;
-  if (on && !S.open) S.lastFocus = document.activeElement;
+  const change = on !== S.open;
+  if (on && change) S.lastFocus = document.activeElement;
   const wasIn = N.aside.contains(document.activeElement);
   S.open = on;
-  if (keep) setPref(P('dockOpen'), on === defOpen() ? null : on);
+  if (anim && change) anime();
   applyLayout();
   if (on) {
     if (S.dirty) reload();
@@ -328,7 +340,7 @@ async function place(items, how = 'place') {
   if (r === false) return;
   live(out.length > 1 ? `${out.length} posés` : `posé : ${out[0].title || out[0].id}`);
   recent(out);
-  if (S.geo.over) setOpen(false, { keep: false });
+  if (S.geo.over) setOpen(false);
   if (items.some((it) => it._cf)) reload();
 }
 function recent(items) {
@@ -603,10 +615,19 @@ function openSection(id) {
 }
 
 // ── le montage ──────────────────────────────────────────────
-function build() {
-  if (!document.querySelector('link[data-sr-dock]')) {
-    document.head.append(el('link', { rel: 'stylesheet', href: new URL('./dock.css', import.meta.url).href, 'data-sr-dock': '' }));
+// La feuille d'abord : un panneau posé avant elle se montrait nu, en travers de la page, puis
+// glissait hors de vue à son arrivée (le « ouvert puis refermé » de Vidéo et de Character Factory,
+// mesuré le 30/09 : 10 à 14 images visibles au chargement de chaque outil).
+function cssReady() {
+  let link = document.querySelector('link[data-sr-dock]');
+  if (!link) {
+    link = el('link', { rel: 'stylesheet', href: new URL('./dock.css', import.meta.url).href, 'data-sr-dock': '' });
+    document.head.append(link);
   }
+  if (link.sheet) return Promise.resolve();
+  return new Promise((ok) => { link.addEventListener('load', ok, { once: true }); link.addEventListener('error', ok, { once: true }); });
+}
+function build() {
   N.btn = document.getElementById('sr-dock-btn');
   N.file = el('input', { type: 'file', multiple: true, accept: 'image/*,video/*,audio/*,.mid,.midi', hidden: true });
   N.file.addEventListener('change', () => { const f = [...N.file.files]; N.file.value = ''; upload(f); });
@@ -644,7 +665,7 @@ function build() {
     N.q, N.kinds, N.etypes, N.ctx, secs, N.foot, N.live);
   N.grip = el('div', { class: 'sr-dock-grip', role: 'separator', tabindex: '0', 'aria-orientation': 'vertical', 'aria-controls': 'sr-dock',
     'aria-valuemin': W.min, 'aria-valuemax': W.max, 'aria-label': 'la largeur du panneau Asset' });
-  N.veil = el('div', { class: 'sr-dock-veil', hidden: true, onclick: () => setOpen(false, { keep: false }) });
+  N.veil = el('div', { class: 'sr-dock-veil', hidden: true, onclick: () => setOpen(false) });
   document.body.append(N.aside, N.grip, N.veil);
   wire();
 }
@@ -838,14 +859,14 @@ function wire() {
     const mv = (ev) => {
       const d = (ev.clientX - x0) / z;
       if (!moved && Math.abs(d) < 3) return;
-      if (!moved) { moved = true; if (!was) setOpen(true, { keep: false }); }
+      if (!moved) { moved = true; if (!was) setOpen(true, { anim: false }); }
       setWant(w0 + d, false);
     };
     const up = () => {
       grip.removeEventListener('pointermove', mv); grip.removeEventListener('pointerup', up); grip.removeEventListener('pointercancel', up);
       grip.classList.remove('on');
       document.documentElement.classList.remove('sr-dock-resizing');
-      if (moved) { if (!was) setPref(P('dockOpen'), defOpen() ? null : true); setWant(S.want); }
+      if (moved) setWant(S.want);
       else if (!was) setOpen(true, { focus: true });
     };
     grip.addEventListener('pointermove', mv);
@@ -877,12 +898,13 @@ function wire() {
   // relire : un rendu fini, le choix d'un autre navigateur, les récents rangés ailleurs
   let jT = 0;
   document.addEventListener('sr:job', () => { clearTimeout(jT); jT = setTimeout(() => { S.dirty = true; if (S.open) reload(true); }, 300); });
-  for (const k of [P('dockOpen'), P('dockW')]) prefs.on(k, () => { if (!own) { readState(); applyLayout(); } });
+  prefs.on(P('dockW'), () => { if (!own) { readState(); applyLayout(); } });
   prefs.on('general.dockKey', () => applyLayout());
 }
 
+// Ouvert ou fermé ne se garde pas : chaque page arrive panneau FERMÉ (Cal, 30/09 : « changer de page =
+// faire autre chose, on n'a plus besoin du panneau »). Seule la largeur choisie se garde, par outil.
 function readState() {
-  S.open = !!prefs.get(P('dockOpen'), defOpen());
   S.want = clamp(Number(prefs.get(P('dockW'), W.def)) || W.def, W.min, W.max);
 }
 
@@ -899,18 +921,22 @@ const M = {
   zones: () => { queueMicrotask(() => { if (!N.aside || D.ctx || S.userKinds) return; if (filtersMoved()) reload(); else paintKinds(); }); },
 };
 
-export function mount(tool) {
-  if (D.mod || !tool) return;
+let mounting = false;
+export async function mount(tool) {
+  if (D.mod || !tool || mounting) return;
+  mounting = true;
+  await cssReady();
   T = tool;
   build();
   D.mod = M; D.on = true;
+  mounting = false;
   readState();
   const sec = prefs.get('general.dockSec', 'here');
   S.sec = SECS.some(([k]) => k === sec) ? sec : 'here';
   applyLayout();
   paintAll();
   for (const fn of D.wait.splice(0)) { try { fn(M); } catch (e) { console.error('panneau Asset', e); } }
-  // les préférences relues du portail (un autre navigateur a pu fermer le panneau)
+  // la largeur relue du portail (un autre navigateur a pu la changer)
   prefs.ready.then(() => { readState(); applyLayout(); });
   // qui entre : l'invité d'une planche n'a pas le panneau ; Character Factory est au Studio
   session().then((me) => {
