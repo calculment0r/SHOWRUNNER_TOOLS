@@ -1,21 +1,32 @@
 // Transcrire : un son ou une vidéo → le texte horodaté (et les voix), la
 // traduction, la lecture synchronisée, la correction à la main, les
-// sous-titres. Le serveur tient la seule vérité : moteurs, langues, ce qui
-// passe ou non, les sous-titres calculés du document
+// sous-titres, le carnet. Le serveur tient la seule vérité : moteurs, langues,
+// ce qui passe ou non, les sous-titres calculés du document
 // (server/tools/transcrire.py, étude docs/etudes/transcrire.md).
+//
+// Deux modes (Cal, 30/09) : Rapide — un horodatage par réplique, le plus vite
+// possible, pour beaucoup de sons ; Complet — les voix séparées, chaque mot à
+// son instant, et la frise des voix de Movie Analysis (commun/voix.js : une
+// piste par voix, sa ligne de dialogue mot à mot, sous elle son spectre).
+// Pas de traduction par défaut (la préférence « Traduire par défaut en » : rien).
+// Les voix se renomment à UN endroit (les cartes des voix) : le nom se pose
+// partout — répliques, frise, carnet, exports — et reste dans le document.
+// Le carnet (à la NotebookLM) : résumé, points clés · décisions · actions,
+// chapitres, questions — tiré du seul texte, chaque élément cite ses répliques.
 //
 // Entrée : un dépôt (disque ou vignette glissée), la bibliothèque, ou
 // l'adresse transcrire/?src=<id>. Une transcription s'ouvre par #trn-….
 //
 // L'annulation (commun/undo.js) : chaque correction d'une réplique, d'une
 // traduction, d'un nom de voix, avec son contraire (réenregistré). Ne
-// s'annulent pas : lancer une transcription ou une traduction (partie dans la
-// file), un fichier déposé, les réglages.
+// s'annulent pas : lancer une transcription, une traduction, le carnet (partis
+// dans la file), un fichier déposé, les réglages.
 import { mountHeader, api, pick, toast, el, $, $$, href, fmtDur, fmtDate, uploadFile, dropZone, dropAnywhere, dock, sorteEffective, avecEspace } from '../commun/shell.js';
 import { createUndo } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { menu, contextMenu, pageMenu, copy } from '../commun/menu.js';
 import { lecteur } from '../commun/lecteur.js';
+import { friseVoix, teinte } from '../commun/voix.js';
 
 mountHeader('transcrire', { sub: 'transcrire · traduire' });
 
@@ -23,12 +34,13 @@ const KEY = 'sr-transcrire';
 const S = {
   cfg: null,
   item: null,                       // le média choisi
-  lang: 'auto', to: 'en', mode: 'rapide', speakers: null, cpl: 42, max_s: 7, stamps: false,
+  lang: 'auto', to: '', mode: 'rapide', cpl: 42, max_s: 7, stamps: false,
   doc: null, docs: [],
-  view: 'both', follow: true, sending: false,
+  view: 'both', follow: true, sending: false, pane: 'texte',
 };
 const P = { edits: new Map(), timer: 0, saving: false };   // corrections en attente d'envoi
 const U = createUndo({ name: 'transcrire' });
+const ACTIVE = ['queued', 'running'];
 
 // ── petites aides ───────────────────────────────────────────
 const L = (id) => S.cfg?.langs.find((l) => l.id === id)?.name || id;
@@ -39,19 +51,43 @@ const clock = (t) => { t = Math.max(0, t || 0); const h = Math.floor(t / 3600), 
   return (h ? `${h}:${String(m).padStart(2, '0')}` : String(m).padStart(2, '0')) + ':' + String(s).padStart(2, '0'); };
 const put = (box, ...kids) => box.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false && k !== ''));
 const head = (label, right) => el('div', { class: 'ipan-h' }, el('span', { class: 'lbl' }, label), right ? el('span', { class: 'r' }, right) : null);
-const speakersOn = () => (S.speakers === null ? !!M(S.mode)?.speakers : S.speakers);
-const busy = (d = S.doc) => !!d && (['queued', 'running'].includes(d.state) || Object.values(d.translations || {}).some((t) => ['queued', 'running'].includes(t.state)));
+const complet = (d = S.doc) => d?.mode === 'complet' && (d.speakers || []).length > 0;
+const busy = (d = S.doc) => !!d && (ACTIVE.includes(d.state) || Object.values(d.translations || {}).some((t) => ACTIVE.includes(t.state))
+  || Object.values(d.notes || {}).some((n) => ACTIVE.includes(n.state)) || (d.qa || []).some((q) => ACTIVE.includes(q.state)));
 const trLang = () => {
   const have = Object.keys(S.doc?.translations || {}).filter((k) => S.doc.translations[k].state === 'done' || S.doc.segments.some((s) => s.tr?.[k]));
   return have.includes(S.to) ? S.to : have[0] || '';
 };
-const voiceIndex = (spk) => Math.max(0, (S.doc?.speakers || []).findIndex((v) => v.id === spk)) % 8;
+const voiceIndex = (spk) => Math.max(0, (S.doc?.speakers || []).findIndex((v) => v.id === spk));
+const voiceName = (spk) => (S.doc?.speakers || []).find((v) => v.id === spk)?.name || spk;
+const segById = (id) => S.doc?.segments.find((s) => s.id === id);
 const store = {
   get() { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; } },
+  // « traduire en » n'est pas gardé ici : son défaut est la préférence (rien, par défaut — Cal, 30/09)
   save() {
-    try { const { lang, to, mode, speakers, cpl, max_s, stamps } = S; localStorage.setItem(KEY, JSON.stringify({ lang, to, mode, speakers, cpl, max_s, stamps, item: S.item?.id })); } catch { /* stockage fermé */ }
+    try { const { lang, mode, cpl, max_s, stamps } = S; localStorage.setItem(KEY, JSON.stringify({ lang, mode, cpl, max_s, stamps, item: S.item?.id })); } catch { /* stockage fermé */ }
   },
 };
+// les mots horodatés du moteur remis sur les mots du texte (on_text du serveur) : Whisper découpe
+// « qu'est-ce » en trois morceaux ; sans concordance (texte corrigé), pas de mots
+function motsDe(s) {
+  if (!s.words?.length || s.edited) return null;
+  const ws = s.words.map(([w, a, b]) => [String(w).trim(), +a, +b]).filter((x) => x[0]);
+  const out = [];
+  let k = 0;
+  for (const tw of String(s.text || '').split(/\s+/).filter(Boolean)) {
+    let acc = '', a = null, b = null;
+    while (k < ws.length && acc.length < tw.length) { acc += ws[k][0]; a ??= ws[k][1]; b = ws[k][2]; k++; }
+    if (acc !== tw) return null;
+    out.push({ w: tw, a, b });
+  }
+  return k === ws.length ? out : null;
+}
+// une étiquette de voix du carnet ([S1]) devient le nom du moment, teint de sa voix
+function avecNoms(text) {
+  const parts = String(text || '').split(/\[(S\d{1,2})\]/);
+  return parts.map((p, i) => (i % 2 ? el('span', { class: 'who inl', style: { '--c': teinte(voiceIndex(p)) } }, voiceName(p)) : p));
+}
 
 // ── le squelette ────────────────────────────────────────────
 const fileIn = el('input', { type: 'file', accept: 'audio/*,video/*', hidden: true, onchange: async () => { await addFiles([...fileIn.files]); fileIn.value = ''; } });
@@ -59,12 +95,14 @@ function skeleton() {
   $('#rail').replaceChildren(
     el('div', { class: 'row tr-undo' }, el('span', { class: 'lbl' }, 'les réglages'), el('span', { class: 'sp' }),
       el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons())),
-    el('section', { class: 'ipan', id: 'p-in' }), el('section', { class: 'ipan', id: 'p-lang' }),
-    el('section', { class: 'ipan', id: 'p-mode' }), el('section', { class: 'ipan adv', id: 'p-adv' }),
+    el('section', { class: 'ipan', id: 'p-in' }), el('section', { class: 'ipan', id: 'p-mode' }),
+    el('section', { class: 'ipan', id: 'p-lang' }), el('section', { class: 'ipan adv', id: 'p-adv' }),
     el('div', { class: 'act', id: 'act' }), fileIn);
   $('#stage').replaceChildren(el('div', { id: 'banner' }), el('div', { class: 'tr-player', id: 'player' }),
     el('div', { id: 'transport' }), el('div', { class: 'tr-bar', id: 'bar' }), el('div', { class: 'tr-voices', id: 'voices' }),
-    el('div', { class: 'tr-lines', id: 'lines', role: 'list', 'aria-label': 'les répliques' }));
+    el('div', { class: 'tr-frise', id: 'frise' }),
+    el('div', { class: 'tr-lines', id: 'lines', role: 'list', 'aria-label': 'les répliques' }),
+    el('div', { class: 'tr-carnet', id: 'carnet', hidden: true }));
   $('#side').replaceChildren(el('p', { class: 'lbl' }, 'chargement'));
 }
 
@@ -116,12 +154,19 @@ dock.configure({
   place: async (items) => setItem(await lastVersion(items[0])),
 });
 
-// ── les langues, la vitesse, les avancés ────────────────────
+// ── le mode, les langues, les avancés ───────────────────────
 function select(opts, cur, onchange, label) {
   const s = el('select', { class: 'fld', 'aria-label': label, onchange: (e) => onchange(e.target.value) },
     ...opts.map(([v, t]) => el('option', { value: v }, t)));
   s.value = cur;
   return s;
+}
+function paintMode() {
+  put($('#p-mode'), head('Le mode'),
+    el('div', { class: 'opts two' }, ...S.cfg.modes.map((m) => el('button', {
+      class: 'opt' + (S.mode === m.id ? ' on' : '') + (m.off ? ' off' : ''), type: 'button', 'aria-pressed': String(S.mode === m.id),
+      title: m.off || null, onclick: () => { S.mode = m.id; store.save(); paintMode(); paintAdv(); paintAct(); } },
+    m.label, el('small', {}, m.about)))));
 }
 function paintLang() {
   const langs = S.cfg.langs.map((l) => [l.id, l.name]);
@@ -129,22 +174,16 @@ function paintLang() {
     el('label', { class: 'fl' }, el('span', { class: 'lbl' }, 'Langue parlée'),
       select([['auto', 'Détecter'], ...langs], S.lang, (v) => { S.lang = v; store.save(); paintAct(); }, 'langue parlée')),
     el('label', { class: 'fl' }, el('span', { class: 'lbl' }, 'Traduire en'),
-      select([['', 'Pas de traduction'], ...langs], S.to, (v) => { S.to = v; store.save(); paintAct(); paintBar(); paintLines(); }, 'traduire en')));
-}
-function paintMode() {
-  put($('#p-mode'), head('Vitesse'),
-    el('div', { class: 'opts two' }, ...S.cfg.modes.map((m) => el('button', {
-      class: 'opt' + (S.mode === m.id ? ' on' : '') + (m.off ? ' off' : ''), type: 'button', 'aria-pressed': String(S.mode === m.id),
-      title: m.off || null, onclick: () => { S.mode = m.id; store.save(); paintMode(); paintAdv(); paintAct(); } },
-    m.label, el('small', {}, m.about)))));
+      select([['', 'Pas de traduction'], ...langs], S.to, (v) => { S.to = v; paintAct(); paintBar(); paintLines(); }, 'traduire en')),
+    el('p', { class: 'hint' }, 'Rien par défaut : la transcription seule. Le défaut se règle dans les préférences de Transcrire.'));
 }
 function paintAdv() {
   const box = $('#p-adv');
   const open = box.querySelector('details')?.open || false;
   const chk = (on, label, set) => el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: on || null, onchange: (e) => set(e.target.checked) }), el('span', {}, label));
+  const C = S.cfg.carnet || {};
   const d = el('details', { class: 'more', open: open || null },
     el('summary', {}, el('span', { class: 'lbl' }, 'Paramètres avancés')),
-    chk(speakersOn(), 'Séparer les voix', (v) => { S.speakers = v === !!M(S.mode)?.speakers ? null : v; store.save(); paintAct(); }),
     el('label', { class: 'fl' }, el('span', { class: 'lbl' }, 'Sous-titres · caractères par ligne'),
       select(S.cfg.cpl.map((n) => [String(n), `${n}`]), String(S.cpl), (v) => { S.cpl = +v; store.save(); }, 'caractères par ligne')),
     el('label', { class: 'fl' }, el('span', { class: 'lbl' }, 'Sous-titres · durée maximale'),
@@ -153,8 +192,11 @@ function paintAdv() {
     el('div', { class: 'engines' }, el('span', { class: 'lbl' }, 'Ce qui tourne derrière'),
       ...S.cfg.modes.map((m) => el('p', { class: 'hint' }, el('b', {}, m.label), ' : ',
         m.asr_list.map((a) => `${a.name}${a.missing?.length ? ' (absent)' : ''}`).join(' puis '),
-        m.speakers ? ' · voix : Nemotron (DGX1)' : ' · voix, si coché : Nemotron (DGX1)', m.mt_name ? ` · traduction : ${m.mt_name}` : '',
+        m.words ? ', mots horodatés (Whisper : au pas de 20 ms)' : ', un horodatage par réplique',
+        m.speakers ? ' · voix : Nemotron (DGX1)' : '', m.mt_name ? ` · traduction : ${m.mt_name}` : '',
         m.off ? el('span', { class: 'reason' }, m.off) : null, m.mt_off ? el('span', { class: 'reason' }, m.mt_off) : null)),
+      el('p', { class: 'hint' }, el('b', {}, 'Carnet'), ' : ', stub() ? 'factice (extraits du texte, sans modèle)' : `${C.name} par Ollama, en local`,
+        C.off ? el('span', { class: 'reason' }, C.off) : null),
       el('p', { class: 'hint' }, 'Sources, vitesses, licences : ', el('a', { href: href('docs/etudes/transcrire.md'), target: '_blank', rel: 'noopener' }, 'l’étude'), '.')));
   box.replaceChildren(d);
 }
@@ -167,8 +209,8 @@ function paintAct() {
       : m?.off ? `${m.label} : ${m.off}`
         : S.to && m?.mt_off ? `traduire : ${m.mt_off}` : '';
   put($('#act'),
-    S.item ? el('div', { class: 'sum' }, el('span', {}, el('b', {}, fmtDur(S.item.duration)), ' à transcrire'),
-      el('span', {}, [S.lang === 'auto' ? 'langue détectée' : L(S.lang), S.to ? `→ ${L(S.to)}` : ''].filter(Boolean).join(' '))) : null,
+    S.item ? el('div', { class: 'sum' }, el('span', {}, el('b', {}, fmtDur(S.item.duration)), ` · ${m?.label.toLowerCase() || ''}`),
+      el('span', {}, [S.lang === 'auto' ? 'langue détectée' : L(S.lang), S.to ? `→ ${L(S.to)}` : 'sans traduction'].join(' '))) : null,
     why ? el('div', { class: 'tr-why' }, why) : null,
     el('button', { class: 'tb go block', type: 'button', disabled: !!why || S.sending || null, onclick: launch }, S.sending ? 'Envoi…' : 'Transcrire'),
     stub() ? el('div', { class: 'hint c' }, 'moteur factice : un texte d’essai, horodaté') : null);
@@ -176,7 +218,8 @@ function paintAct() {
 async function launch() {
   S.sending = true; paintAct();
   try {
-    const r = await api('transcrire/run', { method: 'POST', body: { item: S.item.id, lang: S.lang, to: S.to, mode: S.mode, speakers: speakersOn(), cpl: S.cpl, max_s: S.max_s } });
+    const r = await api('transcrire/run', { method: 'POST', body: { item: S.item.id, lang: S.lang, to: S.to, mode: S.mode, cpl: S.cpl, max_s: S.max_s } });
+    S.pane = 'texte';
     openDoc(r.doc);
     loadDocs();
   } catch (e) { toast(e.message, 8000); }
@@ -191,7 +234,7 @@ function openDoc(d, { keepMedia = false } = {}) {
   try { history.replaceState(null, '', location.pathname + location.search + (d ? '#' + d.id : '')); } catch { /* sans historique */ }
   if (!same || !keepMedia) paintPlayer();
   else paintStrip();   // la frise suit les répliques arrivées
-  paintBar(); paintVoices(); paintLines(); markSide();
+  paintBar(); paintVoices(); paintFrise(!same); paintLines(); paintCarnet(); markSide();
   clearTimeout(pollT);
   if (busy(d)) pollT = setTimeout(poll, 900);
 }
@@ -202,8 +245,10 @@ async function poll() {
     const d = await api('transcrire/docs/' + was.id);
     if (S.doc?.id !== d.id) return;
     const finished = busy(was) && !busy(d);
-    if (P.edits.size || $('.tx[contenteditable="true"]')) { S.doc = { ...d, segments: S.doc.segments }; }
-    else openDoc(d, { keepMedia: true });
+    if (P.edits.size || $('.tx[contenteditable="true"]') || document.activeElement?.closest?.('.vcard')) {
+      S.doc = { ...d, segments: S.doc.segments, speakers: S.doc.speakers };
+      paintCarnet();
+    } else openDoc(d, { keepMedia: true });
     if (finished) { loadDocs(); toast(d.state === 'error' ? `échec : ${d.error}` : 'fini'); }
   } catch (e) { toast(e.message); }
   clearTimeout(pollT);
@@ -214,7 +259,7 @@ async function poll() {
 // LE lecteur du portail (commun/lecteur.js, 30/09) : l'image (ou l'onde du
 // son importé), la règle des temps et la tête de lecture du Montage ; les
 // répliques sont une piste de sa frise (une teinte par voix), sous l'onde.
-const V = { L: null, cap: null, active: null, strip: null, n: 0 };
+const V = { L: null, cap: null, active: null, strip: null, n: 0, F: null, probas: null, wrow: null, wk: -2 };
 function paintPlayer() {
   V.L?.detruire();
   const box = $('#player');
@@ -224,7 +269,7 @@ function paintPlayer() {
   if (!it) {
     box.className = 'tr-player empty';
     box.replaceChildren(el('div', { class: 'empty' }, el('b', {}, 'Transcrire'),
-      el('span', {}, 'Un son ou une vidéo, les langues, puis « Transcrire ».')));
+      el('span', {}, 'Un son ou une vidéo, le mode, puis « Transcrire ».')));
     $('#transport').replaceChildren();
     return;
   }
@@ -234,25 +279,25 @@ function paintPlayer() {
   (it.url ? Promise.resolve(it) : api('library/' + it.id)).then((full) => {
     if (n !== V.n) return;
     V.cap = el('div', { class: 'cap', 'aria-live': 'off' });
-    const L = lecteur(full, { clavier: 'page', sur: full.kind === 'video' ? V.cap : null, onTemps: tick });
-    V.L = L;
-    V.strip = L.piste(el('div', { class: 'tr-strip', title: 'les répliques · clic, glisser : la tête de lecture' }));
+    const Lc = lecteur(full, { clavier: 'page', sur: full.kind === 'video' ? V.cap : null, onTemps: tick });
+    V.L = Lc;
+    V.strip = Lc.piste(el('div', { class: 'tr-strip', title: 'les répliques · clic, glisser : la tête de lecture' }));
     // replaceChildren(null) écrirait « null » : on ne passe que des nœuds
-    box.replaceChildren(...(full.kind === 'audio' ? [el('div', { class: 'aud' }, el('span', { class: 'lbl' }, 'son'), el('b', {}, full.title || ''), V.cap)] : []), L.el);
-    L.media.addEventListener('loadedmetadata', paintStrip);
+    box.replaceChildren(...(full.kind === 'audio' ? [el('div', { class: 'aud' }, el('span', { class: 'lbl' }, 'son'), el('b', {}, full.title || ''), V.cap)] : []), Lc.el);
+    Lc.media.addEventListener('loadedmetadata', paintStrip);
     paintStrip();
   }).catch(() => { if (n === V.n) box.replaceChildren(el('p', { class: 'warn' }, 'le média a quitté la bibliothèque')); });
   $('#transport').replaceChildren(el('div', { class: 'transport tr-nav' }, el('span', { class: 'lbl' }, 'répliques'),
     el('button', { class: 'tb ghost sm', type: 'button', title: 'réplique précédente (↑)', onclick: () => step(-1) }, '‹'),
     el('button', { class: 'tb ghost sm', type: 'button', title: 'réplique suivante (↓)', onclick: () => step(1) }, '›')));
 }
-function seek(t, play = true) { const L = V.L; if (!L) return; L.seek(Math.max(0, t)); if (play && !L.lecture) L.play(); }
+function seek(t, play = true) { const Lc = V.L; if (!Lc) return; Lc.seek(Math.max(0, t)); if (play && !Lc.lecture) Lc.play(); }
 const dur = () => V.L?.duree || S.doc?.duration || S.item?.duration || 0;
 function paintStrip() {
   if (!V.strip) return;
   const d = dur();
   const segs = S.doc?.segments || [];
-  V.strip.replaceChildren(...(d ? segs.map((s) => el('span', { class: `sg v${voiceIndex(s.spk)}`, 'data-id': s.id, style: { left: `${(s.a / d) * 100}%`, width: `${Math.max(0.15, ((s.b - s.a) / d) * 100)}%` } })) : []));
+  V.strip.replaceChildren(...(d ? segs.map((s) => el('span', { class: 'sg', 'data-id': s.id, style: { left: `${(s.a / d) * 100}%`, width: `${Math.max(0.15, ((s.b - s.a) / d) * 100)}%`, '--c': s.spk ? teinte(voiceIndex(s.spk)) : null } })) : []));
   V.active = undefined;
   tick(V.L?.t || 0, V.L?.lecture);
 }
@@ -262,21 +307,38 @@ function segAt(t) {
   while (lo <= hi) { const mid = (lo + hi) >> 1; if (segs[mid].a <= t) { hit = mid; lo = mid + 1; } else hi = mid - 1; }
   return hit !== null && t < segs[hit].b + 0.25 ? segs[hit] : null;
 }
-// le lecteur dit où est la tête (à chaque image en lecture, à chaque geste) : la réplique, le sous-titre
+// le lecteur dit où est la tête (à chaque image en lecture, à chaque geste) : la réplique, le mot, le sous-titre, la frise
 function tick(t = V.L?.t || 0, playing = false) {
   if (!V.L) return;
+  V.F?.temps(t, playing);
   const s = segAt(t);
-  if (s?.id === V.active) return;
-  V.active = s?.id || null;
-  $$('#lines .ln.on').forEach((x) => x.classList.remove('on'));
-  $$('#player .tr-strip .sg.on').forEach((x) => x.classList.remove('on'));
-  if (s) {
-    const row = $(`#lines .ln[data-id="${s.id}"]`);
-    row?.classList.add('on');
-    V.strip?.querySelector(`.sg[data-id="${s.id}"]`)?.classList.add('on');
-    if (row && S.follow && !$('.tx[contenteditable="true"]') && playing) scrollInto(row);
+  if (s?.id !== V.active) {
+    V.active = s?.id || null;
+    $$('#lines .ln.on').forEach((x) => x.classList.remove('on'));
+    $$('#player .tr-strip .sg.on').forEach((x) => x.classList.remove('on'));
+    if (s) {
+      const row = $(`#lines .ln[data-id="${s.id}"]`);
+      row?.classList.add('on');
+      V.strip?.querySelector(`.sg[data-id="${s.id}"]`)?.classList.add('on');
+      if (row && S.follow && !$('.tx[contenteditable="true"]') && playing) scrollInto(row);
+    }
+    paintCap(s);
   }
-  paintCap(s);
+  paintWords(t);
+}
+// le mot qu'on entend, dans la réplique lue (mode complet) : les mots dits pâlissent, le mot dit maintenant se souligne
+function paintWords(t) {
+  const row = V.active ? $(`#lines .ln[data-id="${V.active}"] .tx[data-f="src"]:not([contenteditable="true"])`) : null;
+  if (row !== V.wrow) { V.wrow?.querySelectorAll('.w').forEach((x) => x.classList.remove('dit', 'ici')); V.wrow = row; V.wk = -2; }
+  if (!row) return;
+  const spans = row.querySelectorAll('.w');
+  let k = -1;
+  for (let i = 0; i < spans.length; i++) { if (+spans[i].dataset.a <= t) k = i; else break; }
+  const now = k >= 0 && t < +spans[k].dataset.b + 0.12 ? k : -1;
+  const key = k * 2 + (now >= 0 ? 1 : 0);
+  if (key === V.wk) return;
+  V.wk = key;
+  spans.forEach((x, i) => { x.classList.toggle('dit', i < k || (i === k && now < 0)); x.classList.toggle('ici', i === now); });
 }
 function scrollInto(row) {
   const box = $('#lines');
@@ -297,6 +359,7 @@ function step(n) {
   const s = segs[k < 0 ? (n > 0 ? segs.length - 1 : 0) : k];
   seek(s.a, V.L.lecture);
 }
+const seekSeg = (id) => { const s = segById(id); if (s) seek(s.a, true); };
 
 // ── la barre du texte ───────────────────────────────────────
 function paintBar() {
@@ -306,21 +369,26 @@ function paintBar() {
   const tl = trLang();
   const views = [['src', 'Original'], ['tr', 'Traduction'], ['both', 'Les deux']];
   const tr = d.translations?.[S.to];
-  const canTranslate = d.state === 'done' && S.to && S.to !== d.detected && !['queued', 'running'].includes(tr?.state);
+  const canTranslate = d.state === 'done' && S.to && S.to !== d.detected && !ACTIVE.includes(tr?.state);
   const stale = S.to && d.stale?.[S.to];
-  const trBtn = canTranslate && (!tr || tr.state === 'error' || stale)
+  const trBtn = S.pane === 'texte' && canTranslate && (!tr || tr.state === 'error' || stale)
     ? el('button', { class: 'tb ghost sm', type: 'button', title: stale ? 'les répliques corrigées depuis la traduction' : '', onclick: () => translate(S.to) },
       tr && stale ? `Retraduire ${plural(stale, 'réplique')}` : `Traduire en ${L(S.to).toLowerCase()}`) : null;
+  const nNotes = Object.values(d.notes || {}).filter((n) => n.state === 'done').length + (d.qa || []).filter((q) => q.state === 'done').length;
   put(box,
     el('div', { class: 'ttl' }, el('span', { class: 'lbl' }, 'transcription'), el('b', {}, d.title || d.id),
-      el('span', { class: 'lbl meta' }, [d.detected ? L(d.detected) : d.lang === 'auto' ? 'langue à détecter' : L(d.lang), tl ? `→ ${L(tl)}` : '',
+      el('span', { class: 'lbl meta' }, [d.mode === 'complet' ? 'complet' : 'rapide', d.detected ? L(d.detected) : d.lang === 'auto' ? 'langue à détecter' : L(d.lang), tl ? `→ ${L(tl)}` : '',
         d.segments?.length ? plural(d.segments.length, 'réplique') : '', d.engine?.backend === 'factice' ? 'factice' : ''].filter(Boolean).join(' · '))),
     el('span', { class: 'sp' }),
-    tl ? el('div', { class: 'seg' }, ...views.map(([v, lab]) => el('button', { class: 'tb' + (S.view === v ? ' on' : ''), type: 'button', onclick: () => setView(v) }, lab))) : null,
+    d.state === 'done' ? el('div', { class: 'seg tr-panes', role: 'tablist', 'aria-label': 'le texte ou le carnet' },
+      ...[['texte', 'Texte'], ['carnet', nNotes ? `Carnet · ${nNotes}` : 'Carnet']].map(([v, lab]) => el('button', {
+        class: 'tb' + (S.pane === v ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': String(S.pane === v), onclick: () => setPane(v) }, lab))) : null,
+    S.pane === 'texte' && tl ? el('div', { class: 'seg' }, ...views.map(([v, lab]) => el('button', { class: 'tb' + (S.view === v ? ' on' : ''), type: 'button', onclick: () => setView(v) }, lab))) : null,
     trBtn,
     d.state === 'done' ? el('button', { class: 'tb ghost sm', type: 'button', onclick: () => copyText() }, 'Copier le texte') : null,
     d.state === 'done' ? el('button', { class: 'tb ghost sm', type: 'button', 'aria-haspopup': 'menu', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); menu(r.left, r.bottom + 4, exportItems(), { focusFirst: e.detail === 0 }); } }, 'Exporter') : null);
 }
+function setPane(v) { S.pane = v; paintBar(); paintFrise(false); paintLines(); paintCarnet(); }
 function setView(v) { S.view = v; prefs.set('transcrire.view', v); paintBar(); paintLines(); paintCap(segAt(V.L?.t || 0)); }
 async function translate(to, all = false) {
   try { const r = await api(`transcrire/docs/${S.doc.id}/translate`, { method: 'POST', body: { to, all } }); openDoc(r.doc, { keepMedia: true }); toast(`traduction en ${L(to).toLowerCase()} en file`); }
@@ -336,8 +404,10 @@ function exportItems() {
   const block = (which, name) => [{ head: name },
     { label: 'Sous-titres SRT', icon: '↓', onclick: () => download('srt', which) },
     { label: 'Sous-titres VTT', icon: '↓', onclick: () => download('vtt', which) },
-    { label: 'Texte TXT', icon: '↓', onclick: () => download('txt', which) }];
-  return [...block('src', `original · ${src}`), ...trs.flatMap((k) => ['-', ...block(k, `traduction · ${L(k).toLowerCase()}`)]), '-',
+    { label: 'Texte TXT', icon: '↓', onclick: () => download('txt', which) },
+    { label: 'Mots horodatés JSON', icon: '↓', sub: d.mode === 'complet' && which === 'src' ? 'temps du moteur' : 'temps au prorata', onclick: () => download('json', which) }];
+  return [{ head: 'compte rendu' }, { label: 'Compte rendu Markdown', icon: '↓', sub: 'carnet + transcription', onclick: () => download('md', 'src') }, '-',
+    ...block('src', `original · ${src}`), ...trs.flatMap((k) => ['-', ...block(k, `traduction · ${L(k).toLowerCase()}`)]), '-',
     { label: 'Ranger les sous-titres dans Asset', icon: '▦', disabled: !S.cfg.asset, why: S.cfg.asset_why, onclick: toAsset }];
 }
 async function toAsset() {
@@ -352,30 +422,66 @@ async function copyText(which = S.view === 'tr' && trLang() ? trLang() : 'src') 
   } catch (e) { toast(e.message); }
 }
 
-// ── les voix ────────────────────────────────────────────────
+// ── les voix : LE seul endroit où l'on renomme ─────────────
 function paintVoices() {
   const box = $('#voices');
-  const vs = S.doc?.state === 'done' ? S.doc.speakers || [] : [];
+  const d = S.doc;
+  const vs = d?.state === 'done' ? d.speakers || [] : [];
   if (!vs.length) { box.replaceChildren(); return; }
-  box.replaceChildren(el('span', { class: 'lbl' }, 'les voix'), ...vs.map((v, i) => {
-    const chip = el('span', { class: `who v${i % 8}`, tabindex: '0', title: 'double-clic : renommer', 'data-spk': v.id }, v.name);
-    chip.addEventListener('dblclick', () => editText(chip, v.name, (t) => renameVoice(v.id, v.name, t)));
-    chip.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); editText(chip, v.name, (t) => renameVoice(v.id, v.name, t)); } });
-    return chip;
-  }));
+  const talk = Object.fromEntries(vs.map((v) => [v.id, [0, 0]]));
+  for (const s of d.segments) if (talk[s.spk]) { talk[s.spk][0] += s.b - s.a; talk[s.spk][1]++; }
+  box.replaceChildren(el('div', { class: 'tr-voices-h' }, el('span', { class: 'lbl' }, 'les voix'),
+    el('span', { class: 'hint' }, 'un nom tapé ici se pose partout : répliques, frise, carnet, exports')),
+  el('div', { class: 'tr-vcards' }, ...vs.map((v, i) => {
+    const inp = el('input', { class: 'fld', value: v.name, maxlength: '40', 'aria-label': `nom de la voix ${i + 1}`, spellcheck: 'false' });
+    const commit = () => { const t = inp.value.replace(/\s+/g, ' ').trim(); if (!t) { inp.value = v.name; return; } renameVoice(v.id, v.name, t); };
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } else if (e.key === 'Escape') { inp.value = v.name; inp.blur(); } });
+    inp.addEventListener('change', commit);
+    const [secs, n] = talk[v.id];
+    return el('div', { class: 'vcard', style: { '--c': teinte(i) }, 'data-spk': v.id },
+      el('i'), inp, el('small', {}, `${clock(secs)} · ${plural(n, 'réplique')}`));
+  })));
 }
 function renameVoice(id, before, after) {
   if (!after || after === before) return;
-  const apply = (name) => { const v = S.doc.speakers.find((x) => x.id === id); if (v) v.name = name; queue({ speaker: { id, name } }); paintVoices(); paintLines(); };
+  const apply = (name) => {
+    const v = S.doc.speakers.find((x) => x.id === id); if (v) v.name = name;
+    queue({ speaker: { id, name } });
+    const inp = $(`#voices .vcard[data-spk="${id}"] input`);
+    if (inp && document.activeElement !== inp) inp.value = name;
+    paintLines(); paintCarnet(); V.F && paintFrise(false);
+  };
   apply(after);
   U.record({ label: `renommer la voix « ${before} »`, undo: () => apply(before), redo: () => apply(after) });
+}
+
+// ── la frise des voix (complet) : commun/voix.js, le dessin de la diarisation de Movie Analysis ──
+async function paintFrise(fresh) {
+  const box = $('#frise');
+  const d = S.doc;
+  if (!d || d.state !== 'done' || !complet(d) || S.pane !== 'texte') { box.hidden = true; return; }
+  box.hidden = false;
+  if (!V.F) { V.F = friseVoix({ onSeek: (t) => seek(t, false), cle: 'transcrire' }); box.replaceChildren(V.F.el); }
+  if (fresh || V.probas?.id !== d.id) {
+    V.probas = { id: d.id, data: null };
+    if (d.voix) { try { V.probas.data = await api(`transcrire/docs/${d.id}/voix`); } catch { V.probas.data = null; } }
+    if (S.doc?.id !== d.id) return;
+  }
+  V.F.donner({
+    duree: dur() || d.duration,
+    voix: d.speakers.map((v, i) => ({ id: v.id, nom: v.name, col: i, idx: parseInt(v.id.slice(1), 10) - 1 })),
+    probas: V.probas.data,
+    lignes: d.segments.filter((s) => s.spk).map((s) => ({ id: s.id, a: s.a, b: s.b, voix: s.spk, texte: s.text, mots: motsDe(s) })),
+  });
+  V.F.temps(V.L?.t || 0);
 }
 
 // ── les répliques ───────────────────────────────────────────
 function paintLines() {
   const box = $('#lines');
   const d = S.doc;
-  if (!d) { box.replaceChildren(); return; }
+  if (!d || S.pane !== 'texte') { box.replaceChildren(); box.hidden = !!d; return; }
+  box.hidden = false;
   if (d.state !== 'done') {
     const lv = d.live || {};
     const p = lv.progress;
@@ -388,25 +494,29 @@ function paintLines() {
   const tl = trLang();
   const tr = d.translations?.[tl] || {};
   const showSrc = S.view !== 'tr' || !tl, showTr = S.view !== 'src' && tl;
-  const names = Object.fromEntries((d.speakers || []).map((v) => [v.id, v.name]));
-  const pending = ['queued', 'running'].includes(tr.state);
+  const voices = (d.speakers || []).length > 0;
+  const pending = ACTIVE.includes(tr.state);
   const scroll = box.scrollTop;
+  box.classList.toggle('sans-voix', !voices);
   put(box,
     pending ? el('div', { class: 'tr-wait slim' }, el('b', {}, `traduction · ${L(tl).toLowerCase()}`), el('span', {}, tr.live?.message || 'en file'),
       el('div', { class: 'bar' }, el('i', { style: { width: tr.live?.progress != null ? `${Math.round(tr.live.progress * 100)}%` : '100%' } }))) : null,
     d.segments.length ? null : el('p', { class: 'hint c' }, 'Aucune parole trouvée dans ce média.'),
     ...d.segments.map((s, i) => {
       const prev = d.segments[i - 1];
-      const row = el('div', { class: 'ln' + (V.active === s.id ? ' on' : ''), 'data-id': s.id, role: 'listitem' },
+      const ws = d.mode === 'complet' ? motsDe(s) : null;
+      const src = el('div', { class: 'tx', 'data-f': 'src', tabindex: '0' },
+        ...(ws ? ws.flatMap((w, k) => [k ? ' ' : null, el('span', { class: 'w', 'data-a': w.a, 'data-b': w.b }, w.w)]) : [s.text]));
+      return el('div', { class: 'ln' + (V.active === s.id ? ' on' : ''), 'data-id': s.id, role: 'listitem' },
         el('button', { class: 'tc', type: 'button', title: 'aller à ce moment', tabindex: '-1' }, clock(s.a)),
-        s.spk && s.spk !== prev?.spk ? el('span', { class: `who v${voiceIndex(s.spk)}` }, names[s.spk] || s.spk) : el('span', { class: 'who none' }),
+        voices ? (s.spk && s.spk !== prev?.spk ? el('span', { class: 'who', style: { '--c': teinte(voiceIndex(s.spk)) } }, voiceName(s.spk)) : el('span', { class: 'who none' })) : null,
         el('div', { class: 'txs' },
-          showSrc ? el('div', { class: 'tx', 'data-f': 'src', tabindex: '0' }, s.text) : null,
+          showSrc ? src : null,
           showTr ? el('div', { class: 'tx tr' + (s.tr?.[tl] ? '' : ' miss') + (isStale(s, tl) ? ' stale' : ''), 'data-f': tl, tabindex: '0',
             title: isStale(s, tl) ? 'la réplique a été corrigée depuis : à retraduire' : null }, s.tr?.[tl] || (pending ? '…' : '')) : null));
-      return row;
     }));
   box.scrollTop = scroll;
+  V.wrow = null; V.wk = -2;
 }
 // le serveur dit quelles répliques ont changé depuis leur traduction (stale_ids)
 function isStale(s, tl) { return !!(tl && s.tr?.[tl] && S.doc?.stale_ids?.[tl]?.includes(s.id)); }
@@ -415,7 +525,9 @@ function wireLines() {
   box.addEventListener('click', (e) => {
     const row = e.target.closest('.ln');
     if (!row || e.target.closest('[contenteditable="true"]')) return;
-    const s = S.doc?.segments.find((x) => x.id === row.dataset.id);
+    const w = e.target.closest('.w');   // un mot : son instant
+    if (w) { seek(+w.dataset.a, true); return; }
+    const s = segById(row.dataset.id);
     if (s) seek(s.a, true);
   });
   box.addEventListener('dblclick', (e) => { const tx = e.target.closest('.tx'); if (tx) startEdit(tx); });
@@ -423,10 +535,11 @@ function wireLines() {
 }
 function startEdit(tx) {
   const row = tx.closest('.ln');
-  const s = S.doc.segments.find((x) => x.id === row.dataset.id);
+  const s = segById(row.dataset.id);
   const f = tx.dataset.f;
   const before = f === 'src' ? s.text : s.tr?.[f] || '';
   V.L?.pause();
+  if (f === 'src') tx.textContent = before;   // les mots redeviennent du texte le temps de la correction
   editText(tx, before, (after) => setField(s.id, f, before, after, true));
 }
 // un champ édité sur place : Entrée garde, Échap rend, sortir garde
@@ -441,27 +554,104 @@ function editText(node, before, done) {
     if (over) return; over = true;
     node.contentEditable = 'false'; node.classList.remove('editing');
     const after = node.textContent.replace(/\s+/g, ' ').trim();
-    if (!keep) node.textContent = before;
+    if (!keep) { node.textContent = before; paintLines(); }
     else done(after);
   };
   node.addEventListener('keydown', function k(e) {
     if (e.key === 'Enter') { e.preventDefault(); node.removeEventListener('keydown', k); end(true); node.focus(); }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); node.removeEventListener('keydown', k); end(false); node.focus(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); node.removeEventListener('keydown', k); end(false); }
   });
   node.addEventListener('blur', () => end(true), { once: true });
 }
 function setField(id, f, before, after, record) {
   if (after === before || (f === 'src' && !after)) { paintLines(); return; }
   const apply = (v) => {
-    const s = S.doc.segments.find((x) => x.id === id);
+    const s = segById(id);
     if (!s) return;
     if (f === 'src') { s.text = v; s.edited = true; } else { (s.tr ||= {})[f] = v; }
     queue({ seg: { id, f, v } });
     paintLines(); paintCap(segAt(V.L?.t || 0));
+    if (f === 'src') paintFrise(false);
   };
   apply(after);
-  if (record) U.record({ label: `corriger la réplique ${clock(S.doc.segments.find((x) => x.id === id)?.a)}`, undo: () => apply(before), redo: () => apply(after) });
+  if (record) U.record({ label: `corriger la réplique ${clock(segById(id)?.a)}`, undo: () => apply(before), redo: () => apply(after) });
 }
+
+// ── le carnet (à la NotebookLM) ─────────────────────────────
+const refChips = (refs) => (refs || []).filter(segById).map((id) => el('button', { class: 'ref', type: 'button', title: 'aller à cette réplique', onclick: () => seekSeg(id) }, clock(segById(id).a)));
+function noteState(n) {
+  if (!n) return null;
+  if (ACTIVE.includes(n.state)) return el('span', { class: 'cn-st run' }, n.live?.message || (n.state === 'queued' ? 'en file' : 'en cours'));
+  if (n.state === 'error') return el('span', { class: 'cn-st err' }, n.error || 'échec');
+  if (n.stale) return el('span', { class: 'cn-st old', title: 'des répliques ont été corrigées depuis' }, 'le texte a changé depuis');
+  return el('span', { class: 'cn-st' }, [n.model === 'factice' ? 'factice' : n.model, n.at ? fmtDate(n.at) : ''].filter(Boolean).join(' · '));
+}
+async function notes(kinds) {
+  try { const r = await api(`transcrire/docs/${S.doc.id}/notes`, { method: 'POST', body: { kinds } }); openDoc(r.doc, { keepMedia: true }); }
+  catch (e) { toast(e.message, 8000); }
+}
+async function ask(q) {
+  try { const r = await api(`transcrire/docs/${S.doc.id}/notes`, { method: 'POST', body: { question: q } }); openDoc(r.doc, { keepMedia: true }); return true; }
+  catch (e) { toast(e.message, 8000); return false; }
+}
+async function forget(qid) {
+  try { openDoc(await api(`transcrire/docs/${S.doc.id}/qa/${qid}/delete`, { method: 'POST' }), { keepMedia: true }); } catch (e) { toast(e.message, 7000); }
+}
+function paintCarnet() {
+  const box = $('#carnet');
+  const d = S.doc;
+  if (!d || d.state !== 'done' || S.pane !== 'carnet') { box.hidden = true; box.replaceChildren(); return; }
+  box.hidden = false;
+  const C = S.cfg.carnet || {};
+  const off = C.off || (!d.segments.length ? 'aucune parole dans ce texte : rien à résumer' : '');
+  const nt = d.notes || {};
+  const card = (k, body, empty) => {
+    const n = nt[k], run = ACTIVE.includes(n?.state);
+    return el('section', { class: 'cn-card', 'data-k': k },
+      el('div', { class: 'cn-card-h' }, el('span', { class: 'lbl' }, C.kinds?.find((x) => x.id === k)?.label || k), noteState(n), el('span', { class: 'sp' }),
+        el('button', { class: 'tb ghost sm', type: 'button', disabled: run || !!off || null, title: off || (run ? 'en cours' : null), onclick: () => notes([k]) },
+          n?.state === 'done' || n?.state === 'error' ? 'Refaire' : 'Écrire')),
+      n?.state === 'done' ? body(n.data || {}) : el('p', { class: 'hint' }, run ? '…' : empty));
+  };
+  const list = (items, who = false) => el('ul', { class: 'cn-list' }, ...items.map((x) => el('li', {},
+    el('span', { class: 'cn-t' }, ...avecNoms(x.text), who && x.who ? el('span', { class: 'cn-who' }, ' → ', ...avecNoms(x.who)) : null), ...refChips(x.refs))));
+  const all = Object.keys(CARNET_KINDS());
+  const anyRun = all.some((k) => ACTIVE.includes(nt[k]?.state));
+  // la question en cours de frappe survit à un nouveau dessin (une réponse qui arrive)
+  const was = box.querySelector('.cn-ask input');
+  const inp = el('input', { class: 'fld', type: 'text', maxlength: String(C.q_max || 500), placeholder: 'Une question sur ce qui a été dit…', 'aria-label': 'une question sur le texte', value: was?.value || null });
+  if (was && document.activeElement === was) requestAnimationFrame(() => { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); });
+  const send = async () => { const q = inp.value.trim(); if (!q) return; inp.disabled = true; if (await ask(q)) inp.value = ''; inp.disabled = false; };
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+  put(box,
+    el('div', { class: 'cn-head' },
+      el('div', { class: 'cn-about' }, el('b', {}, 'Le carnet'),
+        el('span', {}, 'tiré du seul texte, chaque élément renvoie à ses répliques · ', stub() ? 'moteur factice (des extraits, sans modèle)' : `${C.name}, en local`)),
+      el('span', { class: 'sp' }),
+      el('button', { class: 'tb ghost sm', type: 'button', disabled: anyRun || !!off || null, title: off || null,
+        onclick: () => notes(all) }, all.every((k) => nt[k]?.state === 'done') ? 'Tout refaire' : 'Tout préparer')),
+    off ? el('div', { class: 'reason' }, off) : null,
+    el('div', { class: 'cn-grid' },
+      card('resume', (x) => el('div', { class: 'cn-body' }, el('p', { class: 'cn-p' }, ...avecNoms(x.text)), el('div', { class: 'cn-refs' }, ...refChips(x.refs))),
+        'L’essentiel en quelques phrases : « Écrire ».'),
+      card('chapitres', (x) => (x.chapitres || []).length ? el('ol', { class: 'cn-chap' }, ...x.chapitres.map((c) => el('li', {},
+        el('button', { class: 'ref', type: 'button', onclick: () => seek(c.a, true) }, clock(c.a)),
+        el('div', {}, el('b', {}, ...avecNoms(c.title)), el('span', {}, ...avecNoms(c.text)))))) : el('p', { class: 'hint' }, 'Aucun chapitre.'),
+        'Les parties du texte, chacune à son instant.'),
+      card('points', (x) => el('div', { class: 'cn-body' },
+        ...[['points', 'Points clés'], ['decisions', 'Décisions'], ['actions', 'Actions']].map(([k, lab]) => el('div', { class: 'cn-sub' },
+          el('span', { class: 'lbl' }, lab), (x[k] || []).length ? list(x[k], k === 'actions') : el('p', { class: 'hint' }, k === 'points' ? 'Aucun.' : 'Aucune dite dans le texte.')))),
+        'Points clés, décisions, actions — pour une réunion.'),
+      el('section', { class: 'cn-card cn-qa', 'data-k': 'qa' },
+        el('div', { class: 'cn-card-h' }, el('span', { class: 'lbl' }, 'Questions'), el('span', { class: 'cn-st' }, 'la réponse ne vient que du texte'), el('span', { class: 'sp' })),
+        el('div', { class: 'cn-ask' }, inp, el('button', { class: 'tb ghost sm', type: 'button', disabled: !!off || null, title: off || null, onclick: send }, 'Demander')),
+        (d.qa || []).length ? el('div', { class: 'cn-qas' }, ...[...d.qa].reverse().map((q) => el('div', { class: 'cn-q' + (q.state === 'done' && !q.found ? ' nf' : '') },
+          el('div', { class: 'cn-qq' }, el('b', {}, q.q), noteState(q), el('span', { class: 'sp' }),
+            el('button', { class: 'x', type: 'button', title: 'retirer la question', onclick: () => forget(q.id) }, '×')),
+          q.state === 'done' ? el('div', { class: 'cn-qa-a' }, el('p', { class: 'cn-p' }, ...avecNoms(q.text)), el('div', { class: 'cn-refs' }, ...refChips(q.refs))) : null)))
+          : el('p', { class: 'hint' }, 'Demandez ce qui a été dit, décidé, par qui : la réponse cite ses répliques, ou dit que le texte n’en parle pas.'))));
+}
+const CARNET_KINDS = () => Object.fromEntries((S.cfg.carnet?.kinds || []).map((k) => [k.id, k]));
 
 // ── l'enregistrement des corrections ────────────────────────
 function queue({ seg, speaker }) {
@@ -489,7 +679,7 @@ async function flush() {
       const editing = $('.tx[contenteditable="true"]');
       S.doc = { ...d, segments: P.edits.size || editing ? S.doc.segments : d.segments };
       S.doc.rev = d.rev;
-      if (!editing && !P.edits.size) { paintBar(); paintLines(); }
+      if (!editing && !P.edits.size) { paintBar(); paintLines(); paintCarnet(); }
     }
   } catch (e) { toast(`correction non enregistrée : ${e.message}`, 8000); }
   P.saving = false;
@@ -501,18 +691,17 @@ async function loadDocs() {
   try { S.docs = (await api('transcrire/docs')).docs; } catch (e) { $('#side').replaceChildren(el('p', { class: 'warn' }, e.message)); return; }
   const side = $('#side');
   side.replaceChildren(el('div', { class: 'ipan-h hist-h' }, el('span', { class: 'lbl' }, 'Mes transcriptions'), el('span', { class: 'r' }, String(S.docs.length))),
-    S.docs.length ? el('div', { class: 'tr-docs' }, ...S.docs.map(docRow)) : el('p', { class: 'hint' }, 'Chaque transcription se range ici, avec ses traductions.'));
+    S.docs.length ? el('div', { class: 'tr-docs' }, ...S.docs.map(docRow)) : el('p', { class: 'hint' }, 'Chaque transcription se range ici, avec ses traductions et son carnet.'));
   markSide();
 }
 function docRow(x) {
   const st = x.live?.state || x.state;
-  const row = el('div', { class: 'drow', role: 'button', tabindex: '0', 'data-id': x.id, onclick: () => openById(x.id),
+  return el('div', { class: 'drow', role: 'button', tabindex: '0', 'data-id': x.id, onclick: () => openById(x.id),
     onkeydown: (e) => { if (e.key === 'Enter') openById(x.id); } },
   el('div', { class: 'th ' + (x.kind || ''), style: x.thumb_url ? { backgroundImage: `url(${href(x.thumb_url)})` } : null }),
   el('div', { class: 'tx' }, el('b', {}, x.title || x.id),
-    el('small', {}, [fmtDur(x.duration), [x.detected ? x.detected.toUpperCase() : '', ...(x.to || []).map((k) => k.toUpperCase())].filter(Boolean).join(' → '),
+    el('small', {}, [fmtDur(x.duration), x.mode === 'complet' ? 'complet' : 'rapide', [x.detected ? x.detected.toUpperCase() : '', ...(x.to || []).map((k) => k.toUpperCase())].filter(Boolean).join(' → '),
       st === 'done' ? fmtDate(x.created) : st === 'error' ? 'échec' : st === 'running' ? 'en cours' : 'en file'].filter(Boolean).join(' · '))));
-  return row;
 }
 function markSide() { $$('#side .drow').forEach((r) => r.classList.toggle('on', r.dataset.id === S.doc?.id)); }
 async function openById(id) {
@@ -540,7 +729,7 @@ document.addEventListener('keydown', (e) => {
 function linesMenu(e) {
   const row = e.target.closest('.ln');
   if (row && S.doc) {
-    const s = S.doc.segments.find((x) => x.id === row.dataset.id);
+    const s = segById(row.dataset.id);
     const tl = trLang();
     return [{ head: `réplique · ${clock(s.a)}` },
       { label: 'Aller à ce moment', icon: '▶', onclick: () => seek(s.a, true) },
@@ -559,14 +748,16 @@ function linesMenu(e) {
 }
 pageMenu(() => {
   const go = $('#act .tb.go');
+  const done = S.doc?.state === 'done';
   return [{ head: 'Transcrire' },
     { label: 'Transcrire', icon: '▶', disabled: !go || go.disabled, why: $('#act .tr-why')?.textContent || 'rien à envoyer', onclick: launch },
     '-',
     { label: 'Choisir dans la bibliothèque…', icon: '+', onclick: choose },
     { label: 'Depuis le disque…', icon: '↑', onclick: () => fileIn.click() },
-    S.doc?.state === 'done' ? '-' : null,
-    S.doc?.state === 'done' ? { label: 'Copier le texte', icon: '⧉', onclick: () => copyText() } : null,
-    ...(S.doc?.state === 'done' ? [{ label: 'Exporter', icon: '↓', items: exportItems() }] : [])];
+    done ? '-' : null,
+    done ? { label: S.pane === 'carnet' ? 'Le texte' : 'Le carnet', icon: '☰', onclick: () => setPane(S.pane === 'carnet' ? 'texte' : 'carnet') } : null,
+    done ? { label: 'Copier le texte', icon: '⧉', onclick: () => copyText() } : null,
+    ...(done ? [{ label: 'Exporter', icon: '↓', items: exportItems() }] : [])];
 });
 
 // ── démarrage ───────────────────────────────────────────────
@@ -579,18 +770,23 @@ async function start() {
   dropAnywhere((files) => addFiles(files));
   try { S.cfg = await api('transcrire/options'); } catch (e) { $('#rail').replaceChildren(el('p', { class: 'warn' }, `le portail ne répond pas : ${e.message}`)); return; }
   const d = store.get() || {};
-  for (const k of ['lang', 'to', 'mode', 'speakers', 'cpl', 'max_s', 'stamps']) if (d[k] !== undefined && d[k] !== null) S[k] = d[k];
+  for (const k of ['lang', 'mode', 'cpl', 'max_s', 'stamps']) if (d[k] !== undefined && d[k] !== null) S[k] = d[k];
+  if (S.mode === 'precis') S.mode = 'complet';   // l'ancien nom
   if (!M(S.mode)) S.mode = 'rapide';
+  S.to = prefs.get('transcrire.to', S.cfg.to_default ?? '') || '';
+  if (S.to && !S.cfg.langs.some((l) => l.id === S.to)) S.to = '';
   S.view = prefs.get('transcrire.view', S.view);
   S.follow = prefs.get('transcrire.follow', S.follow) !== false;
   prefs.on('transcrire.view', (v) => { if (v && v !== S.view) setView(v); });
   prefs.on('transcrire.follow', (v) => { S.follow = v !== false; });
+  prefs.on('transcrire.to', (v) => { S.to = v || ''; paintLang(); paintAct(); paintBar(); });
   put($('#banner'), stub() ? el('div', { class: 'banner' }, el('b', {}, 'Moteur factice'),
-    el('span', {}, 'le texte est un texte d’essai, calé sur les passages parlés du son — aucun modèle n’est chargé. Le câblage réel attend l’accord de Cal (Admin → Câblage).')) : null);
+    el('span', {}, 'le texte, les voix et le carnet sont des essais, calés sur les passages parlés du son — aucun modèle n’est chargé. Le câblage réel attend l’accord de Cal (Admin → Câblage).')) : null);
   const q = new URLSearchParams(location.search);
   const want = q.get('src') || d.item;
   if (want) { try { const it = await api('library/' + want); if (['audio', 'video'].includes(it.kind)) S.item = it; } catch { /* parti */ } }
-  paintIn(); paintLang(); paintMode(); paintAdv(); paintAct(); paintPlayer();
+  if (q.get('vue') === 'carnet') S.pane = 'carnet';
+  paintIn(); paintMode(); paintLang(); paintAdv(); paintAct(); paintPlayer();
   loadDocs();
   const h = location.hash.slice(1);
   if (h) openById(h);

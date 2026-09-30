@@ -1,7 +1,7 @@
 {
   "tool": "image",
   "title": "Image",
-  "about": "La barre de prompt garde son brouillon dans ce navigateur ; ces réglages valent pour un brouillon neuf.",
+  "about": "La barre de prompt garde son brouillon dans ce navigateur ; ces réglages valent pour un brouillon neuf. L’atelier d’édition garde le sien dans sa session.",
   "prefs": [
     {
       "key": "model", "label": "Modèle d’un brouillon neuf", "type": "choice", "default": "krea2",
@@ -11,6 +11,11 @@
     {
       "key": "count", "label": "Images par envoi, au départ", "type": "number", "default": 2,
       "min": 1, "max": 4, "step": 1
+    },
+    {
+      "key": "editModel", "label": "Modèle d’édition d’un atelier neuf", "type": "choice", "default": "krea2",
+      "options": [["krea2", "Krea 2"], ["qwen21", "Qwen-Image 2.1"]],
+      "help": "Krea 2 tient mieux un visage ; Retirer passe par Qwen (Krea Turbo ne retire pas)."
     },
     {
       "key": "scrollTop", "label": "Remonter en tête du fil à l’envoi", "type": "toggle", "default": true,

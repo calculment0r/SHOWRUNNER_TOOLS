@@ -6,7 +6,7 @@ module (pkgutil le charge au démarrage comme tout fichier de `tools/`, et il
 n'a pas de `register`).
 
     python transcrire_moteur.py --engine whisper-turbo --weights ~/.cache/whisper/large-v3-turbo.pt \
-        --audio audio.wav --lang auto --beam 1 --out asr.json [--duration 612.3]
+        --audio audio.wav --lang auto --beam 1 --out asr.json [--duration 612.3] [--words 0|1]
     python transcrire_moteur.py --check        # se lit, sans rien importer de lourd
 
 Rend `{"lang", "segments": [{"a", "b", "text", "words": [[mot, début, fin]…]}], "calcul_s", "engine"}`.
@@ -78,7 +78,10 @@ def whisper_run(a) -> dict:
         probs = m.detect_language(mel)[1]
         lang = max(probs, key=probs.get)
     step(f"transcription ({lang})")
-    opts = {"language": lang, "word_timestamps": True, "fp16": True, "verbose": None}
+    # les temps au mot (mode complet) : l'alignement DTW de l'attention croisée
+    # (whisper/timing.py, add_word_timestamps), au pas de 20 ms (audio.py :
+    # TOKENS_PER_SECOND = 50) ; le mode rapide s'en passe — une passe de moins
+    opts = {"language": lang, "word_timestamps": bool(a.words), "fp16": True, "verbose": None}
     if a.beam > 1:
         opts.update(beam_size=a.beam, best_of=a.beam)
     r = m.transcribe(audio, **opts)
@@ -116,6 +119,7 @@ def main() -> int:
     ap.add_argument("--lang", default="auto")
     ap.add_argument("--beam", type=int, default=1)
     ap.add_argument("--duration", type=float, default=0.0)
+    ap.add_argument("--words", type=int, choices=(0, 1), default=1)
     ap.add_argument("--out")
     a = ap.parse_args()
     if a.check:

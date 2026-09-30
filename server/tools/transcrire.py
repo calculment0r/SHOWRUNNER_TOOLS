@@ -33,8 +33,53 @@ sous-titres se calculent du document à l'export (SRT, VTT, TXT) : une seule
 vérité. Ranger un sous-titre dans Asset attend une sorte `subtitle` du socle
 (étude § 5.3) : la route le dit tant qu'elle manque.
 
-Travaux : `transcrire.transcribe` (puis `transcrire.translate` à la suite si
-une langue est demandée), `transcrire.translate`.
+Deux modes (Cal, 30/09 : « pour la transcription rapide, on garde peut-être
+l'horodatage simple, car l'idée est de convertir ultra rapidement beaucoup
+d'audio ») :
+
+  rapide   le texte, un horodatage par réplique ; pas de voix, pas de temps
+           au mot (Whisper sans `word_timestamps` : la passe d'alignement en
+           moins) — le plus vite possible, pour beaucoup de sons.
+  complet  les voix séparées (Nemotron, DGX1) et chaque mot à son instant
+           (Whisper `word_timestamps=True`, l'alignement DTW de l'attention
+           croisée, au pas de 20 ms — whisper/audio.py, TOKENS_PER_SECOND ;
+           « (experimental) » dans l'aide de sa ligne de commande) ; la page
+           le montre comme la diarisation de Movie Analysis : une piste par
+           voix, sa ligne de dialogue mot à mot et, dessous, sa probabilité
+           de parole trame par trame (le « spectre » de Nemotron, rangé à
+           côté du document : `<id>.voix.json`, route `…/voix`).
+  (« precis », l'ancien nom, vaut « complet ».)
+
+Pas de traduction par défaut (Cal, 30/09) : `to` vide, sauf demande.
+
+Le carnet (à la NotebookLM, une fois le texte là) : résumé, points clés /
+décisions / actions, chapitres, questions-réponses — tirés du SEUL texte, chaque
+élément cite ses répliques (des numéros contraints par le schéma JSON : le
+modèle ne peut pas en citer une qui n'existe pas). Les voix y sont des
+étiquettes ([S1]…) que la page et les exports remplacent par le nom du moment :
+renommer une voix (un seul endroit, la liste des voix) se voit partout, carnet
+compris. Moteur : celui de `transcrire_moteur` — factice (extraits du texte, sans
+modèle), local (le LLM d'Ollama `transcrire_carnet_modele`, par défaut
+qwen3:30b-a3b, déjà servi sur les deux DGX).
+
+L'ACCROCHE POUR L'IDÉATION (et tout outil qui veut « transcrire ce son, puis
+résumer ») — le son est d'abord dans la bibliothèque (Upload), puis :
+
+    POST /api/transcrire/run  {"item": "<id du son>", "mode": "rapide" | "complet",
+                               "notes": ["resume", "points"]}          # « to » absent : pas de traduction
+      → {"doc": {"id": "trn-…", "state": "queued", …}, "job": {…}}
+    GET  /api/transcrire/docs/<id>                                     # à suivre
+      → state « done » ; notes.resume = {"state": "done", "data": {"text", "refs"}} ;
+        notes.points = {"state": "done", "data": {"points", "decisions", "actions"}}
+    GET  /api/transcrire/docs/<id>/export?format=md                    # le compte rendu, noms des voix posés
+    POST /api/transcrire/docs/<id>/notes {"kinds": [...]} | {"question": "…"}   # plus tard, à la demande
+
+Le document naît dans le Workspace du son (library.stamp) ; chaque étape passe
+par jobs.submit (la garde du calcul, son coût déclaré).
+
+Travaux : `transcrire.transcribe` (puis `transcrire.translate` si une langue est
+demandée, et `transcrire.notes` si un carnet l'est), `transcrire.translate`,
+`transcrire.notes`.
 """
 
 from __future__ import annotations
@@ -112,11 +157,17 @@ MT = {
 # mots ; les noms des modèles ne sont que dans les paramètres avancés.
 # `asr` : dans l'ordre, le premier installé qui connaît la langue demandée.
 MODES = {
-    "rapide": {"label": "Rapide", "about": "le texte en quelques secondes",
-               "asr": ("parakeet-v3", "whisper-turbo"), "beam": 1, "speakers": False, "mt": "qwen3:30b-a3b"},
-    "precis": {"label": "Précis", "about": "les voix séparées, la traduction relue dans son contexte",
-               "asr": ("whisper-turbo",), "beam": 5, "speakers": True, "mt": "mistral-small3.2:24b"},
+    "rapide": {"label": "Rapide", "about": "le texte horodaté, le plus vite possible — pour beaucoup de sons",
+               "asr": ("parakeet-v3", "whisper-turbo"), "beam": 1, "speakers": False, "words": False, "mt": "qwen3:30b-a3b"},
+    "complet": {"label": "Complet", "about": "les voix séparées, chaque mot à son instant, la frise des voix",
+                "asr": ("whisper-turbo",), "beam": 5, "speakers": True, "words": True, "mt": "mistral-small3.2:24b"},
 }
+ALIAS = {"precis": "complet"}   # l'ancien nom (documents et pages d'avant le 30/09)
+
+
+def mode_of(m: str | None) -> str:
+    m = ALIAS.get(m or "", m or "rapide")
+    return m if m in MODES else "rapide"
 CPL = (32, 37, 42)          # caractères par ligne : 42 est l'usage courant des chartes ; 37, 32 plus serrés
 MAX_S = (5.0, 7.0, 10.0)    # durée maximale d'un sous-titre
 LINES = 2
@@ -252,6 +303,21 @@ def _stale(seg: dict, lang: str) -> bool:
     return lang not in (seg.get("tr") or {}) or (seg.get("trh") or {}).get(lang) != _h(seg.get("text", ""))
 
 
+def text_hash(d: dict) -> str:
+    """Le texte d'un document tel que le carnet l'a lu : les répliques et leurs
+    voix (leurs étiquettes, pas leurs noms — renommer une voix ne rend pas un
+    résumé périmé : il ne porte que des étiquettes)."""
+    return _h("\n".join(f"{s['id']}|{s.get('spk') or ''}|{s.get('text') or ''}" for s in d.get("segments") or []))
+
+
+def _voix_path(tid: str) -> Path:
+    """Le spectre des voix d'un document « complet » : les probabilités de parole
+    par voix et par trame (Nemotron, ou le factice), à côté du document — lourd
+    (1 h au pas de 10 ms : 360 000 × 8 octets), il ne voyage pas avec chaque
+    correction."""
+    return _path(tid).with_suffix(".voix.json")
+
+
 ACTIVE = ("queued", "running")
 
 
@@ -287,13 +353,21 @@ def public(d: dict) -> dict:
     out["stale_ids"] = {k: [s["id"] for s in d.get("segments", []) if _stale(s, k)] for k in (d.get("translations") or {})}
     out["stale"] = {k: len(v) for k, v in out["stale_ids"].items()}
     out["owner_name"] = auth.display_name(auth.owner_of(d))
+    out["mode"] = mode_of(d.get("mode"))
+    out["voix"] = _voix_path(d["id"]).is_file()      # le spectre des voix (complet) : …/voix
+    h = text_hash(d)
+    out["notes"] = {k: {**_settled(v), "live": _live(v.get("job")), "stale": bool(v.get("h")) and v.get("h") != h}
+                    for k, v in (d.get("notes") or {}).items()}
+    out["qa"] = [{**_settled(q), "live": _live(q.get("job")), "stale": bool(q.get("h")) and q.get("h") != h}
+                 for q in d.get("qa") or []]
     return out
 
 
 def summary(d: dict) -> dict:
     d = _settled(d)
-    return {k: d.get(k) for k in ("id", "title", "item", "created", "updated", "state", "mode", "lang", "detected",
+    return {k: d.get(k) for k in ("id", "title", "item", "created", "updated", "state", "lang", "detected",
                                   "duration", "kind", "thumb_url", "engine")} | {
+        "mode": mode_of(d.get("mode")), "notes": sorted(k for k, v in (d.get("notes") or {}).items() if v.get("state") == "done"),
         "to": sorted((d.get("translations") or {}).keys()), "segments": len(d.get("segments") or []),
         "voices": len(d.get("speakers") or []), "live": _live(d.get("job"))}
 
@@ -467,7 +541,8 @@ def speech_regions(path: Path, duration: float) -> list[tuple[float, float]]:
     return [(a, b) for a, b in out if b - a >= 0.5]
 
 
-def fake_transcribe(path: Path, duration: float, lang: str, speakers: bool, seed: str) -> tuple[list[dict], list[dict]]:
+def fake_transcribe(path: Path, duration: float, lang: str, speakers: bool, seed: str,
+                    words: bool = True) -> tuple[list[dict], list[dict]]:
     rnd = random.Random(seed)
     order = list(range(len(BANK["fr"])))
     rnd.shuffle(order)
@@ -487,12 +562,49 @@ def fake_transcribe(path: Path, duration: float, lang: str, speakers: bool, seed
         if speakers and k and (a - chunks[k - 1][1] > 0.3 or rnd.random() < 0.35):
             spk = f"S{rnd.choice([n for n in range(1, 4) if f'S{n}' != spk])}"
         pad = min(0.12, (b - a) * 0.05)
-        words = [[w, round(x, 3), round(y, 3)] for w, x, y in spread(text, a + pad, b - pad)]
+        ws = [[w, round(x, 3), round(y, 3)] for w, x, y in spread(text, a + pad, b - pad)] if words else []
         segs.append({"id": f"s{k + 1:04d}", "a": round(a, 3), "b": round(b, 3), "text": text, "k": idx,
-                     "spk": spk if speakers else None, "words": words})
+                     "spk": spk if speakers else None, "words": ws})
         if speakers and spk not in voices:
             voices.append(spk)
     return segs, [{"id": v, "name": f"Voix {v[1:]}"} for v in sorted(voices)]
+
+
+FAKE_PAS = 0.04   # le pas des trames du spectre factice (Nemotron rend 10 ms : trame_s de son résultat)
+
+
+def fake_probas(segs: list[dict], duration: float, seed: str) -> dict:
+    """Le spectre des voix du factice, au format du service Nemotron
+    (`probas` : pas_s, n, voix, q = octets 0-255 en base64, trame × voix) : haut
+    sous les répliques de la voix (rampes de 120 ms), un fond bas et bruité
+    ailleurs, un peu de diaphonie aux bords — de quoi dessiner et essayer la
+    frise sans modèle. Le document le dit (`engine.diar` = factice)."""
+    import base64
+    rnd = random.Random(seed)
+    n = max(1, int(duration / FAKE_PAS + 0.999))
+    nv = max([int(s["spk"][1:]) for s in segs if s.get("spk")] or [1])
+    q = bytearray(n * nv)
+    ramp = 0.12
+    for i in range(n):
+        for v in range(nv):
+            q[i * nv + v] = int(255 * min(1.0, max(0.0, 0.03 + 0.04 * rnd.random())))
+    for s in segs:
+        if not s.get("spk"):
+            continue
+        v = int(s["spk"][1:]) - 1
+        a, b = float(s["a"]), float(s["b"])
+        lvl = 0.78 + 0.18 * rnd.random()
+        for i in range(max(0, int((a - ramp) / FAKE_PAS)), min(n, int((b + ramp) / FAKE_PAS) + 1)):
+            t = i * FAKE_PAS
+            edge = min(1.0, max(0.0, (t - (a - ramp)) / ramp), max(0.0, ((b + ramp) - t) / ramp))
+            wob = 0.08 * (rnd.random() - 0.5)
+            p = max(q[i * nv + v] / 255, min(1.0, lvl * edge + wob))
+            q[i * nv + v] = int(round(255 * p))
+            if edge < 1 and nv > 1:   # la diaphonie aux bords : la voix voisine frémit
+                u = (v + 1) % nv
+                q[i * nv + u] = max(q[i * nv + u], int(255 * 0.22 * (1 - edge)))
+    return {"pas_s": FAKE_PAS, "n": n, "voix": nv, "regroupement": 1, "q": base64.b64encode(bytes(q)).decode(),
+            "source": "factice"}
 
 
 def fake_translate(seg: dict, src: str, dst: str) -> str:
@@ -622,14 +734,17 @@ def extract_wav(src: Path, dest: Path) -> None:
         raise RuntimeError("ffmpeg n'a pas extrait le son : " + (r.stderr or "")[-400:])
 
 
-def run_worker(ctx, aid: str, wav: Path, lang: str, beam: int, duration: float) -> dict:
-    """Le sous-processus du moteur de texte ; arrêté si Cal arrête le travail."""
+def run_worker(ctx, aid: str, wav: Path, lang: str, beam: int, duration: float, words: bool = True) -> dict:
+    """Le sous-processus du moteur de texte ; arrêté si Cal arrête le travail.
+    `words` : les temps au mot (Whisper : `word_timestamps`) — le mode rapide
+    s'en passe."""
     st = asr_state(aid)
     if st["missing"]:
         raise RuntimeError(f"{ASR[aid]['name']} : {'; '.join(st['missing'])}")
     out = ctx.workdir / "asr.json"
     cmd = [st["python"], str(WORKER), "--engine", aid, "--weights", st["weights"], "--audio", str(wav),
-           "--lang", lang, "--beam", str(beam), "--out", str(out), "--duration", str(duration)]
+           "--lang", lang, "--beam", str(beam), "--out", str(out), "--duration", str(duration),
+           "--words", "1" if words else "0"]
     log = ctx.workdir / "moteur.log"
     lines: queue.Queue = queue.Queue()
     with open(log, "wb") as lf:
@@ -666,8 +781,10 @@ def run_worker(ctx, aid: str, wav: Path, lang: str, beam: int, duration: float) 
     return json.loads(out.read_text(encoding="utf-8"))
 
 
-def diarize(ctx, wav: Path) -> list[list]:
-    """Le service Nemotron de DGX1 : diarisation seule. Rend [[début, fin, voix]…]."""
+def diarize(ctx, wav: Path) -> dict:
+    """Le service Nemotron de DGX1 : diarisation seule. Rend son résultat :
+    `segments_nemo` [[début, fin, voix]…] et `probas` (le spectre : pas_s, n,
+    voix, q — analyse/chaine/diarisation-serveur.py, `quantifie`)."""
     q = urllib.parse.urlencode({"nom": f"transcrire-{ctx.job['id']}.wav"})
     req = urllib.request.Request(diar_url() + "/analyse?" + q, data=wav.read_bytes(), method="POST",
                                  headers={"Content-Type": "application/octet-stream"})
@@ -683,7 +800,7 @@ def diarize(ctx, wav: Path) -> list[list]:
             raise Cancelled("arrêté")
         st = _get_json(diar_url() + "/travail/" + jid, timeout=90)
         if st.get("resultat"):
-            return st["resultat"].get("segments_nemo") or []
+            return st["resultat"]
         if st.get("erreur") or st.get("etat") in ("erreur", "annulé"):
             raise RuntimeError(f"diarisation : {st.get('erreur') or st.get('etat')}")
         ctx.progress(None, f"voix : {st.get('etat', '…')}" + (f" {int(100 * st['progression'])} %" if st.get("progression") else ""))
@@ -767,6 +884,374 @@ def ollama_translate(model: str, msgs: list[dict], batch: list[tuple[int, str]],
     return out
 
 
+# ── le carnet (à la NotebookLM) ─────────────────────────────
+# Cal, 30/09 : « quelques fonctions utiles comme NotebookLM une fois qu'on a le
+# transcript, ça servira pas mal pour des réunions enregistrées ». Tout vient
+# du texte seul ; chaque élément cite ses répliques ; les voix sont des
+# étiquettes [S1]… (le nom du moment les remplace à l'affichage et à l'export).
+CARNET = {
+    "resume": {"label": "Résumé", "about": "l’essentiel en quelques phrases"},
+    "points": {"label": "Points clés", "about": "points clés, décisions, actions — une réunion"},
+    "chapitres": {"label": "Chapitres", "about": "les parties, chacune à son instant"},
+}
+CARNET_MODELS = {   # la fenêtre de contexte documentée ; un autre modèle : 8192, prudent (non documenté ici)
+    "qwen3:30b-a3b": {"name": "Qwen3 30B-A3B", "ctx": 32768, "mem_gb": 24, "license": "Apache-2.0",
+                      "src": "https://huggingface.co/Qwen/Qwen3-30B-A3B (« 32,768 natively »)"},
+}
+CARNET_OUT = 4096      # jetons de réponse au plus (num_predict) : un résumé, 8 points, 10 chapitres y tiennent
+CARNET_CHUNK = 20000   # signes de transcription par appel (borne : un jeton par signe, cf. mt_context)
+QA_MAX, Q_MAX = 40, 500
+TAG_RX = re.compile(r"\[(S\d{1,2})\]")
+
+
+def carnet_model() -> str:
+    return str(config.get("transcrire_carnet_modele") or "qwen3:30b-a3b")
+
+
+def carnet_ctx_max(model: str) -> int:
+    return (CARNET_MODELS.get(model) or {}).get("ctx", 8192)
+
+
+def carnet_state() -> tuple[str, str]:
+    """Le modèle du carnet et ce qui manque (rien en factice)."""
+    model = carnet_model()
+    if engine() == "factice":
+        return "factice", ""
+    o = services()["ollama"]
+    if not o["up"]:
+        return model, o.get("why", "Ollama ne répond pas")
+    if model not in o["models"]:
+        return model, f"le modèle {model} n'est pas dans Ollama ({ollama_url()}) — transcrire_carnet_modele"
+    return model, ""
+
+
+def carnet_lines(d: dict) -> list[dict]:
+    """Les répliques numérotées comme le modèle les lit : [n] temps [S1] texte."""
+    out = []
+    for n, s in enumerate(sorted(d.get("segments") or [], key=lambda s: float(s["a"]))):
+        t = str(s.get("text") or "").strip()
+        if t:
+            out.append({"n": n, "id": s["id"], "a": float(s["a"]), "spk": s.get("spk"), "text": t,
+                        "line": f"[{n}] {_clock(float(s['a']))} " + (f"[{s['spk']}] " if s.get("spk") else "") + t})
+    return out
+
+
+def carnet_chunks(lines: list[dict], limit: int = CARNET_CHUNK) -> list[list[dict]]:
+    """Des morceaux consécutifs d'au plus `limit` signes (une réplique n'est jamais coupée)."""
+    out, cur, size = [], [], 0
+    for x in lines:
+        k = len(x["line"]) + 1
+        if cur and size + k > limit:
+            out.append(cur)
+            cur, size = [], 0
+        cur.append(x)
+        size += k
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _refs(nums: list[int]) -> dict:
+    """Des numéros de répliques contraints par le schéma : le modèle ne peut citer
+    qu'une réplique qu'on lui a donnée (Ollama : `format` = un schéma JSON)."""
+    return {"type": "array", "items": {"type": "integer", "enum": sorted(set(nums))}}
+
+
+def carnet_schema(kind: str, nums: list[int], tags: list[str]) -> dict:
+    item = {"type": "object", "properties": {"text": {"type": "string"}, "refs": _refs(nums)}, "required": ["text", "refs"]}
+    if kind == "resume":
+        props = {"text": {"type": "string"}, "refs": _refs(nums)}
+    elif kind == "points":
+        act = {"type": "object", "properties": {"text": {"type": "string"}, "who": {"type": "string"}, "refs": _refs(nums)},
+               "required": ["text", "who", "refs"]}
+        # au moins un point clé, par le schéma (minItems : la grammaire d'Ollama le tient — essai du 30/09 : sans
+        # lui, qwen3:30b-a3b rendait trois listes vides sur Getaround)
+        props = {"points": {"type": "array", "items": item, "minItems": 1, "maxItems": 8},
+                 "decisions": {"type": "array", "items": item, "maxItems": 8}, "actions": {"type": "array", "items": act, "maxItems": 8}}
+    elif kind == "chapitres":
+        props = {"chapitres": {"type": "array", "minItems": 1, "maxItems": 10, "items": {"type": "object", "properties": {
+            "line": {"type": "integer", "enum": sorted(set(nums))}, "title": {"type": "string"}, "text": {"type": "string"}},
+            "required": ["line", "title", "text"]}}}
+    else:   # qa
+        props = {"found": {"type": "boolean"}, "text": {"type": "string"}, "refs": _refs(nums)}
+    return {"type": "object", "properties": props, "required": list(props)}
+
+
+CARNET_TASK = {
+    "resume": "Summarise the transcript in 3 to 6 sentences: the subject, what was said, what was decided. "
+              "In \"refs\", the numbers of the lines that support the summary (at most 12); never write line numbers "
+              "in the text itself.",
+    "points": "List the key points: 3 to 8 short sentences on what matters in the transcript (always at least one). "
+              "Then the decisions that were explicitly taken, and the action items (what must be done and, in \"who\", "
+              "by whom — a speaker tag like [S1] or a name said in the transcript, or an empty string). A decision or "
+              "an action must be said in the transcript, not inferred: empty lists when there are none. Each item "
+              "cites its lines in \"refs\".",
+    "chapitres": "Split the transcript into chapters following the changes of subject: at most one chapter per five "
+                 "lines, at most 10, a single one if the transcript is short. For each: \"line\", the number of the "
+                 "line where it starts; a short title (at most 8 words); \"text\", one sentence that sums up the chapter "
+                 "(not a copy of a line).",
+    "qa": "Answer the question using only the transcript. \"found\" is true when the transcript contains the answer, "
+          "even partly; false only when it says nothing about it — then say so in one sentence. Cite the supporting "
+          "lines in \"refs\"; never write line numbers in the text itself.",
+}
+CARNET_REDUCE = ("Here are the summaries of consecutive parts of one transcript, each with the lines it cites. "
+                 "Merge them into a single summary of 3 to 6 sentences; in \"refs\", keep at most 12 of the cited lines.")
+
+
+def carnet_messages(kind: str, lang: str, body: str, question: str = "") -> list[dict]:
+    sys_msg = ("You work only from the transcript you are given, never from outside knowledge. Each line reads "
+               "\"[n] time [S1] text\": n is the line number, [S1], [S2]… are speaker tags. Refer to speakers only by "
+               f"their tag, exactly as written (e.g. [S2]), never invent names for them. Write in {LANG_EN.get(lang, 'the language of the transcript')}. "
+               "Answer only with the JSON asked for.")
+    user = CARNET_TASK[kind] + ("\n\nQuestion: " + question if question else "") + "\n\nTranscript:\n" + body
+    return [{"role": "system", "content": sys_msg}, {"role": "user", "content": user}]
+
+
+def carnet_ctx(max_chars: int, model: str) -> int:
+    """La fenêtre d'un travail du carnet, la même pour tous ses appels (Ollama
+    recharge le modèle quand `num_ctx` change) : un jeton par signe à l'entrée
+    (borne haute, cf. mt_context), la réponse (CARNET_OUT), arrondi aux 4096 du
+    dessus ; jamais au-delà de ce que le modèle documente."""
+    need = max_chars + CARNET_OUT + 512
+    return min(carnet_ctx_max(model), max(CTX_STEP, -(-need // CTX_STEP) * CTX_STEP))
+
+
+def ollama_json(model: str, msgs: list[dict], schema: dict, num_ctx: int, last: bool, thinks: bool) -> dict:
+    """Un appel d'Ollama qui rend un objet conforme au schéma (`format`), la pensée
+    coupée (`think: false`), déchargé au dernier (`keep_alive: 0`) —
+    docs.ollama.com/api/chat. Coupé par la fenêtre : échoue en le disant."""
+    body = {"model": model, "stream": False, "format": schema, "messages": msgs, "keep_alive": 0 if last else "2m",
+            "options": {"temperature": 0.2, "num_ctx": num_ctx, "num_predict": CARNET_OUT}}
+    if thinks:
+        body["think"] = False
+    r = _get_json(ollama_url() + "/api/chat", timeout=900, body=body)
+    if r.get("done_reason") == "length":
+        raise RuntimeError(f"carnet : la réponse dépasse {CARNET_OUT} jetons ou la fenêtre de {num_ctx} (rien n'est rangé)")
+    out = json.loads((r.get("message") or {}).get("content") or "{}")
+    if not isinstance(out, dict):
+        raise RuntimeError("carnet : le modèle n'a pas rendu un objet JSON")
+    out["_usage"] = {"in": r.get("prompt_eval_count"), "out": r.get("eval_count")}
+    return out
+
+
+def qa_pick(lines: list[dict], question: str, limit: int = CARNET_CHUNK) -> list[dict]:
+    """Les répliques données au modèle pour une question : tout le texte s'il
+    tient ; sinon les répliques qui partagent le plus de mots (≥ 4 lettres) avec
+    la question, chacune avec ses trois voisines de part et d'autre, dans l'ordre
+    du texte, jusqu'à la borne. (Aucun index vectoriel : la bibliothèque standard.)"""
+    if sum(len(x["line"]) + 1 for x in lines) <= limit:
+        return lines
+    words = {w for w in re.findall(r"\w{4,}", question.lower())}
+    score = [(len(words & set(re.findall(r"\w{4,}", x["text"].lower()))), -k) for k, x in enumerate(lines)]
+    keep, size = set(), 0
+    for sc, mk in sorted(score, reverse=True):
+        if sc == 0 and keep:
+            break
+        for k in range(max(0, -mk - 3), min(len(lines), -mk + 4)):
+            if k not in keep and size + len(lines[k]["line"]) + 1 <= limit:
+                keep.add(k)
+                size += len(lines[k]["line"]) + 1
+        if size >= limit * 0.9:
+            break
+    return [lines[k] for k in sorted(keep)]
+
+
+def carnet_limit(model: str, question: str = "") -> int:
+    """La borne d'un morceau, tirée de la fenêtre du modèle : la consigne, la
+    question et la réponse y tiennent."""
+    return max(1000, min(CARNET_CHUNK, carnet_ctx_max(model) - CARNET_OUT - 2600 - len(question)))
+
+
+def carnet_job_ctx(lines: list[dict], question: str, model: str) -> int:
+    """La fenêtre d'un travail du carnet : son plus gros morceau possible."""
+    total = sum(len(x["line"]) + 1 for x in lines)
+    return carnet_ctx(min(total, carnet_limit(model, question)) + len(question) + 2000, model)
+
+
+def carnet_llm(kind: str, lines: list[dict], lang: str, question: str, model: str, progress=lambda f, m: None,
+               cancelled=lambda: False, unload: bool = True, num_ctx: int | None = None) -> dict:
+    """Un élément du carnet par le modèle local : un appel si le texte tient,
+    sinon un appel par morceau puis, pour le résumé, un appel qui les fond ;
+    les points et les chapitres des morceaux se suivent tels quels. `unload` :
+    décharger au dernier appel (le dernier élément d'un travail) — entre deux
+    éléments, le modèle reste chargé (mesuré le 30/09 : 3 à 4,6 s de chargement
+    par appel sinon). `num_ctx` : la fenêtre du travail entier (Ollama recharge
+    le modèle quand elle change)."""
+    tags = sorted({x["spk"] for x in lines if x.get("spk")})
+    limit = carnet_limit(model, question)
+    parts = [qa_pick(lines, question, limit)] if kind == "qa" else carnet_chunks(lines, limit)
+    calls = len(parts) + (1 if kind == "resume" and len(parts) > 1 else 0)
+    num_ctx = num_ctx or carnet_job_ctx(lines, question, model)
+    thinks = _thinks(model)
+    got, k = [], 0
+    try:
+        for p in parts:
+            if cancelled():
+                raise Cancelled("arrêté")
+            progress(0.05 + 0.85 * k / calls, f"{(CARNET.get(kind) or {}).get('label', 'Question')} : {k + 1}/{calls}")
+            nums = [x["n"] for x in p]
+            got.append(ollama_json(model, carnet_messages(kind, lang, "\n".join(x["line"] for x in p), question),
+                                   carnet_schema(kind, nums, tags), num_ctx, last=unload and (k + 1 == calls), thinks=thinks))
+            k += 1
+        if kind == "resume" and len(got) > 1:
+            progress(0.9, "Résumé : la synthèse des morceaux")
+            nums = sorted({n for g in got for n in g.get("refs") or []})
+            body = "\n\n".join(f"Part {i + 1}: {g.get('text', '')} (lines {g.get('refs')})" for i, g in enumerate(got))
+            msgs = carnet_messages("resume", lang, body)
+            msgs[1]["content"] = CARNET_REDUCE + "\n\n" + body
+            got = [ollama_json(model, msgs, carnet_schema("resume", nums or [x["n"] for x in lines[:1]], tags),
+                               num_ctx, last=unload, thinks=thinks)]
+    except Exception:
+        try:   # arrêt ou échec : le modèle ne reste pas chargé pour rien
+            _get_json(ollama_url() + "/api/generate", timeout=30, body={"model": model, "keep_alive": 0})
+        except (OSError, ValueError):
+            pass
+        raise
+    if kind == "resume":
+        return {"text": got[0].get("text", ""), "refs": got[0].get("refs") or [], "calls": calls}
+    if kind == "qa":
+        return {"text": got[0].get("text", ""), "refs": got[0].get("refs") or [], "found": bool(got[0].get("found")), "calls": calls}
+    if kind == "points":
+        out = {"points": [], "decisions": [], "actions": [], "calls": calls}
+        for g in got:
+            for key in ("points", "decisions", "actions"):
+                for it in g.get(key) or []:
+                    if isinstance(it, dict) and str(it.get("text") or "").strip() and \
+                            all(str(it["text"]).strip() != x["text"] for x in out[key]):
+                        out[key].append({"text": str(it["text"]).strip(), "refs": it.get("refs") or [],
+                                         **({"who": str(it.get("who") or "").strip()} if key == "actions" else {})})
+        return out
+    return {"chapitres": [c for g in got for c in g.get("chapitres") or [] if isinstance(c, dict)], "calls": calls}
+
+
+# le factice : des extraits du texte, sans modèle — la même forme que le vrai
+_ACT_RX = re.compile(r"\b(il faut|faut qu|on se retrouve|on range|need to|we'll|let's|tenemos que|wir müssen|dobbiamo)\b", re.I)
+_DEC_RX = re.compile(r"\b(on la garde|on garde|dernière prise|we'll keep|last take|décid|decid|parfait|perfect)\b", re.I)
+
+
+def fake_carnet(kind: str, lines: list[dict], question: str = "") -> dict:
+    if not lines:
+        return {"text": "", "refs": [], "found": False} if kind in ("resume", "qa") else \
+            {"points": [], "decisions": [], "actions": []} if kind == "points" else {"chapitres": []}
+    if kind == "resume":
+        top = sorted(sorted(lines, key=lambda x: -len(x["text"]))[:3], key=lambda x: x["n"])
+        return {"text": "Factice · " + " ".join(x["text"] for x in top), "refs": [x["n"] for x in top]}
+    if kind == "points":
+        step = max(1, len(lines) // 5)
+        tag = lambda x: f"[{x['spk']}]" if x.get("spk") else ""   # noqa: E731
+        return {"points": [{"text": x["text"], "refs": [x["n"]]} for x in lines[::step][:5]],
+                "decisions": [{"text": x["text"], "refs": [x["n"]]} for x in lines if _DEC_RX.search(x["text"])][:5],
+                "actions": [{"text": x["text"], "who": tag(x), "refs": [x["n"]]} for x in lines if _ACT_RX.search(x["text"])][:5]}
+    if kind == "chapitres":
+        k = max(1, min(6, len(lines) // 4))
+        step = -(-len(lines) // k)
+        return {"chapitres": [{"line": lines[i]["n"], "title": " ".join(lines[i]["text"].split()[:6]),
+                               "text": lines[i]["text"]} for i in range(0, len(lines), step)]}
+    words = {w for w in re.findall(r"\w{4,}", question.lower())}
+    best = sorted(((len(words & set(re.findall(r"\w{4,}", x["text"].lower()))), x) for x in lines), key=lambda s: -s[0])
+    hits = [x for sc, x in best[:3] if sc > 0]
+    if not hits:
+        return {"found": False, "text": "Factice · le texte ne dit rien de proche de la question.", "refs": []}
+    hits.sort(key=lambda x: x["n"])
+    return {"found": True, "text": "Factice · " + " ".join(f"« {x['text']} »" for x in hits), "refs": [x["n"] for x in hits]}
+
+
+def carnet_store(kind: str, raw: dict, lines: list[dict]) -> dict:
+    """Ce que le document garde : les numéros deviennent des identifiants de
+    répliques (stables quand on corrige un texte), les chapitres prennent le temps
+    de leur réplique, triés ; un numéro inconnu (le schéma l'interdit déjà) tombe."""
+    by = {x["n"]: x for x in lines}
+    ids = lambda ns: [by[n]["id"] for n in dict.fromkeys(ns or []) if isinstance(n, int) and n in by]   # noqa: E731
+    if kind in ("resume", "qa"):
+        out = {"text": str(raw.get("text") or "").strip(), "refs": ids(raw.get("refs"))}
+        if kind == "qa":
+            out["found"] = bool(raw.get("found"))
+        return out
+    if kind == "points":
+        return {key: [{"text": it["text"], "refs": ids(it.get("refs")), **({"who": it.get("who", "")} if key == "actions" else {})}
+                      for it in raw.get(key) or []] for key in ("points", "decisions", "actions")}
+    chs, seen = [], set()
+    for c in sorted(raw.get("chapitres") or [], key=lambda c: c.get("line") if isinstance(c.get("line"), int) else 1 << 30):
+        n = c.get("line")
+        if isinstance(n, int) and n in by and n not in seen:
+            seen.add(n)
+            chs.append({"id": by[n]["id"], "a": round(by[n]["a"], 3), "title": str(c.get("title") or "").strip(),
+                        "text": str(c.get("text") or "").strip()})
+    return {"chapitres": chs}
+
+
+def run_notes(ctx) -> dict:
+    """Le carnet : les éléments demandés (`kinds`), ou une question (`qid`)."""
+    p = ctx.params
+    tid = p["doc"]
+    t0 = time.time()
+    kinds, qid = list(p.get("kinds") or []), p.get("qid")
+
+    def mark(state, **kw):
+        def f(d):
+            if qid:
+                for q in d.get("qa") or []:
+                    if q["id"] == qid:
+                        q.update(state=state, **kw)
+            else:
+                for k in kinds:
+                    d.setdefault("notes", {}).setdefault(k, {}).update(state=state, **kw)
+        _update(tid, f)
+
+    mark("running", job=ctx.job["id"], error=None)
+    try:
+        with _lock:
+            d = _load(tid)
+        if not d:
+            raise RuntimeError("la transcription a été supprimée")
+        lines, h = carnet_lines(d), text_hash(d)
+        lang = d.get("detected") or (d.get("lang") if d.get("lang") != "auto" else "fr")
+        question = ""
+        if qid:
+            question = next((q["q"] for q in d.get("qa") or [] if q["id"] == qid), "")
+            if not question:
+                raise RuntimeError("la question a été retirée")
+        model = "factice" if engine() == "factice" else carnet_model()
+        done = {}
+        todo = ["qa"] if qid else kinds
+        job_ctx = carnet_job_ctx(lines, question, model) if model != "factice" else 0
+        for i, kind in enumerate(todo):
+            if ctx.cancelled():
+                raise Cancelled("arrêté")
+            ctx.progress(0.05 + 0.9 * i / max(1, len(kinds) or 1), f"{(CARNET.get(kind) or {}).get('label', 'Question')}")
+            if model == "factice":
+                raw = fake_carnet(kind, lines, question)
+                time.sleep(0.1)
+            else:
+                raw = carnet_llm(kind, lines, lang, question, model, progress=ctx.progress, cancelled=ctx.cancelled,
+                                 unload=(i + 1 == len(todo)), num_ctx=job_ctx)
+            done[kind] = carnet_store(kind, raw, lines)
+        secs = round(time.time() - t0, 1)
+
+        def put(x):
+            if qid:
+                for q in x.get("qa") or []:
+                    if q["id"] == qid:
+                        q.update(state="done", error=None, at=library.now(), model=model, seconds=secs, h=h, **done["qa"])
+            else:
+                for k in kinds:
+                    x.setdefault("notes", {})[k] = {"state": "done", "job": ctx.job["id"], "data": done[k], "model": model,
+                                                    "seconds": secs, "at": library.now(), "h": h}
+        _update(tid, put)
+        return {"note": ("question" if qid else " · ".join(CARNET[k]["label"] for k in kinds)) + f" · {secs} s", "doc": tid}
+    except Exception as e:
+        mark("error", error=str(e)[:400])
+        raise
+
+
+def submit_notes(d: dict, kinds: list[str], qid: str | None = None, owner=None) -> dict:
+    who = {"owner": owner} if owner else {}
+    label = "Question" if qid else " · ".join(CARNET[k]["label"] for k in kinds)
+    return jobs.submit("transcrire.notes", {"doc": d["id"], "kinds": kinds, "qid": qid},
+                       title=f"Carnet · {label} · {d.get('title', '')[:40]}", tool="transcrire", thumb=d.get("thumb_url"),
+                       pin=pin_for(ollama_url()), **who)
+
+
 # ── les travaux ─────────────────────────────────────────────
 def run_transcribe(ctx) -> dict:
     p = ctx.params
@@ -780,22 +1265,26 @@ def run_transcribe(ctx) -> dict:
         src = library.path_of(it)
         dur = float(it.get("duration") or 0)
         lang = p["lang"]
+        words = p.get("words", True)
+        probas = None
         if engine() == "factice":
             ctx.progress(0.1, "cherche les passages parlés (factice)")
             detected = lang if lang != "auto" else "fr"
-            segs, voices = fake_transcribe(src, dur, detected, p["speakers"], p["item"] + p["mode"])
+            segs, voices = fake_transcribe(src, dur, detected, p["speakers"], p["item"] + p["mode"], words=words)
+            if p["speakers"]:
+                probas = fake_probas(segs, dur, p["item"])
             for k in range(6):   # le temps d'un vrai calcul, pour voir la page attendre
                 if ctx.cancelled():
                     raise Cancelled("arrêté")
                 ctx.progress(0.2 + 0.12 * k, f"transcrit (factice) {int(100 * (k + 1) / 6)} %")
                 time.sleep(0.15)
-            used = {"asr": "factice", "diar": "factice" if p["speakers"] else None}
+            used = {"asr": "factice", "diar": "factice" if p["speakers"] else None, "words": words}
         else:
             wav = ctx.workdir / "audio.wav"
             ctx.progress(0.03, "extrait le son (16 kHz mono)")
             extract_wav(src, wav)
             ctx.progress(0.08, f"{ASR[p['asr']]['name']} : chargement")
-            res = run_worker(ctx, p["asr"], wav, lang, p["beam"], dur)
+            res = run_worker(ctx, p["asr"], wav, lang, p["beam"], dur, words=words)
             detected = res.get("lang") or (lang if lang != "auto" else None)
             segs = []
             for k, s in enumerate(res.get("segments") or []):
@@ -804,26 +1293,41 @@ def run_transcribe(ctx) -> dict:
                     continue
                 segs.append({"id": f"s{k + 1:04d}", "a": round(float(s["a"]), 3), "b": round(float(s["b"]), 3), "text": txt,
                              "spk": None, "words": [[str(w).strip(), round(float(x), 3), round(float(y), 3)]
-                                                    for w, x, y in s.get("words") or [] if str(w).strip()]})
+                                                    for w, x, y in (s.get("words") or [] if words else []) if str(w).strip()]})
             voices = []
             if p["speakers"] and segs:
                 ctx.progress(0.8, "voix : envoi au service de diarisation (DGX1)")
-                voices = assign_speakers(segs, diarize(ctx, wav))
-            used = {"asr": p["asr"], "diar": "nemotron" if p["speakers"] else None, "asr_s": res.get("calcul_s")}
+                dz = diarize(ctx, wav)
+                voices = assign_speakers(segs, dz.get("segments_nemo") or [])
+                if isinstance(dz.get("probas"), dict) and dz["probas"].get("q"):
+                    probas = {k: dz["probas"][k] for k in ("pas_s", "n", "voix", "regroupement", "q") if k in dz["probas"]}
+                    probas["source"] = "nemotron"
+            used = {"asr": p["asr"], "diar": "nemotron" if p["speakers"] else None, "asr_s": res.get("calcul_s"), "words": words}
         secs = round(time.time() - t0, 1)
+        if probas:   # le spectre à côté du document, avant que le document ne se dise fini
+            f = _voix_path(tid)
+            f.with_suffix(".tmp").write_text(json.dumps(probas), encoding="utf-8")
+            f.with_suffix(".tmp").replace(f)
+        notes = [k for k in p.get("notes") or [] if k in CARNET]
 
         def done(d):
             d.update(state="done", segments=segs, speakers=voices, detected=detected, error=None,
                      engine={**used, "mode": p["mode"], "backend": engine(), "seconds": secs})
             if p.get("to") and p["to"] != detected:
                 d.setdefault("translations", {})[p["to"]] = {"state": "queued"}
+            if notes and segs:
+                for k in notes:
+                    d.setdefault("notes", {})[k] = {"state": "queued"}
         d = _update(tid, done)
+        who = {"owner": ctx.job["owner"]} if ctx.job.get("owner") else {}   # la suite est à qui a transcrit
         if p.get("to") and p["to"] != detected and segs:
-            who = {"owner": ctx.job["owner"]} if ctx.job.get("owner") else {}   # la traduction est à qui a transcrit
             j = jobs.submit("transcrire.translate", {"doc": tid, "to": p["to"], "mode": p["mode"], "all": False},
                             title=f"Traduire · {LANGS[p['to']]} · {d.get('title', '')[:40]}", tool="transcrire",
                             thumb=ctx.job.get("thumb"), pin=pin_for(ollama_url()), **who)
             _update(tid, lambda x: x["translations"][p["to"]].update(job=j["id"]))
+        if notes and segs:   # « transcrire ce son, puis résumer » (l'accroche de l'Idéation)
+            j = submit_notes(d, notes, owner=who.get("owner"))
+            _update(tid, lambda x: [x["notes"][k].update(job=j["id"]) for k in notes])
         return {"note": f"{len(segs)} répliques · {secs} s", "doc": tid, "seconds": secs}
     except Exception as e:
         _update(tid, lambda d: d.update(state="error", error=str(e)[:400]))
@@ -850,7 +1354,7 @@ def run_translate(ctx) -> dict:
                     time.sleep(0.05)
             model = "factice"
         else:
-            model = MODES[p["mode"]]["mt"]
+            model = MODES[mode_of(p.get("mode"))]["mt"]
             ctxn = MT[model]["context"]
             thinks = _thinks(model)
             order = {s["id"]: k for k, s in enumerate(d["segments"])}
@@ -920,11 +1424,18 @@ def check(d: dict) -> dict:
     to = d.get("to") or ""
     if to and to not in LANGS:
         raise ValueError(f"langue de traduction inconnue : {to}")
-    mode = d.get("mode") or "rapide"
+    mode = ALIAS.get(d.get("mode") or "rapide", d.get("mode") or "rapide")
     if mode not in MODES:
-        raise ValueError(f"vitesse inconnue : {mode} (rapide, precis)")
+        raise ValueError(f"mode inconnu : {mode} (rapide, complet)")
     sp = d.get("speakers")
     speakers = MODES[mode]["speakers"] if sp is None else bool(sp)
+    notes = d.get("notes") or []
+    if not isinstance(notes, list) or any(k not in CARNET for k in notes):
+        raise ValueError(f"carnet : {', '.join(CARNET)}")
+    if notes:
+        _, cwhy = carnet_state()
+        if cwhy:
+            raise ValueError(f"carnet : {cwhy}")
     try:
         cpl, max_s = int(d.get("cpl", 42)), float(d.get("max_s", 7.0))
     except (TypeError, ValueError) as e:
@@ -943,7 +1454,7 @@ def check(d: dict) -> dict:
         if mwhy:
             raise ValueError(f"traduire : {mwhy}")
     return {"item": it, "lang": lang, "to": to if to != lang else "", "mode": mode, "speakers": speakers,
-            "cpl": cpl, "max_s": max_s, "asr": aid}
+            "cpl": cpl, "max_s": max_s, "asr": aid, "notes": list(dict.fromkeys(notes))}
 
 
 # ── les routes ──────────────────────────────────────────────
@@ -953,13 +1464,18 @@ def api_options(req) -> dict:
     for mid, m in MODES.items():
         aid, why = pick_asr(mid, "auto")
         mt, mwhy = mt_state(mid)
-        modes.append({"id": mid, "label": m["label"], "about": m["about"], "speakers": m["speakers"],
+        modes.append({"id": mid, "label": m["label"], "about": m["about"], "speakers": m["speakers"], "words": m["words"],
                       "off": why if not aid else "", "asr": aid, "asr_name": ASR[aid]["name"] if aid else "",
                       "asr_list": [{"id": a, "name": ASR[a]["name"], "speed": ASR[a]["speed"], "license": ASR[a]["license"],
                                     "src": ASR[a]["src"], "missing": asr_state(a)["missing"] if engine() == "local" else []}
                                    for a in m["asr"]],
                       "mt": mt, "mt_name": MT[mt]["name"], "mt_off": mwhy, "mt_src": MT[mt]["src"]})
-    return {"engine": engine(), "modes": modes, "langs": [{"id": k, "name": v} for k, v in LANGS.items()],
+    cm, cwhy = carnet_state()
+    carnet = {"model": cm, "off": cwhy, "name": (CARNET_MODELS.get(cm) or {}).get("name", cm),
+              "src": (CARNET_MODELS.get(cm) or {}).get("src", ""),
+              "kinds": [{"id": k, **v} for k, v in CARNET.items()], "q_max": Q_MAX, "qa_max": QA_MAX}
+    return {"engine": engine(), "modes": modes, "to_default": "", "carnet": carnet,
+            "langs": [{"id": k, "name": v} for k, v in LANGS.items()],
             "cpl": list(CPL), "max_s": list(MAX_S), "lines": LINES, "max_duration": MAX_DURATION,
             "diar": sv["diar"], "asset": "subtitle" in library.KINDS,
             "asset_why": "" if "subtitle" in library.KINDS else
@@ -969,6 +1485,8 @@ def api_options(req) -> dict:
 def api_list(req) -> dict:
     out = []
     for f in _dir().glob("trn-*.json"):
+        if f.name.endswith(".voix.json"):   # le spectre d'un document, pas un document
+            continue
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
         except ValueError:
@@ -1006,8 +1524,8 @@ def api_run(req) -> dict:
         _write(d)
     a = ASR[c["asr"]]
     params = {"doc": tid, "item": it["id"], "lang": c["lang"], "to": c["to"], "mode": c["mode"],
-              "speakers": c["speakers"], "asr": c["asr"], "beam": MODES[c["mode"]]["beam"],
-              "family": a["family"], "mem_gb": a["mem_gb"]}
+              "speakers": c["speakers"], "words": MODES[c["mode"]]["words"], "asr": c["asr"],
+              "beam": MODES[c["mode"]]["beam"], "family": a["family"], "mem_gb": a["mem_gb"], "notes": c["notes"]}
     try:
         j = jobs.submit("transcrire.transcribe", params, title=f"Transcrire · {d['title'][:48]}", tool="transcrire",
                         thumb=pub.get("thumb_url"), pin=pin_for())
@@ -1033,7 +1551,7 @@ def api_translate(req, tid) -> dict:
         cur = (d.get("translations") or {}).get(to) or {}
         if cur.get("state") in ("queued", "running"):
             raise HttpError(409, "une traduction dans cette langue est déjà en cours")
-        _, why = mt_state(d.get("mode") or "rapide")
+        _, why = mt_state(mode_of(d.get("mode")))
         if why:
             raise HttpError(409, f"traduire : {why}")
         # la garde du calcul (celle de jobs.submit) avant d'écrire « en file » dans le document
@@ -1042,7 +1560,7 @@ def api_translate(req, tid) -> dict:
         # « en file » avant l'envoi : le travail peut finir avant qu'on revienne ici
         _update(tid, lambda x: x.setdefault("translations", {}).__setitem__(to, {**cur, "state": "queued", "error": None}))
     try:
-        j = jobs.submit("transcrire.translate", {"doc": tid, "to": to, "mode": d.get("mode") or "rapide", "all": bool(b.get("all"))},
+        j = jobs.submit("transcrire.translate", {"doc": tid, "to": to, "mode": mode_of(d.get("mode")), "all": bool(b.get("all"))},
                         title=f"Traduire · {LANGS[to]} · {d.get('title', '')[:40]}", tool="transcrire", thumb=d.get("thumb_url"),
                         pin=pin_for(ollama_url()))
     except Exception:
@@ -1096,15 +1614,83 @@ def api_save(req, tid) -> dict:
     return public(cur)
 
 
+def names_of(d: dict) -> dict[str, str]:
+    """Le nom du moment de chaque voix : la seule source des noms (la liste des voix)."""
+    return {s["id"]: s.get("name") or s["id"] for s in d.get("speakers") or []}
+
+
+def untag(text: str, names: dict[str, str]) -> str:
+    """Les étiquettes du carnet ([S1]) remplacées par le nom de la voix."""
+    return TAG_RX.sub(lambda m: names.get(m.group(1), m.group(0)), text or "")
+
+
+def to_words_json(d: dict, which: str = "src") -> str:
+    """Les mots horodatés (le « temps au mot », à la manière des paroles alignées) :
+    chaque réplique, sa voix (le nom du moment), ses mots et leurs temps. Les
+    temps viennent du moteur (Whisper : alignement DTW au pas de 20 ms) ; un mot
+    sans temps du moteur (texte corrigé, traduction, mode rapide) porte
+    `"timing": "prorata"` — réparti sur la réplique, jamais présenté comme mesuré."""
+    names = names_of(d)
+    out = []
+    for seg in sorted(d.get("segments") or [], key=lambda s: float(s["a"])):
+        measured = which == "src" and bool(seg.get("words")) and not seg.get("edited")
+        ws = seg_words(seg, which)
+        out.append({"id": seg["id"], "start": seg["a"], "end": seg["b"], "speaker": names.get(seg.get("spk")) if seg.get("spk") else None,
+                    "text": seg_text(seg, which), "timing": "moteur" if measured else "prorata",
+                    "words": [{"word": w, "start": round(a, 3), "end": round(b, 3)} for w, a, b in ws]})
+    return json.dumps({"format": "showrunner-transcrire-mots", "version": 1, "title": d.get("title"),
+                       "lang": d.get("detected") if which == "src" else which, "duration": d.get("duration"),
+                       "engine": (d.get("engine") or {}).get("asr"), "speakers": [names[k] for k in names],
+                       "segments": out}, ensure_ascii=False, indent=1) + "\n"
+
+
+def to_md(d: dict, which: str = "src") -> str:
+    """Le compte rendu : le carnet (résumé, points, décisions, actions, chapitres,
+    questions), puis la transcription — les voix sous leur nom du moment."""
+    names = names_of(d)
+    at = {s["id"]: float(s["a"]) for s in d.get("segments") or []}
+    cite = lambda refs: (" (" + ", ".join(_clock(at[r]) for r in refs if r in at) + ")") if refs else ""   # noqa: E731
+    notes = {k: v for k, v in (d.get("notes") or {}).items() if v.get("state") == "done"}
+    out = [f"# {d.get('title') or d['id']}", ""]
+    meta = [_clock(float(d.get("duration") or 0)), LANGS.get(d.get("detected") or "", d.get("detected") or ""),
+            ", ".join(names.values())]
+    out += [" · ".join(x for x in meta if x), ""]
+    if "resume" in notes:
+        r = notes["resume"]["data"]
+        out += ["## Résumé", "", untag(r.get("text", ""), names) + cite(r.get("refs")), ""]
+    if "points" in notes:
+        p = notes["points"]["data"]
+        for key, title in (("points", "Points clés"), ("decisions", "Décisions"), ("actions", "Actions")):
+            if p.get(key):
+                out += [f"## {title}", ""]
+                out += [f"- {untag(x['text'], names)}" + (f" — {untag(x['who'], names)}" if x.get("who") else "") + cite(x.get("refs"))
+                        for x in p[key]] + [""]
+    if "chapitres" in notes and notes["chapitres"]["data"].get("chapitres"):
+        out += ["## Chapitres", ""]
+        out += [f"- {_clock(c['a'])} **{untag(c['title'], names)}** — {untag(c['text'], names)}"
+                for c in notes["chapitres"]["data"]["chapitres"]] + [""]
+    qa = [q for q in d.get("qa") or [] if q.get("state") == "done"]
+    if qa:
+        out += ["## Questions", ""]
+        for q in qa:
+            out += [f"**{q['q']}**", "", untag(q.get("text", ""), names) + cite(q.get("refs")), ""]
+    out += ["## Transcription", "", to_txt(d, which, stamps=True)]
+    return "\n".join(out)
+
+
 def _export(d: dict, fmt: str, which: str, stamps: bool) -> tuple[str, str, str]:
-    if fmt not in ("srt", "vtt", "txt"):
-        raise HttpError(400, "format : srt, vtt ou txt")
+    if fmt not in ("srt", "vtt", "txt", "json", "md"):
+        raise HttpError(400, "format : srt, vtt, txt, json (mots horodatés) ou md (compte rendu)")
     if which != "src" and which not in (d.get("translations") or {}):
         raise HttpError(400, f"pas de traduction « {which} »")
     if d.get("state") != "done":
         raise HttpError(409, "la transcription n'est pas finie")
     st = d.get("settings") or {}
-    if fmt == "txt":
+    if fmt == "json":
+        body, ctype = to_words_json(d, which), "application/json; charset=utf-8"
+    elif fmt == "md":
+        body, ctype = to_md(d, which), "text/markdown; charset=utf-8"
+    elif fmt == "txt":
         body, ctype = to_txt(d, which, stamps), "text/plain; charset=utf-8"
     else:
         cs = cues(d, which, int(st.get("cpl", 42)), float(st.get("max_s", 7.0)))
@@ -1156,7 +1742,98 @@ def api_delete(req, tid) -> dict:
         trash = _dir() / "corbeille"
         trash.mkdir(exist_ok=True)
         shutil.move(str(_path(tid)), str(trash / f"{tid}.json"))
+        if _voix_path(tid).is_file():
+            shutil.move(str(_voix_path(tid)), str(trash / _voix_path(tid).name))
     return {"ok": True, "id": tid}
+
+
+def api_voix(req, tid) -> dict:
+    """Le spectre des voix (complet) : les probabilités de parole par trame et par
+    voix, au format du service Nemotron (`probas`). 404 sans lui (rapide)."""
+    d = _read(tid)
+    f = _voix_path(d["id"])
+    if not f.is_file():
+        raise HttpError(404, "pas de spectre des voix pour cette transcription (mode rapide, ou d'avant le 30/09)")
+    return json.loads(f.read_text(encoding="utf-8"))
+
+
+def api_notes(req, tid) -> dict:
+    """Le carnet : `{"kinds": ["resume", "points", "chapitres"]}` (les refaire
+    aussi) ou `{"question": "…"}`. Écrire le carnet, c'est écrire le document :
+    la règle des objets (check_write) ; puis la garde du calcul (jobs.submit)."""
+    b = req.json()
+    q = str(b.get("question") or "").strip()
+    kinds = b.get("kinds")
+    with _lock:
+        d = _read(tid)
+        library.check_write(d)
+        if d.get("state") != "done":
+            raise HttpError(409, "la transcription n'est pas finie")
+        if not carnet_lines(d):
+            raise HttpError(409, "aucune parole dans ce texte : rien à résumer")
+        _, why = carnet_state()
+        if why:
+            raise HttpError(409, f"carnet : {why}")
+        # la garde du calcul (celle de jobs.submit) avant d'écrire « en file » dans le document
+        me = auth.current()
+        jobs._guard("transcrire.notes", {"doc": tid}, me, me, jobs._space_for(me))
+        if q:
+            if len(q) > Q_MAX:
+                raise HttpError(400, f"question trop longue ({Q_MAX} signes au plus)")
+            if len(d.get("qa") or []) >= QA_MAX:
+                raise HttpError(409, f"{QA_MAX} questions au plus : en retirer une d'abord")
+            qid = f"q{secrets.token_hex(3)}"
+            _update(tid, lambda x: x.setdefault("qa", []).append({"id": qid, "q": q, "state": "queued", "at": library.now()}))
+            kinds = []
+        else:
+            qid = None
+            if not isinstance(kinds, list) or not kinds or any(k not in CARNET for k in kinds):
+                raise HttpError(400, f"carnet : une question, ou des éléments parmi {', '.join(CARNET)}")
+            kinds = list(dict.fromkeys(kinds))
+            busy = [k for k in kinds if ((d.get("notes") or {}).get(k) or {}).get("state") in ACTIVE
+                    and _live(((d.get("notes") or {}).get(k) or {}).get("job"))]
+            if busy:
+                raise HttpError(409, f"déjà en cours : {', '.join(CARNET[k]['label'] for k in busy)}")
+            before = {k: (d.get("notes") or {}).get(k) for k in kinds}
+            _update(tid, lambda x: [x.setdefault("notes", {}).__setitem__(k, {**(before[k] or {}), "state": "queued", "error": None})
+                                    for k in kinds])
+    try:
+        j = submit_notes(d, kinds, qid)
+    except Exception:
+        def undo(x):
+            if qid:
+                x["qa"] = [y for y in x.get("qa") or [] if y["id"] != qid]
+            else:
+                for k in kinds:
+                    if before[k]:
+                        x["notes"][k] = before[k]
+                    else:
+                        x["notes"].pop(k, None)
+        _update(tid, undo)
+        raise
+
+    def put(x):
+        if qid:
+            for y in x.get("qa") or []:
+                if y["id"] == qid:
+                    y["job"] = j["id"]
+        else:
+            for k in kinds:
+                x["notes"][k]["job"] = j["id"]
+    d = _update(tid, put)
+    return {"doc": public(d), "job": jobs.public(j)}
+
+
+def api_qa_delete(req, tid, qid) -> dict:
+    with _lock:
+        d = _read(tid)
+        library.check_write(d)
+        q = next((x for x in d.get("qa") or [] if x["id"] == qid), None)
+        if not q:
+            raise HttpError(404, f"question inconnue : {qid}")
+        if q.get("state") in ACTIVE and _live(q.get("job")):
+            raise HttpError(409, "la réponse est en cours : l'arrêter d'abord (File)")
+    return public(_update(tid, lambda x: x.__setitem__("qa", [y for y in x.get("qa") or [] if y["id"] != qid])))
 
 
 def register(app) -> None:
@@ -1166,7 +1843,11 @@ def register(app) -> None:
                   mem_gb=(lambda p: p.get("mem_gb")) if real else None, cost="gpu" if real else "cpu")
     jobs.register("transcrire.translate", run_translate, lane="audio" if real else "cpu", title="Traduire",
                   family="ollama-mt" if real else None, gpu=real,
-                  mem_gb=(lambda p: MT[MODES[p.get("mode") or "rapide"]["mt"]]["mem_gb"]) if real else None, cost="gpu" if real else "cpu")
+                  mem_gb=(lambda p: MT[MODES[mode_of(p.get("mode"))]["mt"]]["mem_gb"]) if real else None, cost="gpu" if real else "cpu")
+    jobs.register("transcrire.notes", run_notes, lane="audio" if real else "cpu", title="Carnet",
+                  family="ollama-carnet" if real else None, gpu=real,
+                  mem_gb=(lambda p: (CARNET_MODELS.get(carnet_model()) or {}).get("mem_gb", 24)) if real else None,
+                  cost="gpu" if real else "cpu")
     app.route("GET", "/api/transcrire/options", api_options)
     app.route("GET", "/api/transcrire/docs", api_list)
     app.route("POST", "/api/transcrire/run", api_run)
@@ -1176,6 +1857,9 @@ def register(app) -> None:
     app.route("GET", "/api/transcrire/docs/{tid}/export", api_export)
     app.route("POST", "/api/transcrire/docs/{tid}/asset", api_asset)
     app.route("POST", "/api/transcrire/docs/{tid}/delete", api_delete)
+    app.route("GET", "/api/transcrire/docs/{tid}/voix", api_voix)
+    app.route("POST", "/api/transcrire/docs/{tid}/notes", api_notes)
+    app.route("POST", "/api/transcrire/docs/{tid}/qa/{qid}/delete", api_qa_delete)
 
 
 # ── le contrôle sans GPU ────────────────────────────────────
@@ -1324,14 +2008,14 @@ def selftest(call, ok) -> None:
     shutil.rmtree(tmp, ignore_errors=True)
 
     def wait_doc(tid, pred):
-        for _ in range(200):
+        for _ in range(600):   # la voie cpu est commune : un travail d'un autre essai peut passer devant
             st, dd = call("GET", f"/api/transcrire/docs/{tid}")
             if pred(dd):
                 return dd
             time.sleep(0.1)
         return dd
 
-    # de bout en bout : transcrire (précis : les voix), traduire à la suite
+    # de bout en bout : transcrire (complet, par son ancien nom « precis » : les voix), traduire à la suite
     st, r = call("POST", "/api/transcrire/run", {"item": aid, "lang": "auto", "to": "en", "mode": "precis"})
     ok(st == 200 and r.get("doc", {}).get("id") and r.get("job", {}).get("id"), f"transcrire : lancé ({st} {r})")
     tid = r.get("doc", {}).get("id", "trn-00000000-000000-0000")
@@ -1404,3 +2088,314 @@ def selftest(call, ok) -> None:
     ok(r.returncode == 0 and "ok" in r.stdout, f"transcrire : le moteur réel se charge à vide ({r.returncode} {r.stdout} {r.stderr[-300:]})")
     ok(assign_speakers([{"a": 0.0, "b": 2.0}, {"a": 2.0, "b": 5.0}], [[0, 1.5, 0], [1.5, 5, 1]])[1]["id"] == "S2",
        "transcrire : la voix qui recouvre le plus une réplique la prend")
+
+    _selftest_modes(call, ok, tid, aid, wait_doc)
+    _selftest_carnet(call, ok, tid, aid, wait_doc)
+    _selftest_ollama(ok)
+    _selftest_espaces(ok)
+
+
+def _essai_wav(path: Path) -> None:
+    """Deux passages de tonalité séparés par 2 s de silence (11 s)."""
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=330:duration=4",
+                    "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-f", "lavfi", "-i", "sine=frequency=440:duration=5",
+                    "-filter_complex", "[1]atrim=0:2[s];[0][s][2]concat=n=3:v=0:a=1", str(path)], capture_output=True, timeout=60)
+
+
+def _selftest_modes(call, ok, tid, aid, wait_doc) -> None:
+    """Pas de traduction par défaut ; rapide (horodatage simple) et complet (voix,
+    mots, spectre) ; renommer une voix se voit partout et reste dans le document."""
+    import base64
+    st, o = call("GET", "/api/transcrire/options")
+    prefs = json.loads((REPO / "transcrire" / "prefs.json").read_text(encoding="utf-8"))
+    pto = next((p for p in prefs.get("prefs", []) if p.get("key") == "to"), {})
+    ok(o.get("to_default") == "" and pto.get("default") == "" and {m["id"] for m in o.get("modes", [])} == {"rapide", "complet"},
+       f"transcrire : pas de traduction par défaut (options, préférence) ; deux modes, rapide et complet ({o.get('to_default')!r} {pto})")
+    st, r = call("POST", "/api/transcrire/run", {"item": aid, "mode": "rapide"})
+    t3 = r.get("doc", {}).get("id", "trn-00000000-000000-0000")
+    d3 = wait_doc(t3, lambda x: x.get("state") in ("done", "error"))
+    ok(st == 200 and d3.get("state") == "done" and not d3.get("translations") and d3.get("mode") == "rapide",
+       f"transcrire : sans « to », rien n'est traduit ({st} {d3.get('translations')})")
+    ok(d3.get("segments") and all(not s.get("words") and s["a"] < s["b"] for s in d3["segments"]) and not d3.get("speakers")
+       and not d3.get("voix"), "transcrire : rapide — un horodatage par réplique, ni mots ni voix ni spectre")
+    st, _ = call("GET", f"/api/transcrire/docs/{t3}/voix")
+    ok(st == 404, f"transcrire : rapide, pas de spectre ({st})")
+
+    st, dd = call("GET", f"/api/transcrire/docs/{tid}")
+    ok(dd.get("mode") == "complet" and dd.get("voix") and dd.get("engine", {}).get("words"),
+       f"transcrire : « precis » est devenu « complet » : voix, mots, spectre ({dd.get('mode')} {dd.get('voix')})")
+    st, vx = call("GET", f"/api/transcrire/docs/{tid}/voix")
+    q = base64.b64decode(vx.get("q", "")) if st == 200 else b""
+    n, nv, pas = vx.get("n", 0), vx.get("voix", 0), vx.get("pas_s", 1)
+    ok(st == 200 and len(q) == n * nv and abs(n * pas - float(dd.get("duration") or 0)) < 2 * pas
+       and nv >= len(dd.get("speakers") or []), f"transcrire : le spectre, au format de Nemotron ({st} n={n} voix={nv} pas={pas})")
+    if q and dd.get("segments"):
+        s0 = dd["segments"][0]
+        v = int(s0["spk"][1:]) - 1
+        mid = int((s0["a"] + s0["b"]) / 2 / pas)
+        ok(q[mid * nv + v] > 150, f"transcrire : le spectre est haut sous une réplique de sa voix ({q[mid * nv + v]})")
+
+    # renommer une voix : un seul endroit (la liste des voix), partout ensuite
+    spk = dd["speakers"][0]["id"]
+    st, e = call("POST", f"/api/transcrire/docs/{tid}", {"rev": dd["rev"], "speakers": [{"id": spk, "name": "Marie Curie"}]})
+    st2, back = call("GET", f"/api/transcrire/docs/{tid}")
+    ok(st == 200 and back["speakers"][0]["name"] == "Marie Curie", f"transcrire : la voix renommée, gardée dans le document ({st})")
+    outs = {}
+    for fmt in ("txt", "vtt", "srt", "json", "md"):
+        st, raw = call("GET", f"/api/transcrire/docs/{tid}/export?format={fmt}&stamps=1")
+        outs[fmt] = raw.decode("utf-8") if isinstance(raw, bytes) else json.dumps(raw, ensure_ascii=False)
+    said = [s for s in back["segments"] if s.get("spk") == spk]
+    ok(said and "Marie Curie :" in outs["txt"] and "<v Marie Curie>" in outs["vtt"] and "Marie Curie" in outs["md"]
+       and '"Marie Curie"' in outs["json"] and "Voix 1" not in outs["txt"].replace("Voix 10", ""),
+       "transcrire : le nom se déploie partout — texte, VTT, mots horodatés, compte rendu")
+    wj = json.loads(outs["json"]) if outs["json"].startswith("{") else {}
+    segs = wj.get("segments") or []
+    ok(segs and all(w["start"] <= w["end"] for s in segs for w in s["words"]) and {s["timing"] for s in segs} <= {"moteur", "prorata"}
+       and any(s["speaker"] == "Marie Curie" for s in segs),
+       f"transcrire : l'export des mots horodatés dit d'où vient chaque temps ({[s.get('timing') for s in segs][:4]})")
+
+
+def _selftest_carnet(call, ok, tid, aid, wait_doc) -> None:
+    """Le carnet, moteur factice : résumé, points / décisions / actions, chapitres,
+    questions ; chaque citation est une réplique du document ; le nom des voix s'y
+    pose ; périmé quand le texte change ; l'accroche « transcrire puis résumer »."""
+    st, dd = call("GET", f"/api/transcrire/docs/{tid}")
+    ids = {s["id"] for s in dd.get("segments") or []}
+    st, r = call("POST", f"/api/transcrire/docs/{tid}/notes", {"kinds": ["resume", "points", "chapitres"]})
+    ok(st == 200 and r.get("job", {}).get("id"), f"carnet : lancé ({st} {r if st != 200 else ''})")
+    dn = wait_doc(tid, lambda x: all((x.get("notes") or {}).get(k, {}).get("state") in ("done", "error") for k in CARNET))
+    nt = dn.get("notes") or {}
+    ok(all(nt.get(k, {}).get("state") == "done" for k in CARNET), f"carnet : les trois éléments écrits ({ {k: v.get('state') for k, v in nt.items()} })")
+    res = (nt.get("resume") or {}).get("data") or {}
+    pts = (nt.get("points") or {}).get("data") or {}
+    chs = ((nt.get("chapitres") or {}).get("data") or {}).get("chapitres") or []
+    cited = res.get("refs", []) + [x for k in ("points", "decisions", "actions") for it in pts.get(k, []) for x in it["refs"]] + [c["id"] for c in chs]
+    ok(res.get("text") and cited and set(cited) <= ids, f"carnet : chaque citation est une réplique du document ({len(cited)})")
+    ok(chs and all(chs[i]["a"] < chs[i + 1]["a"] for i in range(len(chs) - 1)) and all(c["title"] for c in chs),
+       f"carnet : les chapitres, dans l'ordre du temps ({[(c['a'], c['title']) for c in chs]})")
+    st, md = call("GET", f"/api/transcrire/docs/{tid}/export?format=md")
+    md = md.decode("utf-8") if isinstance(md, bytes) else str(md)
+    ok("## Résumé" in md and "## Chapitres" in md and "## Transcription" in md and not TAG_RX.search(md),
+       "carnet : le compte rendu porte le carnet, les étiquettes des voix remplacées par leur nom")
+    # la même chose, les voix en étiquettes dans le document, les noms à l'export seulement
+    fake_act = {"notes": {"points": {"state": "done", "data": {"points": [], "decisions": [],
+                                                                 "actions": [{"text": "[S1] envoie le devis à [S2]", "who": "[S1]", "refs": []}]}}},
+                "speakers": [{"id": "S1", "name": "Marie"}, {"id": "S2", "name": "Paul"}], "segments": [], "id": "trn-x"}
+    ok("- Marie envoie le devis à Paul — Marie" in to_md(fake_act), "carnet : une étiquette [S1] devient le nom du moment")
+
+    # une question : sa réponse cite les répliques ; une question hors sujet le dit
+    seg = next((s for s in dd["segments"] if len(re.findall(r"\w{4,}", s["text"])) >= 2), dd["segments"][0])
+    qtext = "Que dit-on de " + " ".join(re.findall(r"\w{4,}", seg["text"])[:2]) + " ?"
+    st, r = call("POST", f"/api/transcrire/docs/{tid}/notes", {"question": qtext})
+    dq = wait_doc(tid, lambda x: (x.get("qa") or [{}])[-1].get("state") in ("done", "error"))
+    qa = (dq.get("qa") or [{}])[-1]
+    ok(st == 200 and qa.get("state") == "done" and qa.get("found") and seg["id"] in qa.get("refs", []),
+       f"carnet : une question, sa réponse cite la réplique ({st} {qa})")
+    st, r = call("POST", f"/api/transcrire/docs/{tid}/notes", {"question": "zzzz qqqq wwww ?"})
+    dq = wait_doc(tid, lambda x: (x.get("qa") or [{}])[-1].get("state") in ("done", "error"))
+    ok(st == 200 and (dq.get("qa") or [{}])[-1].get("found") is False,
+       f"carnet : une question hors du texte le dit (found = false) ({st} {(dq.get('qa') or [{}])[-1]})")
+    qid = (dq.get("qa") or [{}])[-1].get("id", "q000000")
+    st, r = call("POST", f"/api/transcrire/docs/{tid}/qa/{qid}/delete")
+    ok(st == 200 and all(x["id"] != qid for x in r.get("qa", [])), f"carnet : une question retirée ({st})")
+    for body, want, msg in (({"kinds": ["xx"]}, 400, "élément inconnu"), ({}, 400, "rien de demandé"),
+                            ({"question": "x" * (Q_MAX + 1)}, 400, "question trop longue")):
+        st, r = call("POST", f"/api/transcrire/docs/{tid}/notes", body)
+        ok(st == want and r.get("error"), f"carnet : refusé — {msg} ({st} {r})")
+    st, _ = call("POST", f"/api/transcrire/docs/{tid}/qa/qzzzzzz/delete")
+    ok(st == 404, f"carnet : une question inconnue, 404 ({st})")
+    # corriger le texte : le carnet se dit périmé (renommer une voix, non)
+    st, cur = call("GET", f"/api/transcrire/docs/{tid}")
+    ok(not cur["notes"]["resume"]["stale"], "carnet : renommer une voix ne périme pas le carnet")
+    st, e = call("POST", f"/api/transcrire/docs/{tid}", {"rev": cur["rev"], "segments": [{"id": cur["segments"][-1]["id"], "text": "Un texte retouché."}]})
+    ok(st == 200 and e["notes"]["resume"]["stale"] and e["notes"]["chapitres"]["stale"], "carnet : le texte corrigé, le carnet se dit à refaire")
+
+    # l'accroche de l'Idéation : transcrire ce son, puis résumer — une requête
+    st, r = call("POST", "/api/transcrire/run", {"item": aid, "notes": ["resume", "points"]})
+    t4 = r.get("doc", {}).get("id", "trn-00000000-000000-0000")
+    d4 = wait_doc(t4, lambda x: x.get("state") == "error" or all((x.get("notes") or {}).get(k, {}).get("state") in ("done", "error")
+                                                                 for k in ("resume", "points")))
+    ok(st == 200 and d4.get("state") == "done" and d4["notes"]["resume"]["state"] == "done" and d4["notes"]["points"]["state"] == "done"
+       and not d4.get("translations") and d4.get("mode") == "rapide",
+       f"carnet : « transcrire puis résumer » en une requête (rapide, sans traduction) ({st} {d4.get('state')} {d4.get('notes')})")
+    st, r = call("POST", "/api/transcrire/run", {"item": aid, "notes": ["poeme"]})
+    ok(st == 400 and "carnet" in r.get("error", ""), f"carnet : un élément inconnu refusé au lancement ({st})")
+
+
+class _FauxOllama:
+    """Un Ollama d'essai : il rend, pour chaque appel, un objet conforme au schéma
+    reçu (les numéros pris dans son `enum`) et garde ce qu'on lui a envoyé."""
+
+    def __init__(self):
+        import http.server
+        self.calls = []
+        outer = self
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+                if self.path == "/api/show":
+                    out = {"capabilities": ["completion", "thinking"]}
+                elif self.path == "/api/chat":
+                    outer.calls.append(body)
+                    out = {"message": {"content": json.dumps(outer.answer(body["format"]))}, "done_reason": "stop",
+                           "prompt_eval_count": 100, "eval_count": 20}
+                else:
+                    out = {}
+                data = json.dumps(out).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.srv.server_address[1]}"
+
+    @staticmethod
+    def answer(schema: dict) -> dict:
+        p = schema["properties"]
+        nums = lambda s: s["items"]["enum"]   # noqa: E731
+        if "chapitres" in p:
+            e = p["chapitres"]["items"]["properties"]["line"]["enum"]
+            return {"chapitres": [{"line": e[-1], "title": "La fin", "text": "[S2] conclut."},
+                                  {"line": e[0], "title": "Le début", "text": "[S1] ouvre."}]}
+        if "points" in p:
+            e = nums(p["points"]["items"]["properties"]["refs"])
+            return {"points": [{"text": "Un point", "refs": e[:2]}], "decisions": [],
+                    "actions": [{"text": "[S1] rappelle", "who": "[S1]", "refs": e[-1:]}]}
+        e = nums(p["refs"])
+        return {"text": "[S1] parle de l'essai.", "refs": [e[0], e[-1]], **({"found": True} if "found" in p else {})}
+
+    def close(self):
+        self.srv.shutdown()
+
+
+def _selftest_ollama(ok) -> None:
+    """Le câblage local du carnet, contre un Ollama d'essai : les morceaux d'un long
+    texte, la même fenêtre pour tous les appels, la pensée coupée, le modèle
+    déchargé au dernier appel seulement, les citations contraintes par le schéma."""
+    f = _FauxOllama()
+    saved = config.CFG.get("transcrire_ollama")
+    config.CFG["transcrire_ollama"] = f.url
+    try:
+        d = {"segments": [{"id": f"s{k:04d}", "a": 2.0 * k, "b": 2.0 * k + 1.5, "spk": f"S{1 + k % 2}",
+                           "text": f"Réplique numéro {k} : " + ("la girafe " if k == 250 else "") + "parole " * 40}
+                          for k in range(400)]}
+        lines = carnet_lines(d)
+        model = "qwen3:30b-a3b"
+        raw = carnet_llm("resume", lines, "fr", "", model)
+        parts = carnet_chunks(lines, min(CARNET_CHUNK, carnet_ctx_max(model) - CARNET_OUT - 2600))
+        ctxs = {c["options"]["num_ctx"] for c in f.calls}
+        ok(len(parts) > 1 and len(f.calls) == len(parts) + 1 and raw["calls"] == len(parts) + 1,
+           f"carnet local : un long texte en {len(parts)} morceaux, puis la synthèse ({len(f.calls)} appels)")
+        ok(len(ctxs) == 1 and next(iter(ctxs)) <= carnet_ctx_max(model), f"carnet local : une seule fenêtre pour tous les appels ({ctxs})")
+        ok([c["keep_alive"] for c in f.calls] == ["2m"] * (len(f.calls) - 1) + [0] and all(c.get("think") is False for c in f.calls),
+           "carnet local : la pensée coupée, le modèle déchargé au dernier appel seulement")
+        first = f.calls[0]
+        e = first["format"]["properties"]["refs"]["items"]["enum"]
+        ok(e == [x["n"] for x in parts[0]] and "[S1]" in first["messages"][1]["content"],
+           "carnet local : les citations possibles sont exactement les répliques envoyées (enum du schéma)")
+        st = carnet_store("resume", raw, lines)
+        ok(st["refs"] and set(st["refs"]) <= {x["id"] for x in lines}, f"carnet local : le résumé cite des répliques ({st['refs']})")
+        f.calls.clear()
+        ch = carnet_store("chapitres", carnet_llm("chapitres", lines[:30], "fr", "", model), lines)
+        ok([c["title"] for c in ch["chapitres"]] == ["Le début", "La fin"], f"carnet local : les chapitres triés par leur réplique ({ch})")
+        f.calls.clear()
+        jc = carnet_job_ctx(lines[:30], "", model)
+        carnet_llm("points", lines[:30], "fr", "", model, unload=False, num_ctx=jc)
+        carnet_llm("resume", lines[:30], "fr", "", model, unload=True, num_ctx=jc)
+        ok([c["keep_alive"] for c in f.calls] == ["2m", 0] and {c["options"]["num_ctx"] for c in f.calls} == {jc},
+           "carnet local : plusieurs éléments d'un travail — le modèle reste chargé entre eux, même fenêtre, déchargé au bout")
+        f.calls.clear()
+        qa = carnet_store("qa", carnet_llm("qa", lines, "fr", "Où est-il question de la girafe ?", model), lines)
+        sent = f.calls[0]["messages"][1]["content"]
+        ok(qa["found"] and "Réplique numéro 250 " in sent and len(sent) < CARNET_CHUNK + 3000,
+           "carnet local : une question sur un long texte envoie les répliques qui en parlent")
+    finally:
+        f.close()
+        if saved is None:
+            config.CFG.pop("transcrire_ollama", None)
+        else:
+            config.CFG["transcrire_ollama"] = saved
+
+
+def _selftest_espaces(ok) -> None:
+    """Les droits par Workspace, porte allumée : Cal transcrit dans un Workspace ;
+    d'un autre, le document n'existe pas ; un membre lit, renomme, lance le carnet ;
+    un guest viewer lit sans rien écrire ni calculer."""
+    import tempfile
+    from core import espaces   # noqa: F401 — la migration des données d'essai l'a posé
+    from tools.admin import essai_http as H
+    before = {k: config.CFG.get(k) for k in ("auth", "equipes_guests_essai")}
+    config.CFG["auth"] = True
+    config.CFG["equipes_guests_essai"] = True
+    auth.startup()
+    same = {"Origin": f"http://127.0.0.1:{config.get('port')}"}
+    err = lambda d: d.get("error", "") if isinstance(d, dict) else str(d)[:100]   # noqa: E731
+    tmp = Path(tempfile.mkdtemp(prefix="sr_trn_ws_"))
+    try:
+        for k in ("entree:127.0.0.1", "demande:127.0.0.1"):
+            auth._hits.pop(k, None)
+        _, _, cal = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
+        P = lambda path, body=None, tok=cal, esp=None: H("POST", path, body if body is not None else {}, cookie=tok,   # noqa: E731
+                                                         headers={**same, **({"X-SR-Espace": esp} if esp else {})})
+        G = lambda path, tok=cal, esp=None: H("GET", path, cookie=tok, headers={"X-SR-Espace": esp} if esp else {})   # noqa: E731
+        s, t, _ = P("/api/equipes", {"name": "Essai Transcrire"})
+        ok(s == 200 and t.get("spaces"), f"transcrire · Workspaces : une Team d'essai ({s} {err(t)})")
+        if s != 200:
+            return
+        team, s1 = t["id"], t["spaces"][0]["id"]
+        s, sp2, _ = P(f"/api/equipes/{team}/espaces", {"name": "Autre"})
+        s2 = sp2.get("id")
+        toks = {}
+        for name, body in (("Lina Trn", {"role": "member"}), ("Vio Trn", {"role": "guest", "guest": "viewer", "spaces": [s1]})):
+            s, d, _ = P(f"/api/equipes/{team}/membres", {"pseudo": name, **body})
+            _, _, toks[name] = H("POST", "/api/auth/enter", {"name": name}, headers=same)
+            ok(s == 200 and toks[name], f"transcrire · Workspaces : {name} ({body['role']}) entre ({s} {err(d)})")
+        wav = tmp / "ws.wav"
+        _essai_wav(wav)
+        s, au, _ = H("PUT", "/api/library/upload?name=ws.wav&title=R%C3%A9union%20WS", raw=wav.read_bytes(), cookie=cal,
+                     headers={**same, "X-SR-Espace": s1, "Content-Type": "audio/wav"})
+        s, r, _ = P("/api/transcrire/run", {"item": au.get("id"), "mode": "complet"}, esp=s1)
+        doc = (r.get("doc") or {}).get("id", "trn-00000000-000000-0000") if isinstance(r, dict) else "trn-00000000-000000-0000"
+        d = {}
+        for _ in range(200):
+            _, d, _ = G(f"/api/transcrire/docs/{doc}", esp=s1)
+            if isinstance(d, dict) and d.get("state") in ("done", "error"):
+                break
+            time.sleep(0.1)
+        ok(s == 200 and d.get("state") == "done" and d.get("space") == s1,
+           f"transcrire · Workspaces : Cal transcrit dans son Workspace ({s} {d.get('state')} {d.get('space')} {err(r)})")
+        base = f"/api/transcrire/docs/{doc}"
+        seen = [G(base, esp=s2)[0], G(base + "/voix", esp=s2)[0], P(base + "/notes", {"kinds": ["resume"]}, esp=s2)[0],
+                G(base + "/export?format=md", esp=s2)[0]]
+        _, lst, _ = G("/api/transcrire/docs", esp=s2)
+        ok(seen == [404] * 4 and doc not in [x["id"] for x in lst.get("docs", [])],
+           f"transcrire · Workspaces : d'un autre Workspace, le document n'existe pas ({seen})")
+        lina, vio = toks["Lina Trn"], toks["Vio Trn"]
+        s_get = G(base, tok=lina, esp=s1)[0]
+        s, e, _ = P(base, {"rev": d.get("rev"), "speakers": [{"id": (d.get("speakers") or [{}])[0].get("id"), "name": "Lina"}]}, tok=lina, esp=s1)
+        s_n, rn, _ = P(base + "/notes", {"kinds": ["resume"]}, tok=lina, esp=s1)
+        ok(s_get == 200 and s == 200 and s_n == 200 and (rn.get("job") or {}).get("space") == s1,
+           f"transcrire · Workspaces : un membre lit, renomme une voix, lance le carnet — dans ce Workspace ({s_get} {s} {s_n} {err(rn)})")
+        s_get = G(base, tok=vio, esp=s1)[0]
+        s_v = G(base + "/voix", tok=vio, esp=s1)[0]
+        _, cur, _ = G(base, esp=s1)
+        s_w, ew, _ = P(base, {"rev": cur.get("rev"), "speakers": [{"id": (cur.get("speakers") or [{}])[0].get("id"), "name": "Vio"}]}, tok=vio, esp=s1)
+        s_n, en, _ = P(base + "/notes", {"question": "De quoi parle-t-on ?"}, tok=vio, esp=s1)
+        ok(s_get == 200 and s_v == 200 and s_w == 403 and s_n == 403,
+           f"transcrire · Workspaces : un guest viewer lit (texte, spectre) mais ni ne renomme ni ne lance ({s_get} {s_v} {s_w} {s_n} {err(en)[:80]})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        auth.set_current(None)
+        auth.set_current_space(None)
+        for k, v in before.items():
+            if v is None:
+                config.CFG.pop(k, None)
+            else:
+                config.CFG[k] = v
