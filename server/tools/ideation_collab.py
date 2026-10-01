@@ -1234,6 +1234,17 @@ def _no53(servers: list) -> list:
     return out
 
 
+def _plus(base: list, extra: list) -> list:
+    """`base` puis `extra`, sans redire une adresse STUN déjà là (Cloudflare en rend une)."""
+    seen = {u for s in base for u in ([s.get("urls")] if isinstance(s.get("urls"), str) else (s.get("urls") or []))}
+    out = list(base)
+    for s in extra:
+        urls = s["urls"] if s.get("credential") else [u for u in s["urls"] if u not in seen]
+        if urls:
+            out.append({**s, "urls": urls})
+    return out
+
+
 def _coturn(t: dict, who: str, ttl: int) -> list:
     import base64
     import hashlib
@@ -1257,7 +1268,7 @@ def ice_for(who: str) -> dict:
     with _tlock:
         hit = _turn_cache.get(who)
         if hit and hit[0] - now > ttl * (1 - TURN_RENEW):
-            return {"iceServers": base + hit[1], "relay": t["fournisseur"], "expires": hit[0], "why": ""}
+            return {"iceServers": _plus(base, hit[1]), "relay": t["fournisseur"], "expires": hit[0], "why": ""}
     try:
         if t["fournisseur"] == "cloudflare":
             if not (t.get("key_id") and t.get("api_token")):
@@ -1277,7 +1288,9 @@ def ice_for(who: str) -> dict:
             if not servers:
                 raise ValueError("ideation_turn : urls manque")
     except Exception as e:   # noqa: BLE001 — le relais en panne ne coupe pas la visio : STUN seul, et la page le dit
-        why = str(e) if isinstance(e, ValueError) else f"le relais {t['fournisseur']} ne répond pas ({type(e).__name__})"
+        code = getattr(e, "code", None)   # urllib.error.HTTPError : 401 (jeton), 404 (clé)…
+        why = str(e) if isinstance(e, ValueError) and code is None else \
+            f"le relais {t['fournisseur']} ne répond pas ({type(e).__name__}{f' {code}' if code else ''})"
         auth.journal("idéation · relais TURN en échec", fournisseur=t["fournisseur"], why=why[:200])
         return {"iceServers": base, "relay": t["fournisseur"], "expires": None, "why": why[:300]}
     exp = now + ttl
@@ -1285,8 +1298,8 @@ def ice_for(who: str) -> dict:
         _turn_cache[who] = (exp, servers)
         for k in [k for k, (e, _) in _turn_cache.items() if e < now]:
             _turn_cache.pop(k, None)
-    # STUN du fournisseur déjà dedans (Cloudflare en rend un) : on garde aussi celui du réglage
-    return {"iceServers": base + servers, "relay": t["fournisseur"], "expires": exp, "why": ""}
+    # le STUN du réglage, puis le relais (sans redire le STUN que Cloudflare rend aussi)
+    return {"iceServers": _plus(base, servers), "relay": t["fournisseur"], "expires": exp, "why": ""}
 
 
 def public_https() -> str:
@@ -2218,7 +2231,8 @@ def _selftest_ice(call, ok, base: str) -> None:
         urls = [u for s in d.get("iceServers", []) for u in ([s["urls"]] if isinstance(s["urls"], str) else s["urls"])]
         turn = [s for s in d.get("iceServers", []) if s.get("credential")]
         ok(st == 200 and d["relay"] == "cloudflare" and turn and turn[0]["username"] == "u-essai"
-           and not any(":53" in u for u in urls) and "turns:turn.cloudflare.com:443?transport=tcp" in urls
+           and not any(re.search(r":53(?:[/?]|$)", u) for u in urls) and "turns:turn.cloudflare.com:5349?transport=tcp" in urls
+           and urls.count("stun:stun.cloudflare.com:3478") == 1 and "turns:turn.cloudflare.com:443?transport=tcp" in urls
            and d["expires"] and d["expires"] - time.time() > 3500,
            f"relais : Cloudflare (faux), identifiants de courte durée, sans le port 53 ({st} {urls})")
         ok(len(seen) == 1 and seen[0][0] == CF_TURN.format(key="cle-essai-0123") and seen[0][1] == "JETON-SECRET-ESSAI"
