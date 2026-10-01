@@ -220,11 +220,21 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .stage .safe i:first-child { inset: 5%; }
 .stage .safe i:last-child { inset: 10%; }
 
-.scrub { position: relative; height: 16px; cursor: ew-resize; touch-action: none; flex: none; }
-.scrub::before { content: ""; position: absolute; left: 0; right: 0; top: 5px; height: 6px; border-radius: 999px; background: var(--panel3); }
-.scrub .rng { position: absolute; top: 5px; height: 6px; border-radius: 999px; background: var(--or-bg2); }
-.scrub .fill { position: absolute; left: 0; top: 5px; height: 6px; border-radius: 999px; background: var(--or); width: 0; }
-.scrub .pos { position: absolute; top: 2px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: var(--ink); left: 0; }
+/* la barre de lecture des moniteurs : le fader du thème (commun/curseur.css), pas un rail et un pouce génériques.
+   Mêmes cotes que le curseur natif : rail creux de 8 px, chapeau plein à l'encre de 10 × 20 avec son encoche.
+   La plage Entrée / Sortie (.rng) et le remplissage du programme (.fill) restent des teintes d'action. */
+.scrub { position: relative; height: 22px; cursor: ew-resize; touch-action: none; flex: none; }
+.scrub::before { content: ""; position: absolute; left: 0; right: 0; top: 7px; height: 8px; border-radius: 999px;
+  background: linear-gradient(var(--line), var(--line)) center / calc(100% - 8px) 2px no-repeat, var(--panel3);
+  box-shadow: inset 0 0 0 1px var(--line), inset 0 1px 2px var(--drop); }
+.scrub .rng { position: absolute; top: 7px; height: 8px; border-radius: 999px; background: var(--or-bg2); box-shadow: inset 0 0 0 1px var(--line-or); }
+.scrub .fill { position: absolute; left: 0; top: 7px; height: 8px; border-radius: 999px; background: var(--or); width: 0; }
+.scrub .pos { position: absolute; top: 1px; width: 10px; height: 20px; margin-left: -5px; border-radius: 3px; left: 0;
+  background: linear-gradient(to right, transparent 4px, var(--ink3) 4px 6px, transparent 6px), var(--ink);
+  box-shadow: 0 2px 6px var(--drop), inset 0 0 0 1px var(--line);
+  transition: transform .12s; }
+.scrub:hover .pos { transform: scaleY(1.08); }
+.scrub:active .pos { transform: scaleY(.94); }
 .mon-foot { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; flex: none; }
 .mon-foot .sp { flex: 1; }
 .mon-foot .pb { height: 26px; min-width: 30px; padding: 0 8px; font-size: 10px; }
