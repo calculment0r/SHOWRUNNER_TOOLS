@@ -270,6 +270,7 @@ export function createGen(app) {
     const e = app.canvas?.dom.get(id)?.el;
     if (!g || !e) return;
     const w = why(g);
+    e.dataset.titre = `image · ${M(g.model)?.name || g.model}`;   // le titre de loin (ideation.css, .cv.far)
     const btn = e.querySelector('.gbtn'), wy = e.querySelector('.gwhy'), sum = e.querySelector('.gsum');
     if (btn) paintBtn(btn, w, goText(g));
     // rien ne bloque : combien de références partent, quand toutes ne partent pas
