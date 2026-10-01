@@ -408,6 +408,14 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
   bFull.addEventListener('click', plein);
   const onFull = () => paintFull();
   doc.addEventListener('fullscreenchange', onFull);
+  // commun/pleinecran.js garde Échap pour la page (Keyboard Lock) : le lecteur plein écran en sort lui-même,
+  // un cran à la fois (Échap rend l'état d'avant ; une fenêtre qui le porte se ferme à l'Échap suivant)
+  const onEsc = (e) => {
+    if (e.key !== 'Escape' || doc.fullscreenElement !== root) return;
+    e.preventDefault(); e.stopPropagation();
+    doc.exitFullscreen().catch(() => {});
+  };
+  doc.addEventListener('keydown', onEsc, true);
 
   // le clavier du Montage ; `clavier: 'page'` : partout sur la page (hors d'un champ, d'une boîte, d'un menu)
   function cle(e) {
@@ -445,6 +453,7 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     try { src.pause(); } catch { /* */ }
     doc.removeEventListener('keydown', onKey);
     doc.removeEventListener('fullscreenchange', onFull);
+    doc.removeEventListener('keydown', onEsc, true);
     ro.disconnect();
     for (const m of [src, nav]) if (m) { m.removeAttribute('src'); try { m.load(); } catch { /* */ } }
   }

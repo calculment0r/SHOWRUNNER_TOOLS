@@ -141,3 +141,65 @@ export function brancher(zone, o = {}) {
   zone.addEventListener('wheel', f, { passive: false });
   return () => zone.removeEventListener('wheel', f, { passive: false });
 }
+
+// ── LE CANVAS (Idéation, planches) : la souris ET le pavé, sans réglage ──────────────────────────────
+// Cal, 01/10 : « le deux doigts pour panner, le zoom en pincer, sans les deux choix de Miro ».
+//   pincer (pavé)  ou  Ctrl + molette      zoom, sous le curseur
+//   deux doigts (pavé)                     déplacer la vue (pan), dans les deux sens
+//   molette à crans (souris)               zoom, comme avant ; Maj + molette : la vue à l'horizontale
+//   Alt + molette                          zoom, quel que soit l'appareil
+// Le navigateur ne dit pas quel appareil tourne : on le déduit de l'événement (`wheel`, MDN), et on
+// garde le verdict pour la suite du geste (l'inertie du pavé continue 1 s après les doigts) :
+//   - deltaMode ≠ 0 (lignes, pages)                         → molette (Firefox)
+//   - deltaX ≠ 0, un delta non entier, ou |deltaY| < 40 px  → pavé (une molette ne fait ni l'un ni l'autre :
+//                                                             un cran fait ≥ 100 px entier, sur Y seul)
+//   - sinon, un cran entier sur Y seul                      → molette, SAUF dans la suite d'un geste de
+//                                                             pavé (l'inertie : le verdict du pavé tient 700 ms
+//                                                             après son dernier événement)
+// Le pincement d'un pavé arrive en `wheel` + `ctrlKey` (MDN) sans Ctrl tenu ; Safari macOS l'envoie en
+// `gesturechange` (non standard, WebKit) : `brancherCanvas` écoute les deux.
+const TENU_PAVE = 700;
+let dernierPave = 0;
+
+// → { geste: 'pan' | 'zoom', dx, dy, facteur, pave }
+export function lireCanvas(ev, el) {
+  const [dx, dy] = pixels(ev, el);              // deltaMode lu en premier
+  const now = ev.timeStamp || performance.now();
+  const crans = ev.deltaMode !== 0 || (dx === 0 && Number.isInteger(dy) && Math.abs(dy) >= 40);
+  const pave = !crans || (ev.deltaMode === 0 && now - dernierPave < TENU_PAVE && !(ev.ctrlKey && ctrlTenu));
+  if (pave && ev.deltaMode === 0) dernierPave = now;
+  const d = borne(dy || dx, -MAX_PX, MAX_PX);
+  const vraiCtrl = ev.metaKey || (ev.ctrlKey && ctrlTenu);
+  const pince = ev.ctrlKey && !ctrlTenu && !ev.metaKey;
+  if (pince) return { geste: 'zoom', dx, dy, facteur: Math.exp(-d * K_PINCE), pave: true };
+  if (vraiCtrl || ev.altKey) return { geste: 'zoom', dx, dy, facteur: Math.exp(-d * (pave ? K_PINCE : K_CRAN * 0.75)), pave };
+  if (ev.shiftKey && !pave) return { geste: 'pan', dx: dx || dy, dy: 0, facteur: 1, pave };
+  if (pave) return { geste: 'pan', dx, dy, facteur: 1, pave };
+  return { geste: 'zoom', dx, dy, facteur: Math.exp(-d * K_CRAN * 0.75), pave };
+}
+
+// Brancher le canvas : `pan(dx, dy, ev)` et `zoom(facteur, clientX, clientY, ev)`.
+// `ignore(ev)` : vrai pour ce qui garde sa propre molette (la mini-carte, les listes). Rend de quoi débrancher.
+export function brancherCanvas(zone, { pan, zoom, ignore } = {}) {
+  if (!zone) return () => {};
+  const f = (ev) => {
+    if (ignore && ignore(ev)) return;
+    ev.preventDefault();
+    const g = lireCanvas(ev, zone);
+    if (g.geste === 'pan') { if (pan && (g.dx || g.dy)) pan(g.dx, g.dy, ev); }
+    else if (zoom && g.facteur !== 1) zoom(g.facteur, ev.clientX, ev.clientY, ev);
+  };
+  // Safari (macOS) : le pincement n'est pas une molette
+  let s0 = 1;
+  const gs = (ev) => { if (ignore && ignore(ev)) return; ev.preventDefault(); s0 = 1; };
+  const gc = (ev) => {
+    if (ignore && ignore(ev)) return;
+    ev.preventDefault();
+    const k = ev.scale / s0; s0 = ev.scale;
+    if (zoom && k !== 1) zoom(k, ev.clientX, ev.clientY, ev);
+  };
+  zone.addEventListener('wheel', f, { passive: false });
+  zone.addEventListener('gesturestart', gs);
+  zone.addEventListener('gesturechange', gc);
+  return () => { zone.removeEventListener('wheel', f); zone.removeEventListener('gesturestart', gs); zone.removeEventListener('gesturechange', gc); };
+}

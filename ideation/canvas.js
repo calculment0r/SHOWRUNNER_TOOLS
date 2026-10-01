@@ -22,6 +22,7 @@
 import { el, href, fmtDur, etypeFr, toast, dropZone } from '../commun/shell.js';
 import { survolSon } from '../commun/lecteur.js';
 import { menu } from '../commun/menu.js';
+import { brancherCanvas } from '../commun/molette.js';
 import { CF_MIME } from './library.js';
 import { createWires, edgePts } from './wires.js';
 import { KINDS, outPort, inPorts } from './ports.js';
@@ -1250,13 +1251,13 @@ export function createCanvas(app) {
     return inn;
   }
 
-  cv.addEventListener('wheel', (e) => {
-    if (e.target.closest('.zoombox, .mini')) return;
-    e.preventDefault();
-    const r = rect();
-    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-    zoomAt(V().z * Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0016)), e.clientX - r.left, e.clientY - r.top);
-  }, { passive: false });
+  // la souris ET le pavé, sans réglage (commun/molette.js, brancherCanvas) : pincer = zoom, deux doigts = déplacer la vue,
+  // molette à crans = zoom
+  brancherCanvas(cv, {
+    ignore: (e) => !!e.target.closest?.('.zoombox, .mini'),
+    pan: (dx, dy) => { const v = V(); v.x -= dx; v.y -= dy; applyView(); },
+    zoom: (k, cx, cy) => { const r = rect(); zoomAt(V().z * k, cx - r.left, cy - r.top); },
+  });
 
   // le survol d'un enfant montre son groupe (un filet pointillé et son nom)
   let hovG = '';

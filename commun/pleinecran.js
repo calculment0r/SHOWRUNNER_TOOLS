@@ -18,8 +18,16 @@
 // concordance des images, sans Ctrl), ODIO (Ctrl → la vue ; F : cadrer, sans
 // Ctrl ; KeyF : le clavier musical, sans Ctrl), Idéation (F : un cadre ou le
 // plein écran de la présentation, sans Ctrl), Asset (F : favori, sans Ctrl).
-// Firefox : non vérifié. On sort par Échap, comme le navigateur le fait de
-// lui-même (on ne peut pas l'en empêcher, et c'est tant mieux).
+// Firefox : non vérifié.
+//
+// Échap (Cal, 01/10 : « on veut des fois sortir de quelque chose, un asset en pop-up
+// ou plein écran, et pas du plein écran du navigateur »). Un `preventDefault` ne
+// retient pas Échap : le navigateur sort du plein écran avant la page. Reste la
+// Keyboard Lock API (WICG ; MDN `Keyboard.lock()`) : en plein écran, `lock(['Escape'])`
+// livre Échap à la page ; le navigateur garde la sortie en MAINTENANT Échap (~2 s,
+// il le dit à l'écran), et Ctrl+Maj+F ou le bouton sortent toujours. Chrome et Edge
+// seulement (Firefox et Safari : pas de `navigator.keyboard.lock`) : là, Échap sort du
+// plein écran et ferme aussi ce que la page ferme — comme avant.
 
 import { dansCoquille } from './coquille.js';
 
@@ -29,6 +37,19 @@ const docPlein = (doc) => (doc === document && dansCoquille ? window.top.documen
 
 const ICON_IN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
 const ICON_OUT = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>';
+
+// Échap à la page tant qu'on est en plein écran : verrou posé à l'entrée, levé à la sortie
+const verrouEchap = () => {
+  const d = docPlein(document), k = d.defaultView && d.defaultView.navigator.keyboard;
+  if (!k || !k.lock) return;
+  if (d.fullscreenElement) k.lock(['Escape']).catch(() => {});
+  else if (k.unlock) k.unlock();
+};
+if (typeof document !== 'undefined' && !window.__srVerrouEchap) {
+  window.__srVerrouEchap = true;
+  docPlein(document).addEventListener('fullscreenchange', verrouEchap);
+  verrouEchap();
+}
 
 export const enPleinEcran = (doc = document) => !!docPlein(doc).fullscreenElement;
 export const permis = (doc = document) => { const d = docPlein(doc); return !!(d.fullscreenEnabled && d.documentElement.requestFullscreen); };
@@ -67,8 +88,8 @@ export function boutonPleinEcran(doc, el, { cls = 'tb ghost sm sr-full' } = {}) 
     b.classList.toggle('on', on);
     // une action impossible dit pourquoi, et ce qui la débloque (règle 7)
     b.title = !ok ? 'ce navigateur refuse le plein écran à cette page — F11 met toute la fenêtre en plein écran'
-      : on ? 'quitter le plein écran · Échap ou Ctrl+Maj+F'
-        : 'plein écran · Ctrl+Maj+F (Échap pour sortir) — il tient d’un outil à l’autre';
+      : on ? 'quitter le plein écran · Ctrl+Maj+F (ou maintenir Échap)'
+        : 'plein écran · Ctrl+Maj+F pour sortir (ou maintenir Échap) — il tient d’un outil à l’autre';
     b.setAttribute('aria-disabled', String(!ok));
   };
   b.addEventListener('click', () => { if (permis(doc) || enPleinEcran(doc)) basculer(doc); paint(); });
