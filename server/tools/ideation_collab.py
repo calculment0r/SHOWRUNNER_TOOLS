@@ -36,6 +36,31 @@ fil, la version de la planche), `p` (des présences), `join`, `leave`, `msg`,
 écrite entière ailleurs : la page se recale). Réglage : `ideation_ice_servers`
 (liste RTCIceServer, vide par défaut : réseau local, aucun STUN ni TURN).
 
+Hors du même réseau, STUN ne suffit pas (un NAT symétrique, d'entreprise ou
+mobile, ne laisse pas passer de flux pair à pair) : il faut un relais TURN.
+Réglage `ideation_turn` (showrunner.local.json, jamais le dépôt public ; les
+secrets ne sortent jamais du serveur — seuls des identifiants de courte durée
+partent vers les pages) :
+
+    {"fournisseur": "cloudflare", "key_id": "<TURN key id>", "api_token": "<API token>", "ttl": 14400}
+        Cloudflare Realtime TURN : POST https://rtc.live.cloudflare.com/v1/turn/keys/
+        <key id>/credentials/generate-ice-servers, « Authorization: Bearer <token> »,
+        {"ttl": s} → {"iceServers": [...]} (developers.cloudflare.com/realtime/turn/
+        generate-credentials). Le port 53 est retiré : « known to be blocked by web
+        browsers », et la page n'envoie pas ses candidats au fil de l'eau (même page).
+    {"fournisseur": "coturn", "urls": ["turn:hôte:3478", "turns:hôte:5349?transport=tcp"],
+     "secret": "<static-auth-secret>", "ttl": 14400}
+        un coturn à soi (`use-auth-secret`, `static-auth-secret`) : l'API REST de TURN
+        (coturn, README.turnserver ; draft-uberti-behave-turn-rest) — le nom
+        « <expiration unix>:<personne> », le mot de passe
+        base64(HMAC-SHA1(secret, nom)).
+
+    GET  /api/ideation/collab/<planche>/ice               {iceServers, relay, expires, why}
+
+Sans réglage : `ideation_ice_servers` seul (STUN), `relay` vide, et la page dit
+que hors du même réseau la visio peut ne pas passer. `hello` porte `relay`
+(le nom du fournisseur, jamais un secret).
+
 La co-édition (l'étude, § 5, sur le modèle du multijoueur de Figma) : le
 serveur est l'arbitre. Il tient la planche en mémoire, ordonne les lots
 d'opérations que les pages envoient (un numéro chacun : `rev`, la version de
@@ -762,7 +787,12 @@ def _attach(req, bid: str, poll: bool = False):
     u = _user(req)
     _bid_ok(bid)
     role = need(req, bid, "see")
-    _sweep(bid)
+    # toutes les planches : un onglet tombé sur une planche où personne ne revient
+    # compterait sinon pour toujours dans les limites par personne (_can_join)
+    with _lock:
+        bids = list(_boards)
+    for b in bids:
+        _sweep(b)
     resume = req.q("resume")
     since = req.q("since")
     joined = False
@@ -800,7 +830,8 @@ def _attach(req, bid: str, poll: bool = False):
              "me": {"id": c.uid, "name": c.name, "color": c.color, "admin": c.admin, "role": role}, "can": can_of(role, bid),
              "peers": others, "messages": msgs, "total": total,
              "limits": {k: LIMITS[k] for k in ("call", "msg_len", "history", "sel")},
-             "ice": config.get("ideation_ice_servers") or [], "t": time.time(), "ops": ops}
+             "ice": config.get("ideation_ice_servers") or [], "relay": relay_name(), "https": public_https(),
+             "t": time.time(), "ops": ops}
     if joined:
         _broadcast(bid, _sse("join", c.public()), exclude=c.cid)
         auth.journal("idéation · entre", user=c.uid, board=bid, cid=c.cid, **({"mode": "interrogation"} if poll else {}))
@@ -1151,6 +1182,128 @@ def r_signal(req, bid):
     _push(to, _sse("sig", {"from": c.cid, "user": c.uid, "kind": kind,
                            "data": {"type": data["type"], "sdp": data["sdp"]} if kind != "bye" else None}))
     return {"ok": True}
+
+
+# ── le relais TURN : des identifiants de courte durée (en tête du module) ─────
+CF_TURN = "https://rtc.live.cloudflare.com/v1/turn/keys/{key}/credentials/generate-ice-servers"
+TURN_TTL = 4 * 3600          # assez pour un long appel ; la page en redemande avant la fin
+TURN_TTL_MAX = 48 * 3600
+TURN_RENEW = 0.5             # on garde des identifiants jusqu'à la moitié de leur vie
+RELAYS = ("cloudflare", "coturn")
+_tlock = threading.Lock()
+_turn_cache: dict[str, tuple[float, list]] = {}   # personne → (expiration, iceServers)
+
+
+def _turn_conf() -> dict:
+    t = config.get("ideation_turn") or {}
+    return t if isinstance(t, dict) and t.get("fournisseur") in RELAYS else {}
+
+
+def relay_name() -> str:
+    return str(_turn_conf().get("fournisseur") or "")
+
+
+def _ttl(t: dict) -> int:
+    try:
+        return max(600, min(TURN_TTL_MAX, int(t.get("ttl") or TURN_TTL)))
+    except (TypeError, ValueError):
+        return TURN_TTL
+
+
+def _cf_post(url: str, token: str, body: dict, timeout: float = 6.0) -> dict:
+    """L'appel à l'API de Cloudflare (remplacé par un faux dans le contrôle)."""
+    import urllib.request
+    rq = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
+                                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(rq, timeout=timeout) as r:   # noqa: S310 — l'adresse est fixe (CF_TURN)
+        return json.loads(r.read().decode("utf-8"))
+
+
+def _no53(servers: list) -> list:
+    """Sans les adresses en :53 (Cloudflare : « blocked by web browsers ») ; un serveur
+    sans adresse restante disparaît."""
+    out = []
+    for s in servers or []:
+        if not isinstance(s, dict):
+            continue
+        urls = s.get("urls")
+        urls = [urls] if isinstance(urls, str) else list(urls or [])
+        keep = [u for u in urls if isinstance(u, str) and not re.search(r":53(?:[/?]|$)", u)]
+        if keep:
+            out.append({**{k: v for k, v in s.items() if k in ("username", "credential")}, "urls": keep})
+    return out
+
+
+def _coturn(t: dict, who: str, ttl: int) -> list:
+    import base64
+    import hashlib
+    import hmac
+    exp = int(time.time()) + ttl
+    name = f"{exp}:{re.sub(r'[^A-Za-z0-9_.-]', '', who)[:40] or 'ideation'}"
+    pwd = base64.b64encode(hmac.new(str(t["secret"]).encode(), name.encode(), hashlib.sha1).digest()).decode()
+    urls = t.get("urls")
+    urls = [urls] if isinstance(urls, str) else [u for u in (urls or []) if isinstance(u, str)]
+    return [{"urls": urls, "username": name, "credential": pwd}] if urls else []
+
+
+def ice_for(who: str) -> dict:
+    """Les serveurs ICE d'une personne : STUN du réglage + le relais, s'il est réglé."""
+    base = [s for s in (config.get("ideation_ice_servers") or []) if isinstance(s, dict)]
+    t = _turn_conf()
+    if not t:
+        return {"iceServers": base, "relay": "", "expires": None, "why": ""}
+    ttl = _ttl(t)
+    now = time.time()
+    with _tlock:
+        hit = _turn_cache.get(who)
+        if hit and hit[0] - now > ttl * (1 - TURN_RENEW):
+            return {"iceServers": base + hit[1], "relay": t["fournisseur"], "expires": hit[0], "why": ""}
+    try:
+        if t["fournisseur"] == "cloudflare":
+            if not (t.get("key_id") and t.get("api_token")):
+                raise ValueError("ideation_turn : key_id et api_token manquent")
+            if not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", str(t["key_id"])):
+                raise ValueError("ideation_turn : key_id hors motif")
+            d = _cf_post(CF_TURN.format(key=t["key_id"]), str(t["api_token"]), {"ttl": ttl})
+            got = d.get("iceServers") if isinstance(d, dict) else None
+            got = [got] if isinstance(got, dict) else got   # la doc a d'abord rendu un objet, puis une liste
+            servers = _no53(got or [])
+            if not any(s.get("credential") for s in servers):
+                raise ValueError("Cloudflare n'a pas rendu de serveur TURN")
+        else:
+            if not t.get("secret"):
+                raise ValueError("ideation_turn : secret manque")
+            servers = _coturn(t, who, ttl)
+            if not servers:
+                raise ValueError("ideation_turn : urls manque")
+    except Exception as e:   # noqa: BLE001 — le relais en panne ne coupe pas la visio : STUN seul, et la page le dit
+        why = str(e) if isinstance(e, ValueError) else f"le relais {t['fournisseur']} ne répond pas ({type(e).__name__})"
+        auth.journal("idéation · relais TURN en échec", fournisseur=t["fournisseur"], why=why[:200])
+        return {"iceServers": base, "relay": t["fournisseur"], "expires": None, "why": why[:300]}
+    exp = now + ttl
+    with _tlock:
+        _turn_cache[who] = (exp, servers)
+        for k in [k for k, (e, _) in _turn_cache.items() if e < now]:
+            _turn_cache.pop(k, None)
+    # STUN du fournisseur déjà dedans (Cloudflare en rend un) : on garde aussi celui du réglage
+    return {"iceServers": base + servers, "relay": t["fournisseur"], "expires": exp, "why": ""}
+
+
+def public_https() -> str:
+    """L'adresse https du portail (la porte publique), pour qui est sur l'adresse http du
+    réseau local : la caméra et le micro n'y existent pas (MDN, « secure context »)."""
+    ds = auth.door_settings()
+    if ds["mode"] == "off":
+        return ""
+    u = str(auth.demo_state().get("url") or "") if ds["mode"] == "demo" else ds["url"]
+    return u.rstrip("/") if u.startswith("https://") else ""
+
+
+def r_ice(req, bid):
+    u = _user(req)
+    _bid_ok(bid)
+    need(req, bid, "see")
+    return ice_for(str(u["id"]))
 
 
 # ── la co-édition : des opérations par objet et par propriété ─────────────
@@ -1771,6 +1924,7 @@ def register(app) -> None:
     app.route("POST", "/api/ideation/collab/{bid}/messages", r_post)
     app.route("POST", "/api/ideation/collab/{bid}/messages/{mid}/delete", r_delete)
     app.route("POST", "/api/ideation/collab/{bid}/signal", r_signal)
+    app.route("GET", "/api/ideation/collab/{bid}/ice", r_ice)
 
 
 # ── le contrôle (tools/check.py) ─────────────────────────────
@@ -2020,6 +2174,96 @@ def selftest(call, ok) -> None:
     _selftest_roles(call, ok)
     _selftest_registres(call, ok)
     _selftest_invite(call, ok)
+    _selftest_ice(call, ok, base)
+
+
+def _selftest_ice(call, ok, base: str) -> None:
+    """Le relais TURN : sans réglage, STUN seul ; Cloudflare par un FAUX fournisseur
+    (aucun appel réseau) ; coturn par l'HMAC de l'API REST de TURN. Aucun secret ne
+    sort vers la page."""
+    import base64
+    import hashlib
+    import hmac
+    global _cf_post
+    real = _cf_post
+    saved = {k: config.CFG.get(k) for k in ("ideation_turn", "ideation_ice_servers")}
+    stun = [{"urls": "stun:stun.cloudflare.com:3478"}]
+    seen: list = []
+
+    def fake(url, token, body, timeout=6.0):
+        seen.append((url, token, body))
+        return {"iceServers": [
+            {"urls": ["stun:stun.cloudflare.com:3478", "stun:stun.cloudflare.com:53"]},
+            {"urls": ["turn:turn.cloudflare.com:3478?transport=udp", "turn:turn.cloudflare.com:53?transport=udp",
+                      "turn:turn.cloudflare.com:3478?transport=tcp", "turns:turn.cloudflare.com:5349?transport=tcp",
+                      "turns:turn.cloudflare.com:443?transport=tcp"],
+             "username": "u-essai", "credential": "c-essai"}]}
+
+    def broken(url, token, body, timeout=6.0):
+        raise OSError("réseau coupé (essai)")
+    try:
+        _cf_post = fake
+        with _tlock:
+            _turn_cache.clear()
+        config.CFG["ideation_ice_servers"] = stun
+        config.CFG.pop("ideation_turn", None)
+        st, d = call("GET", base + "/ice")
+        ok(st == 200 and d["iceServers"] == stun and d["relay"] == "" and not seen,
+           f"relais : sans réglage, STUN seul, et la page le sait ({st} {d})")
+        st, d = call("GET", "/api/ideation/collab/ide-20260101-000000-0000/ice")
+        ok(st == 404, f"relais : une planche absente est refusée ({st})")
+
+        config.CFG["ideation_turn"] = {"fournisseur": "cloudflare", "key_id": "cle-essai-0123", "api_token": "JETON-SECRET-ESSAI", "ttl": 3600}
+        st, d = call("GET", base + "/ice")
+        urls = [u for s in d.get("iceServers", []) for u in ([s["urls"]] if isinstance(s["urls"], str) else s["urls"])]
+        turn = [s for s in d.get("iceServers", []) if s.get("credential")]
+        ok(st == 200 and d["relay"] == "cloudflare" and turn and turn[0]["username"] == "u-essai"
+           and not any(":53" in u for u in urls) and "turns:turn.cloudflare.com:443?transport=tcp" in urls
+           and d["expires"] and d["expires"] - time.time() > 3500,
+           f"relais : Cloudflare (faux), identifiants de courte durée, sans le port 53 ({st} {urls})")
+        ok(len(seen) == 1 and seen[0][0] == CF_TURN.format(key="cle-essai-0123") and seen[0][1] == "JETON-SECRET-ESSAI"
+           and seen[0][2] == {"ttl": 3600}, f"relais : l'appel suit la doc (adresse, jeton, ttl) ({seen})")
+        ok("JETON-SECRET-ESSAI" not in json.dumps(d) and "cle-essai-0123" not in json.dumps(d),
+           "relais : ni le jeton ni la clé ne partent vers la page")
+        call("GET", base + "/ice")
+        ok(len(seen) == 1, f"relais : les identifiants sont gardés (pas un appel par participant et par onglet) ({len(seen)})")
+
+        _cf_post = broken
+        with _tlock:
+            _turn_cache.clear()
+        st, d = call("GET", base + "/ice")
+        ok(st == 200 and d["iceServers"] == stun and d["relay"] == "cloudflare" and "ne répond pas" in d["why"],
+           f"relais : Cloudflare en panne, STUN seul et la raison ({d})")
+
+        config.CFG["ideation_turn"] = {"fournisseur": "coturn", "urls": ["turn:turn.essai.test:3478"], "secret": "SECRET-COTURN", "ttl": 7200}
+        with _tlock:
+            _turn_cache.clear()
+        st, d = call("GET", base + "/ice")
+        t = [s for s in d.get("iceServers", []) if s.get("credential")]
+        name = t[0]["username"] if t else ""
+        good = base64.b64encode(hmac.new(b"SECRET-COTURN", name.encode(), hashlib.sha1).digest()).decode()
+        exp = int(name.split(":")[0]) if ":" in name else 0
+        ok(st == 200 and d["relay"] == "coturn" and t and t[0]["credential"] == good and 7100 < exp - time.time() <= 7200
+           and "SECRET-COTURN" not in json.dumps(d),
+           f"relais : coturn, nom « expiration:personne », mot de passe HMAC-SHA1 ({name})")
+        config.CFG["ideation_turn"] = {"fournisseur": "coturn", "urls": ["turn:turn.essai.test:3478"]}
+        with _tlock:
+            _turn_cache.clear()
+        st, d = call("GET", base + "/ice")
+        ok(st == 200 and "secret" in d["why"] and d["iceServers"] == stun, f"relais : coturn sans secret, dit pourquoi ({d['why']})")
+        f0 = _Flux(base + "/stream")
+        ev, hello = f0.wait(lambda e, d: e == "hello")
+        f0.close()
+        ok(hello and hello.get("relay") == "coturn" and "SECRET" not in json.dumps(hello), "relais : bonjour dit le fournisseur, jamais un secret")
+    finally:
+        _cf_post = real
+        with _tlock:
+            _turn_cache.clear()
+        for k, v in saved.items():
+            if v is None:
+                config.CFG.pop(k, None)
+            else:
+                config.CFG[k] = v
 
 
 def _selftest_ops(call, ok) -> None:

@@ -3,10 +3,12 @@
 // autres, leur sélection (un anneau à leur couleur), « où regarde X » (un
 // cadre en option), le fil de la planche (messages ancrés à un objet ou à un
 // point, pastilles sur la planche, point corail quand le fil est fermé) et
-// la visio (WebRTC pair à pair : bandeau de vignettes repliable au-dessus de
-// la planche, caméra, micro, partage d'écran). Le fil et la visio partagent
-// un même bandeau à onglets, posé sur la colonne de l'inspecteur ; en mode
-// présentation, tout se réduit à une pastille.
+// la visio (WebRTC pair à pair : un panneau flottant qu'on déplace et
+// redimensionne, réductible en bulle — visio.js —, caméra, micro, partage
+// d'écran, raccrocher ; un relais TURN s'il est réglé, GET …/ice). Le fil et
+// l'onglet Visio (qui est en appel, rejoindre) partagent un même bandeau à
+// onglets, posé sur la colonne de l'inspecteur ; en mode présentation, le
+// bandeau se réduit à une pastille, le panneau de l'appel reste.
 //
 // Le serveur : server/tools/ideation_collab.py (un flux SSE par onglet, de
 // petits POST pour les gestes). L'étude : docs/etudes/ideation_collab.md.
@@ -29,10 +31,12 @@
 // quelqu'un (un clic sur son visage) et « suivez-moi » (la présence porte `lead`).
 // L'étude : docs/etudes/ideation_collab.md, § 5 à 8.
 
-import { api, el, toast, href, $ } from '../commun/shell.js';
+import { api, el, toast, href, $, espace } from '../commun/shell.js';
 import { menu } from '../commun/menu.js';
 import { createCoedition } from './coedition.js';
 import { createRecorder } from './enregistrer.js';
+import { createPanel, createTalk, VZ_ICO } from './visio.js';
+import { fenetres } from '../commun/fenetre.js';
 
 const API = window.SR_API ? new URL(window.SR_API, location.href) : new URL(href('api/'));
 const url = (p) => new URL(p, API).href;
@@ -45,6 +49,8 @@ const CAN_SCREEN = SECURE && typeof navigator.mediaDevices?.getDisplayMedia === 
 const VIDEO = { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 24, max: 30 } };
 const INSECURE = `la caméra, le micro et le partage d’écran ne s’ouvrent que sur une page sûre (https, ou localhost) : ce portail est servi en http sur ${location.host}, et le navigateur n’y donne pas l’accès aux appareils`;
 const MDN = 'https://developer.mozilla.org/fr/docs/Web/Security/Secure_Contexts';
+// sans relais TURN, STUN seul : deux réseaux derrière des NAT symétriques (entreprise, mobile) ne se joignent pas
+const NO_RELAY = 'hors du même réseau, la visio peut ne pas passer : aucun relais TURN n’est réglé (réglage ideation_turn du portail, showrunner.local.json sur DGX2)';
 const ROLE_FR = { owner: 'propriétaire', editor: 'éditeur', viewer: 'spectateur', none: 'sans accès' };
 
 const ICO = {
@@ -90,12 +96,24 @@ export function install(app) {
     bid: null, es: null, gen: 0, retry: 0, retryT: 0, hideT: 0, cid: null, me: null, ice: [], limits: {},
     peers: new Map(), msgs: new Map(), order: [], total: 0, readT: 0,
     tab: null, pinning: false, anchor: null, reply: null, focus: null, bottom: false,
-    views: LS('co-views') === true, pins: LS('co-pins') !== false, fold: LS('co-fold') === true, compact: false, before: null,
+    views: LS('co-views') === true, pins: LS('co-pins') !== false, compact: false, before: null,
     cursor: null, last: null, selKey: '', rev: null, viewT: 0, whoKey: '', callKey: '',
     // le rôle sur la planche (propriétaire, éditeur, spectateur) ; suivre la vue de quelqu'un
     role: '', can: null, follow: null, byLead: false, broke: null, leadMe: false, leads: new Map(), flyT: 0,
   };
   const K = { on: false, joining: false, local: null, cam: false, screen: null, pcs: new Map(), camWhy: '', micWhy: '' };
+  // la même planche, dans le même Workspace, par l'adresse https du portail (hello.https : la
+  // porte publique) ; `visio=1` y ouvre l'onglet Visio
+  function httpsHere() {
+    if (!C.https) return '';
+    try {
+      const u = new URL(location.pathname, `${C.https}/`);
+      if (espace()) u.searchParams.set('e', espace());
+      u.searchParams.set('visio', '1');
+      u.hash = C.bid || location.hash.slice(1);
+      return u.href;
+    } catch { return ''; }
+  }
   // la co-édition : ses opérations passent par ce flux ; elle prend l'enregistrement de la planche
   const CO = createCoedition(app, { url, moved: () => schedule(), status: () => paintNotice() });
   app.coed = CO;
@@ -160,33 +178,50 @@ export function install(app) {
   // la visio
   const visWarn = el('div', { class: 'co-warn', hidden: true });
   const visList = el('div', { class: 'co-vlist' });
+  // rejoindre : sur une page qui n'est pas sûre (http hors localhost), le bouton est
+  // éteint, dit pourquoi, et mène à la même planche par l'adresse https (bHttps)
   const bJoin = el('button', { class: 'tb on sm', type: 'button', onclick: () => (K.on ? leaveCall() : joinCall()) });
-  const ctl = (kind, label, fn) => el('button', { class: 'co-ctlb', type: 'button', 'aria-pressed': 'false', onclick: fn }, svg(ICO[kind]), el('span', {}, label));
-  const bMic = ctl('mic', 'Micro', () => toggleMic());
-  const bCam = ctl('cam', 'Caméra', () => toggleCam());
-  const bScr = ctl('screen', 'Écran', () => toggleScreen());
-  const stripTog = el('button', { class: 'co-tog', type: 'button', title: 'le bandeau des vignettes, au-dessus de la planche', onclick: () => fold(!C.fold) }, 'vignettes');
+  bJoin.addEventListener('click', (e) => { if (bJoin.getAttribute('aria-disabled') === 'true') { e.stopImmediatePropagation(); if (bJoin.title) toast(bJoin.title, 8000); } }, true);
+  const bHttps = el('a', { class: 'tb ghost sm co-https', hidden: true, rel: 'noopener' }, 'Ouvrir en https ↗');
+  const bListen = el('button', { class: 'co-tog', type: 'button', hidden: true, title: 'rejoindre sans caméra ni micro : voir et entendre les autres', onclick: () => joinCall() }, 'écouter seulement');
+  const bShow = el('button', { class: 'co-tog', type: 'button', hidden: true, title: 'le panneau de l’appel, qu’on déplace et redimensionne', onclick: () => { VZ.show(true); VZ.mini(false); } }, 'panneau');
+  // les commandes du panneau : une icône, le mot quand il y a la place
+  const ctl = (label, ic, fn) => el('button', { class: 'co-ctlb vz-b', type: 'button', 'aria-pressed': 'false', 'aria-label': label, onclick: fn },
+    el('span', { class: 'vz-ico', html: `<svg viewBox="0 0 24 24" aria-hidden="true">${ic}</svg>` }), el('span', { class: 'vz-w' }, label));
+  const bMic = ctl('Micro', VZ_ICO.micOff, () => toggleMic());
+  const bCam = ctl('Caméra', VZ_ICO.camOff, () => toggleCam());
+  const bScr = ctl('Écran', `<path d="${ICO.screen}"/>`, () => toggleScreen());
   const visNote = el('p', { class: 'co-note' });
   // enregistrer le son de l'appel (enregistrer.js) : le bouton, l'état, le voyant de qui enregistre
-  const bRec = el('button', { class: 'co-ctlb co-recb', type: 'button', 'aria-pressed': 'false', onclick: () => (REC.on() ? REC.stop() : REC.start()) },
-    el('i', { class: 'co-recdot' }), el('span', {}, 'Enregistrer'));
+  const bRec = el('button', { class: 'co-ctlb vz-b co-recb', type: 'button', 'aria-pressed': 'false', 'aria-label': 'enregistrer le son de l’appel', onclick: () => (REC.on() ? REC.stop() : REC.start()) },
+    el('i', { class: 'co-recdot' }), el('span', { class: 'vz-w' }, 'Enregistrer'));
   bRec.addEventListener('click', (e) => { if (bRec.getAttribute('aria-disabled') === 'true') { e.stopImmediatePropagation(); if (bRec.title) toast(bRec.title, 7000); } }, true);
+  // raccrocher : une action qui coupe, pas l'action de la page — l'orange de l'alerte
+  // en filet et en encre, jamais l'aplat (.tb.go, un seul par écran)
+  const bHang = el('button', { class: 'co-ctlb vz-b vz-hang', type: 'button', 'aria-label': 'raccrocher', title: 'raccrocher : quitter l’appel (la planche reste ouverte)', onclick: () => leaveCall() },
+    el('span', { class: 'vz-ico', html: `<svg viewBox="0 0 24 24" aria-hidden="true">${VZ_ICO.hang}</svg>` }), el('span', { class: 'vz-w' }, 'Raccrocher'));
   const recSt = el('span', { class: 'co-recst lbl' });
-  const recRow = el('div', { class: 'co-recrow' }, bRec, recSt);
+  const recRow = el('div', { class: 'co-recrow' }, recSt);
   visPane.append(
-    el('div', { class: 'co-fhead' }, el('span', { class: 'lbl' }, 'visio · pair à pair'), el('span', { class: 'sp' }), stripTog),
+    el('div', { class: 'co-fhead' }, el('span', { class: 'lbl' }, 'visio · pair à pair'), el('span', { class: 'sp' }), bShow),
     visWarn, visList,
-    el('div', { class: 'co-vrow' }, bJoin, el('div', { class: 'co-ctl' }, bMic, bCam, bScr)),
+    el('div', { class: 'co-vrow' }, bJoin, bHttps, bListen),
     recRow,
     visNote);
 
-  // le bandeau des vignettes : au-dessus de la planche, jamais sur les outils
-  const tiles = el('div', { class: 'co-tiles' });
-  const strip = el('div', { class: 'co-strip', hidden: true, 'aria-label': 'vignettes de l’appel' },
-    el('button', { class: 'co-fold', type: 'button', title: 'replier les vignettes (la visio reste ouverte)', onclick: () => fold(true) }, el('span', { class: 'lbl' }, 'appel'), el('span', { class: 'lbl co-n' })),
-    tiles);
-  const ideMain = $('.ide-main');
-  if (ideMain?.parentNode) ideMain.parentNode.insertBefore(strip, ideMain); else { strip.classList.add('in-cv'); cv.append(strip); }
+  // le panneau de l'appel (visio.js) : flottant, au-dessus de la planche, sans voile ;
+  // il peut passer dans une fenêtre du navigateur (commun/fenetre.js)
+  const FEN = fenetres('ideation', { onchange: () => afterMove() });
+  const relayChip = el('span', { class: 'vz-relay lbl' });
+  const VZ = createPanel({ label: 'visio', head: [relayChip], bar: [bMic, bCam, bScr, bRec, el('span', { class: 'sp' }), bHang] });
+  FEN.panneau('visio', { node: VZ.root, title: 'Visio' });
+  VZ.root.querySelector('.vz-head .sp').after(FEN.bouton('visio'));
+  // une vidéo déplacée d'un document à l'autre s'arrête : on la relance
+  function afterMove() {
+    for (const t of tilePool.values()) if (t.v.srcObject && t.v.paused) t.v.play().catch(() => t.el.classList.add('blocked'));
+    VZ.show(K.on); VZ.layout();
+  }
+  const TALK = createTalk((k) => { C.talk = k; paintTiles(); });
 
   // sur la planche : curseurs, anneaux, cadres de vue, pastilles
   const layer = el('div', { class: 'co-layer', 'aria-hidden': 'true' });
@@ -289,7 +324,10 @@ export function install(app) {
   }
   function onHello(d) {
     const fresh = d.cid !== C.cid;
-    C.cid = d.cid; C.me = d.me; C.ice = d.ice || []; C.limits = d.limits || {}; C.retry = 0; C.total = d.total || 0;
+    C.cid = d.cid; C.me = d.me; C.limits = d.limits || {}; C.retry = 0; C.total = d.total || 0;
+    // les serveurs ICE du flux : STUN seul ; ceux du relais (identifiants de courte durée) viennent de …/ice
+    if (!C.iceExp) { C.ice = d.ice || []; C.relay = d.relay || ''; }
+    C.https = d.https || '';
     C.peers = new Map((d.peers || []).map((p) => [p.cid, p]));
     C.msgs = new Map(); C.order = [];
     for (const m of d.messages || []) putMsg(m);
@@ -405,7 +443,7 @@ export function install(app) {
   }
   // le curseur ne compte que sur la planche même (pas sur la mini-carte, le zoom, le bandeau)
   addEventListener('pointermove', (e) => {
-    const on = cv.contains(e.target) && !e.target.closest?.('.co-mini, .zoombox, .mini, .co-strip, .co-pin');
+    const on = cv.contains(e.target) && !e.target.closest?.('.co-mini, .zoombox, .mini, .co-pin');
     C.last = on ? [e.clientX, e.clientY] : null;
     trackCursor();
   }, { passive: true });
@@ -1055,13 +1093,33 @@ export function install(app) {
     fill(leadMini, el('span', { class: 'lbl' + (C.leadMe ? ' on' : '') }, C.leadMe ? el('i') : null, C.leadMe ? 'on vous suit · arrêter' : 'suivez-moi'));
     leadMini.title = C.leadMe ? 'les autres suivent votre vue : arrêter' : 'demander à tous de suivre votre vue pendant la présentation';
   }
-  function fold(on) {
-    C.fold = on;
-    LS('co-fold', on);
-    paintTiles(); paintCall();
+  // ── la visio ────────────────────────────────────────────────
+  // les serveurs ICE : STUN du réglage, et le relais TURN s'il est réglé — des identifiants
+  // de courte durée (GET …/ice, server/tools/ideation_collab.py), redemandés avant la fin
+  async function freshIce() {
+    if (C.iceExp && C.iceExp * 1000 - Date.now() > 120000) return;
+    try {
+      const d = await api(`ideation/collab/${C.bid}/ice`);
+      C.ice = d.iceServers || []; C.relay = d.relay || ''; C.relayWhy = d.why || '';
+      C.iceExp = d.expires || 0;
+      // Cloudflare : « refresh credentials … using RTCPeerConnection.setConfiguration() »
+      for (const Q of K.pcs.values()) { try { Q.pc.setConfiguration({ iceServers: C.ice }); } catch { /* */ } }
+    } catch (e) { C.relayWhy = e.message; }
+    paintRelay();
+  }
+  setInterval(() => { if (K.on && C.iceExp) freshIce(); }, 5 * 60000);
+  function paintRelay() {
+    const has = !!C.relay && !C.relayWhy;
+    relayChip.textContent = has ? 'relais' : 'stun seul';
+    relayChip.classList.toggle('ok', has);
+    relayChip.title = has ? `un relais TURN (${C.relay}) : la visio passe aussi d’un réseau à l’autre`
+      : C.relayWhy ? `le relais TURN ne répond pas : ${C.relayWhy}` : NO_RELAY;
+    const failed = [...K.pcs.values()].some((Q) => Q.pc.connectionState === 'failed');
+    VZ.note.hidden = has && !failed;
+    fill(VZ.note, el('span', {}, failed && !has ? `pas de chemin réseau vers quelqu’un : ${NO_RELAY}` : has ? 'pas de chemin réseau vers quelqu’un, même par le relais : réessayez, ou vérifiez le réseau' : C.relayWhy ? `relais en panne (${C.relayWhy}) : hors du même réseau, la visio peut ne pas passer` : NO_RELAY));
+    VZ.note.title = VZ.note.textContent;
   }
 
-  // ── la visio ────────────────────────────────────────────────
   const audioTrack = () => K.local?.getAudioTracks()[0] || null;
   const videoTrack = () => K.screen || (K.cam ? K.local?.getVideoTracks()[0] : null) || null;
   function stopLocal() {
@@ -1084,6 +1142,8 @@ export function install(app) {
     if (!C.cid) { toast('la planche n’est pas encore reliée au portail : un instant', 4000); return; }
     K.joining = true; K.camWhy = ''; K.micWhy = '';
     paintCall();
+    TALK.start();   // le geste qui rejoint ouvre aussi l'AudioContext (qui parle)
+    await freshIce();
     if (SECURE) {
       try { K.local = await navigator.mediaDevices.getUserMedia({ audio: true, video: VIDEO }); K.cam = true; } catch (e1) {
         K.camWhy = mediaWhy(e1, 'la caméra');
@@ -1095,20 +1155,24 @@ export function install(app) {
     K.on = true;
     delete P.pend.call;
     try { await post('presence', { cid: C.cid, call: callState() }); } catch (e) {
-      K.on = false; K.joining = false; stopLocal();
+      K.on = false; K.joining = false; stopLocal(); TALK.stop();
       toast(e.message, 7000); paintCall(); return;
     }
     K.joining = false;
-    if (C.fold) fold(false);
-    reconcile(true); paintWho(); paintCall();
+    VZ.show(true);
+    reconcile(true); paintWho(); paintCall(); paintTiles();
   }
   function leaveCall(silent = false) {
     // quitter l'appel arrête l'enregistrement : ce qui est pris se range (enregistrer.js)
     if (REC.on()) REC.stop();
     for (const cid of [...K.pcs.keys()]) closePeer(cid);
     stopLocal();
+    TALK.stop();
     K.on = false;
     if (!silent) send({ call: null });
+    // la fenêtre détachée se referme avec l'appel ; le panneau se cache
+    if (FEN.detache('visio')) FEN.rattacher('visio');
+    VZ.show(false);
     paintTiles(); paintWho(); paintCall();
   }
   function toggleMic() {
@@ -1198,7 +1262,9 @@ export function install(app) {
   }
   const gathered = (pc) => new Promise((res) => {
     if (pc.iceGatheringState === 'complete') { res(); return; }
-    const t = setTimeout(res, 2500);
+    // un relais au loin se rassemble moins vite que le réseau de la maison (sans « trickle »,
+    // l'offre part avec ce qui est là au bout du délai)
+    const t = setTimeout(res, C.relay ? 4000 : 2500);
     pc.addEventListener('icegatheringstatechange', () => { if (pc.iceGatheringState === 'complete') { clearTimeout(t); res(); } });
   });
   // pas de « trickle » : l'offre part avec tous ses candidats (réseau local, rassemblés en quelques ms)
@@ -1247,7 +1313,11 @@ export function install(app) {
     if (!t) {
       const v = el('video', { autoplay: true, playsinline: true });
       v.muted = key === 'me';
-      t = { el: el('figure', { class: 'co-tile' }, v, el('span', { class: 'co-ph' }), el('span', { class: 'co-state lbl' }),
+      // les icônes d'état (micro coupé, caméra coupée) : chez chacun, d'après la présence (call)
+      const icos = el('span', { class: 'co-icos' },
+        el('span', { class: 'vz-ico co-i-mic', title: 'micro coupé', html: `<svg viewBox="0 0 24 24" aria-hidden="true">${VZ_ICO.micOff}</svg>` }),
+        el('span', { class: 'vz-ico co-i-cam', title: 'caméra coupée', html: `<svg viewBox="0 0 24 24" aria-hidden="true">${VZ_ICO.camOff}</svg>` }));
+      t = { el: el('figure', { class: 'co-tile', role: 'listitem' }, v, el('span', { class: 'co-ph' }), el('span', { class: 'co-state lbl' }), icos,
         el('figcaption', {}, el('span', { class: 'nm' }), el('i', { class: 'co-flag' }))), v, src: null };
       t.el.addEventListener('click', () => { if (t.v.paused) t.v.play().then(() => t.el.classList.remove('blocked')).catch(() => {}); });
       tilePool.set(key, t);
@@ -1284,43 +1354,65 @@ export function install(app) {
       t.el.classList.toggle('mirror', w.key === 'me' && !K.screen);
       t.el.classList.toggle('screen', !!w.call?.screen);
       t.el.classList.toggle('mute', !w.call?.mic);
+      t.el.classList.toggle('camoff', !cam);
       t.el.classList.toggle('wait', !!w.Q && st !== 'connected');
+      t.el.classList.toggle('talk', !!C.talk && C.talk === w.key && !!w.call?.mic && want.length > 1);
       t.el.querySelector('.co-state').textContent = !w.Q || st === 'connected' ? (w.call?.recv ? 'écoute' : '')
         : st === 'failed' ? 'pas de chemin réseau' : st === 'disconnected' ? 'coupé…' : 'connexion…';
-      t.el.querySelector('.co-flag').textContent = w.call?.screen ? 'écran' : !w.call?.mic ? 'muet' : '';
+      t.el.querySelector('.co-flag').textContent = w.call?.screen ? 'écran' : '';
+      t.el.setAttribute('aria-label', `${w.name}${w.call?.mic ? '' : ', micro coupé'}${cam ? '' : ', caméra coupée'}`);
       // à sa place seulement : une vidéo qu'on déplace dans la page peut s'arrêter
       const i = want.indexOf(w);
-      if (tiles.children[i] !== t.el) tiles.insertBefore(t.el, tiles.children[i] || null);
+      const grid = VZ.grid;
+      if (grid.children[i] !== t.el) grid.insertBefore(t.el, grid.children[i] || null);
     }
-    strip.hidden = !K.on || C.compact;
-    strip.classList.toggle('fold', C.fold);
-    strip.querySelector('.co-n').textContent = `· ${want.length}`;
-    requestAnimationFrame(placeDock);
+    // qui parle : la piste son de chacun (la mienne, celle reçue de chaque personne)
+    const tracks = new Map();
+    for (const w of want) tracks.set(w.key, w.key === 'me' ? audioTrack() : w.Q.stream.getAudioTracks()[0] || null);
+    TALK.set(tracks);
+    VZ.count(want.length);
+    VZ.faces(want.map((w) => ({ name: w.key === 'me' ? `${w.name} · vous` : w.name, color: col(w.color), initials: initials(w.name),
+      talk: C.talk === w.key && !!w.call?.mic, mute: !w.call?.mic })));
+    paintRelay();
   }
   function paintCall() {
     const inCall = [...C.peers.values()].filter((p) => p.call?.on);
+    const https = SECURE ? '' : httpsHere();
     const warn = !HAS_RTC ? ['ce navigateur n’a pas WebRTC : la visio ne peut pas s’ouvrir ici.']
-      : !SECURE ? [`${INSECURE[0].toUpperCase()}${INSECURE.slice(1)}. Vous pouvez rejoindre l’appel pour voir et entendre les autres.`,
-        'Pour parler et montrer : ouvrir le portail par localhost (un tunnel ssh : ssh -L 8790:127.0.0.1:8790 dgx2, puis http://localhost:8790/), ou attendre la porte Cloudflare (https).']
+      : !SECURE ? [`${INSECURE[0].toUpperCase()}${INSECURE.slice(1)}.`,
+        https ? 'Pour parler et montrer : la même planche par l’adresse https du portail (« Ouvrir en https »). Ici, on peut seulement écouter.'
+          : 'Pour parler et montrer : ouvrir le portail par localhost (un tunnel ssh : ssh -L 8790:127.0.0.1:8790 dgx2, puis http://localhost:8790/). Ici, on peut seulement écouter.']
         : [K.camWhy, K.micWhy].filter(Boolean);
     visWarn.hidden = !warn.length;
     fill(visWarn, ...warn.map((w) => el('p', {}, w)),
       !SECURE && HAS_RTC ? el('a', { href: MDN, target: '_blank', rel: 'noopener' }, 'contexte sécurisé · MDN ↗') : null);
-    bJoin.disabled = !HAS_RTC || K.joining || !C.cid;
-    bJoin.title = !C.cid ? 'la planche n’est pas encore reliée au portail' : '';
-    bJoin.className = K.on ? 'tb ghost sm' : 'tb on sm';
-    bJoin.textContent = K.joining ? 'ouverture…' : K.on ? 'Quitter l’appel' : SECURE ? (inCall.length ? 'Rejoindre l’appel' : 'Lancer l’appel') : 'Rejoindre (voir, entendre)';
+    // sur une page qui n'est pas sûre : éteint, il dit pourquoi, et « Ouvrir en https » y mène
+    const insecure = HAS_RTC && !SECURE && !K.on;
+    bJoin.disabled = !HAS_RTC || K.joining || (!C.cid && !insecure);
+    bJoin.setAttribute('aria-disabled', insecure ? 'true' : 'false');
+    bJoin.classList.toggle('why', insecure);
+    bJoin.title = insecure ? `${INSECURE}${https ? ' : « Ouvrir en https » ouvre la même planche par l’adresse sûre' : ''}`
+      : !C.cid ? 'la planche n’est pas encore reliée au portail' : '';
+    bJoin.className = `${K.on ? 'tb ghost sm' : 'tb on sm'}${insecure ? ' why' : ''}`;
+    bJoin.textContent = K.joining ? 'ouverture…' : K.on ? 'Quitter l’appel' : !SECURE ? 'Rejoindre en visio' : inCall.length ? 'Rejoindre en visio' : 'Lancer la visio';
+    bHttps.hidden = !insecure || !https;
+    if (https) { bHttps.href = https; bHttps.title = `la même planche, dans le même Workspace, par ${new URL(https).host} : la caméra et le micro y sont permis`; }
+    bListen.hidden = !insecure || !C.cid;
+    bShow.hidden = !K.on;
     const cs = callState();
-    const off = (b, on, why) => {
+    const off = (b, on, why, tip) => {
       b.setAttribute('aria-disabled', why ? 'true' : 'false');
       b.setAttribute('aria-pressed', String(!!on));
       b.classList.toggle('on', !!on);
-      b.title = why || '';
+      b.title = why || tip;
     };
     const need = !HAS_RTC ? 'ce navigateur n’a pas WebRTC' : !SECURE ? INSECURE : !K.on ? 'rejoignez d’abord l’appel' : '';
-    off(bMic, K.on && cs.mic, need || (K.on && !audioTrack() ? K.micWhy || 'pas de micro : cliquer pour réessayer' : ''));
-    off(bCam, K.on && cs.cam, need || (K.on && !K.cam && K.camWhy ? K.camWhy : ''));
-    off(bScr, K.on && cs.screen, need || (!CAN_SCREEN ? 'ce navigateur ne partage pas l’écran' : ''));
+    off(bMic, K.on && cs.mic, need || (K.on && !audioTrack() ? K.micWhy || 'pas de micro : cliquer pour réessayer' : ''),
+      cs.mic ? 'couper le micro (les autres voient l’icône)' : 'rétablir le micro');
+    off(bCam, K.on && cs.cam, need || (K.on && !K.cam && K.camWhy ? K.camWhy : ''),
+      cs.cam ? 'couper la caméra (les autres voient l’icône)' : 'rétablir la caméra');
+    off(bScr, K.on && cs.screen, need || (!CAN_SCREEN ? 'ce navigateur ne partage pas l’écran' : ''),
+      cs.screen ? 'arrêter de partager l’écran' : 'partager l’écran (une fenêtre, un onglet, l’écran entier)');
     // un mot désactivé dit pourquoi, et reste cliquable pour le redire (règle 7)
     for (const b of [bMic, bCam, bScr]) if (b.getAttribute('aria-disabled') === 'true' && b.title) b.classList.add('why'); else b.classList.remove('why');
     const rows = [];
@@ -1332,10 +1424,8 @@ export function install(app) {
       el('span', { class: 'lbl' }, [r.call?.recv ? 'écoute' : r.call?.mic ? 'micro' : 'muet', r.call?.cam ? 'caméra' : '', r.call?.screen ? 'écran' : ''].filter(Boolean).join(' · ')),
       r.st && r.st !== 'connected' ? el('span', { class: `lbl st ${r.st}` }, r.st === 'failed' ? 'pas de chemin' : r.st === 'new' || r.st === 'connecting' ? 'connexion' : r.st) : null))
       : [el('p', { class: 'co-empty' }, 'Personne n’est en appel sur cette planche.')]));
-    visNote.textContent = K.on ? `pair à pair, sans serveur relais : sur le réseau de la maison seulement (${C.limits.call || 6} personnes au plus).`
-      : 'l’image et le son vont directement d’un navigateur à l’autre ; le portail ne fait que les présenter.';
-    stripTog.classList.toggle('on', !C.fold);
-    stripTog.hidden = !K.on;
+    visNote.textContent = `l’image et le son vont directement d’un navigateur à l’autre (${C.limits.call || 6} personnes au plus) ; `
+      + (C.relay ? `hors du même réseau, par le relais TURN (${C.relay}).` : NO_RELAY);
     paintCallPill();
     paintRec();
   }
@@ -1358,7 +1448,8 @@ export function install(app) {
     recPill.hidden = !ws.length;
     recPill.lastChild.textContent = ws.length ? `enregistrement · ${ws.join(', ')}` : '';
     recPill.title = ws.length ? `${ws.join(', ')} enregistre${ws.length > 1 ? 'nt' : ''} le son de l’appel` : '';
-    strip.classList.toggle('rec', !!ws.length);
+    VZ.root.classList.toggle('rec', !!ws.length);
+    VZ.bub.classList.toggle('rec', !!ws.length);
     tabVis.classList.toggle('rec', !!ws.length);
   }
   function paintAll() {
@@ -1370,7 +1461,18 @@ export function install(app) {
   app.collab = { C, K, CO, rec: REC, open: openDock, close: closeDock, present: setCompact, pin: pinMode, stream: { open, close: closeStream },
     follow: startFollow, unfollow: stopFollow, lead, invite: inviteModal };
   const t0 = LS('co-tab');
-  if (t0 === 'fil' || t0 === 'visio') openDock(t0);
+  // venu de « Ouvrir en https » (une page http du réseau local) : l'onglet Visio, ouvert
+  // (l'adresse de la navigation : ideation.js a pu déjà réécrire celle de la page)
+  let nav = location.href;
+  try { nav = performance.getEntriesByType('navigation')[0]?.name || nav; } catch { /* */ }
+  const qv = new URLSearchParams(location.search);
+  if (new URL(nav).searchParams.has('visio') || qv.has('visio')) {
+    if (qv.has('visio')) {
+      qv.delete('visio');
+      history.replaceState(history.state, '', `${location.pathname}${qv.toString() ? `?${qv}` : ''}${location.hash}`);
+    }
+    openDock('visio');
+  } else if (t0 === 'fil' || t0 === 'visio') openDock(t0);
   paintAll();
   if (S.board) connect(S.board.id);
 }

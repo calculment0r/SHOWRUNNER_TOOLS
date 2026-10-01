@@ -9,7 +9,7 @@
 
 /* un élément caché le reste, même quand une règle ci-dessous lui donne un display */
 .co-bar [hidden], .co-dock [hidden], .co-layer [hidden], .co-mini [hidden], .co-tile [hidden],
-.co-dock[hidden], .co-mini[hidden], .co-strip[hidden] { display: none !important; }
+.co-dock[hidden], .co-mini[hidden] { display: none !important; }
 
 /* ── la barre ──────────────────────────────────────────── */
 .co-bar { display: flex; align-items: center; gap: 6px; flex: none; }
@@ -239,26 +239,131 @@ body.co-viewer #insp [contenteditable] { pointer-events: none; opacity: .45; }
 .co-ctlb .co-svg svg { width: 13px; height: 13px; }
 .co-note { flex: none; margin: 0; font-size: 10.5px; line-height: 1.5; color: var(--ink3); }
 
-/* le bandeau des vignettes, au-dessus de la planche (il prend sa place, ne couvre rien) */
-.co-strip { flex: none; display: flex; align-items: stretch; gap: 8px; min-width: 0; }
-.co-strip[hidden] { display: none; }
-/* replié : hors du flux, mais les vidéos continuent (le son des autres passe par elles) */
-.co-strip.fold { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-.co-strip.in-cv { position: absolute; left: 12px; right: 12px; top: 52px; z-index: 7; }
-.co-fold {
-  flex: none; width: 34px; border-radius: var(--r3); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
-  box-shadow: inset 0 0 0 1px var(--line-gr);
+/* rejoindre, sur une page qui n'est pas sûre : éteint, il dit pourquoi (un clic le redit) */
+.co-vrow .tb.why { opacity: .45; cursor: help; }
+.co-https[hidden] { display: none; }
+
+/* ── le panneau de l'appel (visio.js) : flottant, sans voile, au-dessus de la planche ── */
+.vz[hidden], .vz-bub[hidden], .vz-note[hidden] { display: none !important; }
+.vz {
+  position: fixed; z-index: 50; display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  background: var(--panel); border-radius: var(--r4); container-type: inline-size;
+  box-shadow: inset 0 0 0 1px var(--line), 0 18px 44px var(--drop-lg);
 }
-.co-fold .lbl { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 8px; color: var(--grn2); }
-.co-fold .co-n { color: var(--ink3); }
-.co-fold:hover .lbl { color: var(--ink); }
-.co-tiles { flex: 1; min-width: 0; display: flex; gap: 8px; overflow-x: auto; }
+.vz.rec { box-shadow: inset 0 0 0 1px var(--line-or), 0 18px 44px var(--drop-lg); }
+.vz.busy { user-select: none; }
+.vz-head {
+  flex: none; display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 6px 0 8px;
+  cursor: grab; touch-action: none; box-shadow: inset 0 -1px 0 var(--line);
+}
+.vz.busy .vz-head { cursor: grabbing; }
+.vz-head .sp { flex: 1; }
+.vz-head .grip { color: var(--ink3); }
+.vz-t { color: var(--ink2); }
+.vz-n { color: var(--ink3); }
+.vz-relay {
+  height: 18px; padding: 0 6px; border-radius: var(--r1); display: inline-flex; align-items: center; font-size: 7.5px;
+  color: var(--amb); box-shadow: inset 0 0 0 1px var(--line-amb); cursor: help;
+}
+.vz-relay.ok { color: var(--grn2); box-shadow: inset 0 0 0 1px var(--line-gr); }
+.vz-hb {
+  flex: none; width: 24px; height: 22px; border-radius: var(--r2); display: inline-flex; align-items: center; justify-content: center;
+  color: var(--ink3); box-shadow: inset 0 0 0 1px var(--line);
+}
+.vz-hb:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.vz-ico { display: inline-flex; flex: none; }
+.vz-ico svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.vz-hb .vz-ico svg { width: 13px; height: 13px; }
+.vz-note {
+  flex: none; margin: 6px 8px 0; padding: 5px 8px; border-radius: var(--r2); font-size: 10.5px; line-height: 1.45; color: var(--ink2);
+  background: var(--amb-bg); box-shadow: inset 0 0 0 1px var(--line-amb);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vz-note:hover { white-space: normal; }
+/* la grille : --cols et --rows, calculés pour que les vignettes soient les plus grandes */
+.vz-grid {
+  --cols: 1; --rows: 1;
+  flex: 1; min-height: 0; display: grid; gap: 6px; padding: 8px;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-template-rows: repeat(var(--rows), minmax(0, 1fr));
+}
+.vz-bar {
+  flex: none; display: flex; align-items: center; gap: 4px; padding: 7px 8px; box-shadow: inset 0 1px 0 var(--line);
+}
+.vz-bar .sp { flex: 1; }
+.vz-b { height: 30px; }
+.vz-b .vz-ico .x { display: none; }
+/* micro, caméra : coupés, l'icône est barrée */
+.vz-b:not(.co-recb):not(.vz-hang):not(.on) .vz-ico .x { display: inline; }
+.vz-b:not(.on):not(.vz-hang):not(.co-recb):not([aria-disabled="true"]) { color: var(--ink2); }
+/* raccrocher : une action qui coupe, pas l'action de la page — l'orange de l'alerte en filet, jamais l'aplat */
+.vz-hang { color: var(--or); box-shadow: inset 0 0 0 1px var(--line-or); }
+.vz-hang:hover { color: var(--or); background: var(--or-bg); box-shadow: inset 0 0 0 1px var(--or); }
+/* étroit : les icônes seules (le nom reste dans aria-label et au survol) */
+@container (max-width: 470px) { .vz-b .vz-w { display: none; } .vz-b { padding: 0 8px; } }
+@container (max-width: 470px) { .vz-b.co-recb.on .vz-w { display: inline; } }
+/* les poignées : quatre bords, quatre coins */
+.vz-rz { position: absolute; z-index: 2; touch-action: none; }
+.vz-rz.n, .vz-rz.s { left: 10px; right: 10px; height: 8px; cursor: ns-resize; }
+.vz-rz.n { top: -4px; } .vz-rz.s { bottom: -4px; }
+.vz-rz.e, .vz-rz.w { top: 10px; bottom: 10px; width: 8px; cursor: ew-resize; }
+.vz-rz.e { right: -4px; } .vz-rz.w { left: -4px; }
+.vz-rz.ne, .vz-rz.nw, .vz-rz.se, .vz-rz.sw { width: 14px; height: 14px; }
+.vz-rz.ne { top: -4px; right: -4px; cursor: nesw-resize; } .vz-rz.sw { bottom: -4px; left: -4px; cursor: nesw-resize; }
+.vz-rz.nw { top: -4px; left: -4px; cursor: nwse-resize; } .vz-rz.se { bottom: -4px; right: -4px; cursor: nwse-resize; }
+.vz-rz.se::after {
+  content: ''; position: absolute; right: 7px; bottom: 7px; width: 7px; height: 7px; pointer-events: none;
+  box-shadow: inset -1.5px -1.5px 0 var(--ink3); border-radius: 0 0 2px 0;
+}
+/* la bulle : les visages, qu'on déplace, et qui rouvre le panneau */
+.vz-bub {
+  position: fixed; z-index: 50; display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px 0 6px;
+  border-radius: 999px; background: var(--panel); cursor: grab; touch-action: none;
+  box-shadow: inset 0 0 0 1px var(--line-gr), 0 12px 30px var(--drop-lg);
+}
+.vz-bub.rec { box-shadow: inset 0 0 0 1px var(--or), 0 12px 30px var(--drop-lg); }
+.vz-bub:hover { box-shadow: inset 0 0 0 1px var(--line-cy), 0 12px 30px var(--drop-lg); }
+.vz-faces { display: inline-flex; }
+.vz-face {
+  --c: var(--cy);
+  position: relative; width: 32px; height: 32px; border-radius: 50%; margin-right: -6px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--c); color: var(--on-light); box-shadow: 0 0 0 2px var(--panel);
+  font-family: var(--f-disp); font-size: 9px; letter-spacing: .04em; line-height: 1;
+}
+.vz-face:last-child { margin-right: 0; }
+.vz-face.talk { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--c); z-index: 1; }
+.vz-face.mute::after {
+  content: ''; position: absolute; right: -1px; bottom: -1px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--ink3); box-shadow: 0 0 0 2px var(--panel);
+}
+.vz-bn { color: var(--grn2); }
+/* détaché dans une fenêtre du navigateur (commun/fenetre.js) : il prend toute la place */
+.vz[data-sr-fen] { position: relative !important; left: auto !important; top: auto !important; height: auto !important; border-radius: 0; box-shadow: none; }
+.vz[data-sr-fen] .vz-head { cursor: default; }
+.vz[data-sr-fen] .vz-rz, .vz[data-sr-fen] .vz-hb, .vz[data-sr-fen] .vz-head .grip { display: none; }
+
+/* une vignette : elle remplit sa case de la grille */
 .co-tile {
   --c: var(--cy);
-  position: relative; flex: none; width: 160px; height: 90px; margin: 0; border-radius: var(--r3); overflow: hidden;
-  background: var(--black); box-shadow: inset 0 0 0 1px var(--c);
+  position: relative; min-width: 0; min-height: 0; margin: 0; border-radius: var(--r3); overflow: hidden;
+  background: var(--black);
 }
+/* le filet à la couleur de la personne, par-dessus la vidéo ; épais pour qui parle */
+.co-tile::before {
+  content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--c); transition: box-shadow .15s;
+}
+.co-tile.talk::before { box-shadow: inset 0 0 0 3px var(--c); }
 .co-tile video { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* les icônes d'état, en haut à droite : micro coupé, caméra coupée (chez chacun) */
+.co-icos { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; pointer-events: auto; }
+.co-icos .vz-ico {
+  display: none; width: 22px; height: 22px; border-radius: 50%; align-items: center; justify-content: center;
+  background: var(--veil); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line);
+}
+.co-icos .vz-ico svg { width: 12px; height: 12px; }
+.co-tile.mute .co-i-mic, .co-tile.camoff .co-i-cam { display: inline-flex; }
+.co-tile.mute .co-i-mic { color: var(--or); box-shadow: inset 0 0 0 1px var(--line-or); }
 .co-tile.mirror video { transform: scaleX(-1); }
 .co-tile.screen video { object-fit: contain; }
 .co-tile .co-ph {
@@ -295,8 +400,6 @@ body.co-viewer #insp [contenteditable] { pointer-events: none; opacity: .45; }
 .co-recb .co-recdot { width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--or); flex: none; }
 .co-recb.on { color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }
 .co-recb.on .co-recdot { background: var(--or); animation: sPulse 1.2s infinite; }
-/* le bandeau de l'appel et l'onglet Visio : un filet orange tant que quelqu'un enregistre */
-.co-strip.rec .co-fold { box-shadow: inset 0 0 0 1px var(--or); }
-.co-strip.rec .co-fold .lbl:first-child { color: var(--or); }
+/* le panneau de l'appel (.vz.rec, plus haut) et l'onglet Visio : orange tant que quelqu'un enregistre */
 .co-tab.rec::after { content: ''; display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--or); vertical-align: middle; animation: sPulse 1.2s infinite; }
 .co-recdone p { margin: 0; }
