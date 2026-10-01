@@ -23,6 +23,7 @@ import { el, href, ITEM_MIME } from '../commun/shell.js';
 import { brancher, borne, tenirY } from '../commun/molette.js';   // molette commune
 import { tete, poser, suivre, peindreRegle, brancherRegle } from '../commun/tete.js';   // LA tête et LA règle (30/09 : extraites d'ici, communes)
 import * as M from './model.js';
+import { pics, dessiner } from '../commun/onde.js';   // l'onde dessinée à la résolution de l'écran (01/10)
 
 export const HEAD = 124;           // la tête de piste, collée à gauche (même largeur que .tl-hd)
 const MIN_PPS = 0.5, MAX_PPS = 800;
@@ -106,6 +107,30 @@ export class Timeline {
     this.paintRuler();
     this.paintMarks();
     this.paintPlayhead(this.app.playhead());
+    this.paintWaves();
+  }
+
+  // les ondes des plans son : chaque canvas couvre la partie VISIBLE de son plan et y dessine
+  // le son à la résolution de l'écran (commun/onde.js) — nette à tout zoom (Cal, 01/10)
+  paintWaves() {
+    cancelAnimationFrame(this.waveF);
+    this.waveF = requestAnimationFrame(() => {
+      const vr = this.scroll.getBoundingClientRect();
+      const L = vr.left + HEAD, Rt = vr.right;
+      for (const cv of this.lanes.querySelectorAll('canvas.wave')) {
+        const body = cv.parentElement;
+        const br = body.getBoundingClientRect();
+        const a = Math.max(br.left, L), b = Math.min(br.right, Rt);
+        if (b - a < 1 || br.bottom < vr.top || br.top > vr.bottom) { cv.style.display = 'none'; continue; }
+        const op = (cv.offsetParent || body).getBoundingClientRect();
+        cv.style.display = '';
+        cv.style.left = `${a - op.left}px`;
+        cv.style.width = `${b - a}px`;
+        const sp = Number(cv.dataset.sp) || 1, t_in = Number(cv.dataset.in) || 0;
+        const t0 = t_in + (a - br.left) * sp / this.pps, t1 = t_in + (b - br.left) * sp / this.pps;
+        pics(cv.dataset.item).then((P) => { if (cv.isConnected) dessiner(cv, P, { t0, t1 }); }).catch(() => {});
+      }
+    });
   }
 
   // plus de séquence ouverte : une timeline vide qui dit quoi faire
@@ -169,12 +194,8 @@ export class Timeline {
     if (t.kind === 'video' && it && it.thumb_url) body.style.backgroundImage = `url("${href(it.thumb_url)}")`;
     const hasSound = t.kind === 'audio' || (c.kind === 'video' && c.audio);
     if (t.kind === 'audio' && it && (it.kind === 'audio' || it.audio)) {
-      const wave = el('i', { class: 'wave' });
-      const u = `url("${href('api/montage/wave/' + it.id)}")`;
-      const sp = M.spd(c);
-      const full = (c.src_dur || it.duration || c.dur / fps * sp) / sp * this.pps;
-      Object.assign(wave.style, { maskImage: u, webkitMaskImage: u, maskSize: `${full}px 100%`, webkitMaskSize: `${full}px 100%`,
-        maskPosition: `${-(c.in || 0) / sp * this.pps}px 0`, webkitMaskPosition: `${-(c.in || 0) / sp * this.pps}px 0` });
+      // l'onde : un canvas dessiné pour la seule partie visible du plan (paintWaves), plus une image étirée
+      const wave = el('canvas', { class: 'wave', 'data-item': it.id, 'data-in': String(c.in || 0), 'data-sp': String(M.spd(c)) });
       body.append(wave);
     }
     this.fadeMarks(body, w, t.kind === 'audio');
@@ -320,7 +341,11 @@ export class Timeline {
 
   // ── gestes ───────────────────────────────────────────────
   bind() {
+    // le thème change (la couleur de l'onde est un jeton), la fenêtre change de taille : on redessine
+    document.addEventListener('sr:theme', () => this.paintWaves());
+    new ResizeObserver(() => this.paintWaves()).observe(this.scroll);
     this.scroll.addEventListener('scroll', () => {
+      this.paintWaves();
       this.paintRuler();
       if (this.phX !== undefined) poser(this.ph, this.phX, { decal: HEAD, sous: this.scroll.scrollLeft });
     });

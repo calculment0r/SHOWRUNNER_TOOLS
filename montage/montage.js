@@ -30,7 +30,8 @@ import { mountProject, MULTI_MIME } from './projet.js';
 import { mountEffects, bindEffectDrops, fxOfDesc, lutFamilies } from './effets.js';
 import { bindTrackDrag } from './pistes.js';
 import { createUndo } from '../commun/undo.js';
-import { createElements } from './elements.js';   // éléments : la pastille « vN+1 » (30/09)
+import { createElements } from './elements.js';
+import { pics, dessiner } from '../commun/onde.js';   // éléments : la pastille « vN+1 » (30/09)
 import { REGLE as MOLETTE, AIDE as MOLETTE_AIDE } from '../commun/molette.js';
 
 mountHeader('montage');
@@ -852,8 +853,12 @@ function openSource(it, marks, { show = true } = {}) {
   const wave = $('#src-screen .wave');
   if (wave) wave.remove();
   if (it.kind === 'audio') {
-    const u = `url("${href('api/montage/wave/' + it.id)}")`;
-    $('#src-screen').append(el('i', { class: 'wave', style: { maskImage: u, webkitMaskImage: u } }));
+    // le son entier, dessiné à la taille de l'écran Source (commun/onde.js), redessiné s'il change de taille
+    const cv = el('canvas', { class: 'wave' });
+    $('#src-screen').append(cv);
+    const peindre = () => pics(it.id).then((P) => { if (cv.isConnected) dessiner(cv, P); }).catch(() => {});
+    new ResizeObserver(peindre).observe(cv);
+    document.addEventListener('sr:theme', peindre);
   }
   $('#src-name').textContent = it.title || it.id;
   if (S.srcTab === 'src') focus('source');

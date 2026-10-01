@@ -75,8 +75,8 @@ def _lock_for(p: Path) -> threading.Lock:
         return _locks.setdefault(str(p), threading.Lock())
 
 
-def peaks(src: Path, cols: int = W, duration: float | None = None) -> list[float] | None:
-    """Le pic de chaque colonne (0 à 1, normalisé sur le plus fort), ou None si
+def _pcm(src: Path, duration: float | None = None):
+    """Le son décodé (PCM 16 bits mono, `array('h')`) et sa fréquence, ou None si
     ffmpeg ne lit pas de son. La fréquence de décodage s'abaisse pour les longs
     sons : la durée entière tient toujours dans MAX_SAMPLES."""
     sr = SR
@@ -110,9 +110,17 @@ def peaks(src: Path, cols: int = W, duration: float | None = None) -> list[float
     a.frombytes(bytes(buf[: len(buf) // 2 * 2]))
     if sys.byteorder == "big":
         a.byteswap()
-    n = len(a)
-    if not n:
+    return (a, sr) if len(a) else None
+
+
+def peaks(src: Path, cols: int = W, duration: float | None = None) -> list[float] | None:
+    """Le pic de chaque colonne (0 à 1, normalisé sur le plus fort), ou None si
+    ffmpeg ne lit pas de son."""
+    got = _pcm(src, duration)
+    if not got:
         return None
+    a, _sr = got
+    n = len(a)
     out = []
     for c in range(cols):
         i0 = c * n // cols
@@ -168,6 +176,52 @@ def ensure(src: Path, dest: Path, duration: float | None = None) -> bool:
         return make(src, dest, duration)
 
 
+# ── les pics (01/10) ─────────────────────────────────────────
+# Cal, 01/10 : « dans le canva elle semble bien dessinée et précise alors que dans montage
+# elle est super mal faite : on dirait une image en basse définition ». Le Montage étirait
+# une image fixe de ffmpeg (showwavespic 2400 × 96, sans normalisation) sur toute la
+# longueur du plan. Ici : le pic de chaque 1/BPS de seconde (0 à 255, normalisé sur le plus
+# fort), calculé une fois, et la page DESSINE l'onde à la résolution de l'écran, pour la
+# seule partie visible (commun/onde.js) — nette à tout zoom.
+BPS = 200                    # pics par seconde : 5 ms ; au zoom le plus fort du Montage (800 px/s), 4 px par pic
+
+
+def pics_name(src_name: str | None = None) -> str:
+    return f"{src_name}.pics.v{VERSION}.bin" if src_name else f"pics.v{VERSION}.bin"
+
+
+def make_pics(src: Path, dest: Path, duration: float | None = None) -> bool:
+    """Les pics de `src` dans `dest` (un octet par 1/BPS s ; écrit d'un coup)."""
+    with _slots:
+        got = _pcm(src, duration)
+    if not got:
+        return False
+    a, sr = got
+    step = sr / BPS
+    n = max(1, int(len(a) / step))
+    out = []
+    for c in range(n):
+        i0 = int(c * step)
+        i1 = max(i0 + 1, int((c + 1) * step))
+        s = a[i0:i1]
+        out.append(max(max(s), -min(s)) if s else 0)
+    top = max(out) or 1
+    data = bytes(min(255, round(v * 255 / top)) for v in out)
+    tmp = dest.with_suffix(".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(dest)
+    return True
+
+
+def ensure_pics(src: Path, dest: Path, duration: float | None = None) -> bool:
+    if dest.is_file():
+        return True
+    with _lock_for(dest):
+        if dest.is_file():
+            return True
+        return make_pics(src, dest, duration)
+
+
 def soon(src: Path, duration: float | None = None, voice: bool = False) -> None:
     """L'accroche de la mise en bibliothèque (core/library.py : `add_file` pour un son,
     `_add_voice` avec voice=True pour la voix d'un élément) : le masque se calcule à
@@ -210,8 +264,35 @@ def r_wave(req, iid):
     return FileResponse(dest, "image/png", cache=CACHE if req.q("v") == str(VERSION) else "no-cache")
 
 
+def r_pics(req, iid):
+    """`GET /api/son/pics/<id>[?voix=k][&v=1]` → {bps, n, b64} : les pics d'un son, d'une voix
+    d'élément, ou de la piste son d'une vidéo (le Montage). Jugé par l'objet, comme le masque."""
+    import base64
+    it = library.see(iid)
+    if not it:
+        raise HttpError(404, f"introuvable : {iid}")
+    if it["kind"] == "video":
+        src = library.path_of(it)
+        dur = it.get("duration")
+        dest = src.parent / pics_name()
+    else:
+        src, wave, dur = _source(it, req.q("voix"))
+        dest = wave.parent / (pics_name(wave.name[: -len(wave_name())].rstrip(".")) if wave.name != wave_name() else pics_name())
+    if not src.is_file():
+        raise HttpError(404, "le fichier du son manque")
+    if not ensure_pics(src, dest, dur):
+        raise HttpError(422, "ffmpeg ne lit pas de son dans ce fichier")
+    data = dest.read_bytes()
+    import json
+    from core.http import Response
+    return Response(json.dumps({"bps": BPS, "n": len(data), "b64": base64.b64encode(data).decode("ascii")}),
+                    ctype="application/json; charset=utf-8",
+                    headers={"Cache-Control": CACHE if req.q("v") == str(VERSION) else "no-cache"})
+
+
 def register(app) -> None:
     app.route("GET", "/api/son/apercu/{iid}", r_wave)
+    app.route("GET", "/api/son/pics/{iid}", r_pics)
     # l'invité d'Idéation voit la forme des sons de ses planches : `library.see` le juge
     auth.guest_realm("apercu_son", routes=[("GET", r"/api/son/apercu/(?P<iid>[a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4})", None)])
 
@@ -250,6 +331,15 @@ def selftest(call, ok) -> None:
     ok(st == 200 and isinstance(png, bytes) and png[:4] == b"\x89PNG", f"son : le visuel se calcule et se sert ({st}, {dt:.2f} s)")
     if st != 200 or not isinstance(png, bytes):
         return
+    # les pics (01/10) : 4 s de son → 4 × BPS pics ; le silence à 0, le fort au plus haut, le faible entre
+    import base64
+    st, pj = call("GET", f"/api/son/pics/{iid}?v={VERSION}")
+    ok(st == 200 and isinstance(pj, dict) and pj.get("bps") == BPS and abs(pj.get("n", 0) - 4 * BPS) <= 2,
+       f"son : les pics se servent ({st}, {pj.get('n') if isinstance(pj, dict) else '?'} pics pour 4 s)")
+    if st == 200 and isinstance(pj, dict):
+        a = base64.b64decode(pj["b64"])
+        sil, fort, faible = max(a[10:BPS - 10]), max(a[BPS + 10:3 * BPS - 10]), max(a[3 * BPS + 10:4 * BPS - 10])
+        ok(sil <= 5 and fort >= 250 and 20 <= faible <= 120, f"son : les pics suivent le son (silence {sil}, fort {fort}, faible {faible})")
     im = Image.open(BytesIO(png))
     ok(im.size == (W, H) and im.mode == "LA", f"son : un masque {W}×{H} en niveaux de gris + alpha ({im.size} {im.mode})")
     alpha = im.getchannel("A")
