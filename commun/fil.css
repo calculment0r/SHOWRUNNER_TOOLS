@@ -176,6 +176,11 @@ html.fv-open { overflow: hidden; }
 .fv-media { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 52px 62px 18px; }
 .fv-media > img, .fv-media > video { max-width: 100%; max-height: 100%; object-fit: contain; display: block; user-select: none; }
 .fv-media > audio { width: min(520px, 90%); }
+/* le lecteur du portail dans la visionneuse : la vidéo occupe la scène, la barre et la frise dessous */
+.fv-media > .sr-lect { max-width: 100%; }
+.fv-media > .sr-lect:has(.sr-lect-ecran) { height: 100%; }
+.fv-media > .sr-lect .sr-lect-ecran { height: auto; min-height: 0; }
+.fv-media > .sr-lect:not(:has(.sr-lect-ecran)) { width: min(920px, 100%); }
 .fv-media.alpha > img { background: conic-gradient(var(--panel2) 25%, var(--panel3) 0 50%, var(--panel2) 0 75%, var(--panel3) 0) 0 0 / 22px 22px; }
 .fv-el { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; max-width: 80%; }
 .fv-el img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: var(--r2); }

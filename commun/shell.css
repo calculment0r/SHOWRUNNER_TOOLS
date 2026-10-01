@@ -64,7 +64,6 @@
 .hdr .sr-full.on { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
 .hdr .sr-full[aria-disabled="true"] { opacity: .35; cursor: help; }
 /* le plein écran quitté par le changement de page (commun/pleinecran.js) : il attend Cal (ambre), un clic y ramène */
-.hdr .sr-full.relance { color: var(--amb); box-shadow: inset 0 0 0 1px var(--line-amb); }
 /* ── la Team et le Workspace de l'onglet (commun/shell.js, le sélecteur ; equipes_espaces.md § 4.3) ──
    À droite, collé au nom (c'est de l'administration), « TEAM / WORKSPACE » en capitales mono, discret :
    l'encre faible, un filet au survol seulement. Le menu reprend le tiroir des outils ; le Workspace

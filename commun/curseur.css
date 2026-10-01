@@ -1,48 +1,91 @@
 /* ============================================================
    SHOWRUNNER TOOLS — LE curseur du thème (input type=range)
-   Celui du banc NL et de Character Factory (#vol de nl-bench.css,
-   .slider de factory.css) : une piste fine en --panel3 sous un filet,
-   un pouce rond en acier (--cy : une valeur lue, jamais l'orange de
-   l'action). Tout curseur natif du portail le prend, sans classe :
-   juste par construction (Cal, 30/09 : « je n'aime pas du tout ces
-   sliders… on a fait de super sliders dans notre thème »).
 
-   Chargé par commun/base.css (@import, en tête) — donc par toute page
-   du portail —, et directement par les pages qui gardent leurs propres
-   styles sans base.css (Movie Analysis, diarisation).
+   Partout : le FADER DE CONSOLE d'ODIO, couché (Cal, 01/10 : « on veut
+   des sliders plus jolis comme on a dans ODIO… remplace-les partout dans
+   les onglets sauf ODIO, ne touche à rien »). Le modèle est le fader de
+   la console et du nodal d'ODIO (musique/nodal.css, .fader / .machine__fader) :
+   un rail creux arrondi (--panel3 sous un filet, un trait fin au milieu),
+   un chapeau plein à l'encre (--ink), rectangle aux coins doux, porté par
+   son ombre (--drop), une encoche au milieu.
+
+   ODIO (body.mu-page) garde EXACTEMENT sa règle d'avant : la piste fine
+   et le pouce rond acier (bloc « ODIO » en bas) — on n'y touche pas.
+
+   Tout curseur natif du portail le prend, sans classe : juste par
+   construction. Chargé par commun/base.css (@import, en tête) — donc par
+   toute page du portail —, et directement par les pages qui gardent leurs
+   propres styles sans base.css (Movie Analysis, diarisation).
 
    Posé sous :where() (spécificité nulle) : une variante voulue du thème
-   (la tête de la timeline .tl, le fader coloré d'une piste d'ODIO) le
-   précise sans !important ; une page n'a rien d'autre à écrire.
+   (la tête de la timeline .tl de base.css) le précise sans !important.
    Chromium et WebKit : ::-webkit-slider-* ; Firefox : ::-moz-range-*
    (MDN, ::-webkit-slider-thumb, ::-moz-range-thumb, ::-moz-range-progress).
-   Le focus : le contour orange de tous les champs (commun/base.css).
+   Le focus : le contour de tous les champs (commun/base.css).
    Jetons seulement (commun/tokens.css), les deux thèmes par eux.
    ============================================================ */
 
 :where(input[type=range]) {
   -webkit-appearance: none; appearance: none;
-  height: 18px; margin: 0; padding: 0; min-width: 0;
+  margin: 0; padding: 0; min-width: 0;
   background: transparent; cursor: pointer; vertical-align: middle;
 }
-:where(input[type=range])::-webkit-slider-runnable-track {
+:where(input[type=range]:disabled) { opacity: .35; cursor: not-allowed; }
+
+/* ── le fader : partout sauf ODIO ─────────────────────────── */
+:where(body:not(.mu-page) input[type=range]) { height: 22px; }
+
+/* le rail : creux, arrondi, un trait fin au milieu */
+:where(body:not(.mu-page) input[type=range])::-webkit-slider-runnable-track {
+  height: 8px; border-radius: 999px;
+  background: linear-gradient(var(--line), var(--line)) center / calc(100% - 8px) 2px no-repeat, var(--panel3);
+  box-shadow: inset 0 0 0 1px var(--line), inset 0 1px 2px var(--drop);
+}
+:where(body:not(.mu-page) input[type=range])::-moz-range-track {
+  height: 8px; border-radius: 999px;
+  background: linear-gradient(var(--line), var(--line)) center / calc(100% - 8px) 2px no-repeat, var(--panel3);
+  box-shadow: inset 0 0 0 1px var(--line), inset 0 1px 2px var(--drop);
+}
+:where(body:not(.mu-page) input[type=range])::-moz-range-progress { background: transparent; }
+
+/* le chapeau : plein, à l'encre, l'encoche au milieu, porté par son ombre */
+:where(body:not(.mu-page) input[type=range])::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 10px; height: 20px; margin-top: -6px; border: none; border-radius: 3px;
+  background: linear-gradient(to right, transparent 4px, var(--ink3) 4px 6px, transparent 6px), var(--ink);
+  box-shadow: 0 2px 6px var(--drop), inset 0 0 0 1px var(--line);
+  transition: transform .12s, background-color .12s;
+}
+:where(body:not(.mu-page) input[type=range])::-moz-range-thumb {
+  width: 10px; height: 20px; border: none; border-radius: 3px;
+  background: linear-gradient(to right, transparent 4px, var(--ink3) 4px 6px, transparent 6px), var(--ink);
+  box-shadow: 0 2px 6px var(--drop), inset 0 0 0 1px var(--line);
+  transition: transform .12s, background-color .12s;
+}
+/* sous la main : le chapeau se soulève un peu ; tenu : il s'enfonce */
+:where(body:not(.mu-page) input[type=range]:hover:not(:disabled))::-webkit-slider-thumb { transform: scaleY(1.08); }
+:where(body:not(.mu-page) input[type=range]:hover:not(:disabled))::-moz-range-thumb { transform: scaleY(1.08); }
+:where(body:not(.mu-page) input[type=range]:active:not(:disabled))::-webkit-slider-thumb { transform: scaleY(.94); }
+:where(body:not(.mu-page) input[type=range]:active:not(:disabled))::-moz-range-thumb { transform: scaleY(.94); }
+
+/* ── ODIO : sa règle d'avant, inchangée ───────────────────── */
+:where(.mu-page input[type=range]) { height: 18px; }
+:where(.mu-page input[type=range])::-webkit-slider-runnable-track {
   height: 4px; border-radius: 2px; background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line);
 }
-:where(input[type=range])::-webkit-slider-thumb {
+:where(.mu-page input[type=range])::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
   width: 12px; height: 12px; margin-top: -4px; border: none; border-radius: 50%;
   background: var(--cy); transition: transform .12s;
 }
-:where(input[type=range])::-moz-range-track {
+:where(.mu-page input[type=range])::-moz-range-track {
   height: 4px; border-radius: 2px; background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line);
 }
-:where(input[type=range])::-moz-range-progress { background: transparent; }
-:where(input[type=range])::-moz-range-thumb {
+:where(.mu-page input[type=range])::-moz-range-progress { background: transparent; }
+:where(.mu-page input[type=range])::-moz-range-thumb {
   width: 12px; height: 12px; border: none; border-radius: 50%; background: var(--cy); transition: transform .12s;
 }
-/* sous la main : le pouce grossit un peu ; tenu : il passe à l'encre */
-:where(input[type=range]:hover:not(:disabled))::-webkit-slider-thumb { transform: scale(1.17); }
-:where(input[type=range]:hover:not(:disabled))::-moz-range-thumb { transform: scale(1.17); }
-:where(input[type=range]:active:not(:disabled))::-webkit-slider-thumb { background: var(--ink); }
-:where(input[type=range]:active:not(:disabled))::-moz-range-thumb { background: var(--ink); }
-:where(input[type=range]:disabled) { opacity: .35; cursor: not-allowed; }
+:where(.mu-page input[type=range]:hover:not(:disabled))::-webkit-slider-thumb { transform: scale(1.17); }
+:where(.mu-page input[type=range]:hover:not(:disabled))::-moz-range-thumb { transform: scale(1.17); }
+:where(.mu-page input[type=range]:active:not(:disabled))::-webkit-slider-thumb { background: var(--ink); }
+:where(.mu-page input[type=range]:active:not(:disabled))::-moz-range-thumb { background: var(--ink); }

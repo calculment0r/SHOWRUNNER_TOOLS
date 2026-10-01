@@ -49,6 +49,7 @@ import { menu, kebab, contextMenu, closeMenus } from './menu.js';
 // chaque image à la taille où elle est vue : la copie d'affichage qui suffit,
 // l'original seulement au-delà (docs/etudes/ideation_fluidite.md)
 import { pickView, needOf, swap, bind, ORIGINAL } from './proxies.js';
+import { lecteur } from './lecteur.js';
 // aimer, ranger, jeter : des gestes de la page, avec leur contraire lu sur le serveur
 import { libPatch, libTrash, describeLibPatch } from './undo.js';
 
@@ -412,10 +413,19 @@ export function createFil(box, o = {}) {
     return row;
   }
 
+  // Au survol, la vidéo part AVEC le son (Cal, 01/10), au volume du lecteur commun
+  // (sr-lecteur-son : son niveau, son « muet »). Le navigateur ne permet le son sans geste
+  // qu'après une première interaction avec la page (MDN, « Autoplay guide for media and
+  // Web Audio APIs » ; Chrome, « Autoplay policy » : « The user has interacted with the
+  // domain ») : avant, la lecture refusée repart muette, et le son vient au survol suivant.
   function hoverPlay(zone, v, it) {
     zone.addEventListener('mouseenter', () => {
       if (!v.getAttribute('src')) v.src = href(it.url);
-      v.play().catch(() => {});
+      let son = { vol: 1, muet: false };
+      try { son = JSON.parse(localStorage.getItem('sr-lecteur-son') || 'null') || son; } catch { /* stockage fermé */ }
+      v.volume = Math.max(0, Math.min(1, +son.vol || 0));
+      v.muted = !!son.muet || !(navigator.userActivation?.hasBeenActive ?? true);
+      v.play().catch(() => { if (!v.muted) { v.muted = true; v.play().catch(() => {}); } });
     });
     zone.addEventListener('mouseleave', () => v.pause());
   }
@@ -604,6 +614,7 @@ export function createFil(box, o = {}) {
   function close() {
     if (!V) return;
     clearTimeout(V.origT);
+    V.lect?.detruire();
     V.media.querySelector('video')?.pause();
     V.ov.remove();
     document.removeEventListener('keydown', onKey);
@@ -656,7 +667,7 @@ export function createFil(box, o = {}) {
     }
   }
   function onKey(e) {
-    if (!V || document.querySelector('.sr-menu, .scrim')) return;   // un menu, une fenêtre par-dessus
+    if (!V || document.querySelector('.sr-menu, .scrim:not([hidden])')) return;   // un menu, une fenêtre par-dessus
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
     else if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(e.key)) { e.preventDefault(); step(-1); }
@@ -703,13 +714,18 @@ export function createFil(box, o = {}) {
   function paintMedia() {
     const it = V.it;
     clearTimeout(V.origT);
+    V.lect?.detruire(); V.lect = null;
     V.media.querySelector('video')?.pause();
     V.media.classList.toggle('alpha', !V.custom && !!o.alpha?.(it));
     if (V.custom) { V.media.replaceChildren(V.custom); return; }
     let m;
     if (it.kind === 'video') {
-      const poster = pickView(it, shownPx(it)).url;
-      m = el('video', { src: href(it.url), controls: true, autoplay: true, loop: true, playsinline: true, poster: poster || null });
+      // le lecteur du portail (commun/lecteur.js), celui d'Asset et de Transcrire : jamais
+      // les contrôles du navigateur (Cal, 01/10). Les flèches restent à la visionneuse (son
+      // onKey passe avant et les consomme) ; Espace, J K L, la frise vont au lecteur
+      V.lect = lecteur(it, { clavier: 'page' });
+      m = V.lect.el;
+      const L = V.lect; requestAnimationFrame(() => { if (V?.lect === L) L.play(); });
     } else if (it.kind === 'image') {
       m = el('img', { alt: it.title || '', decoding: 'async' });
       fitImg(m, it);
@@ -728,7 +744,9 @@ export function createFil(box, o = {}) {
       });
       dragItem(m, it);   // la grande image se glisse vers un emplacement (références, image à éditer…)
     } else if (it.kind === 'audio') {
-      m = el('audio', { src: href(it.url), controls: true, autoplay: true });
+      V.lect = lecteur(it, { clavier: 'page' });
+      m = V.lect.el;
+      const L = V.lect; requestAnimationFrame(() => { if (V?.lect === L) L.play(); });
     } else {
       m = el('div', { class: 'fv-el' }, ...(it.element?.refs || []).slice(0, 6).map((r) => el('img', { src: href(r.thumb_url || r.url), alt: '' })));
     }
