@@ -84,6 +84,7 @@ export function createVideo(app) {
   }
 
   function why(v) {
+    if (app.gen?.busy(v)) return app.gen.BUSY_WHY;   // un rendu tourne : pas de relance (Cal, 01/10)
     if (!O()) return S.moptsError ? `l’outil Vidéo ne répond pas : ${S.moptsError}` : 'lecture des réglages de Vidéo…';
     const F = app.flowNow();
     const pr = promptOf(v, F);
@@ -203,7 +204,7 @@ export function createVideo(app) {
     if (!v || v.type !== 'vgen' || !e) return;
     const w = why(v);
     const btn = e.querySelector('.gbtn'), wy = e.querySelector('.gwhy'), sum = e.querySelector('.gsum'), est = e.querySelector('.vest');
-    if (btn) { btn.disabled = !!w; btn.textContent = w ? 'Générer' : goLabel(v); }
+    if (btn) app.gen.paintBtn(btn, w, w ? 'Générer' : goLabel(v));
     if (wy) wy.textContent = w;
     if (sum) sum.textContent = promptOf(v).text || '—';
     // un lot : le temps estimé multiplié par le nombre de rendus, sur la carte
@@ -236,7 +237,7 @@ export function createVideo(app) {
     const box = document.getElementById('insp-vgo');
     if (!box || !S.sel.has(v.id)) return;
     const w = why(v);
-    box.replaceChildren(el('button', { class: 'tb go block', type: 'button', disabled: w ? true : null, onclick: () => generate(v.id) }, w ? 'Générer la vidéo' : goLabel(v)),
+    box.replaceChildren(el('button', { class: 'tb go block' + (w ? ' off' : ''), type: 'button', 'aria-disabled': String(!!w), title: w || null, onclick: () => generate(v.id) }, w ? 'Générer la vidéo' : goLabel(v)),
       el('p', { class: w ? 'why' : 'hint' }, w || 'la vidéo se pose à droite de la carte, reliée'));
   }
   function panels(v, K) {

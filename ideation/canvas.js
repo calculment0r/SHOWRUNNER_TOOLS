@@ -20,6 +20,7 @@
 // après le geste, décodée avant l'échange.
 
 import { el, href, fmtDur, etypeFr, toast, dropZone } from '../commun/shell.js';
+import { survolSon } from '../commun/lecteur.js';
 import { menu } from '../commun/menu.js';
 import { CF_MIME } from './library.js';
 import { createWires, edgePts } from './wires.js';
@@ -451,7 +452,7 @@ export function createCanvas(app) {
     if (n.type === 'media' && n.kind === 'video') {
       const v = e.querySelector('video');
       if (v) {
-        e.addEventListener('pointerenter', () => { v.play().catch(() => {}); });
+        e.addEventListener('pointerenter', () => { survolSon(v); });   // avec le son (Cal, 01/10)
         e.addEventListener('pointerleave', () => { v.pause(); });
       }
     }
@@ -709,6 +710,8 @@ export function createCanvas(app) {
     const box = dom.get(id)?.el.querySelector('.jobs');
     if (!n || !box) return;
     const list = (n.jobs || []).map((j) => S.jobs.get(j.id) || { id: j.id, state: 'queued', message: 'en file' });
+    // une carte qui calcule se grise (Cal, 01/10) ; sa barre de progression, elle, reste vive
+    dom.get(id)?.el.classList.toggle('busy', list.some((j) => j.state === 'queued' || j.state === 'running'));
     if (!list.length && !box.firstChild) return;
     box.replaceChildren(...list.map((j) => el('div', { class: 'jb ' + j.state, title: j.message || '' },
       el('span', { class: 'lbl' }, `${j.state === 'running' ? (j.progress != null ? Math.round(j.progress * 100) + ' %' : 'en cours') : j.state === 'queued' ? 'en file' : j.state} · ${j.message || ''}`),

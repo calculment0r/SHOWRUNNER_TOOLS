@@ -32,6 +32,7 @@
 // sa descendance quand on le supprime, le copie ou le duplique.
 
 import { mountHeader, api, jobs, toast, el, $, href, fmtDate, uploadFile, pick, session } from '../commun/shell.js';
+import { lecteur } from '../commun/lecteur.js';
 import { menu } from '../commun/menu.js';
 import { createCanvas, bbox, ready as viewsReady } from './canvas.js';
 import { createGroups, tidy as tidyGroups, kidsOf, setSize, readingOrder, setOrder, layoutOf } from './groups.js';
@@ -745,8 +746,11 @@ function askName(title, value = '', action = 'Créer') {
 app.lightbox = (n) => {
   const it = S.items.get(n.item);
   if (!it || it.missing) return;
-  const media = n.kind === 'video' ? el('video', { src: href(it.url), controls: true, autoplay: true, loop: true }) : el('img', { src: href(it.url), alt: it.title || '' });
-  app.modal(it.title || it.id, el('div', { class: 'lightbox' }, media), null, { cls: 'lb' });
+  // une vidéo : le lecteur du portail (commun/lecteur.js), jamais les contrôles du navigateur (Cal, 01/10)
+  const L = n.kind === 'video' ? lecteur(it, { clavier: 'page' }) : null;
+  const media = L ? L.el : el('img', { src: href(it.url), alt: it.title || '' });
+  app.modal(it.title || it.id, el('div', { class: 'lightbox' + (L ? ' lb-lect' : '') }, media), null, { cls: 'lb', onclose: () => L?.detruire() });
+  if (L) requestAnimationFrame(() => L.play());
 };
 
 // ── les planches ───────────────────────────────────────────

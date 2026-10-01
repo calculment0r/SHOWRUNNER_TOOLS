@@ -393,7 +393,14 @@ body.at-presenting > .sr-dock, body.at-presenting > .sr-dock-grip, body.at-prese
   font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; flex: none;
 }
 .gbtn:hover:not(:disabled) { background: var(--or-bg); }
-.gbtn:disabled { opacity: .35; cursor: default; }
+.gbtn:disabled, .gbtn.off { opacity: .35; cursor: help; }
+.gbtn.off:hover { background: none; }
+/* une carte qui calcule : grisée (sauf sa barre de progression), on ne la relance pas */
+.nd.busy > :not(.jobs):not(.pt) { filter: grayscale(1); opacity: .55; transition: opacity .2s, filter .2s; }
+#insp-vgo .tb.go.off { opacity: .4; cursor: help; }
+/* « voir en grand » une vidéo : le lecteur du portail */
+.lightbox.lb-lect { width: min(1400px, 92vw); }
+.lightbox.lb-lect .sr-lect { --sr-lect-h: min(70vh, 780px); }
 .gwhy { flex: 1; min-width: 0; }
 .gerr {
   margin: 10px 0 0; border-radius: var(--r1); background: var(--or-bg); box-shadow: inset 0 0 0 1px var(--or-bg2);

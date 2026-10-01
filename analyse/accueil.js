@@ -13,6 +13,7 @@
 // Le dépôt partagé refuse l'écriture depuis l'adresse du portail : la page le dit (encadré C), et vérifie ce que CE
 // navigateur en reçoit.
 import { mountHeader, api, jobs, pick, thumb, toast, el, $, $$, href, fmtDur, fmtDate, dropZone, dock } from '../commun/shell.js';
+import { lecteur } from '../commun/lecteur.js';
 import { menu, kebab, contextMenu, closeMenus, pageMenu } from '../commun/menu.js';
 import { copyText, ask } from '../commun/fil.js';
 import { createUndo, keyLabel } from '../commun/undo.js';
@@ -492,12 +493,17 @@ function peintMedia(p) {
   if (V.media === p.id) return;   // la vidéo qui joue n'est pas coupée à chaque relevé de la file
   V.media = p.id;
   V.mediaBox.querySelector('video')?.pause();
+  V.lect?.detruire(); V.lect = null;
   const im = p.affiche || p.vignette;
   let m;
   if (p.media) {
-    m = el('video', { src: href(p.media), controls: true, autoplay: true, playsinline: true, preload: 'metadata', poster: im ? href(im) : null });
+    // le lecteur du portail (commun/lecteur.js), jamais les contrôles du navigateur (Cal, 01/10) ;
+    // un film d'analyse n'est pas un objet de la bibliothèque : pas de copie de défilement
+    V.lect = lecteur({ kind: 'video', url: p.media, duration: p.duree || p.duration || 0 }, { clavier: 'page', defilement: false });
+    m = V.lect.el;
+    const L = V.lect; requestAnimationFrame(() => { if (V.lect === L) L.play(); });
     // la vidéo de nos films est sur R2 (le Worker de MOVIE_ANALYSE) : si ce navigateur ne la lit pas, on le dit
-    m.addEventListener('error', () => {
+    m.querySelector('.sr-lect-src').addEventListener('error', () => {
       const msg = el('p', { class: 'ma-fv-err' }, `Ce navigateur ne lit pas la vidéo (${p.media.startsWith('http') ? 'sur R2 : ' + p.media : 'à côté de la page'}). Le Studio a la sienne, avec son repli.`);
       m.after(msg);
     });

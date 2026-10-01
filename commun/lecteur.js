@@ -64,6 +64,52 @@ const lireSon = () => { try { return JSON.parse(localStorage.getItem(SON) || 'nu
 const garderSon = (s) => { try { localStorage.setItem(SON, JSON.stringify(s)); } catch { /* stockage fermé */ } };
 const champ = (t) => t && t.closest && t.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]');
 
+// Au survol d'une vignette vidéo (le fil, la planche d'Idéation) : la lecture AVEC le son
+// (Cal, 01/10), au volume et au « muet » du lecteur. Le navigateur ne permet le son sans
+// geste qu'après une première interaction avec la page (MDN, « Autoplay guide for media and
+// Web Audio APIs » ; Chrome, « Autoplay policy ») : avant, la lecture refusée repart muette.
+export function survolSon(v) {
+  const son = lireSon();
+  v.volume = Math.max(0, Math.min(1, +son.vol || 0));
+  v.muted = !!son.muet || !(navigator.userActivation?.hasBeenActive ?? true);
+  v.play().catch(() => { if (!v.muted) { v.muted = true; v.play().catch(() => {}); } });
+}
+
+// Le PETIT lecteur, pour un son dans une liste (une version, une voix) : lecture / pause,
+// le curseur du thème (commun/curseur.css), le temps. Jamais les contrôles du navigateur.
+// Un seul petit lecteur joue à la fois.
+let petitEnCours = null;
+export function petitLecteur(url, { duree = 0, titre = '' } = {}) {
+  const a = el('audio', { preload: 'none' });
+  a.src = href(url);
+  const son = lireSon();
+  a.volume = Math.max(0, Math.min(1, +son.vol || 0));
+  a.muted = !!son.muet;
+  const b = el('button', { class: 'tb ghost sm sr-mini-lire', type: 'button', title: titre ? `écouter « ${titre} »` : 'écouter', 'aria-label': 'lecture' }, '▶');
+  const r = el('input', { type: 'range', min: '0', max: '1000', step: '1', value: '0', 'aria-label': 'position' });
+  const t = el('span', { class: 'lbl sr-mini-t' }, fmt(0, duree));
+  function fmt(s, d) { const m = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`; return d ? `${m(s)} / ${m(d)}` : m(s); }
+  const d = () => (Number.isFinite(a.duration) && a.duration > 0 ? a.duration : duree);
+  let tient = false;
+  const peindre = () => {
+    if (!tient && d()) r.value = String(Math.round((a.currentTime / d()) * 1000));
+    t.textContent = fmt(a.currentTime, d());
+    b.textContent = a.paused ? '▶' : '❚❚';
+    b.setAttribute('aria-label', a.paused ? 'lecture' : 'pause');
+  };
+  b.addEventListener('click', () => {
+    if (a.paused) {
+      if (petitEnCours && petitEnCours !== a) petitEnCours.pause();
+      petitEnCours = a;
+      a.play().catch(() => {});
+    } else a.pause();
+  });
+  r.addEventListener('input', () => { tient = true; if (d()) { a.currentTime = (Number(r.value) / 1000) * d(); peindre(); } });
+  r.addEventListener('change', () => { tient = false; });
+  for (const ev of ['timeupdate', 'play', 'pause', 'ended', 'loadedmetadata']) a.addEventListener(ev, peindre);
+  return el('div', { class: 'sr-mini' }, b, r, t, a);
+}
+
 export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps: fpsDit = null, defilement = true } = {}) {
   const kind = it.kind === 'audio' ? 'audio' : 'video';
   const fps = fpsDit || it.fps || 25;

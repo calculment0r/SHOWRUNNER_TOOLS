@@ -130,8 +130,30 @@ export function createGen(app) {
   const quality = (g) => { const m = M(g.model); return !m ? g.quality : m.sizes[g.quality] ? g.quality : m.quality[0].id; };
   const goText = (g, pr = promptOf(g)) => (pr.lot && !pr.lot.conflict && pr.lot.on.length ? `Générer ${pr.lot.on.length} × ${g.count}` : `Générer${g.count > 1 ? ' ×' + g.count : ''}`);
 
+  // une carte dont un rendu est en file ou en cours : elle ne se relance pas (Cal, 01/10)
+  function busy(n) {
+    return (n?.jobs || []).some((x) => { const s = S.jobs.get(x.id)?.state ?? 'queued'; return s === 'queued' || s === 'running'; });
+  }
+  const BUSY_WHY = 'en cours : ce rendu calcule — la carte se libère à la fin (la file dit où il en est)';
+  // le bouton d'une carte : éteint, il reste cliquable pour DIRE pourquoi (règle 7 du thème)
+  function paintBtn(btn, w, text) {
+    btn.disabled = false;
+    btn.setAttribute('aria-disabled', String(!!w));
+    btn.classList.toggle('off', !!w);
+    btn.title = w || '';
+    btn.textContent = text;
+  }
+  // la carte qui demandait : son bouton et sa raison, après un départ ou une fin
+  function refreshCard(id) {
+    const n = app.node(id);
+    if (n?.type === 'gen') refresh(id);
+    else if (n?.type === 'vgen') app.video?.refresh(id);
+    app.canvas?.paintJobs(id);
+  }
+
   // ce qui empêche de générer, dit en clair (une action éteinte dit pourquoi)
   function why(g) {
+    if (busy(g)) return BUSY_WHY;
     if (!S.cfg) return S.cfgError ? `l’outil Image ne répond pas : ${S.cfgError}` : 'lecture des modèles…';
     const m = M(g.model);
     if (!m) return `modèle inconnu : ${g.model}`;
@@ -231,7 +253,7 @@ export function createGen(app) {
     if (!g || !e) return;
     const w = why(g);
     const btn = e.querySelector('.gbtn'), wy = e.querySelector('.gwhy'), sum = e.querySelector('.gsum');
-    if (btn) { btn.disabled = !!w; btn.textContent = goText(g); }
+    if (btn) paintBtn(btn, w, goText(g));
     // rien ne bloque : combien de références partent, quand toutes ne partent pas
     const all = app.flowNow().inputs(id).refs || [];
     const sent = sentLabel(all.filter((x) => x.ok || x.held).length, all.filter((x) => x.ok).length);
@@ -268,6 +290,7 @@ export function createGen(app) {
   const capH = (t, w) => Math.round(24 + 19.5 * Math.max(1, Math.ceil(t.length / Math.max(8, Math.floor((w - 24) / 6.9)))));
   // `rows` rendus par valeur ; `ratio` : largeur / hauteur d'un rendu
   async function launchLot(id, body, rows, ratio) {
+    if (busy(app.node(id))) { toast(BUSY_WHY, 5000); return false; }
     let r;
     try { r = await api('ideation/lot', { method: 'POST', body }); } catch (e) {
       const n = app.node(id);
@@ -293,6 +316,7 @@ export function createGen(app) {
       n.jobs = [...(n.jobs || []), ...r.jobs.map((j) => ({ id: j.id, act: 'lot', frame: f.id, col: j.col, row: j.row, dx: PAD + j.col * (cw + GAP), w: cw }))];
     });
     for (const j of r.jobs) { S.jobs.set(j.id, j); follow(id, j.id); }
+    refreshCard(id);
     toast(`${r.jobs.length} travaux en file, graine ${r.seed} pour chaque valeur — le lot se pose dans le cadre « ${name} »`, 6000);
     return true;
   }
@@ -409,6 +433,7 @@ export function createGen(app) {
 
   // lancer : `run()` rend les travaux mis en file ; l'objet les garde, la page les suit
   async function launch(id, run, act) {
+    if (busy(app.node(id))) { toast(BUSY_WHY, 5000); return false; }
     let list;
     try { list = await run(); } catch (e) {
       const n = app.node(id);
@@ -423,6 +448,7 @@ export function createGen(app) {
       n.jobs = [...(n.jobs || []), ...list.map((j) => ({ id: j.id, act }))];
     });
     for (const j of list) { S.jobs.set(j.id, j); follow(id, j.id); }
+    refreshCard(id);
     toast(`${list.length > 1 ? list.length + ' travaux' : 'un travail'} en file — le résultat se posera à côté, relié`);
     return true;
   }
@@ -431,7 +457,7 @@ export function createGen(app) {
   function follow(nodeId, jobId) {
     if (followed.has(jobId)) return;
     followed.add(jobId);
-    jobs.wait(jobId, (j) => { S.jobs.set(jobId, j); app.canvas.paintJobs(nodeId); })
+    jobs.wait(jobId, (j) => { S.jobs.set(jobId, j); refreshCard(nodeId); })
       .then((j) => finish(nodeId, j))
       .catch(() => {                       // le travail a été retiré de la file
         followed.delete(jobId);
@@ -455,6 +481,7 @@ export function createGen(app) {
       if (j.state === 'done' && fresh.length && !n) toast('le résultat est dans la bibliothèque (l’objet qui le demandait n’est plus sur la planche)');
     }
     if (j.state === 'error') toast(`échec : ${j.message}`, 9000);
+    refreshCard(nodeId);
     app.lib?.reload();
   }
 
@@ -478,7 +505,7 @@ export function createGen(app) {
     for (const n of S.board?.nodes || []) for (const j of n.jobs || []) follow(n.id, j.id);
   }
 
-  return { card, cardKey, refresh, why, refsOf, promptOf, looksOf, goText, quality, generate, variations, edit, recipe, resume, placeResults, launch,
+  return { card, cardKey, refresh, why, busy, BUSY_WHY, paintBtn, refsOf, promptOf, looksOf, goText, quality, generate, variations, edit, recipe, resume, placeResults, launch,
     launchLot, showSent, composeFrom, M, KINDS,
     // pour l'inspecteur : d'où vient la prise de vue de la carte ('composer' : sa case Photographie)
     looksFrom: (g) => (promptOf(g).looks ? 'composer' : 'card') };

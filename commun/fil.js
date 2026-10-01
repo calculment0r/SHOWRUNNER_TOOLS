@@ -49,7 +49,7 @@ import { menu, kebab, contextMenu, closeMenus } from './menu.js';
 // chaque image à la taille où elle est vue : la copie d'affichage qui suffit,
 // l'original seulement au-delà (docs/etudes/ideation_fluidite.md)
 import { pickView, needOf, swap, bind, ORIGINAL } from './proxies.js';
-import { lecteur } from './lecteur.js';
+import { lecteur, survolSon } from './lecteur.js';
 // aimer, ranger, jeter : des gestes de la page, avec leur contraire lu sur le serveur
 import { libPatch, libTrash, describeLibPatch } from './undo.js';
 
@@ -421,11 +421,7 @@ export function createFil(box, o = {}) {
   function hoverPlay(zone, v, it) {
     zone.addEventListener('mouseenter', () => {
       if (!v.getAttribute('src')) v.src = href(it.url);
-      let son = { vol: 1, muet: false };
-      try { son = JSON.parse(localStorage.getItem('sr-lecteur-son') || 'null') || son; } catch { /* stockage fermé */ }
-      v.volume = Math.max(0, Math.min(1, +son.vol || 0));
-      v.muted = !!son.muet || !(navigator.userActivation?.hasBeenActive ?? true);
-      v.play().catch(() => { if (!v.muted) { v.muted = true; v.play().catch(() => {}); } });
+      survolSon(v);   // commun/lecteur.js : le son du lecteur, la règle des navigateurs
     });
     zone.addEventListener('mouseleave', () => v.pause());
   }

@@ -70,3 +70,10 @@
 /* un son : pas d'écran, l'onde est le cadre */
 .sr-lect.audio .sr-lect-barre { box-shadow: inset 0 -1px 0 var(--line); }
 .sr-lect.erreur .sr-lect-etat { color: var(--amb); }
+
+/* le petit lecteur (petitLecteur) : un son dans une liste */
+.sr-mini { display: inline-flex; align-items: center; gap: 8px; min-width: 180px; max-width: 100%; }
+.sr-mini input[type=range] { flex: 1 1 auto; min-width: 60px; }
+.sr-mini .sr-mini-lire { width: 28px; padding: 0; justify-content: center; font-size: 10px; }
+.sr-mini .sr-mini-t { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sr-mini audio { display: none; }

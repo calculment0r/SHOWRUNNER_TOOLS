@@ -51,7 +51,7 @@ import { createUndo, libPatch, libBoard, keyLabel } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { bind as bindView } from '../commun/proxies.js';
 import { contextMenu, pageMenu, copy } from '../commun/menu.js';
-import { lecteur } from '../commun/lecteur.js';   // LE lecteur (30/09) : la vidéo ou le son d'une fiche, sa frise, sa tête
+import { lecteur, petitLecteur } from '../commun/lecteur.js';   // LE lecteur (30/09) : la vidéo ou le son d'une fiche, sa frise, sa tête
 
 mountHeader('asset');
 // le panneau Asset commun (commun/dock.js), ici aussi (Ctrl+Espace) : un visualiseur ; clic :
@@ -2493,7 +2493,7 @@ function versionRow(d, v) {
       paintSheet(d.id, { keepScroll: true });
     }, { title: v.state === 'withdrawn' ? 'la remettre dans les versions proposées' : 'une version ratée : elle ne se propose plus, ses usages la gardent' }));
   }
-  if (o?.url && ['audio'].includes(o.kind)) acts.push(el('audio', { src: href(o.url), controls: true, preload: 'none' }));
+  if (o?.url && ['audio'].includes(o.kind)) acts.push(petitLecteur(o.url, { duree: o.duration || 0, titre: `v${v.n}` }));
   return el('li', { class: 'vrow' + (v.head ? ' head' : '') + (v.state === 'withdrawn' || v.trashed ? ' off' : ''), 'data-n': v.n },
     el('div', { class: 'vpic' }, pic),
     el('div', { class: 'vn' }, `v${v.n}`),
@@ -2648,7 +2648,7 @@ function elementSheet(it) {
       wave(14),
       el('div', { class: 'vmeta' }, el('b', {}, v.label || 'voix'),
         el('span', { class: 'lbl' }, [v.duration ? fmtDur(v.duration) : '', (v.file.split('.').pop() || '').toUpperCase()].filter(Boolean).join(' · '))),
-      el('audio', { src: href(v.url), controls: true, preload: 'metadata' }),
+      petitLecteur(v.url, { duree: v.duration || 0, titre: v.label || 'voix' }),
       el('button', { class: 'tb ghost sm', type: 'button', title: 'retirer la voix — on peut l\'annuler', onclick: () => removeVoice(v) }, 'Retirer')))
       : [el('p', { class: 'hint' }, 'Aucune voix : dépose ici un son (WAV, MP3, FLAC, M4A, OGG) ou choisis-en un dans la bibliothèque. L\'élément la portera avec ses images, pour que ce personnage garde la même voix d\'un plan à l\'autre.')]),
     el('div', { class: 'row' }, el('button', { class: 'tb ghost sm', type: 'button', onclick: pickVoice }, voices.length ? 'Remplacer depuis la bibliothèque' : 'Choisir dans la bibliothèque'),
