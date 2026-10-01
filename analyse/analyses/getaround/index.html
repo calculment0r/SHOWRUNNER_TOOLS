@@ -22,18 +22,22 @@
 <body class="film">
 <!-- l'en-tête du portail se pose au-dessus (film.js → mountHeader('analyse')) ; dessous, la barre du film -->
 <nav class="fm-bar" aria-label="le film">
+  <div class="fm-g">
   <a class="tb ghost sm" href="../../" title="Movie Analysis : les projets (nos films, les analyses faites d’ici, les projets créés)">← Projets</a>
-  <div class="fm-t"><b>Évadez-vous avec Getaround</b><span class="lbl">12 plans · 00:30 · 1920×804</span></div>
+  <div class="fm-t"><b>Évadez-vous avec Getaround</b></div>
+  </div>
   <div class="fm-onglets" id="tabs" role="tablist" aria-label="les vues du film">
     <button type="button" role="tab" data-tab="studio" aria-pressed="true">Studio</button>
     <button type="button" role="tab" data-tab="casting" aria-pressed="false">Casting</button>
     <button type="button" role="tab" data-tab="depouillement" aria-pressed="false">Dépouillement</button>
     <a class="fm-voix" href="../../diarisation/?projet=getaround" title="la diarisation Nemotron de ce film, dans le labo : recalculer, direct, micro">Voix <span aria-hidden="true">↗</span></a>
   </div>
+  <div class="fm-d">
   <span class="sp"></span>
   <span class="lbl fm-src" title="getaround.mp4">vidéo sur R2 · repli à côté</span>
   <!-- le menu « ⋯ » du portail (commun/menu.js), posé par film.js : la fiche du projet, les vues, les exports, le lien -->
   <span id="fm-plus" data-film="getaround"></span>
+  </div>
 </nav>
 
 <main id="studio" class="fm-vue">

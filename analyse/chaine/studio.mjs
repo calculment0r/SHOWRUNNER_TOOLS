@@ -196,18 +196,22 @@ const html = `<!DOCTYPE html>
 <body class="film">
 <!-- l'en-tête du portail se pose au-dessus (film.js → mountHeader('analyse')) ; dessous, la barre du film -->
 <nav class="fm-bar" aria-label="le film">
+  <div class="fm-g">
   <a class="tb ghost sm" href="${OUTIL}" title="Movie Analysis : les projets (nos films, les analyses faites d’ici, les projets créés)">← Projets</a>
-  <div class="fm-t"><b>${esc(TITRE || DATA.title)}</b><span class="lbl">${DATA.shots.length} plans · ${tc(DATA.duration).replace(/\.\d+$/, '')} · ${DATA.meta.width ?? '?'}×${DATA.meta.height ?? '?'}</span></div>
+  <div class="fm-t"><b>${esc(TITRE || DATA.title)}</b></div>
+  </div>
   <div class="fm-onglets" id="tabs" role="tablist" aria-label="les vues du film">
     <button type="button" role="tab" data-tab="studio" aria-pressed="true">Studio</button>
     <button type="button" role="tab" data-tab="casting" aria-pressed="false">Casting</button>
     <button type="button" role="tab" data-tab="depouillement" aria-pressed="false">Dépouillement</button>
     <a class="fm-voix" href="${esc(VOIX.labo)}" title="la diarisation Nemotron de ce film, dans le labo : recalculer, direct, micro">Voix <span aria-hidden="true">↗</span></a>
   </div>
+  <div class="fm-d">
   <span class="sp"></span>
   <span class="lbl fm-src" title="${esc(video)}">${MEDIA ? 'vidéo sur R2 · repli à côté' : 'vidéo à côté de la page'}</span>
   <!-- le menu « ⋯ » du portail (commun/menu.js), posé par film.js : la fiche du projet, les vues, les exports, le lien -->
   <span id="fm-plus" data-film="${esc(slug)}"></span>
+  </div>
 </nav>
 
 <main id="studio" class="fm-vue">

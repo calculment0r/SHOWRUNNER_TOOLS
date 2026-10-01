@@ -179,7 +179,9 @@ body.at-presenting > .sr-dock, body.at-presenting > .sr-dock-grip, body.at-prese
 .pt {
   /* 13 px d'écran à tout zoom, comme les bornes d'ODIO (musique_theme.md § 4). Avant :
      max(var(--z), .8) le faisait fondre sous 80 % (1,3 px à 8 %, 4 px à 25 %, mesuré) */
-  --pz: var(--z);
+  /* Cal, 01/10 : « quand on dézoome beaucoup ils deviennent énormes par rapport aux cartes » :
+     un seuil — sous 60 % de zoom, ils ne grossissent plus par rapport à la carte */
+  --pz: max(var(--z), .6);
   position: absolute; top: 50%; width: calc(13px / var(--pz)); height: calc(13px / var(--pz)); border-radius: 50%; z-index: 3;
   background: var(--bg); box-shadow: inset 0 0 0 calc(2px / var(--pz)) var(--k, var(--ink3)); cursor: crosshair;
   transform: translate(-50%, -50%); transition: transform .1s, opacity .12s, background .12s;
@@ -193,7 +195,6 @@ body.at-presenting > .sr-dock, body.at-presenting > .sr-dock-grip, body.at-prese
 /* un objet simple (note, image…) : sa sortie se montre au survol, choisi, ou branchée */
 .nd:not(.gen):not(.compose) > .pt.out:not(.on) { opacity: 0; }
 .nd:not(.gen):not(.compose):hover > .pt.out, .nd.sel > .pt.out { opacity: 1; }
-.cv.moving .pt { opacity: 0 !important; }
 /* tirer un fil : ce qui prend s'allume, le reste s'éteint */
 .cv.wiring .pt { opacity: 1; }
 .cv.wiring .pt.no { opacity: .1; transform: translate(-50%, -50%) scale(.75); }
@@ -439,8 +440,15 @@ body.at-presenting > .sr-dock, body.at-presenting > .sr-dock-grip, body.at-prese
 /* Ensemble (sous 42 %) : les cartes ne gardent que l'essentiel (comme le nodal de
    Musique) ; les noms des cadres en grand ; notes et post-it : leur couleur seule ;
    légendes, travaux, étiquettes des liens cachés */
-.cv.far .nd.gen .gform, .cv.far .nd.gen .gerr, .cv.far .nd.compose .gform { display: none; }
-.cv.far .nd.gen .gsum, .cv.far .nd.compose .gsum { display: block; }
+.cv.far .nd.gen .gform, .cv.far .nd.gen .gerr, .cv.far .nd.vgen .gform, .cv.far .nd.vgen .gerr, .cv.far .nd.compose .gform { display: none; }
+.cv.far .nd.gen .gsum, .cv.far .nd.vgen .gsum, .cv.far .nd.compose .gsum { display: block; }
+/* de loin, une carte Générer dit ce qu'elle est (Cal, 01/10) : son titre au-dessus d'elle, lisible
+   à l'écran comme le nom d'un cadre (12 px jusqu'à 20 % de zoom, puis il suit la planche) */
+.cv.far .nd:is(.gen, .vgen)::before {
+  content: attr(data-titre); position: absolute; left: 0; bottom: 100%; margin-bottom: calc(5px / max(var(--z), .2));
+  font: 600 calc(12px / max(var(--z), .2)) / 1.1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase;
+  white-space: nowrap; color: var(--or); pointer-events: none;
+}
 .cv.far .nd .cap, .cv.far .estrip, .cv.far .jobs { display: none; }
 .cv.far .fr-h { visibility: hidden; }
 .cv.far .fr-big { display: flex; }

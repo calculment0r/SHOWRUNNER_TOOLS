@@ -228,6 +228,7 @@ export function createVideo(app) {
     const e = app.canvas?.dom.get(id)?.el;
     if (!v || v.type !== 'vgen' || !e) return;
     const w = why(v);
+    e.dataset.titre = `vidéo · ${modeName(v.mode)}`;   // le titre de loin (ideation.css, .cv.far)
     const btn = e.querySelector('.gbtn'), wy = e.querySelector('.gwhy'), sum = e.querySelector('.gsum'), est = e.querySelector('.vest');
     if (btn) app.gen.paintBtn(btn, w, w ? 'Générer' : goLabel(v));
     if (wy) wy.textContent = w;
