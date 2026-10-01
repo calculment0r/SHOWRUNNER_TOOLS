@@ -1,6 +1,7 @@
 # Ce que la porte Cloudflare ne publie jamais (porte/wrangler.jsonc sert le dépôt comme assets : "directory": "..").
 # Syntaxe de .gitignore (https://developers.cloudflare.com/workers/static-assets/binding/). Rien n'est déployé.
 .git
+.github
 .gitattributes
 .gitignore
 .assetsignore
