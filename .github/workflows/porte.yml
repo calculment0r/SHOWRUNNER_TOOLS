@@ -1,0 +1,51 @@
+# L'adresse publique à jour sans passer par les DGX (demandé par Cal, 01/10 : « oui on doit mettre à jour »).
+# Les pages du portail sont le dépôt lui-même (porte/wrangler.jsonc : assets.directory = ".."), servies par le
+# Worker Cloudflare : un changement d'interface n'a besoin que d'un « wrangler deploy ». Ce flux le fait à chaque
+# poussée sur main, ou à la main (onglet Actions de GitHub > « Porte, déployer » > Run workflow, depuis le téléphone).
+#
+# Une seule fois, à faire par Cal (navigateur, téléphone possible) :
+#   1. Cloudflare > My Profile > API Tokens > Create Token > modèle « Edit Cloudflare Workers »
+#      (Account Resources : le compte de Cal) ; copier le jeton.
+#   2. Cloudflare > Workers & Pages : l'« Account ID » est dans la colonne de droite.
+#   3. GitHub > le dépôt > Settings > Secrets and variables > Actions > New repository secret :
+#        CLOUDFLARE_API_TOKEN = le jeton       CLOUDFLARE_ACCOUNT_ID = l'identifiant du compte
+# Sans ces deux secrets, le flux ne fait rien (il le dit). Un déploiement garde les secrets du Worker (PORTE_CLE, ADMINS).
+# Ce flux ne met à jour que ce que sert le Worker (les pages). Le serveur Python de DGX2 (server/) ne bouge pas :
+# un changement d'API demande toujours un git pull + tools/portail.sh restart sur DGX2.
+name: Porte, déployer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: porte
+  cancel-in-progress: true
+
+jobs:
+  deploie:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Les secrets Cloudflare sont-ils posés ?
+        id: cle
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "Pas de CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID : rien n'est déployé (voir l'en-tête de ce fichier)."
+            echo "pret=non" >> "$GITHUB_OUTPUT"
+          else
+            echo "pret=oui" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.cle.outputs.pret == 'oui'
+      - uses: cloudflare/wrangler-action@v3
+        if: steps.cle.outputs.pret == 'oui'
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: porte
+          wranglerVersion: "4"
+          command: deploy
