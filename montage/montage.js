@@ -257,6 +257,7 @@ function applySettings() {
   const f = st.format === 'custom' ? { w: st.width || 1920, h: st.height || 1080 } : (S.meta.formats.find((x) => x.id === st.format) || { w: 1920, h: 1080 });
   st.width = f.w; st.height = f.h;
   $('#stage').style.setProperty('--ar', String(f.w / f.h));
+  $('#prg-fmt').textContent = `${f.w} × ${f.h} · ${st.fps} i/s`;
   $('#fps').textContent = st.fps;
   $('#p-name').value = S.p.name;
   document.title = `${S.p.name} · Montage`;

@@ -31,13 +31,6 @@
     <span class="pill save" id="save-st"><i></i><span>—</span></span>
     <span class="sp"></span>
     <span class="tgrp sr-undo" id="undo-box" role="group" aria-label="annuler, rétablir, le journal des gestes"></span>
-    <div class="tgrp transport-mini" aria-label="lecture du programme">
-      <button class="pb" id="p-home" title="Origine">|◀</button>
-      <button class="pb" id="p-prev" title="←">◀</button>
-      <button class="pb play" id="p-play" title="espace · J K L">Lecture</button>
-      <button class="pb" id="p-next" title="→">▶</button>
-      <button class="pb" id="p-end" title="Fin">▶|</button>
-    </div>
     <div class="tcbox">
       <span><small>timecode</small><b id="tc" class="tcv">00:00:00:00</b></span>
       <i></i>
@@ -107,8 +100,16 @@
       <div class="mon-head"><span class="t">Programme</span><span class="mon-nm" id="prg-name">—</span><span class="sp"></span><span class="st" id="prg-state">arrêt</span></div>
       <div class="screen" id="prg-screen"><div class="stage" id="stage"><div class="empty" id="prg-empty"><b>Programme</b></div><div class="safe" id="safe" hidden><i></i><i></i></div></div></div>
       <div class="scrub" id="prg-scrub"><div class="fill" id="prg-fill"></div><div class="pos" id="prg-pos"></div></div>
-      <div class="mon-foot">
-        <span class="lbl">durée</span><span class="tcv sm" id="prg-dur">00:00:00:00</span><span class="sp"></span>
+      <div class="mon-foot prg-foot">
+        <span class="prg-dur"><span class="lbl">durée</span><span class="tcv sm" id="prg-dur">00:00:00:00</span></span>
+        <div class="tgrp transport-mini" aria-label="lecture du programme">
+          <button class="pb" id="p-home" title="Origine">|◀</button>
+          <button class="pb" id="p-prev" title="←">◀</button>
+          <button class="pb play" id="p-play" title="espace · J K L">Lecture</button>
+          <button class="pb" id="p-next" title="→">▶</button>
+          <button class="pb" id="p-end" title="Fin">▶|</button>
+        </div>
+        <span class="prg-fmt lbl" id="prg-fmt"></span>
       </div>
     </section>
 
