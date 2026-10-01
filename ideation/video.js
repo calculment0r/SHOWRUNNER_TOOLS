@@ -24,6 +24,7 @@
 import { api, jobs, toast, el, href, dropZone, fmtDur, pick } from '../commun/shell.js';
 import { KINDS, VMODES, inPorts, nameOf, cleanLooks } from './ports.js';
 import { plab, inbox, badList, chip, lotCheck, composeBtn, refStrip, placesLabel } from './gen.js';
+import { arobase } from '../commun/arobase.js';
 
 const SLOTS_R2V = ['image', 'element', 'video', 'audio'];
 
@@ -81,6 +82,29 @@ export function createVideo(app) {
       refresh(v.id);
       if (S.sel.has(v.id)) app.insp?.render();
     }, 260));
+  }
+
+  // le « @ » du prompt (commun/arobase.js) : les jetons que lit H3 — en Références, la place dans
+  // chaque catégorie (@image1, @element1, @video1, @audio1 : commun/entrees.js, CATS) ; en Images,
+  // les étiquettes du plan du serveur (la première et la dernière image) ; en Texte, aucune entrée
+  function atChoices(v) {
+    if (v.mode === 't2v') return { why: 'le mode Texte ne prend pas d’entrée : passez en Images ou en Références' };
+    const F = app.flowNow();
+    if (v.mode === 'i2v') {
+      // la première image puis la dernière : <Picture 1>, <Picture 2> (server/tools/movie.py, le plan)
+      const pics = [...F.take(v.id, 'start').map((e) => [e, 'la première image']), ...F.take(v.id, 'end').map((e) => [e, 'la dernière image'])].filter(([e]) => e.item);
+      if (!pics.length) return { why: 'branchez une première image, une dernière, ou les deux' };
+      return { toks: pics.map(([e, lab], k) => { const it = S.items.get(e.item);
+        return { tag: `<Picture ${k + 1}>`, titre: `${lab} · ${it?.title || ''}`, vignette: it?.thumb_url || (it?.kind === 'image' ? it.url : null) }; }) };
+    }
+    const toks = [];
+    for (const cat of SLOTS_R2V) {
+      F.take(v.id, cat).filter((e) => e.item).forEach((e, k) => {
+        const it = S.items.get(e.item);
+        toks.push({ tag: `@${cat}${k + 1}`, titre: it?.title || '', son: cat === 'audio', vignette: it?.thumb_url || (it?.kind === 'image' ? it.url : null) });
+      });
+    }
+    return toks.length ? { toks } : { why: 'branchez une entrée : une image, un élément, une vidéo ou un son' };
   }
 
   function why(v) {
@@ -164,6 +188,7 @@ export function createVideo(app) {
       let changed = () => {};
       field.addEventListener('focus', () => { changed = app.editing(); });
       field.addEventListener('input', () => { changed(); v.prompt = field.value; refresh(v.id); });
+      arobase(field, () => atChoices(app.node(v.id) || v));
     }
     const seg = el('div', { class: 'seg vmodes' }, ...modes().map((m) => el('button', { class: 'tb' + (v.mode === m.id ? ' on' : ''), type: 'button',
       title: m.sub || '', onclick: () => { if (v.mode !== m.id) app.mutate(() => { v.mode = m.id; }); } }, m.label)));
@@ -252,6 +277,7 @@ export function createVideo(app) {
     else {
       field = el('textarea', { class: 'fld', rows: 5, 'data-reg': 'prompt', placeholder: v.mode === 'r2v' ? 'la description, en anglais : @image1, @element1… par leur place' : 'la description, en anglais' });
       field.value = v.prompt || '';
+      arobase(field, () => atChoices(app.node(v.id) || v));
       let ch = () => {};
       field.addEventListener('focus', () => { ch = app.editing(); });
       field.addEventListener('input', () => {
@@ -333,5 +359,5 @@ export function createVideo(app) {
     return out;
   }
 
-  return { card, cardKey, refresh, why, params, generate, panels, promptOf, goLabel, KINDS };
+  return { card, cardKey, refresh, why, params, generate, panels, promptOf, goLabel, atChoices, KINDS };
 }

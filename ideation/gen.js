@@ -26,6 +26,7 @@
 
 import { api, jobs, toast, el, href, dropZone } from '../commun/shell.js';
 import { sortable, moveItem, heldTitle, sentLabel } from '../commun/refs.js';
+import { arobase } from '../commun/arobase.js';
 import { KINDS, nameOf, fromName, short, inPorts, newSlots, DEFAULT_ROLES, cleanLooks } from './ports.js';
 
 // ── ce que les cartes partagent (video.js aussi) ──────────────
@@ -130,6 +131,22 @@ export function createGen(app) {
   const quality = (g) => { const m = M(g.model); return !m ? g.quality : m.sizes[g.quality] ? g.quality : m.quality[0].id; };
   const goText = (g, pr = promptOf(g)) => (pr.lot && !pr.lot.conflict && pr.lot.on.length ? `Générer ${pr.lot.on.length} × ${g.count}` : `Générer${g.count > 1 ? ' ×' + g.count : ''}`);
 
+  // le « @ » du prompt (commun/arobase.js) : la même règle que la barre d'Image — Qwen-Image 2.1
+  // nomme ses références par leur place (<image1>…, les places ENVOYÉES seulement) ; Krea 2 ne
+  // les nomme pas (l'ordre suffit : la scène, puis le sujet) ; un modèle sans référence le dit
+  function atChoices(g) {
+    const m = M(g.model);
+    if (!m) return { why: `modèle inconnu : ${g.model}` };
+    if (g.model !== 'qwen21') {
+      return { why: g.model === 'krea2' ? 'Krea 2 ne nomme pas ses références : l’ordre suffit (la scène, puis le sujet)'
+        : m.refs_why || `${m.name} ne prend pas de référence` };
+    }
+    const sent = refsOf(g).filter((e) => e.ok && e.item);
+    if (!sent.length) return { why: 'aucune référence envoyée : déposez ou branchez des images sur la carte' };
+    return { toks: sent.map((e, k) => { const it = S.items.get(e.item);
+      return { tag: `<image${k + 1}>`, titre: it?.title || '', vignette: it?.thumb_url || (it?.kind === 'image' ? it.url : null) }; }) };
+  }
+
   // une carte dont un rendu est en file ou en cours : elle ne se relance pas (Cal, 01/10)
   function busy(n) {
     return (n?.jobs || []).some((x) => { const s = S.jobs.get(x.id)?.state ?? 'queued'; return s === 'queued' || s === 'running'; });
@@ -192,6 +209,7 @@ export function createGen(app) {
       let changed = () => {};
       field.addEventListener('focus', () => { changed = app.editing(); });
       field.addEventListener('input', () => { changed(); g.prompt = field.value; refresh(g.id); app.insp?.syncPrompt(g.id); });
+      arobase(field, () => atChoices(app.node(g.id) || g));
     }
     const sel = (opts, cur, on, title) => {
       const s = el('select', { class: 'fld sm', title },
@@ -505,7 +523,7 @@ export function createGen(app) {
     for (const n of S.board?.nodes || []) for (const j of n.jobs || []) follow(n.id, j.id);
   }
 
-  return { card, cardKey, refresh, why, busy, BUSY_WHY, paintBtn, refsOf, promptOf, looksOf, goText, quality, generate, variations, edit, recipe, resume, placeResults, launch,
+  return { card, cardKey, refresh, why, busy, BUSY_WHY, paintBtn, atChoices, refsOf, promptOf, looksOf, goText, quality, generate, variations, edit, recipe, resume, placeResults, launch,
     launchLot, showSent, composeFrom, M, KINDS,
     // pour l'inspecteur : d'où vient la prise de vue de la carte ('composer' : sa case Photographie)
     looksFrom: (g) => (promptOf(g).looks ? 'composer' : 'card') };

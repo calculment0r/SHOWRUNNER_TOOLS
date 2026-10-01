@@ -13,6 +13,7 @@ import { api, toast, el, href, fmtDate, fmtDur, etypeFr, dropZone } from '../com
 import { bbox, inside } from './canvas.js';
 import { KINDS, nameOf, portOf } from './ports.js';
 import { inbox } from './gen.js';
+import { arobase } from '../commun/arobase.js';
 import { kidsOf, layoutOf } from './groups.js';
 
 const ROLES = [['face', 'visage'], ['full body', 'plein pied'], ['outfit', 'tenue'], ['view', 'vue'], ['detail', 'détail'], ['style', 'style'], ['expression', 'expression']];
@@ -309,6 +310,7 @@ export function createInspector(app) {
     } else {
       ta = el('textarea', { class: 'fld', rows: 5, id: 'insp-prompt', placeholder: 'le prompt, en anglais — ou branchez un texte, un composeur', 'data-reg': 'prompt' });
       ta.value = n.prompt || '';
+      if (n.type === 'gen') arobase(ta, () => app.gen.atChoices(app.node(n.id) || n));
       let ch = () => {};
       ta.addEventListener('focus', () => { ch = app.editing(); });
       ta.addEventListener('input', () => {
