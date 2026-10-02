@@ -185,15 +185,24 @@ function inviter() {
   const name = el('input', { class: 'fld', placeholder: 'su007', maxlength: 24, autocomplete: 'off', spellcheck: 'false',
     autocapitalize: 'none', 'aria-label': 'le pseudo', value: S.addName || '', oninput: (e) => { S.addName = e.target.value; } });
   const role = el('div', { class: 'seg' }, ...[['ami', 'ami·e'], ['admin', 'admin']].map(([v, lab]) =>
-    el('button', { class: 'tb' + (S.addRole === v ? ' on' : ''), type: 'button', onclick: () => { S.addRole = v; render(true); } }, lab)));
+    el('button', { class: 'tb' + (S.addRole === v ? ' on' : ''), type: 'button', onclick: () => { S.addRole = v; if (v === 'admin') S.admShow = true; render(true); } }, lab)));
   // Apps ou Studio (un admin a toujours le Studio) ; par défaut, le réglage « un compte neuf »
   const acc = S.addAccess || S.state.settings.new_access || 'studio';
   const access = S.addRole === 'admin' ? el('span', { class: 'chip' }, 'studio · admin')
     : el('div', { class: 'seg', role: 'group', 'aria-label': 'ce qu’il ouvre' }, ...[['apps', 'Apps'], ['studio', 'Studio']].map(([v, lab]) =>
       el('button', { class: 'tb' + (acc === v ? ' on' : ''), type: 'button', onclick: () => { S.addAccess = v; render(true); } }, lab)));
   const lien = p.lien || '';
-  const admLine = el('div', { class: 'row', hidden: true }, el('span', { class: 'lbl' }, 'lien admin'),
-    el('b', { class: 'acct-code' }, p.lien_admin || ''), el('span', { class: 'sp' }), copier(p.lien_admin || '', 'lien admin'));
+  // le lien admin reste affiché tant qu'on ne le cache pas (l'état est gardé : un rafraîchissement de la page ne le
+  // ferme plus) ; choisir « admin » ou ajouter un admin l'ouvre ; « Copier le message » donne tout ce qu'il faut envoyer
+  const admOpen = S.admShow ?? false;
+  const admMsg = (who) => `Ouvre ce lien : ${p.lien_admin}\npuis tape le pseudo : ${who}`;
+  const admLine = el('div', { class: 'sub-card', hidden: !admOpen || !p.lien_admin },
+    el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'lien admin'),
+      el('b', { class: 'acct-code' }, p.lien_admin || ''), el('span', { class: 'sp' }), copier(p.lien_admin || '', 'lien admin')),
+    S.admFor ? el('div', { class: 'row' }, el('span', { class: 'lbl' }, `pour « ${S.admFor} »`), el('span', { class: 'sp' }),
+      el('button', { class: 'tb ghost sm', type: 'button', onclick: async () => {
+        try { await navigator.clipboard.writeText(admMsg(S.admFor)); toast('message copié : le lien et le pseudo'); } catch { toast(admMsg(S.admFor), 12000); }
+      } }, 'Copier le message')) : null);
   return el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('span', { class: 'nm' }, 'Ajouter quelqu’un'),
       el('span', { class: 'chip' }, p.mode ? `porte · ${p.mode}${p.mode === 'code' ? (p.invitation_requise ? ' · sur invitation' : ' · sans invitation') : ''}` : 'porte')),
@@ -206,8 +215,9 @@ function inviter() {
       if (!v) { name.focus(); return; }
       const r = S.addRole;
       S.addName = '';
+      if (r === 'admin') { S.admShow = true; S.admFor = v; }
       act(() => post('admin/users', { name: v, role: r, access: r === 'admin' ? 'studio' : acc }), r === 'admin'
-        ? `« ${v} » ajouté, admin : donne-lui le lien admin` : `« ${v} » peut entrer · ${acc === 'studio' ? 'Studio' : 'Apps'}`);
+        ? `« ${v} » ajouté, admin : le lien admin reste affiché, copie-le` : `« ${v} » peut entrer · ${acc === 'studio' ? 'Studio' : 'Apps'}`);
     } }, name, role, access, el('button', { class: 'tb', type: 'submit' }, 'Ajouter')),
     lien
       ? el('div', { class: 'row' }, el('span', { class: 'lbl' }, p.invitation_requise === false ? 'l’adresse à lui envoyer' : 'le lien à lui envoyer'),
@@ -216,8 +226,8 @@ function inviter() {
         ? 'porte « access » : tes amis entrent par leur e-mail (la politique Cloudflare Access), pas par un lien'
         : 'pas de lien : la porte publique n’est ni « code » ni une démo en route (tools/porte.sh code)'),
     p.lien_admin ? el('div', { class: 'row' }, el('span', { class: 'sp' }),
-      el('button', { class: 'tb ghost sm', type: 'button', onclick: (e) => { admLine.hidden = !admLine.hidden;
-        e.target.textContent = admLine.hidden ? 'Montrer le lien admin' : 'Cacher le lien admin'; } }, 'Montrer le lien admin')) : null,
+      el('button', { class: 'tb ghost sm', type: 'button', onclick: (e) => { S.admShow = admLine.hidden; admLine.hidden = !admLine.hidden;
+        e.target.textContent = admLine.hidden ? 'Montrer le lien admin' : 'Cacher le lien admin'; } }, admOpen ? 'Cacher le lien admin' : 'Montrer le lien admin')) : null,
     admLine);
 }
 
