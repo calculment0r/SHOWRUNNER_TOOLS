@@ -695,7 +695,7 @@ export function mountHeader(toolId, { dock: useDock = true } = {}) {
     el('a', { class: 'logo', href: avecEspace(href('')), title: 'le portail' },
       el('span', { class: 'sq' }, el('i')),
       el('span', {}, el('b', {}, 'Nirvalab'))),
-    t ? el('span', { class: 'tool-name' }, el('span', { class: 'k' }, t.k), el('b', {}, t.name)) : null,
+    t ? el('span', { class: 'tool-name' }, el('b', {}, t.name)) : null,
     nav,
     el('span', { class: 'sp' }),
     el('div', { class: 'sr-droite' },

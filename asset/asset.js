@@ -329,7 +329,7 @@ function paintTree() {
       saveClosed(); paintTree();
     } });
   const out = [
-    el('div', { class: 'side-head' }, el('span', { class: 'kicker' }, 'la bibliothèque'), el('span', { class: 'lbl' }, plural(t.total, 'objet', 'objets'))),
+    el('div', { class: 'side-head' }, el('span', { class: 'kicker' }, 'la bibliothèque')),
     row({ cls: 'q', label: 'Tout', count: t.total, hash: '#', on: P.k === 'all', lead: el('i', { class: 'ico all', 'aria-hidden': 'true' }), title: 'tout ce que tu vois, dans toutes tes Teams' }),
     row({ cls: 'q', label: 'Récents', count: t.recent, hash: '#/recents', on: P.k === 'recent', lead: el('i', { class: 'ico recent', 'aria-hidden': 'true' }), title: 'touchés ces 7 derniers jours' }),
     row({ cls: 'q', label: 'Favoris', count: t.fav, hash: '#/favoris', on: P.k === 'fav', drop: 'fav', lead: el('i', { class: 'ico fav', 'aria-hidden': 'true' }, '★'), title: 'glisser ici : en favori' }),
@@ -507,7 +507,7 @@ function placeTitle(p = S.place) {
 // le fil : Asset / Team / Workspace / dossier — un Workspace du fil reçoit aussi un glisser
 function paintCrumbs() {
   const P = S.place;
-  if (P.k === 'all') { parts.crumbs.replaceChildren(el('span', { class: 'kicker' }, 'SR—00 · la bibliothèque · toutes tes Teams')); return; }
+  if (P.k === 'all') { parts.crumbs.replaceChildren(); return; }
   const c = [el('a', { class: 'crumb', href: '#' }, 'Asset')];
   const sp = placeSpace(P);
   const info = sp ? spaceInfo(sp) : null;
@@ -534,17 +534,13 @@ function paintTop() {
     title: noCreate || `${where}${S.folder ? `, dossier « ${S.folder} »` : ''} — ou glisser des fichiers n’importe où sur la page` }, label));
   const more = el('button', { class: 'tb ghost more-btn', type: 'button', 'aria-haspopup': 'menu', title: 'les gestes de ce lieu', 'aria-label': 'plus',
     onclick: (e) => { e.stopPropagation(); toggleMenu(e.currentTarget, placeMenu()); } }, '⋯');
-  const all = Object.values(d.counts).reduce((a, b) => a + b, 0);
-  let sub = `${plural(all, 'objet', 'objets')}${d.folders?.length ? ` · ${plural(d.folders.length, 'dossier', 'dossiers')}` : ''} · ${countLine(d.counts)}`;
-  if (P.k === 'all' && manySpaces()) sub += ` · ${plural(S.spaces.length, 'Workspace', 'Workspaces')}`;
-  if (P.k === 'recent') sub += ' · touchés ces 7 derniers jours';
   const h1 = el('h1', { class: 'lib-h' }, placeTitle(P));
   if (P.k === 'folder') {
     h1.setAttribute('data-rename', ''); h1.title = 'renommer'; h1.tabIndex = 0;
     h1.onclick = () => renameFolderInline(P.name, P.space, h1);
     h1.onkeydown = (e) => { if (e.key === 'Enter') renameFolderInline(P.name, P.space, h1); };
   }
-  parts.who.replaceChildren(h1, el('span', { class: 'lbl' }, sub));
+  parts.who.replaceChildren(h1);
   if (P.k === 'folder') {
     parts.acts.replaceChildren(undoBox(),
       el('button', { class: 'tb ghost', type: 'button', onclick: () => renameFolderInline(P.name, P.space, h1) }, 'Renommer'),

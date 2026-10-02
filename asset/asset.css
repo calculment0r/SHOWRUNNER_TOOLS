@@ -94,6 +94,7 @@ body.dragging .am-side [data-drop].drop-on { box-shadow: inset 0 0 0 2px var(--g
 .lib-top .who-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .lib-top .who { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .lib-top .crumbs { margin-left: -9px; min-height: 25px; }
+.lib-top .crumbs:empty { display: none; }
 .lib-top .crumbs > .kicker { margin-left: 9px; }
 .lib-h { margin: 0; font-family: var(--f-disp); font-weight: 400; font-size: clamp(24px, 2.6vw, 38px); line-height: 1; letter-spacing: .03em; text-transform: uppercase; overflow-wrap: anywhere; }
 .more-btn { font-size: 14px; letter-spacing: .06em; }
