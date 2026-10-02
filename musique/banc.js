@@ -52,6 +52,7 @@
 //            segment, une lane, le banc — jamais celui du navigateur
 
 import { toast } from '../commun/shell.js';
+import { brancherCanvas } from '../commun/molette.js';
 import { $ as $partout } from '../commun/fenetre.js';   // un menu ouvert dans la fenêtre du nodal détaché compte aussi
 import { songEnd, projEnd } from './moteur.js';
 import { el, put, tok, clamp, letter } from './ui.js';
@@ -758,15 +759,23 @@ export function createBench(app, nodal) {
   }
 
   // ── la caméra du banc : molette ancrée au curseur, clic milieu pour se déplacer (n° 51, 61) ──
-  plan.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    const r = plan.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top, c = cam();
-    const wx = mx / c.k + c.x, wy = my / c.k + c.y;
-    const k = clamp(c.k * (e.deltaY > 0 ? 0.9 : 1.111), 0.25, 3);
-    U().cam = { k, x: wx - mx / k, y: wy - my / k };
-    demanderPlan(); paintFil();
-    clearTimeout(plan._t); plan._t = setTimeout(() => app.saveUi(), 400);
-  }, { passive: false });
+  // la souris ET le pavé, sans réglage (commun/molette.js, brancherCanvas) : pincer = zoom, deux doigts = déplacer,
+  // molette à crans = zoom ancré au curseur
+  const vueEnregistree = () => { clearTimeout(plan._t); plan._t = setTimeout(() => app.saveUi(), 400); };
+  brancherCanvas(plan, {
+    zoom: (f, cx, cy) => {
+      const r = plan.getBoundingClientRect(), mx = cx - r.left, my = cy - r.top, c = cam();
+      const wx = mx / c.k + c.x, wy = my / c.k + c.y;
+      const k = clamp(c.k * f, 0.25, 3);
+      U().cam = { k, x: wx - mx / k, y: wy - my / k };
+      demanderPlan(); paintFil(); vueEnregistree();
+    },
+    pan: (dx, dy) => {
+      const c = cam();
+      U().cam = { ...c, x: c.x + dx / c.k, y: c.y + dy / c.k };
+      demanderPlan(); paintFil(); vueEnregistree();
+    },
+  });
   plan.addEventListener('pointerdown', (e) => {
     if (e.button !== 1 || e.target.closest('.bn-seg')) return;
     e.preventDefault(); e.stopPropagation();

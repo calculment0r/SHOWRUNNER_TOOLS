@@ -47,6 +47,7 @@
 // sont gardés : leurs cartes, leurs ports typés, leurs câbles, leur boucle.
 
 import { toast } from '../commun/shell.js';
+import { brancherCanvas } from '../commun/molette.js';
 // le nodal peut être dans sa fenêtre (un 2ᵉ écran) : docs/etudes/fenetres.md § 6
 import { $ as $partout, partout, suivreTaille, elementAuPoint } from '../commun/fenetre.js';
 import { MODULES, COLORS, COLOR_FR, spec, val, drumVoicesOf, moduleName } from './modules.js';
@@ -2137,16 +2138,25 @@ export function createNodal(app) {
   });
   cv.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
   cv.addEventListener('contextmenu', (e) => e.preventDefault());
-  cv.addEventListener('wheel', (e) => {
-    if (e.target.closest?.('.palette, .cat, .machine-panel, .ndx-seuils, .nd-tools, .nd-zoom')) return;
-    e.preventDefault();
-    const r = cv.getBoundingClientRect();
-    const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
-    gesteVue();
-    poserCam(zoomCamera(cam(), dy, e.clientX - r.left, e.clientY - r.top, plancherCamera(plancher)));
-    demanderVue();
-    clearTimeout(cv._t); cv._t = setTimeout(() => app.saveUi(), 500);
-  }, { passive: false });
+  // la souris ET le pavé, sans réglage (commun/molette.js, brancherCanvas ; comme l'Idéation) : pincer = zoom,
+  // deux doigts = déplacer la vue, molette à crans = zoom ancré. Le zoomAt de la caméra veut un « deltaY » :
+  // un facteur f vaut ln f / ln 0,9988
+  const enregistrerVue = () => { clearTimeout(cv._t); cv._t = setTimeout(() => app.saveUi(), 500); };
+  brancherCanvas(cv, {
+    ignore: (e) => !!e.target.closest?.('.palette, .cat, .machine-panel, .ndx-seuils, .nd-tools, .nd-zoom'),
+    zoom: (f, cx, cy) => {
+      const r = cv.getBoundingClientRect();
+      gesteVue();
+      poserCam(zoomCamera(cam(), Math.log(f) / Math.log(0.9988), cx - r.left, cy - r.top, plancherCamera(plancher)));
+      demanderVue(); enregistrerVue();
+    },
+    pan: (dx, dy) => {
+      gesteVue();
+      const c = cam();
+      poserCam({ ...c, x: c.x + dx / c.k, y: c.y + dy / c.k });
+      demanderVue(); enregistrerVue();
+    },
+  });
   cv.addEventListener('dblclick', (e) => {
     if (e.target.closest('.tile, .nd-card, .bn-meta, .bn-atr, .nd-tools, .nd-zoom, .machine-panel, .group-menu, .cable__hit, .ndx-borne')) return;
     ouvrirLeCatalogue(versMonde(e.clientX, e.clientY));
@@ -2303,7 +2313,7 @@ export function createNodal(app) {
   }
 
   // ═════════════════════════════════════════════════════ les outils
-  const HINT = 'clic milieu glissé : se déplacer (sur les réglages d\'une tuile : tracer ce qu\'elle garde au zoom) · molette : zoom · clic : choisir, Maj : ajouter, Ctrl : ajouter ou retirer · glisser le fond : cadre · double-clic : le catalogue · ⌥ glissé : dupliquer · Ctrl+4 : aimant · T ranger · G grouper · F cadrer · clic droit : le menu';
+  const HINT = 'clic milieu glissé ou deux doigts : se déplacer (sur les réglages d\'une tuile : tracer ce qu\'elle garde au zoom) · molette ou pincer : zoom · clic : choisir, Maj : ajouter, Ctrl : ajouter ou retirer · glisser le fond : cadre · double-clic : le catalogue · ⌥ glissé : dupliquer · Ctrl+4 : aimant · T ranger · G grouper · F cadrer · clic droit : le menu';
   function peindreOutils() {
     const p = P();
     put(tools,
