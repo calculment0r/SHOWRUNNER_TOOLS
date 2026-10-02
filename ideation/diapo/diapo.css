@@ -48,9 +48,13 @@
 .dp-panel[hidden] { display: none; }
 body.at-presenting .dp-panel { display: none; }
 .dp-h { display: flex; align-items: center; gap: 6px; padding: 8px 8px 8px 12px; box-shadow: inset 0 -1px 0 var(--line); }
+.dp-h { padding-right: 6px; }
 .dp-h > * { flex: none; white-space: nowrap; }
+/* le titre et le décompte s'effacent en « … » avant que Présenter et × ne perdent un pixel */
+.dp-h .lbl { letter-spacing: .14em; }
+.dp-h .dp-n { color: var(--cy); flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .dp-h .sp { flex: 1 1 0; min-width: 0; }
-.dp-h .dp-n { color: var(--cy); }
+.dp-h .tb.sm { flex: none; }
 .dp-h .tb.sm { height: 24px; padding: 0 8px; }
 .dp-h .dp-x { width: 24px; padding: 0; }
 .dp-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; background: var(--panel3); display: flex; flex-direction: column; gap: 4px; }
