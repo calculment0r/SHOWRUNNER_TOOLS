@@ -548,6 +548,41 @@ def check_tokens(texts: list[str], tags: dict) -> tuple[list, set]:
     return bad, seen
 
 
+# ── les répliques : au format H3, jamais « entre guillemets » ─────────────────────────────────────────────────────
+# H3 ne prend une réplique que dans sa notation : `The weathered man (S1) mutters: <d>[English] Not tonight.</d>`
+# (l'aide « Réplique » de la page Vidéo, les guides MiniMax). Une phrase écrite « Marc dit : "vive Nirvalab !" » n'est
+# pour lui qu'un texte à raconter : la voix lit la phrase comme un narrateur, ou y ajoute n'importe quoi. Le portail
+# met donc au format H3 ce qui est sans ambiguïté une réplique citée — un verbe de parole puis des guillemets, ou deux
+# points puis des guillemets —, et laisse tel quel tout ce qui est déjà en `<d>`. Une seule personne parle (S1) :
+# pour plusieurs voix, écrire soi-même les `<d>`.
+_SPEECH_CUES = (r"dit|dis|disent|répond|répondit|demande|crie|hurle|murmure|chuchote|lance|s['’]exclame|annonce|déclare|"
+                r"ajoute|souffle|chante|says?|said|shouts?|whispers?|mutters?|replies|asks?|exclaims?|yells?|calls?|"
+                r"announces?|declares?|sings?|adds?")
+_SPEECH_RX = re.compile(
+    r"(?:\b(?:et|and|puis|then)\s+)?(?:\b(?:" + _SPEECH_CUES + r")\b)?\s*:?\s*(?<![\w])[\"“«]\s*([^\"”»<>]+?)\s*[\"”»]",
+    re.IGNORECASE)
+_SPEECH_LANG = {"fr": "French", "en": "English"}
+
+
+def speech_to_h3(desc: str, lang: str = "fr") -> tuple[str, int]:
+    """(texte, nombre de répliques mises au format H3). Les `<d>…</d>` déjà écrits ne sont pas touchés ; un
+    texte entre guillemets sans verbe de parole ni deux points avant lui (un titre, une enseigne) non plus."""
+    name = _SPEECH_LANG.get(lang, "French")
+    n = 0
+
+    def one(m):
+        nonlocal n
+        before = m.group(0)[:m.start(1) - m.start(0)]
+        if not re.search(r"(?:\b(?:" + _SPEECH_CUES + r")\b|:)\s*[\"“«]\s*$", before, re.IGNORECASE):
+            return m.group(0)          # des guillemets seuls : une enseigne, un titre, pas une réplique
+        n += 1
+        return f"(S1) says: <d>[{name}] {m.group(1).strip()}</d>"
+
+    parts = re.split(r"(<d>.*?</d>)", desc, flags=re.DOTALL)
+    out = [x if x.startswith("<d>") else _SPEECH_RX.sub(one, x) for x in parts]
+    return "".join(out), n
+
+
 def swap_tokens(text: str, tags: dict) -> str:
     return TOKEN_RX.sub(lambda m: tags.get(token_key(m.group(1), m.group(2)), m.group(0)), text or "")
 
@@ -809,6 +844,14 @@ def plan(mode: str, p: dict, *, with_graph: bool = False) -> dict:
     ref_size = p.get("ref_image_size") if p.get("ref_image_size") in ("match", "max") else "match"
     crf = max(10, min(30, _num(adv.get("crf"), int, 12)))   # 12 : la recette de Cal
     raw = any(h in desc for h in SECTION_HEADS)
+    spoken = 0
+    if not raw:
+        desc_h3, spoken = speech_to_h3(desc, p.get("speech_lang") or "fr")
+        if spoken:
+            notes.append(f"{spoken} réplique{'s' if spoken > 1 else ''} mise{'s' if spoken > 1 else ''} au format H3 "
+                         "« (S1) says: <d>[langue] … </d> » : H3 ne parle qu'une réplique écrite ainsi (sinon un narrateur "
+                         "la raconte) ; pour plusieurs voix, écris tes <d> toi-même")
+            desc = desc_h3
     if raw:
         sent = swap_tokens(desc, R["tags"])
         notes.append("prompt déjà au format H3 (sections) : envoyé tel quel, jetons remplacés")
@@ -2040,6 +2083,10 @@ def selftest(call, ok) -> None:
     pne = plan("r2v", {"inputs": {"element": [{"item": empty["id"]}]}, "desc": "@element1"})
     ok(not pne["ok"] and any("pas encore de version" in e for e in pne["errors"]), "un élément sans version publiée : dit")
     st, raw = call("POST", "/api/movie/plan", {"mode": "r2v", "params": {"inputs": {"element": [{"item": eid}]}, "desc": "subject_definitions:\n@element1"}})
+    ok(speech_to_h3('@element1 mange de la soupe et dit:"vive Nirvalab!"')[0] == "@element1 mange de la soupe (S1) says: <d>[French] vive Nirvalab!</d>",
+       "une réplique citée devient une réplique H3 (plus de narrateur)")
+    ok(speech_to_h3('he mutters: <d>[English] hi</d>', "en") == ('he mutters: <d>[English] hi</d>', 0)
+       and speech_to_h3('Une enseigne "OPEN" au néon')[1] == 0, "un <d> déjà écrit, ou des guillemets d'enseigne : intacts")
     ok(raw.get("raw") and raw.get("prompt_sent") == "subject_definitions:\n<Subject 1>", "un prompt au format H3 part tel quel, jetons remplacés")
     st, lo = call("POST", "/api/movie/plan", {"mode": "r2v", "params": {"inputs": {"element": [{"item": eid}]}, "desc": "@element1",
                                                                          "loras": [{"name": "Minimax_H3/minimax_h3_fl2v_x.safetensors"}]}})

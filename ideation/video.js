@@ -25,6 +25,7 @@ import { api, jobs, toast, el, href, dropZone, fmtDur, pick } from '../commun/sh
 import { KINDS, VMODES, inPorts, nameOf, cleanLooks } from './ports.js';
 import { plab, inbox, badList, chip, lotCheck, composeBtn, refStrip, placesLabel } from './gen.js';
 import { arobase } from '../commun/arobase.js';
+import { prefs } from '../commun/prefs.js';
 
 const SLOTS_R2V = ['image', 'element', 'video', 'audio'];
 
@@ -57,7 +58,7 @@ export function createVideo(app) {
     const take = (pb) => F.take(v.id, pb).filter((e) => e.item);
     const pr = promptOf(v, F, k);
     const p = { desc: pr.text, sound: pr.son || v.sound || '', music: pr.musique || v.music || '', method: methodOf(v), frames: v.frames,
-      steps: null, seed: v.seed ? Number(v.seed) : null, canvas: canvasOf(v), loras: [], adv: {} };
+      steps: null, seed: v.seed ? Number(v.seed) : null, canvas: canvasOf(v), loras: [], adv: {}, speech_lang: prefs.get('general.langue', 'fr') === 'en' ? 'en' : 'fr' };
     if (v.mode === 'i2v') { p.start = take('start')[0]?.item || ''; p.end = take('end')[0]?.item || ''; }
     if (v.mode === 'r2v') {
       p.inputs = Object.fromEntries(SLOTS_R2V.map((k) => [k, take(k).map((e) => ({ item: e.item }))]));

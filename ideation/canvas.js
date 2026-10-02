@@ -445,9 +445,10 @@ export function createCanvas(app) {
     else if (n.type === 'palette') {
       body = [el('div', { class: 'sws' }, ...(n.colors || []).map((c) =>
         // une couleur tirée d'une image : une donnée, pas une teinte du thème
-        el('button', { class: 'sw', type: 'button', title: `${c} — copier`, style: { background: c },
-          onclick: () => { navigator.clipboard?.writeText(c).then(() => toast(`${c} copiée`), () => toast(c)); } },
-        el('span', {}, c))))];
+        // pas un bouton : un bouton retient le clic et empêche de déplacer le nuancier (Cal, 02/10) ; la copie est au
+        // clic droit (menus.js, « Copier cette couleur »)
+        el('div', { class: 'sw', 'data-c': c, title: `${c} — clic droit : copier`, style: { background: c } },
+          el('span', {}, c))))];
     }
     const e = el('div', { class: cls.join(' '), 'data-id': n.id, 'data-g': n.group || '', style }, ...body, el('div', { class: 'jobs' }), ...ports(n));
     if (n.type === 'media' && n.kind === 'video') {
@@ -1306,6 +1307,7 @@ export function createCanvas(app) {
     if (fld) { menu(...at, M.text(fld)); return; }
     if (t.closest('.zoombox, .mini')) { menu(...at, M.view()); return; }
     if (locked) { menu(...at, M.view()); return; }
+    app.swatchHit = t.closest?.('.sw')?.dataset.c || '';   // la couleur du nuancier sous le clic droit, pour son menu
     const raw = t.closest('[data-id]')?.dataset.id;
     const lk = t.closest('[data-link]')?.dataset.link;
     if (lk && !raw) {

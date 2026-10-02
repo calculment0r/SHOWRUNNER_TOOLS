@@ -481,7 +481,7 @@ function params(mode = F.mode) {
   const out = {
     desc: p.desc, sound: p.sound, music: p.music, method: F.method, frames: F.frames,
     steps: F.steps ? Number(F.steps) : null, seed: F.seed === '' ? null : Number(F.seed),
-    canvas: F.canvas[mode],
+    canvas: F.canvas[mode], speech_lang: prefs.get('general.langue', 'fr') === 'en' ? 'en' : 'fr',
     loras: S.loras.filter((l) => F.loras[l.name]?.on && l.modes.includes(mode) && !l.accel).map((l) => ({ name: l.name, strength: F.loras[l.name].strength })),
     adv: { unet: F.adv['unet_' + w], crf: F.adv.crf || null },
   };

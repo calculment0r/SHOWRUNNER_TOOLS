@@ -123,6 +123,8 @@ export function createMenus(app) {
       if (n.type === 'gen') out.push({ label: app.gen.goText ? app.gen.goText(n) : 'Générer', dot: 'or', disabled: !!w, why: w, onclick: () => app.gen.generate(n.id) });
       out.push({ label: 'Écrire le prompt', onclick: () => C().dom.get(n.id)?.el.querySelector('textarea:not([readonly])')?.focus({ preventScroll: true }) });
     } else if (n.type === 'palette') {
+      const hit = app.swatchHit;
+      if (hit) out.push({ label: `Copier ${hit}`, onclick: () => navigator.clipboard?.writeText(hit).then(() => toast(`${hit} copiée`), () => toast(hit)) });
       out.push({ label: 'Copier les couleurs', onclick: () => navigator.clipboard?.writeText((n.colors || []).join(' ')).then(() => toast('couleurs copiées'), () => toast((n.colors || []).join(' '))) });
     } else if (app.objets?.has(n.type)) {
       // formes, cartes, nœuds de mind map, traits (objets/)
