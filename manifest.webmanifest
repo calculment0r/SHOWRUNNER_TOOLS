@@ -1,0 +1,26 @@
+{
+  "name": "Showrunner · Nirvalab",
+  "short_name": "Showrunner",
+  "description": "Showrunner, par Nirvalab : les apps, le Studio, une bibliothèque commune.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0d0b",
+  "theme_color": "#0a0d0b",
+  "lang": "fr",
+  "icons": [
+    {
+      "src": "media/icone-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "media/icone-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

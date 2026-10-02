@@ -1799,6 +1799,13 @@ def _invitation_page(message: str = "", status: int = 200, next_: str = "", door
 <meta charset="UTF-8">
 <script src="/commun/theme-tot.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/media/icone-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Showrunner">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#0a0d0b">
 <meta name="robots" content="noindex">
 <title>SHOWRUNNER TOOLS · invitation</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">

@@ -54,6 +54,7 @@ mimetypes.add_type("font/otf", ".otf")
 mimetypes.add_type("font/ttf", ".ttf")
 mimetypes.add_type("model/gltf-binary", ".glb")
 mimetypes.add_type("image/webp", ".webp")
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 mimetypes.add_type("audio/flac", ".flac")
 
 MAX_BODY = 2 << 30  # 2 Go : une vidéo déposée dans la bibliothèque

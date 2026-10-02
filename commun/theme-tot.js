@@ -80,6 +80,31 @@
     return { theme: theme, base: base, scale: z };
   }
 
+  // L'appareil, posé sur <html> comme le thème (Cal, 01/10 : « on peut savoir si on affiche sur téléphone ou
+  // ordi ? ») : data-appareil = mobile | tablette | ordi ; data-tactile (écran tactile principal) ;
+  // data-standalone (lancé depuis l'écran d'accueil, sans barre d'adresse). Le CSS peut s'y accrocher
+  // (html[data-appareil="mobile"]) et le JS lire window.SR_APPAREIL. Les téléphones se reconnaissent à
+  // leur agent (iPhone, Android « Mobile »), les iPad récents aussi : iPadOS se dit « Macintosh » mais a un écran
+  // tactile (maxTouchPoints > 1) ; Chrome sur iPhone dit « CriOS » (c'est WebKit dessous).
+  var ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+  var mm = function (q) { try { return !!(W.matchMedia && W.matchMedia(q).matches); } catch (e) { return false; } };
+  var ipad = /iPad/.test(ua) || (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1);
+  var droid = /Android/.test(ua);
+  var appareil = {
+    mobile: /iPhone|iPod/.test(ua) || (droid && /Mobile/.test(ua)),
+    tablette: ipad || (droid && !/Mobile/.test(ua)),
+    tactile: mm('(pointer: coarse)'),
+    ios: /iPhone|iPod|iPad/.test(ua) || ipad,
+    navigateur: /CriOS/.test(ua) ? 'chrome' : /FxiOS/.test(ua) ? 'firefox' : /EdgiOS|EdgA|Edg\//.test(ua) ? 'edge' : /Chrome\//.test(ua) ? 'chrome' : /Safari\//.test(ua) ? 'safari' : '?',
+    standalone: (typeof navigator !== 'undefined' && navigator.standalone === true) || mm('(display-mode: standalone)') || mm('(display-mode: fullscreen)'),
+  };
+  appareil.type = appareil.mobile ? 'mobile' : appareil.tablette ? 'tablette' : 'ordi';
+  var rootEl = document.documentElement;
+  rootEl.setAttribute('data-appareil', appareil.type);
+  if (appareil.tactile) rootEl.setAttribute('data-tactile', ''); else rootEl.removeAttribute('data-tactile');
+  if (appareil.standalone) rootEl.setAttribute('data-standalone', ''); else rootEl.removeAttribute('data-standalone');
+  W.SR_APPAREIL = appareil;
+
   W.SR_THEME = { KEY: KEY, THEMES: THEMES, SCALES: SCALES, colorOk: colorOk, tokenOk: tokenOk, readLocal: readLocal, apply: apply };
   apply();
 })();
