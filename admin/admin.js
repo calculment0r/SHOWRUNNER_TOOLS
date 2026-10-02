@@ -374,7 +374,12 @@ function personne(u) {
           () => post(`admin/users/${u.id}`, { role: adm ? 'ami' : 'admin' }), () => post(`admin/users/${u.id}`, { role: adm ? 'admin' : 'ami' }),
           adm ? `${u.name} n’est plus admin` : `${u.name} est admin`) }, adm ? 'Retirer le rôle admin' : 'Donner le rôle admin'),
       adm ? null : el('button', { class: 'tb ghost sm', onclick: () => act(() => post(`admin/users/${u.id}`, { state: susp ? 'active' : 'suspended' }),
-        susp ? `${u.name} peut revenir` : `${u.name} suspendu·e : ses travaux en file sont retirés`) }, susp ? 'Réactiver' : 'Suspendre')),
+        susp ? `${u.name} peut revenir` : `${u.name} suspendu·e : ses travaux en file sont retirés`) }, susp ? 'Réactiver' : 'Suspendre'),
+      // détruire : le compte, ses connexions et ses places dans les Teams ; ce qu'il a rangé reste dans les Workspaces
+      adm ? null : el('button', { class: 'tb ghost sm', type: 'button', title: 'détruit le compte : son pseudo redevient libre (ce qu’il a rangé reste dans les Workspaces)',
+        onclick: () => confirmBox(`Supprimer ${u.name} ?`,
+          'Le compte, ses connexions et sa place dans les Teams disparaissent, et son pseudo redevient libre. Ce qu’il a rangé reste dans les Workspaces. Ça ne s’annule pas.',
+          'Supprimer', () => act(() => post(`admin/users/${u.id}/supprimer`), `${u.name} supprimé·e`)) }, 'Supprimer')),
     lastAdm ? el('p', { class: 'why' }, 'dernier admin : son rôle ne se retire pas') : null,
     devBox);
 }

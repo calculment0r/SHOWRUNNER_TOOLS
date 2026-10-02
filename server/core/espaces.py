@@ -999,6 +999,37 @@ def remove_member(u, tid: str, uid: str) -> dict:
     return team_view(u, tid) if (can_manage(u, tid) or team_role(u, tid)) else {"id": tid, "left": True}
 
 
+def forget_user(uid: str) -> dict:
+    """Un compte détruit (auth.delete_user) : il sort de toutes les Teams et de tous les Workspaces
+    où il n'était que membre. Sa Team personnelle « Chez moi » est archivée (ses objets restent,
+    dans leurs Workspaces, à la Team) ; une Team qu'il possédait passe à son premier admin, sinon
+    à son premier membre, sinon elle est archivée. Rien n'est effacé du disque."""
+    out = {"teams": 0, "archivees": 0, "transmises": 0}
+    with _lock:
+        db = _data()
+        for t in db["teams"].values():
+            m = (t.get("members") or {}).get(uid)
+            if t.get("owner") != uid and not m:
+                continue
+            out["teams"] += 1
+            if t.get("owner") == uid:
+                rest = {k: v for k, v in (t.get("members") or {}).items() if k != uid}
+                heir = next((k for k, v in rest.items() if v.get("role") == "admin"), None) or next(iter(rest), None)
+                if t.get("personal") or not heir:
+                    t["archived"] = t.get("archived") or now_iso()
+                    out["archivees"] += 1
+                else:
+                    t["owner"] = heir
+                    rest[heir]["role"] = "owner"
+                    out["transmises"] += 1
+            (t.get("members") or {}).pop(uid, None)
+        for sp in db["spaces"].values():
+            (sp.get("members") or {}).pop(uid, None)
+        db["users"].pop(uid, None)
+        _save()
+    return out
+
+
 def set_space_member(u, sid: str, uid: str, role: str | None) -> dict:
     """Dans un Workspace : le rôle d'un membre de la Team (admin, editor, commenter,
     viewer, none ; null : le rôle par défaut), ou un guest qu'on y met (`guest`) ou

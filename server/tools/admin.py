@@ -22,7 +22,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from core import auth, config, jobs, library, machines
+from core import auth, config, espaces, jobs, library, machines
 from core.http import HttpError
 
 # les interrupteurs que la page lit et change : les valeurs que le code de
@@ -89,6 +89,17 @@ def set_user(req, uid):
             if j.get("owner") == uid and j["state"] == "queued":
                 jobs.cancel(j["id"])
     return auth.public_user(u)
+
+
+def delete_user(req, uid):
+    """Détruire un compte (Admin → Personnes → Supprimer) : ses travaux en file s'en vont, ses connexions
+    se ferment, il sort des Teams ; ce qu'il a rangé reste dans les Workspaces (espaces.forget_user)."""
+    me = _admin(req)
+    gone = auth.delete_user(uid, me["id"])   # les refus d'abord : un refus ne retire aucun travail
+    for j in jobs.listing(limit=400):
+        if j.get("owner") == uid and j["state"] == "queued":
+            jobs.cancel(j["id"])
+    return {"ok": True, "name": gone.get("name", uid), "teams": espaces.forget_user(uid)}
 
 
 def user_devices(req, uid):
@@ -332,6 +343,7 @@ def register(app) -> None:
     app.route("POST", "/api/admin/requests/{uid}/accept", accept)
     app.route("POST", "/api/admin/requests/{uid}/refuse", refuse)
     app.route("POST", "/api/admin/users/{uid}", set_user)
+    app.route("POST", "/api/admin/users/{uid}/supprimer", delete_user)
     app.route("GET", "/api/admin/users/{uid}/devices", user_devices)
     app.route("POST", "/api/admin/users/{uid}/devices/{sid}/revoke", user_revoke)
     app.route("POST", "/api/admin/settings", settings)
@@ -596,6 +608,13 @@ def selftest(call, ok) -> None:
         s_, d, _ = essai_http("POST", "/api/admin/users/lea", {"quotas": {"queued": 1}}, cookie=tok, headers=same)
         ok(s_ == 200 and auth.quotas_for("lea")["queued"] == 1, f"un quota changé par l'API ({s_})")
         auth.set_user("lea", {"quotas": {"queued": None}}, "cal")
+        auth.create_friend("Efface Moi", by="cal")
+        s_, d, _ = essai_http("POST", "/api/admin/users/efface-moi/supprimer", {}, cookie=tok, headers=same)
+        ok(s_ == 200 and auth.user("efface-moi") is None, f"un compte se détruit par l'API ({s_})")
+        s_, d, _ = essai_http("POST", "/api/admin/users/efface-moi/supprimer", {}, cookie=tok, headers=same)
+        ok(s_ == 404, f"détruire un compte absent : 404 ({s_})")
+        s_, d, _ = essai_http("POST", "/api/admin/users/cal/supprimer", {}, cookie=tok, headers=same)
+        ok(s_ in (404, 409), f"détruire Cal : refusé ({s_})")
         s_, d, _ = essai_http("GET", "/api/admin/switches", cookie=tok)
         ok(s_ == 200 and {i["key"] for i in d["items"]} >= {"image_backend", "movie_engine", "music_engine", "objet_trellis"},
            f"les interrupteurs se lisent ({s_})")

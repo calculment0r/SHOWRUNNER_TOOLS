@@ -1351,6 +1351,31 @@ def create_invited(pseudo, by: str, guest: bool) -> dict:
     return dict(u)
 
 
+def delete_user(uid: str, by: str) -> dict:
+    """Détruire un compte (Admin → Personnes → Supprimer ; Cal, 01/10 : « je peux que les suspendre »).
+    Le compte et ses connexions disparaissent ; il peut se recréer (le même pseudo redevient libre).
+    Un admin ne se détruit pas (lui retirer d'abord le rôle), ni soi-même. Ce qu'il a rangé reste :
+    les objets sont à leurs Workspaces (core/espaces.py, forget_user)."""
+    with _lock:
+        db = _data()
+        u = db["users"].get(uid)
+        if not u:
+            raise HttpError(404, "pas de compte à ce pseudo")
+        if u.get("state") == "pending":
+            raise HttpError(409, "c'est une demande : refuse-la plutôt")
+        if u.get("role") == "admin":
+            raise HttpError(409, "un admin ne se détruit pas : retire-lui d'abord le rôle admin")
+        if uid == by:
+            raise HttpError(409, "tu ne peux pas détruire ton propre compte")
+        db["users"].pop(uid)
+        gone = [h for h, x in db["sessions"].items() if x.get("user") == uid]
+        for h in gone:
+            db["sessions"].pop(h, None)
+        _save()
+    journal("détruit", user=uid, name=u.get("name", ""), by=by, connexions=len(gone))
+    return u
+
+
 def refuse(uid: str, by: str) -> None:
     with _lock:
         db = _data()
