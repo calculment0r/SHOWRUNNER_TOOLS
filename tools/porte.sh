@@ -341,6 +341,28 @@ ami() {
 
 # porte.invitation (mode « code ») : off = phase d'essai (Cal, 29/09 à 19 h) : on ouvre l'adresse, on tape le pseudo
 # que Cal a ajouté dans Admin, on entre ; un pseudo inconnu est refusé ; un compte admin exige toujours le code admin.
+# l'admin par son seul pseudo (porte ouverte seulement) : plus de code admin à porter d'un ordinateur à l'autre.
+# Un pseudo admin n'est pas un secret : à n'allumer que si l'on accepte que quiconque le connaît entre en admin.
+admin_pseudo() {
+  local v=${1:-}
+  case "$v" in on) v=true ;; off) v=false ;; *) faux "usage : admin-pseudo <on|off>" ;; esac
+  mkdir -p "$SAUVE_DIR"
+  [ -f "$LOCAL" ] && cp -p "$LOCAL" "$SAUVE_DIR/showrunner.local.json.$(date +%Y%m%d-%H%M%S)"
+  python3 - "$LOCAL" "$v" <<'PY' || faux "réglage non écrit"
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+d = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+porte = d.get("porte") if isinstance(d.get("porte"), dict) else {"mode": d.get("porte") or "demo"}
+porte["admin_pseudo"] = sys.argv[2] == "true"
+d["porte"] = porte
+p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+print(json.dumps({"porte": {k: v for k, v in porte.items() if k != "emails"}}, ensure_ascii=False))
+PY
+  $RELANCE || faux "le portail ne repart pas"
+  bon "admin-pseudo $1 (ne compte que si la porte est ouverte : bash tools/porte.sh invitation off)"
+}
+
 invitation() {
   local v=${1:-}
   case "$v" in on) v=true ;; off) v=false ;; *) faux "usage : invitation <on|off>" ;; esac
@@ -381,6 +403,7 @@ case "${1:-}" in
   lien) lien ;;
   ami) ami "${2:-}" ;;
   invitation) invitation "${2:-}" ;;
+  admin-pseudo) admin_pseudo "${2:-}" ;;
   nouveaux-codes) nouveaux_codes ;;
   verifie) verifie ;;
   cle) cle ;;

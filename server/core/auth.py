@@ -1238,7 +1238,7 @@ def enter(name, req) -> tuple[str, dict, str]:
             return "pending", dict(u), tok
         if u.get("state") == "suspended":
             raise HttpError(403, "ce compte est suspendu : vois avec Cal")
-        if d and is_admin(u) and level != "admin":
+        if d and is_admin(u) and level != "admin" and not admin_by_pseudo(d):
             raise HttpError(403, DOOR_ADMIN.format(p=f"« {name} »"))
         if _offnet(u, req):
             raise HttpError(403, OFFNET.format(p=f"« {name} »"))
@@ -1630,12 +1630,21 @@ def door_settings() -> dict:
         # porte « code » : le code d'invitation est-il demandé ? false (phase d'essai, Cal, 29/09 à 19 h) : on tape son
         # pseudo et l'on entre si Cal l'a ajouté dans Admin ; un compte admin exige toujours le code admin
         "invitation": d.get("invitation", True) is not False,
+        # porte ouverte (sans invitation) : un admin entre aussi par son seul pseudo, sans le code admin (Cal, 04/09 :
+        # « 6 ordinateurs »). Faux par défaut : un pseudo admin n'est pas un secret (il est écrit dans docs/, dépôt public) ;
+        # bash tools/porte.sh admin-pseudo on|off
+        "admin_pseudo": d.get("admin_pseudo") is True,
     }
 
 
 def open_door(d: str | None) -> bool:
     """La porte « code » sans code d'invitation (`porte.invitation = false`)."""
     return d == "code" and not door_settings()["invitation"]
+
+
+def admin_by_pseudo(d: str | None) -> bool:
+    """Un admin entre par son seul pseudo : seulement sur la porte ouverte, et si Cal l'a voulu (`porte.admin_pseudo`)."""
+    return open_door(d) and door_settings()["admin_pseudo"]
 
 
 def _door_mark(req) -> str | None:
@@ -1779,7 +1788,7 @@ def _door_session_ok(req, s: dict, u: dict | None) -> bool:
     if d not in PSEUDO_DOORS or s.get("porte") != d:
         return False
     level = demo_level(s.get("code"))
-    return bool(level) and (level == "admin" or not is_admin(u))
+    return bool(level) and (level == "admin" or not is_admin(u) or admin_by_pseudo(d))
 
 
 def invite_cookie(level_mark: str | None) -> str:

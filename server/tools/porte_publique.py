@@ -313,6 +313,14 @@ def _selftest_code(ok, home, home_tok, same_home, keyfile, key, team, jwt_for) -
     s, d, jar2, _ = C("POST", "/api/auth/enter", {"name": "lea007"}, cookies={auth.INVITE_COOKIE: jar.get(auth.INVITE_COOKIE)}, qui=ip2)
     s2, _, _, _ = C("GET", "/api/admin/state", cookies={auth.COOKIE: jar2.get(auth.COOKIE)}, qui=ip2)
     ok(s == 200 and d["user"]["role"] == "admin" and s2 == 200, f"… avec le lien du code admin, elle entre, admin ({s}, {s2})")
+    # admin par son seul pseudo (porte.admin_pseudo, faux par défaut) : sans le code admin, sur la porte ouverte
+    config.CFG["porte"]["admin_pseudo"] = True
+    s, d, jar3, _ = C("POST", "/api/auth/enter", {"name": "lea007"}, qui=ip2)
+    s2, _, _, _ = C("GET", "/api/admin/state", cookies={auth.COOKIE: jar3.get(auth.COOKIE)}, qui=ip2)
+    ok(s == 200 and d["user"]["role"] == "admin" and s2 == 200, f"admin_pseudo : « lea007 » entre par son seul pseudo, admin ({s}, {s2})")
+    config.CFG["porte"]["admin_pseudo"] = False
+    s2, _, _, _ = C("GET", "/api/admin/state", cookies={auth.COOKIE: jar3.get(auth.COOKIE)}, qui=ip2)
+    ok(s2 in (401, 403), f"admin_pseudo coupé : sa session sans code admin ne vaut plus ({s2})")
     s, d, _, _ = _req(home, "POST", "/api/admin/users", {"name": "Truc", "role": "root"}, cookies={auth.COOKIE: home_tok},
                       headers=same_home)
     ok(s == 400, f"Admin : un autre rôle que ami/admin → 400 ({s})")
