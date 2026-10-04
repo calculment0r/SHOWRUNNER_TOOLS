@@ -1,0 +1,48 @@
+/* ============================================================
+   SHOWRUNNER TOOLS — le panneau Multishot (commun/multishot.js)
+   Jetons seulement (commun/tokens.css), des filets (inset), un seul .tb.go
+   (Écrire dans le prompt), les capitales pour la machine.
+   ============================================================ */
+.ms-scrim .ms-modal { width: min(1040px, 96vw); max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; }
+.ms-body { display: flex; flex-direction: column; gap: 14px; padding: 16px 18px 14px; overflow-y: auto; min-height: 0; }
+.ms-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ms-t { font-family: var(--f-disp); font-size: 20px; letter-spacing: .06em; text-transform: uppercase; }
+
+/* la frise : la durée, découpée en plans ; les poignées sont entre les plans */
+.ms-tlw { position: relative; padding-bottom: 20px; }
+.ms-tl { position: relative; height: 68px; border-radius: var(--r3); background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line); }
+.ms-seg {
+  position: absolute; top: 4px; bottom: 4px; display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  padding: 0 14px; min-width: 0; overflow: hidden; text-align: left; cursor: pointer;
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line), inset 0 3px 0 var(--seg, var(--cy)); border-radius: var(--r2);
+}
+.ms-seg.c0 { --seg: var(--cy); } .ms-seg.c1 { --seg: var(--or); } .ms-seg.c2 { --seg: var(--grn2); } .ms-seg.c3 { --seg: var(--amb); }
+.ms-seg b { font-family: var(--f-mono); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink); font-weight: 500; white-space: nowrap; }
+.ms-seg small { font-family: var(--f-mono); font-size: 10px; color: var(--ink3); white-space: nowrap; }
+.ms-seg:hover { background: var(--panel); }
+.ms-seg.sel { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-or), inset 0 3px 0 var(--seg, var(--cy)); }
+.ms-h {
+  position: absolute; top: 0; bottom: 0; width: 16px; margin-left: -8px; z-index: 2; cursor: ew-resize; touch-action: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.ms-h::before { content: ""; width: 4px; height: 34px; border-radius: 2px; background: var(--ink); box-shadow: 0 2px 6px var(--drop); transition: transform .12s; }
+.ms-h:hover::before, .ms-h:focus-visible::before { transform: scaleY(1.2); background: var(--or); }
+.ms-ruler { position: absolute; left: 0; right: 0; bottom: 0; height: 18px; pointer-events: none; }
+.ms-ruler i { position: absolute; top: 0; width: 1px; height: 6px; background: var(--line); }
+.ms-ruler i span { position: absolute; top: 7px; left: 0; transform: translateX(-50%); font: normal 9px var(--f-mono); color: var(--ink3); }
+
+.ms-plans, .ms-auto, .ms-ed { display: flex; flex-direction: column; gap: 10px; }
+.ms-ed { padding: 12px; border-radius: var(--r3); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
+.ms-lines { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.ms-line { display: grid; grid-template-columns: minmax(180px, 260px) minmax(0, 1fr) auto; gap: 8px; width: 100%; align-items: start; }
+.ms-who-w { display: flex; flex-direction: column; gap: 6px; }
+.ms-prev { display: flex; flex-direction: column; gap: 6px; }
+.ms-pre {
+  margin: 0; padding: 10px 12px; max-height: 190px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  font: 12px/1.5 var(--f-mono); color: var(--ink2); background: var(--panel3); border-radius: var(--r3); box-shadow: inset 0 0 0 1px var(--line);
+}
+.ms-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; box-shadow: inset 0 1px 0 var(--line); padding-top: 12px; }
+.ms-chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink2); cursor: pointer; }
+.ms-lang { display: inline-flex; align-items: center; gap: 6px; }
+.ms-lang .fld { width: auto; }
+@media (max-width: 720px) { .ms-line { grid-template-columns: 1fr; } .ms-seg { padding: 0 6px; } }

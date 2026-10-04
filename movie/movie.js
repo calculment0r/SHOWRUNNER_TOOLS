@@ -327,6 +327,15 @@ $('#h-say').addEventListener('click', () => {
   const pre = `(S1) says: <d>[${prefs.get('general.langue', 'fr') === 'en' ? 'English' : 'French'}] `;
   insertAt(descEl, pre + '…</d>', { select: [pre.length, pre.length + 1] });
 });
+// le multishot : le panneau de la frise (commun/multishot.js) écrit les [Shot n] et les <d> dans le prompt
+$('#h-multi').addEventListener('click', async () => {
+  const { openMultishot } = await import('../commun/multishot.js');
+  const fr = S.opts?.frames || [];
+  const secs = fr[durIndex()]?.seconds || F.frames / 24;
+  const mentions = Object.entries(S.plan?.mentions || {}).map(([token, label]) => ({ token, label: String(label || '').replace(/^<|>$/g, '') }));
+  openMultishot({ total: secs, desc: descEl.value, mentions, lang: prefs.get('general.langue', 'fr') === 'en' ? 'en' : 'fr',
+    onApply: (text) => { descEl.value = text; descEl.dispatchEvent(new Event('input', { bubbles: true })); descEl.focus(); } });
+});
 $('#h-excl').addEventListener('click', () => insertAt(descEl, 'No text, subtitles, logos or watermarks of any kind, keep the live-action texture.'));
 
 // ── LoRA ────────────────────────────────────────────────────
