@@ -353,7 +353,8 @@ def resolve_space(args):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--team", default="Années folles")
+    # « folles » : la Team de Cal s'écrit « LES ANEES FOLLES » (un seul N) ; la recherche ignore accents et majuscules
+    ap.add_argument("--team", default="folles")
     ap.add_argument("--espace", default="")
     ap.add_argument("--nom", default="Réunion réalisateur · Establishing shots (Montparnasse 1926)")
     ap.add_argument("--par-lieu", type=int, default=4)
@@ -374,7 +375,7 @@ def main(argv=None):
         return 0
 
     team, space = resolve_space(args)
-    print(f"Team « {team['name']} », Workspace « {space.get('name')} » ({space['id']})")
+    print(f"Team « {team['name']} », Workspace « {space.get('name')} » ({space['id']})  — un autre Workspace : --espace \"nom\"")
     auth.set_current_space(space["id"])
     tmp = Path(tempfile.mkdtemp(prefix="reunion_"))
     cache = {}
