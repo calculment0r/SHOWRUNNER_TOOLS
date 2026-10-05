@@ -2,12 +2,14 @@
 //   Arrangement  sections, arc d'énergie, pistes, clips, automation ; en
 //                bas la vue de détail (le clip choisi, ou les instruments
 //                et effets de la piste), à gauche le navigateur
-//   Session      le lanceur de clips de Live (scènes, clips qui bouclent,
-//                lancement quantifié) et, dessous, la console : faders,
-//                panoramiques, envois vers les bus, vu-mètres, sortie (session.js)
+//   Session      le lanceur de clips de Live, en couche PAR-DESSUS
+//                l'arrangement : ses propres voies, vierges, qui jouent en
+//                plus de lui sur la même horloge (scènes, clips qui bouclent,
+//                lancement quantifié) et, dessous, la console : voies,
+//                pistes, retours, sortie (session.js, biblio.js)
 //   Nodal        le graphe des modules et de leurs câbles (le même projet),
-//                et en bas le banc d'ODIO_01 (banc.js) ; Tab bascule
-//                Arrangement ↔ Nodal
+//                et en bas le banc d'ODIO_01 (banc.js) ; Tab passe
+//                Arrangement → Session → Nodal
 // Autour : le transport (retour, lecture, stop, prise, boucle, métronome),
 // la position mesure.temps.double-croche, le tempo (et sa frappe), la
 // tonalité, la forme d'onde de la session, annuler / rétablir, Générer (YuE,
@@ -23,7 +25,9 @@ import { MODULES, TRACK_KINDS, COLORS, COLOR_FR, PRESETS, SOURCES_OF, DRUM_MODEL
   kindOfSource, keyLabel, moduleName } from './modules.js';
 import { el, modal, ask, confirmBox, menu, put, tok, letter } from './ui.js';
 import { migrate, workOf, describeWork, copyClips, pasteClips, splitClip, consolidatePatterns, clipRate, splitRange, piecesIn,
-  trajets, pistesDuModule, recoudre, sortirDeLaChaine, entrerDansLaChaine, deplacerPistes, grouperPistes, degrouper, rangerGroupes } from './projet.js';
+  trajets, pistesDuModule, recoudre, sortirDeLaChaine, entrerDansLaChaine, deplacerPistes, grouperPistes, degrouper, rangerGroupes,
+  retenirSons, noterOrigine } from './projet.js';
+import { versSession, clipDeRef, refDe } from './biblio.js';   // la bibliothèque du projet, « Envoyer à la Session » (05/10 au soir)
 import { createUndo, isTextField } from '../commun/undo.js';
 import { createTimeline } from './timeline.js';
 import { createSession } from './session.js';   // la vue Session (05/10) : le lanceur de clips, la console dessous
@@ -44,6 +48,7 @@ const S = {
   proj: null, list: [], view: 'timeline', engines: null,
   // tracks : les en-têtes de piste choisis (clic, Ctrl+clic, Maj+clic) — Suppr les retire, Ctrl+G les groupe
   // time : la sélection de temps de l'arrangement, { a, b, tracks, from } (app.timeSel, plus bas)
+  // voie, slot : la voie de la Session et le clip de Session choisis (session.js)
   sel: { track: null, tracks: [], pat: null, clip: null, clips: [], mod: null, cable: null, time: null },
   oct: 4, vel: 0.85, kbd: true, midi: null, rec: false, metro: false,
 };
@@ -67,6 +72,9 @@ export const uid = (p) => p + Math.random().toString(36).slice(2, 9);
 export const app = {
   S, engine, items, loadItem, uid, board: null,
   track: (id) => S.proj.tracks.find((t) => t.id === id),
+  // une voie de la Session (session.js) ; owner : la piste ou la voie (un motif, une chaîne)
+  voie: (id) => (S.proj.voies || []).find((v) => v.id === id),
+  owner: (id) => app.track(id) || app.voie(id),
   mod: (id) => S.proj.modules.find((m) => m.id === id),
   pat: (id) => S.proj.patterns.find((p) => p.id === id),
   clip: (id) => S.proj.clips.find((c) => c.id === id),
@@ -78,6 +86,7 @@ export const app = {
   // 'quiet' (la vue s'est déjà redessinée elle-même : on enregistre),
   // 'mute', 'graph' (modules ou câbles), 'data' (clips, motifs), 'meta'
   commit(kind, m) {
+    retenirSons(S.proj);   // la bibliothèque du projet : un son posé y entre de lui-même (projet.js)
     if (kind === 'param' && m) engine.updateModule(m);
     else if (kind === 'mute') engine.mutes();
     else if (kind === 'graph' || kind === 'meta') engine.setProject(S.proj);
@@ -270,7 +279,7 @@ export const app = {
     const mods = new Set();
     for (const m of P.modules) {
       if (!gone.has(m.track)) continue;
-      const garde = (T.de.get(m.id) || []).filter((tid) => !gone.has(tid));
+      const garde = (T.de.get(m.id) || []).filter((tid) => !gone.has(tid) && app.track(tid));
       if (MODULES[m.type]?.role === 'effect' && garde.length) m.track = garde[0];   // partagé : il reste à l'autre piste
       else mods.add(m.id);
     }
@@ -278,7 +287,6 @@ export const app = {
     P.cables = P.cables.filter((c) => !mods.has(c.a) && !mods.has(c.b));
     P.patterns = P.patterns.filter((p) => !gone.has(p.track));
     P.clips = P.clips.filter((c) => !gone.has(c.track));
-    P.slots = (P.slots || []).filter((c) => !gone.has(c.track));   // la vue Session
     P.auto = (P.auto || []).filter((L) => !mods.has(L.mod));
     P.tracks = P.tracks.filter((x) => !gone.has(x.id));
     rangerGroupes(P);
@@ -330,8 +338,9 @@ export const app = {
   // Lue dans les câbles (projet.js, trajets) : les modules sur un chemin de sa
   // source à sa tranche, un effet partagé compris. À défaut de chemin
   // complet, le fil des câbles depuis la source (l'ancienne lecture).
+  // Une voie de la Session a la sienne, lue de la même façon (ses modules portent `voie`).
   chain(trackId) {
-    const t = app.track(trackId);
+    const t = app.owner(trackId);
     if (!t) return [];
     const P = S.proj;
     const seq = trajets(P).ordre.get(t.id);
@@ -339,7 +348,7 @@ export const app = {
     const out = [t.src], seen = new Set(out);
     let cur = t.src;
     for (;;) {
-      const next = P.cables.map((c) => c.a === cur && typeof c.send !== 'number' && !c.t && app.mod(c.b)).find((m) => m && m.track === trackId && !seen.has(m.id));   // jouets : !c.t, le son seul
+      const next = P.cables.map((c) => c.a === cur && typeof c.send !== 'number' && !c.t && app.mod(c.b)).find((m) => m && (m.track === trackId || m.voie === trackId) && !seen.has(m.id));   // jouets : !c.t, le son seul
       if (!next) break;
       out.push(next.id); seen.add(next.id);
       if (next.type === 'strip') break;
@@ -363,11 +372,12 @@ export const app = {
   addEffect(trackId, type, { x, y, quiet = false } = {}) {
     const P = S.proj;
     const m = { id: uid('m'), type, track: trackId || null, x: x ?? 0, y: y ?? 0, on: true, params: {} };
+    if (app.voie(trackId)) { delete m.track; m.voie = trackId; }   // l'insert d'une voie de la Session (sa tranche, session.js)
     P.modules.push(m);
     if (trackId) {
       const ch = app.chain(trackId);
       const strip = ch.findIndex((mm) => mm.type === 'strip');
-      const src = app.mod(app.track(trackId).src);
+      const src = app.mod(app.owner(trackId).src);
       if (x === undefined) { m.x = src.x + 320 * (ch.length - 1); m.y = src.y; }
       if (strip > 0) {
         ch.splice(strip, 0, m);
@@ -458,13 +468,14 @@ export const app = {
 
   // ── motifs et clips ──
   newPattern(trackId, from = null, { name, quiet = false } = {}) {
-    const t = app.track(trackId), P = S.proj;
+    const t = app.owner(trackId), P = S.proj;   // une piste, ou une voie de la Session (sa prise, sa vue Clip)
     const n = P.patterns.filter((p) => p.track === trackId).length + 1;
     const base = from ? JSON.parse(JSON.stringify(from)) : (TRACK_KINDS[t.kind].pattern === 'drums'
       ? { steps: P.sig * 4, lanes: {} } : { steps: P.sig * 4, notes: [] });
     const p = { ...base, id: uid('p'), track: trackId, name: name || (from ? `${from.name} bis`.slice(0, 40) : `Motif ${n}`) };
     P.patterns.push(p);
-    t.pat = p.id; S.sel.pat = p.id;
+    t.pat = p.id;
+    if (app.track(trackId)) S.sel.pat = p.id;
     if (!quiet) app.commit('data');
     return p;
   },
@@ -538,6 +549,7 @@ export const app = {
     if (!got.length) return;
     const audio = got.filter((it) => it.kind === 'audio');
     if (audio.length < got.length) toast('un fichier n\'est pas un son : il reste dans la bibliothèque', 5000);
+    for (const it of audio) noterOrigine(S.proj, it.id, 'import');   // la bibliothèque du projet : son origine
     if (audio.length) {
       await app.placeItems(audio, { track, at, perTrack });
       toast(`${audio.length} son${audio.length > 1 ? 's' : ''} importé${audio.length > 1 ? 's' : ''} · rangé${audio.length > 1 ? 's' : ''} dans la bibliothèque (Upload)`);
@@ -584,6 +596,8 @@ export const app = {
       const cp = app.newPattern(t.id, p, { quiet: true, name: p.name });
       return app.addClip(t.id, at, { pat: cp.id });
     }
+    // un clip de la bibliothèque du projet (navigateur, rubrique Projet ; biblio.js)
+    if (d.t === 'pclip') { const ref = refDe(P, d.id); return ref ? clipDeRef(app, ref, t?.id || null, at) : null; }
     if (d.t === 'modele') {
       const want = d.kind === 'drums' ? 'drums' : 'notes';
       let tt = t && TRACK_KINDS[t.kind].pattern === want ? t : null;
@@ -880,6 +894,8 @@ export const app = {
   stemsItem: (itemId) => runStems(itemId, null),
   exportMix: () => openExport(),
   paintTransport: () => paintTransport(),
+  // « Envoyer à la Session » (timeline.js : le menu d'un clip, d'une plage ; l'onglet) : biblio.js
+  versSession: (o) => versSession(app, o),
 };
 // des clips audio d'une piste en UN, de a à b : leur son rendu tel qu'ils le
 // lisent (moteur.js, renderClips), en WAV dans la bibliothèque (dossier
@@ -892,6 +908,7 @@ async function consolidateAudio(t, cs, a, b) {
     const name = `${`${t.name} consolidé`.replace(/[^A-Za-z0-9._ -]+/g, '_').slice(0, 60)}.wav`;
     const it = await uploadFile(new File([wav24(buf)], name, { type: 'audio/wav' }), { tool: 'music', folder: 'Musique', title: `${t.name} · consolidé` });
     items.set(it.id, Promise.resolve({ ...it, href: href(it.url) }));
+    noterOrigine(P, it.id, 'rendu');
     const ids = new Set(cs.map((c) => c.id));
     P.clips = P.clips.filter((c) => !ids.has(c.id));
     const n = { id: uid('c'), track: t.id, start: a, len: b - a, item: it.id, off: 0 };
@@ -1155,7 +1172,9 @@ function paintBar() {
     S.list.map((x) => el('option', { value: x.id, selected: x.id === P.id || null }, x.name)));
   const ic = (label, title, fn, cls = '', attrs = {}) => el('button', { class: `tb sm mu-ic ${cls}`, type: 'button', title, onclick: fn, ...attrs }, label);
   const views = el('div', { class: 'seg mu-views', role: 'tablist' },
-    [['timeline', 'Arrangement', 'Tab : Arrangement ↔ Nodal'], ['console', 'Session', 'le lanceur de clips et la console (Live : Session View)'], ['nodal', 'Nodal', 'Tab : Arrangement ↔ Nodal']].map(([v, l, ti]) => {
+    [['timeline', 'Arrangement', 'Tab : Arrangement → Session → Nodal → Arrangement'],
+      ['console', 'Session', 'le lanceur de clips, par-dessus l\'arrangement : ses voies jouent en plus de lui (Live : Session View) · glisser un clip de l\'arrangement ici : l\'envoyer à la Session'],
+      ['nodal', 'Nodal', 'Tab : Arrangement → Session → Nodal → Arrangement']].map(([v, l, ti]) => {
       const dehors = v === 'nodal' && F.detache('nodal');   // dans sa fenêtre : l'onglet y mène
       return el('button', { class: `tb${S.view === v ? ' on' : ''}`, role: 'tab', 'aria-selected': S.view === v, type: 'button', 'data-view': v,
         title: dehors ? 'le nodal est dans sa fenêtre (2ᵉ écran) : clic pour la montrer' : ti,
@@ -1446,6 +1465,11 @@ const held = new Map();
 const typing = (e) => e.target.closest?.('input, textarea, select, [contenteditable]');
 
 function srcForPlay() {
+  // la vue Session : la voie armée, sinon la voie choisie (sa prise, session.js)
+  if (S.view === 'console') {
+    const vs = S.proj.voies || [], v = vs.find((x) => x.arm && TRACK_KINDS[x.kind]?.pattern) || app.voie(S.sel.voie);
+    if (v && TRACK_KINDS[v.kind]?.pattern) return v;
+  }
   const armed = S.proj.tracks.find((x) => x.arm && TRACK_KINDS[x.kind]?.pattern);
   const t = armed || app.track(S.sel.track) || S.proj.tracks.find((x) => TRACK_KINDS[x.kind]?.pattern);
   return t && TRACK_KINDS[t.kind]?.pattern ? t : null;
@@ -1466,13 +1490,17 @@ addEventListener('keydown', async (e) => {
   // annuler, rétablir (Ctrl+Z ; Ctrl+Maj+Z, Ctrl+Y ; ⌘ sur Mac) : commun/undo.js les lit, par la
   // lettre (e.key) et non la touche (e.code, faux en AZERTY) ; ils ne vont pas plus loin
   if (ctrl && !e.altKey && ['z', 'y'].includes((e.key || '').toLowerCase())) return;
-  // les vues : Tab Arrangement ↔ Nodal (Live : Session ↔ Arrangement),
-  // Maj+Tab ou F12 : Clip ↔ Instruments, Ctrl+Alt+B : le navigateur,
-  // Ctrl+Alt+3 / 4 : la vue Clip / Instruments
+  // les vues : Tab fait le tour des trois onglets de travail, Arrangement →
+  // Session → Nodal → Arrangement (Cal, 05/10 au soir puis 06/10 : « le Tab aussi
+  // pour passer entre nos trois onglets de travail » ; Live y bascule Session ↔
+  // Arrangement) ; le nodal dans sa fenêtre sort du tour. Maj+Tab ou F12 : Clip ↔
+  // Instruments (Live : Clip View ↔ Device View, gardé), Ctrl+Alt+B : le
+  // navigateur, Ctrl+Alt+3 / 4 : la vue Clip / Instruments
   if (c === 'Tab' && !ctrl && !e.altKey) {
     e.preventDefault();
-    if (e.shiftKey) app.showDetail(S.proj.ui.detail === 'device' ? 'clip' : 'device');
-    else app.setView(S.view === 'nodal' ? 'timeline' : 'nodal');
+    if (e.shiftKey) { app.showDetail(S.proj.ui.detail === 'device' ? 'clip' : 'device'); return; }
+    const tour = F.detache('nodal') ? ['timeline', 'console'] : ['timeline', 'console', 'nodal'];
+    app.setView(tour[(Math.max(0, tour.indexOf(S.view)) + 1) % tour.length]);
     return;
   }
   if (c === 'F12') { e.preventDefault(); app.showDetail(S.proj.ui.detail === 'device' ? 'clip' : 'device'); return; }
@@ -1665,6 +1693,7 @@ function watchPending() {
         const its = full.items || [];
         const placed = [];
         for (const it of its) {
+          noterOrigine(P, it.id, 'generation');
           const t = app.addTrack('audio', { name: (it.title || 'Généré').slice(0, 60), color: 'coral-2' });
           const c = { id: uid('c'), track: t.id, start: pd.at || 0, len: Math.max(0.25, (it.duration || 10) * P.bpm / 60), item: it.id, off: 0 };
           P.clips.push(c);
@@ -1684,6 +1713,7 @@ function watchPending() {
         const start = pd.clip ? pd.clip.start : Math.round(engine.position());
         const made = [];
         for (const [stem, it] of byStem) {
+          noterOrigine(P, it.id, 'generation');
           const t = app.addTrack('audio', { name: `${STEM_FR[stem] || stem}${src ? ` · ${src.name}` : ''}`.slice(0, 60), color: STEM_COLOR[stem] || 'cy', at: at++ });
           let len = pd.clip?.len;
           if (!len) len = Math.max(0.25, (it.duration || 10) * P.bpm / 60);

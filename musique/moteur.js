@@ -25,7 +25,7 @@
 import { MODULES, DRUM_VOICES, WAVES, FILTER_TYPES, DELAY_DIVS, val, spec, fromNorm, dbToGain, drumVoicesOf } from './modules.js';
 import { jouetNode, jouetsAutomate } from './jouets/son.js';   // jouets : le son des jouets du Playground
 import { influer, rendre } from './machines/influence.js';   // attracteurs : ce que les attracteurs du banc font au son (nodal)
-import { trajets } from './projet.js';   // les chaînes des pistes, lues dans les câbles (une seule vérité)
+import { trajets, sansSession } from './projet.js';   // les chaînes des pistes et des voies, lues dans les câbles (une seule vérité) ; l'export sans la Session
 
 const LOOKAHEAD_MS = 25;      // MDN : « lookahead = 25.0 »
 const AHEAD_S = 0.12;         // MDN : « scheduleAheadTime = 0.1 » (+ 20 ms de marge au démarrage d'onglet)
@@ -413,7 +413,7 @@ function drumVoice(ctx, out, voice, t, vel, m, live, st) {
 }
 
 // Les notes d'une source qui sonnent encore, avec leur fin : la vue Session
-// coupe une piste à l'instant où un clip y part ou s'y arrête (Graph.cut) —
+// coupe une voie à l'instant où un clip y part ou s'y arrête (Graph.cut) —
 // comme Live, qui relâche les notes du clip d'avant. Les finies s'oublient
 // en chemin.
 function tenues(ctx) {
@@ -829,10 +829,12 @@ export class Graph {
   setSend(a, b, db) { const g = this.sends.get(`${a}>${b}`); if (g) setP(this.ctx, g.gain, dbToGain(db)); }
 
   // muet et solo ; un bus n'est jamais rendu muet par le solo d'une autre
-  // piste (ce qu'on envoie dans la réverbération doit y rester)
+  // piste (ce qu'on envoie dans la réverbération doit y rester). Le solo est
+  // commun aux pistes et aux voies de la Session (docs/etudes/odio_session.md § 6)
   mutes(p) {
-    const solo = p.tracks.some((t) => t.solo && t.kind !== 'bus');
-    for (const t of p.tracks) {
+    const voies = p.voies || [];
+    const solo = p.tracks.some((t) => t.solo && t.kind !== 'bus') || voies.some((v) => v.solo);
+    for (const t of [...p.tracks, ...voies]) {
       const s = this.nodes.get(t.strip);
       if (s?.setMute) s.setMute(t.mute || (solo && !t.solo && t.kind !== 'bus'));
     }
@@ -900,9 +902,9 @@ export class Graph {
 
   // Pose les événements du morceau entre les temps b0 et b1 (en noires),
   // b0 tombant à l'instant t0 de l'horloge audio. `limit` : un clip audio
-  // s'arrête là (la fin de la boucle). `hors` : les pistes qui ne jouent pas
-  // l'arrangement (elles jouent la Session : Engine, plus bas).
-  schedule(p, b0, b1, t0, limit = Infinity, hors = null) {
+  // s'arrête là (la fin de la boucle). La Session ne l'arrête jamais : elle
+  // joue en plus (scheduleSession).
+  schedule(p, b0, b1, t0, limit = Infinity) {
     const spb = 60 / p.bpm;
     const at = (b) => t0 + (b - b0) * spb;
     this.automate(p, b0, b1, at);
@@ -910,7 +912,7 @@ export class Graph {
     const pats = new Map(p.patterns.map((x) => [x.id, x]));
     const cutLanes = new Map((p.auto || []).filter((L) => L.k === 'cut' && L.on !== false && L.pts?.length).map((L) => [L.mod, L]));
     for (const c of p.clips) {
-      if (c.mute || hors?.has(c.track)) continue;
+      if (c.mute) continue;
       const tr = trk.get(c.track);
       if (!tr) continue;
       const cs = c.start, ce = c.start + c.len;
@@ -959,24 +961,25 @@ export class Graph {
     }
   }
 
-  // ── la vue Session (session.js ; docs/etudes/odio_session.md) ──
+  // ── la vue Session (session.js ; docs/etudes/odio_session.md § 6) ──
   // Les clips de Session qui jouent, posés entre les temps a0 et a1 de
   // l'horloge de la Session (des noires qui ne reviennent jamais en arrière,
   // même quand la boucle de l'arrangement revient : Engine.tick), a0 tombant
-  // à t0. `joue` : piste → { slot, origin, fresh, rec } ; un clip de Session
+  // à t0. `joue` : voie → { slot, origin, fresh, rec } ; un clip de Session
   // boucle sur sa longueur `len` depuis `origin` (Live 12, « Launching
   // Clips » : un clip de Session tourne en boucle). Chaque tour est un clip
-  // d'arrangement de `len` noires qui commencerait là : les mêmes lectures.
+  // d'arrangement de `len` noires qui commencerait là : les mêmes lectures,
+  // par la source de la VOIE (p.voies) — l'arrangement, lui, continue.
   // `fresh` : le clip vient de partir en retard, ou la lecture vient de
   // repartir (playFrom) — un son déjà commencé se reprend en son milieu.
   scheduleSession(p, joue, a0, a1, t0) {
     if (!joue.size) return;
     const spb = 60 / p.bpm;
     const at = (x) => t0 + (x - a0) * spb;
-    for (const [tid, J] of joue) {
-      const tr = p.tracks.find((t) => t.id === tid);
+    for (const [vid, J] of joue) {
+      const tr = (p.voies || []).find((v) => v.id === vid);
       const s = (p.slots || []).find((x) => x.id === J.slot);
-      if (!tr || !s || s.track !== tid) { joue.delete(tid); continue; }   // retirés (Suppr, Ctrl+Z) : la piste se tait
+      if (!tr || !s || s.voie !== vid) { joue.delete(vid); continue; }   // retirés (Suppr, Ctrl+Z) : la voie se tait
       const src = this.nodes.get(tr.src);
       const L = J.rec ? Infinity : s.len;
       if (!src || !(L > 0)) continue;
@@ -994,11 +997,11 @@ export class Graph {
     }
   }
 
-  // Une piste se tait à l'instant `t` : son clip d'arrangement ou de Session
-  // (les sons lus, les notes tenues) — un clip de Session part, ou s'arrête.
-  cut(p, tid, t) {
-    const tr = p.tracks.find((x) => x.id === tid);
-    const n = tr && this.nodes.get(tr.src);
+  // Une voie de la Session se tait à l'instant `t` (les sons lus, les notes
+  // tenues) : son clip s'arrête, ou un autre y part.
+  cut(p, vid, t) {
+    const v = (p.voies || []).find((x) => x.id === vid);
+    const n = v && this.nodes.get(v.src);
     n?.cut?.(t);
   }
 
@@ -1021,15 +1024,13 @@ export class Graph {
   }
 
   // Les clips audio déjà commencés à l'instant où la lecture part (ou
-  // reprend en haut de boucle) : lus depuis le bon endroit. `hors` : les
-  // pistes qui jouent la Session ; `seules` : ces pistes-là seulement (le
-  // retour à l'arrangement).
-  resume(p, beat, t, limit = Infinity, hors = null, seules = null) {
+  // reprend en haut de boucle) : lus depuis le bon endroit.
+  resume(p, beat, t, limit = Infinity) {
     const spb = 60 / p.bpm;
     const trk = new Map(p.tracks.map((x) => [x.id, x]));
     for (const c of p.clips) {
       const tr = trk.get(c.track);
-      if (!tr || tr.kind !== 'audio' || c.mute || hors?.has(c.track) || (seules && !seules.has(c.track))) continue;
+      if (!tr || tr.kind !== 'audio' || c.mute) continue;
       if (c.start < beat && c.start + c.len > beat) {
         const src = this.nodes.get(tr.src);
         if (src) this.audioClip(src, c, t, beat, c.start, limit, spb);
@@ -1064,16 +1065,15 @@ export class Engine {
     this.metro = false;
     this.live = (node) => { this.voices.add(node); node.onended = () => this.voices.delete(node); };
     this.timer = null;
-    // la vue Session (session.js) : ce qui joue, ce qui attend son temps, les
-    // pistes qui ne jouent plus l'arrangement — l'état de jeu, pas le projet
-    //   joue   piste → { slot, origin, depuis, fresh, rec } (origin : où le
+    // la vue Session (session.js) : ce qui joue, ce qui attend son temps —
+    // l'état de jeu, pas le projet. Elle joue EN PLUS de l'arrangement, par ses
+    // propres voies (docs/etudes/odio_session.md § 6) : rien ne s'y arrête.
+    //   joue   voie → { slot, origin, depuis, fresh, rec } (origin : où le
     //          clip commence, en noires de l'horloge de la Session ; depuis :
     //          où il a été posé — un départ en retard le reprend en son milieu)
-    //   file   [{ track, slot | null, at, rec }] : les départs et les arrêts
+    //   file   [{ voie, slot | null, at, rec }] : les départs et les arrêts
     //          quantifiés, rangés par `at`
-    //   hors   les pistes qui ne jouent plus l'arrangement (Live : « Back to
-    //          Arrangement » s'allume) ; l'arrêt de la lecture ne les rend pas
-    this.sess = { joue: new Map(), file: [], hors: new Set() };
+    this.sess = { joue: new Map(), file: [] };
   }
 
   get running() { return !!this.play; }
@@ -1156,7 +1156,7 @@ export class Engine {
       for (const ev of this.sess.file) ev.at += d;
     }
     const loop = this.loopAt(beat);
-    this.graph.resume(p, beat, t0, loop ? loop.b : Infinity, this.sess.hors);
+    this.graph.resume(p, beat, t0, loop ? loop.b : Infinity);
     this.tick();
     if (!this.timer) {
       this.timer = new Worker(URL.createObjectURL(new Blob([TIMER], { type: 'text/javascript' })));
@@ -1183,11 +1183,11 @@ export class Engine {
       const loop = this.loopAt(P.cb);
       let end = P.cb + (horizon - P.ct) / P.spb, wrap = false;
       if (loop && end >= loop.b) { end = loop.b; wrap = true; }
-      // la tranche s'arrête au prochain départ de la Session : l'arrangement
-      // de la piste se tait là, pas une tranche plus tard
+      // la tranche s'arrête au prochain départ de la Session : le clip d'avant
+      // de la voie se tait là, sans notes planifiées au-delà
       const next = S.file.length ? S.file[0].at : Infinity;
       if (next < P.ab + (end - P.cb) - 1e-9) { end = P.cb + Math.max(0, next - P.ab); wrap = false; }
-      this.graph.schedule(p, P.cb, end, P.ct, loop ? loop.b : Infinity, S.hors);
+      this.graph.schedule(p, P.cb, end, P.ct, loop ? loop.b : Infinity);
       this.graph.scheduleSession(p, S.joue, P.ab, P.ab + (end - P.cb), P.ct);
       if (this.metro) this.clicks(P.cb, end, P.ct, P.spb, p.sig);
       P.ct += (end - P.cb) * P.spb;
@@ -1197,14 +1197,14 @@ export class Engine {
         P.cb = loop.a;
         P.anchors.push({ time: P.ct, beat: loop.a });
         if (P.anchors.length > 32) P.anchors.splice(0, P.anchors.length - 32);
-        this.graph.resume(p, loop.a, P.ct, loop.b, S.hors);
+        this.graph.resume(p, loop.a, P.ct, loop.b);
       }
     }
     // la fin du morceau arrête la lecture, sauf si la Session joue ou attend
     if (!this.loopAt(P.cb) && P.cb > songEnd(p) + 2 && !this.keepGoing && !S.joue.size && !S.file.length) this.stop(true);
   }
 
-  // ── la vue Session : lancer, arrêter, revenir à l'arrangement ──
+  // ── la vue Session : lancer, arrêter ──
   // Live 12, « Launching Clips » et « Session View » (docs/etudes/odio_session.md).
   // L'horloge de la Session, à l'instant qu'on entend (null à l'arrêt) — en
   // noires, comme la tête, mais sans retour de boucle.
@@ -1214,8 +1214,8 @@ export class Engine {
     return Math.max(P.ab0, P.ab0 + (this.ctx.currentTime - P.ct0) / P.spb);
   }
 
-  // Lancer ou arrêter, quantifié : `evs` [{ track, slot (un id) | null (arrêter
-  // la piste), rec }], `q` la quantification en noires (0 : tout de suite). Le
+  // Lancer ou arrêter, quantifié : `evs` [{ voie, slot (un id) | null (arrêter
+  // la voie), rec }], `q` la quantification en noires (0 : tout de suite). Le
   // départ tombe sur le prochain multiple de `q` de l'horloge de la Session —
   // calée sur la tête : une mesure de la Session est une mesure du morceau. À
   // l'arrêt, la lecture part avec le clip, au début de la mesure de la tête
@@ -1232,8 +1232,8 @@ export class Engine {
     const P = this.play, now = this.absNow();
     // sans quantification : au prochain temps encore libre (la tranche déjà posée sonne)
     const at = q > 0 ? Math.ceil(now / q - 1e-6) * q : P.ab;
-    const pistes = new Set(evs.map((ev) => ev.track));
-    S.file = S.file.filter((ev) => !pistes.has(ev.track));   // un nouveau départ remplace celui qui attendait
+    const voies = new Set(evs.map((ev) => ev.voie));
+    S.file = S.file.filter((ev) => !voies.has(ev.voie));   // un nouveau départ remplace celui qui attendait
     for (const ev of evs) S.file.push({ ...ev, at });
     S.file.sort((x, y) => x.at - y.at);
     return at;
@@ -1242,50 +1242,31 @@ export class Engine {
   // Les départs et les arrêts venus à leur temps. D'ordinaire à la frontière
   // de ce qui est planifié (P.ab). Un départ demandé juste avant son temps
   // tombe déjà derrière la frontière (on planifie 120 ms d'avance) : s'il est
-  // encore à venir pour l'oreille, il se rattrape à son instant exact — la
-  // piste se tait là, le clip y part (la tranche manquante se planifie) ;
-  // sinon il part à la frontière, en gardant sa phase.
+  // encore à venir pour l'oreille, il se rattrape à son instant exact — le
+  // clip d'avant de la voie se tait là, le nouveau y part (la tranche
+  // manquante se planifie) ; sinon il part à la frontière, en gardant sa phase.
   echeances() {
     const P = this.play, S = this.sess, p = this.proj;
     while (S.file.length && S.file[0].at <= P.ab + 1e-9) {
       const ev = S.file.shift();
-      const cur = S.joue.get(ev.track);
+      const cur = S.joue.get(ev.voie);
       const t = Math.max(this.ctx.currentTime + 0.003, P.ct - Math.max(0, P.ab - ev.at) * P.spb);
       const x = P.ab - (P.ct - t) / P.spb;           // le temps de la Session à cet instant
-      if (ev.slot && (p.slots || []).some((s) => s.id === ev.slot && s.track === ev.track)) {
-        this.graph.cut(p, ev.track, t);              // l'arrangement, ou le clip d'avant, se tait
-        S.hors.add(ev.track);
+      if (ev.slot && (p.slots || []).some((s) => s.id === ev.slot && s.voie === ev.voie)) {
+        if (cur) this.graph.cut(p, ev.voie, t);      // le clip d'avant de la voie se tait
         const J = { slot: ev.slot, origin: ev.at, depuis: x, fresh: true, rec: !!ev.rec };
-        S.joue.set(ev.track, J);
-        if (x < P.ab - 1e-9) this.graph.scheduleSession(p, new Map([[ev.track, J]]), x, P.ab, t);   // la tranche déjà passée
+        S.joue.set(ev.voie, J);
+        if (x < P.ab - 1e-9) this.graph.scheduleSession(p, new Map([[ev.voie, J]]), x, P.ab, t);   // la tranche déjà passée
       } else if (!ev.slot) {
-        // arrêter la piste : son clip de Session ; ou l'arrangement qu'elle jouait
-        // (Live : le bouton Stop de la piste, et « Back to Arrangement » s'allume)
-        if (cur || !S.hors.has(ev.track)) this.graph.cut(p, ev.track, t);
-        S.joue.delete(ev.track);
-        S.hors.add(ev.track);
+        // arrêter la voie (Live : le bouton Stop) ; l'arrangement continue
+        if (cur) this.graph.cut(p, ev.voie, t);
+        S.joue.delete(ev.voie);
       }
     }
   }
 
   // La fin d'une prise de Session : le clip boucle désormais sur sa longueur
-  finPrise(tid) { const J = this.sess.joue.get(tid); if (J) J.rec = false; }
-
-  // « Retour à l'arrangement » (Live 12, « Session View ») : les pistes `tids`
-  // (toutes par défaut) quittent la Session et reprennent l'arrangement, tout
-  // de suite — à la frontière de ce qui est déjà planifié.
-  retourArrangement(tids = null) {
-    const S = this.sess, p = this.proj;
-    const R = new Set(tids || [...S.hors, ...S.joue.keys()]);
-    S.file = S.file.filter((ev) => !R.has(ev.track));
-    const P = this.play;
-    for (const tid of R) {
-      if (P && S.joue.has(tid)) this.graph.cut(p, tid, P.ct);
-      S.joue.delete(tid);
-      S.hors.delete(tid);
-    }
-    if (P) { const loop = this.loopAt(P.cb); this.graph.resume(p, P.cb, P.ct, loop ? loop.b : Infinity, null, R); }
-  }
+  finPrise(vid) { const J = this.sess.joue.get(vid); if (J) J.rec = false; }
 
   // Le métronome : un bip à chaque temps, plus aigu sur le premier de la
   // mesure (sinus 1500 / 1000 Hz, 30 ms — choix de réglage). Il part droit
@@ -1311,7 +1292,7 @@ export class Engine {
   }
 
   // pause : on reste où l'on est ; stop : on revient où la lecture a commencé.
-  // La Session s'arrête avec la lecture (Live) ; ses pistes « hors » le restent.
+  // La Session s'arrête avec la lecture (Live).
   stop(ended = false, { stay = false } = {}) {
     const from = this.play ? this.play.from : this.pos;
     const here = this.position();
@@ -1407,8 +1388,10 @@ async function rendreMix(engine, p, from, to, { tail = 2, sampleRate = 48000, so
   // documenté). Les `decale` premières images sont retirées à la fin.
   const decale = Math.round(DEPART_S * sampleRate) % RQ;
   if (signal?.aborted) throw annule();
-  // le projet est figé au départ : une retouche pendant le rendu ne s'y mêle pas
+  // le projet est figé au départ : une retouche pendant le rendu ne s'y mêle pas ;
+  // ce qu'on exporte reste l'arrangement (comme Live) : la Session n'y est pas
   try { p = structuredClone(p); } catch { p = JSON.parse(JSON.stringify(p)); }
+  p = sansSession(p);
   await engine.need(p);
   // une piste seule : les autres sont muettes (tranche coupée, envois
   // compris) — on ne planifie donc que ses clips, le rendu est le même

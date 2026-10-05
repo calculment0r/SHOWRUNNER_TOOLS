@@ -1,8 +1,13 @@
-// ODIO — le navigateur, à gauche de l'arrangement : ce qu'on glisse sur
-// une piste (ou sous les pistes, pour une piste neuve). En accordéon : chaque
-// rubrique s'ouvre et se ferme par son titre, plusieurs à la fois ; le
+// ODIO — le navigateur, à gauche de l'arrangement et de la Session (celui de
+// Live est commun aux deux vues) : ce qu'on glisse sur une piste (ou sous les
+// pistes, pour une piste neuve), ou dans une case de la Session. En accordéon :
+// chaque rubrique s'ouvre et se ferme par son titre, plusieurs à la fois ; le
 // panneau entier se replie en un rail (le bouton ‹, ou Ctrl+Alt+B comme le
-// navigateur de Live) et l'arrangement prend toute la largeur.
+// navigateur de Live) et la vue prend toute la largeur.
+//   Projet        la bibliothèque du projet (biblio.js) : ses clips édités
+//                 (références de son, copies de notes), les sons qu'il a pris
+//                 ou fabriqués, ses dossiers — ce qu'on fait dans ODIO sans
+//                 encombrer Asset (Cal, 05/10 au soir)
 //   Instruments   les sources (DR-9, boîte à rythme, synthés, basse acide,
 //                 numérique, échantillonneur, audio) et les bus d'effets
 //   Effets        à glisser sur une piste
@@ -17,29 +22,36 @@
 //                 portail) : les notes extraites d'un son, nos clips rangés,
 //                 les fichiers .mid déposés ; glisser sur une piste
 //                 d'instrument : ses notes (29/09)
-// Clic sur un élément = le poser sur la piste choisie (ou une piste neuve).
+// Clic sur un élément = le poser sur la piste choisie (ou une piste neuve) ;
+// dans la Session, dans la case choisie (`poser`, session.js).
 // Sons et MIDI sont aussi dans le panneau Asset commun (Ctrl+Espace, panneau.js) :
 // un bouton les y mène tant qu'il est fermé.
 
 import { api, href, toast, dragItem, dropZone, fmtDur, uploadFile, dock, dockKeyLabel } from '../commun/shell.js';
 import { MODULES, SOURCES_OF, EFFECT_TYPES, PRESETS, DRUM_MODELS, NOTE_MODELS, TRACK_KINDS, keyLabel } from './modules.js';
-import { el, put, menu, inlineEdit } from './ui.js';
+import { el, put, menu, inlineEdit, ask } from './ui.js';
 import { listMidi, midiSub, placeMidi, saveClipMidi } from './generatif_midi.js';
 import { addGenTrack } from './generatif_region.js';
+import { QUOI_FR, mesures, fiches, fiche } from './biblio.js';   // la bibliothèque du projet (05/10 au soir)
+import { usagesDuSon } from './projet.js';
 
 const MIME = 'application/x-odio';
-const SECTIONS = [['inst', 'Instruments'], ['fx', 'Effets'], ['pre', 'Préréglages'], ['son', 'Sons'], ['mot', 'Motifs'], ['midi', 'MIDI']];
+const SECTIONS = [['proj', 'Projet'], ['inst', 'Instruments'], ['fx', 'Effets'], ['pre', 'Préréglages'], ['son', 'Sons'], ['mot', 'Motifs'], ['midi', 'MIDI']];
+// ce qu'un clic pose dans une case de la Session (`poser`) plutôt que sur l'arrangement
+const POSABLE = new Set(['son', 'midi', 'pclip', 'motif', 'modele', 'preset', 'inst']);
 
-export function createBrowser(app) {
+// `poser(payload)` : la vue Session — un clic pose dans la case choisie
+export function createBrowser(app, { poser = null } = {}) {
   const { S } = app;
   const root = el('aside', { class: 'nv', 'aria-label': 'navigateur' });
   let q = '', sounds = null, loading = false, player = null, playing = null;
   const ui = () => S.proj.ui;
-  const isOpen = (k) => (ui().navOpen || { inst: true, son: true })[k] === true;
+  // la rubrique Projet est ouverte tant qu'on ne l'a pas refermée
+  const isOpen = (k) => { const o = ui().navOpen || { inst: true, son: true }; return k === 'proj' ? o.proj !== false : o[k] === true; };
 
   const item = (payload, { name, sub, dot, title = '', extra = null, onclick, rename = null, ctx = null }) => {
     const nm = el('span', { class: 'nm' }, name);
-    const act = (e) => (onclick || (() => app.dropItem(payload, S.sel.track, app.pos())))(e);
+    const act = (e) => (poser && POSABLE.has(payload.t) ? poser(payload) : (onclick || (() => app.dropItem(payload, S.sel.track, app.pos())))(e));
     // un élément qu'on renomme : le clic attend de savoir s'il n'est pas le
     // premier d'un double-clic (poser le réglage redessinerait la liste
     // sous le second clic)
@@ -230,9 +242,85 @@ export function createBrowser(app) {
   }
   document.addEventListener('mu:midi', () => { mids = null; if (isOpen('midi')) loadMidi(); });
 
-  const BODY = { inst: instruments, fx: effects, pre: presets, son: soundsList, mot: motifs, midi: midiList };
+  // ── la bibliothèque du projet (biblio.js) ──
+  // Les clips édités du projet, puis ses sons ; chaque dossier ensuite, avec les
+  // siens. Les fiches des sons (titre, durée, adresse) se lisent par lots.
+  const P = () => S.proj;
+  function projet() {
+    const p = P(), b = p.biblio || { dossiers: [], clips: [], sons: [] };
+    const manque = b.sons.map((x) => x.item).filter((id) => fiche(id) === undefined);
+    if (manque.length) fiches(manque).then(() => { if (isOpen('proj') && root.isConnected) render(); });
+    const commit = (lab) => { app.label(lab); app.commit('data'); };
+    const dansDossier = (x, quoi) => [
+      ...b.dossiers.map((d) => ({ label: d.name, checked: x.dossier === d.id, onclick: () => { x.dossier = d.id; commit(`ranger ${quoi} dans « ${d.name} »`); } })),
+      { label: 'Aucun', checked: !x.dossier, onclick: () => { delete x.dossier; commit(`sortir ${quoi} de son dossier`); } },
+      '-', { label: 'Un dossier neuf…', onclick: async () => { const d = await neufDossier(); if (d) { x.dossier = d.id; commit(`ranger ${quoi} dans « ${d.name} »`); } } },
+    ];
+    const clipIt = (c) => {
+      const rename = (nm) => inlineEdit(nm, c.name || '', (v) => { c.name = v.slice(0, 60); commit('renommer un clip du projet'); }, { max: 60 });
+      const de = c.from && (app.clip(c.from) ? app.track(app.clip(c.from).track)?.name : null);
+      return item({ t: 'pclip', id: c.id }, {
+        name: c.name || (c.kind === 'audio' ? 'Son' : 'Notes'), sub: [c.kind === 'audio' ? 'son' : c.drums ? 'pas' : 'notes', mesures(p, c.len), de].filter(Boolean).join(' · '),
+        dot: c.color || (c.kind === 'audio' ? 'grn2' : c.drums ? 'or' : 'cy'), rename,
+        title: `un clip du projet (${c.kind === 'audio' ? 'une référence : le son d\'Asset, son départ, sa longueur' : 'une copie de notes'}) · glisser sur une piste ou dans une case de la Session · clic : ${poser ? 'dans la case choisie' : 'sur la piste choisie, à la tête de lecture'} · double-clic : renommer`,
+        ctx: (nm) => [{ head: c.name || 'clip du projet' },
+          { label: 'Renommer', sub: 'double-clic', onclick: () => rename(nm) },
+          { label: 'Dans un dossier', items: dansDossier(c, 'un clip') },
+          '-',
+          { label: 'Retirer du projet', sub: 'les clips posés restent', onclick: () => { b.clips = b.clips.filter((x) => x !== c); p.biblio = b; commit(`retirer « ${c.name || 'un clip'} » du projet`); } }],
+      });
+    };
+    const sonIt = (x) => {
+      const it = fiche(x.item), u = usagesDuSon(p, x.item), libre = !u.arr && !u.sess && !u.refs && !u.ech;
+      const ou = [u.arr ? `${u.arr} arr.` : '', u.sess ? `${u.sess} sess.` : '', u.refs ? `${u.refs} clip${u.refs > 1 ? 's' : ''}` : '', u.ech ? 'échant.' : ''].filter(Boolean).join(' · ');
+      const sub = [QUOI_FR[x.quoi] || x.quoi, it?.duration ? fmtDur(it.duration) : '', ou || 'plus posé'].filter(Boolean).join(' · ');
+      if (it === null) return el('div', { class: 'nv-it off', title: 'ce son n\'est plus dans la bibliothèque (corbeille, ou un autre Workspace)' }, el('i', { class: 'dot' }), el('span', { class: 'nm' }, x.item), el('small', {}, `introuvable · ${sub}`));
+      const btn = it ? el('button', { class: 'nv-play', type: 'button', title: 'écouter', onclick: (e) => { e.stopPropagation(); listen(it, btn); } }, '▶') : null;
+      const n = item(it ? { t: 'son', item: it } : { t: 'none' }, { name: it?.title || '…', sub, dot: 'grn2', extra: btn,
+        title: `un son du projet (${QUOI_FR[x.quoi] || x.quoi}) · glisser sur une piste audio ou dans une case de la Session`,
+        ctx: () => [{ head: it?.title || x.item },
+          { label: 'Révéler dans Asset', sub: 'sa fiche, un autre onglet', onclick: () => open(href(`asset/#${x.item}`), '_blank') },
+          { label: 'Dans un dossier', items: dansDossier(x, 'un son') },
+          '-',
+          { label: 'Retirer du projet', disabled: !libre, why: `encore posé : ${ou}`, onclick: () => { b.sons = b.sons.filter((y) => y !== x); commit('retirer un son du projet'); } }] });
+      if (it) dragItem(n, it);
+      return n;
+    };
+    const out = [];
+    const racine = (x) => !x.dossier || !b.dossiers.some((d) => d.id === x.dossier);
+    const rc = b.clips.filter(racine), rs = b.sons.filter(racine);
+    out.push(el('button', { class: 'tb ghost sm nv-wide', type: 'button', title: 'un dossier du projet (un niveau) pour ranger clips et sons',
+      onclick: () => neufDossier().then((d) => d && commit(`un dossier « ${d.name} »`)) }, '+ Dossier'));
+    if (!b.clips.length && !b.sons.length) out.push(el('p', { class: 'lbl nv-note' }, 'les sons posés, importés, pris, rendus · les clips envoyés à la Session (clic droit sur un clip)'));
+    if (rc.length) { out.push(group(`Clips · ${rc.length}`)); out.push(...rc.map(clipIt)); }
+    if (rs.length) { out.push(group(`Sons · ${rs.length}`)); out.push(...rs.map(sonIt)); }
+    for (const d of b.dossiers) {
+      const dc = b.clips.filter((x) => x.dossier === d.id), ds = b.sons.filter((x) => x.dossier === d.id);
+      const g = group(`${d.name} · ${dc.length + ds.length}`);
+      g.classList.add('nv-dos');
+      g.title = 'un dossier du projet · double-clic : renommer · clic droit : retirer';
+      g.addEventListener('dblclick', () => inlineEdit(g, d.name, (v) => { d.name = v.slice(0, 40); commit('renommer le dossier'); }, { max: 40 }));
+      g.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); menu(e.clientX, e.clientY, [{ head: `dossier · ${d.name}` },
+        { label: 'Renommer', sub: 'double-clic', onclick: () => inlineEdit(g, d.name, (v) => { d.name = v.slice(0, 40); commit('renommer le dossier'); }, { max: 40 }) },
+        { label: 'Retirer le dossier', sub: 'son contenu revient en tête', onclick: () => { for (const x of [...b.clips, ...b.sons]) if (x.dossier === d.id) delete x.dossier; b.dossiers = b.dossiers.filter((y) => y !== d); commit(`retirer le dossier « ${d.name} »`); } }]); });
+      out.push(g, ...dc.map(clipIt), ...ds.map(sonIt));
+      if (!dc.length && !ds.length) out.push(el('p', { class: 'lbl nv-note' }, 'vide · clic droit sur un clip ou un son : Dans un dossier'));
+    }
+    return out;
+  }
+  async function neufDossier() {
+    const b = P().biblio;
+    if (!b || b.dossiers.length >= 64) { toast('64 dossiers au plus'); return null; }
+    const n = await ask('Un dossier du projet', 'Nom du dossier', `Dossier ${b.dossiers.length + 1}`, 'Créer');
+    if (!n) return null;
+    const d = { id: app.uid('d'), name: n.slice(0, 40) };
+    b.dossiers.push(d);
+    return d;
+  }
+
+  const BODY = { proj: projet, inst: instruments, fx: effects, pre: presets, son: soundsList, mot: motifs, midi: midiList };
   function toggle(k) {
-    ui().navOpen = { ...(ui().navOpen || { inst: true, son: true }), [k]: !isOpen(k) };
+    ui().navOpen = { ...(ui().navOpen || { inst: true, son: true }), [k]: !isOpen(k) };   // Projet : false le referme
     if (k === 'son' && isOpen('son')) sounds = null;
     if (k === 'midi' && isOpen('midi')) mids = null;
     app.saveUi();
@@ -256,7 +344,7 @@ export function createBrowser(app) {
     }));
     put(root,
       el('div', { class: 'nv-top' }, el('span', { class: 'lbl' }, 'navigateur'), el('span', { class: 'sp' }),
-        el('button', { class: 'tb ghost sm', type: 'button', title: 'tout refermer', onclick: () => { ui().navOpen = {}; app.saveUi(); render(); } }, '▴'),
+        el('button', { class: 'tb ghost sm', type: 'button', title: 'tout refermer', onclick: () => { ui().navOpen = { proj: false }; app.saveUi(); render(); } }, '▴'),
         el('button', { class: 'tb ghost sm', type: 'button', title: 'replier le navigateur : l\'arrangement prend toute la largeur · Ctrl+Alt+B', onclick: () => collapse(true) }, '‹')),
       acc);
     acc.scrollTop = scrollTop;

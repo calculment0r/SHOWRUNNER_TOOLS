@@ -1,19 +1,26 @@
 /* ============================================================
    ODIO — la vue Session (session.js) : le lanceur de clips de Live 12
-   (« Session View »), la console dessous. Une colonne par piste, une
-   ligne par scène ; à droite, la colonne des scènes reste en vue (collée
-   au bord) ; sous la grille, l'état des pistes et la console, qui
-   défilent avec elle à l'horizontale. Couleurs : jetons de
-   commun/tokens.css seulement ; la couleur d'une piste, ou d'un clip,
-   passe par --c, toujours posée sur un jeton. Filets en box-shadow
-   inset. Le vert est le jeu (Live : le triangle vert), l'orange la prise.
+   (« Session View »), en couche par-dessus l'arrangement, refaite le
+   05/10 au soir (Cal : « un design mieux et centré, car tout est à
+   gauche »). À gauche, le navigateur (commun avec l'arrangement) ; au
+   centre, la grille : des colonnes de largeur fixe, une par voie, la
+   colonne libre (une voie neuve), puis les scènes collées à la grille ;
+   la grille se centre dans la place qu'elle a, et défile quand elle
+   déborde (la colonne des scènes reste alors au bord droit, l'en-tête en
+   haut, l'état des voies en bas). Dessous, la console en groupes (voies,
+   pistes, retours, sortie), centrée elle aussi, ou la vue Clip.
+   Couleurs : jetons de commun/tokens.css seulement ; la couleur d'une
+   voie, ou d'un clip, passe par --c, toujours posée sur un jeton. Filets
+   en box-shadow inset. Le vert est le jeu (Live : le triangle vert),
+   l'orange la prise.
    ============================================================ */
 
 .ss {
-  --ss-w: 124px;     /* une colonne de piste (et sa tranche) */
-  --ss-h: 30px;      /* une case */
-  --ss-g: 6px;       /* entre deux colonnes */
-  --ss-mw: 168px;    /* la colonne des scènes (et la sortie) */
+  --ss-w: 148px;     /* une colonne de voie */
+  --ss-h: 40px;      /* une case */
+  --ss-g: 6px;       /* entre deux colonnes, deux rangées */
+  --ss-nw: 112px;    /* la colonne libre : une voie neuve */
+  --ss-mw: 176px;    /* la colonne des scènes */
   height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 6px;
 }
 
@@ -25,58 +32,59 @@
 .ss-head .sp { flex: 1; min-width: 0; }
 .ss-head .ss-hint { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 10.5px; color: var(--ink3); }
+/* « par-dessus l'arrangement » : ce que la vue est, en une pastille discrète */
+.ss-onto { font-family: var(--f-mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--grn2);
+  padding: 3px 8px; border-radius: var(--r2); background: var(--grn-bg); box-shadow: inset 0 0 0 1px var(--line-gr); }
 .ss-q { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 8px; border-radius: var(--r2); background: var(--panel2); }
 .ss-q .k { font-family: var(--f-mono); font-size: 8px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink3); }
 .ss-q select { width: auto; }
-/* Retour à l'arrangement : éteint tant que toutes les pistes jouent l'arrangement,
-   allumé (l'orange de l'alerte, sans aplat : ce n'est pas l'action de l'écran) sinon */
-.ss-back { gap: 6px; background: transparent; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink3); }
-.ss-back i { width: 0; height: 0; border-style: solid; border-width: 4px 6px 4px 0; border-color: transparent currentColor transparent transparent; }
-.ss-back.lit { color: var(--or); background: var(--or-bg); box-shadow: inset 0 0 0 1px var(--line-or); }
 .ss-bas .tb { padding: 0 9px; }
 
-/* ── la grille et le bas : des rangées de colonnes alignées ── */
-.ss-grid { flex: 1; min-height: 96px; overflow: auto; scrollbar-gutter: stable; border-radius: var(--r3);
-  background: var(--bg); overscroll-behavior: contain; }
-.ss-bot { flex: none; overflow: hidden; scrollbar-gutter: stable; }
-.ss-r { display: flex; gap: var(--ss-g); width: max-content; min-width: 100%; padding: 0 0 var(--ss-g); }
-.ss-r > * { flex: none; width: var(--ss-w); }
-.ss-r > .ss-fill { flex: 1 0 96px; width: auto; }
-/* la colonne des scènes reste au bord droit (collée), la grille passe dessous */
-.ss-r > .ss-m { width: var(--ss-mw); position: sticky; right: 0; z-index: 2; }
+/* ── le corps : le navigateur, la grille et le bas ────────── */
+.ss-body { flex: 1; min-height: 0; display: grid; grid-template-columns: var(--nav-w, 214px) 8px minmax(0, 1fr); }
+.ss-body.nav-off > .mu-split.x { visibility: hidden; pointer-events: none; }
+.ss-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+
+/* la grille : elle défile, son plateau se centre */
+.ss-grid { flex: 1; min-height: 120px; overflow: auto; scrollbar-gutter: stable both-edges; border-radius: var(--r3);
+  background: var(--bg); overscroll-behavior: contain; display: flex; }
+.ss-board { margin: 0 auto; padding: 0 var(--s3); width: max-content; display: flex; flex-direction: column; }
+.ss-r { display: grid; grid-template-columns: repeat(var(--n), var(--ss-w)) var(--ss-nw) var(--ss-mw); gap: var(--ss-g); padding-bottom: var(--ss-g); }
+.ss-r > * { min-width: 0; }
+/* la colonne des scènes reste au bord droit quand la grille déborde */
+.ss-r > .ss-m { position: sticky; right: 0; z-index: 2; }
 .ss-r > .ss-m::before { content: ""; position: absolute; top: 0; bottom: calc(-1 * var(--ss-g)); right: 100%; width: var(--ss-g); background: var(--bg); }
 
-/* les en-têtes : collés en haut de la grille */
-.ss-tr { position: sticky; top: 0; z-index: 4; background: var(--bg); padding-top: 0; }
+/* les en-têtes : collés en haut */
+.ss-tr { position: sticky; top: 0; z-index: 4; background: var(--bg); padding-top: var(--s3); }
 .ss-tr > .ss-m { z-index: 5; }
-.ss-t { height: 40px; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 0 8px;
+.ss-t { height: 46px; display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 0 10px;
   border-radius: var(--r2); background: var(--panel); box-shadow: inset 0 2px 0 var(--c, var(--line)); cursor: pointer; min-width: 0; }
-.ss-t b { font-family: var(--f-disp); font-weight: 400; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+.ss-t b { font-family: var(--f-disp); font-weight: 400; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
 .ss-t .lbl { font-size: 7.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ss-t.sel { background: var(--sel-bg); }
-.ss-t.hors b { color: var(--ink2); }
-.ss-t.bus { background: var(--panel2); cursor: default; }
-.ss-t.add { background: transparent; box-shadow: none; align-items: flex-start; cursor: default; }
-.ss-t.add .ss-vide { font-size: 10.5px; color: var(--ink3); white-space: normal; max-width: 420px; }
-.ss-tr .ss-t.add:has(.ss-vide) { height: auto; min-height: 40px; gap: 6px; padding-top: 6px; }
+.ss-t.muted b { color: var(--ink3); }
+.ss-t.ss-nv { background: transparent; box-shadow: inset 0 0 0 1px var(--line); align-items: center; cursor: default; }
+.ss-t.ss-nv .tb { width: calc(100% - 12px); }
 .ss-t.master { background: var(--panel2); box-shadow: inset 0 2px 0 var(--grn2); cursor: default; }
 
 /* ── une case ─────────────────────────────────────────────── */
-.ss-c { position: relative; height: var(--ss-h); display: flex; align-items: center; gap: 7px; padding: 0 7px 0 6px;
-  border-radius: var(--r1); background: var(--panel); overflow: hidden; user-select: none; }
-.ss-c.void { background: transparent; box-shadow: inset 0 0 0 1px var(--line); opacity: .35; }
+.ss-c { position: relative; height: var(--ss-h); display: flex; align-items: center; gap: 8px; padding: 0 9px 0 7px;
+  border-radius: var(--r2); background: var(--panel); overflow: hidden; user-select: none; }
 .ss-c.ghost { background: transparent; }
-.ss-add .ss-c.void { opacity: 0; }
 .ss-c.cur { box-shadow: inset 0 0 0 1px var(--line-cy); }
 .ss-c.drop, .ss-fill.drop, .ss-t.drop { box-shadow: inset 0 0 0 1px var(--line-or); background: var(--or-bg); }
-.ss-fill { border-radius: var(--r1); }
+/* la colonne libre : une voie neuve à chaque case */
+.ss-fill { border-radius: var(--r2); }
+.ss-new { box-shadow: inset 0 0 0 1px var(--line); opacity: .5; transition: opacity .12s; }
+.ss-r:hover > .ss-new, .ss-new.drop { opacity: 1; }
 /* vide : le bouton Stop de la case (Live : Clip Stop) — un carré discret */
 .ss-stop { padding: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.ss-stop::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 1px; box-shadow: inset 0 0 0 1px var(--ink3); opacity: .45; transition: opacity .12s; }
+.ss-stop::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 1px; box-shadow: inset 0 0 0 1px var(--ink3); opacity: .45; transition: opacity .12s; }
 .ss-c:hover .ss-stop::before { opacity: 1; }
-/* piste armée : le bouton de prise (Live : Clip Record) */
-.ss-stop.rec::before { width: 9px; height: 9px; border-radius: 50%; box-shadow: none; background: var(--or); opacity: .55; }
+/* voie armée : le bouton de prise (Live : Clip Record) */
+.ss-stop.rec::before { width: 10px; height: 10px; border-radius: 50%; box-shadow: none; background: var(--or); opacity: .55; }
 .ss-stop.rec.off::before { background: var(--ink3); opacity: .35; }
 .ss-c:hover .ss-stop.rec::before { opacity: 1; }
 
@@ -85,10 +93,10 @@
 .ss-c.full.cur { box-shadow: inset 3px 0 0 var(--c), inset 0 0 0 1px var(--line-cy); }
 .ss-c.full:hover { background: color-mix(in srgb, var(--c) 24%, var(--panel2)); }
 .ss-c.lift { opacity: .45; }
-.ss-go { flex: none; padding: 0; width: 15px; height: 15px; display: flex; align-items: center; justify-content: center; cursor: pointer; margin-left: 2px; }
-.ss-go::before { content: ""; flex: none; width: 0; height: 0; border-style: solid; border-width: 5px 0 5px 8px; border-color: transparent transparent transparent var(--ink3); transition: border-color .1s; }
+.ss-go { flex: none; padding: 0; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; margin-left: 2px; }
+.ss-go::before { content: ""; flex: none; width: 0; height: 0; border-style: solid; border-width: 6px 0 6px 9px; border-color: transparent transparent transparent var(--ink3); transition: border-color .1s; }
 .ss-go:hover::before { border-left-color: var(--ink); }
-.ss-c .nm { flex: 1; min-width: 0; font-size: 11.5px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ss-c .nm { flex: 1; min-width: 0; font-size: 12px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ss-c .len { flex: none; font-family: var(--f-mono); font-size: 8px; letter-spacing: .1em; color: var(--ink3); }
 .ss-c .pr { position: absolute; left: 3px; right: 0; bottom: 0; height: 3px; background: var(--c); transform-origin: 0 50%; transform: scaleX(var(--pr, 0)); opacity: 0; }
 /* en lecture : le triangle vert (Live), la case plus franche, la barre qui avance */
@@ -104,7 +112,7 @@
 .ss.tic .ss-c.wait:not(.on) { box-shadow: inset 3px 0 0 var(--c), inset 0 0 0 1px var(--line-gr); }
 /* la prise : l'orange, un rond qui bat */
 .ss-c.rec { background: var(--or-bg); box-shadow: inset 3px 0 0 var(--or); }
-.ss-c.rec .ss-go::before { width: 9px; height: 9px; border: 0; border-radius: 50%; background: var(--or); animation: sPulse .8s infinite; }
+.ss-c.rec .ss-go::before { width: 10px; height: 10px; border: 0; border-radius: 50%; background: var(--or); animation: sPulse .8s infinite; }
 .ss-c.rec.wait .ss-go::before { animation: none; opacity: .4; }
 .ss.tic .ss-c.rec.wait .ss-go::before { opacity: 1; }
 /* la longueur d'une prise n'est connue qu'à sa fin : « prise » à sa place */
@@ -112,30 +120,29 @@
 .ss-c.rec .len::after { content: "prise"; font-size: 8px; color: var(--or); }
 
 /* ── la colonne des scènes ───────────────────────────────── */
-.ss-sc { height: var(--ss-h); display: flex; align-items: center; gap: 7px; padding: 0 8px 0 6px; border-radius: var(--r1);
+.ss-sc { height: var(--ss-h); display: flex; align-items: center; gap: 8px; padding: 0 10px 0 7px; border-radius: var(--r2);
   background: var(--panel2); cursor: pointer; }
 .ss-sc.cur { box-shadow: inset 0 0 0 1px var(--line-cy); }
-.ss-sc .nm { flex: 1; min-width: 0; font-size: 11.5px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ss-sc .nm { flex: 1; min-width: 0; font-size: 12px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ss-sc .nm.num { font-family: var(--f-mono); font-size: 9px; letter-spacing: .14em; color: var(--ink3); }
 .ss-sc .bpm { flex: none; font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; color: var(--or); }
 .ss-sc .bpm::after { content: " BPM"; color: var(--ink3); }
-.ss-sgo { flex: none; padding: 0; width: 18px; height: 18px; border-radius: var(--r1); display: flex; align-items: center; justify-content: center; background: var(--panel3); cursor: pointer; }
-.ss-sgo::before { content: ""; flex: none; width: 0; height: 0; border-style: solid; border-width: 4px 0 4px 7px; border-color: transparent transparent transparent var(--ink2); }
+.ss-sgo { flex: none; padding: 0; width: 22px; height: 22px; border-radius: var(--r1); display: flex; align-items: center; justify-content: center; background: var(--panel3); cursor: pointer; }
+.ss-sgo::before { content: ""; flex: none; width: 0; height: 0; border-style: solid; border-width: 5px 0 5px 8px; border-color: transparent transparent transparent var(--ink2); }
 .ss-sgo:hover::before { border-left-color: var(--ink); }
 .ss-sc.on .ss-sgo::before { border-left-color: var(--grn2); }
 .ss.tic .ss-sc.wait .ss-sgo::before { border-left-color: var(--grn2); }
 .ss-sc.add { background: transparent; cursor: default; }
 .ss-sc.add .tb { width: 100%; }
 
-/* ── l'état des pistes (Live : Track Status) ─────────────── */
-.ss-str { padding-top: var(--ss-g); }
-.ss-st { height: 26px; display: flex; align-items: center; gap: 7px; padding: 0 8px; border-radius: var(--r1); background: var(--panel); }
+/* ── l'état des voies (Live : Track Status), collé en bas ── */
+.ss-str { position: sticky; bottom: 0; z-index: 3; background: var(--bg); padding-top: var(--ss-g); padding-bottom: var(--s3); margin-top: auto; }
+.ss-st { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 9px; border-radius: var(--r2); background: var(--panel); }
 .ss-st.void { background: transparent; }
 .ss-st.sel { background: var(--sel-bg); }
-.ss-tstop { flex: none; width: 16px; height: 16px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--r1); cursor: pointer; }
+.ss-tstop { flex: none; width: 18px; height: 18px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--r1); cursor: pointer; }
 .ss-tstop::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 1px; background: var(--ink3); }
 .ss-tstop:hover::before { background: var(--ink); }
-.ss-st.end .ss-tstop::before { background: var(--ink3); }
 .ss.tic .ss-st.end .ss-tstop::before { background: var(--or); }
 .ss-st .pie { flex: none; width: 12px; height: 12px; border-radius: 50%; opacity: 0;
   background: conic-gradient(var(--c) calc(var(--pr, 0) * 1turn), var(--panel3) 0); }
@@ -152,18 +159,42 @@
 .ss-all:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
 .ss-all.lit { color: var(--ink2); }
 
-/* ── la console sous la grille : chaque tranche sous sa colonne ── */
-.ss-mix { align-items: stretch; }
-.ss-mix > * { height: auto; }
-.ss .cs-strip { width: var(--ss-w); padding: 10px 6px; }
-.ss .cs-strip.master { width: var(--ss-mw); }
-.ss .ss-mix > .ss-m { display: flex; }
-.ss .ss-mix > .ss-m > .cs-strip { flex: 1; }
-.ss-mix .cs-fv { min-height: 150px; }
-.ss-mix .cs-fv .fdr .rail { min-height: 110px; }
+/* ── la Session vierge : ce qu'elle est, où déposer ───────── */
+.ss-vide { margin: auto; width: min(560px, calc(100% - 2 * var(--s4))); display: flex; flex-direction: column; align-items: center; gap: var(--s3);
+  padding: var(--s5) var(--s5) var(--s4); border-radius: var(--r4); background: var(--panel); text-align: center; box-shadow: inset 0 0 0 1px var(--line); }
+.ss-vide .k { font-family: var(--f-mono); font-size: 8px; letter-spacing: .22em; text-transform: uppercase; color: var(--grn2); }
+.ss-vide b.venus { font-size: 20px; font-weight: 400; }
+.ss-vide p { margin: 0; font-size: 12px; line-height: 1.55; color: var(--ink2); max-width: 46ch; }
+.ss-vide p.ss-vh { font-size: 10.5px; color: var(--ink3); }
+.ss-vz { width: 100%; padding: var(--s4) var(--s3); border-radius: var(--r3); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 11px; line-height: 1.5; color: var(--ink3); }
+.ss-vide.drop .ss-vz, .ss-vide.drop-on .ss-vz { box-shadow: inset 0 0 0 1px var(--line-or); background: var(--or-bg); color: var(--ink2); }
+.ss-vb { justify-content: center; flex-wrap: wrap; gap: 6px; }
+
+/* ── la console : en groupes, centrée ─────────────────────── */
+.ss-main > .mu-split.y[hidden] { display: none; }
+.ss-bot { flex: none; height: var(--ss-bh, 330px); overflow: auto; border-radius: var(--r3); }
+.ss-bot[hidden] { display: none; }
+.ss-cons { margin: 0 auto; width: max-content; display: flex; align-items: stretch; gap: var(--s3); padding: 0 var(--s3) 4px; }
+.ss-cg { display: flex; flex-direction: column; gap: 6px; }
+.ss-cgh { display: flex; align-items: center; gap: 8px; padding: 0 2px; height: 22px; }
+.ss-cgh b { font-family: var(--f-mono); font-weight: 400; font-size: 8.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink2); }
+.ss-cgh .lbl { font-size: 7.5px; }
+.ss-cgh .tb { height: 20px; margin-left: auto; }
+.ss-cg.v .ss-cgh b { color: var(--grn2); }
+.ss-cgs { flex: 1; display: flex; align-items: stretch; gap: 6px; }
+.ss-cvide { align-self: flex-start; width: 112px; margin: 0; padding: var(--s3); border-radius: var(--r4); box-shadow: inset 0 0 0 1px var(--line); line-height: 1.6; }
+/* des tranches plus basses que dans l'ancienne console : la grille garde sa place */
+.ss .cs-strip { width: 112px; padding: 8px 6px; gap: 6px; }
+.ss .cs-ins, .ss .cs-sends { min-height: 0; }
+.ss .cs-strip.voie { background: color-mix(in srgb, var(--grn2) 6%, var(--panel)); }
+.ss .cs-strip.voie.sel { background: var(--sel-bg); }
+.ss .cs-strip.master { width: 150px; }
+.ss .cs-fv { min-height: 112px; }
+.ss .cs-fv .fdr .rail { min-height: 80px; }
 
 /* ── la vue Clip d'un clip de Session ─────────────────────── */
-.ss-clip { flex: none; height: clamp(240px, calc(40 * var(--vh)), 440px); display: flex; flex-direction: column; min-height: 0;
+.ss-clip { flex: none; height: var(--ss-bh, 330px); display: flex; flex-direction: column; min-height: 0;
   background: var(--panel); border-radius: var(--r3); overflow: hidden; }
 .ss-clip[hidden] { display: none; }
 .ss-chead { flex: none; display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; padding: 7px var(--s3); box-shadow: inset 0 -1px 0 var(--line); }
@@ -178,11 +209,19 @@
 
 /* La place de la page, pas la fenêtre (@container sr-page, commun/shell.css) */
 @container sr-page (max-width: 1280px) {
-  .ss { --ss-w: 112px; --ss-mw: 150px; }
+  .ss { --ss-w: 132px; --ss-mw: 156px; --ss-nw: 96px; }
   .ss-head .ss-hint { display: none; }
 }
 @container sr-page (max-width: 1100px) {
   .ss { height: auto; min-height: calc(80 * var(--vh)); }
+  .ss-body { grid-template-columns: min(var(--nav-w, 214px), 180px) 8px minmax(0, 1fr); }
   .ss-grid { flex: none; max-height: calc(55 * var(--vh)); }
   .ss-head { flex-wrap: wrap; }
+  .ss-onto { display: none; }
+}
+@container sr-page (max-width: 760px) {
+  .ss { --ss-w: 112px; --ss-mw: 120px; --ss-nw: 64px; }
+  .ss-body { grid-template-columns: 1fr; }
+  .ss-body > .mu-split.x { display: none; }
+  .ss-body > .nv { max-height: 180px; }
 }
