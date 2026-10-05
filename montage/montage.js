@@ -2599,6 +2599,7 @@ function suivrePanneau() {
 function branchePanneau() {
   dock.configure({
     kinds: PANNEAU_KINDS,
+    label: 'la séquence',                        // « filtres de : la séquence » ; une piste choisie dit les siens (suivrePanneau)
     dockMin: PANNEAU_GARDE,
     placeLabel: 'Poser à la tête de lecture',
     hint: 'glisser sur la timeline, le programme ou le Projet · double-clic : à la tête de lecture',

@@ -249,6 +249,19 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .prg-foot .prg-dur { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .prg-foot .transport-mini { justify-content: center; }
 .prg-foot .prg-fmt { justify-self: end; white-space: nowrap; }
+/* Le pied du programme répond à la place du PANNEAU, pas de la page ni de la fenêtre : le panneau
+   Asset ouvert, les séparateurs, une fenêtre détachée le rétrécissent (la durée chevauchait la
+   lecture, panneau Asset ouvert sur 1600 px). Le format se lit aussi dans l'inspecteur (Sortie). */
+.mon.prg { container: prg / inline-size; }
+@container prg (max-width: 540px) {
+  .mon-foot.prg-foot { grid-template-columns: auto 1fr; }
+  .prg-foot .prg-fmt { display: none; }
+  .prg-foot .transport-mini { justify-content: flex-end; }
+}
+@container prg (max-width: 380px) {
+  .prg-foot .prg-dur .lbl { display: none; }
+  .prg-foot .pb.play { width: 76px; }
+}
 
 /* l'inspecteur : son en-tête (le bouton qui le détache), puis ses cartes */
 .mtg .inspw { background: transparent; gap: 6px; overflow: visible; }
