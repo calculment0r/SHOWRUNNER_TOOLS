@@ -656,6 +656,40 @@ def me_payload(u, current: str | None, refused: str | None = None) -> dict:
     return out
 
 
+def people_for(u) -> dict:
+    """Les personnes qu'on peut mettre dans une Team neuve (« Commencer un projet »,
+    ideation/projet.js ; GET /api/equipes/personnes) — des comptes qui EXISTENT déjà
+    (Cal, 05/10). À Cal : tous les comptes actifs. À un autre : les membres des Teams où
+    il est propriétaire, admin ou membre — personne qu'il ne voyait déjà (GET
+    /api/equipes les lui montre) ; un guest n'y voit personne. Jamais un invité de
+    planche, ni soi-même. {people: [{id, name, pseudo, teams}], scope, why}"""
+    if not u:
+        return {"people": [], "scope": "aucun", "why": "connexion requise"}
+    uid, every = _uid(u), auth.is_admin(u)
+    with _lock:
+        db = _data()
+        mine = [t for t in db["teams"].values() if not t.get("personal") and not t.get("archived")
+                and (t.get("members", {}).get(uid) or {}).get("role") in ("owner", "admin", "member")]
+        teams: dict[str, list] = {}   # qui → les Teams (partagées) où on le trouve
+        for t in (db["teams"].values() if every else mine):
+            if t.get("personal"):
+                continue
+            for mid in t.get("members", {}):
+                teams.setdefault(mid, []).append(t["name"])
+    ids = [x["id"] for x in auth.users_public()] if every else list(teams)
+    out = []
+    for i in ids:
+        x = auth.user(i)
+        if i == uid or not x or x.get("state") != "active" or x.get("role") == auth.GUEST:
+            continue
+        out.append({"id": i, "name": x.get("name") or i, "pseudo": x.get("pseudo") or x.get("name") or i,
+                    "teams": sorted(set(teams.get(i, [])), key=str.lower)})
+    out.sort(key=lambda r: r["name"].lower())
+    why = None if every else ("les personnes de tes Teams — Cal seul voit tous les comptes" if out
+                              else "personne dans tes Teams pour l'instant — Cal seul voit tous les comptes : demande-lui")
+    return {"people": out, "scope": "tous" if every else "mes-teams", "why": why}
+
+
 # ── écrire : Teams, Workspaces, membres ─────────────────────
 def _need(ok: bool, why: str) -> None:
     if not ok:
@@ -682,12 +716,29 @@ def _see_team(u, tid: str) -> None:
         raise HttpError(404, f"Team inconnue : {tid}")
 
 
+def create_team_why(u) -> str | None:
+    """Pourquoi cette personne ne crée pas de Team (None : elle le peut) — la seule phrase
+    du refus : create_team la lève, GET /api/equipes la rend (`create_why`), et la fenêtre
+    « Commencer un projet » (ideation/projet.js) la dit avant qu'on ne remplisse. Créer :
+    Cal, ou un compte qui a le Studio SUR SON COMPTE (inviter est du Studio) ; le Studio
+    reçu d'une Team ne suffit pas, un guest ni un invité de planche n'en créent."""
+    if u is None:
+        return "créer une Team : connexion requise"
+    if auth.is_admin(u):
+        return None
+    if not _eligible(u):
+        return "créer une Team : un compte entré comme guest (ou invité d'une planche) n'en crée pas — vois avec Cal"
+    if not auth.has_studio(u):
+        return "créer une Team : le Studio (ton compte ouvre les Apps) — demande-le à Cal"
+    return None
+
+
 def create_team(u, name, plan: str | None = None) -> dict:
     """Créer une Team : Cal, ou un compte qui a le Studio (inviter est du Studio). Elle
     naît avec un Workspace « Général » ; son offre : celle de son créateur (Cal choisit)."""
     name = clean_name(name, "le nom de la Team")
-    _need(u is not None and (auth.is_admin(u) or (auth.has_studio(u) and _eligible(u))),
-          "créer une Team : le Studio (ton compte ouvre les Apps) — demande-le à Cal")
+    why = create_team_why(u)
+    _need(why is None, why or "")
     if plan is not None and not auth.is_admin(u):
         raise HttpError(403, "l'offre d'une Team : Cal la règle")
     plan = plan or ("studio" if auth.has_studio(u) else "apps")

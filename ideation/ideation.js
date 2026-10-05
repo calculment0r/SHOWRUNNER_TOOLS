@@ -870,6 +870,10 @@ async function openBoard(id, { force = false } = {}) {
 // relire la planche du serveur sans recharger la page (la collaboration : quelqu'un d'autre
 // l'a changée) ; ce qui n'est pas enregistré ici est perdu — la page qui appelle le sait
 app.reloadBoard = () => (S.board ? openBoard(S.board.id, { force: true }) : Promise.resolve(false));
+// ouvrir une planche par son id (« Commencer un projet », projet.js : celle qu'il vient de créer)
+app.openBoard = (id) => openBoard(id);
+// « Commencer un projet » (le mode showrunner, projet.js) : la fenêtre par-dessus la planche
+app.projet = (o) => import('./projet.js').then((m) => m.ouvrirProjet(app, o)).catch((e) => toast(`Commencer un projet : ${e.message}`, 7000));
 function closeBoard() {
   S.board = null; S.sel.clear(); S.link = null;
   $('#b-name').value = '';
@@ -1076,6 +1080,7 @@ document.querySelector('.ide')?.addEventListener('contextmenu', (e) => {
   if (fld) { menu(e.clientX, e.clientY, app.menus.text(fld)); return; }
   menu(e.clientX, e.clientY, [{ head: 'idéation' },
     { label: 'Les planches…', onclick: () => app.boardsModal() }, { label: 'Nouvelle planche…', studio: true, onclick: () => app.newBoard() },
+    { label: 'Commencer un projet…', sub: 'une Team, un Workspace, tout rangé', studio: true, onclick: () => app.projet() },
     { label: 'Exporter la planche en PNG', sub: 'ordinateur + presse-papier', studio: true, disabled: !S.board?.nodes.length, why: 'la planche est vide', onclick: () => app.exportBoard('') },
     '-', { label: 'Annuler', key: 'ctrl+Z', disabled: !S.undo.length, why: 'rien à annuler', onclick: () => app.undoStep() },
     { label: 'Rétablir', key: 'ctrl+maj+Z', disabled: !S.redo.length, why: 'rien à rétablir', onclick: () => app.redoStep() },
@@ -1149,6 +1154,14 @@ async function start() {
     .finally(() => { app.canvas.render(); app.insp.render(); });
   api('movie/options').then((o) => { S.mopts = o; }).catch((e) => { S.moptsError = e.message; })
     .finally(() => { app.canvas.render(); app.insp.render(); });
+  // « Commencer un projet » (l'accueil : ?projet=nouveau ; docs/etudes/mode_showrunner.md) : pas de
+  // planche — elle naîtra dans le Workspace neuf ; la fenêtre par-dessus. Fermée sans commencer :
+  // le départ ordinaire
+  if (new URLSearchParams(location.search).get('projet') === 'nouveau') { app.projet({ annule: ouvrirDerniere }); return; }
+  await ouvrirDerniere();
+}
+// la planche de l'adresse, sinon la dernière ouverte ici, sinon la plus récente
+async function ouvrirDerniere() {
   const want = location.hash.slice(1) || LS('last');
   if (want && await openBoard(want)) return;
   const { boards } = await api('ideation/boards').catch(() => ({ boards: [] }));

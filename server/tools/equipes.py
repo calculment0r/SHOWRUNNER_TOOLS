@@ -3,7 +3,11 @@ le modèle et la matrice : core/espaces.py). Hors de /api/admin/ : l'admin d'une
 Team (pas seulement Cal) y règle la sienne ; chaque route juge qui gère quoi.
 
     GET  /api/equipes[?toutes=1]                         mes Teams, leurs Workspaces, mes droits ; pour qui gère,
-                                                         les membres et les liens ; Cal : toutes (?toutes=1)
+                                                         les membres et les liens ; Cal : toutes (?toutes=1) ;
+                                                         `can_create` / `create_why` : créer une Team, ou pourquoi pas
+    GET  /api/equipes/personnes                          qui l'on peut mettre dans une Team neuve (« Commencer un
+                                                         projet ») : Cal, tous les comptes actifs ; un autre, les
+                                                         membres de ses Teams (espaces.people_for)
     POST /api/equipes {name}                             créer une Team (le Studio ; Cal : aussi `plan`)
     GET  /api/equipes/<t>                                une Team
     POST /api/equipes/<t> {name, api, archived, plan}    renommer, l'API payante, archiver / rouvrir, l'offre (Cal)
@@ -56,9 +60,15 @@ def r_list(req):
     for t in teams:   # le budget du mois (étape 8) : ses membres le voient, qui gère le règle ; un guest, rien
         if t.get("manage") or t.get("role") in ("owner", "admin", "member"):
             t["conso"] = _budget_out(u, t["id"])
+    why = espaces.create_team_why(u)   # la phrase du refus, dite avant qu'on ne remplisse (ideation/projet.js)
     return {"teams": teams, "workspace": req.workspace,
             "roles": {"team": espaces.TEAM_FR, "space": espaces.SPACE_FR, "guest": espaces.GUEST_FR},
-            "hours": list(espaces.HOURS), "can_create": auth.is_admin(u) or (auth.has_studio(u) and espaces._eligible(u))}
+            "hours": list(espaces.HOURS), "can_create": why is None, "create_why": why}
+
+
+def r_people(req):
+    """Qui l'on peut mettre dans une Team neuve : des comptes qui existent (core/espaces.py, people_for)."""
+    return espaces.people_for(_who(req))
 
 
 def r_create(req):
@@ -276,6 +286,7 @@ def register(app) -> None:
     app.route("GET", "/api/equipes/{tid}/budget", r_budget)
     app.route("POST", "/api/equipes/{tid}/budget", r_budget_set)
     app.route("GET", "/api/equipes", r_list)
+    app.route("GET", "/api/equipes/personnes", r_people)   # avant /api/equipes/{tid} : le premier motif gagne
     app.route("POST", "/api/equipes", r_create)
     app.route("GET", "/api/equipes/{tid}", r_team)
     app.route("POST", "/api/equipes/{tid}", r_team_set)
@@ -399,6 +410,7 @@ def _http(ok, H, same) -> None:
     ok(s == 200, f"équipes : les gardes prêtes, un guest viewer ({s} {err(d)})")
     gus = auth.user("gus-essai")
     ok(gus and gus.get("perso") is False and gus["access"] == "apps", f"équipes : un guest n'a pas de « Chez moi » ({gus})")
+    _, _, gus_tok = H("POST", "/api/auth/enter", {"name": "Gus Essai"}, headers=same)
     s, d, _ = P(f"/api/equipes/{tid}/membres", {"pseudo": "Gia Essai", "role": "guest", "guest": "acteur", "spaces": [s1]})
     ok(s == 200, f"équipes : un guest acteur ({s} {err(d)})")
     gia = auth.user("gia-essai")
@@ -485,6 +497,33 @@ def _http(ok, H, same) -> None:
     ok(s == 200 and {tid, tx["id"], "tea-perso-xav-essai"} <= ids, f"équipes : Cal voit toutes les Teams ({len(ids)})")
     s, d, _ = G("/api/equipes?toutes=1", A)
     ok({x["id"] for x in d.get("teams", [])} == {tid, "tea-perso-ana-essai"}, "équipes : ?toutes=1 ne vaut que pour Cal")
+
+    # « Commencer un projet » (ideation/projet.js) : qui crée une Team le sait avant de remplir, et
+    # la phrase est celle du refus ; qui l'on peut y mettre (des comptes qui existent déjà)
+    s, d, _ = G("/api/equipes")
+    ok(s == 200 and d.get("can_create") is True and d.get("create_why") is None, f"équipes : Cal crée des Teams ({s} {d.get('create_why')})")
+    s, d, _ = G("/api/equipes", A)
+    why = d.get("create_why") or ""
+    s_, d_, _ = P("/api/equipes", {"name": "Projet d'Ana"}, tok=A)
+    ok(s == 200 and d.get("can_create") is False and "Studio" in why and s_ == 403 and err(d_) == why,
+       f"équipes : un compte Apps (le Studio par sa Team) l'apprend avant, la même phrase que le refus ({why})")
+    s, d, _ = G("/api/equipes", gus_tok)
+    ok(s == 200 and d.get("can_create") is False and "guest" in (d.get("create_why") or ""),
+       f"équipes : un guest ne crée pas de Team, et le dit ({d.get('create_why')})")
+    s, d, _ = G("/api/equipes/personnes")
+    ids = [x["id"] for x in d.get("people", [])]
+    ok(s == 200 and d.get("scope") == "tous" and {"ana-essai", "xav-essai", "gus-essai"} <= set(ids) and "cal" not in ids
+       and next(x for x in d["people"] if x["id"] == "ana-essai")["teams"] == ["Studio Essai"],
+       f"équipes : Cal voit tous les comptes actifs, pas lui-même ({s} {len(ids)})")
+    s, d, _ = G("/api/equipes/personnes", A)
+    ids = [x["id"] for x in d.get("people", [])]
+    ok(s == 200 and d.get("scope") == "mes-teams" and "cal" in ids and "gus-essai" in ids and "xav-essai" not in ids
+       and "ana-essai" not in ids and d.get("why"),
+       f"équipes : un membre voit les gens de ses Teams, pas les autres comptes ({ids})")
+    s, d, _ = G("/api/equipes/personnes", gus_tok)
+    ok(s == 200 and d.get("people") == [] and d.get("why"), f"équipes : un guest ne voit personne à ajouter ({s} {d.get('people')})")
+    s, d, _ = H("GET", "/api/equipes/personnes")
+    ok(s == 401, f"équipes : sans session, pas d'annuaire ({s})")
 
     # le Studio passe à la Team : Ana (compte Apps) ouvre le Studio dans la Team Studio, pas chez elle
     perso = "esp-perso-ana-essai"
