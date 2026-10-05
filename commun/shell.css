@@ -272,6 +272,9 @@ html[data-motion="reduce"]::view-transition-new(*) { animation: none !important;
 .kmark.sequence { color: var(--on-cy); background: var(--cy); padding: 4px 7px 4px 6px; font-size: 8px; }
 .kmark.sequence .ki { width: 13px; height: 13px; }
 .kmark.sequence.compact { padding: 2px; }
+/* un document (05/10) : l'acier, avec un filet (une vidéo n'en a pas) ; sa couverture est une page, vue par le haut */
+.thumb .kind.document, .kmark.document { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.thumb .im:has(.kmark.document) img { object-position: 50% 0; }
 .thumb .dur {
   position: absolute; bottom: 6px; right: 6px; padding: 2px 5px; border-radius: var(--r1);
   background: var(--veil); font-family: var(--f-mono); font-size: 8px; letter-spacing: .1em; color: var(--ink);
