@@ -68,7 +68,7 @@ $('.adm-nav').prepend(el('div', { class: 'row adm-undo' }, el('span', { class: '
 api('strategie/moi').then((d) => {
   if (!d || !d.cal) return;
   $('.adm-nav').append(el('ul', { class: 'rack adm-kit', style: { marginTop: 'var(--s5)' } }, el('li', {},
-    el('a', { class: 'item', href: href('strategie/'), target: '_blank', rel: 'noopener', style: { textDecoration: 'none' },
+    el('a', { class: 'item', href: href('strategie/'), target: '_top', style: { textDecoration: 'none' },   // une page normale : même onglet, jamais le volet
       title: d.pret ? 'le positionnement, le deck, les discours : pour toi seul' : 'le dossier strategie/ manque dans les données du portail' },
     el('span', { class: 'st' + (d.pret ? ' ok' : ' err') }),
     el('span', { class: 'txt' }, el('span', { class: 'ref' }, 'CAL · STRATÉGIE'),

@@ -30,19 +30,19 @@
   text-transform: uppercase; color: var(--ink);
 }
 .acc-lede { margin: 0; max-width: 62ch; color: var(--ink2); font-size: 13px; line-height: 1.6; }
-/* le kit de présentation de Cal, à droite du titre (accueil.js, paintKit) */
+/* le kit de présentation de Cal, à droite du titre (accueil.js, paintKit) : un seul gros bouton */
 .acc-top.kit { grid-template-columns: minmax(0, 1.7fr) minmax(260px, 1fr); }
-.acc-kit {
-  background: var(--panel); border-radius: var(--r4); padding: 24px 26px; box-shadow: inset 0 0 0 1px var(--line-or);
-  display: flex; flex-direction: column; gap: var(--s3); justify-content: center; min-width: 0;
+.acc-kit { display: flex; min-width: 0; }
+.acc-kit-go {
+  flex: 1; position: relative; display: flex; flex-direction: column; justify-content: center; gap: var(--s3);
+  padding: 24px 26px; border-radius: var(--r4); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-or);
+  text-decoration: none; color: inherit; transition: background .15s;
 }
-.acc-kit-t { margin: 0; font-family: var(--f-disp); font-weight: 400; font-size: 18px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink); }
-.acc-kit-docs { display: flex; flex-wrap: wrap; gap: 6px; }
-.acc-kit-doc {
-  display: inline-flex; align-items: center; height: 28px; padding: 0 12px; border-radius: 999px; text-decoration: none;
-  font-size: 12.5px; color: var(--ink2); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line);
-}
-.acc-kit-doc:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-or); }
+.acc-kit-go:hover { background: var(--panel2); box-shadow: inset 0 0 0 1px var(--or); }
+.acc-kit-go:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--or); }
+.acc-kit-t { font-family: var(--f-disp); font-size: clamp(20px, 2vw, 30px); letter-spacing: .06em; text-transform: uppercase; color: var(--ink); }
+.acc-kit-arr { position: absolute; right: 24px; bottom: 18px; font-size: 28px; line-height: 1; color: var(--or); transition: transform .15s; }
+.acc-kit-go:hover .acc-kit-arr { transform: translateX(4px); }
 .acc-stat.statcard { min-height: 0; padding: 20px 24px; text-decoration: none; }
 .acc-stat .n { font-size: clamp(48px, 5.4vw, 84px); }
 

@@ -305,23 +305,22 @@ function budgetPills(pill) {
 }
 
 // le positionnement et le kit de présentation (server/tools/strategie.py : au seul compte de Cal) :
-// Cal, 05/10 — « elle doit apparaître sur la home, dans le header avec Showrunner, un autre panneau à
-// droite qui renvoie sur la page, avec un accès direct aux différents éléments ». Un autre compte reçoit
-// 403 : le panneau ne se montre pas. Les liens s'ouvrent comme ceux d'Admin (_blank : en plein écran,
-// le volet du portail, commun/coquille.js).
+// Cal, 05/10 — un panneau à droite du titre, un seul gros bouton qui mène à la page du positionnement,
+// comme une page normale du portail : même onglet, jamais le volet (commun/coquille.js ne prend que
+// les liens « nouvel onglet ») ; `_top` : la page entière, même depuis un cadre du portail. Les pages
+// du kit ont leur barre d'accès direct (commun/kit_nav.js). Un autre compte reçoit 403 : rien ne se montre.
 async function paintKit() {
   const box = $('#acc-kit');
   let d;
   try { d = await api('strategie/plan'); } catch { box.hidden = true; return; }
   const docs = d.docs || [];
-  const go = (path, text, cls = '') => el('a', { class: cls, href: href('strategie/' + (path === 'index.html' ? '' : path)), target: '_blank', rel: 'noopener' }, text);
-  box.replaceChildren(
+  const autres = docs.filter((x) => x.path !== 'index.html').map((x) => x.titre);
+  box.replaceChildren(el('a', { class: 'acc-kit-go', href: href('strategie/'), target: '_top' },
     el('span', { class: 'acc-ref' }, '00_KIT · pour toi seul'),
-    el('h2', { class: 'acc-kit-t' }, 'Positionnement'),
-    docs.length
-      ? el('nav', { class: 'acc-kit-docs', 'aria-label': 'les pages du kit' }, ...docs.map((x) => go(x.path, x.titre, 'acc-kit-doc')))
-      : el('p', { class: 'acc-lede' }, 'le kit n’est pas encore posé : ~/showrunner-data/strategie/ sur DGX2'),
-    el('div', { class: 'row' }, docs.length ? go('index.html', 'Ouvrir le kit', 'tb ghost sm') : null));
+    el('span', { class: 'acc-kit-t' }, 'Positionnement'),
+    el('span', { class: 'acc-lede' }, docs.length ? (autres.length ? autres.join(' · ') : 'le kit de présentation')
+      : 'le kit n’est pas encore posé : ~/showrunner-data/strategie/ sur DGX2'),
+    el('span', { class: 'acc-kit-arr', 'aria-hidden': 'true' }, '→')));
   box.hidden = false;
   box.closest('.acc-top')?.classList.add('kit');
 }
