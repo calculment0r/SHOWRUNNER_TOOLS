@@ -13,14 +13,16 @@
 //   - glisser un élément pose sa dernière version ; poser un élément de sa
 //     propre descendance est refusé avant de poser (check-use), la chaîne nommée ;
 //   - le journal des éléments est relu toutes les 5 s : une version publiée
-//     ailleurs (ODIO, Asset, un autre onglet) fait paraître la pastille.
+//     ailleurs (ODIO, Asset, un autre onglet) fait paraître la pastille, et le
+//     Projet (projet.js), qui montre la dernière version de ses éléments, se
+//     relit (`app.changes`) — même sans séquence ouverte ni plan d'élément.
 
 import { api, el, toast, href } from '../commun/shell.js';
 import { menu } from '../commun/menu.js';
 import * as M from './model.js';
 
 export function createElements(app) {
-  // app : { getP, commit, ensureItems, itemOf, rerender }
+  // app : { getP, commit, ensureItems, itemOf, rerender, changes(events) }
   const info = new Map();         // objet → son statut (POST /api/elements/status)
   let seq = null, lastIds = '', timer = 0, loading = null;
 
@@ -29,7 +31,7 @@ export function createElements(app) {
   async function refresh() {
     const ids = clipItems();
     lastIds = ids.join(',');
-    if (!ids.length) { info.clear(); app.rerender(); return; }
+    // sans plan : rien à demander, mais le numéro du journal (le Projet suit aussi ses éléments)
     loading = api('elements/status', { method: 'POST', body: { items: ids } });
     try {
       const r = await loading;
@@ -45,7 +47,7 @@ export function createElements(app) {
   function changed() { if (clipItems().join(',') !== lastIds) refresh(); }
 
   async function poll() {
-    if (document.hidden || seq === null || !app.getP()) return;
+    if (document.hidden || seq === null) return;
     try {
       const r = await api(`elements/changes?since=${seq}`);
       if (r.events?.length) {
@@ -53,11 +55,13 @@ export function createElements(app) {
         const mine = new Set([...info.values()].map((s) => s.el));
         const pub = r.events.filter((e) => e.ev === 'el.published' && mine.has(e.el));
         await refresh();
+        app.changes?.(r.events);
         for (const e of pub) toast(`nouvelle version : v${e.n} de « ${e.title} »${e.note ? ` — ${e.note}` : ''}`, 5000);
       }
     } catch { /* hors ligne : au prochain tour */ }
   }
   timer = setInterval(poll, 5000);
+  refresh();
 
   const stat = (c) => (c && c.item ? info.get(c.item) : null);
 

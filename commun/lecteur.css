@@ -21,8 +21,10 @@
 .sr-lect-ecran video, .sr-lect-ecran .sr-lect-attente {
   position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block;
 }
-.sr-lect-nav { visibility: hidden; }
-.sr-lect.defile .sr-lect-nav { visibility: visible; }
+/* la copie de défilement (commun/defilement.js) : par-dessus l'originale, visible seulement pendant
+   qu'on cherche (.vu) ; dans l'écran du lecteur comme dans celui d'une page (Upscale) */
+.sr-defil { visibility: hidden; }
+.sr-defil.vu { visibility: visible; }
 .sr-lect-attente { opacity: .9; }
 .sr-lect-sur { position: absolute; inset: 0; pointer-events: none; }
 .sr-lect-sur > * { pointer-events: auto; }

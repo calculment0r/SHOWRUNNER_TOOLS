@@ -15,7 +15,9 @@
 // - Le moniteur (repris du banc NL de Cal) : rideau glissant, côte à côte, A,
 //   B ; molette = zoom sous le curseur, bouton du milieu = déplacer,
 //   double-clic = ajuster ; le zoom et la position sont les mêmes pour A et
-//   B. Une vidéo : lecture synchronisée des deux.
+//   B. Une vidéo : lecture synchronisée des deux, par le lecteur du portail
+//   (commun/lecteur.js, son écran laissé à la page : sa barre, sa frise, sa
+//   tête, son clavier, la copie de défilement de A et de B dans leur couche).
 // - Les réglages : trois préréglages en mots simples ; « Paramètres avancés »
 //   (fermé) montre le modèle et ses paramètres. La correspondance est sur le
 //   serveur, seule (PRESETS de server/tools/upscale.py) ; toucher un avancé
@@ -24,10 +26,11 @@
 // L'annulation (commun/undo.js) : ouvrir, fermer un média, les réglages
 // (instantanés) ; retirer un essai (corbeille, libTrash). Ne s'annulent pas :
 // un envoi, un fichier déposé, la vue (des préférences, upscale/prefs.json).
-import { mountHeader, api, jobs, pick, toast, el, $, $$, href, fmtDur, uploadFile, dropAnywhere, dropZone, stateFr, dock, sorteEffective } from '../commun/shell.js';
+import { mountHeader, api, jobs, pick, toast, el, $, href, fmtDur, uploadFile, dropAnywhere, dropZone, stateFr, dock, sorteEffective } from '../commun/shell.js';
 import { createUndo, libTrash } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { contextMenu, pageMenu, kebab } from '../commun/menu.js';
+import { lecteur } from '../commun/lecteur.js';   // LE lecteur du portail : ici sans son écran (le moniteur A/B est à la page)
 
 mountHeader('upscale', { sub: 'agrandir · comparer' });
 
@@ -499,8 +502,7 @@ async function retire(it, n) {
 // Le zoom et la position sont les mêmes pour A et B : un décalage relatif à
 // la couche (qui fait la moitié du moniteur en côte à côte) et un facteur.
 const Z = { z: 1, x: 0, y: 0 };
-const V = { a: null, b: null, drag: null, toggle: null, step: null, key: '' };
-let raf = 0, syncT = 0;
+const V = { a: null, b: null, itA: null, itB: null, drag: null, lect: null, key: '' };
 const mon = () => $('#mon');
 const monOk = () => { const s = S.cur && selOf(S.cur); return !!s && V.key === `${S.cur}|${s.A}|${s.B}`; };
 function resetZoom() { Z.z = 1; Z.x = 0; Z.y = 0; }
@@ -521,10 +523,10 @@ const label = (id) => {
   return n < 0 ? '' : `Essai ${n + 1}`;
 };
 function paintMonitor() {
-  cancelAnimationFrame(raf); clearInterval(syncT);
   const box = mon();
   const src = curItem();
-  V.a = V.b = null; V.toggle = V.step = null;
+  V.lect?.detruire(); V.lect = null;
+  V.a = V.b = null; V.itA = V.itB = null;
   if (!src) {
     V.key = '';
     box.className = 'monitor upm empty';
@@ -538,6 +540,7 @@ function paintMonitor() {
   const A = byId(s.A) || src, B = s.B && s.B !== A.id ? byId(s.B) : null;
   const t0 = V.t || 0;
   V.key = `${src.id}|${s.A}|${s.B}`;
+  V.itA = A; V.itB = B;
   V.a = media(A);
   const kids = [el('div', { class: 'layer a' }, el('div', { class: 'zs' }, V.a))];
   if (B) {
@@ -670,57 +673,37 @@ function wireMonitor() {
   dropZone($('#tiles'), { kinds: ['image', 'video'], via: 'upscale', onitems: openItems });
 }
 
-// la lecture synchronisée des deux vidéos (le banc A/B de l'outil Vidéo)
+// la lecture synchronisée des deux vidéos (le banc A/B de l'outil Vidéo) : le lecteur du portail
+// (commun/lecteur.js) sans son écran — sa barre et sa frise sous le moniteur, son clavier (Espace,
+// J K L, ← →, Début, Fin) ; il pilote la maîtresse (B, l'essai ; A sans B) et l'autre la suit ; la
+// copie de défilement de chacune se pose dans sa couche (le zoom et le rideau la prennent avec elle).
+// Le son : on écoute A, B ou rien (un réglage de la page, dans la barre du lecteur).
 function wireVideo(t0) {
   const a = V.a, b = V.b;
-  const master = b || a;
-  const both = [a, b].filter((v) => v && v.tagName === 'VIDEO');
-  const fps = curItem()?.fps || 24;
-  const playBtn = el('button', { class: 'tb', type: 'button', title: 'lire · pause (espace)', onclick: () => toggle() });
-  const tc = el('span', { class: 'timecode' }, '0:00');
-  const fill = el('div', { class: 'fill' });
-  const scrub = el('input', { type: 'range', min: 0, max: 1000, value: 0, 'aria-label': 'position' });
-  const dur = () => { const x = Math.min(...both.map((v) => (isFinite(v.duration) ? v.duration : Infinity))); return isFinite(x) ? x : 0; };
-  const seek = (t) => both.forEach((v) => { try { v.currentTime = t; } catch { /* pas prête */ } });
-  const playing = () => !master.paused && !master.ended;
-  const icon = () => { playBtn.textContent = playing() ? 'Pause' : 'Lire'; };
-  const toggle = async () => { if (playing()) both.forEach((v) => v.pause()); else { try { await Promise.all(both.map((v) => v.play())); } catch { /* geste requis */ } } icon(); };
-  const step = (n) => { both.forEach((v) => v.pause()); seek(Math.max(0, Math.min(dur() || 0, master.currentTime + n / fps))); icon(); };
+  const master = b && b.tagName === 'VIDEO' ? b : a;
+  const other = master === b && a && a.tagName === 'VIDEO' ? a : null;
+  const itOf = (v) => (v === a ? V.itA : V.itB);
+  const it = itOf(master);
   const audio = () => {
     const want = S.listen === 'a' ? a : S.listen === 'b' ? (b || a) : null;
-    both.forEach((v) => { v.muted = v !== want; });
-    $$('#transport .aud .tb').forEach((x) => x.classList.toggle('on', x.dataset.a === S.listen));
+    for (const v of [a, b]) if (v && v.tagName === 'VIDEO') v.muted = v !== want;
+    for (const x of seg.querySelectorAll('.tb')) x.classList.toggle('on', x.dataset.a === S.listen);
   };
-  const upd = () => {
-    const t = master.currentTime || 0, d = dur();
-    V.t = t;
-    tc.textContent = `${fmtDur(t)} / ${fmtDur(d)} · img ${Math.round(t * fps)}`;
-    if (!scrub.matches(':active')) scrub.value = d ? Math.round((t / d) * 1000) : 0;
-    fill.style.width = (d ? (t / d) * 100 : 0) + '%';
-  };
-  scrub.addEventListener('input', () => { seek((scrub.value / 1000) * (dur() || 0)); upd(); });
-  master.addEventListener('timeupdate', upd);
-  master.addEventListener('loadedmetadata', upd);
-  master.addEventListener('play', icon); master.addEventListener('pause', icon);
-  master.addEventListener('ended', () => { if (!S.loop) both.forEach((v) => v.pause()); icon(); });
-  if (t0) master.addEventListener('loadedmetadata', () => seek(t0), { once: true });
-  // l'autre suit la maîtresse : écart corrigé au-delà de 0,06 s (banc A/B)
-  if (b) syncT = setInterval(() => { if (!playing()) return; if (a.readyState >= 2 && Math.abs(a.currentTime - b.currentTime) > 0.06) a.currentTime = b.currentTime; }, 200);
-  $('#transport').replaceChildren(el('div', { class: 'transport' },
-    playBtn,
-    el('button', { class: 'tb ghost sm', type: 'button', title: 'image précédente (←)', onclick: () => step(-1) }, '‹'),
-    el('button', { class: 'tb ghost sm', type: 'button', title: 'image suivante (→)', onclick: () => step(1) }, '›'),
-    tc,
-    el('div', { class: 'tl grow' }, el('div', { class: 'track' }, fill), scrub),
-    el('button', { class: 'tb sm ' + (S.loop ? 'on' : 'ghost'), type: 'button', title: 'en boucle', onclick: (e) => { S.loop = !S.loop; both.forEach((v) => { v.loop = S.loop; }); e.currentTarget.className = 'tb sm ' + (S.loop ? 'on' : 'ghost'); prefs.set('upscale.loop', S.loop); } }, 'Boucle'),
-    el('div', { class: 'seg aud', role: 'group', 'aria-label': 'le son entendu' }, ...[['a', 'Son A'], ['b', 'B'], ['0', 'muet']].filter(([id]) => b || id !== 'b').map(([id, lab]) => {
-      const x = el('button', { class: 'tb', type: 'button', onclick: () => { S.listen = id; audio(); } }, lab);
-      x.dataset.a = id;
-      return x;
-    }))));
-  both.forEach((v) => { v.loop = S.loop; });
-  audio(); icon(); upd();
-  V.toggle = toggle; V.step = step;
+  const seg = el('div', { class: 'seg aud', role: 'group', 'aria-label': 'le son entendu' }, ...[['a', 'Son A'], ['b', 'B'], ['0', 'muet']].filter(([id]) => b || id !== 'b').map(([id, lab]) => {
+    const x = el('button', { class: 'tb sm', type: 'button', onclick: () => { S.listen = id; audio(); } }, lab);
+    x.dataset.a = id;
+    return x;
+  }));
+  const L = lecteur(it, {
+    clavier: 'page', ecran: false, media: master, suiveurs: other ? [{ el: other, it: itOf(other) }] : [],
+    son: false, outils: [seg], fps: it.fps || curItem()?.fps || 24,
+    boucle: S.loop, onBoucle: (on) => { S.loop = on; prefs.set('upscale.loop', on); },
+    onTemps: (t) => { V.t = t; },
+  });
+  V.lect = L;
+  $('#transport').replaceChildren(L.el);
+  if (t0) master.addEventListener('loadedmetadata', () => { if (V.lect === L) L.seek(t0); }, { once: true });
+  audio();
 }
 
 // ── le clavier ──────────────────────────────────────────────
@@ -735,9 +718,7 @@ document.addEventListener('keydown', (e) => {
   else if (k === '[' && pair) setWipe(S.wipe - 2);
   else if (k === ']' && pair) setWipe(S.wipe + 2);
   else if ((k === 's' || k === 'S') && pair) swap();
-  else if (k === ' ' && V.toggle) { e.preventDefault(); V.toggle(); }
-  else if (k === 'ArrowLeft' && V.step) { e.preventDefault(); V.step(-1); }
-  else if (k === 'ArrowRight' && V.step) { e.preventDefault(); V.step(1); }
+  // Espace, J K L, les flèches, Début, Fin : le lecteur du portail (commun/lecteur.js) les prend
 });
 function swap() { const s = selOf(S.cur); [s.A, s.B] = [s.B, s.A]; s.chosen = true; paintPile(); paintMonitor(); }
 
@@ -814,7 +795,8 @@ async function start() {
   doc.reset();
   $('#rail').addEventListener('focusin', (e) => { if (e.target.matches?.('textarea')) typing++; });
   prefs.on('upscale.view', (v) => { if (v && v !== S.view) setView(v); });
-  prefs.on('upscale.loop', (v) => { S.loop = v !== false; if (curItem()?.kind === 'video') paintMonitor(); });
+  // changée ailleurs (un autre onglet, les Préférences) : le moniteur se refait ; le bouton du lecteur l'a déjà
+  prefs.on('upscale.loop', (v) => { const on = v !== false; if (on === S.loop) return; S.loop = on; if (curItem()?.kind === 'video') paintMonitor(); });
   if (S.cfg.availability_error) toast(`machines : ${S.cfg.availability_error}`, 6000);
 }
 addEventListener('hashchange', async () => {

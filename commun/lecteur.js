@@ -34,17 +34,29 @@
 // en pleine définition, sans saut. Un saut ne s'empile jamais sur un saut en
 // cours (commun/tete.js, `sauter`). `fastSeek` (MDN : « quickly seeks […] with
 // precision tradeoff ») n'est pas dans Chromium, et l'image doit être juste :
-// on ne s'en sert pas.
+// on ne s'en sert pas. La copie et son relais sont communs (commun/defilement.js) :
+// le Montage s'en sert de même pour son programme et sa source.
 //
 //   const L = lecteur(it, { clavier: 'page', sur, onTemps(t, lecture) })
 //   box.append(L.el) ; L.seek(t) ; L.play() ; L.pause() ; L.toggle() ; L.step(n)
 //   L.piste(nœud) ; L.t ; L.duree ; L.etat() ; L.detruire()
+//
+// L'écran de la page (Upscale : ses couches A et B, le rideau, le zoom ; 05/10) :
+//   lecteur(it, { ecran: false, media: <video de la page>, suiveurs: [{ el, it }],
+//                 son: false, outils: [nœuds], boucle, onBoucle(on) })
+// le lecteur n'a alors que sa barre et sa frise ; il pilote `media` (la maîtresse)
+// et ses suiveurs (lecture, arrêt, vitesse, saut, boucle ; un écart de plus de
+// 60 ms est rattrapé, comme le banc A/B) ; la copie de défilement de chacune se
+// pose juste après elle, dans la page (.sr-defil, lecteur.css) ; `son: false` :
+// la page règle le son (ce qu'on écoute) ; `outils` : des nœuds de la page dans
+// la barre.
 
-import { el, href, api } from './shell.js';
+import { el, href } from './shell.js';
 import { tete, poser, suivre, peindreRegle, brancherRegle, sauter, cible, tc } from './tete.js';
 import { brancher } from './molette.js';
 import { permis } from './pleinecran.js';
 import { pickView } from './proxies.js';
+import { copieDefil } from './defilement.js';
 
 if (typeof document !== 'undefined' && !document.querySelector('link[data-sr-lecteur]')) {
   document.head.append(el('link', { rel: 'stylesheet', href: new URL('./lecteur.css', import.meta.url).href, 'data-sr-lecteur': '' }));
@@ -110,29 +122,46 @@ export function petitLecteur(url, { duree = 0, titre = '' } = {}) {
   return el('div', { class: 'sr-mini' }, b, r, t, a);
 }
 
-export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps: fpsDit = null, defilement = true } = {}) {
+export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps: fpsDit = null, defilement = true,
+  ecran: avecEcran = true, media = null, suiveurs = [], son: avecSon = true, outils = [], boucle = false, onBoucle = null } = {}) {
   const kind = it.kind === 'audio' ? 'audio' : 'video';
   const fps = fpsDit || it.fps || 25;
-  const S = { t: 0, lecture: false, rate: 0, rev: 0, pps: 0, fit: true, boucle: false, defile: false, geste: false,
-    nav: null, navEtat: kind === 'video' && defilement ? 'attente' : 'sans', montre: 'source', raf: 0, cale: 0, fini: false };
+  const S = { t: 0, lecture: false, rate: 0, rev: 0, pps: 0, fit: true, boucle: false, defile: false, geste: false, raf: 0, fini: false, sync: 0 };
   const son = lireSon();
 
-  // ── les médias ──
-  const src = el(kind, { class: 'sr-lect-src', preload: 'auto', playsinline: true, draggable: false });
-  src.src = href(it.url);
-  src.volume = Math.max(0, Math.min(1, son.vol));
-  src.muted = !!son.muet;
-  const nav = kind === 'video' ? el('video', { class: 'sr-lect-nav', preload: 'auto', playsinline: true, muted: true, draggable: false }) : null;
-  if (nav) nav.muted = true;
+  // ── les médias : le sien, ou celui de la page (écran de la page) ──
+  const src = media || el(kind, { class: 'sr-lect-src', preload: 'auto', playsinline: true, draggable: false });
+  if (!media) src.src = href(it.url);
+  if (avecSon) {
+    src.volume = Math.max(0, Math.min(1, son.vol));
+    src.muted = !!son.muet;
+  }
+  // la copie de défilement de chaque vidéo (commun/defilement.js) : ce qui se voit pendant qu'on cherche
+  // (appelé plus tard, quand l'une change : C, F et root sont alors posés)
+  const montrer = () => {
+    root.dataset.montre = C.montre;
+    root.classList.toggle('defile', [C, ...F.map((f) => f.C)].some((c) => c.montre === 'nav'));
+  };
+  const C = kind === 'video' ? copieDefil(src, it, { fps, actif: defilement, montrer, onEtat: () => paintDefil() })
+    : { nav: null, etat: 'sans', why: '', montre: 'source', cible: () => cible(src), aller: (t) => sauter(src, t), caler() {}, fin() {}, lire() {}, arret() {}, detruire() {}, debut() {} };
+  const nav = C.nav;
+  if (nav) nav.classList.add('sr-lect-nav');
+  // les suiveurs (le banc A/B) : chacun sa copie, posée après lui
+  const F = (kind === 'video' ? suiveurs : []).filter((f) => f && f.el).map((f) => ({ el: f.el, C: copieDefil(f.el, f.it || {}, { fps, actif: defilement, montrer }) }));
+  if (!avecEcran) {
+    if (nav) src.after(nav);
+    for (const f of F) if (f.C.nav) f.el.after(f.C.nav);
+  }
+  const tous = () => [src, ...F.map((f) => f.el)];
   // l'image d'attente : la copie d'affichage de l'affiche, dans le cadre, le temps que la vidéo arrive
   let attente = null;
-  if (kind === 'video' && (it.view_urls || it.thumb_url)) {
+  if (avecEcran && kind === 'video' && (it.view_urls || it.thumb_url)) {
     const v = pickView(it, 1024);
     if (v && v.url) attente = el('img', { class: 'sr-lect-attente', src: v.url, alt: '', decoding: 'async' });
   }
   const sous = el('div', { class: 'sr-lect-sur' });
   if (sur) sous.append(sur);
-  const ecran = kind === 'video' ? el('div', { class: 'sr-lect-ecran', title: 'clic : lecture · pause · double-clic : plein écran' },
+  const ecran = avecEcran && kind === 'video' ? el('div', { class: 'sr-lect-ecran', title: 'clic : lecture · pause · double-clic : plein écran' },
     attente, src, nav, sous) : null;
 
   // ── la barre ──
@@ -147,7 +176,7 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
   const bFull = el('button', { class: 'tb ghost sm sr-lect-ic', type: 'button' });
   const barre = el('div', { class: 'sr-lect-barre' },
     bLire, el('span', { class: 'timecode sr-lect-tc' }, tcNow, tcDur), etat, el('span', { class: 'sp' }), defil,
-    bBoucle, bSon, vol, bFull);
+    ...outils, bBoucle, avecSon ? bSon : null, avecSon ? vol : null, ecran ? bFull : null);
 
   // ── la frise ──
   const ticks = el('div', { class: 'sr-lect-ticks' });
@@ -166,7 +195,8 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
   const dedans = el('div', { class: 'sr-lect-in' }, regle, bande, ph);
   const defile = el('div', { class: 'sr-lect-defile' }, dedans);
   const frise = el('div', { class: 'sr-lect-frise' }, defile);
-  const root = el('div', { class: `sr-lect ${kind}`, tabindex: '0', 'data-kind': kind, 'aria-label': `lecteur · ${it.title || it.id}` }, ecran, barre, frise);
+  const root = el('div', { class: `sr-lect ${kind}${ecran || kind === 'audio' ? '' : ' sans-ecran'}`, tabindex: '0', 'data-kind': kind,
+    'aria-label': `lecteur · ${it.title || it.id || 'vidéo'}` }, ecran, barre, frise);
 
   // ── le temps ──
   const D = () => (isFinite(src.duration) && src.duration) || it.duration || 0;
@@ -214,33 +244,12 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     peindreRegle(ticks, { pps: S.pps, fps, gauche: defile.scrollLeft, droite: defile.scrollLeft + defile.clientWidth });
   }
 
-  // ── montrer l'une ou l'autre ──
-  function montrer(qui) {
-    if (S.montre === qui) return;
-    S.montre = qui;
-    root.dataset.montre = qui;
-    root.classList.toggle('defile', qui === 'nav');
-  }
-  // l'originale se cale sur la tête ; quand elle MONTRE l'image voulue, elle reprend la place
-  function caler() {
-    clearTimeout(S.cale);
-    const want = viser(S.t);
-    sauter(src, want);
-    if (S.montre !== 'nav') return;
-    const tv = S.t;
-    const rendre = () => { if (!S.geste && !S.lecture && !S.rev && S.t === tv) montrer('source'); };
-    if (src.requestVideoFrameCallback) {
-      const ok = (now, md) => {
-        if (S.t !== tv || S.geste) return;
-        if (Math.abs(md.mediaTime - want) < 0.75 / fps) rendre(); else src.requestVideoFrameCallback(ok);
-      };
-      src.requestVideoFrameCallback(ok);
-    }
-    const vu = () => { if (!src.seeking && Math.abs(src.currentTime - want) < 0.75 / fps) setTimeout(rendre, 80); };
-    src.addEventListener('seeked', vu, { once: true });
-  }
+  // ── la copie de défilement : les relais de la maîtresse et des suiveurs (commun/defilement.js) ──
+  const relais = () => [C, ...F.map((f) => f.C)];
+  const caler = () => relais().forEach((c) => c.caler());
 
   // aller à t (s) : la tête et le timecode tout de suite ; l'image dès qu'elle est décodée
+  // (la copie pendant qu'on cherche, l'originale ensuite)
   function seek(t, { geste = false } = {}) {
     const d = D();
     S.t = Math.max(0, Math.min(d || 0, t));
@@ -248,25 +257,25 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     peindre();
     if (!d) return;
     const want = viser(S.t);
-    if (S.lecture) { sauter(src, want); return; }
-    if (S.nav && S.navEtat === 'pret') {
-      montrer('nav');
-      sauter(S.nav, want);
-      clearTimeout(S.cale);
-      // l'originale se cale quand le geste s'arrête (au lâcher, ou 150 ms sans mouvement)
-      if (!geste) S.cale = setTimeout(caler, 150);
-      return;
+    C.aller(want, { geste });
+    for (const f of F) {
+      const fd = isFinite(f.el.duration) && f.el.duration ? f.el.duration : d;
+      f.C.aller(Math.min(want, Math.max(0, fd - 0.5 / fps)), { geste });
     }
-    sauter(src, want);
   }
 
   // ── la lecture ──
   function boucleRaf() {
     cancelAnimationFrame(S.raf);
     const w = root.ownerDocument.defaultView || window;
-    const f = () => {
+    const f = (now) => {
       if (!S.lecture) return;
       S.t = src.currentTime;
+      // les suiveurs suivent la maîtresse : un écart de plus de 60 ms est rattrapé (5 fois par seconde, le banc A/B)
+      if (F.length && now - S.sync > 200) {
+        S.sync = now;
+        for (const x of F) if (x.el.readyState >= 2 && !x.el.seeking && Math.abs(x.el.currentTime - src.currentTime) > 0.06) sauter(x.el, src.currentTime);
+      }
       peindre();
       S.raf = w.requestAnimationFrame(f);
     };
@@ -280,7 +289,8 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     S.rate = rate;
     if (rate < 0) {
       // en arrière : des sauts à 30 par seconde (le lecteur n'a pas de lecture à rebours), sur la copie
-      if (!src.paused) src.pause();
+      for (const m of tous()) if (!m.paused) m.pause();
+      relais().forEach((c) => c.arret());
       S.lecture = false;
       S.rev = setInterval(() => {
         const t = S.t + rate / 30;
@@ -292,13 +302,15 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     }
     if (S.t >= d - 1 / fps) S.t = 0;
     const want = viser(S.t);
-    if (Math.abs(cible(src) - want) > 0.5 / fps) sauter(src, want);
-    src.playbackRate = Math.max(0.0625, Math.min(16, rate));
+    for (const m of tous()) {
+      if (Math.abs(cible(m) - want) > 0.5 / fps) sauter(m, want);
+      m.playbackRate = Math.max(0.0625, Math.min(16, rate));
+    }
     S.lecture = true;
     src.play().catch(() => { S.lecture = false; peindre(); });
+    for (const f of F) f.el.play().catch(() => {});
     // la copie reste devant tant que l'originale n'a pas montré une image
-    if (S.montre === 'nav' && src.requestVideoFrameCallback) src.requestVideoFrameCallback(() => { if (S.lecture) montrer('source'); });
-    else montrer('source');
+    relais().forEach((c) => c.lire());
     boucleRaf();
     peindre();
   }
@@ -306,7 +318,8 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     const wasRev = !!S.rev;
     stopArriere();
     S.rate = 0;
-    if (S.lecture) { S.lecture = false; src.pause(); S.t = imageDe(src.currentTime) / fps; }
+    if (S.lecture) { S.lecture = false; for (const m of tous()) m.pause(); S.t = imageDe(src.currentTime) / fps; }
+    relais().forEach((c) => c.arret());
     cancelAnimationFrame(S.raf);
     if (wasRev) caler();
     peindre();
@@ -323,35 +336,31 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
 
   src.addEventListener('loadedmetadata', () => mesurer());
   src.addEventListener('loadeddata', () => { if (attente) { attente.remove(); attente = null; } root.classList.add('pret'); });
-  src.addEventListener('pause', () => { if (S.lecture) { S.lecture = false; S.t = src.currentTime; cancelAnimationFrame(S.raf); peindre(); } });
-  src.addEventListener('ended', () => { S.lecture = false; S.t = D(); S.fini = true; cancelAnimationFrame(S.raf); peindre(); });
+  src.addEventListener('pause', () => {
+    if (!S.lecture) return;
+    S.lecture = false; S.t = src.currentTime; cancelAnimationFrame(S.raf);
+    for (const f of F) f.el.pause();
+    relais().forEach((c) => c.arret());
+    peindre();
+  });
+  src.addEventListener('ended', () => {
+    S.lecture = false; S.t = D(); S.fini = true; cancelAnimationFrame(S.raf);
+    for (const f of F) f.el.pause();
+    relais().forEach((c) => c.arret());
+    peindre();
+  });
   src.addEventListener('error', () => { etat.textContent = 'illisible'; root.classList.add('erreur'); });
 
-  // ── la copie de défilement ──
+  // ── la copie de défilement : ce que la barre en dit (celle de la maîtresse) ──
   function paintDefil() {
     const m = { pret: ['défilement fluide', 'la copie de défilement est prête : l’image suit la tête'],
       calcul: ['copie en calcul', 'la copie de défilement se calcule (quelques secondes) : en attendant, l’image suit plus lentement'],
-      refus: ['défilement direct', S.navWhy || 'pas de copie de défilement : l’image suit la vidéo elle-même'],
-      attente: ['', ''], sans: ['', ''] }[S.navEtat] || ['', ''];
+      refus: ['défilement direct', C.why || 'pas de copie de défilement : l’image suit la vidéo elle-même'],
+      attente: ['', ''], sans: ['', ''] }[C.etat] || ['', ''];
     defil.textContent = m[0];
     defil.title = m[1];
-    root.dataset.copie = S.navEtat;
-    defil.classList.toggle('ok', S.navEtat === 'pret');
-  }
-  async function chercherCopie(n = 0) {
-    if (!nav || S.mort) return;
-    try {
-      const r = await api('defil/' + encodeURIComponent(it.id));
-      if (S.mort) return;
-      if (r.ready) {
-        nav.addEventListener('loadeddata', () => { S.nav = nav; S.navEtat = 'pret'; paintDefil(); }, { once: true });
-        nav.addEventListener('error', () => { S.nav = null; S.navEtat = 'refus'; S.navWhy = 'la copie de défilement ne se lit pas : l’image suit la vidéo elle-même'; paintDefil(); }, { once: true });
-        nav.src = href(r.url);
-        S.navEtat = 'calcul';
-      } else if (r.pending && n < 90) { S.navEtat = 'calcul'; setTimeout(() => { if (root.isConnected) chercherCopie(n + 1); }, 1500); }
-      else { S.navEtat = 'refus'; S.navWhy = r.why; }
-    } catch (e) { S.navEtat = 'refus'; S.navWhy = e.message; }
-    paintDefil();
+    root.dataset.copie = C.etat;
+    defil.classList.toggle('ok', C.etat === 'pret');
   }
 
   // ── les gestes ──
@@ -362,11 +371,10 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
   brancherRegle(dedans, {
     avant: () => { root.focus({ preventScroll: true }); return !!D(); },
     temps: tempsA,
-    debut: () => { S.geste = true; if (S.lecture) pause(); stopArriere(); },
+    debut: () => { S.geste = true; if (S.lecture) pause(); stopArriere(); relais().forEach((c) => c.debut()); },
     aller: (t) => seek(t, { geste: true }),
-    // au lâcher, l'originale se cale un peu après : la copie décode d'abord l'image voulue, sans
-    // partager le processeur avec l'originale (mesuré : un clic, 50 → 15 ms sur une vidéo à une clé)
-    fin: () => { S.geste = false; if (S.montre === 'nav') { clearTimeout(S.cale); S.cale = setTimeout(caler, 120); } },
+    // au lâcher, l'originale se cale un peu après (commun/defilement.js, `fin`)
+    fin: () => { S.geste = false; relais().forEach((c) => c.fin()); },
   });
   brancher(frise, { zoom: (f, x) => zoomer(f, x), scroller: defile });
   defile.addEventListener('scroll', () => peindreRegle(ticks, { pps: pps(), fps, gauche: defile.scrollLeft, droite: defile.scrollLeft + defile.clientWidth }));
@@ -375,11 +383,14 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     ecran.addEventListener('dblclick', (e) => { e.preventDefault(); plein(); });
   }
   bLire.addEventListener('click', toggle);
-  bBoucle.addEventListener('click', () => {
-    S.boucle = !S.boucle; src.loop = S.boucle;
+  const poserBoucle = (on) => {
+    S.boucle = !!on;
+    for (const m of tous()) m.loop = S.boucle;
     bBoucle.classList.toggle('on', S.boucle); bBoucle.classList.toggle('ghost', !S.boucle);
     bBoucle.setAttribute('aria-pressed', String(S.boucle));
-  });
+  };
+  bBoucle.addEventListener('click', () => { poserBoucle(!S.boucle); if (onBoucle) onBoucle(S.boucle); });
+  if (boucle) poserBoucle(true);
   const paintSon = () => {
     bSon.innerHTML = src.muted || src.volume === 0 ? ICON.muet : ICON.son;
     bSon.title = src.muted ? 'rendre le son' : 'couper le son';
@@ -448,19 +459,20 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
   ro.observe(defile);
 
   function detruire() {
-    S.mort = true;
-    stopArriere(); cancelAnimationFrame(S.raf); clearTimeout(S.cale);
-    try { src.pause(); } catch { /* */ }
+    stopArriere(); cancelAnimationFrame(S.raf);
+    for (const m of tous()) { try { m.pause(); } catch { /* */ } }
+    relais().forEach((c) => c.detruire());
     doc.removeEventListener('keydown', onKey);
     doc.removeEventListener('fullscreenchange', onFull);
     doc.removeEventListener('keydown', onEsc, true);
     ro.disconnect();
-    for (const m of [src, nav]) if (m) { m.removeAttribute('src'); try { m.load(); } catch { /* */ } }
+    // le média de la page reste à la page ; le sien se vide
+    if (!media) { src.removeAttribute('src'); try { src.load(); } catch { /* */ } }
   }
 
   paintSon(); paintFull(); paintDefil(); peindre();
-  root.dataset.montre = S.montre;
-  if (nav) chercherCopie();
+  root.dataset.montre = C.montre;
+  if (media && media.readyState >= 1) requestAnimationFrame(mesurer);
 
   const L = {
     el: root, media: src, fps, kind,
@@ -472,7 +484,8 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     // de la durée (la largeur de la frise = durée × zoom : ils suivent le zoom d'eux-mêmes)
     piste(node) { node.classList.add('sr-lect-piste'); dedans.insertBefore(node, ph); mesurer(); return node; },
     xDe, pps,
-    etat: () => ({ t: S.t, montre: S.montre, copie: S.navEtat, src: src.currentTime, nav: nav ? nav.currentTime : null, pps: S.pps, lecture: S.lecture, rev: !!S.rev, rate: S.rate }),
+    etat: () => ({ t: S.t, montre: C.montre, copie: C.etat, src: src.currentTime, nav: nav ? nav.currentTime : null, pps: S.pps, lecture: S.lecture, rev: !!S.rev, rate: S.rate,
+      suiveurs: F.map((f) => ({ t: f.el.currentTime, montre: f.C.montre, copie: f.C.etat })) }),
   };
   root.srLecteur = L;       // pour les pilotes (Chromium sans affichage) : l'état, sans toucher à rien
   return L;

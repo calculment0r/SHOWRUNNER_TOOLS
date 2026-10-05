@@ -17,7 +17,7 @@
 // la piste cible du montage ouvert (le dernier ouvert, sinon un nouveau).
 
 import { mountHeader, api, jobs, el, toast, href, uploadFile, dropAnywhere, dropZone, dragItem, ITEM_MIME, fmtDate, stateFr, dock, declareZone,
-  session, espace, avecEspace, espaceDocument, surEspace } from '../commun/shell.js';
+  session, espace, avecEspace, espaceDocument, surEspace, sorteEffective } from '../commun/shell.js';
 // $ et $$ cherchent aussi dans les fenêtres détachées (un panneau sur un 2ᵉ écran : docs/etudes/fenetres.md)
 import { fenetres, $, $$, winOf } from '../commun/fenetre.js';
 import { menu, contextMenu, pageMenu } from '../commun/menu.js';
@@ -477,10 +477,13 @@ function pushLibUndo(label, undoFn, redoFn) {
 }
 
 // ce qu'on glisse depuis cette page : sa longueur sur la timeline, d'où il part
+// (un élément versionné : sa dernière version, sa sorte et sa durée — server/core/library.py, public)
 function markDrag(it, tin, tout, from, ids = null) {
-  const frames = it.kind === 'image' ? Math.round(S.p ? S.p.settings.still * fps() : 125)
-    : Math.max(1, Math.round(((tout || it.duration || 5) - (tin || 0)) * (S.p ? fps() : 25)));
-  S.dragging = { id: it.id, kind: it.kind, frames, from, ids };
+  const kind = sorteEffective(it);
+  const dur = it.kind === 'element' ? it.element?.head_duration : it.duration;
+  const frames = kind === 'image' ? Math.round(S.p ? S.p.settings.still * fps() : 125)
+    : Math.max(1, Math.round(((tout || dur || 5) - (tin || 0)) * (S.p ? fps() : 25)));
+  S.dragging = { id: it.id, kind, frames, from, ids };
 }
 
 // la source se glisse avec ses points d'entrée et de sortie (même type que dragItem)
@@ -581,6 +584,7 @@ function closeAll() {
   paintBin();
 }
 async function newSequenceFrom(it) {
+  if (it?.kind === 'element') it = await headOf(it);   // un élément versionné : sa dernière version
   if (!it || !['video', 'image', 'audio'].includes(it.kind)) return toast('une séquence se fait à partir d’une vidéo, d’une image ou d’un son');
   try {
     const p = await api('montage/projects', { method: 'POST', body: { from_item: it.id, bin: project.state.tab || '' } });
@@ -861,6 +865,14 @@ function srcTab(which) {
 }
 
 function openSource(it, marks, { show = true } = {}) {
+  // un élément versionné (le Projet, le panneau Asset) : sa dernière version
+  if (it?.kind === 'element') {
+    headOf(it).then((v) => {
+      if (v && ['video', 'image', 'audio'].includes(v.kind)) openSource(v, marks, { show });
+      else toast(v && v.kind !== 'element' ? 'seulement une vidéo, une image ou un son' : `« ${it.title || it.id} » n’a pas encore de version prête`);
+    });
+    return;
+  }
   S.items.set(it.id, it);
   if (show && S.srcTab !== 'src') srcTab('src');
   source.load(it, marks || undefined);
@@ -908,7 +920,7 @@ function fromSource(mode) {
 }
 function fromBin(it, mode) {
   if (!S.p) return toast('ouvrez d’abord un montage');
-  placeItem({ id: it.id, in: 0, out: it.duration || 0 }, it.kind === 'audio' ? S.target.audio : S.target.video, program.frame(), mode);
+  placeItem({ id: it.id, in: 0, out: it.duration || 0 }, sorteEffective(it) === 'audio' ? S.target.audio : S.target.video, program.frame(), mode);
 }
 
 // ── poser un objet sur la timeline ──────────────────────────
@@ -952,12 +964,13 @@ async function appendItem(id, marks = {}) {
   await ensureItems([id]);
   const it = itemOf(id);
   if (!it) return toast('objet introuvable : ' + id);
-  const tid = it.kind === 'audio' ? S.target.audio : S.target.video;
+  const tid = sorteEffective(it) === 'audio' ? S.target.audio : S.target.video;   // un élément : la sorte de sa dernière version
   const end = M.trackClips(S.p, tid).reduce((m, c) => Math.max(m, M.clipEnd(c)), 0);
   const c = await placeItem({ id, in: marks.in || 0, out: marks.out || it.duration || 0 }, tid, end);
   if (c) {
     program.seekFrame(c.start);
-    if (!source.item || source.item.id !== it.id) openSource(it, null, { show: false });
+    const v = itemOf(c.item) || it;            // un élément : la version posée
+    if (!source.item || source.item.id !== v.id) openSource(v, null, { show: false });
   }
 }
 
@@ -1013,7 +1026,8 @@ function focus(which) {
 }
 
 // ── éléments : la pastille « vN+1 » des plans qui posent une version (montage/elements.js, 30/09) ──
-const EL = createElements({ getP: () => S.p, commit, ensureItems, itemOf, rerender: () => { timeline.render(); } });
+// le journal des éléments a bougé (une version publiée ailleurs) : le Projet relit la dernière version de ses éléments
+const EL = createElements({ getP: () => S.p, commit, ensureItems, itemOf, rerender: () => { timeline.render(); }, changes: () => loadBin() });
 
 // ── la timeline ─────────────────────────────────────────────
 const timeline = new Timeline($('#tl'), {
@@ -1033,6 +1047,7 @@ const timeline = new Timeline($('#tl'), {
   select,
   focus,
   seekFrame: (f) => program.seekFrame(f),
+  scrub: (on) => program.scrub(on),            // la tête glissée sur la règle : la copie de défilement (player.js)
   cut,
   trackFor: (tid, kind) => trackFor(tid, kind),
   placeItem,
@@ -2484,8 +2499,8 @@ function wire() {
   $('#s-out').onclick = () => source.markOut();
   $('#s-insert').onclick = () => fromSource('insert');
   $('#s-over').onclick = () => fromSource('overwrite');
-  scrubber($('#src-scrub'), (u) => source.seek(u * source.duration));
-  scrubber($('#prg-scrub'), (u) => program.seek(u * program.duration()));
+  scrubber($('#src-scrub'), (u) => source.seek(u * source.duration), (on) => source.scrub(on));
+  scrubber($('#prg-scrub'), (u) => program.seek(u * program.duration()), (on) => program.scrub(on));
   $('#src-screen').addEventListener('dragstart', (e) => {
     const it = source.item;
     if (!it) { e.preventDefault(); return; }
@@ -2534,19 +2549,26 @@ function wire() {
   addEventListener('hashchange', () => { const id = location.hash.slice(1); if (id && (!S.p || S.p.id !== id)) openProject(id).catch((er) => toast(er.message)); });
 }
 
-function scrubber(bar, go) {
+// la barre sous un moniteur : cliquer, glisser = la tête ; `geste(on)` : le geste commence, finit
+// (pendant, la copie de défilement reste devant : player.js)
+function scrubber(bar, go, geste = () => {}) {
   bar.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     const a = document.activeElement;
     if (a && a !== document.body && a.blur) a.blur();
     const r = bar.getBoundingClientRect();
     const at = (ev) => go(Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)));
+    geste(true);
     at(e);
     try { bar.setPointerCapture(e.pointerId); } catch { /* */ }
     const mv = (ev) => at(ev);
-    const up = () => { bar.removeEventListener('pointermove', mv); bar.removeEventListener('pointerup', up); };
+    const up = () => {
+      bar.removeEventListener('pointermove', mv); bar.removeEventListener('pointerup', up); bar.removeEventListener('pointercancel', up);
+      geste(false);
+    };
     bar.addEventListener('pointermove', mv);
     bar.addEventListener('pointerup', up);
+    bar.addEventListener('pointercancel', up);
   });
 }
 
@@ -2590,6 +2612,7 @@ function suivrePanneau() {
 function branchePanneau() {
   dock.configure({
     kinds: PANNEAU_KINDS,
+    label: 'la séquence',                        // « filtres de : la séquence » ; une piste choisie dit les siens (suivrePanneau)
     dockMin: PANNEAU_GARDE,
     placeLabel: 'Poser à la tête de lecture',
     hint: 'glisser sur la timeline, le programme ou le Projet · double-clic : à la tête de lecture',

@@ -35,8 +35,16 @@
 //     les retirer aussi de la séquence ouverte).
 // Glisser vers la timeline, la source ou une autre page : le glisser-déposer
 // HTML du portail (ITEM_MIME), plusieurs objets sous MULTI_MIME.
+//
+// Les éléments versionnés (05/10, docs/etudes/apps_studio_elements.md) : un
+// élément dont les versions sont des médias entre lui-même au Projet
+// (server/tools/montage_projet.py) ; sa ligne montre sa dernière version (son
+// image, sa durée, sa sorte : une chanson d'ODIO est un son) et la pastille
+// « ◆ vN » des plans (elements.js) ; le poser, l'ouvrir dans la source, en faire
+// une séquence prennent sa dernière version (montage.js : placeItem,
+// openSource). La version d'un élément montre aussi sa pastille (« v1 → v2 »).
 
-import { api, el, toast, href, ITEM_MIME, kindMark } from '../commun/shell.js';
+import { api, el, toast, href, ITEM_MIME, kindMark, sorteEffective, etypeFr, kindFr } from '../commun/shell.js';
 // le panneau peut être dans sa fenêtre (un 2ᵉ écran) : $ y cherche aussi, partout y écoute aussi
 import { $, $$, partout } from '../commun/fenetre.js';
 import { contextMenu } from '../commun/menu.js';
@@ -50,6 +58,27 @@ const cleanFolder = (s) => ' '.concat(s || '').split(/\s+/).filter(Boolean).join
 const SPRING_MS = 700;    // le délai du Finder se règle (Apple ne donne pas sa valeur par défaut) : le nôtre
 
 const SEQ_ICON = '<svg viewBox="0 0 24 24"><path d="M3 6h18v12H3zM3 10h18M3 14h18M8 6v4M14 10v4M11 14v4"/></svg>';
+
+// un élément versionné : ce qu'il vaut ici, sa dernière version (la sorte, la durée), et les objets de ses versions
+const isEl = (it) => it.kind === 'element';
+const dureeDe = (it) => (isEl(it) ? it.element?.head_duration : it.duration) || 0;
+const versionsDe = (it) => (isEl(it) ? (it.element?.versions || []).map((v) => v.item).filter(Boolean) : []);
+// la pastille de version, celle des plans (elements.js, .elb) : l'élément dit sa dernière ; la version d'un
+// élément dit son numéro, et « → vM » (filet orange) quand une plus récente existe
+function pastille(it) {
+  if (isEl(it)) {
+    const e = it.element || {};
+    const t = e.head ? `la dernière version : v${e.head}${e.count > 1 ? ` (${e.count} versions)` : ''} — poser l’élément pose celle-là`
+      : 'pas encore de version prête : publie la v1 depuis sa source';
+    return el('span', { class: 'elb' + (e.head ? '' : ' gone'), title: t }, el('i', { 'aria-hidden': 'true' }, '◆'), e.head ? `v${e.head}` : 'v—');
+  }
+  const v = it.version;
+  if (!v || !v.of) return null;
+  const newer = v.head && v.head !== v.n;
+  const t = !v.of_present ? 'l’élément de cette version est à la corbeille'
+    : newer ? `v${v.n} de « ${v.of_title} » · la v${v.head} existe (le Projet garde cette version-ci)` : `v${v.n} de « ${v.of_title} » · la dernière`;
+  return el('span', { class: 'elb' + (newer ? ' new' : '') + (v.of_present ? '' : ' gone'), title: t }, el('i', { 'aria-hidden': 'true' }, '◆'), newer ? `v${v.n} → v${v.head}` : `v${v.n}`);
+}
 
 export function mountProject(app) {
   const root = app.root;
@@ -68,7 +97,7 @@ export function mountProject(app) {
   let loadT = 0;
   function filter() {
     const q = P.q.trim().toLowerCase();
-    P.all = P.every.filter((it) => (!P.kind || it.kind === P.kind)
+    P.all = P.every.filter((it) => (!P.kind || sorteEffective(it) === P.kind)
       && (!q || `${it.title || ''} ${it.prompt || ''} ${(it.tags || []).join(' ')}`.toLowerCase().includes(q)));
   }
   async function load() {
@@ -91,11 +120,15 @@ export function mountProject(app) {
   function sorted(items) {
     const s = P.sort;
     if (s === 'name') return [...items].sort((a, b) => (a.title || '').localeCompare(b.title || '', 'fr'));
-    if (s === 'duration') return [...items].sort((a, b) => (b.duration || 0) - (a.duration || 0));
-    if (s === 'kind') return [...items].sort((a, b) => a.kind.localeCompare(b.kind) || (a.title || '').localeCompare(b.title || '', 'fr'));
+    if (s === 'duration') return [...items].sort((a, b) => dureeDe(b) - dureeDe(a));
+    if (s === 'kind') return [...items].sort((a, b) => sorteEffective(a).localeCompare(sorteEffective(b)) || (a.title || '').localeCompare(b.title || '', 'fr'));
     return items;
   }
   function meta(it) {
+    if (isEl(it)) {
+      const e = it.element || {};
+      return [etypeFr(e.type), e.head ? '' : 'sans version', e.head_duration ? short(e.head_duration) : '', e.head_kind ? kindFr(e.head_kind) : ''].filter(Boolean).join(' · ');
+    }
     if (it.kind === 'sequence') return ['séquence', it.width && it.height ? `${it.width}×${it.height}` : '', it.fps ? `${it.fps} i/s` : '', short(it.duration)].filter(Boolean).join(' · ');
     const bits = [];
     if (it.duration) bits.push(short(it.duration));
@@ -219,8 +252,10 @@ export function mountProject(app) {
     const one = items.length === 1;
     const who = one ? `« ${items[0].title || items[0].id} »` : `${items.length} objets`;
     const openId = app.openSequenceId();
-    const clips = app.clipsUsing(ids);
-    const others = P.every.filter((s) => s.kind === 'sequence' && s.id !== openId && !ids.includes(s.id) && (s.parents || []).some((x) => ids.includes(x)));
+    // ce qui est posé : l'objet, ou les versions d'un élément
+    const poses = [...new Set(items.flatMap((it) => [it.id, ...versionsDe(it)]))];
+    const clips = app.clipsUsing(poses);
+    const others = P.every.filter((s) => s.kind === 'sequence' && s.id !== openId && !ids.includes(s.id) && (s.parents || []).some((x) => poses.includes(x)));
     const elsewhere = others.length ? `${one ? 'Il est' : 'Ils sont'} aussi ${one ? 'posé' : 'posés'} dans ${others.length > 1 ? 'les séquences' : 'la séquence'} ${others.map((s) => `« ${s.title} »`).join(', ')} : ${others.length > 1 ? 'leurs' : 'ses'} plans y restent.` : '';
     let strip = false;
     const keep = `${one ? 'Il reste' : 'Ils restent'} dans la bibliothèque (Asset, le panneau Asset) : rien n’est supprimé.`;
@@ -236,7 +271,7 @@ export function mountProject(app) {
     }
     let r;
     try { r = await api('montage/bin/remove', { method: 'POST', body: { ids } }); } catch (e) { toast(e.message); return; }
-    const cut = strip ? app.stripClips(ids) : null;
+    const cut = strip ? app.stripClips(poses) : null;
     for (const it of items) if (it.kind === 'sequence') app.closeSequence(it.id);
     app.pushUndo(`retirer du projet ${who}`,
       async () => { if (cut) cut.undo(); await restoreBin(r.before); await load(); },
@@ -320,17 +355,20 @@ export function mountProject(app) {
   function itemRow(it, used, cur, open) {
     const renaming = P.renaming && P.renaming.type === 'item' && P.renaming.id === it.id;
     const seq = it.kind === 'sequence';
-    const row = el('div', { class: 'bi' + (seq ? ' seq' : '') + (it.id === cur || it.id === open ? ' cur' : '') + (P.sel.has(it.id) ? ' on' : ''), 'data-id': it.id,
+    // un élément : employé, ou dans la source, par l'une de ses versions
+    const siens = [it.id, ...versionsDe(it)];
+    const row = el('div', { class: 'bi' + (seq ? ' seq' : '') + (isEl(it) ? ' el' : '') + (siens.includes(cur) || it.id === open ? ' cur' : '') + (P.sel.has(it.id) ? ' on' : ''), 'data-id': it.id,
       title: `${it.title}\n${meta(it)}${P.q && it.bin ? '\ndossier : ' + it.bin : ''}`,
       // clic : chargé dans la source sans quitter l'onglet Effets ; double-clic : l'onglet Source
       onclick: (e) => { if (e.target.closest('input')) return; selectRow(it.id, e); if (!seq && !e.shiftKey && !e.ctrlKey && !e.metaKey) app.openSource(it, { show: false }); },
       ondblclick: (e) => { if (e.target.closest('input')) return; if (seq) app.openSequence(it.id); else app.openSource(it); } },
-    el('span', { class: 'th' + (it.kind === 'audio' ? ' audio' : '') + (seq ? ' seqth' : ''), style: it.thumb_url ? { backgroundImage: `url("${href(it.thumb_url)}")` } : null, html: seq && !it.thumb_url ? SEQ_ICON : null },
-      // une séquence porte la marque commune dans le coin (on ne la confond plus avec le clip de même première image)
-      seq ? kindMark(it, { compact: true }) : null),
+    el('span', { class: 'th' + (sorteEffective(it) === 'audio' ? ' audio' : '') + (seq ? ' seqth' : ''), style: it.thumb_url ? { backgroundImage: `url("${href(it.thumb_url)}")` } : null, html: seq && !it.thumb_url ? SEQ_ICON : null },
+      // une séquence, un élément portent la marque commune dans le coin (on ne les confond plus avec le clip de même image)
+      seq || isEl(it) ? kindMark(it, { compact: true }) : null),
     el('span', { class: 'tx' }, renaming ? renameField(it.title || '', (v) => renameItem(it, v)) : el('b', {}, seq ? el('i', { class: 'sq', html: SEQ_ICON }) : null, it.title || it.id),
       el('small', {}, P.q && it.bin ? `${it.bin} · ${meta(it)}` : meta(it))),
-    used.has(it.id) ? el('span', { class: 'used', title: 'employé dans la séquence ouverte' }) : null);
+    pastille(it),
+    siens.some((x) => used.has(x)) ? el('span', { class: 'used', title: 'employé dans la séquence ouverte' }) : null);
     if (!renaming) {
       row.draggable = true;
       row.addEventListener('dragstart', (e) => {
@@ -482,7 +520,7 @@ export function mountProject(app) {
   $('#bin-q', root).addEventListener('input', (e) => { clearTimeout(qT); qT = setTimeout(() => { P.q = e.target.value; filter(); paint(); }, 160); });
   $('#bin-new', root).onclick = () => askFolder(selectedIds());
   $('#bin-newseq', root).onclick = () => {
-    const ids = selectedIds().filter((id) => ['video', 'image', 'audio'].includes((byId(id) || {}).kind));
+    const ids = selectedIds().filter((id) => ['video', 'image', 'audio'].includes(sorteEffective(byId(id) || {})));
     if (ids.length === 1) return app.newSequenceFrom(byId(ids[0]));
     return app.newSequence(P.tab);
   };

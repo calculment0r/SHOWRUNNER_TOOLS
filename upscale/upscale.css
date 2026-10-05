@@ -103,7 +103,8 @@ details.adv > summary .r {
 .vtools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 32px; }
 .vtools .sp { flex: 1; }
 .vtools .zoom { min-width: 64px; font-family: var(--f-mono); letter-spacing: .08em; }
-.monitor.upm { aspect-ratio: auto; height: calc(100 * var(--vh) - 250px); min-height: 360px; touch-action: none; outline-offset: -2px; }
+/* la hauteur : la page moins l'en-tête, les outils du moniteur et le lecteur (sa barre, sa frise) */
+.monitor.upm { aspect-ratio: auto; height: calc(100 * var(--vh) - 320px); min-height: 360px; touch-action: none; outline-offset: -2px; }
 .monitor.upm.empty { display: flex; align-items: center; justify-content: center; }
 .monitor.upm .empty { position: static; }
 .monitor.upm .empty .row { display: flex; gap: 8px; }
@@ -119,10 +120,10 @@ details.adv > summary .r {
 .upm.mode-side .layer.b { box-shadow: inset 1px 0 0 var(--line); }
 .upm.mode-a .tag.b, .upm.mode-b .tag.a { display: none; }
 .upm .tag span { max-width: 40ch; }
+/* la copie de défilement d'une vidéo (commun/defilement.js) : dans sa couche, par-dessus l'originale */
+.upm .zs > .sr-defil { position: absolute; inset: 0; }
+/* le lecteur du portail sous le moniteur (commun/lecteur.js, sans son écran) */
 #transport:empty { display: none; }
-#transport .transport { gap: 8px; }
-#transport .tl.grow { flex: 1; min-width: 160px; }
-#transport .timecode { font-size: 12px; min-width: 150px; }
 #transport .seg.aud .tb { text-transform: none; letter-spacing: .04em; }
 
 /* ── la pile ────────────────────────────────────────────── */

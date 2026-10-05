@@ -249,6 +249,19 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .prg-foot .prg-dur { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .prg-foot .transport-mini { justify-content: center; }
 .prg-foot .prg-fmt { justify-self: end; white-space: nowrap; }
+/* Le pied du programme répond à la place du PANNEAU, pas de la page ni de la fenêtre : le panneau
+   Asset ouvert, les séparateurs, une fenêtre détachée le rétrécissent (la durée chevauchait la
+   lecture, panneau Asset ouvert sur 1600 px). Le format se lit aussi dans l'inspecteur (Sortie). */
+.mon.prg { container: prg / inline-size; }
+@container prg (max-width: 540px) {
+  .mon-foot.prg-foot { grid-template-columns: auto 1fr; }
+  .prg-foot .prg-fmt { display: none; }
+  .prg-foot .transport-mini { justify-content: flex-end; }
+}
+@container prg (max-width: 380px) {
+  .prg-foot .prg-dur .lbl { display: none; }
+  .prg-foot .pb.play { width: 76px; }
+}
 
 /* l'inspecteur : son en-tête (le bouton qui le détache), puis ses cartes */
 .mtg .inspw { background: transparent; gap: 6px; overflow: visible; }
@@ -413,13 +426,8 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 .tl-ruler .tl-hd { z-index: 11; }
 .tl-marks { position: relative; flex: none; height: 100%; overflow: hidden; }
 .tl-ticks, .tl-mlayer { position: absolute; inset: 0; }
+/* les graduations (.sr-mk) et la tête de lecture (.sr-ph) : commun/tete.css, communes à toutes les timelines */
 .tl-mlayer { pointer-events: none; }
-.tl-marks .mk {
-  position: absolute; top: 0; bottom: 0; padding-left: 5px; display: flex; align-items: center;
-  font-family: var(--f-mono); font-size: 8px; letter-spacing: .06em; color: var(--ink3);
-  box-shadow: inset 1px 0 0 var(--line); white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums;
-}
-.tl-marks .mk.sub { top: 16px; box-shadow: inset 1px 0 0 var(--line); }
 /* la plage entrée → sortie de séquence, et les marques (vertes, comme dans Premiere) */
 .tl-rng { position: absolute; top: 0; height: 6px; background: var(--cy-bg); box-shadow: inset 0 -2px 0 var(--line-cy); }
 .tl-io { position: absolute; top: 0; width: 6px; height: 24px; box-shadow: inset 2px 0 0 var(--cy); }
@@ -471,16 +479,19 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 }
 /* éléments (30/09) : la pastille de version d'un plan, en bas à droite ; un filet orange quand une plus
    récente existe (jamais pleine : le seul orange plein de l'écran reste l'action, règle 4) */
-.clip .elb {
-  position: absolute; right: 12px; top: 2px; z-index: 5; display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px;
+.clip .elb, .bi .elb {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px;
   border-radius: 2px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
   font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink2); cursor: pointer; white-space: nowrap;
 }
-.clip .elb i { font-style: normal; font-size: 7px; color: var(--ink3); }
+.clip .elb { position: absolute; right: 12px; top: 2px; z-index: 5; }
+/* la même pastille au bout d'une ligne du Projet (projet.js) : un élément, la version d'un élément */
+.bi .elb { flex: none; margin-right: 6px; cursor: inherit; }
+.clip .elb i, .bi .elb i { font-style: normal; font-size: 7px; color: var(--ink3); }
 .clip .elb:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
-.clip .elb.new { color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }
-.clip .elb.new i { color: var(--or); }
-.clip .elb.gone { color: var(--amb); box-shadow: inset 0 0 0 1px var(--line-amb); }
+.clip .elb.new, .bi .elb.new { color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }
+.clip .elb.new i, .bi .elb.new i { color: var(--or); }
+.clip .elb.gone, .bi .elb.gone { color: var(--amb); box-shadow: inset 0 0 0 1px var(--line-amb); }
 /* l'onde d'un plan son : un canvas dessiné à la résolution de l'écran (commun/onde.js) ;
    sa couleur est un jeton (le canvas la lit dans « color ») */
 .clip .wave {
@@ -555,8 +566,6 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
   font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--or);
   display: flex; align-items: center; padding: 0 6px; pointer-events: none; z-index: 5; white-space: nowrap; overflow: hidden;
 }
-.tl-ph { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; background: var(--or); pointer-events: none; z-index: 9; }
-.tl-ph i { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 11px; height: 11px; border-radius: 0 0 4px 4px; background: var(--or); }
 .tl-snap { position: absolute; top: 0; bottom: 0; left: 0; width: 1px; background: var(--cy); pointer-events: none; z-index: 9; }
 .tl-tip {
   position: absolute; z-index: 20; pointer-events: none; padding: 4px 8px; border-radius: var(--r1);

@@ -18,9 +18,14 @@ Workspace) : `<data_dir>/montage/projet/<workspace>.json`
     {"space": …, "rev": n, "seeded": date,
      "items": {"<id>": {"folder": "Rushes", "added": date, "by": uid}}}
 
-- On y met des **objets de la bibliothèque** (séquence, vidéo, image, son) ;
-  un élément versionné y entre par sa dernière version (la règle du Montage :
-  « glisser un élément pose sa dernière version », elements.js).
+- On y met des **objets de la bibliothèque** (séquence, vidéo, image, son) et
+  des **éléments versionnés** dont les versions sont des médias (une chanson
+  d'ODIO, un plan rendu… ; 05/10, docs/etudes/apps_studio_elements.md § « Ce
+  qui reste ») : l'élément y entre lui-même, et le Projet montre sa dernière
+  version (son image, sa durée, la pastille « vN », comme Asset) ; le poser
+  pose sa dernière version (la règle du Montage : « glisser un élément pose sa
+  dernière version », elements.js). Avant le 05/10, l'élément entrait par sa
+  dernière version, figée : une v2 publiée ensuite n'y paraissait pas.
 - Ses **dossiers sont les siens** : un seul niveau, un dossier n'existe que par
   ce qu'il contient (la règle d'Asset) ; ranger ici ne touche plus le dossier
   d'Asset de l'objet.
@@ -30,8 +35,9 @@ Workspace) : `<data_dir>/montage/projet/<workspace>.json`
 - Ce que le montage **crée ou pose** y entre seul (montage.py, `_projet`) : une
   séquence neuve ou dupliquée, un export, un objet posé pour la première fois
   sur une timeline (Premiere : ce qu'on pose depuis une bibliothèque entre dans
-  le projet). Un objet qu'on a retiré en gardant ses plans n'y revient pas tant
-  qu'on ne le pose pas de nouveau.
+  le projet) ; la version d'un élément posée y fait entrer son élément (une
+  seule ligne par élément, qui suit ses versions). Un objet qu'on a retiré en
+  gardant ses plans n'y revient pas tant qu'on ne le pose pas de nouveau.
 - La première lecture d'un Workspace (le fichier absent) reprend ce que le
   Projet montrait jusque-là : les séquences, vidéos, images et sons du
   Workspace, chacun dans son dossier d'Asset — rien ne disparaît à l'écran.
@@ -54,6 +60,7 @@ from core import auth, config, library
 from core.http import HttpError
 
 KINDS = ("sequence", "video", "image", "audio")
+MEDIA = ("video", "image", "audio")      # ce qu'une version d'élément doit être pour se monter
 FOLDER_MAX = 60
 IDS_MAX = 5000
 ID_RX = re.compile(r"[a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4}")
@@ -124,20 +131,41 @@ def _ids(raw) -> list[str]:
     return list(dict.fromkeys(str(i) for i in raw if ID_RX.fullmatch(str(i))))
 
 
+def _media_element(it: dict | None) -> bool:
+    """Un élément versionné dont la dernière version est un média qui se monte."""
+    if not library.is_living(it):
+        return False
+    hi = library.resolve(it)
+    return bool(hi) and hi.get("kind") in MEDIA
+
+
 def _usable(iid: str) -> tuple[dict | None, str]:
-    """L'objet à inscrire (un élément : sa dernière version), ou pourquoi pas."""
+    """L'objet à inscrire (un élément versionné : lui-même, s'il a une version qui se monte), ou pourquoi pas."""
     it = library.get(iid)
     if not it:
         return None, "introuvable dans ce Workspace (rapatriez-le d'abord)"
     if it["kind"] == "element":
-        head = (library.head_entry(it) or {}).get("item") if library.is_living(it) else None
-        hi = library.get(head) if head else None
-        if not hi:
+        if not library.is_living(it):
+            return None, "une planche de références (un élément sans versions) ne se monte pas"
+        if not library.resolve(it):
             return None, "un élément sans version prête"
-        it = hi
+        if not _media_element(it):
+            return None, f"un élément dont la dernière version ne se monte pas ({library.resolve(it)['kind']})"
+        return it, ""
     if it["kind"] not in KINDS:
         return None, f"une sorte que le montage ne prend pas ({it['kind']})"
     return it, ""
+
+
+def _element_of(iid: str) -> str:
+    """La version d'un élément versionné présent, qui se monte : l'élément ; sinon l'objet lui-même."""
+    it = library.get(iid)
+    v = (it or {}).get("version")
+    if isinstance(v, dict) and v.get("of"):
+        e = library.get(v["of"])
+        if e and _media_element(e):
+            return e["id"]
+    return iid
 
 
 # ── les gestes (rendent l'état d'avant) ──────────────────────
@@ -173,8 +201,9 @@ def put(ids: list[str], folder: str = "", only_new: bool = False, check: bool = 
 
 
 def ensure(ids) -> None:
-    """Ce que le montage crée ou pose : inscrit à la racine s'il n'y est pas déjà."""
-    put([i for i in ids if i], "", only_new=True, check=False)
+    """Ce que le montage crée ou pose : inscrit à la racine s'il n'y est pas déjà ;
+    la version d'un élément y fait entrer l'élément (une ligne qui suit ses versions)."""
+    put(list(dict.fromkeys(_element_of(i) for i in ids if i)), "", only_new=True, check=False)
 
 
 def remove(ids: list[str]) -> dict:
@@ -246,7 +275,8 @@ def listing() -> dict:
     out = []
     for iid, v in entries.items():
         it = library.get(iid)
-        if it and it["kind"] in KINDS:
+        # un élément versionné : montré même s'il n'a plus de version prête (la page le dit ; le poser le refuse)
+        if it and (it["kind"] in KINDS or library.is_living(it)):
             out.append({**library.public(it), "bin": v.get("folder", ""), "bin_added": v.get("added")})
     out.sort(key=lambda x: x.get("created") or "", reverse=True)
     counts: dict[str, int] = {}
@@ -399,18 +429,61 @@ def selftest(call, ok) -> None:
        "montage · projet : une séquence faite d'un objet déjà dans le Projet le laisse dans son dossier")
     for iid in (p["id"], dup["id"], fs.get("id"), fb.get("id")):
         call("POST", f"/api/montage/projects/{iid}/delete")
+    selftest_elements(call, ok)
 
 
-def _wav(secs: float = 1.0, rate: int = 16000) -> bytes:
-    """Un son d'essai (un la à 440 Hz, PCM 16 bits mono), sans ffmpeg."""
+def _wav(freq: int = 440, secs: float = 1.0) -> bytes:
+    """Un son d'essai (WAV 16 bits mono, bibliothèque standard) : sans PIL ni ffmpeg."""
+    import io
     import math
     import struct
     import wave
-    from io import BytesIO
-    buf = BytesIO()
+    buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
-        w.setframerate(rate)
-        w.writeframes(b"".join(struct.pack("<h", int(8000 * math.sin(2 * math.pi * 440 * k / rate))) for k in range(int(secs * rate))))
+        w.setframerate(22050)
+        w.writeframes(b"".join(struct.pack("<h", int(8000 * math.sin(2 * math.pi * freq * i / 22050))) for i in range(int(22050 * secs))))
     return buf.getvalue()
+
+
+def selftest_elements(call, ok) -> None:
+    """Les éléments versionnés dans le Projet (05/10) : l'élément y entre lui-même et suit ses versions."""
+    got = []
+    for f in (330, 440):
+        st, it = call("PUT", f"/api/library/upload?name=el{f}.wav&title=Prise%20{f}", raw=_wav(f), headers={"Content-Type": "audio/wav"})
+        ok(st == 200 and it.get("kind") == "audio", f"montage · projet · éléments : un son d'essai ({st})")
+        got.append(it.get("id"))
+    a1, a2 = got
+    st, e = call("POST", "/api/elements", {"from_item": a1, "title": "Chanson du Projet"})
+    ok(st == 200 and e.get("id"), f"montage · projet · éléments : un élément, v1 = le premier son ({st})")
+    eid = e.get("id")
+    st, r = call("POST", "/api/montage/bin/put", {"ids": [eid], "folder": ""})
+    ok(st == 200 and r.get("ids") == [eid] and not r.get("refused"), f"montage · projet · éléments : l'élément entre lui-même ({r})")
+    st, L = call("GET", "/api/montage/bin")
+    row = next((x for x in L.get("items", []) if x["id"] == eid), {})
+    ok(row.get("kind") == "element" and row.get("element", {}).get("head") == 1 and row["element"].get("head_item") == a1
+       and row["element"].get("head_kind") == "audio", f"montage · projet · éléments : sa ligne montre la v1 ({row.get('element', {}).get('head')})")
+    st, pv = call("POST", f"/api/elements/{eid}/versions", {"item": a2, "note": "plus aigu"})
+    st, L = call("GET", "/api/montage/bin")
+    row = next((x for x in L.get("items", []) if x["id"] == eid), {})
+    ok(row.get("element", {}).get("head") == 2 and row["element"].get("head_item") == a2,
+       f"montage · projet · éléments : la v2 publiée, la ligne la montre sans geste ({row.get('element', {}).get('head')})")
+    # poser une version sur la timeline : son élément est déjà là, pas de seconde ligne
+    st, p = call("POST", "/api/montage/projects", {"name": "Essai éléments"})
+    clip = {"id": "e1", "track": "A1", "item": a1, "kind": "audio", "start": 0, "dur": 25}
+    st, s1 = call("POST", f"/api/montage/projects/{p['id']}", {**p, "base_rev": p["rev"], "clips": [clip]})
+    st, L = call("GET", "/api/montage/bin")
+    ids = [x["id"] for x in L["items"]]
+    ok(s1.get("ok") and eid in ids and a1 not in ids, f"montage · projet · éléments : la v1 posée n'ajoute pas de ligne ({a1 in ids})")
+    # retiré du Projet en gardant ses plans : il n'y revient pas ; une autre de ses versions posée : l'élément revient
+    call("POST", "/api/montage/bin/remove", {"ids": [eid]})
+    st, s2 = call("POST", f"/api/montage/projects/{p['id']}", {**p, "base_rev": s1["rev"], "clips": [clip], "name": "Essai éléments 2"})
+    st, L = call("GET", "/api/montage/bin")
+    ok(eid not in [x["id"] for x in L["items"]], "montage · projet · éléments : retiré en gardant ses plans, il n'y revient pas seul")
+    clip2 = {**clip, "id": "e2", "item": a2, "start": 25}
+    st, s3 = call("POST", f"/api/montage/projects/{p['id']}", {**p, "base_rev": s2["rev"], "clips": [clip, clip2]})
+    st, L = call("GET", "/api/montage/bin")
+    bins = {x["id"]: x["bin"] for x in L["items"]}
+    ok(s3.get("ok") and bins.get(eid) == "" and a2 not in bins, f"montage · projet · éléments : la v2 posée fait entrer l'élément, à la racine ({bins.get(eid)!r})")
+    call("POST", f"/api/montage/projects/{p['id']}/delete")
