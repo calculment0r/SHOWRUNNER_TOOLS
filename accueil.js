@@ -7,7 +7,7 @@
 // (commun/shell.js), la seule liste : une carte dont l'outil n'y est pas
 // encore est « bientôt » — elle s'allume seule le jour où l'outil y entre
 // avec sa page.
-import { TOOLS, api, el, $, href, mountHeader, system, session, thumb, toolHref, toast, uploadFile, dropAnywhere, jobs, stateFr, fmtDate, ouvrirFile, studioIci, studioLiens, releve } from './commun/shell.js';
+import { TOOLS, api, el, $, href, mountHeader, system, session, thumb, toolHref, toast, uploadFile, dropAnywhere, jobs, stateFr, fmtDate, ouvrirFile, studioIci, studioLiens, releve, GRAND_ECRAN } from './commun/shell.js';
 import { bind } from './commun/proxies.js';
 
 mountHeader(null);
@@ -86,9 +86,13 @@ function card(cls, def, t, locked, soon, kids) {
       onclick: () => { showWhy(true); toast(`${def.label} : réservé au Studio`); } },
     kids, el('span', { class: 'acc-st', html: ICON.lock }));
   }
+  // au téléphone, un outil à grand écran le dit sur sa carte, à la place de où il calcule (sa page y montre l'écran
+  // du téléphone : commun/telephone.js)
+  const grand = TELEPHONE && GRAND_ECRAN.has(t.id) ? el('b', { class: 'acc-eng acc-grand', title: 'se fait sur ordinateur ou tablette ; au téléphone : ses calculs, ce qu’il a rendu' }, 'ordinateur') : null;
   return el('a', { ...attrs, href: toolHref(t, S.sys), target: t.external ? '_blank' : null, rel: t.external ? 'noopener' : null },
-    kids, el('span', { class: 'acc-st' }, ...enginesOf(t).map((e) => el('b', { class: 'acc-eng' }, e))));
+    kids, el('span', { class: 'acc-st' }, ...(grand ? [grand] : enginesOf(t).map((e) => el('b', { class: 'acc-eng' }, e)))));
 }
+const TELEPHONE = window.SR_APPAREIL?.type === 'mobile';
 
 // ce qui débloque (règle 7) : la demande, que Cal voit dans le journal d'Admin
 function showWhy(flash = false) {
@@ -324,19 +328,24 @@ async function paintKit() {
   box.closest('.acc-top')?.classList.add('kit');
 }
 
+// Les cartes n'attendent pas l'état des machines (GET /api/system attend qu'une machine réponde, ou
+// non : trois secondes sans le studio de Character Factory) : elles se dessinent dès la session connue
+// — au téléphone, sur un réseau lent, c'était une page vide —, les machines en pied quand elles répondent.
 async function paint() {
-  const [sys, me] = await Promise.all([system(), session()]);
-  S.sys = sys;
+  const me = await session();
   Object.assign(S, accessOf(me));
   document.documentElement.dataset.access = S.access;
   paintActs();
   paintApps();
   paintStudio();
-  paintSys(sys);
   paintAssets();
   loadProjects();
   loadBudget();
   paintKit();
+  const sys = await system();
+  S.sys = sys;
+  paintSys(sys);
+  if (TOOLS.some((t) => t.external)) { paintActs(); paintStudio(); }   // une adresse que l'état des machines donne
 }
 
 dropAnywhere(async (files) => {

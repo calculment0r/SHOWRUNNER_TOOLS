@@ -517,3 +517,41 @@ select.fld { cursor: pointer; }
 .slab.lk  { background: var(--verd-2); color: var(--on-grn); }
 .slab.lk2 { background: var(--verd-1); color: var(--on-grn); }
 .slab.lk .go, .slab.lk2 .go { opacity: .6; }
+
+/* ============================================================
+   LE TÉLÉPHONE — ce que tous les composants communs y changent
+   (data-appareil="mobile", posé avant le premier dessin par
+   commun/theme-tot.js ; la tablette et l'ordinateur ne bougent pas).
+   - Une cible au doigt fait au moins 44 × 44 px : WCAG 2.2, critère
+     2.5.5 « Target Size (Enhanced) » (w3.org/WAI/WCAG22/Understanding/
+     target-size-enhanced) ; Apple, Human Interface Guidelines, « Layout »
+     et « Buttons » : 44 × 44 pt au moins.
+   - Un champ s'écrit en 16 px : en dessous, Safari d'iOS agrandit la page
+     à chaque champ touché (non documenté par Apple ; décrit par
+     CSS-Tricks, « 16px or Larger Text Prevents iOS Form Zoom »). Pas sur
+     la planche d'Idéation (.cv) : sa taille y suit le zoom de la vue.
+   - Les bords de l'écran (encoche, barre d'accueil) : la page déborde
+     dessous (viewport-fit=cover, dans chaque <head>) ; env(safe-area-
+     inset-*) les rend (WebKit, « Designing Websites for iPhone X », 2017 ;
+     CSS Environment Variables 1). Zéro hors de l'iPhone.
+   ============================================================ */
+html[data-appareil="mobile"] .tb,
+html[data-appareil="mobile"] .tb.sm,
+html[data-appareil="mobile"] .seg .tb { height: 44px; min-width: 44px; }
+html[data-appareil="mobile"] :is(input, select, textarea):not(.cv *):not([type=range]):not([type=checkbox]):not([type=radio]) { font-size: 16px; }
+html[data-appareil="mobile"] :is(input.fld, select.fld) { min-height: 44px; }
+/* l'encoche (paysage) et la barre d'accueil : le corps s'en écarte ; la barre du haut aussi (shell.css) */
+html[data-appareil="mobile"] body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+html[data-appareil="mobile"] .toast { bottom: calc(22px + env(safe-area-inset-bottom)); }
+/* une boîte : presque tout l'écran, ses boutons au pouce */
+html[data-appareil="mobile"] .scrim { padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom)); }
+html[data-appareil="mobile"] .modal { max-height: calc(100 * var(--vh) - 16px); }
+html[data-appareil="mobile"] .modal-head { padding: 6px 6px 6px var(--s4); }
+html[data-appareil="mobile"] .modal-body { padding: var(--s4); }
+html[data-appareil="mobile"] .modal-foot { padding: var(--s3) var(--s4); flex-wrap: wrap; }
+/* un curseur (commun/curseur.css) : la bande qu'on touche fait 44 px de haut, le rail et le chapeau restent dessinés au milieu */
+html[data-appareil="mobile"] input[type=range] { height: 44px; }
+/* une case à cocher : un peu plus grande ; son libellé, s'il l'enveloppe, la prend au doigt */
+html[data-appareil="mobile"] input[type=checkbox], html[data-appareil="mobile"] input[type=radio] { width: 20px; height: 20px; }
+html[data-appareil="mobile"] label:has(> input[type=checkbox]), html[data-appareil="mobile"] label:has(> input[type=radio]) { min-height: 44px; }
+html[data-appareil="mobile"] summary { min-height: 44px; }

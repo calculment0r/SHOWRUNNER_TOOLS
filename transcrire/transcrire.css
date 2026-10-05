@@ -399,3 +399,34 @@ button.tr-tl-c:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--
 .drow:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
 .drow.on { background: var(--sel-bg); box-shadow: inset 0 0 0 1px var(--line-cy); }
 @container sr-page (max-width: 1380px) { .tr-studio .side-r { position: static; max-height: none; } .tr-docs { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); } }
+
+/* ── le téléphone (data-appareil="mobile" ; les 44 px : commun/base.css, « LE TÉLÉPHONE ») ──
+   Une transcription ouverte passe devant les réglages : on la lit, on l'écoute, on la copie ; les réglages
+   (une autre transcription) et la liste viennent dessous. Les répliques : le temps à gauche, la voix et le
+   texte dans la même colonne (trois colonnes ne tiennent pas) ; chaque réplique fait 44 px au moins. */
+html[data-appareil="mobile"] .tr-studio:has(#splitbox:not([hidden])) > .stage { order: -1; }
+html[data-appareil="mobile"] .tr-studio { padding: var(--s3) 12px calc(48px + env(safe-area-inset-bottom)); gap: var(--s3); }
+html[data-appareil="mobile"] .ln { grid-template-columns: 48px minmax(0, 1fr); gap: 2px 10px; min-height: 44px; padding: 8px; }
+html[data-appareil="mobile"] .ln > .who, html[data-appareil="mobile"] .ln > .txs { grid-column: 2; }
+html[data-appareil="mobile"] .ln .tx { font-size: 15px; line-height: 1.5; }
+html[data-appareil="mobile"] .ln .tc { min-height: 28px; font-size: 11px; }
+html[data-appareil="mobile"] .tr-item { grid-template-columns: 52px minmax(0, 1fr) 44px; }
+html[data-appareil="mobile"] .tr-item .x, html[data-appareil="mobile"] .cn-q .x { width: 44px; height: 44px; line-height: 44px; }
+html[data-appareil="mobile"] .tr-bar .ttl b { max-width: 100%; }
+html[data-appareil="mobile"] .act .tb.go { height: 48px; }
+html[data-appareil="mobile"] details.more > summary { min-height: 44px; }
+/* le temps d'une réplique : toute la hauteur de sa ligne (44 px au moins) */
+html[data-appareil="mobile"] .ln { padding: 0 8px 0 0; }
+html[data-appareil="mobile"] .ln .tc { align-self: stretch; min-height: 44px; padding: 10px 0 0 8px; grid-row: 1 / span 2; }
+html[data-appareil="mobile"] .ln > .who { margin-top: 10px; }
+html[data-appareil="mobile"] .ln > .txs { padding: 10px 0; }
+html[data-appareil="mobile"] .ln > .who + .txs { padding-top: 2px; }
+/* les plis de la frise (l'entrée, les répliques : une économie de hauteur d'ordinateur, Cal 06/10) : au
+   téléphone, dépliés ; leurs en-têtes restent des noms, alignés sur la frise des voix (repliés, 12 px de
+   haut, ils ne se touchaient pas au doigt) ; la rangée des répliques fait 44 px, on y glisse le doigt.
+   Le pli des voix reste un bouton, de 44 px. */
+html[data-appareil="mobile"] .tr-player { --tr-h-rep: 44px !important; }
+html[data-appareil="mobile"] .tr-player button.tr-tl-c { pointer-events: none; }
+html[data-appareil="mobile"] .tr-player button.tr-tl-c::before { display: none; }
+html[data-appareil="mobile"] .tr-frise .tr-vx-pli { height: 44px; }
+html[data-appareil="mobile"] .vchip { min-height: 44px; }

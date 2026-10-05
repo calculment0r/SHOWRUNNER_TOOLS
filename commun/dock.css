@@ -193,3 +193,8 @@ html.sr-dock-over .sr-dock-grip { z-index: 63; }
 @media (hover: none) { .sr-dock-tab { transform: none; pointer-events: auto; transition: none; } }
 @media (prefers-reduced-motion: reduce) { .sr-dock-tab { transition: none; } }
 html[data-motion="reduce"] .sr-dock-tab { transition: none; }
+
+/* ── le téléphone (data-appareil="mobile") : pas de panneau Asset ──
+   Sa languette couvrait le bord gauche de chaque page, et le panneau ouvert prend plus que l'écran. Au
+   téléphone, la bibliothèque est la page Asset (la grille de la barre) et le sélecteur commun (pick). */
+html[data-appareil="mobile"] .sr-dock, html[data-appareil="mobile"] .sr-dock-grip { display: none; }

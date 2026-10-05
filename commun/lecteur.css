@@ -100,3 +100,17 @@
 .sr-mini .sr-mini-lire { width: 28px; padding: 0; justify-content: center; font-size: 10px; }
 .sr-mini .sr-mini-t { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .sr-mini audio { display: none; }
+
+/* ── le téléphone (data-appareil="mobile" ; les 44 px : base.css, « LE TÉLÉPHONE ») ──
+   L'écran prend le rapport de son média (--sr-lect-ar, posé par la page qui le connaît ; 16:9 sinon),
+   pas une hauteur d'ordinateur : une vidéo en largeur ne flotte plus dans un grand cadre noir. La règle
+   et la frise s'épaississent pour le doigt ; les boutons de la barre font 44 px. */
+html[data-appareil="mobile"] .sr-lect:not(.plein) .sr-lect-ecran {
+  height: auto; min-height: 0; aspect-ratio: var(--sr-lect-ar, 16 / 9); max-height: calc(70 * var(--vh));
+}
+html[data-appareil="mobile"] .sr-lect-ic { width: 44px; }
+html[data-appareil="mobile"] .sr-lect-regle { height: 32px; }
+/* le volume est aux boutons du téléphone (iOS ne laisse pas la page le régler : Apple, « Safari HTML5 Audio and
+   Video Guide », iOS-Specific Considerations) ; « défilement direct » est un état de l'ordinateur : le muet reste */
+html[data-appareil="mobile"] .sr-lect-vol, html[data-appareil="mobile"] .sr-lect-dfl { display: none; }
+html[data-appareil="mobile"] .sr-mini .sr-mini-lire { width: 44px; font-size: 12px; }

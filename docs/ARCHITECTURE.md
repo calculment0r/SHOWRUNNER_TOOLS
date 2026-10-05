@@ -12,7 +12,7 @@ commun/                     tokens.css, base.css, shell.css, shell.js, porte.js/
                             theme.js, prefs.js/.css/.json, theme.html (l'éditeur de thème), undo.js,
                             proxies.js, menu.js/.css, fil.js/.css, wire.js/.css, entrees.js/.css, split.js,
                             refs.js, molette.js, fenetre.js/.html/.css, pleinecran.js, tete.js/.css,
-                            lecteur.js/.css, dock.js/.css, documents.js/.css (§ 4)
+                            lecteur.js/.css, dock.js/.css, documents.js/.css, telephone.js/.css (§ 4)
 asset/ image/ movie/ …      une page par outil : index.html + <outil>.js + <outil>.css
 admin/                      la page de Cal (§ 9)
 media/                      l'image et la vidéo des grandes cartes de l'accueil
@@ -26,6 +26,7 @@ tools/check.py              le contrôle sans GPU (socle + selftest de chaque ou
 tools/faux_comfy.py         un faux ComfyUI pour essayer la file sans rien calculer
 tools/faux_ollama.py        un faux Ollama (l'agent Showrunner d'Idéation, sans modèle) : outils scénarisés, sorties JSON
 tools/portail_essai.py      un portail d'essai jetable (session cloud, agent) : sans porte, moteurs factices (§ 6)
+tools/pilote_telephone.mjs  le pilote du téléphone (§ 4, « Le téléphone ») : les pages au doigt, sur un portail d'essai
 tools/presentation_export.mjs  l'impression d'une présentation d'Idéation par Chromium sans affichage (PDF, PNG : § 7)
 docs/                       REPRISE, ARCHITECTURE, études
 ```
@@ -355,6 +356,7 @@ repeint le fil dans le `onapply` de sa pile (`items` : les objets rendus,
 | `documents.js` + `documents.css` | **les documents** (05/10) : `extraireDocument(it, {file})` lit un PDF que le serveur n'a pas lu (pdf.js 4.10.38, chargé de cdnjs à la première lecture ; ses `cmaps/` et `standard_fonts/` de jsdelivr, que cdnjs n'a pas) et le dépose — `uploadFile` l'appelle seul (`lireSiBesoin`) ; **LA liseuse** : les pages en vignettes (rendues par poppler, sinon pdf.js, sinon leurs premières lignes), le texte page par page, les pages d'un PDF telles qu'elles sont (« Pages ») ; Asset (la fiche) et Idéation (au double-clic) | `liseuse(it, {page, onitem, deposer, telecharger})` → `{el, aller, detruire}` ; `lirePdf(source)`, `deposerLecture(it, lu)`, `rendrePage(pdf, n, px)`, `docLigne(it)`, `nomDe(it)` |
 | `lrc.js` + `lrc.css` | **l'éditeur de paroles calées** (05/10) : le lecteur commun, une marque par ligne sur sa frise, la ligne entendue ; toucher une ligne à l'écoute la pose à l'instant (Entrée : la ligne choisie), à l'arrêt elle y mène la lecture ; ± 0,1 s, décaler tout, corriger le texte, sa pile d'annulation, « Caler automatiquement » ; tout s'enregistre seul | `ouvrirEditeurLrc({item, lrc, lyrics, onSave, enregistrer, caler})` → `{el, fermer}` (`enregistrer(lrc)` : ailleurs que le champ `lrc` du son, une playlist) ; `lireLrc`, `ecrireLrc`, `tempsLrc` |
 | `dock.js` + `dock.css` | **le panneau Asset** (30/09, `docs/etudes/panneau_asset.md`) : la bibliothèque à gauche de chaque outil, montée par `mountHeader`, fermée à l'arrivée ; Ctrl+Espace (ou ², Préférences → Général), ou sa languette verte au bord. Un visualiseur : chercher, trier, filtrer (les sortes en pastilles ; cinq sections en accordéon : ce Workspace, récents, favoris, autres Workspaces, Character Factory), poser — rien ne s'y range ni ne s'y jette (« Gérer dans Asset ↗ »). Il pousse la page (`html.sr-dock-on`, `@container sr-page`) ; une grille fenêtrée, par pages de 120 (`GET /api/asset/dock`) ; un objet d'un autre Workspace est rapatrié (une copie) avant d'être posé | la façade `dock` de `shell.js` : `dock.configure({place(items, {how}), clickPlaces, placeLabel, menu, kinds, label, dockMin, fiche, hint, rapatrie})` (`rapatrie: false` : l'outil reçoit l'original d'un autre Workspace et en fait la copie lui-même, plus tard — « Commencer un projet »), `dock.contexte({kinds, label, why})`, `declareZone(node, {kinds, label})`, `dock.open/close/toggle/isOpen/reload/recent` ; l'événement `sr:dock` (`{open, w}`) |
+| `telephone.js` + `telephone.css` | **le téléphone** (06/10, REPRISE § 2.E) : chargé par `mountHeader` sur un téléphone seulement (`data-appareil="mobile"`, posé avant le premier dessin par `theme-tot.js` ; la tablette n'en est pas un). Les outils à grand écran (`GRAND_ECRAN` de `shell.js` : ODIO, le Montage, Image, Vidéo) y montrent un écran propre — « se fait sur ordinateur ou tablette », leurs calculs (`jobs.watch`), ce qu'ils ont rendu (un son s'écoute sur place, le reste mène à sa fiche d'Asset), la file, « Ouvrir quand même » pour l'onglet (`sessionStorage sr-tel-ouvert-<outil>`) ; la page de l'outil est cachée dès la barre posée (`html.sr-tel-lourd`, `shell.css`) | `monter(outil, {lourd})` (appelé par `mountHeader`) ; l'accueil lit `GRAND_ECRAN` (« ordinateur » sur leurs cartes) |
 
 **Le clic droit** (Cal, 29/09 : « ne plus avoir de clic droit du navigateur
 partout dans nos outils ; on a un menu contextuel dédié à où on se trouve au
@@ -370,6 +372,16 @@ Préférences, copier le lien de la page.
 **Une hauteur d'écran** s'écrit `calc(100 * var(--vh))` (et une largeur
 `calc(94 * var(--vw))`) : sous la taille de l'interface (`zoom`), `100vh`
 dépasse la fenêtre (`commun/tokens.css`).
+
+**Le téléphone** (06/10, REPRISE § 2.E) : `data-appareil="mobile"` (`commun/theme-tot.js`) porte ce qui ne vaut
+qu'au doigt — dans chaque feuille, un bloc final « le téléphone » sous `html[data-appareil="mobile"]` ; la
+mise en page qui dépend de la place reste aux requêtes de conteneur (`@container sr-page`). La règle commune
+(`base.css`, « LE TÉLÉPHONE ») : toute cible de 44 × 44 px au moins (WCAG 2.2, 2.5.5 ; Apple HIG) — un petit
+dessin garde sa taille, un `::after` élargit sa cible —, les champs en 16 px (Safari d'iOS n'agrandit plus la
+page), les bords sûrs (`env(safe-area-inset-*)`, la page étant en `viewport-fit=cover`) ; `--vh` y est en `svh`
+(`tokens.css` : la hauteur sous la barre d'adresse). La barre commune garde son ordre et ses x, en compact,
+dans les deux orientations ; le panneau Asset n'y est pas. Idéation y a son module (`ideation/telephone.js`,
+chargé par `plugins.js` : lire la planche au doigt, Plan, Photo, Note). Le contrôle : `tools/pilote_telephone.mjs`.
 
 ## 5. Les machines
 

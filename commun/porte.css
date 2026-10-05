@@ -85,3 +85,12 @@ body.porte-on { overflow: hidden; }
 .drawer .qh .n { margin-left: auto; }
 .job.mine { box-shadow: inset 2px 0 0 var(--cy); }
 .job .jo { color: var(--ink2); }
+
+/* ── le téléphone (data-appareil="mobile" ; les 44 px : base.css, « LE TÉLÉPHONE ») ── */
+html[data-appareil="mobile"] .porte { padding: max(var(--s5), env(safe-area-inset-top)) 16px calc(48px + env(safe-area-inset-bottom)); }
+html[data-appareil="mobile"] .porte-in { margin-top: calc(3 * var(--vh)); }
+html[data-appareil="mobile"] .porte-card { padding: 24px 20px; }
+html[data-appareil="mobile"] .porte-form .row { flex-wrap: wrap; }
+html[data-appareil="mobile"] .porte-form .fld { flex: 1 1 100%; min-height: 48px; }
+html[data-appareil="mobile"] .porte-form .tb.go { width: 100%; height: 48px; }
+html[data-appareil="mobile"] .acct-dev { min-height: 44px; }

@@ -530,3 +530,65 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .cmenu .mi .why { font-size: 10.5px; line-height: 1.45; color: var(--ink2); white-space: normal; }
 
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ============================================================
+   LE TÉLÉPHONE (data-appareil="mobile", commun/theme-tot.js ; les 44 px :
+   commun/base.css, « LE TÉLÉPHONE »). La page reste la même ; ce qui change :
+   - le haut : « Déposer des fichiers » d'abord, toute la largeur (le
+     téléphone propose l'appareil photo ou la galerie) ;
+   - la barre : les sortes sur une ligne qui défile au doigt, la taille des
+     vignettes s'en va (deux colonnes, toujours) ;
+   - les cartes : la case et le menu gardent leur dessin, leur cible fait
+     44 px (un ::after autour d'eux), à 44 px l'une de l'autre ;
+   - la fiche : le titre sur toute la largeur, le média juste dessous, ses
+     gestes après lui, le reste ensuite (la grille de la fiche se défait :
+     display: contents, ses deux colonnes deviennent des rangées de .sheet).
+   ============================================================ */
+html[data-appareil="mobile"] .lib-top { gap: var(--s3); }
+html[data-appareil="mobile"] .lib-top .acts { width: 100%; margin-left: 0; }
+html[data-appareil="mobile"] .lib-top .acts > .tb.go { order: -1; flex: 1 1 100%; }
+html[data-appareil="mobile"] .lib-bar { padding: var(--s3); }
+html[data-appareil="mobile"] .lib-bar .seg { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+html[data-appareil="mobile"] .lib-bar .seg::-webkit-scrollbar { display: none; }
+html[data-appareil="mobile"] .lib-bar .seg .tb { flex: none; }
+html[data-appareil="mobile"] .lib-bar .size { display: none; }
+html[data-appareil="mobile"] .lib-bar input.fld[type=search] { min-width: 0; }
+/* l'arbre (le tiroir « Lieux ») : des lignes au doigt */
+html[data-appareil="mobile"] .tr { min-height: 44px; }
+html[data-appareil="mobile"] .tr .cv::after, html[data-appareil="mobile"] .tr .plus::after { content: ""; position: absolute; inset: -14px -14px; }
+html[data-appareil="mobile"] .tr .plus { position: relative; opacity: 1; }
+html[data-appareil="mobile"] .am-side { padding-top: max(var(--s4), env(safe-area-inset-top)); padding-left: max(var(--s3), env(safe-area-inset-left)); }
+/* les cartes : la case au coin, le menu à 44 px d'elle */
+html[data-appareil="mobile"] .acard .chk { top: 10px; right: 10px; }
+html[data-appareil="mobile"] .acard .chk::after { content: ""; position: absolute; inset: -10px; }
+html[data-appareil="mobile"] .acard[data-id] .menu-btn, html[data-appareil="mobile"] .acard .menu-btn { top: 9px; right: 53px; }
+html[data-appareil="mobile"] .acard.folder .menu-btn { right: 9px; }
+html[data-appareil="mobile"] .acard .menu-btn::after { content: ""; position: absolute; inset: -9px; }
+/* la liste : la case et le menu dans des colonnes de 44 px */
+html[data-appareil="mobile"] .lrow { grid-template-columns: 44px 44px minmax(0, 1fr) 44px; }
+html[data-appareil="mobile"] .acard.lrow .chk, html[data-appareil="mobile"] .acard.lrow .menu-btn { position: relative; top: auto; right: auto; justify-self: center; }
+html[data-appareil="mobile"] .acard.lrow .chk::after { inset: -12px; }
+/* le menu d'une carte, la barre de la sélection : au doigt */
+html[data-appareil="mobile"] .cmenu { max-width: calc(100vw - 16px); }
+html[data-appareil="mobile"] .cmenu button { min-height: 44px; }
+html[data-appareil="mobile"] .selbar { bottom: calc(8px + env(safe-area-inset-bottom)); }
+html[data-appareil="mobile"] .selbar .x { width: 44px; height: 44px; }
+html[data-appareil="mobile"] .crumb { display: inline-flex; align-items: center; min-height: 44px; }
+/* la fiche : titre, média, gestes, le reste */
+html[data-appareil="mobile"] .sh-head { grid-template-columns: minmax(0, 1fr); gap: var(--s2); }
+html[data-appareil="mobile"] .sh-head .who { gap: 4px; }
+html[data-appareil="mobile"] .o-back { display: inline-flex; align-items: center; min-height: 44px; }
+html[data-appareil="mobile"] .sh-title { font-size: 22px; overflow-wrap: anywhere; }
+html[data-appareil="mobile"] .sh-head > .row { justify-content: flex-start; }
+html[data-appareil="mobile"] .sheet > .sh-grid { display: contents; }
+html[data-appareil="mobile"] .sheet > .sh-grid > :first-child { order: 1; min-width: 0; }
+html[data-appareil="mobile"] .sheet > .sh-acts { order: 2; }
+html[data-appareil="mobile"] .sheet > .sh-grid > .sh-side { order: 3; }
+html[data-appareil="mobile"] .sh-media { min-height: 0; }
+html[data-appareil="mobile"] .sh-media img { max-height: calc(70 * var(--vh)); }
+html[data-appareil="mobile"] .sh-media.sh-doc { --sr-lis-h: calc(80 * var(--vh)); }
+html[data-appareil="mobile"] .facts { grid-template-columns: 84px minmax(0, 1fr); }
+html[data-appareil="mobile"] .chip button { position: relative; }
+html[data-appareil="mobile"] .chip button::after { content: ""; position: absolute; inset: -13px; }
+html[data-appareil="mobile"] .sh-head > .row .saved { order: 9; }   /* « enregistré » après les boutons : sa place vide ne les décale plus */
+html[data-appareil="mobile"] .sh-title { min-height: 44px; }

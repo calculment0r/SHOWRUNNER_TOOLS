@@ -140,6 +140,16 @@
   color-scheme: dark;
 }
 
+/* le téléphone (commun/theme-tot.js pose data-appareil) : 1vh y est la hauteur SANS la barre d'adresse
+   (la plus grande), et ce qui fait 100vh passe dessous quand elle est là. 1svh, « small viewport », est la
+   hauteur quand elle est là : rien ne s'y cache, et rien ne saute quand elle se replie (CSS Values 4,
+   § « Viewport-percentage lengths » ; MDN, length#relative_length_units_based_on_viewport : Safari 15.4,
+   Chrome 108, Firefox 101). Mêmes noms, aucune couleur : les deux thèmes le prennent. */
+html[data-appareil="mobile"] {
+  --vh: calc(1svh / var(--ui-zoom));
+  --vw: calc(1svw / var(--ui-zoom));
+}
+
 /* ============================================================
    LE THÈME CLAIR — les mêmes noms, les mêmes rôles.
    Un papier gris-vert (la teinte du sombre, retournée) ; les panneaux

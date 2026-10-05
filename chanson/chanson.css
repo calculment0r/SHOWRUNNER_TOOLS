@@ -251,3 +251,18 @@ textarea.fld.ch-plan-abc { width: 100%; margin-top: 6px; font-family: var(--f-mo
 @media (max-width: 560px) {
   .ch-head { flex-wrap: wrap; }
 }
+
+/* ── le téléphone (data-appareil="mobile" ; les 44 px : commun/base.css, « LE TÉLÉPHONE ») ──
+   Les pastilles du style au doigt ; l'action au pied, au-dessus de la barre d'accueil de l'iPhone. */
+html[data-appareil="mobile"] .ch-studio { padding: var(--s3) 12px calc(48px + env(safe-area-inset-bottom)); gap: var(--s3); }
+html[data-appareil="mobile"] .ch-chips { gap: 6px; }
+html[data-appareil="mobile"] .ch-chips .opt { min-height: 44px; padding: 0 12px; font-size: 13px; }
+html[data-appareil="mobile"] .ch-act { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+html[data-appareil="mobile"] .ch-act .tb.go { height: 48px; }
+html[data-appareil="mobile"] .ch-x { width: 44px; height: 44px; line-height: 44px; }
+html[data-appareil="mobile"] .ch-space .sr-kebab { width: 44px; height: 44px; }
+html[data-appareil="mobile"] details.ch-adv > summary { min-height: 44px; }
+html[data-appareil="mobile"] .opt.ch-preset { min-height: 44px; }
+html[data-appareil="mobile"] .ch-space-btn { min-height: 44px; }
+html[data-appareil="mobile"] .ch-play { width: 44px; height: 44px; }
+html[data-appareil="mobile"] .ch-top { grid-template-columns: 44px minmax(0, 1fr) auto; }
