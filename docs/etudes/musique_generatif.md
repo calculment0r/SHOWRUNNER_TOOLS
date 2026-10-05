@@ -851,7 +851,8 @@ Trois voies, de la plus fidèle à la plus sûre aujourd'hui :
 | tonalité | `P.key` (11 modes) | `keyscale` majeur ou mineur, par la tierce (`aceKey`) | dans le style (« F minor ») et `K:Fm` | oui |
 | signature | `P.sig` (2, 3, 4, 6) | `timesignature` | `M:` (6 → `M:6/4`, `generatif_modeles.json`, en suspens) | oui |
 | plage | la sélection de temps, sinon la région choisie, la boucle, le clip choisi, les sections (une chanson), la tête de lecture + 8 mesures | `duration` = la plage en secondes (10 s au moins) ; le contexte (± marge) pour `lego`, `complete`, `repaint` | `max_duration` (un maximum, `nodes_yue2.py:56`) | oui (la source de la plage se choisit ; début et longueur se règlent) |
-| structure | les sections couvertes par la plage : **`P.sections`** (nom, étiquette, et depuis le 06/10 les paroles) | — | les blocs `[Verse]`, `[Chorus]`… des paroles, dans l'ordre des sections ; les `% verse` d'une partition écrite par nous | oui, **dans la section elle-même** : une seule vérité |
+| structure | les sections couvertes par la plage : **`p.sections`** (nom, étiquette, bornes), la rangée au-dessus de l'arc | — | les blocs `[Verse]`, `[Chorus]`… des paroles (`c.gen.v.lyrics`), le i-ème bloc avec la i-ème section ; les `% verse` d'une partition écrite par nous | oui, dans l'éditeur par blocs (§ 8.6) : une seule vérité, le contrat de `projet.js` |
+| arcs | `valeursArcs(p, a, b)` (`arcs.js`) : énergie, densité, tension, moyennées sur la plage | des mots ajoutés à la légende (`caption`) | des mots ajoutés au style (`tags`) | une case « dans le style » ; les seuils : notre choix (§ 8.6) |
 | clip d'inspiration | un clip audio de l'arrangement (glissé, ou « la sélection »), un son du navigateur, d'Asset, du disque | audio de référence (`ReferenceTimbreAudio`) | **rien** : YuE2 n'a pas d'entrée son ; la mélodie d'un clip passe par « Une variation d'un clip » (reprise) | — |
 | guide MIDI | un clip de notes de l'arrangement, un motif, un clip MIDI de la bibliothèque | **rien** (pas d'entrée MIDI) | Chant (`Vocal`), Thème (`Ins`), Accords | — |
 | ce qui joue autour | les pistes dont un clip touche la plage ± la marge, rendues (`renderMix`) | `src_audio` de `lego`, `complete`, `repaint` | rien | les pistes se cochent |
@@ -907,19 +908,98 @@ l'agent Showrunner pourrait la tenir plus tard, pas dans ce chantier.
 
 ### 8.6 Le panneau, refait le 06/10
 
-- **Une seule entrée** : « Générer » (la barre du haut), le dessin d'une région sur une
-  piste générative, le clic droit d'une plage, d'une région : le même panneau, à droite
-  (le tiroir d'ODIO), qui travaille sur une **cible** — une région existante, ou une
-  plage encore vide (rien n'est créé avant « Générer »).
-- De haut en bas : la question (quatre tuiles, chacune dit le modèle qu'elle prendra,
-  ou pourquoi elle ne peut pas) ; **Où** (la plage et sa source, la piste d'arrivée) ;
-  **Du projet** (tempo, tonalité, mesure, marqués « du projet » ou « changé », un clic
-  pour changer, un clic pour revenir) ; les réglages de la seule réponse choisie ;
-  **Inspiration** et **Guide MIDI** (par glisser depuis l'arrangement, le navigateur,
-  Asset, ou « la sélection »), grisés avec la raison quand le modèle ne les prend pas ;
-  **Modèle** (choisi d'office, changeable, ce qui manque grisé) et les réglages avancés
-  repliés ; en pied, où le résultat atterrit et le seul orange.
-- La vue du bas d'une région garde ses prises et mène au panneau.
+**Une seule entrée** : « Générer » (la barre du haut), le dessin d'une région sur une
+piste générative, son double-clic, « Générer ici… » sur une plage, « Générer une
+variation… » sur un clip audio : le même panneau (`musique/generatif_panneau.js`), le
+tiroir d'ODIO élargi à droite (1 120 px au plus : l'arrangement reste visible à gauche),
+qui travaille sur une **cible** — une région existante, ou une plage encore vide (le
+brouillon `P.gen.brouillon` ; rien n'est posé dans l'arrangement avant « Générer »).
+
+**Chaque champ a la forme de ce qu'il contient** (Cal, 06/10 : « des champs de saisie
+super larges, ça n'a aucun sens ; les paroles plus hautes et étroites ») : trois
+colonnes bornées — les réglages (320 px), le texte (300 à 430 px), les versions — ;
+les paroles en colonne de lecture (52 signes au plus par ligne, `max-width: 52ch` : la
+demande de Cal, « 40 à 60 signes »), qui grandit avec le texte ; le style sur
+trois lignes ; les réglages courts (versions, graine, partition, langue) en colonnes de
+120 px ; plus rien ne s'étire sur la largeur de l'écran. Sous 1 180 px de large, une
+seule colonne de 560 px.
+
+De haut en bas, colonne des réglages : la question (quatre tuiles, chacune dit le
+modèle qu'elle prendra, ou pourquoi elle ne peut pas) ; l'essentiel de la réponse
+(l'instrument, le clip à varier, ce que la piste entend) ; **Où** (la plage et sa source,
+la piste d'arrivée) ; **Du projet** (tempo, tonalité, mesure, marqués « du projet » ou
+« changé », un clic pour changer, ↺ pour revenir ; les arcs) ; le **clip d'inspiration**
+et le **guide MIDI** (par glisser depuis l'arrangement, le navigateur, Asset, ou
+« Sélection »), grisés avec la raison quand le modèle ne les prend pas ; le **modèle**
+(choisi d'office, changeable, ce qui manque grisé avec sa raison, le moteur d'essai
+dit), les réglages courts et les avancés repliés. En pied : où le résultat atterrit, et
+le seul orange (« Générer », ou « Écrire la partition » pour YuE2, « Sans relire » à
+côté).
+
+**La structure, sans taper les balises** (Cal, 06/10 : « un truc super ergonomique
+dans le champ des paroles ; dans Suno, il les détecte automatiquement quand on tape
+chorus ? »). Ce que fait Suno : les balises de structure s'écrivent **à la main, entre
+crochets, sur leur ligne** (`[Verse]`, `[Chorus]`, `[Bridge]`… ; l'aide « Song
+Editor » ([6141505](https://help.suno.com/en/articles/6141505)) permet ensuite de nommer
+et colorer les sections de la timeline d'un morceau rendu) ; qu'il reconnaisse
+« chorus » tapé sans crochets : **non documenté** — les guides disent au contraire de
+les écrire soi-même, sur leur ligne ([jackrighteous](https://jackrighteous.com/en-us/pages/suno-ai-meta-tags-guide),
+[hookgenius](https://hookgenius.app/learn/suno-lyrics-formatting/)). Ce que fait ODIO :
+- les blocs **sont** les sections du projet que la plage couvre (`p.sections`, la
+  rangée au-dessus de l'arc d'énergie) : chacun montre l'étiquette de sa section (un
+  menu), sa longueur en mesures, ses paroles ; **+ Intro, + Couplet, + Refrain…** ajoute
+  une section d'un clic (après la dernière : ce qui suit se décale, comme « insérer du
+  temps ») ; ⧉ duplique (un refrain repris : la copie suit, avec ses paroles et son
+  contenu) ; ⠿ se glisse pour réordonner (le contenu suit, comme dans la rangée) ; ×
+  retire la section et son bloc (les clips restent) ;
+- **la reconnaissance en tapant** : « refrain », « couplet 2 », « [chorus] »,
+  « (Pont) : », « [Build] » seuls sur une ligne, suivis d'un retour à la ligne, créent
+  la section suivante (les mots connus en français et en anglais ; entre crochets,
+  toute étiquette, lue par `etiquetteDe` du contrat) ; tapé en tête d'un bloc vide, ils
+  ré-étiquettent ce bloc ; collées d'un coup dans le champ sans section, des paroles à
+  en-têtes posent toute la structure ;
+- **les balises du moteur s'écrivent seules** (`[Verse]`, `[Pre-Chorus]`…) ; « YuE2
+  lira : [Intro] [Verse] [Chorus]… » le montre sous les blocs, tenu à jour pendant la
+  frappe ;
+- **le contrat** (fixé par `wip2/odio-arcs-session`, `musique/projet.js`) : les
+  sections dans `p.sections`, les paroles d'une génération dans `c.gen.v.lyrics` (des
+  blocs ouverts par `[Étiquette]`), le i-ème bloc avec la i-ème section couverte ;
+  `musique.js` tient les deux côtés à chaque geste pour une région (`suivreStructure`) ;
+  le panneau garde autant de blocs que de sections (sinon la plage serait replanifiée)
+  et appelle `structureDepuisParoles` pour le brouillon. Aucune copie propre au panneau.
+  La longueur d'une section neuve : deux mesures par vers, au moins quatre (le choix de
+  `chanson.py`) ; sans vers, quatre (intro, final, pré-refrain) ou huit.
+
+**Les arcs** (`arcs.js`, `valeursArcs`) : ni YuE2 ni ACE-Step n'a d'entrée pour une
+énergie, une densité ou une tension ; leur style est un texte libre qui dit l'humeur et
+l'instrumentation (YuE2 : « genre, instruments, mood… », `docs/generation.md:7` ;
+ACE-Step : `caption`). La moyenne de chaque arc sur la plage devient donc des mots
+ajoutés au style envoyé, quand elle s'éloigne du milieu — **notre choix, seuils
+compris** : énergie < 0,33 « calm, low energy », > 0,66 « high energy » ; densité < 0,35
+« sparse arrangement », > 0,65 « dense arrangement » ; tension < 0,35 « relaxed », > 0,65
+« tense, building up » ; une case « dans le style » les retire. La section par section
+(« build-up » au refrain) attend un style par section, qu'aucun des deux n'a.
+
+**Les versions** (Cal, 06/10 : « elles sont en tout petit à droite ; comment on affecte
+la bonne dans le segment de la timeline »). Ce que font les DAW : Live 11, les *take
+lanes* — « The first lane of a track is the main lane, which is always available and is
+audible by default […] Take lanes are never audible, unless Audition Mode is enabled » ;
+on les écoute par leur haut-parleur (ou T), et Entrée copie la sélection d'une prise
+dans la voie principale ([manuel de Live 11, « Comping »](https://www.ableton.com/en/live-manual/11/comping/)) ;
+Logic, les *take folders* — pendant la lecture, on choisit une prise dans le menu du
+dossier, qui devient active ; « Select Next/Previous Take or Comp » les parcourt
+([Logic Pro, « Preview take recordings »](https://support.apple.com/en-gw/guide/logicpro/lgcp317d76de/mac),
+« Create and save comps »). Ce que fait ODIO : la région **est** le dossier de prises —
+elle garde toutes ses versions ; chacune est une **carte** (sa forme d'onde, la part qui
+joue dans le segment en couleur ; un clic l'écoute seule à cet endroit) ; **« mettre
+dans le segment »** est le geste qui la fait jouer dans l'arrangement, et se refait
+plus tard ; **A/B** passe de la version courante à la précédente, et **« Écouter dans
+le morceau »** boucle la région et lance la lecture : on compare sans s'arrêter, comme
+le menu de Logic pendant la lecture ; **Garder** (la région devient un clip ordinaire,
+les autres restent dans la bibliothèque), ×, **Stems**, **MIDI** depuis une version ;
+« Les versions en pistes » pose les autres en pistes muettes (les *take lanes* à plat).
+La vue du bas d'une région les montre en rangée. Le *comping* (des morceaux de
+plusieurs versions dans un même segment) n'est pas fait.
 
 ### 8.7 Décisions à prendre (Cal)
 
@@ -939,11 +1019,10 @@ l'agent Showrunner pourrait la tenir plus tard, pas dans ce chantier.
 4. **Le clip d'inspiration d'ACE-Step** (`ReferenceTimbreAudio`, expérimental, jamais
    rendu) : *recommandation : un rendu A/B (avec, sans) avant de le garder en vue ; il
    est marqué « expérimental » dans le panneau d'ici là.*
-5. **Les paroles rangées dans les sections du projet** (`P.sections[i].paroles`, à côté du
-   nom et de l'étiquette) : ce que le panneau écrit dans un bloc de paroles change la
-   section, et l'étiquette choisie dans le panneau est celle de la rangée de structure.
-   À accorder avec le chantier de la rangée de structure (`wip2/odio-arcs-session`).
-   *Recommandation : oui (format le plus simple, une seule vérité).*
+5. **Les arcs dans le style** : énergie, densité et tension deviennent des mots du
+   style quand elles s'éloignent du milieu (§ 8.6, seuils de notre choix), coché par
+   défaut. *Recommandation : garder coché, écouter trois rendus avec et sans, ajuster
+   les mots ; ce qui marche mieux d'un modèle à l'autre n'est pas documenté.*
 6. **Caler un rendu sur la grille** : mesurer ses temps (`tempo.js`) et décaler la prise,
    ou aussi l'étirer (un warp, qu'ODIO n'a pas) ? *Recommandation : mesurer et décaler
    seulement, en v1.*
@@ -951,7 +1030,10 @@ l'agent Showrunner pourrait la tenir plus tard, pas dans ce chantier.
    groupes pour seize mesures) : la couper à la plage avant de la relire ?
    *Recommandation : oui, par groupes entiers — aujourd'hui seul le groupe coupé est
    retiré.*
-8. En suspens d'avant : la mesure 6 en `M:6/4` ou `6/8` ; les licences non commerciales
+8. **Le comping des versions** (un segment fait de morceaux de plusieurs versions, comme
+   Live et Logic) : *recommandation : pas avant le premier vrai rendu de lego ; le geste
+   « mettre dans le segment » suffit tant qu'une version est une prise entière.*
+9. En suspens d'avant : la mesure 6 en `M:6/4` ou `6/8` ; les licences non commerciales
    (YuE2, SheetSage2).
 
 ## Sources
@@ -985,4 +1067,4 @@ l'agent Showrunner pourrait la tenir plus tard, pas dans ce chantier.
   `musique/generatif.js`, `banc.js`, `timeline.js`, `modules.js` ;
   `docs/etudes/yue.md`, `stems.md`, `musique.md`, `orchestration.md`.
 - Web (consulté le 29/09/2026) : cités en ligne, § 1.8, 2.5, 3, 4, 5.1.
-- Web (consulté le 06/10/2026) : cités en ligne, § 8 — ACE-Step (INFERENCE.md, tickets 117, 369, 809, PR 810), ComfyUI (blog du 03/02/2026), ACE-Step-ComfyUI, Suno (aide, notes de version, communiqué, presse ; par extraits du moteur de recherche).
+- Web (consulté le 06/10/2026) : cités en ligne, § 8 — ACE-Step (INFERENCE.md, tickets 117, 369, 809, PR 810), ComfyUI (blog du 03/02/2026), ACE-Step-ComfyUI, Suno (aide, notes de version, communiqué, presse, guides des balises), le manuel de Live 11 (« Comping ») et l'aide de Logic Pro (take folders) ; Suno, Ableton et Apple par extraits du moteur de recherche (leurs sites sont bloqués depuis le conteneur).

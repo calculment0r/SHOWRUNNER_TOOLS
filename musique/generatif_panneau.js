@@ -42,12 +42,13 @@
 import { api, jobs, toast, href, pick, stateFr } from '../commun/shell.js';
 import { TONICS, TONICS_FR, MODES, SECTION_TAGS, COLORS } from './modules.js';
 import { songEnd, peaks } from './moteur.js';
-import { shiftFrom, duplicateSection, swapSection, removeSection, sorted } from './projet.js';
+import { valeursArcs } from './arcs.js';
+import { shiftFrom, duplicateSection, swapSection, removeSection, sorted, lireParoles, sectionsDeRegion, structureDepuisParoles, etiquetteDe } from './projet.js';
 import { el, put, menu, tok, drawer } from './ui.js';
 import { loadSchema, schemaNow, model, task, cond, defaultsFor, requestV, unavailable, trackFr, aceKeyOf, secs, choiceIds, choiceLabel } from './generatif_modeles.js';
 import { reportVoices, chordToNotes, abcKey } from './generatif_abc.js';
 import { placeNotes, listMidi, midiSub, openExtract } from './generatif_midi.js';
-import { engines, engNow, effectif, fingerprint, stale, covered, sectionsFor, regionBars, around, windowOf, renderContext,
+import { engines, engNow, effectif, fingerprint, stale, sectionsFor, regionBars, around, windowOf, renderContext,
   chooseTake, keepTake, dropTake, takesToTracks, injectFrom, check, lastCheck, setCheck, quoiDe, isRegion, isGenTrack, itemOfDrop,
   useSound } from './generatif_region.js';
 import { options } from './generatif.js';
@@ -210,7 +211,7 @@ function peindre1(app) {
   const scroll = O.dr.body.scrollTop;
   put(O.dr.body,
     el('div', { class: 'gp' },
-      el('div', { class: 'gp-col gp-a' }, questionBox(ctx), ouBox(ctx), projetBox(ctx), essentielBox(ctx), inspirationBox(ctx), guideBox(ctx), modeleBox(ctx)),
+      el('div', { class: 'gp-col gp-a' }, questionBox(ctx), essentielBox(ctx), ouBox(ctx), projetBox(ctx), inspirationBox(ctx), guideBox(ctx), modeleBox(ctx)),
       el('div', { class: 'gp-col gp-b' }, styleBox(ctx), structureBox(ctx), partitionBox(ctx)),
       el('div', { class: 'gp-col gp-c' }, versionsBox(app, c, {}))),
     piedBox(ctx));
@@ -312,7 +313,15 @@ function projetBox({ app, c, g, P }) {
     menu(r.left, r.bottom + 4, [{ head: 'mesure de cette génération' }, ...[2, 3, 4, 6].map((n) => ({ label: n === 6 ? '6/8' : `${n}/4`, checked: E.sig === n, onclick: () => setLibre({ sig: n }) }))]);
   }, () => setLibre({ sig: undefined }));
   const ace = g.model === 'ace';
-  return sec('Du projet', el('div', { class: 'gp-pills' }, tempo, ton, mes),
+  // les arcs du projet sur la plage (arcs.js, valeursArcs) : l'énergie, la densité, la tension
+  // deviennent des mots du style — notre choix, aucun des deux modèles n'a d'entrée pour elles
+  const { A, mots } = motsArcs(P, c);
+  const pc = (v) => (v == null ? '—' : `${Math.round(v * 100)}`);
+  const arcs = el('div', { class: 'gp-arcs', title: 'les arcs du projet (la rangée au-dessus de l\'arrangement), moyennés sur la plage ; une valeur loin du milieu ajoute ses mots au style' },
+    el('i', {}, 'arcs'), el('span', {}, `énergie ${pc(A.energie)} · densité ${pc(A.densite)} · tension ${pc(A.tension)}`),
+    el('label', { class: 'opt mu-check' }, el('input', { type: 'checkbox', checked: g.arcs !== false || null, onchange: (e) => { g.arcs = e.target.checked ? undefined : false; commit(app); } }),
+      mots.length ? ` dans le style : « ${mots.join(', ')} »` : ' dans le style (rien à dire : les arcs sont au milieu, ou vides)'));
+  return sec('Du projet', el('div', { class: 'gp-pills' }, tempo, ton, mes), arcs,
     el('p', { class: 'gp-note' }, ace ? `ACE-Step reçoit bpm ${E.bpm}, « ${aceKeyOf(E.key)} », mesure ${E.sig} (des nombres)${['major', 'minor'].includes(E.key.mode) ? '' : ` — le mode ${MODES[E.key.mode].label} ramené à ${aceKeyOf(E.key).split(' ')[1] === 'major' ? 'majeur' : 'mineur'} par la tierce`}`
       : `YuE2 n'a pas d'entrée tempo : « ${E.bpm} BPM, ${aceKeyOf(E.key)} » s'ajoutent au style, et sa partition dit Q:1/4=${E.bpm}, K:${abcKey(E.key)}`));
 }
@@ -333,15 +342,14 @@ function keyPop(e, E, setLibre) {
 // 4. l'essentiel de la réponse : l'instrument, le clip à varier, ce qui joue autour
 function essentielBox(ctx) {
   const { g, T, V } = ctx, q = quoiDe(g), out = [];
-  if (q === 'instrument') out.push(instrumentBox(ctx));
+  if (q === 'instrument') out.push(instrumentBox(ctx, V?.garder && !(T?.params || []).includes('autour')));
   const sonPid = (T?.params || []).find((pid) => ['src_audio', 'ref'].includes(pid));
   if (sonPid) out.push(sec(q === 'variation' ? 'Le clip à varier' : ctx.M.params[sonPid].label, soundSlot(ctx, sonPid, { requis: true })));
   if ((T?.params || []).includes('autour')) out.push(sec(q === 'suite' ? 'Ce qui joue avant' : 'Ce qu\'elle entend', contextBox(ctx)));
-  else if (V?.garder) out.push(el('p', { class: 'gp-note' }, 'elle n\'entend pas les autres pistes : une chanson au même tempo, dans la même tonalité, dont on garde un stem ; la chanson entière reste dans la bibliothèque'));
   return out.length ? el('div', { class: 'gp-ess' }, out) : null;
 }
 const stemPret = (stem) => (stemsO?.ok ? (stemsO.o.models || []).filter((m) => m.ready !== false && (m.stems || []).includes(stem)) : []);
-function instrumentBox({ app, s, g, V }) {
+function instrumentBox({ app, s, g, V }, sourde = false) {
   const I0 = I();
   const ids = V?.garder ? ['drums', 'bass', 'vocals', 'guitar', 'keyboard', 'other'] : s.pistes.ordre;
   if (!g.instrument || !ids.includes(g.instrument)) g.instrument = ids[0];
@@ -350,7 +358,7 @@ function instrumentBox({ app, s, g, V }) {
     const why = stem && !stemPret(stem).length ? `aucun séparateur prêt ne rend « ${stem} » (${stem === 'guitar' || stem === 'piano' ? 'BS-RoFormer SW, à télécharger' : 'music_stems.py'}) : choisis « autre », ou la voie « dans le contexte »` : '';
     return el('button', { class: `opt${g.instrument === id ? ' on' : ''}`, type: 'button', disabled: why ? true : null, title: why || (stem ? `on garde le stem « ${stem} »` : ''),
       onclick: () => { g.instrument = id; commit(app); } }, id === 'other' ? 'autre (tout le reste)' : trackFr(s, id));
-  })));
+  })), sourde ? el('p', { class: 'gp-note' }, 'elle n\'entend pas les autres pistes : une chanson au même tempo, dans la même tonalité, dont on garde un stem ; la chanson entière reste dans la bibliothèque') : null);
 }
 
 // une case de son : un clip glissé de l'arrangement, du navigateur, d'Asset, du disque, ou « la sélection »
@@ -368,7 +376,7 @@ function soundSlot({ app, c, M }, pid, { requis = false, off = '' } = {}) {
     title: off || 'glisser ici un clip audio de l\'arrangement, un son du navigateur, d\'Asset ou du disque' },
   title, el('span', { class: 'sp' }),
   el('button', { class: 'tb ghost sm', type: 'button', disabled: off ? true : null, title: off || 'le clip audio choisi dans l\'arrangement',
-    onclick: () => { const x = chosen(); if (!x) { toast('choisis d\'abord un clip audio dans l\'arrangement'); return; } set(x.item, x); } }, 'La sélection'),
+    onclick: () => { const x = chosen(); if (!x) { toast('choisis d\'abord un clip audio dans l\'arrangement'); return; } set(x.item, x); } }, 'Sélection'),
   el('button', { class: 'tb ghost sm', type: 'button', disabled: off ? true : null, onclick: async () => { const [it] = await pick({ kinds: ['audio'], title: M.params[pid]?.label || 'Un son' }); if (it) set(it.id); } }, 'Choisir'),
   v && !off ? el('button', { class: 'tb ghost sm', type: 'button', title: 'retirer', onclick: () => { const n = { ...c.gen.v }; delete n[pid]; c.gen.v = n; commit(app); } }, '×') : null);
   if (!off) {
@@ -424,7 +432,7 @@ function caseSlot({ app, s, c }, k, cs, off) {
       const x = app.S.proj.clips.find((y) => (app.S.sel.clips || []).includes(y.id) && y.pat);
       if (!x) { toast('choisis d\'abord un clip de notes dans l\'arrangement'); return; }
       injectFrom(app, c, s, k, { clip: x.id });
-    } }, 'La sélection'),
+    } }, 'Sélection'),
     el('button', { class: 'tb ghost sm', type: 'button', disabled: off || null, onclick: (e) => caseMenu(app, c, s, k, e) }, '…'));
   if (off) return box;
   box.addEventListener('dragover', (e) => { e.preventDefault(); box.classList.add('drop-on'); });
@@ -506,9 +514,23 @@ function field({ app, c }, pid, pd, vals) {
   return null;
 }
 
+// les arcs d'une plage, en mots du style (seuils : notre choix ; la densité et la tension
+// sont « lues par le génératif », arcs.js ; musique_generatif.md § 6.3 et § 8.4)
+export function motsArcs(P, c) {
+  const A = valeursArcs(P, c.start, c.start + c.len), mots = [];
+  if (A.energie != null) { if (A.energie < 0.33) mots.push('calm', 'low energy'); else if (A.energie > 0.66) mots.push('high energy'); }
+  if (A.densite < 0.35) mots.push('sparse arrangement'); else if (A.densite > 0.65) mots.push('dense arrangement');
+  if (A.tension < 0.35) mots.push('relaxed'); else if (A.tension > 0.65) mots.push('tense', 'building up');
+  return { A, mots };
+}
 // les valeurs envoyées : défauts du schéma, réglages, et ce que le panneau calcule
 function valeurs({ s, c, g, P, V }) {
   const vals = { ...defaultsFor(s, g.model, g.task), ...g.v };
+  if (g.arcs !== false) {
+    const sk = g.model === 'ace' ? 'caption' : 'tags', mots = motsArcs(P, c).mots.filter((w) => !(vals[sk] || '').toLowerCase().includes(w));
+    const max = model(s, g.model).params[sk]?.max || 512;
+    if (mots.length && (vals[sk] || '').trim()) vals[sk] = `${vals[sk].trim()}, ${mots.join(', ')}`.slice(0, max);
+  }
   const q = quoiDe(g), chante = q !== 'instrument' || ['vocals', 'backing_vocals'].includes(g.instrument);
   const ly = chante ? parolesDe(P, c, g) : '';
   if ('lyrics' in vals || task(s, g.model, g.task).params.includes('lyrics')) vals.lyrics = ly;
@@ -543,64 +565,108 @@ function styleBox({ app, g, M, P }) {
     el('p', { class: 'gp-note' }, g.model === 'yue' ? `+ « ${E.bpm} BPM, ${aceKeyOf(E.key)} » ajoutés seuls (YuE2 les lit dans le style)` : 'le tempo, la tonalité, la mesure partent à part, en nombres'));
 }
 
-// La structure et les paroles : les sections du projet que la plage couvre, en blocs
+// ── La structure et les paroles ──────────────────────────────
+// Le contrat (projet.js, 06/10, wip2/odio-arcs-session) : les SECTIONS vivent
+// dans le projet (p.sections, la rangée au-dessus de l'arc) ; les PAROLES d'une
+// génération dans c.gen.v.lyrics, des blocs ouverts par « [Étiquette] » ; le
+// lien est l'ordre — le i-ème bloc va avec la i-ème section que la plage couvre.
+// Pour une région, musique.js tient les deux côtés à chaque geste
+// (suivreStructure) ; pour le brouillon (pas encore de région), le panneau
+// appelle structureDepuisParoles lui-même. L'éditeur n'a aucune copie : un bloc
+// affiche la section i (son étiquette, sa longueur) et les vers du bloc i ;
+// ajouter, dupliquer, déplacer, retirer touche les deux d'un même geste, pour
+// que le nombre de blocs reste celui des sections (sinon la plage serait
+// replanifiée, structureDepuisParoles).
+const balise = (tag, bas) => `[${bas ? tag : cap(tag)}]`;
+// les paroles en blocs : { tete (ce qui précède la première balise), bas (balises en bas de casse), blocs: [{ tag, vers }] }
+function blocsDe(texte) {
+  const { lignes, blocs } = lireParoles(texte || '');
+  const fin = (i) => (blocs[i + 1] ? blocs[i + 1].ligne : lignes.length);
+  return {
+    tete: lignes.slice(0, blocs.length ? blocs[0].ligne : lignes.length).join('\n').trim(),
+    bas: blocs.length > 0 && blocs.every((b) => b.bas),
+    blocs: blocs.map((b, i) => ({ tag: b.tag, vers: lignes.slice(b.ligne + 1, fin(i)).join('\n').replace(/^\n+|\n+$/g, '') })),
+  };
+}
+const ecrireBlocs = (B) => [B.tete || null, ...B.blocs.map((b) => `${balise(b.tag, B.bas)}${b.vers ? `\n${b.vers}` : ''}`)].filter((x) => x != null && x !== '').join('\n\n');
+// les blocs alignés sur les sections couvertes (autant de blocs que de sections ; les blocs en trop restent derrière)
+function aligne(B, cov) {
+  for (let i = 0; i < cov.length; i++) {
+    if (!B.blocs[i]) B.blocs[i] = { tag: cov[i].tag || 'verse', vers: '' };
+    else B.blocs[i].tag = cov[i].tag || B.blocs[i].tag;
+  }
+  return B;
+}
+// écrire les paroles d'une cible ; `struct` : la structure a pu changer (le brouillon la suit lui-même)
+function poserParoles(app, c, B, kind = 'quiet') {
+  c.gen.v = { ...c.gen.v, lyrics: ecrireBlocs(B) };
+  if (kind === 'quiet') { app.commit('quiet'); O.majEnvoi?.(); return; }
+  commit(app, kind);
+}
+
 function structureBox(ctx) {
   const { app, s, c, g, P, T } = ctx, q = quoiDe(g);
   if (!T.params.includes('lyrics')) return null;
   if (q === 'instrument' && !['vocals', 'backing_vocals'].includes(g.instrument)) return null;
-  const cov = covered(P, c).map((x) => x.s);
+  const cov = sectionsDeRegion(P, c);
+  const B = aligne(blocsDe(g.v.lyrics), cov);
   const inst = el('label', { class: 'opt mu-check', title: 'sans paroles : les sections restent, le chant non' },
     el('input', { type: 'checkbox', checked: g.inst || null, onchange: (e) => { g.inst = e.target.checked || undefined; commit(app); } }), ' sans paroles');
   const blocks = el('div', { class: 'gp-blocs' });
   cov.forEach((sc, i) => blocks.append(bloc(ctx, sc, i, cov)));
+  const enTrop = B.blocs.slice(cov.length);
+  const trop = enTrop.length ? el('p', { class: 'gp-why' }, `${enTrop.length} bloc${enTrop.length > 1 ? 's' : ''} de paroles sans section (${enTrop.map((b) => balise(b.tag)).join(' ')}) : ils restent dans les paroles ; « + une section après » leur en donne une`) : null;
   const ajout = el('div', { class: 'gp-ajout' }, el('span', { class: 'lbl' }, cov.length ? '+ une section après' : '+ commencer la structure'),
-    SECTION_TAGS.map(([k, l]) => el('button', { class: 'opt', type: 'button', title: `une section « ${l} » ${cov.length ? 'après la dernière' : 'au début de la plage'}, dans la rangée de structure`,
-      onclick: () => { inserer(app, c, cov.length ? Math.max(...cov.map((x) => x.b)) : c.start, [{ tag: k, paroles: '' }]); } }, l)));
+    SECTION_TAGS.map(([k, l]) => el('button', { class: 'opt', type: 'button', title: cov.length ? `une section « ${l} » après la dernière, dans la rangée de structure (ce qui suit se décale)` : `une section « ${l} » sur la plage, dans la rangée de structure`,
+      onclick: () => (cov.length ? inserer(app, c, cov.length, [{ tag: k, vers: '' }]) : commencer(app, c, [{ tag: k, vers: '' }])) }, l)));
   const libre = !cov.length ? texteLibre(ctx) : null;
   const vide = P.sections.length && !cov.length ? el('p', { class: 'gp-note' }, 'la plage ne couvre aucune section du projet',
     !c.id ? el('button', { class: 'tb ghost sm', type: 'button', onclick: () => { g.plage = plageDefaut(app, g, 'sections'); commit(app); } }, 'Prendre les sections') : null) : null;
-  const regle = c.id && cov.length && (Math.min(...cov.map((x) => x.a)) !== c.start || Math.max(...cov.map((x) => x.b)) !== c.start + c.len)
+  const regle = c.id && cov.length && (cov[0].a !== c.start || cov[cov.length - 1].b !== c.start + c.len)
     ? el('button', { class: 'tb ghost sm', type: 'button', title: 'la région prend les bornes des sections qu\'elle touche', onclick: () => {
-      const r = app.clip(c.id), a = Math.min(...cov.map((x) => x.a)), b = Math.max(...cov.map((x) => x.b));
-      r.start = a; r.len = b - a; commit(app);
+      const r = app.clip(c.id);
+      r.start = cov[0].a; r.len = cov[cov.length - 1].b - cov[0].a; commit(app);
     } }, 'Ajuster la région à la structure') : null;
-  const envoi = parolesDe(P, c, g);
   // ce que le moteur lira, tenu à jour pendant la frappe (sans redessiner le panneau)
-  const lit = (txt) => (txt ? `${s.modeles[g.model].court} lira : ${txt.match(/^\[[^\]]+\]/gm)?.join(' ') || 'les paroles telles quelles'}` : 'rien à chanter : instrumental');
+  const lit = (txt) => (txt ? `${s.modeles[g.model].court} lira : ${lireParoles(txt).blocs.map((b) => balise(b.tag, false)).join(' ') || 'les paroles telles quelles'}` : 'rien à chanter : instrumental');
   O.majEnvoi = () => { const n = O.dr.body.querySelector('.gp-envoi'); if (n) { const t = parolesDe(P, c, g); n.textContent = lit(t); n.title = t || '(rien : instrumental)'; } };
-  return sec(el('span', {}, 'Structure et paroles', el('small', { class: 'gp-tag', title: 'les sections du projet : la rangée au-dessus de l\'arc d\'énergie' }, 'la structure du projet')),
+  const envoi = parolesDe(P, c, g);
+  return sec(el('span', {}, 'Structure et paroles', el('small', { class: 'gp-tag', title: 'les sections du projet : la rangée au-dessus de l\'arc d\'énergie ; les paroles : c.gen.v.lyrics, un bloc par section' }, 'la structure du projet')),
     el('div', { class: 'gp-row' }, inst, regle),
-    vide, blocks, libre, ajout,
+    vide, blocks, trop, libre, ajout,
     el('p', { class: 'gp-note gp-envoi', title: envoi || '(rien : instrumental)' }, lit(envoi)));
 }
-function bloc({ app, c, P }, sc, i, cov) {
-  const ta = el('textarea', { class: 'fld gp-par', rows: Math.max(2, Math.min(10, (sc.paroles || '').split('\n').length + 1)), spellcheck: 'true',
-    placeholder: sc.tag === 'instrumental' || sc.tag === 'intro' || sc.tag === 'outro' ? '(sans paroles : la section reste)' : 'les paroles de cette section ; « refrain », « couplet 2 »… seul sur une ligne crée la section suivante' });
-  ta.value = sc.paroles || '';
+function bloc({ app, c, g, P }, sc, i, cov) {
+  const B0 = aligne(blocsDe(g.v.lyrics), cov), vers = B0.blocs[i]?.vers || '';
+  const ta = el('textarea', { class: 'fld gp-par', rows: Math.max(2, Math.min(10, vers.split('\n').length + 1)), spellcheck: 'true',
+    placeholder: ['instrumental', 'intro', 'outro'].includes(sc.tag) ? '(sans paroles : la section reste)' : 'les paroles de cette section ; « refrain », « couplet 2 »… seul sur une ligne crée la section suivante' });
+  ta.value = vers;
   ta.addEventListener('input', () => {
-    sc.paroles = ta.value.slice(0, 4000);
     ta.rows = Math.max(2, Math.min(10, ta.value.split('\n').length + 1));
-    O.majEnvoi?.();
+    const B = aligne(blocsDe(g.v.lyrics), sectionsDeRegion(P, c));
     // une ligne d'en-tête suivie d'un retour à la ligne : la suite devient une section neuve ;
-    // tapée en tête d'un bloc vide, elle renomme ce bloc
+    // tapée en tête d'un bloc vide, elle ré-étiquette ce bloc (et sa section)
     const cut = decouper(ta.value, true);
     if (cut.sections.length) {
       const reste = [...cut.sections];
       if (!cut.avant.trim()) {
         const h = reste.shift();
-        sc.tag = h.tag; sc.name = `${TAG_FR[h.tag]}${h.n ? ` ${h.n}` : ''}`; sc.paroles = h.paroles;
-        if (!reste.length) { O.focus = sc.id; commit(app); return; }
-      } else sc.paroles = cut.avant;
-      inserer(app, c, sc.b, reste);
+        etiqueter(sc, h.tag, h.n);
+        B.blocs[i] = { tag: h.tag, vers: h.paroles };
+        if (!reste.length) { O.focus = sc.id; poserParoles(app, c, B, 'data'); return; }
+      } else B.blocs[i].vers = cut.avant;
+      c.gen.v = { ...c.gen.v, lyrics: ecrireBlocs(B) };
+      inserer(app, c, i + 1, reste.map((x) => ({ tag: x.tag, n: x.n, vers: x.paroles })));
       return;
     }
-    app.commit('quiet');
+    B.blocs[i].vers = sansEnCours(ta.value).slice(0, 4000);
+    poserParoles(app, c, B);
   });
-  const tag = el('select', { class: 'fld gp-tagsel', 'aria-label': 'étiquette', title: 'l\'étiquette de la section, celle de la rangée de structure', onchange: (e) => {
-    const was = TAG_FR[sc.tag]; sc.tag = e.target.value;
-    if (!sc.name || sc.name === was || /^(Couplet|Refrain|Intro|Pont|Final|Pré-refrain|Instrumental)( \d+)?$/.test(sc.name)) sc.name = TAG_FR[sc.tag];
-    commit(app);
-  } }, SECTION_TAGS.map(([k, l]) => el('option', { value: k, selected: sc.tag === k || null }, l)));
+  const tag = el('select', { class: 'fld gp-tagsel', 'aria-label': 'étiquette', title: 'l\'étiquette de la section, celle de la rangée de structure et de la balise des paroles', onchange: (e) => {
+    etiqueter(sc, e.target.value);
+    const B = aligne(blocsDe(g.v.lyrics), sectionsDeRegion(P, c));
+    poserParoles(app, c, B, 'data');
+  } }, [...(TAG_FR[sc.tag] ? [] : [[sc.tag, cap(sc.tag || 'verse')]]), ...SECTION_TAGS].map(([k, l]) => el('option', { value: k, selected: sc.tag === k || null }, l)));
   const bars = Math.round((sc.b - sc.a) / P.sig);
   const len = el('input', { class: 'fld gp-num', type: 'number', min: 1, max: 64, step: 1, value: bars, 'aria-label': 'mesures', title: 'sa longueur en mesures : ce qui suit se décale, comme dans la rangée de structure',
     onchange: (e) => {
@@ -609,14 +675,23 @@ function bloc({ app, c, P }, sc, i, cov) {
       const at = sc.b, avant = c.id ? app.clip(c.id)?.start : null;
       shiftFrom(P, at, d); sc.b += d; suivre(app, c, at, d, avant); commit(app);
     } });
-  const handle = el('span', { class: 'gp-poignee', draggable: 'true', title: 'glisser pour déplacer la section (son contenu suit, comme dans la rangée)' }, '⠿');
+  const handle = el('span', { class: 'gp-poignee', draggable: 'true', title: 'glisser pour déplacer la section (son contenu et ses paroles suivent)' }, '⠿');
   const box = el('div', { class: 'gp-bloc', 'data-section': sc.id, style: { '--c': `var(--${sc.color || 'cy'})` } },
     el('div', { class: 'gp-bloc-h' }, handle, tag, sc.name && sc.name !== TAG_FR[sc.tag] ? el('b', { title: 'son nom dans la rangée de structure' }, sc.name) : null, el('span', { class: 'sp' }), len, el('small', {}, 'mes.'),
       el('button', { class: 'tb ghost sm', type: 'button', title: 'dupliquer (un refrain repris) : la copie suit, avec ses paroles et son contenu', onclick: () => {
-        const at = sc.b, avant = c.id ? app.clip(c.id)?.start : null;
-        const n = duplicateSection(P, sc, app.uid); suivre(app, c, at, n.b - n.a, avant); O.focus = n.id; commit(app);
+        const cv = sectionsDeRegion(P, c), B = aligne(blocsDe(g.v.lyrics), cv), at = sc.b, avant = c.id ? app.clip(c.id)?.start : null;
+        const n = duplicateSection(P, sc, app.uid);
+        suivre(app, c, at, n.b - n.a, avant);
+        B.blocs.splice(i + 1, 0, { ...B.blocs[i] });
+        O.focus = n.id;
+        poserParoles(app, c, B, 'data');
       } }, '⧉'),
-      el('button', { class: 'tb ghost sm', type: 'button', title: 'retirer la section de la structure (ses clips restent)', onclick: () => { removeSection(P, sc, false); commit(app); } }, '×')),
+      el('button', { class: 'tb ghost sm', type: 'button', title: 'retirer la section de la structure, et son bloc de paroles (ses clips restent)', onclick: () => {
+        const B = aligne(blocsDe(g.v.lyrics), sectionsDeRegion(P, c));
+        B.blocs.splice(i, 1);
+        removeSection(P, sc, false);
+        poserParoles(app, c, B, 'data');
+      } }, '×')),
     ta);
   handle.addEventListener('dragstart', (e) => { e.dataTransfer.setData('application/x-gp-section', sc.id); e.dataTransfer.effectAllowed = 'move'; });
   box.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('application/x-gp-section')) { e.preventDefault(); box.classList.add('drop-on'); } });
@@ -628,30 +703,42 @@ function bloc({ app, c, P }, sc, i, cov) {
     e.preventDefault();
     deplacerSection(app, c, id, sc.id);
   });
-  void i; void cov;
   return box;
 }
-// les paroles sans section encore : taper un en-tête crée les sections
+// l'étiquette d'une section ; son nom la suit s'il suivait l'ancienne (« Couplet », « Couplet 2 »)
+function etiqueter(sc, tag, n = null) {
+  const suit = !sc.name || /^(Intro|Couplet|Pré-refrain|Refrain|Pont|Instrumental|Final)( \d+)?$/.test(sc.name);
+  sc.tag = tag;
+  if (suit) sc.name = `${TAG_FR[tag] || cap(tag)}${n ? ` ${n}` : ''}`;
+}
+// les paroles sans section encore : taper un en-tête crée les sections (structureDepuisParoles)
 function texteLibre({ app, c, g }) {
   const ta = el('textarea', { class: 'fld gp-par', rows: 8, spellcheck: 'true', placeholder: 'colle ou tape les paroles ; « refrain », « couplet 2 », « [chorus] », « pont »… seul sur une ligne crée la section, dans la rangée de structure' });
   ta.value = g.v.lyrics || '';
   const convert = (fin) => {
     const cut = decouper(ta.value, !fin);
     if (!cut.sections.length) return false;
-    g.v = { ...g.v, lyrics: '' };
-    inserer(app, c, c.start, [...(cut.avant.trim() ? [{ tag: 'verse', paroles: cut.avant }] : []), ...cut.sections]);
+    commencer(app, c, [...(cut.avant.trim() ? [{ tag: 'verse', vers: cut.avant }] : []), ...cut.sections.map((x) => ({ tag: x.tag, n: x.n, vers: x.paroles }))]);
     return true;
   };
-  ta.addEventListener('input', () => { g.v = { ...g.v, lyrics: ta.value.slice(0, 4000) }; if (!convert(false)) { app.commit('quiet'); O.majEnvoi?.(); } });
+  ta.addEventListener('input', () => { if (convert(false)) return; g.v = { ...g.v, lyrics: sansEnCours(ta.value).slice(0, 4000) }; app.commit('quiet'); O.majEnvoi?.(); });
   ta.addEventListener('change', () => convert(true));
   return ta;
 }
 
-// « refrain », « Couplet 2 », « [chorus] », « (Pont) : » seul sur sa ligne : un en-tête de section
+// Une balise qu'on est en train de taper (la dernière ligne, pas encore de retour à
+// la ligne) n'entre pas dans les paroles : le contrat la lirait déjà comme un bloc
+// (projet.js, lireParoles) ; elle y entre au retour à la ligne (decouper).
+const BAL = /^\s*\[([^\]\n]{1,40})\]\s*$/;
+const sansEnCours = (t) => { const l = (t || '').split('\n'); return lireEntete(l[l.length - 1]) ? l.slice(0, -1).join('\n') : t; };
+// « refrain », « Couplet 2 », « [chorus] », « [Build] », « (Pont) : » seul sur sa ligne : un en-tête de
+// section ; entre crochets, toute étiquette (etiquetteDe du contrat), sans crochets, les mots connus
 const ENTETES = [[/^intro(duction)?$/, 'intro'], [/^(couplet|verse|strophe)$/, 'verse'], [/^(pre ?refrain|pre ?chorus|prechorus)$/, 'pre-chorus'],
   [/^(refrain|chorus|hook)$/, 'chorus'], [/^(pont|bridge)$/, 'bridge'], [/^(instrumental|instru|solo|break|interlude)$/, 'instrumental'], [/^(outro|final|fin|coda)$/, 'outro']];
 export function lireEntete(line) {
-  const n = (line || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  const b = (line || '').match(BAL);
+  if (b) { const k = b[1].match(/(\d+)\s*$/); return { tag: etiquetteDe(b[1]), n: k ? +k[1] : null }; }
+  const n = (line || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
   if (!n || n.length > 30) return null;
   const m = n.match(/^[[(]?\s*([a-z][a-z -]*?)\s*(\d+)?\s*[\])]?\s*:?$/);
   if (!m) return null;
@@ -659,7 +746,7 @@ export function lireEntete(line) {
   for (const [rx, tag] of ENTETES) if (rx.test(w)) return { tag, n: m[2] ? +m[2] : null };
   return null;
 }
-// le texte coupé à ses en-têtes : [{ tag, n, paroles }] (le premier sans tag : ce qui précède) ;
+// le texte coupé à ses en-têtes : { avant, sections: [{ tag, n, paroles }] } ;
 // `fini` : un en-tête ne compte que suivi d'un retour à la ligne (on est en train de le taper)
 export function decouper(text, fini = false) {
   const lines = (text || '').split('\n'), avant = { paroles: [] }, sections = [];
@@ -671,28 +758,45 @@ export function decouper(text, fini = false) {
   const net = (a) => a.join('\n').replace(/^\n+|\n+$/g, '');
   return { avant: net(avant.paroles), sections: sections.map((x) => ({ tag: x.tag, n: x.n, paroles: net(x.paroles) })) };
 }
-// Des sections neuves à `at` (projet.js : ce qui suit se décale, comme « insérer du temps ») :
-// leur longueur, deux mesures par vers (le choix de chanson.py), au moins quatre
-function inserer(app, c, at, list) {
-  const P = app.S.proj, avant = c.id ? app.clip(c.id)?.start : null;
+// La première structure, depuis des blocs de paroles : les balises écrites, puis la plage
+// planifiée par le contrat (structureDepuisParoles : un bloc, une section, des mesures
+// entières) — musique.js le fait pour une région, le panneau pour le brouillon.
+function commencer(app, c, list) {
+  const P = app.S.proj, B = blocsDe(c.gen.v.lyrics);
+  B.tete = ''; B.blocs = list.map((x) => ({ tag: x.tag, vers: x.vers || '' }));
+  c.gen.v = { ...c.gen.v, lyrics: ecrireBlocs(B) };
+  if (!c.id) structureDepuisParoles(P, c, app.uid);
+  // les noms numérotés tapés (« couplet 2 ») : ceux des sections que la plage couvre désormais
+  sectionsDeRegion(P, c).forEach((sc, i) => { if (list[i]?.n) sc.name = `${TAG_FR[sc.tag] || sc.name}${` ${list[i].n}`}`; });
+  O.focus = sectionsDeRegion(P, c).slice(-1)[0]?.id || null;
+  toast(`${list.length > 1 ? `${list.length} sections` : 'une section'} dans la rangée de structure`, 3000);
+  commit(app);
+}
+// Des sections neuves après le i-ème bloc (projet.js, shiftFrom : ce qui suit se décale,
+// comme « insérer du temps ») et leurs blocs de paroles au même rang ; leur longueur :
+// deux mesures par vers (le choix de chanson.py), au moins quatre
+function inserer(app, c, i, list) {
+  const P = app.S.proj, cov = sectionsDeRegion(P, c), B = aligne(blocsDe(c.gen.v.lyrics), cov);
+  const at = cov[i - 1] ? cov[i - 1].b : c.start, avant = c.id ? app.clip(c.id)?.start : null;
   let pos = at, total = 0;
   const made = list.map((x) => {
-    const lines = (x.paroles || '').split('\n').filter((l) => l.trim()).length;
+    const lines = (x.vers || '').split('\n').filter((l) => l.trim()).length;
     const bars = lines ? Math.max(4, Math.ceil((2 * lines) / 4) * 4) : (TAG_LEN[x.tag] || 8);
     const len = bars * P.sig;
-    const sc = { id: app.uid('s'), name: `${TAG_FR[x.tag] || 'Couplet'}${x.n ? ` ${x.n}` : ''}`, a: pos, b: pos + len, color: COLORS[(P.sections.length + 1) % COLORS.length], tag: x.tag, paroles: x.paroles || '' };
+    const sc = { id: app.uid('s'), name: `${TAG_FR[x.tag] || cap(x.tag)}${x.n ? ` ${x.n}` : ''}`, a: pos, b: pos + len, color: COLORS[(P.sections.length + 1) % COLORS.length], tag: x.tag };
     pos += len; total += len;
     return sc;
   });
   shiftFrom(P, at, total);
   P.sections.push(...made);
   suivre(app, c, at, total, avant);
+  B.blocs.splice(i, 0, ...list.map((x) => ({ tag: x.tag, vers: x.vers || '' })));
   O.focus = made[made.length - 1].id;
   toast(`${made.length > 1 ? `${made.length} sections` : `la section « ${made[0].name} »`} dans la rangée de structure`, 3000);
-  commit(app);
+  poserParoles(app, c, B, 'data');
 }
 // la cible suit la structure : une région (ou la plage du brouillon) qui contient
-// le point d'insertion s'allonge d'autant ; une qui commence après lui ne bouge pas
+// le point d'insertion s'allonge d'autant ; une qui commence après lui suit le décalage
 function suivre(app, c, at, d, avant = null) {
   if (c.id) {
     const r = app.clip(c.id);
@@ -700,30 +804,31 @@ function suivre(app, c, at, d, avant = null) {
     // insérer au début de la région : shiftFrom l'a poussée, elle revient et contient la section neuve
     if (avant != null && Math.abs(avant - at) < 1e-9) { r.start = avant; r.len = Math.max(0.25, r.len + d); return; }
     if (at > r.start + 1e-9 && at <= r.start + r.len + 1e-9) r.len = Math.max(0.25, r.len + d);
+    else if (d > 0 && at > r.start + r.len) r.len = at + d - r.start;     // après une section qui dépassait : la région la rejoint
   } else if (c.gen.plage && c.gen.plage.src !== 'sections') {
     const pl = c.gen.plage;
     if (at >= pl.a - 1e-9 && at <= pl.b + 1e-9) pl.b = Math.max(pl.a + 0.25, pl.b + d);
     else if (pl.a >= at) { pl.a += d; pl.b += d; }
   }
 }
+// déplacer une section (et son bloc de paroles) à la place d'une autre
 function deplacerSection(app, c, id, versId) {
   const P = app.S.proj, list = sorted(P), i = list.findIndex((x) => x.id === id), j = list.findIndex((x) => x.id === versId);
   if (i < 0 || j < 0) return;
+  const cov = sectionsDeRegion(P, c), B = aligne(blocsDe(c.gen.v.lyrics), cov);
+  const bi = cov.findIndex((x) => x.id === id), bj = cov.findIndex((x) => x.id === versId);
   const sc = list[i], dir = j > i ? 1 : -1;
   for (let k = i; k !== j; k += dir) {
     const why = swapSection(P, sc, dir);
     if (why) { toast(why); break; }
   }
-  commit(app);
-  void c;
+  if (bi >= 0 && bj >= 0) { const [m] = B.blocs.splice(bi, 1); B.blocs.splice(bj, 0, m); }
+  poserParoles(app, c, B, 'data');
 }
-// les paroles que le moteur lit : les sections couvertes, dans l'ordre, chacune sous sa balise
+// les paroles que le moteur lit : celles de la génération (c.gen.v.lyrics), telles quelles
 export function parolesDe(P, c, g) {
-  if (g.inst) return '';
-  const cov = covered(P, c).map((x) => x.s);
-  if (!cov.length) return (g.v?.lyrics || '').trim();
-  return cov.filter((sc) => (sc.paroles || '').trim() || ['intro', 'outro', 'instrumental'].includes(sc.tag))
-    .map((sc) => `[${cap(sc.tag || 'verse')}]${(sc.paroles || '').trim() ? `\n${sc.paroles.trim()}` : ''}`).join('\n\n');
+  void P; void c;
+  return g.inst ? '' : (g.v?.lyrics || '').trim();
 }
 
 // la partition de YuE2 : écrite d'abord, relue, retouchée (05/10), la faute dite en français (06/10)
@@ -982,8 +1087,10 @@ function materialiser(app, d) {
   for (const k of keep) if (g[k] !== undefined && g[k] !== null) gen[k] = JSON.parse(JSON.stringify(g[k]));
   const c = { id: app.uid('c'), track: t.id, start: d.start, len: d.len, off: 0, gen };
   if (lastCheck(d) !== undefined) setCheck(c, lastCheck(d));
-  // les paroles sans section suivent la région ; le brouillon garde le style pour la prochaine fois
+  // les paroles suivent la région ; le brouillon garde le style pour la prochaine fois, et
+  // reprend les valeurs du projet (Cal : « par défaut il prend la nôtre »)
   g.v = { ...g.v, abc: '', lyrics: '' };
+  g.libre = {};
   delete g.v.src_audio; delete g.v.ref;
   P.clips.push(c);
   app.selectClips([c.id], true);
