@@ -482,7 +482,29 @@ dérober à la main. Essai (Chromium, hors temps réel, le `CompEffect` même du
   l'ondulation de la détection entre deux crêtes ;
 - l'ancienne courbe contre le signal constant : 11 dB aux défauts, 23,8 dB au plus.
 
-### 5.3 Les tables de saturation
+### 5.4 L'EQ-3 du nodal (06/10)
+
+La surface EQ-3 du nodal (`machines/blocks/registry.js`, `eqSurface`) traçait la réponse de
+son **jumeau** : un `EqEffect` (`odio/effects/eq3.js`) posé sur un `OfflineAudioContext` qu'on
+ne rend jamais (`nodal.js`, `jumeau`), lu par `getFrequencyResponse`. Ses réglages partent par
+`setTargetAtTime` ; sans rendu, les biquads gardent leurs valeurs d'office. **Mesuré : la
+courbe restait plate (0 dB) quels que soient les réglages**, jusqu'à 30,7 dB du son rendu
+(grave, médium et aigu à +18).
+
+Elle lit maintenant la loi de la vue Instruments, `appareils/calcul.js` : les trois étages de
+l'`EqEffect` (plateau grave à `LOW_CORNER`, cloche à `midHz` et `width`, plateau aigu à
+`HIGH_CORNER`), leurs décibels ajoutés, à la fréquence d'échantillonnage du moteur (le
+jumeau la prend du moteur, et se refait si elle change).
+
+L'essai (Chromium, hors temps réel) : la courbe que la surface trace vraiment, relevée sur un
+faux contexte de dessin, contre un sinus rendu à travers l'`EqEffect` du moteur (valeur
+efficace contre le même sinus sans lui) ; 6 réglages (d'office, chaque bande seule, les
+bornes ±18 avec la largeur 0,3 et 4), 16 points chacun de 20 Hz à 20 kHz, à 48 et 44,1 kHz :
+**0,018 dB d'écart au plus** sur 192 points. La mesure par crête d'échantillons donnait
+jusqu'à 1,1 dB à 8 kHz (six échantillons par période) : c'est la mesure qui se trompait, pas
+la loi.
+
+### 5.5 Les tables de saturation
 
 Pour la distorsion du studio, la courbe dessinée est la table même que reçoit
 le `WaveShaperNode`, lue comme le nœud la lit : interpolation linéaire. On la
@@ -567,9 +589,9 @@ captures, l'historique du compresseur est donc en marches d'escalier ; à
 
 ## 9. Ce qui reste
 
-- **Le nodal** dessine encore son propre EQ-3 (sa courbe de compresseur lit
-  `appareils/calcul.js` depuis le 05/10 au soir, § 5.2). Ses autres surfaces
-  devraient lire `appareils/calcul.js` elles aussi.
+- ~~**Le nodal** dessine encore son propre EQ-3~~ : il lit `appareils/calcul.js`
+  depuis le 06/10 (§ 5.4), comme sa courbe de compresseur (§ 5.2). Ses autres
+  surfaces devraient lire `appareils/calcul.js` elles aussi.
 - **L'égaliseur** pourrait aller plus loin :
   - un type par bande (plateau ↔ cloche) ;
   - des coupes à 24 et 48 dB/oct. (des biquads en cascade, avec les Q de

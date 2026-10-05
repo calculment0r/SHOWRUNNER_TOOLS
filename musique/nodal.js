@@ -298,9 +298,13 @@ export function createNodal(app) {
   function jumeau(m) {
     const def = MODULES[m.type];
     if (!def?.cls) return null;
+    // à la fréquence d'échantillonnage du moteur (le moteur démarré plus tard : les jumeaux se refont) —
+    // les surfaces qui calculent une réponse la lisent (registry.js, eqSurface)
+    const fs = app.engine.ctx?.sampleRate || 48000;
+    if (ctxJumeau && ctxJumeau.sampleRate !== fs) { ctxJumeau = null; jumeaux.clear(); }
     let j = jumeaux.get(m.id);
     if (!j || j.type !== m.type) {
-      try { ctxJumeau = ctxJumeau || new OfflineAudioContext(2, 128, 48000); j = { type: m.type, fx: new def.cls(ctxJumeau) }; jumeaux.set(m.id, j); } catch { return null; }
+      try { ctxJumeau = ctxJumeau || new OfflineAudioContext(2, 128, fs); j = { type: m.type, fx: new def.cls(ctxJumeau) }; jumeaux.set(m.id, j); } catch { return null; }
     }
     for (const s of def.params) { try { j.fx.setParameter(s.k, val(m, s.k)); } catch { /* un réglage que le jumeau ignore */ } }
     return j.fx;

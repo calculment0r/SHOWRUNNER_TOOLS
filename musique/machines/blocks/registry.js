@@ -35,8 +35,10 @@ import {
 } from "../moteur/index.js"
 // SHOWRUNNER : la courbe du compresseur que le nœud applique vraiment (la vue Instruments s'en sert),
 // à la place de compressorCurve d'ODIO_01 — voir compSurface
-import { compresseur } from "../../appareils/calcul.js"
+import { compresseur, coefs, module as moduleBiquad, linVersDb } from "../../appareils/calcul.js"
 import { COMP_KNEE } from "../../odio/effects/comp.js"
+// SHOWRUNNER (06/10) : les coudes des plateaux de l'EQ-3, pour sa loi (voir eqSurface)
+import { LOW_CORNER, HIGH_CORNER } from "../../odio/effects/eq3.js"
                                                                 
 import { MACHINE_SECTIONS, sectionLayout,                 } from "./machines.js"
                                               
@@ -211,14 +213,26 @@ const eqSurface                        = {
     ctx.stroke()
     ctx.globalAlpha = 1
 
-    const frequencies = new Float32Array(new ArrayBuffer(CURVE_POINTS * 4))
-    for (let i = 0; i < CURVE_POINTS; i++) frequencies[i] = normToFreq(i / (CURVE_POINTS - 1))
-    const magnitude = effect.getFrequencyResponse(frequencies)
+    // SHOWRUNNER (06/10) : la loi du moteur, une seule — appareils/calcul.js (les coefficients
+    // des BiquadFilterNode de la spécification Web Audio), celle de la vue Instruments
+    // (appareils/egaliseur.js) : les trois étages de l'EqEffect (odio/effects/eq3.js : plateau
+    // grave à LOW_CORNER, cloche, plateau aigu à HIGH_CORNER), leurs décibels ajoutés, à la
+    // fréquence d'échantillonnage du moteur (celle du jumeau, nodal.js). Avant, la courbe venait
+    // de getFrequencyResponse du jumeau — un EqEffect sur un contexte hors temps réel jamais
+    // rendu, dont les réglages partent par setTargetAtTime : elle restait PLATE, jusqu'à 30 dB
+    // du son rendu (docs/etudes/odio_appareils.md § 5.4).
+    const fs = effect.context?.sampleRate || 48000
+    const etages = [
+      coefs("lowshelf", LOW_CORNER, 1, effect.getParameter("low"), fs),
+      coefs("peaking", effect.getParameter("midHz"), effect.getParameter("width"), effect.getParameter("mid"), fs),
+      coefs("highshelf", HIGH_CORNER, 1, effect.getParameter("high"), fs),
+    ]
+    const gainDb = (hz        ) => etages.reduce((somme, c) => somme + linVersDb(moduleBiquad(c, hz, fs)), 0)
 
     ctx.beginPath()
     for (let i = 0; i < CURVE_POINTS; i++) {
       const x = (i / (CURVE_POINTS - 1)) * width
-      const y = toY(magnitudeToDb(magnitude[i] ?? 1))
+      const y = toY(gainDb(normToFreq(i / (CURVE_POINTS - 1))))
       if (i === 0) ctx.moveTo(x, y)
       else ctx.lineTo(x, y)
     }
