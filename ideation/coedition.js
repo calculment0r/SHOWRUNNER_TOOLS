@@ -859,12 +859,12 @@ export function createCoedition(app, hooks = {}) {
   async function items(ids) {
     const want = [...new Set(ids)].filter((id) => id && !S.items.has(id));
     if (!want.length) return;
-    try {
-      const r = await api('library/batch', { method: 'POST', body: { ids: want } });
+    try {   // montrer (`spaces: '*'`) : comme ensureItems (ideation.js), la planche d'un lien est d'un autre Workspace
+      const r = await api('library/batch', { method: 'POST', body: { ids: want, spaces: '*' } });
       for (const it of r.items || []) S.items.set(it.id, it);
       for (const id of r.missing || []) S.items.set(id, { id, missing: true });
     } catch {
-      for (const id of want) S.items.set(id, await api('library/' + id).catch(() => ({ id, missing: true })));
+      for (const id of want) S.items.set(id, await api('library/' + id + '?spaces=*').catch(() => ({ id, missing: true })));
     }
     full();
   }

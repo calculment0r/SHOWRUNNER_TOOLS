@@ -40,6 +40,10 @@ def elsewhere_or_404(item_id: str) -> dict:
     if it:
         return it
     other = library.see(item_id)
+    if other and not auth.can_read_item(other, auth.current(), links=False):
+        # montré par le lien d'une planche seulement (core/auth.py, can_read_item) : ni à lui, ni à rapatrier
+        raise HttpError(403, f"« {other.get('title') or item_id} » ne t'est montré que par le lien d'une planche : "
+                             f"il se regarde là, tu ne t'en sers pas ailleurs")
     if other:
         raise HttpError(409, f"« {other.get('title') or item_id} » est dans le Workspace « {library.space_name(library.space_of(other))} » : "
                              f"on ne s'en sert que là — passe dans ce Workspace, ou rapatrie-le ici (Asset, « Rapatrier »)")

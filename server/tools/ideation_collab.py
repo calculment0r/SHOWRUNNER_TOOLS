@@ -81,6 +81,13 @@ Les rôles par planche (propriétaire, éditeur, spectateur) et les invitations 
     POST /api/ideation/collab/<planche>/invites           {role, hours} → le lien (une fois)
     POST /api/ideation/collab/<planche>/invites/<id>/revoke
     POST /api/auth/ideation-invite/<jeton>                ouvrir un lien (une session qui attend passe)
+
+Le rôle d'un lien vaut pour CETTE planche, quel que soit le compte qui l'ouvre : un
+invité du portail, un compte sans le Studio (un ami « Apps »), un membre d'un autre
+Workspace. Il passe la porte du Studio pour les routes de cette planche (core/auth.py,
+_studio_only, par GUEST_ROUTES et leurs juges), voit les objets posés dessus (et ne
+pose que ceux qu'il voit déjà), et ne calcule pas plus qu'avant : l'export, les rendus
+restent jugés par la file (le droit Studio, la garde du calcul).
 """
 
 from __future__ import annotations
@@ -378,6 +385,7 @@ TOKEN = re.compile(r"(ide-\d{8}-\d{6}-[0-9a-f]{4})\.([A-Za-z0-9_-]{16,64})")
 _alock = threading.RLock()
 _acc: dict[str, dict] = {}
 _gst: dict | None = None
+_lidx: dict[str, list[str]] | None = None   # personne → les planches où un lien lui donne un rôle (_links_index)
 
 
 def _afile(bid: str) -> Path:
@@ -402,11 +410,31 @@ def _access(bid: str) -> dict:
 
 
 def _asave(bid: str) -> None:
+    global _lidx
     with _alock:
         f = _afile(bid)
         tmp = f.with_suffix(".tmp")
         tmp.write_text(json.dumps(_acc[bid], ensure_ascii=False, indent=1), encoding="utf-8")
         tmp.replace(f)
+        _lidx = None   # les rôles des liens ont pu changer : l'index se refait à la prochaine lecture
+
+
+def _links_index() -> dict[str, list[str]]:
+    """Pour chaque personne, les planches où un lien lui a donné un rôle (`members` des
+    fichiers d'accès : chacun y entre par un lien, r_redeem). Dérivé des fichiers, refait
+    après chaque écriture (_asave, par où toutes passent) : il ne peut pas les contredire
+    — y compris pour qui a ouvert un lien avant que l'index existe."""
+    global _lidx
+    with _alock:
+        if _lidx is None:
+            idx: dict[str, list[str]] = {}
+            d = config.data_dir() / "ideation_collab"
+            for f in sorted(d.glob("ide-*.access.json")) if d.is_dir() else []:
+                bid = f.name[:-len(".access.json")]
+                for uid in _access(bid).get("members") or {}:
+                    idx.setdefault(uid, []).append(bid)
+            _lidx = idx
+        return _lidx
 
 
 def _guests() -> dict:
@@ -439,21 +467,24 @@ def role_of(u: dict | None, bid: str) -> str:
     devient le rôle d'espace — on peut resserrer une planche, pas l'ouvrir au-delà
     du Workspace (un lecteur, un guest viewer : spectateur au plus ; qui n'est pas
     dans le Workspace : aucun accès), sauf un rôle donné explicitement (un lien de
-    partage, `members`)."""
+    partage, `members`) : il vaut pour cette planche, dans une requête de n'importe
+    quel Workspace (equipes_espaces.md § 1.7 : la planche peut ouvrir plus) — celui
+    qui l'a reçu n'est souvent pas du Workspace de la planche (un ami « Apps » n'a que
+    le sien)."""
     if not auth.enabled():
         return "owner"
     if not u:
         return "none"
+    a = _access(bid)
+    m = a["members"].get(u["id"])
+    if m and m.get("role") in ROLES and a.get("owner") != u["id"] and not auth.is_admin(u):
+        return m["role"]
     here = auth.current_space()
     sp = _ide().board_space(bid) if here or not auth.is_guest(u) else None
     if here and sp != here:
         return "none"
     if auth.is_admin(u):
         return "owner"
-    a = _access(bid)
-    m = a["members"].get(u["id"])
-    if m and m.get("role") in ROLES and a.get("owner") != u["id"]:
-        return m["role"]
     if auth.is_guest(u):   # l'invité : les planches de ses liens, rien d'autre
         return "none"
     cap = "editor" if auth.can_edit(u, sp) else "viewer" if auth.can_view(u, sp) else "none"
@@ -513,14 +544,29 @@ def board_items(bid: str) -> frozenset:
 
 
 def guest_boards(u: dict) -> list[str]:
-    """Les planches d'un invité : celles de ses liens où il a encore un rôle."""
+    """Les planches de ses liens où il a encore un rôle : celles d'un invité du portail
+    (_invites.json), et celles où un lien a donné un rôle à un membre (_links_index) —
+    un ami « Apps », un membre d'un autre Workspace : le lien lui ouvre la planche
+    (core/auth.py, _studio_only, can_read_item), comme à l'invité."""
     ide = _ide()
+    uid = u.get("id")
+    mine = list((_guests().get(uid) or {}).get("boards", [])) + list(_links_index().get(uid, []))
     out = []
-    for bid in (_guests().get(u.get("id")) or {}).get("boards", []):
+    for bid in dict.fromkeys(mine):
         if isinstance(bid, str) and ide.BID.fullmatch(bid) and ide._path(bid).exists() \
                 and role_of(u, bid) in ("viewer", "editor"):
             out.append(bid)
     return out
+
+
+def by_link(u: dict | None, bid: str) -> bool:
+    """La planche ne lui est ouverte que par un lien : un invité du portail, ou un membre
+    qui ne voit pas le Workspace de la planche. Il n'y pose alors que des objets qu'il voit
+    déjà (guest_nodes_ok, _apply) : poser un identifiant deviné du même Workspace lui
+    ouvrirait un objet qu'on ne lui a pas montré."""
+    if not u or not auth.enabled() or auth.is_admin(u):
+        return False
+    return auth.is_guest(u) or not auth.can_view(u, _ide().board_space(bid))
 
 
 def guest_items(u: dict) -> set:
@@ -532,11 +578,11 @@ def _guest_home(u: dict) -> str:
     return f"/ideation/#{b[0]}" if b else "/ideation/"
 
 
-def guest_nodes_ok(u: dict | None, before: list, after: list) -> bool:
-    """Un invité ne pose sur une planche que des objets de la bibliothèque qu'il voit
-    déjà (copier, coller, dupliquer) : sinon, poser un identifiant deviné lui
-    ouvrirait un objet qu'on ne lui a pas montré."""
-    if not auth.is_guest(u):
+def guest_nodes_ok(u: dict | None, before: list, after: list, bid: str | None = None) -> bool:
+    """Un invité (ou qui n'a la planche `bid` que par un lien : by_link) ne pose sur une
+    planche que des objets de la bibliothèque qu'il voit déjà (copier, coller, dupliquer) :
+    sinon, poser un identifiant deviné lui ouvrirait un objet qu'on ne lui a pas montré."""
+    if not (auth.is_guest(u) or (bid and by_link(u, bid))):
         return True
     had = {i for n in before for i in node_items(n)}
     new = {i for n in after for i in node_items(n)} - had
@@ -1658,7 +1704,8 @@ def _posable(B: dict, obj: dict, cur: dict | None, fix) -> None:
 
 def _one(ide, h: dict, op, added: set, allowed=None):
     """Applique une opération ; rend sa forme normalisée (None : sans effet).
-    `allowed` : pour un invité, les objets de la bibliothèque qu'il peut poser."""
+    `allowed` : pour qui n'a la planche que par un lien (by_link), les objets de la
+    bibliothèque qu'il peut poser."""
     if not isinstance(op, dict):
         raise _Drop("invalide")
     o, t = op.get("o"), op.get("t")
@@ -1807,7 +1854,7 @@ def _apply(bid: str, h: dict, ops: list, sid: str, n: int, u: dict) -> list:
     acc, fx, drop, fixes = [], [], [], []
     added: set = set()
     order_n = order_l = struct = False
-    allowed = auth.guest_items(u) if auth.is_guest(u) else None
+    allowed = auth.guest_items(u) if by_link(u, bid) else None   # par un lien seulement : ce qu'il voit déjà
     for i, op in enumerate(ops):
         try:
             r = _one(ide, h, op, added, allowed)
@@ -1917,7 +1964,9 @@ def r_ops_since(req, bid):
 
 def register(app) -> None:
     # l'invité : ce qu'Idéation lui ouvre (core/auth.py, guest_realm), et où le mener
-    auth.guest_realm("ideation", routes=GUEST_ROUTES, pages=("/ideation/",), items=guest_items, home=_guest_home)
+    # le même royaume ouvre la planche d'un lien à un compte sans le Studio (_studio_only : `shared`, les juges)
+    auth.guest_realm("ideation", routes=GUEST_ROUTES, pages=("/ideation/",), items=guest_items, home=_guest_home,
+                     shared=lambda u: bool(guest_boards(u)), link_param="invite")   # …/ideation/?invite=<jeton>#<planche>
     app.route("GET", auth.GUEST_HOME, auth.r_guest_home)
     app.route("HEAD", auth.GUEST_HOME, auth.r_guest_home)
     app.route("GET", "/api/ideation/collab/{bid}", r_state)
@@ -2187,6 +2236,7 @@ def selftest(call, ok) -> None:
     _selftest_roles(call, ok)
     _selftest_registres(call, ok)
     _selftest_invite(call, ok)
+    _selftest_apps(call, ok)
     _selftest_ice(call, ok, base)
 
 
@@ -2572,6 +2622,158 @@ def _selftest_registres(call, ok) -> None:
     finally:
         with _lock:
             _boards.clear()
+
+
+def _selftest_apps(call, ok) -> None:
+    """Un ami « Apps » (un compte sans le Studio, qui n'a que son Workspace « Perso ») invité
+    comme éditeur sur la planche P de Cal (dans Général) : le lien lui ouvre P — la page
+    d'Idéation, le direct, la co-édition, les objets posés sur P —, et rien d'autre du Studio ;
+    ce qui calcule (l'export, le PNG, un travail d'Idéation) reste refusé, et dit pourquoi.
+    Avant le 05/10, la porte du Studio (core/auth.py, _studio_only) refusait toute écriture
+    sous /api/ideation/ (403 « Idéation fait partie du Studio »), et role_of bornait au
+    Workspace de la requête le rôle que le lien avait donné (« aucun accès »)."""
+    from PIL import Image
+
+    from core import jobs
+    from tools import porte_publique as PP
+    from tools.admin import essai_http as H
+    saved = {k: globals()[k] for k in ("HEARTBEAT_S", "GRACE_S", "WAKE_S")}
+    before = config.CFG.get("auth")
+    config.CFG["auth"] = True
+    auth.startup()
+    home = int(config.get("port"))
+    same = {"Origin": f"http://127.0.0.1:{home}"}
+    err = lambda d: d.get("error", "") if isinstance(d, dict) else ""   # noqa: E731
+    flux: list[_Flux] = []
+    try:
+        globals().update(HEARTBEAT_S=1.0, GRACE_S=2.0, WAKE_S=0.2)
+        for k in ("entree:127.0.0.1", "demande:127.0.0.1", "invitation-planche:127.0.0.1"):
+            auth._hits.pop(k, None)
+        s, d, cal = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
+        s, ap, _ = H("POST", "/api/admin/users", {"name": "Aurore Apps", "access": "apps"}, cookie=cal, headers=same)
+        _, _, A = H("POST", "/api/auth/enter", {"name": "Aurore Apps"}, headers=same)
+        s, me0, _ = H("GET", "/api/auth/me", cookie=A)
+        ok(ap.get("access") == "apps" and A and (me0.get("studio") or {}).get("ici") is False
+           and (me0.get("studio") or {}).get("liens") == [],
+           f"apps : Aurore, un compte Apps, sans le Studio ici ni lien ({ap} {me0.get('studio')})")
+        auth.set_current(auth.user(auth.admin_id()))
+        pics = []
+        for i, c in enumerate(((210, 80, 30), (30, 80, 210))):
+            f = config.data_dir() / f"apps-essai-{i}.png"
+            Image.new("RGB", (32, 24), c).save(f, "PNG")
+            pics.append(library.add_file(f, title=f"apps {i}"))
+        auth.set_current(None)
+        X, Y = pics[0]["id"], pics[1]["id"]
+        xurl, yurl = "/" + library.public(pics[0])["url"], "/" + library.public(pics[1])["url"]
+        s, P, _ = H("POST", "/api/ideation/boards", {"name": "Planche P (Apps)"}, cookie=cal, headers=same)
+        s, Q, _ = H("POST", "/api/ideation/boards", {"name": "Planche Q (Apps)"}, cookie=cal, headers=same)
+        p, q = P["id"], Q["id"]
+        H("POST", f"/api/ideation/boards/{p}", {"name": "Planche P (Apps)", "base_rev": 1, "links": [],
+                                                "nodes": [{"id": "m1", "type": "media", "item": X, "kind": "image", "x": 0, "y": 0, "w": 200, "h": 150},
+                                                          {"id": "t1", "type": "note", "x": 300, "y": 0, "w": 200, "h": 80, "text": "à P"}]},
+          cookie=cal, headers=same)
+        G = lambda m, path, body=None: H(m, path, body, cookie=A, headers=same if m != "GET" else None)[:2]   # noqa: E731
+        s, _ = G("POST", f"/api/ideation/collab/{p}/ops", {"sid": "sid-aurore01", "n": 1, "ops": []})
+        s1, _, _, _ = PP._req(home, "GET", "/ideation/", cookies={auth.COOKIE: A})
+        s2, _, _, _ = PP._req(home, "GET", f"/ideation/?invite={p}.pas-encore-ouvert-xx#{p}", cookies={auth.COOKIE: A})
+        s3, _, _, _ = PP._req(home, "GET", "/ideation/collab.js", cookies={auth.COOKIE: A})
+        ok(s == 403 and s1 == 403 and s2 == 200 and s3 == 200,
+           f"apps : sans lien, P et Idéation lui sont fermées ; la page qui ouvre un lien (?invite=) se sert, "
+           f"son code aussi ({s} {s1} {s2} {s3})")
+
+        s, inv, _ = H("POST", f"/api/ideation/collab/{p}/invites", {"role": "editor", "hours": 24}, cookie=cal, headers=same)
+        s, rd = G("POST", f"/api/auth/ideation-invite/{inv.get('token', '')}", {})
+        ok(s == 200 and rd.get("role") == "editor" and not rd.get("guest") and auth.user("aurore-apps")["role"] == "ami",
+           f"apps : le lien d'éditeur l'accepte sur P — elle reste une amie Apps, pas une invitée ({s} {rd})")
+        s, me1 = G("GET", "/api/auth/me")
+        _perso = lambda _tok: (me1.get("workspace") or {}).get("id")   # noqa: E731 — son Workspace « Perso »
+        ok((me1.get("studio") or {}).get("ici") is False and me1["studio"].get("liens") == ["ideation"]
+           and me1["user"]["access"] == "apps", f"apps : /api/auth/me dit le lien (studio.liens) ({me1.get('studio')})")
+        s1, _, _, _ = PP._req(home, "GET", "/ideation/", cookies={auth.COOKIE: A})
+        s2, _, _, hd = PP._req(home, "GET", "/montage/", cookies={auth.COOKIE: A})
+        ok(s1 == 200 and s2 == 403 and hd.get("X-Studio") == "ferme",
+           f"apps : la page d'Idéation s'ouvre, le Montage reste « réservé au Studio » ({s1} {s2})")
+        s, lst = G("GET", "/api/ideation/boards")
+        s2, _ = G("GET", f"/api/ideation/boards/{p}")
+        s3, _ = G("GET", f"/api/ideation/boards/{q}")
+        ok(s == 200 and [x["id"] for x in lst["boards"]] == [p] and lst["boards"][0]["role"] == "editor" and s2 == 200 and s3 == 403,
+           f"apps : dans Idéation, P seule, éditrice ; Q fermée ({s} {s2} {s3})")
+
+        # la co-édition : son direct, ses gestes
+        fa = _Flux(f"/api/ideation/collab/{p}/stream", A)
+        flux.append(fa)
+        _, ha = fa.wait(lambda e, dd: e == "hello")
+        ok(fa.status == 200 and ha and ha["me"]["role"] == "editor" and ha["can"]["edit"],
+           f"apps : son direct sur P, éditrice ({fa.status} {ha and ha['me'].get('role')})")
+        fc = _Flux(f"/api/ideation/collab/{p}/stream", cal)
+        flux.append(fc)
+        fc.wait(lambda e, dd: e == "hello")
+        s, r = G("POST", f"/api/ideation/collab/{p}/ops", {"sid": "sid-aurore01", "n": 1, "ops": [
+            {"o": "set", "t": "n", "id": "t1", "k": "text", "v": "à P, et à Aurore", "b": "à P"},
+            {"o": "add", "t": "n", "v": {"id": "m2", "type": "media", "item": Y, "kind": "image", "x": 0, "y": 300, "w": 100, "h": 80}},
+            {"o": "add", "t": "n", "v": {"id": "m3", "type": "media", "item": X, "kind": "image", "x": 200, "y": 300, "w": 100, "h": 80}}]})
+        _, ev = fc.wait(lambda e, dd: e == "op" and dd.get("sid") == "sid-aurore01")
+        nodes = {n["id"]: n for n in H("GET", f"/api/ideation/boards/{p}", cookie=cal)[1]["nodes"]}
+        ok(s == 200 and ev and nodes.get("t1", {}).get("text") == "à P, et à Aurore" and "m3" in nodes and "m2" not in nodes
+           and {"i": 1, "why": "invité"} in r.get("drop", []),
+           f"apps : la co-édition passe — Cal voit son geste ; elle colle l'image de P, pas un objet deviné ({s} {err(r)} {sorted(nodes)})")
+        s, _ = G("POST", f"/api/ideation/collab/{p}/presence", {"cid": ha["cid"] if ha else "", "cursor": [10, 10]})
+        s2, _ = G("POST", f"/api/ideation/collab/{p}/messages", {"text": "bonjour"})
+        s3, _ = G("POST", f"/api/ideation/boards/{p}/rename", {"name": "Planche P, renommée"})
+        ok((s, s2, s3) == (200, 200, 200), f"apps : présence, fil, renommer P ({s} {s2} {s3})")
+
+        # les objets de P se montrent ; un autre, non ; ses listes restent ses Workspaces
+        s, bt = G("POST", "/api/library/batch", {"ids": [X, Y], "spaces": "*"})
+        s1, _, _, _ = PP._req(home, "GET", xurl, cookies={auth.COOKIE: A})
+        s2, _, _, _ = PP._req(home, "GET", yurl, cookies={auth.COOKIE: A})
+        s3, lib = G("GET", "/api/library?spaces=*&limit=500")
+        ok(s == 200 and [i["id"] for i in bt["items"]] == [X] and bt["missing"] == [Y] and s1 == 200 and s2 == 404
+           and not {X, Y} & {i["id"] for i in lib.get("items", [])},
+           f"apps : l'image de P se montre (fiche, fichier), pas l'autre ; Asset ne les liste pas ({s} {s1} {s2})")
+        s, d = G("POST", f"/api/library/{X}", {"title": "à Aurore"})
+        s2, d2 = G("POST", f"/api/espaces/{_perso(A)}/rapatrier", {"items": [X]})
+        ok(s == 403 and "lien" in err(d) and library._items[X]["title"] != "à Aurore" and s2 == 409 and "lien" in err(d2),
+           f"apps : elle ne modifie pas l'image de P, ni ne la rapatrie chez elle — le lien la montre, il ne la donne pas "
+           f"({s} {err(d)[:60]} · {s2} {err(d2)[:60]})")
+
+        # ce qui calcule reste refusé, et dit pourquoi ; le reste du Studio reste fermé
+        jobs_before = set(jobs._jobs)
+        refus = {}
+        for m, path, body in (("POST", f"/api/ideation/boards/{p}/export", {}), ("POST", f"/api/ideation/boards/{p}/png", {}),
+                              ("POST", "/api/jobs", {"kind": "ideation.export", "params": {"board": p}}),
+                              ("POST", "/api/ideation/boards", {"name": "à moi"}), ("POST", f"/api/ideation/boards/{p}/duplicate", {}),
+                              ("POST", f"/api/ideation/boards/{p}/delete", {}), ("POST", f"/api/ideation/boards/{q}/rename", {"name": "x"}),
+                              ("POST", "/api/ideation/lot", {}), ("POST", "/api/montage/projects", {"name": "x"})):
+            s, d = G(m, path, body)
+            refus[path] = (s, err(d))
+        ok(all(v[0] == 403 and "Studio" in v[1] for v in refus.values()),
+           f"apps : l'export, le PNG, le travail d'Idéation, créer, dupliquer, jeter, Q, le lot, le Montage : 403 qui dit "
+           f"« réservé au Studio » ({ {k: v[0] for k, v in refus.items()} })")
+        new = set(jobs._jobs) - jobs_before
+        ok(not new, f"apps : aucun travail lancé ({new})")
+        s, d = G("POST", f"/api/ideation/boards/{p}/export", {})
+        ok("Demander le Studio" in err(d), f"apps : la raison mène à la demande ({err(d)[:90]})")
+
+        # le lien retiré : P se ferme, la porte du Studio aussi
+        s, acc, _ = H("GET", f"/api/ideation/collab/{p}/access", cookie=cal)
+        H("POST", f"/api/ideation/collab/{p}/invites/{acc['invites'][0]['id']}/revoke", {}, cookie=cal, headers=same)
+        ev, _ = fa.wait(lambda e, dd: e in ("bye", "eof"), 4)
+        s1, _ = G("GET", f"/api/ideation/boards/{p}")
+        s2, d2 = G("POST", f"/api/ideation/collab/{p}/ops", {"sid": "sid-aurore01", "n": 2, "ops": []})
+        s3, _, _, _ = PP._req(home, "GET", xurl, cookies={auth.COOKIE: A})
+        s4, _, _, _ = PP._req(home, "GET", "/ideation/", cookies={auth.COOKIE: A})
+        s5, me2 = G("GET", "/api/auth/me")
+        ok(ev == "bye" and s1 == 403 and s2 == 403 and "Studio" in err(d2) and s3 == 404 and s4 == 403
+           and me2["studio"]["liens"] == [],
+           f"apps : le lien retiré, P, son image et la page d'Idéation se ferment ({ev} {s1} {s2} {s3} {s4})")
+    finally:
+        for f in flux:
+            f.close()
+        globals().update(saved)
+        with _lock:
+            _boards.clear()
+        auth.set_current(None)
+        config.CFG["auth"] = before
 
 
 def _selftest_invite(call, ok) -> None:

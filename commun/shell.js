@@ -113,6 +113,31 @@ const lu = (k) => { try { return JSON.parse(ss.get(k) || 'null'); } catch { retu
 let lastMe = lu(ME_KEY);
 // entré dans cet onglet (ou la maison sans porte) : la page n'a pas à se cacher en attendant la porte
 const entre = (me) => !!(me && (!me.auth || me.state === 'active'));
+
+// ── le Studio ici (core/auth.py, « le Studio ») ─────────────
+// /api/auth/me → `studio` : `ici`, le Studio dans le Workspace de l'onglet, jugé comme la porte le
+// juge (_studio_only : le compte, ou l'offre de la Team du Workspace) ; `liens`, les outils Studio
+// dont un lien lui ouvre un document (une planche d'Idéation). Sans le champ (une réponse d'avant),
+// le droit du compte (`user.access`) ; pas encore de réponse : rien ne se retire (le serveur juge).
+// Un geste du Studio (Envoyer au Montage, Ouvrir ODIO…) est RETIRÉ pour qui ne l'a pas — « retire
+// (reste en Studio) », apps_studio_elements.md § 3.2 — d'une seule façon, pour toutes les pages :
+//   - un nœud : studioSeul(nœud), la classe STUDIO_SEUL (`sr-studio`), cachée sous <html data-studio="non">
+//     (shell.css) ;
+//   - une entrée de menu (commun/menu.js) : `studio: true`, que menu() écarte.
+// Le serveur juge de son côté (pages, écritures, travaux) : ceci ne fait que le montrer.
+export const STUDIO_SEUL = 'sr-studio';
+/** Marque un nœud (un bouton, un lien) comme geste du Studio : retiré sans lui. Rend le nœud. */
+export function studioSeul(node) { if (node) node.classList.add(STUDIO_SEUL); return node; }
+export function studioIci(me = lastMe) {
+  if (!me || !me.user || me.auth === false) return true;
+  if (me.user.role === 'invite') return false;
+  if (me.studio && typeof me.studio.ici === 'boolean') return me.studio.ici;
+  return me.user.access !== 'apps';
+}
+/** Les outils Studio (ids de TOOLS) qu'un lien ouvre à cette personne sans le Studio. */
+export const studioLiens = (me = lastMe) => (me && me.studio && Array.isArray(me.studio.liens) ? me.studio.liens : []);
+const poseStudio = (me) => { document.documentElement.dataset.studio = studioIci(me) ? 'oui' : 'non'; };
+poseStudio(lastMe);   // dès la première image : ce que l'onglet sait déjà
 export const session = (fresh = false) => {
   if (!meP || fresh) {
     meP = api('auth/me').catch(() => null).then((me) => {
@@ -124,6 +149,7 @@ export const session = (fresh = false) => {
       }
       lastMe = me;
       ss.set(ME_KEY, me ? JSON.stringify(me) : null);
+      poseStudio(me);
       paintEspace();
       return me;
     });
@@ -759,14 +785,15 @@ export function mountHeader(toolId, { dock: useDock = true } = {}) {
     $('#sr-asset', hdr).hidden = me.user.role === 'invite';   // l'invité d'une planche n'a pas la bibliothèque
     paintFile();
   };
-  // Le droit Studio (core/auth.py, « le Studio » ; /api/auth/me → user.access) : un compte Apps voit les
-  // outils Studio fermés — grisés, un cadenas, un clic mène à la demande ; sur une page Studio (servie par le
+  // Le droit Studio (core/auth.py, « le Studio » ; /api/auth/me → studio, studioIci) : sans lui, les outils
+  // Studio sont fermés — grisés, un cadenas, un clic mène à la demande ; sur une page Studio (servie par le
   // Worker de la porte, que le portail ne voit pas), la porte « réservé au Studio » la couvre. Le serveur juge
   // de son côté (pages, écritures, travaux) : ceci ne fait que le montrer.
   // un invité de planche (rôle `invite`) n'a pas le Studio, mais sa planche d'Idéation lui est ouverte :
-  // le serveur l'exempte (_studio_only), l'en-tête aussi
-  const studioOff = (me, x) => !!(me && me.user && me.user.access === 'apps' && me.user.role !== 'invite'
-    && x && x.tier === 'studio' && !x.open);
+  // le serveur l'exempte (_studio_only), l'en-tête aussi ; de même, l'outil dont un lien ouvre un
+  // document à un compte sans le Studio (studioLiens : un ami « Apps » invité sur une planche)
+  const studioOff = (me, x) => !!(me && me.user && me.user.role !== 'invite' && !studioIci(me)
+    && x && x.tier === 'studio' && !x.open && !studioLiens(me).includes(x.id));
   const askStudio = (me, x) => (e) => { e.preventDefault(); menu.hidden = true; import('./porte.js').then((m) => m.studioDoor(me, x, { closable: true })); };
   const LOCK = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
   // le Workspace oublié avant le rechargement (oublieEspace) : le dire ici
@@ -812,7 +839,9 @@ export function mountHeader(toolId, { dock: useDock = true } = {}) {
     if (me && me.auth && me.state !== 'active') return showDoor(me);
     paintMe(me);
     paintEspace();
-    if (studioOff(me, t)) import('./porte.js').then((m) => m.studioDoor(me, t));
+    // un lien qui s'ouvre (…/ideation/?invite=<jeton>) : la page l'ouvre elle-même, puis se recharge ;
+    // la porte « réservé au Studio » ne la couvre pas entre-temps (le serveur juge le jeton)
+    if (studioOff(me, t) && !new URLSearchParams(location.search).has('invite')) import('./porte.js').then((m) => m.studioDoor(me, t));
     import('./prefs.js').then((m) => m.prefs.ready);   // les préférences de la personne, relues du portail
   });
   setInterval(() => { if (!doorOn) session(true).then(paintMe); }, 20000);

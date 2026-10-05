@@ -1004,10 +1004,15 @@ def rapatrier(ids: list, dest: str, *, folder: str = "") -> list[dict]:
         raise KeyError(dest)
     check_import(dest)
     srcs = []
+    who = auth.current()
     for iid in dict.fromkeys(str(i) for i in ids):
         src = see(iid)
         if src is None:
             raise KeyError(iid)
+        if not auth.can_read_item(src, who, links=False):   # le lien d'une planche montre l'objet, il ne le donne pas
+            owner = auth.display_name(auth.owner_of(src)) or auth.admin_name()
+            raise ValueError(f"« {src.get('title') or iid} » ne t'est montré que par le lien d'une planche : il se "
+                             f"regarde là, il ne se copie pas chez toi — demande-le à {owner}")
         why = import_refusal(src, dest)
         if why:
             raise ValueError(why)

@@ -822,15 +822,17 @@ app.boardsModal = async () => {
 
 // les fiches des objets posés : par paquets de 500, une requête chacun (POST /api/library/batch ;
 // une planche de 1000 images en faisait 1000 — étude de fluidité, § 2.2) ; un serveur sans lot :
-// une par objet, huit à la fois
+// une par objet, huit à la fois. MONTRER (`spaces: '*'`) : ce qui est posé est du Workspace de la
+// planche (le serveur le garde), qui n'est pas celui de l'onglet quand un lien l'ouvre (un ami
+// « Apps », un membre d'un autre Workspace : core/auth.py, can_read_item)
 async function ensureItems(ids) {
   const want = [...new Set(ids)].filter((id) => !S.items.has(id));
-  const one = (list) => Promise.all(list.map((id) => api('library/' + id)
+  const one = (list) => Promise.all(list.map((id) => api('library/' + id + '?spaces=*')
     .then((it) => S.items.set(id, it)).catch(() => S.items.set(id, { id, missing: true }))));
   for (let i = 0; i < want.length; i += 500) {
     const chunk = want.slice(i, i + 500);
     try {
-      const r = await api('library/batch', { method: 'POST', body: { ids: chunk } });
+      const r = await api('library/batch', { method: 'POST', body: { ids: chunk, spaces: '*' } });
       for (const it of r.items || []) S.items.set(it.id, it);
       for (const id of r.missing || []) S.items.set(id, { id, missing: true });
     } catch {

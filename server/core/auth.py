@@ -88,6 +88,15 @@ demande le Studio (`request_studio`, `POST /api/auth/studio`) ; Cal l'ouvre dans
 Admin. Un compte neuf reçoit le réglage `new_access` (« studio » pendant
 l'essai).
 
+Un lien (le lien d'une planche d'Idéation) ouvre CE document à qui l'ouvre,
+qu'il soit un invité du portail ou un compte sans le Studio, ou d'un autre
+Workspace (docs/etudes/equipes_espaces.md § 1.7 : « la planche peut ouvrir
+plus (un lien de partage) … sauf le calcul ») : les routes que l'outil déclare
+pour ses liens (`guest_realm`, avec leur juge) et ses pages passent la porte du
+Studio (`_studio_only`) ; les objets posés sur ce document se montrent
+(`can_read_item`). Le reste du Studio reste fermé, et le calcul reste jugé par
+la file (`jobs.submit` : `compute_refusal`, `need_studio_kind`).
+
 Teams et Workspaces (30/09, docs/etudes/equipes_espaces.md, étape 0 ; le modèle
 et sa matrice : core/espaces.py). La porte pose sur chaque requête le Workspace
 courant (`req.workspace`, et `current_space()` pour le fil) : l'en-tête
@@ -327,6 +336,7 @@ def current() -> dict | None:
 
 def set_current(u: dict | None) -> None:
     _local.user = u
+    _local.gitems = None   # ce que ses liens lui montrent : recalculé pour chaque personne (une requête, un travail)
 
 
 def current_id() -> str | None:
@@ -483,15 +493,19 @@ def owner_of(it: dict) -> str | None:
 # Workspace (core/espaces.py, la matrice) ; `visibility: own` (réglage d'admin) resserre
 # encore la lecture à ce qui est à soi ou partagé. Cal voit et fait tout ; le socle (aucune
 # personne) aussi ; l'invité d'une planche ne voit que ce que ses outils lui montrent.
+# Un membre voit aussi, hors de ses Workspaces, les objets que ses liens lui montrent
+# (posés sur une planche qu'un lien lui ouvre) — un à un, jamais dans une liste
+# (`item_reader` : Asset liste ses Workspaces) ; il ne les modifie pas (can_write_item :
+# le rôle dans leur Workspace).
 # Ces juges disent « où qu'il soit » : la borne du Workspace courant (un outil n'atteint
 # que son Workspace) est à part, dans core/library.py (readable, get, query).
-def can_read_item(it: dict, u: dict | None, _view=None) -> bool:
+def can_read_item(it: dict, u: dict | None, _view=None, links: bool = True) -> bool:
     if is_guest(u):   # un invité : les objets que ses outils lui montrent, rien d'autre
         return it.get("id") in guest_items(u)
     if u is None or is_admin(u):
         return True
     if not (_view(space_of(it)) if _view else can_view(u, space_of(it))):
-        return False
+        return links and it.get("id") in guest_items(u)
     return settings()["visibility"] == "all" or owner_of(it) == u["id"] or bool(it.get("shared"))
 
 
@@ -504,7 +518,7 @@ def item_reader(u: dict | None):
         if space not in memo:
             memo[space] = can_view(u, space)
         return memo[space]
-    return lambda it: can_read_item(it, u, view)
+    return lambda it: can_read_item(it, u, view, links=False)
 
 
 def can_write_item(it: dict, u: dict | None) -> bool:
@@ -656,7 +670,13 @@ def _studio_only(req) -> None:
     Studio devient la page « réservé au Studio » (STUDIO_PAGE, qui mène à la demande) ;
     une écriture sur une route Studio, 403. Sur la porte « code », les pages viennent
     des assets du Worker, sans passer ici : l'en-tête (commun/shell.js, mountHeader)
-    les ferme aussi ; les écritures, elles, arrivent toujours ici."""
+    les ferme aussi ; les écritures, elles, arrivent toujours ici.
+
+    Sauf ce qu'un lien lui ouvre (le lien d'une planche) : les routes de ce document
+    que l'outil déclare pour ses liens, jugées document par document (`shared_route`),
+    et les pages de cet outil tant qu'un lien lui en ouvre un (`studio_links`). Le
+    calcul n'en profite pas : les routes qui en lancent ne sont pas déclarées, et la
+    file juge chaque travail (jobs.submit : compute_refusal, need_studio_kind)."""
     u = getattr(req, "user", None)
     if not u or is_guest(u) or _studio_here(u, _space(req)):
         return
@@ -664,14 +684,33 @@ def _studio_only(req) -> None:
     if req.protected:
         if req.method not in ("GET", "HEAD", "OPTIONS"):
             name = studio_write(p)
-            if name:
+            if name and not shared_route(u, req.method, p):
                 raise HttpError(403, STUDIO_WHY.format(name=name))
         return
     if req.method in ("GET", "HEAD"):
         tid = studio_page(p)
-        if tid:
+        if tid and tid not in studio_links(u) and not _opens_link(req):
             req.studio_tool = tid
             req.path, req.rewritten = STUDIO_PAGE, True
+
+
+def _opens_link(req) -> bool:
+    """La page d'un outil qui ouvre un de ses liens (`/ideation/?invite=<jeton>`) : elle se
+    sert, son script ouvre le lien (une route sous /api/auth/, qui juge le jeton), puis se
+    recharge — sans quoi un compte sans le Studio ne pourrait jamais ouvrir le premier. Ses
+    fichiers (ses modules, ses feuilles : ils ne portent pas le paramètre) se servent aussi,
+    pour un outil qui s'ouvre par un lien (`link_param`). Ce n'est que du code (le dépôt est
+    public, le Worker de la porte le sert à tous) : les données restent aux routes, jugées
+    document par document."""
+    p = req.path
+    for r in _realms:
+        k = r.get("link_param")
+        if not k or not any(p.startswith(x) for x in r["pages"]):
+            continue
+        page = p.endswith("/") or p.endswith(".html")
+        if not page or (req.q(k) or "").strip():
+            return True
+    return False
 
 
 # ── les sessions ────────────────────────────────────────────
@@ -840,21 +879,54 @@ def _rules(rules) -> list:
 _GUEST_BASE = _rules([("GET POST", r"/api/prefs", None), ("GET", r"/api/prefs/schemas", None)])
 
 
-def guest_realm(name: str, *, routes=(), pages=(), items=None, home=None) -> None:
+def guest_realm(name: str, *, routes=(), pages=(), items=None, home=None, shared=None, link_param=None) -> None:
     """Un outil ouvre à l'invité une part de lui-même :
       routes : [(« GET POST », motif (expression régulière entière, groupes nommés),
                juge(personne, **groupes) → bool, ou None : la route juge elle-même)] ;
       pages  : les préfixes de ses pages (« /ideation/ ») ;
       items(personne) : les objets de la bibliothèque qu'il lui montre ;
-      home(personne)  : l'adresse où le mener (une autre page du portail y renvoie)."""
+      home(personne)  : l'adresse où le mener (une autre page du portail y renvoie) ;
+      shared(personne) : un de ses liens lui ouvre-t-il quelque chose (une planche) ?
+      link_param : le paramètre d'adresse par lequel une de ses pages ouvre un lien (« invite ») ;
+    Les mêmes déclarations valent pour un membre à qui un lien ouvre un document d'un
+    outil Studio sans qu'il ait le Studio (_studio_only : les routes à juge, les pages
+    tant que `shared`), ou d'un Workspace où il n'est pas (can_read_item : `items`)."""
     global _realms
     _realms = [r for r in _realms if r["name"] != name] + [
-        {"name": name, "routes": _rules(routes), "pages": tuple(pages), "items": items, "home": home}]
+        {"name": name, "routes": _rules(routes), "pages": tuple(pages), "items": items, "home": home, "shared": shared,
+         "link_param": link_param}]
+
+
+def shared_route(u: dict, method: str, path: str) -> bool:
+    """Une route qu'un lien ouvre à cette personne : déclarée par un outil (guest_realm),
+    et son juge dit oui pour ce document (la planche est-elle à ses liens ?). Jamais une
+    route sans juge : elle ne dit rien d'un document partagé."""
+    for r in _realms:
+        for methods, rx, judge in r["routes"]:
+            mm = rx.fullmatch(path) if judge is not None and method in methods else None
+            if mm and judge(u, **mm.groupdict()):
+                return True
+    return False
+
+
+def studio_links(u: dict | None) -> list[str]:
+    """Les outils Studio (STUDIO_TOOLS) dont un lien ouvre un document à cette personne :
+    leurs pages lui sont servies sans le Studio (les routes, elles, se jugent document par
+    document : shared_route). /api/auth/me le rend (`studio.liens`) : l'en-tête n'y pose
+    pas la porte « réservé au Studio »."""
+    out: list[str] = []
+    if not u:
+        return out
+    for r in _realms:
+        if r.get("shared") and r["shared"](u):
+            out += [t for t in map(studio_page, r["pages"]) if t and t not in out]
+    return out
 
 
 def guest_items(u: dict) -> frozenset:
-    """Les objets de la bibliothèque qu'un invité peut lire : ceux que ses outils lui
-    montrent. Calculés une fois par requête (une planche de 500 images en demande 500)."""
+    """Les objets de la bibliothèque que ses liens montrent à cette personne (un invité ;
+    un membre, hors de ses Workspaces) : ceux que les outils déclarent (`items`). Calculés
+    une fois par requête (une planche de 500 images en demande 500)."""
     c = getattr(_local, "gitems", None)
     if c and c[0] == u.get("id"):
         return c[1]
@@ -1141,9 +1213,17 @@ def _spaces_of(req, u: dict) -> dict:
     from . import espaces
     try:
         cur = _space(req) if getattr(req, "user", None) and req.user.get("id") == u.get("id") else espaces.default_for(u)
-        return espaces.me_payload(u, cur, getattr(req, "workspace_refused", None))
+        return {**espaces.me_payload(u, cur, getattr(req, "workspace_refused", None)), "studio": _studio_payload(u, cur)}
     except HttpError as e:   # teams.json illisible : la page le dit, rien ne tombe
-        return {"teams": [], "workspace": None, "teams_error": e.message}
+        return {"teams": [], "workspace": None, "teams_error": e.message, "studio": _studio_payload(u, None)}
+
+
+def _studio_payload(u: dict, space: str | None) -> dict:
+    """Le Studio pour la page, jugé comme la porte le juge (_studio_only) : `ici`, dans
+    le Workspace de la requête (un invité de planche : jamais) ; `liens`, les outils
+    Studio dont un lien lui ouvre un document. commun/shell.js (studioIci) en tire ce
+    qu'il montre : les gestes du Studio sont retirés sans lui."""
+    return {"ici": not is_guest(u) and _studio_here(u, space), "liens": studio_links(u)}
 
 
 def _me(req) -> dict:
