@@ -924,8 +924,15 @@ function h3Card(h3) {
     el('div', { class: 'card-head' }, el('span', { class: 'nm' }, 'H3 · vidéo'),
       el('span', { class: 'chip ' + (off ? '' : 'ok') }, el('i'), off ? 'moteur factice' : 'câblé')),
     off ? el('p', { class: 'adm-note' }, 'H3 n’est pas câblé (Câblage → movie_engine = h3) : rien ne le démarre, les vidéos sont d’essai.') :
-      el('p', { class: 'adm-note' }, `Démarré à la demande, arrêté après ${h3.idle_minutes} min sans rendu ; ${h3.min_free_gb} Go libres exigés avant un rendu.`),
-    ...(h3.instances || []).map((i) => el('div', { class: 'inst' }, el('span', { class: 'port' }, i.machine),
+      // le câblage de Cal (30/09) : la voie h3 = les ComfyUI :8188 des deux DGX, toujours allumés ; une instance
+      // ComfyUI-H3TEST (:8189, « managed ») n'est démarrée et arrêtée par le portail que si la voie en déclare une
+      el('p', { class: 'adm-note' }, (h3.instances || []).some((i) => i.managed)
+        ? `Démarré à la demande, arrêté après ${h3.idle_minutes} min sans rendu ; ${h3.min_free_gb} Go libres exigés avant un rendu.`
+        : `Sur les ComfyUI de la voie h3, toujours allumés : le portail ne les démarre ni ne les arrête ; ${h3.min_free_gb} Go libres exigés avant un rendu (sinon il décharge les autres modèles de la machine).`),
+    ...(h3.instances || []).map((i) => !i.managed ? el('div', { class: 'inst' }, el('span', { class: 'port' }, i.machine),
+      el('div', { class: 'lbl' }, [`ComfyUI :${i.port} · toujours allumé`, i.up ? '' : 'ne répond pas',
+        i.free_gb != null ? `${i.free_gb} Go libres` : '', i.busy ? 'calcule' : ''].filter(Boolean).join(' · '))) :
+      el('div', { class: 'inst' }, el('span', { class: 'port' }, i.machine),
       el('div', { class: 'lbl' }, [i.up ? 'démarré' : i.starting_for != null ? `démarre depuis ${i.starting_for} s` : 'arrêté',
         i.free_gb != null ? `${i.free_gb} Go libres` : '', i.busy ? 'calcule' : '', i.stops_in != null ? `s’arrête dans ${fmtWait(i.stops_in)}` : '',
         i.error || ''].filter(Boolean).join(' · ')),
