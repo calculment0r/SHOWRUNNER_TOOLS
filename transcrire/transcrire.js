@@ -9,8 +9,16 @@
 // son instant, et la frise des voix de Movie Analysis (commun/voix.js : une
 // piste par voix, sa ligne de dialogue mot à mot, sous elle son spectre).
 // Pas de traduction par défaut (la préférence « Traduire par défaut en » : rien).
-// Les voix se renomment à UN endroit (les cartes des voix) : le nom se pose
-// partout — répliques, frise, carnet, exports — et reste dans le document.
+// Les voix se renomment à UN endroit (leurs noms, en tête de la frise des voix) :
+// le nom se pose partout — répliques, frise, carnet, exports — et reste dans le
+// document.
+// L'écran gagne de la hauteur (Cal, 06/10) : plus d'en-tête de la réplique lue
+// au-dessus du lecteur (elle est éclairée dans la liste), plus de panneau
+// « répliques ‹ › » (↑ ↓ et le clic suffisent) ; l'onde moins haute une fois les
+// voix séparées, la frise des voix juste dessous ; l'entrée, les répliques
+// découpées et les voix se replient en accordéon (le groupe d'arcs d'ODIO) ;
+// original · traduction · les deux, en tête du texte ; le texte et le carnet
+// prennent la hauteur qui reste.
 // Le carnet (à la NotebookLM) : résumé, points clés · décisions · actions,
 // chapitres, questions — tiré du seul texte, chaque élément cite ses répliques.
 // Le texte et le carnet sont côte à côte, sur un seul écran (Cal, 05/10 : « on
@@ -33,6 +41,7 @@ import { menu, contextMenu, pageMenu, copy } from '../commun/menu.js';
 import { lecteur } from '../commun/lecteur.js';
 import { friseVoix, teinte } from '../commun/voix.js';
 import { split } from '../commun/split.js';
+import { AIDE } from '../commun/molette.js';
 
 mountHeader('transcrire', { sub: 'transcrire · traduire' });
 
@@ -106,16 +115,16 @@ function skeleton() {
     el('section', { class: 'ipan', id: 'p-in' }), el('section', { class: 'ipan', id: 'p-mode' }),
     el('section', { class: 'ipan', id: 'p-lang' }), el('section', { class: 'ipan adv', id: 'p-adv' }),
     el('div', { class: 'act', id: 'act' }), fileIn);
-  // le texte à gauche, le carnet à droite (un seul écran, Cal 05/10) ; la frise des voix (complet) dessous
+  // le lecteur ; la frise des voix (complet) juste dessous (Cal, 06/10) ; le texte à gauche, le carnet à
+  // droite (un seul écran, Cal 05/10), sur la hauteur qui reste
   $('#stage').replaceChildren(el('div', { id: 'banner' }), el('div', { class: 'tr-player', id: 'player' }),
-    el('div', { id: 'transport' }), el('div', { class: 'tr-bar', id: 'bar' }), el('div', { class: 'tr-voices', id: 'voices' }),
+    el('div', { class: 'tr-frise', id: 'frise', hidden: true }), el('div', { class: 'tr-bar', id: 'bar' }),
     el('div', { class: 'tr-splitbox', id: 'splitbox', hidden: true },
       el('div', { class: 'tr-split', id: 'split' },
         el('section', { class: 'tr-col tr-col-l', id: 'col-l', 'aria-label': 'la transcription' },
           el('div', { class: 'tr-col-h', id: 'lines-h' }),
           el('div', { class: 'tr-lines', id: 'lines', role: 'list', 'aria-label': 'les répliques' })),
-        el('section', { class: 'tr-col tr-col-r tr-carnet', id: 'carnet', 'aria-label': 'le carnet' }))),
-    el('div', { class: 'tr-frise', id: 'frise' }));
+        el('section', { class: 'tr-col tr-col-r tr-carnet', id: 'carnet', 'aria-label': 'le carnet' }))));
   $('#side').replaceChildren(el('p', { class: 'lbl' }, 'chargement'));
   // la poignée entre les deux : glisser, flèches (16 px, Maj 64), double-clic pour revenir à moitié-moitié ;
   // le partage est gardé dans ce navigateur (localStorage « sr-split-transcrire-texte-carnet »)
@@ -251,7 +260,7 @@ function openDoc(d, { keepMedia = false } = {}) {
   try { history.replaceState(null, '', location.pathname + location.search + (d ? '#' + d.id : '')); } catch { /* sans historique */ }
   if (!same || !keepMedia) paintPlayer();
   else paintStrip();   // la frise suit les répliques arrivées
-  paintBar(); paintVoices(); paintFrise(!same); paintLines(); paintCarnet(); markSide();
+  paintBar(); paintFrise(!same); paintVoices(); paintLines(); paintCarnet(); markSide();
   if (S.wantCarnet && d?.state === 'done') { S.wantCarnet = false; requestAnimationFrame(() => showCarnet(false)); }
   clearTimeout(pollT);
   if (busy(d) && !ongletCache()) pollT = setTimeout(poll, 900);
@@ -266,7 +275,7 @@ async function poll() {
     const d = await api('transcrire/docs/' + was.id);
     if (S.doc?.id !== d.id) return;
     const finished = busy(was) && !busy(d);
-    if (P.edits.size || $('.tx[contenteditable="true"]') || document.activeElement?.closest?.('.vcard')) {
+    if (P.edits.size || $('.tx[contenteditable="true"]') || document.activeElement?.closest?.('.vchip')) {
       S.doc = { ...d, segments: S.doc.segments, speakers: S.doc.speakers };
       paintCarnet();
     } else openDoc(d, { keepMedia: true });
@@ -280,18 +289,21 @@ async function poll() {
 // LE lecteur du portail (commun/lecteur.js, 30/09) : l'image (ou l'onde du
 // son importé), la règle des temps et la tête de lecture du Montage ; les
 // répliques sont une piste de sa frise (une teinte par voix), sous l'onde.
-const V = { L: null, cap: null, active: null, strip: null, n: 0, F: null, probas: null, wrow: null, wk: -2 };
+// Plus d'en-tête au-dessus pour un son (« son », le titre, la réplique lue :
+// Cal, 06/10, « on s'en fout ») : la réplique lue est éclairée dans la liste ;
+// une vidéo garde son sous-titre posé sur l'image.
+const V = { L: null, cap: null, active: null, strip: null, noms: null, ro: null, n: 0, F: null, probas: null, wrow: null, wk: -2, vtog: null, vchips: null };
 function paintPlayer() {
   V.L?.detruire();
+  V.ro?.disconnect();
   const box = $('#player');
   const it = S.doc ? { id: S.doc.item, kind: S.doc.kind, title: S.doc.title, url: null } : S.item;
-  V.L = null; V.active = null; V.strip = null;
+  V.L = null; V.active = null; V.strip = null; V.noms = null; V.ro = null; V.cap = null;
   const n = ++V.n;
   if (!it) {
     box.className = 'tr-player empty';
     box.replaceChildren(el('div', { class: 'empty' }, el('b', {}, 'Transcrire'),
       el('span', {}, 'Un son ou une vidéo, le mode, puis « Transcrire ».')));
-    $('#transport').replaceChildren();
     return;
   }
   box.className = 'tr-player lect ' + it.kind;
@@ -299,18 +311,23 @@ function paintPlayer() {
   // l'objet entier (adresse, cadence, copies d'affichage) vient de la bibliothèque
   (it.url ? Promise.resolve(it) : api('library/' + it.id)).then((full) => {
     if (n !== V.n) return;
-    V.cap = el('div', { class: 'cap', 'aria-live': 'off' });
-    const Lc = lecteur(full, { clavier: 'page', sur: full.kind === 'video' ? V.cap : null, onTemps: tick });
+    V.cap = full.kind === 'video' ? el('div', { class: 'cap', 'aria-live': 'off' }) : null;
+    const Lc = lecteur(full, { clavier: 'page', sur: V.cap, onTemps: tick });
     V.L = Lc;
     V.strip = Lc.piste(el('div', { class: 'tr-strip', title: 'les répliques · clic, glisser : la tête de lecture' }));
-    // replaceChildren(null) écrirait « null » : on ne passe que des nœuds
-    box.replaceChildren(...(full.kind === 'audio' ? [el('div', { class: 'aud' }, el('span', { class: 'lbl' }, 'son'), el('b', {}, full.title || ''), V.cap)] : []), Lc.el);
+    // la colonne des en-têtes, à gauche de la frise (les plis : paintTl)
+    const frise = Lc.el.querySelector('.sr-lect-frise');
+    if (frise) {
+      V.noms = el('div', { class: 'tr-tl-noms' });
+      frise.prepend(V.noms);
+      // une rangée qui change de hauteur (un pli, l'onde moins haute, une piste de plus) : les en-têtes la suivent
+      const inn = frise.querySelector('.sr-lect-in');
+      if (inn && typeof ResizeObserver !== 'undefined') { V.ro = new ResizeObserver(placeNoms); V.ro.observe(inn); }
+    }
+    box.replaceChildren(Lc.el);
     Lc.media.addEventListener('loadedmetadata', paintStrip);
     paintStrip();
   }).catch(() => { if (n === V.n) box.replaceChildren(el('p', { class: 'warn' }, 'le média a quitté la bibliothèque')); });
-  $('#transport').replaceChildren(el('div', { class: 'transport tr-nav' }, el('span', { class: 'lbl' }, 'répliques'),
-    el('button', { class: 'tb ghost sm', type: 'button', title: 'réplique précédente (↑)', onclick: () => step(-1) }, '‹'),
-    el('button', { class: 'tb ghost sm', type: 'button', title: 'réplique suivante (↓)', onclick: () => step(1) }, '›')));
 }
 function seek(t, play = true) { const Lc = V.L; if (!Lc) return; Lc.seek(Math.max(0, t)); if (play && !Lc.lecture) Lc.play(); }
 const dur = () => V.L?.duree || S.doc?.duration || S.item?.duration || 0;
@@ -319,8 +336,72 @@ function paintStrip() {
   const d = dur();
   const segs = S.doc?.segments || [];
   V.strip.replaceChildren(...(d ? segs.map((s) => el('span', { class: 'sg', 'data-id': s.id, style: { left: `${(s.a / d) * 100}%`, width: `${Math.max(0.15, ((s.b - s.a) / d) * 100)}%`, '--c': s.spk ? teinte(voiceIndex(s.spk)) : null } })) : []));
+  paintTl();
   V.active = undefined;
   tick(V.L?.t || 0, V.L?.lecture);
+}
+
+// ── les plis (Cal, 06/10 : « gagner de la hauteur ») ───────
+// L'entrée (l'onde d'un son, les images d'une vidéo), les répliques découpées et
+// les voix (la frise de la diarisation) se replient en accordéon, comme le groupe
+// d'arcs d'ODIO (musique/timeline.js, arcsRows) : toujours là — repliées, une
+// rangée fine qui résume (l'onde et les répliques en 12 px ; la tête de la frise
+// des voix, leurs noms) ; dépliées, leur hauteur. Les en-têtes sont une colonne à
+// gauche de la frise du lecteur, large comme les noms de la frise des voix et
+// son retrait (128 + 12 px, commun/voix.css) : les temps des deux frises
+// commencent au même endroit. Un pli n'est pas un geste (hors de l'annulation) :
+// il est gardé dans ce navigateur, comme le partage texte · carnet.
+const PLIS_KEY = 'sr-transcrire-plis';
+const plis = { entree: true, repliques: true, voix: false };
+try { Object.assign(plis, JSON.parse(localStorage.getItem(PLIS_KEY) || 'null') || {}); } catch { /* stockage fermé */ }
+// les hauteurs dépliées (px) : l'onde d'un son, 120 (PISTE_H de commun/lecteur.js), 48 une fois les voix
+// séparées (Cal : « beaucoup moins haute ») ; la bande des images d'une vidéo, 34 ; les répliques, 22 ;
+// repliée, une rangée de 12
+const HT = { audio: 120, audioVoix: 48, video: 34, rep: 22, pli: 12 };
+function plier(k) {
+  plis[k] = !plis[k];
+  try { localStorage.setItem(PLIS_KEY, JSON.stringify(plis)); } catch { /* stockage fermé */ }
+  if (k === 'voix') paintVoixPli(); else paintTl();
+}
+// la colonne des en-têtes et les hauteurs de la frise du lecteur
+function paintTl() {
+  const box = $('#player');
+  if (!V.L || !V.noms) return;
+  const voix = complet() && S.doc?.state === 'done';
+  const hE = !plis.entree ? HT.pli : V.L.kind === 'audio' ? (voix ? HT.audioVoix : HT.audio) : HT.video;
+  box.style.setProperty('--sr-lect-bande-h', hE + 'px');          // commun/lecteur.js, la bande
+  box.style.setProperty('--tr-h-rep', (plis.repliques ? HT.rep : HT.pli) + 'px');
+  box.classList.toggle('pli-entree', !plis.entree);
+  box.classList.toggle('pli-rep', !plis.repliques);
+  const n = S.doc?.state === 'done' ? S.doc.segments.length : 0;
+  const cell = (k, label, sum, quoi) => el('button', { class: 'tr-tl-c', type: 'button', 'data-k': k, 'aria-expanded': String(plis[k]),
+    title: plis[k] ? `replier ${quoi} : une rangée fine qui résume` : `déplier ${quoi}`, onclick: () => plier(k) }, el('b', {}, label), sum ? el('span', {}, sum) : null);
+  put(V.noms,
+    el('div', { class: 'tr-tl-c regle', 'data-k': 'regle', title: 'clic, glisser : la tête de lecture · Alt + molette : zoom · Maj + molette : le temps' }, el('span', {}, 'temps')),
+    cell('entree', 'Entrée', [V.L.kind === 'video' ? 'images' : 'onde', fmtDur(dur() || null)].filter(Boolean).join(' · '), 'l’entrée'),
+    cell('repliques', 'Répliques', n ? String(n) : '', 'les répliques'));
+  placeNoms();
+}
+// chaque en-tête à la hauteur de sa rangée, lue dans la frise (une piste de plus, ailleurs, ne les décale pas)
+function placeNoms() {
+  const inn = V.L?.el.querySelector('.sr-lect-in');
+  if (!inn || !V.noms) return;
+  const rows = { regle: inn.querySelector('.sr-lect-regle'), entree: inn.querySelector('.sr-lect-audio, .sr-lect-video'), repliques: V.strip };
+  for (const c of V.noms.children) {
+    const r = rows[c.dataset.k];
+    c.hidden = !r;
+    if (r) { c.style.top = r.offsetTop + 'px'; c.style.height = r.offsetHeight + 'px'; c.classList.toggle('haut', r.offsetHeight >= 34); }
+  }
+}
+// la frise des voix, repliée ou dépliée ; l'en-tête de son pli dit lequel
+function paintVoixPli() {
+  V.F?.plier(!plis.voix);
+  if (!V.vtog) return;
+  const nv = (S.doc?.speakers || []).length;
+  V.vtog.setAttribute('aria-expanded', String(plis.voix));
+  V.vtog.title = plis.voix ? `replier la frise des voix : une rangée fine, leurs noms · dans la frise, ${AIDE}`
+    : 'déplier la frise des voix : chaque mot à son instant, sous lui la probabilité de chaque voix';
+  put(V.vtog, el('b', {}, 'Voix'), el('span', {}, String(nv)));
 }
 function segAt(t) {
   const segs = S.doc?.segments || [];
@@ -388,7 +469,6 @@ function paintBar() {
   const d = S.doc;
   if (!d) { box.replaceChildren(); return; }
   const tl = trLang();
-  const views = [['src', 'Original'], ['tr', 'Traduction'], ['both', 'Les deux']];
   const tr = d.translations?.[S.to];
   const canTranslate = d.state === 'done' && S.to && S.to !== d.detected && !ACTIVE.includes(tr?.state);
   const stale = S.to && d.stale?.[S.to];
@@ -397,10 +477,9 @@ function paintBar() {
       tr && stale ? `Retraduire ${plural(stale, 'réplique')}` : `Traduire en ${L(S.to).toLowerCase()}`) : null;
   put(box,
     el('div', { class: 'ttl' }, el('span', { class: 'lbl' }, 'transcription'), el('b', {}, d.title || d.id),
-      el('span', { class: 'lbl meta' }, [d.mode === 'complet' ? 'complet' : 'rapide', d.detected ? L(d.detected) : d.lang === 'auto' ? 'langue à détecter' : L(d.lang), tl ? `→ ${L(tl)}` : '',
+      el('span', { class: 'lbl tr-meta' }, [d.mode === 'complet' ? 'complet' : 'rapide', d.detected ? L(d.detected) : d.lang === 'auto' ? 'langue à détecter' : L(d.lang), tl ? `→ ${L(tl)}` : '',
         d.segments?.length ? plural(d.segments.length, 'réplique') : '', d.engine?.backend === 'factice' ? 'factice' : ''].filter(Boolean).join(' · '))),
     el('span', { class: 'sp' }),
-    tl ? el('div', { class: 'seg' }, ...views.map(([v, lab]) => el('button', { class: 'tb' + (S.view === v ? ' on' : ''), type: 'button', onclick: () => setView(v) }, lab))) : null,
     trBtn,
     d.state === 'done' ? el('button', { class: 'tb ghost sm', type: 'button', onclick: () => copyText() }, 'Copier le texte') : null,
     d.state === 'done' ? el('button', { class: 'tb ghost sm', type: 'button', 'aria-haspopup': 'menu', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); menu(r.left, r.bottom + 4, exportItems(), { focusFirst: e.detail === 0 }); } }, 'Exporter') : null);
@@ -412,7 +491,7 @@ function showCarnet(ask = true) {
   box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   if (ask) box.querySelector('.cn-ask input')?.focus({ preventScroll: true });
 }
-function setView(v) { S.view = v; prefs.set('transcrire.view', v); paintBar(); paintLines(); paintCap(segAt(V.L?.t || 0)); }
+function setView(v) { S.view = v; prefs.set('transcrire.view', v); paintLines(); paintCap(segAt(V.L?.t || 0)); }
 async function translate(to, all = false) {
   try { const r = await api(`transcrire/docs/${S.doc.id}/translate`, { method: 'POST', body: { to, all } }); openDoc(r.doc, { keepMedia: true }); toast(`traduction en ${L(to).toLowerCase()} en file`); }
   catch (e) { toast(e.message, 7000); }
@@ -455,31 +534,33 @@ async function copyText(which = S.view === 'tr' && trLang() ? trLang() : 'src') 
 }
 
 // ── les voix : LE seul endroit où l'on renomme ─────────────
+// Leurs noms, en tête de la frise des voix (repliée ou non : toujours là) — sa teinte, le nom, le temps de
+// parole et le nombre de répliques ; ils remplacent les cartes des voix d'avant le 06/10, qui prenaient une
+// rangée de plus.
 function paintVoices() {
-  const box = $('#voices');
+  const box = V.vchips;
+  if (!box) return;
   const d = S.doc;
   const vs = d?.state === 'done' ? d.speakers || [] : [];
-  if (!vs.length) { box.replaceChildren(); return; }
   const talk = Object.fromEntries(vs.map((v) => [v.id, [0, 0]]));
-  for (const s of d.segments) if (talk[s.spk]) { talk[s.spk][0] += s.b - s.a; talk[s.spk][1]++; }
-  box.replaceChildren(el('div', { class: 'tr-voices-h' }, el('span', { class: 'lbl' }, 'les voix'),
-    el('span', { class: 'hint' }, 'un nom tapé ici se pose partout : répliques, frise, carnet, exports')),
-  el('div', { class: 'tr-vcards' }, ...vs.map((v, i) => {
+  for (const s of d?.segments || []) if (talk[s.spk]) { talk[s.spk][0] += s.b - s.a; talk[s.spk][1]++; }
+  box.replaceChildren(...vs.map((v, i) => {
     const inp = el('input', { class: 'fld', value: v.name, maxlength: '40', 'aria-label': `nom de la voix ${i + 1}`, spellcheck: 'false' });
     const commit = () => { const t = inp.value.replace(/\s+/g, ' ').trim(); if (!t) { inp.value = v.name; return; } renameVoice(v.id, v.name, t); };
     inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } else if (e.key === 'Escape') { inp.value = v.name; inp.blur(); } });
     inp.addEventListener('change', commit);
     const [secs, n] = talk[v.id];
-    return el('div', { class: 'vcard', style: { '--c': teinte(i) }, 'data-spk': v.id },
-      el('i'), inp, el('small', {}, `${clock(secs)} · ${plural(n, 'réplique')}`));
-  })));
+    return el('label', { class: 'vchip', style: { '--c': teinte(i) }, 'data-spk': v.id,
+      title: `${clock(secs)} de parole · ${plural(n, 'réplique')} — un nom tapé ici se pose partout : répliques, frise, carnet, exports` },
+    el('i'), inp, el('small', {}, `${clock(secs)} · ${n}`));
+  }));
 }
 function renameVoice(id, before, after) {
   if (!after || after === before) return;
   const apply = (name) => {
     const v = S.doc.speakers.find((x) => x.id === id); if (v) v.name = name;
     queue({ speaker: { id, name } });
-    const inp = $(`#voices .vcard[data-spk="${id}"] input`);
+    const inp = $(`#frise .vchip[data-spk="${id}"] input`);
     if (inp && document.activeElement !== inp) inp.value = name;
     paintLines(); paintCarnet(); V.F && paintFrise(false);
   };
@@ -488,12 +569,20 @@ function renameVoice(id, before, after) {
 }
 
 // ── la frise des voix (complet) : commun/voix.js, le dessin de la diarisation de Movie Analysis ──
+// Juste sous le lecteur (Cal, 06/10 : elle était en bas de la page), en accordéon : sa tête porte le pli
+// et les noms des voix ; dépliée, chaque mot à son instant et le spectre des voix.
 async function paintFrise(fresh) {
   const box = $('#frise');
   const d = S.doc;
   if (!d || d.state !== 'done' || !complet(d)) { box.hidden = true; return; }
   box.hidden = false;
-  if (!V.F) { V.F = friseVoix({ onSeek: (t) => seek(t, false), cle: 'transcrire' }); box.replaceChildren(V.F.el); }
+  if (!V.F) {
+    V.vtog = el('button', { class: 'tr-tl-c tr-vx-pli', type: 'button', onclick: () => plier('voix') });
+    V.vchips = el('div', { class: 'tr-vchips', role: 'group', 'aria-label': 'les noms des voix' });
+    V.F = friseVoix({ onSeek: (t) => seek(t, false), cle: 'transcrire', tete: [V.vtog, V.vchips] });
+    box.replaceChildren(V.F.el);
+  }
+  paintVoixPli();
   if (fresh || V.probas?.id !== d.id) {
     V.probas = { id: d.id, data: null };
     if (d.voix) { try { V.probas.data = await api(`transcrire/docs/${d.id}/voix`); } catch { V.probas.data = null; } }
@@ -551,13 +640,18 @@ function paintLines() {
   box.scrollTop = scroll;
   V.wrow = null; V.wk = -2;
 }
-// l'en-tête de la colonne du texte : ce qu'elle tient, et ses gestes
+// l'en-tête de la colonne du texte : ce qu'elle tient, ses gestes, et ce qu'elle montre — original, traduction,
+// les deux : ici, au-dessus du texte qu'ils changent (Cal, 06/10), pas ailleurs
+const VUES = [['src', 'Original'], ['tr', 'Traduction'], ['both', 'Les deux']];
 function paintLinesHead() {
   const d = S.doc;
   const n = d?.state === 'done' ? d.segments.length : 0;
+  const tl = n ? trLang() : '';
   const about = d?.state === 'done' ? 'clic : y aller · double-clic ou Entrée : corriger · ↑ ↓ : réplique précédente, suivante' : 'le texte arrive ici, horodaté';
   put($('#lines-h'), el('div', { class: 'cn-about' }, el('b', {}, 'La transcription'), el('span', { title: about }, about)),
-    n ? el('span', { class: 'cn-st' }, plural(n, 'réplique')) : null);
+    tl ? el('div', { class: 'seg tr-vues', role: 'group', 'aria-label': 'le texte montré' }, ...VUES.map(([v, lab]) => el('button', {
+      class: 'tb' + (S.view === v ? ' on' : ''), type: 'button', 'aria-pressed': String(S.view === v), onclick: () => setView(v) }, lab)))
+      : n ? el('span', { class: 'cn-st' }, plural(n, 'réplique')) : null);
 }
 // le serveur dit quelles répliques ont changé depuis leur traduction (stale_ids)
 function isStale(s, tl) { return !!(tl && s.tr?.[tl] && S.doc?.stale_ids?.[tl]?.includes(s.id)); }
@@ -846,6 +940,9 @@ pageMenu(() => {
     { label: 'Choisir dans la bibliothèque…', icon: '+', onclick: choose },
     { label: 'Depuis le disque…', icon: '↑', onclick: () => fileIn.click() },
     done ? '-' : null,
+    // les répliques précédente, suivante : ↑ ↓ (le panneau « répliques ‹ › » est parti, Cal 06/10)
+    done ? { label: 'Réplique précédente', icon: '‹', key: '↑', disabled: !S.doc.segments.length, why: 'aucune réplique', onclick: () => step(-1) } : null,
+    done ? { label: 'Réplique suivante', icon: '›', key: '↓', disabled: !S.doc.segments.length, why: 'aucune réplique', onclick: () => step(1) } : null,
     done ? { label: 'Une question au carnet', icon: '☰', onclick: () => showCarnet(true) } : null,
     done ? { label: 'Copier le texte', icon: '⧉', onclick: () => copyText() } : null,
     ...(done ? [{ label: 'Exporter', icon: '↓', items: exportItems() }] : [])];

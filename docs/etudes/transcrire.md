@@ -340,6 +340,59 @@ la frise du lecteur, des répliques, du texte, du carnet, des voix, relevé tout
 d'écart ; après, **0 px** sur 170 relevés, en sombre et en clair, dans les trois vues (original,
 traduction, les deux), à 1600, 1000 et 760 px de large ; une vidéo : 0 px aussi.
 
+**Remplacé par le § 5.8 (06/10)** : cet en-tête est supprimé.
+
+## 5.8 L'écran gagne de la hauteur (06/10)
+
+Cal, avec trois captures : « gagner de la hauteur, éviter les défilements, voir plus de choses à l'écran ».
+
+- **Plus d'en-tête de la réplique lue** au-dessus du lecteur (« son · le titre · la réplique », § 5.7 : « on
+  s'en fout ») : la réplique lue est éclairée dans la liste. Une vidéo garde son sous-titre posé sur l'image.
+- **Plus de panneau « répliques ‹ › »** : ↑ ↓ (le clavier de la page), le clic sur une réplique, sur un mot, sur
+  la piste des répliques ; et le clic droit de la page (« Réplique précédente ↑ », « Réplique suivante ↓ »).
+- **L'onde moins haute une fois les voix séparées** : 48 px au lieu de 120 (`HT`, `transcrire.js`) ; un son
+  en rapide garde 120, la bande des images d'une vidéo 34. La hauteur passe au lecteur commun par
+  `--sr-lect-bande-h` (`commun/lecteur.js`).
+- **La frise des voix juste sous le lecteur** (elle était sous le texte et le carnet, en bas de la page).
+- **Trois plis, comme le groupe d'arcs d'ODIO** (`musique/timeline.js`, `arcsRows`) : l'entrée (l'onde ou les
+  images), les répliques découpées, les voix. Toujours là : repliés, une rangée fine qui résume (l'onde et les
+  répliques en 12 px ; pour les voix, la tête de la frise, leurs noms) ; dépliés, leur hauteur. Les en-têtes
+  de l'entrée et des répliques sont une colonne à gauche de la frise du lecteur (140 px = les noms de la frise
+  des voix, 128, et son retrait, 12 ; le même retrait à droite) : les deux frises vont d'un même bord à
+  l'autre. Chaque en-tête se place sur la rangée qu'il nomme, lue dans la frise (`placeNoms`) : une piste de
+  plus dans le lecteur ne les décale pas. Le pli est gardé dans le navigateur (`sr-transcrire-plis`), hors de
+  l'annulation. Par défaut : l'entrée et les répliques dépliées, **les voix repliées** — dépliée, la frise des
+  voix prend 340 px (trois voix) et repousse le texte de autant.
+- **Les noms des voix** (le seul endroit où l'on renomme) passent des cartes, une rangée à elles, à la tête de
+  la frise des voix (`friseVoix({ tete })`, `commun/voix.js`) : la teinte, le nom, le temps de parole, le
+  nombre de répliques.
+- **Original · traduction · les deux** quittent la barre de la transcription pour l'en-tête du texte.
+- **Le texte et le carnet prennent la hauteur qui reste** : la scène va jusqu'au bas de la fenêtre, le partage
+  la remplit (440 px au moins) ; la page ne défile plus, sauf si la frise des voix dépliée la remplit. En une
+  colonne (860 px et moins), la page défile comme avant.
+- **Le thème** : le volume du lecteur prend le fader couché du kit (`musique/ui.js`, `fader({ couche: true })`,
+  rendu en curseur natif par `commun/lecteur.css`) ; la barre de défilement de la frise, qui était celle du
+  système (gris, une flèche claire au bout : `scrollbar-width: thin` fait oublier `::-webkit-scrollbar` à
+  Chromium depuis la version 121, developer.chrome.com, « Scrollbar styling »), est fine et aux jetons, comme
+  celle de la frise des voix.
+- Une classe `meta` de la barre de la transcription prenait la carte `.meta` de `base.css` (18 px de marge) :
+  renommée, la barre perd 23 px.
+
+Mesures (portail d'essai, son de 95 s, trois voix, traduit, carnet écrit, moteur factice) :
+
+| | 1920 × 1080 avant → après | 1440 × 900 avant → après |
+|---|---|---|
+| haut du texte (la liste des répliques) | 681 → 430 px | 763 → 537 px |
+| haut du carnet | 619 → 368 px | 701 → 439 px |
+| hauteur de la page | 2014 → 1080 px (plus de défilement) | 1951 → 900 px |
+| la frise des voix | à 1599 px, sous le texte | à 268 px (1920), sous le lecteur |
+
+Essai Playwright (deux thèmes, 1920 × 1080 et 1440 × 900) : 105 vérifications, 0 échec — les en-têtes à la
+hauteur de leurs rangées (pliées ou non), l'onde à 48 puis 12 px, la frise des voix dépliée puis repliée,
+les trois vues, ↓ ↓ ↑, le clic droit, un nom tapé qui se pose sur les répliques, le volume, un son en rapide
+(onde à 120, pas de frise des voix), une vidéo (images à 34 px, sous-titre sur l'image), aucune erreur de
+console ; à 1000, 760 et 390 px, rien ne déborde.
+
 ## 6. Les essais à lancer (quand Cal le dit)
 
 1. **Vitesse** : Whisper turbo sur DGX2, sur la piste son de `getaround.mp4`

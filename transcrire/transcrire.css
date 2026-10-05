@@ -104,7 +104,16 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
   background: var(--amb-bg); box-shadow: inset 0 0 0 1px var(--line-amb); font-size: 11.5px; color: var(--ink2);
 }
 .banner b { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--amb); font-weight: 400; }
-#banner:empty, #transport:empty, #bar:empty, #voices:empty { display: none; }
+#banner:empty, #bar:empty { display: none; }
+
+/* la scène tient dans l'écran (Cal, 06/10 : « gagner de la hauteur, éviter les défilements ») : elle va
+   jusqu'au bas de la fenêtre (le pied du rail, commun/shell.css : 70 + 16 px), et le texte et le carnet
+   prennent la hauteur qui reste, 440 px au moins ; la page ne défile que si une frise dépliée la remplit.
+   Au téléphone (une colonne), la page défile comme avant. */
+@container sr-page (min-width: 861px) {
+  .tr-studio { padding-bottom: var(--s4); }
+  .tr-studio .stage { min-height: calc(100 * var(--vh) - var(--sr-hdr-h, 52px) - var(--s5) - var(--s4)); }
+}
 
 .tr-player {
   position: relative; width: 100%; height: calc(40 * var(--vh)); min-height: 240px; border-radius: var(--r4);
@@ -116,9 +125,7 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
 .tr-player.empty { display: flex; align-items: center; justify-content: center; }
 .tr-player .empty { padding: var(--s6); text-align: center; color: var(--ink3); display: flex; flex-direction: column; gap: var(--s3); align-items: center; max-width: 56ch; line-height: 1.5; }
 .tr-player .empty b { font-family: var(--f-disp); font-size: 20px; font-weight: 400; letter-spacing: .08em; text-transform: uppercase; color: var(--ink2); }
-.tr-player .aud { position: absolute; left: 14px; top: 10px; display: flex; gap: 10px; align-items: baseline; }
-.tr-player .aud b { font-family: var(--f-disp); font-size: 13px; font-weight: 400; letter-spacing: .05em; text-transform: uppercase; color: var(--ink2); }
-/* le sous-titre posé sur l'image (ou au milieu, pour un son) */
+/* le sous-titre posé sur l'image d'une vidéo (un son n'a plus d'en-tête : la réplique lue est éclairée dans la liste) */
 .tr-player .cap {
   position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); width: min(86%, 72ch);
   display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; text-align: center;
@@ -127,35 +134,51 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
 .tr-player .cap span { padding: 3px 10px; border-radius: var(--r2); background: var(--veil); font-size: 15px; line-height: 1.4; }
 .tr-player .cap .o { color: var(--ink); }
 .tr-player .cap .t { color: var(--cy); font-size: 13.5px; }
-.tr-player.audio .cap { bottom: auto; top: 50%; transform: translate(-50%, -38%); }
-.tr-player.audio .cap span { background: transparent; font-size: 17px; }
 
 /* LE lecteur (commun/lecteur.js) : l'image ou l'onde, sa barre, sa frise et sa tête ; le cadre est le sien */
 .tr-player.lect { height: auto; min-height: 0; background: none; box-shadow: none; overflow: visible; border-radius: 0;
   display: flex; flex-direction: column; gap: 6px; --sr-lect-h: calc(40 * var(--vh)); }
 .tr-player.lect .tr-wait-media { padding: var(--s5); text-align: center; }
-/* l'en-tête d'un son : « son », le titre, la réplique lue. Sa hauteur est FIXE (Cal, 06/10 : « les
-   répliques tout en haut font vibrer tous les panneaux en dessous ») : deux lignes pour l'original, une
-   pour la traduction (trois pour l'une sans l'autre) ; plus long, le texte se coupe d'une ellipse (il est
-   en entier dans la liste, éclairé). Rien en dessous ne bouge quand la réplique change, ni quand il n'y
-   en a pas. 65 px = 2 × 21 + 4 + 19 : les hauteurs de ligne ci-dessous. */
-.tr-player.lect.audio .aud { position: static; flex-wrap: nowrap; height: 65px; padding: 0 2px; overflow: hidden; }
-.tr-player.lect.audio .aud > .lbl, .tr-player.lect.audio .aud > b { flex: none; }
-.tr-player.lect.audio .aud > b { max-width: 32%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tr-player.lect.audio .cap { position: static; transform: none; width: auto; flex: 1; min-width: 0; align-items: stretch; text-align: left; }
-.tr-player.lect.audio .cap span {
-  padding: 0; font-size: 15px; line-height: 21px;
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere;
-}
-.tr-player.lect.audio .cap .t { line-height: 19px; -webkit-line-clamp: 1; }
-.tr-player.lect.audio .cap span:only-child { -webkit-line-clamp: 3; }
 
-/* sous la barre du lecteur : les répliques précédente, suivante */
-#transport .tr-nav { gap: 8px; padding: 6px var(--s4); }
+/* ── la frise du lecteur : une colonne d'en-têtes, les plis (Cal, 06/10) ──
+   Comme le groupe d'arcs d'ODIO (musique/timeline.js, .ar-arch) : l'en-tête de chaque rangée à gauche,
+   son nom, ce qu'elle tient, son pli ; repliée, une rangée fine de 12 px qui résume (transcrire.js, plis).
+   140 px = les noms de la frise des voix (128) + son retrait (12, commun/voix.css) ; le même retrait à
+   droite : les temps du lecteur et ceux de la frise des voix vont d'un même bord à l'autre. La hauteur
+   de l'onde : --sr-lect-bande-h (commun/lecteur.js), posée par la page. */
+.tr-player.lect .sr-lect-frise { display: grid; grid-template-columns: 140px minmax(0, 1fr); padding-right: 12px; }
+.tr-tl-noms { position: relative; min-width: 0; background: var(--panel); box-shadow: inset -1px 0 0 var(--line); }
+.tr-tl-c {
+  position: absolute; left: 0; right: 1px; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 8px 0 12px;
+  overflow: hidden; white-space: nowrap; text-align: left; border-radius: 0;
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3);
+}
+.tr-tl-c b { font-weight: 400; color: var(--ink2); }
+.tr-tl-c span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tr-tl-c.regle { background: var(--panel2); box-shadow: inset 0 -1px 0 var(--line); }
+/* une rangée haute (l'onde dépliée) : ce qu'elle tient passe sous son nom */
+.tr-tl-c.haut { flex-wrap: wrap; align-content: center; row-gap: 3px; }
+.tr-tl-c.haut span { flex: 0 0 100%; padding-left: 15px; }
+/* le pli : le chevron de « Paramètres avancés » (details.more), couché replié, debout déplié */
+button.tr-tl-c { cursor: pointer; }
+button.tr-tl-c::before {
+  content: ""; width: 5px; height: 5px; margin: 0 2px; flex: none;
+  box-shadow: inset -1px -1px 0 var(--ink3); transform: rotate(-45deg); transition: transform .15s;
+}
+button.tr-tl-c[aria-expanded="true"]::before { transform: rotate(45deg); }
+button.tr-tl-c:hover { background: var(--panel2); }
+button.tr-tl-c:hover b, button.tr-tl-c:focus-visible b { color: var(--ink); }
+button.tr-tl-c:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--line-cy); }
+/* étroit : la colonne suit celle des noms de la frise des voix (86 px, commun/voix.css) */
+@container sr-page (max-width: 600px) { .tr-player.lect .sr-lect-frise { grid-template-columns: 98px minmax(0, 1fr); } }
+/* l'onde repliée : 12 px, elle garde un trait (l'onde du lecteur, inset 6 px, n'en aurait plus) */
+.tr-player.pli-entree .sr-lect-onde { inset: 2px 0; }
+
 /* la piste des répliques dans la frise du lecteur (une couleur par voix) ; la lue s'éclaire */
-.tr-strip { height: 22px; border-radius: var(--r2); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+.tr-strip { height: var(--tr-h-rep, 22px); border-radius: var(--r2); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
 .tr-strip .sg { position: absolute; top: 5px; bottom: 5px; border-radius: 2px; background: var(--c, var(--cy)); opacity: .6; pointer-events: none; }
 .tr-strip .sg.on { opacity: 1; box-shadow: 0 0 0 1px var(--ink); }
+.tr-player.pli-rep .tr-strip .sg { top: 3px; bottom: 3px; border-radius: 1px; }
 
 /* une teinte par voix : --c, posée par la page (commun/voix.js, teinte) — les huit teintes des voix de
    Movie Analysis (--pv-0…7, analyse/film/palette.css, liée par index.html), sinon des jetons du portail */
@@ -169,23 +192,29 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
 .tr-bar .ttl b { font-family: var(--f-disp); font-size: 14px; font-weight: 400; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40ch; }
 .tr-bar .sp { flex: 1; }
 
-/* les voix : LE seul endroit où l'on renomme (une carte par voix, son nom, son temps de parole) */
-.tr-voices { display: flex; flex-direction: column; gap: 6px; }
-.tr-voices-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 0 2px; }
-.tr-vcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px; }
-.vcard {
-  display: grid; grid-template-columns: 14px minmax(0, 1fr); grid-template-rows: auto auto; gap: 2px 8px; align-items: center;
-  padding: 6px 8px; border-radius: var(--r2); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
-}
-.vcard:focus-within { box-shadow: inset 0 0 0 1px var(--line-cy); }
-.vcard i { grid-row: 1 / 3; width: 14px; height: 14px; border-radius: var(--r1); background: var(--c, var(--ink3)); }
-.vcard .fld { height: 26px; padding: 0 6px; font-size: 12.5px; font-weight: 600; background: transparent; box-shadow: none; }
-.vcard .fld:hover { box-shadow: inset 0 0 0 1px var(--line); }
-.vcard .fld:focus { box-shadow: inset 0 0 0 1px var(--line-cy); background: var(--panel2); }
-.vcard small { padding-left: 6px; font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
-
-/* la frise des voix (commun/voix.js) : sous le lecteur, en mode complet */
+/* la frise des voix (commun/voix.js) : juste sous le lecteur, en mode complet. Sa tête : le pli (aligné sur
+   la colonne des noms, 128 px) et les voix — LE seul endroit où l'on renomme : sa teinte, son nom, son temps
+   de parole et son nombre de répliques (transcrire.js, paintVoices) */
 .tr-frise[hidden] { display: none; }
+/* l'aide de la molette (commun/molette.js, AIDE) passe dans la bulle du pli : sur une ligne à elle, elle
+   coûtait une rangée de plus à la frise dépliée */
+.tr-frise .sr-vx-aide { display: none; }
+.tr-frise .tr-vx-pli { position: static; flex: none; width: 128px; height: 26px; padding-left: 0; margin-right: -10px; border-radius: var(--r1); }
+@container sr-page (max-width: 600px) { .tr-frise .tr-vx-pli { width: 86px; } }
+.tr-vchips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.vchip {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px 0 8px; border-radius: var(--r2);
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); cursor: text;
+}
+.vchip:focus-within { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.vchip i { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--c, var(--ink3)); }
+.vchip .fld {
+  width: 9ch; min-width: 4ch; max-width: 18ch; field-sizing: content; height: 20px; padding: 0 4px;
+  font-size: 12px; font-weight: 600; background: transparent; box-shadow: none;
+}
+.vchip .fld:hover { box-shadow: inset 0 0 0 1px var(--line); }
+.vchip .fld:focus { box-shadow: inset 0 0 0 1px var(--line-cy); background: var(--panel3); }
+.vchip small { font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); white-space: nowrap; }
 
 .who {
   display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 2px 8px 2px 6px; border-radius: var(--r1);
@@ -204,17 +233,27 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
    chacune ; la poignée vient de commun/split.js (glisser, flèches, double-clic). */
 .tr-splitbox { container: tr-split / inline-size; min-width: 0; }
 .tr-splitbox[hidden] { display: none; }
-.tr-split { display: flex; align-items: stretch; height: clamp(440px, calc(100 * var(--vh) - 110px), 1400px); }
+/* la hauteur qui reste dans la scène (au moins 440 px) : la boîte grandit, le partage la remplit */
+.tr-splitbox { flex: 1 1 auto; min-height: 440px; display: flex; flex-direction: column; }
+.tr-split { display: flex; align-items: stretch; flex: 1 1 0; min-height: 0; }
+/* une colonne (téléphone, tablette) : la page défile ; le partage garde la hauteur d'un écran */
+@container sr-page (max-width: 860px) { .tr-split { flex: none; height: clamp(440px, calc(100 * var(--vh) - 110px), 1400px); } }
 .tr-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
 .tr-col-h {
   display: flex; align-items: center; gap: 10px; flex: none; padding: 8px 12px; min-height: 52px; border-radius: var(--r3);
   background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
 }
+/* original · traduction · les deux, en tête du texte (Cal, 06/10) : le segment du thème, ramassé ; trop
+   étroit, il passe sous le titre */
+.tr-col-l .tr-col-h { flex-wrap: wrap; row-gap: 6px; }
+.tr-col-l .tr-col-h .cn-about { flex: 1 1 150px; }
+.tr-vues { flex: none; }
+.tr-vues .tb { height: 24px; padding: 0 8px; font-size: 9.5px; }
 /* la poignée : un filet toujours là, pour qu'on la trouve (survol, prise : commun/split.js) */
 .tr-split > .sr-gutter::after { background: var(--line); }
 @container tr-split (max-width: 720px) {
   /* trop étroit pour deux colonnes : le texte, puis le carnet dessous, la page défile */
-  .tr-split { flex-direction: column; height: auto; gap: 8px; }
+  .tr-split { flex-direction: column; flex: none; height: auto; gap: 8px; }
   .tr-split > .tr-col { flex: none !important; min-width: 0 !important; }   /* les tailles en ligne de split.js ne valent qu'en rangée */
   .tr-split > .sr-gutter { display: none; }
   .tr-col-l .tr-lines { flex: none; max-height: calc(70 * var(--vh)); min-height: 280px; }
