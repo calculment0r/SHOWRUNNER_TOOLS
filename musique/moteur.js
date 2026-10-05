@@ -74,8 +74,9 @@ function impulse(ctx, time) {
 }
 
 // Courbe de saturation : l'exemple de la page WaveShaperNode de MDN
-// (makeDistortionCurve), k de 0 à 100.
-function distCurve(k) {
+// (makeDistortionCurve), k de 0 à 100. Exportée : la vue Instruments en
+// dessine la table (musique/appareils/calcul.js).
+export function distCurve(k) {
   const n = 4096, curve = new Float32Array(n), deg = Math.PI / 180;
   for (let i = 0; i < n; i++) {
     const x = (i * 2) / n - 1;
@@ -221,6 +222,8 @@ const FX = {
     c.connect(g);
     return {
       core: { in: c, out: g },
+      // la réduction de gain lue par le mètre de la vue Instruments (musique/appareils/)
+      reduction: () => c.reduction,
       ap: { thr: [[c.threshold, same]], gain: [[g.gain, dbToGain]] },
       update(m) {
         setP(ctx, c.threshold, val(m, 'thr')); setP(ctx, c.ratio, val(m, 'ratio'));
@@ -229,18 +232,41 @@ const FX = {
       },
     };
   },
+  // Cinq étages en série (la découpe d'EQ Eight, docs/etudes/odio_appareils.md) :
+  // coupe-bas (12 dB/oct.), plateau grave, cloche, plateau aigu, coupe-haut
+  // (12 dB/oct.), puis le gain de sortie. Une coupe éteinte sort du trajet
+  // (pas un passe-tout : rien ne tourne la phase) ; éteintes, le son est
+  // celui de l'égaliseur trois bandes d'avant. Le Q d'une coupe se règle en
+  // Q linéaire (0,71 : Butterworth) ; le nœud le lit en décibels pour ces
+  // deux types (spécification Web Audio, α_QdB) : 20·log10(Q).
   eq(ctx) {
+    const inp = G(ctx), out = G(ctx);
+    const hp = new BiquadFilterNode(ctx, { type: 'highpass' });
     const lo = new BiquadFilterNode(ctx, { type: 'lowshelf' });
     const mid = new BiquadFilterNode(ctx, { type: 'peaking', Q: 0.9 });
     const hi = new BiquadFilterNode(ctx, { type: 'highshelf' });
-    lo.connect(mid).connect(hi);
+    const lp = new BiquadFilterNode(ctx, { type: 'lowpass' });
+    let trajet = null;
+    const cabler = (h, l) => {
+      const cle = `${h}${l}`;
+      if (cle === trajet) return;
+      trajet = cle;
+      for (const n of [inp, hp, lo, mid, hi, lp]) n.disconnect();
+      const ch = [inp, ...(h ? [hp] : []), lo, mid, hi, ...(l ? [lp] : []), out];
+      for (let i = 0; i < ch.length - 1; i++) ch[i].connect(ch[i + 1]);
+    };
     return {
-      core: { in: lo, out: hi },
-      ap: { lg: [[lo.gain, same]], mg: [[mid.gain, same]], hg: [[hi.gain, same]] },
+      core: { in: inp, out },
+      ap: { lg: [[lo.gain, same]], mg: [[mid.gain, same]], hg: [[hi.gain, same]], mf: [[mid.frequency, same]],
+        hpf: [[hp.frequency, same]], lpf: [[lp.frequency, (v) => nyq(ctx, v)]] },
       update(m) {
+        cabler(val(m, 'hpo') ? 1 : 0, val(m, 'lpo') ? 1 : 0);
+        setP(ctx, hp.frequency, val(m, 'hpf')); setP(ctx, hp.Q, 20 * Math.log10(val(m, 'hpq')));
         setP(ctx, lo.frequency, val(m, 'lf')); setP(ctx, lo.gain, val(m, 'lg'));
-        setP(ctx, mid.frequency, val(m, 'mf')); setP(ctx, mid.gain, val(m, 'mg'));
+        setP(ctx, mid.frequency, val(m, 'mf')); setP(ctx, mid.gain, val(m, 'mg')); setP(ctx, mid.Q, val(m, 'mq'));
         setP(ctx, hi.frequency, nyq(ctx, val(m, 'hf'))); setP(ctx, hi.gain, val(m, 'hg'));
+        setP(ctx, lp.frequency, nyq(ctx, val(m, 'lpf'))); setP(ctx, lp.Q, 20 * Math.log10(val(m, 'lpq')));
+        setP(ctx, out.gain, dbToGain(val(m, 'out')));
       },
     };
   },
@@ -619,7 +645,7 @@ function makeNode(ctx, m, env) {
   if (def.role === 'master') return master(ctx);
   const fx = FX[m.type](ctx);
   const sh = effectShell(ctx, fx.core);
-  return { input: sh.input, output: sh.output, ap: fx.ap, update(mm, bpm) { fx.update(mm, bpm); sh.setOn(mm.on !== false); } };
+  return { input: sh.input, output: sh.output, ap: fx.ap, reduction: fx.reduction, update(mm, bpm) { fx.update(mm, bpm); sh.setOn(mm.on !== false); } };
 }
 
 // ── un effet que plusieurs pistes traversent ────────────────
@@ -660,6 +686,7 @@ export class Graph {
   constructor(ctx, env) {
     this.ctx = ctx; this.env = env; this.nodes = new Map(); this.types = new Map();
     this.sends = new Map();
+    this.sondes = new Map();   // les analyseurs de la vue Instruments (sonde)
     env.held = new Set(); env.pending = [];
     this.dest = ctx.destination;
   }
@@ -732,6 +759,39 @@ export class Graph {
     for (const k of [...this.sends.keys()]) if (!used.has(k)) this.sends.delete(k);
     const m = p.modules.find((x) => x.type === 'master');
     if (m) this.nodes.get(m.id).output.connect(this.dest);
+    this.brancherSondes();
+  }
+
+  // ── les sondes de la vue Instruments (musique/appareils/) ──
+  // Un AnalyserNode piqué sur l'entrée ou la sortie d'un module : il lit le
+  // son sans le changer (une dérivation ; un analyseur sans sortie est tiré
+  // quand même, comme celui des tranches). wire() débranche toutes les
+  // sorties : les sondes s'y rebranchent, sur le nœud du moment ; celle d'un
+  // module retiré s'en va. `fft` : la taille de la transformée (8192 : six
+  // hertz par case à 48 kHz, ce que le grave d'un égaliseur demande).
+  sonde(id, cote = 'out', fft = 8192) {
+    const cle = `${cote}:${fft}:${id}`;
+    if (!this.sondes.has(cle)) {
+      this.sondes.set(cle, new AnalyserNode(this.ctx, { fftSize: fft, smoothingTimeConstant: 0.7, minDecibels: -100, maxDecibels: -10 }));
+      this.brancherSondes();
+    }
+    return this.sondes.get(cle) || null;
+  }
+  brancherSondes() {
+    for (const [cle, an] of [...this.sondes]) {
+      const [cote, , id] = cle.split(':');
+      const v = voixDe(this.nodes.get(id))[0];
+      if (!v) { this.sondes.delete(cle); continue; }
+      const n = cote === 'in' ? v.input : v.output;
+      if (n) n.connect(an);
+    }
+  }
+  // la réduction de gain d'un compresseur, en dB (≤ 0) : DynamicsCompressorNode.reduction
+  reduction(id) {
+    const v = voixDe(this.nodes.get(id))[0];
+    if (!v) return 0;
+    if (v.reduction) return v.reduction();
+    return v.odio && 'reduction' in v.odio ? v.odio.reduction : 0;
   }
 
   setSend(a, b, db) { const g = this.sends.get(`${a}>${b}`); if (g) setP(this.ctx, g.gain, dbToGain(db)); }
@@ -942,6 +1002,9 @@ export class Engine {
   setSend(a, b, db) { if (this.graph) this.graph.setSend(a, b, db); }
   mutes() { if (this.graph && this.proj) this.graph.mutes(this.proj); }
   level(id) { return this.graph ? this.graph.level(id) : -Infinity; }
+  // la vue Instruments : un analyseur sur un module, sa réduction de gain (Graph.sonde)
+  sonde(id, cote, fft) { return this.graph ? this.graph.sonde(id, cote, fft) : null; }
+  reduction(id) { return this.graph ? this.graph.reduction(id) : 0; }
   levelLR(id) { return this.graph ? this.graph.levelLR(id) : [-Infinity, -Infinity]; }
   settle() { if (this.graph && this.proj && !this.play) this.graph.settle(this.proj, this.pos); }
 

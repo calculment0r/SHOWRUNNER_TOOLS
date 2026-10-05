@@ -1,6 +1,8 @@
 // ODIO — la vue Instruments, en bas de l'arrangement (la « Device View » de
 // Live) : toute la chaîne de la piste choisie (source → effets → tranche),
-// module par module avec ses molettes, de gauche à droite. Les effets
+// module par module, de gauche à droite : sa surface quand le métier en
+// dessine une (courbe d'égaliseur, de compresseur, de filtre… :
+// musique/appareils/), ses molettes sinon, ou dessous pour régler fin. Les effets
 // s'ajoutent, se déplacent et se retirent ici ; c'est la même chaîne de
 // câbles que dans la vue Nodal (la chaîne est lue dans les câbles : un effet
 // que plusieurs pistes traversent y est dans le rack de chacune, « lié », une
@@ -12,6 +14,9 @@ import { toast, pick, href, dropZone } from '../commun/shell.js';
 import { MODULES, TRACK_KINDS, EFFECT_TYPES, DRUM_VOICES, RHYTHM_VOICES, SOURCES_OF, AUTOMATABLE, spec, val, fmt, presetsFor, moduleName } from './modules.js';
 import { peaks } from './moteur.js';
 import { el, knob, choice, menu, tok, put, inlineEdit } from './ui.js';
+// les appareils (05/10) : une surface graphique à la place des molettes là où
+// le métier dessine (égaliseur, compresseur…) — docs/etudes/odio_appareils.md
+import { appareil } from './appareils/index.js';
 
 const BUS = '__bus';
 
@@ -20,6 +25,7 @@ export function createDevices(app) {
   const root = el('div', { class: 'rk' });
   let padSel = 'bd';
   const meters = [];
+  const appareils = [];   // les surfaces dessinées : leur frame (spectre, mètres) à chaque image
 
   // ── un module ──
   const onoff = (m) => el('button', { class: `tb sm${m.on !== false ? ' on' : ' ghost'}`, type: 'button', title: 'actif ou court-circuité',
@@ -29,8 +35,8 @@ export function createDevices(app) {
     const s = spec(m.type, k);
     if (s.opts && size !== 'xs') return choice(s, val(m, k), { onChange: (v) => { m.params[k] = v; app.commit('param', m); app.commit('data'); } });
     return knob(s, val(m, k), { accent, size, onInput: (v) => { m.params[k] = v; app.commit('param', m); },
-      // les dessins (enveloppe, filtre, départ du son) suivent une fois la molette lâchée
-      onChange: () => { app.commit('quiet'); if (m.type === 'synth' || m.type === 'sampler') render(); } });
+      // le départ du son de l'échantillonneur suit une fois la molette lâchée
+      onChange: () => { app.commit('quiet'); if (m.type === 'sampler') render(); } });
   }
 
   function devHead(m, t) {
@@ -79,7 +85,6 @@ export function createDevices(app) {
     box.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); S.sel.mod = m.id; const it = menuDe(m.id, t); if (it) menu(e.clientX, e.clientY, it); });
     if (m.type === 'drums') box.append(devHead(m, t), drumBody(m, t, accent));
     else if (m.type === 'rythme') box.append(devHead(m, t), rhythmBody(m, t, accent));
-    else if (m.type === 'synth') box.append(devHead(m, t), synthBody(m, accent));
     else if (m.type === 'sampler') box.append(devHead(m, t), samplerBody(m, t, accent));
     else if (m.type === 'player') {
       const n = S.proj.clips.filter((c) => c.track === t.id).length;
@@ -95,7 +100,9 @@ export function createDevices(app) {
           el('button', { class: `tb sm${t.mute ? ' on' : ' ghost'}`, type: 'button', onclick: () => { t.mute = !t.mute; app.commit('mute'); } }, 'Muet'),
           t.kind === 'bus' ? null : el('button', { class: `tb sm${t.solo ? ' on' : ' ghost'}`, type: 'button', onclick: () => { t.solo = !t.solo; app.commit('mute'); } }, 'Solo')) : null));
     } else {
-      box.append(devHead(m, t), el('div', { class: 'dev-body' }, ...def.params.map((p) => kn(m, p.k, accent))));
+      const ap = appareil(app, m, { accent });
+      if (ap) { appareils.push(ap); box.classList.add('graphique'); box.append(devHead(m, t), ap.el); }
+      else box.append(devHead(m, t), el('div', { class: 'dev-body' }, ...def.params.map((p) => kn(m, p.k, accent))));
     }
     const l = lien(m, t);
     if (l) box.firstChild.after(l);
@@ -156,14 +163,6 @@ export function createDevices(app) {
         el('i', { class: 'vsep' }), kn(m, 'kit', 'cy'), kn(m, 'drive', 'cy'), kn(m, 'gain', 'cy')));
   }
 
-  function synthBody(m, accent) {
-    const def = MODULES.synth;
-    return el('div', { class: 'dev-body synth' }, def.sections.map(([name, keys]) => el('div', { class: 'sec' },
-      el('span', { class: 'lbl' }, name),
-      name === 'Oscillateur A' ? waveSvg(val(m, 'wave')) : name === 'Enveloppe' ? adsrSvg(m) : name === 'Filtre' ? filterSvg(m) : null,
-      el('div', { class: 'kns' }, keys.map((k) => kn(m, k, k === keys[0] ? accent : 'cy'))))));
-  }
-
   function samplerBody(m, t, accent) {
     const id = m.params.item;
     const cv = el('canvas', { class: 'wave' });
@@ -176,7 +175,25 @@ export function createDevices(app) {
     };
     if (id) {
       app.loadItem(id).then((it) => { title.textContent = it.title; }).catch(() => { title.textContent = 'son introuvable'; });
-      app.engine.buffer(id).then((buf) => drawWave(cv, buf, val(m, 'start'))).catch(() => {});
+      app.engine.buffer(id).then((buf) => {
+        drawWave(cv, buf, val(m, 'start'));
+        // le départ se tire sur la forme d'onde (le marqueur de Simpler) ; double-clic : au début
+        cv.title = 'glisser : le départ du son · double-clic : au début';
+        const poser = (e, fin) => {
+          const r = cv.getBoundingClientRect();
+          m.params.start = Math.max(0, Math.min(0.99, (e.clientX - r.left) / Math.max(1, r.width)));
+          app.commit('param', m);
+          drawWave(cv, buf, m.params.start);
+          if (fin) { app.commit('quiet'); render(); }
+        };
+        cv.addEventListener('pointerdown', (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault(); cv.setPointerCapture(e.pointerId); poser(e);
+          const mv = (ev) => poser(ev), up = (ev) => { cv.removeEventListener('pointermove', mv); cv.removeEventListener('pointerup', up); poser(ev, true); };
+          cv.addEventListener('pointermove', mv); cv.addEventListener('pointerup', up);
+        });
+        cv.addEventListener('dblclick', () => { m.params.start = 0; app.commit('param', m); app.commit('quiet'); render(); });
+      }).catch(() => {});
     }
     const zone = el('div', { class: 'snd' }, el('span', { class: 'lbl' }, 'son'), title,
       el('button', { class: 'tb ghost sm', type: 'button', onclick: async () => {
@@ -190,34 +207,7 @@ export function createDevices(app) {
       el('div', { class: 'kns' }, MODULES.sampler.params.map((p) => kn(m, p.k, p.k === 'root' ? accent : 'cy'))));
   }
 
-  // ── petits dessins (SVG, couleurs par classes) ──
-  const svg = (w, h, d) => {
-    const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    s.setAttribute('viewBox', `0 0 ${w} ${h}`); s.setAttribute('preserveAspectRatio', 'none'); s.setAttribute('class', 'viz');
-    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    p.setAttribute('d', d);
-    s.append(p);
-    return s;
-  };
-  function waveSvg(w) {
-    const pts = [];
-    for (let x = 0; x <= 120; x += 2) {
-      const ph = (x / 120) * 4 * Math.PI;
-      const y = w === 0 ? Math.sin(ph) : w === 1 ? (2 / Math.PI) * Math.asin(Math.sin(ph)) : w === 2 ? 2 * ((ph / (2 * Math.PI)) % 1) - 1 : Math.sign(Math.sin(ph));
-      pts.push(`${x} ${(19 - y * 14).toFixed(1)}`);
-    }
-    return svg(120, 38, `M${pts.join(' L')}`);
-  }
-  function adsrSvg(m) {
-    const a = Math.log(val(m, 'a') / 0.001) / Math.log(3000), d = Math.log(val(m, 'd') / 0.01) / Math.log(300);
-    const s = val(m, 's'), r = Math.log(val(m, 'r') / 0.005) / Math.log(800);
-    const x1 = 4 + a * 30, x2 = x1 + 6 + d * 30, x3 = 116 - 6 - r * 30, ys = 34 - s * 28;
-    return svg(120, 38, `M4 34 L${x1.toFixed(1)} 6 L${x2.toFixed(1)} ${ys.toFixed(1)} L${x3.toFixed(1)} ${ys.toFixed(1)} L116 34`);
-  }
-  function filterSvg(m) {
-    const c = 4 + Math.log(val(m, 'cut') / 40) / Math.log(400) * 100, q = val(m, 'res') / 24;
-    return svg(120, 38, `M4 14 L${(c - 16).toFixed(1)} 14 Q${(c - 3).toFixed(1)} ${(14 - q * 12).toFixed(1)} ${c.toFixed(1)} ${(12 + q * 4).toFixed(1)} T116 34`);
-  }
+  // la forme d'onde d'un son (l'échantillonneur), sur <canvas>
   function drawWave(cv, buf, start) {
     const w = cv.clientWidth || 300, h = cv.clientHeight || 46, dpr = devicePixelRatio || 1;
     cv.width = w * dpr; cv.height = h * dpr;
@@ -237,6 +227,7 @@ export function createDevices(app) {
   function render() {
     const P = S.proj;
     meters.length = 0;
+    appareils.length = 0;
     const scrollL = root.querySelector('.rk-chain')?.scrollLeft || 0;
     const trackSel = el('select', { class: 'fld mu-mini', 'aria-label': 'piste', title: 'la piste dont on voit la chaîne',
       onchange: (e) => app.select({ track: e.target.value, mod: null }) },
@@ -280,6 +271,7 @@ export function createDevices(app) {
   }
 
   function frame() {
+    for (const ap of appareils) ap.frame?.();
     for (const [id, mt] of meters) {
       const db = app.engine.level(id);
       mt.firstChild.style.width = `${Math.max(0, Math.min(100, (db + 60) / 60 * 100)).toFixed(1)}%`;

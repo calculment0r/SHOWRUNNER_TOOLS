@@ -148,12 +148,23 @@ export const MODULES = {
     ],
     face: ['thr', 'ratio', 'gain'],
   },
+  // l'égaliseur paramétrique : cinq bandes, la découpe d'EQ Eight (coupe-bas,
+  // plateau, cloche, plateau, coupe-haut) ; les deux coupes éteintes et le Q
+  // de la cloche à 0,9 rendent l'égaliseur trois bandes d'avant, au son près
+  // (moteur.js, FX.eq). Le Q d'une coupe : 0,71 = Butterworth (aucune bosse).
   eq: {
-    name: 'Égaliseur', kind: '3 bandes', role: 'effect', color: 'coral-3',
+    name: 'Égaliseur', kind: 'paramétrique · 5 bandes', role: 'effect', color: 'coral-3',
+    // les six réglages d'avant d'abord : la tuile du nodal garde son ordre de rails
     params: [
       P('lf', 'Graves', 40, 600, 180, 'Hz', 'log'), P('lg', 'Gain gr.', -18, 18, 0, 'dB'),
       P('mf', 'Médiums', 200, 6000, 1000, 'Hz', 'log'), P('mg', 'Gain méd.', -18, 18, 0, 'dB'),
       P('hf', 'Aigus', 1500, 16000, 5000, 'Hz', 'log'), P('hg', 'Gain aig.', -18, 18, 0, 'dB'),
+      P('mq', 'Q médiums', 0.1, 10, 0.9, 'Q', 'log'),
+      O('hpo', 'Coupe-bas', ['Éteint', 'Actif'], 0),
+      P('hpf', 'Fréq. coupe-bas', 20, 2000, 40, 'Hz', 'log'), P('hpq', 'Q coupe-bas', 0.3, 8, 0.71, 'Q', 'log'),
+      O('lpo', 'Coupe-haut', ['Éteint', 'Actif'], 0),
+      P('lpf', 'Fréq. coupe-haut', 1000, 20000, 16000, 'Hz', 'log'), P('lpq', 'Q coupe-haut', 0.3, 8, 0.71, 'Q', 'log'),
+      P('out', 'Sortie', -24, 12, 0, 'dB'),
     ],
     face: ['lg', 'mg', 'hg'],
   },
@@ -270,7 +281,7 @@ export const COLOR_FR = { or: 'orange', cy: 'acier', amb: 'ambre', grn2: 'vert',
 export const AUTOMATABLE = {
   strip: ['vol', 'pan'], bus: ['in'], master: ['vol'], synth: ['vol', 'cut'], sampler: ['vol'], player: ['vol'],
   drums: ['lvl'], filter: ['freq', 'q'], delay: ['mix', 'fb'], reverb: ['mix'], dist: ['mix'],
-  eq: ['lg', 'mg', 'hg'], comp: ['thr', 'gain'],
+  eq: ['lg', 'mg', 'hg', 'mf', 'hpf', 'lpf'], comp: ['thr', 'gain'],
 };
 // les modules d'ODIO : tout réglage continu, posé par setParameter(id, valeur,
 // instant) — un effet l'applique à l'instant dit, un instrument aux notes
@@ -304,7 +315,8 @@ export function fmt(s, v) {
   if (s.unit === 'dB') return v <= -59.9 ? '−∞' : `${v > 0 ? '+' : ''}${v.toFixed(Math.abs(v) < 10 ? 1 : 0)}`;
   if (s.unit === 'dt') return `${v > 0 ? '+' : ''}${Math.round(v)}`;
   if (s.unit === '%' || s.unit === 'ms') return `${Math.round(v)}`;
-  if (s.unit === ':1' || s.unit === 'Q' || s.unit === 'bits') return v.toFixed(1);
+  if (s.unit === 'Q') return v.toFixed(v < 1 ? 2 : 1);
+  if (s.unit === ':1' || s.unit === 'bits') return v.toFixed(1);
   if (s.k === 'pan' || s.k === 'pano') return Math.abs(v) < 0.02 ? 'C' : `${v < 0 ? 'G' : 'D'} ${Math.round(Math.abs(v) * 100)}`;
   if (s.k === 'root') return noteName(v);
   if (s.max <= 1 && s.min >= 0 && !s.unit) return `${Math.round(v * 100)}`;

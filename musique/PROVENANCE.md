@@ -40,6 +40,8 @@ Chaque changement est marqué `SHOWRUNNER :` dans le code.
 | `instruments/acid-bass.js` | `noteOff(note, instant)` | idem, pour la voix monophonique |
 | `instruments/plaits-synth.js` | messages `relacher` et `ping` du worklet, méthodes `noteOff` et `ping` | relâcher à la main ; l'export hors temps réel attend que les notes postées au worklet soient arrivées (MessagePort garde l'ordre) |
 | `effects/reverb.js` | `flush()` | l'export hors temps réel ne peut pas attendre les 90 ms que la réverbe laisse au geste avant de refaire sa réponse |
+| `effects/eq3.js` | `export` sur `LOW_CORNER`, `HIGH_CORNER` | la vue Instruments pose les points des plateaux à ces coudes (`musique/appareils/egaliseur.js`) : une seule vérité |
+| `effects/filter.js` | `export` sur `makeDriveCurve` | la vue Instruments dessine la table du drive (`musique/appareils/calcul.js`) |
 
 L'adaptateur qui présente ces pièces comme des modules du studio est dans
 `moteur.js` (`odioSource`, `odioEffect`) ; leurs réglages sont lus sur

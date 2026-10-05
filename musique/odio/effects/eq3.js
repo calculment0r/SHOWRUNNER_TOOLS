@@ -24,8 +24,9 @@ export const EQ_PARAMETERS                                 = [
 ]
 
 /** Fréquences de coude des deux plateaux, en Hz. */
-const LOW_CORNER = 220
-const HIGH_CORNER = 3800
+// SHOWRUNNER : exportées — la vue Instruments pose les points des plateaux (musique/appareils/egaliseur.js)
+export const LOW_CORNER = 220
+export const HIGH_CORNER = 3800
 
 export class EqEffect extends BaseEffect {
            #low

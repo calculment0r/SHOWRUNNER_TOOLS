@@ -50,7 +50,8 @@ const DESCRIPTOR                   = {
  * Le buffer est alloué explicitement : les typages Web Audio exigent un
  * `Float32Array` adossé à un `ArrayBuffer`, pas à un `SharedArrayBuffer`.
  */
-function makeDriveCurve(amount        )                            {
+// SHOWRUNNER : exportée — la vue Instruments en dessine la table (musique/appareils/calcul.js)
+export function makeDriveCurve(amount        )                            {
   const n = 1024
   const curve = new Float32Array(new ArrayBuffer(n * Float32Array.BYTES_PER_ELEMENT))
   const k = 1 + (amount / 100) * 24
