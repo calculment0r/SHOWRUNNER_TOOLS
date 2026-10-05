@@ -466,7 +466,21 @@ Trois faits mesurés, qui changent la façon de dessiner :
 La courbe qu'ODIO_01 dessinait dans le nodal (`odio/effects/comp.js`,
 `compressorCurve`) a un genou quadratique centré et pas de rattrapage. Avec
 les réglages par défaut de Comp, l'écart va jusqu'à une dizaine de dB.
-**Le nodal n'a pas été changé** (hors périmètre) : voir § 9.
+**Le nodal a suivi le 05/10 au soir.** Sa surface COMP (`machines/blocks/registry.js`)
+trace maintenant `compresseur` de `appareils/calcul.js`, plus le gain du module : la
+courbe de SORTIE que le moteur applique, rattrapage compris : le geste du nodal ne
+s'accroche pas à la courbe (`corps.js`, `surface` : l'horizontale pose le seuil, la
+verticale dose le taux en relatif), le rattrapage peut donc la déplacer sans rien
+dérober à la main. Essai (Chromium, hors temps réel, le `CompEffect` même du moteur,
+5 réglages × 9 niveaux d'entrée, dont les défauts de Comp et 20:1 au seuil −40) :
+
+- le dessin contre la formule : 0,001 dB ;
+- le dessin contre un signal **constant** (`ConstantSourceNode`, que le détecteur
+  voit sans ondulation) : 0,002 dB au plus — la loi statique est exacte ;
+- le dessin contre un sinus de 1 kHz (la méthode ci-dessus) : 0,59 dB au plus, à
+  20:1 et 30 dB au-dessus du seuil ; la sortie mesurée est toujours un peu plus haute,
+  l'ondulation de la détection entre deux crêtes ;
+- l'ancienne courbe contre le signal constant : 11 dB aux défauts, 23,8 dB au plus.
 
 ### 5.3 Les tables de saturation
 
@@ -553,9 +567,9 @@ captures, l'historique du compresseur est donc en marches d'escalier ; à
 
 ## 9. Ce qui reste
 
-- **Le nodal** dessine encore la courbe de compresseur d'ODIO_01 (genou
-  centré, sans rattrapage) et son propre EQ-3. Ses surfaces devraient lire
-  `appareils/calcul.js`. Le nodal n'est pas à cette branche.
+- **Le nodal** dessine encore son propre EQ-3 (sa courbe de compresseur lit
+  `appareils/calcul.js` depuis le 05/10 au soir, § 5.2). Ses autres surfaces
+  devraient lire `appareils/calcul.js` elles aussi.
 - **L'égaliseur** pourrait aller plus loin :
   - un type par bande (plateau ↔ cloche) ;
   - des coupes à 24 et 48 dB/oct. (des biquads en cascade, avec les Q de
