@@ -146,6 +146,11 @@ trier.
       et 4 000 signes au plus (les bornes de `server/tools/ideation_agent.py`, au-delà : 400 ; la
       suite du brief est nommée, elle est parmi les pièces). S'il n'est pas là : rien, ni ligne ni
       erreur — la planche reste rangée par la mise en page de départ.
+      **Depuis le 06/10** (le premier essai réel de Cal, `agent_showrunner.md` § 7) : toutes les pièces partent
+      (400 au plus : la réception les compte toutes), celles qui sont le brief sont nommées (`brief`) ; l'agent
+      accuse réception, dit ce qu'il comprend et ce qui ne colle pas, pose ses questions dans son panneau, et ne
+      pose RIEN sur la planche avant les réponses. La sorte d'un fichier est celle du portail, qui lit son contenu :
+      un `.webm` ou un `.mp4` sans image est un son (il allait dans « Vidéos »).
 8. Tout est dans **Asset** (le panneau se relit dans le Workspace neuf).
 
 ## 3. Les droits (lus dans `core/espaces.py` et `server/tools/equipes.py`)

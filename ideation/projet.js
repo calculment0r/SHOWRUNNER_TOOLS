@@ -18,9 +18,11 @@
 //     personnes, l'onglet dans ce Workspace sans recharger (entrerEspace), la planche, les fichiers
 //     (trois à la fois, la progression sur chaque vignette, un refus n'arrête pas les autres ; ce
 //     qui vient d'Asset est rapatrié), le brief (une note ; tapé, il est rangé aussi en brief.md),
-//     la mise en page de départ (des cadres : Brief, Documents, Images, Vidéos, Sons, Autres), puis
-//     l'analyse de l'agent (app.agent.open(), app.agent.send(brief, { pieces, intent: 'ingest' }))
-//     s'il est là — sinon rien : la planche reste rangée par la mise en page de départ.
+//     la mise en page de départ (des cadres : Brief, Documents, Images, Vidéos, Sons, Autres — la sorte
+//     décidée par le portail au rangement), puis l'entrée de l'agent (app.agent.open(), app.agent.send(brief,
+//     { pieces, intent: 'ingest' })) s'il est là : il accuse réception, dit ce qu'il comprend et pose ses
+//     questions dans son panneau — il ne pose rien sur la planche avant les réponses (Cal, 06/10). Sans
+//     agent : rien, la planche reste rangée par la mise en page de départ.
 //
 // Rien n'est envoyé avant « Commencer » : le Workspace n'existe pas encore, un envoi ailleurs
 // laisserait des doubles. Les fichiers attendent dans la page (des File : lus à l'envoi seulement).
@@ -84,10 +86,11 @@ const EN_MEME_TEMPS = 3;
 // la mise en page de départ : l'ordre des cadres, ce qui va où
 const CADRES = ['Brief', 'Documents', 'Images', 'Vidéos', 'Sons', 'Autres'];
 const CADRE_DE = { document: 'Documents', image: 'Images', element: 'Images', video: 'Vidéos', audio: 'Sons', midi: 'Sons' };
-// ce que l'agent prend d'un message (server/tools/ideation_agent.py : MAX_TEXT, MAX_ITEMS — au-delà, 400) ;
-// les pièces dans cet ordre : le brief, les documents, les images, les vidéos, les sons, le reste
+// ce que l'agent prend de l'entrée d'un projet (server/tools/ideation_agent.py : MAX_TEXT, MAX_ITEMS_INGEST — au-delà,
+// 400) : TOUTES les pièces, pour que sa réception les compte toutes ; les pièces dans cet ordre : le brief, les
+// documents, les images, les vidéos, les sons, le reste (il lit le début des documents, les paliers regardent le reste)
 const AGENT_TEXTE = 4000;
-const AGENT_PIECES = 24;
+const AGENT_PIECES = 400;
 const ORDRE_PIECES = ['document', 'image', 'element', 'video', 'audio'];
 
 let ouverte = null;   // une fenêtre à la fois
@@ -180,6 +183,21 @@ export function ouvrirProjet(app, { annule = () => {} } = {}) {
     e.textContent = f.state === 'echec' ? f.error : '';
     const x = n.querySelector('.pj-x');
     x.hidden = P.running || P.done || f.state === 'ok';
+  }
+  // rangé : la sorte du portail fait foi (core/library.py lit le contenu — un .webm sans image est un son ;
+  // l'extension et le type MIME du navigateur ne servaient qu'à la vignette d'avant l'envoi)
+  function sorteRangee(f) {
+    const k = f.result?.kind === 'element' ? 'element' : SORTE_FR[f.result?.kind] ? f.result.kind : null;
+    if (!k || k === f.kind) return;
+    const n = f.node;
+    if (n) {
+      n.classList.replace(`k-${f.kind}`, `k-${k}`);
+      const ico = n.querySelector('.pj-vis .pj-ico');
+      if (ico) ico.innerHTML = icon(k);
+      const lab = n.querySelector('.pj-k');
+      if (lab) lab.textContent = [SORTE_FR[k], f.size ? fmtMo(f.size) : '', f.folder ? `dossier ${f.folder}` : ''].filter(Boolean).join(' · ');
+    }
+    f.kind = k;
   }
   // la progression : repeinte une fois par image d'écran, quel que soit le nombre d'envois
   const dirty = new Set();
@@ -602,6 +620,7 @@ export function ouvrirProjet(app, { annule = () => {} } = {}) {
               onprogress: (p) => { f.progress = p; barSoon(f); } });
           }
           f.state = 'ok';
+          sorteRangee(f);
         } catch (e) {
           f.state = 'echec';
           f.error = e.message;   // la phrase du portail (un contenu qui n'est pas ce que dit son nom, trop gros…)
@@ -671,14 +690,14 @@ export function ouvrirProjet(app, { annule = () => {} } = {}) {
     if (text.length > AGENT_TEXTE) text = text.slice(0, AGENT_TEXTE - suite.length).trimEnd() + suite;
     // l'agent lit la planche au portail : la mise en page de départ doit y être enregistrée
     await app.flushSave?.();
-    const sA = step('agent', 'L’analyse de l’agent');
+    const sA = step('agent', 'L’agent : la réception, puis ses questions');
     try {
       ag.open?.();
       // `items` : le nom du contrat de l'étude (agent_showrunner.md § 5), `pieces` celui de la page de l'agent
-      const p = ag.send(text, { pieces, items: pieces, intent: 'ingest' });
+      const p = ag.send(text, { pieces, items: pieces, intent: 'ingest', brief: [...briefIds].filter((id) => pieces.includes(id)) });
       P.R.agent = true;
-      sA.ok(`lancée · ${pieces.length} pièce${pieces.length > 1 ? 's' : ''}${toutes.length > pieces.length
-        ? ` sur ${toutes.length} : le brief et les documents d’abord, le reste est sur la planche` : ''}`);
+      sA.ok(`${pieces.length} pièce${pieces.length > 1 ? 's' : ''}${toutes.length > pieces.length
+        ? ` sur ${toutes.length} : le brief et les documents d’abord, le reste est sur la planche` : ''} · il te répond dans son panneau`);
       Promise.resolve(p).catch((e) => toast(`l’agent : ${e.message}`, 8000));
     } catch (e) { P.R.agentErr = e.message; sA.err(e.message); }
   }

@@ -9,8 +9,10 @@
 // Une planche neuve (deux images, une note, un document) ; le panneau par la touche I ; « Citer dans
 // la discussion » au clic droit ; « une image dans ce style » → la carte posée et branchée, un seul
 // pas d'annulation ; la ligne du geste montre la carte ; « Annuler ce tour », « Reposer » ; un tour de
-// gestes variés (le faux Ollama en script) défait d'un coup, la planche identique ; l'analyse
-// d'entrée par app.agent.send(texte, { pieces, intent: 'ingest' }) ; une note glissée sur le champ.
+// gestes variés (le faux Ollama en script) défait d'un coup, la planche identique ; l'entrée d'un projet
+// par app.agent.send(texte, { pieces, intent: 'ingest' }) (06/10 : la réception, ce qui ne colle pas, des
+// questions cliquables, RIEN de posé ; une réponse → le plan ; accepté → une étape, un geste, défait d'un
+// coup ; le carnet) ; une note glissée sur le champ.
 // Captures en sombre et en clair. Rend 0 si tout passe ; le détail dans <out>/pilote.log.
 import { createRequire } from 'module';
 import { writeFileSync, mkdirSync, existsSync } from 'fs';
@@ -115,12 +117,34 @@ for (const theme of ['dark', 'light']) {
   await page.click('.ag-turn:last-child >> text=Annuler ce tour');
   await sleep(400);
   ok(await snap() === before, `${theme} : « Annuler ce tour » rend la planche identique (nom, places, groupe, fils)`);
-  // le contrat de « Commencer un projet »
+  // le contrat de « Commencer un projet » (06/10) : la réception, des questions, rien de posé
+  const nIng = (await st()).n;
   const ing = await page.evaluate(async (p) => {
-    const r2 = await window.ideation.app.agent.send('Un film sur Kiki.', { pieces: [p.doc, p.i1, p.i2], intent: 'ingest' });
-    return { n: r2.results.length, frames: window.ideation.S.board.nodes.filter((n) => n.type === 'frame').length };
+    const r2 = await window.ideation.app.agent.send('Une publicité pour un café en grains.', { pieces: [p.doc, p.i1, p.i2], intent: 'ingest' });
+    return { n: r2.results.length, q: (r2.turn.questions || []).length, contra: (r2.turn.contradictions || []).length };
   }, P);
-  ok(ing.n >= 8 && ing.frames >= 3, `${theme} : app.agent.send(…, { pieces, intent: 'ingest' }) organise la planche (${JSON.stringify(ing)})`);
+  await sleep(400);
+  ok(ing.n === 0 && ing.q >= 3 && ing.contra === 1 && (await st()).n === nIng && await page.isVisible('.ag-recu') && await page.isVisible('.ag-contra'),
+    `${theme} : l'entrée accuse réception, dit ce qui ne colle pas, pose ses questions, et ne pose RIEN (${JSON.stringify(ing)})`);
+  await page.locator('.ag-qcard .ag-q').nth(1).locator('.ag-opt').first().click();
+  ok(await page.locator('.ag-qcard .ag-opt.on').count() === 1 && !(await page.isDisabled('.ag-qcard button:text-is("Répondre")')),
+    `${theme} : un choix cliqué allume « Répondre »`);
+  await page.screenshot({ path: `${out}/${theme}-4-questions.png` });
+  await page.click('.ag-qcard button:text-is("Répondre")');
+  await page.waitForSelector('.ag-plancard button:has-text("Accepter")', { timeout: 30000 });
+  ok((await st()).n === nIng && await page.locator('.ag-plan li').count() >= 1, `${theme} : la réponse → un plan court, toujours rien de posé`);
+  const u1 = (await st()).undo;
+  await page.click('.ag-plancard button:has-text("Accepter")');
+  await page.waitForSelector('.ag-turn:last-child .ag-acts', { timeout: 30000 });
+  await sleep(500);
+  ok((await st()).n === nIng + 1 && (await st()).undo - u1 === 1 && await page.isVisible('.ag-suite'),
+    `${theme} : le plan accepté → l'étape 1 pose UN geste, un pas d'annulation, l'étape suivante proposée`);
+  await page.screenshot({ path: `${out}/${theme}-5-etape.png` });
+  await page.click('.ag-turn:last-child >> text=Annuler ce tour');
+  await sleep(600);
+  ok((await st()).n === nIng && /refaire/i.test(await page.textContent('.ag-suite')), `${theme} : « Annuler ce tour » défait l'étape, qui est à refaire`);
+  await page.click('.ag-ch');
+  ok(await page.locator('.ag-clist li').count() >= 2, `${theme} : le carnet : la réponse et le plan accepté`);
   // une note de la planche glissée sur le champ : citée, revenue à sa place, sans pas d'annulation
   await page.evaluate(() => window.ideation.app.canvas.flyTo('n3', { ms: 0, zmax: 1 }));
   await sleep(300);
