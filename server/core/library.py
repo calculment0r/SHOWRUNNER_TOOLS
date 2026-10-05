@@ -488,6 +488,27 @@ VIEW_KINDS = ("image", "video")
 # servirait pas à quelqu'un que `visibility` n'autorise pas à la voir
 VIEW_CACHE = "private, max-age=31536000, immutable"
 VIEW_RE = re.compile(r"^view-(\d+)\.webp$")
+# Les vignettes (thumb.jpg, ref-NN.thumb.jpg) se réécrivent en place (une couverture de document refaite, une
+# séquence du Montage, une pochette) : leur adresse porte la version du fichier lui-même (?v=, file_v), et seule
+# l'adresse de la version présente se garde un an. Derrière la porte Cloudflare, chaque revalidation (304) était une
+# requête du Worker (docs/etudes/cloudflare.md, « Le compte des requêtes du Worker »).
+THUMB_RE = re.compile(r"^(thumb|ref-\d+\.thumb)\.jpg$")
+
+
+def file_v(path: Path) -> str:
+    """La version d'un fichier, tirée de lui-même (taille, date en ns) : qui le réécrit change son adresse, par
+    construction, sans compteur à tenir dans chaque outil qui écrit une vignette. "" : pas de fichier."""
+    try:
+        st = path.stat()
+    except OSError:
+        return ""
+    return f"{st.st_size:x}-{st.st_mtime_ns:x}"
+
+
+def thumb_url(base: str, folder: Path, name: str) -> str:
+    """L'adresse versionnée d'une vignette de l'objet (`base` : library/<id>/)."""
+    v = file_v(folder / name)
+    return f"{base}{name}?v={v}" if v else base + name
 
 
 def view_name(w: int) -> str:
@@ -597,8 +618,15 @@ def view_path(it: dict, w: int) -> Path | None:
 def cache_policy(rel: str, req) -> str | None:
     """La politique de cache de /library/ (core/http.py, `mount(…, cache=)`) :
     une copie d'affichage demandée à son adresse versionnée se garde un an ;
-    le reste se revalide (ETag, 304)."""
-    return VIEW_CACHE if VIEW_RE.match(rel.rsplit("/", 1)[-1]) and req.q("v") else None
+    une vignette aussi, si sa version (?v=) est celle du fichier présent (file_v :
+    jamais un vieux contenu gardé sous une adresse neuve) ; le reste se revalide
+    (ETag, 304)."""
+    name = rel.rsplit("/", 1)[-1]
+    if VIEW_RE.match(name) and req.q("v"):
+        return VIEW_CACHE
+    if THUMB_RE.match(name) and req.q("v") and req.q("v") == file_v(root() / rel):
+        return VIEW_CACHE
+    return None
 
 
 # ── servir sans danger ce qu'on a déposé ────────────────────
@@ -1201,12 +1229,14 @@ def ref_paths(it: dict, roles: list[str] | None = None) -> list[tuple[Path, dict
 def public(it: dict) -> dict:
     """L'objet tel que la page le voit : avec ses adresses."""
     base = f"library/{it['id']}/"
+    d = folder_of(it["id"])
     out = dict(it)
     out["owner"] = auth.owner_of(it)
     out["space"] = space_of(it)   # chaque carte dit son Workspace (Asset tous Workspaces, étape 5)
     if it.get("file"):
         out["url"] = base + it["file"]
-    out["thumb_url"] = base + it["thumb"] if it.get("thumb") else (out.get("url") if it["kind"] == "image" else None)
+    # la vignette, à son adresse versionnée (thumb_url, cache_policy : gardée un an par le navigateur)
+    out["thumb_url"] = thumb_url(base, d, it["thumb"]) if it.get("thumb") else (out.get("url") if it["kind"] == "image" else None)
     # les copies d'affichage qui existent (grand côté, px) et leurs adresses versionnées
     # (commun/proxies.js choisit) ; [] : la page prend la vignette ou l'original
     out["views"] = sorted(it.get("views") or [])
@@ -1223,7 +1253,7 @@ def public(it: dict) -> dict:
         out["original"] = {**it["original"], "url": base + it["original"]["file"]}   # l'image telle qu'elle a été déposée
     if it["kind"] == "element":
         el = dict(it["element"])
-        el["refs"] = [{**r, "url": base + r["file"], "thumb_url": base + r["thumb"] if r.get("thumb") else base + r["file"]}
+        el["refs"] = [{**r, "url": base + r["file"], "thumb_url": thumb_url(base, d, r["thumb"]) if r.get("thumb") else base + r["file"]}
                       for r in it["element"]["refs"]]
         if it["element"].get("voices"):
             el["voices"] = [{**v, "url": base + v["file"]} for v in it["element"]["voices"]]

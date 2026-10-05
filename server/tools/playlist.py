@@ -730,7 +730,7 @@ def selftest(call, ok) -> None:
        and pl2["download"] is True and pl2["cover"] == img["id"],
        f"réécrire : titre, artiste, année, l'ordre, les surcharges d'une piste, le fondu, la pochette ({st} {str(p2)[:160]})")
     ok(abs(p2.get("duration", 0) - 9.0) < 0.1 and p2.get("parents") == [ids[2], ids[0], ids[1], ids[3]]
-       and p2.get("thumb_url", "").endswith("thumb.jpg") and p2.get("views"),
+       and p2.get("thumb_url", "").split("?")[0].endswith("thumb.jpg") and p2.get("views"),
        f"réécrire : la durée suit, la vignette et les copies d'affichage sont celles de la pochette ({p2.get('duration')})")
     v1 = dict(p2.get("view_urls") or {})
     st, p3 = call("POST", f"/api/playlist/{pid}", {"base_rev": 2, "playlist": {"cover": im2["id"]}})
