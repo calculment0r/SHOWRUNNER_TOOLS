@@ -9,8 +9,11 @@
    un chapeau plein à l'encre (--ink), rectangle aux coins doux, porté par
    son ombre (--drop), une encoche au milieu.
 
-   ODIO (body.mu-page) garde EXACTEMENT sa règle d'avant : la piste fine
-   et le pouce rond acier (bloc « ODIO » en bas) — on n'y touche pas.
+   ODIO aussi depuis le 06/10 (Cal : « je ne veux plus aucun de ces sliders
+   avec le rond tout simple ») : ses curseurs à lui sont le fader de la
+   console couché (musique/ui.js, fader({ couche: true })) ; ce qui reste de
+   natif chez lui (les Préférences, l'éditeur de thème) prend celui-ci —
+   plus de pouce rond nulle part.
 
    Tout curseur natif du portail le prend, sans classe : juste par
    construction. Chargé par commun/base.css (@import, en tête) — donc par
@@ -32,60 +35,38 @@
 }
 :where(input[type=range]:disabled) { opacity: .35; cursor: not-allowed; }
 
-/* ── le fader : partout sauf ODIO ─────────────────────────── */
-:where(body:not(.mu-page) input[type=range]) { height: 22px; }
+/* ── le fader : partout ──────────────────────────────────── */
+:where(input[type=range]) { height: 22px; }
 
 /* le rail : creux, arrondi, un trait fin au milieu */
-:where(body:not(.mu-page) input[type=range])::-webkit-slider-runnable-track {
+:where(input[type=range])::-webkit-slider-runnable-track {
   height: 8px; border-radius: 999px;
   background: linear-gradient(var(--line), var(--line)) center / calc(100% - 8px) 2px no-repeat, var(--panel3);
   box-shadow: inset 0 0 0 1px var(--line), inset 0 1px 2px var(--drop);
 }
-:where(body:not(.mu-page) input[type=range])::-moz-range-track {
+:where(input[type=range])::-moz-range-track {
   height: 8px; border-radius: 999px;
   background: linear-gradient(var(--line), var(--line)) center / calc(100% - 8px) 2px no-repeat, var(--panel3);
   box-shadow: inset 0 0 0 1px var(--line), inset 0 1px 2px var(--drop);
 }
-:where(body:not(.mu-page) input[type=range])::-moz-range-progress { background: transparent; }
+:where(input[type=range])::-moz-range-progress { background: transparent; }
 
 /* le chapeau : plein, à l'encre, l'encoche au milieu, porté par son ombre */
-:where(body:not(.mu-page) input[type=range])::-webkit-slider-thumb {
+:where(input[type=range])::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
   width: 10px; height: 20px; margin-top: -6px; border: none; border-radius: 3px;
   background: linear-gradient(to right, transparent 4px, var(--ink3) 4px 6px, transparent 6px), var(--ink);
   box-shadow: 0 2px 6px var(--drop), inset 0 0 0 1px var(--line);
   transition: transform .12s, background-color .12s;
 }
-:where(body:not(.mu-page) input[type=range])::-moz-range-thumb {
+:where(input[type=range])::-moz-range-thumb {
   width: 10px; height: 20px; border: none; border-radius: 3px;
   background: linear-gradient(to right, transparent 4px, var(--ink3) 4px 6px, transparent 6px), var(--ink);
   box-shadow: 0 2px 6px var(--drop), inset 0 0 0 1px var(--line);
   transition: transform .12s, background-color .12s;
 }
 /* sous la main : le chapeau se soulève un peu ; tenu : il s'enfonce */
-:where(body:not(.mu-page) input[type=range]:hover:not(:disabled))::-webkit-slider-thumb { transform: scaleY(1.08); }
-:where(body:not(.mu-page) input[type=range]:hover:not(:disabled))::-moz-range-thumb { transform: scaleY(1.08); }
-:where(body:not(.mu-page) input[type=range]:active:not(:disabled))::-webkit-slider-thumb { transform: scaleY(.94); }
-:where(body:not(.mu-page) input[type=range]:active:not(:disabled))::-moz-range-thumb { transform: scaleY(.94); }
-
-/* ── ODIO : sa règle d'avant, inchangée ───────────────────── */
-:where(.mu-page input[type=range]) { height: 18px; }
-:where(.mu-page input[type=range])::-webkit-slider-runnable-track {
-  height: 4px; border-radius: 2px; background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line);
-}
-:where(.mu-page input[type=range])::-webkit-slider-thumb {
-  -webkit-appearance: none; appearance: none;
-  width: 12px; height: 12px; margin-top: -4px; border: none; border-radius: 50%;
-  background: var(--cy); transition: transform .12s;
-}
-:where(.mu-page input[type=range])::-moz-range-track {
-  height: 4px; border-radius: 2px; background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line);
-}
-:where(.mu-page input[type=range])::-moz-range-progress { background: transparent; }
-:where(.mu-page input[type=range])::-moz-range-thumb {
-  width: 12px; height: 12px; border: none; border-radius: 50%; background: var(--cy); transition: transform .12s;
-}
-:where(.mu-page input[type=range]:hover:not(:disabled))::-webkit-slider-thumb { transform: scale(1.17); }
-:where(.mu-page input[type=range]:hover:not(:disabled))::-moz-range-thumb { transform: scale(1.17); }
-:where(.mu-page input[type=range]:active:not(:disabled))::-webkit-slider-thumb { background: var(--ink); }
-:where(.mu-page input[type=range]:active:not(:disabled))::-moz-range-thumb { background: var(--ink); }
+:where(input[type=range]:hover:not(:disabled))::-webkit-slider-thumb { transform: scaleY(1.08); }
+:where(input[type=range]:hover:not(:disabled))::-moz-range-thumb { transform: scaleY(1.08); }
+:where(input[type=range]:active:not(:disabled))::-webkit-slider-thumb { transform: scaleY(.94); }
+:where(input[type=range]:active:not(:disabled))::-moz-range-thumb { transform: scaleY(.94); }

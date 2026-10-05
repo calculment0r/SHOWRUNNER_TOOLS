@@ -488,28 +488,37 @@ def availability(max_age: float = 120.0) -> dict:
     return caps
 
 
-def _pin_for(cap: str) -> str | None:
+def _pin_for(cap: str, lora: dict | None = None) -> str | None:
     """L'instance où épingler un travail dont le modèle n'est que sur une
-    machine (Z-Image base : DGX1). Aucune : on refuse, en disant pourquoi.
-    En factice, rien n'est épinglé : aucun modèle n'est chargé."""
+    machine (Z-Image base : DGX1), ou dont le LoRA de moodboard n'est que dans
+    une ComfyUI (sa copie vers l'autre DGX a échoué). Aucune : on refuse, en
+    disant pourquoi. En factice, rien n'est épinglé : aucun modèle n'est chargé."""
     if backend() == "stub":
         return None
     eps = [e for e in config.get("lanes", {}).get("image", []) if e != "local"]
+    if not eps:
+        return None
     try:
         av = availability().get(cap)
     except Exception:
-        return None
-    if not av or not eps:
-        return None
-    if not av["on"]:
+        av = None
+    if av and not av["on"]:
         miss = "; ".join(f"{m} : {', '.join(v)}" for m, v in av["missing"].items())
         raise HttpError(409, f"aucune machine ne peut le faire ({miss})")
     # épingler, c'est écarter une machine à qui il MANQUE le modèle ; une machine
     # qui ne répond pas à l'instant n'est pas écartée (la file ne lui donne rien
     # tant qu'elle ne répond pas) — relevé du 30/09 : un /object_info trop lent
     # pendant un rendu épinglait tout sur l'autre machine, en pause
-    able = [e for e in eps if e in av["on"] or e in av.get("down", [])]
-    return None if len(able) == len(eps) else av["on"][0]
+    able = [e for e in eps if not av or e in av["on"] or e in av.get("down", [])]
+    if lora:
+        from tools import lora as L
+        able = L.machines_with(lora["name"], able)
+        if not able:
+            raise HttpError(409, f"le LoRA {lora['name']} n'est dans la ComfyUI d'aucune machine qui peut faire ce rendu "
+                                 "(models/loras/showrunner/) : Admin → Diagnostics → « LoRA » dit où il est")
+    if len(able) == len(eps):
+        return None
+    return next((e for e in able if av and e in av["on"]), able[0])
 
 
 # ── le prompt ───────────────────────────────────────────────
@@ -523,9 +532,10 @@ def _sentence(s: str) -> str:
 
 
 def compose(model: str, prompt: str, looks: dict | None = None, refs: list[dict] | None = None,
-            mode: str = "generate", keep_face: bool = False, transparent: bool = False) -> dict:
+            mode: str = "generate", keep_face: bool = False, transparent: bool = False, lora: dict | None = None) -> dict:
     """Le prompt réellement envoyé, et ce qui mérite d'être dit (`notes`).
-    `refs` : [{label}] dans l'ordre d'envoi, sans l'image éditée."""
+    `refs` : [{label}] dans l'ordre d'envoi, sans l'image éditée. `lora` : celui
+    d'un moodboard (lora.check_render), son mot déclencheur en tête."""
     looks = looks or {}
     refs = refs or []
     notes = []
@@ -581,7 +591,20 @@ def compose(model: str, prompt: str, looks: dict | None = None, refs: list[dict]
         elif model == "krea2":
             # formulation de Character Factory (krea2.FACE_PASS, banc du 28/09)
             parts.append("Keep the face, the identity, the age, the skin and the hair exactly as they are.")
-    return {"prompt": " ".join(p for p in parts if p), "notes": notes}
+    text = " ".join(p for p in parts if p)
+    if lora:
+        what = f"LoRA « {lora.get('title') or lora['name']} »" + (f" v{lora['v']}" if lora.get("v") else "") + \
+            f" à {lora['strength']:g}".replace(".", ",")
+        trig = lora.get("trigger") or ""
+        if trig and trig not in text:
+            # comme dans ses légendes d'entraînement : ai-toolkit y met le mot en tête
+            # (toolkit/prompt_utils.py, inject_trigger_into_prompt : « trigger + ' ' + légende »)
+            text = f"{trig} {text}"
+        notes.append(f"{what} : " + (f"son mot déclencheur « {trig} » en tête, comme dans ses légendes d'entraînement"
+                                     if trig else "pas de mot déclencheur connu (un fichier de ComfyUI que le portail n'a pas entraîné)"))
+        if model == "krea2" and refs:
+            notes.append("LoRA avec une référence (Identity Edit) : non essayé à l'installation du 05/10")
+    return {"prompt": text, "notes": notes}
 
 
 # ── les références ──────────────────────────────────────────
@@ -805,6 +828,10 @@ def check_generate(d: dict) -> dict:
         out["realism"] = bool(d.get("realism", True))
     if model == "qwen21" and d.get("transparent"):
         out["transparent"] = True
+    if d.get("lora"):
+        # un LoRA de moodboard (server/tools/lora.py) : pour le modèle qui l'a produit, force de 0 à 1,5
+        from tools import lora
+        out["lora"] = lora.check_render(model, d["lora"], variant if model == "zimage" else None)
     return out
 
 
@@ -872,7 +899,16 @@ def _fill(wf: dict, values: dict, names: list[str]) -> dict:
 
 
 def graph_generate(p: dict, names: list[str], prompt: str) -> dict:
-    """Le graphe d'un rendu, références déjà déposées (`names`)."""
+    """Le graphe d'un rendu, références déjà déposées (`names`) ; un LoRA de
+    moodboard (`lora`) posé après le chargeur du modèle (lora.with_lora)."""
+    g = _graph_generate(p, names, prompt)
+    if p.get("lora"):
+        from tools import lora
+        g = lora.with_lora(g, p["lora"]["name"], p["lora"]["strength"])
+    return g
+
+
+def _graph_generate(p: dict, names: list[str], prompt: str) -> dict:
     cf = _cf()
     w, h, model = p["width"], p["height"], p["model"]
     if model == "zimage":
@@ -1104,6 +1140,10 @@ def stub_generate(ctx, p: dict, refs: list[dict], prompt: str, out: Path) -> Pat
         lines.append(("références", " · ".join(r["title"] for r in refs)))
     if p.get("transparent"):
         lines.append(("fond", "transparent (RGBA natif de Qwen 2.1)"))
+    if p.get("lora"):
+        lo = p["lora"]
+        lines.append(("LoRA", f"{lo.get('title') or lo['name']}" + (f" v{lo['v']}" if lo.get("v") else "")
+                      + f" · {lo['strength']:g}".replace(".", ",")))
     _stub_wait(ctx, m["name"])
     card = stub_card((p["width"], p["height"]), "image d'essai — aucun modèle chargé", lines, prompt,
                      [r["path"] for r in refs], p["seed"])
@@ -1408,7 +1448,7 @@ def run_generate(ctx) -> dict:
     model = p["model"]
     ctx.progress(0.02, "prépare")
     refs = [_ref(r) for r in p.get("refs", [])]
-    comp = compose(model, p["prompt"], p.get("looks"), refs, transparent=p.get("transparent", False))
+    comp = compose(model, p["prompt"], p.get("looks"), refs, transparent=p.get("transparent", False), lora=p.get("lora"))
     out = ctx.workdir / "out.png"
     if backend() == "stub":
         stub_generate(ctx, p, refs, comp["prompt"], out)
@@ -1664,8 +1704,12 @@ def api_compose(req) -> dict:
         # le carrousel entier arrive ; le prompt ne présente que les places envoyées
         send = MODELS[model]["refs"] - (1 if mode == "edit" else 0)
         refs = [_ref(r) for r in split_refs(_refs(d.get("refs")), send)[0]]
+        lo = None
+        if mode == "generate" and d.get("lora"):
+            from tools import lora
+            lo = lora.check_render(model, d["lora"], d.get("variant") if model == "zimage" else None)
         out = compose(model, d.get("prompt") or "", _looks(d.get("looks")), refs, mode=mode,
-                      keep_face=bool(d.get("keep_face")), transparent=bool(d.get("transparent")))
+                      keep_face=bool(d.get("keep_face")), transparent=bool(d.get("transparent")), lora=lo)
     except ValueError as e:
         raise HttpError(400, str(e)) from e
     return out
@@ -1680,12 +1724,12 @@ def api_generate(req) -> dict:
         raise HttpError(400, str(e)) from e
     if d.get("dry"):
         refs = [_ref(r) for r in p["refs"]]
-        comp = compose(p["model"], p["prompt"], p["looks"], refs, transparent=p.get("transparent", False))
+        comp = compose(p["model"], p["prompt"], p["looks"], refs, transparent=p.get("transparent", False), lora=p.get("lora"))
         out = {"params": p, "prompt": comp["prompt"], "notes": comp["notes"], "backend": backend()}
         if cf_available():
             out["graph"] = graph_generate(p, [f"ref{k + 1}.png" for k in range(len(refs))], comp["prompt"])
         return out
-    pin = _pin_for(_cap_generate(p))
+    pin = _pin_for(_cap_generate(p), p.get("lora"))
     batch = _batch()
     out = []
     for k in range(count):
@@ -1755,7 +1799,7 @@ def api_redo(req) -> dict:
         n = _int(d.get("variations", 0), 0, 8, "variations")
     except ValueError as e:
         raise HttpError(400, f"la recette ne passe plus : {e}") from e
-    pin = _pin_for(_cap_generate(p) if kind == "image.generate" else _cap_edit(p))
+    pin = _pin_for(_cap_generate(p), p.get("lora")) if kind == "image.generate" else _pin_for(_cap_edit(p))
     title = (it.get("title") or it["id"])[:60]
     batch = _batch()
     if not n:

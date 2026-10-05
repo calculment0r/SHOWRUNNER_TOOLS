@@ -1,5 +1,9 @@
 # Installer l'entraînement des LoRA sur les DGX — brief pour une session Claude Code du PC
 
+**Fait le 05/10/2026 sur DGX2 et DGX1** : le compte rendu, ce qui a changé par rapport à ce brief
+et le manifeste final sont au **§ 6**. Le brief reste tel qu'il a été donné ; ses trois écarts
+avec ce qui marche sont signalés en place (HF_HUB_OFFLINE, les commandes d'ACE-Step, le manifeste).
+
 **À donner tel quel à une session Claude Code ouverte sur le PC de Cal** (dans le dossier du
 dépôt). L'étude qui fonde chaque choix : `docs/etudes/lora_entrainement.md` (à lire d'abord).
 
@@ -51,7 +55,9 @@ pas les retélécharger). `uv` absent : le dire à Cal plutôt que de l'installe
 Avec `MODELS_PATH=$HOME/ComfyUI/models`, ai-toolkit relit nos fichiers ComfyUI ; il ne manque que
 des adaptateurs, des configurations et quelques encodeurs. Le plus sûr : lancer chaque essai du
 § 4 **sans** `HF_HUB_OFFLINE` la première fois (il télécharge ce qui manque), noter ce qui est
-venu (taille, chemin), puis toujours avec `HF_HUB_OFFLINE=1` ensuite. Attendu d'après l'étude :
+venu (taille, chemin), puis toujours avec `HF_HUB_OFFLINE=1` ensuite. **Corrigé le 05/10 : jamais
+`HF_HUB_OFFLINE=1`** — hors ligne, Z-Image, Qwen-Image 2.1 et H3 échouent (§ 6) ; ai-toolkit lit
+déjà le cache d'abord. Attendu d'après l'étude :
 
 | modèle | à télécharger | taille |
 |---|---|---|
@@ -107,7 +113,10 @@ Les blocs `model:` des autres modèles (valeurs de l'interface d'ai-toolkit, `ui
 - H3 (sur images) : `{arch: minimax_h3, name_or_path: "Comfy-Org/MiniMax-H3", model_kwargs: {partition: fl2va_pruned}, quantize: true, qtype: convrot8, quantize_te: true, qtype_te: nvfp4, assistant_lora_path: "ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v3.safetensors"}`, avec `network: {type: lora, linear: 16, linear_alpha: 16, network_kwargs: {ignore_if_contains: [adaln_proj]}}` et `train.timestep_type: shift`.
 
 ACE-Step (officiel) : 2 à 4 morceaux de la bibliothèque (`~/showrunner-data/library/aud-*/main.*`),
-le prétraitement puis 20 époques, d'après `docs/en/LoRA_Training_Tutorial.md` du dépôt cloné :
+le prétraitement puis 20 époques, d'après `docs/en/LoRA_Training_Tutorial.md` du dépôt cloné
+(**ces deux commandes ne marchent pas telles quelles** : celles qui marchent sont dans le manifeste
+du § 6 — `--model-variant acestep-v15-xl-base`, `--plain --yes`, `--dataset-dir` et
+`--output-dir` même au prétraitement, `uv run --directory`) :
 
 ```sh
 ssh dgx2 'cd ~/trainers/ace-train && ~/.local/bin/uv run train.py fixed --checkpoint-dir ./checkpoints --model-variant xl_base --preprocess --audio-dir ~/trainers/essai_sons --dataset-json ~/trainers/essai_sons/ds.json --tensor-output ~/trainers/essai_sons_t'
@@ -118,7 +127,8 @@ ssh dgx2 'cd ~/trainers/ace-train && ~/.local/bin/uv run train.py fixed --checkp
 
 Le portail (`server/tools/lora_trainers.py`) ne propose un modèle que s'il y est marqué `ok`
 **après un essai réussi du § 4** (entraînement ET chargement dans ComfyUI). Le bloc `model` est
-celui qui a marché, tel quel ; `s_per_step` la vitesse relevée pendant l'essai.
+celui qui a marché, tel quel ; `s_per_step` la vitesse relevée pendant l'essai. (Le gabarit
+ci-dessous était celui du brief ; le manifeste réel du 05/10 est au § 6.)
 
 ```json
 {
@@ -162,9 +172,102 @@ propose (rien à redémarrer : le portail relit le manifeste à chaque demande).
 Le même manifeste peut exister sur DGX1 (le portail n'entraîne aujourd'hui que sur DGX2, la
 machine du portail ; DGX1 sert de deuxième machine plus tard).
 
-## 6. Le compte rendu à rapporter à Cal (qui le colle dans la session cloud)
+## 6. Le compte rendu — fait, le 05/10
 
-Pour chaque machine et chaque modèle : installé ou non, ce qui a été téléchargé (taille, chemin),
-le résultat de l'essai (s/pas, mémoire vue par `nvidia-smi`, le LoRA chargé par ComfyUI : oui ou
-non, avec l'image), et le contenu final de `~/trainers/sr_lora.json`. Ce qui a échoué : le message
-d'erreur exact et ce qui a été essayé.
+(Ce que le brief demandait : pour chaque machine et chaque modèle, installé ou non, ce qui a été
+téléchargé, le résultat de l'essai, le contenu final de `~/trainers/sr_lora.json`, et ce qui a
+échoué.) Session du PC du 05/10, d'après ce brief. Rien n'a été redémarré, rien installé dans le
+venv de ComfyUI ni dans `~/ACE-Step-1.5` ; chaque essai sous `flock /tmp/sr_gpu_dgxN.lock`, file
+ComfyUI vide, après `/free`.
+
+**Installé sur les deux DGX** (32 Go par machine sous `~/trainers/`) :
+- ai-toolkit `ecee894` (`~/trainers/ai-toolkit`, venv 6,0 Go) : torch `2.13.0+cu130 12 1 True`,
+  `requirements.txt` et torchcodec 0.15.0 sans erreur en aarch64 (bitsandbytes 0.50.2, diffusers
+  0.39.0.dev0, transformers 5.5.3) ; flash-attn non installé (SDPA).
+- L'entraîneur d'ACE-Step 1.5 `ca1e85f` (`~/trainers/ace-train`, venv 5,3 Go, torch
+  `2.10.0+cu130`) ; `acestep-v15-xl-base` dans `checkpoints/` ; la VAE et Qwen3-Embedding-0.6B
+  sont des liens vers `~/ACE-Step-1.5/checkpoints`.
+
+**Téléchargé** (identique sur les deux machines ; rien d'autre n'est arrivé dans `~/ComfyUI/models` :
+les DiT, encodeurs et VAE sont relus depuis nos fichiers ComfyUI) :
+
+| quoi | taille | où |
+|---|---|---|
+| `Tongyi-MAI/Z-Image-Turbo` (encodeur Qwen3-4B, VAE, tokenizer) | 7,7 Go | cache HF |
+| `ostris/zimage_turbo_training_adapter` v2 | 325 Mo | cache HF |
+| `Qwen/Qwen-Image-2.1` (configs, processeur) | 16 Mo | cache HF |
+| `Qwen/Qwen3-VL-4B-Instruct` | 8,3 Go | cache HF |
+| `Qwen/Qwen-Image` (VAE) | 243 Mo | cache HF |
+| `ostris/krea2_turbo_training_adapter` v1 | 219 Mo | cache HF |
+| `MiniMaxAI/MiniMax-H3` (tokenizer, processeur, config) | 12 Mo | cache HF |
+| `ostris/minimax_h3_training_adapter` v3 | 296 Mo | `~/ComfyUI/models/loras/training_adapters/` |
+| `ACE-Step/acestep-v15-xl-base` | **19 Go** | `~/trainers/ace-train/checkpoints/` |
+| torchcodec `0.10.0+cu130` | quelques Mo | venv d'ACE-Step (accord de Cal) |
+
+**Essais** (6 photos d'archives de Paris de la bibliothèque, 20 pas, rang 16, 768/1024 ; ACE : 3
+morceaux). Chaque LoRA copié dans `loras/showrunner/`, rendu par le graphe du portail plus
+`LoraLoaderModelOnly`, même graine à force 1 puis 0 : aucune ligne `lora key not loaded`, des
+poids patchés, des pixels qui changent. Les copies d'essai ont été retirées ensuite.
+
+| modèle | s/pas DGX2 · DGX1 | mémoire du processus (pic) | chargé par ComfyUI |
+|---|---|---|---|
+| Z-Image Turbo | 6,35 · 6,2 | 20,8 Go | oui — 180 poids patchés, 23 % des pixels changent |
+| Qwen-Image 2.1 | 6,6 · 6,7 | 17,3 Go | oui — empilé sur Viggle turbo (montage Character Factory), 192 |
+| Krea 2 Turbo bf16 + adaptateur | 9,6 · 9,7 | 33 Go | oui — 256, 38 à 47 % |
+| H3 fl2va_pruned (images) + adaptateur v3 | 4,55 · 4,4 | 42 à 44 Go | oui — recette de Cal en i2v, écart ≈ 2/255 par image, 258 patches (les couches de People et DY) ; 0 entre deux rendus à force 0 |
+| ACE-Step 1.5 XL base (LoRA PEFT) | 5,6 s par époque pour 3 morceaux | ≈ 11 Go | oui (256 patches), **sur le ComfyUI de DGX2** : celui de DGX1 n'a aucun modèle ACE-Step 1.5 |
+
+ACE-Step : prétraitement de 3 morceaux en 75 à 88 s ; au rang 32, un point de sauvegarde pèse
+≈ 240 Mo (`--epochs 800 --save-every 50` en laisse 16, ≈ 3,9 Go, plus `final/`). Le câble :
+`ssh -o BatchMode=yes 169.254.110.6 true` marche depuis DGX2, le `rsync` de `publish()` passe,
+`loras/showrunner/` existe sur DGX1.
+
+**Ce qui a changé par rapport au brief**
+1. **`HF_HUB_OFFLINE=1` casse Z-Image, Qwen-Image 2.1 et H3** : hors ligne, transformers 5.5.3
+   réclame `<dépôt>/<sous-dossier tokenizer>/config.json`, qui n'existe pas sur le Hub
+   (`OSError: We couldn't connect to 'https://huggingface.co'…`) ; seul Krea 2 passe. Pour H3, le
+   dépôt du tokenizer est écrit en dur dans ai-toolkit. Tous les essais validés ont tourné sans ;
+   ai-toolkit lit déjà le cache d'abord. → le portail ne la pose plus (`run_aitk`).
+2. **Krea 2 plantait avant le premier pas** avec `cache_text_embeddings` : le gabarit `sample` sans
+   `neg` (défaut d'ai-toolkit : `False`) → `TypeError: can only concatenate str (not "bool") to
+   str`. → le portail écrit `neg: ""` et `train.disable_sampling: true` pour tous (les deux images
+   d'échantillon du début et de la fin coûtent 20 à 50 s chacune, que `sample_every` n'empêche pas).
+3. **ACE-Step, quatre obstacles** : torchcodec absent en aarch64 (installé à part : un `uv sync`
+   le retire — à refaire après une mise à jour) ; `--model-variant xl_base` refusé à
+   l'entraînement → le nom du dossier, `acestep-v15-xl-base` ; `--dataset-dir` et `--output-dir`
+   exigés même au prétraitement ; sans `--plain --yes`, en ssh, la confirmation reçoit EOF et sort
+   en 0 sans rien faire.
+4. **ACE-Step, la racine « sûre »** : tenseurs et sortie doivent être sous le répertoire courant
+   (`Path escapes safe root`) → `uv run --directory /home/dgx --project ~/trainers/ace-train`
+   (effet de bord : `sidestep.log` s'écrit dans `~/`). → le portail vérifie avant de lancer que
+   `{tensors}` et `{out}` sont sous ce `--directory`, et le dit sinon.
+5. **ACE-Step ignore `000.caption.txt` / `000.lyrics.txt`** en ligne de commande : sans
+   `{audio}/ds.json`, la légende est « 000 ». → le portail l'écrit (`lora_trainers.ace_dataset` :
+   le mot déclencheur en `custom_tag`, légende, paroles, et tempo, tonalité, mesure quand la recette
+   du son les donne).
+6. **ACE-Step rend 0 même en échec** (prétraitement 0/3, modèle introuvable, chemin refusé,
+   confirmation interrompue). → le portail compte les `.pt` après le prétraitement (aucun : il
+   s'arrête), cherche `final/adapter_model.safetensors`, et son erreur cite la fin utile du journal.
+7. `acestep-v15-xl-base` pèse 19 Go, pas ≈ 10. Krea 2 : aucun jeton à saisir (celui de la machine a
+   suffi). L'adaptateur d'entraînement d'H3 est arrivé dans `loras/training_adapters/` comme prévu
+   → la page Vidéo ne le liste plus (ce n'est pas un LoRA de rendu).
+8. DGX1, Qwen 2.1, un premier essai bloqué 22 min sur l'image de référence avec des latents
+   **copiés de DGX2** ; relancé avec des caches neufs : normal. Cause non trouvée, sans effet pour
+   le portail (il recrée son dossier à chaque travail).
+
+**Le manifeste final** (`~/trainers/sr_lora.json` de DGX2) est copié tel quel dans
+`tools/lora_manifeste_0510.json` : l'essai de `lora_trainers` vérifie qu'il propose Z-Image,
+Qwen 2.1, Krea 2, H3 et ACE-Step, et pas YuE2. Ses points clés : les quatre modèles d'ai-toolkit
+`ok` avec le bloc `model` essayé (Krea 2 et H3 avec `train.disable_sampling`, H3 avec son réseau
+`ignore_if_contains: [adaln_proj]` et `timestep_type: shift`) ; ACE-Step `ok` avec ses deux
+commandes exactes (`--dataset-json {audio}/ds.json`) ; YuE2 `ok: false` (le nœud n'est pas
+branché). Le même manifeste existe sur DGX1, avec ses vitesses.
+
+**Reste sur les machines** : `~/trainers/` (les outils, les essais, `runs/`), les images d'essai
+dans `~/ComfyUI/output/sr_lora_essai/`, `~/sidestep.log`, et l'adaptateur d'H3 dans
+`loras/training_adapters/` (nécessaire).
+
+**Au rendu** (branché le 05/10, `docs/etudes/lora_entrainement.md` § 8) : un LoRA entraîné se
+choisit, avec sa force (0 à 1,5), dans une carte Générer d'Idéation et la page Image pour le modèle
+qui l'a produit, et dans la page Vidéo (et la carte vidéo) pour H3 ; il entre dans le graphe par
+`LoraLoaderModelOnly`, la forme de ces essais.

@@ -27,6 +27,7 @@ import { motifJoue } from './arpege.js';   // l'arpégiateur des instruments mé
 import { jouetNode, jouetsAutomate } from './jouets/son.js';   // jouets : le son des jouets du Playground
 import { influer, rendre } from './machines/influence.js';   // attracteurs : ce que les attracteurs du banc font au son (nodal)
 import { trajets, sansSession } from './projet.js';   // les chaînes des pistes et des voies, lues dans les câbles (une seule vérité) ; l'export sans la Session
+import { etageArcs, configurerArcs, planifierArcs, poserArcs } from './arcs.js';   // les arcs du projet (06/10) : l'étage de la sortie, l'envoi des retours
 
 const LOOKAHEAD_MS = 25;      // MDN : « lookahead = 25.0 »
 const AHEAD_S = 0.12;         // MDN : « scheduleAheadTime = 0.1 » (+ 20 ms de marge au démarrage d'onglet)
@@ -651,26 +652,32 @@ function strip(ctx) {
   };
 }
 
-// l'entrée d'un bus : là où les envois se rejoignent, avant les effets
+// l'entrée d'un bus : là où les envois se rejoignent, avant les effets ;
+// `arc` : ce que l'arc d'envoi du projet y laisse entrer (arcs.js : Réverbe,
+// Delay), un gain à part du réglage « in » — 1 tant qu'aucun arc ne le tient
 function busIn(ctx) {
-  const g = G(ctx);
-  return { input: g, output: g, ap: { in: [[g.gain, dbToGain]] }, update(m) { setP(ctx, g.gain, dbToGain(val(m, 'in'))); } };
+  const g = G(ctx), arc = G(ctx);
+  g.connect(arc);
+  return { input: g, output: arc, arc: arc.gain, ap: { in: [[g.gain, dbToGain]] }, update(m) { setP(ctx, g.gain, dbToGain(val(m, 'in'))); } };
 }
 
 // La sortie : volume → filtre de l'arc (passe-bas, Q de Butterworth
-// 1/√2) → gain de l'arc → haut-parleurs ; deux analyseurs, gauche et
-// droite (ChannelSplitterNode, MDN).
+// 1/√2) → gain de l'arc → l'étage des arcs du projet (arcs.js : saturation,
+// filtre, largeur, volume — seulement ceux qu'on a peints) → haut-parleurs ;
+// deux analyseurs, gauche et droite (ChannelSplitterNode, MDN), après l'étage :
+// les vu-mètres montrent ce qu'on entend.
 function master(ctx) {
   const vol = G(ctx), arcF = new BiquadFilterNode(ctx, { type: 'lowpass', Q: Math.SQRT1_2, frequency: nyq(ctx, 20000) });
-  const arcG = G(ctx), output = G(ctx);
+  const arcG = G(ctx), output = G(ctx), etage = etageArcs(ctx);
   const an = new AnalyserNode(ctx, { fftSize: 2048 });
   const split = new ChannelSplitterNode(ctx, { numberOfOutputs: 2 });
   const anL = new AnalyserNode(ctx, { fftSize: 1024 }), anR = new AnalyserNode(ctx, { fftSize: 1024 });
-  vol.connect(arcF).connect(arcG).connect(output);
-  arcG.connect(an); arcG.connect(split); split.connect(anL, 0); split.connect(anR, 1);
+  vol.connect(arcF).connect(arcG).connect(etage.input);
+  etage.output.connect(output);
+  etage.output.connect(an); etage.output.connect(split); split.connect(anL, 0); split.connect(anR, 1);
   const hi = nyq(ctx, 20000);
   return {
-    input: vol, output, analyser: an, anL, anR,
+    input: vol, output, analyser: an, anL, anR, etage,
     ap: { vol: [[vol.gain, dbToGain]] },
     update(m) { setP(ctx, vol.gain, dbToGain(val(m, 'vol'))); },
     // ce que l'arc tient, selon sa cible : le filtre, le volume, les deux
@@ -837,6 +844,7 @@ export class Graph {
       }
       n.update(m, p.bpm);
     }
+    configurerArcs(this, p);   // les arcs du projet : l'étage de la sortie ne porte que ceux qu'on a peints (arcs.js)
     this.wire(p);
     this.mutes(p);
   }
@@ -948,6 +956,7 @@ export class Graph {
     const A = p.arc, mm = p.modules.find((x) => x.type === 'master');
     const mn = mm && this.nodes.get(mm.id);
     if (mn && A?.on && A.pts?.length) ramp(mn.arcAp(A.to, mm), A.pts, b0, b1, at, same);
+    planifierArcs(this, p, b0, b1, at);   // les arcs du projet (arcs.js) : rampes enchaînées, sans valeur posée à chaque tranche
   }
 
   // à l'arrêt : l'automation rend la main ; les réglages prennent la valeur
@@ -976,6 +985,7 @@ export class Graph {
       const A = p.arc;
       if (A?.on && A.pts?.length) for (const [param, fn] of mn.arcAp(A.to, mm)) setP(this.ctx, param, fn(interp(A.pts, beat)));
     }
+    poserArcs(this, p, beat);   // les arcs du projet : leur valeur à la tête, ou leur neutre (arcs.js)
   }
 
   // Pose les événements du morceau entre les temps b0 et b1 (en noires),

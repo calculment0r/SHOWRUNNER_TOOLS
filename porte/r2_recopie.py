@@ -74,13 +74,17 @@ def autorisation(method: str, host: str, path: str, query: list[tuple[str, str]]
 
 
 def essai() -> bool:
-    """L'exemple « GET Object » de la documentation AWS (signature connue)."""
+    """Les exemples « GET Object » et « GET Bucket (List Objects) » de la documentation AWS (signatures connues) :
+    la seconde porte des paramètres (la liste d'un préfixe, R2.liste)."""
+    cle = ("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "20130524T000000Z")
     got = autorisation("GET", "examplebucket.s3.amazonaws.com", "/test.txt", [],
                        {"host": "examplebucket.s3.amazonaws.com", "range": "bytes=0-9", "x-amz-content-sha256": VIDE,
-                        "x-amz-date": "20130524T000000Z"}, VIDE,
-                       "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "20130524T000000Z",
-                       region="us-east-1")
-    return got.endswith("Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41")
+                        "x-amz-date": "20130524T000000Z"}, VIDE, *cle, region="us-east-1")
+    liste = autorisation("GET", "examplebucket.s3.amazonaws.com", "/", [("max-keys", "2"), ("prefix", "J")],
+                         {"host": "examplebucket.s3.amazonaws.com", "x-amz-content-sha256": VIDE,
+                          "x-amz-date": "20130524T000000Z"}, VIDE, *cle, region="us-east-1")
+    return (got.endswith("Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41")
+            and liste.endswith("Signature=34b48302e7b5fa45bde8084f4b7868a86f0a534bc59db6670ed5711ef69dc6f7"))
 
 
 # ── R2 ──────────────────────────────────────────────────────
@@ -91,16 +95,20 @@ class R2:
         u = urllib.parse.urlsplit(point or f"https://{cfg['account_id']}.r2.cloudflarestorage.com")
         self.scheme, self.host = u.scheme, u.netloc
 
-    def _send(self, method: str, key: str, body=None, length: int = 0, sha: str = VIDE, extra: dict | None = None):
-        path = f"/{self.bucket}/{key}"
+    def _send(self, method: str, key: str, body=None, length: int = 0, sha: str = VIDE, extra: dict | None = None,
+              query: list[tuple[str, str]] | None = None):
+        # key vide : le bucket lui-même (une liste, query = ses paramètres)
+        path = f"/{self.bucket}/{key}" if key else f"/{self.bucket}"
+        query = query or []
         amz = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         h = {"host": self.host, "x-amz-date": amz, "x-amz-content-sha256": sha, **{k.lower(): v for k, v in (extra or {}).items()}}
-        h["authorization"] = autorisation(method, self.host, path, [], h, sha, self.access, self.secret, amz)
+        h["authorization"] = autorisation(method, self.host, path, query, h, sha, self.access, self.secret, amz)
         if body is not None or method == "PUT":
             h["content-length"] = str(length)
+        qs = "&".join(f"{_q(k)}={_q(v)}" for k, v in sorted(query))
         conn = (http.client.HTTPSConnection if self.scheme == "https" else http.client.HTTPConnection)(self.host, timeout=120)
         try:
-            conn.request(method, _q(path, "/-_.~"), body=body, headers=h)
+            conn.request(method, _q(path, "/-_.~") + (f"?{qs}" if qs else ""), body=body, headers=h)
             r = conn.getresponse()
             txt = r.read()
             return r.status, txt
@@ -125,6 +133,26 @@ class R2:
         st, txt = self._send("DELETE", key)
         if st not in (200, 204, 404):
             raise OSError(f"DELETE {key} : {st} {txt[:300]!r}")
+
+    def liste(self, prefixe: str) -> list[str]:
+        """Les clés sous un préfixe (ListObjectsV2, 1000 par page, la suite par
+        continuation-token : https://developers.cloudflare.com/r2/api/s3/api/). Le lien
+        d'écoute s'en sert pour retirer un lien et compter ses écoutes (server/tools/ecoute.py)."""
+        import xml.etree.ElementTree as ET
+        cles: list[str] = []
+        suite = None
+        while True:
+            q = [("list-type", "2"), ("prefix", prefixe)] + ([("continuation-token", suite)] if suite else [])
+            st, txt = self._send("GET", "", query=q)
+            if st != 200:
+                raise OSError(f"LIST {prefixe} : {st} {txt[:300]!r}")
+            racine = ET.fromstring(txt)
+            nom = lambda e: e.tag.rsplit("}", 1)[-1]   # noqa: E731 — avec ou sans l'espace de noms de S3
+            cles += [e.text or "" for e in racine.iter() if nom(e) == "Key"]
+            tronque = next((e.text for e in racine if nom(e) == "IsTruncated"), "false")
+            suite = next((e.text for e in racine if nom(e) == "NextContinuationToken"), None)
+            if tronque != "true" or not suite:
+                return cles
 
 
 def lis_jeton() -> dict:

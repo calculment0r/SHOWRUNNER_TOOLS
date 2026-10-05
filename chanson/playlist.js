@@ -25,14 +25,24 @@
 //   personne garde ou annule.
 // - Par morceau : son titre, ses crédits, ses paroles dans la playlist ;
 //   « Caler les paroles » ouvre l'éditeur des paroles calées (commun/lrc.js,
-//   la branche « paroles ») ; « Exporter en .zip » appelle la route de la
-//   branche « écoute ». Absents de ce portail, ils sont éteints et disent
+//   la branche « paroles »). Absent de ce portail, il est éteint et dit
 //   pourquoi (GET /api/playlist/options).
+// - Partager (server/tools/ecoute.py, l'étude § 4) : « Exporter en .zip » met
+//   le travail `ecoute.zip` dans la file ; la ligne sous le bouton suit sa
+//   progression (le relevé de la file, jobs.watch), puis le .zip se
+//   télécharge, et reste à reprendre tant que le portail le garde (deux
+//   heures). « Publier le lien » ouvre un petit panneau : un code facultatif,
+//   une date de fin facultative, le téléchargement permis et l'enchaînement
+//   (les champs de la playlist, écrits tout de suite) ; Publier, puis
+//   l'adresse à copier, Republier (le même lien), Retirer (confirmé), les
+//   écoutes. La destination Cloudflare attend le jeton R2 : le panneau le dit
+//   et propose le .zip. Qui ne peut pas publier (un guest : `peut_publier`)
+//   voit les deux boutons éteints, et pourquoi.
 //
 // Aucune couleur ici : chanson/playlist.css habille avec les jetons.
-import { api, jobs, toast, el, href, fmtDur, dropZone, pick, stateFr } from '../commun/shell.js';
+import { api, jobs, toast, el, href, fmtDur, fmtDate, dropZone, pick, stateFr } from '../commun/shell.js';
 import { menu, kebab, contextMenu } from '../commun/menu.js';
-import { ask } from '../commun/fil.js';
+import { ask, copyText } from '../commun/fil.js';
 import { pochette } from '../commun/pochette.js';
 import { lecturePlaylist } from './playlist_lecture.js';
 
@@ -67,6 +77,7 @@ const P = {
   carte: null,                          // « Fais-moi une pochette » : { prompt, model, models, jobs, images }
   dropAt: null,
   ecouteOrdre: false,                   // l'écoute en cours suit l'ordre proposé (pas encore gardé)
+  lien: false,                          // le panneau « Publier le lien » ouvert
 };
 const put = (box, ...kids) => box && box.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false && k !== ''));
 const memo = () => { try { return JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch { return {}; } };
@@ -112,6 +123,7 @@ async function ouvrir(id) {
   }
   P.ordre = null; P.carte = null;
   if (P.cur) garder({ id: P.cur.id });
+  lienNeuf();
   paint();
 }
 async function creer(premiers = []) {
@@ -122,6 +134,7 @@ async function creer(premiers = []) {
   P.list = [{ id: d.id, title: d.title, tracks: d.playlist.tracks.length, duration: d.duration }, ...P.list];
   P.cur = d; P.ordre = null; P.carte = null;
   garder({ id: d.id });
+  lienNeuf();
   // créer s'annule : la playlist part à la corbeille (et en revient)
   P.U?.record({ label: `créer la playlist « ${d.title} »`,
     undo: async () => { await api(`library/${d.id}/delete`, { method: 'POST' }); if (P.cur?.id === d.id) { P.cur = null; } await chargerListe(); paint(); },
@@ -407,19 +420,215 @@ async function calerParoles(k) {
       paintListe();
     } });
 }
-async function exporterZip() {
-  const o = P.opts?.zip;
-  if (!o?.ready) { toast(o?.why || 'l’export .zip n’est pas encore là', 7000); return; }
+// ── partager : le .zip et le lien d'écoute ──────────────────
+// Le serveur : server/tools/ecoute.py. GET /api/ecoute/<id> dit le lien (`lien` : url, publie,
+// code, fin), ses écoutes (`?ecoutes=1`), si l'on peut publier (`peut_publier`, sinon `pourquoi`
+// — un guest jamais, décision L2 de l'étude) et si la destination Cloudflare est prête (`r2`).
+// POST …/zip et …/publier mettent un travail dans la file (`ecoute.zip`, `ecoute.publier`) :
+// suivi ici par le relevé de la file (jobs.watch), sans attente bloquante — la progression,
+// puis le téléchargement (un .zip lancé d'ici) ou l'adresse (le lien relu).
+const ZIP_GARDE_MS = 2 * 3600e3 - 5 * 60e3;   // le .zip est gardé deux heures (server/tools/asset.py, ZIP_KEEP_S) : on cesse de l'offrir un peu avant
+const ECHEC_MS = 30 * 60e3;                    // un échec reste dit une demi-heure
+const R2_ATTEND = 'le lien d’écoute attend le jeton R2 (Admin / docs/etudes/cloudflare.md, geste 9)';
+const E = { pid: null, d: null };              // l'état du lien de la playlist ouverte
+const L = { code: '', sansCode: false, fin: null };   // le panneau : ce qui est tapé, envoyé à la publication (fin null : pas touchée)
+const J = { list: [], sig: '', etats: new Map(), zips: new Set(), pubs: new Set(), envoiZip: false, envoiPub: false, retrait: false };
+const FINI = ['done', 'error', 'cancelled', 'interrupted'];
+const vif = (j) => !!j && (j.state === 'queued' || j.state === 'running');
+const etat = () => (P.cur && E.pid === P.cur.id ? E.d : null);
+const taille = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1).replace('.', ',')} Mo` : `${Math.max(1, Math.round((n || 0) / 1e3))} ko`);
+// la date de fin : le serveur rend l'instant où le lien cesse, le lendemain à 0 h (heure de Paris) du
+// jour choisi ; le champ montre ce jour-là
+const JOUR = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit' });
+const finJour = (iso) => (iso ? JOUR.format(new Date(Date.parse(iso) - 1000)) : '');
+const finFr = (iso) => new Date(Date.parse(iso) - 1000).toLocaleDateString('fr-FR', { timeZone: 'Europe/Paris', day: '2-digit', month: '2-digit', year: 'numeric' });
+const aujourdhui = () => JOUR.format(new Date());
+// les écoutes des sept derniers jours (le Worker les range par jour UTC)
+function semaine(parJour) {
+  const d0 = new Date(Date.now() - 6 * 864e5).toISOString().slice(0, 10);
+  return Object.entries(parJour || {}).reduce((s, [j, n]) => s + (j >= d0 ? n : 0), 0);
+}
+// le dernier travail de cette sorte pour la playlist ouverte ; un .zip : seulement les siens (son lien de téléchargement)
+function travail(kind) {
+  let best = null;
+  for (const j of J.list) {
+    if (j.kind !== kind || j.params?.playlist !== P.cur?.id || (kind === 'ecoute.zip' && j.mine === false)) continue;
+    if (!best || String(j.created || '') > String(best.created || '')) best = j;
+  }
+  return best;
+}
+const dit = (j) => `${stateFr(j.state)}${j.message && j.message !== stateFr(j.state) ? ' — ' + j.message : ''}`;
+
+function lienNeuf() {
+  E.pid = null; E.d = null;
+  Object.assign(L, { code: '', sansCode: false, fin: null });
+  chargerLien();
+}
+async function chargerLien(id = P.cur?.id) {
+  if (!id || !P.opts?.zip?.ready) return;     // le portail n'a pas la route : les boutons le disent
   try {
-    const j = await api(`ecoute/${P.cur.id}/zip`, { method: 'POST', body: {} });
-    toast('le .zip se prépare (la file)', 5000);
+    const d = await api(`ecoute/${id}?ecoutes=1`);
+    if (P.cur?.id !== id) return;
+    E.pid = id; E.d = d;
+  } catch (e) {
+    if (P.cur?.id !== id) return;
+    E.pid = null; E.d = null;
+    if (e.status !== 404) toast(`lien d’écoute : ${e.message}`, 6000);
+  }
+  paintPartage(); paintLien();
+}
+
+// le relevé de la file : les travaux ecoute.* ; un travail qui finit (lancé d'ici, ou vu en cours)
+function surTravaux(list) {
+  const nos = (list || []).filter((j) => j.kind === 'ecoute.zip' || j.kind === 'ecoute.publier');
+  for (const j of nos) {
+    const avant = J.etats.get(j.id);
+    J.etats.set(j.id, j.state);
+    if (!FINI.includes(j.state) || avant === j.state) continue;
+    const ici = J.zips.has(j.id) || J.pubs.has(j.id);
+    if (!ici && !(avant && !FINI.includes(avant))) continue;
+    if (j.kind === 'ecoute.zip' && J.zips.delete(j.id)) {
+      if (j.state === 'done' && j.result?.zip?.url) telecharger(j.result.zip);
+      else toast(`.zip : ${dit(j)}`, 8000);
+    }
+    if (j.kind === 'ecoute.publier') {
+      if (J.pubs.delete(j.id)) toast(j.state === 'done' ? 'le lien est publié : Copier, et donne-le' : `le lien : ${dit(j)}`, 7000);
+      if (j.params?.playlist === P.cur?.id) chargerLien();
+    }
+  }
+  // un relevé parti avant l'envoi ne connaît pas encore le travail lancé d'ici : il reste montré
+  J.list = [...nos, ...J.list.filter((j) => (J.zips.has(j.id) || J.pubs.has(j.id)) && !nos.some((x) => x.id === j.id))];
+  const sig = JSON.stringify(J.list.map((j) => [j.id, j.state, j.progress, j.message]));
+  if (sig !== J.sig) { J.sig = sig; paintPartage(); paintPub(); }
+}
+function telecharger(z) {
+  const a = el('a', { href: href(z.url), download: '' });
+  document.body.append(a); a.click(); a.remove();
+  toast(`le .zip est prêt · ${taille(z.size)}`, 5000);
+}
+
+// ce qui éteint un geste : { why, lock? } ou null (la raison au survol, au clic, et sous le bouton)
+function refusPartage() {
+  const o = P.opts?.zip, d = etat();
+  if (!o?.ready) return { why: o?.why || 'le .zip et le lien arrivent avec le lecteur d’écoute (server/tools/ecoute.py)', lock: 'à venir' };
+  if (d && !d.peut_publier) return { why: d.pourquoi || 'publier n’est pas permis ici', lock: 'réservé' };
+  return null;
+}
+function refusZip(zj = travail('ecoute.zip')) {
+  return refusPartage()
+    || (!pl().tracks.length ? { why: 'la playlist est vide : glisse des sons dedans' } : null)
+    || (vif(zj) ? { why: `le .zip se prépare : ${dit(zj)}` } : null)
+    || (J.envoiZip ? { why: 'envoi à la file…' } : null);
+}
+function r2Why(d) {
+  const w = d?.r2?.pourquoi || '';
+  return !w || /jeton R2 manque/.test(w) ? R2_ATTEND : `le lien d’écoute attend la destination Cloudflare : ${w}`;
+}
+function refusPublier(pj = travail('ecoute.publier')) {
+  const d = etat(), code = L.code.replace(/\s+/g, '');
+  return refusPartage()
+    || (!d ? { why: 'lecture de l’état du lien…' } : null)
+    || (!d.r2?.pret ? { why: r2Why(d), lock: 'jeton R2' } : null)
+    || (!pl().tracks.length ? { why: 'la playlist est vide : glisse des sons dedans' } : null)
+    || (vif(pj) ? { why: `la publication est en cours : ${dit(pj)}` } : null)
+    || (code && (code.length < 4 || code.length > 64) ? { why: 'le code : de 4 à 64 signes (ou vide)' } : null)
+    || (L.fin && L.fin < aujourdhui() ? { why: 'la date de fin est déjà passée' } : null)
+    || (J.envoiPub ? { why: 'envoi à la file…' } : null);
+}
+function refusRetirer() {
+  const d = etat();
+  return refusPartage() || (!d?.lien ? { why: 'aucun lien publié' } : null) || (!d.r2?.pret ? { why: r2Why(d), lock: 'jeton R2' } : null)
+    || (J.retrait ? { why: 'retrait en cours…' } : null);
+}
+const verrou = (off) => (off?.lock ? el('span', { class: 'ch-lock' }, off.lock) : null);
+
+async function exporterZip() {
+  if (!P.cur) return;
+  const off = refusZip();
+  if (off) { toast(off.why, 7000); return; }
+  const id = P.cur.id;
+  J.envoiZip = true; paintPartage();
+  try {
+    await P.q.catch(() => {});        // la dernière écriture d'abord : le .zip part de ce que la page montre
+    const j = await api(`ecoute/${id}/zip`, { method: 'POST', body: {} });
+    J.zips.add(j.id);
+    J.list = [j, ...J.list.filter((x) => x.id !== j.id)];   // montré tout de suite, avant le prochain relevé
     jobs.poll(true);
-    const done = j?.id ? await jobs.wait(j.id) : j;
-    if (done.state && done.state !== 'done') throw new Error(`.zip : ${stateFr(done.state)}${done.message ? ' — ' + done.message : ''}`);
-    const url = done.result?.url || done.url;
-    if (url) { const a = el('a', { href: href(url), download: '' }); document.body.append(a); a.click(); a.remove(); }
-    else toast('le .zip est prêt', 5000);
-  } catch (e) { toast(e.message, 7000); }
+    toast('le .zip se prépare dans la file : il se télécharge quand il est prêt', 5000);
+  } catch (e) {
+    toast(e.message, 8000);
+    if (e.status === 403) chargerLien(id);
+  } finally { J.envoiZip = false; paintPartage(); paintPub(); }
+}
+
+// la ligne d'un travail en cours : où il en est, l'arrêter
+function ligneVive(j, quoi) {
+  const pc = j.state === 'running' && j.progress != null ? Math.round(j.progress * 100) : null;
+  const msg = j.message && !['en file', 'en cours', stateFr(j.state)].includes(j.message) ? j.message : '';
+  return el('div', { class: 'pl-job', 'data-job': quoi },
+    el('span', { class: 'pill work' }, el('i'), el('span', {}, [quoi, pc != null ? `${pc} %` : stateFr(j.state), msg].filter(Boolean).join(' · '))),
+    j.can !== false ? el('button', { class: 'tb ghost sm', type: 'button', title: 'l’arrêter (la file)', onclick: () => jobs.cancel(j.id).catch((e) => toast(e.message, 6000)) }, 'Arrêter') : null,
+    el('div', { class: 'pl-bar', 'aria-hidden': 'true' }, el('i', { style: { width: pc != null ? `${pc}%` : '100%', opacity: pc != null ? '1' : '.35' } })));
+}
+function ligneZip(zj) {
+  if (!zj) return null;
+  if (vif(zj)) return ligneVive(zj, '.zip');
+  const age = Date.now() - (Date.parse(zj.finished || '') || 0);
+  if (zj.state === 'done' && zj.result?.zip?.url && age < ZIP_GARDE_MS) {
+    const z = zj.result.zip;
+    return el('div', { class: 'pl-job', 'data-job': '.zip', title: `${z.name} · fait le ${fmtDate(zj.finished)} · le portail le garde deux heures` },
+      el('span', { class: 'pill on' }, el('i'), el('span', {}, `.zip prêt · ${taille(z.size)}`)),
+      el('a', { class: 'tb ghost sm', href: href(z.url), download: '', 'data-act': 'zip-get' }, 'Télécharger'));
+  }
+  if (zj.state !== 'done' && age < ECHEC_MS) return el('p', { class: 'ch-note warn', 'data-job': '.zip' }, `.zip : ${dit(zj)}`);
+  return null;
+}
+
+function basculerLien() {
+  const off = refusPartage();
+  if (off) { toast(off.why, 7000); return; }
+  P.lien = !P.lien;
+  if (P.lien) { Object.assign(L, { code: '', sansCode: false, fin: null }); chargerLien(); }
+  paintPartage(); paintLien();
+  if (P.lien) requestAnimationFrame(() => V.lien.firstElementChild?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+}
+async function publier() {
+  const off = refusPublier();
+  if (off) { toast(off.why, 7000); return; }
+  const id = P.cur.id, avant = etat().lien, body = {};
+  // le code : tapé, il remplace ; « Sans code », il part ; rien, le lien garde le sien
+  if (L.code.trim()) body.code = L.code; else if (L.sansCode) body.code = '';
+  // la fin : envoyée si elle a changé ; vide, le lien n'en a plus
+  if (L.fin !== null && L.fin !== finJour(avant?.fin)) body.fin = L.fin;
+  J.envoiPub = true; paintPub();
+  try {
+    await P.q.catch(() => {});        // la dernière écriture d'abord (téléchargement, enchaînement)
+    const r = await api(`ecoute/${id}/publier`, { method: 'POST', body });
+    J.pubs.add(r.id);
+    J.list = [r, ...J.list.filter((x) => x.id !== r.id)];
+    if (E.pid === id && E.d) E.d = { ...E.d, lien: r.lien };
+    Object.assign(L, { code: '', sansCode: false, fin: null });
+    jobs.poll(true);
+    toast(avant ? 'republier : la file refait le lecteur, sur le même lien' : 'publier : la file fabrique le lecteur, puis l’envoie', 5000);
+  } catch (e) {
+    toast(e.message, 9000);
+    if (e.status === 409 || e.status === 403) chargerLien(id);
+  } finally { J.envoiPub = false; paintPartage(); paintLien(); }
+}
+async function retirerLien() {
+  const off = refusRetirer();
+  if (off) { toast(off.why, 7000); return; }
+  const id = P.cur.id;
+  const yes = await ask({ title: 'Retirer le lien d’écoute ?', ok: 'Retirer le lien', danger: true,
+    text: 'L’adresse cesse de marcher tout de suite, pour tout le monde, et ses écoutes sont effacées. Publier de nouveau donnera une autre adresse ; la playlist et ses sons ne bougent pas.' });
+  if (!yes) return;
+  J.retrait = true; paintPub();
+  try {
+    const r = await api(`ecoute/${id}/retirer`, { method: 'POST', body: {} });
+    toast(`lien retiré · ${plural(r.retires || 0, 'fichier effacé', 'fichiers effacés')}`, 5000);
+  } catch (e) { toast(e.message, 8000); }
+  J.retrait = false;
+  await chargerLien(id);
 }
 async function jeter() {
   if (!P.cur) return;
@@ -443,13 +652,15 @@ function squelette() {
   V.sum = el('div', { class: 'pl-sum', 'aria-live': 'polite' });
   V.id = el('section', { class: 'pl-id' });
   V.acts = el('div', { class: 'pl-acts' });
+  V.partage = el('div', { class: 'pl-partage-box' });
+  V.lien = el('div', { class: 'pl-lien-box' });
   V.ordre = el('div', { class: 'pl-ordre-box' });
   V.carte = el('div', { class: 'pl-carte-box' });
   V.liste = el('ol', { class: 'pl-liste', 'aria-label': 'les morceaux' });
   V.vide = el('div', { class: 'pl-vide' });
   V.plus = el('details', { class: 'pl-plus' });
   V.barre = el('div', { class: 'pl-barre' });
-  V.corps = el('div', { class: 'pl-corps' }, V.id, V.acts, V.ordre, V.carte, V.liste, V.vide, V.plus);
+  V.corps = el('div', { class: 'pl-corps' }, V.id, V.acts, V.partage, V.lien, V.ordre, V.carte, V.liste, V.vide, V.plus);
   V.root = el('aside', { class: 'pl-volet', id: 'pl-volet', 'aria-label': 'la playlist', hidden: true },
     el('header', { class: 'pl-h' },
       el('div', { class: 'pl-h1' }, el('span', { class: 'lbl' }, 'Playlist'), V.choix,
@@ -563,7 +774,9 @@ function menuPlaylist() {
     pl().cover ? { label: 'Revenir à la mosaïque', icon: '▦', onclick: () => poserPochette(null) } : null,
     { label: 'Fais-moi une pochette', icon: '✦', sub: 'une carte Image', onclick: ouvrirCarte },
     '-',
-    { label: 'Exporter en .zip', icon: '↓', disabled: !P.opts?.zip?.ready, why: P.opts?.zip?.why, onclick: exporterZip },
+    { label: 'Exporter en .zip', icon: '↓', sub: 'le lecteur et ses fichiers', disabled: !!refusZip(), why: refusZip()?.why, onclick: exporterZip },
+    { label: etat()?.lien ? 'Le lien d’écoute…' : 'Publier le lien…', icon: '↗', sub: 'une adresse à donner', disabled: !!refusPartage(), why: refusPartage()?.why,
+      onclick: () => { if (!P.lien) basculerLien(); } },
     { label: 'Ouvrir dans Asset', icon: '▦', onclick: () => { location.href = href('asset/#' + P.cur.id); } },
     '-',
     { label: 'Mettre à la corbeille', icon: '×', sub: 'Ctrl+Z la rend', onclick: jeter }].filter(Boolean);
@@ -571,7 +784,7 @@ function menuPlaylist() {
 
 function paint() {
   if (!V.root) return;
-  paintTete(); paintId(true); paintActs(); paintOrdre(); paintCarte(); paintListe(); paintPlus();
+  paintTete(); paintId(true); paintActs(); paintLien(); paintOrdre(); paintCarte(); paintListe(); paintPlus();
 }
 function paintTete() {
   V.choix.textContent = P.cur ? P.cur.title || 'sans titre' : P.list.length ? 'choisir une playlist' : 'aucune playlist';
@@ -618,9 +831,8 @@ function paintId(fort) {
           onclick: ouvrirCarte }, 'Fais-moi une pochette'))));
 }
 function paintActs() {
-  if (!P.cur) { put(V.acts); return; }
-  const o = P.opts || {}, n = pl().tracks.length;
-  const zipOff = !o.zip?.ready ? o.zip?.why || 'pas encore là' : '';
+  if (!P.cur) { put(V.acts); paintPartage(); return; }
+  const n = pl().tracks.length;
   const mes = P.mesure ? `tempo ${P.mesure.k} / ${P.mesure.n}` : '';
   put(V.acts,
     el('button', { class: 'tb sm', type: 'button', 'data-act': 'ecouter', title: 'toute la playlist, dans la page', disabled: !n || null,
@@ -629,12 +841,113 @@ function paintActs() {
     el('button', { class: 'tb ghost sm', type: 'button', 'data-act': 'ordre', disabled: n < 2 || !!P.ordre || !!P.mesure || null,
       title: n < 2 ? 'il faut au moins deux morceaux' : 'des tonalités voisines, un tempo qui monte puis redescend : tu gardes ou tu annules', onclick: proposer },
     P.mesure ? mes : 'Proposer un ordre'),
-    // éteint, il dit pourquoi (au survol, au clic) et la pastille le montre
-    el('button', { class: 'tb ghost sm', type: 'button', 'data-act': 'zip', 'aria-disabled': zipOff ? 'true' : null, title: zipOff || 'le lecteur et ses fichiers, à héberger où tu veux',
-      onclick: exporterZip }, 'Exporter en .zip', zipOff ? el('span', { class: 'ch-lock' }, 'à venir') : null),
     el('span', { class: 'sp' }),
-    kebab(menuPlaylist, { title: 'la playlist : pochette, Asset, corbeille' }));
+    kebab(menuPlaylist, { title: 'la playlist : pochette, partager, Asset, corbeille' }));
   paintLecture(lect.P.index);
+  paintPartage(); paintPub();           // le nombre de morceaux éteint ou rallume « Exporter » et « Publier »
+}
+// Partager : « Exporter en .zip », « Publier le lien » ; sous eux, le .zip en cours ou prêt, et
+// pourquoi les deux sont éteints (un guest). Éteint, un bouton dit pourquoi au survol et au clic.
+function paintPartage() {
+  if (!V.partage) return;
+  if (!P.cur) { put(V.partage); return; }
+  const d = etat(), lien = d?.lien, zj = travail('ecoute.zip');
+  const zOff = refusZip(zj), lOff = refusPartage();
+  const zLab = vif(zj) ? (zj.state === 'running' && zj.progress != null ? `.zip · ${Math.round(zj.progress * 100)} %` : '.zip · en file') : J.envoiZip ? 'Envoi…' : 'Exporter en .zip';
+  put(V.partage,
+    el('div', { class: 'pl-partage' },
+      el('span', { class: 'lbl' }, 'Partager'),
+      el('button', { class: 'tb ghost sm', type: 'button', 'data-act': 'zip', 'aria-disabled': zOff ? 'true' : null,
+        title: zOff?.why || 'le lecteur et ses fichiers dans un .zip, à héberger où tu veux', onclick: exporterZip }, zLab, verrou(zOff)),
+      el('button', { class: 'tb ghost sm' + (P.lien ? ' on' : ''), type: 'button', 'data-act': 'lien', 'aria-pressed': String(!!P.lien), 'aria-disabled': lOff ? 'true' : null,
+        title: lOff?.why || (lien?.publie ? 'le lien d’écoute : l’adresse, les écoutes, republier, retirer' : 'une adresse à donner : le lecteur de la playlist, en ligne'),
+        onclick: basculerLien }, lien?.publie ? el('i', { class: 'pl-dot', 'aria-hidden': 'true' }) : null, lien?.publie ? 'Lien publié' : 'Publier le lien', verrou(lOff))),
+    d && !d.peut_publier ? el('p', { class: 'why pl-why', 'data-why': 'droits' }, d.pourquoi) : null,
+    ligneZip(zj));
+}
+// Le panneau « Publier le lien ». Reconstruit quand l'état du lien change ; la ligne des
+// gestes et de la publication en cours (V.pub) suit seule la file, sans toucher aux champs.
+function paintLien() {
+  if (!V.lien) return;
+  if (!P.lien || !P.cur) { put(V.lien); V.pub = null; return; }
+  const d = etat(), lien = d?.lien;
+  const fermer = () => { P.lien = false; paintPartage(); paintLien(); };
+  const tete = el('div', { class: 'pl-lien-h' }, el('span', { class: 'lbl' }, 'Lien d’écoute'),
+    lien ? el('span', { class: 'pill' + (lien.publie ? ' on' : '') }, el('i'), el('span', {}, lien.publie ? 'publié' : 'pas encore en ligne')) : null,
+    el('span', { class: 'sp' }),
+    el('button', { class: 'ch-x', type: 'button', title: 'fermer le panneau', 'aria-label': 'fermer le panneau du lien', onclick: fermer }, '×'));
+  if (!d) { put(V.lien, el('section', { class: 'pl-lien', 'aria-label': 'le lien d’écoute' }, tete, el('p', { class: 'ch-note' }, 'lecture de l’état du lien…'))); V.pub = null; return; }
+  const T = pl().transition;
+  // l'adresse (seulement en ligne : avant, elle ne mène nulle part), ses réglages, ses écoutes
+  const adr = lien?.publie ? el('div', { class: 'pl-lien-adr' },
+    el('input', { class: 'fld', readonly: true, value: lien.url, 'aria-label': 'l’adresse du lien', 'data-lf': 'url', spellcheck: 'false', onfocus: (e) => e.target.select() }),
+    el('button', { class: 'tb sm', type: 'button', 'data-act': 'copier', 'data-lf': 'copier', title: 'copier l’adresse, pour la donner', onclick: () => copyText(lien.url, 'adresse copiée') }, 'Copier'),
+    el('a', { class: 'tb ghost sm', href: lien.url, target: '_blank', rel: 'noopener', title: 'ouvrir le lecteur publié (un nouvel onglet)' }, 'Ouvrir')) : null;
+  const ec = d.ecoutes;
+  const stats = lien ? el('div', { class: 'pl-lien-stats' },
+    lien.publie && ec ? el('span', { class: 'pl-lien-n', title: 'un morceau compte une fois entendu 30 s (ou presque tout, s’il est plus court)' },
+      el('b', {}, String(ec.total)), ` ${ec.total > 1 ? 'écoutes' : 'écoute'}${ec.total ? ` · ${semaine(ec.par_jour)} ces 7 jours` : ''}`) : null,
+    lien.publie && !ec && d.ecoutes_pourquoi ? el('span', { class: 'e' }, `écoutes : ${d.ecoutes_pourquoi}`) : null,
+    el('span', {}, lien.code ? 'un code le protège' : 'sans code'),
+    el('span', {}, lien.fin ? `jusqu’au ${finFr(lien.fin)} inclus` : 'sans date de fin'),
+    lien.maj || lien.cree ? el('span', {}, `${lien.maj ? 'mis à jour' : 'préparé'} le ${fmtDate(lien.maj || lien.cree)}`) : null) : null;
+  // Cloudflare pas prêt : on le dit, et le .zip le remplace
+  const zOff = refusZip();
+  const attend = !d.r2?.pret ? el('div', { class: 'pl-lien-attend', role: 'note', 'data-why': 'r2', title: d.r2?.pourquoi || '' },
+    el('b', {}, r2Why(d)),
+    el('span', {}, 'En attendant, le .zip : le même lecteur, à déposer sur n’importe quel hébergement.'),
+    el('button', { class: 'tb sm', type: 'button', 'data-act': 'zip-plutot', 'aria-disabled': zOff ? 'true' : null, title: zOff?.why || 'le lecteur et ses fichiers dans un .zip',
+      onclick: exporterZip }, 'Exporter en .zip')) : null;
+  // le code et la date de fin : ceux du lien Cloudflare, envoyés à la publication
+  let champs = null;
+  if (d.r2?.pret) {
+    const code = el('input', { class: 'fld', type: 'text', value: L.code, maxlength: 64, autocomplete: 'off', spellcheck: 'false', 'data-lf': 'code',
+      'aria-label': 'le code du lien (facultatif)', disabled: L.sansCode || null,
+      title: L.sansCode ? 'le code partira à la publication' : lien?.code ? 'vide : le lien garde son code ; tapé : il le remplace' : 'facultatif : sans code, qui a l’adresse écoute ; de 4 à 64 signes',
+      placeholder: L.sansCode ? 'retiré à la publication' : lien?.code ? 'inchangé' : 'facultatif',
+      oninput: (e) => { L.code = e.target.value; paintPub(); } });
+    const finX = el('small', { class: 'pl-lien-x' }, (L.fin ?? finJour(lien?.fin)) ? 'inclus' : 'sans fin');
+    const fin = el('input', { class: 'fld', type: 'date', value: L.fin ?? finJour(lien?.fin), min: aujourdhui(), 'data-lf': 'fin',
+      'aria-label': 'la date de fin (facultative)', title: 'le lien marche jusqu’au bout de ce jour (heure de Paris) ; vide : sans fin',
+      oninput: (e) => { L.fin = e.target.value; finX.textContent = L.fin ? 'inclus' : 'sans fin'; paintPub(); } });
+    champs = [
+      el('span', { class: 'lbl' }, 'Code'),
+      el('div', { class: 'pl-lien-l' }, code, lien?.code ? el('button', { class: 'tb ghost sm' + (L.sansCode ? ' on' : ''), type: 'button', 'data-lf': 'sans-code',
+        'aria-pressed': String(L.sansCode), title: L.sansCode ? 'garder le code du lien' : 'retirer le code à la prochaine publication',
+        onclick: () => { L.sansCode = !L.sansCode; L.code = ''; paintLien(); } }, 'Sans code') : null),
+      el('span', { class: 'lbl' }, 'Jusqu’au'),
+      el('div', { class: 'pl-lien-l' }, fin, finX),
+    ];
+  }
+  V.pub = el('div', { class: 'pl-lien-pub' });
+  refaire(V.lien, () => put(V.lien, el('section', { class: 'pl-lien', 'aria-label': 'le lien d’écoute' },
+    tete, adr, stats, attend,
+    el('div', { class: 'pl-lien-g' }, champs,
+      el('span', { class: 'lbl' }, 'Enchaîner'), segEnchainer(),
+      T.mode === 'crossfade' ? [el('span'), el('small', { class: 'pl-lien-x' }, `fondu de ${T.crossfade_s} s · sa durée se règle plus bas`)] : null,
+      el('span', { class: 'lbl' }, 'Télécharger'), caseTelecharger('le lecteur publié montre « Télécharger »')),
+    V.pub,
+    el('p', { class: 'ch-note' }, lien
+      ? 'Republier refait le lecteur avec la playlist d’aujourd’hui, sur la même adresse : seuls les fichiers changés repartent.'
+      : 'Publier fabrique le lecteur — MP3 au volume égal, paroles, pochette — et le met en ligne : une adresse à donner, qui marche DGX éteintes.'))));
+  paintPub();
+}
+// les gestes du lien et la publication en cours : suivent la file seuls
+function paintPub() {
+  if (!V.pub || !P.lien || !P.cur) return;
+  const d = etat();
+  if (!d) return;
+  const lien = d.lien, pj = travail('ecoute.publier'), off = refusPublier(pj), offR = lien ? refusRetirer() : null;
+  const age = pj ? Date.now() - (Date.parse(pj.finished || '') || 0) : Infinity;
+  put(V.pub,
+    el('div', { class: 'pl-lien-a' },
+      el('button', { class: 'tb sm', type: 'button', 'data-act': 'publier', 'aria-disabled': off ? 'true' : null,
+        title: off?.why || (lien ? 'le même lien, mis à jour : seuls les fichiers changés repartent' : 'fabriquer le lecteur et le mettre en ligne'),
+        onclick: publier }, J.envoiPub ? 'Envoi…' : lien ? 'Republier' : 'Publier le lien', verrou(off)),
+      lien ? el('button', { class: 'tb ghost sm pl-retirer', type: 'button', 'data-act': 'retirer', 'aria-disabled': offR ? 'true' : null,
+        title: offR?.why || 'l’adresse cesse de marcher, pour tout le monde (confirmé avant)', onclick: retirerLien }, J.retrait ? 'Retrait…' : 'Retirer le lien') : null),
+    vif(pj) ? ligneVive(pj, 'publication') : null,
+    pj && FINI.includes(pj.state) && pj.state !== 'done' && age < ECHEC_MS ? el('p', { class: 'ch-note warn', 'data-job': 'publication' }, `la publication : ${dit(pj)}`) : null);
 }
 function paintOrdre() {
   if (!P.ordre) { put(V.ordre); return; }
@@ -700,16 +1013,28 @@ function paintListe() {
     el('b', {}, 'Glisse des chansons ici.'), el('span', {}, 'Une carte de la scène, une piste séparée, un son du panneau Asset ou un fichier : tout son de la bibliothèque.')));
   paintLecture(lect.P.index);
 }
+// l'enchaînement et le téléchargement : des champs de la playlist, écrits tout de suite ; dans le
+// volet (repliés) et dans le panneau du lien, qui les montre avant de publier
+const MODES = [['gapless', 'Sans blanc', 'le suivant part à la fin du précédent'], ['crossfade', 'Fondu', 'le suivant entre pendant que le précédent s’efface'],
+  ['single', 'Un seul fichier', 'un fichier continu à la publication, le plus sûr sur iPhone écran verrouillé ; ici, comme « sans blanc »']];
+function enchainer(tr, label) {
+  const t = { ...pl().transition, ...tr };
+  ecrire({ playlist: { transition: t } }, label);
+  lect.P.transition = t;
+  paintPlus(); paintLien();
+}
+const segEnchainer = () => el('div', { class: 'seg ch-full', role: 'group', 'aria-label': 'enchaînement' }, MODES.map(([id, lab, why]) => el('button', {
+  class: 'tb' + (pl().transition.mode === id ? ' on' : ''), type: 'button', title: why, 'data-lf': `mode-${id}`, 'aria-pressed': String(pl().transition.mode === id),
+  onclick: () => { if (pl().transition.mode !== id) enchainer({ mode: id }, `enchaîner : ${lab.toLowerCase()}`); } }, lab)));
+const caseTelecharger = (texte) => el('label', { class: 'pl-dl' }, el('input', { type: 'checkbox', checked: pl().download || null, 'data-lf': 'dl',
+  onchange: (e) => {
+    ecrire({ playlist: { download: e.target.checked } }, e.target.checked ? 'permettre le téléchargement' : 'ne plus permettre le téléchargement');
+    paintPlus(); paintLien();
+  } }), el('span', {}, texte));
 function paintPlus() {
   if (!P.cur) { put(V.plus); V.plus.hidden = true; return; }
   V.plus.hidden = false;
   const p = pl(), T = p.transition;
-  const set = (tr, label) => {
-    const t = { ...T, ...tr };
-    ecrire({ playlist: { transition: t } }, label);
-    lect.P.transition = t;
-    paintPlus();
-  };
   const desc = el('textarea', { class: 'fld', rows: 3, maxlength: 4000, placeholder: 'quelques mots : l’ambiance, l’histoire', 'aria-label': 'description' });
   desc.value = p.description || '';
   let tm = null;
@@ -718,22 +1043,25 @@ function paintPlus() {
   desc.addEventListener('change', () => { clearTimeout(tm); dire(); });
   const xf = el('input', { type: 'range', min: '0', max: String(P.opts?.crossfade_max || 6), step: '0.5', value: String(T.crossfade_s), 'aria-label': 'durée du fondu (s)',
     disabled: T.mode !== 'crossfade' || null,
-    onchange: (e) => set({ crossfade_s: +e.target.value }, `fondu de ${e.target.value} s`) });
-  const MODES = [['gapless', 'Sans blanc', 'le suivant part à la fin du précédent'], ['crossfade', 'Fondu', 'le suivant entre pendant que le précédent s’efface'],
-    ['single', 'Un seul fichier', 'un fichier continu à la publication, le plus sûr sur iPhone écran verrouillé ; ici, comme « sans blanc »']];
+    'data-lf': 'fondu', onchange: (e) => enchainer({ crossfade_s: +e.target.value }, `fondu de ${e.target.value} s`) });
   const open = V.plus.open;
-  put(V.plus, el('summary', {}, el('span', { class: 'lbl' }, 'Enchaînements, téléchargement, description'),
+  refaire(V.plus, () => put(V.plus, el('summary', {}, el('span', { class: 'lbl' }, 'Enchaînements, téléchargement, description'),
     el('span', { class: 'r' }, [MODES.find((m) => m[0] === T.mode)?.[1], T.mode === 'crossfade' ? `${T.crossfade_s} s` : '', p.download ? 'téléchargeable' : ''].filter(Boolean).join(' · '))),
   el('div', { class: 'pl-plus-in' },
-    el('span', { class: 'lbl' }, 'Enchaîner'),
-    el('div', { class: 'seg ch-full', role: 'group', 'aria-label': 'enchaînement' }, MODES.map(([id, lab, why]) => el('button', { class: 'tb' + (T.mode === id ? ' on' : ''), type: 'button', title: why,
-      onclick: () => set({ mode: id }, `enchaîner : ${lab.toLowerCase()}`) }, lab))),
+    el('span', { class: 'lbl' }, 'Enchaîner'), segEnchainer(),
     el('span', { class: 'lbl' }, 'Fondu'), el('div', { class: 'pl-xf' }, xf, el('span', { class: 'pl-xf-v' }, `${T.crossfade_s} s`)),
-    el('span', { class: 'lbl' }, 'Télécharger'),
-    el('label', { class: 'pl-dl' }, el('input', { type: 'checkbox', checked: p.download || null, onchange: (e) => ecrire({ playlist: { download: e.target.checked } }, e.target.checked ? 'permettre le téléchargement' : 'ne plus permettre le téléchargement') }),
-      el('span', {}, 'le lecteur publié montre « Télécharger »')),
-    el('span', { class: 'lbl' }, 'Description'), desc));
+    el('span', { class: 'lbl' }, 'Télécharger'), caseTelecharger('le lecteur publié montre « Télécharger »'),
+    el('span', { class: 'lbl' }, 'Description'), desc)));
   V.plus.open = open;
+}
+// reconstruire une boîte sans perdre le champ où l'on est (repéré par data-lf)
+function refaire(box, fn) {
+  const a = document.activeElement, lf = box.contains(a) ? a.dataset.lf : null;
+  fn();
+  const n = lf && box.querySelector(`[data-lf="${lf}"]`);
+  if (!n || n.disabled) return;
+  n.focus();
+  if (n.type === 'text') n.setSelectionRange(n.value.length, n.value.length);
 }
 
 // ── monter le volet ─────────────────────────────────────────
@@ -773,6 +1101,7 @@ export function monterPlaylists({ U = null, onPlay = () => {} } = {}) {
   })();
   if (m.open || voulue) ouvrirVolet();
   addEventListener('sr:music-space', () => { if (!P.cur) paintListe(); });   // « une playlist naît dans … » suit le Space
+  jobs.watch(surTravaux);               // le .zip et la publication en cours, depuis la file
   return {
     bouton: () => V.btn,
     ouvrir: ouvrirVolet, fermer, basculer,

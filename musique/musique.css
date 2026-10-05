@@ -117,6 +117,15 @@ body.mu-page { display: flex; flex-direction: column; height: 100vh; overflow: h
 .fdr .cap { position: absolute; left: 2px; right: 2px; height: 12px; border-radius: 999px; background: var(--ink); box-shadow: 0 2px 6px var(--drop); cursor: grab; }
 .fdr .v { font-family: var(--f-disp); font-size: 12px; color: var(--ink); min-width: 34px; text-align: center; }
 .fdr:focus-visible { outline: 2px solid var(--or); outline-offset: 3px; border-radius: var(--r2); }
+/* COUCHÉ (ui.js fader({ couche: true }), 06/10) : le même fader à l'horizontale —
+   rail creux arrondi, trait de la valeur dans l'accent, chapeau plein ombré, plus
+   haut que large comme celui de la console est plus large que haut (18 × 12) ;
+   sa course tient dans le rail (8 px : CAP_COUCHE de ui.js) */
+.fdr.h { flex-direction: row; gap: 6px; }
+.fdr.h .rail { flex: 1; min-width: 0; width: auto; height: 16px; border-radius: 5px; cursor: ew-resize; }
+.fdr.h .fill { left: 0; top: 7px; bottom: auto; width: 0; height: 2px; }
+.fdr.h .cap { top: 2px; bottom: 2px; left: 0; right: auto; width: 8px; height: auto; }
+.fdr.h:focus-visible { outline-offset: 2px; }
 .vu { display: flex; gap: 2px; height: 150px; }
 .vu .col { position: relative; width: 6px; height: 100%; border-radius: 3px; background: var(--bg); overflow: hidden; }
 .vu .lvl { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--grn2); }
@@ -299,7 +308,7 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 .ar-mtr { height: 3px; border-radius: 2px; background: var(--bg); overflow: hidden; width: 100%; max-width: 150px; }
 .ar-mtr i { display: block; height: 100%; width: 0; background: var(--c); opacity: .85; }
 .ar-mtr.hot i { background: var(--or); }
-.ar-vol { width: 58px; height: 14px; margin: 0 2px; }   /* le curseur du thème (commun/curseur.css) */
+.ar-vol { width: 58px; margin: 0 2px; }   /* le fader couché (ui.js fader, .fdr.h) */
 .ar-head .kn.xs { width: 24px; }
 .ar-head .kn.xs .dial { width: 18px; height: 18px; }
 .ar-head .kn.xs .v { display: none; }

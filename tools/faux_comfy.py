@@ -7,10 +7,14 @@ Il répond comme ComfyUI à ce que la file lit (core/machines.py) :
 `/system_stats` (la mémoire, réglable), `/queue` (vide, ou occupée par le
 rendu d'un « autre » : le studio Character Factory, une autre session),
 `/free` (la mémoire revient), `/prompt` et `/history` (un rendu fini tout
-de suite, sans image). Réglages en direct, depuis un essai :
+de suite, sans image). `/object_info/LoraLoaderModelOnly` liste ses LoRA
+(`loras`, réglable) ; un autre nœud : `{}` (inconnu). Il garde chaque graphe
+reçu, pour qu'un essai vérifie ce que le portail a vraiment envoyé.
+Réglages en direct, depuis un essai :
 
-    POST /_faux {"busy": true, "client": "usine-essai", "free_gb": 20}
+    POST /_faux {"busy": true, "client": "usine-essai", "free_gb": 20, "loras": ["showrunner/x.safetensors"]}
     GET  /_faux          son état : combien de /free reçus, etc.
+    GET  /_faux/last     le dernier graphe reçu par /prompt
 
 tools/check.py le lance dans son processus (`start()`) ; le pilote de la
 page admin en lance deux, un par « machine ».
@@ -33,6 +37,8 @@ class Faux:
         self.busy, self.client = False, "usine-essai"
         self.frees = 0
         self.prompts: list[str] = []
+        self.graphs: dict[str, dict] = {}   # prompt_id → le graphe reçu
+        self.loras: list[str] = []
         self.lock = threading.Lock()
 
     def state(self) -> dict:
@@ -78,6 +84,15 @@ class Faux:
                                           if pid in faux.prompts else {})
                     if self.path == "/_faux":
                         return self._json(faux.state())
+                    if self.path == "/_faux/last":
+                        return self._json(faux.graphs.get(faux.prompts[-1], {}) if faux.prompts else {})
+                    if self.path.startswith("/object_info/"):
+                        node = self.path.rsplit("/", 1)[1]
+                        if node == "LoraLoaderModelOnly":
+                            return self._json({node: {"input": {"required": {
+                                "model": ["MODEL"], "lora_name": [list(faux.loras)],
+                                "strength_model": ["FLOAT", {"default": 1.0, "min": -100.0, "max": 100.0}]}}}})
+                        return self._json({})
                 self._json({"error": "introuvable"}, 404)
 
             def do_POST(self):
@@ -90,6 +105,7 @@ class Faux:
                     if self.path == "/prompt":
                         pid = uuid.uuid4().hex
                         faux.prompts.append(pid)
+                        faux.graphs[pid] = d.get("prompt") or {}
                         return self._json({"prompt_id": pid, "number": len(faux.prompts), "node_errors": {}})
                     if self.path == "/_faux":
                         if "busy" in d:
@@ -100,6 +116,8 @@ class Faux:
                             faux.free = float(d["free_gb"])
                         if d.get("total_gb") is not None:
                             faux.total = float(d["total_gb"])
+                        if isinstance(d.get("loras"), list):
+                            faux.loras = [str(x) for x in d["loras"]]
                         return self._json(faux.state())
                 self._json({"error": "introuvable"}, 404)
 

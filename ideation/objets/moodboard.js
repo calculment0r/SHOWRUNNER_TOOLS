@@ -269,7 +269,8 @@ export function extendMoodboard(app, api0) {
             b('Maintenant…', () => trainModal(n.id, 'now'), { disabled: (n.items || []).length < MIN[kindOf(n)] })),
         vers.length ? el('div', { class: 'mb-vers' }, ...vers.map((v) => el('div', { class: 'mb-v' }, el('b', {}, `v${v.v}`),
           el('span', {}, `${mname(v.model)} · ${(v.items || []).length} ${word(n, 2)} · ${(v.at || '').slice(0, 16).replace('T', ' ')}${v.factice ? ' · essai' : ''}${v.comfy ? ` · ${v.comfy}${v.trigger ? ` (mot : ${v.trigger})` : ''}` : ''}`)))) : null,
-        hint('Un entraînement occupe un DGX entier pendant des heures : planifiez-le la nuit. Une image ajoutée rend le LoRA périmé ; la dernière version reste utilisable jusqu’au suivant.')),
+        hint('Un entraînement occupe un DGX entier pendant des heures : planifiez-le la nuit. Une image ajoutée rend le LoRA périmé ; la dernière version reste utilisable jusqu’au suivant.'),
+        hint('Une version faite se choisit, avec sa force, dans une carte Générer du modèle qui l’a produite (et dans la page Image ; la page Vidéo pour H3) : son mot part en tête du prompt.')),
     ];
   }
 

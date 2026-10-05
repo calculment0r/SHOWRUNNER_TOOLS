@@ -28,6 +28,7 @@ import { migrate, workOf, describeWork, copyClips, pasteClips, splitClip, consol
   trajets, pistesDuModule, recoudre, sortirDeLaChaine, entrerDansLaChaine, deplacerPistes, grouperPistes, degrouper, rangerGroupes,
   retenirSons, noterOrigine } from './projet.js';
 import { versSession, clipDeRef, refDe } from './biblio.js';   // la bibliothèque du projet, « Envoyer à la Session » (05/10 au soir)
+import { empreinteStructure, suivreStructure } from './projet.js';   // la structure (06/10) : sections ↔ balises des paroles
 import { createUndo, isTextField } from '../commun/undo.js';
 import { createTimeline } from './timeline.js';
 import { createSession } from './session.js';   // la vue Session (05/10) : le lanceur de clips, la console dessous
@@ -52,6 +53,7 @@ const S = {
   sel: { track: null, tracks: [], pat: null, clip: null, clips: [], mod: null, cable: null, time: null },
   oct: 4, vel: 0.85, kbd: true, midi: null, rec: false, metro: false,
 };
+let structVue = null;      // l'empreinte de la structure au dernier geste (projet.js, empreinteStructure)
 const items = new Map();   // les objets de la bibliothèque déjà lus
 async function loadItem(id) {
   if (!items.has(id)) items.set(id, api(`library/${id}`).then((it) => ({ ...it, href: href(it.url) })));
@@ -87,6 +89,14 @@ export const app = {
   // 'mute', 'graph' (modules ou câbles), 'data' (clips, motifs), 'meta'
   commit(kind, m) {
     if (kind !== 'param') retenirSons(S.proj);   // la bibliothèque du projet : un son posé y entre de lui-même (projet.js)
+    // la structure (06/10) : les balises des paroles d'une région et les sections
+    // du projet se suivent, dans le même geste (projet.js, suivreStructure) ; un
+    // geste discret (les paroles qu'on tape) ne refait que la règle
+    if (kind !== 'param' && S.proj) {
+      const r = suivreStructure(S.proj, structVue, uid);
+      structVue = r.vu;
+      if (r.changed && (kind === 'quiet' || kind === 'mute')) views.timeline?.paintRegle?.();
+    }
     if (kind === 'param' && m) engine.updateModule(m);
     else if (kind === 'mute') engine.mutes();
     else if (kind === 'graph' || kind === 'meta') engine.setProject(S.proj);
@@ -1051,6 +1061,7 @@ const snaps = undoStack.snapshots({
     // ce que l'instantané n'a pas (p.nodal naît au premier geste du nodal) repart aussi
     for (const k of Object.keys(workOf(p))) if (!(k in o)) delete p[k];
     for (const k of Object.keys(o)) p[k] = fondre(p[k], o[k]);
+    structVue = empreinteStructure(p);   // annuler rend sections et paroles ensemble : rien à récrire
     const ok = new Set(p.clips.map((c) => c.id));
     S.sel.clips = (S.sel.clips || []).filter((id) => ok.has(id));
     if (!ok.has(S.sel.clip)) S.sel.clip = null;
@@ -1086,6 +1097,7 @@ async function openProject(id, esp = {}) {
   const p = migrate(await api(`music/projects/${id}`, esp));
   if (!p.space && !esp.espace && !espace()) await session();   // le Workspace de l'onglet : dit par /api/auth/me
   S.proj = p;
+  structVue = empreinteStructure(p);
   espProjet = p.space || esp.espace || espace() || null;
   espaceDocument(espProjet);   // l'en-tête dit l'espace du projet quand ce n'est pas celui de l'onglet
   S.view = MAKERS[p.ui?.view] ? p.ui.view : 'timeline';

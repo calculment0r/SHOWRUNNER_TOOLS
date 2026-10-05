@@ -176,6 +176,13 @@
 .ss-bot { flex: none; height: var(--ss-bh, 330px); overflow: auto; border-radius: var(--r3); }
 .ss-bot[hidden] { display: none; }
 .ss-cons { margin: 0 auto; width: max-content; display: flex; align-items: stretch; gap: var(--s3); padding: 0 var(--s3) 4px; }
+/* deux blocs (session.js, consoleEl) : à gauche les voies et les pistes, qui
+   défilent quand la console déborde ; à droite les retours collés à la Sortie,
+   qui restent au bord droit de la place (sticky : un fond plein, un filet à
+   gauche) — l'ordre d'une console, à toutes les largeurs */
+.ss-cdef, .ss-cfix { display: flex; align-items: stretch; gap: var(--s3); }
+.ss-cfix { position: sticky; right: 0; z-index: 2; background: var(--bg);
+  margin-left: calc(-1 * var(--s3)); padding-left: var(--s3); box-shadow: inset 1px 0 0 var(--line); }
 .ss-cg { display: flex; flex-direction: column; gap: 6px; }
 .ss-cgh { display: flex; align-items: center; gap: 8px; padding: 0 2px; height: 22px; }
 .ss-cgh b { font-family: var(--f-mono); font-weight: 400; font-size: 8.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink2); }

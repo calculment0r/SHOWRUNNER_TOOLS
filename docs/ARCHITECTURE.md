@@ -17,6 +17,7 @@ asset/ image/ movie/ …      une page par outil : index.html + <outil>.js + <ou
 admin/                      la page de Cal (§ 9)
 media/                      l'image et la vidéo des grandes cartes de l'accueil
 porte/                      le Worker de l'adresse publique, sa configuration, son essai (§ 8)
+ecoute/                     le lecteur du lien d'écoute (celui d'AGOSTA généralisé) : le gabarit de chaque paquet (§ 7)
 server/showrunner.py        le serveur (stdlib) : pages, /api, /library/<id>/<fichier>
 server/core/                config, http, auth, library, jobs, machines, comfy — le socle
 server/tools/<outil>.py     les routes et les travaux d'un outil : register(app)
@@ -43,6 +44,10 @@ fichier et sa vignette. Huit sortes (`library.KINDS`) : `image`, `video`,
   noires : `GET /api/music/midi/<id>/notes`. Dans Asset : sa portée, sa fiche
   (les notes dessinées, une écoute par un synthé de la page, le clip à
   glisser dans l'arrangement d'ODIO) ;
+- `playlist` (id `pla-…`, 05/10) : une playlist de Musique, `playlist: {artist, year, description,
+  cover, tracks: [{item, title?, credits?, lyrics?, lrc?}], transition: {mode: gapless | crossfade |
+  single, crossfade_s}, download}` dans `item.json` ; son outil : wip2/playlists ; son lien
+  d'écoute : `server/tools/ecoute.py` (§ 7) ;
 - `sequence` (id `seq-…`) : une séquence du Montage, sa timeline dans
   `sequence.json` (`server/tools/montage.py`) ; `item.json` suit la timeline
   (titre, taille, cadence, durée, `params.clips`, `params.format`, lignée =
@@ -74,7 +79,8 @@ fichier et sa vignette. Huit sortes (`library.KINDS`) : `image`, `video`,
   premiers morceaux, peinte par la page, `commun/pochette.js`). Routes :
   `GET /api/playlist/options`, `GET|POST /api/playlist`, `GET|POST /api/playlist/<id>`
   (`base_rev`, 409), `POST /api/playlist/<id>/ordre` (« Proposer un ordre », rien
-  n'est écrit). Musique l'ouvre dans son volet par `chanson/?playlist=<id>`.
+  n'est écrit). Musique l'ouvre dans son volet par `chanson/?playlist=<id>` ; le volet la partage
+  (« Exporter en .zip », « Publier le lien » : les routes du lien d'écoute, § 7).
 
 ```jsonc
 {
@@ -381,7 +387,9 @@ Hors des DGX (une session cloud, un agent dans sa copie) : `tools/portail_essai.
 [port] [données]` (8795 et `/tmp/sr_essai/data` par défaut) lance le même serveur
 avec `auth: false` (on entre en Cal), l'écoute sur 127.0.0.1 et les seules voies
 `cpu` et `image` sur la machine même — donc les moteurs factices des réglages par
-défaut ; `SR_LORA_MANIFEST` pose un faux manifeste d'entraîneurs. Il s'arrête par
+défaut ; `SR_LORA_MANIFEST` pose un faux manifeste d'entraîneurs, `SR_FAUX_R2=1` un faux
+R2 (le faux S3 du selftest d'`ecoute.py` et un jeton d'essai : le lien d'écoute se publie
+pour de faux, `chanson/pilote_lien.mjs`). Il s'arrête par
 son PID (jamais `pkill -f`). Jamais sur les DGX : c'est le portail de la maison
 qui y tourne. L'agent d'Idéation s'y essaie contre `tools/faux_ollama.py`.
 
@@ -401,7 +409,7 @@ réel est écrit, vérifié à vide, et s'allume par un réglage de
 | Montage | `/api/montage/meta`, `projects` (GET la liste des séquences, POST `{name, settings}` ou `{from_item}`), `projects/<id>` (lire, enregistrer), `projects/<id>/rename`, `duplicate`, `delete`, `plan` (un id `mon-…` d'avant le 29/09 mène à sa séquence `seq-…`), `wave/<id>`, `luts` (GET, PUT un .cube), `luts/<id>` (POST), `luts/<id>/cube`, `mini`, `delete` | `montage.export` (voie cpu, ffmpeg) | — |
 | ODIO (`musique/`) | `/api/music/projects…` (lire, enregistrer, `delete`), `engines`, `generate` ; `gen/engines`, `gen/generate` (`music_gen.py` : les modèles génératifs du schéma `musique/generatif_modeles.json`) ; `midi` (ranger un clip de notes), `midi/options`, `midi/extract`, `midi/<id>/notes` (`music_midi.py`) ; `stems/options`, `stems/plan`, `stems/separate` ; `yue/options`, `yue/plan`, `yue/generate`, `yue/abc`, `yue/abc/check`. Les jouets (`music_jouets.py`) n'ont pas de route : leurs câbles `notes` et `mod` sont jugés dans l'enregistrement du projet (`music.validate`, sans boucle) | `music.generate`, `music.gen.<modèle>`, `music.midi`, `music.midi.abc`, `music.stems`, `music.yue`, `music.yue.abc` | `"music_engine": "ace-step"`, `"music_yue"`, `"music_stems"`, `"music_midi": true` |
 | Idéation (`ideation/`) | `/api/ideation/meta`, `boards` (GET la liste, POST une planche), `boards/<id>` (lire, enregistrer), `boards/<id>/rename`, `duplicate`, `delete`, `export` (le travail, rangé dans la bibliothèque), `png` (`{frame?}` : la planche ou un cadre en PNG, rendu tout de suite et renvoyé tel quel — la page l'enregistre sur l'ordinateur et le copie dans le presse-papier, rien ne va dans la bibliothèque ; 05/10), `palette/<id>`, `lot` (les cartes Générer : des lots d'images ou de vidéos, lancés par les sortes d'Image et de Vidéo) ; `collab/<id>/…` (`ideation_collab.py` : opérations, flux, présence, accès, invitations, fil, visio) ; `web/apercu`, `web/img/<empreinte>` (`web_apercu.py` : l'objet Web — YouTube, Vimeo, un site dans un cadre s'il l'accepte, sinon une carte lien lue par le serveur, sans adresse locale ni privée) | `ideation.export` (voie cpu) | `"ideation_ice_servers"` |
-| LoRA (les moodboards d'Idéation) | `GET /api/lora/models` (les modèles cibles et s'ils sont prêts), `GET /api/lora/<planche>/<objet>` (l'état d'un moodboard : versions, plan, travail), `POST …/train {items, model, when: "now" \| "HH:MM", name}` (lancer ou planifier la nuit ; la garde du calcul d'abord), `POST …/cancel`, `GET /api/lora` (les LoRA entraînés qu'on voit, pour les cartes Générer), `GET /api/lora/file/<planche>/<objet>/<v>` — `server/tools/lora.py` ; l'état d'un LoRA dans `<data_dir>/lora/<planche>-<objet>.json`, ses fichiers dans `lora/files/` | `lora.train` (voie image, épinglé à la ComfyUI de la machine du portail, une seule chose de GPU pendant ce temps), `lora.train_factice` (voie cpu, l'essai sans GPU, pour Cal) | le manifeste `~/trainers/sr_lora.json` (réglage `lora_manifest`) : un modèle n'est proposé que marqué `ok` après un essai réel à l'installation (`docs/INSTALL_LORA.md`) ; `comfy_loras`, `lora_peer` |
+| LoRA (les moodboards d'Idéation) | `GET /api/lora/models` (les modèles cibles et s'ils sont prêts), `GET /api/lora/<planche>/<objet>` (l'état d'un moodboard : versions, plan, travail), `POST …/train {items, model, when: "now" \| "HH:MM", name}` (lancer ou planifier la nuit ; la garde du calcul d'abord), `POST …/cancel`, `GET /api/lora[?model=]` (les LoRA entraînés qu'on voit ; `render` : ceux qu'un rendu peut poser, avec le modèle qui les a produits et les machines qui les ont — la carte Générer, la page Image, la page Vidéo pour H3 ; `image.generate` et `movie.*` les reçoivent en `lora` / `loras`, posés par `LoraLoaderModelOnly` après l'`UNETLoader`, le mot déclencheur en tête du prompt), `GET /api/lora/file/<planche>/<objet>/<v>` — `server/tools/lora.py` ; l'état d'un LoRA dans `<data_dir>/lora/<planche>-<objet>.json`, ses fichiers dans `lora/files/` | `lora.train` (voie image, épinglé à la ComfyUI de la machine du portail, une seule chose de GPU pendant ce temps), `lora.train_factice` (voie cpu, l'essai sans GPU, pour Cal) | le manifeste `~/trainers/sr_lora.json` (réglage `lora_manifest`) : un modèle n'est proposé que marqué `ok` après un essai réel à l'installation (`docs/INSTALL_LORA.md`) ; `comfy_loras`, `lora_peer` |
 | Agent Showrunner (Idéation) | `POST /api/ideation/agent {board, messages: [{role, content, items}], intent: '' \| 'ingest'}` (un tour), `GET /api/ideation/agent/<planche>` (la conversation, le moteur), `POST …/turns/<tour> {claim} \| {applied, ids, results} \| {undone}`, `POST …/clear` — `server/tools/ideation_agent.py` ; la page : `ideation/agent.js` (le panneau, `app.agent = {open, send, busy}` ; les gestes posés en un `app.mutate`) ; la conversation dans `<data_dir>/ideation_agent/<planche>.json` (`docs/etudes/agent_showrunner.md`) | `ideation.agent` (voie audio, épinglé sur la machine de l'Ollama ; cpu sans voie audio) | `ideation_agent_url`, `ideation_agent_modele` (sinon `llm_url`, `llm_model`), `ideation_agent_ctx` ; le diagnostic `agent` d'Admin (`tools/diag_agent.py`) |
 | Paroles calées (`commun/lrc.js`) | `GET /api/paroles/<id>` (le LRC, les paroles connues, l'état du calage, ce qu'on peut faire), `POST /api/paroles/<id> {lrc}` (à la main : relu, trié), `POST /api/paroles/<id>/caler {paroles?, langue?, voix?}` (la chaîne : `music.stems` la voix seule, `transcrire.transcribe` complet, puis le calage ; l'état dans `<data_dir>/paroles/<id>.json`) — `server/tools/paroles.py` ; la mesure sur des LRC calés à la main : `tools/paroles_mesure.py` | `paroles.caler` (voie cpu : l'alignement) | ceux de la séparation et de Transcrire |
 | Object Creator | `/api/objet/state` (les instances ComfyUI de la voie `image` seulement : une entrée `local` n'en est pas une), `objects` | `objet.mesh` (TRELLIS.2), `objet.mesh_factice` | `"objet_trellis": true` |
@@ -412,6 +420,7 @@ réel est écrit, vérifié à vide, et s'allume par un réglage de
 | Transcrire (`transcrire/`, `server/tools/transcrire.py`) | `/api/transcrire/options`, `docs` (les transcriptions), `run {item, mode: rapide \| complet, to?, notes?}`, `docs/<id>` (lire ; POST : enregistrer, `rev`), `…/translate {to, all}`, `…/export?format=srt\|vtt\|txt\|json\|md&which=&stamps=1`, `…/asset` (409 tant que la sorte `subtitle` manque au socle), `…/delete`, `…/voix` (la probabilité de parole de chaque voix), `…/notes {kinds} \| {question}` (le carnet), `…/qa/<q>/delete` ; un document `<data_dir>/transcrire/trn-….json` par transcription, né dans le Workspace du son | `transcrire.transcribe`, `transcrire.translate`, `transcrire.notes` (voie audio ; cpu en factice) | `"transcrire_moteur": "local"` (Whisper turbo ou Parakeet sur DGX2, les voix par Nemotron de DGX1, traduction et carnet par Ollama) |
 | L'agent Showrunner (Idéation, `server/tools/ideation_agent.py`, `docs/etudes/agent_showrunner.md`) | `POST /api/ideation/agent {board, messages, intent: "" \| "ingest"}` (un tour en file ; 4 000 signes et 24 objets cités au plus), `GET /api/ideation/agent/<planche>` (la conversation, l'état du modèle : prêt, vision), `POST …/turns/<t> {claim \| applied \| undone}`, `POST …/clear` (la conversation archivée) | `ideation.agent` : voie audio épinglée sur l'instance de la machine de l'Ollama (famille `ollama-agent`, 31 Go, modèle déchargé en fin de tour), cpu sans voie audio | `ideation_agent_url` (sinon `llm_url`), `ideation_agent_modele` (sinon `llm_model`, `qwen3-vl-32b-32k`), `ideation_agent_ctx` (32768) |
 | Le kit de Cal (`server/tools/strategie.py`) | `/strategie/…` : `<data_dir>/strategie/` (jamais dans le dépôt, qui est public), au compte de Cal seul (403 à tout autre, la porte sans session) ; chaque page HTML y est servie avec `<script src="/commun/kit_nav.js">` ; `GET /api/strategie/moi`, `GET /api/strategie/plan` (les pages, ou l'ordre de `plan.json`) | — | — |
+| Lien d'écoute (`ecoute/`, `server/tools/ecoute.py`, 05/10, `docs/etudes/musique_spaces_playlists.md` § 4) | `GET /api/ecoute/<playlist>` (le lien, ses réglages, ses écoutes avec `?ecoutes=1`, si l'on peut publier, sinon pourquoi), `POST …/zip {adresse?}` (le paquet zippé : servi par `api/asset/zip/…`), `POST …/publier {code?, fin?}`, `POST …/retirer` (Cloudflare : R2 sous `ecoute/<jeton>/`, porte/r2_recopie.py ; 409 tant que le jeton R2 manque). Le paquet : le lecteur, `playlist.json`, les MP3 256 kbit/s ramenés à −14 LUFS (loudnorm deux passes, linéaire quand un gain suffit), les LRC, les pochettes, l'aperçu Open Graph ; gapless, ou un fichier continu (fondu enchaîné, bout à bout) fabriqué à la publication. Droits : `espaces.can_publish` | `ecoute.zip`, `ecoute.publier` (voie cpu, ffmpeg) | — (Cloudflare : `~/.config/showrunner/r2.json`, le geste 9 de `cloudflare.md`) |
 
 **Idéation, les objets du 05/10** (un module par objet sous `ideation/objets/`, un
 par réglage de diapositive sous `ideation/diapo/`) :
@@ -528,6 +537,13 @@ ajoute les requêtes partielles (`Range` → 206, `Content-Range`,
 `Accept-Ranges`), que les assets statiques ne font pas et sans lesquelles
 Safari ne lit pas une vidéo. Déployer : `bash tools/porte.sh deploie` sur
 DGX2 ; l'essai sans Cloudflare : `node porte/essai.mjs`.
+
+**Les liens d'écoute** (05/10, non déployés : le jeton R2 manque) : `GET /ecoute/<jeton>/…`
+(`run_worker_first`), HORS de la porte à code — le paquet d'une playlist lu dans R2 sous
+`ecoute/<jeton>/` seulement (liste blanche des fichiers d'un paquet, plages), jeton de 128 bits ;
+`_lien.json` (jamais servi) porte le code facultatif (empreinte salée ; `POST …/_code` pose un
+cookie scellé par `PORTE_CLE`), la date de fin (410 au-delà), le compteur (`POST …/_ecoute`, un
+objet vide par écoute sous `_ecoutes/`). L'essai sans Cloudflare : `node porte/essai_ecoute.mjs`.
 
 ## 9. La porte du portail et la page de Cal
 

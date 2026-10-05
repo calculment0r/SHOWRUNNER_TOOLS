@@ -78,7 +78,8 @@ from . import auth, config, espaces
 
 # "sequence" : une séquence du Montage (sa timeline dans `sequence.json`, écrite par server/tools/montage.py), 29/09
 # "document" : tout ce qui n'est pas un média (server/tools/documents.py), 05/10
-# "playlist" : une suite de sons, réécrite en place (server/tools/playlist.py), 05/10
+# "playlist" : une suite de sons, réécrite en place (server/tools/playlist.py) ; son lien d'écoute :
+# server/tools/ecoute.py, 05/10
 KINDS = ("image", "video", "audio", "element", "midi", "sequence", "document", "playlist")
 EXT_KIND = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
