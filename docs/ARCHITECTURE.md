@@ -177,9 +177,11 @@ def register(app):
 ```
 
 Voies (`showrunner.local.json` → `lanes`) : `image` (ComfyUI :8188 de
-DGX2 et de DGX1), `h3` (ComfyUI-H3TEST :8189, arrêté au repos), `audio`,
-`cpu` (ffmpeg…, `ctx.comfy` vaut `None`). Un ouvrier par instance ; une
-instance qui ne répond pas ne prend rien.
+DGX2 et de DGX1), `h3` (la recette de Cal sur les ComfyUI :8188 des deux DGX
+depuis le 30/09 ; le défaut du code reste ComfyUI-H3TEST :8189, arrêté au
+repos, démarré à la demande), `audio`, `cpu` (ffmpeg…, `ctx.comfy` vaut
+`None`). Un ouvrier par instance ; une instance qui ne répond pas ne prend
+rien.
 
 **L'ordonnanceur** (`core/jobs.py`, `core/machines.py`) : qui part, et où,
 ne se décide qu'à un endroit (`_choose`, sous le verrou de la file) :
@@ -311,7 +313,7 @@ dépasse la fenêtre (`commun/tokens.css`).
 |---|---|---|
 | portail | **:8790**, `~/showrunner-data` | miroir du code |
 | ComfyUI | :8188 (`~/comfyui-env`) | :8188 (`~/ComfyUI/venv`), joint par 169.254.110.6 |
-| H3 | :8189 `comfyui-h3test` (arrêté au repos) | :8189 idem ; SHOWRUNNER_SANDBOX :8015 |
+| H3 | la recette sur :8188 (voie `h3`) ; :8189 `comfyui-h3test` arrêté | idem ; SHOWRUNNER_SANDBOX :8015 |
 | Character Factory | relais :8765 → DGX1 | studio :8765 |
 
 Les graphes Krea 2 et Qwen-Image 2.1 viennent de
