@@ -401,8 +401,12 @@ export function dragItem(node, it) {
   return node;
 }
 const EXT_KIND = { png: 'image', jpg: 'image', jpeg: 'image', webp: 'image', mp4: 'video', webm: 'video', mov: 'video', m4v: 'video',
-  wav: 'audio', mp3: 'audio', flac: 'audio', m4a: 'audio', ogg: 'audio' };
-const kindOfFile = (f) => EXT_KIND[(f.name.split('.').pop() || '').toLowerCase()] || null;
+  wav: 'audio', mp3: 'audio', flac: 'audio', m4a: 'audio', ogg: 'audio', mid: 'midi', midi: 'midi' };
+// une image d'un autre format : le serveur en fait une image PNG si PIL la lit, sinon un document
+// (server/tools/documents.py, EXOTIC) ; tout le reste est un document (05/10)
+const EXOTIC = new Set(['gif', 'bmp', 'dib', 'tif', 'tiff', 'avif', 'heic', 'heif', 'psd', 'tga', 'ico', 'icns', 'jp2', 'j2k', 'jpf',
+  'jpx', 'qoi', 'ppm', 'pgm', 'pbm', 'pnm', 'sgi', 'rgb', 'dds', 'pcx', 'jfif', 'jpe']);
+const kindOfFile = (f) => { const x = (f.name.includes('.') ? f.name.split('.').pop() : '').toLowerCase(); return EXT_KIND[x] || (EXOTIC.has(x) ? 'image' : 'document'); };
 
 // Tout bloc qui attend un asset accepte un dépôt : un fichier du disque (il
 // entre dans la bibliothèque, catégorie Upload) ou une vignette glissée
@@ -1034,7 +1038,8 @@ export function jobRow(j) {
 
 // ── vignettes ───────────────────────────────────────────────
 // midi : un clip de notes d'ODIO ; sequence : une séquence du Montage (29/09)
-const KIND_FR = { image: 'image', video: 'vidéo', audio: 'son', element: 'élément', midi: 'MIDI', sequence: 'séquence' };
+// document : tout ce qui n'est pas un média (05/10, server/tools/documents.py)
+const KIND_FR = { image: 'image', video: 'vidéo', audio: 'son', element: 'élément', midi: 'MIDI', sequence: 'séquence', document: 'document' };
 export const kindFr = (k) => KIND_FR[k] || k;
 // les sortes d'un élément : les planches (server/core/library.py, ELEMENT_TYPES), puis les sortes d'un
 // élément versionné (VERSIONED_TYPES : une chanson, un son, une séquence, une image) — jamais le nom
@@ -1062,6 +1067,8 @@ export const KIND_ICON = {
   midi: '<svg viewBox="0 0 24 24"><path d="M9 17V6l10-2v11M9 17a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0zM19 15a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z"/></svg>',
   // deux fiches l'une sur l'autre : un élément (ses références), pas une image
   element: '<svg viewBox="0 0 24 24"><path d="M4 9h11v11H4zM9 4h11v11h-5"/></svg>',
+  // une page au coin plié : un document (PDF, texte, DOCX…), pas une image
+  document: '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6"/></svg>',
 };
 export function kindMark(it, { compact = false } = {}) {
   const k = it.kind;

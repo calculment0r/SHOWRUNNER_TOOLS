@@ -153,17 +153,21 @@ def _views_on_start() -> None:
 
 
 def lib_upload(req):
-    """PUT /api/library/upload?name=photo.jpg&title=…&folder=… — le corps est le fichier."""
+    """PUT /api/library/upload?name=photo.jpg&title=…&folder=… — le corps est le fichier.
+    Tout fichier entre (05/10, le « mode Showrunner » : « tout ce dont il dispose, sans
+    exports ») : un média (son contenu doit être ce que dit son nom : 415 sinon), une image
+    d'un autre format (en PNG si PIL la lit), sinon un document rangé tel quel, avec son
+    texte et sa couverture (library.add_file, server/tools/documents.py)."""
     name = SAFE_NAME.sub("_", req.q("name", "fichier"))[:120] or "fichier"
     ext = Path(name).suffix.lower()
-    if ext not in library.EXT_KIND:
-        raise HttpError(415, f"type non pris : {ext or 'sans extension'} (images PNG/JPEG/WEBP, vidéos MP4/WEBM/MOV, sons WAV/MP3/FLAC/M4A/OGG)")
-    kind = library.EXT_KIND[ext]
+    media = ext in library.EXT_KIND
+    kind = library.EXT_KIND[ext] if media else "document"   # une image d'un autre format : bornée comme un document
     u = auth.current()
     if not auth.is_admin(u):   # un ami : la taille de sa sorte (config `upload_max_mb`) ; Cal : 2 Go (core/http.py)
         mb = (config.get("upload_max_mb") or {}).get(kind)
         if mb and req._length() > mb * 1_000_000:
-            raise HttpError(413, f"fichier trop gros : {mb} Mo au plus pour {'une image' if kind == 'image' else 'un fichier ' + ext}")
+            what = {"image": "une image", "document": "un document"}.get(kind, "un fichier " + ext)
+            raise HttpError(413, f"fichier trop gros : {mb} Mo au plus pour {what}")
     tmp = config.data_dir() / "uploads"
     tmp.mkdir(exist_ok=True)
     dest = tmp / f"{int(time.time() * 1000)}_{secrets.token_hex(4)}_{name}"
@@ -171,7 +175,7 @@ def lib_upload(req):
     try:
         with open(dest, "rb") as f:
             head = f.read(16)
-        if not library.sniff(head, ext):   # le contenu doit être ce que dit le nom (PIL, ffmpeg ne devinent rien d'autre)
+        if media and not library.sniff(head, ext):   # le contenu doit être ce que dit le nom (PIL, ffmpeg ne devinent rien d'autre)
             raise HttpError(415, f"ce fichier n'est pas un {ext[1:].upper()} : son contenu ne correspond pas à son nom")
         it = library.add_file(dest, title=req.q("title") or Path(name).stem, folder=req.q("folder"),
                               origin={"tool": req.q("tool") or "upload",

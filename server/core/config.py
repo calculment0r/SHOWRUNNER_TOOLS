@@ -66,7 +66,10 @@ DEFAULTS: dict = {
     # la taille d'un dépôt pour qui n'est pas admin, en Mo, par sorte (core_api.lib_upload) :
     # une image 15 Mo (l'audit, docs/etudes/cloudflare.md § 4.3) ; le reste 100 Mo, la
     # limite d'une requête d'un Worker gratuit (même page) — au-delà, la porte ne le passerait pas
-    "upload_max_mb": {"image": 15, "video": 100, "audio": 100, "midi": 100},
+    "upload_max_mb": {"image": 15, "video": 100, "audio": 100, "midi": 100, "document": 100},
+    # les documents (server/tools/documents.py) : poppler (pdftotext, pdftoppm) lit les PDF quand il est
+    # sur la machine ; faux : le serveur fait comme s'il manquait — la page lit le PDF (pdf.js, commun/documents.js)
+    "documents_poppler": True,
 }
 
 # Les interrupteurs de câblage que la page admin lit et change : chaque

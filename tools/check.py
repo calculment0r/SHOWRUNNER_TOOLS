@@ -100,7 +100,10 @@ def core_checks() -> None:
     st, raw = call("GET", "/" + got.get("url", ""), headers={"Range": "bytes=0-3"})
     ok(st == 206 and raw == b"\x89PNG", "requête partielle (Range)")
     st, bad = call("PUT", "/api/library/upload?name=x.eps", raw=b"%!PS")
-    ok(st == 415, "un EPS est refusé (Ghostscript, audit du 28/09)")
+    # 05/10 : tout fichier entre (un document, server/tools/documents.py) ; un EPS n'est jamais lu par
+    # PIL (Ghostscript, audit du 28/09) : rangé tel quel, il se télécharge ; sa vignette est une carte dessinée
+    ok(st == 200 and bad.get("kind") == "document" and bad.get("file") == "main.eps" and bad.get("doc", {}).get("format") == "eps",
+       f"un EPS devient un document, jamais lu par PIL (Ghostscript, audit du 28/09) ({st} {bad.get('kind') if isinstance(bad, dict) else bad})")
     st, el = call("POST", "/api/elements", {"title": "Perso", "type": "character", "description": "un homme",
                                             "refs": [{"item": iid, "role": "face"}]})
     ok(st == 200 and el.get("kind") == "element" and el["element"]["refs"][0]["role"] == "face", f"un élément ({st} {el})")

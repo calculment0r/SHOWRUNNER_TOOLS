@@ -94,10 +94,10 @@ const GAP = 6;
 const CAP = 32;            // la légende d'une case (titre, une ligne)
 const PAGE = 120;
 const RECENT_MAX = 60;
-const KINDS = ['image', 'video', 'audio', 'midi', 'sequence', 'element'];
+const KINDS = ['image', 'video', 'audio', 'midi', 'sequence', 'document', 'element'];   // document : 05/10 (server/tools/documents.py)
 const MEDIA = KINDS.filter((k) => k !== 'element');
 const ETYPES = ['character', 'object', 'place', 'style', 'other'];
-const KIND_PL = { image: 'images', video: 'vidéos', audio: 'sons', midi: 'MIDI', sequence: 'séquences', element: 'éléments' };
+const KIND_PL = { image: 'images', video: 'vidéos', audio: 'sons', midi: 'MIDI', sequence: 'séquences', document: 'documents', element: 'éléments' };
 const ETYPE_PL = { character: 'personnages', object: 'objets 3D', place: 'lieux', style: 'styles', other: 'autres' };
 const SECS = [['here', 'Ce workspace'], ['recent', 'Récents'], ['fav', 'Favoris'], ['other', 'Autres workspaces'], ['cf', 'Character Factory']];
 // le tri : ceux de la bibliothèque (server/core/library.py, query : new, old, title, updated)
