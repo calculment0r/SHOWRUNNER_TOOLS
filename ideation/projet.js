@@ -19,7 +19,8 @@
 //     (trois à la fois, la progression sur chaque vignette, un refus n'arrête pas les autres ; ce
 //     qui vient d'Asset est rapatrié), le brief (une note ; tapé, il est rangé aussi en brief.md),
 //     la mise en page de départ (des cadres : Brief, Documents, Images, Vidéos, Sons, Autres), puis
-//     l'agent (app.agent.send(brief, { items, intent: 'ingest' })) s'il est là.
+//     l'analyse de l'agent (app.agent.open(), app.agent.send(brief, { pieces, intent: 'ingest' }))
+//     s'il est là — sinon rien : la planche reste rangée par la mise en page de départ.
 //
 // Rien n'est envoyé avant « Commencer » : le Workspace n'existe pas encore, un envoi ailleurs
 // laisserait des doubles. Les fichiers attendent dans la page (des File : lus à l'envoi seulement).
@@ -70,13 +71,24 @@ const icon = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICO[k] || ICO
 const fmtMo = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} Go` : n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)} Mo` : `${Math.max(1, Math.round(n / 1e3))} Ko`)
   .replace('.', ',');
 const jour = () => new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-const nom40 = (s) => String(s || '').replace(/\s+/g, ' ').replace(/^[#>*\-\s]+/, '').trim().slice(0, 40).trim();
+// un nom de 40 signes : coupé à la fin d'un mot, sans la ponctuation qui traînerait (« des néons, »)
+const nom40 = (s) => {
+  const t = String(s || '').replace(/\s+/g, ' ').replace(/^[#>*\-\s]+/, '').trim();
+  let c = t.slice(0, 40);
+  if (t.length > 40 && t[40] !== ' ' && c.includes(' ')) c = c.replace(/\s+\S*$/, '');
+  return c.replace(/[\s,;:·—–-]+$/, '');
+};
 
 // combien d'envois à la fois : assez pour remplir le lien, pas assez pour affamer le portail
 const EN_MEME_TEMPS = 3;
 // la mise en page de départ : l'ordre des cadres, ce qui va où
 const CADRES = ['Brief', 'Documents', 'Images', 'Vidéos', 'Sons', 'Autres'];
 const CADRE_DE = { document: 'Documents', image: 'Images', element: 'Images', video: 'Vidéos', audio: 'Sons', midi: 'Sons' };
+// ce que l'agent prend d'un message (server/tools/ideation_agent.py : MAX_TEXT, MAX_ITEMS — au-delà, 400) ;
+// les pièces dans cet ordre : le brief, les documents, les images, les vidéos, les sons, le reste
+const AGENT_TEXTE = 4000;
+const AGENT_PIECES = 24;
+const ORDRE_PIECES = ['document', 'image', 'element', 'video', 'audio'];
 
 let ouverte = null;   // une fenêtre à la fois
 
@@ -87,7 +99,7 @@ export function ouvrirProjet(app, { annule = () => {} } = {}) {
   const P = {
     files: [], seen: new Set(), people: [], chosen: new Set(), peopleWhy: '', peopleErr: '',
     canCreate: null, createWhy: '', asked: null, running: false, done: false, nameTouched: false,
-    R: { team: null, space: null, board: null, members: new Set(), memberErr: [], briefMd: null, briefMdErr: '' },
+    R: { team: null, space: null, board: null, members: new Set(), memberErr: [], briefMd: null, briefMdErr: '', agent: false, agentErr: '' },
     pending: [], reading: 0,
   };
   let seq = 0;
@@ -182,7 +194,7 @@ export function ouvrirProjet(app, { annule = () => {} } = {}) {
   function ajouter(list) {
     let doubles = 0;
     for (const f of list) {
-      const key = f.item ? `asset:${f.item.id}` : `${f.path || f.file.name}|${f.file.size}|${f.file.lastModified}`;
+      const key = f.item ? `asset:${f.item.id}` : `${f.path || f.name}|${f.file.size}|${f.file.lastModified}`;
       if (P.seen.has(key)) { doubles++; continue; }
       P.seen.add(key);
       f.key = key;
@@ -216,7 +228,10 @@ export function ouvrirProjet(app, { annule = () => {} } = {}) {
     paintCount();
     paintGo();
   }
-  const fromFile = (file, path = '', folder = '') => ({ file, name: file.name, size: file.size, kind: guessKind(file), path, folder });
+  // le nom en NFC : un nom venu décomposé (NFD, celui d'un disque HFS+ de Mac) s'écrit comme le même nom
+  // tapé au clavier — dans la vignette, dans le titre rangé dans Asset, dans une recherche
+  const fromFile = (file, path = '', folder = '') => ({ file, name: file.name.normalize('NFC'), size: file.size, kind: guessKind(file),
+    path: path.normalize('NFC'), folder: folder.normalize('NFC') });
   const fromItem = (it) => ({ item: it, name: it.title || it.id, size: 0, kind: it.kind === 'element' ? 'element' : (SORTE_FR[it.kind] ? it.kind : 'autre') });
   function ajouterFichiers(files, folder = '') {
     ajouter([...files].filter((f) => !BRUIT.test(f.name)).map((f) => fromFile(f, f.webkitRelativePath || '', folder || dossierDe(f.webkitRelativePath))));
@@ -408,10 +423,15 @@ export function ouvrirProjet(app, { annule = () => {} } = {}) {
   };
   document.addEventListener('paste', onPaste, true);
 
-  // le panneau Asset, pendant la fenêtre : un clic ajoute au projet (sa configuration d'Idéation revient après)
+  // le panneau Asset, pendant la fenêtre : un clic ajoute au projet (sa configuration d'Idéation revient après).
+  // Un objet d'un autre Workspace arrive tel quel (rapatrie: false) : sa copie se fera au départ, dans le
+  // Workspace neuf — pas dans celui d'avant, où elle resterait en double
   const dockAvant = { ...dockState().cfg };
-  dock.configure({ place: (items) => { ajouter(items.map(fromItem)); return true; }, placeLabel: 'Ajouter au projet',
-    label: 'le projet', clickPlaces: true, hint: 'clic ou glisser sur la fenêtre : au projet', upload: (files) => ajouterFichiers(files) });
+  const dockMien = { place: (items) => { ajouter(items.map(fromItem)); return true; }, placeLabel: 'Ajouter au projet',
+    label: 'le projet', clickPlaces: true, hint: 'clic ou glisser sur la fenêtre : au projet', rapatrie: false,
+    // tout ce qui se copie d'un Workspace à l'autre (server/core/library.py, IMPORT_KINDS) : les documents aussi
+    kinds: ['image', 'video', 'audio', 'document', 'element', 'midi'] };
+  dock.configure(dockMien);
 
   // ── fermer ────────────────────────────────────────────────
   const onKey = (e) => {
@@ -434,7 +454,8 @@ export function ouvrirProjet(app, { annule = () => {} } = {}) {
     document.removeEventListener('keydown', onKey, true);
     document.removeEventListener('paste', onPaste, true);
     removeEventListener('beforeunload', onUnload);
-    dock.configure(dockAvant);
+    // configure fusionne : ce que la fenêtre avait ajouté s'efface, la configuration d'Idéation revient
+    dock.configure({ ...Object.fromEntries(Object.keys(dockMien).map((k) => [k, undefined])), ...dockAvant });
     for (const f of P.files) if (f.url) URL.revokeObjectURL(f.url);
     scrim.remove();
     document.documentElement.classList.remove('pj-open');
@@ -533,7 +554,7 @@ export function ouvrirProjet(app, { annule = () => {} } = {}) {
       verrou(false);
       const ko = P.files.filter((f) => f.state === 'echec').length;
       paintCount();
-      if (!ko && !R.memberErr.length && !lay.left) {
+      if (!ko && !R.memberErr.length && !lay.left && !R.agentErr) {
         toast(`« ${projet} » : ${P.files.length} fichier${P.files.length > 1 ? 's' : ''} rangé${P.files.length > 1 ? 's' : ''}, la planche organisée`, 6000);
         setTimeout(() => fermer(true), 900);
       } else {
@@ -577,12 +598,13 @@ export function ouvrirProjet(app, { annule = () => {} } = {}) {
             if (!f.result) throw new Error('le portail n’a rien rendu');
           } else {
             f.result = await uploadFile(f.file, { tool: 'upload', via: 'projet', folder: (f.folder || '').replace(/\//g, ' · '), espace: sid,
+              title: f.name.replace(/\.[^.]+$/, ''),
               onprogress: (p) => { f.progress = p; barSoon(f); } });
           }
           f.state = 'ok';
         } catch (e) {
           f.state = 'echec';
-          f.error = e.status === 415 ? `${e.message} — ce portail ne range pas encore ce type (la lecture des documents arrive)` : e.message;
+          f.error = e.message;   // la phrase du portail (un contenu qui n'est pas ce que dit son nom, trop gros…)
         }
         barSoon(f);
         paint();
@@ -603,16 +625,15 @@ export function ouvrirProjet(app, { annule = () => {} } = {}) {
       if (f.file && TEXTE_LOCAL.has(extOf(f.name)) && f.file.size < 2e6) {
         try { out.docText = (await f.file.text()).trim(); } catch { /* illisible : le portail peut-être */ }
       }
-      if (!out.docText && f.result) {
+      // un PDF, un DOCX… : le texte que le portail en a tiré au rangement (server/tools/documents.py)
+      if (!out.docText && f.result?.kind === 'document') {
         try {
-          const blob = await api(`library/${f.result.id}/texte`, { blob: true });
-          const raw = await blob.text();
-          let d = null;
-          try { d = JSON.parse(raw); } catch { d = raw; }
-          out.docText = String(typeof d === 'string' ? d : d?.text ?? d?.texte ?? d?.content ?? '').trim();
-        } catch { /* le portail ne lit pas encore ce document */ }
+          const d = await api(`library/${f.result.id}/texte`, { espace: sid });
+          out.docText = String(d?.text || '').trim();
+          if (!out.docText) out.docWhy = d?.why || 'pas de texte lisible (un scan ?) : il est dans Asset';
+        } catch (e) { out.docWhy = `son texte ne se lit pas : ${e.message}`; }
       }
-      if (!out.docText) out.docWhy = f.result ? 'son texte se lira quand le portail lira les documents' : 'pas rangé : son texte n’est pas lu';
+      if (!out.docText && !out.docWhy) out.docWhy = f.result ? 'son texte n’est pas lu : il est dans Asset' : 'pas rangé : son texte n’est pas lu';
     }
     if (typed) {
       const sM = step('brief', 'Le brief · brief.md');
@@ -630,25 +651,36 @@ export function ouvrirProjet(app, { annule = () => {} } = {}) {
     return out;
   }
 
-  // l'agent d'Idéation (contrat : app.agent = { open, send(text, { items, intent }), busy }) ; il se
-  // charge avec les modules de la planche : on lui laisse quelques secondes
+  // l'analyse de l'agent d'Idéation (ideation/agent.js : app.agent = { open(), send(texte, { pieces, intent }),
+  // busy() }) ; il se charge avec les modules de la planche : on lui laisse quelques secondes. Absent : rien,
+  // ni ligne ni erreur — la planche reste rangée par la mise en page de départ.
   async function agent(brief, projet) {
-    const sA = step('agent', 'L’agent');
+    if (P.R.agent) return;   // « Reprendre » ne relance pas une analyse partie
     let ag = app.agent;
-    for (let t = 0; !ag && t < 30; t++) { await new Promise((r) => setTimeout(r, 100)); ag = app.agent; }
-    if (!ag || typeof ag.send !== 'function') {
-      sA.note('pas encore là : la planche est rangée par la mise en page de départ ; l’analyse des documents viendra avec l’agent');
-      return;
-    }
-    const items = [...new Set([...P.files.filter((f) => f.state === 'ok' && f.result).map((f) => f.result.id), brief.md?.id].filter(Boolean))];
-    const text = [brief.typed, brief.docText].filter(Boolean).join('\n\n')
+    for (let t = 0; typeof ag?.send !== 'function' && t < 30; t++) { await new Promise((r) => setTimeout(r, 100)); ag = app.agent; }
+    if (typeof ag?.send !== 'function') return;
+    // les pièces : des objets de la bibliothèque (les documents y sont en sorte `document`), le brief en tête
+    const briefIds = new Set([brief.docItem?.id, brief.md?.id].filter(Boolean));
+    const rang = (it) => { if (briefIds.has(it.id)) return -1; const i = ORDRE_PIECES.indexOf(it.kind); return i < 0 ? ORDRE_PIECES.length : i; };
+    const toutes = [...new Map([brief.docItem, brief.md, ...P.files.filter((f) => f.state === 'ok').map((f) => f.result)]
+      .filter((it) => it?.id).map((it) => [it.id, it])).values()];
+    const pieces = toutes.sort((a, b) => rang(a) - rang(b)).slice(0, AGENT_PIECES).map((it) => it.id);
+    let text = [brief.typed, brief.docText].filter(Boolean).join('\n\n')
       || `Projet « ${projet} » : pas de brief écrit — lis les fichiers et organise la planche.`;
-    try { ag.open?.(); } catch (e) { console.error('agent.open', e); }
+    const suite = `…\n\n(la suite : « ${(brief.md ? 'brief.md' : brief.doc?.name || 'le brief').slice(0, 80)} », dans les pièces)`;
+    if (text.length > AGENT_TEXTE) text = text.slice(0, AGENT_TEXTE - suite.length).trimEnd() + suite;
+    // l'agent lit la planche au portail : la mise en page de départ doit y être enregistrée
+    await app.flushSave?.();
+    const sA = step('agent', 'L’analyse de l’agent');
     try {
-      const p = ag.send(text, { items, intent: 'ingest' });
-      sA.ok(`analyse lancée · ${items.length} objet${items.length > 1 ? 's' : ''}`);
+      ag.open?.();
+      // `items` : le nom du contrat de l'étude (agent_showrunner.md § 5), `pieces` celui de la page de l'agent
+      const p = ag.send(text, { pieces, items: pieces, intent: 'ingest' });
+      P.R.agent = true;
+      sA.ok(`lancée · ${pieces.length} pièce${pieces.length > 1 ? 's' : ''}${toutes.length > pieces.length
+        ? ` sur ${toutes.length} : le brief et les documents d’abord, le reste est sur la planche` : ''}`);
       Promise.resolve(p).catch((e) => toast(`l’agent : ${e.message}`, 8000));
-    } catch (e) { sA.err(e.message); }
+    } catch (e) { P.R.agentErr = e.message; sA.err(e.message); }
   }
 
   // ── au départ : les droits, les personnes ─────────────────
@@ -713,7 +745,7 @@ export function miseEnPage(app, P, brief, projet) {
   const nodeOf = (it, nx, ny, w, h) => {
     if (kinds.includes(it.kind)) { S.items.set(it.id, it); return app.newMedia(it, nx, ny, w, h); }
     return { id: app.uid('n'), type: 'note', x: Math.round(nx), y: Math.round(ny), w, h,
-      text: `« ${it.title || it.id} » — ${kindFr(it.kind)} : dans Asset` };
+      text: `« ${it.title || it.id} » — ${kindFr(it.kind)}${it.doc?.label ? ` ${it.doc.label}` : ''} : dans Asset` };
   };
   // le brief : une note, la première chose qu'on lit
   const briefText = [brief.typed, brief.docText].filter(Boolean).join('\n\n');
