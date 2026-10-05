@@ -31,7 +31,9 @@ longueur du film. Dans chaque passe :
     d'entrée (`-ss` avant `-i` : recherche exacte en transcodage, doc
     ffmpeg « Main options », -ss), remise à 0 et à sa vitesse (`setpts`),
     à la cadence du projet (`fps`), cadrée sans déformer (`scale` +
-    `force_original_aspect_ratio=decrease`) et passée en RVB **avec la
+    `force_original_aspect_ratio=decrease`) — ou posée selon sa trajectoire
+    (position, échelle, rotation, ancrage, opacité, recadrage : `cadre`,
+    `_placement`, le calcul du moniteur) — et passée en RVB **avec la
     matrice que le navigateur emploie pour cette source** (celle de son
     étiquette ; sans étiquette, BT.709 à partir de 720 lignes, BT.601
     en dessous — mesuré dans Chromium le 29/09, voir l'étude), passée par

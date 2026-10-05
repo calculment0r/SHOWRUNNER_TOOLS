@@ -1148,7 +1148,7 @@ cadreMon = mountCadre({ screen: $('#prg-screen'), stage: $('#stage'), program, a
   select: (ids) => { focus('program'); select(ids); },
   locked: (c) => trackLocked(c.track),
   snap: () => S.snap,
-  debut: (label) => beginEdit(label),
+  debut: (label) => { focus('program'); beginEdit(label); },
   vivant: (id, m) => { const c = M.byId(S.p, id); if (c) { M.setMotion(c, m); liveCadre(); } },
   fin: () => { cancelAnimationFrame(cadreRaf); cadreRaf = 0; endEdit(); program.invalidate(); paintInspector(); },
 } });
