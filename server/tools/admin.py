@@ -361,6 +361,12 @@ DIAGS = {   # id : (nom court, ce qu'il dit, commande, délai en s, action ?)
     "planche": ("Planche · créer", "crée la planche de la réunion dans LES ANEES FOLLES, photos d'époque comprises", None, 1800, True),
     "lora": ("LoRA · entraîneurs", "ce que l'installation a vérifié (~/trainers/sr_lora.json), les venvs, torch, la mémoire libre",
              ["python3", "tools/diag_lora.py"], 120, False),
+    # 05/10 : poppler sur la machine du portail ? sinon chaque PDF déposé est lu par la page (commun/documents.js)
+    "documents": ("Documents · PDF", "qui lit le texte et les pages des PDF déposés : poppler sur la machine du portail, ou la page (pdf.js)",
+                  ["python3", "-c", "import sys; sys.path.insert(0, 'server'); from tools import documents as d; s = d.tools_state(); "
+                   "print('poppler :', ', '.join(k + (' oui' if v else ' absent') for k, v in s.items())); "
+                   "print('les PDF :', 'lus par le portail (texte, pages rendues)' if s['pdftotext'] else 'lus par la page (pdf.js, depuis cdnjs)')"],
+                  30, False),
 }
 _runs: dict = {}
 _runs_lock = threading.Lock()
