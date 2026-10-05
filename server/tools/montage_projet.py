@@ -380,5 +380,37 @@ def selftest(call, ok) -> None:
     call("POST", "/api/asset/restore", {"ids": [c]})
     st, L = call("GET", "/api/montage/bin")
     ok({x["id"]: x["bin"] for x in L["items"]}.get(c) == "Plans larges", "montage · projet : revenu de la corbeille, il reparaît à sa place")
-    for iid in (p["id"], dup["id"]):
+    # « Ajouter au montage » sans séquence ouverte (montage/?add=<id> : une séquence « à partir de
+    # l'élément », l'objet déjà posé sur sa timeline) : il entre dans le Projet avec elle (Cal, 05/10 :
+    # le son envoyé au montage depuis Transcrire « n'est pas arrivé dans les assets du projet »)
+    st, snd = call("PUT", "/api/library/upload?name=envoi.wav&title=Envoi&tool=upload&via=transcrire", raw=_wav())
+    sid = snd.get("id") if isinstance(snd, dict) else None
+    st, L = call("GET", "/api/montage/bin")
+    ok(sid and sid not in {x["id"] for x in L["items"]}, f"montage · projet : un son déposé ailleurs n'est pas dans le Projet ({sid})")
+    st, fs = call("POST", "/api/montage/projects", {"from_item": sid, "bin": "Séquences"})
+    st, L = call("GET", "/api/montage/bin")
+    bins = {x["id"]: x["bin"] for x in L["items"]}
+    ok(st == 200 and [x["item"] for x in fs.get("clips", [])] == [sid] and bins.get(fs.get("id")) == "Séquences"
+       and bins.get(sid) == "Séquences",
+       f"montage · projet : « ajouter au montage » sans séquence — le son entre dans le Projet avec sa séquence ({bins.get(sid)!r})")
+    st, fb = call("POST", "/api/montage/projects", {"from_item": c, "bin": "Séquences"})
+    st, L = call("GET", "/api/montage/bin")
+    ok({x["id"]: x["bin"] for x in L["items"]}.get(c) == "Plans larges",
+       "montage · projet : une séquence faite d'un objet déjà dans le Projet le laisse dans son dossier")
+    for iid in (p["id"], dup["id"], fs.get("id"), fb.get("id")):
         call("POST", f"/api/montage/projects/{iid}/delete")
+
+
+def _wav(secs: float = 1.0, rate: int = 16000) -> bytes:
+    """Un son d'essai (un la à 440 Hz, PCM 16 bits mono), sans ffmpeg."""
+    import math
+    import struct
+    import wave
+    from io import BytesIO
+    buf = BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"".join(struct.pack("<h", int(8000 * math.sin(2 * math.pi * 440 * k / rate))) for k in range(int(secs * rate))))
+    return buf.getvalue()

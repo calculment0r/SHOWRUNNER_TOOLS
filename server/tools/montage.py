@@ -1744,6 +1744,11 @@ def r_create(req):
         with _lock:
             p = new_sequence(p, folder or it.get("folder") or "", source=it)
         _projet("put", [p["id"]], d.get("bin") or "", check=False)   # le Projet : dans le dossier où on l'a créée
+        # …et l'objet de départ avec elle (Cal, 05/10 : « exporter l'audio vers le montage… il n'est pas
+        # arrivé dans les assets du projet ») : il est déjà posé sur sa timeline, et `r_save` n'inscrit que
+        # ce qu'un enregistrement pose de NOUVEAU — il n'y entrait donc jamais. Déjà dans le Projet : il
+        # reste dans son dossier (only_new).
+        _projet("put", [it["id"]], d.get("bin") or "", only_new=True, check=False)
         return {**p, "note": note}
     p = blank(d.get("name", ""), d.get("settings"))
     with _lock:

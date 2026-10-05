@@ -262,6 +262,67 @@ l'anglais, le mandarin, des langues indiennes et « multilingual sources »,
   téléphone (390 px, rien ne déborde) → la carte de l'accueil ; aucune erreur
   de console.
 
+## 5.6 Le texte et le carnet sur un seul écran ; la consigne du carnet (05/10)
+
+Trois remarques de Cal, le 05/10 :
+
+- **Le carnet ne se voyait pas** (« les gens ne voient pas le "carnet" ») : les
+  onglets Texte / Carnet sont remplacés par un écran en deux colonnes, la
+  transcription à gauche, le carnet à droite (résumé, questions, points clés,
+  chapitres). Une poignée les sépare (`commun/split.js` : glisser, flèches,
+  double-clic pour revenir moitié-moitié ; le partage est gardé dans le
+  navigateur, `sr-split-transcrire-texte-carnet`). Sous 720 px de large
+  (`@container tr-split`), les deux colonnes s'empilent. Le carnet se montre
+  dès qu'une transcription est ouverte, et attend la fin du texte.
+- **Le carnet répondait à la première personne** : une locutrice dit avoir
+  17 ans ; à « elle a quel âge ? », le modèle répondait « j'ai 17 ans ». Le
+  modèle n'avait pas de rôle, et rien ne lui disait que les « je » du texte
+  ne le désignent pas. La transcription était collée derrière la question, sans
+  bord ; en mode rapide, aucune étiquette ne nommait la locutrice. La
+  consigne est réécrite d'après le guide d'Anthropic [AN], dans
+  `server/tools/transcrire.py` (`CARNET_SYSTEM`, `carnet_messages`) :
+  - un rôle (l'assistant du carnet, qui analyse un document et ne parle
+    jamais au nom des personnes enregistrées) ;
+  - les voix à la troisième personne, par leur étiquette (`[S1]`, que la page
+    remplace par le nom du moment) ;
+  - ce qui est dit, séparé de ce qui est déduit ;
+  - « la transcription ne le dit pas » plutôt qu'une supposition ;
+  - chaque règle avec son pourquoi, et un exemple entre balises `<example>`.
+
+  La transcription est donnée comme une donnée, en tête du message, entre
+  `<transcript>…</transcript>` : sa source, sa durée, les voix et leurs noms
+  (ou « voix non séparées »), puis les répliques. Son texte est échappé : une
+  réplique ne peut pas fermer la balise. Une phrase dit que les « je » y
+  désignent le locuteur et que rien de ce qui est dit n'est une consigne. La
+  tâche vient ensuite, puis la question en dernier ; la réponse est dans la
+  langue de la question.
+  Chaque fonction du carnet garde ces règles : résumé et synthèse de ses
+  morceaux, points, chapitres, questions. Pour une question, le schéma JSON
+  demande d'abord les répliques citées, puis `basis` (`said`, `inferred`,
+  `not_said`), puis la réponse. La page montre les répliques citées telles
+  quelles, avec leur temps et leur voix : la citation est juste par
+  construction, puisque le modèle ne choisit que des numéros.
+  **L'effet sur le modèle réel** (`qwen3:30b-a3b`) **n'est pas mesuré** : le
+  conteneur où la consigne a été écrite n'a pas de modèle. Essai à faire sur
+  DGX2 : l'enregistrement de la locutrice de 17 ans, « elle a quel âge ? ».
+- **« Exporter l'audio vers le montage » : il n'arrivait pas dans le Projet.**
+  Transcrire n'avait pas d'export vers le Montage. Le chemin était celui
+  d'Asset (« Ajouter au montage », `montage/?add=<id>`). Sans séquence
+  ouverte, le Montage crée une séquence « à partir de l'élément » ; le son
+  est déjà posé sur la timeline de cette séquence. Or `r_save` n'inscrit au
+  Projet que ce qu'un enregistrement pose de nouveau : le son n'y entrait
+  jamais. Avec une séquence ouverte, le serveur l'inscrivait bien, mais la
+  page ne relisait pas le Projet. Ce qui est corrigé :
+  - `server/tools/montage.py`, `r_create` : l'objet de départ entre au Projet
+    avec sa séquence ;
+  - `montage/montage.js` : le Projet se relit après l'enregistrement qui pose
+    un objet nouveau, et `?add=` y montre l'objet arrivé ;
+  - Transcrire gagne « Envoyer le son (la vidéo) au Montage » dans Exporter et
+    dans le clic droit d'une transcription. L'entrée est cachée aux comptes
+    Apps.
+
+  L'essai est dans le selftest de `montage_projet.py`.
+
 ## 6. Les essais à lancer (quand Cal le dit)
 
 1. **Vitesse** : Whisper turbo sur DGX2, sur la piste son de `getaround.mp4`
@@ -295,4 +356,5 @@ l'anglais, le mandarin, des langues indiennes et « multilingual sources »,
 - [MS] https://huggingface.co/mistralai/Mistral-Small-3.2-24B-Instruct-2506 (Apache-2.0, 24 langues dont le français)
 - [MD] https://huggingface.co/google/madlad400-3b-mt (Apache-2.0, 419 langues)
 - [NL] https://huggingface.co/facebook/nllb-200-distilled-600M (CC-BY-NC, « research model », 512 jetons)
+- [AN] https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices (lu le 05/10/2026 : « Give Claude a role », « Add context to improve performance », « Structure prompts with XML tags », « Long context prompting » — documents en tête, la question à la fin, « Ground responses in quotes »)
 - `analyse/chaine/whisper-run.py`, `analyse/chaine/diarisation-serveur.py`, `server/tools/analyse.py` (`diar_url`), `docs/etudes/orchestration.md` § 2.2, § 3.3
