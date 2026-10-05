@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="fr" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Le lien d'écoute : le lecteur d'AGOSTA généralisé (docs/etudes/musique_spaces_playlists.md § 4). Ce fichier est
+     le gabarit ; server/tools/ecoute.py en fait l'index.html de chaque playlist : il remplace le bloc ecoute:tete
+     (titre, description, aperçu du lien Open Graph, couleurs de la barre du navigateur) et ne touche à rien d'autre. -->
+<!--ecoute:tete-->
+<title>Écoute</title>
+<!--/ecoute:tete-->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
+<meta name="referrer" content="no-referrer">
+<!-- use-credentials : un lien protégé par un code ne sert son manifeste qu'avec le cookie du code ; sans cela, le
+     navigateur le demande sans cookie (https://developer.mozilla.org/en-US/docs/Web/Manifest#deploying_a_manifest) -->
+<link rel="manifest" href="./manifest.webmanifest" crossorigin="use-credentials">
+<link rel="icon" href="./assets/icon-192.png">
+<link rel="apple-touch-icon" href="./assets/icon-192.png">
+<link rel="stylesheet" href="./ecoute.css">
+<!-- le thème du système avant le premier dessin (app.js le suit ensuite) -->
+<script>document.documentElement.dataset.theme = window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';</script>
+<script type="module" src="./app.js"></script>
+</head>
+<body>
+<div id="error-banner" class="error-banner" role="alert" hidden></div>
+
+<!-- le fond : la pochette floutée -->
+<div class="ambient" aria-hidden="true"><div id="ambient-img" class="ambient-img"></div></div>
+
+<main class="page">
+  <header class="album">
+    <div class="cover-frame">
+      <img id="cover" class="cover" alt="" width="1200" height="1200">
+      <div id="cover-empty" class="cover-empty" aria-hidden="true"></div>
+      <div class="cover-sheen" aria-hidden="true"></div>
+    </div>
+    <div class="album-meta">
+      <p id="artist" class="artist"></p>
+      <h1 id="album-title" class="album-title"></h1>
+      <p id="year" class="year" hidden></p>
+      <p id="description" class="description" hidden></p>
+      <div class="links"><a id="download" class="link" href="#" hidden>Télécharger</a></div>
+    </div>
+  </header>
+
+  <section class="tracks" aria-label="Morceaux">
+    <div class="tracks-head">
+      <span class="tracks-title">Titres</span>
+      <span id="tracks-count" class="tracks-count"></span>
+    </div>
+    <ol id="tracklist" class="tracklist"></ol>
+  </section>
+</main>
+
+<footer id="player-sheet" class="player" role="region" aria-label="Lecteur audio" data-state="collapsed">
+  <button id="sheet-handle" class="sheet-handle" type="button" aria-label="Afficher les paroles" aria-expanded="false">
+    <span class="sheet-grip" aria-hidden="true"></span>
+  </button>
+
+  <div id="sheet-lyrics" class="sheet-lyrics">
+    <div class="sheet-lyrics-head">
+      <span id="lyrics-badge" class="lyrics-badge" hidden>synchro</span>
+      <button id="lyrics-full" class="lyrics-full" type="button" aria-label="Paroles en plein écran" aria-pressed="false">
+        <svg class="i-full" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg>
+        <svg class="i-exit" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/></svg>
+      </button>
+    </div>
+    <div id="lyrics-box" class="lyrics-box" role="list" aria-label="Paroles"></div>
+  </div>
+
+  <div id="progress" class="seek" role="slider" tabindex="0" aria-label="Position dans le morceau"
+       aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+    <div class="seek-track"></div>
+    <div id="progress-fill" class="seek-fill"></div>
+    <div id="progress-knob" class="seek-knob"></div>
+  </div>
+
+  <div class="player-body">
+    <button id="mini-cover-btn" class="mini-cover" type="button" aria-label="Afficher les paroles">
+      <img id="mini-cover" alt="" width="48" height="48">
+    </button>
+
+    <div class="np">
+      <span id="np-title" class="np-title">Choisissez un morceau</span>
+      <span class="np-time">
+        <span id="time-current">0:00</span>
+        <span class="np-sep">/</span>
+        <span id="time-duration">0:00</span>
+      </span>
+    </div>
+
+    <div class="controls">
+      <button id="btn-prev" class="ctrl" type="button" aria-label="Morceau précédent">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6l-9 6 9 6zM6 6h2v12H6z"/></svg>
+      </button>
+      <button id="btn-play" class="ctrl btn-play" type="button" aria-label="Lecture">
+        <span class="btn-play-ring" aria-hidden="true"></span>
+        <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+        <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+      </button>
+      <button id="btn-next" class="ctrl" type="button" aria-label="Morceau suivant">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l9 6-9 6zM16 6h2v12h-2z"/></svg>
+      </button>
+      <div class="volume">
+        <button id="btn-mute" class="ctrl ctrl-sm" type="button" aria-label="Couper le son">
+          <svg class="i-vol" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 5V4L8 9z"/></svg>
+          <svg class="i-mute" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 5V4L8 9zM16 9l5 6M21 9l-5 6"/></svg>
+        </button>
+        <input id="volume" class="volume-slider" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume">
+      </div>
+    </div>
+  </div>
+</footer>
+
+<audio id="audio-player" preload="metadata"></audio>
+</body>
+</html>
