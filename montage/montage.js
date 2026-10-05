@@ -192,6 +192,7 @@ async function save(force = false) {
     S.conflict = false;
     $('#conflict').hidden = true;
     if (r.warnings && r.warnings.length) toast('plans qui se chevauchent : ' + r.warnings.join(' ; '));
+    binFollow(p);
   } catch (e) {
     S.dirty = true;
     // 409 d'un objet d'un autre Workspace (server/tools/elements.py, check_space) : la phrase, et le geste à défaire
@@ -201,6 +202,18 @@ async function save(force = false) {
   }
   S.saving = null;
   paintSave();
+}
+// Le Projet suit la timeline : un objet posé pour la première fois dans une séquence y est inscrit par
+// le serveur quand elle s'enregistre (server/tools/montage.py, r_save) ; la page relit alors le Projet,
+// une fois par objet — un objet retiré du Projet en gardant ses plans ne le fait pas relire à chaque
+// geste. (Cal, 05/10 : un son « ajouté au montage » n'apparaissait pas dans le Projet avant un rechargement.)
+const binAsked = new Set();
+function binFollow(p) {
+  const known = new Set(project.state.every.map((x) => x.id));
+  const fresh = [...new Set(p.clips.map((c) => c.item))].filter((id) => id && !known.has(id) && !binAsked.has(id));
+  if (!fresh.length) return;
+  for (const id of fresh) binAsked.add(id);
+  project.soon();
 }
 // Enregistrer une séquence qui pose un objet (ou une LUT) d'un autre Workspace : refusé, la phrase
 // du serveur dit lequel, d'où, et qu'il faut le rapatrier. Rien n'est perdu : la séquence garde son
@@ -2619,6 +2632,14 @@ async function start() {
     history.replaceState(null, '', location.pathname + (S.p ? '#' + S.p.id : ''));
     if (S.p) await appendItem(add);
     else { await ensureItems([add]); const it = itemOf(add); if (it) await newSequenceFrom(it); }
+    // …et dans le Projet : le serveur l'y inscrit en enregistrant la séquence (r_save, r_create) ; on
+    // attend cet enregistrement, on relit le Projet et on y montre l'objet arrivé (un élément y entre par
+    // la version posée : celle du plan)
+    await flushSave();
+    await loadBin();
+    const here = new Set(project.state.every.map((x) => x.id));
+    const got = here.has(add) ? add : S.p && [...S.p.clips].reverse().map((c) => c.item).find((id) => here.has(id) && S.items.get(id)?.version?.of === add);
+    if (got) revealInBin(got);
   }
   if (!S.p) closeAll();
   paintSeqTabs();
