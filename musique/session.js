@@ -662,18 +662,28 @@ export function createSession(app) {
   }
 
   // ── la console : en groupes ──
+  // L'ordre d'une console (Live 12, « Mixing » : le mixeur de la vue Session
+  // range les retours et le Main à droite) : les voies et les pistes à gauche,
+  // puis les retours collés à la Sortie, à droite. Deux blocs (06/10, Cal :
+  // « Réverbe et RTT-01 doivent être à côté du fader Sortie, à droite ») :
+  // la console entière se centre quand elle tient ; quand elle déborde, les
+  // voies et les pistes défilent, et le bloc des retours et de la Sortie reste
+  // collé au bord droit de la place (session.css, .ss-cfix) — jamais hors de
+  // la vue, jamais séparé de la Sortie.
   function consoleEl() {
     const p = P(), vs = voies(), ts = p.tracks.filter((t) => t.kind !== 'bus'), bs = mixer.buses();
     const grp = (cls, label, sub, strips, extra = null) => el('div', { class: `ss-cg ${cls}` },
       el('div', { class: 'ss-cgh' }, el('b', {}, label), el('span', { class: 'lbl' }, sub), extra),
       el('div', { class: 'ss-cgs' }, strips));
     return el('div', { class: 'ss-cons' },
-      grp('v', 'Session', vs.length ? nPluriel(vs.length, 'voie', 'voies') : 'aucune voie', vs.length ? vs.map((v) => mixer.strip(v, { voie: true }))
-        : el('p', { class: 'lbl ss-cvide' }, '+ Voie : ses tranches ici')),
-      ts.length ? grp('t', 'Arrangement', nPluriel(ts.length, 'piste', 'pistes'), ts.map((t) => mixer.strip(t))) : null,
-      grp('b', 'Retours', bs.length ? nPluriel(bs.length, 'bus', 'bus') : 'aucun', bs.map((t) => mixer.strip(t, { bus: true })),
-        el('button', { class: 'tb ghost sm', type: 'button', title: 'un bus d\'effets : les pistes et les voies y envoient', onclick: mixer.busMenu }, '+ Bus')),
-      grp('m', 'Sortie', 'master', [mixer.masterStrip()]));
+      el('div', { class: 'ss-cdef' },
+        grp('v', 'Session', vs.length ? nPluriel(vs.length, 'voie', 'voies') : 'aucune voie', vs.length ? vs.map((v) => mixer.strip(v, { voie: true }))
+          : el('p', { class: 'lbl ss-cvide' }, '+ Voie : ses tranches ici')),
+        ts.length ? grp('t', 'Arrangement', nPluriel(ts.length, 'piste', 'pistes'), ts.map((t) => mixer.strip(t))) : null),
+      el('div', { class: 'ss-cfix' },
+        grp('b', 'Retours', bs.length ? nPluriel(bs.length, 'bus', 'bus') : 'aucun', bs.map((t) => mixer.strip(t, { bus: true })),
+          el('button', { class: 'tb ghost sm', type: 'button', title: 'un bus d\'effets : les pistes et les voies y envoient', onclick: mixer.busMenu }, '+ Bus')),
+        grp('m', 'Sortie', 'master', [mixer.masterStrip()])));
   }
 
   // ── la vue Clip d'un clip de Session ──
