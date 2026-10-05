@@ -161,6 +161,7 @@ SANS_ROUTE_OUTIL = {
     "droits.route": "essai des droits : une sorte qui a sa route",
     "essai.krea2": "essai de l'ordonnanceur", "essai.qwen21": "essai de l'ordonnanceur",
     "essai.zimage": "essai de l'ordonnanceur", "essai.h3": "essai de l'ordonnanceur",
+    "lora.train": "il ne part que si l'entraîneur de son modèle est installé (tools/lora_install.sh) ; son parcours est celui de lora.train_factice, essayé",
 }
 # un chemin d'essai pour chaque motif de auth.COMPUTE_ROUTES
 COMPUTE_SAMPLES = {r"/character/.*": "/character/api/essai-garde", r"/api/movie/h3/start": "/api/movie/h3/start",

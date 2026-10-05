@@ -126,7 +126,9 @@ TYPES = ("media", "note", "sticky", "title", "frame", "gen", "vgen", "compose", 
          "shape", "card", "mind", "ink",
          "web",   # web : l'objet « Web » (server/tools/web_apercu.py), 30/09
          "text",  # idéation, 30/09 : l'objet texte (ideation/objets/texte.js, _text_node)
-         "model3d")  # 05/10 : le modèle 3D d'un élément, dans la visionneuse (ideation/objets/modele3d.js)
+         "model3d",  # 05/10 : le modèle 3D d'un élément, dans la visionneuse (ideation/objets/modele3d.js)
+         "moodboard")  # 05/10 : un moodboard, des images d'où naît un LoRA de style (ideation/objets/moodboard.js, tools/lora.py)
+MOOD_MAX = 200
 # le modèle 3D : un GLB de l'élément (`element.meshes`), ses éclairages et canaux (character/viewer.html)
 MESH_FILE = re.compile(r"mesh-\d{3}\.glb")
 VIEW_LIGHTS = ("studio", "jour", "interieur", "contre", "plat")
@@ -651,6 +653,15 @@ def _node(n) -> dict:
                    color=n.get("color") if n.get("color") in PALETTE else "or", width=_num(n.get("width"), 0.5, 12, 2.2))
     elif t == "text":  # idéation, 30/09 : l'objet texte
         out.update(_text_node(n))
+    elif t == "moodboard":   # 05/10 : ses images (dans l'ordre, sans doublon), ouvert ou non, sa taille fermée
+        seen, items = set(), []
+        for x in (n.get("items") or [])[:MOOD_MAX] if isinstance(n.get("items"), list) else []:
+            if isinstance(x, str) and ITEM.fullmatch(x) and x not in seen:
+                seen.add(x)
+                items.append(x)
+        out.update(name=_s(n.get("name"), 120), items=items, open=bool(n.get("open")))
+        if out["open"]:
+            out["wc"], out["hc"] = _num(n.get("wc"), 16, 20000, 260.0), _num(n.get("hc"), 16, 20000, 240.0)
     elif t == "model3d":   # 05/10 : la visionneuse 3D sur la planche
         item = str(n.get("item", ""))
         if not ITEM.fullmatch(item):
@@ -1470,6 +1481,21 @@ def render(b: dict, frame: str = "", check=lambda: None):
                 d.rounded_rectangle([x0, y0, x1, y1], radius=rad(9), fill=T["panel2"], outline=T["line"], width=max(1, rad(1)))
                 d.text((x0 + rad(14), y0 + rad(12)), "SON", font=_font("mono", 8.5 * s), fill=T["grn2"])
                 d.text((x0 + rad(14), y0 + rad(30)), (n.get("title") or "")[:40], font=_font("ui", 13 * s), fill=T["ink"])
+        elif t == "moodboard":
+            d.rounded_rectangle([x0, y0, x1, y1], radius=rad(9), fill=T["panel2"], outline=T["line"], width=max(1, rad(1)))
+            d.text((x0 + rad(12), y0 + rad(10)), ("MOODBOARD · " + (n.get("name") or "")).upper()[:40], font=_font("mono", 8.5 * s), fill=T["amb"])
+            ids = n.get("items") or []
+            cols = 4 if n.get("open") else 3
+            gap, top = rad(6), rad(30)
+            cw = (w - 2 * rad(10) - (cols - 1) * gap) / cols
+            for k, iid in enumerate(ids[: cols * max(1, int((h - top) // (cw + gap)))]):
+                cx, cy = x0 + rad(10) + (k % cols) * (cw + gap), y0 + top + (k // cols) * (cw + gap)
+                if cy + cw > y1:
+                    break
+                got = picture({"item": iid}, cw, cw, rad(4))
+                if got:
+                    img.paste(got[0], (round(cx), round(cy)), got[1])
+                    parents.append(iid)
         elif t == "model3d":
             parents.append(n["item"])
             d.rounded_rectangle([x0, y0, x1, y1], radius=rad(9), fill=T["panel2"], outline=T["line-cy"] if "line-cy" in T else T["line"], width=max(1, rad(1)))

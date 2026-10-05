@@ -1116,6 +1116,8 @@ app.objets = createObjets(app);
 Object.assign(DEF, app.objets.defs);
 // une image ou un personnage lâché sur une carte personne : son visage
 app.dropRules.push(app.objets.faceRule());
+// une image lâchée sur un moodboard : elle y entre (objets/moodboard.js)
+if (app.moodboard?.rule) app.dropRules.push(app.moodboard.rule);
 // un objet lâché sur un autre, en dernier recours (après app.dropRules) : un groupe
 app.dropLast = [app.groups.rule];
 app.menus = createMenus(app);

@@ -33,7 +33,8 @@ import { regroup as regroupStickies } from './couleurs.js';
 import { TEMPLATES, insertTemplate, TOOL_ICON as TPL_ICON } from './modeles.js';
 import { galerie } from '../galerie.js';
 import { extendWeb } from './web.js';
-import { extendModele3d } from './modele3d.js';   // le modèle 3D d'un élément, dans la visionneuse (05/10)   // web : l'objet « Web » (YouTube, Vimeo, un site), 30/09
+import { extendModele3d } from './modele3d.js';
+import { extendMoodboard, moodTool } from './moodboard.js';   // le moodboard → un LoRA de style (05/10)   // le modèle 3D d'un élément, dans la visionneuse (05/10)   // web : l'objet « Web » (YouTube, Vimeo, un site), 30/09
 import { extendTexte, textTool } from './texte.js';   // l'objet texte, comme celui de Miro (30/09)
 import { createCrop } from './recadrer.js';           // recadrer une image, comme Miro (30/09)
 
@@ -226,6 +227,9 @@ export function createObjets(app) {
       mk('card', 'une carte : tâche, lien, mesure, personne · K', C.TOOL_ICON),
       mk('mind', 'une mind map : Tab un enfant, Entrée un frère · B', M.TOOL_ICON),
       mk('ink', 'le crayon : un trait à main levée · D', I.TOOL_ICON));
+    // le moodboard (moodboard.js) : posé au centre de la vue d'un clic
+    const vgen = document.querySelector('.ide-bar [data-tool="vgen"]');
+    if (vgen && !document.querySelector('.ide-bar .mb-tool')) { const b = moodTool(app); b.classList.add('mb-tool'); vgen.after(b); }
   }
 
   // ── le coin bas gauche de la planche : les modèles, l'aimant ──
@@ -319,7 +323,7 @@ export function createObjets(app) {
 
   // web : extendWeb (web.js) ajoute la sorte « web » et prend ses objets dans build, key, menu, panels, mini, boardItems ;
   // texte : extendTexte (texte.js), la sorte « text », de même ; crop : recadrer une image (recadrer.js)
-  return extendModele3d(app, extendWeb(app, extendTexte(app, {
+  return extendMoodboard(app, extendModele3d(app, extendWeb(app, extendTexte(app, {
     TYPES, has: (t) => TYPES.has(t), defs, build, key, layout, folded: () => L.folded, info: (id) => L.info.get(id), paint, mini,
     place, menu, boardItems, selectionItems, linkItems, panels, writable, editKey, cleanText,
     onKey, mindKey, pickTool, closeSub, mount, commands, items, snapper, setSnap,
@@ -329,5 +333,5 @@ export function createObjets(app) {
     rootOf: (n) => M.rootOf(S.board, n), addMind: (n, child) => M.addMind(app, n, child),
     regroup, toMind, insert, faceRule: () => C.faceRule(app), annot: (n) => !!n && ANNOT.has(n.type),
     crop: createCrop(app),
-  })));
+  }))));
 }
