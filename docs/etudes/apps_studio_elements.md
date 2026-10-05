@@ -164,9 +164,10 @@ jetables). Rien n'est poussé ; le portail en ligne n'est pas touché.
   enregistré par la route habituelle ; le plan garde début et entrée, sa
   durée suit la nouvelle version si elle est plus courte (le dit). Glisser un
   élément pose sa dernière version ; poser un élément de sa propre descendance
-  est refusé avant de poser. Le journal est relu toutes les 5 s
-  (`/api/elements/changes`) : une publication ailleurs fait paraître la
-  pastille et un bandeau, sans recharger.
+  est refusé avant de poser. Le journal est relu quand il avance
+  (`/api/elements/changes` sur « sr:elements », § 2.11 ; toutes les 5 s
+  jusqu'au 05/10) : une publication ailleurs fait paraître la pastille et un
+  bandeau, sans recharger.
 - **ODIO** (`musique/element.js` neuf ; accroches marquées dans
   `musique/musique.js`) : « Publier » dans la barre (et « Publier comme
   élément… » au menu) : enregistre, rend le morceau entier hors temps réel

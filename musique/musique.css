@@ -14,17 +14,22 @@ body.mu-page { display: flex; flex-direction: column; height: 100vh; overflow: h
 
 /* ── la barre de transport ──────────────────────────────── */
 .mu-bar {
-  display: flex; align-items: center; gap: 8px 8px; flex-wrap: nowrap; min-width: 0;
+  display: flex; align-items: center; gap: 8px 8px; flex-wrap: wrap; min-width: 0;
   background: var(--panel); border-radius: var(--r3); padding: 7px var(--s3);
 }
 .mu-bar > * { flex: none; }
 .mu-bar .grp { display: flex; align-items: center; gap: 4px; }
-/* ce qui cède quand la place manque : la forme d'onde, puis le nom du projet */
-.mu-bar > .mu-ovw { flex: 0 1 128px; min-width: 0; overflow: hidden; }
+/* La barre passe à la ligne quand elle ne tient plus, elle ne déborde jamais : le navigateur mesure
+   (la place de la page, le panneau Asset ouvert, les polices, le nom du projet), plus une largeur
+   devinée — la règle de 1440 px laissait la barre sortir de son cadre entre 1440 et 1720 px de page,
+   1920 avec le panneau ouvert compris. Ce qui cède d'abord : la forme d'onde, dont la base est son
+   minimum ; elle grandit jusqu'à sa taille avant que la place n'aille au reste, et se resserre entière.
+   Le nom du projet cède quand son groupe est seul sur sa rangée ; le groupe de droite reste à droite. */
+.mu-bar > .mu-ovw { flex: 100 1 64px; min-width: 64px; max-width: 128px; overflow: hidden; }
+.mu-bar > .mu-ovw .mu-ov { max-width: 100%; }   /* le clic lit la largeur vue (musique.js, ov) */
 .mu-bar > .grp:nth-child(2) { flex: 0 1 auto; min-width: 0; }
 .mu-bar .mu-proj { min-width: 84px; flex: 0 1 138px; }
-/* la place de la page, pas la fenêtre (le panneau Asset ouvert en prend) : @container sr-page, commun/shell.css */
-@container sr-page (max-width: 1440px) { .mu-bar { flex-wrap: wrap; } }
+.mu-bar > .grp:last-child { margin-left: auto; }
 .mu-bar .sp { flex: 1; min-width: 0; }
 .mu-bar .tb.sm { padding: 0 7px; }
 .mu-brand { padding-right: 2px; flex-direction: column; align-items: flex-start !important; gap: 1px !important; }
@@ -259,7 +264,6 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
   font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .1em; color: var(--ink3); pointer-events: none; white-space: nowrap;
 }
 .ar-nums span.t { font-size: 7.5px; padding-top: 6px; opacity: .65; }   /* de près, les temps : « 5.2 » */
-.ar-tri { position: absolute; left: -5px; bottom: 0; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid var(--or); pointer-events: none; z-index: 2; }
 .ar-mark { position: absolute; top: 8px; display: flex; align-items: center; gap: 3px; cursor: pointer; z-index: 3; transform: translateX(-1px); touch-action: none; }
 .ar-mark i { width: 2px; height: 16px; background: var(--amb); display: block; }
 .ar-mark span { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--amb); background: var(--panel); padding: 1px 3px; border-radius: 2px; white-space: nowrap; }
@@ -367,7 +371,6 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 .ar-dropz span { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); position: sticky; left: calc(var(--head) + 14px); }
 .ar-zone { position: absolute; top: var(--ruler); bottom: 0; pointer-events: none; background: var(--cy-bg); opacity: 0; }
 .ar-zone.on { opacity: .5; }
-.ar-ph { position: absolute; top: 0; bottom: 0; left: 0; width: 1.5px; background: var(--or); pointer-events: none; z-index: 2; }
 .ar-rec { position: absolute; display: none; border-radius: 6px; background: var(--or-bg); box-shadow: inset 0 0 0 1.5px var(--line-or); pointer-events: none; z-index: 2; }
 .ar-rec span { font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--or); padding: 3px 6px; display: block; white-space: nowrap; }
 .ar-marquee { position: absolute; display: none; background: var(--cy-bg); box-shadow: inset 0 0 0 1px var(--line-cy); pointer-events: none; z-index: 6; }
@@ -525,7 +528,6 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 .ae-w { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .ae-cv { position: relative; }
 .ae-wave { width: 100%; height: 170px; background: var(--bg); border-radius: var(--r2); display: block; box-shadow: inset 0 0 0 1px var(--line); touch-action: none; }
-.ae-now { position: absolute; top: 0; bottom: 0; left: 0; width: 1.5px; background: var(--or); pointer-events: none; display: none; }
 .ae-nums { display: flex; gap: 18px; flex-wrap: wrap; }
 .ae-nums span { display: flex; flex-direction: column; gap: 1px; }
 .ae-nums i { font-style: normal; font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); }
@@ -821,7 +823,7 @@ body.ar-grab, body.ar-grab * { cursor: grabbing !important; }
    1100 px, c'est .mu-app qui défile, la barre du portail reste en haut. */
 @container sr-page (max-width: 1280px) {
   .ar-body { grid-template-columns: min(var(--nav-w, 214px), 180px) 8px minmax(0, 1fr); }
-  .mu-ovw { display: none; }
+  .mu-bar > .mu-ovw { display: none; }   /* plus fort que .mu-bar .grp (display: flex) */
 }
 @container sr-page (max-width: 1100px) {
   .nd { grid-template-columns: 1fr; grid-template-rows: minmax(420px, 1fr) auto; }

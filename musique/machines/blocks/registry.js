@@ -27,13 +27,16 @@
                      
 import {
   FREQ_TICKS,
-  compressorCurve,
   formatHz,
   freqToNorm,
   normToFreq,
   quantize,
   saturate,
 } from "../moteur/index.js"
+// SHOWRUNNER : la courbe du compresseur que le nœud applique vraiment (la vue Instruments s'en sert),
+// à la place de compressorCurve d'ODIO_01 — voir compSurface
+import { compresseur } from "../../appareils/calcul.js"
+import { COMP_KNEE } from "../../odio/effects/comp.js"
                                                                 
 import { MACHINE_SECTIONS, sectionLayout,                 } from "./machines.js"
                                               
@@ -316,7 +319,8 @@ const compSurface                          = {
       ctx.moveTo(Math.round(toX(db)) + 0.5, 0)
       ctx.lineTo(Math.round(toX(db)) + 0.5, height)
     }
-    // La diagonale du « rien fait » : au-dessus impossible, en dessous compressé.
+    // La diagonale du « rien fait » : au-dessus, du gain (le rattrapage, le gain du module) ;
+    // en dessous, réduit.
     ctx.moveTo(toX(-60), toY(-60))
     ctx.lineTo(toX(0), toY(0))
     ctx.stroke()
@@ -325,13 +329,21 @@ const compSurface                          = {
     const threshold = effect.getParameter("threshold")
     const ratio = effect.getParameter("ratio")
     const makeup = effect.getParameter("makeup")
+    // SHOWRUNNER (05/10) : la courbe que le moteur applique vraiment — le DynamicsCompressorNode
+    // tel que Chromium le calcule (le genou de COMP_KNEE dB commence au seuil, il n'est pas
+    // centré), plus son gain de rattrapage automatique (spécification Web Audio : (1 / courbe(0
+    // dB))^0,6), puis le GainNode du module (`makeup`) : appareils/calcul.js, compresseur, la
+    // même loi que la vue Instruments (docs/etudes/odio_appareils.md § 5.2). compressorCurve
+    // d'ODIO_01 (genou centré, sans rattrapage) s'en écartait jusqu'à une dizaine de dB. Sans
+    // butée à 0 dB : le nœud ne limite pas, au-dessus le trait sort du cadre.
+    const loi = compresseur(threshold, COMP_KNEE, ratio)
+    const sortie = (db        ) => loi.sortie(db) + makeup
 
     ctx.beginPath()
     for (let i = 0; i < CURVE_POINTS; i++) {
       const db = -60 + (i / (CURVE_POINTS - 1)) * 60
-      const out = compressorCurve(db, threshold, ratio, makeup)
       const x = toX(db)
-      const y = toY(Math.min(0, out))
+      const y = toY(sortie(db))
       if (i === 0) ctx.moveTo(x, y)
       else ctx.lineTo(x, y)
     }
@@ -348,7 +360,7 @@ const compSurface                          = {
     ctx.globalAlpha = 1
 
     if (active) {
-      handle(ctx, toX(threshold), toY(compressorCurve(threshold, threshold, ratio, makeup)), height, colors)
+      handle(ctx, toX(threshold), Math.max(0, Math.min(height, toY(sortie(threshold)))), height, colors)
     }
   },
 }
