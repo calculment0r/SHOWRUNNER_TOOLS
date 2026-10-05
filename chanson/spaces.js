@@ -70,6 +70,8 @@ const marque = (sp) => (sp?.cover_url ? el('img', { class: 'ch-sp-cov', src: hre
 const cartes = (e) => [...(e.dataTransfer?.types || [])].includes(CARD_MIME);
 const nChansons = (n) => `${n} chanson${n > 1 ? 's' : ''}`;
 const nObjets = (n) => (P.opt.nom ? P.opt.nom(n) : nChansons(n));
+const nProjets = (n) => (n > 1 ? `${n} projets ODIO` : 'un projet ODIO');
+const PROJET_RX = /^mus-/;   // un projet ODIO (server/tools/music.py, PID_RX) : la route des Spaces le range aussi
 
 // ── le contrat ──────────────────────────────────────────────
 /** Le Space courant de la page : celui où naît ce qu'on crée (voir l'en-tête du fichier). */
@@ -369,15 +371,17 @@ async function supprimer(sp) {
 async function deplacer(ids, to) {
   const dest = byId(to);
   if (!dest || !ids.length) return;
-  const label = `déplacer ${ids.length > 1 ? nObjets(ids.length) : P.opt.nom ? P.opt.nom(1) : 'une chanson'} vers « ${dest.name} »`;
+  const projets = ids.every((x) => PROJET_RX.test(x));
+  const mots = projets ? nProjets : nObjets;
+  const label = `déplacer ${ids.length > 1 || projets ? mots(ids.length) : P.opt.nom ? P.opt.nom(1) : 'une chanson'} vers « ${dest.name} »`;
   try {
     const r = await P.opt.U.run({ label,
       do: () => A('chanson/spaces/move', { method: 'POST', body: { ids, to } }),
       undo: (x) => (Object.keys(x?.before || {}).length ? A('chanson/spaces/move', { method: 'POST', body: { restore: x.before } }) : null) });
     P.sel.clear(); P.anchor = null;
     const songs = r.moved.length - (r.stems || 0);
-    const more = [r.stems ? `leurs ${r.stems} pistes avec` : '', r.elsewhere ? `${nObjets(r.elsewhere)} d’autres personnes retournent dans leur « Mon Space »` : ''].filter(Boolean);
-    toast(r.moved.length ? `${nObjets(songs)} → « ${dest.name} »${more.length ? ' · ' + more.join(' · ') : ''} · Ctrl+Z les rend` : `déjà dans « ${dest.name} »`, 4500);
+    const more = [r.stems ? `leurs ${r.stems} pistes avec` : '', r.elsewhere ? `${mots(r.elsewhere)} d’autres personnes retournent dans leur « Mon Space »` : ''].filter(Boolean);
+    toast(r.moved.length ? `${mots(songs)} → « ${dest.name} »${more.length ? ' · ' + more.join(' · ') : ''} · Ctrl+Z les rend` : `déjà dans « ${dest.name} »`, 4500);
     P.opt.reload?.();
   } catch (e) { toast(e.message, 7000); }
 }

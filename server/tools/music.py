@@ -865,17 +865,32 @@ def _read(pid: str) -> dict:
 # à la création, celui de la chanson quand on l'ouvre depuis elle (chanson.api_odio) ;
 # tenu par le serveur comme `space` (save_project), changé par la route des Spaces
 # (chanson.api_move). Ce qu'ODIO génère pour lui y naît (chanson.project_space).
+_lus: dict = {}   # fichier → ((mtime_ns, taille), projet) : une liste ne relit que ce qui a changé
+
+
 def readable_projects() -> list[dict]:
     """Les projets que la personne peut lire dans le Workspace courant (library.readable),
-    entiers : la liste d'ODIO, et les Spaces de Musique (chanson.py) qui les rangent."""
-    out = []
+    entiers : la liste d'ODIO, et les Spaces de Musique (chanson.py) qui les rangent — l'app
+    Musique la demande à chaque relevé de ses chansons. Un fichier n'est relu que s'il a
+    changé (sa date, sa taille : _write le remplace d'un coup). À lire, pas à modifier."""
+    out, vus = [], set()
     for f in _dir().glob("mus-*.json"):
         try:
-            p = json.loads(f.read_text(encoding="utf-8"))
+            st = f.stat()
+            cle = (st.st_mtime_ns, st.st_size)
+            hit = _lus.get(f.name)
+            if hit and hit[0] == cle:
+                p = hit[1]
+            else:
+                p = json.loads(f.read_text(encoding="utf-8"))
+                _lus[f.name] = (cle, p)
+            vus.add(f.name)
             if library.readable(p):
                 out.append(p)
-        except (ValueError, KeyError, AttributeError):
+        except (OSError, ValueError, KeyError, AttributeError):
             continue
+    for k in set(_lus) - vus:   # à la corbeille, ou effacé
+        _lus.pop(k, None)
     return out
 
 
