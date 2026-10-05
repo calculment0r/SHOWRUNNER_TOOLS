@@ -620,6 +620,24 @@ function setField(id, f, before, after, record) {
 const said = (s) => { const t = String(s.text || ''); return t.length > 140 ? t.slice(0, 139) + '…' : t; };
 const refChips = (refs) => (refs || []).map(segById).filter(Boolean).map((s) => el('button', { class: 'ref', type: 'button',
   title: `aller à ${clock(s.a)} · « ${said(s)} »`, onclick: () => seekSeg(s.id) }, clock(s.a)));
+// Les sources d'un texte du carnet, sans gêner sa lecture (Cal, 05/10 : « on n'a pas besoin de tous ces timecodes,
+// ça perturbe beaucoup la lecture ») : repliées sous une ligne discrète, qu'on déplie si on les veut
+function sources(refs) {
+  const ss = (refs || []).map(segById).filter(Boolean);
+  if (!ss.length) return null;
+  return el('details', { class: 'cn-src' }, el('summary', {}, `${ss.length} passage${ss.length > 1 ? 's' : ''} cité${ss.length > 1 ? 's' : ''}`),
+    el('div', { class: 'cn-refs' }, ...refChips(ss.map((x) => x.id))));
+}
+// … et sur une ligne de liste (points clés, décisions) : le premier temps seul, « +N » déplie les autres
+function sourceCourte(refs) {
+  const ss = (refs || []).map(segById).filter(Boolean);
+  if (!ss.length) return [];
+  const first = refChips([ss[0].id]);
+  if (ss.length === 1) return first;
+  const more = el('button', { class: 'ref plus', type: 'button', title: 'les autres passages cités' }, `+${ss.length - 1}`);
+  more.addEventListener('click', () => more.replaceWith(...refChips(ss.slice(1).map((x) => x.id))));
+  return [...first, more];
+}
 // Les répliques qui fondent une réponse, telles quelles : leur temps, leur voix, leurs mots. La citation est
 // juste par construction : le modèle ne choisit que des numéros de répliques (le schéma les borne), le texte
 // et le temps viennent du document.
@@ -632,7 +650,7 @@ function quotes(refs) {
   el('span', { class: 'ref' }, clock(s.a)),
   s.spk ? el('span', { class: 'who', style: { '--c': teinte(voiceIndex(s.spk)) } }, voiceName(s.spk)) : null,
   el('span', { class: 'q' }, `« ${said(s)} »`))),
-  ss.length > QUOTES ? el('div', { class: 'cn-refs' }, ...refChips(ss.slice(QUOTES).map((s) => s.id))) : null);
+  ss.length > QUOTES ? sources(ss.slice(QUOTES).map((s) => s.id)) : null);
 }
 // ce sur quoi repose une réponse (server/tools/transcrire.py, QA_BASIS) ; une réponse d'avant le 05/10 n'a que « found »
 const BASIS = { said: ['dit dans le texte', ''], inferred: ['déduit du texte', ' inf'], not_said: ['le texte ne le dit pas', ' nf'] };
@@ -676,7 +694,7 @@ function paintCarnet() {
       n?.state === 'done' ? body(n.data || {}) : el('p', { class: 'hint' }, run ? '…' : empty));
   };
   const list = (items, who = false) => el('ul', { class: 'cn-list' }, ...items.map((x) => el('li', {},
-    el('span', { class: 'cn-t' }, ...avecNoms(x.text), who && x.who ? el('span', { class: 'cn-who' }, ' → ', ...avecNoms(x.who)) : null), ...refChips(x.refs))));
+    el('span', { class: 'cn-t' }, ...avecNoms(x.text), who && x.who ? el('span', { class: 'cn-who' }, ' → ', ...avecNoms(x.who)) : null), ...sourceCourte(x.refs))));
   const all = Object.keys(CARNET_KINDS());
   const anyRun = all.some((k) => ACTIVE.includes(nt[k]?.state));
   // la question en cours de frappe survit à un nouveau dessin (une réponse qui arrive)
@@ -696,7 +714,7 @@ function paintCarnet() {
         onclick: () => notes(all) }, all.every((k) => nt[k]?.state === 'done') ? 'Tout refaire' : 'Tout préparer')),
     off ? el('div', { class: 'reason' }, off) : wait ? el('p', { class: 'hint cn-wait' }, wait) : null,
     el('div', { class: 'cn-grid' },
-      card('resume', (x) => el('div', { class: 'cn-body' }, el('p', { class: 'cn-p' }, ...avecNoms(x.text)), el('div', { class: 'cn-refs' }, ...refChips(x.refs))),
+      card('resume', (x) => el('div', { class: 'cn-body' }, el('p', { class: 'cn-p' }, ...avecNoms(x.text)), sources(x.refs)),
         'L’essentiel en quelques phrases : « Écrire ».'),
       el('section', { class: 'cn-card cn-qa', 'data-k': 'qa' },
         el('div', { class: 'cn-card-h' }, el('span', { class: 'lbl' }, 'Questions'), el('span', { class: 'cn-st' }, 'la réponse ne vient que du texte'), el('span', { class: 'sp' })),

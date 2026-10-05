@@ -288,6 +288,15 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
 .cn-body { display: flex; flex-direction: column; gap: 8px; }
 .cn-p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--ink); }
 .cn-refs { display: flex; flex-wrap: wrap; gap: 4px; }
+/* les sources repliées (transcrire.js, sources) : une ligne discrète sous le texte */
+.cn-src { margin-top: 6px; }
+.cn-src > summary { cursor: pointer; width: max-content; font-family: var(--f-mono); font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); list-style: none; }
+.cn-src > summary::-webkit-details-marker { display: none; }
+.cn-src > summary::before { content: '▸ '; }
+.cn-src[open] > summary::before { content: '▾ '; }
+.cn-src > summary:hover { color: var(--ink2); }
+.cn-src[open] > .cn-refs { margin-top: 6px; }
+.ref.plus { color: var(--ink3); }
 .ref {
   display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: var(--r1); flex: none;
   font-family: var(--f-mono); font-size: 9px; letter-spacing: .06em; color: var(--cy); box-shadow: inset 0 0 0 1px var(--line);
