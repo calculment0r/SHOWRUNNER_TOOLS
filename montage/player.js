@@ -64,7 +64,7 @@
 // au moniteur, `pv.seul`), le plan se montre plein, comme avant.
 
 import { href } from '../commun/shell.js';
-import { windows, opacityAt, gainAt, audibleTracks, projectEnd, spd, isOn, chainOf, srcTime, cadre, motionOf } from './model.js';
+import { windows, opacityAt, gainAt, audibleTracks, projectEnd, spd, isOn, chainOf, srcTime, cadre, motionAt } from './model.js';
 import { getLut, lutFailed, lutGL, passesOf } from './lut.js';
 // un saut ne s'empile jamais sur un saut en cours (commun/tete.js, mesuré le 30/09) :
 // la tête glissée à l'arrêt, l'image suit au lieu d'attendre la fin du geste
@@ -412,11 +412,12 @@ export class Program {
     return it && it.width > 0 && it.height > 0 ? [it.width, it.height] : null;
   }
   // Où se pose l'image d'un plan dans le cadre (model.js, cadre), ou null tant que sa taille
-  // n'est pas connue. `p` : le montage (celui de la page par défaut).
-  geometry(c, p = this.getP()) {
+  // n'est pas connue. `p` : le montage (celui de la page par défaut) ; `f` : l'image de la
+  // timeline (celle qui se voit par défaut) — ses images clés y donnent sa trajectoire (motionAt).
+  geometry(c, p = this.getP(), f = this.frame()) {
     const d = p && this.dims(c);
     if (!d) return null;
-    const g = cadre(motionOf(c), p.settings.width || 1920, p.settings.height || 1080, d[0], d[1]);
+    const g = cadre(motionAt(c, f), p.settings.width || 1920, p.settings.height || 1080, d[0], d[1]);
     g.sw = d[0]; g.sh = d[1];
     return g;
   }
@@ -613,7 +614,7 @@ export class Program {
         // la trajectoire (pas pendant le rognage d'un bord : le plan seul et plein) ; sa taille pas encore
         // connue, le plan attend caché plutôt que de se montrer un instant plein cadre
         const mo = e.tag !== 'audio' && !seul && !!c.motion;
-        const g = mo ? this.geometry(c, p) : null;
+        const g = mo ? this.geometry(c, p, frame) : null;
         this.pose(e, g, p);
         const mop = !mo ? 1 : g && g.vis ? g.op : 0;
         if (e.cv) e.cv.style.zIndex = e.el.style.zIndex;

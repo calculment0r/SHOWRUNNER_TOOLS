@@ -139,7 +139,7 @@ export function mountCadre({ screen, stage, program, app }) {
           transform: `rotate(${deg.toFixed(3)} ${q[0]} ${q[1]})` }, grp);
         r.style.cursor = curseurCoin(q[0] - (pts[0][0] + pts[2][0]) / 2, q[1] - (pts[0][1] + pts[2][1]) / 2);
       });
-      const [ax, ay] = ecran(v, M.ancrage(M.motionOf(c), v.W, v.H));
+      const [ax, ay] = ecran(v, M.ancrage(M.motionAt(c, program.frame()), v.W, v.H));
       const an = mk('g', { class: 'ancre' }, grp);
       for (const [x1, y1, x2, y2] of [[ax - 7, ay, ax + 7, ay], [ax, ay - 7, ax, ay + 7]]) {
         mk('line', { x1, y1, x2, y2, class: 'trait-f' }, an);
@@ -167,7 +167,8 @@ export function mountCadre({ screen, stage, program, app }) {
     if (!g) return;
     ev.preventDefault();
     ev.stopPropagation();
-    const P0 = dansCadre(v, ev), m0 = M.motionOf(c);
+    // la trajectoire telle qu'elle se voit à cette image (ses images clés : app.vivant y pose une clé)
+    const P0 = dansCadre(v, ev), m0 = M.motionAt(c, program.frame());
     const A = M.ancrage(m0, v.W, v.H);
     // alt sur la croix de l'ancrage (à 9 px d'écran) : l'ancrage ; sinon le plan
     let role = t.dataset.role;

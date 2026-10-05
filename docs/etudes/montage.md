@@ -176,8 +176,8 @@ pris ceux d'Adobe, l'anglais dans l'infobulle.
 
 Ce que Cal appelle « roll pour déplacer un footage dans son segment » est le
 **Slip** (Y) ; le **Rolling** de Premiere (N) déplace la coupe entre deux
-plans ; les deux sont faits. Le pinceau (P) n'est pas repris (pas d'images
-clés ici). Propagation, coupe, vitesse, slip et slide se voient en direct
+plans ; les deux sont faits. Le pinceau (P) n'est pas repris (les images
+clés se posent dans l'inspecteur, 06/10). Propagation, coupe, vitesse, slip et slide se voient en direct
 dans le programme : chaque mouvement repart des plans d'avant le geste
 (`gesture` de montage.js) et le lâcher fait une seule annulation. Chaque
 outil a son curseur, dessiné à l'exécution avec les couleurs des jetons
@@ -1115,21 +1115,106 @@ coin, 30° ; alt + l'ancrage le déplace, l'image reste ; Ctrl+Z défait chaque
 geste ; grille 2 × 2 sur les quatre plans ; Réinit. puis Ctrl+Z ; double-clic :
 le plan sous le pointeur ; l'opacité tapée. Les deux thèmes, aucune erreur.
 
+### Les images clés (06/10, suite)
+
+Cal : « on avance avec les images clés ». Ses décisions déjà prises restent : l'ancrage se
+déplace par Alt + glisser ; dans une grille, l'image tient dans sa case sans être coupée.
+
+**Ce que fait Premiere** (aide d'Adobe, « Add, navigate, and set keyframes » et « Keyframe
+interpolation », par les résultats de recherche ; helpx.adobe.com ne s'ouvre pas d'ici) :
+dans Options d'effet, un chronomètre par propriété ; l'activer pose une image clé à
+l'indicateur de temps ; changer la valeur ailleurs en pose une là ; « Aller à l'image clé
+précédente / suivante », « Ajouter/supprimer une image clé » ; une petite timeline des clés
+à droite du panneau ; l'interpolation temporelle (linéaire, Bézier, maintien, lissage
+d'entrée et de sortie). Désactiver le chronomètre retire les clés de la propriété.
+
+**Le modèle** (`montage/model.js`, et `server/tools/montage.py` ligne pour ligne) :
+`motion.keys = {groupe: [[k, [valeurs]], [k, [valeurs], 1], …]}`. Un groupe = une
+propriété de Premiere : `pos` (x, y), `ech` (hauteur, largeur), `rot`, `anc` (ancrage x,
+y), `op`, `rec` (les quatre côtés du recadrage, un seul chronomètre). k : l'image, comptée
+depuis le début du plan ; le 3ᵉ élément 1 : le segment qui part de cette clé est lissé
+(smoothstep, u²(3 − 2u) : l'« accélérer, ralentir » le plus simple) ; sinon linéaire.
+Avant la première clé, sa valeur ; après la dernière, la sienne. `motionAt(c, image)` /
+`motion_at` : la trajectoire à une image ; un groupe qui a des clés ignore sa valeur fixe.
+
+- **Les clés suivent la matière.** Un plan déplacé emporte les siennes (temps relatifs au
+  plan). Rogner le début, couper (le morceau de droite), la propagation (B), la coupe (N), le
+  slide (U, pour le voisin dont l'entrée change) les décalent d'autant que la tête bouge
+  (`shiftKeys`) : elles gardent leur place dans la timeline, comme les images. La vitesse (R,
+  Ctrl+R) les étire avec la matière (`scaleKeys`) ; changer de cadence les arrondit à la
+  nouvelle grille comme les bords. Le slip (Y) les laisse sur le plan (on fait glisser le
+  contenu, pas l'animation ; ce que fait Premiere là : non vérifié). Une clé qui tombe hors du
+  plan rogné reste et compte pour l'interpolation, comme dans Premiere.
+- **Le panneau** (la carte Trajectoire) : pour chaque propriété, le chronomètre (allumé : une
+  clé à la tête de lecture ; éteint : plus de clé, la valeur qui se voit reste — sans demander,
+  Ctrl+Z la rend), son nom, la petite piste de ses clés sur la durée du plan (losanges ; un
+  rond pour une clé lissée ; le trait de la tête ; clic : y aller ; clic droit : lissée ou
+  linéaire, supprimer), ‹ ◆ › (précédente, poser ou retirer à la tête, suivante ; éteints, ils
+  disent pourquoi). Les valeurs affichées sont celles de l'image sous la tête (ramenée dans le
+  plan si la tête est ailleurs) et suivent la lecture. Changer une valeur (curseur, champ, un
+  geste au moniteur, une grille) pose une clé à la tête si le chronomètre de sa propriété est
+  allumé, change la valeur fixe sinon (`setMotionAt`). Sur le plan, dans la timeline : un
+  losange par image clé. Tout se défait par Ctrl+Z.
+- **Le moniteur** pose chaque image à sa trajectoire du moment (`program.geometry(c, p, image)`),
+  à l'arrêt, pendant la lecture et pendant les gestes.
+
+**L'export** (`_placement_anim`) — ce qui a été pesé :
+
+- `scale` à `eval=frame`, `rotate` en expression, `overlay` à `eval=frame` : un `scale` ou un
+  `crop` animés changent la taille des images d'une image à l'autre, ce que les filtres qui
+  suivent ne suivent pas (leurs liens ont une taille fixe) ; écarté sans le monter.
+- Le rendu par segments (un plan d'une image par image, à sa trajectoire fixe) : juste, mais un
+  graphe qui grandit avec la durée animée. Il sert de **vérité** pour la mesure.
+- **Retenu** : une toile de taille fixe, sur laquelle tout s'anime image par image.
+  1. La source passe en RVB à la plus grande échelle de l'animation sur la passe (bornée à
+     deux fois le cadre), puis les effets.
+  2. L'opacité (`colorchannelmixer aa`) et le recadrage (quatre bandes rendues transparentes,
+     `drawbox` replace=1) sont réglés image par image par `sendcmd` (doc ffmpeg-filters :
+     ces options portent le drapeau T, « runtime commands » ; un fichier de commandes par plan
+     et par passe, écrit à côté).
+  3. En yuva444p BT.709, pour que `drawbox` et `perspective` travaillent sans conversion
+     cachée (mesuré : en gbrap, ffmpeg insérait trois `auto_scale`), la toile reçoit un bord
+     transparent de 2 px.
+  4. `perspective` (sense=destination, eval=frame) envoie ses quatre coins là où `cadre()` les
+     pose. Ses huit expressions calculent position, échelle, rotation et ancrage de l'image
+     `in` comme `motion_at`, par morceaux, linéaires ou lissés (`_kexpr`). Hors de la toile,
+     le bord transparent ; elle est ensuite ramenée au cadre.
+  5. Une trajectoire qui ne change pas sur la passe garde le chemin fixe d'avant (`_placement`).
+- **Mesures** (1280 × 720, 60 images ; le rendu animé contre la vérité image par image,
+  écart moyen sur 0..255) :
+
+  | animation | écart moyen | pire image | pixels à ± 12 |
+  |---|---|---|---|
+  | tout (position, échelle lissée 0,3 → 0,6, rotation 0 → 90°, opacité 1 → 0,4, recadrage) | 0,37 | 0,61 | 98,8 % |
+  | échelle 0,15 → 1 sur une mire fine | 0,44 | 1,34 | 98,8 % |
+  | position seule, lissée | 0,22 | 0,36 | 99,4 % |
+  | ancrage 0 → 1 et rotation de 720° | 0,84 | 1,85 | 98,4 % |
+
+  Ce qui reste, ce sont les bords et les détails fins : le rééchantillonnage bilinéaire de
+  `perspective` contre celui de `scale` et `rotate`. Le rendu animé prend 1,6 s, la vérité
+  image par image 10 s.
+- Un piège mesuré : la variable `in` de `perspective` compte les images à partir de 1. Sans le
+  −1, l'animation avait une image d'avance (l'écart tombait de 4,8 à 0,4 avec l'image suivante).
+
+**Les contrôles.**
+- `check.py montage` :
+  - la page contre le serveur, sur 50 images de cinq trajectoires (linéaire, lissée, hors des
+    clés, non uniforme, clés illisibles) : écart 0 ;
+  - rogner (+15, −10), couper, déplacer : chaque image restante garde sa trajectoire ;
+  - la vitesse ×2 resserre les clés ; poser une clé, le chronomètre, basculer une clé ;
+  - un carré rouge animé (un segment lissé puis linéaire, opacité 1 → 0,4) exporté par le
+    vrai travail sur deux passes : à sa place à 0,2 px près à dix images, son rouge à 2 près.
+- Le pilote `montage/pilote_images_cles.mjs` (Playwright, 20 essais, sombre et clair) :
+  - chronomètre, valeur tapée ailleurs, le moniteur à l'image 35 (centre à 0,625 près) ;
+  - ‹ › ; lissée par le clic droit ; la lecture ; un geste au moniteur qui pose une clé ;
+  - rogner et déplacer ; éteindre le chronomètre ; l'opacité animée en clair ;
+  - Ctrl+Z à chaque pas.
+
 ### La suite (non fait)
 
-- **Les images clés** (le chronomètre de Premiere) : `motion.keys = {champ: [[image,
-  valeur], …]}`, en images depuis le début du plan, lues en ligne droite
-  (`motionAt(c, image)`, deux fois comme `cadre`). Le moniteur n'a rien à ajouter
-  (il pose déjà chaque image). Ce qui reste à décider et à faire : (1) les gestes
-  de la timeline qui déplacent la tête d'un plan (rogner à gauche, couper, slip,
-  propagation, vitesse, changer de cadence) doivent décaler ses clés comme
-  Premiere les garde sur la matière — à vérifier chez Adobe ; (2) l'export d'une
-  géométrie qui change à chaque image : `scale` à `eval=frame`, l'angle de
-  `rotate` en expression de `t`, la position par `overlay` (expressions, sur une
-  image transparente) au lieu de `crop` + `pad`, la part visible prise sur
-  l'union du geste, l'opacité et le recadrage animés par `geq` (lent) ou des
-  commandes (`sendcmd`) — à mesurer avant de choisir ; (3) le panneau : un
-  chronomètre par réglage, aller à la clé précédente, suivante.
+- Les images clés : faire glisser un losange dans le temps ; les autres interpolations de
+  Premiere (Bézier réglable, maintien) ; une trajectoire courbe (le chemin de la position)
+  dessinée au moniteur ; des clés sur les effets (étalonnage, LUT) et le volume.
 - « Coller les attributs » (Ctrl+Alt+V) colle les effets, pas encore la
   trajectoire.
 - Les poignées de côté (une seule dimension), les flèches qui poussent la
@@ -1153,7 +1238,7 @@ le plan sous le pointeur ; l'opacité tapée. Les deux thèmes, aucune erreur.
 - Vitesse : pas de vitesse négative, pas de remappage temporel. (Une source
   d'une autre cadence que le projet — 24 ou 16 i/s dans un projet à 25 — montre
   depuis le 06/10 à l'export l'image même du moniteur : « Les poignées ».)
-- Pas de titres, de clés (ni d'images clés sur la trajectoire), de scopes, de roues chromatiques.
+- Pas de titres, de scopes, de roues chromatiques ; les images clés ne portent que sur la trajectoire.
 - Une passe finale lit tous les sons à la fois : un montage de centaines de
   plans sonores ouvre autant d'entrées (léger, mais non borné).
 - La matrice d'une source sans étiquette suit la règle du Chromium de DGX2
