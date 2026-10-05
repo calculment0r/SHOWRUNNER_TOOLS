@@ -1,44 +1,97 @@
 # Reprise — à lire en premier
 
-État au 30/09/2026, fin de session (commit ba8205b). Portail à la maison :
+État au 05/10/2026, fin de session (commit 1ad5ebb, sur `main`). Portail à la maison :
 **http://192.168.10.247:8790/** (DGX2 ; Tailscale http://100.108.108.65:8790/).
 **Adresse publique : https://showrunner.luxigone.workers.dev** — un ami tape le
 pseudo que Cal lui a créé (Admin → « Ajouter quelqu'un »), sans code ni e-mail.
-Cal : `nico007` (admin, compte `cal`) ; par l'adresse publique, un admin entre avec
-le lien admin (Admin → « Montrer le lien admin », ou `bash tools/porte.sh lien`).
+Cal : `nico007` (admin, compte `cal`).
 Secours : `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && python3 server/showrunner.py --admin nico007'`.
-L'état des lieux lisible par Cal (HTML) : scratchpad de la session du 30/09,
-`etat_des_lieux.html`.
 
-## PREMIER GESTE DE LA SESSION SUIVANTE : le socle Team / Workspace (prêt, PAS en ligne)
+## Session du 01-05/10 : ce qui a changé dans la façon de travailler
 
-Codé et essayé, gardé hors ligne pour le faire au calme : copie testée
-**`/tmp/sr_espaces`** sur DGX2 (base 08c8917 ; ses fichiers n'ont pas bougé
-depuis sur origin — revérifier), aussi sur le PC : `server/core/espaces.py`,
-`server/tools/equipes.py`, `tools/migrer_espaces.py` (neufs), `server/core/auth.py`,
-`server/core/http.py`, `admin/admin.js`, `admin/admin.css`, `admin/prefs.json`,
-`docs/etudes/equipes_espaces.md`. check.py : 1705 / 0 sur la copie.
-Décisions de Cal (30/09) : « Team » et « Workspace » à l'écran ; le guest est
-**viewer ou acteur**, réglé dans l'admin ; un guest ne calcule jamais ; favoris
-partagés par team et workspace ; les clics d'aujourd'hui restent.
-Pour le mettre en ligne :
-1. assembler depuis `/tmp/sr_espaces` (check.py), commit, push ;
-2. `porte/worker.js` : ajouter `x-sr-espace` à `EN_TETES_TRANSMIS`, puis `tools/porte.sh deploie` ;
-3. **portail arrêté**, `python3 tools/migrer_espaces.py --vraies-donnees` (sauvegarde
-   `sauvegarde-espaces-<date>/` faite avant ; sur la copie : Nirvalab + Général, 395
-   fichiers passés à `space: esp-general`, rien perdu, 2ᵉ passe vide), puis relancer ;
-4. faire un guest répond 409 tant que les étapes 1 (garde du calcul dans
-   `jobs.submit` : `espaces.garde_prete("calcul")`) et 2 (appartenance au workspace :
-   `garde_prete("bibliotheque")`) ne sont pas faites — c'est voulu.
-Ensuite (phase B, en parallèle, un agent par étape / par outil) : étape 1 garde du
-calcul (chaque sorte déclare `cost` gpu | api | cpu | none), étape 2 `space` posé par
-`library._owned` et dans chaque outil qui réécrit ses documents (ODIO `save_project`
-ne garde que owner / shared / origin), étape 4 en-tête `X-SR-Espace` posé par `api()`
-et le sélecteur Team / Workspace, étape 5 Asset tous workspaces + rapatriement
-(`POST /api/espaces/<courant>/rapatrier`, copie neuve, `origin.from`), budget,
-éléments entre workspaces ; puis le **panneau Asset branché dans chaque outil**
-(`dock.configure`, `dock.contexte`, `declareZone` : voir l'en-tête de `commun/dock.js`),
-la bibliothèque MIDI d'ODIO sur tous les workspaces, le Montage garde « Projet ».
+- **La mise à jour se fait toute seule** (`tools/auto_maj.sh`, installé sur DGX2 le 05/10) :
+  un cron passe toutes les 2 min. Il fait `git fetch` puis `reset --hard origin/main` ; il
+  relance le portail si `server/` a changé, mais attend si `jobs.json` a un calcul en cours
+  ou en file. Il lance `tools/porte.sh deploie` si autre chose que `docs/` a changé, puis
+  recale DGX1. Le journal est dans `~/showrunner-maj.log` (`bash tools/auto_maj.sh etat`).
+  **Pousser sur `main` suffit donc pour mettre en ligne** ; ensuite, Ctrl+Maj+R côté Cal.
+- **Admin → Diagnostics** (`server/tools/admin.py`, `DIAGS`) : liste blanche de scripts
+  lancés d'un clic, avec leur sortie à l'écran. Cal n'a plus à copier de commandes :
+  `maj`, `voies`, `yue`, `yue_wf`, `yue_miroir`, `director`, `planche_plan`, `planche`.
+  Pour ajouter une vérification, la mettre là au lieu de demander un terminal à Cal.
+- Une session cloud (claude.ai/code) pousse directement sur `main`, ainsi que sur sa
+  branche `claude/…`. Cal n'a donc rien à faire sur le PC.
+- Rapport lisible par Cal : un HTML envoyé dans le chat (pas d'artifact), avec un
+  « point » par session.
+
+## Fait du 01 au 05/10 (détail : `git log --since=2026-10-01`)
+
+- Plein écran : Échap gardé (Keyboard Lock, `commun/pleinecran.js`). Une page du portail
+  ouverte « dans un nouvel onglet » (kit de présentation, Révéler dans Asset, Ouvrir ODIO)
+  s'ouvre dans un **volet** par-dessus l'outil (`commun/coquille.js`, `ouvrirAcote`,
+  `window.open` intercepté), et le plein écran tient.
+- Pavé tactile sans réglage (`commun/molette.js`, `brancherCanvas`) : Idéation et ODIO
+  (nodal, attracteurs) ; deux doigts déplacent, pincer zoome.
+- Idéation :
+  - la fluidité : plus de mise en page forcée par événement de molette (taille et boîte
+    du canvas en cache, mini-carte, cadre de sélection, curseurs de co-édition) ;
+  - le nuancier se déplace, avec « Copier #hex » au clic droit ;
+  - le panneau Diapositives est lisible ;
+  - **la galerie des modèles** (`ideation/galerie.js`) : 5 présentations motion, 5
+    statiques, 5 ateliers. Elle est sur une planche vide, dans le menu Modèles du dock,
+    et derrière un **bouton « Modèles » de la barre du haut**, à côté de Présenter
+    (1ad5ebb). Cal la cherchait (« ils sont où les modèles ? ») : **vérifier qu'il la voit**.
+- Vidéo (H3) :
+  - une réplique citée devient `(S1) says: <d>[French] …</d>`
+    (`server/tools/movie.py`, `speech_to_h3`), au lieu d'une voix de narrateur ;
+  - **panneau Multishot** (`commun/multishot.js`, `multishot_texte.js`) : frise de plans
+    à poignées, prompt et répliques par plan, mode auto, qui écrit les `[Shot n]`. On
+    l'ouvre par la puce « multishot… » de Vidéo et des cartes vidéo d'Idéation. Inspiré
+    du nœud « Bernini Director » de ComfyUI (`tools/diag_director.py`). A/B à faire sur
+    l'écriture des durées (case décochée par défaut).
+- Montage : barres de lecture au fader du thème, lecture sous le moniteur programme, le
+  cadre vidéo distinct du fond, format affiché.
+- Asset : moins de petit texte.
+- Admin :
+  - le lien admin reste affiché, avec « Copier le message » ;
+  - on peut supprimer un compte (`auth.delete_user`, `espaces.forget_user` ; ses objets
+    restent) ;
+  - `porte.admin_pseudo` permet à un admin d'entrer par son seul pseudo sur la porte.
+    C'est le choix de Cal, mais l'option est **fausse par défaut** : Cal l'allume avec
+    `bash tools/porte.sh admin-pseudo on`. Ce n'est pas encore fait ; on pourrait en
+    faire un bouton d'Admin.
+- Musique : la voie audio passe sur les deux DGX (`tools/voie.py audio dgx2 dgx1`, fait
+  par Cal).
+- Application sur l'écran d'accueil : manifeste, icônes, plein écran iOS ;
+  `data-appareil` (mobile, tablette, ordi), `data-tactile` et `data-standalone` posés sur
+  `<html>` (`commun/theme-tot.js`).
+- Planche de la réunion réalisateur (establishing shots, Montparnasse 1920-1929, Team
+  « LES ANEES FOLLES ») : `tools/board_reunion.py` (23 cadres, photos de la bibliothèque
+  et de Wikimedia Commons). On la crée par Admin → Diagnostics → `planche`. **Pas encore
+  lancée par Cal**, et les photos de Commons n'ont pas été essayées en vrai.
+- Déploiement par GitHub Actions (`.github/workflows/porte.yml`) : inactif tant que les
+  secrets Cloudflare ne sont pas posés. Il ne sert plus vraiment, puisque `auto_maj`
+  publie déjà.
+
+## PREMIER GESTE DE LA SESSION SUIVANTE
+
+1. Vérifier que `1ad5ebb` est en ligne : Admin → Diagnostics → `maj`, ou `auto_maj.sh etat`.
+   Demander ensuite à Cal s'il voit le bouton « Modèles » de l'Idéation.
+2. **Paroles de YuE ignorées** : le câblage du code paraît bon, mais la cause n'est pas
+   trouvée. Il faut les sorties de Diagnostics → `yue` et `yue_wf` (ce que YuE2 a reçu,
+   et les workflows de Cal comparés au graphe du portail), puis corriger.
+3. Comptes créés « à valider » : Cal s'en plaint, alors que le code les crée actifs. Lui
+   demander ce qu'il voit exactement (capture d'écran).
+4. Planche de la réunion : la lancer (Diagnostics → `planche`), puis la regarder.
+5. `tools/check.py` : 5 échecs anciens, présents avant la session. Les stems sortent en
+   « unknown format 65534 », plus ODIO et la garde `music.yue.abc`. Ils sont à corriger.
+6. Backlog : mises en page mobiles, panneau Asset dans ODIO et le Montage, lecteur commun
+   ailleurs, `docs/ARCHITECTURE.md`, 403 du droit Studio, licences (voir plus bas).
+
+Le socle Team / Workspace (`server/core/espaces.py`, en-tête `x-sr-espace` dans le Worker)
+est dans `main`. La phase B (garde du calcul par `cost`, `space` posé par chaque outil,
+sélecteur Team / Workspace, rapatriement) reste à vérifier puis à poursuivre :
+voir `docs/etudes/equipes_espaces.md`.
 
 ## Travailler ici (règles fermes de Cal)
 
