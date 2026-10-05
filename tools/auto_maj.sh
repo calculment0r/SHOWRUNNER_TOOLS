@@ -49,6 +49,23 @@ PY
   ) 2>/dev/null || echo 0
 }
 
+bloquants() {   # les travaux qui font attendre la mise à jour : leur titre, leur état, depuis quand (pour les annuler dans Admin → File)
+  (cd "$REPO" && python3 - <<'PY'
+import json, sys
+sys.path.insert(0, "server")
+from core import config
+f = config.data_dir() / "jobs.json"
+try:
+    jobs = json.loads(f.read_text(encoding="utf-8")) if f.exists() else []
+except ValueError:
+    jobs = []
+for j in jobs:
+    if j.get("state") in ("running", "queued"):
+        etat = "en cours" if j["state"] == "running" else "en file"
+        print(f"  {etat:8} {str(j.get('created', ''))[:16]}  {j.get('id', '')}  {j.get('title') or j.get('kind', '')}  ({j.get('owner_name') or j.get('owner') or ''})")
+PY
+  ) 2>/dev/null
+}
 tour() {
   cd "$REPO" || { dit "ÉCHEC dépôt introuvable : $REPO"; return 1; }
   git fetch -q origin main 2>/dev/null || { dit "ÉCHEC git fetch (réseau ?)"; return 1; }
@@ -129,6 +146,10 @@ case "${1:-etat}" in
     echo "en route    : $(git log -1 --format='%h %s' | cut -c1-100)"
     echo "origin/main : $(git log -1 --format='%h %s' origin/main | cut -c1-100)"
     echo "calculs en cours ou en file : $(occupe)"
+    if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ] && git diff --name-only HEAD origin/main | grep -q '^server/' && [ "$(occupe)" -gt 0 ]; then
+      echo "LA MISE À JOUR ATTEND ces travaux (le serveur change ; un redémarrage les interromprait) — Admin → File pour annuler ceux qui sont coincés :"
+      bloquants
+    fi
     echo "--- journal ($LOG) ---"
     tail -n 15 "$LOG" 2>/dev/null || echo "(vide)"
     ;;
