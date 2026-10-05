@@ -241,6 +241,13 @@ export function planifierArcs(g, p, b0, b1, at) {
       FIN.delete(prm);
     }
   }
+  // un retour qu'aucun arc ne tient plus (l'arc retiré en lecture) : l'envoi de la console, en 6 ms
+  for (const t of p.tracks) {
+    const prm = t.kind === 'bus' ? g.nodes.get(t.src)?.arc : null;
+    if (!prm || !FIN.has(prm) || (p.arcs || []).some((A) => ARCS[A.k]?.son === 'retour' && genreRetour(p, t) === A.k)) continue;
+    prm.linearRampToValueAtTime(1, at(b0) + LISSE);
+    FIN.delete(prm);
+  }
 }
 
 // Graph.settle (à l'arrêt, un saut, un geste) : chaque réglage prend la valeur
