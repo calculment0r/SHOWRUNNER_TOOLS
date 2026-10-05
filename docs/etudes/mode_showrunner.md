@@ -140,9 +140,12 @@ trier.
       Images, Vidéos, Sons, Autres (ceux qui ont quelque chose) ; le brief en note dans
       son cadre ; chaque cadre en grille régulière ; un seul pas d'annulation ; la vue
       montre tout ;
-   7. l'agent : `app.agent.send(brief, { items: les ids, intent: 'ingest' })` puis
-      `app.agent.open()` — s'il n'est pas là, la planche reste rangée par la mise en
-      page de départ, et un message dit que l'analyse viendra avec l'agent.
+   7. l'analyse de l'agent, la planche enregistrée d'abord (il la lit au portail) :
+      `app.agent.open()` puis `app.agent.send(brief, { pieces: les ids, intent: 'ingest' })` — le
+      brief en tête des pièces, puis les documents, les images, les vidéos, les sons ; 24 pièces
+      et 4 000 signes au plus (les bornes de `server/tools/ideation_agent.py`, au-delà : 400 ; la
+      suite du brief est nommée, elle est parmi les pièces). S'il n'est pas là : rien, ni ligne ni
+      erreur — la planche reste rangée par la mise en page de départ.
 8. Tout est dans **Asset** (le panneau se relit dans le Workspace neuf).
 
 ## 3. Les droits (lus dans `core/espaces.py` et `server/tools/equipes.py`)
@@ -189,15 +192,40 @@ trier.
 
 ## 5. Les contrats avec les deux autres agents
 
-- **DOCUMENTS** : `uploadFile(file)` accepte tout fichier ; une sorte `document`
-  (`doc: {format, pages, words, has_text, title}`), une vignette, `GET
-  /api/library/<id>/texte` ; un `media` de sorte `document` sur la planche. Aujourd'hui
-  le portail refuse ces fichiers (415, « type non pris ») : la vignette passe en échec
-  avec cette phrase, les autres continuent ; un brief `.txt` / `.md` se lit quand même
-  dans la page. Le jour où l'agent arrive, rien à changer ici.
-- **AGENT** : `app.agent = { open(), send(text, { items, intent }), busy() }`, posé par
-  un module d'Idéation ; `intent: 'ingest'` lance l'analyse d'entrée. La fenêtre
-  l'attend quelques secondes au départ (les modules se chargent après la planche).
+- **DOCUMENTS** (serveur fusionné) : `uploadFile(file)` accepte tout fichier ; une sorte
+  `document` (`doc: {format, label, pages, words, has_text, title}`), une vignette, `GET
+  /api/library/<id>/texte` (`{text, why…}`) : le texte d'un brief PDF ou DOCX en vient. Un 415
+  ne dit plus que « son contenu ne correspond pas à son nom » (un `.mp4` qui n'en est pas un).
+  Sur la planche : un `media` de sorte `document` dès que `media_kinds` le contient (la page
+  d'Idéation des documents) ; d'ici là, une note qui le nomme (« — document PDF : dans Asset »).
+  Rien à changer ici ce jour-là.
+- **AGENT** : `app.agent = { open(), send(texte, { pieces, intent }), busy() }`, posé par
+  `ideation/agent.js` ; `intent: 'ingest'` lance l'analyse d'entrée. La fenêtre passe aussi
+  `items` (le même tableau : le nom de `agent_showrunner.md` § 5) et l'attend trois secondes
+  au plus (les modules se chargent après la planche).
+
+## Fait le 05/10
+
+- La fenêtre, le départ, les cadres (commit 4595b96) ; puis, de bout en bout : `ideation/pilote_projet.mjs`
+  (un portail d'essai ; sept parcours, sombre et clair, étroit) et le départ joué par l'API dans le
+  selftest d'`equipes.py` (`_depart` : un ami Studio, la Team, le Workspace renommé, une personne,
+  la planche, un nom accentué, des documents, un objet rapatrié, le texte du brief, ce que voient un
+  membre et un inconnu).
+- Corrigé en chemin : un objet d'un autre Workspace pris par un CLIC dans le panneau Asset était
+  copié dans le Workspace D'AVANT (le panneau rapatrie avant de poser), puis recopié au départ — un
+  double. Le panneau a l'option `rapatrie: false` (`commun/dock.js`) : la fenêtre reçoit l'original,
+  la copie se fait au départ, dans le Workspace neuf. Fermée, la fenêtre efface ce qu'elle avait mis
+  dans la configuration du panneau (`configure` fusionne). Les documents sont dans le filtre du
+  panneau pendant la fenêtre. La raison d'un refus est en bas de casse (de la prose), et lisible.
+- **« repérage_rue.mp4 » qui manquait** : un artefact de l'essai, pas notre code. Chromium lancé sous
+  la locale POSIX du conteneur (`LC_CTYPE=POSIX`) laisse tomber, sans erreur, les chemins non ASCII
+  qu'on lui donne par `setInputFiles` ou par le sélecteur de fichiers (un `<input type=file>` nu fait
+  de même) ; des tampons (`{name, buffer}`) passent, et tout passe sous `LC_ALL=C.UTF-8`. Le pilote
+  lance donc Chromium en UTF-8. Un vrai navigateur rend le nom tel quel ; la fenêtre le met en NFC
+  (un nom décomposé, celui d'un disque HFS+, s'écrit alors comme le même nom tapé).
+- Reste : l'essai avec la vraie page de l'agent (`ideation/agent.js`) et la page des documents, une
+  fois fusionnées (relancer le pilote : il s'y adapte) ; l'essai porte allumée par la page (la phrase
+  du refus est jouée par le selftest et, dans la page, par une réponse interceptée).
 
 ## Sources (05/10/2026)
 

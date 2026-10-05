@@ -138,12 +138,18 @@ sauvegarde du PC, à ne pas toucher.
   - « Commencer un projet » remplace « Répondre à un brief » : Idéation, plus une fenêtre d'ingestion où tout
     se dépose (le brief tapé ou déposé) ;
   - il crée la Team et son Workspace « Général », et ajoute des personnes ;
-  - `entrerEspace(id)` dans `shell.js`, la progression d'`uploadFile`, `GET /api/equipes/personnes`.
+  - `entrerEspace(id)` dans `shell.js`, la progression d'`uploadFile`, `GET /api/equipes/personnes` ;
+  - essayé de bout en bout (`wip2/projet-ingest`) : `ideation/pilote_projet.mjs` (sept parcours, sombre, clair,
+    étroit ; tout passe) et `_depart` dans le selftest d'`equipes.py` (le départ joué par l'API) ;
+  - l'analyse de l'agent : `app.agent.open()` puis `send(brief, {pieces, intent: 'ingest'})`, la planche
+    enregistrée d'abord ; absent, rien ;
+  - corrigé : un objet d'un autre Workspace cliqué dans le panneau Asset était copié dans le Workspace
+    d'avant (option `rapatrie: false` de `commun/dock.js`) ;
+  - `repérage_rue.mp4` : un artefact de l'essai (Chromium sous la locale POSIX du conteneur laisse tomber les
+    chemins non ASCII de `setInputFiles`), pas notre code ; le pilote lance Chromium en UTF-8.
 - Reste :
-  - l'essai de bout en bout ;
-  - `check.py` sur ce code ;
-  - un fichier au nom accentué (`repérage_rue.mp4`) qui manque par `setInputFiles` : à comprendre ;
-  - lancer l'analyse de l'agent, une fois la page de l'agent faite.
+  - relancer le pilote une fois la page de l'agent et celle des documents fusionnées (il s'y adapte) ;
+  - l'essai porte allumée par la page (le refus est joué par le selftest et par une réponse interceptée).
 
 **ODIO : la Session refaite** (`wip/odio-session2`, étude `docs/etudes/odio_session.md` § 6)
 - Ce que Cal demande :
