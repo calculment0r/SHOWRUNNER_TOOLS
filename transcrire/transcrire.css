@@ -1,5 +1,5 @@
 /* ============================================================
-   TRANSCRIRE — réglages | lecture et texte | mes transcriptions
+   TRANSCRIRE — réglages | lecture, texte et carnet | mes transcriptions
    Les règles du thème : aucune couleur en dur (tout vient de
    commun/tokens.css), des filets et jamais de bordures, un seul .tb.go
    par écran (Transcrire, au pied du rail), les capitales pour la
@@ -173,7 +173,7 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
 .vcard small { padding-left: 6px; font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
 
 /* la frise des voix (commun/voix.js) : sous le lecteur, en mode complet */
-.tr-frise[hidden], .tr-lines[hidden], .tr-carnet[hidden] { display: none; }
+.tr-frise[hidden] { display: none; }
 
 .who {
   display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 2px 8px 2px 6px; border-radius: var(--r1);
@@ -185,13 +185,37 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
 /* une voix nommée dans une phrase du carnet */
 .who.inl { display: inline-flex; vertical-align: baseline; padding: 0 6px 0 5px; margin: 0 1px; font-size: .92em; line-height: 1.45; }
 
+/* ── le texte et le carnet, côte à côte (Cal, 05/10) ───────
+   Une boîte-conteneur (tr-split) : le partage se règle sur SA largeur, pas sur
+   celle de la fenêtre (le rail, la liste, le panneau Asset en prennent). Les
+   deux colonnes ont la même hauteur, presque celle de l'écran, et défilent
+   chacune ; la poignée vient de commun/split.js (glisser, flèches, double-clic). */
+.tr-splitbox { container: tr-split / inline-size; min-width: 0; }
+.tr-splitbox[hidden] { display: none; }
+.tr-split { display: flex; align-items: stretch; height: clamp(440px, calc(100 * var(--vh) - 110px), 1400px); }
+.tr-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
+.tr-col-h {
+  display: flex; align-items: center; gap: 10px; flex: none; padding: 8px 12px; min-height: 52px; border-radius: var(--r3);
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
+}
+/* la poignée : un filet toujours là, pour qu'on la trouve (survol, prise : commun/split.js) */
+.tr-split > .sr-gutter::after { background: var(--line); }
+@container tr-split (max-width: 720px) {
+  /* trop étroit pour deux colonnes : le texte, puis le carnet dessous, la page défile */
+  .tr-split { flex-direction: column; height: auto; gap: 8px; }
+  .tr-split > .tr-col { flex: none !important; min-width: 0 !important; }   /* les tailles en ligne de split.js ne valent qu'en rangée */
+  .tr-split > .sr-gutter { display: none; }
+  .tr-col-l .tr-lines { flex: none; max-height: calc(70 * var(--vh)); min-height: 280px; }
+  .tr-col-r { overflow: visible; }
+  .tr-col-r .cn-head { position: static; }
+}
+
 /* les répliques : le temps, la voix, le texte, la traduction */
 .tr-lines {
-  display: flex; flex-direction: column; gap: 2px; max-height: calc(100 * var(--vh) - 40 * var(--vh) - 440px); min-height: 280px;
+  display: flex; flex-direction: column; gap: 2px; flex: 1; min-height: 0;
   overflow: auto; padding: 4px; border-radius: var(--r3); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
   scroll-behavior: smooth;
 }
-.tr-lines:empty { display: none; }
 .ln {
   display: grid; grid-template-columns: 52px 96px minmax(0, 1fr); gap: 10px; align-items: start;
   padding: 7px 8px; border-radius: var(--r2); cursor: pointer;
@@ -227,19 +251,29 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
 .tr-wait.slim .bar { width: 120px; }
 .tr-wait .bar i { display: block; height: 100%; background: var(--cy); transition: width .4s; }
 
-/* ── le carnet (à la NotebookLM) ────────────────────────── */
-.tr-panes .tb { min-width: 64px; }
+/* ── le carnet (à la NotebookLM) : la colonne de droite ─── */
 .tr-carnet { display: flex; flex-direction: column; gap: 8px; }
+.tr-col-r { container: tr-carnet / inline-size; overflow: auto; overscroll-behavior: contain; }
 .cn-head {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; border-radius: var(--r3);
+  display: flex; align-items: center; gap: 10px; flex: none; padding: 8px 12px; min-height: 52px; border-radius: var(--r3);
   background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
 }
-.cn-head .sp { flex: 1; }
-.cn-about { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tr-col-r .cn-head { position: sticky; top: 0; z-index: 2; box-shadow: inset 0 0 0 1px var(--line), 0 6px 8px -6px var(--bg); }
+.cn-wait { padding: 0 4px; }
+/* les deux en-têtes, à la même hauteur : le nom, une ligne d'aide (entière au survol), le geste à droite */
+.cn-about { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .cn-about b { font-family: var(--f-disp); font-size: 13px; font-weight: 400; letter-spacing: .06em; text-transform: uppercase; }
-.cn-about span { font-size: 11px; color: var(--ink3); }
-.cn-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: start; }
-@container sr-page (max-width: 1100px) { .cn-grid { grid-template-columns: minmax(0, 1fr); } }
+.cn-about span { font-size: 11px; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cn-head > .tb, .tr-col-h > .cn-st { flex: none; }
+/* une colonne de cartes ; une colonne large (les deux empilés, ou la poignée tirée) en prend deux */
+.cn-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: start; }
+@container tr-carnet (min-width: 760px) {
+  .cn-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: "resume qa" "points chap"; }
+  .cn-card[data-k="resume"] { grid-area: resume; }
+  .cn-card[data-k="qa"] { grid-area: qa; }
+  .cn-card[data-k="points"] { grid-area: points; }
+  .cn-card[data-k="chapitres"] { grid-area: chap; }
+}
 .cn-card {
   display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-radius: var(--r3); min-width: 0;
   background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
@@ -269,12 +303,25 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
 .cn-chap li > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .cn-chap b { font-weight: 600; font-size: 12.5px; }
 .cn-chap span { font-size: 12px; line-height: 1.5; color: var(--ink2); }
-.cn-qa { grid-column: 1 / -1; }
 .cn-ask { display: flex; gap: 6px; }
 .cn-ask .fld { flex: 1; min-width: 0; }
 .cn-qas { display: flex; flex-direction: column; gap: 6px; }
 .cn-q { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: var(--r2); background: var(--panel2); }
 .cn-q.nf .cn-p { color: var(--ink2); }
+/* ce sur quoi la réponse repose : dit dans le texte, déduit de lui, ou absent */
+.cn-basis { align-self: flex-start; font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--cy); }
+.cn-q.inf .cn-basis { color: var(--amb); }
+.cn-q.nf .cn-basis { color: var(--ink3); }
+/* les répliques citées, telles quelles : le temps, la voix, les mots (un clic : y aller) */
+.cn-quotes { display: flex; flex-direction: column; gap: 3px; }
+.cn-quote {
+  display: flex; gap: 6px; align-items: flex-start; padding: 4px 6px; border-radius: 0 var(--r1) var(--r1) 0;
+  text-align: left; font-size: 12px; line-height: 1.5; color: var(--ink2); box-shadow: inset 2px 0 0 var(--line-cy);
+}
+.cn-quote:hover { background: var(--panel3); color: var(--ink); }
+.cn-quote .ref { margin-top: 1px; }
+.cn-quote .who { flex: none; max-width: 40%; }
+.cn-quote .q { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .cn-qq b { font-weight: 600; font-size: 12.5px; }
 .cn-qa-a { display: flex; flex-direction: column; gap: 6px; }
 .cn-q .x { width: 20px; height: 20px; border-radius: 50%; color: var(--ink3); font-size: 13px; line-height: 20px; text-align: center; }

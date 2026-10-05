@@ -13,6 +13,11 @@
 // partout — répliques, frise, carnet, exports — et reste dans le document.
 // Le carnet (à la NotebookLM) : résumé, points clés · décisions · actions,
 // chapitres, questions — tiré du seul texte, chaque élément cite ses répliques.
+// Le texte et le carnet sont côte à côte, sur un seul écran (Cal, 05/10 : « on
+// va réunir ensemble les deux onglets "texte" et "carnet" car les gens ne voient
+// pas le "carnet" ») : la transcription à gauche, le carnet à droite, une poignée
+// entre eux (commun/split.js, le partage gardé par visiteur) ; quand la place
+// manque, les deux s'empilent (@container tr-split, transcrire.css).
 //
 // Entrée : un dépôt (disque ou vignette glissée), la bibliothèque, ou
 // l'adresse transcrire/?src=<id>. Une transcription s'ouvre par #trn-….
@@ -21,12 +26,13 @@
 // traduction, d'un nom de voix, avec son contraire (réenregistré). Ne
 // s'annulent pas : lancer une transcription, une traduction, le carnet (partis
 // dans la file), un fichier déposé, les réglages.
-import { mountHeader, api, pick, toast, el, $, $$, href, fmtDur, fmtDate, uploadFile, dropZone, dropAnywhere, dock, sorteEffective, avecEspace } from '../commun/shell.js';
+import { mountHeader, api, pick, toast, el, $, $$, href, fmtDur, fmtDate, uploadFile, dropZone, dropAnywhere, dock, sorteEffective, avecEspace, session } from '../commun/shell.js';
 import { createUndo } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { menu, contextMenu, pageMenu, copy } from '../commun/menu.js';
 import { lecteur } from '../commun/lecteur.js';
 import { friseVoix, teinte } from '../commun/voix.js';
+import { split } from '../commun/split.js';
 
 mountHeader('transcrire', { sub: 'transcrire · traduire' });
 
@@ -36,7 +42,9 @@ const S = {
   item: null,                       // le média choisi
   lang: 'auto', to: '', mode: 'rapide', cpl: 42, max_s: 7, stamps: false,
   doc: null, docs: [],
-  view: 'both', follow: true, sending: false, pane: 'texte',
+  view: 'both', follow: true, sending: false,
+  studio: false,                    // le Montage est ouvert à ce compte (un compte Apps ne l'a pas : commun/shell.js, studioOff)
+  wantCarnet: false,                // transcrire/?vue=carnet : le carnet montré à l'ouverture
 };
 const P = { edits: new Map(), timer: 0, saving: false };   // corrections en attente d'envoi
 const U = createUndo({ name: 'transcrire' });
@@ -98,12 +106,22 @@ function skeleton() {
     el('section', { class: 'ipan', id: 'p-in' }), el('section', { class: 'ipan', id: 'p-mode' }),
     el('section', { class: 'ipan', id: 'p-lang' }), el('section', { class: 'ipan adv', id: 'p-adv' }),
     el('div', { class: 'act', id: 'act' }), fileIn);
+  // le texte à gauche, le carnet à droite (un seul écran, Cal 05/10) ; la frise des voix (complet) dessous
   $('#stage').replaceChildren(el('div', { id: 'banner' }), el('div', { class: 'tr-player', id: 'player' }),
     el('div', { id: 'transport' }), el('div', { class: 'tr-bar', id: 'bar' }), el('div', { class: 'tr-voices', id: 'voices' }),
-    el('div', { class: 'tr-frise', id: 'frise' }),
-    el('div', { class: 'tr-lines', id: 'lines', role: 'list', 'aria-label': 'les répliques' }),
-    el('div', { class: 'tr-carnet', id: 'carnet', hidden: true }));
+    el('div', { class: 'tr-splitbox', id: 'splitbox', hidden: true },
+      el('div', { class: 'tr-split', id: 'split' },
+        el('section', { class: 'tr-col tr-col-l', id: 'col-l', 'aria-label': 'la transcription' },
+          el('div', { class: 'tr-col-h', id: 'lines-h' }),
+          el('div', { class: 'tr-lines', id: 'lines', role: 'list', 'aria-label': 'les répliques' })),
+        el('section', { class: 'tr-col tr-col-r tr-carnet', id: 'carnet', 'aria-label': 'le carnet' }))),
+    el('div', { class: 'tr-frise', id: 'frise' }));
   $('#side').replaceChildren(el('p', { class: 'lbl' }, 'chargement'));
+  // la poignée entre les deux : glisser, flèches (16 px, Maj 64), double-clic pour revenir à moitié-moitié ;
+  // le partage est gardé dans ce navigateur (localStorage « sr-split-transcrire-texte-carnet »)
+  const sp = split($('#split'), [{ el: $('#col-l'), grow: 1, min: 300 }, { el: $('#carnet'), grow: 1, min: 300 }],
+    { key: 'transcrire-texte-carnet', gutter: 12 });
+  sp.gutters[0].setAttribute('aria-label', 'le partage entre la transcription et le carnet');
 }
 
 // ── le média ────────────────────────────────────────────────
@@ -219,7 +237,6 @@ async function launch() {
   S.sending = true; paintAct();
   try {
     const r = await api('transcrire/run', { method: 'POST', body: { item: S.item.id, lang: S.lang, to: S.to, mode: S.mode, cpl: S.cpl, max_s: S.max_s } });
-    S.pane = 'texte';
     openDoc(r.doc);
     loadDocs();
   } catch (e) { toast(e.message, 8000); }
@@ -235,6 +252,7 @@ function openDoc(d, { keepMedia = false } = {}) {
   if (!same || !keepMedia) paintPlayer();
   else paintStrip();   // la frise suit les répliques arrivées
   paintBar(); paintVoices(); paintFrise(!same); paintLines(); paintCarnet(); markSide();
+  if (S.wantCarnet && d?.state === 'done') { S.wantCarnet = false; requestAnimationFrame(() => showCarnet(false)); }
   clearTimeout(pollT);
   if (busy(d)) pollT = setTimeout(poll, 900);
 }
@@ -371,24 +389,26 @@ function paintBar() {
   const tr = d.translations?.[S.to];
   const canTranslate = d.state === 'done' && S.to && S.to !== d.detected && !ACTIVE.includes(tr?.state);
   const stale = S.to && d.stale?.[S.to];
-  const trBtn = S.pane === 'texte' && canTranslate && (!tr || tr.state === 'error' || stale)
+  const trBtn = canTranslate && (!tr || tr.state === 'error' || stale)
     ? el('button', { class: 'tb ghost sm', type: 'button', title: stale ? 'les répliques corrigées depuis la traduction' : '', onclick: () => translate(S.to) },
       tr && stale ? `Retraduire ${plural(stale, 'réplique')}` : `Traduire en ${L(S.to).toLowerCase()}`) : null;
-  const nNotes = Object.values(d.notes || {}).filter((n) => n.state === 'done').length + (d.qa || []).filter((q) => q.state === 'done').length;
   put(box,
     el('div', { class: 'ttl' }, el('span', { class: 'lbl' }, 'transcription'), el('b', {}, d.title || d.id),
       el('span', { class: 'lbl meta' }, [d.mode === 'complet' ? 'complet' : 'rapide', d.detected ? L(d.detected) : d.lang === 'auto' ? 'langue à détecter' : L(d.lang), tl ? `→ ${L(tl)}` : '',
         d.segments?.length ? plural(d.segments.length, 'réplique') : '', d.engine?.backend === 'factice' ? 'factice' : ''].filter(Boolean).join(' · '))),
     el('span', { class: 'sp' }),
-    d.state === 'done' ? el('div', { class: 'seg tr-panes', role: 'tablist', 'aria-label': 'le texte ou le carnet' },
-      ...[['texte', 'Texte'], ['carnet', nNotes ? `Carnet · ${nNotes}` : 'Carnet']].map(([v, lab]) => el('button', {
-        class: 'tb' + (S.pane === v ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': String(S.pane === v), onclick: () => setPane(v) }, lab))) : null,
-    S.pane === 'texte' && tl ? el('div', { class: 'seg' }, ...views.map(([v, lab]) => el('button', { class: 'tb' + (S.view === v ? ' on' : ''), type: 'button', onclick: () => setView(v) }, lab))) : null,
+    tl ? el('div', { class: 'seg' }, ...views.map(([v, lab]) => el('button', { class: 'tb' + (S.view === v ? ' on' : ''), type: 'button', onclick: () => setView(v) }, lab))) : null,
     trBtn,
     d.state === 'done' ? el('button', { class: 'tb ghost sm', type: 'button', onclick: () => copyText() }, 'Copier le texte') : null,
     d.state === 'done' ? el('button', { class: 'tb ghost sm', type: 'button', 'aria-haspopup': 'menu', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); menu(r.left, r.bottom + 4, exportItems(), { focusFirst: e.detail === 0 }); } }, 'Exporter') : null);
 }
-function setPane(v) { S.pane = v; paintBar(); paintFrise(false); paintLines(); paintCarnet(); }
+// le carnet montré (le panneau de droite, ou sous le texte quand ils s'empilent) ; `ask` : la question prend la main
+function showCarnet(ask = true) {
+  const box = $('#carnet');
+  if (!box || $('#splitbox').hidden) return;
+  box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  if (ask) box.querySelector('.cn-ask input')?.focus({ preventScroll: true });
+}
 function setView(v) { S.view = v; prefs.set('transcrire.view', v); paintBar(); paintLines(); paintCap(segAt(V.L?.t || 0)); }
 async function translate(to, all = false) {
   try { const r = await api(`transcrire/docs/${S.doc.id}/translate`, { method: 'POST', body: { to, all } }); openDoc(r.doc, { keepMedia: true }); toast(`traduction en ${L(to).toLowerCase()} en file`); }
@@ -408,7 +428,16 @@ function exportItems() {
     { label: 'Mots horodatés JSON', icon: '↓', sub: d.mode === 'complet' && which === 'src' ? 'temps du moteur' : 'temps au prorata', onclick: () => download('json', which) }];
   return [{ head: 'compte rendu' }, { label: 'Compte rendu Markdown', icon: '↓', sub: 'carnet + transcription', onclick: () => download('md', 'src') }, '-',
     ...block('src', `original · ${src}`), ...trs.flatMap((k) => ['-', ...block(k, `traduction · ${L(k).toLowerCase()}`)]), '-',
-    { label: 'Ranger les sous-titres dans Asset', icon: '▦', disabled: !S.cfg.asset, why: S.cfg.asset_why, onclick: toAsset }];
+    { label: 'Ranger les sous-titres dans Asset', icon: '▦', disabled: !S.cfg.asset, why: S.cfg.asset_why, onclick: toAsset },
+    montageItem(d)];
+}
+// le média de la transcription dans le Montage : montage/?add=<id> le pose au bout de la piste de la
+// séquence ouverte (sinon une séquence à ses réglages) et l'inscrit dans le Projet (montage.js, start ;
+// server/tools/montage.py, r_create). Un compte Apps n'a pas le Montage : rien à proposer.
+function montageItem(d) {
+  if (!S.studio || !d?.item) return null;
+  return { label: `Envoyer ${d.kind === 'video' ? 'la vidéo' : 'le son'} au Montage`, icon: '▤',
+    onclick: () => { location.href = href(`montage/?add=${encodeURIComponent(d.item)}`); } };
 }
 async function toAsset() {
   try { const it = await api(`transcrire/docs/${S.doc.id}/asset`, { method: 'POST', body: { format: 'srt', which: S.view === 'tr' && trLang() ? trLang() : 'src' } }); toast(`rangé dans Asset : ${it.title}`); }
@@ -459,7 +488,7 @@ function renameVoice(id, before, after) {
 async function paintFrise(fresh) {
   const box = $('#frise');
   const d = S.doc;
-  if (!d || d.state !== 'done' || !complet(d) || S.pane !== 'texte') { box.hidden = true; return; }
+  if (!d || d.state !== 'done' || !complet(d)) { box.hidden = true; return; }
   box.hidden = false;
   if (!V.F) { V.F = friseVoix({ onSeek: (t) => seek(t, false), cle: 'transcrire' }); box.replaceChildren(V.F.el); }
   if (fresh || V.probas?.id !== d.id) {
@@ -480,8 +509,9 @@ async function paintFrise(fresh) {
 function paintLines() {
   const box = $('#lines');
   const d = S.doc;
-  if (!d || S.pane !== 'texte') { box.replaceChildren(); box.hidden = !!d; return; }
-  box.hidden = false;
+  $('#splitbox').hidden = !d;
+  paintLinesHead();
+  if (!d) { box.replaceChildren(); return; }
   if (d.state !== 'done') {
     const lv = d.live || {};
     const p = lv.progress;
@@ -517,6 +547,14 @@ function paintLines() {
     }));
   box.scrollTop = scroll;
   V.wrow = null; V.wk = -2;
+}
+// l'en-tête de la colonne du texte : ce qu'elle tient, et ses gestes
+function paintLinesHead() {
+  const d = S.doc;
+  const n = d?.state === 'done' ? d.segments.length : 0;
+  const about = d?.state === 'done' ? 'clic : y aller · double-clic ou Entrée : corriger · ↑ ↓ : réplique précédente, suivante' : 'le texte arrive ici, horodaté';
+  put($('#lines-h'), el('div', { class: 'cn-about' }, el('b', {}, 'La transcription'), el('span', { title: about }, about)),
+    n ? el('span', { class: 'cn-st' }, plural(n, 'réplique')) : null);
 }
 // le serveur dit quelles répliques ont changé depuis leur traduction (stale_ids)
 function isStale(s, tl) { return !!(tl && s.tr?.[tl] && S.doc?.stale_ids?.[tl]?.includes(s.id)); }
@@ -577,8 +615,28 @@ function setField(id, f, before, after, record) {
   if (record) U.record({ label: `corriger la réplique ${clock(segById(id)?.a)}`, undo: () => apply(before), redo: () => apply(after) });
 }
 
-// ── le carnet (à la NotebookLM) ─────────────────────────────
-const refChips = (refs) => (refs || []).filter(segById).map((id) => el('button', { class: 'ref', type: 'button', title: 'aller à cette réplique', onclick: () => seekSeg(id) }, clock(segById(id).a)));
+// ── le carnet (à la NotebookLM) : la colonne de droite ─────
+// Une réplique citée : un bouton à son temps (un saut), ses mots en survol.
+const said = (s) => { const t = String(s.text || ''); return t.length > 140 ? t.slice(0, 139) + '…' : t; };
+const refChips = (refs) => (refs || []).map(segById).filter(Boolean).map((s) => el('button', { class: 'ref', type: 'button',
+  title: `aller à ${clock(s.a)} · « ${said(s)} »`, onclick: () => seekSeg(s.id) }, clock(s.a)));
+// Les répliques qui fondent une réponse, telles quelles : leur temps, leur voix, leurs mots. La citation est
+// juste par construction : le modèle ne choisit que des numéros de répliques (le schéma les borne), le texte
+// et le temps viennent du document.
+const QUOTES = 4;
+function quotes(refs) {
+  const ss = (refs || []).map(segById).filter(Boolean);
+  if (!ss.length) return null;
+  return el('div', { class: 'cn-quotes' }, ...ss.slice(0, QUOTES).map((s) => el('button', { class: 'cn-quote', type: 'button',
+    title: 'aller à cette réplique', onclick: () => seekSeg(s.id) },
+  el('span', { class: 'ref' }, clock(s.a)),
+  s.spk ? el('span', { class: 'who', style: { '--c': teinte(voiceIndex(s.spk)) } }, voiceName(s.spk)) : null,
+  el('span', { class: 'q' }, `« ${said(s)} »`))),
+  ss.length > QUOTES ? el('div', { class: 'cn-refs' }, ...refChips(ss.slice(QUOTES).map((s) => s.id))) : null);
+}
+// ce sur quoi repose une réponse (server/tools/transcrire.py, QA_BASIS) ; une réponse d'avant le 05/10 n'a que « found »
+const BASIS = { said: ['dit dans le texte', ''], inferred: ['déduit du texte', ' inf'], not_said: ['le texte ne le dit pas', ' nf'] };
+const basisOf = (q) => (BASIS[q.basis] ? q.basis : q.found === false ? 'not_said' : 'said');
 function noteState(n) {
   if (!n) return null;
   if (ACTIVE.includes(n.state)) return el('span', { class: 'cn-st run' }, n.live?.message || (n.state === 'queued' ? 'en file' : 'en cours'));
@@ -597,19 +655,23 @@ async function ask(q) {
 async function forget(qid) {
   try { openDoc(await api(`transcrire/docs/${S.doc.id}/qa/${qid}/delete`, { method: 'POST' }), { keepMedia: true }); } catch (e) { toast(e.message, 7000); }
 }
+// Le carnet se montre dès qu'une transcription est ouverte, à côté du texte : tant que le texte n'est pas
+// fini, ses cartes disent ce qu'elles feront et attendent (Cal, 05/10 : « les gens ne voient pas le carnet »).
 function paintCarnet() {
   const box = $('#carnet');
   const d = S.doc;
-  if (!d || d.state !== 'done' || S.pane !== 'carnet') { box.hidden = true; box.replaceChildren(); return; }
-  box.hidden = false;
+  if (!d) { box.replaceChildren(); return; }
   const C = S.cfg.carnet || {};
-  const off = C.off || (!d.segments.length ? 'aucune parole dans ce texte : rien à résumer' : '');
+  const ready = d.state === 'done';
+  const off = C.off || (ready && !d.segments.length ? 'aucune parole dans ce texte : rien à résumer' : '');
+  const wait = !ready ? (d.state === 'error' ? 'La transcription a échoué : pas de carnet.' : 'Le carnet s’écrit à partir du texte : il attend la fin de la transcription.') : '';
+  const block = off || wait;
   const nt = d.notes || {};
   const card = (k, body, empty) => {
     const n = nt[k], run = ACTIVE.includes(n?.state);
     return el('section', { class: 'cn-card', 'data-k': k },
       el('div', { class: 'cn-card-h' }, el('span', { class: 'lbl' }, C.kinds?.find((x) => x.id === k)?.label || k), noteState(n), el('span', { class: 'sp' }),
-        el('button', { class: 'tb ghost sm', type: 'button', disabled: run || !!off || null, title: off || (run ? 'en cours' : null), onclick: () => notes([k]) },
+        el('button', { class: 'tb ghost sm', type: 'button', disabled: run || !!block || null, title: block || (run ? 'en cours' : null), onclick: () => notes([k]) },
           n?.state === 'done' || n?.state === 'error' ? 'Refaire' : 'Écrire')),
       n?.state === 'done' ? body(n.data || {}) : el('p', { class: 'hint' }, run ? '…' : empty));
   };
@@ -619,37 +681,43 @@ function paintCarnet() {
   const anyRun = all.some((k) => ACTIVE.includes(nt[k]?.state));
   // la question en cours de frappe survit à un nouveau dessin (une réponse qui arrive)
   const was = box.querySelector('.cn-ask input');
-  const inp = el('input', { class: 'fld', type: 'text', maxlength: String(C.q_max || 500), placeholder: 'Une question sur ce qui a été dit…', 'aria-label': 'une question sur le texte', value: was?.value || null });
+  const inp = el('input', { class: 'fld', type: 'text', maxlength: String(C.q_max || 500), placeholder: 'Une question sur ce qui a été dit…', 'aria-label': 'une question sur le texte',
+    value: was?.value || null, disabled: !!block || null, title: block || null });
   if (was && document.activeElement === was) requestAnimationFrame(() => { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); });
   const send = async () => { const q = inp.value.trim(); if (!q) return; inp.disabled = true; if (await ask(q)) inp.value = ''; inp.disabled = false; };
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+  const scroll = box.scrollTop;
+  const about = `résumé, questions, points clés, chapitres : tirés du seul texte, chaque élément renvoie à ses répliques · ${stub() ? 'factice, sans modèle' : `${C.name}, en local`}`;
   put(box,
     el('div', { class: 'cn-head' },
-      el('div', { class: 'cn-about' }, el('b', {}, 'Le carnet'),
-        el('span', {}, 'tiré du seul texte, chaque élément renvoie à ses répliques · ', stub() ? 'moteur factice (des extraits, sans modèle)' : `${C.name}, en local`)),
-      el('span', { class: 'sp' }),
-      el('button', { class: 'tb ghost sm', type: 'button', disabled: anyRun || !!off || null, title: off || null,
+      el('div', { class: 'cn-about' }, el('b', {}, 'Le carnet'), el('span', { title: about },
+        about)),
+      el('button', { class: 'tb ghost sm', type: 'button', disabled: anyRun || !!block || null, title: block || null,
         onclick: () => notes(all) }, all.every((k) => nt[k]?.state === 'done') ? 'Tout refaire' : 'Tout préparer')),
-    off ? el('div', { class: 'reason' }, off) : null,
+    off ? el('div', { class: 'reason' }, off) : wait ? el('p', { class: 'hint cn-wait' }, wait) : null,
     el('div', { class: 'cn-grid' },
       card('resume', (x) => el('div', { class: 'cn-body' }, el('p', { class: 'cn-p' }, ...avecNoms(x.text)), el('div', { class: 'cn-refs' }, ...refChips(x.refs))),
         'L’essentiel en quelques phrases : « Écrire ».'),
-      card('chapitres', (x) => (x.chapitres || []).length ? el('ol', { class: 'cn-chap' }, ...x.chapitres.map((c) => el('li', {},
-        el('button', { class: 'ref', type: 'button', onclick: () => seek(c.a, true) }, clock(c.a)),
-        el('div', {}, el('b', {}, ...avecNoms(c.title)), el('span', {}, ...avecNoms(c.text)))))) : el('p', { class: 'hint' }, 'Aucun chapitre.'),
-        'Les parties du texte, chacune à son instant.'),
+      el('section', { class: 'cn-card cn-qa', 'data-k': 'qa' },
+        el('div', { class: 'cn-card-h' }, el('span', { class: 'lbl' }, 'Questions'), el('span', { class: 'cn-st' }, 'la réponse ne vient que du texte'), el('span', { class: 'sp' })),
+        el('div', { class: 'cn-ask' }, inp, el('button', { class: 'tb ghost sm', type: 'button', disabled: !!block || null, title: block || null, onclick: send }, 'Demander')),
+        (d.qa || []).length ? el('div', { class: 'cn-qas' }, ...[...d.qa].reverse().map((q) => {
+          const b = q.state === 'done' ? basisOf(q) : null;
+          return el('div', { class: 'cn-q' + (b ? BASIS[b][1] : '') },
+            el('div', { class: 'cn-qq' }, el('b', {}, q.q), noteState(q), el('span', { class: 'sp' }),
+              el('button', { class: 'x', type: 'button', title: 'retirer la question', onclick: () => forget(q.id) }, '×')),
+            b ? el('div', { class: 'cn-qa-a' }, el('span', { class: 'cn-basis' }, BASIS[b][0]), el('p', { class: 'cn-p' }, ...avecNoms(q.text)), quotes(q.refs)) : null);
+        }))
+          : el('p', { class: 'hint' }, 'Demandez ce qui a été dit, décidé, par qui : la réponse parle des voix à la troisième personne, cite ses répliques, ou dit que le texte n’en parle pas.')),
       card('points', (x) => el('div', { class: 'cn-body' },
         ...[['points', 'Points clés'], ['decisions', 'Décisions'], ['actions', 'Actions']].map(([k, lab]) => el('div', { class: 'cn-sub' },
           el('span', { class: 'lbl' }, lab), (x[k] || []).length ? list(x[k], k === 'actions') : el('p', { class: 'hint' }, k === 'points' ? 'Aucun.' : 'Aucune dite dans le texte.')))),
         'Points clés, décisions, actions — pour une réunion.'),
-      el('section', { class: 'cn-card cn-qa', 'data-k': 'qa' },
-        el('div', { class: 'cn-card-h' }, el('span', { class: 'lbl' }, 'Questions'), el('span', { class: 'cn-st' }, 'la réponse ne vient que du texte'), el('span', { class: 'sp' })),
-        el('div', { class: 'cn-ask' }, inp, el('button', { class: 'tb ghost sm', type: 'button', disabled: !!off || null, title: off || null, onclick: send }, 'Demander')),
-        (d.qa || []).length ? el('div', { class: 'cn-qas' }, ...[...d.qa].reverse().map((q) => el('div', { class: 'cn-q' + (q.state === 'done' && !q.found ? ' nf' : '') },
-          el('div', { class: 'cn-qq' }, el('b', {}, q.q), noteState(q), el('span', { class: 'sp' }),
-            el('button', { class: 'x', type: 'button', title: 'retirer la question', onclick: () => forget(q.id) }, '×')),
-          q.state === 'done' ? el('div', { class: 'cn-qa-a' }, el('p', { class: 'cn-p' }, ...avecNoms(q.text)), el('div', { class: 'cn-refs' }, ...refChips(q.refs))) : null)))
-          : el('p', { class: 'hint' }, 'Demandez ce qui a été dit, décidé, par qui : la réponse cite ses répliques, ou dit que le texte n’en parle pas.'))));
+      card('chapitres', (x) => (x.chapitres || []).length ? el('ol', { class: 'cn-chap' }, ...x.chapitres.map((c) => el('li', {},
+        el('button', { class: 'ref', type: 'button', onclick: () => seek(c.a, true) }, clock(c.a)),
+        el('div', {}, el('b', {}, ...avecNoms(c.title)), el('span', {}, ...avecNoms(c.text)))))) : el('p', { class: 'hint' }, 'Aucun chapitre.'),
+        'Les parties du texte, chacune à son instant.')));
+  box.scrollTop = scroll;
 }
 const CARNET_KINDS = () => Object.fromEntries((S.cfg.carnet?.kinds || []).map((k) => [k.id, k]));
 
@@ -740,8 +808,10 @@ function linesMenu(e) {
   }
   const d = e.target.closest('#side .drow');
   if (d) {
+    const x = S.docs.find((y) => y.id === d.dataset.id);
     return [{ head: 'une transcription' }, { label: 'Ouvrir', icon: '⤢', onclick: () => openById(d.dataset.id) },
-      { label: 'Ouvrir le média dans la bibliothèque', icon: '▦', onclick: () => { const x = S.docs.find((y) => y.id === d.dataset.id); if (x) location.href = href('asset/#' + x.item); } },
+      { label: 'Ouvrir le média dans la bibliothèque', icon: '▦', onclick: () => { if (x) location.href = href('asset/#' + x.item); } },
+      montageItem(x),
       '-', { label: 'Mettre à la corbeille…', icon: '×', onclick: () => removeDoc(d.dataset.id) }];
   }
   return null;
@@ -755,7 +825,7 @@ pageMenu(() => {
     { label: 'Choisir dans la bibliothèque…', icon: '+', onclick: choose },
     { label: 'Depuis le disque…', icon: '↑', onclick: () => fileIn.click() },
     done ? '-' : null,
-    done ? { label: S.pane === 'carnet' ? 'Le texte' : 'Le carnet', icon: '☰', onclick: () => setPane(S.pane === 'carnet' ? 'texte' : 'carnet') } : null,
+    done ? { label: 'Une question au carnet', icon: '☰', onclick: () => showCarnet(true) } : null,
     done ? { label: 'Copier le texte', icon: '⧉', onclick: () => copyText() } : null,
     ...(done ? [{ label: 'Exporter', icon: '↓', items: exportItems() }] : [])];
 });
@@ -785,7 +855,9 @@ async function start() {
   const q = new URLSearchParams(location.search);
   const want = q.get('src') || d.item;
   if (want) { try { const it = await api('library/' + want); if (['audio', 'video'].includes(it.kind)) S.item = it; } catch { /* parti */ } }
-  if (q.get('vue') === 'carnet') S.pane = 'carnet';
+  S.wantCarnet = q.get('vue') === 'carnet';
+  // le Montage est un outil du Studio : un compte Apps ne s'y voit pas proposer d'envoi (commun/shell.js, studioOff)
+  session().then((me) => { S.studio = !!me && !(me.user && me.user.access === 'apps' && me.user.role !== 'invite'); });
   paintIn(); paintMode(); paintLang(); paintAdv(); paintAct(); paintPlayer();
   loadDocs();
   const h = location.hash.slice(1);
