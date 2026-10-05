@@ -8,7 +8,14 @@
    ============================================================ */
 
 /* ── en-tête : la navigation entre outils ──────────────── */
-.hdr .tools { display: flex; gap: 2px; flex-wrap: wrap; }
+/* La barre est la même sur toutes les pages : sa hauteur est la sienne (une page qui lui retire du
+   padding — le Montage, Idéation — ne la tasse plus : les éléments restent centrés sur la même ligne),
+   et sa navigation n'a pas d'autre boîte que celle-ci (.tools est aussi la barre d'outils du Montage :
+   sa feuille ne l'habille plus). */
+:root { --sr-hdr-h: 52px; }   /* 13 + 26 (un .tb.sm) + 13 ; au téléphone, 10 + 26 + 10 */
+@media (max-width: 700px) { :root { --sr-hdr-h: 46px; } }
+body > .hdr { min-height: var(--sr-hdr-h); }
+.hdr .tools { display: flex; gap: 2px; flex-wrap: wrap; padding: 0; margin: 0; border-radius: 0; box-shadow: none; }
 .hdr .tools a {
   font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .18em; text-transform: uppercase;
   color: var(--ink3); text-decoration: none; padding: 6px 8px; border-radius: var(--r1);
@@ -19,9 +26,22 @@
 .hdr .tools .sep { flex: none; width: 1px; align-self: stretch; margin: 5px 6px; background: var(--line); }
 .hdr .tools-menu .grp { padding: 9px 10px 3px; font-family: var(--f-mono); font-size: 8px; letter-spacing: .22em; text-transform: uppercase; color: var(--ink3); }
 .hdr .tools-menu .grp:not(:first-child) { margin-top: 4px; box-shadow: inset 0 1px 0 var(--line); }
-.hdr .tool-name { display: flex; align-items: baseline; gap: 10px; }
 .hdr .tool-name .k { font-family: var(--f-mono); font-size: 9px; letter-spacing: .2em; color: var(--or); }
-.hdr .tool-name b { font-family: var(--f-disp); font-size: 15px; font-weight: 400; letter-spacing: .06em; text-transform: uppercase; }
+/* le nom de l'outil : une case de largeur FIXE, la même sur toutes les pages (Cal, 05/10 : « quand je
+   passe d'Image à Transcrire, tout le menu se décale vers la droite »). mountHeader y pose TOUS les noms
+   (TOOLS, PAGES), l'un sur l'autre dans une grille d'une case, et seul celui de la page se voit : la case
+   a la largeur du plus long, dans sa police — mesurée par le navigateur, pas devinée — et la navigation,
+   après le séparateur fixe, commence au même x partout (l'accueil compris : la case y reste vide).
+   Faute de place, la case se resserre (de même sur toutes les pages : rien d'autre dans la barre ne
+   change de l'une à l'autre) et un nom trop long se coupe d'une ellipse, entier au survol (title). */
+.hdr .tool-name {
+  display: grid; grid-template-columns: minmax(0, max-content); align-items: center;
+  font-family: var(--f-disp); font-size: 15px; letter-spacing: .06em; text-transform: uppercase;
+}
+.hdr .tool-name b { grid-area: 1 / 1; min-width: 0; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; visibility: hidden; }
+.hdr .tool-name b.cur { visibility: visible; }
+/* le séparateur fixe : un filet, la hauteur d'un bouton */
+.hdr .tool-sep { flex: none; width: 1px; height: 26px; box-shadow: inset 1px 0 0 var(--line); }
 @media (max-width: 1100px) { .hdr .tools { display: none; } }
 /* sous 1100 px, la navigation passe dans le menu « Outils » (jamais cachée) */
 .hdr .tools-btn { display: none; }
@@ -52,7 +72,7 @@
 /* le nom : le compte ; son menu (commun/porte.js, account ; les lignes : .sr-ml plus bas) */
 .hdr .sr-me { position: relative; gap: 6px; max-width: 200px; }
 .hdr .sr-me[hidden] { display: none; }
-.hdr .sr-me .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hdr .sr-me .sr-nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* ce qui attend dans le menu : un calcul en file (acier), une demande pour Cal (ambre) */
 .hdr .sr-me .dq, .hdr .sr-me .da { flex: none; width: 6px; height: 6px; border-radius: 50%; }
 .hdr .sr-me .dq { background: var(--cy); }
@@ -77,10 +97,10 @@
   font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .18em; text-transform: uppercase; white-space: nowrap;
 }
 .hdr .sr-ws-btn:hover, .hdr .sr-ws-btn[aria-expanded="true"] { color: var(--ink2); box-shadow: inset 0 0 0 1px var(--line); }
-.hdr .sr-ws-btn .tm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.hdr .sr-ws-btn .sl { flex: none; opacity: .6; }
-.hdr .sr-ws-btn .ws { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink2); }
-.hdr .sr-ws-btn:hover .ws, .hdr .sr-ws-btn[aria-expanded="true"] .ws { color: var(--ink); }
+.hdr .sr-ws-btn .sr-tm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.hdr .sr-ws-btn .sr-sl { flex: none; opacity: .6; }
+.hdr .sr-ws-btn .sr-wsn { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink2); }
+.hdr .sr-ws-btn:hover .sr-wsn, .hdr .sr-ws-btn[aria-expanded="true"] .sr-wsn { color: var(--ink); }
 /* (sr-cv, pas « cv » : c'est la planche d'Idéation, ideation.css) */
 .hdr .sr-ws-btn .sr-cv { flex: none; display: inline-flex; width: 10px; height: 10px; }
 .hdr .sr-ws-btn .sr-cv svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
@@ -89,7 +109,7 @@
 .hdr .sr-ws .doc[hidden] { display: none; }
 /* étroit : le Workspace seul (la Team est dans le menu et la bulle) ; au téléphone, il passe au menu du nom */
 @media (max-width: 1320px) { .hdr .sr-ws .doc { display: none; } }
-@media (max-width: 1100px) { .hdr .sr-ws-btn .tm, .hdr .sr-ws-btn .sl { display: none; } .hdr .sr-ws-btn { max-width: 160px; } }
+@media (max-width: 1100px) { .hdr .sr-ws-btn .sr-tm, .hdr .sr-ws-btn .sr-sl { display: none; } .hdr .sr-ws-btn { max-width: 160px; } }
 
 /* ── les lignes du menu du nom (commun/shell.js, lignesDuNom ; le menu : commun/porte.js, account) ── */
 .sr-ml { display: flex; flex-direction: column; gap: 1px; margin: 0 calc(-1 * var(--s2)); padding: 4px 0; box-shadow: inset 0 1px 0 var(--line), inset 0 -1px 0 var(--line); }
@@ -358,11 +378,15 @@ a.statcard, a.tile, a.thumb, .sect-head a { text-decoration: none; }
    ligne (l'en-tête reste une ligne, à toute largeur au-dessus du téléphone) */
 @media (min-width: 1101px) {
   .hdr { flex-wrap: nowrap; }
-  .hdr .tools { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  /* la navigation ne se resserre pas : faute de place, la case du nom cède d'abord, jusqu'à 10,5 em
+     (les noms courts y tiennent entiers : Transcrire, 9,9 em) ; ensuite la barre déborderait, et
+     shell.js (mountHeader, fit) passe la navigation dans le menu « Outils » */
+  .hdr .tools { flex: 1 0 auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .hdr .tools::-webkit-scrollbar { display: none; }
   .hdr .tools a { white-space: nowrap; flex: none; }
   .hdr .sp { flex: 0 0 var(--s3); min-width: var(--s3); }
-  .hdr > .logo, .hdr > .tool-name, .hdr > .tb { flex: none; }
+  .hdr > .logo, .hdr > .tb { flex: none; }
+  .hdr > .tool-name { flex: 0 1 auto; min-width: 10.5em; }
   /* les noms n'y tiennent pas entiers (mesuré par shell.js, mountHeader) : le menu « Outils » */
   .hdr.squeeze .tools { display: none; }
   .hdr.squeeze .tools-btn { display: inline-flex; }
@@ -373,7 +397,6 @@ a.statcard, a.tile, a.thumb, .sect-head a { text-decoration: none; }
   .hdr { flex-wrap: nowrap; gap: var(--s3); }
   .hdr > .logo, .hdr > .tb { flex: none; }
   .hdr .tool-name { flex: 0 1 auto; min-width: 0; }
-  .hdr .tool-name b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hdr .sp { min-width: 0; }
 }
 /* le téléphone : le carré du logotype, le nom de l'outil (coupé s'il le faut), « Outils », puis la
@@ -382,9 +405,9 @@ a.statcard, a.tile, a.thumb, .sect-head a { text-decoration: none; }
 @media (max-width: 700px) {
   .hdr { gap: var(--s2); padding: 10px 12px; }
   .hdr .logo > span:not(.sq) { display: none; }
-  .hdr .tool-name b { font-size: 13px; }
+  .hdr .tool-name { font-size: 13px; }
   .hdr .tools-menu { left: 12px; }
-  .hdr .sr-droite { gap: 4px; flex: 0 1 auto; }
+  .hdr .sr-droite { gap: 4px; flex: none; }   /* rigide : la case du nom cède la place d'abord (le nom se coupe, entier au survol) */
   .hdr .sr-asset-btn { width: 30px; min-width: 30px; padding: 0; }
   .hdr .sr-asset-btn span { display: none; }
   .hdr .sr-full, .hdr .sr-ws { display: none; }
