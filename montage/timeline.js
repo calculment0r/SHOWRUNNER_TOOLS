@@ -26,10 +26,12 @@ import { el, href, ITEM_MIME } from '../commun/shell.js';
 import { brancher, borne, tenirY } from '../commun/molette.js';   // molette commune
 import { tete, poser, suivre, peindreRegle, brancherRegle } from '../commun/tete.js';   // LA tête et LA règle (30/09 : extraites d'ici, communes)
 import * as M from './model.js';
-import { pics, dessiner } from '../commun/onde.js';   // l'onde dessinée à la résolution de l'écran (01/10)
+import { source as sourceOnde, dessiner, vueSon, boutonVue } from '../commun/onde.js';   // l'onde précise, à tout zoom (06/10)
 
 export const HEAD = 124;           // la tête de piste, collée à gauche (même largeur que .tl-hd)
-const MIN_PPS = 0.5, MAX_PPS = 800;
+// le zoom le plus fort (06/10) : 2 px par échantillon à 48 kHz, une image (25 i/s) sur 3840 px — l'onde
+// montre ses échantillons ; borné par la largeur que le navigateur sait poser (LARGEUR_MAX, commun/lecteur.js)
+const MIN_PPS = 0.5, MAX_PPS = 96000, LARGEUR_MAX = 1.6e7;
 const SNAP_PX = 8;
 // un clic dans la timeline rend le clavier aux raccourcis (un curseur de
 // l'inspecteur garderait sinon espace et les flèches)
@@ -52,7 +54,9 @@ export class Timeline {
     this.ticks = el('div', { class: 'tl-ticks' });
     this.mlayer = el('div', { class: 'tl-mlayer' });
     this.marks = el('div', { class: 'tl-marks' }, this.ticks, this.mlayer);
-    this.ruler = el('div', { class: 'tl-ruler' }, el('div', { class: 'tl-hd' }, el('span', { class: 'lbl' }, 'pistes')), this.marks);
+    // l'en-tête de la règle : « pistes », et la vue du son (onde, spectre, les deux : commun/onde.js)
+    this.ruler = el('div', { class: 'tl-ruler' }, el('div', { class: 'tl-hd' }, el('span', { class: 'lbl' }, 'pistes'),
+      boutonVue({ cls: 'tb ghost sm tl-vue' })), this.marks);
     this.lanes = el('div', { class: 'tl-lanes' });
     this.ph = tete();                // commun/tete.js : le trait et l'onglet (au-dessus de la règle, sous les en-têtes)
     this.snapLine = el('div', { class: 'tl-snap', hidden: true });
@@ -114,7 +118,8 @@ export class Timeline {
   }
 
   // les ondes des plans son : chaque canvas couvre la partie VISIBLE de son plan et y dessine
-  // le son à la résolution de l'écran (commun/onde.js) — nette à tout zoom (Cal, 01/10)
+  // le son à la résolution de l'écran (commun/onde.js) — juste à tout zoom, jusqu'aux échantillons
+  // (Cal, 01/10, 06/10) ; la vue (onde, spectre, les deux) est celle du bouton de la règle
   paintWaves() {
     cancelAnimationFrame(this.waveF);
     this.waveF = requestAnimationFrame(() => {
@@ -131,7 +136,7 @@ export class Timeline {
         cv.style.width = `${b - a}px`;
         const sp = Number(cv.dataset.sp) || 1, t_in = Number(cv.dataset.in) || 0;
         const t0 = t_in + (a - br.left) * sp / this.pps, t1 = t_in + (b - br.left) * sp / this.pps;
-        pics(cv.dataset.item).then((P) => { if (cv.isConnected) dessiner(cv, P, { t0, t1 }); }).catch(() => {});
+        dessiner(cv, sourceOnde(cv.dataset.item), { t0, t1, vue: vueSon() });
       }
     });
   }
@@ -201,9 +206,11 @@ export class Timeline {
       if (c.kind === 'video') body.style.backgroundPositionX = `${-((c.in || 0) / M.spd(c) * this.pps)}px`;
     }
     const hasSound = t.kind === 'audio' || (c.kind === 'video' && c.audio);
-    if (t.kind === 'audio' && it && (it.kind === 'audio' || it.audio)) {
-      // l'onde : un canvas dessiné pour la seule partie visible du plan (paintWaves), plus une image étirée
-      const wave = el('canvas', { class: 'wave', 'data-item': it.id, 'data-in': String(c.in || 0), 'data-sp': String(M.spd(c)) });
+    // l'onde : un canvas dessiné pour la seule partie visible du plan (paintWaves), plus une image étirée ;
+    // celle d'un plan son, et celle d'un plan vidéo qui porte son son, dans le bas du plan (06/10)
+    const sonVideo = t.kind === 'video' && c.kind === 'video' && c.audio && it && it.audio;
+    if ((t.kind === 'audio' && it && (it.kind === 'audio' || it.audio)) || sonVideo) {
+      const wave = el('canvas', { class: sonVideo ? 'wave vid' : 'wave', 'data-item': it.id, 'data-in': String(c.in || 0), 'data-sp': String(M.spd(c)) });
       body.append(wave);
     }
     this.fadeMarks(body, w, t.kind === 'audio');
@@ -318,13 +325,19 @@ export class Timeline {
     const r = this.scroll.getBoundingClientRect();
     const ax = anchorClientX ?? (r.left + HEAD + this.fx(this.app.playhead()) - this.scroll.scrollLeft);
     const f = this.frameAt(ax, true);
-    this.pps = Math.max(MIN_PPS, Math.min(MAX_PPS, pps));
+    this.pps = Math.max(MIN_PPS, Math.min(this.maxPps(), pps));
     this.render();
     this.scroll.scrollLeft = Math.max(0, this.fx(f) - (ax - r.left - HEAD));
     this.paintRuler();
     this.app.zoomed(this.pps);
   }
   zoom(factor, anchorClientX) { this.setPps(this.pps * factor, anchorClientX); }
+  // le zoom le plus fort que la séquence permet : la timeline (sa fin + 20 s) tient dans LARGEUR_MAX
+  maxPps() {
+    const p = this.p;
+    const fin = p ? Math.max(M.projectEnd(p), this.app.playhead()) / this.fps + 20 : 20;
+    return Math.min(MAX_PPS, LARGEUR_MAX / fin);
+  }
   // molette commune — Ctrl + molette : une piste (id) ou toutes (null), bornée 28–240 px (assez pour l'en-tête) ;
   // toutes : ce qui est sous le pointeur y reste. Point de départ : la hauteur dessinée (montage.css)
   scaleHeights(factor, id, clientY) {
@@ -353,6 +366,7 @@ export class Timeline {
   bind() {
     // le thème change (la couleur de l'onde est un jeton), la fenêtre change de taille : on redessine
     document.addEventListener('sr:theme', () => this.paintWaves());
+    document.addEventListener('sr:vue-son', () => this.paintWaves());
     new ResizeObserver(() => this.paintWaves()).observe(this.scroll);
     this.scroll.addEventListener('scroll', () => {
       this.paintWaves();

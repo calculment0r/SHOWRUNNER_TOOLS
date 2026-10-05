@@ -552,6 +552,10 @@ body.mtg-page .hdr { flex: none; }   /* la barre commune, telle quelle : sa haut
   position: absolute; left: 0; top: 14px; height: calc(100% - 16px); width: 0; pointer-events: none; opacity: .9;
   color: var(--grn2);
 }
+/* le son d'un plan vidéo (06/10) : dans le bas du plan, sur un voile (les vignettes restent au-dessus) */
+.clip .wave.vid { top: auto; bottom: 0; height: 45%; opacity: 1; background: var(--veil); }
+/* la vue du son (commun/onde.js, 06/10) : un petit bouton dans l'en-tête de la règle */
+.tl-ruler .tl-vue { margin-left: auto; height: 18px; min-width: 0; padding: 0 6px; font-size: 9px; }
 /* les fondus : la courbe (le gain du son, ou la ligne droite de l'image) et la part assombrie au-dessus */
 .clip .fade { position: absolute; top: 0; bottom: 0; pointer-events: none; z-index: 1; }
 .clip .fade.l { left: 0; }

@@ -80,11 +80,14 @@
   box-shadow: inset 0 0 0 1px var(--line-cy);
 }
 .sr-lect-piste.sr-lect-audio { background: var(--grn-bg); border-radius: var(--r2); box-shadow: inset 0 0 0 1px var(--line-gr); }
-.sr-lect-onde {
-  position: absolute; inset: 6px 0; background: var(--grn2); pointer-events: none;
-  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-position: 0 0; mask-position: 0 0;
-}
-.sr-lect-onde.fond { opacity: .38; }
+/* le son d'une vidéo (`onde: true`) : sa propre hauteur, posée par la page (--sr-lect-son-h) */
+.sr-lect-piste.sr-lect-son { height: var(--sr-lect-son-h, 72px); }
+/* l'onde (commun/onde.js) : un cadre sur la seule partie visible (le lecteur pose left et width), en
+   retrait de 6 px en haut et en bas — il remplit la bande à toute hauteur ; ses deux canvas le remplissent.
+   La couleur est un jeton, lue par le dessin ; le fond est plus pâle (le dessin le fait : le spectre reste plein) */
+.sr-lect-onde { position: absolute; inset: 6px 0; width: 0; color: var(--grn2); pointer-events: none; }
+.sr-lect-onde-cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.sr-vue-son { min-width: 64px; }
 
 /* en plein écran : l'image prend tout, la barre et la frise dessous */
 .sr-lect.plein { border-radius: 0; background: var(--black); }

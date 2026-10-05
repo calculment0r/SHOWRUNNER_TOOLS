@@ -94,6 +94,15 @@
   --verd-4:    #24543b;
   --verd-5:    #1a3f2c;
 
+  /* le spectre d'un son (commun/spectre.js, 06/10) : la rampe du silence (--spec-0) au plus fort
+     (--spec-4), mélangée en 256 teintes ; la luminance monte à chaque pas (0,004 → 0,84), le
+     plus fort tient 16:1 sur le silence, le milieu 3,8:1 (WCAG 1.4.11 : 3:1 pour un graphique) */
+  --spec-0:    #0b0f0d;
+  --spec-1:    #183d2c;
+  --spec-2:    #2f7d54;
+  --spec-3:    #d6a24a;
+  --spec-4:    #f7ead8;
+
   /* encres inversées, posées sur un aplat d'accent */
   --on-or:   #170c08;
   --on-cy:   #0a0d0b;
@@ -243,6 +252,13 @@ html[data-appareil="mobile"] {
   --verd-3:  #2f6b4a;
   --verd-4:  #24543b;
   --verd-5:  #1a3f2c;
+  /* le spectre : la même rampe retournée, du papier à l'encre ; la luminance descend à chaque pas
+     (0,92 → 0,009), le plus fort tient 16,5:1 sur le silence, le milieu 3,6:1 */
+  --spec-0:  #f4f6f3;
+  --spec-1:  #b5d3c0;
+  --spec-2:  #43905f;
+  --spec-3:  #744a0a;
+  --spec-4:  #1b1612;
 
   /* planche de présentation : un papier de studio clair dans les deux
      thèmes (le rendu PNG de la variante claire) — les mêmes */

@@ -315,7 +315,7 @@ function paintPlayer() {
   (it.url ? Promise.resolve(it) : api('library/' + it.id)).then((full) => {
     if (n !== V.n) return;
     V.cap = full.kind === 'video' ? el('div', { class: 'cap', 'aria-live': 'off' }) : null;
-    const Lc = lecteur(full, { clavier: 'page', sur: V.cap, onTemps: tick });
+    const Lc = lecteur(full, { clavier: 'page', sur: V.cap, onTemps: tick, onde: true });   // onde : celle du son d'une vidéo aussi (06/10)
     V.L = Lc;
     V.strip = Lc.piste(el('div', { class: 'tr-strip', title: 'les répliques · clic, glisser : la tête de lecture' }));
     // la colonne des en-têtes, à gauche de la frise (les plis : paintTl)
