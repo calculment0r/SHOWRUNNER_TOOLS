@@ -837,6 +837,88 @@ def birth_space(p: dict, asked: str = "") -> str:
     return asked if asked and asked in spaces_table() else ""
 
 
+# ── ODIO dans les Spaces (06/10, étude § 5 étape 7) ─────────
+# Un projet ODIO porte son Space comme une chanson (`music_space`, tenu par le serveur :
+# music.create_project, music.save_project) : le Space courant de la page à sa création,
+# celui de la chanson quand on l'ouvre depuis elle (api_odio). Ce qu'ODIO génère pour lui
+# (les versions d'une région, des stems, un MIDI extrait ou rangé) naît dans ce Space :
+# la page dit le projet (`project`), jamais le Space — project_space le lit, et le
+# travail le rejuge en rangeant (birth_space : un Space disparu depuis, « Mon Space »).
+def project_space(pid) -> str:
+    """Le Space d'un projet ODIO lisible ici (son `music_space` s'il nomme un Space
+    vivant de son Workspace) ; "" — « Mon Space » — pour un projet sans Space, absent ou
+    invisible : ce qui en naît ne se perd pas, il va chez qui l'a fait naître."""
+    if not isinstance(pid, str) or not music.PID_RX.fullmatch(pid):
+        return ""
+    try:
+        return space_of_item(music._read(pid))
+    except HttpError:
+        return ""
+
+
+def _space_key(doc: dict, table: dict, me: str | None) -> str | None:
+    """Où la personne range ce document : son Space vivant, sinon « Mon Space » s'il est
+    à elle (ou sans porte : Cal) ; None : le « Mon Space » d'un autre, jamais montré (S1)."""
+    m = space_of_item(doc, table)
+    if m:
+        return m
+    return MON if me is None or auth.owner_of(doc) == me else None
+
+
+def _de_musique(it: dict) -> bool:
+    """Un objet né de Musique ou d'ODIO, ou déposé par eux : ce que « Mon Space » range
+    (le reste de la bibliothèque n'y est pas : le panneau Asset et la rubrique Sons le montrent)."""
+    o = it.get("origin") or {}
+    return o.get("tool") in (TOOL, "music") or (o.get("tool") == "upload" and o.get("via") in ("chanson", "odio"))
+
+
+def _projets(table: dict, want: str, me: str | None) -> list[dict]:
+    """Les projets ODIO d'un Space (`want` : « mon », msp-…, « * »), du plus récent au plus
+    ancien, chacun avec son Space (`music_space` : "" pour « Mon Space ») et son auteur."""
+    out = []
+    for p in music.readable_projects():
+        k = _space_key(p, table, me)
+        if k is None or (want != TOUS and k != want):
+            continue
+        who = auth.owner_of(p)
+        out.append({**music._summary(p), "music_space": "" if k == MON else k, "created": p.get("created"),
+                    "owner_name": auth.display_name(who) if who else "", "mine": me is None or who == me,
+                    "open": f"musique/?p={p['id']}"})
+    out.sort(key=lambda s: s.get("updated") or "", reverse=True)
+    return out
+
+
+CONTENT_MAX = 200
+
+
+def api_space_content(req):
+    """GET /api/chanson/spaces/contenu?space=mon|msp-…|*&projet=mus-… — ce que range un
+    Space, pour la rubrique « Space » du navigateur d'ODIO : ses chansons (et les sons
+    importés dans l'app), leurs pistes séparées, les autres sons (versions d'une région,
+    références, rendus), les clips MIDI, les projets ODIO — chacun avec son Space ; 200 au
+    plus par sorte (`totals` : combien en tout). « Mon Space » : ce qui est à soi et né de
+    Musique ou d'ODIO. `projet` : le Space du projet ouvert (`projet_space`), qu'un autre
+    onglet a pu changer. Un Space qui n'est plus là : « Mon Space » (`space` le dit)."""
+    table = spaces_table()
+    want = req.q("space", MON) or MON
+    if want not in (MON, TOUS) and want not in table:
+        want = MON
+    me = auth.current_id()
+    out: dict = {"chansons": [], "stems": [], "sons": [], "midi": []}
+    for it in library.query(kinds=["audio", "midi"], limit=5000)["items"]:
+        k = _space_key(it, table, me)
+        if k is None or (k == MON and not _de_musique(it)) or (want != TOUS and k != want):
+            continue
+        part = ("midi" if it["kind"] == "midi" else "stems" if _is_stem(it)
+                else "chansons" if (it.get("origin") or {}).get("tool") == TOOL else "sons")
+        out[part].append({**it, "music_space": "" if k == MON else k})
+    out["projets"] = _projets(table, want, me)
+    res = {"space": want, "totals": {k: len(v) for k, v in out.items()}, **{k: v[:CONTENT_MAX] for k, v in out.items()}}
+    if req.q("projet"):
+        res["projet_space"] = project_space(req.q("projet")) or MON
+    return res
+
+
 def _song_rows(table: dict) -> tuple[list[dict], list[dict], str | None]:
     """Les sons de l'app dans ce Workspace (pistes comprises), les chansons que la
     personne peut voir ici avec leur Space (`_msp`) : les Spaces partagés (S1), et son
@@ -993,7 +1075,8 @@ def api_move(req):
     pistes séparées de chaque chanson, qui suivent leur chanson ; ou reposer un état
     d'avant (`restore` : {id: Space}, ce que rend `before` — Ctrl+Z). Tout ou rien :
     chaque objet est jugé (library.check_write) avant la première écriture. « Mon
-    Space » est celui de l'auteur de chaque objet (S1 : il est personnel)."""
+    Space » est celui de l'auteur de chaque objet (S1 : il est personnel). Un projet
+    ODIO (mus-…) se range de même (06/10, étape 7) : ses stems ne bougent pas avec lui."""
     d = req.json()
     if not isinstance(d, dict):
         raise HttpError(400, "la demande est un objet")
@@ -1006,10 +1089,7 @@ def api_move(req):
         for iid, to in rs.items():
             if not isinstance(to, str) or (to and to not in table):
                 raise HttpError(409, "un des Spaces d'avant n'existe plus : rien n'est reposé")
-            it = library.get(iid)
-            if not it:
-                raise HttpError(404, f"introuvable : {iid}")
-            plan.append((it, to))
+            plan.append((_objet(iid), to))
     else:
         ids, to = d.get("ids"), d.get("to")
         if not isinstance(ids, list) or not 1 <= len(ids) <= MOVE_MAX or not all(isinstance(x, str) for x in ids):
@@ -1025,13 +1105,11 @@ def api_move(req):
         its = []
         u = auth.current()
         for iid in dict.fromkeys(ids):
-            it = library.get(iid)
-            if not it:
-                raise HttpError(404, f"introuvable : {iid}")
+            it = _objet(iid)
             # « Mon Space » est à chacun (S1) : on n'en sort pas la chanson d'un autre (Cal, si)
             who = auth.owner_of(it)
             if u is not None and not auth.is_admin(u) and not space_of_item(it, table) and who and who != u.get("id"):
-                raise PermissionError(f"« {it.get('title') or iid} » est dans le « Mon Space » de {auth.display_name(who) or who} : "
+                raise PermissionError(f"« {it.get('title') or it.get('name') or iid} » est dans le « Mon Space » de {auth.display_name(who) or who} : "
                                       "seul·e son auteur l'en sort")
             its.append(it)
         songs = {it["id"] for it in its if it.get("kind") == "audio" and not _is_stem(it)}
@@ -1053,7 +1131,10 @@ def api_move(req):
         old = space_of_item(it, table)
         if old == to and (it.get("music_space") or "") == to:
             continue
-        library.update(it["id"], {"music_space": to})
+        if music.PID_RX.fullmatch(it["id"]):
+            _projet_dans(it["id"], to)
+        else:
+            library.update(it["id"], {"music_space": to})
         before[it["id"]] = old
         if _is_stem(it):
             stems += 1
@@ -1061,6 +1142,30 @@ def api_move(req):
             elsewhere += 1
     return {"moved": list(before), "before": before, "stems": stems, "elsewhere": elsewhere,
             "to": (d.get("to") if d.get("restore") is None else None)}
+
+
+def _objet(iid) -> dict:
+    """Ce que la route des Spaces range : un objet de la bibliothèque, ou un projet ODIO
+    lisible ici (music._read : 404 sinon, sans dire qu'il existe)."""
+    if isinstance(iid, str) and music.PID_RX.fullmatch(iid):
+        return music._read(iid)
+    it = library.get(iid) if isinstance(iid, str) else None
+    if not it:
+        raise HttpError(404, f"introuvable : {iid}")
+    return it
+
+
+def _projet_dans(pid: str, to: str) -> None:
+    """Le Space d'un projet ODIO, réécrit en place par son seul écrivain (music._write) :
+    ni sa révision ni sa date ne bougent — un onglet ouvert l'enregistre ensuite sans
+    conflit, et music.save_project garde ce champ, quoi que la page envoie."""
+    with music._lock:
+        p = music._read(pid)
+        if to:
+            p["music_space"] = to
+        else:
+            p.pop("music_space", None)
+        music._write(p)
 
 
 class _Depot:
@@ -1104,7 +1209,8 @@ def api_import(req):
 def api_list(req):
     """Les chansons d'un Space (`space` : « mon » par défaut, msp-…, ou « * » : tous —
     les Spaces partagés et « Mon Space »), chacune avec son Space (`music_space`, ""
-    pour « Mon Space »), ses pistes, son projet ODIO ; les comptes par Space. Un Space
+    pour « Mon Space »), ses pistes, son projet ODIO ; les comptes par Space ; les
+    projets ODIO du Space (`projets`, étape 7 : une carte qui ouvre ODIO). Un Space
     qui n'est plus là : « Mon Space » (`space` dit celui qui est montré)."""
     try:
         limit = max(1, min(200, int(req.q("limit", "60") or 60)))
@@ -1120,7 +1226,9 @@ def api_list(req):
     for s in songs[:limit]:
         row = {k: v for k, v in s.items() if k != "_msp"}
         out.append({**row, "music_space": s["_msp"], "stems": stems_of(s["id"], items), "odio": _odio_link(s["id"])})
-    return {"songs": out, "total": len(songs), "space": want, "counts": _counts(rows)}
+    projets = _projets(table, want, auth.current_id())
+    return {"songs": out, "total": len(songs), "space": want, "counts": _counts(rows),
+            "projets": projets[:CONTENT_MAX], "projets_total": len(projets)}
 
 
 def _tonic(key: str) -> dict | None:
@@ -1194,6 +1302,9 @@ def api_odio(req):
     p = odio_project(song, stems)
     now = library.now()
     p.update(id=f"mus-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}", rev=1, created=now, updated=now)
+    msp = space_of_item(song)       # son Space : celui de la chanson (étape 7), même si la page en regarde un autre
+    if msp:
+        p["music_space"] = msp
     library.stamp(p, source=song)   # son auteur ; son Workspace : celui de la chanson (403 si l'on n'y crée pas)
     try:
         music.validate(p)
@@ -1388,6 +1499,7 @@ def register(app) -> None:
     app.route("GET", "/api/chanson/spaces", api_spaces)
     app.route("POST", "/api/chanson/spaces", api_spaces_post)
     app.route("POST", "/api/chanson/spaces/move", api_move)
+    app.route("GET", "/api/chanson/spaces/contenu", api_space_content)   # la rubrique « Space » d'ODIO (étape 7)
     app.route("PUT", "/api/chanson/import", api_import)
 
 
@@ -1735,7 +1847,145 @@ def _selftest_spaces(call, ok, wait, base: dict, song: dict, v1: dict) -> None:
     except ValueError as e:
         ok(False, f"creatable_space : un Space rendu est ouvert ({e})")
 
+    _selftest_odio(call, ok, wait, A, B, a1, va, song, imp, wav)
     _selftest_partage(ok, wav, base)
+
+
+def _selftest_odio(call, ok, wait, A: dict, B: dict, a1: dict, va: dict, song: dict, imp: dict, wav: bytes) -> None:
+    """ODIO dans les Spaces (étape 7) : un projet naît dans le Space courant, ou dans celui
+    de la chanson qu'on ouvre ; il le garde à l'enregistrement ; il se range comme une
+    chanson (et Ctrl+Z) ; ce qu'il génère (versions, stems, MIDI extrait ou rangé) naît dans
+    son Space ; la rubrique « Space » du navigateur (la route du contenu) ; ses cartes dans
+    l'app ; supprimer le Space (S2) le renvoie dans « Mon Space »."""
+    import math
+
+    ids = lambda xs: {x["id"] for x in xs or []}   # noqa: E731
+    st, pa = call("POST", "/api/music/projects", {"name": "Odio A", "template": "vide", "music_space": A["id"]})
+    st2, pm = call("POST", "/api/music/projects", {"name": "Odio mon", "template": "vide", "music_space": MON})
+    st3, bad = call("POST", "/api/music/projects", {"name": "X", "template": "vide", "music_space": "msp-000000000000"})
+    st4, _ = call("POST", "/api/music/projects", {"name": "X", "template": "vide", "music_space": "Album"})
+    ok(st == 200 and pa.get("music_space") == A["id"] and st2 == 200 and "music_space" not in pm
+       and st3 == 400 and "Space" in bad.get("error", "") and st4 == 400,
+       f"odio : un projet naît dans le Space courant (ou « Mon Space ») ; un Space absent ou mal écrit, refusé ({st} {st2} {st3} {st4})")
+    if st != 200 or st2 != 200:
+        return
+    call("POST", "/api/chanson/spaces", {"id": B["id"], "archived": True})
+    st, bad = call("POST", "/api/music/projects", {"name": "X", "template": "vide", "music_space": B["id"]})
+    call("POST", "/api/chanson/spaces", {"id": B["id"], "archived": False})
+    ok(st == 400 and "archivé" in bad.get("error", ""), f"odio : pas de projet neuf dans un Space archivé, la raison dite ({st})")
+    st, _ = call("POST", f"/api/music/projects/{pa['id']}", {**music._read(pa["id"]), "music_space": B["id"]})
+    st2, _ = call("POST", f"/api/music/projects/{pa['id']}", {k: v for k, v in music._read(pa["id"]).items() if k != "music_space"})
+    st3, _ = call("POST", f"/api/music/projects/{pa['id']}", {**music._read(pa["id"]), "music_space": "Album"})
+    st4, lp = call("GET", "/api/music/projects")
+    ok((st, st2, st3) == (200, 200, 400) and music._read(pa["id"]).get("music_space") == A["id"]
+       and next((x for x in lp.get("projects", []) if x["id"] == pa["id"]), {}).get("music_space") == A["id"],
+       f"odio : enregistrer garde le Space du serveur, quoi que la page envoie ; la liste le dit ({st} {st2} {st3})")
+
+    # ouvrir depuis une chanson : le projet naît dans le Space de la chanson
+    st, oa = call("POST", "/api/chanson/odio", {"item": a1["id"]})
+    po = music._read(oa["id"]) if st == 200 else {}
+    old = _odio_link(song["id"])
+    ok(st == 200 and oa.get("created") and po.get("music_space") == A["id"] and old and "music_space" not in music._read(old),
+       f"odio : ouvert depuis une chanson, le projet est dans le Space de la chanson (« Mon Space » pour une chanson de « Mon Space ») ({st})")
+
+    # ce que génère le panneau : dans le Space du projet — la page dit le projet, jamais le Space
+    gen = {"projet": {"bpm": 112, "sig": 4, "tonic": 5, "mode": "minor"}, "region": {"a": 0, "b": 8}, "model": "ace",
+           "task": "text2music", "v": {"caption": "funk", "n": 1, "seed": 5}, "title": "Région"}
+    st, j = call("POST", "/api/music/gen/generate", {**gen, "project": pa["id"], "music_space": B["id"]})
+    t1 = ((wait(j["id"]) if st == 200 else {}).get("items") or [{}])[0]
+    st2, j = call("POST", "/api/music/gen/generate", {**gen, "project": pm["id"]})
+    t2 = ((wait(j["id"]) if st2 == 200 else {}).get("items") or [{}])[0]
+    st3, j = call("POST", "/api/music/gen/generate", {**gen, "music_space": A["id"]})
+    t3 = ((wait(j["id"]) if st3 == 200 else {}).get("items") or [{}])[0]
+    ok(t1.get("music_space") == A["id"] and t2.get("id") and "music_space" not in t2 and t3.get("id") and "music_space" not in t3,
+       f"versions : dans le Space du projet ; un projet de « Mon Space », sans projet, ou un Space que la page enverrait : « Mon Space » "
+       f"({t1.get('music_space')} {t2.get('music_space')} {t3.get('music_space')})")
+    st, up = call("PUT", "/api/library/upload?name=nu.wav&title=Son+nu", raw=wav)
+    st, js = call("POST", "/api/music/stems/separate", {"src": up.get("id"), "project": pa["id"]})
+    js = wait(js["id"]) if st == 200 else {}
+    s_up = [library.get(x) or {} for x in (js.get("result") or {}).get("stems", {}).values()]
+    st, jb = call("POST", "/api/music/stems/separate", {"src": imp["id"], "project": pa["id"]})
+    jb = wait(jb["id"]) if st == 200 else {}
+    s_imp = [library.get(x) or {} for x in (jb.get("result") or {}).get("stems", {}).values()]
+    ok(js.get("state") == "done" and s_up and all(x.get("music_space") == A["id"] for x in s_up)
+       and jb.get("state") == "done" and s_imp and all(x.get("music_space") == B["id"] for x in s_imp),
+       f"stems : ceux d'un son sans Space naissent dans le Space du projet, ceux d'une chanson rangée suivent leur chanson "
+       f"({js.get('state')} {jb.get('state')})")
+    sr, pcm = 22050, array("h")   # do mi sol do, une noire chacun à 120 (le son d'essai de music_midi)
+    for f0 in (262, 330, 392, 523):
+        pcm.extend(int(12000 * math.sin(2 * math.pi * f0 * i / sr) * min(1, (sr // 2 - i) / 200)) for i in range(sr // 2))
+    tone = _wav_bytes(pcm, sr)
+    st, gam = call("PUT", "/api/library/upload?name=gamme.wav&title=Gamme", raw=tone)
+    st, jx = call("POST", "/api/music/midi/extract", {"src": gam.get("id"), "off_s": 0, "dur_s": 2, "bpm": 120, "sig": 4, "tonic": 0,
+                                                      "mode": "major", "engine": "basic_pitch", "v": {}, "project": pa["id"]})
+    jx = wait(jx["id"]) if st == 200 else {}
+    mx = library.get((jx.get("result") or {}).get("midi") or "") or {}
+    st, mr = call("POST", "/api/music/midi", {"name": "Basse", "bpm": 112, "sig": 4, "notes": [[0, 1, 41, 0.9]], "project": pa["id"]})
+    st2, mr2 = call("POST", "/api/music/midi", {"name": "Basse", "bpm": 112, "sig": 4, "notes": [[0, 1, 41, 0.9]]})
+    ok(jx.get("state") == "done" and mx.get("music_space") == A["id"] and st == 200 and mr.get("music_space") == A["id"]
+       and st2 == 200 and "music_space" not in mr2,
+       f"MIDI : extrait d'un clip ou rangé depuis le projet, dans son Space ; sans projet, « Mon Space » ({jx.get('state')} {jx.get('message')})")
+
+    # ranger un projet : la route des Spaces ; sa révision ne bouge pas (un onglet ouvert l'enregistre sans conflit) ; Ctrl+Z
+    rev = music._read(pa["id"])["rev"]
+    st, mv = call("POST", "/api/chanson/spaces/move", {"ids": [pa["id"]], "to": B["id"]})
+    p1 = music._read(pa["id"])
+    st2, _ = call("POST", "/api/chanson/spaces/move", {"restore": mv.get("before", {})})
+    st3, mm = call("POST", "/api/chanson/spaces/move", {"ids": [pm["id"]], "to": A["id"]})
+    st4, _ = call("POST", "/api/chanson/spaces/move", {"ids": [pm["id"]], "to": MON})
+    st5, _ = call("POST", "/api/chanson/spaces/move", {"ids": ["mus-20000101-000000-dead"], "to": MON})
+    ok(st == 200 and mv.get("moved") == [pa["id"]] and mv.get("before") == {pa["id"]: A["id"]} and p1.get("music_space") == B["id"]
+       and p1.get("rev") == rev and st2 == 200 and music._read(pa["id"]).get("music_space") == A["id"]
+       and st3 == 200 and st4 == 200 and "music_space" not in music._read(pm["id"]) and st5 == 404,
+       f"odio : ranger un projet (sa révision ne bouge pas), Ctrl+Z, le rendre à « Mon Space » ; un projet inconnu : 404 ({st} {st2} {st3} {st4} {st5})")
+
+    # la rubrique « Space » du navigateur d'ODIO : ce que range un Space
+    st, ca = call("GET", f"/api/chanson/spaces/contenu?space={A['id']}&projet={pa['id']}")
+    stems_a1 = ids(stems_of(a1["id"]))
+    ok(st == 200 and ca.get("space") == A["id"] and {a1["id"], va["id"]} <= ids(ca.get("chansons")) and stems_a1 <= ids(ca.get("stems"))
+       and ids(s_up) <= ids(ca.get("stems")) and t1.get("id") in ids(ca.get("sons")) and {mx.get("id"), mr.get("id")} <= ids(ca.get("midi"))
+       and {pa["id"], oa["id"]} <= ids(ca.get("projets")) and pm["id"] not in ids(ca.get("projets")) and song["id"] not in ids(ca.get("chansons"))
+       and ca.get("projet_space") == A["id"] and ca.get("totals", {}).get("projets") == len(ca["projets"])
+       and all(x.get("music_space") == A["id"] for k in ("chansons", "stems", "sons", "midi", "projets") for x in ca.get(k, [])),
+       f"contenu d'un Space : ses chansons, leurs stems, les versions, le MIDI, ses projets ; le Space du projet ouvert ({st} {ca.get('totals')})")
+    st, cm = call("GET", f"/api/chanson/spaces/contenu?projet={pm['id']}")
+    st2, ct = call("GET", "/api/chanson/spaces/contenu?space=*")
+    st3, cx = call("GET", "/api/chanson/spaces/contenu?space=msp-000000000000")
+    ok(st == 200 and cm.get("space") == MON and song["id"] in ids(cm.get("chansons")) and a1["id"] not in ids(cm.get("chansons"))
+       and pm["id"] in ids(cm.get("projets")) and t2.get("id") in ids(cm.get("sons")) and up.get("id") not in ids(cm.get("sons"))
+       and cm.get("projet_space") == MON and all(x.get("music_space") == "" for x in cm.get("projets", []))
+       and {pa["id"], pm["id"], oa["id"]} <= ids(ct.get("projets")) and {song["id"], a1["id"]} <= ids(ct.get("chansons"))
+       and st3 == 200 and cx.get("space") == MON,
+       f"contenu : « Mon Space » (ce qui est à soi et né de Musique ou d'ODIO, pas un dépôt d'Asset), « Tous », un Space disparu ({st} {st2} {st3})")
+    # l'app Musique montre les projets ODIO de son Space
+    st, la = call("GET", f"/api/chanson/list?space={A['id']}")
+    st2, lm = call("GET", "/api/chanson/list")
+    pr = next((x for x in la.get("projets", []) if x["id"] == pa["id"]), {})
+    ok(st == 200 and {pa["id"], oa["id"]} <= ids(la.get("projets")) and pm["id"] not in ids(la.get("projets"))
+       and pm["id"] in ids(lm.get("projets")) and pr.get("open") == f"musique/?p={pa['id']}" and pr.get("music_space") == A["id"]
+       and la.get("projets_total") == len(la["projets"]),
+       f"l'app : les projets ODIO du Space montré, chacun son adresse ({st} {st2})")
+    # S2 : supprimer le Space renvoie ses projets dans « Mon Space » de leur auteur, sans les réécrire ; Ctrl+Z
+    st, _ = call("POST", "/api/chanson/spaces", {"action": "delete", "id": A["id"]})
+    _, cm = call("GET", "/api/chanson/spaces/contenu")
+    st2, _ = call("POST", "/api/chanson/spaces", {"action": "restore", "id": A["id"]})
+    _, ca = call("GET", f"/api/chanson/spaces/contenu?space={A['id']}")
+    ok(st == 200 and pa["id"] in ids(cm.get("projets")) and music._read(pa["id"]).get("music_space") == A["id"]
+       and st2 == 200 and pa["id"] in ids(ca.get("projets")),
+       f"odio (S2) : le Space supprimé, son projet revient dans « Mon Space » sans être réécrit ; Ctrl+Z le rend ({st} {st2})")
+
+
+def _wav_bytes(pcm, sr: int) -> bytes:
+    """Un WAV mono 16 bits en mémoire (un son d'essai pour l'extraction MIDI)."""
+    import io
+    import wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(pcm.tobytes())
+    return buf.getvalue()
 
 
 def _selftest_partage(ok, wav: bytes, base: dict) -> None:
@@ -1817,6 +2067,28 @@ def _selftest_partage(ok, wav: bytes, base: dict) -> None:
         ok(s == 403 and "Mon Space" in err(d) and s2 == 200 and d2.get("elsewhere") == 1 and s3 == 200,
            f"partage : Ana ne sort pas une chanson du « Mon Space » de Bob ; Bob renvoie celle d'Ana dans le sien, puis Ctrl+Z "
            f"({s} {err(d)[:60]} {s2} {s3})")
+        # ODIO dans le Space partagé (étape 7) : le projet d'Ana y est pour Bob ; celui de son « Mon Space », non ;
+        # Bob ne l'en sort pas ; ce que Bob range depuis le projet d'Ana naît dans le Space, Ana le voit
+        pids = lambda r, k="projets": {x["id"] for x in (r.get(k) or [])} if isinstance(r, dict) else set()   # noqa: E731
+        s, pA = a("POST", "/api/music/projects", {"name": "Projet de la Team", "template": "vide", "music_space": A})
+        s2, pM = a("POST", "/api/music/projects", {"name": "Projet d'Ana", "template": "vide"})
+        pA, pM = (pA if isinstance(pA, dict) else {}), (pM if isinstance(pM, dict) else {})
+        _, cb = b("GET", f"/api/chanson/spaces/contenu?space={A}&projet={pA.get('id')}")
+        _, cbt = b("GET", "/api/chanson/spaces/contenu?space=*")
+        _, cbm = b("GET", "/api/chanson/spaces/contenu")
+        _, cam = a("GET", "/api/chanson/spaces/contenu")
+        seenp = next((x for x in (cb.get("projets") or []) if x["id"] == pA.get("id")), {}) if isinstance(cb, dict) else {}
+        ok(s == 200 and s2 == 200 and pA.get("music_space") == A and seenp.get("owner_name") == "Ana Spaces" and cb.get("projet_space") == A
+           and pM.get("id") not in pids(cbt) | pids(cbm) and pM.get("id") in pids(cam) and pA.get("id") not in pids(cam),
+           f"partage (S1) : le projet ODIO d'Ana dans le Space est dans la rubrique de Bob ; celui de son « Mon Space » reste à elle "
+           f"({s} {s2} {len(pids(cb))} {len(pids(cbt))} {len(pids(cam))})")
+        s, d = b("POST", "/api/chanson/spaces/move", {"ids": [pM.get("id")], "to": A})
+        s2, mid = b("POST", "/api/music/midi", {"name": "Riff de Bob", "bpm": 120, "sig": 4, "notes": [[0, 1, 60, 0.8]], "project": pA.get("id")})
+        _, ca = a("GET", f"/api/chanson/spaces/contenu?space={A}")
+        ok(s == 403 and "Mon Space" in err(d) and s2 == 200 and mid.get("music_space") == A and mid.get("owner") != pA.get("owner")
+           and mid.get("id") in pids(ca, "midi"),
+           f"partage : Bob ne sort pas le projet du « Mon Space » d'Ana ; un clip que Bob range depuis le projet d'Ana naît dans le Space, "
+           f"Ana le voit ({s} {err(d)[:60]} {s2})")
         s, d = b("POST", "/api/chanson/spaces", {"action": "delete", "id": A})
         s2, rn = b("POST", "/api/chanson/spaces", {"id": A, "name": "Album de toute la Team"})
         ok(s == 403 and "Ana Spaces" in err(d) and s2 == 200 and rn.get("name") == "Album de toute la Team",
@@ -1827,6 +2099,10 @@ def _selftest_partage(ok, wav: bytes, base: dict) -> None:
         ok(s == 200 and d.get("returned") == 3 and ids(lam) == {ia, iam} and ids(lbm) == {ib, ibm, bg}
            and all(library.see(x) for x in (ia, ib, bg)),
            f"partage (S2) : Ana supprime ; chaque chanson revient dans « Mon Space » de son auteur, rien n'est jeté ({s} {d})")
+        _, cam = a("GET", "/api/chanson/spaces/contenu")
+        _, cbm = b("GET", "/api/chanson/spaces/contenu")
+        ok(pA.get("id") in pids(cam) and pA.get("id") not in pids(cbm) and mid.get("id") in pids(cbm, "midi") and mid.get("id") not in pids(cam, "midi"),
+           "partage (S2) : le projet revient dans « Mon Space » d'Ana, le clip de Bob dans celui de Bob")
     finally:
         auth.set_current(None)
         auth.set_current_space(None)

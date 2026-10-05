@@ -239,7 +239,7 @@ async function lancerGarde(app, c, tk, stem) {
   const m = list.find((x) => x.id === s.o.recommended) || list[0];
   if (!m) { toast(`aucun séparateur prêt ne rend « ${stem} » — la version garde la chanson entière`, 7000); return; }
   try {
-    const j = await api('music/stems/separate', { method: 'POST', body: { src: tk.item, model: m.id, stems: [stem] } });
+    const j = await api('music/stems/separate', { method: 'POST', body: { src: tk.item, model: m.id, stems: [stem], project: app.S.proj.id } });
     app.S.proj.pending.push({ job: j.id, kind: 'garder', clip: c.id, take: tk.item, stem, title: j.title });
     tk.attente = stem;
   } catch (e) { toast(e.message, 6000); }

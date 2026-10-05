@@ -511,6 +511,8 @@ def fake_cover(dest: Path, src_id: str, p: dict, k: int) -> float:
 def _store(ctx, p: dict, dest: Path, k: int, engine: str, extra: dict | None = None) -> dict:
     essai = engine == "factice"
     M = schema()["modeles"][p["model"]]
+    from tools import chanson   # le Space du projet (api_generate), rejugé en rangeant : un Space disparu, « Mon Space »
+    msp = chanson.birth_space({}, (ctx.params or {}).get("music_space") or "")
     return ctx.add(dest, kind="audio", title=f"{p['title']} · prise {k + 1}" + (" (essai)" if essai else ""),
                    prompt=p["values"].get("caption") or p["values"].get("tags") or "", parents=p["refs"],
                    params={"model": p["model"], "task": p["task"], "values": p["values"], "projet": p["projet"],
@@ -518,7 +520,7 @@ def _store(ctx, p: dict, dest: Path, k: int, engine: str, extra: dict | None = N
                            "garder": p["garder"], "region": p["region"], "seed": p["seed"] + k, "take": k, "region_off": p["region"]["off"]
                            if p["sortie"] == "contexte" else 0.0, "engine": engine, "clip": p["clip"], **(extra or {})},
                    origin={"model": "factice" if essai else M["nom"]}, tags=["musique", "région", "essai" if essai else "généré"],
-                   folder="Musique")
+                   folder="Musique", extra={"music_space": msp} if msp else None)
 
 
 def run_test(ctx):
@@ -634,6 +636,12 @@ def api_generate(req):
         raise HttpError(400, str(e)) from e
     # la graine tirée au hasard est gardée : le travail la rejouera telle quelle
     d = {**d, "v": {**(d.get("v") or {}), "seed": p["seed"]}}
+    # les versions naissent dans le Space de Musique du projet (`project` : son id ; chanson.py, étape 7)
+    from tools import chanson
+    d.pop("music_space", None)
+    msp = chanson.project_space(d.get("project"))
+    if msp:
+        d["music_space"] = msp
     j = jobs.submit(f"music.gen.{p['model']}", d, title=f"Région · {p['title']}"[:90], tool="music")
     return jobs.public(j)
 
