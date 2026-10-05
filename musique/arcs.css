@@ -1,0 +1,13 @@
+/* ============================================================
+   ODIO — l'arrangement, en haut : la structure (les sections que tiennent
+   les balises des paroles, projet.js) et le groupe des arcs (arcs.js,
+   timeline.js). Jetons de commun/tokens.css seulement ; la couleur d'une
+   section ou d'un arc passe par --c, posée sur un jeton ; filets en
+   box-shadow inset.
+   ============================================================ */
+
+/* ── la structure : une section tenue par les paroles d'une région ── */
+.ar-sec.liee { box-shadow: inset 2px 0 0 var(--c), inset 0 -1.5px 0 color-mix(in srgb, var(--c) 70%, transparent); }
+.ar-sec .tg { flex: none; margin-left: 6px; font-style: normal; font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .08em;
+  color: var(--ink3); white-space: nowrap; pointer-events: none; }
+.ar-sec:hover .tg { color: var(--ink2); }

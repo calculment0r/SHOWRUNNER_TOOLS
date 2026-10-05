@@ -82,6 +82,8 @@ import { tete, poser, suivre, glisser } from '../commun/tete.js';
 import { scrub as scrubSon, actif as scrubActif } from '../commun/scrub.js';
 // « ça calcule » (06/10) : la couche d'un clip dont un travail de la file s'occupe (calcul.js, calcul.css)
 import { brancherCalculs, etatCalcul, poserCalcul } from './calcul.js';
+// la structure (06/10) : les sections qu'une balise des paroles tient (projet.js)
+import { sectionsLiees } from './projet.js';
 
 const HEAD_W = 224;
 const Z_MIN = 2, Z_MAX = 160;                           // pixels par noire, les bornes du zoom
@@ -377,7 +379,8 @@ export function createTimeline(app) {
     const p = P();
     const r = el('div', { class: 'ar-ruler' });   // sa largeur : la colonne des voies
     const secRow = el('div', { class: 'ar-secs', title: 'double-clic : une section · sur une section : la renommer · glisser : la déplacer avec ses clips (Maj : l\'étiquette seule) · clic droit : dupliquer, colorer…' });
-    regle.secs = p.sections.map((s) => [sectionEl(s), s]);
+    const liees = sectionsLiees(p);   // tenues par les balises des paroles d'une région (projet.js, la structure)
+    regle.secs = [...p.sections].sort((x, y) => x.a - y.a).map((s) => [sectionEl(s, liees.has(s.id)), s]);
     for (const [box] of regle.secs) secRow.append(box);
     const barRow = el('div', { class: 'ar-bars' });
     const band = el('div', { class: 'ar-band', title: 'glisser : la boucle' });
@@ -497,12 +500,21 @@ export function createTimeline(app) {
   }
   const renameSection = (s, node) => inlineEdit(node, s.name, (n) => { s.name = n.slice(0, 40); s.tag = guessTag(s.name); app.commit('data'); }, { max: 40 });
 
-  function sectionEl(s) {
+  // Les mesures d'une section, justes (06/10) : « mesures 5 à 8 · 4 mes. » — la
+  // fin d'une section est le début de la suivante (01.1 → 05.1 disait la 5 en trop)
+  function mesuresDe(s) {
+    const sig = P().sig, m1 = Math.floor(s.a / sig + 1e-9) + 1, m2 = Math.max(m1, Math.ceil(s.b / sig - 1e-9));
+    const n = Math.round(((s.b - s.a) / sig) * 100) / 100;
+    return { txt: m1 === m2 ? `mesure ${m1}` : `mesures ${m1} à ${m2}`, n: `${String(n).replace('.', ',')} mes.` };
+  }
+  // `liee` : une balise des paroles d'une région la tient (projet.js, la structure) — son [étiquette] s'affiche
+  function sectionEl(s, liee = false) {
     const p = P();
     const nm = el('b', {}, s.name);
-    const box = el('div', { class: 'ar-sec', style: { left: `${X(s.a)}px`, width: `${Math.max(6, X(s.b - s.a) - 2)}px`, '--c': `var(--${s.color || 'cy'})` },
-      title: `${s.name} · ${app.bar(s.a)} → ${app.bar(s.b)} · ${SECTION_TAGS.find(([k]) => k === s.tag)?.[1] || ''} — double-clic : renommer` },
-    nm, el('i', { class: 'e l' }), el('i', { class: 'e r' }));
+    const M = mesuresDe(s);
+    const box = el('div', { class: `ar-sec${liee ? ' liee' : ''}`, style: { left: `${X(s.a)}px`, width: `${Math.max(6, X(s.b - s.a) - 2)}px`, '--c': `var(--${s.color || 'cy'})` },
+      title: `${s.name} · ${M.txt} · ${M.n} · ${SECTION_TAGS.find(([k]) => k === s.tag)?.[1] || s.tag || ''} [${s.tag || 'verse'}]${liee ? ' · tenue par les paroles d\'une région : la renommer, l\'étiqueter, la déplacer récrit leurs balises' : ''} — double-clic : renommer` },
+    nm, liee ? el('i', { class: 'tg' }, `[${s.tag}]`) : null, el('i', { class: 'e l' }), el('i', { class: 'e r' }));
     box.addEventListener('dblclick', (e) => { e.stopPropagation(); renameSection(s, nm); });
     box.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); sectionMenu(e, s, nm); });
     box.addEventListener('pointerdown', (e) => {
@@ -548,7 +560,7 @@ export function createTimeline(app) {
   function sectionMenu(e, s, nm) {
     const p = P();
     menu(e.clientX, e.clientY, [
-      { head: `${s.name} · ${app.bar(s.a)} → ${app.bar(s.b)}` },
+      { head: `${s.name} · ${mesuresDe(s).txt} · ${mesuresDe(s).n}` },
       { label: 'Renommer', sub: 'double-clic', onclick: () => renameSection(s, nm) },
       { label: 'Dupliquer avec ses clips', sub: 'insère la copie après', onclick: () => { const n = duplicateSection(p, s, app.uid); toast(`« ${n.name} » dupliquée : ${app.bar(n.a)} → ${app.bar(n.b)}`); app.commit('data'); } },
       { label: 'Avancer (échanger avec la précédente)', onclick: () => { const w = swapSection(p, s, -1); if (w) toast(w); else app.commit('data'); } },
@@ -1685,6 +1697,18 @@ export function createTimeline(app) {
 
   // ── l'ensemble ──
   const meters = [];
+  // La règle seule, refaite en place (06/10) : les paroles qu'on tape dans le
+  // panneau du bas replacent des sections (musique.js, la structure) sans
+  // refaire l'arrangement — le champ garde la main.
+  let regleEl = null;
+  function paintRegle() {
+    if (!regleEl?.isConnected) return;
+    const n = ruler();
+    regleEl.replaceWith(n);
+    regleEl = n;
+    const nb = grid.querySelector('.ar-corner .lbl:last-child');
+    if (nb) nb.textContent = `${visTracks().length} · ${P().sections.length} sections`;
+  }
   function render() {
     const p = P();
     const sl = scroll.scrollLeft;   // lu avant toute écriture : la fenêtre et la portée en partent
@@ -1705,8 +1729,9 @@ export function createTimeline(app) {
     grid.style.setProperty('--head', `${HEAD_W}px`);
     grid.style.setProperty('--ruler', `${RULER_H}px`);
     poserLargeur();
+    regleEl = ruler();
     const rows = [el('div', { class: 'ar-corner', title: MOLETTE }, el('span', { class: 'lbl' }, 'pistes'),
-      el('span', { class: 'lbl' }, `${visTracks().length} · ${p.sections.length} sections`)), ruler()];
+      el('span', { class: 'lbl' }, `${visTracks().length} · ${p.sections.length} sections`)), regleEl];
     const [ah, al] = arcRow();
     rows.push(ah, al);
     for (const L of (p.auto || []).filter((x) => !app.mod(x.mod)?.track)) rows.push(...autoRows(L));
@@ -1934,5 +1959,5 @@ export function createTimeline(app) {
   scroll.addEventListener('dragover', (e) => onDragOver(e, null));
   scroll.addEventListener('drop', (e) => onDrop(e, null));
 
-  return { el: root, render, frame, key, paintTools, paintSel, fit, dock, zoneMenu };
+  return { el: root, render, frame, key, paintTools, paintSel, fit, dock, zoneMenu, paintRegle };
 }

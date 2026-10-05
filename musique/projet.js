@@ -5,7 +5,8 @@
 //
 // Version 2, ce qui s'ajoute à la version 1 (docs/etudes/musique.md) :
 //   key       { tonic 0..11, mode }             la tonalité de la session
-//   sections  [{ id, name, a, b, color, tag }]  la règle des sections (en noires)
+//   sections  [{ id, name, a, b, color, tag }]  la règle des sections (en noires) ; `tag` est
+//               aussi la balise des paroles d'une région qui la couvre (la structure, plus bas)
 //   markers   [{ id, b, name }]                 les marqueurs
 //   arc       { on, to: lpf|vol|both, pts }     l'arc d'énergie peint (0..1)
 //   auto      [{ id, mod, k, on, pts }]         les voies d'automation (0..1)
@@ -68,6 +69,7 @@
 //                 posé y entre de lui-même et y reste (retenirSons) }
 
 import { guessTag, MODULES, TRACK_KINDS, COLORS } from './modules.js';
+import { SECTION_TAGS } from './modules.js';   // la structure : les étiquettes des paroles (06/10)
 
 export const VERSION = 2;
 const own = (c) => (c.gen ? { gen: JSON.parse(JSON.stringify(c.gen)) } : {});   // une copie de région a ses propres prises
@@ -792,6 +794,190 @@ export function removeSection(p, sec, withClips = false) {
     for (const pts of curves(p)) pts.splice(0, pts.length, ...pts.filter((pt) => !within(pt[0], sec.a, sec.b)));
   }
   p.sections = p.sections.filter((s) => s !== sec);
+}
+
+// ── la structure : les sections et les balises des paroles (06/10) ──
+// Cal, 06/10 : « si on place [verse], [chorus], [bridge]… dans les paroles
+// d'une région générative, les sections correspondantes apparaissent alignées
+// au-dessus de l'arc d'énergie, sur la bonne plage de mesures, et inversement ».
+//
+// LE CONTRAT (le panneau génératif, generatif*.js, s'y tient sans rien appeler) :
+//   - les SECTIONS vivent dans le projet : p.sections [{ id, name, a, b, color,
+//     tag }], en noires. C'est le plan que la génération envoie déjà
+//     (generatif_region.js, sectionsFor → [[étiquette, mesures]]) ;
+//   - les PAROLES d'une région vivent dans c.gen.v.lyrics : un texte, des blocs
+//     ouverts par une ligne « [Étiquette] » (YuE : « structure labels (e.g.,
+//     [verse], [chorus], [bridge], [outro]) prepended […] separated by 2 newline »,
+//     README de YuE ; ACE-Step écrit « [Verse] », INFERENCE.md) ;
+//   - le lien est l'ORDRE : le i-ème bloc ↔ la i-ème section que la région
+//     couvre (sectionsDeRegion : tout recouvrement, la règle de `covered`) ;
+//   - musique.js le tient à chaque geste (app.commit → suivreStructure) : des
+//     paroles qui changent replacent les sections de la région ; des sections
+//     qui changent (renommer, étiqueter, tirer, déplacer, retirer), ou une région
+//     qui bouge, récrivent les balises de ses paroles (les vers restent). Le
+//     panneau écrit c.gen.v.lyrics et fait app.commit, comme aujourd'hui ; un
+//     autre champ de paroles appelle structureDepuisParoles / parolesDepuisStructure
+//     avec son texte.
+// Sans balise dans les paroles, rien ne bouge (on ne met pas de balises dans
+// des paroles qui n'en veulent pas) ; des blocs en trop (plus de blocs que de
+// sections) restent tels quels — aucun vers ne se perd.
+
+// une ligne de balise : « [Verse] », « [verse 2] », « [Pre-Chorus] »… seule sur sa ligne
+const BALISE_RX = /^\s*\[([^\]\n]{1,40})\]\s*$/;
+const sansAccent = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+// L'étiquette d'une balise : une des sept de SECTION_TAGS (modules.js), sinon le
+// mot écrit (« [Build] » → build), gardé tel quel : il revient dans les paroles.
+export function etiquetteDe(txt) {
+  const n = sansAccent(txt).replace(/\d+/g, ' ').trim();
+  if (/pre.?(refrain|chorus)/.test(n)) return 'pre-chorus';
+  if (/refrain|chorus|hook/.test(n)) return 'chorus';
+  if (/couplet|verse/.test(n)) return 'verse';
+  if (/pont|bridge/.test(n)) return 'bridge';
+  if (/intro/.test(n)) return 'intro';
+  if (/outro|final|\bfin\b|\bend\b|coda/.test(n)) return 'outro';
+  if (/instru|solo|break|interlude|pause/.test(n)) return 'instrumental';
+  return n.replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 20) || 'verse';
+}
+// Les blocs des paroles : [{ tag, ligne (l'index de la ligne de balise), vers (le nombre de lignes chantées) }]
+export function lireParoles(texte) {
+  const lignes = (texte || '').split('\n'), blocs = [];
+  lignes.forEach((l, i) => {
+    const m = l.match(BALISE_RX);
+    if (m) blocs.push({ tag: etiquetteDe(m[1]), ligne: i, vers: 0, bas: m[1] === m[1].toLowerCase() });
+    else if (blocs.length && l.trim()) blocs[blocs.length - 1].vers += 1;
+  });
+  return { lignes, blocs };
+}
+// Une balise écrite comme les autres du texte : en bas de casse si elles le sont
+// toutes (YuE), sinon « [Pre-Chorus] » (ACE-Step, et le bouton « Les sections »).
+const ecrireBalise = (tag, bas) => `[${bas ? tag : tag.split('-').map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w)).join('-')}]`;
+// Le texte dont les blocs portent `tags` dans l'ordre : les balises qui diffèrent
+// sont récrites, les sections en plus deviennent des blocs vides à la fin, les
+// blocs en plus restent. Rend le texte (le même s'il n'y a rien à changer).
+export function ecrireParoles(texte, tags) {
+  const { lignes, blocs } = lireParoles(texte);
+  const bas = blocs.length > 0 && blocs.every((b) => b.bas);
+  for (let i = 0; i < Math.min(blocs.length, tags.length); i++) if (blocs[i].tag !== tags[i]) lignes[blocs[i].ligne] = ecrireBalise(tags[i], bas);
+  let out = lignes.join('\n');
+  for (const t of tags.slice(blocs.length)) out = `${out.replace(/\s*$/, '')}\n\n${ecrireBalise(t, bas)}\n`;
+  return out;
+}
+
+// les régions génératives qui ont des paroles (le contrat : c.gen.v.lyrics)
+const regionsParoles = (p) => (p.clips || []).filter((c) => c.gen && typeof c.gen.v?.lyrics === 'string');
+// les sections qu'une région couvre, dans l'ordre du temps
+export function sectionsDeRegion(p, c) {
+  const a = c.start, b = c.start + c.len;
+  return sorted(p).filter((s) => s.b > a + 1e-9 && s.a < b - 1e-9);
+}
+// les couleurs des sections nées des paroles : celles de la session de la
+// maquette (server/tools/music.py : intro cy, couplet grn2, refrain or, final coral-3)
+const COULEUR_TAG = { intro: 'cy', verse: 'grn2', 'pre-chorus': 'amb', chorus: 'or', bridge: 'coral-1', instrumental: 'coral-2', outro: 'coral-3' };
+const nomTag = (tag) => SECTION_TAGS.find(([k]) => k === tag)?.[1] || (tag[0] || '').toUpperCase() + tag.slice(1).replace(/-/g, ' ');
+// un nom qui suit son étiquette (« Couplet », « Couplet 2 », « Verse ») suivra la nouvelle
+const nomSuit = (s) => { const n = sansAccent(s.name).replace(/\s*\d+$/, '').trim(); return n === sansAccent(nomTag(s.tag || '')) || n === sansAccent(s.tag || ''); };
+function nomNeuf(p, tag, sauf = null) {
+  const base = nomTag(tag).slice(0, 36);
+  const pris = new Set(p.sections.filter((s) => s !== sauf).map((s) => s.name));
+  if (!pris.has(base)) return base;
+  for (let k = 2; ; k++) if (!pris.has(`${base} ${k}`)) return `${base} ${k}`;
+}
+
+// Les paroles → les sections de la région. Autant de blocs que de sections
+// couvertes : chaque section prend l'étiquette de son bloc (et son nom, s'il
+// suivait l'ancienne). Sinon la plage de la région est replanifiée : un bloc,
+// une section, des mesures entières, la même durée pour chacun (YuE : « each
+// session is around 30s », README — une durée par bloc, pas par vers) ; les
+// sections qui débordaient de la région gardent leur part au-dehors. Rend ce
+// qui a changé, en mots, ou null.
+export function structureDepuisParoles(p, c, uid, texte = c.gen?.v?.lyrics) {
+  const { blocs } = lireParoles(texte);
+  if (!blocs.length || !(c.len > 0)) return null;
+  const cov = sectionsDeRegion(p, c);
+  if (cov.length === blocs.length) {
+    let n = 0;
+    cov.forEach((s, i) => {
+      const t = blocs[i].tag;
+      if (s.tag === t) return;
+      if (nomSuit(s)) s.name = nomNeuf(p, t, s);
+      s.tag = t; n++;
+    });
+    return n ? `${n} section${n > 1 ? 's' : ''} ré-étiquetée${n > 1 ? 's' : ''} par les paroles` : null;
+  }
+  // replanifier : k blocs sur N mesures (une mesure au moins chacun)
+  const a = c.start, e = c.start + c.len, sig = p.sig || 4;
+  const N = Math.max(1, Math.round(c.len / sig)), k = Math.min(blocs.length, N);
+  const base = Math.floor(N / k), plus = N - base * k;
+  const plan = [];
+  let x = a;
+  for (let i = 0; i < k; i++) {
+    const y = i === k - 1 ? e : x + (base + (i < plus ? 1 : 0)) * sig;
+    plan.push({ tag: blocs[i].tag, a: x, b: y });
+    x = y;
+  }
+  // déjà ainsi (des blocs en trop pour la région) : rien à refaire
+  if (cov.length === plan.length && cov.every((s, i) => s.tag === plan[i].tag && Math.abs(s.a - plan[i].a) < 1e-9 && Math.abs(s.b - plan[i].b) < 1e-9)) return null;
+  const garde = [];
+  for (const s of p.sections) {
+    if (s.b <= a + 1e-9 || s.a >= e - 1e-9) { garde.push(s); continue; }
+    const apres = s.b > e + 1e-9 ? { ...s, a: e } : null;
+    if (s.a < a - 1e-9) { s.b = a; garde.push(s); if (apres) garde.push({ ...apres, id: uid('s') }); } else if (apres) garde.push(Object.assign(s, { a: e }));
+  }
+  p.sections = garde;
+  for (const q of plan) p.sections.push({ id: uid('s'), name: nomNeuf(p, q.tag), a: q.a, b: q.b, color: COULEUR_TAG[q.tag] || 'cy', tag: q.tag });
+  return `${plan.length} section${plan.length > 1 ? 's' : ''} posée${plan.length > 1 ? 's' : ''} par les paroles`;
+}
+
+// Les sections → les balises des paroles de la région (les vers restent). Rend
+// le texte neuf, ou null s'il n'y a rien à changer (ou pas de balise du tout).
+export function parolesDepuisStructure(p, c, texte = c.gen?.v?.lyrics) {
+  if (!lireParoles(texte).blocs.length) return null;
+  const neuf = ecrireParoles(texte, sectionsDeRegion(p, c).map((s) => s.tag || guessTag(s.name)));
+  return neuf === texte ? null : neuf;
+}
+
+// Les sections qu'une balise de paroles tient (la vue les marque de leur [étiquette]).
+export function sectionsLiees(p) {
+  const out = new Set();
+  for (const c of regionsParoles(p)) {
+    const n = lireParoles(c.gen.v.lyrics).blocs.length;
+    sectionsDeRegion(p, c).slice(0, n).forEach((s) => out.add(s.id));
+  }
+  return out;
+}
+
+// L'empreinte de la structure : les sections, et pour chaque région ses paroles et sa place.
+export function empreinteStructure(p) {
+  return {
+    secs: JSON.stringify((p.sections || []).map((s) => [s.id, s.a, s.b, s.tag, s.name])),
+    regions: new Map(regionsParoles(p).map((c) => [c.id, { lyr: c.gen.v.lyrics, a: c.start, b: c.start + c.len }])),
+  };
+}
+// Tenir la structure après un geste (musique.js, app.commit). `vu` : l'empreinte
+// du geste d'avant. Les paroles changées d'une région replacent ses sections ;
+// puis les autres régions (sections changées, région déplacée, collée)
+// récrivent leurs balises. Rend { vu (l'empreinte neuve), changed, dit }.
+export function suivreStructure(p, vu, uid) {
+  const now = empreinteStructure(p);
+  vu = vu || now;
+  let changed = false, dit = '';
+  const lyr = new Set();
+  for (const c of regionsParoles(p)) {
+    const o = vu.regions.get(c.id);
+    if (!o || o.lyr === c.gen.v.lyrics) continue;
+    lyr.add(c.id);
+    const r = structureDepuisParoles(p, c, uid);
+    if (r) { changed = true; dit = r; }
+  }
+  const secs = changed || now.secs !== vu.secs;
+  for (const c of regionsParoles(p)) {
+    if (lyr.has(c.id)) continue;
+    const o = vu.regions.get(c.id);
+    if (!secs && o && o.a === c.start && o.b === c.start + c.len) continue;
+    const t = parolesDepuisStructure(p, c);
+    if (t !== null) { c.gen.v.lyrics = t; changed = true; dit = dit || 'balises des paroles récrites'; }
+  }
+  return { vu: changed ? empreinteStructure(p) : now, changed, dit };
 }
 
 // ── le presse-papiers des clips ─────────────────────────────
