@@ -34,6 +34,8 @@ const PLUGINS = [
   ['médias · son, web', () => import('./objets/medias.js')],
   // l'agent Showrunner : le panneau de conversation, ses gestes sur la planche (05/10, docs/etudes/agent_showrunner.md)
   ['agent Showrunner', () => import('./agent.js')],
+  // le téléphone : lire la planche au doigt, y déposer une photo, y écrire une note (ideation/telephone.js)
+  ...(window.SR_APPAREIL?.type === 'mobile' ? [['téléphone', () => import('./telephone.js')]] : []),
 ];
 
 export function installPlugins(app) {

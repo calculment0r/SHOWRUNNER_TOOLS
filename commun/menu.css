@@ -47,3 +47,10 @@
   box-shadow: inset 0 0 0 1px var(--line);
 }
 .sr-kebab:hover, .sr-kebab[aria-expanded="true"] { background: var(--panel3); }
+
+/* ── le téléphone (data-appareil="mobile" ; les 44 px : base.css, « LE TÉLÉPHONE ») ──
+   Une entrée par ligne de 44 px ; les raccourcis clavier s'effacent (pas de clavier) ; le « ⋯ » fait 44 px. */
+html[data-appareil="mobile"] .sr-menu { max-width: calc(100vw - 16px); max-height: calc(82 * var(--vh)); }
+html[data-appareil="mobile"] .sr-menu .mi { min-height: 44px; font-size: 14px; }
+html[data-appareil="mobile"] .sr-menu .mi .key { display: none; }
+html[data-appareil="mobile"] .sr-kebab { width: 44px; height: 44px; }

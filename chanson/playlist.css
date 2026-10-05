@@ -214,3 +214,20 @@ details.pl-plus > summary .r { margin-left: auto; font-family: var(--f-mono); fo
 
 /* une boîte vide (pas d'ordre proposé, pas de carte, pas de panneau du lien) ne prend pas de place */
 .pl-ordre-box:empty, .pl-carte-box:empty, .pl-partage-box:empty, .pl-lien-box:empty { display: none; }
+
+/* ── le téléphone (data-appareil="mobile" ; les 44 px : commun/base.css, « LE TÉLÉPHONE ») ──
+   Le volet couvre la page sous la barre, ses bords sûrs. Un morceau se réordonne par sa poignée, au doigt :
+   elle prend le geste (touch-action: none, sinon le doigt fait défiler la liste et le geste s'annule) ; le
+   reste de la ligne fait défiler. « ⋯ » d'un morceau : Monter, Descendre. */
+html[data-appareil="mobile"] .pl-volet {
+  position: fixed; top: calc(var(--sr-hdr-h) + 6px); left: calc(6px + env(safe-area-inset-left)); right: calc(6px + env(safe-area-inset-right));
+  bottom: calc(6px + env(safe-area-inset-bottom)); z-index: 30; width: auto; max-height: none;
+}
+html[data-appareil="mobile"] .pl-choix { height: 44px; font-size: 15px; }
+html[data-appareil="mobile"] .pl-tr { grid-template-columns: 28px 20px 44px minmax(0, 1fr) auto; min-height: 56px; }
+html[data-appareil="mobile"] .pl-grip { align-self: stretch; width: 28px; height: auto; margin: -5px 0 -5px -4px; touch-action: none; cursor: grab;
+  background-position: center; background-size: 3px 3.5px; background-repeat: repeat-y; background-origin: content-box; padding: 0 12px; }
+html[data-appareil="mobile"] .pl-jouer { width: 44px; height: 44px; }
+html[data-appareil="mobile"] .pl-jouer svg { width: 13px; height: 13px; }
+html[data-appareil="mobile"] .pl-tt b { font-size: 14px; }
+html[data-appareil="mobile"] details.pl-plus > summary { min-height: 44px; }

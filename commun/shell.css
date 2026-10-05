@@ -443,10 +443,18 @@ html[data-appareil="mobile"] body.ide-page .hdr { padding-top: 4px; padding-bott
 html[data-appareil="mobile"] .hdr .logo { flex: none; width: 44px; height: 44px; justify-content: center; }
 html[data-appareil="mobile"] .hdr .logo > span:not(.sq) { display: none; }
 html[data-appareil="mobile"] .hdr .logo .sq { flex: none; }   /* ODIO a sa propre .sq (flex: 1, musique.css) */
-html[data-appareil="mobile"] .hdr .tool-name { flex: 0 1 auto; min-width: 0; font-size: 13px; }
-html[data-appareil="mobile"] .hdr .tool-sep { margin: 0 2px; }
+html[data-appareil="mobile"] .hdr .tool-name { flex: 0 1 auto; min-width: 0; font-size: 12px; letter-spacing: .05em; }
+html[data-appareil="mobile"] .hdr .tool-sep { margin: 0; }
 html[data-appareil="mobile"] .hdr .tools { display: none; }
-html[data-appareil="mobile"] .hdr .tools-btn { display: inline-flex; flex: none; padding: 0 10px; }
+/* « Outils » : trois traits, à sa place (le mot reste dans le bouton, pour les lecteurs d'écran) — la case du nom
+   y gagne la largeur d'un mot */
+html[data-appareil="mobile"] .hdr .tools-btn { display: inline-flex; flex: none; width: 44px; padding: 0; font-size: 0; letter-spacing: 0; }
+html[data-appareil="mobile"] .hdr .tools-btn::before {
+  content: ""; width: 16px; height: 12px;
+  background: linear-gradient(currentColor, currentColor) 0 0 / 100% 1.6px no-repeat,
+    linear-gradient(currentColor, currentColor) 0 50% / 100% 1.6px no-repeat,
+    linear-gradient(currentColor, currentColor) 0 100% / 100% 1.6px no-repeat;
+}
 html[data-appareil="mobile"] .hdr .sp { flex: 1; min-width: 0; }
 html[data-appareil="mobile"] .hdr .sr-droite { flex: none; gap: 4px; }
 html[data-appareil="mobile"] .hdr .sr-asset-btn { width: 44px; padding: 0; }

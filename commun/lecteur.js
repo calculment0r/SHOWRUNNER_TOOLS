@@ -404,13 +404,17 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
   vol.addEventListener('input', () => { src.volume = +vol.value; src.muted = +vol.value === 0; garderSon({ vol: src.volume, muet: src.muted }); paintSon(); });
   // le plein écran DU lecteur (l'image, sa frise, sa barre) : Fullscreen API (MDN Element.requestFullscreen)
   const doc = root.ownerDocument;
+  // l'iPhone n'a pas le plein écran d'un élément, seulement celui d'une vidéo, par le lecteur du système
+  // (WebKit : HTMLVideoElement.webkitEnterFullscreen ; MDN, Fullscreen API, compatibilité) — la vidéo seule
+  const pleinVideo = () => kind === 'video' && !root.requestFullscreen && typeof src.webkitEnterFullscreen === 'function';
   const plein = () => {
     if (doc.fullscreenElement === root) return doc.exitFullscreen().catch(() => {});
+    if (pleinVideo()) { try { src.webkitEnterFullscreen(); } catch { /* refusé : rien */ } return Promise.resolve(); }
     if (!permis(doc) || !root.requestFullscreen) return Promise.resolve();
     return root.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
   };
   const paintFull = () => {
-    const on = doc.fullscreenElement === root, ok = permis(doc) && !!root.requestFullscreen;
+    const on = doc.fullscreenElement === root, ok = (permis(doc) && !!root.requestFullscreen) || pleinVideo();
     bFull.innerHTML = on ? ICON.unfull : ICON.full;
     bFull.setAttribute('aria-pressed', String(on));
     bFull.setAttribute('aria-disabled', String(!ok));

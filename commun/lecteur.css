@@ -89,5 +89,7 @@ html[data-appareil="mobile"] .sr-lect:not(.plein) .sr-lect-ecran {
 }
 html[data-appareil="mobile"] .sr-lect-ic { width: 44px; }
 html[data-appareil="mobile"] .sr-lect-regle { height: 32px; }
-html[data-appareil="mobile"] .sr-lect-vol { width: 96px; }
+/* le volume est aux boutons du téléphone (iOS ne laisse pas la page le régler : Apple, « Safari HTML5 Audio and
+   Video Guide », iOS-Specific Considerations) ; « défilement direct » est un état de l'ordinateur : le muet reste */
+html[data-appareil="mobile"] .sr-lect-vol, html[data-appareil="mobile"] .sr-lect-dfl { display: none; }
 html[data-appareil="mobile"] .sr-mini .sr-mini-lire { width: 44px; font-size: 12px; }
