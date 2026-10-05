@@ -392,6 +392,7 @@ export function createTimeline(app) {
 
     // la boucle
     band.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;   // le bouton droit : le menu de la règle, pas un geste
       e.preventDefault();
       band.setPointerCapture(e.pointerId);
       const b0 = beatAt(e.clientX);
@@ -747,8 +748,11 @@ export function createTimeline(app) {
           onInput: (v) => { st.params.pan = v; app.commit('param', st); }, onChange: () => app.commit('quiet') }))));
     box.addEventListener('contextmenu', (e) => {
       e.preventDefault(); e.stopPropagation();
-      if (!(S.sel.tracks || []).includes(t.id)) app.selectTrack(t.id);
-      trackMenu(e, t, nm);
+      // une plage qui passe par cette piste reste, et le menu agit sur ses
+      // pistes (Live : les pistes d'une sélection de temps sont choisies)
+      const R = app.timeRange(), inR = R && R.tracks.includes(t.id);
+      if (!inR && !(S.sel.tracks || []).includes(t.id)) app.selectTrack(t.id);
+      trackMenu(e, t, nm, inR ? R.tracks : null);
     });
     box.addEventListener('pointerdown', (e) => dragTrack(e, t, box));
     box.addEventListener('dragover', (e) => onDragOver(e, t));
@@ -762,9 +766,11 @@ export function createTimeline(app) {
     menu(e.clientX, e.clientY, [{ head: `couleur de « ${t.name} »` }, ...colorItems(t)]);
   }
 
-  function trackMenu(e, t, nm) {
+  // plage : les pistes de la plage de temps sous le clic droit (elles font la sélection)
+  function trackMenu(e, t, nm, plage = null) {
     const vis = visTracks(), i = vis.indexOf(t);
-    const picked = (S.sel.tracks || []).length > 1 && S.sel.tracks.includes(t.id) ? S.sel.tracks : [t.id];
+    const picked = plage ? vis.map((x) => x.id).filter((id) => plage.includes(id))
+      : (S.sel.tracks || []).length > 1 && S.sel.tracks.includes(t.id) ? S.sel.tracks : [t.id];
     const g = t.grp && (P().groups || []).find((x) => x.id === t.grp);
     const autos = (AUTOMATABLE[app.mod(t.src)?.type] || []).map((k) => [t.src, k]).concat(
       app.chain(t.id).filter((m) => m.id !== t.src).flatMap((m) => (AUTOMATABLE[m.type] || []).map((k) => [m.id, k])));
@@ -778,7 +784,7 @@ export function createTimeline(app) {
       '-',
       { label: 'Monter', disabled: i <= 0, why: 'déjà en haut', onclick: () => app.moveTracks(picked, vis[i - 1].id, 'avant') },
       { label: 'Descendre', disabled: i >= vis.length - 1, why: 'déjà en bas', onclick: () => app.moveTracks(picked, vis[i + 1].id, 'apres') },
-      picked.length > 1 ? { label: `Grouper les ${picked.length} pistes`, key: 'Ctrl+G', onclick: () => groupPicked() }
+      picked.length > 1 ? { label: `Grouper les ${picked.length} pistes`, key: 'Ctrl+G', onclick: () => groupPicked(picked) }
         : { label: 'Grouper avec…', disabled: vis.length < 2, why: 'une seule piste', items: vis.filter((x) => x.id !== t.id).map((x) => ({ label: x.name, dot: x.color, onclick: () => app.groupTracks([t.id], x.id) })) },
       g ? { label: `Sortir du groupe « ${g.name} »`, onclick: () => { for (const id of picked) delete app.track(id)?.grp; rangerGroupes(P()); app.label(`sortir du groupe « ${g.name} »`); app.commit('data'); } } : null,
       g ? { label: `Défaire le groupe « ${g.name} »`, onclick: () => app.ungroup(g.id) } : null,
@@ -793,8 +799,8 @@ export function createTimeline(app) {
       { label: picked.length > 1 ? `Retirer les ${picked.length} pistes` : 'Retirer la piste', key: 'Suppr', danger: true, onclick: () => app.removeTracks(picked, { ask: false }) },
     ]);
   }
-  function groupPicked() {
-    const ids = (S.sel.tracks || []).filter((id) => app.track(id)?.kind !== 'bus');
+  function groupPicked(picked = S.sel.tracks || []) {
+    const ids = picked.filter((id) => app.track(id)?.kind !== 'bus');
     if (ids.length < 2) { toast('Ctrl+G : choisis au moins deux pistes (Ctrl+clic sur leurs en-têtes)'); return; }
     const order = visTracks().map((x) => x.id).filter((id) => ids.includes(id));
     app.groupTracks(order.slice(1), order[0]);
@@ -1028,13 +1034,13 @@ export function createTimeline(app) {
     });
     box.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      // dans le corps, sur la plage choisie de cette piste : le menu de la
-      // plage, et elle reste ; ailleurs, le clip (choisi s'il ne l'était pas)
+      // sur la plage choisie de cette piste (corps ou barre de titre : une
+      // piste basse n'a presque que sa barre) : le menu de la plage, et elle
+      // reste ; ailleurs, le clip (choisi s'il ne l'était pas)
       const at = Math.max(0, snapB(beatAt(e.clientX), e));
-      const R = app.timeRange();
-      const inR = R && R.tracks.includes(t.id) && at >= R.a - 1e-6 && at <= R.b + 1e-6 && !e.target.closest?.('.ch');
-      if (!inR && !sel().has(c.id)) { app.selectClips([c.id], true); paintSel(); }
-      clipMenu(e, c, t, ttl, inR ? R : null, at);
+      const R = plageSous(t, e);
+      if (!R && !sel().has(c.id)) { app.selectClips([c.id], true); paintSel(); }
+      clipMenu(e, c, t, ttl, R, at);
     });
     box.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || ttl.classList.contains('editing')) return;
@@ -1375,6 +1381,13 @@ export function createTimeline(app) {
     const r = scroll.getBoundingClientRect();
     if (ev.clientX > r.right - 24) scroll.scrollLeft += 14; else if (ev.clientX < r.left + HEAD_W + 16) scroll.scrollLeft -= 14;
     if (ev.clientY > r.bottom - 20) scroll.scrollTop += 10;
+  }
+  // Le clic droit tombe-t-il dans la plage choisie ? (Live 12 : clic droit
+  // dans une sélection, le menu de la sélection, qui reste.) Sa piste et son
+  // temps, tels que la voile les montre (sans aimant). Rend la plage, ou null.
+  function plageSous(t, e) {
+    const R = app.timeRange(), at = beatAt(e.clientX);
+    return R && R.tracks.includes(t.id) && at >= R.a - 1e-6 && at <= R.b + 1e-6 ? R : null;
   }
   // les commandes de la plage (le clic droit d'un clip, d'une voie)
   const timeItems = (R) => [
@@ -1853,10 +1866,12 @@ export function createTimeline(app) {
       const t = app.track(ln.dataset.track);
       if (!t) return null;
       const b = Math.max(0, Math.floor(beatAt(e.clientX) / p.sig) * p.sig);
-      const R = app.timeRange(), at = beatAt(e.clientX);
-      const inR = R && R.tracks.includes(t.id) && at >= R.a - 1e-6 && at <= R.b + 1e-6;
+      const R = plageSous(t, e);
+      // hors de la sélection, le bouton droit choisit ce qui est sous lui,
+      // comme un clic (Live) : le marqueur d'insertion là, sur cette piste
+      if (!R && e.button === 2) timePoint(t, Math.max(0, snapB(beatAt(e.clientX), e)));
       return [
-        ...(inR ? [...timeItems(R), '-'] : []),
+        ...(R ? [...timeItems(R), '-'] : []),
         { head: `${t.name} · mesure ${app.bar(b)}` },
         isGenTrack(t) ? { label: 'Une région ici', sub: 'quatre mesures', onclick: () => newRegion(app, t, b, b + 4 * p.sig) }
           : t.kind === 'audio' ? { label: 'Un son de la bibliothèque ici', onclick: () => app.addAudio(t.id, b) }
