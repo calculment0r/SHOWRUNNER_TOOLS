@@ -2422,8 +2422,8 @@ export function createNodal(app) {
     bench.frame();
     for (const [id, mt, big] of meters) {
       const db = app.engine.level(id), bar = mt.firstChild;
-      if (big) { bar.style.width = `${Math.max(0, Math.min(100, (db + 60) / 60 * 100)).toFixed(1)}%`; big.textContent = db > -80 ? db.toFixed(1) : '—'; }
-      else bar.style.transform = `scaleX(${Math.max(0, Math.min(1, (db + 60) / 60)).toFixed(3)})`;
+      bar.style.transform = `scaleX(${Math.max(0, Math.min(1, (db + 60) / 60)).toFixed(3)})`;   // .mtr comme .ndx-vu : par transform
+      if (big) big.textContent = db > -80 ? db.toFixed(1) : '—';
       mt.classList.toggle('hot', db > -1);
     }
     // le témoin d'un bloc allumé passe au vert quand le transport joue

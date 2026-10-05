@@ -111,6 +111,10 @@ export class AcidBass                       {
   #voix              = null
   /** La hauteur en cours — le point de départ d'un glide. */
   #hauteur = 0
+  // SHOWRUNNER : toutes les voix planifiées qui n'ont pas fini — la dernière
+  // ne suffit pas à l'arrêt : une note posée d'avance (l'ordonnanceur planifie
+  // plusieurs doubles croches devant l'horloge) partirait encore après.
+  #vivantes = new Set()
 
   constructor(context                  , id = "acide", name = "BASSE ACIDE") {
     this.#context = context
@@ -209,15 +213,17 @@ export class AcidBass                       {
 
   allNotesOff(time         )       {
     const quand = time ?? this.#context.currentTime
-    if (!this.#voix) return
-    const voix = this.#voix
-    voix.vca.gain.cancelScheduledValues(quand)
-    voix.vca.gain.setTargetAtTime(0.0001, quand, 0.01)
-    try {
-      voix.osc.stop(quand + 0.06)
-    } catch {
-      // déjà arrêtée
+    // SHOWRUNNER : chaque voix planifiée, pas seulement la dernière (#vivantes)
+    for (const voix of this.#vivantes) {
+      voix.vca.gain.cancelScheduledValues(quand)
+      voix.vca.gain.setTargetAtTime(0.0001, quand, 0.01)
+      try {
+        voix.osc.stop(quand + 0.06)
+      } catch {
+        // déjà arrêtée
+      }
     }
+    this.#vivantes.clear()
     this.#voix = null
     this.#hauteur = 0
   }
@@ -268,6 +274,8 @@ export class AcidBass                       {
     osc.start(time)
     const voix       = { osc, etages, vca, finit: time }
     this.#voix = voix
+    this.#vivantes.add(voix)
+    osc.onended = () => this.#vivantes.delete(voix)   // SHOWRUNNER : voir #vivantes
     return voix
   }
 }

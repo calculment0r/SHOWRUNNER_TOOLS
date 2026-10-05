@@ -568,9 +568,11 @@ function audioEditor(app, host, c, t) {
   const xOf = (s, w) => ((s - view[0]) / (view[1] - view[0])) * w;
   const sOf = (x, w) => view[0] + (x / w) * (view[1] - view[0]);
 
+  let vw = 0;                               // la largeur peinte : frame() la relit sans forcer de mise en page
   function draw() {
     const b0 = src();
     const w = cv.clientWidth || 600, h = cv.clientHeight || 150, dpr = devicePixelRatio || 1;
+    vw = w;
     cv.width = w * dpr; cv.height = h * dpr;
     const g = cv.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -764,7 +766,7 @@ function audioEditor(app, host, c, t) {
       const gm = G(), into = (beat - c.start) * spb();
       let pos = gm.off + into * gm.rate;
       if (gm.loop && pos >= gm.ls + gm.llen) pos = gm.ls + ((pos - gm.ls) % gm.llen);
-      const w = cv.clientWidth;
+      const w = vw || cv.clientWidth;   // relue au dessin (ResizeObserver) : rien à mesurer à chaque image
       now.style.display = '';
       poser(now, xOf(pos, w));
     },

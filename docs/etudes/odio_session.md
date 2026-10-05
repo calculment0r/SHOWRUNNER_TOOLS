@@ -150,12 +150,15 @@ Scene » (Ctrl+Maj+I) ; une scène peut porter un tempo.
   tête mais ne reviennent jamais en arrière quand la boucle de l'arrangement
   revient ; les clips de Session y bouclent sans à-coup. Un saut de la tête ou
   un tempo changé garde la phase de chaque clip.
-- **Le temps des départs.** Le moteur planifie 120 ms d'avance (MDN, « A Tale of
-  Two Clocks ») : un départ demandé juste avant la barre tombe derrière ce qui
-  est déjà planifié ; s'il est encore à venir pour l'oreille, il est rattrapé à
-  son instant exact (la piste est coupée là, le bout de clip manquant se
-  planifie) ; sinon il part à la frontière, en gardant sa phase. Sans
-  quantification, un clip part au prochain instant encore libre (≈ 100 ms).
+- **Le temps des départs.** Le moteur planifie l'avance du tampon (MDN, « A Tale of
+  Two Clocks » ; 300 ms par défaut depuis le 06/10, 120 avant : `TAMPONS`,
+  `docs/etudes/musique.md`, « Les craquements ») : un départ demandé juste avant
+  la barre tombe derrière ce qui est déjà planifié ; s'il est encore à venir
+  pour l'oreille, il est rattrapé à son instant exact (la piste est coupée là,
+  le bout de clip manquant se planifie) ; sinon il part tout de suite, en
+  gardant sa phase. Sans quantification, un clip part tout de suite par ce
+  même rattrapage (au réveil suivant du minuteur, 25 ms au plus, et 10 ms de
+  marge), et non plus au prochain instant libre, qui attendrait toute l'avance.
 - **Couper une piste** (`Graph.cut`) : les sons lus s'éteignent en 6 ms, les
   notes tenues se relâchent (synthé, échantillonneur) ; les instruments d'ODIO
   reçoivent `allNotesOff` à l'instant voulu ; les coups de batterie, brefs,

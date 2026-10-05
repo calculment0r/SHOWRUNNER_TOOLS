@@ -30,8 +30,41 @@ import { trajets, sansSession } from './projet.js';   // les chaînes des pistes
 import { etageArcs, configurerArcs, planifierArcs, poserArcs } from './arcs.js';   // les arcs du projet (06/10) : l'étage de la sortie, l'envoi des retours
 
 const LOOKAHEAD_MS = 25;      // MDN : « lookahead = 25.0 »
-const AHEAD_S = 0.12;         // MDN : « scheduleAheadTime = 0.1 » (+ 20 ms de marge au démarrage d'onglet)
 const DEPART_S = 0.05;        // la lecture part 50 ms après l'instant présent (playFrom) ; l'export s'y cale (renderMix)
+
+// ── le tampon (Cal, 06/10 : « des craquements… le buffer pas assez grand ») ──
+// Deux réserves contre les à-coups, réglées ensemble par la préférence
+// `music.tampon` (musique/prefs.json), comme le « Buffer Size » de Live :
+//  - `latence` : le tampon de la carte son, le `latencyHint` de l'AudioContext
+//    (spécification Web Audio : « interactive » = « the lowest audio output
+//    latency possible without glitching » ; « playback » = « Prioritize
+//    sustained playback without interruption over audio output latency » ; ou
+//    une durée en secondes, que le navigateur arrondit — la valeur obtenue se
+//    lit dans baseLatency). Chromium (media/base/audio_latency.cc) :
+//    interactive = le tampon matériel (10 ms sous Windows), playback = 20 ms,
+//    une durée = un multiple du tampon matériel, 8192 images au plus. Ne se
+//    règle qu'à la création du contexte : en changer refait le contexte.
+//  - `avance` : ce que l'ordonnanceur pose devant l'horloge audio (« A Tale of
+//    Two Clocks », Chris Wilson : 100 ms pour commencer, davantage quand la
+//    page a des mises en page lourdes ; le prix : une retouche faite pendant
+//    la lecture s'entend après l'avance). Le fil principal et le minuteur du
+//    Worker prennent du retard sous charge : au-delà de l'avance, les notes
+//    tombaient dans le passé (Engine.tick, plus bas).
+// Mesuré le 06/10 (docs/etudes/musique.md, « Les craquements ») : `court`
+// était le réglage d'avant (10 ms, 120 ms) ; sur une machine chargée, des
+// pertes du rendu à 10 ms, aucune à 20 ms, et des tranches planifiées
+// jusqu'à 228 ms en retard.
+export const TAMPONS = {
+  court: { latence: 'interactive', avance: 0.12 },   // jouer au clavier : la réponse la plus vive
+  moyen: { latence: 'playback', avance: 0.3 },       // le défaut : la lecture d'un arrangement
+  long: { latence: 0.05, avance: 0.5 },              // une machine chargée, un gros projet
+};
+export const TAMPON_DEFAUT = 'moyen';
+// Rien ne se planifie à moins de MARGE_S de l'horloge audio : currentTime est
+// l'instant qui suit le dernier bloc rendu (spécification), et un nœud créé
+// sur le fil principal n'entre dans le rendu qu'à un bloc suivant (128
+// images, 2,9 ms à 44,1 kHz) : trois blocs, et de quoi traverser.
+const MARGE_S = 0.01;
 
 // ── petites aides ───────────────────────────────────────────
 const G = (ctx, gain = 1) => new GainNode(ctx, { gain });
@@ -1060,7 +1093,9 @@ export class Graph {
   // d'arrangement de `len` noires qui commencerait là : les mêmes lectures,
   // par la source de la VOIE (p.voies) — l'arrangement, lui, continue.
   // `fresh` : le clip vient de partir en retard, ou la lecture vient de
-  // repartir (playFrom) — un son déjà commencé se reprend en son milieu.
+  // repartir (playFrom) — un son déjà commencé se reprend en son milieu ;
+  // un nombre (le retard rattrapé, Engine.tick) : seulement un tour commencé
+  // à partir de ce temps de la Session (ceux d'avant jouent déjà).
   scheduleSession(p, joue, a0, a1, t0) {
     if (!joue.size) return;
     const spb = 60 / p.bpm;
@@ -1079,7 +1114,7 @@ export class Graph {
         const c = { ...s, start: vs, len: L === Infinity ? 1e5 : L };
         if (tr.kind === 'audio') {
           if (vs >= a0) this.audioClip(src, c, at(vs), vs, vs, Infinity, spb);
-          else if (J.fresh) this.audioClip(src, c, at(a0), a0, vs, Infinity, spb);
+          else if (J.fresh === true || (typeof J.fresh === 'number' && vs >= J.fresh - 1e-9)) this.audioClip(src, c, at(a0), a0, vs, Infinity, spb);
         } else if (pat && !J.rec) this.notes(tr, c, pat, src, Math.max(a0, vs), Math.min(a1, vs + c.len), at, spb);
         if (L === Infinity) break;
       }
@@ -1114,14 +1149,16 @@ export class Graph {
   }
 
   // Les clips audio déjà commencés à l'instant où la lecture part (ou
-  // reprend en haut de boucle) : lus depuis le bon endroit.
-  resume(p, beat, t, limit = Infinity) {
+  // reprend en haut de boucle) : lus depuis le bon endroit. `depuis` : ceux
+  // qui ont commencé à partir de ce temps seulement (le retard rattrapé,
+  // Engine.tick : ceux d'avant jouent déjà).
+  resume(p, beat, t, limit = Infinity, depuis = -Infinity) {
     const spb = 60 / p.bpm;
     const trk = new Map(p.tracks.map((x) => [x.id, x]));
     for (const c of p.clips) {
       const tr = trk.get(c.track);
       if (!tr || tr.kind !== 'audio' || c.mute) continue;
-      if (c.start < beat && c.start + c.len > beat) {
+      if (c.start < beat && c.start + c.len > beat && c.start >= depuis - 1e-9) {
         const src = this.nodes.get(tr.src);
         if (src) this.audioClip(src, c, t, beat, c.start, limit, spb);
       }
@@ -1164,18 +1201,62 @@ export class Engine {
     //   file   [{ voie, slot | null, at, rec }] : les départs et les arrêts
     //          quantifiés, rangés par `at`
     this.sess = { joue: new Map(), file: [] };
+    // le tampon (TAMPONS, en tête) : son nom ; `tamponAttente` : un autre
+    // tampon choisi pendant la lecture, le contexte se refait à l'arrêt ;
+    // `rattrapes` : les tranches perdues au retard (tick), pour les essais
+    this.tampon = TAMPON_DEFAUT; this.tamponAttente = false; this.refait = null; this.rattrapes = 0;
   }
 
   get running() { return !!this.play; }
+  get avance() { return TAMPONS[this.tampon].avance; }
 
   async start() {
-    if (!this.ctx) {
-      this.ctx = new AudioContext({ latencyHint: 'interactive' });
-      this.graph = new Graph(this.ctx, { buffers: this.buffers, live: this.live, ecoute: () => this.ecoute });   // attracteurs : la tête d'écoute du banc, quand elle gouverne
-      if (this.proj) { this.graph.sync(this.proj); this.graph.settle(this.proj, this.pos); }
-    }
+    if (this.refait) await this.refait;   // un contexte qu'on refait (reglerTampon)
+    if (!this.ctx) this.creer();
     if (this.ctx.state !== 'running') await this.ctx.resume();
     await this.graph.ready();
+  }
+
+  creer() {
+    this.ctx = new AudioContext({ latencyHint: TAMPONS[this.tampon].latence });
+    this.graph = new Graph(this.ctx, { buffers: this.buffers, live: this.live, ecoute: () => this.ecoute });   // attracteurs : la tête d'écoute du banc, quand elle gouverne
+    if (this.proj) { this.graph.sync(this.proj); this.graph.settle(this.proj, this.pos); }
+  }
+
+  // ── le tampon (TAMPONS, en tête ; la préférence music.tampon) ──
+  // L'avance vaut dès le réveil suivant ; le tampon de la carte son demande un
+  // autre contexte (latencyHint ne se donne qu'à sa création) : refait tout de
+  // suite à l'arrêt, à l'arrêt suivant pendant la lecture (le morceau ne se
+  // coupe pas). Rend 'fait' | 'attente' | 'pareil'.
+  reglerTampon(nom) {
+    if (!TAMPONS[nom]) nom = TAMPON_DEFAUT;
+    if (nom === this.tampon) return 'pareil';
+    const avant = TAMPONS[this.tampon];
+    this.tampon = nom;
+    if (!this.ctx || avant.latence === TAMPONS[nom].latence) return 'fait';
+    if (this.play) { this.tamponAttente = true; return 'attente'; }
+    this.refaireContexte();
+    return 'fait';
+  }
+  // Le contexte refait au tampon choisi : le graphe s'y reconstruit (les sons
+  // décodés restent : un AudioBuffer ne tient à aucun contexte) ; `mu:contexte`
+  // prévient les vues, dont les analyseurs tenaient à l'ancien.
+  refaireContexte() {
+    this.tamponAttente = false;
+    const old = this.ctx, g = this.graph;
+    if (g) for (const n of g.nodes.values()) { try { n.dispose?.(); } catch { /* déjà défait */ } }
+    this.creer();   // le nouveau tout de suite : this.ctx n'est jamais nul (les jouets le lisent)
+    this.refait = (async () => {
+      try { await old?.close(); } catch { /* déjà fermé */ }
+      try { await this.ctx.resume(); } catch { /* sans geste : la lecture suivante le lancera */ }
+      await this.graph.ready();
+    })().finally(() => { this.refait = null; document.dispatchEvent(new CustomEvent('mu:contexte', { detail: this.latences() })); });
+    return this.refait;
+  }
+  // ce que le navigateur a donné (s) : le tampon de la carte son (baseLatency),
+  // la sortie jusqu'aux haut-parleurs (outputLatency, une estimation), l'avance
+  latences() {
+    return { tampon: this.tampon, base: this.ctx?.baseLatency ?? null, sortie: this.ctx?.outputLatency ?? null, avance: this.avance };
   }
 
   setProject(p) { this.proj = p; if (this.graph) { this.graph.sync(p); if (!this.play) this.graph.settle(p, this.pos); } this.need(p); }
@@ -1265,12 +1346,18 @@ export class Engine {
     const P = this.play;
     if (!P) return;
     const p = this.proj;
-    const horizon = this.ctx.currentTime + AHEAD_S;
+    const now = this.ctx.currentTime;
+    const horizon = now + this.avance;
     const S = this.sess;
     let guard = 0;
     while (P.ct < horizon && guard++ < 64) {
       this.echeances();                              // les départs et arrêts de la Session venus à leur temps
       const loop = this.loopAt(P.cb);
+      // en retard (le fil principal ou le minuteur a pris plus que l'avance) :
+      // rien ne part dans le passé (sauter) ; puis les sons commencés dans la
+      // tranche perdue repartent à leur place
+      if (P.ct < now + MARGE_S - 1e-9) { this.sauter(now + MARGE_S, loop); continue; }
+      if (P.retard) { this.graph.resume(p, P.cb, P.ct, loop ? loop.b : Infinity, P.retard.depuis); P.retard = null; }
       let end = P.cb + (horizon - P.ct) / P.spb, wrap = false;
       if (loop && end >= loop.b) { end = loop.b; wrap = true; }
       // la tranche s'arrête au prochain départ de la Session : le clip d'avant
@@ -1292,6 +1379,36 @@ export class Engine {
     }
     // la fin du morceau arrête la lecture, sauf si la Session joue ou attend
     if (!this.loopAt(P.cb) && P.cb > songEnd(p) + 2 && !this.keepGoing && !S.joue.size && !S.file.length) this.stop(true);
+  }
+
+  // Le retard, juste par construction : la tranche qui aurait dû sonner avant
+  // `cible` est perdue, plutôt que jouée en retard. Une note posée dans le
+  // passé part tout de suite (AudioScheduledSourceNode.start : « the sound
+  // will start playing immediately ») et les temps de son enveloppe sont
+  // ramenés à currentTime (« clamped to currentTime », spécification) :
+  // l'attaque devient une marche, un claquement ; et toutes ensemble, les
+  // notes en retard chargent le rendu d'un coup. Les sons qui commençaient
+  // dans la tranche partent à `cible`, à leur place dans le son (resume avec
+  // `depuis`, puis `fresh` pour la Session), comme après un saut de la tête.
+  // L'heure de chaque temps ne bouge pas (P.ct et P.cb avancent ensemble) :
+  // la tête reste calée sur l'horloge audio. La boucle se referme au passage
+  // (après elle, tous les sons en cours repartent : depuis = -Infinity).
+  sauter(cible, loop) {
+    const P = this.play;
+    let fin = P.cb + (cible - P.ct) / P.spb, wrap = false;
+    if (loop && fin >= loop.b) { fin = loop.b; wrap = true; }
+    const depuis = wrap ? -Infinity : Math.min(P.retard?.depuis ?? Infinity, P.cb);
+    for (const J of this.sess.joue.values()) if (J.fresh !== true) J.fresh = typeof J.fresh === 'number' ? Math.min(J.fresh, P.ab) : P.ab;
+    P.ct = wrap ? P.ct + (fin - P.cb) * P.spb : cible;   // exactement la cible : pas de second saut pour un arrondi
+    P.ab += fin - P.cb;
+    P.cb = fin;
+    if (wrap) {
+      P.cb = loop.a;
+      P.anchors.push({ time: P.ct, beat: loop.a });
+      if (P.anchors.length > 32) P.anchors.splice(0, P.anchors.length - 32);
+    }
+    P.retard = { depuis };
+    this.rattrapes++;
   }
 
   // ── la vue Session : lancer, arrêter ──
@@ -1320,8 +1437,10 @@ export class Engine {
       return b;
     }
     const P = this.play, now = this.absNow();
-    // sans quantification : au prochain temps encore libre (la tranche déjà posée sonne)
-    const at = q > 0 ? Math.ceil(now / q - 1e-6) * q : P.ab;
+    // sans quantification : tout de suite, rattrapé à son instant (echeances) —
+    // la frontière de ce qui est posé (P.ab) est à l'avance du tampon, jusqu'à
+    // 500 ms (TAMPONS) : y attendre se sentirait
+    const at = q > 0 ? Math.ceil(now / q - 1e-6) * q : Math.min(P.ab, now + MARGE_S / P.spb);
     const voies = new Set(evs.map((ev) => ev.voie));
     S.file = S.file.filter((ev) => !voies.has(ev.voie));   // un nouveau départ remplace celui qui attendait
     for (const ev of evs) S.file.push({ ...ev, at });
@@ -1331,7 +1450,7 @@ export class Engine {
 
   // Les départs et les arrêts venus à leur temps. D'ordinaire à la frontière
   // de ce qui est planifié (P.ab). Un départ demandé juste avant son temps
-  // tombe déjà derrière la frontière (on planifie 120 ms d'avance) : s'il est
+  // tombe déjà derrière la frontière (on planifie l'avance du tampon) : s'il est
   // encore à venir pour l'oreille, il se rattrape à son instant exact — le
   // clip d'avant de la voie se tait là, le nouveau y part (la tranche
   // manquante se planifie) ; sinon il part à la frontière, en gardant sa phase.
@@ -1340,7 +1459,7 @@ export class Engine {
     while (S.file.length && S.file[0].at <= P.ab + 1e-9) {
       const ev = S.file.shift();
       const cur = S.joue.get(ev.voie);
-      const t = Math.max(this.ctx.currentTime + 0.003, P.ct - Math.max(0, P.ab - ev.at) * P.spb);
+      const t = Math.max(this.ctx.currentTime + MARGE_S, P.ct - Math.max(0, P.ab - ev.at) * P.spb);   // jamais plus près de l'horloge que MARGE_S (en tête)
       const x = P.ab - (P.ct - t) / P.spb;           // le temps de la Session à cet instant
       if (ev.slot && (p.slots || []).some((s) => s.id === ev.slot && s.voie === ev.voie)) {
         if (cur) this.graph.cut(p, ev.voie, t);      // le clip d'avant de la voie se tait
@@ -1392,6 +1511,7 @@ export class Engine {
     this.sess.file = [];
     this.pos = stay ? here : from;
     if (this.graph && this.proj) this.graph.settle(this.proj, this.pos);
+    if (this.tamponAttente) this.refaireContexte();   // le tampon choisi pendant la lecture
     if (this.onstop) this.onstop(ended, here);
   }
 
@@ -1483,8 +1603,8 @@ export function projEnd(p) {
 //  - toutes les voix existaient dès le début du rendu, et chaque bloc de 128
 //    images parcourt les nœuds vivants : le rendu ralentissait à mesure que le
 //    morceau s'allongeait (64 temps : 8,8 s ; 128 temps : 66,8 s).
-// La tranche vaut EXPORT_PAS noires, posée AHEAD_S avant de sonner (l'horizon
-// de la lecture) : un réglage lu « maintenant » l'est au même moment qu'en
+// La tranche vaut EXPORT_PAS noires, posée avant de sonner de l'avance de la
+// lecture (engine.avance) : un réglage lu « maintenant » l'est au même moment qu'en
 // lecture, et une note sur la grille des doubles croches lit la valeur de
 // son propre temps. Mesuré le 29/09 (« Verre fumé », 161 s, DGX2) : 383 s
 // d'un bloc, 40 à 54 s par doubles croches (une ou deux noires : 40-45 s,
@@ -1532,7 +1652,7 @@ async function rendreMix(engine, p, from, to, { tail = 2, sampleRate = 48000, so
   const poser = (k) => { const b0 = from + k * pas; g.schedule(p, b0, Math.min(to, b0 + pas), D + (b0 - from) * spb, to); };
   const arrets = new Map(), debut = [];
   for (let k = 0; k < n; k++) {
-    const f = Math.floor(((D + k * pas * spb - AHEAD_S) * sampleRate) / RQ) * RQ;
+    const f = Math.floor(((D + k * pas * spb - engine.avance) * sampleRate) / RQ) * RQ;
     if (f <= 0 || f + RQ >= length) debut.push(k);
     else { if (!arrets.has(f)) arrets.set(f, []); arrets.get(f).push(k); }
   }
