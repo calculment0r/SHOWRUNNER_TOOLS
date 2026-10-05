@@ -1,8 +1,8 @@
 # Reprise — à lire en premier
 
 **État au 05/10/2026, 23 h.** C'est la fin de la session cloud du 05/10 après-midi et soir. `main` est à jour et
-en ligne : la mise à jour automatique le publie seule. Cinq branches `wip/…` attendent sur GitHub ; elles se
-fusionnent sans conflit (essayé, § 2.A).
+en ligne, et `check.py` y passe : **2601 / 0**. La mise à jour automatique le publie seule. Quatre branches
+`wip/…` attendent sur GitHub ; elles se fusionnent sans conflit et passent `check.py` (essayé, § 2.A).
 
 - Portail à la maison : **http://192.168.10.247:8790/** (DGX2 ; Tailscale http://100.108.108.65:8790/).
 - Adresse publique : **https://showrunner.luxigone.workers.dev**. Un ami tape le pseudo que Cal lui a créé
@@ -13,8 +13,8 @@ fusionnent sans conflit (essayé, § 2.A).
 
 ## 0. En trente secondes
 
-1. **Fusionner les cinq branches `wip/…` (§ 2.A)**, dans l'ordre du tableau. `check.py` sur la fusion des
-   cinq : voir § 2.A, ligne « essai de fusion ».
+1. **Fusionner les quatre branches `wip/…` restantes (§ 2.A)**, dans l'ordre du tableau. `check.py` passe déjà
+   sur leur fusion ; il reste à essayer leurs pages.
 2. **Finir ce qui est à moitié (§ 2.B)** : la page des documents, la page de l'agent Showrunner,
    « Commencer un projet » de bout en bout, la Session d'ODIO refaite.
 3. **Le nouveau, décidé, à coder (§ 2.C)** : Musique → Spaces, playlists, lien d'écoute (le lecteur d'AGOSTA).
@@ -81,12 +81,13 @@ Chaque dernier commit dit ce qui est fait et ce qui reste.
 5. pousser `main`
 
 **Essai de fusion du 05/10 au soir** : les cinq branches, fusionnées dans cet ordre sur une copie de `main`
-(4da6194), passent **sans un seul conflit**. `check.py` sur cette fusion : RÉSULTAT_FUSION. `check.py` sur
-`main` seul : RÉSULTAT_MAIN.
+(4da6194), passent **sans un seul conflit**. `check.py` sur cette fusion : **2723 passés, 0 échec**. Sur `main`
+seul : **2601 / 0**. L'échec de Transcrire vu sur la branche de la Secousse ne revient pas : il était
+intermittent. Ce qui manque encore, c'est l'essai des PAGES.
 
 | ordre | branche | état | avant de fusionner |
 |---|---|---|---|
-| 1 | `wip/odio-pistes-secousse` (862731e) | **FINIE** | Cal valide la hauteur mini des pistes : 26 px au lieu de 48 |
+| ~~1~~ | ~~`wip/odio-pistes-secousse`~~ | **FUSIONNÉE dans `main` le 05/10 au soir** (18ada48 ; page ODIO essayée dans les deux thèmes, sans erreur) | Cal valide la hauteur mini des pistes : 26 px au lieu de 48 (`TH_MIN`, `musique/timeline.js`) |
 | 2 | `wip/documents` (c3104b5) | serveur seul | rien ne casse sans la page ; la fusionner tôt, car `projet-ingest` s'appuie dessus |
 | 3 | `wip/agent-showrunner` (bd3c65b) | serveur seul | idem |
 | 4 | `wip/projet-ingest` (4595b96) | partielle | après 2 et 3 (leur contrat est dans son commit) ; essayer « Commencer » de bout en bout |
