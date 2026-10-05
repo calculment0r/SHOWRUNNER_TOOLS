@@ -204,7 +204,11 @@ export function suivreTaille(node, cb) {
   observeTaille(t);
   return () => { if (t.ro) t.ro.disconnect(); tailles.delete(t); };
 }
-window.SR_FENETRES = { claim, owns, suivreTaille };
+// une fenêtre détachée encore visible garde la page « visible » : ses relevés (commun/shell.js, ongletCache)
+// continuent pour le panneau qu'on regarde sur l'autre écran, même la page cachée derrière
+const visible = () => openWins().some((w) => { try { return !w.document.hidden; } catch { return false; } });
+const direVisibilite = () => document.dispatchEvent(new Event('sr:visibilite'));
+window.SR_FENETRES = { claim, owns, suivreTaille, visible };
 
 function ancestors(node) {
   const out = [];
@@ -283,6 +287,7 @@ function bridge(p, w) {
   w.__srFen = TOKEN;
   const d = w.document;
   for (const [t, fn, opt] of listeners) w.addEventListener(t, fn, opt);
+  d.addEventListener('visibilitychange', direVisibilite);
   const mark = (e) => { lastWin = w; if (e.type === 'contextmenu') lastPoint = { x: e.clientX, y: e.clientY }; };
   for (const t of ['pointerdown', 'contextmenu', 'keydown']) w.addEventListener(t, mark, true);
   // un clic hors du menu le ferme (menu.js n'écoute que la page)
@@ -381,6 +386,7 @@ function back(p, why = 'attach') {
 
 function changed() {
   for (const t of tailles) { try { observeTaille(t); } catch { /* fenêtre fermée : au prochain changement */ } }
+  direVisibilite();   // une fenêtre de plus ou de moins : la page est-elle encore vue ?
   try { onchange(); } catch (e) { console.error(e); }
   for (const b of pills) b();
 }

@@ -2,7 +2,7 @@
 
 import { SHEET_FIELDS } from './schema.js';
 import { talk, voiceConfig, micBlocker, Micro } from './parler.js';
-import { local, localSummary, errorText, mount } from './cf.js';
+import { local, localSummary, errorText, mount, ongletCache, auRetour } from './cf.js';
 
 /* Dans le portail (29/09) : l'en-tête est celle du portail, la page vit
    sous character/ et parle au studio de DGX1 par le relais du portail —
@@ -2470,11 +2470,15 @@ async function pollJobs() {
 }
 
 // Un travail vient de partir : on relève tout de suite, sans attendre le tour lent.
+// Onglet caché : plus de relevé ; à son retour, tout de suite (cf.js, ongletCache).
 let pollTimer = null;
+let sysTimer = null;
+let polling = false;   // les relevés ont commencé (après la première route)
 function schedulePoll(ms) {
   clearTimeout(pollTimer);
-  pollTimer = setTimeout(pollJobs, ms);
+  if (!ongletCache()) pollTimer = setTimeout(pollJobs, ms);
 }
+auRetour(() => { if (polling) { schedulePoll(0); clearTimeout(sysTimer); pollSystem(); } });
 
 async function pollSystem() {
   const pill = $('#sys-pill');
@@ -2494,7 +2498,8 @@ async function pollSystem() {
     $('#sys-text').textContent = 'studio muet · DGX1 ne répond pas';
     pill.className = 'pill err';
   }
-  setTimeout(pollSystem, 5000);
+  clearTimeout(sysTimer);
+  if (!ongletCache()) sysTimer = setTimeout(pollSystem, 5000);
 }
 
 /* ── le clic droit (Cal, 29/09 : jamais le menu du navigateur dans le portail) ──
@@ -2532,4 +2537,4 @@ import('../../commun/menu.js').then(({ contextMenu, pageMenu }) => {
 });
 
 wire();
-onRoute().then(() => { pollJobs(); pollSystem(); });
+onRoute().then(() => { polling = true; pollJobs(); pollSystem(); });

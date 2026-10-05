@@ -347,6 +347,10 @@ export async function api(path, { method = 'GET', body, raw, headers = {}, signa
     e.status = r.status;
     throw e;
   }
+  // Une écriture qui rend un travail (son id, ou { job }, ou { jobs }) vient d'en lancer, d'en arrêter, d'en relancer
+  // un, quelle que soit sa route (POST /api/image/…, /api/chanson/plan…) : la file est relue tout de suite, puis de
+  // près — au repos, elle ne se relit que toutes les 30 s. Les routes de la file le font elles-mêmes (jobs.submit…).
+  if (method !== 'GET' && !/^\/?(api\/)?jobs(\/|\?|$)/.test(path) && porteTravail(data)) fileBouge();
   return data;
 }
 
@@ -524,61 +528,134 @@ export function dropZone(node, { kinds = ['image', 'element'], multiple = true, 
   return node;
 }
 
+// ── l'onglet caché : plus aucun relevé ──────────────────────
+// Cal, 06/10 : Cloudflare a compté 80 000 requêtes du Worker dans la journée, sur une limite de 100 000
+// (Workers Free ; au-delà, /api/* et /library/* répondent 429 jusqu'à minuit UTC). Chaque onglet relisait
+// la file, la session, la page d'admin… même caché. Un onglet caché (Page Visibility, MDN : un autre onglet
+// devant, la fenêtre réduite, l'écran éteint — document.hidden) ne relit plus rien ; au retour
+// (visibilitychange), chaque relevé repart TOUT DE SUITE. Une fenêtre détachée encore visible
+// (commun/fenetre.js : un panneau sur le second écran) garde la page « visible ».
+// Ce qui continue caché n'interroge rien : un flux (la collaboration d'Idéation : une seule requête, qui dit
+// aussi « absent » aux autres), un enregistrement, une lecture. docs/etudes/cloudflare.md, « Le compte des
+// requêtes du Worker » ; le compteur : tools/compte_requetes.mjs.
+export const ongletCache = () => document.hidden && !(window.SR_FENETRES && window.SR_FENETRES.visible && window.SR_FENETRES.visible());
+const retours = new Set();
+let cacheVu = ongletCache();
+/** cb() à chaque retour de l'onglet (caché → visible) ; rend de quoi se désabonner. */
+export function auRetour(cb) { retours.add(cb); return () => retours.delete(cb); }
+/** Tenue tout de suite si l'onglet se voit, sinon à son retour. */
+export const quandVisible = () => (!ongletCache() ? Promise.resolve()
+  : new Promise((ok) => { const off = auRetour(() => { off(); ok(); }); }));
+function visibilite() {
+  const c = ongletCache();
+  if (c === cacheVu) return;
+  cacheVu = c;
+  if (!c) for (const cb of [...retours]) { try { cb(); } catch (e) { console.error('retour de l’onglet', e); } }
+}
+document.addEventListener('visibilitychange', visibilite);
+document.addEventListener('sr:visibilite', visibilite);   // une fenêtre détachée qui se montre, se cache, se ferme
+
+/** Un relevé périodique : fn() toutes les `ms` (un nombre, ou une fonction qui le rend), jamais deux à la
+ *  fois, rien tant que l'onglet est caché, tout de suite au retour. Rend { now(), stop() } : now() relit
+ *  tout de suite (un relevé en vol : un seul de plus, juste après). */
+export function releve(fn, ms, { now = false } = {}) {
+  let t = 0, vol = false, encore = false, fini = false;
+  const delai = () => (typeof ms === 'function' ? ms() : ms);
+  const tour = async () => {
+    clearTimeout(t); t = 0;
+    if (fini || ongletCache()) return;   // caché : le retour relance
+    if (vol) { encore = true; return; }
+    vol = true;
+    try { await fn(); } catch { /* le serveur redémarre : au tour suivant */ } finally { vol = false; }
+    if (encore) { encore = false; tour(); return; }
+    if (!fini && !ongletCache()) t = setTimeout(tour, delai());
+  };
+  const off = auRetour(tour);
+  if (now) tour(); else t = setTimeout(tour, delai());
+  return { now: tour, stop() { fini = true; clearTimeout(t); off(); } };
+}
+
 // ── la file ─────────────────────────────────────────────────
 const listeners = new Set();
 let lastJobs = [];
-let pollT = null;
+let pollT = 0;
+let pollOn = false;     // une page relève la file (mountHeader, jobs.watch)
+let pollVol = false;    // un relevé en vol
+let pollEncore = false; // demandé pendant ce vol : un seul de plus, juste après
 let evSeq = null;   // le dernier numéro vu du journal des éléments (ev_seq de GET /api/jobs)
+const FINIS = ['done', 'error', 'cancelled', 'interrupted'];
+// Les délais du relevé : 1,5 s quand un travail est en file ou en cours ; 6 s pendant les deux minutes qui suivent
+// un mouvement (un travail vu en cours, un état qui change, un geste qui lance, arrête, relance : fileBouge) ;
+// 30 s au repos. Ce qu'on attend de la file se voit tout de suite quand on l'a lancé d'ici (fileBouge, et api()
+// pour toute écriture qui rend un travail) ; ce que lancent les autres, en 30 s au plus au repos.
+const FILE_ACTIVE = 1500, FILE_PRES = 6000, FILE_REPOS = 30000, FILE_CALME = 120000;
+let bougeA = Date.now();   // le dernier mouvement de la file (l'arrivée sur la page en est un)
+/** Un geste vient de toucher la file (lancer, arrêter, relancer, retirer) : relue tout de suite, puis de près. */
+function fileBouge() { bougeA = Date.now(); jobs.poll(true); }
+const JOB_ID = /^job-\d{4}-\d{6}-[0-9a-f]{4}$/;   // core/jobs.py, submit : « job-MMJJ-HHMMSS-xxxx »
+const estTravail = (x) => (typeof x === 'string' ? JOB_ID.test(x) : !!x && typeof x === 'object' && JOB_ID.test(String(x.id || '')));
+const porteTravail = (d) => !!d && typeof d === 'object' && (estTravail(d) || estTravail(d.job) || (Array.isArray(d.jobs) && d.jobs.some(estTravail)));
 export const jobs = {
   async submit(kind, params, { title = '', tool = '' } = {}) {
     const j = await api('jobs', { method: 'POST', body: { kind, params, title, tool } });
-    jobs.poll(true);
+    fileBouge();
     return j;
   },
   get: (id) => api('jobs/' + id),
-  cancel: (id) => api(`jobs/${id}/cancel`, { method: 'POST' }).then((j) => (jobs.poll(true), j)),
-  retry: (id) => api(`jobs/${id}/retry`, { method: 'POST' }).then((j) => (jobs.poll(true), j)),
-  forget: (id) => api(`jobs/${id}/forget`, { method: 'POST' }).then(() => jobs.poll(true)),
+  cancel: (id) => api(`jobs/${id}/cancel`, { method: 'POST' }).then((j) => (fileBouge(), j)),
+  retry: (id) => api(`jobs/${id}/retry`, { method: 'POST' }).then((j) => (fileBouge(), j)),
+  forget: (id) => api(`jobs/${id}/forget`, { method: 'POST' }).then(() => fileBouge()),
   // cb(liste) à chaque relevé ; renvoie de quoi se désabonner
   watch(cb) { listeners.add(cb); if (lastJobs.length) cb(lastJobs); jobs.poll(true); return () => listeners.delete(cb); },
+  // Un seul relevé à la fois, une seule minuterie : un poll(true) pendant un relevé en vol en demande
+  // UN de plus, juste après (avant le 06/10, chaque jobs.watch lancé pendant un vol ajoutait une chaîne :
+  // l'accueil relisait la file deux fois, ODIO trois — tools/compte_requetes.mjs).
   async poll(now = false) {
+    pollOn = true;
+    clearTimeout(pollT); pollT = 0;
+    if (!now) { pollT = setTimeout(() => jobs.poll(true), 1500); return; }
+    if (doorOn || ongletCache()) return;   // la porte est fermée, l'onglet caché : rien (le retour relance)
+    if (pollVol) { pollEncore = true; return; }
+    pollVol = true;
+    try {
+      const { jobs: list, ev_seq: ev } = await api('jobs?limit=60');
+      const before = new Map(lastJobs.map((j) => [j.id, j.state]));
+      lastJobs = list;
+      for (const cb of listeners) cb(list);
+      for (const j of list) {
+        const was = before.get(j.id);
+        if (was !== undefined && was !== j.state) bougeA = Date.now();
+        if (was && was !== j.state && ['done', 'error', 'cancelled'].includes(j.state)) {
+          document.dispatchEvent(new CustomEvent('sr:job', { detail: j }));
+        }
+      }
+      // le journal des éléments a avancé dans ce Workspace (server/tools/elements.py, seq_here) :
+      // « sr:elements » dit aux pages qui suivent des versions de relire GET /api/elements/changes
+      // (docs/etudes/apps_studio_elements.md § 2.11) — le relevé de la file, sans connexion de plus
+      if (Number.isInteger(ev)) {
+        if (evSeq !== null && ev > evSeq) document.dispatchEvent(new CustomEvent('sr:elements', { detail: { seq: ev, since: evSeq } }));
+        evSeq = ev;
+      }
+    } catch { /* le serveur redémarre : on réessaie */ } finally { pollVol = false; }
+    if (pollEncore) { pollEncore = false; jobs.poll(true); return; }
+    if (doorOn || ongletCache()) return;
+    const active = lastJobs.some((j) => j.state === 'queued' || j.state === 'running');
+    if (active) bougeA = Date.now();
     clearTimeout(pollT);
-    const go = async () => {
-      if (doorOn) return;   // la porte est fermée : on ne relit rien
-      try {
-        const { jobs: list, ev_seq: ev } = await api('jobs?limit=60');
-        const before = new Map(lastJobs.map((j) => [j.id, j.state]));
-        lastJobs = list;
-        for (const cb of listeners) cb(list);
-        for (const j of list) {
-          const was = before.get(j.id);
-          if (was && was !== j.state && ['done', 'error', 'cancelled'].includes(j.state)) {
-            document.dispatchEvent(new CustomEvent('sr:job', { detail: j }));
-          }
-        }
-        // le journal des éléments a avancé dans ce Workspace (server/tools/elements.py, seq_here) :
-        // « sr:elements » dit aux pages qui suivent des versions de relire GET /api/elements/changes
-        // (docs/etudes/apps_studio_elements.md § 2.11) — le relevé de la file, sans connexion de plus
-        if (Number.isInteger(ev)) {
-          if (evSeq !== null && ev > evSeq) document.dispatchEvent(new CustomEvent('sr:elements', { detail: { seq: ev, since: evSeq } }));
-          evSeq = ev;
-        }
-      } catch { /* le serveur redémarre : on réessaie */ }
-      const active = lastJobs.some((j) => j.state === 'queued' || j.state === 'running');
-      pollT = setTimeout(go, active ? 1500 : 6000);
-    };
-    if (now) go(); else pollT = setTimeout(go, 1500);
+    pollT = setTimeout(() => jobs.poll(true), active ? FILE_ACTIVE : Date.now() - bougeA < FILE_CALME ? FILE_PRES : FILE_REPOS);
   },
-  // attend la fin d'un travail ; onTick(job) à chaque relevé
+  // attend la fin d'un travail ; onTick(job) à chaque relevé — onglet caché, il attend son retour
   async wait(id, onTick) {
     for (;;) {
+      await quandVisible();
       const j = await api('jobs/' + id);
       if (onTick) onTick(j);
-      if (['done', 'error', 'cancelled', 'interrupted'].includes(j.state)) return j;
+      if (FINIS.includes(j.state)) return j;
       await new Promise((r) => setTimeout(r, 1200));
     }
   },
 };
+auRetour(() => { if (pollOn) jobs.poll(true); });
 
 const STATE_FR = { queued: 'en file', running: 'en cours', done: 'fini', error: 'échec', cancelled: 'arrêté', interrupted: 'interrompu' };
 export const stateFr = (s) => STATE_FR[s] || s;
@@ -938,7 +1015,11 @@ export function mountHeader(toolId, { dock: useDock = true } = {}) {
     if (studioOff(me, t) && !new URLSearchParams(location.search).has('invite')) import('./porte.js').then((m) => m.studioDoor(me, t));
     import('./prefs.js').then((m) => m.prefs.ready);   // les préférences de la personne, relues du portail
   });
-  setInterval(() => { if (!doorOn) session(true).then(paintMe); }, 20000);
+  // La session relue toutes les 60 s (20 s avant le 06/10) : les Teams et Workspaces, les demandes à traiter (Admin),
+  // le Studio ouvert ou fermé. Une porte qui se ferme (compte suspendu, connexion retirée) n'attend pas ce relevé :
+  // toute requête refusée en 401 la montre aussitôt (api(), showDoor), la file comprise. Onglet caché, rien ; relue
+  // dès son retour (releve).
+  releve(() => (doorOn ? null : session(true).then(paintMe)), 60000);
   Promise.all([system(), session()]).then(([sys, me]) => {
     paintNav(me, sys);
     paintSys(sys);
@@ -1039,7 +1120,7 @@ function drawer(on) {
 
 async function paintDrawer() {
   const box = $('.drawer .list');
-  if (!box || !$('.drawer.on') || qBusy) return;
+  if (!box || !$('.drawer.on') || qBusy || ongletCache()) return;   // caché : relu au retour (plus bas)
   qBusy = true;
   clearTimeout(qT);
   let q = null;
@@ -1060,8 +1141,9 @@ async function paintDrawer() {
     if (e.status !== 401) box.replaceChildren(el('p', { class: 'warn' }, e.message));
   } finally { qBusy = false; }
   const busy = q && (q.running.length || q.queued.length);
-  if ($('.drawer.on')) qT = setTimeout(paintDrawer, busy ? 1500 : 5000);
+  if ($('.drawer.on') && !ongletCache()) qT = setTimeout(paintDrawer, busy ? 1500 : 5000);
 }
+auRetour(() => { if ($('.drawer.on')) paintDrawer(); });
 
 export const fmtWait = (s) => {
   if (s === null || s === undefined) return '';

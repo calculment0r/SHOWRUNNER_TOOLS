@@ -7,7 +7,7 @@
 // (commun/shell.js), la seule liste : une carte dont l'outil n'y est pas
 // encore est « bientôt » — elle s'allume seule le jour où l'outil y entre
 // avec sa page.
-import { TOOLS, api, el, $, href, mountHeader, system, session, thumb, toolHref, toast, uploadFile, dropAnywhere, jobs, stateFr, fmtDate, ouvrirFile, studioIci, studioLiens } from './commun/shell.js';
+import { TOOLS, api, el, $, href, mountHeader, system, session, thumb, toolHref, toast, uploadFile, dropAnywhere, jobs, stateFr, fmtDate, ouvrirFile, studioIci, studioLiens, releve } from './commun/shell.js';
 import { bind } from './commun/proxies.js';
 
 mountHeader(null);
@@ -346,5 +346,8 @@ dropAnywhere(async (files) => {
   paintAssets();
 });
 
-setInterval(() => system().then((sys) => { S.sys = sys; paintSys(sys); loadBudget(); }), 20000);
+// le budget de la Team relu toutes les 60 s, onglet visible seulement (commun/shell.js, releve), et à la fin de chaque
+// travail (« sr:job ») : c'est là qu'il change
+const budgetR = releve(() => system().then((sys) => { S.sys = sys; paintSys(sys); return loadBudget(); }), 60000);
+document.addEventListener('sr:job', () => budgetR.now());
 paint();

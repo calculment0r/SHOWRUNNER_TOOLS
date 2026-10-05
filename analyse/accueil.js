@@ -12,7 +12,7 @@
 // projets créés dans le portail et ceux du dépôt partagé de MOVIE_ANALYSE, fusionnés comme le fait son commun/projets.js.
 // Le dépôt partagé refuse l'écriture depuis l'adresse du portail : la page le dit (encadré C), et vérifie ce que CE
 // navigateur en reçoit.
-import { mountHeader, api, jobs, pick, thumb, toast, el, $, $$, href, fmtDur, fmtDate, dropZone, dock } from '../commun/shell.js';
+import { mountHeader, api, jobs, pick, thumb, toast, el, $, $$, href, fmtDur, fmtDate, dropZone, dock, releve } from '../commun/shell.js';
 import { lecteur } from '../commun/lecteur.js';
 import { menu, kebab, contextMenu, closeMenus, pageMenu } from '../commun/menu.js';
 import { copyText, ask } from '../commun/fil.js';
@@ -809,4 +809,4 @@ $('#nv-lancer').onclick = async () => {
 charge();
 chargeDiar();
 chargeChaine();
-setInterval(() => { if (!document.hidden) chargeDiar(); }, 30000);
+releve(chargeDiar, 30000);   // onglet visible seulement, tout de suite à son retour (commun/shell.js)

@@ -12,7 +12,7 @@
    comme sous un sous-chemin (la porte Cloudflare, un jour).
    ============================================================ */
 
-import { mountHeader, system } from '../../commun/shell.js';
+import { mountHeader, system, ongletCache, auRetour } from '../../commun/shell.js';
 
 // « /files/x » rendu par le studio → « files/x », relatif à la page
 export const local = (u) => (typeof u === 'string' ? u.replace(/^\/(api|files|v1)\//, '$1/') : u);
@@ -32,4 +32,6 @@ export const errorText = (json) => json?.error?.message || (typeof json?.error =
 // L'en-tête du portail, à la place de celui du studio.
 export const mount = () => mountHeader('character');
 
-export { system };
+// Onglet caché : les relevés du studio s'arrêtent, et repartent à son retour (commun/shell.js ; chacun passe
+// par la porte Cloudflare : docs/etudes/cloudflare.md, « Le compte des requêtes du Worker »).
+export { system, ongletCache, auRetour };
