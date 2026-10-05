@@ -160,3 +160,34 @@ critique) ; rien n'est appelé ni téléchargé ici.
   étape 5 de l'étude).
 - La co-édition transporte `motion` / `tone` / `pres.template` (le serveur les
   valide par `_node` / `_pres`) ; non essayé à deux dans le mode.
+
+## 8. Le 06/10 : la minuterie dans la convention du portail
+
+Demandes de Cal du 06/10, sur la minuterie « MOTION » du mode :
+
+- **LA tête de lecture** : celle de toutes les timelines (`commun/tete.js` : le trait orange de 2 px et
+  son onglet, le geste de la règle par capture du pointeur) remplace le trait de 1 px du mode. La règle
+  prend le dessin de LA règle (`.sr-mk` de `tete.css`) mais reste en secondes : le motion se règle à la
+  milliseconde (l'onglet Objet écrit des ms), un timecode à l'image n'y dirait rien. Une étiquette tous
+  les 64 px au moins (de 0,1 s à 10 s).
+- **Plus aucun texte sélectionné** en glissant : le geste de la règle annule le `pointerdown` (comme le
+  Montage), et la minuterie, la barre de lecture sont en `user-select: none`.
+- **Les boutons du lecteur**, centrés sous la scène : la barre de `commun/lecteur.css` (`.sr-lect-barre`,
+  Lecture / Pause `.sr-lect-lire`, le temps `.sr-lect-tc`, l'état, la boucle du lecteur) ; Origine et
+  Fin (l'état final) de part et d'autre de Lecture. Clavier : Espace, Origine, Fin.
+- **Le clic sur la scène ne rejoue plus rien** (il relançait l'entrée de l'objet cliqué, ce qui empêchait
+  d'en changer le texte) : il choisit l'objet ; sur un texte (titre, note, post-it, forme), il y pose le
+  curseur et le texte s'écrit sur place, dans l'habit du modèle. L'objet se montre dans son état final le
+  temps d'écrire, la tête ne bouge pas, la lecture s'arrête ; Échap, Ctrl+Entrée ou un clic ailleurs le
+  posent en un geste (`app.mutate` : Ctrl+Z, co-édition) ; pendant qu'on écrit, Ctrl+Z annule la frappe.
+  La scène se refait ensuite au même instant ; la planche qui change entre-temps attend.
+- **Un panneau qu'on redimensionne** : la scène et la minuterie l'une sur l'autre, la poignée de
+  `commun/split.js` entre les deux (glisser, flèches, double-clic : 220 px) ; la hauteur est gardée dans
+  ce navigateur (`sr-split-ideation-motion`), comme les panneaux du Montage et de Transcrire.
+
+Essais (portail d'essai, Chromium sans affichage, sombre et clair, aucune erreur console) : la tête est
+`.sr-ph` ; glisser la règle → les pistes → les noms : `getSelection()` vide (l'ancien code sélectionnait
+« 0s1s2s DÉCOR décor · glow SCALE… ») ; les boutons à 0 px du centre de la scène, avant comme après la
+poignée ; un clic sur le titre : éditable, curseur dedans, la tête à 1,31 s avant comme après (l'ancien
+code repartait à 0,31 s) ; Échap écrit « Showrunner 2 bis », Ctrl+Z le retire ; un compteur (128) se
+remet en texte, passer d'un texte à l'autre pose le premier ; la poignée : +140 px, retenue au retour.
