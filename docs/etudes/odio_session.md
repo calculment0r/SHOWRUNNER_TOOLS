@@ -18,7 +18,7 @@ pilotes, sombre et clair, sans erreur console (§ 6, « Fait »).
 | la console | `musique/console.js` fabrique les tranches (`createMixer`) d'une piste, d'un bus ou d'une voie ; la vue Session les range en groupes |
 | le moteur | `musique/moteur.js` : `Engine.sess` (voie → clip), `lancer`, `echeances`, `finPrise` ; `Graph.scheduleSession`, `Graph.cut`, `Graph.mutes` sur les voies ; l'export sans la Session |
 | le format | `musique/projet.js` (`voies`, `scenes`, `slots`, `launch`, `biblio`, `QUANTS`, les gestes de scène et de voie, la migration) ; `server/tools/music.py` (`_voies`, `_session`, `_biblio`) ; `server/tools/elements.py` (`slots[].item`, `biblio…` dans `ID_FIELDS`) |
-| la bibliothèque du projet | `musique/biblio.js` (Envoyer à la Session, les clips du projet en case ou en clip) ; `musique/navigateur.js` (la rubrique « Projet ») |
+| la bibliothèque du projet | `musique/biblio.js` (Envoyer à la Session, les clips du projet en case ou en clip) ; `musique/navigateur.js` (la rubrique « Projet ») ; au-dessus d'elle depuis le 06/10, la rubrique « Space » (`musique/space.js` : le Space de Musique du projet, ses chansons, stems, sons, MIDI et projets ; `musique_spaces_playlists.md` § 2) |
 | le branchement | `musique/musique.js` (Tab, `app.voie`, `app.owner`, `app.versSession`, la prise au clavier et en MIDI, `retenirSons` à chaque geste, les origines des sons) ; `musique/timeline.js` (les menus, l'onglet) ; `musique/guide.js` |
 
 ## 1. Les sources
@@ -319,10 +319,26 @@ une couche par-dessus l'arrangement.
 
 - La timeline n'a plus à griser les pistes « jouées en Session » (REPRISE
   § 2.F) : par construction, aucune piste n'est prise par la Session.
-- Le nodal montre les modules des voies sans leur titre (le nom de la voie sur
-  son nœud de départ, comme pour une piste) : `nodal.js`.
-- Le panneau Asset, cliqué depuis la Session, pose encore sur l'arrangement
-  (`panneau.js`) ; glisser dans une case marche.
+- ~~Le nodal montre les modules des voies sans leur titre (le nom de la voie sur
+  son nœud de départ, comme pour une piste) : `nodal.js`.~~ **Fait (06/10,
+  finitions)** : le nœud de départ d'une voie porte son étiquette, à sa
+  couleur, marquée « session » (une voie née d'une piste en a souvent le nom) ;
+  la pastille la colore, le double-clic la renomme, un clic en fait la voie
+  courante (`S.sel.voie`) ; le menu dit « voie de Session », « Voir dans la
+  Session ». Suppr sur sa source ou sa tranche retire toute la voie
+  (`retirerVoies`, comme une piste) — avant, le module partait seul et la voie
+  restait sans source. Essayé dans Chromium, deux thèmes, sans erreur console.
+- ~~Le panneau Asset, cliqué depuis la Session, pose encore sur l'arrangement
+  (`panneau.js`) ; glisser dans une case marche.~~ **Fait (06/10, finitions)** :
+  en Session, un clic du panneau pose dans la case choisie, comme un clic du
+  navigateur (`app.session.poser`, session.js) ; sans case de voie choisie (la
+  colonne des scènes, la Session vierge), une voie neuve ; un son sur une voie
+  de notes : une voie neuve, en le disant. Le clic droit propose « Dans une voie
+  neuve » ; l'aide du bas et l'entrée du menu suivent la vue ; en Session, les
+  filtres restent ceux d'ODIO (une case s'y choisit d'un simple clic). Essayé
+  dans Chromium, deux thèmes, sans erreur console : vierge, case choisie, voie
+  de synthé, clip MIDI dans une voie Analog, voie neuve, Ctrl+Z ; l'arrangement
+  inchangé (13 clips).
 - Follow Actions, Legato, vélocité du lancement ; la prise audio en Session ;
   un clip MIDI de plus de 256 pas n'entre qu'en partie dans une case.
 - Relire les trois chapitres sur le manuel (le réseau l'a refusé).

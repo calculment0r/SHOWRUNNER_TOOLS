@@ -5,6 +5,240 @@ VPC → 127.0.0.1:9790 de DGX2) ; Cal quitte Cloudflare Access pour **la
 porte par code** (section suivante). Ce qui suit la section « La porte par
 code » est l'étude d'avant, gardée telle quelle.
 
+**06/10 : le compte des requêtes du Worker** (section suivante) : 80 000 requêtes
+dans la journée sur 100 000 ; les relevés des pages divisés par 6 à 13 au repos, à zéro
+pour un onglet caché.
+
+---
+
+## Le compte des requêtes du Worker (06/10/2026)
+
+### Ce qui s'est passé
+
+Cloudflare a prévenu Cal que le Worker `showrunner` avait fait 80 000 requêtes dans la
+journée, sur les 100 000 de Workers Free. L'Observability du Worker, vers 20 h, montrait
+**5 340 événements dans l'heure** (≈ 89 par minute). Presque tous étaient
+`GET /api/jobs?limit=60`, parfois trois à quelques dizaines de millisecondes d'écart (donc
+plusieurs onglets), et de temps en temps `GET /api/auth/me`.
+
+### Ce que Cloudflare compte
+
+Ces pages ont été lues dans leurs sources (dépôt `cloudflare/cloudflare-docs`, branche
+`production`, le 06/10) : `developers.cloudflare.com` est fermé depuis le conteneur.
+
+- **100 000 requêtes par jour** sur Workers Free, remises à zéro **à minuit UTC** (2 h à Paris
+  jusqu'au 25/10, 1 h ensuite). Au-delà, Cloudflare répond « Error 1027 »
+  ([limits, Daily requests](https://developers.cloudflare.com/workers/platform/limits/#daily-requests)).
+- **Les assets sont gratuits et illimités ; `run_worker_first` ne l'est pas** : « requests
+  matching the specified patterns will always invoke your Worker script. If you exceed your free
+  tier request limits, these requests will receive a 429 (Too Many Requests) response instead of
+  falling back to static asset serving »
+  ([Static Assets, Billing](https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/)).
+  - Donc, la limite passée, les pages s'affichent encore, mais `/api/*`, `/library/*`, les
+    médias et `/ecoute/*` répondent 429 jusqu'à minuit UTC.
+  - Les motifs négatifs (`!/…`) renvoient aux assets sans le Worker
+    ([binding, run_worker_first](https://developers.cloudflare.com/workers/static-assets/binding/#run_worker_first)) ;
+    ils ne servent à rien ici : ce qui passe par le Worker a besoin de lui.
+- **Ce qui compte** : « Inbound requests to your Worker ». Les sous-requêtes (le Worker vers
+  DGX2 par Workers VPC, vers R2) ne sont pas facturées. Un WebSocket compte pour une requête
+  (l'`Upgrade`), ses messages pour rien
+  ([pricing](https://developers.cloudflare.com/workers/platform/pricing/), notes 1 et 2).
+- **La durée** : « There is no hard limit on duration for HTTP-triggered Workers. As long as the
+  client remains connected… » ; attendre le réseau ne compte pas dans les 10 ms de CPU. Le
+  moteur est mis à jour « a few times per week », avec 30 s de grâce pour une requête en cours
+  ([limits, Duration et CPU time](https://developers.cloudflare.com/workers/platform/limits/#duration)).
+- **Workers Logs** (`observability`, `head_sampling_rate: 1`) sur Workers Free : 200 000
+  événements par jour, gardés 3 jours
+  ([Workers Logs, Pricing](https://developers.cloudflare.com/workers/observability/logs/workers-logs/#pricing)).
+
+### D'où venaient les requêtes : mesuré
+
+Le compteur `tools/compte_requetes.mjs` lance Playwright devant le portail d'essai. Il compte
+les requêtes des chemins de `run_worker_first` par le protocole de Chromium : ce que le cache
+du navigateur sert ne compte pas, une revalidation (304) compte. L'état « caché » est simulé
+(`document.hidden`, `visibilitychange`), car Chromium sans affichage ne cache jamais un onglet.
+Le ralentissement des minuteries d'un onglet caché n'est donc pas compté : l'« avant caché »
+est le pire cas.
+- Chrome vérifie les minuteries d'un onglet caché une fois par seconde, puis une fois par
+  minute après 5 minutes cachées, si la chaîne de minuteries est assez longue (MDN,
+  `setTimeout`, « Timeouts in inactive tabs »).
+- Un onglet qui joue du son n'est pas ralenti (MDN, Page Visibility API).
+
+Requêtes du Worker par minute, onglet inactif, avant le 06/10 (visible = caché) :
+
+| page | par minute | par jour, onglet ouvert | d'où |
+|---|---|---|---|
+| accueil | 26 | 37 440 | la file **deux fois** (20), la session (3), le budget (3) |
+| Asset, Idéation | 13 | 18 720 | la file toutes les 6 s (10), la session toutes les 20 s (3) |
+| ODIO | 33 | 47 520 | la file **trois fois** (30), la session (3) |
+| Admin | 33 | 47 520 | `admin/state` toutes les 3 s (20), la file, la session |
+| Character Factory | 31 | 44 640 | ses trois relevés du studio toutes les 5 s (18), la file, la session |
+
+« Deux fois », « trois fois » : c'était un défaut de `jobs.poll`. Chaque `jobs.watch` d'une page
+lancé pendant un relevé en vol ajoutait une chaîne de relevés. Quatre onglets (accueil, ODIO,
+Asset, Idéation) font 85 requêtes par minute : c'est ce que montrait l'Observability.
+
+### Ce qui a été fait (branche `wip2/worker-requetes`)
+
+1. **Onglet caché : plus aucun relevé** (`commun/shell.js` : `ongletCache`, `auRetour`,
+   `quandVisible`, `releve(fn, ms)`). Un onglet caché ne relit plus rien ; il relit tout de
+   suite à son retour. Une fenêtre détachée visible (`commun/fenetre.js`) garde la page
+   « visible ». C'est le cas de la file, de la session, du tiroir de la file, d'Admin (et de
+   ses diagnostics), de l'agent d'Idéation, de `jobs.wait`, du budget de l'accueil, de l'état
+   d'H3, de Transcrire, de la porte en attente, de Movie Analysis et du studio de Character
+   Factory. Ce qui continue caché :
+   - « Tout lancer et copier » d'Admin : chaque relevé lance le script suivant, l'arrêter
+     arrêterait la suite ;
+   - **le flux de la collaboration d'Idéation reste ouvert**. C'est une seule requête tant
+     qu'il tient. Il porte la signalisation de la visio, qui doit continuer onglet caché. La
+     présence dit déjà « absent » (`away: document.hidden`). Le fermer puis le rouvrir
+     coûterait une requête à chaque retour, et la visio.
+   - Un enregistrement et une lecture d'ODIO n'interrogent rien.
+2. **Un seul relevé en vol** (le défaut des chaînes, corrigé).
+3. **La file au repos** :
+   - 1,5 s quand un travail est en file ou en cours ;
+   - 6 s pendant les 2 minutes qui suivent un mouvement ;
+   - **30 s au repos** (6 s avant).
+
+   Un travail lancé d'ici se voit tout de suite. `jobs.submit` (`cancel`, `retry`, `forget`)
+   et **`api()` relisent la file après toute écriture dont la réponse porte un travail**
+   (`job-MMJJ-HHMMSS-xxxx`, `{job}`, `{jobs}`), quelle que soit la route de l'outil. Ce que
+   lancent les autres se voit en 30 s au plus.
+4. **La session toutes les 60 s** (20 s avant). Elle sert aux Teams et Workspaces, aux
+   demandes à traiter (Admin) et au Studio ouvert ou fermé. Une porte qui se ferme (compte
+   suspendu, connexion retirée) n'attend pas ce relevé : toute requête refusée en 401 la
+   montre aussitôt (`api()`, `showDoor`), et la file relit au moins toutes les 30 s.
+5. **Un seul relevé par navigateur**. Les onglets visibles d'un même portail et d'un même
+   Workspace élisent un meneur par Web Locks (`navigator.locks`) :
+   - le verrou passe au suivant quand l'onglet se ferme ; caché ou porte fermée, l'onglet le
+     rend ;
+   - le meneur relève et diffuse la liste (`BroadcastChannel` « sr-file:<Workspace> ») ;
+   - un geste relève dans son propre onglet et diffuse aussi ;
+   - un suiveur qui n'entend rien pendant le délai + 15 s relève lui-même ;
+   - un onglet caché garde la dernière liste diffusée sans la traiter, et la traite à son
+     retour : rien ne part caché, pas même ce que relit un `sr:job` (Asset, le panneau) ;
+   - un travail né et fini entre deux listes (un travail court, ou pendant que l'onglet était
+     caché) fait aussi son `sr:job` : il est plus récent que tous ceux de la liste d'avant
+     (`created`, l'heure du portail) ;
+   - un onglet neuf ne partage qu'une fois son Workspace connu (la session a répondu) ;
+   - sans ces API, chaque onglet relève. Web Locks n'existe qu'en contexte sûr (MDN, Web Locks
+     API : « secure context ») : à l'adresse publique (https) et en local (127.0.0.1), oui ; à la
+     maison (`http://192.168.10.247:8790`), non, et chaque onglet relève, hors du compte de
+     Cloudflare ;
+   - l'onglet meneur fermé, un autre prend la main (essayé : le verrou est rendu avec l'onglet).
+
+   `jobs.wait` lit la liste tant que le travail tourne, puis sa fiche une fois fini (un GET
+   toutes les 1,2 s en plus, avant).
+6. **Les vignettes de la bibliothèque à une adresse versionnée**. `thumb.jpg` et
+   `ref-NN.thumb.jpg` étaient en `no-cache` : une revalidation par page qui les montre, donc
+   une requête du Worker. Elles portent maintenant `?v=<taille-date du fichier>`
+   (`library.file_v`) et se gardent un an (`private, immutable`), mais seulement à la version
+   du fichier présent ; une autre version se revalide. Les copies d'affichage
+   (`view-N.webp?v=`) l'étaient déjà : les grilles d'Asset, le panneau Asset, le fil ne
+   redemandent rien d'une visite à l'autre (mesuré : 0 requête `/library/` à la seconde
+   visite).
+
+Mesuré après (requêtes du Worker par minute, au repos ; « par jour » = ouvert 24 h) :
+
+| | avant | onglet caché + repos | + partage |
+|---|---|---|---|
+| 1 onglet (accueil) | 26 | 4 | 4 |
+| 3 onglets, dont 2 cachés | 52 | 4 | 4 |
+| 3 onglets visibles (plusieurs fenêtres) | 52 | 10 | 6 |
+| accueil et ODIO visibles, Admin caché | 92 (somme des mesures par onglet : 26 + 33 + 33) | — | 5 |
+| Asset, Idéation, ODIO (un onglet visible) | 13 · 13 · 33 | 3 · 3 · 3 | 3 |
+| un onglet caché, quel qu'il soit | = visible | **0** | 0 |
+| Admin, Character Factory (visibles) | 33 · 31 | 23 · 21 | 23 · 21 |
+
+Un travail lancé (`POST /api/image/generate`) : la file est relue 18 ms après, puis toutes les
+1,5 s ; il est vu fini comme avant. Un travail lancé dans un onglet suiveur est vu par un autre
+onglet 4 ms après (la diffusion). Retour d'un onglet caché : relu dans la seconde. Aucune erreur
+console sur les 14 pages.
+
+**L'estimation** :
+- au repos, un onglet visible coûte 3 à 4 requêtes par minute (≈ 1 800 pour 10 h) ; les onglets
+  cachés, rien ;
+- pendant un calcul, la file coûte 40 requêtes par minute (2 400 par heure de rendu), une seule
+  fois par navigateur ;
+- une journée de 10 h devant le portail, dont 3 h de rendus, fait environ 9 000 requêtes,
+  contre 80 000 le 06/10 ;
+- s'y ajoutent les médias et la bibliothèque, non mesurés ici (le portail d'essai n'en a
+  presque pas). Chaque requête partielle d'une vidéo ou d'un son lus compte (`media()`,
+  `worker.js`).
+
+**À faire après la mise à jour** : recharger (ou fermer) les onglets du portail déjà ouverts.
+Un onglet ouvert garde son ancien code, et ses relevés, jusqu'à ce qu'on le recharge.
+
+### Un flux par onglet (`/api/events`) : étudié, pas codé
+
+L'idée : une requête longue (SSE) qui pousse la file, `ev_seq` et la session, au lieu des
+relevés.
+
+Ce qui est clair :
+- Cloudflare compte une requête par connexion, sans limite de durée tant que le navigateur
+  reste connecté, et le CPU seulement quand le Worker calcule.
+- Le Worker relaie déjà un flux tel quel (`rends()`, le flux de la collaboration d'Idéation).
+- Le portail sait en écrire un (`ideation_collab.py` : `retry: 3000`, un commentaire toutes
+  les 15 s, `HEARTBEAT_S`).
+- La file a déjà de quoi prévenir : `core/jobs.py`, `_cv.notify_all()`.
+
+Ce qui ne l'est pas :
+- **Par Workers VPC, un flux n'est pas documenté.** `connection_read_timeout` coupe une
+  connexion sans données « within the time limit », délai non publié
+  ([Workers VPC, troubleshooting](https://developers.cloudflare.com/workers-vpc/reference/troubleshooting/)).
+- Le moteur, mis à jour plusieurs fois par semaine, coupe aussi les flux.
+- Chaque coupure coûte une requête (la reconnexion d'`EventSource`). Si un flux ne tenait que
+  30 s, il coûterait 2 requêtes par minute, autant que la file au repos maintenant.
+
+Le gain restant est surtout pendant les calculs (40 par minute → presque 0). Il ne vaut le
+risque qu'après une mesure. Elle est gratuite, car le flux d'Idéation passe déjà par le Worker :
+
+1. Dans l'Observability, filtrer `$workers.event.request.path` sur `…/collab/…/stream`.
+2. Le nombre d'invocations par heure, pour une planche ouverte, donne les reconnexions.
+3. La durée (wall time) de chaque invocation donne combien de temps un flux tient.
+
+Si un flux tient plusieurs minutes, coder :
+- `GET /api/events?since=<ev_seq>` : `hello`, `jobs` (la liste, quand `_cv` bouge), `ev`,
+  `me`, un commentaire toutes les 15 s ;
+- **ouvert par le seul meneur** (point 5 : un flux par navigateur, pas par onglet), qui diffuse
+  aux autres onglets ;
+- un repli sur le relevé si le flux ne dit pas bonjour en 9 s ou tombe deux fois de suite,
+  comme `ideation/collab.js` (et le tunnel rapide de la démo, qui n'a pas de SSE).
+
+### Ce qui reste
+
+- **Character Factory** (`character/js/studio.js`, `coulisses.js`) : visible, ses relevés
+  propres restent toutes les 5 s au repos (18 par minute). Ils pourraient passer à 15-30 s :
+  ses gestes relèvent déjà tout de suite (`schedulePoll(600)`).
+- **Admin** visible : `admin/state` toutes les 3 s (réglage `admin.refresh`), 20 par minute. À
+  rallonger si Cal la laisse ouverte.
+- **La session** reste relue par chaque onglet visible (1 par minute). Elle se partagerait
+  comme la file.
+- **Les fichiers originaux** (`library/<id>/<fichier>`) restent en `no-cache` : leur adresse est
+  rendue au serveur par plusieurs outils, la versionner demande de vérifier chacun.
+- **Les médias** : chaque plage d'une vidéo ou d'un son lu compte ; à regarder dans
+  l'Observability.
+- **Au besoin, Workers Paid** : 5 $ par mois, 10 millions de requêtes par mois.
+
+### Ce que Cal peut regarder dans le tableau de bord
+
+Les noms viennent de la documentation (sources lues le 06/10) :
+- **Workers & Pages → Overview → `showrunner`** : les **Metrics** du Worker. Le graphe
+  **Requests** (Total, Success, Errors) compte les requêtes du Worker. Il y a aussi
+  Subrequests, CPU Time et Wall time per execution
+  ([Metrics and analytics](https://developers.cloudflare.com/workers/observability/metrics-and-analytics/)).
+- **`showrunner` → Observability** (menu de gauche) → onglet **Overview** : le **Query
+  Builder** ([Query Builder](https://developers.cloudflare.com/workers/observability/query-builder/)).
+  - Visualization **Count**, **Group By** `$workers.event.request.path`, l'intervalle de
+    temps, **Run** : les chemins les plus demandés, comme dans l'exemple de la documentation
+    (qui groupe par `$workers.event.request.path` et `$workers.event.response.status`).
+  - Les vues **Visualizations**, **Invocations** et **Events** ; **Save Query** pour la
+    garder.
+  - Workers Logs garde 3 jours sur Workers Free.
+- **Le chiffre à suivre** : 5 340 événements par heure le 06/10 vers 20 h, presque tous
+  `/api/jobs`. Une fois les onglets rechargés, il devrait tomber vers 200 par heure (un onglet
+  visible au repos) et 2 400 par heure pendant un calcul.
+
 ---
 
 ## La porte par code (29/09/2026, soir)
@@ -1197,7 +1431,8 @@ dans un dépôt (tous sont publics) ni dans une conversation.
 
 Le poste qui peut faire passer à 5 $ : **les relevés des pages**. Le portail
 relit la file toutes les 1,5 s pendant un rendu, 6 s au repos
-(`commun/shell.js`) ; le studio aussi relit souvent. Un onglet ouvert, c'est
+(`commun/shell.js`) ; le studio aussi relit souvent. (06/10 : c'est arrivé — 80 000 requêtes
+dans la journée ; les relevés refaits, voir « Le compte des requêtes du Worker », en tête.) Un onglet ouvert, c'est
 600 à 2 400 requêtes par heure : 100 000 par jour font 40 à 160 heures
 d'onglet. Quelques amis tiennent en gratuit ; une vraie séance à plusieurs,
 non. Les 10 ms de CPU par requête devraient suffire (vérifier un RS256 et un

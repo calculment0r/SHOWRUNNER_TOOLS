@@ -1107,7 +1107,8 @@ async function lancer(app, go) {
     const vals = valeurs({ s, c, g, P, V });
     const body = { model: g.model, task: g.task, v: requestV(s, g.model, g.task, vals), projet: { bpm: P.bpm, sig: P.sig, tonic: P.key.tonic, mode: P.key.mode },
       libre: g.libre || {}, quoi: quoiDe(g), voie: V.id, region: { a: c.start, b: c.start + c.len }, sections: sectionsFor(P, c),
-      title: (c.name || app.track(c.track)?.name || 'région').slice(0, 60), clip: c.id };
+      title: (c.name || app.track(c.track)?.name || 'région').slice(0, 60), clip: c.id,
+      project: P.id };   // les versions naissent dans le Space de Musique du projet (server/tools/chanson.py, project_space)
     if (V.garder) body.garder = g.instrument || 'drums';
     if (T.sortie === 'contexte') {
       const [w0, w1] = windowOf(P, c, vals.marge);

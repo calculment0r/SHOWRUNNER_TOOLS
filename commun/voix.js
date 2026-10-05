@@ -20,12 +20,14 @@
 // calculées des voix de Movie Analysis), sinon huit jetons du portail. Aucune
 // couleur n'est écrite ici.
 //
-//   const F = friseVoix({ onSeek: (t) => …, cle: 'transcrire' })
-//   box.append(F.el)
+//   const F = friseVoix({ onSeek: (t) => …, cle: 'transcrire', tete: [nœuds] })
+//   box.append(F.el)       `tete` : les nœuds de la page en tête de la frise, à la
+//                          place de son titre (Transcrire : le pli, les noms des voix)
 //   F.donner({ duree, voix: [{ id, nom, col }], probas: { pas, n, V, q } | null,
 //              lignes: [{ id, a, b, voix, texte, mots: [{ w, a, b }] | null }] })
 //   F.temps(t, lecture)    la tête ; en lecture, la vue suit
 //   F.dessiner()           après un renommage, un thème
+//   F.plier(oui)           repliée : sa tête seule (une rangée fine) ; dépliée : sa hauteur
 //   F.detruire()
 import { el } from './shell.js';
 import { brancher, AIDE } from './molette.js';
@@ -127,7 +129,7 @@ function texteDans(ctx, texte, x, y, w, h, couleur, police) {
   ctx.restore();
 }
 
-export function friseVoix({ onSeek = () => {}, cle = 'page' } = {}) {
+export function friseVoix({ onSeek = () => {}, cle = 'page', tete = null } = {}) {
   const KEY = 'sr-voix-hauteurs-' + cle;
   let hauteurs = {};
   try { hauteurs = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch { hauteurs = {}; }
@@ -146,7 +148,7 @@ export function friseVoix({ onSeek = () => {}, cle = 'page' } = {}) {
     ...ZOOMS.map((z) => el('button', { class: 'tb' + (z === 1 ? ' on' : ''), type: 'button', 'data-z': z, onclick: () => zoome(z) }, '×' + z)));
   const legende = el('span', { class: 'lbl sr-vx-leg' });
   const root = el('div', { class: 'sr-vx' },
-    el('div', { class: 'sr-vx-tete' }, el('span', { class: 'lbl' }, 'les voix · chaque mot à son instant, sous lui la voix'),
+    el('div', { class: 'sr-vx-tete' }, tete || el('span', { class: 'lbl' }, 'les voix · chaque mot à son instant, sous lui la voix'),
       el('span', { class: 'sp' }), el('span', { class: 'lbl sr-vx-aide' }, AIDE), zooms),
     el('div', { class: 'sr-vx-corps' }, noms, plot), legende);
 
@@ -368,6 +370,8 @@ export function friseVoix({ onSeek = () => {}, cle = 'page' } = {}) {
       placeCue();
     },
     dessiner() { V.cleNoms = ''; dessiner(); },
+    // repliée, la frise n'a plus de largeur : dépliée, son ResizeObserver la redessine
+    plier(oui) { root.classList.toggle('plie', !!oui); },
     zoome,
     detruire() { debrancher(); ro?.disconnect(); document.removeEventListener('sr:theme', surTheme); root.remove(); },
   };

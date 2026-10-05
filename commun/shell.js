@@ -67,11 +67,13 @@ let ESPACE = (() => {
 })();
 /** Le Workspace de l'onglet (`esp-…`), ou null tant que le portail ne l'a pas dit. */
 export const espace = () => ESPACE;
-/** Une adresse qui ne passe pas par api() (EventSource, sendBeacon, fetch à la main) : + `e=`. */
+/** Une adresse qui ne passe pas par api() (EventSource, sendBeacon, fetch à la main) : + `e=` — celui
+ *  du document qu'elle nomme s'il est ouvert dans cet onglet (espaceDocument), sinon celui de l'onglet. */
 export function avecEspace(u) {
-  if (!ESPACE) return u;
+  const e = espaceDe(u);
+  if (!e) return u;
   const abs = new URL(u, location.href);
-  if (!abs.searchParams.has('e')) abs.searchParams.set('e', ESPACE);
+  if (!abs.searchParams.has('e')) abs.searchParams.set('e', e);
   return abs.href;
 }
 /** Les en-têtes d'un fetch ou d'un XMLHttpRequest fait à la main. */
@@ -96,8 +98,40 @@ const espaceCbs = new Set();
 export function surEspace(cb) { espaceCbs.add(cb); return () => espaceCbs.delete(cb); }
 // Un document ouvert dit toujours son espace (§ 4.3) : l'outil le déclare, l'en-tête le montre
 // quand ce n'est pas le Workspace de l'onglet. null : plus de document.
-let docEspace = null;
-export function espaceDocument(id) { docEspace = id && ESP_RX.test(id) ? id : null; paintEspace(); }
+// `doc`, son identifiant (`ide-…`, `trn-…`, `seq-…`, `mus-…`) : l'onglet le retient (sessionStorage),
+// et toute requête qui le nomme part dans SON Workspace — api(), avecEspace() (le flux d'une planche,
+// une balise de départ) —, qu'on ait changé de Workspace depuis (l'en-tête) ou rechargé la page (son
+// #document se rouvre où il est). Le document ne change pas d'espace parce que l'en-tête change.
+// `outil: true` : tant qu'il est ouvert, l'outil travaille dans le Workspace du document — tout ce
+// qu'il demande sans dire `espace` y part (générer, déposer, ranger : ce qui naît pour le document
+// naît où il est) ; ce qui liste ou crée pour l'onglet (la liste des planches, une planche neuve)
+// passe `espace: espace()` ; un objet d'un autre Workspace qu'on y pose y est rapatrié : la copie va
+// dans le Workspace du document (rapatrier, ici()).
+let docEspace = null, docOutil = false;
+const DOC_KEY = 'sr-docs-espace', DOC_MAX = 40;
+const DOC_ID = /^[a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4}$/;
+const DOC_IN = /\b[a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4}\b/g;
+const docsEspace = (() => { try { const m = JSON.parse(ss.get(DOC_KEY) || '{}'); return m && typeof m === 'object' ? m : {}; } catch { return {}; } })();
+export function espaceDocument(id, doc = null, { outil = false } = {}) {
+  docEspace = id && ESP_RX.test(id) ? id : null;
+  docOutil = !!(docEspace && outil);
+  if (docEspace && typeof doc === 'string' && DOC_ID.test(doc)) {
+    delete docsEspace[doc];          // le plus récent en dernier : les plus anciens s'en vont d'abord
+    docsEspace[doc] = docEspace;
+    const keys = Object.keys(docsEspace);
+    for (const k of keys.slice(0, Math.max(0, keys.length - DOC_MAX))) delete docsEspace[k];
+    ss.set(DOC_KEY, JSON.stringify(docsEspace));
+  }
+  paintEspace();
+}
+// le Workspace d'une requête : celui du document ouvert qu'elle nomme ; sinon celui où l'outil
+// travaille (le document `outil`), sinon celui de l'onglet
+function espaceDe(path) {
+  for (const x of String(path || '').match(DOC_IN) || []) if (docsEspace[x] && ESP_RX.test(docsEspace[x])) return docsEspace[x];
+  return docOutil ? docEspace : ESPACE;
+}
+/** Le Workspace où l'outil travaille en ce moment : celui du document qu'il a ouvert `outil`, sinon celui de l'onglet. */
+export const ici = () => (docOutil && docEspace) || ESPACE;
 
 // ── la porte (core/auth.py, commun/porte.js) ────────────────
 // qui je suis : { auth, state: anonymous | pending | active | refused | suspended, user,
@@ -148,6 +182,8 @@ export const session = (fresh = false) => {
         else if (!ESPACE && me.workspace && me.workspace.id) fixeEspace(me.workspace.id);
       }
       lastMe = me;
+      espaceSu = true;   // le Workspace de l'onglet est fixé : la file peut se partager (brancherPartage)
+      if (pollOn) brancherPartage();
       ss.set(ME_KEY, me ? JSON.stringify(me) : null);
       poseStudio(me);
       paintEspace();
@@ -324,10 +360,11 @@ export const fmtDate = (iso) => {
 };
 
 // ── serveur ─────────────────────────────────────────────────
-// `espace` : le Workspace de cette requête — par défaut celui de l'onglet ; un document ouvert
-// passe le sien (il ne change pas d'espace parce que l'en-tête change) ; null : aucun.
+// `espace` : le Workspace de cette requête — par défaut celui du document ouvert qu'elle nomme
+// (espaceDocument : il ne change pas d'espace parce que l'en-tête change), sinon celui de
+// l'onglet ; null : aucun.
 // `blob` : la réponse est un fichier (un PNG exporté) — rendue en Blob, l'erreur reste en JSON
-export async function api(path, { method = 'GET', body, raw, headers = {}, signal, espace: esp = ESPACE, blob = false } = {}) {
+export async function api(path, { method = 'GET', body, raw, headers = {}, signal, espace: esp = espaceDe(path), blob = false } = {}) {
   const opts = { method, headers: { ...headers }, signal };
   if (esp && !Object.keys(opts.headers).some((k) => k.toLowerCase() === 'x-sr-espace')) opts.headers['X-SR-Espace'] = esp;
   if (raw !== undefined) opts.body = raw;
@@ -358,11 +395,11 @@ export async function api(path, { method = 'GET', body, raw, headers = {}, signa
 // Un fichier vers la bibliothèque. Ce que quelqu'un dépose de son disque
 // garde `tool: 'upload'` (la catégorie « Upload » d'Asset, pour le distinguer
 // de ce que les outils fabriquent) et dit par où il est entré (`via`). Un
-// outil qui range sa propre création (un mixage exporté…) passe son nom. Il entre dans le
-// Workspace de l'onglet (api()), ou dans `espace` (celui du document ouvert).
+// outil qui range sa propre création (un mixage exporté…) passe son nom. Il entre là où l'outil
+// travaille (le document ouvert `outil`, sinon l'onglet : espaceDocument), ou dans `espace`.
 // `onprogress(part, ev)` : la progression de l'envoi, de 0 à 1 (« Commencer un projet »,
 // ideation/projet.js) — fetch ne la donne pas, l'envoi passe alors par XMLHttpRequest ; `signal` l'arrête.
-export async function uploadFile(file, { tool = 'upload', via = '', folder = '', title = '', espace: esp = ESPACE, onprogress = null, signal } = {}) {
+export async function uploadFile(file, { tool = 'upload', via = '', folder = '', title = '', espace: esp = espaceDe(''), onprogress = null, signal } = {}) {
   const q = new URLSearchParams({ name: file.name, tool, via, folder, title: title || file.name.replace(/\.[^.]+$/, '') });
   const it = onprogress
     ? await envoiSuivi('library/upload?' + q, file, { espace: esp, onprogress, signal, headers: { 'Content-Type': file.type || 'application/octet-stream' } })
@@ -382,7 +419,7 @@ export async function lireSiBesoin(it, file = null, { signal } = {}) {
 }
 // Un envoi dont on suit la progression (XMLHttpRequest, upload.onprogress), avec les erreurs d'api() :
 // le message du portail, `status`, la porte sur un 401.
-function envoiSuivi(path, body, { espace: esp = ESPACE, headers = {}, onprogress, signal } = {}) {
+function envoiSuivi(path, body, { espace: esp = espaceDe(path), headers = {}, onprogress, signal } = {}) {
   return new Promise((resolve, reject) => {
     const fail = (msg, status) => { const e = new Error(msg); e.status = status; reject(e); };
     const x = new XMLHttpRequest();
@@ -421,21 +458,23 @@ export const CF_MIME = 'application/x-sr-cf';
 // (panneau_asset.md § 5) — il se lit au survol, quand le contenu ne se lit pas encore
 export const SPACE_MIME = 'application/x-sr-space-';
 
-// Un objet d'un autre Workspace (it.space ≠ celui de l'onglet) ne se pose jamais tel quel : il est
-// d'abord rapatrié — une copie neuve dans le Workspace de l'onglet, jamais un lien vivant
-// (POST /api/espaces/<courant>/rapatrier, server/tools/equipes.py ; equipes_espaces.md, étape 5) —
-// et l'outil reçoit la copie, à la place de l'original, dans le même ordre. Tout ou rien : un refus
-// (un viewer, un élément versionné, une séquence) lève l'erreur du portail, qui dit pourquoi.
+// Un objet d'un autre Workspace (it.space ≠ celui où l'outil travaille : le document qu'il a ouvert
+// `outil`, sinon l'onglet — ici()) ne se pose jamais tel quel : il est d'abord rapatrié — une copie neuve dans ce
+// Workspace, jamais un lien vivant (POST /api/espaces/<ici>/rapatrier, server/tools/equipes.py ;
+// equipes_espaces.md, étape 5) — et l'outil reçoit la copie, à la place de l'original, dans le même
+// ordre. Tout ou rien : un refus (un viewer, une séquence) lève l'erreur du portail, qui dit pourquoi.
+// Un élément versionné arrive en élément neuf dont la v1 est sa version figée (§ 3.3).
 export async function rapatrier(items) {
-  const here = ESPACE;
+  const here = ici();
   const away = (items || []).filter((it) => it && it.id && it.space && here && it.space !== here);
   if (!away.length) return items;
   const ids = [...new Set(away.map((it) => it.id))];
-  const r = await api(`espaces/${here}/rapatrier`, { method: 'POST', body: { items: ids } });
+  const r = await api(`espaces/${here}/rapatrier`, { method: 'POST', body: { items: ids }, espace: here });
   const made = r.items || [];
   // chaque copie dit d'où elle vient (origin.from.item) ; sinon, l'ordre des ids
   const copy = new Map(ids.map((id, i) => [id, made.find((x) => x?.origin?.from?.item === id) || made[i]]));
-  toast(ids.length > 1 ? `${ids.length} assets copiés dans ce Workspace` : `copié dans ce Workspace : ${made[0]?.title || ids[0]}`);
+  const where = here === ESPACE ? 'dans ce Workspace' : `dans « ${nomEspace(here)} », celui du document`;
+  toast(ids.length > 1 ? `${ids.length} assets copiés ${where}` : `copié ${where} : ${made[0]?.title || ids[0]}`);
   return items.map((it) => (it && copy.get(it.id)) || it);
 }
 export function dragItem(node, it) {
@@ -604,17 +643,21 @@ const porteTravail = (d) => !!d && typeof d === 'object' && (estTravail(d) || es
 // plusieurs onglets qui relèvent chacun la file. Les onglets visibles d'un même portail (même origine, même
 // Workspace : ev_seq est celui du Workspace) élisent un meneur par un verrou (Web Locks, navigator.locks : tenu
 // tant que l'onglet le garde ; l'onglet fermé, le verrou passe au suivant ; caché, la porte fermée, il le rend).
-// Le meneur seul relève la file au rythme ci-dessus et diffuse chaque liste (BroadcastChannel) ; chaque onglet,
-// caché compris, la traite comme la sienne (recevoir) : sr:job, sr:elements, l'en-tête, jobs.wait. Un geste qui
+// Le meneur seul relève la file au rythme ci-dessus et diffuse chaque liste (BroadcastChannel) ; chaque onglet
+// visible la traite comme la sienne (recevoir) : sr:job, sr:elements, l'en-tête, jobs.wait ; un onglet caché
+// garde la dernière et la traite à son retour (gardee : caché, rien ne part, pas même ce que sr:job relit). Un geste qui
 // touche la file relève tout de suite dans son onglet, et diffuse aussi. Un suiveur qui n'entend rien pendant le
-// délai + 15 s relève lui-même (le filet). Sans ces deux API : chaque onglet relève, comme avant.
+// délai + 15 s relève lui-même (le filet). Sans ces deux API : chaque onglet relève, comme avant — c'est le cas
+// à la maison en http (Web Locks : contexte sûr seulement, MDN), qui ne passe pas par Cloudflare.
 const PARTAGE = typeof BroadcastChannel === 'function' && !!(navigator.locks && typeof navigator.locks.request === 'function');
 let canal = null;      // le canal du Workspace de l'onglet
 let canalNom = '';
 let meneur = false;    // cet onglet tient le verrou : il relève pour tous
 let lacher = null;     // rend le verrou, ou abandonne la demande en attente
+let gardee = null;     // la dernière liste diffusée pendant que l'onglet était caché : traitée à son retour
+let espaceSu = false;  // la session a répondu (le Workspace de l'onglet est connu) : avant, chacun relève pour soi
 function brancherPartage() {
-  if (!PARTAGE) return;
+  if (!PARTAGE || !espaceSu) return;   // un onglet neuf ne sait son Workspace qu'à la réponse de la session
   const nom = `sr-file:${ESPACE || ''}`;
   if (canal && canalNom === nom) { briguer(); return; }
   if (lacher) lacher();
@@ -625,6 +668,8 @@ function brancherPartage() {
   canal.onmessage = (e) => {
     const d = e.data;
     if (!d || d.t !== 'file' || !Array.isArray(d.jobs)) return;
+    // caché : gardée pour le retour, rien de traité (un sr:job ferait relire ses pages : Asset, le panneau…)
+    if (ongletCache()) { gardee = { jobs: d.jobs, ev: d.ev, bouge: Number(d.bouge) || 0, at: Date.now() }; return; }
     recevoir(d.jobs, d.ev, Number(d.bouge) || 0);
     planifier();
   };
@@ -648,7 +693,7 @@ function briguer() {
 function fileCachee() { if (lacher) lacher(); clearTimeout(pollT); pollT = 0; }
 function planifier() {
   clearTimeout(pollT); pollT = 0;
-  if (!pollOn || doorOn || ongletCache()) return;
+  if (!pollOn || doorOn || ongletCache() || pollVol) return;   // un relevé en vol replanifie en finissant
   const active = lastJobs.some((j) => j.state === 'queued' || j.state === 'running');
   const d = active ? FILE_ACTIVE : Date.now() - bougeA < FILE_CALME ? FILE_PRES : FILE_REPOS;
   // le meneur (ou chaque onglet, sans partage) relève à son heure ; un suiveur attend la diffusion (le filet)
@@ -656,16 +701,24 @@ function planifier() {
   pollT = setTimeout(() => jobs.poll(true), attente);
 }
 // une liste de la file, relevée ici ou diffusée par un autre onglet : la même suite pour toutes
+let dejaRecu = false;   // une première liste reçue : la suivante dit ce qui a changé depuis
 function recevoir(list, ev, bouge = 0) {
   entenduA = Date.now();
   if (bouge > bougeA) bougeA = bouge;
   const before = new Map(lastJobs.map((j) => [j.id, j.state]));
+  // le plus récent travail de la liste d'avant (heure du portail) : un travail absent d'elle et au moins aussi
+  // récent est né depuis (fini entre deux relevés, ou pendant que l'onglet était caché : son sr:job part quand
+  // même) ; plus ancien, il remonte seulement dans la fenêtre des 60 (un autre retiré)
+  const seuil = lastJobs.reduce((m, j) => (j.created && j.created > m ? j.created : m), '');
+  const premier = !dejaRecu;
+  dejaRecu = true;
   lastJobs = list;
   for (const cb of listeners) cb(list);
   for (const j of list) {
     const was = before.get(j.id);
-    if (was !== undefined && was !== j.state) bougeA = Date.now();
-    if (was && was !== j.state && ['done', 'error', 'cancelled'].includes(j.state)) {
+    const neuf = was === undefined && !premier && !!j.created && j.created >= seuil;
+    if ((was !== undefined && was !== j.state) || neuf) bougeA = Date.now();
+    if (['done', 'error', 'cancelled'].includes(j.state) && (was ? was !== j.state : neuf)) {
       document.dispatchEvent(new CustomEvent('sr:job', { detail: j }));
     }
   }
@@ -690,7 +743,8 @@ export const jobs = {
   retry: (id) => api(`jobs/${id}/retry`, { method: 'POST' }).then((j) => (fileBouge(), j)),
   forget: (id) => api(`jobs/${id}/forget`, { method: 'POST' }).then(() => fileBouge()),
   // cb(liste) à chaque relevé ; renvoie de quoi se désabonner
-  watch(cb) { listeners.add(cb); if (lastJobs.length) cb(lastJobs); jobs.poll(true); return () => listeners.delete(cb); },
+  // (un relevé déjà en vol sert aussi ce nouvel abonné : pas un de plus)
+  watch(cb) { listeners.add(cb); if (lastJobs.length) cb(lastJobs); if (pollVol) pollOn = true; else jobs.poll(true); return () => listeners.delete(cb); },
   // Un seul relevé à la fois, une seule minuterie : un poll(true) pendant un relevé en vol en demande
   // UN de plus, juste après (avant le 06/10, chaque jobs.watch lancé pendant un vol ajoutait une chaîne :
   // l'accueil relisait la file deux fois, ODIO trois — tools/compte_requetes.mjs).
@@ -725,12 +779,14 @@ export const jobs = {
     }
   },
 };
-// de retour sur l'onglet : il brigue le verrou ; la liste diffusée pendant qu'il était caché a moins de 2 s : rien
-// à relire, sinon relue tout de suite
+// de retour sur l'onglet : il brigue le verrou ; la dernière liste diffusée pendant qu'il était caché est traitée
+// (les travaux finis entre-temps font leur sr:job maintenant) si elle a moins de 2 s, sinon la file est relue
 auRetour(() => {
   if (!pollOn) return;
   brancherPartage();
-  if (!canal || Date.now() - entenduA > 2000) jobs.poll(true); else planifier();
+  const g = gardee;
+  gardee = null;
+  if (g && Date.now() - g.at < 2000) { recevoir(g.jobs, g.ev, g.bouge); planifier(); } else jobs.poll(true);
 });
 
 const STATE_FR = { queued: 'en file', running: 'en cours', done: 'fini', error: 'échec', cancelled: 'arrêté', interrupted: 'interrompu' };

@@ -81,7 +81,7 @@
 
 import {
   api, el, href, toast, kindFr, etypeFr, fmtDur, session, kindMark, ITEM_MIME, MULTI_MIME, CF_MIME,
-  dockState, dockKeyLabel, sorteEffective, TOOLS, espace, rapatrier, SPACE_MIME,
+  dockState, dockKeyLabel, sorteEffective, TOOLS, ici, rapatrier, SPACE_MIME,
 } from './shell.js';
 import { pickView } from './proxies.js';
 import { prefs } from './prefs.js';
@@ -112,21 +112,21 @@ const WHY_OTHER ='aucun autre Workspace où tu as un rôle : une Team t’en ouv
 // null : pas encore lus ; sinon { list: [{ id, name, team_name, here, import, import_why }], here }
 let SPACES = null;
 async function loadSpaces() {
-  try { const r = await api('asset/espaces'); SPACES = { list: r.spaces || [], here: r.here || espace() }; } catch (e) { SPACES = { list: [], here: espace(), error: e.message }; }
+  try { const r = await api('asset/espaces'); SPACES = { list: r.spaces || [], here: r.here || ici() }; } catch (e) { SPACES = { list: [], here: ici(), error: e.message }; }
   const others = workspaces();
   if (!others.some((s) => s.id === S.space)) S.space = others[0]?.id || null;
   paintSecs();
   if (S.sec === 'other') { S.lists.other = null; if (S.open && S.space) fetchPage(list('other'), 0); paintAll(); }
 }
-// ceux d'ailleurs (hors de l'onglet) ; [] : aucun, ou pas encore lus
-const workspaces = () => (SPACES ? SPACES.list.filter((s) => !s.here && s.id !== (SPACES.here || espace())) : []);
+// ceux d'ailleurs (hors de là où l'outil travaille : l'onglet, ou le document qu'il a ouvert — ici()) ; [] : aucun, ou pas encore lus
+const workspaces = () => (SPACES ? SPACES.list.filter((s) => !s.here && s.id !== (SPACES.here || ici())) : []);
 const spaceName = (id) => { const s = SPACES?.list.find((x) => x.id === id); return s ? `${s.team_name ? s.team_name + ' / ' : ''}${s.name}` : id; };
 // ce Workspace-ci prend-il une copie ? (la matrice : `import` du courant) — sinon pourquoi
 function importWhy() {
-  const h = SPACES?.list.find((s) => s.here || s.id === espace());
+  const h = SPACES?.list.find((s) => s.here || s.id === ici());
   return h && !h.import ? (h.import_why || 'ce Workspace ne prend pas de copie d’ailleurs') : '';
 }
-const away = (it) => !!(it && !it._cf && it.space && espace() && it.space !== espace());
+const away = (it) => !!(it && !it._cf && it.space && ici() && it.space !== ici());
 
 let T = null;              // l'outil
 let N = {};                // les nœuds

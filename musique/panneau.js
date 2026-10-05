@@ -5,15 +5,20 @@
 // d'aujourd'hui restent ») :
 //   - un clic pose, comme un son ou un clip MIDI du navigateur : sur la piste
 //     choisie, à la tête de lecture (un son sur un échantillonneur : il le joue) ;
-//     glisser pose là où l'on lâche (l'arrangement : timeline.js, onDrop) ;
+//     dans la vue Session, dans la case choisie (une voie neuve si aucune case de
+//     voie ne l'est : session.js, app.session.poser) ;
+//     glisser pose là où l'on lâche (l'arrangement : timeline.js, onDrop ; une
+//     case de la Session : session.js, dropZone) ;
 //   - les sortes d'ODIO : les sons et la bibliothèque MIDI (sorte « midi ») — les
 //     zones inscrites le disent (l'arrangement, l'échantillonneur, la référence
 //     du génératif) ; un élément versionné compte pour sa dernière version (une
 //     chanson publiée est un son) et c'est elle qui se pose ;
 //   - la zone active : l'en-tête d'une piste choisi (panneau_asset.md § 4.2) — une
 //     piste audio : les sons ; batterie, synthé : le MIDI ; un échantillonneur : les
-//     sons (son échantillon) et le MIDI ; rien de choisi : les filtres d'ODIO ;
-//   - le clic droit ajoute « Sur des pistes neuves » (comme le navigateur).
+//     sons (son échantillon) et le MIDI ; rien de choisi, ou la vue Session (une case
+//     s'y choisit d'un simple clic) : les filtres d'ODIO ;
+//   - le clic droit ajoute « Sur des pistes neuves » (comme le navigateur) ; en
+//     Session, « Dans une voie neuve ».
 
 import { api, toast, dock, kindFr, sorteEffective } from '../commun/shell.js';
 import { TRACK_KINDS } from './modules.js';
@@ -59,29 +64,43 @@ export async function poserObjets(app, list, trackId, at) {
   return n;
 }
 
+// ce que le panneau dit de son clic, selon la vue (la vue Session : 'console', musique.js)
+const AIDE = {
+  arrangement: { placeLabel: 'Poser sur la piste choisie', hint: 'glisser sur une piste · clic : sur la piste choisie, à la tête de lecture' },
+  session: { placeLabel: 'Poser dans la case choisie', hint: 'glisser dans une case · clic : dans la case choisie (sans voie choisie : une voie neuve)' },
+};
+
 export function branchePanneau(app) {
   const { S } = app;
   // à la tête de lecture, comme le navigateur (le MIDI : au début de la mesure)
   const ici = (it) => (it.kind === 'midi' ? Math.floor(app.pos() / S.proj.sig) * S.proj.sig : app.pos());
+  // la vue Session : la case choisie (session.js) ; un élément versionné y arrive en sa dernière version
+  const enSession = () => S.view === 'console' && !!app.session?.poser;
+  const enCase = async (items, o) => (await app.session.poser((await Promise.all(items.map(tete))).filter(Boolean), o)) > 0;
   dock.configure({
     clickPlaces: true,
-    placeLabel: 'Poser sur la piste choisie',
-    hint: 'glisser sur une piste · clic : sur la piste choisie, à la tête de lecture',
+    ...AIDE.arrangement,
     dockMin: GARDE,
     place: async (items) => {
       if (!S.proj) return false;
+      if (enSession()) return enCase(items);
       const n = await poserObjets(app, items, S.sel.track, ici(items[0]));
       return n > 0;
     },
     menu: (it, chosen) => {
+      if (enSession()) return [{ label: 'Dans une voie neuve', sub: 'une scène chacun', onclick: () => enCase(chosen, { neuve: true }).then((ok) => { if (ok) dock.recent(chosen); }) }];
       const mids = chosen.filter((x) => x.kind === 'midi');
       return [mids.length ? { label: 'Sur des pistes neuves', sub: 'une par canal', onclick: () => poserObjets(app, mids, null, ici(mids[0])) } : null];
     },
   });
 
-  // la zone active : l'en-tête d'une piste choisi (pas la piste courante d'un simple clic dans sa voie)
-  let vu = '';
+  // la zone active : l'en-tête d'une piste choisi (pas la piste courante d'un simple clic dans sa voie) ;
+  // l'aide et l'entrée du menu suivent la vue
+  let vu = '', vue = 'arrangement';
   return function suivre() {
+    const v = S.view === 'console' ? 'session' : 'arrangement';
+    if (v !== vue) { vue = v; dock.configure(AIDE[v]); }
+    if (v === 'session') { if (vu) { vu = ''; dock.contexte(null); } return; }
     const t = S.proj && app.track(S.sel.track);
     const choisie = t && (S.sel.tracks || []).length === 1 && S.sel.tracks[0] === t.id ? t : null;
     const cle = choisie ? `${choisie.id}|${choisie.kind}|${choisie.name}` : '';

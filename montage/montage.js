@@ -294,7 +294,7 @@ async function openProject(id) {
   const esp = p.space || lu.espace || espace() || null;
   id = p.id;                                   // un « mon-… » d'avant mène à sa séquence
   if (esp) tabEsp.set(id, esp);
-  espaceDocument(esp);                         // l'en-tête dit l'espace de la séquence quand ce n'est pas celui de l'onglet
+  espaceDocument(esp, id);                     // l'en-tête dit l'espace de la séquence ; une page rechargée la rouvre dans le sien
   await ensureItems([id, ...M.mediaIds(p)]);
   program.pause();
   program.clear();
@@ -2107,7 +2107,7 @@ function helpModal() {
     ['LECTURE', ''],
     ['espace', 'lecture / pause du moniteur actif (cliquez-le : source ou programme)'],
     ['J · K · L', 'arrière, arrêt, avant (répéter : plus vite)'],
-    ['← →', 'image par image · maj : une seconde'],
+    ['← → · K tenue + J · L', 'image par image (un grain du son à chaque image) · maj + ← → : une seconde'],
     ['↑ ↓', 'point de montage précédent, suivant'],
     ['Origine · Fin', 'début, fin'],
     ['MONTAGE', ''],
@@ -2491,6 +2491,10 @@ function slideKey(d) {
   commit('déplacer le plan', (p) => M.slide(p, c.id, dd));
 }
 
+// K tenue (le pas à pas de J et L) : relâchée, ou la fenêtre quittée
+let kTenue = false;
+document.addEventListener('keyup', (e) => { if (e.key === 'k' || e.key === 'K') kTenue = false; });
+addEventListener('blur', () => { kTenue = false; });
 document.addEventListener('keydown', (e) => {
   if ($('.scrim') || $('.sr-menu')) return;         // une boîte ou un menu ouvert garde le clavier
   // espace sur un bouton ou un curseur qui a gardé le focus : c'est la lecture, pas un clic
@@ -2551,9 +2555,10 @@ document.addEventListener('keydown', (e) => {
   if (!sh && TOOL_BY_KEY[low] && !['s', 'm', 'i', 'o', 'j', 'k', 'l', 'd', 'f'].includes(low)) { setTool(TOOL_BY_KEY[low]); return; }
   switch (k) {
     case ' ': e.preventDefault(); S.shuttle = 0; mon.toggle(); break;
-    case 'j': case 'J': shuttle(-1); break;
-    case 'k': case 'K': shuttle(0); break;
-    case 'l': case 'L': shuttle(1); break;
+    // K tenue, J ou L : une image (Premiere, « hold K and tap J or L ») ; le son, un grain (player.js, step)
+    case 'j': case 'J': if (kTenue) mon.step(-1); else shuttle(-1); break;
+    case 'k': case 'K': kTenue = true; if (!e.repeat) shuttle(0); break;
+    case 'l': case 'L': if (kTenue) mon.step(1); else shuttle(1); break;
     case 'ArrowLeft': e.preventDefault(); mon.step(sh ? -(mon === source ? Math.round(source.fps) : f) : -1); break;
     case 'ArrowRight': e.preventDefault(); mon.step(sh ? (mon === source ? Math.round(source.fps) : f) : 1); break;
     case 'ArrowUp': e.preventDefault(); stepEdit(-1); break;

@@ -488,6 +488,27 @@ VIEW_KINDS = ("image", "video")
 # servirait pas à quelqu'un que `visibility` n'autorise pas à la voir
 VIEW_CACHE = "private, max-age=31536000, immutable"
 VIEW_RE = re.compile(r"^view-(\d+)\.webp$")
+# Les vignettes (thumb.jpg, ref-NN.thumb.jpg) se réécrivent en place (une couverture de document refaite, une
+# séquence du Montage, une pochette) : leur adresse porte la version du fichier lui-même (?v=, file_v), et seule
+# l'adresse de la version présente se garde un an. Derrière la porte Cloudflare, chaque revalidation (304) était une
+# requête du Worker (docs/etudes/cloudflare.md, « Le compte des requêtes du Worker »).
+THUMB_RE = re.compile(r"^(thumb|ref-\d+\.thumb)\.jpg$")
+
+
+def file_v(path: Path) -> str:
+    """La version d'un fichier, tirée de lui-même (taille, date en ns) : qui le réécrit change son adresse, par
+    construction, sans compteur à tenir dans chaque outil qui écrit une vignette. "" : pas de fichier."""
+    try:
+        st = path.stat()
+    except OSError:
+        return ""
+    return f"{st.st_size:x}-{st.st_mtime_ns:x}"
+
+
+def thumb_url(base: str, folder: Path, name: str) -> str:
+    """L'adresse versionnée d'une vignette de l'objet (`base` : library/<id>/)."""
+    v = file_v(folder / name)
+    return f"{base}{name}?v={v}" if v else base + name
 
 
 def view_name(w: int) -> str:
@@ -597,8 +618,15 @@ def view_path(it: dict, w: int) -> Path | None:
 def cache_policy(rel: str, req) -> str | None:
     """La politique de cache de /library/ (core/http.py, `mount(…, cache=)`) :
     une copie d'affichage demandée à son adresse versionnée se garde un an ;
-    le reste se revalide (ETag, 304)."""
-    return VIEW_CACHE if VIEW_RE.match(rel.rsplit("/", 1)[-1]) and req.q("v") else None
+    une vignette aussi, si sa version (?v=) est celle du fichier présent (file_v :
+    jamais un vieux contenu gardé sous une adresse neuve) ; le reste se revalide
+    (ETag, 304)."""
+    name = rel.rsplit("/", 1)[-1]
+    if VIEW_RE.match(name) and req.q("v"):
+        return VIEW_CACHE
+    if THUMB_RE.match(name) and req.q("v") and req.q("v") == file_v(root() / rel):
+        return VIEW_CACHE
+    return None
 
 
 # ── servir sans danger ce qu'on a déposé ────────────────────
@@ -1000,6 +1028,16 @@ IMPORT_SKIP = ("item.json", "source.json")
 # (elle n'est la version d'aucun élément de B), son partage, son favori (les favoris sont
 # ceux du Workspace), ce que la copie reçoit à neuf
 IMPORT_DROP = ("uid", "version", "shared", "fav", "id", "space", "origin", "created", "updated", "folder", "parents_space")
+# Un document qui pose d'autres objets (une séquence, une playlist ; la source d'un élément :
+# un projet ODIO, une planche) ne se copie pas seul : ce qu'il pose vient avec lui, et sa
+# copie s'écrit par son outil, qui juge encore que tout ce qu'elle pose est d'ici. Le module
+# des documents (server/tools/elements.py : la table ID_FIELDS) s'inscrit au démarrage :
+#   DOC_IMPORT[sorte](src, dest, folder, at, undo) → [copies], la première : le document
+#   SOURCE_IMPORT[0](élément, version, dest, folder, at, undo) → (source neuve, [copies], empreinte de la v1)
+# `undo` : ce qu'il faut défaire si le rapatriement échoue plus loin (des fonctions) — ce qui
+# n'est pas un objet de la bibliothèque (un projet ODIO, une planche) s'y défait.
+DOC_IMPORT: dict = {}
+SOURCE_IMPORT: list = []
 
 
 def space_name(sid: str | None) -> str:
@@ -1030,8 +1068,11 @@ def import_refusal(it: dict, dest: str | None) -> str | None:
     if space_of(it) == dest:
         return f"{name} est déjà dans « {space_name(dest)} » : rien à rapatrier"
     if is_living(it):
-        return (f"{name} est un élément versionné : le rapatrier (sa version figée, § 3.3 de l'étude) vient avec "
-                f"l'étape 9 — en attendant, rapatrie sa dernière version (sa fiche, « les versions »)")
+        if head_entry(it) is None:   # rien de prêt à figer
+            return f"{name} est un élément versionné sans version prête : rien à figer — publie d'abord une version"
+        return None
+    if it.get("kind") in DOC_IMPORT:   # une séquence, une playlist : ce qu'elle pose vient avec elle
+        return None
     if it.get("kind") == "playlist":   # comme une séquence : elle pose des sons de son Workspace
         return f"{name} est une playlist : elle pose des sons de son Workspace — rapatrie ses morceaux"
     if it.get("kind") not in IMPORT_KINDS:
@@ -1099,16 +1140,85 @@ def _import_one(src: dict, dest: str, folder: str, at: str) -> dict:
         raise
 
 
-def rapatrier(ids: list, dest: str, *, folder: str = "") -> list[dict]:
+def frozen_version(src: dict, n=None) -> dict:
+    """La version d'un élément versionné que le rapatriement fige (équipes_espaces.md § 3.3,
+    a) : la vN demandée, sinon la dernière prête. ValueError qui dit pourquoi : une version
+    qui n'existe pas, retirée, ou partie à la corbeille."""
+    name = f"« {src.get('title') or src['id']} »"
+    if n is None:
+        v = head_entry(src)
+        if v is None:
+            raise ValueError(f"{name} n'a pas de version prête : rien à figer — publie d'abord une version")
+        return v
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise ValueError(f"{name} : la version à rapatrier est un numéro (n)")
+    v = next((x for x in src["element"]["versions"] if int(x.get("n") or 0) == n), None)
+    if v is None:
+        raise ValueError(f"{name} n'a pas de v{n}")
+    if v.get("state", "ready") != "ready":
+        raise ValueError(f"la v{n} de {name} est retirée : remets-la d'abord (sa fiche), ou rapatrie une autre version")
+    if v.get("item") not in _items:
+        raise ValueError(f"la v{n} de {name} est à la corbeille : sors-la d'abord, ou rapatrie une autre version")
+    return v
+
+
+def _import_living(src: dict, v: dict, dest: str, folder: str, at: str, avec_source: bool = False,
+                   undo: list | None = None) -> list[dict]:
+    """Un élément versionné rapatrié (§ 3.3, a — la version figée) : un élément NEUF dans
+    `dest`, dont la v1 est une copie de la version `v` ; sa source reste dans son Workspace
+    (« non suivie » ici : on n'en publie pas depuis B, rien ne relie les deux) ; un
+    personnage de Character Factory garde la sienne, qui n'est d'aucun Workspace.
+    `avec_source` (§ 3.3, b) : sa source aussi est copiée dans `dest`, avec ce qu'elle pose
+    (SOURCE_IMPORT), et l'élément de B vit sur cette copie — deux sources qui divergent.
+    Rend [l'élément, sa v1, ce que la source a copié] ; l'élément et sa v1 pas encore dans `_items`."""
+    a = space_of(src)
+    vcopy = _import_one(_items[v["item"]], dest, folder, at)
+    try:
+        ecopy = _import_one(src, dest, folder, at)
+    except BaseException:
+        shutil.rmtree(folder_of(vcopy["id"]), ignore_errors=True)
+        raise
+    vcopy["version"] = {"of": ecopy["id"], "n": 1}
+    el = ecopy["element"]
+    s = el.get("source") if isinstance(el.get("source"), dict) else {}
+    extra, fp = [], v.get("fp")
+    if avec_source and s.get("doc") and SOURCE_IMPORT:
+        try:
+            src_new, extra, fp = SOURCE_IMPORT[0](src, v, dest, folder, at, undo if undo is not None else [])
+        except BaseException:
+            for x in (vcopy, ecopy):
+                shutil.rmtree(folder_of(x["id"]), ignore_errors=True)
+            raise
+        el["source"] = {**src_new, "from": {"space": a, "doc": s["doc"]}}
+    elif s.get("tool") != "character-factory":
+        el["source"] = {"tool": s.get("tool") or "asset", "from": {"space": a, **({"doc": s["doc"]} if s.get("doc") else {})}}
+    note = f"v{v.get('n')} de « {src.get('title') or src['id']} », rapatriée de « {space_name(a)} »"
+    el["versions"] = [{"n": 1, "item": vcopy["id"], "at": at, "by": auth.current_id(), "note": note[:400],
+                       "fp": fp, "rev": v.get("rev"), "src": {k: x for k, x in el["source"].items() if k in ("tool", "doc", "slug")},
+                       "deps": [], "state": "ready"}]
+    ecopy["origin"]["from"]["n"] = v.get("n")
+    return [ecopy, vcopy, *extra]
+
+
+def rapatrier(ids: list, dest: str, *, folder: str = "", versions: dict | None = None, avec_source: bool = False) -> list[dict]:
     """Rapatrie les objets `ids` (vus par la personne, où qu'ils soient : `see`) dans le
     Workspace `dest`. Tout ou rien : chaque objet est jugé avant d'en copier un seul, et
-    une copie qui échoue défait les précédentes. KeyError : un objet ou le Workspace
-    inconnu (ou invisible) ; PermissionError : on ne peut pas rapatrier dans `dest` ;
-    ValueError : un objet qui ne se rapatrie pas (import_refusal). Rend les copies."""
+    une copie qui échoue défait les précédentes. Un élément versionné arrive en élément
+    neuf dont la v1 est sa version figée (`versions` : {élément: n}, sinon la dernière
+    prête ; frozen_version) ; `avec_source` (le Studio) : sa source aussi. Un document qui
+    pose d'autres objets (une séquence, une playlist : DOC_IMPORT) arrive avec eux. KeyError :
+    un objet ou le Workspace inconnu (ou invisible) ; PermissionError : on ne peut pas
+    rapatrier dans `dest` ; ValueError : un objet qui ne se rapatrie pas (import_refusal,
+    frozen_version). Rend les copies, la copie de chaque objet demandé d'abord, puis ce qui
+    est venu avec (la v1 d'un élément, ce que pose un document)."""
     _load()
     if espaces.space(dest) is None:
         raise KeyError(dest)
     check_import(dest)
+    if avec_source and not auth.has_studio(auth.current(), dest):
+        raise PermissionError(f"rapatrier avec sa source est du Studio : « {space_name(dest)} » ne l'a pas — "
+                              "rapatrie la version figée, ou demande le Studio à Cal")
+    versions = versions if isinstance(versions, dict) else {}
     srcs = []
     who = auth.current()
     for iid in dict.fromkeys(str(i) for i in ids):
@@ -1122,23 +1232,37 @@ def rapatrier(ids: list, dest: str, *, folder: str = "") -> list[dict]:
         why = import_refusal(src, dest)
         if why:
             raise ValueError(why)
-        srcs.append(src)
+        srcs.append((src, frozen_version(src, versions.get(iid)) if is_living(src) else None))
     at = now()
     made: list[dict] = []
+    undo: list = []
     try:
-        for src in srcs:   # hors du verrou : les copies de fichiers ne bloquent pas la bibliothèque
-            made.append(_import_one(src, dest, folder, at))
+        for src, v in srcs:   # hors du verrou : les copies de fichiers ne bloquent pas la bibliothèque
+            if v:
+                made.extend(_import_living(src, v, dest, folder, at, avec_source, undo))
+            elif src.get("kind") in DOC_IMPORT:
+                made.extend(DOC_IMPORT[src["kind"]](src, dest, folder, at, undo))
+            else:
+                made.append(_import_one(src, dest, folder, at))
         with _lock:
             for it in made:
                 _items[it["id"]] = it
                 _save(it)
     except BaseException:
+        for fn in reversed(undo):
+            try:
+                fn()
+            except Exception:  # noqa: BLE001 — défaire le reste quand même
+                pass
         with _lock:
             for it in made:
                 _items.pop(it["id"], None)
                 shutil.rmtree(folder_of(it["id"]), ignore_errors=True)
         raise
-    return made
+    # la copie de chaque objet demandé d'abord, dans l'ordre ; puis ce qui est venu avec
+    asked = {s["id"] for s, _ in srcs}
+    first = [m for m in made if ((m.get("origin") or {}).get("from") or {}).get("item") in asked]
+    return first + [m for m in made if m not in first]
 
 
 def copies_of(src: dict, dest: str) -> list[dict]:
@@ -1201,12 +1325,14 @@ def ref_paths(it: dict, roles: list[str] | None = None) -> list[tuple[Path, dict
 def public(it: dict) -> dict:
     """L'objet tel que la page le voit : avec ses adresses."""
     base = f"library/{it['id']}/"
+    d = folder_of(it["id"])
     out = dict(it)
     out["owner"] = auth.owner_of(it)
     out["space"] = space_of(it)   # chaque carte dit son Workspace (Asset tous Workspaces, étape 5)
     if it.get("file"):
         out["url"] = base + it["file"]
-    out["thumb_url"] = base + it["thumb"] if it.get("thumb") else (out.get("url") if it["kind"] == "image" else None)
+    # la vignette, à son adresse versionnée (thumb_url, cache_policy : gardée un an par le navigateur)
+    out["thumb_url"] = thumb_url(base, d, it["thumb"]) if it.get("thumb") else (out.get("url") if it["kind"] == "image" else None)
     # les copies d'affichage qui existent (grand côté, px) et leurs adresses versionnées
     # (commun/proxies.js choisit) ; [] : la page prend la vignette ou l'original
     out["views"] = sorted(it.get("views") or [])
@@ -1223,7 +1349,7 @@ def public(it: dict) -> dict:
         out["original"] = {**it["original"], "url": base + it["original"]["file"]}   # l'image telle qu'elle a été déposée
     if it["kind"] == "element":
         el = dict(it["element"])
-        el["refs"] = [{**r, "url": base + r["file"], "thumb_url": base + r["thumb"] if r.get("thumb") else base + r["file"]}
+        el["refs"] = [{**r, "url": base + r["file"], "thumb_url": thumb_url(base, d, r["thumb"]) if r.get("thumb") else base + r["file"]}
                       for r in it["element"]["refs"]]
         if it["element"].get("voices"):
             el["voices"] = [{**v, "url": base + v["file"]} for v in it["element"]["voices"]]

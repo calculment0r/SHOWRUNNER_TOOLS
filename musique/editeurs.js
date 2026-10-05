@@ -1,5 +1,12 @@
-// ODIO — la vue de détail, en bas de l'arrangement : une seule colonne qui
-// défile (29/09, plus d'onglets) — le clip choisi, puis la chaîne de la piste.
+// ODIO — la vue de détail, en bas de l'arrangement (29/09, plus d'onglets) : le
+// clip choisi et la chaîne de la piste, ensemble. Deux tailles (06/10, Cal :
+// « un mode plus petit et qu'on puisse le mettre en grand ») :
+//   compact      (d'office) le clip à gauche, la chaîne à droite, chacun dans la
+//                hauteur du panneau — l'un sous l'autre quand la largeur manque ;
+//                le piano roll cadré sur ses notes, ses rangées plus basses
+//   grand        « Agrandir », Ctrl+Alt+E (Live 12 : « Expand Clip View ») : le
+//                panneau à sa hauteur maximale, le clip le remplit, la chaîne
+//                suit dessous (la colonne défile)
 // Maj+Tab ou F12 passe de l'un à l'autre ; Ctrl+Alt+3 : le clip,
 // Ctrl+Alt+4 : la chaîne (les raccourcis de Live 12, qui y changent d'onglet).
 //   Clip         le clip choisi :
@@ -16,7 +23,7 @@
 //   Génération   une région d'une piste générative : son modèle, sa tâche, ses
 //                réglages dessinés depuis le schéma, ses prises
 //                (generatif_region.js) ; « Son de la prise » : la vue Clip du son
-// Le panneau défile à la verticale ; sa hauteur se tire (timeline.js).
+// Sa hauteur se tire (timeline.js), une par taille (ui.dockH, ui.dockHg).
 
 import { toast } from '../commun/shell.js';
 import { MODULES, TRACK_KINDS, DRUM_MODELS, NOTE_MODELS, drumVoicesOf, noteName, isBlack, inScale, snapToScale, keyLabel,
@@ -33,14 +40,18 @@ import { isRegion, isGenTrack, regionPanel, trackPanel } from './generatif_regio
 
 const STEP_MAX = 256;
 
-// ── la vue de détail : UNE colonne qui défile, sans onglets ─
+// ── la vue de détail : le clip et la chaîne, sans onglets ─
 // Demande de Cal (29/09) : « tout sans avoir d'onglet clip et instrument, on
-// met tout avec un scroll ». De haut en bas : le clip choisi (ses notes, ses
-// pas, son son — ou, pour une région générative, sa génération), puis la
-// chaîne de la piste (l'instrument et ses effets, rack.js), le génératif
-// étant l'éditeur du clip quand le clip est une région. « Instruments et
-// effets » (menus, Maj+Tab, F12, Ctrl+Alt+3 / 4) fait défiler jusqu'à la
-// partie voulue au lieu de changer d'onglet.
+// met tout avec un scroll » : le clip choisi (ses notes, ses pas, son son — ou,
+// pour une région générative, sa génération), puis la chaîne de la piste
+// (l'instrument et ses effets, rack.js). Le 06/10 (« les trucs de MIDI piano
+// prennent énormément de place […] trop chiant de scroller jusqu'en bas pour
+// voir les racks ») : en compact, les deux côte à côte, chacun défile chez lui
+// (Live 12 empile la vue Clip au-dessus de la vue Appareils, « stack ») ; en
+// grand, l'ancienne colonne. Une région générative y montre ses versions (son
+// panneau de réglages est « Générer »). « Instruments et effets » (menus, Maj+Tab,
+// F12, Ctrl+Alt+3 / 4) va à la partie voulue au lieu de changer d'onglet.
+export const detailGrand = (S) => !!S.proj?.ui?.dockGrand;
 export function createDock(app) {
   const { S } = app;
   const root = el('section', { class: 'dk', 'aria-label': 'vue de détail' });
@@ -50,7 +61,9 @@ export function createDock(app) {
   const devices = createDevices(app);
   const clipSec = el('section', { class: 'dk-sec dk-sec-clip', 'data-part': 'clip', 'aria-label': 'le clip choisi' });
   const chainSec = el('section', { class: 'dk-sec dk-sec-chain', 'data-part': 'device', 'aria-label': 'la chaîne de la piste' });
-  let ed = null;
+  let ed = null, colonne = false;   // colonne : un éditeur qui garderait la colonne qui défile (aucun aujourd'hui)
+  // compact ↔ grand (Ctrl+Alt+E : musique.js, app.basculerDetail) ; la hauteur suit (timeline.js)
+  const basculer = () => app.basculerDetail();
   function target() {
     const c = app.clip(S.sel.clip);
     if (c) return { c, t: app.track(c.track) };
@@ -60,13 +73,17 @@ export function createDock(app) {
   }
   const title = (label, what, ...extra) => el('div', { class: 'dk-title' }, el('span', { class: 'lbl' }, label), what ? el('span', { class: 'dk-what' }, what) : null, el('span', { class: 'sp' }), ...extra);
   function paintHead() {
-    const t = app.track(S.sel.track), c = app.clip(S.sel.clip);
+    const t = app.track(S.sel.track), c = app.clip(S.sel.clip), grand = detailGrand(S);
     put(head,
       t ? el('i', { class: 'dk-dot', style: { background: `var(--${t.color})` } }) : null,
       el('b', { class: 'venus dk-name' }, t ? t.name : 'aucune piste'),
       el('span', { class: 'lbl dk-what' }, c ? `clip · ${app.bar(c.start)} → ${app.bar(c.start + c.len)}` : '', t ? ` · ${app.chain(t.id).length} modules en chaîne` : ''),
       el('span', { class: 'sp' }),
-      el('span', { class: 'lbl' }, 'le clip, puis la chaîne de la piste : faire défiler · tirer le filet du haut : la hauteur'));
+      el('span', { class: 'lbl dk-aide' }, colonne || grand ? 'le clip, puis la chaîne de la piste : faire défiler · tirer le filet du haut : la hauteur'
+        : 'le clip, et la chaîne de la piste à côté · tirer le filet du haut : la hauteur'),
+      colonne ? null : el('button', { class: `tb sm${grand ? ' on' : ' ghost'}`, type: 'button', 'aria-pressed': String(grand),
+        title: grand ? 'remettre le clip en compact, la chaîne à côté · Ctrl+Alt+E' : 'le clip en grand : le panneau à sa hauteur maximale, la chaîne dessous · Ctrl+Alt+E',
+        onclick: basculer }, grand ? 'Réduire' : 'Agrandir'));
   }
   function renderClip() {
     const tg = target();
@@ -76,7 +93,10 @@ export function createDock(app) {
     const seg = reg ? el('div', { class: 'seg dk-gen' }, [['gen', 'Génération'], ['son', 'Son de la prise']].map(([k, l]) => el('button', { class: `tb${(S.proj.ui.genSon ? 'son' : 'gen') === k ? ' on' : ''}`, type: 'button',
       onclick: () => { S.proj.ui.genSon = k === 'son' || undefined; app.saveUi(); render(); } }, l))) : null;
     const host = el('div', { class: 'dk-clip' });
-    put(clipSec, title(c && isRegion(c) && !(c.item && S.proj.ui.genSon) ? 'génératif · la région' : 'clip', tg?.t ? tg.t.name : '', seg), host);
+    const tete = title(c && isRegion(c) && !(c.item && S.proj.ui.genSon) ? 'génératif · la région' : 'clip', tg?.t ? tg.t.name : '', seg);
+    if (seg) tete.classList.add('dk-title-seg');   // en compact, le titre ne reste que s'il porte ce choix
+    put(clipSec, tete, host);
+    colonne = false;
     if (!tg || !tg.t) {
       ed = null;
       put(host, el('div', { class: 'dk-empty dk-empty-sm' },
@@ -87,14 +107,18 @@ export function createDock(app) {
     if (tg.t.kind === 'audio' && !tg.c && isGenTrack(tg.t)) { ed = trackPanel(app, host, tg.t); return; }
     ed = tg.t.kind === 'audio'
       ? (tg.c ? audioEditor(app, host, tg.c, tg.t) : (put(host, el('div', { class: 'dk-empty dk-empty-sm' }, el('span', {}, 'choisis un clip de cette piste audio'))), null))
-      : patternEditor(app, host, tg.t, tg.c);
+      : patternEditor(app, host, tg.t, tg.c, { taille: detailGrand(S) ? 'grand' : 'compact' });
   }
   function render() {
-    paintHead();
     document.body.classList.remove('mu-gen-dock');          // le panneau génératif le remet s'il s'ouvre
     const top = body.scrollTop;
     if (clipSec.parentNode !== body || chainSec.parentNode !== body) put(body, clipSec, chainSec);
     renderClip();
+    // la taille se pose avant que l'éditeur ne se mesure (il se cadre à l'image suivante)
+    const grand = detailGrand(S);
+    root.classList.toggle('compact', !colonne && !grand);
+    root.classList.toggle('grand', !colonne && grand);
+    paintHead();
     if (chainSec.firstChild !== devices.el) put(chainSec, devices.el);
     devices.render();
     body.scrollTop = top;
@@ -105,7 +129,10 @@ export function createDock(app) {
       // aller au clip : un piano roll s'y centre sur ses notes (le haut de la partie serait do8)
       requestAnimationFrame(() => {
         if (jump !== 'device' && ed?.centrer) { ed.centrer(); return; }
-        const sec = jump === 'device' ? chainSec : clipSec; body.scrollTop = Math.max(0, sec.offsetTop);
+        const sec = jump === 'device' ? chainSec : clipSec;
+        // en compact, chaque partie défile chez elle : la chaîne revient à son début
+        if (root.classList.contains('compact')) { if (jump === 'device') chainSec.scrollTop = 0; return; }
+        body.scrollTop = Math.max(0, sec.offsetTop);
       });
     }
   }
@@ -120,6 +147,7 @@ export function createDock(app) {
       { head: inChain ? `la chaîne · ${t?.name || ''}` : `le clip · ${t?.name || ''}` },
       { label: 'Aller au clip', onclick: () => { S.dockJump = 'clip'; render(); } },
       { label: 'Aller à la chaîne de la piste', onclick: () => { S.dockJump = 'device'; render(); } },
+      colonne ? null : { label: detailGrand(S) ? 'Réduire le clip' : 'Agrandir le clip', key: 'Ctrl+Alt+E', onclick: basculer },
       t ? { label: 'Un effet dans la chaîne', items: devices.fxItems(t.id) } : null,
       c ? { label: 'Retirer le clip', danger: true, onclick: () => app.removeSel((S.sel.clips || []).includes(c.id) ? null : [c.id]) } : null,   // le clip ouvert en bas, choisi ou non (un clic dans son corps)
       '-',
@@ -130,7 +158,9 @@ export function createDock(app) {
 }
 
 // ── l'éditeur de motif (notes ou pas) ───────────────────────
-export function patternEditor(app, host, t, c = null, { tall = false } = {}) {
+// taille : 'compact' ou 'grand' (le panneau du bas, createDock) ; rien : l'éditeur remplit
+// ce qu'on lui donne (la vue Clip de la Session)
+export function patternEditor(app, host, t, c = null, { taille = null } = {}) {
   const { S } = app;
   const P = S.proj;
   const pats = P.patterns.filter((p) => p.track === t.id);
@@ -178,8 +208,9 @@ export function patternEditor(app, host, t, c = null, { tall = false } = {}) {
     menu(r.left, r.bottom + 4, [{ head: drums ? 'rythmes (écrits à la main)' : `tirés de la gamme · ${keyLabel(P.key)}` }, ...items]);
   }
 
-  const body = drums ? stepGrid(app, pat, src, t) : pianoRoll(app, pat, src, t, c, ui, tall);
-  put(host, el('div', { class: 'pe' }, head, body.el, el('p', { class: 'lbl pe-hint' }, body.hint)));
+  const body = drums ? stepGrid(app, pat, src, t) : pianoRoll(app, pat, src, t, c, ui, taille);
+  // la barre : le motif, puis les outils du piano roll — deux rangées, ou une seule qui passe à la ligne en compact (musique.css)
+  put(host, el('div', { class: `pe${taille === 'compact' ? ' pe-compact' : ''}` }, el('div', { class: 'pe-barre' }, head, body.tools || null), body.el, el('p', { class: 'lbl pe-hint' }, body.hint)));
   return body;
 }
 
@@ -271,16 +302,27 @@ function stepGrid(app, p, src, t) {
 // ── le piano roll ───────────────────────────────────────────
 const GRIDS = [[0.5, '1/32'], [1, '1/16'], [2, '1/8'], [4, '1/4']];
 const CENTRE = new WeakMap();   // ce qui défile → le motif sur lequel on l'a centré
-function pianoRoll(app, p, src, t, c, ui, tall) {
+// la vue d'un motif dans un piano roll qui défile chez lui : { top, rh, taille } — un
+// redessin (une retouche, « Doubler ») la rend telle quelle ; un autre motif se cadre
+const VUES = new Map();
+// replier (Live 12, « Editing MIDI » : le bouton Fold, « Fold to Notes » — seules les
+// rangées qui ont des notes ; « Fold to Scale » — celles de la gamme, plus les notes hors
+// gamme, qui restent visibles) ; F : les notes ↔ tout, comme dans Live
+const REPLIS = [['', 'non', 'toutes les hauteurs'], ['gamme', 'gamme', 'les hauteurs de la gamme du projet (et les notes hors gamme)'], ['notes', 'notes', 'seulement les hauteurs qui ont des notes · F, le clavier de l\'ordinateur éteint']];
+function pianoRoll(app, p, src, t, c, ui, taille) {
   const P = app.S.proj;
-  // la hauteur d'une rangée (une note) : Ctrl+molette (commun/molette.js), gardée dans ui (P.ui.ed.rh)
-  const LO = 24, HI = 108, RH0 = tall ? 14 : 12, RH_MIN = 8, RH_MAX = 36;
-  let RH = borne(ui.rh || RH0, RH_MIN, RH_MAX);
+  // la hauteur d'une rangée (une note) : Ctrl+molette (commun/molette.js), gardée dans ui —
+  // P.ui.ed.rhc en compact (des rangées plus basses), P.ui.ed.rh sinon
+  const compact = taille === 'compact', cleRH = compact ? 'rhc' : 'rh';
+  const LO = 24, HI = 108, RH0 = compact ? 10 : taille === 'grand' ? 14 : 12, RH_MIN = compact ? 7 : 8, RH_MAX = 36;
+  let RH = borne(ui[cleRH] || RH0, RH_MIN, RH_MAX);
+  const vue0 = VUES.get(p.id);
+  if (vue0?.taille === (taille || '') && vue0.rh) RH = borne(vue0.rh, RH_MIN, RH_MAX);
   const zx = () => borne(ui.zx || 1, 1, 16);          // le zoom du temps : 1 = le motif tient dans la largeur
   const acid = src?.type === 'acid';
   const chosen = new Set();
   let lastLen = 2;
-  const wrap = el('div', { class: `pr${tall ? ' tall' : ''}` });
+  const wrap = el('div', { class: `pr${taille ? ` pr-${taille}` : ''}` });
   const keys = el('div', { class: 'pr-keys' });
   const scrollX = el('div', { class: 'pr-sx' });
   const area = el('div', { class: 'pr-area' });
@@ -298,18 +340,44 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
   scrollX.append(area);
   wrap.append(keys, scrollX);
   scrollX.addEventListener('scroll', () => { velScroll.scrollLeft = scrollX.scrollLeft; });
-  for (let q = HI; q >= LO; q--) {
-    const inS = inScale(P.key, q), root = ((q - P.key.tonic) % 12 + 12) % 12 === 0;
-    keys.append(el('button', { class: `pr-k${isBlack(q) ? ' blk' : ''}${q % 12 === 0 ? ' c' : ''}${inS ? ' in' : ''}${root ? ' root' : ''}`, type: 'button',
-      onpointerdown: () => app.engine.preview(src.id, q) }, q % 12 === 0 || root ? noteName(q) : ''));
-    rows.append(el('i', { class: `${inS ? 'in' : 'out'}${root ? ' root' : ''}` }));
-  }
+  // LES RANGÉES : les hauteurs montrées, de haut en bas — toutes, ou repliées (REPLIS)
+  const repli = () => (REPLIS.some(([k]) => k === ui.fold) ? ui.fold : '');
+  let vis = [], rangDe = new Map();
+  const visibles = () => {
+    const used = [...new Set(p.notes.map((n) => n.p))].sort((a, b) => b - a);
+    const f = repli();
+    if (f === 'notes' && used.length) return used;
+    if (f) { const out = []; for (let q = HI; q >= LO; q--) if (inScale(P.key, q) || used.includes(q)) out.push(q); return out; }
+    const out = [];
+    for (let q = HI; q >= LO; q--) out.push(q);
+    return out;
+  };
+  const rangee = (row) => vis[clamp(row, 0, vis.length - 1)];
+  const batirRangees = () => {
+    vis = visibles();
+    rangDe = new Map(vis.map((q, i) => [q, i]));
+    const tous = !!repli();   // replié : chaque rangée dit sa note (elles ne se suivent plus)
+    keys.replaceChildren(); rows.replaceChildren();
+    for (const q of vis) {
+      const inS = inScale(P.key, q), root = ((q - P.key.tonic) % 12 + 12) % 12 === 0;
+      keys.append(el('button', { class: `pr-k${isBlack(q) ? ' blk' : ''}${q % 12 === 0 ? ' c' : ''}${inS ? ' in' : ''}${root ? ' root' : ''}`, type: 'button',
+        onpointerdown: () => app.engine.preview(src.id, q) }, tous || q % 12 === 0 || root ? noteName(q) : ''));
+      rows.append(el('i', { class: `${inS ? 'in' : 'out'}${root ? ' root' : ''}` }));
+    }
+  };
+  // replié : les rangées suivent les notes (une note transposée, ôtée) ; rend vrai si elles ont changé
+  const suivreRangees = () => {
+    if (!repli() || visibles().join() === vis.join()) return false;
+    batirRangees(); layoutRows();
+    return true;
+  };
   // les rangées à la hauteur RH (au départ, et à chaque Ctrl+molette)
   const layoutRows = () => {
     [...keys.children].forEach((k) => { k.style.height = `${RH}px`; });
     [...rows.children].forEach((r, i) => { r.style.top = `${i * RH}px`; r.style.height = `${RH}px`; });
-    area.style.height = `${(HI - LO + 1) * RH}px`;
+    area.style.height = `${vis.length * RH}px`;
   };
+  batirRangees();
   layoutRows();
   let cw = 14;
   const layout = () => {
@@ -323,15 +391,16 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
   const snapS = (s) => Math.round(s / gridS()) * gridS();
   const paintNotes = () => {
     put(notes, ...p.notes.map((n, i) => el('div', { class: `pr-n${chosen.has(n) ? ' sel' : ''}${n.ac ? ' ac' : ''}${n.sl ? ' sl' : ''}`, 'data-i': i,
-      style: { left: `${n.s * cw}px`, top: `${(HI - n.p) * RH}px`, width: `${Math.max(3, n.l * cw - 1)}px`, height: `${RH - 1}px`, opacity: 0.45 + 0.55 * (n.v ?? 0.8) },
+      style: { left: `${n.s * cw}px`, top: `${(rangDe.get(n.p) ?? -9) * RH}px`, width: `${Math.max(3, n.l * cw - 1)}px`, height: `${RH - 1}px`, opacity: 0.45 + 0.55 * (n.v ?? 0.8),
+        display: rangDe.has(n.p) ? null : 'none' },
       title: `${noteName(n.p)} · vélocité ${Math.round((n.v ?? 0.8) * 100)}${n.ac ? ' · accent' : ''}${n.sl ? ' · liée' : ''}` }, el('i', { class: 'rs' }))));
     put(velLane, ...p.notes.map((n, i) => el('i', { class: chosen.has(n) ? 'sel' : '', 'data-i': i,
       style: { left: `${n.s * cw}px`, height: `${Math.round((n.v ?? 0.8) * 100)}%` } })));
   };
-  const commit = () => { paintNotes(); app.commit('quiet'); };
+  const commit = () => { suivreRangees(); paintNotes(); app.commit('quiet'); };
   const at = (ev) => {
-    const r = area.getBoundingClientRect();
-    return { s: (ev.clientX - r.left) / cw, p: HI - Math.floor((ev.clientY - r.top) / RH) };
+    const r = area.getBoundingClientRect(), row = Math.floor((ev.clientY - r.top) / RH);
+    return { s: (ev.clientX - r.left) / cw, row, p: rangee(row) };
   };
   area.addEventListener('contextmenu', (e) => {
     e.preventDefault();
@@ -357,14 +426,15 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
       const group = [...chosen].map((x) => ({ x, s: x.s, p: x.p, l: x.l }));
       const mv = (ev) => {
         const a = at(ev);
-        const ds = snapS(a.s - a0.s), dp = a.p - a0.p;
-        if (ds || dp) moved = true;
+        // en rangées (repliées ou non : une rangée plus bas = la hauteur montrée en dessous)
+        const ds = snapS(a.s - a0.s), dr = a.row - a0.row;
+        if (ds || dr) moved = true;
         for (const g of group) {
           if (resizing) g.x.l = Math.max(gridS() / 2, Math.min(p.steps - g.x.s, g.l + ds));
           else {
             g.x.s = clamp(g.s + ds, 0, p.steps - Math.min(g.l, p.steps));
-            let np = clamp(g.p + dp, LO, HI);
-            if (ui.scale) np = snapToScale(P.key, np);
+            let np = rangee((rangDe.get(g.p) ?? 0) + dr);
+            if (ui.scale && !repli()) np = snapToScale(P.key, np);   // replié, les rangées sont déjà la gamme ou les notes
             if (np !== g.x.p) { g.x.p = np; if (g.x === n) app.engine.preview(src.id, np); }
           }
         }
@@ -382,10 +452,11 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
       const r = area.getBoundingClientRect();
       const mv = (ev) => {
         const a = at(ev);
-        const s0 = Math.min(a0.s, a.s), s1 = Math.max(a0.s, a.s), p0 = Math.min(a0.p, a.p), p1 = Math.max(a0.p, a.p);
-        Object.assign(box.style, { display: 'block', left: `${s0 * cw}px`, width: `${(s1 - s0) * cw}px`, top: `${(HI - p1) * RH}px`, height: `${(p1 - p0 + 1) * RH}px` });
+        const s0 = Math.min(a0.s, a.s), s1 = Math.max(a0.s, a.s);
+        const r0 = clamp(Math.min(a0.row, a.row), 0, vis.length - 1), r1 = clamp(Math.max(a0.row, a.row), 0, vis.length - 1);
+        Object.assign(box.style, { display: 'block', left: `${s0 * cw}px`, width: `${(s1 - s0) * cw}px`, top: `${r0 * RH}px`, height: `${(r1 - r0 + 1) * RH}px` });
         chosen.clear();
-        for (const n of p.notes) if (n.s + n.l > s0 && n.s < s1 && n.p >= p0 && n.p <= p1) chosen.add(n);
+        for (const n of p.notes) { const r = rangDe.get(n.p); if (n.s + n.l > s0 && n.s < s1 && r >= r0 && r <= r1) chosen.add(n); }
         paintNotes();
       };
       const up = () => { area.removeEventListener('pointermove', mv); area.removeEventListener('pointerup', up); box.style.display = 'none'; void r; };
@@ -394,8 +465,8 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
     }
     const s = Math.floor(a0.s / gridS()) * gridS();
     let pitch = a0.p;
-    if (s < 0 || s >= p.steps || pitch < LO || pitch > HI) return;
-    if (ui.scale) pitch = snapToScale(P.key, pitch);
+    if (s < 0 || s >= p.steps || a0.row < 0 || a0.row >= vis.length) return;
+    if (ui.scale && !repli()) pitch = snapToScale(P.key, pitch);
     const n = { s, l: Math.min(lastLen, p.steps - s), p: pitch, v: 0.8 };
     p.notes.push(n);
     chosen.clear(); chosen.add(n);
@@ -429,11 +500,13 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
     for (const n of g) { let np = clamp(n.p + d, LO, HI); if (ui.scale && Math.abs(d) === 1) { np = n.p; do { np += d; } while (np >= LO && np <= HI && !inScale(P.key, np)); np = clamp(np, LO, HI); } n.p = np; }
     commit();
   }
+  // un groupe (son nom et ses boutons) ne se coupe pas quand la barre passe à la ligne
+  const groupe = (...kids) => el('span', { class: 'pr-grp' }, ...kids);
   const tools = el('div', { class: 'pr-tools' },
-    el('span', { class: 'lbl' }, 'grille'),
-    el('div', { class: 'seg' }, GRIDS.map(([v, l]) => el('button', { class: `tb${gridS() === v ? ' on' : ''}`, type: 'button', onclick: (e) => {
-      ui.grid = v; app.saveUi(); [...e.currentTarget.parentNode.children].forEach((b) => b.classList.toggle('on', b === e.currentTarget));
-    } }, l))),
+    groupe(el('span', { class: 'lbl' }, 'grille'),
+      el('div', { class: 'seg' }, GRIDS.map(([v, l]) => el('button', { class: `tb${gridS() === v ? ' on' : ''}`, type: 'button', onclick: (e) => {
+        ui.grid = v; app.saveUi(); [...e.currentTarget.parentNode.children].forEach((b) => b.classList.toggle('on', b === e.currentTarget));
+      } }, l)))),
     el('button', { class: 'tb ghost sm', type: 'button', title: 'ramener les débuts de notes sur la grille (les notes choisies, sinon toutes) · Ctrl+U', onclick: () => quantize(gridS()) }, 'Quantifier'),
     el('i', { class: 'ar-sep' }),
     el('button', { class: `tb sm${ui.scale ? ' on' : ' ghost'}`, type: 'button', title: `aimanter les notes à la gamme de la session (${keyLabel(P.key)})`,
@@ -444,6 +517,11 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
     acid ? el('i', { class: 'ar-sep' }) : null,
     acid ? el('button', { class: 'tb ghost sm', type: 'button', title: 'accent : plus fort et plus ouvert (la 303)', onclick: () => { for (const n of selOrAll()) n.ac = !n.ac || undefined; commit(); } }, 'Accent') : null,
     acid ? el('button', { class: 'tb ghost sm', type: 'button', title: 'liaison : la note glisse depuis la précédente (la 303)', onclick: () => { for (const n of selOrAll()) n.sl = !n.sl || undefined; commit(); } }, 'Liaison') : null,
+    el('i', { class: 'ar-sep' }),
+    groupe(el('span', { class: 'lbl' }, 'replier'),
+      el('div', { class: 'seg pr-repli' }, REPLIS.map(([k, l, why]) => el('button', { class: `tb${repli() === k ? ' on' : ''}`, type: 'button', 'data-fold': k, title: why,
+        onclick: () => replier(k) }, l)))),
+    el('button', { class: 'tb ghost sm', type: 'button', title: 'cadrer sur les notes : toutes dans la hauteur, au milieu (un clip vide : une octave autour de la tonique) · H, le clavier de l\'ordinateur éteint', onclick: () => cadrer() }, 'Cadrer'),
     el('span', { class: 'sp' }),
     el('span', { class: 'lbl' }, `${p.notes.length} note${p.notes.length > 1 ? 's' : ''}`));
   // la molette : la règle commune (commun/molette.js) — seule : monter / descendre
@@ -460,11 +538,35 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
     },
     // ce qui défile en hauteur : le piano roll lui-même (grand format), sinon la colonne du panneau du bas
     hauteur: (f, _piste, e) => tenirY(wrap.scrollHeight > wrap.clientHeight + 1 ? wrap : (wrap.closest('.dk-body') || wrap), e.clientY, () => {
-      RH = Math.round(borne(RH * f, RH_MIN, RH_MAX) * 10) / 10; ui.rh = RH; app.saveUi();
-      layoutRows(); layout(); paintNotes();
+      RH = Math.round(borne(RH * f, RH_MIN, RH_MAX) * 10) / 10; ui[cleRH] = RH; app.saveUi();
+      layoutRows(); layout(); paintNotes(); retenir();
     }),
   });
   const ro = new ResizeObserver(() => { layout(); paintNotes(); });
+  // la vue de ce motif, retenue pour le prochain redessin (VUES)
+  const retenir = () => { if (wrap.scrollHeight > wrap.clientHeight + 1) VUES.set(p.id, { top: wrap.scrollTop, rh: RH, taille: taille || '' }); };
+  wrap.addEventListener('scroll', retenir, { passive: true });
+  function replier(k) {
+    ui.fold = k || undefined; app.saveUi();
+    for (const b of tools.querySelectorAll('.pr-repli .tb')) b.classList.toggle('on', b.dataset.fold === k);
+    batirRangees(); layoutRows(); layout(); paintNotes();
+    cadrer();
+  }
+  // CADRER (Live 12 : « Fit Content to View Height », H) : en compact, des rangées assez basses
+  // pour que toutes les notes tiennent, plus une marge (jamais plus hautes que celles qu'on a
+  // choisies à Ctrl+molette, ni plus basses que RH_MIN : on défile alors), puis centrer. Un clip
+  // vide : une octave autour de la tonique du projet, à l'octave du do central.
+  const MARGE = 4;
+  function cadrer() {
+    const ps = p.notes.map((n) => rangDe.get(n.p)).filter((r) => r !== undefined);
+    const tonique = rangDe.get(60 + P.key.tonic);
+    const r0 = ps.length ? Math.min(...ps) : (tonique ?? vis.length / 2) - 6, r1 = ps.length ? Math.max(...ps) : r0 + 12;
+    if (compact && wrap.clientHeight > 0) {
+      const veut = clamp(Math.floor(wrap.clientHeight / (r1 - r0 + 1 + 2 * MARGE)), RH_MIN, borne(ui[cleRH] || RH0, RH_MIN, RH_MAX));
+      if (veut !== RH) { RH = veut; layoutRows(); layout(); paintNotes(); }
+    }
+    centrer((r0 + r1) / 2);
+  }
   // Centrer sur les notes CE QUI DÉFILE : le piano roll lui-même en grand
   // format, sinon la colonne du panneau du bas (.dk-body) — la même règle que
   // la molette (hauteur, plus haut). La rangée du milieu des notes (ou do4)
@@ -472,26 +574,36 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
   // change : le panneau se redessine à chaque retouche, il garde alors le
   // défilement qu'on lui a donné.
   const defile = () => (wrap.scrollHeight > wrap.clientHeight + 1 ? wrap : wrap.closest('.dk-body'));
-  const centrer = () => {
+  // centrer sur une rangée (d'office : le milieu des notes, ou la tonique d'un clip vide)
+  const centrer = (milieu) => {
     const sc = defile();
     if (!sc) return;
-    const ps = p.notes.map((n) => n.p);
-    const mid = ps.length ? (Math.min(...ps) + Math.max(...ps)) / 2 : 60;
-    const y = (HI - mid + 0.5) * RH;                  // dans la grille (.pr-area)
+    let mid = milieu;
+    if (mid === undefined) {
+      const ps = p.notes.map((n) => rangDe.get(n.p)).filter((r) => r !== undefined);
+      mid = ps.length ? (Math.min(...ps) + Math.max(...ps)) / 2 : rangDe.get(60 + P.key.tonic) ?? vis.length / 2;
+    }
+    const y = (mid + 0.5) * RH;                       // dans la grille (.pr-area)
     const top = area.getBoundingClientRect().top - sc.getBoundingClientRect().top;   // la grille dans la fenêtre de ce qui défile
     sc.scrollTop += top + y - sc.clientHeight / 2;
     CENTRE.set(sc, p.id);
+    retenir();
   };
   requestAnimationFrame(() => {
     layout(); paintNotes();
     const sc = defile();
-    if (sc === wrap || (sc && CENTRE.get(sc) !== p.id)) centrer();
+    // le même motif, dans la même taille : sa vue d'avant ; sinon il se cadre (compact) ou se centre
+    const vu = VUES.get(p.id);
+    if (sc === wrap && vu?.taille === (taille || '')) wrap.scrollTop = vu.top;
+    else if (sc === wrap && compact) cadrer();
+    else if (sc === wrap || (sc && CENTRE.get(sc) !== p.id)) centrer();
     ro.observe(scrollX);
   });
   return {
-    centrer,
-    el: el('div', { class: 'pr-wrap', style: { '--k': `var(--${t.color})` } }, tools, wrap, velBox),
-    hint: 'clic : une note · glisser : sa longueur · glisser une note : la déplacer · Maj+glisser : choisir · double-clic ou clic droit : l\'ôter · ↑ ↓ transposer · Ctrl+A tout · Suppr · Ctrl+U quantifier · la voie du bas : vélocités · molette : monter, descendre · Maj : le temps · Alt : zoom · Ctrl : hauteur des notes',
+    centrer: () => (compact ? cadrer() : centrer()),
+    tools,
+    el: el('div', { class: 'pr-wrap', style: { '--k': `var(--${t.color})` } }, wrap, velBox),
+    hint: 'clic : une note · glisser : sa longueur · glisser une note : la déplacer · Maj+glisser : choisir · double-clic ou clic droit : l\'ôter · ↑ ↓ transposer · Ctrl+A tout · Suppr · Ctrl+U quantifier · F replier · H cadrer · la voie du bas : vélocités · molette : monter, descendre · Maj : le temps · Alt : zoom · Ctrl : hauteur des notes',
     frame() {
       const st = playingStep(app, p, c);
       nowCol.style.display = st >= 0 ? 'block' : 'none';
@@ -503,6 +615,12 @@ function pianoRoll(app, p, src, t, c, ui, tall) {
     key(e) {
       const ctrl = e.ctrlKey || e.metaKey;
       if (e.target.closest?.('input, textarea, select')) return false;
+      // F : replier sur les notes ↔ tout ; H : cadrer (Live 12) — sauf quand le clavier de l'ordinateur joue (ses touches sont des notes)
+      if (!ctrl && !e.altKey && !app.kbdOn?.() && (letter(e) === 'f' || letter(e) === 'h')) {
+        e.preventDefault();
+        if (letter(e) === 'f') replier(repli() === 'notes' ? '' : 'notes'); else cadrer();
+        return true;
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && chosen.size) { e.preventDefault(); p.notes = p.notes.filter((n) => !chosen.has(n)); chosen.clear(); commit(); return true; }
       if (ctrl && letter(e) === 'a') { e.preventDefault(); for (const n of p.notes) chosen.add(n); paintNotes(); return true; }
       if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && chosen.size) { e.preventDefault(); transpose((e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 12 : 1)); return true; }

@@ -191,12 +191,21 @@ def _entree(d: Path, source: str) -> dict:
 
 
 def analyses_list(req):
+    """Les analyses du Workspace courant, comme les projets (projets_liste) : une analyse est
+    à son projet — son Workspace (analyse/projets.json), sinon celui du travail qui l'a faite ;
+    nos films et les analyses d'avant le 30/09 sont dans Général (library.space_of)."""
+    with _store_lock:
+        store = {p["id"]: p for p in _store_lit()}
+
+    def ici(d: Path) -> bool:
+        jid = (_lit_json(d / "portail.json") or {}).get("job")
+        return library.readable(_doc({**store.get(d.name, {}), "id": d.name}, jobs.get(jid) if isinstance(jid, str) else None))
     out = []
     if produites().is_dir():
-        faites = [d for d in produites().iterdir() if d.is_dir() and not d.name.startswith(".")]
+        faites = [d for d in produites().iterdir() if d.is_dir() and not d.name.startswith(".") and ici(d)]
         out += sorted((_entree(d, "portail") for d in faites), key=lambda e: e["date"], reverse=True)
     if DEPOT.is_dir():
-        out += [_entree(d, "depot") for d in sorted(DEPOT.iterdir()) if d.is_dir() and (d / "shots.json").is_file()]
+        out += [_entree(d, "depot") for d in sorted(DEPOT.iterdir()) if d.is_dir() and (d / "shots.json").is_file() and ici(d)]
     return {"analyses": out, "runs": str(runs()), "partage": PARTAGE}
 
 
@@ -362,6 +371,9 @@ def _projet(pid: str, e: dict | None, d: Path | None, source: str | None, job: d
         media = f"analyse/runs/{pid}/{urllib.parse.quote(video)}"
     else:
         media = None
+    # la vidéo de la bibliothèque qu'une analyse lancée d'ici a dépouillée (_publie, `origine`) : la
+    # visionneuse en tire le son au défilement de son lecteur (GET /api/defil/<item>/son, 06/10)
+    origine = info.get("origine") if isinstance(info.get("origine"), dict) else {}
     meta = info.get("meta") or " · ".join(x for x in (info.get("genre") or (a or {}).get("genre"), _duree_lisible(c.get("duree")),
                                                      f"{w}×{h}" if w and h else "") if x)
     return {
@@ -374,6 +386,7 @@ def _projet(pid: str, e: dict | None, d: Path | None, source: str | None, job: d
         "meta": meta or ("créé le " + str(e.get("cree") or "")[:10] if e.get("cree") else ""),
         # un dépouillement en cours n'a pas encore d'image clé : la vignette de sa vidéo (celle du travail)
         "vignette": (a or {}).get("vignette") or (job or {}).get("thumb"), "affiche": (a or {}).get("affiche"), "media": media,
+        "item": origine.get("item") if media and isinstance(origine.get("item"), str) else None,
         "largeur": w, "hauteur": h, "duree": c.get("duree"),
         "studio": (a or {}).get("studio"), "casting": (a or {}).get("casting"), "depouillement": (a or {}).get("depouillement"),
         "labo": "analyse/diarisation/?projet=" + urllib.parse.quote(pid),
@@ -1262,6 +1275,10 @@ def selftest(call, ok) -> None:
             ok(st == 200, f"analyse faite : {k} se sert ({st})")
         st, raw = call("GET", "/analyse/runs/essai-de-film/essai-de-film.mp4", headers={"Range": "bytes=0-3"})
         ok(st == 206, f"la vidéo est à côté de la page, lue par morceaux ({st})")
+        st, pl = call("GET", "/api/analyse/projets")
+        pr = {x["id"]: x for x in (pl.get("projets") or [])}.get("essai-de-film") or {}
+        ok(pr.get("item") == vid.get("id") and (pr.get("media") or "").endswith("essai-de-film.mp4"),
+           f"le projet dit la vidéo de la bibliothèque dépouillée : le son au défilement de sa visionneuse ({pr.get('item')}, {pr.get('media')})")
     st, _ = call("POST", "/api/analyse/run", {"item": vid.get("id"), "titre": "Essai de film"})
     ok(st == 409, "le même nom une seconde fois : refusé")
     st, libre = call("GET", "/api/analyse/nom/essai-de-film")

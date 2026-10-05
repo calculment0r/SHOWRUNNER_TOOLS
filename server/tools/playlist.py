@@ -730,7 +730,7 @@ def selftest(call, ok) -> None:
        and pl2["download"] is True and pl2["cover"] == img["id"],
        f"réécrire : titre, artiste, année, l'ordre, les surcharges d'une piste, le fondu, la pochette ({st} {str(p2)[:160]})")
     ok(abs(p2.get("duration", 0) - 9.0) < 0.1 and p2.get("parents") == [ids[2], ids[0], ids[1], ids[3]]
-       and p2.get("thumb_url", "").endswith("thumb.jpg") and p2.get("views"),
+       and p2.get("thumb_url", "").split("?")[0].endswith("thumb.jpg") and p2.get("views"),
        f"réécrire : la durée suit, la vignette et les copies d'affichage sont celles de la pochette ({p2.get('duration')})")
     v1 = dict(p2.get("view_urls") or {})
     st, p3 = call("POST", f"/api/playlist/{pid}", {"base_rev": 2, "playlist": {"cover": im2["id"]}})
@@ -787,7 +787,9 @@ def selftest(call, ok) -> None:
     st2, back = call("POST", f"/api/library/{p0['id']}/restore")
     ok(st == 200 and st2 == 200 and back.get("kind") == KIND and back.get("playlist", {}).get("tracks") == [],
        "corbeille et retour : comme tout objet")
-    ok("playlist" in (library.import_refusal(library.get(pid), "esp-ailleurs") or ""), "rapatrier une playlist : refusé, la raison dite")
+    # rapatrier : une copie, avec ses sons et sa pochette (server/tools/elements.py, DOC_IMPORT ; essayé par asset.py)
+    ok(library.import_refusal(library.get(pid), "esp-ailleurs") is None and KIND in library.DOC_IMPORT,
+       "rapatrier une playlist : permis, ses sons et sa pochette viennent avec elle")
 
     # le tempo et la tonalité d'un son : la partition, la recette, la chanson d'une piste
     ok(key_of("F minor") == {"tonic": 5, "mode": "minor", "label": "Fm"} and key_of("Bb")["tonic"] == 10
