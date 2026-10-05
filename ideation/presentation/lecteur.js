@@ -13,7 +13,7 @@
 
 import { buildScene, releaseScene, decoded, slideNodes, partOf, roleOf, ensureCss } from './scene.js';
 import { createRun, pointerParallax, frameMeter } from './moteur.js';
-import { transit, pairsOf } from './transitions.js';
+import { transit, pairsOf, leadOf, neighbours as voisines } from './transitions.js';
 import { styler, fontsReady, motionFor, transFor } from './modeles.js';
 
 const two = (k) => String(k).padStart(2, '0');
@@ -112,7 +112,7 @@ export function createPlayer(ctx) {
     last.kind = kind; last.from = prev ? frames[prev.i].id : null; last.to = f.id; last.pairs = pairs.length;
     const meter = frameMeter();
     // les entrées partent pendant la transition (vers sa fin) : elles se chevauchent
-    const lead = { cut: 0, fade: 0.35, push: 0.55, wipe: 0.5, curtain: 0.52, zoom: 0.45, morph: 0.3, toile: 0.72 }[kind] ?? 0.4;
+    const lead = leadOf(kind);
     const t0 = performance.now();
     const entries = new Promise((r) => setTimeout(() => { if (back) { run.finish(); r(); } else run.play(0).then(r); }, first ? 250 : dur * lead));
     await transit(prev ? kind : 'cut', { fit, stage, from: prev?.sc, to: sc, back, dur, ease: tr.ease, pairs, others, fitCss });
@@ -134,12 +134,8 @@ export function createPlayer(ctx) {
     const a = frames[idx]?.motion?.auto;
     if (a && step >= (cur?.run.steps ?? 1) - 1 && idx < frames.length - 1) autoT = setTimeout(() => next(), a * 1000);
   }
-  // les diapositives voisines sur la toile (celles que le vol survole)
-  function neighbours(a, b) {
-    const A = frames[a], B = frames[b];
-    const x0 = Math.min(A.x, B.x) - A.w, y0 = Math.min(A.y, B.y) - A.h, x1 = Math.max(A.x + A.w, B.x + B.w) + A.w, y1 = Math.max(A.y + A.h, B.y + B.h) + A.h;
-    return frames.map((f, k) => [f, k]).filter(([f, k]) => k !== a && k !== b && f.x < x1 && f.x + f.w > x0 && f.y < y1 && f.y + f.h > y0).slice(0, 10).map(([, k]) => k);
-  }
+  // les diapositives voisines sur la toile (celles que le vol survole : transitions.js)
+  const neighbours = (a, b) => voisines(frames, a, b);
   // → : l'étape suivante, sinon la diapositive suivante
   async function next() {
     if (!alive || busy) { if (busy) queued = Math.min(frames.length - 1, idx + 1); return; }

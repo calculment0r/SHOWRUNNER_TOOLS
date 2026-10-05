@@ -21,7 +21,9 @@
 }
 .pm-bg, .pm-decor { position: absolute; inset: 0; pointer-events: none; }
 .pm-o { position: absolute; transform-origin: 0 0; }
-.pm-p, .pm-e, .pm-m, .pm-l, .pm-c { position: relative; width: 100%; height: 100%; }
+.pm-p, .pm-k, .pm-e, .pm-m, .pm-l, .pm-c { position: relative; width: 100%; height: 100%; }
+/* les images clés (courbes.js) : translate, rotate, scale autour du centre de l'objet */
+.pm-k { transform-origin: 50% 50%; }
 .pm-e.pm-clip { overflow: hidden; }
 .pm-o[data-tone="ink"] { color: var(--t-ink); }
 .pm-o[data-tone="muted"] { color: var(--t-muted); }

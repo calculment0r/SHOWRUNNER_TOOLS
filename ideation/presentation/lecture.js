@@ -10,6 +10,12 @@
 // un son son onde). Imprimer (le navigateur) ou page.pdf() de Chromium sans affichage en font un
 // PDF : le travail `presentation.pdf` (server/tools/presentation_pdf.py, tools/presentation_export.mjs)
 // attend `body.dataset.ready` (ou `error`) et lit `window.SR_IMPRESSION` (les pages, leurs polices).
+//
+// ?video[&slide=<id>][&hold=<ms>] (06/10) : la page de RENDU, sans interface — la présentation (ou une
+// diapositive) mise bout à bout comme le lecteur la joue (programme.js), à la taille de sa première
+// scène. `window.SR_RENDU.seek(t)` la pose à l'instant t (ms) et rend quand l'image est prête ; le
+// travail `presentation.video` (server/tools/presentation_video.py, tools/presentation_export.mjs) la
+// capture image par image et donne les images à ffmpeg.
 
 import { api, href } from '../../commun/shell.js';
 import { basculer, enPleinEcran, permis } from '../../commun/pleinecran.js';
@@ -18,10 +24,13 @@ import { ensureFont } from '../diapo/polices.js';
 import { buildScene, fontsOf } from './scene.js';
 import { styler, fontsReady, modele } from './modeles.js';
 import { createPlayer } from './lecteur.js';
+import { programme } from './programme.js';
 
 const msg = document.getElementById('msg');
 const bid = location.hash.slice(1);
-const print = new URLSearchParams(location.search).has('print');
+const Q = new URLSearchParams(location.search);
+const print = Q.has('print');
+const video = Q.has('video');
 
 async function main() {
   if (!bid) throw new Error('aucune planche : lecture.html#<planche>');
@@ -41,6 +50,17 @@ async function main() {
   for (const id of new Set(board.nodes.map((n) => n.font).filter(Boolean))) ensureFont(fake, id, () => {});
   document.title = `${board.name} · Présentation`;
   msg.remove();
+  if (video) {
+    // le rendu image par image : aucune interface, la scène seule, à sa taille
+    document.body.classList.add('pl-video');
+    const hold = Q.has('hold') ? Number(Q.get('hold')) : undefined;
+    const P = programme({ board, frames, only: Q.get('slide') || null, items, meta, tpl, href, name: board.name, host: document.body, hold });
+    const info = await P.prepare();
+    window.SR_RENDU = { name: board.name, w: P.w, h: P.h, total: info.total, fonts: info.fonts, slides: P.slides, seek: (t) => P.seek(t) };
+    await P.seek(0);
+    document.body.dataset.ready = String(info.total);
+    return;
+  }
   if (!print) {
     createPlayer({ board, frames, items, meta, tpl, href, name: board.name,
       fullscreen: permis() ? { toggle: () => basculer(), on: () => enPleinEcran() } : null,

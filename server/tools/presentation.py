@@ -4,7 +4,9 @@ Ce module ne sert aucune route : il tient la RÈGLE des champs neufs d'une planc
 que ideation.normalize garde par deux petits branchements délimités (`_node`, `_pres`) :
 
   objet    `motion` { in: {fx, dur, delay, ease, by, stagger, dist}, out: {fx, dur, ease},
-                      loop: {fx, dur, amp}, depth, step }      des données bornées, jamais du code
+                      loop: {fx, dur, amp}, depth, step,
+                      keys: {x, y, scale, rot, op: [{t, v, e, p}]} }   des données bornées, jamais du code
+                    (les images clés et les courbes libres {bz}, {spring} : 06/10, courbes.js de la page)
            `tone`   le rôle de couleur dans la palette du modèle (ink, accent, veil…)
   cadre    `motion` { trans, tdur, ease, bg, auto }           la transition d'arrivée, le fond, l'avance seule
   planche  `pres.template`                                     le modèle appliqué (un fichier de modeles/)
@@ -57,6 +59,67 @@ def _lim(k):
     return schema()["limits"][k]
 
 
+def _fin(v) -> bool:
+    return not isinstance(v, bool) and isinstance(v, (int, float)) and math.isfinite(v)
+
+
+def _r(v: float, nd: int) -> float:
+    """Arrondi comme Math.round de la page (au plus proche, la moitié vers le haut) : les mêmes chiffres des deux côtés."""
+    f = 10 ** nd
+    return math.floor(v * f + 0.5) / f
+
+
+def clean_ease(e):
+    """Une courbe : un nom du schéma, {bz: [x1, y1, x2, y2]} ou {spring: {k, c, m}} bornés (courbes.js, cleanEase) ; sinon None."""
+    S = schema()
+    if isinstance(e, str):
+        return e if e in S["ease"] else None
+    if not isinstance(e, dict):
+        return None
+    F = S["ease_free"]
+    bz = e.get("bz")
+    if isinstance(bz, list) and len(bz) == 4 and all(_fin(v) for v in bz):
+        lim = (F["bzx"], F["bzy"], F["bzx"], F["bzy"])
+        return {"bz": [_r(max(lo, min(hi, float(v))), 4) for v, (lo, hi) in zip(bz, lim)]}
+    sp = e.get("spring")
+    if isinstance(sp, dict):
+        dflt = {"k": 180, "c": 16, "m": 1}
+        return {"spring": {k: (_r(max(F[k][0], min(F[k][1], float(sp[k]))), 4) if _fin(sp.get(k)) else dflt[k]) for k in ("k", "c", "m")}}
+    return None
+
+
+def clean_keys(raw) -> dict | None:
+    """Les images clés d'un objet (courbes.js, cleanKeys) : par propriété, triées, une par instant (la
+    dernière l'emporte), bornées ; t en ms dans l'étape (0,1 ms), v (4 décimales), e la courbe vers la
+    suivante (linéaire : tue), p 'in' | 'out' (un préréglage). Rien de lisible : None."""
+    if not isinstance(raw, dict):
+        return None
+    K = schema()["keys"]
+    t_lo, t_hi = K["t"]
+    out = {}
+    for prop in ("x", "y", "scale", "rot", "op"):
+        lst = raw.get(prop)
+        if not isinstance(lst, list):
+            continue
+        lo, hi = K[prop]
+        by: dict = {}
+        for k in lst[: K["max"] * 4]:
+            if not isinstance(k, dict) or not _fin(k.get("t")) or not _fin(k.get("v")):
+                continue
+            t = _r(max(t_lo, min(t_hi, float(k["t"]))), 1)
+            o = {"t": t, "v": _r(max(lo, min(hi, float(k["v"]))), 4)}
+            e = clean_ease(k.get("e"))
+            if e and e != "linear":
+                o["e"] = e
+            if k.get("p") in ("in", "out"):
+                o["p"] = k["p"]
+            by[t] = o
+        lst2 = sorted(by.values(), key=lambda x: x["t"])[: K["max"]]
+        if lst2:
+            out[prop] = lst2
+    return out or None
+
+
 def clean_motion(m) -> dict | None:
     """Le motion d'un objet, borné par le schéma ; rien de lisible : None."""
     if not isinstance(m, dict):
@@ -70,8 +133,9 @@ def clean_motion(m) -> dict | None:
             v = _num(i.get(k), *_lim(lim))
             if v is not None:
                 o[k] = v
-        if i.get("ease") in S["ease"]:
-            o["ease"] = i["ease"]
+        e = clean_ease(i.get("ease"))
+        if e is not None:
+            o["ease"] = e
         if i.get("by") in S["by"]:
             o["by"] = i["by"]
         out["in"] = o
@@ -81,8 +145,9 @@ def clean_motion(m) -> dict | None:
         v = _num(x.get("dur"), *_lim("dur"))
         if v is not None:
             o["dur"] = v
-        if x.get("ease") in S["ease"]:
-            o["ease"] = x["ease"]
+        e = clean_ease(x.get("ease"))
+        if e is not None:
+            o["ease"] = e
         out["out"] = o
     lp = m.get("loop")
     if isinstance(lp, dict) and lp.get("fx") in S["fx_loop"] and lp["fx"] != "none":
@@ -98,6 +163,9 @@ def clean_motion(m) -> dict | None:
     s = _num(m.get("step"), *_lim("step"))
     if s:
         out["step"] = int(s)
+    k = clean_keys(m.get("keys"))
+    if k:
+        out["keys"] = k
     return out or None
 
 
@@ -112,8 +180,9 @@ def clean_frame_motion(m) -> dict | None:
     v = _num(m.get("tdur"), *_lim("tdur"))
     if v is not None:
         out["tdur"] = v
-    if m.get("ease") in S["ease"]:
-        out["ease"] = m["ease"]
+    e = clean_ease(m.get("ease"))
+    if e is not None:
+        out["ease"] = e
     if m.get("bg") in S["bg"]:
         out["bg"] = m["bg"]
     a = _num(m.get("auto"), *_lim("auto"))
@@ -254,6 +323,137 @@ def _strip(m):
     return out or None
 
 
+# ── les courbes et les images clés (06/10) : courbes.js de la page, par node ──────────
+# La note de spécification du 06/10 demande des essais RÉELS de l'interpolation et de chaque courbe :
+# ils tournent sur le module de la page lui-même (le même code que le moteur et le panneau), et ses
+# clés propres sont comparées à celles d'ici (clean_keys) sur les mêmes entrées.
+_COURBES_JS = r"""
+const C = await import(process.env.COURBES_URL);
+const cases = JSON.parse(process.env.CASES);
+const R = {};
+R.names = C.EASE_NAMES; R.lim = C.LIM; R.props = C.KEY_PROPS.map((p) => [p.id, p.lim]); R.t = C.KEY_T; R.max = C.KEY_MAX;
+const U = Array.from({ length: 101 }, (_, i) => i / 100);
+R.curves = {};
+for (const e of [...C.EASE_NAMES, { bz: [0, 0, 1, 1] }, { bz: [0.42, 0, 0.58, 1] }, { spring: { k: 300, c: 6, m: 1 } }, { spring: { k: 100, c: 40, m: 1 } }, { spring: { k: 180, c: 16, m: 1 } }]) {
+  const f = C.easeFn(e); const ys = U.map(f);
+  R.curves[typeof e === 'string' ? e : JSON.stringify(e)] = { y: ys, css: C.easeCss(e) };
+}
+// le ressort : la fonction JS est l'interpolation des mêmes points que linear() (ce que le navigateur peint)
+const pts = C.springPoints({ k: 300, c: 6, m: 1 });
+const lin = (u) => { const f = u * (pts.length - 1), i = Math.min(pts.length - 2, Math.floor(f)); return pts[i] + (pts[i + 1] - pts[i]) * (f - i); };
+R.springMatch = Math.max(...U.map((u) => Math.abs(C.easeFn({ spring: { k: 300, c: 6, m: 1 } })(u) - lin(u))));
+// les clés propres, puis leurs valeurs
+R.clean = cases.map((raw) => C.cleanKeys(raw));
+const K = C.cleanKeys({ x: [{ t: 100, v: 0 }, { t: 600, v: 200, e: 'in-out' }, { t: 1100, v: 100 }], op: [{ t: 300, v: 0.5 }] });
+R.vals = [0, 100, 350, 600, 850, 1100, 2000].map((t) => C.keysAt(K, t));
+R.mid = C.valueAt(C.cleanKeys({ x: [{ t: 0, v: 0 }, { t: 1000, v: 100 }] }).x, 500);
+R.wa = C.waapiTracks(C.cleanKeys({ x: [{ t: 200, v: -50, e: 'out' }, { t: 700, v: 0 }], y: [{ t: 0, v: 10 }], op: [{ t: 0, v: 0 }, { t: 1000, v: 1, e: { bz: [0.1, 0.2, 0.3, 0.4] } }] }));
+// poser, basculer, déplacer, la courbe d'une clé
+let k2 = C.setKey(null, 'x', 500, 40); k2 = C.setKey(k2, 'x', 0, -40); k2 = C.toggleKey(k2, 'x', 250); R.toggle = k2.x.map((k) => [k.t, k.v]);
+k2 = C.toggleKey(k2, 'x', 250); R.untoggle = k2.x.map((k) => k.t);
+R.move = C.moveKeys(k2, 'x', 500, 300).x.map((k) => k.t); R.moveOnto = C.moveKeys(k2, 'x', 0, 500).x.map((k) => [k.t, k.v]);
+R.ease = C.setEaseAt(k2, null, 0, { spring: { k: 50 } }).x[0].e;
+// les préréglages fabriquent des clés ordinaires ; réappliquer remplace les siennes, garde les autres
+let p = C.presetKeys({ x: [{ t: 2000, v: 30 }] }, 'in', { kind: 'slide', dir: 'left', dist: 80, delay: 100, dur: 600, ease: 'out' });
+R.preset1 = p; p = C.presetKeys(p, 'in', { kind: 'scale', dist: 20, delay: 0, dur: 400, ease: 'in-out' }); R.preset2 = p;
+R.presetOut = C.presetKeys(p, 'out', { kind: 'slide', dir: 'down', dist: 50, delay: 3000, dur: 500, ease: 'in' });
+// la cascade : avant, arrière, hasard semé (reproductible)
+const items = [{ id: 'a', mo: { in: { fx: 'fade', delay: 300 } } }, { id: 'b', mo: { in: { fx: 'rise', delay: 0 } } }, { id: 'c', mo: { in: { fx: 'none' }, keys: K } }, { id: 'd', mo: { in: { fx: 'none' } } }];
+R.cascade = ['forward', 'reverse', 'random'].map((o) => [...C.cascade(items, { order: o, interval: 150, seed: 7 })]);
+R.random2 = [...C.cascade(items, { order: 'random', interval: 150, seed: 7 })];
+R.random3 = [...C.cascade(items, { order: 'random', interval: 150, seed: 8 })];
+console.log(JSON.stringify(R));
+"""
+
+
+def _selftest_courbes(ok) -> None:
+    import os
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        ok(True, "présentations : node absent, les courbes de la page ne sont pas essayées ici")
+        return
+    S = schema()
+    cases = [
+        {"x": [{"t": 300, "v": 5}, {"t": 100, "v": 1, "e": "out"}, {"t": 300, "v": 7, "p": "in"}, {"t": -10, "v": 99999, "e": {"bz": [2, 5, -1, -7]}}],
+         "op": [{"t": 70000, "v": 2, "e": {"spring": {"k": 5, "c": 500, "m": "x"}}}], "rot": [{"t": "a", "v": 1}, {"t": 1, "v": True}], "w": [{"t": 1, "v": 1}]},
+        {"scale": [{"t": 12.34, "v": 1.23456, "e": "linear", "p": "autre"}], "y": []},
+        {"x": "rien"},
+        None,
+    ]
+    env = {**os.environ, "COURBES_URL": (DIR / "courbes.js").as_uri(), "CASES": json.dumps(cases)}
+    r = subprocess.run([node, "--input-type=module", "-e", _COURBES_JS], capture_output=True, text=True, timeout=60, env=env)
+    try:
+        R = json.loads(r.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        ok(False, f"présentations : courbes.js ne répond pas ({r.returncode} {r.stderr[-400:]})")
+        return
+    F, K = S["ease_free"], S["keys"]
+    ok(R["names"] == S["ease"], f"présentations : courbes.js et le schéma ont les mêmes courbes ({R['names']} / {S['ease']})")
+    ok(R["lim"] == {"bzx": F["bzx"], "bzy": F["bzy"], "k": F["k"], "c": F["c"], "m": F["m"]} and R["t"] == K["t"] and R["max"] == K["max"]
+       and all(lim == K[pid] for pid, lim in R["props"]) and [pid for pid, _ in R["props"]] == ["x", "y", "scale", "rot", "op"],
+       f"présentations : courbes.js et le schéma ont les mêmes bornes ({R['lim']} {R['props']})")
+    cv = R["curves"]
+    for name, c in cv.items():
+        y = c["y"]
+        ok(abs(y[0]) < 1e-9 and abs(y[-1] - 1) < 1e-9 and c["css"] and all(v == v for v in y),
+           f"présentations : la courbe {name} va de 0 à 1 ({y[0]}, {y[-1]}, {c['css'][:40]})")
+    mono = lambda y: all(b >= a - 1e-9 for a, b in zip(y, y[1:]))  # noqa: E731
+    lin = cv["linear"]["y"]
+    ok(all(abs(v - i / 100) < 1e-9 for i, v in enumerate(lin)), "présentations : la courbe linéaire est la diagonale")
+    ok(mono(cv["in"]["y"]) and cv["in"]["y"][50] < 0.25 and mono(cv["out"]["y"]) and cv["out"]["y"][50] > 0.75
+       and mono(cv["in-out"]["y"]) and abs(cv["in-out"]["y"][50] - 0.5) < 1e-3 and cv["in-out"]["y"][25] < 0.25,
+       f"présentations : entrée lente au début, sortie lente à la fin, entrée-sortie symétrique ({cv['in']['y'][50]:.3f} {cv['out']['y'][50]:.3f} {cv['in-out']['y'][50]:.3f})")
+    ok(all(abs(a - b) < 1e-4 for a, b in zip(cv['{"bz":[0,0,1,1]}']["y"], lin)) and cv['{"bz":[0,0,1,1]}']["css"] == "cubic-bezier(0, 0, 1, 1)",
+       "présentations : une cubic-bezier (0, 0, 1, 1) est la diagonale")
+    # CSS ease-in-out = cubic-bezier(0.42, 0, 0.58, 1) : à x = 0,25, y ≈ 0,1291 (la courbe de WebKit, résolue ici par dichotomie)
+    y25 = cv['{"bz":[0.42,0,0.58,1]}']["y"][25]
+    ok(abs(y25 - 0.12916) < 2e-4, f"présentations : la cubic-bezier résolue comme le navigateur ({y25:.5f})")
+    ok(max(cv["back"]["y"]) > 1.05, "présentations : le rebond dépasse avant de revenir")
+    sp_lo, sp_hi = cv['{"spring":{"k":300,"c":6,"m":1}}']["y"], cv['{"spring":{"k":100,"c":40,"m":1}}']["y"]
+    ok(max(sp_lo) > 1.2 and min(sp_lo[40:]) < 1 and mono(sp_hi) and max(sp_hi) <= 1 + 1e-9,
+       f"présentations : le ressort peu amorti oscille, le très amorti arrive sans dépasser ({max(sp_lo):.3f}, {max(sp_hi):.3f})")
+    ok(cv['{"spring":{"k":180,"c":16,"m":1}}']["css"] == cv["spring"]["css"] and cv["spring"]["css"].startswith("linear(0, ")
+       and R["springMatch"] < 1e-12, f"présentations : le ressort en JS est la courbe linear() que peint le navigateur (écart {R['springMatch']})")
+    # les clés propres : les mêmes ici et dans la page
+    for raw, js in zip(cases, R["clean"]):
+        ok(clean_keys(raw) == js, f"présentations : clean_keys et cleanKeys de la page rendent les mêmes clés ({str(raw)[:70]} → {clean_keys(raw)} / {js})")
+    ok(R["clean"][0]["x"] == [{"t": 0, "v": 4000, "e": {"bz": [1, 3, 0, -2]}}, {"t": 100, "v": 1, "e": "out"}, {"t": 300, "v": 7, "p": "in"}]
+       and R["clean"][0]["op"] == [{"t": 60000, "v": 1, "e": {"spring": {"k": 10, "c": 100, "m": 1}}}] and "rot" not in R["clean"][0],
+       f"présentations : des clés propres — triées, une par instant (la dernière l'emporte), bornées, l'illisible laissé ({R['clean'][0]})")
+    v = R["vals"]
+    ok(R["mid"] == 50 and v[0]["x"] == 0 and v[1]["x"] == 0 and abs(v[2]["x"] - 100) < 1e-9 and v[3]["x"] == 200 and abs(v[4]["x"] - 150) < 1e-9
+       and v[5]["x"] == 100 and v[6]["x"] == 100 and v[0]["op"] == 0.5 and v[6]["op"] == 0.5 and v[3]["scale"] == 1 and v[3]["rot"] == 0 and v[3]["y"] == 0,
+       f"présentations : l'interpolation — avant la première clé sa valeur, après la dernière la sienne, linéaire entre, la courbe de la clé qui part ({v})")
+    wa = {t["prop"]: t for t in R["wa"]}
+    x, y, op = wa.get("x", {}), wa.get("y", {}), wa.get("op", {})
+    ok(x.get("timing", {}).get("delay") == 200 and x["timing"]["duration"] == 500 and x["keyframes"][0]["translate"] == "-50px 0px"
+       and x["keyframes"][0]["easing"].startswith("cubic-bezier(0.33, 1, 0.68, 1)") and x["keyframes"][1]["offset"] == 1
+       and y.get("timing", {}).get("composite") == "add" and y["keyframes"][0]["translate"] == "0px 10px" and len(y["keyframes"]) == 2
+       and op["keyframes"][0]["easing"] == "linear" and op["timing"]["fill"] == "both",
+       f"présentations : les clés en animations Web (délai, durée, décalages, courbe par clé, translate y additionné) ({R['wa']})")
+    ok(R["toggle"] == [[0, -40], [250, 0], [500, 40]] and R["untoggle"] == [0, 500] and R["move"] == [0, 800] and R["moveOnto"] == [[500, -40]]
+       and R["ease"] == {"spring": {"k": 50, "c": 16, "m": 1}},
+       f"présentations : poser, basculer (la valeur qui s'y voit), déplacer (sur une autre : la remplace), la courbe d'une clé "
+       f"({R['toggle']} {R['untoggle']} {R['move']} {R['moveOnto']} {R['ease']})")
+    p1, p2, po = R["preset1"], R["preset2"], R["presetOut"]
+    ok(p1["x"] == [{"t": 100, "v": -80, "e": "out", "p": "in"}, {"t": 700, "v": 0, "p": "in"}, {"t": 2000, "v": 30}]
+       and p1["op"] == [{"t": 100, "v": 0, "e": "out", "p": "in"}, {"t": 700, "v": 1, "p": "in"}],
+       f"présentations : un préréglage d'entrée fabrique des clés ordinaires (glisse depuis la gauche, apparaît) ({p1})")
+    ok(p2.get("x") == [{"t": 2000, "v": 30}] and p2["scale"] == [{"t": 0, "v": 0.8, "e": "in-out", "p": "in"}, {"t": 400, "v": 1, "p": "in"}]
+       and [k["t"] for k in p2["op"]] == [0, 400],
+       f"présentations : le réappliquer remplace ses clés, garde les autres ({p2})")
+    ok(po["y"] == [{"t": 3000, "v": 0, "e": "in", "p": "out"}, {"t": 3500, "v": 50, "p": "out"}] and [k["t"] for k in po["op"]] == [0, 400, 3000, 3500]
+       and po["scale"] == p2["scale"], f"présentations : une sortie s'ajoute à l'entrée (glisse vers le bas, disparaît) ({po})")
+    fw, rv, rd = (dict(x) for x in R["cascade"])
+    ok(fw == {"a": -300, "b": 150, "c": 200} and rv == {"c": -100, "b": 150, "a": 0} and "d" not in fw,
+       f"présentations : la cascade avant, arrière (0, 150, 300 ms depuis le premier début ; un objet sans entrée ni clé n'y est pas) ({fw} {rv})")
+    starts = {"a": 300, "b": 0, "c": 100}
+    ok(dict(R["random2"]) == rd and sorted(starts[i] + d for i, d in rd.items()) == [0, 150, 300],
+       f"présentations : la cascade au hasard semé est reproductible — la même graine, le même ordre ({rd} ; graine 8 : {dict(R['random3'])})")
+
+
 FIGURE = re.compile(r"^\s*[+\-−]?\s*\d[\d\s.,  ]*\s*[%a-zA-Zéû€$×x+]{0,4}\s*$")
 
 
@@ -323,8 +523,7 @@ def selftest(call, ok) -> None:
     src = (DIR / "moteur.js").read_text(encoding="utf-8")
     for fx in S["fx_in"] + S["fx_out"] + S["fx_loop"]:
         ok(re.search(rf"['\"]?{re.escape(fx)}['\"]?\s*:", src) or f"'{fx}'" in src, f"présentations : moteur.js connaît l'effet {fx}")
-    for e in S["ease"]:
-        ok(re.search(rf"['\"]?{re.escape(e)}['\"]?\s*:", src), f"présentations : moteur.js connaît la courbe {e}")
+    _selftest_courbes(ok)
     tsrc = (DIR / "transitions.js").read_text(encoding="utf-8")
     for k in S["trans"]:
         ok(k == "cut" or f"case '{k}'" in tsrc, f"présentations : transitions.js joue {k}")
@@ -333,7 +532,7 @@ def selftest(call, ok) -> None:
         ok(f"case '{k}'" in ssrc, f"présentations : scene.js pose le décor {k}")
     # l'interface : aucune couleur en dur (les palettes des modèles sont des données JSON)
     for name in ("presentation.css", "mode.js", "lecteur.js", "scene.js", "moteur.js", "transitions.js", "assist.js", "modeles.js", "lecture.js", "lecture.html",
-                 "export.js"):
+                 "export.js", "courbes.js", "programme.js", "courbe.js"):
         body = (DIR / name).read_text(encoding="utf-8")
         ok(not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", body), f"présentations : {name} n'écrit aucune couleur en dur")
     # une planche garde son motion (aller-retour par l'API), et perd ce qui sort du schéma
@@ -346,7 +545,9 @@ def selftest(call, ok) -> None:
          "motion": {"trans": "curtain", "tdur": 99999, "ease": "spring", "bg": "accent", "auto": 4, "code": "alert(1)"}},
         {"id": "t1", "type": "title", "x": 96, "y": 400, "w": 1200, "h": 180, "text": "Titre", "size": "l", "style": "display", "tone": "accent",
          "motion": {"in": {"fx": "reveal", "by": "word", "dur": 900, "delay": -5, "ease": "spring", "stagger": 80, "x": 1},
-                    "out": {"fx": "sink", "dur": 400}, "loop": {"fx": "float", "dur": 5000, "amp": 999}, "depth": 3, "step": 2}},
+                    "out": {"fx": "sink", "dur": 400}, "loop": {"fx": "float", "dur": 5000, "amp": 999}, "depth": 3, "step": 2,
+                    "keys": {"x": [{"t": 0, "v": -120, "e": {"bz": [0.3, -0.5, 0.2, 9]}, "p": "in"}, {"t": 700, "v": 0, "p": "in"}],
+                             "op": [{"t": 900, "v": 1}, {"t": 1500, "v": 0.25, "e": "eval"}], "z": [{"t": 1, "v": 1}]}}},
         {"id": "n1", "type": "note", "x": 96, "y": 700, "w": 800, "h": 60, "text": "corps", "style": "body", "tone": "rouge",
          "motion": {"in": {"fx": "eval", "dur": 1}}},
     ]
@@ -359,8 +560,10 @@ def selftest(call, ok) -> None:
     ok(st == 200 and f1.get("motion") == {"trans": "curtain", "tdur": 4000.0, "ease": "spring", "bg": "accent", "auto": 4.0},
        f"présentations : une diapositive garde sa transition, bornée, sans le reste ({f1.get('motion')})")
     ok(t1.get("motion") == {"in": {"fx": "reveal", "dur": 900.0, "delay": 0.0, "stagger": 80.0, "ease": "spring", "by": "word"},
-                            "out": {"fx": "sink", "dur": 400.0}, "loop": {"fx": "float", "dur": 5000.0, "amp": 200.0}, "depth": 1.0, "step": 2}
-       and t1.get("tone") == "accent", f"présentations : un objet garde son motion borné et son ton ({t1.get('motion')}, {t1.get('tone')})")
+                            "out": {"fx": "sink", "dur": 400.0}, "loop": {"fx": "float", "dur": 5000.0, "amp": 200.0}, "depth": 1.0, "step": 2,
+                            "keys": {"x": [{"t": 0.0, "v": -120.0, "e": {"bz": [0.3, -0.5, 0.2, 3.0]}, "p": "in"}, {"t": 700.0, "v": 0.0, "p": "in"}],
+                                     "op": [{"t": 900.0, "v": 1.0}, {"t": 1500.0, "v": 0.25}]}}
+       and t1.get("tone") == "accent", f"présentations : un objet garde son motion borné, ses images clés et son ton ({t1.get('motion')}, {t1.get('tone')})")
     ok("motion" not in n1 and "tone" not in n1, f"présentations : un effet ou un ton inconnus tombent ({n1})")
     ok(got.get("pres") == {"template": "generique"}, f"présentations : la planche garde son modèle ({got.get('pres')})")
     st, sv = call("POST", f"/api/ideation/boards/{b['id']}", {**got, "pres": {"template": "n-existe-pas"}, "base_rev": got.get("rev")})
