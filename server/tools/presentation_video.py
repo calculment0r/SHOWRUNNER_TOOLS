@@ -372,14 +372,18 @@ def selftest(call, ok) -> None:
        and (j.get("result") or {}).get("frames") == 72,
        f"présentation · vidéo : la présentation entière, sa transition ({j.get('state')} {j.get('message')} {it2.get('duration')} s)")
     if j.get("state") == "done":
-        # au milieu de la poussée (2,3 s) : la première diapositive à moitié partie à gauche, la seconde à moitié arrivée
-        R3 = stills(bid, [2300], hold=0.4, out=out / "push")
+        # au milieu de la poussée (2,3 s) : la première diapositive à moitié partie à gauche ; et le même instant,
+        # rejoint par trois chemins (depuis 0, depuis la pause de la première, depuis la fin), les mêmes pixels
+        R3 = stills(bid, [2300, 1000, 2300, 2950, 2300, 0, 2300], hold=0.4, out=out / "push")
+        P3 = [Path(x["path"]) for x in R3.get("stills") or []]
         from PIL import Image
-        with Image.open((R3.get("stills") or [{}])[0].get("path")) as im:
+        with Image.open(P3[0]) as im:
             im = im.convert("RGB")
             bg = im.getpixel((1900, 40))
             row = [x for x in range(0, 1920) if sum(abs(a - b) for a, b in zip(im.getpixel((x, 660)), bg)) > 90]
         ok(bool(row) and row[-1] < 400, f"présentation · vidéo : au milieu de la poussée, la forme de la première est partie à gauche (jusqu'à {row and row[-1]} px)")
+        ok(len(P3) == 7 and len({P3[k].read_bytes() for k in (0, 2, 4, 6)}) == 1,
+           "présentation · vidéo : pendant une transition, le même instant rejoint par trois chemins donne les mêmes pixels")
 
     # une police dont la licence refuse le PDF refuse la vidéo (un titre sans style : Venus Rising)
     st, b2 = call("POST", "/api/ideation/boards", {"name": "Essai vidéo licence"})

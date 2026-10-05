@@ -333,6 +333,14 @@ export function presetKeys(keys, side, o) {
   return cleanKeys(K);
 }
 
+// retirer les clés d'un préréglage (side : 'in' | 'out') ; les autres restent
+export function dropPreset(keys, side) {
+  const K = copy(keys);
+  for (const P of KEY_PROPS) if (K[P.id]) K[P.id] = K[P.id].filter((k) => k.p !== side);
+  return cleanKeys(K);
+}
+export const hasPreset = (keys, side) => KEY_PROPS.some((P) => (keys?.[P.id] || []).some((k) => k.p === side));
+
 // ── le décalage en cascade (stagger) ────────────────────────
 // La note du 06/10 : « Stagger: applied to a multi-selection; params: order (forward / reverse /
 // seeded random), interval. Offsets layer start times. » Le début d'un objet : le plus tôt de son
