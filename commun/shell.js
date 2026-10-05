@@ -237,7 +237,7 @@ addEventListener('contextmenu', (e) => {
 // fait trop tôt attend le panneau), le registre des zones qui prennent un asset
 // (`declareZone` ; `dropZone` s'y inscrit seul), la sorte effective, le raccourci.
 //
-//   dock.configure({ place, clickPlaces, placeLabel, menu, kinds, label, dockMin, hint, upload, fiche })
+//   dock.configure({ place, clickPlaces, placeLabel, menu, kinds, label, dockMin, hint, upload, fiche, rapatrie })
 //   dock.contexte({ kinds, label, why }) · dock.contexte(null)     les filtres de la zone active
 //   dock.open({ focus }) · close() · toggle() · isOpen() · closed() · reload() · recent(items)
 //   declareZone(node, { kinds, label }) → de quoi la retirer

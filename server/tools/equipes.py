@@ -358,6 +358,7 @@ def selftest(call, ok) -> None:
         auth._hits.clear()
     try:
         _http(ok, H, same)
+        _depart(ok, H, same)
         _budget(ok, H, same)
         _migration(ok, tempfile, shutil, json, hashlib, Path)
     finally:
@@ -599,6 +600,130 @@ def _http(ok, H, same) -> None:
     s, d, _ = P(f"/api/equipes/{tid}/membres/cal/retirer")
     ok(s == 409, f"équipes : le propriétaire ne part pas ({s})")
     ok(any(e["event"] == "team : rôle" for e in auth.journal_tail(300)), "équipes : les gestes vont au journal")
+
+
+def _depart(ok, H, same) -> None:
+    """« Commencer un projet » (ideation/projet.js ; docs/etudes/mode_showrunner.md § 2) : le départ
+    joué par l'API dans l'ordre de la page, par un ami qui a le Studio sur son compte — la Team et son
+    Workspace, renommé ; une personne qui existe ; l'onglet dans ce Workspace ; la planche ; les
+    fichiers (un nom accentué, un dossier, des documents) ; un objet d'ailleurs rapatrié ; le texte du
+    brief ; la mise en page enregistrée. Puis ce qu'en voient la personne ajoutée et un inconnu."""
+    import io
+    import shutil
+    from urllib.parse import quote
+
+    from PIL import Image
+
+    from core import library
+    from tools import documents
+    err = lambda d: d.get("error", "") if isinstance(d, dict) else str(d)[:80]   # noqa: E731
+    _, _, adm = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
+    toks = {}
+    # trois comptes créés par Cal : deux Studio (membres de Nirvalab, la Team de l'instance), un Apps (seul chez lui)
+    for name, acc in (("Sam Depart", "studio"), ("Noa Depart", "studio"), ("Ugo Depart", "apps")):
+        s, d, _ = H("POST", "/api/admin/users", {"name": name, "access": acc}, cookie=adm, headers=same)
+        _, _, toks[name.split()[0]] = H("POST", "/api/auth/enter", {"name": name}, headers=same)
+        ok(s == 200 and toks[name.split()[0]], f"départ : {name}, un compte {acc}, entre ({s} {err(d)})")
+    sam, noa, ugo = toks["Sam"], toks["Noa"], toks["Ugo"]
+    P = lambda path, body=None, tok=sam, hd=None: H("POST", path, body if body is not None else {}, cookie=tok,   # noqa: E731
+                                                     headers={**same, **(hd or {})})
+    G = lambda path, tok=sam, hd=None: H("GET", path, cookie=tok, headers=hd or {})   # noqa: E731
+
+    # 0. la fenêtre s'ouvre : les droits, les personnes
+    s, d, _ = G("/api/equipes")
+    ok(s == 200 and d.get("can_create") is True and d.get("create_why") is None, f"départ : Sam crée une Team ({s} {d.get('create_why')})")
+    s, d, _ = G("/api/equipes/personnes")
+    ids = [x["id"] for x in d.get("people", [])]
+    ok(s == 200 and "noa-depart" in ids and "ugo-depart" not in ids and "sam-depart" not in ids,
+       f"départ : Sam peut mettre Noa (de sa Team Nirvalab), pas Ugo, qui n'est dans aucune de ses Teams ({ids})")
+    # 1. la Team, née avec son Workspace « Général » ; 2. le Workspace renommé
+    s, t, _ = P("/api/equipes", {"name": "Les Rues"})
+    ok(s == 200 and t.get("owner") == "sam-depart" and [x["name"] for x in t.get("spaces", [])] == ["Général"],
+       f"départ : la Team « Les Rues », son Workspace « Général », Sam propriétaire ({s} {err(t)})")
+    tid, sid = t["id"], t["spaces"][0]["id"]
+    s, sp, _ = P(f"/api/espaces/{sid}", {"name": "Repérages"})
+    ok(s == 200 and sp.get("name") == "Repérages", f"départ : le propriétaire renomme le Workspace ({s} {err(sp)})")
+    # 3. une personne qui existe : membre (pas un compte neuf)
+    s, d, _ = P(f"/api/equipes/{tid}/membres", {"pseudo": "Noa Depart", "role": "member"})
+    ok(s == 200 and not (d.get("added") or {}).get("created") and espaces.team_role(auth.user("noa-depart"), tid) == "member",
+       f"départ : Noa, membre de la Team ({s} {err(d)})")
+    # 4. l'onglet dans ce Workspace (entrerEspace : le portail le retient)
+    s, _, _ = P("/api/espaces/courant", {"workspace": sid})
+    _, me, _ = G("/api/auth/me")
+    ok(s == 200 and (me.get("workspace") or {}).get("id") == sid, f"départ : le Workspace neuf devient le courant ({s})")
+    # 5. la planche, dans ce Workspace
+    here = {"X-SR-Espace": sid}
+    s, b, _ = P("/api/ideation/boards", {"name": "Les Rues"}, hd=here)
+    ok(s == 200 and b.get("space") == sid, f"départ : la planche, dans le Workspace neuf ({s} {b.get('space')} {err(b)})")
+    bid = b.get("id", "")
+    # 6. les fichiers (uploadFile : le titre, le dossier, `via`), dans ce Workspace
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 40), (200, 60, 40)).save(buf, "PNG")
+    fx = documents.fixtures()
+    up = {}
+    for name, body, folder in (("repérage_rue.mp4", b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64, "Repérages Paris"),
+                               ("décor_nuit.png", buf.getvalue(), "Repérages Paris"), ("dossier.pdf", fx["dossier.pdf"], ""),
+                               ("donnees.bin", bytes(range(256)), "")):
+        title = name.rsplit(".", 1)[0]
+        s, it, _ = H("PUT", f"/api/library/upload?name={quote(name)}&tool=upload&via=projet&folder={quote(folder)}&title={quote(title)}",
+                     raw=body, cookie=sam, headers={**same, **here})
+        up[name] = it if s == 200 else {}
+        ok(s == 200 and it.get("space") == sid and it.get("title") == title and it.get("folder") == folder
+           and (it.get("origin") or {}).get("via") == "projet", f"départ : « {name} » rangé dans le Workspace neuf ({s} {err(it)})")
+    ok(up["repérage_rue.mp4"].get("kind") == "video" and up["décor_nuit.png"].get("kind") == "image"
+       and up["dossier.pdf"].get("kind") == up["donnees.bin"].get("kind") == "document",
+       f"départ : les sortes tranchées au rangement ({[(k, v.get('kind')) for k, v in up.items()]})")
+    s, d, _ = H("PUT", "/api/library/upload?name=faux.mp4&tool=upload&via=projet&title=faux", raw=b"pas une video",
+                cookie=sam, headers={**same, **here})
+    ok(s == 415 and "MP4" in err(d), f"départ : un contenu qui n'est pas ce que dit son nom, refusé avec sa raison ({s} {err(d)})")
+    md = "# Les Rues\n\nUne nuit en ville, trois personnages.\n".encode()
+    s, brief, _ = H("PUT", "/api/library/upload?name=brief.md&tool=upload&via=projet&title=Brief", raw=md, cookie=sam,
+                    headers={**same, **here, "Content-Type": "text/markdown"})
+    ok(s == 200 and brief.get("kind") == "document" and brief.get("space") == sid, f"départ : le brief tapé, rangé en brief.md ({s} {err(brief)})")
+    # ce qui vient d'Asset, d'un autre Workspace : une copie dans le Workspace neuf, l'original reste
+    perso = "esp-perso-sam-depart"
+    s, src, _ = H("PUT", "/api/library/upload?name=affiche.png&title=Affiche", raw=buf.getvalue(), cookie=sam,
+                  headers={**same, "X-SR-Espace": perso})
+    s, r, _ = P(f"/api/espaces/{sid}/rapatrier", {"items": [src.get("id")]})
+    cp = (r.get("items") or [{}])[0] if s == 200 else {}
+    ok(s == 200 and cp.get("space") == sid and ((cp.get("origin") or {}).get("from") or {}).get("item") == src.get("id")
+       and library.get(src["id"])["space"] == perso, f"départ : un objet de « Perso » rapatrié, l'original reste ({s} {err(r)})")
+    # 7. le texte du brief (un PDF : lu par le portail, server/tools/documents.py ; le brief.md aussi)
+    s, tx, _ = G(f"/api/library/{brief.get('id')}/texte", hd=here)
+    ok(s == 200 and "trois personnages" in tx.get("text", ""), f"départ : le texte de brief.md ({s} {err(tx)})")
+    if shutil.which("pdftotext"):
+        s, tx, _ = G(f"/api/library/{up['dossier.pdf'].get('id')}/texte", hd=here)
+        ok(s == 200 and "Montparnasse" in tx.get("text", ""), f"départ : le texte du PDF, pour la note du brief et l'agent ({s} {err(tx)})")
+    # 8. la mise en page de départ, un seul enregistrement
+    vid, img = up["repérage_rue.mp4"], up["décor_nuit.png"]
+    nodes = [{"id": "t0", "type": "title", "x": 0, "y": -150, "w": 420, "h": 72, "text": "Les Rues", "size": "l"},
+             {"id": "f1", "type": "frame", "x": 0, "y": 0, "w": 560, "h": 300, "name": "Brief"},
+             {"id": "n1", "type": "note", "x": 36, "y": 36, "w": 460, "h": 96, "text": "Une nuit en ville, trois personnages."},
+             {"id": "f2", "type": "frame", "x": 710, "y": 0, "w": 400, "h": 300, "name": "Images"},
+             {"id": "m1", "type": "media", "item": img.get("id"), "kind": "image", "x": 746, "y": 36, "w": 240, "h": 150, "title": "décor_nuit"},
+             {"id": "f3", "type": "frame", "x": 1260, "y": 0, "w": 400, "h": 300, "name": "Vidéos"},
+             {"id": "m2", "type": "media", "item": vid.get("id"), "kind": "video", "x": 1296, "y": 36, "w": 300, "h": 169, "title": "repérage_rue"},
+             {"id": "m3", "type": "media", "item": cp.get("id"), "kind": "image", "x": 746, "y": 200, "w": 160, "h": 100, "title": "Affiche"}]
+    s, sv, _ = P(f"/api/ideation/boards/{bid}", {"name": "Les Rues", "nodes": nodes, "links": [], "base_rev": b.get("rev", 1)}, hd=here)
+    ok(s == 200 and sv.get("rev") == b.get("rev", 1) + 1, f"départ : la planche rangée, enregistrée ({s} {err(sv)})")
+    # ce que voit chacun
+    s, mine, _ = G("/api/library?limit=100", hd=here)
+    got = {i["id"] for i in mine.get("items", [])}
+    ok(s == 200 and {up[k].get("id") for k in up} | {brief.get("id"), cp.get("id")} <= got and src.get("id") not in got,
+       f"départ : Asset du Workspace neuf : tout ce qui a été rangé ({len(got)} objets)")
+    _, pm, _ = G("/api/library?limit=100", hd={"X-SR-Espace": perso})
+    ok({i["id"] for i in pm.get("items", [])} == {src.get("id")}, "départ : rien n'est entré dans « Perso » que l'objet d'avant")
+    s, eq, _ = G("/api/equipes", noa)
+    mt = next((x for x in eq.get("teams", []) if x["id"] == tid), {})
+    ok(s == 200 and mt.get("role") == "member" and [x["name"] for x in mt.get("spaces", [])] == ["Repérages"],
+       f"départ : Noa voit la Team et son Workspace ({mt.get('role')})")
+    s, bd, _ = G(f"/api/ideation/boards/{bid}", noa, here)
+    s2, li, _ = G("/api/library?limit=100", noa, here)
+    ok(s == 200 and len(bd.get("nodes", [])) == len(nodes) and s2 == 200 and got <= {i["id"] for i in li.get("items", [])},
+       f"départ : Noa ouvre la planche et voit les fichiers ({s}, {s2})")
+    s, _, _ = G(f"/api/ideation/boards/{bid}", ugo, here)
+    s2, _, _ = G(f"/api/library/{vid.get('id')}", ugo)
+    ok(s in (403, 404) and s2 in (403, 404), f"départ : Ugo, hors de la Team, ne voit ni la planche ni les fichiers ({s}, {s2})")
 
 
 def _budget(ok, H, same) -> None:

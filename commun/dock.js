@@ -60,6 +60,8 @@
 //     (upload : ignoré depuis le 30/09 — le panneau ne prend plus de fichier ; les zones de l'outil, si)
 //     fiche(it)                 « Fiche dans Asset » (sinon : asset/#<id> dans un autre onglet)
 //     hint: '…'                 la ligne d'aide du bas
+//     rapatrie: false           l'outil fait lui-même la copie d'un objet d'ailleurs, plus tard (« Commencer un
+//                               projet » : son Workspace n'existe pas encore) ; il reçoit l'original
 //   })
 //   dock.contexte({ kinds, label, why }) · dock.contexte(null)    la zone active a changé
 //   declareZone(node, { kinds, label })        une zone qui a son propre écouteur de dépôt
@@ -373,14 +375,15 @@ async function place(items, how = 'place') {
     toast(`pour la poser : glisse la vignette sur une zone de ${toolName()} qui la prend`);
     return;
   }
-  if (items.some(away) && importWhy()) { toast(importWhy(), 7000); return; }
+  const ici = D.cfg.rapatrie !== false;   // sinon l'outil reçoit l'original et le rapatrie lui-même
+  if (ici && items.some(away) && importWhy()) { toast(importWhy(), 7000); return; }
   let out = [];
   for (const it of items) {
     try { out.push(it._cf ? await cfItem(it) : await versionAPoser(it)); } catch (e) { toast(`${it._cf ? 'Character Factory' : it.title || it.id} : ${e.message}`, 7000); }
   }
   if (!out.length) return;
   // d'un autre Workspace : la copie d'ici d'abord (commun/shell.js, rapatrier) ; un refus dit pourquoi
-  try { out = await rapatrier(out); } catch (e) { toast(e.message, 7000); return; }
+  if (ici) { try { out = await rapatrier(out); } catch (e) { toast(e.message, 7000); return; } }
   const r = await D.cfg.place(out, { how });
   if (r === false) return;
   live(out.length > 1 ? `${out.length} posés` : `posé : ${out[0].title || out[0].id}`);
@@ -842,7 +845,7 @@ function wire() {
     const extra = typeof D.cfg.menu === 'function' ? (D.cfg.menu(it, tg) || []) : [];
     menu(x, y, [{ head: many ? `${tg.length} objets` : (it.title || it.id) },
       { label: D.cfg.placeLabel || 'Poser', sub: D.cfg.clickPlaces ? 'clic' : 'double-clic',
-        disabled: typeof D.cfg.place !== 'function' || (tg.some(away) && !!importWhy()),
+        disabled: typeof D.cfg.place !== 'function' || (D.cfg.rapatrie !== false && tg.some(away) && !!importWhy()),
         why: typeof D.cfg.place !== 'function' ? `pour la poser : glisse la vignette sur une zone de ${toolName()} qui la prend` : importWhy(),
         onclick: () => place(tg, 'menu') },
       ...extra,
