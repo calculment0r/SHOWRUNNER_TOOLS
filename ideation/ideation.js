@@ -31,7 +31,7 @@
 // de mind map compte pour tout son arbre quand on le déplace ou l'aligne, pour
 // sa descendance quand on le supprime, le copie ou le duplique.
 
-import { mountHeader, api, jobs, toast, el, $, href, fmtDate, uploadFile, pick, session, studioSeul } from '../commun/shell.js';
+import { mountHeader, api, jobs, toast, el, $, href, fmtDate, uploadFile, pick, session, studioSeul, espace, espaceDocument, avecEspace, surEspace } from '../commun/shell.js';
 import { lecteur } from '../commun/lecteur.js';
 import { liseuse, nomDe } from '../commun/documents.js';   // LA liseuse d'un document (05/10)
 import { menu } from '../commun/menu.js';
@@ -206,7 +206,7 @@ addEventListener('beforeunload', () => {
   if (!S.dirty || !S.board || S.conflict) return;
   const b = S.board;
   const body = JSON.stringify({ name: b.name, v: b.v, nodes: b.nodes, links: b.links, pres: b.pres ?? null, base_rev: S.rev });
-  try { navigator.sendBeacon(href(`api/ideation/boards/${b.id}`), new Blob([body], { type: 'application/json' })); } catch { /* */ }
+  try { navigator.sendBeacon(avecEspace(href(`api/ideation/boards/${b.id}`)), new Blob([body], { type: 'application/json' })); } catch { /* */ }
 });
 $('#c-reload').addEventListener('click', async () => { S.conflict = false; $('#conflict').hidden = true; await openBoard(S.board.id, { force: true }); });
 $('#c-force').addEventListener('click', async () => {
@@ -796,7 +796,7 @@ app.newBoard = async () => {
   const name = await askName('Nouvelle planche', `Planche du ${d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}`);
   if (!name) return null;
   let b;
-  try { b = await api('ideation/boards', { method: 'POST', body: { name } }); } catch (e) { toast(e.message, 6000); return null; }
+  try { b = await api('ideation/boards', { method: 'POST', body: { name }, espace: espace() }); } catch (e) { toast(e.message, 6000); return null; }
   await openBoard(b.id);
   return b;
 };
@@ -840,7 +840,7 @@ app.boardsModal = async () => {
     (cl) => [el('span', { class: 'sp' }), studioSeul(el('button', { class: 'tb go', type: 'button', onclick: async () => { cl(); await app.newBoard(); } }, 'Nouvelle planche'))],
     { cls: 'lg' });
   if (S.board) await flushSave();
-  try { ({ boards: list } = await api('ideation/boards')); } catch (e) { box.replaceChildren(el('p', { class: 'warn' }, e.message)); return; }
+  try { ({ boards: list } = await api('ideation/boards', { espace: espace() })); } catch (e) { box.replaceChildren(el('p', { class: 'warn' }, e.message)); return; }
   paint();
 };
 
@@ -870,6 +870,10 @@ async function openBoard(id, { force = false } = {}) {
   let b;
   try { b = await api('ideation/boards/' + id); } catch (e) { toast(e.message, 6000); return false; }
   S.board = b; S.rev = b.rev;
+  // la planche est dans son Workspace : l'en-tête le dit, et tout ce qu'on y fait y part — son flux,
+  // ses enregistrements, ce qu'on y génère ou dépose —, même après un changement de Workspace dans
+  // l'en-tête (commun/shell.js, espaceDocument `outil`) ; la liste des planches reste celle de l'onglet
+  espaceDocument(b.space || null, b.id, { outil: true });
   app.emit?.('board:open', b);   // collab : la co-édition part de la planche telle que le serveur l'a donnée
   S.undo = []; S.redo = []; S.sel = new Set(); S.link = null; S.focus = null; S.dirty = false; S.conflict = false; S.clip = null;
   $('#conflict').hidden = true;
@@ -900,6 +904,7 @@ app.openBoard = (id) => openBoard(id);
 app.projet = (o) => import('./projet.js').then((m) => m.ouvrirProjet(app, o)).catch((e) => toast(`Commencer un projet : ${e.message}`, 7000));
 function closeBoard() {
   S.board = null; S.sel.clear(); S.link = null;
+  espaceDocument(null);
   $('#b-name').value = '';
   history.replaceState(null, '', location.pathname);
   app.canvas.render(); app.insp.render(); paintSave(); paintBar();
@@ -1193,11 +1198,14 @@ async function start() {
 async function ouvrirDerniere() {
   const want = location.hash.slice(1) || LS('last');
   if (want && await openBoard(want)) return;
-  const { boards } = await api('ideation/boards').catch(() => ({ boards: [] }));
+  const { boards } = await api('ideation/boards', { espace: espace() }).catch(() => ({ boards: [] }));
   if (boards.length) await openBoard(boards[0].id);
   else { app.canvas.render(); app.insp.render(); }
 }
 addEventListener('hashchange', () => { const id = location.hash.slice(1); if (id && id !== S.board?.id) openBoard(id); });
+// changer de Workspace (l'en-tête) ne recharge pas Idéation : la planche ouverte reste ouverte, dans
+// le sien (l'en-tête le dit) ; « Planches » liste celles du nouveau Workspace
+surEspace(() => paintBar());
 start();
 
 // pour les essais (playwright) et le débogage : l'état, en lecture

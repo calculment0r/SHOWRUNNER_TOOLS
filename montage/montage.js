@@ -294,7 +294,7 @@ async function openProject(id) {
   const esp = p.space || lu.espace || espace() || null;
   id = p.id;                                   // un « mon-… » d'avant mène à sa séquence
   if (esp) tabEsp.set(id, esp);
-  espaceDocument(esp);                         // l'en-tête dit l'espace de la séquence quand ce n'est pas celui de l'onglet
+  espaceDocument(esp, id);                     // l'en-tête dit l'espace de la séquence ; une page rechargée la rouvre dans le sien
   await ensureItems([id, ...M.mediaIds(p)]);
   program.pause();
   program.clear();

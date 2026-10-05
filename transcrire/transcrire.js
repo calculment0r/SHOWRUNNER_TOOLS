@@ -26,7 +26,7 @@
 // traduction, d'un nom de voix, avec son contraire (réenregistré). Ne
 // s'annulent pas : lancer une transcription, une traduction, le carnet (partis
 // dans la file), un fichier déposé, les réglages.
-import { mountHeader, api, pick, toast, el, $, $$, href, fmtDur, fmtDate, uploadFile, dropZone, dropAnywhere, dock, sorteEffective, avecEspace, session, ongletCache, auRetour } from '../commun/shell.js';
+import { mountHeader, api, pick, toast, el, $, $$, href, fmtDur, fmtDate, uploadFile, dropZone, dropAnywhere, dock, sorteEffective, avecEspace, session, ongletCache, auRetour, espaceDocument, surEspace } from '../commun/shell.js';
 import { createUndo } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { menu, contextMenu, pageMenu, copy } from '../commun/menu.js';
@@ -248,6 +248,9 @@ let pollT = 0;
 function openDoc(d, { keepMedia = false } = {}) {
   const same = S.doc?.id === d?.id;
   S.doc = d;
+  // la transcription est dans son Workspace : l'en-tête le dit, et ce qui la nomme (traduire, le
+  // carnet, exporter, enregistrer) y part, même après un changement de Workspace (commun/shell.js)
+  espaceDocument(d?.space || null, d?.id || null);
   try { history.replaceState(null, '', location.pathname + location.search + (d ? '#' + d.id : '')); } catch { /* sans historique */ }
   if (!same || !keepMedia) paintPlayer();
   else paintStrip();   // la frise suit les répliques arrivées
@@ -885,5 +888,8 @@ async function start() {
   if (h) openById(h);
 }
 addEventListener('hashchange', () => { const id = location.hash.slice(1); if (id && id !== S.doc?.id) openById(id); });
+// changer de Workspace (l'en-tête) ne recharge pas Transcrire : la transcription ouverte reste ouverte,
+// dans le sien ; « Mes transcriptions » se relit dans le nouveau
+surEspace(() => loadDocs());
 addEventListener('beforeunload', () => { if (P.edits.size) flush(); });
 start();

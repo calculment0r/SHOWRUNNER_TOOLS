@@ -1118,7 +1118,7 @@ async function openProject(id, esp = {}) {
   S.proj = p;
   structVue = empreinteStructure(p);
   espProjet = p.space || esp.espace || espace() || null;
-  espaceDocument(espProjet);   // l'en-tête dit l'espace du projet quand ce n'est pas celui de l'onglet
+  espaceDocument(espProjet, p.id);   // l'en-tête dit l'espace du projet ; une page rechargée le rouvre dans le sien
   S.view = MAKERS[p.ui?.view] ? p.ui.view : 'timeline';
   const t0 = p.tracks.find((t) => t.kind !== 'bus');
   S.sel = { track: t0?.id || null, tracks: [], pat: t0?.pat || null, clip: null, clips: [], mod: null, cable: null };
