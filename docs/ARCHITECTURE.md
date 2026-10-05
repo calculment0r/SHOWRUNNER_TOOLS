@@ -270,6 +270,18 @@ Côté page : `jobs.submit(kind, params, {title, tool})`, `jobs.wait(id, onTick)
 `sr:elements` (`{seq, since}`) quand `ev_seq` grandit : une page qui suit des
 versions relit alors `GET /api/elements/changes`, sans connexion de plus que le
 relevé de la file (`apps_studio_elements.md` § 2.11).
+
+**Le relevé** (06/10, `docs/etudes/cloudflare.md`, « Le compte des requêtes du Worker » : derrière
+la porte, chaque requête de `/api/*` compte dans les 100 000 par jour du Worker) : `GET
+/api/jobs?limit=60` toutes les 1,5 s quand un travail est en file ou en cours, 6 s pendant les
+deux minutes qui suivent un mouvement, 30 s au repos ; tout de suite après un geste qui touche
+la file (`jobs.submit`, `cancel`, `retry`, `forget`, et toute écriture dont la réponse porte un
+travail : `api()` le voit). **Onglet caché, rien** (Page Visibility) ; relu dès son retour. **Un
+seul relevé par navigateur** : les onglets visibles d'un même Workspace élisent un meneur
+(Web Locks) qui relève et diffuse la liste aux autres (BroadcastChannel) ; sans ces API,
+chaque onglet relève. `jobs.wait` lit la liste tant que le travail tourne, sa fiche une fois
+fini. Une page qui relève autre chose passe par `releve(fn, ms)` (ou `ongletCache()` et
+`auRetour(cb)`), jamais par un `setInterval` nu. Le compteur : `tools/compte_requetes.mjs`.
 `jobRow(j)` dit la place (« 2 devant toi · départ ≈ 4 min ») ; sa vignette
 est la copie d'affichage de l'objet du travail (`jobItemsFor(liste)` les lit
 d'un coup par `/api/library/batch`).
@@ -320,7 +332,7 @@ repeint le fil dans le `onapply` de sa pile (`items` : les objets rendus,
 
 | module | ce qu'il fait | l'API |
 |---|---|---|
-| `shell.js` | l'en-tête (avec le bouton plein écran), `api`, la file (`jobs`, `jobRow`), `pick`, `thumb`, `dropZone`, `dragItem`, `uploadFile` (`onprogress` : la progression, par XMLHttpRequest) ; `entrerEspace(id)` : l'onglet dans un Workspace sans recharger la page (« Commencer un projet ») ; **le gardien du clic droit** (ci-dessous) ; `kindMark` : la pastille de la sorte au coin d'une vignette, avec une icône pour les sortes qu'on confondrait à l'image (séquence ≠ clip vidéo, MIDI ≠ son, élément ≠ image), la séquence pleine | `mountHeader(outil)` pose aussi `data-sr-tool` sur `<html>` ; `kindMark(it, {compact})` (posée par `thumb`, reprise par Asset et le chutier du Montage) ; ré-exporte `refBoard` et la règle de `refs.js` |
+| `shell.js` | l'en-tête (avec le bouton plein écran), `api`, la file (`jobs`, `jobRow`), les relevés (`releve`, `ongletCache`, `auRetour`, `quandVisible` : rien onglet caché, § 3), `pick`, `thumb`, `dropZone`, `dragItem`, `uploadFile` (`onprogress` : la progression, par XMLHttpRequest) ; `entrerEspace(id)` : l'onglet dans un Workspace sans recharger la page (« Commencer un projet ») ; **le gardien du clic droit** (ci-dessous) ; `kindMark` : la pastille de la sorte au coin d'une vignette, avec une icône pour les sortes qu'on confondrait à l'image (séquence ≠ clip vidéo, MIDI ≠ son, élément ≠ image), la séquence pleine | `mountHeader(outil)` pose aussi `data-sr-tool` sur `<html>` ; `kindMark(it, {compact})` (posée par `thumb`, reprise par Asset et le chutier du Montage) ; ré-exporte `refBoard` et la règle de `refs.js` |
 | `refs.js` | **la règle des références** (Image, Vidéo, les cartes Générer d'Idéation) : un carrousel ordonné ; `@image1` désigne une **place**, jamais un visuel (réordonner change qui est `@image1`, le prompt ne bouge pas) ; le modèle envoie les N premières places, les suivantes restent **grisées**, non envoyées, la raison au survol ; changer de modèle ne retire rien ; le « + » s'éteint à la limite et dit pourquoi. Le serveur tient la même règle : il reçoit le carrousel entier, `split_refs(refs, send)` (`server/tools/image.py`) n'envoie que les N premières et garde les autres sous `refs_held` ; N vient d'un seul endroit (`refs` de `/api/image/models`) | `sentCount`, `isHeld`, `sentLabel`, `heldTitle`, `moveItem`, `sortable(box, {item, onmove, stop})` (glisser, Alt + ← →), `refBoard` ; les états sont des classes (`held`, `dragging`, `drop-before`, `drop-after`) |
 | `molette.js` | **la molette de toutes les timelines** (Montage, ODIO, Movie Analysis) : molette = défiler les pistes, Maj = le temps, Alt (ou pincer) = zoom du temps sous le curseur, Ctrl = la hauteur de toutes les pistes (sur un en-tête `data-piste` : la sienne) ; Ctrl + molette ne zoome jamais la page ; `deltaMode` converti | `brancher(zone, {zoom, hauteur, defilerX, defilerY, scroller, piste})` rend de quoi débrancher ; `lire(ev, el)`, `REGLE`, `AIDE` (le texte d'aide) |
 | `fenetre.js` + `fenetre.html`, `fenetre.css` | **les panneaux détachés** (un 2ᵉ écran : Montage, le nodal d'ODIO) : une page, un état, un moteur. `fenetre.html` est une page vide qui se présente à la page qui l'a ouverte (`window.opener.SR_FENETRES`) ; la page y **déplace** le nœud du panneau : écouteurs, annulation, son, données restent ceux de la page. Styles, thème, ancêtres du panneau, clavier et glisser suivent ; fermer la fenêtre rattache le panneau ; sa place est retenue par visiteur (`docs/etudes/fenetres.md`) | `fenetres(outil, {onchange})` puis `F.panneau(id, {node, title})`, `detacher`, `rattacher`, `bouton(id)`, `entree(id)`, `pastilles()` ; `$`, `$$`, `winOf`, `partout`, `suivreTaille`, `fenetreDuGeste` pour un code qui doit voir aussi les fenêtres |
