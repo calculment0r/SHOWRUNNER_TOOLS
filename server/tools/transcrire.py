@@ -1626,12 +1626,20 @@ def api_run(req) -> dict:
         c = check(req.json())
     except ValueError as e:
         raise HttpError(400, str(e)) from e
-    it = c["item"]
     # la garde du calcul (celle de jobs.submit) avant d'écrire le document : un guest refusé
     # ne laisse pas une transcription « en file » sans travail (le retrait ci-dessous ne
     # reste que pour ce que la file refuse après, un quota)
     me = auth.current()
     jobs._guard("transcrire.transcribe", {"asr": c["asr"], "mode": c["mode"]}, me, me, jobs._space_for(me))
+    d, j = lancer(c)
+    return {"doc": public(d), "job": jobs.public(j)}
+
+
+def lancer(c: dict) -> tuple[dict, dict]:
+    """Le document, puis sa transcription en file — après `check` : la route, et
+    un outil qui transcrit pour lui-même (server/tools/paroles.py : les mots de
+    la voix seule). Rend (document, travail)."""
+    it = c["item"]
     now = library.now()
     tid = f"trn-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
     pub = library.public(it)
@@ -1653,7 +1661,7 @@ def api_run(req) -> dict:
         _path(tid).unlink(missing_ok=True)
         raise
     d = _update(tid, lambda x: x.update(job=j["id"]))
-    return {"doc": public(d), "job": jobs.public(j)}
+    return d, j
 
 
 def api_translate(req, tid) -> dict:

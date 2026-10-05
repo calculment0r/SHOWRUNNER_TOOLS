@@ -1,0 +1,58 @@
+/* ============================================================
+   SHOWRUNNER TOOLS — l'éditeur de paroles calées (commun/lrc.js)
+   Jetons seulement (commun/tokens.css), des filets (inset), aucun orange :
+   le geste est de toucher une ligne ; les capitales pour la machine.
+   ============================================================ */
+.lrc-scrim .lrc-modal { width: min(920px, 100%); height: min(calc(88 * var(--vh)), 900px); max-height: none; }
+.lrc-modal .modal-head { flex-wrap: wrap; row-gap: 6px; }
+.lrc-titre { font-size: 13px; font-weight: 600; color: var(--ink); min-width: 0; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lrc-etat { white-space: nowrap; }
+.lrc-etat.err { color: var(--or); }
+.lrc-undo { display: inline-flex; gap: 4px; }
+
+.lrc-lect { padding: var(--s3) var(--s5) 0; }
+.lrc-lect .sr-lect { border-radius: var(--r3); }
+/* une marque par ligne sur la frise du lecteur (sa piste : les enfants se placent en % de la durée) */
+.lrc-marques { height: 16px; position: relative; pointer-events: none; }
+.lrc-m { position: absolute; top: 3px; bottom: 3px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--cy); opacity: .7; }
+.lrc-m.est { background: var(--amb); }
+.lrc-m.sel { background: var(--ink); opacity: 1; box-shadow: 0 0 0 1px var(--panel); }
+
+.lrc-outils { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: var(--s3) var(--s5); box-shadow: inset 0 -1px 0 var(--line); }
+.lrc-outils .sp { flex: 1; }
+.lrc-pas { width: 64px; height: 26px; padding: 0 8px; font-family: var(--f-mono); font-size: 11px; text-align: right; }
+.lrc-chaine { font-size: 11px; color: var(--ink3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46ch; }
+.lrc-chaine.err { color: var(--or); }
+.lrc-aide { margin: 0; padding: var(--s2) var(--s5) 0; font-size: 11px; color: var(--ink3); line-height: 1.5; }
+
+.lrc-liste { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s2) var(--s4) var(--s5); display: flex; flex-direction: column; gap: 2px; }
+.lrc-vide { margin: var(--s5) var(--s2); color: var(--ink3); font-size: 12px; }
+.lrc-l {
+  display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 4px 8px; border-radius: var(--r2);
+  cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; outline: none;
+}
+.lrc-l:hover { background: var(--panel2); }
+.lrc-l.sel { background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.lrc-l.on { background: var(--cy-bg); }
+.lrc-l.on .lrc-x { color: var(--ink); font-weight: 600; }
+.lrc-t { font-family: var(--f-mono); font-size: 11px; letter-spacing: .04em; color: var(--cy); min-width: 66px; font-variant-numeric: tabular-nums; }
+.lrc-l.est .lrc-t { color: var(--amb); }
+.lrc-l.desordre .lrc-t { color: var(--or); }
+.lrc-x { flex: 1; min-width: 0; font-size: 14px; color: var(--ink2); line-height: 1.35; }
+.lrc-in { flex: 1; min-width: 0; height: 30px; font-size: 13px; }
+.lrc-est { font-family: var(--f-mono); font-size: 12px; color: var(--amb); }
+.lrc-fin { display: inline-flex; gap: 2px; }
+.lrc-fin .tb, .lrc-ed { padding: 0 8px; }
+.lrc-ed { opacity: 0; }
+.lrc-l:hover .lrc-ed, .lrc-l.sel .lrc-ed, .lrc-ed:focus-visible { opacity: 1; }
+
+/* téléphone : la boîte prend l'écran, les lignes restent faciles à toucher */
+@media (max-width: 640px) {
+  .lrc-scrim { padding: 0; }
+  .lrc-scrim .lrc-modal { width: 100%; height: calc(100 * var(--vh)); border-radius: 0; }
+  .lrc-titre { max-width: 22ch; }
+  .lrc-lect, .lrc-outils, .lrc-aide { padding-left: var(--s3); padding-right: var(--s3); }
+  .lrc-liste { padding-left: var(--s2); padding-right: var(--s2); }
+  .lrc-l { min-height: 46px; }
+  .lrc-ed { opacity: 1; }
+}
