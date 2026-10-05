@@ -62,6 +62,7 @@ from __future__ import annotations
 import math
 import re
 import threading
+import time
 from pathlib import Path
 
 from core import auth, library
@@ -71,6 +72,7 @@ TOOL = "chanson"
 KIND = "playlist"
 PID = re.compile(r"pla-\d{8}-\d{6}-[0-9a-f]{4}")
 MSP = re.compile(r"msp-[A-Za-z0-9_-]{1,60}")      # un Space de Musique (étude § 2 : `music_space`, `msp-…`)
+MON = "mon"                                         # « Mon Space », le Space par défaut (la branche des Spaces)
 MAX_TRACKS = 500
 TITLE_MAX, ARTIST_MAX, YEAR_MAX, DESC_MAX = 200, 120, 16, 4000
 TRACK_MAX = {"title": 200, "credits": 1000, "lyrics": 20000, "lrc": 60000}
@@ -82,6 +84,7 @@ DEFAULT_TITLE = "Nouvelle playlist"
 FOLDER = "Musique"                                  # le dossier de ce que fait l'app (chanson.py, _store)
 REPO = Path(__file__).resolve().parents[2]
 LRC_PAGE = REPO / "commun" / "lrc.js"               # l'éditeur des paroles calées (la branche « paroles »)
+SPACES_PAGE = REPO / "chanson" / "spaces.js"        # les Spaces de la page (la branche des Spaces : spaceCourant())
 ZIP_ROUTE = "/api/ecoute/{id}/zip"                  # l'export .zip (la branche « écoute »)
 
 _lock = threading.RLock()
@@ -228,9 +231,7 @@ def create(d: dict) -> dict:
         raise ValueError("la demande est un objet")
     library._load()
     title = _text(d.get("title"), TITLE_MAX, "titre") or DEFAULT_TITLE
-    msp = d.get("music_space")
-    if msp is not None and not (isinstance(msp, str) and MSP.fullmatch(msp)):
-        raise ValueError("Space : un identifiant msp-…, ou null (le Space par défaut)")
+    msp = birth_space(d.get("music_space"))
     raw = dict(d.get("playlist") or {})
     if "tracks" in d:
         raw["tracks"] = d["tracks"]
@@ -250,6 +251,24 @@ def create(d: dict) -> dict:
         library._items[pid] = it
         library._save(it)
     return it
+
+
+def birth_space(v) -> str | None:
+    """Le Space où naît la playlist : null pour « Mon Space » (null, "" ou « mon »), sinon
+    un Space du Workspace. La branche des Spaces juge un Space vivant et ouvert
+    (`chanson.creatable_space`, ValueError qui dit pourquoi) ; sans elle, la forme seule."""
+    if v in (None, "", MON):
+        return None
+    try:
+        from tools import chanson
+        judge = getattr(chanson, "creatable_space", None)
+    except ImportError:
+        judge = None
+    if judge:
+        return judge(v) or None
+    if not (isinstance(v, str) and MSP.fullmatch(v)):
+        raise ValueError("Space : « mon » ou un identifiant msp-…")
+    return v
 
 
 def _item(pid: str) -> dict:
@@ -508,12 +527,14 @@ def options(req=None) -> dict:
     « paroles » est-il servi ?). Une action absente dit pourquoi."""
     zip_ok = _route_exists("POST", ZIP_ROUTE.format(id="pla-20260101-000000-0000"))
     lrc_ok = LRC_PAGE.is_file()
+    spaces_ok = SPACES_PAGE.is_file()
     return {"zip": {"ready": zip_ok, "route": ZIP_ROUTE,
                     "why": "" if zip_ok else "l'export .zip arrive avec le lecteur d'écoute (POST /api/ecoute/<id>/zip) : "
                                              "il n'est pas encore dans ce portail"},
             "lrc": {"ready": lrc_ok, "module": "commun/lrc.js",
                     "why": "" if lrc_ok else "l'éditeur des paroles calées (commun/lrc.js) arrive avec les paroles calées : "
                                              "il n'est pas encore dans ce portail"},
+            "spaces": spaces_ok,   # la page lit alors le Space courant par chanson/spaces.js
             "transitions": list(TRANSITIONS), "crossfade_max": XFADE_MAX, "max_tracks": MAX_TRACKS,
             "peak": round(PEAK, 3), "bpm": [BPM_MIN, BPM_MAX]}
 
@@ -529,7 +550,7 @@ def api_list(req):
     out = []
     for it in library.query([KIND], sort="updated", limit=10 ** 6)["items"]:
         msp = it.get("music_space")
-        if want and not ((want == "default" and not msp) or want == msp):
+        if want and not ((want in ("default", MON) and not msp) or want == msp):
             continue
         pl = it.get("playlist") or {}
         out.append({"id": it["id"], "title": it.get("title", ""), "music_space": msp, "updated": it.get("updated"),
@@ -664,11 +685,20 @@ def selftest(call, ok) -> None:
     st, img = call("PUT", "/api/library/upload?name=pochette.png&title=Pochette", raw=_png())
     st, im2 = call("PUT", "/api/library/upload?name=pochette2.png&title=Pochette%202", raw=_png((40, 120, 200)))
 
-    # créer : dans le Space courant, avec des sons, le contrat du champ `playlist`
-    st, p = call("POST", "/api/playlist", {"title": "Album été", "music_space": "msp-essai-1", "tracks": ids[:2]})
+    # créer : dans le Space courant, avec des sons, le contrat du champ `playlist` ; avec la branche des
+    # Spaces, un Space vivant du Workspace (créé ici par sa route), sinon la forme msp-… suffit
+    msp = "msp-0123456789ab"
+    try:
+        from tools import chanson
+        if getattr(chanson, "creatable_space", None):
+            st, sp = call("POST", "/api/chanson/spaces", {"name": f"Essai playlists {int(time.time() * 1000) % 100000}"})
+            msp = sp.get("id", msp) if st == 200 else msp
+    except ImportError:
+        pass
+    st, p = call("POST", "/api/playlist", {"title": "Album été", "music_space": msp, "tracks": ids[:2]})
     pid = p.get("id", "") if isinstance(p, dict) else ""
     pl = p.get("playlist", {}) if isinstance(p, dict) else {}
-    ok(st == 200 and PID.fullmatch(pid) and p["kind"] == KIND and p["music_space"] == "msp-essai-1" and p.get("space")
+    ok(st == 200 and PID.fullmatch(pid) and p["kind"] == KIND and p["music_space"] == msp and p.get("space")
        and p["origin"]["tool"] == TOOL and p["folder"] == FOLDER and p["rev"] == 1
        and set(pl) == {"artist", "year", "description", "cover", "tracks", "transition", "download"}
        and pl["tracks"] == [{"item": ids[0]}, {"item": ids[1]}] and pl["cover"] is None and pl["download"] is False
@@ -680,7 +710,7 @@ def selftest(call, ok) -> None:
        and p.get("missing") == [] and set(p.get("metas", {})) == set(ids[:2]),
        f"créer : la durée totale, la lignée, les sons et leurs métas ({p.get('duration')})")
     st, lp = call("GET", f"/api/library/{pid}")
-    ok(st == 200 and lp.get("kind") == KIND and lp.get("playlist") == pl and lp.get("music_space") == "msp-essai-1"
+    ok(st == 200 and lp.get("kind") == KIND and lp.get("playlist") == pl and lp.get("music_space") == msp
        and "url" not in lp, "lire : GET /api/library/<id> rend l'objet et son champ `playlist`, sans fichier")
     st, p0 = call("POST", "/api/playlist", {})
     ok(st == 200 and p0.get("title") == DEFAULT_TITLE and p0.get("music_space") is None and p0["playlist"]["tracks"] == [],
@@ -730,6 +760,8 @@ def selftest(call, ok) -> None:
     ok(st == 200 and p5["rev"] == 4 and p5["playlist"]["tracks"] == pl2["tracks"], "les refus n'ont rien écrit")
     st, r = call("POST", "/api/playlist", {"music_space": "mon space"})
     ok(st == 400, f"créer : un Space qui n'est pas msp-… est refusé ({st})")
+    ok(birth_space("") is None and birth_space(MON) is None and birth_space(None) is None,
+       "créer : « mon », vide ou null — le Space par défaut (null)")
 
     # un son parti à la corbeille : la playlist le garde (absent), réordonner marche encore
     st, _ = call("POST", f"/api/library/{ids[1]}/delete")
@@ -744,8 +776,8 @@ def selftest(call, ok) -> None:
     # la recherche, la liste, le Space
     st, q = call("GET", "/api/library?kind=playlist&q=lentes%20puis")
     ok(st == 200 and [x["id"] for x in q.get("items", [])] == [pid], "la recherche trouve une playlist par sa description")
-    st, ls = call("GET", "/api/playlist?music_space=msp-essai-1")
-    st2, ld = call("GET", "/api/playlist?music_space=default")
+    st, ls = call("GET", f"/api/playlist?music_space={msp}")
+    st2, ld = call("GET", "/api/playlist?music_space=mon")
     ok(st == 200 and [x["id"] for x in ls["playlists"]] == [pid] and ls["playlists"][0]["tracks"] == 4
        and p0["id"] in [x["id"] for x in ld["playlists"]] and pid not in [x["id"] for x in ld["playlists"]],
        "la liste : par Space (le sien, le Space par défaut)")

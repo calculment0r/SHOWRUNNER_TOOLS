@@ -40,13 +40,17 @@ if (!document.querySelector('link[data-pl-css]')) {
   document.head.append(el('link', { rel: 'stylesheet', href: new URL('./playlist.css', import.meta.url).href, 'data-pl-css': '' }));
 }
 
-// ── le Space courant : UNE fonction, à rebrancher ───────────
-// La branche des Spaces exposera le Space courant de la page : une fonction
-// `spaceCourant()` et l'événement `sr:music-space` sur window. En attendant : ce que
-// l'événement a dit, sinon null — le Space par défaut (« Mon Space »).
-let spaceDit = null;
-addEventListener('sr:music-space', (e) => { const d = e.detail; spaceDit = (d && typeof d === 'object' ? d.id : d) || null; });
-export function spaceCourant() { return spaceDit; }
+// ── le Space courant : UNE fonction ─────────────────────────
+// Le contrat de la branche des Spaces (chanson/spaces.js) : `spaceCourant()` rend
+// { id: 'mon' | 'msp-…', music_space: '' | 'msp-…', name, … }, et l'événement
+// `sr:music-space` sur window le redit à chaque changement. Le module n'est importé que
+// si le portail le sert (GET /api/playlist/options, `spaces`) : sans lui, ce que
+// l'événement a dit, sinon « Mon Space ». Rend la fiche du Space ou null (« Mon Space »).
+let spaceDit = null, spacesMod = null;
+addEventListener('sr:music-space', (e) => { spaceDit = e.detail && typeof e.detail === 'object' ? e.detail : null; });
+export function spaceCourant() { return spacesMod?.spaceCourant?.() || spaceDit || null; }
+const spaceEnvoi = () => spaceCourant()?.music_space || null;     // le `music_space` de la création (null : « Mon Space »)
+const spaceNom = () => spaceCourant()?.name || 'Mon Space';
 
 const KEY = 'sr-chanson-playlist.v1';         // { open, id } : une commodité de ce navigateur
 const TEMPO_KEY = 'sr-playlist-tempo.v1';     // les tempos mesurés ici, par son (un son ne change jamais)
@@ -112,7 +116,7 @@ async function ouvrir(id) {
 async function creer(premiers = []) {
   let d;
   try {
-    d = await api('playlist', { method: 'POST', body: { music_space: spaceCourant(), tracks: premiers.map((it) => it.id) } });
+    d = await api('playlist', { method: 'POST', body: { music_space: spaceEnvoi(), tracks: premiers.map((it) => it.id) } });
   } catch (e) { toast(e.message, 7000); return null; }
   P.list = [{ id: d.id, title: d.title, tracks: d.playlist.tracks.length, duration: d.duration }, ...P.list];
   P.cur = d; P.ordre = null; P.carte = null;
@@ -529,7 +533,7 @@ function menuPlaylists(btn) {
     ...P.list.map((x) => ({ label: x.title || x.id, checked: P.cur?.id === x.id, sub: `${plural(x.tracks || 0, 'morceau', 'morceaux')} · ${total(x.duration)}`,
       onclick: () => ouvrir(x.id) })),
     P.list.length ? '-' : null,
-    { label: 'Nouvelle playlist', icon: '+', sub: spaceCourant() ? 'dans le Space courant' : 'dans Mon Space', onclick: () => creer() },
+    { label: 'Nouvelle playlist', icon: '+', sub: `dans « ${spaceNom()} »`, onclick: () => creer() },
   ].filter(Boolean));
 }
 function menuMorceau(k) {
@@ -667,7 +671,7 @@ function paintCarte() {
 function paintListe() {
   if (!P.cur) {
     put(V.liste);
-    put(V.vide, el('div', { class: 'pl-vide-in' }, el('b', {}, 'Glisse des chansons ici.'), el('span', {}, 'Une playlist naît avec elles, dans ton Space.')));
+    put(V.vide, el('div', { class: 'pl-vide-in' }, el('b', {}, 'Glisse des chansons ici.'), el('span', {}, `Une playlist naît avec elles, dans « ${spaceNom()} ».`)));
     return;
   }
   const list = trs(), rows = P.ordre?.rows;
@@ -757,11 +761,13 @@ export function monterPlaylists({ U = null, onPlay = () => {} } = {}) {
   if (voulue) { try { history.replaceState(null, '', location.pathname + location.hash); } catch { /* sans historique */ } }
   (async () => {
     try { P.opts = await api('playlist/options'); } catch { P.opts = null; }
+    if (P.opts?.spaces) spacesMod = await import('./spaces.js').catch(() => null);   // le même module que la page
     await chargerListe();
     const id = voulue || m.id;
     if (id && (voulue || P.list.some((x) => x.id === id))) await ouvrir(id); else paint();
   })();
   if (m.open || voulue) ouvrirVolet();
+  addEventListener('sr:music-space', () => { if (!P.cur) paintListe(); });   // « une playlist naît dans … » suit le Space
   return {
     bouton: () => V.btn,
     ouvrir: ouvrirVolet, fermer, basculer,

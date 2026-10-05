@@ -172,3 +172,6 @@ details.pl-plus > summary .r { margin-left: auto; font-family: var(--f-mono); fo
 .pl-fiche .modal { width: min(560px, 100%); }
 .pl-champ { display: flex; flex-direction: column; gap: 5px; }
 .pl-champ textarea.fld { font-family: var(--f-mono); font-size: 11px; line-height: 1.6; letter-spacing: 0; }
+
+/* une boîte vide (pas d'ordre proposé, pas de carte) ne prend pas de place */
+.pl-ordre-box:empty, .pl-carte-box:empty { display: none; }
