@@ -1,0 +1,143 @@
+/* ============================================================
+   ODIO — les appareils de la vue Instruments (musique/appareils/)
+   Les surfaces graphiques des modules : un écran encastré (--bg,
+   coins, filet), la courbe dans l'accent de la piste (--k), la
+   grille en filets, les repères en mono. Aucune couleur en dur :
+   les jetons de commun/tokens.css, les deux thèmes par les seuls
+   jetons (docs/etudes/odio_appareils.md § 4).
+   ============================================================ */
+
+/* le module : la surface prend la largeur qu'elle demande */
+.dev.graphique { max-width: none; gap: 10px; }
+.ap { display: flex; flex-direction: column; gap: 8px; }
+
+/* ── l'écran ─────────────────────────────────────────────── */
+.ap-ecran {
+  position: relative; flex: none; overflow: hidden;
+  background: var(--bg); border-radius: var(--r3);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.ap-svg { display: block; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+.ap-svg:focus { outline: none; }
+.ap-svg:focus-visible { outline: 1px solid var(--line-cy); outline-offset: -1px; }
+/* l'écran reprend le filet du module choisi */
+.dev.sel .ap-ecran { box-shadow: inset 0 0 0 1px var(--line-cy); }
+
+/* la grille : des filets ; les repères forts un cran plus francs ; le zéro */
+.ap-grille line { stroke: var(--line); stroke-width: 1; shape-rendering: crispEdges; }
+.ap-grille line.fort { stroke: var(--line-cy); stroke-opacity: .32; }
+.ap-grille line.zero { stroke: var(--line-cy); stroke-opacity: .8; }
+.ap-grille .ap-cadre { fill: none; stroke: var(--line); stroke-width: 1; }
+.ap-grille .ap-diag { stroke: var(--ink3); stroke-opacity: .5; stroke-width: 1; stroke-dasharray: 2 3; }
+
+/* les repères et la lecture : la machine parle en mono */
+.ap-et { font-family: var(--f-mono); font-size: 8px; letter-spacing: .06em; fill: var(--ink3); }
+.ap-lecture { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .1em; fill: var(--ink2); white-space: pre; }
+
+/* ── les courbes ─────────────────────────────────────────── */
+.ap-courbe { fill: none; stroke: var(--k); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.ap-aire { fill: var(--k); fill-opacity: .13; }
+/* la bande survolée ou choisie : sa propre courbe, en creux */
+.ap-courbe-b { fill: none; stroke: var(--k); stroke-width: 1; stroke-dasharray: 3 3; stroke-opacity: .75; }
+.ap-aire-b { fill: var(--k); fill-opacity: .07; }
+/* le spectre, en fond : une encre discrète, qui ne se prend pas pour la courbe */
+.ap-spectre { fill: var(--ink3); fill-opacity: .16; stroke: var(--ink3); stroke-opacity: .42; stroke-width: 1; stroke-linejoin: round; }
+
+/* ── les poignées ────────────────────────────────────────── */
+.ap-pt .halo { fill: var(--k); fill-opacity: 0; transition: fill-opacity .12s; }
+.ap-pt.survol .halo, .ap-pt.on .halo { fill-opacity: .15; }
+.ap-svg.tire .ap-pt.on .halo { fill-opacity: .26; }
+.ap-pt .c { fill: var(--panel2); stroke: var(--k); stroke-width: 1.5; }
+.ap-pt .n { font-family: var(--f-mono); font-size: 8px; font-weight: 600; fill: var(--ink); pointer-events: none; }
+.ap-pt.on .c { fill: var(--k); }
+.ap-pt.on .n { fill: var(--bg); }
+/* une bande éteinte : en creux, pointillée */
+.ap-pt.eteint .c { fill: var(--bg); stroke: var(--ink3); stroke-dasharray: 2 2; }
+.ap-pt.eteint .n { fill: var(--ink3); }
+.ap-pt.eteint.on .c { fill: var(--panel3); }
+.ap-pt.eteint.on .n { fill: var(--ink2); }
+
+/* ── sous l'écran ────────────────────────────────────────── */
+.ap-pied { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ap-note { font-size: 10.5px; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* les gestes, dits en petit là où la rangée a de la place */
+.ap-aide { flex: 1; min-width: 0; align-self: center; font-size: 7px; letter-spacing: .14em; line-height: 1.7; color: var(--ink3); opacity: .85; white-space: nowrap; overflow: hidden; }
+.ap-coupe { align-self: center; margin-left: 4px; }
+.ap-reglages { display: flex; align-items: flex-end; gap: 10px; min-height: 54px; }
+.ap-kns { display: flex; align-items: flex-end; gap: 4px; flex-wrap: nowrap; }
+.ap-reglages > .vsep { height: 40px; align-self: center; }
+.ap-vide { align-self: center; }
+.ap-seg .tb { height: 22px; font-size: 9px; padding: 0 7px; }
+
+/* les bandes : un chiffre, un nom court ; la choisie dans l'accent */
+.ap-bandes { display: inline-flex; gap: 3px; background: var(--panel3); border-radius: var(--r2); padding: 3px; flex: none; }
+.ap-bd {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px;
+  border-radius: var(--r1); color: var(--ink2);
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .1em; text-transform: uppercase;
+}
+.ap-bd b { font-weight: 600; color: var(--ink); }
+.ap-bd:hover { color: var(--ink); background: var(--panel2); }
+.ap-bd.on { background: var(--panel); color: var(--ink); box-shadow: inset 0 -2px 0 var(--k); }
+.ap-bd.eteint span, .ap-bd.eteint b { color: var(--ink3); }
+/* la pastille d'une coupe : pleine allumée, creuse éteinte */
+.ap-bd-on { width: 7px; height: 7px; border-radius: 50%; background: var(--k); box-shadow: inset 0 0 0 1px var(--k); flex: none; cursor: pointer; }
+.ap-bd.eteint .ap-bd-on { background: transparent; box-shadow: inset 0 0 0 1px var(--ink3); }
+
+/* ── le compresseur ──────────────────────────────────────── */
+.ap-niv { fill: var(--ink3); fill-opacity: .16; stroke: none; }
+.ap-niv-sortie { fill: none; stroke: var(--ink2); stroke-width: 1; stroke-opacity: .8; }
+.ap-gr { fill: var(--coral-2); fill-opacity: .18; stroke: var(--coral-2); stroke-width: 1.25; stroke-linejoin: round; }
+.ap-gr-m { fill: var(--coral-2); }
+.ap-gr-t { fill: var(--coral-2); }
+.ap-seuil { stroke: var(--k); stroke-width: 1; stroke-dasharray: 4 3; stroke-opacity: .8; }
+.ap-genou { fill: var(--k); fill-opacity: .08; }
+.ap-vivant { fill: var(--ink); stroke: var(--bg); stroke-width: 1.5; }
+
+/* ── les filtres ─────────────────────────────────────────── */
+/* la course de l'enveloppe d'un synthé : la courbe au sommet, l'aire balayée */
+.ap-courbe-env { fill: none; stroke: var(--k); stroke-width: 1; stroke-dasharray: 3 3; stroke-opacity: .7; }
+.ap-balaye { fill: var(--k); fill-opacity: .07; }
+.ap-filtre.compact .ap-lecture { display: none; }
+
+/* ── les saturations ─────────────────────────────────────── */
+.ap-part { fill: none; stroke: var(--or); stroke-width: 7; stroke-opacity: .3; stroke-linecap: round; stroke-linejoin: round; }
+.ap-sin { fill: none; stroke: var(--ink3); stroke-width: 1; stroke-dasharray: 2 3; }
+
+/* ── la réverbération, le délai, le chorus ───────────────── */
+.ap-ir { fill: none; stroke: var(--k); stroke-width: 1; stroke-opacity: .38; }
+.ap-sec { fill: none; stroke: var(--ink2); stroke-width: 3; stroke-linecap: round; }
+.ap-pre { fill: none; stroke: var(--ink3); stroke-width: 1.5; }
+.ap-med-f { fill: var(--panel); stroke: var(--line); stroke-width: 1; }
+.ap-courbe.ap-fin { stroke-width: 1.5; }
+.ap-echo { fill: var(--k); }
+.ap-place { fill: var(--k); stroke: var(--bg); stroke-width: 1.5; }
+.ap-choix .mu-seg .tb { height: 22px; font-size: 9px; padding: 0 6px; }
+.ap-choix { align-self: flex-end; margin-bottom: 4px; }
+
+/* les molettes sous une surface : la largeur d'une étiquette de neuf lettres */
+.ap .kn.sm { width: 52px; }
+.ap-types .tb { padding: 0 6px; }
+.ap-icone { display: block; width: 26px; height: 12px; }
+.ap-icone path { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
+
+/* ── les synthés ─────────────────────────────────────────── */
+.ap-instr { gap: 10px; }
+.ap-duo { display: flex; gap: 10px; align-items: flex-start; }
+.ap-cadre-s { display: flex; flex-direction: column; gap: 5px; }
+.ap-groupes { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
+.ap-groupe { display: flex; flex-direction: column; gap: 4px; background: var(--panel3); border-radius: var(--r3); padding: 6px 8px 4px; }
+.ap-groupe > .lbl { color: var(--ink3); }
+.ap-groupe .ap-choix { margin: 0 4px 4px 0; }
+/* une forme d'onde, un type de filtre : le dessin à la place du mot */
+.tb.ap-ic { padding: 0 6px; }
+.tb.ap-ic .ap-icone { width: 22px; height: 11px; }
+.ap-onde-e { width: 200px; height: 40px; display: flex; align-items: center; padding: 0 8px; }
+.ap-onde { width: 100%; height: 30px; }
+.ap-onde path { fill: none; stroke: var(--k); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+.ap-synth.dev-body { align-items: stretch; }
+.ap-synth .sec { justify-content: space-between; }
+.ap-synth .sec .ap-ecran { align-self: flex-start; }
+
+/* l'échantillonneur : le départ se tire sur la forme d'onde (rack.js) */
+.dev.sampler canvas.wave, .sampler canvas.wave { cursor: ew-resize; }
