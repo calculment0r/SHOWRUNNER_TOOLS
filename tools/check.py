@@ -223,12 +223,15 @@ def record_routes(app) -> None:
     app.gate, app.after, jobs.submit = gate, after, submit
 
 
-def compute_guard_checks() -> None:
+def compute_guard_checks(ran: set | None = None) -> None:
     """Pour CHAQUE sorte de jobs.HANDLERS : un coût déclaré ; un guest (viewer et
     acteur) refusé (403 qui dit pourquoi) par jobs.submit, par la route commune et
-    par la route de son outil. Puis : l'invité d'une planche, un membre (son
-    Workspace sur le travail, le travail lancé par un travail), retry, les calculs
-    hors file (auth.COMPUTE_ROUTES), et le message de _gpu_block."""
+    par la route de son outil ; chaque profil de la matrice (lecteur, commentateur,
+    autre Team : refusés ; éditeur, admin du Workspace : en file). Puis : l'invité
+    d'une planche, un membre (son Workspace sur le travail, le travail lancé par un
+    travail), retry, les calculs hors file (auth.COMPUTE_ROUTES), et le message de
+    _gpu_block. `ran` : les selftests qui ont tourné (un contrôle filtré) — la route
+    d'outil n'est rejouée et exigée que pour les sortes de ces modules-là ; None : tous."""
     from core import auth, espaces
     from core.http import HttpError
     from tools.admin import essai_http as H
@@ -333,6 +336,8 @@ def compute_guard_checks() -> None:
                     auth.set_current_space(None)
                 s, d, _ = P("/api/jobs", {"kind": kind, "params": {}}, tok=toks[g], hd={"X-SR-Espace": s1})
                 ok(s == 403 and GUEST in err(d), f"garde : la route commune refuse « {kind} » ({cost}) au guest {g} ({s} {err(d)[:90]})")
+            if ran is not None and getattr(jobs.HANDLERS[kind][0], "__module__", "").split(".")[-1] not in ran:
+                continue   # un contrôle filtré : le selftest de son outil n'a pas tourné, ses routes ne sont pas relevées
             if any(tool_requests(kind, fixture, g) for g in guests) and kind not in SANS_ROUTE_OUTIL:
                 # chaque requête rejouée : jamais un travail ; l'une au moins atteint la garde (les
                 # autres peuvent être refusées plus tôt par l'outil : un objet qui n'est pas au guest…)
@@ -356,6 +361,48 @@ def compute_guard_checks() -> None:
         print(f"  garde : {len(kinds)} sortes, {covered} routes d'outils rejouées par un guest")
         mine = [x["id"] for x in jobs._jobs.values() if x.get("owner") in guests]
         ok(not mine, f"garde : aucun travail au nom d'un guest, après tout cela ({mine})")
+
+        # 2 bis. la matrice entière (§ 2.4), pour CHAQUE sorte, par jobs.submit : qui ne calcule pas dans
+        # ce Workspace — un lecteur, un commentateur, quelqu'un d'une autre Team — reçoit 403 qui dit
+        # pourquoi ; qui calcule — un éditeur, un admin du Workspace — met le travail en file, dans ce
+        # Workspace, à son coût (l'API payante : coupée pour la Team, 403 qui le dit)
+        s, ot, _ = P("/api/equipes", {"name": "Autre Calcul"})
+        for name, uid, team_id, space_role in (("Lu Calcul", "lu-calcul", tid, "viewer"), ("Co Calcul", "co-calcul", tid, "commenter"),
+                                               ("Ad Calcul", "ad-calcul", tid, "admin"), ("Et Calcul", "et-calcul", ot.get("id"), None)):
+            s, d, _ = P(f"/api/equipes/{team_id}/membres", {"pseudo": name, "role": "member"})
+            if space_role:
+                P(f"/api/espaces/{s1}/membres/{uid}", {"role": space_role})
+            people[uid] = auth.user(uid)
+            ok(s == 200 and people[uid], f"garde : {name} ({space_role or 'autre Team'}) ({s} {err(d)})")
+        api_why = espaces.WHY["api"]
+        refused = {"lu-calcul": "lecteur", "co-calcul": "commentateur", "et-calcul": espaces.WHY["none"]}
+        allowed = ("mo-calcul", "ad-calcul")
+        n_kinds = 0
+        for kind in kinds:
+            cost = jobs.cost_of(kind, {})
+            if cost == "none":
+                continue
+            n_kinds += 1
+            for uid in (*refused, *allowed):
+                p = people.get(uid)
+                if not p:
+                    continue
+                auth.set_current(p)
+                auth.set_current_space(s1)
+                try:
+                    j = jobs.submit(kind, {}, title="matrice", tool="check")
+                    queued.append(j["id"])
+                    ok(uid in allowed and cost != "api" and j.get("space") == s1 and j.get("cost") == cost,
+                       f"garde : « {kind} » ({cost}) par {uid} : {'en file, dans son Workspace' if uid in allowed else 'devait être refusé'} "
+                       f"({j.get('space')} {j.get('cost')})")
+                except HttpError as e:
+                    want = api_why if uid in allowed else refused[uid]
+                    ok(e.status == 403 and want in e.message, f"garde : « {kind} » ({cost}) refusé à {uid} ({e.status} {e.message[:90]})")
+                finally:
+                    auth.set_current(None)
+                    auth.set_current_space(None)
+                drop()   # son quota de travaux en file : chaque essai sort aussitôt
+        print(f"  garde : {n_kinds} sortes qui calculent × 5 profils de la matrice")
 
         # 3. l'invité d'une planche (rôle « invite ») : jamais, sans Workspace ni Team
         auth.set_current({"id": "planche-essai", "name": "Planche", "role": auth.GUEST, "state": "active"})
@@ -502,7 +549,7 @@ def main() -> int:
     if not seul or "garde" in seul:
         print("la garde du calcul")
         try:
-            compute_guard_checks()
+            compute_guard_checks(seul or None)
         except Exception as e:  # noqa: BLE001
             import traceback
             traceback.print_exc()
