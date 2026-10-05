@@ -474,6 +474,52 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 .dk-empty { flex: 1; display: flex; flex-direction: column; gap: 8px; align-items: center; justify-content: center; color: var(--ink3); text-align: center; padding: var(--s5); }
 .dk-empty b { font-size: 16px; color: var(--ink2); }
 .dk .pe { flex: 1; min-height: 0; border-radius: 0; padding: 8px var(--s3); gap: 6px; }
+.dk-head .dk-aide { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* LES DEUX TAILLES (06/10, Cal : « un mode plus petit et qu'on puisse le mettre en grand ») —
+   editeurs.js, createDock. COMPACT (d'office) : le clip et la chaîne dans la hauteur du
+   panneau, chacun défile chez lui ; côte à côte dès que le panneau a 960 px (le clip à
+   gauche, la chaîne à droite), sinon l'un sous l'autre. GRAND : le clip remplit le
+   panneau, la chaîne suit dessous (la colonne défile). La génération d'une région garde la
+   colonne d'avant (ni l'un ni l'autre). */
+.dk { container-type: inline-size; }
+.dk.compact .dk-body { overflow: hidden; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 3fr) minmax(96px, 2fr); }
+.dk.compact .dk-sec { min-height: 0; min-width: 0; }
+.dk.compact .dk-sec-clip { overflow-x: hidden; overflow-y: auto; }
+.dk.compact .dk-sec-clip > .dk-title { display: none; }
+.dk.compact .dk-sec-clip .dk-clip, .dk.grand .dk-sec-clip .dk-clip { flex: 1; min-height: 0; }
+.dk.compact .dk-clip > .pe { min-height: 0; padding: 6px var(--s3) 8px; gap: 4px; }
+/* l'éditeur de notes compact (patternEditor, taille 'compact') : ici et dans la vue Clip de la Session */
+.pe-compact .pe-hint { display: none; }
+.pe-compact .pr-vel { height: 26px; }
+.pe-compact .sq { gap: 2px; }
+.pe-compact .sq-c { height: 14px; }
+.pe-barre { display: flex; flex-direction: column; gap: 6px; }
+.pe-compact .pe-barre { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 5px; }
+.pe-compact .pe-barre > .pe-head, .pe-compact .pe-barre > .pr-tools { display: contents; }
+.pe-compact .pe-barre .sp, .pe-compact .pe-barre .ar-sep, .pe-compact .pe-head > .k, .pe-compact .pr-tools > .lbl:last-child { display: none; }
+/* le clip audio compact : l'onde en tête, sur toute la largeur ; ses réglages en rangée dessous (la partie défile) */
+.dk.compact .ae { grid-template-columns: minmax(0, 1fr); gap: 8px; padding-top: 6px; }
+.dk.compact .ae-w { order: -1; }
+.dk.compact .ae-wave { height: 112px; }
+.dk.compact .ae .pe-hint { display: none; }
+.dk.compact .ae-side { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
+.dk.compact .ae-side > .ae-box { flex: 1 1 210px; min-width: 0; }
+/* la chaîne : son en-tête reste en haut, la rangée des modules défile chez elle (les deux sens) */
+.dk.compact .dk-sec-chain { overflow: hidden; }
+.dk.compact .dk-sec-chain .rk { flex: 1; min-height: 0; padding: 6px var(--s3) 4px; gap: 6px; }
+.dk.compact .dk-sec-chain .rk-chain { flex: 1 1 auto; min-height: 0; overflow: auto; align-items: flex-start; }
+.dk.compact .dk-sec-chain .rk-loose { flex: none; max-height: 40%; overflow: auto; }
+.dk.compact .dk-sec-chain .rk-head { flex: none; flex-wrap: nowrap; gap: var(--s2); }
+.dk.compact .dk-sec-chain .rk-head > .lbl { display: none; }   /* « N modules en chaîne » : l'en-tête du panneau le dit */
+.dk.compact .dk-sec-chain .rk-head .fld { min-width: 0; flex: 0 1 auto; }
+.dk.compact .dk-sec-chain .rk-head .tb { flex: none; white-space: nowrap; }
+.dk.compact .dk-sec-chain .rk-head b.venus { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+@container (min-width: 960px) {
+  .dk.compact .dk-body { grid-template-columns: minmax(440px, 52%) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .dk.compact .dk-sec + .dk-sec { box-shadow: inset 1px 0 0 var(--line); }
+}
+.dk.grand .dk-sec-clip { height: 100%; }
+.dk.grand .dk-clip > .pe { min-height: 0; }
 .pe { background: var(--panel); border-radius: var(--r4); padding: var(--s4); display: flex; flex-direction: column; gap: var(--s3); }
 .pe-head { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .pe-head .sp { flex: 1; }
@@ -500,10 +546,10 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 .pr-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
 .pr-tools { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .pr-tools .sp { flex: 1; }
+.pr-grp { display: inline-flex; align-items: center; gap: 5px; }
 .pr-tools .seg .tb { height: 22px; font-size: 9px; padding: 0 6px; }
 .pr-tools .tb { text-transform: none; letter-spacing: .02em; }
 .pr { flex: 1; min-height: 0; display: grid; grid-template-columns: 48px minmax(0, 1fr); overflow-y: auto; overflow-x: hidden; background: var(--bg); border-radius: var(--r3); box-shadow: inset 0 0 0 1px var(--line); align-items: start; }
-.pr.tall { height: 400px; flex: none; }
 .pr-keys { display: flex; flex-direction: column; position: sticky; left: 0; }
 .pr-k { flex: none; text-align: left; font-family: var(--f-mono); font-size: 7px; letter-spacing: .06em; color: var(--ink3); padding-left: 4px; background: var(--panel3); box-shadow: inset 0 -1px 0 var(--bg); }
 .pr-k.blk { background: var(--panel); }

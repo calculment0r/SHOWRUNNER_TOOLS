@@ -732,7 +732,8 @@ export function createSession(app) {
         el('button', { class: 'tb ghost sm', type: 'button', title: 'ce clip dans l\'arrangement, à la tête de lecture (autant de tours que sa scène)', onclick: () => versArrangement([s.scene]) }, 'Vers l\'arrangement'),
         el('button', { class: 'tb ghost sm', type: 'button', onclick: () => { ui().bas = 'mix'; app.saveUi(); render(); } }, 'Fermer')),
       host);
-    ed = v.kind === 'audio' ? audioPanel(host, s) : patternEditor(app, host, v, s);
+    // l'éditeur compact : il tient dans la boîte, cadré sur ses notes (editeurs.js)
+    ed = v.kind === 'audio' ? audioPanel(host, s) : patternEditor(app, host, v, s, { taille: 'compact' });
     if (centrer) { centrer = false; const e = ed; requestAnimationFrame(() => e?.centrer?.()); }
   }
   // un son en Session : la boucle qu'il joue, son gain, sa transposition, son départ

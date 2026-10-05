@@ -923,3 +923,90 @@ sans rien poser dans le passé.
   compter ses pertes chez Cal ; le banc le fait (drapeau).
 - Cal : écouter un vrai morceau chargé sur son PC, en *moyen*, puis en *long*
   si un craquement reste.
+
+## Le panneau du bas en deux tailles (06/10/2026)
+
+Cal, avec une capture (≈ 2000 × 1090) : « Les trucs de MIDI piano prennent énormément de place
+dans notre interface. Il faut qu'on ait un mode plus petit et qu'on puisse le mettre en grand,
+car là c'est juste trop chiant de scroller jusqu'en bas pour voir les racks etc. »
+
+**Avant** (mesuré dans Chromium, un clip d'une note do5 sur une piste Macro, le panneau à sa
+hauteur d'office, 300 px) : la colonne du bas (29/09, « tout avec un scroll ») tenait le piano
+roll **entier** — 85 rangées de 12 px, **1 020 px** — puis la chaîne ; à 2000, 1920 et 1280 px
+de large, **0 px de la chaîne** visible sans défiler. La vue Clip de la Session avait le même
+défaut (1 020 px dans une boîte de 330).
+
+### Ce que fait Live 12 (les pages d'Ableton sont bloquées depuis le conteneur : citées par l'extrait du moteur de recherche)
+
+- **Les deux vues ensemble** : « stack Live's Clip and Device Views », la vue Clip au-dessus
+  de la vue Appareils, par les bascules à côté des sélecteurs ; Ctrl+Alt+3 et Ctrl+Alt+4
+  montrent ou cachent l'une ou l'autre ([nouveautés de Live 12](https://www.ableton.com/en/live/all-new-features/)).
+- **Maj+Tab ou F12** : « Toggle Device/Clip View » ; Ctrl+Alt+L montre ou cache le bas
+  ([raccourcis de Live 12](https://www.ableton.com/en/manual/live-keyboard-shortcuts/)).
+- **En grand** : « Clip View can be toggled to its maximum height using the Ctrl Alt E […]
+  or the Expand Clip View entry in the View menu » ; le filet entre la vue et le bas se
+  tire ([« Editing MIDI »](https://www.ableton.com/en/live-manual/12/editing-midi/)).
+- **Replier** : « Fold to Notes […] immediately hide all key tracks that do not contain MIDI
+  notes », par le bouton Fold ou la touche F ; « Fold to Scale » ne garde que les rangées de
+  la gamme, et les notes hors gamme restent visibles (même page).
+- **Cadrer** : « Fit Content to View Height: H », « Fit Content to View Width: W » ; la
+  molette dans la règle des notes change d'octave, Alt+molette la hauteur des rangées (même
+  page).
+
+### Ce qui est fait (`editeurs.js`, `musique.css`, `musique.js`, `timeline.js`, `session.js`)
+
+- **Compact, d'office** : le clip et la chaîne dans la hauteur du panneau, chacun défile chez
+  lui. **Côte à côte** dès que le panneau a 960 px de large (le clip à gauche, 52 %, au
+  moins 440 px ; la chaîne à droite), sinon l'un sous l'autre. Choix d'ODIO : Live empile ;
+  Cal veut le clip à gauche et la chaîne à droite (« comme le bas de Live »), ce que nos
+  écrans larges permettent.
+  - Le piano roll a sa hauteur bornée et défile chez lui ; ses rangées sont plus basses
+    (10 px, Ctrl+molette les règle, gardées à part : `ui.ed.rhc`) ; **il se cadre** sur ses
+    notes à l'ouverture : des rangées assez basses pour que toutes tiennent avec quatre
+    demi-tons de marge (jamais sous 7 px : on défile alors), centrées ; un clip vide :
+    une octave autour de la tonique du projet, à l'octave du do central.
+  - Les deux barres (le motif, les outils) n'en font qu'une, qui passe à la ligne ; l'aide
+    du bas se tait ; la voie des vélocités fait 26 px.
+  - La chaîne garde son en-tête en haut ; la rangée des modules défile dans les deux sens.
+  - La batterie : des cases de 14 px (les onze voix de la boîte à rythme tiennent). Le clip
+    audio : l'onde en tête, sur toute la largeur, ses réglages en rangée dessous.
+- **Grand** : « Agrandir » (en-tête du panneau, menu du clic droit) ou **Ctrl+Alt+E**, le
+  raccourci de Live : le panneau à sa hauteur maximale, le clip le remplit, la chaîne suit
+  dessous (la colonne d'avant). « Réduire » ou Ctrl+Alt+E le remet. L'état est retenu par
+  projet (`ui.dockGrand`) ; **chaque taille garde sa hauteur** (`ui.dockH`, `ui.dockHg`) :
+  le filet tiré en grand ne change pas le compact.
+- **Replier** (Live : Fold) : « non », « gamme » (les rangées de la gamme, plus celles des
+  notes hors gamme), « notes » (seulement les hauteurs jouées) ; replié, chaque rangée dit
+  sa note, une note se déplace de rangée en rangée et les rangées suivent les notes
+  (transposées, ôtées). **Cadrer** (Live : H). Les touches F et H, comme dans Live, quand le
+  clavier de l'ordinateur ne joue pas (ses lettres sont alors des notes).
+- **La vue d'un motif est retenue** (le défilement et la hauteur des rangées) : un redessin
+  (une retouche, « Doubler ») la rend telle quelle ; un autre motif se cadre.
+- Maj+Tab, F12, Ctrl+Alt+3 et 4 restent : en compact, aller à la chaîne la ramène à son
+  début. La génération d'une région garde la colonne d'avant (son panneau a ses trois
+  colonnes), sans « Agrandir ».
+- **La vue Clip de la Session** prend l'éditeur compact : il tient dans sa boîte.
+
+### Après (Chromium, deux thèmes, sans erreur console ; captures `/tmp/odio_compact/`)
+
+| fenêtre | arrangement visible | le clip (piano roll) | la chaîne visible |
+|---|---|---|---|
+| 2000 × 1090 | 610 px | 264 px (154) | 264 px, trois modules |
+| 2000 × 900 | 420 px | 264 px (154) | 264 px |
+| 1920 × 1080 | 600 px | 264 px (154) | 264 px |
+| 1280 × 1100 | 552 px | 264 px (124) | 264 px |
+| 1280 × 900 | 352 px | 264 px (124) | 264 px |
+
+Le clip d'une note s'ouvre centré sur do5 ; replié sur les notes, deux notes donnent deux
+rangées (do5, sol5) ; « Doubler » garde le défilement ; en grand, 780 px de panneau à 1080 de
+haut ; la vue Clip de la Session : 146 px de piano roll dans sa boîte de 330 (avant : 1 020).
+
+### Reste
+
+- Le panneau d'office fait toujours 300 px : le piano roll compact y a 124 à 154 px
+  (Cal parlait de 160 à 240 pour l'éditeur ; le nôtre, barre et vélocités comprises, en fait
+  264). Tirer le filet suffit, et la hauteur reste ; changer celle d'office : à Cal.
+- Le module Macro fait 1 900 px de large, le Synthé environ 2 800 (`odio_synthes.md` § 6) :
+  dans la colonne de la chaîne, on n'en voit que le début.
+- Live zoome les rangées en tirant la règle des notes, et cadre la largeur (W) : pas fait.
+- Le bas de la Session (la console ou la vue Clip) n'a pas d'« Agrandir ».

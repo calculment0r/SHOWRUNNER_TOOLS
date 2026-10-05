@@ -157,6 +157,15 @@ export const app = {
     saveQuiet();
     if (S.view !== 'timeline') app.setView('timeline'); else render();
   },
+  // le panneau du bas, compact ↔ grand (editeurs.js) : « Agrandir », Ctrl+Alt+E (Live 12 :
+  // « Expand Clip View ») ; retenu par projet, chaque taille garde sa hauteur (timeline.js)
+  basculerDetail() {
+    S.proj.ui.dockGrand = !S.proj.ui.dockGrand || undefined;
+    S.proj.ui.dock = true;
+    S.dockJump = 'clip';
+    saveQuiet();
+    if (S.view !== 'timeline') app.setView('timeline'); else render();
+  },
 
   select(patch) {
     Object.assign(S.sel, patch);
@@ -1550,7 +1559,7 @@ addEventListener('keydown', async (e) => {
   // pour passer entre nos trois onglets de travail » ; Live y bascule Session ↔
   // Arrangement) ; le nodal dans sa fenêtre sort du tour. Maj+Tab ou F12 : Clip ↔
   // Instruments (Live : Clip View ↔ Device View, gardé), Ctrl+Alt+B : le
-  // navigateur, Ctrl+Alt+3 / 4 : la vue Clip / Instruments
+  // navigateur, Ctrl+Alt+3 / 4 : la vue Clip / Instruments, Ctrl+Alt+E : le clip en grand ↔ compact
   if (c === 'Tab' && !ctrl && !e.altKey) {
     e.preventDefault();
     if (e.shiftKey) { app.showDetail(S.proj.ui.detail === 'device' ? 'clip' : 'device'); return; }
@@ -1562,6 +1571,7 @@ addEventListener('keydown', async (e) => {
   if (ctrl && e.altKey && c === 'KeyB') { e.preventDefault(); S.proj.ui.nav = S.proj.ui.nav === false; saveQuiet(); render(); return; }
   if (ctrl && e.altKey && c === 'Digit3') { e.preventDefault(); app.showDetail('clip'); return; }
   if (ctrl && e.altKey && c === 'Digit4') { e.preventDefault(); app.showDetail('device'); return; }
+  if (ctrl && e.altKey && c === 'KeyE') { e.preventDefault(); app.basculerDetail(); return; }   // le clip en grand ↔ compact
   // les commandes se lisent par la lettre (ui.js, letter) ; le clavier MIDI, plus bas, par la position (KEYS)
   const L = letter(e);
   // les pistes : Ctrl+T audio, Ctrl+Maj+T MIDI (un synthé), Ctrl+Alt+T retour (bus)
