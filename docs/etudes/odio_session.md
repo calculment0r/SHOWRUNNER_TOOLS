@@ -200,3 +200,94 @@ d'une mesure (`projet.js`, `migrate`). Les sons des clips de Session sont dans
 - Glisser un clip de l'arrangement dans une case ; ranger les scènes à la
   souris ; un clip MIDI de plus de 256 pas n'entre qu'en partie dans une case.
 - Relire les trois chapitres sur le manuel (le réseau l'a refusé ici).
+
+## 6. La refonte demandée par Cal (05/10 au soir) — EN COURS
+
+La parole de Cal, mot pour mot : « il faut que le Tab dans ODIO fasse aussi
+passer au mode Session. On doit avoir un design mieux et centré, car tout est à
+gauche, c'est nul. Et tu n'as pas compris aussi, car on fait ce mode Session
+comme synchro sur ce qui est le temps etc., mais il est vierge et ne veut pas
+reproduire les pistes de la partie arrangement. C'est vraiment un truc "marche
+on top" pour lancer des trucs EN PLUS de ce qui avance dans la timeline de
+l'arrangement. Mais dans la vue arrangement, on doit pouvoir éditer un clip et
+en faire un truc qu'on envoie dans le mode Session. On devrait je pense avoir,
+comme pour la vidéo, une bibliothèque projet pour ODIO pour pouvoir trouver
+facilement tout ce qu'on fait dans cet environnement, non ? Si je prends un clip
+et que je le découpe plusieurs fois différemment pour l'envoyer dans le mode
+Session, je vais avoir 4/5 clips édités et raccourcis, donc cela va être
+infernal d'avoir cela dans les assets généraux je pense. »
+
+Ce qui change, et pourquoi : le modèle de Live (§ 2, une colonne par piste, la
+piste qui quitte l'arrangement) n'est PAS ce que Cal veut. La Session devient
+une couche par-dessus l'arrangement.
+
+### Le modèle décidé
+
+- **Les voies de Session** (`voies`, projet.js) : les colonnes de la Session, à
+  elle, vierges dans un projet neuf (« + voie »). Une voie a la forme d'une piste
+  (source : l'instrument pour le MIDI, le lecteur `player` pour le son ; tranche ;
+  chaîne lue dans les câbles ; envois vers les bus de l'arrangement ; muet, solo,
+  armer), mais vit dans `p.voies`, jamais dans `p.tracks` : l'arrangement, son
+  export, ses en-têtes ne la voient pas, sans un seul filtre à écrire (juste par
+  construction). Ses modules portent `voie` (pas `track`) ; ses motifs
+  `track: <voie>`. `piste` : la piste dont elle est née (« Envoyer à la Session »).
+- **Les deux jouent ensemble** : lancer un clip de Session n'arrête rien dans
+  l'arrangement (plus de `hors`, plus de « Retour à l'arrangement ») ; chaque
+  voie sort par sa tranche vers la sortie, mixée avec les pistes. Même horloge :
+  tempo du projet, quantification calée sur la tête (`Engine.play.ab`), à l'arrêt
+  lancer démarre le transport. Le solo est global (pistes et voies).
+- **L'export reste l'arrangement** : le rendu retirera les voies et leurs modules
+  (`sansSession`), pour qu'un solo de voie ne taise pas l'export.
+- **Migration** : un projet de la première Session (`slots[].track`) → une voie
+  par piste qui avait des clips de Session, copie de sa chaîne (source, effets
+  hors jouets, tranche), de ses sorties et de ses envois ; ses motifs joués en
+  Session copiés pour la voie ; la piste reste intacte (`convertirSlots`,
+  `voieDePiste`, projet.js).
+- **Envoyer à la Session** (clic droit sur un clip, ou sur une plage de temps ;
+  glisser un clip sur l'onglet « Session ») : non destructif. Un son devient une
+  RÉFÉRENCE (`refDeClip` : le même objet de la bibliothèque, son départ avancé,
+  sa longueur, son gain, sa transposition) ; des notes, une COPIE du motif
+  (consolidatePatterns sur le morceau). Dans la voie née de la piste (ou une
+  neuve, ou une voie choisie), à la première case libre ; une plage sur
+  plusieurs pistes → un clip par piste (un par morceau de son).
+- **La bibliothèque du projet** (`biblio`) : dans le projet lui-même (pas un
+  chutier par Workspace comme le Montage, `montage_projet.py`) parce que ses
+  clips édités n'existent que dans ce projet et doivent suivre son annulation et
+  sa validation. Elle s'ouvrira comme une rubrique « Projet », en tête du
+  navigateur d'ODIO, qui sera aussi monté à gauche de la Session (le navigateur
+  de Live est commun aux deux vues) : glisser vers la timeline ou vers une case.
+  `clips` (les références et copies), `sons` (asset, import, prise, rendu,
+  generation : `retenirSons` y fait entrer de lui-même tout son posé, et il y
+  reste), `dossiers` (un niveau), « Révéler dans Asset » pour un son.
+- **Tab** : Arrangement → Session → Nodal → …, Maj+Tab à l'envers (F12 garde
+  Clip ↔ Instruments).
+- **Le design** : la grille centrée (colonnes de largeur fixe, la colonne des
+  scènes collée à la grille), des cases plus grandes, un vide accueillant
+  (« glisse un clip ici, ou + voie ») ; la console en bas : voies, pistes de
+  l'arrangement, retours, sortie, en groupes (les envois des pistes n'ont pas
+  d'autre console).
+
+### Fait (commit de ce soir)
+
+Dans `musique/projet.js`, non branché encore (le reste lit toujours
+`slots[].track`) : la forme documentée, `migrerSession` (à appeler depuis
+`migrate`), `convertirSlots`, `voieDePiste`, `biblioDe`, `retenirSons`,
+`usagesDuSon`, `refDeClip`, `motifDeRef`, `champsDeRef`. Vérifié : `node --check`.
+
+### Reste (dans l'ordre)
+
+1. `moteur.js` : `sess` sans `hors` ni `retourArrangement` ; `scheduleSession`,
+   `cut`, `mutes` lisent les voies ; `trajets` (projet.js) inclut les voies ;
+   l'export sans la Session.
+2. `server/tools/music.py` : valider `voies` (comme une piste), `slots[].voie`,
+   les motifs et modules d'une voie, `biblio` ; le selftest ; `elements.py` :
+   `biblio.clips[].item`, `biblio.sons[].item` dans `ID_FIELDS["mus"]`.
+3. `session.js` / `session.css` réécrits sur les voies, centrés ; la console en
+   groupes ; le navigateur à gauche.
+4. `musique.js` : Tab, `app.voie`, chaîne et effets d'une voie, `dropItem` d'un
+   clip du projet, `srcForPlay` en Session, `retenirSons` dans `commit`, les
+   origines (import, prise, rendu, génération) ; `timeline.js` : deux entrées de
+   menu et le dépôt sur l'onglet Session (petit, groupé) ; `guide.js`.
+5. `navigateur.js` + un `biblio.js` : la rubrique « Projet ».
+6. Vérifier en vrai (port 8805, Playwright), captures sombre et clair dans
+   `/tmp/claude-0/odio_session2/`.
