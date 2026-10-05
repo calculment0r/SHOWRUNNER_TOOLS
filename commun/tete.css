@@ -1,7 +1,8 @@
 /* ============================================================
    LA tête de lecture et LA règle des temps (commun/tete.js) : le
-   dessin du Montage (montage.css, .tl-ph et .tl-marks .mk, 29/09),
-   repris tel quel pour toutes les timelines. Jetons seulement.
+   dessin du Montage (ex .tl-ph et .tl-marks .mk de montage.css, 29/09 ;
+   retirés de là le 05/10), repris tel quel pour toutes les timelines.
+   Jetons seulement.
    ============================================================ */
 
 /* la tête : un trait orange, un onglet en haut */
