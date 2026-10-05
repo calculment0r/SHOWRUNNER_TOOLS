@@ -851,6 +851,13 @@ def run_publier(ctx) -> dict:
             octets += p.stat().st_size
         cles[key] = sha
         ctx.progress(0.96 + 0.03 * (k + 1) / len(ordre), f"envoi · {k + 1}/{len(ordre)}")
+    with _lock:   # retiré pendant qu'on envoyait : on n'écrit pas la fiche (le lien ne revit pas), on défait l'envoi
+        retire = (_lis("liens.json").get(pid) or {}).get("jeton") != jeton
+    if retire:
+        for key in cles:
+            if key not in avant:
+                r2.delete(key)
+        raise RuntimeError("le lien a été retiré pendant la publication : rien n'est publié")
     fiche = {"v": 1, "title": str(it.get("title") or ""), "artist": str((it.get("playlist") or {}).get("artist") or ""),
              "code": lien.get("code_hash"), "fin": lien.get("fin"), "ecoutes": True, "accent": rapport.get("accent"),
              "maj": _now()}
@@ -886,9 +893,12 @@ def r_publier(req, pid):
         fin = _fin(d["fin"]) if "fin" in d else "garde"
     except ValueError as e:
         raise HttpError(400, str(e)) from e
+    # le lien est noté AVANT la mise en file (le travail le lit en partant) ; un refus de la file (quota, garde du
+    # calcul) remet l'état d'avant
     with _lock:
         liens = _lis("liens.json")
-        lien = liens.get(it["id"]) or {"jeton": secrets.token_hex(16), "cree": _now(), "par": auth.current_id()}
+        avant = liens.get(it["id"])
+        lien = dict(avant or {"jeton": secrets.token_hex(16), "cree": _now(), "par": auth.current_id()})
         if code != "garde":
             lien["code_hash"] = {"sel": code[0], "sha256": code[1]} if code else None
         if fin != "garde":
@@ -896,8 +906,18 @@ def r_publier(req, pid):
         lien["url"] = _url(lien["jeton"])
         liens[it["id"]] = lien
         _ecris("liens.json", liens)
-    j = jobs.submit("ecoute.publier", {"playlist": it["id"]}, title=f"Lien d'écoute · {it.get('title') or pid}"[:90],
-                    tool=TOOL, space=library.space_of(it))
+    try:
+        j = jobs.submit("ecoute.publier", {"playlist": it["id"]}, title=f"Lien d'écoute · {it.get('title') or pid}"[:90],
+                        tool=TOOL, space=library.space_of(it))
+    except BaseException:
+        with _lock:
+            liens = _lis("liens.json")
+            if avant is None:
+                liens.pop(it["id"], None)
+            else:
+                liens[it["id"]] = avant
+            _ecris("liens.json", liens)
+        raise
     return {**jobs.public(j), "lien": _public(lien)}
 
 
@@ -1338,6 +1358,20 @@ def selftest(call, ok) -> None:
            and f"ecoute/{jt}/audio/03-ton-2.mp3" not in faux.objets and fiche.get("code") is None and r.get("envoyes", 99) < 8,
            f"écoute : republier met à jour le même lien, sans le code ({r.get('note')} {r.get('lien')})")
         ok(any(k.startswith(f"ecoute/{jt}/_ecoutes/") for k in faux.objets), "écoute : republier garde les écoutes")
+        # un refus de la file (ici, la garde du calcul simulée) remet l'état d'avant : le code reste celui publié
+        real_submit = jobs.submit
+
+        def refuse(*a, **k):
+            raise HttpError(429, "quota atteint (essai)")
+        jobs.submit = refuse
+        try:
+            st, d = call("POST", f"/api/ecoute/{pid}/publier", {"code": "ABCD"})
+        finally:
+            jobs.submit = real_submit
+        with _lock:
+            reste = _lis("liens.json").get(pid) or {}
+        ok(st == 429 and reste.get("jeton") == jt and reste.get("code_hash") is None,
+           f"écoute : un refus de la file ne change pas le lien ({st} {reste.get('code_hash')})")
         st, d = call("POST", f"/api/ecoute/{pid}/publier", {"fin": "2001-01-01"})
         ok(st == 400 and "passée" in d.get("error", ""), f"écoute : une date de fin passée ({st})")
         st, d = call("POST", f"/api/ecoute/{pid}/publier", {"code": "12"})

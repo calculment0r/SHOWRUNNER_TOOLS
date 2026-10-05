@@ -547,7 +547,6 @@ function demarre(data) {
   // ── le démarrage ──
   player.init(direct());
   refreshVolumeUI();
-  document.body.classList.add('pret');
 
   if ('serviceWorker' in navigator) {
     const inscris = () => navigator.serviceWorker.register('./service-worker.js').catch(() => {});
