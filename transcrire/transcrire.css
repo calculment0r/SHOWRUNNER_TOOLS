@@ -421,3 +421,12 @@ html[data-appareil="mobile"] .ln .tc { align-self: stretch; min-height: 44px; pa
 html[data-appareil="mobile"] .ln > .who { margin-top: 10px; }
 html[data-appareil="mobile"] .ln > .txs { padding: 10px 0; }
 html[data-appareil="mobile"] .ln > .who + .txs { padding-top: 2px; }
+/* les plis de la frise (l'entrée, les répliques : une économie de hauteur d'ordinateur, Cal 06/10) : au
+   téléphone, dépliés ; leurs en-têtes restent des noms, alignés sur la frise des voix (repliés, 12 px de
+   haut, ils ne se touchaient pas au doigt) ; la rangée des répliques fait 44 px, on y glisse le doigt.
+   Le pli des voix reste un bouton, de 44 px. */
+html[data-appareil="mobile"] .tr-player { --tr-h-rep: 44px !important; }
+html[data-appareil="mobile"] .tr-player button.tr-tl-c { pointer-events: none; }
+html[data-appareil="mobile"] .tr-player button.tr-tl-c::before { display: none; }
+html[data-appareil="mobile"] .tr-frise .tr-vx-pli { height: 44px; }
+html[data-appareil="mobile"] .vchip { min-height: 44px; }

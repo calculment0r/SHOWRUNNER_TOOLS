@@ -68,11 +68,15 @@ if (!board) {
     { id: 'n1', type: 'note', x: 340, y: 0, w: 260, h: 100, text: 'La lumière tombe à 17 h.' },
     { id: 'a1', type: 'media', x: 340, y: 160, w: 260, h: 104, item: son.id, kind: 'audio', title: 'tel_son' }] } });
 }
-ok(!!(img?.id && son?.id && board?.id), `les données d’essai : ${img?.id}, ${son?.id}, ${board?.id}`);
+// une transcription complète du son (le moteur factice : quelques secondes)
+let trn = ((await api('transcrire/docs')).docs || []).find((d) => d.item === son.id && d.mode === 'complet');
+if (!trn) trn = (await api('transcrire/run', { body: { item: son.id, mode: 'complet' } })).doc;
+for (let k = 0; k < 60 && trn && trn.state !== 'done'; k++) { await new Promise((r) => setTimeout(r, 1000)); const d = await api(`transcrire/docs/${trn.id}`); trn = d.doc || d; }
+ok(!!(img?.id && son?.id && board?.id && trn?.state === 'done'), `les données d’essai : ${img?.id}, ${son?.id}, ${board?.id}, ${trn?.id} (${trn?.state})`);
 
 const PAGES = [
   ['accueil', ''], ['porte', '', { porte: true }], ['asset', 'asset/'], ['fiche-image', `asset/#${img.id}`], ['fiche-son', `asset/#${son.id}`],
-  ['transcrire', 'transcrire/'], ['musique-app', 'chanson/'], ['ideation', `ideation/#${board.id}`],
+  ['transcrire', 'transcrire/'], ['transcription', `transcrire/#${trn.id}`], ['musique-app', 'chanson/'], ['ideation', `ideation/#${board.id}`],
   ['odio', 'musique/'], ['montage', 'montage/'], ['image', 'image/'], ['video', 'movie/'],
 ];
 const PROFILS = [
