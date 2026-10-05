@@ -4,18 +4,22 @@ Demande de Cal, mot pour mot : « notre partie CONSOLE de ODIO devient la partie
 Scène d'Ableton : un launchpad avec la même logique et les mêmes outils que ceux
 d'Ableton ».
 
-**Statut** : codé et essayé dans Chromium (sans affichage, copie
-`odio-session`, port 8794, données jetables) : quatre pilotes, 40 contrôles,
-captures dans `/tmp/claude-0/odio_session/`. Le serveur valide le format neuf
-(`server/tools/music.py`, `_session`, et son essai dans `selftest`).
+**Statut (06/10)** : REFAITE sur la parole de Cal du 05/10 au soir (§ 6) —
+une couche vierge par-dessus l'arrangement, ses propres voies, Tab, « Envoyer à
+la Session », la bibliothèque du projet. Les § 1 à 5 décrivent la première
+version (05/10) : ce qui y parle d'une colonne par PISTE, de la piste qui
+quitte l'arrangement et du « Retour à l'arrangement » ne vaut plus (§ 6).
+Essayé dans Chromium sans affichage (portail d'essai, données jetables) : deux
+pilotes, sombre et clair, sans erreur console (§ 6, « Fait »).
 
 | | |
 |---|---|
-| la vue | `musique/session.js`, `musique/session.css` (l'onglet « Session », l'ancien « Console » : même clé de vue, `console`) |
-| la console | `musique/console.js` fabrique désormais les tranches (`createMixer`) ; la vue Session les range sous ses colonnes |
-| le moteur | `musique/moteur.js` : `Engine.sess`, `lancer`, `echeances`, `retourArrangement`, `finPrise` ; `Graph.scheduleSession`, `Graph.cut`, `Graph.notes` |
-| le format | `musique/projet.js` (`scenes`, `slots`, `launch`, `QUANTS` et les gestes de scène) ; `server/tools/music.py` (`_session`) ; `server/tools/elements.py` (`slots[].item` dans `ID_FIELDS`) |
-| le branchement | `musique/musique.js` (l'onglet, Entrée, la prise au clavier et en MIDI, les pistes retirées) ; `musique/index.html` (la feuille) |
+| la vue | `musique/session.js`, `musique/session.css` (l'onglet « Session », clé de vue `console`) |
+| la console | `musique/console.js` fabrique les tranches (`createMixer`) d'une piste, d'un bus ou d'une voie ; la vue Session les range en groupes |
+| le moteur | `musique/moteur.js` : `Engine.sess` (voie → clip), `lancer`, `echeances`, `finPrise` ; `Graph.scheduleSession`, `Graph.cut`, `Graph.mutes` sur les voies ; l'export sans la Session |
+| le format | `musique/projet.js` (`voies`, `scenes`, `slots`, `launch`, `biblio`, `QUANTS`, les gestes de scène et de voie, la migration) ; `server/tools/music.py` (`_voies`, `_session`, `_biblio`) ; `server/tools/elements.py` (`slots[].item`, `biblio…` dans `ID_FIELDS`) |
+| la bibliothèque du projet | `musique/biblio.js` (Envoyer à la Session, les clips du projet en case ou en clip) ; `musique/navigateur.js` (la rubrique « Projet ») |
+| le branchement | `musique/musique.js` (Tab, `app.voie`, `app.owner`, `app.versSession`, la prise au clavier et en MIDI, `retenirSons` à chaque geste, les origines des sons) ; `musique/timeline.js` (les menus, l'onglet) ; `musique/guide.js` |
 
 ## 1. Les sources
 
@@ -201,7 +205,7 @@ d'une mesure (`projet.js`, `migrate`). Les sons des clips de Session sont dans
   souris ; un clip MIDI de plus de 256 pas n'entre qu'en partie dans une case.
 - Relire les trois chapitres sur le manuel (le réseau l'a refusé ici).
 
-## 6. La refonte demandée par Cal (05/10 au soir) — EN COURS
+## 6. La refonte demandée par Cal (05/10 au soir) — FAITE le 06/10
 
 La parole de Cal, mot pour mot : « il faut que le Tab dans ODIO fasse aussi
 passer au mode Session. On doit avoir un design mieux et centré, car tout est à
@@ -259,35 +263,63 @@ une couche par-dessus l'arrangement.
   `clips` (les références et copies), `sons` (asset, import, prise, rendu,
   generation : `retenirSons` y fait entrer de lui-même tout son posé, et il y
   reste), `dossiers` (un niveau), « Révéler dans Asset » pour un son.
-- **Tab** : Arrangement → Session → Nodal → …, Maj+Tab à l'envers (F12 garde
-  Clip ↔ Instruments).
+- **Tab** : Arrangement → Session → Nodal → Arrangement (Cal, 06/10 : « le Tab
+  aussi pour passer entre nos trois onglets de travail »). Écrit ici le 05/10 :
+  Maj+Tab à l'envers ; finalement **Maj+Tab garde Clip ↔ Instruments** (comme
+  Live ; consigne du 06/10 : ne pas casser l'existant) — à confirmer par Cal.
 - **Le design** : la grille centrée (colonnes de largeur fixe, la colonne des
   scènes collée à la grille), des cases plus grandes, un vide accueillant
   (« glisse un clip ici, ou + voie ») ; la console en bas : voies, pistes de
   l'arrangement, retours, sortie, en groupes (les envois des pistes n'ont pas
   d'autre console).
 
-### Fait (commit de ce soir)
+### Fait (06/10, branche `wip2/odio-session`)
 
-Dans `musique/projet.js`, non branché encore (le reste lit toujours
-`slots[].track`) : la forme documentée, `migrerSession` (à appeler depuis
-`migrate`), `convertirSlots`, `voieDePiste`, `biblioDe`, `retenirSons`,
-`usagesDuSon`, `refDeClip`, `motifDeRef`, `champsDeRef`. Vérifié : `node --check`.
+- **Le moteur** : la Session joue par les voies, en plus de l'arrangement (plus
+  de `hors`, plus de Retour à l'arrangement) ; un départ ou un arrêt ne coupe
+  que le clip d'avant de la voie ; le solo est commun ; l'export et la forme
+  d'onde de la barre se rendent sans la Session (`sansSession`).
+- **Le serveur** : `voies`, `slots[].voie`, `slots[].ref`, `biblio` validés ;
+  un clip de la Session d'avant (`track`) refusé en le disant ; le selftest
+  (19 refus, la relecture, `closure_gaps`) ; `ID_FIELDS` voit la bibliothèque.
+- **La vue** : la grille centrée (colonnes de 148 px, la colonne libre, les
+  scènes collées, l'état des voies collé dessous), la Session vierge qui dit
+  ce qu'elle est, le navigateur à gauche, la console en groupes ou la vue Clip
+  (le bas se tire) ; + Voie (les mêmes instruments qu'une piste) ; le menu
+  d'une voie (couleur, armer, muet, solo, un effet, sa chaîne dans le nodal,
+  retirer) ; « Garder dans le projet » pour un clip de Session ; une scène vers
+  l'arrangement va sur la piste d'origine de la voie, sinon sur une piste
+  neuve qui joue comme elle (`pisteDeVoie`).
+- **Envoyer à la Session** : le menu d'un clip (ou des clips choisis), d'une
+  plage, « Envoyer dans une voie » (une neuve, ou une voie de la même sorte),
+  un clip glissé sur l'onglet Session (la vue y passe).
+- **La bibliothèque du projet** : la rubrique « Projet » en tête du navigateur
+  (ses clips, ses sons avec leur origine et leurs usages, ses dossiers) ;
+  glisser vers une piste ou une case, un clic pose (dans la case choisie en
+  Session) ; « Révéler dans Asset » ; « Retirer du projet » quand plus rien ne
+  le pose ; les origines notées à l'import, à la prise micro, au rendu
+  (consolider), à la génération et à la séparation.
+- **Vérifié** dans Chromium, sombre et clair, sans erreur console : Tab fait le
+  tour ; Session vierge, + Voie, un clip MIDI au double-clic ; la grille
+  centrée ; Envoyer depuis le menu d'un clip (l'arrangement inchangé), une
+  plage sur deux pistes, un son (référence, départ avancé) ; enregistré ;
+  lancer un clip lance la lecture, l'arrangement joue avec, la voie sonne
+  (crêtes mesurées) ; Stop de la voie, l'arrangement continue ; la vue Clip ;
+  l'export ne se tait pas pour le solo d'une voie ; relu ; un clip glissé sur
+  l'onglet ; Ctrl+Z et Ctrl+Maj+Z ; un clip du projet glissé dans la colonne
+  libre (une voie neuve) et cliqué (la case choisie) ; une scène vers
+  l'arrangement ; la prise de Session au clavier ; un projet de la première
+  Session converti ; un effet dans la chaîne d'une voie ; retirer une voie ;
+  1000 px sans débordement.
 
-### Reste (dans l'ordre)
+### Reste
 
-1. `moteur.js` : `sess` sans `hors` ni `retourArrangement` ; `scheduleSession`,
-   `cut`, `mutes` lisent les voies ; `trajets` (projet.js) inclut les voies ;
-   l'export sans la Session.
-2. `server/tools/music.py` : valider `voies` (comme une piste), `slots[].voie`,
-   les motifs et modules d'une voie, `biblio` ; le selftest ; `elements.py` :
-   `biblio.clips[].item`, `biblio.sons[].item` dans `ID_FIELDS["mus"]`.
-3. `session.js` / `session.css` réécrits sur les voies, centrés ; la console en
-   groupes ; le navigateur à gauche.
-4. `musique.js` : Tab, `app.voie`, chaîne et effets d'une voie, `dropItem` d'un
-   clip du projet, `srcForPlay` en Session, `retenirSons` dans `commit`, les
-   origines (import, prise, rendu, génération) ; `timeline.js` : deux entrées de
-   menu et le dépôt sur l'onglet Session (petit, groupé) ; `guide.js`.
-5. `navigateur.js` + un `biblio.js` : la rubrique « Projet ».
-6. Vérifier en vrai (port 8805, Playwright), captures sombre et clair dans
-   `/tmp/claude-0/odio_session2/`.
+- La timeline n'a plus à griser les pistes « jouées en Session » (REPRISE
+  § 2.F) : par construction, aucune piste n'est prise par la Session.
+- Le nodal montre les modules des voies sans leur titre (le nom de la voie sur
+  son nœud de départ, comme pour une piste) : `nodal.js`.
+- Le panneau Asset, cliqué depuis la Session, pose encore sur l'arrangement
+  (`panneau.js`) ; glisser dans une case marche.
+- Follow Actions, Legato, vélocité du lancement ; la prise audio en Session ;
+  un clip MIDI de plus de 256 pas n'entre qu'en partie dans une case.
+- Relire les trois chapitres sur le manuel (le réseau l'a refusé).
