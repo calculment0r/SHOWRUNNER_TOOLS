@@ -5,9 +5,12 @@
 //                lecture (clic = aller là ; glisser vers le haut ou le bas =
 //                zoomer, comme la règle des temps de Live ; son onglet se
 //                prend et se glisse)
-//   l'arc        une piste qu'on peint à la souris : elle pilote la sortie
-//                (filtre, volume ou les deux) — et plus bas, sous chaque
-//                piste, ses voies d'automation, une par réglage
+//   les arcs     un groupe en accordéon, collé sous la règle (06/10, arcs.js) :
+//                l'arc d'énergie (il pilote la sortie : filtre, volume ou les
+//                deux), le volume, le filtre, les envois de réverbe et de delay,
+//                et ceux qu'on ajoute ; replié, une rangée qui résume et peint
+//                l'arc choisi, déplié un arc par rangée — et plus bas, sous
+//                chaque piste, ses voies d'automation, une par réglage
 //   les pistes   choisir un en-tête (Ctrl : ajouter / retirer, Maj : jusqu'à
 //                lui), Suppr les retire ; glisser un en-tête : lâché ENTRE
 //                deux pistes il s'y range (trait d'insertion), SUR une piste il
@@ -84,6 +87,8 @@ import { scrub as scrubSon, actif as scrubActif } from '../commun/scrub.js';
 import { brancherCalculs, etatCalcul, poserCalcul } from './calcul.js';
 // la structure (06/10) : les sections qu'une balise des paroles tient (projet.js)
 import { sectionsLiees } from './projet.js';
+// le groupe des arcs du projet (06/10) : leurs définitions, leurs points, les retours qu'ils tiennent
+import { ARCS, ENERGIE, arcNeuf, ptsArc, retoursDe } from './arcs.js';
 
 const HEAD_W = 224;
 const Z_MIN = 2, Z_MAX = 160;                           // pixels par noire, les bornes du zoom
@@ -319,7 +324,7 @@ export function createTimeline(app) {
   // H : les pistes à la hauteur qui les fait toutes tenir
   function fitHeight() {
     const n = visTracks().length || 1;
-    const avail = scroll.clientHeight - RULER_H - ARC_H - 70;
+    const avail = scroll.clientHeight - RULER_H - ARC_H - (AR().ouvert ? (1 + (P().arcs || []).length) * AUTO_H : 0) - 70;
     ui().th = clamp(Math.floor(avail / n), TH_MIN, TH_MAX);
     delete ui().thT;                                    // toutes à la même hauteur
     app.saveUi();
@@ -609,8 +614,10 @@ export function createTimeline(app) {
   // de points), le défilement quand on sort de la fenêtre (toiles).
   const toiles = [];
   // `traits` : la toile peint aussi les traits de la grille (l'arc, collé en
-  // haut au-dessus de ceux des voies)
-  function paintable(cv, getPts, { res, h, color, columns, traits = false, onDone }) {
+  // haut au-dessus de ceux des voies) ; `neutre` : la valeur où la courbe ne
+  // change rien (un tiret, les arcs du groupe) ; `fond(g, y)` : ce qui se peint
+  // dessous (la rangée du groupe : les autres arcs, pâles)
+  function paintable(cv, getPts, { res, h, color, columns, traits = false, neutre = null, fond = null, onDone }) {
     const draw = () => {
       const pts = getPts(), a = Math.floor(win.a), w = Math.max(4, Math.ceil(win.b - a)), dpr = devicePixelRatio || 1;
       const W = Math.round(w * dpr), H = Math.round(h * dpr);
@@ -626,6 +633,12 @@ export function createTimeline(app) {
         g.globalAlpha = 1;
       }
       const y = (v) => 4 + (1 - v) * (h - 8);
+      if (neutre !== null) {
+        g.strokeStyle = tok('ink3'); g.globalAlpha = 0.5; g.lineWidth = 1; g.setLineDash([3, 4]);
+        g.beginPath(); g.moveTo(a, Math.round(y(neutre)) + 0.5); g.lineTo(a + w, Math.round(y(neutre)) + 0.5); g.stroke();
+        g.setLineDash([]); g.globalAlpha = 1;
+      }
+      if (fond) fond(g, y, a, w);
       if (!pts.length) {
         g.fillStyle = tok('ink3'); g.font = `9px ${tok('f-mono') || 'monospace'}`;
         g.fillText('glisser pour peindre', 8, h / 2 + 3);
@@ -689,37 +702,127 @@ export function createTimeline(app) {
     return draw;
   }
 
-  function arcRow() {
-    const p = P(), A = p.arc, mst = app.master();
-    const target = { lpf: 'filtre maître', vol: 'volume maître', both: 'filtre et volume' }[A.to] || 'filtre maître';
+  // ── les arcs : le groupe en accordéon (06/10, arcs.js) ──
+  // Cal : « l'arc d'énergie doit être dans un groupe d'arcs ; on a le volume,
+  // mais il en faut d'autres : réverbe et delay […] un groupe par défaut qu'on
+  // peut replier en accordéon ». La rangée du groupe, collée en haut sous la
+  // règle, résume : toutes les courbes, pâles, et l'arc qu'elle peint (« peindre :
+  // Énergie », au choix) ; dépliée, un arc par rangée dessous, chacun se peint
+  // (glisser ; Maj : une droite ; clic droit : effacer) et a son menu. Chaque
+  // geste passe par app.commit : Ctrl+Z le reprend. Replier n'est pas un geste
+  // (ui.arcs, comme la hauteur des pistes).
+  const AR = () => (ui().arcs = ui().arcs || { ouvert: false, peint: 'energie' });
+  const CIBLE_ENERGIE = { lpf: 'filtre de la sortie', vol: 'volume de la sortie', both: 'filtre et volume' };
+  // ce qu'un arc tient, en mots (un retour absent le dit)
+  function ditArc(A) {
+    const d = ARCS[A.k];
+    if (d.son !== 'retour') return d.dit;
+    const rs = retoursDe(P(), A.k);
+    return rs.length ? `envoi → ${rs.map((t) => t.name).join(', ')}` : `aucun retour de ${A.k === 'reverb' ? 'réverbe' : 'délai'}`;
+  }
+  // les arcs du groupe, vus par la vue : l'énergie (p.arc) en tête, puis p.arcs
+  function arcsVus() {
+    const p = P();
+    const out = [{ id: 'energie', nom: ENERGIE.nom, couleur: ENERGIE.couleur, A: p.arc, pts: () => p.arc.pts, neutre: null, dit: CIBLE_ENERGIE[p.arc.to] || CIBLE_ENERGIE.lpf, doc: ENERGIE.doc }];
+    for (const A of p.arcs || []) {
+      const d = ARCS[A.k];
+      if (d) out.push({ id: A.id, k: A.k, nom: d.nom, couleur: d.couleur, A, pts: () => ptsArc(p, A), neutre: d.neutre, dit: ditArc(A), doc: d.doc });
+    }
+    return out;
+  }
+  // une courbe pâle sous celle qu'on peint (la rangée du groupe)
+  function courbePale(g, pts, y, a, w, couleur) {
+    if (!pts.length) return;
+    g.strokeStyle = tok(couleur); g.globalAlpha = 0.55; g.lineWidth = 1.2; g.beginPath();
+    g.moveTo(a, y(pts[0][1]));
+    for (const [b, v] of pts) g.lineTo(X(b), y(v));
+    g.lineTo(a + w, y(pts[pts.length - 1][1]));
+    g.stroke(); g.globalAlpha = 1;
+  }
+  const pct = (v) => (v === null || v === undefined ? '—' : `${Math.round(v * 100)} %`);
+
+  function arcsRows() {
+    const G = AR(), vus = arcsVus();
+    const peint = vus.find((v) => v.id === G.peint) || vus[0];
     const cv = el('canvas', { class: 'ar-curve' });
-    const lane = el('div', { class: `ar-arc${A.on ? '' : ' off'}` }, cv);
+    const lane = el('div', { class: `ar-arc grp${peint.A.on === false ? ' off' : ''}`, title: `peindre l'arc « ${peint.nom} » (${peint.dit}) · Maj : une droite · clic droit : effacer — les autres arcs, pâles, dessous` }, cv);
     // collée en haut, au-dessus des traits des voies : elle peint les siens
-    paintable(cv, () => A.pts, { res: Math.max(0.25, snapU() || 1), h: ARC_H, color: 'or', columns: true, traits: true, onDone: () => app.commit('data') });
-    const head = el('div', { class: `ar-arch${A.on ? '' : ' off'}` },
-      el('div', { class: 'txt' }, el('b', {}, 'Arc d\'énergie'), el('span', {}, `peindre · ${target}`)),
+    paintable(cv, peint.pts, { res: Math.max(0.25, snapU() || 1), h: ARC_H, color: peint.couleur, columns: peint.id === 'energie', traits: true, neutre: peint.neutre,
+      fond: (g, y, a, w) => { for (const v of vus) if (v !== peint && v.A.on !== false) courbePale(g, v.pts(), y, a, w, v.couleur); },
+      onDone: () => { app.label(`peindre l'arc « ${peint.nom} »`); app.commit('data'); } });
+    const head = el('div', { class: `ar-arch grp${G.ouvert ? ' open' : ''}${peint.A.on === false ? ' off' : ''}` },
+      el('div', { class: 'txt' }, el('b', {}, 'Arcs'), el('span', {}, `${vus.length} · ${G.ouvert ? 'un par rangée' : 'replié'} · ${peint.dit}`)),
       el('div', { class: 'row' },
-        el('button', { class: `tb sm${A.on ? ' on' : ' ghost'}`, type: 'button', title: 'l\'arc pilote la sortie ; éteint, la sortie reste ouverte',
-          onclick: () => { A.on = !A.on; app.commit('meta'); } }, A.on ? 'Actif' : 'Éteint'),
-        knob(spec('master', 'arc_lo'), val(mst, 'arc_lo'), { size: 'xs', accent: 'or', label: 'coupure basse de l\'arc',
-          onInput: (v) => { mst.params.arc_lo = v; app.commit('param', mst); }, onChange: () => app.engine.settle() }),
-        el('button', { class: 'tb ghost sm', type: 'button', title: 'cible, effacer, automation de la sortie', onclick: (e) => arcMenu(e) }, '···')));
-    head.addEventListener('contextmenu', (e) => { e.preventDefault(); arcMenu(e); });
-    return [head, lane];
+        el('button', { class: 'tb sm ghost ar-pli', type: 'button', 'aria-expanded': G.ouvert ? 'true' : 'false',
+          title: G.ouvert ? 'replier le groupe : une seule rangée qui résume' : 'déplier le groupe : un arc par rangée',
+          onclick: () => { G.ouvert = !G.ouvert; app.saveUi(); render(); } }, G.ouvert ? '▾' : '▸'),
+        el('button', { class: 'tb sm ghost ar-peint', type: 'button', style: { '--c': `var(--${peint.couleur})` }, title: `l'arc que cette rangée peint : ${peint.doc}`,
+          onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); menu(r.left, r.bottom + 4, [{ head: 'la rangée du groupe peint' },
+            ...vus.map((v) => ({ label: v.nom, dot: v.couleur, checked: v === peint, sub: v.dit, onclick: () => { G.peint = v.id; app.saveUi(); render(); } }))]); } },
+        el('i'), peint.nom),
+        el('button', { class: `tb sm${peint.A.on !== false ? ' on' : ' ghost'}`, type: 'button', title: `« ${peint.nom} » ${peint.A.on !== false ? 'agit' : 'est éteint'} · clic : ${peint.A.on !== false ? 'l\'éteindre (son neutre)' : 'l\'allumer'}`,
+          onclick: () => { peint.A.on = peint.A.on === false; app.label(`${peint.A.on ? 'allumer' : 'éteindre'} l'arc « ${peint.nom} »`); app.commit('meta'); } }, peint.A.on !== false ? 'Actif' : 'Éteint'),
+        el('button', { class: 'tb sm ghost', type: 'button', title: 'ajouter un arc au groupe', onclick: (e) => addArcMenu(e) }, '+')));
+    head.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); arcMenu(e, peint); });
+    const rows = [head, lane];
+    if (G.ouvert) for (const v of vus) rows.push(...arcRow(v));
+    return rows;
   }
 
-  function arcMenu(e) {
-    const p = P(), A = p.arc;
-    menu(e.clientX, e.clientY, [
-      { head: 'l\'arc pilote' },
-      ...[['lpf', 'le filtre de la sortie'], ['vol', 'le volume de la sortie'], ['both', 'les deux']].map(([k, l]) => ({ label: `${l}${A.to === k ? ' ·' : ''}`, onclick: () => { A.to = k; app.commit('meta'); } })),
+  // une rangée du groupe déplié : un arc
+  function arcRow(v) {
+    const A = v.A, G = AR(), mst = app.master(), on = A.on !== false;
+    const cv = el('canvas', { class: 'ar-curve' });
+    const ln = el('div', { class: `ar-alane arcl${on ? '' : ' off'}`, style: { '--c': `var(--${v.couleur})` } }, cv);
+    paintable(cv, v.pts, { res: Math.max(0.25, snapU() || 1), h: AUTO_H, color: v.couleur, columns: v.id === 'energie', neutre: v.neutre,
+      onDone: () => { app.label(`peindre l'arc « ${v.nom} »`); app.commit('data'); } });
+    const pts = v.pts(), now = pts.length ? interp(pts, app.pos()) : v.neutre;
+    const hd = el('div', { class: `ar-ahead arch${on ? '' : ' off'}${G.peint === v.id ? ' peint' : ''}`, 'data-arc': v.id, style: { '--c': `var(--${v.couleur})` }, title: v.doc },
+      el('div', { class: 'txt' }, el('b', {}, el('i'), v.nom), el('span', {}, `${v.dit} · ${pct(now)}`)),
+      el('div', { class: 'row' },
+        el('button', { class: `tb sm${on ? ' on' : ' ghost'}`, type: 'button', title: on ? 'l\'arc agit · clic : l\'éteindre (son neutre)' : 'l\'arc est éteint · clic : l\'allumer',
+          onclick: () => { A.on = !on; app.label(`${A.on ? 'allumer' : 'éteindre'} l'arc « ${v.nom} »`); app.commit('meta'); } }, on ? 'Actif' : 'Éteint'),
+        v.id === 'energie' ? knob(spec('master', 'arc_lo'), val(mst, 'arc_lo'), { size: 'xs', accent: 'or', label: 'coupure basse de l\'arc',
+          onInput: (x) => { mst.params.arc_lo = x; app.commit('param', mst); }, onChange: () => app.engine.settle() }) : null,
+        el('button', { class: 'tb ghost sm', type: 'button', title: 'ce que l\'arc tient, effacer, monter, retirer', onclick: (e) => arcMenu(e, v) }, '···')));
+    hd.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); arcMenu(e, v); });
+    return [hd, ln];
+  }
+
+  function arcMenu(e, v) {
+    const p = P(), A = v.A, G = AR();
+    const i = (p.arcs || []).indexOf(A);
+    const fait = (lab, fn, kind = 'meta') => () => { fn(); app.label(lab); app.commit(kind); };
+    const items = [{ head: `arc · ${v.nom} · ${v.dit}` }];
+    if (v.id === 'energie') {
+      items.push({ head: 'l\'énergie tient' },
+        ...[['lpf', 'le filtre de la sortie'], ['vol', 'le volume de la sortie'], ['both', 'les deux']].map(([k, l]) => ({ label: l, checked: A.to === k, onclick: fait(`l'énergie tient ${l}`, () => { A.to = k; }) })),
+        '-',
+        { label: 'Tout à fond (arc plat)', onclick: fait('énergie à fond', () => { A.pts = [[0, 1]]; }) },
+        { label: 'Suivre les sections', sub: 'intro basse, refrain haut', onclick: fait('l\'énergie suit les sections', () => { A.pts = arcFromSections(p); }) });
+    } else if (v.neutre !== null) {
+      items.push({ label: 'Plat au neutre', sub: pct(v.neutre), onclick: fait(`« ${v.nom} » à plat`, () => { const pts = v.pts(); pts.splice(0, pts.length, [0, v.neutre]); }) });
+    }
+    if (ARCS[v.k]?.son === 'retour' && !retoursDe(p, v.k).length) {
+      items.push({ label: v.k === 'reverb' ? 'Ajouter un retour de réverbération' : 'Ajouter un retour RTT-01', sub: 'la console', onclick: () => app.addBus(v.k === 'reverb' ? 'reverb' : 'rtt') });
+    }
+    items.push(
+      { label: 'Effacer la courbe', disabled: !v.pts().length, why: 'la courbe est vide', onclick: fait(`effacer l'arc « ${v.nom} »`, () => { const pts = v.pts(); pts.splice(0, pts.length); }) },
+      { label: 'La rangée du groupe le peint', checked: G.peint === v.id, onclick: () => { G.peint = v.id; app.saveUi(); render(); } },
       '-',
-      { label: 'Tout à fond (arc plat)', onclick: () => { A.pts = [[0, 1]]; app.commit('meta'); } },
-      { label: 'Suivre les sections', sub: 'intro basse, refrain haut', onclick: () => { A.pts = arcFromSections(p); app.commit('meta'); } },
-      { label: 'Effacer l\'arc', onclick: () => { A.pts = []; app.commit('meta'); } },
-      '-',
-      { label: 'Automation du volume de la sortie', onclick: () => app.addAuto(app.master().id, 'vol') },
-    ]);
+      { label: 'Monter', disabled: i <= 0, why: v.id === 'energie' ? 'l\'énergie reste en tête du groupe' : 'déjà juste sous l\'énergie', onclick: fait(`monter l'arc « ${v.nom} »`, () => { p.arcs.splice(i - 1, 0, ...p.arcs.splice(i, 1)); }) },
+      { label: 'Descendre', disabled: i < 0 || i >= p.arcs.length - 1, why: v.id === 'energie' ? 'l\'énergie reste en tête du groupe' : 'déjà en bas', onclick: fait(`descendre l'arc « ${v.nom} »`, () => { p.arcs.splice(i + 1, 0, ...p.arcs.splice(i, 1)); }) },
+      v.id === 'energie' ? { label: 'Automation du volume de la sortie', onclick: () => app.addAuto(app.master().id, 'vol') }
+        : { label: 'Retirer l\'arc du groupe', danger: true, onclick: fait(`retirer l'arc « ${v.nom} »`, () => { p.arcs.splice(i, 1); if (G.peint === v.id) G.peint = 'energie'; }) });
+    menu(e.clientX, e.clientY, items);
+  }
+  function addArcMenu(e) {
+    const p = P(), G = AR(), r = e.currentTarget.getBoundingClientRect();
+    const libres = Object.keys(ARCS).filter((k) => !(p.arcs || []).some((A) => A.k === k));
+    menu(r.left, r.bottom + 4, [{ head: 'un arc de plus' },
+      ...(libres.length ? libres.map((k) => ({ label: ARCS[k].nom, sub: ARCS[k].dit, dot: ARCS[k].couleur,
+        onclick: () => { p.arcs = p.arcs || []; p.arcs.push(arcNeuf(k)); G.ouvert = true; G.peint = `a${k}`; app.saveUi(); app.label(`ajouter l'arc « ${ARCS[k].nom} »`); app.commit('meta'); } }))
+        : [{ label: 'Tous les arcs sont là', disabled: true, why: 'un arc par sorte' }])]);
   }
   // un arc de départ tiré des étiquettes de section (choix de réglage) :
   // l'intro et le final bas, le couplet au milieu, le refrain en haut
@@ -1732,8 +1835,7 @@ export function createTimeline(app) {
     regleEl = ruler();
     const rows = [el('div', { class: 'ar-corner', title: MOLETTE }, el('span', { class: 'lbl' }, 'pistes'),
       el('span', { class: 'lbl' }, `${visTracks().length} · ${p.sections.length} sections`)), regleEl];
-    const [ah, al] = arcRow();
-    rows.push(ah, al);
+    rows.push(...arcsRows());   // le groupe des arcs : sa rangée collée en haut, déplié un arc par rangée (arcs.js)
     for (const L of (p.auto || []).filter((x) => !app.mod(x.mod)?.track)) rows.push(...autoRows(L));
     // les pistes, et au-dessus des membres d'un groupe, son en-tête (replié : lui seul)
     const groups = new Map((p.groups || []).map((g) => [g.id, g])), vus = new Set();

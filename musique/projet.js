@@ -9,6 +9,11 @@
 //               aussi la balise des paroles d'une région qui la couvre (la structure, plus bas)
 //   markers   [{ id, b, name }]                 les marqueurs
 //   arc       { on, to: lpf|vol|both, pts }     l'arc d'énergie peint (0..1)
+// Les arcs du projet (06/10, même version, champ facultatif ; arcs.js) :
+//   arcs      [{ id, k, on, pts }]             les autres arcs du groupe, après
+//               l'énergie (vol, filtre, reverb, delay ; largeur, satur, densite,
+//               tension), un par sorte ; la Tension prend ses points dans banc.ten
+//   ui.arcs   { ouvert, peint }                 le groupe déplié, l'arc que sa rangée peint
 //   auto      [{ id, mod, k, on, pts }]         les voies d'automation (0..1)
 //   tracks[]  + sub, arm ; sorte « bus » (retour d'effets)
 //   cables[]  + send (dB) : un envoi de la console vers un bus
@@ -72,6 +77,8 @@ import { guessTag, MODULES, TRACK_KINDS, COLORS } from './modules.js';
 import { SECTION_TAGS } from './modules.js';   // la structure : les étiquettes des paroles (06/10)
 
 export const VERSION = 2;
+// le groupe des arcs d'un projet neuf, ou d'un projet d'avant (arcs.js en a les définitions)
+export const ARCS_DEFAUT = ['vol', 'filtre', 'reverb', 'delay'];
 const own = (c) => (c.gen ? { gen: JSON.parse(JSON.stringify(c.gen)) } : {});   // une copie de région a ses propres prises
 
 export function migrate(p) {
@@ -80,6 +87,8 @@ export function migrate(p) {
   p.markers = p.markers || [];
   p.auto = p.auto || [];
   p.arc = p.arc || { on: true, to: 'lpf', pts: [] };
+  // le groupe des arcs (06/10) : un projet d'avant garde son arc d'énergie (p.arc, tel quel) et reçoit le groupe par défaut, vide
+  if (!Array.isArray(p.arcs)) p.arcs = ARCS_DEFAUT.map((k) => ({ id: `a${k}`, k, on: true, pts: [] }));
   p.key = p.key || { tonic: 9, mode: 'minor' };
   p.loop = p.loop || { on: false, a: 0, b: 16 };
   p.ui = p.ui || {};
@@ -495,13 +504,14 @@ const NOUN = {
   sections: ['section', 'sections'], markers: ['marqueur', 'marqueurs'], patterns: ['motif', 'motifs'],
   auto: ['voie d’automation', 'voies d’automation'], presets: ['préréglage', 'préréglages'], groups: ['groupe de pistes', 'groupes de pistes'],
   slots: ['clip de Session', 'clips de Session'], scenes: ['scène', 'scènes'], voies: ['voie de Session', 'voies de Session'],
+  arcs: ['arc', 'arcs'],
 };
 const WHAT = {
   bpm: 'le tempo', sig: 'la mesure', key: 'la tonalité', loop: 'la boucle', arc: 'l’arc d’énergie', name: 'le nom du projet',
   banc: 'le banc (attracteurs)', nodal: 'le nodal', clips: 'les clips', tracks: 'les pistes', modules: 'les instruments et effets',
   cables: 'les câbles', sections: 'les sections', markers: 'les marqueurs', patterns: 'les motifs', auto: 'l’automation', presets: 'les préréglages',
   groups: 'les groupes de pistes', slots: 'les clips de Session', scenes: 'les scènes', launch: 'la quantification du lancement',
-  voies: 'les voies de Session', biblio: 'la bibliothèque du projet',
+  voies: 'les voies de Session', biblio: 'la bibliothèque du projet', arcs: 'les arcs',
 };
 const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
 export function describeWork(a, b, names = {}) {
@@ -724,7 +734,8 @@ export function shiftFrom(p, at, d) {
   for (const m of p.markers) if (m.b >= at - 1e-9) m.b += d;
   for (const pts of curves(p)) for (const pt of pts) if (pt[0] >= at - 1e-9) pt[0] += d;
 }
-const curves = (p) => [p.arc?.pts || [], ...(p.auto || []).map((L) => L.pts || [])];
+// (les arcs du projet aussi, 06/10 : déplacer une section emporte leurs points ; la Tension est au banc)
+const curves = (p) => [p.arc?.pts || [], ...(p.auto || []).map((L) => L.pts || []), ...(p.arcs || []).filter((A) => A.k !== 'tension').map((A) => A.pts || (A.pts = []))];
 const sortPts = (p) => { for (const pts of curves(p)) pts.sort((x, y) => x[0] - y[0]); };
 
 // déplace ce qui commence dans [a, b) de `d` : clips et points des courbes ;
