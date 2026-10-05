@@ -1165,7 +1165,7 @@ def selftest(call, ok) -> None:
             ok(not ancienne.exists() or (ancienne.stat().st_size < 4096 and b"?vue=depouillement" in ancienne.read_bytes()),
                f"{a['id']} : plus d'ancienne page de dépouillement à part (depouillement.html ne fait que renvoyer à la vue)")
     for page in ("/analyse/", "/analyse/film/film.css", "/analyse/film/film.js", "/analyse/diarisation/",
-                 "/analyse/diarisation/portail.css", "/analyse/commun/projets.js"):
+                 "/analyse/commun/projets.js"):
         st, _ = call("GET", page)
         ok(st == 200, f"{page} se sert ({st})")
     st, _ = call("GET", "/analyse/runs/../../jobs.json")
@@ -1193,6 +1193,16 @@ def selftest(call, ok) -> None:
     ok(not re.search(r"['\"(:, ]#[0-9a-fA-F]{3,8}\b|rgba?\(\s*\d", labo) and not bordure.search(labo.replace("border:0", ""))
        and 'href="../film/palette.css"' in labo and "sr:theme" in labo,
        "diarisation/index.html : aucune couleur écrite, des filets, la palette des voix, relue quand le thème change")
+    # l'en-tête du portail y est celle des autres pages, par les mêmes feuilles (plus de copie bornée à .hdr, l'ancien
+    # diarisation/portail.css) : la page charge base.css et shell.css, et ses classes ne croisent pas celles du portail
+    # (sa .mono, sa .pill, sa .pan, sa .bar, sa .wrap — celle des préférences — sont devenues .num, .bouton, .onglets,
+    # .barre-page, .corps-page le 05/10)
+    feuille = re.search(r"<style>(.*?)</style>", re.sub(r"url\(data:[^)]*\)", "", labo), re.S).group(1)
+    ok(all(f'href="../../commun/{x}.css"' in labo for x in ("tokens", "base", "shell")) and "portail.css" not in labo
+       and not (TOOL / "diarisation" / "portail.css").exists()
+       and not re.search(r"(?<![\w-])\.(mono|pill|pan|bar|wrap)(?![\w-])", feuille)
+       and not re.search(r"""class(=|: )["'][^"']*\b(mono|pill|pan|bar|wrap)\b""", labo),
+       "diarisation/index.html : base.css et shell.css comme partout, aucune classe de la page ne croise base.css")
     # la hauteur de l'écran sous la taille de l'interface : calc(N * var(--vh)), jamais Nvh (étude des préférences § 6)
     for f in ("analyse.css", "film/film.css", "diarisation/index.html"):
         src = (TOOL / f).read_text(encoding="utf-8")

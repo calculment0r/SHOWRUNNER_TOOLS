@@ -32,7 +32,7 @@ Ses documents de reprise y restent et font foi pour l'histoire et les décisions
 Ajouté ici : `index.html`, `accueil.js` (ex-`analyse.js` : la liste EasyPrivacy bloque tout chemin en `/analyse.js`), `analyse.css` (l'accueil de l'outil, dans le thème du
 portail), `film/film.css` et `film/film.js` (le cadre de la page d'un film, 29/09),
 `outils/rendre-films.sh` (re-rendre nos films), `analyses/<film>/portail.json` (titre accentué et genre, repris de `DU_DEPOT` dans
-`commun/projets.js`), `diarisation/portail.css` (l'en-tête du portail sur la page),
+`commun/projets.js`),
 `outils/faux/analyse.sh` (la chaîne factice des essais), ce fichier. Le serveur :
 `server/tools/analyse.py`.
 
@@ -58,9 +58,12 @@ portail), `film/film.css` et `film/film.js` (le cadre de la page d'un film, 29/0
   `"labo":"../../outils/diarisation/?projet=…"` → `"../../diarisation/?projet=…"`.
 - `chaine/studio.mjs` : la même adresse du labo, pour les pages rendues d'ici.
 - `diarisation/index.html` : chemins (`../commun/projets.js`, `../analyses/…`), retour vers
-  l'accueil de l'outil (`../`), l'en-tête du portail (`tokens.css`, `shell.css`, `portail.css`,
-  `mountHeader`), une machine de plus, **« Portail · relais »** (choisie par défaut), et le direct
-  refusé sur ce relais avec la raison.
+  l'accueil de l'outil (`../`), l'en-tête du portail (`tokens.css`, `shell.css`, `mountHeader`), une
+  machine de plus, **« Portail · relais »** (choisie par défaut), et le direct refusé sur ce relais avec
+  la raison. Depuis le 05/10, la page charge aussi `base.css`, comme toutes les pages (l'ancien
+  `diarisation/portail.css`, une copie de la barre, est retiré) : ses classes `.mono`, `.pill`, `.pan`
+  et `.bar`, qui croisaient celles de `base.css`, sont devenues `.num`, `.bouton`, `.onglets` et
+  `.barre-page`, et sa barre se colle sous l'en-tête commune.
 - `outils/casting.mjs` (`../chaine/casting-parts.mjs`), `outils/banc/banc.mjs`
   (`chaine/serve.mjs`), `outils/controle.mjs` (à lancer depuis `analyse/` : les analyses et
   `diarisation/index.html` ; plus l'accueil ni `.nojekyll`).

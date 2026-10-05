@@ -432,6 +432,13 @@ def _img_dir() -> Path:
     return d
 
 
+def image_file(key: str) -> Path | None:
+    """L'image rangée d'une carte (son empreinte), si elle est là : l'export PNG d'une planche
+    la dessine (server/tools/ideation.py, render) ; sans elle, la carte garde titre et site."""
+    f = _img_dir() / f"{key}.webp" if KEY.fullmatch(key or "") else None
+    return f if f and f.is_file() else None
+
+
 def _oembed(p: dict, end: float) -> dict:
     watch = f"https://www.youtube.com/watch?v={p['id']}" if p["kind"] == "youtube" else p["url"]
     api = ("https://www.youtube.com/oembed?format=json&url=" if p["kind"] == "youtube"
@@ -731,3 +738,26 @@ def selftest(call, ok) -> None:
     st2, _ = call("GET", "/api/ideation/web/img/0123456789abcdef01234567")
     ok(st in (400, 404) and st2 == 404, f"web : l'image se demande par son empreinte seulement ({st} {st2})")
     ok(isinstance(cfg.data_dir(), Path), "web : les images rangées hors du dépôt (data_dir)")
+    # 9. l'export PNG de la planche dessine l'objet web (server/tools/ideation.py, _web) : l'image rangée
+    # s'il y en a une, sinon la carte (barre, globe, titre) — jamais rien d'autre que ce que le serveur a
+    from PIL import Image
+    key = "abcdef0123456789abcdef01"
+    Image.new("RGB", (64, 40), (255, 0, 255)).save(_img_dir() / f"{key}.webp", "WEBP", lossless=True)
+    ok(image_file(key) is not None and image_file("../" + key) is None and image_file("0" * 24) is None,
+       "web : l'image rangée se retrouve par son empreinte, et par elle seule")
+    b = ideation.blank("Essai web png")
+    ideation._write(b)
+    nodes = [{"id": "w1", "type": "web", "x": 0, "y": 0, "w": 360, "h": 250, "url": "https://example.org/a", "title": "Avec image", "img": key},
+             {"id": "w2", "type": "web", "x": 400, "y": 0, "w": 360, "h": 250, "url": "http://example.org/b", "title": "Sans image"},
+             {"id": "w3", "type": "web", "x": 800, "y": 0, "w": 420, "h": 272, "url": "https://youtu.be/dQw4w9WgXcQ"}]
+    st, _ = call("POST", f"/api/ideation/boards/{b['id']}", {"name": b["name"], "v": ideation.VERSION, "nodes": nodes, "links": [], "base_rev": 1})
+    st2, png = call("POST", f"/api/ideation/boards/{b['id']}/png", {})
+    vu = None
+    if st == 200 and st2 == 200 and isinstance(png, bytes) and png[:4] == b"\x89PNG":
+        im = Image.open(BytesIO(png)).convert("RGB")
+        T = ideation.tokens()
+        px = list(im.getdata())
+        vu = {"image": sum(1 for c in px if c == (255, 0, 255)), "carte": sum(1 for c in px if c == T["panel2"]),
+              "barre": sum(1 for c in px if c == T["panel3"])}
+    ok(bool(vu) and vu["image"] > 2000 and vu["carte"] > 2000 and vu["barre"] > 2000,
+       f"web : l'export PNG dessine les objets web, l'image rangée comprise ({st} {st2} {vu})")

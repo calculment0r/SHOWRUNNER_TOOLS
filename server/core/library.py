@@ -17,6 +17,9 @@ Les sortes d'objets (KINDS) :
            tenue…) et d'une description en prose. Un personnage de
            Character Factory devient un élément ; un élément s'appelle
            ensuite comme référence dans l'image, la vidéo H3, etc.
+  playlist une suite de sons de la bibliothèque (05/10, server/tools/playlist.py) :
+           un objet qu'on réécrit, comme une planche, sans fichier — ses
+           morceaux, sa pochette, ses enchaînements dans `playlist`
 
 Sur disque, sous `<data_dir>/library/<id>/` : `item.json`, le fichier
 principal, sa vignette, ses copies d'affichage (`view-256.webp`…, plus
@@ -75,7 +78,8 @@ from . import auth, config, espaces
 
 # "sequence" : une séquence du Montage (sa timeline dans `sequence.json`, écrite par server/tools/montage.py), 29/09
 # "document" : tout ce qui n'est pas un média (server/tools/documents.py), 05/10
-KINDS = ("image", "video", "audio", "element", "midi", "sequence", "document")
+# "playlist" : une suite de sons, réécrite en place (server/tools/playlist.py), 05/10
+KINDS = ("image", "video", "audio", "element", "midi", "sequence", "document", "playlist")
 EXT_KIND = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
     ".mp4": "video", ".webm": "video", ".mov": "video", ".m4v": "video",
@@ -784,6 +788,7 @@ def create_living(title: str, etype: str, source: dict, *, media: str | None = N
 # le Space de Musique d'un objet (server/tools/chanson.py, `music_space`) : un identifiant
 # msp-…, ou vide pour « Mon Space » de son auteur ; la bibliothèque n'en juge que la forme
 MUSIC_SPACE_RX = re.compile(r"(msp-[0-9a-f]{12})?")
+LRC_MAX = 100000   # les paroles calées d'un son (champ `lrc`) : 157 lignes d'AGOSTA font 8 Ko
 
 
 def _check_patch(patch: dict) -> None:
@@ -804,6 +809,9 @@ def _check_patch(patch: dict) -> None:
             raise ValueError(f"{k} : vrai ou faux")
     if "music_space" in patch and not (isinstance(patch["music_space"], str) and MUSIC_SPACE_RX.fullmatch(patch["music_space"])):
         raise ValueError("music_space : un Space de Musique (msp-…), ou vide pour « Mon Space »")
+    # les paroles calées d'un son, en LRC (server/tools/paroles.py les relit et les remet au format)
+    if "lrc" in patch and not (isinstance(patch["lrc"], str) and len(patch["lrc"]) <= LRC_MAX):
+        raise ValueError(f"lrc : un texte de {LRC_MAX} signes au plus")
     el = patch.get("element")
     if isinstance(el, dict):
         if "type" in el and el["type"] not in ELEMENT_TYPES_ALL:
@@ -820,6 +828,8 @@ def update(item_id: str, patch: dict) -> dict:
             raise KeyError(item_id)
         _check_write(it)
         _check_patch(patch)
+        if "lrc" in patch and it["kind"] != "audio":
+            raise ValueError("des paroles calées (lrc) ne vont qu'à un son")
         if "prompt" in patch or isinstance(patch.get("element"), dict):
             _frozen(it, "sa recette, sa planche")
         el_patch = patch.get("element") if isinstance(patch.get("element"), dict) else {}
@@ -835,6 +845,11 @@ def update(item_id: str, patch: dict) -> dict:
                 it["music_space"] = patch["music_space"]
             else:
                 it.pop("music_space", None)
+        if "lrc" in patch:
+            if patch["lrc"].strip():
+                it["lrc"] = patch["lrc"]
+            else:
+                it.pop("lrc", None)
         if it["kind"] == "element" and isinstance(patch.get("element"), dict):
             el = it["element"]
             for k in ("type", "description"):
@@ -1016,6 +1031,8 @@ def import_refusal(it: dict, dest: str | None) -> str | None:
     if is_living(it):
         return (f"{name} est un élément versionné : le rapatrier (sa version figée, § 3.3 de l'étude) vient avec "
                 f"l'étape 9 — en attendant, rapatrie sa dernière version (sa fiche, « les versions »)")
+    if it.get("kind") == "playlist":   # comme une séquence : elle pose des sons de son Workspace
+        return f"{name} est une playlist : elle pose des sons de son Workspace — rapatrie ses morceaux"
     if it.get("kind") not in IMPORT_KINDS:
         return (f"{name} est une séquence : elle pose d'autres objets de son Workspace — la dupliquer ailleurs viendra "
                 f"avec les documents (§ 3.5) ; en attendant, rapatrie ses plans")
@@ -1275,7 +1292,10 @@ def query(kinds: list[str] | None = None, q: str = "", folder: str | None = None
         ql = q.lower()
         items = [i for i in items if ql in " ".join([i.get("title", ""), i.get("prompt", ""), " ".join(i.get("tags", [])),
                                                       (i.get("element") or {}).get("description", ""),
-                                                      (i.get("doc") or {}).get("title") or ""]).lower()]
+                                                      (i.get("doc") or {}).get("title") or "",
+                                                      # une playlist : son artiste, sa description
+                                                      (i.get("playlist") or {}).get("artist") or "",
+                                                      (i.get("playlist") or {}).get("description") or ""]).lower()]
     key = {"new": lambda i: i["created"], "old": lambda i: i["created"], "title": lambda i: i.get("title", "").lower(),
            "updated": lambda i: i.get("updated", i["created"])}.get(sort, lambda i: i["created"])
     items.sort(key=key, reverse=sort in ("new", "updated"))

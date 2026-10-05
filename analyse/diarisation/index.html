@@ -11,13 +11,15 @@
 <script src="../../commun/theme-tot.js"></script>
 <link rel="preload" href="../../commun/fonts/norelli-black.otf" as="font" type="font/otf" crossorigin>
 <title>Diarisation · Movie Analysis</title>
-<!-- portail Showrunner : ses jetons, son en-tête (portail.css borne ce qu'il reprend de base.css) ; la palette des voix,
-     la même qu'au Studio (analyse/film/palette.css) -->
+<!-- portail Showrunner : les feuilles de toutes les pages (jetons, composants, en-tête commune, posée par mountHeader) ;
+     la palette des voix, la même qu'au Studio (analyse/film/palette.css). Les classes de la page ne croisent pas
+     celles du portail (.num, .bouton, .onglets, .barre-page, .corps-page : renommées le 05/10 ; .sep, .ok, .erreur,
+     .ecran, .defile : bornées aux blocs de la page) : l'en-tête, ses menus, la file, les préférences et le panneau
+     Asset y sont ceux des autres pages, par les mêmes règles. -->
 <link rel="stylesheet" href="../../commun/tokens.css">
-<link rel="stylesheet" href="../../commun/curseur.css">
+<link rel="stylesheet" href="../../commun/base.css">
 <link rel="stylesheet" href="../film/palette.css">
 <link rel="stylesheet" href="../../commun/shell.css">
-<link rel="stylesheet" href="./portail.css">
 <style>
 /* Polices du kit Showrunner, reprises de skill/report.css (base64 : aucune ressource externe). */
 @font-face{font-family:'Azeret Mono';font-style:normal;font-weight:400;font-display:swap;src:url(data:font/woff2;base64,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) format('woff2');unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF}
@@ -42,23 +44,29 @@
   --disp:'Venus Rising','Chakra Petch',sans-serif}
 *{box-sizing:border-box}
 html,body{background:var(--surface)}
-body{margin:0;color:var(--ink);font:400 13px/1.55 var(--ui);-webkit-font-smoothing:antialiased}
+/* le corps garde le texte du portail (base.css) : l'en-tête, ses menus, la file s'y posent comme ailleurs ; la page
+   pose le sien sur ses deux blocs */
+body{margin:0;color:var(--ink);-webkit-font-smoothing:antialiased}
+.barre-page,.corps-page{font:400 13px/1.55 var(--ui)}
 button,input,select{font:inherit;color:inherit}
 button{background:none;border:0;cursor:pointer}
-a{color:var(--cy)}
+/* les liens de la page en acier ; pas ceux du portail (le logo de l'en-tête garde l'encre) */
+:where(.barre-page,.corps-page) a{color:var(--cy)}
 [hidden]{display:none!important}
 ::selection{background:var(--red-accent);color:var(--on-or)}
 ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--surface-4);border-radius:4px}
 .lab{font:400 8.5px/1.2 var(--mono);letter-spacing:.2em;text-transform:uppercase;color:var(--ink-3)}
-.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .disp{font-family:var(--disp);font-weight:400}
 .dim{color:var(--ink-3)}
 .note{font-size:11.5px;color:var(--ink-2)}
 code{font:400 11px/1.5 var(--mono);background:var(--surface-3);padding:1px 5px;border-radius:4px}
 
-/* ── la barre : deux rangs, menu d'onglets centré (comme le Studio) ── */
-.bar{position:sticky;top:0;z-index:50;background:var(--hdr-bg);backdrop-filter:blur(12px)}
+/* ── la barre : deux rangs, menu d'onglets centré (comme le Studio) ──
+   collée sous l'en-tête commune, qui colle aussi (--sr-hdr-h, sa hauteur : commun/shell.css, mesurée par dock.js),
+   comme la barre d'un film (analyse/film/film.css) ; sous elle (30 < 40) : les menus de l'en-tête passent dessus */
+.barre-page{position:sticky;top:var(--sr-hdr-h);z-index:30;background:var(--hdr-bg);backdrop-filter:blur(12px)}
 .haut{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:11px 20px 9px}
 .retour{display:inline-flex;align-items:center;gap:8px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--line-gr);
   padding:7px 14px;font-size:11px;color:var(--ink-2);text-decoration:none}
@@ -69,7 +77,7 @@ code{font:400 11px/1.5 var(--mono);background:var(--surface-3);padding:1px 5px;b
 .titre .ix{font:400 9px/1 var(--mono);letter-spacing:.22em;color:var(--red-accent);text-transform:uppercase}
 .titre h1{margin:0;font:400 15px/1 var(--disp);letter-spacing:.1em;text-transform:uppercase}
 .titre small{font:400 9px/1.3 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
-.sep{flex:1;min-width:10px}
+:where(.barre-page,.corps-page) .sep{flex:1;min-width:10px}
 .pastille{display:inline-flex;align-items:center;gap:8px;border-radius:6px;padding:7px 14px;
   box-shadow:inset 0 0 0 1px var(--hairline);font:400 9px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2);cursor:pointer}
 .pastille i{width:8px;height:8px;border-radius:50%;background:var(--ink-3);flex:none}
@@ -79,7 +87,7 @@ code{font:400 11px/1.5 var(--mono);background:var(--surface-3);padding:1px 5px;b
 .pastille[data-etat="hors"] i,.pastille[data-etat="erreur"] i{background:var(--signal)}
 @keyframes clign{0%,100%{opacity:.35}50%{opacity:1}}
 .menu{position:relative;display:flex;justify-content:center;box-shadow:inset 0 -1px 0 var(--line)}
-.menu .pan{position:relative;display:flex}
+.menu .onglets{position:relative;display:flex}
 .menu button{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;padding:9px 30px 12px}
 .menu .ix{font-family:var(--mono);font-size:8px;letter-spacing:.24em;color:var(--ink-3);transition:color .18s}
 .menu .nm{font-family:var(--disp);font-size:14px;letter-spacing:.17em;text-transform:uppercase;color:var(--ink-3);transition:color .18s;white-space:nowrap}
@@ -90,18 +98,18 @@ code{font:400 11px/1.5 var(--mono);background:var(--surface-3);padding:1px 5px;b
   transition:transform .26s cubic-bezier(.4,0,.2,1),width .26s cubic-bezier(.4,0,.2,1)}
 
 /* ── les briques ── */
-.wrap{padding:16px 20px 60px;max-width:1500px;margin:0 auto}
+.corps-page{padding:16px 20px 60px;max-width:1500px;margin:0 auto}
 .panneau{border-radius:14px;background:var(--surface-2);padding:14px 16px;min-width:0}
 .panneau.anneau{background:none;box-shadow:inset 0 0 0 1px var(--line-gr)}
 .panneau > .tete{display:flex;align-items:baseline;gap:10px;margin-bottom:10px;flex-wrap:wrap}
 .panneau > .tete .sep{flex:1}
-.pill{display:inline-flex;align-items:center;justify-content:center;gap:7px;border-radius:6px;padding:7px 14px;
+.bouton{display:inline-flex;align-items:center;justify-content:center;gap:7px;border-radius:6px;padding:7px 14px;
   font:600 11px/1 var(--ui);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);white-space:nowrap;
   box-shadow:inset 0 0 0 1px var(--line-gr);transition:color .15s,box-shadow .15s,background .15s}
-.pill:hover{color:var(--ink);box-shadow:inset 0 0 0 1px var(--grn2)}
-.pill[aria-pressed="true"]{background:var(--cy);color:var(--on-cy);box-shadow:none}
-.pill:disabled{opacity:.35;cursor:default}
-.pill.petit{padding:5px 10px;font-size:10px}
+.bouton:hover{color:var(--ink);box-shadow:inset 0 0 0 1px var(--grn2)}
+.bouton[aria-pressed="true"]{background:var(--cy);color:var(--on-cy);box-shadow:none}
+.bouton:disabled{opacity:.35;cursor:default}
+.bouton.petit{padding:5px 10px;font-size:10px}
 .action{display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:6px;padding:12px 20px;
   background:var(--grn);color:var(--on-grn);font:700 12px/1 var(--ui);letter-spacing:.14em;text-transform:uppercase;transition:background .15s,filter .15s}
 .action:hover{filter:brightness(1.18)}
@@ -121,8 +129,8 @@ code{font:400 11px/1.5 var(--mono);background:var(--surface-3);padding:1px 5px;b
 .champs{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
 .alerte{border-radius:12px;background:var(--signal-fill);box-shadow:inset 0 0 0 1px var(--line-amb);padding:11px 14px;font-size:12px;color:var(--ink)}
 .alerte b{color:var(--signal)}
-.ok{color:var(--ok)}
-.erreur{color:var(--signal)}
+:where(.barre-page,.corps-page) .ok{color:var(--ok)}
+:where(.barre-page,.corps-page) .erreur{color:var(--signal)}
 
 /* ── la source ── */
 .depot{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:118px;border-radius:12px;
@@ -135,7 +143,7 @@ code{font:400 11px/1.5 var(--mono);background:var(--surface-3);padding:1px 5px;b
 .fichiers button{display:flex;gap:10px;align-items:baseline;text-align:left;border-radius:9px;padding:7px 10px;color:var(--ink-2)}
 .fichiers button:hover{background:var(--surface-3);color:var(--ink)}
 .fichiers button[aria-pressed="true"]{background:var(--cy);color:var(--on-cy)}
-.fichiers button .mono{font-size:10px;opacity:.8;margin-left:auto;white-space:nowrap}
+.fichiers button .num{font-size:10px;opacity:.8;margin-left:auto;white-space:nowrap}
 .choisi{margin-top:12px;display:flex;gap:12px;align-items:center;border-radius:12px;background:var(--surface-3);padding:10px 12px}
 .choisi .nom{font:600 13px/1.3 var(--ui);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .choisi .quoi{font:400 9px/1.3 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
@@ -159,10 +167,10 @@ code{font:400 11px/1.5 var(--mono);background:var(--surface-3);padding:1px 5px;b
 
 /* ── la lecture ── */
 .scene{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(300px,1fr);gap:12px;margin-top:12px;align-items:start}
-.ecran{border-radius:14px;overflow:hidden;background:var(--well)}
-.ecran video{display:block;width:100%;max-height:calc(46 * var(--vh));background:var(--black)}
+:where(.barre-page,.corps-page) .ecran{border-radius:14px;overflow:hidden;background:var(--well)}
+:where(.barre-page,.corps-page) .ecran video{display:block;width:100%;max-height:calc(46 * var(--vh));background:var(--black)}
 #d-ecran{border-radius:12px}#d-ecran video{max-height:calc(30 * var(--vh))}
-.ecran video.son{height:0;max-height:0}
+:where(.barre-page,.corps-page) .ecran video.son{height:0;max-height:0}
 .hud{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center;padding:9px 12px;background:var(--surface-3)}
 .hud .g{display:flex;align-items:center;gap:10px;min-width:0}.hud .g.droite{justify-content:flex-end}
 .hud .gros{font:400 19px/1 var(--disp);white-space:nowrap}
@@ -180,7 +188,7 @@ code{font:400 11px/1.5 var(--mono);background:var(--surface-3);padding:1px 5px;b
 .parle .m.ici{color:var(--ink);text-decoration:underline 2px var(--red-accent);text-underline-offset:4px}
 .jeton{display:inline-flex;align-items:center;gap:7px;border-radius:6px;padding:5px 11px 5px 7px;background:var(--surface-4);font:600 11px/1 var(--ui);letter-spacing:.06em}
 .jeton i{width:14px;height:4px;border-radius:2px}
-.jeton .mono{font-size:10px;color:var(--ink-2);font-weight:400}
+.jeton .num{font-size:10px;color:var(--ink-2);font-weight:400}
 
 /* ── les voix ── */
 .voix{display:flex;flex-direction:column;gap:4px}
@@ -250,7 +258,7 @@ code{font:400 11px/1.5 var(--mono);background:var(--surface-3);padding:1px 5px;b
 .tableau td.fort{color:var(--ink);font-weight:600}
 .tableau tr:hover td{background:var(--surface-3)}
 .tableau td .cle{display:inline-block;width:12px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
-.defile{max-height:360px;overflow:auto}
+:where(.barre-page,.corps-page) .defile{max-height:360px;overflow:auto}
 .matrice td.n{min-width:52px}
 .matrice td.max{color:var(--on-cy);background:var(--cy);border-radius:6px;box-shadow:none}
 
@@ -311,7 +319,7 @@ pre.cmd{margin:0;background:var(--well);border-radius:10px;padding:11px 13px;fon
 
 /* la place de la page, pas la fenêtre : le panneau Asset ouvert lui en prend (@container sr-page, commun/shell.css) */
 @container sr-page (max-width:960px){.grille2,.scene,.bandeau{grid-template-columns:1fr}.maintenant{grid-template-columns:repeat(4,minmax(0,1fr))}.latences{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@container sr-page (max-width:600px){.bar{position:static}.titre small{display:none}.wrap{padding:12px 12px 50px}.haut{padding:10px 12px 8px}.menu button{padding:9px 14px 12px}.menu .nm{font-size:12px}
+@container sr-page (max-width:600px){.barre-page{position:static}.titre small{display:none}.corps-page{padding:12px 12px 50px}.haut{padding:10px 12px 8px}.menu button{padding:9px 14px 12px}.menu .nm{font-size:12px}
   .frise{padding:12px 10px}.frise-corps{grid-template-columns:86px minmax(0,1fr)}
   .script .r{grid-template-columns:52px minmax(0,1fr)}.script .dit{grid-column:1/-1}.demo{flex-direction:column;align-items:stretch}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
@@ -322,7 +330,7 @@ mountHeader('analyse', { sub: 'diarisation' });
 </script>
 </head>
 <body>
-<header class="bar">
+<header class="barre-page">
   <div class="haut">
     <a class="retour" id="retour" href="../"><svg viewBox="0 0 20 12"><path d="M13 1L7 6L13 11"></path></svg><span id="retour-txt">Movie Analysis</span></a>
     <a class="mark" href="../">Movie Analysis</a>
@@ -331,7 +339,7 @@ mountHeader('analyse', { sub: 'diarisation' });
     <button class="pastille" id="pastille" data-etat="hors" title="La machine qui calcule — voir l’onglet Machine"><i></i><span id="pastille-txt">connexion…</span></button>
   </div>
   <nav class="menu" role="tablist">
-    <div class="pan">
+    <div class="onglets">
       <button role="tab" data-onglet="fichier" aria-selected="true"><span class="ix">01</span><span class="nm">Fichier</span></button>
       <button role="tab" data-onglet="direct" aria-selected="false"><span class="ix">02</span><span class="nm">Direct</span></button>
       <button role="tab" data-onglet="machine" aria-selected="false"><span class="ix">03</span><span class="nm">Machine</span></button>
@@ -340,7 +348,7 @@ mountHeader('analyse', { sub: 'diarisation' });
   </nav>
 </header>
 
-<main class="wrap">
+<main class="corps-page">
 <!-- ═══════════════════════════════════════════════════════════════ FICHIER -->
 <section id="onglet-fichier">
   <div class="bandeau">
@@ -355,7 +363,7 @@ mountHeader('analyse', { sub: 'diarisation' });
   <div class="grille2" style="margin-top:12px">
     <div class="panneau">
       <div class="tete"><span class="lab">01 · Source</span><span class="sep"></span>
-        <button class="pill petit" id="f-ouvrir-json">Ouvrir un résultat .json</button></div>
+        <button class="bouton petit" id="f-ouvrir-json">Ouvrir un résultat .json</button></div>
       <div class="demo">
         <div><span class="lab">Pour voir tout de suite</span><b>Démo · une scène en français</b>
           <span class="note">Getaround, 30 s : une négociatrice, des braqueurs, une voix off — avec les répliques et les personnages de la chaîne.</span></div>
@@ -376,7 +384,7 @@ mountHeader('analyse', { sub: 'diarisation' });
       </div>
       <div class="choisi" id="f-choisi" hidden>
         <div style="min-width:0;flex:1"><div class="quoi" id="f-choisi-quoi"></div><div class="nom" id="f-choisi-nom"></div></div>
-        <button class="pill petit" id="f-oublier">Changer</button>
+        <button class="bouton petit" id="f-oublier">Changer</button>
       </div>
       <input type="file" id="f-json" accept=".json,application/json" hidden>
     </div>
@@ -393,7 +401,7 @@ mountHeader('analyse', { sub: 'diarisation' });
         ne change que ce que le modèle voit à la fois — plus le tampon est long, plus il a de contexte.</p>
       <div style="display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap">
         <button class="action" id="f-lancer" disabled>Lancer l’analyse</button>
-        <button class="pill" id="f-annuler" hidden>Annuler</button>
+        <button class="bouton" id="f-annuler" hidden>Annuler</button>
         <span class="note" id="f-pourquoi"></span>
       </div>
       <div class="progres" id="f-progres" hidden>
@@ -413,9 +421,9 @@ mountHeader('analyse', { sub: 'diarisation' });
         <div class="hud">
           <div class="g"><span class="gros" id="hud-t">00:00.00</span><span class="tc" id="hud-d"></span></div>
           <div class="g">
-            <button class="pill petit" id="hud-moins" title="Reculer de 5 s (←)">−5 s</button>
+            <button class="bouton petit" id="hud-moins" title="Reculer de 5 s (←)">−5 s</button>
             <button class="lecture" id="hud-lire" aria-pressed="false" title="Lecture (espace)"><svg viewBox="0 0 16 16"><path id="hud-ico" d="M4 2l10 6-10 6z"/></svg></button>
-            <button class="pill petit" id="hud-plus" title="Avancer de 5 s (→)">+5 s</button>
+            <button class="bouton petit" id="hud-plus" title="Avancer de 5 s (→)">+5 s</button>
           </div>
           <div class="g droite"><span class="tc" id="hud-nom"></span></div>
         </div>
@@ -455,7 +463,7 @@ mountHeader('analyse', { sub: 'diarisation' });
     <div class="grille2" style="margin-top:12px">
       <div class="panneau">
         <div class="tete"><span class="lab">Seuils · post-traitement de NeMo, refait dans la page</span><span class="sep"></span>
-          <button class="pill petit" id="p-defaut">Réglages NeMo</button></div>
+          <button class="bouton petit" id="p-defaut">Réglages NeMo</button></div>
         <div class="reglages" id="p-reglages"></div>
         <p class="note" style="margin:12px 0 0" id="p-conforme"></p>
       </div>
@@ -468,13 +476,13 @@ mountHeader('analyse', { sub: 'diarisation' });
     <div class="panneau" id="qdq" style="margin-top:12px">
       <div class="tete"><span class="lab">Qui dit quoi · <span id="qdq-source"></span></span><span class="sep"></span>
         <label class="lab" style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="qdq-suivre" checked> suivre la lecture</label>
-        <button class="pill petit" id="qdq-txt">Exporter le texte</button></div>
+        <button class="bouton petit" id="qdq-txt">Exporter le texte</button></div>
       <div class="script" id="qdq-script"></div>
     </div>
 
     <div class="panneau" id="cpl" style="margin-top:12px" hidden>
       <div class="tete"><span class="lab">Couplage image ↔ voix · <span id="cpl-titre"></span></span><span class="sep"></span>
-        <button class="pill petit" id="cpl-export">Propositions pour la chaîne .json</button></div>
+        <button class="bouton petit" id="cpl-export">Propositions pour la chaîne .json</button></div>
       <p class="note" style="margin:0 0 12px">L’image ancre, la voix propage. Une réplique « vue et entendue » — la bouche filmée bouge
         en mesure avec le son — dit quel personnage parle ; Nemotron dit quelle voix. Chaque voix prend le personnage de ses ancres,
         puis le porte sur toutes ses répliques : hors champ, de dos, voix off. Là où la chaîne s’arrêtait faute de visage.</p>
@@ -498,11 +506,11 @@ mountHeader('analyse', { sub: 'diarisation' });
     <div class="panneau" style="margin-top:12px">
       <div class="tete"><span class="lab">Exports · ce que montre la frise, aux seuils du moment</span></div>
       <div class="rangee">
-        <button class="pill" id="x-rttm">RTTM</button>
-        <button class="pill" id="x-csv">CSV des segments</button>
-        <button class="pill" id="x-json">Résultat complet .json</button>
-        <button class="pill" id="x-table" aria-pressed="false">Voir les segments</button>
-        <button class="pill" id="x-demo" hidden>Garder comme démo</button>
+        <button class="bouton" id="x-rttm">RTTM</button>
+        <button class="bouton" id="x-csv">CSV des segments</button>
+        <button class="bouton" id="x-json">Résultat complet .json</button>
+        <button class="bouton" id="x-table" aria-pressed="false">Voir les segments</button>
+        <button class="bouton" id="x-demo" hidden>Garder comme démo</button>
       </div>
       <p class="note" id="x-demo-note" hidden style="margin:10px 0 0">Le fichier téléchargé se pose dans <code>analyses/&lt;film&gt;/diarisation.json</code> du
         dépôt, puis se pousse : la démo s’ouvrira alors aussitôt, même machine éteinte — avec ce vrai résultat, sa date et sa machine.</p>
@@ -529,8 +537,8 @@ mountHeader('analyse', { sub: 'diarisation' });
         <button class="action clair" id="d-demo">Lancer la démo</button>
       </div>
       <div class="rangee" id="d-sources">
-        <button class="pill" data-src="micro" aria-pressed="true">Micro</button>
-        <button class="pill" data-src="lecture" aria-pressed="false">Lecture d’un média</button>
+        <button class="bouton" data-src="micro" aria-pressed="true">Micro</button>
+        <button class="bouton" data-src="lecture" aria-pressed="false">Lecture d’un média</button>
       </div>
       <div id="d-lecture-bloc" hidden style="margin-top:10px">
         <div class="liste rangee" id="d-films"></div>
@@ -573,7 +581,7 @@ mountHeader('analyse', { sub: 'diarisation' });
 <section id="onglet-machine" hidden>
   <div class="grille2" style="margin-top:12px">
     <div class="panneau">
-      <div class="tete"><span class="lab">01 · Connexion</span><span class="sep"></span><button class="pill petit" id="c-tester">Tester</button></div>
+      <div class="tete"><span class="lab">01 · Connexion</span><span class="sep"></span><button class="bouton petit" id="c-tester">Tester</button></div>
       <div class="rangee" id="c-machines"></div>
       <div class="champs" style="grid-template-columns:minmax(0,1fr);margin-top:10px">
         <label class="champ"><span class="lab">Adresse du service</span><input id="c-url" spellcheck="false" autocomplete="off"></label>
@@ -979,7 +987,7 @@ async function chargeTravaux() {
     for (const x of j.travaux || []) {
       t.append(el('tr', null, el('td', { class: 'n', text: (x.date || '').replace('T', ' ') }), el('td', { text: x.nom || '' }),
         el('td', { class: 'n', text: dur(x.duree_s) }), el('td', { class: 'n', text: x.latence_s != null ? nb(x.latence_s, 2) + ' s' : '—' }),
-        el('td', null, el('button', { class: 'pill petit', text: 'Ouvrir', onclick: () => ouvreTravail(x.id, x.nom) }))));
+        el('td', null, el('button', { class: 'bouton petit', text: 'Ouvrir', onclick: () => ouvreTravail(x.id, x.nom) }))));
     }
     $('#c-travaux-bloc').hidden = !(j.travaux && j.travaux.length);
   } catch (e) { /* rien : l'état dit déjà ce qui ne va pas */ }
@@ -1051,7 +1059,7 @@ function majLatences(pref) {
 function construitSources() {
   const f = $('#f-films');
   for (const film of FILMS) {
-    f.append(el('button', { class: 'pill', 'data-film': film.slug, onclick: () => choisitSource(sourceFilm(film)) }, film.titre));
+    f.append(el('button', { class: 'bouton', 'data-film': film.slug, onclick: () => choisitSource(sourceFilm(film)) }, film.titre));
   }
   const depot = $('#depot'), inp = $('#f-fichier');
   inp.addEventListener('change', () => { if (inp.files[0]) choisitFichier(inp.files[0]); inp.value = ''; });
@@ -1087,7 +1095,7 @@ function afficheFichiers() {
   box.textContent = '';
   for (const f of S.fichiers || []) {
     box.append(el('button', { 'data-chemin': f.chemin, onclick: () => choisitSource({ type: 'machine', chemin: f.chemin, nom: f.chemin.split('/').pop(), video: /\.(mp4|mov|mkv|webm|m4v|avi)$/i.test(f.chemin) }) },
-      el('span', { text: f.chemin }), el('span', { class: 'mono', text: f.mo + ' Mo · ' + f.date })));
+      el('span', { text: f.chemin }), el('span', { class: 'num', text: f.mo + ' Mo · ' + f.date })));
   }
   $('#f-machine-bloc').hidden = !(S.etat && S.etat.racine && S.fichiers && S.fichiers.length);
   afficheSource();
@@ -1450,7 +1458,7 @@ function afficheParle() {
   for (const s of qui) {
     const d = ligne(s);
     box.append(el('div', { class: 'ligne' },
-      el('span', { class: 'jeton' }, el('i', { style: 'background:' + CV(s) }), nomVoix(s), el('span', { class: 'mono', text: pct(p[s]) })),
+      el('span', { class: 'jeton' }, el('i', { style: 'background:' + CV(s) }), nomVoix(s), el('span', { class: 'num', text: pct(p[s]) })),
       el('span', { class: 'dit' + (d && d.principale ? '' : ' vide') }, !d ? (S.qdq.length ? 'pas de réplique ici' : '')
         : !d.principale ? 'même réplique que ' + d.avec.map(nomVoix).join(', ') + ' — la chaîne n’en a écrit qu’une'
         // mot à mot : dits, en cours (souligné), à venir
@@ -1529,7 +1537,7 @@ function vue() {
 function construitZooms() {
   const box = $('#tl-zooms');
   box.textContent = '';
-  for (const z of [1, 2, 4, 8, 24]) box.append(el('button', { class: 'pill petit', 'data-z': z, 'aria-pressed': String(TL.zoom === z), text: '×' + z, onclick: () => zoome(z) }));
+  for (const z of [1, 2, 4, 8, 24]) box.append(el('button', { class: 'bouton petit', 'data-z': z, 'aria-pressed': String(TL.zoom === z), text: '×' + z, onclick: () => zoome(z) }));
 }
 function zoome(z, ancreX) {
   const R = S.R, zone = $('#tl-zone');
@@ -1920,7 +1928,7 @@ function afficheComparaison() {
   const modes = $('#cmp-ref');
   if (!modes.childElementCount) {
     for (const [id, txt] of [['personnages', 'Personnages · chaîne'], ['pyannote', 'Voix pyannote']]) {
-      modes.append(el('button', { class: 'pill petit', 'data-m': id, text: txt, onclick: () => { S.refMode = id; TL.cleNoms = ''; afficheComparaison(); dessineFrise(); } }));
+      modes.append(el('button', { class: 'bouton petit', 'data-m': id, text: txt, onclick: () => { S.refMode = id; TL.cleNoms = ''; afficheComparaison(); dessineFrise(); } }));
     }
   }
   $$('#cmp-ref button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.m === S.refMode)));
@@ -2163,7 +2171,7 @@ function afficheCouplage() {
   const f = $('#cpl-filtres');
   if (!f.childElementCount) {
     for (const [id, txt] of [['tous', 'Toutes'], ['desaccord', 'Désaccords'], ['nouvelle', 'Nouvelles'], ['confirmee', 'Confirmées'], ['sans', 'Sans personnage']]) {
-      f.append(el('button', { class: 'pill petit', 'data-f': id, text: txt, onclick: () => { S.filtreCpl = id; afficheCouplage(); } }));
+      f.append(el('button', { class: 'bouton petit', 'data-f': id, text: txt, onclick: () => { S.filtreCpl = id; afficheCouplage(); } }));
     }
   }
   $$('#cpl-filtres button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.f === S.filtreCpl)));
@@ -2293,7 +2301,7 @@ function construitDirect() {
     if (D.src !== 'lecture') $('#d-ecran').hidden = true;
   });
   const films = $('#d-films');
-  for (const film of FILMS) films.append(el('button', { class: 'pill petit', 'data-film': film.slug, 'aria-pressed': 'false', text: film.titre, onclick: () => { if (D.actif) return; D.film = film; $$('#d-films button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.film === film.slug))); } }));
+  for (const film of FILMS) films.append(el('button', { class: 'bouton petit', 'data-film': film.slug, 'aria-pressed': 'false', text: film.titre, onclick: () => { if (D.actif) return; D.film = film; $$('#d-films button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.film === film.slug))); } }));
   $('#d-go').onclick = () => (D.actif ? arreteDirect() : demarreDirect());
   $('#d-garder').onclick = () => { if (D.resultat) { va('fichier'); charge(D.resultat.r, D.resultat.opts); } };
   // la démo en direct : la scène française joue, son son part vers la machine au fil de la lecture
@@ -2588,7 +2596,7 @@ function dessineDirect() {
 /* ═══════════════════════════════════════════════════════ la machine, bis ── */
 function construitMachine() {
   const box = $('#c-machines');
-  for (const m of MACHINES) box.append(el('button', { class: 'pill', 'data-m': m.id, text: m.nom, onclick: () => choisitMachine(m.id) }));
+  for (const m of MACHINES) box.append(el('button', { class: 'bouton', 'data-m': m.id, text: m.nom, onclick: () => choisitMachine(m.id) }));
   $('#c-url').addEventListener('change', () => {
     const urls = garde.lit('urls', {});
     urls[S.machine] = $('#c-url').value.trim(); garde.ecrit('urls', urls);
@@ -2625,7 +2633,7 @@ function afficheCommandes() {
   c.textContent = '';
   for (const [titre, cmd] of cmds) {
     c.append(el('div', { class: 'cmdbloc' }, el('div', { class: 'tete' }, el('span', { class: 'lab', text: titre }), el('span', { style: 'flex:1' }),
-      el('button', { class: 'pill petit', text: 'Copier', onclick: (ev) => { navigator.clipboard.writeText(cmd).then(() => { ev.target.textContent = 'Copié'; setTimeout(() => { ev.target.textContent = 'Copier'; }, 1500); }).catch(() => {}); } })),
+      el('button', { class: 'bouton petit', text: 'Copier', onclick: (ev) => { navigator.clipboard.writeText(cmd).then(() => { ev.target.textContent = 'Copié'; setTimeout(() => { ev.target.textContent = 'Copier'; }, 1500); }).catch(() => {}); } })),
       el('pre', { class: 'cmd', text: cmd })));
   }
 }

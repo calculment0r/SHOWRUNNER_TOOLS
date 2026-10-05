@@ -1554,15 +1554,18 @@ def selftest(call, ok) -> None:
            and [a["tool"] for a in t.get("actions") or []] == ["poser_texte"] and "Rotonde" in t["actions"][0]["args"]["texte"]
            and "DOCX" in (first.get("messages") or [{}])[-1].get("content", ""),
            f"agent : « lis ce document » → lire_document rend son texte, le résumé posé en note ({[a['tool'] for a in t.get('actions') or []]} {res[:2]})")
-        # un document ne se pose pas sur la planche (ideation.MEDIA_KINDS) : refusé au modèle, avec la raison
+        # un document se pose sur la planche depuis le 06/10 (ideation.MEDIA_KINDS : la carte et la liseuse,
+        # server/tools/documents.py) : la garde suit la planche, une seule vérité
         f.script = [{"tool_calls": [F.call("poser_asset", item=did)]}, {"content": "fini"}]
         f.calls.clear()
         st, r = call("POST", "/api/ideation/agent", {"board": bid, "messages": [{"role": "user", "content": "pose-le"}]})
         wait(r["job"]["id"]) if st == 200 else None
         _, conv = call("GET", f"/api/ideation/agent/{bid}")
         res = [m["content"] for c in f.calls for m in c.get("messages") or [] if m.get("role") == "tool"]
-        ok(conv["turns"][-1].get("actions") == [] and any(x.startswith("refusé") and "note" in x for x in res),
-           f"agent : poser un document est refusé au modèle (la planche ne le pose pas), il le résume en note ({res[:1]})")
+        acts = conv["turns"][-1].get("actions") or []
+        ok("document" in _ide().MEDIA_KINDS and [a["tool"] for a in acts] == ["poser_asset"] and acts[0]["args"].get("item") == did
+           and not any(x.startswith("refusé") for x in res),
+           f"agent : un document se pose sur la planche comme la planche le pose ({[a['tool'] for a in acts]} {res[:1]})")
         # l'analyse d'entrée prend tout ce qu'un projet cite (au-delà de 24), les documents lus d'abord
         many = [iid] * (MAX_ITEMS + 2) + [did]
         st, _ = call("POST", "/api/ideation/agent", {"board": bid, "messages": [{"role": "user", "content": "x", "items": many}]})

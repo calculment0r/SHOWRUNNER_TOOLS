@@ -13,12 +13,12 @@
 @media (max-width: 700px) { .lib, .sheet { padding: var(--s4) 16px 80px; } }
 
 /* ── la page de gestion : l'arbre à gauche, le lieu à droite ── */
-/* 57 px : la hauteur de l'en-tête commun (.hdr, base.css : 13 px + 30 px + 13 px + le filet) */
-.am { --hdr-h: 57px; --side-w: 256px; display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); align-items: start; min-height: calc(100 * var(--vh) - var(--hdr-h)); }
+/* --sr-hdr-h : la hauteur de l'en-tête commune (commun/shell.css : 52 px, 46 au téléphone), une seule vérité */
+.am { --side-w: 256px; display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); align-items: start; min-height: calc(100 * var(--vh) - var(--sr-hdr-h)); }
 .am[hidden] { display: none; }
 .am > .lib { max-width: none; width: 100%; margin: 0; min-width: 0; gap: var(--s3); padding-top: var(--s4); }
 @media (min-width: 1500px) { .am { --side-w: 280px; } }
-.am-side { position: sticky; top: var(--hdr-h); height: calc(100 * var(--vh) - var(--hdr-h)); overflow: auto; overscroll-behavior: contain;
+.am-side { position: sticky; top: var(--sr-hdr-h); height: calc(100 * var(--vh) - var(--sr-hdr-h)); overflow: auto; overscroll-behavior: contain;
   padding: var(--s4) var(--s3) var(--s6); background: var(--panel); box-shadow: inset -1px 0 0 var(--line); }
 .side-scrim { display: none; }
 
@@ -108,7 +108,7 @@ body.dragging .am-side [data-drop].drop-on { box-shadow: inset 0 0 0 2px var(--g
 .rename-f .fld { font-family: var(--f-disp); font-size: 22px; letter-spacing: .03em; text-transform: uppercase; max-width: 520px; height: 44px; }
 
 /* ── la barre : où, quoi, dans quel ordre ───────────────── */
-.lib-bar { display: flex; flex-direction: column; align-items: stretch; gap: var(--s2); padding: var(--s3) var(--s4); background: var(--panel); border-radius: var(--r3); position: sticky; top: 57px; z-index: 30; box-shadow: inset 0 0 0 1px var(--line); }
+.lib-bar { display: flex; flex-direction: column; align-items: stretch; gap: var(--s2); padding: var(--s3) var(--s4); background: var(--panel); border-radius: var(--r3); position: sticky; top: var(--sr-hdr-h); z-index: 30; box-shadow: inset 0 0 0 1px var(--line); }
 .lib-bar .bar-row { display: flex; align-items: center; gap: var(--s2) var(--s3); flex-wrap: wrap; min-width: 0; }
 .lib-bar .sp { flex: 1; min-width: 8px; }
 .lib-bar .seg { flex-wrap: wrap; max-width: 100%; }
@@ -367,6 +367,20 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .midi-drag .roll { position: relative; inset: auto; width: 64px; height: 40px; flex: none; }
 .midi-drag .md-t { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .midi-drag b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* la fiche d'une playlist (05/10) : sa pochette ou sa mosaïque (commun/pochette.js), ses morceaux à écouter */
+.pl-sh-poch { display: block; width: min(420px, 100%); align-self: center; }
+.viewer .pl-sh-poch { margin: var(--s5) auto; }
+.pl-sh-poch .sr-poch { width: 100%; height: auto; }
+.pl-sh-poch:hover .sr-poch { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.pl-sh-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.pl-sh-tr { display: grid; grid-template-columns: 26px minmax(0, 1fr) minmax(180px, 280px); gap: var(--s3); align-items: center;
+  padding: 6px var(--s3); border-radius: var(--r2); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
+.pl-sh-tr .t { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pl-sh-tr .t a, .pl-sh-tr .t b { font-weight: 500; font-size: 12.5px; color: var(--ink); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-sh-tr .t a:hover { color: var(--cy); }
+.pl-sh-tr.absent .t b { color: var(--ink3); text-decoration: line-through; }
+.pl-sh-tr.absent small { color: var(--amb); }
+@media (max-width: 700px) { .pl-sh-tr { grid-template-columns: 26px minmax(0, 1fr); } .pl-sh-tr .sr-mini { grid-column: 1 / -1; } }
 .sh-side { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
 .blk { background: var(--panel); border-radius: var(--r4); box-shadow: inset 0 0 0 1px var(--line); display: flex; flex-direction: column; min-width: 0; }
 .blk-head { display: flex; align-items: baseline; gap: var(--s3); padding: var(--s4) var(--s4) 0; }
