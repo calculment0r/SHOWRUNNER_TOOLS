@@ -62,9 +62,9 @@
 import { toast, api, ITEM_MIME, MULTI_MIME, uploadFile, declareZone } from '../commun/shell.js';
 import { poserObjets } from './panneau.js';
 import { MODULES, TRACK_KINDS, COLORS, COLOR_FR, AUTOMATABLE, SECTION_TAGS, SECTION_NAMES, SOURCES_OF,
-  spec, val, fmt, toNorm, fromNorm, drumVoicesOf, guessTag, moduleName } from './modules.js';
+  spec, val, fmt, fromNorm, drumVoicesOf, guessTag, moduleName } from './modules.js';
 import { peaks, projEnd, interp, clipBuffer, audioGeom } from './moteur.js';
-import { el, knob, menu, tok, clamp, put, confirmBox, inlineEdit, splitter, letter } from './ui.js';
+import { el, knob, fader, menu, tok, clamp, put, confirmBox, inlineEdit, splitter, letter } from './ui.js';
 import { sectionAt, duplicateSection, moveSection, swapSection, removeSection, trimStart, rangerGroupes } from './projet.js';
 import { createDock } from './editeurs.js';
 import { createBrowser } from './navigateur.js';
@@ -719,12 +719,10 @@ export function createTimeline(app) {
     const st = app.mod(t.strip), src = app.mod(t.src);
     const tog = (label, on, title, fn, cls = '') => el('button', { class: `tb sm ${cls}${on ? ' on' : ' ghost'}`, type: 'button', title, 'aria-pressed': on,
       onclick: (e) => { e.stopPropagation(); fn(); } }, label);
-    const volS = spec('strip', 'vol');
-    const vol = el('input', { type: 'range', class: 'ar-vol', min: 0, max: 1, step: 0.001, value: toNorm(volS, val(st, 'vol')),
-      title: `volume : ${fmt(volS, val(st, 'vol'))} dB`, 'aria-label': 'volume',
-      oninput: (e) => { const s = volS; const v = Math.round((s.min + e.target.value * (s.max - s.min)) * 10) / 10; st.params.vol = v; e.target.title = `volume : ${fmt(s, v)} dB`; app.commit('param', st); },
-      onchange: () => app.commit('quiet'), ondblclick: (e) => { st.params.vol = 0; e.target.value = toNorm(volS, 0); app.commit('param', st); app.commit('quiet'); },
-      onpointerdown: (e) => e.stopPropagation() });
+    // le volume : le fader de la console couché (ui.js), dans la teinte de la
+    // piste — double-clic : 0 dB ; plus de curseur natif au rond (Cal, 06/10)
+    const vol = fader(spec('strip', 'vol'), val(st, 'vol'), { couche: true, valeur: false, cls: 'ar-vol', accent: t.color, label: 'volume',
+      onInput: (v) => { st.params.vol = Math.round(v * 10) / 10; app.commit('param', st); }, onChange: () => app.commit('quiet') });
     const mtr = el('div', { class: 'ar-mtr' }, el('i'));
     meters.push([t.strip, mtr]);
     // son nom entier au survol : en-tête bas, il est tronqué (musique.css, les paliers)
@@ -840,7 +838,7 @@ export function createTimeline(app) {
     return null;
   }
   function dragTrack(e, t, box, idsOverride = null) {
-    if (e.button !== 0 || e.target.closest('button, input, select, .kn, .bar, .editing, .mu-inline')) return;
+    if (e.button !== 0 || e.target.closest('button, input, select, .kn, .fdr, .bar, .editing, .mu-inline')) return;
     const mode = e.ctrlKey || e.metaKey ? 'toggle' : e.shiftKey ? 'range' : 'replace';
     const x0 = e.clientX, y0 = e.clientY;
     let started = false, target = null, ghost = null;
