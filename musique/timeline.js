@@ -72,6 +72,8 @@ import { createBrowser } from './navigateur.js';
 import { isGenTrack, isRegion, genTrackChoices, addGenTrack, newRegion, drawRegion, regionMenuItems, genTarget, soundSlotsOf, useSound, injectFrom } from './generatif_region.js';
 import { openExtract, placeMidi, saveClipMidi } from './generatif_midi.js';
 import { schemaNow } from './generatif_modeles.js';
+// le tempo d'un clip audio (05/10) : « Détecter le tempo » au clic droit (bpm.js, tempo.js)
+import { openTempo } from './bpm.js';
 // la molette : la règle commune de toutes les timelines du portail (29/09)
 import { brancher, borne, tenirY, AIDE as MOLETTE } from '../commun/molette.js';
 // LA tête de lecture du portail (30/09, Cal : « toutes nos timelines [avec] la même cue […] celle du montage vidéo »)
@@ -1093,6 +1095,7 @@ export function createTimeline(app) {
         { label: c.loop ? 'Ne plus boucler le son' : 'Boucler le son', disabled: !c.item, why: noSound, onclick: () => app.toggleLoop(c.id) },
         { label: 'Séparer en stems', sub: 'voix · batterie · basse · autre', disabled: !c.item, why: noSound, onclick: () => app.stems(c.id) },
         { label: 'Extraire le MIDI', sub: 'notes · partition · batterie', disabled: !c.item, why: noSound, onclick: () => openExtract(app, c.id) },
+        { label: 'Détecter le tempo', sub: 'bpm · temps fort · caler', disabled: !c.item, why: noSound, onclick: () => openTempo(app, c.id) },
         ...(slots.length ? ['-', { head: `pour ${tgt.name || 'la région'} (génératif)` }] : []),
         ...slots.map((sl) => ({ label: `Comme ${sl.label}`, sub: 'la case du panneau du bas', onclick: () => useSound(app, sl.region, sl.pid, c.item) })),
       ] : [

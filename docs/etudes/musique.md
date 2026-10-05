@@ -740,3 +740,36 @@ Et le Ctrl+Z commun du portail (`commun/undo.js`, `docs/etudes/preferences.md`
   l'ordre du trajet ; « ← → » du rack la remettent en série.
 - La palette des pistes a sept jetons (`COLORS`, `server/tools/music.py`) ;
   plus de couleurs demanderaient des jetons dans `commun/tokens.css`.
+
+## Détecter le tempo d'un clip audio (05/10/2026)
+
+Cal : « ça serait top d'avoir le BPM detector dans audio sur une piste audio
+qu'on a importée ». Clic droit sur un clip audio → **Détecter le tempo** : un
+tiroir dit le tempo (et ± son incertitude), la confiance, la première
+pulsation, le premier temps fort, dessine la grille sur la forme d'onde,
+fait écouter le son avec un clic par temps ; on corrige (÷ 2, × 2, saisie,
+le « 1 » avec ‹ ›) ; **Appliquer** règle le tempo du projet sur celui du son
+(ou le clip sur celui du projet, Re-Pitch) et/ou cale le clip (son début sur
+le temps fort, posé sur la barre de mesure la plus proche ; ce qui précède
+reste derrière la poignée gauche). Un seul Ctrl+Z défait tout.
+
+- Calcul **dans la page** (`musique/tempo.js`, module pur ; `bpm.js` le
+  tiroir) sur le son que le moteur a déjà décodé, rééchantillonné à 11 025 Hz
+  mono par un `OfflineAudioContext` : 30 s en ~0,2-0,3 s, 3 min en ~1,3 s. Le
+  serveur (bibliothèque standard) n'a pas de FFT. La méthode et ses sources
+  (Percival & Tzanetakis 2014 ; Ellis 2007 et librosa ; Davies & Plumbley
+  2006 ; Goto 2001 ; Lerdahl & Jackendoff 1983 pour l'alternance) sont en tête
+  de `tempo.js` ; ce qui est « notre règle » y est dit.
+- Essais (`server/tools/music_tempo.py`, selftest : clics écrits par `wave`,
+  lus par le module de la page sous node) : 90, 120, 128, 174 BPM, droits et
+  swing, 60 (l'octave 60/120), 174 en noires seules (87/174), 140 swing dans
+  du bruit : tempo à ± 0,01, proposé à l'entier, première pulsation à ± 1 ms,
+  temps fort juste, confiance 1,00 ; 3 s et un silence refusés.
+- Sur de la musique (exemples de librosa, non versionnés) : « Choice » 68,0
+  (librosa : 136 ; la grille à 136 alterne fort / faible, rapport 0,26 — la
+  page propose × 2), « Vibe Ace » 65,0 (× 2 « tout aussi plausible »), une
+  valse à 150,0, un orchestre au tempo libre et une caisse claire qui
+  accélère à confiance ~0,05 et ~0,02.
+- Reste : le temps fort est une estimation (la page le dit) ; pas d'étirement
+  sans changer la hauteur dans ODIO, donc pas de « warp » ; le résultat n'est
+  pas gardé dans le projet (refait en moins d'une seconde).

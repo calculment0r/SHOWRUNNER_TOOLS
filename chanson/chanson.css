@@ -166,3 +166,49 @@ canvas.ch-wave { display: block; width: 100%; height: 56px; cursor: pointer; col
   .ch-advin { grid-template-columns: 1fr; gap: 4px; }
   .ch-presets { grid-template-columns: 1fr; }
 }
+
+/* ── relire la partition avant de chanter (05/10) ──────────
+   La case du rail, sous la qualité ; la carte de la partition en tête
+   des chansons : sa structure (une bande par section, à la longueur de
+   ses mesures), ses accords, le premier vers de chaque section, son
+   texte ABC modifiable. Les teintes des sections : la rampe de la
+   console (jetons), jamais l'orange, qui reste l'action. */
+.ch-relire { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; align-items: start; padding: 8px 10px; border-radius: var(--r2);
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); cursor: pointer; }
+.ch-relire input { margin: 2px 0 0; accent-color: var(--grn2); }
+.ch-relire b { display: block; font-weight: 600; font-size: 12px; color: var(--ink); }
+.ch-relire small { display: block; font-size: 10.5px; line-height: 1.4; color: var(--ink3); margin-top: 2px; }
+.ch-relire.off { opacity: .6; cursor: not-allowed; }
+.ch-act .ch-act-n { text-align: center; }
+
+.ch-plan { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; margin-bottom: 8px; border-radius: var(--r3);
+  background: var(--panel); box-shadow: inset 3px 0 0 var(--grn2), inset 0 0 0 1px var(--line-gr); }
+.ch-plan.stale { box-shadow: inset 3px 0 0 var(--amb), inset 0 0 0 1px var(--line-amb); }
+.ch-plan.busy { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.ch-plan-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ch-plan-h .sp { flex: 1; }
+.ch-plan-st { font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--grn2); }
+.ch-plan.stale .ch-plan-st { color: var(--amb); }
+.ch-plan-facts { display: flex; flex-direction: column; gap: 8px; }
+.ch-plan-k { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.ch-plan-k span { display: flex; flex-direction: column; gap: 1px; }
+.ch-plan-k i { font-style: normal; font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink3); }
+.ch-plan-k b { font-family: var(--f-mono); font-weight: 400; font-size: 13px; color: var(--cy); }
+.ch-plan-bar { display: flex; gap: 2px; height: 34px; border-radius: var(--r2); overflow: hidden; }
+.ch-plan-bar span { flex-basis: 0; min-width: 0; display: flex; flex-direction: column; justify-content: center; padding: 0 6px;
+  background: color-mix(in srgb, var(--k) 26%, var(--panel2)); box-shadow: inset 0 2px 0 var(--k); overflow: hidden; }
+.ch-plan-bar b { font-weight: 600; font-size: 10.5px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-plan-bar small { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .1em; color: var(--ink2); white-space: nowrap; }
+.ch-plan-secs { display: flex; flex-direction: column; gap: 3px; }
+.ch-plan-sec { display: grid; grid-template-columns: 92px minmax(0, 1fr) minmax(0, 1.1fr); gap: 10px; align-items: baseline; font-size: 11.5px; }
+.ch-plan-sec b { font-weight: 600; color: var(--ink); box-shadow: inset 3px 0 0 var(--k); padding-left: 8px; }
+.ch-plan-ch { font-family: var(--f-mono); font-size: 10.5px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-plan-v { color: var(--ink3); font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+details.ch-plan-txt > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+details.ch-plan-txt > summary::-webkit-details-marker { display: none; }
+details.ch-plan-txt > summary .r { font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
+textarea.fld.ch-plan-abc { width: 100%; margin-top: 6px; font-family: var(--f-mono); font-size: 10.5px; line-height: 1.55; letter-spacing: 0; min-height: 160px; }
+@media (max-width: 560px) {
+  .ch-plan-sec { grid-template-columns: 80px minmax(0, 1fr); }
+  .ch-plan-v { grid-column: 1 / -1; }
+}

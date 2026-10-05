@@ -11,6 +11,15 @@
 //   Asset, disque) à « Reprendre » ou dont « S'en inspirer », la qualité en
 //   mots simples (Rapide, Soigné) ; le modèle et le reste dans « Paramètres
 //   avancés », fermés. Créer (le seul orange).
+// - Relire la partition (05/10, Cal : « on devait pas avoir un mode de
+//   validation de ce que le modèle va faire avant de le calculer ? notre
+//   modèle "qualité" le fait. on met ce modèle par défaut aussi ») : avec
+//   Soigné (YuE2, le défaut) et Reprendre, l'orange fait d'abord écrire la
+//   partition (`chanson.plan`) ; elle s'affiche en tête des chansons — sa
+//   structure, ses accords, son tempo, sa tonalité, sa durée, son texte ABC
+//   modifiable — et l'orange devient « Chanter cette partition », qui la
+//   fait chanter telle quelle. Allumé par défaut ; Rapide (ACE-Step) n'a
+//   rien à relire et le dit.
 // - Tes chansons : les rendus en file en tête, puis chaque chanson avec son
 //   lecteur (forme d'onde, clic = aller là), Variante, Séparer les pistes,
 //   Ouvrir dans ODIO (ces deux-là : le Studio ; sans lui, le bouton dit
@@ -34,12 +43,17 @@ if (!TOOLS.some((t) => t.id === 'chanson')) {
 }
 
 const KEY = 'sr-chanson.v1';
-const DEF = { prompt: '', vocal: true, lyrics: '', duration: 60, exact: '', preset: 'rapide', refMode: 'cover', n: 1, seed: '',
-  precision: 'bf16', bpm: '', key: '', language: 'fr' };
+const DEF = { prompt: '', vocal: true, lyrics: '', duration: 60, exact: '', preset: 'soigne', refMode: 'cover', n: 1, seed: '',
+  precision: 'bf16', bpm: '', key: '', language: 'fr', relire: true };
+// la forme gardée dans ce navigateur : v2 (05/10) remet Soigné et « relire » par défaut
+// une fois, même si l'ancien défaut (Rapide) avait été gardé
+const FORM_V = 2;
 const S = {
   cfg: null, f: { ...DEF }, ref: null, advOpen: false,
   songs: [], total: 0, jobs: [], sending: false, writing: false,
   cur: null,               // ce qui joue : { id, song }
+  plan: null,              // la partition à relire : { abc, resume, check, engine, model, fp }
+  planJob: null,           // le travail qui l'écrit
   waves: new Map(), fresh: new Set(),
 };
 // des mots de style : la page les montre en français, le modèle les lit en anglais (ses exemples le sont)
@@ -61,6 +75,13 @@ const studio = () => !!S.cfg?.studio?.ok;
 // le modèle : celui que la référence impose, sinon celui du préréglage (un modèle par préréglage : une seule vérité)
 const model = () => (S.ref ? REF(S.f.refMode)?.model : PRE(S.f.preset)?.model) || 'ace';
 const presetOf = (m) => S.cfg?.presets.find((p) => p.model === m)?.id;
+// relire la partition avant de chanter : allumé, et le modèle en écrit une (YuE2)
+const relire = () => !!S.f.relire && !!S.cfg?.plan?.models?.[model()]?.ok;
+// l'empreinte de ce qui écrit la partition : changer le style, les paroles, la référence
+// la périme (la durée, les versions, la graine du chant ne la touchent pas)
+const fp = () => JSON.stringify([model(), S.f.prompt.trim(), S.f.vocal, S.f.vocal ? S.f.lyrics.trim() : '', S.ref?.id || '',
+  S.ref ? S.f.refMode : '', S.f.language, S.f.precision]);
+const planOk = () => !!S.plan?.abc && S.plan.fp === fp();
 function duration() {
   const x = parseFloat(String(S.f.exact).replace(',', '.'));
   return String(S.f.exact).trim() !== '' && isFinite(x) ? x : S.f.duration;
@@ -68,7 +89,7 @@ function duration() {
 
 // ── la mémoire de ce navigateur ─────────────────────────────
 function save() {
-  try { localStorage.setItem(KEY, JSON.stringify({ f: S.f, ref: S.ref?.id || null, advOpen: S.advOpen })); } catch { /* stockage fermé */ }
+  try { localStorage.setItem(KEY, JSON.stringify({ v: FORM_V, f: S.f, ref: S.ref?.id || null, advOpen: S.advOpen, plan: S.plan })); } catch { /* stockage fermé */ }
 }
 function restore() {
   try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; }
@@ -85,6 +106,8 @@ function why() {
   if (!(d >= m.min && d <= m.max)) return `durée : de ${DUR_FR(m.min)} à ${DUR_FR(m.max)}${S.ref ? '' : ` en ${PRE(S.f.preset)?.label.toLowerCase()}`}`;
   if (S.ref && !REF(f.refMode)?.ready) return REF(f.refMode)?.why || 'pas prêt';
   if (!m.ready) return m.why || 'pas prêt';
+  if (relire() && S.planJob) return 'la partition s’écrit';
+  if (relire() && planOk() && S.plan.check?.ok === false) return `la partition ne passe pas : ${S.plan.check.error}`;
   return '';
 }
 function body() {
@@ -97,10 +120,11 @@ function body() {
   const seed = String(f.seed).trim();
   return { prompt: f.prompt.trim(), vocal: f.vocal, lyrics: f.vocal ? f.lyrics.trim() : '', duration: duration(),
     preset: S.ref ? presetOf(m) || f.preset : f.preset, ref: S.ref?.id || '', ref_mode: S.ref ? f.refMode : '',
-    n: f.n, seed: seed === '' ? -1 : Math.round(+seed), adv };
+    n: f.n, seed: seed === '' ? -1 : Math.round(+seed), adv, abc: relire() && planOk() ? S.plan.abc : '' };
 }
 async function create() {
   if (why() || S.sending) return;
+  if (relire() && !planOk()) { writePlan(); return; }
   S.sending = true; paintAct();
   try {
     const j = await api('chanson/create', { method: 'POST', body: body() });
@@ -130,7 +154,7 @@ function buildRail() {
     pan('Voix', null, el('div', { class: 'seg ch-full', id: 'ch-vocal', role: 'group', 'aria-label': 'voix' }),
       el('div', { id: 'ch-lyrbox' }, el('div', { class: 'ch-lyr-h' }, el('span', { class: 'lbl' }, 'Paroles'), el('span', { class: 'sp' }), lyrBtn), lyrTa)),
     pan('Durée', null, el('div', { class: 'seg ch-full', id: 'ch-dur', role: 'group', 'aria-label': 'durée' })),
-    pan('Qualité', el('span', { id: 'ch-fake' }), el('div', { class: 'ch-presets', id: 'ch-presets' })),
+    pan('Qualité', el('span', { id: 'ch-fake' }), el('div', { class: 'ch-presets', id: 'ch-presets' }), el('div', { id: 'ch-relire' })),
     pan('Référence son', el('span', { class: 'lbl' }, 'facultatif'), el('div', { id: 'ch-ref' })),
     el('details', { class: 'ch-adv', id: 'ch-adv', open: S.advOpen || null, ontoggle: (e) => { S.advOpen = e.target.open; save(); } }),
     el('div', { class: 'ch-act', id: 'ch-act' }), fileIn);
@@ -138,7 +162,7 @@ function buildRail() {
   lyrTa.value = S.f.lyrics;
   paintRail();
 }
-function paintRail() { paintChips(); paintVocal(); paintLyrBtn(); paintDur(); paintRef(); paintPresets(); paintAdv(); paintAct(); }
+function paintRail() { paintChips(); paintVocal(); paintLyrBtn(); paintDur(); paintRef(); paintPresets(); paintAdv(); paintAct(); paintPlan(); }
 
 // un mot entier (« male vocal » n'est pas dans « female vocal »)
 const wordRx = (w) => new RegExp(`(^|[^\\p{L}-])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[^\\p{L}-])`, 'iu');
@@ -223,8 +247,24 @@ function paintPresets() {
       onclick: () => { if (off) { toast(off, 4000); return; } S.f.preset = p.id; save(); paintPresets(); paintAdv(); paintAct(); } },
     el('b', {}, p.label), el('span', {}, off || p.about));
   }));
+  paintRelire();
   const M = MOD(m);
   put($('#ch-fake'), M?.engine === 'factice' ? el('span', { class: 'ch-fake', title: 'moteur d’essai : des sons synthétisés, pas le modèle — il se branche dans Admin → Câblage' }, 'essai') : null);
+}
+// « relire la partition avant de chanter » : la validation de ce que YuE2 va chanter
+function paintRelire() {
+  const box = $('#ch-relire');
+  if (!box || !S.cfg?.plan) return;
+  const P = S.cfg.plan.models?.[model()] || {};
+  // en mots simples dans le rail (le nom du modèle reste dans les avancés et au survol)
+  const mot = S.ref ? REF(S.f.refMode)?.label : PRE(S.f.preset)?.label;
+  const off = P.ok ? '' : `${mot || 'Ce réglage'} compose et rend d’un même geste : rien à relire avant le calcul`;
+  put(box, el('label', { class: 'ch-relire' + (off ? ' off' : ''), title: off ? P.why : 'YuE2 écrit d’abord sa partition (structure, mélodie, accords : YuE2GenerateABC) ; tu la relis, tu la modifies, puis elle est chantée telle quelle' },
+    el('input', { type: 'checkbox', checked: S.f.relire && !off ? true : null, disabled: off ? true : null, 'aria-label': 'relire la partition avant de chanter',
+      onchange: (e) => { S.f.relire = e.target.checked; save(); paintRelire(); paintAct(); paintPlan(); } }),
+    el('span', {}, el('b', {}, 'Relire la partition avant de chanter'),
+      el('small', {}, off || (S.f.relire ? 'la structure, les accords et le tempo d’abord ; le chant ensuite' : 'éteint : la partition s’écrit et se chante d’un trait')))));
+  paintPlan();
 }
 function paintAdv() {
   const d = $('#ch-adv');
@@ -259,11 +299,134 @@ function paintAdv() {
   put(d, el('summary', {}, el('span', { class: 'lbl' }, 'Paramètres avancés'), el('span', { class: 'r' }, [M.name, touched].filter(Boolean).join(' · '))),
     el('div', { class: 'ch-advin' }, kids));
 }
+function actLabel() {
+  if (S.sending) return 'Envoi…';
+  if (relire()) {
+    if (S.planJob) return 'La partition s’écrit…';
+    if (planOk()) return S.f.n > 1 ? `Chanter cette partition · ${S.f.n} versions` : 'Chanter cette partition';
+    return S.plan?.abc ? 'Réécrire la partition' : 'Écrire la partition';
+  }
+  return S.f.n > 1 ? `Créer ${S.f.n} versions` : 'Créer';
+}
 function paintAct() {
   const w = why();
+  // la partition périmée se dit tout de suite (sans refaire la carte : on peut être en train d'y écrire)
+  const card = document.querySelector('.ch-plan:not(.busy)');
+  if (card && S.plan) {
+    const stale = S.plan.fp !== fp();
+    card.classList.toggle('stale', stale);
+    const st = card.querySelector('.ch-plan-st');
+    if (st) st.textContent = stale ? 'périmée : le style ou les paroles ont changé' : S.plan.edited ? 'retouchée' : 'à relire';
+    if (stale !== !!card.querySelector('[data-garder]')) requestAnimationFrame(paintPlan);
+  }
   put($('#ch-act'), el('button', { class: 'tb go block', id: 'ch-create', type: 'button', disabled: !!w || S.sending || null, onclick: create },
-    S.sending ? 'Envoi…' : S.f.n > 1 ? `Créer ${S.f.n} versions` : 'Créer'),
-  w ? el('div', { class: 'why' }, w) : null);
+    actLabel()),
+  w ? el('div', { class: 'why' }, w)
+    : relire() && !planOk() ? el('div', { class: 'ch-note ch-act-n' }, 'la partition d’abord : tu la relis, puis elle est chantée telle quelle') : null);
+}
+
+// ── relire la partition avant de chanter ────────────────────
+async function writePlan(again = false) {
+  if (S.planJob) return;
+  const b = body();
+  delete b.abc;
+  if (again) b.seed = -1;                       // réécrire : une autre graine pour la partition
+  const want = fp();
+  S.sending = true; paintAct();
+  let j;
+  try { j = await api('chanson/plan', { method: 'POST', body: b }); } catch (e) { toast(e.message, 7000); S.sending = false; paintAct(); return; }
+  S.sending = false;
+  S.planJob = j; paintAct(); paintPlan();
+  jobs.poll(true);
+  try {
+    const done = await jobs.wait(j.id);
+    if (done.state !== 'done') throw new Error(`partition : ${stateFr(done.state)}${done.message ? ' — ' + done.message : ''}`);
+    const r = done.result || {};
+    S.plan = { abc: r.abc || '', resume: r.resume, check: r.check, engine: r.engine, model: r.model, seed: r.seed, fp: want, edited: false };
+    save();
+    toast(r.engine === 'factice' ? 'partition d’essai écrite (moteur factice) : relis-la' : 'partition écrite : relis-la, puis chante-la', 5000);
+  } catch (e) { toast(e.message, 7000); }
+  S.planJob = null; paintAct(); paintPlan();
+}
+// une retouche à la main : relue par le serveur (ce qu'elle dit, et abc_tools)
+let lireT = null;
+function editPlan(txt) {
+  S.plan = { ...S.plan, abc: txt, edited: true };
+  save(); paintAct();
+  clearTimeout(lireT);
+  lireT = setTimeout(async () => {
+    try {
+      const r = await api('chanson/plan/lire', { method: 'POST', body: { abc: txt } });
+      if (S.plan?.abc !== txt) return;
+      S.plan = { ...S.plan, resume: r.resume, check: r.check };
+      save(); paintPlanFacts(); paintAct();
+    } catch (e) { toast(e.message, 5000); }
+  }, 600);
+}
+// les paroles par section, pour mettre le premier vers en face de chaque section de la partition
+function lyricBlocks() {
+  if (!S.f.vocal) return [];
+  return S.f.lyrics.split(/\n(?=\s*\[)/).map((b) => {
+    const m = b.match(/^\s*\[([^\]]+)\]/);
+    const lines = b.split('\n').slice(m ? 1 : 0).map((x) => x.trim()).filter(Boolean);
+    return { tag: (m ? m[1] : 'verse').toLowerCase().split(/\s/)[0].replace(/[^a-z-]/g, ''), first: lines[0] || '' };
+  });
+}
+const SEC_TONE = { intro: 'verd-1', verse: 'verd-2', 'pre-chorus': 'coral-1', chorus: 'coral-2', bridge: 'cy', outro: 'verd-1', instrumental: 'cy', solo: 'cy' };
+function paintPlanFacts() {
+  const box = $('#ch-plan-facts');
+  if (!box || !S.plan) return;
+  const R = S.plan.resume || {}, secs = R.sections || [];
+  const want = duration();
+  const lb = lyricBlocks(), used = {};
+  const firstOf = (tag) => { const i = used[tag] = (used[tag] ?? -1) + 1; return lb.filter((b) => b.tag === tag)[i]?.first || ''; };
+  const ck = S.plan.check || {};
+  put(box,
+    el('div', { class: 'ch-plan-k' },
+      [['tempo', R.bpm ? `${R.bpm} BPM` : '—'], ['mesure', R.meter || '—'], ['tonalité', R.key || '—'], ['mesures', R.bars ? String(R.bars) : '—'],
+        ['durée', R.seconds ? fmtDur(R.seconds) : '—']].map(([k, v]) => el('span', {}, el('i', {}, k), el('b', {}, v)))),
+    R.seconds && R.seconds > want + 2 ? el('p', { class: 'ch-note warn' }, `la partition dure ${fmtDur(R.seconds)}, la chanson ${fmtDur(want)} : le chant s’arrêtera à ${fmtDur(want)} (la durée est un maximum)`) : null,
+    secs.length ? el('div', { class: 'ch-plan-bar', role: 'img', 'aria-label': `structure : ${secs.map((x) => `${x.label} ${x.bars} mesures`).join(', ')}` },
+      secs.map((x) => el('span', { style: { flexGrow: String(Math.max(1, x.bars)), '--k': `var(--${SEC_TONE[x.tag] || 'cy'})` }, title: `${x.label} · ${x.bars} mesures${x.chords.length ? ' · ' + x.chords.join(' ') : ''}` },
+        el('b', {}, x.label), el('small', {}, `${x.bars} mes.`)))) : el('p', { class: 'ch-note warn' }, 'aucune section lisible dans cette partition'),
+    secs.length ? el('div', { class: 'ch-plan-secs' }, secs.map((x) => {
+      const vers = firstOf(x.tag);
+      return el('div', { class: 'ch-plan-sec' }, el('b', { style: { '--k': `var(--${SEC_TONE[x.tag] || 'cy'})` } }, x.label),
+        el('span', { class: 'ch-plan-ch' }, x.chords.length ? x.chords.join(' · ') : 'mélodie seule'),
+        vers ? el('span', { class: 'ch-plan-v' }, `« ${vers} »`) : null);
+    })) : null,
+    el('p', { class: 'ch-note' + (ck.ok === false ? ' warn' : '') }, ck.ok === true ? 'partition vérifiée : elle suit le dialecte du modèle (abc_tools)'
+      : ck.ok === false ? `ne passe pas : ${ck.error}` : `vérification indisponible ici : ${ck.why || 'abc_tools absent'} — elle sera chantée telle quelle`));
+}
+function paintPlan() {
+  const box = $('#ch-plan');
+  if (!box) return;
+  if (!relire()) { put(box); return; }
+  if (S.planJob) {
+    const cover = !!S.ref && S.f.refMode === 'cover';
+    put(box, el('div', { class: 'ch-plan busy' }, el('div', { class: 'ch-plan-h' },
+      el('span', { class: 'pill work' }, el('i'), el('span', {}, cover ? 'la mélodie de la référence se transcrit' : 'la partition s’écrit')),
+      el('span', { class: 'sp' }), el('button', { class: 'tb ghost sm', type: 'button', onclick: () => jobs.cancel(S.planJob.id).catch((e) => toast(e.message)) }, 'Arrêter')),
+    el('p', { class: 'ch-note' }, 'rien n’est chanté : la structure, la mélodie et les accords d’abord ; tu les relis avant le calcul du son')));
+    return;
+  }
+  if (!S.plan?.abc) { put(box); return; }
+  const stale = S.plan.fp !== fp();
+  const ta = el('textarea', { class: 'fld ch-plan-abc', rows: 10, spellcheck: 'false', 'aria-label': 'la partition (ABC)', oninput: (e) => editPlan(e.target.value) });
+  ta.value = S.plan.abc;
+  put(box, el('section', { class: 'ch-plan' + (stale ? ' stale' : ''), 'aria-label': 'la partition à relire' },
+    el('div', { class: 'ch-plan-h' },
+      el('span', { class: 'lbl' }, 'La partition'),
+      el('span', { class: 'ch-plan-st' }, stale ? 'périmée : le style ou les paroles ont changé' : S.plan.edited ? 'retouchée' : 'à relire'),
+      S.plan.engine === 'factice' ? el('span', { class: 'ch-fake', title: 'moteur d’essai : une partition écrite pour l’essai, pas par YuE2' }, 'essai') : null,
+      el('span', { class: 'sp' }),
+      el('button', { class: 'tb ghost sm', type: 'button', title: 'une autre partition, une autre graine', onclick: () => writePlan(true) }, 'Réécrire'),
+      stale ? el('button', { class: 'tb ghost sm', type: 'button', 'data-garder': '', title: 'la garder pour le style et les paroles actuels', onclick: () => { S.plan = { ...S.plan, fp: fp() }; save(); paintPlan(); paintAct(); } }, 'La garder') : null,
+      el('button', { class: 'ch-x', type: 'button', title: 'l’oublier', onclick: () => { S.plan = null; save(); paintPlan(); paintAct(); } }, '×')),
+    el('div', { id: 'ch-plan-facts', class: 'ch-plan-facts' }),
+    el('details', { class: 'ch-plan-txt' }, el('summary', {}, el('span', { class: 'lbl' }, 'La partition (ABC)'), el('span', { class: 'r' }, 'modifiable')), ta,
+      el('p', { class: 'ch-note' }, 'deux voix : Vocal (le chant, les accords entre guillemets) et Ins (le thème instrumental) ; Q: le tempo, K: la tonalité, % les sections (le dialecte : ~/YuE/skills/yue2-music/references/abc-editing.md)'))));
+  paintPlanFacts();
 }
 
 // ── « Écris-les pour moi » ──────────────────────────────────
@@ -393,6 +556,7 @@ function buildStage() {
   put($('#stage'),
     el('div', { class: 'ch-head' }, el('span', { class: 'lbl' }, 'Tes chansons'), el('span', { class: 'n', id: 'ch-count' }), el('span', { class: 'sp' }),
       el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons())),
+    el('div', { id: 'ch-plan' }),
     el('div', { class: 'ch-list', id: 'ch-pend' }),
     el('div', { class: 'ch-list', id: 'ch-list' }));
 }
@@ -416,7 +580,7 @@ const recOf = (s) => s.params?.chanson || {};
 function metaOf(s) {
   const r = recOf(s), p = s.params || {};
   const what = r.ref_mode === 'cover' ? 'reprise' : r.ref_mode === 'inspire' ? 'inspirée' : (PRE(r.preset)?.label || '').toLowerCase();
-  return [what, fmtDur(s.duration), r.vocal === false ? 'instrumental' : r.vocal ? 'chanté' : '', r.parent ? 'variante' : '',
+  return [what, fmtDur(s.duration), r.vocal === false ? 'instrumental' : r.vocal ? 'chanté' : '', r.abc ? 'partition relue' : '', r.parent ? 'variante' : '',
     p.engine === 'factice' ? el('span', { class: 'e' }, 'essai') : ''].filter(Boolean);
 }
 function paintSongs() {
@@ -425,7 +589,7 @@ function paintSongs() {
   ro.disconnect();
   if (!S.songs.length) {
     put(box, activeJobs().length ? null : el('div', { class: 'ch-empty' }, el('b', {}, 'Tes chansons arriveront ici.'),
-      el('span', {}, 'Décris un style à gauche, puis Créer.')));
+      el('span', {}, relire() ? 'Décris un style à gauche, puis Écrire la partition : tu la relis avant le chant.' : 'Décris un style à gauche, puis Créer.')));
     return;
   }
   put(box, S.songs.map(card));
@@ -501,15 +665,20 @@ async function takeRecipe(s) {
   const r = recOf(s);
   if (!r.prompt) { toast('cette chanson n’a pas de recette', 5000); return; }
   const f = S.f;
-  Object.assign(f, { prompt: r.prompt, vocal: r.vocal !== false, lyrics: r.lyrics || '', preset: r.preset || presetOf(r.model) || 'rapide',
+  Object.assign(f, { prompt: r.prompt, vocal: r.vocal !== false, lyrics: r.lyrics || '', preset: r.preset || presetOf(r.model) || DEF.preset,
     refMode: r.ref_mode || f.refMode, n: 1, seed: '', precision: r.precision || 'bf16', bpm: r.bpm && r.bpm !== 120 ? String(r.bpm) : '',
     key: r.key && r.key !== 'C major' ? r.key : '', language: r.language || 'fr' });
   if (S.cfg.durations.includes(r.duration)) { f.duration = r.duration; f.exact = ''; } else f.exact = String(r.duration || '');
   S.ref = null;
   if (r.ref) { try { S.ref = await api('library/' + r.ref); } catch { toast('la référence n’est plus dans la bibliothèque', 5000); } }
   promptTa.value = f.prompt; lyrTa.value = f.lyrics;
+  // la partition qu'elle a chantée revient à relire (et à rechanter telle quelle)
+  if (r.abc) {
+    S.plan = { abc: r.abc, resume: null, check: null, engine: s.params?.engine, fp: fp(), edited: false };
+    api('chanson/plan/lire', { method: 'POST', body: { abc: r.abc } }).then((x) => { if (S.plan?.abc === r.abc) { S.plan = { ...S.plan, resume: x.resume, check: x.check }; save(); paintPlan(); } }).catch(() => {});
+  }
   save(); paintRail();
-  toast('réglages repris');
+  toast(r.abc ? 'réglages et partition repris' : 'réglages repris');
 }
 
 // ── le Studio : séparer, ouvrir dans ODIO ───────────────────
@@ -614,7 +783,7 @@ function stageMenu(e) {
   return s ? songMenu(s) : null;
 }
 pageMenu(() => [{ head: 'Musique' },
-  { label: 'Créer', icon: '▶', disabled: !!why(), why: why(), onclick: create },
+  { label: actLabel(), icon: '▶', disabled: !!why(), why: why(), onclick: create },
   { label: 'Écris-les pour moi', icon: '✎', disabled: !S.f.prompt.trim() || S.writing, why: 'décris d’abord la chanson', onclick: writeLyrics },
   { label: 'Choisir une référence son…', icon: '+', onclick: chooseRef },
   S.ref ? { label: 'Retirer la référence', icon: '×', onclick: () => setRef(null) } : null].filter(Boolean));
@@ -628,7 +797,10 @@ async function start() {
   }
   const d = restore() || {};
   if (d.f && typeof d.f === 'object') S.f = { ...DEF, ...d.f };
-  if (!PRE(S.f.preset)) S.f.preset = 'rapide';
+  // une forme gardée avant le 05/10 : Soigné et « relire » reviennent par défaut, une fois
+  if ((d.v || 1) < FORM_V) { S.f.preset = S.cfg.default_preset || DEF.preset; S.f.relire = true; }
+  if (!PRE(S.f.preset)) S.f.preset = S.cfg.default_preset || DEF.preset;
+  if (d.plan && typeof d.plan === 'object' && typeof d.plan.abc === 'string') S.plan = d.plan;
   if (!S.cfg.refs[S.f.refMode]) S.f.refMode = 'cover';
   S.advOpen = !!d.advOpen;
   if (d.ref) { try { S.ref = await api('library/' + d.ref); } catch { S.ref = null; } }

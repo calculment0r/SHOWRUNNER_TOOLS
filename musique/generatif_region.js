@@ -398,7 +398,9 @@ function field(app, c, s, pid, pd, vals, set, redraw) {
     const big = pid === 'lyrics' || pid === 'tags';
     const count = el('small', { class: 'gr-count' }, `${(v || '').length} / ${pd.max}`);
     const ta = el('textarea', { class: 'fld', rows: pid === 'lyrics' ? 4 : 2, maxlength: pd.max, placeholder: pd.exemple || '',
-      oninput: (e) => { set(pid, e.target.value); count.textContent = `${e.target.value.length} / ${pd.max}`; } });
+      oninput: (e) => { set(pid, e.target.value); count.textContent = `${e.target.value.length} / ${pd.max}`; },
+      // en quittant le champ : le panneau se refait (l'orange, qui attendait le style, le voit)
+      onchange: () => redraw() });
     ta.value = v || '';
     const tools = [];
     if (pid === 'lyrics') {
@@ -533,14 +535,7 @@ function partitionBox(app, c, s, vals) {
   const busy = (P.pending || []).find((x) => x.clip === c.id && x.kind === 'abc');
   const write = el('button', { class: 'tb ghost sm', type: 'button', disabled: busy || !(vals.tags || '').trim() || null,
     title: busy ? 'en cours' : !(vals.tags || '').trim() ? 'décris d\'abord le style (YuE2GenerateABC le lit)' : 'YuE2GenerateABC seul : la partition, rien n\'est chanté (travail music.yue.abc)',
-    onclick: async () => {
-      try {
-        const j = await api('music/yue/abc', { method: 'POST', body: { tags: vals.tags, lyrics: vals.lyrics || '', seed: vals.seed ?? -1, mode: vals.mode || 'full', precision: vals.precision || 'bf16',
-          projet: { bpm: P.bpm, sig: P.sig, tonic: P.key.tonic, mode: P.key.mode }, sections: sectionsFor(P, c), title: c.name || 'région' } });
-        P.pending.push({ job: j.id, kind: 'abc', clip: c.id, title: j.title });
-        app.commit('data'); jobs.poll(true);
-      } catch (e) { toast(e.message, 6000); }
-    } }, 'Écrire la partition');
+    onclick: () => ecrirePartition(app, c, vals) }, 'Écrire la partition');
   const fromTake = g.takes.filter((x) => x.score);
   const cases = Object.entries(PT.cases).map(([k, cs]) => caseSlot(app, c, s, k, cs));
   return el('div', { class: 'gr-abc' },
@@ -553,6 +548,17 @@ function partitionBox(app, c, s, vals) {
       g.v.abc ? el('button', { class: 'tb ghost sm', type: 'button', onclick: () => { g.v.abc = ''; app.commit('data'); } }, 'Vider') : null),
     el('div', { class: 'gr-cases' }, cases, el('p', { class: 'gr-note gr-refuse' }, `ne passent pas : ${PT.refuse}`)),
     el('div', { class: 'gr-abc-w' }, ta, roll));
+}
+
+// YuE2GenerateABC seul (travail music.yue.abc) : la partition, rien n'est chanté
+async function ecrirePartition(app, c, vals) {
+  const P = app.S.proj;
+  try {
+    const j = await api('music/yue/abc', { method: 'POST', body: { tags: vals.tags, lyrics: vals.lyrics || '', seed: vals.seed ?? -1, mode: vals.mode || 'full', precision: vals.precision || 'bf16',
+      projet: { bpm: P.bpm, sig: P.sig, tonic: P.key.tonic, mode: P.key.mode }, sections: sectionsFor(P, c), title: c.name || 'région' } });
+    P.pending.push({ job: j.id, kind: 'abc', clip: c.id, title: j.title });
+    app.commit('data'); jobs.poll(true);
+  } catch (e) { toast(e.message, 6000); }
 }
 
 // une case de la partition : Chant (Vocal), Thème (Ins), Accords (symboles dans Vocal)
@@ -738,7 +744,17 @@ function goBox(app, c, t, s, vals) {
   if (!why && g.model === 'yue' && secsR > 900) why = 'la région dépasse 900 s (YuE2)';
   if (!why && g.model === 'yue' && cond('mode!=off', vals) && vals.abc && lastCheck(c)?.ok === false) why = `la partition ne passe pas : ${lastCheck(c).error}`;
   if (!why && ace(g) && (P.bpm < 30)) why = `le tempo ${P.bpm} sort des 30-300 d'ACE-Step`;
-  const go = el('button', { class: 'tb go gr-go', type: 'button', disabled: why || null, title: why || `${vals.n || 1} prise${(vals.n || 1) > 1 ? 's' : ''}`, onclick: () => launch(app, c, go) }, 'Générer');
+  // relire avant de chanter (05/10, Cal : « un mode de validation de ce que le modèle va faire avant de
+  // le calculer […] par défaut ») : une chanson YuE2 sans partition fait d'abord écrire la partition
+  // (l'orange) ; on la relit à gauche, puis Générer la chante. « Sans relire » reste à côté.
+  const relire = !why && g.model === 'yue' && T.params.includes('abc') && cond('mode!=off', vals) && !(vals.abc || '').trim();
+  const busyAbc = (P.pending || []).some((x) => x.clip === c.id && x.kind === 'abc');
+  const go = relire
+    ? el('button', { class: 'tb go gr-go', type: 'button', disabled: busyAbc || !(vals.tags || '').trim() || null,
+      title: busyAbc ? 'la partition s\'écrit' : !(vals.tags || '').trim() ? 'décris d\'abord le style (YuE2GenerateABC le lit)' : 'YuE2 écrit d\'abord la partition : tu la relis (à gauche), puis Générer la chante telle quelle',
+      onclick: () => ecrirePartition(app, c, vals) }, busyAbc ? 'La partition s\'écrit…' : 'Écrire la partition')
+    : el('button', { class: 'tb go gr-go', type: 'button', disabled: why || null, title: why || `${vals.n || 1} prise${(vals.n || 1) > 1 ? 's' : ''}`, onclick: () => launch(app, c, go) }, 'Générer');
+  const sans = relire ? el('button', { class: 'tb ghost sm', type: 'button', title: 'YuE2 écrit sa partition et chante d\'un trait, sans la montrer', onclick: (e) => launch(app, c, e.currentTarget) }, 'Sans relire') : null;
   // le moteur en deux lignes ; le détail (la raison entière, ses sources) au survol
   const real = x?.real ? (x.real.ok ? `en réel : câblé (${x.real.voie === 'comfyui' ? 'ComfyUI' : 'serveur d\'API'})` : `en réel : pas câblé — ${x.real.pourquoi.split(/ ; | : /)[0]}`) : '';
   return el('div', { class: 'gr-box gr-gobox' },
@@ -746,7 +762,7 @@ function goBox(app, c, t, s, vals) {
       x.essai ? (g.model === 'yue' ? 'moteur d\'essai : la partition jouée en sinus, à son tempo (sans partition : un son synthétisé) — pas YuE2'
         : `moteur d'essai : un son synthétisé au tempo, dans la tonalité, à la mesure — pas ${M.nom}`) : (x.real.doc || M.nom),
       real ? el('small', {}, real) : null) : null,
-    el('div', { class: 'row' }, el('span', { class: why ? 'why' : 'lbl' }, why || `${vals.n || 1} prise${(vals.n || 1) > 1 ? 's' : ''} · ${M.nom} · ${T.nom}`), el('span', { class: 'sp' }), go));
+    el('div', { class: 'row' }, el('span', { class: why ? 'why' : 'lbl' }, why || (relire ? 'la partition d\'abord, relue à gauche ; le chant ensuite' : `${vals.n || 1} prise${(vals.n || 1) > 1 ? 's' : ''} · ${M.nom} · ${T.nom}`)), el('span', { class: 'sp' }), sans, go));
 }
 const ace = (g) => g.model === 'ace';
 

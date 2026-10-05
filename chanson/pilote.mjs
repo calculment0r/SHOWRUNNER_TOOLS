@@ -4,6 +4,7 @@
 //
 //   node chanson/pilote.mjs http://127.0.0.1:8861 /tmp/sr_chanson_shots
 //
+// Le défaut (05/10) : Soigné et « relire la partition » ; puis, en Rapide :
 // Écris-les pour moi → Créer → écouter (la forme d'onde avance) → une
 // variante → reprendre une chanson (référence son) → séparer les pistes →
 // ouvrir dans ODIO (le projet existe, une piste par stem, la page d'ODIO
@@ -58,6 +59,12 @@ ok(await page.$eval('#ch-create', (b) => b.disabled) && /décris/.test(await pag
 ok(await page.$eval('details.ch-adv', (d) => !d.open), 'paramètres avancés fermés');
 ok(!(await page.$eval('#rail', (r) => /ACE-Step|YuE/.test([...r.querySelectorAll(':scope > section')].map((s) => s.innerText).join(' ')))),
   'aucun nom de modèle hors des paramètres avancés');
+// le défaut du 05/10 : Soigné, et relire la partition avant de chanter
+ok(await page.$eval('#ch-presets [data-preset="soigne"]', (b) => b.classList.contains('on')) && await page.$eval('.ch-relire input', (i) => i.checked)
+  && (await page.textContent('#ch-create')) === 'Écrire la partition', 'par défaut : Soigné, « relire la partition » coché, l’orange « Écrire la partition »');
+// le parcours d'avant, en Rapide (rien à relire : la case le dit)
+await page.click('#ch-presets [data-preset="rapide"]');
+ok(await page.$eval('.ch-relire input', (i) => i.disabled) && (await page.textContent('#ch-create')) === 'Créer', 'Rapide : rien à relire, l’orange « Créer »');
 await page.fill('#ch-prompt', 'dreamy pop, piano, warm female vocal, 92 BPM');
 await page.click('#ch-chips .opt:has-text("cordes")');
 ok((await page.inputValue('#ch-prompt')).includes('strings'), 'un mot de style s’ajoute au prompt');
@@ -113,6 +120,13 @@ await page.click('#ch-refmode .tb:has-text("Reprendre")');
 ok(await page.$eval('#ch-presets [data-preset="rapide"]', (b) => b.classList.contains('off')) && await page.$eval('#ch-presets [data-preset="soigne"]', (b) => b.classList.contains('on')),
   'reprendre : la qualité passe à « Soigné », « Rapide » dit pourquoi');
 await shot(page, '03-reference-sombre-1440');
+// reprendre passe par YuE2 : la mélodie de la référence s'écrit d'abord, on la relit, puis on la chante
+await page.click('#ch-create');
+try {
+  await page.waitForSelector('.ch-plan:not(.busy) .ch-plan-k', { timeout: 60000 });
+  ok((await page.textContent('#ch-create')).startsWith('Chanter cette partition'), 'reprendre : la partition de la référence à relire, l’orange « Chanter cette partition »');
+} catch { ok(false, 'reprendre : aucune partition à relire'); }
+await shot(page, '03b-reference-partition-sombre-1440');
 await page.click('#ch-create');
 await waitSongs(page, 3, 'Reprendre : une troisième chanson');
 list = await songs(page);

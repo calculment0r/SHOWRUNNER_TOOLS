@@ -60,7 +60,7 @@ export async function openGenerative(app) {
   const { S } = app;
   const P = S.proj;
   const G = P.gen = { engine: 'yue', tags: '', blocks: [], dur: null, seed: null, ref: null, title: '', inst: false, lang: 'fr',
-    tempo: true, split: true, at: 'plan', hist: [], ymode: null, yprec: 'bf16', stemModel: null, ...(P.gen || {}) };
+    tempo: true, split: true, at: 'plan', hist: [], ymode: null, yprec: 'bf16', stemModel: null, relire: true, abc: '', abcFp: '', ...(P.gen || {}) };
   const save = () => app.saveUi();
   const eng = el('div', { class: 'seg' });
   const dr = drawer({ title: 'Générer', cls: 'gen', head: [eng] });
@@ -166,6 +166,55 @@ export async function openGenerative(app) {
       el('pre', { class: 'gen-pre', id: 'gen-pre' }));
   }
 
+  // relire la partition avant de chanter (05/10, Cal : « un mode de validation de ce que le
+  // modèle va faire avant de le calculer […] par défaut ») : YuE2 écrit d'abord sa partition
+  // (music.yue.abc, YuE2GenerateABC seul) ; on la relit ici, puis Lancer la fait chanter telle
+  // quelle (entrée `abc`). Pas pour une reprise : sa partition vient de la référence.
+  const relire = () => G.engine === 'yue' && G.relire !== false && !G.ref && (G.ymode || 'full') !== 'off' && !!yo;
+  const abcFp = () => JSON.stringify([tagsText(), lyricsText(), G.ymode || 'full', G.yprec || 'bf16']);
+  const abcOk = () => !!G.abc && G.abcFp === abcFp();
+  let abcJob = null;
+  async function ecrire(again = false) {
+    const tags = tagsText();
+    if (!tags) { toast('décris le style : genre, instruments, humeur, voix'); return; }
+    const secs = G.blocks.length ? G.blocks.map((b) => [b.tag || 'verse', Math.max(1, Math.round(b.bars || 4))]) : [['verse', 8]];
+    try {
+      abcJob = await api('music/yue/abc', { method: 'POST', body: { tags, lyrics: lyricsText(), seed: again ? -1 : (G.seed ?? -1), mode: G.ymode || 'full', precision: G.yprec || 'bf16',
+        projet: { bpm: P.bpm, sig: P.sig, tonic: P.key.tonic, mode: P.key.mode }, sections: secs, title: (G.title || '').trim() || P.name } });
+      paint(); jobs.poll(true);
+      const done = await jobs.wait(abcJob.id);
+      if (done.state !== 'done') throw new Error(`partition : ${stateFr(done.state)}${done.message ? ' — ' + done.message : ''}`);
+      const abc = done.result?.abc || '';
+      G.abc = abc.length <= 40000 ? abc : abc.slice(0, 40000); G.abcFp = abcFp();
+      save();
+      toast(done.result?.engine === 'factice' ? 'partition d\'essai écrite (moteur factice) : relis-la, puis Lancer' : 'partition écrite : relis-la, puis Lancer', 5000);
+    } catch (e) { toast(e.message, 7000); }
+    abcJob = null;
+    if (document.body.contains(dr.root)) paint();
+  }
+  function partBox() {
+    if (G.engine !== 'yue' || !yo) return null;
+    const why = G.ref ? 'une reprise : sa partition vient de la référence (SheetSage2)' : (G.ymode || 'full') === 'off' ? 'partition « sans » : YuE2 n\'en écrit pas' : '';
+    const head = el('div', { class: 'row' }, el('b', { class: 'venus' }, 'Partition'), el('span', { class: 'sp' }),
+      el('label', { class: 'opt mu-check', title: why || 'YuE2 écrit d\'abord sa partition ; tu la relis, puis Lancer la chante telle quelle' },
+        el('input', { type: 'checkbox', checked: (G.relire !== false && !why) || null, disabled: why ? true : null, onchange: (e) => { G.relire = e.target.checked; save(); paint(); } }),
+        ' relire avant de chanter'));
+    if (!relire()) return el('div', { class: 'gen-sec' }, head, el('p', { class: 'lbl' }, why || 'éteint : YuE2 écrit sa partition et chante d\'un trait'));
+    if (abcJob) return el('div', { class: 'gen-sec' }, head, el('div', { class: 'gen-res' }, el('span', { class: 'pill work' }, el('i'), el('span', {}, 'YuE2 écrit la partition')), el('span', { class: 'sp' }), el('span', { class: 'lbl', 'data-job': abcJob.id }, 'en file')));
+    if (!G.abc) return el('div', { class: 'gen-sec' }, head, el('p', { class: 'lbl' }, 'Lancer fait d\'abord écrire la partition (la mélodie, les accords, le tempo, les sections) : rien n\'est chanté ; tu la relis ici avant le calcul du son.'));
+    const ta = el('textarea', { class: 'fld gen-abc', rows: 9, spellcheck: 'false', 'aria-label': 'la partition (ABC)', oninput: (e) => { G.abc = e.target.value; G.abcFp = abcFp(); save(); } });
+    ta.value = G.abc;
+    const q = G.abc.match(/^Q:\s*(?:\d+\/\d+\s*=\s*)?(\d+)/m), k = G.abc.match(/^K:\s*(\S+)/m), m = G.abc.match(/^M:\s*(\S+)/m);
+    const secs = [...G.abc.matchAll(/^%\s*(\S+)/gm)].map((x) => x[1]).filter((t, i, a) => i === 0 || t !== a[i - 1]);
+    return el('div', { class: 'gen-sec' }, head,
+      el('p', { class: abcOk() ? 'lbl' : 'why' }, abcOk() ? `à relire · ${q ? q[1] + ' BPM' : 'tempo ?'} · ${m ? m[1] : ''} · ${k ? k[1] : ''}${secs.length ? ' · ' + secs.join(' → ') : ''}`
+        : 'périmée : le style ou les paroles ont changé — Lancer la réécrit'),
+      ta,
+      el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'Vocal : le chant et ses accords · Ins : le thème · Q: le tempo · K: la tonalité'), el('span', { class: 'sp' }),
+        el('button', { class: 'tb ghost sm', type: 'button', title: 'une autre partition', onclick: () => { G.abc = ''; save(); ecrire(true); } }, 'Réécrire'),
+        el('button', { class: 'tb ghost sm', type: 'button', onclick: () => { G.abc = ''; save(); paint(); } }, 'Oublier')));
+  }
+
   let refItem = null;
   function settingsBox() {
     const B = bounds();
@@ -260,7 +309,7 @@ export async function openGenerative(app) {
   function paint() {
     put(eng, ...[['yue', 'YuE2'], ['ace', 'ACE-Step']].map(([k, l]) => el('button', { class: `tb${G.engine === k ? ' on' : ''}`, type: 'button',
       onclick: () => { G.engine = k; save(); paint(); } }, l)));
-    const go = el('button', { class: 'tb go', type: 'button' }, 'Lancer');
+    const go = el('button', { class: 'tb go', type: 'button', disabled: abcJob ? true : null }, relire() && !abcOk() ? (abcJob ? 'La partition s\'écrit…' : 'Écrire la partition') : 'Lancer');
     const why = G.engine === 'ace' ? (ace.generate?.ok ? '' : `ACE-Step indisponible : ${ace.generate?.why || ace.error || ''}`)
       : !yue.ok ? `YuE2 absent : ${yue.why}` : yo.ready === false ? `YuE2 indisponible : ${yo.why}` : '';
     if (why) { go.disabled = true; go.title = why; }
@@ -268,7 +317,7 @@ export async function openGenerative(app) {
     put(dr.body,
       // le génératif par région (generatif_region.js) : une piste seule, calée sur la région, en prises
       el('p', { class: 'gen-hint' }, 'Ici, un morceau entier. Une seule piste (la batterie, une guitare), une région précise, une partition à relire : « + Piste » → Générative, puis tirer sur sa voie ; le panneau du bas la règle.'),
-      engineBox(), styleBox(), planBox(), settingsBox(), resultsBox(),
+      engineBox(), styleBox(), planBox(), settingsBox(), partBox(), resultsBox(),
       el('div', { class: 'gen-foot' },
         el('span', { class: why ? 'why' : 'lbl' }, why || `le morceau se pose sur une piste audio neuve ${G.at === 'plan' ? `au début du plan (${app.bar(planStart())})` : `à la tête de lecture (${app.bar(app.pos())})`} et entre dans la bibliothèque (Musique)`),
         el('span', { class: 'sp' }), go));
@@ -281,6 +330,7 @@ export async function openGenerative(app) {
   };
 
   async function launch(go) {
+    if (relire() && !abcOk()) { ecrire(); return; }
     const tags = tagsText();
     if (!tags) { toast('décris le style : genre, instruments, humeur, voix'); return; }
     const B = bounds();
@@ -295,6 +345,7 @@ export async function openGenerative(app) {
         if (yo.modes?.length) body.mode = G.ymode || (G.ref ? 'melody' : 'full');
         if (yo.precisions?.length) body.precision = G.yprec || 'bf16';
         if (G.ref && yo.ref_ready) body.ref = G.ref;
+        if (relire() && abcOk()) body.abc = G.abc;              // la partition relue, chantée telle quelle
         j = await api('music/yue/generate', { method: 'POST', body });
       } else {
         j = await api('music/generate', { method: 'POST', body: {
