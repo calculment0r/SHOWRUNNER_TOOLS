@@ -31,7 +31,7 @@
 // de mind map compte pour tout son arbre quand on le déplace ou l'aligne, pour
 // sa descendance quand on le supprime, le copie ou le duplique.
 
-import { mountHeader, api, jobs, toast, el, $, href, fmtDate, uploadFile, pick, session } from '../commun/shell.js';
+import { mountHeader, api, jobs, toast, el, $, href, fmtDate, uploadFile, pick, session, studioSeul } from '../commun/shell.js';
 import { lecteur } from '../commun/lecteur.js';
 import { menu } from '../commun/menu.js';
 import { createCanvas, bbox, ready as viewsReady } from './canvas.js';
@@ -806,14 +806,14 @@ app.boardsModal = async () => {
           try { Object.assign(bd, await api(`ideation/boards/${bd.id}/rename`, { method: 'POST', body: { name: nm } })); } catch (e) { toast(e.message); }
           paint();
         } }, 'Renommer'),
-        el('button', { class: 'tb ghost sm', type: 'button', onclick: async () => {
+        studioSeul(el('button', { class: 'tb ghost sm', type: 'button', onclick: async () => {
           if (S.board?.id === bd.id) await flushSave();
           try { const r = await api(`ideation/boards/${bd.id}/duplicate`, { method: 'POST' }); list.unshift(r); paint(); toast(`« ${r.name} » créée`); } catch (e) { toast(e.message); }
-        } }, 'Dupliquer'),
+        } }, 'Dupliquer')),
         del));
   };
   const close = app.modal('Les planches', el('div', { class: 'stack' }, count, box),
-    (cl) => [el('span', { class: 'sp' }), el('button', { class: 'tb go', type: 'button', onclick: async () => { cl(); await app.newBoard(); } }, 'Nouvelle planche')],
+    (cl) => [el('span', { class: 'sp' }), studioSeul(el('button', { class: 'tb go', type: 'button', onclick: async () => { cl(); await app.newBoard(); } }, 'Nouvelle planche'))],
     { cls: 'lg' });
   if (S.board) await flushSave();
   try { ({ boards: list } = await api('ideation/boards')); } catch (e) { box.replaceChildren(el('p', { class: 'warn' }, e.message)); return; }
@@ -822,15 +822,17 @@ app.boardsModal = async () => {
 
 // les fiches des objets posés : par paquets de 500, une requête chacun (POST /api/library/batch ;
 // une planche de 1000 images en faisait 1000 — étude de fluidité, § 2.2) ; un serveur sans lot :
-// une par objet, huit à la fois
+// une par objet, huit à la fois. MONTRER (`spaces: '*'`) : ce qui est posé est du Workspace de la
+// planche (le serveur le garde), qui n'est pas celui de l'onglet quand un lien l'ouvre (un ami
+// « Apps », un membre d'un autre Workspace : core/auth.py, can_read_item)
 async function ensureItems(ids) {
   const want = [...new Set(ids)].filter((id) => !S.items.has(id));
-  const one = (list) => Promise.all(list.map((id) => api('library/' + id)
+  const one = (list) => Promise.all(list.map((id) => api('library/' + id + '?spaces=*')
     .then((it) => S.items.set(id, it)).catch(() => S.items.set(id, { id, missing: true }))));
   for (let i = 0; i < want.length; i += 500) {
     const chunk = want.slice(i, i + 500);
     try {
-      const r = await api('library/batch', { method: 'POST', body: { ids: chunk } });
+      const r = await api('library/batch', { method: 'POST', body: { ids: chunk, spaces: '*' } });
       for (const it of r.items || []) S.items.set(it.id, it);
       for (const id of r.missing || []) S.items.set(id, { id, missing: true });
     } catch {
@@ -1073,8 +1075,8 @@ document.querySelector('.ide')?.addEventListener('contextmenu', (e) => {
   const fld = e.target.closest?.('input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]');
   if (fld) { menu(e.clientX, e.clientY, app.menus.text(fld)); return; }
   menu(e.clientX, e.clientY, [{ head: 'idéation' },
-    { label: 'Les planches…', onclick: () => app.boardsModal() }, { label: 'Nouvelle planche…', onclick: () => app.newBoard() },
-    { label: 'Exporter la planche en PNG', sub: 'ordinateur + presse-papier', disabled: !S.board?.nodes.length, why: 'la planche est vide', onclick: () => app.exportBoard('') },
+    { label: 'Les planches…', onclick: () => app.boardsModal() }, { label: 'Nouvelle planche…', studio: true, onclick: () => app.newBoard() },
+    { label: 'Exporter la planche en PNG', sub: 'ordinateur + presse-papier', studio: true, disabled: !S.board?.nodes.length, why: 'la planche est vide', onclick: () => app.exportBoard('') },
     '-', { label: 'Annuler', key: 'ctrl+Z', disabled: !S.undo.length, why: 'rien à annuler', onclick: () => app.undoStep() },
     { label: 'Rétablir', key: 'ctrl+maj+Z', disabled: !S.redo.length, why: 'rien à rétablir', onclick: () => app.redoStep() },
     '-', { label: 'Les raccourcis', key: '?', onclick: () => help() }]);

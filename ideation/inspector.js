@@ -9,7 +9,7 @@
 // références ou un élément (aligner, distribuer, même taille, grouper : la
 // barre au-dessus de la sélection, selection.js).
 
-import { api, toast, el, href, fmtDate, fmtDur, etypeFr, dropZone } from '../commun/shell.js';
+import { api, toast, el, href, fmtDate, fmtDur, etypeFr, dropZone, studioSeul } from '../commun/shell.js';
 import { bbox, inside } from './canvas.js';
 import { KINDS, nameOf, portOf } from './ports.js';
 import { inbox } from './gen.js';
@@ -62,7 +62,7 @@ export function createInspector(app) {
       el('h2', { class: 'ttl' }, B.name),
       el('p', { class: 'hint' }, `modifiée ${fmtDate(B.updated) || '—'} · elle s’enregistre seule`),
       row(b('Tout voir', () => app.canvas.fit(), { title: 'Maj+1' }),
-        b('Exporter en PNG', () => app.exportBoard(''), { title: 'la planche entière : sur l’ordinateur et dans le presse-papier', disabled: !B.nodes.length })),
+        studioSeul(b('Exporter en PNG', () => app.exportBoard(''), { title: 'la planche entière : sur l’ordinateur et dans le presse-papier', disabled: !B.nodes.length }))),
       !B.nodes.length ? hint('Exporter : posez d’abord quelque chose.') : null));
     // un objet d'un groupe se choisit dans son groupe (le groupe s'ouvre) ; caché dans une carte, on va à la carte
     const item = (n) => el('button', { class: 'oline' + (n.group ? ' kid' : ''), type: 'button', onclick: () => {
@@ -192,15 +192,15 @@ export function createInspector(app) {
         go('Éditer dans Image', `image/#${id}`, 'l’outil Image, cette image ouverte'),
         go('Animer', `movie/?start=${id}`, 'Vidéo : cette image en première image d’un plan'),
         go('Référence vidéo', `movie/?ref=${id}`, 'Vidéo : cette image en référence d’un plan'),
-        go('Ajouter au montage', `montage/?add=${id}`),
+        studioSeul(go('Ajouter au montage', `montage/?add=${id}`)),
         b('Faire un élément', () => app.elementModal([n.id]), { title: 'un personnage, un objet, un lieu, un style réutilisable partout' }))));
     } else if (n.kind === 'video') {
       out.push(card('Production', null, el('div', { class: 'prod' },
         go('Référence vidéo', `movie/?ref=${id}`, 'Vidéo : ce mouvement en référence'),
-        go('Ajouter au montage', `montage/?add=${id}`))));
+        studioSeul(go('Ajouter au montage', `montage/?add=${id}`)))));
     } else if (n.kind === 'audio') {
       out.push(card('Production', null, el('div', { class: 'prod' },
-        go('Ajouter au montage', `montage/?add=${id}`),
+        studioSeul(go('Ajouter au montage', `montage/?add=${id}`)),
         go('Référence vidéo', `movie/?ref=${id}`, 'Vidéo : cette voix en référence'))));
     } else if (n.kind === 'element') {
       out.push(partsCard(it, n));

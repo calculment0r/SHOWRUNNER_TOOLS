@@ -394,3 +394,8 @@ a.statcard, a.tile, a.thumb, .sect-head a { text-decoration: none; }
 /* la porte (commun/porte.js) : la page reste cachée le temps de savoir
    qui entre ; ses propres styles sont dans commun/porte.css */
 html.sr-wait body { visibility: hidden; }
+
+/* le Studio (commun/shell.js, studioIci) : un geste du Studio — Envoyer au Montage,
+   Ouvrir ODIO… — est retiré pour qui ne l'a pas ici (apps_studio_elements.md § 3.2,
+   « retire (reste en Studio) ») ; les menus l'écartent de même (`studio: true`) */
+html[data-studio="non"] .sr-studio { display: none !important; }

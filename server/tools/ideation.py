@@ -919,7 +919,7 @@ def _summary(b: dict) -> dict:
         k = n.get("kind") if n["type"] == "media" else n["type"]
         kinds[k] = kinds.get(k, 0) + 1
         if thumb is None and n["type"] == "media" and n.get("kind") in ("image", "video", "element"):
-            it = library.get(n["item"])
+            it = library.see(n["item"])   # montrer : la planche d'un lien est d'un autre Workspace que la requête
             if it:
                 thumb = library.public(it).get("thumb_url")
     return {"id": b["id"], "name": b["name"], "created": b.get("created"), "updated": b.get("updated"),
@@ -983,8 +983,8 @@ def r_save(req, bid):
             raise HttpError(409, "cette planche a été modifiée ailleurs (un autre onglet ?) : rechargez-la")
         # la version : celle de la page (qui a lu la planche migrée), sinon celle du fichier
         new = normalize({**d, "id": bid, "name": d.get("name", cur.get("name")), "v": d.get("v") or cur.get("v") or 1})
-        from tools import ideation_collab   # un invité ne pose que ce qu'il voit déjà
-        if not ideation_collab.guest_nodes_ok(getattr(req, "user", None), cur.get("nodes") or [], new["nodes"]):
+        from tools import ideation_collab   # un invité (ou qui n'a la planche que par un lien) ne pose que ce qu'il voit déjà
+        if not ideation_collab.guest_nodes_ok(getattr(req, "user", None), cur.get("nodes") or [], new["nodes"], bid):
             raise HttpError(403, "invité : on ne pose ici que des objets déjà sur tes planches")
         # le Workspace de ce qu'elle pose (409), les boucles d'éléments (400) : tools/elements.py
         from tools import elements

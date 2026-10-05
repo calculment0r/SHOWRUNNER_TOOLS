@@ -7,7 +7,7 @@
 // (commun/shell.js), la seule liste : une carte dont l'outil n'y est pas
 // encore est « bientôt » — elle s'allume seule le jour où l'outil y entre
 // avec sa page.
-import { TOOLS, api, el, $, href, mountHeader, system, session, thumb, toolHref, toast, uploadFile, dropAnywhere, jobs, stateFr, fmtDate, ouvrirFile } from './commun/shell.js';
+import { TOOLS, api, el, $, href, mountHeader, system, session, thumb, toolHref, toast, uploadFile, dropAnywhere, jobs, stateFr, fmtDate, ouvrirFile, studioIci, studioLiens } from './commun/shell.js';
 import { bind } from './commun/proxies.js';
 
 mountHeader(null);
@@ -57,23 +57,24 @@ const STUDIO = [
 ];
 
 // Le droit Studio : jugé par la porte (core/auth.py, « le Studio » ;
-// apps_studio_elements.md § 3.6), rendu par /api/auth/me (`user.access`,
-// `user.studio_asked`) — un admin l'a toujours, la maison sans porte (auth:
-// false) c'est Cal. La demande : POST /api/auth/studio, que Cal voit dans
-// Admin. Sans réponse du portail : rien à fermer ici (le serveur juge).
+// apps_studio_elements.md § 3.6), rendu par /api/auth/me et lu d'une seule
+// façon (commun/shell.js, studioIci, studioLiens) — un admin l'a toujours, la
+// maison sans porte (auth: false) c'est Cal. La demande : POST /api/auth/studio,
+// que Cal voit dans Admin. Sans réponse du portail : rien à fermer ici (le serveur juge).
 function accessOf(me) {
   const u = me && me.user;
-  if (!u) return { access: 'studio', asked: null };
-  return { access: u.access === 'apps' ? 'apps' : 'studio', asked: u.studio_asked || null };
+  if (!u) return { access: 'studio', asked: null, liens: [] };
+  return { access: studioIci(me) ? 'studio' : 'apps', asked: u.studio_asked || null, liens: studioLiens(me) };
 }
-// une carte d'outil fermée à ce compte : un outil Studio de TOOLS (sauf `open`), pour un compte Apps
-const lockedFor = (t) => !!t && S.access === 'apps' && t.tier === 'studio' && !t.open;
+// une carte d'outil fermée à ce compte : un outil Studio de TOOLS (sauf `open`), sans le Studio — sauf
+// l'outil dont un lien lui ouvre un document (une planche d'Idéation : il y entre pour elle)
+const lockedFor = (t) => !!t && S.access === 'apps' && t.tier === 'studio' && !t.open && !S.liens.includes(t.id);
 
 const toolOf = (id) => TOOLS.find((t) => t.id === id && (t.path || t.external)) || null;
 // où l'outil calcule : `local` (nos DGX) ; `api` s'ajoutera dans TOOLS
 // (`engines`) le jour où un modèle fermé sera branché — pas avant
 const enginesOf = (t) => (t && t.engines) || ['local'];
-const S = { access: 'studio', asked: null, sys: null, budget: null };
+const S = { access: 'studio', asked: null, liens: [], sys: null, budget: null };
 
 // une carte : un lien, un bouton fermé (qui dit pourquoi), ou « bientôt »
 function card(cls, def, t, locked, soon, kids) {

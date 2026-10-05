@@ -45,7 +45,7 @@
 // celui de l'onglet s'y regarde et se rapatrie.
 import {
   mountHeader, api, pick, thumb, kindMark, el, $, $$, href, ROOT, fmtDate, fmtDur, kindFr, etypeFr, dropAnywhere,
-  dropZone, dragItem, dock, espace, espaceDocument, enTeteEspace, surEspace, ITEM_MIME, MULTI_MIME,
+  dropZone, dragItem, dock, espace, espaceDocument, enTeteEspace, surEspace, ITEM_MIME, MULTI_MIME, studioSeul,
 } from '../commun/shell.js';
 import { createUndo, libPatch, libBoard, keyLabel } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
@@ -1471,10 +1471,10 @@ function paintSelBar(force = false) {
       disabled: !ups.length || !!fw,
       title: fw || (!ups.length ? 'Upscale prend des images et des vidéos : il n\'y en a pas dans la sélection'
         : ups.length < n ? `Upscale : les ${plural(ups.length, 'image ou vidéo', 'images et vidéos')} de la sélection seulement` : 'Upscale : agrandir et affiner') }),
-    b('Ajouter au montage', () => { location.href = href(`montage/?add=${encodeURIComponent(one.id)}`); }, {
+    studioSeul(b('Ajouter au montage', () => { location.href = href(`montage/?add=${encodeURIComponent(one.id)}`); }, {
       disabled: !(one && MEDIA.includes(one.kind)) || !!fw,
       title: fw || (one && MEDIA.includes(one.kind) ? 'Montage : au bout de la piste' : n > 1
-        ? 'le montage prend un objet à la fois par son adresse (?add=) : n\'en choisis qu\'un' : 'une image, une vidéo ou un son') }),
+        ? 'le montage prend un objet à la fois par son adresse (?add=) : n\'en choisis qu\'un' : 'une image, une vidéo ou un son') })),
     one ? b('Ouvrir', () => go('#' + one.id), { key: 'Entrée', title: 'sa fiche' }) : null,
     b('Corbeille', () => trashMany(items), { key: 'Suppr', title: 'à la corbeille ; Ctrl+Z la reprend' }),
     el('button', { class: 'x', type: 'button', title: 'ne plus rien choisir · Échap', 'aria-label': 'vider la sélection', onclick: clearSel }, '×'));
@@ -2093,11 +2093,11 @@ function itemSheet(it) {
     acts.append(link('Animer', href(`movie/?start=${id}`), { go: true, title: 'Vidéo : cette image en première image d\'un plan' }),
       link('Éditer dans Image', href(`image/?edit=${id}`)),
       link('Référence vidéo', href(`movie/?ref=${id}`), { title: 'Vidéo : cette image en référence d\'un plan' }),
-      link('Ajouter au montage', href(`montage/?add=${id}`)),
+      studioSeul(link('Ajouter au montage', href(`montage/?add=${id}`))),
       btn('Faire une planche de références', () => elementModal({ items: [it], title: it.title, folder: it.folder || '' }),
         { title: 'un élément de références (personnage, objet, lieu…) : l’image y est copiée' }));
   } else {
-    acts.append(link('Ajouter au montage', href(`montage/?add=${id}`), { go: true }));
+    acts.append(studioSeul(link('Ajouter au montage', href(`montage/?add=${id}`), { go: true })));
   }
   acts.append(...versionActs(it));
   acts.append(el('span', { class: 'sp' }),
@@ -2252,7 +2252,7 @@ function midiSheet(it) {
   const kicker = ['clip MIDI', p.bars ? plural(p.bars, 'mesure', 'mesures') : '', p.bpm ? `${p.bpm} bpm` : '', `${sig}/4`,
     it.origin?.tool === 'upload' ? 'importé' : `fait dans ${toolFr(it.origin?.tool)}`].filter(Boolean).join(' · ');
   const acts = el('section', { class: 'sh-acts' },
-    link('Ouvrir ODIO ↗', href('musique/'), { go: true, blank: true, title: 'ODIO dans un autre onglet : glisse ensuite ce clip sur une piste' }),
+    studioSeul(link('Ouvrir ODIO ↗', href('musique/'), { go: true, blank: true, title: 'ODIO dans un autre onglet : glisse ensuite ce clip sur une piste' })),
     listen,
     el('span', { class: 'sp' }),
     el('a', { class: 'tb ghost', href: href(it.url), download: `${it.title || it.id}.mid` }, 'Télécharger (.mid)'),
@@ -2845,12 +2845,12 @@ function kindItems(it) {
       { label: 'Éditer dans Image', icon: '✎', onclick: goTo(`image/?edit=${id}`) },
       { label: 'Référence vidéo', icon: '◎', onclick: goTo(`movie/?ref=${id}`) },
       { label: 'Agrandir', icon: '⤢', sub: 'Upscale', onclick: goTo(`upscale/?src=${id}`) },
-      { label: 'Ajouter au montage', icon: '▤', onclick: goTo(`montage/?add=${id}`) },
+      { label: 'Ajouter au montage', icon: '▤', studio: true, onclick: goTo(`montage/?add=${id}`) },
       { label: 'Faire une planche de références', icon: '▦', onclick: () => elementModal({ items: [it], title: it.title, folder: it.folder || '', space: it.space }) },
       ...versionItems(it)];
   }
-  if (it.kind === 'video') return [{ label: 'Agrandir', icon: '⤢', sub: 'Upscale', onclick: goTo(`upscale/?src=${id}`) }, { label: 'Ajouter au montage', icon: '▤', onclick: goTo(`montage/?add=${id}`) }, ...versionItems(it)];
-  if (it.kind === 'audio') return [{ label: 'Ajouter au montage', icon: '▤', onclick: goTo(`montage/?add=${id}`) }, ...versionItems(it)];
+  if (it.kind === 'video') return [{ label: 'Agrandir', icon: '⤢', sub: 'Upscale', onclick: goTo(`upscale/?src=${id}`) }, { label: 'Ajouter au montage', icon: '▤', studio: true, onclick: goTo(`montage/?add=${id}`) }, ...versionItems(it)];
+  if (it.kind === 'audio') return [{ label: 'Ajouter au montage', icon: '▤', studio: true, onclick: goTo(`montage/?add=${id}`) }, ...versionItems(it)];
   if (isLiving(it)) {
     const src = it.element.source || {};
     return [{ label: `Publier la v${(it.element.count || 0) + 1}…`, icon: '◆', onclick: async () => publishFrom(await api('elements/' + it.id)) },
@@ -2858,10 +2858,10 @@ function kindItems(it) {
   }
   if (it.kind === 'element') {
     return [{ label: 'Référence vidéo', icon: '◎', onclick: goTo(`movie/?ref=${id}`) },
-      it.element?.type === 'object' ? { label: 'Ouvrir dans Object Creator', icon: '◇', onclick: goTo(`objet/#${id}`) } : null, ...versionItems(it)];
+      it.element?.type === 'object' ? { label: 'Ouvrir dans Object Creator', icon: '◇', studio: true, onclick: goTo(`objet/#${id}`) } : null, ...versionItems(it)];
   }
-  if (it.kind === 'sequence') return [{ label: 'Ouvrir dans le Montage', icon: '▤', onclick: goTo(`montage/#${id}`) }];
-  if (it.kind === 'midi') return [{ label: 'Ouvrir ODIO', icon: '↗', sub: 'nouvel onglet', onclick: () => window.open(href('musique/'), '_blank', 'noopener') }, ...versionItems(it)];
+  if (it.kind === 'sequence') return [{ label: 'Ouvrir dans le Montage', icon: '▤', studio: true, onclick: goTo(`montage/#${id}`) }];
+  if (it.kind === 'midi') return [{ label: 'Ouvrir ODIO', icon: '↗', sub: 'nouvel onglet', studio: true, onclick: () => window.open(href('musique/'), '_blank', 'noopener') }, ...versionItems(it)];
   return [];
 }
 // le menu d'un objet ordinaire : il devient la v1 d'un élément, ou la version suivante d'un des siens

@@ -478,7 +478,7 @@ const goTo = (u) => () => { location.href = href(u); };
 function rowItems(it, n) {
   const s = selOf(S.cur);
   const lib = [{ label: 'Ouvrir dans la bibliothèque', icon: '▦', onclick: goTo('asset/#' + it.id) },
-    { label: 'Envoyer au montage', icon: '▤', onclick: goTo('montage/?add=' + encodeURIComponent(it.id)) },
+    { label: 'Envoyer au montage', icon: '▤', studio: true, onclick: goTo('montage/?add=' + encodeURIComponent(it.id)) },   // retiré sans le Studio
     { label: 'Télécharger', icon: '↓', onclick: () => download(it) }];
   if (!n) {
     return [{ head: 'la source' }, { label: 'Montrer en A', icon: 'A', checked: s.A === it.id, onclick: () => setSlot('A', it.id) }, '-', ...lib, '-',
