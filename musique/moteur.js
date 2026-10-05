@@ -1270,19 +1270,28 @@ export function peakDb(buf, a = 0, b = Infinity) {
   return pk > 0 ? 20 * Math.log10(pk) : -Infinity;
 }
 
-// Les crêtes d'un son, pour dessiner sa forme d'onde : `n` cases.
+// Les crêtes d'un son, pour dessiner sa forme d'onde : `n` cases. Gardées par
+// son ET par résolution (05/10) : avant, une seule par son — un son montré à
+// la fois dans la vue Clip (6000) et dans l'arrangement (4000) était repassé
+// en entier, deux fois, à chaque rendu. L'arrangement en demande une selon son
+// zoom (des puissances de deux, timeline.js) : de près, l'onde reste précise.
 const PEAKS = new WeakMap();
 export function peaks(buf, n = 2000) {
-  const key = PEAKS.get(buf);
-  if (key && key.length === n) return key;
+  let par = PEAKS.get(buf);
+  if (!par) { par = new Map(); PEAKS.set(buf, par); }
+  const got = par.get(n);
+  if (got) return got;
   const out = new Float32Array(n), d0 = buf.getChannelData(0), d1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : d0;
   const step = buf.length / n;
+  // un échantillon sur quatre dans une case large ; tous dans une case étroite
+  // (de près, une case ne compte que quelques échantillons)
+  const saut = step >= 64 ? 4 : 1;
   for (let k = 0; k < n; k++) {
     let pk = 0;
     const a = Math.floor(k * step), b = Math.min(buf.length, Math.floor((k + 1) * step));
-    for (let i = a; i < b; i += 4) { const v = Math.max(Math.abs(d0[i]), Math.abs(d1[i])); if (v > pk) pk = v; }
+    for (let i = a; i < b; i += saut) { const v = Math.max(Math.abs(d0[i]), Math.abs(d1[i])); if (v > pk) pk = v; }
     out[k] = pk;
   }
-  PEAKS.set(buf, out);
+  par.set(n, out);
   return out;
 }

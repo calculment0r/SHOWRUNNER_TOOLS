@@ -31,6 +31,26 @@
 // Gestes et raccourcis : ceux de Live 12 (manuel de référence, chapitres
 // « Live Keyboard Shortcuts » et « Arrangement View », ableton.com/en/manual,
 // relevés le 29/09/2026) — le détail dans guide.js.
+//
+// Le zoom et la grille (05/10, Cal : « le zoom n'est pas fluide du tout […]
+// quand je dézoome, la timeline n'affiche plus la grille à droite […] quand on
+// a un clip audio, on ne voit pas la grille ») :
+//   - un cran de molette ne refait plus tout l'arrangement (avant : la barre,
+//     le navigateur, le panneau du bas, chaque piste et chaque toile, à chaque
+//     événement) ; les demandes d'une même image n'en font qu'une
+//     (requestAnimationFrame), et le zoom met en place ce qui dépend de lui
+//     (`echelle`) : la largeur, la grille, la règle, les clips. Pendant le
+//     geste, les formes d'onde sont étirées (transform), puis repeintes nettes
+//     quand il s'arrête ;
+//   - la grille ne s'arrête jamais à droite (Live) : la largeur va toujours deux
+//     écrans au-delà de ce qui se voit, et défiler la rallonge ; ses pas suivent
+//     le zoom (`grille`) ;
+//   - elle passe AU-DESSUS des clips (.ar-lignes, des traits fins) : on vise un
+//     temps à travers une forme d'onde ;
+//   - les toiles (formes d'onde, notes, arc, automation) ne se peignent que sur
+//     la fenêtre : ce qui se voit et un écran de chaque côté ; avant, une toile
+//     faisait la largeur du clip, bornée à 8000 px (de près, un long clip
+//     restait vide au-delà).
 
 import { toast, api, ITEM_MIME, MULTI_MIME, uploadFile, declareZone } from '../commun/shell.js';
 import { poserObjets } from './panneau.js';
@@ -51,7 +71,14 @@ import { brancher, borne, tenirY, AIDE as MOLETTE } from '../commun/molette.js';
 import { tete, poser, suivre } from '../commun/tete.js';
 
 const HEAD_W = 224;
+const Z_MIN = 2, Z_MAX = 160;                           // pixels par noire, les bornes du zoom
 const SEC_H = 22, BAR_H = 30, RULER_H = SEC_H + BAR_H, ARC_H = 58, AUTO_H = 46;
+// la grille adaptative (Live : « adaptive grid ») : le trait le plus fin garde
+// au moins FIN_PX entre deux traits ; les numéros de mesure NUM_PX ; de près
+// (une noire de TEMPS_PX au moins), les temps ont le leur (« 5.2 »)
+const FIN_PX = 8, NUM_PX = 44, TEMPS_PX = 52;
+// la fin d'un geste de zoom : les formes d'onde étirées sont repeintes nettes
+const ZOOM_REPOS = 140;
 const AUDIO_EXT = /\.(wav|mp3|flac|m4a|ogg|oga|aac)$/i;
 export const SNAPS = [[0, 'libre'], [0.25, '1/16'], [0.5, '1/8'], [1, '1/4'], [2, '1/2'], ['bar', 'mesure']];
 
@@ -96,12 +123,84 @@ export function createTimeline(app) {
   const X = (b) => b * ppb();
   const beatAt = (clientX) => (clientX - grid.getBoundingClientRect().left - HEAD_W) / ppb();
   const snapB = (b, e) => { const u = e?.altKey ? 0 : snapU(); return u ? Math.round(b / u) * u : b; };
-  const width = () => (Math.max(projEnd(P()), P().loop.b, 16 * P().sig) + 8 * P().sig) * ppb();
+
+  // ── la vue : ce qui se voit, la fenêtre des toiles, la largeur ──
+  // vueW : la largeur visible des voies (sans les en-têtes), tenue par un
+  // ResizeObserver plutôt que lue (clientWidth) à chaque geste ; portee : le
+  // bord droit à tenir (px des voies), deux écrans au-delà de ce qui se voit ;
+  // win : la fenêtre des toiles, ce qui se voit et un écran de chaque côté.
+  let vueW = Math.max(400, innerWidth - HEAD_W);
+  let portee = 0;
+  let win = { a: 0, b: 0 };
+  const fenetre = (sl) => { win = { a: Math.max(0, sl - vueW), b: sl + 2 * vueW }; };
+  // la largeur des voies : le morceau et huit mesures, et jamais moins que la
+  // portée — la grille continue à droite, comme dans Live
+  const finMorceau = () => (Math.max(projEnd(P()), P().loop.b, 16 * P().sig) + 8 * P().sig) * ppb();
+  const width = () => Math.max(finMorceau(), portee);
+  // la largeur posée sur la grille CSS : la colonne des voies (elles s'y
+  // étirent, sans largeur chacune) — une propriété qui ne s'hérite pas : rien
+  // n'est recalculé dans les pistes
+  function poserLargeur() {
+    const Wd = width();
+    grid.style.gridTemplateColumns = `${HEAD_W}px ${Wd}px`;
+    grid.style.width = `${HEAD_W + Wd}px`;
+    return Wd;
+  }
+
+  // ── la grille, selon le zoom ──
+  // Le trait fin : le premier pas (double-croche, croche, noire, mesure, puis
+  // groupes de mesures) qui laisse FIN_PX ; le moyen : le temps (de loin, le
+  // fin lui-même) ; le fort : la mesure (de loin, quatre pas fins). Les
+  // numéros : toutes les 1, 2, 4… mesures, NUM_PX au moins entre eux.
+  function grille() {
+    const z = ppb(), sig = P().sig;
+    const pas = [0.25, 0.5, 1, sig, 2 * sig, 4 * sig, 8 * sig, 16 * sig, 32 * sig, 64 * sig, 128 * sig];
+    const fin = pas.find((s) => s * z >= FIN_PX) ?? pas[pas.length - 1];
+    return {
+      fin, moyen: Math.max(1, fin), fort: fin < sig ? sig : 4 * fin,
+      num: [1, 2, 4, 8, 16, 32, 64, 128, 256].find((k) => k * sig * z >= NUM_PX) ?? 256,
+      temps: z >= TEMPS_PX,
+    };
+  }
+  // Les traits, toujours peints sur une toile (jamais en dégradés CSS : trois
+  // dégradés répétés sur la zone des pistes coûtaient à eux seuls deux tiers
+  // de l'image pendant un zoom — mesuré le 05/10, Chromium sans GPU : 54 ms
+  // par image avec eux, 18 sans ; sous SwiftShader, la règle et l'arc en
+  // dégradés pesaient encore un tiers). `chaqueTrait(a, w, fn)` : un trait par
+  // pas fin entre a et a + w (px des voies) ; `fn(x, force)`, x depuis a, la
+  // force celle du plus grand pas qui tombe là. Le trait suit l'encre du
+  // thème, plus ou moins appuyé (ALPHA).
+  const ALPHA = { fort: 0.2, moyen: 0.1, fin: 0.05 };
+  function chaqueTrait(a, w, fn) {
+    const z = ppb(), G = grille(), px = G.fin * z;
+    const rm = Math.round(G.moyen / G.fin), rf = Math.round(G.fort / G.fin);
+    for (let i = Math.max(0, Math.ceil(a / px)); i * px < a + w; i++) fn(i * px - a, i % rf === 0 ? 'fort' : i % rm === 0 ? 'moyen' : 'fin');
+  }
+  // Les voies : des traits PAR-DESSUS les pistes et leurs clips (on vise un
+  // temps à travers une forme d'onde), dans .ar-lignes, posée sur la zone des
+  // pistes par les lignes de la grille CSS (render). Les traits sont
+  // verticaux : une toile d'UN pixel de haut, étirée sur toute la hauteur, les
+  // porte tous — sur la fenêtre, repeinte en quelques microsecondes à chaque
+  // image de zoom.
+  const lignesCv = el('canvas', { class: 'ar-lignes-cv' });
+  const lignes = el('div', { class: 'ar-lignes', 'aria-hidden': 'true' }, lignesCv);
+  function peindreLignes() {
+    const dpr = devicePixelRatio || 1, lw = Math.max(1, Math.round(dpr));
+    const a = Math.floor(win.a), w = Math.max(1, Math.ceil(win.b - a)), W = Math.round(w * dpr);
+    if (lignesCv.width !== W) { lignesCv.width = W; lignesCv.height = 1; lignesCv.style.width = `${w}px`; }
+    lignesCv.style.transform = `translateX(${a}px)`;
+    const g = lignesCv.getContext('2d');
+    g.clearRect(0, 0, W, 1);
+    g.fillStyle = tok('ink');
+    chaqueTrait(a, w, (x, f) => { g.globalAlpha = ALPHA[f]; g.fillRect(Math.round(x * dpr), 0, lw, 1); });
+    g.globalAlpha = 1;
+  }
   const sel = () => new Set(S.sel.clips || []);
   const visTracks = () => P().tracks.filter((t) => t.kind !== 'bus');
   const lanesOf = (t) => (ui().auto?.[t.id] ? (P().auto || []).filter((L) => app.mod(L.mod)?.track === t.id) : []);
 
   // ── la barre d'outils ──
+  let zoomLab = null;   // le nombre de px par mesure : le zoom le récrit en place
   function paintTools() {
     const c = app.clip(S.sel.clip);
     const t = c && app.track(c.track);
@@ -133,9 +232,9 @@ export function createTimeline(app) {
       el('span', { class: 'sp' }),
       el('span', { class: 'lbl ar-info' }, n > 1 ? `${n} clips choisis` : c ? `${t.name} · ${app.bar(c.start)} → ${app.bar(c.start + c.len)}` : 'double-clic sur une piste : un clip · glisser : choisir'),
       el('i', { class: 'ar-sep' }),
-      el('button', { class: 'tb ghost sm', type: 'button', title: 'dézoomer · − (Alt+molette)', onclick: () => setZoom(ppb() / 1.25) }, '−'),
-      el('span', { class: 'ar-zoom', title: 'pixels par mesure' }, el('b', {}, String(Math.round(ppb() * P().sig))), ' px/mes'),
-      el('button', { class: 'tb ghost sm', type: 'button', title: 'zoomer · + (Alt+molette)', onclick: () => setZoom(ppb() * 1.25) }, '+'),
+      el('button', { class: 'tb ghost sm', type: 'button', title: 'dézoomer · − (Alt+molette)', onclick: () => setZoom(zoomCible() / 1.25) }, '−'),
+      el('span', { class: 'ar-zoom', title: 'pixels par mesure' }, zoomLab = el('b', {}, String(Math.round(ppb() * P().sig))), ' px/mes'),
+      el('button', { class: 'tb ghost sm', type: 'button', title: 'zoomer · + (Alt+molette)', onclick: () => setZoom(zoomCible() * 1.25) }, '+'),
       el('button', { class: 'tb ghost sm', type: 'button', title: 'tout le morceau dans la fenêtre · W', onclick: fit }, 'Ajuster'),
       el('div', { class: 'seg', title: 'hauteur des pistes (toutes) · Ctrl+molette ; sur le nom d\'une piste : la sienne · Alt + / Alt − · H : ajuster' }, [[60, 'S'], [88, 'M'], [124, 'L']].map(([h, l]) =>
         el('button', { class: `tb${th() === h ? ' on' : ''}`, type: 'button', onclick: () => { ui().th = h; delete ui().thT; app.saveUi(); render(); } }, l))),
@@ -149,21 +248,44 @@ export function createTimeline(app) {
     menu(r.left, r.bottom + 4, [...app.trackChoices(), '-', ...genTrackChoices(app)]);
   }
 
-  // zoom horizontal ancré sur un point de l'écran (le curseur, ou le milieu)
-  function zoomAround(z, mx = scroll.clientWidth / 2) {
-    const b = (scroll.scrollLeft + mx - HEAD_W) / ppb();
-    ui().ppb = clamp(z, 2, 160);
+  // ── le zoom horizontal, ancré sur un point de l'écran (le curseur, ou le milieu) ──
+  // Une molette ou un pavé envoient plusieurs événements par image : chacun ne
+  // fait que noter la demande (zoomPend, le zoom visé et son ancre, mx : px
+  // depuis le bord gauche de la zone qui défile) ; l'image suivante l'applique
+  // une fois (appliquerZoom). Les crans d'une même image se multiplient
+  // (zoomCible part du zoom déjà demandé, pas du zoom posé).
+  let zoomPend = null, zoomRaf = 0, zoomRepos = 0;
+  const zoomCible = () => zoomPend?.z ?? ppb();
+  function zoomAround(z, mx = HEAD_W + vueW / 2) {
+    zoomPend = { z: clamp(z, Z_MIN, Z_MAX), mx };
+    if (!zoomRaf) zoomRaf = requestAnimationFrame(appliquerZoom);
+  }
+  function appliquerZoom() {
+    zoomRaf = 0;
+    const q = zoomPend;
+    zoomPend = null;
+    if (!q || q.z === ppb()) return;
+    // lu avant toute écriture de l'image : la mise en page est encore propre
+    const b = (scroll.scrollLeft + q.mx - HEAD_W) / ppb();
+    poserZoom(q.z, b * q.z + HEAD_W - q.mx, true);
+    // le geste fini, les formes d'onde étirées sont repeintes nettes
+    clearTimeout(zoomRepos);
+    zoomRepos = setTimeout(() => pourClips(drawClip), ZOOM_REPOS);
+  }
+  // poser un zoom et un défilement : en place (echelle), sans refaire la vue
+  function poserZoom(z, left, geste = false) {
+    if (!geste) zoomPend = null;   // W, Z, X l'emportent sur des crans encore en route
+    ui().ppb = clamp(z, Z_MIN, Z_MAX);
     app.saveUi();
-    render();
-    scroll.scrollLeft = b * ppb() + HEAD_W - mx;
+    const sl = Math.max(0, left);
+    echelle(sl, geste);
+    scroll.scrollLeft = sl;    // la largeur va deux écrans au-delà : jamais bornée à droite
+    frame(app.pos());          // la tête et l'enregistrement, à leur place dans la même image
   }
   const setZoom = (z) => zoomAround(z);
   function fit() {
     const end = Math.max(projEnd(P()), P().loop.on ? P().loop.b : 0, 4 * P().sig);
-    ui().ppb = clamp((scroll.clientWidth - HEAD_W - 30) / end, 2, 160);
-    app.saveUi();
-    render();
-    scroll.scrollLeft = 0;
+    poserZoom((vueW - 30) / end, 0);
   }
   // H : les pistes à la hauteur qui les fait toutes tenir
   function fitHeight() {
@@ -176,8 +298,22 @@ export function createTimeline(app) {
   }
   // Ctrl+molette (commun/molette.js) : une piste (son id), ou toutes — les
   // hauteurs propres suivent le même rapport ; toutes : ce qui est sous le
-  // curseur y reste
+  // curseur y reste. Comme le zoom : une seule mise à jour par image, les
+  // crans d'une même image multipliés (une autre piste visée : la demande
+  // d'avant part tout de suite).
+  let hautPend = null, hautRaf = 0;
   function scaleHeights(f, id, clientY) {
+    const cle = id || null;
+    if (hautPend && hautPend.id !== cle) appliquerHauteurs();
+    hautPend = { f: (hautPend?.f || 1) * f, id: cle, clientY };
+    if (!hautRaf) hautRaf = requestAnimationFrame(appliquerHauteurs);
+  }
+  function appliquerHauteurs() {
+    if (hautRaf) { cancelAnimationFrame(hautRaf); hautRaf = 0; }
+    const q = hautPend;
+    hautPend = null;
+    if (!q) return;
+    const { f, id, clientY } = q;
     const t = id && app.track(id);
     const k = (h) => Math.round(borne(h * f, TH_MIN, TH_MAX) * 10) / 10;
     const go = () => {
@@ -198,36 +334,38 @@ export function createTimeline(app) {
     const [a, b] = g.length ? [Math.min(...g.map((c) => c.start)), Math.max(...g.map((c) => c.start + c.len))] : [P().loop.a, P().loop.b];
     if (b <= a) return;
     zoomBack = { ppb: ppb(), left: scroll.scrollLeft };
-    ui().ppb = clamp((scroll.clientWidth - HEAD_W - 40) / (b - a), 2, 160);
-    app.saveUi();
-    render();
-    scroll.scrollLeft = X(a);
+    const z = clamp((vueW - 40) / (b - a), Z_MIN, Z_MAX);
+    poserZoom(z, a * z);
   }
   function zoomOut() {
     if (!zoomBack) return;
-    ui().ppb = zoomBack.ppb; app.saveUi(); render(); scroll.scrollLeft = zoomBack.left; zoomBack = null;
+    poserZoom(zoomBack.ppb, zoomBack.left);
+    zoomBack = null;
   }
 
   // ── la règle : sections, mesures, boucle, marqueurs ──
+  // ce que le zoom déplace dans la règle, sans la refaire (echelle)
+  const regle = { secs: [], marks: [], loop: null, nums: null };
   function ruler() {
-    const p = P(), Wd = width(), bars = Math.ceil(Wd / ppb() / p.sig);
-    const r = el('div', { class: 'ar-ruler', style: { width: `${Wd}px` } });
+    const p = P();
+    const r = el('div', { class: 'ar-ruler' });   // sa largeur : la colonne des voies
     const secRow = el('div', { class: 'ar-secs', title: 'double-clic : une section · sur une section : la renommer · glisser : la déplacer avec ses clips (Maj : l\'étiquette seule) · clic droit : dupliquer, colorer…' });
-    for (const s of p.sections) secRow.append(sectionEl(s));
+    regle.secs = p.sections.map((s) => [sectionEl(s), s]);
+    for (const [box] of regle.secs) secRow.append(box);
     const barRow = el('div', { class: 'ar-bars' });
     const band = el('div', { class: 'ar-band', title: 'glisser : la boucle' });
     const L = el('div', { class: `ar-loop${p.loop.on ? ' on' : ''}`, style: { left: `${X(p.loop.a)}px`, width: `${X(p.loop.b - p.loop.a)}px` } },
       el('i', { class: 'h a' }), el('i', { class: 'h b' }));
     band.append(L);
+    regle.loop = L;
     const nums = el('div', { class: 'ar-nums', title: 'clic : aller là · glisser à l\'horizontale : chercher · à la verticale : zoomer · double-clic : zoomer sur la sélection' });
-    const every = ppb() * p.sig < 26 ? 4 : ppb() * p.sig < 50 ? 2 : 1;
-    for (let b = 0; b <= bars; b++) {
-      if (b % every) continue;
-      nums.append(el('span', { style: { left: `${X(b * p.sig)}px` } }, String(b + 1)));
-    }
+    // les numéros et les graduations, sur la fenêtre (paintNums)
+    regle.nums = nums;
+    paintNums();
     // (plus de triangle dans la règle : l'onglet de LA tête de lecture la marque, commun/tete.js)
     barRow.append(band, nums);
-    for (const m of p.markers) barRow.append(markerEl(m));
+    regle.marks = p.markers.map((m) => [markerEl(m), m]);
+    for (const [box] of regle.marks) barRow.append(box);
     r.append(secRow, barRow);
 
     // la boucle
@@ -285,6 +423,36 @@ export function createTimeline(app) {
       addSectionAt(Math.max(0, Math.floor(beatAt(e.clientX) / p.sig) * p.sig));
     });
     return r;
+  }
+
+  // Les numéros de mesure et les graduations, sur la fenêtre seulement (le
+  // reste n'existe pas : la règle n'a pas de fin à droite). Les numéros :
+  // toutes les 1, 2, 4… mesures selon le zoom ; de près, les temps (« 5.2 »),
+  // plus pâles. Les graduations : celles de la grille des voies (chaqueTrait),
+  // la mesure sur toute la hauteur, le temps et le pas fin en bas.
+  const NUMS_H = BAR_H - 7;    // .ar-nums : la rangée des mesures sous la bande de boucle
+  const numsCv = el('canvas', { class: 'ar-nums-cv' });
+  function paintNums() {
+    const nums = regle.nums;
+    if (!nums) return;
+    const sig = P().sig, z = ppb(), G = grille(), bar = sig * z, k = G.num;
+    const m0 = Math.max(0, Math.floor(win.a / bar / k) * k), m1 = Math.ceil(win.b / bar);
+    const out = [numsCv];
+    for (let m = m0; m <= m1; m += k) {
+      out.push(el('span', { style: { left: `${m * bar}px` } }, String(m + 1)));
+      if (G.temps && k === 1) for (let t = 1; t < sig; t++) out.push(el('span', { class: 't', style: { left: `${(m * sig + t) * z}px` } }, `${m + 1}.${t + 1}`));
+    }
+    nums.replaceChildren(...out);
+    const dpr = devicePixelRatio || 1, lw = Math.max(1, Math.round(dpr));
+    const a = Math.floor(win.a), w = Math.max(1, Math.ceil(win.b - a)), W = Math.round(w * dpr), H = Math.round(NUMS_H * dpr);
+    if (numsCv.width !== W || numsCv.height !== H) { numsCv.width = W; numsCv.height = H; numsCv.style.width = `${w}px`; numsCv.style.height = `${NUMS_H}px`; }
+    numsCv.style.transform = `translateX(${a}px)`;
+    const g = numsCv.getContext('2d');
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = tok('ink');
+    const haut = { fort: H, moyen: Math.round(9 * dpr), fin: Math.round(5 * dpr) };
+    chaqueTrait(a, w, (x, f) => { g.globalAlpha = ALPHA[f] * 1.4; g.fillRect(Math.round(x * dpr), H - haut[f], lw, haut[f]); });
+    g.globalAlpha = 1;
   }
 
   function addSectionAt(b) {
@@ -395,13 +563,28 @@ export function createTimeline(app) {
   // Glisser : peindre (la valeur suit la souris, posée à chaque pas de la
   // résolution) ; Maj : une droite depuis le point de départ ; clic droit :
   // effacer ce qu'on survole.
-  function paintable(cv, getPts, { res, h, color, columns, onDone }) {
+  // La toile ne couvre que la fenêtre (win) : posée à sa gauche (transform),
+  // elle dessine dans les coordonnées de la voie ; sa taille ne dépend ni du
+  // zoom ni de la longueur du morceau. Le zoom la repeint à chaque image (peu
+  // de points), le défilement quand on sort de la fenêtre (toiles).
+  const toiles = [];
+  // `traits` : la toile peint aussi les traits de la grille (l'arc, collé en
+  // haut au-dessus de ceux des voies)
+  function paintable(cv, getPts, { res, h, color, columns, traits = false, onDone }) {
     const draw = () => {
-      const pts = getPts(), w = Math.max(4, Math.round(width())), dpr = devicePixelRatio || 1;
-      if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr; cv.style.width = `${w}px`; cv.style.height = `${h}px`; }
+      const pts = getPts(), a = Math.floor(win.a), w = Math.max(4, Math.ceil(win.b - a)), dpr = devicePixelRatio || 1;
+      const W = Math.round(w * dpr), H = Math.round(h * dpr);
+      if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; cv.style.width = `${w}px`; cv.style.height = `${h}px`; }
+      cv.style.transform = `translateX(${a}px)`;
       const g = cv.getContext('2d');
-      g.setTransform(dpr, 0, 0, dpr, 0, 0);
-      g.clearRect(0, 0, w, h);
+      g.setTransform(dpr, 0, 0, dpr, -a * dpr, 0);
+      g.clearRect(a, 0, w, h);
+      if (traits) {
+        const lw = Math.max(1, Math.round(dpr)) / dpr;
+        g.fillStyle = tok('ink');
+        chaqueTrait(a, w, (x, f) => { g.globalAlpha = ALPHA[f]; g.fillRect(a + Math.round(x * dpr) / dpr, 0, lw, h); });
+        g.globalAlpha = 1;
+      }
       const y = (v) => 4 + (1 - v) * (h - 8);
       if (!pts.length) {
         g.fillStyle = tok('ink3'); g.font = `9px ${tok('f-mono') || 'monospace'}`;
@@ -418,7 +601,7 @@ export function createTimeline(app) {
       g.strokeStyle = tok(color); g.lineWidth = 1.6; g.beginPath();
       g.moveTo(0, y(pts[0][1]));
       for (const [b, v] of pts) g.lineTo(X(b), y(v));
-      g.lineTo(w, y(pts[pts.length - 1][1]));
+      g.lineTo(a + w, y(pts[pts.length - 1][1]));
       g.stroke();
       if (!columns) { g.fillStyle = tok(color); for (const [b, v] of pts) g.fillRect(X(b) - 2, y(v) - 2, 4, 4); }
     };
@@ -431,7 +614,7 @@ export function createTimeline(app) {
       const pts = getPts();
       const erase = e.button === 2;
       const orig = pts.map((p) => [...p]);
-      const r = cv.getBoundingClientRect();
+      const r = cv.parentNode.getBoundingClientRect();   // la voie (le temps 0), pas la toile posée sur la fenêtre
       const at = (ev) => ({ b: Math.max(0, (ev.clientX - r.left) / ppb()), v: clamp(1 - (ev.clientY - r.top - 4) / (h - 8), 0, 1) });
       const a0 = at(e);
       let prev = a0;
@@ -461,6 +644,7 @@ export function createTimeline(app) {
       const up = () => { cv.removeEventListener('pointermove', mv); cv.removeEventListener('pointerup', up); onDone(); };
       cv.addEventListener('pointermove', mv); cv.addEventListener('pointerup', up);
     });
+    toiles.push(draw);
     requestAnimationFrame(draw);
     return draw;
   }
@@ -469,8 +653,9 @@ export function createTimeline(app) {
     const p = P(), A = p.arc, mst = app.master();
     const target = { lpf: 'filtre maître', vol: 'volume maître', both: 'filtre et volume' }[A.to] || 'filtre maître';
     const cv = el('canvas', { class: 'ar-curve' });
-    const lane = el('div', { class: `ar-arc${A.on ? '' : ' off'}`, style: { width: `${width()}px`, '--bar': `${X(p.sig)}px` } }, cv);
-    paintable(cv, () => A.pts, { res: Math.max(0.25, snapU() || 1), h: ARC_H, color: 'or', columns: true, onDone: () => app.commit('data') });
+    const lane = el('div', { class: `ar-arc${A.on ? '' : ' off'}` }, cv);
+    // collée en haut, au-dessus des traits des voies : elle peint les siens
+    paintable(cv, () => A.pts, { res: Math.max(0.25, snapU() || 1), h: ARC_H, color: 'or', columns: true, traits: true, onDone: () => app.commit('data') });
     const head = el('div', { class: `ar-arch${A.on ? '' : ' off'}` },
       el('div', { class: 'txt' }, el('b', {}, 'Arc d\'énergie'), el('span', {}, `peindre · ${target}`)),
       el('div', { class: 'row' },
@@ -692,13 +877,19 @@ export function createTimeline(app) {
     box.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); groupMenu(e, g, members, nm); });
     return box;
   }
+  // les clips des membres, en traits (le zoom les replace : minis)
+  const minis = [];
+  const placerMini = (i, c) => { i.style.left = `${X(c.start)}px`; i.style.width = `${Math.max(2, X(c.len) - 1)}px`; };
   function groupLane(g, members) {
     const p = P();
-    const ln = el('div', { class: `ar-glane${g.fold ? ' fold' : ''}`, 'data-grp': g.id, style: { width: `${width()}px`, '--bar': `${X(p.sig)}px` } });
+    const ln = el('div', { class: `ar-glane${g.fold ? ' fold' : ''}`, 'data-grp': g.id });
     const n = Math.max(1, members.length), hh = Math.max(2, Math.floor(22 / n));
     members.forEach((t, r) => {
       for (const c of p.clips.filter((x) => x.track === t.id)) {
-        ln.append(el('i', { style: { left: `${X(c.start)}px`, width: `${Math.max(2, X(c.len) - 1)}px`, top: `${2 + r * hh}px`, height: `${Math.max(1, hh - 1)}px`, background: `var(--${t.color})` } }));
+        const i = el('i', { style: { top: `${2 + r * hh}px`, height: `${Math.max(1, hh - 1)}px`, background: `var(--${t.color})` } });
+        placerMini(i, c);
+        minis.push([i, c]);
+        ln.append(i);
       }
     });
     ln.addEventListener('dblclick', () => { g.fold = !g.fold; app.commit('data'); });
@@ -720,7 +911,7 @@ export function createTimeline(app) {
   function lane(t) {
     const p = P();
     const ln = el('div', { class: `ar-lane${S.sel.track === t.id ? ' sel' : ''}`, 'data-track': t.id,
-      style: { width: `${width()}px`, height: `${thOf(t)}px`, '--bar': `${X(p.sig)}px`, '--beat': `${X(1)}px`, '--c': `var(--${t.color})` } });
+      style: { height: `${thOf(t)}px`, '--c': `var(--${t.color})` } });   // sa largeur : la colonne ; sa grille : .ar-lignes
     for (const c of p.clips.filter((x) => x.track === t.id)) ln.append(clipEl(c, t));
     if (isGenTrack(t)) ln.classList.add('gen');
     ln.addEventListener('dblclick', (e) => {
@@ -749,7 +940,7 @@ export function createTimeline(app) {
     const s = spec(m.type, L.k), t = m.track && app.track(m.track);
     const color = t?.color || 'cy';
     const cv = el('canvas', { class: 'ar-curve' });
-    const ln = el('div', { class: `ar-alane${L.on === false ? ' off' : ''}`, style: { width: `${width()}px`, '--bar': `${X(P().sig)}px`, '--c': `var(--${color})` } }, cv);
+    const ln = el('div', { class: `ar-alane${L.on === false ? ' off' : ''}`, style: { '--c': `var(--${color})` } }, cv);
     paintable(cv, () => L.pts, { res: 0.25, h: AUTO_H, color, columns: false, onDone: () => app.commit('data') });
     const now = L.pts.length ? fmt(s, fromNormSafe(s, interp(L.pts, app.pos()))) : fmt(s, val(m, L.k));
     const hd = el('div', { class: `ar-ahead${L.on === false ? ' off' : ''}`, style: { '--c': `var(--${color})` } },
@@ -1061,36 +1252,55 @@ export function createTimeline(app) {
     addEventListener('pointermove', mv); addEventListener('pointerup', up);
   }
 
+  // Le dessin d'un clip (forme d'onde, notes, région générative), sur la
+  // fenêtre seulement : la toile couvre [xa, xb[ du clip (px depuis son
+  // début), posée là par un transform, et l'on dessine dans les coordonnées du
+  // clip (le contexte décalé de xa). cv._vue retient ce qui est peint (xa, w,
+  // le zoom) : pendant un geste de zoom, echelle étire la toile au lieu de la
+  // repeindre.
   function drawClip(cv, c, t, pat) {
-    const w = Math.max(4, Math.min(8000, Math.round(X(c.len)))), h = Math.max(10, thOf(t) - 28);
+    const z = ppb(), x0 = X(c.start), full = X(c.len);
+    const xa = Math.max(0, Math.floor(win.a - x0)), xb = Math.max(xa, Math.min(Math.ceil(full), Math.ceil(win.b - x0)));
+    const w = xb - xa, h = Math.max(10, thOf(t) - 28);
     const dpr = devicePixelRatio || 1;
-    cv.width = w * dpr; cv.height = h * dpr;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
     cv.style.width = `${w}px`; cv.style.height = `${h}px`;
+    cv.style.transform = xa ? `translateX(${xa}px)` : '';
+    cv._vue = { xa, w, z };
+    if (!w) return;
     const g = cv.getContext('2d');
-    g.scale(dpr, dpr);
+    g.setTransform(dpr, 0, 0, dpr, -xa * dpr, 0);
     g.fillStyle = tok(t.color);
     const p = P();
-    if (t.kind === 'audio' && isRegion(c) && !c.item) { drawRegion(g, w, h, c, app); return; }
+    if (t.kind === 'audio' && isRegion(c) && !c.item) { drawRegion(g, xb, h, c, app); return; }
     if (t.kind === 'audio') {
       const buf0 = app.engine.buffers.get(c.item);
       if (!buf0) { app.engine.buffer(c.item).then(() => drawClip(cv, c, t, pat)).catch(() => {}); return; }
-      const buf = clipBuffer(buf0, c), G = audioGeom(c, buf.duration);
-      const pk = peaks(buf, 4000), spb = 60 / p.bpm, L = c.len * spb;
+      const buf = clipBuffer(buf0, c), G = audioGeom(c, buf.duration), D = buf.duration;
+      const spb = 60 / p.bpm, L = c.len * spb;
+      // les crêtes à la résolution du zoom (une ou deux par pixel) : de près,
+      // l'onde reste précise — on y coupe sur un temps
+      const n = resCretes((D / G.rate / spb) * z);
+      const pk = peaks(buf, n), kps = n / D, parPx = Math.max(1, Math.ceil((spb / z) * G.rate * kps));
       const gain = Math.pow(10, (c.gain || 0) / 20);
-      for (let x = 0; x < w; x++) {
-        const tau = (x / ppb()) * spb;
+      for (let x = xa; x < xb; x++) {
+        const tau = (x / z) * spb;
         let sec = G.off + tau * G.rate;
         if (G.loop && sec >= G.ls + G.llen) sec = G.ls + ((sec - G.ls) % G.llen);
-        if (sec >= buf.duration) break;
+        if (sec >= D) break;
         const env = Math.min(1, c.fi ? tau / c.fi : 1, c.fo ? (L - tau) / c.fo : 1);
-        const v = pk[Math.min(pk.length - 1, Math.floor(sec / buf.duration * pk.length))] * gain * Math.max(0, env);
+        // la plus haute des crêtes que couvre ce pixel
+        const i0 = Math.min(n - 1, Math.floor(sec * kps)), i1 = Math.min(n, i0 + parPx);
+        let v = 0;
+        for (let i = i0; i < i1; i++) if (pk[i] > v) v = pk[i];
+        v *= gain * Math.max(0, env);
         const hh = Math.max(1, Math.min(1, v) * (h - 2));
         g.fillRect(x, (h - hh) / 2, 1, hh);
       }
       // les fondus, en trait
       g.strokeStyle = tok('ink2'); g.lineWidth = 1;
       if (c.fi) { g.beginPath(); g.moveTo(0, h); g.lineTo(X(c.fi / spb), 1); g.stroke(); }
-      if (c.fo) { g.beginPath(); g.moveTo(w - X(c.fo / spb), 1); g.lineTo(w, h); g.stroke(); }
+      if (c.fo) { g.beginPath(); g.moveTo(full - X(c.fo / spb), 1); g.lineTo(full, h); g.stroke(); }
       if (G.loop) {
         // les retours en haut de boucle
         g.fillStyle = tok('line-cy');
@@ -1103,13 +1313,13 @@ export function createTimeline(app) {
     const plen = pat.steps / 4, off = c.off || 0;
     if (t.kind === 'drums') {
       const voices = drumVoicesOf(app.mod(t.src)?.type).filter((v) => pat.lanes?.[v.id]?.some(Boolean));
-      const rows = Math.max(1, voices.length), rh = h / rows;
+      const rows = Math.max(1, voices.length), rh = h / rows, wn = Math.max(3, X(0.25) - 2);
       voices.forEach((v, r) => {
         const laneArr = pat.lanes[v.id];
         for (let b = -off; b < c.len; b += plen) {
           laneArr.forEach((vel, s) => {
             const x = X(b + s / 4);
-            if (vel && x >= 0 && x < w) { g.globalAlpha = 0.45 + 0.55 * vel; g.fillRect(x, r * rh + rh / 2 - 1.5, Math.max(3, X(0.25) - 2), 3); }
+            if (vel && x >= 0 && x + wn > xa && x < xb) { g.globalAlpha = 0.45 + 0.55 * vel; g.fillRect(x, r * rh + rh / 2 - 1.5, wn, 3); }
           });
         }
       });
@@ -1120,7 +1330,7 @@ export function createTimeline(app) {
       for (let b = -off; b < c.len; b += plen) {
         for (const n of pat.notes || []) {
           const x = X(b + n.s / 4);
-          if (x + X(n.l / 4) < 0 || x >= w) continue;
+          if (x + X(n.l / 4) < xa || x >= xb) continue;
           const y = h - 3 - ((n.p - lo) / (hi - lo)) * (h - 6);
           g.fillRect(x, y - 1.5, Math.max(2, X(n.l / 4) - 1), 3);
         }
@@ -1129,6 +1339,82 @@ export function createTimeline(app) {
     g.fillStyle = tok('line');
     for (let b = plen - off; b < c.len; b += plen) g.fillRect(X(b), 0, 1, h);
   }
+  // la résolution des crêtes pour une onde de `px` pixels : une puissance de
+  // deux (le cache de moteur.js en garde une par résolution), bornée
+  const resCretes = (px) => Math.min(1 << 18, Math.max(2048, 2 ** Math.ceil(Math.log2(Math.max(1, px)))));
+
+  // chaque clip de la grille, avec son clip, sa piste, son motif
+  function pourClips(fn) {
+    const byId = new Map(P().clips.map((c) => [c.id, c]));
+    for (const box of grid.querySelectorAll('.clip')) {
+      const c = byId.get(box.dataset.id), cv = box.querySelector('.cv');
+      const t = c && app.track(c.track);
+      if (t && cv) fn(cv, c, t, c.pat && app.pat(c.pat), box);
+    }
+  }
+
+  // ── le zoom en place ──
+  // Tout ce qui dépend du zoom, mis à jour sans rien refaire : la largeur, la
+  // grille, la règle (numéros, sections, marqueurs, boucle), la zone de
+  // boucle, les clips (place et largeur), les traits des groupes, l'arc et
+  // l'automation (repeints : peu de points). Des écritures seulement : la
+  // seule lecture de mise en page de l'image est faite avant (appliquerZoom).
+  // Pendant un geste (`geste`), la toile d'un clip est étirée (transform,
+  // sans la repeindre) tant qu'elle couvre ce qui se voit du clip ; sinon
+  // repeinte, dans un budget par image ; le geste fini, toutes sont
+  // repeintes nettes (appliquerZoom, ZOOM_REPOS).
+  function echelle(sl, geste = false) {
+    const z = ppb();
+    portee = sl + 2 * vueW;
+    poserLargeur();
+    fenetre(sl);
+    paintNums();
+    const p = P();
+    for (const [box, s] of regle.secs) { box.style.left = `${X(s.a)}px`; box.style.width = `${Math.max(6, X(s.b - s.a) - 2)}px`; }
+    for (const [box, m] of regle.marks) box.style.left = `${X(m.b)}px`;
+    if (regle.loop) { regle.loop.style.left = `${X(p.loop.a)}px`; regle.loop.style.width = `${X(p.loop.b - p.loop.a)}px`; }
+    paintZone();
+    for (const [i, c] of minis) placerMini(i, c);
+    const t0 = performance.now();
+    pourClips((cv, c, t, pat, box) => {
+      box.style.left = `${X(c.start)}px`; box.style.width = `${Math.max(4, X(c.len))}px`;
+      const v = cv._vue;
+      if (!geste || !v) { drawClip(cv, c, t, pat); return; }
+      const k = z / v.z, x0 = X(c.start);
+      // ce qui se voit du clip, et ce que la toile étirée en couvre ; étirée
+      // de plus du double (ou réduite de plus de moitié), elle est repeinte
+      const va = Math.max(0, sl - x0), vb = Math.min(X(c.len), sl + vueW - x0);
+      const cache = vb <= va;
+      const couvre = cache || (v.xa * k <= va + 1 && (v.xa + v.w) * k >= vb - 1);
+      if (!cache && (!couvre || k > 2 || k < 0.5) && performance.now() - t0 < 6) { drawClip(cv, c, t, pat); return; }
+      cv.style.transform = `translateX(${v.xa * k}px) scaleX(${k})`;
+    });
+    for (const d of toiles) d();
+    if (zoomLab) zoomLab.textContent = String(Math.round(z * p.sig));
+  }
+
+  // Défiler (ou une fenêtre qui change de taille) : plus loin à droite, la
+  // largeur s'étend (la grille suit, sans fin) ; sorti de la fenêtre, on la
+  // replace et l'on repeint ce qui s'y dessine. Une fois par image.
+  let vueRaf = 0;
+  function suivreVue() {
+    vueRaf = 0;
+    const sl = scroll.scrollLeft;
+    if (sl + 2 * vueW > width()) { portee = sl + 3 * vueW; poserLargeur(); }
+    const marge = vueW / 4;
+    if ((win.a > 0 && sl < win.a + marge) || sl + vueW > win.b - marge) {
+      fenetre(sl);
+      paintNums();
+      for (const d of toiles) d();
+      pourClips(drawClip);
+    }
+  }
+  const vueBouge = () => { if (!vueRaf) vueRaf = requestAnimationFrame(suivreVue); };
+  scroll.addEventListener('scroll', vueBouge, { passive: true });
+  new ResizeObserver(([e]) => {
+    const w = Math.round(e.contentRect.width) - HEAD_W;
+    if (w > 0 && w !== vueW) { vueW = w; vueBouge(); }
+  }).observe(scroll);
 
   // ── déposer : fichiers du disque (ils entrent dans la bibliothèque,
   // catégorie Upload), sons glissés d'ailleurs dans le portail (ITEM_MIME de
@@ -1189,7 +1475,10 @@ export function createTimeline(app) {
   const meters = [];
   function render() {
     const p = P();
+    const sl = scroll.scrollLeft;   // lu avant toute écriture : la fenêtre et la portée en partent
     meters.length = 0;
+    toiles.length = 0;
+    minis.length = 0;
     paintTools();
     body.style.setProperty('--nav-w', `${navW()}px`);
     body.classList.toggle('nav-off', ui().nav === false);
@@ -1199,10 +1488,11 @@ export function createTimeline(app) {
     if (ui().dock === false) document.body.classList.remove('mu-gen-dock');     // le panneau génératif fermé : le GUIDE reprend son orange
     dock.el.style.height = `${dockH()}px`;
     if (ui().dock !== false) dock.render();
-    const Wd = width();
+    portee = sl + 2 * vueW;
+    fenetre(sl);
     grid.style.setProperty('--head', `${HEAD_W}px`);
     grid.style.setProperty('--ruler', `${RULER_H}px`);
-    grid.style.width = `${HEAD_W + Wd}px`;
+    poserLargeur();
     const rows = [el('div', { class: 'ar-corner', title: MOLETTE }, el('span', { class: 'lbl' }, 'pistes'),
       el('span', { class: 'lbl' }, `${visTracks().length} · ${p.sections.length} sections`)), ruler()];
     const [ah, al] = arcRow();
@@ -1218,7 +1508,7 @@ export function createTimeline(app) {
       for (const L of lanesOf(t)) rows.push(...autoRows(L));
     }
     const dropHead = el('div', { class: 'ar-droph' }, el('span', { class: 'lbl' }, visTracks().length ? 'déposer ici : une piste neuve' : 'aucune piste'));
-    const dropLane = el('div', { class: 'ar-dropz', style: { width: `${Wd}px` } },
+    const dropLane = el('div', { class: 'ar-dropz' },
       el('span', {}, 'glisser un instrument, un son de la bibliothèque ou des fichiers audio du disque · double-clic : une piste'));
     for (const n of [dropHead, dropLane]) {
       n.addEventListener('dragover', (e) => onDragOver(e, null));
@@ -1226,8 +1516,17 @@ export function createTimeline(app) {
     }
     dropLane.addEventListener('dblclick', (e) => { const r = e.currentTarget.getBoundingClientRect(); menu(e.clientX, Math.min(e.clientY, r.bottom), [...app.trackChoices(), '-', ...genTrackChoices(app)]); });
     rows.push(dropHead, dropLane);
+    // les traits de la grille, par-dessus les voies et leurs clips : de la
+    // rangée qui suit l'arc (collé en haut, il porte la sienne) à celle de la
+    // zone de dépôt (exclue) ; placés sur les lignes de la grille CSS, sans
+    // mesure lue (un enfant absolu d'une grille prend la zone de ses lignes)
+    const n = rows.length / 2;
+    lignes.style.gridRow = `3 / ${n}`;
+    lignes.hidden = n <= 3;
+    toiles.push(peindreLignes);
+    peindreLignes();
     paintZone();
-    put(grid, ...rows, zone, ph, recBox, marquee, dropLine, trackLine);
+    put(grid, ...rows, lignes, zone, ph, recBox, marquee, dropLine, trackLine);
     frame(app.pos());
   }
 
@@ -1304,8 +1603,8 @@ export function createTimeline(app) {
     if (e.altKey && (k === '+' || k === '=' || e.code === 'NumpadAdd')) { e.preventDefault(); scaleHeights((th() + 12) / th()); return true; }
     if (e.altKey && (k === '-' || e.code === 'NumpadSubtract')) { e.preventDefault(); scaleHeights((th() - 12) / th()); return true; }
     if (e.altKey) return false;
-    if (k === '+' || k === '=' || e.code === 'NumpadAdd') { e.preventDefault(); setZoom(ppb() * 1.25); return true; }
-    if (k === '-' || e.code === 'NumpadSubtract') { e.preventDefault(); setZoom(ppb() / 1.25); return true; }
+    if (k === '+' || k === '=' || e.code === 'NumpadAdd') { e.preventDefault(); setZoom(zoomCible() * 1.25); return true; }
+    if (k === '-' || e.code === 'NumpadSubtract') { e.preventDefault(); setZoom(zoomCible() / 1.25); return true; }
     if (e.code === 'Digit0' || e.code === 'Numpad0') { if (has) { e.preventDefault(); app.muteSel(); } return true; }
     if (k === 'Escape') { app.selectClips([]); return true; }
     if ((k === 'ArrowLeft' || k === 'ArrowRight') && has) {
@@ -1345,7 +1644,7 @@ export function createTimeline(app) {
   // toutes les pistes, sur l'en-tête d'une piste (à gauche) : la sienne.
   // (Avant : Ctrl zoomait le temps et Alt la hauteur, comme Live 12.)
   brancher(scroll, {
-    zoom: (f, cx) => zoomAround(ppb() * f, cx - scroll.getBoundingClientRect().left),
+    zoom: (f, cx) => zoomAround(zoomCible() * f, cx - scroll.getBoundingClientRect().left),   // une demande ; l'image l'applique
     hauteur: (f, id, e) => scaleHeights(f, id, e.clientY),
   });
   // Ctrl+Alt+glisser : déplacer la vue (Live)
