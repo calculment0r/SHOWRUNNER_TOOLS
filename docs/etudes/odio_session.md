@@ -18,7 +18,7 @@ pilotes, sombre et clair, sans erreur console (§ 6, « Fait »).
 | la console | `musique/console.js` fabrique les tranches (`createMixer`) d'une piste, d'un bus ou d'une voie ; la vue Session les range en groupes |
 | le moteur | `musique/moteur.js` : `Engine.sess` (voie → clip), `lancer`, `echeances`, `finPrise` ; `Graph.scheduleSession`, `Graph.cut`, `Graph.mutes` sur les voies ; l'export sans la Session |
 | le format | `musique/projet.js` (`voies`, `scenes`, `slots`, `launch`, `biblio`, `QUANTS`, les gestes de scène et de voie, la migration) ; `server/tools/music.py` (`_voies`, `_session`, `_biblio`) ; `server/tools/elements.py` (`slots[].item`, `biblio…` dans `ID_FIELDS`) |
-| la bibliothèque du projet | `musique/biblio.js` (Envoyer à la Session, les clips du projet en case ou en clip) ; `musique/navigateur.js` (la rubrique « Projet ») |
+| la bibliothèque du projet | `musique/biblio.js` (Envoyer à la Session, les clips du projet en case ou en clip) ; `musique/navigateur.js` (la rubrique « Projet ») ; au-dessus d'elle depuis le 06/10, la rubrique « Space » (`musique/space.js` : le Space de Musique du projet, ses chansons, stems, sons, MIDI et projets ; `musique_spaces_playlists.md` § 2) |
 | le branchement | `musique/musique.js` (Tab, `app.voie`, `app.owner`, `app.versSession`, la prise au clavier et en MIDI, `retenirSons` à chaque geste, les origines des sons) ; `musique/timeline.js` (les menus, l'onglet) ; `musique/guide.js` |
 
 ## 1. Les sources

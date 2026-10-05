@@ -143,8 +143,46 @@ le reste est comme tu proposes ») : S1 partagé, S2, L1 Cloudflare, L2, L3 comm
 - **La page** : `chanson/spaces.js` (le menu, le « ⋯ », la sélection, glisser, importer) ; le contrat des
   volets voisins : `spaceCourant()` et l'événement `sr:music-space` (en tête du fichier). Pilote :
   `chanson/pilote_spaces.mjs`.
-- **Reste** : ODIO dans les Spaces (étape 7) ; un son téléversé depuis le sélecteur commun (`pick`, bouton
-  « Disque » de sa fenêtre) naît sans Space (« Mon Space »).
+- **Reste** : un son téléversé depuis le sélecteur commun (`pick`, bouton « Disque » de sa fenêtre) naît sans
+  Space (« Mon Space »). ODIO dans les Spaces (étape 7) : fait, ci-dessous.
+
+### CODÉ : ODIO dans les Spaces (branche `wip2/odio-spaces`, 06/10)
+
+- **Le projet porte son Space** (`music_space`, tenu par le serveur comme `space`) :
+  - à sa création, le Space courant de la page (`POST /api/music/projects {music_space}`, jugé par
+    `chanson.creatable_space` : un Space absent, mal écrit ou archivé est refusé en le disant) ;
+  - ouvert depuis une chanson (« Ouvrir dans ODIO »), celui de la chanson (`chanson.api_odio`) ;
+  - gardé à chaque enregistrement, quoi que la page envoie (`music.save_project`) ; il ne change que par la
+    route des Spaces (`POST /api/chanson/spaces/move` prend aussi un projet `mus-…`, sans toucher sa
+    révision : un onglet ouvert l'enregistre ensuite sans conflit ; Ctrl+Z par `restore`) ;
+  - S1 et S2 comme une chanson : partagé avec le Workspace sauf « Mon Space » (personnel) ; un Space
+    supprimé renvoie ses projets dans « Mon Space » de leur auteur, sans les réécrire.
+- **Ce qu'ODIO génère naît dans le Space du projet** : la page dit le projet (`project`), jamais le Space ;
+  `chanson.project_space` le lit, le travail le rejuge en rangeant (`birth_space`) :
+  - les versions d'une région (panneau Générer, `music_gen`) ; le MIDI extrait ou rangé (`music_midi`) ;
+  - des stems (`music_stems`) : ceux d'un son sans Space naissent dans le Space du projet ; ceux d'une
+    chanson rangée dans un Space **suivent leur chanson** (la règle d'avant, et la route `move` les garde
+    ensemble). À confirmer par Cal (ci-dessous).
+- **La rubrique « Space » du navigateur d'ODIO** (`musique/space.js`), au-dessus de « Projet », dans
+  l'arrangement et la Session : le menu de l'app (le même module, `chanson/spaces.js`, monté dans le
+  navigateur : `montrerSpaces({ box, memo: false, vue, esp, nom })`), puis ce que range le Space montré —
+  projets ODIO (un clic l'ouvre ; le projet ouvert marqué), chansons, stems, sons, MIDI — à glisser sur une
+  piste ou dans une case (un clic pose). Elle montre d'abord le Space du projet et le suit ; « Ranger le
+  projet dans « … » » quand on en regarde un autre ; « Déplacer vers… » au clic droit. Un projet neuf
+  naît dans le Space montré (la modale le dit). Route : `GET /api/chanson/spaces/contenu?space=&projet=`
+  (« Mon Space » = ce qui est à soi et né de Musique ou d'ODIO ; 200 au plus par sorte).
+- **L'app Musique montre les projets ODIO de son Space** (`GET /api/chanson/list` → `projets`) : une ligne
+  chacun au-dessus des chansons (Ouvrir dans ODIO, Déplacer vers…, la pastille en vue « Tous »).
+- Essais : selftest de `chanson.py` (`_selftest_odio`, et Ana et Bob dans `_selftest_partage`) ; pilote
+  `musique/pilote_odio_spaces.mjs` (46 contrôles, sombre et clair).
+- **À trancher par Cal** :
+  - les stems d'une chanson d'un autre Space séparée dans un projet : avec leur chanson (fait) ou dans le
+    Space du projet ?
+  - ce qu'ODIO importe, enregistre au micro, consolide ou exporte (`uploadFile`, la route commune du dépôt)
+    naît encore dans « Mon Space » : il faudrait que `PUT /api/library/upload` prenne un Space (le socle) ;
+  - un projet du « Mon Space » d'un autre reste visible dans la liste des projets d'ODIO (la règle du
+    Workspace, `library.readable`) : les Spaces rangent, ils ne cachent pas. La rubrique, elle, ne montre
+    jamais le « Mon Space » d'un autre.
 
 ## 3. Les playlists
 
@@ -312,6 +350,7 @@ Ce qu'on ajoute à AGOSTA :
      (`node porte/essai_ecoute.mjs`, un faux bucket ; un faux S3 dans le selftest). Attend le jeton R2 de Cal.
 7. **ODIO dans les Spaces** (étape 2) : la rubrique « Space » du navigateur d'ODIO, au-dessus de la
    bibliothèque du projet de `wip/odio-session2`.
+   - **FAIT (06/10, wip2/odio-spaces)** : voir § 2, « CODÉ : ODIO dans les Spaces ».
 
 ## Sources
 
