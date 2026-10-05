@@ -1,0 +1,57 @@
+/* ============================================================
+   ODIO — « ça calcule » (calcul.js) : la couche posée sur un clip de
+   l'arrangement, ou une case de la Session, dont un travail de la file
+   s'occupe. Le langage du portail pour un rendu en cours (commun/fil.css,
+   .fl-job) : l'acier (--cy) qui travaille, l'ambre (--amb) pour l'échec.
+     en file   une lueur qui respire lentement (3,6 s)
+     en cours  la lueur plus vive (2,4 s), un balayage lumineux qui avance,
+               la barre de progression en bas (transform: scaleX, glissée)
+     échec     l'ambre, fixe, un × pour l'effacer
+   Seuls opacity et transform s'animent (le compositeur, sans repeindre) ;
+   le texte et la barre changent au relevé de la file (1,5 s). Animations
+   réduites : la lueur fixe, ni souffle ni balayage — l'état reste lisible.
+   Jetons de commun/tokens.css seulement ; filets en box-shadow inset.
+   ============================================================ */
+
+.calc { position: absolute; inset: 0; z-index: 2; pointer-events: none; border-radius: inherit; overflow: hidden; }
+.calc-lueur { position: absolute; inset: 0; border-radius: inherit; opacity: .55;
+  box-shadow: inset 0 0 0 2px var(--cy), inset 0 0 26px var(--hl-cy); background: var(--hl-cy);
+  animation: calcSouffle 2.4s ease-in-out infinite; }
+.calc.file .calc-lueur { box-shadow: inset 0 0 0 1.5px var(--line-cy), inset 0 0 16px var(--hl-cy); background: var(--cy-bg); animation-duration: 3.6s; }
+/* le balayage : une bande de lumière qui traverse le clip, de gauche à droite */
+.calc-balai { position: absolute; top: 0; bottom: 0; left: 0; width: 100%; display: none;
+  background: linear-gradient(90deg, transparent 32%, var(--hl-cy) 50%, transparent 68%);
+  transform: translateX(-100%); animation: calcBalai 2.2s cubic-bezier(.45, 0, .25, 1) infinite; }
+.calc.cours .calc-balai { display: block; }
+/* l'étape, lisible de loin : une pastille sur le voile, en bas à gauche */
+.calc-tx { position: absolute; left: 6px; bottom: 7px; max-width: calc(100% - 12px); padding: 2px 6px; border-radius: var(--r1);
+  background: var(--veil); box-shadow: inset 0 0 0 1px var(--line-cy);
+  font-family: var(--f-mono); font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.calc-tx b { font-weight: 500; color: var(--cy); }
+/* la progression réelle (calcul.js pose --p) ; sans elle, le balayage seul dit que ça avance */
+.calc-barre { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--cy);
+  transform-origin: 0 50%; transform: scaleX(var(--p, 0)); transition: transform .9s linear; }
+.calc-barre.ind { display: none; }
+/* l'échec : l'ambre, rien ne bouge */
+.calc.echec { background: var(--amb-bg); }
+.calc.echec .calc-lueur { animation: none; opacity: 1; background: none; box-shadow: inset 0 0 0 1.5px var(--line-amb); }
+.calc.echec .calc-tx { box-shadow: inset 0 0 0 1px var(--line-amb); padding-right: 20px; }
+.calc.echec .calc-tx b { color: var(--amb); }
+.calc-x { position: absolute; right: 4px; top: 3px; pointer-events: auto; width: 16px; height: 16px; padding: 0; border-radius: var(--r1);
+  display: grid; place-items: center; font-size: 11px; line-height: 1; color: var(--amb); background: var(--veil); box-shadow: inset 0 0 0 1px var(--line-amb); cursor: pointer; }
+.calc-x:hover { color: var(--ink); }
+
+/* une case de la Session : la même couche, la pastille plus courte */
+.ss-c.calcule .calc-tx { bottom: 50%; transform: translateY(50%); left: 30px; max-width: calc(100% - 36px); }
+
+@keyframes calcSouffle { 0%, 100% { opacity: .3; } 50% { opacity: .95; } }
+@keyframes calcBalai { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+
+/* animations réduites (le système, ou Préférences → Général) : un état fixe et clair */
+@media (prefers-reduced-motion: reduce) {
+  .calc-lueur { opacity: .8; }
+  .calc-balai { display: none !important; }
+}
+html[data-motion="reduce"] .calc-lueur { opacity: .8; }
+html[data-motion="reduce"] .calc-balai { display: none !important; }

@@ -46,6 +46,7 @@ import { peaks, clipBuffer } from './moteur.js';
 import { QUANTS, quantum, slotQuant, slotAt, sceneName, insererScene, copieSlot, dupliquerScene, retirerScene, capturerScene,
   sceneVersArrangement, voieNeuve, retirerVoies } from './projet.js';
 import { accepte, refDe, slotDeRef, voiePourRef, caseLibre } from './biblio.js';
+import { etatCalcul, poserCalcul } from './calcul.js';   // « ça calcule » (06/10) : une case dont le son est en calcul
 
 // Live 12, « Launching Clips », Launch Mode : Trigger, Gate, Toggle, Repeat
 const MODES = [
@@ -611,6 +612,7 @@ export function createSession(app) {
         el('span', { class: 'len' }, barsTxt(s.len)),
         el('i', { class: 'pr' }));
       cells.set(s.id, { node: c, slot: s, st: '' });
+      if (s.item) poserCalcul(c, etatCalcul({ item: s.item }), s.item);   // son son est en calcul (séparé, transcrit) : calcul.js
     } else {
       const rec = v.arm && patKind(v), audioArm = v.arm && !patKind(v);
       c.append(el('button', { class: `ss-stop${rec ? ' rec' : ''}${audioArm ? ' rec off' : ''}`, type: 'button', tabindex: -1,

@@ -80,6 +80,8 @@ import { brancher, borne, tenirY, AIDE as MOLETTE } from '../commun/molette.js';
 import { tete, poser, suivre, glisser } from '../commun/tete.js';
 // le son au défilement (06/10, Cal : « entendre le son quand on fait glisser la tête […] pour caler un cut ») : commun/scrub.js
 import { scrub as scrubSon, actif as scrubActif } from '../commun/scrub.js';
+// « ça calcule » (06/10) : la couche d'un clip dont un travail de la file s'occupe (calcul.js, calcul.css)
+import { brancherCalculs, etatCalcul, poserCalcul } from './calcul.js';
 
 const HEAD_W = 224;
 const Z_MIN = 2, Z_MAX = 160;                           // pixels par noire, les bornes du zoom
@@ -96,6 +98,7 @@ export const SNAPS = [[0, 'libre'], [0.25, '1/16'], [0.5, '1/8'], [1, '1/4'], [2
 export function createTimeline(app) {
   const { S } = app;
   const P = () => S.proj;
+  brancherCalculs(app);   // le relevé de la file met à jour la couche « en calcul » des clips (calcul.js)
   const ui = () => S.proj.ui;
   const ppb = () => ui().ppb || 83 / 4;                 // pixels par noire
   const th = () => ui().th || 88;                       // hauteur des pistes (toutes)
@@ -1022,6 +1025,7 @@ export function createTimeline(app) {
     ch, cv, el('i', { class: 'rs l', title: 'rogner le début (la fin reste, le contenu reste calé)' }), el('i', { class: 'rs r', title: t.kind === 'audio' ? 'rogner la fin' : 'rogner ou rallonger la fin : le motif se répète' }));
     if (t.kind === 'audio' && !c.name && c.item) app.loadItem(c.item).then((it) => { ttl.textContent = `${clipLabel(c, t, null)}${clipLabel(c, t, null) ? ' · ' : ''}${it.title}`; box.title = it.title; }).catch(() => { ttl.textContent = 'son introuvable'; });
     requestAnimationFrame(() => drawClip(cv, c, t, pat));
+    poserCalcul(box, etatCalcul({ clip: c.id }), c.id);   // un travail de la file s'en occupe : la couche « en calcul »
     box.addEventListener('dblclick', (e) => {
       e.stopPropagation();
       // la capture du pointeur (dragClips) fait du clip la cible du double-clic :
@@ -1883,6 +1887,8 @@ export function createTimeline(app) {
     addEventListener('pointermove', mv, true); addEventListener('pointerup', up, true);
   }, true);
   document.addEventListener('mu:buffer', () => { if (S.view === 'timeline') render(); });
+  // un travail de la file a commencé ou fini sur des clips (calcul.js) : leur toile se redessine (une région dit « en cours »)
+  document.addEventListener('mu:calcul', (e) => { const ids = new Set(e.detail?.clips || []); pourClips((cv, c, t, pat) => { if (ids.has(c.id)) drawClip(cv, c, t, pat); }); });
   // défiler : la tête se cache sous les en-têtes collés, ou y reparaît (commun/tete.js)
   scroll.addEventListener('scroll', () => { if (phX !== null) poser(ph, phX, { decal: HEAD_W, sous: scroll.scrollLeft }); }, { passive: true });
 
