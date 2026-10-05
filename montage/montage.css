@@ -193,6 +193,7 @@ body.mtg-page .hdr { flex: none; }   /* la barre commune, telle quelle : sa haut
 .screen {
   position: relative; flex: 1; min-height: 0; border-radius: var(--r4); background: var(--black); overflow: hidden;
   box-shadow: inset 0 0 0 1px var(--line); container-type: size; display: grid; place-items: center;
+  isolation: isolate;     /* ses couches (le programme composé, les zones de sécurité, la trajectoire) restent sous les menus */
 }
 .screen .layer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; pointer-events: none; }
 .screen audio.layer { display: none; }
@@ -218,12 +219,29 @@ body.mtg-page .hdr { flex: none; }   /* la barre commune, telle quelle : sa haut
   width: min(100cqw, calc(100cqh * var(--ar, 1.7778))); aspect-ratio: var(--ar, 1.7778);
   box-shadow: 0 0 0 1px var(--line-cy), 0 6px 18px var(--drop);
 }
+/* le programme garde une marge autour du cadre : les poignées de la trajectoire (cadre.js) d'un plan qui
+   remplit le cadre, et la zone où l'on tourne hors de ses coins, restent dans l'écran */
+#prg-screen .stage { width: min(100cqw - 28px, calc((100cqh - 28px) * var(--ar, 1.7778))); }
 .stage .empty { position: absolute; }
 /* zones de sécurité : action 90 %, titres 80 % (celles de Premiere par défaut) */
 .stage .safe { position: absolute; inset: 0; z-index: 900; pointer-events: none; }
 .stage .safe i { position: absolute; box-shadow: inset 0 0 0 1px var(--line-cy); }
 .stage .safe i:first-child { inset: 5%; }
 .stage .safe i:last-child { inset: 10%; }
+
+/* la trajectoire au moniteur (cadre.js) : le cadre du plan choisi, ses poignées, son point d'ancrage, les
+   repères de l'aimant. Par-dessus la scène (et ses zones de sécurité), sur tout l'écran du moniteur : les
+   poignées d'un plan qui déborde du cadre restent à portée. Un trait clair sur un trait d'ombre : il se voit
+   sur toute image. Seuls les éléments qui portent un geste prennent le pointeur. */
+.cadre-ov { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1000; pointer-events: none; overflow: visible; }
+.cadre-ov .trait-f, .cadre-ov .repere-f { fill: none; stroke: var(--shade); stroke-width: 3; }
+.cadre-ov .trait { fill: none; stroke: var(--or); stroke-width: 1.2; }
+.cadre-ov .autre .trait { stroke-dasharray: 4 3; }
+.cadre-ov .repere { fill: none; stroke: var(--cy); stroke-width: 1; stroke-dasharray: 5 4; }
+.cadre-ov .corps { fill: transparent; pointer-events: all; cursor: move; }
+.cadre-ov .tour { fill: transparent; pointer-events: all; cursor: var(--cur-tour, alias); }
+.cadre-ov .poig { fill: var(--or); stroke: var(--shade); stroke-width: 1; pointer-events: all; }
+.screen.cadre-geste { cursor: var(--cadre-cur, default); }
 
 /* la barre de lecture des moniteurs : le fader du thème (commun/curseur.css), pas un rail et un pouce génériques.
    Mêmes cotes que le curseur natif : rail creux de 8 px, chapeau plein à l'encre de 10 × 20 avec son encoche.
@@ -289,6 +307,18 @@ body.mtg-page .hdr { flex: none; }   /* la barre commune, telle quelle : sa haut
 .slider > span { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; color: var(--ink3); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .slider output { font-family: var(--f-mono); font-size: 10px; text-align: right; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .slider.off { opacity: .35; }
+/* un réglage de la trajectoire : le curseur, et la valeur exacte à taper (montage.js, reglage) */
+.slider.reg { grid-template-columns: minmax(0, 70px) minmax(0, 1fr) 78px; }
+.slider.reg .nv { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.slider.reg .nfld { width: 0; flex: 1; min-width: 0; padding: 3px 5px; font-size: 10.5px; }
+.slider.reg small { width: 14px; flex: none; font-family: var(--f-mono); font-size: 8.5px; color: var(--ink3); }
+.card.traj .lbl.sub { margin-top: 2px; }
+/* les grilles en un clic : chaque grille aux proportions de la séquence, ses cases sont des boutons */
+.grilles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.grille { position: relative; border-radius: var(--r1); background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line); }
+.grille .gc { position: absolute; border-radius: 0; background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); padding: 0; min-width: 0; }
+.grille .gc:hover:not(:disabled), .grille .gc:focus-visible { background: var(--or-bg2); box-shadow: inset 0 0 0 1px var(--line-or); }
+.grille .gc:disabled { cursor: not-allowed; opacity: .5; }
 .card .row .tb { flex: 1; }
 .card .row .tb.sm { flex: 1 1 auto; }
 .card .why { margin: 0; }

@@ -804,6 +804,216 @@ arrêtée, aucun préférence coupée.
 Non fait : le son quand on avance image par image au clavier (← →, J K L) ;
 deux images au moniteur pendant un rognage (le mode Trim de Premiere).
 
+## Le 06/10 : la trajectoire — déplacer, mettre à l'échelle, tourner, recadrer
+
+Cal, 06/10 : « Dans le banc de montage, il faut pouvoir déplacer les éléments
+dans la frame, pour pouvoir composer des montages avec des grilles vidéo, et
+même le zoom aussi. Regarde dans Premiere : le panneau de droite doit avoir ces
+options, comme celui des effets par clip dans Premiere. »
+
+### Ce que fait Premiere (les sources)
+
+`helpx.adobe.com` et `web.archive.org` sont fermés depuis le conteneur de la
+session cloud (le proxy refuse) : ce qui suit vient des **résultats de
+recherche** sur les pages d'Adobe et de guides, pas d'une lecture des pages.
+
+- « Apply Motion effect to clips » (helpx …/premiere-pro/using/motion-position-scale-rotate-clip.html,
+  et …/premiere/desktop/add-video-effects/commonly-used-effects/apply-motion-effect.html) :
+  l'effet fixe **Trajectoire** (Motion) a Position, Scale, Scale Width (« Uniform
+  Scale »), Rotation, Anchor Point, Anti-flicker Filter ; on glisse l'image au
+  moniteur pour la position, les poignées pour l'échelle ; « the anchor point is
+  the place where all the other fixed effects will work from. If you rotate your
+  clip it will rotate around the anchor point » ; la rotation : « hover slightly
+  above and outside of any of the corner handles until you see the rotation icon ».
+- Le double-clic au moniteur (guides, Larry Jordan « Premiere Pro CS6: Moving
+  Images and Effect Controls », Creative COW) : « Double-clicking a clip inside
+  the Program Monitor selects it and displays a bounding box around the clip with
+  a centered anchor-point cross hair and handles ».
+- « Types of effects in Premiere » (helpx …/premiere-pro/using/effects.html) : les
+  effets fixes (Trajectoire, Opacité, Remappage temporel, Volume) se rendent
+  **après** les effets standard ; pour changer l'ordre, l'effet standard
+  **Transform** remplace la Trajectoire.
+- L'effet **Crop** (guides PremiumBeat, Boris FX) : Left, Top, Right, Bottom en
+  pour cent de l'image ; Edge Feather ; Zoom.
+- « Snap objects to guides » (helpx …/premiere/desktop/get-started/source-and-program-monitor-adjustments/snap-objects-to-guides.html) :
+  « Snap in Program Monitor », aux bords et au centre de l'écran (« within 2
+  pixels »).
+
+### Le modèle (`motion`, model.js et montage.py)
+
+Un plan vidéo ou image d'une piste V porte `motion` ; sans lui, rien ne change
+(un montage d'avant se relit tel quel : `normalize` ne l'écrit pas quand il vaut
+le défaut ; le contrôle le vérifie).
+
+| champ | sens | défaut |
+|---|---|---|
+| `x`, `y` | la place du point d'ancrage, en **fraction du cadre** | 0,5 ; 0,5 |
+| `scale` | l'échelle ; la hauteur si `uniform` est faux | 1 |
+| `scaleW`, `uniform` | la largeur, l'échelle uniforme | 1, vrai |
+| `rot` | degrés, sens horaire | 0 |
+| `ax`, `ay` | le point d'ancrage, en fraction de l'image source | 0,5 ; 0,5 |
+| `op` | l'opacité, multipliée par les fondus | 1 |
+| `cl`, `ct`, `cr`, `cb` | le recadrage : la fraction retirée de chaque côté, qui devient transparente (l'image ne bouge pas) | 0 |
+
+- **La position en fraction, pas en pixels** : une grille reste juste si le format
+  de la séquence change (1080p → 4K), les cases tombent juste (¼, ¾) ; le panneau
+  l'affiche en pixels de la séquence, comme Premiere, et l'ancrage en pixels de
+  l'image.
+- **L'échelle 100 % = l'image tient dans le cadre** (la mise en place d'avant,
+  contenue, centrée ; Premiere : « Ajuster à la taille de l'image ») : rien ne
+  bouge pour un montage d'avant, et 50 % fait une case de grille 2 × 2 pour une
+  image aux proportions du cadre.
+- **L'ordre** : les effets du plan (étalonnage, LUT, ceux de sa piste et de son
+  groupe) agissent sur l'image du plan, puis viennent le recadrage, l'échelle, la
+  rotation, la position, l'opacité — l'ordre de Premiere.
+- `cadre(m, W, H, sw, sh)` dit où se pose l'image : l'échelle qui la fait tenir
+  (k0), les pixels du cadre par pixel de la source (kx, ky), la part gardée de la
+  source, son centre dans le cadre et sa taille avant la rotation. Il existe deux
+  fois, ligne pour ligne (model.js, montage.py), comme `windows` ; le contrôle les
+  compare sur sept cas (mêmes nombres à 10⁻⁹ près), ainsi que `cleanMotion` /
+  `_motion` (bornes, un vrai/faux ou un texte vide ignorés).
+
+### L'export (`_placement`, ffmpeg 6.1.1)
+
+Sans trajectoire, la chaîne d'avant, inchangée (`scale … force_original_aspect_ratio
+=decrease`, `pad` centré). Avec : `pre` passe la source en RVB à sa taille dans le
+cadre, les effets s'appliquent, puis `post` :
+`crop` (le recadrage) → `format=gbrap` → `colorchannelmixer=aa=` (l'opacité) →
+`rotate=a=…:ow=…:oh=…:c=black@0` → `crop` + `pad=W:H:x:y:color=black@0` (la part
+qui tombe dans le cadre, posée dans une image transparente) → YUV BT.709 →
+`tpad`, `trim`, les fondus et `overlay` comme les autres plans.
+
+- **Seule la part visible est mise à l'échelle** : le cadre ramené dans la source
+  par ses quatre coins, croisé avec le recadrage, un pixel de marge. Un zoom à
+  1000 % d'une image 1080p ne fabrique pas une image de 19 200 px.
+- **Des pixels entiers** : tailles et positions arrondies (au plus proche, la
+  moitié vers le haut, comme `Math.round`) ; `rotate` tourne autour du centre de
+  son entrée et le pose au centre de sa sortie (vf_rotate.c) : sa sortie a la
+  parité de l'image, le centre reste sur un pixel entier. D'où « à un pixel près ».
+- En RVB (gbrp, gbrap) : `crop` et `pad` n'y arrondissent pas les positions à la
+  grille de la chrominance, comme ils le font en yuv420p. `c=none` de `rotate`
+  laisse le fond non peint : on prend `black@0`.
+- La taille décodée d'une vidéo (`_video_color`) tient compte de sa rotation
+  (`side_data_list`, `rotation` ; ffmpeg et le navigateur tournent l'image, essayé
+  sur une vidéo à `-display_rotation 90` : 320 × 180 lue 180 × 320).
+- **Contrôle** (`_selftest_trajectoire_export`, le vrai travail de la file, 720p) :
+  grille 2 × 2 de quatre sources de couleur sur V1 à V4, chaque quart de sa
+  couleur, et les cases qui se touchent au milieu au pixel près (16 px de part et
+  d'autre) ; un plan 320 × 180 tourné de 90° debout au centre (noir à côté) ; un
+  plan déplacé en bas à droite à 50 % d'opacité (vert à moitié sur le noir) ; un
+  plan recadré de moitié à gauche (la moitié droite reste à sa place).
+
+### Le moniteur (player.js) : le même calcul
+
+Chaque élément (vidéo, image, sa copie de défilement, son canevas d'effets) est
+posé dans la scène par `left`, `top`, `width`, `height` en pour cent du cadre
+(l'image source entière à son échelle), `rotate` autour du centre de la part
+gardée, `clip-path: inset` pour le recadrage (dans les coordonnées de l'élément :
+il tourne avec lui), l'opacité multipliée par celle des fondus. Le programme
+composé (un calque d'effet actif) dessine la même géométrie dans son canevas
+(`translate`, `rotate`, la part gardée en `drawImage`). Les plans se superposent
+dans l'ordre des pistes, la piste du haut au-dessus, chacun avec son opacité.
+
+**Mesure** (`exact.js`, Chromium sans affichage, capture de la scène ×2, 1004 ×
+564, contre l'image 10 de l'export du vrai travail ramenée à cette taille ; quatre
+plans : une rotation de 30° recadrée, une de −12° à 60 % d'opacité autour d'un
+ancrage décentré, une échelle non uniforme recadrée en bas, un fond plein cadre) :
+
+| | écart moyen (0..255) | pixels à ± 12 |
+|---|---|---|
+| éléments posés en CSS | 3,7 · 2,8 · 3,2 | 89,9 % |
+| programme composé (un calque d'effet, saturation −40) | 6,6 · 6,3 · 6,2 | 87,2 % |
+| témoin : désaturé contre non désaturé | 39,5 · 12,5 · 28,0 | — |
+
+L'image d'écart (×4) ne montre que les bords et les filets fins de la mire (le
+rééchantillonnage, le 4:2:0 de la sortie) : aucun décalage de géométrie. Le
+surplus du programme composé est l'étalonnage approché (`eq` contre `saturate`),
+déjà connu.
+
+### Les gestes au moniteur (cadre.js)
+
+Le plan choisi (un seul, visible sous la tête, piste non verrouillée) montre son
+cadre, ses poignées de coin et la croix de son point d'ancrage ; plusieurs plans
+choisis, leurs cadres en pointillé. Un **double-clic** dans l'image choisit le
+plan le plus haut qui s'y voit (sa part gardée).
+
+- glisser dans le cadre : la position ; maj : un seul axe ;
+- un coin : l'échelle autour du point d'ancrage, **proportions gardées ; maj les
+  libère** (largeur et hauteur séparées, l'échelle n'est plus uniforme) — la
+  demande de Cal ; Premiere fait l'inverse quand « Échelle uniforme » est décochée
+  (« to scale proportionally, shift-drag a corner handle ») ;
+- juste hors d'un coin (22 px) : tourner autour du point d'ancrage ; maj : par 15° ;
+  les tours s'additionnent (un geste peut faire plus d'un demi-tour) ;
+- **alt** + glisser la croix de l'ancrage : le déplacer sans bouger l'image (la
+  position suit). Sans alt, la croix se prend comme le reste du cadre : on prend un
+  plan par son milieu, où est l'ancrage — essayé, la croix seule volait le geste ;
+- l'aimant (le même que la timeline, S ; ctrl le suspend le temps du geste) : les
+  bords et le centre de l'image (sa boîte) aux bords et au centre du cadre, le coin
+  d'une image droite aux bords du cadre, la rotation aux angles droits (à 3°),
+  l'ancrage au centre de l'image ; 6 px d'écran ; un repère pointillé se dessine.
+
+L'image du moniteur suit à chaque mouvement (le plan de la page change, le
+programme se redessine à l'image d'écran suivante) ; le lâcher fait **une seule
+annulation**. Le moniteur garde 14 px de marge autour du cadre (les poignées d'un
+plan plein cadre, et l'anneau où l'on tourne, restent dans l'écran), et isole ses
+couches (`isolation: isolate`) : le programme composé et la trajectoire passaient
+par-dessus les menus. Le cadre marche dans le programme détaché sur un 2ᵉ écran
+(essayé : le geste, puis la fenêtre redimensionnée, le cadre suit).
+
+### L'inspecteur : la carte Trajectoire
+
+Pour le plan choisi, avant ses Effets (l'ordre du panneau Options d'effet de
+Premiere) : les grilles, position x et y (px de la séquence), échelle (ou hauteur
+et largeur), échelle uniforme, rotation, ancrage x et y (px de l'image), opacité,
+recadrage gauche, droite, haut, bas ; « Réinit. » remet tout par défaut. Chaque
+réglage : le curseur du thème (commun/curseur.css) sur une plage courante, et un
+champ pour la valeur exacte, qui va au-delà (une position hors du cadre, 1000 %) ;
+glisser ou taper fait une annulation.
+
+**Les grilles en un clic** (`GRILLES`, `dansCase`) : plein cadre, deux côte à
+côte, deux l'un au-dessus de l'autre, 2 × 2, 3 × 3, l'image dans l'image aux
+quatre coins (un tiers du cadre, 0,3, dans la zone d'action à 5 % des bords — les
+90 % des zones de sécurité du moniteur). Chaque grille est dessinée aux
+proportions de la séquence, ses cases sont des boutons : une case reçoit le plan
+choisi ; plusieurs plans choisis (carte « Trajectoire · N plans », ou le menu du
+moniteur) s'y répartissent à partir d'elle, la piste du haut d'abord, puis le
+temps. L'image tient dans sa case, centrée (la part gardée si elle est
+recadrée) ; l'ancrage revient au centre, la rotation à 0 ; l'opacité et le
+recadrage restent.
+
+**Essais** (`gestes.js`, Chromium sans affichage, 20 sur 20) : un clic sur la
+timeline choisit le plan ; le glisser au moniteur change le modèle et l'image
+pendant le geste (`left` 20 %), une annulation au lâcher ; l'aimant le ramène au
+centre exact (deux repères) ; le coin à 50 %, maj libère (70 % × 50 %) ; hors du
+coin, 30° ; alt + l'ancrage le déplace, l'image reste ; Ctrl+Z défait chaque
+geste ; grille 2 × 2 sur les quatre plans ; Réinit. puis Ctrl+Z ; double-clic :
+le plan sous le pointeur ; l'opacité tapée. Les deux thèmes, aucune erreur.
+
+### La suite (non fait)
+
+- **Les images clés** (le chronomètre de Premiere) : `motion.keys = {champ: [[image,
+  valeur], …]}`, en images depuis le début du plan, lues en ligne droite
+  (`motionAt(c, image)`, deux fois comme `cadre`). Le moniteur n'a rien à ajouter
+  (il pose déjà chaque image). Ce qui reste à décider et à faire : (1) les gestes
+  de la timeline qui déplacent la tête d'un plan (rogner à gauche, couper, slip,
+  propagation, vitesse, changer de cadence) doivent décaler ses clés comme
+  Premiere les garde sur la matière — à vérifier chez Adobe ; (2) l'export d'une
+  géométrie qui change à chaque image : `scale` à `eval=frame`, l'angle de
+  `rotate` en expression de `t`, la position par `overlay` (expressions, sur une
+  image transparente) au lieu de `crop` + `pad`, la part visible prise sur
+  l'union du geste, l'opacité et le recadrage animés par `geq` (lent) ou des
+  commandes (`sendcmd`) — à mesurer avant de choisir ; (3) le panneau : un
+  chronomètre par réglage, aller à la clé précédente, suivante.
+- « Coller les attributs » (Ctrl+Alt+V) colle les effets, pas encore la
+  trajectoire.
+- Les poignées de côté (une seule dimension), les flèches qui poussent la
+  position, le filtre anti-scintillement, les modes de fusion de l'Opacité, le
+  contour adouci du Recadrage, son « Zoom ».
+- Une image dont l'EXIF dit une orientation : le navigateur la tourne, ffmpeg
+  non (non vérifié sur nos images) — un JPEG de téléphone pourrait se poser
+  autrement à l'export.
+- Les titres : le banc n'en a pas encore ; ils prendront la même trajectoire.
+
 ## Les limites connues
 
 - L'aperçu de l'étalonnage est approché ; l'export fait foi (la LUT, elle,
@@ -818,7 +1028,7 @@ deux images au moniteur pendant un rognage (le mode Trim de Premiere).
   projet à 25) peut montrer à l'export l'image voisine de celle de l'aperçu
   (le filtre `fps` arrondit, le navigateur prend l'image en cours) ; pas de
   vitesse négative, pas de remappage temporel.
-- Pas de titres, de clés, de scopes, de roues chromatiques.
+- Pas de titres, de clés (ni d'images clés sur la trajectoire), de scopes, de roues chromatiques.
 - Une passe finale lit tous les sons à la fois : un montage de centaines de
   plans sonores ouvre autant d'entrées (léger, mais non borné).
 - La matrice d'une source sans étiquette suit la règle du Chromium de DGX2
