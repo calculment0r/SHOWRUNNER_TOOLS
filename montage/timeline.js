@@ -232,6 +232,8 @@ export class Timeline {
     }
     node.append(el('i', { class: 'h l' }), el('i', { class: 'h r' }));
     this.fadeHandles(node, w);
+    // ses images clés (06/10) : un losange par image où l'une de ses propriétés a une clé, au bas du plan
+    if (M.hasKeys(c)) for (const f of M.keyFrames(c)) if (f >= c.start && f < M.clipEnd(c)) node.append(el('i', { class: 'kf', style: { left: this.fx(f - c.start + 0.5) + 'px' } }));
     return node;
   }
 

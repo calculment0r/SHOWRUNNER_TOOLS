@@ -1003,6 +1003,7 @@ function paintProgram(t, playing) {
   $('#prg-empty').hidden = !!S.p.clips.length;
   if (!playing) { saveView(); clearTimeout(shelfT); shelfT = setTimeout(() => effects.thumbs(), 250); }
   if (cadreMon) cadreMon.paint();
+  if (trajSync) trajSync();                    // les images clés : la carte suit la tête (valeurs, losanges, chronomètres)
 }
 let shelfT = 0;
 
@@ -1150,7 +1151,8 @@ cadreMon = mountCadre({ screen: $('#prg-screen'), stage: $('#stage'), program, a
   locked: (c) => trackLocked(c.track),
   snap: () => S.snap,
   debut: (label) => { focus('program'); beginEdit(label); },
-  vivant: (id, m) => { const c = M.byId(S.p, id); if (c) { M.setMotion(c, m); liveCadre(); } },
+  // le geste au moniteur change la trajectoire telle qu'elle se voit à la tête : une image clé là si le chronomètre est actif
+  vivant: (id, m) => { const c = M.byId(S.p, id); if (c) { M.setMotionAt(c, program.frame(), m); liveCadre(); } },
   fin: () => { cancelAnimationFrame(cadreRaf); cadreRaf = 0; endEdit(); program.invalidate(); paintInspector(); },
 } });
 
@@ -1462,7 +1464,8 @@ function reglage({ label, min, max, step, value, unit = '', digits = 1, fmin = -
     inp.value = String(r);
     inp.style.setProperty('--rg-p', ((r - min) / (max - min) * 100) + '%');
   };
-  const sync = (v) => { if (num.ownerDocument.activeElement !== num) { num.value = fmt(v); num.defaultValue = num.value; } paint(v); };
+  // la valeur affichée suit (un geste au moniteur, la tête qui passe sur des images clés), sauf pendant qu'on la tape
+  const sync = (v) => { if (num.ownerDocument.activeElement !== num || num.value === num.defaultValue) { num.value = fmt(v); num.defaultValue = num.value; } paint(v); };
   inp.style.setProperty('--rg-c', 'var(--cy)');
   sync(value);
   inp.addEventListener('pointerdown', () => beginEdit(label));
@@ -1487,35 +1490,113 @@ function reglage({ label, min, max, step, value, unit = '', digits = 1, fmin = -
 // l'échelle en un clic.
 const W_H = () => [S.p.settings.width || 1920, S.p.settings.height || 1080];
 const dimsOf = (c) => program.dims(c) || W_H();
+// L'image du plan où l'inspecteur lit et écrit sa trajectoire : celle sous la tête de lecture,
+// ramenée dans le plan si la tête est ailleurs (ses images clés s'y posent).
+const imgDans = (c) => Math.max(c.start, Math.min(M.clipEnd(c) - 1, program.frame()));
+const ICO_CHRONO = '<svg viewBox="0 0 24 24"><circle cx="12" cy="14" r="7"/><path d="M12 14V10M10 3h4M18.5 7.5l1.5-1.5"/></svg>';
+// Les images clés d'une propriété (06/10, le chronomètre de Premiere, « Options d'effet ») :
+// le chronomètre (l'allumer pose une clé à la tête de lecture ; l'éteindre retire les clés, la
+// valeur qui se voit reste), la petite piste de ses clés sur la durée du plan (un losange par clé,
+// le trait de la tête ; un clic : y aller ; clic droit : lissée ou linéaire, supprimer), aller à la
+// clé précédente, poser ou retirer la clé à la tête, aller à la suivante.
+function kRow(c, gid, locked) {
+  const g = M.KGROUP[gid];
+  const now = () => M.byId(S.p, c.id);
+  const go = (f) => { focus('program'); program.seekFrame(f); };
+  const chrono = el('button', { class: 'kchrono', html: ICO_CHRONO, disabled: locked || null,
+    onclick: () => {
+      const x = now(), on = !!M.groupKeys(x, gid), f = imgDans(x);
+      commit(on ? `images clés · ${g.label} : arrêt` : `images clés · ${g.label}`, (q) => M.setStopwatch(M.byId(q, c.id), gid, f, !on));
+      if (!on && f !== program.frame()) go(f);
+    } });
+  const piste = el('div', { class: 'kpiste', title: 'clic : aller à la clé · clic droit : lissée, supprimer' });
+  const btn = (txt, title, fn) => el('button', { class: 'knav', title, disabled: locked || null, onclick: fn }, txt);
+  const prev = btn('‹', 'clé précédente', () => { const x = now(), f = program.frame(); const l = M.keyFrames(x, gid).filter((k) => k < f); if (l.length) go(l[l.length - 1]); });
+  const next = btn('›', 'clé suivante', () => { const x = now(), f = program.frame(); const l = M.keyFrames(x, gid).filter((k) => k > f); if (l.length) go(l[0]); });
+  const pose = btn('◆', 'poser ou retirer la clé à la tête de lecture', () => {
+    const x = now(), f = imgDans(x);
+    commit(`images clés · ${g.label}`, (q) => M.toggleKey(M.byId(q, c.id), gid, f));
+    if (f !== program.frame()) go(f);
+  });
+  pose.classList.add('kpose');
+  piste.addEventListener('click', (e) => { const d = e.target.closest('.kd'); if (d) go(+d.dataset.f); });
+  contextMenu(piste, (e) => {
+    const d = e.target.closest('.kd');
+    if (!d || locked) return null;
+    const x = now(), k = +d.dataset.f - x.start, e1 = (M.groupKeys(x, gid) || []).find((q) => q[0] === k);
+    if (!e1) return null;
+    return [
+      { label: 'Y aller', onclick: () => go(+d.dataset.f) },
+      { label: 'Lissée (vers la clé suivante)', checked: e1[2] === 1, onclick: () => commit(`images clés · ${g.label} : ${e1[2] === 1 ? 'linéaire' : 'lissée'}`, (q) => M.setEase(M.byId(q, c.id), gid, k, e1[2] !== 1)) },
+      '-',
+      { label: 'Supprimer la clé', danger: true, onclick: () => commit(`images clés · ${g.label} : supprimer`, (q) => M.toggleKey(M.byId(q, c.id), gid, x.start + k)) },
+    ];
+  });
+  const row = el('div', { class: 'kgrp', 'data-k': gid }, chrono, el('span', { class: 'kn' }, g.label), piste, el('span', { class: 'knavs' }, prev, pose, next));
+  const sync = () => {
+    const x = now();
+    if (!x) return;
+    const keys = M.groupKeys(x, gid) || [], on = keys.length > 0, f = program.frame();
+    chrono.classList.toggle('on', on);
+    chrono.setAttribute('aria-pressed', String(on));
+    chrono.title = on ? `${g.label} : images clés (cliquer : les retirer, la valeur qui se voit reste)` : `${g.label} : animer — une image clé à la tête de lecture`;
+    row.classList.toggle('on', on);
+    const sig = JSON.stringify([x.start, x.dur, keys]);
+    if (piste.dataset.sig !== sig) {
+      piste.dataset.sig = sig;
+      piste.replaceChildren(...keys.filter((q) => q[0] >= 0 && q[0] < x.dur).map((q) => el('i', { class: 'kd' + (q[2] === 1 ? ' lis' : ''), 'data-f': String(x.start + q[0]),
+        style: { left: `calc(4px + (100% - 8px) * ${(q[0] + 0.5) / x.dur})` }, title: `${M.tc(x.start + q[0], fps())}${q[2] === 1 ? ' · lissée' : ''}` })), el('b', { class: 'kph' }));
+    }
+    const ph = piste.querySelector('.kph');
+    const inside = f >= x.start && f < M.clipEnd(x);
+    ph.hidden = !inside;
+    if (inside) ph.style.left = `calc(4px + (100% - 8px) * ${(f - x.start + 0.5) / x.dur})`;
+    for (const d of piste.querySelectorAll('.kd')) d.classList.toggle('ici', +d.dataset.f === f);
+    const fs = keys.map((q) => x.start + q[0]);
+    pose.classList.toggle('ici', fs.includes(imgDans(x)));
+    prev.disabled = locked || !fs.some((k) => k < f) || null;
+    next.disabled = locked || !fs.some((k) => k > f) || null;
+    for (const b of [prev, next]) b.title = b.disabled ? `${b === prev ? 'aucune clé avant' : 'aucune clé après'} la tête de lecture` : (b === prev ? 'clé précédente' : 'clé suivante');
+  };
+  sync();
+  return { el: row, sync };
+}
+
 function trajCard(c, locked) {
   const [W, H] = W_H();
   const [sw, sh] = dimsOf(c);
-  const m = M.motionOf(c);
-  const cur = () => M.motionOf(M.byId(S.p, c.id));
+  const m = M.motionAt(c, imgDans(c));
+  const cur = () => { const x = M.byId(S.p, c.id); return M.motionAt(x, imgDans(x)); };
   const syncs = [];
   const reg = (o) => {
-    const r = reglage({ ...o, value: o.from(m), disabled: locked, apply: (v) => { const x = M.byId(S.p, c.id); if (x) { M.setMotion(x, o.to(v, M.motionOf(x))); liveCadre(); } } });
+    const r = reglage({ ...o, value: o.from(m), disabled: locked, apply: (v) => { const x = M.byId(S.p, c.id); if (x) { const f = imgDans(x); M.setMotionAt(x, f, o.to(v, M.motionAt(x, f))); liveCadre(); } } });
     syncs.push(() => r.sync(o.from(cur())));
     return r.el;
   };
+  const kr = (gid) => { const r = kRow(c, gid, locked); syncs.push(r.sync); return r.el; };
   const head = el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Trajectoire'),
-    el('button', { class: 'lnk', disabled: (!c.motion || locked) || null, title: 'position, échelle, rotation, ancrage, opacité, recadrage par défaut',
+    el('button', { class: 'lnk', disabled: (!c.motion || locked) || null, title: 'position, échelle, rotation, ancrage, opacité, recadrage par défaut, sans image clé',
       onclick: () => commit('réinitialiser la trajectoire', (p) => { delete M.byId(p, c.id).motion; }) }, 'Réinit.'));
   const uni = el('span', { class: 'snapper', title: 'décoché : largeur et hauteur séparées (au moniteur : maj sur un coin)' }, 'échelle uniforme',
     el('button', { class: 'sw sm' + (m.uniform ? ' on' : ''), 'aria-pressed': String(m.uniform), disabled: locked || null,
-      onclick: () => commit(m.uniform ? 'échelle non uniforme' : 'échelle uniforme', (p) => { const x = M.byId(p, c.id); const mm = M.motionOf(x); M.setMotion(x, { uniform: !mm.uniform, scaleW: mm.scale }); }) }, el('i')));
+      onclick: () => commit(m.uniform ? 'échelle non uniforme' : 'échelle uniforme', (p) => { const x = M.byId(p, c.id); const mm = M.motionAt(x, imgDans(x)); M.setMotion(x, { uniform: !mm.uniform, scaleW: mm.scale }); }) }, el('i')));
   const card = el('div', { class: 'card traj', 'data-clip': c.id }, head,
     grillesRow([c.id], locked),
+    kr('pos'),
     reg({ label: 'position x', min: -W, max: 2 * W, step: 1, unit: 'px', fmin: -10 * W, fmax: 10 * W, from: (x) => x.x * W, to: (v) => ({ x: v / W }) }),
     reg({ label: 'position y', min: -H, max: 2 * H, step: 1, unit: 'px', fmin: -10 * H, fmax: 10 * H, from: (x) => x.y * H, to: (v) => ({ y: v / H }) }),
+    kr('ech'),
     reg({ label: m.uniform ? 'échelle' : 'hauteur', min: 0, max: 400, step: 1, unit: '%', fmin: 0, fmax: 10000, from: (x) => x.scale * 100, to: (v) => ({ scale: v / 100 }) }),
     m.uniform ? null : reg({ label: 'largeur', min: 0, max: 400, step: 1, unit: '%', fmin: 0, fmax: 10000, from: (x) => x.scaleW * 100, to: (v) => ({ scaleW: v / 100 }) }),
     el('div', { class: 'row' }, el('span', { class: 'sp' }), uni),
+    kr('rot'),
     reg({ label: 'rotation', min: -180, max: 180, step: 0.5, unit: '°', fmin: -3600, fmax: 3600, from: (x) => x.rot, to: (v) => ({ rot: v }) }),
+    kr('anc'),
     reg({ label: 'ancrage x', min: 0, max: sw, step: 1, unit: 'px', fmin: -10 * sw, fmax: 10 * sw, from: (x) => x.ax * sw, to: (v) => ({ ax: v / sw }) }),
     reg({ label: 'ancrage y', min: 0, max: sh, step: 1, unit: 'px', fmin: -10 * sh, fmax: 10 * sh, from: (x) => x.ay * sh, to: (v) => ({ ay: v / sh }) }),
+    kr('op'),
     reg({ label: 'opacité', min: 0, max: 100, step: 1, unit: '%', fmin: 0, fmax: 100, from: (x) => x.op * 100, to: (v) => ({ op: v / 100 }) }),
-    el('span', { class: 'lbl sub' }, 'recadrage'),
+    kr('rec'),
     ...[['gauche', 'cl'], ['droite', 'cr'], ['haut', 'ct'], ['bas', 'cb']].map(([label, k]) =>
       reg({ label, min: 0, max: 100, step: 0.5, unit: '%', fmin: 0, fmax: 100, from: (x) => x[k] * 100, to: (v) => ({ [k]: v / 100 }) })));
   trajSync = () => { if (card.isConnected && M.byId(S.p, c.id)) for (const fn of syncs) fn(); };
@@ -1548,7 +1629,8 @@ function poserGrille(gp, k, ids) {
   commit(clips.length > 1 ? `grille · ${gp.label} · ${clips.length} plans` : `grille · ${gp.label}`, (p) => clips.forEach((c0, i) => {
     const c = M.byId(p, c0.id);
     const [sw, sh] = dimsOf(c);
-    M.setMotion(c, M.dansCase(M.motionOf(c), gp.cells[(k + i) % gp.cells.length], W, H, sw, sh));
+    const f = imgDans(c);
+    M.setMotionAt(c, f, M.dansCase(M.motionAt(c, f), gp.cells[(k + i) % gp.cells.length], W, H, sw, sh));
   }));
 }
 
@@ -2141,6 +2223,8 @@ function helpModal() {
     ['alt + glisser l’ancrage', 'déplacer le point d’ancrage sans bouger l’image'],
     ['aimant (S) · ctrl', 'bords et centre du cadre, angles droits · ctrl le suspend le temps du geste'],
     ['inspecteur · Trajectoire', 'position, échelle, rotation, ancrage, opacité, recadrage ; les grilles en un clic'],
+    ['chronomètre d’une propriété', 'l’animer : une image clé à la tête de lecture ; ensuite, changer la valeur ailleurs (curseur, champ, geste au moniteur) pose une clé là · recliquer : retirer ses clés'],
+    ['‹ ◆ › · ses losanges', 'clé précédente · poser ou retirer la clé à la tête · suivante · clic : y aller · clic droit : lissée ou linéaire, supprimer'],
     ['EFFETS', ''],
     ['glisser un effet', 'sur un plan · sur l’en-tête d’une piste ou d’un groupe · sur la règle : un calque d’effet'],
     ['maj + lâcher une LUT', 'l’ajouter au lieu de remplacer celle du plan'],
