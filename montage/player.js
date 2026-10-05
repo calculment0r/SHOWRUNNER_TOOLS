@@ -43,6 +43,15 @@
 // l'originale se cale et reprend la place dès qu'elle montre la même image.
 // Ce qui se voit d'un plan (`vu`) porte son opacité, son filtre, et sert de
 // source au canevas des effets ; l'autre reste à 0.
+//
+// L'aperçu d'un geste de la timeline (`pv`, 06/10, Cal : « voir l'image changer
+// EN DIRECT pendant le glisser ») : le programme montre un autre montage que
+// celui de la page (`pv.p` : déplacer un plan, tel qu'il serait si l'on lâchait
+// maintenant), à un autre instant que la tête (`pv.t`), un seul plan (`pv.seul` :
+// le bord qu'on rogne, plein, sans fondu ni son — Premiere montre l'image du bord
+// au moniteur). Un plan neuf du même média (le morceau d'un plan coupé, une
+// copie) reprend l'élément d'un plan qui n'existe plus (`entry`) : rien ne se
+// recharge en chemin, et la copie de défilement montre l'image (montage.js, apercu).
 
 import { href } from '../commun/shell.js';
 import { windows, opacityAt, gainAt, audibleTracks, projectEnd, spd, isOn, chainOf } from './model.js';
@@ -280,12 +289,23 @@ export class Program {
     this.schedule();
   }
 
-  entry(c, track) {
+  entry(c, track, ids = null) {
     const item = this.itemOf(c.item);
     if (!item || !item.url) return null;
     const tag = track.kind === 'video' ? (c.kind === 'image' ? 'img' : 'video') : 'audio';
     let e = this.els.get(c.id);
     if (e && (e.item !== item.id || e.tag !== tag)) { this.drop(c.id); e = null; }
+    // un plan neuf du même média (un morceau coupé, une copie, l'aperçu d'un geste) : l'élément
+    // d'un plan qui n'est plus dans le montage, déjà chargé, plutôt qu'un nouveau
+    if (!e && ids) {
+      for (const [k, x] of this.els) {
+        if (ids.has(k) || x.item !== item.id || x.tag !== tag) continue;
+        this.els.delete(k);
+        this.els.set(c.id, x);
+        e = x;
+        break;
+      }
+    }
     if (!e) {
       const el = document.createElement(tag);
       el.className = 'layer ' + tag;
@@ -420,11 +440,14 @@ export class Program {
   clear() { for (const id of [...this.els.keys()]) this.drop(id); }
 
   render() {
-    const p = this.getP();
+    const pv = this.pv;                      // l'aperçu d'un geste de la timeline (en tête de ce fichier)
+    const p = (pv && pv.p) || this.getP();
     if (!p) return;
     const fps = p.settings.fps;
     if (!this.win) this.win = windows(p);
-    const t = this.t, frame = Math.floor(t * fps + 1e-6);
+    const t = pv && pv.t !== undefined && pv.t !== null ? pv.t : this.t, frame = Math.floor(t * fps + 1e-6);
+    const seul = (pv && pv.seul) || null;
+    const ids = new Set(p.clips.map((c) => c.id));
     const hear = audibleTracks(p);
     const hidden = new Set(p.tracks.filter((x) => x.hide).map((x) => x.id));
     const fwd = this.playing && this.rate > 0;
@@ -443,7 +466,7 @@ export class Program {
       const clips = p.clips.filter((c) => c.track === track.id && isOn(c)).sort((a, b) => a.start - b.start);
       if (track.kind === 'fx') {
         // un calque d'effet actif (piste non coupée, chaîne prête) : le programme sera composé
-        if (track.hide || !gl.ok) continue;
+        if (track.hide || !gl.ok || seul) continue;
         for (const c of clips) {
           const w = this.win.get(c.id);
           if (!w || frame < w.ws || frame >= w.we) continue;
@@ -456,13 +479,14 @@ export class Program {
         continue;
       }
       for (const c of clips) {
+        if (seul && c.id !== seul) continue;
         const w = this.win.get(c.id);
         if (!w) continue;
         const a = w.ws / fps, b = w.we / fps;
         const active = t >= a && t < b;
         const soon = fwd && t < a && a - t < 2;
         if (!active && !soon) continue;
-        const e = this.entry(c, track);
+        const e = this.entry(c, track, ids);
         if (!e) continue;
         need.add(c.id);
         e.idle = 0;
@@ -490,14 +514,14 @@ export class Program {
           continue;
         }
         if (e.tag !== 'audio') {
-          const op = hidden.has(track.id) ? 0 : opacityAt(w, frame);
+          const op = seul ? 1 : hidden.has(track.id) ? 0 : opacityAt(w, frame);
           if (e.cv) {
             voir(e, 0, 'none');
             e.cv.style.opacity = String(op);
           } else voir(e, op, e.css);
           if (op > 0) { this.visible.push(c); layers.push({ e, c, op, css: e.css }); }
         }
-        const sound = hear.has(track.id) && (track.kind === 'audio' || c.audio) && c.kind !== 'image';
+        const sound = !seul && hear.has(track.id) && (track.kind === 'audio' || c.audio) && c.kind !== 'image';
         setGain(e, sound ? (c.vol ?? 1) * gainAt(w, t, fps) : 0);
         if (e.tag !== 'img') {
           this.sync(e, target, fwd, fps, sp);

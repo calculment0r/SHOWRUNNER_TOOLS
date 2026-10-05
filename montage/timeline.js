@@ -13,10 +13,12 @@
 //   Main (H), Zoom (Z ; alt : dézoomer)
 //
 // Tout geste passe par `app.commit(nom, p => …)` (une entrée d'annulation)
-// ou, pour ceux qui se voient en direct dans le programme (propagation,
-// coupe, vitesse, slip, slide), par `app.gesture` : chaque mouvement repart
-// du projet d'avant le geste et rejoue l'opération du modèle avec le
-// décalage du moment ; le lâcher fait une seule entrée d'annulation.
+// ou, pour ceux qui se voient en direct dans le programme (rogner,
+// propagation, coupe, vitesse, slip, slide), par `app.gesture` : chaque
+// mouvement repart du projet d'avant le geste et rejoue l'opération du modèle
+// avec le décalage du moment ; le lâcher fait une seule entrée d'annulation.
+// Pendant un geste, le moniteur suit (`app.apercu`, 06/10) : l'image du bord
+// qu'on tire, ou, en déplaçant, l'image sous la tête du montage d'après le lâcher.
 // molette commune (commun/molette.js) : seule, défiler haut / bas ; Maj : le temps ; Alt : zoom sous le pointeur ; Ctrl : hauteur des pistes, sur un en-tête (à gauche) : la sienne
 
 import { el, href, ITEM_MIME } from '../commun/shell.js';
@@ -191,7 +193,12 @@ export class Timeline {
     const fps = this.fps;
     const x = this.fx(c.start), wpx = Math.max(3, this.fx(c.dur));
     const body = el('div', { class: 'body' });
-    if (t.kind === 'video' && it && it.thumb_url) body.style.backgroundImage = `url("${href(it.thumb_url)}")`;
+    if (t.kind === 'video' && it && it.thumb_url) {
+      body.style.backgroundImage = `url("${href(it.thumb_url)}")`;
+      // la bande des vignettes est calée sur le début de la SOURCE, comme l'onde : rogner le bord
+      // gauche cache ou révèle le début, la matière ne suit pas le bord (06/10, Cal : « tronquer, pas pousser »)
+      if (c.kind === 'video') body.style.backgroundPositionX = `${-((c.in || 0) / M.spd(c) * this.pps)}px`;
+    }
     const hasSound = t.kind === 'audio' || (c.kind === 'video' && c.audio);
     if (t.kind === 'audio' && it && (it.kind === 'audio' || it.audio)) {
       // l'onde : un canvas dessiné pour la seule partie visible du plan (paintWaves), plus une image étirée
@@ -531,37 +538,39 @@ export class Timeline {
     const side = handle ? (handle.classList.contains('l') ? 'l' : 'r') : null;
     if (tool === 'slip') return this.slip(e, c);
     if (tool === 'slide') return this.slide(e, c);
-    if (tool === 'select') return side ? this.trim(e, c, side, node) : this.move(e, sel, lane.dataset.track);
+    if (tool === 'select') return side ? this.trim(e, c, side) : this.move(e, sel, lane.dataset.track);
     if (!side) return;                                   // B, N, R : les bords seulement
     if (tool === 'ripple') return this.ripple(e, c, side);
-    if (tool === 'roll') { const pair = M.rollPair(p, c, side); return pair ? this.roll(e, pair[0], pair[1]) : this.trim(e, c, side, node); }
+    if (tool === 'roll') { const pair = M.rollPair(p, c, side); return pair ? this.roll(e, pair[0], pair[1], c.id, side) : this.trim(e, c, side); }
     if (tool === 'stretch') return this.stretch(e, c, side);
   }
 
-  trim(e, c, side, node) {
-    const p = this.p, fps = this.fps;
-    const [lo, hi] = M.trimLimits(p, c, side);
-    const pts = M.snapPoints(p, new Set([c.id]), [this.app.playhead()]);
-    const x0 = e.clientX;
-    let d = 0;
-    const edge0 = side === 'l' ? c.start : M.clipEnd(c);
-    this.drag(e, (ev) => {
-      d = Math.round((ev.clientX - x0) / this.pps * fps);
-      let snapped = null;
-      if (this.app.snap()) {
-        const sd = M.snapDelta([edge0 + d], pts, this.tol());
-        if (sd !== null) { d += sd; snapped = edge0 + d; }
-      }
-      d = Math.max(lo, Math.min(hi, d));
-      this.showSnap(snapped !== null && edge0 + d === snapped ? snapped : null);
-      const s = side === 'l' ? c.start + d : c.start, dur = side === 'l' ? c.dur - d : c.dur + d;
-      node.style.left = this.fx(s) + 'px';
-      node.style.width = Math.max(3, this.fx(dur)) + 'px';
-      this.showTip(ev, `${side === 'l' ? 'début' : 'fin'} ${M.tc(side === 'l' ? s : s + dur, fps)} · durée ${M.short(dur / fps)}`);
-    }, () => {
-      if (d) this.app.commit('rogner', (q) => M.trimClip(M.byId(q, c.id), side, d, fps));
-      else this.render();
-    });
+  // Rogner (Sélection, V) comme Premiere (06/10, Cal : « tronquer, pas pousser ») :
+  // le bord gauche déplace le point d'entrée dans la source — la matière reste
+  // calée dans le temps, on cache ou on révèle le début —, le bord droit le point
+  // de sortie ; borné par la source (une image fixe n'a pas de borne) et par les
+  // voisins, qui ne bougent pas (M.trimClip, M.trimLimits). Vu en direct : la
+  // timeline (l'onde, les vignettes restent en place) et, au moniteur, l'image
+  // du bord qu'on tire.
+  trim(e, c, side) {
+    const fps = this.fps;
+    this.live(e, 'rogner', M.trimLimits(this.p, c, side), (q, d) => M.trimClip(M.byId(q, c.id), side, d, fps),
+      (d) => {
+        const s = side === 'l' ? c.start + d : c.start, dur = side === 'l' ? c.dur - d : c.dur + d;
+        const sp = M.spd(c), i = M.still(c) ? 0 : Math.max(0, (c.in || 0) + (side === 'l' ? d / fps * sp : 0));
+        const src = M.still(c) ? '' : ` · source ${M.short(i)} → ${M.short(i + dur / fps * sp)}${c.src_dur ? ` / ${M.short(c.src_dur)}` : ''}`;
+        return `${side === 'l' ? 'début' : 'fin'} ${M.tc(side === 'l' ? s : s + dur, fps)} · durée ${M.short(dur / fps)}${src}`;
+      },
+      { edge: side === 'l' ? (d) => c.start + d : (d) => M.clipEnd(c) + d, exclude: new Set([c.id]), vu: (q) => this.bordVu(q, c.id, side) });
+  }
+
+  // L'image du bord qu'on tire, au moniteur (Premiere montre le bord rogné) :
+  // la première image du plan (bord gauche) ou sa dernière (bord droit), le plan
+  // seul ; rien pour un son ou un calque d'effet (montage.js, apercu.bord).
+  bordVu(q, id, side) {
+    const x = M.byId(q, id);
+    if (!x || x.kind === 'adjust' || M.trackKind(x.track) !== 'video') return null;
+    return { t: (side === 'l' ? x.start : M.clipEnd(x) - 1) / q.settings.fps, seul: x.id };
   }
 
   // La poignée de fondu : la durée suit la souris, image par image, vue en
@@ -579,13 +588,17 @@ export class Timeline {
   }
 
   // Un geste vu en direct : chaque mouvement rejoue `apply(q, d)` sur le
-  // projet d'avant le geste. `edge(d)` : l'image du bord qui bouge (aimant).
-  live(e, label, [lo, hi], apply, tip, { edge = null, exclude = new Set(), onEnd = null } = {}) {
+  // projet d'avant le geste. `edge(d)` : l'image du bord qui bouge (aimant) ;
+  // `vu(q, d)` : ce que le moniteur montre pendant le geste (bordVu), rendu au lâcher.
+  live(e, label, [lo, hi], apply, tip, { edge = null, exclude = new Set(), onEnd = null, vu = null } = {}) {
     const fps = this.fps;
     const pts = edge ? M.snapPoints(this.p, exclude, [this.app.playhead()]) : [];
     const x0 = e.clientX;
     let d = 0;
     this.app.gesture.begin(label);
+    const v0 = vu && this.app.apercu ? vu(this.p, 0) : null;
+    const A = v0 ? this.app.apercu : null;
+    if (A) { A.debut(); A.bord(v0, true); }
     this.drag(e, (ev) => {
       let nd = Math.round((ev.clientX - x0) / this.pps * fps);
       let snapped = null;
@@ -598,22 +611,23 @@ export class Timeline {
       this.showTip(ev, tip(nd));
       if (nd === d) return;
       d = nd;
-      this.app.gesture.apply((q) => apply(q, d));
-    }, () => { this.app.gesture.end(); if (onEnd) onEnd(d); });
+      this.app.gesture.apply((q) => { apply(q, d); if (A) A.bord(vu(q, d)); });
+    }, () => { if (A) A.fin(false); this.app.gesture.end(); if (onEnd) onEnd(d); });
   }
 
   ripple(e, c, side) {
     const fps = this.fps;
     this.live(e, 'rogner avec propagation', M.rippleLimits(this.p, c, side), (q, d) => M.rippleTrim(q, c.id, side, d),
       (d) => `propagation · ${side === 'l' ? 'tête' : 'queue'} ${d >= 0 ? '+' : '−'}${Math.abs(d)} im. · durée ${M.short((c.dur + (side === 'l' ? -d : d)) / fps)} · la suite ${side === 'l' ? (d > 0 ? 'recule' : 'avance') : (d > 0 ? 'avance' : 'recule')}`,
-      { edge: side === 'r' ? (d) => M.clipEnd(c) + d : null, exclude: new Set([c.id]) });
+      { edge: side === 'r' ? (d) => M.clipEnd(c) + d : null, exclude: new Set([c.id]), vu: (q) => this.bordVu(q, c.id, side) });
   }
 
-  roll(e, a, b) {
+  // `id`, `side` : le bord pris (le moniteur montre ce plan-là, à ce bord)
+  roll(e, a, b, id = b.id, side = 'l') {
     const fps = this.fps;
     this.live(e, 'déplacer la coupe', M.rollLimits(this.p, a, b), (q, d) => M.roll(q, a.id, b.id, d),
       (d) => `coupe ${M.tc(b.start + d, fps)} · ${d >= 0 ? '+' : '−'}${Math.abs(d)} im. · « ${a.title || 'A'} » ${M.short((a.dur + d) / fps)} · « ${b.title || 'B'} » ${M.short((b.dur - d) / fps)}`,
-      { edge: (d) => b.start + d, exclude: new Set([a.id, b.id]) });
+      { edge: (d) => b.start + d, exclude: new Set([a.id, b.id]), vu: (q) => this.bordVu(q, id, side) });
   }
 
   stretch(e, c, side) {
@@ -621,7 +635,7 @@ export class Timeline {
     const sp0 = M.spd(c);
     this.live(e, 'changer la vitesse', M.stretchLimits(this.p, c, side), (q, d) => M.stretch(q, c.id, side, d),
       (d) => { const nd = c.dur + (side === 'l' ? -d : d); return `vitesse ${c.kind === 'image' ? '—' : M.pct(sp0 * c.dur / nd)} · durée ${M.short(nd / fps)}`; },
-      { edge: side === 'l' ? (d) => c.start + d : (d) => M.clipEnd(c) + d, exclude: new Set([c.id]) });
+      { edge: side === 'l' ? (d) => c.start + d : (d) => M.clipEnd(c) + d, exclude: new Set([c.id]), vu: (q) => this.bordVu(q, c.id, side) });
   }
 
   slip(e, c) {
@@ -652,9 +666,13 @@ export class Timeline {
     const minStart = Math.min(...clips.map((c) => c.start));
     const pts = M.snapPoints(p, ids, [this.app.playhead()]);
     const x0 = e.clientX, y0 = e.clientY;
-    let moved = false, df = 0, dt = 0;
+    let moved = false, df = 0, dt = 0, vuK = '';
+    // le moniteur pendant le geste (06/10, Cal) : l'image sous la tête de lecture, le montage tel
+    // qu'il serait si l'on lâchait maintenant (montage.js, apercu.deplacer)
+    const A = this.app.apercu;
     this.drag(e, (ev) => {
       if (!moved && Math.abs(ev.clientX - x0) < 4 && Math.abs(ev.clientY - y0) < 4) return;
+      if (!moved && A) A.debut();
       moved = true;
       df = Math.round((ev.clientX - x0) / this.pps * fps);
       let snapped = null;
@@ -693,7 +711,10 @@ export class Timeline {
         n.classList.add('moving');
       }
       this.showTip(ev, `${ev.altKey ? 'copier · ' : ''}${df >= 0 ? '+' : '−'}${M.short(Math.abs(df) / fps)} · ${M.tc(minStart + df, fps)}${dt ? ` · ${dt > 0 ? '↓' : '↑'} ${Math.abs(dt)} piste` : ''}`);
+      const mode = ev.ctrlKey || ev.metaKey ? 'insert' : 'overwrite', copy = !!ev.altKey, k = `${df}|${dt}|${mode}|${copy}`;
+      if (A && k !== vuK) { vuK = k; A.deplacer({ ids, df, dt, mode, copy }); }
     }, (ev) => {
+      if (moved && A) A.fin(!df && !dt);
       if (!moved || (!df && !dt)) { if (moved) this.render(); return; }
       const mode = ev && (ev.ctrlKey || ev.metaKey) ? 'insert' : 'overwrite';
       const copy = !!(ev && ev.altKey);

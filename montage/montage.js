@@ -1025,6 +1025,42 @@ function focus(which) {
   $('#prg').classList.toggle('focus', which === 'program');
 }
 
+// ── le moniteur pendant un geste de la timeline (06/10) ──
+// Cal : « voir l'image changer EN DIRECT pendant le glisser […] pour être précis ».
+// Déplacer un plan : le programme montre l'image sous la tête de lecture, le montage tel
+// qu'il serait si l'on lâchait maintenant ; rogner un bord : l'image de ce bord, le plan
+// seul (Premiere montre le bord rogné au moniteur). Rien ne change dans S.p avant le lâcher
+// (player.js, `pv`) ; la copie de défilement est devant le temps du geste (program.scrub) :
+// aucune vidéo ne se recharge, l'originale se cale au lâcher.
+let apRaf = 0, apMove = null;
+const apercu = {
+  debut() { program.scrub(true); },
+  // le bord : posé avant le dessin du geste (timeline.live le rend) ; `rendre` : tout de suite
+  bord(o, rendre = false) { program.pv = o || null; if (rendre) program.invalidate(); },
+  // déplacer, copier : le montage d'après le lâcher, calculé une fois par image d'écran
+  deplacer(m) {
+    apMove = m;
+    if (apRaf) return;
+    apRaf = requestAnimationFrame(() => {
+      apRaf = 0;
+      if (!apMove || !S.p) return;
+      const q = { ...S.p, clips: JSON.parse(JSON.stringify(S.p.clips)) };   // les pistes ne bougent pas (moveClips)
+      M.moveClips(q, apMove.ids, apMove.df, apMove.dt, apMove.mode, apMove.copy);
+      program.pv = { p: q };
+      program.invalidate();
+    });
+  },
+  // `rendre` : faux quand le geste s'enregistre (commit redessine)
+  fin(rendre = true) {
+    cancelAnimationFrame(apRaf);
+    apRaf = 0; apMove = null;
+    const vu = !!program.pv;
+    program.pv = null;
+    if (vu && rendre) program.invalidate();
+    program.scrub(false);
+  },
+};
+
 // ── éléments : la pastille « vN+1 » des plans qui posent une version (montage/elements.js, 30/09) ──
 // le journal des éléments a bougé (une version publiée ailleurs) : le Projet relit la dernière version de ses éléments
 const EL = createElements({ getP: () => S.p, commit, ensureItems, itemOf, rerender: () => { timeline.render(); }, changes: () => loadBin() });
@@ -1044,6 +1080,7 @@ const timeline = new Timeline($('#tl'), {
   dragging: () => S.dragging,
   commit,
   gesture,
+  apercu,                                      // le moniteur pendant un geste (06/10)
   select,
   focus,
   seekFrame: (f) => program.seekFrame(f),
