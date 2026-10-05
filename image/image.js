@@ -751,7 +751,7 @@ function menuFor(it) {
       { label: 'dans Vidéo', sub: '@image', onclick: go(`movie/?ref=${id}`) },
     ] },
     { label: 'Agrandir dans Upscale', icon: '⇱', onclick: go(`upscale/?src=${id}`) },
-    { label: 'Envoyer au Montage', icon: '▤', onclick: go(`montage/?add=${id}`) },
+    { label: 'Envoyer au Montage', icon: '▤', studio: true, onclick: go(`montage/?add=${id}`) },   // retiré sans le Studio (commun/menu.js)
     { label: 'Créer un élément', icon: '◆', items: ETYPES.map(([t, lab]) => ({ label: lab, onclick: () => makeElement(it, t) })) },
   ];
 }

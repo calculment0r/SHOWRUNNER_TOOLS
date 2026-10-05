@@ -715,8 +715,8 @@ export function createCanvas(app) {
           ? 'Glissez des images, des vidéos, des sons, des personnages depuis la bibliothèque (à gauche), déposez des fichiers du disque, ou double-cliquez sur le fond : une note, un cadre, une carte Générer image ou vidéo, un composeur de prompt.'
           : 'Ouvrez une planche ou créez-en une : elle s’enregistre seule, à chaque geste.'),
         el('div', { class: 'row' }, ...(S.board
-          ? [el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.addAt('gen', ...center()) }, 'Générer image'),
-            el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.addAt('vgen', ...center()) }, 'Générer vidéo'),
+          ? [el('button', { class: 'tb ghost sm sr-studio', type: 'button', onclick: () => app.addAt('gen', ...center()) }, 'Générer image'),   // sr-studio : retiré sans le Studio (shell.css)
+            el('button', { class: 'tb ghost sm sr-studio', type: 'button', onclick: () => app.addAt('vgen', ...center()) }, 'Générer vidéo'),
             el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.addAt('compose', ...center()) }, 'Composeur'),
             el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.addAt('note', ...center()) }, 'Note'),
             el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.addAt('frame', ...center()) }, 'Cadre')]

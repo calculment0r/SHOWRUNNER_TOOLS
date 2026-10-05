@@ -741,7 +741,7 @@ function menuFor(it) {
       { label: 'en B', onclick: () => toBench('B', it) },
     ] },
     { label: 'Agrandir dans Upscale', icon: '⇱', disabled: !vid, why: 'pas une vidéo', onclick: go(`upscale/?src=${id}`) },
-    { label: 'Envoyer au Montage', icon: '▤', onclick: go(`montage/?add=${id}`) },
+    { label: 'Envoyer au Montage', icon: '▤', studio: true, onclick: go(`montage/?add=${id}`) },   // retiré sans le Studio (commun/menu.js)
     { label: 'Créer un élément', icon: '◆', disabled: true,
       why: 'un élément se fait d’images (et d’une voix) : tirez d’abord une image de la vidéo (⋯ → Extraire une image), puis faites l’élément depuis Image ou Asset' },
   ];

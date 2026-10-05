@@ -15,7 +15,7 @@
 // 150 ms après. Ses boutons dépendent de ce qui est choisi ; aucun n'est orange
 // (l'orange reste à Générer). Les sous-menus : commun/menu.js.
 
-import { el, toast } from '../commun/shell.js';
+import { el, toast, studioSeul } from '../commun/shell.js';
 import { menu } from '../commun/menu.js';
 import { PAD, bboxOf, kidsOf, layoutOf, setOrder, readingOrder, flowAt, columns, GAP } from './groups.js';
 
@@ -180,7 +180,7 @@ export function createSelection(app, env) {
       if (one.deck && app.diapo) out.push(btn('Animer', () => app.diapo.enterMode(one.id), { title: 'l’outil d’animation de cette diapositive : entrées, durées, transition' }));
       out.push(btn('Renommer', () => app.canvas.renameFrame(one.id), { title: 'double-clic sur son nom' }),
         btn('Présenter d’ici', () => P.start(one.id), { why: P ? '' : 'la présentation (atelier) n’est pas chargée', title: 'plein écran, de cadre en cadre, depuis celui-ci' }),
-        btn('Exporter en PNG', () => app.exportBoard(one.id), { title: 'ce cadre : sur l’ordinateur et dans le presse-papier' }));
+        studioSeul(btn('Exporter en PNG', () => app.exportBoard(one.id), { title: 'ce cadre : sur l’ordinateur et dans le presse-papier' })));
     } else if (mode === 'text') {
       out.push(...app.texte.barItems(one, { btn, sub, sep }));
     } else if (mode === 'libre') {

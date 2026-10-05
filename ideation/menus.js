@@ -85,7 +85,7 @@ export function createMenus(app) {
       if (!gone) {
         const go = [{ label: 'Dans Asset', icon: '↗', onclick: () => open(`asset/#${it.id}`) }];
         if (n.kind === 'image') go.push({ label: 'Éditer dans Image', icon: '↗', onclick: () => open(`image/#${it.id}`) }, { label: 'Animer', icon: '↗', onclick: () => open(`movie/?start=${it.id}`) });
-        if (n.kind !== 'element') go.push({ label: 'Ajouter au montage', icon: '↗', onclick: () => open(`montage/?add=${it.id}`) });
+        if (n.kind !== 'element') go.push({ label: 'Ajouter au montage', icon: '↗', studio: true, onclick: () => open(`montage/?add=${it.id}`) });
         go.push({ label: 'Référence vidéo', icon: '↗', onclick: () => open(`movie/?ref=${it.id}`) });
         out.push({ label: 'Ouvrir ailleurs', items: go });
       }
@@ -103,7 +103,7 @@ export function createMenus(app) {
       const inner = S.board.nodes.filter((m) => m !== n && m.type !== 'group' && m.x >= n.x && m.y >= n.y && m.x + m.w <= n.x + n.w && m.y + m.h <= n.y + n.h);
       out.push({ label: 'Renommer', key: 'Entrée', onclick: () => C().renameFrame(n.id) },
         { label: 'Présenter d’ici', disabled: !P, why: 'la présentation (atelier) n’est pas chargée', onclick: () => P.start(n.id) },
-        { label: 'Exporter en PNG', sub: 'dans la bibliothèque', onclick: () => app.exportBoard(n.id) },
+        { label: 'Exporter en PNG', sub: 'dans la bibliothèque', studio: true, onclick: () => app.exportBoard(n.id) },
         { label: 'Choisir son contenu', disabled: !inner.length, why: 'ce cadre est vide', onclick: () => app.select(inner.map((m) => (m.group && S.focus !== m.group ? m.group : m.id))) },
         { label: 'Voir', onclick: () => C().flyTo(n.id) });
     } else if (n.type === 'group') {
@@ -181,8 +181,8 @@ export function createMenus(app) {
       // forme, carte, mind map, modèle d'atelier (objets/)
       ...(app.objets?.boardItems(wx, wy) || []),
       ...(app.diapo?.boardItems(wx, wy) || []),
-      '-', { label: 'Générer image', key: 'G', dot: 'or', onclick: at('gen') },
-      { label: 'Générer vidéo', key: 'M', dot: 'cy', onclick: at('vgen') },
+      '-', { label: 'Générer image', key: 'G', dot: 'or', studio: true, onclick: at('gen') },   // sans le Studio : retirées (menu.js)
+      { label: 'Générer vidéo', key: 'M', dot: 'cy', studio: true, onclick: at('vgen') },
       { label: 'Composeur de prompt', key: 'P', dot: 'amb', onclick: at('compose') },
       // le panneau fermé (pas pour l'invité) : l'ouvrir ; ouvert, il est là, l'entrée se tait (Cal, 29/09)
       ...(app.lib?.closed() ? ['-', { label: 'Depuis la bibliothèque', onclick: () => app.lib.open() }] : [])];

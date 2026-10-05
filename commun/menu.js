@@ -22,11 +22,12 @@
 // items : '-' (filet) · { head: 'TITRE' } · une entrée :
 //   { label, onclick, icon?, dot?: 'or' (un jeton), key?: 'Ctrl+K' (raccourci
 //     affiché), sub?: 'petit texte', danger?, checked?, items?: [...] (sous-menu),
-//     disabled?, why?: 'ce qui manque', font?: '"Fraunces", serif' (le libellé dans cette police) }
+//     disabled?, why?: 'ce qui manque', font?: '"Fraunces", serif' (le libellé dans cette police),
+//     studio?: true (un geste du Studio : retiré pour qui ne l'a pas ici — commun/shell.js, studioIci) }
 // Une entrée désactivée reste lisible et dit pourquoi (why) : écrit sous
 // elle, et redit au clic au lieu de ne rien faire (règle 7 du thème). `build` peut rendre null (pas de menu ici).
 
-import { el, toast } from './shell.js';
+import { el, toast, studioIci } from './shell.js';
 
 // la feuille du menu, chargée une fois, à côté de ce fichier
 if (!document.querySelector('link[data-sr-menu]')) {
@@ -112,7 +113,7 @@ function closeFrom(depth) {
 }
 
 function openSub(b, items, depth) {
-  const sub = build(items, depth + 1);
+  const sub = build(tidy(items), depth + 1);
   document.body.append(sub.node);
   stack.push(sub);
   const r = b.getBoundingClientRect();
@@ -158,15 +159,22 @@ function keys(e) {
   }
 }
 
-export function menu(x, y, items, { focusFirst = false } = {}) {
-  closeMenus();
-  // pas de filet en tête, en queue, ni deux de suite
+// les entrées montrées : sans les gestes du Studio pour qui ne l'a pas (`studio: true`, une seule
+// règle pour tous les menus : commun/shell.js, studioIci) ; pas de filet en tête, en queue, ni deux de suite
+function tidy(items) {
+  const studio = studioIci();
   const list = [];
   for (const it of items || []) {
-    if (!it || (it === '-' && (!list.length || list[list.length - 1] === '-'))) continue;
+    if (!it || (it.studio && !studio) || (it === '-' && (!list.length || list[list.length - 1] === '-'))) continue;
     list.push(it);
   }
   while (list[list.length - 1] === '-') list.pop();
+  return list;
+}
+
+export function menu(x, y, items, { focusFirst = false } = {}) {
+  closeMenus();
+  const list = tidy(items);
   if (!list.length) return { close: closeMenus };
   restore = document.activeElement;
   const m = build(list, 0);
