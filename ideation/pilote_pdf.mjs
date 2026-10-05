@@ -7,7 +7,8 @@
 //   node ideation/pilote_pdf.mjs http://127.0.0.1:8850 /tmp/sr_pilote_pdf
 //
 // Une présentation de trois diapositives (un texte, une image, une forme), en sombre puis en clair :
-//   - « Exporter en PDF » allumé, un seul bouton orange à l'écran ; son menu (▾) : quatre entrées ;
+//   - « Exporter en PDF » allumé, un seul bouton orange à l'écran ; son menu (▾) : sept entrées (le PDF, le
+//     PDF et les images, les images, trois vidéos MP4 depuis le 06/10, l'impression du navigateur) ;
 //   - le clic : le panneau d'export, la progression du travail (la ligne de la file), puis « fini » ;
 //     « Télécharger le PDF » mène au document rangé (trois pages de 1440 × 810 pt, son texte, sa
 //     couverture, dossier Idéation), « Dans Asset ↗ » à sa fiche ; le PDF et les images : « Images · 3 » ;
@@ -104,6 +105,9 @@ const btn = (page) => page.$eval('.pm-expb', (b) => ({ dis: b.getAttribute('aria
 const visibleGo = (page) => page.$$eval('.tb.go', (l) => l.filter((x) => x.offsetWidth || x.offsetHeight).length);
 const menuItems = (page) => page.$$eval('.sr-menu .mi', (l) => l.map((x) => ({ label: x.querySelector('.lb')?.textContent || '',
   text: x.textContent, off: x.getAttribute('aria-disabled') === 'true' })));
+// une entrée du menu par son libellé (le menu a grandi le 06/10 : les vidéos MP4)
+const entry = (items, re) => items.find((x) => re.test(x.label)) || { off: null, label: '?' };
+const PDF = /^PDF$/, PDFPNG = /^PDF et une image/, PNG = /^Une image par/, PRINT = /^Imprimer/, VIDEO = /^Vidéo/;
 async function waitPanel(page, before = '', ms = 120000) {
   const seen = new Set();
   const t0 = Date.now();
@@ -133,7 +137,7 @@ for (const theme of ['dark', 'light']) {
   await page.click('.pm-expm');
   await page.waitForSelector('.sr-menu .mi', { timeout: 3000 });
   const items = await menuItems(page);
-  ok(items.length === 4 && items.every((x) => !x.off) && /PDF/.test(items[0].text) && /Imprimer/.test(items[3].text),
+  ok(items.length === 7 && items.every((x) => !x.off) && PDF.test(items[0].label) && PRINT.test(items[6].label) && items.filter((x) => VIDEO.test(x.label)).length === 3,
     `${theme} : le menu d'export : ${items.map((x) => x.text.replace(/\s+/g, ' ').trim()).join(' | ')}`);
   await page.shot(`${theme}-menu`);
   await page.keyboard.press('Escape');
@@ -192,7 +196,9 @@ for (const theme of ['dark', 'light']) {
   await page.click('.pm-expm');
   await page.waitForSelector('.sr-menu .mi', { timeout: 3000 });
   const items = await menuItems(page);
-  ok(items[0].off && items[1].off && !items[2].off && !items[3].off, `licence : le menu éteint le PDF, garde les images et l'impression du navigateur`);
+  ok(entry(items, PDF).off && entry(items, PDFPNG).off && !entry(items, PNG).off && !entry(items, PRINT).off
+    && items.filter((x) => VIDEO.test(x.label)).every((x) => x.off && /ni le PDF ni la vidéo/.test(x.text)),
+    `licence : le menu éteint le PDF et la vidéo (la même licence), garde les images et l'impression du navigateur`);
   await page.shot('licence-menu');
   await page.evaluate(() => [...document.querySelectorAll('.sr-menu .mi')].find((x) => /^Une image/.test(x.querySelector('.lb')?.textContent)).click());
   const run = await waitPanel(page);
@@ -220,7 +226,7 @@ for (const theme of ['dark', 'light']) {
   await page.click('.pm-expm');
   await page.waitForSelector('.sr-menu .mi', { timeout: 3000 });
   const items = await menuItems(page);
-  ok(items[0].off && items[1].off && items[2].off && !items[3].off, 'sans Chromium : seule l’impression du navigateur reste');
+  ok(items.filter((x) => !PRINT.test(x.label)).every((x) => x.off) && !entry(items, PRINT).off, 'sans Chromium : seule l’impression du navigateur reste');
   await page.shot('sans-chromium');
   ok(!page.errs.length, `sans Chromium : aucune erreur de console ${page.errs.slice(0, 3).join(' | ')}`);
   await ctx.close();

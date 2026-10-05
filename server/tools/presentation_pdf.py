@@ -41,7 +41,7 @@ chaque diapositive lu dans la page et la première diapositive en couverture), l
 présentation ; en option une image par diapositive (`image`, lignée = les objets de la diapositive).
 
 Routes :
-  GET  /api/ideation/presentation/pdf            {ok, why, node, playwright, version, chromium}
+  GET  /api/ideation/presentation/pdf            {ok, why, node, playwright, version, chromium, refused_fonts, ffmpeg}
   POST /api/ideation/boards/<id>/pdf {pdf, png}   le travail (400 : rien demandé ; 409 : aucune diapositive)
 """
 
@@ -164,7 +164,8 @@ def refused_fonts() -> list[dict]:
 def r_state(req):
     fresh = req.q("frais") == "1" and auth.is_admin(getattr(req, "user", None) or auth.current())
     st = state(fresh=fresh)
-    return {**st, "refused_fonts": refused_fonts()}
+    # ffmpeg : la vidéo MP4 (presentation_video.py, 06/10) en a besoin en plus de Chromium
+    return {**st, "refused_fonts": refused_fonts(), "ffmpeg": bool(shutil.which("ffmpeg"))}
 
 
 def _slides(b: dict) -> list[dict]:

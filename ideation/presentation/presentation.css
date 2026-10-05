@@ -21,7 +21,9 @@
 }
 .pm-bg, .pm-decor { position: absolute; inset: 0; pointer-events: none; }
 .pm-o { position: absolute; transform-origin: 0 0; }
-.pm-p, .pm-e, .pm-m, .pm-l, .pm-c { position: relative; width: 100%; height: 100%; }
+.pm-p, .pm-k, .pm-e, .pm-m, .pm-l, .pm-c { position: relative; width: 100%; height: 100%; }
+/* les images clés (courbes.js) : translate, rotate, scale autour du centre de l'objet */
+.pm-k { transform-origin: 50% 50%; }
 .pm-e.pm-clip { overflow: hidden; }
 .pm-o[data-tone="ink"] { color: var(--t-ink); }
 .pm-o[data-tone="muted"] { color: var(--t-muted); }
@@ -215,10 +217,25 @@
 .pm-lab .tx { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pm-track { position: relative; }
 .pm-bar { position: absolute; top: 5px; bottom: 5px; border-radius: 3px; background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line-cy); cursor: grab; display: flex; align-items: center; overflow: hidden; }
-.pm-bar span { font-family: var(--f-mono); font-size: 8px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink2); padding: 0 6px; white-space: nowrap; }
+.pm-bar span { font-family: var(--f-mono); font-size: 8px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink2); padding: 0 10px; white-space: nowrap; }
 .pm-bar.on { box-shadow: inset 0 0 0 1px var(--line-or); }
 .pm-bar.pm-k-image, .pm-bar.pm-k-video, .pm-bar.pm-k-element { box-shadow: inset 0 0 0 1px var(--line-amb); }
 .pm-bar .pm-rz { position: absolute; right: 0; top: 0; bottom: 0; width: 7px; cursor: ew-resize; background: var(--line-cy); }
+.pm-bar .pm-rz.l { left: 0; right: auto; }
+/* les images clés (06/10) : un losange par instant où l'objet a une clé ; sous l'objet choisi, une
+   ligne par propriété animée et ses losanges ; on les glisse dans le temps (un glisser = un pas) */
+.pm-lane.pm-sub { min-height: 20px; background: var(--panel2); }
+.pm-lane.pm-sub .pm-lab { padding-left: 22px; }
+.pm-lane.pm-sub .pm-lab .tx { font-size: 10.5px; color: var(--ink3); }
+.pm-kd { position: absolute; top: 50%; width: 11px; height: 11px; margin: -6px 0 0 -6px; transform: rotate(45deg); z-index: 2;
+  background: var(--panel); box-shadow: inset 0 0 0 1.5px var(--ink2); cursor: ew-resize; touch-action: none; }
+.pm-kd:hover { box-shadow: inset 0 0 0 1.5px var(--cy); }
+.pm-kd.on { background: var(--or); box-shadow: inset 0 0 0 1.5px var(--or); }
+.pm-kd.p-in, .pm-kd.p-out { border-radius: 2px; }
+.pm-kd.drag { box-shadow: inset 0 0 0 1.5px var(--or); }
+.pm-ktip { position: absolute; top: -18px; transform: translateX(-50%); z-index: 4; padding: 1px 5px; border-radius: var(--r1); pointer-events: none;
+  font-family: var(--f-mono); font-size: 9px; letter-spacing: .08em; color: var(--ink); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); white-space: nowrap; }
+.pm-selbox.multi { box-shadow: 0 0 0 1px var(--cy), 0 0 0 4px var(--cy-bg); }
 /* l'inspecteur */
 .pm-insp { grid-area: insp; display: flex; flex-direction: column; min-height: 0; background: var(--panel); box-shadow: inset 1px 0 0 var(--line); }
 .pm-tabs { margin: 8px; }
@@ -231,6 +248,43 @@
 .pm-num input { width: 86px; flex: none; }
 .pm-num .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pm-range { display: flex; flex-direction: column; gap: 3px; }
+/* le choix d'une courbe (courbe.js) : le dessin en filets, la courbe en acier, les poignées à l'encre */
+.pm-cv { display: flex; flex-direction: column; gap: 6px; }
+.pm-cv-h1 { display: flex; align-items: center; gap: 8px; }
+.pm-cv-h1 .fld { flex: 1; min-width: 0; }
+.pm-cv-say { font-size: 11px; line-height: 1.4; color: var(--ink3); }
+.pm-cv-plot { display: block; width: 100%; height: auto; background: var(--panel2); border-radius: var(--r2); box-shadow: inset 0 0 0 1px var(--line); touch-action: none; user-select: none; }
+.pm-cv-grid, .pm-cv-diag, .pm-cv-arm, .pm-cv-line { fill: none; vector-effect: non-scaling-stroke; }
+.pm-cv-grid { stroke: var(--line); }
+.pm-cv-diag { stroke: var(--line); stroke-dasharray: 3 3; }
+.pm-cv-arm { stroke: var(--ink3); }
+.pm-cv-line { stroke: var(--cy); stroke-width: 2; stroke-linejoin: round; }
+.pm-cv-h { fill: var(--panel); stroke: var(--ink); stroke-width: 1.5; vector-effect: non-scaling-stroke; cursor: grab; }
+.pm-cv-h:focus-visible { stroke: var(--cy); outline: none; }
+.pm-cv-bz { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.pm-cvn { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pm-cvn input { width: 100%; min-width: 0; }
+.pm-cv-bz[hidden], .pm-cv-sps[hidden] { display: none; }
+.pm-cv-sps { display: flex; flex-direction: column; gap: 4px; }
+.pm-cv-sp { display: grid; grid-template-columns: 96px minmax(0, 1fr) 64px; gap: 6px; align-items: center; }
+.pm-cv-sp .fld { width: 100%; min-width: 0; }
+.pm-cv-run { display: flex; align-items: center; gap: 8px; }
+.pm-cv-track { position: relative; flex: 1; height: 10px; border-radius: 5px; background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line); }
+.pm-cv-dot { position: absolute; left: 0; top: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--cy); }
+/* les images clés de l'objet (onglet Objet) : une ligne par propriété — son nom, sa valeur à la tête,
+   ‹ ◆ › (la clé précédente, poser ou retirer la clé à la tête, la suivante) */
+.pm-sec { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; box-shadow: inset 0 1px 0 var(--line); }
+.pm-sec > .lbl:first-child { color: var(--cy); }
+.pm-kp { display: grid; grid-template-columns: 82px minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.pm-kp .tx { font-size: 11.5px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pm-kp .pm-num input { width: 100%; min-width: 0; flex: 1; }
+.pm-kp .pm-num { min-width: 0; }
+.pm-kn { display: inline-flex; align-items: center; }
+.pm-kn .tb { padding: 0 6px; min-width: 24px; }
+.pm-kt { font-size: 13px; line-height: 1; color: var(--ink3); }
+.pm-kt.on { color: var(--or); }
+.pm-kt.some { color: var(--ink2); }
+.pm-seg3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
 .pm-range input { width: 100%; accent-color: var(--or); }
 .pm-h2 { display: flex; align-items: baseline; gap: 8px; padding: 4px 0 2px; }
 .pm-h2 b { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

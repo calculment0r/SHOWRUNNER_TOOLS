@@ -11,11 +11,13 @@
 // JSON, posée en variables --t-* sur la scène) ; sans modèle, la scène prend les jetons du
 // thème (presentation.css). Aucune couleur n'est écrite ici.
 //
-// Chaque objet est emboîté pour le moteur (moteur.js) : .pm-o > .pm-p > .pm-e > .pm-m > .pm-l > .pm-c
+// Chaque objet est emboîté pour le moteur (moteur.js) : .pm-o > .pm-p > .pm-k > .pm-e > .pm-m > .pm-l > .pm-c
+// (.pm-k : ses images clés, 06/10)
 
 import { within } from '../atelier/socle.js';
 import { waveUrl } from '../objets/son.js';
 import { isFigure, normMotion } from './moteur.js';
+import { keysAt, styleOf } from './courbes.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const TITLE_PX = { s: 22, m: 34, l: 52 };   // server/tools/ideation.py, TITLE_SIZES
@@ -179,9 +181,9 @@ export function buildScene(ctx) {
     o.dataset.part = part;
     o.dataset.type = n.type;
     Object.assign(o.style, { left: `${n.x - f.x}px`, top: `${n.y - f.y}px`, width: `${n.w}px` });
-    const p = h('div', 'pm-p'), e = h('div', 'pm-e'), m = h('div', 'pm-m'), l = h('div', 'pm-l'), c = h('div', 'pm-c');
-    l.append(c); m.append(l); e.append(m); p.append(e); o.append(p);
-    const obj = { id: n.id, n, part, kind: n.type === 'media' ? n.kind : n.type, o, p, e, m, l, c, txt: null, text: '', paths: [], media: false,
+    const p = h('div', 'pm-p'), k = h('div', 'pm-k'), e = h('div', 'pm-e'), m = h('div', 'pm-m'), l = h('div', 'pm-l'), c = h('div', 'pm-c');
+    l.append(c); m.append(l); e.append(m); k.append(e); p.append(k); o.append(p);
+    const obj = { id: n.id, n, part, kind: n.type === 'media' ? n.kind : n.type, o, p, k, e, m, l, c, txt: null, text: '', paths: [], media: false,
       label: '', key: n.mid || (n.type === 'media' ? `i:${n.item}` : (n.type === 'title' || n.type === 'note') && n.text ? `t:${n.style || n.type}:${n.text}` : '') };
     // le ton : celui de l'objet, sinon le plus lisible sur ce qu'il y a dessous (lookOf)
     const tone = look.tones.get(n.id);
@@ -305,6 +307,9 @@ export function buildScene(ctx) {
       obj.label = n.type;
     }
     obj.mo = normMotion(n.motion) || (ctx.motionOf ? ctx.motionOf(n, part, order.get(n.id), role) : null);
+    // ses images clés (courbes.js, 06/10) : l'état final posé en style sur .pm-k — ce que montrent
+    // l'impression et prefers-reduced-motion ; les animations du moteur le recouvrent pendant la frise
+    if (obj.mo?.keys) Object.assign(k.style, styleOf(keysAt(obj.mo.keys, Infinity)));
     objs.push(obj);
     root.append(o);
   }

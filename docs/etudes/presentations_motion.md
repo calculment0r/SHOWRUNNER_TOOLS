@@ -153,7 +153,7 @@ critique) ; rien n'est appelé ni téléchargé ici.
   une capture par 1/30 s en posant l'instant (transitions comprises, en jouant
   leurs animations à l'arrêt), puis `ffmpeg -framerate 30 -i %05d.png -c:v libx264
   -pix_fmt yuv420p -movflags +faststart` (ffmpeg est sur DGX2). Un travail de la
-  file, voie `cpu`.
+  file, voie `cpu`. **Fait le 06/10** (§ 10) : le travail `presentation.video`.
 - La planche montre le fond et les couleurs du modèle, pas son décor (bandes,
   halos, filets) : seulement la scène.
 - Les vidéos d'une diapositive jouent muettes, en boucle (`play`, `poster_t` :
@@ -233,3 +233,131 @@ Essais (portail d'essai, Chromium 141 du conteneur) : `check.py presentation_pdf
 pages de 1440 × 810 pt, le texte par `pdftotext`, l'image à sa place sur sa capture, la licence, 9:16,
 les pieds, le chemin sans poppler) ; `ideation/pilote_pdf.mjs` (35 contrôles, sombre et clair : le
 bouton, son menu, la progression, le document rangé et téléchargé, les refus avec leur raison).
+
+## 10. Le 06/10 : les idées reprises d'une note de spécification (branche `wip2/motion-editeur`)
+
+Cal a partagé le 06/10 l'image d'une note de spécification d'un éditeur local de motion design
+(« pour notre partie motion, ça peut être pas mal de prendre des idées dedans »). Ce qu'elle tient en
+une phrase : **l'image d'un instant ne dépend que du projet et de cet instant**, et la même fonction
+dessine l'aperçu et l'export. On la compare ici point par point au mode Présentation ; on en reprend
+ce qui manque sans demander de décision, dans notre architecture (modules ES sans construction, serveur
+en bibliothèque standard, la planche d'Idéation comme seule vérité) — pas sa pile (Vite, React,
+TypeScript, Zustand, zod, Express), ni son dossier de projet à part.
+
+### 10.1 Point par point
+
+| la note | chez nous avant le 06/10 | ce qu'on en fait |
+|---|---|---|
+| une seule source de vérité, validée par schéma | la planche ; le motion borné par `schema.json`, lu par le moteur, le serveur (`clean_motion`) et le contrôle | **déjà**. Les clés et les courbes libres entrent dans le même schéma (`keys`, `ease_free`) ; la page et le serveur les nettoient de la même façon (le contrôle compare) |
+| une fonction pure `renderFrame(projet, t)` en Canvas 2D, pour l'aperçu et l'export | la scène (`scene.js`) et la frise du moteur (`run.seek(t)`), en DOM et Web Animations : le mode, le lecteur, l'impression | **le principe repris, pas le Canvas** : notre texte est du vrai texte (le PDF vectoriel, `text-wrap: balance`, les polices des modèles), le moteur et ses dix modèles sont en DOM. Neuf : `programme.js` met la présentation entière bout à bout et la pose à n'importe quel instant (`seek(t)`) ; le MP4 l'appelle pour chaque image |
+| rien que (projet, t) : ni horloge, ni hasard non semé, ni animation CSS, ni état accumulé | aucune animation CSS dans la scène, aucun hasard dans le rendu (le seul `Math.random` nomme les affiches des modèles) ; la parallaxe au pointeur est un état accumulé, mais en direct seulement | **vérifié et corrigé** (§ 10.2) : les vidéos d'une diapositive tournaient seules ; la sortie et les transitions ne se jouaient qu'en temps réel ; le compositeur de Chromium gardait l'histoire des images |
+| aperçu à la densité de l'écran, export à la pleine taille, texte net en 4K | vrai par construction : la scène est mise à l'échelle par `transform`, le navigateur redessine le texte à la densité de l'écran (jamais une image agrandie) | **repris pour l'export** : 1080p, ou 2160p par `deviceScaleFactor: 2` (le texte et les formes redessinés à cette taille) |
+| des images clés par propriété `[{time, value, easing}]` | des effets déclaratifs (entrée, sortie, boucle, profondeur, étape) | **repris** : `motion.keys = {x, y, scale, rot, op: [{t, v, e, p}]}`, sur une enveloppe neuve `.pm-k` (translate, rotate, scale, opacity : les propriétés de transformation individuelles, y additionné à x), par-dessus les effets ; t compté depuis l'étape de l'objet. Pas repris : animer la typographie, l'alignement, l'espacement, la couleur — le texte suit son modèle (ses six styles) ; à décider |
+| courbes : linéaire, ease-in/out/in-out, cubic-bezier libre, ressort {raideur, amortissement, masse} | huit courbes nommées, dont un ressort fixe | **repris** : `in` et `out` (easings.net), la cubic-bezier libre `{bz}`, le ressort réglé `{spring: {k, c, m}}` ; le ressort est rendu en `linear()` et la valeur calculée en JavaScript (`valueAt`) est l'interpolation des mêmes points : ce que le panneau affiche est ce que le navigateur peint |
+| des préréglages (glisse, fondu, échelle ; entrée, sortie ; direction, distance, délai, durée, courbe) qui FABRIQUENT des clés ordinaires ; réappliquer remplace, annulable | `modeles.js` donne un motion par part d'objet, décalé par le rythme ; `assist.js` propose un modèle et des entrées pour toute la présentation — des EFFETS, pas des clés | **repris sans doubler** : les préréglages servent l'objet choisi et fabriquent des clés marquées `p: 'in' | 'out'` ; les reposer ne remplace que les leurs ; l'entrée par effet passe à « Aucune ». La passe assistée reste la proposition d'ensemble |
+| un décalage en cascade sur une sélection (avant, arrière, hasard semé ; intervalle) | le rythme du modèle (l'ordre de lecture) ; `in.stagger` décale les unités d'un texte | **repris** sur les objets choisis (Maj + clic) : « avant » est l'ordre de lecture (`readOrder`), le hasard est semé (mulberry32 : la même graine, le même ordre) ; le début de chacun (son entrée, ses clés) se décale, rien ne change de forme |
+| la timeline : blocs de scène aux bords déplaçables, barres de calque début / fin, losanges déplaçables, la tête, le zoom | la minuterie d'une diapositive : une barre par entrée (le délai, la durée), LA tête de lecture | **repris** : un losange par instant où l'objet a une clé, une ligne par propriété sous l'objet choisi, le glisser (un pas d'annulation) ; le bord gauche d'une barre (le début). **Pas repris** : les blocs de scène (nos diapositives n'ont pas de durée dans une frise commune — question 6) ; le zoom (la minuterie tient la diapositive dans sa largeur ; la molette commune `commun/molette.js` le donnerait) |
+| le panneau des propriétés : transformation, opacité, typographie, couleur ; la bascule d'image clé à la tête ; le choix de courbe et son aperçu en direct ; des libellés simples, une infobulle par réglage | l'onglet Objet : entrée, découpe, délai, durée, courbe (une liste), décalage, distance, étape, boucle, profondeur, sortie | **repris** : les cinq propriétés à la tête (la valeur, ‹ ◆ ›), la courbe de la clé choisie, le choix de courbe (`courbe.js` : le dessin redessiné pendant qu'on glisse une poignée ou un réglage du ressort, « Voir ») pour l'entrée, la transition et les clés ; une infobulle en mots simples sur chaque réglage de l'onglet. La typographie et la couleur : celles de la planche (`diapo/libre.js`) |
+| la lecture : Espace, pas à pas ← →, le temps et le numéro d'image | Espace, Origine, Fin, la boucle ; ← → changent de diapositive | **repris** en Maj + ← → (image par image, 30 i/s) et « i 42 » à côté du temps ; ← → gardent leur rôle |
+| annuler / rétablir, un glisser = un pas | `app.mutate` (la pile de l'Idéation, la co-édition) | **déjà** ; chaque geste neuf est un `app.mutate` |
+| enregistrer / ouvrir un dossier `.motion`, un `.zip` | la planche vit dans le portail (co-édition, bibliothèque) | **pas repris** |
+| l'export MP4 : Chromium sans affichage sur une page de rendu, `renderFrame` à chaque image, ffmpeg libx264 yuv420p CRF 16 +faststart, après `document.fonts.ready` et le décodage des images, progression, annulation ; ffmpeg absent : le dire | l'étude le prévoyait (§ 7) ; le PDF passait déjà par Chromium sans affichage (§ 9) | **repris par le chemin du PDF** (§ 10.3) |
+| hors champ de sa première version : son, vidéos en calque, transitions, effets | des transitions (huit), des vidéos jouées muettes, des effets | rien à reprendre ; le son du MP4 : question 4 |
+| la vérification RÉELLE : interpolation, chaque courbe, déterminisme, un essai de bout en bout, un export de 3 s dont trois images sont comparées au rendu | les contrôles du schéma, les pilotes du mode et du PDF | **repris** (§ 10.4) |
+| le calque « curseur » (une souris animée, ses clics) | — | **pas fait** (§ 10.5) |
+
+### 10.2 Le déterminisme, mesuré
+
+- **Les vidéos** d'une diapositive jouaient seules (`autoplay`, `loop`) : l'image d'un instant dépendait
+  de l'horloge. `run.seek(t)` les pose maintenant à t (en boucle sur leur durée), en pause ; `playFrom(t)`
+  les lance de là ; le rendu attend qu'elles y soient (`seeked`). Le lecteur plein écran les laisse tourner.
+- **La sortie et les transitions** se créaient au moment de les jouer et s'attendaient : elles n'avaient
+  pas d'instant. `run.exitAnims()` et `transition(…, { paused })` créent les mêmes animations en pause et
+  rendent de quoi les retirer (le volet, le rideau, la toile, les paires du morph rendus tels qu'avant) ;
+  `exit()` et `transit()` les jouent comme avant (le lecteur est inchangé : 37 diapositives de cinq
+  exemples lues sans erreur).
+- **Le compositeur** : la scène posée au même instant, deux fois de suite, différait de 1 à 2 niveaux sur
+  la couture d'un pixel où deux scènes se touchent (une poussée) ; rejointe par un autre chemin, 21 des 36
+  transitions des cinq exemples différaient d'un niveau sur quelques pixels — avec, élément par élément,
+  les mêmes styles calculés (vérifié sur les 135 éléments d'une scène). Chromium garde la trame d'un
+  calque qui porte une animation ou une transformation 3D d'une image à l'autre. Le rendu image par image
+  fige donc chaque image : chaque animation écrit sa valeur en style (`commitStyles`) puis se retire le
+  temps de la capture, et un `translate3d(x, y, 0)` figé devient un `translate(x, y)` (la même image, sans
+  calque à part) ; la suivante les remet. Mesuré : les 36 transitions, rejointes par trois chemins, donnent
+  les mêmes pixels. Les drapeaux de Chromium essayés n'y suffisaient pas (`--disable-gpu-rasterization`
+  en laissait 7, `--disable-partial-raster`, `--run-all-compositor-stages-before-draw`, le rendu logiciel :
+  rien). Coût : 134 ms par image 1080p au lieu de 117 (Chromium du conteneur, SwiftShader).
+
+### 10.3 L'export MP4
+
+- **Le menu** « Exporter » du mode (▾) : « Vidéo · la présentation » (1080p, 30 i/s), « Vidéo · cette
+  diapositive », « Vidéo · la présentation en 4K » (2160p). Une entrée impossible dit pourquoi (Chromium
+  ou ffmpeg absents de la machine du portail, une police que sa licence refuse, un export en route, un
+  aperçu ou une passe ouverts) ; le panneau d'export suit le travail (la ligne de la file, « Arrêter ») et
+  donne « Télécharger la vidéo » et « Dans Asset ↗ ».
+- **Le travail** `presentation.video` (voie `cpu`, `server/tools/presentation_video.py`) prend le chemin du
+  PDF : il lit la planche au nom de la personne, écrit le spec, lance `tools/presentation_export.mjs`
+  (`kind: video`), qui ouvre `lecture.html?video` (la page de rendu, sans interface : `programme.js`),
+  attend les polices et les images, puis pour chaque image k : `SR_RENDU.seek(k / fps)`, une capture PNG
+  (sans perte), donnée à ffmpeg par son entrée standard (`-f image2pipe -c:v png`, puis `libx264`,
+  `yuv420p`, CRF 16, la matrice BT.709 et ses marques — une vidéo HD sans marque est lue en BT.709 par les
+  navigateurs, swscale aurait converti en BT.601 sans le dire —, `+faststart`). La note demandait des
+  images brutes : Playwright rend du PNG, le décoder dans node demanderait une dépendance ; le PNG est sans
+  perte, ffmpeg le décode. Arrêter le travail tue node, Chromium et ffmpeg (le groupe de processus).
+  La vidéo va dans la bibliothèque : une `video`, dossier « Idéation », Workspace de la planche, lignée =
+  les objets montrés. Réglages : `slide` (une diapositive), `fps` (24, 25, 30, 50, 60), `scale` (1, 2),
+  `hold` (la pause d'une diapositive sans avance seule, 2 s par défaut).
+- **La frise de la vidéo** est celle du lecteur : la transition de chaque diapositive, ses entrées qui
+  partent pendant la transition (la même part, `LEAD`, partagée avec le lecteur), ses étapes au clic
+  bout à bout, la pause, sa sortie. Ce qui diffère : la première entre dès 0, les étapes se suivent sans
+  clic, la parallaxe au pointeur n'existe pas.
+- **Les polices** : une vidéo diffusée embarque le dessin des lettres ; Venus Rising et Norelli (`FONTS` :
+  « pas de PDF ») refusent donc aussi la vidéo, en disant laquelle et sur quelles diapositives — la règle
+  du PDF, gardée telle quelle. **La décision est à Cal** (question 1).
+- **Le PDF et l'état final** : un objet porte l'état final de ses clés en style (ce que montrent
+  l'impression, prefers-reduced-motion et le bouton Fin) ; les animations le recouvrent pendant la frise.
+
+### 10.4 Preuves (portail d'essai, Chromium 141 du conteneur, ffmpeg 6.1)
+
+- `tools/check.py presentation` : chaque courbe va de 0 à 1 ; la linéaire est la diagonale, l'entrée lente
+  au début, la sortie lente à la fin, l'entrée-sortie symétrique ; une cubic-bezier (0, 0, 1, 1) est la
+  diagonale, (0,42, 0, 0,58, 1) donne 0,12916 à x = 0,25 (la courbe de WebKit) ; le rebond dépasse ; le
+  ressort peu amorti oscille, le très amorti arrive sans dépasser ; le ressort en JavaScript est la courbe
+  `linear()` peinte (écart 0) ; l'interpolation (avant la première clé, après la dernière, entre, la courbe
+  de la clé qui part) ; les clés de la page et du serveur identiques sur les mêmes entrées ; les animations
+  Web qu'on en tire ; poser, basculer, déplacer ; les préréglages (fabriquer, reposer, une sortie en plus) ;
+  la cascade (avant, arrière, hasard semé reproductible) ; l'aller-retour d'une planche avec des clés.
+- `tools/check.py presentation_video` : le même instant rendu deux fois donne les mêmes pixels ; la forme
+  menée par un ressort est, à 1,1 s, là où `courbes.js` la place (à 3 px près) ; pendant une poussée, le
+  même instant rejoint par trois chemins donne les mêmes pixels ; un MP4 de 3 s (1080p, 30 i/s, 90 images,
+  H.264, yuv420p, BT.709, l'index en tête), sa première, sa médiane et sa dernière image extraites par
+  ffmpeg contre le rendu au même instant : écart moyen 1,3 / 255, PSNR 45 dB (seuil : 3 / 255, 32 dB) ;
+  arrêté en route : rien n'est rangé, plus de processus ; la présentation entière (72 images à 24 i/s) ;
+  la licence (Venus Rising refuse la vidéo).
+- `ideation/pilote_motion.mjs` (sombre et clair, aucune erreur de console, un seul bouton orange) : glisser
+  le losange de « position x » (0,40 s pendant le geste, 400 ms écrits), Ctrl+Z le remet ; un clic sur un
+  losange choisit la clé ; « ressort réglé » change la courbe dessinée, la raideur glissée la redessine
+  sans rien écrire, lâchée elle s'écrit ; une poignée de cubic-bezier glissée ; « Poser l'entrée » fabrique
+  des clés, Ctrl+Z les retire ; la cascade sur trois objets (200 ms : le corps à 200, la forme à 400),
+  Ctrl+Z ; « Vidéo · cette diapositive » : la progression, la vidéo rangée (1920 × 1080, 3 s).
+  `ideation/pilote_pdf.mjs` passe toujours (il lit le menu par ses libellés : le menu a grandi).
+
+### 10.5 Ce qui n'est pas fait, et les questions pour Cal
+
+- **Le calque « curseur »** (la note : une souris animée, ses points glissés sur la scène, des clics à des
+  instants avec une onde, la trajectoire lissée) : un objet de la scène dont la place suit des images
+  clés x, y (les mêmes que ci-dessus), et des clics `[{t}]` dessinés comme une onde qui s'ouvre ; le
+  préréglage « aller vers un objet » poserait deux clés. Non fait : le reste d'abord.
+- **Le zoom de la minuterie** (la molette commune) et les **blocs de diapositives** d'une frise commune.
+
+Questions :
+1. **Polices** : Venus Rising et Norelli refusent le MP4 comme le PDF (une vidéo diffusée embarque le dessin
+   des lettres), mais une image PNG passe : garder ce refus, ou traiter la vidéo comme les images ? La
+   licence (Typodermic Desktop License) n'a pas été lue ici : non documenté.
+2. Un objet qui **sort par images clés** pendant sa diapositive est absent de l'état final, donc du PDF
+   (juste par construction : le PDF montre la fin). Le PDF doit-il plutôt montrer « tout visible » ?
+3. La **pause** d'une diapositive sans avance seule, dans la vidéo : 2 s. D'accord ?
+4. Le **son** : aucune piste dans le MP4 (les vidéos d'une diapositive sont muettes). Une musique de fond
+   (un son de la bibliothèque) ?
+5. Animer la **typographie et la couleur** par images clés (la note les met dans son panneau) ?
+6. Une **frise de toute la présentation** (les diapositives en blocs dont on tire les bords : leur durée) ?

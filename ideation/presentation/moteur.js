@@ -7,13 +7,15 @@
 //             out:  { fx, dur, ease },                              la sortie
 //             loop: { fx, dur, amp },                               la boucle, après l'entrée
 //             depth: -1…1,                                          la parallaxe
-//             step:  0…9 }                                          l'étape (0 : à l'arrivée ; 1… : au clic)
+//             step:  0…9,                                           l'étape (0 : à l'arrivée ; 1… : au clic)
+//             keys:  { x, y, scale, rot, op: [{t, v, e}] } }        les images clés par propriété (courbes.js)
 //
 // Le moteur en fait des animations de l'API Web Animations (Element.animate) sur des
 // enveloppes emboîtées que scene.js pose autour de chaque objet :
 //
 //   .pm-o  la place (left, top : posée une fois ; le morph l'anime en transform)
 //   .pm-p  la parallaxe (pointeur en style, dérive lente en composite « add »)
+//   .pm-k  les images clés par propriété (06/10, courbes.js) : translate, rotate, scale, opacity
 //   .pm-e  l'entrée et la sortie (opacity, transform, filter)
 //   .pm-m  le contre-glissement d'un masque ; le zoom d'une image dans sa boîte
 //   .pm-l  la boucle (dérive, flottement, pulsation…)
@@ -29,37 +31,19 @@
 // prefers-reduced-motion : aucune entrée, aucune boucle, aucune parallaxe — l'état final
 // d'emblée (le même que le PDF) ; les transitions se réduisent à un fondu court.
 
+import { EASE_NAMES, easeCss, cleanEase, cleanKeys, keySpan, keyTimes, waapiTracks } from './courbes.js';
+
 export const SCHEMA_URL = new URL('./schema.json', import.meta.url).href;
 
-// ── les courbes nommées ─────────────────────────────────────
-// Les cubic-bezier sont celles d'easings.net (Andrey Sitnik : easeOutQuint, easeOutExpo,
-// easeInOutCubic, easeInOutExpo, easeOutBack) et la courbe « standard » de Material 3
-// (m3.material.io, Easing and duration : cubic-bezier(0.2, 0, 0, 1)). Le ressort est
-// calculé ici, une fois : un oscillateur amorti échantillonné, rendu en fonction CSS
-// linear() (MDN, <easing-function> linear() : Chrome 113, Firefox 112, Safari 17.2).
-function springCurve({ k = 180, c = 16, m = 1, n = 56 } = {}) {
-  const w0 = Math.sqrt(k / m), z = c / (2 * Math.sqrt(k * m));
-  const wd = w0 * Math.sqrt(Math.max(1e-6, 1 - z * z));
-  const x = (t) => 1 - Math.exp(-z * w0 * t) * (Math.cos(wd * t) + (z * w0 / wd) * Math.sin(wd * t));
-  // la durée : jusqu'à ce que l'écart reste sous 0,1 %
-  let T = 0.1;
-  while (T < 6 && Math.exp(-z * w0 * T) > 0.001) T += 0.05;
-  const pts = [];
-  for (let i = 0; i <= n; i++) pts.push(+x((T * i) / n).toFixed(4));
-  pts[n] = 1;
-  return `linear(${pts.join(', ')})`;
-}
-export const EASE = {
-  linear: 'linear',
-  standard: 'cubic-bezier(.2, 0, 0, 1)',
-  'out-quint': 'cubic-bezier(.22, 1, .36, 1)',
-  'out-expo': 'cubic-bezier(.16, 1, .3, 1)',
-  'in-out': 'cubic-bezier(.65, 0, .35, 1)',
-  'in-out-expo': 'cubic-bezier(.87, 0, .13, 1)',
-  back: 'cubic-bezier(.34, 1.56, .64, 1)',
-  spring: springCurve(),
-};
-export const easeOf = (name) => EASE[name] || EASE['out-expo'];
+// ── les courbes nommées, et les libres ──────────────────────
+// La vérité des courbes est dans courbes.js (06/10) : les cubic-bezier d'easings.net (easeOutQuint,
+// easeOutExpo, easeInOutCubic, easeInOutExpo, easeOutBack, easeInCubic, easeOutCubic) et la « standard »
+// de Material 3, le ressort (un oscillateur amorti échantillonné, rendu en fonction CSS linear() : MDN,
+// Chrome 113, Firefox 112, Safari 17.2) — nommé (raideur 180, amortissement 16, masse 1) ou libre
+// ({ spring: { k, c, m } }) —, une cubic-bezier libre ({ bz: [x1, y1, x2, y2] }).
+export const EASE = Object.fromEntries(EASE_NAMES.map((n) => [n, easeCss(n)]));
+// une courbe (un nom, { bz }, { spring }) → la fonction d'easing CSS ; illisible : expo
+export const easeOf = (e) => (typeof e === 'string' ? EASE[e] || EASE['out-expo'] : cleanEase(e) ? easeCss(e) : EASE['out-expo']);
 // la même courbe en JavaScript (les trajets échantillonnés : la caméra de la toile)
 export const easeFn = {
   'in-out': (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2),
@@ -218,7 +202,7 @@ function odometer(obj) {
 }
 
 // ── compiler une diapositive ────────────────────────────────
-// `objs` : les objets de la scène (scene.js : { id, label, kind, o, p, e, m, l, txt, text, paths, mo })
+// `objs` : les objets de la scène (scene.js : { id, label, kind, o, p, k, e, m, l, txt, text, paths, mo })
 // rend { tracks, steps, total } ; chaque piste : l'objet, son étape, son début et sa fin dans l'étape
 export function normMotion(mo) {
   if (!mo || typeof mo !== 'object') return null;
@@ -226,13 +210,15 @@ export function normMotion(mo) {
   const fx = FX.in.includes(i.fx) ? i.fx : 'none';
   const by = ['all', 'line', 'word', 'letter'].includes(i.by) ? i.by : 'all';
   return {
-    in: { fx, dur: clampN(i.dur, 0, 6000, DEF.dur), delay: clampN(i.delay, 0, 20000, 0), ease: EASE[i.ease] ? i.ease : DEF.ease,
+    in: { fx, dur: clampN(i.dur, 0, 6000, DEF.dur), delay: clampN(i.delay, 0, 20000, 0), ease: cleanEase(i.ease) ?? DEF.ease,
       by, stagger: clampN(i.stagger, 0, 1000, STAGGER[by]), dist: clampN(i.dist, 0, 600, DEF.dist) },
     out: mo.out && FX.out.includes(mo.out.fx) && mo.out.fx !== 'none'
-      ? { fx: mo.out.fx, dur: clampN(mo.out.dur, 0, 6000, 420), ease: EASE[mo.out.ease] ? mo.out.ease : 'in-out' } : null,
+      ? { fx: mo.out.fx, dur: clampN(mo.out.dur, 0, 6000, 420), ease: cleanEase(mo.out.ease) ?? 'in-out' } : null,
     loop: mo.loop && LOOP[mo.loop.fx] ? { fx: mo.loop.fx, dur: clampN(mo.loop.dur, 400, 60000, 9000), amp: clampN(mo.loop.amp, 0, 200, 24) } : null,
     depth: clampN(mo.depth, -1, 1, 0),
     step: Math.round(clampN(mo.step, 0, 9, 0)),
+    // les images clés par propriété (courbes.js, 06/10) : posées sur .pm-k, par-dessus l'entrée
+    keys: cleanKeys(mo.keys),
   };
 }
 function unitCount(obj, mo) {
@@ -242,14 +228,23 @@ function unitCount(obj, mo) {
   if (mo.in.by === 'word') return Math.max(1, s.split(/\s+/).filter(Boolean).length);
   return Math.max(1, obj.lines || Math.ceil(s.length / 28));
 }
+// Une piste par objet qui a une entrée ou des images clés : `bar` l'entrée (début, fin dans l'étape ;
+// null sans entrée), `keys` les instants de ses clés ; `start`, `end` le tout. t0, t1 (et bar.t0, bar.t1,
+// keys[].at) : dans la frise entière (les étapes mises bout à bout).
 export function compile(objs) {
   const tracks = [];
   for (const obj of objs) {
     const mo = obj.mo;
-    if (!mo || mo.in.fx === 'none') continue;
-    const n = unitCount(obj, mo);
+    if (!mo) continue;
+    const ks = keySpan(mo.keys);
+    if (mo.in.fx === 'none' && !ks) continue;
+    const n = mo.in.fx === 'none' ? 1 : unitCount(obj, mo);
     const span = mo.in.dur + (n > 1 ? mo.in.stagger * (n - 1) : 0);
-    tracks.push({ id: obj.id, label: obj.label, kind: obj.kind, step: mo.step, start: mo.in.delay, end: mo.in.delay + span, fx: mo.in.fx, by: mo.in.by, units: n });
+    const bar = mo.in.fx === 'none' ? null : { start: mo.in.delay, end: mo.in.delay + span };
+    const start = Math.min(bar ? bar.start : Infinity, ks ? ks[0] : Infinity);
+    const end = Math.max(bar ? bar.end : 0, ks ? ks[1] : 0);
+    tracks.push({ id: obj.id, label: obj.label, kind: obj.kind, step: mo.step, start, end, bar, fx: mo.in.fx, by: mo.in.by, units: n,
+      keys: keyTimes(mo.keys) });
   }
   const steps = Math.max(0, ...tracks.map((t) => t.step)) + 1;
   const len = Array.from({ length: steps }, (_, s) => Math.max(0, ...tracks.filter((t) => t.step === s).map((t) => t.end)));
@@ -257,7 +252,12 @@ export function compile(objs) {
   const offset = [];
   let acc = 0;
   for (let s = 0; s < steps; s++) { offset.push(acc); acc += len[s] + (s < steps - 1 ? GAP : 0); }
-  for (const t of tracks) { t.t0 = offset[t.step] + t.start; t.t1 = offset[t.step] + t.end; }
+  for (const t of tracks) {
+    const o = offset[t.step];
+    t.t0 = o + t.start; t.t1 = o + t.end;
+    if (t.bar) { t.bar.t0 = o + t.bar.start; t.bar.t1 = o + t.bar.end; }
+    for (const k of t.keys) k.at = o + k.t;
+  }
   return { tracks, steps, len, offset, total: acc };
 }
 
@@ -349,6 +349,9 @@ export function createRun(scene, { reduced = false, loops = true, parallax = tru
         a.pause(); a.currentTime = 0;
         loopA.push({ a, step });
       }
+      // les images clés (06/10) : une animation par propriété sur .pm-k (translate, rotate, scale,
+      // opacité), dans l'étape de l'objet ; l'état final est déjà posé en style par la scène
+      if (mo.keys && obj.k) for (const tr of waapiTracks(mo.keys)) add(obj.k, tr.keyframes, tr.timing, step);
       if (parallax && mo.depth) {
         const a = obj.p.animate([{ transform: 'translate3d(0, 0, 0)' }, { transform: `translate3d(${-mo.depth * 70}px, ${-mo.depth * 18}px, 0)` }],
           { duration: 14000, fill: 'both', easing: 'linear', composite: 'add' });
@@ -360,6 +363,11 @@ export function createRun(scene, { reduced = false, loops = true, parallax = tru
   const played = new Set();
   const now = () => document.timeline.currentTime;
   const all = () => [...anims, ...loopA];
+  // Les vidéos d'une diapositive suivent la frise (06/10, le déterminisme : l'image d'un instant ne
+  // dépend que de la planche et de cet instant) : seek(t) les pose à t (en boucle sur leur durée),
+  // en pause ; playFrom(t) les lance de là. Le lecteur plein écran (play) les laisse tourner seules.
+  const vids = objs.filter((o) => o.video).map((o) => o.video);
+  const vidAt = (v, t) => { const d = v.duration; const s = Math.max(0, t) / 1000; return Number.isFinite(d) && d > 0 ? s % d : s; };
   const R = {
     plan, reduced,
     get steps() { return plan.steps; },
@@ -382,6 +390,7 @@ export function createRun(scene, { reduced = false, loops = true, parallax = tru
         const lt = t - plan.offset[step];
         a.currentTime = Math.max(0, Number.isFinite(lt) ? lt : 0);
       }
+      for (const v of vids) { try { v.pause(); v.currentTime = vidAt(v, t); } catch { /* pas encore de métadonnées */ } }
     },
     playFrom(t = 0) {
       const tl = now();
@@ -391,8 +400,11 @@ export function createRun(scene, { reduced = false, loops = true, parallax = tru
         a.play();
         a.startTime = tl - (t - plan.offset[step]);
       }
+      for (const v of vids) { try { v.currentTime = vidAt(v, t); v.play().catch(() => {}); } catch { /* */ } }
     },
-    pause() { for (const { a } of all()) a.pause(); },
+    pause() { for (const { a } of all()) a.pause(); for (const v of vids) v.pause(); },
+    // les vidéos posées à leur image (le rendu image par image les attend : programme.js)
+    videos: vids,
     // l'instant de la frise : lu sur une animation de l'étape la plus avancée
     time() {
       let t = 0;
@@ -400,24 +412,34 @@ export function createRun(scene, { reduced = false, loops = true, parallax = tru
       return t;
     },
     running() { return anims.some(({ a }) => a.playState === 'running'); },
-    // la sortie : les objets qui en ont une ; rend quand elle a fini
-    exit() {
-      if (reduced) return Promise.resolve();
-      const outs = [];
+    // La sortie : les objets qui en ont une. exitAnims() les crée en pause, à leur premier état (le
+    // repos) : { anims, dur, end() } — le rendu image par image (programme.js) les pose à l'instant,
+    // end() les retire ; exit() les joue et rend quand elles ont fini (le lecteur plein écran).
+    exitAnims() {
+      const out = [], clip = [];
+      if (reduced) return { anims: out, dur: 0, end() {} };
       for (const obj of objs) {
         const o = obj.mo?.out;
         if (!o) continue;
         const ease = easeOf(o.ease);
+        const opt = { duration: o.dur, easing: ease, fill: 'both' };
         if (MASK[o.fx]) {
           const [ax, sg] = MASK[o.fx];
-          obj.e.classList.add('pm-clip');
-          outs.push(obj.e.animate([{ transform: T0 }, { transform: `translate${ax}(${-100 * sg}%)` }], { duration: o.dur, easing: ease, fill: 'forwards' }).finished);
-          outs.push(obj.m.animate([{ transform: T0 }, { transform: `translate${ax}(${100 * sg}%)` }], { duration: o.dur, easing: ease, fill: 'forwards' }).finished);
+          if (!obj.e.classList.contains('pm-clip')) { obj.e.classList.add('pm-clip'); clip.push(obj.e); }
+          out.push(obj.e.animate([{ transform: T0 }, { transform: `translate${ax}(${-100 * sg}%)` }], opt));
+          out.push(obj.m.animate([{ transform: T0 }, { transform: `translate${ax}(${100 * sg}%)` }], opt));
         } else {
-          outs.push(obj.e.animate(OUT[o.fx]({ dist: obj.mo.in.dist }), { duration: o.dur, easing: ease, fill: 'forwards' }).finished);
+          out.push(obj.e.animate(OUT[o.fx]({ dist: obj.mo.in.dist }), opt));
         }
       }
-      return Promise.all(outs.map((p) => p.catch(() => {})));
+      for (const a of out) { a.pause(); a.currentTime = 0; }
+      const dur = Math.max(0, ...out.map((a) => a.effect.getComputedTiming().endTime));
+      return { anims: out, dur, end() { for (const a of out) a.cancel(); for (const e of clip) e.classList.remove('pm-clip'); } };
+    },
+    exit() {
+      const X = R.exitAnims();
+      for (const a of X.anims) a.play();
+      return Promise.all(X.anims.map((a) => a.finished.catch(() => {})));
     },
     hasExit: () => !reduced && objs.some((o) => o.mo?.out),
     cancel() { for (const { a } of all()) a.cancel(); },
