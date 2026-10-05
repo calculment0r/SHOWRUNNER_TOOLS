@@ -457,7 +457,8 @@ async function media(req, env) {
 //                               un objet vide ecoute/<jeton>/_ecoutes/<jour>/<ms>-<hasard>-<n> (ajouter sans relire :
 //                               deux écoutes simultanées ne s'écrasent jamais) ; le portail les compte (R2.liste)
 // Retirer le lien = le portail efface le préfixe (_lien.json d'abord). Une date de fin passée : 410. Le lecteur ne nomme
-// pas l'outil (décision L3) : ces pages non plus.
+// pas l'outil (décision L3) : ces pages non plus. Referrer-Policy « same-origin » (et non « no-referrer », qui fait
+// envoyer Origin: null aux POST de la page : memeOrigine les refuserait) : le jeton ne part jamais vers un autre site.
 const ECOUTE = /^\/ecoute\/([0-9a-f]{32})(\/.*)?$/;
 const ECOUTE_FICHIER = new RegExp('^(index\\.html|playlist\\.json|player\\.js|app\\.js|ecoute\\.css|service-worker\\.js|'
   + 'manifest\\.webmanifest|assets/(cover-1200\\.jpg|cover-512\\.jpg|icon-192\\.png|icon-512\\.png)|'
@@ -519,7 +520,7 @@ ${erreurCode ? `<p class="porte-erreur" role="alert">${esc(erreurCode)}</p>` : '
   const page = `<!doctype html>
 <html lang="fr" data-theme="dark"${style ? ` style="${style}"` : ''}>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="robots" content="noindex"><meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex"><meta name="referrer" content="same-origin">
 <title>${esc(titre)}</title><meta property="og:title" content="${esc(titre)}">
 ${fiche ? '<link rel="stylesheet" href="./ecoute.css">' : ''}
 <script>document.documentElement.dataset.theme = window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';</script>
@@ -530,7 +531,7 @@ ${corps}
 </div></main></body></html>`;
   return new Response(page, { status: statut, headers: {
     'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
-    'referrer-policy': 'no-referrer', 'x-robots-tag': 'noindex' } });
+    'referrer-policy': 'same-origin', 'x-robots-tag': 'noindex' } });
 }
 
 async function entreCode(req, env, url, jeton, fiche) {
@@ -544,7 +545,7 @@ async function entreCode(req, env, url, jeton, fiche) {
   if (!Number.isSafeInteger(n) || n > 2048) return erreur(413, 'trop long');
   const saisi = (new URLSearchParams(await req.text()).get('code') || '').replace(/\s+/g, '').toUpperCase();
   const empreinte = hex(await crypto.subtle.digest('SHA-256', ENC.encode(`${fiche.code.sel}:${saisi}`)));
-  if (!saisi || !egal(empreinte, fiche.code.sha256)) return pageEcoute(401, { fiche, code: true, erreurCode: 'Ce n’est pas le bon code.' });
+  if (!saisi || !egal(empreinte, fiche.code.sha256)) return pageEcoute(200, { fiche, code: true, erreurCode: 'Ce n’est pas le bon code.' });
   const sceau = await sceauEcoute(env, jeton, fiche);
   if (!sceau) return erreur(503, 'ce lien ne peut pas vérifier son code pour le moment');
   const reste = fiche.fin ? Math.floor((Date.parse(fiche.fin) - Date.now()) / 1000) : Infinity;
@@ -586,13 +587,15 @@ async function ecoute(req, env, url) {
   if (!SANS_CORPS.has(req.method)) return erreur(405, 'lecture seule');
   if (!ECOUTE_FICHIER.test(chemin)) return erreur(404, 'introuvable');
   if (fiche.code && !ECOUTE_PUBLIC.test(chemin) && !(await codeBon(req, env, jeton, fiche))) {
-    return chemin === 'index.html' ? pageEcoute(401, { fiche, code: true }) : erreur(401, 'ce lien demande son code');
+    // la page du code en 200 (un document en 401 est une erreur pour le navigateur, et 401 voudrait WWW-Authenticate) ;
+    // les fichiers, eux, en 401
+    return chemin === 'index.html' ? pageEcoute(200, { fiche, code: true }) : erreur(401, 'ce lien demande son code');
   }
   const garde = url.searchParams.has('v') ? 'private, max-age=31536000, immutable' : 'no-cache';
   const r = await depuisR2(req, env, `ecoute/${jeton}/${chemin}`, garde);
   if (!r) return erreur(404, 'introuvable');
   r.headers.set('x-content-type-options', 'nosniff');
-  r.headers.set('referrer-policy', 'no-referrer');
+  r.headers.set('referrer-policy', 'same-origin');
   r.headers.set('x-robots-tag', 'noindex');
   return r;
 }

@@ -13,7 +13,9 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="format-detection" content="telephone=no">
-<meta name="referrer" content="no-referrer">
+<!-- same-origin : l'adresse du lien (son jeton) ne part jamais vers un autre site ; « no-referrer » ferait envoyer
+     Origin: null aux POST de la page (le code, le compteur), que le Worker refuserait (spécification Fetch) -->
+<meta name="referrer" content="same-origin">
 <!-- use-credentials : un lien protégé par un code ne sert son manifeste qu'avec le cookie du code ; sans cela, le
      navigateur le demande sans cookie (https://developer.mozilla.org/en-US/docs/Web/Manifest#deploying_a_manifest) -->
 <link rel="manifest" href="./manifest.webmanifest" crossorigin="use-credentials">

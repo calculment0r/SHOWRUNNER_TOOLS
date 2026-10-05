@@ -122,8 +122,8 @@ if (args.servir) {
   console.log('  un lien ouvert :');
   let r = await W(`/ecoute/${J1}/`);
   ok(r.s === 200 && r.x.includes('<title>lecteur</title>') && r.h.get('content-type').startsWith('text/html')
-    && r.h.get('cache-control') === 'no-cache' && r.h.get('x-robots-tag') === 'noindex' && r.h.get('referrer-policy') === 'no-referrer',
-  `la racine sert index.html, revalidé, ni indexé ni référent (${r.s} ${r.h.get('cache-control')})`);
+    && r.h.get('cache-control') === 'no-cache' && r.h.get('x-robots-tag') === 'noindex' && r.h.get('referrer-policy') === 'same-origin',
+  `la racine sert index.html, revalidé, ni indexé, le référent jamais ailleurs (${r.s} ${r.h.get('cache-control')})`);
   r = await W(`/ecoute/${J1}`);
   ok(r.s === 301 && r.h.get('location') === `/ecoute/${J1}/`, `sans la barre finale : 301 vers …/ (${r.s} ${r.h.get('location')})`);
   r = await W(`/ecoute/${J1}/audio/01-un.mp3?v=abc`);
@@ -186,7 +186,7 @@ if (args.servir) {
   const sel = randomBytes(8).toString('hex');
   await garnis(b, J5, fiche({ code: { sel, sha256: sha(`${sel}:AB12`) }, fin: new Date(Date.now() + 7 * 86400e3).toISOString() }), paquet);
   r = await W(`/ecoute/${J5}/`);
-  ok(r.s === 401 && r.x.includes('action="./_code"') && r.x.includes('Été « 26 » &lt;b&gt;') && r.x.includes('--acc-sombre:#7a9cff')
+  ok(r.s === 200 && r.h.get('cache-control') === 'no-store' && r.x.includes('action="./_code"') && r.x.includes('Été « 26 » &lt;b&gt;') && r.x.includes('--acc-sombre:#7a9cff')
     && !r.x.includes('og:image') && !/showrunner/i.test(r.x) && r.x.includes('href="./ecoute.css"'),
   `sans le code : la page du code (titre échappé, l'accent, ni pochette en aperçu ni nom d'outil) (${r.s})`);
   for (const p of ['playlist.json', 'audio/01-un.mp3', 'assets/cover-1200.jpg', 'paroles/01-un.lrc']) {
@@ -198,7 +198,7 @@ if (args.servir) {
   ok(r.s === 401, `sans le code, pas d'écoute comptée (${r.s})`);
   const form = { ...meme, 'content-type': 'application/x-www-form-urlencoded' };
   r = await W(`/ecoute/${J5}/_code`, { method: 'POST', body: 'code=XXXX', headers: form });
-  ok(r.s === 401 && r.x.includes('pas le bon code') && !r.h.get('set-cookie'), `un mauvais code : la page, sans cookie (${r.s})`);
+  ok(r.s === 200 && r.x.includes('pas le bon code') && !r.h.get('set-cookie'), `un mauvais code : la page, sans cookie (${r.s})`);
   r = await W(`/ecoute/${J5}/_code`, { method: 'POST', body: 'code=ab+12', headers: form });
   const sc = r.h.get('set-cookie') || '';
   const val = (/ecoute_code=([0-9a-f]{64})/.exec(sc) || [])[1];
@@ -209,7 +209,8 @@ if (args.servir) {
   const avec = { cookie: `ecoute_code=${val}` };
   r = await W(`/ecoute/${J5}/audio/01-un.mp3`, { headers: { ...avec, range: 'bytes=0-9' } });
   ok(r.s === 206 && r.t.equals(MP3.subarray(0, 10)), `avec le cookie : le son, par plages (${r.s})`);
-  ok((await W(`/ecoute/${J5}/`, { headers: avec })).s === 200, 'avec le cookie : le lecteur');
+  r = await W(`/ecoute/${J5}/`, { headers: avec });
+  ok(r.s === 200 && r.x.includes('<title>lecteur</title>'), 'avec le cookie : le lecteur');
   ok((await W(`/ecoute/${J5}/_ecoute`, { method: 'POST', body: 'n=1', headers: { ...meme, ...avec } })).s === 204, 'avec le cookie : une écoute comptée');
   ok((await W(`/ecoute/${J1}/audio/01-un.mp3`, { headers: { cookie: `ecoute_code=${val}` } })).s === 200, 'le cookie d’un lien n’ouvre rien d’autre (J1 est ouvert de toute façon)');
   ok((await W(`/ecoute/${J5}/playlist.json`, { headers: { cookie: `ecoute_code=${'0'.repeat(64)}` } })).s === 401, 'un cookie forgé : 401');

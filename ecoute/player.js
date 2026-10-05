@@ -67,9 +67,13 @@ export function createPlayer(audio, data, { storeKey } = {}) {
     return audio.currentTime || 0;
   }
 
-  // en mode continu : quel morceau joue à cet instant ? Avec des fondus enchaînés, les bornes se chevauchent : le
-  // morceau reste le précédent jusqu'à sa fin (le fondu entendu est le sien qui s'éteint)
+  // en mode continu : quel morceau joue à cet instant ? Avec des fondus enchaînés, les bornes se chevauchent (le
+  // morceau k+1 commence quand k commence à s'éteindre) : tant que la tête est entre les bornes du morceau courant, il
+  // reste le courant — à l'écoute, k jusqu'à la fin de son fondu ; choisi, k+1 dès le début du sien. On ne cherche un
+  // autre morceau (le premier qui n'est pas fini) qu'en sortant de ses bornes.
   function indexForTime(time) {
+    const t = tracks[index];
+    if (t && time >= trackStart(t) - 0.001 && time < trackEnd(t, index) - 0.001) return index;
     for (let i = 0; i < tracks.length; i++) if (time < trackEnd(tracks[i], i) - 0.001) return i;
     return tracks.length - 1;
   }
