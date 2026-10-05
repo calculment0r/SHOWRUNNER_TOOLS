@@ -68,7 +68,46 @@
 .pl-acts { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 .pl-acts .sp { flex: 1; }
 .pl-acts [data-act="ecouter"] { min-width: 86px; }
-.pl-acts .tb[aria-disabled="true"] { opacity: .55; }
+
+/* partager : le .zip et le lien d'écoute ; sous les boutons, le .zip en cours ou prêt */
+.pl-partage-box { display: flex; flex-direction: column; gap: 6px; }
+.pl-partage { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.pl-partage > .lbl { color: var(--ink3); margin-right: 3px; }
+.pl-partage .tb.on, .pl-lien .tb.ghost.on { background: var(--grn-bg); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-gr); }
+.pl-partage .tb[aria-disabled="true"], .pl-lien .tb[aria-disabled="true"] { opacity: .55; }
+.pl-why { margin: 0; }
+.pl-dot { display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--grn2); vertical-align: 1px; }
+.pl-job { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.pl-job .pill { flex: 1 1 0; min-width: 0; gap: 7px; letter-spacing: .14em; }
+.pl-job .pill span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-bar { flex-basis: 100%; height: 3px; border-radius: 2px; background: var(--panel3); overflow: hidden; }
+.pl-bar i { display: block; height: 100%; background: var(--cy); transition: width .4s; }
+
+/* « Publier le lien » : le panneau */
+.pl-lien { display: flex; flex-direction: column; gap: 9px; padding: 10px 12px; border-radius: var(--r2);
+  background: var(--panel2); box-shadow: inset 3px 0 0 var(--cy), inset 0 0 0 1px var(--line-cy); }
+.pl-lien-h { display: flex; align-items: center; gap: 8px; }
+.pl-lien-h > .lbl { color: var(--cy); }
+.pl-lien-h .sp { flex: 1; }
+.pl-lien-h .pill { gap: 6px; letter-spacing: .14em; }
+.pl-lien-adr { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 5px; align-items: center; }
+.pl-lien-adr .fld { padding: 5px 8px; font-family: var(--f-mono); font-size: 10px; letter-spacing: 0; color: var(--cy); }
+.pl-lien-stats { display: flex; flex-wrap: wrap; gap: 3px 10px; font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
+.pl-lien-stats .pl-lien-n { flex-basis: 100%; color: var(--ink2); }
+.pl-lien-stats .pl-lien-n b { font-size: 15px; font-weight: 500; letter-spacing: .04em; color: var(--ink); }
+.pl-lien-stats .e { color: var(--amb); }
+.pl-lien-attend { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 9px 11px; border-radius: var(--r2);
+  background: var(--amb-bg); box-shadow: inset 0 0 0 1px var(--line-amb); }
+.pl-lien-attend b { font-weight: 600; font-size: 12px; line-height: 1.45; color: var(--ink); }
+.pl-lien-attend span { font-size: 11.5px; line-height: 1.45; color: var(--ink2); }
+.pl-lien-g { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 8px 10px; align-items: center; }
+.pl-lien-g .seg.ch-full .tb { font-size: 9px; }
+.pl-lien-l { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pl-lien-l .fld { flex: 1; min-width: 0; padding: 5px 8px; font-size: 11.5px; }
+.pl-lien-l .fld:disabled { opacity: .55; }
+.pl-lien-x { font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
+.pl-lien-pub { display: flex; flex-direction: column; gap: 6px; }
+.pl-lien-a { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 
 /* l'ordre proposé : la personne garde ou annule */
 .pl-ordre { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--r2);
@@ -173,5 +212,5 @@ details.pl-plus > summary .r { margin-left: auto; font-family: var(--f-mono); fo
 .pl-champ { display: flex; flex-direction: column; gap: 5px; }
 .pl-champ textarea.fld { font-family: var(--f-mono); font-size: 11px; line-height: 1.6; letter-spacing: 0; }
 
-/* une boîte vide (pas d'ordre proposé, pas de carte) ne prend pas de place */
-.pl-ordre-box:empty, .pl-carte-box:empty { display: none; }
+/* une boîte vide (pas d'ordre proposé, pas de carte, pas de panneau du lien) ne prend pas de place */
+.pl-ordre-box:empty, .pl-carte-box:empty, .pl-partage-box:empty, .pl-lien-box:empty { display: none; }
