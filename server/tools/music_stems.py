@@ -209,14 +209,22 @@ def decode_source(it: dict, workdir: Path) -> tuple[Path, int, int]:
         raise RuntimeError(f"ffprobe ne lit pas la source : {r.stderr.strip()[:300]}") from e
     mix = workdir / "mix.wav"
     _ffmpeg(["-i", str(src), "-map", "0:a:0", "-ac", "2", "-ar", str(sr), "-c:a", "pcm_s24le", str(mix)], "décodage")
-    with wave.open(str(mix)) as w:
-        n = w.getnframes()
-    if n <= 0:
+    n = samples_of(mix)
+    if n < 0:
+        raise RuntimeError(f"ffprobe ne compte pas les échantillons de {mix.name}")
+    if n == 0:
         raise RuntimeError("la source ne contient aucun échantillon")
     return mix, sr, n
 
 
 def samples_of(path: Path) -> int:
+    """Le nombre d'échantillons (par canal) de la première piste audio, compté par
+    ffprobe (`duration_ts`, en 1/fréquence) ; -1 s'il ne le dit pas. Le même compte
+    pour le FLAC et pour le WAV : ffmpeg écrit le PCM de plus de 16 bits en
+    WAVE_FORMAT_EXTENSIBLE (0xFFFE, `ff_put_wav_header` de libavformat/riff.c), que
+    le module `wave` ne lit que depuis Python 3.12 (« unknown format: 65534 »
+    avant) ; ffprobe relit ce que ffmpeg a écrit (taille du bloc data / taille
+    d'un échantillon, libavformat/wavdec.c), quelle que soit la version de Python."""
     r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=duration_ts",
                         "-of", "json", str(path)], capture_output=True, text=True, timeout=120)
     try:
@@ -231,11 +239,7 @@ def conform(src: Path, dest: Path, sr: int, n: int, pre: str = "") -> Path:
     chain = (pre + "," if pre else "") + f"aresample={sr},apad=whole_len={n},atrim=end_sample={n}"
     codec = ["-c:a", "pcm_s24le"] if dest.suffix == ".wav" else ["-c:a", "flac", "-sample_fmt", "s32"]
     _ffmpeg(["-i", str(src), "-af", chain, "-ac", "2", "-ar", str(sr), *codec, str(dest)], "calage")
-    if dest.suffix == ".wav":
-        with wave.open(str(dest)) as w:
-            got = w.getnframes()
-    else:
-        got = samples_of(dest)
+    got = samples_of(dest)
     if got != n:
         raise RuntimeError(f"{dest.name} : {got} échantillons au lieu de {n}")
     return dest

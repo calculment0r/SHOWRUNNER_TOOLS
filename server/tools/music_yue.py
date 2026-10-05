@@ -1070,7 +1070,19 @@ def selftest(call, ok) -> None:
            f"une reprise garde sa référence pour parent ({j2.get('state')} {j2.get('message')})")
 
     # ── la partition : le dialecte natif, écrit, vérifié, chanté ──
-    if not abc_tools():
+    # La route de la partition seule (travail music.yue.abc) ne demande pas abc_tools.py :
+    # le moteur d'essai l'écrit (fake_abc), abc_tools la juge s'il est là. Elle s'essaie
+    # donc partout, et la garde du calcul de tools/check.py la rejoue pour un guest.
+    judge = bool(abc_tools())
+    st, j = call("POST", "/api/music/yue/abc", {"tags": "pop", "seed": 4, "mode": "full", "projet": {"bpm": 112, "sig": 4, "tonic": 5, "mode": "minor"},
+                                              "sections": [["verse", 4], ["chorus", 4]], "lyrics": "[Verse]\nla"})
+    j = wait(j["id"]) if st == 200 else {}
+    res = j.get("result") or {}
+    ok(j.get("state") == "done" and "Q:1/4=112" in res.get("abc", "") and "K:Fm" in res["abc"]
+       and res.get("check", {}).get("ok") is (True if judge else None),
+       f"la partition d'essai d'une région : 112, fa mineur, {'jugée bonne' if judge else 'pas jugée (abc_tools.py absent)'} "
+       f"({j.get('state')} {j.get('message')})")
+    if not judge:
         ok(True, f"abc_tools.py absent : essais de la partition sautés ({_abc['why']})")
         return
     ex = ('X:1\nT:\nM:4/4\nL:1/16\nQ:1/4=88\n' + "\n".join(ABC_VOICES) + '\nK:C\n% verse\nV: Vocal\n'
@@ -1100,12 +1112,6 @@ def selftest(call, ok) -> None:
     ok(check_graph(gg, FAKE_INFO) == [] and gg["2"]["inputs"]["mode"] == "melody", f"le graphe de la partition seule ({check_graph(gg, FAKE_INFO)})")
     st, r = call("POST", "/api/music/yue/abc/check", {"abc": ex})
     ok(st == 200 and r.get("ok") is True and r["tools"]["ok"], f"la route de vérification ({st})")
-    st, j = call("POST", "/api/music/yue/abc", {"tags": "pop", "seed": 4, "mode": "full", "projet": {"bpm": 112, "sig": 4, "tonic": 5, "mode": "minor"},
-                                              "sections": [["verse", 4], ["chorus", 4]], "lyrics": "[Verse]\nla"})
-    j = wait(j["id"]) if st == 200 else {}
-    res = j.get("result") or {}
-    ok(j.get("state") == "done" and res.get("check", {}).get("ok") and "Q:1/4=112" in res.get("abc", "") and "K:Fm" in res["abc"],
-       f"la partition d'essai d'une région : 112, fa mineur, jugée bonne ({j.get('state')} {j.get('message')})")
     st, j = call("POST", "/api/music/yue/generate", {"tags": "pop", "abc": ex, "mode": "full", "duration_s": 12, "seed": 1})
     j = wait(j["id"]) if st == 200 else {}
     it3 = (j.get("items") or [{}])[0]

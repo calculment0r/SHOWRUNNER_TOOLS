@@ -579,6 +579,7 @@ def check_doc(doc: str, d: dict, space: str | None = None) -> None:
 # ── le journal ──────────────────────────────────────────────
 _jlock = threading.Lock()
 _jseq: dict[str, int] = {}
+_jspace: dict[str, dict] = {}   # par journal : le dernier numéro de chaque Workspace (seq_here)
 
 
 def _jpath() -> Path:
@@ -590,17 +591,37 @@ def _jpath() -> Path:
 def _last_seq(p: Path) -> int:
     if str(p) in _jseq:
         return _jseq[str(p)]
-    n = 0
+    n, per = 0, {}
     try:
         for line in p.read_text(encoding="utf-8").splitlines():
             try:
-                n = max(n, int(json.loads(line).get("seq") or 0))
-            except (ValueError, AttributeError):
+                ev = json.loads(line)
+                seq = int(ev.get("seq") or 0)
+            except (ValueError, AttributeError, TypeError):
                 continue
+            n = max(n, seq)
+            # une ligne d'avant le 30/09, sans `space` : celui de son élément (comme `changes`),
+            # l'espace par défaut s'il n'est plus là
+            sp = ev.get("space") or library.space_of(library._items.get(str(ev.get("el") or "")) or {})
+            per[sp] = max(per.get(sp, 0), seq)
     except OSError:
         pass
     _jseq[str(p)] = n
+    _jspace[str(p)] = per
     return n
+
+
+def seq_here() -> int:
+    """`ev_seq` de GET /api/jobs, le relevé que chaque page fait déjà (apps_studio_elements.md
+    § 2.11) : le dernier numéro du journal dans le Workspace de la requête, celui dont
+    `changes` rend les lignes (library.readable) ; sans Workspace (le socle, la maison sans
+    porte) : le dernier de tous. Une page qui le voit grandir relit /api/elements/changes :
+    aucune connexion de plus, et rien ne s'y devine de l'activité d'un autre Workspace."""
+    p = _jpath()
+    h = library.here()
+    with _jlock:
+        last = _last_seq(p)
+        return _jspace.get(str(p), {}).get(h, 0) if h else last
 
 
 def emit(ev: str, **kw) -> int:
@@ -616,6 +637,7 @@ def emit(ev: str, **kw) -> int:
         with open(p, "a", encoding="utf-8") as f:
             f.write(json.dumps(line, ensure_ascii=False) + "\n")
         _jseq[str(p)] = seq
+        _jspace.setdefault(str(p), {})[line["space"]] = seq
     return seq
 
 
@@ -1156,6 +1178,8 @@ def selftest(call, ok) -> None:
        f"éléments : le journal numéroté ({evs})")
     st, ch2 = call("GET", f"/api/elements/changes?since={ch['seq']}")
     ok(ch2.get("events") == [] and ch2["seq"] == ch["seq"], "éléments : rien de neuf après le dernier numéro")
+    st, jl = call("GET", "/api/jobs?limit=1")
+    ok(st == 200 and jl.get("ev_seq") == ch["seq"], f"éléments : GET /api/jobs rend ev_seq, le dernier numéro ({jl.get('ev_seq')} {ch['seq']})")
 
     # ── les droits (Teams et Workspaces, étape 2) : un éditeur de son Workspace publie (décision 9),
     #    un guest jamais (publier calcule sa source) ; le journal est par Workspace ──
@@ -1224,6 +1248,13 @@ def selftest(call, ok) -> None:
            and mine and all(x.get("space") == "esp-general" for x in mine),
            f"éléments : le journal est par Workspace — Cyril ne voit rien de Général, chaque ligne porte `space` "
            f"({s11} {len(mine)})")
+        # ev_seq (GET /api/jobs) : le dernier numéro de ce que `changes` rend à chacun
+        _, ja = as_(A, "GET", "/api/jobs?limit=1")
+        _, jc = as_(C, "GET", "/api/jobs?limit=1")
+        ok(ja.get("ev_seq") == max(x["seq"] for x in cha.get("events", [])) >= max(x["seq"] for x in mine)
+           and jc.get("ev_seq") == max([x["seq"] for x in chc.get("events", [])], default=0),
+           f"éléments : ev_seq suit le journal du Workspace — Albane voit Général avancer, Cyril non "
+           f"({ja.get('ev_seq')} {jc.get('ev_seq')})")
 
         # ── les documents dans un Workspace (étape 6) ; la garde du calcul avant d'écrire ──
         _selftest_documents(ok, err, H, same, cal, wav)
