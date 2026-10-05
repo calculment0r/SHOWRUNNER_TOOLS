@@ -150,3 +150,7 @@
 /* les éclairages et les canaux du modèle 3D, dans le panneau : sur deux lignes au besoin */
 .seg.m3-seg { display: grid; grid-template-columns: repeat(3, 1fr); }
 .seg.m3-seg .tb { padding-inline: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mb-c.snd { background: var(--grn-bg); }
+.mb-snd { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 4px; color: var(--grn2); }
+.mb-snd svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.mb-snd b { font-family: var(--f-mono); font-size: 7.5px; font-weight: 400; letter-spacing: .04em; color: var(--ink2); text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }

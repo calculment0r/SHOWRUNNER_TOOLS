@@ -132,13 +132,32 @@ celui qui a marché, tel quel ; `s_per_step` la vitesse relevée pendant l'essai
     "qwen21": {"ok": false, "note": "pourquoi, s'il ne marche pas"},
     "krea2": {"ok": false, "note": "…"},
     "h3": {"ok": false, "note": "…"},
-    "ace": {"ok": true, "trainer": "ace", "variant": "xl_base", "s_per_step": null, "checked": "2026-10-06"},
+    "ace": {"ok": true, "trainer": "ace", "checked": "2026-10-06",
+            "preprocess": ["/home/<utilisateur>/.local/bin/uv", "run", "train.py", "fixed", "--checkpoint-dir", "./checkpoints",
+                           "--model-variant", "xl_base", "--preprocess", "--audio-dir", "{audio}", "--tensor-output", "{tensors}"],
+            "cmd": ["/home/<utilisateur>/.local/bin/uv", "run", "train.py", "fixed", "--checkpoint-dir", "./checkpoints",
+                    "--model-variant", "xl_base", "--dataset-dir", "{tensors}", "--output-dir", "{out}",
+                    "--adapter-type", "lora", "--rank", "32", "--alpha", "64", "--epochs", "800", "--save-every", "50"]},
     "yue2": {"ok": false, "note": "le nœud ComfyUI-YuE2-Trainer (workflow 06) : pas encore branché au portail"}
   }
 }
 ```
 
-Facultatif par modèle : `"network": {…}`, `"train": {…}` (surcharges du gabarit), `"resolution": [768, 1024]`.
+Facultatif par modèle : `"network": {…}`, `"train": {…}` (surcharges du gabarit, `steps` compris),
+`"resolution": [768, 1024]`.
+
+**ACE-Step** : `preprocess` et `cmd` sont **les commandes exactes qui ont marché à l'essai**
+(chemins absolus), où le portail remplace `{audio}` (le dossier des sons : `000.wav`,
+`000.caption.txt`, `000.lyrics.txt`…), `{tensors}` et `{out}` ; si le prétraitement veut un
+`--dataset-json`, l'écrire dans la commande et le dire dans le compte rendu (le portail l'écrira).
+Le portail cherche ensuite `adapter_model.safetensors` sous `{out}`.
+
+Le portail copie chaque LoRA produit dans `~/ComfyUI/models/loras/showrunner/` (DGX2), puis par le
+câble vers DGX1 (`rsync` vers `169.254.110.6:ComfyUI/models/loras/showrunner/`) : vérifier que
+`ssh -o BatchMode=yes 169.254.110.6 true` marche depuis DGX2.
+
+Une fois le manifeste écrit : Admin → Diagnostics → « LoRA » le relit et dit ce que le portail
+propose (rien à redémarrer : le portail relit le manifeste à chaque demande).
 
 Le même manifeste peut exister sur DGX1 (le portail n'entraîne aujourd'hui que sur DGX2, la
 machine du portail ; DGX1 sert de deuxième machine plus tard).

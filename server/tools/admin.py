@@ -358,6 +358,8 @@ DIAGS = {   # id : (nom court, ce qu'il dit, commande, délai en s, action ?)
     "planche_plan": ("Planche · plan", "la planche de la réunion (establishing shots) : ce qu'elle contiendra",
                      ["python3", "tools/board_reunion.py", "--plan"], 60, False),
     "planche": ("Planche · créer", "crée la planche de la réunion dans LES ANEES FOLLES, photos d'époque comprises", None, 1800, True),
+    "lora": ("LoRA · entraîneurs", "ce que l'installation a vérifié (~/trainers/sr_lora.json), les venvs, torch, la mémoire libre",
+             ["python3", "tools/diag_lora.py"], 120, False),
 }
 _runs: dict = {}
 _runs_lock = threading.Lock()

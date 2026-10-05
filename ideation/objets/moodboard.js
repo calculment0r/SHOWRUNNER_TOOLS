@@ -27,7 +27,12 @@ let models = null;          // les modèles cibles (GET /api/lora/models)
 
 export function extendMoodboard(app, api0) {
   const { S } = app;
-  const thumb = (id) => { const it = S.items.get(id); return it && !it.missing ? it.thumb_url || it.url : ''; };
+  const thumb = (id) => { const it = S.items.get(id); return it && !it.missing ? it.thumb_url || (it.kind === 'image' ? it.url : '') : ''; };
+  // un moodboard de sons (Cal, 05/10 : « des LoRA pour nos modèles image, vidéo et son ») : que des sons,
+  // pour ACE-Step ; sinon des images. La sorte se lit dans ses objets, la première qui entre décide
+  const kindOf = (n) => { const k = (n.items || []).map((id) => S.items.get(id)?.kind).find(Boolean); return k === 'audio' ? 'audio' : 'image'; };
+  const word = (n, k) => (kindOf(n) === 'audio' ? (k > 1 ? 'sons' : 'son') : (k > 1 ? 'images' : 'image'));
+  const MIN = { image: 4, audio: 2 };
 
   // ── l'état du LoRA : lu au serveur, relu tant qu'un entraînement est prévu ou en cours ──
   async function refresh(id, { force = false } = {}) {
@@ -78,14 +83,17 @@ export function extendMoodboard(app, api0) {
     const more = n.open ? 0 : ids.length - shown.length;
     const cell = (id) => {
       const u = thumb(id);
-      const c = el('div', { class: 'mb-c', 'data-item': id, title: S.items.get(id)?.title || id },
-        u ? el('img', { src: href(u), alt: '', loading: 'lazy', decoding: 'async', draggable: 'false' }) : el('span', { class: 'mb-miss' }, '?'));
+      const it = S.items.get(id);
+      const c = el('div', { class: 'mb-c' + (it?.kind === 'audio' ? ' snd' : ''), 'data-item': id, title: it?.title || id },
+        u ? el('img', { src: href(u), alt: '', loading: 'lazy', decoding: 'async', draggable: 'false' })
+          : it?.kind === 'audio' ? el('span', { class: 'mb-snd' }, icon('M3 12h2M7 8v8M11 5v14M15 9v6M19 7v10'), el('b', {}, cut(it.title || 'son', 22)))
+            : el('span', { class: 'mb-miss' }, '?'));
       if (n.open) c.append(el('button', { class: 'mb-x', type: 'button', title: 'retirer du moodboard (l’image reste dans la bibliothèque)', 'data-rm': id }, '×'));
       return c;
     };
     const grid = el('div', { class: 'mb-g' + (n.open ? ' open' : '') }, ...shown.map(cell),
       more > 0 ? el('div', { class: 'mb-c mb-more' }, `+${more + 1}`) : null,
-      !ids.length ? el('p', { class: 'mb-empty' }, 'déposez des images ici : de la planche, du panneau Asset ou du disque') : null);
+      !ids.length ? el('p', { class: 'mb-empty' }, 'déposez des images (un LoRA d’image ou de vidéo) ou des sons (un LoRA de son) : de la planche, du panneau Asset ou du disque') : null);
     const root = el('div', { class: 'mb' },
       el('div', { class: 'mb-h' }, el('span', { class: 'mb-k' }, 'moodboard'), el('b', { class: 'mb-n', title: n.name || '' }, n.name || 'sans nom'),
         el('span', { class: 'sp' }), el('span', { class: 'mb-cnt' }, String(ids.length))),
@@ -105,7 +113,7 @@ export function extendMoodboard(app, api0) {
       toggle(c.id);
     });
     // une image du panneau Asset ou un fichier du disque (rangé dans la bibliothèque, Upload)
-    dropZone(root, { kinds: ['image'], via: 'ideation', label: 'le moodboard', onitems: (items) => addItems(n.id, items) });
+    dropZone(root, { kinds: ['image', 'audio'], via: 'ideation', label: 'le moodboard', onitems: (items) => addItems(n.id, items) });
     return { cls: ['mb-node', n.open ? 'open' : ''].filter(Boolean), body: [root] };
   }
   const key = (n) => `|${(n.items || []).map((id) => (thumb(id) ? 1 : 0)).join('')}|${JSON.stringify(status(n))}`;
@@ -131,14 +139,16 @@ export function extendMoodboard(app, api0) {
   function addItems(id, items) {
     const n = app.node(id);
     if (!n) return;
-    const imgs = items.filter((it) => it.kind === 'image');
-    if (!imgs.length) { toast('un moodboard ne prend que des images'); return; }
+    const want = (n.items || []).length ? kindOf(n) : (items.find((it) => it.kind === 'image' || it.kind === 'audio')?.kind || 'image');
+    const imgs = items.filter((it) => it.kind === want);
+    if (!imgs.length) { toast(want === 'audio' ? 'ce moodboard est un moodboard de sons : il ne prend que des sons' : 'ce moodboard prend des images (ou, vide, des sons)'); return; }
+    if (imgs.length < items.length) toast(`un moodboard ne mélange pas images et sons : ${items.length - imgs.length} laissé${items.length - imgs.length > 1 ? 's' : ''} de côté`, 5000);
     for (const it of imgs) S.items.set(it.id, it);
     const before = new Set(n.items || []);
     const fresh = imgs.filter((it) => !before.has(it.id));
     if (!fresh.length) { toast('déjà dans le moodboard'); return; }
     app.mutate(() => { n.items = [...(n.items || []), ...fresh.map((it) => it.id)]; if (n.open) fitOpen(n); });
-    toast(`${fresh.length} image${fresh.length > 1 ? 's' : ''} dans « ${n.name || 'moodboard'} »${states.get(id)?.versions?.length ? ' — le LoRA est maintenant périmé (il reste utilisable)' : ''}`);
+    toast(`${fresh.length} ${want === 'audio' ? 'son' : 'image'}${fresh.length > 1 ? 's' : ''} dans « ${n.name || 'moodboard'} »${states.get(id)?.versions?.length ? ' — le LoRA est maintenant périmé (il reste utilisable)' : ''}`);
   }
   function removeItem(id, item) {
     const n = app.node(id);
@@ -152,8 +162,12 @@ export function extendMoodboard(app, api0) {
   // une image de la planche lâchée sur le moodboard : elle y entre et quitte la planche
   const rule = {
     name: 'ajouter au moodboard', cls: 'drop-grp', tag: 'MOODBOARD',
-    test: (mv, t) => (t?.type === 'moodboard' && mv.length && mv.every((m) => m.type === 'media' && m.kind === 'image' && !S.items.get(m.item)?.missing)
-      ? `lâcher : ${mv.length > 1 ? `ces ${mv.length} images entrent` : 'l’image entre'} dans le moodboard` : ''),
+    test: (mv, t) => {
+      if (t?.type !== 'moodboard' || !mv.length) return '';
+      const k = (t.items || []).length ? kindOf(t) : mv[0].kind;
+      if (!mv.every((m) => m.type === 'media' && m.kind === k && (k === 'image' || k === 'audio') && !S.items.get(m.item)?.missing)) return '';
+      return `lâcher : ${mv.length > 1 ? `ces ${mv.length} ${k === 'audio' ? 'sons' : 'images'} entrent` : k === 'audio' ? 'le son entre' : 'l’image entre'} dans le moodboard`;
+    },
     run: (mv, t) => {
       const ids = new Set(mv.map((m) => m.id));
       const have = new Set(t.items || []);
@@ -190,7 +204,8 @@ export function extendMoodboard(app, api0) {
   function trainModal(id, preset = 'night') {
     const n = app.node(id);
     if (!n) return;
-    const ms = (models || []).filter((m) => m.kind === 'image');
+    const kind = kindOf(n);
+    const ms = (models || []).filter((m) => m.kind === kind);
     if (!ms.length) { refresh(id, { force: true }).then(() => (models ? trainModal(id, preset) : toast('les modèles ne se lisent pas : le portail répond-il ?'))); return; }
     let model = (ms.find((m) => m.ready) || ms[0]).id, when = preset;
     const time = el('input', { class: 'fld sm', type: 'time', value: '01:00', step: 60, title: 'l’heure de la machine' });
@@ -200,14 +215,14 @@ export function extendMoodboard(app, api0) {
       onclick: (e) => { set(k); for (const b of e.currentTarget.parentNode.children) b.classList.toggle('on', b === e.currentTarget); paint(); } }, v)));
     const paint = () => {
       const m = ms.find((x) => x.id === model);
-      const few = (n.items || []).length < 4;
-      why.textContent = !m.ready ? m.why : few ? 'il faut au moins 4 images' : `${m.name} : environ ${m.hours} d’un DGX entier, qui ne fait rien d’autre pendant ce temps.`;
+      const few = (n.items || []).length < MIN[kind];
+      why.textContent = !m.ready ? m.why : few ? `il faut au moins ${MIN[kind]} ${word(n, 2)}` : `${m.name} : environ ${m.hours} d’un DGX entier, qui ne fait rien d’autre pendant ce temps.`;
       go.disabled = !m.ready || few;
       go.textContent = when === 'now' ? 'Lancer maintenant' : 'Planifier';
       time.disabled = when === 'now';
     };
     const body = el('div', { class: 'stack mb-train' },
-      el('p', { class: 'hint' }, `« ${n.name || 'moodboard'} » · ${(n.items || []).length} images. Le LoRA apprend leur style commun ; la version d’avant reste utilisable pendant l’entraînement.`),
+      el('p', { class: 'hint' }, `« ${n.name || 'moodboard'} » · ${(n.items || []).length} ${word(n, 2)}. Le LoRA apprend leur style commun ; la version d’avant reste utilisable pendant l’entraînement.`),
       el('span', { class: 'lbl' }, 'pour le modèle'),
       seg(ms.map((m) => [m.id, m.name, m.ready ? `prêt · environ ${m.hours}` : m.why]), () => model, (k) => { model = k; }),
       el('span', { class: 'lbl' }, 'quand'),
@@ -240,20 +255,20 @@ export function extendMoodboard(app, api0) {
     const vers = (s?.versions || []).slice().reverse();
     const mname = (id) => (models || []).find((m) => m.id === id)?.name || id;
     return [
-      card('Moodboard', `${(n.items || []).length} image${(n.items || []).length > 1 ? 's' : ''}`,
+      card(kindOf(n) === 'audio' ? 'Moodboard de sons' : 'Moodboard', `${(n.items || []).length} ${word(n, (n.items || []).length)}`,
         el('label', { class: 'look' }, el('span', { class: 'lbl' }, 'nom'), nm),
         row(b(n.open ? 'Refermer' : 'Tout voir', () => toggle(n.id), { title: 'double-clic sur la carte aussi' })),
-        hint('Glissez-y des images : de la planche (elles y entrent), du panneau Asset ou du disque. Fermé, il garde sa taille ; ouvert, il montre tout et chaque image se retire (×).')),
+        hint('Glissez-y des images (un LoRA d’image ou de vidéo) ou des sons (un LoRA de son), sans les mélanger : de la planche (ils y entrent), du panneau Asset ou du disque. Fermé, il garde sa taille ; ouvert, il montre tout et chacun se retire (×).')),
       card('LoRA de style', st.label.replace(/^LoRA · /, ''),
         el('p', { class: `mb-lora big ${st.k}` }, el('i'), st.label),
         st.why ? hint(st.why) : null,
         s?.last_job && s.last_job.state === 'error' ? el('p', { class: 'why' }, `dernier essai : ${s.last_job.message}`) : null,
         s?.job || s?.plan
           ? row(b(s.job ? 'Arrêter' : 'Annuler le plan', () => cancel(n.id)))
-          : row(b('Planifier cette nuit', () => trainModal(n.id, 'night'), { disabled: (n.items || []).length < 4, title: (n.items || []).length < 4 ? 'il faut au moins 4 images' : 'à 1 h par défaut : les DGX sont libres' }),
-            b('Maintenant…', () => trainModal(n.id, 'now'), { disabled: (n.items || []).length < 4 })),
+          : row(b('Planifier cette nuit', () => trainModal(n.id, 'night'), { disabled: (n.items || []).length < MIN[kindOf(n)], title: (n.items || []).length < MIN[kindOf(n)] ? `il faut au moins ${MIN[kindOf(n)]} ${word(n, 2)}` : 'à 1 h par défaut : les DGX sont libres' }),
+            b('Maintenant…', () => trainModal(n.id, 'now'), { disabled: (n.items || []).length < MIN[kindOf(n)] })),
         vers.length ? el('div', { class: 'mb-vers' }, ...vers.map((v) => el('div', { class: 'mb-v' }, el('b', {}, `v${v.v}`),
-          el('span', {}, `${mname(v.model)} · ${(v.items || []).length} images · ${(v.at || '').slice(0, 16).replace('T', ' ')}${v.factice ? ' · essai' : ''}`)))) : null,
+          el('span', {}, `${mname(v.model)} · ${(v.items || []).length} ${word(n, 2)} · ${(v.at || '').slice(0, 16).replace('T', ' ')}${v.factice ? ' · essai' : ''}${v.comfy ? ` · ${v.comfy}${v.trigger ? ` (mot : ${v.trigger})` : ''}` : ''}`)))) : null,
         hint('Un entraînement occupe un DGX entier pendant des heures : planifiez-le la nuit. Une image ajoutée rend le LoRA périmé ; la dernière version reste utilisable jusqu’au suivant.')),
     ];
   }

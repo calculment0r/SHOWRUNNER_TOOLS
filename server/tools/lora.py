@@ -62,7 +62,7 @@ MODELS = {
     "yue2": {"name": "YuE2 (timbre)", "family": "audio", "kind": "audio", "trainer": None, "hours": "1 à 2 h"},
     "factice": {"name": "Essai sans GPU", "family": "image", "kind": "image", "trainer": "factice", "hours": "quelques secondes"},
 }
-# les entraîneurs branchés : modèle → { ready() → (bool, pourquoi), run(ctx, dataset, sortie, params) }
+# les entraîneurs branchés : modèle → { ready() → (bool, pourquoi), run(ctx, dataset, sortie, params) → {trigger, comfy, note…} }
 # (server/tools/lora_trainers.py les déclare, une fois installés par tools/lora_install.sh)
 TRAINERS: dict[str, dict] = {"factice": {"ready": lambda: (True, ""), "run": None}}
 
@@ -267,9 +267,20 @@ def r_file(req, bid, nid, v):
 
 
 # ── la file : lancer, et ce que l'entraînement laisse ──────
+def _local_endpoint() -> str | None:
+    """La ComfyUI de la machine du portail : l'entraînement tourne ici (lora_trainers.py), la file
+    y réserve donc sa place GPU (rien d'autre de GPU n'y part pendant ce temps)."""
+    for ep in (config.get("lanes") or {}).get("image", []):
+        if "127.0.0.1" in str(ep) or "localhost" in str(ep):
+            return ep
+    return None
+
+
 def _submit(s: dict, mid: str, items: list, owner, space) -> dict:
     kind = "lora.train_factice" if mid == "factice" else "lora.train"
     kw = {"owner": owner} if owner is not None else {}   # un plan qui part la nuit : au nom de qui l'a prévu
+    if kind == "lora.train" and _local_endpoint():
+        kw["pin"] = _local_endpoint()
     return jobs.submit(kind, {"board": s["board"], "node": s["node"], "model": mid, "items": items, "name": s.get("name") or ""},
                        title=f"LoRA · {s.get('name') or 'moodboard'} · {MODELS[mid]['name']}", tool="ideation", space=space, **kw)
 
@@ -282,7 +293,7 @@ def _settle(s: dict) -> None:
         s["job"] = None
 
 
-def _add_version(bid: str, nid: str, items: list, src: Path | None, job_id: str, factice: bool) -> dict:
+def _add_version(bid: str, nid: str, items: list, src: Path | None, job_id: str, factice: bool, extra: dict | None = None) -> dict:
     with _lock:
         s = load(bid, nid)
         v = 1 + max([x["v"] for x in s.get("versions") or []] or [0])
@@ -294,6 +305,8 @@ def _add_version(bid: str, nid: str, items: list, src: Path | None, job_id: str,
         entry = {"v": v, "at": library.now(), "items": items, "file": name, "job": job_id, "model": s.get("model")}
         if factice:
             entry["factice"] = True
+        # ce que l'entraîneur en dit : le mot déclencheur, le nom dans ComfyUI, la durée (lora_trainers.py)
+        entry.update({k: v for k, v in (extra or {}).items() if k in ("trigger", "comfy", "note", "minutes", "steps")})
         s.setdefault("versions", []).append(entry)
         s["job"] = None
         save(s)
@@ -311,9 +324,14 @@ def _dataset(ctx, items: list, kind: str) -> Path:
             continue
         src = library.path_of(it)
         shutil.copyfile(src, d / f"{k:03d}{src.suffix.lower()}")
-        # la légende : le prompt de l'objet s'il en a un (un entraîneur la lira à côté de l'image)
-        if it.get("prompt"):
-            (d / f"{k:03d}.txt").write_text(it["prompt"], encoding="utf-8")
+        # la légende : le prompt de l'objet s'il en a un (ai-toolkit lit `<image>.txt` et y ajoute le mot
+        # déclencheur) ; un son : `.caption.txt` et `.lyrics.txt` (le tutoriel d'ACE-Step 1.5)
+        cap = (it.get("prompt") or "").strip()
+        if kind == "image":
+            (d / f"{k:03d}.txt").write_text(cap, encoding="utf-8")
+        else:
+            (d / f"{k:03d}.caption.txt").write_text(cap or (it.get("title") or ""), encoding="utf-8")
+            (d / f"{k:03d}.lyrics.txt").write_text("[Instrumental]", encoding="utf-8")
     return d
 
 
@@ -341,11 +359,11 @@ def run_train(ctx) -> dict:
         raise RuntimeError(why)
     data = _dataset(ctx, list(p.get("items") or []), MODELS[mid]["kind"])
     out = ctx.workdir / "lora.safetensors"
-    t["run"](ctx, data, out, p)
+    extra = t["run"](ctx, data, out, p) or {}
     if not out.is_file():
         raise RuntimeError("l'entraînement n'a pas laissé de fichier")
-    e = _add_version(p["board"], p["node"], list(p.get("items") or []), out, ctx.job["id"], False)
-    return {"lora": e["file"], "v": e["v"]}
+    e = _add_version(p["board"], p["node"], list(p.get("items") or []), out, ctx.job["id"], False, extra)
+    return {"lora": e["file"], "v": e["v"], "note": extra.get("note", "")}
 
 
 # ── les plans : un entraînement prévu part à son heure ──────
