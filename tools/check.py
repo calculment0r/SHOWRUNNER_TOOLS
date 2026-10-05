@@ -3,6 +3,8 @@
 chaque outil qui en a un. Rend 0 si tout passe.
 
     python3 tools/check.py
+    python3 tools/check.py chanson documents   # seulement ces selftests (plus vite)
+    python3 tools/check.py socle garde chanson # « socle » et « garde » les ajoutent
 
 Il lance le serveur dans ce processus, sur un port libre et des données
 jetables, et le mène par son API comme une page le ferait. Un outil
@@ -465,11 +467,15 @@ def main() -> int:
             break
         except OSError:
             time.sleep(0.1)
-    print("le socle")
-    core_checks()
+    seul = set(sys.argv[1:])   # vide : tout ; sinon les selftests nommés, « socle », « garde »
+    if not seul or "socle" in seul:
+        print("le socle")
+        core_checks()
     import tools
     import pkgutil
     for mod in sorted(pkgutil.iter_modules(tools.__path__), key=lambda m: m.name):
+        if seul and mod.name not in seul:
+            continue
         m = importlib.import_module(f"tools.{mod.name}")
         if hasattr(m, "selftest"):
             print(mod.name)
@@ -477,13 +483,14 @@ def main() -> int:
                 m.selftest(call, ok)
             except Exception as e:  # un selftest qui plante est un échec, pas un arrêt
                 ok(False, f"{mod.name} : selftest a planté : {type(e).__name__}: {e}")
-    print("la garde du calcul")
-    try:
-        compute_guard_checks()
-    except Exception as e:  # noqa: BLE001
-        import traceback
-        traceback.print_exc()
-        ok(False, f"la garde du calcul : le contrôle a planté : {type(e).__name__}: {e}")
+    if not seul or "garde" in seul:
+        print("la garde du calcul")
+        try:
+            compute_guard_checks()
+        except Exception as e:  # noqa: BLE001
+            import traceback
+            traceback.print_exc()
+            ok(False, f"la garde du calcul : le contrôle a planté : {type(e).__name__}: {e}")
     print(f"\n{passed} passés, {len(failed)} en échec — données dans {DATA}")
     return 1 if failed else 0
 
