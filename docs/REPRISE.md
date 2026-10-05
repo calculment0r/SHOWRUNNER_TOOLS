@@ -2,7 +2,7 @@
 
 **État au 06/10/2026.** Session cloud du 06/10 : une session principale et une trentaine d'agents en parallèle,
 chacun dans sa copie, fusionnés et vérifiés lot par lot, poussés sur `main` à chaque lot (`check.py` complet à
-0 échec avant chaque poussée ; dernier passage complet : **3476 / 0**). La mise à jour automatique de DGX2 publie
+0 échec avant chaque poussée ; dernier passage complet : **3544 / 0**). La mise à jour automatique de DGX2 publie
 seule. Les branches de la session : `claude/adoring-turing-op7th8` (l'intégration, égale à `main`) et
 `wip2/<sujet>` (une par agent, toutes fusionnées sauf celles marquées « en cours » au § 2.A).
 
@@ -59,7 +59,8 @@ seule. Les branches de la session : `claude/adoring-turing-op7th8` (l'intégrati
   - `python3 tools/check.py chanson documents` : seulement ces selftests (06/10) ; `socle` et `garde` les
     ajoutent. Attention : la garde (`garde`) suppose que tous les selftests ont tourné.
   - Sous forte charge (plusieurs agents), deux essais de temps peuvent échouer seuls (`apercu_son` : `soon` en
-    moins de 50 ms ; les LoRA d'un moodboard) : les relancer seuls avant de chercher plus loin.
+    moins de 50 ms ; les LoRA d'un moodboard) : les relancer seuls avant de chercher plus loin. Mais un échec qui
+    revient au passage complet est à prendre au sérieux : le 06/10, c'était une vraie course (`wip2/carnet-course`).
 - **Travailler en parallèle** : un agent par sujet, chacun dans sa copie
   (`git worktree add /home/user/wt_<b> -b wip2/<b> <intégration>`), son port, ses données ; la session
   principale seule fusionne, vérifie et pousse ; les agents ne poussent jamais. Leur donner les contrats entre
@@ -113,6 +114,11 @@ DGX ; 44 appels au modèle → 1 pour la première réponse ; le cadre « Vidéo
 Puis : `wip2/motion-editeur` (les idées d'une note de spécification d'éditeur de motion partagée par Cal : le
 rendu déterministe, l'export MP4 `presentation.video` par Chromium sans affichage et ffmpeg, les losanges
 déplaçables, les courbes et le ressort, les préréglages et la cascade ; `presentations_motion.md` § 10).
+
+Puis : `wip2/carnet-course` — une vraie course trouvée par un passage complet de `check.py` : une vue lisait le
+document puis la file ; un travail fini entre les deux montrait « échec : fini » (une question du carnet, une
+traduction, une transcription) et la page cessait de relire. `_settled` : un travail fini n'est jamais un échec ;
+un essai `_selftest_vue` rend l'ordre fautif certain. `check.py` complet : **3544 / 0**.
 
 Plus rien en cours à la fin de la session du 06/10 : toutes les branches `wip2/…` sont fusionnées.
 
