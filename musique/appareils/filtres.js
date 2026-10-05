@@ -35,6 +35,8 @@ const FILTRES = {
   // Numérique (Plaits) : son mode de filtre, ouvert de envAmount Hz à pleine vélocité (plaits-synth.js)
   plaits: { type: (L) => ['lowpass', 'bandpass', 'highpass'][L.get('fmode')], f: 'cutoff', q: 'resonance', sommet: (L) => Math.min(L.get('cutoff') + L.get('envAmount'), 18000) },
   // Basse acide : trois passe-bas en série, la résonance sur le premier seulement (acid-bass.js, ETAGES, resonanceParEtage)
+  // Macro (Plaits complet) : un passe-bas après les voix, sans enveloppe (plaits/macro.js)
+  macro: { type: () => 'lowpass', f: 'cutoff', q: 'resonance' },
   acid: { type: () => 'lowpass', f: 'cutoff', q: 'resonance', etages: 3, sommet: (L, fs) => ouverture(L.get('cutoff'), L.get('envMod'), L.get('accent'), false, fs / 2) },
 };
 export const A_FILTRE = (type) => !!FILTRES[type];

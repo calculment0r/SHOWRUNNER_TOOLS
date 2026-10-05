@@ -17,7 +17,8 @@
 //                  segment : 5 ms et 3 s se lisent sur la même largeur.
 // Les formes d'onde se choisissent sur leur dessin.
 
-import { el } from '../ui.js';
+import { el, menu } from '../ui.js';
+import { FAMILLES, PATCHS_FM, harmoDuPatch, patchDeHarmo } from '../plaits/macro.js';   // les moteurs de Macro, par famille ; les patchs FM-6 (06/10)
 import { MODULES } from '../modules.js';
 import { filtre, icone as iconeFiltre } from './filtres.js';
 import { ecran, s, trait, poignee, gestes, liaison, trace, choixLie, iconeOnde, plusProche, AIDE } from './surface.js';
@@ -27,8 +28,9 @@ const ENV = {
   synth: { a: 'a', d: 'd', s: 's', r: 'r', forme: 'exp', tau: 0.25 },
   analog: { a: 'attack', d: 'decay', s: 'sustain', r: 'release', forme: 'lin' },
   plaits: { a: 'attack', d: 'decay', s: 'sustain', r: 'release', forme: 'exp', tau: 0.35 },
+  macro: { a: 'attack', d: 'decay', s: 'sustain', r: 'release', forme: 'exp', tau: 0.35 },   // son worklet : la même enveloppe que le Numérique
 };
-export const A_INSTRUMENT = (type) => ['synth', 'analog', 'plaits', 'acid'].includes(type);
+export const A_INSTRUMENT = (type) => ['synth', 'analog', 'plaits', 'acid', 'macro'].includes(type);
 
 // ── l'enveloppe ─────────────────────────────────────────────
 // px(t) = K · ln(1 + t / T0) pour chaque segment ; la tenue a une largeur fixe
@@ -90,6 +92,41 @@ export function enveloppe(app, m, { w = 220, h = 96, L: lie = null } = {}) {
   return { el: E.box, peindre, L };
 }
 
+// Le moteur de Macro : 24 choix, un bouton qui ouvre le menu commun, rangé
+// par famille (plaits/macro.js, FAMILLES) — 24 boutons côte à côte ne tiennent pas
+function choixMoteur(L, sp) {
+  const b = el('button', { class: 'tb ghost sm ap-moteur', type: 'button', title: 'le moteur de Plaits (24)' });
+  const peindre = () => { b.textContent = `${sp.opts[Math.round(L.get('moteur'))] || ''} ▾`; };
+  b.onclick = () => {
+    const r = b.getBoundingClientRect(), cur = Math.round(L.get('moteur'));
+    menu(r.left, r.bottom + 4, FAMILLES.flatMap(([nom, a, z]) => [{ head: nom.toLowerCase() },
+      ...sp.opts.slice(a, z).map((o, j) => ({ label: o, checked: cur === a + j, onclick: () => { L.pose('moteur', a + j); L.fin(); peindre(); } }))]));
+  };
+  L.ecoute(peindre);
+  peindre();
+  return el('div', { class: 'mu-choice ap-choix' }, el('span', { class: 'lbl' }, sp.label), b);
+}
+
+// Les moteurs FM-6 de Macro (2 à 4) : HARMO choisit l'un des 32 patchs DX7 de
+// la banque ; ce bouton les nomme (plaits/macro.js, PATCHS_FM). Ailleurs il se tait.
+function choixPatch(L) {
+  const b = el('button', { class: 'tb ghost sm ap-moteur', type: 'button', title: 'le patch DX7 de la banque (HARMO le choisit)' });
+  const banque = () => Math.round(L.get('moteur')) - 2;
+  const peindre = () => {
+    const k = banque();
+    b.hidden = !(k >= 0 && k < 3);
+    if (!b.hidden) b.textContent = `${PATCHS_FM[k][patchDeHarmo(L.get('harmo'))]} ▾`;
+  };
+  b.onclick = () => {
+    const r = b.getBoundingClientRect(), k = banque(), cur = patchDeHarmo(L.get('harmo'));
+    menu(r.left, r.bottom + 4, [{ head: `fm-6 · banque ${k + 1}` }, ...PATCHS_FM[k].map((nom, i) => ({ label: nom, sub: `${i + 1}`, checked: i === cur,
+      onclick: () => { L.pose('harmo', harmoDuPatch(i)); L.fin(); peindre(); } }))]);
+  };
+  L.ecoute(peindre);
+  peindre();
+  return b;
+}
+
 // ── un instrument ───────────────────────────────────────────
 export function instrument(app, m, { accent = 'cy' } = {}) {
   if (m.type === 'synth') return synthe(app, m, accent);
@@ -101,6 +138,8 @@ export function instrument(app, m, { accent = 'cy' } = {}) {
   const mol = (k, i) => {
     const sp = def.params.find((p) => p.k === k);
     if (!sp) return null;
+    if (m.type === 'macro' && k === 'moteur') return choixMoteur(L, sp);
+    if (m.type === 'macro' && k === 'harmo') return el('div', { class: 'ap-macro-harmo' }, choixPatch(L), L.molette(k, { accent: i === 0 ? accent : 'cy' }));
     // une forme d'onde, un mode de filtre : leur dessin ; un modèle de Plaits : son nom
     const dessin = k === 'wave' ? (j, o) => iconeOnde(o) : k === 'fmode' ? (j) => iconeFiltre(['lowpass', 'bandpass', 'highpass'][j]) : null;
     if (sp.opts) return choixLie(L, k, { dessin, apres: () => fl.peindre() });
@@ -110,6 +149,8 @@ export function instrument(app, m, { accent = 'cy' } = {}) {
     analog: [['Oscillateur', ['wave', 'detune']], ['Filtre', ['cutoff', 'resonance', 'envAmount']], ['Enveloppe', ['attack', 'decay', 'sustain', 'release']], ['Sortie', ['gain']]],
     plaits: [['Oscillateur', ['modele', 'harmo', 'timbre', 'morph']], ['Filtre', ['fmode', 'cutoff', 'resonance', 'envAmount']], ['Enveloppe', ['attack', 'decay', 'sustain', 'release']], ['Sortie', ['gain']]],
     acid: [['Oscillateur', ['wave', 'glide']], ['Filtre', ['cutoff', 'resonance', 'envMod', 'decay', 'accent']], ['Sortie', ['gain']]],
+    macro: [['Moteur', ['moteur', 'harmo', 'timbre', 'morph', 'aux']], ['Porte basse', ['jeu', 'declin', 'couleur']], ['Filtre', ['cutoff', 'resonance']],
+      ['Enveloppe', ['attack', 'decay', 'sustain', 'release']], ['Sortie', ['gain']]],
   }[m.type];
   groupes.push(['Arpège', ['arp', 'arp_div', 'arp_oct', 'arp_gate']]);   // 06/10 : arpege.js
   const surfaces = el('div', { class: 'ap-duo' },

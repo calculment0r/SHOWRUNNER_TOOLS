@@ -17,6 +17,8 @@ import { AnalogSynth } from './odio/instruments/analog-synth.js';
 import { AcidBass } from './odio/instruments/acid-bass.js';
 import { RhythmBox } from './odio/instruments/rhythm-box.js';
 import { PlaitsSynth } from './odio/instruments/plaits-synth.js';
+// Macro : Plaits complet, ses 24 moteurs (06/10 ; musique/plaits/, même contrat que les instruments d'ODIO)
+import { MacroPlaits } from './plaits/macro.js';
 import { VOIX } from './odio/instruments/drums-voices.js';
 import { ReverbEffect } from './odio/effects/reverb.js';
 import { ChorusEffect } from './odio/effects/chorus.js';
@@ -251,6 +253,8 @@ const ODIO = {
   analog: { cls: AnalogSynth, name: 'Analog', kind: 'soustractif · ODIO', role: 'source', color: 'cy', face: ['cutoff', 'resonance', 'decay', 'gain'], trim: -6 },
   acid: { cls: AcidBass, name: 'Basse acide', kind: '303 · filtre 18 dB', role: 'source', color: 'grn2', face: ['cutoff', 'resonance', 'envMod', 'decay'], trim: -12 },
   plaits: { cls: PlaitsSynth, name: 'Numérique', kind: 'Plaits · wasm', role: 'source', color: 'coral-2', face: ['modele', 'harmo', 'timbre', 'morph'], trim: -2 },
+  // pas d'ODIO_01 : écrit ici sur son contrat (musique/plaits/macro.js, docs/etudes/odio_synthes.md)
+  macro: { cls: MacroPlaits, name: 'Macro', kind: 'Plaits · 24 moteurs', role: 'source', color: 'coral-3', face: ['moteur', 'harmo', 'timbre', 'morph'], trim: 0 },
   reverbe: { cls: ReverbEffect, name: 'Réverbe', kind: 'rvb-02 · convolution', role: 'effect', color: 'cy', face: ['size', 'decay', 'mix'] },
   chorus: { cls: ChorusEffect, name: 'Chorus', kind: 'chr-04 · trois retards', role: 'effect', color: 'cy', face: ['rate', 'depth', 'mix'] },
   rtt: { cls: DelayEffect, name: 'RTT-01', kind: 'délai · filtre en boucle', role: 'effect', color: 'amb', face: ['time', 'fdb', 'mix'] },
@@ -286,7 +290,7 @@ Object.assign(MODULES, JOUETS);   // jouets : leurs réglages et leurs ports (mu
 
 export const EFFECT_TYPES = ['delay', 'reverb', 'comp', 'eq', 'filter', 'dist', ...ODIO_TYPES.filter((t) => ODIO[t].role === 'effect')];
 // les sources qu'une piste peut porter, par sorte de piste
-export const SOURCES_OF = { drums: ['drums', 'rythme'], synth: ['synth', 'analog', 'acid', 'plaits'], sampler: ['sampler'], audio: ['player'], bus: ['bus'] };
+export const SOURCES_OF = { drums: ['drums', 'rythme'], synth: ['synth', 'analog', 'acid', 'plaits', 'macro'], sampler: ['sampler'], audio: ['player'], bus: ['bus'] };
 export const kindOfSource = (type) => Object.keys(SOURCES_OF).find((k) => SOURCES_OF[k].includes(type));
 
 // Les voix d'une batterie, selon sa source : la DR-9 (huit voix) ou la

@@ -141,3 +141,6 @@
 
 /* l'échantillonneur : le départ se tire sur la forme d'onde (rack.js) */
 .dev.sampler canvas.wave, .sampler canvas.wave { cursor: ew-resize; }
+/* le moteur de Macro (instruments.js, choixMoteur) : un bouton qui ouvre le menu des 24 */
+.ap-moteur { min-width: 150px; justify-content: space-between; }
+.ap-macro-harmo { display: flex; flex-direction: column; align-items: center; gap: 4px; }

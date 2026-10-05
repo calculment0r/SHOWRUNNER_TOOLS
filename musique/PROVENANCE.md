@@ -207,3 +207,44 @@ panneau publie ses minima, le canvas ne les lit pas encore), la tête dans les
 pads du groove. Les réglages de conception d'ODIO_01 (`odio.machines` :
 agencements enregistrés, cotes retouchées, ordre d'exposition) restent comme
 chez lui dans le navigateur, pas dans le projet.
+
+# Provenance — `musique/plaits/` (Macro : Plaits complet, 06/10)
+
+L'instrument « Macro » joue la voix entière de **Plaits**, le macro-oscillateur
+d'Émilie Gillet (Mutable Instruments) : ses 24 moteurs. Le Numérique (plus
+haut) n'en a que six oscillateurs, compilés par ODIO_01. Étude, mesures et
+décision : `docs/etudes/odio_synthes.md` (§ 3.2, § 4.5).
+
+- **Sources**, prises aux commits fixés par `tools/plaits_wasm/construire.sh` :
+  - `pichenettes/eurorack` @ `08460a69a7e1f7a81c5a2abcc7189c9a6b7208d4`, les
+    dossiers `plaits/dsp/` et `plaits/resources.*` ;
+  - `pichenettes/stmlib` @ `d18def816c51d1da0c108236928b2bbd25c17481` (`dsp/`,
+    `utils/`, `stmlib.h`).
+- **Licence MIT.** Les 111 fichiers de `plaits/dsp` portent la notice MIT,
+  vérifiée par le script, qui refuse un fichier sans elle. Le README du dépôt
+  dit : « Code (STM32F projects): MIT license ». `stmlib/LICENSE` est en MIT.
+  La notice est reproduite dans `musique/plaits/LICENSE-plaits.txt`.
+  `plaits/test/plaits_test.cc` (GPL-3) n'est **pas** utilisé.
+- **Les données des moteurs FM-6** sont trois banques de 32 patchs au format
+  DX7 (`syx_bank_0..2` de `resources.cc`), distribuées par Plaits sous sa
+  licence. Leurs noms (`PATCHS_FM` de `macro.js`) sont lus dans ces données.
+  D'où viennent ces patchs à l'origine, le dépôt de Plaits ne le dit pas.
+- **Ce qui est écrit ici** (`tools/plaits_wasm/`), pour compiler sans
+  bibliothèque C (clang 18, `--target=wasm32 -ffreestanding -nostdlib`) :
+  - `shim/` : un `<algorithm>` de six fonctions et un `<cmath>` qui mène aux
+    instructions WebAssembly et à `sr_math.cc` ;
+  - `<cstring>`, `<inttypes.h>` ;
+  - un `plaits/user_data.h` sans mémoire flash : les données d'usine, comme
+    la version `TEST` du module ;
+  - `sr_math.cc` : `sin`, `cos`, `tan`, `exp`, `log`, `pow`, `atan` en double,
+    par réduction d'argument et séries ; `memset` et `memcpy` ;
+  - `sr_plaits.cc` : huit `plaits::Voice`, 16 Ko de mémoire chacune comme
+    `plaits.cc`, et `rendre(...)`.
+  Rien n'est changé dans les sources de Plaits.
+- **Le résultat** : `musique/plaits/plaits.wasm`, 207 Ko, SIMD 128 bits,
+  aucune importation. Il est servi par le portail (même origine, aucun CDN)
+  et lu une fois par page.
+- `musique/plaits/macro.js` est écrit ici, sur le contrat des instruments
+  d'ODIO (`odio/types.js`) : le worklet, l'enveloppe par voix, le passe-bas,
+  la file des blocs de 24. Le principe du worklet en URL `data:` vient du
+  Numérique d'ODIO (`plaits-synth.js`).

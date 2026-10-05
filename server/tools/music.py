@@ -65,12 +65,12 @@ MAX_BYTES = 4 << 20
 # ── ce que la page sait jouer (musique/modules.js en est la vérité) ──
 # Les modules d'ODIO (le prototype de Cal, porté dans musique/odio/) : leurs
 # sortes seulement ; leurs réglages sont les leurs.
-ODIO_SOURCES = {"rythme", "analog", "acid", "plaits"}
+ODIO_SOURCES = {"rythme", "analog", "acid", "plaits", "macro"}   # macro : Plaits complet (musique/plaits/, 06/10)
 ODIO_EFFECTS = {"reverbe", "chorus", "rtt", "comp3", "eq3", "filtre", "satura", "crush", "table", "volume"}
 SOURCES = {"drums", "synth", "sampler", "player"} | ODIO_SOURCES
 EFFECTS = {"delay", "reverb", "comp", "eq", "filter", "dist"} | ODIO_EFFECTS
 MODULE_TYPES = SOURCES | EFFECTS | {"strip", "master", "bus"} | music_jouets.TYPES   # jouets : leurs sortes
-TRACK_SOURCES = {"drums": {"drums", "rythme"}, "synth": {"synth", "analog", "acid", "plaits"},
+TRACK_SOURCES = {"drums": {"drums", "rythme"}, "synth": {"synth", "analog", "acid", "plaits", "macro"},
                  "sampler": {"sampler"}, "audio": {"player"}, "bus": {"bus"}}
 COLORS = {"or", "cy", "amb", "grn2", "coral-1", "coral-2", "coral-3"}
 # les voix de la DR-9 et celles de la boîte à rythme d'ODIO (onze, TR-8S)

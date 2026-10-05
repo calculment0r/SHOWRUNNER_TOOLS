@@ -19,6 +19,7 @@
 // la session, au tempo du projet : `phraseDe(préréglage)`.
 
 import { VOIX } from './odio/instruments/drums-voices.js';
+import { harmoDuPatch } from './plaits/macro.js';   // Macro : le patch FM-6 que vise HARMO
 
 // ── les catégories, dans l'ordre du navigateur ──────────────
 export const CATEGORIES = [
@@ -49,6 +50,13 @@ const N = (id, cat, name, sub, params) => ({ id, type: 'plaits', cat, name, sub,
 const R = (id, name, sub, params) => ({ id, type: 'rythme', cat: 'kit', name, sub, params });
 const D = (id, name, sub, params) => ({ id, type: 'drums', cat: 'kit', name, sub, params });
 const E = (id, name, sub, params) => ({ id, type: 'sampler', cat: 'env', name, sub, params });
+const M = (id, cat, name, sub, params) => ({ id, type: 'macro', cat, name, sub, params });
+// Macro, moteurs FM-6 : un patch DX7 d'une des trois banques de Plaits
+// (plaits/macro.js, PATCHS_FM : leurs noms lus dans les données ; harmoDuPatch :
+// HARMO au milieu de la case du patch). MORPH étire
+// les enveloppes (0,5 : celles du patch, fm/voice.h), TIMBRE la brillance (0,5 : neutre).
+const fm = (banque, i, plus = {}) => ({ moteur: 1 + banque, harmo: harmoDuPatch(i), timbre: 0.5, morph: 0.5,
+  attack: 0.001, decay: 1, sustain: 1, release: 0.8, ...plus });
 
 // ── la banque ───────────────────────────────────────────────
 // Synthé (soustractif du studio) : forme A (0 sinus, 1 triangle, 2 scie,
@@ -245,6 +253,36 @@ export const BANQUE = [
     { modele: 0, harmo: 0.1, timbre: 0.8, morph: 0.9, cutoff: 3000, resonance: 6, envAmount: 6000, attack: 0.001, decay: 0.08, sustain: 0, release: 0.06, gain: 0.46 }),
   N('pl-arp', 'arp', 'Arpège numérique', 'phase · hasard en doubles croches',
     { modele: 4, harmo: 0.5, timbre: 0.5, morph: 0.4, cutoff: 3000, resonance: 3, envAmount: 2000, attack: 0.001, decay: 0.18, sustain: 0.1, release: 0.15, gain: 0.86, arp: 5, arp_div: 3, arp_oct: 2, arp_gate: 0.5 }),
+
+  // ── Macro (Plaits complet, plaits/macro.js : moteur 0..23 ; jeu 0 tenu, 1 frappé) ──
+  M('mc-va', 'lead', 'Macro', 'analogique virtuel', { moteur: 8 }),
+  M('mc-vcf', 'basse', 'Basse VA filtrée', 'VA filtré · résonance', { moteur: 0, harmo: 0.72, timbre: 0.36, morph: 0.25, decay: 0.4, sustain: 0.7, release: 0.12, gain: 0.72 }),
+  M('mc-solid', 'basse', 'Solid Bass', 'FM-6 · banque 1 · SOLID BASS', fm(1, 0, { release: 0.2, gain: 0.93 })),
+  M('mc-fmbass', 'basse', 'Basse FM', 'FM-6 · banque 1 · BASS 1', fm(1, 6, { release: 0.2, gain: 1.0 })),
+  M('mc-epiano', 'clavier', 'Piano électrique FM', 'FM-6 · banque 2 · E.PIANO 1', fm(2, 0, { gain: 0.22 })),
+  M('mc-rhodes', 'clavier', 'Rhodes d\'hiver', 'FM-6 · banque 2 · WINTRHODES', fm(2, 2, { gain: 0.22 })),
+  M('mc-clavinet', 'clavier', 'Clavinet FM', 'FM-6 · banque 2 · CLAVINET', fm(2, 7, { release: 0.3 })),
+  M('mc-orgue', 'clavier', 'Orgue FM', 'FM-6 · banque 3 · *Hammond 1', fm(3, 1, { release: 0.15, gain: 0.24 })),
+  M('mc-marimba', 'pluck', 'Marimba FM', 'FM-6 · banque 2 · MARIMBA', fm(2, 17, { gain: 0.42 })),
+  M('mc-koto', 'pluck', 'Koto', 'FM-6 · banque 2 · KOTO', fm(2, 13, { release: 1.2, gain: 0.76 })),
+  M('mc-vibra', 'cloche', 'Vibraphone', 'FM-6 · banque 2 · VIBE 1', fm(2, 18, { release: 1.5 })),
+  M('mc-tubes', 'cloche', 'Cloches tubes', 'FM-6 · banque 2 · TUB BELLS', fm(2, 22, { release: 2, gain: 0.52 })),
+  M('mc-cordes', 'nappe', 'Cordes FM', 'FM-6 · banque 3 · STRINGS 2', fm(3, 25, { release: 1.2 })),
+  M('mc-icepad', 'nappe', 'Nappe glacée', 'FM-6 · banque 3 · ICE PAD 2', fm(3, 10, { release: 1.6, gain: 0.24 })),
+  M('mc-cuivres', 'lead', 'Cuivres FM', 'FM-6 · banque 3 · BRASS 1', fm(3, 29, { release: 0.3, gain: 0.31 })),
+  M('mc-accords', 'nappe', 'Accords', 'accords · une note, un accord', { moteur: 14, harmo: 0.25, timbre: 0.4, morph: 0.3, attack: 0.08, decay: 1, sustain: 0.9, release: 1 }),
+  M('mc-machine', 'nappe', 'String machine', 'string machine · ensemble', { moteur: 6, harmo: 0.4, timbre: 0.5, morph: 0.4, attack: 0.3, sustain: 1, release: 1.2 }),
+  M('mc-table', 'lead', 'Table d\'ondes', 'table d\'ondes · balayage', { moteur: 13, harmo: 0.3, timbre: 0.6, morph: 0.4, attack: 0.005, sustain: 0.8, release: 0.3, gain: 0.63 }),
+  M('mc-chip', 'lead', 'Chiptune', 'chiptune · console 8 bits', { moteur: 7, harmo: 0.5, timbre: 0.5, morph: 0.2, sustain: 0.9, release: 0.1 }),
+  M('mc-corde', 'pluck', 'Corde pincée', 'corde · modélisation physique', { moteur: 19, harmo: 0.4, timbre: 0.6, morph: 0.6, jeu: 1, declin: 0.6, sustain: 1, release: 1.5, gain: 0.9 }),
+  M('mc-modal', 'cloche', 'Modal', 'résonateur modal · coûteux (§ 3.2)', { moteur: 20, harmo: 0.35, timbre: 0.6, morph: 0.6, jeu: 1, declin: 0.6, sustain: 1, release: 2, gain: 0.61 }),
+  M('mc-gc', 'perc', 'Grosse caisse Plaits', 'grosse caisse · frappée', { moteur: 21, harmo: 0.5, timbre: 0.5, morph: 0.5, jeu: 1, declin: 0.5, sustain: 1, release: 0.6, gain: 0.63 }),
+  M('mc-cc', 'perc', 'Caisse claire Plaits', 'caisse claire · frappée', { moteur: 22, harmo: 0.5, timbre: 0.5, morph: 0.5, jeu: 1, declin: 0.5, sustain: 1, release: 0.4, gain: 0.54 }),
+  M('mc-ch', 'perc', 'Charley Plaits', 'charley · frappé', { moteur: 23, harmo: 0.5, timbre: 0.5, morph: 0.3, jeu: 1, declin: 0.3, sustain: 1, release: 0.2, gain: 0.61 }),
+  M('mc-parole', 'fx', 'Parole', 'synthèse vocale · des mots', { moteur: 15, harmo: 0.9, timbre: 0.5, morph: 0.5, sustain: 1, release: 0.3 }),
+  M('mc-particules', 'fx', 'Particules', 'grains filtrés', { moteur: 18, harmo: 0.5, timbre: 0.6, morph: 0.5, sustain: 1, release: 1 }),
+  M('mc-essaim', 'fx', 'Essaim', 'huit scies qui dérivent', { moteur: 16, harmo: 0.5, timbre: 0.4, morph: 0.5, attack: 0.4, sustain: 1, release: 1.5, gain: 0.48 }),
+  M('mc-arp', 'arp', 'Arpège marimba', 'FM-6 · MARIMBA · monte en doubles croches', fm(2, 17, { arp: 1, arp_div: 3, arp_oct: 2, arp_gate: 0.6, gain: 0.64 })),
 
   // ── Échantillonneur : des enveloppes, qui gardent le son posé ──
   E('ech-coup', 'Coup', 'attaque nette · chute courte', { a: 0.001, r: 0.05 }),

@@ -19,18 +19,18 @@ semble… si ? »
   - les instruments à échantillons (TR-808 échantillonnée, General MIDI) ;
   - le LFO, l'arpégiateur, la matrice de modulation.
 - **Fait sur cette branche** (§ 4) :
-  - une banque de **102 préréglages** en onze catégories, chacun rendu et
+  - une banque de **130 préréglages** en onze catégories, chacun rendu et
     mesuré ;
   - l'**écoute** dans le navigateur ;
   - un **LFO**, du **bruit**, un **glissé** et une **enveloppe de hauteur**
     sur le Synthé ;
-  - un **arpégiateur** sur les quatre instruments mélodiques.
-- **La meilleure suite** (§ 3, § 5, décision 1) : Plaits complet, c'est-à-dire
-  ses **24 moteurs** (FM à six opérateurs, table d'ondes, cordes, modal,
-  accords, parole, percussions…).
-  - Licence MIT, vérifiée sur ses 111 fichiers.
-  - Compilé ici en WebAssembly : 220 Ko, sans aucune dépendance.
-  - Les 24 moteurs sonnent ; les mesures sont au § 3.2.
+  - un **arpégiateur** sur les instruments mélodiques ;
+  - **Macro**, un instrument neuf : **Plaits complet**, ses **24 moteurs**
+    (FM à six opérateurs et ses 96 patchs DX7, table d'ondes, cordes, modal,
+    accords, parole, percussions…), avec 28 préréglages (§ 4.5).
+    - Licence MIT, vérifiée sur ses 111 fichiers.
+    - Compilé en WebAssembly : 207 Ko, sans aucune dépendance.
+    - Le garder ou non : c'est la décision 1.
 
 ## 1. L'étude « des synthés avec des presets » : où elle est
 
@@ -183,7 +183,7 @@ Chaque licence ci-dessous a été lue dans le dépôt de l'auteur
 
 | référence | ce que c'est | licence (lue) | portable en Web Audio / WASM ? | pour nous |
 |---|---|---|---|---|
-| **Plaits** (Mutable Instruments, `pichenettes/eurorack`, `plaits/`) | une voix complète, 24 moteurs | **MIT** : les 111 fichiers de `plaits/dsp` portent la notice MIT ; le README : « Code (STM32F projects): MIT » ; `stmlib` MIT. Seul `plaits/test/plaits_test.cc` est GPL-3 (non utilisé) | **oui** : compilé ici (§ 3.2) | **à intégrer d'abord** (décision 1) |
+| **Plaits** (Mutable Instruments, `pichenettes/eurorack`, `plaits/`) | une voix complète, 24 moteurs | **MIT** : les 111 fichiers de `plaits/dsp` portent la notice MIT ; le README : « Code (STM32F projects): MIT » ; `stmlib` MIT. Seul `plaits/test/plaits_test.cc` est GPL-3 (non utilisé) | **oui** : compilé ici (§ 3.2) | **intégré** : Macro (§ 4.5, décision 1) |
 | **Rings**, **Elements**, **Braids** (même dépôt) | résonateur modal et cordes ; voix de modélisation physique ; macro-oscillateur d'avant Plaits | **MIT** (`rings/dsp/part.h`, `elements/dsp/part.h`) | oui, même méthode que Plaits | ensuite. Plaits a déjà ses moteurs « corde » et « modal », tirés de Rings |
 | Audible Instruments (VCV) | les modules Mutable dans VCV Rack | **GPL-3** pour son `src/` | — | non : prendre le code MIT d'origine |
 | **Surge XT** | grand synthé hybride | **GPL-3** | port Web non trivial (C++, JUCE) | non (licence) |
@@ -223,8 +223,9 @@ qu'ODIO (clang 18.1.3, cible `wasm32`) :
     version `TEST` du module ;
   - une colle de quarante lignes : huit `plaits::Voice`, 16 Ko de mémoire
     chacune, comme `plaits.cc`.
-- **le résultat** : **220 Ko**, aucune importation, 448 Ko de mémoire. Le
-  compiler et l'initialiser prend 3 ms sous node.
+- **le résultat** : **220 Ko** (207 Ko avec les instructions SIMD, qu'on
+  garde : le moteur modal coûte deux fois moins), aucune importation, 448 Ko
+  de mémoire. Le compiler et l'initialiser prend 3 ms sous node.
 
 **Les 24 moteurs, rendus sous node.** Do3, porte tenue 0,8 s sur 1,5 s,
 harmo, timbre et morph à 0,5. Aucun NaN ; la hauteur est juste (le VA passe
@@ -253,17 +254,19 @@ en part d'un cœur.
   (`Voice::Frame`) ; il a son limiteur et sa porte basse.
 - **Il rend par blocs de 24 échantillons.** Le worklet les met en file, pour
   des quanta de 128.
-- **Le moteur modal coûte cher** : 8,7 % d'un cœur par voix sous node. Huit
-  voix modales tiendraient 70 % d'un cœur. Il faudra le dire dans la page, ou
-  limiter ses voix.
+- **Le moteur modal coûte cher** : 8,7 % d'un cœur par voix sous node, 6 %
+  avec le SIMD. Sous Chromium, le moteur du portail, on mesure 1,5 à 3,2 %
+  (16 s rendues, une voix ; le VA : 1,3 à 2 %). Huit voix modales restent le
+  pire cas de l'instrument ; son préréglage le dit (« coûteux »).
 
 ## 4. Ce qui est fait sur cette branche
 
 ### 4.1 La banque de préréglages (`musique/prereglages.js`)
 
-**102 préréglages** :
+**130 préréglages** :
 
-- **39 Synthé**, **13 Analog**, **11 Basse acide**, **13 Numérique** ;
+- **39 Synthé**, **13 Analog**, **11 Basse acide**, **13 Numérique**,
+  **28 Macro** ;
 - **10 kits** pour la boîte à rythme, **10** pour la DR-9 ;
 - **6 enveloppes** pour l'échantillonneur.
 
@@ -279,6 +282,7 @@ Les volumes ont été réglés pour que la phrase crête autour de −8 dBFS :
 
 | instrument | n | crête (dBFS) | RMS des parties qui sonnent | centroïde spectral |
 |---|---|---|---|---|
+| Macro (§ 4.5) | 28 | −9,4 à −6,8 | −32,4 à −14,9 | 142 à 8 436 Hz |
 | DR-9 | 10 | −10,4 à −4,7 | −27,0 à −19,6 | 1 173 à 3 836 Hz |
 | Boîte à rythme | 10 | −9,8 à −6,9 | −19,6 à −15,4 | 2 926 à 6 191 Hz |
 | Synthé | 39 | −8,7 à −6,3 | −28,2 à −13,3 | 84 à 9 031 Hz |
@@ -286,7 +290,8 @@ Les volumes ont été réglés pour que la phrase crête autour de −8 dBFS :
 | Basse acide | 11 | −10,3 à −7,9 | −25,2 à −18,1 | 137 à 1 855 Hz |
 | Numérique | 13 | −10,7 à −7,5 | −27,8 à −20,4 | 702 à 4 689 Hz |
 
-**Aucun silence, aucun écrêtage.** Le centroïde suit la catégorie, en
+Les 124 qui s'écoutent seuls (pas l'échantillonneur) crêtent entre −10,7 et
+−4,7 dBFS. **Aucun silence, aucun écrêtage.** Le centroïde suit la catégorie, en
 moyenne : basses 769 Hz, claviers 1 356 Hz, nappes 1 704 Hz, leads
 2 294 Hz, cloches 2 741 Hz, kits 3 455 Hz.
 
@@ -355,8 +360,8 @@ hasard.
 
 ### 4.4 L'arpégiateur (`musique/arpege.js`)
 
-**Les réglages**, les mêmes sur le Synthé, l'Analog, la Basse acide et le
-Numérique :
+**Les réglages**, les mêmes sur le Synthé, l'Analog, la Basse acide, le
+Numérique et Macro :
 
 - **le mode** : monte, descend, va-et-vient, ordre joué, hasard, accord ;
 - **la division** : 1/4, 1/8, 1/8 t., 1/16, 1/16 t., 1/32 ;
@@ -376,13 +381,63 @@ Numérique :
 **Mesuré.** La nappe de la session avec l'arpège (monte, 1/16, deux octaves,
 attaque courte) passe de quelques attaques à 28 en huit temps, à l'export.
 
+### 4.5 Macro : Plaits complet (`musique/plaits/`)
+
+**Le WASM.** `tools/plaits_wasm/construire.sh` prend Plaits et stmlib aux
+commits fixés, refuse un fichier sans notice MIT, compile et écrit
+`musique/plaits/plaits.wasm` (207 Ko) en neuf secondes. La notice est
+reproduite dans `musique/plaits/LICENSE-plaits.txt` ; la provenance est dans
+`musique/PROVENANCE.md`.
+
+**L'instrument** (`musique/plaits/macro.js`) suit le contrat des instruments
+d'ODIO, et l'adaptateur du studio le joue comme les autres : lecture,
+export, écoute, nodal, jouets, arpège.
+
+- **Huit voix**, chacune une `plaits::Voice` complète, dans un AudioWorklet.
+  Le worklet met en file les blocs de 24 échantillons du module et pose une
+  note au bon échantillon du quantum.
+- **La note tenue est la porte du module** (son TRIG branché) : le front
+  déclenche, la porte haute tient les enveloppes des moteurs FM-6.
+- **Le jeu** :
+  - « Tenu » branche LEVEL sur la vélocité : la porte basse s'ouvre et
+    suit ;
+  - « Frappé » le débranche : la porte basse est « pingée », le son
+    percussif du module, réglé par Déclin et Couleur.
+- **Aux** mêle la seconde sortie du moteur.
+- **Le reste** : un passe-bas après les voix, une enveloppe par voix, le
+  volume, l'arpège.
+- **Dans le rack** :
+  - le moteur se choisit dans un menu, par famille (24 boutons ne tiennent
+    pas) ;
+  - sur les moteurs FM-6, un second menu nomme les **32 patchs DX7** de la
+    banque (« E.PIANO 1 », « MARIMBA », « STRINGS 2 »…), lus dans les
+    données de Plaits. HARMO les parcourt.
+- **28 préréglages** :
+  - 13 patchs FM-6 choisis : basses, pianos électriques, clavinet, orgue,
+    marimba, koto, vibraphone, cloches tubes, cordes, nappe, cuivres ;
+  - les moteurs analogique virtuel, VA filtré, accords, string machine,
+    table d'ondes, chiptune, corde, modal ;
+  - les trois percussions, la parole, les particules, l'essaim ;
+  - un arpège.
+
+**Vérifié** (Chromium du conteneur, deux thèmes, aucune erreur de console) :
+
+- une piste Macro créée depuis le navigateur ;
+- le moteur choisi par le menu (FM-6 · banque 2), le bouton suit ;
+- une note jouée en direct : −14,8 dBFS sur la tranche ;
+- un clip de quatre notes exporté, la piste seule : −14,8 dBFS ;
+- le « Piano électrique FM » écouté dans le navigateur, puis posé sur la
+  piste ;
+- les 24 moteurs rendus hors temps réel à 44,1 kHz : aucun NaN, crêtes de
+  −19,9 à −8,9 dBFS avec le gain par défaut.
+
 ## 5. Les décisions pour Cal
 
 | # | la question | recommandation |
 |---|---|---|
-| 1 | **Plaits complet** : 24 moteurs, MIT, 220 Ko, compilé et mesuré (§ 3.2). En faire un instrument « Macro » à côté du Numérique, qui garde ses six oscillateurs pour les projets qui l'ont ? | **Oui.** C'est le plus grand gain pour l'oreille, à licence sûre. FM-6 avec trois banques DX7, table d'ondes, cordes, modal, accords, parole, percussions. Le script de compilation et sa colle seraient versionnés, avec la notice MIT |
+| 1 | **Garder Macro** (Plaits complet, 24 moteurs, MIT, 207 Ko), fait sur cette branche (§ 4.5) ? Il est à côté du Numérique, qui garde ses six oscillateurs pour les projets qui l'ont | **Oui**, après écoute. C'est le plus grand gain pour l'oreille, à licence sûre. Le script de compilation, sa colle et la notice MIT sont versionnés |
 | 2 | **Où est l'étude** des synthés à préréglages : ODIO_01 (le bouton des sons par machine) ou le PC ? | La mettre dans `docs/etudes/`, ou autoriser la lecture d'ODIO_01 à la session suivante. Ses choix se reprendront dans la banque |
-| 3 | **Les machines du nodal** sur leurs vrais moteurs : FM-6 sur la FM-6 de Plaits, STRINGS-4 sur sa string machine, la MicroFreak sur les moteurs de Plaits | **Oui**, après la décision 1 et une écoute. Aujourd'hui le FM-6 est un soustractif |
+| 3 | **Les machines du nodal** sur leurs vrais moteurs : FM-6 sur la FM-6 de Macro, STRINGS-4 sur sa string machine, la MicroFreak sur ses moteurs | **Oui**, après la décision 1 et une écoute. Aujourd'hui le FM-6 est un soustractif. C'est `MACHINE_ENGINES` (`machines/blocks/machines.js`) et `TYPE_DE_VOIX` (`machines/tuiles.js`) |
 | 4 | **Des échantillons** (piano, cordes, General MIDI) | **VCSL (CC0)** d'abord, puis Salamander (CC-BY, auteur cité). Servis depuis la bibliothèque du portail : ni dans le dépôt, ni depuis un CDN tiers. Lecteur : l'échantillonneur, étendu à plusieurs zones |
 | 5 | **La GPL** (Surge, Vital, Dexed, Odin, Helm, TAL) | **Non.** Le dépôt est public sans licence ; ne pas l'y soumettre. Ce qu'ils apportent existe sous MIT ou Apache (Plaits, msfa) |
 | 6 | **« Les miens »** suivent le projet aujourd'hui. Les rendre personnels, pour les retrouver dans tous ses projets ? | **Oui** : une préférence par personne (`/api/prefs`, un schéma `musique/prefs.json`). Cela touche les préférences du portail, d'où la question |
@@ -411,3 +466,12 @@ attaque courte) passe de quelques attaques à 28 en huit temps, à l'export.
   son posé sur sa piste, ils ne s'écoutent pas, et le bouton le dit.
 - **Le Numérique écrête en accord à fort gain** (§ 2.3). La banque en tient
   compte, son réglage par défaut non.
+- **Macro** :
+  - il compte en 48 kHz : à 44,1 kHz, la hauteur est corrigée, mais ses
+    enveloppes internes sont 8,8 % plus lentes ;
+  - sa sortie est en 16 bits, comme le module ;
+  - il demande le SIMD de WebAssembly : Chrome 91, Firefox 89, Safari 16.4 ;
+  - le nodal ne lui donne pas encore de facettes pour les attracteurs
+    (`machines/influence.js`).
+- **La DR-9 et la boîte à rythme** pourraient aussi jouer les percussions de
+  Plaits (grosse caisse, caisse claire, charley de Macro).
