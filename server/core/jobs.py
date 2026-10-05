@@ -87,6 +87,12 @@ espaces.garde_prete("calcul")
 
 HANDLERS: dict[str, tuple] = {}
 _META: dict[str, dict] = {}
+# ce qu'un outil enchaîne quand un travail sort d'un ouvrier (fini, en échec, arrêté) :
+# une fonction(travail), appelée hors du verrou, sans personne ni Workspace posés ; ce
+# qu'elle lance, elle le lance au nom du travail (server/tools/paroles.py : la voix
+# seule, puis les mots, puis le calage). Un travail retiré de la file avant de partir
+# ne passe pas par là : l'outil le lit dans la file quand on le lui demande.
+AFTER: list = []
 _jobs: dict[str, dict] = {}
 _order: list[str] = []
 _cv = threading.Condition()
@@ -1208,6 +1214,11 @@ def _run(j: dict, ep: str) -> None:
             _cv.notify_all()
         if j["state"] == "done" and ctx:
             shutil.rmtree(ctx.workdir, ignore_errors=True)
+        for fn in AFTER:
+            try:
+                fn(j)
+            except Exception:  # noqa: BLE001 — une suite qui échoue ne touche pas au travail sorti
+                traceback.print_exc()
 
 
 # ── la place de chacun ──────────────────────────────────────

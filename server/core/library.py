@@ -781,6 +781,9 @@ def create_living(title: str, etype: str, source: dict, *, media: str | None = N
     return it
 
 
+LRC_MAX = 100000   # les paroles calées d'un son (champ `lrc`) : 157 lignes d'AGOSTA font 8 Ko
+
+
 def _check_patch(patch: dict) -> None:
     """La forme de ce qu'une page peut changer (ValueError → 400) : rien
     d'autre qu'un texte, une liste de textes, un booléen, là où on les attend."""
@@ -797,6 +800,9 @@ def _check_patch(patch: dict) -> None:
     for k in ("fav", "shared"):
         if k in patch and not isinstance(patch[k], bool):
             raise ValueError(f"{k} : vrai ou faux")
+    # les paroles calées d'un son, en LRC (server/tools/paroles.py les relit et les remet au format)
+    if "lrc" in patch and not (isinstance(patch["lrc"], str) and len(patch["lrc"]) <= LRC_MAX):
+        raise ValueError(f"lrc : un texte de {LRC_MAX} signes au plus")
     el = patch.get("element")
     if isinstance(el, dict):
         if "type" in el and el["type"] not in ELEMENT_TYPES_ALL:
@@ -813,6 +819,8 @@ def update(item_id: str, patch: dict) -> dict:
             raise KeyError(item_id)
         _check_write(it)
         _check_patch(patch)
+        if "lrc" in patch and it["kind"] != "audio":
+            raise ValueError("des paroles calées (lrc) ne vont qu'à un son")
         if "prompt" in patch or isinstance(patch.get("element"), dict):
             _frozen(it, "sa recette, sa planche")
         el_patch = patch.get("element") if isinstance(patch.get("element"), dict) else {}
@@ -823,6 +831,11 @@ def update(item_id: str, patch: dict) -> dict:
                 it[k] = patch[k]
         if "shared" in patch:
             it["shared"] = bool(patch["shared"])
+        if "lrc" in patch:
+            if patch["lrc"].strip():
+                it["lrc"] = patch["lrc"]
+            else:
+                it.pop("lrc", None)
         if it["kind"] == "element" and isinstance(patch.get("element"), dict):
             el = it["element"]
             for k in ("type", "description"):
