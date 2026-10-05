@@ -20,7 +20,7 @@ import { openPublish } from './element.js';   // éléments : « Publier comme �
 import { MODULES, TRACK_KINDS, COLORS, COLOR_FR, PRESETS, SOURCES_OF, DRUM_MODELS, NOTE_MODELS, TONICS, TONICS_FR, MODES,
   kindOfSource, keyLabel, moduleName } from './modules.js';
 import { el, modal, ask, confirmBox, menu, put, tok, letter } from './ui.js';
-import { migrate, workOf, describeWork, copyClips, pasteClips, splitClip, consolidatePatterns, clipRate,
+import { migrate, workOf, describeWork, copyClips, pasteClips, splitClip, consolidatePatterns, clipRate, splitRange, piecesIn,
   trajets, pistesDuModule, recoudre, sortirDeLaChaine, entrerDansLaChaine, deplacerPistes, grouperPistes, degrouper, rangerGroupes } from './projet.js';
 import { createUndo, isTextField } from '../commun/undo.js';
 import { createTimeline } from './timeline.js';
@@ -31,7 +31,7 @@ import { fenetres, $ as $partout, partout, fenetreDuGeste } from '../commun/fene
 import { createJouets } from './jouets/index.js';   // jouets : les jouets du Playground de Cal
 import { createRecorder } from './enregistrement.js';
 import { openGenerative, options, bestStems, STEM_FR } from './generatif.js';
-import { GEN_KINDS, genJobDone } from './generatif_region.js';   // génératif : les prises d'une région, sa partition, le MIDI extrait
+import { GEN_KINDS, genJobDone, isGenTrack, newRegion } from './generatif_region.js';   // génératif : les prises d'une région, sa partition, le MIDI extrait
 import { openGuide } from './guide.js';
 import { branchePanneau } from './panneau.js';   // le panneau Asset commun (commun/dock.js) : sons et MIDI de la bibliothèque
 
@@ -41,7 +41,8 @@ mountHeader('music', { sub: 'studio · YuE · stems' });
 const S = {
   proj: null, list: [], view: 'timeline', engines: null,
   // tracks : les en-têtes de piste choisis (clic, Ctrl+clic, Maj+clic) — Suppr les retire, Ctrl+G les groupe
-  sel: { track: null, tracks: [], pat: null, clip: null, clips: [], mod: null, cable: null },
+  // time : la sélection de temps de l'arrangement, { a, b, tracks, from } (app.timeSel, plus bas)
+  sel: { track: null, tracks: [], pat: null, clip: null, clips: [], mod: null, cable: null, time: null },
   oct: 4, vel: 0.85, kbd: true, midi: null, rec: false, metro: false,
 };
 const items = new Map();   // les objets de la bibliothèque déjà lus
@@ -104,7 +105,7 @@ export const app = {
       const a = vis.indexOf(picked[picked.length - 1]), b = vis.indexOf(id);
       picked = [...new Set([...picked, ...vis.slice(Math.min(a, b), Math.max(a, b) + 1)])];
     } else picked = [id];
-    Object.assign(S.sel, { track: id, tracks: picked, pat: t.pat || null, clip: null, clips: [], mod: null });
+    Object.assign(S.sel, { track: id, tracks: picked, pat: t.pat || null, clip: null, clips: [], mod: null, time: null });
     if (views[S.view]?.paintSel) views[S.view].paintSel(); else render();
   },
   // la vue de détail en bas, une colonne : aller au clip ('clip') ou à la
@@ -126,7 +127,9 @@ export const app = {
     }
     render();
   },
+  // choisir des clips (la barre de titre, un cadre…) : la sélection de temps s'en va (Live : l'objet OU le temps)
   selectClips(ids, keep = false) {
+    S.sel.time = null;
     S.sel.clips = [...ids];
     S.sel.clip = ids[ids.length - 1] || null;
     if (ids.length) S.sel.tracks = [];
@@ -591,18 +594,139 @@ export const app = {
     return null;
   },
 
+  // ── la sélection de temps (05/10, Cal : « couper les clips, sélectionner des
+  // parties de la grille et en faire un clip ») ──
+  // Live 12, « Arrangement View » : la barre de titre d'un clip le choisit
+  // (l'objet) ; cliquer dans son corps, ou dans une piste vide, pose le
+  // marqueur d'insertion ; glisser y choisit une plage de temps, sur une ou
+  // plusieurs pistes (timeline.js, startTime). S.sel.time = { a, b, tracks,
+  // from } ; a === b : le marqueur seul, dont la place est celle du moteur
+  // (moteur.js, engine.insert : la tête à l'arrêt). Une plage exclut les clips
+  // choisis : les commandes d'édition (Ctrl+E, Suppr, Ctrl+D, Ctrl+C / X,
+  // Ctrl+J, Ctrl+L) la prennent quand elle est là, sinon les clips choisis.
+  // La sélection n'est pas de l'œuvre : l'annulation ne la range pas.
+  timeSel() {
+    const T = S.sel.time;
+    if ((S.sel.clips || []).length) return null;      // des clips choisis l'emportent : ils sont venus après
+    const tracks = (T?.tracks || []).filter((id) => app.track(id));
+    return tracks.length ? { ...T, tracks } : null;
+  },
+  timeRange() { const T = app.timeSel(); return T && T.b - T.a > 1e-6 ? T : null; },
+  // couper aux bords de la plage (Live : Split sur une sélection de temps, le clip devient trois)
+  splitTime() {
+    const T = app.timeRange();
+    if (!T) return;
+    const n = S.proj.clips.length;
+    splitRange(S.proj, T.tracks, T.a, T.b, uid);
+    if (S.proj.clips.length === n) { toast('aucun clip ne passe par les bords de la plage'); return; }
+    app.label(`couper aux bords de la plage ${fmtBar(T.a)} → ${fmtBar(T.b)}`);
+    app.commit('data');
+  },
+  // retirer ce que la plage contient, sur ses pistes ; le temps reste (un trou)
+  deleteTime() {
+    const T = app.timeRange();
+    if (!T) return;
+    const gone = new Set(splitRange(S.proj, T.tracks, T.a, T.b, uid).map((c) => c.id));
+    if (!gone.size) { toast('la plage est vide : rien à retirer'); return; }
+    S.proj.clips = S.proj.clips.filter((c) => !gone.has(c.id));
+    if (gone.has(S.sel.clip)) S.sel.clip = null;
+    app.label(`retirer la plage ${fmtBar(T.a)} → ${fmtBar(T.b)}`);
+    app.commit('data');
+  },
+  // copier la plage : ses morceaux de clips, le vide du début compris (il se recolle)
+  copyTime() {
+    const T = app.timeRange();
+    if (!T) return null;
+    const items = piecesIn(S.proj, T.tracks, T.a, T.b, uid);
+    if (!items.length) { toast('la plage est vide : rien à copier'); return null; }
+    app.board = { base: T.a, len: T.b - T.a, items };
+    toast(`la plage ${fmtBar(T.a)} → ${fmtBar(T.b)} copiée · ${items.length} morceau${items.length > 1 ? 'x' : ''} de clip`);
+    return app.board;
+  },
+  // dupliquer la plage : sa copie juste après elle, à la place de ce qui y
+  // était ; la sélection passe sur la copie (Live : Duplicate)
+  duplicateTime() {
+    const T = app.timeRange();
+    if (!T) return;
+    const L = T.b - T.a;
+    const items = piecesIn(S.proj, T.tracks, T.a, T.b, uid);
+    if (!items.length) { toast('la plage est vide : rien à dupliquer'); return; }
+    const gone = new Set(splitRange(S.proj, T.tracks, T.b, T.b + L, uid).map((c) => c.id));
+    S.proj.clips = S.proj.clips.filter((c) => !gone.has(c.id));
+    for (const c of items) { c.start += L; S.proj.clips.push(c); }
+    S.sel.time = { ...T, a: T.b, b: T.b + L, from: { b: T.b, track: T.tracks[0] } };
+    engine.cue(T.b);
+    app.label(`dupliquer la plage ${fmtBar(T.a)} → ${fmtBar(T.b)}`);
+    app.commit('data');
+  },
+  // Ctrl+J sur une plage, « en faire un clip » (Live : Consolidate) : par
+  // piste, ce qu'elle couvre devient UN clip qui la couvre exactement. Une
+  // piste de motifs : ses notes dans un motif neuf (consolidatePatterns), et
+  // sur du vide un clip MIDI vide ; une piste audio : le clip coupé à ces
+  // bornes, et s'il y en a plusieurs, leur son rendu (consolidateAudio) ; une
+  // piste générative vide : une région (generatif_region.js).
+  async consolidateTime() {
+    const T = app.timeRange();
+    if (!T) return;
+    const P = S.proj, { a, b } = T, made = [];
+    for (const tid of T.tracks) {
+      const t = app.track(tid);
+      if (!t || t.kind === 'bus') continue;
+      const inside = splitRange(P, [tid], a, b, uid);
+      if (TRACK_KINDS[t.kind].pattern) {
+        if (inside.length) {
+          const r = consolidatePatterns(P, inside, uid, [a, b]);
+          if (typeof r === 'string') { toast(`${t.name} : ${r}`, 5000); continue; }
+          const ids = new Set(inside.map((c) => c.id));
+          P.clips = P.clips.filter((c) => !ids.has(c.id));
+          P.patterns.push(r.pattern); P.clips.push(r.clip); made.push(r.clip);
+        } else {
+          const pat = app.newPattern(tid, null, { name: 'Nouveau', quiet: true });
+          pat.steps = Math.min(256, Math.max(4, Math.ceil(b - a - 1e-9) * 4));
+          const c = { id: uid('c'), track: tid, start: a, len: b - a, pat: pat.id };
+          P.clips.push(c); made.push(c);
+        }
+      } else if (!inside.length) {
+        if (isGenTrack(t)) made.push(await newRegion(app, t, a, b));
+        else toast(`${t.name} : rien dans la plage — une piste audio vide ne fait pas de clip`, 4000);
+      } else if (inside.length === 1) made.push(inside[0]);
+      else { const n = await consolidateAudio(t, inside, a, b); if (n) made.push(n); }
+    }
+    if (!made.length) { app.commit('data'); return; }
+    S.sel.time = null;
+    S.sel.clips = made.map((c) => c.id); S.sel.clip = made[0].id; S.sel.track = made[0].track;
+    app.label(made.length > 1 ? `faire ${made.length} clips de la plage` : 'faire un clip de la plage');
+    app.commit('data');
+  },
+
   // ── la sélection de clips ──
   selected: () => S.proj.clips.filter((c) => (S.sel.clips || []).includes(c.id)),
+  // Ctrl+E (Live : Split) : une plage, à ses bords ; le marqueur
+  // d'insertion, les clips de ses pistes à sa place ; sinon les clips choisis
+  // (ou ceux de la piste choisie) à la tête de lecture
   splitAtPlayhead() {
-    const pos = Math.round(engine.position() * 4) / 4;
-    const g = app.selected().length ? app.selected() : S.proj.clips.filter((c) => c.track === S.sel.track);
+    if (app.timeRange()) { app.splitTime(); return; }
+    const T = app.timeSel();
+    const pos = T ? engine.insert : Math.round(engine.position() * 4) / 4;
+    const g = T ? S.proj.clips.filter((c) => T.tracks.includes(c.track))
+      : app.selected().length ? app.selected() : S.proj.clips.filter((c) => c.track === S.sel.track);
     const made = [];
     for (const c of g) { const n = splitClip(S.proj, c, pos, uid); if (n) made.push(n); }
-    if (!made.length) { toast('la tête de lecture n\'est dans aucun clip choisi'); return; }
-    S.sel.clips = made.map((c) => c.id); S.sel.clip = made[0].id;
+    if (!made.length) { toast(T ? 'le marqueur d\'insertion n\'est dans aucun clip' : 'la tête de lecture n\'est dans aucun clip choisi'); return; }
+    if (!T) { S.sel.clips = made.map((c) => c.id); S.sel.clip = made[0].id; }
+    app.label(made.length > 1 ? `couper ${made.length} clips à ${fmtBar(pos)}` : `couper le clip à ${fmtBar(pos)}`);
+    app.commit('data');
+  },
+  // un clip coupé à un temps donné (le menu du clip : « Couper ici »)
+  splitAt(id, pos) {
+    const c = app.clip(id);
+    const n = c && splitClip(S.proj, c, pos, uid);
+    if (!n) return;
+    app.label(`couper le clip à ${fmtBar(pos)}`);
     app.commit('data');
   },
   duplicateSel() {
+    if (app.timeRange()) { app.duplicateTime(); return; }
     const g = app.selected();
     if (!g.length) return;
     const b = copyClips(S.proj, g.map((c) => c.id));
@@ -610,21 +734,30 @@ export const app = {
     S.sel.clips = made.map((c) => c.id); S.sel.clip = made[made.length - 1]?.id || null;
     app.commit('data');
   },
-  copySel() { const b = copyClips(S.proj, S.sel.clips || []); if (b) { app.board = b; toast(`${b.items.length} clip${b.items.length > 1 ? 's' : ''} copié${b.items.length > 1 ? 's' : ''}`); } },
-  cutSel() { app.copySel(); app.removeSel(); },
+  copySel() {
+    if (app.timeRange()) { app.copyTime(); return; }
+    const b = copyClips(S.proj, S.sel.clips || []); if (b) { app.board = b; toast(`${b.items.length} clip${b.items.length > 1 ? 's' : ''} copié${b.items.length > 1 ? 's' : ''}`); }
+  },
+  cutSel() { if (app.timeRange()) { if (app.copyTime()) app.deleteTime(); return; } app.copySel(); app.removeSel(); },
+  // coller : au marqueur d'insertion (au début d'une plage), sinon à la tête de lecture
   paste() {
-    if (!app.board) { toast('rien à coller : Ctrl+C sur des clips'); return; }
-    const at = Math.round(engine.position() * 4) / 4;
-    const made = pasteClips(S.proj, app.board, at, uid, S.sel.track);
+    if (!app.board) { toast('rien à coller : Ctrl+C sur des clips ou sur une plage'); return; }
+    const T = app.timeSel();
+    const at = T ? (T.b - T.a > 1e-6 ? T.a : engine.insert) : Math.round(engine.position() * 4) / 4;
+    const made = pasteClips(S.proj, app.board, at, uid, T ? T.tracks[0] : S.sel.track);
     if (!made.length) { toast('rien à coller ici : les pistes d\'origine ont disparu'); return; }
+    S.sel.time = null;
     S.sel.clips = made.map((c) => c.id); S.sel.clip = made[made.length - 1].id;
     app.commit('data');
   },
-  removeSel() {
-    const ids = new Set(S.sel.clips || []);
+  // `only` : ces clips-là (la vue de détail : « Retirer le clip »)
+  removeSel(only = null) {
+    if (!only && app.timeRange()) { app.deleteTime(); return; }
+    const ids = new Set(only || S.sel.clips || []);
     if (!ids.size) return;
     S.proj.clips = S.proj.clips.filter((c) => !ids.has(c.id));
-    S.sel.clips = []; S.sel.clip = null;
+    S.sel.clips = (S.sel.clips || []).filter((id) => !ids.has(id));
+    if (ids.has(S.sel.clip)) S.sel.clip = null;
     app.commit('data');
   },
   muteSel() {
@@ -678,7 +811,8 @@ export const app = {
   // Ctrl+L (Live : « Loop selection ») : la boucle sur les clips choisis ;
   // sans clip choisi, la boucle s'allume ou s'éteint
   loopSelection() {
-    const g = app.selected(), P = S.proj;
+    const g = app.selected(), P = S.proj, T = app.timeRange();
+    if (T) { P.loop = { on: true, a: T.a, b: T.b }; toast(`boucle : ${fmtBar(T.a)} → ${fmtBar(T.b)}`); app.commit('meta'); return; }
     if (!g.length) { P.loop.on = !P.loop.on; app.commit('meta'); return; }
     const a = Math.min(...g.map((c) => c.start)), b = Math.max(...g.map((c) => c.start + c.len));
     P.loop = { on: true, a, b };
@@ -689,27 +823,19 @@ export const app = {
   // seul. Motifs : un motif neuf qui contient ce qu'ils jouaient ; sons :
   // leur son rendu tel qu'ils le lisent (moteur.js, renderClips), en WAV
   // dans la bibliothèque (dossier Musique), sans les effets de la piste.
+  // Une plage de temps choisie : consolidateTime (plus haut).
   async consolidateSel() {
+    if (app.timeRange()) return app.consolidateTime();
     const P = S.proj, g = app.selected();
-    if (!g.length) { toast('Ctrl+J : choisis des clips'); return; }
+    if (!g.length) { toast('Ctrl+J : choisis des clips, ou une plage de temps'); return; }
     const byTrack = new Map();
     for (const c of g) { if (!byTrack.has(c.track)) byTrack.set(c.track, []); byTrack.get(c.track).push(c); }
     const made = [];
     for (const [tid, cs] of byTrack) {
       const t = app.track(tid);
       if (t.kind === 'audio') {
-        const a = Math.min(...cs.map((c) => c.start)), b = Math.max(...cs.map((c) => c.start + c.len));
-        toast(`consolidation · ${t.name}…`, 20000);
-        try {
-          const buf = await renderClips(engine, P, cs, a, b);
-          const name = `${`${t.name} consolidé`.replace(/[^A-Za-z0-9._ -]+/g, '_').slice(0, 60)}.wav`;
-          const it = await uploadFile(new File([wav24(buf)], name, { type: 'audio/wav' }), { tool: 'music', folder: 'Musique', title: `${t.name} · consolidé` });
-          items.set(it.id, Promise.resolve({ ...it, href: href(it.url) }));
-          const ids = new Set(cs.map((c) => c.id));
-          P.clips = P.clips.filter((c) => !ids.has(c.id));
-          const n = { id: uid('c'), track: tid, start: a, len: b - a, item: it.id, off: 0 };
-          P.clips.push(n); made.push(n);
-        } catch (e) { toast(`consolider : ${e.message}`, 6000); }
+        const n = await consolidateAudio(t, cs, Math.min(...cs.map((c) => c.start)), Math.max(...cs.map((c) => c.start + c.len)));
+        if (n) made.push(n);
       } else {
         const r = consolidatePatterns(P, cs, uid);
         if (typeof r === 'string') { toast(`consolider ${t.name} : ${r}`, 5000); continue; }
@@ -752,6 +878,25 @@ export const app = {
   exportMix: () => openExport(),
   paintTransport: () => paintTransport(),
 };
+// des clips audio d'une piste en UN, de a à b : leur son rendu tel qu'ils le
+// lisent (moteur.js, renderClips), en WAV dans la bibliothèque (dossier
+// Musique), sans les effets de la piste ; ils laissent la place au clip neuf
+async function consolidateAudio(t, cs, a, b) {
+  const P = S.proj;
+  toast(`consolidation · ${t.name}…`, 20000);
+  try {
+    const buf = await renderClips(engine, P, cs, a, b);
+    const name = `${`${t.name} consolidé`.replace(/[^A-Za-z0-9._ -]+/g, '_').slice(0, 60)}.wav`;
+    const it = await uploadFile(new File([wav24(buf)], name, { type: 'audio/wav' }), { tool: 'music', folder: 'Musique', title: `${t.name} · consolidé` });
+    items.set(it.id, Promise.resolve({ ...it, href: href(it.url) }));
+    const ids = new Set(cs.map((c) => c.id));
+    P.clips = P.clips.filter((c) => !ids.has(c.id));
+    const n = { id: uid('c'), track: t.id, start: a, len: b - a, item: it.id, off: 0 };
+    P.clips.push(n);
+    return n;
+  } catch (e) { toast(`consolider : ${e.message}`, 6000); return null; }
+}
+
 const rec = createRecorder(app);
 app.rec = rec;
 app.toys = createJouets(app);   // jouets : les jouets posés, leur boucle, leurs câbles de notes et de valeur

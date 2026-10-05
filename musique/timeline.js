@@ -3,7 +3,8 @@
 //   la règle     sections (ajouter, nommer, déplacer avec leurs clips,
 //                colorer, dupliquer), mesures, boucle, marqueurs, tête de
 //                lecture (clic = aller là ; glisser vers le haut ou le bas =
-//                zoomer, comme la règle des temps de Live)
+//                zoomer, comme la règle des temps de Live ; son onglet se
+//                prend et se glisse)
 //   l'arc        une piste qu'on peint à la souris : elle pilote la sortie
 //                (filtre, volume ou les deux) — et plus bas, sous chaque
 //                piste, ses voies d'automation, une par réglage
@@ -18,6 +19,12 @@
 //                dupliquer, couper, consolider, rogner par les deux bords
 //                (la poignée de gauche rogne le DÉBUT, le contenu reste calé
 //                dans le temps), boucler, désactiver
+//   objet, temps comme dans Live (05/10) : la BARRE DE TITRE d'un clip est
+//                l'objet (le choisir, le glisser) ; son CORPS et le vide d'une
+//                piste sont le temps — un clic y pose le marqueur d'insertion
+//                (et la tête de lecture), glisser y choisit une plage sur une
+//                ou plusieurs pistes ; Ctrl+E coupe, Suppr retire la plage,
+//                Ctrl+D la duplique, Ctrl+J en fait un clip (musique.js, timeSel)
 //   en bas       la vue de détail, comme celle de Live : le clip choisi (Clip)
 //                ou les instruments et effets de la piste (Instrument) ;
 //                Maj+Tab bascule ; le séparateur se tire, sa hauteur reste
@@ -48,7 +55,7 @@ import { schemaNow } from './generatif_modeles.js';
 // la molette : la règle commune de toutes les timelines du portail (29/09)
 import { brancher, borne, tenirY, AIDE as MOLETTE } from '../commun/molette.js';
 // LA tête de lecture du portail (30/09, Cal : « toutes nos timelines [avec] la même cue […] celle du montage vidéo »)
-import { tete, poser, suivre } from '../commun/tete.js';
+import { tete, poser, suivre, glisser } from '../commun/tete.js';
 
 const HEAD_W = 224;
 const SEC_H = 22, BAR_H = 30, RULER_H = SEC_H + BAR_H, ARC_H = 58, AUTO_H = 46;
@@ -74,6 +81,11 @@ export function createTimeline(app) {
   // commun/tete.js : au-dessus de la règle (5), sous le coin (7) ; sous les en-têtes collés, cachée
   const ph = tete({ z: 6 });
   let phX = null;
+  // son onglet se prend et se glisse (Cal, 05/10 : « je ne peux pas la slider
+  // en attrapant sa tête ») : musique.css le rend saisissable, collé en haut de
+  // la vue quand on descend dans les pistes
+  ph.firstChild.title = 'la tête de lecture · glisser : la déplacer, aimantée (Alt : libre)';
+  ph.firstChild.addEventListener('pointerdown', (e) => grabHead(e));
   const zone = el('div', { class: 'ar-zone' });
   const recBox = el('div', { class: 'ar-rec' }, el('span', {}, 'prise'));
   const marquee = el('div', { class: 'ar-marquee' });
@@ -108,6 +120,10 @@ export function createTimeline(app) {
     const n = (S.sel.clips || []).length;
     const pos = app.pos();
     const inside = c && pos > c.start && pos < c.start + c.len;
+    const T = app.timeSel(), R = app.timeRange();   // la sélection de temps (musique.js)
+    // Couper : une plage, le marqueur dans un clip de ses pistes, sinon la tête dans le clip choisi
+    const ins = app.engine.insert;
+    const cutOK = R ? true : T ? P().clips.some((x) => T.tracks.includes(x.track) && ins > x.start && ins < x.start + x.len) : inside;
     const btn = (label, on, why, fn, title = '') => el('button', { class: 'tb ghost sm', type: 'button', disabled: !on || null,
       title: on ? title : why, onclick: fn }, label);
     const snapSel = el('select', { class: 'fld mu-mini', 'aria-label': 'aimant', title: 'aimant à la grille (Alt en glissant : libre) · Ctrl+1 / Ctrl+2 : resserrer / élargir',
@@ -124,14 +140,14 @@ export function createTimeline(app) {
       el('i', { class: 'ar-sep' }),
       el('label', { class: 'ar-lab' }, el('span', { class: 'lbl' }, 'aimant'), snapSel),
       el('i', { class: 'ar-sep' }),
-      btn('Couper', inside, c ? 'place la tête de lecture dans le clip' : 'choisis un clip', () => app.splitAtPlayhead(), 'à la tête de lecture · Ctrl+E'),
-      btn('Dupliquer', n > 0, 'choisis un clip', () => app.duplicateSel(), 'Ctrl+D'),
-      btn('Consolider', n > 0, 'choisis des clips', () => app.consolidateSel(), 'un seul clip · Ctrl+J'),
-      btn('Boucler', n > 0, 'choisis des clips', () => app.loopSelection(), 'la boucle sur la sélection · Ctrl+L'),
+      btn('Couper', cutOK, T ? 'le marqueur d\'insertion n\'est dans aucun clip : clique dans un clip, là où le couper' : c ? 'clique dans le clip, là où le couper' : 'clique dans un clip, ou glisse une plage', () => app.splitAtPlayhead(), R ? 'aux bords de la plage · Ctrl+E' : 'au marqueur d\'insertion · Ctrl+E'),
+      btn('Dupliquer', n > 0 || !!R, 'choisis un clip (sa barre de titre), ou glisse une plage', () => app.duplicateSel(), R ? 'la plage, juste après elle · Ctrl+D' : 'Ctrl+D'),
+      btn(R ? 'En faire un clip' : 'Consolider', n > 0 || !!R, 'choisis des clips, ou glisse une plage', () => app.consolidateSel(), R ? 'la plage devient un clip, sur chaque piste · Ctrl+J' : 'un seul clip · Ctrl+J'),
+      btn('Boucler', n > 0 || !!R, 'choisis des clips, ou une plage', () => app.loopSelection(), 'la boucle sur la sélection · Ctrl+L'),
       btn(c?.mute ? 'Activer' : 'Désactiver', n > 0, 'choisis un clip', () => app.muteSel(), '0'),
-      btn('Retirer', n > 0, 'choisis un clip', () => app.removeSel(), 'Suppr'),
+      btn('Retirer', n > 0 || !!R, 'choisis un clip, ou une plage', () => app.removeSel(), R ? 'ce que la plage contient · Suppr' : 'Suppr'),
       el('span', { class: 'sp' }),
-      el('span', { class: 'lbl ar-info' }, n > 1 ? `${n} clips choisis` : c ? `${t.name} · ${app.bar(c.start)} → ${app.bar(c.start + c.len)}` : 'double-clic sur une piste : un clip · glisser : choisir'),
+      el('span', { class: 'lbl ar-info' }, R ? `plage · ${app.bar(R.a)} → ${app.bar(R.b)} · ${R.tracks.length} piste${R.tracks.length > 1 ? 's' : ''}` : n > 1 ? `${n} clips choisis` : c ? `${t.name} · ${app.bar(c.start)} → ${app.bar(c.start + c.len)}` : 'double-clic sur une piste : un clip · glisser : une plage'),
       el('i', { class: 'ar-sep' }),
       el('button', { class: 'tb ghost sm', type: 'button', title: 'dézoomer · − (Alt+molette)', onclick: () => setZoom(ppb() / 1.25) }, '−'),
       el('span', { class: 'ar-zoom', title: 'pixels par mesure' }, el('b', {}, String(Math.round(ppb() * P().sig))), ' px/mes'),
@@ -722,6 +738,8 @@ export function createTimeline(app) {
     const ln = el('div', { class: `ar-lane${S.sel.track === t.id ? ' sel' : ''}`, 'data-track': t.id,
       style: { width: `${width()}px`, height: `${thOf(t)}px`, '--bar': `${X(p.sig)}px`, '--beat': `${X(1)}px`, '--c': `var(--${t.color})` } });
     for (const c of p.clips.filter((x) => x.track === t.id)) ln.append(clipEl(c, t));
+    const T = app.timeSel();
+    if (T?.tracks.includes(t.id)) ln.append(tselEl(T));
     if (isGenTrack(t)) ln.classList.add('gen');
     ln.addEventListener('dblclick', (e) => {
       if (e.target !== ln) return;
@@ -730,11 +748,15 @@ export function createTimeline(app) {
       else if (t.kind === 'audio') app.addAudio(t.id, b);
       else { const c = app.newClip(t.id, b); if (c) app.showDetail('clip'); }
     });
-    // sur une piste générative, tirer sur le vide dessine une région (Maj ou
-    // Ctrl : le cadre de sélection, comme ailleurs)
+    // le vide d'une piste est du temps, comme le corps d'un clip (Live) : un
+    // clic, le marqueur d'insertion ; glisser, une plage ; Maj : l'étendre ;
+    // Ctrl : le cadre qui choisit des clips ; sur une piste générative, tirer
+    // dessine une région
     ln.addEventListener('pointerdown', (e) => {
       if (e.target !== ln || e.button !== 0) return;
-      if (isGenTrack(t) && !e.shiftKey && !e.ctrlKey && !e.metaKey) startRegion(e, t, ln); else startMarquee(e, t);
+      if (e.ctrlKey || e.metaKey) startMarquee(e, t);
+      else if (isGenTrack(t) && !e.shiftKey) startRegion(e, t, ln);
+      else startTime(e, t);
     });
     ln.addEventListener('dragover', (e) => onDragOver(e, t));
     ln.addEventListener('dragleave', () => { dropLine.style.display = 'none'; });
@@ -808,13 +830,23 @@ export function createTimeline(app) {
     });
     box.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      if (!sel().has(c.id)) app.selectClips([c.id], true);
-      clipMenu(e, c, t, ttl);
+      // dans le corps, sur la plage choisie de cette piste : le menu de la
+      // plage, et elle reste ; ailleurs, le clip (choisi s'il ne l'était pas)
+      const at = Math.max(0, snapB(beatAt(e.clientX), e));
+      const R = app.timeRange();
+      const inR = R && R.tracks.includes(t.id) && at >= R.a - 1e-6 && at <= R.b + 1e-6 && !e.target.closest?.('.ch');
+      if (!inR && !sel().has(c.id)) { app.selectClips([c.id], true); paintSel(); }
+      clipMenu(e, c, t, ttl, inR ? R : null, at);
     });
     box.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || ttl.classList.contains('editing')) return;
       e.stopPropagation();
       const edge = e.target.classList.contains('rs') ? (e.target.classList.contains('l') ? 'l' : 'r') : null;
+      // Live 12 : la barre de titre est l'objet (choisir, glisser ; Ctrl :
+      // copier) ; le corps est le temps (startTime : un clic, le marqueur
+      // d'insertion et la tête de lecture ; glisser, une plage ; Maj :
+      // l'étendre). Ctrl+clic dans le corps : ajouter ou retirer le clip.
+      if (!edge && !e.target.closest?.('.ch') && !e.ctrlKey && !e.metaKey) { startTime(e, t, c); return; }
       if ((e.shiftKey || e.ctrlKey || e.metaKey) && !edge && !(e.ctrlKey && sel().has(c.id))) {   // ajouter / retirer de la sélection (Live : Ctrl+clic)
         const s = sel();
         if (s.has(c.id)) s.delete(c.id); else s.add(c.id);
@@ -827,14 +859,23 @@ export function createTimeline(app) {
       // l'ouvre ensuite sur le clip, comme d'habitude (dragClips, up)
       const keepDock = document.body.classList.contains('mu-gen-dock');
       if (!sel().has(c.id)) { app.selectClips([c.id], true); paintSel(keepDock); }
-      else { S.sel.clip = c.id; S.sel.track = t.id; }
+      else { S.sel.clip = c.id; S.sel.track = t.id; if (S.sel.time) { S.sel.time = null; paintTime(); } }
       dragClips(e, c, t, box, edge);
     });
     return box;
   }
 
-  function clipMenu(e, c, t, ttl) {
+  // R : la plage choisie sous le clic droit (son menu, timeItems) ; at : le temps du clic (« Couper ici »)
+  function clipMenu(e, c, t, ttl, R = null, at = null) {
+    if (R) {
+      menu(e.clientX, e.clientY, [...timeItems(R), '-', { head: clipLabel(c, t, app.pat(c.pat)) || 'clip' },
+        { label: 'Ouvrir dans la vue Clip', onclick: () => { S.sel.clip = c.id; S.sel.track = t.id; app.showDetail('clip'); } },
+        { label: 'Choisir ce clip', sub: 'clic sur sa barre de titre', onclick: () => { app.selectClips([c.id], true); paintSel(); } },
+        { label: 'Renommer', sub: 'double-clic sur son titre', onclick: () => renameClip(c, ttl, c.name || ttl.textContent) }]);
+      return;
+    }
     const n = (S.sel.clips || []).length;
+    const cut = at !== null && at >= c.start + 0.0625 && at <= c.start + c.len - 0.0625;   // la borne de splitClip (projet.js)
     // le génératif : les prises d'une région ; un clip audio comme son de la
     // région montrée en bas ; un clip de notes dans sa partition (YuE2)
     const reg = isRegion(c), tgt = genTarget(app), sch = schemaNow();
@@ -847,7 +888,8 @@ export function createTimeline(app) {
       { head: n > 1 ? `${n} clips` : clipLabel(c, t, app.pat(c.pat)) || 'clip' },
       { label: 'Ouvrir dans la vue Clip', onclick: () => app.showDetail('clip') },
       { label: 'Renommer', sub: 'Ctrl+R', onclick: () => renameClip(c, ttl, c.name || ttl.textContent) },
-      { label: 'Couper à la tête de lecture', sub: 'Ctrl+E', onclick: () => app.splitAtPlayhead() },
+      { label: 'Couper ici', sub: cut ? `à ${app.bar(at)}` : '', disabled: !cut, why: 'clic droit dans le corps du clip, là où le couper', onclick: () => app.splitAt(c.id, at) },
+      { label: app.timeSel() ? 'Couper au marqueur d\'insertion' : 'Couper à la tête de lecture', sub: 'Ctrl+E', onclick: () => app.splitAtPlayhead() },
       { label: 'Dupliquer', sub: 'Ctrl+D', onclick: () => app.duplicateSel() },
       { label: 'Consolider', sub: 'Ctrl+J', onclick: () => app.consolidateSel() },
       { label: 'Boucler la sélection', sub: 'Ctrl+L', onclick: () => app.loopSelection() },
@@ -880,6 +922,7 @@ export function createTimeline(app) {
     for (const b of grid.querySelectorAll('.ar-head, .ar-lane')) b.classList.toggle('sel', b.dataset.track === S.sel.track);
     const picked = new Set(S.sel.tracks || []);
     for (const b of grid.querySelectorAll('.ar-head')) b.classList.toggle('pick', picked.has(b.dataset.track));
+    paintTime();
     paintTools();
     if (ui().dock !== false && !keepDock) dock.render();
   }
@@ -1015,19 +1058,14 @@ export function createTimeline(app) {
     const up = (ev) => {
       removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
       draft.remove();
-      if (!moved) {
-        S.sel.clips = []; S.sel.clip = null;
-        if (!app.engine.running) app.engine.seek(Math.max(0, snapB(beatAt(ev.clientX), ev)));
-        app.selectTrack(t.id, 'lane');
-        return;
-      }
+      if (!moved) { timePoint(t, Math.max(0, snapB(beatAt(ev.clientX), ev))); return; }
       newRegion(app, t, a, b);
     };
     addEventListener('pointermove', mv); addEventListener('pointerup', up);
   }
 
-  // tirer un cadre sur les voies vides : les clips qu'il touche ; un simple
-  // clic pose la tête de lecture (à l'arrêt) et choisit la piste
+  // Ctrl + tirer un cadre sur les voies vides : les clips qu'il touche ; un
+  // simple clic pose le marqueur d'insertion, comme sans Ctrl
   function startMarquee(e, t) {
     const g = grid.getBoundingClientRect();
     const x0 = e.clientX, y0 = e.clientY;
@@ -1049,16 +1087,112 @@ export function createTimeline(app) {
     const up = (ev) => {
       removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
       marquee.style.display = 'none';
-      if (!moved) {
-        S.sel.clips = []; S.sel.clip = null;
-        if (!app.engine.running) app.engine.seek(Math.max(0, snapB(beatAt(ev.clientX), ev)));
-        app.selectTrack(t.id, 'lane');
-        return;
-      }
+      if (!moved) { timePoint(t, Math.max(0, snapB(beatAt(ev.clientX), ev))); return; }
       app.selectClips(S.sel.clips, true);
       paintSel();
     };
     addEventListener('pointermove', mv); addEventListener('pointerup', up);
+  }
+
+  // ── le temps : le marqueur d'insertion, la sélection de temps ──
+  // Live 12, chapitre « Arrangement View » : « Clicking into the Arrangement
+  // background selects a point in time, represented by a flashing insert
+  // marker. Clicking and dragging selects a timespan. » ; la barre de titre
+  // d'un clip le choisit, son corps choisit du temps ; Maj+clic étend la
+  // sélection. Ici : le temps est aimanté à la grille (Alt : libre) ; à
+  // l'arrêt la tête de lecture va au marqueur, en lecture la lecture continue
+  // et l'arrêt y revient (moteur.js, cue) ; le clip cliqué s'ouvre en bas sans
+  // être « choisi ». L'état : S.sel.time (musique.js, timeSel).
+  function timePoint(t, b, c = null) {
+    Object.assign(S.sel, { time: { a: b, b, tracks: [t.id], from: { b, track: t.id } }, clips: [], tracks: [],
+      clip: c ? c.id : null, track: t.id, pat: c?.pat || t.pat || null });
+    app.engine.cue(b);
+    paintSel();
+  }
+  function startTime(e, t, c = null) {
+    e.preventDefault();
+    const T0 = e.shiftKey ? app.timeSel() : null;
+    const b0 = Math.max(0, snapB(beatAt(e.clientX), e));
+    const from = T0?.from && app.track(T0.from.track) ? T0.from : T0 ? { b: T0.a, track: T0.tracks[0] } : { b: b0, track: t.id };
+    const x0 = e.clientX, y0 = e.clientY;
+    let moved = !!T0, tid = t.id;
+    // la plage du point de départ jusqu'à b, sur les pistes de l'une à l'autre (dans l'ordre des voies)
+    const span = (b, to) => {
+      const ids = [...grid.querySelectorAll('.ar-lane[data-track]')].map((n) => n.dataset.track);
+      const i = ids.indexOf(from.track), j = ids.indexOf(to);
+      return { a: Math.min(from.b, b), b: Math.max(from.b, b), tracks: i < 0 || j < 0 ? [to] : ids.slice(Math.min(i, j), Math.max(i, j) + 1), from };
+    };
+    const show = (T) => { S.sel.time = T; S.sel.clips = []; S.sel.tracks = []; paintTime(); grid.querySelectorAll('.clip.sel').forEach((n) => n.classList.remove('sel')); };
+    if (T0) show(span(b0, t.id));
+    const mv = (ev) => {
+      if (!moved && Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - y0) < 5) return;
+      moved = true;
+      edgeScroll(ev);
+      const ln = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('.ar-lane[data-track]');
+      if (ln) tid = ln.dataset.track;
+      show(span(Math.max(0, snapB(beatAt(ev.clientX), ev)), tid));
+    };
+    const up = () => {
+      removeEventListener('pointermove', mv, true); removeEventListener('pointerup', up, true); removeEventListener('pointercancel', up, true);
+      if (!moved) { timePoint(t, b0, c); return; }
+      // une plage, ou le marqueur sur plusieurs pistes (glissé à la verticale)
+      Object.assign(S.sel, { clip: c ? c.id : null, track: t.id, pat: c?.pat || t.pat || null });
+      app.engine.cue(S.sel.time.a);
+      paintSel();
+    };
+    addEventListener('pointermove', mv, true); addEventListener('pointerup', up, true); addEventListener('pointercancel', up, true);
+  }
+  // la sélection dans une voie : la plage en voile, le marqueur en trait qui clignote
+  const tselEl = (T) => {
+    const pt = T.b - T.a < 1e-6;
+    return el('div', { class: `ar-tsel${pt ? ' pt' : ''}`, 'aria-hidden': 'true',
+      style: pt ? { left: `${X(app.engine.insert)}px` } : { left: `${X(T.a)}px`, width: `${X(T.b - T.a)}px` } });
+  };
+  function paintTime() {
+    grid.querySelectorAll('.ar-tsel').forEach((n) => n.remove());
+    const T = app.timeSel();
+    if (!T) return;
+    for (const id of T.tracks) grid.querySelector(`.ar-lane[data-track="${id}"]`)?.append(tselEl(T));
+    insX = X(app.engine.insert);
+  }
+  // à chaque image : le marqueur suit le moteur (la règle, Origine, l'arrêt le déplacent)
+  let insX = null;
+  function frameTime() {
+    const x = X(app.engine.insert);
+    if (x === insX) return;
+    insX = x;
+    for (const n of grid.querySelectorAll('.ar-tsel.pt')) n.style.left = `${x}px`;
+  }
+  // près des bords de la vue, elle défile pendant un geste
+  function edgeScroll(ev) {
+    const r = scroll.getBoundingClientRect();
+    if (ev.clientX > r.right - 24) scroll.scrollLeft += 14; else if (ev.clientX < r.left + HEAD_W + 16) scroll.scrollLeft -= 14;
+    if (ev.clientY > r.bottom - 20) scroll.scrollTop += 10;
+  }
+  // les commandes de la plage (le clic droit d'un clip, d'une voie)
+  const timeItems = (R) => [
+    { head: `plage · ${app.bar(R.a)} → ${app.bar(R.b)} · ${R.tracks.length} piste${R.tracks.length > 1 ? 's' : ''}` },
+    { label: 'En faire un clip', key: 'Ctrl+J', onclick: () => app.consolidateTime() },
+    { label: 'Couper aux bords de la plage', key: 'Ctrl+E', onclick: () => app.splitTime() },
+    { label: 'Dupliquer la plage', key: 'Ctrl+D', onclick: () => app.duplicateTime() },
+    { label: 'Copier la plage', key: 'Ctrl+C', onclick: () => app.copyTime() },
+    { label: 'Couper la plage (presse-papiers)', key: 'Ctrl+X', onclick: () => { if (app.copyTime()) app.deleteTime(); } },
+    { label: 'Retirer ce que la plage contient', key: 'Suppr', onclick: () => app.deleteTime() },
+    { label: 'Boucler sur la plage', key: 'Ctrl+L', onclick: () => app.loopSelection() },
+  ];
+  // la tête de lecture prise par son onglet : glisser la fait suivre, aimantée
+  // (Alt : libre) ; en lecture, la lecture repart d'où on la lâche à chaque pas
+  function grabHead(e) {
+    if (e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    let last = null;
+    const go = (ev) => {
+      edgeScroll(ev);
+      const b = Math.max(0, snapB(beatAt(ev.clientX), ev));
+      if (b !== last) { last = b; app.engine.seek(b); }
+    };
+    document.body.classList.add('ar-grab');
+    glisser(e, go, () => { document.body.classList.remove('ar-grab'); paintTools(); });
   }
 
   function drawClip(cv, c, t, pat) {
@@ -1260,6 +1394,7 @@ export function createTimeline(app) {
         recBox.firstChild.textContent = `prise · ${R.n} note${R.n > 1 ? 's' : ''}`;
       }
     } else recBox.style.display = 'none';
+    frameTime();
     dock.frame(beat);
   }
 
@@ -1276,6 +1411,8 @@ export function createTimeline(app) {
     const ctrl = e.ctrlKey || e.metaKey;
     const has = (S.sel.clips || []).length > 0;
     const L = letter(e);   // la lettre, pas la touche : juste en AZERTY (ui.js)
+    // Suppr sur une plage de temps : ce qu'elle contient s'en va (Ctrl+Z le rend)
+    if ((k === 'Delete' || k === 'Backspace') && !ctrl && app.timeRange()) { e.preventDefault(); app.deleteTime(); return true; }
     if ((k === 'Delete' || k === 'Backspace') && !ctrl && has) { e.preventDefault(); app.removeSel(); return true; }
     // Suppr sur des en-têtes choisis : les pistes partent (Ctrl+Z les rend)
     if ((k === 'Delete' || k === 'Backspace') && !ctrl && (S.sel.tracks || []).length) { e.preventDefault(); app.removeTracks([...S.sel.tracks], { ask: false }); return true; }
@@ -1307,12 +1444,27 @@ export function createTimeline(app) {
     if (k === '+' || k === '=' || e.code === 'NumpadAdd') { e.preventDefault(); setZoom(ppb() * 1.25); return true; }
     if (k === '-' || e.code === 'NumpadSubtract') { e.preventDefault(); setZoom(ppb() / 1.25); return true; }
     if (e.code === 'Digit0' || e.code === 'Numpad0') { if (has) { e.preventDefault(); app.muteSel(); } return true; }
-    if (k === 'Escape') { app.selectClips([]); return true; }
+    if (k === 'Escape') { app.selectClips([]); return true; }   // les clips et le temps (selectClips)
     if ((k === 'ArrowLeft' || k === 'ArrowRight') && has) {
       e.preventDefault();
       const d = (k === 'ArrowLeft' ? -1 : 1) * (snapU() || 0.25);
       const g = P().clips.filter((c) => sel().has(c.id));
       if (g.every((c) => c.start + d >= 0)) { for (const c of g) c.start += d; app.commit('data'); }
+      return true;
+    }
+    // sans clip choisi : ← → déplacent le marqueur d'insertion (ou la plage)
+    // d'un pas de grille ; Maj : étendre ou resserrer la plage (Live)
+    if ((k === 'ArrowLeft' || k === 'ArrowRight') && app.timeSel()) {
+      e.preventDefault();
+      const T = app.timeSel(), d = (k === 'ArrowLeft' ? -1 : 1) * (snapU() || 0.25);
+      const a = T.b - T.a < 1e-6 ? app.engine.insert : T.a, len = T.b - T.a;
+      if (e.shiftKey) {
+        let A = a, B = a + len;
+        if (d > 0 || B + d > A + 1e-6) B += d; else A = Math.max(0, A + d);
+        S.sel.time = { ...T, a: A, b: B, from: { b: A, track: T.tracks[0] } };
+      } else S.sel.time = { ...T, a: Math.max(0, a + d), b: Math.max(0, a + d) + len, from: { b: Math.max(0, a + d), track: T.tracks[0] } };
+      app.engine.cue(S.sel.time.a);
+      paintTime(); paintTools();
       return true;
     }
     if (L === 'r' && has) { app.reverseSel(); return true; }
@@ -1372,12 +1524,15 @@ export function createTimeline(app) {
       const t = app.track(ln.dataset.track);
       if (!t) return null;
       const b = Math.max(0, Math.floor(beatAt(e.clientX) / p.sig) * p.sig);
+      const R = app.timeRange(), at = beatAt(e.clientX);
+      const inR = R && R.tracks.includes(t.id) && at >= R.a - 1e-6 && at <= R.b + 1e-6;
       return [
+        ...(inR ? [...timeItems(R), '-'] : []),
         { head: `${t.name} · mesure ${app.bar(b)}` },
         isGenTrack(t) ? { label: 'Une région ici', sub: 'quatre mesures', onclick: () => newRegion(app, t, b, b + 4 * p.sig) }
           : t.kind === 'audio' ? { label: 'Un son de la bibliothèque ici', onclick: () => app.addAudio(t.id, b) }
             : { label: 'Un clip ici', sub: 'une mesure', onclick: () => { const c = app.newClip(t.id, b); if (c) app.showDetail('clip'); } },
-        { label: 'Coller ici', key: 'Ctrl+V', disabled: !app.board, why: 'rien à coller : Ctrl+C sur des clips', onclick: () => { app.engine.seek(b); app.paste(); } },
+        { label: 'Coller ici', key: 'Ctrl+V', disabled: !app.board, why: 'rien à coller : Ctrl+C sur des clips ou sur une plage', onclick: () => { S.sel.time = null; app.engine.seek(b); app.paste(); } },
         { label: 'Choisir ses clips', onclick: () => app.selectClips(p.clips.filter((c) => c.track === t.id).map((c) => c.id)) },
         { label: 'Aller là', onclick: () => app.engine.seek(b) },
         '-',
