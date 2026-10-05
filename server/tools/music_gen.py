@@ -156,12 +156,54 @@ def region_params(d: dict) -> dict:
     md = pj.get("mode", "minor")
     if md not in SCALES:
         raise ValueError(f"mode inconnu : {md}")
+    session = {"bpm": bpm, "sig": sig, "tonic": tonic, "mode": md}
+    # ce que la personne a changé du projet pour cette génération (06/10, Cal : « la
+    # tonalité, qu'on peut modifier, mais par défaut il prend la nôtre ») : le reste vient
+    # du projet, et la recette garde les deux (params.projet, params.projet_session)
+    lib = d.get("libre") or {}
+    if not isinstance(lib, dict) or any(k not in ("bpm", "tonic", "mode", "sig") for k in lib):
+        raise ValueError("ce qui change du projet : tempo (bpm), tonique, mode, mesure (sig)")
+    if "bpm" in lib:
+        bpm = _num(lib["bpm"], 20, 300, "tempo choisi")
+    if "sig" in lib:
+        if lib["sig"] not in (2, 3, 4, 6):
+            raise ValueError("mesure choisie : 2, 3, 4 ou 6 temps")
+        sig = lib["sig"]
+    if "tonic" in lib:
+        tonic = _num(lib["tonic"], 0, 11, "tonique choisie", integer=True)
+    if "mode" in lib:
+        if lib["mode"] not in SCALES:
+            raise ValueError(f"mode choisi inconnu : {lib['mode']}")
+        md = lib["mode"]
+    libre = sorted(k for k in lib if session[k] != {"bpm": bpm, "sig": sig, "tonic": tonic, "mode": md}[k])
+    # la réponse à « Que veux-tu générer ? » et sa voie (le schéma, intentions) : elles vont
+    # avec le modèle et la tâche demandés ; une voie « garder » n'en garde qu'un stem
+    I = S.get("intentions", {})
+    quoi, voie, garder = d.get("quoi"), d.get("voie"), d.get("garder")
+    V = None
+    if quoi is not None or voie is not None:
+        if quoi not in I.get("ordre", []):
+            raise ValueError(f"« {quoi} » n'est pas une réponse du panneau ({', '.join(I.get('ordre', []))})")
+        V = next((x for x in I[quoi]["voies"] if x["id"] == voie), None)
+        if not V:
+            raise ValueError(f"{I[quoi]['label']} : pas de voie « {voie} »")
+        if (V["model"], V["task"]) != (model, task):
+            raise ValueError(f"la voie « {V['label']} » demande {V['model']} · {V['task']}, pas {model} · {task}")
+    keep = None
+    if garder is not None:
+        if not V or not V.get("garder"):
+            raise ValueError("garder un stem demande une voie « chanson puis stem »")
+        if garder not in I["stems"] or garder.startswith("_"):
+            raise ValueError(f"instrument à garder inconnu : {garder!r} ({', '.join(k for k in I['stems'] if not k.startswith('_'))})")
+        keep = {"instrument": garder, **I["stems"][garder]}
+    elif V and V.get("garder"):
+        raise ValueError(f"{V['label']} : dis l'instrument à garder")
     rg = d.get("region") or {}
     a = _num(rg.get("a"), 0, 1e5, "début de la région")
     b = _num(rg.get("b"), 0, 1e5, "fin de la région")
     if b <= a or b - a > MAX_REGION_BEATS:
         raise ValueError(f"la région va de son début à sa fin, {MAX_REGION_BEATS} temps au plus")
-    spb = 60.0 / bpm
+    spb = 60.0 / session["bpm"]          # la région se mesure au tempo du projet, celui qui la joue
     secs = (b - a) * spb
     zone = T.get("zone")
     if zone and not zone["min"] <= secs <= zone["max"]:
@@ -248,6 +290,12 @@ def region_params(d: dict) -> dict:
         pd = M["params"][pid]
         if pd.get("requis") and _cond(pd.get("si"), vals) and pid not in vals:
             raise ValueError(f"{pd['label']} : à remplir pour {T['nom']}")
+    if keep and keep["mot"]:
+        # le mot de l'instrument dans le style, pour que la chanson le contienne (notre choix, étude § 8.3)
+        sk = "caption" if model == "ace" else "tags"
+        cur = vals.get(sk, "")
+        if keep["mot"].lower() not in cur.lower():
+            vals[sk] = ", ".join(x for x in (cur, keep["mot"]) if x)[:M["params"][sk]["max"]]
     if model == "yue":
         if vals.get("abc") and vals.get("mode") == "off":
             raise ValueError("une partition demande « mélodie et accords » ou « mélodie seule » (YuE2)")
@@ -280,8 +328,11 @@ def region_params(d: dict) -> dict:
     title = (d.get("title") or "").strip()[:80] if isinstance(d.get("title"), str) else ""
     if mode(model) == "reel" and not T["reel"]["ok"]:
         raise ValueError(f"{M['nom']} · {T['nom']} : pas câblé en réel — {T['reel'].get('pourquoi', '')}")
+    if keep:
+        title = (title or f"{M['court']} · {T['nom']}") + f" · {S['pistes']['fr'].get(garder, 'autre')}"
     return {"model": model, "task": task, "values": vals, "n": n, "seed": seed,
             "projet": {"bpm": bpm, "sig": sig, "tonic": tonic, "mode": md, "keyscale": ace_key(tonic, md)},
+            "projet_session": session, "libre": libre, "quoi": quoi, "voie": voie, "garder": keep,
             "region": {"a": a, "b": b, "secs": round(secs, 4), "w0": w0, "w1": w1,
                        "win_secs": round((w1 - w0) * spb, 4), "off": round((a - w0) * spb, 4)},
             "refs": refs, "sortie": T["sortie"], "sections": sections,
@@ -463,7 +514,8 @@ def _store(ctx, p: dict, dest: Path, k: int, engine: str, extra: dict | None = N
     return ctx.add(dest, kind="audio", title=f"{p['title']} · prise {k + 1}" + (" (essai)" if essai else ""),
                    prompt=p["values"].get("caption") or p["values"].get("tags") or "", parents=p["refs"],
                    params={"model": p["model"], "task": p["task"], "values": p["values"], "projet": p["projet"],
-                           "region": p["region"], "seed": p["seed"] + k, "take": k, "region_off": p["region"]["off"]
+                           "projet_session": p["projet_session"], "libre": p["libre"], "quoi": p["quoi"], "voie": p["voie"],
+                           "garder": p["garder"], "region": p["region"], "seed": p["seed"] + k, "take": k, "region_off": p["region"]["off"]
                            if p["sortie"] == "contexte" else 0.0, "engine": engine, "clip": p["clip"], **(extra or {})},
                    origin={"model": "factice" if essai else M["nom"]}, tags=["musique", "région", "essai" if essai else "généré"],
                    folder="Musique")
@@ -524,6 +576,16 @@ def build_ace_graph(p: dict, style_name: str | None = None) -> dict:
     return g
 
 
+def yue_recipe(p: dict, k: int) -> dict:
+    """La prise k d'une région YuE2, dans la forme de music_yue.yue_params (qui la
+    juge encore) : le style porte déjà le tempo et la tonalité (region_params), la
+    partition fournie (relue, ou écrite depuis un guide MIDI) part dans `abc`."""
+    v = p["values"]
+    return music_yue.yue_params({"tags": v["tags"], "lyrics": v.get("lyrics", ""), "duration_s": v["duration_s"],
+                                 "seed": p["seed"] + k, "mode": v.get("mode", "full"), "precision": v.get("precision", "bf16"),
+                                 "ref": v.get("ref", ""), "abc": v.get("abc", ""), "title": f"{p['title']} · prise {k + 1}"})
+
+
 def run_real(ctx):
     p = region_params(ctx.params)
     t0 = time.time()
@@ -540,14 +602,10 @@ def run_real(ctx):
         for k, path in enumerate(paths):
             ids.append(_store(ctx, p, path, k, "comfyui", {"graph": "music_ace15_xl_base.json"})["id"])
     else:
-        v = p["values"]
         for k in range(p["n"]):
             ctx.check()
             ctx.progress(0.05 + 0.9 * k / p["n"], f"YuE2 · prise {k + 1} / {p['n']}")
-            yp = music_yue.yue_params({"tags": v["tags"], "lyrics": v.get("lyrics", ""), "duration_s": v["duration_s"],
-                                       "seed": p["seed"] + k, "mode": v.get("mode", "full"), "precision": v.get("precision", "bf16"),
-                                       "ref": v.get("ref", ""), "abc": v.get("abc", ""), "title": f"{p['title']} · prise {k + 1}"})
-            for path, score in music_yue.render_real(ctx, yp):
+            for path, score in music_yue.render_real(ctx, yue_recipe(p, k)):
                 ids.append(_store(ctx, p, path, k, "comfyui", {"score": score})["id"])
     if not ids:
         raise ComfyError("aucune prise rendue")
@@ -687,6 +745,56 @@ def selftest(call, ok) -> None:
     ok(gs["3"]["inputs"]["positive"] == ["122", 0] and gs["122"]["inputs"]["latent"] == ["121", 0]
        and music_yue.check_graph(gs, FAKE_INFO_ACE) == [], "l'audio de style : LoadAudio → VAEEncodeAudio → ReferenceTimbreAudio")
 
+    # ── ce qui part au graphe ComfyUI (06/10) : le projet, ce qu'on en change, le clip
+    # d'inspiration, le guide MIDI, la voie « chanson puis stem » ──
+    I = S["intentions"]
+    bad_voies = [(q, x["id"]) for q in I["ordre"] for x in I[q]["voies"] if x["task"] not in S["modeles"][x["model"]]["taches"]]
+    ok(not bad_voies and set(I["ordre"]) == {"chanson", "instrument", "variation", "suite"},
+       f"la question du panneau : quatre réponses, chaque voie est une tâche du schéma ({bad_voies})")
+    node = lambda g, cls: next(n for n in g.values() if n["class_type"] == cls)  # noqa: E731
+    pl = region_params({**base, "model": "ace", "task": "text2music", "libre": {"bpm": 100, "tonic": 2, "mode": "major", "sig": 3},
+                        "v": {"caption": "funk", "n": 1, "seed": 3}})
+    gl = build_ace_graph(pl)
+    enc = node(gl, "TextEncodeAceStepAudio1.5")["inputs"]
+    ok(enc["bpm"] == 100 and enc["keyscale"] == "D major" and enc["timesignature"] == "3"
+       and abs(node(gl, "EmptyAceStep1.5LatentAudio")["inputs"]["seconds"] - 32 * 60 / 112) < 0.01
+       and pl["libre"] == ["bpm", "mode", "sig", "tonic"] and pl["projet_session"]["bpm"] == 112 and music_yue.check_graph(gl, FAKE_INFO_ACE) == [],
+       f"le tempo, la tonalité, la mesure changés partent au graphe ; la durée reste celle de la plage au tempo du projet ({enc})")
+    pd_ = region_params({**base, "model": "ace", "task": "text2music", "v": {"caption": "funk", "n": 1}})
+    ed = node(build_ace_graph(pd_), "TextEncodeAceStepAudio1.5")["inputs"]
+    ok(ed["bpm"] == 112 and ed["keyscale"] == "F minor" and ed["timesignature"] == "4" and pd_["libre"] == [],
+       "sans rien changer : ceux du projet")
+    ok(region_params({**base, "model": "ace", "task": "text2music", "libre": {"bpm": 112}, "v": {}})["libre"] == [],
+       "« changé » vers la valeur du projet n'est pas un changement")
+    gst = build_ace_graph({**pd_, "values": {**pd_["values"], "style_audio": "aud-x"}}, "inspiration.flac")
+    ok(node(gst, "LoadAudio")["inputs"]["audio"] == "inspiration.flac" and node(gst, "ReferenceTimbreAudio")["inputs"]["latent"]
+       and music_yue.check_graph(gst, FAKE_INFO_ACE) == [], "le clip d'inspiration : chargé, encodé, timbre de référence")
+    yl = region_params({**base, "model": "yue", "task": "chanson", "libre": {"tonic": 7, "mode": "major"}, "v": {"tags": "pop", "n": 1}})
+    gy = music_yue.build_graph(yue_recipe(yl, 0))
+    ok("112 BPM" in gy["3"]["inputs"]["style"] and "G major" in gy["3"]["inputs"]["style"] and gy["3"]["inputs"]["abc"] == ["2", 0]
+       and music_yue.check_graph(gy, music_yue.FAKE_INFO) == [], f"YuE2 : le tempo et la tonalité changée dans le style du graphe ({gy['3']['inputs']['style']})")
+    guide = music_yue.fake_abc(9, 112, 4, 5, "minor", [["verse", 4], ["chorus", 4]], sing=True)
+    yg = region_params({**base, "model": "yue", "task": "chanson", "v": {"tags": "pop", "mode": "full", "abc": guide}})
+    gg = music_yue.build_graph(yue_recipe(yg, 0))
+    ok(gg["3"]["inputs"]["abc"] == guide.strip() and "2" not in gg and music_yue.check_graph(gg, music_yue.FAKE_INFO) == [],
+       "le guide MIDI (la partition écrite depuis nos notes) part dans l'entrée abc ; YuE2 n'écrit pas la sienne")
+    pk = region_params({**base, "model": "ace", "task": "text2music", "quoi": "instrument", "voie": "stem-ace", "garder": "drums",
+                        "v": {"caption": "funk", "instrumental": True, "n": 1}})
+    ok("drums" in node(build_ace_graph(pk), "TextEncodeAceStepAudio1.5")["inputs"]["tags"] and pk["garder"]["stem"] == "drums"
+       and pk["title"].endswith("batterie"), f"chanson puis stem : le mot de l'instrument au style, le stem à garder ({pk['garder']})")
+    for bad, why in (({"model": "ace", "task": "text2music", "quoi": "instrument", "voie": "stem-ace", "v": {}}, "chanson puis stem sans instrument"),
+                     ({"model": "ace", "task": "text2music", "quoi": "instrument", "voie": "lego", "v": {}}, "une voie qui n'est pas cette tâche"),
+                     ({"model": "ace", "task": "text2music", "garder": "drums", "v": {}}, "garder sans voie"),
+                     ({"model": "ace", "task": "text2music", "quoi": "instrument", "voie": "stem-ace", "garder": "kazoo", "v": {}}, "instrument inconnu"),
+                     ({"model": "ace", "task": "text2music", "quoi": "danse", "voie": "x", "v": {}}, "réponse inconnue"),
+                     ({"model": "ace", "task": "text2music", "libre": {"bpm": 400}, "v": {}}, "tempo choisi hors bornes"),
+                     ({"model": "ace", "task": "text2music", "libre": {"swing": 1}, "v": {}}, "un changement inconnu")):
+        try:
+            region_params({**base, **bad})
+            ok(False, f"refusé : {why}")
+        except ValueError:
+            ok(True, f"refusé : {why}")
+
     def wait(jid):
         jj = {}
         for _ in range(400):
@@ -712,6 +820,14 @@ def selftest(call, ok) -> None:
         ok(j2.get("state") == "done" and abs(it2.get("duration", 0) - 24 * 60 / 112) < 0.05
            and abs(it2["params"]["region_off"] - 8 * 60 / 112) < 0.01 and it2["parents"] == [its[0]["id"]],
            f"lego d'essai : la fenêtre du contexte, la région à sa place dedans ({j2.get('state')} {j2.get('message')})")
+        st, j4 = call("POST", "/api/music/gen/generate", {**base, "model": "ace", "task": "text2music", "quoi": "instrument", "voie": "stem-ace",
+                                                          "garder": "bass", "libre": {"bpm": 90}, "v": {"caption": "funk", "n": 1}})
+        j4 = wait(j4["id"]) if st == 200 else {}
+        it4 = (j4.get("items") or [{}])[0]
+        pp = it4.get("params", {})
+        ok(j4.get("state") == "done" and pp.get("garder", {}).get("stem") == "bass" and pp.get("projet", {}).get("bpm") == 90
+           and pp.get("projet_session", {}).get("bpm") == 112 and pp.get("quoi") == "instrument" and abs(it4.get("duration", 0) - 32 * 60 / 112) < 0.05,
+           f"une prise « chanson puis stem » garde sa recette : le stem voulu, le tempo changé, celui du projet ({j4.get('state')} {pp.get('garder')})")
         if shutil.which("ffmpeg"):
             st, j3 = call("POST", "/api/music/gen/generate", {**base, "model": "ace", "task": "cover", "v": {"src_audio": its[0]["id"], "n": 1}})
             j3 = wait(j3["id"]) if st == 200 else {}
