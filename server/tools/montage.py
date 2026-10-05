@@ -163,7 +163,10 @@ def _item(sid: str) -> dict:
 
 def load(pid: str) -> dict:
     sid = _resolve(pid)
-    _item(sid)
+    try:
+        _item(sid)
+    except HttpError:   # l'adresse d'un montage d'avant : on ne nomme pas la séquence qu'on ne lui montre pas
+        raise HttpError(404, f"séquence introuvable : {pid}") from None
     f = _seq_file(sid)
     if not f.exists():
         raise HttpError(404, f"séquence sans timeline : {sid}")

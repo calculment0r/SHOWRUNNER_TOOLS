@@ -191,12 +191,21 @@ def _entree(d: Path, source: str) -> dict:
 
 
 def analyses_list(req):
+    """Les analyses du Workspace courant, comme les projets (projets_liste) : une analyse est
+    à son projet — son Workspace (analyse/projets.json), sinon celui du travail qui l'a faite ;
+    nos films et les analyses d'avant le 30/09 sont dans Général (library.space_of)."""
+    with _store_lock:
+        store = {p["id"]: p for p in _store_lit()}
+
+    def ici(d: Path) -> bool:
+        jid = (_lit_json(d / "portail.json") or {}).get("job")
+        return library.readable(_doc({**store.get(d.name, {}), "id": d.name}, jobs.get(jid) if isinstance(jid, str) else None))
     out = []
     if produites().is_dir():
-        faites = [d for d in produites().iterdir() if d.is_dir() and not d.name.startswith(".")]
+        faites = [d for d in produites().iterdir() if d.is_dir() and not d.name.startswith(".") and ici(d)]
         out += sorted((_entree(d, "portail") for d in faites), key=lambda e: e["date"], reverse=True)
     if DEPOT.is_dir():
-        out += [_entree(d, "depot") for d in sorted(DEPOT.iterdir()) if d.is_dir() and (d / "shots.json").is_file()]
+        out += [_entree(d, "depot") for d in sorted(DEPOT.iterdir()) if d.is_dir() and (d / "shots.json").is_file() and ici(d)]
     return {"analyses": out, "runs": str(runs()), "partage": PARTAGE}
 
 
