@@ -826,7 +826,8 @@ const voixDe = (n) => (n?.par ? [...n.par.values()] : n ? [n] : []);
 
 // Le motif qu'une source joue : le sien, ou son arpège quand elle en a un
 // d'allumé (arpege.js ; seuls les instruments mélodiques ont ces réglages).
-function joue(pat, m) {
+// Exporté : le son au défilement de l'arrangement joue les mêmes notes (timeline.js).
+export function joue(pat, m) {
   if (!m || !pat?.notes || !spec(m.type, 'arp')) return pat;
   return motifJoue(pat, (k) => val(m, k));
 }

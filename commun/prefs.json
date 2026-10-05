@@ -35,7 +35,7 @@
     },
     {
       "key": "scrub", "label": "Son au défilement", "type": "toggle", "default": true,
-      "help": "Glisser la tête de lecture du Montage ou de l’arrangement d’ODIO fait entendre le son sous elle, par grains de 60 ms, pour caler une coupe. Comme « Play audio while scrubbing » de Premiere Pro."
+      "help": "Glisser la tête de lecture du Montage, de l’arrangement d’ODIO ou du lecteur (Asset, le fil, Transcrire, Idéation…) fait entendre le son sous elle, par grains de 60 ms, pour caler une coupe ; la lecture à rebours (J) aussi. Avancer image par image (← →, ou J et L la touche K tenue) en fait entendre un à chaque image. Dans ODIO, les notes se jouent, courtes, quand la tête passe sur leur début. Comme « Play audio while scrubbing » de Premiere Pro."
     },
     {
       "key": "dockKey", "label": "Panneau Asset : le raccourci", "type": "choice", "default": "ctrl-space",

@@ -803,8 +803,47 @@ source, l'objet ouvert. Essayé en espionnant `AudioBufferSourceNode.start` :
 61 grains pour 50 images glissées sur deux sons, aucun au clic, aucun la tête
 arrêtée, aucun préférence coupée.
 
-Non fait : le son quand on avance image par image au clavier (← →, J K L) ;
-deux images au moniteur pendant un rognage (le mode Trim de Premiere).
+Non fait : deux images au moniteur pendant un rognage (le mode Trim de Premiere).
+
+### Le son au défilement partout, et le pas à pas (06/10, suite)
+
+La même mécanique (commun/scrub.js), étendue :
+
+- **le lecteur commun** (commun/lecteur.js : la fiche d'Asset, le fil d'Image et
+  de Vidéo, Transcrire, Idéation, les paroles calées, la playlist, la
+  visionneuse de Movie Analysis) : glisser la frise fait entendre le son de
+  défilement de l'objet, aux mêmes grains, au volume et au « muet » du lecteur ;
+  le contexte audio est celui des pages sans moteur de son (`contexteCommun`,
+  créé dans le geste). Movie Analysis : seule une analyse lancée d'ici, qui
+  dit la vidéo de la bibliothèque qu'elle a dépouillée (`item`, un lien dur du
+  même fichier) ; nos films sont sur R2 et durent plus de 30 min ;
+- **le pas à pas** : ← →, et J ou L la touche K tenue (Premiere : « hold K and
+  tap J or L ») avancent d'une image et font entendre un grain, un seul, à la
+  nouvelle place, à la vitesse du son. Premiere fait de même : « Play audio
+  while scrubbing » vaut pour la tête glissée, les flèches et J K L (fils du
+  forum d'Adobe « Sound when going frame by frame in Premiere Pro » et « Audio
+  preview frame by frame », lus par les résultats de recherche ;
+  community.adobe.com et helpx.adobe.com ne s'ouvrent pas d'ici). La lecture à
+  rebours (J), qui n'a pas de son à elle, est un geste comme un autre ; la
+  lecture en avant a le sien : aucun grain. Dans le Montage, au programme
+  comme à la source ;
+- **ODIO, les clips de notes** : la tête de l'arrangement qui passe sur le
+  début d'une note la fait jouer par l'instrument de la piste (Logic Pro rejoue
+  de même les régions MIDI qu'on parcourt : Logic Pro User Guide, « Scrub a
+  project in Logic Pro for Mac », par les résultats de recherche). Courte (la
+  durée de la note à la vitesse du geste, 150 ms au plus) ; par piste,
+  l'attaque la plus proche de la tête seule (un accord reste un accord), huit
+  notes par pas au plus, et la source se tait avant de rejouer : rien ne
+  s'empile. Les notes sont celles de la lecture (Graph.notes : le motif
+  bouclé, l'arpège, les voix de la boîte à rythmes).
+
+Essayé (commun/pilote_scrub.mjs, Chromium sans affichage, une vidéo VP9/Opus et
+un son WAV de ffmpeg, en sombre et en clair) : 40 grains pour 40 mouvements sur
+la frise du lecteur, aucun au clic ; un grain par image pour ← →, K + J ou L,
+au lecteur, au programme et à la source du Montage ; 18 à 21 grains pour 0,6 s
+de J ; aucun en lecture ni préférence coupée ; ODIO : 147 notes en 43 pas en
+glissant sur 43 noires du projet de démonstration, 7 au plus par pas, aucune au
+clic ni préférence coupée.
 
 ### Les poignées : rogner le début (06/10, suite)
 
