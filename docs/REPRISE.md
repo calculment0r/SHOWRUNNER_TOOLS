@@ -127,7 +127,7 @@ précédents : leur contrat est dans son commit), odio-pistes-secousse, odio-ses
 
 | branche | demande de Cal (05/10) |
 |---|---|
-| `wip/entete` | le nom de l'atelier dans une place FIXE de l'en-tête + séparateur fixe (la navigation ne bouge plus d'une page à l'autre) ; la barre du Montage identique aux autres |
+| ~~`wip/entete`~~ | **FUSIONNÉE dans main le 05/10** (navigation au même x sur toutes les pages, barre du Montage identique) — restes : `analyse/diarisation/portail.css` copie encore la barre ; ODIO ne charge pas Google Fonts ; `asset.css` suppose 57 px (utiliser `--sr-hdr-h`) |
 | `wip/documents` | la sorte `document` dans la bibliothèque (pdf, docx, pptx, xlsx, txt, md, csv… et tout fichier inconnu) : texte extrait (`GET/POST /api/library/<id>/texte`), vignette, Asset, objet d'Idéation avec liseuse ; PDF par pdftotext s'il est là, sinon pdf.js dans la page (`commun/documents.js`) |
 | `wip/agent-showrunner` | l'agent « Showrunner » dans Idéation (comme le Supercomputer de Higgsfield, mais qui AGIT sur la planche, lisiblement) : panneau de discussion façon Claude, fichiers en vignettes au-dessus du champ, outils de lecture côté serveur (Ollama local) et d'écriture côté page (une annulation par tour) ; `app.agent.open()/send(text,{items,intent})` |
 | `wip/projet-ingest` | « Commencer un projet » remplace « Répondre à un brief » : Idéation + fenêtre d'ingestion (tout se dépose, brief tapé ou déposé), crée la Team et son Workspace « Général », ajoute des personnes, range tout sur la planche, lance l'analyse de l'agent ; étude `mode_showrunner.md` |
