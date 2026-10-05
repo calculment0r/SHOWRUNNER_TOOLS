@@ -678,6 +678,21 @@ def selftest(call, ok) -> None:
     ok(st == 304, f"If-None-Match avec plusieurs validateurs → 304 ({st})")
     st, hd2, _ = raw("/" + big["url"], {"If-None-Match": 'W/"autre"'})
     ok(st == 200, "un autre validateur → 200")
+    # la vignette : son adresse porte la version du fichier (library.file_v) ; gardée un an à cette adresse-là
+    # seulement ; réécrite, son adresse change, et l'ancienne n'est plus gardée (jamais un vieux contenu gardé)
+    tu = big.get("thumb_url") or ""
+    st, hd, _ = raw("/" + tu)
+    ok("?v=" in tu and st == 200 and "immutable" in (hd.get("Cache-Control") or ""),
+       f"vignette versionnée : cache d'un an ({tu} {st} {hd.get('Cache-Control') if hd else None})")
+    st, hd, _ = raw("/" + tu.split("?")[0])
+    ok(st == 200 and hd.get("Cache-Control") == "no-cache", "la vignette sans ?v= : revalidée (no-cache)")
+    thp = library.folder_of(big["id"]) / tu.split("?")[0].rsplit("/", 1)[-1]
+    thp.write_bytes(thp.read_bytes() + b"\0")   # réécrite (une couverture refaite)
+    st, b2 = call("GET", f"/api/library/{big['id']}")
+    tu2 = (b2 or {}).get("thumb_url") or ""
+    st, hd, _ = raw("/" + tu)
+    ok(tu2 != tu and "?v=" in tu2 and hd.get("Cache-Control") == "no-cache",
+       f"vignette réécrite : nouvelle adresse, l'ancienne revalidée ({tu2} {hd.get('Cache-Control') if hd else None})")
     st, hd, _ = raw("/commun/shell.js")
     ok(st == 200 and hd.get("ETag") and raw("/commun/shell.js", {"If-None-Match": hd.get("ETag")})[0] == 304,
        "un fichier du dépôt : ETag, 304")
