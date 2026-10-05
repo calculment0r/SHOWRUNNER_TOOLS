@@ -837,3 +837,6 @@ html[data-appareil="mobile"] .lis-box .sr-lis { --sr-lis-h: calc(80 * var(--vh))
 html[data-appareil="mobile"] .brow { grid-template-columns: 64px minmax(0, 1fr); }
 html[data-appareil="mobile"] .brow > .row { grid-column: 1 / -1; }
 html[data-appareil="mobile"] .brow > .row > .tb { flex: 1 1 auto; }
+/* « Commencer un projet » (projet.js) : « Depuis Asset » ouvre le panneau Asset, absent du téléphone
+   (commun/dock.css) ; le trombone y mène à l'appareil photo, à la galerie, aux fichiers */
+html[data-appareil="mobile"] .pj-asset { display: none; }
