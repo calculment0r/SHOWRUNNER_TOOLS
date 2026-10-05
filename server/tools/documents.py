@@ -1014,8 +1014,6 @@ def r_texte_post(req, item_id):
             raise HttpError(400, f"pages : n entre 1 et {PAGES_MAX}")
         by_n[n] = p.get("text") or ""
     hi = max(by_n) if by_n else 0
-    pages, cut = _bound([by_n.get(k, "") for k in range(1, hi + 1)])
-    text = "\n\n".join(p["text"] for p in pages)
     png = _data_png(d["thumb"]) if d.get("thumb") is not None else None
     cover = None
     if png:
@@ -1031,9 +1029,25 @@ def r_texte_post(req, item_id):
         count = int(d.get("count") or hi) or None
     except (TypeError, ValueError):
         count = hi or None
+    return library.public(deposer(it, [by_n.get(k, "") for k in range(1, hi + 1)], cover=cover, count=count, via="page"))
+
+
+def deposer(it: dict, texts: list[str], *, cover=None, count: int | None = None, via: str = "page") -> dict:
+    """Pose sur un document ce qu'on a lu ailleurs que dans le serveur : le texte de chaque page (`texts`,
+    dans l'ordre), sa couverture (une image PIL ou le chemin d'un PNG ; sans elle, la carte dessinée qui montre
+    le texte), le nombre de pages. La page (POST …/texte, pdf.js : via « page ») et l'export d'une présentation
+    (server/tools/presentation_pdf.py, la page d'impression : via « chromium ») passent par ici. Rend l'objet."""
+    pages, cut = _bound(list(texts))
+    text = "\n\n".join(p["text"] for p in pages)
+    if isinstance(cover, (str, Path)):
+        from PIL import Image
+        with Image.open(cover) as im:
+            im.load()
+            cover = im.copy()
+    doc = dict(it.get("doc") or {})
     has = bool(text.strip())
     fd = library.folder_of(it["id"])
-    doc.update(pages=count or doc.get("pages"), words=words(text), has_text=has, via="page", needs_page=False,
+    doc.update(pages=count or doc.get("pages"), words=words(text), has_text=has, via=via, needs_page=False,
                truncated=cut)
     if has:
         doc.pop("why", None)
@@ -1048,12 +1062,12 @@ def r_texte_post(req, item_id):
         cur = library._items.get(it["id"])
         if cur is None or not fd.is_dir():
             raise HttpError(404, "parti à la corbeille entre-temps")
-        write_text(fd, doc.get("format") or "pdf", pages, cut, "page")
+        write_text(fd, doc.get("format") or "pdf", pages, cut, via)
         cur.update(shown)
         cur["doc"] = doc
         cur["updated"] = library.now()
         library._save(cur)
-        return library.public(cur)
+        return cur
 
 
 def register(app) -> None:

@@ -18,9 +18,10 @@
 //   à droite   Modèles (les dix, essayer, charger l'exemple), Diapositive (transition, durée,
 //              courbe, fond, avance seule), Objet (entrée, découpe, délai, durée, courbe,
 //              décalage, étape, boucle, profondeur, sortie).
-// En haut : Lire (le lecteur plein écran), Imprimer / PDF, et la seule action orange : la passe
-// assistée (avant / après, puis Appliquer). Tout ce qui change le document passe par
-// app.mutate : Ctrl+Z l'annule, la co-édition l'envoie. Échap rend l'Idéation telle quelle :
+// En haut : Lire (le lecteur plein écran), Exporter en PDF (export.js : le travail presentation.pdf,
+// Chromium sans affichage sur la page d'impression — et son menu : les images, imprimer depuis ce
+// navigateur), et la seule action orange : la passe assistée (avant / après, puis Appliquer). Tout
+// ce qui change le document passe par app.mutate : Ctrl+Z l'annule, la co-édition l'envoie. Échap rend l'Idéation telle quelle :
 // le mode ne touche ni la caméra, ni la sélection, ni la planche tant qu'on n'y change rien.
 
 import { el, toast, href, api } from '../../commun/shell.js';
@@ -36,6 +37,7 @@ import { transit, pairsOf } from './transitions.js';
 import { loadModeles, styler, fontsReady, motionFor, transFor, applyTo, exampleNodes, legacyTrans } from './modeles.js';
 import { propose, recommend, applyProposal } from './assist.js';
 import { createPlayer } from './lecteur.js';
+import { exporter } from './export.js';   // ── export PDF (06/10) ── l'export de la présentation : PDF, images
 
 const CSS = new URL('./presentation.css', import.meta.url).href;
 export const FX_IN = [['none', 'Aucune'], ['fade', 'Fondu'], ['rise', 'Monte'], ['drop', 'Descend'], ['left', 'Glisse ←'], ['right', 'Glisse →'], ['scale', 'Échelle'],
@@ -86,10 +88,11 @@ function install(app) {
   const tplB = el('span', { class: 'pm-tplname' });
   const goB = el('button', { class: 'tb go sm', type: 'button', onclick: () => (assist ? applyAssist() : startAssist()) }, 'Passe assistée');
   const cancelB = el('button', { class: 'tb ghost sm', type: 'button', hidden: true, onclick: () => stopAssist() }, 'Annuler la passe');
+  const exportSlot = el('span', { class: 'pm-exps' });   // ── export PDF ── posé plus bas, une fois le plan monté
   const top = el('header', { class: 'pm-top' },
     el('span', { class: 'lbl' }, 'présentation'), titleB, tplB, el('span', { class: 'sp' }),
     el('button', { class: 'tb ghost sm', type: 'button', title: 'lire la présentation en plein écran, depuis cette diapositive', onclick: () => play() }, 'Lire'),
-    el('button', { class: 'tb ghost sm', type: 'button', title: 'une page par diapositive, dans son état final : l’impression du navigateur en fait un PDF', onclick: () => printView() }, 'Imprimer / PDF'),
+    exportSlot,
     cancelB, goB,
     el('button', { class: 'tb ghost sm', type: 'button', title: 'retour à l’Idéation · Échap', onclick: () => close() }, 'Retour · Échap'));
   const outline = el('aside', { class: 'pm-out', 'aria-label': 'plan des diapositives' });
@@ -110,6 +113,12 @@ function install(app) {
   const mid = el('div', { class: 'pm-mid' }, view, tl);
   root.append(top, outline, mid, insp);
   document.body.append(root);
+  // ── export PDF (06/10) ── le PDF est celui de la planche enregistrée : ni pendant un aperçu, ni pendant une passe
+  const exp = exporter({ app, frames: () => frames(), outline, host: root, printView: () => printView(),
+    busy: (short) => (assist ? (short ? 'une passe est ouverte : appliquez-la ou annulez-la' : 'une passe assistée est ouverte : appliquez-la ou annulez-la — le PDF est celui de la planche')
+      : trying ? (short ? 'un aperçu est ouvert : appliquez le modèle ou Échap' : `aperçu de ${trying.name} : appliquez le modèle ou quittez l’aperçu (Échap) — le PDF est celui de la planche`) : '') });
+  exportSlot.replaceWith(exp.el);
+  // ── fin export PDF ──
   const rows = panneaux(mid, [{ el: view, grow: 1, min: 240 }, { el: tl, size: 220, min: 120 }], { axis: 'y', key: 'ideation-motion', gutter: 8 });
   rows.gutters[0].setAttribute('aria-label', 'la hauteur de la minuterie de motion');
   for (const ev of ['pointerdown', 'wheel', 'contextmenu', 'dblclick', 'dragover', 'drop']) root.addEventListener(ev, (e) => e.stopPropagation(), { passive: ev === 'wheel' });
@@ -130,7 +139,7 @@ function install(app) {
   // ── rendre ───────────────────────────────────────────────
   const ctxFor = (board, tpl, preview, extra = {}) => {
     const style = styler(meta(), board, tpl, preview);
-    return { board, items: S.items, style, tpl, preview, motionOf: motionFor(tpl), count: frames().length, href, labelOf: app.label, name: board.name, fonts: meta()?.deck?.fonts || [], ...extra };
+    return { board, items: S.items, style, tpl, preview, motionOf: motionFor(tpl), count: frames().length, href, labelOf: app.label, name: board.name, fonts: meta()?.fonts || [], ...extra };
   };
   const sceneFor = (board, i, { live = true, tpl = tplNow(), preview = !!trying } = {}) => {
     const f = board.nodes.find((n) => n.id === frames()[i].id);
@@ -660,6 +669,7 @@ function install(app) {
     const t0 = keepAt;   // après un texte écrit : la scène refaite au même instant, rien ne se rejoue
     keepAt = null;
     paintOutline(); paintInsp(); paintStage(t0 !== null ? { at: t0 } : {}); paintSplit();
+    exp.paint();   // ── export PDF ── ses raisons se lisent sur le plan (les polices de ses scènes)
   }
   // un texte qu'on écrit n'est jamais refait sous les doigts : la planche qui change (un geste, un
   // travail, la co-édition) attend qu'il soit posé (endEdit relance)
@@ -684,6 +694,7 @@ function install(app) {
     subs = [app.on('commit', later), app.on('quiet', later), app.on('board', () => close())];
     tab = 'modeles';
     paintAll();
+    exp.refresh();   // ── export PDF ── la machine du portail sait-elle imprimer ?
     app.emit('presentation:mode', true);
     return true;
   }
