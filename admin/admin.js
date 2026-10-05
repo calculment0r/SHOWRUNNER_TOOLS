@@ -131,7 +131,10 @@ async function loadSection() {
 
 function busy() {
   const a = document.activeElement;
-  return S.drag || (a && main.contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName));
+  // Cal, 06/10 : une sélection dans une sortie de diagnostic se perdait au relevé suivant (2-3 s)
+  const sel = getSelection();
+  const selecting = sel && !sel.isCollapsed && sel.anchorNode && main.contains(sel.anchorNode);
+  return S.drag || selecting || (a && main.contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName));
 }
 
 async function refresh(now = false) {
@@ -178,8 +181,27 @@ function render(force = false) {
 async function loadPorte() {
   try { S.porte = await api('admin/porte'); } catch { S.porte = null; }
 }
+// copier : le presse-papier moderne n'existe qu'en https ; le portail de la maison est en http
+// (192.168.10.247:8790), où seule la vieille voie marche, et seulement pendant le clic lui-même :
+// on l'appelle donc tout de suite, jamais après une longue attente (Cal, 06/10)
+function legacyCopy(txt) {
+  const ta = el('textarea', { readonly: '', style: { position: 'fixed', top: '0', left: '-9999px', opacity: '0' } });
+  ta.value = txt;
+  document.body.append(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, txt.length);
+  let good = false;
+  try { good = document.execCommand('copy'); } catch { good = false; }
+  ta.remove();
+  return good;
+}
+function copyText(txt) {
+  if (window.isSecureContext && navigator.clipboard) return navigator.clipboard.writeText(txt).then(() => true, () => legacyCopy(txt));
+  return Promise.resolve(legacyCopy(txt));
+}
 const copier = (txt, quoi) => el('button', { class: 'tb ghost sm', type: 'button', onclick: async () => {
-  try { await navigator.clipboard.writeText(txt); toast(`${quoi} copié`); } catch { toast(txt); }
+  if (await copyText(txt)) toast(`${quoi} copié`); else toast(txt, 12000);
 } }, 'Copier');
 function inviter() {
   const p = S.porte || {};
@@ -203,7 +225,7 @@ function inviter() {
       el('b', { class: 'acct-code' }, p.lien_admin || ''), el('span', { class: 'sp' }), copier(p.lien_admin || '', 'lien admin')),
     S.admFor ? el('div', { class: 'row' }, el('span', { class: 'lbl' }, `pour « ${S.admFor} »`), el('span', { class: 'sp' }),
       el('button', { class: 'tb ghost sm', type: 'button', onclick: async () => {
-        try { await navigator.clipboard.writeText(admMsg(S.admFor)); toast('message copié : le lien et le pseudo'); } catch { toast(admMsg(S.admFor), 12000); }
+        if (await copyText(admMsg(S.admFor))) toast('message copié : le lien et le pseudo'); else toast(admMsg(S.admFor), 12000);
       } }, 'Copier le message')) : null);
   return el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('span', { class: 'nm' }, 'Ajouter quelqu’un'),
@@ -980,7 +1002,7 @@ function cablage() {
     el('p', { class: 'adm-note' }, 'Les interrupteurs de câblage des modèles. Ils s’écrivent dans showrunner.local.json dès le clic et prennent effet ',
       'au redémarrage du portail : le serveur ne relit ce fichier qu’au démarrage.'),
     pending.length ? el('div', { class: 'cmd' }, el('span', { class: 'why' }, 'à relancer'), el('code', {}, d.restart),
-      el('button', { class: 'tb ghost sm', onclick: () => navigator.clipboard.writeText(d.restart).then(() => toast('copié'), () => toast(d.restart)) }, 'Copier')) : null,
+      el('button', { class: 'tb ghost sm', onclick: async () => { if (await copyText(d.restart)) toast('copié'); else toast(d.restart, 12000); } }, 'Copier')) : null,
     ...d.items.map((it) => el('div', { class: 'card' + (it.pending ? ' amb' : '') },
       el('div', { class: 'sw' },
         el('div', { style: { minWidth: 0 } }, el('div', { class: 'nm' }, it.label), el('div', { class: 'k' }, it.key)),
@@ -1060,7 +1082,7 @@ function journalSec() {
 // ── I · les diagnostics : une liste fixe de scripts du dépôt, lancés d'un clic (server/tools/admin.py, DIAGS) ──
 // Cal, 05/10 : plus de terminal pour savoir ce qui se passe ; la sortie s'affiche ici, et se relit tant qu'un script tourne.
 let dgTimer = 0;
-let allBusy = '', allNote = '';
+let allBusy = '', allNote = '', allText = '';
 // tous les diagnostics qui ne changent rien, l'un après l'autre, puis un seul texte dans le presse-papier
 async function runAll() {
   const list = (S.dg?.diags || []).filter((x) => !x.action);
@@ -1068,38 +1090,41 @@ async function runAll() {
   allNote = '';
   for (const [k, x] of list.entries()) {
     allBusy = `${k + 1}/${list.length} · ${x.label}`;
-    render(true);
+    render();
     try { await post(`admin/diag/${x.id}`); } catch (e) { parts.push(`===== ${x.id} · ${x.label} · non lancé : ${e.message} =====`); continue; }
     let r = null;
     for (let t = 0; t < 400; t++) {   // jusqu'à 20 min par script (le plus long : 300 s)
       await new Promise((ok) => setTimeout(ok, 3000));
       try { S.dg = await api('admin/diag'); } catch { continue; }
       r = S.dg.diags.find((y) => y.id === x.id);
-      render(true);
+      render();
       if (r && r.state !== 'running') break;
     }
     parts.push(`===== ${x.id} · ${x.label} · ${r?.state || '?'}${r?.rc != null ? ` (code ${r.rc})` : ''} =====\n${r?.out || ''}`);
   }
   allBusy = '';
-  const text = parts.join('\n\n');
-  let copied = false;
-  try { await navigator.clipboard.writeText(text); copied = true; } catch {
-    // http (pas https) : l'API du presse-papier est fermée ; la vieille voie marche encore
-    const ta = el('textarea', { style: { position: 'fixed', left: '-9999px' } });
-    ta.value = text; document.body.append(ta); ta.select();
-    try { copied = document.execCommand('copy'); } catch { copied = false; }
-    ta.remove();
-  }
-  allNote = copied ? `copié (${Math.round(text.length / 1000)} k signes) : colle-le dans le chat de Claude` : 'la copie a été refusée par le navigateur : chaque sortie reste affichée ci-dessous';
+  allText = parts.join('\n\n');
+  // après plusieurs minutes, le navigateur refuse la copie (le clic est trop loin) : le texte
+  // reste affiché, et le bouton « Copier tout » le copie dans son propre clic
+  allNote = `fini (${signes(allText)}) : clique sur « Copier tout », puis colle dans le chat de Claude`;
   toast(allNote, 8000);
   render(true);
 }
+const signes = (t) => (t.length < 1000 ? `${t.length} signes` : `${Math.round(t.length / 1000)} k signes`);
+const copyAll = async () => {
+  const good = await copyText(allText);
+  allNote = good ? `copié (${signes(allText)}) : colle-le dans le chat de Claude`
+    : 'copie refusée par le navigateur : clique dans le texte ci-dessous, Ctrl+A puis Ctrl+C';
+  toast(allNote, 8000);
+  render(true);
+};
 function diagSec() {
   const d = S.dg;
   if (!d) return [head('Diagnostics', 'I'), el('p', { class: 'lbl' }, 'lecture…')];
   const running = d.diags.some((x) => x.state === 'running');
   clearTimeout(dgTimer);
-  if (running) dgTimer = setTimeout(async () => { if (S.sec !== 'diag') return; try { S.dg = await api('admin/diag'); } catch { /* */ } render(true); }, 2000);
+  // pas de repeinte forcée : une sélection en cours dans une sortie reste (busy)
+  if (running) dgTimer = setTimeout(async () => { if (S.sec !== 'diag') return; try { S.dg = await api('admin/diag'); } catch { /* */ } render(); }, 2000);
   const start = async (x) => {
     try { await post(`admin/diag/${x.id}`); S.dg = await api('admin/diag'); render(true); } catch (e) { toast(e.message); }
   };
@@ -1110,9 +1135,14 @@ function diagSec() {
     el('p', { class: 'adm-note' }, 'Les scripts de vérification du dépôt, sans terminal : un clic, la sortie s’affiche ici. Ils ne changent rien, sauf « Planche · créer », qui crée la planche de la réunion (une deuxième fois : une deuxième planche).'),
     // Cal, 05/10 : « c'est infernal de copier-coller les diagnostics » — un clic les lance tous (sauf la
     // planche, qui crée quelque chose), un seul texte part dans le presse-papier : un Ctrl+V pour Claude
-    el('div', { class: 'row' }, el('button', { class: 'tb go sm', type: 'button', disabled: running || allBusy ? true : null,
-      title: 'lance chaque diagnostic l’un après l’autre, puis copie toutes leurs sorties en un seul texte', onclick: () => runAll() },
-    allBusy ? `en cours : ${allBusy}` : 'Tout lancer et copier'), el('span', { class: 'adm-note' }, allNote)),
+    el('div', { class: 'row' }, el('button', { class: 'tb' + (allText && !allBusy ? ' ghost' : ' go') + ' sm', type: 'button', disabled: running || allBusy ? true : null,
+      title: 'lance chaque diagnostic l’un après l’autre, puis rassemble toutes leurs sorties en un seul texte', onclick: () => runAll() },
+    allBusy ? `en cours : ${allBusy}` : allText ? 'Tout relancer' : 'Tout lancer'),
+    allText && !allBusy ? el('button', { class: 'tb go sm', type: 'button', title: 'copie toutes les sorties en un seul texte', onclick: copyAll }, 'Copier tout') : null,
+    el('span', { class: 'adm-note' }, allNote)),
+    // le texte rassemblé, dans un champ qui ne bouge pas : un clic le sélectionne en entier (secours si la copie est refusée)
+    allText && !allBusy ? el('textarea', { class: 'fld diag-all', readonly: '', rows: 8, spellcheck: 'false',
+      onfocus: (e) => e.target.select() }, allText) : null,
     el('div', { class: 'grid2' }, ...d.diags.map((x) => el('div', { class: 'card' },
       el('div', { class: 'card-head' }, el('span', { class: 'nm' }, x.label), chip(x)),
       el('p', { class: 'adm-note' }, x.doc),
@@ -1120,7 +1150,8 @@ function diagSec() {
         el('button', { class: 'tb' + (x.action ? '' : ' ghost') + ' sm', type: 'button', disabled: x.state === 'running' ? true : null,
           title: x.state === 'running' ? 'il tourne : sa sortie arrive' : '',
           onclick: () => (x.action ? confirmBox('Créer la planche de la réunion ?', 'Ça crée une nouvelle planche dans la Team « LES ANEES FOLLES », avec des photos d’époque téléchargées de Wikimedia Commons (quelques minutes). Une deuxième fois en crée une deuxième.', 'Créer la planche', () => start(x)) : start(x)) },
-        x.action ? 'Lancer' : x.state ? 'Relancer' : 'Lancer')),
+        x.action ? 'Lancer' : x.state ? 'Relancer' : 'Lancer'),
+        x.out ? copier(`===== ${x.id} · ${x.label} · ${x.state || '?'}${x.rc != null ? ` (code ${x.rc})` : ''} =====\n${x.out}`, 'sortie') : null),
       x.out ? el('pre', { class: 'log' }, x.out) : null)))];
 }
 
