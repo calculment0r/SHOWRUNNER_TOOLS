@@ -1,0 +1,216 @@
+/* ============================================================
+   MUSIQUE — le volet des playlists (chanson/playlist.js), à droite
+   de la scène. Les règles du thème : aucune couleur en dur (tout vient
+   de commun/tokens.css), des filets et jamais de bordures, aucun
+   orange ici (le seul .tb.go de l'écran reste Créer, au pied du rail),
+   les capitales pour la machine, la prose en bas de casse.
+   ============================================================ */
+
+.ch-studio.pl-on { grid-template-columns: 340px minmax(0, 1fr) 360px; max-width: 1760px; }
+@media (max-width: 1380px) { .ch-studio.pl-on { grid-template-columns: 320px minmax(0, 1fr) 340px; } }
+
+.pl-volet {
+  position: sticky; top: 70px; display: flex; flex-direction: column; min-width: 0;
+  max-height: calc(100 * var(--vh) - 86px); border-radius: var(--r3); background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line); overflow: hidden;
+}
+.pl-volet[hidden] { display: none; }
+/* la page trop étroite pour trois colonnes : le volet flotte à droite, par-dessus la scène */
+@media (max-width: 1180px) {
+  .ch-studio.pl-on { grid-template-columns: 340px minmax(0, 1fr); }
+  .pl-volet {
+    position: fixed; top: calc(var(--sr-hdr-h, 52px) + 8px); right: 8px; bottom: 8px; z-index: 30; max-height: none;
+    width: min(380px, calc(100 * var(--vw) - 16px)); box-shadow: inset 0 0 0 1px var(--line-cy), 0 18px 40px var(--drop-lg);
+  }
+}
+@media (max-width: 860px) { .ch-studio.pl-on { grid-template-columns: 1fr; } }
+
+/* l'en-tête : la playlist ouverte, la durée totale toujours visible */
+.pl-h { display: flex; flex-direction: column; gap: 4px; padding: 10px var(--s4) 10px; box-shadow: inset 0 -1px 0 var(--line); background: var(--panel); }
+.pl-h1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pl-h1 > .lbl { color: var(--ink2); flex: none; }
+.pl-choix {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 1; height: 26px; padding: 0 8px; border-radius: var(--r1);
+  color: var(--ink); font-size: 12.5px; font-weight: 600; text-align: left; box-shadow: inset 0 0 0 1px transparent;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pl-choix:hover { box-shadow: inset 0 0 0 1px var(--line); }
+.pl-chev { flex: none; width: 5px; height: 5px; margin: -3px 0 0 auto; box-shadow: inset -1px -1px 0 var(--ink3); transform: rotate(45deg); }
+.pl-sum { font-family: var(--f-mono); font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); padding-left: 2px; }
+.pl-sum b { font-weight: 400; color: var(--ink2); }
+.pl-sum .pl-total { color: var(--cy); }
+.pl-sum .pl-abs { color: var(--amb); }
+
+.pl-corps { flex: 1 1 auto; min-height: 120px; overflow: auto; padding: 12px var(--s4) 14px; display: flex; flex-direction: column; gap: 10px; scrollbar-gutter: stable; }
+.pl-corps.drop-on { box-shadow: inset 0 0 0 1px var(--line-cy); background: var(--cy-bg); }
+
+/* la pochette et ce qu'on lit de la playlist */
+.pl-id { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 10px; align-items: start; }
+.pl-poch { width: 104px; height: 104px; padding: 0; border-radius: var(--r2); }
+.pl-poch .sr-poch { width: 100%; height: 100%; }
+.pl-poch:hover .sr-poch { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.pl-idx { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.pl-idx .fld { padding: 5px 8px; font-size: 11.5px; }
+.pl-idx .fld.pl-titre { font-size: 14px; font-weight: 600; padding: 5px 8px; }
+.pl-ligne { display: grid; grid-template-columns: minmax(0, 1fr) 64px; gap: 5px; }
+.pl-poch-acts { display: flex; flex-wrap: wrap; gap: 4px; }
+.pl-poch-acts .tb.on { background: var(--grn-bg); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-gr); }
+.pl-accueil { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; padding: 6px 0; }
+.pl-accueil b { font-weight: 600; font-size: 13px; color: var(--ink); }
+.pl-accueil > span { font-size: 12px; line-height: 1.5; color: var(--ink3); }
+.pl-autres { display: flex; flex-direction: column; gap: 4px; width: 100%; margin-top: 6px; }
+.pl-autre { display: flex; flex-direction: column; gap: 1px; padding: 7px 10px; border-radius: var(--r2); background: var(--panel2); text-align: left; box-shadow: inset 0 0 0 1px var(--line); }
+.pl-autre:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.pl-autre b { font-weight: 500; font-size: 12px; color: var(--ink); }
+.pl-autre small { font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
+
+/* les gestes de la playlist */
+.pl-acts { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.pl-acts .sp { flex: 1; }
+.pl-acts [data-act="ecouter"] { min-width: 86px; }
+
+/* partager : le .zip et le lien d'écoute ; sous les boutons, le .zip en cours ou prêt */
+.pl-partage-box { display: flex; flex-direction: column; gap: 6px; }
+.pl-partage { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.pl-partage > .lbl { color: var(--ink3); margin-right: 3px; }
+.pl-partage .tb.on, .pl-lien .tb.ghost.on { background: var(--grn-bg); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-gr); }
+.pl-partage .tb[aria-disabled="true"], .pl-lien .tb[aria-disabled="true"] { opacity: .55; }
+.pl-why { margin: 0; }
+.pl-dot { display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--grn2); vertical-align: 1px; }
+.pl-job { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.pl-job .pill { flex: 1 1 0; min-width: 0; gap: 7px; letter-spacing: .14em; }
+.pl-job .pill span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-bar { flex-basis: 100%; height: 3px; border-radius: 2px; background: var(--panel3); overflow: hidden; }
+.pl-bar i { display: block; height: 100%; background: var(--cy); transition: width .4s; }
+
+/* « Publier le lien » : le panneau */
+.pl-lien { display: flex; flex-direction: column; gap: 9px; padding: 10px 12px; border-radius: var(--r2);
+  background: var(--panel2); box-shadow: inset 3px 0 0 var(--cy), inset 0 0 0 1px var(--line-cy); }
+.pl-lien-h { display: flex; align-items: center; gap: 8px; }
+.pl-lien-h > .lbl { color: var(--cy); }
+.pl-lien-h .sp { flex: 1; }
+.pl-lien-h .pill { gap: 6px; letter-spacing: .14em; }
+.pl-lien-adr { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 5px; align-items: center; }
+.pl-lien-adr .fld { padding: 5px 8px; font-family: var(--f-mono); font-size: 10px; letter-spacing: 0; color: var(--cy); }
+.pl-lien-stats { display: flex; flex-wrap: wrap; gap: 3px 10px; font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
+.pl-lien-stats .pl-lien-n { flex-basis: 100%; color: var(--ink2); }
+.pl-lien-stats .pl-lien-n b { font-size: 15px; font-weight: 500; letter-spacing: .04em; color: var(--ink); }
+.pl-lien-stats .e { color: var(--amb); }
+.pl-lien-attend { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 9px 11px; border-radius: var(--r2);
+  background: var(--amb-bg); box-shadow: inset 0 0 0 1px var(--line-amb); }
+.pl-lien-attend b { font-weight: 600; font-size: 12px; line-height: 1.45; color: var(--ink); }
+.pl-lien-attend span { font-size: 11.5px; line-height: 1.45; color: var(--ink2); }
+.pl-lien-g { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 8px 10px; align-items: center; }
+.pl-lien-g .seg.ch-full .tb { font-size: 9px; }
+.pl-lien-l { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pl-lien-l .fld { flex: 1; min-width: 0; padding: 5px 8px; font-size: 11.5px; }
+.pl-lien-l .fld:disabled { opacity: .55; }
+.pl-lien-x { font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
+.pl-lien-pub { display: flex; flex-direction: column; gap: 6px; }
+.pl-lien-a { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+
+/* l'ordre proposé : la personne garde ou annule */
+.pl-ordre { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--r2);
+  background: var(--panel2); box-shadow: inset 3px 0 0 var(--cy), inset 0 0 0 1px var(--line-cy); }
+.pl-ordre-h { display: flex; align-items: center; gap: 6px; }
+.pl-ordre-h .sp { flex: 1; }
+.pl-ordre-h .lbl { color: var(--cy); }
+
+/* « Fais-moi une pochette » : la carte Image */
+.pl-carte { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: var(--r2);
+  background: var(--panel2); box-shadow: inset 3px 0 0 var(--grn2), inset 0 0 0 1px var(--line-gr); }
+.pl-carte-h, .pl-carte-m, .pl-carte-a { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pl-carte-h .sp, .pl-carte-m .sp { flex: 1; }
+textarea.fld.pl-carte-p { font-family: var(--f-mono); font-size: 10.5px; line-height: 1.55; letter-spacing: 0; min-height: 76px; }
+.pl-carte-m .seg .tb { padding: 0 7px; font-size: 9px; }
+.pl-carte-i { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 6px; }
+.pl-carte-img { padding: 0; border-radius: var(--r2); aspect-ratio: 1; }
+.pl-carte-img .sr-poch { width: 100%; height: 100%; }
+.pl-carte-img:hover .sr-poch, .pl-carte-img.on .sr-poch { box-shadow: inset 0 0 0 2px var(--line-gr); }
+
+/* les morceaux : glisser pour réordonner */
+.pl-liste { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.pl-tr {
+  position: relative; display: grid; grid-template-columns: 8px 20px 26px minmax(0, 1fr) auto; gap: 6px; align-items: center;
+  padding: 5px 6px 5px 4px; border-radius: var(--r2); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line);
+  cursor: grab; user-select: none; touch-action: pan-y;
+}
+.pl-tr:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.pl-tr:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--line-cy); }
+.pl-tr.on { background: var(--cy-bg); box-shadow: inset 3px 0 0 var(--cy), inset 0 0 0 1px var(--line-cy); }
+.pl-tr.dragging { opacity: .55; cursor: grabbing; }
+.pl-tr.drop-before { box-shadow: inset 0 2px 0 var(--cy), inset 0 0 0 1px var(--line); }
+.pl-tr.drop-after { box-shadow: inset 0 -2px 0 var(--cy), inset 0 0 0 1px var(--line); }
+.pl-tr.absent .pl-tt b { color: var(--ink3); text-decoration: line-through; }
+.pl-tr.absent .pl-tt small { color: var(--amb); }
+.pl-grip { width: 6px; height: 14px; opacity: .55;
+  background: radial-gradient(circle, var(--ink3) 1px, transparent 1.5px) 0 0 / 3px 3.5px; }
+.pl-n { font-family: var(--f-mono); font-size: 9px; letter-spacing: .08em; color: var(--ink3); text-align: right; }
+.pl-jouer {
+  width: 26px; height: 26px; border-radius: 50%; background: var(--panel3); color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line); display: flex; align-items: center; justify-content: center;
+}
+.pl-jouer:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.pl-jouer:disabled { opacity: .35; }
+.pl-tr.on .pl-jouer { background: var(--cy-bg); color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.pl-jouer svg { width: 10px; height: 10px; fill: currentColor; }
+.pl-tt { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.pl-tt b { font-weight: 500; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-tt small { font-family: var(--f-mono); font-size: 8px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-lrc { color: var(--grn2); }
+.pl-lien { color: var(--ink3); }
+.pl-lien.voisin { color: var(--cy); }
+.pl-from { font-family: var(--f-mono); font-size: 8px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink3); padding-right: 4px; }
+
+.pl-vide-in { display: flex; flex-direction: column; gap: 4px; padding: 26px 14px; text-align: center; border-radius: var(--r2);
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
+.pl-vide-in b { font-weight: 500; font-size: 13px; color: var(--ink2); }
+.pl-vide-in span { font-size: 11.5px; line-height: 1.5; color: var(--ink3); }
+.pl-glisse { margin: 0; text-align: center; font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); padding: 6px 0; }
+.pl-corps.drop-on .pl-glisse, .pl-corps.drop-on .pl-vide-in { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
+
+/* enchaînements, téléchargement, description : repliés */
+details.pl-plus { display: flex; flex-direction: column; border-radius: var(--r2); padding: 4px 10px; background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
+details.pl-plus[hidden] { display: none; }
+details.pl-plus > summary { list-style: none; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+details.pl-plus > summary::-webkit-details-marker { display: none; }
+details.pl-plus > summary::before { content: ""; width: 5px; height: 5px; flex: none; box-shadow: inset -1px -1px 0 var(--ink3); transform: rotate(-45deg); transition: transform .15s; }
+details.pl-plus[open] > summary::before { transform: rotate(45deg); }
+details.pl-plus > summary .r { margin-left: auto; font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-plus-in { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 8px 10px; align-items: center; padding: 6px 0 10px; }
+.pl-plus-in .seg.ch-full .tb { font-size: 9px; }
+.pl-plus-in textarea.fld { font-size: 11.5px; }
+.pl-xf { display: flex; align-items: center; gap: 8px; }
+.pl-xf input { flex: 1; }
+.pl-xf input:disabled { opacity: .4; }
+.pl-xf-v { font-family: var(--f-mono); font-size: 9px; color: var(--ink2); min-width: 30px; }
+.pl-dl { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--ink2); cursor: pointer; }
+.pl-dl input { accent-color: var(--grn2); }
+
+/* la barre de lecture : le lecteur commun, sous la liste */
+.pl-barre { flex: none; padding: 8px var(--s4) 10px; background: var(--panel); box-shadow: inset 0 1px 0 var(--line); display: flex; flex-direction: column; gap: 6px; }
+.pl-barre[hidden] { display: none; }
+.pl-lect-h { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.pl-lect-h .lbl { color: var(--cy); flex: none; }
+.pl-lect-t { font-size: 11.5px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-barre .sr-lect { border-radius: var(--r2); }
+.pl-barre .sr-lect-barre { padding: 6px 8px; gap: 5px; }
+.pl-barre .sr-lect-lire { min-width: 64px; }
+.pl-barre .sr-lect-tc { font-size: 11px; }
+.pl-barre .sr-lect-etat { display: none; }
+/* étroit : précédent et suivant devant la lecture, le temps sans la durée (la liste la dit), le son
+   sans son curseur (son bouton le coupe ; le volume reste celui du lecteur, retenu) */
+.pl-barre .pl-lect-ic { order: -1; }
+.pl-barre .sr-lect-tc small, .pl-barre .sr-lect-vol { display: none; }
+
+/* le bouton du volet, dans l'en-tête de la scène */
+.pl-btn.on { background: var(--grn-bg); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-gr); }
+
+/* un morceau : ce que la playlist en dit */
+.pl-fiche .modal { width: min(560px, 100%); }
+.pl-champ { display: flex; flex-direction: column; gap: 5px; }
+.pl-champ textarea.fld { font-family: var(--f-mono); font-size: 11px; line-height: 1.6; letter-spacing: 0; }
+
+/* une boîte vide (pas d'ordre proposé, pas de carte, pas de panneau du lien) ne prend pas de place */
+.pl-ordre-box:empty, .pl-carte-box:empty, .pl-partage-box:empty, .pl-lien-box:empty { display: none; }

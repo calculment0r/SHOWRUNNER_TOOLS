@@ -32,7 +32,8 @@ des DGX) · Starnodes2024/ComfyUI-YuE2-Trainer `4578039` · NVIDIA/dgx-spark-pla
   LoKr, XL compris, aarch64 cu130 prévu dans son `pyproject.toml`) et le nœud
   **ComfyUI-YuE2-Trainer**, déjà installé (étage NAR : timbre et style).
 - **Durées** : une seule mesure publiée sur GB10 pour nos modèles — Z-Image avec ai-toolkit,
-  5,3 s/pas, 34,4 Go [recherche, forum NVIDIA]. Le reste (§ 4) est estimé.
+  5,3 s/pas, 34,4 Go [recherche, forum NVIDIA]. Le reste (§ 4) est estimé. **Mesuré le 05/10 sur
+  nos deux DGX, pour les cinq modèles : § 8.**
 
 ## 2. Qui entraîne quoi
 
@@ -79,7 +80,9 @@ distillés [supposition]) ; diffusion-pipe (exige deepspeed, sans roue aarch64).
 | ACE-Step XL (officiel) | 17–24 Go | — | LoRA 1–3 h ; LoKr 10–30 min | estimé |
 | YuE2 NAR (nœud) | ≈ 24 Go | 3–10 | 3000 pas : 2,5–8 h | estimé |
 
-Ancrage des estimations : FLUX.1-dev 12B sur Spark (playbook NVIDIA) ≈ 6 s par image à 1024 ;
+Mesures du 05/10 (20 pas, 6 images, rang 16, 768/1024) : Z-Image 6,2 à 6,35 s/pas, Qwen 2.1 6,6,
+Krea 2 9,6 à 9,8, H3 sur images 4,4 à 4,55, ACE-Step 5,6 s par époque pour 3 morceaux — le détail
+au § 8. Ancrage des estimations : FLUX.1-dev 12B sur Spark (playbook NVIDIA) ≈ 6 s par image à 1024 ;
 mis à l'échelle par la taille du DiT ; H3 vidéo depuis nos temps de rendu mesurés. Tous les LoRA
 d'image tiennent dans une nuit ; H3 sur vidéo, pas toujours.
 
@@ -89,7 +92,8 @@ d'image tiennent dans une nuit ; H3 sur vidéo, pas toujours.
   + adaptateur pour des entraînements courts (« styles, concepts, and characters »). À
   télécharger : `Qwen/Qwen3-VL-4B-Instruct` (≈ 9 Go), la VAE de `Qwen/Qwen-Image`, l'adaptateur ;
   modèle à accès restreint (jeton HF, licence Krea 2 Community). Notre DiT Turbo bf16 devrait se
-  relire [supposition, à vérifier au premier lancement].
+  relire [supposition, à vérifier au premier lancement] — **vérifié le 05/10** : il se relit, et
+  le jeton HF déjà enregistré sur les machines a suffi.
 - **Qwen-Image 2.1** : ai-toolkit relit nos fichiers Comfy-Org INT8 convrot (DiT 7,3 Go, encodeur
   9,4 Go, VAE) ; seuls des configs de `Qwen/Qwen-Image-2.1`. Licence non commerciale. L'empilement
   « LoRA de style + Viggle turbo » est à essayer [supposition].
@@ -102,7 +106,7 @@ d'image tiennent dans une nuit ; H3 sur vidéo, pas toujours.
   contenant `h3` et en déduit le mode (`movie.py` l. 1484-1510). Licence : autorisation requise
   dans l'UE.
 - **ACE-Step 1.5 XL** : l'entraîneur officiel, en **clone séparé** (`~/ACE-Step-1.5` sert l'API
-  d'AUDIOLAB sur DGX1) ; à télécharger : `acestep-v15-xl-base` (≈ 10 Go) ; jeu de données
+  d'AUDIOLAB sur DGX1) ; à télécharger : `acestep-v15-xl-base` (≈ 10 Go ; **19 Go** en vrai) ; jeu de données
   `chanson.mp3` + `.lyrics.txt` + `.json` (caption, bpm, tonalité…) ; sortie
   `final/adapter_model.safetensors` (PEFT) → `LoraLoaderModelOnly`. Des sons courts (boucles) :
   non documenté.
@@ -114,6 +118,9 @@ d'image tiennent dans une nuit ; H3 sur vidéo, pas toujours.
 1. **ai-toolkit** sur DGX1 et DGX2, un venv à part, épinglé `ecee894`, lancé en ligne de commande
    (`run.py job.yaml`, pas le « manager », qui se met à jour seul) avec
    `MODELS_PATH=~/ComfyUI/models HF_HUB_OFFLINE=1` une fois les téléchargements faits.
+   **Corrigé le 05/10 : sans `HF_HUB_OFFLINE`** — hors ligne, transformers 5.5.3 réclame
+   `<dépôt>/<sous-dossier tokenizer>/config.json`, absent du Hub : Z-Image, Qwen 2.1 et H3
+   échouent ; ai-toolkit lit déjà le cache d'abord (§ 8).
 2. **L'entraîneur officiel d'ACE-Step 1.5**, en clone séparé, épinglé `ca1e85f`.
 3. **YuE2** : le nœud en place.
 4. Plan B, non installé : musubi-tuner (la seule voie H3 sans adaptateur sur un fichier INT8).
@@ -132,7 +139,48 @@ L'installation pas à pas, pour une session Claude Code du PC (qui a `ssh dgx1` 
    Singularity) : non documenté — on entraîne sur la base ou avec un adaptateur.
 3. YuE2 : pas d'encodeur audio→jetons officiel ; l'AR mémorise vite ; pas de clonage de voix.
 4. LoRA d'ACE-Step sur des sons courts : non documenté.
-5. Durées sur GB10 : à remplacer par nos mesures.
+5. Durées sur GB10 : à remplacer par nos mesures — fait le 05/10 (§ 8), sur 20 pas ; une nuit
+   réelle (2000 pas, 20 à 50 images) reste à mesurer.
+
+## 8. L'installation du 05/10 et le rendu dans le portail
+
+**Installé et essayé sur DGX2 et DGX1** par une session du PC (`docs/INSTALL_LORA.md` § 6, le
+compte rendu ; le manifeste final : `tools/lora_manifeste_0510.json`). Chaque modèle a entraîné 20
+pas sur 6 photos de la bibliothèque, puis son LoRA a été rendu par le graphe du portail plus
+`LoraLoaderModelOnly`, même graine à force 1 puis 0 :
+
+| modèle | s/pas (DGX2 · DGX1) | mémoire du processus, pic | ComfyUI |
+|---|---|---|---|
+| Z-Image Turbo + adaptateur v2 | 6,35 · 6,2 (≈ 4,5–5,4 à 768, 7–7,9 à 1024) | 20,8 Go | 180 poids patchés, 23 % des pixels changent |
+| Qwen-Image 2.1 (INT8 convrot) | 6,6 · 6,7 | 17,3 Go | 192, empilé sur Viggle turbo |
+| Krea 2 Turbo bf16 + adaptateur v1 | 9,6 · 9,7 | 33 Go | 256, 38 à 47 % |
+| H3 fl2va_pruned (images) + adaptateur v3 | 4,55 · 4,4 | 42 à 44 Go | 258 patches, ≈ 2/255 par image après 20 pas, 0 à force 0 |
+| ACE-Step 1.5 XL base (PEFT, rang 32) | 5,6 s par époque, 3 morceaux | ≈ 11 Go | 256 patches (DGX2 ; DGX1 n'a pas de modèle ACE-Step 1.5) |
+
+À 2000 pas, cela fait ≈ 3,5 h pour Z-Image ou Qwen 2.1, ≈ 5,5 h pour Krea 2, ≈ 2,5 h pour H3
+[calcul, sur la vitesse de 20 pas]. Ce qui a dû changer dans le portail : pas de `HF_HUB_OFFLINE`,
+`neg: ""` et `disable_sampling` dans le gabarit d'ai-toolkit, le `ds.json` d'ACE-Step (sa ligne de
+commande ignore les `.caption.txt`), sa racine sûre (`uv run --directory`), son code 0 même en
+échec (`server/tools/lora_trainers.py`, `INSTALL_LORA.md` § 6).
+
+**Au rendu** (`server/tools/lora.py`, section « au rendu ») :
+- Un LoRA du portail est dans ComfyUI sous `loras/showrunner/<modèle>-<moodboard>-v001.safetensors`
+  (H3 : `h3-<moodboard>-v001-fl2v.safetensors`, que la page Vidéo range en Texte et Images). Le
+  préfixe dit le modèle qui l'a produit : **il ne se propose qu'à ce modèle** (carte Générer et page
+  Image pour Z-Image, Qwen 2.1, Krea 2 ; page Vidéo et carte vidéo pour H3, pas en Références, qui
+  est ref2va). Z-Image : Turbo seulement (entraîné avec l'adaptateur de Turbo ; Base non essayé).
+- Il entre dans le graphe par **`LoraLoaderModelOnly` juste après l'`UNETLoader`** : tout ce qui
+  lisait le modèle lit le modèle patché, et les LoRA de la recette (Viggle turbo de Qwen 2.1,
+  UltraReal de Krea 2) s'y ajoutent — la forme des essais. H3 garde sa place : après People → DY,
+  avant le Turbo v4 (`movie.py`).
+- **Force de 0 à 1,5** (1 : celle des essais).
+- **Le mot déclencheur** (`mb` + la fin de l'id du moodboard) part en tête du prompt : ai-toolkit
+  le met en tête de chaque légende d'entraînement (`toolkit/prompt_utils.py`,
+  `inject_trigger_into_prompt` : « trigger + ' ' + légende », lu à `ecee894`) ; pour H3, juste après
+  le tag de la recette (« r34l1sm. DY. mb… »). ACE-Step le reçoit en `custom_tag` (`prepend`).
+- Le travail va à une machine dont la ComfyUI liste le fichier (la copie vers l'autre DGX peut
+  avoir échoué : `image._pin_for`) ; aucune : refusé, en le disant.
+- Non essayé : un LoRA Krea 2 avec une référence (Identity Edit) — la carte le dit en note.
 
 ## Sources
 

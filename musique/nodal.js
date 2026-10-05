@@ -51,7 +51,7 @@ import { brancherCanvas } from '../commun/molette.js';
 // le nodal peut être dans sa fenêtre (un 2ᵉ écran) : docs/etudes/fenetres.md § 6
 import { $ as $partout, partout, suivreTaille, elementAuPoint } from '../commun/fenetre.js';
 import { MODULES, COLORS, COLOR_FR, spec, val, drumVoicesOf, moduleName } from './modules.js';
-import { el, knob, choice, put, menu, letter, inlineEdit } from './ui.js';
+import { el, knob, fader, choice, put, menu, letter, inlineEdit } from './ui.js';
 import { trajets, recoudre, entrerDansLaChaine } from './projet.js';   // le graphe du son : les chaînes des pistes, lues dans les câbles
 import { createBench } from './banc.js';
 import { portsOf } from './jouets/index.js';   // jouets : leurs ports « notes » et « valeur », les mêmes pour les machines
@@ -1983,12 +1983,13 @@ export function createNodal(app) {
   // ═════════════════════════════════ le panneau des seuils (Seuils.tsx)
   const PLANCHER_LIGNES = [['knob', 'knob'], ['switch', 'sélecteur'], ['fader', 'fader'], ['button', 'bouton · pas'], ['pad', 'pad'], ['wheel', 'molette'], ['key', 'touche'],
     ['led', 'diode'], ['ribbon', 'ruban'], ['vu', 'vu'], ['orbit', 'pad orbital'], ['matrix', 'matrice'], ['curve', 'courbe'], ['display', 'afficheur']];
+  // un réglage : le fader de la console couché (ui.js), plus de curseur natif au rond (Cal, 06/10)
   function curseur(label, min, max, step, v, set, fmt) {
-    const l = h('label', 'machine-panel__row');
+    const l = h('div', 'machine-panel__row');
     const s = h('span', 'machine-panel__label'); s.textContent = label;
-    const i = h('input'); Object.assign(i, { type: 'range', min: String(min), max: String(max), step: String(step), value: String(v) });
     const o = h('span', 'machine-panel__value'); o.textContent = fmt(v);
-    i.addEventListener('input', () => { set(Number(i.value)); o.textContent = fmt(Number(i.value)); });
+    const i = fader({ label, min, max, step, unit: '', fmt }, v, { couche: true, valeur: false,
+      onInput: (x) => { set(x); o.textContent = fmt(x); } });
     l.append(s, i, o);
     return l;
   }
@@ -2329,9 +2330,10 @@ export function createNodal(app) {
     const pres = getPresenceRelative();
     const sem = el('label', { class: 'ndx-semantique', title: 'La vitesse du zoom sémantique : un élément ne se rend jamais sous cette fraction de sa taille dessinée — plus haut, les blocs se simplifient plus tôt', onpointerdown: (e) => e.stopPropagation() },
       el('span', { class: 'lbl' }, 'sémantique'));
-    const rg = h('input'); Object.assign(rg, { type: 'range', min: '0.2', max: '0.9', step: '0.05', value: String(pres) });
-    const pv = el('span', { class: 'lbl ndx-semantique-v' }, `${Math.round(pres * 100)} %`);
-    rg.addEventListener('input', () => { setPresenceRelative(Number(rg.value)); pv.textContent = `${Math.round(Number(rg.value) * 100)} %`; });
+    const pct = (x) => `${Math.round(x * 100)} %`;
+    const pv = el('span', { class: 'lbl ndx-semantique-v' }, pct(pres));
+    const rg = fader({ label: 'sémantique', min: 0.2, max: 0.9, step: 0.05, unit: '', fmt: pct }, pres, { couche: true, valeur: false,
+      onInput: (x) => { setPresenceRelative(x); pv.textContent = pct(x); } });
     sem.append(rg, pv);
     put(zoomBox,
       sem,

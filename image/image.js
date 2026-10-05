@@ -55,6 +55,7 @@ const S = {
   cfg: null,
   model: 'krea2', variant: 'turbo', prompt: '', looks: {}, aspect: '3:4', quality: '', count: 2, seed: '', realism: true,
   refs: [], refChoice: {}, origSeed: null,
+  lora: null, loras: null,   // le LoRA d'un moodboard {name, strength} ; la liste (GET /api/lora, `render`)
   transparent: false,
   pop: null, lookTab: 'camera',
   sent: '', notes: [],
@@ -95,6 +96,7 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const BAR_FR = [['model', 'changer de modèle'], ['variant', 'changer la variante de Z-Image'], ['refs', 'changer les références'],
   ['refChoice', 'changer l’image envoyée d’un élément'], ['aspect', 'changer le format'],
   ['quality', 'changer la taille'], ['realism', 'changer le rendu photo'], ['transparent', 'changer le fond'], ['looks', 'changer la prise de vue'],
+  ['lora', 'changer le LoRA'],
   ['count', 'changer le nombre d’images'], ['seed', 'changer la graine'], ['origSeed', 'changer la graine d’origine'], ['prompt', 'écrire le prompt']];
 const TYPED = new Set(['prompt', 'seed']);   // une saisie : un seul geste tant que le champ garde la main
 let typing = 0;
@@ -106,8 +108,8 @@ function barDescribe(b, a) {
 }
 let bar = null;   // posé au démarrage, une fois le brouillon relu (l'ouverture n'est pas un geste)
 function barState() {
-  const { model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, origSeed, lookTab } = S;
-  return { model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, origSeed, lookTab, refs: S.refs };
+  const { model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, origSeed, lookTab, lora } = S;
+  return { model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, origSeed, lookTab, lora, refs: S.refs };
 }
 function barRestore(s) {
   const { refs, ...rest } = s;
@@ -120,8 +122,8 @@ function barRestore(s) {
 // ── le brouillon : une commodité de ce navigateur ───────────
 function saveDraft() {
   try {
-    const { model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, origSeed, lookTab } = S;
-    localStorage.setItem(KEY, JSON.stringify({ model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, origSeed, lookTab,
+    const { model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, origSeed, lookTab, lora } = S;
+    localStorage.setItem(KEY, JSON.stringify({ model, variant, prompt, looks, aspect, quality, count, seed, realism, transparent, refChoice, origSeed, lookTab, lora,
       refs: S.refs.map((r) => r.id) }));
   } catch { /* stockage fermé : rien à garder */ }
   bar?.commit();   // chaque changement de la barre passe ici : un geste qu'on annule
@@ -136,7 +138,7 @@ async function loadDraft() {
     S.count = prefs.get('image.count', S.count);
     return;
   }
-  for (const k of ['model', 'variant', 'prompt', 'looks', 'aspect', 'quality', 'count', 'seed', 'realism', 'transparent', 'refChoice', 'origSeed', 'lookTab']) {
+  for (const k of ['model', 'variant', 'prompt', 'looks', 'aspect', 'quality', 'count', 'seed', 'realism', 'transparent', 'refChoice', 'origSeed', 'lookTab', 'lora']) {
     if (d[k] !== undefined && d[k] !== null) S[k] = d[k];
   }
   S.refs = (await Promise.all((d.refs || []).map((id) => api('library/' + id).catch(() => null)))).filter(Boolean);
@@ -185,7 +187,8 @@ function fixQuality() {
 let composeT = null;
 function schedCompose() { clearTimeout(composeT); composeT = setTimeout(doCompose, 220); }
 async function doCompose() {
-  const body = { mode: 'generate', model: S.model, prompt: S.prompt, looks: S.looks, refs: refsParam(S.refs), transparent: S.model === 'qwen21' && S.transparent };
+  const body = { mode: 'generate', model: S.model, prompt: S.prompt, looks: S.looks, refs: refsParam(S.refs), transparent: S.model === 'qwen21' && S.transparent,
+    variant: S.variant, lora: loraFit().sent };
   try {
     const r = await api('image/compose', { method: 'POST', body });
     S.sent = r.prompt; S.notes = r.notes || [];
@@ -439,6 +442,57 @@ function sizeNote(m) {
   if (m.id === 'qwen21') return S.quality === '2k' ? 'tailles du README Qwen-Image 2.1' : 'gabarits ComfyUI';
   return 'README Krea 2';
 }
+// ── le LoRA d'un moodboard (server/tools/lora.py) : pour le modèle qui l'a produit, avec sa force ──
+// (la même règle que la carte Générer d'Idéation, ideation/gen.js : changer de modèle ne le retire
+// pas, il ne part pas et la puce dit pourquoi)
+let lorasAsked = 0;
+function loadLoras(force = false) {
+  if (Date.now() - lorasAsked < (force ? 15000 : 60000)) return;
+  lorasAsked = Date.now();
+  api('lora').then((r) => { S.loras = { list: r.render || [], names: r.names || {}, max: r.strength_max || 1.5, why: r.why || '' }; })
+    .catch((e) => { S.loras = { list: [], names: {}, max: 1.5, why: e.message }; })
+    .finally(() => { if (S.cfg) { paintChips(); paintPop(); } });
+}
+const loraTitle = (x) => `${x.title}${x.v ? ` · v${x.v}` : ''}`;
+const fmtF = (v) => String(Math.round(v * 100) / 100).replace('.', ',');
+function loraFit() {
+  const name = S.lora?.name;
+  if (!name) return { sent: null, why: '' };
+  const x = (S.loras?.list || []).find((l) => l.name === name);
+  const lm = x?.model || (/^showrunner\/(zimage|qwen21|krea2|h3|ace)-/.exec(name) || [])[1] || '';
+  const nm = (id) => S.loras?.names?.[id] || M(id)?.name || id;
+  if (lm !== S.model) return { sent: null, why: `entraîné pour ${nm(lm)} : pas envoyé à ${nm(S.model)}`, x };
+  if (S.model === 'zimage' && S.variant !== 'turbo') return { sent: null, why: 'entraîné sur Z-Image Turbo : pas envoyé avec Base', x };
+  const st = Number(S.lora.strength);
+  return { sent: { name, strength: Number.isFinite(st) ? st : 1 }, why: '', x };
+}
+function loraChip() {
+  const mine = (S.loras?.list || []).filter((l) => l.model === S.model);
+  const f = loraFit();
+  const setL = (v) => { S.lora = v; saveDraft(); paintChips(); paintPop(); schedCompose(); };
+  const off = !S.loras ? 'lecture des LoRA…' : !mine.length && !S.lora ? `aucun LoRA ${M(S.model).name} : un moodboard d’Idéation en fait un (clic droit → « Entraîner le LoRA… »)` : '';
+  const value = S.lora ? (f.why ? 'ne part pas' : `${f.x ? loraTitle(f.x) : S.lora.name.split('/').pop()} · ${fmtF(f.sent.strength)}`) : '';
+  return chip('LoRA', { value, cls: S.lora && !f.why ? 'set' : '', off, title: f.why || (f.x?.trigger ? `mot déclencheur « ${f.x.trigger} », mis en tête du prompt` : 'le style d’un moodboard, appris pour ce modèle'),
+    onclick: (a) => { loadLoras(true); up(a, [{ head: `LoRA · ${M(S.model).name}` },
+      { label: 'Sans LoRA', checked: !S.lora, onclick: () => setL(null) },
+      ...mine.map((x) => ({ label: loraTitle(x), checked: S.lora?.name === x.name,
+        sub: x.machines && !x.machines.length ? 'absent de ComfyUI' : x.trigger || '',
+        title: x.trigger ? `mot déclencheur « ${x.trigger} »` : 'pas de mot déclencheur connu',
+        onclick: () => setL({ name: x.name, strength: S.lora?.strength ?? 1 }) })),
+      ...(f.why ? [{ label: f.why, disabled: true, why: f.why }] : [])]); } });
+}
+function loraForce() {
+  const max = S.loras?.max || 1.5;
+  const inp = el('input', { class: 'fld seed', inputmode: 'decimal', value: fmtF(S.lora.strength ?? 1), 'aria-label': 'force du LoRA',
+    title: `de 0 à ${fmtF(max)} (1 : celle de l’essai à l’installation)`,
+    onchange: (e) => {
+      const v = parseFloat(e.target.value.replace(',', '.'));
+      const st = Number.isFinite(v) ? Math.round(Math.max(0, Math.min(max, v)) * 100) / 100 : 1;
+      e.target.value = fmtF(st);
+      S.lora = { ...S.lora, strength: st }; saveDraft(); paintChips(); schedCompose();
+    } });
+  return el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'Force du LoRA'), inp, el('span', { class: 'hint' }, `0 à ${fmtF(max)}`));
+}
 // la puce des paramètres avancés : fermée par défaut ; ce qui s'écarte du défaut s'y lit
 function advChip() {
   const alt = [S.seed ? `graine ${S.seed}` : '', renderOf(M(S.model)).alt].filter(Boolean);
@@ -473,6 +527,7 @@ function paintChips() {
     counter(S, 4),
     chip('Prise de vue', { value: nLooks ? String(nLooks) : '', cls: nLooks ? 'set' : '', open: S.pop === 'looks', title: 'caméra, objectif, ouverture, pellicule, lumière',
       onclick: () => togglePop('looks') }),
+    loraChip(),
     advChip());
 }
 
@@ -528,6 +583,7 @@ function paintPop() {
           S.origSeed != null ? el('button', { class: 'tb ghost sm', type: 'button', title: `la graine de l’image réutilisée : ${S.origSeed}`,
             onclick: () => { S.seed = String(S.origSeed); seed.value = S.seed; saveDraft(); paintChips(); } }, 'd’origine') : null),
         opts(rd.label, rd.opts),
+        S.lora ? loraForce() : null,
         el('details', { class: 'pp-acc', open: S.sentOpen ? true : null, ontoggle: (e) => { S.sentOpen = e.currentTarget.open; } },
           el('summary', { class: 'lbl' }, 'Le prompt envoyé'), el('pre', { class: 'sent', id: 'sent' }, S.sent || '—')))];
   }
@@ -571,6 +627,8 @@ async function generate() {
   const body = { model: S.model, variant: S.variant, prompt: S.prompt, looks: S.looks, aspect: S.aspect, quality: S.quality,
     count: S.count, realism: S.realism, transparent: S.model === 'qwen21' && S.transparent, refs: refsParam(S.refs) };
   if (S.seed) body.seed = Number(S.seed);
+  const lo = loraFit().sent;
+  if (lo) body.lora = lo;
   await launch('image/generate', body);
 }
 async function launch(path, body) {
@@ -707,7 +765,7 @@ async function reuse(it) {
   }
   Object.assign(S, { model: M(p.model) ? p.model : S.model, prompt: p.prompt || '', looks: { ...(p.looks || {}) }, aspect: p.aspect || S.aspect,
     quality: p.quality || S.quality, variant: p.variant || S.variant, realism: p.realism ?? S.realism, transparent: !!p.transparent,
-    seed: '', origSeed: p.seed ?? null, pop: null });
+    seed: '', origSeed: p.seed ?? null, pop: null, lora: p.lora ? { name: p.lora.name, strength: p.lora.strength } : null });
   // le carrousel entier, dans son ordre : les places envoyées, puis celles restées grisées
   const all = [...(p.refs || []), ...(p.refs_held || [])];
   S.refs = (await Promise.all(all.map((r) => api('library/' + r.item).catch(() => null)))).filter(Boolean);
@@ -884,6 +942,7 @@ async function start() {
     $('#pb-chips').replaceChildren(el('p', { class: 'warn' }, `le portail ne répond pas : ${e.message}`)); return;
   }
   await loadDraft();
+  loadLoras();
   if (qs.get('ref')) {
     try {
       const it = await api('library/' + encodeURIComponent(qs.get('ref')));

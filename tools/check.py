@@ -438,7 +438,23 @@ def compute_guard_checks() -> None:
             finally:
                 jobs._jobs.pop(fake["id"], None)
         ok("Moi-même" not in own, f"file : un travail pris ne se bloque pas lui-même ({own!r})")
-        ok("prépare « Moi-même »" in other and "calcule déjà" not in other, f"file : les autres lisent qu'il se prépare ({other!r})")
+        ok("prépare « Moi-même »" in other and "calcule «" not in other and ":8188" in other,
+           f"file : les autres lisent qu'il se prépare, et où ({other!r})")
+        # ce que dit un travail retenu : la machine, le travail qui tourne, l'instance, la règle ; et chaque
+        # machine retenue, pas la première seule (deux DGX occupées : les deux sont nommées)
+        fake.update(state="running", endpoint=fake.pop("_claim"))
+        with jobs._cv:
+            jobs._jobs[fake["id"]] = fake
+            try:
+                tourne = jobs._gpu_block(fake["endpoint"], m)
+                deux = jobs._gpu_says([jobs._gpu_wait(fake["endpoint"], m), ("calcule", "DGX1 calcule « Autre » (ComfyUI :8188)")])
+            finally:
+                jobs._jobs.pop(fake["id"], None)
+        ok(tourne == f"attend : {m} calcule « Moi-même » (ComfyUI :8188) · un calcul GPU du portail à la fois par machine",
+           f"file : un travail retenu dit qui calcule, où, et la règle ({tourne!r})")
+        ok(f"{m} calcule « Moi-même »" in deux and "DGX1 calcule « Autre »" in deux and deux.count("à la fois") == 1,
+           f"file : deux machines retenues, les deux nommées, la règle une fois ({deux!r})")
+        ok("Moi-même" not in jobs._gpu_block(fake["endpoint"], m), "file : le travail parti, plus rien ne le cite")
     finally:
         auth.set_current(None)
         auth.set_current_space(None)

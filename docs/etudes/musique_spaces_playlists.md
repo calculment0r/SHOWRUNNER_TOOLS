@@ -190,6 +190,32 @@ le reste est comme tu proposes ») : S1 partagé, S2, L1 Cloudflare, L2, L3 comm
    « un seul fichier continu » (celui d'AGOSTA, le plus sûr sur iPhone écran verrouillé). Ce mode est fabriqué
    au moment de la publication.
 
+### Codé (05/10, branche `wip2/playlists`)
+
+- La sorte `playlist` (`library.KINDS`, id `pla-…`) et ses routes : `server/tools/playlist.py` (selftest).
+- Le volet de la page (`chanson/playlist.js`, `.css`) : glisser des cartes, réordonner (Alt + ↑ ↓), la durée
+  totale en tête, « Écouter » (la barre du lecteur commun, `chanson/playlist_lecture.js` : sans blanc, fondu à
+  puissance égale ; « un seul fichier » s'écoute comme sans blanc dans la page), par morceau titre, crédits,
+  paroles.
+- La pochette : une image, ou la mosaïque faite d'office (`commun/pochette.js`) ; « Fais-moi une pochette » :
+  une carte Image dans le volet (le prompt relu, Générer = le geste de la personne, une image rendue devient la
+  pochette d'un clic).
+- « Proposer un ordre » : l'arc du tempo (sommet aux deux tiers, notre choix) et les tonalités voisines (la
+  distance en quintes, plus 1 si le mode change), par échanges qui baissent le coût ; le tempo d'un son sans
+  recette mesuré dans la page (`musique/tempo.js`, confiance ≥ 0,5) ; aucun détecteur de tonalité (non
+  documenté) : une tonalité inconnue ne compte ni pour ni contre.
+- La fiche d'Asset, « Ouvrir dans Musique » (`chanson/?playlist=<id>`). Le pilote : `chanson/pilote_playlist.mjs`.
+- Attendait sa branche : « Caler les paroles » (`commun/lrc.js`, `ouvrirEditeurLrc`) — éteint, il dit pourquoi.
+- **Partager, branché (05/10, branche `wip2/playlist-publier`)** : sous les gestes du volet, « Exporter en .zip »
+  (le travail `ecoute.zip` suivi par le relevé de la file : sa progression sous le bouton, puis le téléchargement,
+  et le .zip prêt reste à reprendre deux heures) et « Publier le lien » (un panneau : code et date de fin
+  facultatifs, le téléchargement permis et l'enchaînement — les champs de la playlist, écrits tout de suite —,
+  Publier, l'adresse et Copier par la vieille voie `execCommand` en http, Republier sur la même adresse, Retirer
+  confirmé, les écoutes des sept derniers jours). Sans jeton R2, le panneau le dit (« le lien d'écoute attend le
+  jeton R2… ») et propose le .zip ; qui ne peut pas publier (`peut_publier`, un guest) voit les deux boutons
+  éteints et la raison de `espaces.judge`. Le pilote : `chanson/pilote_lien.mjs` (avec
+  `SR_FAUX_R2=1 python3 tools/portail_essai.py`, la publication de bout en bout contre le faux S3 du selftest).
+
 ## 4. Le lien d'écoute
 
 ### Le principe
@@ -269,11 +295,21 @@ Ce qu'on ajoute à AGOSTA :
    - **premier essai : l'album AGOSTA** (14 MP3 + 13 LRC du dépôt `calculment0r/AGOSTA`) importé en playlist,
      exporté en .zip, puis comparé au site en ligne sur iPhone et Android avec la liste de contrôle du README
      d'AGOSTA (§ 9).
+   - **FAIT (05/10, wip2/ecoute)** : `ecoute/`, `server/tools/ecoute.py` (`POST /api/ecoute/<id>/zip`). Essai sur
+     AGOSTA : le .zip et le site comparés dans Chromium (bureau, iPhone et Android émulés, deux thèmes), la liste
+     du § 9 tenue sur tout ce qui se vérifie sans téléphone ; restent l'écran verrouillé et la lecture écran
+     éteint sur de vrais appareils.
 4. **Les paroles calées** : stems, puis Transcrire en mots, puis l'alignement, puis l'éditeur LRC. Essai sur
    les chansons d'AGOSTA, dont les LRC calés par aeneas servent de vérité : on mesure l'écart ligne par ligne.
 5. **Le volume égal et les enchaînements** à la publication.
+   - **FAIT (05/10, wip2/ecoute)** : loudnorm en deux passes, gardé linéaire quand un simple gain suffit (son
+     mode dynamique écrasait l'étendue d'un morceau d'AGOSTA : LRA 5,8 → 3,5 pour −0,5 dB) ; gapless, fondu
+     enchaîné 0-6 s et « un seul fichier continu », ces deux-là fabriqués dans un seul MP3.
 6. **La destination A** (route Worker, envoi R2, aperçu du lien, code, date de fin, compteur), après le
    jeton R2 de Cal. Puis B si Cal le veut.
+   - **CODÉ, NON DÉPLOYÉ (05/10, wip2/ecoute)** : `GET /ecoute/<jeton>/…` dans `porte/worker.js`, l'envoi par
+     `porte/r2_recopie.py`, `POST /api/ecoute/<id>/publier` et `…/retirer`. Essayé sans Cloudflare
+     (`node porte/essai_ecoute.mjs`, un faux bucket ; un faux S3 dans le selftest). Attend le jeton R2 de Cal.
 7. **ODIO dans les Spaces** (étape 2) : la rubrique « Space » du navigateur d'ODIO, au-dessus de la
    bibliothèque du projet de `wip/odio-session2`.
 

@@ -79,6 +79,10 @@ SIGS = (2, 3, 4, 6)
 MODES = {"major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "locrian", "harmonic",
          "pentamaj", "pentamin", "blues"}
 ARC_TO = ("lpf", "vol", "both")
+# les arcs du projet (06/10, musique/arcs.js) : des courbes 0..1 sur tout le
+# morceau, un par sorte ; le groupe d'un projet neuf (musique/projet.js, ARCS_DEFAUT)
+ARC_KINDS = ("vol", "filtre", "reverb", "delay", "largeur", "satur", "densite", "tension")
+ARCS_DEFAUT = ("vol", "filtre", "reverb", "delay")
 TEMPLATES = ("rythme", "session", "vide")
 # la vue Session (05/10, musique/session.js) : la quantification du lancement
 # (musique/projet.js, QUANTS — les choix de Live 12) et les modes de lancement
@@ -422,6 +426,22 @@ def validate(p: dict) -> None:
             raise ValueError("arc d'énergie : filtre, volume ou les deux")
         _bool(arc, "on", "arc d'énergie")
         _curve(arc.get("pts", []), "arc d'énergie")
+    # les arcs du projet (06/10) : un par sorte ; la Tension prend ses points au banc (banc.ten)
+    arcs = p.get("arcs", [])
+    if not isinstance(arcs, list) or len(arcs) > len(ARC_KINDS):
+        raise ValueError(f"arcs : une liste de {len(ARC_KINDS)} au plus")
+    aids, akinds = set(), set()
+    for A in arcs:
+        aid = _id((A or {}).get("id"), "arc")
+        if A.get("k") not in ARC_KINDS:
+            raise ValueError(f"arc inconnu : {A.get('k')!r} ({', '.join(ARC_KINDS)})")
+        if aid in aids or A["k"] in akinds:
+            raise ValueError(f"arc en double : {A['k']}")
+        aids.add(aid)
+        akinds.add(A["k"])
+        _bool(A, "on", f"arc {A['k']}")
+        if A.get("pts") is not None:
+            _curve(A["pts"], f"arc {A['k']}")
     autos = p.get("auto", [])
     if not isinstance(autos, list) or len(autos) > 256:
         raise ValueError("automation : 256 voies au plus")
@@ -648,7 +668,8 @@ def _biblio(p: dict) -> None:
 # ── les projets de départ ───────────────────────────────────
 def _v2(p: dict, **extra) -> dict:
     p.update({"v": 2, "key": {"tonic": 9, "mode": "minor"}, "sections": [], "markers": [],
-              "arc": {"on": True, "to": "lpf", "pts": []}, "auto": []})
+              "arc": {"on": True, "to": "lpf", "pts": []}, "auto": [],
+              "arcs": [{"id": f"a{k}", "k": k, "on": True, "pts": []} for k in ARCS_DEFAUT]})
     p.update(extra)
     return p
 
@@ -1155,6 +1176,14 @@ def selftest(call, ok) -> None:
     good["presets"] = [{"id": "r1", "name": "Ma basse", "type": "acid", "params": {"cutoff": 0.4}}]
     good["banc"] = {"segs": [{"id": "g1", "lane": "ryt", "d": 4, "l": 8}], "atts": [], "ten": [[0, 0.5], [8, 0.7]]}
     refused(lambda b: b.update(presets=[{"id": "r1", "name": "X", "type": "theremine", "params": {}}]), "un réglage d'une source inconnue", "source")
+    # les arcs du projet (06/10, musique/arcs.js)
+    ok(got.get("arcs") == [{"id": f"a{k}", "k": k, "on": True, "pts": []} for k in ARCS_DEFAUT], f"un projet neuf a le groupe d'arcs par défaut ({got.get('arcs')})")
+    refused(lambda b: b["arcs"].append({"id": "atheremine", "k": "theremine", "pts": []}), "un arc d'une sorte inconnue", "arc")
+    refused(lambda b: b["arcs"].append({"id": "avol2", "k": "vol", "pts": []}), "deux arcs de volume", "double")
+    refused(lambda b: b["arcs"][2].update(pts=[[0, 0.5], [4, 1.3]]), "un point d'arc de réverbe hors de 0..1", "reverb")
+    refused(lambda b: b["arcs"][0].update(on="oui"), "un arc allumé « oui »", "vrai ou faux")
+    good["arcs"] = [{"id": "avol", "k": "vol", "on": True, "pts": [[0, 1], [60, 0]]}, {"id": "areverb", "k": "reverb", "on": True, "pts": [[0, 0.5], [32, 1]]},
+                    {"id": "adelay", "k": "delay", "on": False, "pts": []}, {"id": "atension", "k": "tension", "on": True}]
     refused(lambda b: b.update(banc={"segs": [], "atts": [], "ten": [[0, 2]]}), "une tension hors de 0..1", "tension")
     # les groupes de pistes (29/09)
     refused(lambda b: b["tracks"][0].update(grp="gx"), "une piste dans un groupe absent", "groupe")
@@ -1164,6 +1193,13 @@ def selftest(call, ok) -> None:
     st, r = call("POST", f"/api/music/projects/{pid}", good)
     ok(st == 200 and r.get("rev") == 3, f"sections, marqueurs, arc, automation, tonalité passent ({st} {r})")
     good["rev"] = 3
+    st, back = call("GET", f"/api/music/projects/{pid}")
+    ok(st == 200 and back.get("arcs") == good["arcs"] and back.get("arc") == good["arc"], "les arcs (et l'énergie, à part) se relisent tels quels")
+    old_p = json.loads(json.dumps(good))
+    old_p.pop("arcs")
+    st, r = call("POST", f"/api/music/projects/{pid}", old_p)
+    ok(st == 200, f"un projet d'avant, sans arcs, passe encore (la page lui donne le groupe à l'ouverture) ({st} {r})")
+    good["rev"] = r.get("rev", 4)
 
     # la vue Session (05/10 ; refaite le soir : des voies à elle, en plus de l'arrangement) :
     # voies, scènes, clips de Session, quantification du lancement, la bibliothèque du projet

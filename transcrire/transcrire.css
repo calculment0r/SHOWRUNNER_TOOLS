@@ -134,9 +134,21 @@ details.more > .fl, details.more > .chk, details.more > .engines { margin-top: 6
 .tr-player.lect { height: auto; min-height: 0; background: none; box-shadow: none; overflow: visible; border-radius: 0;
   display: flex; flex-direction: column; gap: 6px; --sr-lect-h: calc(40 * var(--vh)); }
 .tr-player.lect .tr-wait-media { padding: var(--s5); text-align: center; }
-.tr-player.lect.audio .aud { position: static; min-height: 44px; flex-wrap: wrap; padding: 0 2px; }
-.tr-player.lect.audio .cap { position: static; transform: none; width: auto; flex: 1; align-items: flex-start; text-align: left; }
-.tr-player.lect.audio .cap span { padding: 0; font-size: 15px; }
+/* l'en-tête d'un son : « son », le titre, la réplique lue. Sa hauteur est FIXE (Cal, 06/10 : « les
+   répliques tout en haut font vibrer tous les panneaux en dessous ») : deux lignes pour l'original, une
+   pour la traduction (trois pour l'une sans l'autre) ; plus long, le texte se coupe d'une ellipse (il est
+   en entier dans la liste, éclairé). Rien en dessous ne bouge quand la réplique change, ni quand il n'y
+   en a pas. 65 px = 2 × 21 + 4 + 19 : les hauteurs de ligne ci-dessous. */
+.tr-player.lect.audio .aud { position: static; flex-wrap: nowrap; height: 65px; padding: 0 2px; overflow: hidden; }
+.tr-player.lect.audio .aud > .lbl, .tr-player.lect.audio .aud > b { flex: none; }
+.tr-player.lect.audio .aud > b { max-width: 32%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tr-player.lect.audio .cap { position: static; transform: none; width: auto; flex: 1; min-width: 0; align-items: stretch; text-align: left; }
+.tr-player.lect.audio .cap span {
+  padding: 0; font-size: 15px; line-height: 21px;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere;
+}
+.tr-player.lect.audio .cap .t { line-height: 19px; -webkit-line-clamp: 1; }
+.tr-player.lect.audio .cap span:only-child { -webkit-line-clamp: 3; }
 
 /* sous la barre du lecteur : les répliques précédente, suivante */
 #transport .tr-nav { gap: 8px; padding: 6px var(--s4); }

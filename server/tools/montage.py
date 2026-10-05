@@ -2012,8 +2012,59 @@ def _test_cube(n: int, fn) -> str:
     return "\n".join(lines) + "\n"
 
 
+# Rogner comme Premiere (06/10, Cal : « tronquer, pas pousser ») : le modèle de la
+# page (montage/model.js, une fonction pure) mené par node. Le bord gauche avance le
+# point d'entrée dans la source, la matière reste calée dans le temps ; le bord droit
+# déplace la sortie ; borné par la source (pas une image fixe) et par les voisins, qui
+# ne bougent pas.
+_ROGNAGE_JS = r"""
+const M = await import(process.env.MODEL_URL);
+const p = () => ({ settings: { fps: 25 }, tracks: [{ id: 'V1', kind: 'video' }], clips: [
+  { id: 'a', track: 'V1', kind: 'video', start: 30, dur: 50, in: 1, src_dur: 4 },
+  { id: 'b', track: 'V1', kind: 'video', start: 90, dur: 50, in: 0.4, src_dur: 6, speed: 2 },
+  { id: 'i', track: 'V1', kind: 'image', start: 200, dur: 25, in: 0, src_dur: 0 } ] });
+const R = {};
+const pose = (q) => q.clips.map((c) => [c.id, c.start, c.dur, +(c.in || 0).toFixed(4)]);
+let q = p(); M.trimClip(M.byId(q, 'a'), 'l', 10, 25); R.gauche = pose(q);
+q = p(); M.trimClip(M.byId(q, 'a'), 'r', -10, 25); R.droit = pose(q);
+q = p(); R.lim_a_l = M.trimLimits(q, M.byId(q, 'a'), 'l'); R.lim_a_r = M.trimLimits(q, M.byId(q, 'a'), 'r');
+R.lim_b_l = M.trimLimits(q, M.byId(q, 'b'), 'l'); R.lim_b_r = M.trimLimits(q, M.byId(q, 'b'), 'r');
+R.lim_i_l = M.trimLimits(q, M.byId(q, 'i'), 'l'); R.lim_i_r = M.trimLimits(q, M.byId(q, 'i'), 'r');
+q = p(); M.trimClip(M.byId(q, 'b'), 'l', -5, 25); R.b_gauche = pose(q);
+q = p(); M.trimClip(M.byId(q, 'i'), 'r', 500, 25); R.image = pose(q);
+console.log(JSON.stringify(R, (k, v) => (v === Infinity ? 'inf' : v)));
+"""
+
+
+def _selftest_rognage(ok) -> None:
+    node = shutil.which("node")
+    if not node:
+        ok(True, "montage : node absent, le rognage du modèle de la page n'est pas essayé ici")
+        return
+    env = {**__import__("os").environ, "MODEL_URL": (config.REPO / "montage" / "model.js").as_uri()}
+    r = subprocess.run([node, "--input-type=module", "-e", _ROGNAGE_JS], capture_output=True, text=True, timeout=60, env=env)
+    try:
+        R = json.loads(r.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        ok(False, f"montage : model.js ne répond pas ({r.returncode} {r.stderr[-400:]})")
+        return
+    autres = [["b", 90, 50, 0.4], ["i", 200, 25, 0]]
+    ok(R["gauche"] == [["a", 40, 40, 1.4]] + autres,
+       f"montage : le bord gauche tronque — l'entrée avance de 10 images (1 → 1,4 s), la matière reste en place, les voisins ne bougent pas ({R['gauche']})")
+    ok(R["droit"] == [["a", 30, 40, 1]] + autres, f"montage : le bord droit déplace la sortie, l'entrée ne bouge pas ({R['droit']})")
+    ok(R["lim_a_l"] == [-25, 49] and R["lim_a_r"] == [-49, 10],
+       f"montage : bornes de A — 1 s de source avant l'entrée (25 im., avant le début de la timeline), le voisin à 10 im., avant la fin de la source ({R['lim_a_l']} {R['lim_a_r']})")
+    ok(R["lim_b_l"] == [-5, 49] and R["lim_b_r"] == [-49, 20],
+       f"montage : bornes de B à × 2 — 0,4 s de source = 5 im. (avant le voisin, à 10), la fin de la source à 20 im. (avant l'image, à 60) ({R['lim_b_l']} {R['lim_b_r']})")
+    ok(R["lim_i_r"] == [-24, "inf"] and R["lim_i_l"] == [-60, 24],
+       f"montage : une image fixe n'a pas de borne de source, seulement ses voisins ({R['lim_i_l']} {R['lim_i_r']})")
+    ok(R["b_gauche"][1] == ["b", 85, 55, 0], f"montage : révéler le début à × 2 recule l'entrée deux fois plus vite ({R['b_gauche']})")
+    ok(R["image"][2] == ["i", 200, 525, 0], f"montage : une image fixe s'allonge sans entrée de source ({R['image']})")
+
+
 def selftest(call, ok) -> None:
     # 1. les projets
+    _selftest_rognage(ok)
     st, meta = call("GET", "/api/montage/meta")
     ok(st == 200 and "1080p" in [f["id"] for f in meta["formats"]] and meta["fps"] == [24, 25, 30], "montage : réglages")
     st, p = call("POST", "/api/montage/projects", {"name": "Essai montage", "settings": {"format": "720p", "fps": 25}})

@@ -97,43 +97,74 @@ export function knob(s, value, { accent = 'cy', size = 'md', onInput = () => {},
 
 // ── le fader de la console ──────────────────────────────────
 // Course verticale, linéaire en dB (choix de réglage) ; tiré à la verticale,
-// double-clic = 0 dB (le défaut), flèches au clavier, Maj : réglage fin.
-export function fader(s, value, { accent = 'cy', onInput = () => {}, onChange = () => {}, label = s.label } = {}) {
+// double-clic = la valeur par défaut (0 dB), flèches au clavier, Maj : réglage
+// fin ; Début / Fin : les bornes, Page haut / bas : un dixième de la course.
+// COUCHÉ (`couche: true`, Cal, 06/10 : « je ne veux plus aucun de ces sliders
+// avec le rond tout simple… on a fait un kit avec des super sliders ») : le
+// même fader à l'horizontale, son chapeau dans le rail — le volume d'une piste
+// de l'arrangement, les curseurs du nodal ; aucun curseur natif dans ODIO.
+// `valeur: false` : sans la lecture dessous (la page écrit la sienne). Une
+// spec sans `def` : pas de double-clic. La molette n'y fait rien : elle reste
+// à la règle de la vue (commun/molette.js).
+const CAP_COUCHE = 8;   // la largeur du chapeau couché (musique.css, .fdr.h .cap)
+export function fader(s, value, { accent = 'cy', onInput = () => {}, onChange = () => {}, label = s.label, couche = false, valeur = true, cls = '' } = {}) {
   const cap = el('i', { class: 'cap' });
   const fill = el('i', { class: 'fill' });
   const rail = el('div', { class: 'rail' }, fill, cap);
-  const v = el('span', { class: 'v' });
-  const box = el('div', { class: 'fdr', tabindex: 0, role: 'slider', 'aria-label': label, 'aria-orientation': 'vertical',
+  const v = valeur ? el('span', { class: 'v' }) : null;
+  const box = el('div', { class: `fdr${couche ? ' h' : ''}${cls ? ` ${cls}` : ''}`, tabindex: 0, role: 'slider', 'aria-label': label,
+    'aria-orientation': couche ? 'horizontal' : 'vertical', 'aria-valuemin': s.min, 'aria-valuemax': s.max,
     style: { '--k': `var(--${accent})` } }, rail, v);
   let cur = value;
   const paint = () => {
-    const n = toNorm(s, cur);
-    cap.style.bottom = `calc(${(n * 100).toFixed(2)}% - 6px)`;
-    fill.style.height = `${(n * 100).toFixed(2)}%`;
-    v.textContent = fmt(s, cur);
-    box.setAttribute('aria-valuetext', `${fmt(s, cur)} ${s.unit || ''}`.trim());
-    box.title = `${label} : ${fmt(s, cur)} ${s.unit || ''}`.trim();
+    const n = toNorm(s, cur), pc = (n * 100).toFixed(2);
+    if (couche) {
+      // la course tient dans le rail : le chapeau va de 0 à (largeur − chapeau)
+      cap.style.left = `calc(${pc}% - ${(n * CAP_COUCHE).toFixed(2)}px)`;
+      fill.style.width = `calc(${pc}% - ${(n * CAP_COUCHE - CAP_COUCHE / 2).toFixed(2)}px)`;
+    } else {
+      cap.style.bottom = `calc(${pc}% - 6px)`;
+      fill.style.height = `${pc}%`;
+    }
+    const txt = fmt(s, cur);
+    if (v) v.textContent = txt;
+    box.setAttribute('aria-valuenow', Math.round(cur * 1000) / 1000);
+    box.setAttribute('aria-valuetext', `${txt} ${s.unit || ''}`.trim());
+    box.title = `${label} : ${txt} ${s.unit || ''}`.trim();
   };
   const set = (nv, commit) => { cur = nv; paint(); onInput(cur); if (commit) onChange(cur); };
   rail.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     e.preventDefault(); e.stopPropagation();
+    box.focus({ preventScroll: true });
     rail.setPointerCapture(e.pointerId);
     const r = rail.getBoundingClientRect();
     const grabCap = e.target === cap;
-    const y0 = e.clientY, n0 = toNorm(s, cur);
-    if (!grabCap) set(fromNorm(s, 1 - (e.clientY - r.top) / r.height), false);
+    // la position sous le pointeur, en 0..1 de la course ; le geste, en pixels
+    const at = (ev) => (couche ? (ev.clientX - r.left - CAP_COUCHE / 2) / Math.max(1, r.width - CAP_COUCHE) : 1 - (ev.clientY - r.top) / r.height);
+    const run = couche ? Math.max(1, r.width - CAP_COUCHE) : r.height;
+    const d = (ev) => (couche ? ev.clientX - e.clientX : e.clientY - ev.clientY);
+    const n0 = toNorm(s, cur);
+    if (!grabCap) set(fromNorm(s, at(e)), false);
     const n1 = toNorm(s, cur);
-    const mv = (ev) => set(fromNorm(s, (grabCap ? n0 : n1) + (y0 - ev.clientY) / (r.height * (ev.shiftKey ? 4 : 1))), false);
-    const up = () => { rail.removeEventListener('pointermove', mv); rail.removeEventListener('pointerup', up); onChange(cur); };
-    rail.addEventListener('pointermove', mv); rail.addEventListener('pointerup', up);
+    const mv = (ev) => set(fromNorm(s, (grabCap ? n0 : n1) + d(ev) / (run * (ev.shiftKey ? 4 : 1))), false);
+    const up = () => {
+      rail.removeEventListener('pointermove', mv); rail.removeEventListener('pointerup', up); rail.removeEventListener('pointercancel', up);
+      onChange(cur);
+    };
+    rail.addEventListener('pointermove', mv); rail.addEventListener('pointerup', up); rail.addEventListener('pointercancel', up);
   });
-  box.addEventListener('dblclick', (e) => { e.stopPropagation(); set(s.def, true); });
+  if (s.def !== undefined) box.addEventListener('dblclick', (e) => { e.stopPropagation(); set(s.def, true); });
   box.addEventListener('keydown', (e) => {
-    const d = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[e.key];
-    if (!d) return;
+    const n = toNorm(s, cur);
+    const step = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[e.key];
+    // un cran : 2 % de la course (Maj : 0,5 %), jamais moins que le pas de la spec
+    const pas = s.step && s.curve !== 'log' ? s.step / (s.max - s.min) : 0;
+    const to = step ? n + step * Math.max(pas, e.shiftKey ? 0.005 : 0.02)
+      : { Home: 0, End: 1, PageUp: n + 0.1, PageDown: n - 0.1 }[e.key];
+    if (to === undefined) return;
     e.preventDefault(); e.stopPropagation();
-    set(fromNorm(s, toNorm(s, cur) + d * (e.shiftKey ? 0.005 : 0.02)), true);
+    set(fromNorm(s, to), true);
   });
   box.setValue = (nv) => { cur = nv; paint(); };
   paint();

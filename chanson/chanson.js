@@ -34,12 +34,14 @@
 // L'annulation (commun/undo.js) : mettre une chanson à la corbeille, déplacer,
 // gérer un Space. Le formulaire se garde dans ce navigateur (localStorage), rien
 // à enregistrer.
-import { mountHeader, api, jobs, pick, toast, el, $, href, fmtDur, fmtWait, dropZone, dropAnywhere, stateFr, TOOLS } from '../commun/shell.js';
+import { mountHeader, api, jobs, pick, toast, el, $, href, fmtDur, fmtWait, dropZone, dropAnywhere, stateFr, TOOLS, dragItem } from '../commun/shell.js';
 import { createUndo, libTrash } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { contextMenu, pageMenu, kebab } from '../commun/menu.js';
 import { ask } from '../commun/fil.js';
 import { montrerSpaces, spaceCourant, vueSpace, spaceWhy, spacesListe, carteSpace, menuSpaces, deposerRef, fichiersAuSpace } from './spaces.js';
+// les playlists (05/10) : le volet à droite de la scène (chanson/playlist.js)
+import { monterPlaylists } from './playlist.js';
 
 const hdr = mountHeader('chanson', { sub: 'une chanson par prompt' });
 // accroche : tant que commun/shell.js (TOOLS) ne connaît pas l'app, elle pose son nom elle-même
@@ -73,6 +75,7 @@ const ICON = {
   pause: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 1.5h2.6v9H2.5zM6.9 1.5h2.6v9H6.9z"/></svg>',
 };
 
+let PL = null;            // le volet des playlists (monté au démarrage)
 const put = (box, ...kids) => box && box.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false && k !== ''));
 const PRE = (id) => S.cfg?.presets.find((p) => p.id === id);
 const MOD = (id) => S.cfg?.models[id];
@@ -474,6 +477,7 @@ function find(id) {
   return null;
 }
 function toggle(it, song, at = null) {
+  PL?.pause();             // une seule écoute à la fois : la playlist se tait
   if (S.cur?.id === it.id && at === null) {
     if (player.paused) player.play().catch(() => {}); else player.pause();
     return;
@@ -595,6 +599,7 @@ function metaOf(s) {
   const r = recOf(s), p = s.params || {};
   const what = r.ref_mode === 'cover' ? 'reprise' : r.ref_mode === 'inspire' ? 'inspirée' : (PRE(r.preset)?.label || '').toLowerCase();
   return [s.origin?.via === 'import' ? 'importé' : what, fmtDur(s.duration), r.vocal === false ? 'instrumental' : r.vocal ? 'chanté' : '', r.abc ? 'partition relue' : '', r.parent ? 'variante' : '',
+    s.lrc ? 'paroles calées' : '',
     p.engine === 'factice' ? el('span', { class: 'e' }, 'essai') : ''].filter(Boolean);
 }
 function paintSongs() {
@@ -639,9 +644,9 @@ function card(s) {
       el('button', { class: 'tb ghost sm', type: 'button', 'data-act': 'odio', title: studio() ? (s.stems?.length ? 'la chanson et ses pistes dans le studio' : 'la chanson dans le studio') : S.cfg.studio.why,
         onclick: () => openOdio(s) }, 'Ouvrir dans ODIO', studio() ? null : el('span', { class: 'ch-lock' }, 'Studio'))),
     s.stems?.length ? el('div', { class: 'ch-stems' }, el('span', { class: 'lbl' }, 'pistes'),
-      s.stems.map((st) => el('button', { class: 'ch-stem', type: 'button', 'data-id': st.id, title: `écouter ${STEM_FR[st.params?.stem] || st.params?.stem} seule`,
-        onclick: () => toggle(st, s) }, el('i', { html: ICON.play }), STEM_FR[st.params?.stem] || st.params?.stem))) : null);
-  carteSpace(c, s);
+      s.stems.map((st) => dragItem(el('button', { class: 'ch-stem', type: 'button', 'data-id': st.id, title: `écouter ${STEM_FR[st.params?.stem] || st.params?.stem} seule · glisser : dans la playlist`,
+        onclick: () => toggle(st, s) }, el('i', { html: ICON.play }), STEM_FR[st.params?.stem] || st.params?.stem), st))) : null);
+  carteSpace(c, s);   // une carte se glisse (seule ou la sélection) : sur un Space, dans la playlist
   return c;
 }
 const NO_RECIPE = 'un son importé n’a pas de recette à rejouer : « Reprendre » le prend comme référence';
@@ -651,7 +656,10 @@ function songMenu(s) {
     { label: playing ? 'Pause' : 'Écouter', icon: playing ? '❚❚' : '▶', key: 'Espace', onclick: () => toggle(s, s) },
     { label: 'Reprendre ces réglages', icon: '⤓', sub: 'dans le formulaire', onclick: () => takeRecipe(s) },
     { label: 'Une variante', icon: '↻', sub: 'une autre graine', disabled: !s.params?.chanson, why: NO_RECIPE, onclick: () => variant(s) },
+    { label: 'Ajouter à la playlist', icon: '≣', sub: 'le volet à droite', onclick: () => PL?.ajouter([s]) },
     s.params?.score ? { label: 'Copier la partition', icon: '♪', sub: 'ABC', onclick: () => copyScore(s) } : null,
+    { label: s.lrc ? 'Paroles calées…' : 'Caler les paroles', icon: '♫', sub: s.lrc ? 'relire, recaler en écoutant' : 'la voix seule, les mots, l’alignement',
+      disabled: recOf(s).vocal === false, why: 'instrumental : pas de paroles', onclick: () => paroles(s) },
     '-',
     { label: 'Séparer les pistes', icon: '≡', disabled: !!s.stems?.length || !!stemJob(s), why: s.stems?.length ? 'déjà séparée' : 'en cours', onclick: () => separate(s) },
     { label: 'Ouvrir dans ODIO', icon: '◆', sub: studio() ? '' : 'Studio', onclick: () => openOdio(s) },
@@ -697,6 +705,15 @@ async function takeRecipe(s) {
   }
   save(); paintRail();
   toast(r.abc ? 'réglages et partition repris' : 'réglages repris');
+}
+
+// ── les paroles calées (commun/lrc.js ; le calage : server/tools/paroles.py) ──
+async function paroles(s) {
+  if (S.cur) stop();
+  try {
+    const { ouvrirEditeurLrc } = await import('../commun/lrc.js');
+    await ouvrirEditeurLrc({ item: s, caler: !s.lrc, onSave: () => loadSoon() });
+  } catch (e) { toast(e.message, 6000); }
 }
 
 // ── le Studio : séparer, ouvrir dans ODIO ───────────────────
@@ -787,6 +804,8 @@ document.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey || document.querySelector('.scrim')) return;
   const t = document.activeElement;
   if (t && (['INPUT', 'SELECT', 'TEXTAREA'].includes(t.tagName) || t.isContentEditable)) return;
+  // la playlist joue (ou attend en pause) et aucune chanson de la page : Espace est à elle
+  if (e.key === ' ' && !S.cur && PL?.actif()) { e.preventDefault(); PL.toggle(); return; }
   if (e.key === ' ') {
     const f = S.cur ? find(S.cur.id) : null;
     const it = f?.it || S.songs[0];
@@ -826,11 +845,14 @@ async function start() {
   buildRail();
   addEventListener('sr:music-space', () => paintAct());   // archivé, rouvert, un autre Space : l'orange le redit
   await montrerSpaces({ U, reload: loadSongs, onChange: () => { S.songs = []; S.total = 0; loadSongs(); } });
+  // le volet des playlists : son bouton dans l'en-tête de la scène ; écouter la playlist arrête la page
+  PL = monterPlaylists({ U, onPlay: () => { if (S.cur) stop(); } });
+  $('.ch-head .sr-undo')?.before(PL.bouton());
   contextMenu($('#stage'), stageMenu);
   dropAnywhere((files) => { const f = files.find((x) => /^audio\//.test(x.type) || /\.(wav|mp3|flac|m4a|ogg)$/i.test(x.name)); if (f) refFromFile(f); else toast('seul un son se dépose ici : la référence', 5000); });
   await loadSongs();
   jobs.watch(onJobs);
-  document.addEventListener('sr:job', (e) => { if (e.detail?.tool === 'chanson') loadSoon(); });
+  document.addEventListener('sr:job', (e) => { if (['chanson', 'paroles'].includes(e.detail?.tool)) loadSoon(); });
   prefs.on?.('general.theme', () => requestAnimationFrame(() => document.querySelectorAll('.ch-song').forEach(drawWave)));
 }
 start();

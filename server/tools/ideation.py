@@ -507,6 +507,17 @@ def _text_node(n: dict) -> dict:
 # ── fin idéation ──
 
 
+def _lora_of(n: dict) -> dict | None:
+    """Le LoRA d'un moodboard posé sur une carte Générer (gen.js, loraRow) : son nom dans ComfyUI et sa
+    force. Jugé au rendu (lora.check_render) ; gardé ici même s'il ne va plus au modèle de la carte
+    (il passe en alerte, comme un fil)."""
+    from tools import lora
+    lo = n.get("lora")
+    if not isinstance(lo, dict) or not lora.COMFY_RX.fullmatch(str(lo.get("name") or "")):
+        return None
+    return {"name": lo["name"], "strength": _num(lo.get("strength"), 0, lora.STRENGTH_MAX, 1.0)}
+
+
 def _node(n) -> dict:
     if not isinstance(n, dict):
         raise HttpError(400, "un objet de la planche est un objet JSON")
@@ -603,6 +614,8 @@ def _node(n) -> dict:
                    variant="base" if n.get("variant") == "base" else "turbo",
                    realism=bool(n.get("realism", True)), seed=seed, refChoice=choice,
                    jobs=_jobs(n.get("jobs")), error=_s(n.get("error"), 500))
+        if _lora_of(n):
+            out["lora"] = _lora_of(n)
     elif t == "vgen":
         mv = _movie()
         try:
@@ -617,6 +630,8 @@ def _node(n) -> dict:
                    method=n.get("method") if n.get("method") in mv.METHODS else "turbo",
                    seed=re.sub(r"\D", "", str(n.get("seed") or ""))[:15], sound=_s(n.get("sound"), 2000),
                    music=_s(n.get("music"), 2000), jobs=_jobs(n.get("jobs")), error=_s(n.get("error"), 500))
+        if _lora_of(n):
+            out["lora"] = _lora_of(n)
     elif t == "compose":
         raw = n.get("slots") if isinstance(n.get("slots"), list) else [{"id": i, "role": i, "name": nm} for i, nm in SLOTS]
         slots, seen = [], set()
@@ -1608,6 +1623,8 @@ def render(b: dict, frame: str = "", check=lambda: None):
             _centered(d, n.get("text", ""), _font("ui", 14 * s), (x0 + rad(18), y0, x1 - rad(18), y1), T["ink"])
         elif t == "card":
             _card(d, img, n, (x0, y0, x1, y1), T, s, rad, picture, parents)
+        elif t == "web":
+            _web(d, img, n, (x0, y0, x1, y1), T, s, rad)
         elif t == "mind":
             depth, col, _ = minfo.get(n["id"], (0, "or", False))
             bcol = T.get(col, T["or"])
@@ -1750,6 +1767,79 @@ def _card(d, img, n: dict, bx: tuple, T: dict, s: float, rad, picture, parents: 
         d.text((x0 + p + a + rad(10), yy + a / 2 - rad(5)), (data.get("role") or "").upper(), font=_font("mono", 8.5 * s), fill=T["ink2"])
 
 
+def _web(d, img, n: dict, bx: tuple, T: dict, s: float, rad) -> None:
+    """Un objet « Web » (ideation/objets/web.js, medias.css) tel que la carte le montre au
+    repos : la barre (YouTube, Vimeo, site ou lien, et le site), l'image que le serveur a
+    rangée (server/tools/web_apercu.py) — sinon le globe —, le bouton de lecture d'une
+    vidéo, le titre, et ce qui empêche l'intégration. Jamais le site lui-même : l'export ne
+    va rien chercher dehors."""
+    from PIL import Image, ImageOps
+    from tools import web_apercu
+    x0, y0, x1, y1 = bx
+    w = x1 - x0
+    p = web_apercu.parse(n.get("url"))
+    vid = p["kind"] in ("youtube", "vimeo")
+    can = p["ok"] and (vid or (bool(n.get("frame")) and p["url"].lower().startswith("https://")))
+    name = {"youtube": "YouTube", "vimeo": "Vimeo"}.get(p["kind"], "site" if can else "lien")
+    d.rounded_rectangle([x0, y0, x1, y1], radius=rad(10), fill=T["panel2"], outline=T["line"], width=max(1, rad(1)))
+    # la barre : 30 px, la sorte en acier (un lien : en gris), le site
+    bh = 30 * s
+    d.rounded_rectangle([x0 + rad(1), y0 + rad(1), x1 - rad(1), y0 + bh], radius=rad(9), fill=T["panel3"])
+    d.rectangle([x0 + rad(1), y0 + bh - rad(10), x1 - rad(1), y0 + bh], fill=T["panel3"])
+    d.line([(x0, y0 + bh), (x1, y0 + bh)], fill=T["line"], width=max(1, rad(1)))
+    mono = _font("mono", 8 * s)
+    d.text((x0 + rad(12), y0 + (bh - mono.size) / 2 - rad(1)), name.upper(), font=mono, fill=T["ink3" if name == "lien" else "cy"])
+    hx = x0 + rad(12) + d.textlength(name.upper(), font=mono) + rad(8)
+    host = _wrap(d, p["host"] or "—", _font("mono", 9 * s), max(1, x1 - rad(10) - hx), 1)[0]
+    d.text((hx, y0 + (bh - 9 * s) / 2 - rad(1)), host, font=_font("mono", 9 * s), fill=T["ink3"])
+    # le bas : le titre (2 lignes), puis ce qui empêche l'intégration (ce que la carte doit dire)
+    pad = rad(12)
+    tf, wf = _font("ui", 13 * s), _font("ui", 11 * s)
+    title = n.get("title") or (f"Vidéo {name}" if vid else p["host"]) or "adresse"
+    tl = [ln for ln in _wrap(d, title, tf, max(1, w - 2 * pad), 2) if ln]
+    why = (n.get("why") or "") if can else (n.get("why") or (p["why"] if not p["ok"] else
+           "une page en http:// ne s’intègre pas" if not p["url"].lower().startswith("https://") else "ce site ne s’intègre pas"))
+    wl = [ln for ln in _wrap(d, why, wf, max(1, w - 2 * pad), 2) if ln] if why else []
+    meta = rad(10) + len(tl) * tf.size * 1.3 + (rad(4) + len(wl) * wf.size * 1.4 if wl else 0) + rad(12)
+    # l'image : la place qui reste (un lien : 46 % du corps, 34 % sans image, comme la page)
+    key = web_apercu.image_file(n.get("img") or "")
+    body = max(1.0, y1 - y0 - bh)
+    ih = body - meta if can else body * (0.46 if key else 0.34)
+    ih = max(0.0, min(ih, body - meta))
+    iy0, iy1 = y0 + bh + rad(1), y0 + bh + ih
+    if ih > rad(8):
+        d.rectangle([x0 + rad(1), iy0, x1 - rad(1), iy1], fill=T["panel3"])
+        pasted = False
+        if key:
+            try:
+                with Image.open(key) as im:
+                    im = ImageOps.fit(im.convert("RGB"), (max(1, round(w - 2 * rad(1))), max(1, round(iy1 - iy0))), Image.LANCZOS)
+                img.paste(im, (round(x0 + rad(1)), round(iy0)))
+                pasted = True
+            except OSError:
+                pass
+        cx, cy = x0 + w / 2, (iy0 + iy1) / 2
+        rp = min(28 * s, ih / 2.6)   # le bouton de lecture : 56 px
+        if not pasted:   # le globe (WEB_ICON), 40 px, au trait ; une vidéo sans image : le globe, puis le bouton dessous
+            gy = cy - rp if vid else cy
+            R, lw = 18 * s, max(1, rad(1.2))
+            d.ellipse([cx - R, gy - R, cx + R, gy + R], outline=T["ink3"], width=lw)
+            d.ellipse([cx - R * 0.42, gy - R, cx + R * 0.42, gy + R], outline=T["ink3"], width=lw)
+            for k in (-1 / 3, 1 / 3):   # les deux parallèles, au tiers du rayon
+                hw = R * math.sqrt(1 - k * k)
+                d.line([(cx - hw, gy + k * R), (cx + hw, gy + k * R)], fill=T["ink3"], width=lw)
+            cy = cy + 20 * s if vid else cy
+        if vid:          # voile et filet, le triangle à l'encre
+            d.ellipse([cx - rp, cy - rp, cx + rp, cy + rp], fill=T["veil"], outline=T["line"], width=max(1, rad(1)))
+            d.polygon([(cx - rp * 0.28, cy - rp * 0.4), (cx - rp * 0.28, cy + rp * 0.4), (cx + rp * 0.45, cy)], fill=T["ink"])
+    ty = y0 + bh + ih + rad(10)
+    for k, ln in enumerate(tl):
+        d.text((x0 + pad, ty + k * tf.size * 1.3), ln, font=tf, fill=T["ink"])
+    ty += len(tl) * tf.size * 1.3 + rad(4)
+    for k, ln in enumerate(wl):
+        d.text((x0 + pad, ty + k * wf.size * 1.4), ln, font=wf, fill=T["amb"])
+
+
 def run_export(ctx) -> dict:
     bid = ctx.params.get("board", "")
     b = normalize(load(bid))
@@ -1835,7 +1925,7 @@ def _lot_image(d: dict, vals: list, name: str) -> dict:
             ps.append(img.check_generate({**card, "prompt": _s(v.get("prompt"), 6001), "seed": base}))
         except ValueError as e:
             raise HttpError(400, f"valeur {i + 1} : {e}") from e
-    pin = img._pin_for(img._cap_generate(ps[0]))
+    pin = img._pin_for(img._cap_generate(ps[0]), ps[0].get("lora"))   # le LoRA de la carte : une machine qui l'a
     batch = img._batch()
     todo = []
     for i, (v, p) in enumerate(zip(vals, ps)):

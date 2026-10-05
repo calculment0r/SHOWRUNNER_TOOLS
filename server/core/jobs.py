@@ -87,6 +87,12 @@ espaces.garde_prete("calcul")
 
 HANDLERS: dict[str, tuple] = {}
 _META: dict[str, dict] = {}
+# ce qu'un outil enchaîne quand un travail sort d'un ouvrier (fini, en échec, arrêté) :
+# une fonction(travail), appelée hors du verrou, sans personne ni Workspace posés ; ce
+# qu'elle lance, elle le lance au nom du travail (server/tools/paroles.py : la voix
+# seule, puis les mots, puis le calage). Un travail retiré de la file avant de partir
+# ne passe pas par là : l'outil le lit dans la file quand on le lui demande.
+AFTER: list = []
 _jobs: dict[str, dict] = {}
 _order: list[str] = []
 _cv = threading.Condition()
@@ -991,22 +997,52 @@ def _foreign_block(machine: str, fresh: bool = False, first: dict | None = None)
     return ""
 
 
-def _gpu_block(ep: str, machine: str, me: dict | None = None) -> str:
-    """Un seul travail GPU du portail par machine (factory/memory.py : « un
-    seul gros travail GPU à la fois »), et rien sous le rendu d'un autre.
-    `me` : le travail dont on parle ne se bloque pas lui-même — pris par un
-    ouvrier (`_claim`), il se prépare (mémoire, instance) et `annotate`
-    disait « DGX2 calcule déjà pour la file (« lui-même ») » (REPRISE.md)."""
+def _gpu_wait(ep: str, machine: str, me: dict | None = None) -> tuple[str, str]:
+    """Ce qui retient un travail GPU sur `machine`, en clair : (sorte, raison).
+    Un seul travail GPU du portail par machine (factory/memory.py : « un seul
+    gros travail GPU à la fois » ; `gpu_jobs_per_machine`), quelle que soit
+    l'instance ComfyUI de la machine, et rien sous le rendu d'un autre :
+    - `calcule` : un travail du portail tourne sur la machine — il finira,
+      le départ s'estime ;
+    - `prépare` : un ouvrier vient de le prendre, il vérifie l'instance et
+      libère la mémoire — départ inconnu ;
+    - `autre` : un rendu qui n'est pas du portail (le studio, une session) ;
+    - ("", "") : rien ne retient.
+    `me` : le travail dont on parle ne se retient pas lui-même — pris par un
+    ouvrier (`_claim`), il se prépare, et `annotate` disait « DGX2 calcule
+    déjà pour la file (« lui-même ») » (REPRISE.md)."""
     per = int(config.get("gpu_jobs_per_machine", 1))
     busy = [x for x in _jobs.values() if x is not me and x.get("gpu") and str(_where(x) or "").startswith("http")
             and machines.machine_of(_where(x)) == machine]
     if len(busy) >= per:
         b = busy[0]
+        titres = ", ".join(f"« {x['title']} »" for x in busy[:per])
+        port = machines.port_of(_where(b))
         if b["state"] == "running":
-            return f"attend : {machine} calcule déjà pour la file (« {b['title']} »)"
-        # pris, pas encore parti : il vérifie l'instance et libère la mémoire — départ inconnu
-        return f"attend : {machine} prépare « {b['title']} » pour la file"
-    return _foreign_block(machine)
+            return "calcule", f"{machine} calcule {titres} (ComfyUI :{port})"
+        return "prépare", f"{machine} prépare {titres} (ComfyUI :{port} : l'instance et la mémoire)"
+    why = _foreign_block(machine)
+    return ("autre", why.removeprefix("attend : ")) if why else ("", "")
+
+
+def _gpu_rule() -> str:
+    per = int(config.get("gpu_jobs_per_machine", 1))
+    return f"{'un calcul' if per == 1 else f'{per} calculs'} GPU du portail à la fois par machine"
+
+
+def _gpu_says(waits: list[tuple[str, str]]) -> str:
+    """Ce que lit la personne : chaque machine qui retient, une fois, puis la règle
+    quand c'est le portail lui-même qui retient (pas le rendu d'un autre)."""
+    raisons = list(dict.fromkeys(r for _, r in waits if r))
+    if not raisons:
+        return ""
+    regle = f" · {_gpu_rule()}" if any(k in ("calcule", "prépare") for k, _ in waits) else ""
+    return "attend : " + " ; ".join(raisons) + regle
+
+
+def _gpu_block(ep: str, machine: str, me: dict | None = None) -> str:
+    """Pourquoi un travail GPU ne part pas maintenant sur `machine` (« » : il peut)."""
+    return _gpu_says([_gpu_wait(ep, machine, me)])
 
 
 def _better_elsewhere(j: dict, ep: str) -> bool:
@@ -1208,6 +1244,11 @@ def _run(j: dict, ep: str) -> None:
             _cv.notify_all()
         if j["state"] == "done" and ctx:
             shutil.rmtree(ctx.workdir, ignore_errors=True)
+        for fn in AFTER:
+            try:
+                fn(j)
+            except Exception:  # noqa: BLE001 — une suite qui échoue ne touche pas au travail sorti
+                traceback.print_exc()
 
 
 # ── la place de chacun ──────────────────────────────────────
@@ -1274,11 +1315,11 @@ def annotate(force: bool = False) -> None:
                     msg = j["waiting"]
                     stuck = True
                 if not msg and j.get("gpu"):
-                    blocks = [_gpu_block(e, machines.machine_of(e), j) for e in avail if e.startswith("http")]
-                    if blocks and all(blocks):
-                        msg = blocks[0]
-                        stuck = stuck or not any(b.startswith(f"attend : {machines.machine_of(e)} calcule déjà")
-                                                 for b, e in zip(blocks, [e for e in avail if e.startswith("http")]))
+                    # toutes les instances de la voie retenues : le dire pour chaque machine, pas pour la première
+                    waits = [_gpu_wait(e, machines.machine_of(e), j) for e in avail if e.startswith("http")]
+                    if waits and all(k for k, _ in waits):
+                        msg = _gpu_says(waits)
+                        stuck = stuck or not any(k == "calcule" for k, _ in waits)
                 if not msg:
                     msg = "part dès qu'une instance se libère" if i == 0 else f"en file · {i} devant"
                 _auto_message(j, msg)

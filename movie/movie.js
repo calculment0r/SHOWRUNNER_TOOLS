@@ -367,7 +367,8 @@ function paintLoras() {
     return el('div', { class: 'lora' + (st.on ? ' on' : '') + (off ? ' off' : '') },
       el('label', { class: 'lh' },
         el('input', { type: 'checkbox', checked: st.on || null, disabled: off || null, onchange: (e) => { st.on = e.target.checked; changed(); paintLoras(); } }),
-        el('b', {}, l.nom), force),
+        // un LoRA de moodboard d'Idéation, entraîné par le portail (server/tools/lora.py)
+        el('b', {}, l.nom), l.moodboard ? el('span', { class: 'lbl mb', title: l.trigger ? `mot déclencheur « ${l.trigger} »` : '' }, 'moodboard') : null, force),
       el('span', { class: 'hint' }, l.note),
       !fits && !l.accel ? el('span', { class: 'why' }, `pas pour ce mode : ${l.modes.map((m) => MODE_FR[m]).join(', ')}`) : null,
       l.warn ? el('span', { class: 'warn-t' }, 'décision de Cal : exclu pour ses personnages') : null);
