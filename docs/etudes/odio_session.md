@@ -319,8 +319,15 @@ une couche par-dessus l'arrangement.
 
 - La timeline n'a plus à griser les pistes « jouées en Session » (REPRISE
   § 2.F) : par construction, aucune piste n'est prise par la Session.
-- Le nodal montre les modules des voies sans leur titre (le nom de la voie sur
-  son nœud de départ, comme pour une piste) : `nodal.js`.
+- ~~Le nodal montre les modules des voies sans leur titre (le nom de la voie sur
+  son nœud de départ, comme pour une piste) : `nodal.js`.~~ **Fait (06/10,
+  finitions)** : le nœud de départ d'une voie porte son étiquette, à sa
+  couleur, marquée « session » (une voie née d'une piste en a souvent le nom) ;
+  la pastille la colore, le double-clic la renomme, un clic en fait la voie
+  courante (`S.sel.voie`) ; le menu dit « voie de Session », « Voir dans la
+  Session ». Suppr sur sa source ou sa tranche retire toute la voie
+  (`retirerVoies`, comme une piste) — avant, le module partait seul et la voie
+  restait sans source. Essayé dans Chromium, deux thèmes, sans erreur console.
 - ~~Le panneau Asset, cliqué depuis la Session, pose encore sur l'arrangement
   (`panneau.js`) ; glisser dans une case marche.~~ **Fait (06/10, finitions)** :
   en Session, un clic du panneau pose dans la case choisie, comme un clic du

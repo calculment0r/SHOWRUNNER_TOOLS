@@ -52,7 +52,7 @@ import { brancherCanvas } from '../commun/molette.js';
 import { $ as $partout, partout, suivreTaille, elementAuPoint } from '../commun/fenetre.js';
 import { MODULES, COLORS, COLOR_FR, spec, val, drumVoicesOf, moduleName } from './modules.js';
 import { el, knob, fader, choice, put, menu, letter, inlineEdit } from './ui.js';
-import { trajets, recoudre, entrerDansLaChaine } from './projet.js';   // le graphe du son : les chaînes des pistes, lues dans les câbles
+import { trajets, recoudre, entrerDansLaChaine, retirerVoies } from './projet.js';   // le graphe du son : les chaînes des pistes, lues dans les câbles
 import { createBench } from './banc.js';
 import { portsOf } from './jouets/index.js';   // jouets : leurs ports « notes » et « valeur », les mêmes pour les machines
 import { beginDrag } from './machines/interaction/drag.js';
@@ -221,16 +221,19 @@ export function createNodal(app) {
   app.toys?.attach({ cv, world, view, zNet: () => zNet ?? view().z, paintSide: () => paintSide(), paintWires: () => peindreCables() });   // jouets : leurs câbles typés, les billes de la fontaine
 
   // ═════════════════════════════════════════ les tuiles, lues dans le projet
-  // la piste dont cette tuile est le nœud de DÉPART (sa source ; une machine-instrument : chacune de ses sections)
+  // la piste dont cette tuile est le nœud de DÉPART (sa source ; une machine-instrument : chacune de ses sections) ;
+  // une voie de la Session de même (session.js : ses modules portent `voie`, pas `track`)
   function pisteDeDepart(t) {
     if (t.bloc) return null;
-    const m = app.mod(t.mod), tr = m?.track && app.track(m.track);
+    const m = app.mod(t.mod), tr = m && (m.track ? app.track(m.track) : m.voie ? app.voie(m.voie) : null);
     return tr && tr.src === m.id ? tr : null;
   }
+  // la piste courante de l'arrangement, ou la voie courante de la Session (S.sel.voie)
+  const estCourante = (t) => !!t.piste && t.piste === (t.voie ? S.sel.voie : S.sel.track);
   function lireTuiles() {
     T = tuilesDe(P(), MODULES).map((t) => {
       const tr = pisteDeDepart(t);
-      if (tr) { t.piste = tr.id; t.pc = tr.color; }
+      if (tr) { t.piste = tr.id; t.pc = tr.color; if (!app.track(tr.id)) t.voie = true; }
       const def = MODULES[t.type];
       if (t.bloc || !def?.jouet) return t;
       // jouets : leur carte a la taille de leur scène (jouets/defs.js)
@@ -396,7 +399,7 @@ export function createNodal(app) {
     vue.el.classList.toggle('tile--section', !!t.sec);
     vue.el.classList.toggle('tile--carte', !t.sec);
     s.setProperty('--k', `var(--${accentDe(t)})`);
-    vue.el.classList.toggle('tile--courante', !!t.piste && t.piste === S.sel.track);
+    vue.el.classList.toggle('tile--courante', estCourante(t));
   }
   function grooveSig(m) {
     const tr = m?.track && app.track(m.track), pat = tr && app.pat(tr.pat);
@@ -849,7 +852,13 @@ export function createNodal(app) {
     // l'arrangement et le nodal voient le même projet : choisir un nœud d'une piste en fait la piste courante
     const m = pid && app.mod(pid);
     const tid = m?.track && app.track(m.track) ? m.track : (m && app.linked(m.id)[0]) || null;
-    if (tid && S.sel.track !== tid) { S.sel.track = tid; S.sel.pat = app.track(tid)?.pat || null; for (const x of T) { const v = vues.get(x.id); if (v) v.el.classList.toggle('tile--courante', !!x.piste && x.piste === tid); } }
+    // un nœud d'une voie de la Session : la voie courante (session.js)
+    const vid = m?.voie && app.voie(m.voie) ? m.voie : null;
+    if ((tid && S.sel.track !== tid) || (vid && S.sel.voie !== vid)) {
+      if (tid) { S.sel.track = tid; S.sel.pat = app.track(tid)?.pat || null; }
+      if (vid) S.sel.voie = vid;
+      for (const x of T) { const v = vues.get(x.id); if (v) v.el.classList.toggle('tile--courante', estCourante(x)); }
+    }
     classesSelection(); peindreDessus(); paintSide(); peindreOutils(); paintCableClass();
     // le « bloc pris » d'une section de machine change son T en édition
     if (machinePanel) rafraichir([...new Set([...avant, ...ids])].filter((id) => parId.get(id)?.sec));
@@ -1122,7 +1131,7 @@ export function createNodal(app) {
 
   // ═════════════════════════════════════════════════════ retirer, dupliquer
   function retirerTuiles(ids) {
-    const p = P(), porteurs = [...new Set(ids.map(porteurDe))], pistes = new Set();
+    const p = P(), porteurs = [...new Set(ids.map(porteurDe))], pistes = new Set(), voies = new Set();
     let fait = false;
     for (const pid of porteurs) {
       const m = app.mod(pid);
@@ -1130,6 +1139,9 @@ export function createNodal(app) {
         if (MODULES[m.type]?.role === 'master') continue;
         const tr = m.track && app.track(m.track);
         if (tr && (tr.src === m.id || tr.strip === m.id)) { pistes.add(tr.id); continue; }
+        // la source ou la tranche d'une voie de la Session : toute la voie (session.js, retirerVoie)
+        const vo = m.voie && app.voie(m.voie);
+        if (vo && (vo.src === m.id || vo.strip === m.id)) { voies.add(vo.id); continue; }
         // on retire en RECOUSANT, chaîne par chaîne : ce qui entrait est rebranché
         // sur ce qui sortait, le long de la même piste (projet.js, recoudre)
         recoudre(p, pid, app.wouldCycle);
@@ -1141,6 +1153,13 @@ export function createNodal(app) {
         n.blocs = (n.blocs || []).filter((b) => b.id !== pid);
         fait = true;
       }
+    }
+    if (voies.size) {
+      const noms = [...voies].map((id) => app.voie(id)?.name);
+      retirerVoies(p, [...voies]);
+      if (voies.has(S.sel.voie)) S.sel.voie = null;
+      app.label(noms.length > 1 ? `retirer les voies « ${noms.join(' », « ')} »` : `retirer la voie « ${noms[0]} »`);
+      fait = true;
     }
     const n = nodalDe(p), vivants = new Set([...p.modules.map((m) => m.id), ...(n.blocs || []).map((b) => b.id)]);
     n.liens = (n.liens || []).filter((l) => vivants.has(l.a) && vivants.has(l.b));
@@ -1911,23 +1930,25 @@ export function createNodal(app) {
     // de la source (ou de toute la machine), à taille d'écran constante — il
     // reste lisible à tous les reculs, là où l'en-tête de la tuile se tait —,
     // à la couleur de la piste. Sa pastille ouvre la palette ; double-clic sur
-    // le nom : le renommer ; clic : choisir le nœud.
+    // le nom : le renommer ; clic : choisir le nœud. Une voie de la Session de
+    // même, marquée « session » (une voie née d'une piste en a souvent le nom).
     const parPiste = new Map();
     for (const t of T) if (t.piste) { if (!parPiste.has(t.piste)) parPiste.set(t.piste, []); parPiste.get(t.piste).push(t); }
     for (const [tid, membres] of parPiste) {
-      const tr = app.track(tid);
+      const tr = app.owner(tid), voie = !!membres[0].voie;
       if (!tr) continue;
       const b = boundsOf(membres);
-      const lab = fixe(h('span', `piste-titre${membres[0].group ? ' piste-titre--groupe' : ''}${tid === S.sel.track ? ' piste-titre--courante' : ''}`), b.x, b.y);
+      const lab = fixe(h('span', `piste-titre${membres[0].group ? ' piste-titre--groupe' : ''}${estCourante(membres[0]) ? ' piste-titre--courante' : ''}`), b.x, b.y);
       lab.dataset.piste = tid;
       lab.style.setProperty('--c', `var(--${tr.color})`);
-      const past = bouton('piste-titre__couleur', null, `la couleur de « ${tr.name} » — celle de sa piste dans l'arrangement · clic : la palette`, (ev) => menu(ev.clientX, ev.clientY,
-        [{ head: `couleur de « ${tr.name} »` }, ...COLORS.map((c) => ({ label: COLOR_FR[c], dot: c, checked: tr.color === c, onclick: () => app.setTrackColor(tid, c) }))]));
+      const past = bouton('piste-titre__couleur', null, `la couleur de « ${tr.name} » — celle de sa ${voie ? 'voie dans la Session' : 'piste dans l\'arrangement'} · clic : la palette`, (ev) => menu(ev.clientX, ev.clientY,
+        [{ head: `couleur de « ${tr.name} »` }, ...COLORS.map((c) => ({ label: COLOR_FR[c], dot: c, checked: tr.color === c, onclick: () => colorerPiste(tid, c) }))]));
       const nm = h('span', 'nm');
       nm.textContent = tr.name;
-      nm.title = `la piste « ${tr.name} » · glisser : déplacer son nœud · double-clic : la renommer · clic droit : son menu`;
+      nm.title = `${voie ? 'la voie de Session' : 'la piste'} « ${tr.name} » · glisser : déplacer son nœud · double-clic : la renommer · clic droit : son menu`;
       nm.addEventListener('dblclick', (ev) => { ev.stopPropagation(); renommerPiste(tid); });
       lab.append(past, nm);
+      if (voie) { const k = h('span', 'piste-titre__sorte'); k.textContent = 'session'; lab.append(k); }
       // L'ÉTIQUETTE SE GLISSE (Cal, 29/09 : « il faut qu'on puisse déplacer les
       // nodes de piste par la grosse étiquette ») : elle vaut l'en-tête de son
       // nœud — les mêmes touches pour choisir, le même déplacement (la
@@ -2249,17 +2270,18 @@ export function createNodal(app) {
   function menuTuile(t) {
     const info = infoTuile(t), { owner } = porteurDeTuile(P(), t.id);
     if (!info || !owner) return null;
-    const tr = t.piste && app.track(t.piste);
+    const tr = t.piste && app.owner(t.piste), voie = !!(tr && t.voie);
     const m = app.mod(owner.id), def = m && MODULES[m.type];
     const ps = m ? app.linked(m.id) : [];
     const ordre = ordreDe(t.id) || [], ex = expose(t.id);
     const ids = sel.includes(t.id) ? sel : [t.id];
     const exposer = (id) => { const o = reglage('ordre'), x = reglage('expose'); if (id) { x[t.id] = id; o[t.id] = [id, ...(o[t.id] || []).filter((q) => q !== id)]; } else { delete x[t.id]; delete o[t.id]; } app.commit('quiet'); rafraichir([t.id], true); };
     return [
-      { head: tr ? `piste · ${tr.name}` : info.nom },
-      tr ? { label: 'Couleur de la piste', dot: tr.color, items: COLORS.map((c) => ({ label: COLOR_FR[c], dot: c, checked: tr.color === c, onclick: () => app.setTrackColor(tr.id, c) })) } : null,
-      tr ? { label: 'Renommer la piste', onclick: () => renommerPiste(tr.id) } : null,
-      tr ? { label: 'Voir dans l\'arrangement', onclick: () => { app.selectTrack(tr.id); app.setView('timeline'); } } : null,
+      { head: tr ? `${voie ? 'voie de Session' : 'piste'} · ${tr.name}` : info.nom },
+      tr ? { label: voie ? 'Couleur de la voie' : 'Couleur de la piste', dot: tr.color, items: COLORS.map((c) => ({ label: COLOR_FR[c], dot: c, checked: tr.color === c, onclick: () => colorerPiste(tr.id, c) })) } : null,
+      tr ? { label: voie ? 'Renommer la voie' : 'Renommer la piste', onclick: () => renommerPiste(tr.id) } : null,
+      tr && !voie ? { label: 'Voir dans l\'arrangement', onclick: () => { app.selectTrack(tr.id); app.setView('timeline'); } } : null,
+      voie ? { label: 'Voir dans la Session', onclick: () => { S.sel.voie = tr.id; app.setView('console'); } } : null,
       m?.track || ps.length ? { label: 'Instruments et effets de sa piste', onclick: () => { S.sel.track = m.track || ps[0]; S.sel.mod = m.id; app.showDetail('device'); } } : null,
       ps.length > 1 ? { head: `effet lié · chaînes de ${ps.map((x) => app.track(x)?.name).join(', ')}` } : null,
       ...(ps.length > 1 ? ps.map((x) => ({ label: `Sortir de la chaîne de « ${app.track(x)?.name} »`, onclick: () => app.removeFromTrack(m.id, x) })) : []),
@@ -2276,7 +2298,7 @@ export function createNodal(app) {
       sel.length > 1 ? { label: 'Grouper', key: 'G', onclick: () => toggleGroup() } : t.group && !t.machine ? { label: 'Dégrouper', key: '⌥G', onclick: () => ungroupBlocks() } : null,
       !tr ? { label: 'Teinte', items: [...TEINTES.map((c) => ({ label: c, dot: c, checked: t.teinte === c, onclick: () => poserTeinte(ids, c) })), { label: 'Aucune', onclick: () => poserTeinte(ids, null) }] } : null,
       '-',
-      def?.role === 'master' ? null : { label: tr ? `Retirer la piste « ${tr.name} »` : 'Retirer', key: 'Suppr', danger: true, onclick: () => retirerTuiles(ids) },
+      def?.role === 'master' ? null : { label: tr ? `Retirer la ${voie ? 'voie' : 'piste'} « ${tr.name} »` : 'Retirer', key: 'Suppr', danger: true, onclick: () => retirerTuiles(ids) },
     ];
   }
   function menuJouet(t, tg) {
@@ -2292,11 +2314,21 @@ export function createNodal(app) {
       { label: 'Retirer', key: 'Suppr', danger: true, onclick: () => { if (!app.toys?.remove(m.id)) app.removeModule(m.id); } },
     ];
   }
-  // renommer une piste depuis le nodal : son étiquette devient un champ
+  // renommer une piste (ou une voie de la Session) depuis le nodal : son étiquette devient un champ
   function renommerPiste(tid) {
-    const tr = app.track(tid), lab = dessusEl.querySelector(`.piste-titre[data-piste="${tid}"] .nm`);
+    const tr = app.owner(tid), lab = dessusEl.querySelector(`.piste-titre[data-piste="${tid}"] .nm`);
     if (!tr) return;
-    if (lab) inlineEdit(lab, tr.name, (n) => { tr.name = n.slice(0, 60); app.label(`renommer la piste en « ${tr.name} »`); app.commit('data'); }, { max: 60 });
+    const quoi = app.track(tid) ? 'la piste' : 'la voie';
+    if (lab) inlineEdit(lab, tr.name, (n) => { tr.name = n.slice(0, 60); app.label(`renommer ${quoi} en « ${tr.name} »`); app.commit('data'); }, { max: 60 });
+  }
+  // sa couleur : une piste par l'application (app.setTrackColor) ; une voie comme le menu de la Session (session.js)
+  function colorerPiste(tid, c) {
+    if (app.track(tid)) { app.setTrackColor(tid, c); return; }
+    const v = app.voie(tid);
+    if (!v || !COLORS.includes(c) || v.color === c) return;
+    v.color = c;
+    app.label(`colorer la voie en ${COLOR_FR[c]}`);
+    app.commit('data');
   }
 
   function supprimer() {

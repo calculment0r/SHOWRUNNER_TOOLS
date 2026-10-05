@@ -152,6 +152,8 @@ html.dragging * { cursor: inherit !important; }
 .ndx-dessus .piste-titre .nm { font-family: var(--f-disp); font-size: 12px; line-height: 18px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink); }
 .ndx-dessus .piste-titre__couleur { width: 14px; height: 14px; padding: 0; border: 0; border-radius: 3px; cursor: pointer; background: var(--c); flex: none; margin-left: 3px; }
 .ndx-dessus .piste-titre__couleur:hover { box-shadow: 0 0 0 2px var(--line-cy); }
+/* une voie de la Session : la même étiquette, marquée (une voie née d'une piste en a souvent le nom) */
+.ndx-dessus .piste-titre__sorte { font-family: var(--f-mono); font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink3); }
 
 /* LE TRACÉ D'ORDRE au bouton du milieu (MachinePanel.tsx, tracerOrdre) : la
    courbe et les rangs vivent dans l'écran ; le trait du lasso d'Idéation */
