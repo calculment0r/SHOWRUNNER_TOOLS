@@ -181,9 +181,18 @@ def next_time(hhmm: str) -> str:
 
 def r_train(req, bid, nid):
     _ok_ids(bid, nid)
-    _board(req, bid, "edit")
+    _board(req, bid, "see")
     d = req.json()
     mid = d.get("model")
+    # la garde du calcul (celle de jobs.submit, que _submit appellera) avant tout jugement des
+    # réglages, pour la sorte et le Workspace du travail : un guest lit pourquoi (et non un
+    # « modèle inconnu » ou un « spectateur »), et un plan pour la nuit n'est pas gardé pour
+    # rien — jobs.submit le refuserait à son heure
+    from tools import ideation
+    space = ideation.board_space(bid)
+    me = auth.current()
+    jobs._guard("lora.train_factice" if mid == "factice" else "lora.train", {}, me, me, space)
+    _board(req, bid, "edit")
     if mid not in MODELS or (mid == "factice" and not auth.is_admin(auth.current())):
         raise HttpError(400, f"modèle cible inconnu : {mid!r}")
     st = model_state(mid)
@@ -194,8 +203,6 @@ def r_train(req, bid, nid):
     need = MIN_ITEMS[m["family"]]
     if len(items) < need:
         raise HttpError(400, f"il faut au moins {need} {'images' if m['kind'] == 'image' else 'sons'} lisibles ici (il y en a {len(items)})")
-    from tools import ideation
-    space = ideation.board_space(bid)
     when = str(d.get("when") or "now")
     with _lock:
         s = load(bid, nid)
