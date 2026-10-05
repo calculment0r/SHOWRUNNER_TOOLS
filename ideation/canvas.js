@@ -23,6 +23,7 @@ import { el, href, fmtDur, etypeFr, toast, dropZone } from '../commun/shell.js';
 import { survolSon } from '../commun/lecteur.js';
 import { menu } from '../commun/menu.js';
 import { brancherCanvas } from '../commun/molette.js';
+import { galerie } from './galerie.js';
 import { CF_MIME } from './library.js';
 import { createWires, edgePts } from './wires.js';
 import { KINDS, outPort, inPorts } from './ports.js';
@@ -699,8 +700,11 @@ export function createCanvas(app) {
             el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.addAt('note', ...center()) }, 'Note'),
             el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.addAt('frame', ...center()) }, 'Cadre')]
           : [el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.boardsModal() }, 'Les planches'),
-            el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.newBoard() }, 'Nouvelle planche')])));
+            el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.newBoard() }, 'Nouvelle planche')])),
+        // une planche vide : les modèles, à portée de main (motion design compris : ideation/galerie.js)
+        S.board ? el('div', { class: 'gal-w' }, el('span', { class: 'lbl' }, 'ou commencer avec un modèle'), galerie(app)) : null);
     }
+    empty.classList.toggle('with-gal', !has && !!S.board);
     const stub = (S.cfg?.backend || S.meta?.backend) === 'stub';
     banner.hidden = !stub || !S.board;
     banner.replaceChildren(el('b', {}, 'Moteur factice'), el('span', {}, `Générer image, Variations et Éditer rendent des mires dessinées${S.mopts && S.mopts.engine !== 'h3' ? ', Générer vidéo une vidéo d’essai (ffmpeg)' : ''} : aucun modèle n’est chargé. Le câblage : page Admin.`));

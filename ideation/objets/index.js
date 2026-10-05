@@ -31,6 +31,7 @@ import * as I from './crayon.js';
 import * as G from './guides.js';
 import { regroup as regroupStickies } from './couleurs.js';
 import { TEMPLATES, insertTemplate, TOOL_ICON as TPL_ICON } from './modeles.js';
+import { galerie } from '../galerie.js';
 import { extendWeb } from './web.js';   // web : l'objet « Web » (YouTube, Vimeo, un site), 30/09
 import { extendTexte, textTool } from './texte.js';   // l'objet texte, comme celui de Miro (30/09)
 import { createCrop } from './recadrer.js';           // recadrer une image, comme Miro (30/09)
@@ -254,7 +255,9 @@ export function createObjets(app) {
     closeTpl();
     tplBox = el('div', { class: 'ob-tpl', role: 'menu', 'aria-label': 'les modèles' }, el('span', { class: 'lbl' }, 'insérer au centre de la vue'),
       ...TEMPLATES.map((t) => el('button', { class: 'ob-tr', type: 'button', role: 'menuitem', onclick: () => { closeTpl(); insertTemplate(app, t.id, ...app.canvas.center()); } },
-        el('b', {}, t.name), el('span', {}, t.desc))));
+        el('b', {}, t.name), el('span', {}, t.desc))),
+      // les modèles de présentation (motion design compris) : la galerie, sans les ateliers (ils sont juste au-dessus)
+      galerie(app, { ateliers: false, onPick: () => closeTpl(), compacte: true }));
     for (const ev of ['pointerdown', 'dblclick', 'wheel']) tplBox.addEventListener(ev, (e) => e.stopPropagation(), { passive: true });
     app.canvas.el.append(tplBox);
     const c = app.canvas.el.getBoundingClientRect(), r = anchor.getBoundingClientRect();

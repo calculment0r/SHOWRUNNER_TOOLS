@@ -594,6 +594,27 @@ body.at-presenting > .sr-dock, body.at-presenting > .sr-dock-grip, body.at-prese
 .empty b { font-family: var(--f-disp); font-weight: 400; font-size: 20px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink2); }
 .empty p { margin: 0; color: var(--ink3); line-height: 1.6; }
 .empty .row { pointer-events: auto; justify-content: center; }
+/* une planche vide : la galerie des modèles (ideation/galerie.js) sous les boutons */
+.empty.with-gal { width: min(1000px, 94%); top: 46%; max-height: calc(100% - 190px); overflow-y: auto; }
+.gal-w { pointer-events: auto; width: 100%; display: flex; flex-direction: column; gap: 10px; margin-top: 8px; padding-top: 14px; box-shadow: inset 0 1px 0 var(--line); }
+.gal { display: flex; flex-direction: column; gap: 14px; text-align: left; }
+.gal-sec { display: flex; flex-direction: column; gap: 8px; }
+.gal-sec > .lbl { color: var(--cy); }
+.gal-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
+.gal-card {
+  position: relative; display: flex; flex-direction: column; gap: 5px; padding: 10px 11px 11px; border-radius: var(--r3); text-align: left;
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); cursor: pointer;
+}
+.gal-card:hover { background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.gal-card b { font-family: var(--f-disp); font-weight: 400; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink); }
+.gal-line { font-size: 11.5px; line-height: 1.4; color: var(--ink2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.gal-tag { position: absolute; top: 10px; right: 10px; font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--or); box-shadow: inset 0 0 0 1px var(--line-or); padding: 1px 5px; border-radius: 3px; }
+.gal-sw { display: flex; gap: 3px; }
+.gal-sw i { width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--line); }
+.gal.compacte { margin-top: 6px; padding-top: 8px; box-shadow: inset 0 1px 0 var(--line); }
+.gal.compacte .gal-cards { grid-template-columns: 1fr 1fr; }
+.gal.compacte .gal-line { -webkit-line-clamp: 2; }
 .banner {
   position: absolute; left: 12px; top: 12px; z-index: 6; max-width: min(520px, 70%); display: flex; gap: 8px; align-items: baseline;
   padding: 6px 10px; border-radius: var(--r2); background: var(--veil); box-shadow: inset 0 0 0 1px var(--line-amb); pointer-events: none;

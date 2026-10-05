@@ -47,9 +47,16 @@ const sec = (ms) => (ms / 1000).toFixed(2);
 
 let M = null;   // le mode, une fois installé (un seul par page)
 
-export async function enter(app, { from = null } = {}) {
+// `exemple` : l'id d'un modèle dont l'exemple (ses diapositives, son motion) se pose sur la planche à l'ouverture
+// (la galerie des modèles, ideation/galerie.js)
+export async function enter(app, { from = null, exemple = null } = {}) {
   if (!M) M = install(app);
-  return M.open(from);
+  const ok = await M.open(from);
+  if (ok && exemple) {
+    const m = M.modeles.find((x) => x.id === exemple);
+    if (m) await M.loadExample(m);
+  }
+  return ok;
 }
 export const current = () => M;
 
