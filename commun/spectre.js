@@ -32,7 +32,7 @@ const T = 128;                 // colonnes par tuile
 export const SPAN_MAX = 1 << 23;   // échantillons à l'écran au plus
 const PLAGE = 90;              // dB sous le plus fort
 const FMIN = 20, FMAX = 20000;
-const TUILES_MAX = 400;        // tuiles gardées (≈ 128 × 160 × 5 octets chacune)
+const TUILES_MAX = 240;        // tuiles gardées (128 colonnes × la hauteur, en niveaux et en couleurs : 60 Mo au pire, 480 px d’écran de haut)
 const VOULUE_MS = 1500;        // une tuile qu'aucun dessin n'a demandée depuis : abandonnée
 
 let worker = null, enCours = null;
