@@ -1,6 +1,8 @@
 // ODIO — la vue Instruments, en bas de l'arrangement (la « Device View » de
 // Live) : toute la chaîne de la piste choisie (source → effets → tranche),
-// module par module avec ses molettes, de gauche à droite. Les effets
+// module par module, de gauche à droite : sa surface quand le métier en
+// dessine une (courbe d'égaliseur, de compresseur, de filtre… :
+// musique/appareils/), ses molettes sinon, ou dessous pour régler fin. Les effets
 // s'ajoutent, se déplacent et se retirent ici ; c'est la même chaîne de
 // câbles que dans la vue Nodal (la chaîne est lue dans les câbles : un effet
 // que plusieurs pistes traversent y est dans le rack de chacune, « lié », une
