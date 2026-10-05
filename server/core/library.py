@@ -801,6 +801,22 @@ def add_ref(item_id: str, src: Path, role: str = "", label: str = "", from_item:
         return it
 
 
+def remember_ref_item(item_id: str, name: str, image_id: str) -> None:
+    """La référence `name` d'un élément retient l'image qui la porte dans la bibliothèque
+    (server/tools/core_api.py, el_part). Rien si l'élément ne s'écrit pas ici."""
+    _load()
+    with _lock:
+        it = _items.get(item_id)
+        if not it or it["kind"] != "element":
+            return
+        _check_write(it)
+        for r in it["element"].get("refs") or []:
+            if r.get("file") == name and not r.get("item"):
+                r["item"] = image_id
+                _save(it)
+                return
+
+
 def trash(item_id: str) -> None:
     _load()
     with _lock:
@@ -1092,6 +1108,8 @@ def public(it: dict) -> dict:
                       for r in it["element"]["refs"]]
         if it["element"].get("voices"):
             el["voices"] = [{**v, "url": base + v["file"]} for v in it["element"]["voices"]]
+        if it["element"].get("meshes"):   # les modèles 3D (Object Creator) : leur adresse, pour la visionneuse
+            el["meshes"] = [{**m, "url": base + m["file"]} for m in it["element"]["meshes"] if m.get("file")]
         out["element"] = el
         if is_living(it):
             # un élément versionné : sa dernière version, et son image (celle de la dernière)

@@ -54,8 +54,8 @@ import { contextMenu, pageMenu, copy } from '../commun/menu.js';
 import { lecteur, petitLecteur } from '../commun/lecteur.js';   // LE lecteur (30/09) : la vidéo ou le son d'une fiche, sa frise, sa tête
 
 mountHeader('asset');
-// le panneau Asset commun (commun/dock.js), ici aussi (Ctrl+Espace) : un visualiseur ; clic :
-// choisir, double-clic ou Entrée : la fiche
+// le panneau Asset commun (commun/dock.js) n'est plus monté ici (Cal, 05/10 : la page est déjà la
+// bibliothèque ; commun/shell.js, DOCK.page) — ce réglage reste sans effet tant qu'il ne l'est pas
 dock.configure({ kinds: ['image', 'video', 'audio', 'midi', 'sequence', 'element'], label: 'Asset',
   placeLabel: 'Ouvrir la fiche', place: (items) => { go('#' + items[0].id); }, fiche: (it) => go('#' + it.id),
   hint: 'clic : choisir · double-clic : la fiche' });

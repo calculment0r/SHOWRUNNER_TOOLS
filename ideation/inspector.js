@@ -15,6 +15,8 @@ import { KINDS, nameOf, portOf } from './ports.js';
 import { inbox } from './gen.js';
 import { arobase } from '../commun/arobase.js';
 import { kidsOf, layoutOf } from './groups.js';
+import { LINK_COLORS, setLinkColor } from './objets/commun.js';
+import { PART_MIME } from './library.js';
 
 const ROLES = [['face', 'visage'], ['full body', 'plein pied'], ['outfit', 'tenue'], ['view', 'vue'], ['detail', 'détail'], ['style', 'style'], ['expression', 'expression']];
 
@@ -60,7 +62,7 @@ export function createInspector(app) {
       el('h2', { class: 'ttl' }, B.name),
       el('p', { class: 'hint' }, `modifiée ${fmtDate(B.updated) || '—'} · elle s’enregistre seule`),
       row(b('Tout voir', () => app.canvas.fit(), { title: 'Maj+1' }),
-        b('Exporter en PNG', () => app.exportBoard(''), { title: 'la planche entière, dans la bibliothèque (dossier Idéation)', disabled: !B.nodes.length })),
+        b('Exporter en PNG', () => app.exportBoard(''), { title: 'la planche entière : sur l’ordinateur et dans le presse-papier', disabled: !B.nodes.length })),
       !B.nodes.length ? hint('Exporter : posez d’abord quelque chose.') : null));
     // un objet d'un groupe se choisit dans son groupe (le groupe s'ouvre) ; caché dans une carte, on va à la carte
     const item = (n) => el('button', { class: 'oline' + (n.group ? ' kid' : ''), type: 'button', onclick: () => {
@@ -120,6 +122,9 @@ export function createInspector(app) {
       hint(l.kind === 'out' ? 'La lignée : cet objet est né de l’autre.' : 'Une flèche d’annotation : elle ne porte rien. Pour qu’une image ou un texte parte dans une carte, tirez un fil depuis sa sortie.'),
       el('div', { class: 'seg' }, ...[['arrow', 'Flèche'], ['line', 'Ligne'], ['out', 'Résultat']].map(([k, v]) =>
         el('button', { class: 'tb' + (l.kind === k ? ' on' : ''), type: 'button', onclick: () => app.mutate(() => { l.kind = k; }) }, v))),
+      // la couleur d'une annotation (Cal, 05/10)
+      l.kind === 'out' ? null : el('div', { class: 'swatches' }, ...LINK_COLORS.map((c) => el('button', { class: 'swc' + ((l.color || '') === c.id ? ' on' : ''), type: 'button', title: c.name,
+        style: { background: `var(--${c.id || 'ink3'})` }, onclick: () => setLinkColor(app, l, c.id) }))),
       lab,
       row(b('Inverser', () => app.mutate(() => { [l.a, l.b] = [l.b, l.a]; })), el('span', { class: 'sp' }), cut))];
   }
@@ -198,11 +203,7 @@ export function createInspector(app) {
         go('Ajouter au montage', `montage/?add=${id}`),
         go('Référence vidéo', `movie/?ref=${id}`, 'Vidéo : cette voix en référence'))));
     } else if (n.kind === 'element') {
-      const refs = it.element?.refs || [];
-      out.push(card('Références', `${refs.length}`,
-        el('div', { class: 'erefs' }, ...refs.map((r) => el('i', { title: `${r.label || ''} · ${r.role || ''}`, style: { backgroundImage: `url("${href(r.thumb_url)}")` } },
-          el('span', {}, r.label || r.role || '')))),
-        it.element?.description ? el('p', { class: 'hint' }, it.element.description) : null));
+      out.push(partsCard(it, n));
       out.push(card('Faire naître', null, row(b('Carte Générer', () => app.genWith([n.id]), { title: 'une carte qui prend cet élément en référence' }),
         b('Nuancier', () => app.palette(n.id)))));
       out.push(card('Production', null, el('div', { class: 'prod' },
@@ -210,6 +211,52 @@ export function createInspector(app) {
         it.element?.source?.open ? el('a', { class: 'tb ghost sm', href: it.element.source.open, target: '_blank', rel: 'noopener' }, 'Character Factory ↗') : null)));
     }
     return out;
+  }
+
+  // ── ce qui compose un élément (Cal, 05/10) : « si je sélectionne un élément sur le canvas, on a dans
+  // le panneau de droite tout ce qui compose l'élément en vignettes (planche, expressions, modèle 3D) et
+  // on peut glisser ces assets dans le canvas » — par sorte, chaque vignette se glisse (PART_MIME,
+  // canvas.js) ou se pose d'un clic à côté de l'élément ; une image devient une image de la
+  // bibliothèque (une fois), un modèle 3D la visionneuse (objets/modele3d.js)
+  const ROLE_FR = { face: 'Visage et looks', 'full body': 'Plein pied', expression: 'Expressions', view: 'Vues', style: 'Style', '': 'Planches et autres' };
+  function partsCard(it, n) {
+    const refs = it.element?.refs || [];
+    const meshes = app.modele3d?.meshesOf(it) || [];
+    const voices = (it.element?.voices || []).filter((v) => v.item);
+    const at = () => [n.x + n.w + 40 + 160, n.y + n.h / 2];
+    const tile = (part, { bg = '', label = '', title = '', glyph = null }) => {
+      const t = el('button', { class: 'epart', type: 'button', draggable: 'true', title: `${title} — glisser sur la planche, ou clic : à côté de l’élément`,
+        style: bg ? { backgroundImage: `url("${href(bg)}")` } : {} }, glyph, label ? el('span', {}, label) : null);
+      t.addEventListener('dragstart', (e) => {
+        e.dataTransfer.setData(PART_MIME, JSON.stringify({ eid: it.id, ...part }));
+        e.dataTransfer.effectAllowed = 'copy';
+      });
+      t.addEventListener('click', () => app.placePart({ eid: it.id, ...part }, ...at()));
+      return t;
+    };
+    const groups = new Map();
+    for (const r of refs) {
+      const k = ROLE_FR[r.role] !== undefined ? r.role : '';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(r);
+    }
+    const order = Object.keys(ROLE_FR).filter((k) => groups.has(k));
+    const secs = order.map((k) => el('div', { class: 'epsec' }, el('span', { class: 'lbl' }, `${ROLE_FR[k]} · ${groups.get(k).length}`),
+      el('div', { class: 'erefs' }, ...groups.get(k).map((r) => tile({ kind: 'ref', file: r.file }, { bg: r.thumb_url, label: r.label || r.role || '', title: `${r.label || ''} · ${r.role || 'image'}` })))));
+    if (meshes.length) {
+      secs.push(el('div', { class: 'epsec' }, el('span', { class: 'lbl' }, `Modèle 3D · ${meshes.length}`),
+        el('div', { class: 'erefs' }, ...meshes.map((m, i) => tile({ kind: 'mesh', file: m.file }, { bg: it.thumb_url || '', label: i === 0 ? '3D' : m.file.replace(/\.glb$/, ''),
+          title: `${m.file}${m.faces ? ` · ${m.faces} faces` : ''} : la visionneuse 3D`, glyph: el('b', { class: 'ep3d' }, '3D') })))));
+    }
+    if (voices.length) {
+      secs.push(el('div', { class: 'epsec' }, el('span', { class: 'lbl' }, `Voix · ${voices.length}`),
+        el('div', { class: 'erefs' }, ...voices.map((v) => tile({ kind: 'item', id: v.item }, { label: v.label || 'voix', title: 'la voix : un son sur la planche', glyph: el('b', { class: 'ep3d' }, '♪') })))));
+    }
+    return card('Composants', `${refs.length + meshes.length + voices.length}`,
+      secs.length ? el('div', { class: 'eparts' }, ...secs) : hint('cet élément n’a encore ni image, ni modèle 3D'),
+      hint('Glisser une vignette sur la planche la pose là ; un clic la pose à côté de l’élément.'),
+      it.element?.description ? el('p', { class: 'hint' }, it.element.description) : null,
+      meshes.length ? row(b('Voir en 3D', () => app.modele3d.place(it, ...at()), { title: 'le modèle 3D le plus récent, dans la visionneuse' })) : null);
   }
 
   function textPanel(n) {
@@ -239,7 +286,7 @@ export function createInspector(app) {
     name.addEventListener('focus', () => { ch = app.editing(); });
     name.addEventListener('input', () => { ch(); n.name = name.value; app.render(); });
     return card('Cadre', `${inner.length} objet${inner.length > 1 ? 's' : ''}`, name,
-      row(b('Exporter ce cadre', () => app.exportBoard(n.id), { title: 'en PNG, dans la bibliothèque (dossier Idéation)' }),
+      row(b('Exporter ce cadre', () => app.exportBoard(n.id), { title: 'en PNG : sur l’ordinateur et dans le presse-papier' }),
         b('Voir', () => app.canvas.fit(bbox([n]))),
         b('Choisir son contenu', () => app.select(inner.map((m) => m.id)), { disabled: !inner.length })),
       row(b(`Faire un élément (${imgs.length} image${imgs.length > 1 ? 's' : ''})`, () => app.elementModal(imgs.map((m) => m.id), n.name),

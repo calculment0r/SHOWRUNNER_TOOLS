@@ -24,7 +24,7 @@ import { survolSon } from '../commun/lecteur.js';
 import { menu } from '../commun/menu.js';
 import { brancherCanvas } from '../commun/molette.js';
 import { galerie } from './galerie.js';
-import { CF_MIME } from './library.js';
+import { CF_MIME, PART_MIME } from './library.js';
 import { createWires, edgePts } from './wires.js';
 import { KINDS, outPort, inPorts } from './ports.js';
 import { CARD_W, LOD_PX, EXIT, kidsMap, kidsOf, layoutAll, arrange, layoutOf, crossing, portLabel, slotAt, setOrder } from './groups.js';
@@ -1111,7 +1111,8 @@ export function createCanvas(app) {
       if (auto) { measure(); W.placePorts(); }
       // dans un groupe, les autres se remettent en forme à chaque image
       if (g) live([n]);
-      paintLinks(); paintMini();
+      // les poignées (et le cadre de la sélection) suivent la boîte à chaque image, pas au lâcher
+      paintLinks(); paintMini(); sel.follow();
     }, () => { paintGuides(over, V(), cv.clientWidth, cv.clientHeight, null); if (moved) { sel.gesture(false); paintFrames(); app.commit(); } });
   }
   // un texte (objets/texte.js), comme dans Miro : le coin change sa taille (« dragging the white
@@ -1425,13 +1426,22 @@ export function createCanvas(app) {
   let dropAt = null;
   cv.addEventListener('dragover', (e) => {
     dropAt = [e.clientX, e.clientY];
-    if (e.dataTransfer?.types?.includes(CF_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; cv.classList.add('drop-on'); }
+    if (e.dataTransfer?.types?.includes(CF_MIME) || e.dataTransfer?.types?.includes(PART_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; cv.classList.add('drop-on'); }
   });
   cv.addEventListener('dragleave', (e) => { if (!cv.contains(e.relatedTarget)) cv.classList.remove('drop-on'); });
   const dropPoint = () => (dropAt ? toWorld(...dropAt) : center());
   // un dépôt dans une carte (zone dans la zone) n'atteint pas la planche : son filet s'éteint quand même
   for (const ev of ['drop', 'dragend']) addEventListener(ev, () => setTimeout(() => cv.classList.remove('drop-on')), true);
   dropZone(cv, { kinds: ['image', 'video', 'audio', 'element'], via: 'ideation', onitems: (items) => app.placeMany(items, ...dropPoint()) });
+  // une partie d'un élément (le panneau de droite : planche, expression, modèle 3D) : posée là où on lâche
+  cv.addEventListener('drop', (e) => {
+    const raw = e.dataTransfer?.getData(PART_MIME);
+    if (!raw) return;
+    e.preventDefault();
+    e.stopPropagation();
+    cv.classList.remove('drop-on');
+    try { app.placePart(JSON.parse(raw), ...toWorld(e.clientX, e.clientY)); } catch { /* charge illisible */ }
+  });
   cv.addEventListener('drop', (e) => {
     const raw = e.dataTransfer?.getData(CF_MIME);
     if (!raw) return;

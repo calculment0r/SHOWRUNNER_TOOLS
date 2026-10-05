@@ -156,6 +156,9 @@ def _refs_in(doc: str, d: dict) -> list[tuple[str, str]]:
         for n in d.get("nodes") or []:
             if isinstance(n, dict) and isinstance(n.get("item"), str) and n["item"]:
                 out.append((n["item"], f"nœud {n.get('id')}"))
+            # un moodboard (ideation/objets/moodboard.js) : ses images
+            if isinstance(n, dict) and isinstance(n.get("items"), list):
+                out.extend((str(x), f"moodboard {n.get('id')}") for x in n["items"] if isinstance(x, str) and x)
     return out
 
 
@@ -402,7 +405,7 @@ def check_loops(doc: str, items) -> None:
 #   mus  music.validate ; musique/generatif_region.js (prises `gen.takes`, cases « son »
 #        `gen.v`) ; musique/moteur.js (l'échantillonneur : `params.item`) ; musique.js
 #        savePreset (un réglage gardé recopie les `params` du module)
-#   ide  ideation._node (média, nuancier), ideation._card_data (le visage d'une carte),
+#   ide  ideation._node (média, nuancier, les images d'un moodboard), ideation._card_data (le visage d'une carte),
 #        la carte Générer (`refChoice` : l'élément → la référence choisie)
 #   item library.py (lignée, éléments, versions), elements.publish (`deps`), les recettes
 #        (image.check_generate `refs`, image.check_edit `source`, movie._inputs `inputs`)
@@ -410,7 +413,7 @@ ID_FIELDS = {
     "seq": ("clips[].item", "clips[].fx[].lut", "tracks[].fx[].lut", "groups[].fx[].lut"),
     "mus": ("clips[].item", "clips[].gen.takes[].item", "clips[].gen.v.*", "modules[].params.item",
             "presets[].params.item"),
-    "ide": ("nodes[].item", "nodes[].data.item", "nodes[].refChoice.{}"),
+    "ide": ("nodes[].item", "nodes[].items[]", "nodes[].data.item", "nodes[].refChoice.{}"),
     "item": ("parents[]", "version.of", "element.refs[].item", "element.voices[].item", "element.versions[].item",
              "element.versions[].deps[].el", "element.versions[].deps[].item", "params.refs[].item", "params.source",
              "params.inputs.*[].item"),

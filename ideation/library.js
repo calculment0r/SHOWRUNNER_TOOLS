@@ -22,6 +22,8 @@ import { toast, dock, CF_MIME } from '../commun/shell.js';
 import { inPorts } from './ports.js';
 
 export { CF_MIME };
+// une partie d'un élément glissée du panneau de droite (inspector.js) : { eid, kind: 'ref' | 'mesh' | 'item', file?, id? }
+export const PART_MIME = 'application/x-sr-element-part';
 
 // la planche garde toujours de quoi travailler : 360 px, l'inspecteur, les marges de .ide
 const CV_MIN = 360;

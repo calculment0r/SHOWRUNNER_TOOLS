@@ -2025,6 +2025,24 @@ if (params.get('src')) loadFromUrl('a', local(params.get('src')));
 if (params.get('b')) loadFromUrl('b', local(params.get('b')));
 if (MODES[params.get('mode')]) setMode(params.get('mode'));
 else if (params.get('b')) setMode('side');
+// la visionneuse posée sur une planche d'Idéation (ideation/objets/modele3d.js, 05/10) : son
+// éclairage et son canal à l'ouverture (?light=, ?chan=), puis par message de la page qui
+// l'intègre — de la même origine seulement : { sr3d: { light, chan, fit } }
+{
+  const light = params.get('light'), chan = params.get('chan');
+  try { if (light) setPreset(light); } catch { /* un nom inconnu : l'éclairage par défaut */ }
+  try { if (chan) setChannel(chan); } catch { /* le rendu */ }
+  addEventListener('message', (e) => {
+    if (e.origin !== location.origin || !e.data || typeof e.data !== 'object' || !e.data.sr3d) return;
+    const m = e.data.sr3d;
+    try {
+      if (m.light) setPreset(m.light);
+      if (m.chan) setChannel(m.chan);
+      if (m.fit) frameAll();
+      requestRender?.();
+    } catch (err) { console.warn('visionneuse · message', err); }
+  });
+}
 
 // accès pour la console et les tests, en lecture
 window.__viewer = { THREE, renderer, scene, camera, controls, slots, anim, state, drawFrame, requestRender };

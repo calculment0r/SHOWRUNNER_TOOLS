@@ -8,6 +8,7 @@
 import { href, toast } from '../commun/shell.js';
 import { KINDS, nameOf, outPort, portOf } from './ports.js';
 import { kidsOf, layoutOf } from './groups.js';
+import { LINK_COLORS, setLinkColor } from './objets/commun.js';
 
 export function createMenus(app) {
   const { S } = app;
@@ -165,6 +166,8 @@ export function createMenus(app) {
       { label: 'Choisir', sub: 'un mot sur le lien, à droite', onclick: () => app.selectLink(l.id) },
       ...[['arrow', 'Flèche'], ['line', 'Ligne'], ['out', 'Résultat']].map(([k, v]) => ({ label: v, checked: l.kind === k, onclick: () => app.mutate(() => { l.kind = k; }) })),
       { label: 'Pointillé', checked: !!l.dash, disabled: l.kind === 'out', why: 'la lignée est une courbe à elle', onclick: () => app.mutate(() => { if (l.dash) delete l.dash; else l.dash = true; }) },
+      { label: 'Couleur', disabled: l.kind === 'out', why: 'la lignée garde la couleur de ce qu’elle porte',
+        items: LINK_COLORS.map((c) => ({ label: c.name, dot: c.id || 'ink3', checked: (l.color || '') === c.id, onclick: () => setLinkColor(app, l, c.id) })) },
       { label: 'Inverser', onclick: () => app.mutate(() => { [l.a, l.b] = [l.b, l.a]; }) },
       '-', { label: 'Supprimer', key: 'Suppr', danger: true, onclick: () => app.cutLink(l.id) }];
   }

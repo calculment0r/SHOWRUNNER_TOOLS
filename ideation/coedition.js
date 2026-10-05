@@ -466,7 +466,7 @@ export function createCoedition(app, hooks = {}) {
   // pendant un geste (déplacer, redimensionner, mettre à l'échelle) : la géométrie au fil de l'eau
   const liveSoon = () => { if (!K.liveT && K.on) K.liveT = setTimeout(() => { K.liveT = 0; local('live', { geo: true }); }, LIVE_MS); };
   addEventListener('pointerdown', (e) => { if (e.button === 0) K.pointer = true; }, true);
-  for (const ev of ['pointerup', 'pointercancel']) addEventListener(ev, () => { K.pointer = false; }, true);
+  for (const ev of ['pointerup', 'pointercancel']) addEventListener(ev, () => { if (!K.pointer) return; K.pointer = false; setTimeout(paint); }, true);
   addEventListener('pointermove', (e) => { if ((e.buttons & 1) && S.board) liveSoon(); }, { capture: true, passive: true });
   app.on('moving', (ids) => { if (ids?.length) liveSoon(); });
   // un champ qu'on remplit (note, carte, inspecteur) : l'objet choisi, ou celui du champ
@@ -513,6 +513,10 @@ export function createCoedition(app, hooks = {}) {
     if (!K.on) return;
     S.dirty = K.out.length > 0 || !!(K.fly && K.fails);
     S.saving = K.fly ? true : null;
+    // un geste en cours (glisser, redimensionner) : sa géométrie part 20 fois par seconde pour
+    // que les autres la voient bouger, mais ce n'est pas un enregistrement — la pastille ne
+    // clignote pas ; elle dit l'état au lâcher (Cal, 05/10 : « enregistré bouge plein de fois »)
+    if (K.pointer && !K.fails) return;
     app.paintSave?.();
     hooks.status?.();
   }

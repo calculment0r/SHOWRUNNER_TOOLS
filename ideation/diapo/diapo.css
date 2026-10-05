@@ -36,6 +36,14 @@
 .cv .nd[data-st="body"] > .txt, .cv .nd[data-st="caption"] > .txt { text-wrap: pretty; }
 .cv .nd[data-al="center"] > .txt { text-align: center; }
 .cv .nd[data-al="right"] > .txt { text-align: right; }
+/* le style « Aucun » réglé depuis la barre du texte (diapo/libre.js) : police, taille, couleur, fond */
+.cv .nd[data-lf] > .txt { font-family: var(--lf); }
+.cv .nd[data-lfs] > .txt { font-size: var(--lfs); }
+.cv .nd[data-lc] > .txt { color: var(--lc); }
+.cv .nd.note[data-lbg] { background: var(--lbg); }
+.cv .nd.title[data-lbg] { background: var(--lbg); padding: 6px 10px; border-radius: var(--r2); }
+.cv .nd.note[data-lnone] { background: none; box-shadow: none; }
+.cv .nd.note[data-lnone].sel { box-shadow: 0 0 0 calc(2px / var(--z)) var(--or); }
 .cv.far .nd.note[data-st] .txt:not(.editing), .cv.far .nd.title[data-st] .txt:not(.editing) { visibility: visible; }
 .cv.far .nd.note[data-st] { background: none; }
 

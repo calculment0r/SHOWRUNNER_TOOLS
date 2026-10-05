@@ -96,6 +96,10 @@ export function createSelection(app, env) {
     if (n.type === 'media' && n.kind === 'image') return 'image';
     // un texte : sa barre (objets/texte.js), comme Miro — les réglages depuis le texte
     if (n.type === 'text' && app.texte) return 'text';
+    // un titre, une note : leur barre (diapo/libre.js) — le style, et sans style police, taille, couleurs, alignement
+    if ((n.type === 'title' || n.type === 'note') && app.libre) return 'libre';
+    // un modèle 3D : éclairage, canal, recadrer (objets/modele3d.js)
+    if (n.type === 'model3d' && app.modele3d) return 'm3d';
     return null;   // un seul objet autre qu'une image ou un texte : l'inspecteur suffit
   }
   const selBox = (us) => bboxOf(us.map(box));
@@ -172,11 +176,17 @@ export function createSelection(app, env) {
       out.push(btn('Dégrouper', () => G().ungroup([one.id]), { title: 'ctrl+maj+G' }));
     } else if (mode === 'frame') {
       const P = app.atelier?.presentation;
+      // une diapositive : revenir à son animation (diapo/index.js, le mode Présentation)
+      if (one.deck && app.diapo) out.push(btn('Animer', () => app.diapo.enterMode(one.id), { title: 'l’outil d’animation de cette diapositive : entrées, durées, transition' }));
       out.push(btn('Renommer', () => app.canvas.renameFrame(one.id), { title: 'double-clic sur son nom' }),
         btn('Présenter d’ici', () => P.start(one.id), { why: P ? '' : 'la présentation (atelier) n’est pas chargée', title: 'plein écran, de cadre en cadre, depuis celui-ci' }),
-        btn('Exporter en PNG', () => app.exportBoard(one.id), { title: 'ce cadre, dans la bibliothèque (dossier Idéation)' }));
+        btn('Exporter en PNG', () => app.exportBoard(one.id), { title: 'ce cadre : sur l’ordinateur et dans le presse-papier' }));
     } else if (mode === 'text') {
       out.push(...app.texte.barItems(one, { btn, sub, sep }));
+    } else if (mode === 'libre') {
+      out.push(...app.libre.barItems(one, { btn, sub, sep }));
+    } else if (mode === 'm3d') {
+      out.push(...app.modele3d.barItems(one, { btn, sub, sep }));
     } else if (mode === 'image') {
       const it = S.items.get(one.item);
       const rec = it && !it.missing ? app.gen.recipe(it) : null;
@@ -244,7 +254,7 @@ export function createSelection(app, env) {
     org.hidden = !cur.frame;
     // ne refaire la barre que si ce qu'elle montre a changé (un bouton refait sous le pointeur perdrait son clic)
     const k = mode + '|' + JSON.stringify(us.map((n) => [n.id, n.type, n.kind, n.name, n.layout, n.lod, n.collapsed, n.color, isCard(n)]))
-      + (mode === 'text' ? '|' + app.texte.barKey(us[0]) : '')
+      + (mode === 'text' ? '|' + app.texte.barKey(us[0]) : mode === 'libre' ? '|' + app.libre.barKey(us[0]) : mode === 'm3d' ? '|' + app.modele3d.barKey(us[0]) : '')
       + '|' + (app.atelier?.presentation ? 1 : 0) + (us.length === 1 && us[0].item ? '|' + (app.gen.recipe(S.items.get(us[0].item) || {}) ? 1 : 0) : '');
     // (sauf pendant qu'on renomme le groupe dans la barre)
     const naming = bar.contains(document.activeElement) && document.activeElement.matches('input');

@@ -195,9 +195,14 @@ export function buildScene(ctx) {
       if (!n.style && !ctx.preview && n.type === 'note') o.classList.add('pm-note');
       const txt = h('div', 'pm-txt');
       txt.textContent = n.text || '';
-      Object.assign(txt.style, { fontFamily: st.css || '', fontSize: `${st.size || 34}px`, fontWeight: String(st.weight || 400),
+      // sans style, ce que la barre du texte a réglé (diapo/libre.js : police, taille, couleur, fond)
+      const free = !n.style && !ctx.preview && n.type !== 'sticky';
+      const ff = free && n.font ? (ctx.fonts || []).find((x) => x.id === n.font) : null;
+      Object.assign(txt.style, { fontFamily: ff ? `"${ff.family}", ${ff.gen || 'sans-serif'}` : st.css || '', fontSize: `${(free && n.fs) || st.size || 34}px`, fontWeight: String(st.weight || 400),
         lineHeight: String(st.lh || 1.3), letterSpacing: `${st.track || 0}em`, textTransform: st.upper ? 'uppercase' : 'none',
         textAlign: n.align || 'left' });
+      if (free && n.color) txt.style.color = `var(--${n.color})`;
+      if (free && n.bg) { if (n.bg === 'none') o.classList.remove('pm-note'); else { o.style.background = `var(--${n.bg})`; o.style.padding = '12px'; } }
       txt.dataset.st = sid;
       if (n.type === 'sticky') { o.classList.add('pm-sticky'); o.style.height = `${n.h}px`; }
       c.append(txt);

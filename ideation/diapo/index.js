@@ -32,6 +32,7 @@ import * as G from '../objets/guides.js';
 import { isSlide, deckOf, putOrder, setOrder, readingReset, setSkip } from './ordre.js';
 import { deckMeta, styleOf, stylesCss, fontOf, licenceLine, ensureFont } from './polices.js';
 import { drawSlide } from './vignette.js';
+import { installLibre } from './libre.js';
 
 const TRANS = [['cut', 'Coupe'], ['fade', 'Fondu'], ['push', 'Poussée'], ['morph', 'Morph']];
 const ALIGN = [['left', 'Gauche'], ['center', 'Centre'], ['right', 'Droite']];
@@ -71,6 +72,7 @@ export function install(app) {
   const slidesOn = () => (S.board?.nodes || []).some(isSlide);
 
   // ── les styles de texte : une feuille vivante (polices.js) ─
+  installLibre(app);
   const sheet = A.style('diapo-styles');
   const paintStyles = () => sheet(stylesCss(app));
 
@@ -143,7 +145,8 @@ export function install(app) {
     };
   };
 
-  // ── un titre, une note posés dans une diapositive : un style, sur la grille ─
+  // ── un titre, une note posés dans une diapositive : sur la grille, en style « Aucun » ─
+  // (Cal, 05/10 : un nouveau texte n'a pas de style ; sa barre règle police, couleurs, alignement)
   const add0 = app.addAt;
   app.addAt = (type, wx, wy, o = {}) => {
     const f = (type === 'title' || type === 'note') && !(o.preset && 'style' in o.preset) ? slideAt(wx, wy) : null;
@@ -156,7 +159,7 @@ export function install(app) {
         wx = f.x + g.margin + i * (g.cw + g.gutter);
         wy = f.y + Math.round((wy - f.y) / g.baseline) * g.baseline;
       }
-      o = { ...o, w: o.w || w, preset: { ...(o.preset || {}), style: type === 'title' ? 'h1' : 'body' } };
+      o = { ...o, w: o.w || w };
     }
     return add0(type, wx, wy, o);
   };
@@ -486,6 +489,7 @@ export function install(app) {
         seg([[!isSlide(n), 'Libre', () => unslide(n.id), 'un cadre de la planche, de la taille qu’on veut'],
           ...Object.keys(M()?.ratios || {}).map((r) => [n.deck?.ratio === r, r, () => makeSlides([n.id], r), `une scène ${M().ratios[r].join(' × ')}`])]),
         isSlide(n) ? seg(TRANS.map(([t, v]) => [(n.deck.trans || 'fade') === t, v, () => setTrans(n.id, t), `la transition qui mène à cette diapositive`])) : null,
+        isSlide(n) ? K.row(K.b('Animer cette diapositive', () => enterMode(n.id), { title: 'l’outil d’animation : entrées, durées, transitions, modèle' })) : null,
         K.row(K.b('Présenter d’ici', () => P()?.start(n.id), { disabled: !!n.skip, title: n.skip ? 'masquée : Montrer la remet' : '' }),
           K.b('Dupliquer', () => duplicateSlide(n.id), { title: 'la diapositive et son contenu, juste après elle (morph)' }),
           K.b(n.skip ? 'Montrer' : 'Masquer', () => setSkip(app, n.id, !n.skip))),
@@ -544,6 +548,18 @@ export function install(app) {
     import('../presentation/mode.js').then((m) => m.enter(app, { from })).catch((e) => { console.error('présentation · mode', e); toast(`le mode Présentation ne se charge pas : ${e.message}`); });
   }
   A.command({ order: 19, label: 'Mode présentation', sub: 'modèles, motion, passe assistée', run: () => enterMode(oneFrame()?.id || null) });
+  // ── « Animer » : revenir à l'outil d'animation (Cal, 05/10 : « les templates de motion posent des
+  // diapositives sur la planche, mais on ne peut plus éditer les anims ») — un bouton toujours visible
+  // dans la barre du haut, à côté de Modèles ; il s'ouvre sur la diapositive choisie, sinon la première
+  const ANIM_ICON = 'M4 17c3-9 6-9 8 0s5 9 8 0M4 6h4M16 6h4';
+  const animB = A.button({ order: 10, d: ANIM_ICON, name: 'Animer', title: 'l’outil d’animation : le motion de chaque diapositive et de chaque objet, les modèles, la passe assistée',
+    onclick: () => {
+      if (!slidesOn()) { toast('aucune diapositive à animer : un modèle (bouton Modèles), ou + Diapositive dans le panneau Diapositives', 6000); return; }
+      const f = oneFrame();
+      enterMode(f && isSlide(f) ? f.id : null);
+    } });
+  animB.className = 'tb ghost sm cmp at-present at-anim';
+  animB.replaceChildren(el('span', { class: 'bi' }, ...animB.childNodes), el('span', { class: 'bt' }, 'Animer'));
   // la planche montre l'habit du modèle appliqué : le fond de chaque diapositive, la couleur de ses
   // textes (les mêmes règles que la scène : presentation/scene.js, lookOf) ; les polices viennent
   // déjà des styles (pres.styles). Des données du modèle, posées dans une feuille vivante.

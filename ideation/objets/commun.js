@@ -23,6 +23,10 @@ export const PALETTE = [
   { id: 'amb', name: 'ambre' }, { id: 'ink', name: 'encre' },
 ];
 export const colorName = (id) => PALETTE.find((c) => c.id === id)?.name || id;
+// les couleurs d'une flèche d'annotation (Cal, 05/10 ; server/tools/ideation.py, LINK_COLORS) : gris par défaut
+export const LINK_COLORS = [{ id: '', name: 'gris' }, { id: 'ink', name: 'encre' }, { id: 'or', name: 'orange' }, { id: 'cy', name: 'acier' },
+  { id: 'grn2', name: 'vert' }, { id: 'amb', name: 'ambre' }, { id: 'coral-2', name: 'corail' }];
+export const setLinkColor = (app, l, c) => app.mutate(() => { if (c && c !== 'ink3') l.color = c; else delete l.color; });
 
 // les objets d'annotation : ils portent les quatre poignées des connecteurs
 export const ANNOT = new Set(['note', 'sticky', 'title', 'shape', 'card', 'mind', 'text']);

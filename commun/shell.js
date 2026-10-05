@@ -299,12 +299,14 @@ export const fmtDate = (iso) => {
 // ── serveur ─────────────────────────────────────────────────
 // `espace` : le Workspace de cette requête — par défaut celui de l'onglet ; un document ouvert
 // passe le sien (il ne change pas d'espace parce que l'en-tête change) ; null : aucun.
-export async function api(path, { method = 'GET', body, raw, headers = {}, signal, espace: esp = ESPACE } = {}) {
+// `blob` : la réponse est un fichier (un PNG exporté) — rendue en Blob, l'erreur reste en JSON
+export async function api(path, { method = 'GET', body, raw, headers = {}, signal, espace: esp = ESPACE, blob = false } = {}) {
   const opts = { method, headers: { ...headers }, signal };
   if (esp && !Object.keys(opts.headers).some((k) => k.toLowerCase() === 'x-sr-espace')) opts.headers['X-SR-Espace'] = esp;
   if (raw !== undefined) opts.body = raw;
   else if (body !== undefined) { opts.body = JSON.stringify(body); opts.headers['Content-Type'] = 'application/json'; }
   const r = await fetch(new URL(path.replace(/^\/?(api\/)?/, ''), API), opts);
+  if (blob && r.ok) return r.blob();
   const txt = await r.text();
   let data = null;
   try { data = txt ? JSON.parse(txt) : null; } catch { data = { error: txt.slice(0, 300) }; }
@@ -688,7 +690,9 @@ export function mountHeader(toolId, { dock: useDock = true } = {}) {
   const t = TOOLS.find((x) => x.id === toolId) || PAGES[toolId];
   document.documentElement.dataset.srTool = toolId;   // le menu de repli ouvre les préférences de l'outil
   // le panneau Asset (commun/dock.js) : il s'ouvre par sa languette, au bord gauche, et le raccourci
-  DOCK.page = useDock && TOOLS.some((x) => x.id === toolId) ? toolId : null;
+  // pas sur la page Asset elle-même (Cal, 05/10) : elle EST la bibliothèque, le panneau s'y doublait et
+  // se disputait la lecture des objets avec elle
+  DOCK.page = useDock && toolId !== 'asset' && TOOLS.some((x) => x.id === toolId) ? toolId : null;
   const assetT = TOOLS.find((x) => x.id === 'asset');
   const nav = el('nav', { class: 'tools' });
   const hdr = el('header', { class: 'hdr' },

@@ -75,7 +75,7 @@ export function createPlayer(ctx) {
   function sceneOf(i, live = true) {
     const f = frames[i];
     return buildScene({ board: ctx.board, frame: f, items: ctx.items, style, tpl: ctx.tpl, preview: !!ctx.preview, motionOf, index: i, count: frames.length,
-      live, href: ctx.href, labelOf: ctx.labelOf, name: ctx.name });
+      live, href: ctx.href, labelOf: ctx.labelOf, name: ctx.name, fonts: ctx.meta?.deck?.fonts || [] });
   }
 
   // aller à la diapositive i (dans l'ordre), par sa transition

@@ -63,3 +63,23 @@ export function licenceLine(f) {
   if (f.web && f.pdf) return `${f.licence} — présentation, publication, PDF`;
   return `${f.licence} — présentation ici ; publication et PDF : licence à acheter`;
 }
+
+// ── le choix d'une police, chaque nom écrit dans sa police (Cal, 05/10) ──
+// Les polices des styles (`use`), dans l'ordre du serveur ; une police proposée (Google
+// Fonts) se charge à l'ouverture du menu, pour que son nom s'y montre tel qu'il sera.
+export function fontChoices(app) {
+  return (deckMeta(app)?.fonts || []).filter((f) => f.use).map((f) => ({ id: f.id, name: f.name, css: cssFamily(f), proposed: !!f.proposed }));
+}
+// les entrées d'un menu de polices : `cur` l'identifiant en place, `pick(id)` au choix ;
+// `head` le titre du menu ; `extra` des entrées en tête (les polices du thème d'un objet texte)
+export function fontMenu(app, cur, pick, { head = 'police', extra = [] } = {}) {
+  const list = fontChoices(app);
+  for (const f of list) if (f.proposed) ensureFont(app, f.id, () => {
+    // la police arrive : les libellés du menu ouvert la prennent d'eux-mêmes (font-family déjà posée) ;
+    // la planche remesure ses textes
+    app.render?.();
+  });
+  const seen = new Set(extra.map((e) => e.id));
+  return [{ head }, ...extra.map((e) => ({ label: e.name, font: e.css, checked: cur === e.id, onclick: () => pick(e.id) })),
+    ...list.filter((f) => !seen.has(f.id)).map((f) => ({ label: f.name, font: f.css, sub: f.proposed ? 'OFL' : '', checked: cur === f.id, onclick: () => pick(f.id) }))];
+}

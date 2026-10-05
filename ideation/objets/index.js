@@ -32,7 +32,8 @@ import * as G from './guides.js';
 import { regroup as regroupStickies } from './couleurs.js';
 import { TEMPLATES, insertTemplate, TOOL_ICON as TPL_ICON } from './modeles.js';
 import { galerie } from '../galerie.js';
-import { extendWeb } from './web.js';   // web : l'objet « Web » (YouTube, Vimeo, un site), 30/09
+import { extendWeb } from './web.js';
+import { extendModele3d } from './modele3d.js';   // le modèle 3D d'un élément, dans la visionneuse (05/10)   // web : l'objet « Web » (YouTube, Vimeo, un site), 30/09
 import { extendTexte, textTool } from './texte.js';   // l'objet texte, comme celui de Miro (30/09)
 import { createCrop } from './recadrer.js';           // recadrer une image, comme Miro (30/09)
 
@@ -318,7 +319,7 @@ export function createObjets(app) {
 
   // web : extendWeb (web.js) ajoute la sorte « web » et prend ses objets dans build, key, menu, panels, mini, boardItems ;
   // texte : extendTexte (texte.js), la sorte « text », de même ; crop : recadrer une image (recadrer.js)
-  return extendWeb(app, extendTexte(app, {
+  return extendModele3d(app, extendWeb(app, extendTexte(app, {
     TYPES, has: (t) => TYPES.has(t), defs, build, key, layout, folded: () => L.folded, info: (id) => L.info.get(id), paint, mini,
     place, menu, boardItems, selectionItems, linkItems, panels, writable, editKey, cleanText,
     onKey, mindKey, pickTool, closeSub, mount, commands, items, snapper, setSnap,
@@ -328,5 +329,5 @@ export function createObjets(app) {
     rootOf: (n) => M.rootOf(S.board, n), addMind: (n, child) => M.addMind(app, n, child),
     regroup, toMind, insert, faceRule: () => C.faceRule(app), annot: (n) => !!n && ANNOT.has(n.type),
     crop: createCrop(app),
-  }));
+  })));
 }

@@ -332,6 +332,19 @@ app.placeMany = (items, wx, wy, { free = false } = {}) => {
     }
   });
 };
+// une partie d'un élément (inspector.js, le panneau de l'élément ; PART_MIME) : une de ses images devient
+// une image de la bibliothèque (POST /api/elements/<id>/part, une fois) ; un modèle 3D, la visionneuse
+app.placePart = async (p, wx, wy) => {
+  if (!S.board) { toast('ouvrez ou créez d’abord une planche'); return null; }
+  try {
+    if (p.kind === 'mesh') {
+      const it = S.items.get(p.eid) || await api('library/' + p.eid);
+      return app.modele3d?.place(it, wx, wy, p.file) || null;
+    }
+    const it = p.kind === 'item' ? await api('library/' + p.id) : await api(`elements/${p.eid}/part`, { method: 'POST', body: { file: p.file } });
+    return app.placeItem(it, wx, wy, { free: true });
+  } catch (e) { toast(e.message, 6000); return null; }
+};
 app.pickAt = async (wx, wy) => {
   const got = await pick({ kinds: ['image', 'video', 'audio', 'element'], multiple: true, title: 'Poser sur la planche' });
   app.placeMany(got, wx, wy);
@@ -874,24 +887,32 @@ $('#b-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.targe
 app.exportBoard = async (frame = '') => {
   if (!S.board) return;
   await flushSave();
-  let j;
-  try { j = await api(`ideation/boards/${S.board.id}/export`, { method: 'POST', body: { frame } }); } catch (e) { toast(e.message, 6000); return; }
+  // Cal, 05/10 : l'export ne va plus dans la bibliothèque ni dans un volet du portail — le PNG
+  // s'enregistre sur l'ordinateur et part dans le presse-papier
   const st = $('#exp-st');
   st.hidden = false;
-  st.replaceChildren(el('span', { class: 'pill work' }, el('i'), el('span', {}, 'export en file')));
-  const done = await jobs.wait(j.id, (x) => {
-    st.firstChild.lastChild.textContent = x.state === 'running' ? `export ${Math.round((x.progress || 0) * 100)} %` : 'export en file';
-  }).catch((e) => ({ state: 'error', message: e.message }));
-  if (done.state !== 'done' || !done.items?.length) {
-    st.replaceChildren(el('span', { class: 'pill err', title: done.message || '' }, el('i'), el('span', {}, 'export en échec')));
-    toast(`export : ${done.message}`, 8000);
+  st.replaceChildren(el('span', { class: 'pill work' }, el('i'), el('span', {}, 'export…')));
+  const fr = frame ? app.node(frame) : null;
+  const name = (fr ? `${S.board.name} · ${fr.name || 'cadre'}` : S.board.name).replace(/[\\/:*?"<>|]+/g, '-').trim() || 'planche';
+  let blob;
+  try { blob = await api(`ideation/boards/${S.board.id}/png`, { method: 'POST', body: { frame }, blob: true }); } catch (e) {
+    st.hidden = true;
+    toast(`export : ${e.message}`, 8000);
     return;
   }
-  const it = done.items[0];
-  st.replaceChildren(el('a', { class: 'tb ghost sm', href: href(`asset/#${it.id}`), target: '_blank', rel: 'noopener', title: `${it.title} — ${it.width} × ${it.height}` },
-    `PNG ${it.width} × ${it.height} · Asset ↗`));
-  toast(`« ${it.title} » est dans la bibliothèque (dossier Idéation)`);
-  app.lib.reload();
+  st.hidden = true;
+  const url = URL.createObjectURL(blob);
+  const a = el('a', { href: url, download: `${name}.png`, hidden: true });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  let copied = false;
+  try {
+    if (navigator.clipboard && window.ClipboardItem) { await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); copied = true; }
+  } catch { /* le presse-papier refusé (page http hors localhost, autorisation) : le fichier suffit */ }
+  toast(copied ? `« ${name}.png » enregistré sur l’ordinateur et copié dans le presse-papier (ctrl+V pour le coller)`
+    : `« ${name}.png » enregistré sur l’ordinateur — le navigateur n’a pas permis la copie dans le presse-papier (il faut une adresse https)`, 7000);
 };
 
 // ── la barre ───────────────────────────────────────────────
@@ -901,7 +922,7 @@ function paintBar() {
   const exWord = f ? 'Exporter le cadre' : 'Exporter';
   ex.querySelector('.bt').textContent = exWord;
   ex.setAttribute('aria-label', exWord.toLowerCase());   // étroite, la barre n'en montre que l'icône (ideation.css)
-  ex.title = f ? 'ce cadre en PNG, dans la bibliothèque' : 'la planche en PNG, dans la bibliothèque (dossier Idéation)';
+  ex.title = f ? 'ce cadre en PNG : sur l’ordinateur et dans le presse-papier' : 'la planche en PNG : sur l’ordinateur et dans le presse-papier';
   ex.disabled = !S.board || !S.board.nodes.length;
 }
 $('#b-boards').addEventListener('click', () => app.boardsModal());
@@ -1053,7 +1074,7 @@ document.querySelector('.ide')?.addEventListener('contextmenu', (e) => {
   if (fld) { menu(e.clientX, e.clientY, app.menus.text(fld)); return; }
   menu(e.clientX, e.clientY, [{ head: 'idéation' },
     { label: 'Les planches…', onclick: () => app.boardsModal() }, { label: 'Nouvelle planche…', onclick: () => app.newBoard() },
-    { label: 'Exporter la planche en PNG', sub: 'dans la bibliothèque', disabled: !S.board?.nodes.length, why: 'la planche est vide', onclick: () => app.exportBoard('') },
+    { label: 'Exporter la planche en PNG', sub: 'ordinateur + presse-papier', disabled: !S.board?.nodes.length, why: 'la planche est vide', onclick: () => app.exportBoard('') },
     '-', { label: 'Annuler', key: 'ctrl+Z', disabled: !S.undo.length, why: 'rien à annuler', onclick: () => app.undoStep() },
     { label: 'Rétablir', key: 'ctrl+maj+Z', disabled: !S.redo.length, why: 'rien à rétablir', onclick: () => app.redoStep() },
     '-', { label: 'Les raccourcis', key: '?', onclick: () => help() }]);

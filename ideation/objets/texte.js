@@ -21,7 +21,7 @@
 //   html   ce HTML-là ; un passage en couleur : <span data-c="or">, surligné :
 //          <span data-h="hl-amb"> — des jetons du thème (commun/tokens.css), jamais une
 //          valeur (règle 1) ; le serveur nettoie avec la même liste (ideation.py, text_html)
-//   font   chakra | venus | azeret (les polices du thème ; Norelli est au logotype seul)
+//   font   chakra | venus | azeret, ou une police des styles de présentation (diapo/polices.js) ; Norelli est au logotype seul
 //   size   en px du monde ; color le jeton de toute la boîte ; bg '' (transparent) ou un jeton
 //   wrap   false : la boîte suit le texte (elle s'agrandit en tapant) ; true : largeur fixe
 //
@@ -32,6 +32,7 @@
 
 import { el, toast } from '../../commun/shell.js';
 import { icon, cut } from './commun.js';
+import { fontOf, cssFamily, ensureFont, fontMenu } from '../diapo/polices.js';
 
 // un T et des lignes de texte (le titre garde son T seul)
 export const TEXT_ICON = 'M4 5h10M9 5v12M16 10h4M16 14h4M4 19h16';
@@ -130,14 +131,24 @@ export function extendTexte(app, api0) {
   const txtOf = (id) => app.canvas?.dom.get(id)?.el.querySelector('.txt');
 
   // ── le dessin (canvas.js l'habille : .nd.text, data-id, sortie, poignée du coin) ──
+  // une police de la bibliothèque de présentation (diapo/polices.js) hors des trois du thème :
+  // sa famille en variable (--tf), chargée depuis Google Fonts si elle est proposée
+  const libFont = (id) => {
+    if (!id || FONTS.some(([k]) => k === id)) return null;
+    const lf = fontOf(app, id);
+    if (!lf) return null;
+    if (lf.src === 'google') ensureFont(app, id, () => app.render());
+    return lf;
+  };
   function build(n) {
-    const f = FONTS.find(([k]) => k === n.font) || FONTS[0];
+    const lf = libFont(n.font);
+    const f = lf ? [lf.id, lf.name, 'x'] : FONTS.find(([k]) => k === n.font) || FONTS[0];
     const txt = el('div', { class: 'txt rt' + (n.html ? '' : ' ph') });
     if (n.html) txt.innerHTML = n.html; else txt.textContent = 'un texte';
     for (const a of txt.querySelectorAll('a[href]')) a.title = `${a.getAttribute('href')} — ctrl+clic : ouvrir`;
     return {
       cls: [`f-${f[2]}`, n.wrap ? 'wrap' : 'auto', n.bg ? 'fill' : '', `al-${n.align || 'left'}`].filter(Boolean),
-      style: { '--ts': `${n.size || 14}px`, '--tc': `var(--${n.color || 'ink'})`, '--tb': n.bg ? `var(--${n.bg})` : null },
+      style: { '--ts': `${n.size || 14}px`, '--tc': `var(--${n.color || 'ink'})`, '--tb': n.bg ? `var(--${n.bg})` : null, '--tf': lf ? cssFamily(lf) : null },
       // le bord droit : la largeur (le texte passe à la ligne) ; le coin (canvas.js) : la taille
       body: [txt, el('span', { class: 'rz rz-e', 'data-rz': 'x', title: 'la largeur : le texte passe à la ligne, sa taille reste' })],
     };
@@ -350,15 +361,16 @@ export function extendTexte(app, api0) {
     const { btn, sub, sep } = K;
     const id = n.id;
     const keep = (b) => { b.addEventListener('mousedown', (e) => e.preventDefault()); return b; };
-    const f = FONTS.find(([k]) => k === n.font) || FONTS[0];
+    const lf = libFont(n.font);
+    const f = lf ? [lf.id, lf.name, 'x'] : FONTS.find(([k]) => k === n.font) || FONTS[0];
     const size = n.size || 14;
     const step = (dir) => { const i = SIZES.findIndex((v) => v >= size); const j = dir > 0 ? (SIZES[i] === size ? i + 1 : i) : (i <= 0 ? 0 : i - 1); return SIZES[Math.max(0, Math.min(SIZES.length - 1, j))]; };
     const cmdBtn = (label, cmd, title, cls) => { const b = keep(btn(label, () => exec(id, cmd), { title, cls })); b.dataset.cmd = cmd; return b; };
     const dot = (tok) => el('i', { class: 'tdot', style: { background: `var(--${tok})` } });
     const al = n.align || 'left';
     const out = [
-      keep(sub(el('span', { class: `tfont f-${f[2]}` }, f[1].split(' ')[0]), () => [{ head: 'police' },
-        ...FONTS.map(([k, name]) => ({ label: name, checked: (n.font || 'chakra') === k, onclick: () => set(id, { font: k }) }))], { title: 'la police de toute la boîte (les polices du thème)' })),
+      keep(sub(el('span', { class: `tfont f-${f[2]}`, style: lf ? { fontFamily: cssFamily(lf) } : {} }, f[1].split(' ')[0]), () => fontMenu(app, n.font || 'chakra', (k) => set(id, { font: k })),
+        { title: 'la police de toute la boîte — chaque nom est écrit dans sa police' })),
       el('span', { class: 'tsize' },
         keep(btn('−', () => set(id, { size: step(-1) }), { title: 'plus petit', why: size <= SIZES[0] ? 'déjà la plus petite taille' : '' })),
         keep(sub(el('b', { class: 'sv' }, String(Math.round(size))), () => [{ head: 'taille' }, ...SIZES.map((v) => ({ label: `${v}`, checked: v === size, onclick: () => set(id, { size: v }) }))], { title: 'la taille de toute la boîte (tirer le coin aussi)' })),
@@ -412,7 +424,7 @@ export function extendTexte(app, api0) {
   // ── les menus, l'inspecteur ──────────────────────────────
   function menu(n) {
     return [{ label: 'Écrire', key: 'Entrée', onclick: () => editRich(n.id) },
-      { label: 'Police', items: FONTS.map(([k, name]) => ({ label: name, checked: (n.font || 'chakra') === k, onclick: () => set(n.id, { font: k }) })) },
+      { label: 'Police', items: fontMenu(app, n.font || 'chakra', (k) => set(n.id, { font: k })).slice(1) },
       { label: 'Taille', items: SIZES.map((v) => ({ label: String(v), checked: v === (n.size || 14), onclick: () => set(n.id, { size: v }) })) },
       { label: 'Couleur', items: COLORS.map(([k, name]) => ({ label: name, dot: k, checked: (n.color || 'ink') === k, onclick: () => color(n.id, k) })) },
       { label: 'Fond', items: BG.map(([k, name]) => ({ label: name, dot: k || null, checked: (n.bg || '') === k, onclick: () => set(n.id, { bg: k }) })) },

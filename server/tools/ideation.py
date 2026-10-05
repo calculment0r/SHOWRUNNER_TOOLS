@@ -64,7 +64,7 @@ qui est un groupe devient son `group` (la migration, sans perte). Le `parent`
 d'un nœud de mind map est un autre nœud (_minds) : un parent d'une autre sorte
 tombe, une boucle se coupe, et tout l'arbre est dans le groupe de sa racine.
 
-Un lien d'annotation (`arrow`, `line`) peut porter `dash` : en pointillé.
+Un lien d'annotation (`arrow`, `line`) peut porter `dash` : en pointillé, et `color` (LINK_COLORS).
 
 Des liens (`links`, a → b) de deux familles (ideation/ports.js, la seule
 vérité de ce qui se branche) :
@@ -125,7 +125,12 @@ REF_FILE = re.compile(r"ref-\d{2}\.[a-z]{3,4}")
 TYPES = ("media", "note", "sticky", "title", "frame", "gen", "vgen", "compose", "palette", "group",
          "shape", "card", "mind", "ink",
          "web",   # web : l'objet « Web » (server/tools/web_apercu.py), 30/09
-         "text")  # idéation, 30/09 : l'objet texte (ideation/objets/texte.js, _text_node)
+         "text",  # idéation, 30/09 : l'objet texte (ideation/objets/texte.js, _text_node)
+         "model3d")  # 05/10 : le modèle 3D d'un élément, dans la visionneuse (ideation/objets/modele3d.js)
+# le modèle 3D : un GLB de l'élément (`element.meshes`), ses éclairages et canaux (character/viewer.html)
+MESH_FILE = re.compile(r"mesh-\d{3}\.glb")
+VIEW_LIGHTS = ("studio", "jour", "interieur", "contre", "plat")
+VIEW_CHANS = ("final", "albedo", "metal", "rough", "normal", "wire")
 # les objets d'atelier (ideation/objets/ : les mêmes listes ; une valeur inconnue revient au défaut)
 SHAPES = ("rect", "round", "ellipse", "diamond", "hex", "para")
 PALETTE = ("cy", "or", "grn2", "amb", "ink")          # formes, cartes, traits : acier, orange, vert, ambre, encre
@@ -221,6 +226,8 @@ FONTS = [
 FONT_IDS = {f["id"]: f for f in FONTS}
 ETYPE_FR = {"character": "personnage", "object": "objet", "place": "lieu", "style": "style", "other": "élément"}
 LINK_KINDS = ("wire", "arrow", "line", "out")
+# la couleur d'une annotation (Cal, 05/10) : des jetons du thème, jamais une valeur ; absente : le gris (ink3)
+LINK_COLORS = ("ink", "ink3", "or", "cy", "grn2", "amb", "coral-2")
 MAX_NODES = 3000
 MAX_LINKS = 6000
 MAX_SIDE = 4096          # le grand côté d'un export
@@ -406,7 +413,8 @@ def _crop(c) -> dict | None:
 # alignement pour toute la boîte. Les couleurs sont des jetons du thème (commun/tokens.css) :
 # `data-c` (la couleur d'un passage) et `data-h` (le surligneur) sur un <span>, jamais une
 # valeur. La page nettoie avec la même liste ; ici, ce qui n'y est pas tombe.
-TEXT_FONTS = ("chakra", "venus", "azeret")
+# les trois du thème, puis les polices des styles de présentation (FONTS, `use`) : le menu les montre toutes
+TEXT_FONTS = ("chakra", "venus", "azeret") + tuple(f["id"] for f in FONTS if f["use"] and f["id"] not in ("chakra", "venus", "azeret"))
 TEXT_COLORS = ("ink", "ink2", "ink3", "or", "cy", "grn2", "amb", "coral-2")
 TEXT_HL = ("hl-amb", "hl-or", "hl-cy", "hl-grn")
 TEXT_BG = ("panel", "panel2", "panel3", "sel-bg") + TEXT_HL
@@ -547,6 +555,16 @@ def _node(n) -> dict:
                 out["style"] = n["style"]
             if n.get("align") in TEXT_ALIGN[1:]:
                 out["align"] = n["align"]
+            # sans style (« Aucun ») : la barre du texte (ideation/diapo/libre.js) règle police,
+            # taille, couleur et fond ; `bg` « none » retire la carte d'une note
+            if n.get("font") in TEXT_FONTS:
+                out["font"] = n["font"]
+            if isinstance(n.get("fs"), (int, float)) and not isinstance(n.get("fs"), bool) and math.isfinite(n["fs"]):
+                out["fs"] = round(max(TEXT_SIZE[0], min(TEXT_SIZE[1], float(n["fs"]))), 2)
+            if n.get("color") in TEXT_COLORS:
+                out["color"] = n["color"]
+            if n.get("bg") in TEXT_BG + ("none",):
+                out["bg"] = n["bg"]
     elif t == "frame":
         out["name"] = _s(n.get("name"), 120)
         # l'ordre de présentation (atelier : présentation par cadres) ; un nombre, sinon rien
@@ -633,6 +651,14 @@ def _node(n) -> dict:
                    color=n.get("color") if n.get("color") in PALETTE else "or", width=_num(n.get("width"), 0.5, 12, 2.2))
     elif t == "text":  # idéation, 30/09 : l'objet texte
         out.update(_text_node(n))
+    elif t == "model3d":   # 05/10 : la visionneuse 3D sur la planche
+        item = str(n.get("item", ""))
+        if not ITEM.fullmatch(item):
+            raise HttpError(400, f"le modèle 3D {nid} ne pointe vers aucun élément de la bibliothèque")
+        mesh = str(n.get("mesh", ""))
+        out.update(item=item, mesh=mesh if MESH_FILE.fullmatch(mesh) else "", title=_s(n.get("title"), 200),
+                   light=n.get("light") if n.get("light") in VIEW_LIGHTS else "studio",
+                   chan=n.get("chan") if n.get("chan") in VIEW_CHANS else "final")
     elif t == "web":   # web : l'adresse (http, https) et ce que l'aperçu en a lu — server/tools/web_apercu.py
         from tools import web_apercu
         out.update(web_apercu.node_fields(n))
@@ -847,6 +873,8 @@ def normalize(b: dict) -> dict:
             entry["lot"] = lk["lot"]      # la lignée d'un rendu de lot : son cadre (la page ne dessine qu'un lien, vers lui)
         if entry["kind"] in ("arrow", "line") and lk.get("dash") is True:
             entry["dash"] = True          # une annotation en pointillé (le menu du lien, les modèles)
+        if entry["kind"] in ("arrow", "line") and lk.get("color") in LINK_COLORS and lk["color"] != "ink3":
+            entry["color"] = lk["color"]  # sa couleur (un jeton) ; le gris par défaut ne s'écrit pas
         if entry["kind"] == "wire":
             key = (a, entry["pa"], z, entry["pb"])
             if key in wires:
@@ -1013,6 +1041,39 @@ def r_export(req, bid):
                     title=f"Export · {title}", tool="ideation", space=board_space(bid))
     return jobs.public(j)
 
+
+
+def r_png(req, bid):
+    """La planche (ou un cadre) en PNG, rendue tout de suite et renvoyée telle quelle : la
+    page l'enregistre sur l'ordinateur et la copie dans le presse-papier (Cal, 05/10 : un
+    export ne va plus dans la bibliothèque, ni dans un volet du portail)."""
+    import io
+    from core.http import Response
+    from tools import elements
+    _need(req, bid, "see")
+    d = req.json()
+    b = normalize(load(bid))
+    fid = str(d.get("frame") or "")
+    name = b["name"]
+    if fid:
+        fr = next((n for n in b["nodes"] if n["id"] == fid and n["type"] == "frame"), None)
+        if not fr:
+            raise HttpError(400, "ce cadre n'est pas sur la planche")
+        name = f"{b['name']} · {fr['name'] or 'cadre'}"
+    elif not b["nodes"]:
+        raise HttpError(409, "la planche est vide : posez quelque chose avant de l'exporter")
+    elements.check_space(bid, b, board_space(bid))
+    try:
+        img, _parents, _s = render(b, fid)
+    except ValueError as e:
+        raise HttpError(409, str(e)) from e
+    buf = io.BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    from urllib.parse import quote
+    fn = re.sub(r"[\\/:*?\"<>|]+", "-", name).strip() or "planche"
+    return Response(buf.getvalue(), 200, "image/png",
+                    {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fn + '.png')}",
+                     "X-SR-Size": f"{img.width}x{img.height}", "Cache-Control": "no-store"})
 
 # ── le nuancier ──────────────────────────────────────────────
 def picture_of(it: dict) -> Path | None:
@@ -1349,7 +1410,7 @@ def render(b: dict, frame: str = "", check=lambda: None):
             d.line(pts, fill=col, width=max(1, rad(2 if lk["kind"] == "wire" else 1.2)), joint="curve")
             continue
         p0, p1 = _edge(a, z)
-        col = T["ink3"]
+        col = T.get(lk.get("color") or "ink3", T["ink3"])
         q0, q1 = (X(p0[0]), Y(p0[1])), (X(p1[0]), Y(p1[1]))
         if lk.get("dash"):
             _dashed(d, q0, q1, 6 * s, 5 * s, col, max(1, rad(1.5)))
@@ -1409,18 +1470,30 @@ def render(b: dict, frame: str = "", check=lambda: None):
                 d.rounded_rectangle([x0, y0, x1, y1], radius=rad(9), fill=T["panel2"], outline=T["line"], width=max(1, rad(1)))
                 d.text((x0 + rad(14), y0 + rad(12)), "SON", font=_font("mono", 8.5 * s), fill=T["grn2"])
                 d.text((x0 + rad(14), y0 + rad(30)), (n.get("title") or "")[:40], font=_font("ui", 13 * s), fill=T["ink"])
+        elif t == "model3d":
+            parents.append(n["item"])
+            d.rounded_rectangle([x0, y0, x1, y1], radius=rad(9), fill=T["panel2"], outline=T["line-cy"] if "line-cy" in T else T["line"], width=max(1, rad(1)))
+            got = picture(n, w - 2 * rad(8), max(1, h - 2 * rad(8)), rad(5))
+            if got:
+                img.paste(got[0], (round(x0 + rad(8)), round(y0 + rad(8))), got[1])
+            d.text((x0 + rad(12), y0 + rad(10)), "3D", font=_font("mono", 9 * s), fill=T["cy"])
         elif t in ("note", "title") and n.get("style") in TEXT_STYLES:
             _styled(d, n, style_of(b, n["style"]), (x0, y0, x1, y1), s, T["ink"])
         elif t == "note":
-            d.rounded_rectangle([x0, y0, x1, y1], radius=rad(7), fill=T["panel2"], outline=T["line"], width=max(1, rad(1)))
-            text(n, _font("ui", 13 * s), T["ink"], rad(12))
+            # sans style : ses réglages (ideation/diapo/libre.js) — fond, couleur, taille
+            fill = None if n.get("bg") == "none" else T.get(n.get("bg") or "panel2", T["panel2"])
+            if fill is not None:
+                d.rounded_rectangle([x0, y0, x1, y1], radius=rad(7), fill=fill, outline=T["line"], width=max(1, rad(1)))
+            text(n, _font("ui", (n.get("fs") or 13) * s), T.get(n.get("color") or "ink", T["ink"]), rad(12))
         elif t == "sticky":
             col = T.get(n.get("color"), T["coral-3"])
             d.rounded_rectangle([x0, y0, x1, y1], radius=rad(5), fill=col)
             text(n, _font("ui", 15 * s), T.get(STICKY.get(n.get("color"), "on-light"), T["on-light"]), rad(14), 1.4)
         elif t == "title":
-            size = TITLE_SIZES.get(n.get("size"), 34)
-            text(n, _font("disp", size * s), T["ink"], 0, 1.15)
+            size = n.get("fs") or TITLE_SIZES.get(n.get("size"), 34)
+            if n.get("bg") and n["bg"] != "none":
+                d.rounded_rectangle([x0, y0, x1, y1], radius=rad(6), fill=T.get(n["bg"], T["panel2"]))
+            text(n, _font("disp", size * s), T.get(n.get("color") or "ink", T["ink"]), 0, 1.15)
         elif t == "text":
             # idéation, 30/09 : l'objet texte — sa boîte, sa police, sa couleur, son alignement
             # (ideation/objets/texte.css : marges .3em .4em, interligne 1.4) ; les passages en
@@ -1768,6 +1841,7 @@ def register(app) -> None:
     app.route("POST", "/api/ideation/boards/{bid}/duplicate", r_duplicate)
     app.route("POST", "/api/ideation/boards/{bid}/delete", r_delete)
     app.route("POST", "/api/ideation/boards/{bid}/export", r_export)
+    app.route("POST", "/api/ideation/boards/{bid}/png", r_png)
     app.route("GET", "/api/ideation/palette/{item_id}", r_palette)
 
 

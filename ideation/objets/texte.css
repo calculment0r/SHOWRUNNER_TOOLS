@@ -22,6 +22,7 @@
 .nd.text.f-ui { font-family: var(--f-ui); }
 .nd.text.f-disp { font-family: var(--f-disp); letter-spacing: .04em; }
 .nd.text.f-mono { font-family: var(--f-mono); }
+.nd.text.f-x { font-family: var(--tf); }   /* une police de la bibliothèque de présentation (diapo/polices.js) */
 .nd.text.al-center { text-align: center; }
 .nd.text.al-right { text-align: right; }
 /* choisi : un filet (le texte n'a pas de bord à lui) ; au survol, un filet discret */

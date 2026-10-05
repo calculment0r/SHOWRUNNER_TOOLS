@@ -98,3 +98,7 @@
 /* ── la fenêtre « Intégrer une adresse web » ─────────────── */
 .wb-ask { display: flex; flex-direction: column; gap: 12px; min-width: min(560px, 80vw); }
 .wb-ask-m.err { color: var(--amb); }
+
+/* ── le modèle 3D (modele3d.js) : l'habit du web, son icône en traits ── */
+.nd.m3d .wb-play svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; translate: 0 0; }
+.nd.m3d .wb-k { color: var(--cy); }

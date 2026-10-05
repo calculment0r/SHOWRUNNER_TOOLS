@@ -117,7 +117,7 @@ function install(app) {
   // ── rendre ───────────────────────────────────────────────
   const ctxFor = (board, tpl, preview, extra = {}) => {
     const style = styler(meta(), board, tpl, preview);
-    return { board, items: S.items, style, tpl, preview, motionOf: motionFor(tpl), count: frames().length, href, labelOf: app.label, name: board.name, ...extra };
+    return { board, items: S.items, style, tpl, preview, motionOf: motionFor(tpl), count: frames().length, href, labelOf: app.label, name: board.name, fonts: meta()?.deck?.fonts || [], ...extra };
   };
   const sceneFor = (board, i, { live = true, tpl = tplNow(), preview = !!trying } = {}) => {
     const f = board.nodes.find((n) => n.id === frames()[i].id);

@@ -93,19 +93,23 @@ export function createWires(app, env) {
     const s = pte();
     for (const m of marks) { m.setAttribute('markerWidth', s); m.setAttribute('markerHeight', s); }
   }
-  function defs() {
+  // une pointe par couleur d'annotation employée (LINK_COLORS : la pointe d'un <marker> ne
+  // prend pas la couleur du trait qui la porte)
+  function defs(colors = []) {
     const d = svg('defs');
     marks = [];
-    for (const [id, cls] of [['ar', ''], ['ar-sel', 'sel']]) {
+    for (const [id, cls, c] of [['ar', '', ''], ['ar-sel', 'sel', ''], ...colors.map((c) => [`ar-${c}`, '', c])]) {
       const m = svg('marker', { id, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: pte(), markerHeight: pte(), markerUnits: 'userSpaceOnUse', orient: 'auto' });
-      m.append(svg('path', { d: 'M0 0L10 5L0 10z', class: 'mk ' + cls }));
+      const p = svg('path', { d: 'M0 0L10 5L0 10z', class: 'mk ' + cls });
+      if (c) p.style.fill = `var(--${c})`;
+      m.append(p);
       d.append(m);
       marks.push(m);
     }
     return d;
   }
   function paint() {
-    layer.replaceChildren(defs());
+    layer.replaceChildren(defs(S.board ? [...new Set(S.board.links.filter((l) => l.color && l.kind !== 'wire' && l.kind !== 'out').map((l) => l.color))] : []));
     if (!S.board) return;
     const F = app.flow();
     for (const l of S.board.links) {
@@ -135,8 +139,9 @@ export function createWires(app, env) {
         // les annotations : les flèches droites
         const [p, q] = edgePts(a, b);
         const d = `M${p[0]} ${p[1]}L${q[0]} ${q[1]}`;
-        const g = svg('g', { class: `lk ${l.kind}${sel ? ' sel' : ''}`, 'data-link': l.id });
-        g.append(svg('path', { class: 'vis', d, 'marker-end': l.kind === 'line' ? null : `url(#${sel ? 'ar-sel' : 'ar'})` }),
+        const g = svg('g', { class: `lk ${l.kind}${sel ? ' sel' : ''}${l.color ? ' colored' : ''}`, 'data-link': l.id });
+        if (l.color) g.style.setProperty('--lc', `var(--${l.color})`);
+        g.append(svg('path', { class: 'vis', d, 'marker-end': l.kind === 'line' ? null : `url(#${sel ? 'ar-sel' : l.color ? `ar-${l.color}` : 'ar'})` }),
           svg('path', { class: 'hit', d, 'data-link': l.id }));
         if (l.label) {
           const t = svg('text', { class: 'lbt', x: (p[0] + q[0]) / 2, y: (p[1] + q[1]) / 2 });

@@ -232,6 +232,42 @@ def el_add_ref(req, item_id):
     return library.public(it)
 
 
+def el_part(req, item_id):
+    """Une partie d'un élément (une de ses images : visage, plein pied, expression, planche)
+    en image de la bibliothèque, pour la poser seule (Idéation, le panneau de l'élément :
+    Cal, 05/10, « on peut glisser ces assets de notre élément dans le canvas »). L'image d'où
+    venait la référence (`item`) sert telle quelle ; sinon une image naît une fois, fille de
+    l'élément, et la référence la retient (le geste suivant la reprend)."""
+    d = req.json()
+    el = elsewhere_or_404(item_id)
+    if el["kind"] != "element":
+        raise HttpError(400, "ce n'est pas un élément")
+    name = str(d.get("file", ""))
+    refs = (el.get("element") or {}).get("refs") or []
+    ref = next((r for r in refs if r.get("file") == name), None)
+    if not ref:
+        raise HttpError(404, f"cette partie n'est plus dans l'élément : {name}")
+    if ref.get("item"):
+        src = library.get(ref["item"])
+        if src and src["kind"] == "image":
+            return library.public(src)
+    path = library.path_of(el, name)
+    if not path.exists():
+        raise HttpError(404, "le fichier de cette partie manque")
+    label = ref.get("label") or ref.get("role") or "partie"
+    try:
+        it = library.add_file(path, kind="image", title=f"{el.get('title') or 'élément'} · {label}",
+                              origin={"tool": "element", "from": item_id}, parents=[item_id], folder=el.get("folder", ""))
+    except (ValueError, PermissionError) as e:
+        raise HttpError(400, str(e)) from e
+    # la référence retient son image (un élément figé ou d'un autre ne se touche pas : on n'y écrit rien)
+    try:
+        library.remember_ref_item(item_id, name, it["id"])
+    except Exception:
+        pass
+    return library.public(it)
+
+
 # ── Character Factory : ses personnages deviennent des éléments ──
 def _cf_get(path: str, timeout: float = 15.0):
     url = config.get("cf_api").rstrip("/") + path
@@ -532,6 +568,7 @@ def register(app) -> None:
     app.route("POST", "/api/library/{item_id}/restore", lib_restore)
     app.route("POST", "/api/elements", el_create)
     app.route("POST", "/api/elements/{item_id}/refs", el_add_ref)
+    app.route("POST", "/api/elements/{item_id}/part", el_part)
     app.route("GET", "/api/cf/characters", cf_characters)
     app.route("GET", "/api/cf/file", cf_file)
     app.route("POST", "/api/cf/import", cf_import)
