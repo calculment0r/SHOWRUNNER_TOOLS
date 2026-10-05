@@ -14,6 +14,7 @@
 // Chaque objet est emboîté pour le moteur (moteur.js) : .pm-o > .pm-p > .pm-e > .pm-m > .pm-l > .pm-c
 
 import { within } from '../atelier/socle.js';
+import { waveUrl } from '../objets/son.js';
 import { isFigure, normMotion } from './moteur.js';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -112,7 +113,9 @@ export function readOrder(list) {
 
 // ── la scène ────────────────────────────────────────────────
 // ctx : { board, frame, items (Map), style(sid) → {css, size, weight, lh, track, upper}, tpl,
-//         motionOf(n, part, order) → motion | null, index, count, live, href(url), name }
+//         motionOf(n, part, order) → motion | null, index, count, live, print, href(url), name }
+// `print` (la page d'impression, le PDF) : ce qui ne s'imprime pas — une vidéo, un objet Web, un son —
+// montre son image fixe (l'affiche, l'aperçu, l'onde) et un pied discret qui dit ce qu'il est (footOf)
 let cssOn = false;
 export function ensureCss() {
   if (cssOn || document.querySelector('link[data-pm]')) { cssOn = true; return; }
@@ -220,7 +223,18 @@ export function buildScene(ctx) {
         else if (n.kind === 'image') url = big ? it.url : it.view_urls?.['1024'] || it.url;
         poster = it.view_urls?.['1024'] || it.thumb_url;
       }
-      if (n.kind === 'video' && it && !it.missing && ctx.live) {
+      if (n.kind === 'audio') {
+        // un son : son onde (le masque du serveur, server/tools/apercu_son.py), peinte par le ton du modèle, et son titre
+        const wave = h('i', 'pm-wave');
+        if (it && !it.missing) {
+          const u = waveUrl(it);
+          wave.style.setProperty('--wave', `url("${u}")`);
+          const pre = new Image();   // attendue avant l'impression comme une image (lecture.js : decode)
+          pre.src = u;
+          obj.img = pre;
+        }
+        c.append(h('div', ctx.print ? 'pm-snd pm-snd-pied' : 'pm-snd', [wave, h('span', 'pm-sndt', [document.createTextNode(n.title || it?.title || 'son')])]));
+      } else if (n.kind === 'video' && it && !it.missing && ctx.live) {
         const v = document.createElement('video');
         Object.assign(v, { muted: true, loop: true, playsInline: true, autoplay: true, preload: 'auto' });
         v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
@@ -242,6 +256,7 @@ export function buildScene(ctx) {
         c.append(h('div', 'pm-ph', [h('span', 'pm-phl', [document.createTextNode(n.kind === 'video' ? 'vidéo' : 'image')])]));
       }
       if (n.tone === 'veil') l.append(h('div', 'pm-veil'));
+      if (ctx.print && (n.kind === 'video' || n.kind === 'audio')) c.append(footOf(n.kind === 'video' ? 'vidéo' : 'son'));
       obj.label = n.title || it?.title || n.kind;
     } else if (n.type === 'shape') {
       o.style.height = `${n.h}px`;
@@ -263,8 +278,28 @@ export function buildScene(ctx) {
       c.append(s('svg', { class: 'pm-ink', viewBox: '0 0 1000 1000', preserveAspectRatio: 'none' }, [path]));
       obj.paths = [path];
       obj.label = 'trait';
+    } else if (n.type === 'web') {
+      // un objet Web : l'image de son aperçu (lue et rangée par le serveur, server/tools/web_apercu.py), jamais
+      // le site lui-même ; sans image, son titre et son site
+      o.style.height = `${n.h}px`;
+      e.classList.add('pm-clip');
+      obj.media = true;
+      if (n.img) {
+        const img = new Image();
+        img.decoding = 'async';
+        img.className = 'pm-img';
+        img.alt = n.title || n.site || '';
+        img.src = href(`api/ideation/web/img/${n.img}`);
+        c.append(img);
+        obj.img = img;
+      } else {
+        c.append(h('div', 'pm-other pm-webt', [h('b', '', [document.createTextNode(n.title || n.url || 'web')]),
+          n.site ? h('span', '', [document.createTextNode(n.site)]) : null]));
+      }
+      if (ctx.print) c.append(footOf(n.site ? `web · ${n.site}` : 'web'));
+      obj.label = n.title || n.site || 'web';
     } else {
-      // le reste (cartes, mind map, web…) : une surface du modèle et son nom
+      // le reste (cartes, mind map…) : une surface du modèle et son nom
       o.style.height = `${n.h}px`;
       c.append(h('div', 'pm-other', [document.createTextNode(ctx.labelOf ? ctx.labelOf(n) : n.type)]));
       obj.label = n.type;
@@ -353,6 +388,25 @@ function decorItem(d, k, { ctx, role, bgKey, pal, inkTone, f }) {
   }
   obj.mo = d.motion ? normMotion(d.motion) : null;
   return obj;
+}
+
+// le pied discret d'un objet qui ne s'imprime pas : ce qu'il est (« vidéo », « son », « web · site »)
+function footOf(text) {
+  return h('span', 'pm-foot', [document.createTextNode(text)]);
+}
+
+// les polices qu'une scène montre : la première famille de chaque texte (celle qu'on a voulue, pas un repli).
+// Le PDF embarque ses polices : leur licence le permet-elle (server/tools/ideation.py, FONTS : `pdf`) ?
+// La page d'impression le dit au travail (lecture.js, SR_IMPRESSION) ; le mode, avant de le lancer.
+export function fontsOf(root) {
+  const out = new Set();
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let t = w.nextNode(); t; t = w.nextNode()) {
+    if (!t.nodeValue.trim() || !t.parentElement) continue;
+    const first = (getComputedStyle(t.parentElement).fontFamily || '').split(',')[0].trim().replace(/^["']|["']$/g, '');
+    if (first) out.add(first);
+  }
+  return [...out];
 }
 
 // les vidéos d'une scène : en pause quand elle s'en va (et relâchées)

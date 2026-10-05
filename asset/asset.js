@@ -2155,7 +2155,8 @@ function sequenceSheet(it) {
 // serveur n'a pas lu est lu par la page à l'ouverture, et la fiche se repeint avec son texte.
 const VIA_FR = { pdftotext: 'par poppler', page: 'dans le navigateur (pdf.js)', texte: 'comme texte', html: 'en HTML, sans les balises',
   xml: 'en XML, sans les balises', rtf: 'en RTF, sans la mise en forme', docx: 'dans le DOCX', pptx: 'dans le PPTX', xlsx: 'dans le classeur',
-  opendocument: 'dans le fichier OpenDocument', epub: 'dans l’EPUB' };
+  opendocument: 'dans le fichier OpenDocument', epub: 'dans l’EPUB',
+  chromium: 'dans sa présentation d’Idéation, à l’export (Chromium)' };
 // ce que le portail sert pour être vu, pas téléchargé (server/core/library.py, SAFE_TYPES)
 const INLINE = new Set(['pdf', 'txt', 'md', 'markdown', 'csv', 'tsv', 'yaml', 'yml', 'log', 'srt', 'vtt']);
 const docInline = (it) => !!it.url && INLINE.has((it.file || '').split('.').pop().toLowerCase());

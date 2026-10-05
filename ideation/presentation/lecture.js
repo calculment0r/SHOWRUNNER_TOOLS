@@ -3,14 +3,19 @@
 // lecteur de l'Idéation (scene.js) : une seule vérité. Le début du lecteur publié de l'étude
 // (§ 3.4) ; la publication elle-même (R2, /p/<jeton>) reste à faire.
 //
-// ?print : chaque diapositive sur une page de sa taille (@page 1920 × 1080 px), dans son état
-// final (sans entrées : « rien d'animé qui n'ait son équivalent statique », § 2.3), vidéos à
-// leur affiche. Imprimer (le navigateur) ou page.pdf() de Chromium sans affichage en font un PDF.
+// ?print : chaque diapositive sur une page de sa taille (une page nommée par taille de scène :
+// 16:9 = 1920 × 1080 px, 9:16, 4:3, 1:1 dans le même PDF), dans son état final (sans entrées :
+// « rien d'animé qui n'ait son équivalent statique », § 2.3) ; ce qui ne s'imprime pas montre son
+// image fixe et un pied discret (scene.js, `print` : une vidéo son affiche, un objet Web son aperçu,
+// un son son onde). Imprimer (le navigateur) ou page.pdf() de Chromium sans affichage en font un
+// PDF : le travail `presentation.pdf` (server/tools/presentation_pdf.py, tools/presentation_export.mjs)
+// attend `body.dataset.ready` (ou `error`) et lit `window.SR_IMPRESSION` (les pages, leurs polices).
 
 import { api, href } from '../../commun/shell.js';
 import { basculer, enPleinEcran, permis } from '../../commun/pleinecran.js';
 import { shownOf, isSlide } from '../diapo/ordre.js';
-import { buildScene } from './scene.js';
+import { ensureFont } from '../diapo/polices.js';
+import { buildScene, fontsOf } from './scene.js';
 import { styler, fontsReady, modele } from './modeles.js';
 import { createPlayer } from './lecteur.js';
 
@@ -19,11 +24,11 @@ const bid = location.hash.slice(1);
 const print = new URLSearchParams(location.search).has('print');
 
 async function main() {
-  if (!bid) { msg.textContent = 'aucune planche : lecture.html#<planche>'; return; }
+  if (!bid) throw new Error('aucune planche : lecture.html#<planche>');
   const [board, m] = await Promise.all([api(`ideation/boards/${bid}`), api('ideation/meta')]);
   const meta = m.deck;
   const frames = shownOf(board).filter(isSlide);
-  if (!frames.length) { msg.textContent = 'cette planche n’a pas de diapositive 16:9'; return; }
+  if (!frames.length) throw new Error('cette planche n’a pas de diapositive');
   const ids = [...new Set(board.nodes.filter((n) => n.type === 'media').map((n) => n.item))];
   const items = new Map();
   if (ids.length) {
@@ -31,6 +36,9 @@ async function main() {
     for (const it of r.items || []) items.set(it.id, it);
   }
   const tpl = await modele(board.pres?.template);
+  // les polices propres d'un texte sans style (diapo/libre.js) : une police proposée se charge ici comme sur la planche
+  const fake = { S: { meta: { deck: meta } } };
+  for (const id of new Set(board.nodes.map((n) => n.font).filter(Boolean))) ensureFont(fake, id, () => {});
   document.title = `${board.name} · Présentation`;
   msg.remove();
   if (!print) {
@@ -39,22 +47,29 @@ async function main() {
       onexit: () => { if (enPleinEcran()) basculer(); location.hash = ''; } }).start(0);
     return;
   }
-  // l'impression : une page par diapositive
+  // l'impression : une page par diapositive, chacune à la taille de sa scène (une page nommée par taille)
   document.body.classList.add('pl-print');
   const style = styler(meta, board, tpl, false);
   const f0 = frames[0];
+  const sizes = [...new Set(frames.map((f) => `${f.w}x${f.h}`))];
   const sheet = document.createElement('style');
-  sheet.textContent = `@page { size: ${f0.w}px ${f0.h}px; margin: 0; } .pl-page { width: ${f0.w}px; height: ${f0.h}px; }`;
+  sheet.textContent = `@page { size: ${f0.w}px ${f0.h}px; margin: 0; }\n`
+    + sizes.map((k) => { const [w, h] = k.split('x'); return `@page p${k} { size: ${w}px ${h}px; margin: 0; }`; }).join('\n');
   document.head.append(sheet);
   const pages = frames.map((f, i) => {
     const page = document.createElement('section');
     page.className = 'pl-page';
-    const sc = buildScene({ board, frame: f, items, style, tpl, motionOf: () => null, index: i, count: frames.length, live: false, href, name: board.name });
+    page.dataset.frame = f.id;
+    Object.assign(page.style, { width: `${f.w}px`, height: `${f.h}px` });
+    page.style.setProperty('page', `p${f.w}x${f.h}`);
+    const sc = buildScene({ board, frame: f, items, style, tpl, motionOf: () => null, index: i, count: frames.length, live: false, print: true,
+      href, name: board.name, fonts: meta.fonts || [] });
     page.append(sc.el);
-    return { page, sc };
+    return { page, sc, f };
   });
   document.body.append(...pages.map((p) => p.page));
   await fontsReady(style, 4000);
+  await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 8000))]);
   await Promise.all(pages.flatMap((p) => p.sc.objs.filter((o) => o.img).map((o) => o.img.decode().catch(() => {}))));
   const bar = document.createElement('div');
   bar.className = 'pl-bar';
@@ -62,7 +77,15 @@ async function main() {
   b.className = 'tb ghost sm'; b.type = 'button'; b.textContent = 'Imprimer / PDF'; b.onclick = () => print2();
   bar.append(b);
   document.body.append(bar);
-  document.body.dataset.ready = String(frames.length);   // pour Chromium sans affichage (tools/presentation_export.mjs)
+  // pour Chromium sans affichage (tools/presentation_export.mjs) : ce qui est imprimé, page par page —
+  // la diapositive, sa taille, les objets de la bibliothèque qu'elle montre, les polices de ses textes
+  window.SR_IMPRESSION = { name: board.name, pages: pages.map(({ page, sc, f }) => ({ id: f.id, name: f.name || '', w: f.w, h: f.h,
+    items: [...new Set(sc.objs.filter((o) => o.n?.type === 'media' && o.n.item).map((o) => o.n.item))], fonts: fontsOf(page) })) };
+  document.body.dataset.ready = String(frames.length);
 }
 const print2 = () => window.print();
-main().catch((e) => { msg.textContent = e.message; });
+main().catch((e) => {
+  msg.textContent = e.message;
+  if (!msg.isConnected) document.body.prepend(msg);
+  document.body.dataset.error = e.message || 'erreur';
+});
