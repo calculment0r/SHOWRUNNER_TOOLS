@@ -22,6 +22,19 @@ Ce que la page montre, en mots simples ; ce que ce module en fait :
   S'en inspirer : ACE-Step seul — le timbre de la référence par le nœud
             ReferenceTimbreAudio de ComfyUI (expérimental, écrit dans
             music_gen.build_ace_graph, jamais rendu)
+  Relire la partition (05/10, Cal : « on devait pas avoir un mode de
+            validation de ce que le modèle va faire avant de le calculer ?
+            notre modèle "qualité" le fait. on met ce modèle par défaut
+            aussi ») : avec Soigné et Reprendre (YuE2), la page fait d'abord
+            écrire la partition — le plan ABC de YuE2 (YuE2GenerateABC), ou
+            la mélodie de la référence transcrite par SheetSage2 —, la
+            montre (structure, accords, tempo, tonalité, durée), la laisse
+            modifier, puis la fait chanter telle quelle (entrée `abc` de
+            YuE2GenerateMusic, « supply an edited score », nodes_yue2.py:53 ;
+            musique_generatif.md § 1.2-1.4). Travail `chanson.plan`. Rapide
+            et S'en inspirer (ACE-Step) n'ont pas de plan lisible à relire :
+            ACE-Step compose et rend d'un même geste (§ 2, § 6). Soigné est
+            le préréglage par défaut, le mode relire est allumé par défaut.
   Écris-les pour moi : les paroles par le modèle de langue d'ACE-Step 1.5
             (`create_sample`, le « Simple Mode » de sa documentation) —
             travail `chanson.paroles`, script chanson_paroles.py
@@ -67,8 +80,19 @@ config.declare_switch(
 # ── ce que la page propose (les mots simples ; le modèle n'est que dans les avancés) ──
 PRESETS = {
     "rapide": {"label": "Rapide", "about": "une idée en quelques secondes", "model": "ace"},
-    "soigne": {"label": "Soigné", "about": "la voix la plus juste, plus long à venir", "model": "yue"},
+    "soigne": {"label": "Soigné", "about": "la voix la plus juste, une partition à relire avant", "model": "yue"},
 }
+# le préréglage par défaut : Soigné, celui qui écrit une partition qu'on relit avant le
+# rendu (décision de Cal du 05/10 : « on met ce modèle par défaut aussi »)
+DEFAULT_PRESET = "soigne"
+# pourquoi un modèle n'a pas de partition à relire avant le rendu
+PLAN_WHY = {"ace": "ACE-Step compose et rend le son d'un même geste : son modèle de langue prépare des codes "
+                   "audio internes, pas une partition lisible (docs/etudes/musique_generatif.md § 2.1, § 6) — "
+                   "rien à relire avant le calcul ; Soigné (YuE2) écrit d'abord sa partition"}
+# les sections d'une partition (étiquettes de SheetSage2, sheetsage2.py:242-246), en mots simples
+SECTION_FR = {"intro": "Intro", "verse": "Couplet", "pre-chorus": "Pré-refrain", "prechorus": "Pré-refrain",
+              "chorus": "Refrain", "bridge": "Pont", "outro": "Fin", "instrumental": "Instrumental", "solo": "Solo",
+              "inst": "Instrumental", "end": "Fin", "interlude": "Interlude", "break": "Pause"}
 MODELS = {
     "ace": {"name": "ACE-Step 1.5", "full": "ACE-Step 1.5 XL base (ComfyUI)", "dur": (10.0, 600.0), "lyrics_max": 4000,
             "switch": "\"music_engine\": \"ace-step\"",
@@ -206,7 +230,7 @@ def song_params(d: dict) -> dict:
         raise ValueError("chanté : écris les paroles, ou « Écris-les pour moi »")
     if not vocal and lyrics:
         raise ValueError("instrumental : sans paroles (passe en « Chanté » pour les garder)")
-    preset = d.get("preset") or "rapide"
+    preset = d.get("preset") or DEFAULT_PRESET
     if preset not in PRESETS:
         raise ValueError(f"préréglage inconnu : {preset} ({', '.join(PRESETS)})")
     ref = d.get("ref") or ""
@@ -258,6 +282,20 @@ def song_params(d: dict) -> dict:
         if precision not in music_yue.CKPTS:
             raise ValueError("précision : bf16 (qualité) ou int8 (rapide)")
         out["precision"] = precision
+    # la partition relue (le mode « relire la partition ») : YuE2 seul la chante
+    abc = d.get("abc") or ""
+    if not isinstance(abc, str):
+        raise ValueError("la partition est un texte")
+    abc = abc.strip()
+    if abc:
+        if model != "yue":
+            raise ValueError(f"une partition ne se chante qu'avec YuE2 : {PLAN_WHY.get(model, '')}")
+        if len(abc) > music_yue.MAX_ABC:
+            raise ValueError(f"la partition tient en {music_yue.MAX_ABC} signes au plus")
+        chk = music_yue.abc_check(abc) if music_yue.abc_tools() else {"ok": None}
+        if chk["ok"] is False:
+            raise ValueError(f"la partition ne suit pas le dialecte de YuE2 : {chk['error']}")
+    out["abc"] = abc
     title = d.get("title") or ""
     out["title"] = (title.strip()[:80] if isinstance(title, str) else "") or prompt[:60]
     parent = d.get("parent") or ""
@@ -274,10 +312,13 @@ def yue_of(p: dict, k: int = 0) -> dict:
     if p["vocal"] and word.lower() not in style.lower():
         style = f"{word}, {style}"
     cover = p["ref_mode"] == "cover"
+    abc = p.get("abc") or ""
+    # une partition relue remplace le plan (ou la transcription de la référence) : YuE2
+    # la chante telle quelle ; la référence reste en parent de la chanson (_store)
     return music_yue.yue_params({"tags": style, "lyrics": p["lyrics"] if p["vocal"] else "", "duration_s": p["duration"],
                                  "seed": p["seed"] + k, "mode": "melody" if cover else "full",
-                                 "precision": p.get("precision", "bf16"), "ref": p["ref"] if cover else "",
-                                 "title": p["title"]})
+                                 "precision": p.get("precision", "bf16"), "ref": p["ref"] if cover and not abc else "",
+                                 "abc": abc, "title": p["title"]})
 
 
 def ace_of(p: dict) -> dict:
@@ -401,6 +442,131 @@ def run_yue_real(ctx):
         raise ComfyError("ComfyUI n'a rendu aucun son")
     secs = round(time.time() - t0, 1)
     return {"note": f"{len(ids)} version{'s' if len(ids) > 1 else ''} en {secs:g} s", "audio": ids, "render_seconds": secs}
+
+
+# ── relire la partition avant de chanter (le plan de YuE2) ──
+def plan_params(d: dict) -> dict:
+    """La demande de la page (celle de Créer) : la recette jugée, sans partition ;
+    seul YuE2 (Soigné, Reprendre) écrit une partition qu'on relit avant le rendu."""
+    p = song_params({**d, "abc": ""}) if isinstance(d, dict) else song_params(d)
+    if p["model"] != "yue":
+        raise ValueError(f"pas de partition à relire avec {MODELS[p['model']]['name']} : {PLAN_WHY[p['model']]}")
+    return p
+
+
+def abc_resume(abc: str) -> dict:
+    """Ce qu'une partition dit d'avance, en mots simples : tempo (Q:), mesure (M:),
+    tonalité (K:), ses sections (`% verse`…, abc-editing.md) avec leurs mesures et
+    leurs accords (sur la voix Vocal), la durée nominale. Une lecture de surface du
+    dialecte de YuE2 pour la page ; le jugement complet reste abc_tools."""
+    q = re.search(r"^Q:\s*(?:\d+/\d+\s*=\s*)?(\d+(?:\.\d+)?)", abc or "", re.M)
+    m = re.search(r"^M:\s*(\d+)/(\d+)", abc or "", re.M)
+    k = re.search(r"^K:\s*(\S+)", abc or "", re.M)
+    sections, cur, voice = [], None, None
+    for line in (abc or "").splitlines():
+        t = line.strip()
+        if not t:
+            continue
+        if t.startswith("%"):
+            tag = t.lstrip("%").strip().lower()
+            # la même étiquette redite à chaque groupe de mesures : la même section
+            if tag and not (cur and cur["tag"] == tag):
+                cur = {"tag": tag, "label": SECTION_FR.get(tag, tag.capitalize()), "bars": 0, "chords": []}
+                sections.append(cur)
+            continue
+        mv = re.match(r"^\[?V:\s*([^\s\]]+)", t)
+        if mv:
+            voice = mv.group(1)
+            continue
+        if re.match(r"^[A-Za-z]:", t) or voice != "Vocal":
+            continue
+        if cur is None:
+            cur = {"tag": "", "label": "—", "bars": 0, "chords": []}
+            sections.append(cur)
+        cur["bars"] += len(re.findall(r"\|+", t))
+        for ch in re.findall(r'"([^"]+)"', t):
+            if not cur["chords"] or cur["chords"][-1] != ch:
+                cur["chords"].append(ch)
+    for x in sections:
+        x["chords"] = x["chords"][:24]
+    bpm = float(q.group(1)) if q else None
+    qpb = int(m.group(1)) * 4 / int(m.group(2)) if m else 4.0     # des noires par mesure
+    bars = sum(x["bars"] for x in sections)
+    return {"bpm": bpm, "meter": f"{m.group(1)}/{m.group(2)}" if m else "", "key": k.group(1) if k else "",
+            "sections": sections, "bars": bars, "seconds": round(bars * qpb * 60 / bpm, 1) if bpm and bars else None}
+
+
+def _lyric_sections(lyrics: str, vocal: bool) -> list[tuple[str, int]]:
+    """Les sections des paroles ([Verse], [Chorus]…) et leur longueur en vers."""
+    if not vocal or not lyrics.strip():
+        return [("intro", 0), ("verse", 0), ("chorus", 0), ("outro", 0)]
+    out = []
+    for blk in re.split(r"\n(?=\s*\[)", lyrics.strip()):
+        mt = re.match(r"\s*\[([^\]]+)\]", blk)
+        tag = re.sub(r"[^a-z-]", "", (mt.group(1) if mt else "verse").lower().split()[0]) or "verse"
+        lines = [x for x in blk.splitlines()[1 if mt else 0:] if x.strip()]
+        out.append((tag if tag in SECTION_FR else "verse", len(lines)))
+    return out
+
+
+def fake_plan(p: dict) -> str:
+    """La partition d'essai (moteur factice) : celle que YuE2 écrirait n'est pas
+    connue sans lui ; on écrit, dans son dialecte (music_yue.fake_abc), une
+    partition qui suit les sections des paroles (deux mesures par vers, notre
+    choix pour l'essai), au tempo du style (« 96 BPM », sinon 96), à la durée
+    demandée. Une reprise : la mélodie seule, comme SheetSage2 en « melody »."""
+    bpm = music_yue._tempo(p["prompt"])
+    secs = p["duration"]
+    if p["ref_mode"] == "cover":
+        it = library.get(p["ref"]) or {}
+        secs = min(secs, float(it.get("duration") or secs))
+        parts = [("verse", 0)]
+    else:
+        parts = _lyric_sections(p["lyrics"], p["vocal"])
+    want = max(len(parts), int(round(secs * bpm / 240)))           # des mesures de 4/4
+    raw = [max(2, 2 * n) if n else 4 for _, n in parts]
+    k = want / sum(raw)
+    sections = [[tag, max(1, int(round(r * k)))] for (tag, _), r in zip(parts, raw)]
+    return music_yue.fake_abc(p["seed"], bpm, 4, 9, "minor", sections, sing=p["vocal"] or p["ref_mode"] == "cover",
+                              chords=p["ref_mode"] != "cover")
+
+
+def _plan_result(abc: str, engine_: str, p: dict, note: str) -> dict:
+    return {"note": note, "abc": abc, "engine": engine_, "check": music_yue.abc_check(abc), "resume": abc_resume(abc),
+            "seed": p["seed"], "model": "sheetsage2" if p["ref_mode"] == "cover" else "yue2"}
+
+
+def run_plan_test(ctx):
+    p = plan_params(ctx.params)
+    ctx.progress(0.3, "partition d'essai (moteur factice)")
+    return _plan_result(fake_plan(p), "factice", p, "partition d'essai écrite (moteur factice, pas YuE2)")
+
+
+def run_plan_real(ctx):
+    """Le plan réel : YuE2GenerateABC seul (le graphe de music_yue.build_abc_graph,
+    le style et les paroles que le rendu lira), ou, pour une reprise, la mélodie de
+    la référence par SheetSage2 (music_midi.build_sheetsage_graph, « melody »)."""
+    from tools import music_midi
+    p = plan_params(ctx.params)
+    yp = yue_of({**p, "abc": ""})
+    if p["ref_mode"] == "cover":
+        ctx.progress(0.05, "envoie la référence à ComfyUI")
+        name = ctx.comfy.upload(library.path_of(library.get(p["ref"])))
+        g = music_midi.build_sheetsage_graph(name, "melody")
+        label = "SheetSage2 · partition"
+    else:
+        g = music_yue.build_abc_graph({"tags": yp["tags"], "lyrics": yp["lyrics"], "seed": yp["seed"], "mode": "full",
+                                       "precision": yp["precision"]})
+        label = "YuE2 · partition"
+    problems = music_yue.check_graph(g, music_yue.fetch_info(ctx.comfy, [n["class_type"] for n in g.values()]))
+    if problems:
+        raise ComfyError("graphe de la partition refusé avant l'envoi : " + " ; ".join(problems[:8]))
+    pid = ctx.comfy.queue(g)
+    entry = ctx.comfy.wait(pid, cancelled=ctx.cancelled, report=ctx.comfy_report(label), timeout=music_yue.TIMEOUT)
+    abc = music_yue._score_of(entry, g)
+    if not abc.strip():
+        raise ComfyError("pas de partition rendue (sortie texte de PreviewAny vide)")
+    return _plan_result(abc, "comfyui", p, "partition transcrite par SheetSage2" if p["ref_mode"] == "cover" else "partition écrite par YuE2")
 
 
 # ── les paroles : « Écris-les pour moi » ────────────────────
@@ -713,6 +879,24 @@ def api_variant(req):
     return _submit(p, f"Variante · {p['title']}")
 
 
+def api_plan(req):
+    """Relire avant de chanter : la partition seule (travail `chanson.plan`)."""
+    try:
+        p = plan_params(req.json())
+    except (ValueError, TypeError) as e:
+        raise HttpError(400, str(e)) from e
+    j = jobs.submit("chanson.plan", {**req.json(), "seed": p["seed"]}, title=f"Partition · {p['title']}"[:90], tool=TOOL)
+    return jobs.public(j)
+
+
+def api_plan_read(req):
+    """Une partition retouchée à la main : ce qu'elle dit (abc_resume) et son jugement (abc_tools)."""
+    abc = (req.json() or {}).get("abc")
+    if not isinstance(abc, str) or not abc.strip() or len(abc) > music_yue.MAX_ABC:
+        raise HttpError(400, f"partition : un texte de 1 à {music_yue.MAX_ABC} signes")
+    return {"resume": abc_resume(abc), "check": music_yue.abc_check(abc)}
+
+
 def api_lyrics(req):
     try:
         p = lyrics_params(req.json())
@@ -798,7 +982,13 @@ def options(req=None) -> dict:
     lyr = {"engine": ps["engine"], "ready": cpu if ps["engine"] == "factice" else ps["ready_real"],
            "why": "" if ps["engine"] == "factice" or ps["ready_real"] else ps["why_real"], "model": ps["model"],
            "switch": ps["switch"], "source": ps["source"]}
-    return {"presets": [{"id": k, **v} for k, v in PRESETS.items()], "models": models, "refs": refs,
+    plan = {"default": True, "preset": DEFAULT_PRESET, "engine": engine("yue"),
+            "models": {mid: {"ok": mid == "yue", "why": PLAN_WHY.get(mid, "")} for mid in MODELS},
+            "check": music_yue.abc_tools_state(),
+            "source": "~/YuE/docs/editing.md (« white-box ») ; nodes_yue2.py:53 (« supply an edited score ») ; "
+                      "docs/etudes/musique_generatif.md § 1.2-1.4"}
+    return {"presets": [{"id": k, **v} for k, v in PRESETS.items()], "default_preset": DEFAULT_PRESET, "plan": plan,
+            "models": models, "refs": refs,
             "durations": list(DURATIONS), "languages": [{"id": k, "label": v[0]} for k, v in LANGS.items()],
             "keys": music.KEYSCALES, "max_n": MAX_N, "prompt_max": PROMPT_MAX, "lyrics": lyr, "stems": stems,
             "studio": studio_state(), "odio": "musique/?p="}
@@ -816,6 +1006,10 @@ def register(app) -> None:
         jobs.register(f"chanson.{model}", fn, lane="audio" if real else "cpu",
                       title=f"Chanson · {MODELS[model]['name']}" + ("" if real else " (essai)"),
                       family="ace-step" if model == "ace" else "yue", gpu=real, cost="gpu" if real else "cpu")
+    preal = engine("yue") == "reel"
+    jobs.register("chanson.plan", run_plan_real if preal else run_plan_test, lane="audio" if preal else "cpu",
+                  title="Partition" + ("" if preal else " (essai)"), family="yue" if preal else None, gpu=preal,
+                  cost="gpu" if preal else "cpu")
     lreal = paroles_engine() == "reel"
     jobs.register("chanson.paroles", run_lyrics_real if lreal else run_lyrics_test, lane="audio" if lreal else "cpu",
                   title="Paroles" + ("" if lreal else " (essai)"), family="ace-step-lm" if lreal else None, gpu=lreal, cost="gpu" if lreal else "cpu")
@@ -824,6 +1018,8 @@ def register(app) -> None:
     app.route("POST", "/api/chanson/create", api_create)
     app.route("POST", "/api/chanson/variant", api_variant)
     app.route("POST", "/api/chanson/paroles", api_lyrics)
+    app.route("POST", "/api/chanson/plan", api_plan)
+    app.route("POST", "/api/chanson/plan/lire", api_plan_read)
     app.route("POST", "/api/chanson/stems", api_stems)
     app.route("POST", "/api/chanson/odio", api_odio)
     app.route("POST", "/api/chanson/studio/demande", api_studio_ask)
@@ -841,7 +1037,13 @@ def selftest(call, ok) -> None:
     ok(o.get("studio", {}).get("ok") is True and o.get("stems", {}).get("ready") is True and o.get("lyrics", {}).get("ready"),
        f"chanson : Studio (porte coupée = Cal), séparation et paroles prêtes ({o.get('stems')})")
 
-    base = {"prompt": "pop mélancolique, piano, 96 BPM", "lyrics": "[Verse]\nla nuit\n[Chorus]\nreste", "duration": 12}
+    ok(o.get("default_preset") == "soigne" and o.get("plan", {}).get("default") is True
+       and o["plan"]["models"]["yue"]["ok"] and not o["plan"]["models"]["ace"]["ok"] and "ACE-Step" in o["plan"]["models"]["ace"]["why"],
+       f"chanson : Soigné par défaut, relire la partition par défaut, Rapide dit pourquoi il n'a rien à relire ({o.get('plan')})")
+    base = {"prompt": "pop mélancolique, piano, 96 BPM", "lyrics": "[Verse]\nla nuit\n[Chorus]\nreste", "duration": 12,
+            "preset": "rapide"}
+    ok(song_params({k: v for k, v in base.items() if k != "preset"})["model"] == "yue",
+       "chanson : sans préréglage, Soigné (YuE2) — le défaut du 05/10")
     p = song_params(base)
     ok(p["model"] == "ace" and p["bpm"] == 96 and p["key"] == DEFAULT_KEY and p["n"] == 1 and p["language"] == "fr",
        f"recette rapide : ACE-Step, le tempo lu dans le style ({p.get('bpm')})")
@@ -899,6 +1101,45 @@ def selftest(call, ok) -> None:
     ok(j2.get("state") == "done" and j2.get("kind") == "chanson.yue" and (y1.get("params") or {}).get("score", "").startswith("X:1"),
        f"chanson soignée d'essai, avec sa partition ({j2.get('state')} {j2.get('message')})")
 
+    # relire la partition avant de chanter (le plan de YuE2), puis la chanter telle quelle
+    soigne = {**base, "preset": "soigne", "duration": 30, "seed": 11,
+              "lyrics": "[Verse]\nla nuit tombe\nsur la ville\n[Chorus]\nreste encore\nun peu\n[Verse]\nle métro file\nsans nous\n[Chorus]\nreste encore\nun peu"}
+    st, jp = call("POST", "/api/chanson/plan", soigne)
+    ok(st == 200 and jp.get("kind") == "chanson.plan" and jp.get("tool") == TOOL, f"relire : la partition en file ({st} {str(jp)[:120]})")
+    jp = wait(jp["id"]) if st == 200 else {}
+    pr = jp.get("result") or {}
+    rs = pr.get("resume") or {}
+    ok(jp.get("state") == "done" and pr.get("abc", "").startswith("X:1") and pr.get("engine") == "factice"
+       and [x["tag"] for x in rs.get("sections", [])] == ["verse", "chorus", "verse", "chorus"]
+       and rs.get("bpm") == 96 and rs.get("meter") == "4/4" and rs.get("bars", 0) >= 8 and all(x["chords"] for x in rs["sections"])
+       and abs((rs.get("seconds") or 0) - 30) <= 6,
+       f"relire : la partition d'essai suit les sections des paroles, au tempo du style ({jp.get('state')} {rs})")
+    st, bad = call("POST", "/api/chanson/plan", base)
+    ok(st == 400 and "ACE-Step" in bad.get("error", ""), f"relire avec Rapide : refusé, la raison dite ({st} {bad})")
+    st, lu = call("POST", "/api/chanson/plan/lire", {"abc": pr.get("abc", "")})
+    ok(st == 200 and lu.get("resume") == rs and "ok" in lu.get("check", {}), f"relire : une partition retouchée se relit ({st})")
+    abc = pr.get("abc", "")
+    st, jw = call("POST", "/api/chanson/create", {**soigne, "abc": abc, "n": 2})
+    jw = wait(jw["id"]) if st == 200 else {}
+    w1 = jw.get("items") or [{}]
+    ok(jw.get("state") == "done" and jw.get("kind") == "chanson.yue" and len(w1) == 2
+       and all(x.get("params", {}).get("score") == abc and x["params"]["chanson"]["abc"] == abc for x in w1),
+       f"chanter la partition relue : deux versions, la partition rangée telle quelle ({jw.get('state')} {jw.get('message')})")
+    st, bad = call("POST", "/api/chanson/create", {**base, "abc": abc})
+    ok(st == 400 and "YuE2" in bad.get("error", ""), f"une partition avec Rapide : refusée ({st})")
+    yv = yue_of(song_params({**soigne, "abc": abc}))
+    ok(yv["abc"] == abc and yv["mode"] == "full" and not yv["ref"] and "2" not in music_yue.build_graph(yv)
+       and music_yue.build_graph(yv)["3"]["inputs"]["abc"] == abc and music_yue.check_graph(music_yue.build_graph(yv), music_yue.FAKE_INFO) == [],
+       "le graphe réel d'une partition relue : pas de YuE2GenerateABC, la partition dans YuE2GenerateMusic.abc, jugé bon")
+    gp = music_yue.build_abc_graph({"tags": yv["tags"], "lyrics": yv["lyrics"], "seed": yv["seed"], "mode": "full", "precision": "bf16"})
+    ok(music_yue.check_graph(gp, music_yue.FAKE_INFO) == [] and gp["2"]["inputs"]["lyrics"] == yv["lyrics"],
+       "le graphe réel du plan : YuE2GenerateABC seul, les paroles que le rendu lira, jugé bon")
+    ok(abc_resume('X:1\nM:3/4\nL:1/16\nQ:1/4=90\nV: Vocal clef=treble name="Vocal Melody" snm="Vocal"\nK:Am\n% chorus\n'
+                  'V: Vocal\n"Am"A12|"F"F12|"F"c12|\nV: Ins\nZ3|') ==
+       {"bpm": 90.0, "meter": "3/4", "key": "Am", "bars": 3, "seconds": 6.0,
+        "sections": [{"tag": "chorus", "label": "Refrain", "bars": 3, "chords": ["Am", "F"]}]},
+       "la lecture d'une partition : tempo, mesure, tonalité, sections, accords, durée")
+
     st, jv = call("POST", "/api/chanson/variant", {"item": song["id"]})
     jv = wait(jv["id"]) if st == 200 else {}
     v1 = (jv.get("items") or [{}])[0]
@@ -915,6 +1156,18 @@ def selftest(call, ok) -> None:
     c1 = (jc.get("items") or [{}])[0]
     ok(jc.get("state") == "done" and jc.get("kind") == "chanson.yue" and c1.get("parents") == [song["id"]],
        f"reprendre (essai) : YuE2, la référence en parent ({jc.get('state')} {jc.get('message')})")
+    st, jr = call("POST", "/api/chanson/plan", {**base, "preset": "soigne", "ref": song["id"], "ref_mode": "cover", "duration": 10})
+    jr = wait(jr["id"]) if st == 200 else {}
+    rr = jr.get("result") or {}
+    ok(jr.get("state") == "done" and rr.get("model") == "sheetsage2" and rr.get("resume", {}).get("bars", 0) >= 1
+       and not any(x["chords"] for x in rr["resume"]["sections"]),
+       f"relire une reprise : la mélodie de la référence (SheetSage2, mélodie seule) ({jr.get('state')} {jr.get('message')})")
+    st, jk = call("POST", "/api/chanson/create", {**base, "preset": "soigne", "ref": song["id"], "ref_mode": "cover", "duration": 10,
+                                                   "abc": rr.get("abc", "")})
+    jk = wait(jk["id"]) if st == 200 else {}
+    k1 = (jk.get("items") or [{}])[0]
+    ok(jk.get("state") == "done" and k1.get("parents") == [song["id"]] and k1.get("params", {}).get("score") == rr.get("abc"),
+       f"reprendre une partition relue : la référence reste en parent ({jk.get('state')} {jk.get('message')})")
     st, bad = call("POST", "/api/chanson/create", {**base, "ref": song["id"], "ref_mode": "cover", "model": "ace"})
     ok(st == 400 and "YuE2" in bad.get("error", ""), f"reprendre avec ACE-Step : refusé, la raison dite ({st})")
 

@@ -176,3 +176,46 @@ le même champ, rien à changer.
 5. **Non documenté, à écouter** : YuE2 en français ; des paroles d'ACE-Step
    (`[Verse 1]`, numérotées) chantées par YuE2 (sa documentation montre
    `[Verse]`).
+
+## 8. Relire la partition avant de chanter (05/10/2026)
+
+Demande de Cal (05/10) : « dans la partie musique on devait pas avoir un mode de
+validation de ce que le modèle va faire avant de le calculer ? notre modèle
+"qualité" le fait. on met ce modèle par défaut aussi. »
+
+**Ce que c'est, d'après le code et les études.** Le modèle « qualité » est
+**Soigné** (YuE2, sous « Qualité » dans le rail ; bf16, la précision « qualité »).
+YuE2 écrit d'abord une **partition ABC** lisible (`YuE2GenerateABC` : voix Vocal et
+Ins, accords, `Q:` tempo, `M:` mesure, `K:` tonalité, sections `% verse`), puis
+la chante ; son entrée `abc` prend « an edited score » (`nodes_yue2.py:53`) —
+c'est le « white-box » de `~/YuE/docs/editing.md`, et ce que Cal disait le 29/09 :
+« ça génère d'abord une partition et donc qu'on peut modifier... avant
+génération !! » (`musique_generatif.md` § 1.2-1.4). ODIO l'avait déjà en
+option (la case Partition d'une région YuE2, « Écrire la partition ») ; l'app
+Musique ne l'avait pas : Soigné chantait d'un trait, et Rapide était le défaut.
+
+**Ce qui change.**
+
+| où | avant | maintenant |
+|---|---|---|
+| app Musique | Rapide par défaut ; Créer rend tout de suite | **Soigné par défaut** ; « Relire la partition avant de chanter » **coché** : l'orange dit « Écrire la partition » (travail `chanson.plan`), la carte de la partition s'affiche en tête des chansons (tempo, mesure, tonalité, mesures, durée ; une bande par section ; les accords et le premier vers de chaque section ; le texte ABC modifiable, relu par `POST /api/chanson/plan/lire`), puis l'orange dit « Chanter cette partition » : la recette porte `abc`, YuE2 la chante telle quelle (pas de `YuE2GenerateABC` dans le graphe) ; changer le style ou les paroles la périme (Réécrire, ou La garder). Une forme gardée dans le navigateur avant ce jour revient une fois à Soigné et à « relire » (`FORM_V`). |
+| app Musique, Reprendre | SheetSage2 → YuE2 d'un trait | la mélodie de la référence (SheetSage2, « melody ») s'affiche d'abord, se relit, puis se chante ; la référence reste en parent |
+| ODIO, tiroir « Générer » (YuE2, déjà le défaut) | Lancer chantait d'un trait | « relire avant de chanter » coché : Lancer fait d'abord écrire la partition (`music.yue.abc`), elle se relit dans le tiroir, Lancer la chante (`abc`) |
+| ODIO, région YuE2 (chanson) | Générer, la partition facultative | sans partition, l'orange est « Écrire la partition » ; « Sans relire » à côté ; la partition écrite, l'orange redevient « Générer » |
+
+**Là où ce n'est pas possible, et pourquoi.** Rapide et S'en inspirer (ACE-Step 1.5) :
+pas de plan lisible — ACE-Step compose et rend d'un même geste ; son modèle de
+langue 5 Hz prépare des codes audio internes (`generate_audio_codes` du nœud
+ComfyUI), qui « restent dans leur adaptateur » (`musique_generatif.md` § 2.1,
+§ 6). La case est grisée et le dit. La reprise d'ODIO (tâche « reprise d'un
+clip ») n'a pas d'entrée `abc` dans le schéma : elle garde sa transcription.
+
+**Réserves.** Le plan réel (`run_plan_real`, `music_yue.run_abc_real`) lit la
+partition sur la sortie texte de `PreviewAny` : **à vérifier au premier rendu**
+(`yue.md` § 4). Le temps : un passage de plus par ComfyUI (12,7 s de plan pour
+60 s de chanson, mesuré par le dépôt autonome sur DGX1), le rendu, lui, saute
+l'étape du plan. Les « paroles de YuE ignorées » (REPRISE, premier geste n° 2)
+ne sont pas résolues : la carte de la partition aidera à le voir (les sections
+du plan suivent-elles les paroles ?). Un LoRA YuE2 (NAR) un jour : son auteur
+déconseille l'ABC avec lui (README du Trainer, `musique_generatif.md` § 5.1).
+Essayé en moteurs factices : selftest de `chanson.py`, pilote `chanson/pilote.mjs`.
