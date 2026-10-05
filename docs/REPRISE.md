@@ -1,6 +1,6 @@
 # Reprise — à lire en premier
 
-État au 05/10/2026, fin de session (commit 1ad5ebb, sur `main`). Portail à la maison :
+État au 05/10/2026 au soir (session cloud de l'après-midi, `main` = cb2a140 et suivants). Portail à la maison :
 **http://192.168.10.247:8790/** (DGX2 ; Tailscale http://100.108.108.65:8790/).
 **Adresse publique : https://showrunner.luxigone.workers.dev** — un ami tape le
 pseudo que Cal lui a créé (Admin → « Ajouter quelqu'un »), sans code ni e-mail.
@@ -73,20 +73,60 @@ Secours : `ssh dgx2 'cd ~/SHOWRUNNER_TOOLS && python3 server/showrunner.py --adm
   secrets Cloudflare ne sont pas posés. Il ne sert plus vraiment, puisque `auto_maj`
   publie déjà.
 
+## Session cloud du 05/10 après-midi (une session, 11 agents en parallèle, chacun dans sa copie, fusionnés ici)
+
+Tout est sur `main`, en ligne, et `tools/check.py` passe : **2601 / 0** (les 5 échecs anciens sont corrigés).
+
+- **Mise à jour automatique : LA PANNE et sa correction** (7c9af00). Un tour qui relançait le portail lui
+  laissait son verrou (`flock`, descripteur 9) : chaque tour suivant s'arrêtait en silence, DGX2 est resté figé
+  sur 0573119 de 13:54 à 16:15. Les commandes lancées par un tour prennent maintenant `9>&-` ; `etat` dit qui
+  tient le verrou et nomme les travaux qui font attendre. À surveiller : que le journal reprenne seul.
+- **Idéation** : export PNG → téléchargement + presse-papier (`POST /api/ideation/boards/<id>/png`, plus de
+  volet ni d'Asset) ; poignées des formes qui suivent pendant le geste ; couleur des flèches d'annotation
+  (`color`, LINK_COLORS) ; titres et notes en style « Aucun » par défaut, avec une barre façon Miro
+  (`ideation/diapo/libre.js` : police, taille, couleur, fond, alignement) ; menus de polices écrits dans leur
+  police (`diapo/polices.js`, fontMenu) ; bouton **Animer** (le mode Présentation, barre du haut et
+  diapositive) ; **composants d'un élément** en vignettes à glisser (panneau de droite ; `POST
+  /api/elements/<id>/part`) ; **visionneuse 3D** sur la planche (`objets/modele3d.js`, character/viewer.html en
+  `?embed=1`, éclairage et canal par message) ; **moodboard** (`objets/moodboard.js` : images OU sons, carte fixe,
+  double-clic pour tout voir) et son **LoRA** (`server/tools/lora.py` : à jour / périmé, maintenant ou la nuit,
+  versions ; `lora_trainers.py` : ai-toolkit et ACE-Step d'après le manifeste `~/trainers/sr_lora.json`).
+  « Pastille enregistrée » qui ne clignote plus pendant un geste (coedition.js ; l'annulation était déjà juste).
+- **LoRA** : étude `docs/etudes/lora_entrainement.md` ; brief `docs/INSTALL_LORA.md`, donné à une session du PC.
+  **Cal installait encore le 05/10 au soir** : attendre son compte rendu (§ 6 du brief), puis vérifier
+  Admin → Diagnostics → « LoRA · entraîneurs ». Reste : utiliser un LoRA de moodboard dans une carte Générer
+  (et la page Vidéo pour H3) ; YuE2 (nœud ComfyUI) pas branché au portail.
+- **ODIO** : zoom fluide et grille partout, par-dessus les clips (timeline.js, echelle) ; tête de lecture par son
+  onglet, corps de clip = temps, plages, Ctrl+E/J/D/L (comme Live) ; appareils visuels (`musique/appareils/`,
+  étude `odio_appareils.md`) ; la Console devient la **vue Session** (`session.js`, étude `odio_session.md`,
+  `scenes`/`slots`/`launch` dans le projet) ; **détecter le tempo** d'un clip audio (`tempo.js`, `bpm.js`).
+  Restes : la courbe du compresseur du nodal (fausse, voir odio_appareils.md) ; timeline qui ne grise pas les
+  pistes jouées en Session ; Follow Actions ; warp.
+- **Musique** : Soigné (YuE2) par défaut, avec « relire la partition avant de chanter » (`chanson.plan`) ; le
+  plan réel (sortie PreviewAny) est **à vérifier au premier rendu**.
+- **Transcrire** : texte et carnet sur un écran en deux colonnes ; nouvelle consigne du carnet (3e personne,
+  citations, `<transcript>` encadré) **à essayer sur le vrai modèle** (la fille de 17 ans) ; le son envoyé au
+  Montage arrive dans le Projet.
+- **Droits** : un ami Apps invité sur une planche la co-édite (le lien ouvre CETTE planche ; le calcul reste
+  refusé) ; les gestes du Studio cachés aux comptes Apps (`studioSeul`, `studio: true` des menus).
+- **Lecteur commun** dans le Montage et Upscale (`commun/defilement.js`) ; les éléments versionnés dans le
+  chutier du Montage ; `ev_seq` / `sr:elements` (le Montage relit encore toutes les 5 s : à brancher).
+- **Kit de présentation** : un gros bouton « Positionnement » sur l'accueil (Cal seul), même onglet ; dans le
+  kit, une barre d'accès direct (`commun/kit_nav.js`, ajoutée au service, le kit n'est pas touché) et Échap →
+  le positionnement ; `plan.json` facultatif pour l'ordre. **Cal ne veut pas de volet pour le kit.**
+- **Admin → Diagnostics → « Tout lancer et copier »** : tous les diagnostics, un seul texte au presse-papier.
+  (Un envoi automatique vers GitHub, même chiffré, a été refusé par les permissions de la session cloud.)
+
 ## PREMIER GESTE DE LA SESSION SUIVANTE
 
-1. Vérifier que `1ad5ebb` est en ligne : Admin → Diagnostics → `maj`, ou `auto_maj.sh etat`.
-   Demander ensuite à Cal s'il voit le bouton « Modèles » de l'Idéation.
-2. **Paroles de YuE ignorées** : le câblage du code paraît bon, mais la cause n'est pas
-   trouvée. Il faut les sorties de Diagnostics → `yue` et `yue_wf` (ce que YuE2 a reçu,
-   et les workflows de Cal comparés au graphe du portail), puis corriger.
-3. Comptes créés « à valider » : Cal s'en plaint, alors que le code les crée actifs. Lui
-   demander ce qu'il voit exactement (capture d'écran).
-4. Planche de la réunion : la lancer (Diagnostics → `planche`), puis la regarder.
-5. `tools/check.py` : 5 échecs anciens, présents avant la session. Les stems sortent en
-   « unknown format 65534 », plus ODIO et la garde `music.yue.abc`. Ils sont à corriger.
-6. Backlog : mises en page mobiles, panneau Asset dans ODIO et le Montage, lecteur commun
-   ailleurs, `docs/ARCHITECTURE.md`, 403 du droit Studio, licences (voir plus bas).
+1. Admin → Diagnostics → « Tout lancer et copier » : demander à Cal de coller le texte. Y lire : la mise à jour
+   (le journal avance-t-il seul ? pas de « VERROU TENU »), YuE2 (paroles ignorées, encore ouvert), LoRA.
+2. LoRA : le compte rendu de l'installation de Cal (docs/INSTALL_LORA.md § 6) → brancher ce qui a marché ;
+   puis un LoRA de moodboard dans la carte Générer.
+3. Essais à faire faire à Cal (rien ne s'essaie ici sans GPU) : la consigne du carnet de Transcrire, la
+   partition de Musique (Soigné), le tempo d'ODIO sur sa musique, les appareils et la Session d'ODIO à 60 i/s.
+4. Toujours ouverts : comptes « à valider » (une capture de Cal), planche de la réunion (Diagnostics →
+   `planche`), téléphone (mises en page dédiées), licences.
 
 Le socle Team / Workspace (`server/core/espaces.py`, en-tête `x-sr-espace` dans le Worker)
 est dans `main`. La phase B (garde du calcul par `cost`, `space` posé par chaque outil,
