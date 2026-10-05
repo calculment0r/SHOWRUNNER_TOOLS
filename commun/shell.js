@@ -105,7 +105,7 @@ export function surEspace(cb) { espaceCbs.add(cb); return () => espaceCbs.delete
 // `outil: true` : tant qu'il est ouvert, l'outil travaille dans le Workspace du document — tout ce
 // qu'il demande sans dire `espace` y part (générer, déposer, ranger : ce qui naît pour le document
 // naît où il est) ; ce qui liste ou crée pour l'onglet (la liste des planches, une planche neuve)
-// passe `espace: espace()`. Un objet posé dedans, d'un autre Workspace, y est rapatrié : la copie va
+// passe `espace: espace()` ; un objet d'un autre Workspace qu'on y pose y est rapatrié : la copie va
 // dans le Workspace du document (rapatrier, ici()).
 let docEspace = null, docOutil = false;
 const DOC_KEY = 'sr-docs-espace', DOC_MAX = 40;
@@ -130,8 +130,8 @@ function espaceDe(path) {
   for (const x of String(path || '').match(DOC_IN) || []) if (docsEspace[x] && ESP_RX.test(docsEspace[x])) return docsEspace[x];
   return docOutil ? docEspace : ESPACE;
 }
-/** Le Workspace où l'outil travaille en ce moment : celui du document ouvert, sinon celui de l'onglet. */
-export const ici = () => docEspace || ESPACE;
+/** Le Workspace où l'outil travaille en ce moment : celui du document qu'il a ouvert `outil`, sinon celui de l'onglet. */
+export const ici = () => (docOutil && docEspace) || ESPACE;
 
 // ── la porte (core/auth.py, commun/porte.js) ────────────────
 // qui je suis : { auth, state: anonymous | pending | active | refused | suspended, user,
@@ -458,8 +458,8 @@ export const CF_MIME = 'application/x-sr-cf';
 // (panneau_asset.md § 5) — il se lit au survol, quand le contenu ne se lit pas encore
 export const SPACE_MIME = 'application/x-sr-space-';
 
-// Un objet d'un autre Workspace (it.space ≠ celui où l'outil travaille : le document ouvert, sinon
-// l'onglet — ici()) ne se pose jamais tel quel : il est d'abord rapatrié — une copie neuve dans ce
+// Un objet d'un autre Workspace (it.space ≠ celui où l'outil travaille : le document qu'il a ouvert
+// `outil`, sinon l'onglet — ici()) ne se pose jamais tel quel : il est d'abord rapatrié — une copie neuve dans ce
 // Workspace, jamais un lien vivant (POST /api/espaces/<ici>/rapatrier, server/tools/equipes.py ;
 // equipes_espaces.md, étape 5) — et l'outil reçoit la copie, à la place de l'original, dans le même
 // ordre. Tout ou rien : un refus (un viewer, une séquence) lève l'erreur du portail, qui dit pourquoi.
