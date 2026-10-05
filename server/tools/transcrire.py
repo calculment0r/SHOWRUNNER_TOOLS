@@ -331,15 +331,24 @@ def _live(jid: str | None) -> dict | None:
 
 
 def _settled(x: dict) -> dict:
-    """Un document (ou une traduction) « en file » ou « en cours » dont le
-    travail est fini sans l'avoir dit — arrêté, perdu à un redémarrage du
-    portail — se montre en échec, avec la raison : jamais « en file » pour
-    toujours. Le travail écrit l'état du document avant de finir : un travail
-    réussi ne passe pas par ici."""
+    """Un document (ou une traduction, un élément du carnet, une question) « en
+    file » ou « en cours » dont le travail est sorti sans l'avoir dit — arrêté,
+    perdu à un redémarrage du portail — se montre en échec, avec la raison :
+    jamais « en file » pour toujours.
+
+    Un travail fini (« done ») n'est jamais un échec : run_transcribe,
+    run_translate et run_notes écrivent leur issue dans le document (`_update`)
+    avant de rendre la main, et la file ne les dit finis qu'après. Une vue qui
+    montre encore « en cours » à côté d'un travail fini a donc été lue avant
+    cette écriture : le document lu, puis la file regardée, et le travail a
+    écrit puis fini entre les deux (06/10 : la page relit toutes les 0,1 s, le
+    travail factice dure 0,1 s). Elle reste « en cours » ; la relecture suivante
+    lit l'issue. Un travail en échec ou arrêté a écrit son échec (ou n'a pas pu
+    partir) : le dire ici dit la même chose."""
     if x.get("state") not in ACTIVE or not x.get("job"):      # sans numéro : le travail est en train d'être posé
         return x
     j = jobs.get(x["job"])
-    if j and j.get("state") in ACTIVE:
+    if j and j.get("state") in (*ACTIVE, "done"):
         return x
     why = {"cancelled": "arrêté", "interrupted": "interrompu par un redémarrage du portail"}.get((j or {}).get("state"))
     return {**x, "state": "error", "error": x.get("error") or why or (j or {}).get("message") or "travail perdu (le portail a redémarré)"}
@@ -1685,8 +1694,9 @@ def api_translate(req, tid) -> dict:
         # la garde du calcul (celle de jobs.submit) avant d'écrire « en file » dans le document
         me = auth.current()
         jobs._guard("transcrire.translate", {"mode": d.get("mode") or "rapide"}, me, me, jobs._space_for(me))
-        # « en file » avant l'envoi : le travail peut finir avant qu'on revienne ici
-        _update(tid, lambda x: x.setdefault("translations", {}).__setitem__(to, {**cur, "state": "queued", "error": None}))
+        # « en file » avant l'envoi : le travail peut finir avant qu'on revienne ici ; l'ancien travail
+        # n'est plus le sien (le numéro du nouveau suit l'envoi : _settled ne le juge pas sur l'ancien)
+        _update(tid, lambda x: x.setdefault("translations", {}).__setitem__(to, {**cur, "state": "queued", "error": None, "job": None}))
     try:
         j = jobs.submit("transcrire.translate", {"doc": tid, "to": to, "mode": mode_of(d.get("mode")), "all": bool(b.get("all"))},
                         title=f"Traduire · {LANGS[to]} · {d.get('title', '')[:40]}", tool="transcrire", thumb=d.get("thumb_url"),
@@ -1923,7 +1933,9 @@ def api_notes(req, tid) -> dict:
             if busy:
                 raise HttpError(409, f"déjà en cours : {', '.join(CARNET[k]['label'] for k in busy)}")
             before = {k: (d.get("notes") or {}).get(k) for k in kinds}
-            _update(tid, lambda x: [x.setdefault("notes", {}).__setitem__(k, {**(before[k] or {}), "state": "queued", "error": None})
+            # remis en file : l'ancien travail n'est plus le sien (le numéro du nouveau suit l'envoi, plus bas)
+            _update(tid, lambda x: [x.setdefault("notes", {}).__setitem__(k, {**(before[k] or {}), "state": "queued", "error": None,
+                                                                              "job": None})
                                     for k in kinds])
     try:
         j = submit_notes(d, kinds, qid)
@@ -2222,6 +2234,7 @@ def selftest(call, ok) -> None:
 
     _selftest_modes(call, ok, tid, aid, wait_doc)
     _selftest_carnet(call, ok, tid, aid, wait_doc)
+    _selftest_vue(call, ok, tid)
     _selftest_consigne(ok)
     _selftest_ollama(ok)
     _selftest_espaces(ok)
@@ -2352,6 +2365,38 @@ def _selftest_carnet(call, ok, tid, aid, wait_doc) -> None:
        f"carnet : « transcrire puis résumer » en une requête (rapide, sans traduction) ({st} {d4.get('state')} {d4.get('notes')})")
     st, r = call("POST", "/api/transcrire/run", {"item": aid, "notes": ["poeme"]})
     ok(st == 400 and "carnet" in r.get("error", ""), f"carnet : un élément inconnu refusé au lancement ({st})")
+
+
+def _selftest_vue(call, ok, tid) -> None:
+    """Une vue lue avant que son travail n'écrive, jugée après sa fin (06/10 : `check.py` complet,
+    « carnet : une question… » en échec « fini » : la page relit le document toutes les 0,1 s, le
+    travail factice dure 0,1 s ; le document lu « en cours », puis le travail écrit sa réponse et
+    finit, puis la vue regarde la file). Cet ordre, rendu certain : la file en pause, la question
+    posée (son travail ne peut pas partir), le document lu, la file relancée, le travail fini — alors
+    seulement la vue de ce document lu avant."""
+    was = jobs.scheduler_state()["paused"]
+    jobs.set_mode(None, "paused")
+    try:
+        st, r = call("POST", f"/api/transcrire/docs/{tid}/notes", {"question": "Que dit-on de l'essai ?"})
+        jid = (r.get("job") or {}).get("id") if st == 200 else None
+        with _lock:
+            avant = _load(tid) or {}
+    finally:
+        jobs.set_mode(None, "paused" if was else "active")
+    t0 = time.time()
+    while jid and (jobs.get(jid) or {}).get("state") in ACTIVE and time.time() - t0 < 60:   # la voie cpu est commune
+        time.sleep(0.05)
+    lu = next((q for q in avant.get("qa") or [] if jid and q.get("job") == jid), {})
+    vu = next((q for q in public(avant)["qa"] if q.get("id") == lu.get("id")), {}) if avant else {}
+    fin = (jobs.get(jid) or {}).get("state") if jid else None
+    ok(st == 200 and lu.get("state") == "queued" and fin == "done" and vu.get("state") == "queued" and not vu.get("error"),
+       f"carnet : une vue lue avant la réponse, jugée après la fin de son travail, reste « en file » — jamais « échec : fini » "
+       f"(lu {lu.get('state')}, travail {fin}, vu {vu.get('state')} {vu.get('error')!r})")
+    st, now = call("GET", f"/api/transcrire/docs/{tid}")
+    q = next((x for x in now.get("qa") or [] if x.get("id") == lu.get("id")), {}) if st == 200 else {}
+    ok(q.get("state") == "done" and "found" in q, f"carnet : la relecture suivante lit la réponse ({q.get('state')})")
+    if lu.get("id"):
+        call("POST", f"/api/transcrire/docs/{tid}/qa/{lu['id']}/delete")
 
 
 class _FauxOllama:
