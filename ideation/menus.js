@@ -57,6 +57,8 @@ export function createMenus(app) {
       ...(app.objets?.selectionItems(us) || []),
       // des cadres choisis : en faire des diapositives (diapo/)
       ...(app.diapo?.selItems(us) || []),
+      // les citer à l'agent Showrunner (agent.js)
+      ...(app.agent?.menuItems(us) || []),
       '-', ...order, remove];
   }
 
@@ -140,6 +142,8 @@ export function createMenus(app) {
       const g = app.node(n.group);
       out.push({ label: `Sortir du groupe « ${g?.name || 'groupe'} »`, onclick: () => app.mutate(() => { for (const m of app.objets ? app.objets.tree(n) : [n]) delete m.group; S.focus = null; }) });
     }
+    // le citer à l'agent Showrunner (agent.js)
+    out.push(...(app.agent?.menuItems([n]) || []));
     out.push('-', ...order, remove);
     return out;
   }

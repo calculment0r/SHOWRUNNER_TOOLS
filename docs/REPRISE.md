@@ -116,22 +116,26 @@ sauvegarde du PC, à ne pas toucher.
   - Playwright ;
   - relancer `check.py` en entier : la correction de l'essai EPS est venue après le dernier passage complet.
 
-**L'agent Showrunner dans Idéation** (`wip/agent-showrunner`, étude `docs/etudes/agent_showrunner.md`)
-- Fait, et vérifié contre `tools/faux_ollama.py` :
-  - `POST /api/ideation/agent` : un tour par la file, travail `ideation.agent` sur la voie audio épinglée,
-    modèle déchargé en fin de tour ;
-  - les outils de lecture sont exécutés au serveur ; les écritures sont validées puis rendues en actions ;
-  - `lancer` est faux par défaut : jamais un rendu sans la personne ;
-  - la conversation est gardée par planche.
+**L'agent Showrunner dans Idéation** (`wip2/agent-page`, étude `docs/etudes/agent_showrunner.md` § 5 et 6)
+- Fait, et vérifié contre `tools/faux_ollama.py` (selftest 22 contrôles, Playwright dans les deux thèmes) :
+  - le serveur : `POST /api/ideation/agent`, un tour par la file (`ideation.agent`, voie audio épinglée,
+    modèle déchargé en fin de tour) ; lectures au serveur, écritures validées puis rendues en actions ;
+    `lancer` faux par défaut ; la conversation gardée par planche ; `TEXTE_DOCUMENT` rebranché sur la
+    sorte `document` (la lecture de `GET /api/library/<id>/texte`) ;
+  - la PAGE `ideation/agent.js` + `agent.css` : panneau façon Claude (bouton de la barre, touche `I`),
+    pièces en vignettes au-dessus du champ (panneau Asset, disque, coller, « + », la planche glissée,
+    « Citer dans la discussion » au clic droit), gestes en lignes cliquables (vol + éclat), un tour =
+    un seul `app.mutate`, « Annuler ce tour » (un `app.mutate`) et « Reposer », « Poser ces gestes »
+    pour un tour fini sans page ;
+  - `app.agent = { open, send(text, { items | pieces, intent }), busy }` : le contrat de « Commencer un
+    projet » (projet.js l'appelle déjà avec `items` ; `pieces` est le même) ;
+  - le diagnostic **Admin → Diagnostics → « Agent Showrunner »** (`tools/diag_agent.py`) : `tools`,
+    `vision`, `num_ctx` du modèle réglé, et l'autre machine.
 - Reste :
-  - la PAGE : `ideation/agent.js` et `.css` (panneau façon Claude, vignettes au-dessus du champ, « Citer
-    dans la discussion », actions cliquables, « Annuler ce tour » = un seul `app.mutate`) ;
-  - `app.agent = {open, send, busy}` ;
-  - Playwright ;
-  - **le vrai modèle** : `/api/show` de `qwen3-vl-32b-32k` sur DGX2 a-t-il `tools` et `vision` ? par un
-    diagnostic ;
-  - `TEXTE_DOCUMENT` à rebrancher sur la sorte `document` ;
-  - le contexte 32k ou 64k : à faire trancher par Cal.
+  - **le vrai modèle** : que Cal lance le diagnostic « Agent Showrunner » (ou « Tout lancer et copier »),
+    puis un premier tour réel sur DGX2 ;
+  - le contexte 32k ou 64k : à faire trancher par Cal (`ideation_agent_ctx`) ;
+  - un tour attend la fin d'un rendu sur la machine de l'Ollama : à revoir avec Cal.
 
 **« Commencer un projet »** (`wip/projet-ingest`, étude `docs/etudes/mode_showrunner.md`)
 - Fait :

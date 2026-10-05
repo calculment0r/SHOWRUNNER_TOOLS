@@ -29,7 +29,9 @@ texte et ils se mettent en vignettes au-dessus. »
   branchées), son bouton orange reste à elle ; seule une demande explicite fait lancer, et
   l'action le dit (« lancée à ta demande »).
 - **Rien n'a tourné sur le vrai modèle** : tout est essayé contre un faux Ollama qui rend des
-  appels d'outils scénarisés (§ 6). Le premier essai réel est à faire sur DGX2.
+  appels d'outils scénarisés (§ 6). Le premier essai réel est à faire sur DGX2 ; avant, le
+  diagnostic **Admin → Diagnostics → « Agent Showrunner »** (`tools/diag_agent.py`) dit si le
+  modèle de Cal a `tools` et `vision`.
 
 ## 1. Le Supercomputer de Higgsfield
 
@@ -175,10 +177,14 @@ countermeasures or rectifications are in place » [11] — d'où la validation d
    Un tour fini est appliqué **une seule fois** : l'onglet qui l'attend le réclame au serveur
    (`claim`) avant de l'appliquer ; un autre onglet, ou la page rechargée, propose « Poser ces
    gestes » au lieu de les poser deux fois.
-8. **Le texte d'un document** : la sorte `document` (`GET /api/library/<id>/texte`) est ajoutée
-   en ce moment par un autre chantier ; `ideation_agent.TEXTE_DOCUMENT` est la fonction à
-   rebrancher dessus. En attendant : le fichier d'un objet s'il est du texte (UTF-8 : .txt, .md,
-   .srt, .vtt, .csv, .json), la description d'un élément, le titre et le prompt d'une image.
+8. **Le texte d'un document** : la sorte `document` (`server/tools/documents.py`) —
+   `ideation_agent.TEXTE_DOCUMENT` y est rebranché (05/10 soir) : la lecture même de
+   `GET /api/library/<id>/texte` (`documents.read_text`, les pages jointes d'une ligne vide). Un
+   document sans texte (un scan, un format que le serveur ne lit pas) se lit par ce qu'on en sait
+   (`doc.why` compris) et sa couverture est regardée. Un autre objet : son fichier s'il est du
+   texte UTF-8, sinon la description d'un élément, le titre et le prompt d'une image. Un document
+   ne se pose pas sur la planche tant qu'Idéation ne le sait pas (`ideation.MEDIA_KINDS`) : le
+   serveur le refuse au modèle, qui le résume en note.
 
 ## 5. Ce qui est fait
 
@@ -197,26 +203,72 @@ Les outils (les descriptions que lit le modèle sont dans `TOOLS`) :
 |---|---|
 | `lire_planche {cadre?, depuis?}` · `lire_document {id, partie?}` · `decrire_image {id, question?}` · `chercher_bibliotheque {q, sorte?}` | `poser_texte {sorte: note \| postit \| titre, texte, couleur?, dans?, pres_de?}` · `poser_cadre {nom, autour?, dans?}` · `ranger {ids, disposition: rangee \| grille \| colonne, dans?}` · `grouper {ids, nom?}` · `poser_asset {item, dans?, pres_de?}` · `carte_image {prompt, refs?, modele?, format?, nombre?, lancer?}` · `carte_video {prompt, image?, fin?, lancer?}` · `composeur {style?, personnages?, action?, decor?, photographie?, son?, musique?, vers?}` · `relier {de, vers, texte?}` · `renommer_planche {nom}` · `deplacer {ids, dans?, pres_de?, dx?, dy?}` |
 
-### La page (`ideation/agent.js`, `agent.css`) — **PAS ENCORE ÉCRITE** (la session s'est arrêtée)
+### La page (`ideation/agent.js`, `agent.css`) — faite (05/10 soir)
 
-Ce qu'elle doit faire : le panneau « Showrunner » à droite (une colonne de la planche ; sur une page étroite, par-dessus
-l'inspecteur) : le fil de la conversation ; le champ, et au-dessus les vignettes des assets
-cités, retirables (glissés du panneau Asset, de la planche ou du disque — un fichier du disque
-est d'abord rangé dans la bibliothèque par `uploadFile` —, collés, ou « Citer dans la discussion »
-au clic droit d'un objet) ; chaque réponse montre ses actions une par une (« posé une carte
-Générer image, branchée sur « photo 3 » »), un clic vole jusqu'à l'objet et l'éclaire,
-« Annuler ce tour » défait tout le tour d'un coup.
+Un greffon (`plugins.js`). Le panneau « Showrunner » : le bouton de la barre du haut (après
+« ? », un geste du Studio : `studioSeul`), la touche `I`, la palette ⌘K. Une troisième colonne de
+`.ide-main` (360 px) ; sous 1360 px de page, il prend la place de l'inspecteur ; sous 760 px, il
+couvre la planche ; caché pendant la présentation. Ouvert ou fermé : retenu par visiteur
+(`ide-agent-open`).
 
-### Le contrat pour l'agent « Commencer un projet » — **prévu, pas encore exposé** (`app.agent` n'existe pas encore dans la page ; le serveur, lui, est là)
+- **Le fil** : la demande en bulle à droite (ses pièces en petites vignettes), la réponse en prose,
+  « a lu : … » (les lectures du serveur), puis les gestes en lignes numérotées, avec leur
+  `pourquoi` ; un tour en cours dit sa place (« en file · 1 devant · départ ≈ 4 min ») ou ce qu'il
+  lit (le message du travail), avec « Arrêter » ; un tour en échec ou arrêté : « Reprendre la
+  demande » (le texte et les pièces reviennent dans le champ). La conversation est celle de la
+  planche (relue à chaque planche ouverte) ; « Nouvelle » (deux clics) l'archive.
+- **Le champ** : une boîte arrondie ; au-dessus du texte, les pièces citées en vignettes de 56 px,
+  retirables (×) — glissées du panneau Asset ou du disque (`dropZone` : un fichier est d'abord
+  rangé dans la bibliothèque), collées (une capture d'écran), prises au « + » (`pick`), « citer la
+  sélection · N », « Citer dans la discussion » au clic droit d'un objet ou d'une sélection
+  (`menus.js`, `app.agent.menuItems`), ou un objet de la planche glissé jusqu'au champ (il est cité
+  et revient à sa place sans pas d'annulation : `app.dropOut` dans `canvas.js`, `app.unsnap`).
+  Entrée envoie ; une action éteinte dit pourquoi (le moteur pas prêt, un tour en cours). Le champ
+  est gardé par planche le temps de la page.
+- **Poser un tour** : à la fin du travail, l'onglet qui l'a envoyé le réclame (`claim`, son jeton)
+  puis l'applique dans **un seul `app.mutate`** (`run`) — des fonctions pures (`canWire`,
+  `replaces`, `outPort`, `newSlots`, `groups.make`, `groups.shift`, `app.def`, `app.sizeFor`,
+  `app.newMedia`), jamais les gestes qui prennent leur propre pas (`addAt`, `wire`, `feed`…) ;
+  puis `applied` avec `ids` (new:N → l'objet) et `results` (`{text, ok, ids}` : ce que chaque geste
+  a créé). Un tour fini sans être posé (la page fermée, un autre onglet) propose « Poser ces
+  gestes ». Ce qui vient d'arriver s'éclaire un instant (sans bouger la vue) ; un clic sur une
+  ligne vole jusqu'à ses objets, les choisit et les éclaire (`agFlash`).
+- **La place** (décision 5) : `prevoir` calcule d'abord la taille de tout ce que le tour pose (un
+  texte mesuré dans la feuille de la planche, une carte à sa hauteur haute — elle suit son contenu
+  au rendu) ; un **cadre posé dans le tour** reçoit d'avance la taille de ce qu'on mettra `dans`
+  lui (la même grille que le placement : les colonnes d'`app.tidy`, ou celles de `ranger`) ; un
+  cadre de la planche grandit à la suite de ce qu'il contient ; `pres_de` cherche une place libre
+  à droite de l'objet ; sinon près du centre de la vue, puis à côté du précédent ; une place libre
+  compte les cadres (un objet posé dans un cadre en ferait partie). Une carte Générer se met à
+  droite de ses références déjà posées ; une référence de la bibliothèque se pose à sa gauche
+  (dans un cadre : la place d'avant la carte) ; Krea 2 si ses références y tiennent, sinon
+  Qwen-Image 2.1. Un composeur se met à gauche de la carte qu'il nourrit.
+- **Annuler ce tour** : un seul `app.mutate`, qui retire ce que le tour a créé (objets, fils,
+  flèches), remet ce qu'il a changé de ce qui était là (`x, y, w, h, group` : les déplacés, les
+  cadres agrandis, les groupés), les fils qu'il a remplacés, le nom de la planche — même après
+  d'autres gestes ; ctrl+Z le remet. Puis « Reposer » (dans la même page : son jeton). Après un
+  rechargement, ce que le tour a créé part (le serveur garde `ids` et `results`), ses déplacements
+  restent, et le message le dit.
+- **Jamais un rendu sans la personne** : une carte est posée prête (« — prête : son bouton
+  Générer est à toi ») ; `lancer: true` la lance après la pose, si sa garde (`gen.why`) le permet,
+  et la ligne dit « lancée à ta demande » ; un tour reposé ne relance pas.
+
+### Le contrat pour l'agent « Commencer un projet » — exposé (05/10 soir)
 
 ```js
-app.agent.open()                                   // ouvre le panneau, le champ prend la main
-app.agent.send(text, { items = [], intent = '' })  // → Promise<{ turn, reply, actions, results }>
-app.agent.busy()                                   // un tour en vol
+app.agent.open()                                              // ouvre le panneau, le champ prend la main
+app.agent.send(text, { items = [], pieces = [], intent = '' }) // → Promise<{ turn, reply, actions, results }>
+app.agent.busy()                                              // un tour en vol sur cette planche
 ```
 
-`items` : des identifiants de la bibliothèque, des objets de la planche, ou des objets de la
-bibliothèque (`{id}`). Avec `intent: 'ingest'`, le tour est l'**analyse d'entrée** : chaque
+`items` (ou `pieces`, le même ; les deux s'ajoutent) : des identifiants de la bibliothèque, des
+objets de la planche, ou des objets `{id}`. La promesse est tenue quand le tour est fini **et posé**
+(`results` : une ligne par geste) ; rejetée sur un refus du portail (son message : 400, 409 « un
+tour est déjà en cours ») ou un tour en échec ou arrêté. `send` enregistre d'abord la planche
+(`app.flushSave`) : l'agent lit celle du serveur. Pour l'analyse d'entrée, le texte au-delà de
+4 000 signes est coupé (le reste est dans les documents cités) et le serveur prend jusqu'à 400
+objets cités (`MAX_ITEMS_INGEST`) ; il en lit 40, les documents d'abord, et le tour dit combien
+il n'a pas lus (`skipped`). Avec `intent: 'ingest'`, le tour est l'**analyse d'entrée** : chaque
 document est lu par parties et chaque image regardée (une sortie structurée par partie ou par
 image : résumé, thèmes, personnages, lieux, références), puis l'agent organise la planche
 (cadres par thème ou par sorte, les documents résumés en notes, les personnages, lieux et
@@ -234,20 +286,39 @@ fois (`claim`) ; trois écritures impossibles refusées au modèle avec leur rai
 (sortie structurée, puis trois cadres) ; les entrées invalides (400), un modèle sans `tools` (409) ;
 `clear`. `tools/check.py` en entier : **2626 passés, 0 en échec** (dont la garde du calcul : la route rejouée par un guest est refusée).
 
+**Vérifié le 05/10 au soir (la page, ce conteneur, contre le faux Ollama)** :
+- selftest de `ideation_agent.py` : **22 contrôles** (les 17 d'avant ; le texte d'un document DOCX
+  est celui de `GET /api/library/<id>/texte` et « lis ce document » le résume en note ; poser un
+  document est refusé au modèle ; 27 objets cités : refusés pour un message, pris pour l'analyse
+  d'entrée, le document lu d'abord ; le diagnostic dit `tools` et `vision`, et sort en échec sans
+  `tools`) ;
+- Playwright (`tools/portail_essai.py 8802` avec `SR_OLLAMA_URL` sur `tools/faux_ollama.py`), dans les
+  deux thèmes, sans erreur console : le panneau par `I` ; « Citer dans la discussion » au clic droit ;
+  « une image dans ce style » → la carte Générer image posée à droite de l'image, branchée, Krea 2,
+  pas lancée, **un seul pas d'annulation** ; le clic sur la ligne choisit la carte ; « Annuler ce
+  tour », « Reposer », ctrl+Z ; l'analyse d'entrée par `app.agent.send(texte, { pieces, intent:
+  'ingest' })` : trois cadres côte à côte sans chevauchement, chacun à la taille de ce qu'il reçoit ;
+  un tour de neuf gestes (carte vidéo branchée sur sa première image, composeur branché sur son
+  prompt, flèche, renommer, grouper, un cadre et ce qu'on y met, une carte lancée à la demande),
+  défait d'un coup : la planche revient **identique** ; un document glissé du panneau Asset sur le
+  champ puis lu ; une note de la planche glissée sur le champ (citée, revenue à sa place, aucun pas
+  d'annulation) ; « Poser ces gestes » d'un tour fini sans page ; « Arrêter », « Reprendre la
+  demande » ; un modèle sans `tools` : « pas prêt », l'envoi éteint dit pourquoi ; à 1280 px, le
+  panneau à la place de l'inspecteur.
+- le pilote du dépôt, à relancer après une fusion : `ideation/pilote_agent.mjs` (l'essai ci-dessus en
+  12 contrôles par thème, sombre et clair ; la commande est dans son en-tête) — 24 / 24.
+
 **Reste** :
-1. **La page** : `ideation/agent.js` + `agent.css` (le panneau, le champ et ses vignettes, `dropZone`,
-   « Citer dans la discussion » dans `menus.js`, le glisser d'un objet de la planche, l'application des
-   actions dans UN `app.mutate`, « Annuler ce tour », flyTo + surbrillance, `claim`/`applied`) et
-   **`app.agent = { open, send, busy }`** — tout le § 5 « La page » et « Le contrat ». Petits ajouts
-   prévus dans `ideation.js` : `app.def(type)` (les défauts DEF), `app.unsnap()` (un geste annulé sans
-   pas d'annulation), le montage du module après `installPlugins`.
-2. **L'essai Playwright** (glisser une image dans le champ, « une image dans ce style », la carte posée et
-   branchée, l'action listée, l'annuler d'un coup) : pas fait.
-3. **Rien n'a tourné sur le vrai modèle** : vérifier sur DGX2 que `qwen3-vl-32b-32k` a `tools` et `vision`
-   (`/api/show`), la qualité de ses appels d'outils, ses temps (chargement à chaque tour, `keep_alive: 0`).
-4. Rebrancher `TEXTE_DOCUMENT` sur la sorte `document` de l'autre chantier.
-5. Un tour attend la fin d'un rendu sur la machine de l'Ollama : à revoir avec Cal (priorité haute pour un
-   tour court ? l'Ollama de l'autre DGX quand celui-ci rend ?). Contexte 32k contre 64k conseillés [10].
+1. **Rien n'a tourné sur le vrai modèle** : lancer Admin → Diagnostics → « Agent Showrunner » sur DGX2
+   (`qwen3-vl-32b-32k` a-t-il `tools` et `vision` ? son `num_ctx`), puis un premier tour réel : la
+   qualité de ses appels d'outils, ses temps (chargement à chaque tour, `keep_alive: 0`).
+2. Un tour attend la fin d'un rendu sur la machine de l'Ollama : à revoir avec Cal (priorité haute pour un
+   tour court ? l'Ollama de l'autre DGX quand celui-ci rend ?). Contexte 32k contre 64k conseillés [10] :
+   **à faire trancher par Cal** (réglage `ideation_agent_ctx`).
+3. La page ne suit pas en direct les tours lancés par quelqu'un d'autre sur la planche : elle relit la
+   conversation toutes les 2,5 s tant qu'un tour tourne et que le panneau est ouvert.
+4. Les étiquettes de deux cadres posés côte à côte peuvent se chevaucher de loin (le nom d'un cadre
+   grossit quand on dézoome : `canvas.js`, `.fr-h`) ; les cadres eux-mêmes ne se chevauchent pas.
 
 
 ## Sources

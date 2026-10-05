@@ -155,6 +155,9 @@ function restore(json) {
   app.commit();
 }
 app.undoStep = () => { if (!S.undo.length) return; S.redo.push(snapshot()); restore(S.undo.pop()); paintUndo(); };
+// un geste repris sans rien changer (un objet de la planche lâché sur le champ de l'agent, qui revient à sa
+// place : agent.js, app.dropOut) : son pas d'annulation s'en va
+app.unsnap = () => { if (S.undo.length) { S.undo.pop(); paintUndo(); } };
 app.redoStep = () => { if (!S.redo.length) return; S.undo.push(snapshot()); restore(S.redo.pop()); paintUndo(); };
 function paintUndo() { $('#b-undo').disabled = !S.undo.length; $('#b-redo').disabled = !S.redo.length; }
 
@@ -249,6 +252,8 @@ const DEF = {
   compose: () => ({ w: 340, h: 300, slots: newSlots() }),
   palette: () => ({ w: 280, h: 64, colors: [] }),
 };
+// les réglages d'un objet neuf de cette sorte (l'agent pose ses objets sans app.addAt, dans son seul app.mutate : agent.js)
+app.def = (type) => (DEF[type] ? DEF[type]() : {});
 // poser un objet ; `link` : une flèche d'annotation depuis cet objet ; `wireIn` : { from, pa, pb }
 // un fil qui y entre ; `wireOut` : { to, pb } un fil qui en part ; `preset` : ses réglages ;
 // `at` : le point est son coin (défaut), son centre ('center') ou le milieu de son bord gauche ('left')

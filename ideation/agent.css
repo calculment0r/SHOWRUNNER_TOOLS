@@ -1,0 +1,146 @@
+/* ============================================================
+   IDÉATION — l'agent Showrunner (agent.js ; l'étude : docs/etudes/agent_showrunner.md).
+   Un panneau façon Claude, à droite de la planche : une colonne de plus (la planche
+   rétrécit) ; sur une page étroite, il prend la place de l'inspecteur ; sur un téléphone,
+   il couvre la planche. Le fil : la demande dans une bulle à droite, la réponse en prose,
+   ses gestes en lignes numérotées qu'un clic montre sur la planche. Le champ : une boîte
+   arrondie, les pièces citées en vignettes au-dessus du texte (Cal, 05/10 : « comme
+   Claude »). Jetons seulement, des filets (inset), aucune couleur en dur ; pas d'orange
+   plein : l'action de l'écran reste Générer (règle 4) — envoyer est le vert « on ».
+   ============================================================ */
+
+.ide-main.ag-on { --ag-w: 360px; grid-template-columns: minmax(0, 1fr) var(--insp-w) var(--ag-w); }
+@container sr-page (max-width: 1360px) {
+  .ide-main.ag-on { --ag-w: max(var(--insp-w), 320px); grid-template-columns: minmax(0, 1fr) var(--ag-w); }
+  .ide-main.ag-on > .insp { display: none; }
+}
+@container sr-page (max-width: 760px) {
+  .ide-main.ag-on { grid-template-columns: minmax(0, 1fr); }
+  .ide-main.ag-on > .ag { position: absolute; inset: 0; z-index: 40; }
+}
+.ag[hidden] { display: none; }
+body.at-presenting .ag { display: none; }
+
+.ag {
+  min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--panel); border-radius: var(--r4); box-shadow: inset 0 0 0 1px var(--line);
+}
+.ag-h { flex: none; display: flex; align-items: center; gap: 8px; padding: 9px 9px 9px 14px; box-shadow: inset 0 -1px 0 var(--line); }
+.ag-h .sp { flex: 1; min-width: 0; }
+.ag-h > .tb, .ag-h > .ag-b { flex: none; }
+.ag-t { flex: none; font-family: var(--f-disp); font-weight: 400; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink); }
+/* l'état du moteur rétrécit le premier (sa raison entière est au survol) */
+.ag-eng { flex: 0 1 auto; min-width: 0; gap: 6px; font-size: 8px; letter-spacing: .14em; white-space: nowrap; }
+.ag-eng > span { overflow: hidden; text-overflow: ellipsis; }
+
+/* ── le fil ────────────────────────────────────────────── */
+.ag-fil { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 20px; padding: 14px 14px 18px; overscroll-behavior: contain; }
+.ag-turn { display: flex; flex-direction: column; gap: 10px; }
+.ag-u {
+  align-self: flex-end; max-width: 88%; display: flex; flex-direction: column; gap: 6px; padding: 9px 12px;
+  border-radius: var(--r4) var(--r4) var(--r1) var(--r4); background: var(--panel3);
+}
+.ag-ut { font-size: 13px; line-height: 1.5; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ag-ucites { display: flex; flex-wrap: wrap; gap: 4px; }
+.ag-meta { font-family: var(--f-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); }
+.ag-u > .ag-meta { align-self: flex-end; }
+.ag-u > .ag-meta:empty { display: none; }
+.ag-a { display: flex; flex-direction: column; gap: 9px; }
+.ag-reply { font-size: 13px; line-height: 1.6; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ag-reads { margin: 0; font-family: var(--f-mono); font-size: 8.5px; line-height: 1.6; letter-spacing: .08em; color: var(--ink3); overflow-wrap: anywhere; }
+.ag-err { margin: 0; font-size: 12px; line-height: 1.5; color: var(--or); overflow-wrap: anywhere; }
+
+/* les gestes du tour : une ligne chacun, numérotée ; un clic les montre sur la planche */
+.ag-acts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; counter-reset: ag; }
+.ag-acts li { counter-increment: ag; }
+.ag-act {
+  width: 100%; display: grid; grid-template-columns: 16px minmax(0, 1fr); column-gap: 8px; row-gap: 2px; text-align: left;
+  padding: 7px 9px; border-radius: var(--r2); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 12px; line-height: 1.45; color: var(--ink2);
+}
+.ag-act::before { content: counter(ag); grid-row: span 2; font-family: var(--f-mono); font-size: 9px; line-height: 17px; color: var(--cy); }
+.ag-act:hover:not(:disabled) { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.ag-act:disabled { cursor: default; }
+.ag-act.plan { color: var(--ink3); }
+.ag-act.bad { box-shadow: inset 0 0 0 1px var(--line-or); }
+.ag-act.bad::before { color: var(--or); }
+.ag-actt { grid-column: 2; overflow-wrap: anywhere; }
+.ag-actw { grid-column: 2; font-size: 10.5px; line-height: 1.4; color: var(--ink3); }
+.ag-acts.undone .ag-actt { text-decoration: line-through; text-decoration-color: var(--ink3); }
+.ag-foot { display: flex; align-items: center; gap: 8px; min-height: 26px; }
+.ag-foot .sp { flex: 1; }
+
+/* un tour qui tourne : où il en est (la file, ce qu'il lit), Arrêter */
+.ag-run { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--ink2); }
+.ag-runt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ag-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cy); flex: none; animation: sPulse 1.4s infinite; }
+.ag-bar { height: 2px; border-radius: 1px; overflow: hidden; background: var(--panel3); }
+.ag-bar i { display: block; height: 100%; background: var(--cy); transition: width .4s; }
+
+/* une conversation vide : ce que fait l'agent, des idées de demande */
+.ag-intro { display: flex; flex-direction: column; gap: 10px; font-size: 12.5px; line-height: 1.6; color: var(--ink2); }
+.ag-intro p, .ag-empty { margin: 0; }
+.ag-empty { font-size: 12px; color: var(--ink3); }
+.ag-sugg { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.ag-chip {
+  height: 26px; padding: 0 11px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 11.5px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+.ag-chip:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.ag-chip[hidden] { display: none; }
+
+/* ── le champ ──────────────────────────────────────────── */
+.ag-comp { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 10px; box-shadow: inset 0 1px 0 var(--line); }
+.ag-box {
+  display: flex; flex-direction: column; gap: 8px; padding: 10px 10px 8px;
+  border-radius: var(--r4); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line);
+}
+.ag-box:focus-within { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.ag-box.drop-on { background: var(--grn-bg); box-shadow: inset 0 0 0 1px var(--grn2); }
+.ag-ta {
+  display: block; width: 100%; min-height: 22px; max-height: 220px; resize: none; padding: 0 2px;
+  background: transparent; color: var(--ink); font-size: 13px; line-height: 1.5;
+}
+.ag-ta::placeholder { color: var(--ink3); }
+.ag-ta:focus-visible { outline: none; }   /* la boîte le dit (:focus-within) */
+.ag-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ag-row .sp { flex: 1; }
+.ag-b, .ag-send { flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; }
+.ag-b { width: 28px; height: 28px; color: var(--ink2); box-shadow: inset 0 0 0 1px var(--line); }
+.ag-b:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.ag-send { width: 30px; height: 30px; background: var(--grn); color: var(--on-grn); }
+.ag-send:hover:not(:disabled) { filter: brightness(1.15); }
+.ag-send:disabled { opacity: .3; cursor: default; }
+.ag-ico { display: inline-flex; }
+.ag-ico svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.ag-why { margin: 0; font-size: 10.5px; line-height: 1.4; color: var(--ink3); }
+.ag-why:empty { display: none; }
+
+/* les pièces citées : des vignettes au-dessus du texte, retirables (×) ; un texte de la planche, en carte */
+.ag-pcs { display: flex; flex-wrap: wrap; gap: 6px; }
+.ag-pcs[hidden] { display: none; }
+.ag-pc { position: relative; flex: none; width: 56px; height: 56px; border-radius: var(--r2); overflow: hidden; background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line); }
+.ag-pc img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.ag-pc.txt { width: 104px; padding: 6px 7px 16px; }
+.ag-pct { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 10px; line-height: 1.3; color: var(--ink2); overflow-wrap: anywhere; }
+.ag-pc .kmark { position: absolute; left: 3px; bottom: 3px; padding: 2px 4px; font-size: 6.5px; }
+.ag-pck { position: absolute; left: 6px; bottom: 4px; font-family: var(--f-mono); font-size: 7px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
+.ag-pcx {
+  position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--veil); color: var(--ink); font-size: 13px; line-height: 1; opacity: 0;
+}
+.ag-pc:hover .ag-pcx, .ag-pcx:focus-visible { opacity: 1; }
+.ag-pc.sm { width: 34px; height: 34px; }
+.ag-pc.sm.txt { width: 88px; height: 34px; padding: 3px 5px; }
+.ag-pc.sm .ag-pct { -webkit-line-clamp: 2; font-size: 9px; }
+.ag-pc.sm .kmark, .ag-pc.sm .ag-pck { display: none; }
+
+/* le bouton de la barre du haut, ouvert : le filet acier (l'orange reste l'action) */
+.ide-bar .ag-btn.on, .ide-bar .ag-btn.on:hover:not(:disabled) { color: var(--cy); box-shadow: inset 0 0 0 1px var(--line-cy); }
+
+/* un geste montré (un clic sur sa ligne, ou posé à l'instant) : ses objets s'éclairent un instant */
+@keyframes agFlash {
+  0% { outline: calc(3px / var(--z)) solid var(--cy); outline-offset: calc(14px / var(--z)); }
+  100% { outline: calc(3px / var(--z)) solid transparent; outline-offset: calc(2px / var(--z)); }
+}

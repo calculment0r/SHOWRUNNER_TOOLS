@@ -6,6 +6,8 @@
     python3 tools/portail_essai.py                 # http://127.0.0.1:8795/, données /tmp/sr_essai/data
     python3 tools/portail_essai.py 8796 /tmp/autre # un second portail, à côté (un agent, une copie)
     SR_LORA_MANIFEST=/chemin/trainers.json python3 tools/portail_essai.py   # un faux manifeste d'entraîneurs
+    SR_OLLAMA_URL=http://127.0.0.1:11500 python3 tools/portail_essai.py   # l'agent d'Idéation sur un Ollama
+                                                                  # (le faux : python3 tools/faux_ollama.py)
 
 Le même que la session cloud du 05/10 faisait tourner à la main (docs/REPRISE.md, « Session
 cloud ») : arrêter par son PID, jamais par `pkill -f` (le motif tue aussi le shell qui le tape).
@@ -31,6 +33,8 @@ config.CFG["host"] = "127.0.0.1"
 config.CFG["lanes"] = {"cpu": ["local"], "image": ["local"]}
 if os.environ.get("SR_LORA_MANIFEST"):
     config.CFG["lora_manifest"] = os.environ["SR_LORA_MANIFEST"]
+if os.environ.get("SR_OLLAMA_URL"):
+    config.CFG["ideation_agent_url"] = os.environ["SR_OLLAMA_URL"]
 
 import showrunner  # noqa: E402
 from core import jobs  # noqa: E402
