@@ -23,14 +23,17 @@ server/tools/<outil>.py     les routes et les travaux d'un outil : register(app)
 server/workflows/           les graphes ComfyUI au format API propres au portail
 tools/check.py              le contrôle sans GPU (socle + selftest de chaque outil)
 tools/faux_comfy.py         un faux ComfyUI pour essayer la file sans rien calculer
+tools/faux_ollama.py        un faux Ollama (l'agent Showrunner d'Idéation, sans modèle) : outils scénarisés, sorties JSON
+tools/portail_essai.py      un portail d'essai jetable (session cloud, agent) : sans porte, moteurs factices (§ 6)
 docs/                       REPRISE, ARCHITECTURE, études
 ```
 
 ## 2. La bibliothèque (« Asset »)
 
 Un objet = un dossier `<data_dir>/library/<id>/` avec `item.json`, son
-fichier et sa vignette. Sept sortes (`library.KINDS`) : `image`, `video`,
-`audio`, `element`, et depuis le 29/09 :
+fichier et sa vignette. Huit sortes (`library.KINDS`) : `image`, `video`,
+`audio`, `element`, depuis le 29/09 `midi` et `sequence`, depuis le 05/10
+`document` et `playlist` :
 
 - `midi` (id `mid-…`) : un clip de notes, un fichier MIDI standard (`.mid`,
   format 0) écrit et lu par le serveur seulement (`server/tools/music_midi.py`,
@@ -56,6 +59,9 @@ fichier et sa vignette. Sept sortes (`library.KINDS`) : `image`, `video`,
   serveur ne sait pas lire (poppler absent : `needs_page`) est lu par la page
   (`commun/documents.js`, pdf.js) qui lui dépose texte et couverture. Servi sans
   risque (`library.serve_policy`) : ce qui pourrait s'exécuter part en pièce jointe.
+  Une image d'un format que les outils ne lisent pas (TIFF, GIF, BMP, PSD… :
+  `EXOTIC`) devient une `image` en PNG si PIL la lit, l'original gardé à côté
+  (`source.<ext>`) ; sinon un document.
 - `playlist` (id `pla-…`, 05/10) : une suite de sons de Musique
   (`server/tools/playlist.py`, étude `musique_spaces_playlists.md` § 3), un objet
   qu'on réécrit en place, sans fichier ; tout est dans `item.json`, champ
@@ -174,6 +180,7 @@ une page ne lit que ceux du sien.
 | `GET /api/elements/changes?since=<seq>` | le journal numéroté après `seq`, celui du Workspace : `{seq, events}` |
 | `GET /api/son/apercu/<id>[?voix=k][&v=1]` · `GET /api/son/pics/<id>` | le masque de l'onde (PNG, gardé un an avec `v=1`) ; les pics `{bps, n, b64}` — jugés par l'objet (qui le voit voit son onde) |
 | `GET /api/defil/<id>` | la copie de défilement : `{ready, url, pending, why}` ; pas prête, la demande passe en tête de sa file et la page redemande |
+| `GET /api/library/<id>/texte` · `POST {pages: [{n, text}], thumb?, count?}` | le texte d'un document `{format, text, pages, truncated, has_text, via, why}` ; ce que la page a lu d'un document sans texte (un PDF que le serveur n'a pas su lire), par qui peut écrire l'objet (`server/tools/documents.py`) |
 | `GET /api/cf/characters` · `POST /api/cf/import {slug}` | Character Factory → élément |
 
 ## 3. La file des rendus
@@ -359,6 +366,14 @@ Ports réservés aux essais : image 8791, movie 8792, montage 8793,
 musique 8794, analyse 8795, objet 8796, asset 8797, admin et file 8786
 (ses faux ComfyUI : 8771, 8772).
 
+Hors des DGX (une session cloud, un agent dans sa copie) : `tools/portail_essai.py
+[port] [données]` (8795 et `/tmp/sr_essai/data` par défaut) lance le même serveur
+avec `auth: false` (on entre en Cal), l'écoute sur 127.0.0.1 et les seules voies
+`cpu` et `image` sur la machine même — donc les moteurs factices des réglages par
+défaut ; `SR_LORA_MANIFEST` pose un faux manifeste d'entraîneurs. Il s'arrête par
+son PID (jamais `pkill -f`). Jamais sur les DGX : c'est le portail de la maison
+qui y tourne. L'agent d'Idéation s'y essaie contre `tools/faux_ollama.py`.
+
 ## 7. Les outils : routes, travaux, interrupteurs
 
 Chaque outil tourne d'abord sur un **moteur factice** (images, vidéos,
@@ -381,6 +396,10 @@ réel est écrit, vérifié à vide, et s'allume par un réglage de
 | Movie Analysis | `/api/analyse/list`, `projets` (GET la liste fusionnée : nos films, les analyses d'ici, les projets du portail et du dépôt partagé ; POST `{nom}` un projet), `projets/<id>` (POST `{nom}` renommer, `{supprime}` retirer ou restaurer), `corrections/<film>` (GET, PUT : les corrections des voix et du casting, gardées dans le portail), `diarisation`, `chaine`, `nom/<nom>`, `run`, `diar/etat`, `diar/fichiers`, `diar/travaux`, `diar/travail/<id>` (GET, DELETE), `diar/analyse` (relais vers DGX1 :10002) | `analyse.run` (voie analyse, une à la fois) | — |
 | Upscale | `/api/upscale/models`, `plan`, `run` | `upscale.image`, `upscale.video` (voie image ; cpu en factice) | `"upscale_backend": "comfyui"` |
 | Character Factory | `/character/api/*`, `/character/files/*`, `/character/v1/*` : relais en flux vers le studio de DGX1 | (la file du studio, sur DGX1) | — |
+| Musique, l'app (`chanson/`, `server/tools/chanson.py`) | `/api/chanson/options`, `list` (mes chansons), `create`, `variant` (la recette, une autre graine), `paroles` (« Écris-les pour moi »), `plan` (la partition seule, à relire avant de chanter), `plan/lire` (une partition retouchée : son résumé, son jugement), `stems`, `odio` (un projet ODIO, une piste par stem), `studio/demande`, `onde/<id>` ; Séparer et Ouvrir dans ODIO demandent le Studio | `chanson.ace` (Rapide : ACE-Step), `chanson.yue` (Soigné et Reprendre : YuE2), `chanson.plan`, `chanson.paroles` (voie audio, cpu en factice) | ceux d'ODIO (`music_engine`, `music_yue`, `music_stems`) et `"chanson_paroles": true` (le modèle de langue d'ACE-Step 1.5) |
+| Transcrire (`transcrire/`, `server/tools/transcrire.py`) | `/api/transcrire/options`, `docs` (les transcriptions), `run {item, mode: rapide \| complet, to?, notes?}`, `docs/<id>` (lire ; POST : enregistrer, `rev`), `…/translate {to, all}`, `…/export?format=srt\|vtt\|txt\|json\|md&which=&stamps=1`, `…/asset` (409 tant que la sorte `subtitle` manque au socle), `…/delete`, `…/voix` (la probabilité de parole de chaque voix), `…/notes {kinds} \| {question}` (le carnet), `…/qa/<q>/delete` ; un document `<data_dir>/transcrire/trn-….json` par transcription, né dans le Workspace du son | `transcrire.transcribe`, `transcrire.translate`, `transcrire.notes` (voie audio ; cpu en factice) | `"transcrire_moteur": "local"` (Whisper turbo ou Parakeet sur DGX2, les voix par Nemotron de DGX1, traduction et carnet par Ollama) |
+| L'agent Showrunner (Idéation, `server/tools/ideation_agent.py`, `docs/etudes/agent_showrunner.md`) | `POST /api/ideation/agent {board, messages, intent: "" \| "ingest"}` (un tour en file ; 4 000 signes et 24 objets cités au plus), `GET /api/ideation/agent/<planche>` (la conversation, l'état du modèle : prêt, vision), `POST …/turns/<t> {claim \| applied \| undone}`, `POST …/clear` (la conversation archivée) | `ideation.agent` : voie audio épinglée sur l'instance de la machine de l'Ollama (famille `ollama-agent`, 31 Go, modèle déchargé en fin de tour), cpu sans voie audio | `ideation_agent_url` (sinon `llm_url`), `ideation_agent_modele` (sinon `llm_model`, `qwen3-vl-32b-32k`), `ideation_agent_ctx` (32768) |
+| Le kit de Cal (`server/tools/strategie.py`) | `/strategie/…` : `<data_dir>/strategie/` (jamais dans le dépôt, qui est public), au compte de Cal seul (403 à tout autre, la porte sans session) ; chaque page HTML y est servie avec `<script src="/commun/kit_nav.js">` ; `GET /api/strategie/moi`, `GET /api/strategie/plan` (les pages, ou l'ordre de `plan.json`) | — | — |
 
 **Idéation, les objets du 05/10** (un module par objet sous `ideation/objets/`, un
 par réglage de diapositive sous `ideation/diapo/`) :
@@ -412,6 +431,52 @@ par réglage de diapositive sous `ideation/diapo/`) :
   (`MEDIA_KINDS`, dit à la page par `media_kinds` de `/api/ideation/meta`) — une page
   debout, sa couverture, sa ligne (« PDF · 12 pages ») et son titre ; le double-clic
   ouvre la liseuse commune (`app.liseuse(n)`) ; l'export PNG dessine sa couverture.
+
+**Idéation, l'entrée d'un projet et l'agent (05/10)** :
+
+- `ideation/projet.js` (`docs/etudes/mode_showrunner.md`) — « Commencer un
+  projet », le bouton orange de l'accueil (`ideation/?projet=nouveau` ;
+  `app.projet()`) : une fenêtre par-dessus Idéation, un champ qui grandit (le
+  brief) où tout se lâche, se colle, se prend au trombone ou par dossier, se
+  glisse du panneau Asset ; une vignette par fichier au-dessus du champ ; le nom
+  du projet (= la Team), du Workspace (« Général »), des personnes (`GET
+  /api/equipes/personnes`). Rien ne part avant « Commencer » : la Team, son
+  Workspace, les membres, l'onglet passé dans le Workspace sans recharger
+  (`entrerEspace` de `shell.js`), la planche, les fichiers (trois à la fois, la
+  progression d'`uploadFile` sur chaque vignette ; ce qui vient d'Asset est
+  rapatrié), le brief (une note, et `brief.md` s'il est tapé), des cadres de
+  départ (Brief, Documents, Images, Vidéos, Sons, Autres), puis l'agent
+  (`app.agent.send(brief, {items, intent: 'ingest'})`) s'il est là ;
+- l'agent (`server/tools/ideation_agent.py`) : une conversation par planche
+  (`<data_dir>/ideation_agent/<planche>.json`). Ses outils de lecture
+  (`lire_planche`, `lire_document`, `decrire_image`, `chercher_bibliotheque`),
+  le serveur les exécute dans sa boucle ; ses outils d'écriture (poser un texte,
+  un cadre, un asset, une carte Générer ou Vidéo, un composeur, ranger, grouper,
+  relier, déplacer, renommer la planche) sont validés puis rendus en actions
+  `{tool, args, why}` que la page applique d'un seul `app.mutate` — un pas
+  d'annulation par tour ; une écriture refusée revient au modèle avec sa raison.
+  Une carte Générer est posée prête, son prompt et ses références branchés : son
+  `lancer` n'est vrai que si la personne a demandé le rendu. `intent: "ingest"` : chaque document
+  lu par parties, chaque image regardée, en sorties structurées, puis la planche
+  organisée. Rien n'a tourné sur le vrai modèle : le contrôle passe par
+  `tools/faux_ollama.py`.
+
+**ODIO, « Détecter le tempo » (05/10)** : le calcul est dans la page
+(`musique/tempo.js`, un module pur, appelé par `musique/bpm.js` sur le son que
+le moteur a déjà décodé : flux spectral, autocorrélation, temps suivis par
+programmation dynamique) — ni travail en file ni GPU. `server/tools/music_tempo.py`
+n'en est que l'essai : son `selftest` écrit des clics à tempo connu (module
+`wave`) et les fait lire par le module de la page sous node (sans node, il le dit
+et ne compte rien).
+
+**Le kit de Cal** (`server/tools/strategie.py`, `commun/kit_nav.js`) : le
+positionnement, le deck, les discours, servis depuis `<data_dir>/strategie/`
+à Cal seul, `Cache-Control: no-store`, `noindex`, sans jamais sortir du dossier.
+`kit_nav.js`, ajouté à chaque page HTML du kit sans toucher au fichier : une barre
+fine d'accès direct aux pages (le plan), dans un shadow DOM aux jetons du thème,
+discrète tant que la souris n'approche pas du haut et absente en plein écran ;
+Échap ramène à la page de positionnement (l'index) ; Alt+← / Alt+→ : la page
+d'avant, d'après.
 
 **Déposer un asset** : tout bloc qui attend un asset passe par `dropZone()`
 de `commun/shell.js` (fichier du disque → bibliothèque avec `tool: upload`,

@@ -1624,6 +1624,9 @@ def start_h3(endpoint: str | None = None) -> dict:
 
 
 def stop_h3(endpoint: str, why: str = "") -> dict:
+    if not managed(endpoint):   # un ComfyUI :8188 (la recette de Cal) : jamais arrêté d'ici, comme start_h3
+        raise HttpError(409, f"{jobs.machine_of(endpoint)} :{urlsplit(endpoint).port} est un ComfyUI toujours allumé "
+                             "(la voie h3) : le portail ne l'arrête pas")
     if _busy(endpoint):
         raise HttpError(409, f"H3 calcule sur {jobs.machine_of(endpoint)} : on ne l'arrête pas en plein rendu")
     ok, err = _service(endpoint, "stop")
@@ -2106,6 +2109,11 @@ def selftest(call, ok) -> None:
     ok(managed("http://127.0.0.1:8189") and not managed("http://169.254.110.6:8188")
        and neighbour("http://127.0.0.1:8188") == "http://127.0.0.1:8189" and neighbour("http://127.0.0.1:8189") == "http://127.0.0.1:8188",
        "le gardien ne démarre ni n'arrête un ComfyUI :8188 ; l'autre instance de la machine se trouve")
+    try:   # ni la page Admin : son bouton « Arrêter » ne vise qu'une instance gérée (le câblage de Cal : les :8188)
+        stop_h3("http://169.254.110.6:8188", "essai")
+        ok(False, "un ComfyUI :8188 ne s'arrête pas d'ici")
+    except HttpError as e:
+        ok(e.status == 409 and "toujours allumé" in e.message, f"un ComfyUI :8188 ne s'arrête pas d'ici ({e.status} {e.message})")
     st, _ = call("POST", "/api/movie/assist", {"brief": "x"})
     ok(st == 501, "l'assistant dit qu'il n'est pas câblé")
     st, lr = call("GET", "/api/movie/loras")
