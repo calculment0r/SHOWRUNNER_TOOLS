@@ -34,7 +34,7 @@
 // et pour la page : app.agent.cite(ids), app.agent.menuItems(objets) (menus.js), app.dropOut
 // (canvas.js : un objet de la planche lâché sur le champ y est cité, et revient à sa place).
 
-import { api, el, toast, jobs, pick, dropZone, uploadFile, kindMark, kindFr, fmtWait, studioSeul, studioIci, session, href } from '../commun/shell.js';
+import { api, el, toast, jobs, pick, dropZone, uploadFile, kindMark, kindFr, fmtWait, studioSeul, studioIci, session, href, ongletCache, auRetour } from '../commun/shell.js';
 import { bbox, inside } from './canvas.js';
 import { outPort, canWire, replaces, newSlots } from './ports.js';
 
@@ -140,9 +140,11 @@ export function install(app) {
       A.bid = bid; A.conv = c; A.err = '';
     } catch (e) { A.err = e.message; }
     paint();
-    // un tour en cours qu'on ne suit pas (un autre onglet, quelqu'un d'autre, la page rechargée) : relu tant qu'il tourne
-    if (A.open && A.conv?.busy && !A.flying.has(A.conv.busy)) loadT = setTimeout(load, 2500);
+    // un tour en cours qu'on ne suit pas (un autre onglet, quelqu'un d'autre, la page rechargée) : relu tant qu'il
+    // tourne et que l'onglet se voit (commun/shell.js, ongletCache) ; de retour sur l'onglet, relu tout de suite
+    if (A.open && A.conv?.busy && !A.flying.has(A.conv.busy) && !ongletCache()) loadT = setTimeout(load, 2500);
   }
+  auRetour(() => { if (A.open && A.conv?.busy && !A.flying.has(A.conv.busy)) load(); });
 
   // ── envoyer ──────────────────────────────────────────────
   async function send(text, opts = {}) {

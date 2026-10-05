@@ -6,7 +6,7 @@
 // une page d'outil n'a rien à faire pour être gardée. Le serveur juge
 // (core/auth.py) ; cette page ne fait que demander et attendre.
 
-import { api, el, toast, href, TOOLS } from './shell.js';
+import { api, el, toast, href, TOOLS, releve } from './shell.js';
 
 let box = null;
 let pollT = null;
@@ -56,7 +56,7 @@ function frame(...body) {
 }
 
 function paint(me) {
-  clearInterval(pollT);
+  pollT?.stop();
   const st = me.state;
   if (st === 'pending') return paintWait(me);
   if (st === 'refused') return paintRefused(me);
@@ -102,7 +102,8 @@ function paintWait(me) {
         try { await api('auth/cancel', { method: 'POST' }); } catch { /* */ }
         paintAsk({ state: 'anonymous' });
       } }, 'Annuler la demande'))));
-  pollT = setInterval(async () => {
+  // relu toutes les 4 s, onglet visible seulement ; de retour sur l'onglet, tout de suite (shell.js, releve)
+  pollT = releve(async () => {
     try {
       const m = await api('auth/me');
       if (m.state !== 'pending') paint(m);
@@ -151,17 +152,17 @@ export async function studioDoor(me, tool, { closable = false } = {}) {
   document.body.classList.add('porte-on');
   sBox.hidden = false;
   paintStudio(me, tool, closable);
-  clearInterval(sPoll);
-  sPoll = setInterval(async () => {
+  sPoll?.stop();
+  sPoll = releve(async () => {   // onglet visible seulement, tout de suite à son retour (shell.js, releve)
     try {
       const m = await api('auth/me');
-      if (m.user && m.user.access === 'studio') { clearInterval(sPoll); location.reload(); }
+      if (m.user && m.user.access === 'studio') { sPoll?.stop(); location.reload(); }
     } catch { /* le portail redémarre : on réessaie */ }
   }, 5000);
 }
 
 function closeStudio() {
-  clearInterval(sPoll);
+  sPoll?.stop();
   if (sBox) sBox.hidden = true;
   if (!document.querySelector('.porte:not([hidden]):not(.studio-door)')) document.body.classList.remove('porte-on');
 }

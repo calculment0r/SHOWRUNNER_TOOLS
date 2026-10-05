@@ -35,7 +35,7 @@
 // réglages avancés) ; aimer, ranger, jeter depuis le fil (le fil les range
 // lui-même dans la pile : commun/fil.js, option undo). Ne s'annulent pas : un rendu lancé, une image tirée d'une
 // vidéo, un fichier déposé. Le banc « Comparer » est une vue : il ne s'annule pas.
-import { mountHeader, api, jobs, pick, uploadFile, toast, el, $, $$, href, fmtDate, dropAnywhere, dropZone, dock } from '../commun/shell.js';
+import { mountHeader, api, jobs, pick, uploadFile, toast, el, $, $$, href, fmtDate, dropAnywhere, dropZone, dock, releve } from '../commun/shell.js';
 import { createEntrees } from '../commun/entrees.js';
 import { createFil } from '../commun/fil.js';
 import { createUndo } from '../commun/undo.js';
@@ -1069,8 +1069,8 @@ dropAnywhere(async (files) => {
   const want = (location.hash || '').slice(1) || q.get('id');
   if (want) fil.open(want);
   loadLoras();
-  paintEngine();
-  setInterval(paintEngine, 15000);
+  // l'état d'H3 relu toutes les 15 s, onglet visible seulement (commun/shell.js, releve)
+  releve(paintEngine, 15000, { now: true });
 })();
 addEventListener('hashchange', () => {
   const id = location.hash.slice(1);

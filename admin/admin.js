@@ -18,7 +18,7 @@
 // un rôle, le mode d'un guest (viewer, acteur), ses Workspaces, un rôle de Workspace,
 // renommer, archiver, l'API, l'offre, le budget (plafond, crédits, parts) ; ne s'annulent pas : créer une Team, un
 // Workspace, mettre quelqu'un dans une Team (on le retire), un lien (on le retire).
-import { mountHeader, api, el, $, $$, toast, href, fmtDate, stateFr, fmtWait } from '../commun/shell.js';
+import { mountHeader, api, el, $, $$, toast, href, fmtDate, stateFr, fmtWait, ongletCache, auRetour } from '../commun/shell.js';
 import { uaShort } from '../commun/porte.js';
 import { createUndo } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
@@ -139,6 +139,7 @@ function busy() {
 
 async function refresh(now = false) {
   clearTimeout(S.t);
+  if (ongletCache()) return;   // onglet caché : rien (docs/etudes/cloudflare.md, « Le compte des requêtes ») ; relu au retour
   try {
     if (!S.limited) {
       try { S.state = await api('admin/state'); } catch (e) {
@@ -156,8 +157,11 @@ async function refresh(now = false) {
   }
   // le relevé : la préférence (3 s par défaut ; les machines et le journal un peu moins souvent)
   const base = prefs.get('admin.refresh', 3) * 1000;
-  S.t = setTimeout(refresh, S.sec === 'machines' ? base * 4 / 3 : S.sec === 'journal' ? base * 2 : base);
+  clearTimeout(S.t);
+  if (!ongletCache()) S.t = setTimeout(refresh, S.sec === 'machines' ? base * 4 / 3 : S.sec === 'journal' ? base * 2 : base);
 }
+// de retour sur l'onglet : relu tout de suite (sans forcer la repeinte : un champ en cours reste)
+auRetour(() => refresh());
 
 function denied(why = '') {
   $('#adm-nav').replaceChildren();
@@ -1090,7 +1094,9 @@ function journalSec() {
 // Cal, 05/10 : plus de terminal pour savoir ce qui se passe ; la sortie s'affiche ici, et se relit tant qu'un script tourne.
 let dgTimer = 0;
 let allBusy = '', allNote = '', allText = '';
-// tous les diagnostics qui ne changent rien, l'un après l'autre, puis un seul texte dans le presse-papier
+// tous les diagnostics qui ne changent rien, l'un après l'autre, puis un seul texte dans le presse-papier.
+// Il continue onglet caché (le seul relevé d'Admin qui le fasse) : chaque relevé lance le script suivant,
+// l'arrêter arrêterait la suite elle-même ; Cal la lance, puis va attendre ailleurs (20 scripts, bornés).
 async function runAll() {
   const list = (S.dg?.diags || []).filter((x) => !x.action);
   const parts = [`Diagnostics Showrunner · ${new Date().toLocaleString('fr-FR')}`];
@@ -1131,7 +1137,7 @@ function diagSec() {
   const running = d.diags.some((x) => x.state === 'running');
   clearTimeout(dgTimer);
   // pas de repeinte forcée : une sélection en cours dans une sortie reste (busy)
-  if (running) dgTimer = setTimeout(async () => { if (S.sec !== 'diag') return; try { S.dg = await api('admin/diag'); } catch { /* */ } render(); }, 2000);
+  if (running) dgTimer = setTimeout(async () => { if (S.sec !== 'diag' || ongletCache()) return; try { S.dg = await api('admin/diag'); } catch { /* */ } render(); }, 2000);
   const start = async (x) => {
     try { await post(`admin/diag/${x.id}`); S.dg = await api('admin/diag'); render(true); } catch (e) { toast(e.message); }
   };

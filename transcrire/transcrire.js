@@ -26,7 +26,7 @@
 // traduction, d'un nom de voix, avec son contraire (réenregistré). Ne
 // s'annulent pas : lancer une transcription, une traduction, le carnet (partis
 // dans la file), un fichier déposé, les réglages.
-import { mountHeader, api, pick, toast, el, $, $$, href, fmtDur, fmtDate, uploadFile, dropZone, dropAnywhere, dock, sorteEffective, avecEspace, session } from '../commun/shell.js';
+import { mountHeader, api, pick, toast, el, $, $$, href, fmtDur, fmtDate, uploadFile, dropZone, dropAnywhere, dock, sorteEffective, avecEspace, session, ongletCache, auRetour } from '../commun/shell.js';
 import { createUndo } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { menu, contextMenu, pageMenu, copy } from '../commun/menu.js';
@@ -254,10 +254,13 @@ function openDoc(d, { keepMedia = false } = {}) {
   paintBar(); paintVoices(); paintFrise(!same); paintLines(); paintCarnet(); markSide();
   if (S.wantCarnet && d?.state === 'done') { S.wantCarnet = false; requestAnimationFrame(() => showCarnet(false)); }
   clearTimeout(pollT);
-  if (busy(d)) pollT = setTimeout(poll, 900);
+  if (busy(d) && !ongletCache()) pollT = setTimeout(poll, 900);
 }
+// une transcription en cours : relue toutes les 0,9 s, onglet visible seulement ; au retour, tout de suite
+auRetour(() => { if (busy(S.doc)) poll(); });
 async function poll() {
-  if (!S.doc) return;
+  clearTimeout(pollT);
+  if (!S.doc || ongletCache()) return;
   const was = S.doc;
   try {
     const d = await api('transcrire/docs/' + was.id);
@@ -270,7 +273,7 @@ async function poll() {
     if (finished) { loadDocs(); toast(d.state === 'error' ? `échec : ${d.error}` : 'fini'); }
   } catch (e) { toast(e.message); }
   clearTimeout(pollT);
-  if (busy(S.doc)) pollT = setTimeout(poll, 900);
+  if (busy(S.doc) && !ongletCache()) pollT = setTimeout(poll, 900);
 }
 
 // ── la lecture ──────────────────────────────────────────────

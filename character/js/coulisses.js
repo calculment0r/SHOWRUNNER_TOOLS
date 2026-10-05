@@ -18,7 +18,7 @@
    character/ (api/…, files/…) que le portail relaie vers DGX1.
    ============================================================ */
 
-import { localSummary, errorText, mount } from './cf.js';
+import { localSummary, errorText, mount, ongletCache, auRetour } from './cf.js';
 
 mount();
 
@@ -821,8 +821,14 @@ async function pollJobs() {
       renderMain();
     }
   } catch (_) { /* studio momentanément muet : on réessaie */ }
-  setTimeout(pollJobs, active ? 2000 : 6000);
+  clearTimeout(jobsTimer);
+  if (!ongletCache()) jobsTimer = setTimeout(pollJobs, active ? 2000 : 6000);
 }
+// Onglet caché : plus de relevé ; à son retour, tout de suite (cf.js, ongletCache).
+let jobsTimer = null;
+let sysTimer = null;
+let polling = false;   // les relevés ont commencé (après la première route)
+auRetour(() => { if (polling) { pollJobs(); pollSystem(); } });
 
 async function pollSystem() {
   const pill = $('#sys-pill');
@@ -849,7 +855,8 @@ async function pollSystem() {
     box.innerHTML = systemBox();
     hydrate(box);
   }
-  setTimeout(pollSystem, 5000);
+  clearTimeout(sysTimer);
+  if (!ongletCache()) sysTimer = setTimeout(pollSystem, 5000);
 }
 
 /* ── gestes ─────────────────────────────────────────────── */
@@ -956,6 +963,7 @@ async function start() {
   }
   renderSide();
   await onRoute();
+  polling = true;
   pollJobs();
   pollSystem();
 }
