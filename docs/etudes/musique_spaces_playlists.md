@@ -1,6 +1,7 @@
 # Musique : les Spaces, les playlists et le lien d'écoute
 
-Étude du 05/10/2026 au soir. RIEN N'EST CODÉ. Les décisions marquées « À TRANCHER » attendent Cal.
+Étude du 05/10/2026 au soir. RIEN N'EST CODÉ. **Décisions de Cal (05/10, « Cloudflare par défaut plus simple non ? tout
+le reste est comme tu proposes ») : S1 partagé, S2, L1 Cloudflare, L2, L3 comme recommandé ci-dessous.**
 
 ## La demande de Cal (05/10)
 
@@ -110,9 +111,9 @@
   - les stems suivent leur chanson.
 - Le Space choisi est retenu par Workspace (préférence de page, `prefs.json`).
 
-### À TRANCHER
+### DÉCIDÉ (Cal, 05/10)
 
-**S1. Un Space est-il partagé avec le Workspace, ou personnel ?**
+**S1. Un Space est-il partagé avec le Workspace, ou personnel ? → PARTAGÉ (« Mon Space » reste personnel).**
 - Aujourd'hui, la liste ne montre que mes chansons.
 - Recommandation :
   - « Mon Space » reste personnel ;
@@ -120,7 +121,7 @@
     créé. C'est le sens d'une Team qui fait un album ensemble.
 - Le seul autre choix sensé : tout personnel, comme Suno.
 
-**S2. Supprimer un Space :**
+**S2. Supprimer un Space (DÉCIDÉ) :**
 - ses chansons repartent dans « Mon Space » de leur auteur ;
 - rien ne va à la corbeille sans qu'on le demande.
 
@@ -216,15 +217,15 @@ Ce qu'on ajoute à AGOSTA :
 - **B en option**, pour qui veut son album sur GitHub comme AGOSTA, avec ses limites : 1 Go, et l'historique
   qui garde tout.
 
-### À TRANCHER
+### DÉCIDÉ (Cal, 05/10)
 
-**L1. Destination par défaut :** A (recommandé) ou B (le chemin connu d'AGOSTA, sans jeton R2).
+**L1. Destination par défaut : A, Cloudflare.** B (GitHub Pages) reste une option pour plus tard, si Cal la demande.
 
-**L2. Qui peut publier un lien ?**
+**L2. Qui peut publier un lien ? (DÉCIDÉ)**
 - Recommandation : `espaces.can_publish`, la règle existante. Un guest ne publie jamais.
 - Le lien est public pour qui l'a, sauf si on met un code.
 
-**L3. Le lien dit-il « Showrunner » ?**
+**L3. Le lien dit-il « Showrunner » ? (DÉCIDÉ : non)**
 - Recommandation : non, le lecteur est à l'artiste.
 - Une ligne discrète en pied de page, facultative.
 
