@@ -507,6 +507,17 @@ def _text_node(n: dict) -> dict:
 # ── fin idéation ──
 
 
+def _lora_of(n: dict) -> dict | None:
+    """Le LoRA d'un moodboard posé sur une carte Générer (gen.js, loraRow) : son nom dans ComfyUI et sa
+    force. Jugé au rendu (lora.check_render) ; gardé ici même s'il ne va plus au modèle de la carte
+    (il passe en alerte, comme un fil)."""
+    from tools import lora
+    lo = n.get("lora")
+    if not isinstance(lo, dict) or not lora.COMFY_RX.fullmatch(str(lo.get("name") or "")):
+        return None
+    return {"name": lo["name"], "strength": _num(lo.get("strength"), 0, lora.STRENGTH_MAX, 1.0)}
+
+
 def _node(n) -> dict:
     if not isinstance(n, dict):
         raise HttpError(400, "un objet de la planche est un objet JSON")
@@ -603,6 +614,8 @@ def _node(n) -> dict:
                    variant="base" if n.get("variant") == "base" else "turbo",
                    realism=bool(n.get("realism", True)), seed=seed, refChoice=choice,
                    jobs=_jobs(n.get("jobs")), error=_s(n.get("error"), 500))
+        if _lora_of(n):
+            out["lora"] = _lora_of(n)
     elif t == "vgen":
         mv = _movie()
         try:
@@ -617,6 +630,8 @@ def _node(n) -> dict:
                    method=n.get("method") if n.get("method") in mv.METHODS else "turbo",
                    seed=re.sub(r"\D", "", str(n.get("seed") or ""))[:15], sound=_s(n.get("sound"), 2000),
                    music=_s(n.get("music"), 2000), jobs=_jobs(n.get("jobs")), error=_s(n.get("error"), 500))
+        if _lora_of(n):
+            out["lora"] = _lora_of(n)
     elif t == "compose":
         raw = n.get("slots") if isinstance(n.get("slots"), list) else [{"id": i, "role": i, "name": nm} for i, nm in SLOTS]
         slots, seen = [], set()
@@ -1835,7 +1850,7 @@ def _lot_image(d: dict, vals: list, name: str) -> dict:
             ps.append(img.check_generate({**card, "prompt": _s(v.get("prompt"), 6001), "seed": base}))
         except ValueError as e:
             raise HttpError(400, f"valeur {i + 1} : {e}") from e
-    pin = img._pin_for(img._cap_generate(ps[0]))
+    pin = img._pin_for(img._cap_generate(ps[0]), ps[0].get("lora"))   # le LoRA de la carte : une machine qui l'a
     batch = img._batch()
     todo = []
     for i, (v, p) in enumerate(zip(vals, ps)):

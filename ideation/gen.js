@@ -23,6 +23,11 @@
 // d'après la case (« Décor × 3 ») : une colonne par valeur, la valeur en
 // légende, les images d'une valeur l'une sous l'autre ; chaque image garde son
 // lien de lignée (`out`, marqué `lot` : le cadre), la carte un lien vers le cadre.
+//
+// Le LoRA d'un moodboard (server/tools/lora.py ; ideation/objets/moodboard.js) : une carte le pose
+// pour le modèle qui l'a produit (un LoRA Z-Image ne va qu'à Z-Image ; la carte vidéo, H3), avec sa
+// force (0 à 1,5). Changer de modèle ne le retire pas : il passe en alerte, avec sa raison, et ne
+// part pas (la règle des fils). La liste : GET /api/lora (`render`), relue au plus toutes les minutes.
 
 import { api, jobs, toast, el, href, dropZone } from '../commun/shell.js';
 import { sortable, moveItem, heldTitle, sentLabel } from '../commun/refs.js';
@@ -122,6 +127,71 @@ export function createGen(app) {
   const M = (id) => S.cfg?.models?.find((m) => m.id === id);
   const followed = new Set();
 
+  // ── le LoRA d'un moodboard ────────────────────────────────
+  let loraAsked = 0;
+  function loadLoras(force = false) {
+    if (Date.now() - loraAsked < (force ? 15000 : 60000)) return;
+    loraAsked = Date.now();
+    api('lora').then((r) => { S.loras = { list: r.render || [], names: r.names || {}, why: r.why || '', max: r.strength_max || 1.5, at: Date.now() }; })
+      .catch((e) => { S.loras = { list: [], names: {}, why: `la liste des LoRA ne répond pas : ${e.message}`, max: 1.5, at: Date.now() }; })
+      .finally(() => { app.canvas?.render(); app.insp?.render(); });
+  }
+  const loraModel = (name) => (/^showrunner\/(zimage|qwen21|krea2|h3|ace)-/.exec(name || '') || [])[1] || '';
+  const loraName = (mid) => S.loras?.names?.[mid] || mid;
+  const fmtF = (v) => String(Math.round(v * 100) / 100).replace('.', ',');
+  // ce qui part : {name, strength}, ou pourquoi le LoRA choisi ne part pas (`unfit` : ce que la carte
+  // ne permet pas maintenant — Z-Image Base, H3 en Références)
+  function loraOf(n, model, unfit = '') {
+    const name = n?.lora?.name;
+    if (!name) return { sent: null, why: '' };
+    const lm = (S.loras?.list || []).find((x) => x.name === name)?.model || loraModel(name);
+    if (lm !== model) return { sent: null, why: `entraîné pour ${loraName(lm)} : pas envoyé à ${loraName(model)}` };
+    if (unfit) return { sent: null, why: unfit };
+    const st = Number(n.lora.strength);
+    return { sent: { name, strength: Number.isFinite(st) ? Math.max(0, Math.min(S.loras?.max || 1.5, st)) : 1 }, why: '' };
+  }
+  const unfitGen = (g) => (g.model === 'zimage' && (g.variant || 'turbo') !== 'turbo' ? 'entraîné sur Z-Image Turbo : pas envoyé avec Base' : '');
+  // la rangée d'une carte (et du panneau de droite) : le choix, sa force, ce qui l'empêche de partir
+  function loraRow(n, model, unfit = '') {
+    loadLoras();
+    const L = S.loras;
+    const mine = (L?.list || []).filter((x) => x.model === model);
+    const cur = n.lora?.name || '';
+    const { why: bad } = loraOf(n, model, unfit);
+    const label = (x) => `${x.title}${x.v ? ` · v${x.v}` : ''}${x.latest === false ? ' · ancienne' : ''}${x.machines && !x.machines.length ? ' · absent de ComfyUI' : ''}`;
+    const tip = (x) => [x.trigger ? `mot déclencheur « ${x.trigger} », mis en tête du prompt` : 'pas de mot déclencheur connu',
+      x.machines ? (x.machines.length ? `dans ComfyUI : ${x.machines.join(', ')}` : 'aucune ComfyUI ne le liste encore') : (L?.why || ''),
+      x.source === 'comfy' ? 'un fichier de loras/showrunner/ que le portail n’a pas entraîné' : ''].filter(Boolean).join(' · ');
+    if (!L) return el('div', { class: 'grow glora' }, el('span', { class: 'lbl' }, 'LoRA'), el('span', { class: 'ghint' }, 'lecture…'));
+    if (!mine.length && !cur) {
+      return el('div', { class: 'grow glora' }, el('span', { class: 'lbl' }, 'LoRA'),
+        el('span', { class: 'ghint', title: 'clic droit sur un moodboard d’Idéation → « Entraîner le LoRA… »' }, `aucun LoRA ${loraName(model)} : un moodboard en fait un`));
+    }
+    const sel = el('select', { class: 'fld sm', title: cur ? tip(mine.find((x) => x.name === cur) || {}) : 'un LoRA de moodboard : le style de ses images' },
+      el('option', { value: '' }, 'sans LoRA'),
+      ...mine.map((x) => el('option', { value: x.name, selected: x.name === cur ? true : null, title: tip(x) }, label(x))),
+      cur && !mine.some((x) => x.name === cur) ? el('option', { value: cur, selected: true }, (() => {
+        const x = (L.list || []).find((l) => l.name === cur);
+        return `${x ? `${x.title}${x.v ? ` · v${x.v}` : ''}` : cur.split('/').pop().replace(/\.safetensors$/, '')} · ${loraName(x?.model || loraModel(cur))}`;
+      })()) : null);
+    sel.addEventListener('mousedown', () => loadLoras(true));
+    sel.addEventListener('change', () => app.mutate(() => { n.lora = sel.value ? { name: sel.value, strength: n.lora?.strength ?? 1 } : null; }));
+    let force = null;
+    if (cur) {
+      force = el('input', { class: 'fld sm glf', inputmode: 'decimal', value: fmtF(n.lora.strength ?? 1), 'aria-label': 'force du LoRA',
+        title: `force du LoRA : de 0 à ${fmtF(L.max)} (1 : celle de l’essai à l’installation)`, disabled: bad ? true : null });
+      force.addEventListener('change', () => {
+        const v = parseFloat(force.value.replace(',', '.'));
+        const st = Number.isFinite(v) ? Math.round(Math.max(0, Math.min(L.max, v)) * 100) / 100 : 1;
+        force.value = fmtF(st);
+        app.mutate(() => { n.lora = { ...n.lora, strength: st }; });
+      });
+    }
+    // ne part pas : dit comme un fil ignoré (une bande, sa raison en clair)
+    return el('div', { class: 'grow glora' + (bad ? ' bad' : '') }, el('span', { class: 'lbl' }, 'LoRA'), sel, force,
+      bad ? el('div', { class: 'gbad' }, el('div', {}, el('b', {}, 'LoRA ignoré'), ` ${bad}`)) : null);
+  }
+
   // les références qui partent : les fils bons de l'entrée `refs`, avec leur objet
   const refsOf = (g, F = app.flowNow()) => F.take(g.id, 'refs');
   // le prompt : celui du fil (la valeur k si une case varie), sinon le champ de la carte
@@ -188,7 +258,8 @@ export function createGen(app) {
   }
 
   // ce qui refait la carte : ce qu'elle reçoit, la lecture des modèles, les choix d'image des éléments
-  const cardKey = (g) => '|' + app.flow().sig(g.id) + '|' + JSON.stringify(g.refChoice || {}) + (S.cfg ? '|c' : '') + '|' + (S.cfg?.backend || '');
+  const cardKey = (g) => '|' + app.flow().sig(g.id) + '|' + JSON.stringify(g.refChoice || {}) + (S.cfg ? '|c' : '') + '|' + (S.cfg?.backend || '')
+    + (S.loras ? `|l${S.loras.at}` : '');
 
   function card(g) {
     const F = app.flow();
@@ -257,6 +328,7 @@ export function createGen(app) {
         el('div', { class: 'prow', 'data-row': 'refs' }, plab('in', 'refs', 'références', shut && !all.length ? 'fermé' : placesLabel(all, m?.refs)), strip),
         el('div', { class: 'grow gmodel' }, sel(models, g.model, (v) => app.mutate(() => { g.model = v; app.LS('gen-model', v); }), 'le modèle : il envoie ses N premières références, les autres restent grisées')),
         el('div', { class: 'grow' }, sel(aspects, g.aspect, (v) => app.mutate(() => { g.aspect = v; }), 'le format'), count, shot),
+        loraRow(g, g.model, unfitGen(g)),
         looks.length ? el('div', { class: 'opts' }, fromC ? el('span', { class: 'lbl dim', title: 'les pastilles de la case Photographie du composeur : celles de la carte ne comptent pas' }, 'du composeur') : null, ...looks) : null,
         el('div', { class: 'grow' }, btn, w),
         badList(app, g.id)),
@@ -291,6 +363,8 @@ export function createGen(app) {
     const body = { model: g.model, prompt: pr.text, aspect: g.aspect, quality: quality(g), count: g.count, looks: looksOf(g, pr),
       realism: g.realism, variant: g.variant, refs: refsBody(g, F) };
     if (g.seed) body.seed = Number(g.seed);
+    const lo = loraOf(g, g.model, unfitGen(g)).sent;
+    if (lo) body.lora = lo;
     if (pr.lot) {
       // un lot : une valeur par colonne, la même graine de l'une à l'autre (le serveur la tire une fois)
       const { prompt, count, ...card } = body;
@@ -382,7 +456,8 @@ export function createGen(app) {
       try {
         if (g.type === 'gen') {
           const pr = promptOf(g, F, L ? k : null);
-          const r = await api('image/compose', { method: 'POST', body: { model: g.model, prompt: pr.text, looks: looksOf(g, pr), refs: refsBody(g, F) } });
+          const r = await api('image/compose', { method: 'POST', body: { model: g.model, prompt: pr.text, looks: looksOf(g, pr), refs: refsBody(g, F),
+            variant: g.variant, lora: loraOf(g, g.model, unfitGen(g)).sent } });
           if (my !== seq) return;
           pre.textContent = r.prompt || '—';
           notes.replaceChildren(...(r.notes || []).map((x) => el('p', { class: 'hint' }, x)),
@@ -525,7 +600,7 @@ export function createGen(app) {
   }
 
   return { card, cardKey, refresh, why, busy, BUSY_WHY, paintBtn, atChoices, refsOf, promptOf, looksOf, goText, quality, generate, variations, edit, recipe, resume, placeResults, launch,
-    launchLot, showSent, composeFrom, M, KINDS,
+    launchLot, showSent, composeFrom, M, KINDS, loraRow, loraOf, unfitGen,
     // pour l'inspecteur : d'où vient la prise de vue de la carte ('composer' : sa case Photographie)
     looksFrom: (g) => (promptOf(g).looks ? 'composer' : 'card') };
 }

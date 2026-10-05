@@ -829,10 +829,20 @@ def plan(mode: str, p: dict, *, with_graph: bool = False) -> dict:
                      "README de ComfyUI-MiniMax-H3-Turbo) ; la recette de Cal : 8")
     seed = _num(p.get("seed"), int, None)
     loras = []   # les LoRA ajoutés dans « Paramètres avancés », après la pile de la recette
+    triggers = []   # les mots déclencheurs des LoRA de moodboard (server/tools/lora.py), en tête de la description
+    from tools import lora as moodlora
     for l in p.get("loras") or []:
         if isinstance(l, dict) and l.get("name"):
             name = str(l["name"])
-            if name.split("/")[-1] in RECIPE_LORAS or ACCEL_RX.search(name.split("/")[-1]):
+            mb = moodlora.info(name) if name.startswith(moodlora.COMFY_DIR) else None
+            if mb:   # un LoRA de moodboard : ni de la pile, ni un accélérateur, quel que soit son nom (« cinema »)
+                if mb.get("hidden") or mb["model"] != "h3":
+                    errors.append(f"{name} : " + ("il vient d'un moodboard que tu ne vois pas" if mb.get("hidden") else
+                                                  f"entraîné pour {moodlora.MODELS[mb['model']]['name']}, pas pour H3"))
+                    continue
+                if mb["trigger"] and mb["trigger"] not in triggers:
+                    triggers.append(mb["trigger"])
+            elif name.split("/")[-1] in RECIPE_LORAS or ACCEL_RX.search(name.split("/")[-1]):
                 continue   # déjà dans la pile, ou un autre accélérateur (on n'en cumule pas deux)
             other = "ref2v" if weights == "fl2va" else "fl2v"
             if other in name.lower() and not ("fl2v" in name.lower() and "ref2v" in name.lower()):
@@ -859,6 +869,17 @@ def plan(mode: str, p: dict, *, with_graph: bool = False) -> dict:
         sent = compose_ref(desc, sound, music, R) if (R["subjects"] or R["videos"] or R["audios"]) else ""
     else:
         sent = compose_base(desc, sound, music, first=bool(start), last=bool(end), seconds=seconds)
+    if triggers:
+        # comme dans ses légendes d'entraînement (ai-toolkit met le mot en tête de chacune), après le tag
+        # de la recette ; un prompt écrit en sections part tel quel : à la personne de l'y mettre
+        miss = [t for t in triggers if t not in sent]
+        if raw and miss:
+            notes.append(f"prompt en sections, envoyé tel quel : écrivez-y le mot déclencheur de votre LoRA "
+                         f"({', '.join(miss)}) en tête de la description")
+        elif miss and QUALITY_TAG in sent:
+            sent = sent.replace(QUALITY_TAG, f"{QUALITY_TAG} {' '.join(miss)}", 1)
+            notes.append(f"LoRA de moodboard : son mot déclencheur ({', '.join(miss)}) en tête de la description, "
+                         "comme dans ses légendes d'entraînement")
     words = len(desc.split())
     if desc and words < 60 and not raw:
         notes.append(f"{words} mots : les guides MiniMax visent 350 à 500 mots pour la description — l'échec "
@@ -1475,18 +1496,33 @@ def _lora_names() -> tuple[list[str], str]:
         try:
             info = Comfy(ep, timeout=15).object_info("LoraLoaderModelOnly")["LoraLoaderModelOnly"]
             opts = _combo_options(info["input"]["required"]["lora_name"]) or []
-            return list(opts), jobs.machine_of(ep)
+            # `training_adapters/` : l'adaptateur d'entraînement qu'ai-toolkit y télécharge
+            # (minimax_h3_training_adapter_v3, 05/10) — pas un LoRA de rendu
+            return [o for o in opts if not str(o).startswith("training_adapters/")], jobs.machine_of(ep)
         except (ComfyError, KeyError, TypeError):
             continue
     return [], ""
 
 
 def r_loras(req):
+    from tools import lora as moodlora
     names, machine = _lora_names()
     out = []
     for n in names:
         base = n.split("/")[-1]
         low = n.lower()
+        if n.startswith(moodlora.COMFY_DIR):
+            # un LoRA de moodboard entraîné par le portail (h3-<moodboard>-v001-fl2v) : par son préfixe, pas par
+            # les mots de son nom (« cinema » contient « ema », que ACCEL_RX prendrait pour un accélérateur)
+            mb = moodlora.info(n)
+            if mb and not mb.get("hidden") and mb["model"] == "h3":
+                v = f" · v{mb['v']}" if mb.get("v") else ""
+                out.append({"name": n, "nom": f"{mb['title']}{v}", "modes": ["t2v", "i2v"], "force": 1.0, "accel": False,
+                            "warn": False, "moodboard": True, "trigger": mb["trigger"],
+                            "note": "LoRA de moodboard (Idéation), entraîné par le portail sur des images (fl2va)"
+                                    + (f" ; son mot déclencheur « {mb['trigger']} » se met en tête de la description"
+                                       if mb["trigger"] else "")})
+            continue
         if not ("minimax" in low or "h3" in low or "mmh3" in low):
             continue
         known = LORA_NOTES.get(base, {})
@@ -1505,7 +1541,7 @@ def r_loras(req):
             note = known.get("note") or "compatibilité inconnue tant qu'elle n'est pas essayée sur la machine"
         out.append({"name": n, "nom": known.get("nom") or base.replace(".safetensors", ""), "modes": modes,
                     "force": known.get("force", 1.0), "note": note, "accel": accel, "warn": bool(known.get("warn"))})
-    out.sort(key=lambda x: (not x.get("recipe"), x["accel"], x["warn"], x["nom"].lower()))
+    out.sort(key=lambda x: (not x.get("recipe"), not x.get("moodboard"), x["accel"], x["warn"], x["nom"].lower()))
     return {"loras": out, "machine": machine,
             "why": "" if machine else "aucune instance ComfyUI ne répond : la liste se lit sur /object_info"}
 
@@ -2098,6 +2134,45 @@ def selftest(call, ok) -> None:
        and gg["50"]["inputs"]["model"] == ["102", 0] and gg["101"]["inputs"]["model"] == ["50", 0]
        and gg["50"]["inputs"]["strength_model"] == 0.8,
        "un LoRA ajouté se pose après People → DY, avant le Turbo ; ni doublon de la pile ni second accélérateur")
+
+    # un LoRA de moodboard H3 (server/tools/lora.py) : ni de la pile ni un accélérateur, même si son nom
+    # contient « ema » (cinéma) ; son mot déclencheur en tête de la description ; jamais en Références
+    from tools import lora as moodlora
+    mb = moodlora.essai_version("Cinéma noir", "h3", 1, "mbcin001")
+    zi = moodlora.essai_version("Rue", "zimage", 3, "mbrue003")
+    pm = plan("t2v", {"desc": "A man walks.", "loras": [{"name": mb, "strength": 0.9}]})
+    gm = build_graph("t2v", pm, [], pm["prompt_sent"])
+    ok(mb == "showrunner/h3-cinema-noir-v001-fl2v.safetensors" and pm["ok"] and [l["name"] for l in pm["loras"]] == [mb]
+       and gm["50"]["inputs"] == {"model": ["102", 0], "lora_name": mb, "strength_model": 0.9} and gm["101"]["inputs"]["model"] == ["50", 0]
+       and "r34l1sm. DY. mbcin001 [Shot 1] A man walks." in pm["prompt_sent"],
+       f"un LoRA de moodboard H3 : après People → DY, avant le Turbo, son mot déclencheur en tête ({pm.get('errors')} {pm['prompt_sent'][:90]!r})")
+    pz = plan("t2v", {"desc": "A man walks.", "loras": [{"name": zi}]})
+    ok(not pz["ok"] and any("entraîné pour Z-Image" in e for e in pz["errors"]), f"un LoRA de moodboard Z-Image est refusé pour H3 ({pz['errors']})")
+    pr2 = plan("r2v", {"inputs": {"element": [{"item": eid}]}, "desc": "@element1", "loras": [{"name": mb}]})
+    ok(not pr2["ok"] and any("l'autre modèle" in e for e in pr2["errors"]), "un LoRA de moodboard (fl2va) est refusé en Références")
+    # la liste de la page : ce que liste la ComfyUI, sans l'adaptateur d'entraînement d'ai-toolkit
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("faux_comfy", config.REPO / "tools" / "faux_comfy.py")
+    fx = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fx)
+    srv, F, url = fx.start()
+    F.loras = [PEOPLE, CINE, TURBO_V4, "training_adapters/minimax_h3_training_adapter_v3.safetensors", mb, zi,
+               "minimax_h3_flf2v_orbit360_v1.safetensors"]
+    old_eps = globals()["h3_endpoints"]
+    try:
+        globals()["h3_endpoints"] = lambda: [url]
+        names, machine = _lora_names()
+        st, lr = call("GET", "/api/movie/loras")
+        got = {x["name"]: x for x in lr.get("loras", [])}
+        x = got.get(mb, {})
+        ok(machine and "training_adapters/minimax_h3_training_adapter_v3.safetensors" not in names and len(names) == 6,
+           f"la page Vidéo ne liste pas training_adapters/ ({names})")
+        ok(st == 200 and x.get("moodboard") and not x.get("accel") and x.get("modes") == ["t2v", "i2v"] and x.get("nom") == "Cinéma noir · v1"
+           and x.get("trigger") == "mbcin001" and zi not in got and [n for n in got][3] == mb,
+           f"la page Vidéo reconnaît un LoRA de moodboard H3, le premier après la pile, sans les LoRA d'image ({x} {list(got)})")
+    finally:
+        globals()["h3_endpoints"] = old_eps
+        srv.shutdown()
 
     st, h3 = call("GET", "/api/movie/h3")
     ok(st == 200 and isinstance(h3.get("instances"), list), "l'état d'H3 se lit")

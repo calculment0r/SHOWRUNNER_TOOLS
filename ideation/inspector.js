@@ -439,6 +439,12 @@ export function createInspector(app) {
         return s;
       })())));
 
+    // le LoRA d'un moodboard : le même choix que sur la carte (gen.js, loraRow)
+    const lo = app.gen.loraOf(n, n.model, app.gen.unfitGen(n));
+    out.push(card('LoRA', n.lora?.name ? (lo.sent ? `force ${String(lo.sent.strength).replace('.', ',')}` : 'pas envoyé') : 'aucun',
+      app.gen.loraRow(n, n.model, app.gen.unfitGen(n)),
+      hint('Le style d’un moodboard, appris pour un modèle : il ne va qu’à ce modèle. Son mot déclencheur part en tête du prompt (« envoyé » sur la carte le montre).')));
+
     // prise de vue : les pastilles de l'outil Image, une liste par groupe — cachées quand
     // la case Photographie d'un composeur branché les porte (composer.js, gen.looksFrom)
     if (app.gen.looksFrom?.(n) !== 'composer') out.push(card('Prise de vue', Object.keys(n.looks || {}).length ? `${Object.keys(n.looks).length} réglage${Object.keys(n.looks).length > 1 ? 's' : ''}` : 'aucune',
