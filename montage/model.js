@@ -121,11 +121,88 @@ const MKEYS = ['x', 'y', 'scale', 'scaleW', 'rot', 'ax', 'ay', 'op', 'cl', 'ct',
 // les plans qui ont une trajectoire : ce qui se voit sur une piste vidéo
 export const movable = (c) => !!c && (c.kind === 'video' || c.kind === 'image') && trackKind(c.track || '') === 'video';
 export const motionOf = (c) => ({ ...MOTION0, ...((c && c.motion) || {}) });
+
+// ── les images clés de la trajectoire (06/10) ────────────────
+// Cal : « on avance avec les images clés ». Le chronomètre de Premiere, dans Options
+// d'effet : un par propriété (aide d'Adobe, « Add, navigate, and set keyframes », par
+// les résultats de recherche ; helpx.adobe.com ne s'ouvre pas d'ici). Une propriété est
+// un GROUPE de champs qui s'animent ensemble — Position (x, y), Échelle (hauteur et
+// largeur), Rotation, Point d'ancrage (x, y), Opacité, Recadrage (les quatre côtés).
+//   motion.keys = { pos: [[k, [x, y]], [k, [x, y], 1], …], ech: …, rot: …, anc: …, op: …, rec: … }
+// k : l'image de la clé, comptée depuis le DÉBUT DU PLAN (un plan déplacé emporte ses
+// clés) ; les gestes qui déplacent la tête d'un plan sans déplacer sa matière (rogner le
+// début, couper, la propagation, la coupe, le slide) décalent ses clés d'autant : elles
+// gardent leur place dans la timeline, comme les images (`shiftKeys`) ; changer la vitesse
+// les étire avec la matière (`scaleKeys`). Une clé peut tomber hors du plan (rogné) : elle
+// reste, et compte pour ce qui se voit. Le 3ᵉ élément, 1 : le segment qui part de cette clé
+// est « lissé » (accélère puis ralentit, smoothstep : u²(3 − 2u)) ; sinon linéaire. Avant
+// la première clé, la valeur de la première ; après la dernière, celle de la dernière.
+// Une propriété qui a des clés ignore sa valeur fixe. `motionAt` existe deux fois, ligne
+// pour ligne (`motion_at`, server/tools/montage.py) : le moniteur et l'export posent la
+// même image à la même image.
+export const KGROUPS = [
+  { id: 'pos', label: 'position', fields: ['x', 'y'] },
+  { id: 'ech', label: 'échelle', fields: ['scale', 'scaleW'] },
+  { id: 'rot', label: 'rotation', fields: ['rot'] },
+  { id: 'anc', label: 'ancrage', fields: ['ax', 'ay'] },
+  { id: 'op', label: 'opacité', fields: ['op'] },
+  { id: 'rec', label: 'recadrage', fields: ['cl', 'ct', 'cr', 'cb'] },
+];
+export const KGROUP = Object.fromEntries(KGROUPS.map((g) => [g.id, g]));
+export const groupOfField = (f) => KGROUPS.find((g) => g.fields.includes(f));
+const MAX_KEYS = 500;
+const r6 = (v) => Math.round(v * 1e6) / 1e6;
+const borne = (f, v) => r6(Math.max(MOTION_LIM[f][0], Math.min(MOTION_LIM[f][1], v)));
+// des clés propres : triées, une par image (la dernière l'emporte), bornées ; [] si rien de lisible
+export function cleanKeys(gid, raw) {
+  const g = KGROUP[gid];
+  if (!g || !Array.isArray(raw)) return [];
+  const by = new Map();
+  for (const e of raw.slice(0, MAX_KEYS * 2)) {
+    if (!Array.isArray(e) || !Array.isArray(e[1]) || e[1].length !== g.fields.length) continue;
+    const k = e[0], vals = e[1];
+    if (typeof k !== 'number' || !Number.isFinite(k) || !vals.every((v) => typeof v === 'number' && Number.isFinite(v))) continue;
+    const kk = Math.round(Math.max(-1e6, Math.min(1e6, k)));
+    by.set(kk, e[2] === 1 ? [kk, vals.map((v, i) => borne(g.fields[i], v)), 1] : [kk, vals.map((v, i) => borne(g.fields[i], v))]);
+  }
+  return [...by.values()].sort((a, b) => a[0] - b[0]).slice(0, MAX_KEYS);
+}
+// la valeur d'un groupe à l'image k (comptée depuis le début du plan)
+export function keysAt(keys, k) {
+  if (k <= keys[0][0]) return keys[0][1].slice();
+  const n = keys.length - 1;
+  if (k >= keys[n][0]) return keys[n][1].slice();
+  let i = 0;
+  while (keys[i + 1][0] <= k) i++;
+  const [k0, a, e] = keys[i], [k1, b] = keys[i + 1];
+  let u = (k - k0) / (k1 - k0);
+  if (e === 1) u = u * u * (3 - 2 * u);
+  return a.map((v, j) => v + (b[j] - v) * u);
+}
+export const hasKeys = (c) => !!(c && c.motion && c.motion.keys && Object.keys(c.motion.keys).length);
+export const groupKeys = (c, gid) => (c && c.motion && c.motion.keys && c.motion.keys[gid]) || null;
+// La trajectoire d'un plan à l'image `f` de la timeline : ses valeurs fixes, et pour chaque
+// groupe qui a des clés, leur valeur à cette image.
+export function motionAt(c, f) {
+  const m = motionOf(c);
+  const keys = c && c.motion && c.motion.keys;
+  if (!keys) return m;
+  for (const g of KGROUPS) {
+    const list = keys[g.id];
+    if (!list || !list.length) continue;
+    const v = keysAt(list, f - c.start);
+    g.fields.forEach((fl, i) => { m[fl] = v[i]; });
+  }
+  if (m.uniform) m.scaleW = m.scale;
+  delete m.keys;
+  return m;
+}
 // Une trajectoire propre : bornée, arrondie (6 décimales), la largeur suit la
-// hauteur en échelle uniforme ; rend null pour celle par défaut (le plan n'en
-// porte pas). Même règle que `_motion` du serveur.
+// hauteur en échelle uniforme, ses clés propres ; rend null pour celle par défaut
+// sans clé (le plan n'en porte pas). Même règle que `_motion` du serveur.
 export function cleanMotion(raw) {
   const m = { ...MOTION0 };
+  const keys = {};
   if (raw && typeof raw === 'object') {
     for (const k of MKEYS) {
       const v = Number(raw[k]);
@@ -133,8 +210,10 @@ export function cleanMotion(raw) {
       if (ok && Number.isFinite(v)) m[k] = Math.round(Math.max(MOTION_LIM[k][0], Math.min(MOTION_LIM[k][1], v)) * 1e6) / 1e6;
     }
     m.uniform = raw.uniform !== false;
+    if (raw.keys && typeof raw.keys === 'object') for (const g of KGROUPS) { const l = cleanKeys(g.id, raw.keys[g.id]); if (l.length) keys[g.id] = l; }
   }
   if (m.uniform) m.scaleW = m.scale;
+  if (Object.keys(keys).length) { m.keys = keys; return m; }
   return MKEYS.every((k) => Math.abs(m[k] - MOTION0[k]) < 1e-9) && m.uniform ? null : m;
 }
 // poser une trajectoire sur un plan (un objet neuf : jamais partagé entre deux plans)
@@ -142,6 +221,82 @@ export function setMotion(c, patch) {
   const m = cleanMotion({ ...motionOf(c), ...patch });
   if (m) c.motion = m; else delete c.motion;
   return c;
+}
+// Changer la trajectoire telle qu'elle se voit à l'image `f` : un groupe sans clé prend
+// la valeur ; un groupe qui a des clés reçoit une clé à cette image (posée ou mise à jour,
+// son lissage gardé) — seulement s'il change. Premiere : « changer une valeur ailleurs pose
+// une image clé là » quand le chronomètre est actif.
+export function setMotionAt(c, f, patch) {
+  const now = motionAt(c, f);
+  const base = { ...motionOf(c) };
+  const keys = JSON.parse(JSON.stringify((c.motion && c.motion.keys) || {}));
+  const k = f - c.start;
+  for (const g of KGROUPS) {
+    const touche = g.fields.filter((fl) => fl in patch && Math.abs(Number(patch[fl]) - now[fl]) > 1e-9);
+    if (!touche.length) continue;
+    if (keys[g.id] && keys[g.id].length) {
+      const vals = g.fields.map((fl) => (fl in patch ? Number(patch[fl]) : now[fl]));
+      const old = keys[g.id].find((e) => e[0] === k);
+      keys[g.id] = keys[g.id].filter((e) => e[0] !== k).concat([old && old[2] === 1 ? [k, vals, 1] : [k, vals]]);
+    } else for (const fl of g.fields) if (fl in patch) base[fl] = patch[fl];
+  }
+  if ('uniform' in patch) base.uniform = patch.uniform;
+  const m = cleanMotion({ ...base, keys });
+  if (m) c.motion = m; else delete c.motion;
+  return c;
+}
+// Le chronomètre d'un groupe : l'allumer pose une clé à l'image `f` avec la valeur qui s'y
+// voit ; l'éteindre retire ses clés, la valeur qui se voit à `f` devient sa valeur fixe.
+export function setStopwatch(c, gid, f, on) {
+  const g = KGROUP[gid], now = motionAt(c, f);
+  const keys = JSON.parse(JSON.stringify((c.motion && c.motion.keys) || {}));
+  const base = { ...motionOf(c) };
+  if (on) keys[gid] = [[f - c.start, g.fields.map((fl) => now[fl])]];
+  else { delete keys[gid]; for (const fl of g.fields) base[fl] = now[fl]; }
+  const m = cleanMotion({ ...base, keys });
+  if (m) c.motion = m; else delete c.motion;
+  return c;
+}
+// Poser (avec la valeur qui se voit) ou retirer la clé d'un groupe à l'image `f` ; le
+// dernier retiré, la valeur reste (fixe). Rend vrai si une clé est posée.
+export function toggleKey(c, gid, f) {
+  const list = groupKeys(c, gid);
+  const k = f - c.start;
+  if (!list) { setStopwatch(c, gid, f, true); return true; }
+  if (list.some((e) => e[0] === k)) {
+    if (list.length === 1) { setStopwatch(c, gid, f, false); return false; }
+    c.motion = cleanMotion({ ...c.motion, keys: { ...c.motion.keys, [gid]: list.filter((e) => e[0] !== k) } });
+    return false;
+  }
+  const now = motionAt(c, f);
+  c.motion = cleanMotion({ ...c.motion, keys: { ...c.motion.keys, [gid]: [...list, [k, KGROUP[gid].fields.map((fl) => now[fl])]] } });
+  return true;
+}
+// le lissage du segment qui part de la clé `k` d'un groupe (vrai : lissé)
+export function setEase(c, gid, k, smooth) {
+  const list = groupKeys(c, gid);
+  if (!list) return;
+  c.motion = cleanMotion({ ...c.motion, keys: { ...c.motion.keys, [gid]: list.map((e) => (e[0] === k ? (smooth ? [e[0], e[1], 1] : [e[0], e[1]]) : e)) } });
+}
+// les images (de la timeline) où un plan a des clés : d'un groupe, ou de tous
+export function keyFrames(c, gid = null) {
+  const keys = (c && c.motion && c.motion.keys) || {};
+  const s = new Set();
+  for (const g of KGROUPS) if ((!gid || g.id === gid) && keys[g.id]) for (const e of keys[g.id]) s.add(c.start + e[0]);
+  return [...s].sort((a, b) => a - b);
+}
+// Les gestes qui bougent la tête d'un plan sans bouger sa matière : ses clés reculent de
+// `d` images (elles gardent leur place dans la timeline) ; un objet neuf.
+export function shiftKeys(motion, d) {
+  if (!motion || !motion.keys || !d) return motion;
+  const keys = {};
+  for (const [gid, list] of Object.entries(motion.keys)) keys[gid] = list.map((e) => [e[0] - d, e[1].slice(), ...e.slice(2)]);
+  return { ...motion, keys };
+}
+// …ou s'étirent avec elle (la vitesse change : `r` = nouvelle durée de la matière / ancienne)
+export function scaleKeys(motion, r) {
+  if (!motion || !motion.keys || Math.abs(r - 1) < 1e-12) return motion;
+  return cleanMotion({ ...motion, keys: Object.fromEntries(Object.entries(motion.keys).map(([gid, list]) => [gid, list.map((e) => [Math.round(e[0] * r), e[1].slice(), ...e.slice(2)])])) });
 }
 
 // Où se pose l'image d'un plan de `sw` × `sh` pixels dans un cadre de W × H :
@@ -304,7 +459,8 @@ export function audibleTracks(p) {
 // ── les gestes ───────────────────────────────────────────────
 function headCut(c, cutFrames, fps) {
   return { ...c, start: c.start + cutFrames, dur: c.dur - cutFrames,
-    in: still(c) ? 0 : (c.in || 0) + cutFrames / fps * spd(c), xfade: 0, fade_in: Math.min(c.fade_in || 0, c.dur - cutFrames) };
+    in: still(c) ? 0 : (c.in || 0) + cutFrames / fps * spd(c), xfade: 0, fade_in: Math.min(c.fade_in || 0, c.dur - cutFrames),
+    ...(c.motion ? { motion: shiftKeys(c.motion, cutFrames) } : {}) };   // les clés gardent leur place dans la timeline
 }
 
 // Vide [s, e) sur une piste : les plans couverts partent, ceux qui
@@ -465,6 +621,7 @@ export function trimClip(c, side, d, fps) {
   if (side === 'l') {
     c.start += d; c.dur -= d;
     if (!still(c)) c.in = Math.max(0, (c.in || 0) + d / fps * spd(c));
+    if (c.motion) c.motion = shiftKeys(c.motion, d);    // les clés, comme les images, gardent leur place
   } else c.dur += d;
   fitFades(c);
 }
@@ -490,6 +647,7 @@ export function rippleTrim(p, id, side, d) {
   if (side === 'l') {
     c.dur -= d;
     if (!still(c)) c.in = Math.max(0, (c.in || 0) + d / fps * spd(c));
+    if (c.motion) c.motion = shiftKeys(c.motion, d);    // la matière avance de d sous la tête : ses clés aussi
   } else c.dur += d;
   fitFades(c);
   const shift = clipEnd(c) - end0;
@@ -508,6 +666,7 @@ export function roll(p, aId, bId, d) {
   a.dur += d;
   b.start += d; b.dur -= d;
   if (!still(b)) b.in = Math.max(0, (b.in || 0) + d / fps * spd(b));
+  if (b.motion) b.motion = shiftKeys(b.motion, d);
   for (const x of [a, b]) fitFades(x);
 }
 // le voisin collé de ce côté, s'il y en a un (sinon Rolling rogne comme Sélection)
@@ -552,6 +711,7 @@ export function slide(p, id, d) {
     const b = byId(p, n.nextTouch.id);
     b.start += d; b.dur -= d;
     if (!still(b)) b.in = Math.max(0, (b.in || 0) + d / fps * spd(b));
+    if (b.motion) b.motion = shiftKeys(b.motion, d);
     fitFades(b);
   }
   c.start += d;
@@ -575,6 +735,8 @@ export function stretch(p, id, side, d) {
   const nd = c.dur + (side === 'l' ? -d : d);
   if (nd < 1) return;
   if (!still(c)) c.speed = Math.max(SPEED_MIN, Math.min(SPEED_MAX, spd(c) * c.dur / nd));
+  // les clés s'étirent avec la matière ; une image fixe se rogne simplement : elles gardent leur place
+  if (c.motion) c.motion = still(c) ? (side === 'l' ? shiftKeys(c.motion, d) : c.motion) : scaleKeys(c.motion, nd / c.dur);
   if (side === 'l') c.start += d;
   c.dur = nd;
   fitFades(c);
@@ -591,6 +753,7 @@ export function setSpeed(p, id, speed, ripple = false) {
   let nd = Math.max(1, Math.round(c.dur * spd(c) / speed));
   const { next } = neighbours(p, c);
   if (!ripple && next) nd = Math.min(nd, next.start - c.start);
+  if (c.motion) c.motion = scaleKeys(c.motion, spd(c) / speed);   // les clés suivent la matière
   c.speed = speed;
   c.dur = nd;
   fitFades(c);
@@ -790,6 +953,11 @@ export function convertFps(p, fps) {
   if (r === 1) return;
   for (const c of p.clips) {
     const s = Math.round(c.start * r), e = Math.round(clipEnd(c) * r);
+    // une clé reste à sa place dans la timeline, arrondie à la nouvelle grille comme les bords
+    if (c.motion && c.motion.keys) {
+      c.motion = cleanMotion({ ...c.motion, keys: Object.fromEntries(Object.entries(c.motion.keys).map(([gid, list]) =>
+        [gid, list.map((k) => [Math.round((c.start + k[0]) * r) - s, k[1].slice(), ...k.slice(2)])])) });
+    }
     c.start = s; c.dur = Math.max(1, e - s);
     c.fade_in = Math.min(c.dur, Math.round((c.fade_in || 0) * r));
     c.fade_out = Math.min(c.dur, Math.round((c.fade_out || 0) * r));

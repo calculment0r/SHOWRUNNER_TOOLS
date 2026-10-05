@@ -412,15 +412,95 @@ def _motion(raw) -> dict | None:
                 lo, hi = MOTION_LIM[k]
                 m[k] = round(max(lo, min(hi, x)), 6)
         m["uniform"] = raw.get("uniform") is not False
+        keys = raw.get("keys") if isinstance(raw.get("keys"), dict) else {}
+        kk = {g: _keys(g, keys.get(g)) for g, _ in KGROUPS}
+        kk = {g: v for g, v in kk.items() if v}
+    else:
+        kk = {}
     if m["uniform"]:
         m["scaleW"] = m["scale"]
+    if kk:
+        m["keys"] = kk
+        return m
     if m["uniform"] and all(abs(m[k] - MOTION0[k]) < 1e-9 for k in MKEYS):
         return None
     return m
 
 
+# Les images clés (06/10) : `motion.keys = {groupe: [[k, [valeurs]], [k, [valeurs], 1], …]}`, k en
+# images depuis le début du plan, 1 : le segment qui part de la clé est lissé (smoothstep).
+# Le même modèle que montage/model.js (KGROUPS, cleanKeys, keysAt, motionAt), ligne pour ligne.
+KGROUPS = (("pos", ("x", "y")), ("ech", ("scale", "scaleW")), ("rot", ("rot",)), ("anc", ("ax", "ay")),
+           ("op", ("op",)), ("rec", ("cl", "ct", "cr", "cb")))
+KFIELDS = dict(KGROUPS)
+MAX_KEYS = 500
+
+
+def _r6(x: float) -> float:
+    """Six décimales, la moitié vers le haut (Math.round de la page)."""
+    return math.floor(x * 1e6 + 0.5) / 1e6
+
+
+def _num_ok(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _keys(gid: str, raw) -> list:
+    """Des clés propres : triées, une par image (la dernière l'emporte), bornées."""
+    fields = KFIELDS.get(gid)
+    if not fields or not isinstance(raw, list):
+        return []
+    by = {}
+    for e in raw[:MAX_KEYS * 2]:
+        if not isinstance(e, list) or len(e) < 2 or not isinstance(e[1], list) or len(e[1]) != len(fields):
+            continue
+        k, vals = e[0], e[1]
+        if not _num_ok(k) or not all(_num_ok(v) for v in vals):
+            continue
+        k = math.floor(max(-1e6, min(1e6, k)) + 0.5)
+        vals = [_r6(max(MOTION_LIM[f][0], min(MOTION_LIM[f][1], v))) for f, v in zip(fields, vals)]
+        by[k] = [k, vals, 1] if len(e) > 2 and e[2] == 1 and not isinstance(e[2], bool) else [k, vals]
+    return [by[k] for k in sorted(by)][:MAX_KEYS]
+
+
+def keys_at(keys: list, k: float) -> list:
+    if k <= keys[0][0]:
+        return list(keys[0][1])
+    n = len(keys) - 1
+    if k >= keys[n][0]:
+        return list(keys[n][1])
+    i = 0
+    while keys[i + 1][0] <= k:
+        i += 1
+    k0, a = keys[i][0], keys[i][1]
+    k1, b = keys[i + 1][0], keys[i + 1][1]
+    u = (k - k0) / (k1 - k0)
+    if len(keys[i]) > 2 and keys[i][2] == 1:
+        u = u * u * (3 - 2 * u)
+    return [v + (w - v) * u for v, w in zip(a, b)]
+
+
 def motion_of(c: dict) -> dict:
-    return {**MOTION0, **(c.get("motion") or {})}
+    m = {**MOTION0, **(c.get("motion") or {})}
+    m.pop("keys", None)
+    return m
+
+
+def motion_at(c: dict, f: float) -> dict:
+    """La trajectoire du plan `c` à l'image `f` de la timeline (`motionAt` de la page)."""
+    m = motion_of(c)
+    keys = (c.get("motion") or {}).get("keys") or {}
+    for gid, fields in KGROUPS:
+        if keys.get(gid):
+            for fl, v in zip(fields, keys_at(keys[gid], f - c["start"])):
+                m[fl] = v
+    if m.get("uniform", True):
+        m["scaleW"] = m["scale"]
+    return m
+
+
+def animated(c: dict) -> bool:
+    return bool((c.get("motion") or {}).get("keys"))
 
 
 def cadre(m: dict, W: float, H: float, sw: float, sh: float) -> dict:
@@ -1544,6 +1624,118 @@ def _placement(mo: dict, m: dict, W: int, H: int) -> dict | None:
     return {"pre": pre, "post": post, "box": (ox, oy, RW, RH)}
 
 
+def _xf(x: float) -> str:
+    """Un nombre pour une expression de ffmpeg : sa valeur exacte (repr), sans exposant."""
+    return f"{x:.12g}" if abs(x) >= 1e-9 else "0"
+
+
+def _kexpr(keys: list, j: int, K: str, scale: float = 1.0) -> str:
+    """L'expression ffmpeg de `keys_at(keys, K)[j] × scale` : par morceaux, linéaire ou
+    lissée (u²(3 − 2u)) — le calcul même de la page et de `motion_at`."""
+    v = [e[1][j] * scale for e in keys]
+    out = _xf(v[-1])
+    for i in range(len(keys) - 2, -1, -1):
+        k0, k1 = keys[i][0], keys[i + 1][0]
+        u = f"(({K})-({k0}))/{k1 - k0}"
+        if len(keys[i]) > 2 and keys[i][2] == 1:
+            u = f"({u})*({u})*(3-2*({u}))"
+        out = f"if(lt({K},{k1}),{_xf(v[i])}+({_xf(v[i + 1] - v[i])})*{u},{out})"
+    return f"if(lte({K},{keys[0][0]}),{_xf(v[0])},{out})"
+
+
+def _placement_anim(c: dict, m: dict, W: int, H: int, a: int, b: int, fps: int, tag: str, workdir: str) -> dict:
+    """Les filtres qui posent un plan dont la trajectoire a des images clés, pour les
+    images [a, b) de la timeline (06/10 : le chronomètre de Premiere). Rend
+    {"pre", "post", "files"} : `pre` passe la source en RVB à une taille fixe (la plus
+    grande échelle de l'animation sur [a, b), bornée à deux fois le cadre), avant les
+    effets ; `post` vient après `trim` (horodatages depuis `a`) :
+      - l'opacité : `colorchannelmixer aa`, réglée image par image par `sendcmd` ;
+      - en YUV BT.709 à pleine chrominance (yuva444p : `drawbox` et `perspective` y
+        travaillent sans conversion cachée), la source posée dans une toile transparente
+        avec un bord de 2 px ; le recadrage : quatre bandes rendues transparentes
+        (`drawbox` replace=1, par `sendcmd`) ;
+      - la géométrie : `perspective` (sense=destination, eval=frame) envoie les coins de
+        la toile là où `cadre()` les pose à chaque image — ses huit expressions calculent
+        la position, l'échelle, la rotation et l'ancrage de l'image `in` comme `motion_at`
+        (par morceaux, linéaires ou lissés) ; hors de la toile, le bord transparent ;
+      - la toile ramenée au cadre (`crop`), puis yuva420p, comme les autres plans.
+    Toutes les tailles restent fixes d'une image à l'autre (un `scale` ou un `crop`
+    animés changeraient la taille des images, ce que la suite du graphe ne suit pas).
+    Mesuré contre le rendu fixe image par image : voir docs/etudes/montage.md."""
+    sw, sh = m.get("width") or 0, m.get("height") or 0
+    if not (sw > 0 and sh > 0):
+        raise ValueError(f"taille inconnue pour « {m.get('title') or m.get('path')} » : sa trajectoire ne peut pas se poser")
+    keys = (c.get("motion") or {}).get("keys") or {}
+    ms = [motion_at(c, f) for f in range(a, b)]
+    uniform = ms[0].get("uniform", True)
+    k0 = min(W / sw, H / sh)
+    kxs = [k0 * (x["scale"] if uniform else x["scaleW"]) for x in ms]
+    kys = [k0 * x["scale"] for x in ms]
+    CW = max(2, min(2 * W, _rnd(sw * max(kxs))))
+    CH = max(2, min(2 * H, _rnd(sh * max(kys))))
+    B = 2
+    PW, PH = max(W, CW + 2 * B), max(H, CH + 2 * B)
+    ex, ey = CW / sw, CH / sh                     # px de la toile par px de la source
+    files, cmds = {}, {}
+    # l'opacité et le recadrage, image par image (la valeur de l'image 0 en option, les suivantes par sendcmd)
+    ops = [x["op"] for x in ms]
+
+    def bandes(x):
+        l, r = _rnd(x["cl"] * CW), _rnd(x["cr"] * CW)
+        t, bo = _rnd(x["ct"] * CH), _rnd(x["cb"] * CH)
+        return [(B, 0, l, PH) if l > 0 else (0, 0, 1, 1), (B + CW - r, 0, r, PH) if r > 0 else (0, 0, 1, 1),
+                (0, B, PW, t) if t > 0 else (0, 0, 1, 1), (0, B + CH - bo, PW, bo) if bo > 0 else (0, 0, 1, 1)]
+    bs = [bandes(x) for x in ms]
+    crop_on = any(x["cl"] or x["cr"] or x["ct"] or x["cb"] for x in ms)
+    op_on = any(v < 1 for v in ops)
+    for i in range(1, len(ms)):
+        at = f"{(i - 0.5) / fps:.6f}"
+        if op_on and ops[i] != ops[i - 1]:
+            cmds.setdefault(at, []).append(f"colorchannelmixer@{tag}o aa {_xf(ops[i])}")
+        if crop_on:
+            for n, (q, q0) in enumerate(zip(bs[i], bs[i - 1])):
+                if q != q0:
+                    cmds.setdefault(at, []).append(", ".join(f"drawbox@{tag}{n} {k} {v}" for k, v in zip("xywh", q)))
+    post = []
+    if cmds:
+        path = str(Path(workdir) / f"commandes-{tag}.txt")
+        files[path] = "".join(f"{t} {', '.join(v)};\n" for t, v in cmds.items())
+        post.append(f"sendcmd=f='{path}'")
+    if op_on:
+        post += ["format=gbrap", f"colorchannelmixer@{tag}o=aa={_xf(ops[0])}"]
+    post += ["scale=out_color_matrix=bt709:out_range=limited", "format=yuva444p", f"pad={PW}:{PH}:{B}:{B}:color=black@0"]
+    if crop_on:
+        post += [f"drawbox@{tag}{n}=x={q[0]}:y={q[1]}:w={q[2]}:h={q[3]}:t=fill:color=black@0:replace=1" for n, q in enumerate(bs[0])]
+    # les coins de la toile, en px de la source : (−B, PW − B) / ex × (−B, PH − B) / ey
+    K = f"{a - c['start'] - 1}+in"            # `in` compte les images de perspective à partir de 1 (mesuré : sans le −1, une image d'avance)
+
+    def field(gid, j, fl, scale=1.0):
+        return _kexpr(keys[gid], j, "ld(0)", scale) if keys.get(gid) else _xf(ms[0][fl] * scale)
+    pre_e = (f"st(0,{K});st(1,{field('pos', 0, 'x', W)});st(2,{field('pos', 1, 'y', H)});"
+             f"st(3,{field('ech', 0 if uniform else 1, 'scale' if uniform else 'scaleW', k0)});st(4,{field('ech', 0, 'scale', k0)});"
+             f"st(5,{field('rot', 0, 'rot', math.pi / 180)});st(6,{field('anc', 0, 'ax', sw)});st(7,{field('anc', 1, 'ay', sh)});")
+    corners = []
+    for vc in (-B / ey, (PH - B) / ey):
+        for uc in (-B / ex, (PW - B) / ex):
+            du, dv = f"({_xf(uc)}-ld(6))", f"({_xf(vc)}-ld(7))"
+            corners.append((pre_e + f"ld(1)+cos(ld(5))*ld(3)*{du}-sin(ld(5))*ld(4)*{dv}",
+                            pre_e + f"ld(2)+sin(ld(5))*ld(3)*{du}+cos(ld(5))*ld(4)*{dv}"))
+    post.append("perspective=" + ":".join(f"x{i}='{X}':y{i}='{Y}'" for i, (X, Y) in enumerate(corners))
+                + ":sense=destination:eval=frame:interpolation=linear")
+    if PW > W or PH > H:
+        post.append(f"crop={W}:{H}:0:0")
+    post.append("format=yuva420p")
+    return {"pre": [f"scale={CW}:{CH}{_to_rgb(m)}", "format=gbrp"], "post": post, "files": files, "canvas": (CW, CH, PW, PH)}
+
+
+def _anime_sur(c: dict, a: int, b: int) -> bool:
+    """La trajectoire du plan change-t-elle sur les images [a, b) ?"""
+    if not animated(c):
+        return False
+    m0 = motion_at(c, a)
+    return any(motion_at(c, f) != m0 for f in range(a + 1, b))
+
+
 def plan_video(p: dict, media: dict[str, dict], f0: int, f1: int, out_path: str, preset: str = "medium",
                luts: dict | None = None) -> dict:
     """Une passe d'image : les images [f0, f1) du montage, sans son."""
@@ -1556,6 +1748,7 @@ def plan_video(p: dict, media: dict[str, dict], f0: int, f1: int, out_path: str,
     order = [t["id"] for t in reversed([t for t in p["tracks"] if t["kind"] != "audio"])]
     kinds = {t["id"]: t["kind"] for t in p["tracks"]}
     inputs: list[list[str]] = []
+    files: dict[str, str] = {}               # les commandes des trajectoires animées (sendcmd), à écrire avant
     graph = [f"color=c=black:s={W}x{H}:r={fps}:d={_f((f1 - f0) / fps)},format=yuv420p[base]"]
     last = "base"
     used: list[str] = []
@@ -1596,8 +1789,12 @@ def plan_video(p: dict, media: dict[str, dict], f0: int, f1: int, out_path: str,
             m = media[c["item"]]
             # la trajectoire (06/10) : un plan déplacé, mis à l'échelle, tourné, recadré ou
             # transparent se pose par `_placement` ; sans elle, la mise en place d'avant, telle quelle
-            place = _placement(c["motion"], m, W, H) if c.get("motion") else None
-            if c.get("motion") and place is None:
+            # ses images clés (06/10) : une trajectoire qui change sur la passe se pose image par image
+            # (`_placement_anim`) ; qui ne change pas, comme une trajectoire fixe, à sa valeur sur la passe
+            anim = _placement_anim(c, m, W, H, a, b, fps, f"k{len(inputs)}f{f0}", str(Path(out_path).parent)) \
+                if c.get("motion") and _anime_sur(c, a, b) else None
+            place = _placement(motion_at(c, a), m, W, H) if c.get("motion") and not anim else None
+            if c.get("motion") and not anim and place is None:
                 continue                         # rien ne s'en voit : hors du cadre, échelle ou opacité nulle
             if m["kind"] == "image":
                 args, pre = _open(c, m, fps, a, b)
@@ -1610,7 +1807,10 @@ def plan_video(p: dict, media: dict[str, dict], f0: int, f1: int, out_path: str,
             nw = w["we"] - w["ws"]
             # horodatage relatif au début de la fenêtre du plan : les fondus
             # (en temps) se calculent comme si le plan était rendu d'un bloc
-            if place:
+            if anim:
+                files.update(anim["files"])
+                fit = [*anim["pre"], "setsar=1", *_fx_filters(chain_of(p, c), luts)]
+            elif place:
                 fit = [*place["pre"], "setsar=1", *_fx_filters(chain_of(p, c), luts), *place["post"]]
             else:
                 fit = [f"scale={W}:{H}:force_original_aspect_ratio=decrease:force_divisible_by=2{_to_rgb(m)}",
@@ -1620,7 +1820,9 @@ def plan_video(p: dict, media: dict[str, dict], f0: int, f1: int, out_path: str,
                        f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black@0"]
             chain = [*head, *fit,
                      f"tpad=start={pre}:start_mode=clone:stop=-1:stop_mode=clone",
-                     f"trim=end_frame={b - a}", f"setpts=PTS-STARTPTS{_shift(a - w['ws'], fps)}"]
+                     f"trim=end_frame={b - a}",
+                     *(["setpts=PTS-STARTPTS", *anim["post"]] if anim else []),     # l'image `in` de `post` est l'image `a`
+                     f"setpts=PTS-STARTPTS{_shift(a - w['ws'], fps)}"]
             if w["xin"]:
                 chain.append(f"fade=t=in:st=0:d={_f(w['xin'] / fps)}:alpha=1")
             if w["fin"]:
@@ -1645,7 +1847,7 @@ def plan_video(p: dict, media: dict[str, dict], f0: int, f1: int, out_path: str,
     args += ["-filter_complex", g, "-map", "[vout]", "-an",
              "-c:v", "libx264", "-preset", preset, "-crf", "18", "-pix_fmt", "yuv420p", *OUT_COLOR, "-r", str(fps),
              "-frames:v", str(f1 - f0), out_path]
-    return {"args": args, "graph": g, "inputs": len(inputs), "items": used, "f0": f0, "f1": f1, "out": out_path}
+    return {"args": args, "graph": g, "inputs": len(inputs), "items": used, "f0": f0, "f1": f1, "out": out_path, "files": files}
 
 
 def plan_mux(p: dict, media: dict[str, dict], list_path: str, out_path: str, rng=None) -> dict:
@@ -1747,7 +1949,7 @@ def plan(p: dict, media: dict[str, dict], out_path: str, preset: str = "medium",
     return {"chunks": chunks, "mux": mux, "list_path": list_path,
             "list": "".join(f"file '{ch['out']}'\n" for ch in chunks),
             "graph": "\n".join([ch["graph"] for ch in chunks] + [mux["graph"]]),
-            "duration": (r1 - r0) / fps, "frames": r1 - r0,
+            "duration": (r1 - r0) / fps, "frames": r1 - r0, "files": {k: v for ch in chunks for k, v in ch["files"].items()},
             "inputs": max([ch["inputs"] for ch in chunks] + [mux["inputs"]]),
             "items": list(dict.fromkeys(used))}
 
@@ -1873,6 +2075,8 @@ def run_export(ctx) -> dict:
     except ValueError as e:
         raise RuntimeError(str(e)) from e
     Path(pl["list_path"]).write_text(pl["list"], encoding="utf-8")
+    for path, text in pl["files"].items():          # les commandes des trajectoires animées (sendcmd)
+        Path(path).write_text(text, encoding="utf-8")
     (ctx.workdir / "commandes.json").write_text(json.dumps([c["args"] for c in pl["chunks"]] + [pl["mux"]["args"]],
                                                            ensure_ascii=False, indent=1), encoding="utf-8")
     fps, total, T = p["settings"]["fps"], pl["frames"], pl["duration"]
@@ -2387,10 +2591,85 @@ def _selftest_trajectoire(ok) -> None:
     ok(abs(R["aller"][0] - 640) < 1e-6 and abs(R["aller"][1] - 360) < 1e-6, f"montage : le coin bas droit de l'image tournée revient au coin de la source ({R['aller']})")
 
 
+# Les images clés (06/10) : `cleanMotion`/`motionAt` de la page contre `_motion`/`motion_at`
+# d'ici, sur les mêmes entrées ; et les gestes de la timeline qui gardent les clés sur la matière.
+_CLES_JS = r"""
+const M = await import(process.env.MODEL_URL);
+const cases = JSON.parse(process.env.CASES);
+const R = { cases: cases.map(([raw, start, frames]) => { const m = M.cleanMotion(raw); const c = { start, motion: m };
+  return { m, v: frames.map((f) => M.motionAt(c, f)) }; }) };
+const base = () => ({ settings: { fps: 25 }, tracks: [{ id: 'V1', kind: 'video' }], clips: [
+  { id: 'a', track: 'V1', kind: 'video', start: 30, dur: 60, in: 1, src_dur: 8, motion: M.cleanMotion({ keys: { pos: [[10, [0.2, 0.3]], [50, [0.8, 0.7], 1]], op: [[0, [1]], [40, [0.2]]] } }) },
+  { id: 'b', track: 'V1', kind: 'video', start: 90, dur: 40, in: 2, src_dur: 8 } ] });
+const vu = (q, id, f) => { const c = M.byId(q, id); return c && f >= c.start && f < M.clipEnd(c) ? JSON.stringify(M.motionAt(c, f)) : null; };
+const pareil = (q0, q1, id, f0, f1) => { for (let f = f0; f < f1; f++) if (vu(q0, id, f) !== vu(q1, id, f)) return f; return true; };
+let q = base(); M.trimClip(M.byId(q, 'a'), 'l', 15, 25); R.trim = pareil(base(), q, 'a', 45, 90);
+q = base(); M.cutAt(q, 'a', 60); const droite = q.clips.find((c) => c.id !== 'a' && c.id !== 'b');
+R.coupe = [pareil(base(), q, 'a', 30, 60), (() => { for (let f = 60; f < 90; f++) if (JSON.stringify(M.motionAt(droite, f)) !== vu(base(), 'a', f)) return f; return true; })()];
+q = base(); M.moveClips(q, new Set(['a']), 7); R.deplace = (() => { const q0 = base(); for (let f = 30; f < 90; f++) if (vu(q0, 'a', f) !== vu(q, 'a', f + 7)) return f; return true; })();
+q = base(); M.byId(q, 'b').start = 95; M.trimClip(M.byId(q, 'a'), 'l', -10, 25); R.revele = pareil(base(), q, 'a', 30, 90);
+q = base(); M.setSpeed(q, 'a', 2); R.vitesse = M.byId(q, 'a').motion.keys.pos.map((e) => e[0]);
+q = base(); const c = M.byId(q, 'a'); M.setMotionAt(c, 70, { x: 0.5 }); R.pose = c.motion.keys.pos.map((e) => [e[0], e[1][0]]);
+M.setMotionAt(c, 70, { rot: 30 }); R.fixe = [c.motion.rot, !!c.motion.keys.rot];
+M.setStopwatch(c, 'pos', 70, false); R.chrono = [!!(c.motion.keys && c.motion.keys.pos), c.motion.x];
+const d = M.byId(q, 'b'); R.bascule = [M.toggleKey(d, 'rot', 100), M.toggleKey(d, 'rot', 110), M.toggleKey(d, 'rot', 110), M.groupKeys(d, 'rot').length];
+console.log(JSON.stringify(R));
+"""
+
+
+def _selftest_cles(ok) -> None:
+    node = shutil.which("node")
+    if not node:
+        ok(True, "montage : node absent, les images clés de la page ne sont pas comparées ici")
+        return
+    K = {"pos": [[0, [0.2, 0.3]], [25, [0.8, 0.7], 1], [50, [0.5, 0.5]]], "ech": [[10, [0.5, 2.0]], [40, [1.5, 0.25]]],
+         "rot": [[-5, [0]], [45, [-270]]], "anc": [[20, [0.1, 0.9], 1], [21, [0.9, 0.1]]], "op": [[0, [1]], [30, [0]]],
+         "rec": [[0, [0, 0, 0, 0]], [30, [0.25, 0.1, 0.5, 0.2]]]}
+    frames = [-10, 0, 3, 12.5, 25, 26, 37, 44, 50, 61]
+    cases = [
+        [{"keys": K}, 100, [100 + f for f in frames]],
+        [{"uniform": False, "scaleW": 2, "x": 0.1, "keys": {"ech": K["ech"], "pos": K["pos"][:1]}}, 0, frames],
+        [{"keys": {"pos": [[3, [0.4, 0.4]], [3, [0.6, 0.6]], ["x", [1, 1]], [7, [1]], [9, [99, -99], True]], "nul": [[0, [1]]]}}, 0, frames],
+        [{"keys": {"op": []}}, 0, frames],
+        [{"keys": {"op": [[5, [3]]]}, "op": 0.5}, 0, frames],
+    ]
+    env = {**__import__("os").environ, "MODEL_URL": (config.REPO / "montage" / "model.js").as_uri(), "CASES": json.dumps(cases)}
+    r = subprocess.run([node, "--input-type=module", "-e", _CLES_JS], capture_output=True, text=True, timeout=60, env=env)
+    try:
+        R = json.loads(r.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        ok(False, f"montage : model.js ne répond pas pour les images clés ({r.returncode} {r.stderr[-400:]})")
+        return
+    worst, bad = 0.0, []
+    for (raw, start, fr), js in zip(cases, R["cases"]):
+        m = _motion(raw)
+        num = lambda x: [num(y) for y in x] if isinstance(x, list) else {k: num(v) for k, v in x.items()} if isinstance(x, dict) else float(x)   # noqa: E731
+        if (m is None) != (js["m"] is None) or (m and num(m.get("keys")) != num(js["m"].get("keys"))):
+            bad.append(f"{str(raw)[:60]} → {m and m.get('keys')} / {js['m'] and js['m'].get('keys')}")
+            continue
+        c = {"start": start, "motion": m}
+        for f, v in zip(fr, js["v"]):
+            py = motion_at(c, f)
+            worst = max(worst, max(abs(py[k] - v[k]) for k in MKEYS))
+    ok(not bad and worst < 1e-9, f"montage : les images clés de la page et celles de l'export, mêmes valeurs à {sum(len(x[2]) for x in cases)} images (écart {worst:.1e}) {bad}")
+    m3 = _motion(cases[2][0])
+    ok(m3 and m3["keys"] == {"pos": [[3, [0.6, 0.6]], [9, [10.0, -10.0]]]},
+       f"montage : des clés propres — une par image (la dernière l'emporte), bornées, les valeurs illisibles et les groupes inconnus laissés ({m3 and m3['keys']})")
+    ok(_motion(cases[3][0]) is None, "montage : un groupe sans clé ne fait pas de trajectoire")
+    ok(R["trim"] is True and R["coupe"] == [True, True] and R["deplace"] is True and R["revele"] is True,
+       f"montage : rogner le début (+15, −10), couper, déplacer : chaque image qui reste montre la même trajectoire — les clés gardent leur place sur la matière ({R['trim']} {R['coupe']} {R['deplace']} {R['revele']})")
+    ok(R["vitesse"] == [5, 25], f"montage : la vitesse ×2 resserre les clés avec la matière (10 → 5, 50 → 25) ({R['vitesse']})")
+    ok(R["pose"] == [[10, 0.2], [40, 0.5], [50, 0.8]] and R["fixe"] == [30, False],
+       f"montage : changer une valeur à une image pose une clé là si le chronomètre est actif ; sinon la valeur fixe change ({R['pose']} {R['fixe']})")
+    ok(R["chrono"][0] is False and abs(R["chrono"][1] - 0.5) < 1e-9, f"montage : éteindre le chronomètre garde la valeur qui se voit ({R['chrono']})")
+    ok(R["bascule"] == [True, True, False, 1], f"montage : poser, poser, retirer une clé ({R['bascule']})")
+
+
 def selftest(call, ok) -> None:
     # 1. les projets
     _selftest_rognage(ok)
     _selftest_trajectoire(ok)
+    _selftest_cles(ok)
     st, meta = call("GET", "/api/montage/meta")
     ok(st == 200 and "1080p" in [f["id"] for f in meta["formats"]] and meta["fps"] == [24, 25, 30], "montage : réglages")
     st, p = call("POST", "/api/montage/projects", {"name": "Essai montage", "settings": {"format": "720p", "fps": 25}})
@@ -2839,6 +3118,7 @@ def selftest(call, ok) -> None:
            f"montage : le calque d'effet inverse ce qui est dessous sur sa durée seulement ({q})")
     _selftest_trajectoire_export(call, ok, export, pid, tmp)
     _selftest_poignees_export(call, ok, export, pid, tmp)
+    _selftest_cles_export(call, ok, export, pid, tmp)
     shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -2950,6 +3230,49 @@ def _selftest_poignees_export(call, ok, export, pid, tmp) -> None:
              f"({[(f, before[f], after[f]) for f in fr['n24'] + fr['n16'] if before[f] != after[f]][:6]})")
     bad = [(f, after[f], rule(c, F, f)) for c, F in zip(cut, (24, 16)) for f in fr[c["id"]] if after[f] != rule(c, F, f)]
     ok(not bad, f"montage : chaque image exportée est celle que montre le moniteur (l'image qui contient l'instant) ({bad[:6]})")
+
+
+def _selftest_cles_export(call, ok, export, pid, tmp) -> None:
+    """Les images clés à l'export (06/10) : un carré rouge (une image fixe) qui va de
+    gauche à droite (un segment lissé), puis redescend (linéaire), et pâlit ; sa place
+    lue dans la sortie à chaque image (le centre de ses pixels rouges, PIL) contre
+    `motion_at` ; son rouge contre l'opacité."""
+    from PIL import Image
+    Image.new("RGB", (160, 90), (220, 40, 40)).save(tmp / "carre.png")
+    st, it = call("PUT", "/api/library/upload?name=carre.png&title=carre", raw=(tmp / "carre.png").read_bytes())
+    W, H, fps, nf = 640, 360, 25, 50
+    keys = {"pos": [[0, [0.2, 0.3], 1], [20, [0.8, 0.3]], [40, [0.5, 0.7]]], "op": [[0, [1.0]], [40, [0.4]]]}
+    clip = {"id": "cr", "track": "V1", "item": it.get("id"), "kind": "image", "start": 0, "dur": nf, "in": 0, "src_dur": 0,
+            "motion": {"scale": 0.25, "keys": keys}}
+    st, cur = call("GET", f"/api/montage/projects/{pid}")
+    st, sv = call("POST", f"/api/montage/projects/{pid}", {**cur, "base_rev": cur["rev"], "range": {"in": None, "out": None},
+                  "settings": {"format": "custom", "width": W, "height": H, "fps": fps}, "tracks": [{"id": "V1"}, {"id": "A1"}], "clips": [clip]})
+    st, back = call("GET", f"/api/montage/projects/{pid}")
+    ok(st == 200 and (back.get("clips") or [{}])[0].get("motion", {}).get("keys") == {"pos": [[0, [0.2, 0.3], 1], [20, [0.8, 0.3]], [40, [0.5, 0.7]]],
+                                                                                      "op": [[0, [1.0]], [40, [0.4]]]},
+       f"montage : les images clés s'enregistrent ({str(back.get('clips'))[:200]})")
+    j = export({"chunk": 1.2}, "images clés")          # deux passes : l'animation se poursuit d'une passe à l'autre
+    if j["state"] != "done" or not j["items"]:
+        return
+    path = str(library.path_of(library.get(j["items"][0]["id"])))
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-i", path, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, timeout=120).stdout
+    n = W * H * 3
+    ims = [Image.frombytes("RGB", (W, H), raw[i:i + n]) for i in range(0, len(raw) - n + 1, n)]
+    c = back["clips"][0]
+    worst, rouge = 0.0, []
+    for f in (0, 4, 10, 16, 20, 27, 33, 40, 45, 49):
+        r, g, b = ims[f].split()
+        mask = r.point(lambda v: 255 if v > 50 else 0)                 # le carré, même pâli (sur du noir)
+        box = mask.getbbox()
+        m = motion_at(c, f)
+        if not box:
+            worst = 99
+            continue
+        cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+        worst = max(worst, abs(cx - m["x"] * W), abs(cy - m["y"] * H))
+        rouge.append((f, ims[f].getpixel((round(cx), round(cy)))[0], round(220 * m["op"])))
+    ok(len(ims) == nf and worst <= 1.0, f"montage : un carré animé par images clés (lissé, puis linéaire, sur deux passes) est à sa place à chaque image, à {worst:.2f} px près")
+    ok(all(abs(a - b) <= 8 for _, a, b in rouge), f"montage : son opacité animée (1 → 0,4) : le rouge lu contre le rouge attendu ({rouge})")
 
 
 # ── en ligne de commande : importer un pack de LUT ───────────
