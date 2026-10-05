@@ -27,13 +27,19 @@
 // - Le serveur tient tout (server/tools/chanson.py) : la correspondance mots
 //   simples → modèle, les bornes, la recette d'une variante, le projet ODIO.
 //
-// L'annulation (commun/undo.js) : mettre une chanson à la corbeille. Le
-// formulaire se garde dans ce navigateur (localStorage), rien à enregistrer.
-import { mountHeader, api, jobs, pick, toast, el, $, href, fmtDur, fmtWait, uploadFile, dropZone, dropAnywhere, stateFr, TOOLS } from '../commun/shell.js';
+// - Les Spaces (05/10) : le Space choisi en haut du rail, la scène qui ne montre
+//   que lui, déplacer des cartes — chanson/spaces.js (et son contrat avec les
+//   volets voisins : spaceCourant(), l'événement `sr:music-space`).
+//
+// L'annulation (commun/undo.js) : mettre une chanson à la corbeille, déplacer,
+// gérer un Space. Le formulaire se garde dans ce navigateur (localStorage), rien
+// à enregistrer.
+import { mountHeader, api, jobs, pick, toast, el, $, href, fmtDur, fmtWait, dropZone, dropAnywhere, stateFr, TOOLS } from '../commun/shell.js';
 import { createUndo, libTrash } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { contextMenu, pageMenu, kebab } from '../commun/menu.js';
 import { ask } from '../commun/fil.js';
+import { montrerSpaces, spaceCourant, vueSpace, spaceWhy, spacesListe, carteSpace, menuSpaces, deposerRef, fichiersAuSpace } from './spaces.js';
 
 const hdr = mountHeader('chanson', { sub: 'une chanson par prompt' });
 // accroche : tant que commun/shell.js (TOOLS) ne connaît pas l'app, elle pose son nom elle-même
@@ -99,6 +105,8 @@ function restore() {
 function why() {
   const f = S.f, m = MOD(model());
   if (!S.cfg || !m) return 'le portail ne répond pas';
+  const sw = spaceWhy();
+  if (sw) return sw;
   if (!f.prompt.trim()) return 'décris la chanson : un style, une ambiance';
   if (f.prompt.trim().length > S.cfg.prompt_max) return `la description tient en ${S.cfg.prompt_max} signes`;
   if (f.vocal && !f.lyrics.trim()) return 'écris les paroles, ou « Écris-les pour moi »';
@@ -120,7 +128,8 @@ function body() {
   const seed = String(f.seed).trim();
   return { prompt: f.prompt.trim(), vocal: f.vocal, lyrics: f.vocal ? f.lyrics.trim() : '', duration: duration(),
     preset: S.ref ? presetOf(m) || f.preset : f.preset, ref: S.ref?.id || '', ref_mode: S.ref ? f.refMode : '',
-    n: f.n, seed: seed === '' ? -1 : Math.round(+seed), adv, abc: relire() && planOk() ? S.plan.abc : '' };
+    n: f.n, seed: seed === '' ? -1 : Math.round(+seed), adv, abc: relire() && planOk() ? S.plan.abc : '',
+    music_space: spaceCourant().music_space };
 }
 async function create() {
   if (why() || S.sending) return;
@@ -204,6 +213,7 @@ function paintRef() {
     const drop = el('div', { class: 'ch-drop', id: 'ch-drop' }, el('span', {}, 'Déposer un son'), el('span', { class: 'sp' }),
       el('button', { class: 'tb ghost sm', type: 'button', onclick: chooseRef }, 'Asset'),
       el('button', { class: 'tb ghost sm', type: 'button', onclick: () => fileIn.click() }, 'Disque'));
+    fichiersAuSpace(drop, refFromFile);
     dropZone(drop, { kinds: ['audio'], multiple: false, via: 'chanson', onitems: (its) => setRef(its[0]) });
     put(box, drop);
     return;
@@ -215,6 +225,7 @@ function paintRef() {
       html: playing && !player.paused ? ICON.pause : ICON.play, onclick: () => toggle(r, null) }),
     el('div', {}, el('div', { class: 't', title: r.title }, r.title || r.id), el('small', {}, fmtDur(r.duration))),
     el('button', { class: 'ch-x', type: 'button', title: 'retirer la référence', onclick: () => setRef(null) }, '×'));
+  fichiersAuSpace(row, refFromFile);
   dropZone(row, { kinds: ['audio'], multiple: false, via: 'chanson', onitems: (its) => setRef(its[0]) });
   put(box, row,
     el('div', { class: 'seg ch-full', id: 'ch-refmode', role: 'group', 'aria-label': 'que faire de la référence' },
@@ -228,7 +239,7 @@ async function chooseRef() {
 }
 async function refFromFile(f) {
   toast(`dépôt · ${f.name}`, 60000);
-  try { setRef(await uploadFile(f, { tool: 'upload', via: 'chanson' })); toast('rangé dans la bibliothèque · Upload'); } catch (e) { toast(`${f.name} : ${e.message}`, 6000); }
+  try { setRef(await deposerRef(f)); toast(`rangé dans la bibliothèque · Upload · Space « ${spaceCourant().name} »`); } catch (e) { toast(`${f.name} : ${e.message}`, 6000); }
 }
 function setRef(it) {
   if (it && it.kind !== 'audio') { toast('une référence est un son', 5000); return; }
@@ -564,9 +575,12 @@ let loadT = null;
 const loadSoon = () => { clearTimeout(loadT); loadT = setTimeout(loadSongs, 250); };
 async function loadSongs() {
   let r;
-  try { r = await api('chanson/list?limit=80'); } catch (e) { put($('#ch-list'), el('p', { class: 'warn' }, e.message)); return; }
+  const vue = vueSpace();
+  try { r = await api(`chanson/list?limit=80&space=${encodeURIComponent(vue)}`); } catch (e) { put($('#ch-list'), el('p', { class: 'warn' }, e.message)); return; }
+  if (vue !== vueSpace()) return;   // un autre Space choisi entre-temps : cette liste n'est plus la sienne
   const before = new Set(S.songs.map((s) => s.id));
   S.songs = r.songs; S.total = r.total;
+  spacesListe(r);
   const neu = S.songs.filter((s) => !before.has(s.id));
   if (before.size) {
     // une chanson qui arrive se voit (un filet vert), quelques secondes
@@ -580,7 +594,7 @@ const recOf = (s) => s.params?.chanson || {};
 function metaOf(s) {
   const r = recOf(s), p = s.params || {};
   const what = r.ref_mode === 'cover' ? 'reprise' : r.ref_mode === 'inspire' ? 'inspirée' : (PRE(r.preset)?.label || '').toLowerCase();
-  return [what, fmtDur(s.duration), r.vocal === false ? 'instrumental' : r.vocal ? 'chanté' : '', r.abc ? 'partition relue' : '', r.parent ? 'variante' : '',
+  return [s.origin?.via === 'import' ? 'importé' : what, fmtDur(s.duration), r.vocal === false ? 'instrumental' : r.vocal ? 'chanté' : '', r.abc ? 'partition relue' : '', r.parent ? 'variante' : '',
     p.engine === 'factice' ? el('span', { class: 'e' }, 'essai') : ''].filter(Boolean);
 }
 function paintSongs() {
@@ -619,26 +633,30 @@ function card(s) {
       kebab(() => songMenu(s), { title: 'plus' })),
     el('div', { class: 'ch-wavebox' }, cv, el('span', { class: 'ch-time' }, fmtDur(s.duration))),
     el('div', { class: 'ch-acts' },
-      el('button', { class: 'tb ghost sm', type: 'button', 'data-act': 'variant', title: 'la même recette, une autre graine', onclick: () => variant(s) }, 'Variante'),
+      s.params?.chanson ? el('button', { class: 'tb ghost sm', type: 'button', 'data-act': 'variant', title: 'la même recette, une autre graine', onclick: () => variant(s) }, 'Variante')
+        : el('button', { class: 'tb ghost sm', type: 'button', 'data-act': 'variant', 'aria-disabled': 'true', title: NO_RECIPE, onclick: () => toast(NO_RECIPE, 5000) }, 'Variante'),
       sep,
       el('button', { class: 'tb ghost sm', type: 'button', 'data-act': 'odio', title: studio() ? (s.stems?.length ? 'la chanson et ses pistes dans le studio' : 'la chanson dans le studio') : S.cfg.studio.why,
         onclick: () => openOdio(s) }, 'Ouvrir dans ODIO', studio() ? null : el('span', { class: 'ch-lock' }, 'Studio'))),
     s.stems?.length ? el('div', { class: 'ch-stems' }, el('span', { class: 'lbl' }, 'pistes'),
       s.stems.map((st) => el('button', { class: 'ch-stem', type: 'button', 'data-id': st.id, title: `écouter ${STEM_FR[st.params?.stem] || st.params?.stem} seule`,
         onclick: () => toggle(st, s) }, el('i', { html: ICON.play }), STEM_FR[st.params?.stem] || st.params?.stem))) : null);
+  carteSpace(c, s);
   return c;
 }
+const NO_RECIPE = 'un son importé n’a pas de recette à rejouer : « Reprendre » le prend comme référence';
 function songMenu(s) {
   const playing = S.cur?.id === s.id && !player.paused;
   return [{ head: s.title || s.id },
     { label: playing ? 'Pause' : 'Écouter', icon: playing ? '❚❚' : '▶', key: 'Espace', onclick: () => toggle(s, s) },
     { label: 'Reprendre ces réglages', icon: '⤓', sub: 'dans le formulaire', onclick: () => takeRecipe(s) },
-    { label: 'Une variante', icon: '↻', sub: 'une autre graine', onclick: () => variant(s) },
+    { label: 'Une variante', icon: '↻', sub: 'une autre graine', disabled: !s.params?.chanson, why: NO_RECIPE, onclick: () => variant(s) },
     s.params?.score ? { label: 'Copier la partition', icon: '♪', sub: 'ABC', onclick: () => copyScore(s) } : null,
     '-',
     { label: 'Séparer les pistes', icon: '≡', disabled: !!s.stems?.length || !!stemJob(s), why: s.stems?.length ? 'déjà séparée' : 'en cours', onclick: () => separate(s) },
     { label: 'Ouvrir dans ODIO', icon: '◆', sub: studio() ? '' : 'Studio', onclick: () => openOdio(s) },
     '-',
+    menuSpaces(s),
     { label: 'Ouvrir dans Asset', icon: '▦', onclick: () => { location.href = href('asset/#' + s.id); } },
     { label: 'Télécharger', icon: '↓', onclick: () => download(s) },
     '-',
@@ -786,6 +804,7 @@ pageMenu(() => [{ head: 'Musique' },
   { label: actLabel(), icon: '▶', disabled: !!why(), why: why(), onclick: create },
   { label: 'Écris-les pour moi', icon: '✎', disabled: !S.f.prompt.trim() || S.writing, why: 'décris d’abord la chanson', onclick: writeLyrics },
   { label: 'Choisir une référence son…', icon: '+', onclick: chooseRef },
+  { label: 'Importer des sons…', icon: '↑', sub: 'dans ce Space', onclick: () => $('#ch-import')?.click() },
   S.ref ? { label: 'Retirer la référence', icon: '×', onclick: () => setRef(null) } : null].filter(Boolean));
 
 // ── démarrage ───────────────────────────────────────────────
@@ -805,6 +824,8 @@ async function start() {
   S.advOpen = !!d.advOpen;
   if (d.ref) { try { S.ref = await api('library/' + d.ref); } catch { S.ref = null; } }
   buildRail();
+  addEventListener('sr:music-space', () => paintAct());   // archivé, rouvert, un autre Space : l'orange le redit
+  await montrerSpaces({ U, reload: loadSongs, onChange: () => { S.songs = []; S.total = 0; loadSongs(); } });
   contextMenu($('#stage'), stageMenu);
   dropAnywhere((files) => { const f = files.find((x) => /^audio\//.test(x.type) || /\.(wav|mp3|flac|m4a|ogg)$/i.test(x.name)); if (f) refFromFile(f); else toast('seul un son se dépose ici : la référence', 5000); });
   await loadSongs();
