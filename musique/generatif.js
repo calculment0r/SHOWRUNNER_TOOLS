@@ -184,10 +184,12 @@ export async function openGenerative(app) {
       paint(); jobs.poll(true);
       const done = await jobs.wait(abcJob.id);
       if (done.state !== 'done') throw new Error(`partition : ${stateFr(done.state)}${done.message ? ' — ' + done.message : ''}`);
-      const abc = done.result?.abc || '';
-      G.abc = abc.length <= 40000 ? abc : abc.slice(0, 40000); G.abcFp = abcFp();
+      // jamais coupée ici (une coupe au milieu d'une ligne la ferait refuser) : le serveur
+      // l'a déjà mise au dialecte et bornée (music_yue.abc_normalise)
+      G.abc = done.result?.abc || ''; G.abcFp = abcFp();
       save();
-      toast(done.result?.engine === 'factice' ? 'partition d\'essai écrite (moteur factice) : relis-la, puis Lancer' : 'partition écrite : relis-la, puis Lancer', 5000);
+      const fixes = done.result?.normalise || [];
+      toast(`${done.result?.engine === 'factice' ? 'partition d\'essai écrite (moteur factice)' : 'partition écrite'} : relis-la, puis Lancer${fixes.length ? ` · ${fixes.join(' · ')}` : ''}`, fixes.length ? 9000 : 5000);
     } catch (e) { toast(e.message, 7000); }
     abcJob = null;
     if (document.body.contains(dr.root)) paint();

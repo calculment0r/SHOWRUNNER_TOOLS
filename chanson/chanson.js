@@ -118,7 +118,7 @@ function why() {
   if (S.ref && !REF(f.refMode)?.ready) return REF(f.refMode)?.why || 'pas prêt';
   if (!m.ready) return m.why || 'pas prêt';
   if (relire() && S.planJob) return 'la partition s’écrit';
-  if (relire() && planOk() && S.plan.check?.ok === false) return `la partition ne passe pas : ${S.plan.check.error}`;
+  if (relire() && planOk() && S.plan.check?.ok === false) return `la partition ne passe pas : ${S.plan.check.error_fr || S.plan.check.error}`;
   return '';
 }
 function body() {
@@ -410,7 +410,7 @@ function paintPlanFacts() {
         vers ? el('span', { class: 'ch-plan-v' }, `« ${vers} »`) : null);
     })) : null,
     el('p', { class: 'ch-note' + (ck.ok === false ? ' warn' : '') }, ck.ok === true ? 'partition vérifiée : elle suit le dialecte du modèle (abc_tools)'
-      : ck.ok === false ? `ne passe pas : ${ck.error}` : `vérification indisponible ici : ${ck.why || 'abc_tools absent'} — elle sera chantée telle quelle`));
+      : ck.ok === false ? `ne passe pas : ${ck.error_fr || ck.error}` : `vérification indisponible ici : ${ck.why || 'abc_tools absent'} — elle sera chantée telle quelle`));
 }
 function paintPlan() {
   const box = $('#ch-plan');

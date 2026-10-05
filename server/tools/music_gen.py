@@ -251,6 +251,10 @@ def region_params(d: dict) -> dict:
     if model == "yue":
         if vals.get("abc") and vals.get("mode") == "off":
             raise ValueError("une partition demande « mélodie et accords » ou « mélodie seule » (YuE2)")
+        if vals.get("abc"):
+            # mise au dialecte et jugée ici, avant la file : une faute revient tout de suite,
+            # en français, avec sa ligne (music_yue.abc_pret)
+            vals["abc"], _ = music_yue.abc_pret(vals["abc"])
         # YuE2 n'a pas d'entrée tempo ni tonalité : elles s'écrivent dans le style
         tags = vals.get("tags", "")
         add = [x for x in (f"{int(round(bpm))} BPM", f"{TONICS[tonic]} {'major' if md in MAJORISH else 'minor'}")
@@ -658,6 +662,18 @@ def selftest(call, ok) -> None:
             ok(False, f"refusé : {why}")
         except ValueError:
             ok(True, f"refusé : {why}")
+    # une partition coupée (06/10, « group 67, Ins: music line must end with a plain barline ») :
+    # refusée à l'entrée, en français, la ligne dite ; la même, normalisée, passe
+    cut = music_yue.fake_abc(3, 112, 4, 5, "minor", [["verse", 4]] * 3, sing=True)
+    cut = cut[:-1] + "z4"
+    try:
+        region_params({**base, "model": "yue", "task": "chanson", "v": {"tags": "pop", "mode": "full", "abc": cut}})
+        ok(False, "une partition coupée est refusée avant la file")
+    except ValueError as e:
+        ok("ligne" in str(e) and "groupe 3" in str(e), f"une partition coupée est refusée avant la file, la ligne dite ({str(e)[:140]})")
+    fixed, _ = music_yue.abc_normalise(cut, couper=True)
+    ok(region_params({**base, "model": "yue", "task": "chanson", "v": {"tags": "pop", "mode": "full", "abc": fixed}})["values"]["abc"] == fixed,
+       "la même, corrigée, part telle quelle")
     try:
         region_params({**base, "projet": {"bpm": 25, "sig": 4, "tonic": 0, "mode": "major"}, "model": "ace", "task": "text2music", "v": {}})
         ok(False, "un tempo de 25 est refusé pour ACE (30-300)")

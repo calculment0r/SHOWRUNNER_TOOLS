@@ -157,12 +157,11 @@ def yue_params(d: dict) -> dict:
         it = library.get(ref)
         if not it or it.get("kind") != "audio":
             raise ValueError("la référence n'est pas un son de la bibliothèque")
-    if abc and abc_tools():
-        # une partition qu'on a relue ou nourrie d'un clip MIDI : jugée par
-        # abc_tools avant d'aller au modèle (le dialecte natif de YuE2)
-        chk = abc_check(abc)
-        if chk["ok"] is False:
-            raise ValueError(f"la partition ne suit pas le dialecte de YuE2 : {chk['error']}")
+    if abc:
+        # une partition qu'on a relue ou nourrie d'un clip MIDI : mise au dialecte sans
+        # toucher à la musique, puis jugée (sa forme partout, abc_tools s'il est là) avant
+        # d'aller au modèle ; une faute est dite en français, avec sa ligne (abc_pret)
+        abc, _ = abc_pret(abc)
     title = (d.get("title") or "")
     title = (title.strip() if isinstance(title, str) else "")[:80] or tags[:60]
     return {"tags": tags, "lyrics": lyrics, "instrumental": not lyrics, "duration_s": round(dur, 2),
@@ -593,19 +592,266 @@ def abc_tools_state() -> dict:
 
 
 def abc_check(text: str) -> dict:
-    """La partition jugée par abc_tools.parse_abc : {ok, error} ou {ok, report}
-    (notes MIDI, instants et durées en noires, accords, mesures, par voix)."""
+    """La partition jugée : d'abord sa forme (abc_marche, la marche par groupes
+    d'abc_tools.parse, sans lire les notes — elle tourne partout), puis
+    abc_tools.parse_abc s'il est là : {ok, error, error_fr, ligne} ou {ok,
+    report} (notes MIDI, instants et durées en noires, accords, mesures, par
+    voix) ; {ok: None} quand la forme est bonne et qu'abc_tools manque."""
+    if not isinstance(text, str) or not text.strip():
+        return {"ok": False, "error": "partition vide", "error_fr": "la partition est vide", "ligne": None}
+    r = abc_marche(text)
+    if not r["ok"]:
+        return {"ok": False, "error": r["en"], "error_fr": abc_message(r), "ligne": r["ligne"]}
     m = abc_tools()
     if not m:
         return {"ok": None, "why": _abc["why"]}
-    if not isinstance(text, str) or not text.strip():
-        return {"ok": False, "error": "partition vide"}
     try:
         # les lignes blanches du bout et les espaces de fin de ligne ne sont pas du dialecte
         score = m.parse_abc("\n".join(ln.rstrip() for ln in text.strip().splitlines()))
     except m.AbcError as e:
-        return {"ok": False, "error": str(e)}
+        fr, ligne = abc_traduire(str(e), text)
+        return {"ok": False, "error": str(e), "error_fr": fr, "ligne": ligne}
     return {"ok": True, "report": json.loads(json.dumps(m.report(score), default=m.json_value))}
+
+
+# ── la forme d'une partition, dite en français, et ce qu'on corrige sans risque ──
+# Cal (06/10) : « LA PARTITION NE PASSE PAS : group 67, Ins: music line must end with a
+# plain barline ». La règle est celle d'abc_tools.parse (~/YuE/skills/yue2-music/scripts/
+# abc_tools.py, l. 176-218 sur la branche main lue le 05/10/2026) : après l'en-tête de huit
+# lignes, la partition est une suite de GROUPES — des « % section » facultatifs, « V: Vocal »,
+# sa ligne de musique, « V: Ins », sa ligne ; chaque ligne de musique finit par une barre
+# simple « | », porte une à quatre mesures (Z2… comptent pour deux…), autant dans les deux
+# voix. Une partition de 67 groupes pour seize mesures demandées : YuE2GenerateABC a écrit
+# jusqu'à sa borne (max_abc_tokens 8 192, ABC_SAMPLING — 8 192 / 67 ≈ 122 jetons par groupe)
+# et sa dernière ligne est coupée ; c'est notre lecture, rien ne la dément ni ne la prouve.
+# abc_marche refait cette marche (pas les notes : abc_tools reste le seul juge des mesures)
+# pour nommer la LIGNE en cause ; abc_normalise ne fait que ce qui ne change pas la musique,
+# et, sur demande (couper), retire un dernier groupe coupé.
+VOIX_FR = {"Vocal": "chant (Vocal)", "Ins": "thème (Ins)"}
+ENTETE = 8                    # X:, T:, M:, L:, Q:, les deux voix, K: (abc_tools.parse, l. 155-170)
+
+
+def _lignes(text: str) -> tuple[list[str], int]:
+    """Les lignes sans leurs espaces de fin, sans les lignes blanches du début et
+    de la fin (abc_check les ôte aussi) ; le décalage rend leurs numéros à l'écran."""
+    raw = [ln.rstrip() for ln in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    off = 0
+    while off < len(raw) and not raw[off]:
+        off += 1
+    end = len(raw)
+    while end > off and not raw[end - 1]:
+        end -= 1
+    return raw[off:end], off
+
+
+def abc_marche(text: str) -> dict:
+    """La forme, comme abc_tools.parse la parcourt : {ok: True, groupes} ou la
+    première faute {ok: False, ligne (comptée à l'écran), groupe, voix, code,
+    en (le message même d'abc_tools), fr, groupes (ceux d'avant, entiers)}.
+    Un groupe : {debut, fin (indices), Vocal, Ins (l'indice de leur ligne de
+    musique), mesures}."""
+    lines, off = _lignes(text if isinstance(text, str) else "")
+    n = len(lines)
+    groups: list[dict] = []
+
+    def faute(i, code, en, fr, group=None, voice=None):
+        # la faute est-elle dans le DERNIER groupe (aucun « V: Vocal » après elle) : la marque d'une partition coupée
+        queue = i is not None and not any(ln == "V: Vocal" for ln in lines[i + 1:])
+        return {"ok": False, "ligne": (None if i is None else min(i, max(0, n - 1)) + off + 1), "groupe": group,
+                "voix": voice, "code": code, "en": en, "fr": fr, "groupes": groups, "n": n, "off": off, "queue": queue}
+    if n < 12:
+        return faute(None, "entete", "Incomplete native two-voice ABC", "la partition est incomplète : l'en-tête (huit lignes) et au moins un groupe des deux voix")
+    for i, ok_, en, fr in ((0, lines[0:2] == ["X:1", "T:"], "Expected native X:1 and blank T: header", "les deux premières lignes sont « X:1 » puis « T: »"),
+                           (2, lines[2].startswith("M:"), "Missing header M:", "la ligne 3 dit la mesure (« M:4/4 »)"),
+                           (3, re.fullmatch(r"L:1/([1-9][0-9]*)", lines[3]) is not None, "Expected L:1/<power of two>, usually L:1/32",
+                            "la ligne 4 dit l'unité (« L:1/16 »)"),
+                           (4, re.fullmatch(r"Q:1/4=([1-9][0-9]*)", lines[4]) is not None, "Expected integer quarter-note tempo Q:1/4=<BPM>",
+                            "la ligne 5 dit le tempo en nombre entier (« Q:1/4=112 »)"),
+                           (5, lines[5:7] == list(ABC_VOICES), "Preserve native Vocal and Ins voice definitions",
+                            "les lignes 6 et 7 déclarent les deux voix telles que YuE2 les écrit (« V: Vocal clef=treble … », « V: Ins … »)"),
+                           (7, lines[7].startswith("K:"), "Missing header K:", "la ligne 8 dit la tonalité (« K:Fm »)")):
+        if not ok_:
+            return faute(i, "entete", en, fr)
+    cur, group = ENTETE, 0
+    while cur < n:
+        start = cur
+        while cur < n and lines[cur].startswith("% "):
+            cur += 1
+        if cur == n:
+            return faute(start, "commentaire", "Dangling section comment without music", "un commentaire de section « % … » n'a pas de musique après lui", group + 1)
+        group += 1
+        g: dict = {"debut": start}
+        counts = []
+        for name in ("Vocal", "Ins"):
+            ctx = f"group {group}, {name}"
+            if cur >= n or lines[cur] != f"V: {name}":
+                why = "une ligne vide au milieu de la partition : le dialecte n'en a pas" if cur < n and not lines[cur] else f"il manque « V: {name} » ici"
+                return faute(cur, "voix", f"{ctx}: expected V: {name}", why, group, name)
+            cur += 1
+            while cur < n and lines[cur].startswith(("M:", "K:")):
+                cur += 1
+            if cur >= n:
+                return faute(cur, "ligne", f"{ctx}: missing music line", "la ligne de musique manque", group, name)
+            line = lines[cur]
+            if not line.endswith("|"):
+                return faute(cur, "barre", f"{ctx}: music line must end with a plain barline",
+                             "une ligne de musique finit par une barre simple « | »", group, name)
+            bars = 0
+            for bar in line[:-1].split("|"):
+                bar = bar.strip()
+                if not bar:
+                    return faute(cur, "vide", f"{ctx}: empty measure or unsupported double/repeat barline",
+                                 "une mesure vide, ou une double barre, une reprise (« || », « |: », « :| ») : le dialecte n'en a pas", group, name)
+                m = re.fullmatch(r"Z([2-4])?", bar)
+                bars += int(m.group(1) or "1") if m else 1
+            if not 1 <= bars <= 4:
+                return faute(cur, "mesures", f"{ctx}: expected 1–4 measures after expanding Z rests",
+                             f"{bars} mesures sur cette ligne : un groupe en porte une à quatre", group, name)
+            g[name] = cur
+            counts.append(bars)
+            cur += 1
+        if counts[0] != counts[1]:
+            return faute(cur - 1, "compte", f"group {group}: voices have different measure counts",
+                         f"le chant a {counts[0]} mesure{'s' if counts[0] > 1 else ''}, le thème {counts[1]} : autant dans les deux voix", group)
+        groups.append({**g, "fin": cur, "mesures": counts[0]})
+    return {"ok": True, "groupes": groups, "n": n, "off": off}
+
+
+def abc_message(r: dict) -> str:
+    """Une faute de forme, pour Cal : la ligne, le groupe, la voix, quoi faire ;
+    le message d'abc_tools à la fin, tel quel (pour le retrouver)."""
+    where = [f"ligne {r['ligne']}"] if r.get("ligne") else []
+    if r.get("groupe"):
+        where.append(f"groupe {r['groupe']}" + (f", {VOIX_FR.get(r['voix'], r['voix'])}" if r.get("voix") else ""))
+    head = f"{where[0]} ({', '.join(where[1:])})" if len(where) > 1 else (where[0] if where else "")
+    todo = ""
+    if r.get("code") in ("barre", "ligne", "voix") and r.get("queue") and r.get("groupes"):
+        todo = " — la fin de la partition semble coupée : « Corriger » retire ce dernier groupe incomplet"
+    elif r.get("code") == "barre":
+        todo = " — ajoute « | » au bout de cette ligne si sa dernière mesure est complète"
+    return f"{head + ' : ' if head else ''}{r['fr']}{todo} (abc_tools : « {r['en']} »)"
+
+
+# les messages d'abc_tools.parse et parse_bar (l. 87-224), en français
+_FR = (
+    (r"duration (\S+) quarter notes != meter duration (\S+)", lambda m: f"la mesure dure {m[1]} noire(s) au lieu de {m[2]}"),
+    (r"note/rest exceeds meter duration", lambda m: "une note ou un silence dépasse la fin de la mesure"),
+    (r"event after the measure end", lambda m: "un signe après la fin de la mesure"),
+    (r"unsupported token at (.*)", lambda m: f"un signe que le dialecte ne connaît pas : {m[1]}"),
+    (r"unsupported duration (\d+).*", lambda m: f"la durée {m[1]} n'est pas dans la liste (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48) : la lier en plusieurs (« C8-C2 »)"),
+    (r"unsupported chord (.*)", lambda m: f"l'accord {m[1]} n'est pas une des 15 qualités du dialecte (abc-editing.md)"),
+    (r"tie changes pitch.*", lambda m: "une liaison change de hauteur"),
+    (r"tie enters a .*rest", lambda m: "une liaison mène à un silence"),
+    (r"mixed octave marks", lambda m: "une note porte à la fois « , » et « ' »"),
+    (r"pitch (\d+) is outside MIDI range", lambda m: f"la hauteur {m[1]} sort des notes MIDI (0 à 127)"),
+    (r"a rest cannot have accidentals, octave marks or ties", lambda m: "un silence ne porte ni altération, ni octave, ni liaison"),
+    (r"unresolved tie at end of score", lambda m: "une liaison à la fin de la partition ne se résout pas"),
+    (r"Native chord symbols belong in Vocal, not Ins", lambda m: "les accords s'écrivent dans le chant (Vocal), pas dans le thème (Ins)"),
+    (r"Voice meter/time grids differ", lambda m: "les deux voix n'ont pas les mêmes mesures"),
+    (r"Voice key-change timelines differ", lambda m: "les deux voix ne changent pas de tonalité aux mêmes instants"),
+    (r"Unsupported key (.*); .*", lambda m: f"la tonalité {m[1]} n'est pas du dialecte : majeure ou mineure (« K:C », « K:Fm »)"),
+    (r"Unsupported meter (.*); .*", lambda m: f"la mesure {m[1]} s'écrit en fraction (« M:4/4 »)"),
+    (r"duplicate (\w): field", lambda m: f"deux champs « {m[1]}: » de suite"),
+)
+
+
+def abc_traduire(err: str, text: str) -> tuple[str, int | None]:
+    """Un message d'abc_tools en français, avec la ligne quand il nomme un groupe
+    et une voix (« group 12, Ins, bar 3: … ») : (texte, ligne à l'écran)."""
+    m = re.match(r"group (\d+)(?:, (Vocal|Ins))?(?:, bar (\d+))?: (.*)", err) or re.match(r"(Vocal|Ins): (.*)", err)
+    group = voice = bar = None
+    rest = err
+    if m and m.re.pattern.startswith("group"):
+        group, voice, bar, rest = int(m[1]), m[2], m[3], m[4]
+    elif m:
+        voice, rest = m[1], m[2]
+    fr = next((f(mm) for pat, f in _FR for mm in [re.fullmatch(pat, rest)] if mm), None)
+    ligne = None
+    if group:
+        r = abc_marche(text)
+        gs = r["groupes"]
+        if group <= len(gs):
+            g = gs[group - 1]
+            idx = g.get(voice or "Vocal", g["debut"])
+            ligne = idx + (r.get("off") or 0) + 1
+    where = []
+    if ligne:
+        where.append(f"ligne {ligne}")
+    det = ", ".join(x for x in (f"groupe {group}" if group else "", VOIX_FR.get(voice, "") if voice else "", f"mesure {bar}" if bar else "") if x)
+    head = f"{where[0]} ({det})" if where and det else (where[0] if where else det)
+    return f"{head + ' : ' if head else ''}{fr or rest} (abc_tools : « {err} »)", ligne
+
+
+def abc_normalise(text: str, couper: bool = False) -> tuple[str, list[str]]:
+    """La partition mise au dialecte sans toucher à la musique : espaces de fin
+    de ligne, lignes blanches (au bout et au milieu), retours chariot, une
+    liaison sur la toute dernière note de chaque voix (qui ne se résout jamais :
+    abc_tools la refuse). Avec `couper` (une partition écrite par YuE2, ou
+    « Corriger ») : un dernier groupe coupé est retiré — sa barre manque, ou sa
+    seconde voix — et une partition plus longue que MAX_ABC perd ses derniers
+    groupes. Rend (texte, ce qui a été fait, en français)."""
+    if not isinstance(text, str):
+        return "", []
+    notes: list[str] = []
+    lines, _ = _lignes(text)
+    blank = sum(1 for ln in lines if not ln)
+    if blank:
+        lines = [ln for ln in lines if ln]
+        notes.append(f"{blank} ligne{'s' if blank > 1 else ''} vide{'s' if blank > 1 else ''} retirée{'s' if blank > 1 else ''}")
+    out = "\n".join(lines)
+    if couper:
+        for _ in range(3):
+            r = abc_marche(out)
+            if r["ok"] or r["code"] not in ("barre", "ligne", "voix") or not r["groupe"]:
+                break
+            lines = out.split("\n")
+            at = (r["ligne"] or 1) - 1
+            if not r["queue"]:
+                break                                   # une faute au milieu : pas sûre à corriger
+            gs = r["groupes"]
+            if not gs:
+                break                                   # rien d'entier à garder
+            if r["code"] == "barre" and abc_tools():
+                # la barre seule manquait-elle ? abc_tools juge la mesure ainsi fermée
+                fixed = lines[:at] + [lines[at] + "|"] + lines[at + 1:]
+                if abc_check("\n".join(fixed)).get("ok"):
+                    out = "\n".join(fixed)
+                    notes.append(f"ligne {at + 1} : la barre « | » de fin ajoutée (la mesure était complète)")
+                    continue
+            out = "\n".join(lines[:gs[-1]["fin"]])
+            notes.append(f"la fin était coupée au milieu du groupe {r['groupe']} (ligne {at + 1}) : ce groupe incomplet est retiré, "
+                         f"{len(gs)} groupe{'s' if len(gs) > 1 else ''} reste{'nt' if len(gs) > 1 else ''} "
+                         f"({sum(g['mesures'] for g in gs)} mesures)")
+        r = abc_marche(out)
+        if r["ok"] and len(out) > MAX_ABC and len(r["groupes"]) > 1:
+            lines, gs = out.split("\n"), r["groupes"]
+            k = len(gs)
+            while k > 1 and len("\n".join(lines[:gs[k - 1]["fin"]])) > MAX_ABC:
+                k -= 1
+            out = "\n".join(lines[:gs[k - 1]["fin"]])
+            notes.append(f"la partition dépassait {MAX_ABC} signes : {len(gs) - k} groupes de la fin retirés")
+    # une liaison sur la dernière note d'une voix ne se résout jamais : on la retire
+    r = abc_marche(out)
+    if r["ok"] and r["groupes"]:
+        lines, g = out.split("\n"), r["groupes"][-1]
+        for name in ("Vocal", "Ins"):
+            ln = lines[g[name]]
+            if ln.endswith("-|"):
+                lines[g[name]] = ln[:-2] + "|"
+                notes.append(f"{VOIX_FR[name]} : la liaison de la dernière note retirée")
+        out = "\n".join(lines)
+    return out, notes
+
+
+def abc_pret(text: str, couper: bool = False) -> tuple[str, list[str]]:
+    """La partition qu'on envoie : normalisée, puis jugée (la forme partout,
+    abc_tools s'il est là) ; une faute lève ValueError, en français, avec la
+    ligne. Rend (texte, ce qui a été corrigé)."""
+    out, notes = abc_normalise(text, couper)
+    chk = abc_check(out)
+    if chk["ok"] is False:
+        raise ValueError(f"la partition ne suit pas le dialecte de YuE2 : {chk['error_fr']}")
+    return out, notes
 
 
 def abc_key(tonic: int, md: str) -> str:
@@ -792,7 +1038,9 @@ def run_abc_test(ctx):
     pj = p["projet"]
     abc = fake_abc(p["seed"], pj["bpm"], pj["sig"], pj["tonic"], pj["mode"], p["sections"], sing=bool(p["lyrics"]),
                    chords=p["mode"] == "full")
-    return {"note": "partition d'essai écrite (moteur factice, pas YuE2)", "abc": abc, "engine": "factice", "check": abc_check(abc)}
+    abc, notes = abc_normalise(abc, couper=True)
+    return {"note": "partition d'essai écrite (moteur factice, pas YuE2)", "abc": abc, "engine": "factice", "check": abc_check(abc),
+            "normalise": notes}
 
 
 def run_abc_real(ctx):
@@ -806,7 +1054,11 @@ def run_abc_real(ctx):
     abc = _score_of(entry, g)
     if not abc.strip():
         raise ComfyError("YuE2 n'a pas rendu de partition (sortie texte de PreviewAny vide)")
-    return {"note": "partition écrite par YuE2", "abc": abc, "engine": "comfyui", "check": abc_check(abc)}
+    # ce que YuE2 a écrit, mis au dialecte : une fin coupée (sa borne de jetons) perd son
+    # dernier groupe incomplet, et le dit (06/10, « group 67, Ins: music line must end… »)
+    abc, notes = abc_normalise(abc, couper=True)
+    note = "partition écrite par YuE2" + (f" ; {' ; '.join(notes)}" if notes else "")
+    return {"note": note, "abc": abc, "engine": "comfyui", "check": abc_check(abc), "normalise": notes}
 
 
 def api_abc(req):
@@ -819,11 +1071,23 @@ def api_abc(req):
 
 
 def api_abc_check(req):
+    """Juger une partition (la page, à chaque frappe) : le jugement, et, si elle ne
+    passe pas, `corriger` — la partition que « Corriger » poserait (abc_normalise
+    avec couper) et ce qu'elle change — quand elle, passe. `{corriger: true}` :
+    rend directement la partition corrigée et son jugement."""
     d = req.json()
     text = d.get("abc")
-    if not isinstance(text, str) or len(text) > MAX_ABC:
-        raise HttpError(400, f"partition : un texte de {MAX_ABC} signes au plus")
-    return {**abc_check(text), "tools": abc_tools_state()}
+    if not isinstance(text, str) or len(text) > 4 * MAX_ABC:
+        raise HttpError(400, f"partition : un texte de {4 * MAX_ABC} signes au plus")
+    if d.get("corriger"):
+        out, notes = abc_normalise(text, couper=True)
+        return {**abc_check(out), "abc": out, "normalise": notes, "tools": abc_tools_state()}
+    chk = abc_check(text)
+    if chk["ok"] is False:
+        out, notes = abc_normalise(text, couper=True)
+        if notes and abc_check(out)["ok"] is not False:
+            chk["corriger"] = {"abc": out, "notes": notes}
+    return {**chk, "tools": abc_tools_state()}
 
 
 # ── le moteur factice : une mélodie d'essai, sans modèle ────
@@ -1082,6 +1346,63 @@ def selftest(call, ok) -> None:
        and res.get("check", {}).get("ok") is (True if judge else None),
        f"la partition d'essai d'une région : 112, fa mineur, {'jugée bonne' if judge else 'pas jugée (abc_tools.py absent)'} "
        f"({j.get('state')} {j.get('message')})")
+
+    # ── la forme (06/10, Cal : « group 67, Ins: music line must end with a plain barline ») ──
+    # Une partition de 67 groupes dont la dernière ligne est coupée au milieu, comme une
+    # écriture arrêtée à sa borne de jetons. La marche par groupes est la nôtre (elle tourne
+    # sans abc_tools) et redit son message mot pour mot ; abc_tools, s'il est là, le confirme.
+    full = fake_abc(5, 112, 4, 5, "minor", [["verse", 4]] * 67, sing=True)
+    cut = "\n".join(full.split("\n")[:-1] + ['F4G4A4c4|d4c4A4'])
+    nlines = len(cut.split("\n"))
+    chk = abc_check(cut)
+    ok(chk["ok"] is False and chk["error"] == "group 67, Ins: music line must end with a plain barline"
+       and chk["ligne"] == nlines and f"ligne {nlines}" in chk["error_fr"] and "groupe 67" in chk["error_fr"]
+       and "thème (Ins)" in chk["error_fr"] and "Corriger" in chk["error_fr"],
+       f"la faute de Cal reproduite, dite en français avec sa ligne ({chk})")
+    if judge:
+        try:
+            abc_tools().parse_abc(cut)
+            ok(False, "abc_tools refuse aussi la partition coupée")
+        except abc_tools().AbcError as e:
+            ok(str(e) == chk["error"], f"abc_tools dit le même message que notre marche ({e})")
+    fixed, notes = abc_normalise(cut, couper=True)
+    rf = abc_marche(fixed)
+    ok(rf["ok"] and len(rf["groupes"]) == 66 and abc_check(fixed)["ok"] is (True if judge else None)
+       and any("groupe 67" in x for x in notes), f"normalisée : le groupe coupé retiré, 66 groupes, elle passe ({notes})")
+    ok(abc_normalise(cut)[0] == cut.strip(), "sans « couper » (une saisie en cours), rien n'est retiré")
+    st, r = call("POST", "/api/music/yue/abc/check", {"abc": cut})
+    ok(st == 200 and r.get("ok") is False and r.get("corriger", {}).get("abc") == fixed and r["error_fr"] == chk["error_fr"],
+       f"la route de vérification propose « Corriger » ({st} {str(r)[:160]})")
+    st, r = call("POST", "/api/music/yue/abc/check", {"abc": cut, "corriger": True})
+    ok(st == 200 and r.get("ok") is not False and r.get("abc") == fixed and r.get("normalise") == notes, "« Corriger » rend la partition qui passe")
+    # la barre seule oubliée au bout d'une mesure complète : abc_tools le sait, sinon le groupe part
+    lone = full.rstrip("|")
+    fl, nl = abc_normalise(lone, couper=True)
+    ok((fl == full and "barre" in nl[0]) if judge else (len(abc_marche(fl)["groupes"]) == 66),
+       f"une barre oubliée : {'ajoutée (abc_tools juge la mesure complète)' if judge else 'sans abc_tools, le groupe est retiré (sûr)'} ({nl})")
+    # au milieu : pas de correction devinée, une faute claire avant l'envoi
+    mid = full.split("\n")
+    i_mid = next(i for i, ln in enumerate(mid) if ln == "V: Ins") + 1
+    mid[i_mid] = mid[i_mid].rstrip("|")
+    try:
+        abc_pret("\n".join(mid), couper=True)
+        ok(False, "une barre manquante au milieu est refusée avant l'envoi")
+    except ValueError as e:
+        ok(f"ligne {i_mid + 1}" in str(e) and "groupe 1" in str(e) and "ajoute « | »" in str(e),
+           f"une barre manquante au milieu : refusée avant l'envoi, la ligne dite ({e})")
+    try:
+        yue_params({"tags": "pop", "abc": cut, "mode": "full"})
+        ok(False, "YuE2 ne reçoit pas une partition coupée")
+    except ValueError as e:
+        ok(f"ligne {nlines}" in str(e), f"YuE2 ne reçoit pas une partition coupée ({str(e)[:120]})")
+    sp = full.split("\n")
+    sp[-3] = sp[-3][:-1] + "-|"                     # la dernière note du chant, liée vers… rien
+    sp.insert(12, "")
+    tied = "\n".join(sp)
+    tn, tnotes = abc_normalise(tied)
+    ok(abc_marche(tn)["ok"] and not tn.endswith("-|") and len(tnotes) == 2,
+       f"une ligne vide et une liaison sur la dernière note : retirées sans toucher à la musique ({tnotes})")
+
     if not judge:
         ok(True, f"abc_tools.py absent : essais de la partition sautés ({_abc['why']})")
         return

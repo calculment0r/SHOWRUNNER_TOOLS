@@ -143,7 +143,9 @@ export function writeAbc({ bpm, sig, key, bars, sections, vocal = [], ins = [], 
         const parts = durs(t1 - t0);
         if (!n) { body += parts.map((d) => (d === 1 ? 'z' : `z${d}`)).join(''); continue; }
         const tok = noteToken(n.p, K, local);
-        const tied = n.e > t1;                                   // la note continue au-delà de ce morceau
+        // la note continue au-delà de ce morceau — jamais au-delà de la dernière mesure : une
+        // liaison qui ne se résout pas est refusée (abc_tools.py, « unresolved tie at end of score »)
+        const tied = n.e > t1 && t1 < bars * U;
         body += parts.map((d, k) => `${tok}${d === 1 ? '' : d}${k < parts.length - 1 || tied ? '-' : ''}`).join('');
       }
       out.push(body);

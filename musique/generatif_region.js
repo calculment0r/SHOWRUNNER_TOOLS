@@ -186,7 +186,8 @@ export async function genJobDone(app, pd, full) {
   if (pd.kind === 'abc') {
     c.gen.v = { ...c.gen.v, abc: full.result?.abc || '' };
     if (full.result?.check) setCheck(c, full.result.check);
-    toast(`partition écrite${full.result?.engine === 'factice' ? ' (moteur d\'essai)' : ''} : relis-la, modifie-la, puis Générer`, 5000);
+    const fixes = full.result?.normalise || [];        // ce que le serveur a mis au dialecte (une fin coupée…)
+    toast(`partition écrite${full.result?.engine === 'factice' ? ' (moteur d\'essai)' : ''} : relis-la, modifie-la, puis Générer${fixes.length ? ` · ${fixes.join(' · ')}` : ''}`, fixes.length ? 9000 : 5000);
     app.commit('data');
     return;
   }
@@ -522,7 +523,12 @@ function partitionBox(app, c, s, vals) {
   const paintState = (r) => {
     if (!r) { state.textContent = g.v.abc ? 'pas vérifiée' : 'vide : sans partition, YuE2 écrit la sienne au rendu'; state.className = 'lbl gr-abc-s'; drawRoll(roll, null, P); return; }
     if (r.ok === null) { state.textContent = `vérification indisponible : ${r.why}`; state.className = 'lbl gr-abc-s'; return; }
-    if (!r.ok) { state.textContent = `ne passe pas : ${r.error}`; state.className = 'lbl gr-abc-s no'; drawRoll(roll, null, P); return; }
+    if (!r.ok) {
+      // la faute en français, avec sa ligne (music_yue.abc_check) ; une fin coupée se corrige d'un geste
+      put(state, `ne passe pas : ${r.error_fr || r.error}`, r.corriger ? el('button', { class: 'tb ghost sm gr-fix', type: 'button', title: r.corriger.notes.join(' · '),
+        onclick: () => { g.v.abc = r.corriger.abc; ta.value = g.v.abc; app.commit('data'); toast(r.corriger.notes.join(' · '), 6000); recheck(); } }, 'Corriger') : null);
+      state.className = 'lbl gr-abc-s no'; drawRoll(roll, null, P); return;
+    }
     const vo = r.report.voices;
     state.textContent = `vérifiée (abc_tools) · ${vo.Vocal.measures} mes. · Q ${r.report.bpm} · chant ${vo.Vocal.sounding_notes} notes · thème ${vo.Ins.sounding_notes} · ${vo.Vocal.chords.length} accords · ${secs(r.report.nominal_duration_seconds)}`;
     state.className = 'lbl gr-abc-s ok';
