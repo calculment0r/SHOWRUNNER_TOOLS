@@ -34,6 +34,15 @@
 // un seul canevas (dans l'ordre des pistes, V1 d'abord, sur du noir comme
 // l'export), y applique ses effets à l'endroit de sa piste, et montre ce
 // canevas à la place des éléments.
+//
+// La copie de défilement (commun/defilement.js, la même que le lecteur
+// commun ; 05/10) : chaque vidéo du programme et de la source a sa copie, une
+// <video> muette posée juste après elle. À l'arrêt, quand la tête bouge (la
+// règle, la barre sous le moniteur, les flèches), c'est la copie qui saute et
+// qui se voit — une image clé toutes les 6 : l'image suit le geste —, puis
+// l'originale se cale et reprend la place dès qu'elle montre la même image.
+// Ce qui se voit d'un plan (`vu`) porte son opacité, son filtre, et sert de
+// source au canevas des effets ; l'autre reste à 0.
 
 import { href } from '../commun/shell.js';
 import { windows, opacityAt, gainAt, audibleTracks, projectEnd, spd, isOn, chainOf } from './model.js';
@@ -41,6 +50,31 @@ import { getLut, lutFailed, lutGL, passesOf } from './lut.js';
 // un saut ne s'empile jamais sur un saut en cours (commun/tete.js, mesuré le 30/09) :
 // la tête glissée à l'arrêt, l'image suit au lieu d'attendre la fin du geste
 import { sauter, cible } from '../commun/tete.js';
+import { copieDefil } from '../commun/defilement.js';
+
+// ce qui se voit d'une vidéo : l'originale, ou sa copie pendant qu'on cherche
+const vu = (e) => (e.dfl && e.dfl.montre === 'nav' ? e.dfl.nav : e.el);
+// l'opacité (et le filtre) d'un plan sur ce qui se voit ; l'autre à 0
+function voir(e, op, filtre = null) {
+  const v = vu(e);
+  for (const m of [e.el, e.dfl?.nav]) {
+    if (!m) continue;
+    m.style.opacity = m === v ? String(op) : '0';
+    if (filtre !== null) m.style.filter = m === v ? filtre : 'none';
+  }
+}
+// la copie de défilement d'une vidéo (commun/defilement.js), posée juste après elle, comme elle
+function copie(el, item, fps, again) {
+  const d = copieDefil(el, item, { fps, montrer: again });
+  if (d.nav) {
+    d.nav.classList.add('layer', 'video');
+    d.nav.style.opacity = '0';
+    d.nav.addEventListener('seeked', again);
+    d.nav.addEventListener('loadeddata', again);
+    el.after(d.nav);
+  }
+  return d;
+}
 
 // la signature d'une chaîne : ce qui change l'image
 const sigOf = (steps) => JSON.stringify(steps.map((f) => (f.type === 'lut' ? ['l', f.lut, f.mix] : ['g', f.exposure || 0, f.contrast || 0, f.saturation || 0, f.temperature || 6500])));
@@ -200,6 +234,13 @@ export class Program {
 
   toggle() { this.playing ? this.pause() : this.play(1); }
 
+  // un geste sur la tête (la règle, la barre du moniteur) commence ou finit : pendant, les
+  // copies de défilement restent devant ; au lâcher, les originales se calent
+  scrub(on) {
+    this.geste = !!on;
+    for (const e of this.els.values()) if (e.dfl) { if (on) e.dfl.debut(); else e.dfl.fin(); }
+  }
+
   seek(t) {
     this.t = Math.max(0, Math.min(this.duration(), t));
     if (this.playing) { this.t0 = this.t; this.n0 = performance.now(); }
@@ -254,10 +295,11 @@ export class Program {
       el.style.opacity = '0';
       this.stage.append(el);
       e = { el, tag, item: item.id, dur: item.duration || 0, idle: 0 };
-      // une image arrêtée qui change (recherche, chargement) : le canevas LUT se redessine
+      // une image arrêtée qui change (recherche, chargement, l'originale qui reprend la place de
+      // sa copie) : le canevas LUT se redessine
       const again = () => { e.drawn = ''; if (!this.playing) this.render(); };
       el.addEventListener(tag === 'img' ? 'load' : 'seeked', again);
-      if (tag === 'video') el.addEventListener('loadeddata', again);
+      if (tag === 'video') { el.addEventListener('loadeddata', again); e.dfl = copie(el, item, item.fps || this.fps, again); }
       route(e);
       this.els.set(c.id, e);
     }
@@ -288,12 +330,13 @@ export class Program {
   // Le canevas d'un plan qui a des effets : la source passée par la chaîne,
   // à la taille de la source (1920 px de large au plus).
   paintChain(e, ready) {
-    const src = e.el;
-    const vw = e.tag === 'img' ? src.naturalWidth : src.videoWidth, vh = e.tag === 'img' ? src.naturalHeight : src.videoHeight;
+    // la source : ce qui se voit (la copie pendant qu'on cherche) ; la taille : celle de l'originale
+    const src = vu(e), o = e.el;
+    const vw = e.tag === 'img' ? o.naturalWidth : (o.videoWidth || src.videoWidth), vh = e.tag === 'img' ? o.naturalHeight : (o.videoHeight || src.videoHeight);
     if (!vw || !vh || (e.tag === 'video' && src.readyState < 2)) return;
     const s = Math.min(1, 1920 / vw);
     const w = Math.max(2, Math.round(vw * s)), h = Math.max(2, Math.round(vh * s));
-    const key = `${e.tag === 'img' ? 0 : src.currentTime}|${ready.sig}|${w}`;
+    const key = `${e.tag === 'img' ? 0 : `${src === o ? 'o' : 'c'}${src.currentTime}`}|${ready.sig}|${w}`;
     if (!this.playing && e.drawn === key) return;
     const gl = lutGL();
     if (!gl.ok) return;
@@ -337,8 +380,8 @@ export class Program {
         ctx.drawImage(gl.cv, 0, 0);
         continue;
       }
-      const src = L.e.cv && L.e.shown ? L.e.cv : L.e.el;
-      const el = L.e.el;
+      const el = vu(L.e);
+      const src = L.e.cv && L.e.shown ? L.e.cv : el;
       const vw = L.e.tag === 'img' ? el.naturalWidth : el.videoWidth, vh = L.e.tag === 'img' ? el.naturalHeight : el.videoHeight;
       if (!vw || !vh || (L.e.tag === 'video' && el.readyState < 2)) continue;
       const k = Math.min(w / vw, h / vh), dw = vw * k, dh = vh * k;
@@ -364,6 +407,7 @@ export class Program {
   drop(id) {
     const e = this.els.get(id);
     if (!e) return;
+    if (e.dfl) e.dfl.detruire();
     try { e.el.pause(); } catch { /* */ }
     e.el.removeAttribute('src');
     if (e.tag !== 'img') e.el.load();
@@ -433,13 +477,14 @@ export class Program {
         e.css = !gl.ok ? steps.filter((f) => f.type === 'grade').map(gradeCss).filter((x) => x !== 'none').join(' ') || 'none' : 'none';
         this.lutLayer(e, !!lut);
         if (e.cv) e.cv.style.zIndex = e.el.style.zIndex;
+        if (e.dfl?.nav) e.dfl.nav.style.zIndex = e.el.style.zIndex;
         if (!active) {                      // en attente : arrêté sur sa première image
           if (e.tag !== 'img') {
             if (!e.el.paused) e.el.pause();
             const want = Math.max(0, target) + 0.001;
             if (Math.abs(cible(e.el) - want) > 0.05) sauter(e.el, want);
           }
-          e.el.style.opacity = '0';
+          voir(e, 0);
           if (e.cv) e.cv.style.opacity = '0';
           setGain(e, 0);
           continue;
@@ -447,13 +492,9 @@ export class Program {
         if (e.tag !== 'audio') {
           const op = hidden.has(track.id) ? 0 : opacityAt(w, frame);
           if (e.cv) {
-            e.el.style.opacity = '0';
-            e.el.style.filter = 'none';
+            voir(e, 0, 'none');
             e.cv.style.opacity = String(op);
-          } else {
-            e.el.style.opacity = String(op);
-            e.el.style.filter = e.css;
-          }
+          } else voir(e, op, e.css);
           if (op > 0) { this.visible.push(c); layers.push({ e, c, op, css: e.css }); }
         }
         const sound = hear.has(track.id) && (track.kind === 'audio' || c.audio) && c.kind !== 'image';
@@ -469,14 +510,14 @@ export class Program {
     if (adjOn) {
       this.compose(layers);
       this.comp.style.opacity = '1';
-      for (const L of layers) if (!L.adj) { L.e.el.style.opacity = '0'; if (L.e.cv) L.e.cv.style.opacity = '0'; }
+      for (const L of layers) if (!L.adj) { voir(L.e, 0); if (L.e.cv) L.e.cv.style.opacity = '0'; }
     } else if (this.comp) this.comp.style.opacity = '0';
     this.composed = adjOn;
     this.media = media;
     for (const [id, e] of this.els) {
       if (need.has(id)) continue;
       if (e.tag !== 'img' && !e.el.paused) e.el.pause();
-      e.el.style.opacity = '0';
+      voir(e, 0);
       if (e.cv) e.cv.style.opacity = '0';
       setGain(e, 0);
       if (!e.idle) e.idle = now;
@@ -485,7 +526,7 @@ export class Program {
   }
 
   sync(e, target, fwd, fps, sp = 1) {
-    const el = e.el;
+    const el = e.el, dfl = e.dfl;
     const D = e.dur || (isFinite(el.duration) ? el.duration : 0);
     const hi = D ? D - 0.5 / fps : Infinity;
     const outside = target < 0 || target > hi;     // tête ou queue figée d'un fondu enchaîné
@@ -493,6 +534,7 @@ export class Program {
     // playbackRate : 1/16 à 16 dans Chromium (au-delà : NotSupportedError)
     const rate = Math.max(0.0625, Math.min(16, this.rate * sp));
     if (fwd && !outside) {
+      if (dfl) dfl.lire();               // la copie, si elle se voyait, laisse la place dès que l'originale joue
       if (el.paused) {
         if (Math.abs(cible(el) - want) > 0.03) sauter(el, want);
         el.playbackRate = rate;
@@ -507,6 +549,14 @@ export class Program {
     }
     if (!el.paused) el.pause();
     const at = want + (outside ? 0 : 0.001);       // + 1 ms : l'image qui commence à cet instant, pas la précédente
+    // à l'arrêt (et à rebours) : la copie de défilement saute, l'originale se cale ensuite (commun/defilement.js)
+    if (dfl) {
+      dfl.arret();
+      const g = this.geste || (this.playing && this.rate < 0);
+      if (Math.abs(dfl.cible() - at) > 0.3 / fps && el.readyState >= 1) dfl.aller(at, { geste: g });
+      else if (!g) dfl.repos();
+      return;
+    }
     if (Math.abs(cible(el) - at) > 0.3 / fps && el.readyState >= 1) sauter(el, at);
   }
 }
@@ -529,12 +579,14 @@ export class Source {
 
   get fps() { return (this.item && this.item.fps) || this.fpsOf(); }
   get duration() { return this.item ? (this.item.kind === 'image' ? 0 : (this.item.duration || (this.el && this.el.duration) || 0)) : 0; }
-  get t() { return this.el && this.item && this.item.kind !== 'image' ? this.el.currentTime : 0; }
+  // le temps de la source : là où va l'image qui se voit (la copie de défilement pendant qu'on cherche)
+  get t() { return this.el && this.item && this.item.kind !== 'image' ? (this.dfl ? this.dfl.cible() : this.el.currentTime) : 0; }
   get playing() { return !!(this.el && this.item && this.item.kind !== 'image' && (!this.el.paused || this.rev)); }
 
   load(item, { in: tin = 0, out = null, at = null } = {}) {
     this.stop();
     if (this.el) { try { this.el.pause(); } catch { /* */ } this.el.remove(); }
+    if (this.dfl) { this.dfl.detruire(); this.dfl = null; }
     this.item = item;
     this.el = null;
     this.box.querySelector('.empty')?.toggleAttribute('hidden', !!item);
@@ -549,10 +601,17 @@ export class Source {
     this.el = el;
     this.in = tin;
     this.out = out ?? (item.duration || 0);
+    if (tag === 'video') {
+      // la copie de défilement (commun/defilement.js) : par-dessus, opaque seulement pendant qu'on cherche
+      const montrer = (qui) => { if (d.nav) d.nav.style.opacity = qui === 'nav' ? '1' : '0'; this.onTick(); };
+      const d = copieDefil(el, item, { fps: this.fps, montrer });
+      if (d.nav) { d.nav.classList.add('layer', 'video'); d.nav.style.opacity = '0'; el.after(d.nav); }
+      this.dfl = d;
+    }
     if (tag !== 'img') {
       el.addEventListener('timeupdate', () => this.onTick());
       el.addEventListener('seeked', () => this.onTick());
-      el.addEventListener('pause', () => this.onTick());
+      el.addEventListener('pause', () => { if (this.dfl) this.dfl.arret(); this.onTick(); });
       el.addEventListener('play', () => this.tick());
       el.addEventListener('loadedmetadata', () => {
         if (!this.out) this.out = el.duration || 0;
@@ -575,6 +634,14 @@ export class Source {
 
   stop() { clearInterval(this.rev); this.rev = 0; this.rate = 0; }
 
+  // un geste sur la tête de la source (sa barre) commence ou finit (la copie de défilement)
+  scrub(on) { this.geste = !!on; if (this.dfl) { if (on) this.dfl.debut(); else this.dfl.fin(); } }
+
+  // aller à t (s) : la copie de défilement si elle est prête, l'originale sinon
+  go(t, geste = false) {
+    if (this.dfl) this.dfl.aller(t, { geste: geste || this.geste }); else sauter(this.el, t);
+  }
+
   play(rate = 1) {
     if (!this.el || this.item.kind === 'image') return;
     audio();
@@ -582,24 +649,33 @@ export class Source {
     this.rate = rate;
     if (rate < 0) {
       this.el.pause();
+      if (this.dfl) this.dfl.arret();
       this.rev = setInterval(() => {
-        const t = cible(this.el) + rate / 30;
-        if (t <= 0) { sauter(this.el, 0); this.stop(); }
-        else sauter(this.el, t);
+        const t = this.t + rate / 30;
+        if (t <= 0) { this.go(0, true); this.stop(); this.dfl?.repos(); }
+        else this.go(t, true);
         this.onTick();
       }, 1000 / 30);
       this.onTick();
       return;
     }
-    if (this.el.ended || cible(this.el) >= this.duration - 0.05) sauter(this.el, this.in || 0);
+    const at = this.t;
+    if (this.el.ended || at >= this.duration - 0.05) sauter(this.el, this.in || 0);
+    else if (Math.abs(cible(this.el) - at) > 0.5 / this.fps) sauter(this.el, at);   // l'originale part d'où la copie montrait
     this.el.playbackRate = rate;
+    if (this.dfl) this.dfl.lire();
     this.el.play().catch(() => {});
   }
 
-  pause() { this.stop(); if (this.el && this.el.pause) this.el.pause(); this.onTick(); }
+  pause() {
+    this.stop();
+    if (this.el && this.el.pause) this.el.pause();
+    if (this.dfl) { this.dfl.arret(); this.dfl.repos(); }
+    this.onTick();
+  }
   toggle() { this.playing ? this.pause() : this.play(1); }
-  seek(t) { if (this.el && this.item.kind !== 'image') { sauter(this.el, Math.max(0, Math.min(this.duration, t))); this.onTick(); } }
-  step(n) { if (!this.el || this.item.kind === 'image') return; this.pause(); this.seek(cible(this.el) + n / this.fps); }
+  seek(t) { if (this.el && this.item.kind !== 'image') { this.go(Math.max(0, Math.min(this.duration, t))); this.onTick(); } }
+  step(n) { if (!this.el || this.item.kind === 'image') return; this.pause(); this.seek(this.t + n / this.fps); }
   markIn() { if (!this.item || this.item.kind === 'image') return; this.in = Math.min(this.t, Math.max(0, this.out - 1 / this.fps)); this.onTick(); }
   markOut() { if (!this.item || this.item.kind === 'image') return; this.out = Math.max(this.t, this.in + 1 / this.fps); this.onTick(); }
   clearIn() { if (this.item) { this.in = 0; this.onTick(); } }

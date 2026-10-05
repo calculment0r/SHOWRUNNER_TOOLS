@@ -368,8 +368,8 @@ export class Timeline {
       },
       temps: (x) => this.frameAt(x),
       aller: (f) => this.app.seekFrame(f),
-      debut: () => this.root.classList.add('dragging'),
-      fin: () => { this.snapLine.hidden = true; this.tip.hidden = true; this.root.classList.remove('dragging'); },
+      debut: () => { this.root.classList.add('dragging'); this.app.scrub?.(true); },
+      fin: () => { this.snapLine.hidden = true; this.tip.hidden = true; this.root.classList.remove('dragging'); this.app.scrub?.(false); },
     });
     this.ruler.addEventListener('dblclick', (e) => {
       const mk = e.target.closest('.tl-m');

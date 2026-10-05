@@ -1020,6 +1020,7 @@ const timeline = new Timeline($('#tl'), {
   select,
   focus,
   seekFrame: (f) => program.seekFrame(f),
+  scrub: (on) => program.scrub(on),            // la tête glissée sur la règle : la copie de défilement (player.js)
   cut,
   trackFor: (tid, kind) => trackFor(tid, kind),
   placeItem,
@@ -2471,8 +2472,8 @@ function wire() {
   $('#s-out').onclick = () => source.markOut();
   $('#s-insert').onclick = () => fromSource('insert');
   $('#s-over').onclick = () => fromSource('overwrite');
-  scrubber($('#src-scrub'), (u) => source.seek(u * source.duration));
-  scrubber($('#prg-scrub'), (u) => program.seek(u * program.duration()));
+  scrubber($('#src-scrub'), (u) => source.seek(u * source.duration), (on) => source.scrub(on));
+  scrubber($('#prg-scrub'), (u) => program.seek(u * program.duration()), (on) => program.scrub(on));
   $('#src-screen').addEventListener('dragstart', (e) => {
     const it = source.item;
     if (!it) { e.preventDefault(); return; }
@@ -2521,19 +2522,26 @@ function wire() {
   addEventListener('hashchange', () => { const id = location.hash.slice(1); if (id && (!S.p || S.p.id !== id)) openProject(id).catch((er) => toast(er.message)); });
 }
 
-function scrubber(bar, go) {
+// la barre sous un moniteur : cliquer, glisser = la tête ; `geste(on)` : le geste commence, finit
+// (pendant, la copie de défilement reste devant : player.js)
+function scrubber(bar, go, geste = () => {}) {
   bar.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     const a = document.activeElement;
     if (a && a !== document.body && a.blur) a.blur();
     const r = bar.getBoundingClientRect();
     const at = (ev) => go(Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)));
+    geste(true);
     at(e);
     try { bar.setPointerCapture(e.pointerId); } catch { /* */ }
     const mv = (ev) => at(ev);
-    const up = () => { bar.removeEventListener('pointermove', mv); bar.removeEventListener('pointerup', up); };
+    const up = () => {
+      bar.removeEventListener('pointermove', mv); bar.removeEventListener('pointerup', up); bar.removeEventListener('pointercancel', up);
+      geste(false);
+    };
     bar.addEventListener('pointermove', mv);
     bar.addEventListener('pointerup', up);
+    bar.addEventListener('pointercancel', up);
   });
 }
 
