@@ -110,10 +110,11 @@ appel, questions cliquables, plan, une étape à la fois, carnet des décisions,
 DGX ; 44 appels au modèle → 1 pour la première réponse ; le cadre « Vidéos » rempli de sons venait de
 `library` qui jugeait par l'extension : il lit le contenu par ffprobe). `check.py` complet : **3476 / 0**.
 
-En cours au moment d'écrire (à fusionner s'il a fini ; sinon sa branche dit où il en est) :
-- `wip2/motion-editeur` : les idées d'une note de spécification d'éditeur de motion partagée par Cal (le
-  déterminisme, l'export MP4 par Chromium sans affichage et ffmpeg, les losanges d'images clés déplaçables, le
-  choix de courbe avec aperçu et le ressort, les préréglages qui posent des clés modifiables, la cascade).
+Puis : `wip2/motion-editeur` (les idées d'une note de spécification d'éditeur de motion partagée par Cal : le
+rendu déterministe, l'export MP4 `presentation.video` par Chromium sans affichage et ffmpeg, les losanges
+déplaçables, les courbes et le ressort, les préréglages et la cascade ; `presentations_motion.md` § 10).
+
+Plus rien en cours à la fin de la session du 06/10 : toutes les branches `wip2/…` sont fusionnées.
 
 **Décision proposée à Cal (sans téléchargement)** : `ideation_agent_modele: "qwen3:30b-a3b"` pour la
 conversation de l'agent (déjà sur les deux DGX ; un modèle à experts, ≈ 6 fois plus rapide à écrire d'après les

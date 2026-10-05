@@ -163,7 +163,8 @@ def run(ctx) -> dict:
             "fps": got.get("fps"), "w": got.get("w"), "h": got.get("h"), "fonts": got.get("fonts") or [], "warnings": warn[:10]}
 
 
-def stills(bid: str, times: list[float], *, slide: str | None = None, hold: float = 2, scale: int = 1, out: Path) -> dict:
+def stills(bid: str, times: list[float], *, slide: str | None = None, hold: float = 2, scale: int = 1, out: Path,
+           owner=None) -> dict:
     """Les images de la présentation aux instants `times` (ms), en PNG, par la même page et le même
     script que la vidéo (sans file : le contrôle s'en sert). Rend {stills: [{t, path}], total, …}."""
     from tools import ideation as ide
@@ -180,7 +181,8 @@ def stills(bid: str, times: list[float], *, slide: str | None = None, hold: floa
         raise RuntimeError(st["why"])
     b = ide.normalize(ide.load(bid))
     out.mkdir(parents=True, exist_ok=True)
-    spec = _spec(b, bid, ide.board_space(bid), "stills", {"slide": slide, "hold": hold, "scale": scale}, out, None, st, times=list(times))
+    # owner : les préférences (le thème) de la personne, comme le travail qu'on compare
+    spec = _spec(b, bid, ide.board_space(bid), "stills", {"slide": slide, "hold": hold, "scale": scale}, out, owner, st, times=list(times))
     spec.pop("_parents")
     p = out / "spec.json"
     p.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
@@ -340,7 +342,8 @@ def selftest(call, ok) -> None:
        f"présentation · vidéo : H.264, yuv420p, BT.709, {n} images, l'index en tête (+faststart) ({vs} {fast})")
     idx = [0, n // 2, n - 1]
     times = [k * 1000 / 30 for k in idx]
-    R2 = stills(bid, times, slide="f1", hold=1.4, out=out / "ref")
+    # la référence au thème de la même personne que le MP4 (un essai d'avant — prefs — a pu poser le sien)
+    R2 = stills(bid, times, slide="f1", hold=1.4, out=out / "ref", owner=(it.get("origin") or {}).get("user"))
     refs = [Path(x["path"]) for x in R2.get("stills") or []]
     ext = _frames(mp4, idx, out)
     res = [_diff(a, b) for a, b in zip(ext, refs)] if len(refs) == 3 and all(p.is_file() for p in ext) else []
