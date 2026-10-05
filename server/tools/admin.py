@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -338,6 +339,81 @@ def journal(req):
     return {"events": auth.journal_tail(n), "log": log, "log_file": str(f)}
 
 
+# ── I · les diagnostics, sans terminal (Cal, 05/10 : « chiant de le faire à chaque modif ») ──
+# Une liste FIXE de scripts du dépôt, sans argument venu de la page : Cal (un admin) les lance d'un clic,
+# la sortie s'affiche dans la page. Lecture seule, sauf « planche » (qui crée la planche de la réunion :
+# elle tourne DANS le portail, pour que la bibliothèque voie ses photos aussitôt, sans redémarrage).
+REPO = Path(__file__).resolve().parents[2]
+DIAGS = {   # id : (nom court, ce qu'il dit, commande, délai en s, action ?)
+    "maj": ("Mise à jour", "la mise à jour automatique : installée ou non, la version en route, son journal",
+            ["bash", "tools/auto_maj.sh", "etat"], 90, False),
+    "voies": ("Voies de calcul", "quelles machines calculent l'image, la vidéo, l'audio", ["python3", "tools/voie.py"], 30, False),
+    "yue": ("YuE2 · paroles", "ce que les dernières chansons YuE2 ont vraiment reçu : style, paroles, partition",
+            ["python3", "tools/diag_yue.py", "5"], 60, False),
+    "yue_wf": ("YuE2 · workflows", "tes workflows YuE2 de ComfyUI contre le graphe que le portail envoie",
+               ["python3", "tools/diag_yue_workflow.py"], 120, False),
+    "yue_miroir": ("YuE2 · modèles", "les fichiers de YuE2 présents sur les deux DGX (rien n'est copié)",
+                   ["bash", "tools/mirror_yue.sh", "--check"], 300, False),
+    "director": ("Director", "le nœud Director de ComfyUI et ses entrées", ["python3", "tools/diag_director.py"], 120, False),
+    "planche_plan": ("Planche · plan", "la planche de la réunion (establishing shots) : ce qu'elle contiendra",
+                     ["python3", "tools/board_reunion.py", "--plan"], 60, False),
+    "planche": ("Planche · créer", "crée la planche de la réunion dans LES ANEES FOLLES, photos d'époque comprises", None, 1800, True),
+}
+_runs: dict = {}
+_runs_lock = threading.Lock()
+OUT_MAX = 200_000
+
+
+def _diag_run(name: str) -> None:
+    _, _, argv, timeout, _ = DIAGS[name]
+    r = _runs[name]
+    try:
+        if argv is None:   # en mémoire : la planche (tools/board_reunion.py, main(…, say=…))
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("board_reunion", REPO / "tools" / "board_reunion.py")
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+
+            def say(*a):
+                r["out"] = (r["out"] + " ".join(str(x) for x in a) + "\n")[-OUT_MAX:]
+            try:
+                rc = mod.main([], say=say, en_portail=True)
+            except SystemExit as e:   # resolve_space : « aucune Team … »
+                say(str(e.code) if e.code not in (None, 0) else "")
+                rc = 1 if e.code not in (None, 0) else 0
+        else:
+            p = subprocess.run(argv, cwd=str(REPO), capture_output=True, text=True, timeout=timeout)
+            r["out"] = ((p.stdout or "") + (("\n" + p.stderr) if p.stderr else ""))[-OUT_MAX:]
+            rc = p.returncode
+        r.update(state="done" if rc == 0 else "failed", rc=rc)
+    except subprocess.TimeoutExpired as e:
+        r.update(state="failed", rc=-1, out=((e.stdout or "") if isinstance(e.stdout, str) else "") + f"\n(arrêté après {timeout} s)")
+    except Exception as e:   # un diagnostic qui casse ne casse pas le portail
+        r.update(state="failed", rc=-1, out=(r.get("out") or "") + f"\n{type(e).__name__} : {e}")
+    finally:
+        r["ended"] = time.time()
+    auth.journal("diagnostic", diag=name, etat=r["state"])
+
+
+def diag_list(req):
+    _admin(req)
+    with _runs_lock:
+        return {"diags": [{"id": k, "label": v[0], "doc": v[1], "action": v[4], **{x: _runs.get(k, {}).get(x) for x in ("state", "started", "ended", "rc", "out")}}
+                          for k, v in DIAGS.items()]}
+
+
+def diag_start(req, name):
+    me = _admin(req)
+    if name not in DIAGS:
+        raise HttpError(404, "diagnostic inconnu")
+    with _runs_lock:
+        if (_runs.get(name) or {}).get("state") == "running":
+            raise HttpError(409, "il tourne déjà : sa sortie arrive")
+        _runs[name] = {"state": "running", "started": time.time(), "ended": None, "rc": None, "out": "", "by": me["id"]}
+    threading.Thread(target=_diag_run, args=(name,), daemon=True, name=f"diag-{name}").start()
+    return {"ok": True}
+
+
 def register(app) -> None:
     app.route("GET", "/api/admin/state", state)
     app.route("POST", "/api/admin/requests/{uid}/accept", accept)
@@ -357,6 +433,8 @@ def register(app) -> None:
     app.route("GET", "/api/admin/storage", storage)
     app.route("POST", "/api/admin/trash/empty", empty_trash)
     app.route("GET", "/api/admin/journal", journal)
+    app.route("GET", "/api/admin/diag", diag_list)
+    app.route("POST", "/api/admin/diag/{name}", diag_start)
 
 
 # ── le contrôle (tools/check.py) : la file contre deux faux ComfyUI ──
@@ -608,6 +686,16 @@ def selftest(call, ok) -> None:
         s_, d, _ = essai_http("POST", "/api/admin/users/lea", {"quotas": {"queued": 1}}, cookie=tok, headers=same)
         ok(s_ == 200 and auth.quotas_for("lea")["queued"] == 1, f"un quota changé par l'API ({s_})")
         auth.set_user("lea", {"quotas": {"queued": None}}, "cal")
+        s_, d, _ = essai_http("GET", "/api/admin/diag", cookie=tok)
+        ok(s_ == 200 and {"voies", "yue", "planche"} <= {x["id"] for x in d.get("diags", [])}, f"les diagnostics se listent ({s_})")
+        s_, _, _ = essai_http("POST", "/api/admin/diag/rm_rf", {}, cookie=tok, headers=same)
+        ok(s_ == 404, f"un diagnostic hors de la liste : 404 ({s_})")
+        s_, _, _ = essai_http("POST", "/api/admin/diag/voies", {}, cookie=tok, headers=same)
+        t_end = time.time() + 30
+        while time.time() < t_end and (_runs.get("voies") or {}).get("state") == "running":
+            time.sleep(0.2)
+        ok(s_ == 200 and (_runs.get("voies") or {}).get("state") == "done" and "audio" in (_runs["voies"].get("out") or ""),
+           f"un diagnostic se lance d'un clic et rend sa sortie ({s_} {(_runs.get('voies') or {}).get('state')})")
         auth.create_friend("Efface Moi", by="cal")
         s_, d, _ = essai_http("POST", "/api/admin/users/efface-moi/supprimer", {}, cookie=tok, headers=same)
         ok(s_ == 200 and auth.user("efface-moi") is None, f"un compte se détruit par l'API ({s_})")

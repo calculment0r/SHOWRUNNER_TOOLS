@@ -175,6 +175,25 @@ export function createVideo(app) {
     return el('div', { class: 'dur' }, el('div', { class: 'dur-h' }, el('span', { class: 'lbl' }, 'durée'), el('span', { class: 'sp' }), val, sub), r);
   }
 
+  // le multishot (commun/multishot.js, le même panneau que la page Vidéo) : il écrit les [Shot n] et les <d> dans le prompt
+  // de la carte ; les personnages d'une réplique sont les entrées branchées (@element1, @image1…), pas les sons
+  function multiBtn(v, fromWire) {
+    return el('button', { class: 'gcut', type: 'button', 'aria-disabled': fromWire ? 'true' : null,
+      title: fromWire ? 'le prompt vient d’un fil : le multishot s’écrit dans la carte elle-même (débranche le texte, ou écris-le en amont)'
+        : 'découper la durée en plans, un prompt et des répliques par plan : le panneau écrit les balises',
+      onclick: async (e) => {
+        e.stopPropagation();
+        if (fromWire) return;
+        const { openMultishot } = await import('../commun/multishot.js');
+        const list = O()?.frames || [];
+        const secs = list.find((f) => f.frames === v.frames)?.seconds || v.frames / 24;
+        const at = v.mode === 'r2v' ? atChoices(app.node(v.id) || v) : {};
+        const mentions = (at.toks || []).filter((t) => !t.son).map((t) => ({ token: t.tag, label: t.titre || '' }));
+        openMultishot({ total: secs, desc: v.prompt || '', mentions, lang: prefs.get('general.langue', 'fr') === 'en' ? 'en' : 'fr',
+          onApply: (text) => app.mutate(() => { v.prompt = text; }) });
+      } }, 'multishot…');
+  }
+
   function card(v) {
     const F = app.flow();
     const pr = F.prompt(v.id);
@@ -210,7 +229,7 @@ export function createVideo(app) {
       el('div', { class: 'gsum' }, (pr ? pr.text : v.prompt) || '—'),
       el('div', { class: 'gform' }, seg,
         el('div', { class: 'prow', 'data-row': 'prompt' }, el('div', { class: 'prow-h' }, plab('in', 'prompt', v.mode === 'r2v' ? 'prompt · @image1…' : 'prompt', pr ? 'fil' : ''),
-          el('span', { class: 'sp' }), pr ? null : composeBtn(app, v.id)), field),
+          el('span', { class: 'sp' }), multiBtn(v, !!pr), pr ? null : composeBtn(app, v.id)), field),
         Object.keys(lk).length ? el('span', { class: 'gcut still', title: 'les pastilles de prise de vue du composeur ne vont pas à H3 : seule la ligne libre de Photographie passe (le guide d’H3 : la caméra s’écrit dans la description)' },
           'pastilles ignorées par H3') : null,
         ...ports.filter((p) => p.id !== 'prompt').map((p) => slot(v, p, F.inputs(v.id)[p.id] || [])),

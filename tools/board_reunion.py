@@ -34,6 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
 
+SAY = print   # où dire ce qu'on fait : la console, ou la page Admin → Diagnostics (main(..., say=…))
 UA = "ShowrunnerTools/1.0 (reunion board; calculmentor@yahoo.fr)"
 COMMONS = "https://commons.wikimedia.org/w/api.php"
 FOLDER = "Réunion establishing shots"
@@ -244,7 +245,7 @@ def commons_search(q, want=6):
         with _get(COMMONS + "?" + urllib.parse.urlencode(p)) as r:
             data = json.load(r)
     except Exception as e:
-        print(f"  ! Commons injoignable pour « {q} » : {e}")
+        SAY(f"  ! Commons injoignable pour « {q} » : {e}")
         return []
     out = []
     for pg in sorted((data.get("query") or {}).get("pages", {}).values(), key=lambda x: x.get("index", 0)):
@@ -351,7 +352,10 @@ def resolve_space(args):
     return t, sps[0]
 
 
-def main(argv=None):
+def main(argv=None, say=print, en_portail=False):
+    """`en_portail` : lancé par le portail lui-même (Admin → Diagnostics) : les images neuves sont vues aussitôt."""
+    global SAY
+    SAY = say
     ap = argparse.ArgumentParser()
     # « folles » : la Team de Cal s'écrit « LES ANEES FOLLES » (un seul N) ; la recherche ignore accents et majuscules
     ap.add_argument("--team", default="folles")
@@ -369,13 +373,20 @@ def main(argv=None):
     if args.plan:
         B = Board()
         hs = build(B, lambda *a: [])
-        print(f"{len(B.nodes)} objets, {len(hs)} cadres :")
+        SAY(f"{len(B.nodes)} objets, {len(hs)} cadres :")
         for nom, W, H in hs:
-            print(f"  - {nom}  ({W}×{H})")
+            SAY(f"  - {nom}  ({W}×{H})")
         return 0
 
     team, space = resolve_space(args)
-    print(f"Team « {team['name']} », Workspace « {space.get('name')} » ({space['id']})  — un autre Workspace : --espace \"nom\"")
+    try:
+        return _create(args, team, space, auth, library, ideation, ideation_collab, en_portail)
+    finally:
+        auth.set_current_space(None)
+
+
+def _create(args, team, space, auth, library, ideation, ideation_collab, en_portail):
+    SAY(f"Team « {team['name']} », Workspace « {space.get('name')} » ({space['id']})  — un autre Workspace : --espace \"nom\"")
     auth.set_current_space(space["id"])
     tmp = Path(tempfile.mkdtemp(prefix="reunion_"))
     cache = {}
@@ -406,10 +417,10 @@ def main(argv=None):
                                       extra={"source": {"page": c["page"], "license": c["license"], "credit": c["credit"]}})
                 got.append((it["id"], title[:120]))
                 stats["commons"] += 1
-                print(f"  + {nom} : {c['title']} ({c['license']})")
+                SAY(f"  + {nom} : {c['title']} ({c['license']})")
                 time.sleep(0.4)
             except Exception as e:
-                print(f"  ! {c['title']} : {e}")
+                SAY(f"  ! {c['title']} : {e}")
         return got
 
     B = Board()
@@ -421,9 +432,12 @@ def main(argv=None):
         ideation._write(b)
     owner = auth.user("cal") or next(iter(auth.admins()), None)
     ideation_collab.created(b, owner)
-    print(f"\nPlanche « {b['name']} » : {b['id']}  ({len(b['nodes'])} objets, {stats['biblio']} images de la bibliothèque, "
+    SAY(f"\nPlanche « {b['name']} » : {b['id']}  ({len(b['nodes'])} objets, {stats['biblio']} images de la bibliothèque, "
           f"{stats['commons']} photos de Commons)")
-    print("Relancer le portail pour qu'il voie les images neuves : tools/portail.sh restart, puis ouvrir Idéation.")
+    if not en_portail:
+        SAY("Relancer le portail pour qu'il voie les images neuves : tools/portail.sh restart, puis ouvrir Idéation.")
+    else:
+        SAY("Ouvre Idéation : la planche est dans la liste.")
     return 0
 
 

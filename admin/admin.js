@@ -35,6 +35,7 @@ const SECTIONS = [
   ['cablage', 'F', 'Câblage', 'les interrupteurs'],
   ['stockage', 'G', 'Stockage', 'bibliothèque · corbeille'],
   ['journal', 'H', 'Journal', 'qui a fait quoi'],
+  ['diag', 'I', 'Diagnostics', 'sans terminal'],
 ];
 // la section d'ouverture : l'adresse, sinon la préférence (admin/prefs.json)
 // `limited` : qui n'est pas admin du portail (403 sur admin/state) n'a que les Teams
@@ -124,6 +125,7 @@ async function loadSection() {
     if (S.sec === 'cablage') S.sw = await api('admin/switches');
     if (S.sec === 'stockage') S.store = await api('admin/storage');
     if (S.sec === 'journal') S.jr = await api('admin/journal?n=300');
+    if (S.sec === 'diag') S.dg = await api('admin/diag');
   } catch (e) { if (e.status !== 403) toast(e.message); }
 }
 
@@ -165,7 +167,7 @@ function render(force = false) {
   if (!S.state && !(S.limited && S.teams)) return;
   nav();
   if (!force && busy()) return;   // on ne repeint pas sous les doigts de Cal
-  const fn = { demandes, personnes, teams: teamsSec, file, machines: machinesSec, cablage, stockage, journal: journalSec }[S.sec];
+  const fn = { demandes, personnes, teams: teamsSec, file, machines: machinesSec, cablage, stockage, journal: journalSec, diag: diagSec }[S.sec];
   main.replaceChildren(...[].concat(fn()).filter(Boolean));
 }
 
@@ -1053,6 +1055,34 @@ function journalSec() {
       el('span', { class: 'd', title: detail(e) }, e.event === 'http' ? e.path : detail(e))))),
     el('span', { class: 'lbl' }, `le journal du serveur · ${d.log_file}`),
     el('pre', { class: 'log' }, d.log.length ? d.log.join('\n') : '(vide, ou pas de fichier)')];
+}
+
+// ── I · les diagnostics : une liste fixe de scripts du dépôt, lancés d'un clic (server/tools/admin.py, DIAGS) ──
+// Cal, 05/10 : plus de terminal pour savoir ce qui se passe ; la sortie s'affiche ici, et se relit tant qu'un script tourne.
+let dgTimer = 0;
+function diagSec() {
+  const d = S.dg;
+  if (!d) return [head('Diagnostics', 'I'), el('p', { class: 'lbl' }, 'lecture…')];
+  const running = d.diags.some((x) => x.state === 'running');
+  clearTimeout(dgTimer);
+  if (running) dgTimer = setTimeout(async () => { if (S.sec !== 'diag') return; try { S.dg = await api('admin/diag'); } catch { /* */ } render(true); }, 2000);
+  const start = async (x) => {
+    try { await post(`admin/diag/${x.id}`); S.dg = await api('admin/diag'); render(true); } catch (e) { toast(e.message); }
+  };
+  const chip = (x) => x.state === 'running' ? el('span', { class: 'chip amb' }, el('i'), 'en cours')
+    : x.state === 'done' ? el('span', { class: 'chip ok' }, el('i'), `fini ${fmtDate(new Date(x.ended * 1000).toISOString())}`)
+      : x.state === 'failed' ? el('span', { class: 'chip err' }, el('i'), `échec${x.rc != null && x.rc !== -1 ? ` (code ${x.rc})` : ''}`) : null;
+  return [head('Diagnostics', 'I', running ? 'un script tourne' : `${d.diags.length} scripts`),
+    el('p', { class: 'adm-note' }, 'Les scripts de vérification du dépôt, sans terminal : un clic, la sortie s’affiche ici. Ils ne changent rien, sauf « Planche · créer », qui crée la planche de la réunion (une deuxième fois : une deuxième planche).'),
+    el('div', { class: 'grid2' }, ...d.diags.map((x) => el('div', { class: 'card' },
+      el('div', { class: 'card-head' }, el('span', { class: 'nm' }, x.label), chip(x)),
+      el('p', { class: 'adm-note' }, x.doc),
+      el('div', { class: 'row' }, el('span', { class: 'sp' }),
+        el('button', { class: 'tb' + (x.action ? '' : ' ghost') + ' sm', type: 'button', disabled: x.state === 'running' ? true : null,
+          title: x.state === 'running' ? 'il tourne : sa sortie arrive' : '',
+          onclick: () => (x.action ? confirmBox('Créer la planche de la réunion ?', 'Ça crée une nouvelle planche dans la Team « LES ANEES FOLLES », avec des photos d’époque téléchargées de Wikimedia Commons (quelques minutes). Une deuxième fois en crée une deuxième.', 'Créer la planche', () => start(x)) : start(x)) },
+        x.action ? 'Lancer' : x.state ? 'Relancer' : 'Lancer')),
+      x.out ? el('pre', { class: 'log' }, x.out) : null)))];
 }
 
 addEventListener('hashchange', () => { const id = location.hash.slice(1); if (id !== S.sec && SECTIONS.some(([x]) => x === id)) go(id); });
