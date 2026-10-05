@@ -1378,16 +1378,22 @@ def apercu(it: dict, size: int) -> str:
     return flat[:size] + ("…" if len(flat) > size else "")
 
 
+def ingest_items(board: dict, items: list) -> list:
+    """Les pièces d'une entrée : celles qu'on cite ; sans rien de cité, les objets de la bibliothèque posés sur la planche."""
+    if items:
+        return items
+    out, seen = [], set()
+    for n in board["nodes"]:
+        if n["type"] == "media" and n.get("item") and n["item"] not in seen:
+            seen.add(n["item"])
+            out.append({"id": n["item"], "kind": n.get("kind"), "node": n["id"]})
+    return out
+
+
 def intake(m: Moteur, board: dict, conv: dict, turn: dict, frac) -> dict:
     """Le palier du TEXTE de l'entrée : UN appel (une sortie structurée) sur le brief et le début de chaque
     document → ce qu'il comprend, ce qui ne colle pas, 3 à 5 questions. Rien n'est posé."""
-    items = cited_of(turn)
-    if not items:   # rien de cité : ce qui est posé sur la planche
-        seen = set()
-        for n in board["nodes"]:
-            if n["type"] == "media" and n.get("item") and n["item"] not in seen:
-                seen.add(n["item"])
-                items.append({"id": n["item"], "kind": n.get("kind"), "node": n["id"]})
+    items = ingest_items(board, cited_of(turn))
     docs, others = [], []
     skip = set(turn.get("brief_items") or [])   # le brief rangé en document : son texte est déjà dans <brief>
     for c in items:
@@ -1935,7 +1941,7 @@ def r_turn(req):
             if not isinstance(bi, list) or any(str(x) not in {c["id"] for c in items} for x in bi):
                 raise HttpError(400, "brief_items : des pièces citées")
             turn["brief_items"] = [str(x) for x in bi][:4]
-            turn["reception"] = inventaire(items, content, turn["brief_items"])   # la première phrase : comptée ici, tout de suite
+            turn["reception"] = inventaire(ingest_items(board, items), content, turn["brief_items"])   # la première phrase : comptée ici, tout de suite
         elif intent == "plan":
             # les réponses aux questions d'un tour (celles qu'on n'a pas encore données), ou un plan à refaire
             qt = _turn(conv, str(d.get("questions_turn") or "")) if d.get("questions_turn") else None
@@ -1989,7 +1995,7 @@ def r_turn(req):
     t = update_turn(bid, tid, lambda x: x.update(job=j["id"]))
     paliers = []
     if intent == "ingest":   # les images, les sons : en arrière-plan, pendant qu'on parle
-        paliers = lancer_paliers(bid, tid, items, space)
+        paliers = lancer_paliers(bid, tid, ingest_items(board, items), space)
         sent = [PALIER_FR[p["palier"]] for p in paliers if p["state"] != "skipped"]
         more = {0: "", 1: {"les images": " Je regarde les images en arrière-plan : je te dis ce qu'elles sont dès qu'elles arrivent.",
                            "les sons": " J'écoute les sons en arrière-plan (Transcrire) : je te dis ce qu'ils sont dès qu'ils arrivent."}.get(sent[0] if sent else "", ""),

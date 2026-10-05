@@ -28,6 +28,11 @@ texte et ils se mettent en vignettes au-dessus. »
 - **Jamais un rendu sans la personne** : une carte Générer est posée prête (prompt, références
   branchées), son bouton orange reste à elle ; seule une demande explicite fait lancer, et
   l'action le dit (« lancée à ta demande »).
+- **06/10, après le premier essai réel de Cal** (§ 7) : l'entrée d'un projet accuse réception (l'inventaire
+  compté par le code), comprend en UN appel sur le début des documents, dit ce qui ne colle pas, pose 3 à 5
+  questions à choix, puis propose un plan court qu'on accepte, et fait une étape à la fois. Les images et les sons
+  arrivent par paliers, en arrière-plan, sur l'autre DGX si on veut. Le carnet garde les décisions. La première
+  réponse passe de 44 appels à 1 (faux Ollama).
 - **Rien n'a tourné sur le vrai modèle** : tout est essayé contre un faux Ollama qui rend des
   appels d'outils scénarisés (§ 6). Le premier essai réel est à faire sur DGX2 ; avant, le
   diagnostic **Admin → Diagnostics → « Agent Showrunner »** (`tools/diag_agent.py`) dit si le
@@ -274,6 +279,9 @@ image : résumé, thèmes, personnages, lieux, références), puis l'agent organ
 (cadres par thème ou par sorte, les documents résumés en notes, les personnages, lieux et
 références repérés, une proposition de suite) — la progression se lit dans le fil (« lit
 « scénario » · partie 2/4 »). Sans objet cité, l'analyse prend ce qui est posé sur la planche.
+**Remplacé le 06/10** (§ 7) : rien n'est posé à l'entrée ; la réception, la compréhension et les questions d'abord.
+`send` prend aussi `brief` (les pièces qui sont le brief) ; les tours `plan` et `etape` passent par la page de
+l'agent (ses boutons), pas par ce contrat.
 
 ## 6. Vérifié, et ce qui reste
 
@@ -321,6 +329,225 @@ fois (`claim`) ; trois écritures impossibles refusées au modèle avec leur rai
    grossit quand on dézoome : `canvas.js`, `.fr-h`) ; les cadres eux-mêmes ne se chevauchent pas.
 
 
+## 7. 06/10 : le premier essai réel, ce qui change
+
+### 7.1 Ce que Cal a vu
+
+Premier essai de « Commencer un projet » sur DGX2, avec `qwen3-vl-32b-32k`. Cal avait déposé exprès des documents
+hétéroclites et un brief sans rapport avec eux. Ses mots, résumés :
+
+- l'agent est « super lent et assez con » ;
+- il a pris tous les documents et a voulu tout organiser avec des post-it et des cartes ;
+- il a même fait un cadre « Vidéo » avec les sons dedans ;
+- il aurait dû dire « c'est bon, j'ai tous les documents » et poser des questions avant de tout faire d'une seule
+  passe, ce qui est pénible à corriger : « on ne veut justement pas submerger l'utilisateur avec une production
+  énorme de mauvaise qualité qui l'oblige à faire plein de corrections ».
+
+### 7.2 Les causes, lues dans le code
+
+- **L'avalanche venait de NOTRE consigne**, pas seulement du modèle. `INGEST_TASK` demandait, mot pour mot :
+  - une note par document, avec son résumé ;
+  - les personnages, les lieux et les références en post-it, dans des cadres ;
+  - les images rangées dans des cadres ;
+  - une note des prochaines étapes.
+- **La lenteur venait de la lecture par morceaux.** `ingest` lisait chaque document par morceaux de 9 000 signes
+  (jusqu'à 8 par document, 40 documents), avec un appel au modèle par morceau, puis un appel de fusion, puis une
+  boucle d'outils.
+  - Ce sont des dizaines d'appels séquentiels à un modèle dense de 32 milliards de paramètres.
+  - Sur un GB10, un modèle dense de cette taille écrit environ 9 jetons par seconde : Ollama mesure 9,411 jetons/s
+    pour `qwen3:32b` en q4_K_M [17]. La raison : chaque jeton relit tous les poids, et la mémoire du Spark débite
+    273 Go/s [18].
+- **Le cadre « Vidéos » avec des sons** : c'était le serveur, pas l'agent.
+  - `core/library.py` donnait la sorte d'un fichier par son extension seule (`EXT_KIND` : `.webm` et `.mp4` →
+    vidéo), sans regarder ce qu'il contient.
+  - La mise en page de `projet.js` range ensuite par `item.kind`.
+  - Un mémo vocal en `.webm`, une voix off en `.mp4` partaient donc dans « Vidéos ».
+  - Corrigé à la racine (commit dc8a29c) : `add_file` lit le contenu (ffprobe) avant de donner la sorte ; un
+    conteneur vidéo sans piste d'image est un son ; une pochette (`attached_pic`) n'est pas une piste d'image.
+
+### 7.3 La conduite neuve : recevoir, comprendre, demander, proposer peu, faire pas à pas
+
+Le principe de Cal, et ceux de *Fondations II* [14] qui s'y appliquent (document interne de Cal, pas dans le dépôt :
+repris ici en substance) :
+
+- **Le poste et son occupant.** Ce qui est décidé appartient au projet et reste quand l'occupant change. Ici, le
+  carnet est gardé avec la conversation de la planche, pas dans le modèle : changer de modèle ne perd aucune
+  décision.
+- **La scripte.** Quelqu'un note les décisions, et les relit. Ici, le carnet.
+- **Les contradictions dites à voix haute**, pas lissées. Un assistant seul suit la dernière instruction ; une
+  contradiction doit au contraire être signalée, avec les deux versions.
+- **Le droit de dire non**, ou de dire ce que ça coûte.
+- **Ne pas faire la moyenne** de deux choses qui s'excluent.
+- **Peu de postes allumés pour une pub.** Une pub de 30 s n'a pas besoin de toute la machinerie : un plan court,
+  peu d'étapes, rien de plus que ce qui est demandé.
+
+Le parcours (`server/tools/ideation_agent.py`, `ideation/agent.js`), par paliers (l'idée de Cal du 06/10 : « une
+restitution par paliers, avec déjà des choses qui arrivent rapidement… on peut discuter pendant qu'on analyse le son
+ou les vidéos ») :
+
+| palier | qui le fait | quand | ce qui s'affiche | ce qui se pose sur la planche |
+|---|---|---|---|---|
+| 0. **réception** | le code (`inventaire`) | dans la réponse de la route : immédiat | « J'ai bien reçu 12 pièces : 7 documents (dont le brief), 2 images, 1 vidéo et 2 sons. » et la liste à déplier | la mise en page de départ de `projet.js` seule (les cadres par sorte, sans les mélanger) |
+| 1. **texte** | UN appel au modèle du texte, sortie structurée (`INGEST_TASK`, `INGEST_SCHEMA`) | dès que la file le prend | ce qu'il comprend (3 à 5 lignes), ce qui ne colle pas (en ambre), 3 à 5 questions à choix cliquables, « autre » en texte libre | rien |
+| 2a. **images** | un travail `ideation.palier` : le modèle qui voit, sur SA machine, en un appel (8 images au plus, 448 px ; une vidéo en trois images côte à côte) | en arrière-plan, priorité basse | une ligne (« Les 4 images sont… ») et ce qu'est chaque pièce ; il peut ajouter UNE question à la carte | rien |
+| 2b. **sons** | Transcrire (mode rapide, puis son résumé), un travail par son ou piste son de vidéo (8 au plus, 15 min chacun) | en arrière-plan, priorité basse | une ligne (« Les 2 sons : transcrits… ») avec le résumé de chacun | rien |
+| 3. **plan** | UN appel, sortie structurée (`PLAN_TASK`, `PLAN_SCHEMA`) | après les réponses, ou « Vas-y sans répondre » | 1 à 4 étapes, chacune dit ce qu'elle posera ; Accepter, Changer, Refuser | rien |
+| 4. **étapes** | la boucle d'outils, UNE étape (`ETAPE_TASK`), 12 gestes et 6 appels au plus | une à la fois, dans l'ordre, sur le clic de la personne | la réponse, les gestes ; « Faire cette étape » pour la suivante | les quelques objets de l'étape, annulables d'un geste (« Annuler ce tour ») |
+
+Détails qui font que c'est juste par construction :
+
+- **Les schémas tiennent les bornes.** 3 à 5 questions, 2 à 5 choix, 1 à 4 étapes, une question au plus par palier :
+  c'est le schéma JSON de la sortie structurée qui l'impose, pas un filtre après coup.
+- **Les réponses vont au carnet par le code.** Chaque réponse cliquée est notée telle quelle (« Quel est le
+  livrable ? → Un film de 30 s ») ; c'est un fait de la personne, pas une interprétation du modèle. Le plan accepté
+  ou refusé y est noté aussi. Le modèle n'ajoute que ce qu'il entend en texte libre (`decisions` du plan,
+  `noter_decision` dans la conversation).
+- **Une étape à la fois, dans l'ordre.** Le serveur refuse l'étape 2 avant la 1 (409). Une étape défaite est à
+  refaire. Un plan neuf remplace l'ancien s'il n'était pas fini.
+- **Lecture bornée.** Le début de chaque document : 700 signes, 16 000 en tout, 40 documents. Le reste se lit par
+  `lire_document`, plus tard, quand c'est utile ou demandé. Le brief rangé en document (`brief.md`, le document coché)
+  est compté, pas relu : son texte est déjà le message.
+- **La consigne de tous les tours** (`system_prompt`) dit maintenant :
+  - peu de gestes, jamais une note par document ;
+  - le carnet tient tant que la personne ne le change pas ;
+  - une demande qui contredit une décision est dite à voix haute, les deux citées, au lieu d'être suivie en
+    silence ;
+  - pas de moyenne entre deux choses incompatibles.
+- **Le carnet est dans le panneau, pas sur la planche.** C'est le plus simple :
+  - gardé avec la conversation (`decisions`) ;
+  - relu par chaque tour (`<decisions>`) ;
+  - lisible et corrigible en haut du panneau (retirer une décision, en écrire une).
+
+  Une note épinglée sur la planche aurait été co-éditée, défaite avec un tour, et elle aurait été une production
+  de plus sur la planche.
+
+### 7.4 Les deux DGX
+
+Cal (06/10) : « on ne pourrait pas optimiser en lançant des trucs différents sur les deux DGX ?… un modèle plus léger
+pour les textes et un plus compliqué pour les vidéos ».
+
+Ce que fait déjà la file (`core/jobs.py`) :
+
+- un seul travail GPU du portail par machine (le jeton GPU) ;
+- un travail est épinglé sur l'instance de sa voie qui est sur la machine où il calcule ;
+- `ideation.agent` est sur la voie `audio`, épinglé sur la machine de l'Ollama, famille `ollama-agent`, 31 Go.
+
+Les paliers sont des travaux SÉPARÉS de la file. Ils peuvent partir en parallèle sur les deux machines, sans jamais
+charger deux gros modèles sur la même :
+
+- **Le texte** (`ideation.agent`) : `ideation_agent_url` et `ideation_agent_modele`, comme avant.
+- **Les images** (`ideation.palier`) : `ideation_agent_vision_url` et `ideation_agent_vision_modele` (sinon ceux du
+  texte), et `ideation_agent_vision_gb` (la mémoire déclarée d'un autre modèle, sinon 31).
+  - `route_vision` les épingle sur l'instance de la voie `audio` de la machine de la vision (le jeton GPU de CETTE
+    machine).
+  - Si cette machine n'a pas d'instance dans la voie `audio`, les images passent sur la machine du texte, après lui,
+    et la ligne du palier le dit.
+- **Les sons** : Transcrire, dans sa voie (son texte sur la machine du portail, son résumé par son Ollama :
+  `qwen3:30b-a3b` par défaut, le modèle léger, déjà là).
+  - `ideation_agent_sons` vaut `auto` par défaut : seulement si Transcrire est réglé en local. En factice, ses textes
+    seraient des textes d'essai, et la ligne le dit.
+- **Les paliers sont en priorité basse** : un tour de conversation passe devant eux. La règle « pas doublé plus de 3
+  fois » (`max_overtake`) leur garantit de partir quand même.
+- **Les défauts marchent aujourd'hui** avec le seul modèle installé : `qwen3-vl-32b-32k` fait le texte et la vision,
+  sur DGX2, l'un après l'autre. Le jeton GPU les sérialise, et chaque travail décharge le modèle à la fin.
+
+Pour paralléliser : si la voie `audio` de DGX2 a une instance sur DGX1 (à lire dans `showrunner.local.json`, le
+diagnostic le dit), régler `ideation_agent_vision_url: "http://169.254.110.6:11434"`. Le modèle est sur les deux DGX
+(`orchestration.md` § 2.2). Les images partent alors sur DGX1 pendant que le texte tourne sur DGX2.
+
+### 7.5 Mesuré contre le faux Ollama
+
+L'entrée de 12 documents hétéroclites (un scénario de 90 000 signes, un chapitre de roman, deux PDF, deux DOCX, un
+CSV, un JSON, des sous-titres…), 3 images, 2 sons (dont un `.webm`), 1 vidéo, et un brief sans rapport. Le script
+d'essai est hors du dépôt (`mesure.py`). Il lance le portail dans un processus, avec le faux Ollama du dépôt, dans
+l'état d'avant (9b90f07) et d'après.
+
+| | avant | après |
+|---|---|---|
+| appels au modèle pour la première réponse | 44 (40 sorties structurées + 4 tours de boucle d'outils) : la première réponse EST la fin | **1** |
+| signes de texte envoyés pour la première réponse | 280 837 (≈ 70 000 jetons à 4 signes le jeton) | **12 450** (≈ 3 100 jetons) |
+| plafond de sortie demandé (`num_predict` × appels) | 180 224 jetons | 4 096 |
+| images jointes | 4, à 1024 px (≈ 1 024 jetons chacune pour Qwen3-VL : un jeton par carré de 32 px, `agent_design.md` § 4.4) | 4 au palier des images, à 448 px (≈ 200 jetons ; la bande d'une vidéo ≈ 300) |
+| appels en tout, paliers compris | 44 | 2 (le texte, les images) ; les sons passent par Transcrire |
+| gestes posés sans qu'on ait rien demandé | 32 | **0** |
+| questions posées | 0 | 5 (dont la contradiction brief / documents, et une du palier des images) |
+
+Avec 2 s par appel au faux Ollama (pour voir le temps) :
+
+| | première réponse utile | les images arrivent | les sons arrivent |
+|---|---|---|---|
+| avant | 88 s (44 appels) | — | — |
+| après, un seul Ollama, un ouvrier (une seule machine) | 2,0 s | 4,3 s | 7,6 s |
+| après, deux Ollama (le second pour la vision), deux ouvriers (deux machines) | 2,0 s | 2,4 s | 4,2 s |
+
+Les paliers arrivent pendant la conversation : à la première réponse, la mesure les trouve tous deux « en cours ».
+Le contrôle (`conduite` dans le selftest) vérifie que la question ajoutée par le palier des images arrive dans la
+carte tant qu'on n'y a pas répondu, et que le plan lit ce que les paliers ont appris (`<background>`).
+
+Ce que coûtera le vrai modèle (une **estimation** à partir des débits publiés, pas une mesure) :
+
+- La réponse de l'entrée fait quelques centaines de jetons : ce qu'il comprend, ce qui ne colle pas, 3 à 5 questions.
+- À environ 9 jetons/s pour un dense de 32 B [17], cela fait de l'ordre de la minute, plus le chargement du modèle.
+- Avant, c'était 44 appels de cette sorte.
+
+### 7.6 Des modèles plus rapides, et meilleurs aux outils, sur un GB10 : ce que disent les sources
+
+Décision de Cal : rien n'est téléchargé, rien n'est changé. Ce qui suit est pour sa décision.
+
+Pourquoi un modèle à experts (MoE) est plus rapide sur un Spark :
+
+- Le débit d'écriture est borné par la mémoire : 273 Go/s [18].
+- Un modèle dense de 32 B en q4 relit environ 20 Go à chaque jeton.
+- Un modèle à experts ne lit que ses paramètres actifs, environ 3 B pour un 30B-A3B.
+
+| modèle | paramètres (actifs) | sur les DGX | vitesse publiée sur un DGX Spark | outils | voit | contexte | licence |
+|---|---|---|---|---|---|---|---|
+| `qwen3-vl-32b-32k` (aujourd'hui) | 32 B dense [21] | les deux, 20,9 Go en Q4_K_M, 30,8 Go chargé à 32k (`orchestration.md` § 2.2) | même famille de taille : `qwen3:32b` q4_K_M, **9,4 jetons/s** en écriture, 705 en lecture (Ollama 0.12.6) [17] | oui (gabarit à vérifier par le diagnostic, § 6) | oui | 256K natif [21] ; 32k réglés | Apache-2.0 [21] |
+| **`qwen3:30b-a3b`** | 30,5 B (**3,3 B**) [23] | **les deux, 18 Go** (`transcrire.md` § 1) ; c'est le modèle du carnet de Transcrire | Qwen3-Coder-30B-A3B (la même architecture) en Q8_0 : **61 jetons/s** en écriture, 2 987 en lecture ; 30 à 32k de contexte : 30 jetons/s (llama.cpp, build 7941 ; `llama-bench -fa 1 -p 2048 -n 32` [16]) [15] | oui : appel d'outils « Hermes » dans le gabarit (§ 2 [11][12]) | **non** | 32 768 natif [23] | Apache-2.0 [23] |
+| `qwen3-vl:30b` (Qwen3-VL-30B-A3B) | ≈ 30 B (≈ 3 B) [21] ; 31,1 B dans la fiche d'Ollama [22] | **absent** (un téléchargement de 20 Go [22]) | non publiée trouvée ; même architecture 30B-A3B : de l'ordre de la ligne au-dessus, **à mesurer** | « Visual Agent » [21] | **oui** | 256K natif [21][22] | Apache-2.0 [21] |
+| `gpt-oss:20b` | 21 B (**3,6 B**) [19] | absent (« tient dans 16 Go » [19]) | **83 jetons/s** en écriture, 4 506 en lecture (llama.cpp) [15] ; 58,3 / 3 224 (Ollama 0.12.6) [17] ; 49,7 / 2 053 (Ollama, LMSYS) [24] | oui : appel de fonctions, sorties structurées, effort de raisonnement réglable [19] | non (rien sur les images dans le README [19]) | 128k (131 072), d'après des sources secondaires [20] | Apache-2.0 [19] |
+| `gpt-oss:120b` | 117 B (**5,1 B**) [19] | **DGX1, 65,4 Go** (`orchestration.md` § 3.2) | **58,7 jetons/s** en écriture, 2 444 en lecture (llama.cpp) [15] ; 41,1 / 1 169 (Ollama 0.12.6) [17] | oui [19] | non | 128k [20] | Apache-2.0 [19] |
+| `mistral-small3.2:24b` | 24 B dense | les deux, 15 Go (`transcrire.md`) | dense : de l'ordre d'un 27 B dense, `gemma3:27b` q4_K_M 10,8 jetons/s (Ollama) [17] | « améliore l'appel de fonctions » (`agent_design.md` [25]) | oui (`agent_design.md` [25]) | 128k (`agent_design.md` [25]) | Apache-2.0 (`transcrire.md` [MS]) |
+
+Les vitesses viennent de moteurs et de quantifications différents. Elles disent un ordre de grandeur : un modèle à
+experts écrit 6 à 9 fois plus vite qu'un dense de 32 B sur la même machine. Ce n'est pas une mesure sur nos DGX.
+La justesse de l'appel d'outils de ces modèles côte à côte n'est pas lue ici (le classement BFCL est refusé au robot)
+: elle est à mesurer sur notre banc.
+
+**Recommandation pour Cal** (rien à télécharger pour les points 1 et 2) :
+
+1. **Garder la conduite neuve quel que soit le modèle.** C'est elle qui supprime l'avalanche et les dizaines
+   d'appels.
+2. **Essayer `qwen3:30b-a3b` pour le texte**, sur DGX2, en gardant `qwen3-vl-32b-32k` pour les images :
+   `ideation_agent_modele: "qwen3:30b-a3b"`, `ideation_agent_vision_modele: "qwen3-vl-32b-32k"`.
+   - Il est déjà sur les deux DGX et sert déjà au carnet de Transcrire.
+   - Il écrirait environ 6 fois plus vite d'après les sources [15][17].
+   - Il ne voit pas, mais le texte n'a plus besoin de voir : les images ont leur palier.
+   - À vérifier d'abord par le diagnostic : sa capacité `tools` dans l'Ollama de DGX2.
+   - Les deux modèles ne sont jamais chargés ensemble sur une machine : le jeton GPU, et le déchargement à la fin
+     de chaque travail.
+3. **Les images sur DGX1** si sa voie `audio` y a une instance (`ideation_agent_vision_url`, § 7.4).
+4. **Plus tard, si Cal le décide** (un téléchargement de 20 Go) : `qwen3-vl:30b`, le même genre de modèle à experts,
+   qui voit et appelle des outils. Il remplacerait les deux, à vitesse de modèle à experts.
+   - `gpt-oss` (déjà sur DGX1 en 120b) est rapide et fait des sorties structurées, mais il ne voit pas.
+   - Le 120b prend 65 Go : il ne cohabite pas avec un rendu H3 sur DGX1.
+
+### 7.7 À vérifier sur les vraies machines
+
+1. **Admin → Diagnostics → « Agent Showrunner »** (`tools/diag_agent.py`) dit maintenant aussi :
+   - où partent les images (le modèle, la machine, l'épinglage, s'il voit) ;
+   - si les sons seront transcrits (`ideation_agent_sons`, Transcrire en local ou non).
+2. **Le temps de la première réponse sur DGX2.** Il est écrit dans chaque tour (« N s » sous la réponse ; `seconds`
+   et `calls` dans la conversation). Le chargement du modèle compte dedans (non mesuré).
+3. **La tenue des schémas par le vrai modèle**, avec les sorties structurées d'Ollama : 3 à 5 questions, des choix
+   concrets, la contradiction vue sur le jeu d'essai de Cal (un brief sans rapport et des documents hétéroclites).
+4. **Si `qwen3:30b-a3b` est essayé** : `tools` au diagnostic, puis le même jeu d'essai ; comparer les questions et
+   le plan aux mêmes avec `qwen3-vl-32b-32k`.
+5. **Chaque travail décharge son modèle** (`keep_alive: 0`). Trois travaux de suite sur une machine rechargent
+   donc le modèle trois fois. C'est le prix de la sûreté à côté d'un rendu H3 (§ 4.2) : à mesurer avant de
+   l'optimiser.
+
+
 ## Sources
 
 1. Higgsfield, « How do I use Supercomputer », https://higgsfield.ai/creator-hub/help-center/tools-and-workflows/how-do-i-use-supercomputer (page refusée au robot ; extraits du moteur de recherche, 05/10/2026)
@@ -336,3 +563,14 @@ fois (`claim`) ; trois écritures impossibles refusées au modèle avec leur rai
 11. Qwen, « Function Calling » (Qwen3), https://github.com/QwenLM/Qwen3/blob/main/docs/source/framework/function_call.md
 12. Qwen3, README (« Tool Use »), https://github.com/QwenLM/Qwen3/blob/main/README.md
 13. Qwen3-VL, README (« Visual Agent », éditions Instruct et Thinking, contexte, hyperparamètres), https://github.com/QwenLM/Qwen3-VL/blob/main/README.md
+14. Fondations II — « Le poste et son occupant » (document de Cal, 16/09/2026) : document interne, pas dans le dépôt ; repris en substance au § 7.3
+15. ggml-org/llama.cpp, `benches/dgx-spark/dgx-spark.md` (build 11fb327bf, 7941), https://github.com/ggml-org/llama.cpp/blob/master/benches/dgx-spark/dgx-spark.md, lu le 06/10/2026
+16. ggml-org/llama.cpp, discussion 16578 « Performance of llama.cpp on NVIDIA DGX Spark » (14/10/2025, mise à jour jusqu'au 05/02/2026), https://github.com/ggml-org/llama.cpp/discussions/16578 (lu)
+17. Ollama, « NVIDIA DGX Spark performance » (Ollama 0.12.6, micrologiciel 580.95.05), https://ollama.com/blog/nvidia-spark-performance (refusé au robot ; extraits du moteur de recherche, 06/10/2026)
+18. La bande passante du DGX Spark, 273 Go/s, 128 Go LPDDR5x unifiés : PNY (partenaire de NVIDIA), https://www.pny.com/dgx-spark, et StorageReview, https://www.storagereview.com/review/nvidia-dgx-spark-review-the-ai-appliance-bringing-datacenter-capabilities-to-desktops (extraits du moteur de recherche)
+19. openai/gpt-oss, README, https://github.com/openai/gpt-oss (lu : paramètres, mémoire, licence, MXFP4, appel de fonctions, sorties structurées, effort de raisonnement)
+20. Le contexte de gpt-oss, 128k (131 072 jetons) : sources secondaires, https://intuitionlabs.ai/articles/openai-gpt-oss-open-weight-models, https://console.groq.com/docs/model/openai/gpt-oss-20b (extraits ; la fiche de Hugging Face est refusée au robot)
+21. QwenLM/Qwen3-VL, README, https://github.com/QwenLM/Qwen3-VL (lu le 06/10/2026 : tailles 2B, 4B, 8B, 32B denses, 30B-A3B et 235B-A22B à experts ; Instruct et Thinking ; 256K natif ; Apache-2.0 ; « Visual Agent »)
+22. Ollama, bibliothèque, `qwen3-vl:30b`, https://ollama.com/library/qwen3-vl:30b (refusé au robot ; extrait : 20 Go, 256K, texte et image, qwen3vlmoe 31,1 B, Q4_K_M)
+23. Qwen, `Qwen3-30B-A3B`, https://huggingface.co/Qwen/Qwen3-30B-A3B (cité par `transcrire.md` [Q] : 30,5 B dont 3,3 B actifs, Apache-2.0 ; « 32,768 natively » : `server/tools/transcrire.py`, CARNET_MODELS)
+24. LMSYS, « NVIDIA DGX Spark In-Depth Review » (13/10/2025), https://www.lmsys.org/blog/2025-10-13-nvidia-dgx-spark/ (refusé au robot ; extraits du moteur de recherche)
