@@ -421,7 +421,8 @@ export function install(app) {
   }
   const viewArr = () => {
     const v = S.view;
-    return [-v.x / v.z, -v.y / v.z, cv.clientWidth / v.z, cv.clientHeight / v.z].map((k) => Math.round(k * 10) / 10);
+    const [w, h] = app.canvas?.size?.() || [cv.clientWidth, cv.clientHeight];   // la taille gardée : pas de mise en page forcée par image
+    return [-v.x / v.z, -v.y / v.z, w / v.z, h / v.z].map((k) => Math.round(k * 10) / 10);
   };
   const callState = () => ({ on: K.on, mic: !!audioTrack()?.enabled, cam: K.cam && !!K.local?.getVideoTracks()[0], screen: !!K.screen, recv: !K.local?.getTracks().length,
     rec: !!REC?.on() });
@@ -431,6 +432,8 @@ export function install(app) {
     send({ cursor: C.cursor, sel: [...S.sel].slice(0, 200), view: viewArr(), away: document.hidden, rev: C.rev, call: K.on ? callState() : null, lead: C.leadMe });
   }
   function toWorld(x, y) {
+    // celui de la planche : sa boîte est lue une fois par image (canvas.js, rect), pas à chaque mouvement de la souris
+    if (app.canvas?.toWorld) return app.canvas.toWorld(x, y);
     const r = cv.getBoundingClientRect(), v = S.view;
     return [(x - r.left - v.x) / v.z, (y - r.top - v.y) / v.z];
   }
@@ -585,7 +588,7 @@ export function install(app) {
   // sa vue [x, y, w, h] tient dans la mienne, centrée (le vol est court : 20 présences par seconde)
   function followView(v, first = false) {
     if (!v || document.body.classList.contains('at-presenting')) return;
-    const cw = cv.clientWidth, ch = cv.clientHeight;
+    const [cw, ch] = app.canvas?.size?.() || [cv.clientWidth, cv.clientHeight];
     const [x, y, w, h] = v;
     const z = Math.max(0.08, Math.min(4, cw / Math.max(w, 1), ch / Math.max(h, 1)));
     const to = { x: cw / 2 - (x + w / 2) * z, y: ch / 2 - (y + h / 2) * z, z };
@@ -777,7 +780,8 @@ export function install(app) {
   function paintLayer() {
     raf = 0;
     seen = new Set();
-    const r = cv.getBoundingClientRect();
+    // la boîte de la planche : une lecture par image (canvas.js, rect), plus une mise en page forcée à chaque présence
+    const r = app.canvas?.rect?.() || cv.getBoundingClientRect();
     const v = S.view;
     const W = r.width, H = r.height;
     layer.classList.toggle('jump', Date.now() - C.viewT < 180);

@@ -96,6 +96,14 @@ export function smallest(it) {
 export function createCanvas(app) {
   const { S } = app;
   const cv = document.getElementById('cv');
+  // la taille de la planche, gardée (ResizeObserver) : la relire à chaque image d'un geste (clientWidth) forçait une
+  // mise en page entière de la planche à chaque événement de molette ou de pavé (Cal, 05/10 : « le canvas perd de la
+  // fluidité de temps en temps » ; mesuré : viewRect, 0,9 s de temps propre sur un geste de 2 s)
+  let cvW = 0, cvH = 0;
+  const size = () => { if (!cvW) { cvW = cv.clientWidth; cvH = cv.clientHeight; } return [cvW, cvH]; };
+  new ResizeObserver(() => { cvW = cv.clientWidth; cvH = cv.clientHeight; rectC = null; }).observe(cv);
+  // la boîte de la planche à l'écran : une lecture par image au plus (une mise en page forcée par image, pas par événement)
+  let rectC = null;
   const world = el('div', { class: 'world' });
   const framesL = el('div', { class: 'layer frames' });
   const groupsL = el('div', { class: 'layer groups' });
@@ -147,7 +155,7 @@ export function createCanvas(app) {
   // (20 ms par image à 1000 objets, mesuré). Pendant le geste, la planche garde
   // le zoom « efficace » d'avant ; il se pose 150 ms après (getEfficientZoomLevel
   // de tldraw), avec le niveau du zoom sémantique.
-  let viewT = 0, resT = 0, viewF = 0, zT = 0, zShown = null, level = null;
+  let viewT = 0, resT = 0, viewF = 0, zT = 0, zShown = null, level = null, lastZ = null, gridOn = null;
   function showZ(z, { quiet = false } = {}) {
     zShown = z;
     cv.style.setProperty('--z', z);
@@ -166,17 +174,21 @@ export function createCanvas(app) {
   function applyView() {
     const v = V();
     world.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.z})`;
-    // les liens en pixels d'écran, à chaque image : --iz = 1 / zoom sur leur seul <svg> (wires.js zoom)
-    W.zoom(v.z);
+    // ce qui ne dépend que du zoom ne s'écrit que quand le zoom change (un déplacement ne restyle rien d'autre)
+    if (v.z !== lastZ) {
+      lastZ = v.z;
+      // les liens en pixels d'écran : --iz = 1 / zoom sur leur seul <svg> (wires.js zoom)
+      W.zoom(v.z);
+      // la trame posée sur le fond lui-même, sans variable héritée par les objets
+      const g = GRID * v.z * (v.z < 0.3 ? 4 : v.z < 0.6 ? 2 : 1);
+      cv.style.backgroundSize = `${g}px ${g}px`;
+      const t = `${Math.round(v.z * 100)} %`;
+      if (pct.textContent !== t) pct.textContent = t;
+    }
     if (zShown === null) showZ(v.z);
     else if (v.z !== zShown) { clearTimeout(zT); zT = setTimeout(() => showZ(V().z), 150); }
-    // la trame posée sur le fond lui-même, sans variable héritée par les objets
-    const g = GRID * v.z * (v.z < 0.3 ? 4 : v.z < 0.6 ? 2 : 1);
-    cv.style.backgroundSize = `${g}px ${g}px`;
     cv.style.backgroundPosition = `${v.x}px ${v.y}px`;
-    cv.classList.toggle('nogrid', !S.grid);
-    gridB.classList.toggle('on', !!S.grid);
-    pct.textContent = `${Math.round(v.z * 100)} %`;
+    if (gridOn !== !!S.grid) { gridOn = !!S.grid; cv.classList.toggle('nogrid', !gridOn); gridB.classList.toggle('on', gridOn); }
     paintMini();
     scheduleCull();
     sel.follow();
@@ -195,7 +207,12 @@ export function createCanvas(app) {
     clearTimeout(zT);
     showZ(V().z, { quiet: true });
   }
-  const rect = () => cv.getBoundingClientRect();
+  // La boîte ne change que si la planche change de taille ou de place dans la page : gardée jusqu'à un
+  // redimensionnement (ResizeObserver plus haut, la fenêtre), et relue quand la souris revient sur la planche (une
+  // barre latérale qui s'est ouverte entre-temps). Le déplacement de la vue (transform) ne la change pas.
+  const rect = () => rectC || (rectC = cv.getBoundingClientRect());
+  addEventListener('resize', () => { rectC = null; });
+  cv.addEventListener('pointerenter', () => { rectC = null; });
   function zoomAt(nz, sx, sy) {
     const v = V(), k = clamp(nz, ZMIN, ZMAX) / v.z;
     v.x = sx - (sx - v.x) * k; v.y = sy - (sy - v.y) * k; v.z *= k;
@@ -241,7 +258,8 @@ export function createCanvas(app) {
   }
   function viewRect() {
     const v = V();
-    return { x: -v.x / v.z, y: -v.y / v.z, w: cv.clientWidth / v.z, h: cv.clientHeight / v.z };
+    const [w, h] = size();
+    return { x: -v.x / v.z, y: -v.y / v.z, w: w / v.z, h: h / v.z };
   }
   const center = () => { const r = viewRect(); return [r.x + r.w / 2, r.y + r.h / 2]; };
   function fit(target) {
@@ -736,13 +754,21 @@ export function createCanvas(app) {
   let miniF = 0;
   let miniT = null;
   function paintMini() { cancelAnimationFrame(miniF); miniF = requestAnimationFrame(drawMini); }
+  // les teintes de la mini-carte : lues une fois, relues quand le thème change (getComputedStyle à chaque image
+  // forçait un recalcul des styles de toute la page)
+  let toks = null;
+  const miniTok = (k) => {
+    if (!toks) toks = { cs: getComputedStyle(document.documentElement), m: new Map() };
+    if (!toks.m.has(k)) toks.m.set(k, toks.cs.getPropertyValue('--' + k).trim());
+    return toks.m.get(k);
+  };
+  document.addEventListener('sr:theme', () => { toks = null; paintMini(); });
   function drawMini() {
     const dpr = devicePixelRatio || 1, W = 188, H = 118;
     if (mini.width !== W * dpr) { mini.width = W * dpr; mini.height = H * dpr; }
     const c = mini.getContext('2d');
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const cs = getComputedStyle(document.documentElement);
-    const tok = (k) => cs.getPropertyValue('--' + k).trim();
+    const tok = miniTok;
     c.clearRect(0, 0, W, H);
     const nodes = S.board?.nodes || [];
     const vr = viewRect();
@@ -1437,5 +1463,5 @@ export function createCanvas(app) {
     toWorld, toScreen, viewFor, flyTo, center, viewRect, editText, renameFrame, decorate, prime, cull,
     level: () => level, isCard, dispBox, hiddenIn: (id) => hidden.get(id) || null, sel,
     lock: () => { locked = true; cv.classList.add('locked'); sel.hide(); }, unlock: () => { locked = false; cv.classList.remove('locked'); paintSel(); }, isLocked: () => locked,
-    dom, portPoint: W.portPoint, over: (x, y) => { const r = rect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; } };
+    dom, size, rect, portPoint: W.portPoint, over: (x, y) => { const r = rect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; } };
 }

@@ -255,6 +255,8 @@ export function createSelection(app, env) {
   }
   // la sélection bouge (un objet qu'on glisse, la vue qui se déplace) : le cadre suit,
   // la barre se cache et revient 150 ms après le dernier mouvement
+  // la vue bouge (molette, pavé) : le cadre de la sélection suit à chaque image, sans rien lire de la page ; la barre,
+  // cachée pendant le geste, se replace 150 ms après (place() lit des tailles : une mise en page forcée par événement)
   function follow() {
     placeHandles();
     if (!cur) return;
@@ -262,7 +264,10 @@ export function createSelection(app, env) {
     const b = us.length ? selBox(us) : null;
     if (b) cur.box = b;
     bar.classList.add('hide');
-    place();
+    if (cur.frame) {
+      const v = V(), bx = cur.box;
+      Object.assign(frame.style, { left: `${v.x + bx.x * v.z}px`, top: `${v.y + bx.y * v.z}px`, width: `${bx.w * v.z}px`, height: `${bx.h * v.z}px` });
+    }
     clearTimeout(showT);
     showT = setTimeout(() => { if (!gest) { bar.classList.remove('hide'); place(); } }, 150);
   }
