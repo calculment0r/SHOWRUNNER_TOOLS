@@ -303,6 +303,28 @@ function budgetPills(pill) {
   return out;
 }
 
+// le positionnement et le kit de présentation (server/tools/strategie.py : au seul compte de Cal) :
+// Cal, 05/10 — « elle doit apparaître sur la home, dans le header avec Showrunner, un autre panneau à
+// droite qui renvoie sur la page, avec un accès direct aux différents éléments ». Un autre compte reçoit
+// 403 : le panneau ne se montre pas. Les liens s'ouvrent comme ceux d'Admin (_blank : en plein écran,
+// le volet du portail, commun/coquille.js).
+async function paintKit() {
+  const box = $('#acc-kit');
+  let d;
+  try { d = await api('strategie/plan'); } catch { box.hidden = true; return; }
+  const docs = d.docs || [];
+  const go = (path, text, cls = '') => el('a', { class: cls, href: href('strategie/' + (path === 'index.html' ? '' : path)), target: '_blank', rel: 'noopener' }, text);
+  box.replaceChildren(
+    el('span', { class: 'acc-ref' }, '00_KIT · pour toi seul'),
+    el('h2', { class: 'acc-kit-t' }, 'Positionnement'),
+    docs.length
+      ? el('nav', { class: 'acc-kit-docs', 'aria-label': 'les pages du kit' }, ...docs.map((x) => go(x.path, x.titre, 'acc-kit-doc')))
+      : el('p', { class: 'acc-lede' }, 'le kit n’est pas encore posé : ~/showrunner-data/strategie/ sur DGX2'),
+    el('div', { class: 'row' }, docs.length ? go('index.html', 'Ouvrir le kit', 'tb ghost sm') : null));
+  box.hidden = false;
+  box.closest('.acc-top')?.classList.add('kit');
+}
+
 async function paint() {
   const [sys, me] = await Promise.all([system(), session()]);
   S.sys = sys;
@@ -315,6 +337,7 @@ async function paint() {
   paintAssets();
   loadProjects();
   loadBudget();
+  paintKit();
 }
 
 dropAnywhere(async (files) => {

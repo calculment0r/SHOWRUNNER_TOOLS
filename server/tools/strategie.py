@@ -9,6 +9,16 @@ n'y entre jamais. Il vit dans `<data_dir>/strategie/` (sur DGX2 :
     GET /strategie/<chemin>      un fichier du dossier, sans jamais en sortir
     GET /strategie               303 vers /strategie/ (les liens du kit sont relatifs)
     GET /api/strategie/moi       {cal, pret, url} pour la page d'admin ; 403 à tout autre
+    GET /api/strategie/plan      {docs: [{path, titre}]} : les pages du kit, pour aller de l'une à l'autre
+
+La navigation (Cal, 05/10 : « en haut un accès direct aux différents éléments, car la navigation
+des éléments à d'autres est fastidieuse » ; « quand on fait Échap dans la présentation, on revient
+à notre page de positionnement ») : chaque page HTML du kit est servie avec une ligne de plus,
+`<script src="/commun/kit_nav.js">` — une barre d'accès direct aux pages (le plan ci-dessus) et
+Échap qui ramène à la page de positionnement (l'index). Le contenu du kit n'est jamais modifié sur
+le disque. Le plan : les pages .html du dossier (et d'un niveau de sous-dossiers), l'index d'abord,
+titrées par leur <title> ; un `plan.json` facultatif dans le dossier ([{"path", "titre"}]) en
+fixe l'ordre et les noms.
 
 Qui entre : LE compte de Cal (`auth.admin_id()`, « cal »), admin, actif. Un
 autre admin, un ami, un invité d'Idéation : 403 (le kit n'est pas « la page
@@ -30,6 +40,8 @@ dépôt moins .assetsignore — ce dossier n'y est jamais ; le Worker relaie
 from __future__ import annotations
 
 import html
+import json
+import re
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -155,7 +167,63 @@ def serve(req, rest: str):
         if rel == "index.html":
             return _missing()
         raise HttpError(404, "introuvable")
+    if target.suffix.lower() in (".html", ".htm"):
+        return Response(_with_nav(target.read_bytes()), 200, "text/html; charset=utf-8", dict(HEADERS))
     return FileResponse(target, cache="no-store")
+
+
+NAV_TAG = b'<script src="/commun/kit_nav.js" defer data-sr-kit></script>'
+
+
+def _with_nav(raw: bytes) -> bytes:
+    """La page telle quelle, avec la barre du kit (commun/kit_nav.js) : avant </head>, sinon avant
+    </body>, sinon à la fin."""
+    low = raw.lower()
+    for mark in (b"</head>", b"</body>"):
+        i = low.find(mark)
+        if i >= 0:
+            return raw[:i] + NAV_TAG + b"\n" + raw[i:]
+    return raw + b"\n" + NAV_TAG
+
+
+_TITLE = re.compile(rb"<title[^>]*>(.*?)</title>", re.I | re.S)
+
+
+def plan() -> list[dict]:
+    """Les pages du kit : celles de `plan.json` s'il existe (dans son ordre), sinon les .html du
+    dossier et d'un niveau de sous-dossiers, l'index d'abord, puis par nom."""
+    base = root()
+    if not base.is_dir():
+        return []
+    folder = base.resolve()
+    pj = base / "plan.json"
+    if pj.is_file():
+        try:
+            out = []
+            for x in json.loads(pj.read_text(encoding="utf-8")):
+                rel = _safe_rel(str(x.get("path", "")))
+                if rel and (folder / rel).resolve().is_relative_to(folder) and (folder / rel).is_file():
+                    out.append({"path": rel, "titre": str(x.get("titre") or x.get("title") or rel)[:80]})
+            if out:
+                return out
+        except (ValueError, AttributeError, TypeError):
+            pass   # un plan illisible : la découverte
+    found = []
+    for f in sorted(list(base.glob("*.html")) + list(base.glob("*/*.html"))):
+        rel = f.relative_to(base).as_posix()
+        if any(p.startswith(".") for p in rel.split("/")) or not f.resolve().is_relative_to(folder):
+            continue
+        m = _TITLE.search(f.read_bytes()[:20000])
+        t = html.unescape(m.group(1).decode("utf-8", "replace")).strip() if m else ""
+        found.append({"path": rel, "titre": (t or f.stem.replace("_", " ").replace("-", " "))[:80]})
+    found.sort(key=lambda d: (d["path"] != "index.html", d["path"].count("/"), d["path"]))
+    return found
+
+
+def r_plan(req):
+    if not is_cal(getattr(req, "user", None)):
+        raise HttpError(403, "réservé à Cal")
+    return {"docs": plan(), "url": PREFIX}
 
 
 def r_moi(req):
@@ -204,6 +272,7 @@ def _guard(app) -> None:
 def register(app) -> None:
     app.prefix(PREFIX, serve)
     app.route("GET", "/api/strategie/moi", r_moi)
+    app.route("GET", "/api/strategie/plan", r_plan)
     app.route("GET", PORTE, r_porte)
     app.route("GET", VERS, r_vers)
     _guard(app)
@@ -257,6 +326,20 @@ def selftest(call, ok) -> None:
                f"stratégie : chemin refusé {bad} ({s})")
         s, d = call("GET", "/api/strategie/moi")
         ok(s == 200 and d.get("cal") is True and d.get("pret") is True, f"stratégie : moi, prêt ({s} {d})")
+        # la barre du kit (commun/kit_nav.js) dans chaque page HTML, le plan des pages
+        ok(b"/commun/kit_nav.js" in raw("/strategie/")[2] and b"kit_nav" not in raw("/strategie/img/a.txt")[2],
+           "stratégie : la barre du kit dans une page HTML, pas dans un autre fichier")
+        (base / "deck.html").write_text("<html><head><title>Le deck</title></head><body>DECK</body></html>", "utf-8")
+        s, hd, body = raw("/strategie/deck.html")
+        ok(s == 200 and body.index(b"kit_nav.js") < body.index(b"</head>") and b"DECK" in body, f"stratégie : la barre avant </head> ({s})")
+        s, d = call("GET", "/api/strategie/plan")
+        ok(s == 200 and [x["path"] for x in d.get("docs", [])] == ["index.html", "deck.html"] and d["docs"][1]["titre"] == "Le deck",
+           f"stratégie : le plan, l'index d'abord, titré par <title> ({s} {d})")
+        (base / "plan.json").write_text(json.dumps([{"path": "deck.html", "titre": "Deck"}, {"path": "../x.html"}, {"path": "index.html", "titre": "Positionnement"}]), "utf-8")
+        s, d = call("GET", "/api/strategie/plan")
+        ok([x["titre"] for x in d.get("docs", [])] == ["Deck", "Positionnement"], f"stratégie : plan.json fixe l'ordre, un chemin qui sort tombe ({d})")
+        (base / "plan.json").unlink()
+        (base / "deck.html").unlink()
 
         # la porte allumée : Cal, un autre admin, un ami, un invité, personne
         before = config.CFG.get("auth")
@@ -293,6 +376,8 @@ def selftest(call, ok) -> None:
                 ok(s == 403 and body != b"image", f"stratégie : {who}, aucun fichier ({s})")
                 s, hd, body = raw("/api/strategie/moi", tok[uid])
                 ok(s == 403, f"stratégie : moi refusé à {who} ({s})")
+                s, hd, body = raw("/api/strategie/plan", tok[uid])
+                ok(s == 403, f"stratégie : le plan refusé à {who} ({s})")
             s, hd, body = raw("/strategie/../server/showrunner.py", tok[auth.admin_id()])
             ok(s == 404, f"stratégie : Cal non plus ne remonte pas ({s})")
         finally:
