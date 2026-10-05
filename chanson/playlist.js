@@ -66,6 +66,7 @@ const P = {
   mesure: null,                         // la mesure des tempos en cours : { k, n }
   carte: null,                          // « Fais-moi une pochette » : { prompt, model, models, jobs, images }
   dropAt: null,
+  ecouteOrdre: false,                   // l'écoute en cours suit l'ordre proposé (pas encore gardé)
 };
 const put = (box, ...kids) => box && box.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false && k !== ''));
 const memo = () => { try { return JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch { return {}; } };
@@ -221,6 +222,7 @@ const file = (list) => list.map((t) => ({ it: son(t.item) || { id: t.item, title
 // ── écouter ─────────────────────────────────────────────────
 function ecouter(k = 0) {
   if (!P.cur || !pl().tracks.length) { toast('la playlist est vide : glisse des chansons dedans', 5000); return; }
+  P.ecouteOrdre = !!P.ordre;            // l'ordre proposé s'écoute avant d'être gardé
   lect.P.jouer(file(trs()), k, pl().transition);
 }
 function paintLecture(i) {
@@ -287,13 +289,16 @@ function garderOrdre() {
   const o = P.ordre;
   const list = o.order.map((i) => o.avant[i]);
   P.ordre = null;
-  suivre((i) => o.order.indexOf(i), list);
+  if (!P.ecouteOrdre) suivre((i) => o.order.indexOf(i), list);   // écoutée dans l'ordre proposé : elle y est déjà
+  P.ecouteOrdre = false;
   ecrire({ playlist: { tracks: list } }, `l’ordre proposé pour « ${P.cur.title} »`);
   paintActs(); paintOrdre(); paintListe();
   toast('ordre gardé · Ctrl+Z le défait');
 }
 function annulerOrdre() {
   P.ordre = null;
+  if (P.ecouteOrdre && lect.P.actif) lect.P.arreter();             // l'écoute de la proposition s'arrête avec elle
+  P.ecouteOrdre = false;
   paintActs(); paintOrdre(); paintListe();
 }
 

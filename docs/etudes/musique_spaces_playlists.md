@@ -169,6 +169,24 @@ le reste est comme tu proposes ») : S1 partagé, S2, L1 Cloudflare, L2, L3 comm
    « un seul fichier continu » (celui d'AGOSTA, le plus sûr sur iPhone écran verrouillé). Ce mode est fabriqué
    au moment de la publication.
 
+### Codé (05/10, branche `wip2/playlists`)
+
+- La sorte `playlist` (`library.KINDS`, id `pla-…`) et ses routes : `server/tools/playlist.py` (selftest).
+- Le volet de la page (`chanson/playlist.js`, `.css`) : glisser des cartes, réordonner (Alt + ↑ ↓), la durée
+  totale en tête, « Écouter » (la barre du lecteur commun, `chanson/playlist_lecture.js` : sans blanc, fondu à
+  puissance égale ; « un seul fichier » s'écoute comme sans blanc dans la page), par morceau titre, crédits,
+  paroles.
+- La pochette : une image, ou la mosaïque faite d'office (`commun/pochette.js`) ; « Fais-moi une pochette » :
+  une carte Image dans le volet (le prompt relu, Générer = le geste de la personne, une image rendue devient la
+  pochette d'un clic).
+- « Proposer un ordre » : l'arc du tempo (sommet aux deux tiers, notre choix) et les tonalités voisines (la
+  distance en quintes, plus 1 si le mode change), par échanges qui baissent le coût ; le tempo d'un son sans
+  recette mesuré dans la page (`musique/tempo.js`, confiance ≥ 0,5) ; aucun détecteur de tonalité (non
+  documenté) : une tonalité inconnue ne compte ni pour ni contre.
+- La fiche d'Asset, « Ouvrir dans Musique » (`chanson/?playlist=<id>`). Le pilote : `chanson/pilote_playlist.mjs`.
+- Attendent leurs branches : « Exporter en .zip » (`POST /api/ecoute/<id>/zip`) et « Caler les paroles »
+  (`commun/lrc.js`, `ouvrirEditeurLrc`) — éteints, ils disent pourquoi.
+
 ## 4. Le lien d'écoute
 
 ### Le principe
