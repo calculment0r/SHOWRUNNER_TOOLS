@@ -473,6 +473,11 @@ def validate(p: dict) -> None:
             raise ValueError(f"{r['name']} : réglages invalides")
     _session(p, by_voie, by_pat)
     _biblio(p)
+    # le Space de Musique du projet (06/10, musique_spaces_playlists.md § 5 étape 7) : tenu
+    # par le serveur (posé à la création, changé par POST /api/chanson/spaces/move), sa forme seule ici
+    msp = p.get("music_space")
+    if msp is not None and not (isinstance(msp, str) and library.MUSIC_SPACE_RX.fullmatch(msp)):
+        raise ValueError("music_space : un Space de Musique (msp-…), ou vide pour « Mon Space »")
     banc = p.get("banc")
     if banc is not None and (not isinstance(banc, dict) or len(json.dumps(banc)) > 65536):
         raise ValueError("banc du nodal : 64 ko au plus")
@@ -816,7 +821,8 @@ def empty(name: str) -> dict:
 
 def _summary(p: dict) -> dict:
     return {"id": p["id"], "name": p["name"], "updated": p.get("updated"), "bpm": p.get("bpm"),
-            "tracks": len(p.get("tracks") or []), "clips": len(p.get("clips") or []), "owner": auth.owner_of(p)}
+            "tracks": len(p.get("tracks") or []), "clips": len(p.get("clips") or []), "owner": auth.owner_of(p),
+            "music_space": p.get("music_space") or ""}
 
 
 def _write(p: dict) -> None:
@@ -854,15 +860,27 @@ def _read(pid: str) -> dict:
 # (library.check_trash) — la règle des objets de la bibliothèque
 # (apps_studio_elements.md § 2.12, equipes_espaces.md § 2.4). La liste est
 # celle du Workspace courant (library.readable).
-def list_projects(req):
+# Son Space de Musique (`music_space`, 06/10 ; musique_spaces_playlists.md § 2) : un
+# dossier de travail dans son Workspace, comme une chanson — le Space courant de la page
+# à la création, celui de la chanson quand on l'ouvre depuis elle (chanson.api_odio) ;
+# tenu par le serveur comme `space` (save_project), changé par la route des Spaces
+# (chanson.api_move). Ce qu'ODIO génère pour lui y naît (chanson.project_space).
+def readable_projects() -> list[dict]:
+    """Les projets que la personne peut lire dans le Workspace courant (library.readable),
+    entiers : la liste d'ODIO, et les Spaces de Musique (chanson.py) qui les rangent."""
     out = []
     for f in _dir().glob("mus-*.json"):
         try:
             p = json.loads(f.read_text(encoding="utf-8"))
             if library.readable(p):
-                out.append(_summary(p))
+                out.append(p)
         except (ValueError, KeyError, AttributeError):
             continue
+    return out
+
+
+def list_projects(req):
+    out = [_summary(p) for p in readable_projects()]
     out.sort(key=lambda s: s.get("updated") or "", reverse=True)
     return {"projects": out}
 
@@ -873,9 +891,18 @@ def create_project(req):
     tpl = d.get("template") or "rythme"
     if tpl not in TEMPLATES:
         raise HttpError(400, f"départ inconnu : {tpl} ({', '.join(TEMPLATES)})")
+    # son Space de Musique : le Space courant de la page (la rubrique « Space » du
+    # navigateur), jugé comme une chanson qui naît (chanson.creatable_space)
+    from tools import chanson
+    try:
+        msp = chanson.creatable_space(d.get("music_space"))
+    except ValueError as e:
+        raise HttpError(400, str(e)) from e
     p = {"rythme": starter, "session": session, "vide": empty}[tpl](name)
     now = library.now()
     p.update(id=f"mus-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}", rev=1, created=now, updated=now)
+    if msp:
+        p["music_space"] = msp
     library.stamp(p)   # son auteur et son Workspace (403 si l'on ne peut pas créer ici)
     validate(p)
     with _lock:
@@ -902,6 +929,10 @@ def save_project(req, pid):
             raise HttpError(409, "ce projet a changé ailleurs (un autre onglet ?) : il faut le recharger")
         # le propriétaire, le partage, le Workspace restent ceux du serveur, quoi que la page envoie
         library.keep(d, cur)
+        # le Space de Musique aussi : il ne change que par POST /api/chanson/spaces/move (chanson.py)
+        d.pop("music_space", None)
+        if cur.get("music_space"):
+            d["music_space"] = cur["music_space"]
         d.update(id=pid, created=cur.get("created"), updated=library.now(), rev=int(cur.get("rev") or 0) + 1)
         _write(d)   # le Workspace de ce qu'il pose, les boucles d'éléments : elements.check_doc
     return {"ok": True, "rev": d["rev"], "updated": d["updated"]}
