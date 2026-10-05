@@ -131,6 +131,21 @@ canvas.ch-wave { display: block; width: 100%; height: 56px; cursor: pointer; col
 .ch-busy { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--cy); }
 .ch-busy.err { color: var(--or); }
 
+/* les projets ODIO du Space (06/10, étape 7 des Spaces) : une ligne chacun, au-dessus des chansons */
+.ch-projets { display: flex; flex-direction: column; gap: 6px; }
+.ch-projets:empty { display: none; }
+.ch-proj-h { display: flex; align-items: center; gap: 10px; }
+.ch-proj-h .n { font-family: var(--f-mono); font-size: 9px; letter-spacing: .14em; color: var(--ink3); }
+.ch-proj {
+  display: grid; grid-template-columns: 24px minmax(0, 1fr) auto auto; gap: 10px; align-items: center;
+  padding: 8px 10px 8px 14px; border-radius: var(--r3); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
+}
+.ch-proj-ic { font-style: normal; font-size: 13px; color: var(--cy); text-align: center; }
+@media (max-width: 560px) {
+  .ch-proj { grid-template-columns: 20px minmax(0, 1fr) auto; }
+  .ch-proj > .tb { grid-column: 2 / -1; justify-self: start; }
+}
+
 /* les pistes séparées d'une chanson */
 .ch-stems { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 .ch-stems > .lbl { margin-right: 4px; }
@@ -214,38 +229,11 @@ textarea.fld.ch-plan-abc { width: 100%; margin-top: 6px; font-family: var(--f-mo
 }
 
 /* ── les Spaces (05/10, chanson/spaces.js) ─────────────────
-   En haut du rail : le Space choisi (sa couleur, un jeton ; ou sa
-   pochette), son menu, son « ⋯ ». Le menu a l'habit du menu commun
-   (.sr-menu) ; ses lignes reçoivent des cartes glissées. Sur la scène :
-   la carte choisie (la rangée choisie du thème), la pastille du Space en
-   vue « Tous », la barre de la sélection. */
-.ch-space {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px 10px; align-items: center;
-  padding: 8px 10px 8px var(--s4); border-radius: var(--r3); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
-}
-.ch-space > .lbl { color: var(--ink2); }
-.ch-space-btn {
-  display: flex; align-items: center; gap: 8px; min-width: 0; height: 32px; padding: 0 10px; border-radius: var(--r2);
-  background: var(--panel2); color: var(--ink); text-align: left; box-shadow: inset 0 0 0 1px var(--line);
-}
-.ch-space-btn:hover, .ch-space-btn[aria-expanded="true"] { box-shadow: inset 0 0 0 1px var(--line-cy); }
-.ch-space-btn.drop-on { background: var(--cy-bg); box-shadow: inset 0 0 0 1px var(--line-cy); }
-.ch-space-btn b { flex: 1; min-width: 0; font-weight: 600; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ch-space-btn small { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; color: var(--ink3); }
-.ch-space-btn .arr { color: var(--ink3); font-size: 9px; }
-.ch-space .sr-kebab { width: 30px; height: 30px; background: var(--panel2); }
-.ch-space-n { grid-column: 1 / -1; }
-.ch-space-n.arch { color: var(--amb); }
-.ch-sp-dot { width: 10px; height: 10px; border-radius: 3px; flex: none; background: var(--k, var(--ink3)); }
-.ch-sp-dot.tous { background: none; box-shadow: inset 0 0 0 1.5px var(--k); }
-.ch-sp-cov { width: 18px; height: 18px; border-radius: 3px; flex: none; object-fit: cover; box-shadow: inset 0 0 0 1px var(--line); }
-
-.ch-spmenu .mi { gap: 9px; }
-.ch-spmenu .mi .ch-sp-dot, .ch-spmenu .mi .ch-sp-cov { margin: 0 2px; }
-.ch-spmenu .mi.cur .lb { font-weight: 600; color: var(--cy); }
-.ch-spmenu .mi.arch .lb { color: var(--ink3); }
-.ch-spmenu .mi.drop-on { background: var(--cy-bg); box-shadow: inset 0 0 0 1px var(--line-cy); }
-
+   Le menu du Space (le bouton, son « ⋯ », le menu) est dans
+   chanson/spaces.css, que spaces.js charge lui-même : ODIO monte le
+   même menu dans son navigateur. Ici, sur la scène : la carte choisie
+   (la rangée choisie du thème), la pastille du Space en vue « Tous »,
+   la barre de la sélection. */
 .ch-song.sel { background: var(--sel-bg); box-shadow: inset 0 0 0 1px var(--line-cy); }
 .ch-song.sel.on { box-shadow: inset 3px 0 0 var(--cy), inset 0 0 0 1px var(--line-cy); }
 .ch-song.drag { opacity: .5; }

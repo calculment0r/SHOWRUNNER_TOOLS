@@ -39,7 +39,7 @@ import { createUndo, libTrash } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { contextMenu, pageMenu, kebab } from '../commun/menu.js';
 import { ask } from '../commun/fil.js';
-import { montrerSpaces, spaceCourant, vueSpace, spaceWhy, spacesListe, carteSpace, menuSpaces, deposerRef, fichiersAuSpace } from './spaces.js';
+import { montrerSpaces, spaceCourant, vueSpace, spaceWhy, spacesListe, carteSpace, menuSpaces, deposerRef, fichiersAuSpace, pastilleSpace } from './spaces.js';
 // les playlists (05/10) : le volet à droite de la scène (chanson/playlist.js)
 import { monterPlaylists } from './playlist.js';
 
@@ -59,6 +59,7 @@ const FORM_V = 2;
 const S = {
   cfg: null, f: { ...DEF }, ref: null, advOpen: false,
   songs: [], total: 0, jobs: [], sending: false, writing: false,
+  projets: [], projetsTotal: 0,   // les projets ODIO du Space montré (06/10, étape 7 des Spaces)
   cur: null,               // ce qui joue : { id, song }
   plan: null,              // la partition à relire : { abc, resume, check, engine, model, fp }
   planJob: null,           // le travail qui l'écrit
@@ -573,6 +574,7 @@ function buildStage() {
       el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons())),
     el('div', { id: 'ch-plan' }),
     el('div', { class: 'ch-list', id: 'ch-pend' }),
+    el('div', { class: 'ch-projets', id: 'ch-projets', 'aria-label': 'les projets ODIO du Space' }),
     el('div', { class: 'ch-list', id: 'ch-list' }));
 }
 let loadT = null;
@@ -584,7 +586,9 @@ async function loadSongs() {
   if (vue !== vueSpace()) return;   // un autre Space choisi entre-temps : cette liste n'est plus la sienne
   const before = new Set(S.songs.map((s) => s.id));
   S.songs = r.songs; S.total = r.total;
+  S.projets = r.projets || []; S.projetsTotal = r.projets_total ?? S.projets.length;
   spacesListe(r);
+  paintProjets();
   const neu = S.songs.filter((s) => !before.has(s.id));
   if (before.size) {
     // une chanson qui arrive se voit (un filet vert), quelques secondes
@@ -649,6 +653,34 @@ function card(s) {
   carteSpace(c, s);   // une carte se glisse (seule ou la sélection) : sur un Space, dans la playlist
   return c;
 }
+// ── les projets ODIO du Space (06/10, étape 7 de docs/etudes/musique_spaces_playlists.md) ──
+// Un projet ODIO porte son Space comme une chanson : celui de la chanson qu'on y a ouverte,
+// ou le Space montré dans ODIO à sa création. La scène les montre au-dessus des chansons, une
+// ligne chacun : l'ouvrir dans ODIO (le Studio), le ranger dans un autre Space (Ctrl+Z le rend).
+const dateCourte = (iso) => (iso ? new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) : '');
+function paintProjets() {
+  const box = $('#ch-projets');
+  if (!box) return;
+  const tous = vueSpace() === '*';
+  put(box, S.projets.length ? [
+    el('div', { class: 'ch-proj-h' }, el('span', { class: 'lbl' }, 'Projets ODIO'), el('span', { class: 'n' }, String(S.projetsTotal))),
+    ...S.projets.map((x) => {
+      const meta = [tous ? pastilleSpace(x.music_space) : '',
+        `${x.tracks} piste${x.tracks > 1 ? 's' : ''}`, x.updated ? `modifié le ${dateCourte(x.updated)}` : '', x.mine ? '' : x.owner_name].filter(Boolean);
+      return el('article', { class: 'ch-proj', 'data-id': x.id },
+        el('i', { class: 'ch-proj-ic', 'aria-hidden': 'true' }, '◆'),
+        el('div', { class: 'ch-tx' }, el('b', { title: x.name }, x.name), el('div', { class: 'ch-meta' }, meta.flatMap((m, i) => (i ? [' · ', m] : [m])))),
+        el('button', { class: 'tb ghost sm', type: 'button', 'data-act': 'odio', title: studio() ? 'ouvrir ce projet dans le studio' : S.cfg.studio.why,
+          onclick: () => ouvrirProjet(x) }, 'Ouvrir dans ODIO', studio() ? null : el('span', { class: 'ch-lock' }, 'Studio')),
+        kebab(() => [{ head: x.name }, { label: 'Ouvrir dans ODIO', icon: '◆', sub: studio() ? '' : 'Studio', onclick: () => ouvrirProjet(x) }, '-', menuSpaces(x)], { title: 'plus' }));
+    }),
+    S.projetsTotal > S.projets.length ? el('p', { class: 'ch-note' }, `et ${S.projetsTotal - S.projets.length} autres, dans ODIO`) : null] : []);
+}
+function ouvrirProjet(x) {
+  if (!studio()) return studioPanel();
+  location.href = href(x.open);
+}
+
 const NO_RECIPE = 'un son importé n’a pas de recette à rejouer : « Reprendre » le prend comme référence';
 function songMenu(s) {
   const playing = S.cur?.id === s.id && !player.paused;

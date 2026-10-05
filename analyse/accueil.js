@@ -498,8 +498,11 @@ function peintMedia(p) {
   let m;
   if (p.media) {
     // le lecteur du portail (commun/lecteur.js), jamais les contrôles du navigateur (Cal, 01/10) ;
-    // un film d'analyse n'est pas un objet de la bibliothèque : pas de copie de défilement
-    V.lect = lecteur({ kind: 'video', url: p.media, duration: p.duree || p.duration || 0 }, { clavier: 'page', defilement: false });
+    // un film d'analyse n'est pas un objet de la bibliothèque : pas de copie de défilement. Une
+    // analyse lancée d'ici dit la vidéo de la bibliothèque qu'elle a dépouillée (`item`, la même :
+    // un lien dur) : le lecteur en tire le son au défilement (commun/scrub.js, 06/10)
+    const vu = { kind: 'video', url: p.media, duration: p.duree || p.duration || 0, ...(p.item ? { id: p.item, audio: true } : {}) };
+    V.lect = lecteur(vu, { clavier: 'page', defilement: false });
     m = V.lect.el;
     const L = V.lect; requestAnimationFrame(() => { if (V.lect === L) L.play(); });
     // la vidéo de nos films est sur R2 (le Worker de MOVIE_ANALYSE) : si ce navigateur ne la lit pas, on le dit

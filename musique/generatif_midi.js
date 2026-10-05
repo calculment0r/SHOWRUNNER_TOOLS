@@ -195,7 +195,8 @@ export async function openExtract(app, clipId) {
     try {
       const it = await app.loadItem(c.item);
       const j = await api('music/midi/extract', { method: 'POST', body: { src: c.item, off_s: offSrc, dur_s: dur, bpm: P.bpm, sig: P.sig,
-        tonic: P.key.tonic, mode: P.key.mode, engine: st.engine, v, title: (c.name || it.title || 'clip').replace(/ \(essai\)/g, '').slice(0, 60), clip: c.id } });
+        tonic: P.key.tonic, mode: P.key.mode, engine: st.engine, v, title: (c.name || it.title || 'clip').replace(/ \(essai\)/g, '').slice(0, 60), clip: c.id,
+        project: P.id } });   // le clip extrait naît dans le Space de Musique du projet (server/tools/chanson.py)
       P.pending.push({ job: j.id, kind: 'midi', clip: c.id, title: j.title, quantize: v.quantize || '1/16' });
       app.commit('data');
       jobs.poll(true);

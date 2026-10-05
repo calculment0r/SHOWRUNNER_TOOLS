@@ -516,11 +516,16 @@ def submit(p: dict, tool: str = "music") -> dict:
 
 
 def api_separate(req):
+    d = req.json()
     try:
-        p = stems_params(req.json())
+        p = stems_params(d)
     except (ValueError, TypeError) as e:
         raise HttpError(400, str(e)) from e
-    return jobs.public(submit(p))
+    # ODIO dit son projet (`project`) : des pistes d'une source sans Space naissent dans
+    # le Space de Musique du projet (chanson.py, étape 7 ; _store)
+    from tools import chanson
+    msp = chanson.project_space(d.get("project")) if isinstance(d, dict) else ""
+    return jobs.public(submit({**p, "music_space": msp} if msp else p))
 
 
 # ── les deux moteurs ────────────────────────────────────────
@@ -529,6 +534,10 @@ def _store(ctx, it: dict, p: dict, raw: dict[str, Path], sr: int, n: int, engine
     out = {}
     m = MODELS[p["model"]]
     essai = engine == "factice"
+    # le Space de Musique : celui de la source (les pistes suivent leur chanson, chanson.py) ;
+    # une source sans Space, celui du projet d'ODIO d'où part la séparation (rejugé ici)
+    from tools import chanson
+    msp = it.get("music_space") or chanson.birth_space({}, (ctx.params or {}).get("music_space") or "")
     for k, stem in enumerate(p["stems"]):
         ctx.check()
         ctx.progress(0.9 + 0.1 * k / len(p["stems"]), f"cale {STEM_FR[stem]}")
@@ -541,8 +550,7 @@ def _store(ctx, it: dict, p: dict, raw: dict[str, Path], sr: int, n: int, engine
                               **({"filter": TEST_FILTERS[stem]} if essai else {})},
                       origin={"model": "factice" if essai else p["model"]},
                       tags=["musique", "essai" if essai else "piste séparée"], folder="Musique",
-                      # le Space de Musique de la source : les pistes naissent avec leur chanson (chanson.py)
-                      extra={"music_space": it["music_space"]} if it.get("music_space") else None)
+                      extra={"music_space": msp} if msp else None)
         out[stem] = got["id"]
     label = "filtres, moteur factice" if essai else m["label"]
     return {"note": f"{len(out)} pistes en {secs:g} s ({label})", "stems": out, "render_seconds": secs,

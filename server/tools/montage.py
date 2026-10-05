@@ -163,7 +163,10 @@ def _item(sid: str) -> dict:
 
 def load(pid: str) -> dict:
     sid = _resolve(pid)
-    _item(sid)
+    try:
+        _item(sid)
+    except HttpError:   # l'adresse d'un montage d'avant : on ne nomme pas la séquence qu'on ne lui montre pas
+        raise HttpError(404, f"séquence introuvable : {pid}") from None
     f = _seq_file(sid)
     if not f.exists():
         raise HttpError(404, f"séquence sans timeline : {sid}")
@@ -1368,12 +1371,12 @@ def _shift(frames: int, fps: int) -> str:
     return f"{'+' if frames >= 0 else '-'}{abs(frames)}/({fps}*TB)"
 
 
-def _open(c: dict, m: dict, fps: int, a: int, b: int, video: bool = True) -> tuple[list[str], int]:
-    """L'entrée ffmpeg qui lit le plan `c` pour les images [a, b) de la
-    timeline ; rend (arguments, images de tête figées). Avant le début de
-    la source (tête d'un fondu enchaîné), sa première image se fige ; après
-    sa fin, la dernière (`tpad` clone, dans le graphe). La vitesse change
-    combien de source on lit."""
+def _open(c: dict, m: dict, fps: int, a: int, b: int) -> tuple[list[str], int]:
+    """L'entrée ffmpeg qui lit le SON du plan `c` (ou une image fixe) pour les
+    images [a, b) de la timeline ; rend (arguments, images de tête en
+    silence). Avant le début de la source (tête d'un fondu enchaîné), on
+    attend ; après sa fin, le silence (`apad`, dans le graphe). La vitesse
+    change combien de source on lit. L'image d'une vidéo : `_open_video`."""
     nf = b - a
     if m["kind"] == "image":
         return ["-loop", "1", "-framerate", str(fps), "-t", _f(nf / fps + 2 / fps), "-i", m["path"]], 0
@@ -1386,21 +1389,58 @@ def _open(c: dict, m: dict, fps: int, a: int, b: int, video: bool = True) -> tup
     length = ((nf - pre) / fps + 2 / fps) * sp
     D = m.get("duration") or 0
     if D:
-        if src >= D - 0.5 / fps:          # tout ce morceau est au-delà de la source : sa dernière image
+        if src >= D - 0.5 / fps:          # tout ce morceau est au-delà de la source
             src = max(0.0, D - 1 / fps)
         length = min(length, D - src + 1 / fps)
-    # L'image que montre le navigateur à l'instant `src` est celle qui le
-    # contient (elle a commencé avant) ; `-ss` exact garde la première image
-    # qui commence à `src` ou après. Entre deux images de la source (une
-    # entrée à 0,5 s en 25 i/s), les deux différaient d'une image (mesuré le
-    # 29/09 sur une mire animée : 4,9 d'écart moyen, 1 une fois recalé). On
-    # recule donc au début de l'image qui contient `src`, moins un quart
-    # d'image pour ne pas la perdre à l'arrondi des horodatages.
-    # (l'image seulement : le son, lui, part à l'échantillon près)
-    F = m.get("fps") or 0
-    if video and F and m["kind"] == "video" and src > 0:
-        src = max(0.0, (math.floor(src * F + 1e-6) - 0.25) / F)
     return (["-ss", _f(src)] if src > 0 else []) + ["-t", _f(max(length, 1 / fps)), "-i", m["path"]], pre
+
+
+# À l'arrêt, le moniteur (montage/player.js, `sync`) cherche l'instant de la source
+# + 1 ms : l'image qui commence à cet instant, pas la précédente.
+SEEK_EPS = 0.001
+
+
+def _open_video(c: dict, m: dict, fps: int, a: int, b: int) -> tuple[list[str], list[str]]:
+    """L'entrée ffmpeg qui lit l'IMAGE d'un plan vidéo pour les images [a, b)
+    de la timeline, et le début de sa chaîne : rend (arguments, filtres).
+
+    L'image `a + k` de la timeline est celle que le moniteur montre : la
+    dernière image de la source commencée au temps `in + (a + k − début) / fps
+    × vitesse` (+ 1 ms), lu sur les horodatages de la source elle-même — le même
+    calcul quelle que soit la cadence de la source (24 ou 16 i/s dans une
+    séquence à 25) et où que le plan commence. Rogner le début d'un plan ne
+    change donc aucune des images qui restent (06/10, Cal : « les poignées sont
+    des in/out sans changer la position des frames dans la timeline »). La
+    chaîne d'avant (`setpts=PTS-STARTPTS`, puis `fps` qui arrondit au plus
+    proche) jetait l'écart entre l'image où `-ss` arrive et l'instant voulu :
+    une image d'écart avec le moniteur, qui changeait avec l'entrée du plan.
+
+    `-copyts` (posé par `plan_video`) garde les horodatages de la source : sans
+    lui, ffmpeg y retranche le point de recherche, arrondi à la base de temps
+    du fichier (1 ms en WebM) — des écarts aux bords. Chaque image prend pour
+    horodatage l'instant, relatif à `a`, où elle commence à se voir :
+    (t_source − entrée − 1 ms) / vitesse, en µs (`settb`) ; puis
+    `fps=…:start_time=0:round=up` donne à chaque image de sortie la dernière
+    image commencée (doc ffmpeg-filters, fps : « round … up » ; « start_time …
+    allows for padding/trimming at the start of stream ») : avant le début de la
+    source (la tête d'un fondu enchaîné), la première se répète ; après la fin,
+    `tpad` clone la dernière. Au-delà de la fin, le moniteur montre l'image à
+    une demi-image de la fin (`hi`), sans le 1 ms : de même ici."""
+    nf = b - a
+    sp = c.get("speed", 1.0) or 1.0
+    src = c["in"] + (a - c["start"]) / fps * sp
+    D = m.get("duration") or 0
+    hi = D - 0.5 / fps if D else math.inf
+    zero = src if src < 0 else src + SEEK_EPS if src <= hi else hi
+    # chercher un peu avant l'image qui contient l'instant (deux images ; 0,1 s si la cadence est
+    # inconnue) : ce qui tombe avant 0, `fps` le laisse
+    F = m.get("fps") or 0
+    seek = max(0.0, min(src, hi) - (2 / F if F else 0.1))
+    length = max(0.0, min(src, hi) - seek) + (nf / fps + 2 / fps) * sp
+    if D:
+        length = min(length, D - seek + 1 / fps)
+    head = ["settb=1/1000000", f"setpts=(PTS{'-' if zero >= 0 else '+'}{_f(abs(zero))}/TB)/{_f(sp)}", f"fps={fps}:start_time=0:round=up"]
+    return (["-ss", _f(seek)] if seek > 0 else []) + ["-t", _f(max(length, 1 / fps)), "-i", m["path"]], head
 
 
 def _head() -> list[str]:
@@ -1562,11 +1602,15 @@ def plan_video(p: dict, media: dict[str, dict], f0: int, f1: int, out_path: str,
             place = _placement(c["motion"], m, W, H) if c.get("motion") else None
             if c.get("motion") and place is None:
                 continue                         # rien ne s'en voit : hors du cadre, échelle ou opacité nulle
-            args, pre = _open(c, m, fps, a, b)
+            if m["kind"] == "image":
+                args, pre = _open(c, m, fps, a, b)
+                head = ["setpts=PTS-STARTPTS", f"fps={fps}"]
+            else:
+                args, head = _open_video(c, m, fps, a, b)
+                pre = 0
             inputs.append(args)
             k = len(inputs) - 1
             nw = w["we"] - w["ws"]
-            sp = c.get("speed", 1.0) or 1.0
             # horodatage relatif au début de la fenêtre du plan : les fondus
             # (en temps) se calculent comme si le plan était rendu d'un bloc
             if place:
@@ -1577,9 +1621,7 @@ def plan_video(p: dict, media: dict[str, dict], f0: int, f1: int, out_path: str,
                        *_fx_filters(chain_of(p, c), luts),
                        "scale=out_color_matrix=bt709:out_range=limited", "format=yuva420p",
                        f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black@0"]
-            chain = ["setpts=PTS-STARTPTS" if abs(sp - 1) < 1e-6 or m["kind"] == "image" else f"setpts=(PTS-STARTPTS)/{_f(sp)}",
-                     f"fps={fps}",
-                     *fit,
+            chain = [*head, *fit,
                      f"tpad=start={pre}:start_mode=clone:stop=-1:stop_mode=clone",
                      f"trim=end_frame={b - a}", f"setpts=PTS-STARTPTS{_shift(a - w['ws'], fps)}"]
             if w["xin"]:
@@ -1598,7 +1640,9 @@ def plan_video(p: dict, media: dict[str, dict], f0: int, f1: int, out_path: str,
     # beaucoup d'entrées : deux fils de décodage chacune (auto = un par cœur,
     # mesuré : 14 Go pour 91 entrées en auto, 5,5 Go à 2 fils)
     threads = ["-threads", "2"] if len(inputs) > 8 else []
-    args = _head()
+    # -copyts : les horodatages des sources restent les leurs (`_open_video`) ; chaque chaîne
+    # repart de 0 (trim, setpts), la sortie aussi (le fond noir `color` commence à 0)
+    args = _head() + ["-copyts"]
     for a in inputs:
         args += threads + a
     args += ["-filter_complex", g, "-map", "[vout]", "-an",
@@ -1636,7 +1680,7 @@ def plan_mux(p: dict, media: dict[str, dict], list_path: str, out_path: str, rng
             w = win[c["id"]]
             if w["we"] <= r0 or w["ws"] >= r1:
                 continue
-            args, pre = _open(c, m, fps, w["ws"], w["we"], video=False)
+            args, pre = _open(c, m, fps, w["ws"], w["we"])
             inputs.append(args)
             k = len(inputs) - 1
             nf = w["we"] - w["ws"]
@@ -2217,6 +2261,26 @@ R.lim_b_l = M.trimLimits(q, M.byId(q, 'b'), 'l'); R.lim_b_r = M.trimLimits(q, M.
 R.lim_i_l = M.trimLimits(q, M.byId(q, 'i'), 'l'); R.lim_i_r = M.trimLimits(q, M.byId(q, 'i'), 'r');
 q = p(); M.trimClip(M.byId(q, 'b'), 'l', -5, 25); R.b_gauche = pose(q);
 q = p(); M.trimClip(M.byId(q, 'i'), 'r', 500, 25); R.image = pose(q);
+// l'invariant (06/10, Cal : « des in/out sans changer la position des frames dans la timeline ») :
+// après un rognage de début (+ ou −, à toute vitesse), à chaque instant que le plan couvre encore,
+// la source montre le même temps qu'avant ; et rien d'autre ne bouge
+R.invariant = [];
+for (const [id, d] of [['a', 10], ['a', -25], ['a', 49], ['b', 7], ['b', -5]]) {
+  const q0 = p(), q1 = p(), c0 = M.byId(q0, id), c1 = M.byId(q1, id);
+  M.trimClip(c1, 'l', d, 25);
+  let worst = 0;
+  for (let f = c1.start; f < M.clipEnd(c1); f++) for (const k of [0, 0.5]) worst = Math.max(worst, Math.abs(M.srcTime(c0, (f + k) / 25, 25) - M.srcTime(c1, (f + k) / 25, 25)));
+  const autres = (q) => JSON.stringify(q.clips.filter((c) => c.id !== id));
+  R.invariant.push([id, d, worst < 1e-9, autres(q0) === autres(q1), M.clipEnd(c1) === M.clipEnd(c0)]);
+}
+for (const sp of [0.5, 1.5, 3]) {
+  const q0 = p(); M.byId(q0, 'a').speed = sp; const q1 = JSON.parse(JSON.stringify(q0));
+  const c0 = M.byId(q0, 'a'), c1 = M.byId(q1, 'a');
+  M.trimClip(c1, 'l', 13, 25);
+  let worst = 0;
+  for (let f = c1.start; f < M.clipEnd(c1); f++) worst = Math.max(worst, Math.abs(M.srcTime(c0, f / 25, 25) - M.srcTime(c1, f / 25, 25)));
+  R.invariant.push(['a×' + sp, 13, worst < 1e-9, true, M.clipEnd(c1) === M.clipEnd(c0)]);
+}
 console.log(JSON.stringify(R, (k, v) => (v === Infinity ? 'inf' : v)));
 """
 
@@ -2245,6 +2309,9 @@ def _selftest_rognage(ok) -> None:
        f"montage : une image fixe n'a pas de borne de source, seulement ses voisins ({R['lim_i_l']} {R['lim_i_r']})")
     ok(R["b_gauche"][1] == ["b", 85, 55, 0], f"montage : révéler le début à × 2 recule l'entrée deux fois plus vite ({R['b_gauche']})")
     ok(R["image"][2] == ["i", 200, 525, 0], f"montage : une image fixe s'allonge sans entrée de source ({R['image']})")
+    inv = R.get("invariant") or []
+    ok(len(inv) == 8 and all(x[2] and x[3] and x[4] for x in inv),
+       f"montage : rogner le début (+10, −25, +49 ; ×2 +7, −5 ; à ×0,5, ×1,5, ×3) : à chaque instant restant, la même image de la source qu'avant ; la fin et les autres plans ne bougent pas ({inv})")
 
 
 # La trajectoire (06/10) : `cleanMotion` et `cadre` de la page (montage/model.js)
@@ -2455,8 +2522,8 @@ def selftest(call, ok) -> None:
     pl = plan(fp, med, "/o.mp4")
     g = pl["graph"]
     ok(pl["frames"] == 100 and abs(pl["duration"] - 4.0) < 1e-9, "montage : durée = fin du dernier plan")
-    ok(len(pl["chunks"]) == 1 and "fade=t=in:st=0:d=0.4:alpha=1" in g and "tpad=start=5:start_mode=clone" in g,
-       "montage : le fondu enchaîné prend 5 images figées avant la source")
+    ok(len(pl["chunks"]) == 1 and "fade=t=in:st=0:d=0.4:alpha=1" in g and "setpts=(PTS+0.2/TB)/1,fps=25:start_time=0:round=up" in g,
+       "montage : le fondu enchaîné commence 0,2 s avant la source : sa première image se répète (fps, start_time=0)")
     p2 = plan(fp, med, "/o.mp4", chunk_s=2.0)
     g2 = p2["chunks"][1]["graph"]
     ok(len(p2["chunks"]) == 2 and "trim=end_frame=5,setpts=PTS-STARTPTS+50/(25*TB)" in g2
@@ -2469,14 +2536,17 @@ def selftest(call, ok) -> None:
        "montage : chaque plan passe en RVB avec la matrice de sa source, repart en BT.709 étiqueté")
     half = plan(normalize({**fake, "clips": [{**fake["clips"][0], "in": 0.5}]}), med, "/o.mp4")
     va, aa = half["chunks"][0]["args"], half["mux"]["args"]
-    ok(va[va.index("-ss") + 1] == "0.47" and aa[aa.index("-ss") + 1] == "0.5",
-       "montage : une entrée entre deux images de la source (0,5 s en 25 i/s) : l'image est celle que montre le navigateur (-ss 0,47), le son part à 0,5 s")
+    hg = half["chunks"][0]["graph"]
+    ok(va[va.index("-ss") + 1] == "0.42" and "setpts=(PTS-0.501/TB)/1,fps=25:start_time=0:round=up" in hg and "-copyts" in va
+       and aa[aa.index("-ss") + 1] == "0.5",
+       "montage : une entrée entre deux images de la source (0,5 s en 25 i/s) : l'image est celle qui contient l'instant, sur les horodatages de la source "
+       "(cherchée deux images avant, -copyts, round=up), le son part à 0,5 s")
     ok("volume=0.5" in g and "amix=inputs=2" in g and "normalize=0" in g, "montage : le son (vidéo A + musique) est mêlé sans renormaliser")
     ok(g.index("[vb]") > g.index("[va]") and g.index("[vt]") > g.index("[vb]"), "montage : V1 dessous, V2 dessus")
     # vitesse, plan désactivé, plage
     sp = normalize({**fake, "clips": [{**fake["clips"][0], "speed": 2.0}, {**fake["clips"][1], "enabled": False}, fake["clips"][3]]})
     gs = plan(sp, med, "/o.mp4")["graph"]
-    ok("setpts=(PTS-STARTPTS)/2" in gs and "atempo=2" in gs and "[vb]" not in gs, "montage : vitesse ×2 (image et son), un plan désactivé ne sort pas")
+    ok("setpts=(PTS-0.001/TB)/2" in gs and "atempo=2" in gs and "[vb]" not in gs, "montage : vitesse ×2 (image et son), un plan désactivé ne sort pas")
     slow = normalize({**fake, "clips": [{**fake["clips"][0], "speed": 0.2}]})
     ok("atempo=0.5,atempo=0.5,atempo=0.8" in plan(slow, med, "/o.mp4")["graph"], "montage : ralenti à 20 % : atempo enchaîné (0,5 × 0,5 × 0,8)")
     pr = plan(fp, med, "/o.mp4", rng=(20, 70), chunk_s=1.0)
@@ -2771,6 +2841,7 @@ def selftest(call, ok) -> None:
         ok(red(q[5]) and red(q[22]) and abs(cy[0] - 35) <= 6 and abs(cy[1] - 215) <= 6 and abs(cy[2] - 215) <= 6,
            f"montage : le calque d'effet inverse ce qui est dessous sur sa durée seulement ({q})")
     _selftest_trajectoire_export(call, ok, export, pid, tmp)
+    _selftest_poignees_export(call, ok, export, pid, tmp)
     shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -2821,6 +2892,67 @@ def _selftest_trajectoire_export(call, ok, export, pid, tmp) -> None:
     ok(near(half, (20, 100, 30), 12), f"montage : un plan déplacé en bas à droite, à 50 % d'opacité sur le noir ({half})")
     rc = (_pixel_at(path, 35, 800, 180), _pixel_at(path, 35, 1120, 180))
     ok(near(rc[0], blk) and near(rc[1], want["bleu"]), f"montage : recadré de moitié à gauche, la moitié droite reste à sa place ({rc})")
+
+
+def _codes(path: str) -> list[int]:
+    """Le numéro de chaque image d'une vidéo dont chaque image porte le sien dans
+    sa couleur (rouge = n mod 16, vert = n div 16, par pas de 16 : l'encodage
+    peut s'écarter de 7 sans changer le numéro), lu au centre."""
+    r = subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-i", path, "-vf", "crop=16:16,scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                       capture_output=True, timeout=120)
+    b = r.stdout
+    return [round((b[i] - 8) / 16) + 16 * round((b[i + 1] - 8) / 16) for i in range(0, len(b) - 2, 3)]
+
+
+def _selftest_poignees_export(call, ok, export, pid, tmp) -> None:
+    """Rogner le début d'un plan ne change aucune des images qui restent, à
+    l'export (06/10, Cal : « les poignées sont des in/out sans changer la
+    position des frames dans la timeline ») ; et chaque image est celle que
+    montre le moniteur. Deux sources dont chaque image porte son numéro dans sa
+    couleur, à 24 et 16 i/s (la cadence des vidéos générées), dans une séquence à
+    25 i/s, l'une à ×1,5 ; exportées, rognées au début (comme `trimClip` de la
+    page), exportées encore. La règle du navigateur : l'image qui commence au
+    plus tard à `entrée + (t − début) × vitesse` + 1 ms (player.js, `sync`)."""
+    src = {}
+    for F in (24, 16):
+        name = f"num{F}.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", f"color=c=gray:s=64x36:r={F}:d=4",
+                        "-vf", "format=gbrp,geq=r='mod(N,16)*16+8':g='floor(N/16)*16+8':b='128'",
+                        "-c:v", "libx264", "-crf", "1", "-pix_fmt", "yuv420p", str(tmp / name)], check=True, timeout=60)
+        st, it = call("PUT", f"/api/library/upload?name={name}&title=num{F}", raw=(tmp / name).read_bytes())
+        src[F] = it
+    ok(all(isinstance(v, dict) and v.get("fps") for v in src.values()), "montage : deux sources numérotées (24 et 16 i/s)")
+    fps = 25
+    clips = [{"id": "n24", "track": "V1", "item": src[24]["id"], "kind": "video", "start": 10, "dur": 60, "in": 0.3, "src_dur": 4},
+             {"id": "n16", "track": "V1", "item": src[16]["id"], "kind": "video", "start": 80, "dur": 50, "in": 0.2, "src_dur": 4, "speed": 1.5}]
+
+    def rule(c, F, f):
+        return math.floor((c["in"] + (f - c["start"]) / fps * c.get("speed", 1) + SEEK_EPS) * F + 1e-9)
+
+    def run(cl, what):
+        st, cur = call("GET", f"/api/montage/projects/{pid}")
+        st, sv = call("POST", f"/api/montage/projects/{pid}", {**cur, "base_rev": cur["rev"], "range": {"in": None, "out": None},
+                      "settings": {"format": "custom", "width": 320, "height": 180, "fps": fps},
+                      "tracks": [{"id": "V1"}, {"id": "A1"}], "clips": cl})
+        ok(st == 200, f"montage : enregistrer ({what})")
+        j = export({}, what)
+        return _codes(str(library.path_of(library.get(j["items"][0]["id"])))) if j["state"] == "done" and j["items"] else []
+
+    before = run(clips, "poignées, avant")
+    cut = json.loads(json.dumps(clips))
+    for c, d in zip(cut, (7, 9)):            # trimClip, bord gauche : début + d, durée − d, entrée + d / fps × vitesse
+        c["start"] += d
+        c["dur"] -= d
+        c["in"] += d / fps * c.get("speed", 1)
+    after = run(cut, "poignées, après un rognage de début")
+    if not before or not after:
+        return
+    fr = {c["id"]: [f for f in range(c["start"], c["start"] + c["dur"])] for c in cut}
+    same = all(before[f] == after[f] for f in fr["n24"] + fr["n16"])
+    ok(same, "montage : après un rognage de début, chaque image restante est la même à l'export (24 i/s ; 16 i/s à ×1,5) "
+             f"({[(f, before[f], after[f]) for f in fr['n24'] + fr['n16'] if before[f] != after[f]][:6]})")
+    bad = [(f, after[f], rule(c, F, f)) for c, F in zip(cut, (24, 16)) for f in fr[c["id"]] if after[f] != rule(c, F, f)]
+    ok(not bad, f"montage : chaque image exportée est celle que montre le moniteur (l'image qui contient l'instant) ({bad[:6]})")
 
 
 # ── en ligne de commande : importer un pack de LUT ───────────

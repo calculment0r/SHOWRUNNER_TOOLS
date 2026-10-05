@@ -338,6 +338,9 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .star-btn.on { color: var(--amb); box-shadow: inset 0 0 0 1px var(--line-amb); }
 .sh-acts { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .sh-acts .sp { flex: 1; }
+/* la fiche d'un élément d'ailleurs : « avec sa source » (le Studio), à côté de la version à figer */
+.sh-src { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink2); cursor: pointer; }
+.sh-src input { accent-color: var(--grn2); }
 
 .sh-grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--s5); align-items: start; }
 @media (max-width: 1100px) { .sh-grid { grid-template-columns: 1fr; } }

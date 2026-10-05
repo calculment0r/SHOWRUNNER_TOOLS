@@ -245,6 +245,8 @@ def api_save(req):
         name = (d.get("name") if isinstance(d.get("name"), str) else "").strip()[:60] or "Clip"
     except (ValueError, TypeError) as e:
         raise HttpError(400, str(e)) from e
+    from tools import chanson   # le clip naît dans le Space de Musique de son projet (étape 7)
+    msp = chanson.project_space(d.get("project"))
     tmp = config.data_dir() / "uploads"
     tmp.mkdir(exist_ok=True)
     f = tmp / f"{int(time.time() * 1000)}_{re.sub(r'[^A-Za-z0-9_-]+', '_', name)[:40]}.mid"
@@ -252,7 +254,7 @@ def api_save(req):
     it = library.add_file(f, kind="midi", title=name, origin={"tool": "music", "via": "odio"},
                           params={"method": "odio", "engine": "odio", "bpm": bpm, "sig": sig, **_summary(notes, sig),
                                   "project": str(d.get("project") or "")[:40]},
-                          tags=["midi", "motif"], folder="MIDI", move=True)
+                          tags=["midi", "motif"], folder="MIDI", move=True, extra={"music_space": msp} if msp else None)
     return library.public(it)
 
 
@@ -442,13 +444,16 @@ def _save_result(ctx, p: dict, notes: list, engine: str, extra: dict | None = No
     if not notes:
         raise RuntimeError("aucune note trouvée dans ce son (silence ?)")
     essai = engine == "factice"
+    from tools import chanson   # le Space du projet (api_extract), rejugé en rangeant
+    msp = chanson.birth_space({}, (ctx.params or {}).get("music_space") or "")
     f = ctx.workdir / "extrait.mid"
     f.write_bytes(write_smf(notes, p["bpm"], p["sig"], p["title"]))
     it = ctx.add(f, kind="midi", title=f"{p['title']} · {p['method']}" + (" (essai)" if essai else ""), parents=[p["src"]],
                  params={"method": p["method"], "engine": engine, "src": p["src"], "off_s": p["off_s"], "dur_s": p["dur_s"],
                          "bpm": p["bpm"], "sig": p["sig"], "values": p["values"], "clip": p["clip"], **_summary(notes, p["sig"]),
                          "confidence": "estimation" if not essai else "essai : pas une transcription", **(extra or {})},
-                 origin={"model": "factice" if essai else engine}, tags=["midi", "extrait", p["method"]], folder="MIDI")
+                 origin={"model": "factice" if essai else engine}, tags=["midi", "extrait", p["method"]], folder="MIDI",
+                 extra={"music_space": msp} if msp else None)
     s = _summary(notes, p["sig"])
     return {"note": f"{s['notes']} notes sur {s['bars']} mesure{'s' if s['bars'] > 1 else ''} ({engine})", "midi": it["id"],
             "notes": s["notes"], "channels": s["channels"]}
@@ -585,6 +590,12 @@ def api_extract(req):
     # sert de jeton GPU) ; basic-pitch sur le processeur (ONNX)
     kind = {"sheetsage2": "music.midi.abc", "bytedance": "music.midi.gpu"}.get(p["engine"], "music.midi")
     pin = music_stems._local_audio_endpoint() if kind == "music.midi.gpu" and mode() == "reel" else None
+    # le clip extrait naît dans le Space de Musique du projet (`project` : son id ; chanson.py, étape 7)
+    from tools import chanson
+    d = {k: v for k, v in d.items() if k != "music_space"}
+    msp = chanson.project_space(d.get("project"))
+    if msp:
+        d["music_space"] = msp
     j = jobs.submit(kind, d, title=f"Extraire le MIDI · {p['title']}"[:90], tool="music", pin=pin)
     return jobs.public(j)
 

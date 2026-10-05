@@ -374,9 +374,11 @@ Une image entre deux images de la source : une entrée à 0,5 s en 25 i/s
 tombe au milieu de l'image 12. Le navigateur montre l'image qui contient
 l'instant (la 12), `-ss` exact garde la première qui commence après (la 13).
 Mesuré sur une mire animée : 4,9 d'écart moyen entre l'aperçu et l'export,
-avec ou sans LUT. L'export recule donc au début de l'image qui contient
-l'instant (moins un quart d'image) : 0,9 après (`_open`, image seulement ; le
-son reste à l'échantillon).
+avec ou sans LUT. L'export reculait donc au début de l'image qui contient
+l'instant (moins un quart d'image) : 0,9 après. Depuis le 06/10, il prend
+l'image qui contient l'instant sur les horodatages de la source elle-même,
+quelle que soit sa cadence (`_open_video`, voir « Les poignées » plus bas) ;
+le son reste à l'échantillon.
 
 ### Les LUT
 
@@ -762,10 +764,12 @@ montrer un aperçu (`pv`, montage/player.js) sans toucher au montage de la page 
   montage tel qu'il serait si l'on lâchait maintenant (`M.moveClips` sur une
   copie, une fois par image d'écran) ;
 - **rogner** (V), propager (B), déplacer la coupe (N), changer la vitesse (R) :
-  l'image du bord qu'on tire, le plan seul et plein (Premiere montre le bord
-  rogné au moniteur — en deux images, sortante et entrante, en mode Trim :
-  helpx « Edit in Trim mode », par les résultats de recherche ; ici une seule,
-  celle du bord pris). Rien pour un son ou un calque d'effet.
+  depuis le 06/10 au soir, l'image sous la tête de lecture, le montage tel qu'il
+  serait au lâcher (voir « Les poignées » plus bas) ; **Alt maintenu**, l'image du
+  bord qu'on tire, le plan seul et plein (Premiere montre le bord rogné au
+  moniteur — en deux images, sortante et entrante, en mode Trim : helpx « Edit in
+  Trim mode », par les résultats de recherche ; ici une seule, celle du bord pris).
+  Rien pour un son ou un calque d'effet.
 
 Fluide : la copie de défilement est devant pendant le geste, l'originale se
 cale au lâcher ; un plan neuf du même média (le morceau d'un plan coupé, une
@@ -801,8 +805,130 @@ source, l'objet ouvert. Essayé en espionnant `AudioBufferSourceNode.start` :
 61 grains pour 50 images glissées sur deux sons, aucun au clic, aucun la tête
 arrêtée, aucun préférence coupée.
 
-Non fait : le son quand on avance image par image au clavier (← →, J K L) ;
-deux images au moniteur pendant un rognage (le mode Trim de Premiere).
+Non fait : deux images au moniteur pendant un rognage (le mode Trim de Premiere).
+
+### Le son au défilement partout, et le pas à pas (06/10, suite)
+
+La même mécanique (commun/scrub.js), étendue :
+
+- **le lecteur commun** (commun/lecteur.js : la fiche d'Asset, le fil d'Image et
+  de Vidéo, Transcrire, Idéation, les paroles calées, la playlist, la
+  visionneuse de Movie Analysis) : glisser la frise fait entendre le son de
+  défilement de l'objet, aux mêmes grains, au volume et au « muet » du lecteur ;
+  le contexte audio est celui des pages sans moteur de son (`contexteCommun`,
+  créé dans le geste). Movie Analysis : seule une analyse lancée d'ici, qui
+  dit la vidéo de la bibliothèque qu'elle a dépouillée (`item`, un lien dur du
+  même fichier) ; nos films sont sur R2 et durent plus de 30 min ;
+- **le pas à pas** : ← →, et J ou L la touche K tenue (Premiere : « hold K and
+  tap J or L ») avancent d'une image et font entendre un grain, un seul, à la
+  nouvelle place, à la vitesse du son. Premiere fait de même : « Play audio
+  while scrubbing » vaut pour la tête glissée, les flèches et J K L (fils du
+  forum d'Adobe « Sound when going frame by frame in Premiere Pro » et « Audio
+  preview frame by frame », lus par les résultats de recherche ;
+  community.adobe.com et helpx.adobe.com ne s'ouvrent pas d'ici). La lecture à
+  rebours (J), qui n'a pas de son à elle, est un geste comme un autre ; la
+  lecture en avant a le sien : aucun grain. Dans le Montage, au programme
+  comme à la source ;
+- **ODIO, les clips de notes** : la tête de l'arrangement qui passe sur le
+  début d'une note la fait jouer par l'instrument de la piste (Logic Pro rejoue
+  de même les régions MIDI qu'on parcourt : Logic Pro User Guide, « Scrub a
+  project in Logic Pro for Mac », par les résultats de recherche). Courte (la
+  durée de la note à la vitesse du geste, 150 ms au plus) ; par piste,
+  l'attaque la plus proche de la tête seule (un accord reste un accord), huit
+  notes par pas au plus, et la source se tait avant de rejouer : rien ne
+  s'empile. Les notes sont celles de la lecture (Graph.notes : le motif
+  bouclé, l'arpège, les voix de la boîte à rythmes).
+
+Essayé (commun/pilote_scrub.mjs, Chromium sans affichage, une vidéo VP9/Opus et
+un son WAV de ffmpeg, en sombre et en clair) : 40 grains pour 40 mouvements sur
+la frise du lecteur, aucun au clic ; un grain par image pour ← →, K + J ou L,
+au lecteur, au programme et à la source du Montage ; 18 à 21 grains pour 0,6 s
+de J ; aucun en lecture ni préférence coupée ; ODIO : 147 notes en 43 pas en
+glissant sur 43 noires du projet de démonstration, 7 au plus par pas, aucune au
+clic ni préférence coupée.
+
+### Les poignées : rogner le début (06/10, suite)
+
+Cal : « la poignée d'un segment sur la timeline à l'avant ne fonctionne pas pareil que
+celle de fin. Les poignées sont des in/out sans changer la position des frames dans la
+timeline, basta. »
+
+**Reproduit à la souris** dans le vrai Montage (portail d'essai, Chromium sans affichage),
+sur des sources VP9 dont chaque image porte son numéro (incrusté, et codé dans la couleur
+d'un coin : rouge = n mod 16, vert = n div 16, par pas de 16), lu au moniteur dans
+l'élément qui se voit, à un instant T fixe avant, pendant et après le geste :
+
+| outil, bord | modèle (début, durée, entrée) | à T, au moniteur | timeline |
+|---|---|---|---|
+| V, début +20 (25 i/s) | 50, 100, 1,0 → 70, 80, 1,8 | 95 → 95 (pendant : 45, l'image du bord) | vignettes à leur place (l'origine de la bande ne bouge pas à 0,01 px près), voisins immobiles |
+| V, début +10 à ×2 | 50, 50, 1,0 → 60, 40, 1,8 | 85 → 85 | idem |
+| V, fin −10 à ×2 | 60, 40, 1,8 → 60, 30, 1,8 | 85 → 85 (pendant : 103, la dernière image) | idem |
+| V, début +20 d'un son | 50, 100, 0,5 → 70, 80, 1,3 | — | l'onde : 442 colonnes d'écran sur 443 identiques (la dernière : le bord) |
+| V, début +10 d'une image fixe | 200, 50 → 210, 40 | — | — |
+| B (propagation), début +20 | 50, 100, 1,0 → 50, 80, 1,8 ; la suite recule de 20 | 95 → 115 | la tête garde sa place, la matière change : c'est la propagation de Premiere |
+| N (sans voisin collé) | comme V | 95 → 95 | — |
+| R (vitesse), début +20 | 70, 80, ×1,25 | 95 → 87 | la matière est la même, plus vite |
+
+Le modèle, le moniteur, l'onde et les vignettes tenaient donc déjà la règle avec V. **Ce
+qui ne la tenait pas : l'export d'une source d'une autre cadence que la séquence**
+(24 ou 16 i/s, celle des vidéos générées, dans une séquence à 25). La chaîne
+(`-ss`, `setpts=PTS-STARTPTS`, `fps`) jetait l'écart entre l'image où `-ss` arrive et
+l'instant voulu, et `fps` arrondissait au plus proche ; l'image exportée à T dépendait
+donc de l'entrée du plan. Mesuré (24 i/s, entrée 1 s) : à T = 80, 53 avant le rognage,
+52 après, 52 au moniteur ; à T = 100, 72 puis 71, 72 au moniteur. Le bord de fin ne
+change pas l'entrée : il ne le montrait pas.
+
+**À la racine** (`_open_video`) : chaque image de la source prend pour horodatage l'instant
+de la timeline où elle commence à se voir, (t_source − entrée − 1 ms) / vitesse, et
+`fps=…:start_time=0:round=up` garde pour chaque image de sortie la dernière image
+commencée (doc ffmpeg-filters, fps : « round », « start_time … padding/trimming at the
+start of stream ») — la règle du moniteur (`sync` : l'image qui contient l'instant, + 1 ms).
+`-copyts` garde les horodatages de la source : sans lui, ffmpeg y retranche le point de
+recherche arrondi à la base de temps du fichier (1 ms en WebM), et il restait 4 écarts sur
+2880 images aux bords ; avec, 0. Essai (ffmpeg seul) : 4 sources (25, 24, 16 i/s ; WebM,
+MP4), 8 entrées (dont une négative, la tête d'un fondu enchaîné, et une au-delà de la fin),
+3 vitesses (0,5 ; 1 ; 2), 30 images chacune : **0 image sur 2880** ne suit pas la règle,
+contre 595 avec la chaîne d'avant. De bout en bout (le vrai travail d'export contre le
+moniteur de la page, une source 24 i/s, chaque image de 63 à 149 après un rognage de
+début de 13) : **87 images sur 87 identiques**, et à 16 i/s ×1,5 les mêmes avant et après.
+
+**La vraie cause, trouvée par Cal** (06/10 au soir, une photo de son écran : un plan
+« vidéo avec son » sur la piste du haut, une voiture dessous, un zoom très fort, la tête
+quelques images après le bord gauche) : « dans la frame, on ne lit plus sous la cue, mais ça
+affiche le nouveau in… C'est pour ça que mon footage en dessous disparaît. C'est pas si mal,
+mais je préfère avoir les fonctions de in et out comme je t'ai dit. » Pendant le geste, le
+moniteur montrait l'image du bord tiré (ci-dessus, « Le moniteur pendant un geste ») : à
+la place de l'image sous la tête, une image qui défile quand on tire — on croit voir la
+matière glisser sous la tête, alors que le modèle tronque bien.
+
+Désormais (`live`, montage/timeline.js) : **pendant un rognage (V, B, N, R), le moniteur
+montre l'image sous la tête de lecture**, le montage tel qu'il serait si l'on lâchait
+maintenant (le projet de la page est rejoué à chaque mouvement, le programme se redessine) ;
+tant que le bord ne passe pas la tête, l'image ne change pas ; quand il la passe, ce qui est
+dessous apparaît (la piste inférieure, ou le noir). **Alt maintenu** — on peut le prendre et
+le lâcher pendant le geste — montre l'image du bord tiré, le plan seul, comme avant (une
+touche plutôt qu'une préférence : c'est le plus simple, et on passe d'une vue à l'autre sans
+lâcher le bord ; Alt n'a pas d'autre sens sur un bord). Le déplacement d'un plan montrait déjà
+l'image sous la tête.
+
+Le pilote `montage/pilote_poignees.mjs` (Playwright, portail d'essai ; 41 essais, sombre et
+clair, aucune erreur de console ; aussi avec la copie de défilement à l'œuvre, faite en VP9
+pour le Chromium du conteneur) : pendant un rognage lent (40 pas d'un demi-pixel, moins
+d'une image chacun : 13 débuts différents), la scène du moniteur est **la même au pixel
+près** (capture comparée à celle d'avant) et le modèle reste juste à chaque pas ; rapide,
+l'image 95 jusqu'à ce que le bord passe la tête, puis l'image fixe de la piste du dessous ;
+Alt : l'image du bord (100), lâché : de nouveau dessous ; le bord de fin pareil. Puis, à T
+fixe avant et après : une vidéo avec son, un son seul (l'onde : les attaques des bips au même
+x d'écran, au pixel près), les deux ensemble (un son dissocié n'est lié à rien : chacun se
+rogne par sa poignée), un zoom fort (32 px par image, +3 images = 96 px), l'aimant (le bord
+se colle à la tête, l'entrée suit), rogner puis re-tirer vers la gauche (jusqu'au début de la
+source), ×1,5, une image fixe (sans borne de source), B, N, R, et chaque Ctrl+Z.
+
+Le contrôle : `model.js` mené par node (l'invariant : après un rognage de début de +10,
+−25, +49 à ×1, de +7 et −5 à ×2, de +13 à ×0,5, ×1,5 et ×3, chaque instant restant montre
+le même temps de la source, la fin et les autres plans ne bougent pas) ; l'export de deux
+sources numérotées (24 i/s, et 16 i/s à ×1,5) avant et après un rognage de début, chaque
+image comparée à la règle du moniteur.
 
 ## Le 06/10 : la trajectoire — déplacer, mettre à l'échelle, tourner, recadrer
 
@@ -1024,10 +1150,9 @@ le plan sous le pointeur ; l'opacité tapée. Les deux thèmes, aucune erreur.
   lecture (chaque image est dessinée deux fois). Les effets de piste et de
   groupe agissent plan par plan (voir plus haut).
 - L'image fond en ligne droite seulement (ffmpeg 6.1, `fade`).
-- Vitesse : un plan dont la cadence diffère du projet (24 i/s dans un
-  projet à 25) peut montrer à l'export l'image voisine de celle de l'aperçu
-  (le filtre `fps` arrondit, le navigateur prend l'image en cours) ; pas de
-  vitesse négative, pas de remappage temporel.
+- Vitesse : pas de vitesse négative, pas de remappage temporel. (Une source
+  d'une autre cadence que le projet — 24 ou 16 i/s dans un projet à 25 — montre
+  depuis le 06/10 à l'export l'image même du moniteur : « Les poignées ».)
 - Pas de titres, de clés (ni d'images clés sur la trajectoire), de scopes, de roues chromatiques.
 - Une passe finale lit tous les sons à la fois : un montage de centaines de
   plans sonores ouvre autant d'entrées (léger, mais non borné).

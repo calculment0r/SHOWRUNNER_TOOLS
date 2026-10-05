@@ -48,8 +48,8 @@
 // EN DIRECT pendant le glisser ») : le programme montre un autre montage que
 // celui de la page (`pv.p` : déplacer un plan, tel qu'il serait si l'on lâchait
 // maintenant), à un autre instant que la tête (`pv.t`), un seul plan (`pv.seul` :
-// le bord qu'on rogne, plein, sans fondu ni son — Premiere montre l'image du bord
-// au moniteur). Un plan neuf du même média (le morceau d'un plan coupé, une
+// le bord qu'on rogne, Alt maintenu, plein, sans fondu ni son — le mode Trim de
+// Premiere). Un plan neuf du même média (le morceau d'un plan coupé, une
 // copie) reprend l'élément d'un plan qui n'existe plus (`entry`) : rien ne se
 // recharge en chemin, et la copie de défilement montre l'image (montage.js, apercu).
 //
@@ -70,7 +70,8 @@ import { getLut, lutFailed, lutGL, passesOf } from './lut.js';
 // la tête glissée à l'arrêt, l'image suit au lieu d'attendre la fin du geste
 import { sauter, cible } from '../commun/tete.js';
 import { copieDefil } from '../commun/defilement.js';
-// le son au défilement (06/10) : glisser la tête fait entendre le son sous elle, par grains (commun/scrub.js)
+// le son au défilement (06/10) : glisser la tête fait entendre le son sous elle, par grains (commun/scrub.js) ;
+// le pas à pas (← →, K + J ou L) un grain par image, la lecture à rebours (J) les grains d'un geste
 import { scrub as scrubSon, sonDefil, chargerSon } from '../commun/scrub.js';
 
 // ce qui se voit d'une vidéo : l'originale, ou sa copie pendant qu'on cherche
@@ -245,9 +246,13 @@ export class Program {
     // jouent vraiment (play() rend la main avant la première image), puis
     // se cale sur eux — sinon ils partent avec 100 à 150 ms de retard.
     this.starting = rate > 0 ? performance.now() : 0;
+    // à rebours, les médias n'ont pas de son : le son au défilement suit la tête (commun/scrub.js)
+    if (rate < 0) { this.prechargerSons(); this.son.debut(); this.son.aller(this.t); this.arebours = true; }
+    else this.finRebours();
     if (!this.raf) this.schedule();
     this.onTick(this.t, true);
   }
+  finRebours() { if (this.arebours) { this.arebours = false; this.son.fin(); } }
 
   // L'horloge bat au rythme de la fenêtre qui MONTRE le programme
   // (requestAnimationFrame de son document) : détaché sur un 2ᵉ écran
@@ -268,6 +273,7 @@ export class Program {
   }
 
   pause() {
+    this.finRebours();
     this.playing = false;
     this.rate = 1;
     this.t = Math.round(this.t * this.fps) / this.fps;
@@ -319,7 +325,14 @@ export class Program {
     if (p) for (const c of p.clips) if (c.kind !== 'image' && c.kind !== 'adjust' && c.item) chargerSon(this.itemOf(c.item));
   }
   seekFrame(f) { this.seek(f / this.fps); }
-  step(n) { if (this.playing) this.pause(); this.seekFrame(this.frame() + n); }
+  // une image (ou plus) : un grain du son à la nouvelle place, si la tête a bougé (Premiere)
+  step(n) {
+    if (this.playing) this.pause();
+    const t0 = this.t;
+    this.prechargerSons();
+    this.seekFrame(this.frame() + n);
+    if (this.t !== t0) this.son.coup(this.t);
+  }
 
   loop() {
     this.raf = 0;
@@ -346,6 +359,7 @@ export class Program {
       return;
     }
     this.t = t;
+    if (this.arebours) this.son.aller(t);
     this.render();
     this.onTick(t, true);
     this.schedule();
@@ -760,7 +774,7 @@ export class Source {
   }
   moved() { this.tick(); }
 
-  stop() { clearInterval(this.rev); this.rev = 0; this.rate = 0; }
+  stop() { if (this.rev) this.son.fin(); clearInterval(this.rev); this.rev = 0; this.rate = 0; }
 
   // un geste sur la tête de la source (sa barre) commence ou finit (la copie de défilement, le son)
   scrub(on) {
@@ -783,10 +797,12 @@ export class Source {
     if (rate < 0) {
       this.el.pause();
       if (this.dfl) this.dfl.arret();
+      // à rebours, l'élément n'a pas de son : le son au défilement suit la tête (commun/scrub.js)
+      this.prechargerSons(); this.son.debut(); this.son.aller(this.t);
       this.rev = setInterval(() => {
         const t = this.t + rate / 30;
         if (t <= 0) { this.go(0, true); this.stop(); this.dfl?.repos(); }
-        else this.go(t, true);
+        else { this.go(t, true); this.son.aller(t); }
         this.onTick();
       }, 1000 / 30);
       this.onTick();
@@ -814,7 +830,15 @@ export class Source {
     if (this.geste && !this.playing) this.son.aller(at);
     this.onTick();
   }
-  step(n) { if (!this.el || this.item.kind === 'image') return; this.pause(); this.seek(this.t + n / this.fps); }
+  // une image (ou plus) : un grain du son à la nouvelle place, si la tête a bougé (Premiere)
+  step(n) {
+    if (!this.el || this.item.kind === 'image') return;
+    this.pause();
+    const t0 = this.t, at = Math.max(0, Math.min(this.duration, t0 + n / this.fps));
+    this.prechargerSons();
+    this.seek(at);
+    if (at !== t0) this.son.coup(at);
+  }
   markIn() { if (!this.item || this.item.kind === 'image') return; this.in = Math.min(this.t, Math.max(0, this.out - 1 / this.fps)); this.onTick(); }
   markOut() { if (!this.item || this.item.kind === 'image') return; this.out = Math.max(this.t, this.in + 1 / this.fps); this.onTick(); }
   clearIn() { if (this.item) { this.in = 0; this.onTick(); } }

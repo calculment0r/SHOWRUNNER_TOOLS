@@ -66,7 +66,7 @@ import { toast, api, ITEM_MIME, MULTI_MIME, uploadFile, declareZone } from '../c
 import { poserObjets } from './panneau.js';
 import { MODULES, TRACK_KINDS, COLORS, COLOR_FR, AUTOMATABLE, SECTION_TAGS, SECTION_NAMES, SOURCES_OF,
   spec, val, fmt, fromNorm, drumVoicesOf, guessTag, moduleName } from './modules.js';
-import { peaks, projEnd, interp, clipBuffer, audioGeom } from './moteur.js';
+import { peaks, projEnd, interp, clipBuffer, audioGeom, joue } from './moteur.js';
 import { el, knob, fader, menu, tok, clamp, put, confirmBox, inlineEdit, splitter, letter } from './ui.js';
 import { sectionAt, duplicateSection, moveSection, swapSection, removeSection, trimStart, rangerGroupes } from './projet.js';
 import { createDock } from './editeurs.js';
@@ -119,7 +119,8 @@ export function createTimeline(app) {
   const thOf = (t) => ui().thT?.[t.id] || th();
   const snapU = () => { const s = ui().snap ?? 1; return s === 'bar' ? P().sig : s; };
   const navW = () => (ui().nav === false ? 30 : clamp(ui().navW || 214, 160, 420));
-  const dockH = () => (ui().dock === false ? 0 : clamp(ui().dockH || 300, 120, Math.max(160, innerHeight - 300)));
+  // la hauteur du panneau du bas : celle de sa taille (editeurs.js, compact ou grand — d'office, au plus haut)
+  const dockH = () => (ui().dock === false ? 0 : clamp((ui().dockGrand ? ui().dockHg || 9999 : ui().dockH) || 300, 120, Math.max(160, innerHeight - 300)));
   const root = el('section', { class: 'ar', 'aria-label': 'arrangement' });
   const tools = el('div', { class: 'ar-tools' });
   const scroll = el('div', { class: 'ar-scroll' });
@@ -144,7 +145,7 @@ export function createTimeline(app) {
   const navSplit = splitter('x', { get: navW, min: 160, max: 420, reset: 214, title: 'tirer : la largeur du navigateur · double-clic : d\'origine',
     set: (v) => { body.style.setProperty('--nav-w', `${v}px`); }, done: (v) => { ui().navW = v; ui().nav = true; app.saveUi(); } });
   const dockSplit = splitter('y', { get: dockH, min: 120, max: 900, invert: true, reset: 300, title: 'tirer : la hauteur du détail · double-clic : d\'origine',
-    set: (v) => { dock.el.style.height = `${v}px`; }, done: (v) => { ui().dockH = v; ui().dock = true; app.saveUi(); } });
+    set: (v) => { dock.el.style.height = `${v}px`; }, done: (v) => { ui()[ui().dockGrand ? 'dockHg' : 'dockH'] = v; ui().dock = true; app.saveUi(); } });
   const main = el('div', { class: 'ar-main' }, scroll, dockSplit, dock.el);
   const body = el('div', { class: 'ar-body' }, browser.el, navSplit, main);
   root.append(tools, body);
@@ -1554,10 +1555,12 @@ export function createTimeline(app) {
   // la tête, par grains : chacun dans la source de SA piste (player du moteur), donc avec son
   // volume, ses effets, muet et solo ; la place dans le son comme le moteur la calcule
   // (audioGeom : début, transposition, boucle ; clipBuffer : à l'envers), le gain et les
-  // fondus du clip. Les clips de notes ne s'entendent pas (les grains sont du son enregistré).
+  // fondus du clip. Les clips de notes (06/10) : la tête passe sur le début d'une note,
+  // l'instrument de la piste la joue, courte (`ecouteNotes`, plus bas).
   // En lecture, rien : la lecture repart d'où va la tête (Engine.seek).
   const ecoute = scrubSon({
     contexte: () => app.engine.ctx,
+    notes: (a, b, T, r) => ecouteNotes(a, b, T, r),
     sons: (t) => {
       const p = P(), eng = app.engine, g = eng.graph;
       if (!p || !g || eng.running) return [];
@@ -1577,6 +1580,63 @@ export function createTimeline(app) {
       return out;
     },
   });
+  // Les clips de notes au défilement (06/10). Logic Pro le fait : glisser la tête rejoue les
+  // régions MIDI, à la vitesse du geste ; une piste ou une région muette ne s'entend pas
+  // (Logic Pro User Guide, « Scrub a project in Logic Pro for Mac », par les résultats de
+  // recherche : support.apple.com ne s'ouvre pas d'ici). Ici, à chaque pas de la mécanique
+  // commune (commun/scrub.js, un toutes les 30 ms au plus), les notes dont la tête a passé le
+  // DÉBUT depuis le pas d'avant (à rebours aussi), trouvées par le moteur comme pour la lecture
+  // (Graph.notes : le motif bouclé, son décalage, l'arpège, les voix de la boîte à rythmes) ;
+  // jouées par la source de la piste, donc avec son volume, ses effets, muet et solo :
+  //   - courtes : la durée de la note à la vitesse du geste, NOTE_S au plus ;
+  //   - sans s'empiler : par piste, seulement l'attaque la plus proche de la tête (un accord
+  //     reste un accord), NOTES_PAR_PAS en tout ; et la source se tait (cut : le relâchement
+  //     des notes du pas d'avant, ou leur arrêt pour un instrument d'ODIO) avant de rejouer.
+  const NOTE_S = 0.15, NOTES_PAR_PAS = 8;
+  function ecouteNotes(a, b, T, r) {
+    const p = P(), eng = app.engine, g = eng.graph;
+    if (!p || !g || eng.running || a === b) return 0;
+    const spb = 60 / p.bpm, avant = b > a;
+    // en avant ]a, b] ; à rebours [b, a[ (en noires) : la note sous la tête qu'on vient de poser
+    const eps = 1e-9, lo = (avant ? a : b) / spb + (avant ? eps : 0), hi = (avant ? b : a) / spb + (avant ? eps : 0);
+    const trk = new Map(p.tracks.map((x) => [x.id, x])), pats = new Map(p.patterns.map((x) => [x.id, x]));
+    const mods = new Map(p.modules.map((m) => [m.id, m]));
+    const parPiste = new Map();   // piste → { src, b, evs } : l'attaque la plus proche de la tête
+    for (const c of p.clips) {
+      const tr = trk.get(c.track);
+      if (!tr || tr.kind === 'audio' || c.mute || !c.pat) continue;
+      const cs = c.start, ce = c.start + c.len;
+      if (ce <= lo || cs >= hi) continue;
+      const pat = pats.get(c.pat), src = g.nodes.get(tr.src);
+      if (!pat || !src) continue;
+      const evs = [];
+      const prendre = (x) => evs.push(x);
+      g.notes(tr, c, joue(pat, mods.get(tr.src)), {
+        noteOn: (pitch, at, v, d, over) => prendre({ at, pitch, v, d, ac: !!over?.ac }),
+        hit: (voix, at, v) => prendre({ at, voix, v }),
+      }, Math.max(lo, cs), Math.min(hi, ce), (x) => x, spb);
+      if (!evs.length) continue;
+      const pres = avant ? Math.max(...evs.map((x) => x.at)) : Math.min(...evs.map((x) => x.at));
+      const cur = parPiste.get(tr.id);
+      if (cur && (avant ? cur.b > pres : cur.b < pres)) continue;
+      const ici = evs.filter((x) => Math.abs(x.at - pres) < 1e-6);
+      if (cur && cur.b === pres) cur.evs.push(...ici); else parPiste.set(tr.id, { src, b: pres, evs: ici });
+    }
+    let n = 0;
+    for (const { src, evs } of parPiste.values()) {
+      if (n >= NOTES_PAR_PAS) break;
+      src.cut?.(T);
+      for (const x of evs) {
+        if (n >= NOTES_PAR_PAS) break;
+        if (x.voix !== undefined) src.hit?.(x.voix, T, x.v);
+        else src.noteOn?.(x.pitch, T, x.v ?? 0.8, Math.max(0.03, Math.min(NOTE_S, x.d / r)), x.ac ? { ac: true } : undefined);
+        n++;
+      }
+    }
+    return n;
+  }
+  window.__muDefil = ecoute;   // essais pilotés : les grains et les notes joués (commun/pilote_scrub.mjs)
+
   // le geste commence : le moteur se lance (son contexte, son graphe) s'il ne l'est pas encore
   // — pas si la préférence coupe le son au défilement
   function ecouteDebut() {

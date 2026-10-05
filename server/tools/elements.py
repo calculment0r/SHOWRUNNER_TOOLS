@@ -46,8 +46,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import secrets
 import shutil
 import threading
+import time
 from pathlib import Path
 
 from core import auth, config, espaces, library
@@ -248,12 +250,18 @@ def _source_now(src: dict) -> dict:
 
 def source_state(e: dict) -> dict:
     """« à jour », « modifiée depuis la vN », « perdue », « sans version », ou « non suivie »
-    (une source dont l'empreinte n'est pas encore écrite)."""
+    (une source dont l'empreinte n'est pas encore écrite). Un élément rapatrié d'un autre
+    Workspace (core/library.py, _import_living) : sa source y est restée — `elsewhere`, le
+    nom de ce Workspace (s'il se voit) ; rien ne la relie à celui-ci, elle n'est pas suivie."""
     src = e["element"].get("source") or {}
     now = _source_now(src)
     head = library.head_entry(e)
     out = {"tool": src.get("tool"), "doc": now.get("doc"), "title": now.get("title"), "open": now.get("open"),
            "what": now.get("what"), "rev": now.get("rev")}
+    if isinstance(src.get("from"), dict):
+        sid = src["from"].get("space")
+        out["elsewhere"] = library.space_name(sid) if _space_name(sid, auth.current()) else "un autre Workspace"
+        out["copied"] = bool(src.get("doc"))   # rapatrié « avec sa source » : il vit sur une copie, ici
     if now.get("lost"):
         return {**out, "state": "perdue"}
     if not head:
@@ -420,6 +428,8 @@ ID_FIELDS = {
             # la bibliothèque du projet (05/10 au soir) : les références de son, l'échantillon de l'instrument d'un clip de notes, ses sons
             "biblio.clips[].item", "biblio.clips[].inst.params.item", "biblio.sons[].item"),
     "ide": ("nodes[].item", "nodes[].items[]", "nodes[].data.item", "nodes[].refChoice.{}"),
+    # une playlist (server/tools/playlist.py) : un objet de la bibliothèque qui pose ses sons et sa pochette
+    "pla": ("playlist.tracks[].item", "playlist.cover"),
     "item": ("parents[]", "version.of", "element.refs[].item", "element.voices[].item", "element.versions[].item",
              "element.versions[].deps[].el", "element.versions[].deps[].item", "params.refs[].item", "params.source",
              "params.inputs.*[].item"),
@@ -428,7 +438,7 @@ ID_FIELDS = {
 # d'avant (un montage `mon-…` devenu séquence). Le contrôle `closure_gaps` ne juge que les
 # documents (seq, mus, ide) : la ligne `item` n'y est pas encore soumise (la recette d'un
 # export du Montage garde la timeline entière, `params.project` ; le paquet la tranchera)
-SELF_FIELDS = {"seq": ("id", "legacy"), "mus": ("id",), "ide": ("id",), "item": ("id",)}
+SELF_FIELDS = {"seq": ("id", "legacy"), "mus": ("id",), "ide": ("id",), "pla": ("id",), "item": ("id",)}
 LUT_RX = re.compile(r"lut-\d{8}-\d{6}-[0-9a-f]{4}")
 _TOK = re.compile(r"\[\]|\{\}|\*|[^.\[\]{}*]+")
 
@@ -577,6 +587,208 @@ def check_doc(doc: str, d: dict, space: str | None = None) -> None:
     élément n'est posé dans sa propre descendance (400, check_loops)."""
     check_space(doc, d, space)
     check_loops(doc, [i for i, _ in _refs_in(doc, d)])
+
+
+# ── rapatrier un document : une copie, avec ce qu'il pose ───
+# equipes_espaces.md § 3.5 (« dupliquer dans… ») et § 3.3 b (« avec sa source »). Un document d'un
+# autre Workspace n'arrive jamais seul, ni lié : ce qu'il pose (la fermeture d'ID_FIELDS — les
+# objets, les LUT, une séquence posée sur une planche) est rapatrié d'abord (library.rapatrier :
+# des copies neuves ; une version d'élément posée arrive en objet figé, un élément versionné posé
+# en élément neuf), puis le document est copié, chaque identifiant remplacé par celui de sa copie
+# (remap), et écrit par son outil — qui juge encore, à l'écriture, que tout ce qu'il pose est
+# d'ici (check_space) : un champ oublié dans ID_FIELDS fait échouer la copie au lieu de laisser un
+# lien vers l'original. Inscrit dans core/library.py (DOC_IMPORT, SOURCE_IMPORT) par register().
+def _set_walk(x, parts: list, fn) -> None:
+    """Remplace en place chaque valeur que le chemin atteint (la syntaxe d'ID_FIELDS) par fn(v) ;
+    `{}` : les clés de l'objet."""
+    if not parts:
+        return
+    p, rest = parts[0], parts[1:]
+    if p in ("[]", "*"):
+        pairs = list(enumerate(x)) if p == "[]" and isinstance(x, list) else list(x.items()) if p == "*" and isinstance(x, dict) else []
+        for k, v in pairs:
+            if rest:
+                _set_walk(v, rest, fn)
+            else:
+                x[k] = fn(v)
+    elif p == "{}":
+        if isinstance(x, dict) and not rest:
+            for k in list(x):
+                nk = fn(k)
+                if nk != k:
+                    x[nk] = x.pop(k)
+    elif isinstance(x, dict) and p in x:
+        if rest:
+            _set_walk(x[p], rest, fn)
+        else:
+            x[p] = fn(x[p])
+
+
+def remap(kind: str, d: dict, mapping: dict) -> dict:
+    """Une copie profonde du document `d`, chaque identifiant qu'il pose (ID_FIELDS) remplacé
+    par celui de sa copie (`mapping` : {ancien: nouveau}) ; les autres restent."""
+    out = json.loads(json.dumps(d))
+    for field in ID_FIELDS[kind]:
+        _set_walk(out, _TOK.findall(field), lambda v: mapping.get(v, v) if isinstance(v, str) else v)
+    return out
+
+
+class _in_space:
+    """Le temps d'écrire une copie : le Workspace d'arrivée est celui « de la requête » (les
+    outils y font naître ce qu'ils écrivent : library.new_space)."""
+    def __init__(self, space: str) -> None:
+        self.space = space
+
+    def __enter__(self):
+        self.before = auth.current_space()
+        auth.set_current_space(self.space)
+
+    def __exit__(self, *exc):
+        auth.set_current_space(self.before)
+
+
+def _bring(kind: str, d: dict, dest: str, folder: str, what: str, undo: list) -> tuple[dict, list[dict]]:
+    """Rapatrie dans `dest` ce que pose le document `d` (sauf ce qui y est déjà) : ({ancien:
+    nouveau}, [copies]). Un objet posé qui est à la corbeille : ValueError qui le dit."""
+    mapping: dict = {}
+    items, luts = [], []
+    for x, _ in ids_in(kind, d):
+        sp, meta = space_of_id(x)
+        if sp is None or sp == dest:
+            continue   # un identifiant qui ne désigne rien, ou déjà d'ici : il reste tel quel
+        if LUT_RX.fullmatch(x):
+            luts.append(x)
+        elif x not in library._items:
+            raise ValueError(f"{what} pose « {(meta or {}).get('title') or x} » ({x}), qui est à la corbeille : sors-le de la "
+                             "corbeille ou retire-le du document, puis rapatrie")
+        else:
+            items.append(x)
+    copies: list[dict] = []
+    if items:
+        copies = library.rapatrier(items, dest, folder=folder)
+        undo.append(lambda: _drop_items(copies))
+        for m in copies:
+            f = ((m.get("origin") or {}).get("from") or {}).get("item")
+            if f in items and f not in mapping:
+                mapping[f] = m["id"]
+    if luts:
+        from tools import equipes, montage
+        for lid in luts:
+            new = equipes._import_lut(montage.lut_meta(lid), dest)
+            undo.append(lambda n=new["id"]: [(montage._luts_dir() / f"{n}{x}").unlink(missing_ok=True) for x in (".cube", ".json")])
+            mapping[lid] = new["id"]
+    return mapping, copies
+
+
+def _drop_items(items: list[dict]) -> None:
+    with library._lock:
+        for it in items:
+            library._items.pop(it["id"], None)
+            shutil.rmtree(library.folder_of(it["id"]), ignore_errors=True)
+
+
+def _from(src_space: str | None, doc: str, at: str, uid: str | None = None) -> dict:
+    return {"space": src_space, "item": doc, "at": at, **({"uid": uid} if uid else {})}
+
+
+def _import_sequence(src: dict, dest: str, folder: str, at: str, undo: list) -> list[dict]:
+    """DOC_IMPORT["sequence"] : une séquence d'ailleurs — ses plans et leurs LUT d'abord, puis la
+    timeline, écrite par le Montage (montage.new_sequence : la vignette, la lignée, le garde)."""
+    from tools import montage
+    d = _read_json(library.folder_of(src["id"]) / montage.SEQ_FILE) or {}
+    mapping, copies = _bring("seq", d, dest, folder, f"« {src.get('title') or src['id']} »", undo)
+    p = remap("seq", d, mapping)
+    for k in ("id", "legacy", "space"):
+        p.pop(k, None)
+    p.update(name=src.get("title") or p.get("name") or "séquence", created=at, updated=at, rev=1)
+    with _in_space(dest):
+        q = montage.new_sequence(montage.normalize(p), folder=folder or src.get("folder") or "")
+    it = library._items[q["id"]]
+    undo.append(lambda: _drop_items([it]))
+    it["origin"] = {**(it.get("origin") or {}), "from": _from(library.space_of(src), src["id"], at, library.uid_of(src))}
+    library._save(it)
+    return [it, *copies]
+
+
+def _import_playlist(src: dict, dest: str, folder: str, at: str, undo: list) -> list[dict]:
+    """DOC_IMPORT["playlist"] : une playlist d'ailleurs — ses sons et sa pochette d'abord, puis la
+    playlist (sa fiche et son dossier), chaque morceau pointant sa copie. Son Space de Musique
+    (`music_space`) est de l'autre Workspace : elle arrive dans « Mon Space »."""
+    mapping, copies = _bring("pla", src, dest, folder, f"« {src.get('title') or src['id']} »", undo)
+    it = library._import_one(src, dest, folder or src.get("folder") or "", at)
+    it = remap("pla", it, mapping)
+    it["music_space"] = None
+    it["parents"] = [mapping.get(x, x) for x in it.get("parents") or []]
+    marks = {x: sp for x, sp in (it.get("parents_space") or {}).items() if x not in mapping}   # les copiés sont d'ici
+    if marks:
+        it["parents_space"] = marks
+    else:
+        it.pop("parents_space", None)
+    return [it, *copies]
+
+
+def copy_source(e: dict, v: dict, dest: str, folder: str, at: str, undo: list) -> tuple[dict, list[dict], str | None]:
+    """SOURCE_IMPORT : la source d'un élément versionné, copiée dans `dest` avec ce qu'elle pose
+    (§ 3.3, b — « avec sa source ») : un projet ODIO, une séquence, une planche, la recette d'un
+    objet. Rend (la source neuve, [copies], l'empreinte de la v1 : celle de la copie si la
+    version figée était celle de la source telle qu'elle est — « à jour » —, sinon la sienne)."""
+    s = e["element"].get("source") or {}
+    doc = str(s.get("doc") or "")
+    a = library.space_of(e)
+    if not auth.can_view(auth.current(), a):
+        raise PermissionError("la source de cet élément n'est pas dans un Workspace que tu vois")
+    what = f"la source de « {e.get('title') or e['id']} »"
+    copies: list[dict] = []
+    is_doc = bool(DOC_RX.fullmatch(doc))
+    if (is_doc and doc[:3] == "seq") or (not is_doc and ITEM_RX.fullmatch(doc)):
+        if doc not in library._items:
+            raise ValueError(f"{what} est à la corbeille : sors-la d'abord, ou rapatrie la version seule")
+        copies = library.rapatrier([doc], dest, folder=folder)   # une séquence : avec ses plans (DOC_IMPORT)
+        undo.append(lambda: _drop_items(copies))
+        new = copies[0]["id"]
+        src_new = {"tool": s.get("tool") or ("montage" if doc[:3] == "seq" else "upload"), "doc": new,
+                   "open": f"montage/#{new}" if new.startswith("seq-") else f"asset/#{new}"}
+    elif is_doc:
+        d = _read_json(_doc_path(doc))
+        if d is None:
+            raise ValueError(f"{what} n'existe plus (à la corbeille ?) : rapatrie la version seule")
+        kind = doc[:3]
+        mapping, copies = _bring(kind, d, dest, folder, what, undo)
+        c = remap(kind, d, mapping)
+        if kind == "mus":
+            from tools import music
+            new = f"mus-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
+            for k in ("shared",):
+                c.pop(k, None)
+            c.update(id=new, rev=1, created=at, updated=at, owner=auth.current_id(), space=dest,
+                     origin={"from": _from(a, doc, at)})
+            music.validate(c)
+            with music._lock:
+                music._write(c)   # le garde : ce qu'il pose est d'ici (check_doc)
+            undo.append(lambda: _doc_path(new).unlink(missing_ok=True))
+            src_new = {"tool": "music", "doc": new, "open": f"musique/?p={new}"}
+        else:
+            from tools import ideation, ideation_collab
+            b = ideation.normalize(c)
+            new = ideation.new_id()
+            b.update(id=new, created=at, updated=at, rev=1, nodes=[{**n, "jobs": []} if "jobs" in n else n for n in b["nodes"]])
+            b.pop("space", None)
+            with _in_space(dest), ideation._lock:
+                ideation._write(b)   # son Workspace : celui d'ici (library.new_space) ; le garde : check_space
+            ideation_collab.created(b, auth.current())
+
+            def _rm(bid=new):
+                ideation._path(bid).unlink(missing_ok=True)
+                ideation._spaces.pop(bid, None)
+                ideation_collab._afile(bid).unlink(missing_ok=True)
+                ideation_collab._acc.pop(bid, None)
+            undo.append(_rm)
+            src_new = {"tool": "ideation", "doc": new, "open": f"ideation/#{new}"}
+    else:
+        return {k: x for k, x in s.items() if k != "from"}, [], v.get("fp")
+    now_fp = _source_now(s).get("fp")
+    fp = _source_now(src_new).get("fp") if v.get("fp") and now_fp == v.get("fp") else v.get("fp")
+    return src_new, copies, fp
 
 
 # ── le journal ──────────────────────────────────────────────
@@ -990,6 +1202,9 @@ def r_changes(req):
 
 def register(app) -> None:
     library.TRASH_GUARDS.append(trash_guard)
+    # rapatrier un document, avec ce qu'il pose : core/library.py juge et copie, ce module sait les documents
+    library.DOC_IMPORT.update(sequence=_import_sequence, playlist=_import_playlist)
+    library.SOURCE_IMPORT[:] = [copy_source]
     # POST /api/elements est aussi la route des planches (core_api, chargé avant) :
     # celle-ci passe devant et lui rend la main quand le corps n'a ni source ni from_item
     app.route("POST", "/api/elements", r_create)

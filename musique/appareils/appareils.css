@@ -138,6 +138,22 @@
 .ap-synth.dev-body { align-items: stretch; }
 .ap-synth .sec { justify-content: space-between; }
 .ap-synth .sec .ap-ecran { align-self: flex-start; }
+/* DEUX RANGÉES (06/10 ; avant : 2 856 px de large) : le module borné, ses sections passent à
+   la ligne, et dans une section les réglages aussi (un choix sur sa ligne, les molettes dessous) */
+.dev.synth { max-width: 1280px; }
+.ap-synth.dev-body { gap: 8px; }
+.ap-synth .sec { max-width: 360px; justify-content: flex-start; }
+.ap-synth .sec .kns { flex-wrap: wrap; row-gap: 6px; }
+/* une section se replie d'un clic sur son nom (instruments.js, synthe) : un onglet étroit, son nom
+   à la verticale, un point quand un réglage caché s'écarte du défaut (sa bulle dit lesquels) */
+.ap-sec-t { display: flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; color: inherit; cursor: pointer; text-align: left; font: inherit; }
+.ap-sec-t:hover .lbl { color: var(--ink); }
+.ap-sec-t:focus-visible { outline: 1px solid var(--line-cy); outline-offset: 2px; }
+.ap-sec-ecart { width: 6px; height: 6px; border-radius: 50%; background: var(--k, var(--cy)); flex: none; }
+.ap-sec-ecart[hidden] { display: none; }
+.ap-synth .sec.replie { padding: 9px 5px; justify-content: flex-start; }
+.ap-synth .sec.replie > :not(.ap-sec-t) { display: none; }
+.ap-synth .sec.replie .ap-sec-t { writing-mode: vertical-rl; }
 
 /* l'échantillonneur : le départ se tire sur la forme d'onde (rack.js) */
 .dev.sampler canvas.wave, .sampler canvas.wave { cursor: ew-resize; }
