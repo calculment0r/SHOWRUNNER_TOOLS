@@ -1060,6 +1060,40 @@ function journalSec() {
 // ── I · les diagnostics : une liste fixe de scripts du dépôt, lancés d'un clic (server/tools/admin.py, DIAGS) ──
 // Cal, 05/10 : plus de terminal pour savoir ce qui se passe ; la sortie s'affiche ici, et se relit tant qu'un script tourne.
 let dgTimer = 0;
+let allBusy = '', allNote = '';
+// tous les diagnostics qui ne changent rien, l'un après l'autre, puis un seul texte dans le presse-papier
+async function runAll() {
+  const list = (S.dg?.diags || []).filter((x) => !x.action);
+  const parts = [`Diagnostics Showrunner · ${new Date().toLocaleString('fr-FR')}`];
+  allNote = '';
+  for (const [k, x] of list.entries()) {
+    allBusy = `${k + 1}/${list.length} · ${x.label}`;
+    render(true);
+    try { await post(`admin/diag/${x.id}`); } catch (e) { parts.push(`===== ${x.id} · ${x.label} · non lancé : ${e.message} =====`); continue; }
+    let r = null;
+    for (let t = 0; t < 400; t++) {   // jusqu'à 20 min par script (le plus long : 300 s)
+      await new Promise((ok) => setTimeout(ok, 3000));
+      try { S.dg = await api('admin/diag'); } catch { continue; }
+      r = S.dg.diags.find((y) => y.id === x.id);
+      render(true);
+      if (r && r.state !== 'running') break;
+    }
+    parts.push(`===== ${x.id} · ${x.label} · ${r?.state || '?'}${r?.rc != null ? ` (code ${r.rc})` : ''} =====\n${r?.out || ''}`);
+  }
+  allBusy = '';
+  const text = parts.join('\n\n');
+  let copied = false;
+  try { await navigator.clipboard.writeText(text); copied = true; } catch {
+    // http (pas https) : l'API du presse-papier est fermée ; la vieille voie marche encore
+    const ta = el('textarea', { style: { position: 'fixed', left: '-9999px' } });
+    ta.value = text; document.body.append(ta); ta.select();
+    try { copied = document.execCommand('copy'); } catch { copied = false; }
+    ta.remove();
+  }
+  allNote = copied ? `copié (${Math.round(text.length / 1000)} k signes) : colle-le dans le chat de Claude` : 'la copie a été refusée par le navigateur : chaque sortie reste affichée ci-dessous';
+  toast(allNote, 8000);
+  render(true);
+}
 function diagSec() {
   const d = S.dg;
   if (!d) return [head('Diagnostics', 'I'), el('p', { class: 'lbl' }, 'lecture…')];
@@ -1074,6 +1108,11 @@ function diagSec() {
       : x.state === 'failed' ? el('span', { class: 'chip err' }, el('i'), `échec${x.rc != null && x.rc !== -1 ? ` (code ${x.rc})` : ''}`) : null;
   return [head('Diagnostics', 'I', running ? 'un script tourne' : `${d.diags.length} scripts`),
     el('p', { class: 'adm-note' }, 'Les scripts de vérification du dépôt, sans terminal : un clic, la sortie s’affiche ici. Ils ne changent rien, sauf « Planche · créer », qui crée la planche de la réunion (une deuxième fois : une deuxième planche).'),
+    // Cal, 05/10 : « c'est infernal de copier-coller les diagnostics » — un clic les lance tous (sauf la
+    // planche, qui crée quelque chose), un seul texte part dans le presse-papier : un Ctrl+V pour Claude
+    el('div', { class: 'row' }, el('button', { class: 'tb go sm', type: 'button', disabled: running || allBusy ? true : null,
+      title: 'lance chaque diagnostic l’un après l’autre, puis copie toutes leurs sorties en un seul texte', onclick: () => runAll() },
+    allBusy ? `en cours : ${allBusy}` : 'Tout lancer et copier'), el('span', { class: 'adm-note' }, allNote)),
     el('div', { class: 'grid2' }, ...d.diags.map((x) => el('div', { class: 'card' },
       el('div', { class: 'card-head' }, el('span', { class: 'nm' }, x.label), chip(x)),
       el('p', { class: 'adm-note' }, x.doc),
