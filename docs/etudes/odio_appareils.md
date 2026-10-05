@@ -504,6 +504,15 @@ bornes ±18 avec la largeur 0,3 et 4), 16 points chacun de 20 Hz à 20 kHz, à 4
 jusqu'à 1,1 dB à 8 kHz (six échantillons par période) : c'est la mesure qui se trompait, pas
 la loi.
 
+**La surface FILTRE du nodal avait le même défaut** (le même jumeau, `FilterEffect`) : sa courbe
+restait celle des réglages d'office (passe-bas à 1 200 Hz, réso 3,5), quels que soient la
+coupure, la résonance ou le type. Elle lit aussi `appareils/calcul.js` : le biquad du
+`FilterEffect` (son type, la coupure, la résonance en Q, lu en décibels pour un passe-bas ou un
+passe-haut comme le nœud). Le drive, avant le biquad, n'est pas dans la courbe (elle dit le
+filtre, comme avant). Essai : contre le `FilterEffect` rendu, la même chaîne en passe-tout
+pour référence (un sinus faible : la table du drive reste linéaire), 6 réglages (les trois
+types, réso 0,7 à 18, drive 0 à 40), 48 et 44,1 kHz : **0,011 dB au plus** sur 158 points.
+
 ### 5.5 Les tables de saturation
 
 Pour la distorsion du studio, la courbe dessinée est la table même que reçoit
@@ -590,8 +599,9 @@ captures, l'historique du compresseur est donc en marches d'escalier ; à
 ## 9. Ce qui reste
 
 - ~~**Le nodal** dessine encore son propre EQ-3~~ : il lit `appareils/calcul.js`
-  depuis le 06/10 (§ 5.4), comme sa courbe de compresseur (§ 5.2). Ses autres
-  surfaces devraient lire `appareils/calcul.js` elles aussi.
+  depuis le 06/10 (§ 5.4), comme sa courbe de compresseur (§ 5.2) et son FILTRE.
+  Ses autres surfaces (SATURA, CRUSH, délai, réverbe) dessinent des fonctions
+  d'ODIO_01 sans jumeau qui réponde : à relire contre `calcul.js` aussi.
 - **L'égaliseur** pourrait aller plus loin :
   - un type par bande (plateau ↔ cloche) ;
   - des coupes à 24 et 48 dB/oct. (des biquads en cascade, avec les Q de

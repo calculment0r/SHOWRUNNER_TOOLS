@@ -106,6 +106,10 @@ const CURVE_POINTS = 200
 
 // ───────────────────────────────────────────────────────────── FILTRE
 
+// SHOWRUNNER (06/10) : les types du FilterEffect, dans l'ordre de son réglage « type »
+// (odio/effects/filter.js, TYPES et BIQUAD_TYPE : « none » est un passe-tout)
+const FILTRE_TYPES = ["lowpass", "highpass", "bandpass", "allpass"]
+
 const filtreSurface                            = {
   dragX: "cutoff",
   dragY: "reso",
@@ -121,9 +125,16 @@ const filtreSurface                            = {
     ctx.stroke()
     ctx.globalAlpha = 1
 
-    const frequencies = new Float32Array(new ArrayBuffer(CURVE_POINTS * 4))
-    for (let i = 0; i < CURVE_POINTS; i++) frequencies[i] = normToFreq(i / (CURVE_POINTS - 1))
-    const magnitude = effect.getFrequencyResponse(frequencies)
+    // SHOWRUNNER (06/10) : la loi du moteur, appareils/calcul.js — le biquad du FilterEffect
+    // (odio/effects/filter.js : son type, la coupure, la résonance en Q ; le Q d'un passe-bas
+    // ou d'un passe-haut se lit en décibels, comme le nœud), celle de la vue Instruments
+    // (appareils/filtres.js), à la fréquence d'échantillonnage du moteur. Le jumeau répondait
+    // avec ses réglages d'office (coupure 1 200 Hz), quels qu'ils soient : le même défaut que
+    // l'EQ-3 (docs/etudes/odio_appareils.md § 5.4). Le drive (sa table, avant le biquad) n'est
+    // pas dans la courbe : elle dit le filtre, comme avant.
+    const fs = effect.context?.sampleRate || 48000
+    const biquad = coefs(FILTRE_TYPES[Math.round(effect.getParameter("type"))] ?? "lowpass", effect.getParameter("cutoff"), effect.getParameter("reso"), 0, fs)
+    const magnitude = Array.from({ length: CURVE_POINTS }, (_, i) => moduleBiquad(biquad, normToFreq(i / (CURVE_POINTS - 1)), fs))
 
     ctx.beginPath()
     for (let i = 0; i < CURVE_POINTS; i++) {
