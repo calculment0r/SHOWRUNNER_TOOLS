@@ -56,6 +56,25 @@ le lecteur le dit et défile sur l'originale.
 
 Route : `GET /api/defil/<id>` → `{ready, url, pending, why}` ; pas prête : la
 demande passe en tête de la file, la page redemande.
+
+Le son de défilement (06/10/2026) — Cal : « entendre le son quand on fait glisser
+la tête de lecture […] hyper important pour caler un cut ». La page
+(`commun/scrub.js`) joue de courts grains du son à la place de la tête ; il lui
+faut le son DÉCODÉ (un AudioBuffer de Web Audio). Décoder l'original ferait
+télécharger toute la vidéo, l'image avec ; on sert le son seul :
+- mono, 22 050 Hz (11 025 Hz au-delà de 10 min : la page garde le son décodé en
+  flottants, 88 Ko par seconde à 22 050 Hz) ;
+- FLAC (sans perte, lu par `decodeAudioData` dans Chrome, Edge, Firefox et
+  Safari) : un codeur à trames (AAC, MP3) ajoute un délai au début (les
+  « priming samples ») qui décalerait les grains de quelques dizaines de ms ;
+- les temps de l'originale : `aresample=…:async=1:first_pts=0` (doc
+  ffmpeg-filters, aresample : « first_pts … pad … with silence ») — un son qui
+  commence après l'image est précédé de silence.
+Où : `<data_dir>/library/<id>/defil-son.v1.flac`, servi par `/library/<id>/…`.
+Quand : à la première demande (`GET /api/defil/<id>/son` → `{ready, url, sr,
+why}`), calculé sur place (quelques secondes pour 10 min, deux ffmpeg à la fois
+au plus) ; au-delà de 30 min, pas de copie (la page n'a pas de son au
+défilement pour ce média, et le dit).
 """
 
 from __future__ import annotations
@@ -186,8 +205,84 @@ def r_state(req, iid):
     return state(it)
 
 
+# ── le son de défilement (06/10, en tête de ce fichier) ──────
+SON_VERSION = 1
+SON_SR, SON_SR_LONG, SON_LONG = 22050, 11025, 600     # Hz ; au-delà de SON_LONG s, la fréquence basse
+SON_TIMEOUT = 300                                     # s, une copie
+_son_locks: dict[str, threading.Lock] = {}
+_son_lock = threading.Lock()
+_son_slots = threading.BoundedSemaphore(2)            # deux ffmpeg à la fois au plus
+
+
+def son_name() -> str:
+    return f"defil-son.v{SON_VERSION}.flac"
+
+
+def son_sr(duration: float | None) -> int:
+    return SON_SR if (duration or 0) <= SON_LONG else SON_SR_LONG
+
+
+def son_command(src: Path, dest: Path, sr: int) -> list[str]:
+    """La commande ffmpeg du son de défilement (une seule vérité : le contrôle la relit)."""
+    return ["nice", "-n", "10", "ffmpeg", "-v", "error", "-nostdin", "-y", "-i", str(src),
+            "-map", "0:a:0", "-vn", "-sn", "-dn", "-ac", "1", "-af", f"aresample={sr}:async=1:first_pts=0",
+            "-c:a", "flac", "-compression_level", "5", "-f", "flac", str(dest)]
+
+
+def son_make(src: Path, dest: Path, sr: int) -> bool:
+    tmp = dest.with_name("." + dest.name + ".tmp")
+    try:
+        r = subprocess.run(son_command(src, tmp, sr), capture_output=True, timeout=SON_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired):
+        tmp.unlink(missing_ok=True)
+        return False
+    if r.returncode != 0 or not tmp.is_file() or not tmp.stat().st_size:
+        tmp.unlink(missing_ok=True)
+        _failed.add(str(dest))
+        return False
+    tmp.replace(dest)
+    return True
+
+
+def son_state(it: dict) -> dict:
+    """Le son de défilement d'une vidéo ou d'un son, calculé au besoin."""
+    if it.get("kind") not in ("video", "audio") or not it.get("file"):
+        raise HttpError(404, "seuls une vidéo et un son ont un son de défilement")
+    if it["kind"] == "video" and not it.get("audio"):
+        return {"ready": False, "why": "cette vidéo n'a pas de son"}
+    src = library.path_of(it)
+    dest = src.parent / son_name()
+    sr = son_sr(it.get("duration"))
+    ready = {"ready": True, "url": f"library/{it['id']}/{son_name()}?v={SON_VERSION}", "sr": sr}
+    if dest.is_file():
+        return ready
+    if (it.get("duration") or 0) > MAX_DURATION:
+        return {"ready": False, "why": f"plus de {MAX_DURATION // 60} min : pas de son au défilement"}
+    if str(dest) in _failed:
+        return {"ready": False, "why": "ffmpeg n'a pas pu lire son son"}
+    if not src.is_file():
+        raise HttpError(404, "le fichier manque")
+    with _son_lock:
+        lock = _son_locks.setdefault(str(dest), threading.Lock())
+    with lock:
+        if not dest.is_file():
+            with _son_slots:
+                son_make(src, dest, sr)
+    if dest.is_file():
+        return ready
+    return {"ready": False, "why": "ffmpeg n'a pas pu lire son son"}
+
+
+def r_son(req, iid):
+    it = library.see(iid)   # comme r_state : qui voit l'objet entend son son
+    if not it:
+        raise HttpError(404, f"introuvable : {iid}")
+    return son_state(it)
+
+
 def register(app) -> None:
     app.route("GET", "/api/defil/{iid}", r_state)
+    app.route("GET", "/api/defil/{iid}/son", r_son)
 
 
 # ── le contrôle (tools/check.py) ─────────────────────────────
@@ -253,6 +348,33 @@ def selftest(call, ok) -> None:
     out = tmp / "petit-defil.mp4"
     ok(make(small, out) and _probe(out, "stream=width,height").split(",")[:2] == ["480", "640"],
        "défilement : une vidéo plus petite n'est pas agrandie (480×640)")
+    # le son de défilement (06/10) : mono, 22 050 Hz, FLAC, la durée de l'originale
+    st, so = call("GET", f"/api/defil/{iid}/son")
+    ok(st == 200 and so.get("ready") and so.get("sr") == SON_SR and so.get("url", "").endswith(f"{son_name()}?v={SON_VERSION}"),
+       f"défilement : le son de défilement d'une vidéo ({st} {so})")
+    sdest = library.folder_of(iid) / son_name()
+    if sdest.is_file():
+        info = _probe(sdest, "stream=codec_name,channels,sample_rate").split(",")
+        ok(sorted(info[:3]) == sorted(["flac", "22050", "1"]),
+           f"défilement : son en FLAC mono 22 050 Hz ({info})")
+        dur = float(_probe(sdest, "format=duration") or 0)
+        ok(abs(dur - 3.0) < 0.05, f"défilement : le son garde la durée de l'originale ({dur:.3f} s)")
+        st, body = call("GET", f"/library/{iid}/{son_name()}")
+        ok(st == 200 and isinstance(body, bytes) and body[:4] == b"fLaC", f"défilement : le son servi sous /library/ ({st})")
+    # un son de la bibliothèque en a un ; une vidéo muette le dit ; une image n'en a pas
+    wav = tmp / "son.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=330:d=2", str(wav)], capture_output=True, timeout=60)
+    st, au = call("PUT", "/api/library/upload?name=essai-son.wav", raw=wav.read_bytes())
+    st, so = call("GET", f"/api/defil/{au.get('id')}/son")
+    ok(st == 200 and so.get("ready"), f"défilement : le son de défilement d'un son ({st} {so})")
+    muet = tmp / "muet.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=1", "-c:v", "libx264",
+                    "-preset", "ultrafast", str(muet)], capture_output=True, timeout=60)
+    st, mu = call("PUT", "/api/library/upload?name=muet.mp4", raw=muet.read_bytes())
+    st, so = call("GET", f"/api/defil/{mu.get('id')}/son")
+    ok(st == 200 and not so.get("ready") and "pas de son" in so.get("why", ""), f"défilement : une vidéo muette le dit ({st} {so})")
+    st, _ = call("GET", f"/api/defil/{img.get('id')}/son")
+    ok(st == 404, f"défilement : une image n'a pas de son de défilement ({st})")
     for p in tmp.iterdir():
         p.unlink(missing_ok=True)
     tmp.rmdir()

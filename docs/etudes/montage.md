@@ -727,6 +727,83 @@ bulle à chaque changement d'outil, les infobulles-phrases (il reste le
 raccourci). Les gestes sont dans la boîte des raccourcis (?), qui a ses
 sections Effets, Pistes, et la molette commune (`REGLE`).
 
+## Le 06/10 : rogner, le moniteur pendant un geste, le son au défilement
+
+Trois demandes de Cal du 06/10.
+
+### Rogner tronque (outil Sélection, V)
+
+« Quand on change la taille d'un segment, ça pousse le contenu au lieu de le
+tronquer, comme dans Premiere Pro. » Le comportement de Premiere (guides tiers, par
+les résultats de recherche ; helpx.adobe.com ne s'ouvre pas d'ici : agitraining.com, « Trimming clips on the
+Timeline in Premiere Pro » ; gotranscript.com, « Cut Faster in Premiere Pro with
+Purposeful Trims ») : tirer un bord avec la Sélection change le point d'entrée
+(ou de sortie) dans la source ; le plan raccourcit et laisse un vide, les plans
+suivants ne bougent pas ; la propagation (B) est l'autre outil.
+
+Le modèle faisait déjà cela (`M.trimClip` : à gauche, `start` et `in` avancent
+ensemble, la matière reste calée dans le temps ; à droite, seule la durée
+change ; `M.trimLimits` : la source, les voisins, une image fixe sans borne).
+Ce qui se voyait, c'était le geste : seul le cadre du plan bougeait jusqu'au
+lâcher, l'onde et les vignettes collées à son bord gauche — la matière semblait
+poussée. Rogner passe désormais par le geste vu en direct (comme B, N, R) : à
+chaque mouvement le modèle rejoue le rognage et la timeline se redessine, l'onde
+reste en place ; les vignettes d'un plan vidéo sont calées sur le début de la
+source (`background-position`) ; l'infobulle dit la source (entrée → sortie /
+durée). Le selftest du Montage mène `model.js` par node (entrée et sortie,
+bornes, vitesse × 2, image fixe).
+
+### Le moniteur pendant un geste
+
+« L'image du moniteur ne se met à jour qu'au lâcher. » Le programme peut
+montrer un aperçu (`pv`, montage/player.js) sans toucher au montage de la page :
+
+- **déplacer** (ou copier) des plans : l'image sous la tête de lecture, du
+  montage tel qu'il serait si l'on lâchait maintenant (`M.moveClips` sur une
+  copie, une fois par image d'écran) ;
+- **rogner** (V), propager (B), déplacer la coupe (N), changer la vitesse (R) :
+  l'image du bord qu'on tire, le plan seul et plein (Premiere montre le bord
+  rogné au moniteur — en deux images, sortante et entrante, en mode Trim :
+  helpx « Edit in Trim mode », par les résultats de recherche ; ici une seule,
+  celle du bord pris). Rien pour un son ou un calque d'effet.
+
+Fluide : la copie de défilement est devant pendant le geste, l'originale se
+cale au lâcher ; un plan neuf du même média (le morceau d'un plan coupé, une
+copie) reprend l'élément d'un plan qui n'est plus dans le montage. Mesuré
+(Chromium sans affichage, 70 mouvements, A glissé au milieu de B sous la tête) :
+2 `<video>` créées (A et sa copie), aucune ensuite, l'image passe de B à A
+pendant le geste ; l'aperçu coûte 0,1 ms par image d'écran (médiane), 2,5 ms au
+plus.
+
+### Le son au défilement (commun/scrub.js)
+
+« Entendre le son quand on fait glisser la tête de lecture, hyper important
+pour caler un cut. » Premiere : Préférences → Audio, « Play audio while
+scrubbing » (guides tiers, par les résultats de recherche : premiumbeat.com,
+4kshooters.net, motionarray.com ; non vérifié chez Adobe) ; Live rejoue un morceau de l'arrangement sous la souris dans sa zone
+de défilement (manuel de Live 12, « Arrangement View », Scrub Area, par les
+résultats de recherche : ableton.com ne s'ouvre pas d'ici).
+
+Une mécanique commune, pour le Montage et ODIO : chaque fois que la tête a
+bougé pendant un geste, un grain de 60 ms part à sa place, un toutes les 30 ms
+au plus ; fenêtre de Hann (setValueCurveAtTime) : ni claquement, ni bosse (deux
+fenêtres décalées de moitié somment à 1) ; la vitesse du grain suit celle du
+geste (0,5 à 2 : la hauteur suit, comme une bande poussée à la main) ; à
+rebours, les grains se lisent à l'endroit et reculent ; silence quand la tête
+s'arrête ; rien au simple clic. Préférence Général → « Son au défilement ».
+
+Le son vient d'une copie faite pour cela (`GET /api/defil/<id>/son`,
+server/tools/defilement.py) : mono, 22 050 Hz, FLAC — un codeur à trames (AAC,
+MP3) ajoute un délai au départ qui décalerait les grains —, aux temps de
+l'originale. Le Montage fait entendre, comme la lecture, les plans des pistes
+son et le son des vidéos (muet, solo, fondus, volume, vitesse) ; la barre de la
+source, l'objet ouvert. Essayé en espionnant `AudioBufferSourceNode.start` :
+61 grains pour 50 images glissées sur deux sons, aucun au clic, aucun la tête
+arrêtée, aucun préférence coupée.
+
+Non fait : le son quand on avance image par image au clavier (← →, J K L) ;
+deux images au moniteur pendant un rognage (le mode Trim de Premiere).
+
 ## Les limites connues
 
 - L'aperçu de l'étalonnage est approché ; l'export fait foi (la LUT, elle,
