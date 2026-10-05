@@ -111,6 +111,7 @@ export function instrument(app, m, { accent = 'cy' } = {}) {
     plaits: [['Oscillateur', ['modele', 'harmo', 'timbre', 'morph']], ['Filtre', ['fmode', 'cutoff', 'resonance', 'envAmount']], ['Enveloppe', ['attack', 'decay', 'sustain', 'release']], ['Sortie', ['gain']]],
     acid: [['Oscillateur', ['wave', 'glide']], ['Filtre', ['cutoff', 'resonance', 'envMod', 'decay', 'accent']], ['Sortie', ['gain']]],
   }[m.type];
+  groupes.push(['Arpège', ['arp', 'arp_div', 'arp_oct', 'arp_gate']]);   // 06/10 : arpege.js
   const surfaces = el('div', { class: 'ap-duo' },
     el('div', { class: 'ap-cadre-s' }, el('span', { class: 'lbl' }, m.type === 'acid' ? 'filtre · 18 dB/oct. · course de l\'enveloppe' : 'filtre · course de l\'enveloppe'), fl.el),
     en ? el('div', { class: 'ap-cadre-s' }, el('span', { class: 'lbl' }, 'enveloppe d\'amplitude'), en.el) : null);
@@ -134,7 +135,7 @@ function synthe(app, m, accent) {
   };
   let onde = ondeSvg();
   const mol = (k, i) => (def.params.find((p) => p.k === k).opts
-    ? choixLie(L, k, { dessin: (j, o) => iconeOnde(o), apres: () => onde.replaceWith(onde = ondeSvg()) })
+    ? choixLie(L, k, { dessin: (j, o) => (/^(wave|wave2|lfo_w)$/.test(k) ? iconeOnde(o) : null), apres: () => onde.replaceWith(onde = ondeSvg()) })
     : L.molette(k, { accent: i === 0 ? accent : 'cy' }));
   const sections = def.sections.map(([name, keys]) => el('div', { class: 'sec' },
     el('span', { class: 'lbl' }, name),
