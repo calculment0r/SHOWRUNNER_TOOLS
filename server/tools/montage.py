@@ -378,6 +378,70 @@ def _fx_list(raw, image: bool = True) -> list[dict]:
     return out
 
 
+# ── la trajectoire (06/10) : montage/model.js, MOTION0, cleanMotion, cadre ──
+# Les effets fixes de Premiere (Trajectoire, Opacité) et le Recadrage : où se
+# pose l'image d'un plan dans le cadre. Position en fraction du cadre, échelle 1
+# = l'image tient dans le cadre (la mise en place d'avant), rotation en degrés
+# (sens horaire), ancrage en fraction de la source, opacité 0..1, recadrage en
+# fraction de la source retirée de chaque côté. Absente = par défaut : un projet
+# d'avant ne change pas.
+MOTION0 = {"x": 0.5, "y": 0.5, "scale": 1.0, "scaleW": 1.0, "uniform": True, "rot": 0.0, "ax": 0.5, "ay": 0.5, "op": 1.0,
+           "cl": 0.0, "ct": 0.0, "cr": 0.0, "cb": 0.0}
+MOTION_LIM = {"x": (-10, 10), "y": (-10, 10), "scale": (0, 100), "scaleW": (0, 100), "rot": (-3600, 3600), "ax": (-10, 10),
+              "ay": (-10, 10), "op": (0, 1), "cl": (0, 1), "ct": (0, 1), "cr": (0, 1), "cb": (0, 1)}
+MKEYS = ("x", "y", "scale", "scaleW", "rot", "ax", "ay", "op", "cl", "ct", "cr", "cb")
+
+
+def _motion(raw) -> dict | None:
+    """Une trajectoire propre (bornée, six décimales ; en échelle uniforme la
+    largeur suit la hauteur), ou None pour celle par défaut. Même règle que
+    `cleanMotion` de montage/model.js."""
+    m = dict(MOTION0)
+    if isinstance(raw, dict):
+        for k in MKEYS:
+            v = raw.get(k)
+            if v is None or isinstance(v, bool):
+                continue
+            try:
+                x = float(v)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(x):
+                lo, hi = MOTION_LIM[k]
+                m[k] = round(max(lo, min(hi, x)), 6)
+        m["uniform"] = raw.get("uniform") is not False
+    if m["uniform"]:
+        m["scaleW"] = m["scale"]
+    if m["uniform"] and all(abs(m[k] - MOTION0[k]) < 1e-9 for k in MKEYS):
+        return None
+    return m
+
+
+def motion_of(c: dict) -> dict:
+    return {**MOTION0, **(c.get("motion") or {})}
+
+
+def cadre(m: dict, W: float, H: float, sw: float, sh: float) -> dict:
+    """Où se pose l'image d'un plan de sw × sh pixels dans un cadre de W × H.
+    Même calcul que `cadre()` de montage/model.js, ligne pour ligne : k0
+    l'échelle qui la fait tenir, kx, ky pixels du cadre par pixel de la
+    source, x0..x1 × y0..y1 la part gardée (le recadrage), cx, cy son centre
+    dans le cadre, dw × dh sa taille avant la rotation th (radians) autour de
+    ce centre — la rotation autour du point d'ancrage, posé en (x·W, y·H)."""
+    k0 = min(W / sw, H / sh)
+    kx = k0 * (m["scaleW"] if m.get("uniform") is False else m["scale"])
+    ky = k0 * m["scale"]
+    x0, x1, y0, y1 = m["cl"] * sw, (1 - m["cr"]) * sw, m["ct"] * sh, (1 - m["cb"]) * sh
+    th = m["rot"] * math.pi / 180
+    co, si = math.cos(th), math.sin(th)
+    ux, uy = (x0 + x1) / 2 - m["ax"] * sw, (y0 + y1) / 2 - m["ay"] * sh
+    cx = m["x"] * W + co * kx * ux - si * ky * uy
+    cy = m["y"] * H + si * kx * ux + co * ky * uy
+    dw, dh = (x1 - x0) * kx, (y1 - y0) * ky
+    return {"k0": k0, "kx": kx, "ky": ky, "x0": x0, "x1": x1, "y0": y0, "y1": y1, "th": th, "co": co, "si": si,
+            "cx": cx, "cy": cy, "dw": dw, "dh": dh, "op": m["op"], "vis": dw > 0 and dh > 0 and m["op"] > 0}
+
+
 def _grade_neutral(g: dict) -> bool:
     return (abs(g.get("exposure", 0)) < 1e-4 and abs(g.get("contrast", 0)) < 1e-4 and abs(g.get("saturation", 0)) < 1e-4
             and abs(g.get("temperature", NEUTRAL_K) - NEUTRAL_K) <= 0.5)
@@ -517,6 +581,8 @@ def normalize(p: dict) -> dict:
             fx = _fx_list(old, image)
         fi = _num(c.get("fade_in"), 0, dur, 0, True)
         fc = c.get("fcurve") if isinstance(c.get("fcurve"), dict) else {}
+        # la trajectoire : seulement ce qui se voit sur une piste vidéo, et seulement si elle n'est pas celle par défaut
+        mo = _motion(c.get("motion")) if kinds[tid] == "video" and kind in ("video", "image") else None
         clips.append({
             "id": cid, "track": tid, "item": item, "kind": kind,
             "title": str(c.get("title", ""))[:200],
@@ -533,6 +599,7 @@ def normalize(p: dict) -> dict:
             "xfade": 0 if kind == "adjust" else _num(c.get("xfade"), 0, 10 ** 6, 0, True),
             "audio": bool(c.get("audio")) if kind == "video" else kind == "audio",
             "fx": fx,
+            **({"motion": mo} if mo else {}),
         })
     markers, mids = [], set()
     for m in (p.get("markers") or [])[:500]:
@@ -1351,6 +1418,93 @@ def _to_rgb(m: dict) -> str:
     return f":in_color_matrix={m.get('matrix') or 'bt709'}:in_range={m.get('range') or 'limited'}"
 
 
+def _rnd(x: float) -> int:
+    """Arrondi au plus proche, la moitié vers le haut (Math.round de la page)."""
+    return math.floor(x + 0.5)
+
+
+def _placement(mo: dict, m: dict, W: int, H: int) -> dict | None:
+    """Les filtres qui posent un plan selon sa trajectoire (`cadre`, le calcul
+    du moniteur) : `pre` passe la source en RVB à sa taille dans le cadre,
+    `post` (après les effets, qui agissent sur l'image du plan comme dans
+    Premiere) la recadre, lui donne son opacité, la tourne et la pose dans une
+    image transparente de W × H, en YUV comme les autres plans. Rend None si
+    rien ne s'en voit.
+
+    Seule la part de la source qui peut tomber dans le cadre est mise à
+    l'échelle (le cadre ramené dans la source par ses quatre coins, croisé avec
+    le recadrage, un pixel de marge) : un zoom à 1000 % ne fabrique pas une
+    image de 19 200 px. ffmpeg pose des tailles et des positions entières : à
+    un pixel près, c'est la place que le moniteur calcule. `rotate` tourne
+    autour du centre de son entrée et le met au centre de sa sortie
+    (vf_rotate.c) : sa sortie, d'une parité égale à celle de l'image, garde ce
+    centre sur un pixel entier."""
+    sw, sh = m.get("width") or 0, m.get("height") or 0
+    if not (sw > 0 and sh > 0):
+        raise ValueError(f"taille inconnue pour « {m.get('title') or m.get('path')} » : sa trajectoire ne peut pas se poser")
+    mot = {**MOTION0, **mo}
+    g = cadre(mot, W, H, sw, sh)
+    if not g["vis"]:
+        return None
+    # 1. la part de la source qui peut se voir
+    pts = []
+    for X, Y in ((0, 0), (W, 0), (W, H), (0, H)):
+        dx, dy = X - g["cx"], Y - g["cy"]
+        u, v = g["co"] * dx + g["si"] * dy, -g["si"] * dx + g["co"] * dy
+        pts.append(((g["x0"] + g["x1"]) / 2 + u / g["kx"], (g["y0"] + g["y1"]) / 2 + v / g["ky"]))
+    lx, hx = max(g["x0"], min(q[0] for q in pts)), min(g["x1"], max(q[0] for q in pts))
+    ly, hy = max(g["y0"], min(q[1] for q in pts)), min(g["y1"], max(q[1] for q in pts))
+    if hx <= lx or hy <= ly:
+        return None
+    gx0, gx1 = max(0, math.floor(lx) - 1), min(sw, math.ceil(hx) + 1)
+    gy0, gy1 = max(0, math.floor(ly) - 1), min(sh, math.ceil(hy) + 1)
+    gw, gh = gx1 - gx0, gy1 - gy0
+    SW, SH = max(1, _rnd(gw * g["kx"])), max(1, _rnd(gh * g["ky"]))
+    ekx, eky = SW / gw, SH / gh
+    # 2. le recadrage, dans l'image mise à l'échelle
+    X0 = max(0, min(SW, _rnd((max(g["x0"], gx0) - gx0) * ekx)))
+    X1 = max(0, min(SW, _rnd((min(g["x1"], gx1) - gx0) * ekx)))
+    Y0 = max(0, min(SH, _rnd((max(g["y0"], gy0) - gy0) * eky)))
+    Y1 = max(0, min(SH, _rnd((min(g["y1"], gy1) - gy0) * eky)))
+    CW, CH = X1 - X0, Y1 - Y0
+    if CW <= 0 or CH <= 0:
+        return None
+    # 3. le centre de cette part dans le cadre : le calcul de cadre() sur son point de la source
+    scx, scy = gx0 + (X0 + X1) / 2 / ekx, gy0 + (Y0 + Y1) / 2 / eky
+    ux, uy = scx - mot["ax"] * sw, scy - mot["ay"] * sh
+    ccx = mot["x"] * W + g["co"] * g["kx"] * ux - g["si"] * g["ky"] * uy
+    ccy = mot["y"] * H + g["si"] * g["kx"] * ux + g["co"] * g["ky"] * uy
+    # 4. la rotation : la boîte qui contient l'image tournée, de la parité de l'image
+    turn = abs(math.remainder(mot["rot"], 360)) > 1e-9
+    if turn:
+        RW = math.ceil(abs(CW * g["co"]) + abs(CH * g["si"]) - 1e-6)
+        RH = math.ceil(abs(CW * g["si"]) + abs(CH * g["co"]) - 1e-6)
+        RW += (RW - CW) % 2
+        RH += (RH - CH) % 2
+    else:
+        RW, RH = CW, CH
+    ox, oy = _rnd(ccx - RW / 2), _rnd(ccy - RH / 2)
+    vx0, vx1, vy0, vy1 = max(0, ox), min(W, ox + RW), max(0, oy), min(H, oy + RH)
+    if vx1 <= vx0 or vy1 <= vy0:
+        return None
+    if (gx0, gy0, gx1, gy1) == (0, 0, sw, sh):
+        pre = [f"scale={SW}:{SH}{_to_rgb(m)}", "format=gbrp"]
+    else:
+        pre = [f"scale=iw:ih{_to_rgb(m)}", "format=gbrp", f"crop={gw}:{gh}:{gx0}:{gy0}", f"scale={SW}:{SH}"]
+    post = []
+    if (X0, Y0, X1, Y1) != (0, 0, SW, SH):
+        post.append(f"crop={CW}:{CH}:{X0}:{Y0}")
+    post.append("format=gbrap")
+    if mot["op"] < 1:
+        post.append(f"colorchannelmixer=aa={_f(mot['op'])}")
+    if turn:
+        post.append(f"rotate=a={_f(g['th'])}:ow={RW}:oh={RH}:c=black@0")
+    if (vx0, vy0, vx1, vy1) != (ox, oy, ox + RW, oy + RH):
+        post.append(f"crop={vx1 - vx0}:{vy1 - vy0}:{vx0 - ox}:{vy0 - oy}")
+    post += [f"pad={W}:{H}:{vx0}:{vy0}:color=black@0", "scale=out_color_matrix=bt709:out_range=limited", "format=yuva420p"]
+    return {"pre": pre, "post": post, "box": (ox, oy, RW, RH)}
+
+
 def plan_video(p: dict, media: dict[str, dict], f0: int, f1: int, out_path: str, preset: str = "medium",
                luts: dict | None = None) -> dict:
     """Une passe d'image : les images [f0, f1) du montage, sans son."""
@@ -1401,6 +1555,11 @@ def plan_video(p: dict, media: dict[str, dict], f0: int, f1: int, out_path: str,
                 last = f"o{k}"
                 continue
             m = media[c["item"]]
+            # la trajectoire (06/10) : un plan déplacé, mis à l'échelle, tourné, recadré ou
+            # transparent se pose par `_placement` ; sans elle, la mise en place d'avant, telle quelle
+            place = _placement(c["motion"], m, W, H) if c.get("motion") else None
+            if c.get("motion") and place is None:
+                continue                         # rien ne s'en voit : hors du cadre, échelle ou opacité nulle
             args, pre = _open(c, m, fps, a, b)
             inputs.append(args)
             k = len(inputs) - 1
@@ -1408,13 +1567,17 @@ def plan_video(p: dict, media: dict[str, dict], f0: int, f1: int, out_path: str,
             sp = c.get("speed", 1.0) or 1.0
             # horodatage relatif au début de la fenêtre du plan : les fondus
             # (en temps) se calculent comme si le plan était rendu d'un bloc
+            if place:
+                fit = [*place["pre"], "setsar=1", *_fx_filters(chain_of(p, c), luts), *place["post"]]
+            else:
+                fit = [f"scale={W}:{H}:force_original_aspect_ratio=decrease:force_divisible_by=2{_to_rgb(m)}",
+                       "format=gbrp", "setsar=1",
+                       *_fx_filters(chain_of(p, c), luts),
+                       "scale=out_color_matrix=bt709:out_range=limited", "format=yuva420p",
+                       f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black@0"]
             chain = ["setpts=PTS-STARTPTS" if abs(sp - 1) < 1e-6 or m["kind"] == "image" else f"setpts=(PTS-STARTPTS)/{_f(sp)}",
                      f"fps={fps}",
-                     f"scale={W}:{H}:force_original_aspect_ratio=decrease:force_divisible_by=2{_to_rgb(m)}",
-                     "format=gbrp", "setsar=1",
-                     *_fx_filters(chain_of(p, c), luts),
-                     "scale=out_color_matrix=bt709:out_range=limited", "format=yuva420p",
-                     f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black@0",
+                     *fit,
                      f"tpad=start={pre}:start_mode=clone:stop=-1:stop_mode=clone",
                      f"trim=end_frame={b - a}", f"setpts=PTS-STARTPTS{_shift(a - w['ws'], fps)}"]
             if w["xin"]:
@@ -1554,10 +1717,13 @@ def _video_color(path: Path) -> dict:
     """La matrice et la plage avec lesquelles le navigateur décode cette
     vidéo : son étiquette, sinon — mesuré dans Chromium le 29/09 (étude
     montage) — BT.709 à partir de 720 lignes, BT.601 en dessous ; plage
-    limitée sauf étiquette « pc » ou format yuvj."""
+    limitée sauf étiquette « pc » ou format yuvj. Et sa taille telle qu'elle
+    se décode (la trajectoire en a besoin) : ffmpeg tourne l'image d'une vidéo
+    qui porte une rotation (un téléphone en hauteur : `side_data_list`,
+    `rotation`), le navigateur aussi — largeur et hauteur s'échangent à ±90°."""
     try:
         r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-                            "stream=color_space,color_range,height,pix_fmt", "-of", "json", str(path)],
+                            "stream=color_space,color_range,width,height,pix_fmt:stream_side_data=rotation", "-of", "json", str(path)],
                            capture_output=True, text=True, timeout=30)
         s = (json.loads(r.stdout or "{}").get("streams") or [{}])[0]
     except (OSError, ValueError, subprocess.SubprocessError):
@@ -1565,7 +1731,13 @@ def _video_color(path: Path) -> dict:
     h = int(s.get("height") or 0)
     matrix = MATRIX.get(s.get("color_space") or "", "bt709" if h >= 720 else "bt601")
     full = s.get("color_range") == "pc" or str(s.get("pix_fmt", "")).startswith("yuvj")
-    return {"matrix": matrix, "range": "full" if full else "limited"}
+    out = {"matrix": matrix, "range": "full" if full else "limited"}
+    w = int(s.get("width") or 0)
+    if w and h:
+        rot = next((float(d.get("rotation") or 0) for d in s.get("side_data_list") or [] if "rotation" in d), 0.0)
+        quart = round(rot) % 180 == 90
+        out.update(width=h if quart else w, height=w if quart else h)
+    return out
 
 
 def media_of(p: dict) -> dict[str, dict]:
@@ -1583,6 +1755,9 @@ def media_of(p: dict) -> dict[str, dict]:
                     "fps": it.get("fps") or 0}
         if it["kind"] == "video":
             out[iid].update(_video_color(path))
+        elif it["kind"] == "image":
+            dims = {"width": it.get("width"), "height": it.get("height")} if it.get("width") else library.probe(path)
+            out[iid].update(width=dims.get("width") or 0, height=dims.get("height") or 0)
     return out
 
 
@@ -2003,6 +2178,14 @@ def _pixel(path: str, frame: int, where: str = "center") -> tuple[int, int, int]
     return tuple(b) if len(b) == 3 else (-1, -1, -1)
 
 
+def _pixel_at(path: str, frame: int, x: int, y: int) -> tuple[int, int, int]:
+    """La couleur moyenne du carré de 16 px centré en (x, y) d'une image de la vidéo."""
+    r = subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-i", path, "-vf", f"select=eq(n\\,{frame}),crop=16:16:{x - 8}:{y - 8},scale=1:1",
+                        "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, timeout=60)
+    b = r.stdout[:3]
+    return tuple(b) if len(b) == 3 else (-1, -1, -1)
+
+
 def _test_cube(n: int, fn) -> str:
     lines = ['TITLE "essai"', "# une LUT d'essai", f"LUT_3D_SIZE {n}"]
     for b in range(n):
@@ -2062,9 +2245,86 @@ def _selftest_rognage(ok) -> None:
     ok(R["image"][2] == ["i", 200, 525, 0], f"montage : une image fixe s'allonge sans entrée de source ({R['image']})")
 
 
+# La trajectoire (06/10) : `cleanMotion` et `cadre` de la page (montage/model.js)
+# contre `_motion` et `cadre` d'ici, sur les mêmes entrées — le moniteur et
+# l'export posent l'image au même endroit ; et les grilles (`dansCase`).
+_TRAJ_JS = r"""
+const M = await import(process.env.MODEL_URL);
+const cases = JSON.parse(process.env.CASES);
+const R = { cases: cases.map(([raw, W, H, sw, sh]) => { const m = M.cleanMotion(raw); return { m, g: M.cadre(M.motionOf({ motion: m }), W, H, sw, sh) }; }) };
+const g4 = M.GRILLES.find((x) => x.id === '2x2');
+R.case16 = M.dansCase(M.MOTION0, g4.cells[3], 1920, 1080, 1280, 720);
+R.case916 = M.dansCase(M.MOTION0, g4.cells[0], 1920, 1080, 720, 1280);
+R.plein = M.cleanMotion(M.dansCase({ ...M.MOTION0, rot: 12, x: 0.1 }, M.GRILLES[0].cells[0], 1920, 1080, 1280, 720));
+const c = { id: 'a', track: 'V1', kind: 'video' };
+M.setMotion(c, { x: 0.25 }); R.pose = c.motion ? c.motion.x : null;
+M.setMotion(c, { x: 0.5 }); R.retire = 'motion' in c;
+const g = M.cadre(M.motionOf({ motion: { ...M.MOTION0, rot: 30, x: 0.3 } }), 1920, 1080, 640, 360);
+R.aller = M.versSource(g, ...M.coins(g)[2]);
+console.log(JSON.stringify(R));
+"""
+
+
+def _selftest_trajectoire(ok) -> None:
+    node = shutil.which("node")
+    if not node:
+        ok(True, "montage : node absent, la trajectoire de la page n'est pas comparée ici")
+        return
+    cases = [
+        [{}, 1920, 1080, 1920, 1080],
+        [{"x": 0.25, "y": 0.75, "scale": 0.5}, 1920, 1080, 1280, 720],
+        [{"rot": 30, "ax": 0.2, "ay": 0.9, "scale": 1.7, "cl": 0.1, "cr": 0.2, "ct": 0.05}, 1280, 720, 704, 896],
+        [{"uniform": False, "scale": 0.5, "scaleW": 2, "rot": -45, "x": 1.2, "op": 0.4}, 1080, 1920, 1920, 1080],
+        [{"scale": 200, "rot": 7200, "op": 3}, 1920, 804, 320, 180],
+        [{"op": "0.5", "x": True, "y": "", "cb": 0.3}, 1920, 1080, 1000, 1000],
+        [{"scale": 0}, 1920, 1080, 640, 480],
+    ]
+    env = {**__import__("os").environ, "MODEL_URL": (config.REPO / "montage" / "model.js").as_uri(), "CASES": json.dumps(cases)}
+    r = subprocess.run([node, "--input-type=module", "-e", _TRAJ_JS], capture_output=True, text=True, timeout=60, env=env)
+    try:
+        R = json.loads(r.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        ok(False, f"montage : model.js ne répond pas pour la trajectoire ({r.returncode} {r.stderr[-400:]})")
+        return
+    worst, bad = 0.0, []
+    for (raw, W, H, sw, sh), js in zip(cases, R["cases"]):
+        m = _motion(raw)
+        if (m is None) != (js["m"] is None) or (m and any(abs(m[k] - js["m"][k]) > 1e-9 for k in MKEYS) or (m and m["uniform"] != js["m"]["uniform"])):
+            bad.append(f"{raw} → {m} / {js['m']}")
+            continue
+        g = cadre({**MOTION0, **(m or {})}, W, H, sw, sh)
+        for k, v in g.items():
+            if k == "vis":
+                if v != js["g"][k]:
+                    bad.append(f"{raw} vis")
+            else:
+                worst = max(worst, abs(v - js["g"][k]))
+    ok(not bad and worst < 1e-9, f"montage : la trajectoire de la page et celle de l'export, mêmes nombres sur {len(cases)} cas (écart {worst:.1e}) {bad}")
+    ok(_motion({}) is None and _motion({"x": 0.5, "scale": 1, "uniform": True}) is None and R["cases"][0]["m"] is None,
+       "montage : la trajectoire par défaut n'est pas écrite (un plan d'avant ne change pas)")
+    g0 = cadre(MOTION0, 1920, 1080, 1280, 720)
+    ok(abs(g0["dw"] - 1920) < 1e-9 and abs(g0["dh"] - 1080) < 1e-9 and abs(g0["cx"] - 960) < 1e-9 and abs(g0["cy"] - 540) < 1e-9,
+       "montage : par défaut, l'image tient dans le cadre, centrée (la mise en place d'avant)")
+    m4 = R["cases"][4]["m"]
+    ok(m4 and m4["scale"] == 100 and m4["op"] == 1 and m4["rot"] == 3600, f"montage : la trajectoire est bornée ({m4})")
+    m5 = R["cases"][5]["m"]
+    ok(m5 and m5["x"] == 0.5 and m5["y"] == 0.5 and m5["op"] == 0.5 and m5["cb"] == 0.3,
+       f"montage : un vrai/faux ou un texte vide ne font pas un nombre, « 0.5 » oui ({m5})")
+    ok(R["cases"][6]["g"]["vis"] is False, "montage : à l'échelle 0, rien ne se voit")
+    c16, c916 = R["case16"], R["case916"]
+    ok(abs(c16["x"] - 0.75) < 1e-9 and abs(c16["y"] - 0.75) < 1e-9 and abs(c16["scale"] - 0.5) < 1e-9,
+       f"montage : grille 2 × 2, case en bas à droite : centre (¾, ¾), échelle 50 % ({c16['x']}, {c16['y']}, {c16['scale']})")
+    ok(abs(c916["x"] - 0.25) < 1e-9 and abs(c916["scale"] - 0.5) < 1e-9,
+       f"montage : une image 9:16 tient dans sa case, centrée ({c916['x']}, {c916['scale']})")
+    ok(R["plein"] is None, "montage : « plein cadre » rend la mise en place par défaut")
+    ok(R["pose"] == 0.25 and R["retire"] is False, "montage : setMotion pose une trajectoire, et la retire quand elle revient au défaut")
+    ok(abs(R["aller"][0] - 640) < 1e-6 and abs(R["aller"][1] - 360) < 1e-6, f"montage : le coin bas droit de l'image tournée revient au coin de la source ({R['aller']})")
+
+
 def selftest(call, ok) -> None:
     # 1. les projets
     _selftest_rognage(ok)
+    _selftest_trajectoire(ok)
     st, meta = call("GET", "/api/montage/meta")
     ok(st == 200 and "1080p" in [f["id"] for f in meta["formats"]] and meta["fps"] == [24, 25, 30], "montage : réglages")
     st, p = call("POST", "/api/montage/projects", {"name": "Essai montage", "settings": {"format": "720p", "fps": 25}})
@@ -2508,7 +2768,57 @@ def selftest(call, ok) -> None:
         cy = q[15]
         ok(red(q[5]) and red(q[22]) and abs(cy[0] - 35) <= 6 and abs(cy[1] - 215) <= 6 and abs(cy[2] - 215) <= 6,
            f"montage : le calque d'effet inverse ce qui est dessous sur sa durée seulement ({q})")
+    _selftest_trajectoire_export(call, ok, export, pid, tmp)
     shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _selftest_trajectoire_export(call, ok, export, pid, tmp) -> None:
+    """La trajectoire à l'export (06/10) : une grille 2 × 2 de quatre sources
+    de couleur (V1 à V4), puis un plan tourné de 90°, un plan déplacé à 50 %
+    d'opacité et un plan recadré ; la couleur de chaque endroit lue dans la
+    sortie (1280 × 720)."""
+    cols = {"rouge": "0xDC2828", "vert": "0x28C83C", "bleu": "0x283CDC", "jaune": "0xE6D228"}
+    src = {}
+    for n, hexa in cols.items():
+        subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", f"color=c={hexa}:s=320x180:r=25:d=2",
+                        "-c:v", "libx264", "-crf", "4", "-pix_fmt", "yuv420p", str(tmp / f"q_{n}.mp4")], check=True, timeout=60)
+        st, it = call("PUT", f"/api/library/upload?name=q_{n}.mp4&title=q_{n}", raw=(tmp / f"q_{n}.mp4").read_bytes())
+        src[n] = it
+    ok(all(isinstance(v, dict) and v.get("id") for v in src.values()), "montage : quatre sources de couleur pour la grille")
+    cells = [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)]
+    clip = lambda cid, tid, n, start, mo: {"id": cid, "track": tid, "item": src[n]["id"], "kind": "video", "start": start, "dur": 25,   # noqa: E731
+                                           "in": 0, "src_dur": 2, "motion": mo}
+    clips = [clip(f"g{i}", f"V{i + 1}", n, 0, {"x": x, "y": y, "scale": 0.5}) for i, (n, (x, y)) in enumerate(zip(cols, cells))]
+    clips += [clip("tr", "V1", "rouge", 25, {"rot": 90, "scale": 0.25}),                       # 320 × 180 tourné : 180 × 320 au centre
+              clip("dp", "V2", "vert", 25, {"x": 0.875, "y": 0.875, "scale": 0.25, "op": 0.5}),  # en bas à droite, à moitié transparent
+              clip("rc", "V3", "bleu", 25, {"x": 0.75, "y": 0.25, "scale": 0.5, "cl": 0.5})]     # en haut à droite, la moitié gauche retirée
+    st, cur = call("GET", f"/api/montage/projects/{pid}")
+    st, sv = call("POST", f"/api/montage/projects/{pid}", {**cur, "base_rev": cur["rev"], "settings": {"format": "720p", "fps": 25},
+                  "tracks": [{"id": t} for t in ("V4", "V3", "V2", "V1", "A1")], "clips": clips})
+    ok(st == 200, f"montage : enregistrer une grille 2 × 2 et des plans déplacés ({st} {str(sv)[:200]})")
+    st, back = call("GET", f"/api/montage/projects/{pid}")
+    mo = {c["id"]: c.get("motion") for c in back.get("clips", [])}
+    ok(mo.get("g3", {}).get("x") == 0.75 and mo.get("dp", {}).get("op") == 0.5 and mo.get("tr", {}).get("rot") == 90,
+       f"montage : la trajectoire s'enregistre ({mo.get('g3')})")
+    j = export({}, "trajectoire")
+    if j["state"] != "done" or not j["items"]:
+        return
+    path = str(library.path_of(library.get(j["items"][0]["id"])))
+    near = lambda c, want, tol=14: all(abs(a - b) <= tol for a, b in zip(c, want))   # noqa: E731
+    want = {"rouge": (220, 40, 40), "vert": (40, 200, 60), "bleu": (40, 60, 220), "jaune": (230, 210, 40)}
+    quarts = {n: _pixel_at(path, 10, round(x * 1280), round(y * 720)) for n, (x, y) in zip(cols, cells)}
+    ok(all(near(quarts[n], want[n]) for n in cols), f"montage : grille 2 × 2, chaque quart a sa couleur ({quarts})")
+    edge = [_pixel_at(path, 10, x, y) for x, y in ((630, 180), (650, 180), (320, 350), (320, 370))]
+    ok(near(edge[0], want["rouge"]) and near(edge[1], want["vert"]) and near(edge[2], want["rouge"]) and near(edge[3], want["bleu"]),
+       f"montage : les cases se touchent au milieu, au pixel près ({edge})")
+    blk = (0, 0, 0)
+    t = {k: _pixel_at(path, 35, x, y) for k, (x, y) in {"haut": (640, 220), "bas": (640, 500), "gauche": (480, 400), "droite": (800, 400)}.items()}
+    ok(near(t["haut"], want["rouge"]) and near(t["bas"], want["rouge"]) and near(t["gauche"], blk) and near(t["droite"], blk),
+       f"montage : un plan tourné de 90° est debout au centre (180 × 320), noir à côté ({t})")
+    half = _pixel_at(path, 35, 1120, 630)
+    ok(near(half, (20, 100, 30), 12), f"montage : un plan déplacé en bas à droite, à 50 % d'opacité sur le noir ({half})")
+    rc = (_pixel_at(path, 35, 800, 180), _pixel_at(path, 35, 1120, 180))
+    ok(near(rc[0], blk) and near(rc[1], want["bleu"]), f"montage : recadré de moitié à gauche, la moitié droite reste à sa place ({rc})")
 
 
 # ── en ligne de commande : importer un pack de LUT ───────────

@@ -84,6 +84,125 @@ export function normClip(c) {
   return c;
 }
 
+// ── la trajectoire (06/10) ───────────────────────────────────
+// Cal : « déplacer les éléments dans la frame, pour composer des montages avec
+// des grilles vidéo, et même le zoom aussi ». Ce sont les effets fixes de
+// Premiere (aide d'Adobe, « Apply Motion effect to clips », par les résultats de
+// recherche : helpx.adobe.com ne s'ouvre pas d'ici) : Trajectoire (Position,
+// Échelle, Largeur d'échelle avec « Échelle uniforme », Rotation, Point
+// d'ancrage), Opacité, et le Recadrage (effet Crop : gauche, haut, droite, bas
+// en pour cent). Premiere rend les effets fixes APRÈS les effets standard
+// (« Types of effects ») : l'étalonnage et la LUT agissent sur l'image du plan,
+// puis elle est recadrée, mise à l'échelle, tournée, posée.
+//
+// `motion` d'un plan vidéo ou image (piste V) ; absent = l'image tient dans le
+// cadre, centrée, comme avant : un montage d'avant ne change pas.
+//   x, y      la place du point d'ancrage, en FRACTION du cadre (0,5 ; 0,5 : le
+//             centre). Pas en pixels : une grille reste juste si le format de la
+//             séquence change (1080p → 4K, 16:9 → 9:16 au même endroit relatif),
+//             et les cases d'une grille tombent juste (¼, ¾) ; le panneau l'affiche
+//             en pixels de la séquence, comme Premiere.
+//   scale     l'échelle (1 = 100 % = l'image TIENT dans le cadre, la mise en place
+//             d'avant ; Premiere : « Ajuster à la taille de l'image ») ; c'est la
+//             hauteur quand `uniform` est faux, `scaleW` la largeur.
+//   rot       degrés, sens des aiguilles d'une montre (Premiere ; CSS rotate ; le
+//             filtre rotate de ffmpeg, « clockwise »).
+//   ax, ay    le point d'ancrage, en fraction de l'image source (0,5 : son centre) :
+//             l'échelle et la rotation se font autour de lui.
+//   op        l'opacité (0..1), multipliée par les fondus.
+//   cl, ct, cr, cb  le recadrage, fraction de la source retirée de chaque côté :
+//             ce qui est retiré devient transparent, l'image ne bouge pas (Crop).
+// `cadre()` fait le même calcul que `cadre()` de server/tools/montage.py, ligne
+// pour ligne : le moniteur et l'export posent l'image au même endroit.
+export const MOTION0 = Object.freeze({ x: 0.5, y: 0.5, scale: 1, scaleW: 1, uniform: true, rot: 0, ax: 0.5, ay: 0.5, op: 1, cl: 0, ct: 0, cr: 0, cb: 0 });
+export const MOTION_LIM = { x: [-10, 10], y: [-10, 10], scale: [0, 100], scaleW: [0, 100], rot: [-3600, 3600], ax: [-10, 10], ay: [-10, 10],
+  op: [0, 1], cl: [0, 1], ct: [0, 1], cr: [0, 1], cb: [0, 1] };
+const MKEYS = ['x', 'y', 'scale', 'scaleW', 'rot', 'ax', 'ay', 'op', 'cl', 'ct', 'cr', 'cb'];
+// les plans qui ont une trajectoire : ce qui se voit sur une piste vidéo
+export const movable = (c) => !!c && (c.kind === 'video' || c.kind === 'image') && trackKind(c.track || '') === 'video';
+export const motionOf = (c) => ({ ...MOTION0, ...((c && c.motion) || {}) });
+// Une trajectoire propre : bornée, arrondie (6 décimales), la largeur suit la
+// hauteur en échelle uniforme ; rend null pour celle par défaut (le plan n'en
+// porte pas). Même règle que `_motion` du serveur.
+export function cleanMotion(raw) {
+  const m = { ...MOTION0 };
+  if (raw && typeof raw === 'object') {
+    for (const k of MKEYS) {
+      const v = Number(raw[k]);
+      const ok = typeof raw[k] === 'number' || (typeof raw[k] === 'string' && raw[k].trim() !== '');
+      if (ok && Number.isFinite(v)) m[k] = Math.round(Math.max(MOTION_LIM[k][0], Math.min(MOTION_LIM[k][1], v)) * 1e6) / 1e6;
+    }
+    m.uniform = raw.uniform !== false;
+  }
+  if (m.uniform) m.scaleW = m.scale;
+  return MKEYS.every((k) => Math.abs(m[k] - MOTION0[k]) < 1e-9) && m.uniform ? null : m;
+}
+// poser une trajectoire sur un plan (un objet neuf : jamais partagé entre deux plans)
+export function setMotion(c, patch) {
+  const m = cleanMotion({ ...motionOf(c), ...patch });
+  if (m) c.motion = m; else delete c.motion;
+  return c;
+}
+
+// Où se pose l'image d'un plan de `sw` × `sh` pixels dans un cadre de W × H :
+//   k0      l'échelle qui la fait tenir dans le cadre (l'échelle 100 %) ;
+//   kx, ky  pixels du cadre par pixel de la source ;
+//   x0..x1, y0..y1  la part gardée de la source (le recadrage), en ses pixels ;
+//   cx, cy  le centre de cette part, en pixels du cadre ; dw, dh sa taille, avant
+//           la rotation `th` (radians) autour de ce centre — c'est la rotation
+//           autour du point d'ancrage, dont la place est (x·W, y·H).
+export function cadre(m, W, H, sw, sh) {
+  const k0 = Math.min(W / sw, H / sh);
+  const kx = k0 * (m.uniform === false ? m.scaleW : m.scale), ky = k0 * m.scale;
+  const x0 = m.cl * sw, x1 = (1 - m.cr) * sw, y0 = m.ct * sh, y1 = (1 - m.cb) * sh;
+  const th = m.rot * Math.PI / 180, co = Math.cos(th), si = Math.sin(th);
+  const ux = (x0 + x1) / 2 - m.ax * sw, uy = (y0 + y1) / 2 - m.ay * sh;
+  const cx = m.x * W + co * kx * ux - si * ky * uy;
+  const cy = m.y * H + si * kx * ux + co * ky * uy;
+  const dw = (x1 - x0) * kx, dh = (y1 - y0) * ky;
+  return { k0, kx, ky, x0, x1, y0, y1, th, co, si, cx, cy, dw, dh, op: m.op, vis: dw > 0 && dh > 0 && m.op > 0 };
+}
+// les quatre coins de l'image posée (haut gauche, haut droit, bas droit, bas gauche), en pixels du cadre
+export function coins(g) {
+  const hx = g.dw / 2, hy = g.dh / 2;
+  return [[-hx, -hy], [hx, -hy], [hx, hy], [-hx, hy]].map(([u, v]) => [g.cx + g.co * u - g.si * v, g.cy + g.si * u + g.co * v]);
+}
+// un point du cadre → le pixel de la source qui s'y pose
+export function versSource(g, X, Y) {
+  const dx = X - g.cx, dy = Y - g.cy;
+  const u = g.co * dx + g.si * dy, v = -g.si * dx + g.co * dy;
+  return [(g.x0 + g.x1) / 2 + u / g.kx, (g.y0 + g.y1) / 2 + v / g.ky];
+}
+// le point d'ancrage, en pixels du cadre
+export const ancrage = (m, W, H) => [m.x * W, m.y * H];
+
+// Les grilles en un clic : des cases en fraction du cadre [x, y, largeur, hauteur].
+// L'image dans l'image : un tiers du cadre (0,3), dans la zone d'action (les 90 %
+// des zones de sécurité de Premiere : 5 % de marge, celles du moniteur).
+export const GRILLES = [
+  { id: 'plein', label: 'plein cadre', cells: [[0, 0, 1, 1]] },
+  { id: '2h', label: 'deux côte à côte', cells: [[0, 0, 0.5, 1], [0.5, 0, 0.5, 1]] },
+  { id: '2v', label: 'deux l’un au-dessus de l’autre', cells: [[0, 0, 1, 0.5], [0, 0.5, 1, 0.5]] },
+  { id: '2x2', label: 'grille 2 × 2', cells: [0, 1].flatMap((j) => [0, 1].map((i) => [i / 2, j / 2, 0.5, 0.5])) },
+  { id: '3x3', label: 'grille 3 × 3', cells: [0, 1, 2].flatMap((j) => [0, 1, 2].map((i) => [i / 3, j / 3, 1 / 3, 1 / 3])) },
+  { id: 'pip', label: 'image dans l’image', cells: [[0.05, 0.05, 0.3, 0.3], [0.65, 0.05, 0.3, 0.3], [0.05, 0.65, 0.3, 0.3], [0.65, 0.65, 0.3, 0.3]] },
+];
+// La trajectoire qui pose l'image dans une case : elle y tient (proportions
+// gardées), centrée ; l'ancrage revient au centre, la rotation à 0 ; l'opacité et
+// le recadrage restent (la part gardée est ce qui tient et se centre).
+export function dansCase(m0, cell, W, H, sw, sh) {
+  const [fx, fy, fw, fh] = cell;
+  const m = { ...m0, rot: 0, ax: 0.5, ay: 0.5, uniform: true };
+  const k0 = Math.min(W / sw, H / sh);
+  const cw = (1 - m.cl - m.cr) * sw, ch = (1 - m.ct - m.cb) * sh;
+  if (!(cw > 0 && ch > 0)) return m;
+  m.scale = m.scaleW = Math.min(fw * W / (cw * k0), fh * H / (ch * k0));
+  const k = k0 * m.scale;
+  m.x = fx + fw / 2 - ((m.cl + 1 - m.cr) / 2 - 0.5) * sw * k / W;
+  m.y = fy + fh / 2 - ((m.ct + 1 - m.cb) / 2 - 0.5) * sh * k / H;
+  return m;
+}
+
 // La courbe d'un fondu de son, comme `afade` (ffmpeg 6.1.1,
 // libavfilter/af_afade.c, fade_gain) : x de 0 à 1 le long du fondu. L'image
 // fond toujours en ligne droite : le filtre `fade` de ffmpeg 6.1 n'a pas de
