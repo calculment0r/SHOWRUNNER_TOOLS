@@ -471,16 +471,19 @@ body.mtg-page .hdr { flex: none; padding-top: 9px; padding-bottom: 9px; }
 }
 /* éléments (30/09) : la pastille de version d'un plan, en bas à droite ; un filet orange quand une plus
    récente existe (jamais pleine : le seul orange plein de l'écran reste l'action, règle 4) */
-.clip .elb {
-  position: absolute; right: 12px; top: 2px; z-index: 5; display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px;
+.clip .elb, .bi .elb {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px;
   border-radius: 2px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
   font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink2); cursor: pointer; white-space: nowrap;
 }
-.clip .elb i { font-style: normal; font-size: 7px; color: var(--ink3); }
+.clip .elb { position: absolute; right: 12px; top: 2px; z-index: 5; }
+/* la même pastille au bout d'une ligne du Projet (projet.js) : un élément, la version d'un élément */
+.bi .elb { flex: none; margin-right: 6px; cursor: inherit; }
+.clip .elb i, .bi .elb i { font-style: normal; font-size: 7px; color: var(--ink3); }
 .clip .elb:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
-.clip .elb.new { color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }
-.clip .elb.new i { color: var(--or); }
-.clip .elb.gone { color: var(--amb); box-shadow: inset 0 0 0 1px var(--line-amb); }
+.clip .elb.new, .bi .elb.new { color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }
+.clip .elb.new i, .bi .elb.new i { color: var(--or); }
+.clip .elb.gone, .bi .elb.gone { color: var(--amb); box-shadow: inset 0 0 0 1px var(--line-amb); }
 /* l'onde d'un plan son : un canvas dessiné à la résolution de l'écran (commun/onde.js) ;
    sa couleur est un jeton (le canvas la lit dans « color ») */
 .clip .wave {
