@@ -21,6 +21,8 @@
 //   *    /agents/*                      → réservé (étude § 6)
 //   GET  /media/*, *.mp4, *.webm…       → les assets, mais par le Worker : il y ajoute les requêtes partielles (Range),
 //                                         que les assets statiques ne font pas et que Safari exige (media(), plus bas)
+//   GET  /ecoute/<jeton>/…              → un lien d'écoute : le paquet d'une playlist, depuis R2 (ecoute/<jeton>/…),
+//                                         HORS de la porte à code (ecoute(), plus bas) ; POST …/_code, …/_ecoute
 //   le reste                            → les pages du portail (assets statiques : le dépôt, sans server/ ni docs/)
 //
 // En mode studio (MODE = "studio"), tout chemin va au studio de DGX1 tel quel : ses pages y demandent /api/…, /files/…
@@ -43,7 +45,7 @@
 //                       Aucun jeton Access n'y est lu ni transmis, Cal compris (le code admin, puis nico007) :
 //                       l'application Access du nom d'hôte est à supprimer (étude, « La porte par code »).
 
-const VERSION = 'porte du 30/09/2026 (code, plages des médias)';
+const VERSION = 'porte du 05/10/2026 (code, plages des médias, lien d’écoute)';
 const COOKIES_PORTAIL = ['sr_session', 'sr_invitation'];
 const JETON_COOKIE = /^[A-Za-z0-9_-]{1,200}$/;   // secrets.token_urlsafe, empreintes hexadécimales
 const INVITATION = /^\/invitation(\/|$)/;
@@ -300,6 +302,9 @@ const TYPES = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', mp4: 'video/mp4', webm: 'video/webm',
   mov: 'video/quicktime', wav: 'audio/wav', mp3: 'audio/mpeg', flac: 'audio/flac', m4a: 'audio/mp4', ogg: 'audio/ogg',
   glb: 'model/gltf-binary', json: 'application/json',
+  // le lien d'écoute (ses fichiers ont leur type dans R2 ; au cas où)
+  html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8',
+  lrc: 'text/plain; charset=utf-8', webmanifest: 'application/manifest+json',
 };
 
 // true : il peut voir ; false : non ; null : l'objet n'est pas (encore) publié dans R2.
@@ -320,7 +325,7 @@ function plage(entete, taille) {
   return debut < taille && fin >= debut ? { debut, long: fin - debut + 1 } : 'hors';
 }
 
-async function depuisR2(req, env, cle) {
+async function depuisR2(req, env, cle, cache = 'private, max-age=3600') {
   const tete = await env.BIBLIO.head(cle);
   if (!tete) return null;
   const h = new Headers();
@@ -328,7 +333,7 @@ async function depuisR2(req, env, cle) {
   if (!h.has('content-type')) h.set('content-type', TYPES[cle.split('.').pop().toLowerCase()] || 'application/octet-stream');
   h.set('etag', tete.httpEtag);
   h.set('accept-ranges', 'bytes');
-  h.set('cache-control', 'private, max-age=3600');
+  h.set('cache-control', cache);
   const inm = req.headers.get('if-none-match');
   if (inm && inm.split(',').some((e) => e.trim().replace(/^W\//, '') === tete.httpEtag)) return new Response(null, { status: 304, headers: h });
   const ir = req.headers.get('if-range');
@@ -389,7 +394,7 @@ async function listeHorsLigne(env, id, url) {
 // (https://developers.cloudflare.com/workers/platform/limits/).
 // Les chemins servis par le Worker lui-même (bibliothèque, rendus de Movie Analysis…) ne sont jamais des assets.
 const MEDIA = /^\/media\/|\.(mp4|m4v|mov|webm|mp3|m4a|aac|wav|ogg|oga|opus|flac)$/i;
-const ROUTES_DU_WORKER = /^\/(api|library|pont|agents|invitation)(\/|$)|^\/(character\/(api|files|v1)|analyse\/runs)\//;
+const ROUTES_DU_WORKER = /^\/(api|library|pont|agents|invitation|ecoute)(\/|$)|^\/(character\/(api|files|v1)|analyse\/runs)\//;
 const assetMedia = (chemin) => MEDIA.test(chemin) && !ROUTES_DU_WORKER.test(chemin);
 
 async function media(req, env) {
@@ -434,12 +439,182 @@ async function media(req, env) {
   return new Response(corps, { status: 206, headers: h });
 }
 
+// ── le lien d'écoute ─────────────────────────────────────────────────────────────────────────────────────────────
+// La destination A du lien d'écoute (docs/etudes/musique_spaces_playlists.md § 4 ; décision L1 de Cal, 05/10) : le
+// portail fabrique le paquet du lecteur d'une playlist (server/tools/ecoute.py : index.html, playlist.json, le code,
+// les MP3, les LRC, les pochettes) et l'envoie dans R2 sous ecoute/<jeton>/ (porte/r2_recopie.py), le jeton tiré au
+// hasard (128 bits, 32 signes hexadécimaux) ; le Worker le sert ici, DGX éteintes comprises, à qui a l'adresse. HORS de
+// la porte à code : ni session ni invitation, et rien n'atteint les DGX. Les seules clés lues sont celles de
+// ecoute/<jeton>/, et seulement les fichiers d'un paquet (ECOUTE_FICHIER) : ni _lien.json, ni les écoutes rangées.
+//   ecoute/<jeton>/_lien.json   la fiche du lien, écrite par le portail, jamais servie : { title, artist, accent,
+//                               code: { sel, sha256 } | null, fin: ISO | null, ecoutes: bool }
+//   GET  /ecoute/<jeton>/<fichier>   le paquet, par plages (depuisR2 : Range, If-Range, ETag, 304) ; un fichier
+//                               versionné (?v=…, les adresses de playlist.json) se garde un an, le reste se revalide
+//   POST /ecoute/<jeton>/_code       le code d'un lien protégé (formulaire) : un cookie scellé par PORTE_CLE, propre à
+//                               ce lien et à ce code (changer le code ferme les anciens), jusqu'à la fin du lien (30 j
+//                               au plus) ; les essais bornés par adresse (ESSAIS, 10 par minute)
+//   POST /ecoute/<jeton>/_ecoute     une écoute (n=<morceau>), que la page envoie après 30 s entendues (ecoute/app.js) :
+//                               un objet vide ecoute/<jeton>/_ecoutes/<jour>/<ms>-<hasard>-<n> (ajouter sans relire :
+//                               deux écoutes simultanées ne s'écrasent jamais) ; le portail les compte (R2.liste)
+// Retirer le lien = le portail efface le préfixe (_lien.json d'abord). Une date de fin passée : 410. Le lecteur ne nomme
+// pas l'outil (décision L3) : ces pages non plus. Referrer-Policy « same-origin » (et non « no-referrer », qui fait
+// envoyer Origin: null aux POST de la page : memeOrigine les refuserait) : le jeton ne part jamais vers un autre site.
+const ECOUTE = /^\/ecoute\/([0-9a-f]{32})(\/.*)?$/;
+const ECOUTE_FICHIER = new RegExp('^(index\\.html|playlist\\.json|player\\.js|app\\.js|ecoute\\.css|service-worker\\.js|'
+  + 'manifest\\.webmanifest|assets/(cover-1200\\.jpg|cover-512\\.jpg|icon-192\\.png|icon-512\\.png)|'
+  + 'audio/[a-z0-9][a-z0-9-]{0,80}\\.mp3|paroles/[a-z0-9][a-z0-9-]{0,80}\\.lrc)$');
+// sans le code : le style de la page du code, et les icônes (le navigateur les lit pour installer, peut-être sans
+// cookie : non documenté)
+const ECOUTE_PUBLIC = /^(ecoute\.css|assets\/icon-(192|512)\.png)$/;
+const COOKIE_ECOUTE = 'ecoute_code';
+const fichesEcoute = new Map();   // jeton → { fiche, lu } : la fiche gardée 30 s par isolat (ce n'est pas un état de requête)
+
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+function egal(a, b) {   // comparer deux empreintes en temps constant
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+}
+
+async function ficheEcoute(env, jeton) {
+  const vu = fichesEcoute.get(jeton);
+  if (vu && Date.now() - vu.lu < 30e3) return vu.fiche;
+  const o = await env.BIBLIO.get(`ecoute/${jeton}/_lien.json`);
+  const fiche = o ? await o.json().catch(() => null) : null;
+  if (fiche) {
+    fichesEcoute.set(jeton, { fiche, lu: Date.now() });
+    if (fichesEcoute.size > 500) fichesEcoute.delete(fichesEcoute.keys().next().value);
+  }
+  return fiche;
+}
+
+// le sceau du cookie : HMAC(PORTE_CLE, « ecoute », jeton, sel et empreinte du code) — ni état, ni code dans le cookie
+async function sceauEcoute(env, jeton, fiche) {
+  const cleHmac = String(env.PORTE_CLE || '').trim();
+  if (!cleHmac || !fiche.code) return null;
+  const k = await crypto.subtle.importKey('raw', ENC.encode(cleHmac), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return hex(await crypto.subtle.sign('HMAC', k, ENC.encode(['ecoute', jeton, fiche.code.sel, fiche.code.sha256].join('\n'))));
+}
+
+async function codeBon(req, env, jeton, fiche) {
+  const attendu = await sceauEcoute(env, jeton, fiche);
+  return !!attendu && egal(cookie(req, COOKIE_ECOUTE), attendu);
+}
+
+// une page du Worker (le code, un lien expiré ou absent), sur le style du paquet (ecoute.css, public) et ses jetons ;
+// l'accent de la pochette comme dans le lecteur. Un lien protégé ne montre dans son aperçu que son titre.
+function pageEcoute(statut, { fiche = null, message = '', code = false, erreurCode = '' } = {}) {
+  const f = fiche || {};
+  const hexa = (v) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : null);
+  const a = f.accent || {};
+  const style = [['--acc-sombre', a.dark], ['--acc-sombre-encre', a.dark_ink], ['--acc-clair', a.light], ['--acc-clair-encre', a.light_ink]]
+    .filter(([, v]) => hexa(v)).map(([k, v]) => `${k}:${v}`).join(';');
+  const titre = f.title || 'Écoute';
+  const corps = code
+    ? `<p>Cette écoute est protégée : entrez le code que l'on vous a donné.</p>
+${erreurCode ? `<p class="porte-erreur" role="alert">${esc(erreurCode)}</p>` : ''}
+<form method="post" action="./_code"><input name="code" aria-label="Code" autocomplete="off" autocapitalize="characters" spellcheck="false" required autofocus>
+<button type="submit">Écouter</button></form>`
+    : `<p>${esc(message)}</p>`;
+  const page = `<!doctype html>
+<html lang="fr" data-theme="dark"${style ? ` style="${style}"` : ''}>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex"><meta name="referrer" content="same-origin">
+<title>${esc(titre)}</title><meta property="og:title" content="${esc(titre)}">
+${fiche ? '<link rel="stylesheet" href="./ecoute.css">' : ''}
+<script>document.documentElement.dataset.theme = window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';</script>
+</head>
+<body><main class="porte"><div class="porte-carte">
+${f.artist ? `<p class="artist">${esc(f.artist)}</p>` : ''}<h1>${esc(titre)}</h1>
+${corps}
+</div></main></body></html>`;
+  return new Response(page, { status: statut, headers: {
+    'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
+    'referrer-policy': 'same-origin', 'x-robots-tag': 'noindex' } });
+}
+
+async function entreCode(req, env, url, jeton, fiche) {
+  if (!memeOrigine(req, url)) return erreur(403, 'requête venue d’une autre page : refusée');
+  if (!fiche.code) return new Response(null, { status: 303, headers: { location: `/ecoute/${jeton}/` } });
+  if (env.ESSAIS) {
+    const { success } = await env.ESSAIS.limit({ key: `ecoute:${req.headers.get('cf-connecting-ip') || 'inconnue'}` });
+    if (!success) return pageEcoute(429, { fiche, code: true, erreurCode: 'Trop d’essais depuis cette adresse : attendez une minute.' });
+  }
+  const n = Number(req.headers.get('content-length'));
+  if (!Number.isSafeInteger(n) || n > 2048) return erreur(413, 'trop long');
+  const saisi = (new URLSearchParams(await req.text()).get('code') || '').replace(/\s+/g, '').toUpperCase();
+  const empreinte = hex(await crypto.subtle.digest('SHA-256', ENC.encode(`${fiche.code.sel}:${saisi}`)));
+  if (!saisi || !egal(empreinte, fiche.code.sha256)) return pageEcoute(200, { fiche, code: true, erreurCode: 'Ce n’est pas le bon code.' });
+  const sceau = await sceauEcoute(env, jeton, fiche);
+  if (!sceau) return erreur(503, 'ce lien ne peut pas vérifier son code pour le moment');
+  const reste = fiche.fin ? Math.floor((Date.parse(fiche.fin) - Date.now()) / 1000) : Infinity;
+  const age = Math.max(60, Math.min(30 * 86400, reste));
+  return new Response(null, { status: 303, headers: {
+    location: `/ecoute/${jeton}/`, 'cache-control': 'no-store',
+    'set-cookie': `${COOKIE_ECOUTE}=${sceau}; Path=/ecoute/${jeton}/; Max-Age=${age}; HttpOnly; Secure; SameSite=Lax` } });
+}
+
+async function compteEcoute(req, env, url, jeton, fiche) {
+  if (fiche.ecoutes !== true) return erreur(404, 'ce lien ne compte pas ses écoutes');
+  if (!memeOrigine(req, url)) return erreur(403, 'requête venue d’une autre page : refusée');
+  if (fiche.code && !(await codeBon(req, env, jeton, fiche))) return erreur(401, 'ce lien demande son code');
+  if (env.LIMITE) {
+    const { success } = await env.LIMITE.limit({ key: `ecoute:${req.headers.get('cf-connecting-ip') || 'inconnue'}` });
+    if (!success) return erreur(429, 'trop d’écoutes d’un coup');
+  }
+  const n = Number(req.headers.get('content-length'));
+  if (!Number.isSafeInteger(n) || n > 64) return erreur(413, 'trop long');
+  const m = /^n=(\d{1,3})$/.exec((await req.text()).trim());
+  if (!m || Number(m[1]) < 1) return erreur(400, 'n=<numéro du morceau>');
+  const jour = new Date().toISOString().slice(0, 10);
+  await env.BIBLIO.put(`ecoute/${jeton}/_ecoutes/${jour}/${Date.now()}-${hex(crypto.getRandomValues(new Uint8Array(4)))}-${Number(m[1])}`, '');
+  return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+}
+
+async function ecoute(req, env, url) {
+  const m = ECOUTE.exec(url.pathname);
+  if (!m || !env.BIBLIO) return pageEcoute(404, { message: 'Ce lien n’existe pas, ou plus.' });
+  const [, jeton, reste] = m;
+  // les adresses du lecteur sont relatives : il lui faut la barre finale
+  if (reste === undefined) return new Response(null, { status: 301, headers: { location: `/ecoute/${jeton}/${url.search}` } });
+  const chemin = reste.slice(1) || 'index.html';
+  const fiche = await ficheEcoute(env, jeton);
+  if (!fiche) return pageEcoute(404, { message: 'Ce lien n’existe pas, ou plus.' });
+  if (fiche.fin && !(Date.parse(fiche.fin) > Date.now())) return pageEcoute(410, { fiche, message: 'Ce lien d’écoute a expiré.' });
+  if (req.method === 'POST' && chemin === '_code') return await entreCode(req, env, url, jeton, fiche);
+  if (req.method === 'POST' && chemin === '_ecoute') return await compteEcoute(req, env, url, jeton, fiche);
+  if (!SANS_CORPS.has(req.method)) return erreur(405, 'lecture seule');
+  if (!ECOUTE_FICHIER.test(chemin)) return erreur(404, 'introuvable');
+  if (fiche.code && !ECOUTE_PUBLIC.test(chemin) && !(await codeBon(req, env, jeton, fiche))) {
+    // la page du code en 200 (un document en 401 est une erreur pour le navigateur, et 401 voudrait WWW-Authenticate) ;
+    // les fichiers, eux, en 401
+    return chemin === 'index.html' ? pageEcoute(200, { fiche, code: true }) : erreur(401, 'ce lien demande son code');
+  }
+  const garde = url.searchParams.has('v') ? 'private, max-age=31536000, immutable' : 'no-cache';
+  const r = await depuisR2(req, env, `ecoute/${jeton}/${chemin}`, garde);
+  if (!r) return erreur(404, 'introuvable');
+  r.headers.set('x-content-type-options', 'nosniff');
+  r.headers.set('referrer-policy', 'same-origin');
+  r.headers.set('x-robots-tag', 'noindex');
+  return r;
+}
+
 // ── l'entrée ─────────────────────────────────────────────────────────────────────────────────────────────────────
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     const chemin = url.pathname;
     const code = env.PORTE_MODE === 'code' && env.MODE !== 'studio';
+    // Un lien d'écoute : hors de la porte (ni identité ni cookie du portail), depuis R2 seulement.
+    if (env.MODE !== 'studio' && /^\/ecoute(\/|$)/.test(chemin)) {
+      try {
+        return await ecoute(req, env, url);
+      } catch (e) {
+        console.log(JSON.stringify({ evenement: 'ecoute', chemin, raison: String((e && e.message) || e) }));
+        return erreur(500, 'le lien a trébuché');
+      }
+    }
     // Un média des assets : ce que les assets serviraient à tous sans passer par ici (la vidéo de l'accueil, avant la
     // porte), plus les plages. Ni identité ni cookie : la page d'accueil le montre avant qu'on entre.
     if (env.MODE !== 'studio' && env.ASSETS && assetMedia(chemin)) {

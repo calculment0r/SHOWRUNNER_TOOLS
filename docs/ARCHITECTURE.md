@@ -17,6 +17,7 @@ asset/ image/ movie/ …      une page par outil : index.html + <outil>.js + <ou
 admin/                      la page de Cal (§ 9)
 media/                      l'image et la vidéo des grandes cartes de l'accueil
 porte/                      le Worker de l'adresse publique, sa configuration, son essai (§ 8)
+ecoute/                     le lecteur du lien d'écoute (celui d'AGOSTA généralisé) : le gabarit de chaque paquet (§ 7)
 server/showrunner.py        le serveur (stdlib) : pages, /api, /library/<id>/<fichier>
 server/core/                config, http, auth, library, jobs, machines, comfy — le socle
 server/tools/<outil>.py     les routes et les travaux d'un outil : register(app)
@@ -43,6 +44,10 @@ fichier et sa vignette. Huit sortes (`library.KINDS`) : `image`, `video`,
   noires : `GET /api/music/midi/<id>/notes`. Dans Asset : sa portée, sa fiche
   (les notes dessinées, une écoute par un synthé de la page, le clip à
   glisser dans l'arrangement d'ODIO) ;
+- `playlist` (id `pla-…`, 05/10) : une playlist de Musique, `playlist: {artist, year, description,
+  cover, tracks: [{item, title?, credits?, lyrics?, lrc?}], transition: {mode: gapless | crossfade |
+  single, crossfade_s}, download}` dans `item.json` ; son outil : wip2/playlists ; son lien
+  d'écoute : `server/tools/ecoute.py` (§ 7) ;
 - `sequence` (id `seq-…`) : une séquence du Montage, sa timeline dans
   `sequence.json` (`server/tools/montage.py`) ; `item.json` suit la timeline
   (titre, taille, cadence, durée, `params.clips`, `params.format`, lignée =
@@ -412,6 +417,7 @@ réel est écrit, vérifié à vide, et s'allume par un réglage de
 | Transcrire (`transcrire/`, `server/tools/transcrire.py`) | `/api/transcrire/options`, `docs` (les transcriptions), `run {item, mode: rapide \| complet, to?, notes?}`, `docs/<id>` (lire ; POST : enregistrer, `rev`), `…/translate {to, all}`, `…/export?format=srt\|vtt\|txt\|json\|md&which=&stamps=1`, `…/asset` (409 tant que la sorte `subtitle` manque au socle), `…/delete`, `…/voix` (la probabilité de parole de chaque voix), `…/notes {kinds} \| {question}` (le carnet), `…/qa/<q>/delete` ; un document `<data_dir>/transcrire/trn-….json` par transcription, né dans le Workspace du son | `transcrire.transcribe`, `transcrire.translate`, `transcrire.notes` (voie audio ; cpu en factice) | `"transcrire_moteur": "local"` (Whisper turbo ou Parakeet sur DGX2, les voix par Nemotron de DGX1, traduction et carnet par Ollama) |
 | L'agent Showrunner (Idéation, `server/tools/ideation_agent.py`, `docs/etudes/agent_showrunner.md`) | `POST /api/ideation/agent {board, messages, intent: "" \| "ingest"}` (un tour en file ; 4 000 signes et 24 objets cités au plus), `GET /api/ideation/agent/<planche>` (la conversation, l'état du modèle : prêt, vision), `POST …/turns/<t> {claim \| applied \| undone}`, `POST …/clear` (la conversation archivée) | `ideation.agent` : voie audio épinglée sur l'instance de la machine de l'Ollama (famille `ollama-agent`, 31 Go, modèle déchargé en fin de tour), cpu sans voie audio | `ideation_agent_url` (sinon `llm_url`), `ideation_agent_modele` (sinon `llm_model`, `qwen3-vl-32b-32k`), `ideation_agent_ctx` (32768) |
 | Le kit de Cal (`server/tools/strategie.py`) | `/strategie/…` : `<data_dir>/strategie/` (jamais dans le dépôt, qui est public), au compte de Cal seul (403 à tout autre, la porte sans session) ; chaque page HTML y est servie avec `<script src="/commun/kit_nav.js">` ; `GET /api/strategie/moi`, `GET /api/strategie/plan` (les pages, ou l'ordre de `plan.json`) | — | — |
+| Lien d'écoute (`ecoute/`, `server/tools/ecoute.py`, 05/10, `docs/etudes/musique_spaces_playlists.md` § 4) | `GET /api/ecoute/<playlist>` (le lien, ses réglages, ses écoutes avec `?ecoutes=1`, si l'on peut publier, sinon pourquoi), `POST …/zip {adresse?}` (le paquet zippé : servi par `api/asset/zip/…`), `POST …/publier {code?, fin?}`, `POST …/retirer` (Cloudflare : R2 sous `ecoute/<jeton>/`, porte/r2_recopie.py ; 409 tant que le jeton R2 manque). Le paquet : le lecteur, `playlist.json`, les MP3 256 kbit/s ramenés à −14 LUFS (loudnorm deux passes, linéaire quand un gain suffit), les LRC, les pochettes, l'aperçu Open Graph ; gapless, ou un fichier continu (fondu enchaîné, bout à bout) fabriqué à la publication. Droits : `espaces.can_publish` | `ecoute.zip`, `ecoute.publier` (voie cpu, ffmpeg) | — (Cloudflare : `~/.config/showrunner/r2.json`, le geste 9 de `cloudflare.md`) |
 
 **Idéation, les objets du 05/10** (un module par objet sous `ideation/objets/`, un
 par réglage de diapositive sous `ideation/diapo/`) :
@@ -528,6 +534,13 @@ ajoute les requêtes partielles (`Range` → 206, `Content-Range`,
 `Accept-Ranges`), que les assets statiques ne font pas et sans lesquelles
 Safari ne lit pas une vidéo. Déployer : `bash tools/porte.sh deploie` sur
 DGX2 ; l'essai sans Cloudflare : `node porte/essai.mjs`.
+
+**Les liens d'écoute** (05/10, non déployés : le jeton R2 manque) : `GET /ecoute/<jeton>/…`
+(`run_worker_first`), HORS de la porte à code — le paquet d'une playlist lu dans R2 sous
+`ecoute/<jeton>/` seulement (liste blanche des fichiers d'un paquet, plages), jeton de 128 bits ;
+`_lien.json` (jamais servi) porte le code facultatif (empreinte salée ; `POST …/_code` pose un
+cookie scellé par `PORTE_CLE`), la date de fin (410 au-delà), le compteur (`POST …/_ecoute`, un
+objet vide par écoute sous `_ecoutes/`). L'essai sans Cloudflare : `node porte/essai_ecoute.mjs`.
 
 ## 9. La porte du portail et la page de Cal
 
