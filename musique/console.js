@@ -1,18 +1,22 @@
 // ODIO — la console de mixage : une tranche par piste (inserts, envois vers
-// les bus d'effets, panoramique, muet, solo, armer, fader, vu-mètre), puis
-// les bus (leurs retours) et la sortie (vu-mètres gauche et droite, l'arc).
-// Les envois sont des câbles qui portent un niveau : le nodal montre le même
-// graphe, en pointillé.
+// les bus d'effets, panoramique, muet, solo, armer, fader, vu-mètre), celle
+// des bus (leurs retours) et celle de la sortie (vu-mètres gauche et droite,
+// l'arc). Les envois sont des câbles qui portent un niveau : le nodal montre le
+// même graphe, en pointillé.
+// Depuis le 05/10, la console est le bas de la vue Session (session.js), comme
+// le mixeur de Live sous sa grille de clips (Live 12, « Mixing ») : chaque
+// tranche tient sous la colonne de sa piste. Ce module fabrique les tranches ;
+// la vue les range.
 
 import { toast } from '../commun/shell.js';
-import { MODULES, EFFECT_TYPES, spec, val, fmt, moduleName } from './modules.js';
-import { el, knob, fader, vu, menu, put, inlineEdit } from './ui.js';
+import { MODULES, EFFECT_TYPES, spec, val, moduleName } from './modules.js';
+import { el, knob, fader, vu, menu, inlineEdit } from './ui.js';
 
 const SEND = { k: 'send', label: 'Envoi', min: -60, max: 6, def: -60, unit: 'dB', curve: 'lin', step: 0 };
 
-export function createConsole(app) {
+// `onSelect(t)` : une tranche cliquée (la vue montre la colonne choisie)
+export function createMixer(app, { onSelect = () => {} } = {}) {
   const { S } = app;
-  const root = el('section', { class: 'cs', 'aria-label': 'console' });
   const meters = [];
 
   const buses = () => S.proj.tracks.filter((t) => t.kind === 'bus');
@@ -63,9 +67,9 @@ export function createConsole(app) {
     return el('div', { class: `cs-strip${bus ? ' bus' : ''}${S.sel.track === t.id ? ' sel' : ''}${t.mute ? ' muted' : ''}`, style: { '--c': `var(--${t.color})` }, 'data-track': t.id,
       onclick: (e) => {
         if (e.target.closest('button, .kn, .fdr, .mu-inline') || S.sel.track === t.id) return;
-        // choisir sans refaire la console : un double-clic qui suit renomme encore
+        // choisir sans refaire la vue : un double-clic qui suit renomme encore
         S.sel.track = t.id; S.sel.pat = t.pat || null; S.sel.clip = null; S.sel.clips = [];
-        for (const s of root.querySelectorAll('.cs-strip')) s.classList.toggle('sel', s === e.currentTarget);
+        onSelect(t);
       } },
     el('div', { class: 'cs-top' }, el('i', { class: 'bar' }), nm,
       el('span', { class: 'lbl' }, bus ? 'retour' : moduleName(src?.type))),
@@ -78,7 +82,7 @@ export function createConsole(app) {
     el('div', { class: 'row cs-btns' },
       tog('M', t.mute, 'muet', () => { t.mute = !t.mute; app.commit('mute'); }),
       bus ? null : tog('S', t.solo, 'solo', () => { t.solo = !t.solo; app.commit('mute'); }),
-      bus ? null : tog('●', t.arm, 'armer pour la prise', () => { t.arm = !t.arm; app.commit('quiet'); render(); }, 'arm')),
+      bus ? null : tog('●', t.arm, 'armer pour la prise · dans la vue Session, ses cases vides deviennent des boutons de prise', () => { t.arm = !t.arm; app.commit('quiet'); app.renderView(); }, 'arm')),
     el('div', { class: 'cs-fv' }, fd, meter),
     bus ? el('button', { class: 'tb ghost sm', type: 'button', title: 'retirer le bus et ses envois', onclick: () => app.removeTrack(t.id) }, 'Retirer') : null);
   }
@@ -109,23 +113,7 @@ export function createConsole(app) {
     ]);
   }
 
-  function render() {
-    meters.length = 0;
-    const tracks = S.proj.tracks.filter((t) => t.kind !== 'bus');
-    put(root,
-      el('div', { class: 'cs-head' }, el('b', { class: 'venus' }, 'Console'),
-        el('span', { class: 'lbl' }, `${tracks.length} pistes · ${buses().length} bus · envois après le fader`),
-        el('span', { class: 'sp' }),
-        el('button', { class: 'tb ghost sm', type: 'button', onclick: busMenu }, '+ Bus'),
-        el('button', { class: 'tb ghost sm', type: 'button', onclick: () => app.setView('nodal') }, 'Voir les câbles')),
-      el('div', { class: 'cs-row' },
-        tracks.map((t) => strip(t)),
-        buses().length ? el('i', { class: 'cs-gap' }) : null,
-        buses().map((t) => strip(t, { bus: true })),
-        el('i', { class: 'cs-gap' }),
-        masterStrip()));
-  }
-
+  // les vu-mètres, à chaque image
   function frame() {
     for (const [id, m, db] of meters) {
       if (db) {
@@ -138,5 +126,6 @@ export function createConsole(app) {
     }
   }
 
-  return { el: root, render, frame };
+  // `reset` : la vue se redessine, les vu-mètres d'avant partent avec leurs tranches
+  return { strip, masterStrip, busMenu, buses, frame, reset: () => { meters.length = 0; } };
 }

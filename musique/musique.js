@@ -2,7 +2,9 @@
 //   Arrangement  sections, arc d'énergie, pistes, clips, automation ; en
 //                bas la vue de détail (le clip choisi, ou les instruments
 //                et effets de la piste), à gauche le navigateur
-//   Console      faders, panoramiques, envois vers les bus, vu-mètres, sortie
+//   Session      le lanceur de clips de Live (scènes, clips qui bouclent,
+//                lancement quantifié) et, dessous, la console : faders,
+//                panoramiques, envois vers les bus, vu-mètres, sortie (session.js)
 //   Nodal        le graphe des modules et de leurs câbles (le même projet),
 //                et en bas le banc d'ODIO_01 (banc.js) ; Tab bascule
 //                Arrangement ↔ Nodal
@@ -24,7 +26,7 @@ import { migrate, workOf, describeWork, copyClips, pasteClips, splitClip, consol
   trajets, pistesDuModule, recoudre, sortirDeLaChaine, entrerDansLaChaine, deplacerPistes, grouperPistes, degrouper, rangerGroupes } from './projet.js';
 import { createUndo, isTextField } from '../commun/undo.js';
 import { createTimeline } from './timeline.js';
-import { createConsole } from './console.js';
+import { createSession } from './session.js';   // la vue Session (05/10) : le lanceur de clips, la console dessous
 import { createNodal } from './nodal.js';
 // le nodal dans sa fenêtre (un 2ᵉ écran) : docs/etudes/fenetres.md § 6
 import { fenetres, $ as $partout, partout, fenetreDuGeste } from '../commun/fenetre.js';
@@ -273,6 +275,7 @@ export const app = {
     P.cables = P.cables.filter((c) => !mods.has(c.a) && !mods.has(c.b));
     P.patterns = P.patterns.filter((p) => !gone.has(p.track));
     P.clips = P.clips.filter((c) => !gone.has(c.track));
+    P.slots = (P.slots || []).filter((c) => !gone.has(c.track));   // la vue Session
     P.auto = (P.auto || []).filter((L) => !mods.has(L.mod));
     P.tracks = P.tracks.filter((x) => !gone.has(x.id));
     rangerGroupes(P);
@@ -1007,7 +1010,7 @@ function paintBar() {
     S.list.map((x) => el('option', { value: x.id, selected: x.id === P.id || null }, x.name)));
   const ic = (label, title, fn, cls = '', attrs = {}) => el('button', { class: `tb sm mu-ic ${cls}`, type: 'button', title, onclick: fn, ...attrs }, label);
   const views = el('div', { class: 'seg mu-views', role: 'tablist' },
-    [['timeline', 'Arrangement', 'Tab : Arrangement ↔ Nodal'], ['console', 'Console', ''], ['nodal', 'Nodal', 'Tab : Arrangement ↔ Nodal']].map(([v, l, ti]) => {
+    [['timeline', 'Arrangement', 'Tab : Arrangement ↔ Nodal'], ['console', 'Session', 'le lanceur de clips et la console (Live : Session View)'], ['nodal', 'Nodal', 'Tab : Arrangement ↔ Nodal']].map(([v, l, ti]) => {
       const dehors = v === 'nodal' && F.detache('nodal');   // dans sa fenêtre : l'onglet y mène
       return el('button', { class: `tb${S.view === v ? ' on' : ''}`, role: 'tab', 'aria-selected': S.view === v, type: 'button', 'data-view': v,
         title: dehors ? 'le nodal est dans sa fenêtre (2ᵉ écran) : clic pour la montrer' : ti,
@@ -1247,7 +1250,7 @@ ov.addEventListener('pointerdown', (e) => {
 
 // ── les vues ────────────────────────────────────────────────
 const views = {};
-const MAKERS = { timeline: createTimeline, console: createConsole, nodal: createNodal };
+const MAKERS = { timeline: createTimeline, console: createSession, nodal: createNodal };   // 'console' : la vue Session
 function render(full = false) {
   if (!S.proj) return;
   // le nodal est dans sa fenêtre (commun/fenetre.js) : la page montre une autre vue
@@ -1351,7 +1354,8 @@ addEventListener('keydown', async (e) => {
   // s'est arrêté, Origine au début (Entrée aussi, l'ancien d'ODIO), F9 prise
   // (Ctrl+Espace est au panneau Asset, commun/shell.js : il ne réveille jamais la lecture)
   if (c === 'Space' && !ctrl) { e.preventDefault(); if (e.repeat) return; if (e.shiftKey) togglePause(); else togglePlay(); return; }
-  if (c === 'Home' || c === 'Enter') { e.preventDefault(); engine.seek(0); return; }
+  // (dans la vue Session, Entrée lance la case choisie : Live)
+  if (c === 'Home' || (c === 'Enter' && S.view !== 'console')) { e.preventDefault(); engine.seek(0); return; }
   if (c === 'F9') { e.preventDefault(); if (!e.repeat) toggleRec(); return; }
   if (e.shiftKey && L === 't' && !ctrl && !e.altKey) { e.preventDefault(); tapTempo(e.timeStamp); return; }
   if (e.shiftKey && L === 'm' && !ctrl && !e.altKey) { app.addMarker(engine.position()); return; }
@@ -1376,6 +1380,7 @@ addEventListener('keydown', async (e) => {
       held.set(c, null);
       const h = await engine.noteOn(t.src, pitch, S.vel);
       rec.noteOn(t, pitch, S.vel, c);
+      app.session?.noteOn(t, pitch, S.vel, c);   // la prise de Session (session.js)
       if (held.has(c)) held.set(c, h); else engine.noteOff(h);
       return;
     }
@@ -1395,6 +1400,7 @@ addEventListener('keyup', (e) => {
   held.delete(e.code);
   if (h) engine.noteOff(h);
   rec.noteOff(e.code);
+  app.session?.noteOff(e.code);
 });
 
 // ── le clic droit : un menu propre à la zone survolée ───────
@@ -1414,7 +1420,7 @@ function baseMenu() {
     { label: 'Rétablir', sub: lab.redo.replace(/^Rétablir : /, ''), key: 'Ctrl+Maj+Z', disabled: !undoStack.canRedo(), why: 'rien à rétablir', onclick: redo },
     { label: 'Le journal des gestes', onclick: () => undoStack.showLog() },
     '-',
-    ...[['timeline', 'Arrangement'], ['console', 'Console'], ['nodal', 'Nodal']].map(([v, l]) => ({ label: l, checked: S.view === v, onclick: () => app.setView(v) })),
+    ...[['timeline', 'Arrangement'], ['console', 'Session'], ['nodal', 'Nodal']].map(([v, l]) => ({ label: l, checked: S.view === v, onclick: () => app.setView(v) })),
     '-',
     { label: engine.running ? 'Arrêter' : 'Lire', key: 'Espace', onclick: togglePlay },
     { label: 'Une piste', items: app.trackChoices() },
@@ -1454,8 +1460,8 @@ async function startMidi() {
           const t = srcForPlay();
           if (!t) return;
           const pitch = t.kind === 'drums' ? d1 - 36 : d1;
-          if (cmd === 0x90 && d2 > 0) { notes.set(d1, await engine.noteOn(t.src, pitch, d2 / 127)); rec.noteOn(t, pitch, d2 / 127, `midi${d1}`); }
-          else if (cmd === 0x80 || (cmd === 0x90 && d2 === 0)) { engine.noteOff(notes.get(d1)); notes.delete(d1); rec.noteOff(`midi${d1}`); }
+          if (cmd === 0x90 && d2 > 0) { notes.set(d1, await engine.noteOn(t.src, pitch, d2 / 127)); rec.noteOn(t, pitch, d2 / 127, `midi${d1}`); app.session?.noteOn(t, pitch, d2 / 127, `midi${d1}`); }
+          else if (cmd === 0x80 || (cmd === 0x90 && d2 === 0)) { engine.noteOff(notes.get(d1)); notes.delete(d1); rec.noteOff(`midi${d1}`); app.session?.noteOff(`midi${d1}`); }
         };
       }
       S.midi = n ? `${n} entrée${n > 1 ? 's' : ''}` : 'aucune entrée';
