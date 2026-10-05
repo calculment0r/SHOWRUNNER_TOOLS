@@ -564,8 +564,8 @@ function paintEspace() {
   box.hidden = !cur;
   if (!cur) return;
   const btn = box.querySelector('.sr-ws-btn');
-  btn.querySelector('.tm').textContent = cur.t.name || '';
-  btn.querySelector('.ws').textContent = cur.s.name || '';
+  btn.querySelector('.sr-tm').textContent = cur.t.name || '';
+  btn.querySelector('.sr-wsn').textContent = cur.s.name || '';
   const doc = docEspace && docEspace !== ESPACE ? nomEspace(docEspace) : '';
   btn.title = `Team ${cur.t.name} · Workspace ${cur.s.name}${cur.s.role ? ` · ${WS_ROLE[cur.s.role] || cur.s.role}` : ''}`
     + (doc ? `\nle document ouvert est dans ${doc}` : '') + '\nchanger de Workspace';
@@ -729,11 +729,19 @@ export function mountHeader(toolId, { dock: useDock = true } = {}) {
   DOCK.page = useDock && toolId !== 'asset' && TOOLS.some((x) => x.id === toolId) ? toolId : null;
   const assetT = TOOLS.find((x) => x.id === 'asset');
   const nav = el('nav', { class: 'tools' });
+  // le nom de l'outil : une case de largeur FIXE, la même sur toutes les pages (Cal, 05/10 : « quand je passe
+  // d'Image à Transcrire, tout le menu se décale vers la droite »). Tous les noms (TOOLS, PAGES) y sont posés
+  // l'un sur l'autre, seul celui de la page se voit (shell.css, .tool-name) : la case a la largeur du plus long,
+  // dans sa police, mesurée par le navigateur ; un séparateur fixe la suit, et la navigation commence au même
+  // x partout, l'accueil compris (la case y reste vide). Le nom entier au survol, s'il est coupé (barre étroite).
+  const noms = el('span', { class: 'tool-name', title: t ? t.name.replace(/\u00ad/g, '') : null },
+    [...TOOLS, ...Object.values(PAGES)].map((x) => el('b', x === t ? { class: 'cur' } : { 'aria-hidden': 'true' }, x.name)));
   const hdr = el('header', { class: 'hdr' },
     el('a', { class: 'logo', href: avecEspace(href('')), title: 'le portail' },
       el('span', { class: 'sq' }, el('i')),
       el('span', {}, el('b', {}, 'Nirvalab'))),
-    t ? el('span', { class: 'tool-name' }, el('b', {}, t.name)) : null,
+    noms,
+    el('i', { class: 'tool-sep', 'aria-hidden': 'true' }),
     nav,
     el('span', { class: 'sp' }),
     el('div', { class: 'sr-droite' },
@@ -751,12 +759,12 @@ export function mountHeader(toolId, { dock: useDock = true } = {}) {
       el('span', { class: 'doc', hidden: true }),
       el('button', { class: 'sr-ws-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false',
         onclick: (e) => openWsMenu(e.currentTarget) },
-      el('span', { class: 'tm' }), el('span', { class: 'sl', 'aria-hidden': 'true' }, '/'), el('span', { class: 'ws' }),
+      el('span', { class: 'sr-tm' }), el('span', { class: 'sr-sl', 'aria-hidden': 'true' }, '/'), el('span', { class: 'sr-wsn' }),
       el('i', { class: 'sr-cv', 'aria-hidden': 'true', html: '<svg viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5"/></svg>' }))),
     // tout à droite : le nom ; son menu (commun/porte.js, account) : la file, les Teams, l'Admin, les machines
     el('button', { class: 'tb ghost sm sr-me', id: 'sr-me', type: 'button', hidden: true, 'aria-haspopup': 'menu',
       onclick: (e) => menuDuNom(e.currentTarget) },
-    el('span', { class: 'nm' }, 'compte'),
+    el('span', { class: 'sr-nm' }, 'compte'),
     el('i', { class: 'dq', hidden: true, 'aria-hidden': 'true' }), el('i', { class: 'da', hidden: true, 'aria-hidden': 'true' }))));
   // fenêtre étroite : la navigation passe dans un menu « Outils », jamais cachée
   const menu = el('div', { class: 'tools-menu', hidden: true });
@@ -768,14 +776,19 @@ export function mountHeader(toolId, { dock: useDock = true } = {}) {
   HDR = hdr;
   // le panneau (et sa place, dès maintenant : la page est encore cachée, rien ne saute)
   if (DOCK.page) import('./dock.js').then((m) => m.mount(DOCK.page)).catch((e) => console.error('panneau Asset', e));
-  // la barre ne se coupe jamais : si les noms n'y tiennent pas entiers (douze
-  // outils, le nom de l'outil, le compte…), elle passe dans le menu « Outils ».
-  // Mesurée, pas devinée par une largeur : juste quel que soit le contenu.
+  // la barre ne se coupe jamais : si les noms n'y tiennent pas entiers (douze outils, la case du nom
+  // resserrée à son minimum, le compte…), la navigation passe dans le menu « Outils ». Mesurée, pas
+  // devinée par une largeur : la navigation ne se resserre pas (shell.css), c'est le groupe de droite qui
+  // sortirait du bord de la barre — juste quel que soit le contenu.
+  const droite = hdr.querySelector('.sr-droite');
   const fit = () => {
     hdr.classList.remove('squeeze');
-    if (nav.children.length && nav.scrollWidth > nav.clientWidth + 1) hdr.classList.add('squeeze');
+    if (!nav.children.length) return;
+    const bord = hdr.getBoundingClientRect().right - parseFloat(getComputedStyle(hdr).paddingRight);
+    if (droite.getBoundingClientRect().right > bord + 1) hdr.classList.add('squeeze');
   };
-  if (window.ResizeObserver) { const ro = new ResizeObserver(fit); ro.observe(hdr); ro.observe(nav); }
+  if (window.ResizeObserver) { const ro = new ResizeObserver(fit); ro.observe(hdr); ro.observe(nav); ro.observe(noms); ro.observe(droite); }
+  document.fonts?.ready.then(fit);   // les polices arrivées, les noms ont leur vraie largeur
   if (!document.querySelector('link[data-porte]')) {
     document.head.append(el('link', { rel: 'stylesheet', href: href('commun/porte.css'), 'data-porte': '' }));
   }
@@ -787,7 +800,7 @@ export function mountHeader(toolId, { dock: useDock = true } = {}) {
     if (!me || !mine) return;
     mine.hidden = !me.user;
     if (!me.user) return;
-    mine.querySelector('.nm').textContent = me.user.name;
+    mine.querySelector('.sr-nm').textContent = me.user.name;
     const pend = me.user.role === 'admin' ? me.pending_requests || 0 : 0;
     mine.querySelector('.da').hidden = !pend;
     $('#sr-asset', hdr).hidden = me.user.role === 'invite';   // l'invité d'une planche n'a pas la bibliothèque
