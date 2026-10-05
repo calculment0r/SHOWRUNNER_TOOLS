@@ -109,8 +109,14 @@ case "${1:-etat}" in
     ( crontab -l 2>/dev/null | grep -v 'tools/auto_maj.sh' ; echo "$LIGNE" ) | crontab -
     echo "ok     installé : toutes les 2 minutes ($LIGNE)"
     echo "       journal : $LOG ; état : bash tools/auto_maj.sh etat ; arrêt : bash tools/auto_maj.sh desinstalle"
-    exec 9>"$LOCK"; flock -n 9 && tour
-    tail -n 5 "$LOG" 2>/dev/null
+    exec 9>"$LOCK"; flock -n 9 || exit 0
+    # la première fois : remettre à niveau ce qui tourne (le dépôt a pu être recalé à la main juste avant, sans relance)
+    cd "$REPO" || exit 1
+    git fetch -q origin main 2>/dev/null && git reset -q --hard origin/main
+    if bash tools/portail.sh status 2>/dev/null | grep -q 'en route'; then
+      if [ "$(occupe)" -gt 0 ]; then echo "       un calcul tourne : le portail sera relancé au prochain changement"; else bash tools/portail.sh restart > /dev/null 2>&1 && echo "ok     portail relancé"; fi
+    fi
+    bash tools/porte.sh deploie > /tmp/sr_maj_porte.txt 2>&1 && echo "ok     adresse publique publiée" || echo "ÉCHEC publication : voir /tmp/sr_maj_porte.txt"
     ;;
   desinstalle)
     ( crontab -l 2>/dev/null | grep -v 'tools/auto_maj.sh' ) | crontab -

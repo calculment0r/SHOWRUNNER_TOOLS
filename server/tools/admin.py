@@ -345,7 +345,7 @@ def journal(req):
 # elle tourne DANS le portail, pour que la bibliothèque voie ses photos aussitôt, sans redémarrage).
 REPO = Path(__file__).resolve().parents[2]
 DIAGS = {   # id : (nom court, ce qu'il dit, commande, délai en s, action ?)
-    "maj": ("Mise à jour", "la mise à jour automatique : installée ou non, la version en route, son journal",
+    "maj": ("Mise à jour", "la mise à jour automatique : installée ou non, la version en route, ce qu'elle a fait (son journal)",
             ["bash", "tools/auto_maj.sh", "etat"], 90, False),
     "voies": ("Voies de calcul", "quelles machines calculent l'image, la vidéo, l'audio", ["python3", "tools/voie.py"], 30, False),
     "yue": ("YuE2 · paroles", "ce que les dernières chansons YuE2 ont vraiment reçu : style, paroles, partition",
