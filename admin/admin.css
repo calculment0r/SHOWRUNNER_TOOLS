@@ -10,7 +10,7 @@
   max-width: 1680px; margin: 0 auto; padding: var(--s5) var(--s6) 64px;
   display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: var(--s5); align-items: start;
 }
-@media (max-width: 900px) { .adm { grid-template-columns: 1fr; padding: var(--s4); } }
+@media (max-width: 900px) { .adm { grid-template-columns: minmax(0, 1fr); padding: var(--s4); } }   /* minmax(0, …) : « 1fr » prenait la largeur de la rangée qui défile (1825 px au téléphone) */
 .adm-nav { position: sticky; top: 70px; }
 @media (max-width: 900px) { .adm-nav { position: static; } .adm-nav .rack { flex-direction: row; overflow-x: auto; } .adm-nav .item { min-width: 150px; } }
 .adm-nav .item { cursor: pointer; }
