@@ -610,7 +610,8 @@ const porteTravail = (d) => !!d && typeof d === 'object' && (estTravail(d) || es
 // visible la traite comme la sienne (recevoir) : sr:job, sr:elements, l'en-tête, jobs.wait ; un onglet caché
 // garde la dernière et la traite à son retour (gardee : caché, rien ne part, pas même ce que sr:job relit). Un geste qui
 // touche la file relève tout de suite dans son onglet, et diffuse aussi. Un suiveur qui n'entend rien pendant le
-// délai + 15 s relève lui-même (le filet). Sans ces deux API : chaque onglet relève, comme avant.
+// délai + 15 s relève lui-même (le filet). Sans ces deux API : chaque onglet relève, comme avant — c'est le cas
+// à la maison en http (Web Locks : contexte sûr seulement, MDN), qui ne passe pas par Cloudflare.
 const PARTAGE = typeof BroadcastChannel === 'function' && !!(navigator.locks && typeof navigator.locks.request === 'function');
 let canal = null;      // le canal du Workspace de l'onglet
 let canalNom = '';

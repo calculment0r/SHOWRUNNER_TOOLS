@@ -121,7 +121,11 @@ Asset, Idéation) font 85 requêtes par minute : c'est ce que montrait l'Observa
      caché) fait aussi son `sr:job` : il est plus récent que tous ceux de la liste d'avant
      (`created`, l'heure du portail) ;
    - un onglet neuf ne partage qu'une fois son Workspace connu (la session a répondu) ;
-   - sans ces API, chaque onglet relève.
+   - sans ces API, chaque onglet relève. Web Locks n'existe qu'en contexte sûr (MDN, Web Locks
+     API : « secure context ») : à l'adresse publique (https) et en local (127.0.0.1), oui ; à la
+     maison (`http://192.168.10.247:8790`), non, et chaque onglet relève, hors du compte de
+     Cloudflare ;
+   - l'onglet meneur fermé, un autre prend la main (essayé : le verrou est rendu avec l'onglet).
 
    `jobs.wait` lit la liste tant que le travail tourne, puis sa fiche une fois fini (un GET
    toutes les 1,2 s en plus, avant).
@@ -141,6 +145,7 @@ Mesuré après (requêtes du Worker par minute, au repos ; « par jour » = ouve
 | 1 onglet (accueil) | 26 | 4 | 4 |
 | 3 onglets, dont 2 cachés | 52 | 4 | 4 |
 | 3 onglets visibles (plusieurs fenêtres) | 52 | 10 | 6 |
+| accueil et ODIO visibles, Admin caché | 92 (somme des mesures par onglet : 26 + 33 + 33) | — | 5 |
 | Asset, Idéation, ODIO (un onglet visible) | 13 · 13 · 33 | 3 · 3 · 3 | 3 |
 | un onglet caché, quel qu'il soit | = visible | **0** | 0 |
 | Admin, Character Factory (visibles) | 33 · 31 | 23 · 21 | 23 · 21 |
