@@ -2,7 +2,7 @@
 
 **État au 06/10/2026.** Session cloud du 06/10 : une session principale et une trentaine d'agents en parallèle,
 chacun dans sa copie, fusionnés et vérifiés lot par lot, poussés sur `main` à chaque lot (`check.py` complet à
-0 échec avant chaque poussée ; dernier passage complet : **3447 / 0**). La mise à jour automatique de DGX2 publie
+0 échec avant chaque poussée ; dernier passage complet : **3476 / 0**). La mise à jour automatique de DGX2 publie
 seule. Les branches de la session : `claude/adoring-turing-op7th8` (l'intégration, égale à `main`) et
 `wip2/<sujet>` (une par agent, toutes fusionnées sauf celles marquées « en cours » au § 2.A).
 
@@ -105,13 +105,20 @@ odio-spaces, slides-pdf, odio-finitions, et la partie 1 de montage-poignees (l'e
 Fusionnées ensuite le 06/10 : transcrire-ecran, montage-poignees (le moniteur sous la tête pendant un rognage,
 Alt pour le bord ; les images clés), espaces-phaseb, telephone, onde-precise. `check.py` complet : **3447 / 0**.
 
+Puis : `wip2/agent-ingest` (la nouvelle conduite de « Commencer un projet » : réception, compréhension en un
+appel, questions cliquables, plan, une étape à la fois, carnet des décisions, paliers en arrière-plan sur les deux
+DGX ; 44 appels au modèle → 1 pour la première réponse ; le cadre « Vidéos » rempli de sons venait de
+`library` qui jugeait par l'extension : il lit le contenu par ffprobe). `check.py` complet : **3476 / 0**.
+
 En cours au moment d'écrire (à fusionner s'il a fini ; sinon sa branche dit où il en est) :
-- `wip2/agent-ingest` : la nouvelle conduite de « Commencer un projet » après le premier essai réel de Cal
-  (« super lent et assez con », une avalanche de post-it, un cadre « Vidéos » rempli de sons) : réception,
-  compréhension en un ou deux appels, 3 à 5 questions cliquables, un plan court accepté, une étape à la fois,
-  un carnet des décisions (la « scripte » de Fondations II, le document de vision de Cal, hors dépôt) ; une
-  restitution par paliers (le texte d'abord, puis images, sons, vidéos pendant la conversation) et les deux DGX
-  en parallèle ; l'étude des modèles locaux plus rapides (rien à télécharger sans Cal).
+- `wip2/motion-editeur` : les idées d'une note de spécification d'éditeur de motion partagée par Cal (le
+  déterminisme, l'export MP4 par Chromium sans affichage et ffmpeg, les losanges d'images clés déplaçables, le
+  choix de courbe avec aperçu et le ressort, les préréglages qui posent des clés modifiables, la cascade).
+
+**Décision proposée à Cal (sans téléchargement)** : `ideation_agent_modele: "qwen3:30b-a3b"` pour la
+conversation de l'agent (déjà sur les deux DGX ; un modèle à experts, ≈ 6 fois plus rapide à écrire d'après les
+sources publiées, `agent_showrunner.md` § 7), `qwen3-vl-32b-32k` gardé pour les images ; vérifier d'abord au
+diagnostic « Agent Showrunner » qu'il prend les outils.
 
 ### 2.D Ce qui attend Cal (gestes, réponses, essais)
 
