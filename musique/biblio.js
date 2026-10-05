@@ -153,17 +153,23 @@ export function versSession(app, { clips = null, range = null, voie = null, neuv
 }
 
 // ── les sons du projet : leurs fiches (titre, durée, adresse), lues par lots ──
+// Une fiche n'est demandée qu'une fois (DEMANDES) : un serveur qui ne répond pas
+// ne fait pas tourner la page en rond. Rend vrai si des fiches sont arrivées.
 const FICHES = new Map();   // id → l'objet public, ou null (absent, à la corbeille, d'un autre Workspace)
+const DEMANDES = new Set();
 export async function fiches(ids) {
-  const manque = [...new Set(ids)].filter((id) => !FICHES.has(id));
+  const manque = [...new Set(ids)].filter((id) => !FICHES.has(id) && !DEMANDES.has(id));
+  let neuves = false;
+  for (const id of manque) DEMANDES.add(id);
   for (let i = 0; i < manque.length; i += 500) {
     const lot = manque.slice(i, i + 500);
     try {
       const r = await api('library/batch', { method: 'POST', body: { ids: lot } });
       for (const it of r.items || []) FICHES.set(it.id, it);
       for (const id of lot) if (!FICHES.has(id)) FICHES.set(id, null);
-    } catch { /* la prochaine fois */ }
+      neuves = true;
+    } catch { /* restent « … » jusqu'au prochain chargement de la page */ }
   }
-  return FICHES;
+  return neuves;
 }
 export const fiche = (id) => FICHES.get(id);

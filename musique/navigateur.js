@@ -249,7 +249,7 @@ export function createBrowser(app, { poser = null } = {}) {
   function projet() {
     const p = P(), b = p.biblio || { dossiers: [], clips: [], sons: [] };
     const manque = b.sons.map((x) => x.item).filter((id) => fiche(id) === undefined);
-    if (manque.length) fiches(manque).then(() => { if (isOpen('proj') && root.isConnected) render(); });
+    if (manque.length) fiches(manque).then((neuves) => { if (neuves && isOpen('proj') && root.isConnected) render(); });
     const commit = (lab) => { app.label(lab); app.commit('data'); };
     const dansDossier = (x, quoi) => [
       ...b.dossiers.map((d) => ({ label: d.name, checked: x.dossier === d.id, onclick: () => { x.dossier = d.id; commit(`ranger ${quoi} dans « ${d.name} »`); } })),

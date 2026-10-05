@@ -86,7 +86,7 @@ export const app = {
   // 'quiet' (la vue s'est déjà redessinée elle-même : on enregistre),
   // 'mute', 'graph' (modules ou câbles), 'data' (clips, motifs), 'meta'
   commit(kind, m) {
-    retenirSons(S.proj);   // la bibliothèque du projet : un son posé y entre de lui-même (projet.js)
+    if (kind !== 'param') retenirSons(S.proj);   // la bibliothèque du projet : un son posé y entre de lui-même (projet.js)
     if (kind === 'param' && m) engine.updateModule(m);
     else if (kind === 'mute') engine.mutes();
     else if (kind === 'graph' || kind === 'meta') engine.setProject(S.proj);
