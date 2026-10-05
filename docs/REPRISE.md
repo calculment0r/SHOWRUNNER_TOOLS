@@ -117,6 +117,26 @@ Tout est sur `main`, en ligne, et `tools/check.py` passe : **2601 / 0** (les 5 �
 - **Admin → Diagnostics → « Tout lancer et copier »** : tous les diagnostics, un seul texte au presse-papier.
   (Un envoi automatique vers GitHub, même chiffré, a été refusé par les permissions de la session cloud.)
 
+## TRAVAUX EN COURS À LA BASCULE (05/10 au soir) : six branches `wip/…` sur GitHub, À FUSIONNER
+
+Lancés en fin de session (chacun dans sa copie), poussés tels quels sur `origin/wip/<branche>` ; chaque dernier
+commit dit ce qui est fait et ce qui reste. Pour chacune : `git fetch origin wip/<b>`, la lire, `git merge`,
+`python3 tools/check.py` (0 échec attendu ; il tourne sans GPU), un essai Playwright de la page touchée, puis
+`main`. Ordre conseillé : entete, documents, agent-showrunner, projet-ingest (qui s'appuie sur les deux
+précédents : leur contrat est dans son commit), odio-pistes-secousse, odio-session2.
+
+| branche | demande de Cal (05/10) |
+|---|---|
+| `wip/entete` | le nom de l'atelier dans une place FIXE de l'en-tête + séparateur fixe (la navigation ne bouge plus d'une page à l'autre) ; la barre du Montage identique aux autres |
+| `wip/documents` | la sorte `document` dans la bibliothèque (pdf, docx, pptx, xlsx, txt, md, csv… et tout fichier inconnu) : texte extrait (`GET/POST /api/library/<id>/texte`), vignette, Asset, objet d'Idéation avec liseuse ; PDF par pdftotext s'il est là, sinon pdf.js dans la page (`commun/documents.js`) |
+| `wip/agent-showrunner` | l'agent « Showrunner » dans Idéation (comme le Supercomputer de Higgsfield, mais qui AGIT sur la planche, lisiblement) : panneau de discussion façon Claude, fichiers en vignettes au-dessus du champ, outils de lecture côté serveur (Ollama local) et d'écriture côté page (une annulation par tour) ; `app.agent.open()/send(text,{items,intent})` |
+| `wip/projet-ingest` | « Commencer un projet » remplace « Répondre à un brief » : Idéation + fenêtre d'ingestion (tout se dépose, brief tapé ou déposé), crée la Team et son Workspace « Général », ajoute des personnes, range tout sur la planche, lance l'analyse de l'agent ; étude `mode_showrunner.md` |
+| `wip/odio-pistes-secousse` | ODIO : en-tête de piste compact quand la piste est basse (le nom reste lisible) ; le jouet Secousse ne réagit plus au pan/zoom, seulement à son nœud traîné, et se penche (pendule amorti, léger) |
+| `wip/odio-session2` | ODIO : la Session REFAITE — une couche vierge par-dessus l'arrangement (ses propres voies, même horloge, joue EN PLUS), Tab y passe, design centré ; « Envoyer à la Session » depuis un clip ou une plage (références non destructives) ; une bibliothèque du PROJET ODIO (les découpes n'y vont pas dans Asset) |
+
+Aussi fait en fin de session, sur `main` : le carnet de Transcrire replie ses timecodes ; Cal demande peut-être
+le carnet toujours en français (le résumé sort dans la langue de l'enregistrement) — lui demander.
+
 ## PREMIER GESTE DE LA SESSION SUIVANTE
 
 1. Admin → Diagnostics → « Tout lancer et copier » : demander à Cal de coller le texte. Y lire : la mise à jour
