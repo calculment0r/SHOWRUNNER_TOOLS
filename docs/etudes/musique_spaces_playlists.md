@@ -205,8 +205,16 @@ le reste est comme tu proposes ») : S1 partagé, S2, L1 Cloudflare, L2, L3 comm
   recette mesuré dans la page (`musique/tempo.js`, confiance ≥ 0,5) ; aucun détecteur de tonalité (non
   documenté) : une tonalité inconnue ne compte ni pour ni contre.
 - La fiche d'Asset, « Ouvrir dans Musique » (`chanson/?playlist=<id>`). Le pilote : `chanson/pilote_playlist.mjs`.
-- Attendent leurs branches : « Exporter en .zip » (`POST /api/ecoute/<id>/zip`) et « Caler les paroles »
-  (`commun/lrc.js`, `ouvrirEditeurLrc`) — éteints, ils disent pourquoi.
+- Attendait sa branche : « Caler les paroles » (`commun/lrc.js`, `ouvrirEditeurLrc`) — éteint, il dit pourquoi.
+- **Partager, branché (05/10, branche `wip2/playlist-publier`)** : sous les gestes du volet, « Exporter en .zip »
+  (le travail `ecoute.zip` suivi par le relevé de la file : sa progression sous le bouton, puis le téléchargement,
+  et le .zip prêt reste à reprendre deux heures) et « Publier le lien » (un panneau : code et date de fin
+  facultatifs, le téléchargement permis et l'enchaînement — les champs de la playlist, écrits tout de suite —,
+  Publier, l'adresse et Copier par la vieille voie `execCommand` en http, Republier sur la même adresse, Retirer
+  confirmé, les écoutes des sept derniers jours). Sans jeton R2, le panneau le dit (« le lien d'écoute attend le
+  jeton R2… ») et propose le .zip ; qui ne peut pas publier (`peut_publier`, un guest) voit les deux boutons
+  éteints et la raison de `espaces.judge`. Le pilote : `chanson/pilote_lien.mjs` (avec
+  `SR_FAUX_R2=1 python3 tools/portail_essai.py`, la publication de bout en bout contre le faux S3 du selftest).
 
 ## 4. Le lien d'écoute
 

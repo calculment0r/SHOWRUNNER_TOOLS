@@ -8,12 +8,15 @@
     SR_LORA_MANIFEST=/chemin/trainers.json python3 tools/portail_essai.py   # un faux manifeste d'entraîneurs
     SR_OLLAMA_URL=http://127.0.0.1:11500 python3 tools/portail_essai.py   # l'agent d'Idéation sur un Ollama
                                                                   # (le faux : python3 tools/faux_ollama.py)
+    SR_FAUX_R2=1 python3 tools/portail_essai.py    # le lien d'écoute publié sans Cloudflare : le faux S3
+                                                   # du selftest d'ecoute.py, un jeton d'essai (chanson/pilote_lien.mjs)
 
 Le même que la session cloud du 05/10 faisait tourner à la main (docs/REPRISE.md, « Session
 cloud ») : arrêter par son PID, jamais par `pkill -f` (le motif tue aussi le shell qui le tape).
 Jamais sur les DGX : c'est le portail de la maison qui y tourne (tools/portail.sh).
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -35,11 +38,22 @@ if os.environ.get("SR_LORA_MANIFEST"):
     config.CFG["lora_manifest"] = os.environ["SR_LORA_MANIFEST"]
 if os.environ.get("SR_OLLAMA_URL"):
     config.CFG["ideation_agent_url"] = os.environ["SR_OLLAMA_URL"]
+if os.environ.get("SR_FAUX_R2"):   # un jeton d'essai, lu par porte/r2_recopie.py (SR_R2_JETON) ; jamais le vrai
+    jeton = Path(data) / "r2-essai.json"
+    jeton.write_text(json.dumps({"account_id": "essai", "access_key_id": "AKIAESSAI", "secret_access_key": "essai",
+                                 "bucket": "showrunner-bibliotheque"}), encoding="utf-8")
+    jeton.chmod(0o600)
+    os.environ["SR_R2_JETON"] = str(jeton)
 
 import showrunner  # noqa: E402
 from core import jobs  # noqa: E402
 
 app = showrunner.build()
+if os.environ.get("SR_FAUX_R2"):
+    from tools import ecoute  # noqa: E402
+    faux = ecoute._FauxS3()
+    ecoute.R2_POINT = faux.point
+    print(f"faux R2 : {faux.point} (le bucket showrunner-bibliotheque, en mémoire)", flush=True)
 jobs.start()
 print(f"portail d'essai : http://127.0.0.1:{port}/  (données {data}, PID {os.getpid()})", flush=True)
 app.serve("127.0.0.1", int(port))

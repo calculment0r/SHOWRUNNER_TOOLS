@@ -79,7 +79,8 @@ fichier et sa vignette. Huit sortes (`library.KINDS`) : `image`, `video`,
   premiers morceaux, peinte par la page, `commun/pochette.js`). Routes :
   `GET /api/playlist/options`, `GET|POST /api/playlist`, `GET|POST /api/playlist/<id>`
   (`base_rev`, 409), `POST /api/playlist/<id>/ordre` (« Proposer un ordre », rien
-  n'est écrit). Musique l'ouvre dans son volet par `chanson/?playlist=<id>`.
+  n'est écrit). Musique l'ouvre dans son volet par `chanson/?playlist=<id>` ; le volet la partage
+  (« Exporter en .zip », « Publier le lien » : les routes du lien d'écoute, § 7).
 
 ```jsonc
 {
@@ -386,7 +387,9 @@ Hors des DGX (une session cloud, un agent dans sa copie) : `tools/portail_essai.
 [port] [données]` (8795 et `/tmp/sr_essai/data` par défaut) lance le même serveur
 avec `auth: false` (on entre en Cal), l'écoute sur 127.0.0.1 et les seules voies
 `cpu` et `image` sur la machine même — donc les moteurs factices des réglages par
-défaut ; `SR_LORA_MANIFEST` pose un faux manifeste d'entraîneurs. Il s'arrête par
+défaut ; `SR_LORA_MANIFEST` pose un faux manifeste d'entraîneurs, `SR_FAUX_R2=1` un faux
+R2 (le faux S3 du selftest d'`ecoute.py` et un jeton d'essai : le lien d'écoute se publie
+pour de faux, `chanson/pilote_lien.mjs`). Il s'arrête par
 son PID (jamais `pkill -f`). Jamais sur les DGX : c'est le portail de la maison
 qui y tourne. L'agent d'Idéation s'y essaie contre `tools/faux_ollama.py`.
 
