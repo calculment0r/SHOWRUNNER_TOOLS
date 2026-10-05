@@ -78,6 +78,8 @@ import { openTempo } from './bpm.js';
 import { brancher, borne, tenirY, AIDE as MOLETTE } from '../commun/molette.js';
 // LA tête de lecture du portail (30/09, Cal : « toutes nos timelines [avec] la même cue […] celle du montage vidéo »)
 import { tete, poser, suivre, glisser } from '../commun/tete.js';
+// le son au défilement (06/10, Cal : « entendre le son quand on fait glisser la tête […] pour caler un cut ») : commun/scrub.js
+import { scrub as scrubSon } from '../commun/scrub.js';
 
 const HEAD_W = 224;
 const Z_MIN = 2, Z_MAX = 160;                           // pixels par noire, les bornes du zoom
@@ -417,14 +419,15 @@ export function createTimeline(app) {
       const x0 = e.clientX, y0 = e.clientY, z0 = ppb();
       const mx = e.clientX - scroll.getBoundingClientRect().left;
       let mode = null;
-      app.engine.seek(Math.max(0, snapB(beatAt(e.clientX), e)));
+      ecouteDebut();
+      ecouteSeek(Math.max(0, snapB(beatAt(e.clientX), e)));
       // zoomer redessine la règle : le geste s'écoute sur la fenêtre, pas sur elle
       const mv = (ev) => {
         if (!mode && Math.hypot(ev.clientX - x0, ev.clientY - y0) > 4) mode = Math.abs(ev.clientY - y0) > Math.abs(ev.clientX - x0) ? 'zoom' : 'seek';
         if (mode === 'zoom') zoomAround(z0 * Math.pow(1.012, ev.clientY - y0), mx);
-        else if (mode === 'seek') app.engine.seek(Math.max(0, snapB(beatAt(ev.clientX), ev)));
+        else if (mode === 'seek') ecouteSeek(Math.max(0, snapB(beatAt(ev.clientX), ev)));
       };
-      const up = () => { removeEventListener('pointermove', mv, true); removeEventListener('pointerup', up, true); paintTools(); };
+      const up = () => { removeEventListener('pointermove', mv, true); removeEventListener('pointerup', up, true); ecoute.fin(); paintTools(); };
       addEventListener('pointermove', mv, true); addEventListener('pointerup', up, true);
     });
     nums.addEventListener('dblclick', () => zoomToSelection());
@@ -1406,13 +1409,53 @@ export function createTimeline(app) {
     if (e.button !== 0) return;
     e.preventDefault(); e.stopPropagation();
     let last = null;
+    ecouteDebut();
     const go = (ev) => {
       edgeScroll(ev);
       const b = Math.max(0, snapB(beatAt(ev.clientX), ev));
-      if (b !== last) { last = b; app.engine.seek(b); }
+      if (b !== last) { last = b; ecouteSeek(b); }
     };
     document.body.classList.add('ar-grab');
-    glisser(e, go, () => { document.body.classList.remove('ar-grab'); paintTools(); });
+    glisser(e, go, () => { document.body.classList.remove('ar-grab'); ecoute.fin(); paintTools(); });
+  }
+
+  // ── le son au défilement (06/10, commun/scrub.js) ──
+  // Glisser la règle ou l'onglet de la tête, à l'arrêt, fait entendre les clips audio sous
+  // la tête, par grains : chacun dans la source de SA piste (player du moteur), donc avec son
+  // volume, ses effets, muet et solo ; la place dans le son comme le moteur la calcule
+  // (audioGeom : début, transposition, boucle ; clipBuffer : à l'envers), le gain et les
+  // fondus du clip. Les clips de notes ne s'entendent pas (les grains sont du son enregistré).
+  // En lecture, rien : la lecture repart d'où va la tête (Engine.seek).
+  const ecoute = scrubSon({
+    contexte: () => app.engine.ctx,
+    sons: (t) => {
+      const p = P(), eng = app.engine, g = eng.graph;
+      if (!p || !g || eng.running) return [];
+      const spb = 60 / p.bpm, beat = t / spb, trk = new Map(p.tracks.map((x) => [x.id, x])), out = [];
+      for (const c of p.clips) {
+        const tr = trk.get(c.track);
+        if (!tr || tr.kind !== 'audio' || c.mute || !c.item || beat < c.start || beat >= c.start + c.len) continue;
+        const buf = clipBuffer(eng.buffers.get(c.item), c), node = g.nodes.get(tr.src);
+        if (!buf || !node || !node.output) continue;
+        const G = audioGeom(c, buf.duration), into = (beat - c.start) * spb, L = c.len * spb;
+        let at = G.off + into * G.rate;
+        if (G.loop && at >= G.ls + G.llen) at = G.ls + ((at - G.ls) % G.llen);
+        const fi = c.fi || 0, fo = c.fo || 0;
+        const fondu = Math.max(0, Math.min(1, fi > 0 ? into / fi : 1, fo > 0 ? (L - into) / fo : 1));
+        out.push({ buffer: buf, at, gain: Math.pow(10, (c.gain || 0) / 20) * fondu, vitesse: G.rate, sortie: node.output });
+      }
+      return out;
+    },
+  });
+  // le geste commence : le moteur se lance (son contexte, son graphe) s'il ne l'est pas encore
+  function ecouteDebut() {
+    if (!app.engine.running) app.engine.start().catch(() => {});
+    ecoute.debut();
+  }
+  // la tête va à `b` (noires) : le moteur la pose, le son suit (en secondes)
+  function ecouteSeek(b) {
+    app.engine.seek(b);
+    ecoute.aller(b * 60 / P().bpm);
   }
 
   // Le dessin d'un clip (forme d'onde, notes, région générative), sur la
