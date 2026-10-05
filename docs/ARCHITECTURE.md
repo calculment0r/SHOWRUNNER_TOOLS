@@ -56,6 +56,19 @@ fichier et sa vignette. Sept sortes (`library.KINDS`) : `image`, `video`,
   serveur ne sait pas lire (poppler absent : `needs_page`) est lu par la page
   (`commun/documents.js`, pdf.js) qui lui dépose texte et couverture. Servi sans
   risque (`library.serve_policy`) : ce qui pourrait s'exécuter part en pièce jointe.
+- `playlist` (id `pla-…`, 05/10) : une suite de sons de Musique
+  (`server/tools/playlist.py`, étude `musique_spaces_playlists.md` § 3), un objet
+  qu'on réécrit en place, sans fichier ; tout est dans `item.json`, champ
+  `playlist` : `{artist, year, description, cover: <id d'image> | null, tracks:
+  [{item: <id audio>, title?, credits?, lyrics?, lrc?}], transition: {mode:
+  gapless | crossfade | single, crossfade_s: 0..6}, download}` (le contrat que lisent
+  le lecteur d'écoute et les paroles calées), plus `music_space` (le Space où elle
+  est née, null : « Mon Space »), `rev`, `duration` (les morceaux présents), lignée
+  = ses sons, vignette = celle de sa pochette (sans pochette : la mosaïque de ses
+  premiers morceaux, peinte par la page, `commun/pochette.js`). Routes :
+  `GET /api/playlist/options`, `GET|POST /api/playlist`, `GET|POST /api/playlist/<id>`
+  (`base_rev`, 409), `POST /api/playlist/<id>/ordre` (« Proposer un ordre », rien
+  n'est écrit). Musique l'ouvre dans son volet par `chanson/?playlist=<id>`.
 
 ```jsonc
 {
