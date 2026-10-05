@@ -108,7 +108,7 @@ function showWhy(flash = false) {
   if (flash) { w.classList.remove('flash'); void w.offsetWidth; w.classList.add('flash'); }
 }
 
-// la seule action orange : répondre à un brief (Studio), créer une image (Apps)
+// la seule action orange : commencer un projet (Studio), créer une image (Apps)
 function paintActs() {
   const box = $('#acc-acts');
   if (S.access === 'apps') {
@@ -116,15 +116,14 @@ function paintActs() {
     box.replaceChildren(el('a', { class: 'tb go', href: toolHref(t, S.sys) }, 'Créer une image'));
     return;
   }
-  // tant que le parcours « brief » n'existe pas : une planche d'Idéation neuve
-  const go = el('button', { class: 'tb go', type: 'button', onclick: async () => {
-    go.disabled = true;
-    try {
-      const b = await api('ideation/boards', { method: 'POST', body: { name: 'Brief' } });
-      location.href = href('ideation/#' + b.id);
-    } catch (e) { go.disabled = false; toast(e.message); }
-  } }, 'Répondre à un brief');
-  box.replaceChildren(go);
+  // le mode showrunner (Cal, 05/10 ; docs/etudes/mode_showrunner.md) : Idéation sur une planche à
+  // venir, avec par-dessus la fenêtre « Commencer un projet » (ideation/projet.js) — un brief et
+  // tout ce qu'on a ; elle crée la Team, son Workspace, la planche rangée. Même onglet : l'onglet
+  // passera dans le Workspace neuf.
+  box.replaceChildren(el('a', { class: 'tb go acc-go', href: href('ideation/?projet=nouveau'),
+    title: 'un brief et tout ce que tu as (PDF, images, vidéos, sons, textes) : une Team, un Workspace, une planche rangée' },
+  'Commencer un projet'));
+  box.append(el('span', { class: 'acc-go-sub' }, 'un brief, tes fichiers · une Team, un Workspace, une planche rangée'));
 }
 
 function paintApps() {

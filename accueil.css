@@ -30,6 +30,11 @@
   text-transform: uppercase; color: var(--ink);
 }
 .acc-lede { margin: 0; max-width: 62ch; color: var(--ink2); font-size: 13px; line-height: 1.6; }
+/* l'action de tête (accueil.js, paintActs) : « Commencer un projet » (le mode showrunner,
+   docs/etudes/mode_showrunner.md), un peu plus haute ; à côté, ce qu'elle fait (de la prose : bas de casse) */
+#acc-acts { gap: var(--s3); }
+.acc-go.tb { height: 38px; padding: 0 var(--s4); font-size: 12px; }
+.acc-go-sub { font-size: 12px; color: var(--ink3); }
 /* le kit de présentation de Cal, à droite du titre (accueil.js, paintKit) : un seul gros bouton */
 .acc-top.kit { grid-template-columns: minmax(0, 1.7fr) minmax(260px, 1fr); }
 .acc-kit { display: flex; min-width: 0; }
