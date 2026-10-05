@@ -79,7 +79,7 @@ const KEYS = [
   ['la molette (la même dans toutes les timelines du portail)', MOLETTE],
   ['le zoom (chapitre « Arrangement View »)', [
     ['+ · −', 'zoomer · dézoomer'], ['Alt + / Alt −', 'hauteur de toutes les pistes'], ['Ctrl+Alt+glisser', 'déplacer la vue'],
-    ['règle des temps', 'glisser à l\'horizontale : chercher · à la verticale : zoomer · double-clic : zoomer sur la sélection'],
+    ['règle des temps', 'glisser à l\'horizontale : chercher (à l\'arrêt, on entend les sons et les notes sous la tête : Général → Son au défilement) · à la verticale : zoomer · double-clic : zoomer sur la sélection'],
     ['Z · X', 'zoomer sur la sélection · revenir (clavier MIDI éteint)'], ['W · H', 'tout le morceau en largeur · toutes les pistes en hauteur'],
   ]],
   ['le clavier MIDI de l\'ordinateur', [
