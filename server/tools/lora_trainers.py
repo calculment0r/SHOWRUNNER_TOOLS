@@ -323,11 +323,24 @@ def run(ctx, data: Path, out: Path, p: dict) -> dict:
     return {**extra, "comfy": f"showrunner/{fname}", "note": note, "minutes": round((time.time() - t0) / 60)}
 
 
+def _hours(mid: str):
+    """La durée annoncée avant de lancer, tirée de la vitesse mesurée à l'installation (`s_per_step`) et
+    du nombre de pas de run_aitk ; None sans mesure (l'ordre de grandeur de lora.MODELS reste)."""
+    def f():
+        e, _ = entry(mid)
+        if not e or e.get("trainer") != "aitk" or not e.get("s_per_step"):
+            return None
+        steps = int((e.get("train") or {}).get("steps") or e.get("steps") or 2000)
+        h = float(e["s_per_step"]) * steps / 3600
+        return f"{h:.1f} h".replace(".", ",") + f" ({steps} pas à {e['s_per_step']:g} s, mesuré le {e.get('checked') or '?'})".replace(".", ",", 1)
+    return f
+
+
 def install() -> None:
     from tools import lora
     for mid in lora.MODELS:
         if mid != "factice":
-            lora.TRAINERS[mid] = {"ready": _ready(mid), "run": run}
+            lora.TRAINERS[mid] = {"ready": _ready(mid), "run": run, "hours": _hours(mid)}
 
 
 def register(app) -> None:
@@ -422,6 +435,9 @@ def selftest(call, ok) -> None:
         ready = [k for k in lora.MODELS if k != "factice" and lora.model_state(k)["ready"]]
         ok(ready == ["krea2", "qwen21", "zimage", "h3", "ace"] and "pas encore branché" in lora.model_state("yue2")["why"],
            f"lora : le manifeste du 05/10 propose Z-Image, Qwen 2.1, Krea 2, H3, ACE-Step, et pas YuE2 ({ready})")
+        zh = lora.model_state("zimage")["hours"]
+        ok(zh.startswith("3,6 h (2000 pas à 6,4 s") and lora.model_state("ace")["hours"] == lora.MODELS["ace"]["hours"],
+           f"lora : la durée annoncée vient de la vitesse mesurée à l'installation ({zh})")
 
         # ai-toolkit (un faux) : sans HF_HUB_OFFLINE, ni échantillons ni neg booléen, le bloc du manifeste tel quel
         py = root / "venv" / "bin" / "python"

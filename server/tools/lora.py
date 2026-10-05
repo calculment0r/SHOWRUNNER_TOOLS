@@ -117,7 +117,13 @@ def model_state(mid: str) -> dict:
     else:
         ready, why = False, ("l'entraîneur de ce modèle n'est pas encore installé sur les DGX "
                              "(Admin → Diagnostics → « LoRA · installer »)")
-    return {"id": mid, "name": m["name"], "family": m["family"], "kind": m["kind"], "hours": m["hours"], "ready": ready, "why": "" if ready else why}
+    hours = m["hours"]
+    if t and t.get("hours"):   # la vitesse mesurée à l'installation (lora_trainers : `s_per_step` du manifeste)
+        try:
+            hours = t["hours"]() or hours
+        except Exception:
+            pass
+    return {"id": mid, "name": m["name"], "family": m["family"], "kind": m["kind"], "hours": hours, "ready": ready, "why": "" if ready else why}
 
 
 def _models_for(u) -> list[dict]:
