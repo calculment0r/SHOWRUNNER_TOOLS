@@ -183,7 +183,6 @@ export function liseuse(it, { page = 1, mode = '', deposer = true, onitem = null
   let doc = null;                 // le PDF ouvert par pdf.js (une promesse), pour les vignettes et « Pages »
   let cur = 0, gone = false;
   let vue = mode || (pdf && !d.has_text && !d.needs_page ? 'pages' : 'texte');
-  const io = [];
   const pdfDoc = () => {
     if (!doc) doc = ouvrirPdf(it.url).catch((e) => { note(e.message); return null; });
     return doc;
@@ -197,7 +196,7 @@ export function liseuse(it, { page = 1, mode = '', deposer = true, onitem = null
       title: k === 'texte' ? 'le texte lu dans le PDF, page par page' : 'les pages telles qu’elles sont (pdf.js)',
       onclick: () => { if (vue !== k) { const n = cur; vue = k; paintSeg(); peindre(); requestAnimationFrame(() => aller(n)); } } }, lab))) : null;
   const msg = el('p', { class: 'hint sr-lis-msg', hidden: true });
-  const pgs = el('div', { class: 'sr-lis-pgs', role: 'list', 'aria-label': 'les pages' });
+  const pgs = el('nav', { class: 'sr-lis-pgs', 'aria-label': 'les pages' });
   const main = el('div', { class: 'sr-lis-main', tabindex: '0', 'aria-label': 'le document' });
   const root = el('div', { class: 'sr-lis' + (pdf ? ' pdf' : ''), 'data-vue': vue },
     el('div', { class: 'sr-lis-bar' }, info, el('span', { class: 'sp' }), pos, seg),
@@ -213,15 +212,30 @@ export function liseuse(it, { page = 1, mode = '', deposer = true, onitem = null
   // une file : une page rendue à la fois (la mémoire d'un gros PDF)
   let file = Promise.resolve();
   const plusTard = (job) => { file = file.then(() => (gone ? null : job())).catch(() => {}); return file; };
-  // rendu quand il approche de la vue
+  // rendu quand il approche de la vue : un seul observateur par colonne (un PDF de 5000 pages)
+  const jobs = new Map();
+  const obs = new Map();
   function paresseux(box, rootEl, job) {
-    const o = new IntersectionObserver((es) => {
-      if (!es.some((e) => e.isIntersecting)) return;
-      o.disconnect();
-      plusTard(job);
-    }, { root: rootEl, rootMargin: '400px' });
+    let o = obs.get(rootEl);
+    if (!o) {
+      o = new IntersectionObserver((es) => {
+        for (const e of es) {
+          if (!e.isIntersecting || !jobs.has(e.target)) continue;
+          const j = jobs.get(e.target);
+          jobs.delete(e.target);
+          o.unobserve(e.target);
+          plusTard(j);
+        }
+      }, { root: rootEl, rootMargin: '400px' });
+      obs.set(rootEl, o);
+    }
+    jobs.set(box, job);
     o.observe(box);
-    io.push(o);
+  }
+  // une colonne repeinte : ses rendus en attente s'oublient
+  function oublier(rootEl) {
+    const o = obs.get(rootEl);
+    for (const b of [...jobs.keys()]) if (rootEl.contains(b)) { o?.unobserve(b); jobs.delete(b); }
   }
 
   // ── les vignettes ──
@@ -239,7 +253,7 @@ export function liseuse(it, { page = 1, mode = '', deposer = true, onitem = null
         pic.append(c);
       });
     } else pic.append(el('span', { class: 'sr-lis-mini' }, (p?.text || '').slice(0, 420)));
-    return el('button', { class: 'sr-lis-pg', type: 'button', role: 'listitem', 'data-n': String(n), title: `aller à la ${label(n)}`,
+    return el('button', { class: 'sr-lis-pg', type: 'button', 'data-n': String(n), title: `aller à la ${label(n)}`,
       onclick: () => aller(n) }, pic, el('span', { class: 'n' }, String(n)));
   }
   function peindreVignettes() {
@@ -282,6 +296,7 @@ export function liseuse(it, { page = 1, mode = '', deposer = true, onitem = null
     }));
   }
   function peindre() {
+    oublier(main);
     if (vue === 'pages') peindrePages(); else peindreTexte();
     suivre();
   }
@@ -341,7 +356,8 @@ export function liseuse(it, { page = 1, mode = '', deposer = true, onitem = null
     aller,
     detruire() {
       gone = true;
-      for (const o of io) o.disconnect();
+      for (const o of obs.values()) o.disconnect();
+      jobs.clear();
       doc?.then((D) => D?.destroy()).catch(() => {});
     },
   };
