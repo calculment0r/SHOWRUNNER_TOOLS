@@ -49,7 +49,7 @@ const DEPART_S = 0.05;        // la lecture part 50 ms après l'instant présent
 //    la lecture s'entend après l'avance). Le fil principal et le minuteur du
 //    Worker prennent du retard sous charge : au-delà de l'avance, les notes
 //    tombaient dans le passé (Engine.tick, plus bas).
-// Mesuré le 05/10 (docs/etudes/musique.md, « Les craquements ») : `court`
+// Mesuré le 06/10 (docs/etudes/musique.md, « Les craquements ») : `court`
 // était le réglage d'avant (10 ms, 120 ms) ; sur une machine chargée, des
 // pertes du rendu à 10 ms, aucune à 20 ms, et des tranches planifiées
 // jusqu'à 228 ms en retard.

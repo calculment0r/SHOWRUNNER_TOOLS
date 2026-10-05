@@ -1,7 +1,7 @@
 {
   "tool": "music",
   "title": "ODIO",
-  "about": "Le studio de musique. Le tampon audio, comme le « Buffer Size » de Live : plus long, la lecture résiste aux à-coups de la machine (plus de craquements) ; plus court, ce qu’on joue au clavier répond plus vite.",
+  "about": "Le studio de musique. Le tampon audio, comme le « Buffer Size » de Live : plus long, la lecture résiste aux à-coups de la machine (moins de craquements) ; plus court, ce qu’on joue au clavier répond plus vite.",
   "prefs": [
     {
       "key": "tampon", "label": "Tampon audio", "type": "choice", "default": "moyen",

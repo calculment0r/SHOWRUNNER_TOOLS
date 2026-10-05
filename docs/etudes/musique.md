@@ -774,3 +774,150 @@ reste derrière la poignée gauche). Un seul Ctrl+Z défait tout.
 - Reste : le temps fort est une estimation (la page le dit) ; pas d'étirement
   sans changer la hauteur dans ODIO, donc pas de « warp » ; le résultat n'est
   pas gardé dans le projet (refait en moins d'une seconde).
+
+## Les craquements (06/10/2026)
+
+Cal : « j'ai noté plein de craquements à un moment dans un morceau… les cracks
+typiques du buffer pas assez grand, et le logiciel se ralentit et des cracks
+sont entendus : corrige ça. »
+
+### Comment on a mesuré
+
+Le banc (scripts hors du dépôt, `/tmp/sr_odio-craquements/essais/`) : le portail
+d'essai, le départ « Session » plus quatre pistes audio de deux minutes faites
+par ffmpeg (WAV 16 et 24 bits, MP3, FLAC), huit effets dessus (égaliseur,
+compresseur, réverbération, délai, distorsion, Filtre drive, Réverbe, Chorus),
+une piste Numérique (Plaits, donc un AudioWorklet), l'arrangement triplé
+(11 pistes, 55 clips). Chromium 141 sans affichage (rendu logiciel), une machine
+de 4 cœurs partagée avec d'autres agents (charge 3 à 6). On joue 30 à 45 s et
+on relève :
+
+- les **pertes du rendu** : `AudioContext.playoutStats` (Chromium, derrière
+  `--enable-blink-features=AudioContextPlayoutStats` ; `fallbackFramesEvents`
+  et `fallbackFramesDuration` : ce que la carte a joué faute de son prêt).
+  Vérifié d'abord sur un worklet qu'on surcharge exprès : il les compte ;
+- l'**avance de l'ordonnanceur** à chaque réveil (`P.ct − currentTime`), les
+  écarts du minuteur du Worker et la livraison de ses messages ;
+- le **fil principal** : tâches longues (PerformanceObserver), images,
+  profils et traces Chromium (`devtools.timeline`).
+
+Les chiffres bougent avec la charge de la machine : chaque essai alterne
+l'avant et l'après, et deux essais contrôlés isolent les mécanismes.
+
+### Les causes
+
+1. **Le tampon de la carte son était le plus petit.** `latencyHint:
+   'interactive'` : 10 ms (Chromium, `media/base/audio_latency.cc` : le tampon
+   matériel ; 10 ms sous Windows en mode partagé). Avec un AudioWorklet dans le
+   graphe, tout le rendu passe sur le « Realtime AudioWorklet thread » : un
+   rappel toutes les 10 ms, 3,6 ms de travail en médiane, 6,9 ms au 99ᵉ
+   centile, des pointes de 9 à 39 ms quand la machine est occupée. Chaque
+   pointe au-delà du tampon est un trou : le craquement. Même code, seul le
+   tampon changé : **18, 14 et 0 pertes** en 40 s à 10 ms, **0, 0, 0** à
+   23 ms (« playback »). Web.dev (*Profiling Web Audio apps in Chrome*) donne
+   le même remède contre un rendu irrégulier : un `latencyHint` plus grand.
+2. **L'ordonnanceur posait des notes dans le passé.** 120 ms d'avance, un
+   réveil toutes les 25 ms. Sous charge, le minuteur du Worker saute jusqu'à
+   96-115 ms, la livraison au fil principal prend jusqu'à 133 ms, et une tâche
+   longue (le saut de page de la tête, qui redessine les clips) jusqu'à 240 ms :
+   des tranches planifiées jusqu'à **228 ms en retard**. La spécification dit
+   ce qui suit : `start(when)` dans le passé part « immediately », et un temps
+   d'automation passé est « clamped to currentTime » — l'attaque d'une
+   enveloppe devient une marche (un claquement), un son part décalé, et toutes
+   les notes en retard arrivent ensemble sur le rendu (une pointe de plus).
+3. **Le fil principal travaillait pour rien** : 64 à 68 % occupé pendant une
+   simple lecture. À chaque image, les vu-mètres changeaient de largeur (mise
+   en page, peinture), la vue Clip relisait la largeur de son onde (une mise en
+   page forcée : 1,1 s sur 25 s), la forme d'onde de la barre se refaisait
+   entière ; et 1,5 s après chaque retouche, l'aperçu de la barre (un rendu
+   hors temps réel du morceau entier, à pleine vitesse, avec ses propres fils
+   de convolution et son worklet) tournait pendant la lecture.
+
+Ce qui n'est pas en cause : le graphe lui-même (rendu hors temps réel : 26 à
+31 % d'un cœur par tranche de 16 temps, aucun passage plus lourd que les
+autres) ; le ramasse-miettes du worklet (141 ramassages mineurs en 57 s,
+0,4 ms au plus) ; la lecture des analyseurs (40 ms sur 20 s) ; le décodage
+(fait au chargement, jamais pendant la lecture).
+
+### Les corrections (juste par construction)
+
+- **`TAMPONS`** (`moteur.js`) et la préférence ODIO **« Tampon audio »**
+  (`musique/prefs.json`, onglet ODIO des préférences), comme le « Buffer Size »
+  de Live : *court* (« interactive », avance 120 ms : le réglage d'avant, pour
+  jouer au clavier), *moyen* par défaut (« playback », 20 ms ; avance
+  300 ms), *long* (50 ms ; avance 500 ms). Le navigateur arrondit (Chromium :
+  un multiple du tampon matériel, 8192 images au plus) : la page dit ce
+  qu'elle a obtenu (`baseLatency`, `outputLatency`). `latencyHint` ne se donne
+  qu'à la création du contexte : en changer le refait (à l'arrêt ; pendant la
+  lecture, à l'arrêt suivant), le graphe s'y reconstruit, les vues reprennent
+  leurs analyseurs.
+- **Rien dans le passé** (`Engine.tick`, `Engine.sauter`) : rien ne se pose à
+  moins de 10 ms de l'horloge audio. Une tranche que le retard a dépassée est
+  perdue plutôt que jouée en retard ; les sons qui y commençaient partent à
+  leur place dans le son (`Graph.resume` avec `depuis` ; `fresh` numérique
+  pour la Session), comme après un saut de la tête ; l'heure de chaque temps ne
+  bouge pas, la tête reste calée. Un lancement de Session non quantifié passe
+  par le rattrapage exact (`lancer`) : il n'attend pas toute l'avance. L'export
+  pose ses tranches à la même avance (`engine.avance`) : ce qu'on entend reste
+  ce qu'on exporte.
+- **Des images légères** : vu-mètres (arrangement, Instruments, console, nodal)
+  et tête de lecture (`commun/tete.css`) par `transform` sur leur propre
+  calque (`will-change`) ; les vues lisent la mise en page avant que la
+  position ne s'écrive ; la vue Clip garde la largeur de son dernier dessin ;
+  la forme d'onde de la barre ne se refait que quand la tête change de
+  demi-pixel ; l'aperçu de la barre attend l'arrêt de la lecture.
+- La basse acide d'ODIO arrête à l'arrêt toutes ses voix planifiées, plus
+  seulement la dernière (`PROVENANCE.md`) : avec plus d'avance, une note déjà
+  posée aurait sonné après Stop.
+
+### Avant / après (l'intégration du 06/10, 885ee72, contre ce code)
+
+| essai | avant | après |
+|---|---|---|
+| lecture, arrangement, 45 s (×3) | pertes 1, 28, 12 | pertes 0, 0, 63 ¹ |
+| la même, une retouche à 4 s (l'aperçu se refait) (×2) | pertes 3, 15 | 0, 0 |
+| fil principal ralenti ×4 (CDP, un PC lent) (×2) | tâches longues 12,3 s et 6,4 s ; 7 et 4 tranches en retard (−72, −92 ms) ; pertes 0, 14 | tâches longues 4,5 s et 2,7 s ; aucune tranche en retard (marge ≥ 44 ms) ; pertes 34 ¹, 0 |
+| des pointes sur le fil audio, 200 ms d'écart, 30 s : 8 / 12 / 20 ms | pertes 1 à 11 / 3 / **156** (1,56 s) | 0 / 0 / **0** |
+| le fil principal bloqué 400 puis 700 ms pendant la lecture | 19 sons partis dans le passé (le pire −373 ms) | aucun ; 2 tranches rattrapées ; la tête à 0 ms de l'horloge |
+| occupation du fil principal (profil, 25 s) | 64 % ; `frame` de la vue Clip 1 126 ms, de l'arrangement 467 ms | 52 % ; 18 ms et 80 ms |
+| vue Session, 30 s ; nodal, 30 s | pertes 0 ; 3 | 0 ; 1 |
+
+¹ Deux passages pendant une forte charge de la machine (le minuteur du Worker
+sautait à 105-116 ms) : 20 ms ne suffisent pas toujours sur une machine
+saturée par d'autres programmes. C'est le cas du réglage *long*.
+
+Après la fusion des arcs du projet (`arcs.js`, l'étage de la Sortie), les mêmes
+essais avec **tous les arcs actifs** (saturation, filtre, largeur, volume, les
+deux envois, l'énergie ; des courbes sur tout le morceau), l'intégration
+d4936ff contre ce code :
+
+| essai, arcs actifs | avant | après |
+|---|---|---|
+| lecture, arrangement, 45 s (×3) | pertes 0, 4, 4 ; 1 et 2 tranches en retard (−19, −40 ms) | pertes 0, 0, 0 ; aucune tranche en retard |
+| la même, une retouche à 4 s (×2) | pertes 3, 0 | 0, 0 |
+| fil principal ralenti ×4 (×2) | tâches longues 6,9 s et 7,4 s ; 2 et 2 tranches en retard (−98, −72 ms) ; pertes 0, 2 | tâches longues 3,9 s et 2,6 s ; aucune tranche en retard ; pertes 12 ¹, 0 |
+| pointes de 20 ms sur le fil audio | pertes 158 (1,58 s) | 0 |
+| le fil principal bloqué 400 puis 700 ms | 19 sons dans le passé (le pire −362 ms) | aucun ; 2 tranches rattrapées |
+| une boucle de 4 temps, un clip audio au temps 1, huit blocages de 600 ms | 4 départs du clip dans le passé (jusqu'à −320 ms), chacun du début du son | aucun ; 9 tranches rattrapées ; les 4 départs repris à leur place dans le son, 10 ms devant l'horloge |
+
+L'étage des arcs ne coûte rien de notable : le réveil de l'ordonnanceur prend
+0,6 ms au 95ᵉ centile avec ou sans lui (deux passages chacun, aucune perte), et
+le rendu hors temps réel du projet prend 22 à 31 % d'un cœur sans lui, 24 à
+31 % avec (deux passages chacun, par tranche de 16 temps). Ses rampes
+enchaînées (`arcs.js`, `rampe`) prennent le rattrapage comme un saut : la
+tranche qui suit une tranche perdue repart de la valeur présente en 6 ms,
+sans rien poser dans le passé.
+
+### Ce qui reste
+
+- Chromium refait la mise en calques (« Layerize ») à chaque image, même quand
+  seuls des `transform` changent : 3,6 à 5 ms par image en rendu logiciel,
+  chaque toile de clip étant un calque. À voir sur la machine de Cal (rendu
+  par la carte graphique).
+- Plaits pose ses réglages « maintenant » (`setParameter`, code d'ODIO_01) :
+  automatisés, ils arrivent l'avance du tampon plus tôt que leurs notes (l'export
+  fait de même : `engine.avance`).
+- `playoutStats` n'est pas allumé par défaut dans Chromium : la page ne peut pas
+  compter ses pertes chez Cal ; le banc le fait (drapeau).
+- Cal : écouter un vrai morceau chargé sur son PC, en *moyen*, puis en *long*
+  si un craquement reste.
