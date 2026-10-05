@@ -1692,8 +1692,8 @@ def _rapatrier_selftest(ok) -> None:
         s2, d2 = X("POST", f"/api/espaces/{B}/rapatrier", {"items": [el["id"]]})
         ok(s == 404 and s2 == 404, f"rapatrier : une autre Team — ni l'objet, ni le Workspace ({s} {s2})")
         s, lv = ra("POST", "/api/elements", {"from_item": snd["id"], "note": "v1"})
-        s2, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [snd["id"], lv.get("id", "x")]})
-        ok(s == 200 and s2 == 409 and "versionné" in err(d), f"rapatrier : un élément versionné, pas encore (étape 9) ({s} {s2})")
+        s2, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [snd["id"], lv.get("id", "x")], "versions": {lv.get("id", "x"): 7}})
+        ok(s == 200 and s2 == 409 and "v7" in err(d), f"rapatrier : un élément versionné, une version qui n'existe pas — refusé ({s} {s2} {err(d)[:60]})")
         s, sq = ra("POST", "/api/montage/projects", {"name": "Séquence de A"})
         s2, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [sq.get("id", "x")]})
         ok(s2 == 409 and "séquence" in err(d), f"rapatrier : une séquence, pas encore ({s} {s2} {err(d)[:50]})")
@@ -1717,8 +1717,77 @@ def _rapatrier_selftest(ok) -> None:
         finally:
             auth.set_current(None)
             auth.set_current_space(None)
+        _selftest_living(ok, err, ra, rb, A, B, lv, snd, wav, rea)
         _sh.rmtree(wav.parent, ignore_errors=True)
     finally:
         auth.set_current(None)
         auth.set_current_space(None)
         config.CFG["auth"] = before["auth"]
+
+
+def _selftest_living(ok, err, ra, rb, A: str, B: str, lv: dict, snd: dict, wav, rea) -> None:
+    """Rapatrier un élément versionné (equipes_espaces.md § 3.3, a — la version figée) : un
+    élément NEUF dans B dont la v1 est une copie de la version choisie (la dernière prête par
+    défaut) ; l'élément de A, ses versions et sa source ne bougent pas ; rien ne relie les deux
+    (publier dans B ne touche pas A). `lv` : un élément de A dont `snd` est la v1."""
+    from core import auth, library
+    eid = lv.get("id", "x")
+    s, s2v = ra("PUT", "/api/library/upload?name=b.wav&title=Son+2+de+A", raw=wav.read_bytes(), hd={"Content-Type": "audio/wav"})
+    s2, _ = ra("POST", f"/api/elements/{eid}/versions", {"item": s2v.get("id", "x"), "note": "v2"})
+    ok(s == 200 and s2 == 200, f"élément entre Workspaces : la v2 de l'élément de A ({s} {s2})")
+    a_before = json.dumps(library.see(eid), sort_keys=True)
+    s, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [eid]})
+    items = (d.get("items") or []) if isinstance(d, dict) else []
+    e2 = next((x for x in items if x.get("kind") == "element"), {})
+    v2 = next((x for x in items if x.get("kind") == "audio"), {})
+    el2 = e2.get("element") or {}
+    vers = el2.get("versions") or []
+    ok(s == 200 and len(items) == 2 and e2.get("space") == B and v2.get("space") == B and e2.get("id") not in (eid, None),
+       f"élément entre Workspaces : un élément neuf dans B, et sa v1 ({s} {err(d)[:80]} {[x.get('kind') for x in items]})")
+    ok(len(vers) == 1 and vers[0].get("n") == 1 and vers[0].get("item") == v2.get("id") and vers[0].get("state") == "ready"
+       and {k: (v2.get("version") or {}).get(k) for k in ("of", "n")} == {"of": e2.get("id"), "n": 1},
+       f"élément entre Workspaces : sa pile — une seule version, la v1, marquée de l'élément de B ({vers} {v2.get('version')})")
+    frm, vfrm = (e2.get("origin") or {}).get("from") or {}, (v2.get("origin") or {}).get("from") or {}
+    ok(frm.get("space") == A and frm.get("item") == eid and frm.get("n") == 2 and frm.get("uid") == library.uid_of(library.see(eid))
+       and vfrm.get("item") == s2v.get("id") and vfrm.get("version") == {"of": eid, "n": 2},
+       f"élément entre Workspaces : par défaut, la dernière version (v2), d'où elle vient ({frm} {vfrm})")
+    src2 = el2.get("source") or {}
+    ok("doc" not in src2 and (src2.get("from") or {}).get("space") == A and e2.get("uid") != library.see(eid).get("uid"),
+       f"élément entre Workspaces : sa source reste dans A (non suivie ici), un uid neuf ({src2})")
+    ok(json.dumps(library.see(eid), sort_keys=True) == a_before and (library.see(s2v.get("id", "x")) or {}).get("version") == {"of": eid, "n": 2},
+       "élément entre Workspaces : l'élément de A, ses versions, sa marque : intacts")
+    s, det = rb("GET", f"/api/elements/{e2.get('id')}")
+    det = det if isinstance(det, dict) else {}
+    ok(s == 200 and (det.get("source_state") or {}).get("state") in ("non suivie", "sans version") and (det.get("versions") or [{}])[0].get("head")
+       and (det.get("source_state") or {}).get("elsewhere"),
+       f"élément entre Workspaces : sa fiche dans B — la v1 en tête, la source restée dans A, non suivie ({s} {det.get('source_state')})")
+    # publier dans B : l'élément de B avance, celui de A ne bouge pas (jamais un lien vivant)
+    s, b3 = rb("PUT", "/api/library/upload?name=c.wav&title=Son+de+B", raw=wav.read_bytes(), hd={"Content-Type": "audio/wav"})
+    s2, _ = rb("POST", f"/api/elements/{e2.get('id')}/versions", {"item": b3.get("id", "x"), "note": "v2 de B"})
+    ok(s2 == 200 and len(library.see(e2["id"])["element"]["versions"]) == 2 and len(library.see(eid)["element"]["versions"]) == 2
+       and json.dumps(library.see(eid), sort_keys=True) == a_before,
+       f"élément entre Workspaces : la v2 de B ne touche pas l'élément de A ({s2})")
+    auth.set_current(rea)
+    auth.set_current_space(B)
+    try:
+        ok((library.resolve(library.get(e2["id"])) or {}).get("id") == b3.get("id") and library.get(eid) is None,
+           "élément entre Workspaces : dans B, un outil lit l'élément de B (sa dernière version), jamais celui de A")
+    finally:
+        auth.set_current(None)
+        auth.set_current_space(None)
+    # une version choisie ; une version retirée ; un élément sans version prête
+    s, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [eid], "versions": {eid: 1}})
+    v1 = next((x for x in (d.get("items") or []) if x.get("kind") == "audio"), {}) if isinstance(d, dict) else {}
+    ok(s == 200 and ((v1.get("origin") or {}).get("from") or {}).get("item") == snd["id"],
+       f"élément entre Workspaces : la v1 demandée — la copie de la v1 ({s} {err(d)[:60]})")
+    ra("POST", f"/api/elements/{eid}/versions/1", {"state": "withdrawn"})
+    n0 = len(library.query(limit=10**6, spaces=[B])["items"])
+    s, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [eid], "versions": {eid: 1}})
+    ok(s == 409 and "retirée" in err(d) and len(library.query(limit=10**6, spaces=[B])["items"]) == n0,
+       f"élément entre Workspaces : une version retirée ne se rapatrie pas, rien n'est copié ({s} {err(d)[:70]})")
+    s, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [eid], "versions": {eid: "1"}})
+    ok(s == 400, f"élément entre Workspaces : versions — un numéro ({s})")
+    s, pj = ra("POST", "/api/music/projects", {"name": "Chanson de A"})
+    s2, ne = ra("POST", "/api/elements", {"title": "Sans version", "source": {"tool": "music", "doc": pj.get("id", "x")}})
+    s3, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [ne.get("id", "x")]})
+    ok(s2 == 200 and s3 == 409 and "version prête" in err(d), f"élément entre Workspaces : sans version prête, rien à figer ({s2} {s3} {err(d)[:60]})")

@@ -248,12 +248,17 @@ def _source_now(src: dict) -> dict:
 
 def source_state(e: dict) -> dict:
     """« à jour », « modifiée depuis la vN », « perdue », « sans version », ou « non suivie »
-    (une source dont l'empreinte n'est pas encore écrite)."""
+    (une source dont l'empreinte n'est pas encore écrite). Un élément rapatrié d'un autre
+    Workspace (core/library.py, _import_living) : sa source y est restée — `elsewhere`, le
+    nom de ce Workspace (s'il se voit) ; rien ne la relie à celui-ci, elle n'est pas suivie."""
     src = e["element"].get("source") or {}
     now = _source_now(src)
     head = library.head_entry(e)
     out = {"tool": src.get("tool"), "doc": now.get("doc"), "title": now.get("title"), "open": now.get("open"),
            "what": now.get("what"), "rev": now.get("rev")}
+    if isinstance(src.get("from"), dict):
+        sid = src["from"].get("space")
+        out["elsewhere"] = library.space_name(sid) if _space_name(sid, auth.current()) else "un autre Workspace"
     if now.get("lost"):
         return {**out, "state": "perdue"}
     if not head:

@@ -1058,8 +1058,9 @@ def import_refusal(it: dict, dest: str | None) -> str | None:
     if space_of(it) == dest:
         return f"{name} est déjà dans « {space_name(dest)} » : rien à rapatrier"
     if is_living(it):
-        return (f"{name} est un élément versionné : le rapatrier (sa version figée, § 3.3 de l'étude) vient avec "
-                f"l'étape 9 — en attendant, rapatrie sa dernière version (sa fiche, « les versions »)")
+        if head_entry(it) is None:   # rien de prêt à figer
+            return f"{name} est un élément versionné sans version prête : rien à figer — publie d'abord une version"
+        return None
     if it.get("kind") == "playlist":   # comme une séquence : elle pose des sons de son Workspace
         return f"{name} est une playlist : elle pose des sons de son Workspace — rapatrie ses morceaux"
     if it.get("kind") not in IMPORT_KINDS:
@@ -1127,16 +1128,67 @@ def _import_one(src: dict, dest: str, folder: str, at: str) -> dict:
         raise
 
 
-def rapatrier(ids: list, dest: str, *, folder: str = "") -> list[dict]:
+def frozen_version(src: dict, n=None) -> dict:
+    """La version d'un élément versionné que le rapatriement fige (équipes_espaces.md § 3.3,
+    a) : la vN demandée, sinon la dernière prête. ValueError qui dit pourquoi : une version
+    qui n'existe pas, retirée, ou partie à la corbeille."""
+    name = f"« {src.get('title') or src['id']} »"
+    if n is None:
+        v = head_entry(src)
+        if v is None:
+            raise ValueError(f"{name} n'a pas de version prête : rien à figer — publie d'abord une version")
+        return v
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise ValueError(f"{name} : la version à rapatrier est un numéro (n)")
+    v = next((x for x in src["element"]["versions"] if int(x.get("n") or 0) == n), None)
+    if v is None:
+        raise ValueError(f"{name} n'a pas de v{n}")
+    if v.get("state", "ready") != "ready":
+        raise ValueError(f"la v{n} de {name} est retirée : remets-la d'abord (sa fiche), ou rapatrie une autre version")
+    if v.get("item") not in _items:
+        raise ValueError(f"la v{n} de {name} est à la corbeille : sors-la d'abord, ou rapatrie une autre version")
+    return v
+
+
+def _import_living(src: dict, v: dict, dest: str, folder: str, at: str) -> list[dict]:
+    """Un élément versionné rapatrié (§ 3.3, a — la version figée) : un élément NEUF dans
+    `dest`, dont la v1 est une copie de la version `v` ; sa source reste dans son Workspace
+    (« non suivie » ici : on n'en publie pas depuis B, rien ne relie les deux) ; un
+    personnage de Character Factory garde la sienne, qui n'est d'aucun Workspace. Rend
+    [l'élément, sa v1], pas encore dans `_items`."""
+    a = space_of(src)
+    vcopy = _import_one(_items[v["item"]], dest, folder, at)
+    try:
+        ecopy = _import_one(src, dest, folder, at)
+    except BaseException:
+        shutil.rmtree(folder_of(vcopy["id"]), ignore_errors=True)
+        raise
+    vcopy["version"] = {"of": ecopy["id"], "n": 1}
+    el = ecopy["element"]
+    s = el.get("source") if isinstance(el.get("source"), dict) else {}
+    if s.get("tool") != "character-factory":
+        el["source"] = {"tool": s.get("tool") or "asset", "from": {"space": a, **({"doc": s["doc"]} if s.get("doc") else {})}}
+    note = f"v{v.get('n')} de « {src.get('title') or src['id']} », rapatriée de « {space_name(a)} »"
+    el["versions"] = [{"n": 1, "item": vcopy["id"], "at": at, "by": auth.current_id(), "note": note[:400],
+                       "fp": v.get("fp"), "rev": v.get("rev"), "src": dict(v.get("src") or {}), "deps": [], "state": "ready"}]
+    ecopy["origin"]["from"]["n"] = v.get("n")
+    return [ecopy, vcopy]
+
+
+def rapatrier(ids: list, dest: str, *, folder: str = "", versions: dict | None = None) -> list[dict]:
     """Rapatrie les objets `ids` (vus par la personne, où qu'ils soient : `see`) dans le
     Workspace `dest`. Tout ou rien : chaque objet est jugé avant d'en copier un seul, et
-    une copie qui échoue défait les précédentes. KeyError : un objet ou le Workspace
-    inconnu (ou invisible) ; PermissionError : on ne peut pas rapatrier dans `dest` ;
-    ValueError : un objet qui ne se rapatrie pas (import_refusal). Rend les copies."""
+    une copie qui échoue défait les précédentes. Un élément versionné arrive en élément
+    neuf dont la v1 est sa version figée (`versions` : {élément: n}, sinon la dernière
+    prête ; frozen_version). KeyError : un objet ou le Workspace inconnu (ou invisible) ;
+    PermissionError : on ne peut pas rapatrier dans `dest` ; ValueError : un objet qui ne
+    se rapatrie pas (import_refusal, frozen_version). Rend les copies, dans l'ordre (un
+    élément : lui, puis sa v1)."""
     _load()
     if espaces.space(dest) is None:
         raise KeyError(dest)
     check_import(dest)
+    versions = versions if isinstance(versions, dict) else {}
     srcs = []
     who = auth.current()
     for iid in dict.fromkeys(str(i) for i in ids):
@@ -1150,12 +1202,12 @@ def rapatrier(ids: list, dest: str, *, folder: str = "") -> list[dict]:
         why = import_refusal(src, dest)
         if why:
             raise ValueError(why)
-        srcs.append(src)
+        srcs.append((src, frozen_version(src, versions.get(iid)) if is_living(src) else None))
     at = now()
     made: list[dict] = []
     try:
-        for src in srcs:   # hors du verrou : les copies de fichiers ne bloquent pas la bibliothèque
-            made.append(_import_one(src, dest, folder, at))
+        for src, v in srcs:   # hors du verrou : les copies de fichiers ne bloquent pas la bibliothèque
+            made.extend(_import_living(src, v, dest, folder, at) if v else [_import_one(src, dest, folder, at)])
         with _lock:
             for it in made:
                 _items[it["id"]] = it

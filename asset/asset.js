@@ -119,7 +119,7 @@ function importWhy(it, dest = here()) {
   if (it.space === dest || (!it.space && dest === here())) return `« ${it.title || it.id} » est déjà dans « ${spaceLong(dest)} »`;
   const h = spaceInfo(dest);
   if (h && h.import === false) return `copier dans « ${spaceLong(dest)} » : ${h.import_why || 'ton rôle ne le permet pas'}`;
-  if (isLiving(it)) return 'un élément versionné se rapatrie avec l’étape 9 (sa version figée) — en attendant, rapatrie sa dernière version';
+  if (isLiving(it) && !it.element?.head) return `« ${it.title || it.id} » n’a pas de version prête : rien à figer — publie d’abord une version`;
   if (it.kind === 'sequence') return 'une séquence pose d’autres objets de son Workspace : rapatrie ses plans';
   return '';
 }
@@ -874,7 +874,8 @@ function fileDrop(node, cb) {
 // ── rapatrier : une copie neuve dans un Workspace, l'original ne bouge pas ─
 // POST /api/espaces/<dest>/rapatrier (server/tools/equipes.py → core/library.py) ; tout ou
 // rien. Ctrl+Z met les copies à la corbeille ; rétablir les en sort (pas une copie de plus).
-async function rapatrier(items, { dest = here(), folder = '' } = {}) {
+// `versions` : {élément: n} — la version figée d'un élément versionné (sinon sa dernière prête)
+async function rapatrier(items, { dest = here(), folder = '', versions = null } = {}) {
   if (!items.length || !dest) return null;
   const why = items.map((it) => importWhy(it, dest)).find(Boolean);
   if (why) { say(why); return null; }
@@ -885,12 +886,16 @@ async function rapatrier(items, { dest = here(), folder = '' } = {}) {
     const r = await U.run({ label: `copier ${what(items)} dans « ${where} »`,
       do: async () => {
         if (made) { await api('asset/restore', { method: 'POST', body: { ids: made.map((x) => x.id) }, espace: dest }); return made; }
-        const d = await api(`espaces/${dest}/rapatrier`, { method: 'POST', body: { items: items.map((i) => i.id), folder }, espace: dest });
+        const d = await api(`espaces/${dest}/rapatrier`, { method: 'POST', body: { items: items.map((i) => i.id), folder, ...(versions ? { versions } : {}) }, espace: dest });
         made = d.items;
         made.earlier = d.earlier;
         return made;
       },
-      undo: (x) => api('asset/trash', { method: 'POST', body: { ids: x.map((i) => i.id) }, espace: dest }) });
+      undo: async (x) => {
+        await api('asset/trash', { method: 'POST', body: { ids: x.map((i) => i.id) }, espace: dest });
+        // la fiche de la copie partie : celle de l'original, tout de suite (refresh, juste après, relit S.route)
+        if (S.route.view === 'sheet' && x.some((i) => S.route.id === i.id)) { S.route = { view: 'sheet', id: items[0].id }; go('#' + items[0].id); }
+      } });
     clearSel();
     say(`${items.length > 1 ? plural(items.length, 'copie', 'copies') : `« ${items[0].title} »`} dans « ${where} »${folder ? `, dossier « ${folder} »` : ''} · l’original reste dans « ${from} »`
       + (r?.earlier ? ` · ${r.earlier > 1 ? `${r.earlier} en avaient` : 'il en avait'} déjà une copie là` : ''), true, 8000);
@@ -914,6 +919,8 @@ function confirmCopy(items, dest, folder = '') {
         el('div', { class: 'pending' }, ...ok.slice(0, 8).map(miniOf), ok.length > 8 ? el('span', { class: 'arrow' }, `+${ok.length - 8}`) : null),
         el('p', { class: 'prose' }, 'Une ', el('b', {}, 'copie neuve'), ' arrive dans ', el('b', {}, spaceLong(dest)), ' : titre, recette, tags suivent. ',
           'L’original reste dans ', el('b', {}, from), ' ; modifier l’un ne touche jamais l’autre. Ctrl+Z met la copie à la corbeille.'),
+        ok.some(isLiving) ? el('p', { class: 'prose' }, 'Un élément versionné arrive en ', el('b', {}, 'élément neuf'),
+          ' : sa v1 est la copie de sa dernière version ; sa source reste dans ', el('b', {}, from), ', rien ne relie les deux.') : null,
         no.length ? el('p', { class: 'hint warn-line' }, `${plural(no.length, 'objet reste', 'objets restent')} : ${importWhy(no[0], dest)}`) : null,
       ],
       foot: [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', type: 'button', onclick: () => end(false) }, 'Pas maintenant'),
@@ -2067,18 +2074,26 @@ function foreignSheet(it) {
   const head = el('section', { class: 'sh-head' },
     el('div', { class: 'who' }, backLink(), el('span', { class: 'kicker' }, kicker), title),
     el('div', { class: 'row' }, el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons())));
+  // un élément versionné : la version qu'on fige (equipes_espaces.md § 3.3) — la dernière prête par défaut ;
+  // il arrive en élément neuf, dont elle est la v1
+  const ready = living ? (it.element.versions || []).filter((v) => (v.state || 'ready') === 'ready').map((v) => v.n).sort((a, b) => b - a) : [];
+  const pickV = ready.length > 1 ? el('select', { class: 'fld', style: { width: 'auto' }, 'aria-label': 'la version à rapatrier', title: 'la version figée qui devient la v1 de l’élément neuf' },
+    ...ready.map((n) => el('option', { value: String(n), selected: n === it.element.head }, `v${n}${n === it.element.head ? ' · la dernière' : ''}`))) : null;
+  const chosen = () => (pickV ? Number(pickV.value) : it.element?.head);
   const bring = el('button', { class: 'tb go', type: 'button', disabled: !!why,
-    title: why || `une copie neuve dans « ${spaceLong(here())} » — titre, recette, tags suivent ; l’original ne bouge pas · Ctrl+Z l’annule`,
+    title: why || (living ? `un élément neuf dans « ${spaceLong(here())} », dont la v1 est la copie de la version choisie ; sa source reste dans « ${spaceLong(it.space)} » · Ctrl+Z l’annule`
+      : `une copie neuve dans « ${spaceLong(here())} » — titre, recette, tags suivent ; l’original ne bouge pas · Ctrl+Z l’annule`),
     onclick: async () => {
-      const r = await rapatrier([it]);
+      const r = await rapatrier([it], living ? { versions: { [it.id]: chosen() } } : {});
       if (r?.[0]) go('#' + r[0].id);   // la copie, ici : elle se modifie, elle sert aux outils
-    } }, `Rapatrier dans « ${spaceShort(here())} »`);
+    } }, living ? `Rapatrier la v${chosen() || '?'} dans « ${spaceShort(here())} »` : `Rapatrier dans « ${spaceShort(here())} »`);
+  if (pickV) pickV.addEventListener('change', () => { bring.textContent = `Rapatrier la v${chosen()} dans « ${spaceShort(here())} »`; });
   const banner = el('section', { class: 'wsbanner' },
     wsBadge(it.space),
     el('span', { class: 'txt' }, 'Dans ', el('b', {}, spaceLong(it.space)), ' : tu le vois d’ici, on ne s’en sert pas d’ici. ',
       'Le rapatrier en fait une copie neuve dans ', el('b', {}, spaceLong(here())), ', que tes outils pourront poser.'),
     why ? el('span', { class: 'why' }, why) : null);
-  const acts = el('section', { class: 'sh-acts' }, bring,
+  const acts = el('section', { class: 'sh-acts' }, pickV, bring,
     el('a', { class: 'tb ghost', href: otherTab(it.space, '#' + it.id), title: 'ouvrir sa fiche dans son Workspace (cet onglet y passe)' }, 'Y aller'),
     el('span', { class: 'sp' }),
     it.url && it.kind !== 'element' ? el('a', { class: 'tb ghost', href: href(it.url), download: it.kind === 'document' ? nomDe(it) : `${it.title || it.id}${(it.file || '').replace(/^main/, '')}` }, 'Télécharger')
@@ -2621,7 +2636,8 @@ function livingSheet(d) {
   const srcBlk = blk('source', STATE_FR[s.state] ? stateLine(s) : '',
     readout([['outil', toolFr(s.tool)], ['document', s.title], ['état', stateLine(s)], ['rev', s.rev != null ? String(s.rev) : '']]),
     s.state === 'modifiée' ? el('p', { class: 'hint' }, `La source a changé depuis la v${s.since} : publie la v${(e.count || 0) + 1} depuis son outil (ODIO : menu ⋯ → Publier comme élément), ou range ici un objet rendu.`) : null,
-    s.state === 'non suivie' ? el('p', { class: 'hint' }, 'Cette source n’a pas encore d’empreinte : on ne sait pas dire si elle a changé.') : null);
+    s.elsewhere ? el('p', { class: 'hint' }, `Rapatrié de « ${s.elsewhere} » : sa source y est restée, rien ne relie les deux. Ce qu’on publie ici reste ici.`)
+      : s.state === 'non suivie' ? el('p', { class: 'hint' }, 'Cette source n’a pas encore d’empreinte : on ne sait pas dire si elle a changé.') : null);
   const usesBlk = blk('usages', d.uses.length ? plural(d.uses.length, 'endroit', 'endroits') : 'aucun',
     d.uses.length ? el('ul', { class: 'vuses' }, ...d.uses.map(useLine)) : el('p', { class: 'hint' }, 'Aucun document ne pose encore une de ses versions.'));
   const side = [srcBlk, usesBlk];
