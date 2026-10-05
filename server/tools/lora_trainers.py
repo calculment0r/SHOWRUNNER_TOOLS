@@ -80,11 +80,13 @@ def _ready(mid: str):
 _STEP = re.compile(r"(\d+)\s*/\s*(\d+)\s*\[")
 
 
-def _run(ctx, argv: list, cwd: str, env: dict, total_hint: int | None, label: str) -> list[str]:
+def _run(ctx, argv: list, cwd: str, env: dict, total_hint: int | None, label: str, drop: tuple = ()) -> list[str]:
     """Lance `argv`, suit ses pas (les barres de tqdm : « 900/2000 [ »), l'arrête si on annule.
+    `drop` : des variables de l'environnement du portail à ne pas lui passer.
     Rend les dernières lignes (le message d'une erreur)."""
     tail: list[str] = []
-    p = subprocess.Popen(argv, cwd=cwd, env={**os.environ, **env}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    full = {k: v for k, v in os.environ.items() if k not in drop}
+    p = subprocess.Popen(argv, cwd=cwd, env={**full, **env}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          start_new_session=True)
     stop = threading.Event()
 
@@ -216,9 +218,11 @@ def run_aitk(ctx, data: Path, out: Path, p: dict, e: dict, v: int) -> dict:
     # MODELS_PATH : ai-toolkit relit nos fichiers ComfyUI. SANS HF_HUB_OFFLINE : hors ligne, transformers 5.5.3
     # (épinglé par ai-toolkit) réclame <dépôt>/<sous-dossier tokenizer>/config.json, absent du Hub — Z-Image,
     # Qwen-Image 2.1 et H3 échouent ainsi (essai du 05/10 sur DGX2) ; ai-toolkit lit déjà le cache d'abord
-    # (local_files_only, puis en ligne seulement s'il manque quelque chose)
+    # (local_files_only, puis en ligne seulement s'il manque quelque chose) ; retirées aussi de l'environnement
+    # du portail s'il les portait (TRANSFORMERS_OFFLINE met transformers dans le même mode hors ligne)
     _run(ctx, [py, "run.py", str(job)], root,
-         {"MODELS_PATH": str(Path.home() / "ComfyUI" / "models"), "PYTHONUNBUFFERED": "1"}, steps, "ai-toolkit")
+         {"MODELS_PATH": str(Path.home() / "ComfyUI" / "models"), "PYTHONUNBUFFERED": "1"}, steps, "ai-toolkit",
+         drop=("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"))
     found = sorted((runs / name).glob("*.safetensors"), key=lambda f: f.stat().st_mtime)
     final = [f for f in found if f.name == f"{name}.safetensors"] or found
     if not final:
@@ -444,21 +448,29 @@ def selftest(call, ok) -> None:
         py.parent.mkdir(parents=True, exist_ok=True)
         py.write_text(_FAUX_AITK, encoding="utf-8")
         py.chmod(0o755)
-        for mid in ("zimage", "krea2", "h3"):
-            e, _ = entry(mid)
-            ctx = _EssaiCtx(config.data_dir() / "work" / f"essai-aitk-{mid}", {"model": mid, "node": "n_ab12cd", "name": "Paris 1900"})
-            out = ctx.workdir / "lora.safetensors"
-            extra = run_aitk(ctx, ctx.workdir / "dataset", out, ctx.params, e, 1)
-            env = json.loads((root / "env.json").read_text())
-            job = json.loads((ctx.workdir / "job.yaml").read_text())["config"]["process"][0]
-            ok(out.read_bytes() == b"lora" and extra["trigger"] == "mbab12cd" and "HF_HUB_OFFLINE" not in env
-               and env.get("MODELS_PATH", "").endswith("ComfyUI/models"),
-               f"lora : ai-toolkit {mid} lancé sans HF_HUB_OFFLINE, avec MODELS_PATH ({env.get('HF_HUB_OFFLINE')})")
-            ok(job["train"]["disable_sampling"] is True and job["sample"]["neg"] == "" and job["model"] == man["models"][mid]["model"],
-               f"lora : ai-toolkit {mid} — disable_sampling, neg \"\", le bloc model du manifeste ({job['train'].get('disable_sampling')} {job['sample'].get('neg')!r})")
-            if mid == "h3":
-                ok(job["network"]["linear"] == 16 and job["network"]["network_kwargs"] == {"ignore_if_contains": ["adaln_proj"]}
-                   and job["train"]["timestep_type"] == "shift", "lora : H3 — le réseau et le pas du manifeste")
+        offline = os.environ.get("HF_HUB_OFFLINE")
+        os.environ["HF_HUB_OFFLINE"] = "1"   # même si le portail l'avait dans son environnement
+        try:
+            for mid in ("zimage", "krea2", "h3"):
+                e, _ = entry(mid)
+                ctx = _EssaiCtx(config.data_dir() / "work" / f"essai-aitk-{mid}", {"model": mid, "node": "n_ab12cd", "name": "Paris 1900"})
+                out = ctx.workdir / "lora.safetensors"
+                extra = run_aitk(ctx, ctx.workdir / "dataset", out, ctx.params, e, 1)
+                env = json.loads((root / "env.json").read_text())
+                job = json.loads((ctx.workdir / "job.yaml").read_text())["config"]["process"][0]
+                ok(out.read_bytes() == b"lora" and extra["trigger"] == "mbab12cd" and "HF_HUB_OFFLINE" not in env
+                   and env.get("MODELS_PATH", "").endswith("ComfyUI/models"),
+                   f"lora : ai-toolkit {mid} lancé sans HF_HUB_OFFLINE, avec MODELS_PATH ({env.get('HF_HUB_OFFLINE')})")
+                ok(job["train"]["disable_sampling"] is True and job["sample"]["neg"] == "" and job["model"] == man["models"][mid]["model"],
+                   f"lora : ai-toolkit {mid} — disable_sampling, neg \"\", le bloc model du manifeste ({job['train'].get('disable_sampling')} {job['sample'].get('neg')!r})")
+                if mid == "h3":
+                    ok(job["network"]["linear"] == 16 and job["network"]["network_kwargs"] == {"ignore_if_contains": ["adaln_proj"]}
+                       and job["train"]["timestep_type"] == "shift", "lora : H3 — le réseau et le pas du manifeste")
+        finally:
+            if offline is None:
+                os.environ.pop("HF_HUB_OFFLINE", None)
+            else:
+                os.environ["HF_HUB_OFFLINE"] = offline
 
         # ACE-Step (un faux) : ds.json, la racine sûre, et ce qu'il laisse fait foi
         import wave
