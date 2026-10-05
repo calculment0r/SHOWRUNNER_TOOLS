@@ -125,6 +125,27 @@ le reste est comme tu proposes ») : S1 partagé, S2, L1 Cloudflare, L2, L3 comm
 - ses chansons repartent dans « Mon Space » de leur auteur ;
 - rien ne va à la corbeille sans qu'on le demande.
 
+### CODÉ (branche `wip2/spaces`, 05/10)
+
+- **Le serveur** (`server/tools/chanson.py`, section « les Spaces ») :
+  - `spaces.json` (une table par Workspace) ; `GET /api/chanson/spaces` ; `POST /api/chanson/spaces`
+    (`action` : create, update — nom, couleur (un jeton), pochette, `archived` —, delete, restore) ;
+    `POST /api/chanson/spaces/move` (`{ids, to}`, ou `{restore}` pour Ctrl+Z) ; `PUT /api/chanson/import`
+    (`as=son` : une carte sans recette ; `as=ref` : une référence) ; `GET /api/chanson/list?space=mon|msp-…|*`.
+  - **Juste par construction** : le Space d'un objet est son `music_space` s'il nomme un Space vivant de son
+    Workspace, sinon « Mon Space » de son auteur (`space_of_item`). Supprimer (S2) ne réécrit aucun objet ; la
+    fiche garde `deleted`, et « restore » la rend.
+  - Une variante naît dans le Space de sa chanson (`birth_space`), des stems aussi (`music_stems._store`
+    recopie le champ de la source) ; « Mon Space » d'un autre ne se vide pas par la route `move` (Cal, si).
+  - Les droits : ceux du Workspace (créer : `library.check_create` ; changer : `check_write` ; supprimer :
+    l'auteur du Space ou un admin du Workspace, `auth.can_trash_item`).
+- **Le socle** : `library.update` accepte `music_space` (`MUSIC_SPACE_RX`, vide = « Mon Space »).
+- **La page** : `chanson/spaces.js` (le menu, le « ⋯ », la sélection, glisser, importer) ; le contrat des
+  volets voisins : `spaceCourant()` et l'événement `sr:music-space` (en tête du fichier). Pilote :
+  `chanson/pilote_spaces.mjs`.
+- **Reste** : ODIO dans les Spaces (étape 7) ; un son téléversé depuis le sélecteur commun (`pick`, bouton
+  « Disque » de sa fenêtre) naît sans Space (« Mon Space »).
+
 ## 3. Les playlists
 
 ### Le modèle

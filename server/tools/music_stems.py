@@ -540,7 +540,9 @@ def _store(ctx, it: dict, p: dict, raw: dict[str, Path], sr: int, n: int, engine
                               "sample_rate": sr, "samples": n, "render_seconds": secs,
                               **({"filter": TEST_FILTERS[stem]} if essai else {})},
                       origin={"model": "factice" if essai else p["model"]},
-                      tags=["musique", "essai" if essai else "piste séparée"], folder="Musique")
+                      tags=["musique", "essai" if essai else "piste séparée"], folder="Musique",
+                      # le Space de Musique de la source : les pistes naissent avec leur chanson (chanson.py)
+                      extra={"music_space": it["music_space"]} if it.get("music_space") else None)
         out[stem] = got["id"]
     label = "filtres, moteur factice" if essai else m["label"]
     return {"note": f"{len(out)} pistes en {secs:g} s ({label})", "stems": out, "render_seconds": secs,

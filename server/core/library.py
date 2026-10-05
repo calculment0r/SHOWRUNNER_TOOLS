@@ -781,6 +781,11 @@ def create_living(title: str, etype: str, source: dict, *, media: str | None = N
     return it
 
 
+# le Space de Musique d'un objet (server/tools/chanson.py, `music_space`) : un identifiant
+# msp-…, ou vide pour « Mon Space » de son auteur ; la bibliothèque n'en juge que la forme
+MUSIC_SPACE_RX = re.compile(r"(msp-[0-9a-f]{12})?")
+
+
 def _check_patch(patch: dict) -> None:
     """La forme de ce qu'une page peut changer (ValueError → 400) : rien
     d'autre qu'un texte, une liste de textes, un booléen, là où on les attend."""
@@ -797,6 +802,8 @@ def _check_patch(patch: dict) -> None:
     for k in ("fav", "shared"):
         if k in patch and not isinstance(patch[k], bool):
             raise ValueError(f"{k} : vrai ou faux")
+    if "music_space" in patch and not (isinstance(patch["music_space"], str) and MUSIC_SPACE_RX.fullmatch(patch["music_space"])):
+        raise ValueError("music_space : un Space de Musique (msp-…), ou vide pour « Mon Space »")
     el = patch.get("element")
     if isinstance(el, dict):
         if "type" in el and el["type"] not in ELEMENT_TYPES_ALL:
@@ -823,6 +830,11 @@ def update(item_id: str, patch: dict) -> dict:
                 it[k] = patch[k]
         if "shared" in patch:
             it["shared"] = bool(patch["shared"])
+        if "music_space" in patch:   # vide : « Mon Space » de son auteur, sans le champ (comme une chanson d'avant)
+            if patch["music_space"]:
+                it["music_space"] = patch["music_space"]
+            else:
+                it.pop("music_space", None)
         if it["kind"] == "element" and isinstance(patch.get("element"), dict):
             el = it["element"]
             for k in ("type", "description"):

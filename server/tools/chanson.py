@@ -50,6 +50,10 @@ voie `cpu`, des sons d'essai (sinus, nappe, bruit filtré) étiquetés « essai 
 Tout ce que l'app fabrique est un objet de la bibliothèque (`tool` :
 « chanson », dossier Musique), avec sa recette dans `params.chanson` : une
 variante la rejoue avec une autre graine.
+
+Les Spaces (05/10, docs/etudes/musique_spaces_playlists.md § 2) : des dossiers
+de travail dans le Workspace ; tout ce que l'app fait naître y va (le champ
+`music_space` de l'objet, « Mon Space » sans lui) — la section « les Spaces ».
 """
 
 from __future__ import annotations
@@ -346,10 +350,12 @@ def _store(ctx, p: dict, path: Path, k: int, eng: str, extra: dict | None = None
     parents = [x for x in (p["ref"], p["parent"]) if x]
     seed = p["seed"] + k if seed is None else seed
     model = "factice" if essai else ("yue2-3b-" + p.get("precision", "bf16") if p["model"] == "yue" else "ace-step-1.5-xl-base")
+    msp = birth_space(p, (ctx.params or {}).get("music_space") or "")
     return ctx.add(path, kind="audio", title=title, prompt=p["prompt"], parents=parents,
                    params={"chanson": {**p, "seed": seed, "n": 1}, "seed": seed, "take": k, "engine": eng,
                            "model": p["model"], **(extra or {})},
-                   origin={"model": model}, tags=["musique", "chanson", "essai" if essai else "généré"], folder="Musique")
+                   origin={"model": model}, tags=["musique", "chanson", "essai" if essai else "généré"], folder="Musique",
+                   extra={"music_space": msp} if msp else None)
 
 
 # ── les moteurs d'essai : des sons plausibles, sans modèle ───
@@ -751,18 +757,368 @@ def _odio_link(song_id: str) -> str | None:
     return pid
 
 
+# ── les Spaces (docs/etudes/musique_spaces_playlists.md § 2) ─
+# Un Space (`msp-…`) est un dossier de travail de Musique, À L'INTÉRIEUR d'un
+# Workspace — `space` est déjà le Workspace (core/espaces.py) : dans les données,
+# le champ d'un objet s'appelle `music_space`. Décisions de Cal du 05/10 :
+#   S1  un Space qu'on crée est PARTAGÉ avec le Workspace : on y voit les chansons
+#       de tous ceux qui y créent ; « Mon Space » reste personnel — le Space par
+#       défaut de chaque personne dans chaque Workspace : un objet sans
+#       `music_space` y est, toutes les chansons d'avant comprises (sans migration) ;
+#   S2  supprimer un Space renvoie ses chansons dans « Mon Space » de leur auteur ;
+#       rien ne va à la corbeille.
+# Un Space n'a pas de droits propres : il est jugé comme un document partagé de son
+# Workspace (library.check_create, check_write ; auth.can_trash_item → espaces.can_*).
+# Ce qui naît dans l'app va dans le Space courant de la page (une chanson, un son
+# déposé ou importé) ; ce qui naît d'une chanson (une variante, des stems), dans
+# celui de la chanson (la règle de Suno), même si la page en regarde un autre.
+# La table : <data_dir>/chanson/spaces.json, une par Workspace —
+#   {<esp-…>: {<msp-…>: {id, name, cover, color, created, owner, archived, deleted?}}}
+# Juste par construction : le Space d'un objet est son `music_space` s'il nomme un
+# Space vivant de son Workspace, sinon « Mon Space » de son auteur (space_of_item).
+# Supprimer (S2) ne réécrit donc aucun objet — la fiche garde `deleted`, et Ctrl+Z
+# la rend telle quelle ; un objet rapatrié d'un autre Workspace tombe dans « Mon Space ».
+SPACES = "spaces.json"
+MON, TOUS = "mon", "*"          # « Mon Space », « Tous les Spaces » : les mots des routes et de la page
+MSP_RX = re.compile(r"msp-[0-9a-f]{12}")   # library.MUSIC_SPACE_RX en juge la forme dans un patch
+# la couleur d'un Space : un nom de jeton de commun/tokens.css (règle 1 du thème), jamais l'orange (l'action)
+SPACE_COLORS = ("cy", "grn2", "amb", "coral-2", "verd-2", "coral-3", "coral-1")
+MOVE_MAX = 500
+
+
+def _ws() -> str | None:
+    """Le Workspace de la requête (ou du travail en cours) : celui où vivent ses Spaces."""
+    return library.new_space(check=False)
+
+
+def spaces_table(ws: str | None = None, *, deleted: bool = False) -> dict:
+    """Les Spaces d'un Workspace (le courant par défaut) : {msp: fiche}, sans les supprimés."""
+    t = _read_json(SPACES).get(ws or _ws() or "") or {}
+    return {k: v for k, v in t.items() if isinstance(v, dict) and (deleted or not v.get("deleted"))}
+
+
+def space_of_item(it: dict | None, table: dict | None = None) -> str:
+    """Le Space d'un objet : son `music_space` s'il nomme un Space vivant de son
+    Workspace (`table` : celle de ce Workspace, si on l'a déjà), sinon "" — « Mon
+    Space » de son auteur (une chanson d'avant, un Space supprimé : S2)."""
+    m = (it or {}).get("music_space") or ""
+    if not m:
+        return ""
+    t = spaces_table(library.space_of(it)) if table is None else table
+    return m if m in t else ""
+
+
+def creatable_space(v) -> str:
+    """Le Space où naît ce que la page crée (le `music_space` d'une demande) : ""
+    (ou « mon ») pour « Mon Space », sinon un Space vivant et ouvert du Workspace
+    courant. ValueError (400) qui dit pourquoi. Les volets voisins s'en servent
+    (une playlist naît dans le Space courant)."""
+    if v in (None, "", MON):
+        return ""
+    if not isinstance(v, str) or not MSP_RX.fullmatch(v):
+        raise ValueError("Space : « mon » ou un identifiant msp-…")
+    sp = spaces_table().get(v)
+    if not sp:
+        raise ValueError("ce Space n'est pas (ou plus) dans ce Workspace : choisis-en un autre dans le menu Space")
+    if sp.get("archived"):
+        raise ValueError(f"le Space « {sp['name']} » est archivé : rouvre-le (menu Space) pour y créer")
+    return v
+
+
+def birth_space(p: dict, asked: str = "") -> str:
+    """Le Space d'une prise (p : la recette) : celui de la chanson d'origine quand
+    elle en a une (une variante ; demain une prolongation), la règle de Suno, même si
+    la page regarde un autre Space ; sinon celui que la page a demandé (le Space
+    courant, jugé à l'envoi : s'il a disparu depuis, « Mon Space »)."""
+    if p.get("parent"):
+        return space_of_item(library.get(p["parent"]))
+    return asked if asked and asked in spaces_table() else ""
+
+
+def _song_rows(table: dict) -> tuple[list[dict], list[dict], str | None]:
+    """Les sons de l'app dans ce Workspace (pistes comprises), les chansons que la
+    personne peut voir ici avec leur Space (`_msp`) : les Spaces partagés (S1), et son
+    « Mon Space » — jamais celui d'un autre."""
+    items = library.query(kinds=["audio"], tool=TOOL, limit=5000)["items"]
+    me = auth.current_id()
+    rows = []
+    for it in items:
+        if _is_stem(it):
+            continue
+        m = space_of_item(it, table)
+        if m or me is None or it.get("owner") == me:
+            rows.append({**it, "_msp": m})
+    return items, rows, me
+
+
+def _counts(rows: list[dict]) -> dict:
+    out: dict = {}
+    for r in rows:
+        k = r["_msp"] or MON
+        out[k] = out.get(k, 0) + 1
+    return out
+
+
+def _space_doc(ws: str | None, sp: dict) -> dict:
+    """Un Space vu par les juges de la bibliothèque : un document de son Workspace, partagé (S1)."""
+    return {"id": sp["id"], "title": sp.get("name"), "space": ws, "owner": sp.get("owner"), "shared": True}
+
+
+def space_public(ws: str | None, sp: dict, counts: dict | None = None) -> dict:
+    u = auth.current()
+    cov = library.get(sp["cover"]) if sp.get("cover") else None
+    doc = _space_doc(ws, sp)
+    return {**{k: sp.get(k) for k in ("id", "name", "color", "created", "owner", "cover")}, "archived": bool(sp.get("archived")),
+            "owner_name": auth.display_name(sp["owner"]) if sp.get("owner") else "",
+            "cover_url": library.public(cov).get("thumb_url") if cov and cov.get("kind") == "image" else None,
+            "count": (counts or {}).get(sp["id"], 0),
+            "can": {"edit": auth.can_write_item(doc, u), "delete": auth.can_trash_item(doc, u)}}
+
+
+def api_spaces(req):
+    """Les Spaces du Workspace courant, « Mon Space » d'abord ; ce que la personne y peut."""
+    ws = _ws()
+    table = spaces_table(ws)
+    _, rows, _ = _song_rows(table)
+    counts = _counts(rows)
+    ok, why = (True, "")
+    try:
+        library.check_create(ws)
+    except PermissionError as e:
+        ok, why = False, str(e)
+    spaces = sorted((space_public(ws, sp, counts) for sp in table.values()), key=lambda s: (s["archived"], (s["name"] or "").lower()))
+    return {"workspace": ws, "mine": {"id": MON, "name": "Mon Space", "count": counts.get(MON, 0)},
+            "spaces": spaces, "all": len(rows), "colors": list(SPACE_COLORS), "can_create": ok, "why_create": why}
+
+
+def _space_name(v, table: dict, sid: str | None) -> str:
+    from core import espaces
+    name = espaces.clean_name(v, "le nom du Space")
+    if name.lower() in ("mon space", "tous les spaces"):
+        raise HttpError(400, f"« {name} » est un mot de la page : choisis un autre nom")
+    if any(x["name"].lower() == name.lower() and x["id"] != sid for x in table.values()):
+        raise HttpError(409, f"un Space s'appelle déjà « {name} » dans ce Workspace")
+    return name
+
+
+def _space_cover(v) -> str:
+    if v in (None, ""):
+        return ""
+    it = library.get(v) if isinstance(v, str) else None
+    if not it or it.get("kind") != "image":
+        raise HttpError(400, "la pochette : une image de la bibliothèque, dans ce Workspace")
+    return it["id"]
+
+
+def _space_color(v, default: str) -> str:
+    if v in (None, ""):
+        return default
+    if v not in SPACE_COLORS:
+        raise HttpError(400, f"couleur : {', '.join(SPACE_COLORS)} (des jetons du thème)")
+    return v
+
+
+def api_spaces_post(req):
+    """Créer (`action` « create » : name, color?, cover?), changer (« update » : id et
+    name, color, cover, archived), supprimer (« delete », S2 : ses chansons retournent
+    dans « Mon Space » de leur auteur), rendre un Space supprimé (« restore », Ctrl+Z)."""
+    d = req.json()
+    if not isinstance(d, dict):
+        raise HttpError(400, "la demande est un objet")
+    act = d.get("action") or ("update" if d.get("id") else "create")
+    if act not in ("create", "update", "delete", "restore"):
+        raise HttpError(400, "action : create, update, delete ou restore")
+    ws = _ws()
+    key = ws or ""
+    me = auth.current_id() or auth.admin_id()
+    with _lock:
+        db = _read_json(SPACES)
+        t = db.setdefault(key, {})
+        live = {k: v for k, v in t.items() if isinstance(v, dict) and not v.get("deleted")}
+        if act == "create":
+            library.check_create(ws)          # créer un Space, c'est créer dans ce Workspace
+            sid = f"msp-{secrets.token_hex(6)}"
+            sp = {"id": sid, "name": _space_name(d.get("name"), live, None),
+                  "cover": _space_cover(d.get("cover")),
+                  "color": _space_color(d.get("color"), SPACE_COLORS[len(live) % len(SPACE_COLORS)]),
+                  "created": library.now(), "owner": me, "archived": False}
+            t[sid] = sp
+        else:
+            sid = d.get("id")
+            sp = t.get(sid) if isinstance(sid, str) else None
+            if not sp or (act != "restore") == bool(sp.get("deleted")):
+                raise HttpError(404, "ce Space n'est pas (ou plus) dans ce Workspace")
+            doc = _space_doc(ws, sp)
+            if act == "update":
+                library.check_write(doc)
+                if "name" in d:
+                    sp["name"] = _space_name(d["name"], live, sid)
+                if "cover" in d:
+                    sp["cover"] = _space_cover(d["cover"])
+                if "color" in d:
+                    sp["color"] = _space_color(d["color"], sp.get("color") or SPACE_COLORS[0])
+                if "archived" in d:
+                    if not isinstance(d["archived"], bool):
+                        raise HttpError(400, "archived : vrai ou faux")
+                    sp["archived"] = d["archived"]
+            else:
+                if not auth.can_trash_item(doc, auth.current()):
+                    owner = auth.display_name(sp.get("owner")) or auth.admin_name()
+                    raise PermissionError(f"« {sp['name']} » : seul·e {owner} (son auteur) ou un admin du Workspace le supprime "
+                                          "ou le rend")
+                if act == "delete":
+                    sp.update(deleted=library.now(), deleted_by=me)
+                else:
+                    if any(x["name"].lower() == sp["name"].lower() for x in live.values()):
+                        raise HttpError(409, f"un Space s'appelle déjà « {sp['name']} » : renomme-le avant de rendre celui-ci")
+                    sp.pop("deleted", None)
+                    sp.pop("deleted_by", None)
+            sp["updated"] = library.now()
+        _write_json(SPACES, db)
+    table = spaces_table(ws)
+    _, rows, _ = _song_rows(table)
+    counts = _counts(rows)
+    if act == "delete":
+        # S2 : ses chansons sont déjà dans « Mon Space » de leur auteur (space_of_item) ; rien n'est réécrit
+        back = sum(1 for it in library.query(kinds=["audio"], tool=TOOL, limit=5000)["items"]
+                   if it.get("music_space") == sid and not _is_stem(it))
+        return {"ok": True, "id": sid, "deleted": True, "returned": back}
+    return space_public(ws, t[sid], counts)
+
+
+def api_move(req):
+    """Déplacer des objets vers un Space (`to` : « mon » ou msp-…) : `ids`, et les
+    pistes séparées de chaque chanson, qui suivent leur chanson ; ou reposer un état
+    d'avant (`restore` : {id: Space}, ce que rend `before` — Ctrl+Z). Tout ou rien :
+    chaque objet est jugé (library.check_write) avant la première écriture. « Mon
+    Space » est celui de l'auteur de chaque objet (S1 : il est personnel)."""
+    d = req.json()
+    if not isinstance(d, dict):
+        raise HttpError(400, "la demande est un objet")
+    table = spaces_table()
+    plan: list[tuple[dict, str]] = []
+    if d.get("restore") is not None:
+        rs = d["restore"]
+        if not isinstance(rs, dict) or not 1 <= len(rs) <= 4 * MOVE_MAX:
+            raise HttpError(400, "restore : {objet: Space}")
+        for iid, to in rs.items():
+            if not isinstance(to, str) or (to and to not in table):
+                raise HttpError(409, "un des Spaces d'avant n'existe plus : rien n'est reposé")
+            it = library.get(iid)
+            if not it:
+                raise HttpError(404, f"introuvable : {iid}")
+            plan.append((it, to))
+    else:
+        ids, to = d.get("ids"), d.get("to")
+        if not isinstance(ids, list) or not 1 <= len(ids) <= MOVE_MAX or not all(isinstance(x, str) for x in ids):
+            raise HttpError(400, f"ids : de 1 à {MOVE_MAX} objets")
+        if to == MON:
+            target = ""
+        elif isinstance(to, str) and to in table:
+            target = to
+            if table[to].get("archived"):
+                raise HttpError(409, f"le Space « {table[to]['name']} » est archivé : rouvre-le pour y ranger")
+        else:
+            raise HttpError(404, "ce Space n'est pas (ou plus) dans ce Workspace")
+        its = []
+        u = auth.current()
+        for iid in dict.fromkeys(ids):
+            it = library.get(iid)
+            if not it:
+                raise HttpError(404, f"introuvable : {iid}")
+            # « Mon Space » est à chacun (S1) : on n'en sort pas la chanson d'un autre (Cal, si)
+            who = auth.owner_of(it)
+            if u is not None and not auth.is_admin(u) and not space_of_item(it, table) and who and who != u.get("id"):
+                raise PermissionError(f"« {it.get('title') or iid} » est dans le « Mon Space » de {auth.display_name(who) or who} : "
+                                      "seul·e son auteur l'en sort")
+            its.append(it)
+        songs = {it["id"] for it in its if it.get("kind") == "audio" and not _is_stem(it)}
+        seen = {it["id"] for it in its}
+        if songs:   # les pistes séparées suivent leur chanson (celles d'ODIO aussi)
+            for x in library.query(kinds=["audio"], limit=10 ** 6)["items"]:
+                pr = x.get("params") or {}
+                if pr.get("stem") and pr.get("src") in songs and x["id"] not in seen:
+                    st = library.get(x["id"])
+                    if st:
+                        its.append(st)
+                        seen.add(st["id"])
+        plan = [(it, target) for it in its]
+    for it, _ in plan:
+        library.check_write(it)
+    me = auth.current_id()
+    before, stems, elsewhere = {}, 0, 0
+    for it, to in plan:
+        old = space_of_item(it, table)
+        if old == to and (it.get("music_space") or "") == to:
+            continue
+        library.update(it["id"], {"music_space": to})
+        before[it["id"]] = old
+        if _is_stem(it):
+            stems += 1
+        elif not to and me and auth.owner_of(it) != me:
+            elsewhere += 1
+    return {"moved": list(before), "before": before, "stems": stems, "elsewhere": elsewhere,
+            "to": (d.get("to") if d.get("restore") is None else None)}
+
+
+class _Depot:
+    """La requête d'un dépôt, vue par core_api.lib_upload : son outil et son « via » sont ceux
+    de Musique ; le reste (le corps, sa taille, les bornes d'un ami) est la requête même."""
+
+    def __init__(self, req, **q) -> None:
+        self._r, self._q = req, q
+
+    def q(self, name: str, default: str = "") -> str:
+        return self._q[name] if name in self._q else self._r.q(name, default)
+
+    def __getattr__(self, name):
+        return getattr(self._r, name)
+
+
+def api_import(req):
+    """PUT /api/chanson/import?name=…&title=…&space=…&as=ref|son — un son déposé dans
+    l'app, rangé dans le Space courant dès sa naissance : une référence (`ref` : un
+    dépôt comme un autre, outil « upload », hors des chansons) ou un son importé
+    (`son` : outil « chanson », une carte de la scène, sans recette). Le dépôt lui-même
+    (bornes, contenu conforme à son nom) est celui de la bibliothèque (core_api)."""
+    from tools import core_api
+    as_ = req.q("as") or "ref"
+    if as_ not in ("ref", "son"):
+        raise HttpError(400, "as : ref (une référence son) ou son (un son importé)")
+    try:
+        msp = creatable_space(req.q("space"))          # avant d'écrire quoi que ce soit
+    except ValueError as e:
+        raise HttpError(400, str(e)) from e
+    name = req.q("name", "")
+    if library.EXT_KIND.get(Path(name).suffix.lower()) != "audio":
+        raise HttpError(415, "un son : wav, mp3, flac, m4a, ogg…")
+    it = core_api.lib_upload(_Depot(req, tool="upload" if as_ == "ref" else TOOL, via="chanson" if as_ == "ref" else "import",
+                                    folder="" if as_ == "ref" else "Musique"))
+    if msp:   # dans la requête même du dépôt : la page ne le pose jamais
+        it = library.public(library.update(it["id"], {"music_space": msp}))
+    return it
+
+
 def api_list(req):
+    """Les chansons d'un Space (`space` : « mon » par défaut, msp-…, ou « * » : tous —
+    les Spaces partagés et « Mon Space »), chacune avec son Space (`music_space`, ""
+    pour « Mon Space »), ses pistes, son projet ODIO ; les comptes par Space. Un Space
+    qui n'est plus là : « Mon Space » (`space` dit celui qui est montré)."""
     try:
         limit = max(1, min(200, int(req.q("limit", "60") or 60)))
     except ValueError as e:
         raise HttpError(400, "limit : un nombre") from e
-    items = library.query(kinds=["audio"], tool=TOOL, limit=5000)["items"]
-    me = auth.current_id()
-    songs = [it for it in items if not _is_stem(it) and (me is None or it.get("owner") == me)]
+    table = spaces_table()
+    want = req.q("space", MON) or MON
+    if want not in (MON, TOUS) and want not in table:
+        want = MON
+    items, rows, _ = _song_rows(table)
+    songs = [r for r in rows if want == TOUS or (r["_msp"] or MON) == want]
     out = []
     for s in songs[:limit]:
-        out.append({**s, "stems": stems_of(s["id"], items), "odio": _odio_link(s["id"])})
-    return {"songs": out, "total": len(songs)}
+        row = {k: v for k, v in s.items() if k != "_msp"}
+        out.append({**row, "music_space": s["_msp"], "stems": stems_of(s["id"], items), "odio": _odio_link(s["id"])})
+    return {"songs": out, "total": len(songs), "space": want, "counts": _counts(rows)}
 
 
 def _tonic(key: str) -> dict | None:
@@ -851,17 +1207,20 @@ def api_odio(req):
 
 
 # ── les routes ──────────────────────────────────────────────
-def _submit(p: dict, title: str):
-    j = jobs.submit(f"chanson.{p['model']}", p, title=title[:90], tool=TOOL)
+def _submit(p: dict, title: str, msp: str = ""):
+    # le Space courant voyage avec le travail, à côté de la recette (une variante ne le rejoue pas)
+    j = jobs.submit(f"chanson.{p['model']}", {**p, "music_space": msp} if msp else p, title=title[:90], tool=TOOL)
     return jobs.public(j)
 
 
 def api_create(req):
+    d = req.json()
     try:
-        p = song_params(req.json())
+        p = song_params(d)
+        msp = creatable_space(d.get("music_space"))     # le Space courant de la page
     except (ValueError, TypeError) as e:
         raise HttpError(400, str(e)) from e
-    return _submit(p, f"Chanson · {p['title']}")
+    return _submit(p, f"Chanson · {p['title']}", msp)
 
 
 def api_variant(req):
@@ -1024,6 +1383,10 @@ def register(app) -> None:
     app.route("POST", "/api/chanson/odio", api_odio)
     app.route("POST", "/api/chanson/studio/demande", api_studio_ask)
     app.route("GET", "/api/chanson/onde/{item_id}", api_wave)
+    app.route("GET", "/api/chanson/spaces", api_spaces)
+    app.route("POST", "/api/chanson/spaces", api_spaces_post)
+    app.route("POST", "/api/chanson/spaces/move", api_move)
+    app.route("PUT", "/api/chanson/import", api_import)
 
 
 # ── le contrôle sans GPU (tools/check.py) ───────────────────
@@ -1235,3 +1598,234 @@ def selftest(call, ok) -> None:
             ok(e.status == 403 and "Studio" in str(e), "Studio : un ami est refusé (403), la raison dite")
     finally:
         auth.set_current(None)
+
+    _selftest_spaces(call, ok, wait, base, song, v1)
+
+
+def _selftest_spaces(call, ok, wait, base: dict, song: dict, v1: dict) -> None:
+    """Les Spaces (musique_spaces_playlists.md § 2) : la naissance, la variante qui
+    reste dans le Space d'origine, les pistes qui suivent, l'import, déplacer et
+    Ctrl+Z, archiver, supprimer (S2) ; puis S1 et S2 entre deux personnes."""
+    import io
+
+    from PIL import Image
+
+    st, s0 = call("GET", "/api/chanson/spaces")
+    ok(st == 200 and s0.get("mine", {}).get("id") == MON and s0["mine"]["name"] == "Mon Space" and s0.get("workspace")
+       and s0.get("can_create") is True and s0.get("colors") == list(SPACE_COLORS),
+       f"spaces : « Mon Space » d'abord, le Workspace, créer permis ({st} {str(s0)[:160]})")
+    ok(s0["mine"]["count"] >= 2, f"spaces : les chansons d'avant sont dans « Mon Space », sans migration ({s0['mine']['count']})")
+    ok("music_space" not in song and "music_space" not in v1, "une chanson et sa variante d'avant : pas de champ, « Mon Space »")
+    st, A = call("POST", "/api/chanson/spaces", {"name": "Album été"})
+    ok(st == 200 and MSP_RX.fullmatch(A.get("id", "")) and A.get("color") in SPACE_COLORS and A.get("can") == {"edit": True, "delete": True}
+       and A.get("count") == 0 and A.get("archived") is False, f"spaces : créer « Album été » ({st} {A})")
+    st, B = call("POST", "/api/chanson/spaces", {"name": "Démos", "color": "amb"})
+    ok(st == 200 and B.get("color") == "amb" and B["id"] != A.get("id"), f"spaces : créer « Démos », sa couleur ({st})")
+    for body, want, why in (({"name": "album   ÉTÉ"}, 409, "un nom déjà pris (casse, espaces)"), ({"name": ""}, 400, "un nom vide"),
+                            ({"name": "Mon Space"}, 400, "un mot de la page"), ({"name": "Rouge", "color": "red"}, 400, "une couleur hors des jetons"),
+                            ({"name": "Pochette", "cover": song["id"]}, 400, "une pochette qui n'est pas une image"),
+                            ({"action": "detruire"}, 400, "une action inconnue")):
+        st, _ = call("POST", "/api/chanson/spaces", body)
+        ok(st == want, f"spaces : refusé — {why} ({st})")
+
+    # la naissance : une chanson dans le Space courant
+    st, ja = call("POST", "/api/chanson/create", {**base, "seed": 70, "music_space": A["id"]})
+    ja = wait(ja["id"]) if st == 200 else {}
+    a1 = (ja.get("items") or [{}])[0]
+    ok(ja.get("state") == "done" and a1.get("music_space") == A["id"], f"naissance : la chanson dans le Space courant ({ja.get('state')} {a1.get('music_space')})")
+    st, bad = call("POST", "/api/chanson/create", {**base, "music_space": "msp-000000000000"})
+    st2, bad2 = call("POST", "/api/chanson/create", {**base, "music_space": "Album"})
+    ok(st == 400 and "Space" in bad.get("error", "") and st2 == 400, f"naissance : un Space absent ou mal écrit, refusé ({st} {st2})")
+    if not a1.get("id"):
+        return
+    st, la = call("GET", f"/api/chanson/list?space={A['id']}")
+    st2, lm = call("GET", "/api/chanson/list")
+    st3, lt = call("GET", "/api/chanson/list?space=*&limit=200")
+    ids = lambda r: [x["id"] for x in r.get("songs", [])]   # noqa: E731
+    tous = {x["id"]: x.get("music_space") for x in lt.get("songs", [])}
+    ok(ids(la) == [a1["id"]] and la.get("space") == A["id"] and a1["id"] not in ids(lm) and song["id"] in ids(lm)
+       and lm.get("space") == MON and tous.get(a1["id"]) == A["id"] and tous.get(song["id"]) == ""
+       and lt.get("counts", {}).get(A["id"]) == 1 and lt["counts"].get(MON) == lm.get("total"),
+       f"la liste : par Space, « Tous » avec le Space de chaque chanson, les comptes ({la.get('total')} {lm.get('total')} {lt.get('counts')})")
+    st, lx = call("GET", "/api/chanson/list?space=msp-000000000000")
+    ok(st == 200 and lx.get("space") == MON, "la liste : un Space qui n'est plus là montre « Mon Space »")
+
+    # une variante reste dans le Space de la chanson d'origine, même si la page en regarde un autre
+    st, jv = call("POST", "/api/chanson/variant", {"item": a1["id"], "music_space": B["id"]})
+    jv = wait(jv["id"]) if st == 200 else {}
+    va = (jv.get("items") or [{}])[0]
+    ok(jv.get("state") == "done" and va.get("music_space") == A["id"] and va.get("parents") == [a1["id"]],
+       f"variante : dans le Space de la chanson d'origine, pas celui que la page regarde ({va.get('music_space')})")
+    # les pistes séparées naissent avec leur chanson
+    st, js = call("POST", "/api/chanson/stems", {"item": a1["id"]})
+    js = wait(js["id"]) if st == 200 else {}
+    stems = [library.get(x) for x in (js.get("result") or {}).get("stems", {}).values()]
+    ok(js.get("state") == "done" and len(stems) == 4 and all(x and x.get("music_space") == A["id"] for x in stems),
+       f"stems : dans le Space de leur chanson ({js.get('state')} {[x.get('music_space') if x else None for x in stems]})")
+
+    # importer : un son importé, une référence déposée, dans le Space courant dès leur naissance
+    wav = library.path_of(library.get(song["id"])).read_bytes()
+    st, imp = call("PUT", f"/api/chanson/import?name=demo.wav&title=D%C3%A9mo&space={A['id']}&as=son", raw=wav)
+    st2, ref = call("PUT", f"/api/chanson/import?name=ref.wav&title=R%C3%A9f&space={A['id']}", raw=wav)
+    ok(st == 200 and imp.get("music_space") == A["id"] and imp["origin"]["tool"] == TOOL and imp["origin"].get("via") == "import"
+       and st2 == 200 and ref.get("music_space") == A["id"] and ref["origin"]["tool"] == "upload" and ref["origin"].get("via") == "chanson",
+       f"importer : un son (une carte) et une référence (un dépôt), dans le Space courant ({st} {st2})")
+    st, la = call("GET", f"/api/chanson/list?space={A['id']}")
+    ok(imp.get("id") in ids(la) and ref.get("id") not in ids(la), "importer : le son importé est une carte du Space, la référence non")
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 48), (40, 120, 90)).save(buf, "PNG")
+    st, _ = call("PUT", "/api/chanson/import?name=x.png&as=son", raw=buf.getvalue())
+    st2, _ = call("PUT", "/api/chanson/import?name=x.wav&space=msp-000000000000&as=son", raw=wav)
+    st3, _ = call("PUT", "/api/chanson/import?name=x.wav&as=planche", raw=wav)
+    ok((st, st2, st3) == (415, 400, 400), f"importer : une image, un Space absent, une sorte inconnue — refusés ({st} {st2} {st3})")
+
+    # déplacer : la chanson et ses pistes ; Ctrl+Z repose l'état d'avant
+    st, mv = call("POST", "/api/chanson/spaces/move", {"ids": [a1["id"]], "to": B["id"]})
+    moved = {x["id"] for x in stems} | {a1["id"]}
+    ok(st == 200 and set(mv.get("moved", [])) == moved and mv.get("stems") == 4
+       and all((library.get(x) or {}).get("music_space") == B["id"] for x in moved) and set(mv["before"].values()) == {A["id"]},
+       f"déplacer : la chanson et ses quatre pistes ({st} {mv.get('stems')})")
+    st, back = call("POST", "/api/chanson/spaces/move", {"restore": mv.get("before", {})})
+    ok(st == 200 and all((library.get(x) or {}).get("music_space") == A["id"] for x in moved), f"déplacer, puis Ctrl+Z : tout revient ({st})")
+    st, mm = call("POST", "/api/chanson/spaces/move", {"ids": [imp["id"]], "to": MON})
+    ok(st == 200 and "music_space" not in (library.get(imp["id"]) or {"music_space": 1}) and mm.get("elsewhere") == 0,
+       f"déplacer vers « Mon Space » : le champ s'en va ({st})")
+    for body, want, why in (({"ids": [a1["id"]], "to": "msp-000000000000"}, 404, "un Space absent"), ({"ids": [], "to": MON}, 400, "rien"),
+                            ({"ids": ["aud-20000101-000000-dead"], "to": MON}, 404, "un objet inconnu"),
+                            ({"restore": {a1["id"]: "msp-000000000000"}}, 409, "reposer dans un Space qui n'est plus")):
+        st, _ = call("POST", "/api/chanson/spaces/move", body)
+        ok(st == want, f"déplacer : refusé — {why} ({st})")
+    st, bad = call("POST", f"/api/library/{a1['id']}", {"music_space": "Album"})
+    ok(st == 400 and "music_space" in bad.get("error", ""), f"le socle : library.update juge la forme de music_space ({st})")
+
+    # renommer, une pochette, archiver (on n'y crée plus, on n'y range plus), rouvrir
+    st, img = call("PUT", "/api/library/upload?name=pochette.png&title=Pochette", raw=buf.getvalue())
+    st, a2 = call("POST", "/api/chanson/spaces", {"action": "update", "id": A["id"], "name": "Album hiver", "cover": img.get("id"), "color": "cy"})
+    ok(st == 200 and a2.get("name") == "Album hiver" and a2.get("cover") == img.get("id") and a2.get("cover_url") and a2["color"] == "cy"
+       and a2.get("count") == 2, f"spaces : renommer, une pochette, une couleur ({st} {a2})")
+    st, a3 = call("POST", "/api/chanson/spaces", {"id": A["id"], "archived": True})
+    st2, bad = call("POST", "/api/chanson/create", {**base, "music_space": A["id"]})
+    st3, _ = call("POST", "/api/chanson/spaces/move", {"ids": [imp["id"]], "to": A["id"]})
+    st4, sl = call("GET", "/api/chanson/spaces")
+    ok(st == 200 and a3.get("archived") is True and st2 == 400 and "archivé" in bad.get("error", "") and st3 == 409
+       and [x["id"] for x in sl.get("spaces", [])][-1] == A["id"],
+       f"archiver : on n'y crée plus, on n'y range plus, il passe en fin de liste ({st} {st2} {st3})")
+    call("POST", "/api/chanson/spaces", {"id": A["id"], "archived": False})
+
+    # supprimer (S2) : ses chansons retournent dans « Mon Space » de leur auteur ; rien à la corbeille ; Ctrl+Z
+    call("POST", "/api/chanson/spaces/move", {"ids": [imp["id"]], "to": B["id"]})
+    st, dl = call("POST", "/api/chanson/spaces", {"action": "delete", "id": B["id"]})
+    st2, sl = call("GET", "/api/chanson/spaces")
+    st3, lm = call("GET", "/api/chanson/list?limit=200")
+    gone = library.get(imp["id"]) or {}
+    ok(st == 200 and dl.get("returned") == 1 and B["id"] not in [x["id"] for x in sl.get("spaces", [])]
+       and imp["id"] in ids(lm) and gone.get("music_space") == B["id"] and space_of_item(gone) == "",
+       f"supprimer (S2) : la chanson revient dans « Mon Space », rien n'est réécrit ni jeté ({st} {dl})")
+    st, _ = call("POST", "/api/chanson/spaces", {"action": "delete", "id": B["id"]})
+    st2, rs = call("POST", "/api/chanson/spaces", {"action": "restore", "id": B["id"]})
+    st3, lb = call("GET", f"/api/chanson/list?space={B['id']}")
+    ok(st == 404 and st2 == 200 and rs.get("id") == B["id"] and ids(lb) == [imp["id"]],
+       f"supprimer deux fois : 404 ; Ctrl+Z rend le Space et sa chanson ({st} {st2})")
+    try:
+        creatable_space(B["id"])
+        ok(birth_space({"parent": va["id"]}) == A["id"] and birth_space({}, "msp-000000000000") == "" and creatable_space(MON) == "",
+           "birth_space : la chanson d'origine d'abord ; un Space disparu depuis l'envoi : « Mon Space »")
+    except ValueError as e:
+        ok(False, f"creatable_space : un Space rendu est ouvert ({e})")
+
+    _selftest_partage(ok, wav, base)
+
+
+def _selftest_partage(ok, wav: bytes, base: dict) -> None:
+    """S1 et S2 entre deux personnes d'un même Workspace, la porte allumée (comme
+    asset.py) : un Space créé par Ana est celui de Bob aussi ; « Mon Space » reste à
+    chacun ; Bob ne supprime pas le Space d'Ana ; Ana le supprime : chaque chanson
+    revient dans « Mon Space » de son auteur."""
+    from tools.admin import essai_http as H
+
+    def err(d) -> str:
+        return d.get("error", "") if isinstance(d, dict) else str(d)[:80]
+
+    before = config.CFG.get("auth")
+    config.CFG["auth"] = True
+    auth.startup()
+    with auth._lock:
+        auth._hits.clear()
+    same = {"Origin": f"http://127.0.0.1:{config.get('port')}"}
+    try:
+        _, _, cal = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
+
+        def who(tok, ws=None):
+            def req(method, path, body=None, *, raw=None, hd=None):
+                h = {**same, **({"X-SR-Espace": ws} if ws else {}), **(hd or {})}
+                return H(method, path, body, cookie=tok, headers=h, raw=raw)[:2]
+            return req
+
+        C = who(cal)
+        s, t = C("POST", "/api/equipes", {"name": "Spaces Essai"})
+        tid, W = (t.get("id"), (t.get("spaces") or [{}])[0].get("id")) if isinstance(t, dict) else (None, None)
+        s1, _ = C("POST", f"/api/equipes/{tid}/membres", {"pseudo": "Ana Spaces", "role": "member"})
+        s2, _ = C("POST", f"/api/equipes/{tid}/membres", {"pseudo": "Bob Spaces", "role": "member"})
+        _, _, ANA = H("POST", "/api/auth/enter", {"name": "Ana Spaces"}, headers=same)
+        _, _, BOB = H("POST", "/api/auth/enter", {"name": "Bob Spaces"}, headers=same)
+        ok((s, s1, s2) == (200, 200, 200) and W and ANA and BOB, f"partage : une Team, Ana et Bob membres ({s} {s1} {s2})")
+        if not (W and ANA and BOB):
+            return
+        a, b = who(ANA, W), who(BOB, W)
+        s, sp = a("POST", "/api/chanson/spaces", {"name": "Album de la Team"})
+        A = sp.get("id") if isinstance(sp, dict) else None
+        s2, lb = b("GET", "/api/chanson/spaces")
+        seen = next((x for x in (lb.get("spaces") or []) if x["id"] == A), {}) if isinstance(lb, dict) else {}
+        ok(s == 200 and A and lb.get("workspace") == W and seen.get("owner_name") == "Ana Spaces"
+           and seen.get("can") == {"edit": True, "delete": False},
+           f"partage (S1) : le Space d'Ana est dans la liste de Bob ; Bob le change, il ne le supprime pas ({s} {s2} {seen.get('can')})")
+        hd = {"Content-Type": "audio/wav"}
+        _, ia = a("PUT", f"/api/chanson/import?name=a.wav&title=Son+d+Ana&space={A}&as=son", raw=wav, hd=hd)
+        _, ib = b("PUT", f"/api/chanson/import?name=b.wav&title=Son+de+Bob&space={A}&as=son", raw=wav, hd=hd)
+        _, iam = a("PUT", "/api/chanson/import?name=am.wav&title=Mon+son+d+Ana&as=son", raw=wav, hd=hd)
+        _, ibm = b("PUT", "/api/chanson/import?name=bm.wav&title=Mon+son+de+Bob&as=son", raw=wav, hd=hd)
+        got = [x.get("id") for x in (ia, ib, iam, ibm) if isinstance(x, dict)]
+        ok(len(got) == 4 and all(got), f"partage : Ana et Bob importent, dans le Space et dans leur « Mon Space » ({got})")
+        if len(got) < 4 or not all(got):
+            return
+        ia, ib, iam, ibm = got
+        # Bob crée une chanson dans le Space d'Ana : le travail tourne en son nom, elle naît dans le Space
+        s, j = b("POST", "/api/chanson/create", {**base, "seed": 90, "music_space": A})
+        jj = {}
+        for _ in range(600):
+            _, jj = b("GET", f"/api/jobs/{j.get('id')}") if isinstance(j, dict) else (0, {})
+            if jj.get("state") in ("done", "error", "cancelled"):
+                break
+            time.sleep(0.2)
+        bg = ((jj.get("items") or [{}])[0]).get("id")
+        bgi = library.see(bg) or {} if bg else {}
+        ok(jj.get("state") == "done" and bgi.get("music_space") == A and auth.owner_of(bgi) != auth.owner_of(library.see(ia) or {}),
+           f"partage : Bob crée dans le Space d'Ana, la chanson y naît ({s} {jj.get('state')} {jj.get('message')})")
+        ids = lambda r: {x["id"] for x in (r.get("songs") or [])} if isinstance(r, dict) else set()   # noqa: E731
+        _, la = a("GET", f"/api/chanson/list?space={A}")
+        _, lam = a("GET", "/api/chanson/list")
+        _, lat = a("GET", "/api/chanson/list?space=*")
+        _, lbm = b("GET", "/api/chanson/list")
+        ok(ids(la) == {ia, ib, bg} and ids(lam) == {iam} and ids(lat) == {ia, ib, bg, iam} and ids(lbm) == {ibm},
+           f"partage (S1) : Ana voit tout le Space, son « Mon Space » seul, jamais celui de Bob "
+           f"({len(ids(la))} {len(ids(lam))} {len(ids(lat))} {len(ids(lbm))})")
+        s, d = a("POST", "/api/chanson/spaces/move", {"ids": [ibm], "to": A})
+        s2, d2 = b("POST", "/api/chanson/spaces/move", {"ids": [ia], "to": MON})
+        s3, _ = b("POST", "/api/chanson/spaces/move", {"restore": d2.get("before", {})}) if s2 == 200 else (0, {})
+        ok(s == 403 and "Mon Space" in err(d) and s2 == 200 and d2.get("elsewhere") == 1 and s3 == 200,
+           f"partage : Ana ne sort pas une chanson du « Mon Space » de Bob ; Bob renvoie celle d'Ana dans le sien, puis Ctrl+Z "
+           f"({s} {err(d)[:60]} {s2} {s3})")
+        s, d = b("POST", "/api/chanson/spaces", {"action": "delete", "id": A})
+        s2, rn = b("POST", "/api/chanson/spaces", {"id": A, "name": "Album de toute la Team"})
+        ok(s == 403 and "Ana Spaces" in err(d) and s2 == 200 and rn.get("name") == "Album de toute la Team",
+           f"partage : Bob renomme, il ne supprime pas le Space d'Ana — la raison dite ({s} {err(d)[:80]} {s2})")
+        s, d = a("POST", "/api/chanson/spaces", {"action": "delete", "id": A})
+        _, lam = a("GET", "/api/chanson/list")
+        _, lbm = b("GET", "/api/chanson/list")
+        ok(s == 200 and d.get("returned") == 3 and ids(lam) == {ia, iam} and ids(lbm) == {ib, ibm, bg}
+           and all(library.see(x) for x in (ia, ib, bg)),
+           f"partage (S2) : Ana supprime ; chaque chanson revient dans « Mon Space » de son auteur, rien n'est jeté ({s} {d})")
+    finally:
+        auth.set_current(None)
+        auth.set_current_space(None)
+        config.CFG["auth"] = before

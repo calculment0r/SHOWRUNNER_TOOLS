@@ -5,6 +5,10 @@
   "prefs": [
     {
       "key": "autoplay", "label": "Écouter une chanson dès qu'elle arrive", "type": "toggle", "default": false
+    },
+    {
+      "key": "spaces", "label": "Le Space choisi, par Workspace", "type": "text", "default": "", "maxlength": 2000, "hidden": true,
+      "help": "des paires « esp-…=msp-… » (ou « * » : tous les Spaces) ; sans paire : « Mon Space » (chanson/spaces.js)"
     }
   ]
 }
