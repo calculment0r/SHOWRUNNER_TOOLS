@@ -53,12 +53,15 @@ export function createVideo(app) {
       `${c.w}×${c.h} · ${c.family}${full ? ' · ' + c.label : ''}`))];
   const canvKey = (v) => { const c = canvasOf(v); return Array.isArray(c) ? c.join('x') : c === 'auto' ? 'auto' : 'preset'; };
 
+  const unfitLora = (v) => (v.mode === 'r2v' ? 'appris sur des images (fl2va) : pas envoyé en Références (ref2va)' : '');
   // ce que la page Vidéo enverrait pour cette carte (movie.js, params) ; `k` : la valeur du lot
   function params(v, F = app.flowNow(), k = null) {
     const take = (pb) => F.take(v.id, pb).filter((e) => e.item);
     const pr = promptOf(v, F, k);
+    // le LoRA d'un moodboard H3 (gen.js, loraOf) : appris sur fl2va, il ne va qu'en Texte et en Images
+    const lo = app.gen.loraOf(v, 'h3', unfitLora(v)).sent;
     const p = { desc: pr.text, sound: pr.son || v.sound || '', music: pr.musique || v.music || '', method: methodOf(v), frames: v.frames,
-      steps: null, seed: v.seed ? Number(v.seed) : null, canvas: canvasOf(v), loras: [], adv: {}, speech_lang: prefs.get('general.langue', 'fr') === 'en' ? 'en' : 'fr' };
+      steps: null, seed: v.seed ? Number(v.seed) : null, canvas: canvasOf(v), loras: lo ? [lo] : [], adv: {}, speech_lang: prefs.get('general.langue', 'fr') === 'en' ? 'en' : 'fr' };
     if (v.mode === 'i2v') { p.start = take('start')[0]?.item || ''; p.end = take('end')[0]?.item || ''; }
     if (v.mode === 'r2v') {
       p.inputs = Object.fromEntries(SLOTS_R2V.map((k) => [k, take(k).map((e) => ({ item: e.item }))]));
@@ -143,7 +146,7 @@ export function createVideo(app) {
     return `estimé ${lo} à ${hi} min sur H3${n > 1 ? ` pour ${n} rendus` : ''} — ${pl.estimate.basis}`;
   };
 
-  const cardKey = (v) => '|' + app.flow().sig(v.id) + (O() ? '|o' : '') + '|' + (O()?.engine || '');
+  const cardKey = (v) => '|' + app.flow().sig(v.id) + (O() ? '|o' : '') + '|' + (O()?.engine || '') + (S.loras ? `|l${S.loras.at}` : '');
 
   // une entrée de la carte : son étiquette (le port la vise) et ce qui y arrive ; les entrées
   // à plusieurs places sont un carrousel (commun/refs.js) : glisser une vignette change sa
@@ -235,6 +238,7 @@ export function createVideo(app) {
         ...ports.filter((p) => p.id !== 'prompt').map((p) => slot(v, p, F.inputs(v.id)[p.id] || [])),
         el('div', { class: 'grow' }, el('span', { class: 'lbl' }, 'préréglage'), presets),
         el('div', { class: 'grow' }, el('span', { class: 'lbl' }, 'toile'), canv),
+        app.gen.loraRow(v, 'h3', unfitLora(v)),
         frames,
         el('div', { class: 'grow' }, btn, w),
         el('span', { class: 'ghint vest' }),

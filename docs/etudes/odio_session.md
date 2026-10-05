@@ -323,3 +323,26 @@ une couche par-dessus l'arrangement.
 - Follow Actions, Legato, vélocité du lancement ; la prise audio en Session ;
   un clip MIDI de plus de 256 pas n'entre qu'en partie dans une case.
 - Relire les trois chapitres sur le manuel (le réseau l'a refusé).
+
+## 7. Les retours à côté de la Sortie (06/10)
+
+Cal : « pourquoi dans le mode Session je n'ai pas mes trucs centrés ?? Réverbe
+et RTT-01 doivent être à côté du fader Sortie, à droite, non ?? ».
+
+**Vu avant** (Chromium, 1920, 2000 et 2560 px, panneau Asset ouvert ou non,
+0, 2, 8 voies, mesuré par `getBoundingClientRect`) : la grille et la console
+étaient bien centrées tant qu'elles tenaient ; mais dès que la console débordait
+(8 voies à 1920 ou 2000 px, ou le panneau Asset ouvert), elle se calait à gauche
+et la fin partait hors de la vue — à 8 voies et 1920 px, les retours finissaient
+à 2150 px et la Sortie à 2310 px pour une zone qui s'arrête à 1906 px.
+
+**Fait** (`session.js` consoleEl, `session.css` `.ss-cdef` / `.ss-cfix`) :
+l'ordre d'une console, comme le mixeur de Live (« Mixing » : les retours et le
+Main à droite). Deux blocs : à gauche les voies et les pistes ; à droite les
+retours collés à la Sortie, `position: sticky; right: 0` sur un fond plein,
+un filet à gauche. Quand tout tient, la console entière se centre ; quand elle
+déborde, les voies et les pistes défilent sous le bloc de droite, qui reste au
+bord de la zone. Mesuré après : à 8 voies et 1920 px, la Sortie finit à 1906 px
+(le bord) et les retours la touchent (10 px) ; aux autres largeurs, inchangé
+(centré). Captures : `apres_session_<thème>_<n>v_<largeur>[_asset].png`
+(/tmp de la session, non gardées).

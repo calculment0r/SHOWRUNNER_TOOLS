@@ -25,6 +25,8 @@
   // Puis les médias (/media/*, les vidéos et les sons publiés) : des assets, mais le Worker y ajoute les requêtes
   // partielles (Range → 206), que les assets ne font pas et que Safari exige (worker.js, media()). Chaque requête d'un
   // média compte donc comme une requête du Worker (quota gratuit : 100 000 par jour).
+  // Puis les liens d'écoute (/ecoute/<jeton>/…, le paquet d'une playlist dans R2 : worker.js, ecoute()), hors de la porte
+  // à code ; le gabarit ecoute/ du dépôt n'est donc jamais servi tel quel.
   // Motifs : « * » va jusqu'au bout du chemin, « / » compris (« /*.mp4 » = tout .mp4 de l'arbre) ; sensibles à la casse.
   // Limites : 20 000 fichiers (Workers Free), 25 Mio par fichier ; run_worker_first : 100 motifs au plus.
   "assets": {
@@ -34,7 +36,7 @@
       "/api/*", "/library/*", "/character/api/*", "/character/files/*", "/character/v1/*", "/analyse/runs/*",
       "/pont/*", "/agents/*", "/invitation", "/invitation/*", "/strategie", "/strategie/*",
       "/media/*", "/*.mp4", "/*.m4v", "/*.mov", "/*.webm", "/*.mp3", "/*.m4a", "/*.aac", "/*.wav", "/*.ogg",
-      "/*.oga", "/*.opus", "/*.flac"
+      "/*.oga", "/*.opus", "/*.flac", "/ecoute/*"
     ]
   },
 

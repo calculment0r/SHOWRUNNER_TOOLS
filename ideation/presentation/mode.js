@@ -7,10 +7,14 @@
 // Le mode est chargé seulement quand on y entre (diapo/ : le bouton du panneau Diapositives,
 // la palette ⌘K) ; il a sa propre vue, posée par-dessus l'Idéation :
 //   à gauche   le plan des diapositives (leurs scènes en petit, dans l'habit du modèle) ;
-//   au centre  la scène de la diapositive choisie, qui joue ses entrées (clic : un objet) ;
-//   dessous    la minuterie de motion : une piste par objet (son entrée, décalée, ses unités),
-//              la tête de lecture qu'on glisse, une barre qu'on déplace (le délai) ou qu'on
-//              étire (la durée) ;
+//   au centre  la scène de la diapositive choisie, qui joue ses entrées ; un clic choisit un
+//              objet, sans rien rejouer, et un texte s'y écrit sur place (Cal, 06/10 : le clic
+//              qui relançait l'animation empêchait de changer les textes) ; dessous, centrés,
+//              les boutons du lecteur du portail (commun/lecteur.css) ;
+//   dessous    la minuterie de motion, dans un panneau qu'on redimensionne (commun/split.js) :
+//              une piste par objet (son entrée, décalée, ses unités), LA tête de lecture du
+//              portail (commun/tete.js) qu'on glisse sur la règle, une barre qu'on déplace (le
+//              délai) ou qu'on étire (la durée) ; aucun texte ne s'y sélectionne en glissant ;
 //   à droite   Modèles (les dix, essayer, charger l'exemple), Diapositive (transition, durée,
 //              courbe, fond, avance seule), Objet (entrée, découpe, délai, durée, courbe,
 //              décalage, étape, boucle, profondeur, sortie).
@@ -21,6 +25,9 @@
 
 import { el, toast, href, api } from '../../commun/shell.js';
 import { basculer, enPleinEcran, permis } from '../../commun/pleinecran.js';
+import { tete, poser, brancherRegle } from '../../commun/tete.js';   // LA tête de lecture de toutes les timelines (Cal, 30/09 et 06/10)
+import { ICON } from '../../commun/lecteur.js';                      // LE lecteur : sa barre (lecteur.css), sa boucle
+import { split as panneaux } from '../../commun/split.js';            // les panneaux qu'on redimensionne
 import { atelier } from '../atelier/socle.js';
 import { shownOf, deckOf, isSlide } from '../diapo/ordre.js';
 import { buildScene, releaseScene, slideNodes, partOf, roleOf } from './scene.js';
@@ -96,9 +103,15 @@ function install(app) {
   stage.append(fitB, fit, selBox, handle);
   view.append(banner, stage);
   const insp = el('aside', { class: 'pm-insp' });
-  const tl = el('footer', { class: 'pm-tl' });
-  root.append(top, outline, view, insp, tl);
+  const tl = el('footer', { class: 'pm-tl', 'aria-label': 'la minuterie de motion' });
+  // la scène et la minuterie, l'une sur l'autre : la poignée entre les deux règle la hauteur de la
+  // minuterie (commun/split.js : glisser, flèches, double-clic ; gardée dans ce navigateur, clé
+  // « sr-split-ideation-motion »)
+  const mid = el('div', { class: 'pm-mid' }, view, tl);
+  root.append(top, outline, mid, insp);
   document.body.append(root);
+  const rows = panneaux(mid, [{ el: view, grow: 1, min: 240 }, { el: tl, size: 220, min: 120 }], { axis: 'y', key: 'ideation-motion', gutter: 8 });
+  rows.gutters[0].setAttribute('aria-label', 'la hauteur de la minuterie de motion');
   for (const ev of ['pointerdown', 'wheel', 'contextmenu', 'dblclick', 'dragover', 'drop']) root.addEventListener(ev, (e) => e.stopPropagation(), { passive: ev === 'wheel' });
 
   // ── l'échelle de la scène ────────────────────────────────
@@ -139,8 +152,10 @@ function install(app) {
     run = createRun(scene, { reduced: reducedQ.matches });
     paintTimeline();
     paintSel();
-    if (at !== null) run.seek(at);
-    else if (replay) playTl(0); else run.seek(run.plan.total);
+    // l'inspecteur lit la scène (le nom d'un objet, le rôle de la diapositive) : il la suit, une fois refaite
+    if (tab === 'objet' || tab === 'diapo') paintInsp();
+    if (at !== null) { run.seek(at); paintHead(at); }
+    else if (replay) playTl(0); else { run.seek(run.plan.total); paintHead(run.plan.total); }
   }
   function paintOutline() {
     const fs = frames();
@@ -159,12 +174,19 @@ function install(app) {
   }
 
   // ── la sélection d'un objet sur la scène ─────────────────
+  // Un clic choisit l'objet (l'onglet Objet, sa piste) et ne rejoue rien : la frise reste où elle
+  // est (Cal, 06/10). Sur un texte, le clic y pose le curseur : on l'écrit sur place (plus bas).
   stage.addEventListener('pointerdown', (e) => {
     if (e.target.closest('.pm-split')) return startSplit(e);
+    if (ed && ed.txt.contains(e.target)) return;   // on écrit dans ce texte : le clic y déplace le curseur
     const o = e.target.closest('.pm-fit:not(.pm-before) .pm-o:not(.pm-dc)');
     sel = o ? o.dataset.id : null;
-    paintSel(); paintInsp(sel ? 'objet' : null);
-    if (sel) { const tr = run?.plan.tracks.find((t) => t.id === sel); if (tr) playTl(Math.max(0, tr.t0 - 150)); }
+    paintSel(); paintInsp(sel ? 'objet' : null); paintLanes();
+  });
+  stage.addEventListener('click', (e) => {
+    if (ed || e.button !== 0) return;
+    const o = e.target.closest('.pm-fit:not(.pm-before) .pm-o:not(.pm-dc)');
+    if (o) startEdit(o.dataset.id, e.clientX, e.clientY);
   });
   function paintSel() {
     const n = sel && S.board?.nodes.find((x) => x.id === sel);
@@ -172,6 +194,70 @@ function install(app) {
     if (!n || !f) { selBox.hidden = true; return; }
     Object.assign(selBox.style, { left: `${ox + (n.x - f.x) * k}px`, top: `${oy + (n.y - f.y) * k}px`, width: `${n.w * k}px`, height: `${Math.max(12, (scene?.objs.find((o) => o.id === sel)?.o.offsetHeight || n.h) * k)}px` });
     selBox.hidden = false;
+    selBox.classList.toggle('ed', !!ed && ed.id === sel);
+  }
+
+  // ── écrire un texte sur la scène ─────────────────────────
+  // Comme sur la planche (canvas.js, editText) : le texte devient éditable là où il est, dans
+  // l'habit du modèle ; Échap, Ctrl+Entrée ou un clic ailleurs le posent, en un geste (app.mutate :
+  // Ctrl+Z l'annule, la co-édition l'envoie). Pendant qu'on écrit, Ctrl+Z annule la frappe.
+  // L'objet se montre dans son état final (ses animations au bout), pas la frise : la tête de
+  // lecture ne bouge pas ; la lecture s'arrête (on n'écrit pas dans un texte qui bouge). Une
+  // découpe (mot, lettre, compteur) est remise en texte simple le temps d'écrire ; la scène
+  // se refait ensuite, au même instant.
+  const WRITABLE = new Set(['title', 'note', 'sticky', 'shape']);
+  let ed = null;   // { id, txt, t0 } : le texte qu'on écrit, l'instant de la frise où on l'a pris
+  function startEdit(id, x, y) {
+    if (assist) return false;   // la passe montre une copie : on écrit sur la planche, pas sur la proposition
+    const n = S.board?.nodes.find((nn) => nn.id === id);
+    const obj = scene?.objs.find((o) => o.id === id);
+    const txt = obj && (obj.txt || (n?.type === 'shape' ? obj.c.querySelector('.pm-txt') : null));
+    if (!n || !txt || !WRITABLE.has(n.type)) return false;
+    if (playing) pauseTl();
+    for (const a of obj.o.getAnimations({ subtree: true })) {
+      const end = a.effect?.getComputedTiming().endTime;
+      if (Number.isFinite(end)) { a.pause(); a.currentTime = end; }
+    }
+    txt.textContent = n.text || '';
+    try { txt.contentEditable = 'plaintext-only'; } catch { txt.contentEditable = 'true'; }
+    if (txt.contentEditable !== 'plaintext-only') txt.contentEditable = 'true';
+    txt.spellcheck = false;
+    txt.classList.add('pm-editing');
+    ed = { id, txt, t0: tNow };
+    txt.focus({ preventScroll: true });
+    // le curseur là où l'on a cliqué (caretPositionFromPoint : Firefox, Chrome 128 ; caretRangeFromPoint : Chrome, Safari)
+    const s = getSelection();
+    const cp = document.caretPositionFromPoint?.(x, y);
+    const cr = !cp && document.caretRangeFromPoint?.(x, y);
+    if (cp && txt.contains(cp.offsetNode)) s.collapse(cp.offsetNode, cp.offset);
+    else if (cr && txt.contains(cr.startContainer)) s.collapse(cr.startContainer, cr.startOffset);
+    else { s.selectAllChildren(txt); s.collapseToEnd(); }
+    txt.addEventListener('input', onEditInput);
+    txt.addEventListener('paste', onEditPaste);
+    txt.addEventListener('blur', () => endEdit(), { once: true });
+    paintSel();
+    return true;
+  }
+  const onEditInput = () => paintSel();
+  const onEditPaste = (ev) => { if (ed?.txt.contentEditable === 'true') { ev.preventDefault(); document.execCommand('insertText', false, ev.clipboardData.getData('text/plain')); } };
+  // le texte tel qu'écrit : innerText rendrait les capitales d'un text-transform (canvas.js, typed)
+  const typed = (txt) => { const tt = txt.style.textTransform; txt.style.textTransform = 'none'; const t = txt.innerText; txt.style.textTransform = tt; return t.replace(/\n$/, ''); };
+  function endEdit() {
+    const E = ed;
+    if (!E) return;
+    ed = null;
+    E.txt.removeEventListener('input', onEditInput);
+    E.txt.removeEventListener('paste', onEditPaste);
+    const text = typed(E.txt);
+    E.txt.contentEditable = 'false';
+    E.txt.classList.remove('pm-editing');
+    if (document.activeElement === E.txt) E.txt.blur();
+    paintSel();
+    // la scène se refait au même instant (rien ne se rejoue), le texte écrit ou non
+    keepAt = E.t0;
+    const n = S.board?.nodes.find((x) => x.id === E.id);
+    if (n && text !== (n.text || '')) app.mutate(() => { n.text = text; });
+    else later();
   }
   // avant / après : la ligne qui partage la scène
   function paintSplit() {
@@ -193,7 +279,12 @@ function install(app) {
   }
 
   // ── la minuterie de motion ───────────────────────────────
-  let playing = false;
+  // LA tête de lecture du portail (commun/tete.js : le trait orange et son onglet, comme le Montage,
+  // ODIO, le lecteur) ; sa règle, du dessin de LA règle (.sr-mk de tete.css) mais en secondes : le
+  // motion se règle à la milliseconde (l'onglet Objet écrit des ms), le timecode à l'image n'y dit rien.
+  // Les boutons de lecture sont ceux du lecteur du portail (commun/lecteur.css : Lecture, la boucle,
+  // le temps, l'état), centrés sous la scène.
+  let playing = false, loop = false, tNow = 0;
   function playTl(t = 0) {
     if (!run) return;
     run.playFrom(t);
@@ -203,56 +294,104 @@ function install(app) {
       if (!on || !run) return;
       const tt = run.time();
       paintHead(tt);
-      if (tt >= run.plan.total - 1 || !run.running()) { playing = false; paintPlay(); paintHead(run.plan.total); return; }
+      if (tt >= run.plan.total - 1 || !run.running()) {
+        if (loop && run.plan.total > 0) { run.playFrom(0); tick = requestAnimationFrame(step); return; }
+        playing = false; paintPlay(); paintHead(run.plan.total); return;
+      }
       tick = requestAnimationFrame(step);
     };
     tick = requestAnimationFrame(step);
     paintPlay();
   }
   function pauseTl() { run?.pause(); playing = false; cancelAnimationFrame(tick); paintPlay(); }
-  const playB = el('button', { class: 'tb ghost sm pm-play', type: 'button', onclick: () => (playing ? pauseTl() : playTl(run && run.time() < run.plan.total - 5 ? run.time() : 0)) });
-  const timeT = el('span', { class: 'pm-time' });
-  const ruler = el('div', { class: 'pm-ruler' });
+  // la lecture repart d'où est la tête ; au bout, du début (le lecteur du portail fait de même)
+  const toggleTl = () => (playing ? pauseTl() : playTl(run && tNow < run.plan.total - 5 ? tNow : 0));
+  const goTl = (t) => { if (!run) return; pauseTl(); run.seek(t); paintHead(t); };
+  const IC = {
+    debut: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14"/><path d="M18 6v12l-9-6z"/></svg>',
+    fin: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14"/><path d="M6 6v12l9-6z"/></svg>',
+  };
+  const playB = el('button', { class: 'tb sm sr-lect-lire', type: 'button', onclick: () => toggleTl() }, 'Lecture');
+  const loopB = el('button', { class: 'tb ghost sm sr-lect-ic', type: 'button', html: ICON.boucle, 'aria-pressed': 'false', title: 'boucle : rejouer la diapositive sans fin',
+    onclick: () => { loop = !loop; loopB.classList.toggle('on', loop); loopB.setAttribute('aria-pressed', String(loop)); } });
+  const nowB = el('b', {}, sec(0));
+  const durS = el('small', {}, '/ 0.00 s');
+  const etatS = el('span', { class: 'lbl sr-lect-etat' }, 'arrêt');
+  const transport = el('div', { class: 'sr-lect-barre pm-transport', role: 'toolbar', 'aria-label': 'lecture du motion' },
+    el('span', { class: 'pm-tp-l' }, el('span', { class: 'timecode sr-lect-tc' }, nowB, durS), etatS),
+    el('span', { class: 'pm-tp-c' },
+      el('button', { class: 'tb ghost sm sr-lect-ic', type: 'button', html: IC.debut, title: 'au début · Origine', onclick: () => goTl(0) }),
+      playB,
+      el('button', { class: 'tb ghost sm sr-lect-ic', type: 'button', html: IC.fin, title: 'l’état final : ce que montrent le PDF et prefers-reduced-motion · Fin', onclick: () => goTl(run?.plan.total || 0) })),
+    el('span', { class: 'pm-tp-r' }, loopB));
+  view.append(transport);
+  const nTracks = el('span', { class: 'lbl pm-n' });
+  const ruler = el('div', { class: 'pm-ruler', title: 'clic, glisser : la tête de lecture' });
   const lanes = el('div', { class: 'pm-lanes' });
-  const head = el('i', { class: 'pm-head' });
+  const head = tete({ z: 3 });
   const tlBody = el('div', { class: 'pm-tlb' }, ruler, lanes, head);
-  const paintPlay = () => { playB.textContent = playing ? 'Pause' : 'Lire'; playB.title = playing ? 'arrêter · espace' : 'jouer les entrées · espace'; };
+  const paintPlay = () => {
+    playB.textContent = playing ? 'Pause' : 'Lecture';
+    playB.classList.toggle('on', playing);
+    playB.title = playing ? 'pause · Espace' : 'jouer les entrées · Espace';
+    etatS.textContent = playing ? 'lecture' : run && tNow >= run.plan.total - 1 && run.plan.total > 0 ? 'fin' : 'arrêt';
+  };
   let total = 1;
   const X = (t) => `${(t / total) * 100}%`;
+  const at = (t) => `calc(var(--pm-lab) + (100% - var(--pm-lab)) * ${t / total})`;
+  // la colonne des noms, la largeur des pistes (la règle a la même gouttière que les pistes : scrollbar-gutter)
+  const geo = () => { const lab = parseFloat(getComputedStyle(tl).getPropertyValue('--pm-lab')) || 150; return { lab, W: Math.max(1, ruler.clientWidth - lab) }; };
   function paintHead(t) {
-    head.style.left = `calc(var(--pm-lab) + (100% - var(--pm-lab)) * ${Math.min(1, t / total)})`;
-    timeT.textContent = `${sec(t)} / ${sec(run?.plan.total || 0)} s`;
+    tNow = t;
+    const { lab, W } = geo();
+    poser(head, Math.min(1, t / total) * W, { decal: lab });
+    nowB.textContent = sec(t);
+    durS.textContent = `/ ${sec(run?.plan.total || 0)} s`;
+    if (!playing) paintPlay();
   }
+  // les graduations : une étiquette tous les 64 px au moins (de 0,1 s à 10 s), des demi-graduations au-delà de 120 px
+  const PAS = [100, 250, 500, 1000, 2000, 5000, 10000];
+  function paintRuler() {
+    const plan = run?.plan;
+    const { W } = geo();
+    const pas = PAS.find((p) => (p / total) * W >= 64) || 20000;
+    const out = [];
+    for (let t = 0; t <= total; t += pas) {
+      out.push(el('span', { class: 'sr-mk', style: { left: at(t) } }, `${+(t / 1000).toFixed(2)} s`));
+      if ((pas / total) * W >= 120 && t + pas / 2 <= total) out.push(el('span', { class: 'sr-mk sub', style: { left: at(t + pas / 2) } }));
+    }
+    if (plan) for (let s = 1; s < plan.steps; s++) out.push(el('b', { class: 'pm-stepmark', style: { left: at(plan.offset[s]) }, title: `étape ${s + 1} : au clic` }, `clic ${s}`));
+    ruler.replaceChildren(...out);
+  }
+  // l'objet choisi s'éclaire dans sa piste
+  const paintLanes = () => { for (const ln of lanes.querySelectorAll('.pm-lane')) { const on2 = ln.dataset.id === sel; ln.classList.toggle('on', on2); ln.querySelector('.pm-bar')?.classList.toggle('on', on2); } };
   function paintTimeline() {
     const plan = run?.plan;
     total = Math.max(1000, (plan?.total || 0) + 200);
-    ruler.replaceChildren();
-    for (let t = 0; t <= total; t += 250) ruler.append(el('i', { class: t % 1000 ? '' : 'mj', style: { left: `calc(var(--pm-lab) + (100% - var(--pm-lab)) * ${t / total})` } }, t % 1000 ? null : el('span', {}, `${t / 1000}s`)));
-    if (plan) for (let s = 1; s < plan.steps; s++) ruler.append(el('b', { class: 'pm-stepmark', style: { left: `calc(var(--pm-lab) + (100% - var(--pm-lab)) * ${plan.offset[s] / total})` }, title: `étape ${s + 1} : au clic` }, `clic ${s}`));
+    paintRuler();
     const tracks = plan?.tracks || [];
+    nTracks.textContent = tracks.length ? String(tracks.length) : '';
     lanes.replaceChildren(...tracks.map((t) => {
       const bar = el('div', { class: `pm-bar pm-k-${t.kind}` + (t.id === sel ? ' on' : ''), style: { left: X(t.t0), width: X(Math.max(40, t.t1 - t.t0)) }, title: `${t.fx}${t.by !== 'all' ? ` · par ${t.by}` : ''} · ${sec(t.t0)} → ${sec(t.t1)} s` },
         el('span', {}, `${t.fx}${t.units > 1 ? ` × ${t.units}` : ''}`), el('i', { class: 'pm-rz', title: 'la durée' }));
       bar.addEventListener('pointerdown', (e) => dragBar(e, t, bar));
-      return el('div', { class: 'pm-lane' + (t.id === sel ? ' on' : '') },
-        el('button', { class: 'pm-lab', type: 'button', title: t.label, onclick: () => { sel = t.id.startsWith('decor:') ? null : t.id; paintSel(); paintInsp(sel ? 'objet' : null); paintTimeline(); } },
+      return el('div', { class: 'pm-lane' + (t.id === sel ? ' on' : ''), 'data-id': t.id },
+        el('button', { class: 'pm-lab', type: 'button', title: t.label, onclick: () => { sel = t.id.startsWith('decor:') ? null : t.id; paintSel(); paintInsp(sel ? 'objet' : null); paintLanes(); } },
           el('span', { class: 'lbl' }, PART_FR[scene?.all.find((o) => o.id === t.id)?.part] || t.kind), el('span', { class: 'tx' }, t.label)),
         el('div', { class: 'pm-track' }, bar));
     }), ...(tracks.length ? [] : [el('p', { class: 'pm-empty' }, tplNow()?.kind === 'statique' ? 'Un modèle statique : rien n’entre, tout est là. Un modèle motion, ou l’onglet Objet, donne des entrées.' : 'Aucune entrée sur cette diapositive : choisissez un objet sur la scène, puis son entrée (onglet Objet).')]));
     paintHead(run ? run.time() : 0);
     paintPlay();
   }
-  ruler.addEventListener('pointerdown', (e) => {
-    if (!run) return;
-    const r = ruler.getBoundingClientRect();
-    const lab = parseFloat(getComputedStyle(tl).getPropertyValue('--pm-lab')) || 150;
-    const at = (ev) => Math.max(0, Math.min(total, ((ev.clientX - r.left - lab) / Math.max(1, r.width - lab)) * total));
-    pauseTl();
-    run.seek(at(e)); paintHead(at(e));
-    const mv = (ev) => { const t = at(ev); run.seek(t); paintHead(t); };
-    const up = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', up); };
-    addEventListener('pointermove', mv); addEventListener('pointerup', up);
+  // la règle : cliquer, glisser = la tête (le geste commun : capture du pointeur, aucun texte sélectionné)
+  brancherRegle(ruler, {
+    avant: () => !!run,
+    temps: (x) => { const { lab, W } = geo(); const r = ruler.getBoundingClientRect(); return Math.max(0, Math.min(total, ((x - r.left - lab) / W) * total)); },
+    aller: (t) => { run.seek(t); paintHead(t); },
+    debut: () => pauseTl(),
   });
+  // la place change (la poignée, la fenêtre) : la tête et les graduations suivent
+  new ResizeObserver(() => { if (on) { paintRuler(); paintHead(tNow); } }).observe(tlBody);
   // glisser une barre : le délai ; son bord droit : la durée (au pas de 50 ms) ; un geste = un pas d'annulation
   function dragBar(e, t, bar) {
     e.preventDefault();
@@ -276,9 +415,8 @@ function install(app) {
     };
     addEventListener('pointermove', mv); addEventListener('pointerup', up);
   }
-  tl.append(el('div', { class: 'pm-tlh' }, el('span', { class: 'lbl' }, 'motion'), playB, timeT, el('span', { class: 'sp' }),
-    el('button', { class: 'tb ghost sm', type: 'button', title: 'rejouer la diapositive depuis le début', onclick: () => playTl(0) }, 'Rejouer'),
-    el('button', { class: 'tb ghost sm', type: 'button', title: 'l’état final : ce que montrent le PDF et prefers-reduced-motion', onclick: () => { pauseTl(); run?.seek(run.plan.total); paintHead(run?.plan.total || 0); } }, 'État final')), tlBody);
+  tl.append(el('div', { class: 'pm-tlh' }, el('span', { class: 'lbl' }, 'motion'), nTracks, el('span', { class: 'sp' }),
+    el('span', { class: 'pm-tlhint' }, 'la règle : la tête · une barre : son délai · son bord : sa durée')), tlBody);
 
   // ── écrire le motion (le document) ───────────────────────
   const serial = (mo) => {
@@ -372,7 +510,7 @@ function install(app) {
   function inspObjet() {
     const n = sel && S.board.nodes.find((x) => x.id === sel);
     const obj = n && scene?.objs.find((o) => o.id === sel);
-    if (!n || !obj) return [el('p', { class: 'pm-hint' }, 'Cliquez un objet sur la scène (ou sa piste dans la minuterie) : son entrée, sa boucle, sa profondeur, sa sortie.')];
+    if (!n || !obj) return [el('p', { class: 'pm-hint' }, 'Cliquez un objet sur la scène (ou sa piste dans la minuterie) : son entrée, sa boucle, sa profondeur, sa sortie. Un texte s’écrit sur place, là où l’on clique.')];
     const mo = obj.mo || { in: { fx: 'none', dur: 800, delay: 0, ease: 'out-expo', by: 'all', stagger: 60, dist: 60 }, depth: 0, step: 0 };
     const set = (fn) => setMotion(n, obj, fn);
     const txt = !!obj.txt;
@@ -519,10 +657,14 @@ function install(app) {
     banner.textContent = assist ? `passe assistée · ${assist.tpl.name} — avant | après` : trying ? `aperçu · ${trying.name} — rien n’est écrit` : '';
     goB.disabled = frames().length ? null : true;
     goB.title = frames().length ? goB.title || 'propose un modèle et un jeu d’animations cohérent : avant / après, puis Appliquer' : 'aucune diapositive 16:9 : le panneau Diapositives en fait (+ Diapositive)';
-    paintOutline(); paintInsp(); paintStage(); paintSplit();
+    const t0 = keepAt;   // après un texte écrit : la scène refaite au même instant, rien ne se rejoue
+    keepAt = null;
+    paintOutline(); paintInsp(); paintStage(t0 !== null ? { at: t0 } : {}); paintSplit();
   }
-  let repaintT = 0;
-  const later = () => { clearTimeout(repaintT); repaintT = setTimeout(() => { if (on && !player) paintAll(); }, 120); };
+  // un texte qu'on écrit n'est jamais refait sous les doigts : la planche qui change (un geste, un
+  // travail, la co-édition) attend qu'il soit posé (endEdit relance)
+  let repaintT = 0, keepAt = null;
+  const later = () => { clearTimeout(repaintT); repaintT = setTimeout(() => { if (on && !player && !ed) paintAll(); }, 120); };
   async function open(fromId) {
     if (!S.board) { toast('ouvrez d’abord une planche'); return false; }
     if (on) return true;
@@ -547,6 +689,7 @@ function install(app) {
   }
   function close() {
     if (!on) return;
+    if (ed) endEdit();   // le texte en cours se pose avant de partir
     player?.stop();
     on = false;
     busy++;
@@ -565,6 +708,11 @@ function install(app) {
   A.key(9, (e, c) => {
     if (!on || player) return false;
     if (c.overlay) return false;
+    // on écrit un texte de la scène : les touches sont au texte (Ctrl+Z y annule la frappe) ; Échap, Ctrl+Entrée le posent
+    if (ed && ed.txt.contains(e.target)) {
+      if (e.key === 'Escape' || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) { e.preventDefault(); endEdit(); }
+      return true;
+    }
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) app.redoStep(); else app.undoStep(); later(); return true; }
     if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); app.redoStep(); later(); return true; }
@@ -573,7 +721,9 @@ function install(app) {
     if (e.key === 'Escape') { e.preventDefault(); if (assist) stopAssist(); else if (trying) tryTpl(null); else close(); return true; }
     if (['ArrowDown', 'ArrowRight', 'PageDown'].includes(e.key)) { e.preventDefault(); if (cur < fs.length - 1) { cur++; sel = null; paintOutline(); paintStage(); paintInsp(); } return true; }
     if (['ArrowUp', 'ArrowLeft', 'PageUp'].includes(e.key)) { e.preventDefault(); if (cur > 0) { cur--; sel = null; paintOutline(); paintStage(); paintInsp(); } return true; }
-    if (e.key === ' ') { e.preventDefault(); if (playing) pauseTl(); else playTl(0); return true; }
+    if (e.key === ' ') { e.preventDefault(); toggleTl(); return true; }
+    if (e.key === 'Home') { e.preventDefault(); goTl(0); return true; }
+    if (e.key === 'End') { e.preventDefault(); goTl(run?.plan.total || 0); return true; }
     if (e.key === 'Enter' && mod) { e.preventDefault(); play(); return true; }
     return true;
   });

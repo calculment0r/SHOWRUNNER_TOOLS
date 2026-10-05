@@ -62,7 +62,8 @@ if (typeof document !== 'undefined' && !document.querySelector('link[data-sr-lec
   document.head.append(el('link', { rel: 'stylesheet', href: new URL('./lecteur.css', import.meta.url).href, 'data-sr-lecteur': '' }));
 }
 
-const ICON = {
+// les icônes de la barre (exportées : la barre de lecture du motion d'Idéation reprend la boucle)
+export const ICON = {
   full: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
   unfull: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>',
   son: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/></svg>',

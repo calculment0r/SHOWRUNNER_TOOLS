@@ -599,6 +599,7 @@ function metaOf(s) {
   const r = recOf(s), p = s.params || {};
   const what = r.ref_mode === 'cover' ? 'reprise' : r.ref_mode === 'inspire' ? 'inspirée' : (PRE(r.preset)?.label || '').toLowerCase();
   return [s.origin?.via === 'import' ? 'importé' : what, fmtDur(s.duration), r.vocal === false ? 'instrumental' : r.vocal ? 'chanté' : '', r.abc ? 'partition relue' : '', r.parent ? 'variante' : '',
+    s.lrc ? 'paroles calées' : '',
     p.engine === 'factice' ? el('span', { class: 'e' }, 'essai') : ''].filter(Boolean);
 }
 function paintSongs() {
@@ -657,6 +658,8 @@ function songMenu(s) {
     { label: 'Une variante', icon: '↻', sub: 'une autre graine', disabled: !s.params?.chanson, why: NO_RECIPE, onclick: () => variant(s) },
     { label: 'Ajouter à la playlist', icon: '≣', sub: 'le volet à droite', onclick: () => PL?.ajouter([s]) },
     s.params?.score ? { label: 'Copier la partition', icon: '♪', sub: 'ABC', onclick: () => copyScore(s) } : null,
+    { label: s.lrc ? 'Paroles calées…' : 'Caler les paroles', icon: '♫', sub: s.lrc ? 'relire, recaler en écoutant' : 'la voix seule, les mots, l’alignement',
+      disabled: recOf(s).vocal === false, why: 'instrumental : pas de paroles', onclick: () => paroles(s) },
     '-',
     { label: 'Séparer les pistes', icon: '≡', disabled: !!s.stems?.length || !!stemJob(s), why: s.stems?.length ? 'déjà séparée' : 'en cours', onclick: () => separate(s) },
     { label: 'Ouvrir dans ODIO', icon: '◆', sub: studio() ? '' : 'Studio', onclick: () => openOdio(s) },
@@ -702,6 +705,15 @@ async function takeRecipe(s) {
   }
   save(); paintRail();
   toast(r.abc ? 'réglages et partition repris' : 'réglages repris');
+}
+
+// ── les paroles calées (commun/lrc.js ; le calage : server/tools/paroles.py) ──
+async function paroles(s) {
+  if (S.cur) stop();
+  try {
+    const { ouvrirEditeurLrc } = await import('../commun/lrc.js');
+    await ouvrirEditeurLrc({ item: s, caler: !s.lrc, onSave: () => loadSoon() });
+  } catch (e) { toast(e.message, 6000); }
 }
 
 // ── le Studio : séparer, ouvrir dans ODIO ───────────────────
@@ -840,7 +852,7 @@ async function start() {
   dropAnywhere((files) => { const f = files.find((x) => /^audio\//.test(x.type) || /\.(wav|mp3|flac|m4a|ogg)$/i.test(x.name)); if (f) refFromFile(f); else toast('seul un son se dépose ici : la référence', 5000); });
   await loadSongs();
   jobs.watch(onJobs);
-  document.addEventListener('sr:job', (e) => { if (e.detail?.tool === 'chanson') loadSoon(); });
+  document.addEventListener('sr:job', (e) => { if (['chanson', 'paroles'].includes(e.detail?.tool)) loadSoon(); });
   prefs.on?.('general.theme', () => requestAnimationFrame(() => document.querySelectorAll('.ch-song').forEach(drawWave)));
 }
 start();

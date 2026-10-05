@@ -34,6 +34,10 @@
       "help": "Un bandeau « annulé : … » après chaque Ctrl+Z."
     },
     {
+      "key": "scrub", "label": "Son au défilement", "type": "toggle", "default": true,
+      "help": "Glisser la tête de lecture du Montage ou de l’arrangement d’ODIO fait entendre le son sous elle, par grains de 60 ms, pour caler une coupe. Comme « Play audio while scrubbing » de Premiere Pro."
+    },
+    {
       "key": "dockKey", "label": "Panneau Asset : le raccourci", "type": "choice", "default": "ctrl-space",
       "options": [["ctrl-space", "Ctrl+Espace"], ["backquote", "²"], ["both", "Les deux"], ["none", "Aucun"]],
       "help": "Ouvrir et fermer le panneau Asset, dans tous les outils. ² : la touche sous Échap, hors d’un champ de texte — le repli quand le système prend Ctrl+Espace (une deuxième langue de saisie sur Mac, l’IME chinois sous Windows). Aucun : sa languette seulement (approcher la souris du bord gauche)."

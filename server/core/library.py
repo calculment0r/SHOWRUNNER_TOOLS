@@ -78,7 +78,8 @@ from . import auth, config, espaces
 
 # "sequence" : une séquence du Montage (sa timeline dans `sequence.json`, écrite par server/tools/montage.py), 29/09
 # "document" : tout ce qui n'est pas un média (server/tools/documents.py), 05/10
-# "playlist" : une suite de sons, réécrite en place (server/tools/playlist.py), 05/10
+# "playlist" : une suite de sons, réécrite en place (server/tools/playlist.py) ; son lien d'écoute :
+# server/tools/ecoute.py, 05/10
 KINDS = ("image", "video", "audio", "element", "midi", "sequence", "document", "playlist")
 EXT_KIND = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
@@ -788,6 +789,7 @@ def create_living(title: str, etype: str, source: dict, *, media: str | None = N
 # le Space de Musique d'un objet (server/tools/chanson.py, `music_space`) : un identifiant
 # msp-…, ou vide pour « Mon Space » de son auteur ; la bibliothèque n'en juge que la forme
 MUSIC_SPACE_RX = re.compile(r"(msp-[0-9a-f]{12})?")
+LRC_MAX = 100000   # les paroles calées d'un son (champ `lrc`) : 157 lignes d'AGOSTA font 8 Ko
 
 
 def _check_patch(patch: dict) -> None:
@@ -808,6 +810,9 @@ def _check_patch(patch: dict) -> None:
             raise ValueError(f"{k} : vrai ou faux")
     if "music_space" in patch and not (isinstance(patch["music_space"], str) and MUSIC_SPACE_RX.fullmatch(patch["music_space"])):
         raise ValueError("music_space : un Space de Musique (msp-…), ou vide pour « Mon Space »")
+    # les paroles calées d'un son, en LRC (server/tools/paroles.py les relit et les remet au format)
+    if "lrc" in patch and not (isinstance(patch["lrc"], str) and len(patch["lrc"]) <= LRC_MAX):
+        raise ValueError(f"lrc : un texte de {LRC_MAX} signes au plus")
     el = patch.get("element")
     if isinstance(el, dict):
         if "type" in el and el["type"] not in ELEMENT_TYPES_ALL:
@@ -824,6 +829,8 @@ def update(item_id: str, patch: dict) -> dict:
             raise KeyError(item_id)
         _check_write(it)
         _check_patch(patch)
+        if "lrc" in patch and it["kind"] != "audio":
+            raise ValueError("des paroles calées (lrc) ne vont qu'à un son")
         if "prompt" in patch or isinstance(patch.get("element"), dict):
             _frozen(it, "sa recette, sa planche")
         el_patch = patch.get("element") if isinstance(patch.get("element"), dict) else {}
@@ -839,6 +846,11 @@ def update(item_id: str, patch: dict) -> dict:
                 it["music_space"] = patch["music_space"]
             else:
                 it.pop("music_space", None)
+        if "lrc" in patch:
+            if patch["lrc"].strip():
+                it["lrc"] = patch["lrc"]
+            else:
+                it.pop("lrc", None)
         if it["kind"] == "element" and isinstance(patch.get("element"), dict):
             el = it["element"]
             for k in ("type", "description"):

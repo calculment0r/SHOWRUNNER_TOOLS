@@ -43,14 +43,25 @@
 // l'originale se cale et reprend la place dès qu'elle montre la même image.
 // Ce qui se voit d'un plan (`vu`) porte son opacité, son filtre, et sert de
 // source au canevas des effets ; l'autre reste à 0.
+//
+// L'aperçu d'un geste de la timeline (`pv`, 06/10, Cal : « voir l'image changer
+// EN DIRECT pendant le glisser ») : le programme montre un autre montage que
+// celui de la page (`pv.p` : déplacer un plan, tel qu'il serait si l'on lâchait
+// maintenant), à un autre instant que la tête (`pv.t`), un seul plan (`pv.seul` :
+// le bord qu'on rogne, plein, sans fondu ni son — Premiere montre l'image du bord
+// au moniteur). Un plan neuf du même média (le morceau d'un plan coupé, une
+// copie) reprend l'élément d'un plan qui n'existe plus (`entry`) : rien ne se
+// recharge en chemin, et la copie de défilement montre l'image (montage.js, apercu).
 
 import { href } from '../commun/shell.js';
-import { windows, opacityAt, gainAt, audibleTracks, projectEnd, spd, isOn, chainOf } from './model.js';
+import { windows, opacityAt, gainAt, audibleTracks, projectEnd, spd, isOn, chainOf, srcTime } from './model.js';
 import { getLut, lutFailed, lutGL, passesOf } from './lut.js';
 // un saut ne s'empile jamais sur un saut en cours (commun/tete.js, mesuré le 30/09) :
 // la tête glissée à l'arrêt, l'image suit au lieu d'attendre la fin du geste
 import { sauter, cible } from '../commun/tete.js';
 import { copieDefil } from '../commun/defilement.js';
+// le son au défilement (06/10) : glisser la tête fait entendre le son sous elle, par grains (commun/scrub.js)
+import { scrub as scrubSon, sonDefil, chargerSon } from '../commun/scrub.js';
 
 // ce qui se voit d'une vidéo : l'originale, ou sa copie pendant qu'on cherche
 const vu = (e) => (e.dfl && e.dfl.montre === 'nav' ? e.dfl.nav : e.el);
@@ -181,6 +192,7 @@ export class Program {
     this.win = null;
     this.raf = 0;
     this.loop = this.loop.bind(this);
+    this.son = scrubSon({ contexte: audio, sons: (t) => this.sons(t) });
   }
 
   get fps() { const p = this.getP(); return p ? p.settings.fps : 25; }
@@ -235,17 +247,45 @@ export class Program {
   toggle() { this.playing ? this.pause() : this.play(1); }
 
   // un geste sur la tête (la règle, la barre du moniteur) commence ou finit : pendant, les
-  // copies de défilement restent devant ; au lâcher, les originales se calent
-  scrub(on) {
+  // copies de défilement restent devant ; au lâcher, les originales se calent. `son` : le son
+  // au défilement suit la tête (faux pour un geste de la timeline qui ne la bouge pas : apercu)
+  scrub(on, son = true) {
     this.geste = !!on;
     for (const e of this.els.values()) if (e.dfl) { if (on) e.dfl.debut(); else e.dfl.fin(); }
+    if (on && son) { this.prechargerSons(); this.son.debut(); } else this.son.fin();
   }
 
   seek(t) {
     this.t = Math.max(0, Math.min(this.duration(), t));
     if (this.playing) { this.t0 = this.t; this.n0 = performance.now(); }
+    else if (this.geste) this.son.aller(this.t);
     this.render();
     this.onTick(this.t, this.playing);
+  }
+
+  // ── le son au défilement (commun/scrub.js) ──
+  // Ce qui s'entend à l'instant t, comme render le règle : les plans des pistes son et le
+  // son des vidéos, muet et solo, fondus et volume, la vitesse du plan ; lus dans le son de
+  // défilement de leur média (une copie mono, décodée une fois : server/tools/defilement.py).
+  sons(t) {
+    const p = this.getP();
+    if (!p) return [];
+    const fps = p.settings.fps, win = this.pv ? windows(p) : (this.win || (this.win = windows(p)));
+    const hear = audibleTracks(p), kind = new Map(p.tracks.map((x) => [x.id, x.kind])), out = [];
+    for (const c of p.clips) {
+      const k = kind.get(c.track);
+      if (!isOn(c) || !hear.has(c.track) || c.kind === 'image' || c.kind === 'adjust' || !(k === 'audio' || (k === 'video' && c.audio))) continue;
+      const w = win.get(c.id);
+      if (!w || t < w.ws / fps || t >= w.we / fps) continue;
+      const buffer = sonDefil(this.itemOf(c.item));
+      if (buffer) out.push({ buffer, at: srcTime(c, t, fps), gain: (c.vol ?? 1) * gainAt(w, t, fps), vitesse: spd(c) });
+    }
+    return out;
+  }
+  // les sons de la séquence, chargés d'avance (au survol de la règle, au début du geste)
+  prechargerSons() {
+    const p = this.getP();
+    if (p) for (const c of p.clips) if (c.kind !== 'image' && c.kind !== 'adjust' && c.item) chargerSon(this.itemOf(c.item));
   }
   seekFrame(f) { this.seek(f / this.fps); }
   step(n) { if (this.playing) this.pause(); this.seekFrame(this.frame() + n); }
@@ -280,12 +320,23 @@ export class Program {
     this.schedule();
   }
 
-  entry(c, track) {
+  entry(c, track, ids = null) {
     const item = this.itemOf(c.item);
     if (!item || !item.url) return null;
     const tag = track.kind === 'video' ? (c.kind === 'image' ? 'img' : 'video') : 'audio';
     let e = this.els.get(c.id);
     if (e && (e.item !== item.id || e.tag !== tag)) { this.drop(c.id); e = null; }
+    // un plan neuf du même média (un morceau coupé, une copie, l'aperçu d'un geste) : l'élément
+    // d'un plan qui n'est plus dans le montage, déjà chargé, plutôt qu'un nouveau
+    if (!e && ids) {
+      for (const [k, x] of this.els) {
+        if (ids.has(k) || x.item !== item.id || x.tag !== tag) continue;
+        this.els.delete(k);
+        this.els.set(c.id, x);
+        e = x;
+        break;
+      }
+    }
     if (!e) {
       const el = document.createElement(tag);
       el.className = 'layer ' + tag;
@@ -420,11 +471,14 @@ export class Program {
   clear() { for (const id of [...this.els.keys()]) this.drop(id); }
 
   render() {
-    const p = this.getP();
+    const pv = this.pv;                      // l'aperçu d'un geste de la timeline (en tête de ce fichier)
+    const p = (pv && pv.p) || this.getP();
     if (!p) return;
     const fps = p.settings.fps;
     if (!this.win) this.win = windows(p);
-    const t = this.t, frame = Math.floor(t * fps + 1e-6);
+    const t = pv && pv.t !== undefined && pv.t !== null ? pv.t : this.t, frame = Math.floor(t * fps + 1e-6);
+    const seul = (pv && pv.seul) || null;
+    const ids = new Set(p.clips.map((c) => c.id));
     const hear = audibleTracks(p);
     const hidden = new Set(p.tracks.filter((x) => x.hide).map((x) => x.id));
     const fwd = this.playing && this.rate > 0;
@@ -443,7 +497,7 @@ export class Program {
       const clips = p.clips.filter((c) => c.track === track.id && isOn(c)).sort((a, b) => a.start - b.start);
       if (track.kind === 'fx') {
         // un calque d'effet actif (piste non coupée, chaîne prête) : le programme sera composé
-        if (track.hide || !gl.ok) continue;
+        if (track.hide || !gl.ok || seul) continue;
         for (const c of clips) {
           const w = this.win.get(c.id);
           if (!w || frame < w.ws || frame >= w.we) continue;
@@ -456,13 +510,14 @@ export class Program {
         continue;
       }
       for (const c of clips) {
+        if (seul && c.id !== seul) continue;
         const w = this.win.get(c.id);
         if (!w) continue;
         const a = w.ws / fps, b = w.we / fps;
         const active = t >= a && t < b;
         const soon = fwd && t < a && a - t < 2;
         if (!active && !soon) continue;
-        const e = this.entry(c, track);
+        const e = this.entry(c, track, ids);
         if (!e) continue;
         need.add(c.id);
         e.idle = 0;
@@ -490,14 +545,14 @@ export class Program {
           continue;
         }
         if (e.tag !== 'audio') {
-          const op = hidden.has(track.id) ? 0 : opacityAt(w, frame);
+          const op = seul ? 1 : hidden.has(track.id) ? 0 : opacityAt(w, frame);
           if (e.cv) {
             voir(e, 0, 'none');
             e.cv.style.opacity = String(op);
           } else voir(e, op, e.css);
           if (op > 0) { this.visible.push(c); layers.push({ e, c, op, css: e.css }); }
         }
-        const sound = hear.has(track.id) && (track.kind === 'audio' || c.audio) && c.kind !== 'image';
+        const sound = !seul && hear.has(track.id) && (track.kind === 'audio' || c.audio) && c.kind !== 'image';
         setGain(e, sound ? (c.vol ?? 1) * gainAt(w, t, fps) : 0);
         if (e.tag !== 'img') {
           this.sync(e, target, fwd, fps, sp);
@@ -575,6 +630,8 @@ export class Source {
     this.out = 0;
     this.rate = 0;
     this.rev = 0;
+    // le son au défilement : le son de l'objet à la tête de la source (commun/scrub.js)
+    this.son = scrubSon({ contexte: audio, sons: (t) => { const b = this.item && sonDefil(this.item); return b ? [{ buffer: b, at: t }] : []; } });
   }
 
   get fps() { return (this.item && this.item.fps) || this.fpsOf(); }
@@ -634,8 +691,13 @@ export class Source {
 
   stop() { clearInterval(this.rev); this.rev = 0; this.rate = 0; }
 
-  // un geste sur la tête de la source (sa barre) commence ou finit (la copie de défilement)
-  scrub(on) { this.geste = !!on; if (this.dfl) { if (on) this.dfl.debut(); else this.dfl.fin(); } }
+  // un geste sur la tête de la source (sa barre) commence ou finit (la copie de défilement, le son)
+  scrub(on) {
+    this.geste = !!on;
+    if (this.dfl) { if (on) this.dfl.debut(); else this.dfl.fin(); }
+    if (on) { this.prechargerSons(); this.son.debut(); } else this.son.fin();
+  }
+  prechargerSons() { if (this.item) chargerSon(this.item); }
 
   // aller à t (s) : la copie de défilement si elle est prête, l'originale sinon
   go(t, geste = false) {
@@ -674,7 +736,13 @@ export class Source {
     this.onTick();
   }
   toggle() { this.playing ? this.pause() : this.play(1); }
-  seek(t) { if (this.el && this.item.kind !== 'image') { this.go(Math.max(0, Math.min(this.duration, t))); this.onTick(); } }
+  seek(t) {
+    if (!this.el || this.item.kind === 'image') return;
+    const at = Math.max(0, Math.min(this.duration, t));
+    this.go(at);
+    if (this.geste && !this.playing) this.son.aller(at);
+    this.onTick();
+  }
   step(n) { if (!this.el || this.item.kind === 'image') return; this.pause(); this.seek(this.t + n / this.fps); }
   markIn() { if (!this.item || this.item.kind === 'image') return; this.in = Math.min(this.t, Math.max(0, this.out - 1 / this.fps)); this.onTick(); }
   markOut() { if (!this.item || this.item.kind === 'image') return; this.out = Math.max(this.t, this.in + 1 / this.fps); this.onTick(); }
