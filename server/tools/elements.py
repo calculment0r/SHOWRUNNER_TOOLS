@@ -152,6 +152,9 @@ def _refs_in(doc: str, d: dict) -> list[tuple[str, str]]:
         for c in d.get("clips") or []:
             if isinstance(c, dict) and isinstance(c.get("item"), str) and c["item"]:
                 out.append((c["item"], f"{names.get(c.get('track')) or c.get('track') or 'piste'} · clip {c.get('id')}"))
+        for c in d.get("slots") or []:   # la vue Session (05/10) : ses clips jouent des sons eux aussi
+            if isinstance(c, dict) and isinstance(c.get("item"), str) and c["item"]:
+                out.append((c["item"], f"{names.get(c.get('track')) or c.get('track') or 'piste'} · Session {c.get('id')}"))
     else:
         for n in d.get("nodes") or []:
             if isinstance(n, dict) and isinstance(n.get("item"), str) and n["item"]:
@@ -412,7 +415,7 @@ def check_loops(doc: str, items) -> None:
 ID_FIELDS = {
     "seq": ("clips[].item", "clips[].fx[].lut", "tracks[].fx[].lut", "groups[].fx[].lut"),
     "mus": ("clips[].item", "clips[].gen.takes[].item", "clips[].gen.v.*", "modules[].params.item",
-            "presets[].params.item"),
+            "presets[].params.item", "slots[].item"),   # slots : les clips de la vue Session d'ODIO (05/10)
     "ide": ("nodes[].item", "nodes[].items[]", "nodes[].data.item", "nodes[].refChoice.{}"),
     "item": ("parents[]", "version.of", "element.refs[].item", "element.voices[].item", "element.versions[].item",
              "element.versions[].deps[].el", "element.versions[].deps[].item", "params.refs[].item", "params.source",

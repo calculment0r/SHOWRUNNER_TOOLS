@@ -80,6 +80,11 @@ MODES = {"major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "locria
          "pentamaj", "pentamin", "blues"}
 ARC_TO = ("lpf", "vol", "both")
 TEMPLATES = ("rythme", "session", "vide")
+# la vue Session (05/10, musique/session.js) : la quantification du lancement
+# (musique/projet.js, QUANTS — les choix de Live 12) et les modes de lancement
+# d'un clip (Live 12, « Launching Clips » : Trigger, Gate, Toggle, Repeat)
+QUANTS = ("none", "8", "4", "2", "1", "1/2", "1/2T", "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T", "1/32")
+LAUNCH_MODES = ("trigger", "gate", "toggle", "repeat")
 GEN_MODELS = ("ace", "yue")          # musique/generatif_modeles.json, « modeles »
 
 # ── les listes du nœud TextEncodeAceStepAudio1.5 (object_info, DGX2, 28/09) ──
@@ -427,6 +432,7 @@ def validate(p: dict) -> None:
             raise ValueError(f"{r['name']} : un réglage de source connue")
         if not isinstance(r.get("params", {}), dict) or len(r.get("params", {})) > 200:
             raise ValueError(f"{r['name']} : réglages invalides")
+    _session(p, by_track, by_pat)
     banc = p.get("banc")
     if banc is not None and (not isinstance(banc, dict) or len(json.dumps(banc)) > 65536):
         raise ValueError("banc du nodal : 64 ko au plus")
@@ -436,6 +442,72 @@ def validate(p: dict) -> None:
                 raise ValueError(f"banc du nodal : {k}, 256 au plus")
         if banc.get("ten") is not None:
             _curve(banc["ten"], "courbe de tension")
+
+
+def _session(p: dict, by_track: dict, by_pat: dict) -> None:
+    """La vue Session (05/10, musique/projet.js en décrit la forme) : les scènes
+    (les lignes du lanceur), les clips de Session (une case : une piste × une
+    scène, au plus un par case) qui bouclent sur `len` noires, la quantification
+    globale du lancement. Tout est facultatif : un projet d'avant n'en a pas."""
+    scenes = p.get("scenes", [])
+    if not isinstance(scenes, list) or len(scenes) > 256:
+        raise ValueError("scènes : une liste de 256 au plus")
+    sc_ids = set()
+    for sc in scenes:
+        sid = _id((sc or {}).get("id"), "scène")
+        if sid in sc_ids:
+            raise ValueError(f"scène en double : {sid}")
+        sc_ids.add(sid)
+        _str(sc.get("name", ""), 40, "nom de scène")
+        if sc.get("bpm") is not None:
+            _num(sc["bpm"], 20, 300, "tempo de la scène")
+        if sc.get("color") is not None and sc["color"] not in COLORS:
+            raise ValueError(f"scène {sid} : couleur inconnue")
+    slots = p.get("slots", [])
+    if not isinstance(slots, list) or len(slots) > 4096:
+        raise ValueError("clips de Session : une liste de 4096 au plus")
+    ids, cases = set(), set()
+    for c in slots:
+        cid = _id((c or {}).get("id"), "clip de Session")
+        if cid in ids:
+            raise ValueError(f"clip de Session en double : {cid}")
+        ids.add(cid)
+        tr = by_track.get(c.get("track"))
+        if not tr or tr["kind"] == "bus":
+            raise ValueError(f"{cid} : piste absente (un bus n'a pas de clips)")
+        if c.get("scene") not in sc_ids:
+            raise ValueError(f"{cid} : scène absente")
+        if (tr["id"], c["scene"]) in cases:
+            raise ValueError(f"{cid} : la case est déjà prise (un clip par piste et par scène)")
+        cases.add((tr["id"], c["scene"]))
+        _num(c.get("len"), 0.0625, 4096, "longueur du clip de Session")
+        if c.get("name") is not None:
+            _str(c["name"], 60, "nom de clip")
+        if c.get("color") is not None and c["color"] not in COLORS:
+            raise ValueError(f"{cid} : couleur inconnue")
+        if c.get("mode") is not None and c["mode"] not in LAUNCH_MODES:
+            raise ValueError(f"{cid} : mode de lancement inconnu ({c['mode']!r})")
+        if c.get("q") is not None and c["q"] not in QUANTS + ("global",):
+            raise ValueError(f"{cid} : quantification inconnue ({c['q']!r})")
+        for k in ("mute", "loop", "rev"):
+            _bool(c, k, f"{cid} : {k}")
+        if tr["kind"] == "audio":
+            _str(c.get("item"), 64, "son du clip", 1)
+            _num(c.get("off", 0), 0, 1e5, "décalage du clip")
+            _num(c.get("gain", 0) or 0, -60, 24, "gain du clip (dB)")
+            _num(c.get("fi", 0) or 0, 0, 600, "fondu d'entrée (s)")
+            _num(c.get("fo", 0) or 0, 0, 600, "fondu de sortie (s)")
+            _num(c.get("pitch", 0) or 0, -48, 48, "transposition du clip (demi-tons)")
+            for k in ("ls", "llen"):
+                if c.get(k) is not None:
+                    _num(c[k], 0, 1e5, "boucle du son (s)")
+        elif c.get("pat") not in by_pat or by_pat[c["pat"]]["track"] != tr["id"]:
+            raise ValueError(f"{cid} : motif absent")
+        else:
+            _num(c.get("off", 0), 0, 1e5, "décalage du motif")
+    launch = p.get("launch")
+    if launch is not None and (not isinstance(launch, dict) or launch.get("q") not in QUANTS):
+        raise ValueError(f"quantification du lancement : {', '.join(QUANTS)}")
 
 
 # ── les projets de départ ───────────────────────────────────
@@ -957,6 +1029,30 @@ def selftest(call, ok) -> None:
     st, r = call("POST", f"/api/music/projects/{pid}", good)
     ok(st == 200 and r.get("rev") == 3, f"sections, marqueurs, arc, automation, tonalité passent ({st} {r})")
     good["rev"] = 3
+
+    # la vue Session (05/10) : scènes, clips de Session, quantification du lancement
+    sess = json.loads(json.dumps(good))
+    sess["scenes"] = [{"id": "sc1", "name": ""}, {"id": "sc2", "name": "Refrain", "bpm": 124, "color": "or"}]
+    sess["slots"] = [{"id": "cl1", "track": "t1", "scene": "sc1", "len": 4, "pat": "p1", "name": "Kit", "mode": "gate", "q": "1/4"},
+                     {"id": "cl2", "track": "t2", "scene": "sc2", "len": 8, "pat": "p2", "off": 0}]
+    sess["launch"] = {"q": "1"}
+    for mut, why, word in (
+            (lambda b: b["slots"].append({"id": "cl9", "track": "t1", "scene": "sc1", "len": 4, "pat": "p1"}), "deux clips dans une case", "case"),
+            (lambda b: b["slots"].append({"id": "cl9", "track": "t1", "scene": "scx", "len": 4, "pat": "p1"}), "un clip dans une scène absente", "scène"),
+            (lambda b: b["slots"].append({"id": "cl9", "track": "t1", "scene": "sc2", "len": 4, "pat": "p2"}), "un clip de Session qui joue le motif d'une autre piste", "motif"),
+            (lambda b: b["slots"][0].update(mode="legato"), "un mode de lancement inconnu", "mode"),
+            (lambda b: b["slots"][0].update(len=0), "un clip de Session sans longueur", "longueur"),
+            (lambda b: b.update(launch={"q": "3/4"}), "une quantification inconnue", "quantification"),
+            (lambda b: b["scenes"].append({"id": "sc1", "name": "bis"}), "une scène en double", "scène"),
+            (lambda b: b["scenes"][1].update(bpm=400), "un tempo de scène hors bornes", "tempo")):
+        bad = json.loads(json.dumps(sess))
+        mut(bad)
+        st, r = call("POST", f"/api/music/projects/{pid}", bad)
+        ok(st == 400 and word in r.get("error", ""), f"refusé : {why} ({st} {r})")
+    st, r = call("POST", f"/api/music/projects/{pid}", sess)
+    st2, back = call("GET", f"/api/music/projects/{pid}")
+    ok(st == 200 and back.get("slots") == sess["slots"] and back.get("scenes") == sess["scenes"] and back.get("launch") == {"q": "1"},
+       f"la Session s'enregistre et se relit telle quelle ({st} {r})")
 
     st, s = call("POST", "/api/music/projects", {"name": "Session", "template": "session"})
     ok(st == 200 and len(s.get("sections", [])) == 4 and s["bpm"] == 112 and s["key"] == {"tonic": 5, "mode": "minor"}

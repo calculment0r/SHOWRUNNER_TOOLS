@@ -30,6 +30,17 @@
 //   la chaîne d'une piste n'est écrite nulle part : c'est le trajet de sa source
 //   à sa tranche dans les câbles (trajets, plus bas) ; un effet que deux pistes
 //   traversent est dans les deux chaînes
+// La vue Session (05/10, même version, champs facultatifs ; session.js,
+// docs/etudes/odio_session.md) — le lanceur de clips de Live :
+//   scenes    [{ id, name, bpm, color }]   les lignes de la grille, dans l'ordre ;
+//               un nom vide montre le numéro ; `bpm` : le tempo que la scène pose
+//   slots     [{ id, track, scene, len, … }]  un clip de Session : une case
+//               (une piste × une scène, une seule par case), qui boucle sur `len`
+//               noires ; les champs d'un clip de l'arrangement (pat, off ; item,
+//               off, gain, pitch, rev ; name, color), sans `start` ; + mode
+//               (trigger, gate, toggle, repeat : Live, « Launch Modes ») et q (sa
+//               quantification ; absente : la globale)
+//   launch    { q }   la quantification globale du lancement (QUANTS, ci-dessous)
 
 import { guessTag } from './modules.js';
 
@@ -56,8 +67,88 @@ export function migrate(p) {
   rangerGroupes(p);
   // la vue Rack est devenue la vue de détail, en bas de l'arrangement
   if (p.ui.view === 'rack') { p.ui.view = 'timeline'; p.ui.detail = 'device'; }
+  // la Session (05/10) : huit scènes vides, comme un set neuf de Live ; une
+  // mesure de quantification (le défaut de Live)
+  if (!Array.isArray(p.scenes)) p.scenes = Array.from({ length: 8 }, (_, i) => ({ id: `sc${i + 1}`, name: '' }));
+  p.slots = Array.isArray(p.slots) ? p.slots : [];
+  if (!p.launch || !QUANT_OF[p.launch.q]) p.launch = { q: '1' };
   p.v = VERSION;
   return p;
+}
+
+// ── la vue Session ──────────────────────────────────────────
+// La quantification du lancement : les choix de Live 12 (« Launching Clips »,
+// Clip Launch Quantization ; la globale est dans sa barre de transport) — en
+// noires : une mesure vaut `sig` noires, 1/4 une noire, T le triolet.
+export const QUANTS = [
+  ['none', 'Aucune', 0], ['8', '8 mesures', -8], ['4', '4 mesures', -4], ['2', '2 mesures', -2], ['1', '1 mesure', -1],
+  ['1/2', '1/2', 2], ['1/2T', '1/2 T', 4 / 3], ['1/4', '1/4', 1], ['1/4T', '1/4 T', 2 / 3], ['1/8', '1/8', 0.5],
+  ['1/8T', '1/8 T', 1 / 3], ['1/16', '1/16', 0.25], ['1/16T', '1/16 T', 1 / 6], ['1/32', '1/32', 0.125],
+];
+const QUANT_OF = Object.fromEntries(QUANTS.map(([k, , v]) => [k, v]));
+// en noires ; une valeur négative compte des mesures
+export function quantum(key, sig) {
+  const v = QUANT_OF[key] ?? -1;
+  return v < 0 ? -v * sig : v;
+}
+// la quantification d'un clip de Session : la sienne, sinon la globale
+export const slotQuant = (p, s) => quantum(s?.q && s.q !== 'global' ? s.q : p.launch?.q, p.sig);
+
+export const slotAt = (p, tid, sid) => (p.slots || []).find((s) => s.track === tid && s.scene === sid) || null;
+// le nom d'une scène : le sien, ou son numéro (Live)
+export const sceneName = (p, sc) => sc.name || String(p.scenes.indexOf(sc) + 1);
+
+// une scène vide à la place `i` (à la fin par défaut)
+export function insererScene(p, i, uid, name = '') {
+  const sc = { id: uid('sc'), name };
+  p.scenes.splice(i ?? p.scenes.length, 0, sc);
+  return sc;
+}
+// une copie d'un clip de Session (ses prises gardées à part), ailleurs
+export function copieSlot(s, uid, patch = {}) {
+  return { ...JSON.parse(JSON.stringify(s)), id: uid('cl'), ...patch };
+}
+// Dupliquer une scène : la copie s'insère juste dessous, avec ses clips
+export function dupliquerScene(p, sid, uid) {
+  const sc = p.scenes.find((x) => x.id === sid);
+  if (!sc) return null;
+  const n = { ...sc, id: uid('sc') };
+  p.scenes.splice(p.scenes.indexOf(sc) + 1, 0, n);
+  for (const s of p.slots.filter((x) => x.scene === sid)) p.slots.push(copieSlot(s, uid, { scene: n.id }));
+  return n;
+}
+export function retirerScene(p, sid) {
+  p.scenes = p.scenes.filter((x) => x.id !== sid);
+  p.slots = p.slots.filter((x) => x.scene !== sid);
+}
+// « Capture and Insert Scene » (Live 12, « Session View ») : une scène neuve
+// sous `apres`, avec une copie de chaque clip qui joue (`joue` : piste → id)
+export function capturerScene(p, joue, apres, uid) {
+  const i = apres ? p.scenes.findIndex((x) => x.id === apres) + 1 : p.scenes.length;
+  const sc = insererScene(p, i, uid);
+  for (const [tid, id] of joue) {
+    const s = p.slots.find((x) => x.id === id);
+    if (s && p.tracks.some((t) => t.id === tid)) p.slots.push(copieSlot(s, uid, { scene: sc.id, track: tid }));
+  }
+  return sc;
+}
+
+// Une scène dans l'arrangement, à `at` (en noires) : chaque clip de la ligne
+// y devient des clips d'arrangement bout à bout, autant de tours qu'il en faut
+// pour remplir la scène (sa longueur : le plus long de ses clips) — ce que la
+// scène joue, lancée seule. Rend les clips posés et la longueur.
+export function sceneVersArrangement(p, sid, at, uid) {
+  const ss = p.slots.filter((s) => s.scene === sid && p.tracks.some((t) => t.id === s.track));
+  const len = Math.max(0, ...ss.map((s) => s.len));
+  const made = [];
+  for (const s of ss) {
+    for (let a = 0; a < len - 1e-9; a += s.len) {
+      const { id, scene, mode, q, color, ...c } = JSON.parse(JSON.stringify(s));
+      made.push({ ...c, id: uid('c'), start: at + a, len: Math.min(s.len, len - a) });
+    }
+  }
+  p.clips.push(...made);
+  return { made, len };
 }
 
 // ── l'historique ────────────────────────────────────────────
@@ -93,12 +184,13 @@ const NOUN = {
   clips: ['clip', 'clips'], tracks: ['piste', 'pistes'], modules: ['module', 'modules'], cables: ['câble', 'câbles'],
   sections: ['section', 'sections'], markers: ['marqueur', 'marqueurs'], patterns: ['motif', 'motifs'],
   auto: ['voie d’automation', 'voies d’automation'], presets: ['préréglage', 'préréglages'], groups: ['groupe de pistes', 'groupes de pistes'],
+  slots: ['clip de Session', 'clips de Session'], scenes: ['scène', 'scènes'],
 };
 const WHAT = {
   bpm: 'le tempo', sig: 'la mesure', key: 'la tonalité', loop: 'la boucle', arc: 'l’arc d’énergie', name: 'le nom du projet',
   banc: 'le banc (attracteurs)', nodal: 'le nodal', clips: 'les clips', tracks: 'les pistes', modules: 'les instruments et effets',
   cables: 'les câbles', sections: 'les sections', markers: 'les marqueurs', patterns: 'les motifs', auto: 'l’automation', presets: 'les préréglages',
-  groups: 'les groupes de pistes',
+  groups: 'les groupes de pistes', slots: 'les clips de Session', scenes: 'les scènes', launch: 'la quantification du lancement',
 };
 const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
 export function describeWork(a, b, names = {}) {
@@ -120,7 +212,8 @@ export function describeWork(a, b, names = {}) {
         if (!ch.length && k === 'tracks') return 'changer l’ordre des pistes';
         if (k === 'modules' && ch.length === 1) return `régler « ${names[ch[0].type] || ch[0].name || ch[0].type} »`;
         if (k === 'tracks' && ch.length === 1) return `modifier la piste « ${ch[0].name} »`;
-        if (k === 'clips' && ch.length) return `modifier ${ch.length} ${n(ch.length)}`;
+        if ((k === 'clips' || k === 'slots') && ch.length) return `modifier ${ch.length} ${n(ch.length)}`;
+        if (!ch.length && k === 'scenes') return 'changer l’ordre des scènes';
       }
     }
     if (WHAT[k]) return `modifier ${WHAT[k]}`;
