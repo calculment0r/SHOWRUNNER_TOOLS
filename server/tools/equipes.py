@@ -126,16 +126,24 @@ def r_space_member(req, sid, uid):
 
 def r_rapatrier(req, sid):
     """Rapatrier : lire l'objet où il est (le voir : library.see), créer dans <sid> (la
-    matrice, `import`). Tout ou rien ; jamais un lien vivant (core/library.py)."""
+    matrice, `import`). Tout ou rien ; jamais un lien vivant (core/library.py). Un élément
+    versionné : un élément neuf dont la v1 est sa version figée — `versions: {élément: n}`,
+    sinon la dernière prête (équipes_espaces.md § 3.3, a) ; `avec_source` (le Studio) : sa
+    source copiée aussi, l'élément neuf vit dessus (b). Une séquence, une playlist : avec ce
+    qu'elles posent (§ 3.5, server/tools/elements.py)."""
     from core import library
     u = _who(req)
     d = req.json()
     ids = d.get("items")
     if not isinstance(ids, list) or not ids or len(ids) > library.IMPORT_MAX or not all(isinstance(i, str) for i in ids):
         raise HttpError(400, f"items : la liste des objets à rapatrier ({library.IMPORT_MAX} au plus)")
-    if d.get("avec_source"):
-        raise HttpError(409, "rapatrier avec sa source (un élément versionné et son document) vient avec l'étape 9 : "
-                             "pour l'instant, la copie seule")
+    versions = d.get("versions") or {}
+    if not isinstance(versions, dict) or len(versions) > library.IMPORT_MAX \
+            or not all(isinstance(k, str) and isinstance(n, int) and not isinstance(n, bool) and n > 0 for k, n in versions.items()):
+        raise HttpError(400, "versions : {élément: n}, la version figée de chaque élément versionné (sinon sa dernière)")
+    avec_source = d.get("avec_source", False)
+    if not isinstance(avec_source, bool):
+        raise HttpError(400, "avec_source : vrai ou faux (un élément versionné : sa source copiée aussi — le Studio)")
     folder = d.get("folder") or ""
     if not isinstance(folder, str) or len(folder) > 60 or "/" in folder:
         raise HttpError(400, "folder : un nom de dossier (60 signes, sans « / »)")
@@ -152,7 +160,7 @@ def r_rapatrier(req, sid):
         if src is not None:
             earlier[i] = len(library.copies_of(src, sid))
     try:
-        made = library.rapatrier(ids, sid, folder=folder) if ids else []
+        made = library.rapatrier(ids, sid, folder=folder, versions=versions, avec_source=avec_source) if ids else []
     except KeyError as e:
         raise HttpError(404, f"introuvable : {str(e).strip(chr(39))}") from e
     except ValueError as e:

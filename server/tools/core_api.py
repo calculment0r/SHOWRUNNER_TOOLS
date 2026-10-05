@@ -430,20 +430,33 @@ def _mine(j: dict, u: dict | None) -> bool:
     return u is None or auth.is_admin(u) or j.get("owner") == u["id"]
 
 
+def _sees(j: dict, u: dict | None) -> bool:
+    """Voir un travail — sa recette, son résultat, qui l'a lancé : le sien ; sinon, être
+    dans son Workspace (la matrice, `view` : « objets, documents, file de l'espace »,
+    equipes_espaces.md § 2.4), quand chacun voit tout (`visibility: all`). La file des
+    machines est commune à toutes les Teams : un travail d'ailleurs y garde sa place,
+    masqué (job_out)."""
+    return _mine(j, u) or (auth.settings()["visibility"] == "all" and auth.can_view(u, auth.space_of(j)))
+
+
 def job_out(j: dict, u: dict | None) -> dict:
     mine = bool(u) and j.get("owner") == u["id"]
-    if _mine(j, u) or auth.settings()["visibility"] == "all":
+    if _sees(j, u):
         return {**j, "mine": mine, "can": _mine(j, u)}
     out = {k: j.get(k) for k in MASKED}
-    out.update(title=f"travail de {j.get('owner_name') or 'quelqu’un'}", mine=False, masked=True, can=False,
-               message={"queued": "en file", "running": "en cours"}.get(j["state"], j["state"]))
+    elsewhere = not auth.can_view(u, auth.space_of(j))
+    if elsewhere:   # d'un Workspace qu'on ne voit pas : sa place, ni sa recette, ni qui l'a lancé
+        out.update(owner=None, owner_name="")
+    out.update(title="un travail d'un autre Workspace" if elsewhere else f"travail de {j.get('owner_name') or 'quelqu’un'}",
+               mine=False, masked=True, can=False, message={"queued": "en file", "running": "en cours"}.get(j["state"], j["state"]))
     return out
 
 
 def _job_or_404(job_id: str, write: bool = False) -> dict:
     j = jobs.get(job_id)
     u = auth.current()
-    if not j:
+    if not j or not (_mine(j, u) or auth.can_view(u, auth.space_of(j))):
+        # un travail d'un Workspace qu'on ne voit pas : comme un objet invisible, on ne dit pas qu'il existe
         raise HttpError(404, "travail introuvable")
     if write and not _mine(j, u):   # audit H4 : arrêter, relancer, retirer — le sien, ou Cal
         raise HttpError(403, f"ce travail est à {j.get('owner_name') or 'quelqu’un d’autre'} : seul·e cette personne "

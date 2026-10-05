@@ -212,9 +212,11 @@ def run(ctx):                      # tourne dans un ouvrier de la voie
 
 def register(app):
     # family : la famille de modèles (les noms de FAMILY_GB, Character_Factory/factory/memory.py),
-    # ou une fonction(params) ; gpu : s'il passe vraiment par ComfyUI (False pour un moteur factice)
+    # ou une fonction(params) ; gpu : s'il passe vraiment par ComfyUI (False pour un moteur factice) ;
+    # cost : ce qu'il consomme — gpu | api | cpu | none, ou une fonction(params) — la garde du calcul (§ 10)
     jobs.register("image.generate", run, lane="image", title="Image",
-                  family=lambda p: p["model"], gpu=lambda p: backend() == "comfyui")
+                  family=lambda p: p["model"], gpu=lambda p: backend() == "comfyui",
+                  cost=lambda p: "gpu" if backend() == "comfyui" else "cpu")
     app.route("GET", "/api/image/models", lambda req: {...})
 ```
 
@@ -583,11 +585,12 @@ créé au démarrage. Un pseudo admin n'entre que depuis le réseau de Cal
   (`<data_dir>/journal.jsonl` : qui, méthode, chemin, code).
 - Propriétaire : chaque travail porte `owner` (la personne de la requête,
   ou du travail qui le lance) ; chaque objet `origin.user` (posé par
-  `library.add_file` / `create_element`). Seul le propriétaire (ou Cal)
-  modifie, met à la corbeille, arrête, relance — `PermissionError` → 403.
-  Qui voit quoi : réglage `visibility` (`all` par défaut ; `own` = le sien
-  et ce qui est `shared`), jugé dans `library.query`, `GET
-  /api/library/<id>` et le fichier servi.
+  `library.add_file` / `create_element`) — l'auteur. Qui voit, modifie, met à
+  la corbeille : le rôle de la personne dans le Workspace de l'objet (§ 10 ;
+  tout éditeur modifie, la corbeille reste à l'auteur et aux admins du
+  Workspace) ; un travail : seul son auteur (ou Cal) l'arrête, le relance —
+  `PermissionError` → 403. `visibility: own` resserre encore la lecture à ce
+  qui est à soi ou `shared`.
 - `"auth": false` (`showrunner.local.json`) coupe la porte : tout se passe
   comme si Cal était connecté (`tools/check.py` ; la porte s'y essaie à
   part, allumée : `server/tools/compte.py`, `admin.py`).
@@ -638,3 +641,66 @@ ComfyUI réglable : mémoire, rendu d'un « autre »), `"file_simulation": true`
 (les travaux factices suivent les règles du GPU) et `"machine_names"`
 (nommer les faux ComfyUI « DGX1 », « DGX2 »), dans le
 `showrunner.local.json` d'une copie d'essai seulement.
+
+## 10. Teams et Workspaces
+
+L'étude et les décisions de Cal (30/09) : `docs/etudes/equipes_espaces.md` ; le socle
+`server/core/espaces.py` (`<data_dir>/teams.json`), les routes `server/tools/equipes.py`,
+Admin → Teams.
+
+- **Le modèle.** Une Team (`tea-…`) décide et paie : une offre (`apps` | `studio`), l'API
+  payante (coupée par défaut), un budget ; des membres `owner | admin | member | guest`
+  (un guest est `viewer` ou `acteur`, réglé dans Admin → Personnes). Un Workspace
+  (`esp-…`) est un lieu de travail d'une Team : un rôle par défaut, des rôles par membre
+  (`admin | editor | commenter | viewer`). Chaque compte a « Chez moi » / « Perso ».
+- **La matrice** (`espaces.MATRIX`, profils × actions) est la seule vérité :
+  `espaces.judge(u, espace, action)` rend (oui, pourquoi pas) ; `auth.can_view`,
+  `can_edit`, `can_compute`, `can_publish`… la reprennent. Un guest ne calcule jamais,
+  `cpu` compris.
+- **Le Workspace d'une requête** : l'en-tête `X-SR-Espace` (posé par `api()` de
+  `commun/shell.js`), sinon `?e=` (un flux, une balise, un lien), sinon le dernier de la
+  personne ; la porte le pose (`auth.current_space()`), la file le pose le temps du `run`
+  d'un travail (celui du travail). Un Workspace qu'on ne voit pas : 403.
+- **Ce qui est à un Workspace.** Chaque objet et document porte `space`, posé à sa
+  naissance par le socle (`library.new_space` : le document source, sinon le travail,
+  sinon la requête), jamais par la page ; un document d'outil le reçoit par
+  `library.stamp` et le garde à chaque réécriture (`library.keep`). Un outil n'atteint
+  que son Workspace : `library.get`, `readable`, `query` sont bornés ; montrer (Asset,
+  une vignette) passe par `see` et `query(spaces="*")`. Ce qu'un document pose est de son
+  Workspace (`elements.check_doc` / `check_space`, la table `ID_FIELDS`). **L'inventaire**
+  de ce que chaque outil écrit sous `<data_dir>` et d'où son Workspace lui vient :
+  `STORES` de `tools/check.py` — une entrée neuve non déclarée fait échouer le contrôle.
+- **La garde du calcul** : `jobs.register(…, cost=)` (§ 3) ; `jobs.submit`, par où passent
+  toutes les routes, la route commune, `retry` et les travaux lancés par un travail, juge
+  la personne, le Workspace et le coût (`auth.compute_refusal`, puis le Studio) ; les trois
+  calculs hors file sont dans `auth.COMPUTE_ROUTES`. Le budget de la Team : la
+  réservation dans `submit`, la mesure à la fin, `<data_dir>/conso.jsonl`.
+- **La file est commune** aux Teams (les machines le sont) : un travail d'un Workspace
+  qu'on ne voit pas y garde sa place, masqué — ni sa recette, ni son résultat, ni qui
+  l'a lancé (`core_api.job_out`) ; sa fiche répond 404.
+- **Rapatrier** — `POST /api/espaces/<B>/rapatrier {items, folder?, versions?, avec_source?}`,
+  `library.rapatrier`, tout ou rien, jamais un lien vivant :
+  - un objet : une copie neuve dans B (id et `uid` neufs, `origin.from = {space, item,
+    uid, at}`), `main.*` en lien dur, le reste copié ;
+  - un élément versionné : un élément NEUF dont la v1 est sa version figée (`versions:
+    {élément: n}`, sinon la dernière prête) ; sa source reste où elle est, non suivie ;
+    `avec_source` (le Studio) : sa source est copiée aussi et l'élément vit dessus ;
+  - une séquence, une playlist (et la source d'un élément : un projet ODIO, une planche) :
+    avec ce qu'elles posent — la fermeture d'`ID_FIELDS` rapatriée d'abord, puis la copie
+    écrite par son outil, chaque identifiant remplacé par celui de sa copie
+    (`server/tools/elements.py`, inscrit dans `library.DOC_IMPORT`, `SOURCE_IMPORT`).
+  Asset (la fiche d'un objet d'ailleurs : la version à figer, « avec sa source »), le
+  panneau Asset et les dépôts (`rapatrier` de `shell.js`) passent par là.
+- **Les pages** (`commun/shell.js`) : le Workspace de l'onglet (`espace()`,
+  `avecEspace(url)`, `enTeteEspace()`) ; le sélecteur « TEAM / WORKSPACE » de l'en-tête
+  (ses Teams et leurs Workspaces, « + Nouveau Workspace », « Réglages de la Team ») ;
+  `surEspace(cb)` : l'outil suit un changement sans recharger (sinon la page se
+  recharge) ; `entrerEspace(id)` ; `espaceDocument(espace, id, {outil})` : un document
+  ouvert reste dans le sien — l'en-tête le dit, toute requête qui le nomme y part (une
+  page rechargée le rouvre où il est) ; `outil: true`, tout ce que l'outil demande y part
+  (Idéation : la planche), ce qui liste pour l'onglet passe `espace: espace()` ; `ici()` :
+  là où l'outil travaille, où un objet d'ailleurs posé est rapatrié.
+- **Les contrôles** : `check.py garde` (chaque sorte, pour chaque profil de la matrice ;
+  la route de chaque outil rejouée par un guest), `check.py isolement` (l'inventaire ; un
+  membre d'une autre Team rejoue chaque lecture des selftests et n'y voit rien d'ailleurs),
+  `droits.py`, `asset.py` (rapatrier).

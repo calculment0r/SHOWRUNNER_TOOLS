@@ -1,7 +1,8 @@
 # Équipes et espaces de travail — étude du 30/09/2026
 
-**Statut** : le socle (étapes 0, 3, 7) est codé le 30/09 — voir « Fait le 30/09 »
-en fin de fichier ; le reste est à faire. Le code est lu sur le PC le
+**Statut** : les étapes 0 à 10 sont codées — le socle (0, 3, 7) et 1, 2, 4, 5, 6, 8 le
+30/09, la phase B (9, 10, et la vérification générale) le 05/10 : voir « Fait le 30/09 » et
+« Fait le 05/10 » en fin de fichier, et ce qui reste. Le code est lu sur le PC le
 30/09 (`server/core/auth.py`, `library.py`, `jobs.py`, `server/tools/core_api.py`,
 `droits.py`, `ideation_collab.py`, `music.py`, `ideation.py`) ; les données sur
 DGX2 en lecture seule (`ssh dgx2`, `~/showrunner-data`, rien modifié).
@@ -895,6 +896,61 @@ bouton Admin de l'en-tête n'est montré qu'aux admins du portail).
 **Reste** : les étapes 1, 2, 4, 5, 6, 8, 9, 10 ; céder la propriété d'une Team ;
 les outils qui réécrivent leurs documents doivent garder `space` comme `owner`
 (ODIO `save_project` ne garde que `owner, shared, origin`) — étape 2.
+
+---
+
+## Fait le 05/10 — la phase B (branche `wip2/espaces-phaseb`)
+
+**Ce qui était déjà fait le 30/09 sans être écrit ici** (git : 6c88ed0, 3a623f2, 7f917b8,
+b815159, 4110b4e, 96068c6, 24a0987, 62fd4ce) : l'étape 1 (chaque sorte déclare son `cost`,
+`jobs.submit` juge, `COMPUTE_ROUTES`), 2 (`space` posé par le socle et les outils, gardé à
+chaque réécriture, jugé par rôle ; un outil n'atteint que son Workspace), 4 (le sélecteur
+« TEAM / WORKSPACE », à droite collé au nom ; `X-SR-Espace`, `?e=`), 5 (Asset tous
+Workspaces ; rapatrier un objet), 6 (`check_doc` par `ID_FIELDS`), 8 (le budget).
+
+**Le 05/10** :
+1. **La garde du calcul, la matrice entière** : `check.py garde` essaie chaque sorte pour
+   chaque profil — lecteur, commentateur, une autre Team : 403 qui dit pourquoi ; éditeur,
+   admin du Workspace : en file, dans ce Workspace, à son coût (une sorte `api` : l'API de
+   la Team est coupée).
+2. **`space` posé par chaque outil, vérifié en général** : `check.py isolement` — l'inventaire
+   (`STORES` : chaque entrée de `<data_dir>`, ce qu'elle est, d'où vient son Workspace ; une
+   entrée neuve non déclarée échoue ; chaque document d'un magasin « champ » porte un
+   Workspace connu) ; puis un membre d'une autre Team rejoue chaque lecture des selftests
+   (les GET 2xx relevés) : aucune réponse ne nomme ce qui n'est pas à lui, une adresse qui
+   le nomme répond comme pour ce qui n'existe pas. Trouvé et corrigé : la file montrait la
+   recette, le résultat et l'auteur d'un travail d'un autre Workspace ; Movie Analysis
+   listait les analyses de tous les Workspaces ; le Montage nommait une séquence dans un 404.
+3. **Le passage d'un Workspace à l'autre sans perdre ce qui est ouvert** : `espaceDocument(
+   espace, id, {outil})` (`commun/shell.js`) — un document ouvert reste dans le sien, toute
+   requête qui le nomme y part (une page rechargée le rouvre où il est), `outil` : tout ce
+   que l'outil demande y part. Idéation (changer de Workspace fermait la planche ouverte ;
+   son flux de co-édition répondait 403 dès que l'onglet n'était pas dans le dernier
+   Workspace de la personne) et Transcrire suivent sans recharger ; ODIO et le Montage
+   déclarent l'identifiant de leur document.
+4. **Le rapatriement** (étape 9 et § 3.5) : un élément versionné arrive en élément neuf
+   dont la v1 est sa version figée (la dernière prête par défaut ; décision 7, a) ; « avec
+   sa source » (le Studio, b) : la source est copiée aussi et l'élément vit dessus ; une
+   séquence, une playlist arrivent avec ce qu'elles posent (la fermeture d'`ID_FIELDS`
+   copiée d'abord, puis le document, écrit par son outil, qui rejuge tout). Depuis Asset (la
+   fiche choisit la version, la case « avec sa source ») et le panneau Asset.
+5. **Étape 10** : `docs/ARCHITECTURE.md` § 10 (et § 3, § 9 remis à jour).
+
+**Reste** :
+- (c), l'historique entier : non, par décision ; « suivre l'origine » (B voit que A a publié
+  la v4 et la rapatrie comme sa v2) : plus tard ;
+- les pages ne grisent pas encore leurs gestes de calcul pour qui ne calcule pas (le serveur
+  refuse en disant pourquoi, la page le montre en toast) : `/api/auth/me` donne `can.compute`
+  et `why` par Workspace, de quoi le faire outil par outil ;
+- le brouillon d'Image garde ses références après un changement de Workspace ; le rendu les
+  refuse (elles sont d'ailleurs) : les rapatrier, ou les vider ;
+- un lien vers un document d'un autre Workspace, ouvert dans un onglet neuf : 403 tant que
+  l'onglet ne l'a pas ouvert une fois (la page pourrait demander d'abord le Workspace du
+  document) ;
+- les pastilles « Autres workspaces » du panneau Asset ne montrent que le nom du Workspace
+  (la Team au survol) : deux « Général » se confondent ;
+- déplacer un document (au lieu de le dupliquer) : non, par décision (§ 3.5) ; une planche
+  rapatriée avec sa source n'emporte pas les LoRA de ses moodboards (entraînés dans A).
 
 ---
 

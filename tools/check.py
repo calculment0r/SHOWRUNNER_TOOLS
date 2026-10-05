@@ -4,7 +4,7 @@ chaque outil qui en a un. Rend 0 si tout passe.
 
     python3 tools/check.py
     python3 tools/check.py chanson documents   # seulement ces selftests (plus vite)
-    python3 tools/check.py socle garde chanson # « socle » et « garde » les ajoutent
+    python3 tools/check.py socle garde chanson # « socle », « garde », « isolement » les ajoutent
 
 Il lance le serveur dans ce processus, sur un port libre et des données
 jetables, et le mène par son API comme une page le ferait. Un outil
@@ -162,6 +162,7 @@ SANS_ROUTE_OUTIL = {
     "library.views": "sa route (POST /api/library/views) est à Cal ; sinon le rattrapage au démarrage, sans personne",
     "check.echo": "essai du socle",
     "check.chaine": "essai de la garde : un travail qui en lance un autre",
+    "check.canari": "essai de l'isolement : le témoin, un travail en file dans Général",
     "compte.essai": "essai de la porte",
     "droits.route": "essai des droits : une sorte qui a sa route",
     "essai.krea2": "essai de l'ordonnanceur", "essai.qwen21": "essai de l'ordonnanceur",
@@ -201,14 +202,22 @@ def tool_requests(kind: str, fx: dict, g: str) -> list:
 
 
 def record_routes(app) -> None:
-    gate0, after0, submit0 = app.gate, app.after, jobs.submit
+    from core.http import StreamResponse
+    gate0, after0, submit0, dispatch0 = app.gate, app.after, jobs.submit, app.dispatch
 
     def gate(req, a):
         _REQ.r = req
         return gate0(req, a)
 
+    def dispatch(req):
+        out = dispatch0(req)
+        req._sr_read = req.method == "GET" and not isinstance(out, StreamResponse)   # un flux ne se rejoue pas
+        return out
+
     def after(req, status):
         _REQ.r = None
+        if getattr(req, "_sr_read", False) and 200 <= status < 300:
+            record_read(req._h.path)
         return after0(req, status)
 
     def submit(kind, *a, **kw):
@@ -220,15 +229,243 @@ def record_routes(app) -> None:
                 got.append(rec)
         return submit0(kind, *a, **kw)
 
-    app.gate, app.after, jobs.submit = gate, after, submit
+    app.gate, app.after, jobs.submit, app.dispatch = gate, after, submit, dispatch
 
 
-def compute_guard_checks() -> None:
+# ── l'isolement des Workspaces (docs/etudes/equipes_espaces.md § 2.3, § 3.1, étape 2) ──
+# Les lectures des pages : chaque GET qui a répondu 2xx pendant les contrôles des outils
+# (trois adresses au plus par forme d'adresse), rejouées ensuite par une personne d'une
+# autre Team. Un outil neuf dont le selftest lit ses documents est couvert sans rien
+# écrire ici.
+READS: dict[str, list] = {}
+ID_ANY = r"[a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4}"
+SHAPE_RX = __import__("re").compile(ID_ANY + r"|job-\d{4}-\d{6}-[0-9a-f]{4}|(?:esp|tea|msp|inv)-[a-z0-9-]{4,48}|[0-9a-f]{16,}|\d+")
+
+
+def record_read(path: str) -> None:
+    if not path.startswith(("/api/", "/library/")):
+        return
+    got = READS.setdefault(SHAPE_RX.sub("·", path), [])
+    if path not in got and len(got) < 3:
+        got.append(path)
+
+
+# Ce que chaque outil écrit sous <data_dir>, et d'où son Workspace lui vient : l'inventaire,
+# vérifié sur les données que laissent les contrôles. Une entrée qu'il ne connaît pas fait
+# échouer le contrôle (l'outil qui l'écrit dit d'abord à qui elle est). « champ » : chaque
+# document y porte `space`, un Workspace connu (library.stamp, new_space à la naissance ;
+# keep à chaque réécriture) ; « Workspace » : un fichier, ou une clé, par Workspace ;
+# « parent » : il suit le document ou l'objet dont il dépend ; « personne », « instance » :
+# à personne d'autre ; « cache », « temporaire » : ce qu'un calcul ou un aperçu refait.
+def _json(p):
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _docs(*globs):
+    return lambda root: ((str(p.relative_to(root)), _json(p)) for g in globs for p in sorted(root.glob(g))
+                         if not p.name.endswith(".voix.json"))
+
+
+def _projets(root):
+    for x in (_json(root / "analyse" / "projets.json") or {}).get("projets") or []:
+        if isinstance(x, dict) and x.get("auteur"):   # un projet créé dans le portail (pas un film du dépôt)
+            yield f"analyse/projets.json#{x.get('id')}", x
+
+
+def _journal(root):
+    try:
+        lines = (root / "elements" / "journal.jsonl").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for k, line in enumerate(lines):
+        try:
+            yield f"elements/journal.jsonl:{k + 1}", json.loads(line)
+        except ValueError:
+            continue
+
+
+STORES = {
+    "library": ("champ", "les objets de la bibliothèque : item.json (library._owned, new_space)", _docs("library/*/item.json")),
+    "trash": ("champ", "la corbeille : l'objet et son item.json, son Workspace gardé", _docs("trash/*/item.json")),
+    "musique": ("champ", "les projets ODIO (music.py : library.stamp, keep)", _docs("musique/mus-*.json")),
+    "ideation": ("champ", "les planches d'Idéation (ideation._write : new_space, board_space)", _docs("ideation/ide-*.json")),
+    "transcrire": ("champ", "les transcriptions (library.stamp, du son) ; <id>.voix.json : celle de sa transcription",
+                   _docs("transcrire/trn-*.json")),
+    "luts": ("champ", "les LUT du Montage (montage.py)", _docs("luts/lut-*.json")),
+    "image_atelier": ("champ", "les sessions de l'atelier d'Image (library.stamp, de l'image source)", _docs("image_atelier/*.json")),
+    "paroles": ("champ", "les paroles calées d'un son (library.stamp, du son)", _docs("paroles/*.json")),
+    "analyse": ("champ", "Movie Analysis : projets.json (chaque projet créé ici porte space) ; corrections/ : par film", _projets),
+    "elements": ("champ", "le journal des éléments : chaque ligne porte space", _journal),
+    "montage": ("Workspace", "projet/<Workspace>.json : le Projet du Montage ; migres/ : les montages d'avant les séquences", None),
+    "chanson": ("Workspace", "spaces.json : les Spaces de Musique, une table par Workspace ; odio.json, ondes/ : par son", None),
+    "asset_folders.json": ("Workspace", "les dossiers déclarés d'Asset, une liste par Workspace", None),
+    "analyses": ("parent", "les dépouillements de Movie Analysis : ceux de leur projet (analyse/projets.json)", None),
+    "ecoute": ("parent", "les liens d'écoute : ceux de leur playlist ; mesures.json : un cache par fichier", None),
+    "lora": ("parent", "l'état d'un LoRA : celui de son moodboard (sa planche)", None),
+    "ideation_collab": ("parent", "l'accès, les liens, le fil de chaque planche", None),
+    "ideation_agent": ("parent", "les conversations de l'agent sur une planche", None),
+    "prefs": ("personne", "les préférences de chacun", None),
+    "strategie": ("personne", "le kit de présentation de Cal", None),
+    "auth.json": ("instance", "les comptes, les connexions", None),
+    "teams.json": ("instance", "les Teams, les Workspaces, les liens d'invitation", None),
+    "instance.json": ("instance", "l'identité mondiale de l'instance (uid)", None),
+    "jobs.json": ("instance", "la file : chaque travail porte son Workspace (space)", None),
+    "queue.json": ("instance", "l'état de la file", None),
+    "durations.json": ("instance", "les durées mesurées, par sorte", None),
+    "conso.jsonl": ("instance", "la consommation : chaque ligne porte sa Team et son Workspace", None),
+    "journal.jsonl": ("instance", "le journal des écritures : chaque ligne porte son Workspace", None),
+    "porte-demo.json": ("instance", "les codes de la porte", None),
+    "movie_h3.json": ("instance", "l'état du serveur H3", None),
+    "ideation_web": ("cache", "les aperçus d'adresses web : le web public", None),
+    "image_masks": ("temporaire", "les zones peintes d'une édition d'Image, lues par son travail", None),
+    "uploads": ("temporaire", "les dépôts en cours", None),
+    "work": ("temporaire", "le dossier de travail de chaque calcul", None),
+    "zips": ("temporaire", "les zips d'Asset (un jeton par zip)", None),
+    "cf_import": ("temporaire", "les imports de Character Factory en cours", None),
+    "sauvegarde-espaces-*": ("instance", "la sauvegarde de la migration des Workspaces", None),
+    "*essai*": ("essai", "ce que laissent les selftests (données jetables)", None),
+    "*selftest*": ("essai", "ce que laissent les selftests (données jetables)", None),
+}
+
+
+def isolation_checks() -> None:
+    """1. L'inventaire (STORES) : chaque entrée de <data_dir> est déclarée ; chaque document
+    d'un magasin « champ » porte un Workspace connu. 2. Un membre d'une autre Team (dans son
+    seul Workspace) rejoue chaque lecture relevée (READS) : aucune réponse ne nomme un objet,
+    un document ou un travail d'un Workspace qu'il ne voit pas, et aucune adresse qui en nomme
+    un ne lui rend son contenu."""
+    import fnmatch
+    import functools
+    import re
+    from core import auth, espaces
+    from tools.admin import essai_http as H
+
+    root = config.data_dir()
+    known = set(espaces._data().get("spaces") or {})
+    # 1. l'inventaire
+    unknown = [p.name for p in sorted(root.iterdir()) if not any(fnmatch.fnmatch(p.name, k) for k in STORES)]
+    ok(not unknown, f"isolement : chaque entrée de <data_dir> est déclarée dans STORES (tools/check.py) — inconnues : {unknown}")
+    for name, (how, what, docs) in STORES.items():
+        if how != "champ" or docs is None:
+            continue
+        bad, n = [], 0
+        for where, d in docs(root):
+            n += 1
+            if not isinstance(d, dict) or d.get("space") not in known:
+                bad.append((where, d.get("space") if isinstance(d, dict) else type(d).__name__))
+        ok(not bad, f"isolement : « {name} » ({what}) : chaque document porte un Workspace connu ({n} lus) — {bad[:4]}")
+
+    # 2. le rejeu : une personne d'une autre Team, dans son seul Workspace
+    before = config.CFG.get("auth")
+    config.CFG["auth"] = True
+    auth.startup()
+    with auth._lock:
+        auth._hits.clear()
+    same = {"Origin": BASE}
+    try:
+        _, _, cal = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
+        s, t, _ = H("POST", "/api/equipes", {"name": "Isolement"}, cookie=cal, headers=same)
+        ok(s == 200, f"isolement : Cal crée une Team ({s})")
+        mine = t["spaces"][0]["id"]
+        s, d, _ = H("POST", f"/api/equipes/{t['id']}/membres", {"pseudo": "Ivo Isole", "role": "member"}, cookie=cal, headers=same)
+        _, _, tok = H("POST", "/api/auth/enter", {"name": "Ivo Isole"}, headers=same)
+        ivo = auth.find_pseudo("Ivo Isole")
+        known = set(espaces._data().get("spaces") or {})
+        sees = {x for x in known if espaces.can_view(ivo, x)} if ivo else set()
+        ok(s == 200 and tok and ivo and sees - {espaces.personal_space_id(ivo["id"])} == {mine},
+           f"isolement : Ivo entre, membre de la seule Team « Isolement » ({s} {sees})")
+        if not (tok and ivo):
+            return
+        # ce qui n'est pas à lui : les objets et les documents des Workspaces qu'il ne voit pas
+        theirs: dict[str, str] = {}
+        for name, (how, what, docs) in STORES.items():
+            if how == "champ" and docs is not None:
+                for where, d in docs(root):
+                    if isinstance(d, dict) and d.get("space") not in sees:
+                        for x in {str(d.get("id") or "")} | set(re.findall(ID_ANY, where)):
+                            if re.fullmatch(ID_ANY, x):
+                                theirs[x] = d.get("space")
+        # les travaux d'ailleurs : la file des machines est commune, ils y gardent leur place (masqués,
+        # leur identifiant compris) ; mais une adresse qui en nomme un ne lui rend rien
+        their_jobs = {j["id"] for j in list(jobs._jobs.values()) if j.get("space") not in sees}
+        # un témoin : un travail en file dans Général, au titre et à la recette reconnaissables
+        auth.set_current(auth.user(auth.admin_id()) or auth.pseudo_admin())
+        auth.set_current_space(espaces.GENERAL)
+        jobs.set_mode(None, "paused")
+        jobs.register("check.canari", lambda ctx: {"note": "canari-isolement"}, lane="cpu", title="Essai : le témoin de l'isolement",
+                      cost="cpu")
+        try:
+            canari = jobs.submit("check.canari", {"prompt": "canari-isolement"}, title="canari-isolement", tool="check")
+        finally:
+            auth.set_current(None)
+            auth.set_current_space(None)
+        their_jobs.add(canari["id"])
+        ok(len(theirs) > 20, f"isolement : des objets et des documents d'ailleurs à ne pas voir ({len(theirs)})")
+        leaks, opened, n = [], [], 0
+        ids_rx = re.compile(ID_ANY + r"|job-\d{4}-\d{6}-[0-9a-f]{4}")
+        def get(path: str, hd: dict):
+            req = urllib.request.Request(BASE + path, headers={"Cookie": f"{auth.COOKIE}={tok}", **hd})
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    return r.status, r.read()
+            except urllib.error.HTTPError as e:
+                return e.code, e.read()
+
+        def absent(x: str) -> str:   # un identifiant de la même forme, qui n'existe pas
+            return x[:4] + ("0000-000000-0000" if x.startswith("job-") else "20000101-000000-0000")
+        for shape, paths in sorted(READS.items()):
+            for path in paths:
+                for hd in ({"X-SR-Espace": mine}, {}):
+                    try:
+                        st, body = get(path, hd)
+                    except OSError:
+                        continue
+                    n += 1
+                    asked = set(ids_rx.findall(path))
+                    txt = body.decode("utf-8", "replace")
+                    seen = {x for x in ids_rx.findall(txt) if x in theirs and x not in asked}
+                    if seen or "canari-isolement" in txt:
+                        leaks.append((path, st, sorted(seen)[:3] or ["canari-isolement"]))
+                    foreign = [x for x in asked if x in theirs or x in their_jobs]
+                    if 200 <= st < 300 and foreign:
+                        # ce qu'on ne lui montre pas lui répond comme ce qui n'existe pas : sinon, il en apprend quelque chose
+                        p2 = path
+                        for x in foreign:
+                            p2 = p2.replace(x, absent(x))
+                        try:
+                            st2, body2 = get(p2, hd)
+                        except OSError:
+                            st2, body2 = None, b""
+                        norm = lambda t, xs: functools.reduce(lambda acc, x: acc.replace(x, "·"), xs, t)   # noqa: E731
+                        if st2 != st or norm(txt, foreign) != norm(body2.decode("utf-8", "replace"), [absent(x) for x in foreign]):
+                            opened.append((path, st))
+        print(f"  isolement : {len(READS)} formes de lecture, {n} requêtes rejouées par un membre d'une autre Team")
+        ok(n > 0, "isolement : des lectures relevées à rejouer (les selftests des outils ont tourné)")
+        ok(not leaks, f"isolement : aucune réponse ne nomme un objet, un document ou un travail d'un Workspace qu'il ne voit pas "
+                      f"({len(leaks)} : {leaks[:6]})")
+        ok(not opened, f"isolement : une adresse qui nomme ce qui n'est pas à lui répond comme pour ce qui n'existe pas "
+                       f"({len(opened)} : {opened[:6]})")
+        try:
+            jobs.cancel(canari["id"])
+        except KeyError:
+            pass
+    finally:
+        jobs.set_mode(None, "active")
+        config.CFG["auth"] = before
+
+
+def compute_guard_checks(ran: set | None = None) -> None:
     """Pour CHAQUE sorte de jobs.HANDLERS : un coût déclaré ; un guest (viewer et
     acteur) refusé (403 qui dit pourquoi) par jobs.submit, par la route commune et
-    par la route de son outil. Puis : l'invité d'une planche, un membre (son
-    Workspace sur le travail, le travail lancé par un travail), retry, les calculs
-    hors file (auth.COMPUTE_ROUTES), et le message de _gpu_block."""
+    par la route de son outil ; chaque profil de la matrice (lecteur, commentateur,
+    autre Team : refusés ; éditeur, admin du Workspace : en file). Puis : l'invité
+    d'une planche, un membre (son Workspace sur le travail, le travail lancé par un
+    travail), retry, les calculs hors file (auth.COMPUTE_ROUTES), et le message de
+    _gpu_block. `ran` : les selftests qui ont tourné (un contrôle filtré) — la route
+    d'outil n'est rejouée et exigée que pour les sortes de ces modules-là ; None : tous."""
     from core import auth, espaces
     from core.http import HttpError
     from tools.admin import essai_http as H
@@ -333,6 +570,8 @@ def compute_guard_checks() -> None:
                     auth.set_current_space(None)
                 s, d, _ = P("/api/jobs", {"kind": kind, "params": {}}, tok=toks[g], hd={"X-SR-Espace": s1})
                 ok(s == 403 and GUEST in err(d), f"garde : la route commune refuse « {kind} » ({cost}) au guest {g} ({s} {err(d)[:90]})")
+            if ran is not None and getattr(jobs.HANDLERS[kind][0], "__module__", "").split(".")[-1] not in ran:
+                continue   # un contrôle filtré : le selftest de son outil n'a pas tourné, ses routes ne sont pas relevées
             if any(tool_requests(kind, fixture, g) for g in guests) and kind not in SANS_ROUTE_OUTIL:
                 # chaque requête rejouée : jamais un travail ; l'une au moins atteint la garde (les
                 # autres peuvent être refusées plus tôt par l'outil : un objet qui n'est pas au guest…)
@@ -356,6 +595,48 @@ def compute_guard_checks() -> None:
         print(f"  garde : {len(kinds)} sortes, {covered} routes d'outils rejouées par un guest")
         mine = [x["id"] for x in jobs._jobs.values() if x.get("owner") in guests]
         ok(not mine, f"garde : aucun travail au nom d'un guest, après tout cela ({mine})")
+
+        # 2 bis. la matrice entière (§ 2.4), pour CHAQUE sorte, par jobs.submit : qui ne calcule pas dans
+        # ce Workspace — un lecteur, un commentateur, quelqu'un d'une autre Team — reçoit 403 qui dit
+        # pourquoi ; qui calcule — un éditeur, un admin du Workspace — met le travail en file, dans ce
+        # Workspace, à son coût (l'API payante : coupée pour la Team, 403 qui le dit)
+        s, ot, _ = P("/api/equipes", {"name": "Autre Calcul"})
+        for name, uid, team_id, space_role in (("Lu Calcul", "lu-calcul", tid, "viewer"), ("Co Calcul", "co-calcul", tid, "commenter"),
+                                               ("Ad Calcul", "ad-calcul", tid, "admin"), ("Et Calcul", "et-calcul", ot.get("id"), None)):
+            s, d, _ = P(f"/api/equipes/{team_id}/membres", {"pseudo": name, "role": "member"})
+            if space_role:
+                P(f"/api/espaces/{s1}/membres/{uid}", {"role": space_role})
+            people[uid] = auth.user(uid)
+            ok(s == 200 and people[uid], f"garde : {name} ({space_role or 'autre Team'}) ({s} {err(d)})")
+        api_why = espaces.WHY["api"]
+        refused = {"lu-calcul": "lecteur", "co-calcul": "commentateur", "et-calcul": espaces.WHY["none"]}
+        allowed = ("mo-calcul", "ad-calcul")
+        n_kinds = 0
+        for kind in kinds:
+            cost = jobs.cost_of(kind, {})
+            if cost == "none":
+                continue
+            n_kinds += 1
+            for uid in (*refused, *allowed):
+                p = people.get(uid)
+                if not p:
+                    continue
+                auth.set_current(p)
+                auth.set_current_space(s1)
+                try:
+                    j = jobs.submit(kind, {}, title="matrice", tool="check")
+                    queued.append(j["id"])
+                    ok(uid in allowed and cost != "api" and j.get("space") == s1 and j.get("cost") == cost,
+                       f"garde : « {kind} » ({cost}) par {uid} : {'en file, dans son Workspace' if uid in allowed else 'devait être refusé'} "
+                       f"({j.get('space')} {j.get('cost')})")
+                except HttpError as e:
+                    want = api_why if uid in allowed else refused[uid]
+                    ok(e.status == 403 and want in e.message, f"garde : « {kind} » ({cost}) refusé à {uid} ({e.status} {e.message[:90]})")
+                finally:
+                    auth.set_current(None)
+                    auth.set_current_space(None)
+                drop()   # son quota de travaux en file : chaque essai sort aussitôt
+        print(f"  garde : {n_kinds} sortes qui calculent × 5 profils de la matrice")
 
         # 3. l'invité d'une planche (rôle « invite ») : jamais, sans Workspace ni Team
         auth.set_current({"id": "planche-essai", "name": "Planche", "role": auth.GUEST, "state": "active"})
@@ -502,11 +783,19 @@ def main() -> int:
     if not seul or "garde" in seul:
         print("la garde du calcul")
         try:
-            compute_guard_checks()
+            compute_guard_checks(seul or None)
         except Exception as e:  # noqa: BLE001
             import traceback
             traceback.print_exc()
             ok(False, f"la garde du calcul : le contrôle a planté : {type(e).__name__}: {e}")
+    if not seul or "isolement" in seul:
+        print("l'isolement des Workspaces")
+        try:
+            isolation_checks()
+        except Exception as e:  # noqa: BLE001
+            import traceback
+            traceback.print_exc()
+            ok(False, f"l'isolement des Workspaces : le contrôle a planté : {type(e).__name__}: {e}")
     print(f"\n{passed} passés, {len(failed)} en échec — données dans {DATA}")
     return 1 if failed else 0
 
