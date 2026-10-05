@@ -849,3 +849,12 @@ body.ar-grab, body.ar-grab * { cursor: grabbing !important; }
   .mu-view { flex: none; }
   .ar { min-height: 80vh; }
 }
+
+/* ODIO — les préréglages du navigateur (06/10, navigateur.js) : l'instrument
+   montré, l'écoute au survol, les catégories en pastilles */
+.nv-pre-tete { display: flex; gap: 4px; align-items: center; margin-bottom: 4px; }
+.nv-pre-tete .nv-wide { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nv-chips { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 4px; }
+.nv-chips .tb.sm { height: 20px; padding: 0 6px; font-size: 9px; }
+.nv-play.on { color: var(--ink); box-shadow: inset 0 0 0 1px var(--cy); }
+.nv-play:disabled { opacity: .35; cursor: not-allowed; }

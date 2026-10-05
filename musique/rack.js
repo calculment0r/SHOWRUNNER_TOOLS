@@ -13,6 +13,7 @@
 import { toast, pick, href, dropZone } from '../commun/shell.js';
 import { MODULES, TRACK_KINDS, EFFECT_TYPES, DRUM_VOICES, RHYTHM_VOICES, SOURCES_OF, AUTOMATABLE, spec, val, fmt, presetsFor, moduleName } from './modules.js';
 import { peaks } from './moteur.js';
+import { CATEGORIES } from './prereglages.js';   // la banque de préréglages, par catégorie (06/10)
 import { el, knob, choice, menu, tok, put, inlineEdit } from './ui.js';
 // les appareils (05/10) : une surface graphique à la place des molettes là où
 // le métier dessine (égaliseur, compresseur…) — docs/etudes/odio_appareils.md
@@ -56,7 +57,18 @@ export function createDevices(app) {
       } }, 'Instrument') : null,
       pres.length ? el('button', { class: 'tb ghost sm', type: 'button', title: 'des réglages nommés', onclick: (e) => {
         const r = e.currentTarget.getBoundingClientRect();
-        menu(r.left, r.bottom + 4, pres.map((p) => ({ label: p.name, sub: p.mine ? 'le mien' : p.sub, onclick: () => app.applyPreset(t.id, p.id) })));
+        // rangés par catégorie (la banque, prereglages.js) ; les miens d'abord ; l'écoute est dans le navigateur
+        const lig = (p) => ({ label: p.name, sub: p.mine ? 'le mien' : p.sub, onclick: () => app.applyPreset(t.id, p.id) });
+        const miens = pres.filter((p) => p.mine), autres = pres.filter((p) => !p.mine);
+        // plus de seize : une catégorie par sous-menu
+        const sous = autres.length > 16;
+        const items = miens.length ? [{ head: 'les miens' }, ...miens.map(lig)] : [];
+        const groupe = (l, ps) => (sous ? items.push({ label: l, sub: `${ps.length}`, items: ps.map(lig) }) : items.push({ head: l.toLowerCase() }, ...ps.map(lig)));
+        if (sous && autres.length) items.push({ head: 'la banque' });
+        for (const [k, l] of CATEGORIES) { const ps = autres.filter((p) => p.cat === k); if (ps.length) groupe(l, ps); }
+        const sans = autres.filter((p) => !CATEGORIES.some(([k]) => k === p.cat));
+        if (sans.length) groupe('Autres', sans);
+        menu(r.left, r.bottom + 4, items);
       } }, 'Préréglages') : null,
       src ? el('button', { class: 'tb ghost sm', type: 'button', title: 'garder ce réglage dans le projet : il s\'ajoute au navigateur (Préréglages, Les miens), où un double-clic le renomme',
         onclick: () => app.savePreset(t.id) }, 'Enregistrer le réglage') : null,

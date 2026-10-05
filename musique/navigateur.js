@@ -11,9 +11,12 @@
 //   Instruments   les sources (DR-9, boîte à rythme, synthés, basse acide,
 //                 numérique, échantillonneur, audio) et les bus d'effets
 //   Effets        à glisser sur une piste
-//   Préréglages   des réglages nommés, par instrument, et les miens
-//                 (« Enregistrer le réglage » dans la vue Instruments ;
-//                 double-clic : renommer, clic droit : retirer)
+//   Préréglages   la banque (prereglages.js) : par instrument (celui de la
+//                 piste choisie, par défaut) et par catégorie ; ▶ écoute une
+//                 phrase (ecoute.js), au survol si on le veut ; les miens
+//                 (« + Le réglage de … », ou « Enregistrer le réglage » dans la
+//                 vue Instruments ; double-clic : renommer, clic droit :
+//                 catégorie, retirer)
 //   Sons          la bibliothèque du portail (écouter, glisser) ; on y dépose
 //                 aussi des fichiers du disque (catégorie Upload)
 //   Motifs        les motifs du projet, et des modèles (rythmes, motifs tirés
@@ -29,6 +32,8 @@
 
 import { api, href, toast, dragItem, dropZone, fmtDur, uploadFile, dock, dockKeyLabel } from '../commun/shell.js';
 import { MODULES, SOURCES_OF, EFFECT_TYPES, PRESETS, DRUM_MODELS, NOTE_MODELS, TRACK_KINDS, keyLabel } from './modules.js';
+import { CATEGORIES, CATEGORIE_FR } from './prereglages.js';   // la banque de préréglages (06/10)
+import { ecouter, taire, enEcoute } from './ecoute.js';   // écouter un préréglage (06/10)
 import { el, put, menu, inlineEdit, ask } from './ui.js';
 import { listMidi, midiSub, placeMidi, saveClipMidi } from './generatif_midi.js';
 import { addGenTrack } from './generatif_region.js';
@@ -110,27 +115,111 @@ export function createBrowser(app, { poser = null } = {}) {
     });
   }
 
+  // ── les préréglages (06/10 : la banque, prereglages.js ; l'écoute, ecoute.js) ──
+  // En tête : pour quel instrument (celui de la piste choisie, par défaut),
+  // les catégories, l'écoute au survol. Chaque préréglage : ▶ l'écoute (une
+  // phrase de sa catégorie, dans la tonalité de la session), un clic le pose
+  // sur la piste choisie (ou une piste neuve), glisser aussi. Les miens d'abord.
+  const PREF = 'odio.prereglages';
+  const pref = (() => { try { return JSON.parse(localStorage.getItem(PREF) || '{}') || {}; } catch { return {}; } })();
+  const garderPref = () => { try { localStorage.setItem(PREF, JSON.stringify(pref)); } catch { /* stockage fermé : la session seule */ } };
+  let survolT = 0;
+  const typeDePiste = () => {
+    const t = app.track(S.sel.track), m = t && app.mod(t.src);
+    return m && MODULES[m.type]?.role === 'source' && m.type !== 'player' && m.type !== 'bus' ? m.type : null;
+  };
+  // le son qu'un échantillonneur écoute : celui de la piste choisie, si c'en est un
+  const sonDEchantillon = () => { const t = app.track(S.sel.track), m = t && app.mod(t.src); return m?.type === 'sampler' ? m.params?.item || null : null; };
+  function boutonEcoute(pr) {
+    const ech = pr.type === 'sampler', item = ech ? sonDEchantillon() : null;
+    const b = el('button', { class: `nv-play${enEcoute() === pr.id ? ' on' : ''}`, type: 'button', 'data-ecoute': pr.id,
+      disabled: ech && !item ? true : null,
+      title: ech && !item ? 'l\'échantillonneur écoute le son de sa piste : choisir une piste Échantillonneur qui a un son' : 'écouter (une phrase de sa catégorie, dans la tonalité de la session)',
+      onclick: (e) => { e.stopPropagation(); if (enEcoute() === pr.id) taire(); else ecouter(app, pr, { geste: true, item }); } }, enEcoute() === pr.id ? '■' : '▶');
+    return b;
+  }
+  document.addEventListener('mu:ecoute', (e) => {
+    if (!root.isConnected) return;
+    for (const b of root.querySelectorAll('[data-ecoute]')) { const on = b.dataset.ecoute === e.detail?.id; b.classList.toggle('on', on); b.textContent = on ? '■' : '▶'; }
+  });
+  function itemPreset(pr, { mine = false, tous = false } = {}) {
+    const def = MODULES[pr.type];
+    const sub = [tous || mine ? def?.name : null, mine ? CATEGORIE_FR[pr.cat] || 'le mien' : pr.sub].filter(Boolean).join(' · ');
+    const opts = { name: pr.name, sub, dot: def?.color, extra: boutonEcoute(pr),
+      title: 'clic : sur la piste choisie (une piste neuve si elle n\'a pas cet instrument) · glisser sur une piste · ▶ écouter' };
+    if (mine) {
+      const P = S.proj;
+      const rename = (nm) => inlineEdit(nm, pr.name, (v) => { pr.name = v.slice(0, 40); app.commit('quiet'); render(); }, { max: 40 });
+      opts.rename = rename;
+      opts.title += ' · double-clic : renommer · clic droit : catégorie, retirer';
+      opts.ctx = (nm) => [{ head: pr.name }, { label: 'Renommer', sub: 'double-clic', onclick: () => rename(nm) },
+        { label: 'Catégorie', items: CATEGORIES.map(([k, l]) => ({ label: l, checked: pr.cat === k, onclick: () => { pr.cat = k; app.commit('quiet'); render(); } })) },
+        '-', { label: 'Retirer', onclick: () => { P.presets = (P.presets || []).filter((x) => x !== pr); app.commit('quiet'); render(); } }];
+    }
+    const n = item({ t: 'preset', id: pr.id }, opts);
+    n.addEventListener('pointerenter', () => {
+      if (!pref.survol) return;
+      clearTimeout(survolT);
+      survolT = setTimeout(() => ecouter(app, pr, { item: pr.type === 'sampler' ? sonDEchantillon() : null }), 220);
+    });
+    n.addEventListener('pointerleave', () => clearTimeout(survolT));
+    return n;
+  }
   function presets() {
     const out = [];
     const mine = S.proj.presets || [];
-    out.push(group(`Les miens · ${mine.length}`));
-    if (!mine.length) out.push(el('p', { class: 'lbl nv-note' }, 'vue Instruments, en bas : « Enregistrer le réglage »'));
-    for (const p of mine) {
-      const rename = (nm) => inlineEdit(nm, p.name, (v) => { p.name = v.slice(0, 40); app.commit('quiet'); render(); }, { max: 40 });
-      out.push(item({ t: 'preset', id: p.id }, { name: p.name, sub: MODULES[p.type]?.name || p.type, dot: MODULES[p.type]?.color,
-        title: 'glisser sur une piste de cet instrument : ses réglages · double-clic : renommer · clic droit : retirer', rename,
-        ctx: (nm) => [{ label: 'Renommer', sub: 'double-clic', onclick: () => rename(nm) },
-          { label: 'Retirer', onclick: () => { S.proj.presets = mine.filter((x) => x !== p); app.commit('quiet'); render(); } }] }));
+    const dePiste = typeDePiste();
+    montre = dePiste + '|' + S.sel.track;
+    // l'instrument montré : « piste » suit la piste choisie ; sinon un type, ou tous
+    const choix = pref.inst || 'piste';
+    const type = choix === 'piste' ? dePiste : choix === 'tous' ? null : choix;
+    const types = [...new Set(PRESETS.map((x) => x.type))];
+    const instMenu = (e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      menu(r.left, r.bottom + 4, [{ label: 'Celui de la piste choisie', sub: dePiste ? MODULES[dePiste].name : 'aucune piste d\'instrument', checked: choix === 'piste', onclick: () => { pref.inst = 'piste'; garderPref(); render(); } },
+        { label: 'Tous les instruments', checked: choix === 'tous', onclick: () => { pref.inst = 'tous'; garderPref(); render(); } }, '-',
+        ...types.map((k) => ({ label: MODULES[k].name, sub: `${PRESETS.filter((x) => x.type === k).length} préréglages`, dot: MODULES[k].color, checked: choix === k,
+          onclick: () => { pref.inst = k; garderPref(); render(); } }))]);
+    };
+    const tete = el('div', { class: 'nv-pre-tete' },
+      el('button', { class: 'tb ghost sm nv-wide', type: 'button', title: 'les préréglages de quel instrument', onclick: instMenu },
+        `${choix === 'piste' ? 'Piste · ' : ''}${type ? MODULES[type].name : 'Tous les instruments'} ▾`),
+      el('button', { class: `tb sm${pref.survol ? ' on' : ' ghost'}`, type: 'button', 'aria-pressed': pref.survol ? 'true' : 'false',
+        title: 'écouter un préréglage dès que la souris passe dessus (le son du studio doit avoir été ouvert par un clic)',
+        onclick: () => { pref.survol = !pref.survol; garderPref(); render(); } }, 'Survol'));
+    out.push(tete);
+    const liste = PRESETS.filter((x) => !type || x.type === type);
+    const cats = CATEGORIES.filter(([k]) => liste.some((x) => x.cat === k));
+    const cat = cats.some(([k]) => k === pref.cat) ? pref.cat : '';
+    if (cats.length > 1) {
+      out.push(el('div', { class: 'nv-chips' },
+        el('button', { class: `tb sm${!cat ? ' on' : ' ghost'}`, type: 'button', onclick: () => { pref.cat = ''; garderPref(); render(); } }, 'Tout'),
+        ...cats.map(([k, l]) => el('button', { class: `tb sm${cat === k ? ' on' : ' ghost'}`, type: 'button', onclick: () => { pref.cat = cat === k ? '' : k; garderPref(); render(); } }, l))));
     }
-    const byType = new Map();
-    for (const p of PRESETS) { if (!byType.has(p.type)) byType.set(p.type, []); byType.get(p.type).push(p); }
-    for (const [type, ps] of byType) {
-      out.push(group(MODULES[type].name));
-      for (const p of ps) out.push(item({ t: 'preset', id: p.id }, { name: p.name, sub: p.sub, dot: MODULES[type].color,
-        title: 'glisser sur une piste de cet instrument : ses réglages · ailleurs : une piste neuve' }));
+    // les miens : ceux de l'instrument montré
+    const miens = mine.filter((x) => (!type || x.type === type) && (!cat || x.cat === cat));
+    out.push(group(`Les miens · ${miens.length}`));
+    const t = app.track(S.sel.track), src = t && app.mod(t.src);
+    if (src && MODULES[src.type]?.role === 'source' && src.type !== 'player') {
+      out.push(el('button', { class: 'tb ghost sm nv-wide', type: 'button', title: 'garder le réglage de l\'instrument de la piste choisie dans le projet (double-clic dessus : le renommer)',
+        onclick: () => { const r = app.savePreset(t.id); if (r) render(); } }, `+ Le réglage de « ${t.name} »`));
+    } else if (!mine.length) out.push(el('p', { class: 'lbl nv-note' }, 'choisir une piste d\'instrument : « + Le réglage » garde le sien'));
+    for (const pr of miens) out.push(itemPreset(pr, { mine: true }));
+    for (const [k, l] of cats) {
+      if (cat && k !== cat) continue;
+      const ps = liste.filter((x) => x.cat === k);
+      out.push(group(`${l} · ${ps.length}`));
+      for (const pr of ps) out.push(itemPreset(pr, { tous: !type }));
     }
     return out;
   }
+  // la piste choisie a changé ailleurs (l'arrangement, la Session) : la rubrique
+  // suit son instrument quand on revient dans le navigateur (aucune écoute de
+  // la sélection à poser dans les vues)
+  let montre = null;
+  root.addEventListener('pointerenter', () => {
+    if (isOpen('pre') && (pref.inst || 'piste') === 'piste' && typeDePiste() + '|' + S.sel.track !== montre) render();
+  });
 
   async function loadSounds() {
     loading = true;

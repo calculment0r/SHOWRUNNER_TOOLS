@@ -251,8 +251,10 @@ export const app = {
     const t = app.track(trackId), p = app.preset(presetId);
     if (!t || !p) return;
     const m = app.mod(t.src);
+    // l'échantillonneur garde son son : un préréglage n'en règle que l'enveloppe
+    const garde = m.type === 'sampler' && p.type === 'sampler' && m.params?.item ? { item: m.params.item } : {};
     if (m.type !== p.type) m.type = p.type;
-    m.params = { ...p.params };
+    m.params = { ...p.params, ...garde };
     t.sub = p.sub || p.name;
     toast(`${t.name} : ${p.name}`);
     app.commit('graph');
@@ -266,7 +268,9 @@ export const app = {
     P.presets = P.presets || [];
     if (P.presets.length >= 200) { toast('200 réglages au plus par projet'); return null; }
     const n = P.presets.filter((x) => x.type === m.type).length + 1;
-    const p = { id: uid('r'), name: `${MODULES[m.type].name} ${n}`.slice(0, 40), type: m.type, params: JSON.parse(JSON.stringify(m.params || {})) };
+    // sa catégorie : celle du préréglage d'où il vient, s'il en vient un (la ligne sous le nom de la piste)
+    const de = PRESETS.find((x) => x.type === m.type && (x.sub === t.sub || x.name === t.sub));
+    const p = { id: uid('r'), name: `${MODULES[m.type].name} ${n}`.slice(0, 40), type: m.type, params: JSON.parse(JSON.stringify(m.params || {})), ...(de?.cat ? { cat: de.cat } : {}) };
     P.presets.push(p);
     P.ui.navOpen = { ...(P.ui.navOpen || { inst: true, son: true }), pre: true };
     if (P.ui.nav === false) P.ui.nav = true;

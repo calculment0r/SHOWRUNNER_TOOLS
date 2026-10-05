@@ -17,6 +17,8 @@ import { AnalogSynth } from './odio/instruments/analog-synth.js';
 import { AcidBass } from './odio/instruments/acid-bass.js';
 import { RhythmBox } from './odio/instruments/rhythm-box.js';
 import { PlaitsSynth } from './odio/instruments/plaits-synth.js';
+// Macro : Plaits complet, ses 24 moteurs (06/10 ; musique/plaits/, même contrat que les instruments d'ODIO)
+import { MacroPlaits } from './plaits/macro.js';
 import { VOIX } from './odio/instruments/drums-voices.js';
 import { ReverbEffect } from './odio/effects/reverb.js';
 import { ChorusEffect } from './odio/effects/chorus.js';
@@ -29,6 +31,8 @@ import { CrushEffect } from './odio/effects/crush.js';
 import { MixTable } from './odio/effects/table.js';
 import { VolumeEffect } from './odio/effects/volume.js';
 import { JOUETS } from './jouets/defs.js';   // jouets : les quatorze jouets du Playground de Cal (musique/jouets/)
+import { ARP_MODES, ARP_DIVS } from './arpege.js';   // l'arpégiateur des instruments mélodiques (06/10)
+import { BANQUE } from './prereglages.js';   // la banque de préréglages (06/10, docs/etudes/odio_synthes.md)
 
 // ── les sortes de réglage ───────────────────────────────────
 // { k, label, min, max, def, unit, curve: 'lin' | 'log', step, opts: [libellés] }
@@ -61,6 +65,19 @@ export const DELAY_DIVS = [0.25, 0.5, 0.75, 1, 1.5, 2];            // en temps (
 // l'oscillateur B : « comme A » garde le comportement d'avant (un second
 // oscillateur de la même forme, là seulement si le désaccord est non nul)
 export const WAVES2 = ['Comme A', 'Sinus', 'Triangle', 'Dent de scie', 'Carré', 'Aucun'];
+// les formes du LFO du Synthé (OscillatorNode.type, MDN)
+export const LFO_WAVES = ['sine', 'triangle', 'square', 'sawtooth'];
+// L'arpège (arpege.js) : les mêmes quatre réglages sur chaque instrument
+// mélodique ; « Non » le laisse éteint (le motif joue tel qu'il est écrit).
+// Ils sont lus au moment de planifier les notes, pas par un AudioParam : ils
+// ne s'automatisent pas.
+export const ARP_PARAMS = [
+  O('arp', 'Arpège', ARP_MODES, 0),
+  O('arp_div', 'Division', ARP_DIVS.map(([l]) => l), 3),
+  P('arp_oct', 'Octaves', 1, 4, 1, '', 'lin', 1),
+  P('arp_gate', 'Durée', 0.05, 1, 0.5, ''),
+];
+const ARP_KEYS = new Set(ARP_PARAMS.map((x) => x.k));
 
 export const MODULES = {
   // ── sources ──
@@ -90,10 +107,27 @@ export const MODULES = {
       P('s', 'Tenue', 0, 1, 0.6, ''),
       P('r', 'Chute', 0.005, 4, 0.25, 's', 'log'),
       P('vol', 'Volume', -40, 6, -12, 'dB'),
+      // 06/10 (docs/etudes/odio_synthes.md) : après les réglages d'avant, qui
+      // gardent leur ordre (les rails de la tuile du nodal) ; à leur défaut, le
+      // Synthé sonne exactement comme avant (aucun nœud de plus par voix)
+      P('osc', 'Oscillateurs', 0, 1, 1, ''),          // le niveau de A et B ensemble (0 : le bruit seul)
+      P('noise', 'Bruit', 0, 1, 0, ''),               // bruit blanc, avant le filtre
+      P('glide', 'Glissé', 0, 1, 0, 's'),             // portamento depuis la note d'avant
+      P('penv', 'Env. hauteur', -24, 48, 0, 'dt', 'lin', 1),   // la hauteur part de là…
+      P('pdec', 'Retour hauteur', 0.005, 2, 0.08, 's', 'log'),  // … et revient en ce temps
+      O('lfo_w', 'Forme LFO', ['Sinus', 'Triangle', 'Carré', 'Dent de scie'], 0),
+      P('lfo_f', 'Vitesse LFO', 0.05, 20, 5, 'Hz', 'log'),
+      P('lfo_d', 'Délai LFO', 0, 2, 0, 's'),          // la profondeur monte en ce temps après l'attaque
+      P('lfo_p', 'LFO → hauteur', 0, 100, 0, 'ct'),
+      P('lfo_c', 'LFO → coupure', 0, 3, 0, 'oct'),
+      P('lfo_a', 'LFO → volume', 0, 1, 0, ''),
+      ...ARP_PARAMS,
     ],
     face: ['cut', 'res', 'd', 'vol'],
     sections: [['Oscillateur A', ['wave', 'oct', 'uni', 'det']], ['Oscillateur B', ['wave2', 'oct2', 'mix2']],
-      ['Filtre', ['cut', 'res', 'fenv', 'fdec']], ['Enveloppe', ['a', 'd', 's', 'r']], ['Sortie', ['vol']]],
+      ['Bruit · hauteur', ['osc', 'noise', 'glide', 'penv', 'pdec']],
+      ['Filtre', ['cut', 'res', 'fenv', 'fdec']], ['Enveloppe', ['a', 'd', 's', 'r']],
+      ['LFO', ['lfo_w', 'lfo_f', 'lfo_d', 'lfo_p', 'lfo_c', 'lfo_a']], ['Arpège', ['arp', 'arp_div', 'arp_oct', 'arp_gate']], ['Sortie', ['vol']]],
   },
   sampler: {
     name: 'Échantillonneur', kind: 'lit un son', role: 'source', color: 'coral-2',
@@ -219,6 +253,8 @@ const ODIO = {
   analog: { cls: AnalogSynth, name: 'Analog', kind: 'soustractif · ODIO', role: 'source', color: 'cy', face: ['cutoff', 'resonance', 'decay', 'gain'], trim: -6 },
   acid: { cls: AcidBass, name: 'Basse acide', kind: '303 · filtre 18 dB', role: 'source', color: 'grn2', face: ['cutoff', 'resonance', 'envMod', 'decay'], trim: -12 },
   plaits: { cls: PlaitsSynth, name: 'Numérique', kind: 'Plaits · wasm', role: 'source', color: 'coral-2', face: ['modele', 'harmo', 'timbre', 'morph'], trim: -2 },
+  // pas d'ODIO_01 : écrit ici sur son contrat (musique/plaits/macro.js, docs/etudes/odio_synthes.md)
+  macro: { cls: MacroPlaits, name: 'Macro', kind: 'Plaits · 24 moteurs', role: 'source', color: 'coral-3', face: ['moteur', 'harmo', 'timbre', 'morph'], trim: 0 },
   reverbe: { cls: ReverbEffect, name: 'Réverbe', kind: 'rvb-02 · convolution', role: 'effect', color: 'cy', face: ['size', 'decay', 'mix'] },
   chorus: { cls: ChorusEffect, name: 'Chorus', kind: 'chr-04 · trois retards', role: 'effect', color: 'cy', face: ['rate', 'depth', 'mix'] },
   rtt: { cls: DelayEffect, name: 'RTT-01', kind: 'délai · filtre en boucle', role: 'effect', color: 'amb', face: ['time', 'fdb', 'mix'] },
@@ -244,6 +280,7 @@ function fromOdio(d) {
   for (const [type, def] of Object.entries(ODIO)) {
     const inst = new def.cls(probe);
     const params = inst.getParameters().filter((d) => !(def.skip || []).includes(d.id)).map(fromOdio);
+    if (def.role === 'source' && !def.drum) params.push(...ARP_PARAMS);   // l'arpège : lu par le moteur, pas par l'instrument
     MODULES[type] = { ...def, odio: true, params };
     inst.dispose?.();
   }
@@ -253,7 +290,7 @@ Object.assign(MODULES, JOUETS);   // jouets : leurs réglages et leurs ports (mu
 
 export const EFFECT_TYPES = ['delay', 'reverb', 'comp', 'eq', 'filter', 'dist', ...ODIO_TYPES.filter((t) => ODIO[t].role === 'effect')];
 // les sources qu'une piste peut porter, par sorte de piste
-export const SOURCES_OF = { drums: ['drums', 'rythme'], synth: ['synth', 'analog', 'acid', 'plaits'], sampler: ['sampler'], audio: ['player'], bus: ['bus'] };
+export const SOURCES_OF = { drums: ['drums', 'rythme'], synth: ['synth', 'analog', 'acid', 'plaits', 'macro'], sampler: ['sampler'], audio: ['player'], bus: ['bus'] };
 export const kindOfSource = (type) => Object.keys(SOURCES_OF).find((k) => SOURCES_OF[k].includes(type));
 
 // Les voix d'une batterie, selon sa source : la DR-9 (huit voix) ou la
@@ -286,7 +323,7 @@ export const AUTOMATABLE = {
 // les modules d'ODIO : tout réglage continu, posé par setParameter(id, valeur,
 // instant) — un effet l'applique à l'instant dit, un instrument aux notes
 // qui partent ensuite (leur contrat, odio/types.js)
-for (const t of ODIO_TYPES) AUTOMATABLE[t] = MODULES[t].params.filter((p) => !p.opts).map((p) => p.k);
+for (const t of ODIO_TYPES) AUTOMATABLE[t] = MODULES[t].params.filter((p) => !p.opts && !ARP_KEYS.has(p.k)).map((p) => p.k);
 
 export const spec = (type, k) => MODULES[type].params.find((p) => p.k === k);
 export const val = (mod, k) => {
@@ -310,7 +347,7 @@ export function fromNorm(s, n) {
 export function fmt(s, v) {
   if (s.fmt) return s.fmt(v);   // jouets : les lectures du Playground (0.92 g, +8, 2.2 s)
   if (s.opts) return s.opts[Math.round(v)] ?? '';
-  if (s.unit === 'Hz') return v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)} k` : `${Math.round(v)}`;
+  if (s.unit === 'Hz') return v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)} k` : v < 10 ? v.toFixed(v < 1 ? 2 : 1) : `${Math.round(v)}`;
   if (s.unit === 's') return v < 1 ? `${Math.round(v * 1000)} ms` : `${v.toFixed(2)} s`;
   if (s.unit === 'dB') return v <= -59.9 ? '−∞' : `${v > 0 ? '+' : ''}${v.toFixed(Math.abs(v) < 10 ? 1 : 0)}`;
   if (s.unit === 'dt') return `${v > 0 ? '+' : ''}${Math.round(v)}`;
@@ -390,37 +427,9 @@ export function guessTag(name) {
 export const SECTION_NAMES = ['Intro', 'Couplet', 'Refrain', 'Couplet', 'Refrain', 'Pont', 'Refrain', 'Final'];
 
 // ── les préréglages d'instrument ────────────────────────────
-// Des jeux de réglages nommés, écrits ici : choix de réglage, pas des
-// recettes sourcées. `sub` est la ligne sous le nom de la piste.
-export const PRESETS = [
-  { id: 'kit-sec', type: 'drums', name: 'Kit sec', sub: 'kit · déclins courts', params: {} },
-  { id: 'kit-long', type: 'drums', name: 'Kit long', sub: 'kit · déclins longs', params: { bd_dec: 1.8, sd_dec: 1.4, oh_dec: 1.5, lt_dec: 1.6, ht_dec: 1.6 } },
-  { id: 'kit-serre', type: 'drums', name: 'Kit serré', sub: 'kit · serré', params: { bd_dec: 0.6, sd_dec: 0.6, ch_dec: 0.7, oh_dec: 0.6 } },
-  { id: 'kit-grave', type: 'drums', name: 'Kit grave', sub: 'kit · accordé bas', params: { bd_tune: -3, sd_tune: -2, lt_tune: -3, ht_tune: -2, bd_dec: 1.3 } },
-  { id: 'basse-scie', type: 'synth', name: 'Basse scie', sub: 'scie · filtre',
-    params: { wave: 2, oct: -1, uni: 1, det: 6, wave2: 5, cut: 600, res: 8, fenv: 3, fdec: 0.25, a: 0.003, d: 0.25, s: 0.5, r: 0.12, vol: -12 } },
-  { id: 'nappe-3', type: 'synth', name: 'Nappe', sub: '3 scies désaccordées',
-    params: { wave: 2, oct: 0, uni: 3, det: 14, wave2: 5, cut: 2200, res: 2, fenv: 0.5, fdec: 1.2, a: 0.35, d: 1.5, s: 0.8, r: 1.4, vol: -17 } },
-  { id: 'lead-carre', type: 'synth', name: 'Lead', sub: 'carré · scie',
-    params: { wave: 3, oct: 0, uni: 1, det: 8, wave2: 3, oct2: 0, mix2: 0.45, cut: 3200, res: 5, fenv: 1.5, fdec: 0.3, a: 0.005, d: 0.25, s: 0.7, r: 0.2, vol: -15 } },
-  { id: 'pluck', type: 'synth', name: 'Pluck', sub: 'scie · pincée',
-    params: { wave: 2, uni: 1, det: 4, wave2: 5, cut: 900, res: 10, fenv: 4, fdec: 0.15, a: 0.002, d: 0.18, s: 0, r: 0.15, vol: -12 } },
-  { id: 'sub', type: 'synth', name: 'Sub', sub: 'sinus · grave',
-    params: { wave: 0, oct: -1, uni: 1, det: 0, wave2: 5, cut: 400, res: 0, fenv: 0, a: 0.005, d: 0.3, s: 0.9, r: 0.2, vol: -10 } },
-  { id: 'cloches', type: 'synth', name: 'Cloches', sub: 'triangle · octave',
-    params: { wave: 1, uni: 1, det: 3, wave2: 1, oct2: 1, mix2: 0.35, cut: 5000, res: 2, fenv: 1, fdec: 0.6, a: 0.002, d: 0.9, s: 0.1, r: 1.2, vol: -14 } },
-  // ODIO : les réglages d'origine du prototype (leurs défauts), et les
-  // variantes que ses machines portent sur leur panneau
-  { id: 'tr808', type: 'rythme', name: 'TR-808', sub: 'kit 808 · onze voix', params: { kit: 0 } },
-  { id: 'tr909', type: 'rythme', name: 'TR-909', sub: 'kit 909 · onze voix', params: { kit: 1 } },
-  { id: 'acide', type: 'acid', name: 'Basse acide', sub: 'scie · filtre 18 dB', params: {} },
-  { id: 'acide-carre', type: 'acid', name: 'Acide carrée', sub: 'carré · filtre 18 dB', params: { wave: 1 } },
-  { id: 'analog', type: 'analog', name: 'Analog', sub: 'scie · deux oscillateurs', params: {} },
-  { id: 'analog-carre', type: 'analog', name: 'Analog carré', sub: 'carré · filtre', params: { wave: 1 } },
-  { id: 'plaits-forme', type: 'plaits', name: 'Numérique', sub: 'Plaits · forme', params: { modele: 0 } },
-  { id: 'plaits-formants', type: 'plaits', name: 'Formants', sub: 'Plaits · formants', params: { modele: 5 } },
-  { id: 'plaits-grain', type: 'plaits', name: 'Grain', sub: 'Plaits · grain', params: { modele: 3 } },
-];
+// La banque : musique/prereglages.js (catégories, phrases d'écoute). `sub`
+// est la ligne sous le nom de la piste ; `cat` sa catégorie.
+export const PRESETS = BANQUE;
 export const presetsFor = (type) => PRESETS.filter((p) => p.type === type);
 
 // ── les modèles de motifs ───────────────────────────────────
