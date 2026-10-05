@@ -323,6 +323,23 @@ Trois remarques de Cal, le 05/10 :
 
   L'essai est dans le selftest de `montage_projet.py`.
 
+## 5.7 L'en-tête d'un son à hauteur fixe (06/10)
+
+Cal : « les répliques tout en haut font vibrer tous les panneaux en dessous, car ce header change de
+hauteur en fonction des répliques ; c'est insupportable à regarder en lecture ». Pour un son, la réplique
+lue s'écrit dans l'en-tête du lecteur (« son », le titre, la réplique) ; il passait à la ligne avec une
+réplique longue et disparaissait entre deux : de 44 à 88 px, et tout ce qui est dessous sautait de 42 px.
+L'en-tête a maintenant une hauteur fixe de 65 px (`transcrire.css`) : deux lignes pour l'original, une pour
+la traduction, trois pour l'un sans l'autre ; plus long, le texte se coupe d'une ellipse
+(`-webkit-line-clamp`) — il est en entier dans la liste, éclairé. Pour une vidéo, la réplique est posée sur
+l'image : rien n'y bougeait.
+
+Essai (portail d'essai, Chromium sans affichage) : une lecture entière d'un son de 19,5 s dont les
+répliques sont courtes, très longues (300 caractères) ou absentes, `getBoundingClientRect` de la barre et de
+la frise du lecteur, des répliques, du texte, du carnet, des voix, relevé toutes les 120 ms : avant, 42 px
+d'écart ; après, **0 px** sur 170 relevés, en sombre et en clair, dans les trois vues (original,
+traduction, les deux), à 1600, 1000 et 760 px de large ; une vidéo : 0 px aussi.
+
 ## 6. Les essais à lancer (quand Cal le dit)
 
 1. **Vitesse** : Whisper turbo sur DGX2, sur la piste son de `getaround.mp4`
