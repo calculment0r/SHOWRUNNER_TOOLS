@@ -144,7 +144,8 @@ MAX_CHECKS = 20
 GROUP_MODES = ("free", "flow")
 GROUP_FITS = ("", "h", "w")
 GROUP_GAP = 24           # l'espacement d'une rangée par défaut (px du monde)
-MEDIA_KINDS = ("image", "video", "audio", "element")
+# un document (05/10, tools/documents.py) : un PDF, un texte, un tableur… — sa couverture sur la planche, sa liseuse au double-clic
+MEDIA_KINDS = ("image", "video", "audio", "element", "document")
 VERSION = 2              # 2 : les fils (29/09) ; une planche plus ancienne est migrée en la lisant
 PORT = re.compile(r"[a-z]{1,12}(?::[A-Za-z0-9_-]{1,40})?")
 SLOT_ID = re.compile(r"[A-Za-z0-9_-]{1,40}")
@@ -538,7 +539,7 @@ def _node(n) -> dict:
         if not ITEM.fullmatch(item):
             raise HttpError(400, f"l'objet {nid} ne pointe vers aucun objet de la bibliothèque")
         if n.get("kind") not in MEDIA_KINDS:
-            raise HttpError(400, f"l'objet {nid} n'est ni image, ni vidéo, ni son, ni élément")
+            raise HttpError(400, f"l'objet {nid} n'est ni image, ni vidéo, ni son, ni élément, ni document")
         out.update(item=item, kind=n["kind"], title=_s(n.get("title"), 200), jobs=_jobs(n.get("jobs")))
         # ── idéation (agent « idéation », 30/09) : le recadrage d'une image ──
         crop = _crop(n.get("crop")) if n["kind"] == "image" else None
@@ -1101,6 +1102,9 @@ def picture_of(it: dict) -> Path | None:
         refs = (it.get("element") or {}).get("refs") or []
         if refs:
             return library.path_of(it, refs[0]["file"])
+    if it["kind"] == "document":   # sa couverture : la première page, sinon la carte dessinée (tools/documents.py)
+        cover = library.folder_of(it["id"]) / "cover.png"
+        return cover if cover.is_file() else (library.path_of(it, it["thumb"]) if it.get("thumb") else None)
     return None
 
 
@@ -1352,7 +1356,7 @@ def render(b: dict, frame: str = "", check=lambda: None):
     shown = [n for n in b["nodes"] if _inside(n, r) and n["id"] not in folded]
     parents: list[str] = []
 
-    def picture(n, w, h, radius):
+    def picture(n, w, h, radius, centering=(0.5, 0.5)):
         it = library.get(n["item"])
         p = picture_of(it) if it else None
         if not p or not p.exists():
@@ -1365,7 +1369,7 @@ def render(b: dict, frame: str = "", check=lambda: None):
                     im = im.crop((round(c["x"] * im.width), round(c["y"] * im.height),
                                   max(round(c["x"] * im.width) + 1, round((c["x"] + c["w"]) * im.width)),
                                   max(round(c["y"] * im.height) + 1, round((c["y"] + c["h"]) * im.height))))
-                im = ImageOps.fit(im, (max(1, round(w)), max(1, round(h))), Image.LANCZOS)
+                im = ImageOps.fit(im, (max(1, round(w)), max(1, round(h))), Image.LANCZOS, centering=centering)
         except OSError:
             return None
         mask = Image.new("L", im.size, 0)
@@ -1480,6 +1484,26 @@ def render(b: dict, frame: str = "", check=lambda: None):
                 el = it.get("element") or {}
                 sub = f"{ETYPE_FR.get(el.get('type'), 'élément')} · {len(el.get('refs') or [])} réf.".upper()
                 d.text((x0 + rad(12), y1 - cap + rad(34)), sub, font=_font("mono", 8.5 * s), fill=T["or"])
+            elif kind == "document":
+                # une page debout, comme à l'écran (ideation/canvas.js) : sa couverture vue par le haut, sa ligne, son titre
+                d.rounded_rectangle([x0, y0, x1, y1], radius=rad(7), fill=T["panel2"], outline=T["line-cy"], width=max(1, rad(1)))
+                cap = 46 * s
+                pad = rad(7)
+                pw, ph = max(1, round(w - 2 * pad)), max(1, round(h - cap - pad))
+                got = picture(n, pw, ph, rad(4), (0.5, 0.0))
+                if got:
+                    img.paste(got[0], (round(x0 + pad), round(y0 + pad)), got[1])
+                else:
+                    d.rounded_rectangle([x0 + pad, y0 + pad, x0 + pad + pw, y0 + pad + ph], radius=rad(4), fill=T["panel3"])
+                it = library.get(n["item"]) or {}
+                doc = it.get("doc") or {}
+                from tools.documents import unit_fr
+                line = " · ".join(b for b in (doc.get("label") or "DOCUMENT", unit_fr(doc.get("pages"), doc.get("unit") or "pages")) if b).upper()
+                d.text((x0 + rad(10), y1 - cap + rad(8)), line[:34], font=_font("mono", 8 * s), fill=T["cy"])
+                title = n.get("title") or it.get("title") or ""
+                f = _font("ui", 12 * s)
+                t1 = (_wrap(d, title, f, w - 2 * rad(10), 1) or [""])[0]
+                d.text((x0 + rad(10), y1 - cap + rad(22)), t1, font=f, fill=T["ink"])
             else:  # son
                 d.rounded_rectangle([x0, y0, x1, y1], radius=rad(9), fill=T["panel2"], outline=T["line"], width=max(1, rad(1)))
                 d.text((x0 + rad(14), y0 + rad(12)), "SON", font=_font("mono", 8.5 * s), fill=T["grn2"])

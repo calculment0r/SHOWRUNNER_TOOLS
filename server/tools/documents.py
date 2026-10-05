@@ -836,7 +836,8 @@ def card(fmt: str, title: str, lines: str = "", foot: str = ""):
     bf = _font("ui", 27)
     room = int((H - m - 120 - y) // 38)
     if lines and room > 0:
-        body = "\n".join(ln for ln in lines.splitlines() if ln.strip())[:4000]
+        # une tabulation (les cellules d'un tableau, d'un classeur) n'a pas de dessin dans la police : des espaces
+        body = "\n".join(ln for ln in lines.replace("\t", "   ").splitlines() if ln.strip())[:4000]
         for ln in _wrap(d, body, bf, W - 2 * m - 88, room):
             d.text((x, y), ln, font=bf, fill=T["ink2"])
             y += 38
@@ -949,6 +950,14 @@ def read_text(it: dict) -> dict:
     except (OSError, ValueError):
         t = {"pages": [], "truncated": False, "via": ""}
     return t
+
+
+def text_of(it: dict) -> str | None:
+    """Le texte entier d'un document, pour le serveur lui-même (l'agent Showrunner :
+    ideation_agent.TEXTE_DOCUMENT le cherche ici, sous ce nom) ; None si ce n'est pas un document."""
+    if not it or it.get("kind") != "document":
+        return None
+    return "\n\n".join(p.get("text") or "" for p in read_text(it).get("pages") or [] if isinstance(p, dict))
 
 
 def r_texte(req, item_id):
@@ -1433,6 +1442,20 @@ def selftest(call, ok) -> None:
     st, nd = call("POST", f"/api/library/{up['affiche.tiff'].get('id')}/texte", {"pages": []})
     ok(st == 400, f"documents : POST …/texte d'une image : refusé ({st})")
 
+    # le texte pour le serveur lui-même (l'agent) ; Idéation : un document se pose, sa couverture s'exporte
+    ok("Kiki de Montparnasse" in (text_of(library.get(up["note.docx"].get("id", "x")) or {}) or "")
+       and text_of(library.get(up["affiche.tiff"].get("id", "x")) or {}) is None,
+       "documents : text_of(objet) rend le texte d'un document, None pour une image")
+    try:
+        from tools import ideation_agent
+        hook = getattr(ideation_agent, "TEXTE_DOCUMENT", None)
+    except ImportError:
+        hook = None
+    if callable(hook):
+        got = hook(library.get(up["pitch.pptx"].get("id", "x")) or {})
+        ok(isinstance(got, str) and "Les Années folles" in got, f"documents : l'agent lit le texte d'un PPTX ({str(got)[:80]!r})")
+    _selftest_planche(call, ok, up)
+
     # qui peut écrire : l'auteur, un éditeur du Workspace ; un lecteur (guest viewer) lit sans écrire ; une autre Team ne voit rien
     _selftest_droits(ok, fx)
 
@@ -1440,6 +1463,34 @@ def selftest(call, ok) -> None:
 def texte_of(iid: str) -> str:
     it = library.get(iid)
     return "\n".join(p.get("text", "") for p in read_text(it).get("pages", [])) if it else ""
+
+
+def _selftest_planche(call, ok, up) -> None:
+    """Idéation (05/10) : un objet `media` de sorte `document` se pose, s'enregistre, et l'export PNG
+    de la planche montre sa couverture (celle de l'EPUB : un aplat de couleur, qu'on retrouve)."""
+    from PIL import Image
+    st, meta = call("GET", "/api/ideation/meta")
+    ok(st == 200 and "document" in (meta.get("media_kinds") or []), f"documents : Idéation pose des documents ({meta.get('media_kinds')})")
+    ep, dx = up["roman.epub"], up["note.docx"]
+    st, b = call("POST", "/api/ideation/boards", {"name": "Planche des documents"})
+    bid = b.get("id", "x") if isinstance(b, dict) else "x"
+    nodes = [{"id": "d1", "type": "media", "kind": "document", "item": ep.get("id"), "title": ep.get("title"), "x": 0, "y": 0, "w": 190, "h": 250},
+             {"id": "d2", "type": "media", "kind": "document", "item": dx.get("id"), "title": dx.get("title"), "x": 230, "y": 0, "w": 190, "h": 250}]
+    st, sv = call("POST", f"/api/ideation/boards/{bid}", {"nodes": nodes, "links": [], "base_rev": 1})
+    st2, got = call("GET", f"/api/ideation/boards/{bid}")
+    kinds = [(n.get("kind"), n.get("item")) for n in (got.get("nodes") if isinstance(got, dict) else []) if n.get("type") == "media"]
+    ok(st == 200 and st2 == 200 and kinds == [("document", ep.get("id")), ("document", dx.get("id"))],
+       f"documents : deux documents posés sur une planche, gardés ({st} {sv if st != 200 else ''} {kinds})")
+    st, png = call("POST", f"/api/ideation/boards/{bid}/png", {})
+    try:
+        im = Image.open(BytesIO(png)).convert("RGB") if st == 200 and isinstance(png, bytes) else None
+    except OSError:
+        im = None
+    near = lambda c, w=(40, 90, 130): all(abs(a - b_) <= 6 for a, b_ in zip(c, w))   # noqa: E731 — la couverture de roman.epub
+    cols = (im.getcolors(1 << 22) or []) if im else []
+    ok(im is not None and sum(k for k, c in cols if near(c)) > 400,
+       f"documents : l'export PNG d'une planche montre la couverture d'un document ({st} {im.size if im else png[:80] if isinstance(png, bytes) else png})")
+    call("POST", f"/api/ideation/boards/{bid}/delete")
 
 
 def _selftest_droits(ok, fx) -> None:
