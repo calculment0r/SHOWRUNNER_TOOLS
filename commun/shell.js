@@ -159,6 +159,7 @@ export const session = (fresh = false) => {
 export function showDoor(me) {
   if (doorOn) return;
   doorOn = true;
+  if (lacher) lacher();   // la porte fermée : cet onglet ne relève plus la file pour les autres
   import('./porte.js').then((m) => m.door(me));
 }
 
@@ -550,7 +551,8 @@ function visibilite() {
   const c = ongletCache();
   if (c === cacheVu) return;
   cacheVu = c;
-  if (!c) for (const cb of [...retours]) { try { cb(); } catch (e) { console.error('retour de l’onglet', e); } }
+  if (c) fileCachee();   // la file : le verrou rendu (plus bas, « un seul relevé de la file par navigateur »)
+  else for (const cb of [...retours]) { try { cb(); } catch (e) { console.error('retour de l’onglet', e); } }
 }
 document.addEventListener('visibilitychange', visibilite);
 document.addEventListener('sr:visibilite', visibilite);   // une fenêtre détachée qui se montre, se cache, se ferme
@@ -588,13 +590,95 @@ const FINIS = ['done', 'error', 'cancelled', 'interrupted'];
 // un mouvement (un travail vu en cours, un état qui change, un geste qui lance, arrête, relance : fileBouge) ;
 // 30 s au repos. Ce qu'on attend de la file se voit tout de suite quand on l'a lancé d'ici (fileBouge, et api()
 // pour toute écriture qui rend un travail) ; ce que lancent les autres, en 30 s au plus au repos.
-const FILE_ACTIVE = 1500, FILE_PRES = 6000, FILE_REPOS = 30000, FILE_CALME = 120000;
+const FILE_ACTIVE = 1500, FILE_PRES = 6000, FILE_REPOS = 30000, FILE_CALME = 120000, FILE_FILET = 15000;
 let bougeA = Date.now();   // le dernier mouvement de la file (l'arrivée sur la page en est un)
+let entenduA = 0;          // la dernière liste reçue : relevée ici, ou diffusée par le meneur (plus bas)
 /** Un geste vient de toucher la file (lancer, arrêter, relancer, retirer) : relue tout de suite, puis de près. */
 function fileBouge() { bougeA = Date.now(); jobs.poll(true); }
 const JOB_ID = /^job-\d{4}-\d{6}-[0-9a-f]{4}$/;   // core/jobs.py, submit : « job-MMJJ-HHMMSS-xxxx »
 const estTravail = (x) => (typeof x === 'string' ? JOB_ID.test(x) : !!x && typeof x === 'object' && JOB_ID.test(String(x.id || '')));
 const porteTravail = (d) => !!d && typeof d === 'object' && (estTravail(d) || estTravail(d.job) || (Array.isArray(d.jobs) && d.jobs.some(estTravail)));
+
+// ── un seul relevé de la file par navigateur ────────────────
+// Cal, 06/10 (Observability du Worker) : trois GET /api/jobs à quelques dizaines de millisecondes d'écart —
+// plusieurs onglets qui relèvent chacun la file. Les onglets visibles d'un même portail (même origine, même
+// Workspace : ev_seq est celui du Workspace) élisent un meneur par un verrou (Web Locks, navigator.locks : tenu
+// tant que l'onglet le garde ; l'onglet fermé, le verrou passe au suivant ; caché, la porte fermée, il le rend).
+// Le meneur seul relève la file au rythme ci-dessus et diffuse chaque liste (BroadcastChannel) ; chaque onglet,
+// caché compris, la traite comme la sienne (recevoir) : sr:job, sr:elements, l'en-tête, jobs.wait. Un geste qui
+// touche la file relève tout de suite dans son onglet, et diffuse aussi. Un suiveur qui n'entend rien pendant le
+// délai + 15 s relève lui-même (le filet). Sans ces deux API : chaque onglet relève, comme avant.
+const PARTAGE = typeof BroadcastChannel === 'function' && !!(navigator.locks && typeof navigator.locks.request === 'function');
+let canal = null;      // le canal du Workspace de l'onglet
+let canalNom = '';
+let meneur = false;    // cet onglet tient le verrou : il relève pour tous
+let lacher = null;     // rend le verrou, ou abandonne la demande en attente
+function brancherPartage() {
+  if (!PARTAGE) return;
+  const nom = `sr-file:${ESPACE || ''}`;
+  if (canal && canalNom === nom) { briguer(); return; }
+  if (lacher) lacher();
+  if (canal) canal.close();
+  canal = null;
+  canalNom = nom;
+  try { canal = new BroadcastChannel(nom); } catch { return; }
+  canal.onmessage = (e) => {
+    const d = e.data;
+    if (!d || d.t !== 'file' || !Array.isArray(d.jobs)) return;
+    recevoir(d.jobs, d.ev, Number(d.bouge) || 0);
+    planifier();
+  };
+  briguer();
+}
+function briguer() {
+  if (!canal || lacher || !pollOn || doorOn || ongletCache()) return;
+  const ctl = new AbortController();
+  let rendre = () => {};
+  const tenu = new Promise((ok) => { rendre = ok; });
+  const mien = () => { lacher = null; meneur = false; ctl.abort(); rendre(); planifier(); };
+  lacher = mien;
+  navigator.locks.request(canalNom, { signal: ctl.signal }, async () => {
+    if (lacher !== mien) return;   // rendu avant d'être tenu
+    meneur = true;
+    planifier();   // à son heure, comptée depuis la dernière liste entendue : pas de relevé en double
+    await tenu;
+  }).catch(() => { /* demande abandonnée : caché, porte fermée, autre Workspace */ });
+}
+// l'onglet se cache : il rend le verrou (un onglet visible le prend) et ne relève plus (visibilite)
+function fileCachee() { if (lacher) lacher(); clearTimeout(pollT); pollT = 0; }
+function planifier() {
+  clearTimeout(pollT); pollT = 0;
+  if (!pollOn || doorOn || ongletCache()) return;
+  const active = lastJobs.some((j) => j.state === 'queued' || j.state === 'running');
+  const d = active ? FILE_ACTIVE : Date.now() - bougeA < FILE_CALME ? FILE_PRES : FILE_REPOS;
+  // le meneur (ou chaque onglet, sans partage) relève à son heure ; un suiveur attend la diffusion (le filet)
+  const attente = !canal || meneur ? Math.max(0, d - (Date.now() - entenduA)) : d + FILE_FILET;
+  pollT = setTimeout(() => jobs.poll(true), attente);
+}
+// une liste de la file, relevée ici ou diffusée par un autre onglet : la même suite pour toutes
+function recevoir(list, ev, bouge = 0) {
+  entenduA = Date.now();
+  if (bouge > bougeA) bougeA = bouge;
+  const before = new Map(lastJobs.map((j) => [j.id, j.state]));
+  lastJobs = list;
+  for (const cb of listeners) cb(list);
+  for (const j of list) {
+    const was = before.get(j.id);
+    if (was !== undefined && was !== j.state) bougeA = Date.now();
+    if (was && was !== j.state && ['done', 'error', 'cancelled'].includes(j.state)) {
+      document.dispatchEvent(new CustomEvent('sr:job', { detail: j }));
+    }
+  }
+  if (list.some((j) => j.state === 'queued' || j.state === 'running')) bougeA = Date.now();
+  // le journal des éléments a avancé dans ce Workspace (server/tools/elements.py, seq_here) :
+  // « sr:elements » dit aux pages qui suivent des versions de relire GET /api/elements/changes
+  // (docs/etudes/apps_studio_elements.md § 2.11) — le relevé de la file, sans connexion de plus
+  if (Number.isInteger(ev)) {
+    if (evSeq !== null && ev > evSeq) document.dispatchEvent(new CustomEvent('sr:elements', { detail: { seq: ev, since: evSeq } }));
+    evSeq = ev;
+  }
+}
+
 export const jobs = {
   async submit(kind, params, { title = '', tool = '' } = {}) {
     const j = await api('jobs', { method: 'POST', body: { kind, params, title, tool } });
@@ -612,50 +696,42 @@ export const jobs = {
   // l'accueil relisait la file deux fois, ODIO trois — tools/compte_requetes.mjs).
   async poll(now = false) {
     pollOn = true;
+    brancherPartage();
     clearTimeout(pollT); pollT = 0;
     if (!now) { pollT = setTimeout(() => jobs.poll(true), 1500); return; }
     if (doorOn || ongletCache()) return;   // la porte est fermée, l'onglet caché : rien (le retour relance)
     if (pollVol) { pollEncore = true; return; }
     pollVol = true;
-    try {
-      const { jobs: list, ev_seq: ev } = await api('jobs?limit=60');
-      const before = new Map(lastJobs.map((j) => [j.id, j.state]));
-      lastJobs = list;
-      for (const cb of listeners) cb(list);
-      for (const j of list) {
-        const was = before.get(j.id);
-        if (was !== undefined && was !== j.state) bougeA = Date.now();
-        if (was && was !== j.state && ['done', 'error', 'cancelled'].includes(j.state)) {
-          document.dispatchEvent(new CustomEvent('sr:job', { detail: j }));
-        }
-      }
-      // le journal des éléments a avancé dans ce Workspace (server/tools/elements.py, seq_here) :
-      // « sr:elements » dit aux pages qui suivent des versions de relire GET /api/elements/changes
-      // (docs/etudes/apps_studio_elements.md § 2.11) — le relevé de la file, sans connexion de plus
-      if (Number.isInteger(ev)) {
-        if (evSeq !== null && ev > evSeq) document.dispatchEvent(new CustomEvent('sr:elements', { detail: { seq: ev, since: evSeq } }));
-        evSeq = ev;
-      }
-    } catch { /* le serveur redémarre : on réessaie */ } finally { pollVol = false; }
+    let lu = null;
+    try { lu = await api('jobs?limit=60'); } catch { /* le serveur redémarre : on réessaie */ } finally { pollVol = false; }
+    if (lu && Array.isArray(lu.jobs)) {
+      recevoir(lu.jobs, lu.ev_seq);
+      try { if (canal) canal.postMessage({ t: 'file', jobs: lu.jobs, ev: lu.ev_seq, bouge: bougeA }); } catch { /* */ }
+    }
     if (pollEncore) { pollEncore = false; jobs.poll(true); return; }
-    if (doorOn || ongletCache()) return;
-    const active = lastJobs.some((j) => j.state === 'queued' || j.state === 'running');
-    if (active) bougeA = Date.now();
-    clearTimeout(pollT);
-    pollT = setTimeout(() => jobs.poll(true), active ? FILE_ACTIVE : Date.now() - bougeA < FILE_CALME ? FILE_PRES : FILE_REPOS);
+    planifier();
   },
-  // attend la fin d'un travail ; onTick(job) à chaque relevé — onglet caché, il attend son retour
+  // attend la fin d'un travail ; onTick(job) à chaque relevé — onglet caché, il attend son retour. En cours, la
+  // liste de la file le porte déjà (relue toutes les 1,5 s, ici ou par le meneur) : pas de requête de plus ;
+  // fini, ou absent de la liste, sa fiche complète (avec ses objets, `items`) : une requête.
   async wait(id, onTick) {
     for (;;) {
       await quandVisible();
-      const j = await api('jobs/' + id);
+      const vu = Date.now() - entenduA < 2 * FILE_ACTIVE ? lastJobs.find((x) => x.id === id) : null;
+      const j = vu && !FINIS.includes(vu.state) ? vu : await api('jobs/' + id);
       if (onTick) onTick(j);
       if (FINIS.includes(j.state)) return j;
       await new Promise((r) => setTimeout(r, 1200));
     }
   },
 };
-auRetour(() => { if (pollOn) jobs.poll(true); });
+// de retour sur l'onglet : il brigue le verrou ; la liste diffusée pendant qu'il était caché a moins de 2 s : rien
+// à relire, sinon relue tout de suite
+auRetour(() => {
+  if (!pollOn) return;
+  brancherPartage();
+  if (!canal || Date.now() - entenduA > 2000) jobs.poll(true); else planifier();
+});
 
 const STATE_FR = { queued: 'en file', running: 'en cours', done: 'fini', error: 'échec', cancelled: 'arrêté', interrupted: 'interrompu' };
 export const stateFr = (s) => STATE_FR[s] || s;

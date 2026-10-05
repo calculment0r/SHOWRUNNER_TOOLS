@@ -6,6 +6,9 @@
 //   python3 tools/portail_essai.py 8836 /tmp/sr_essai_compte &        # un portail d'essai (arrêté par son PID)
 //   node tools/compte_requetes.mjs http://127.0.0.1:8836 [secondes] [pages]   # pages : accueil,asset,…
 //   SR_COMPTE_ATTENTE=130 node tools/compte_requetes.mjs …   # compter après 130 s sur la page (le repos de la file)
+//   SR_COMPTE_ONGLETS='accueil,asset:cache,ideation:cache' node tools/compte_requetes.mjs …
+//       # plusieurs onglets d'un même navigateur (un seul contexte : le verrou et le canal de la file partagés),
+//       # « :cache » cachés ; le total de tous les onglets ; plusieurs jeux séparés par « ; », en même temps
 //
 // « Caché » est simulé : document.hidden et visibilityState sont remplacés et visibilitychange est envoyé, comme le
 // fait le navigateur (https://developer.mozilla.org/en-US/docs/Web/API/Page_Visibility_API). Chromium sans
@@ -41,10 +44,11 @@ function sorte(chemin) {
 // la route, sans identifiant ni requête : « api/jobs », « api/ideation/agent/* »
 const route = (chemin) => chemin.replace(/^\//, '').replace(/[a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4}/g, '*').split('/').slice(0, 4).join('/');
 
-const cache = () => ({ api: 0, library: 0, media: 0, relais: 0, asset: 0, routes: {} });
+const vide = () => ({ api: 0, library: 0, media: 0, relais: 0, asset: 0, routes: {} });
 const somme = (c) => c.api + c.library + c.media + c.relais;
+const fmt = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(', ') || '—';
 
-async function mesure(browser, nom) {
+async function contexte(browser) {
   const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   await ctx.addInitScript(() => {
     let cache = false;
@@ -52,28 +56,30 @@ async function mesure(browser, nom) {
     Object.defineProperty(Document.prototype, 'visibilityState', { configurable: true, get: () => (cache ? 'hidden' : 'visible') });
     window.__cacher = (h) => { cache = !!h; document.dispatchEvent(new Event('visibilitychange')); };
   });
-  const page = await ctx.newPage();
+  return ctx;
+}
+
+// compte les requêtes de `page` dans etat.C[etat.phase] ; rend les erreurs de la page
+async function compter(ctx, page, etat) {
   const erreurs = [];
   page.on('pageerror', (e) => erreurs.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error') erreurs.push(m.text()); });
   const cdp = await ctx.newCDPSession(page);
   await cdp.send('Network.enable');
   const vus = new Map();   // requestId → { chemin, phase }
-  let phase = 'chargement';
-  const C = { chargement: cache(), visible: cache(), cache: cache(), retour: cache() };
   const compte = (id) => {
     const r = vus.get(id);
     if (!r || r.compte) return;
     r.compte = true;
     const s = sorte(r.chemin);
-    const c = C[r.phase];
+    const c = etat.C[r.phase];
     c[s]++;
     if (s !== 'asset') c.routes[route(r.chemin)] = (c.routes[route(r.chemin)] || 0) + 1;
   };
   cdp.on('Network.requestWillBeSent', (e) => {
     const u = new URL(e.request.url);
     if (!u.href.startsWith(base)) return;
-    vus.set(e.requestId, { chemin: u.pathname, phase });
+    vus.set(e.requestId, { chemin: u.pathname, phase: etat.phase });
   });
   cdp.on('Network.requestServedFromCache', (e) => { const r = vus.get(e.requestId); if (r) r.cacheNav = true; });
   cdp.on('Network.responseReceived', (e) => {
@@ -84,37 +90,75 @@ async function mesure(browser, nom) {
   });
   // un flux (EventSource) n'a sa réponse qu'aux en-têtes : déjà compté ; une requête refusée compte aussi
   cdp.on('Network.loadingFailed', (e) => { const r = vus.get(e.requestId); if (r && !r.cacheNav && !e.canceled) compte(e.requestId); });
+  return erreurs;
+}
 
+async function mesure(browser, nom) {
+  const ctx = await contexte(browser);
+  const page = await ctx.newPage();
+  const etat = { phase: 'chargement', C: { chargement: vide(), visible: vide(), cache: vide(), retour: vide() } };
+  const erreurs = await compter(ctx, page, etat);
   await page.goto(`${base}/${PAGES[nom] ?? nom}`, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(ATTENTE * 1000);
-  phase = 'visible';
+  etat.phase = 'visible';
   await page.waitForTimeout(SEC * 1000);
-  phase = 'cache';
+  etat.phase = 'cache';
   await page.evaluate(() => window.__cacher(true));
   await page.waitForTimeout(SEC * 1000);
-  phase = 'retour';
+  etat.phase = 'retour';
   await page.evaluate(() => window.__cacher(false));
   await page.waitForTimeout(3000);
   await ctx.close();
-  return { nom, C, erreurs };
+  return { nom, C: etat.C, erreurs };
+}
+
+// plusieurs onglets d'un même navigateur, certains cachés : le total, par minute
+async function onglets(browser, spec) {
+  const ctx = await contexte(browser);
+  const etat = { phase: 'chargement', C: { chargement: vide(), mesure: vide() } };
+  const tous = [];
+  for (const s of spec.split(',')) {
+    const [nom, quoi] = s.split(':');
+    const page = await ctx.newPage();
+    const erreurs = await compter(ctx, page, etat);
+    await page.goto(`${base}/${PAGES[nom] ?? nom}`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(1500);
+    if (quoi === 'cache') await page.evaluate(() => window.__cacher(true));
+    tous.push({ nom: s, erreurs });
+  }
+  await new Promise((ok) => setTimeout(ok, ATTENTE * 1000));
+  etat.phase = 'mesure';
+  await new Promise((ok) => setTimeout(ok, SEC * 1000));
+  await ctx.close();
+  const n = somme(etat.C.mesure);
+  const parMin = Math.round((n * 60) / SEC * 10) / 10;
+  console.log(`Onglets ${spec} (un navigateur, ${SEC} s après ${ATTENTE} s, ${base}) : ${n} requêtes du Worker, ${parMin} par minute, `
+    + `${Math.round(parMin * 1440)} par jour ; ${fmt(etat.C.mesure.routes)}`);
+  for (const { nom, erreurs } of tous) if (erreurs.length) console.log(`${nom} · erreurs de la page : ${[...new Set(erreurs)].slice(0, 5).join(' | ')}`);
+  return { spec, C: etat.C };
 }
 
 const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
-const res = await Promise.all(choix.map((n) => mesure(browser, n)));
-await browser.close();
-
-const parMin = (c) => Math.round((somme(c) * 60) / SEC * 10) / 10;
-console.log(`Requêtes du Worker par onglet (api + library + media + relais ; ${SEC} s par phase, ${base})`);
-console.log('page        visible/min  caché/min  par jour (visible)  par jour (caché)  retour (3 s)  assets (visible)');
-for (const { nom, C } of res) {
-  const v = parMin(C.visible), h = parMin(C.cache);
-  console.log(`${nom.padEnd(12)}${String(v).padStart(11)}${String(h).padStart(11)}${String(Math.round(v * 1440)).padStart(20)}`
-    + `${String(Math.round(h * 1440)).padStart(18)}${String(somme(C.retour)).padStart(14)}${String(C.visible.asset).padStart(18)}`);
-}
-for (const { nom, C, erreurs } of res) {
-  const fmt = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(', ') || '—';
-  console.log(`\n${nom} · visible : ${fmt(C.visible.routes)}\n${nom} · caché : ${fmt(C.cache.routes)}\n${nom} · retour : ${fmt(C.retour.routes)}`);
-  if (erreurs.length) console.log(`${nom} · erreurs de la page : ${[...new Set(erreurs)].slice(0, 5).join(' | ')}`);
+let res;
+if (process.env.SR_COMPTE_ONGLETS) {
+  // chaque jeu d'onglets dans son contexte (verrou et canal propres) : en même temps
+  res = await Promise.all(process.env.SR_COMPTE_ONGLETS.split(';').map((spec) => onglets(browser, spec)));
+  await browser.close();
+} else {
+  res = await Promise.all(choix.map((n) => mesure(browser, n)));
+  await browser.close();
+  const parMin = (c) => Math.round((somme(c) * 60) / SEC * 10) / 10;
+  console.log(`Requêtes du Worker par onglet (api + library + media + relais ; ${SEC} s par phase, ${base})`);
+  console.log('page        visible/min  caché/min  par jour (visible)  par jour (caché)  retour (3 s)  assets (visible)');
+  for (const { nom, C } of res) {
+    const v = parMin(C.visible), h = parMin(C.cache);
+    console.log(`${nom.padEnd(12)}${String(v).padStart(11)}${String(h).padStart(11)}${String(Math.round(v * 1440)).padStart(20)}`
+      + `${String(Math.round(h * 1440)).padStart(18)}${String(somme(C.retour)).padStart(14)}${String(C.visible.asset).padStart(18)}`);
+  }
+  for (const { nom, C, erreurs } of res) {
+    console.log(`\n${nom} · visible : ${fmt(C.visible.routes)}\n${nom} · caché : ${fmt(C.cache.routes)}\n${nom} · retour : ${fmt(C.retour.routes)}`);
+    if (erreurs.length) console.log(`${nom} · erreurs de la page : ${[...new Set(erreurs)].slice(0, 5).join(' | ')}`);
+  }
 }
 if (process.env.SR_COMPTE_JSON) {
   const { writeFileSync } = await import('fs');
