@@ -28,7 +28,7 @@ import threading
 import time
 from pathlib import Path
 
-from core import config
+from core import config, library
 from core.comfy import Comfy
 
 _cache: dict = {"t": 0.0, "mtime": None, "v": None}
@@ -175,10 +175,17 @@ def publish(src: Path, fname: str) -> str:
         return f"copié ici ; l'autre DGX : {e}"
 
 
+def trigger_of(p: dict) -> str:
+    """Le mot déclencheur d'un moodboard : « mb » et la fin de l'id de son objet (un mot qui n'existe pas,
+    stable d'une version à l'autre). ai-toolkit le met en tête de chaque légende (toolkit/prompt_utils.py,
+    inject_trigger_into_prompt : « trigger + ' ' + légende ») ; ACE-Step, en `custom_tag` (prepend)."""
+    return "mb" + re.sub(r"[^a-z0-9]", "", (p.get("node") or "").lower())[-6:]
+
+
 # ── ai-toolkit : image et vidéo ──────────────────────────────
 def run_aitk(ctx, data: Path, out: Path, p: dict, e: dict, v: int) -> dict:
     mid = p["model"]
-    trigger = "mb" + re.sub(r"[^a-z0-9]", "", (p.get("node") or "").lower())[-6:]
+    trigger = trigger_of(p)
     steps = int((e.get("train") or {}).get("steps") or e.get("steps") or 2000)
     name = f"sr_{mid}_{_slug(p.get('name'))}_v{v:03d}"
     runs = ctx.workdir / "runs"
@@ -188,13 +195,17 @@ def run_aitk(ctx, data: Path, out: Path, p: dict, e: dict, v: int) -> dict:
         "save": {"dtype": "bf16", "save_every": 250, "max_step_saves_to_keep": 4},
         "datasets": [{"folder_path": str(data), "caption_ext": "txt", "caption_dropout_rate": 0.05,
                       "cache_latents_to_disk": True, "resolution": e.get("resolution") or [768, 1024]}],
+        # disable_sampling : ni l'image d'échantillon du début ni celle de la fin (20 à 50 s chacune, que
+        # sample_every n'empêche pas — compte rendu de l'installation du 05/10) ; le LoRA s'essaie
+        # ensuite dans une carte Générer. Le manifeste peut le rallumer (`train`).
         "train": {"batch_size": 1, "steps": steps, "gradient_checkpointing": True, "noise_scheduler": "flowmatch",
                   "timestep_type": "linear", "optimizer": "adamw8bit", "lr": 1e-4, "dtype": "bf16",
-                  "cache_text_embeddings": True, **(e.get("train") or {}), "steps": steps},
+                  "cache_text_embeddings": True, "disable_sampling": True, **(e.get("train") or {}), "steps": steps},
         "model": dict(e["model"]),
-        # pas d'échantillons pendant la nuit : le LoRA s'essaie ensuite dans une carte Générer
+        # neg "" : le défaut d'ai-toolkit (False) fait planter Krea 2 avec cache_text_embeddings avant le
+        # premier pas (« can only concatenate str (not "bool") to str », krea2/src/text_encoder.py, 05/10)
         "sample": {"sampler": "flowmatch", "sample_every": steps * 10, "width": 1024, "height": 1024, "sample_steps": 8,
-                   "prompts": [trigger]},
+                   "neg": "", "prompts": [trigger]},
     }]}}
     job = ctx.workdir / "job.yaml"
     job.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")   # du JSON : un YAML valide
@@ -202,8 +213,12 @@ def run_aitk(ctx, data: Path, out: Path, p: dict, e: dict, v: int) -> dict:
     py = str(Path(root) / "venv" / "bin" / "python")
     _free_comfy(ctx)
     ctx.progress(0.03, f"ai-toolkit · {steps} pas")
+    # MODELS_PATH : ai-toolkit relit nos fichiers ComfyUI. SANS HF_HUB_OFFLINE : hors ligne, transformers 5.5.3
+    # (épinglé par ai-toolkit) réclame <dépôt>/<sous-dossier tokenizer>/config.json, absent du Hub — Z-Image,
+    # Qwen-Image 2.1 et H3 échouent ainsi (essai du 05/10 sur DGX2) ; ai-toolkit lit déjà le cache d'abord
+    # (local_files_only, puis en ligne seulement s'il manque quelque chose)
     _run(ctx, [py, "run.py", str(job)], root,
-         {"MODELS_PATH": str(Path.home() / "ComfyUI" / "models"), "HF_HUB_OFFLINE": "1", "PYTHONUNBUFFERED": "1"}, steps, "ai-toolkit")
+         {"MODELS_PATH": str(Path.home() / "ComfyUI" / "models"), "PYTHONUNBUFFERED": "1"}, steps, "ai-toolkit")
     found = sorted((runs / name).glob("*.safetensors"), key=lambda f: f.stat().st_mtime)
     final = [f for f in found if f.name == f"{name}.safetensors"] or found
     if not final:
@@ -213,23 +228,86 @@ def run_aitk(ctx, data: Path, out: Path, p: dict, e: dict, v: int) -> dict:
 
 
 # ── ACE-Step 1.5 (l'entraîneur officiel) : son ───────────────
+def ace_dataset(data: Path, items: list, trigger: str) -> Path:
+    """`{audio}/ds.json`, au format que lit le prétraitement en ligne de commande
+    (acestep/training_v2/preprocess_discovery.py, `ca1e85f`) : il IGNORE `000.caption.txt` et
+    `000.lyrics.txt` — sans ce fichier, il scanne le dossier et prend la légende « 000 », les
+    paroles « [Instrumental] » (compte rendu de l'installation, 05/10). Le mot déclencheur en
+    `custom_tag`, mis en tête de chaque légende (`tag_position: prepend`)."""
+    from tools import lora
+    samples = []
+    for k, iid in enumerate(items):
+        it = library.get(iid)
+        if not it or it["kind"] != "audio":
+            continue
+        f = data / lora.sample_name(k, it)
+        if f.is_file():
+            samples.append({"filename": f.name, "audio_path": str(f.resolve()), **lora.audio_meta(it)})
+    doc = {"metadata": {"custom_tag": trigger, "tag_position": "prepend", "genre_ratio": 0}, "samples": samples}
+    out = data / "ds.json"
+    out.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
+    return out
+
+
+def safe_root(argv: list, cwd: str) -> Path:
+    """La racine « sûre » d'ACE-Step : il refuse des tenseurs ou une sortie hors du répertoire courant
+    (« Path escapes safe root ») ; `uv run --directory D` fait de D ce répertoire, sinon c'est `cwd`."""
+    for k, a in enumerate(argv):
+        a = str(a)
+        if a == "--directory" and k + 1 < len(argv):
+            return Path(str(argv[k + 1])).expanduser()
+        if a.startswith("--directory="):
+            return Path(a.split("=", 1)[1]).expanduser()
+    return Path(cwd)
+
+
+def _useful(tail: list[str], n: int = 6) -> str:
+    """Les dernières lignes utiles d'un journal : sans les barres de progression ni les doublons."""
+    keep: list[str] = []
+    for line in tail:
+        if _STEP.search(line) or re.search(r"\d+%\|", line) or (keep and keep[-1] == line):
+            continue
+        keep.append(line)
+    return " | ".join(keep[-n:])[-900:] or "(journal vide)"
+
+
 def run_ace(ctx, data: Path, out: Path, p: dict, e: dict, v: int) -> dict:
     """Les commandes sont celles qui ont marché à l'installation (`preprocess`, `cmd` du manifeste),
-    avec {audio}, {tensors}, {out} remplacés : le portail ne devine pas l'interface de l'entraîneur."""
+    avec {audio}, {tensors}, {out} remplacés : le portail ne devine pas l'interface de l'entraîneur.
+    ACE-Step rend 0 même en échec (prétraitement 0/3, modèle introuvable, chemin refusé, confirmation
+    interrompue) : ce qu'il laisse fait foi — des tenseurs `.pt` après le prétraitement, puis
+    `adapter_model.safetensors` ; sinon l'erreur cite la fin de son journal."""
     if not isinstance(e.get("preprocess"), list) or not isinstance(e.get("cmd"), list):
         raise RuntimeError("le manifeste ne donne pas les commandes d'ACE-Step (preprocess, cmd) : docs/INSTALL_LORA.md § 5")
     tens, outd = ctx.workdir / "tensors", ctx.workdir / "ace_out"
-    sub = lambda argv: [str(a).replace("{audio}", str(data)).replace("{tensors}", str(tens)).replace("{out}", str(outd)) for a in argv]
     root = e["_root"]
+    for argv in (e["preprocess"], e["cmd"]):
+        safe = safe_root(argv, root).resolve()
+        for tok, d, what in (("{tensors}", tens, "les tenseurs"), ("{out}", outd, "la sortie")):
+            if any(tok in str(a) for a in argv) and not d.resolve().is_relative_to(safe):
+                raise RuntimeError(f"ACE-Step refuse {what} hors de sa racine sûre {safe} (« Path escapes safe root ») : "
+                                   f"le travail écrit dans {d.parent} — dans le manifeste ({manifest_path()}), `--directory` "
+                                   f"doit être un dossier qui contient les données du portail ({config.data_dir()})")
+    sub = lambda argv: [str(a).replace("{audio}", str(data)).replace("{tensors}", str(tens)).replace("{out}", str(outd)) for a in argv]
+    trigger = trigger_of(p)
+    ds = ace_dataset(data, list(p.get("items") or []), trigger)
+    n_audio = len(json.loads(ds.read_text(encoding="utf-8"))["samples"])
     _free_comfy(ctx)
     ctx.progress(0.03, "ACE-Step · prépare les sons")
-    _run(ctx, sub(e["preprocess"]), root, {"PYTHONUNBUFFERED": "1"}, None, "ACE-Step · préparation")
-    _run(ctx, sub(e["cmd"]), root, {"PYTHONUNBUFFERED": "1"}, None, "ACE-Step")
-    found = sorted(outd.rglob("adapter_model.safetensors"), key=lambda f: f.stat().st_mtime) or sorted(outd.rglob("*.safetensors"), key=lambda f: f.stat().st_mtime)
+    log = _run(ctx, sub(e["preprocess"]), root, {"PYTHONUNBUFFERED": "1"}, None, "ACE-Step · préparation")
+    n_pt = len(list(tens.rglob("*.pt"))) if tens.is_dir() else 0
+    if not n_pt:
+        raise RuntimeError(f"ACE-Step : le prétraitement n'a produit aucun tenseur .pt (0 sur {n_audio} son{'s' if n_audio > 1 else ''}) — "
+                           + _useful(log))
+    log = _run(ctx, sub(e["cmd"]), root, {"PYTHONUNBUFFERED": "1"}, None, "ACE-Step")
+    # sous {out} : checkpoints/epoch_…/ et final/ (05/10) ; final/ d'abord, sinon le plus récent
+    final = outd / "final" / "adapter_model.safetensors"
+    found = [final] if final.is_file() else sorted(outd.rglob("adapter_model.safetensors"), key=lambda f: f.stat().st_mtime) if outd.is_dir() else []
     if not found:
-        raise RuntimeError(f"ACE-Step n'a pas laissé de LoRA dans {outd}")
+        raise RuntimeError(f"ACE-Step n'a pas laissé de LoRA (adapter_model.safetensors) dans {outd} ; le prétraitement avait "
+                           f"produit {n_pt} tenseur{'s' if n_pt > 1 else ''} .pt sur {n_audio} son{'s' if n_audio > 1 else ''} — " + _useful(log))
     shutil.copyfile(found[-1], out)
-    return {}
+    return {"trigger": trigger}
 
 
 def run(ctx, data: Path, out: Path, p: dict) -> dict:
@@ -256,6 +334,64 @@ def register(app) -> None:
     install()
 
 
+class _EssaiCtx:
+    """Un travail d'essai pour les entraîneurs (sans file ni GPU)."""
+    def __init__(self, workdir: Path, params: dict) -> None:
+        self.workdir, self.params, self.endpoint = workdir, params, ""
+        self.job = {"id": "essai-lora", "progress": 0.0}
+        workdir.mkdir(parents=True, exist_ok=True)
+
+    def progress(self, frac=None, message=None):
+        pass
+
+    def cancelled(self) -> bool:
+        return False
+
+    def check(self) -> None:
+        pass
+
+
+# un faux ai-toolkit : son « python » garde son environnement et le travail, et laisse un LoRA là où le vrai
+_FAUX_AITK = """#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+here = Path(__file__).resolve().parents[2]
+(here / "env.json").write_text(json.dumps(dict(os.environ)))
+job = json.loads(Path(sys.argv[2]).read_text())
+proc = job["config"]["process"][0]
+d = Path(proc["training_folder"]) / job["config"]["name"]
+d.mkdir(parents=True, exist_ok=True)
+print("  5/%d [00:01<00:00]" % proc["train"]["steps"], flush=True)
+(d / (job["config"]["name"] + ".safetensors")).write_bytes(b"lora")
+"""
+# un faux ACE-Step : il rend 0 même en échec, comme le vrai (compte rendu du 05/10)
+_FAUX_ACE = """#!/usr/bin/env python3
+import json, sys
+from pathlib import Path
+a = sys.argv[1:]
+def arg(k):
+    return a[a.index(k) + 1]
+Path(arg("--marque")).write_text(" ".join(a))
+mode = arg("--faux")
+if "--preprocess" in a:
+    ds = json.loads(Path(arg("--dataset-json")).read_text())
+    t = Path(arg("--tensor-output")); t.mkdir(parents=True, exist_ok=True)
+    print("[Side-Step] Resolved %d audio files from dataset JSON" % len(ds["samples"]))
+    if mode == "0pt":
+        print("Pass 1 FAIL 000.flac: TorchCodec is required for load_with_torchcodec")
+    else:
+        for s in ds["samples"]:
+            (t / (s["filename"] + ".pt")).write_bytes(b"t")
+else:
+    if mode == "rien":
+        print("  3/20 [00:01<00:02]")
+        print("Model directory not found: checkpoints/xl_base")
+    else:
+        f = Path(arg("--output-dir")) / "final"; f.mkdir(parents=True, exist_ok=True)
+        (f / "adapter_model.safetensors").write_bytes(b"ace")
+"""
+
+
 def selftest(call, ok) -> None:
     from tools import lora
     old = config.CFG.get("lora_manifest")
@@ -276,6 +412,92 @@ def selftest(call, ok) -> None:
         ok(not lora.model_state("h3")["ready"], "lora : un modèle absent du manifeste n'est pas prêt")
         ok(comfy_name("h3", "Années folles", 2) == "h3-annees-folles-v002-fl2v.safetensors" and comfy_name("zimage", "", 1) == "zimage-moodboard-v001.safetensors",
            f"lora : les noms dans ComfyUI ({comfy_name('h3', 'Années folles', 2)})")
+
+        # le manifeste final de l'installation du 05/10 (tools/lora_manifeste_0510.json, le § 5 du compte
+        # rendu), tel quel — seuls les dossiers des deux entraîneurs pointent ici
+        man = json.loads((config.REPO / "tools" / "lora_manifeste_0510.json").read_text(encoding="utf-8"))
+        ace_root = config.data_dir() / "ace_essai"
+        ace_root.mkdir(exist_ok=True)
+        tmp.write_text(json.dumps({**man, "aitk": str(root), "ace": str(ace_root)}), encoding="utf-8")
+        ready = [k for k in lora.MODELS if k != "factice" and lora.model_state(k)["ready"]]
+        ok(ready == ["krea2", "qwen21", "zimage", "h3", "ace"] and "pas encore branché" in lora.model_state("yue2")["why"],
+           f"lora : le manifeste du 05/10 propose Z-Image, Qwen 2.1, Krea 2, H3, ACE-Step, et pas YuE2 ({ready})")
+
+        # ai-toolkit (un faux) : sans HF_HUB_OFFLINE, ni échantillons ni neg booléen, le bloc du manifeste tel quel
+        py = root / "venv" / "bin" / "python"
+        py.parent.mkdir(parents=True, exist_ok=True)
+        py.write_text(_FAUX_AITK, encoding="utf-8")
+        py.chmod(0o755)
+        for mid in ("zimage", "krea2", "h3"):
+            e, _ = entry(mid)
+            ctx = _EssaiCtx(config.data_dir() / "work" / f"essai-aitk-{mid}", {"model": mid, "node": "n_ab12cd", "name": "Paris 1900"})
+            out = ctx.workdir / "lora.safetensors"
+            extra = run_aitk(ctx, ctx.workdir / "dataset", out, ctx.params, e, 1)
+            env = json.loads((root / "env.json").read_text())
+            job = json.loads((ctx.workdir / "job.yaml").read_text())["config"]["process"][0]
+            ok(out.read_bytes() == b"lora" and extra["trigger"] == "mbab12cd" and "HF_HUB_OFFLINE" not in env
+               and env.get("MODELS_PATH", "").endswith("ComfyUI/models"),
+               f"lora : ai-toolkit {mid} lancé sans HF_HUB_OFFLINE, avec MODELS_PATH ({env.get('HF_HUB_OFFLINE')})")
+            ok(job["train"]["disable_sampling"] is True and job["sample"]["neg"] == "" and job["model"] == man["models"][mid]["model"],
+               f"lora : ai-toolkit {mid} — disable_sampling, neg \"\", le bloc model du manifeste ({job['train'].get('disable_sampling')} {job['sample'].get('neg')!r})")
+            if mid == "h3":
+                ok(job["network"]["linear"] == 16 and job["network"]["network_kwargs"] == {"ignore_if_contains": ["adaln_proj"]}
+                   and job["train"]["timestep_type"] == "shift", "lora : H3 — le réseau et le pas du manifeste")
+
+        # ACE-Step (un faux) : ds.json, la racine sûre, et ce qu'il laisse fait foi
+        import wave
+        ids = []
+        for k, (params, prompt) in enumerate(((({"tags": "synthwave", "bpm": 140, "keyscale": "A minor", "timesignature": "4",
+                                                  "lyrics": "[Instrumental]", "instrumental": True}), "synthwave, basse analogique"),
+                                               ({"chanson": {"prompt": "folk", "vocal": True, "lyrics": "[verse]\nla la", "bpm": 96,
+                                                             "key": "D major"}}, "folk"))):
+            w = config.data_dir() / f"essai_son{k}.wav"
+            with wave.open(str(w), "wb") as f:
+                f.setnchannels(1)
+                f.setsampwidth(2)
+                f.setframerate(8000)
+                f.writeframes(b"\0\0" * 800)
+            ids.append(library.add_file(w, kind="audio", title=f"son {k}", prompt=prompt, params=params,
+                                        origin={"tool": "music"})["id"])
+        fake = ace_root / "faux_ace.py"
+        fake.write_text(_FAUX_ACE, encoding="utf-8")
+        fake.chmod(0o755)
+        e, _ = entry("ace")
+        base = config.data_dir()
+
+        def ace(mode, safe=str(base), label=""):
+            ctx = _EssaiCtx(base / "work" / f"essai-ace-{label or mode}", {"model": "ace", "node": "n_zz99yy", "name": "Sons", "items": ids})
+            mark = ctx.workdir / "marque.txt"
+            argv = lambda extra: [str(fake), "--directory", safe, "--faux", mode, "--marque", str(mark)] + extra
+            ee = {**e, "preprocess": argv(["--preprocess", "--audio-dir", "{audio}", "--dataset-json", "{audio}/ds.json",
+                                           "--tensor-output", "{tensors}", "--dataset-dir", "{tensors}", "--output-dir", "{out}"]),
+                  "cmd": argv(["--dataset-dir", "{tensors}", "--output-dir", "{out}"])}
+            data = lora._dataset(ctx, ids, "audio")
+            out = ctx.workdir / "lora.safetensors"
+            try:
+                return run_ace(ctx, data, out, ctx.params, ee, 1), out, data, mark, ""
+            except RuntimeError as err:
+                return None, out, data, mark, str(err)
+
+        extra, out, data, mark, err = ace("ok")
+        ds = json.loads((data / "ds.json").read_text(encoding="utf-8"))
+        s0, s1 = ds["samples"]
+        ok(not err and out.read_bytes() == b"ace" and extra == {"trigger": "mbzz99yy"}, f"lora : ACE-Step laisse final/adapter_model ({err})")
+        ok(ds["metadata"] == {"custom_tag": "mbzz99yy", "tag_position": "prepend", "genre_ratio": 0}
+           and s0["filename"] == "000.wav" and s0["audio_path"] == str((data / "000.wav").resolve())
+           and s0["caption"] == "synthwave, basse analogique" and s0["is_instrumental"] is True and s0["lyrics"] == "[Instrumental]"
+           and (s0["bpm"], s0["keyscale"], s0["timesignature"]) == (140, "A minor", "4"),
+           f"lora : ds.json d'ACE-Step — le mot déclencheur en custom_tag, la recette d'une prise ({s0})")
+        ok(s1["is_instrumental"] is False and s1["lyrics"] == "[verse]\nla la" and (s1["bpm"], s1["keyscale"]) == (96, "D major"),
+           f"lora : ds.json — les paroles, le tempo et la tonalité d'une chanson ({s1})")
+        _, _, _, _, err = ace("rien")
+        ok("n'a pas laissé de LoRA" in err and "2 tenseurs .pt sur 2 sons" in err and "Model directory not found" in err
+           and "3/20" not in err, f"lora : ACE-Step sans LoRA — la vraie cause et le nombre de tenseurs ({err[:200]})")
+        _, _, _, _, err = ace("0pt")
+        ok("aucun tenseur .pt (0 sur 2 sons)" in err and "TorchCodec" in err, f"lora : ACE-Step, prétraitement vide — arrêté avant d'entraîner ({err[:200]})")
+        _, _, _, mark, err = ace("ok", safe="/var/empty/racine", label="hors-racine")
+        ok("racine sûre" in err and "/var/empty/racine" in err and "--directory" in err and not mark.exists(),
+           f"lora : ACE-Step, des données hors de la racine sûre — dit avant de lancer ({err[:200]})")
     finally:
         config.CFG["lora_manifest"] = old
         tmp.unlink(missing_ok=True)

@@ -320,6 +320,54 @@ def _add_version(bid: str, nid: str, items: list, src: Path | None, job_id: str,
         return entry
 
 
+def sample_name(k: int, it: dict) -> str:
+    """Le nom d'un objet dans le jeu de données : sa place, l'extension de son fichier (`000.png`, `001.flac`)."""
+    return f"{k:03d}{library.path_of(it).suffix.lower()}"
+
+
+def audio_meta(it: dict) -> dict:
+    """Ce qu'on sait d'un son pour sa légende d'entraînement (un échantillon du `ds.json` d'ACE-Step 1.5,
+    lu par acestep/training_v2/preprocess_discovery.py) : la légende (le prompt de l'objet, sinon son
+    titre), les paroles, et le tempo, la tonalité, la mesure quand sa recette les donne — une prise de
+    Musique (music.gen_params), une chanson (chanson.py : `params.chanson`), une région d'ODIO
+    (music_gen : `params.values`), une partition YuE2 (Q: et K:). Rien d'inventé : un champ inconnu
+    n'est pas écrit (ACE les tient pour facultatifs)."""
+    pr = it.get("params") or {}
+    ch = pr.get("chanson") if isinstance(pr.get("chanson"), dict) else {}
+    va = pr.get("values") if isinstance(pr.get("values"), dict) else {}
+    caption = (it.get("prompt") or ch.get("prompt") or va.get("caption") or pr.get("tags") or it.get("title") or "").strip()
+    if ch:
+        inst, lyrics = not ch.get("vocal", True), ch.get("lyrics") or ""
+    else:
+        src = va if ("lyrics" in va or "instrumental" in va) else pr
+        lyrics = src.get("lyrics") or ""
+        inst = bool(src.get("instrumental")) or not lyrics.strip() or lyrics.strip() == "[Instrumental]"
+    out = {"caption": caption, "lyrics": "[Instrumental]" if inst else lyrics.strip(), "is_instrumental": inst}
+    score = pr.get("score") or ""
+    q = re.search(r"^Q:\s*1/4\s*=\s*(\d+)", score, re.M)
+    bpm = pr.get("bpm") or ch.get("bpm") or va.get("bpm") or (int(q.group(1)) if q else None)
+    key = pr.get("keyscale") or ch.get("key") or va.get("keyscale")
+    k = re.search(r"^K:\s*(\S+)", score, re.M)
+    if not key and k:
+        try:   # la tonalité d'une partition ABC, au format d'ACE-Step (« A minor »)
+            from tools import chanson, music_gen
+            t = chanson._tonic(k.group(1))
+            key = music_gen.ace_key(t["tonic"], t["mode"]) if t else None
+        except Exception:   # une partition illisible : la tonalité reste inconnue
+            key = None
+    ts = pr.get("timesignature") or va.get("timesignature") or ("4" if ch else None)   # chanson.ace_of : toujours 4
+    try:
+        if bpm:
+            out["bpm"] = int(round(float(bpm)))
+    except (TypeError, ValueError):
+        pass
+    if key:
+        out["keyscale"] = str(key)
+    if ts:
+        out["timesignature"] = str(ts)
+    return out
+
+
 def _dataset(ctx, items: list, kind: str) -> Path:
     """Le jeu de données : les fichiers des objets, copiés dans le dossier du travail."""
     import shutil
@@ -329,10 +377,10 @@ def _dataset(ctx, items: list, kind: str) -> Path:
         it = library.get(iid)
         if not it or it["kind"] != kind:
             continue
-        src = library.path_of(it)
-        shutil.copyfile(src, d / f"{k:03d}{src.suffix.lower()}")
+        shutil.copyfile(library.path_of(it), d / sample_name(k, it))
         # la légende : le prompt de l'objet s'il en a un (ai-toolkit lit `<image>.txt` et y ajoute le mot
-        # déclencheur) ; un son : `.caption.txt` et `.lyrics.txt` (le tutoriel d'ACE-Step 1.5)
+        # déclencheur) ; un son : `.caption.txt` et `.lyrics.txt` (le tutoriel d'ACE-Step 1.5), que la ligne
+        # de commande ignore pourtant (05/10) : c'est le `ds.json` qu'elle lit (lora_trainers.ace_dataset)
         cap = (it.get("prompt") or "").strip()
         if kind == "image":
             (d / f"{k:03d}.txt").write_text(cap, encoding="utf-8")
