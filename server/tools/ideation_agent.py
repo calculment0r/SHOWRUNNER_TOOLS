@@ -2375,7 +2375,7 @@ def conduite(call, ok, wait, F, f, did) -> None:
             time.sleep(0.1)
         pal = {p["palier"]: p for p in conv.get("paliers") or []}
         pi = pal.get("images") or {}
-        ok(pi.get("state") == "done" and "images regardées" in pi.get("annonce", "") and len(f2.calls) == 1 and f2.calls[0].get("format") == PALIER_SCHEMA
+        ok(pi.get("state") == "done" and "regardée" in pi.get("annonce", "") and len(f2.calls) == 1 and f2.calls[0].get("format") == PALIER_SCHEMA
            and len((f2.calls[0]["messages"][-1]).get("images") or []) == 1 and not any(c.get("format") == PALIER_SCHEMA for c in f.calls),
            f"palier : les images regardées par le modèle qui voit, sur son Ollama (le second), en un appel ({pi.get('state')} {pi.get('annonce')!r:.80} {len(f2.calls)})")
         t = next((x for x in conv.get("turns") or [] if x["id"] == tid), {})

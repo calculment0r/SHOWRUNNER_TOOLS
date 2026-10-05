@@ -161,7 +161,7 @@ class Faux:
         text = last.get("content") or ""
         noms = re.findall(r"^Picture (\d+): ([^«]*)« (.*) »$", _block(text, "pictures"), re.M)
         n = len(last.get("images") or [])
-        return {"annonce": f"Les {n} images regardées (faux Ollama) : des aplats de couleur, sans rapport net avec le brief.",
+        return {"annonce": f"{f'Les {n} images regardées' if n > 1 else 'L’image regardée'} (faux Ollama) : des aplats de couleur, sans rapport net avec le brief.",
                 "pieces": [{"n": int(k), "ce_que_c_est": f"{'trois images d’une vidéo' if 'video' in kind else 'un aplat'} « {t} »"} for k, kind, t in noms],
                 "questions": [{"question": "Ces images servent-elles de références ?", "choix": ["Oui, toutes", "Non, on les écarte"], "plusieurs": False}]}
 
