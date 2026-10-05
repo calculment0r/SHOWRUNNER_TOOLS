@@ -20,6 +20,50 @@
     "source": "~/ACE-Step-1.5/acestep/constants.py:150-153, TRACK_NAMES"
   },
 
+  "intentions": {
+    "_doc": "La question du panneau « Générer » (06/10, docs/etudes/musique_generatif.md § 8) : « Que veux-tu générer ? ». Pour chaque réponse, les voies qui la font, dans l'ordre où on les essaie : la page prend la première prête (une voie pas câblée en réel est passée, avec sa raison) et la personne peut en choisir une autre ; le serveur vérifie qu'une demande dit une réponse et une voie qui vont ensemble. Une voie « garder » rend une chanson entière puis n'en garde qu'un stem (music.stems) : la voie de repli d'« un instrument seul » tant qu'ACE-Step lego n'est pas câblé.",
+    "ordre": ["chanson", "instrument", "variation", "suite"],
+    "chanson": {
+      "label": "Une chanson entière", "sous": "voix et instruments, sur la plage",
+      "doc": "un morceau complet à la longueur de la plage, au tempo, dans la tonalité et à la mesure du projet ; les paroles par section",
+      "voies": [
+        { "id": "yue", "model": "yue", "task": "chanson", "label": "YuE2", "doc": "la meilleure chanson (SongBench 6,73 contre 6,01, ~/YuE/README.md) ; sa partition se relit avant le chant ; le tempo et la tonalité passent par le style et la partition" },
+        { "id": "ace", "model": "ace", "task": "text2music", "label": "ACE-Step", "doc": "plus rapide (~30 s) ; tempo, tonalité, mesure et durée en nombres" }
+      ]
+    },
+    "instrument": {
+      "label": "Un instrument seul", "sous": "au tempo et dans la tonalité du projet",
+      "doc": "une seule piste — la batterie, une basse — qui suit le tempo et la tonalité du projet (le cas de Suno Studio, étude § 8.3)",
+      "voies": [
+        { "id": "lego", "model": "ace", "task": "lego", "label": "dans le contexte", "doc": "ACE-Step « lego » : la piste entend ce qui joue autour (INFERENCE.md:526) ; modèle base seulement" },
+        { "id": "stem-ace", "model": "ace", "task": "text2music", "garder": true, "label": "chanson puis stem", "doc": "ACE-Step rend une chanson au tempo et dans la tonalité du projet, la séparation n'en garde que l'instrument voulu ; elle n'entend pas les autres pistes" },
+        { "id": "stem-yue", "model": "yue", "task": "chanson", "garder": true, "label": "chanson puis stem · YuE2", "doc": "YuE2 rend la chanson (sa partition peut suivre un guide MIDI), la séparation n'en garde que l'instrument voulu" }
+      ]
+    },
+    "variation": {
+      "label": "Une variation d'un clip", "sous": "le même morceau, autrement",
+      "doc": "un clip de l'arrangement refait dans un autre style ; la prise atterrit à sa place, sur une piste générative",
+      "voies": [
+        { "id": "cover", "model": "ace", "task": "cover", "label": "ACE-Step · variation", "doc": "garde la structure du son, change son style (INFERENCE.md:465-495)" },
+        { "id": "reprise", "model": "yue", "task": "reprise", "label": "YuE2 · reprise", "doc": "SheetSage2 transcrit la mélodie du clip, YuE2 la rechante dans ton style" }
+      ]
+    },
+    "suite": {
+      "label": "La suite", "sous": "prolonger ce qui joue",
+      "doc": "quelques mesures après ce qui joue, qui l'entendent : ACE-Step « repeindre » sur une zone placée après la fin (Tutorial.md:787, 3 à 90 s par passe)",
+      "voies": [
+        { "id": "repaint", "model": "ace", "task": "repaint", "label": "ACE-Step · repeindre", "doc": "la zone d'après, dans le contexte de ce qui joue avant" }
+      ],
+      "sans": { "yue": "YuE2 ne prolonge pas un morceau : ni entrée audio ni intervalle d'édition (generation-and-covers.md:17,141)" }
+    },
+    "stems": {
+      "_doc": "La voie « garder » : l'instrument choisi (une piste d'ACE-Step, ou « other ») et le stem que la séparation rend pour lui (music_stems.py) ; le mot anglais ajouté au style pour que la chanson le contienne (notre choix, étude § 8.3) ; « other » : tout le reste.",
+      "drums": { "stem": "drums", "mot": "drums" }, "bass": { "stem": "bass", "mot": "bass" }, "vocals": { "stem": "vocals", "mot": "vocals" },
+      "backing_vocals": { "stem": "vocals", "mot": "backing vocals" }, "guitar": { "stem": "guitar", "mot": "guitar" }, "keyboard": { "stem": "piano", "mot": "piano" },
+      "other": { "stem": "other", "mot": "" }
+    }
+  },
+
   "modeles": {
     "ace": {
       "nom": "ACE-Step 1.5",

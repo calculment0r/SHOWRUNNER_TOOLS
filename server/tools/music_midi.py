@@ -415,9 +415,10 @@ def abc_to_notes(abc: str, bpm: float) -> list:
     Vocal au canal 0, Ins au 1, les accords au 2 ; les instants de la
     partition (en noires à son tempo Q) ramenés aux temps du projet par les
     secondes (temps = noires × bpm / Q)."""
+    abc, _ = music_yue.abc_normalise(abc, couper=True)       # une fin coupée perd son groupe incomplet
     chk = music_yue.abc_check(abc)
     if not chk.get("ok"):
-        raise RuntimeError(f"partition illisible : {chk.get('error') or chk.get('why')}")
+        raise RuntimeError(f"partition illisible : {chk.get('error_fr') or chk.get('error') or chk.get('why')}")
     rep = chk["report"]
     k = bpm / rep["bpm"]
 

@@ -1,4 +1,4 @@
-# Étude — le génératif dans ODIO : pistes génératives, partition, MIDI, stems, LoRA « pronostic » (29/09/2026)
+# Étude — le génératif dans ODIO : pistes génératives, partition, MIDI, stems, LoRA « pronostic » (29/09/2026) ; le génératif intégré (06/10/2026, § 8)
 
 Demande de Cal (29/09, ses mots) : « il faut pouvoir générer des instruments
 avec notre modèle de génération donc il faut pouvoir ajouter des pistes
@@ -712,6 +712,330 @@ MuScriptor medium, Stable Audio 3 Medium.
    commerciales (YuE2, SheetSage2, MuScriptor, ADTOF) : acceptables pour
    l'usage de Cal ?
 
+## 8. Le génératif intégré (06/10/2026)
+
+Demande de Cal (06/10, ses mots résumés) : « On ne peut pas câbler directement des
+éléments généraux d'ODIO sur notre mode génératif ? Le tempo, la tonalité (qu'on peut
+modifier, mais par défaut il prend la nôtre), un clip qui sert d'inspiration, etc. Il
+faut rendre ce mode génératif ultra bien intégré dans le reste. On avait essayé de
+générer seulement une batterie […] à partir d'un fichier de musique sans batterie, mais
+on n'y était pas arrivé je crois. L'idée, c'est comme Suno et leur Studio : pouvoir
+rajouter juste un instrument qui comprend le tempo et la tonalité d'une autre piste ; on
+peut aussi faire une chanson complète et séparer les stems. […] J'ai trouvé la fonction
+déjà faite pour prendre un clip MIDI et le mettre comme guide dans la génération. Mais il
+faut revoir le design de notre panneau génératif, car il est très confus. »
+
+Méthode : l'étude du 29/09 (§ 1 à 7), relue contre le **code tel qu'il est le 06/10**
+(`musique/generatif*.js`, `server/tools/music_gen.py`, `music_yue.py`, `music_stems.py`,
+`music_midi.py`, `chanson.py`) et l'historique (`git log --all -- musique/generatif*
+server/tools/music_gen.py server/tools/music_yue.py` : dix commits, du 29/09 au 05/10).
+Le web : la documentation d'ACE-Step sur GitHub, ses tickets, l'annonce de ComfyUI, et
+pour Suno l'aide et les notes de version **par les extraits du moteur de recherche** (les
+sites de Suno, de ComfyUI et de la presse sont bloqués depuis le conteneur de la session :
+la page elle-même n'a pas été lue). Aucune DGX n'a été touchée : ce que dit l'étude du
+29/09 sur les disques reste ce qu'on sait.
+
+### 8.1 L'état au 06/10 : fait, proposé, échoué
+
+**Fait** (au portail, moteurs factices d'office, réel derrière son interrupteur) :
+
+| fonction | où | en réel |
+|---|---|---|
+| YuE2, une chanson (style, paroles), la partition écrite d'abord, relue, retouchée (« relire avant de chanter », défaut depuis le 05/10) | tiroir « Générer » (`generatif.js`) ; région d'une piste générative (`generatif_region.js`) ; `music.yue`, `music.yue.abc`, `music.gen.yue` | câblé (`"music_yue": true`), rendu le 30/09 (~40 s, REPRISE § 3) |
+| **le guide MIDI** — « la fonction déjà faite » : un clip de notes (arrangement, motif, bibliothèque MIDI) déposé dans **Chant**, **Thème** ou **Accords** d'une région YuE2 | `injectFrom` (`generatif_region.js`) + notre sérialiseur `writeAbc` (`generatif_abc.js`), jugé par `abc_tools.py` | câblé : la partition part dans l'entrée `abc` de `YuE2GenerateMusic` (`music_yue.build_graph`) |
+| YuE2, la reprise d'un clip (SheetSage2 → partition → YuE2) | région « reprise d'un clip » ; app Musique « Reprendre » | câblé |
+| ACE-Step 1.5, un morceau (`text2music`), tempo, tonalité, mesure, durée en nombres | tiroir, région « morceau », app Musique « Rapide » | câblé (`"music_engine": "ace-step"`, ComfyUI, XL base sur DGX2) |
+| ACE-Step, un audio de style (`ReferenceTimbreAudio`) | région « audio de style », app Musique « S'en inspirer » | écrit, jugé à vide, **jamais rendu** (nœud expérimental) |
+| la séparation en pistes après un rendu, posées alignées | tiroir « puis séparer », prise « Séparer en stems » (`music.stems`) | câblé (chaîne BS-RoFormer + htdemucs_ft : voix, batterie, basse, autre) |
+| extraire le MIDI d'un clip audio | clic droit (`generatif_midi.js`, `music.midi`) | câblé (basic-pitch, SheetSage2) |
+| les prises, leur empreinte (« périmée »), garder une prise | `generatif_region.js` | — |
+| la partition mise au dialecte avant l'envoi : une fin coupée (« group 67, Ins: music line must end with a plain barline », Cal le 06/10) retirée, une faute dite en français avec sa ligne | `music_yue.abc_marche`, `abc_normalise`, `abc_pret` | — (la règle d'`abc_tools.parse`, l. 176-218) |
+| les prises entrent dans la bibliothèque du projet, rubrique « Projet », comme « génération » | `projet.js`, `retenirSons` | — |
+| ACE-Step « une piste » (`lego`), « compléter », « repeindre », « variation » (`cover`), « isoler » : le contexte rendu (`renderMix`), envoyé comme `src_audio` | schéma, panneau, moteur d'essai | **pas câblé** : refusé avec sa raison (`reel.ok: false` dans `generatif_modeles.json`) |
+
+**Proposé, pas fait** (étude § 5 à 7) : le travail `music.ace` sur le serveur d'API du
+dépôt ACE-Step (les six tâches) ; le modèle *base* (lego, complete, extract) ; le module
+`gen` du nodal et ses réglages captés par les attracteurs (§ 6.2, § 6.3) ; les étages
+`intent → plan → proxy → stems → final` ; la continuation de partition YuE2 (§ 1.8) ; le
+LoRA de l'étage ABC (§ 5.3) ; la batterie MIDI par ADTOF (§ 4, à télécharger).
+
+**Échoué : « la batterie seule sur un morceau sans batterie ».** Dans le dépôt, **non
+documenté** : aucun commit, aucune étude, aucune note de REPRISE ne parle d'un essai ;
+au portail, `lego` n'a jamais été câblé en réel (le travail factice seul l'a joué). Si
+Cal l'a essayé, c'est hors du portail — AUDIOLAB, sur DGX1, qui a lancé `lego` et
+`complete` en juin avec `acestep-v15-sft` (§ 2.2 : DGX1 `~/ACE-Step-1.5/api.log`,
+`~/audio-studio/data/7e03bff6/meta.json`). Trois causes possibles sont documentées chez
+ACE-Step, sans qu'on sache laquelle a joué :
+
+- `lego` est réservé au modèle *base* : « **4. Lego (Base Model Only)** »
+  ([INFERENCE.md](https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/INFERENCE.md)) ;
+  AUDIOLAB tournait avec *sft* ;
+- jusqu'au 11/03/2026, `lego` envoyait au DiT un contexte **muet** : « The DiT receives
+  100% silence as `src_latents` » ([ticket 809](https://github.com/ace-step/ACE-Step-1.5/issues/809),
+  corrigé par la PR 810, commit `7f6e615`, fusionnée le 11/03/2026 — avant le `97ac511`
+  du 13/04 qu'ont les DGX) ; un utilisateur décrivait alors « a jumbled sound that seems
+  completely unrelated to the source audio » ([ticket 369](https://github.com/ace-step/ACE-Step-1.5/issues/369), 09/02/2026, modèle base) ;
+- même juste, `lego` ne se cale pas sur la grille : « the rhythm drifts and onsets don't
+  align with the beat grid of the source audio », 20 à 80 ms, le bpm étant un
+  conditionnement doux ([ticket 117](https://github.com/ace-step/ACE-Step-1.5/issues/117), 04/02/2026, `acestep-v15-base`, fermé sans correctif visible).
+
+### 8.2 Chaque fonction, ce qu'elle permet, comment elle apparaît dans ODIO
+
+Le principe du panneau refait : **une seule question en haut** — « Que veux-tu
+générer ? » —, quatre réponses, et pour chacune les voies qui la font, dans l'ordre où on
+les essaie (la première prête est prise ; une voie qui n'est pas câblée en réel est
+passée, avec sa raison). L'ordre vit dans le schéma (`generatif_modeles.json`,
+`intentions`), lu par la page et par le serveur.
+
+| modèle · fonction | ce qu'elle permet | dans ODIO | état (réel) | source |
+|---|---|---|---|---|
+| YuE2 · chanson (`style`, `lyrics`) | une chanson entière, voix et instruments | **« Une chanson entière »**, voie par défaut | câblé | `nodes_yue2.py:19,51` ; § 1.1 |
+| YuE2 · plan ABC puis rendu de la partition donnée | relire, modifier, nourrir la partition avant le chant | case « relire la partition avant de chanter » (défaut) ; la partition, sa vérification, « Corriger » | câblé | `nodes_yue2.py:53` ; § 1.4 |
+| YuE2 · `abc` écrit depuis nos notes | **le guide MIDI** : deux lignes (chant, thème) et les accords | « Guide MIDI » : Chant · Thème · Accords, par glisser ou « la sélection » | câblé | § 1.5 ; `abc-editing.md:27,84-91` |
+| YuE2 · reprise (SheetSage2) | la mélodie d'un clip, rechantée dans un autre style | **« Une variation d'un clip »**, quand ACE-Step `cover` n'est pas câblé | câblé | `generation-and-covers.md:121` |
+| YuE2 · `mode` full / melody / off, `precision` | partition complète ou mélodie seule ; vitesse | réglages avancés | câblé | `nodes_yue2.py:22` |
+| YuE2 · ce qu'il n'a pas | piste seule, son de référence, contexte, tempo en nombre, prolonger | grisé avec la raison (schéma, `indisponible`) | — | `generation-and-covers.md:17,141` |
+| ACE-Step · `text2music` | un morceau au tempo, dans la tonalité, à la mesure, à la durée demandés | « Une chanson entière » (modèle au choix) ; **voie de repli d'« Un instrument seul »** (chanson puis stem, § 8.3) | câblé | `nodes_ace.py:35-52` |
+| ACE-Step · audio de référence (`ReferenceTimbreAudio`) | le timbre d'un clip | **« Clip d'inspiration »** (chanson, instrument) | écrit, jamais rendu | `nodes_ace.py:109-131` ; `INFERENCE.md:376` |
+| ACE-Step · `lego` | **une piste nommée dans le contexte d'un audio** | **« Un instrument seul »**, première voie | pas câblé ; *base* à télécharger | `INFERENCE.md:526-556` |
+| ACE-Step · `complete` | ajouter plusieurs pistes à un audio | « Un instrument seul », plusieurs instruments (réglages avancés) | pas câblé ; *base* | `INFERENCE.md:585-610` |
+| ACE-Step · `cover` | le même morceau, autre style ou timbre | **« Une variation d'un clip »**, première voie | pas câblé (sft sur disque) | `INFERENCE.md:465-495` |
+| ACE-Step · `repaint` | refaire une zone ; en fin de morceau, le prolonger | **« La suite »** (une zone après ce qui joue) | pas câblé (sft sur disque) | `INFERENCE.md:497-524` ; `Tutorial.md:787,803` |
+| ACE-Step · `extract` | une piste « isolée » par génération | pas dans la question : ce n'est pas une séparation (ODIO_01 § 15 n° 9) ; reste dans le schéma | pas câblé ; *base* | `INFERENCE.md:558-583` |
+| ACE-Step · LM 5 Hz (`create_sample`) | écrire des paroles | app Musique « Écris-les pour moi » ; pas encore dans ODIO | câblé (app) | `musique_app.md` § 2 |
+| séparation (BS-RoFormer, Demucs) | des stems alignés à l'échantillon | après une chanson (« puis séparer ») ; **le maillon de la voie de repli** | câblé | `stems.md` § 4 |
+| basic-pitch, SheetSage2 | du MIDI depuis un son | clic droit « Extraire le MIDI » ; les notes peuvent redevenir un guide | câblé | § 4 |
+| détecter le tempo (`tempo.js`) | le tempo d'un clip audio | règle le tempo du projet, que la génération prend ensuite | dans la page | ARCHITECTURE § 7 |
+
+### 8.3 « Ajouter un instrument » qui suit le tempo et la tonalité (le cas Suno Studio)
+
+Trois voies, de la plus fidèle à la plus sûre aujourd'hui :
+
+1. **ACE-Step `lego`** — la seule tâche documentée qui **entend** une autre piste :
+   « Generate a specific instrument track in context of existing audio »
+   (`INFERENCE.md:526`), l'instruction « Generate the {TRACK_NAME} track based on the
+   audio context: » (`constants.py:132`), douze pistes nommées (`constants.py:150-153`),
+   bpm, tonalité et mesure en nombres, la durée verrouillée sur la source
+   (`inference.py:606-610` : le résultat a la longueur du contexte envoyé — calé en
+   longueur par construction). **Pas faisable avec ce qui est installé** : le cœur de
+   ComfyUI ne passe ni audio source ni masque au DiT (`ace_step15.py:1131-1135` ;
+   l'annonce de ComfyUI du 03/02/2026 : « Cover, Repaint, and other features aren't yet
+   supported in ComfyUI », [blog.comfy.org](https://blog.comfy.org/p/ace-step-15-is-now-available-in-comfyui)) ;
+   le serveur d'API du dépôt la fait, mais n'est pas câblé au portail et les DGX n'ont
+   pas le modèle *base* (§ 2.1). Le nœud ComfyUI d'ACE-Step lui-même
+   ([ACE-Step-ComfyUI](https://github.com/ace-step/ACE-Step-ComfyUI), MIT) annonce
+   « text-to-music, cover/remix, repaint » — pas `lego`. Calage rythmique : non garanti
+   (ticket 117, § 8.1) — à mesurer au premier rendu.
+2. **La voie de repli, branchée le 06/10 : une chanson entière puis on garde un stem.**
+   ACE-Step `text2music` reçoit le tempo, la tonalité, la mesure et la durée de la plage
+   en nombres (§ 2.3), sans voix ; la séparation (`music.stems`, le meilleur modèle prêt)
+   ne rend que le stem voulu ; le stem remplace la prise dans la région, la chanson
+   reste dans la bibliothèque, en parent. Un geste. Ses limites, dites dans le panneau :
+   la chanson **n'entend pas** les autres pistes (même tempo et même tonalité, pas le
+   même jeu) ; que son premier temps tombe au début de la plage n'est **pas documenté** ;
+   les instruments sont ceux du séparateur prêt — voix, batterie, basse, « autre » (tout
+   le reste) ; guitare et piano avec BS-RoFormer SW (à télécharger, `stems.md` § 5).
+   Le mot de l'instrument (« drums ») est ajouté au style pour que la chanson le
+   contienne : **notre choix**, aucune documentation ne promet qu'il suffit.
+3. **Un guide MIDI** : ACE-Step ne prend pas de MIDI (ses entrées : texte, nombres,
+   audio) ; YuE2 n'en prend que deux lignes mélodiques et les accords, **pas de batterie
+   ni de basse** (`abc-editing.md:27`). Un instrument guidé par nos notes passe donc
+   par YuE2 (chanson guidée, puis stem) ou se joue tout de suite par nos instruments
+   (« Par nos instruments », déjà là).
+
+### 8.4 Ce qui vient du projet, rempli d'office
+
+| valeur | d'où (ODIO) | vers ACE-Step | vers YuE2 | modifiable |
+|---|---|---|---|---|
+| tempo | `P.bpm` | `bpm` (30-300, `nodes_ace.py:42`) | dans le style (« 112 BPM ») et `Q:1/4=112` (`generation-and-covers.md:17`) | oui : « autre que le projet », d'un geste ; revient au projet d'un clic |
+| tonalité | `P.key` (11 modes) | `keyscale` majeur ou mineur, par la tierce (`aceKey`) | dans le style (« F minor ») et `K:Fm` | oui |
+| signature | `P.sig` (2, 3, 4, 6) | `timesignature` | `M:` (6 → `M:6/4`, `generatif_modeles.json`, en suspens) | oui |
+| plage | la sélection de temps, sinon la région choisie, la boucle, le clip choisi, les sections (une chanson), la tête de lecture + 8 mesures | `duration` = la plage en secondes (10 s au moins) ; le contexte (± marge) pour `lego`, `complete`, `repaint` | `max_duration` (un maximum, `nodes_yue2.py:56`) | oui (la source de la plage se choisit ; début et longueur se règlent) |
+| structure | les sections couvertes par la plage : **`p.sections`** (nom, étiquette, bornes), la rangée au-dessus de l'arc | — | les blocs `[Verse]`, `[Chorus]`… des paroles (`c.gen.v.lyrics`), le i-ème bloc avec la i-ème section ; les `% verse` d'une partition écrite par nous | oui, dans l'éditeur par blocs (§ 8.6) : une seule vérité, le contrat de `projet.js` |
+| arcs | `valeursArcs(p, a, b)` (`arcs.js`) : énergie, densité, tension, moyennées sur la plage | des mots ajoutés à la légende (`caption`) | des mots ajoutés au style (`tags`) | une case « dans le style » ; les seuils : notre choix (§ 8.6) |
+| clip d'inspiration | un clip audio de l'arrangement (glissé, ou « la sélection »), un son du navigateur, d'Asset, du disque | audio de référence (`ReferenceTimbreAudio`) | **rien** : YuE2 n'a pas d'entrée son ; la mélodie d'un clip passe par « Une variation d'un clip » (reprise) | — |
+| guide MIDI | un clip de notes de l'arrangement, un motif, un clip MIDI de la bibliothèque | **rien** (pas d'entrée MIDI) | Chant (`Vocal`), Thème (`Ins`), Accords | — |
+| ce qui joue autour | les pistes dont un clip touche la plage ± la marge, rendues (`renderMix`) | `src_audio` de `lego`, `complete`, `repaint` | rien | les pistes se cochent |
+
+Le résultat atterrit dans **une région d'une piste générative, à la place de la plage**
+(la piste choisie si elle est générative et libre à cet endroit, sinon une piste neuve
+sous la piste choisie) ; ses prises entrent dans la bibliothèque du projet, rubrique
+« Projet », comme « génération » (`projet.js`, `retenirSons`, le comportement prévu par
+`biblio.js`) ; la chanson d'où vient un stem y entre aussi.
+
+### 8.5 Suno Studio : ce qu'il fait vraiment, ce qu'on en retient
+
+Ce que disent Suno et ses guides (les pages sont citées par l'extrait du moteur de
+recherche, les sites étant bloqués ici) :
+
+- Lancé le **25/09/2025** avec le modèle v5, « a browser-based generative audio
+  workstation », réservé à l'offre Premier, qui génère et arrange des stems sur une
+  timeline multipiste et les exporte en audio ou en MIDI
+  ([communiqué](https://www.prnewswire.com/news-releases/suno-introduces-suno-studio-a-generative-audio-workstation-built-for-all-creatives-from-seasoned-pros-to-aspiring-artists-302567486.html),
+  [Music Business Worldwide](https://www.musicbusinessworldwide.com/suno-launches-its-own-daw-after-introducing-most-powerful-model-yet/)).
+  Ses notes de version : « create infinite stem variations […] instantly generating
+  vocals, drums, synths, and more that flow with your audio »
+  ([notes de version](https://about.suno.com/release-notes/introducing-suno-studio)).
+- L'aide, « Introduction to Studio » : générer des stems « basslines, percussion,
+  melodies, and more — that seamlessly integrate with existing songs »
+  ([help.suno.com 7940161](https://help.suno.com/en/articles/7940161)).
+- **Ajouter un instrument** (la vidéo de Suno « Suno Studio Fundamentals – Adding New
+  Instruments to Your Song », résumée par [recapio](https://recapio.com/digest/suno-studio-fundamentals-adding-new-instruments-to-your-song-by-suno-music)) :
+  choisir une **zone vide** de la timeline ouvre un menu — chanson, un instrument,
+  voix, chœurs — ; on décrit le style ; « Suno generates new instrument stems in the
+  context of the existing song, meaning the generated part will fit the key, tempo,
+  and overall vibe » ; et l'on **décale à la main** la piste neuve pour l'aligner sur le
+  temps (« nudging the track […] to align it with the beat »).
+- **Le tempo du projet d'abord** : « Manual BPM » fixe le tempo du projet et y ramène les
+  régions (aide « Fixing Tempo Drift », [8363457](https://help.suno.com/en/articles/8363457) ;
+  « Transport controls in Studio », [8121281](https://help.suno.com/en/articles/8121281)).
+- **Stem Cover** (Studio 1.1) : un clip devient un autre son ou un autre instrument en
+  gardant mélodie et rythme — « hum a melody and turn it into a violin », taper sur une
+  table et en faire une batterie ([9819905](https://help.suno.com/en/articles/9819905)).
+- Séparer en 12 stems au plus ([13925185](https://help.suno.com/en/articles/13925185)).
+- **Studio 2.0** (13/08/2026) : pistes MIDI et piano roll, synthé, automation, effets,
+  une barre de dialogue qui « ajoute des instruments, génère des sections » ; le 02/09,
+  la barre devient sensible au tempo ([13670529](https://help.suno.com/en/articles/13670529),
+  [notes de version](https://suno.com/release-notes/studio-2)).
+
+**Ce qu'on en retient** : (1) le geste — une zone, puis « quoi ? » (chanson, un
+instrument, voix) — est exactement notre question en haut du panneau, sur la plage ;
+(2) le tempo et la tonalité du projet sont posés d'abord et tout s'y conforme : nos
+valeurs « du projet », remplies d'office ; (3) « Stem Cover » = ACE-Step `cover` sur un
+clip : notre « variation d'un clip » (à câbler) ; (4) même Suno fait décaler à la main :
+nous mesurons et le disons, sans promettre le calage ; (5) la barre de dialogue :
+l'agent Showrunner pourrait la tenir plus tard, pas dans ce chantier.
+
+### 8.6 Le panneau, refait le 06/10
+
+**Une seule entrée** : « Générer » (la barre du haut), le dessin d'une région sur une
+piste générative, son double-clic, « Générer ici… » sur une plage, « Générer une
+variation… » sur un clip audio : le même panneau (`musique/generatif_panneau.js`), le
+tiroir d'ODIO élargi à droite (1 120 px au plus : l'arrangement reste visible à gauche),
+qui travaille sur une **cible** — une région existante, ou une plage encore vide (le
+brouillon `P.gen.brouillon` ; rien n'est posé dans l'arrangement avant « Générer »).
+
+**Chaque champ a la forme de ce qu'il contient** (Cal, 06/10 : « des champs de saisie
+super larges, ça n'a aucun sens ; les paroles plus hautes et étroites ») : trois
+colonnes bornées — les réglages (320 px), le texte (300 à 430 px), les versions — ;
+les paroles en colonne de lecture (52 signes au plus par ligne, `max-width: 52ch` : la
+demande de Cal, « 40 à 60 signes »), qui grandit avec le texte ; le style sur
+trois lignes ; les réglages courts (versions, graine, partition, langue) en colonnes de
+120 px ; plus rien ne s'étire sur la largeur de l'écran. Sous 1 180 px de large, une
+seule colonne de 560 px.
+
+De haut en bas, colonne des réglages : la question (quatre tuiles, chacune dit le
+modèle qu'elle prendra, ou pourquoi elle ne peut pas) ; l'essentiel de la réponse
+(l'instrument, le clip à varier, ce que la piste entend) ; **Où** (la plage et sa source,
+la piste d'arrivée) ; **Du projet** (tempo, tonalité, mesure, marqués « du projet » ou
+« changé », un clic pour changer, ↺ pour revenir ; les arcs) ; le **clip d'inspiration**
+et le **guide MIDI** (par glisser depuis l'arrangement, le navigateur, Asset, ou
+« Sélection »), grisés avec la raison quand le modèle ne les prend pas ; le **modèle**
+(choisi d'office, changeable, ce qui manque grisé avec sa raison, le moteur d'essai
+dit), les réglages courts et les avancés repliés. En pied : où le résultat atterrit, et
+le seul orange (« Générer », ou « Écrire la partition » pour YuE2, « Sans relire » à
+côté).
+
+**La structure, sans taper les balises** (Cal, 06/10 : « un truc super ergonomique
+dans le champ des paroles ; dans Suno, il les détecte automatiquement quand on tape
+chorus ? »). Ce que fait Suno : les balises de structure s'écrivent **à la main, entre
+crochets, sur leur ligne** (`[Verse]`, `[Chorus]`, `[Bridge]`… ; l'aide « Song
+Editor » ([6141505](https://help.suno.com/en/articles/6141505)) permet ensuite de nommer
+et colorer les sections de la timeline d'un morceau rendu) ; qu'il reconnaisse
+« chorus » tapé sans crochets : **non documenté** — les guides disent au contraire de
+les écrire soi-même, sur leur ligne ([jackrighteous](https://jackrighteous.com/en-us/pages/suno-ai-meta-tags-guide),
+[hookgenius](https://hookgenius.app/learn/suno-lyrics-formatting/)). Ce que fait ODIO :
+- les blocs **sont** les sections du projet que la plage couvre (`p.sections`, la
+  rangée au-dessus de l'arc d'énergie) : chacun montre l'étiquette de sa section (un
+  menu), sa longueur en mesures, ses paroles ; **+ Intro, + Couplet, + Refrain…** ajoute
+  une section d'un clic (après la dernière : ce qui suit se décale, comme « insérer du
+  temps ») ; ⧉ duplique (un refrain repris : la copie suit, avec ses paroles et son
+  contenu) ; ⠿ se glisse pour réordonner (le contenu suit, comme dans la rangée) ; ×
+  retire la section et son bloc (les clips restent) ;
+- **la reconnaissance en tapant** : « refrain », « couplet 2 », « [chorus] »,
+  « (Pont) : », « [Build] » seuls sur une ligne, suivis d'un retour à la ligne, créent
+  la section suivante (les mots connus en français et en anglais ; entre crochets,
+  toute étiquette, lue par `etiquetteDe` du contrat) ; tapé en tête d'un bloc vide, ils
+  ré-étiquettent ce bloc ; collées d'un coup dans le champ sans section, des paroles à
+  en-têtes posent toute la structure ;
+- **les balises du moteur s'écrivent seules** (`[Verse]`, `[Pre-Chorus]`…) ; « YuE2
+  lira : [Intro] [Verse] [Chorus]… » le montre sous les blocs, tenu à jour pendant la
+  frappe ;
+- **le contrat** (fixé par `wip2/odio-arcs-session`, `musique/projet.js`) : les
+  sections dans `p.sections`, les paroles d'une génération dans `c.gen.v.lyrics` (des
+  blocs ouverts par `[Étiquette]`), le i-ème bloc avec la i-ème section couverte ;
+  `musique.js` tient les deux côtés à chaque geste pour une région (`suivreStructure`) ;
+  le panneau garde autant de blocs que de sections (sinon la plage serait replanifiée)
+  et appelle `structureDepuisParoles` pour le brouillon. Aucune copie propre au panneau.
+  La longueur d'une section neuve : deux mesures par vers, au moins quatre (le choix de
+  `chanson.py`) ; sans vers, quatre (intro, final, pré-refrain) ou huit.
+
+**Les arcs** (`arcs.js`, `valeursArcs`) : ni YuE2 ni ACE-Step n'a d'entrée pour une
+énergie, une densité ou une tension ; leur style est un texte libre qui dit l'humeur et
+l'instrumentation (YuE2 : « genre, instruments, mood… », `docs/generation.md:7` ;
+ACE-Step : `caption`). La moyenne de chaque arc sur la plage devient donc des mots
+ajoutés au style envoyé, quand elle s'éloigne du milieu — **notre choix, seuils
+compris** : énergie < 0,33 « calm, low energy », > 0,66 « high energy » ; densité < 0,35
+« sparse arrangement », > 0,65 « dense arrangement » ; tension < 0,35 « relaxed », > 0,65
+« tense, building up » ; une case « dans le style » les retire. La section par section
+(« build-up » au refrain) attend un style par section, qu'aucun des deux n'a.
+
+**Les versions** (Cal, 06/10 : « elles sont en tout petit à droite ; comment on affecte
+la bonne dans le segment de la timeline »). Ce que font les DAW : Live 11, les *take
+lanes* — « The first lane of a track is the main lane, which is always available and is
+audible by default […] Take lanes are never audible, unless Audition Mode is enabled » ;
+on les écoute par leur haut-parleur (ou T), et Entrée copie la sélection d'une prise
+dans la voie principale ([manuel de Live 11, « Comping »](https://www.ableton.com/en/live-manual/11/comping/)) ;
+Logic, les *take folders* — pendant la lecture, on choisit une prise dans le menu du
+dossier, qui devient active ; « Select Next/Previous Take or Comp » les parcourt
+([Logic Pro, « Preview take recordings »](https://support.apple.com/en-gw/guide/logicpro/lgcp317d76de/mac),
+« Create and save comps »). Ce que fait ODIO : la région **est** le dossier de prises —
+elle garde toutes ses versions ; chacune est une **carte** (sa forme d'onde, la part qui
+joue dans le segment en couleur ; un clic l'écoute seule à cet endroit) ; **« mettre
+dans le segment »** est le geste qui la fait jouer dans l'arrangement, et se refait
+plus tard ; **A/B** passe de la version courante à la précédente, et **« Écouter dans
+le morceau »** boucle la région et lance la lecture : on compare sans s'arrêter, comme
+le menu de Logic pendant la lecture ; **Garder** (la région devient un clip ordinaire,
+les autres restent dans la bibliothèque), ×, **Stems**, **MIDI** depuis une version ;
+« Les versions en pistes » pose les autres en pistes muettes (les *take lanes* à plat).
+La vue du bas d'une région les montre en rangée. Le *comping* (des morceaux de
+plusieurs versions dans un même segment) n'est pas fait.
+
+### 8.7 Décisions à prendre (Cal)
+
+1. **Brancher ACE-Step par le serveur d'API de son dépôt** (travail `music.ace`, § 6.6) et
+   **télécharger `acestep-v15-base`** (4 791 792 407 o, MIT) : `lego`, `complete`, `cover`,
+   `repaint`, `extract` en réel — le vrai « ajouter un instrument » de Suno.
+   *Recommandation : oui, en deux temps : `repaint` et `cover` d'abord avec *sft* (déjà sur
+   disque), puis *base* pour `lego` ; premier essai : `lego` « drums » sur seize mesures
+   d'une session sans batterie, la durée et le calage mesurés (ticket 117).* Les paquets
+   de nœuds de la communauté (ComfyUI-AceMusic, RyanOnTheInside, `lego` « coming soon »)
+   ne sont pas recommandés : la voie officielle d'abord.
+2. **La voie de repli par défaut** (chanson puis stem) : ACE-Step (tempo et tonalité en
+   nombres, ~30 s) ou YuE2 (meilleure chanson, tempo dans le texte seulement) ?
+   *Recommandation : ACE-Step ; YuE2 reste au choix dans le panneau.*
+3. **Télécharger BS-RoFormer SW** (6 pistes, 699 412 152 o) : guitare et piano deviennent
+   des instruments seuls possibles. *Recommandation : oui.*
+4. **Le clip d'inspiration d'ACE-Step** (`ReferenceTimbreAudio`, expérimental, jamais
+   rendu) : *recommandation : un rendu A/B (avec, sans) avant de le garder en vue ; il
+   est marqué « expérimental » dans le panneau d'ici là.*
+5. **Les arcs dans le style** : énergie, densité et tension deviennent des mots du
+   style quand elles s'éloignent du milieu (§ 8.6, seuils de notre choix), coché par
+   défaut. *Recommandation : garder coché, écouter trois rendus avec et sans, ajuster
+   les mots ; ce qui marche mieux d'un modèle à l'autre n'est pas documenté.*
+6. **Caler un rendu sur la grille** : mesurer ses temps (`tempo.js`) et décaler la prise,
+   ou aussi l'étirer (un warp, qu'ODIO n'a pas) ? *Recommandation : mesurer et décaler
+   seulement, en v1.*
+7. **Une partition écrite par YuE2 plus longue que la plage** (le cas du 06/10 : 67
+   groupes pour seize mesures) : la couper à la plage avant de la relire ?
+   *Recommandation : oui, par groupes entiers — aujourd'hui seul le groupe coupé est
+   retiré.*
+8. **Le comping des versions** (un segment fait de morceaux de plusieurs versions, comme
+   Live et Logic) : *recommandation : pas avant le premier vrai rendu de lego ; le geste
+   « mettre dans le segment » suffit tant qu'une version est une prise entière.*
+9. En suspens d'avant : la mesure 6 en `M:6/4` ou `6/8` ; les licences non commerciales
+   (YuE2, SheetSage2).
+
 ## Sources
 
 - DGX2 (lu, rien lancé) : ComfyUI v0.37.2 (`830232b8`) —
@@ -743,3 +1067,4 @@ MuScriptor medium, Stable Audio 3 Medium.
   `musique/generatif.js`, `banc.js`, `timeline.js`, `modules.js` ;
   `docs/etudes/yue.md`, `stems.md`, `musique.md`, `orchestration.md`.
 - Web (consulté le 29/09/2026) : cités en ligne, § 1.8, 2.5, 3, 4, 5.1.
+- Web (consulté le 06/10/2026) : cités en ligne, § 8 — ACE-Step (INFERENCE.md, tickets 117, 369, 809, PR 810), ComfyUI (blog du 03/02/2026), ACE-Step-ComfyUI, Suno (aide, notes de version, communiqué, presse, guides des balises), le manuel de Live 11 (« Comping ») et l'aide de Logic Pro (take folders) ; Suno, Ableton et Apple par extraits du moteur de recherche (leurs sites sont bloqués depuis le conteneur).

@@ -31,7 +31,7 @@ import { jobs, fmtWait } from '../commun/shell.js';
 import { el } from './ui.js';
 
 // ce que fait chaque sorte de travail, pour la personne (les sortes : musique.js, generatif_*.js)
-const VERBE = { takes: 'génère', abc: 'écrit la partition', midi: 'extrait le MIDI', stems: 'sépare en pistes', generate: 'génère' };
+const VERBE = { takes: 'génère', abc: 'écrit la partition', midi: 'extrait le MIDI', stems: 'sépare en pistes', generate: 'génère', garder: 'garde un stem' };
 const FINI = new Set(['done', 'error', 'cancelled', 'interrupted']);
 const ECHEC = new Set(['error', 'interrupted']);
 

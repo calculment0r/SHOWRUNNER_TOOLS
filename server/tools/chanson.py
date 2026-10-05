@@ -296,9 +296,7 @@ def song_params(d: dict) -> dict:
             raise ValueError(f"une partition ne se chante qu'avec YuE2 : {PLAN_WHY.get(model, '')}")
         if len(abc) > music_yue.MAX_ABC:
             raise ValueError(f"la partition tient en {music_yue.MAX_ABC} signes au plus")
-        chk = music_yue.abc_check(abc) if music_yue.abc_tools() else {"ok": None}
-        if chk["ok"] is False:
-            raise ValueError(f"la partition ne suit pas le dialecte de YuE2 : {chk['error']}")
+        abc, _ = music_yue.abc_pret(abc)        # mise au dialecte, jugée, la faute dite avec sa ligne
     out["abc"] = abc
     title = d.get("title") or ""
     out["title"] = (title.strip()[:80] if isinstance(title, str) else "") or prompt[:60]
@@ -538,7 +536,11 @@ def fake_plan(p: dict) -> str:
 
 
 def _plan_result(abc: str, engine_: str, p: dict, note: str) -> dict:
-    return {"note": note, "abc": abc, "engine": engine_, "check": music_yue.abc_check(abc), "resume": abc_resume(abc),
+    # ce que YuE2 (ou SheetSage2) a écrit, mis au dialecte : une fin coupée perd son dernier
+    # groupe incomplet, et le dit (music_yue.abc_normalise, 06/10)
+    abc, notes = music_yue.abc_normalise(abc, couper=True)
+    return {"note": note + (f" ; {' ; '.join(notes)}" if notes else ""), "abc": abc, "engine": engine_,
+            "check": music_yue.abc_check(abc), "resume": abc_resume(abc), "normalise": notes,
             "seed": p["seed"], "model": "sheetsage2" if p["ref_mode"] == "cover" else "yue2"}
 
 

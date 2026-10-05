@@ -72,7 +72,8 @@ import { sectionAt, duplicateSection, moveSection, swapSection, removeSection, t
 import { createDock } from './editeurs.js';
 import { createBrowser } from './navigateur.js';
 // le génératif (29/09) : la piste générative et ses régions, le MIDI
-import { isGenTrack, isRegion, genTrackChoices, addGenTrack, newRegion, drawRegion, regionMenuItems, genTarget, soundSlotsOf, useSound, injectFrom } from './generatif_region.js';
+import { isGenTrack, isRegion, genTrackChoices, addGenTrack, newRegion, drawRegion, regionMenuItems, genTarget, soundSlotsOf, useSound, injectFrom, deposerClip } from './generatif_region.js';
+import { ouvrirGenerer } from './generatif_panneau.js';   // le panneau « Générer » (06/10)
 import { openExtract, placeMidi, saveClipMidi } from './generatif_midi.js';
 import { schemaNow } from './generatif_modeles.js';
 // le tempo d'un clip audio (05/10) : « Détecter le tempo » au clic droit (bpm.js, tempo.js)
@@ -1150,7 +1151,9 @@ export function createTimeline(app) {
       // la capture du pointeur (dragClips) fait du clip la cible du double-clic :
       // c'est la hauteur du geste qui dit s'il tombe sur le titre
       if (e.clientY <= ch.getBoundingClientRect().bottom) { renameClip(c, ttl, c.name || ttl.textContent); return; }
-      app.selectClips([c.id], true); app.showDetail('clip');
+      app.selectClips([c.id], true);
+      if (isRegion(c)) { ouvrirGenerer(app, { region: c.id }); return; }   // une région : le panneau Générer
+      app.showDetail('clip');
     });
     box.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -1228,8 +1231,9 @@ export function createTimeline(app) {
         { label: 'Séparer en stems', sub: 'voix · batterie · basse · autre', disabled: !c.item, why: noSound, onclick: () => app.stems(c.id) },
         { label: 'Extraire le MIDI', sub: 'notes · partition · batterie', disabled: !c.item, why: noSound, onclick: () => openExtract(app, c.id) },
         { label: 'Détecter le tempo', sub: 'bpm · temps fort · caler', disabled: !c.item, why: noSound, onclick: () => openTempo(app, c.id) },
-        ...(slots.length ? ['-', { head: `pour ${tgt.name || 'la région'} (génératif)` }] : []),
-        ...slots.map((sl) => ({ label: `Comme ${sl.label}`, sub: 'la case du panneau du bas', onclick: () => useSound(app, sl.region, sl.pid, c.item) })),
+        { label: 'Générer une variation…', sub: 'le panneau Générer, sur ce clip', disabled: !c.item, why: noSound, onclick: () => ouvrirGenerer(app, { quoi: 'variation', clip: c.id }) },
+        ...(slots.length ? ['-', { head: `pour ${tgt.name || (tgt.id ? 'la région' : 'la génération')} (Générer)` }] : []),
+        ...slots.map((sl) => ({ label: `Comme ${sl.label}`, sub: 'la case du panneau Générer', onclick: () => useSound(app, sl.region, sl.pid, c.item) })),
       ] : [
         { label: 'Motif à part (copie)', onclick: () => app.uniqueClip(c.id) },
         { label: 'Ranger dans la bibliothèque MIDI', sub: 'navigateur, MIDI', onclick: () => saveClipMidi(app, c) },
@@ -1339,13 +1343,8 @@ export function createTimeline(app) {
       const slot = !edge && document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('[data-gen-slot], [data-gen-case]');
       if (slot) {
         for (const x of group) restore(x);
-        const reg = app.clip(slot.dataset.genRegion);
-        if (reg) Object.assign(S.sel, { clips: [reg.id], clip: reg.id, track: reg.track });   // la région reste en bas
         app.commit('data');
-        if (!reg?.gen) return;
-        if (slot.dataset.genSlot) { if (c.item) useSound(app, reg, slot.dataset.genSlot, c.item); else toast('une région sans prise n\'a pas encore de son'); }
-        else if (c.pat) injectFrom(app, reg, schemaNow(), slot.dataset.genCase, { clip: c.id });
-        else toast('la partition prend des clips de notes (chant, thème, accords)');
+        deposerClip(app, slot, c);
         return;
       }
       if (!edge && dRow) {
@@ -1519,6 +1518,7 @@ export function createTimeline(app) {
     { label: 'Couper la plage (presse-papiers)', key: 'Ctrl+X', onclick: () => { if (app.copyTime()) app.deleteTime(); } },
     { label: 'Retirer ce que la plage contient', key: 'Suppr', onclick: () => app.deleteTime() },
     { label: 'Boucler sur la plage', key: 'Ctrl+L', onclick: () => app.loopSelection() },
+    { label: 'Générer ici…', sub: 'chanson, un instrument seul… sur la plage', onclick: () => ouvrirGenerer(app) },
     ...versSessionItems({ range: R }),
   ];
   // « Envoyer à la Session » (docs/etudes/odio_session.md § 6, biblio.js) : non destructif —
