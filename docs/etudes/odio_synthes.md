@@ -444,7 +444,7 @@ export, écoute, nodal, jouets, arpège.
 | 6 | **« Les miens »** suivent le projet aujourd'hui. Les rendre personnels, pour les retrouver dans tous ses projets ? | **Oui** : une préférence par personne (`/api/prefs`, un schéma `musique/prefs.json`). Cela touche les préférences du portail, d'où la question |
 | 7 | **L'écoute au survol** | La laisser éteinte par défaut ; le clic sur ▶ suffit |
 | 8 | **La matrice de modulation** | **Pas une grille de plus.** Les câbles « valeur » du nodal existent déjà, pour les jouets : un module LFO ou enveloppe qui émet une valeur, branchable sur tout réglage continu. Une seule vérité, qu'on voit |
-| 9 | **L'arpège au clavier**, en jeu direct | **Oui**, à faire dans `moteur.js` : les notes tenues au clavier ou en MIDI, arpégées sur l'horloge audio. Aujourd'hui, l'arpège joue les clips |
+| 9 | **L'arpège au clavier**, en jeu direct | **Fait le 06/10** (§ 6) : les notes tenues au clavier de l'ordinateur ou en Web MIDI, arpégées sur l'horloge audio, par la loi des clips |
 | 10 | **La stéréo** | Étaler les copies de l'oscillateur A (et les voix du Numérique) dans le champ : un réglage « largeur » |
 
 ## 6. Ce qui reste, ou n'est pas beau
@@ -452,8 +452,21 @@ export, écoute, nodal, jouets, arpège.
 - **Rien n'a été écouté.** Les préréglages sont mesurés : niveau, spectre, ni
   silence ni écrêtage. Leur goût est à Cal ; la banque se corrige d'une
   ligne par préréglage.
-- **L'arpège ne joue que les motifs.** Il ne joue ni le clavier ni les notes
-  des jouets ; celles-ci arrivent directement à la source.
+- ~~**L'arpège ne joue que les motifs.**~~ **Le clavier aussi (06/10,
+  finitions)** : une note jouée à la main (clavier de l'ordinateur, Web MIDI)
+  sur une source dont l'arpège est allumé est *tenue*, et le moteur égrène les
+  notes tenues sur l'horloge audio (`moteur.js`, `Engine.noteOn`, `arpTic`),
+  par la même loi que les clips : `arpege.js` est découpé en `listeDuPas` et
+  `notesDuPas`, qu'`arpeger` reprend (identique sur 3 000 motifs tirés au
+  hasard). En lecture, le premier pas tombe sur la grille de la division ; à
+  l'arrêt, il part à l'appui (5 ms). Une prise enregistre les touches, que
+  l'arpège du clip rejoue. L'aperçu (piano roll, navigateur) reste sans
+  arpège. Mesuré dans Chromium (une source espionnée) : Monte, 1/16, deux
+  octaves, do et mi tenus une seconde à 112 BPM : do mi do' mi'…, un pas de
+  0,1339 s, la note à moitié du pas ; en lecture, va-et-vient en 1/8 : les pas
+  aux temps 1,5 ; 2 ; 2,5… Web MIDI passe par le même chemin, **non essayé**
+  sans appareil. Les notes des jouets arrivent toujours directement à la
+  source, sans arpège.
 - **Le LFO du Synthé n'est pas automatisable**, sauf le volume et la
   coupure, comme avant. Sa vitesse est réglée sur un AudioParam, mais elle
   n'est pas dans `AUTOMATABLE`.

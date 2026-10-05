@@ -23,7 +23,7 @@
 // et à la fin de la tranche (linearRampToValueAtTime) — AudioParam, MDN.
 
 import { MODULES, DRUM_VOICES, WAVES, LFO_WAVES, FILTER_TYPES, DELAY_DIVS, val, spec, fromNorm, dbToGain, drumVoicesOf } from './modules.js';
-import { motifJoue } from './arpege.js';   // l'arpégiateur des instruments mélodiques (06/10)
+import { motifJoue, reglagesArpege, listeDuPas, notesDuPas } from './arpege.js';   // l'arpégiateur des instruments mélodiques (06/10) ; au clavier aussi
 import { jouetNode, jouetsAutomate } from './jouets/son.js';   // jouets : le son des jouets du Playground
 import { influer, rendre } from './machines/influence.js';   // attracteurs : ce que les attracteurs du banc font au son (nodal)
 import { trajets, sansSession } from './projet.js';   // les chaînes des pistes et des voies, lues dans les câbles (une seule vérité) ; l'export sans la Session
@@ -1533,18 +1533,83 @@ export class Engine {
   }
 
   // ── jouer à la main (clavier, MIDI, pads, piano roll) ──
-  async noteOn(srcId, pitch, vel = 0.8) {
+  // `arpege: false` : la note telle quelle, même si l'arpège de la source est allumé (un aperçu)
+  async noteOn(srcId, pitch, vel = 0.8, { arpege = true } = {}) {
     await this.start();
     const n = this.graph.nodes.get(srcId);
-    return n?.noteOn ? { n, v: n.noteOn(pitch, this.ctx.currentTime + 0.005, vel) } : null;
+    if (!n?.noteOn) return null;
+    if (arpege && this.arpegeDe(srcId)) return this.arpTenir(srcId, pitch, vel);
+    return { n, v: n.noteOn(pitch, this.ctx.currentTime + 0.005, vel) };
   }
-  noteOff(h) { if (h?.v) h.n.noteOff(h.v, this.ctx.currentTime); }
+  noteOff(h) { if (h?.arp) this.arpLacher(h); else if (h?.v) h.n.noteOff(h.v, this.ctx.currentTime); }
+
+  // ── l'arpège au clavier (06/10 ; docs/etudes/odio_synthes.md § 5, décision 9) ──
+  // Une note jouée à la main (le clavier de l'ordinateur, Web MIDI) sur une source dont
+  // l'arpège est allumé ne sonne pas d'elle-même : elle est TENUE, et un ordonnanceur sur
+  // l'horloge audio égrène les notes tenues pas à pas, par la loi des clips (arpege.js :
+  // listeDuPas, notesDuPas — une seule loi) ; une prise enregistre les touches, que
+  // l'arpège du clip rejoue. Transport en marche : le premier pas tombe sur la grille de
+  // l'arpège (le prochain pas de sa division) ; à l'arrêt, il part à l'appui. Les réglages
+  // sont relus à chaque pas ; l'arpège éteint pendant qu'on tient : il se tait. Les pas se
+  // posent 0,1 s devant l'horloge (MDN, « scheduleAheadTime »), par le minuteur d'un Worker.
+  arpegeDe(srcId) {
+    const m = this.proj?.modules.find((x) => x.id === srcId);
+    if (!m || !MODULES[m.type]?.params.some((x) => x.k === 'arp')) return null;
+    return reglagesArpege((k) => val(m, k));
+  }
+  arpTenir(srcId, p, v) {
+    this.arps = this.arps || new Map();
+    let A = this.arps.get(srcId);
+    if (!A) { A = { tenues: [], i: 0, k: 0, t: null, rang: 0 }; this.arps.set(srcId, A); }
+    const h = { arp: srcId, p, v, s: A.rang++ };   // s : l'ordre d'appui (le mode « joué »)
+    A.tenues.push(h);
+    if (A.t === null) {
+      const r = this.arpegeDe(srcId), now = this.ctx.currentTime + 0.005;
+      A.t = now; A.i = 0; A.k = 0;
+      if (this.play && r) {   // calé sur la grille de l'arpège : son prochain pas
+        const sb = r.pas / 4, pos = this.position(), next = Math.ceil(pos / sb - 1e-6) * sb;
+        A.t = Math.max(now, this.ctx.currentTime + (next - pos) * this.play.spb);
+        A.k = Math.round(next / sb);
+      }
+    }
+    if (!this.arpTimer) {
+      this.arpTimer = new Worker(URL.createObjectURL(new Blob([TIMER], { type: 'text/javascript' })));
+      this.arpTimer.onmessage = () => this.arpTic();
+    }
+    this.arpTimer.postMessage('go');
+    this.arpTic();
+    return h;
+  }
+  arpLacher(h) {
+    const A = this.arps?.get(h.arp);
+    if (!A) return;
+    A.tenues = A.tenues.filter((x) => x !== h);
+    if (!A.tenues.length) this.arps.delete(h.arp);   // plus rien de tenu : l'arpège reprendra au début de sa liste
+    if (!this.arps.size) this.arpTimer?.postMessage('stop');
+  }
+  arpTic() {
+    if (!this.arps?.size || !this.ctx) { this.arpTimer?.postMessage('stop'); return; }
+    const horizon = this.ctx.currentTime + 0.1;
+    for (const [srcId, A] of this.arps) {
+      const r = this.arpegeDe(srcId), n = this.graph?.nodes.get(srcId);
+      if (!r || !n?.noteOn) { this.arps.delete(srcId); continue; }
+      const pasS = (r.pas / 4) * (this.play ? this.play.spb : 60 / this.proj.bpm);   // le pas, en secondes
+      // le minuteur en retard (une page chargée) : les pas passés sont sautés, rien ne se pose dans le passé
+      const now = this.ctx.currentTime;
+      if (A.t < now) { const sauts = Math.ceil((now - A.t) / pasS - 1e-9); A.t += sauts * pasS; A.i += sauts; A.k += sauts; }
+      while (A.t < horizon) {
+        for (const x of notesDuPas(listeDuPas(A.tenues, r), A.i, A.k, r)) n.noteOn(x.p, A.t, x.v, (x.l / r.pas) * pasS, x.ac ? { ac: true } : undefined);
+        A.i++; A.k++; A.t += pasS;
+      }
+    }
+    if (!this.arps.size) this.arpTimer?.postMessage('stop');
+  }
   async hit(srcId, voice, vel = 1) {
     await this.start();
     this.graph.nodes.get(srcId)?.hit?.(voice, this.ctx.currentTime + 0.005, vel);
   }
   async preview(srcId, pitch) {
-    const h = await this.noteOn(srcId, pitch, 0.8);
+    const h = await this.noteOn(srcId, pitch, 0.8, { arpege: false });
     if (h) setTimeout(() => this.noteOff(h), 260);
   }
 }
