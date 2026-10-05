@@ -10,9 +10,13 @@
 //                petite image au milieu du grand cadre noir)
 //   la frise     la règle des temps et LA tête de lecture du Montage
 //                (commun/tete.js) ; sous la règle : la bande des images (une
-//                vidéo) ou l'onde du son (api/son/apercu, un masque peint par
-//                un jeton, le joué plus soutenu) ; la page y ajoute ses pistes
-//                (`piste(nœud)` : les répliques de Transcrire…)
+//                vidéo) ou l'onde du son (commun/onde.js, 06/10 : l'onde précise,
+//                dessinée à la résolution de l'écran pour la seule partie visible,
+//                juste à tout zoom jusqu'aux échantillons ; le joué plus soutenu ;
+//                la vue « spectre » ou « les deux », commun/spectre.js — le choix
+//                est un bouton de la barre) ; une vidéo a aussi l'onde de son son
+//                si la page la demande (`onde: true`, Transcrire) ; la page y
+//                ajoute ses pistes (`piste(nœud)` : les répliques de Transcrire…)
 //   les gestes   clic, glisser sur la frise : la tête et l'image suivent ;
 //                molette commune (commun/molette.js : Alt = zoom sous le
 //                pointeur, Maj = le temps) ; le clavier du Montage : Espace,
@@ -37,7 +41,7 @@
 // on ne s'en sert pas. La copie et son relais sont communs (commun/defilement.js) :
 // le Montage s'en sert de même pour son programme et sa source.
 //
-//   const L = lecteur(it, { clavier: 'page', sur, onTemps(t, lecture) })
+//   const L = lecteur(it, { clavier: 'page', sur, onTemps(t, lecture), onde })
 //   box.append(L.el) ; L.seek(t) ; L.play() ; L.pause() ; L.toggle() ; L.step(n)
 //   L.piste(nœud) ; L.t ; L.duree ; L.etat() ; L.detruire()
 //
@@ -57,6 +61,7 @@ import { brancher } from './molette.js';
 import { permis } from './pleinecran.js';
 import { pickView } from './proxies.js';
 import { copieDefil } from './defilement.js';
+import { source as sourceOnde, dessiner as dessinerOnde, vueSon, boutonVue } from './onde.js';
 
 if (typeof document !== 'undefined' && !document.querySelector('link[data-sr-lecteur]')) {
   document.head.append(el('link', { rel: 'stylesheet', href: new URL('./lecteur.css', import.meta.url).href, 'data-sr-lecteur': '' }));
@@ -70,8 +75,12 @@ export const ICON = {
   muet: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"/></svg>',
   boucle: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 3l3 3-3 3"/><path d="M4 12V9a3 3 0 0 1 3-3h13M7 21l-3-3 3-3"/><path d="M20 12v3a3 3 0 0 1-3 3H4"/></svg>',
 };
-const MAX_PPS = 800;
-const PISTE_H = { video: 34, audio: 120 };
+// le zoom le plus fort (06/10) : 4 px par échantillon à 48 kHz — l'onde y montre chaque échantillon ;
+// borné par la largeur que le navigateur sait poser (la frise fait durée × zoom : Firefox plafonne
+// une boîte vers 17,9 millions de px, nscoord_MAX ; Chromium vers 33,5 millions, LayoutUnit)
+const MAX_PPS = 192000;
+const LARGEUR_MAX = 1.6e7;
+const PISTE_H = { video: 34 };
 const SON = 'sr-lecteur-son';
 const lireSon = () => { try { return JSON.parse(localStorage.getItem(SON) || 'null') || { vol: 1, muet: false }; } catch { return { vol: 1, muet: false }; } };
 const garderSon = (s) => { try { localStorage.setItem(SON, JSON.stringify(s)); } catch { /* stockage fermé */ } };
@@ -124,7 +133,8 @@ export function petitLecteur(url, { duree = 0, titre = '' } = {}) {
 }
 
 export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps: fpsDit = null, defilement = true,
-  ecran: avecEcran = true, media = null, suiveurs = [], son: avecSon = true, outils = [], boucle = false, onBoucle = null } = {}) {
+  ecran: avecEcran = true, media = null, suiveurs = [], son: avecSon = true, outils = [], boucle = false, onBoucle = null,
+  onde: ondeVideo = false } = {}) {
   const kind = it.kind === 'audio' ? 'audio' : 'video';
   const fps = fpsDit || it.fps || 25;
   const S = { t: 0, lecture: false, rate: 0, rev: 0, pps: 0, fit: true, boucle: false, defile: false, geste: false, raf: 0, fini: false, sync: 0 };
@@ -175,25 +185,28 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
   const vol = el('input', { class: 'sr-lect-vol', type: 'range', min: '0', max: '1', step: '0.01', value: String(src.volume), 'aria-label': 'volume' });
   const defil = el('span', { class: 'lbl sr-lect-dfl' });
   const bFull = el('button', { class: 'tb ghost sm sr-lect-ic', type: 'button' });
+  // l'onde du son (commun/onde.js) : un son, ou une vidéo dont la page la demande (et qui a du son)
+  const avecOnde = !!it.id && (kind === 'audio' || (ondeVideo && it.audio !== false));
+  const bVue = avecOnde ? boutonVue() : null;
   const barre = el('div', { class: 'sr-lect-barre' },
     bLire, el('span', { class: 'timecode sr-lect-tc' }, tcNow, tcDur), etat, el('span', { class: 'sp' }), defil,
-    ...outils, bBoucle, avecSon ? bSon : null, avecSon ? vol : null, ecran ? bFull : null);
+    ...outils, bVue, bBoucle, avecSon ? bSon : null, avecSon ? vol : null, ecran ? bFull : null);
 
   // ── la frise ──
   const ticks = el('div', { class: 'sr-lect-ticks' });
   const regle = el('div', { class: 'sr-lect-regle', title: 'clic, glisser : la tête de lecture · Alt + molette : zoom · Maj + molette : le temps' }, ticks);
-  const bande = el('div', { class: `sr-lect-piste sr-lect-${kind}`, style: { height: PISTE_H[kind] + 'px' } });
-  let joue = null;
-  if (kind === 'audio') {
-    const u = `url("${href(`api/son/apercu/${it.id}?v=1`)}")`;
-    const onde = (cls) => { const n = el('i', { class: 'sr-lect-onde ' + cls }); Object.assign(n.style, { maskImage: u, webkitMaskImage: u }); return n; };
-    joue = onde('joue');
-    bande.append(onde('fond'), joue);
-  } else if (it.thumb_url) {
-    bande.style.backgroundImage = `url("${href(it.thumb_url)}")`;
+  const bande = el('div', { class: `sr-lect-piste sr-lect-${kind}`, style: kind === 'video' ? { height: PISTE_H.video + 'px' } : null });
+  if (kind === 'video' && it.thumb_url) bande.style.backgroundImage = `url("${href(it.thumb_url)}")`;
+  // l'onde : deux canvas posés sur la seule partie visible de la frise (le fond, et le joué par-dessus,
+  // découpé à la tête) ; chacun redessiné au zoom, au défilement, quand ses données arrivent
+  let ondes = null;
+  if (avecOnde) {
+    const lane = kind === 'audio' ? bande : el('div', { class: 'sr-lect-piste sr-lect-audio sr-lect-son' });
+    ondes = { lane, src: sourceOnde(it.id), fond: el('canvas', { class: 'sr-lect-onde fond' }), joue: el('canvas', { class: 'sr-lect-onde joue' }) };
+    lane.append(ondes.fond, ondes.joue);
   }
   const ph = tete({ z: 4 });
-  const dedans = el('div', { class: 'sr-lect-in' }, regle, bande, ph);
+  const dedans = el('div', { class: 'sr-lect-in' }, regle, bande, ondes && ondes.lane !== bande ? ondes.lane : null, ph);
   const defile = el('div', { class: 'sr-lect-defile' }, dedans);
   const frise = el('div', { class: 'sr-lect-frise' }, defile);
   const root = el('div', { class: `sr-lect ${kind}${ecran || kind === 'audio' ? '' : ' sans-ecran'}`, tabindex: '0', 'data-kind': kind,
@@ -214,23 +227,41 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     tcDur.textContent = '/ ' + tc(Math.round(d * fps), fps);
     const x = poser(ph, xDe(t));
     if (S.lecture) suivre(defile, x);
-    if (joue) joue.style.clipPath = `inset(0 ${Math.max(0, dedans.clientWidth - x)}px 0 0)`;
+    if (ondes) {
+      const cw = ondes.joue.clientWidth;
+      ondes.joue.style.clipPath = `inset(0 ${Math.max(0, Math.min(cw, cw - (x - defile.scrollLeft)))}px 0 0)`;
+    }
     bLire.textContent = S.lecture || S.rev ? (S.rate !== 1 ? `×${S.rate}` : 'Pause') : 'Lecture';
     bLire.classList.toggle('on', !!(S.lecture || S.rev));
     etat.textContent = S.rev ? 'arrière' : S.lecture ? 'lecture' : (d && t >= d - 1 / fps ? 'fin' : 'arrêt');
     if (onTemps) onTemps(t, S.lecture || !!S.rev);
   }
 
+  const maxPps = () => Math.min(MAX_PPS, LARGEUR_MAX / Math.max(1e-3, D()));
   function mesurer() {
     const d = D();
     const w = Math.max(80, defile.clientWidth);
     if (S.fit || !S.pps) S.pps = d ? w / d : 1;
-    S.pps = Math.max(d ? w / d : 1, Math.min(MAX_PPS, S.pps));
+    S.pps = Math.max(d ? w / d : 1, Math.min(maxPps(), S.pps));
     dedans.style.width = Math.max(w, xDe(d)) + 'px';
-    if (kind === 'audio') for (const n of bande.children) { n.style.maskSize = `${xDe(d)}px 100%`; n.style.webkitMaskSize = `${xDe(d)}px 100%`; }
     peindreRegle(ticks, { pps: S.pps, fps, gauche: defile.scrollLeft, droite: defile.scrollLeft + defile.clientWidth });
+    peindreOnde();
     peindre();
   }
+  // l'onde de ce qui se voit : de scrollLeft à scrollLeft + la largeur visible (commun/onde.js)
+  let ondeRaf = 0;
+  function peindreOnde() {
+    if (!ondes) return;
+    const d = D();
+    if (!d) return;
+    const g = defile.scrollLeft, W = defile.clientWidth;
+    const w = Math.max(1, Math.min(W, xDe(d) - g));
+    for (const cv of [ondes.fond, ondes.joue]) { cv.style.left = g + 'px'; cv.style.width = w + 'px'; }
+    const t0 = g / pps(), t1 = (g + w) / pps(), vue = vueSon();
+    dessinerOnde(ondes.fond, ondes.src, { t0, t1, vue, alpha: 0.38 });
+    dessinerOnde(ondes.joue, ondes.src, { t0, t1, vue, part: 'onde' });
+  }
+  const ondePlusTard = () => { cancelAnimationFrame(ondeRaf); ondeRaf = requestAnimationFrame(() => { peindreOnde(); peindre(); }); };
   function zoomer(f, clientX) {
     const d = D();
     if (!d) return;
@@ -238,11 +269,13 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     const ax = clientX ?? (r.left + xDe(S.t) - defile.scrollLeft);
     const tAx = (ax - r.left + defile.scrollLeft) / pps();
     const min = Math.max(80, defile.clientWidth) / d;
-    S.pps = Math.max(min, Math.min(MAX_PPS, pps() * f));
+    S.pps = Math.max(min, Math.min(maxPps(), pps() * f));
     S.fit = S.pps <= min * 1.0001;
     mesurer();
     defile.scrollLeft = Math.max(0, tAx * S.pps - (ax - r.left));
     peindreRegle(ticks, { pps: S.pps, fps, gauche: defile.scrollLeft, droite: defile.scrollLeft + defile.clientWidth });
+    peindreOnde();
+    peindre();
   }
 
   // ── la copie de défilement : les relais de la maîtresse et des suiveurs (commun/defilement.js) ──
@@ -378,7 +411,11 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     fin: () => { S.geste = false; relais().forEach((c) => c.fin()); },
   });
   brancher(frise, { zoom: (f, x) => zoomer(f, x), scroller: defile });
-  defile.addEventListener('scroll', () => peindreRegle(ticks, { pps: pps(), fps, gauche: defile.scrollLeft, droite: defile.scrollLeft + defile.clientWidth }));
+  defile.addEventListener('scroll', () => {
+    peindreRegle(ticks, { pps: pps(), fps, gauche: defile.scrollLeft, droite: defile.scrollLeft + defile.clientWidth });
+    if (ondes) ondePlusTard();
+  });
+
   if (ecran) {
     ecran.addEventListener('click', (e) => { if (e.target.closest('.sr-lect-sur a, .sr-lect-sur button')) return; root.focus({ preventScroll: true }); toggle(); });
     ecran.addEventListener('dblclick', (e) => { e.preventDefault(); plein(); });
@@ -402,6 +439,9 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
   vol.addEventListener('input', () => { src.volume = +vol.value; src.muted = +vol.value === 0; garderSon({ vol: src.volume, muet: src.muted }); paintSon(); });
   // le plein écran DU lecteur (l'image, sa frise, sa barre) : Fullscreen API (MDN Element.requestFullscreen)
   const doc = root.ownerDocument;
+  // la vue du son (onde, spectre, les deux) ou le thème changent : l'onde se redessine
+  doc.addEventListener('sr:vue-son', ondePlusTard);
+  doc.addEventListener('sr:theme', ondePlusTard);
   const plein = () => {
     if (doc.fullscreenElement === root) return doc.exitFullscreen().catch(() => {});
     if (!permis(doc) || !root.requestFullscreen) return Promise.resolve();
@@ -466,6 +506,9 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     doc.removeEventListener('keydown', onKey);
     doc.removeEventListener('fullscreenchange', onFull);
     doc.removeEventListener('keydown', onEsc, true);
+    doc.removeEventListener('sr:vue-son', ondePlusTard);
+    doc.removeEventListener('sr:theme', ondePlusTard);
+    cancelAnimationFrame(ondeRaf);
     ro.disconnect();
     // le média de la page reste à la page ; le sien se vide
     if (!media) { src.removeAttribute('src'); try { src.load(); } catch { /* */ } }

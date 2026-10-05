@@ -300,7 +300,7 @@ function paintPlayer() {
   (it.url ? Promise.resolve(it) : api('library/' + it.id)).then((full) => {
     if (n !== V.n) return;
     V.cap = el('div', { class: 'cap', 'aria-live': 'off' });
-    const Lc = lecteur(full, { clavier: 'page', sur: full.kind === 'video' ? V.cap : null, onTemps: tick });
+    const Lc = lecteur(full, { clavier: 'page', sur: full.kind === 'video' ? V.cap : null, onTemps: tick, onde: true });   // onde : celle du son d'une vidéo aussi (06/10)
     V.L = Lc;
     V.strip = Lc.piste(el('div', { class: 'tr-strip', title: 'les répliques · clic, glisser : la tête de lecture' }));
     // replaceChildren(null) écrirait « null » : on ne passe que des nœuds

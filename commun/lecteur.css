@@ -58,12 +58,18 @@
   border-radius: var(--r2); background: var(--panel3) left center / auto 100% repeat-x;
   box-shadow: inset 0 0 0 1px var(--line-cy);
 }
-.sr-lect-piste.sr-lect-audio { background: var(--grn-bg); border-radius: var(--r2); box-shadow: inset 0 0 0 1px var(--line-gr); }
-.sr-lect-onde {
-  position: absolute; inset: 6px 0; background: var(--grn2); pointer-events: none;
-  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-position: 0 0; mask-position: 0 0;
+.sr-lect-piste.sr-lect-audio {
+  height: var(--sr-lect-onde-h, 120px); background: var(--grn-bg); border-radius: var(--r2); box-shadow: inset 0 0 0 1px var(--line-gr);
 }
-.sr-lect-onde.fond { opacity: .38; }
+/* le son d'une vidéo (`onde: true`) : moins haut que celui d'un son seul ; la page règle l'un et l'autre */
+.sr-lect-piste.sr-lect-son { height: var(--sr-lect-son-h, 72px); }
+/* l'onde (commun/onde.js) : deux canvas sur la seule partie visible (le lecteur les place) ; la couleur
+   est un jeton, lue par le dessin ; le fond est plus pâle (le dessin le fait : le spectre reste plein) */
+.sr-lect-onde {
+  position: absolute; top: 6px; left: 0; height: calc(100% - 12px); width: 0; display: block;
+  color: var(--grn2); pointer-events: none;
+}
+.sr-vue-son { min-width: 64px; }
 
 /* en plein écran : l'image prend tout, la barre et la frise dessous */
 .sr-lect.plein { border-radius: 0; background: var(--black); }

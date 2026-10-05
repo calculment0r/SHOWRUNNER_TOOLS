@@ -42,6 +42,7 @@ route juge elle-même). Avec `v=1` (la version du dessin), gardé un an.
 from __future__ import annotations
 
 import array
+import struct
 import subprocess
 import sys
 import threading
@@ -222,14 +223,226 @@ def ensure_pics(src: Path, dest: Path, duration: float | None = None) -> bool:
         return make_pics(src, dest, duration)
 
 
+# ── l'onde précise (06/10) ───────────────────────────────────
+# Cal, 06/10 : « L'onde audio est super mal définie (sur une capture zoomée de Transcrire :
+# des blocs en escalier) ». Les causes (docs/etudes/onde_spectre.md § 1) : le lecteur commun
+# étirait le masque de 1200 colonnes sur toute la frise (au zoom de 800 px/s, 80 px d'écran
+# par colonne pour 2 min de son) ; les pics du Montage (ci-dessus) n'ont qu'une valeur par
+# 5 ms, d'un son décodé à 8 kHz (le filtre du rééchantillonnage ôte les aigus : les « s »
+# perdent leurs crêtes), sur un octet, le pic seul (|crête|, symétrique) — l'interpolation
+# entre deux pics dessine une enveloppe lisse, pas le son.
+#
+# Ici, la précision vient des données (le principe de BBC audiowaveform — des paires min/max
+# « over groups of N input samples » — et des résumés d'Audacity, min/max de 256 puis de
+# 65 536 échantillons) :
+# - le son décodé à SA fréquence (sans rééchantillonnage), en mono 16 bits, aux temps de
+#   l'originale comme le son de défilement (defilement.py : `aresample=async=1:first_pts=0`) ;
+# - une PYRAMIDE de paires (min, max) exactes, en 16 bits : le palier 0 résume 64 échantillons,
+#   chaque palier en résume 4 fois plus (64, 256, 1024… jusqu'au son entier) ; la page prend le
+#   palier qui tient sous la largeur d'un pixel d'écran, pour la seule partie visible ;
+# - sous 64 échantillons par pixel, les ÉCHANTILLONS eux-mêmes, lus dans la copie d'analyse
+#   (`onde.v2.flac` : FLAC, sans perte ; ffmpeg y saute à l'échantillon près, ce qu'il ne fait
+#   pas dans un MP3, un AAC ou un Opus — essayé le 06/10 : 17 à 200 échantillons d'écart).
+# La pyramide et la copie sortent du même décodage (`asplit`) : leurs échantillons sont les
+# mêmes, par construction. Le spectre de la page (commun/spectre.js) lit les mêmes.
+#
+# Où : à côté du son (`onde.v2.bin`, `onde.v2.flac` ; une voix d'élément : `<fichier>.onde.v2.*`),
+# la corbeille les emporte avec l'objet. Quand : à la mise en bibliothèque (`soon`), sinon à la
+# première demande ; une à la fois (une file, `nice`), la page redemande tant que ce n'est pas prêt.
+ONDE_V = 2                   # le format ; le changer refait les fichiers (nom et adresse changent)
+ONDE_B0, ONDE_F = 64, 4      # le palier 0 : min/max de 64 échantillons ; chaque palier : ×4
+ONDE_MAGIC = b"SRONDE02"
+ONDE_TIMEOUT = 3600          # s, un calcul
+ECH_MAX = 1 << 17            # échantillons par demande au plus (2,7 s à 48 kHz, 256 Ko)
+NIV_MAX = 1 << 16            # paires par demande au plus (256 Ko)
+_ONDE_HDR = struct.Struct("<8sIIQiIII")   # magic, version, sr, n, peak, b0, f, nombre de paliers
+_onde_cv = threading.Condition()
+_onde_q: list[tuple[Path, Path, Path]] = []
+_onde_busy: set[str] = set()
+_onde_failed: dict[str, str] = {}
+_onde_worker: threading.Thread | None = None
+_onde_head: dict[str, tuple[int, dict]] = {}   # chemin → (mtime, en-tête lu) : relu si le fichier change
+_fen = threading.BoundedSemaphore(4)            # quatre lectures d'échantillons à la fois au plus
+
+
+def onde_names(src_name: str | None = None) -> tuple[str, str]:
+    """Les noms de la pyramide et de la copie d'analyse : `onde.v2.bin`, `onde.v2.flac` (une voix : préfixés)."""
+    base = f"{src_name}.onde.v{ONDE_V}" if src_name else f"onde.v{ONDE_V}"
+    return base + ".bin", base + ".flac"
+
+
+def _probe_sr(src: Path) -> int | None:
+    """La fréquence d'échantillonnage du premier son du fichier (ffprobe), ou None."""
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=sample_rate",
+                            "-of", "csv=p=0", str(src)], capture_output=True, text=True, timeout=30)
+        sr = int((r.stdout or "").strip().splitlines()[0])
+        return sr if 1000 <= sr <= 768000 else None
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        return None
+
+
+def onde_command(src: Path, flac: Path, sr: int) -> list[str]:
+    """Le décodage (une seule vérité : le contrôle la relit) : la copie d'analyse en FLAC, et le
+    même son, échantillon pour échantillon, en PCM sur la sortie standard (pour la pyramide)."""
+    graph = (f"[0:a:0]aresample={sr}:async=1:first_pts=0,"
+             "aformat=sample_fmts=s16:channel_layouts=mono,asplit=2[f][p]")
+    return ["nice", "-n", "10", "ffmpeg", "-v", "error", "-nostdin", "-y", "-i", str(src), "-filter_complex", graph,
+            "-map", "[f]", "-c:a", "flac", "-compression_level", "5", "-f", "flac", str(flac),
+            "-map", "[p]", "-f", "s16le", "-c:a", "pcm_s16le", "pipe:1"]
+
+
+def make_onde(src: Path, dest: Path, flac: Path) -> bool:
+    """La pyramide `dest` et la copie `flac` de `src` (écrites à côté, puis renommées : jamais à moitié)."""
+    sr = _probe_sr(src)
+    if not sr:
+        _onde_failed[str(dest)] = "pas de son lisible dans ce fichier"
+        return False
+    tmp_flac = flac.with_name("." + flac.name + ".tmp")
+    try:
+        p = subprocess.Popen(onde_command(src, tmp_flac, sr), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError:
+        return False
+    killer = threading.Timer(ONDE_TIMEOUT, p.kill)
+    killer.start()
+    b0 = ONDE_B0
+    mn, mx = array.array("h"), array.array("h")
+    rest = array.array("h")
+    n = 0
+    swap = sys.byteorder == "big"
+    try:
+        while True:
+            chunk = p.stdout.read(b0 * 2 * 8192)            # 8192 blocs : 1 Mo
+            if not chunk:
+                break
+            a = array.array("h")
+            a.frombytes(chunk[: len(chunk) // 2 * 2])
+            if swap:
+                a.byteswap()
+            if rest:
+                a = rest + a
+            full = len(a) // b0 * b0
+            for i in range(0, full, b0):
+                s = a[i:i + b0]
+                mn.append(min(s))
+                mx.append(max(s))
+            rest = a[full:]
+            n += full
+        if rest:                                          # le dernier bloc, incomplet
+            mn.append(min(rest))
+            mx.append(max(rest))
+            n += len(rest)
+        p.wait(timeout=30)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        p.kill()
+        tmp_flac.unlink(missing_ok=True)
+        return False
+    finally:
+        killer.cancel()
+    if p.returncode != 0 or not n or not tmp_flac.is_file():
+        tmp_flac.unlink(missing_ok=True)
+        _onde_failed[str(dest)] = "ffmpeg ne lit pas de son dans ce fichier"
+        return False
+    levels = [(mn, mx)]
+    while len(levels[-1][0]) > 1:                         # chaque palier : 4 fois moins de paires
+        pm, px = levels[-1]
+        f = ONDE_F
+        levels.append((array.array("h", (min(pm[i:i + f]) for i in range(0, len(pm), f))),
+                       array.array("h", (max(px[i:i + f]) for i in range(0, len(px), f)))))
+    peak = max(max(mx), -min(mn))
+    out = bytearray(_ONDE_HDR.pack(ONDE_MAGIC, ONDE_V, sr, n, peak, b0, ONDE_F, len(levels)))
+    out += struct.pack(f"<{len(levels)}I", *(len(lm) for lm, _ in levels))
+    for lm, lx in levels:                                 # (min, max) entrelacés, petit-boutiste
+        pair = array.array("h", bytes(4 * len(lm)))
+        pair[0::2], pair[1::2] = lm, lx
+        if swap:
+            pair.byteswap()
+        out += pair.tobytes()
+    tmp = dest.with_name("." + dest.name + ".tmp")
+    tmp.write_bytes(bytes(out))
+    tmp_flac.replace(flac)                                # la copie d'abord : la pyramide prête dit que tout l'est
+    tmp.replace(dest)
+    return True
+
+
+def _onde_run() -> None:
+    while True:
+        with _onde_cv:
+            while not _onde_q:
+                _onde_cv.wait()
+            src, dest, flac = _onde_q.pop(0)
+        try:
+            if not dest.is_file():
+                with _lock_for(dest):
+                    if not dest.is_file():
+                        make_onde(src, dest, flac)
+        except Exception as e:  # noqa: BLE001 — une file ne meurt pas d'un fichier
+            _onde_failed[str(dest)] = f"calcul interrompu : {e}"
+        finally:
+            with _onde_cv:
+                _onde_busy.discard(str(dest))
+
+
+def onde_queue(src: Path, dest: Path, flac: Path, first: bool = False) -> None:
+    """Met le calcul en file (une seule fois) ; `first` : en tête (une page l'attend)."""
+    global _onde_worker
+    with _onde_cv:
+        key = str(dest)
+        if key in _onde_busy:
+            if first:                                     # déjà en file : passe devant
+                for i, x in enumerate(_onde_q):
+                    if str(x[1]) == key:
+                        _onde_q.insert(0, _onde_q.pop(i))
+                        break
+            return
+        _onde_busy.add(key)
+        if first:
+            _onde_q.insert(0, (src, dest, flac))
+        else:
+            _onde_q.append((src, dest, flac))
+        if _onde_worker is None or not _onde_worker.is_alive():
+            _onde_worker = threading.Thread(target=_onde_run, daemon=True, name="onde-precise")
+            _onde_worker.start()
+        _onde_cv.notify()
+
+
+def onde_head(dest: Path) -> dict | None:
+    """L'en-tête de la pyramide : {sr, n, peak, b0, f, niveaux, offs} (offs : où commence chaque palier)."""
+    try:
+        st = dest.stat()
+    except OSError:
+        return None
+    got = _onde_head.get(str(dest))
+    if got and got[0] == st.st_mtime_ns:
+        return got[1]
+    with open(dest, "rb") as fh:
+        raw = fh.read(_ONDE_HDR.size)
+        if len(raw) < _ONDE_HDR.size:
+            return None
+        magic, v, sr, n, peak, b0, f, nl = _ONDE_HDR.unpack(raw)
+        if magic != ONDE_MAGIC or v != ONDE_V or not 0 < nl < 64:
+            return None
+        counts = list(struct.unpack(f"<{nl}I", fh.read(4 * nl)))
+    offs, o = [], _ONDE_HDR.size + 4 * nl
+    for c in counts:
+        offs.append(o)
+        o += 4 * c
+    h = {"sr": sr, "n": n, "peak": peak, "b0": b0, "f": f, "niveaux": counts, "offs": offs}
+    _onde_head[str(dest)] = (st.st_mtime_ns, h)
+    return h
+
+
 def soon(src: Path, duration: float | None = None, voice: bool = False) -> None:
     """L'accroche de la mise en bibliothèque (core/library.py : `add_file` pour un son,
     `_add_voice` avec voice=True pour la voix d'un élément) : le masque se calcule à
     côté, dans un fil à part — le dépôt n'attend pas ; une page qui le demande avant
-    la fin attend le même verrou."""
+    la fin attend le même verrou. L'onde précise (06/10) se met en file, derrière."""
     src = Path(src)
     dest = src.parent / (wave_name(src.name) if voice else wave_name())
     threading.Thread(target=ensure, args=(src, dest, duration), daemon=True, name="apercu-son").start()
+    b, f = onde_names(src.name if voice else None)
+    if not (src.parent / b).is_file():
+        onde_queue(src, src.parent / b, src.parent / f)
 
 
 def _source(it: dict, voice: str) -> tuple[Path, Path, float | None]:
@@ -290,11 +503,101 @@ def r_pics(req, iid):
                     headers={"Cache-Control": CACHE if req.q("v") == str(VERSION) else "no-cache"})
 
 
+def _onde_files(req, iid) -> tuple[Path, Path, Path]:
+    """Le son d'un objet (un son, une voix d'élément, la piste son d'une vidéo), sa pyramide et
+    sa copie d'analyse. Jugé par l'objet, comme le masque (qui voit l'objet voit son onde)."""
+    it = library.see(iid)
+    if not it:
+        raise HttpError(404, f"introuvable : {iid}")
+    if it["kind"] == "video":
+        src, name = library.path_of(it), None
+    else:
+        src, wave, _dur = _source(it, req.q("voix"))
+        name = None if wave.name == wave_name() else src.name
+    if not src.is_file():
+        raise HttpError(404, "le fichier du son manque")
+    b, f = onde_names(name)
+    return src, src.parent / b, src.parent / f
+
+
+def _onde_cache(req) -> str:
+    return CACHE if req.q("v") == str(ONDE_V) else "no-cache"
+
+
+def _entier(req, nom: str, lo: int, hi: int) -> int:
+    try:
+        v = int(req.q(nom))
+    except ValueError:
+        raise HttpError(400, f"« {nom} » : un entier est attendu") from None
+    if not lo <= v <= hi:
+        raise HttpError(400, f"« {nom} » hors des bornes ({lo} à {hi})")
+    return v
+
+
+def r_onde(req, iid):
+    """`GET /api/son/onde/<id>[?voix=k][&v=2]` → l'en-tête `{pret, sr, n, peak, b0, f, niveaux}` (pas
+    prête : `{pret: false, attente}`, le calcul passe en tête de la file, la page redemande) ;
+    `…?niveau=k&de=i&n=m` → les paires (min, max) i à i+m du palier k, en octets (int16 petit-boutiste)."""
+    from core.http import Response
+    import json
+    src, dest, flac = _onde_files(req, iid)
+    h = onde_head(dest) if dest.is_file() else None
+    if not h:
+        why = _onde_failed.get(str(dest))
+        if why:
+            raise HttpError(422, why)
+        onde_queue(src, dest, flac, first=True)
+        return Response(json.dumps({"pret": False, "attente": True}), ctype="application/json; charset=utf-8",
+                        headers={"Cache-Control": "no-store"})
+    if not req.q("niveau"):
+        body = {"pret": True, "v": ONDE_V, **{k: h[k] for k in ("sr", "n", "peak", "b0", "f", "niveaux")}}
+        return Response(json.dumps(body), ctype="application/json; charset=utf-8", headers={"Cache-Control": _onde_cache(req)})
+    k = _entier(req, "niveau", 0, len(h["niveaux"]) - 1)
+    de = _entier(req, "de", 0, max(0, h["niveaux"][k] - 1))
+    n = min(_entier(req, "n", 1, NIV_MAX), h["niveaux"][k] - de)
+    with open(dest, "rb") as fh:
+        fh.seek(h["offs"][k] + 4 * de)
+        data = fh.read(4 * n)
+    return Response(data, ctype="application/octet-stream", headers={"Cache-Control": _onde_cache(req)})
+
+
+def r_echantillons(req, iid):
+    """`GET /api/son/echantillons/<id>?de=i&n=m[&voix=k][&v=2]` → les échantillons i à i+m (mono, int16
+    petit-boutiste, à la fréquence du son), lus dans la copie d'analyse : ceux de la pyramide."""
+    from core.http import Response
+    _src, dest, flac = _onde_files(req, iid)
+    h = onde_head(dest) if dest.is_file() else None
+    if not h or not flac.is_file():
+        raise HttpError(409, "l'onde de ce son se calcule : demander d'abord /api/son/onde")
+    de = _entier(req, "de", 0, max(0, h["n"] - 1))
+    n = min(_entier(req, "n", 1, ECH_MAX), h["n"] - de)
+    sr = h["sr"]
+    # -ss avant l'entrée : ffmpeg saute dans le FLAC puis décode jusqu'à l'instant exact
+    # (« accurate_seek », par défaut) ; atrim coupe au nombre d'échantillons
+    cmd = ["ffmpeg", "-v", "error", "-nostdin", "-ss", f"{de / sr:.9f}", "-i", str(flac),
+           "-af", f"atrim=end_sample={n}", "-f", "s16le", "-acodec", "pcm_s16le", "pipe:1"]
+    with _fen:
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired):
+            raise HttpError(500, "la lecture des échantillons a échoué") from None
+    data = r.stdout[: 2 * n]
+    if r.returncode != 0:
+        raise HttpError(500, "la lecture des échantillons a échoué")
+    if len(data) < 2 * n:                                # la fin du son : complétée de silence
+        data += bytes(2 * n - len(data))
+    return Response(data, ctype="application/octet-stream", headers={"Cache-Control": _onde_cache(req)})
+
+
 def register(app) -> None:
     app.route("GET", "/api/son/apercu/{iid}", r_wave)
     app.route("GET", "/api/son/pics/{iid}", r_pics)
+    app.route("GET", "/api/son/onde/{iid}", r_onde)
+    app.route("GET", "/api/son/echantillons/{iid}", r_echantillons)
     # l'invité d'Idéation voit la forme des sons de ses planches : `library.see` le juge
-    auth.guest_realm("apercu_son", routes=[("GET", r"/api/son/apercu/(?P<iid>[a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4})", None)])
+    rid = r"(?P<iid>[a-z]{3}-\d{8}-\d{6}-[0-9a-f]{4})"
+    auth.guest_realm("apercu_son", routes=[("GET", r"/api/son/apercu/" + rid, None), ("GET", r"/api/son/onde/" + rid, None),
+                                           ("GET", r"/api/son/echantillons/" + rid, None)])
 
 
 # ── le contrôle (tools/check.py) ─────────────────────────────
