@@ -208,7 +208,9 @@
 .ss-chead .dot { width: 10px; height: 10px; border-radius: 2px; background: var(--c); }
 .ss-chead b.venus { font-size: 13px; font-weight: 400; }
 .ss-chead .sp { flex: 1; }
-.ss-cbody { flex: 1; min-height: 0; overflow: auto; padding: 6px var(--s3) var(--s3); }
+.ss-cbody { flex: 1; min-height: 0; overflow: auto; padding: 6px var(--s3) var(--s3); display: flex; flex-direction: column; }
+/* l'éditeur de notes tient dans la boîte : le piano roll défile chez lui (06/10, editeurs.js, taille 'compact') */
+.ss-cbody > .pe { flex: 1; min-height: 0; padding: 0; gap: 4px; background: none; }
 .ss-audio { display: flex; align-items: center; gap: var(--s4); flex-wrap: wrap; padding: 8px 0; }
 .ss-wave { display: block; border-radius: var(--r2); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
 .ss-knobs { display: flex; gap: var(--s3); }

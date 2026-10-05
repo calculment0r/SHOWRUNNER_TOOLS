@@ -20,10 +20,23 @@
 //   les gestes   clic, glisser sur la frise : la tête et l'image suivent ;
 //                molette commune (commun/molette.js : Alt = zoom sous le
 //                pointeur, Maj = le temps) ; le clavier du Montage : Espace,
-//                J K L (arrière, arrêt, avant ; répétés : ×2, ×4, ×8), ← →
-//                une image (Maj : une seconde), Début, Fin
-//   la barre     lecture, le timecode (HH:MM:SS:FF), la boucle, le son, le
-//                plein écran du lecteur (Échap pour sortir)
+//                J K L (arrière, arrêt, avant ; répétés : ×2, ×4, ×8 ; K tenue,
+//                J ou L : une image, comme Premiere), ← → une image (Maj : une
+//                seconde), Début, Fin
+//   le son       au défilement (commun/scrub.js, 06/10 ; préférence Général →
+//                « Son au défilement ») : glisser la tête fait entendre le son
+//                sous elle, par grains, la lecture à rebours (J) aussi ; chaque
+//                pas à pas (← →, K + J ou L), un grain à la nouvelle image. Le son
+//                de défilement de l'objet (GET /api/defil/<id>/son), au volume
+//                et au « muet » du lecteur ; un média hors de la bibliothèque n'en
+//                a pas (Movie Analysis : seule une analyse lancée d'ici, qui dit
+//                la vidéo de la bibliothèque dépouillée)
+//   la barre     lecture, le timecode (HH:MM:SS:FF), la boucle, le son (le
+//                fader couché du kit, lecteur.css), le plein écran du lecteur
+//                (Échap pour sortir)
+//   la bande     sa hauteur : --sr-lect-bande-h, posée par la page sur un
+//                parent (Transcrire la règle : l'onde moins haute une fois les
+//                voix séparées, repliée) ; sinon PISTE_H
 //
 // Le défilement (Cal : « quand je déplace la cue il n'affiche pas trop
 // rapidement l'update ») : une vidéo rendue n'a souvent qu'une image clé pour
@@ -61,6 +74,9 @@ import { brancher } from './molette.js';
 import { permis } from './pleinecran.js';
 import { pickView } from './proxies.js';
 import { copieDefil } from './defilement.js';
+// le son au défilement (06/10) : glisser la tête, avancer image par image, la lecture à rebours
+import { scrub, sonDefil, chargerSon, aSon, contexteCommun } from './scrub.js';
+// l'onde précise et le spectre (06/10)
 import { source as sourceOnde, dessiner as dessinerOnde, vueSon, boutonVue } from './onde.js';
 
 if (typeof document !== 'undefined' && !document.querySelector('link[data-sr-lecteur]')) {
@@ -80,7 +96,7 @@ export const ICON = {
 // une boîte vers 17,9 millions de px, nscoord_MAX ; Chromium vers 33,5 millions, LayoutUnit)
 const MAX_PPS = 192000;
 const LARGEUR_MAX = 1.6e7;
-const PISTE_H = { video: 34 };
+const PISTE_H = { video: 34, audio: 120 };
 const SON = 'sr-lecteur-son';
 const lireSon = () => { try { return JSON.parse(localStorage.getItem(SON) || 'null') || { vol: 1, muet: false }; } catch { return { vol: 1, muet: false }; } };
 const garderSon = (s) => { try { localStorage.setItem(SON, JSON.stringify(s)); } catch { /* stockage fermé */ } };
@@ -176,7 +192,7 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     attente, src, nav, sous) : null;
 
   // ── la barre ──
-  const bLire = el('button', { class: 'tb sm sr-lect-lire', type: 'button', title: 'lecture · pause (Espace) · J K L : arrière, arrêt, avant' }, 'Lecture');
+  const bLire = el('button', { class: 'tb sm sr-lect-lire', type: 'button', title: 'lecture · pause (Espace) · J K L : arrière, arrêt, avant · K tenue + J ou L : une image' }, 'Lecture');
   const tcNow = el('b', {}, tc(0, fps));
   const tcDur = el('small', {}, '/ ' + tc(Math.round((it.duration || 0) * fps), fps));
   const etat = el('span', { class: 'lbl sr-lect-etat' }, 'arrêt');
@@ -195,15 +211,17 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
   // ── la frise ──
   const ticks = el('div', { class: 'sr-lect-ticks' });
   const regle = el('div', { class: 'sr-lect-regle', title: 'clic, glisser : la tête de lecture · Alt + molette : zoom · Maj + molette : le temps' }, ticks);
-  const bande = el('div', { class: `sr-lect-piste sr-lect-${kind}`, style: kind === 'video' ? { height: PISTE_H.video + 'px' } : null });
+  const bande = el('div', { class: `sr-lect-piste sr-lect-${kind}`, style: { height: `var(--sr-lect-bande-h, ${PISTE_H[kind]}px)` } });
   if (kind === 'video' && it.thumb_url) bande.style.backgroundImage = `url("${href(it.thumb_url)}")`;
-  // l'onde : deux canvas posés sur la seule partie visible de la frise (le fond, et le joué par-dessus,
-  // découpé à la tête) ; chacun redessiné au zoom, au défilement, quand ses données arrivent
+  // l'onde (commun/onde.js) : deux canvas dans un cadre posé sur la seule partie visible de la frise (le fond,
+  // et le joué par-dessus, découpé à la tête), redessinés au zoom, au défilement, quand leurs données arrivent ;
+  // le cadre remplit la bande à toute hauteur, en retrait (lecteur.css ; la page peut le changer : Transcrire replié)
   let ondes = null;
   if (avecOnde) {
     const lane = kind === 'audio' ? bande : el('div', { class: 'sr-lect-piste sr-lect-audio sr-lect-son' });
-    ondes = { lane, src: sourceOnde(it.id), fond: el('canvas', { class: 'sr-lect-onde fond' }), joue: el('canvas', { class: 'sr-lect-onde joue' }) };
-    lane.append(ondes.fond, ondes.joue);
+    const fond = el('canvas', { class: 'sr-lect-onde-cv fond' }), joue = el('canvas', { class: 'sr-lect-onde-cv joue' });
+    ondes = { lane, src: sourceOnde(it.id), cadre: el('div', { class: 'sr-lect-onde' }, fond, joue), fond, joue };
+    lane.append(ondes.cadre);
   }
   const ph = tete({ z: 4 });
   const dedans = el('div', { class: 'sr-lect-in' }, regle, bande, ondes && ondes.lane !== bande ? ondes.lane : null, ph);
@@ -256,7 +274,8 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     if (!d) return;
     const g = defile.scrollLeft, W = defile.clientWidth;
     const w = Math.max(1, Math.min(W, xDe(d) - g));
-    for (const cv of [ondes.fond, ondes.joue]) { cv.style.left = g + 'px'; cv.style.width = w + 'px'; }
+    ondes.cadre.style.left = g + 'px';
+    ondes.cadre.style.width = w + 'px';
     const t0 = g / pps(), t1 = (g + w) / pps(), vue = vueSon();
     dessinerOnde(ondes.fond, ondes.src, { t0, t1, vue, alpha: 0.38 });
     dessinerOnde(ondes.joue, ondes.src, { t0, t1, vue, part: 'onde' });
@@ -281,6 +300,14 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
   // ── la copie de défilement : les relais de la maîtresse et des suiveurs (commun/defilement.js) ──
   const relais = () => [C, ...F.map((f) => f.C)];
   const caler = () => relais().forEach((c) => c.caler());
+
+  // ── le son au défilement (commun/scrub.js) : le son de défilement de l'objet, sous la tête ──
+  // au niveau de ce qu'on entend : le volume du lecteur, rien s'il est muet (la page qui règle
+  // le son, `son: false` : le plus fort de ses médias qui ne sont pas muets) ; un média sans son
+  // ne crée pas de contexte audio
+  const niveau = () => Math.max(0, ...tous().map((m) => (m.muted ? 0 : m.volume)));
+  const ecoute = scrub({ contexte: () => (aSon(it) ? contexteCommun() : null),
+    sons: (t) => { const b = sonDefil(it); return b ? [{ buffer: b, at: t, gain: niveau() }] : []; } });
 
   // aller à t (s) : la tête et le timecode tout de suite ; l'image dès qu'elle est décodée
   // (la copie pendant qu'on cherche, l'originale ensuite)
@@ -315,21 +342,26 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     };
     S.raf = w.requestAnimationFrame(f);
   }
-  function stopArriere() { clearInterval(S.rev); S.rev = 0; }
+  function stopArriere() { clearInterval(S.rev); S.rev = 0; ecoute.fin(); }
   function play(rate = 1) {
     const d = D();
     if (!d) return;
     stopArriere();
     S.rate = rate;
     if (rate < 0) {
-      // en arrière : des sauts à 30 par seconde (le lecteur n'a pas de lecture à rebours), sur la copie
+      // en arrière : des sauts à 30 par seconde (le lecteur n'a pas de lecture à rebours), sur la copie ;
+      // le son au défilement les suit (un geste sans pointeur)
       for (const m of tous()) if (!m.paused) m.pause();
       relais().forEach((c) => c.arret());
       S.lecture = false;
+      chargerSon(it);
+      ecoute.debut();
+      ecoute.aller(S.t);
       S.rev = setInterval(() => {
         const t = S.t + rate / 30;
         if (t <= 0) { seek(0); stopArriere(); S.rate = 0; peindre(); return; }
         seek(t, { geste: true });
+        ecoute.aller(S.t);
       }, 1000 / 30);
       peindre();
       return;
@@ -359,7 +391,13 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     peindre();
   }
   const toggle = () => (S.lecture || S.rev ? pause() : play(1));
-  function step(n) { pause(); seek((imageDe(S.t) + n) / fps); }
+  // une image (ou plus) : un grain du son à la nouvelle place, si la tête a bougé (Premiere)
+  function step(n) {
+    pause();
+    const t0 = S.t;
+    seek((imageDe(S.t) + n) / fps);
+    if (S.t !== t0) ecoute.coup(S.t);
+  }
   function navette(dir) {
     if (dir === 0) { pause(); return; }
     let r = S.lecture ? S.rate : S.rev ? S.rate : 0;
@@ -405,11 +443,13 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
   brancherRegle(dedans, {
     avant: () => { root.focus({ preventScroll: true }); return !!D(); },
     temps: tempsA,
-    debut: () => { S.geste = true; if (S.lecture) pause(); stopArriere(); relais().forEach((c) => c.debut()); },
-    aller: (t) => seek(t, { geste: true }),
+    debut: () => { S.geste = true; if (S.lecture) pause(); stopArriere(); relais().forEach((c) => c.debut()); chargerSon(it); ecoute.debut(); },
+    aller: (t) => { seek(t, { geste: true }); ecoute.aller(S.t); },
     // au lâcher, l'originale se cale un peu après (commun/defilement.js, `fin`)
-    fin: () => { S.geste = false; relais().forEach((c) => c.fin()); },
+    fin: () => { S.geste = false; relais().forEach((c) => c.fin()); ecoute.fin(); },
   });
+  // le son de défilement se charge d'avance, quand le pointeur approche de la frise
+  frise.addEventListener('pointerenter', () => chargerSon(it));
   brancher(frise, { zoom: (f, x) => zoomer(f, x), scroller: defile });
   defile.addEventListener('scroll', () => {
     peindreRegle(ticks, { pps: pps(), fps, gauche: defile.scrollLeft, droite: defile.scrollLeft + defile.clientWidth });
@@ -434,6 +474,7 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     bSon.title = src.muted ? 'rendre le son' : 'couper le son';
     bSon.setAttribute('aria-pressed', String(src.muted));
     vol.value = String(src.muted ? 0 : src.volume);
+    vol.style.setProperty('--v', vol.value);   // le trait de la valeur du fader couché (lecteur.css)
   };
   bSon.addEventListener('click', () => { src.muted = !src.muted; if (!src.muted && src.volume === 0) src.volume = 1; garderSon({ vol: src.volume, muet: src.muted }); paintSon(); });
   vol.addEventListener('input', () => { src.volume = +vol.value; src.muted = +vol.value === 0; garderSon({ vol: src.volume, muet: src.muted }); paintSon(); });
@@ -469,16 +510,19 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
   };
   doc.addEventListener('keydown', onEsc, true);
 
-  // le clavier du Montage ; `clavier: 'page'` : partout sur la page (hors d'un champ, d'une boîte, d'un menu)
+  // le clavier du Montage ; `clavier: 'page'` : partout sur la page (hors d'un champ, d'une boîte, d'un menu).
+  // K tenue, J ou L avance d'une image (Premiere : « hold K and tap J or L ») ; tenue avec, la
+  // répétition de la touche fait un pas à pas lent, chacun son grain
+  let kTenue = false;
   function cle(e) {
     if (e.ctrlKey || e.metaKey || e.altKey) return false;
     const k = e.key;
     const sh = e.shiftKey;
     switch (k) {
       case ' ': toggle(); break;
-      case 'j': case 'J': navette(-1); break;
-      case 'k': case 'K': navette(0); break;
-      case 'l': case 'L': navette(1); break;
+      case 'j': case 'J': if (kTenue) step(-1); else navette(-1); break;
+      case 'k': case 'K': kTenue = true; if (!e.repeat) navette(0); break;
+      case 'l': case 'L': if (kTenue) step(1); else navette(1); break;
       case 'ArrowLeft': step(sh ? -Math.round(fps) : -1); break;
       case 'ArrowRight': step(sh ? Math.round(fps) : 1); break;
       case 'Home': pause(); seek(0); break;
@@ -495,7 +539,9 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     if (e.key === ' ' && e.target.matches && e.target.matches('button, input[type=range]')) e.target.blur();
     cle(e);
   };
-  if (clavier) doc.addEventListener('keydown', onKey);
+  const onKeyUp = (e) => { if (e.key === 'k' || e.key === 'K') kTenue = false; };
+  const onBlur = () => { kTenue = false; };
+  if (clavier) { doc.addEventListener('keydown', onKey); doc.addEventListener('keyup', onKeyUp); doc.defaultView?.addEventListener('blur', onBlur); }
   const ro = new ResizeObserver(() => mesurer());
   ro.observe(defile);
 
@@ -504,6 +550,8 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     for (const m of tous()) { try { m.pause(); } catch { /* */ } }
     relais().forEach((c) => c.detruire());
     doc.removeEventListener('keydown', onKey);
+    doc.removeEventListener('keyup', onKeyUp);
+    doc.defaultView?.removeEventListener('blur', onBlur);
     doc.removeEventListener('fullscreenchange', onFull);
     doc.removeEventListener('keydown', onEsc, true);
     doc.removeEventListener('sr:vue-son', ondePlusTard);
@@ -529,6 +577,7 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     piste(node) { node.classList.add('sr-lect-piste'); dedans.insertBefore(node, ph); mesurer(); return node; },
     xDe, pps,
     etat: () => ({ t: S.t, montre: C.montre, copie: C.etat, src: src.currentTime, nav: nav ? nav.currentTime : null, pps: S.pps, lecture: S.lecture, rev: !!S.rev, rate: S.rate,
+      grains: ecoute.grains,
       suiveurs: F.map((f) => ({ t: f.el.currentTime, montre: f.C.montre, copie: f.C.etat })) }),
   };
   root.srLecteur = L;       // pour les pilotes (Chromium sans affichage) : l'état, sans toucher à rien

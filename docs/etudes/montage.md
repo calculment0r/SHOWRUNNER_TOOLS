@@ -764,10 +764,12 @@ montrer un aperçu (`pv`, montage/player.js) sans toucher au montage de la page 
   montage tel qu'il serait si l'on lâchait maintenant (`M.moveClips` sur une
   copie, une fois par image d'écran) ;
 - **rogner** (V), propager (B), déplacer la coupe (N), changer la vitesse (R) :
-  l'image du bord qu'on tire, le plan seul et plein (Premiere montre le bord
-  rogné au moniteur — en deux images, sortante et entrante, en mode Trim :
-  helpx « Edit in Trim mode », par les résultats de recherche ; ici une seule,
-  celle du bord pris). Rien pour un son ou un calque d'effet.
+  depuis le 06/10 au soir, l'image sous la tête de lecture, le montage tel qu'il
+  serait au lâcher (voir « Les poignées » plus bas) ; **Alt maintenu**, l'image du
+  bord qu'on tire, le plan seul et plein (Premiere montre le bord rogné au
+  moniteur — en deux images, sortante et entrante, en mode Trim : helpx « Edit in
+  Trim mode », par les résultats de recherche ; ici une seule, celle du bord pris).
+  Rien pour un son ou un calque d'effet.
 
 Fluide : la copie de défilement est devant pendant le geste, l'originale se
 cale au lâcher ; un plan neuf du même média (le morceau d'un plan coupé, une
@@ -803,8 +805,47 @@ source, l'objet ouvert. Essayé en espionnant `AudioBufferSourceNode.start` :
 61 grains pour 50 images glissées sur deux sons, aucun au clic, aucun la tête
 arrêtée, aucun préférence coupée.
 
-Non fait : le son quand on avance image par image au clavier (← →, J K L) ;
-deux images au moniteur pendant un rognage (le mode Trim de Premiere).
+Non fait : deux images au moniteur pendant un rognage (le mode Trim de Premiere).
+
+### Le son au défilement partout, et le pas à pas (06/10, suite)
+
+La même mécanique (commun/scrub.js), étendue :
+
+- **le lecteur commun** (commun/lecteur.js : la fiche d'Asset, le fil d'Image et
+  de Vidéo, Transcrire, Idéation, les paroles calées, la playlist, la
+  visionneuse de Movie Analysis) : glisser la frise fait entendre le son de
+  défilement de l'objet, aux mêmes grains, au volume et au « muet » du lecteur ;
+  le contexte audio est celui des pages sans moteur de son (`contexteCommun`,
+  créé dans le geste). Movie Analysis : seule une analyse lancée d'ici, qui
+  dit la vidéo de la bibliothèque qu'elle a dépouillée (`item`, un lien dur du
+  même fichier) ; nos films sont sur R2 et durent plus de 30 min ;
+- **le pas à pas** : ← →, et J ou L la touche K tenue (Premiere : « hold K and
+  tap J or L ») avancent d'une image et font entendre un grain, un seul, à la
+  nouvelle place, à la vitesse du son. Premiere fait de même : « Play audio
+  while scrubbing » vaut pour la tête glissée, les flèches et J K L (fils du
+  forum d'Adobe « Sound when going frame by frame in Premiere Pro » et « Audio
+  preview frame by frame », lus par les résultats de recherche ;
+  community.adobe.com et helpx.adobe.com ne s'ouvrent pas d'ici). La lecture à
+  rebours (J), qui n'a pas de son à elle, est un geste comme un autre ; la
+  lecture en avant a le sien : aucun grain. Dans le Montage, au programme
+  comme à la source ;
+- **ODIO, les clips de notes** : la tête de l'arrangement qui passe sur le
+  début d'une note la fait jouer par l'instrument de la piste (Logic Pro rejoue
+  de même les régions MIDI qu'on parcourt : Logic Pro User Guide, « Scrub a
+  project in Logic Pro for Mac », par les résultats de recherche). Courte (la
+  durée de la note à la vitesse du geste, 150 ms au plus) ; par piste,
+  l'attaque la plus proche de la tête seule (un accord reste un accord), huit
+  notes par pas au plus, et la source se tait avant de rejouer : rien ne
+  s'empile. Les notes sont celles de la lecture (Graph.notes : le motif
+  bouclé, l'arpège, les voix de la boîte à rythmes).
+
+Essayé (commun/pilote_scrub.mjs, Chromium sans affichage, une vidéo VP9/Opus et
+un son WAV de ffmpeg, en sombre et en clair) : 40 grains pour 40 mouvements sur
+la frise du lecteur, aucun au clic ; un grain par image pour ← →, K + J ou L,
+au lecteur, au programme et à la source du Montage ; 18 à 21 grains pour 0,6 s
+de J ; aucun en lecture ni préférence coupée ; ODIO : 147 notes en 43 pas en
+glissant sur 43 noires du projet de démonstration, 7 au plus par pas, aucune au
+clic ni préférence coupée.
 
 ### Les poignées : rogner le début (06/10, suite)
 
@@ -850,6 +891,38 @@ MP4), 8 entrées (dont une négative, la tête d'un fondu enchaîné, et une au-
 contre 595 avec la chaîne d'avant. De bout en bout (le vrai travail d'export contre le
 moniteur de la page, une source 24 i/s, chaque image de 63 à 149 après un rognage de
 début de 13) : **87 images sur 87 identiques**, et à 16 i/s ×1,5 les mêmes avant et après.
+
+**La vraie cause, trouvée par Cal** (06/10 au soir, une photo de son écran : un plan
+« vidéo avec son » sur la piste du haut, une voiture dessous, un zoom très fort, la tête
+quelques images après le bord gauche) : « dans la frame, on ne lit plus sous la cue, mais ça
+affiche le nouveau in… C'est pour ça que mon footage en dessous disparaît. C'est pas si mal,
+mais je préfère avoir les fonctions de in et out comme je t'ai dit. » Pendant le geste, le
+moniteur montrait l'image du bord tiré (ci-dessus, « Le moniteur pendant un geste ») : à
+la place de l'image sous la tête, une image qui défile quand on tire — on croit voir la
+matière glisser sous la tête, alors que le modèle tronque bien.
+
+Désormais (`live`, montage/timeline.js) : **pendant un rognage (V, B, N, R), le moniteur
+montre l'image sous la tête de lecture**, le montage tel qu'il serait si l'on lâchait
+maintenant (le projet de la page est rejoué à chaque mouvement, le programme se redessine) ;
+tant que le bord ne passe pas la tête, l'image ne change pas ; quand il la passe, ce qui est
+dessous apparaît (la piste inférieure, ou le noir). **Alt maintenu** — on peut le prendre et
+le lâcher pendant le geste — montre l'image du bord tiré, le plan seul, comme avant (une
+touche plutôt qu'une préférence : c'est le plus simple, et on passe d'une vue à l'autre sans
+lâcher le bord ; Alt n'a pas d'autre sens sur un bord). Le déplacement d'un plan montrait déjà
+l'image sous la tête.
+
+Le pilote `montage/pilote_poignees.mjs` (Playwright, portail d'essai ; 41 essais, sombre et
+clair, aucune erreur de console ; aussi avec la copie de défilement à l'œuvre, faite en VP9
+pour le Chromium du conteneur) : pendant un rognage lent (40 pas d'un demi-pixel, moins
+d'une image chacun : 13 débuts différents), la scène du moniteur est **la même au pixel
+près** (capture comparée à celle d'avant) et le modèle reste juste à chaque pas ; rapide,
+l'image 95 jusqu'à ce que le bord passe la tête, puis l'image fixe de la piste du dessous ;
+Alt : l'image du bord (100), lâché : de nouveau dessous ; le bord de fin pareil. Puis, à T
+fixe avant et après : une vidéo avec son, un son seul (l'onde : les attaques des bips au même
+x d'écran, au pixel près), les deux ensemble (un son dissocié n'est lié à rien : chacun se
+rogne par sa poignée), un zoom fort (32 px par image, +3 images = 96 px), l'aimant (le bord
+se colle à la tête, l'entrée suit), rogner puis re-tirer vers la gauche (jusqu'au début de la
+source), ×1,5, une image fixe (sans borne de source), B, N, R, et chaque Ctrl+Z.
 
 Le contrôle : `model.js` mené par node (l'invariant : après un rognage de début de +10,
 −25, +49 à ×1, de +7 et −5 à ×2, de +13 à ×0,5, ×1,5 et ×3, chaque instant restant montre

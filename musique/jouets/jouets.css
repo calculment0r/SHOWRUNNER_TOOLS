@@ -76,7 +76,6 @@
    du mouvement — l'angle change sans repeindre le nodal ; au repos, elle la rend
    (le texte se rastérise net à l'échelle de la vue) */
 .nd-card.jo-penche { will-change: transform; }
-.nd-world.lod0 .nd-card.jo .bd, .nd-world.lod0 .nd-card.jo .ft { display: none; }
 
 /* les billes de la fontaine volent au-dessus de toutes les cartes */
 .jo-ov { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; }

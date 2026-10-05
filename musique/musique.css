@@ -64,7 +64,6 @@ body.mu-page { display: flex; flex-direction: column; height: 100vh; overflow: h
 .mu-views .tb { font-size: 9px; padding: 0 7px; letter-spacing: .06em; }
 .mu-ovw { background: var(--bg); border-radius: var(--r2); padding: 2px 4px; box-shadow: inset 0 0 0 1px var(--line); }
 .mu-ov { display: block; cursor: pointer; }
-.mu-kb { cursor: help; }
 .mu-save { min-width: 58px; text-align: right; font-size: 7.5px; letter-spacing: .14em; }
 .mu-bar .tb { letter-spacing: .07em; }
 /* Rien ne bouge dans la barre pendant la lecture : le compteur a sa
@@ -152,13 +151,6 @@ body.mu-page { display: flex; flex-direction: column; height: 100vh; overflow: h
 .mu-menu .head { font-family: var(--f-mono); font-size: 8px; letter-spacing: .18em; text-transform: uppercase; color: var(--or); padding: 7px 10px 3px; }
 .mu-form4 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s3); }
 .mu-form4 .wide { grid-column: span 2; }
-.mu-engine {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px var(--s3);
-  background: var(--panel2); border-radius: var(--r2); padding: var(--s3) var(--s4); box-shadow: inset 0 0 0 1px var(--line-gr);
-}
-.mu-engine b { font-family: var(--f-disp); font-weight: 400; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; }
-.mu-engine.essai { box-shadow: inset 0 0 0 1px var(--line-amb); background: var(--amb-bg); }
-.mu-engine.essai .lbl { color: var(--amb); flex-basis: 100%; line-height: 1.6; }
 .mu-check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .mu-check input { accent-color: var(--grn2); }
 .mu-export { display: flex; flex-direction: column; gap: var(--s3); }
@@ -184,19 +176,10 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 .mu-dr-body { flex: 1; overflow: auto; padding: var(--s4) var(--s5) var(--s6); display: flex; flex-direction: column; gap: var(--s4); }
 .mu-hl { outline: 2px solid var(--or) !important; outline-offset: 2px; animation: sPulse .65s 4; }
 
-/* le génératif */
+/* les sections d'un tiroir et son pied (nées avec l'ancien tiroir génératif, refait le 06/10 dans
+   generatif_panneau.js / generatif.css) : la détection du tempo s'en sert (bpm.js) */
 .gen-sec { display: flex; flex-direction: column; gap: 8px; background: var(--panel2); border-radius: var(--r3); padding: var(--s3) var(--s4); }
 .gen-sec b.venus { font-size: 12px; font-weight: 400; }
-.gen-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-.gen-chips .lbl { min-width: 78px; }
-.gen-chips .opt { padding: 4px 8px; font-size: 10.5px; }
-.gen-blocks { display: flex; flex-direction: column; gap: 8px; }
-.gen-block { display: flex; flex-direction: column; gap: 5px; background: var(--panel); border-radius: var(--r2); padding: 8px; }
-.gen-block .row b { font-family: var(--f-mono); font-size: 9px; letter-spacing: .14em; text-transform: uppercase; font-weight: 400; color: var(--ink2); }
-.gen-pre { margin: 0; white-space: pre-wrap; font-family: var(--f-mono); font-size: 10px; line-height: 1.6; color: var(--cy); background: var(--bg); border-radius: var(--r2); padding: 8px 10px; max-height: 180px; overflow: auto; }
-.gen-ref { display: flex; align-items: center; gap: 6px; min-height: 34px; border-radius: var(--r2); padding: 0 6px; box-shadow: inset 0 0 0 1px var(--line); }
-.gen-res { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: var(--panel); border-radius: var(--r2); font-size: 11.5px; }
-.gen-res .sp { flex: 1; }
 .gen-foot { display: flex; align-items: center; gap: 10px; position: sticky; bottom: calc(-1 * var(--s6)); background: var(--panel); padding: 10px 0; box-shadow: 0 -1px 0 var(--line); }
 .gen-foot .sp { flex: 1; }
 .gen-foot .lbl { max-width: 330px; line-height: 1.6; }
@@ -445,14 +428,27 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 .nv-g.nv-dos { color: var(--ink2); cursor: default; }
 .nv-it.off { opacity: .5; cursor: default; }
 .nv-it.off .dot { background: var(--ink3); }
+/* la rubrique « Space » (06/10, space.js) : le nom du Space dans son titre (en bas de casse :
+   c'est un nom), le menu de l'app Musique (chanson/spaces.css) resserré à la largeur du
+   navigateur, sans son cadre ; le projet ouvert parmi les projets du Space */
+.nv-h .nv-spn { flex: 1; min-width: 0; font-family: var(--f-ui); font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none;
+  color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nv .ch-space { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 6px; padding: 2px 0 4px; background: none; box-shadow: none; }
+.nv .ch-space > .lbl { display: none; }
+.nv .ch-space-btn { height: 28px; padding: 0 8px; }
+.nv .ch-space-btn b { font-size: 12px; }
+.nv .ch-space .sr-kebab { width: 28px; height: 28px; }
+.nv .ch-space-n { font-size: 10.5px; padding: 0 2px; }
+.nv-space-ou { padding-top: 0; }
+.nv-it.nv-proj { cursor: pointer; }
+.nv-it.nv-proj.on { background: var(--sel-bg); box-shadow: inset 2px 0 0 var(--cy); cursor: default; }
+.nv-note.warn { color: var(--amb); }
+.mu-tpl-sp { margin: 2px 0 0; font-size: 11px; line-height: 1.5; color: var(--ink2); }
 
 /* ── la vue de détail (en bas de l'arrangement) ─────────── */
 .dk { height: 300px; flex: none; background: var(--panel); border-radius: var(--r3); overflow: hidden; display: flex; flex-direction: column; }
 .dk[hidden] { display: none; }
 .dk-tabs { display: flex; align-items: center; gap: 2px; padding: 4px 8px 0; box-shadow: inset 0 -1px 0 var(--line); flex: none; min-width: 0; }
-.dk-tab { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink3); padding: 6px 12px; border-radius: var(--r1) var(--r1) 0 0; }
-.dk-tab:hover { color: var(--ink); background: var(--panel2); }
-.dk-tab.on { color: var(--ink); background: var(--panel2); box-shadow: inset 0 2px 0 var(--cy); }
 .dk-tabs .dk-what { margin-left: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .dk-tabs .sp { flex: 1; }
 .dk-tabs > .lbl:last-child { white-space: nowrap; }
@@ -474,6 +470,51 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 .dk-empty { flex: 1; display: flex; flex-direction: column; gap: 8px; align-items: center; justify-content: center; color: var(--ink3); text-align: center; padding: var(--s5); }
 .dk-empty b { font-size: 16px; color: var(--ink2); }
 .dk .pe { flex: 1; min-height: 0; border-radius: 0; padding: 8px var(--s3); gap: 6px; }
+.dk-head .dk-aide { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* LES DEUX TAILLES (06/10, Cal : « un mode plus petit et qu'on puisse le mettre en grand ») —
+   editeurs.js, createDock. COMPACT (d'office) : le clip et la chaîne dans la hauteur du
+   panneau, chacun défile chez lui ; côte à côte dès que le panneau a 960 px (le clip à
+   gauche, la chaîne à droite), sinon l'un sous l'autre. GRAND : le clip remplit le
+   panneau, la chaîne suit dessous (la colonne défile). */
+.dk { container-type: inline-size; }
+.dk.compact .dk-body { overflow: hidden; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 3fr) minmax(96px, 2fr); }
+.dk.compact .dk-sec { min-height: 0; min-width: 0; }
+.dk.compact .dk-sec-clip { overflow-x: hidden; overflow-y: auto; }
+.dk.compact .dk-sec-clip > .dk-title:not(.dk-title-seg) { display: none; }
+.dk.compact .dk-sec-clip .dk-clip, .dk.grand .dk-sec-clip .dk-clip { flex: 1; min-height: 0; }
+.dk.compact .dk-clip > .pe { min-height: 0; padding: 6px var(--s3) 8px; gap: 4px; }
+/* l'éditeur de notes compact (patternEditor, taille 'compact') : ici et dans la vue Clip de la Session */
+.pe-compact .pe-hint { display: none; }
+.pe-compact .pr-vel { height: 26px; }
+.pe-compact .sq { gap: 2px; }
+.pe-compact .sq-c { height: 14px; }
+.pe-barre { display: flex; flex-direction: column; gap: 6px; }
+.pe-compact .pe-barre { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 5px; }
+.pe-compact .pe-barre > .pe-head, .pe-compact .pe-barre > .pr-tools { display: contents; }
+.pe-compact .pe-barre .sp, .pe-compact .pe-barre .ar-sep, .pe-compact .pe-head > .k, .pe-compact .pr-tools > .lbl:last-child { display: none; }
+/* le clip audio compact : l'onde en tête, sur toute la largeur ; ses réglages en rangée dessous (la partie défile) */
+.dk.compact .ae { grid-template-columns: minmax(0, 1fr); gap: 8px; padding-top: 6px; }
+.dk.compact .ae-w { order: -1; }
+.dk.compact .ae-wave { height: 112px; }
+.dk.compact .ae .pe-hint { display: none; }
+.dk.compact .ae-side { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
+.dk.compact .ae-side > .ae-box { flex: 1 1 210px; min-width: 0; }
+/* la chaîne : son en-tête reste en haut, la rangée des modules défile chez elle (les deux sens) */
+.dk.compact .dk-sec-chain { overflow: hidden; }
+.dk.compact .dk-sec-chain .rk { flex: 1; min-height: 0; padding: 6px var(--s3) 4px; gap: 6px; }
+.dk.compact .dk-sec-chain .rk-chain { flex: 1 1 auto; min-height: 0; overflow: auto; align-items: flex-start; }
+.dk.compact .dk-sec-chain .rk-loose { flex: none; max-height: 40%; overflow: auto; }
+.dk.compact .dk-sec-chain .rk-head { flex: none; flex-wrap: nowrap; gap: var(--s2); }
+.dk.compact .dk-sec-chain .rk-head > .lbl { display: none; }   /* « N modules en chaîne » : l'en-tête du panneau le dit */
+.dk.compact .dk-sec-chain .rk-head .fld { min-width: 0; flex: 0 1 auto; }
+.dk.compact .dk-sec-chain .rk-head .tb { flex: none; white-space: nowrap; }
+.dk.compact .dk-sec-chain .rk-head b.venus { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+@container (min-width: 960px) {
+  .dk.compact .dk-body { grid-template-columns: minmax(440px, 52%) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .dk.compact .dk-sec + .dk-sec { box-shadow: inset 1px 0 0 var(--line); }
+}
+.dk.grand .dk-sec-clip { height: 100%; }
+.dk.grand .dk-clip > .pe { min-height: 0; }
 .pe { background: var(--panel); border-radius: var(--r4); padding: var(--s4); display: flex; flex-direction: column; gap: var(--s3); }
 .pe-head { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .pe-head .sp { flex: 1; }
@@ -500,10 +541,10 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 .pr-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
 .pr-tools { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .pr-tools .sp { flex: 1; }
+.pr-grp { display: inline-flex; align-items: center; gap: 5px; }
 .pr-tools .seg .tb { height: 22px; font-size: 9px; padding: 0 6px; }
 .pr-tools .tb { text-transform: none; letter-spacing: .02em; }
 .pr { flex: 1; min-height: 0; display: grid; grid-template-columns: 48px minmax(0, 1fr); overflow-y: auto; overflow-x: hidden; background: var(--bg); border-radius: var(--r3); box-shadow: inset 0 0 0 1px var(--line); align-items: start; }
-.pr.tall { height: 400px; flex: none; }
 .pr-keys { display: flex; flex-direction: column; position: sticky; left: 0; }
 .pr-k { flex: none; text-align: left; font-family: var(--f-mono); font-size: 7px; letter-spacing: .06em; color: var(--ink3); padding-left: 4px; background: var(--panel3); box-shadow: inset 0 -1px 0 var(--bg); }
 .pr-k.blk { background: var(--panel); }
@@ -553,11 +594,6 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 
 /* ── la console ─────────────────────────────────────────── */
 .cs { height: 100%; display: flex; flex-direction: column; gap: 8px; }
-.cs-head { display: flex; align-items: baseline; gap: var(--s3); background: var(--panel); border-radius: var(--r3); padding: 10px var(--s4); }
-.cs-head b.venus { font-size: 16px; font-weight: 400; }
-.cs-head .sp { flex: 1; }
-.cs-row { flex: 1; min-height: 0; display: flex; gap: 8px; overflow: auto; padding-bottom: 6px; align-items: stretch; }
-.cs-gap { width: 1px; background: var(--line); margin: 0 4px; flex: none; }
 .cs-strip { flex: none; width: 118px; background: var(--panel); border-radius: var(--r4); padding: 10px 8px; display: flex; flex-direction: column; align-items: center; gap: 8px; cursor: pointer; box-shadow: inset 0 2px 0 var(--c, var(--line)); }
 .cs-strip.sel { background: var(--sel-bg); }
 .cs-strip.muted .cs-top b { color: var(--ink3); }
@@ -642,8 +678,6 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 .vsep { width: 1px; height: 52px; background: var(--line); align-self: center; }
 .synth { gap: 10px; }
 .synth .sec { display: flex; flex-direction: column; gap: 8px; background: var(--panel2); border-radius: var(--r3); padding: 9px 11px; }
-.viz { width: 132px; height: 38px; background: var(--bg); border-radius: var(--r2); display: block; }
-.viz path { fill: none; stroke: var(--k); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
 .sampler { flex-direction: column; align-items: stretch; }
 .snd { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-radius: var(--r2); padding: 4px; }
 .snd .sn { font-size: 12px; max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -652,8 +686,6 @@ canvas.wave { width: 100%; min-width: 320px; height: 46px; background: var(--bg)
 .mtr i { display: block; height: 100%; width: 100%; background: var(--grn2); transform-origin: 0 50%; transform: scaleX(0); will-change: transform; }   /* comme .ar-mtr i */
 .mtr.hot i { background: var(--or); }
 .mtr.lg { height: 8px; }
-.tl-empty { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; padding: var(--s6); color: var(--ink3); }
-.tl-empty b { font-family: var(--f-disp); font-weight: 400; font-size: 18px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink2); }
 
 /* ── le nodal ───────────────────────────────────────────── */
 .nd { height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--s4); }
@@ -693,10 +725,6 @@ canvas.wave { width: 100%; min-width: 320px; height: 46px; background: var(--bg)
 .nd-card .ft { display: flex; flex-direction: column; gap: 6px; padding: 0 14px 10px; }
 .nd-card .io { display: flex; justify-content: space-between; font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
 .nd-card .io span:last-child { color: var(--k); }
-.nd-world.lod1 .nd-card .ft .io, .nd-world.lod1 .kn .l { display: none; }
-.nd-world.lod0 .nd-card .bd, .nd-world.lod0 .nd-card .ft { display: none; }
-.nd-world.lod0 .nd-card .hd .nm { font-size: 26px; }
-.nd-world.lod0 .nd-card .hd .lbl { font-size: 14px; }
 .nd-tools, .nd-zoom {
   position: absolute; top: 10px; display: flex; align-items: center; gap: 6px;
   background: var(--veil); border-radius: var(--r3); padding: 5px 7px; box-shadow: inset 0 0 0 1px var(--line); cursor: default;

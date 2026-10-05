@@ -31,7 +31,7 @@
 // quelqu'un (un clic sur son visage) et « suivez-moi » (la présence porte `lead`).
 // L'étude : docs/etudes/ideation_collab.md, § 5 à 8.
 
-import { api, el, toast, href, $, espace } from '../commun/shell.js';
+import { api, el, toast, href, $, ici, avecEspace } from '../commun/shell.js';
 import { menu } from '../commun/menu.js';
 import { createCoedition } from './coedition.js';
 import { createRecorder } from './enregistrer.js';
@@ -39,7 +39,8 @@ import { createPanel, createTalk, VZ_ICO } from './visio.js';
 import { fenetres } from '../commun/fenetre.js';
 
 const API = window.SR_API ? new URL(window.SR_API, location.href) : new URL(href('api/'));
-const url = (p) => new URL(p, API).href;
+// le flux, les balises : dans le Workspace de la planche qu'ils nomment (commun/shell.js, espaceDocument)
+const url = (p) => avecEspace(new URL(p, API).href);
 const HAS_RTC = typeof RTCPeerConnection === 'function';
 // getUserMedia et getDisplayMedia n'existent que dans un contexte sécurisé
 // (https, ou localhost) : ailleurs navigator.mediaDevices vaut undefined (MDN).
@@ -108,7 +109,7 @@ export function install(app) {
     if (!C.https) return '';
     try {
       const u = new URL(location.pathname, `${C.https}/`);
-      if (espace()) u.searchParams.set('e', espace());
+      if (ici()) u.searchParams.set('e', ici());
       u.searchParams.set('visio', '1');
       u.hash = C.bid || location.hash.slice(1);
       return u.href;

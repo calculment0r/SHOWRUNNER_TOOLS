@@ -152,6 +152,8 @@ html.dragging * { cursor: inherit !important; }
 .ndx-dessus .piste-titre .nm { font-family: var(--f-disp); font-size: 12px; line-height: 18px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink); }
 .ndx-dessus .piste-titre__couleur { width: 14px; height: 14px; padding: 0; border: 0; border-radius: 3px; cursor: pointer; background: var(--c); flex: none; margin-left: 3px; }
 .ndx-dessus .piste-titre__couleur:hover { box-shadow: 0 0 0 2px var(--line-cy); }
+/* une voie de la Session : la même étiquette, marquée (une voie née d'une piste en a souvent le nom) */
+.ndx-dessus .piste-titre__sorte { font-family: var(--f-mono); font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink3); }
 
 /* LE TRACÉ D'ORDRE au bouton du milieu (MachinePanel.tsx, tracerOrdre) : la
    courbe et les rangs vivent dans l'écran ; le trait du lasso d'Idéation */
@@ -208,7 +210,7 @@ html.dragging * { cursor: inherit !important; }
   flex: none; white-space: nowrap; cursor: pointer; max-width: 100%; background: none; border: 0; padding: 0; line-height: 1.3;
 }
 .tile .fader__label--upright { writing-mode: vertical-rl; text-orientation: mixed; transform: rotate(180deg); display: flex; align-items: center; justify-content: flex-end; overflow: hidden; }
-/* la surface : un écran encastré (.viz du rack) — le dessin du jumeau, son filet par-dessus */
+/* la surface : un écran encastré (le fond --bg, comme les écrans du rack) — le dessin, son filet par-dessus */
 .tile .surface { position: relative; flex: none; border-radius: var(--r2); overflow: hidden; }
 .tile .surface::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--line); pointer-events: none; }
 .surface__readout {
@@ -309,7 +311,7 @@ html.dragging * { cursor: inherit !important; }
 .machine__label--live:hover { color: var(--ink); }
 .machine__label--exposed { color: var(--k); box-shadow: inset 0 -1px 0 var(--k); }
 .machine__strip { position: absolute; display: flex; align-items: center; justify-content: center; color: var(--ink2); text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; pointer-events: none; }
-/* l'afficheur : un écran encastré (.gen-pre), le texte dans l'accent */
+/* l'afficheur : un écran encastré (le fond --bg, le texte en mono), le texte dans l'accent */
 .machine__display { position: absolute; border-radius: var(--r1); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); display: flex; align-items: center; overflow: hidden; }
 .machine__display-text { color: var(--k); white-space: nowrap; padding-left: 5px; letter-spacing: 0.06em; }
 /* la molette de clavier : un rail de console, un chapeau */

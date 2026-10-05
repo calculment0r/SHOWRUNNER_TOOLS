@@ -45,11 +45,32 @@
 .sr-lect-ic svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .sr-lect-ic.on { background: var(--grn); color: var(--on-grn); box-shadow: none; }
 .sr-lect-ic[aria-disabled="true"] { opacity: .35; cursor: default; }
-.sr-lect-vol { width: 76px; }   /* le curseur du thème (curseur.css) */
+/* le son : LE fader couché du kit (musique/ui.js, fader({ couche: true }) ; musique.css, .fdr.h — Cal, 06/10),
+   en curseur natif (le clavier et l'accessibilité restent ceux du navigateur) : un rail creux arrondi de
+   16 px, le trait de la valeur dans l'accent (--v, posée par lecteur.js), le chapeau plein, ombré, qui tient
+   dans le rail (8 px de large : CAP_COUCHE de ui.js). Le soulèvement au survol vient de curseur.css. */
+.sr-lect-vol { width: 76px; height: 16px; cursor: ew-resize; }
+.sr-lect-vol::-webkit-slider-runnable-track {
+  height: 16px; border-radius: 5px; box-shadow: none;
+  background: linear-gradient(var(--line-cy), var(--line-cy)) 0 7px / calc(var(--v, 1) * (100% - 8px) + 4px) 2px no-repeat, var(--panel3);
+}
+.sr-lect-vol::-moz-range-track { height: 16px; border-radius: 5px; box-shadow: none; background: var(--panel3); }
+.sr-lect-vol::-moz-range-progress { height: 2px; background: var(--line-cy); }
+.sr-lect-vol::-webkit-slider-thumb { width: 8px; height: 12px; margin-top: 2px; border-radius: 999px; background: var(--ink); box-shadow: 0 2px 6px var(--drop); }
+.sr-lect-vol::-moz-range-thumb { width: 8px; height: 12px; border-radius: 999px; background: var(--ink); box-shadow: 0 2px 6px var(--drop); }
 
 /* la frise : la règle, la bande (images ou onde), les pistes de la page, la tête */
 .sr-lect-frise { position: relative; background: var(--bg); }
-.sr-lect-defile { overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+/* la barre de défilement de la frise (zoomée) : fine, aux jetons du thème (Cal, 06/10 : la piste grise du
+   navigateur n'était pas dans le thème). Pas de `scrollbar-width` pour Chromium : posé, il fait oublier
+   ::-webkit-scrollbar et revenir la barre du système (developer.chrome.com, « Scrollbar styling », Chrome 121) ;
+   Firefox, qui n'a pas ::-webkit-scrollbar, prend scrollbar-width et scrollbar-color (MDN). */
+.sr-lect-defile { overflow-x: auto; overflow-y: hidden; }
+.sr-lect-defile::-webkit-scrollbar { height: 6px; }
+.sr-lect-defile::-webkit-scrollbar-track { background: transparent; }
+.sr-lect-defile::-webkit-scrollbar-thumb { background: var(--panel3); border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line-cy); }
+.sr-lect-defile::-webkit-scrollbar-thumb:hover { background: var(--line-cy); }
+@supports not selector(::-webkit-scrollbar) { .sr-lect-defile { scrollbar-width: thin; scrollbar-color: var(--panel3) transparent; } }
 .sr-lect-in { position: relative; min-width: 100%; cursor: ew-resize; touch-action: none; user-select: none; }
 .sr-lect-regle { position: relative; height: 24px; background: var(--panel2); box-shadow: inset 0 -1px 0 var(--line); overflow: hidden; }
 .sr-lect-ticks { position: absolute; inset: 0; }
@@ -58,17 +79,14 @@
   border-radius: var(--r2); background: var(--panel3) left center / auto 100% repeat-x;
   box-shadow: inset 0 0 0 1px var(--line-cy);
 }
-.sr-lect-piste.sr-lect-audio {
-  height: var(--sr-lect-onde-h, 120px); background: var(--grn-bg); border-radius: var(--r2); box-shadow: inset 0 0 0 1px var(--line-gr);
-}
-/* le son d'une vidéo (`onde: true`) : moins haut que celui d'un son seul ; la page règle l'un et l'autre */
+.sr-lect-piste.sr-lect-audio { background: var(--grn-bg); border-radius: var(--r2); box-shadow: inset 0 0 0 1px var(--line-gr); }
+/* le son d'une vidéo (`onde: true`) : sa propre hauteur, posée par la page (--sr-lect-son-h) */
 .sr-lect-piste.sr-lect-son { height: var(--sr-lect-son-h, 72px); }
-/* l'onde (commun/onde.js) : deux canvas sur la seule partie visible (le lecteur les place) ; la couleur
-   est un jeton, lue par le dessin ; le fond est plus pâle (le dessin le fait : le spectre reste plein) */
-.sr-lect-onde {
-  position: absolute; top: 6px; left: 0; height: calc(100% - 12px); width: 0; display: block;
-  color: var(--grn2); pointer-events: none;
-}
+/* l'onde (commun/onde.js) : un cadre sur la seule partie visible (le lecteur pose left et width), en
+   retrait de 6 px en haut et en bas — il remplit la bande à toute hauteur ; ses deux canvas le remplissent.
+   La couleur est un jeton, lue par le dessin ; le fond est plus pâle (le dessin le fait : le spectre reste plein) */
+.sr-lect-onde { position: absolute; inset: 6px 0; width: 0; color: var(--grn2); pointer-events: none; }
+.sr-lect-onde-cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .sr-vue-son { min-width: 64px; }
 
 /* en plein écran : l'image prend tout, la barre et la frise dessous */

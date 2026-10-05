@@ -368,6 +368,13 @@ DIAGS = {   # id : (nom court, ce qu'il dit, commande, délai en s, action ?)
                    "print('poppler :', ', '.join(k + (' oui' if v else ' absent') for k, v in s.items())); "
                    "print('les PDF :', 'lus par le portail (texte, pages rendues)' if s['pdftotext'] else 'lus par la page (pdf.js, depuis cdnjs)')"],
                   30, False),
+    # 06/10 : l'export PDF des présentations d'Idéation (server/tools/presentation_pdf.py) : Chromium sans affichage
+    "presentation": ("Présentation · PDF", "l'export PDF des présentations d'Idéation : node, Playwright et Chromium sur la machine du portail (Chromium lancé pour de bon)",
+                     ["python3", "-c", "import sys; sys.path.insert(0, 'server'); from tools import presentation_pdf as p; s = p.state(launch=True); "
+                      "print('node :', s['node'] or 'absent'); print('playwright :', s.get('playwright') or 'introuvable', s.get('version') or ''); "
+                      "print('chromium :', s.get('chromium') or '?', s.get('browser') or ''); "
+                      "print('export PDF :', 'prêt' if s['ok'] else 'impossible — ' + s['why'])"],
+                     150, False),
     "agent": ("Agent Showrunner", "le modèle de l'agent d'Idéation dans Ollama (/api/show) : tools et vision dans ses capacités, sa fenêtre de contexte",
               ["python3", "tools/diag_agent.py"], 90, False),
 }

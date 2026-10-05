@@ -787,7 +787,9 @@ def selftest(call, ok) -> None:
     st2, back = call("POST", f"/api/library/{p0['id']}/restore")
     ok(st == 200 and st2 == 200 and back.get("kind") == KIND and back.get("playlist", {}).get("tracks") == [],
        "corbeille et retour : comme tout objet")
-    ok("playlist" in (library.import_refusal(library.get(pid), "esp-ailleurs") or ""), "rapatrier une playlist : refusé, la raison dite")
+    # rapatrier : une copie, avec ses sons et sa pochette (server/tools/elements.py, DOC_IMPORT ; essayé par asset.py)
+    ok(library.import_refusal(library.get(pid), "esp-ailleurs") is None and KIND in library.DOC_IMPORT,
+       "rapatrier une playlist : permis, ses sons et sa pochette viennent avec elle")
 
     # le tempo et la tonalité d'un son : la partition, la recette, la chanson d'une piste
     ok(key_of("F minor") == {"tonic": 5, "mode": "minor", "label": "Fm"} and key_of("Bb")["tonic"] == 10

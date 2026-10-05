@@ -42,6 +42,9 @@ import { openGenerative, options, bestStems, STEM_FR } from './generatif.js';
 import { GEN_KINDS, genJobDone, isGenTrack, newRegion } from './generatif_region.js';   // génératif : les prises d'une région, sa partition, le MIDI extrait
 import { openGuide } from './guide.js';
 import { branchePanneau } from './panneau.js';   // le panneau Asset commun (commun/dock.js) : sons et MIDI de la bibliothèque
+// le Space de Musique du projet (06/10, étape 7 de docs/etudes/musique_spaces_playlists.md) : la rubrique
+// « Space » du navigateur, le menu de l'app Musique ; un projet neuf naît dans le Space montré
+import { monterSpace, suivreProjet, spacePourNeuf } from './space.js';
 
 mountHeader('music', { sub: 'studio · YuE · stems' });
 
@@ -154,6 +157,15 @@ export const app = {
     S.proj.ui.detail = which;
     S.proj.ui.dock = true;
     S.dockJump = which;
+    saveQuiet();
+    if (S.view !== 'timeline') app.setView('timeline'); else render();
+  },
+  // le panneau du bas, compact ↔ grand (editeurs.js) : « Agrandir », Ctrl+Alt+E (Live 12 :
+  // « Expand Clip View ») ; retenu par projet, chaque taille garde sa hauteur (timeline.js)
+  basculerDetail() {
+    S.proj.ui.dockGrand = !S.proj.ui.dockGrand || undefined;
+    S.proj.ui.dock = true;
+    S.dockJump = 'clip';
     saveQuiet();
     if (S.view !== 'timeline') app.setView('timeline'); else render();
   },
@@ -926,6 +938,7 @@ export const app = {
   },
   stemsItem: (itemId) => runStems(itemId, null),
   exportMix: () => openExport(),
+  ouvrirProjet: (id) => openProject(id),   // la rubrique « Space » du navigateur (space.js)
   paintTransport: () => paintTransport(),
   // « Envoyer à la Session » (timeline.js : le menu d'un clip, d'une plage ; l'onglet) : biblio.js
   versSession: (o) => versSession(app, o),
@@ -1118,7 +1131,7 @@ async function openProject(id, esp = {}) {
   S.proj = p;
   structVue = empreinteStructure(p);
   espProjet = p.space || esp.espace || espace() || null;
-  espaceDocument(espProjet);   // l'en-tête dit l'espace du projet quand ce n'est pas celui de l'onglet
+  espaceDocument(espProjet, p.id);   // l'en-tête dit l'espace du projet ; une page rechargée le rouvre dans le sien
   S.view = MAKERS[p.ui?.view] ? p.ui.view : 'timeline';
   const t0 = p.tracks.find((t) => t.kind !== 'bus');
   S.sel = { track: t0?.id || null, tracks: [], pat: t0?.pat || null, clip: null, clips: [], mod: null, cable: null };
@@ -1132,6 +1145,7 @@ async function openProject(id, esp = {}) {
   render(true);
   watchPending();
   overviewSoon(100);
+  suivreProjet(p);   // la rubrique « Space » montre le Space du projet (space.js)
 }
 
 async function newProject() {
@@ -1143,15 +1157,19 @@ async function newProject() {
   const paintT = () => put(cards, ...T.map(([k, t, s]) => el('button', { class: `mu-tpl${tpl === k ? ' on' : ''}`, type: 'button', onclick: () => { tpl = k; paintT(); } }, el('b', {}, t), el('span', {}, s))));
   paintT();
   const go = el('button', { class: 'tb go', type: 'button' }, 'Créer');
+  // il naît dans le Space montré par la rubrique « Space » du navigateur (space.js)
+  const sp = spacePourNeuf();
   const m = modal({ title: 'Nouveau projet', wide: true,
-    body: [el('label', { class: 'field' }, el('span', { class: 'lbl' }, 'Nom'), name), el('div', { class: 'field' }, el('span', { class: 'lbl' }, 'Départ'), cards)],
+    body: [el('label', { class: 'field' }, el('span', { class: 'lbl' }, 'Nom'), name), el('div', { class: 'field' }, el('span', { class: 'lbl' }, 'Départ'), cards),
+      el('p', { class: 'mu-tpl-sp' }, sp.archived ? `le Space « ${sp.name} » est archivé : le projet naîtra dans « Mon Space »`
+        : `il naît dans le Space « ${sp.name} » · la rubrique Space du navigateur en choisit un autre`)],
     foot: [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', type: 'button', onclick: () => m.close() }, 'Annuler'), go] });
   setTimeout(() => name.focus(), 30);
   go.addEventListener('click', async () => {
     const n = name.value.trim() || 'Sans titre';
     go.disabled = true;
     try {
-      const p = await api('music/projects', { method: 'POST', body: { name: n, template: tpl } });
+      const p = await api('music/projects', { method: 'POST', body: { name: n, template: tpl, music_space: sp.archived ? '' : sp.music_space } });
       S.list.unshift({ id: p.id, name: p.name });
       m.close();
       await openProject(p.id);
@@ -1550,7 +1568,7 @@ addEventListener('keydown', async (e) => {
   // pour passer entre nos trois onglets de travail » ; Live y bascule Session ↔
   // Arrangement) ; le nodal dans sa fenêtre sort du tour. Maj+Tab ou F12 : Clip ↔
   // Instruments (Live : Clip View ↔ Device View, gardé), Ctrl+Alt+B : le
-  // navigateur, Ctrl+Alt+3 / 4 : la vue Clip / Instruments
+  // navigateur, Ctrl+Alt+3 / 4 : la vue Clip / Instruments, Ctrl+Alt+E : le clip en grand ↔ compact
   if (c === 'Tab' && !ctrl && !e.altKey) {
     e.preventDefault();
     if (e.shiftKey) { app.showDetail(S.proj.ui.detail === 'device' ? 'clip' : 'device'); return; }
@@ -1562,6 +1580,7 @@ addEventListener('keydown', async (e) => {
   if (ctrl && e.altKey && c === 'KeyB') { e.preventDefault(); S.proj.ui.nav = S.proj.ui.nav === false; saveQuiet(); render(); return; }
   if (ctrl && e.altKey && c === 'Digit3') { e.preventDefault(); app.showDetail('clip'); return; }
   if (ctrl && e.altKey && c === 'Digit4') { e.preventDefault(); app.showDetail('device'); return; }
+  if (ctrl && e.altKey && c === 'KeyE') { e.preventDefault(); app.basculerDetail(); return; }   // le clip en grand ↔ compact
   // les commandes se lisent par la lettre (ui.js, letter) ; le clavier MIDI, plus bas, par la position (KEYS)
   const L = letter(e);
   // les pistes : Ctrl+T audio, Ctrl+Maj+T MIDI (un synthé), Ctrl+Alt+T retour (bus)
@@ -1717,7 +1736,8 @@ async function runStems(itemId, clip, want = null) {
   let title = itemId;
   try { title = (await loadItem(itemId)).title || itemId; } catch { /* le titre n'est qu'une étiquette */ }
   try {
-    const j = await api('music/stems/separate', { method: 'POST', body: { src: itemId, model: best.id, stems: best.stems } });
+    // `project` : des pistes d'un son sans Space naissent dans le Space du projet (server/tools/chanson.py)
+    const j = await api('music/stems/separate', { method: 'POST', body: { src: itemId, model: best.id, stems: best.stems, project: S.proj.id } });
     S.proj.pending.push({ job: j.id, kind: 'stems', clip, item: itemId, title: `Séparer · ${title}` });
     app.commit('data');
     toast(`en file : séparation · ${best.name}${s.o.engine === 'factice' ? ' (moteur d\'essai : des filtres, pas une séparation)' : ''}`, 5000);
@@ -1871,6 +1891,11 @@ function openExport() {
     const id = [q, last].find((x) => x && S.list.some((p) => p.id === x)) || S.list[0].id;
     await openProject(id);
     engines();
+    // le menu des Spaces (chanson/spaces.js) dans la rubrique « Space » : le Workspace du projet, la pile d'ODIO ;
+    // la rubrique fermée (ou le navigateur, ou la vue Nodal), rien ne se relit avant qu'on la montre
+    monterSpace(app, { U: undoStack, esp: espaceDuProjet,
+      ouverte: () => S.view !== 'nodal' && S.proj?.ui?.nav !== false && (S.proj?.ui?.navOpen || {}).space !== false })
+      .catch((e) => toast(`Spaces : ${e.message}`, 6000));
   } catch (e) {
     put(viewBox, el('p', { class: 'warn' }, `le portail ne répond pas : ${e.message}`));
   }
