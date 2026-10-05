@@ -20,6 +20,7 @@
 // après le geste, décodée avant l'échange.
 
 import { el, href, fmtDur, etypeFr, toast, dropZone } from '../commun/shell.js';
+import { docLigne } from '../commun/documents.js';
 import { survolSon } from '../commun/lecteur.js';
 import { menu } from '../commun/menu.js';
 import { brancherCanvas } from '../commun/molette.js';
@@ -310,7 +311,7 @@ export function createCanvas(app) {
   const pickSrc = (n, it, z = V().z) => pickView(it, Math.max(n.w / (n.crop?.w || 1), n.h / (n.crop?.h || 1)) * z);
   function swapRes() {
     for (const n of S.board?.nodes || []) {
-      if (n.type !== 'media' || n.kind !== 'image') continue;
+      if (n.type !== 'media' || (n.kind !== 'image' && n.kind !== 'document')) continue;   // un document : sa couverture
       const d = dom.get(n.id);
       if (!d || d.off) continue;
       const img = d.el.querySelector('img');
@@ -321,7 +322,7 @@ export function createCanvas(app) {
     }
   }
   function lowRes(n, e) {
-    if (n.type !== 'media' || n.kind !== 'image') return;
+    if (n.type !== 'media' || (n.kind !== 'image' && n.kind !== 'document')) return;
     const it = S.items.get(n.item);
     const img = it && !it.missing && e.querySelector('img');
     if (!img) return;
@@ -563,6 +564,13 @@ export function createCanvas(app) {
       a.addEventListener('pause', () => { b.textContent = 'Écouter'; b.classList.remove('on'); });
       return [el('span', { class: 'k lbl' }, 'son'), el('div', { class: 'nm' }, it.title || it.id),
         el('div', { class: 'arow' }, b, el('span', { class: 'lbl' }, it.duration ? fmtDur(it.duration) : '')), a];
+    }
+    if (n.kind === 'document') {
+      // une page debout : sa couverture (la première page, sinon la carte du serveur), sa ligne, son titre ;
+      // le double-clic l'ouvre dans la liseuse (commun/documents.js)
+      const p = hits(n, cullRect()) ? pickSrc(n, it) : pickView(it, 1);
+      return [el('div', { class: 'dim' }, p.url ? el('img', { src: p.url, 'data-vw': String(p.w), decoding: 'async', alt: '', draggable: 'false' }) : null),
+        el('div', { class: 'dcap' }, el('span', { class: 'k lbl' }, docLigne(it)), el('b', {}, it.title || it.id))];
     }
     const refs = it.element?.refs || [];
     // ses références : cinq sous l'image, toutes de près (Détail)
@@ -1319,7 +1327,7 @@ export function createCanvas(app) {
       else if (n.type === 'frame') renameFrame(n.id);
       // une image : la recadrer, comme dans Miro (objets/recadrer.js) ; « Voir en grand » reste au menu et à droite
       else if (n.type === 'media' && n.kind === 'image' && app.objets?.crop && !app.objets.crop.whyNot(n)) app.objets.crop.start(n.id);
-      else if (n.type === 'media' && (n.kind === 'image' || n.kind === 'video')) app.lightbox(n);
+      else if (n.type === 'media' && (n.kind === 'image' || n.kind === 'video' || n.kind === 'document')) app.lightbox(n);
       else if (CARDS.has(n.type)) dom.get(n.id)?.el.querySelector('textarea:not([readonly])')?.focus({ preventScroll: true });
       return;
     }
@@ -1435,7 +1443,8 @@ export function createCanvas(app) {
   const dropPoint = () => (dropAt ? toWorld(...dropAt) : center());
   // un dépôt dans une carte (zone dans la zone) n'atteint pas la planche : son filet s'éteint quand même
   for (const ev of ['drop', 'dragend']) addEventListener(ev, () => setTimeout(() => cv.classList.remove('drop-on')), true);
-  dropZone(cv, { kinds: ['image', 'video', 'audio', 'element'], via: 'ideation', onitems: (items) => app.placeMany(items, ...dropPoint()) });
+  // tout fichier (un PDF, un texte, un fichier inconnu : un document) ; les sortes qu'un objet `media` porte
+  dropZone(cv, { kinds: app.mediaKinds(), via: 'ideation', onitems: (items) => app.placeMany(items, ...dropPoint()) });
   // une partie d'un élément (le panneau de droite : planche, expression, modèle 3D) : posée là où on lâche
   cv.addEventListener('drop', (e) => {
     const raw = e.dataTransfer?.getData(PART_MIME);

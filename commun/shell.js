@@ -359,8 +359,21 @@ export async function api(path, { method = 'GET', body, raw, headers = {}, signa
 // ideation/projet.js) — fetch ne la donne pas, l'envoi passe alors par XMLHttpRequest ; `signal` l'arrête.
 export async function uploadFile(file, { tool = 'upload', via = '', folder = '', title = '', espace: esp = ESPACE, onprogress = null, signal } = {}) {
   const q = new URLSearchParams({ name: file.name, tool, via, folder, title: title || file.name.replace(/\.[^.]+$/, '') });
-  if (onprogress) return envoiSuivi('library/upload?' + q, file, { espace: esp, onprogress, signal, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
-  return api('library/upload?' + q, { method: 'PUT', raw: file, espace: esp, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
+  const it = onprogress
+    ? await envoiSuivi('library/upload?' + q, file, { espace: esp, onprogress, signal, headers: { 'Content-Type': file.type || 'application/octet-stream' } })
+    : await api('library/upload?' + q, { method: 'PUT', raw: file, espace: esp, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
+  return lireSiBesoin(it, file, { signal });
+}
+// Un document que le serveur n'a pas su lire (un PDF sans poppler : `doc.needs_page`) : la page
+// le lit (commun/documents.js, pdf.js) et lui dépose son texte et sa couverture ; rend l'objet
+// neuf. Un échec ne fait pas échouer le dépôt : le document reste rangé, sa fiche dit pourquoi
+// (et la liseuse réessaiera). Une page qui dépose par uploadFile n'a rien à faire de plus.
+export async function lireSiBesoin(it, file = null, { signal } = {}) {
+  if (it?.kind !== 'document' || !it.doc?.needs_page) return it;
+  try {
+    const { extraireDocument } = await import('./documents.js');
+    return (await extraireDocument(it, { file, signal })) || it;
+  } catch (e) { console.warn('documents : la page n’a pas lu', it.title || it.id, '—', e.message); return it; }
 }
 // Un envoi dont on suit la progression (XMLHttpRequest, upload.onprogress), avec les erreurs d'api() :
 // le message du portail, `status`, la porte sur un 401.
@@ -443,6 +456,8 @@ const kindOfFile = (f) => { const x = (f.name.includes('.') ? f.name.split('.').
 // bibliothèque, déjà filtrés par `kinds` (un élément compte pour une image
 // quand `kinds` prend 'element'). La zone s'inscrit au registre du panneau
 // Asset (declareZone) : ses `kinds` font les filtres du panneau dans l'outil.
+// Une zone qui prend 'document' prend tout fichier : ce qui n'est pas un média
+// y entre en document (server/tools/documents.py, 05/10).
 // Un élément versionné lâché là où l'on attend la sorte de sa dernière version
 // (un son, pour une chanson d'ODIO) y pose cette dernière version.
 export function dropZone(node, { kinds = ['image', 'element'], multiple = true, via = '', label = '', onitems = () => {} } = {}) {
@@ -483,11 +498,19 @@ export function dropZone(node, { kinds = ['image', 'element'], multiple = true, 
     const refused = files.filter((f) => !kinds.includes(kindOfFile(f)));
     files = files.filter((f) => kinds.includes(kindOfFile(f)));
     if (!multiple) files = files.slice(0, 1);
+    const odd = [];
     for (let i = 0; i < files.length; i++) {
       toast(files.length > 1 ? `dépôt ${i + 1} / ${files.length} · ${files[i].name}` : `dépôt · ${files[i].name}`, 60000);
-      try { got.push(await uploadFile(files[i], { tool: 'upload', via })); } catch (err) { toast(`${files[i].name} : ${err.message}`); }
+      try {
+        const it = await uploadFile(files[i], { tool: 'upload', via });
+        got.push(it);
+        // la sorte est celle du portail, pas celle que l'extension laissait croire (un TIFF que
+        // PIL ne lit pas devient un document) : rangé quand même, la zone le dit
+        if (!kinds.includes(it.kind)) odd.push(it);
+      } catch (err) { toast(`${files[i].name} : ${err.message}`); }
     }
     if (refused.length) toast(`pas pris ici : ${refused.map((f) => f.name).join(', ')} (attendu : ${kinds.map(kindFr).join(', ')})`);
+    else if (odd.length) toast(`rangé dans la bibliothèque, pas pris ici : ${odd.map((it) => `${it.title || it.id} (${kindFr(it.kind)})`).join(', ')}`, 6000);
     else if (files.length) toast(files.length > 1 ? `${files.length} fichiers rangés dans la bibliothèque · Upload` : 'rangé dans la bibliothèque · Upload');
     const ok = got.filter((it) => kinds.includes(it.kind));
     if (ok.length) {
@@ -1167,14 +1190,20 @@ export function pick({ kinds = ['image', 'element'], multiple = false, title = '
     const tabs = el('div', { class: 'seg' });
     const done = el('button', { class: 'tb go', onclick: () => close([...chosen.values()]) }, multiple ? 'Prendre' : 'Prendre');
     const count = el('span', { class: 'lbl' });
-    const accept = [kinds.includes('image') || kinds.includes('element') ? 'image/*' : '', kinds.includes('video') ? 'video/*' : '',
-      kinds.includes('audio') ? 'audio/*' : ''].filter(Boolean).join(',');
+    // 'document' : tout fichier (un PDF, un texte, un fichier inconnu) ; sinon, les médias attendus
+    const accept = kinds.includes('document') ? '' : [kinds.includes('image') || kinds.includes('element') ? 'image/*' : '', kinds.includes('video') ? 'video/*' : '',
+      kinds.includes('audio') ? 'audio/*' : '', kinds.includes('midi') ? '.mid,.midi' : ''].filter(Boolean).join(',');
     const fileIn = el('input', { type: 'file', multiple: true, accept, hidden: true,
       onchange: async () => {
         for (const f of fileIn.files) {
-          try { const it = await uploadFile(f, { tool: 'upload', via: 'selecteur' }); chosen.set(it.id, it); if (!multiple) return close([it]); } catch (e) { toast(e.message); }
+          try {
+            const it = await uploadFile(f, { tool: 'upload', via: 'selecteur' });
+            // la sorte du portail n'est pas attendue ici (un PDF choisi par « tous les fichiers ») : rangé, pas pris
+            if (!kinds.includes(it.kind)) { toast(`rangé dans la bibliothèque, pas pris ici : ${it.title || it.id} (${kindFr(it.kind)})`, 6000); continue; }
+            chosen.set(it.id, it); if (!multiple) return close([it]);
+          } catch (e) { toast(e.message); }
         }
-        load();
+        paintCount(); load();
       } });
     const scrim = el('div', { class: 'scrim picker' },
       el('div', { class: 'modal', role: 'dialog', 'aria-label': title },

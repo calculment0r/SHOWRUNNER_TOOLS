@@ -73,6 +73,7 @@ export function createMenus(app) {
         if (n.crop) out.push({ label: 'Image entière', sub: 'défaire le recadrage', onclick: () => app.mutate(() => { const F = app.objets.crop.fullOf(n); Object.assign(n, { x: Math.round(F.x), y: Math.round(F.y), w: Math.round(F.w), h: Math.round(F.h) }); delete n.crop; }) });
       }
       if (n.kind === 'image' || n.kind === 'video') out.push({ label: 'Voir en grand', sub: n.kind === 'video' ? 'double-clic' : '', disabled: gone, why: 'cet objet a quitté la bibliothèque', onclick: () => app.lightbox(n) });
+      if (n.kind === 'document') out.push({ label: 'Lire', sub: 'double-clic', disabled: gone, why: 'cet objet a quitté la bibliothèque', onclick: () => app.liseuse(n) });
       if (n.kind === 'image') {
         const rec = !gone && app.gen.recipe(it);
         out.push({ label: 'Variations ×4', disabled: !rec, why: 'image sans recette (déposée ou faite ailleurs) : une carte Générer la prend en référence', onclick: () => app.gen.variations(n.id, 4) },
@@ -85,8 +86,8 @@ export function createMenus(app) {
       if (!gone) {
         const go = [{ label: 'Dans Asset', icon: '↗', onclick: () => open(`asset/#${it.id}`) }];
         if (n.kind === 'image') go.push({ label: 'Éditer dans Image', icon: '↗', onclick: () => open(`image/#${it.id}`) }, { label: 'Animer', icon: '↗', onclick: () => open(`movie/?start=${it.id}`) });
-        if (n.kind !== 'element') go.push({ label: 'Ajouter au montage', icon: '↗', studio: true, onclick: () => open(`montage/?add=${it.id}`) });
-        go.push({ label: 'Référence vidéo', icon: '↗', onclick: () => open(`movie/?ref=${it.id}`) });
+        if (n.kind !== 'element' && n.kind !== 'document') go.push({ label: 'Ajouter au montage', icon: '↗', studio: true, onclick: () => open(`montage/?add=${it.id}`) });
+        if (n.kind !== 'document') go.push({ label: 'Référence vidéo', icon: '↗', onclick: () => open(`movie/?ref=${it.id}`) });
         out.push({ label: 'Ouvrir ailleurs', items: go });
       }
     } else if (n.type === 'note' || n.type === 'sticky' || n.type === 'title') {

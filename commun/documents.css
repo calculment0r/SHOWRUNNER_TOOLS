@@ -1,0 +1,77 @@
+/* SHOWRUNNER TOOLS — la liseuse d'un document (commun/documents.js, 05/10/2026) :
+   les pages en vignettes à gauche, le texte (ou les pages d'un PDF) à droite.
+   Chargée par la liseuse elle-même ; Asset (la fiche) et Idéation (au double-clic).
+   Les jetons de commun/tokens.css seulement ; une page rendue par pdf.js garde le
+   papier du document (blanc), c'est le document, pas le thème. */
+
+.sr-lis {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0; height: var(--sr-lis-h, calc(70 * var(--vh)));
+  background: var(--panel); border-radius: var(--r3); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden;
+}
+.sr-lis-bar {
+  display: flex; align-items: center; gap: var(--s3); min-height: 40px; padding: var(--s1) var(--s3);
+  box-shadow: inset 0 -1px 0 var(--line); flex: none;
+}
+.sr-lis-bar .sp { flex: 1; }
+.sr-lis-info { color: var(--cy); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.sr-lis-pos { color: var(--ink3); white-space: nowrap; }
+.sr-lis-msg { margin: 0; padding: var(--s2) var(--s3); color: var(--or); box-shadow: inset 0 -1px 0 var(--line); flex: none; }
+.sr-lis-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 128px minmax(0, 1fr); }
+.sr-lis.seule .sr-lis-body { grid-template-columns: minmax(0, 1fr); }
+
+/* les vignettes */
+.sr-lis-pgs {
+  overflow-y: auto; overscroll-behavior: contain; padding: var(--s3); display: flex; flex-direction: column; gap: var(--s3);
+  box-shadow: inset -1px 0 0 var(--line);
+}
+.sr-lis-pgs[hidden] { display: none; }
+.sr-lis-pg {
+  display: flex; flex-direction: column; align-items: center; gap: var(--s1); padding: 0; background: none; border: 0;
+  color: var(--ink3); cursor: pointer; flex: none;
+}
+.sr-lis-pg .pic {
+  position: relative; display: block; width: 100%; aspect-ratio: 3 / 4; overflow: hidden; border-radius: var(--r1);
+  background: var(--panel3);
+}
+.sr-lis-pg .pic img, .sr-lis-pg .pic canvas { display: block; width: 100%; height: 100%; object-fit: contain; object-position: top; }
+.sr-lis-pg .pic.wait { background: var(--panel2); }
+/* le filet par-dessus la page (une page rendue est opaque) */
+.sr-lis-pg .pic::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--line); pointer-events: none; }
+.sr-lis-pg:hover .pic::after { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.sr-lis-pg.on .pic::after { box-shadow: inset 0 0 0 2px var(--or); }
+.sr-lis-pg.on .n { color: var(--or); }
+.sr-lis-pg .n { font-family: var(--f-mono); font-size: 8px; letter-spacing: .18em; }
+.sr-lis-pg:focus-visible { outline: none; }
+.sr-lis-pg:focus-visible .pic::after { box-shadow: inset 0 0 0 2px var(--cy); }
+.sr-lis-mini {
+  position: absolute; inset: 0; padding: 6px 7px; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-size: 5.5px; line-height: 1.4; color: var(--ink2); text-align: left;
+}
+
+/* la page principale : le texte, ou les pages d'un PDF */
+.sr-lis-main { overflow-y: auto; overscroll-behavior: contain; padding: var(--s5) var(--s6) var(--s6); outline: none; }
+.sr-lis-main > .lbl { color: var(--ink3); }
+.sr-lis-p + .sr-lis-p { margin-top: var(--s6); padding-top: var(--s5); box-shadow: inset 0 1px 0 var(--line); }
+.sr-lis-p h4 { margin: 0 0 var(--s3); color: var(--ink3); font-weight: 400; }
+.sr-lis-t {
+  max-width: 76ch; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.7; color: var(--ink);
+  user-select: text;
+}
+.sr-lis[data-vue="pages"] .sr-lis-p + .sr-lis-p { box-shadow: none; padding-top: 0; margin-top: var(--s5); }
+.sr-lis-big {
+  position: relative; max-width: 1100px; margin: 0 auto; aspect-ratio: 3 / 4; border-radius: var(--r1); overflow: hidden;
+  background: var(--panel2);
+}
+.sr-lis-big::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--line); pointer-events: none; }
+.sr-lis-big canvas, .sr-lis-big img { display: block; width: 100%; height: 100%; }
+.sr-lis-vide { display: flex; flex-direction: column; align-items: center; gap: var(--s4); padding: var(--s5); text-align: center; }
+.sr-lis-vide img { max-width: min(420px, 100%); max-height: calc(48 * var(--vh)); border-radius: var(--r2); box-shadow: inset 0 0 0 1px var(--line); }
+.sr-lis-vide .hint { max-width: 52ch; margin: 0; }
+
+/* étroit (un téléphone) : les vignettes en bande au-dessus */
+@media (max-width: 640px) {
+  .sr-lis-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .sr-lis-pgs { flex-direction: row; overflow-x: auto; overflow-y: hidden; box-shadow: inset 0 -1px 0 var(--line); }
+  .sr-lis-pg { width: 64px; }
+  .sr-lis-main { padding: var(--s4); }
+}

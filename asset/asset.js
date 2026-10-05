@@ -45,18 +45,19 @@
 // celui de l'onglet s'y regarde et se rapatrie.
 import {
   mountHeader, api, pick, thumb, kindMark, el, $, $$, href, ROOT, fmtDate, fmtDur, kindFr, etypeFr, dropAnywhere,
-  dropZone, dragItem, dock, espace, espaceDocument, enTeteEspace, surEspace, ITEM_MIME, MULTI_MIME, studioSeul,
+  dropZone, dragItem, dock, espace, espaceDocument, enTeteEspace, surEspace, ITEM_MIME, MULTI_MIME, studioSeul, lireSiBesoin,
 } from '../commun/shell.js';
 import { createUndo, libPatch, libBoard, keyLabel } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { bind as bindView } from '../commun/proxies.js';
 import { contextMenu, pageMenu, copy } from '../commun/menu.js';
 import { lecteur, petitLecteur } from '../commun/lecteur.js';   // LE lecteur (30/09) : la vidéo ou le son d'une fiche, sa frise, sa tête
+import { liseuse, docLigne, nomDe, unitFr } from '../commun/documents.js';   // LA liseuse (05/10) : les pages, le texte d'un document
 
 mountHeader('asset');
 // le panneau Asset commun (commun/dock.js) n'est plus monté ici (Cal, 05/10 : la page est déjà la
 // bibliothèque ; commun/shell.js, DOCK.page) — ce réglage reste sans effet tant qu'il ne l'est pas
-dock.configure({ kinds: ['image', 'video', 'audio', 'midi', 'sequence', 'element'], label: 'Asset',
+dock.configure({ kinds: ['image', 'video', 'audio', 'midi', 'sequence', 'element', 'document'], label: 'Asset',
   placeLabel: 'Ouvrir la fiche', place: (items) => { go('#' + items[0].id); }, fiche: (it) => go('#' + it.id),
   hint: 'clic : choisir · double-clic : la fiche' });
 
@@ -158,9 +159,10 @@ const bySpace = (items) => {
 };
 
 // les sortes : `sequence` (une séquence du Montage) et `midi` (un clip de
-// notes d'ODIO) depuis le 29/09 (server/core/library.py, KINDS)
+// notes d'ODIO) depuis le 29/09, `document` (tout le reste : PDF, texte, DOCX…)
+// depuis le 05/10 (server/core/library.py, KINDS)
 const KINDS = [['', 'Tout'], ['image', 'Images'], ['element', 'Éléments'], ['video', 'Vidéos'], ['audio', 'Sons'],
-  ['sequence', 'Séquences'], ['midi', 'MIDI']];
+  ['sequence', 'Séquences'], ['midi', 'MIDI'], ['document', 'Documents']];
 // les tris (server/tools/asset.py, SORTS)
 const SORTS = [['new', 'récents'], ['old', 'anciens'], ['updated', 'modifiés'], ['title', 'nom'], ['kind', 'sorte'], ['size', 'poids'], ['space', 'Workspace']];
 const DATES = [['', 'toutes dates'], ['1', 'aujourd’hui'], ['7', '7 derniers jours'], ['30', '30 derniers jours'], ['365', 'cette année']];
@@ -186,7 +188,7 @@ const toolFr = (t) => TOOL_FR[t] || t || 'upload';
 const MEDIA = ['image', 'video', 'audio'];
 const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
 const KIND_N = { image: ['image', 'images'], element: ['élément', 'éléments'], video: ['vidéo', 'vidéos'], audio: ['son', 'sons'],
-  sequence: ['séquence', 'séquences'], midi: ['clip MIDI', 'clips MIDI'] };
+  sequence: ['séquence', 'séquences'], midi: ['clip MIDI', 'clips MIDI'], document: ['document', 'documents'] };
 // les éléments versionnés (30/09, docs/etudes/apps_studio_elements.md) : une source,
 // une pile de versions ; leurs sortes s'ajoutent à celles des planches
 const VTYPE_FR = { music: 'musique', sound: 'son', sequence: 'séquence', picture: 'image' };
@@ -198,7 +200,7 @@ const stateLine = (s) => (!s ? '' : s.state === 'modifiée' ? `modifiée depuis 
 const fmtSize = (b) => (!b ? '—' : b < 1048576 ? `${Math.max(1, Math.round(b / 1024))} Ko` : b < 1073741824 ? `${(b / 1048576).toFixed(1).replace('.', ',')} Mo` : `${(b / 1073741824).toFixed(2).replace('.', ',')} Go`);
 
 // ── l'adresse : le lieu ──────────────────────────────────────
-const ID_RX = /^(ima|vid|aud|ele|seq|mid)-\d{8}-\d{6}-[0-9a-f]{4}$/;
+const ID_RX = /^(ima|vid|aud|ele|seq|mid|doc)-\d{8}-\d{6}-[0-9a-f]{4}$/;
 const ESP = /^(esp-[a-z0-9][a-z0-9-]{1,47})$/;
 function parseHash(raw = location.hash) {
   let h = raw.slice(1);
@@ -657,6 +659,7 @@ function subOf(it) {
   const p = it.params || {};
   if (it.kind === 'midi') return [p.bars ? `${p.bars} mes.` : '', p.notes ? `${p.notes} notes` : '', p.bpm ? `${p.bpm} bpm` : '', toolFr(it.origin?.tool)].filter(Boolean).join(' · ');
   if (it.kind === 'sequence') return [p.clips != null ? plural(p.clips, 'plan', 'plans') : '', it.duration ? fmtDur(it.duration) : '', p.format || ''].filter(Boolean).join(' · ');
+  if (it.kind === 'document') return [it.doc?.label || '', unitFr(it.doc?.pages, it.doc?.unit), toolFr(it.origin?.tool)].filter(Boolean).join(' · ');
   if (isLiving(it)) return [it.element.head ? `v${it.element.head}` : 'sans version', plural(it.element.count || 0, 'version', 'versions'), stateLine(it.source_state)].filter(Boolean).join(' · ');
   if (it.kind === 'element') return `${plural(it.element?.refs?.length || 0, 'réf.', 'réf.')}${it.element?.voices?.length ? ' · voix' : ''}${it.element?.meshes?.length ? ' · 3D' : ''} · ${toolFr(it.origin?.tool)}`;
   return [it.width && it.height ? `${it.width}×${it.height}` : '', it.origin?.model || toolFr(it.origin?.tool)].filter(Boolean).join(' · ');
@@ -1817,7 +1820,7 @@ function upRow(file) {
     el('div', { class: 'meter' }, el('div', { class: 'row' }, st, el('span', { class: 'sp' }), el('span', {}, fmtSize(file.size))), el('div', { class: 'bar' }, bar)));
   upBox.append(row);
   return {
-    prog: (f) => { bar.style.width = `${Math.round(f * 100)}%`; st.textContent = f < 1 ? `envoi · ${Math.round(f * 100)} %` : 'rangement'; },
+    prog: (f, msg) => { bar.style.width = `${Math.round(f * 100)}%`; st.textContent = msg || (f < 1 ? `envoi · ${Math.round(f * 100)} %` : 'rangement'); },
     done: (msg) => { row.classList.add('done'); bar.style.width = '100%'; st.textContent = msg; },
     fail: (msg) => { row.classList.add('err'); st.textContent = msg; },
   };
@@ -1853,7 +1856,9 @@ async function uploadFiles(files, { folder = '', then, space = null } = {}) {
   for (const f of files) {
     const r = upRow(f);
     try {
-      const it = await xhrUpload(f, folder, r.prog, space);
+      let it = await xhrUpload(f, folder, r.prog, space);
+      // un PDF que le serveur n'a pas lu (sans poppler) : la page le lit et lui dépose son texte (commun/documents.js)
+      if (it?.doc?.needs_page) { r.prog(1, 'lecture du PDF'); it = await lireSiBesoin(it, f); }
       r.done(`rangé${folder ? ` dans « ${folder} »` : ''}${space && space !== here() ? ` · ${spaceShort(space)}` : ''}`);
       done.push(it);
     } catch (e) { r.fail(e.message); }
@@ -1959,7 +1964,7 @@ async function paintSheet(id, { keepScroll = false } = {}) {
     return;
   }
   sheetEl.replaceChildren(...(it.kind === 'element' ? elementSheet(it) : it.kind === 'sequence' ? sequenceSheet(it)
-    : it.kind === 'midi' ? midiSheet(it) : itemSheet(it)));
+    : it.kind === 'midi' ? midiSheet(it) : it.kind === 'document' ? documentSheet(it) : itemSheet(it)));
   paintDatalist();
   if (keepScroll) scrollTo({ top: y });
 }
@@ -2037,6 +2042,7 @@ function foreignSheet(it) {
   const kicker = [kind, size, it.duration ? fmtDur(it.duration) : '', `dans ${spaceLong(it.space)}`].filter(Boolean).join(' · ');
   let media;
   if (!living && (it.kind === 'video' || it.kind === 'audio')) media = mediaPlayer(it);
+  else if (it.kind === 'document') media = docReader(it, { deposer: false });
   else if (it.kind === 'element' && !living) {
     // la planche, en lecture : ses références dans l'ordre où un modèle les lit
     media = el('div', { class: 'sh-main' }, blk('références', 'dans l’ordre où un modèle les lit',
@@ -2070,7 +2076,7 @@ function foreignSheet(it) {
   const acts = el('section', { class: 'sh-acts' }, bring,
     el('a', { class: 'tb ghost', href: otherTab(it.space, '#' + it.id), title: 'ouvrir sa fiche dans son Workspace (cet onglet y passe)' }, 'Y aller'),
     el('span', { class: 'sp' }),
-    it.url && it.kind !== 'element' ? el('a', { class: 'tb ghost', href: href(it.url), download: `${it.title || it.id}${(it.file || '').replace(/^main/, '')}` }, 'Télécharger')
+    it.url && it.kind !== 'element' ? el('a', { class: 'tb ghost', href: href(it.url), download: it.kind === 'document' ? nomDe(it) : `${it.title || it.id}${(it.file || '').replace(/^main/, '')}` }, 'Télécharger')
       : btn('Télécharger', () => download([it]), { title: 'un zip' }));
   const side = [];
   if (it.kind === 'element' && (it.element?.description || '').trim()) side.push(blk('ce que les modèles liront', null, el('p', { class: 'o-prose' }, it.element.description)));
@@ -2132,6 +2138,46 @@ function sequenceSheet(it) {
     ['plans', p.clips != null ? String(p.clips) : ''], ['durée', it.duration ? fmtDur(it.duration) : ''], ['format', p.format || ''],
     ['taille', it.width && it.height ? `${it.width} × ${it.height} px` : ''], ['images/s', it.fps],
   ]), el('p', { class: 'hint' }, 'Les plans qu’elle emploie sont sa lignée, ci-dessous : les ouvrir mène à leur fiche.'));
+  return [sheetHead(it, kicker), acts,
+    el('section', { class: 'sh-grid' }, media, el('aside', { class: 'sh-side' }, facts, rangement(it), lineage(it), fabrication(it)))];
+}
+
+// ── un document (05/10, server/tools/documents.py) ───────────
+// Le fichier rangé tel qu'il a été déposé, et ce que le portail en a lu : LA liseuse
+// (commun/documents.js) — les pages en vignettes, le texte page par page, les pages d'un
+// PDF telles qu'elles sont ; Télécharger rend le fichier même ; Ouvrir, ce que le
+// navigateur montre lui-même (un PDF, un texte : library.SAFE_TYPES). Un PDF que le
+// serveur n'a pas lu est lu par la page à l'ouverture, et la fiche se repeint avec son texte.
+const VIA_FR = { pdftotext: 'par poppler', page: 'dans le navigateur (pdf.js)', texte: 'comme texte', html: 'en HTML, sans les balises',
+  xml: 'en XML, sans les balises', rtf: 'en RTF, sans la mise en forme', docx: 'dans le DOCX', pptx: 'dans le PPTX', xlsx: 'dans le classeur',
+  opendocument: 'dans le fichier OpenDocument', epub: 'dans l’EPUB' };
+// ce que le portail sert pour être vu, pas téléchargé (server/core/library.py, SAFE_TYPES)
+const INLINE = new Set(['pdf', 'txt', 'md', 'markdown', 'csv', 'tsv', 'yaml', 'yml', 'log', 'srt', 'vtt']);
+const docInline = (it) => !!it.url && INLINE.has((it.file || '').split('.').pop().toLowerCase());
+let docL = null;   // la liseuse de la fiche ouverte : une seule (la fiche repeinte ferme l'ancienne)
+function docReader(it, opts = {}) {
+  docL?.detruire();
+  const L = docL = liseuse(it, opts);
+  addEventListener('hashchange', () => L.detruire(), { once: true });
+  return el('div', { class: 'sh-media sh-doc' }, L.el);
+}
+function documentSheet(it) {
+  const d = it.doc || {};
+  // lu ici (un PDF sans poppler) : la fiche se repeint avec ce que la page a déposé
+  const media = docReader(it, { telecharger: false, onitem: () => { if (S.route.view === 'sheet' && S.route.id === it.id) paintSheet(it.id, { keepScroll: true }); } });
+  const tool = it.origin?.tool;
+  const from = !tool || tool === 'upload' ? `upload${it.origin?.via ? ` · par ${toolFr(it.origin.via)}` : ''}` : `fait dans ${toolFr(tool)}`;
+  const kicker = ['document', docLigne(it), from].filter(Boolean).join(' · ');
+  const acts = el('section', { class: 'sh-acts' },
+    el('a', { class: 'tb go', href: href(it.url), download: nomDe(it), title: `le fichier tel qu’il a été déposé (${d.label || 'document'})` }, 'Télécharger'),
+    docInline(it) ? link('Ouvrir', href(it.url), { blank: true, title: d.format === 'pdf' ? 'le PDF dans la visionneuse du navigateur' : 'le texte tel quel, dans un nouvel onglet' }) : null,
+    el('span', { class: 'sp' }),
+    btn('Corbeille', () => trashItem(it, { leave: true }), { title: 'mettre à la corbeille — on peut l\'annuler ; son texte part avec lui' }));
+  const facts = blk('le document', d.via ? `lu ${VIA_FR[d.via] || d.via}` : null, readout([
+    ['format', d.label || ''], [d.unit || 'pages', d.pages ? String(d.pages) : ''], ['mots', d.words ? d.words.toLocaleString('fr-FR') : ''],
+    ['titre lu', d.title || ''], ['fichier', nomDe(it)],
+  ]), !d.has_text && d.why ? el('p', { class: 'hint' }, d.why) : null,
+  d.truncated ? el('p', { class: 'hint' }, 'Le texte gardé s’arrête à deux millions de signes ; le fichier, lui, est entier.') : null);
   return [sheetHead(it, kicker), acts,
     el('section', { class: 'sh-grid' }, media, el('aside', { class: 'sh-side' }, facts, rangement(it), lineage(it), fabrication(it)))];
 }
@@ -2862,6 +2908,7 @@ function kindItems(it) {
   }
   if (it.kind === 'sequence') return [{ label: 'Ouvrir dans le Montage', icon: '▤', studio: true, onclick: goTo(`montage/#${id}`) }];
   if (it.kind === 'midi') return [{ label: 'Ouvrir ODIO', icon: '↗', sub: 'nouvel onglet', studio: true, onclick: () => window.open(href('musique/'), '_blank', 'noopener') }, ...versionItems(it)];
+  if (it.kind === 'document' && docInline(it)) return [{ label: 'Ouvrir', icon: '↗', sub: 'nouvel onglet', onclick: () => window.open(href(it.url), '_blank', 'noopener') }];
   return [];
 }
 // le menu d'un objet ordinaire : il devient la v1 d'un élément, ou la version suivante d'un des siens

@@ -33,6 +33,7 @@
 
 import { mountHeader, api, jobs, toast, el, $, href, fmtDate, uploadFile, pick, session, studioSeul } from '../commun/shell.js';
 import { lecteur } from '../commun/lecteur.js';
+import { liseuse, nomDe } from '../commun/documents.js';   // LA liseuse d'un document (05/10)
 import { menu } from '../commun/menu.js';
 import { createCanvas, bbox, ready as viewsReady } from './canvas.js';
 import { createGroups, tidy as tidyGroups, kidsOf, setSize, readingOrder, setOrder, layoutOf } from './groups.js';
@@ -96,7 +97,7 @@ app.label = (n) => {
   if (n.type === 'ink') return 'Trait de crayon';
   return cut(n.text || { note: 'note vide', sticky: 'post-it vide', title: 'titre vide', shape: 'forme vide', card: 'carte sans titre', mind: 'nœud vide' }[n.type]);
 };
-app.kindLabel = (n) => (n.type === 'media' ? { image: 'image', video: 'vidéo', audio: 'son', element: 'élément' }[n.kind]
+app.kindLabel = (n) => (n.type === 'media' ? { image: 'image', video: 'vidéo', audio: 'son', element: 'élément', document: 'document' }[n.kind]
   : n.type === 'card' ? { task: 'tâche', link: 'lien', metric: 'mesure', person: 'personne' }[n.kind] || 'carte'
     : { note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', group: 'groupe', gen: 'image', vgen: 'vidéo', compose: 'composeur', palette: 'nuancier',
       shape: 'forme', mind: 'mind map', ink: 'trait' }[n.type]);
@@ -286,6 +287,8 @@ app.addAt = (type, wx, wy, { edit = false, select = true, link = null, w, h, pre
 // la taille où poser un objet : son grand côté à W, son rapport gardé
 app.sizeFor = (it, W = 280) => {
   if (it.kind === 'audio') return [260, 104];
+  // un document : une page debout (sa couverture, son format, son titre) — 190 × 250 à W = 280, comme projet.js
+  if (it.kind === 'document') return [Math.round(W * 0.68), Math.round(W * 0.68 * 1.316)];
   if (it.kind === 'element') return [Math.round(W * 0.8), Math.round(W * 0.8 * 1.36)];
   const r = it.width && it.height ? it.width / it.height : 4 / 3;
   return r >= 1 ? [W, Math.round(W / r)] : [Math.round(W * r), W];
@@ -346,7 +349,7 @@ app.placePart = async (p, wx, wy) => {
   } catch (e) { toast(e.message, 6000); return null; }
 };
 app.pickAt = async (wx, wy) => {
-  const got = await pick({ kinds: ['image', 'video', 'audio', 'element'], multiple: true, title: 'Poser sur la planche' });
+  const got = await pick({ kinds: app.mediaKinds(), multiple: true, title: 'Poser sur la planche' });
   app.placeMany(got, wx, wy);
 };
 // un personnage de Character Factory : importé (s'il ne l'est pas), puis posé
@@ -759,12 +762,28 @@ function askName(title, value = '', action = 'Créer') {
 app.lightbox = (n) => {
   const it = S.items.get(n.item);
   if (!it || it.missing) return;
+  if (n.kind === 'document') return app.liseuse(n);
   // une vidéo : le lecteur du portail (commun/lecteur.js), jamais les contrôles du navigateur (Cal, 01/10)
   const L = n.kind === 'video' ? lecteur(it, { clavier: 'page' }) : null;
   const media = L ? L.el : el('img', { src: href(it.url), alt: it.title || '' });
   app.modal(it.title || it.id, el('div', { class: 'lightbox' + (L ? ' lb-lect' : '') }, media), null, { cls: 'lb', onclose: () => L?.detruire() });
   if (L) requestAnimationFrame(() => L.play());
 };
+
+// un document : LA liseuse (commun/documents.js) — ses pages, son texte ; un PDF que le portail n'a
+// pas lu se lit ici (et lui est déposé si l'on peut l'écrire : la carte se refait avec sa couverture)
+app.liseuse = (n, { page = 1 } = {}) => {
+  const it = S.items.get(n.item);
+  if (!it || it.missing) return;
+  const L = liseuse(it, { page, telecharger: false, onitem: (nv) => { S.items.set(nv.id, nv); app.canvas.renderSoon(); } });
+  app.modal(it.title || it.id, el('div', { class: 'lis-box' }, L.el), () => [
+    el('a', { class: 'tb ghost', href: href(`asset/#${it.id}`), target: '_blank', rel: 'noopener', title: 'sa fiche dans Asset' }, 'Dans Asset'),
+    el('span', { class: 'sp' }),
+    it.url ? el('a', { class: 'tb ghost', href: href(it.url), download: nomDe(it), title: 'le fichier tel qu’il a été déposé' }, 'Télécharger') : null],
+  { cls: 'lis', onclose: () => L.detruire() });
+};
+// les sortes qu'un objet `media` peut porter : celles du portail (/api/ideation/meta, MEDIA_KINDS)
+app.mediaKinds = () => S.meta?.media_kinds || ['image', 'video', 'audio', 'element', 'document'];
 
 // ── les planches ───────────────────────────────────────────
 app.newBoard = async () => {
@@ -793,7 +812,7 @@ app.boardsModal = async () => {
       if (S.board?.id === bd.id) closeBoard();
       paint();
     } }, 'Supprimer');
-    const kinds = Object.entries(bd.kinds || {}).map(([k, v]) => `${v} ${({ image: 'image', video: 'vidéo', audio: 'son', element: 'élément', note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', group: 'groupe', gen: 'carte image', vgen: 'carte vidéo', compose: 'composeur', palette: 'nuancier', shape: 'forme', card: 'carte', mind: 'nœud', ink: 'trait', text: 'texte' })[k] || k}${v > 1 && !['son'].includes(k) ? 's' : ''}`).join(' · ');
+    const kinds = Object.entries(bd.kinds || {}).map(([k, v]) => `${v} ${({ image: 'image', video: 'vidéo', audio: 'son', element: 'élément', document: 'document', note: 'note', sticky: 'post-it', title: 'titre', frame: 'cadre', group: 'groupe', gen: 'carte image', vgen: 'carte vidéo', compose: 'composeur', palette: 'nuancier', shape: 'forme', card: 'carte', mind: 'nœud', ink: 'trait', text: 'texte' })[k] || k}${v > 1 && !['son'].includes(k) ? 's' : ''}`).join(' · ');
     return el('div', { class: 'brow' + (S.board?.id === bd.id ? ' on' : '') },
       el('span', { class: 'th', style: bd.thumb_url ? { backgroundImage: `url("${href(bd.thumb_url)}")` } : null }),
       el('div', { class: 'bt' }, el('b', {}, bd.name), el('small', {}, `${kinds || 'vide'} · ${fmtDate(bd.updated)}`)),
@@ -1099,9 +1118,14 @@ app.uploadAndPlace = async (files, at = null) => {
     toast(`dépôt · ${f.name}`, 60000);
     try { got.push(await uploadFile(f, { tool: 'upload', via: 'ideation' })); } catch (e) { toast(`${f.name} : ${e.message}`, 7000); }
   }
+  // tout fichier entre dans la bibliothèque ; la planche pose les sortes qu'elle connaît (un clip MIDI reste dans Asset)
+  const kinds = app.mediaKinds();
+  const put = got.filter((it) => kinds.includes(it.kind));
+  const left = got.filter((it) => !kinds.includes(it.kind));
+  if (put.length) app.placeMany(put, wx, wy, { free: !at });
   if (got.length) {
-    app.placeMany(got, wx, wy, { free: !at });
-    toast(got.length > 1 ? `${got.length} fichiers rangés dans la bibliothèque · Upload` : 'rangé dans la bibliothèque · Upload');
+    toast(left.length ? `rangé dans la bibliothèque · pas posé ici : ${left.map((it) => it.title || it.id).join(', ')}`
+      : got.length > 1 ? `${got.length} fichiers rangés dans la bibliothèque · Upload` : 'rangé dans la bibliothèque · Upload', left.length ? 6000 : 3200);
     app.lib.reload();
   }
 };

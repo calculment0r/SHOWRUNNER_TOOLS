@@ -10,6 +10,7 @@
 // barre au-dessus de la sélection, selection.js).
 
 import { api, toast, el, href, fmtDate, fmtDur, etypeFr, dropZone, studioSeul } from '../commun/shell.js';
+import { docLigne } from '../commun/documents.js';
 import { bbox, inside } from './canvas.js';
 import { KINDS, nameOf, portOf } from './ports.js';
 import { inbox } from './gen.js';
@@ -162,11 +163,14 @@ export function createInspector(app) {
     const out = [];
     const meta = [it.width && it.height ? `${it.width} × ${it.height}` : '', it.duration ? fmtDur(it.duration) : '',
       (it.origin?.model || it.origin?.tool || '').replace(/-factice$/, ' (factice)'), fmtDate(it.created)].filter(Boolean).join(' · ');
-    const kindT = { image: 'Image', video: 'Vidéo', audio: 'Son', element: etypeFr(it.element?.type) }[n.kind] || 'Objet';
-    out.push(card(kindT, null, el('h2', { class: 'ttl' }, it.title || id), el('p', { class: 'hint' }, meta),
+    const kindT = { image: 'Image', video: 'Vidéo', audio: 'Son', element: etypeFr(it.element?.type), document: 'Document' }[n.kind] || 'Objet';
+    out.push(card(kindT, null, el('h2', { class: 'ttl' }, it.title || id), el('p', { class: 'hint' }, n.kind === 'document' ? [docLigne(it), meta].filter(Boolean).join(' · ') : meta),
       it.prompt ? el('details', { class: 'pr' }, el('summary', { class: 'lbl' }, 'prompt envoyé'), el('pre', { class: 'sent' }, it.prompt)) : null,
       row(go('Dans Asset', `asset/#${id}`, 'sa fiche : recette, lignée'),
-        n.kind === 'image' || n.kind === 'video' ? b('Voir en grand', () => app.lightbox(n)) : null)));
+        n.kind === 'image' || n.kind === 'video' ? b('Voir en grand', () => app.lightbox(n)) : null,
+        n.kind === 'document' ? b('Lire', () => app.liseuse(n), { title: 'ses pages, son texte · double-clic sur la planche' }) : null)));
+    // un document sans texte lu dit pourquoi (un scan, un format d'avant 2007, un fichier inconnu)
+    if (n.kind === 'document' && !it.doc?.has_text && it.doc?.why) out.push(card('Son texte', null, hint(it.doc.why)));
     if (n.kind === 'image') {
       const rec = app.gen.recipe(it);
       out.push(card('Faire naître', null,

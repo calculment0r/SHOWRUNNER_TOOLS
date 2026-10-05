@@ -349,6 +349,8 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 /* une vidéo, un son : LE lecteur (commun/lecteur.js) ; l'écran prend la hauteur de la fenêtre moins la fiche */
 .sh-media.sh-lect { min-height: 0; --sr-lect-h: max(300px, calc(100 * var(--vh) - 400px)); }
 .sh-media.sh-lect video { max-height: none; }
+/* un document : LA liseuse (commun/documents.js, documents.css), à la hauteur de la fenêtre moins la fiche */
+.sh-media.sh-doc { min-width: 0; min-height: 0; --sr-lis-h: max(420px, calc(100 * var(--vh) - 300px)); }
 /* la fiche d'une séquence : sa vignette mène au Montage */
 .seq-media { position: relative; }
 .seq-open { display: block; position: relative; }
