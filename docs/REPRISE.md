@@ -2,7 +2,7 @@
 
 **État au 06/10/2026.** Session cloud du 06/10 : une session principale et une trentaine d'agents en parallèle,
 chacun dans sa copie, fusionnés et vérifiés lot par lot, poussés sur `main` à chaque lot (`check.py` complet à
-0 échec avant chaque poussée ; dernier passage complet : **3153 / 0**). La mise à jour automatique de DGX2 publie
+0 échec avant chaque poussée ; dernier passage complet : **3447 / 0**). La mise à jour automatique de DGX2 publie
 seule. Les branches de la session : `claude/adoring-turing-op7th8` (l'intégration, égale à `main`) et
 `wip2/<sujet>` (une par agent, toutes fusionnées sauf celles marquées « en cours » au § 2.A).
 
@@ -102,14 +102,16 @@ montage-odio, montage-scrub, odio-craquements, motion-transcrire, etude-agent-de
 odio-generatif, odio-arcs-session, odio-synthes, playlist-publier, worker-requetes, montage-cadre, scrub-lecteur,
 odio-spaces, slides-pdf, odio-finitions, et la partie 1 de montage-poignees (l'export à une autre cadence).
 
-En cours au moment d'écrire (à fusionner s'ils ont fini ; sinon leur branche dit où ils en sont) :
-- `wip2/montage-poignees` : pendant un rognage, le moniteur garde l'image sous la tête de lecture (Cal, 06/10 :
-  « dans la frame on ne lit plus sous la cue, ça affiche le nouveau in… je préfère les fonctions de in et out »),
-  puis les images clés de la trajectoire ;
-- `wip2/espaces-phaseb` : Teams et Workspaces, phase B ;
-- `wip2/telephone` : les mises en page du téléphone ;
-- `wip2/transcrire-ecran` : l'écran de Transcrire réorganisé pour gagner de la hauteur ;
-- `wip2/onde-precise` : une onde à la résolution de l'écran à tout zoom, et un spectre (Transcrire, Montage).
+Fusionnées ensuite le 06/10 : transcrire-ecran, montage-poignees (le moniteur sous la tête pendant un rognage,
+Alt pour le bord ; les images clés), espaces-phaseb, telephone, onde-precise. `check.py` complet : **3447 / 0**.
+
+En cours au moment d'écrire (à fusionner s'il a fini ; sinon sa branche dit où il en est) :
+- `wip2/agent-ingest` : la nouvelle conduite de « Commencer un projet » après le premier essai réel de Cal
+  (« super lent et assez con », une avalanche de post-it, un cadre « Vidéos » rempli de sons) : réception,
+  compréhension en un ou deux appels, 3 à 5 questions cliquables, un plan court accepté, une étape à la fois,
+  un carnet des décisions (la « scripte » de Fondations II, le document de vision de Cal, hors dépôt) ; une
+  restitution par paliers (le texte d'abord, puis images, sons, vidéos pendant la conversation) et les deux DGX
+  en parallèle ; l'étude des modèles locaux plus rapides (rien à télécharger sans Cal).
 
 ### 2.D Ce qui attend Cal (gestes, réponses, essais)
 
