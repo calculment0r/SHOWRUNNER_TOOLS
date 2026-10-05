@@ -390,6 +390,10 @@ body.at-presenting > .sr-dock, body.at-presenting > .sr-dock-grip, body.at-prese
 .grow > .lbl { flex: none; }
 .grow .seg { flex: none; }
 .grow .seg .tb { height: 24px; min-width: 24px; padding: 0 6px; }
+/* le LoRA d'un moodboard (gen.js, loraRow) : le choix, sa force, ce qui l'empêche de partir */
+.glora .glf { flex: none; width: 46px; padding: 5px 6px; font-size: 11px; text-align: right; }
+.glora .ghint { flex: 1; min-width: 0; font-size: 10.5px; }
+.glora .gbad { flex: 1 1 100%; }
 .gcut.still { cursor: default; align-self: flex-start; }
 /* la durée : un curseur aux pas d'H3, la valeur en clair, le nombre d'images en petit */
 .dur { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
