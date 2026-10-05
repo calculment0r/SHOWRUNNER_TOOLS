@@ -8,8 +8,8 @@
    faute de chiffres et d'accents dans son jeu de 54 glyphes.
    ============================================================ */
 
-/* LE curseur (input type=range) : une feuille à part, que les pages sans
-   base.css (Movie Analysis, diarisation) chargent aussi */
+/* LE curseur (input type=range) : une feuille à part, importée ici (toutes
+   les pages chargent base.css, la diarisation aussi depuis le 05/10) */
 @import url('./curseur.css');
 
 @font-face {
