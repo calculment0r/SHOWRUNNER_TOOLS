@@ -2112,7 +2112,10 @@ def selftest(call, ok) -> None:
     aid = au.get("id")
     ok(st == 200 and au.get("kind") == "audio", f"transcrire : un son déposé ({st} {au})")
     st, r = call("PUT", "/api/library/upload?name=notes.txt&tool=upload", raw=b"pas un son")
-    ok(st == 415, f"transcrire : un fichier qui n'est pas un média est refusé au dépôt ({st})")
+    st2, r2 = call("POST", "/api/transcrire/run", {"item": (r or {}).get("id") if isinstance(r, dict) else ""})
+    # 05/10 : un texte entre dans la bibliothèque (un document, server/tools/documents.py) ; il ne se transcrit pas
+    ok(st == 200 and r.get("kind") == "document" and 400 <= st2 < 500,
+       f"transcrire : un fichier qui n'est pas un média entre comme document, et ne se transcrit pas ({st} {st2})")
     st, mv = call("PUT", "/api/library/upload?name=muette.mp4&title=Muette&tool=upload", raw=mp4.read_bytes())
     st2, r = call("POST", "/api/transcrire/run", {"item": mv.get("id")})
     ok(st2 == 400 and "piste son" in r.get("error", ""), f"transcrire : une vidéo sans son est refusée ({st2} {r})")

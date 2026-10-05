@@ -275,7 +275,7 @@ def _bytes(it: dict) -> int:
     return n
 
 
-KIND_ORDER = {k: n for n, k in enumerate(("image", "element", "video", "audio", "sequence", "midi"))}
+KIND_ORDER = {k: n for n, k in enumerate(("image", "element", "video", "audio", "sequence", "midi", "document"))}
 SORTS = ("new", "old", "updated", "title", "kind", "size", "space")
 
 

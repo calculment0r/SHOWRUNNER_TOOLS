@@ -51,7 +51,9 @@ def build() -> App:
     app = App(config.REPO)
     app.gate, app.after = auth.gate, auth.after
     # les copies d'affichage à leur adresse versionnée se gardent un an (library.cache_policy)
-    app.mount("library", library.root(), check=library.readable_path, cache=library.cache_policy)
+    # un document déposé (une page HTML, un SVG, un fichier inconnu) part en téléchargement (library.serve_policy)
+    app.mount("library", library.root(), check=library.readable_path, cache=library.cache_policy,
+              serve=library.serve_policy)
     # la page d'invitation de la porte « demo » (404 partout ailleurs)
     app.prefix("/invitation/", auth.invitation)
     auth.startup()

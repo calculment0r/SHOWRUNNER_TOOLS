@@ -31,7 +31,10 @@ répond 304, sans corps, à un `If-None-Match` qui le reconnaît ; il reste
 en `no-cache` (le navigateur redemande, le serveur dit « pas changé »).
 Un dossier monté choisit sa politique fichier par fichier
 (`mount(…, cache=fonction(chemin, req))`) : la bibliothèque garde un an
-ses copies d'affichage, dont l'adresse change avec elles.
+ses copies d'affichage, dont l'adresse change avec elles. Et sa façon de
+servir (`mount(…, serve=fonction(chemin))` → (type, en-têtes)) : un document
+déposé (une page HTML, un SVG, un fichier inconnu) part en téléchargement,
+jamais affiché dans l'origine du portail (core/library.py, `serve_policy`).
 `app.on_start(fonction)` : appelée une fois, quand le serveur écoute
 (après le démarrage de la file) — le rattrapage des copies s'y lance.
 """
@@ -82,10 +85,12 @@ class Response:
 class FileResponse:
     """Un fichier sur disque, servi avec les requêtes partielles."""
 
-    def __init__(self, path: Path, ctype: str | None = None, cache: str = "no-cache") -> None:
+    def __init__(self, path: Path, ctype: str | None = None, cache: str = "no-cache", headers: dict | None = None) -> None:
         self.path = path
         self.ctype = ctype or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         self.cache = cache
+        # des en-têtes de plus (un document déposé : Content-Disposition, sa propre CSP — core/library.py, serve_policy)
+        self.headers = headers or {}
 
 
 class StreamResponse:
@@ -202,6 +207,9 @@ class App:
         self.mount_checks: dict[str, callable] = {}
         # préfixe monté → fonction(chemin dans le dossier, req) → Cache-Control, ou None (no-cache)
         self.mount_cache: dict[str, callable] = {}
+        # préfixe monté → fonction(chemin dans le dossier) → (type, en-têtes) ou None : la façon de
+        # servir un fichier que le navigateur ne doit pas ouvrir dans l'origine du portail (un document)
+        self.mount_serve: dict[str, callable] = {}
         # appelées une fois, quand le serveur écoute
         self.starters: list[callable] = []
 
@@ -209,12 +217,14 @@ class App:
         rx = "^" + re.sub(r"\{(\w+)\}", r"(?P<\1>[^/]+)", pattern.rstrip("/")) + "/?$"
         self.routes.append((method.upper(), re.compile(rx), fn))
 
-    def mount(self, prefix: str, folder: Path, check=None, cache=None) -> None:
+    def mount(self, prefix: str, folder: Path, check=None, cache=None, serve=None) -> None:
         self.mounts[prefix.strip("/") + "/"] = folder.resolve()
         if check:
             self.mount_checks[prefix.strip("/") + "/"] = check
         if cache:
             self.mount_cache[prefix.strip("/") + "/"] = cache
+        if serve:
+            self.mount_serve[prefix.strip("/") + "/"] = serve
 
     def on_start(self, fn) -> None:
         self.starters.append(fn)
@@ -262,6 +272,10 @@ class App:
                 policy = self.mount_cache.get(prefix)
                 if policy:
                     f.cache = policy(rel[len(prefix):], req) or f.cache
+                serve = self.mount_serve.get(prefix)
+                how = serve(rel[len(prefix):]) if serve else None
+                if how:
+                    f.ctype, f.headers = how[0] or f.ctype, {**f.headers, **(how[1] or {})}
                 return f
         if self.hidden.search(rel):
             raise HttpError(404, "introuvable")
@@ -387,6 +401,8 @@ class App:
                 self.send_header("Content-Length", str(end - start + 1))
                 self.send_header("Cache-Control", f.cache)
                 self.send_header("ETag", etag)
+                for k, v in f.headers.items():
+                    self.send_header(k, v)
                 if status == 206:
                     self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
                 self.end_headers()

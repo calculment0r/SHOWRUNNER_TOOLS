@@ -1,11 +1,17 @@
 """La bibliothèque « Asset » : tout ce que les outils fabriquent ou
 reçoivent, rangé au même endroit et réutilisable partout.
 
-Quatre sortes d'objets :
+Les sortes d'objets (KINDS) :
 
-  image    un fichier image (PNG, JPEG, WEBP)
+  image    un fichier image (PNG, JPEG, WEBP ; une image d'un autre format que PIL
+           lit — TIFF, GIF, AVIF, PSD… — y entre en PNG, l'original gardé à côté)
   video    un fichier vidéo (MP4, WEBM, MOV)
   audio    un fichier son (WAV, MP3, FLAC, M4A, OGG)
+  midi     un clip de notes ; sequence : une séquence du Montage (29/09)
+  document tout le reste (05/10, server/tools/documents.py) : un PDF, un texte, un
+           DOCX, un PPTX, un classeur, un EPUB, un fichier inconnu — rangé tel quel,
+           avec son texte, sa couverture, ses pages ; servi en téléchargement quand
+           l'afficher ne serait pas sûr (`serve_policy`)
   element  une entité réutilisable — un personnage, un objet, un lieu,
            un style — faite de références nommées (visage, plein pied,
            tenue…) et d'une description en prose. Un personnage de
@@ -68,7 +74,8 @@ from pathlib import Path
 from . import auth, config, espaces
 
 # "sequence" : une séquence du Montage (sa timeline dans `sequence.json`, écrite par server/tools/montage.py), 29/09
-KINDS =("image", "video", "audio", "element", "midi", "sequence")
+# "document" : tout ce qui n'est pas un média (server/tools/documents.py), 05/10
+KINDS = ("image", "video", "audio", "element", "midi", "sequence", "document")
 EXT_KIND = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
     ".mp4": "video", ".webm": "video", ".mov": "video", ".m4v": "video",
@@ -79,6 +86,16 @@ EXT_KIND = {
 # PIL ne lit que ces formats-là : sans cette liste, Image.open devine le format par
 # le contenu, et un « .png » qui serait un EPS partirait vers Ghostscript (audit du 28/09, H2)
 PIL_FORMATS = ("PNG", "JPEG", "WEBP")
+# le nom d'un document rangé : `main.<ext>`, l'extension en minuscules, lettres et chiffres
+DOC_EXT = re.compile(r"\.[a-z0-9]{1,10}")
+
+
+def kind_of_name(name: str) -> str:
+    """La sorte d'un fichier d'après son nom : un média (EXT_KIND), une image d'un autre format
+    (« image », provisoire : PIL la lira-t-il ? add_file tranche), sinon un document."""
+    from tools.documents import EXOTIC
+    ext = Path(name).suffix.lower()
+    return EXT_KIND.get(ext) or ("image" if ext in EXOTIC else "document")
 
 
 def sniff(head: bytes, ext: str) -> bool:
@@ -579,30 +596,89 @@ def cache_policy(rel: str, req) -> str | None:
     return VIEW_CACHE if VIEW_RE.match(rel.rsplit("/", 1)[-1]) and req.q("v") else None
 
 
+# ── servir sans danger ce qu'on a déposé ────────────────────
+# Les fichiers de la bibliothèque se servent depuis l'origine du portail : une page HTML,
+# un SVG, un XML déposés y exécuteraient leurs scripts (ils liraient la session, écriraient
+# au nom de qui les ouvre). Juste par construction : seuls les types d'une liste fermée
+# s'affichent ; tout le reste part en téléchargement (`attachment`), sous un type neutre
+# (`application/octet-stream` ; X-Content-Type-Options: nosniff est posé partout, core/http.py),
+# avec une CSP `sandbox` — même ouvert à la main, rien ne s'y exécute. Un PDF s'ouvre dans la
+# visionneuse du navigateur (elle ne donne pas l'origine à ses scripts) ; un texte en text/plain.
+SAFE_INLINE = {".png", ".jpg", ".jpeg", ".webp", ".mp4", ".webm", ".mov", ".m4v", ".wav", ".mp3", ".flac", ".m4a", ".ogg",
+               ".mid", ".midi", ".json", ".glb"}
+SAFE_TYPES = {".pdf": "application/pdf", **{e: "text/plain; charset=utf-8" for e in (
+    ".txt", ".md", ".markdown", ".csv", ".tsv", ".yaml", ".yml", ".log", ".srt", ".vtt")}}
+SAFE_NAME = re.compile(r'[\x00-\x1f\x7f"\\/:*?<>|]+')
+
+
+def serve_policy(rel: str):
+    """Comment servir `<id>/<fichier>` (core/http.py, `mount(…, serve=)`) : None (tel quel, un type
+    de la liste fermée), (type, {}) pour un PDF ou un texte, sinon (octet-stream, téléchargement,
+    CSP sandbox) — le nom proposé : le titre de l'objet et l'extension du fichier."""
+    from urllib.parse import quote
+    iid, _, name = rel.partition("/")
+    ext = Path(name).suffix.lower()
+    if ext in SAFE_INLINE:
+        return None
+    if ext in SAFE_TYPES:
+        return SAFE_TYPES[ext], {}
+    it = _items.get(iid) or {}
+    fn = (SAFE_NAME.sub("-", str(it.get("title") or iid)).strip(" .-") or "fichier")[:120] + ext
+    return "application/octet-stream", {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fn)}",
+                                        "Content-Security-Policy": "sandbox"}
+
+
 # ── écrire ──────────────────────────────────────────────────
 def add_file(src: Path, *, kind: str | None = None, title: str = "", origin: dict | None = None,
              prompt: str = "", params: dict | None = None, parents: list | None = None,
              tags: list | None = None, folder: str = "", move: bool = False, extra: dict | None = None) -> dict:
-    """Range un fichier : une image, une vidéo ou un son."""
+    """Range un fichier : une image, une vidéo, un son, un clip MIDI — ou, tout le reste, un
+    document (05/10 : « tout ce dont il dispose », server/tools/documents.py). Une image d'un
+    format que les outils ne lisent pas (TIFF, GIF, AVIF…) entre en PNG si PIL la lit, son
+    original gardé à côté (`source.<ext>`, `original`) ; sinon elle est un document."""
     _load()
     src = Path(src)
-    kind = kind or EXT_KIND.get(src.suffix.lower())
-    if kind not in ("image", "video", "audio", "midi"):
+    ext = src.suffix.lower()
+    kind = kind or kind_of_name(src.name)
+    if kind not in ("image", "video", "audio", "midi", "document"):
         raise ValueError(f"type de fichier non pris : {src.suffix}")
+    png = None
+    if kind == "image" and ext not in EXT_KIND:
+        from tools import documents
+        png = documents.as_png(src, ext)
+        if png is None:   # PIL ne la lit pas (HEIC sans son greffon, un fichier abîmé) : un document, rangé tel quel
+            kind = "document"
     org = _owned(origin or {"tool": "upload"})
     space = new_space(org)   # avant de rien copier : qui ne peut pas créer ici ne laisse rien derrière lui
     iid = new_id(kind)
     d = folder_of(iid)
     d.mkdir(parents=True, exist_ok=True)
-    name = "main" + src.suffix.lower()
-    (shutil.move if move else shutil.copyfile)(str(src), str(d / name))
-    it = {
-        "id": iid, "kind": kind, "title": title or src.stem, "created": now(), "updated": now(),
-        "file": name, "origin": org, "prompt": prompt, "params": params or {},
-        "parents": list(parents or []), "tags": list(tags or []), "folder": folder, "fav": False,
-        **probe(d / name), **{k: v for k, v in (extra or {}).items() if k != "space"}, "space": space,
-    }
-    if make_thumb(d / name, d / "thumb.jpg", kind):
+    fmt = ext[1:] if DOC_EXT.fullmatch(ext) else ""
+    more: dict = {}
+    try:
+        if png is not None:
+            name = "main.png"
+            (d / name).write_bytes(png)
+            (shutil.move if move else shutil.copyfile)(str(src), str(d / f"source.{fmt}"))
+            from tools import documents
+            more["original"] = {"file": f"source.{fmt}", "format": documents.EXOTIC[ext]}
+        else:
+            name = "main" + (f".{fmt}" if kind == "document" and fmt else ".bin" if kind == "document" else ext)
+            (shutil.move if move else shutil.copyfile)(str(src), str(d / name))
+        it = {
+            "id": iid, "kind": kind, "title": title or src.stem, "created": now(), "updated": now(),
+            "file": name, "origin": org, "prompt": prompt, "params": params or {},
+            "parents": list(parents or []), "tags": list(tags or []), "folder": folder, "fav": False,
+            **(probe(d / name) if kind != "document" else {}), **more,
+            **{k: v for k, v in (extra or {}).items() if k != "space"}, "space": space,
+        }
+        if kind == "document":   # son texte, sa couverture, ses pages (server/tools/documents.py)
+            from tools import documents
+            it.update(documents.ingest(d, name, fmt, it["title"]))
+    except BaseException:
+        shutil.rmtree(d, ignore_errors=True)
+        raise
+    if kind != "document" and make_thumb(d / name, d / "thumb.jpg", kind):
         it["thumb"] = "thumb.jpg"
     if kind == "audio":   # le visuel du son (server/tools/apercu_son.py)
         from tools import apercu_son; apercu_son.soon(d / name, it.get("duration"))
@@ -886,9 +962,9 @@ def restore(item_id: str) -> dict:
 # ou le vidage d'un côté laisse donc l'autre intact. Tout le reste (vignette, copies
 # d'affichage, références et voix d'un élément, copie de défilement, onde) : une copie
 # pleine — petit, et réécrit en place par certains (make_thumb, montage._sync_item).
-IMPORT_KINDS = ("image", "video", "audio", "midi", "element")
+IMPORT_KINDS = ("image", "video", "audio", "midi", "element", "document")
 IMPORT_MAX = 200
-MAIN_RX = re.compile(r"^main\.[a-z0-9]{1,5}$")
+MAIN_RX = re.compile(r"^main\.[a-z0-9]{1,10}$")
 # ce qui ne suit pas : la fiche (réécrite), l'instantané de la source d'une version
 # (server/tools/elements.py : la copie n'est la version de rien dans B)
 IMPORT_SKIP = ("item.json", "source.json")
@@ -1107,6 +1183,14 @@ def public(it: dict) -> dict:
     ver = out.pop("views_v", "")
     out["view_urls"] = {str(w): f"{base}{view_name(w)}?v={ver}" for w in out["views"]}
     out["uid"] = uid_of(it)
+    if it["kind"] == "document":
+        # son texte (server/tools/documents.py : GET /api/library/<id>/texte) et ses pages rendues
+        out["text_url"] = f"api/library/{it['id']}/texte"
+        doc = dict(it.get("doc") or {})
+        doc["page_urls"] = [f"{base}page-{n:03d}.jpg" for n in range(1, int(doc.get("rendered") or 0) + 1)]
+        out["doc"] = doc
+    if isinstance(it.get("original"), dict) and it["original"].get("file"):
+        out["original"] = {**it["original"], "url": base + it["original"]["file"]}   # l'image telle qu'elle a été déposée
     if it["kind"] == "element":
         el = dict(it["element"])
         el["refs"] = [{**r, "url": base + r["file"], "thumb_url": base + r["thumb"] if r.get("thumb") else base + r["file"]}
@@ -1178,7 +1262,8 @@ def query(kinds: list[str] | None = None, q: str = "", folder: str | None = None
     if q:
         ql = q.lower()
         items = [i for i in items if ql in " ".join([i.get("title", ""), i.get("prompt", ""), " ".join(i.get("tags", [])),
-                                                      (i.get("element") or {}).get("description", "")]).lower()]
+                                                      (i.get("element") or {}).get("description", ""),
+                                                      (i.get("doc") or {}).get("title") or ""]).lower()]
     key = {"new": lambda i: i["created"], "old": lambda i: i["created"], "title": lambda i: i.get("title", "").lower(),
            "updated": lambda i: i.get("updated", i["created"])}.get(sort, lambda i: i["created"])
     items.sort(key=key, reverse=sort in ("new", "updated"))
