@@ -148,7 +148,7 @@ critique) ; rien n'est appelé ni téléchargé ici.
 - **Export PNG** d'une diapositive dans l'habit du modèle : `lecture.html?print`
   rendu par Chromium sans affichage (une capture par page, ou `page.pdf()`), à
   mettre en travail de la file (`ideation.pdf`, étude § 4) ; l'export PNG actuel
-  (PIL) ignore le modèle.
+  (PIL) ignore le modèle. **Fait le 06/10** (§ 9) : le travail `presentation.pdf`.
 - **Export vidéo** : la frise est exacte (`run.seek(t)`) : Chromium sans affichage,
   une capture par 1/30 s en posant l'instant (transitions comprises, en jouant
   leurs animations à l'arrêt), puis `ffmpeg -framerate 30 -i %05d.png -c:v libx264
@@ -191,3 +191,45 @@ Essais (portail d'essai, Chromium sans affichage, sombre et clair, aucune erreur
 poignée ; un clic sur le titre : éditable, curseur dedans, la tête à 1,31 s avant comme après (l'ancien
 code repartait à 0,31 s) ; Échap écrit « Showrunner 2 bis », Ctrl+Z le retire ; un compteur (128) se
 remet en texte, passer d'un texte à l'autre pose le premier ; la poignée : +140 px, retenue au retour.
+
+## 9. Le 06/10 : l'export PDF et PNG (branche `wip2/slides-pdf`)
+
+« Exporter en PDF » dans la barre du mode (`export.js`), et son menu : le PDF et une image par
+diapositive, les images seules, imprimer depuis ce navigateur. Le travail `presentation.pdf` (voie
+`cpu`, `server/tools/presentation_pdf.py`) lance `tools/presentation_export.mjs` sur la machine du
+portail : Chromium sans affichage ouvre `lecture.html?print` — la même scène que le mode (`scene.js`),
+chaque diapositive à son état final (aucune entrée jouée), polices attendues (`document.fonts.ready`),
+images décodées — puis `page.pdf` (une page nommée par taille de scène : 16:9 et 9:16 dans le même PDF,
+1920 × 1080 px = 1440 × 810 pt ; textes et formes vectoriels) et, en option, une capture PNG par page
+aux mêmes règles d'impression. Le PDF va dans la bibliothèque : un `document` (dossier « Idéation »,
+Workspace de la planche, lignée = ses objets) ; les images : des `image`.
+
+- **Les données** ne passent pas par l'API : le travail lit la planche, les réglages et les fiches au nom
+  de la personne (comme `ideation.export`) et les donne au script, qui les sert à la page par
+  `page.route` ; seuls les fichiers de ces objets se servent. Ni session ni jeton (la question du
+  « jeton de lecture » d'`agent_design.md` § 4.4 ne se pose pas ici). Les pages statiques viennent du
+  portail, sur la boucle locale. Le thème : celui de la personne (ses préférences), une scène sans
+  modèle prenant les jetons du thème — le PDF montre ce que son mode lui montre.
+- **Où sont les outils** (réglages, avec défaut ; absents : le bouton le dit, Admin → Diagnostics →
+  « Présentation · PDF » les cherche) : `presentation_node` (`node` du PATH), `presentation_playwright`
+  (le dossier d'où node résout Playwright : `~/Character_Sheet`, celui de `tools/shot.mjs`, puis les
+  modules globaux du node), `presentation_chromium` (le Chromium de Playwright par défaut). Sur DGX2 :
+  non essayé (aucun accès depuis la session cloud) — le diagnostic le dira.
+- **Les polices** : un PDF embarque les siennes ; une police dont la licence ne le permet pas
+  (`FONTS`, `pdf : false` : Venus Rising, Norelli) le refuse, en disant laquelle et sur quelles
+  diapositives ; les images PNG restent possibles. Un texte sans style prend `--f-disp` (Venus Rising) :
+  sans modèle ni police OFL, pas de PDF. Question pour Cal (la licence web + PDF de Venus Rising).
+- **Ce qui ne s'imprime pas** : une vidéo montre son affiche, un objet Web l'image de son aperçu (sinon
+  son titre et son site), un son son onde ; chacun avec un pied discret, en capitales mono (« vidéo »,
+  « web · site », « son »). Dans le mode, l'objet Web et le son prennent la même image (le mode
+  montrait « web » et un aplat « image ») : le mode et le PDF restent une seule vérité.
+- **Sans poppler** sur la machine du portail (non documenté sur DGX2), le serveur ne lit pas le PDF : le
+  texte de chaque diapositive (lu dans la page) et la première diapositive en couverture sont déposés
+  (`documents.deposer`, via « chromium »).
+- **Corrigé en passant** : le mode et le lecteur cherchaient les polices des textes sans style dans
+  `meta.deck.fonts` (vide) : la police propre d'un texte (`diapo/libre.js`) ne s'y montrait pas.
+
+Essais (portail d'essai, Chromium 141 du conteneur) : `check.py presentation_pdf` (22 contrôles : trois
+pages de 1440 × 810 pt, le texte par `pdftotext`, l'image à sa place sur sa capture, la licence, 9:16,
+les pieds, le chemin sans poppler) ; `ideation/pilote_pdf.mjs` (35 contrôles, sombre et clair : le
+bouton, son menu, la progression, le document rangé et téléchargé, les refus avec leur raison).

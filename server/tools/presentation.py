@@ -332,7 +332,8 @@ def selftest(call, ok) -> None:
     for k in S["decor"]:
         ok(f"case '{k}'" in ssrc, f"présentations : scene.js pose le décor {k}")
     # l'interface : aucune couleur en dur (les palettes des modèles sont des données JSON)
-    for name in ("presentation.css", "mode.js", "lecteur.js", "scene.js", "moteur.js", "transitions.js", "assist.js", "modeles.js", "lecture.js", "lecture.html"):
+    for name in ("presentation.css", "mode.js", "lecteur.js", "scene.js", "moteur.js", "transitions.js", "assist.js", "modeles.js", "lecture.js", "lecture.html",
+                 "export.js"):
         body = (DIR / name).read_text(encoding="utf-8")
         ok(not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", body), f"présentations : {name} n'écrit aucune couleur en dur")
     # une planche garde son motion (aller-retour par l'API), et perd ce qui sort du schéma
