@@ -1,0 +1,148 @@
+/* ============================================================
+   IDÉATION — « Commencer un projet » (ideation/projet.js ; l'étude :
+   docs/etudes/mode_showrunner.md). La fenêtre du mode « ingest » : un champ
+   façon Claude (les vignettes au-dessus de la zone de texte), les noms, avec
+   qui, la liste des étapes. Règles du thème : des jetons seulement
+   (commun/tokens.css), des filets, un seul .tb.go (Commencer), les capitales
+   pour la machine. Reprend .scrim, .modal, .fld, .tb, .lbl (base.css).
+   ============================================================ */
+
+/* le panneau Asset reste à portée pendant la fenêtre : la fenêtre s'ouvre à sa droite, et
+   par-dessus quand il recouvre la page (commun/dock.css, sr-dock-over) */
+html.sr-dock-on .pj-scrim { left: var(--sr-dock-w, 250px); }
+html.pj-open.sr-dock-over .sr-dock { z-index: 72; }
+html.pj-open.sr-dock-over .sr-dock-veil { z-index: 71; }
+html.pj-open.sr-dock-over .sr-dock-grip { z-index: 73; }
+
+.pj-scrim { z-index: 70; }
+.modal.pj { width: min(920px, 100%); max-height: calc(90 * var(--vh)); }
+.pj-body { gap: var(--s4); }
+.pj-lede { font-size: 13px; }
+
+/* ── le champ : les vignettes, puis la zone de texte, puis ses outils ── */
+.pj-box {
+  display: flex; flex-direction: column; gap: 0; border-radius: var(--r3);
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line);
+}
+.pj-box:focus-within { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.pj-tiles {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 8px;
+  padding: 10px 10px 0; max-height: min(330px, calc(36 * var(--vh))); overflow-y: auto;
+}
+.pj-tiles:empty { display: none; }
+.pj-txt {
+  width: 100%; min-height: 76px; resize: none; background: transparent; color: var(--ink);
+  padding: 12px 14px; font-size: 13px; line-height: 1.55; border: 0; outline: none;
+}
+.pj-txt::placeholder { color: var(--ink3); }
+.pj-tools { display: flex; align-items: center; gap: 6px; padding: 0 8px 8px; min-width: 0; }
+.pj-tools .ic { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r2); color: var(--ink2); }
+.pj-tools .ic:hover:not(:disabled) { color: var(--ink); background: var(--panel3); }
+.pj-tools .ic:disabled { opacity: .35; }
+.pj-tools .ic svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.pj-count, .pj-hint { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); }
+.pj-count { color: var(--ink2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pj-tools .sp { flex: 1; }
+
+/* une vignette : l'aperçu, la sorte, le nom, la progression, retirer */
+.pj-tile {
+  position: relative; display: flex; flex-direction: column; min-width: 0; border-radius: var(--r2);
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden;
+  content-visibility: auto; contain-intrinsic-size: auto 132px;
+}
+.pj-tile.is-brief { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.pj-tile.pj-dim { opacity: .55; }
+.pj-vis { height: 72px; display: flex; align-items: center; justify-content: center; gap: 6px; background: var(--panel3); color: var(--ink3); }
+.pj-vis img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pj-ico svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; display: block; }
+.pj-ext { font-family: var(--f-mono); font-size: 9px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink2); }
+.pj-tile.k-image .pj-vis { color: var(--cy); }
+.pj-tile.k-video .pj-vis { color: var(--amb); }
+.pj-tile.k-audio .pj-vis { color: var(--grn2); }
+.pj-meta { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px 7px; min-width: 0; }
+.pj-nm { font-size: 11px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pj-k { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pj-brief { display: flex; align-items: center; gap: 6px; padding: 0 8px 7px; font-size: 10.5px; color: var(--ink2); cursor: pointer; }
+.pj-brief input { accent-color: var(--cy); margin: 0; }
+.pj-tile.is-brief .pj-brief { color: var(--cy); }
+.pj-bar { height: 3px; background: transparent; margin-top: auto; }
+.pj-bar i { display: block; height: 100%; width: 0; background: var(--cy); transition: width .2s; }
+.pj-tile[data-state="pret"] .pj-bar i { width: 0 !important; }
+.pj-tile[data-state="ok"] .pj-bar i { background: var(--grn2); }
+.pj-tile[data-state="echec"] { box-shadow: inset 0 0 0 1px var(--line-or); }
+.pj-tile[data-state="echec"] .pj-bar i { background: var(--or); width: 100% !important; }
+.pj-err { margin: 0; padding: 0 8px 8px; font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .08em; line-height: 1.5; text-transform: uppercase; color: var(--or); }
+.pj-err[hidden] { display: none; }
+.pj-x {
+  position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; font-size: 14px; line-height: 1;
+  background: var(--scrim); color: var(--ink); opacity: 0; transition: opacity .12s;
+}
+.pj-tile:hover .pj-x, .pj-x:focus-visible { opacity: 1; }
+.pj-x[hidden] { display: none; }
+@media (hover: none) { .pj-x { opacity: 1; } }
+
+/* ── les noms, avec qui ─────────────────────────────────────── */
+.pj-form { display: flex; flex-direction: column; gap: var(--s4); }
+.pj-form[hidden], .pj-lede[hidden] { display: none; }
+.pj-names { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: var(--s3); }
+.pj-who { display: flex; flex-direction: column; gap: 8px; }
+.pj-who-find[hidden] { display: none; }
+.pj-who-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 132px; overflow-y: auto; }
+.pj-person {
+  display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 10px 0 4px; border-radius: 14px;
+  background: transparent; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink2); font-size: 11.5px;
+}
+.pj-person i {
+  width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-style: normal; font-family: var(--f-mono); font-size: 9px; background: var(--panel3); color: var(--ink2);
+}
+.pj-person:hover:not(:disabled) { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.pj-person.on { background: var(--grn-bg); box-shadow: inset 0 0 0 1px var(--grn2); color: var(--ink); }
+.pj-person.on i { background: var(--grn2); color: var(--on-grn); }
+.pj-person:disabled { opacity: .6; cursor: default; }
+.pj-note { margin: 0; font-size: 11.5px; color: var(--ink3); line-height: 1.5; }
+
+/* ── ce compte ne crée pas de Team : dit avant de remplir ───── */
+.pj-refus {
+  display: flex; flex-direction: column; gap: 8px; padding: var(--s4); border-radius: var(--r3);
+  background: var(--or-bg); box-shadow: inset 0 0 0 1px var(--or-bg2);
+}
+.pj-refus[hidden] { display: none; }
+.pj-refus b { font-family: var(--f-mono); font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: var(--or); font-weight: 500; }
+.pj-refus p { margin: 0; color: var(--ink); font-size: 13px; line-height: 1.55; }
+
+/* ── la liste des étapes ────────────────────────────────────── */
+.pj-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.pj-steps[hidden] { display: none; }
+.pj-steps li { display: grid; grid-template-columns: 10px minmax(0, auto) minmax(0, 1fr); align-items: baseline; gap: 10px; font-size: 12px; color: var(--ink2); }
+.pj-steps li i { width: 6px; height: 6px; border-radius: 50%; background: var(--ink3); align-self: center; }
+.pj-steps li.work i { background: var(--cy); animation: sPulse 1.2s infinite; }
+.pj-steps li.ok i { background: var(--grn2); }
+.pj-steps li.err i { background: var(--or); }
+.pj-steps li.ok .pj-sl { color: var(--ink); }
+.pj-steps small { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink3); line-height: 1.5; }
+.pj-steps li.err small { color: var(--or); }
+
+.pj-why { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--amb); line-height: 1.5; }
+.modal.pj.busy .pj-box { opacity: .8; }
+
+/* ── le dépôt : sur toute la fenêtre, un voile le dit ───────── */
+.pj-voile {
+  position: absolute; inset: 12px; z-index: 1; display: none; flex-direction: column; gap: 8px;
+  align-items: center; justify-content: center; border-radius: var(--r4); pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--grn2); background: var(--grn-bg);
+}
+.pj-voile b { font-family: var(--f-mono); font-size: 12px; font-weight: 500; letter-spacing: .24em; text-transform: uppercase; color: var(--grn2); }
+.pj-voile span { font-size: 12px; color: var(--ink2); }
+.pj-scrim.drag .pj-voile { display: flex; }
+
+/* ── étroit, puis téléphone ─────────────────────────────────── */
+@media (max-width: 700px) {
+  .pj-scrim { padding: var(--s2); }
+  .modal.pj { max-height: calc(96 * var(--vh)); }
+  .pj-body { padding: var(--s4); }
+  .pj-names { grid-template-columns: minmax(0, 1fr); }
+  .pj-tiles { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
+  .pj-hint { display: none; }
+}

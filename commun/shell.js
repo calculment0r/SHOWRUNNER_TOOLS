@@ -355,9 +355,38 @@ export async function api(path, { method = 'GET', body, raw, headers = {}, signa
 // de ce que les outils fabriquent) et dit par où il est entré (`via`). Un
 // outil qui range sa propre création (un mixage exporté…) passe son nom. Il entre dans le
 // Workspace de l'onglet (api()), ou dans `espace` (celui du document ouvert).
-export async function uploadFile(file, { tool = 'upload', via = '', folder = '', title = '', espace: esp = ESPACE } = {}) {
+// `onprogress(part, ev)` : la progression de l'envoi, de 0 à 1 (« Commencer un projet »,
+// ideation/projet.js) — fetch ne la donne pas, l'envoi passe alors par XMLHttpRequest ; `signal` l'arrête.
+export async function uploadFile(file, { tool = 'upload', via = '', folder = '', title = '', espace: esp = ESPACE, onprogress = null, signal } = {}) {
   const q = new URLSearchParams({ name: file.name, tool, via, folder, title: title || file.name.replace(/\.[^.]+$/, '') });
+  if (onprogress) return envoiSuivi('library/upload?' + q, file, { espace: esp, onprogress, signal, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
   return api('library/upload?' + q, { method: 'PUT', raw: file, espace: esp, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
+}
+// Un envoi dont on suit la progression (XMLHttpRequest, upload.onprogress), avec les erreurs d'api() :
+// le message du portail, `status`, la porte sur un 401.
+function envoiSuivi(path, body, { espace: esp = ESPACE, headers = {}, onprogress, signal } = {}) {
+  return new Promise((resolve, reject) => {
+    const fail = (msg, status) => { const e = new Error(msg); e.status = status; reject(e); };
+    const x = new XMLHttpRequest();
+    x.open('PUT', new URL(path.replace(/^\/?(api\/)?/, ''), API));
+    for (const [k, v] of Object.entries(headers)) x.setRequestHeader(k, v);
+    if (esp) x.setRequestHeader('X-SR-Espace', esp);
+    x.upload.onprogress = (e) => { if (e.lengthComputable && e.total) onprogress(Math.min(1, e.loaded / e.total), e); };
+    x.onload = () => {
+      let data = null;
+      try { data = x.responseText ? JSON.parse(x.responseText) : null; } catch { data = { error: x.responseText.slice(0, 300) }; }
+      if (x.status >= 200 && x.status < 300) { onprogress(1); resolve(data); return; }
+      if (x.status === 401) showDoor();
+      fail((data && data.error) || `${x.status} ${x.statusText}`, x.status);
+    };
+    x.onerror = () => fail('le portail ne répond pas : l’envoi est coupé', 0);
+    x.onabort = () => fail('envoi arrêté', 0);
+    if (signal) {
+      if (signal.aborted) { fail('envoi arrêté', 0); return; }
+      signal.addEventListener('abort', () => x.abort(), { once: true });
+    }
+    x.send(body);
+  });
 }
 
 // ── glisser un asset d'un endroit à l'autre ─────────────────
@@ -691,6 +720,23 @@ async function changeEspace(id) {
     return;
   }
   location.replace(u.href);
+}
+// Entrer dans un Workspace SANS recharger la page : un parcours qui vient de le créer garde ce
+// qu'il a en mémoire (« Commencer un projet », ideation/projet.js : les fichiers déposés). Comme
+// changeEspace : le portail le retient, l'onglet le prend, l'adresse suit (?e=) ; puis l'en-tête,
+// les écouteurs surEspace, le panneau Asset et la file se relisent. Rend l'identifiant.
+export async function entrerEspace(id) {
+  if (!ESP_RX.test(id || '')) throw new Error(`Workspace inconnu : ${id}`);
+  await api('espaces/courant', { method: 'POST', body: { workspace: id } });
+  fixeEspace(id);
+  const u = new URL(location.href);
+  u.searchParams.set('e', id);
+  history.replaceState(history.state, '', u.href);
+  await session(true);
+  for (const cb of espaceCbs) { try { cb(id); } catch (e) { console.error('surEspace', e); } }
+  DOCK.mod?.reload();
+  jobs.poll(true);
+  return id;
 }
 
 // `dock: false` : une page d'outil sans le panneau Asset (les pages hors outils, Admin, ne l'ont jamais)

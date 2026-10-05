@@ -932,6 +932,9 @@ def r_meta(req):
     return {"sticky": [{"id": k, "ink": v, "name": STICKY_NAMES.get(k, k)} for k, v in STICKY.items()], "title_sizes": TITLE_SIZES,
             "objets": {"shapes": list(SHAPES), "palette": list(PALETTE), "cards": list(CARD_KINDS), "branch": list(MIND_BRANCH), "ink_max": INK_MAX},
             "link_kinds": list(LINK_KINDS), "types": list(TYPES), "version": VERSION,
+            # les sortes qu'un objet `media` peut porter (la page n'en pose pas d'autre : « Commencer
+            # un projet », ideation/projet.js, met une note à la place d'un document si `document` n'y est pas)
+            "media_kinds": list(MEDIA_KINDS),
             "limits": {"nodes": MAX_NODES, "links": MAX_LINKS, "slots": MAX_SLOTS},
             "lot": {"max": LOT_MAX, "values": MAX_VALUES},
             "element_types": list(library.ELEMENT_TYPES), "backend": img.backend(), "movie_engine": _movie().engine(),
@@ -1878,6 +1881,8 @@ def selftest(call, ok) -> None:
 
     st, meta = call("GET", "/api/ideation/meta")
     ok(st == 200 and "coral-3" in [c["id"] for c in meta["sticky"]] and "gen" in meta["types"], f"idéation : réglages ({st})")
+    ok(meta.get("media_kinds") == list(MEDIA_KINDS) and "image" in meta["media_kinds"],
+       f"idéation : les sortes d'un objet media, dites à la page ({meta.get('media_kinds')})")
     st, b = call("POST", "/api/ideation/boards", {"name": "Essai idéation"})
     ok(st == 200 and BID.fullmatch(b.get("id", "")) and b["rev"] == 1 and b["nodes"] == [], f"idéation : créer une planche ({st} {b})")
     bid = b["id"]
