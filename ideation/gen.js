@@ -132,9 +132,15 @@ export function createGen(app) {
   function loadLoras(force = false) {
     if (Date.now() - loraAsked < (force ? 15000 : 60000)) return;
     loraAsked = Date.now();
-    api('lora').then((r) => { S.loras = { list: r.render || [], names: r.names || {}, why: r.why || '', max: r.strength_max || 1.5, at: Date.now() }; })
-      .catch((e) => { S.loras = { list: [], names: {}, why: `la liste des LoRA ne répond pas : ${e.message}`, max: 1.5, at: Date.now() }; })
-      .finally(() => { app.canvas?.render(); app.insp?.render(); });
+    // les cartes ne se refont que si la liste a changé (une carte où l'on écrit garde la main)
+    const put = (next) => {
+      const sig = JSON.stringify(next);
+      if (S.loras?.sig === sig) return;
+      S.loras = { ...next, sig, at: Date.now() };
+      app.canvas?.render(); app.insp?.render();
+    };
+    api('lora').then((r) => put({ list: r.render || [], names: r.names || {}, why: r.why || '', max: r.strength_max || 1.5 }))
+      .catch((e) => { if (!S.loras) put({ list: [], names: {}, why: `la liste des LoRA ne répond pas : ${e.message}`, max: 1.5 }); });
   }
   const loraModel = (name) => (/^showrunner\/(zimage|qwen21|krea2|h3|ace)-/.exec(name || '') || [])[1] || '';
   const loraName = (mid) => S.loras?.names?.[mid] || mid;
