@@ -61,6 +61,7 @@ NEW = re.compile(r"new:(\d{1,3})")
 MEM_GB = 31              # qwen3-vl-32b-32k chargé à 32k : 30,8 Go (orchestration.md § 2.2)
 MAX_TEXT = 4000          # un message de la personne
 MAX_ITEMS = 24           # les objets cités d'un message
+MAX_ITEMS_INGEST = 400   # ceux d'une analyse d'entrée (« Commencer un projet » cite tout ce qu'on a déposé) ; INGEST_ITEMS en sont lus
 MAX_TURNS = 300          # la conversation gardée (les plus vieux tours partent)
 MAX_STEPS = 12           # les appels du modèle d'un tour (la boucle)
 MAX_STEPS_INGEST = 20
@@ -293,24 +294,17 @@ _TEXT_EXT = {".txt", ".md", ".srt", ".vtt", ".csv", ".json", ".fountain"}
 
 
 def _texte_document(it: dict) -> str | None:
-    """Le texte d'un document. La sorte `document` et sa route `GET /api/library/<id>/texte`
-    arrivent par un autre chantier (05/10) : c'est ici qu'on la rebranche (TEXTE_DOCUMENT).
-    En attendant : le fichier de l'objet s'il est du texte UTF-8."""
-    for mod in ("documents", "document"):   # le module de l'autre chantier, s'il est là et expose `texte`
-        try:
-            m = __import__(f"tools.{mod}", fromlist=["texte"])
-        except ImportError:
-            continue
-        fn = getattr(m, "texte", None) or getattr(m, "text_of", None)
-        if callable(fn):
-            try:
-                got = fn(it)
-                if isinstance(got, dict):
-                    got = got.get("text") or got.get("texte")
-                if isinstance(got, str):
-                    return got
-            except Exception:  # noqa: BLE001 — sa lecture a échoué : la lecture du fichier, ci-dessous
-                pass
+    """Le texte d'un objet. Un `document` (server/tools/documents.py : PDF, DOCX, PPTX, EPUB, texte…) :
+    le texte que le serveur en a tiré au rangement, page par page — la lecture même de
+    `GET /api/library/<id>/texte` (documents.read_text, les pages jointes d'une ligne vide). Sans
+    texte (un scan, un format que le serveur ne lit pas : `doc.why`) : None, l'agent lit alors ce
+    qu'on sait de l'objet (item_text) et en regarde la couverture (picture_path). Un autre objet :
+    son fichier s'il est du texte UTF-8."""
+    if it.get("kind") == "document":
+        from tools import documents
+        pages = [p for p in documents.read_text(it).get("pages") or [] if isinstance(p, dict)]
+        text = "\n\n".join(str(p.get("text") or "") for p in pages)
+        return text if text.strip() else None
     f = it.get("file")
     if not f or Path(f).suffix.lower() not in _TEXT_EXT:
         return None
@@ -321,7 +315,7 @@ def _texte_document(it: dict) -> str | None:
         return None
 
 
-TEXTE_DOCUMENT = _texte_document   # à rebrancher sur la sorte `document` (GET /api/library/<id>/texte)
+TEXTE_DOCUMENT = _texte_document   # le texte d'un objet : la sorte `document` (GET /api/library/<id>/texte), sinon le fichier
 
 
 def item_line(it: dict) -> str:
@@ -335,6 +329,13 @@ def item_line(it: dict) -> str:
     if k == "element":
         el = it.get("element") or {}
         bits.append(f"élément {el.get('type', '')}".strip())
+    if k == "document":
+        doc = it.get("doc") or {}
+        bits.append(str(doc.get("label") or doc.get("format") or "").upper() or "document")
+        if doc.get("pages"):
+            bits.append(f"{doc['pages']} {doc.get('unit') or 'pages'}")
+        if not doc.get("has_text"):
+            bits.append("texte non lu")
     return " · ".join(bits)
 
 
@@ -358,11 +359,20 @@ def item_text(it: dict) -> str:
         parts.append(f"Description : {el['description']}")
     if el.get("refs"):
         parts.append("Références : " + ", ".join(f"{r.get('role') or 'image'} « {r.get('label') or r.get('file')} »" for r in el["refs"][:12]))
+    if it.get("kind") == "document" and (it.get("doc") or {}).get("why"):
+        parts.append(f"Texte : non lu — {it['doc']['why']}")
     return "\n".join(parts)
 
 
 def picture_path(it: dict) -> Path | None:
-    p = _ide().picture_of(it) if it.get("kind") in ("image", "video", "element") else None
+    """L'image qu'on regarde d'un objet : la sienne (ideation.picture_of) ; d'un document, sa
+    couverture (la première page d'un PDF, celle d'un EPUB… documents.py) — un scan sans texte se
+    lit ainsi par la vision."""
+    if it.get("kind") == "document":
+        d = library.folder_of(it["id"])
+        p = d / "cover.png" if (d / "cover.png").exists() else (library.path_of(it, it["thumb"]) if it.get("thumb") else None)
+    else:
+        p = _ide().picture_of(it) if it.get("kind") in ("image", "video", "element") else None
     return p if p and p.exists() else None
 
 
@@ -793,6 +803,10 @@ class Gestes:
             a = self.asset(d.get("item"))
             if not a or a["type"] != "item":
                 return f"refusé : « {d.get('item')} » n'est pas un objet de la bibliothèque qu'on voit ici (chercher_bibliotheque)"
+            # les sortes qu'une planche pose : celles du module des planches (ideation.MEDIA_KINDS), une seule vérité
+            if a["kind"] not in _ide().MEDIA_KINDS:
+                return (f"refusé : un objet « {a['kind']} » ne se pose pas sur la planche (elle pose : {', '.join(_ide().MEDIA_KINDS)}) — "
+                        "résume-le dans une note (poser_texte)")
             out = {"item": a["item"]}
             w = self._where(d, out)
             if w:
@@ -1133,6 +1147,10 @@ def ingest(m: Moteur, board: dict, conv: dict, turn: dict, progress, frac) -> di
                 if it:
                     seen.append(n["item"])
                     cited.append({"id": it["id"], "kind": it["kind"], "node": n["id"], "line": item_line(it)})
+    # au-delà d'INGEST_ITEMS, les documents d'abord (le brief, le scénario : ce que l'agent doit comprendre),
+    # puis le reste dans l'ordre donné ; ce qui n'est pas lu est compté et dit (`skipped`)
+    cited.sort(key=lambda c: 0 if c.get("kind") == "document" else 1)
+    skipped = max(0, len(cited) - INGEST_ITEMS)
     cited = cited[:INGEST_ITEMS]
     plan = []
     for c in cited:
@@ -1191,7 +1209,7 @@ def ingest(m: Moteur, board: dict, conv: dict, turn: dict, progress, frac) -> di
     frac(done / total, "organise la planche")
     g = Gestes(board, cited)
     reads = Lectures(m, board, g, lambda msg: frac(done / total, msg))
-    body = "\n".join(fiches)
+    body = "\n".join(fiches) + (f"\n({skipped} more cited items were not read: only the first {INGEST_ITEMS} are)" if skipped else "")
     budget = max(4000, int(ctx_size() * 1.2) - DIGEST_CHARS - 9000)
     if len(body) > budget:   # trop long pour la fenêtre : chaque fiche raccourcie d'autant
         body = body[:budget] + "\n(… la suite des fiches est coupée : relis un document par lire_document)"
@@ -1200,7 +1218,7 @@ def ingest(m: Moteur, board: dict, conv: dict, turn: dict, progress, frac) -> di
             f"<request>\n{request}\n\n{INGEST_TASK}\n</request>")
     msgs = [{"role": "system", "content": system_prompt()}, *history(conv, turn["id"]), {"role": "user", "content": user}]
     reply = loop(m, msgs, g, reads, MAX_STEPS_INGEST, lambda msg: frac(done / total, msg))
-    return {"reply": reply, "actions": g.actions, "reads": reads.log,
+    return {"reply": reply, "actions": g.actions, "reads": reads.log, "skipped": skipped,
             "read": [{"id": c["id"], "line": c.get("line")} for c in cited]}
 
 
@@ -1251,7 +1269,7 @@ def run_turn(ctx) -> dict:
             res = converse(m, board, conv, turn, lambda msg: ctx.progress(None, msg))
         secs = round(time.time() - t0, 1)
         mark(state="done", reply=res["reply"], actions=res["actions"], reads=res["reads"], read=res.get("read"),
-             model=m.model, calls=m.calls, seconds=secs, done_at=library.now())
+             skipped=res.get("skipped") or 0, model=m.model, calls=m.calls, seconds=secs, done_at=library.now())
         n = len(res["actions"])
         return {"note": f"{n} geste{'s' if n > 1 else ''} · {m.calls} appel{'s' if m.calls > 1 else ''} · {secs} s",
                 "board": bid, "turn": tid, "reply": res["reply"], "actions": res["actions"]}
@@ -1270,13 +1288,13 @@ def _need(req, bid: str, what: str) -> None:
     _ide()._need(req, bid, what)
 
 
-def _clean_items(raw, board: dict) -> list:
+def _clean_items(raw, board: dict, limit: int = MAX_ITEMS) -> list:
     """Les objets cités : des identifiants de la bibliothèque (qu'on voit) ou des objets
     de la planche ; rend [{id, kind, title, node?}]. 400 en disant lequel ne va pas."""
     if raw is None:
         return []
-    if not isinstance(raw, list) or len(raw) > MAX_ITEMS:
-        raise HttpError(400, f"items : une liste de {MAX_ITEMS} identifiants au plus")
+    if not isinstance(raw, list) or len(raw) > limit:
+        raise HttpError(400, f"items : une liste de {limit} identifiants au plus")
     nodes = {n["id"]: n for n in board["nodes"]}
     out, seen = [], set()
     for x in raw:
@@ -1325,7 +1343,7 @@ def r_turn(req):
     if len(content) > MAX_TEXT:
         raise HttpError(400, f"message trop long ({MAX_TEXT} signes au plus)")
     board = _ide().normalize(_ide().load(bid))
-    items = _clean_items(last.get("items"), board)
+    items = _clean_items(last.get("items"), board, MAX_ITEMS_INGEST if intent == "ingest" else MAX_ITEMS)
     if not content and intent != "ingest":
         raise HttpError(400, "un message, s'il te plaît")
     st = engine_state()
@@ -1516,6 +1534,44 @@ def selftest(call, ok) -> None:
         ok(j.get("state") == "done" and tools.count("poser_cadre") == 3 and "deplacer" in tools and t.get("intent") == "ingest"
            and any(c.get("format") for c in f.calls),
            f"agent : l'analyse d'entrée regarde l'image (sortie structurée) puis organise la planche ({j.get('message')} {tools})")
+        # un document (server/tools/documents.py) : l'agent lit le texte de GET /api/library/<id>/texte, pas le fichier
+        from tools import documents
+        st, doc = call("PUT", "/api/library/upload?name=scenario.docx&title=sc%C3%A9nario&tool=ideation",
+                       raw=documents.docx_bytes(["Kiki entre à La Rotonde.", "Man Ray la photographie."], title="Scénario"))
+        did = doc.get("id", "") if isinstance(doc, dict) else ""
+        _, tx = call("GET", f"/api/library/{did}/texte")
+        got = TEXTE_DOCUMENT(library.get(did) or {"id": did}) if did else None
+        ok(st == 200 and doc.get("kind") == "document" and got and "Rotonde" in got and got == tx.get("text"),
+           f"agent : le texte d'un document est celui de GET /api/library/<id>/texte ({st} {doc.get('kind') if isinstance(doc, dict) else doc} {got!r:.80})")
+        f.calls.clear()
+        st, r = call("POST", "/api/ideation/agent", {"board": bid, "messages": [{"role": "user", "content": "lis ce document", "items": [did]}]})
+        wait(r["job"]["id"]) if st == 200 else None
+        _, conv = call("GET", f"/api/ideation/agent/{bid}")
+        t = conv["turns"][-1]
+        res = [m["content"] for c in f.calls for m in c.get("messages") or [] if m.get("role") == "tool"]
+        first = next((c for c in f.calls if c.get("tools")), {})
+        ok(any(m.get("tool_name") == "lire_document" and "Man Ray" in m["content"] for c in f.calls for m in c.get("messages") or [] if m.get("role") == "tool")
+           and [a["tool"] for a in t.get("actions") or []] == ["poser_texte"] and "Rotonde" in t["actions"][0]["args"]["texte"]
+           and "DOCX" in (first.get("messages") or [{}])[-1].get("content", ""),
+           f"agent : « lis ce document » → lire_document rend son texte, le résumé posé en note ({[a['tool'] for a in t.get('actions') or []]} {res[:2]})")
+        # un document ne se pose pas sur la planche (ideation.MEDIA_KINDS) : refusé au modèle, avec la raison
+        f.script = [{"tool_calls": [F.call("poser_asset", item=did)]}, {"content": "fini"}]
+        f.calls.clear()
+        st, r = call("POST", "/api/ideation/agent", {"board": bid, "messages": [{"role": "user", "content": "pose-le"}]})
+        wait(r["job"]["id"]) if st == 200 else None
+        _, conv = call("GET", f"/api/ideation/agent/{bid}")
+        res = [m["content"] for c in f.calls for m in c.get("messages") or [] if m.get("role") == "tool"]
+        ok(conv["turns"][-1].get("actions") == [] and any(x.startswith("refusé") and "note" in x for x in res),
+           f"agent : poser un document est refusé au modèle (la planche ne le pose pas), il le résume en note ({res[:1]})")
+        # l'analyse d'entrée prend tout ce qu'un projet cite (au-delà de 24), les documents lus d'abord
+        many = [iid] * (MAX_ITEMS + 2) + [did]
+        st, _ = call("POST", "/api/ideation/agent", {"board": bid, "messages": [{"role": "user", "content": "x", "items": many}]})
+        f.calls.clear()
+        st2, r = call("POST", "/api/ideation/agent", {"board": bid, "intent": "ingest", "messages": [{"role": "user", "content": "", "items": many}]})
+        j = wait(r["job"]["id"]) if st2 == 200 else {}
+        fmt = [c for c in f.calls if c.get("format")]
+        ok(st == 400 and st2 == 200 and j.get("state") == "done" and fmt and fmt[0]["messages"][0]["content"] == READ_SYSTEM,
+           f"agent : {MAX_ITEMS + 3} objets cités : refusés pour un message, pris pour l'analyse d'entrée, le document lu d'abord ({st} {st2} {j.get('state')})")
         for body, why in (({"board": bid, "messages": []}, "sans message"),
                           ({"board": bid, "messages": [{"role": "user", "content": "x", "items": ["ima-20990101-000000-0000"]}]}, "un objet absent"),
                           ({"board": bid, "messages": [{"role": "user", "content": "x", "items": ["zz"]}]}, "un objet hors de la planche"),
@@ -1527,8 +1583,16 @@ def selftest(call, ok) -> None:
         _probe["v"] = None
         st, r = call("POST", "/api/ideation/agent", {"board": bid, "messages": [{"role": "user", "content": "x"}]})
         ok(st == 409 and "outils" in r.get("error", ""), f"agent : un modèle sans outils est refusé en le disant ({st} {r})")
+        # le diagnostic de Cal (Admin → Diagnostics → Agent, tools/diag_agent.py) lit les mêmes capacités
+        import subprocess
+        import sys as _sys
+        d1 = subprocess.run([_sys.executable, "tools/diag_agent.py", f.url], cwd=str(config.REPO), capture_output=True, text=True, timeout=60)
         f.caps = ["completion", "tools", "vision"]
         _probe["v"] = None
+        d2 = subprocess.run([_sys.executable, "tools/diag_agent.py", f.url], cwd=str(config.REPO), capture_output=True, text=True, timeout=60)
+        ok(d1.returncode == 1 and "tools    : NON" in d1.stdout and d2.returncode == 0 and "tools    : OUI" in d2.stdout
+           and "vision   : OUI" in d2.stdout and "num_ctx du modèle 32768" in d2.stdout,
+           f"agent : le diagnostic dit si le modèle a tools et vision ({d1.returncode} {d2.returncode} {d2.stdout[-300:]} {d2.stderr[-300:]})")
         st, _ = call("POST", f"/api/ideation/agent/{bid}/clear", {})
         _, conv = call("GET", f"/api/ideation/agent/{bid}")
         ok(st == 200 and conv["turns"] == [], "agent : une conversation neuve (l'ancienne archivée)")

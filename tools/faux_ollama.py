@@ -4,7 +4,8 @@
     python3 tools/faux_ollama.py --port 11500
 
 Il répond comme Ollama à ce que l'agent appelle (docs/api.md du dépôt d'Ollama) :
-`GET /api/tags` (les modèles), `POST /api/show` (`capabilities`), `POST /api/generate`
+`GET /api/tags` (les modèles), `GET /api/version`, `POST /api/show` (`capabilities`, et ce que lit
+le diagnostic tools/diag_agent.py : `parameters`, `details`, `model_info`), `POST /api/generate`
 (décharger : compté), `POST /api/chat` :
 
   - avec `format` (un schéma JSON) : un objet conforme au schéma, rempli d'après le texte
@@ -211,7 +212,9 @@ class Faux:
 
             def do_GET(self):
                 if self.path == "/api/tags":
-                    return self._send({"models": [{"name": m} for m in outer.models]})
+                    return self._send({"models": [{"name": m, "size": 30_800_000_000} for m in outer.models]})
+                if self.path == "/api/version":
+                    return self._send({"version": "0.0.0-faux"})
                 if self.path == "/_faux":
                     return self._send({"calls": len(outer.calls), "unloads": outer.unloads, "script": len(outer.script),
                                        "last": outer.calls[-1] if outer.calls else None})
@@ -222,8 +225,10 @@ class Faux:
                     body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
                 except ValueError:
                     return self._send({"error": "json"}, 400)
-                if self.path == "/api/show":
-                    return self._send({"capabilities": outer.caps})
+                if self.path == "/api/show":   # les champs que lit le diagnostic (tools/diag_agent.py) ; des valeurs d'essai
+                    return self._send({"capabilities": outer.caps, "parameters": "num_ctx                        32768",
+                                       "details": {"family": "faux", "parameter_size": "0B", "quantization_level": "faux"},
+                                       "model_info": {"faux.context_length": 32768}})
                 if self.path == "/api/generate":
                     outer.unloads += 1
                     return self._send({"done": True, "done_reason": "unload"})
