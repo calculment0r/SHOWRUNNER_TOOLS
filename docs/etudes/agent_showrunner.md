@@ -197,9 +197,9 @@ Les outils (les descriptions que lit le modèle sont dans `TOOLS`) :
 |---|---|
 | `lire_planche {cadre?, depuis?}` · `lire_document {id, partie?}` · `decrire_image {id, question?}` · `chercher_bibliotheque {q, sorte?}` | `poser_texte {sorte: note \| postit \| titre, texte, couleur?, dans?, pres_de?}` · `poser_cadre {nom, autour?, dans?}` · `ranger {ids, disposition: rangee \| grille \| colonne, dans?}` · `grouper {ids, nom?}` · `poser_asset {item, dans?, pres_de?}` · `carte_image {prompt, refs?, modele?, format?, nombre?, lancer?}` · `carte_video {prompt, image?, fin?, lancer?}` · `composeur {style?, personnages?, action?, decor?, photographie?, son?, musique?, vers?}` · `relier {de, vers, texte?}` · `renommer_planche {nom}` · `deplacer {ids, dans?, pres_de?, dx?, dy?}` |
 
-### La page (`ideation/agent.js`, `agent.css`)
+### La page (`ideation/agent.js`, `agent.css`) — **PAS ENCORE ÉCRITE** (la session s'est arrêtée)
 
-Le panneau « Showrunner » à droite (une colonne de la planche ; sur une page étroite, par-dessus
+Ce qu'elle doit faire : le panneau « Showrunner » à droite (une colonne de la planche ; sur une page étroite, par-dessus
 l'inspecteur) : le fil de la conversation ; le champ, et au-dessus les vignettes des assets
 cités, retirables (glissés du panneau Asset, de la planche ou du disque — un fichier du disque
 est d'abord rangé dans la bibliothèque par `uploadFile` —, collés, ou « Citer dans la discussion »
@@ -207,7 +207,7 @@ au clic droit d'un objet) ; chaque réponse montre ses actions une par une (« p
 Générer image, branchée sur « photo 3 » »), un clic vole jusqu'à l'objet et l'éclaire,
 « Annuler ce tour » défait tout le tour d'un coup.
 
-### Le contrat pour l'agent « Commencer un projet »
+### Le contrat pour l'agent « Commencer un projet » — **prévu, pas encore exposé** (`app.agent` n'existe pas encore dans la page ; le serveur, lui, est là)
 
 ```js
 app.agent.open()                                   // ouvre le panneau, le champ prend la main
@@ -225,7 +225,30 @@ références repérés, une proposition de suite) — la progression se lit dans
 
 ## 6. Vérifié, et ce qui reste
 
-(rempli à la fin du chantier)
+**Vérifié (05/10, ce conteneur, sans GPU ni Ollama)** : le selftest de `ideation_agent.py` contre le faux
+Ollama (`tools/faux_ollama.py`), 17 contrôles — un tour « une image dans ce style » avec une image citée
+rend une action `carte_image` branchée sur elle, `lancer` faux, l'image regardée par le serveur ; Ollama
+reçoit les outils, `think: false`, `num_ctx`, la planche, l'objet cité et son image en JPEG base64 ; les
+résultats de lecture reviennent en `role: tool` ; le modèle est déchargé ; un tour ne s'applique qu'une
+fois (`claim`) ; trois écritures impossibles refusées au modèle avec leur raison ; l'analyse d'entrée
+(sortie structurée, puis trois cadres) ; les entrées invalides (400), un modèle sans `tools` (409) ;
+`clear`. `tools/check.py` en entier : **2626 passés, 0 en échec** (dont la garde du calcul : la route rejouée par un guest est refusée).
+
+**Reste** :
+1. **La page** : `ideation/agent.js` + `agent.css` (le panneau, le champ et ses vignettes, `dropZone`,
+   « Citer dans la discussion » dans `menus.js`, le glisser d'un objet de la planche, l'application des
+   actions dans UN `app.mutate`, « Annuler ce tour », flyTo + surbrillance, `claim`/`applied`) et
+   **`app.agent = { open, send, busy }`** — tout le § 5 « La page » et « Le contrat ». Petits ajouts
+   prévus dans `ideation.js` : `app.def(type)` (les défauts DEF), `app.unsnap()` (un geste annulé sans
+   pas d'annulation), le montage du module après `installPlugins`.
+2. **L'essai Playwright** (glisser une image dans le champ, « une image dans ce style », la carte posée et
+   branchée, l'action listée, l'annuler d'un coup) : pas fait.
+3. **Rien n'a tourné sur le vrai modèle** : vérifier sur DGX2 que `qwen3-vl-32b-32k` a `tools` et `vision`
+   (`/api/show`), la qualité de ses appels d'outils, ses temps (chargement à chaque tour, `keep_alive: 0`).
+4. Rebrancher `TEXTE_DOCUMENT` sur la sorte `document` de l'autre chantier.
+5. Un tour attend la fin d'un rendu sur la machine de l'Ollama : à revoir avec Cal (priorité haute pour un
+   tour court ? l'Ollama de l'autre DGX quand celui-ci rend ?). Contexte 32k contre 64k conseillés [10].
+
 
 ## Sources
 
