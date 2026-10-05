@@ -482,8 +482,20 @@ html[data-appareil="mobile"] .drawer {
   width: 100%; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 html[data-appareil="mobile"] .drawer .pan-head { padding: 4px 8px 4px var(--s4); }
-html[data-appareil="mobile"] .job { grid-template-columns: 44px minmax(0, 1fr); }
-html[data-appareil="mobile"] .job > :nth-child(3) { grid-column: 1 / -1; justify-content: flex-end; }
+html[data-appareil="mobile"] .job .row { flex-wrap: nowrap; gap: 4px; }
+/* le sélecteur de la bibliothèque (pick) : le titre sur sa ligne, les sortes qui défilent, la recherche en
+   entier ; au pied, « Déposer un fichier » (l'appareil photo, la galerie), puis Annuler et Prendre */
+html[data-appareil="mobile"] .picker .modal { height: calc(100 * var(--vh) - 16px); }
+html[data-appareil="mobile"] .picker .modal-head { flex-wrap: wrap; row-gap: 8px; }
+html[data-appareil="mobile"] .picker .modal-head > .t { flex: 1 1 100%; }
+html[data-appareil="mobile"] .picker .modal-head > .sp { display: none; }
+html[data-appareil="mobile"] .picker .modal-head > .seg { max-width: 100%; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+html[data-appareil="mobile"] .picker .modal-head > .seg .tb { flex: none; }
+html[data-appareil="mobile"] .picker .modal-head > .fld { flex: 1 1 100%; width: auto !important; }
+html[data-appareil="mobile"] .picker .modal-body .grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+html[data-appareil="mobile"] .picker .modal-foot > .sp { display: none; }
+html[data-appareil="mobile"] .picker .modal-foot > .tb { flex: 1 1 40%; }
+html[data-appareil="mobile"] .picker .modal-foot > .tb:first-child { flex-basis: 100%; }
 /* un outil à grand écran, au téléphone (commun/telephone.js) : sa page se cache dès la barre posée, l'écran du
    téléphone la remplace ; restent la barre, les menus, la file, les boîtes et les bulles communes */
 html.sr-tel-lourd body > :not(.hdr):not(.sr-tel):not(.drawer):not(.scrim):not(.toast):not(.acct):not(.sr-ws-menu):not(.sr-menu):not(.porte) { display: none !important; }

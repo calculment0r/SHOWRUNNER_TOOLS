@@ -549,3 +549,9 @@ html[data-appareil="mobile"] .modal { max-height: calc(100 * var(--vh) - 16px); 
 html[data-appareil="mobile"] .modal-head { padding: 6px 6px 6px var(--s4); }
 html[data-appareil="mobile"] .modal-body { padding: var(--s4); }
 html[data-appareil="mobile"] .modal-foot { padding: var(--s3) var(--s4); flex-wrap: wrap; }
+/* un curseur (commun/curseur.css) : la bande qu'on touche fait 44 px de haut, le rail et le chapeau restent dessinés au milieu */
+html[data-appareil="mobile"] input[type=range] { height: 44px; }
+/* une case à cocher : un peu plus grande ; son libellé, s'il l'enveloppe, la prend au doigt */
+html[data-appareil="mobile"] input[type=checkbox], html[data-appareil="mobile"] input[type=radio] { width: 20px; height: 20px; }
+html[data-appareil="mobile"] label:has(> input[type=checkbox]), html[data-appareil="mobile"] label:has(> input[type=radio]) { min-height: 44px; }
+html[data-appareil="mobile"] summary { min-height: 44px; }

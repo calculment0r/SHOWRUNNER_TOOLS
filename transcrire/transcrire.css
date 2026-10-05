@@ -371,6 +371,14 @@ html[data-appareil="mobile"] .ln { grid-template-columns: 48px minmax(0, 1fr); g
 html[data-appareil="mobile"] .ln > .who, html[data-appareil="mobile"] .ln > .txs { grid-column: 2; }
 html[data-appareil="mobile"] .ln .tx { font-size: 15px; line-height: 1.5; }
 html[data-appareil="mobile"] .ln .tc { min-height: 28px; font-size: 11px; }
-html[data-appareil="mobile"] .tr-item .x, html[data-appareil="mobile"] .cn-q .x { position: relative; }
-html[data-appareil="mobile"] .tr-item .x::after, html[data-appareil="mobile"] .cn-q .x::after { content: ""; position: absolute; inset: -12px; }
+html[data-appareil="mobile"] .tr-item { grid-template-columns: 52px minmax(0, 1fr) 44px; }
+html[data-appareil="mobile"] .tr-item .x, html[data-appareil="mobile"] .cn-q .x { width: 44px; height: 44px; line-height: 44px; }
 html[data-appareil="mobile"] .tr-bar .ttl b { max-width: 100%; }
+html[data-appareil="mobile"] .act .tb.go { height: 48px; }
+html[data-appareil="mobile"] details.more > summary { min-height: 44px; }
+/* le temps d'une réplique : toute la hauteur de sa ligne (44 px au moins) */
+html[data-appareil="mobile"] .ln { padding: 0 8px 0 0; }
+html[data-appareil="mobile"] .ln .tc { align-self: stretch; min-height: 44px; padding: 10px 0 0 8px; grid-row: 1 / span 2; }
+html[data-appareil="mobile"] .ln > .who { margin-top: 10px; }
+html[data-appareil="mobile"] .ln > .txs { padding: 10px 0; }
+html[data-appareil="mobile"] .ln > .who + .txs { padding-top: 2px; }

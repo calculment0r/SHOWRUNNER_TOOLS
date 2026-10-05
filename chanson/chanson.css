@@ -275,3 +275,6 @@ html[data-appareil="mobile"] .ch-x { width: 44px; height: 44px; line-height: 44p
 html[data-appareil="mobile"] .ch-space .sr-kebab { width: 44px; height: 44px; }
 html[data-appareil="mobile"] details.ch-adv > summary { min-height: 44px; }
 html[data-appareil="mobile"] .opt.ch-preset { min-height: 44px; }
+html[data-appareil="mobile"] .ch-space-btn { min-height: 44px; }
+html[data-appareil="mobile"] .ch-play { width: 44px; height: 44px; }
+html[data-appareil="mobile"] .ch-top { grid-template-columns: 44px minmax(0, 1fr) auto; }
