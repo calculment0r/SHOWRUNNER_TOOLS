@@ -40,6 +40,8 @@ const attente = new Map();     // cle → {S, p} : à calculer
 const voulues = new Map();     // cle → dernier dessin qui l'a demandée
 const tuiles = new Map();      // cle → {niv, cols, rows, cv, lutV} (LRU)
 let lut = null, lutV = 0;
+// pour les mesures : les tuiles calculées, le temps du Worker, ce qui attend
+export const mesureSpectre = { tuiles: 0, ms: 0, attente: () => attente.size + (enCours ? 1 : 0) };
 
 // ── la rampe du thème : les jetons --spec-0 … --spec-4, lus et mélangés en 256 teintes ──
 function couleur(css, g) {
@@ -84,7 +86,9 @@ function lancer() {
   if (!worker) {
     worker = new Worker(new URL('./spectre.worker.js', import.meta.url));
     worker.onmessage = (e) => {
-      const { cle, niv } = e.data;
+      const { cle, niv, ms } = e.data;
+      mesureSpectre.tuiles++;
+      mesureSpectre.ms += ms;
       const j = enCours;
       enCours = null;
       if (j && j.cle === cle) {

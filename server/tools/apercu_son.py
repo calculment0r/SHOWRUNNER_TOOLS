@@ -253,7 +253,7 @@ ONDE_V = 2                   # le format ; le changer refait les fichiers (nom e
 ONDE_B0, ONDE_F = 64, 4      # le palier 0 : min/max de 64 échantillons ; chaque palier : ×4
 ONDE_MAGIC = b"SRONDE02"
 ONDE_TIMEOUT = 3600          # s, un calcul
-ECH_MAX = 1 << 17            # échantillons par demande au plus (2,7 s à 48 kHz, 256 Ko)
+ECH_MAX = 1 << 18            # échantillons par demande au plus (5,5 s à 48 kHz, 512 Ko : peu de requêtes, cloudflare.md)
 NIV_MAX = 1 << 16            # paires par demande au plus (256 Ko)
 _ONDE_HDR = struct.Struct("<8sIIQiIII")   # magic, version, sr, n, peak, b0, f, nombre de paliers
 _onde_cv = threading.Condition()
@@ -695,6 +695,109 @@ def selftest(call, ok) -> None:
     ok(amps is not None and max(amps[: W // 2 - 2]) < 0.01 and min(amps[W // 2 + 2:]) > 0.9,
        f"son : un son de 10 min se lit en entier, la moitié silencieuse à gauche ({time.time() - t0:.2f} s)")
     long.unlink()
+    _selftest_onde(call, ok, eid)
+
+
+def _wav_ech(ech: array.array, rate: int) -> bytes:
+    """Un WAV mono 16 bits de ces échantillons-là, tels quels."""
+    import wave
+    a = array.array("h", ech)
+    if sys.byteorder == "big":
+        a.byteswap()
+    out = BytesIO()
+    with wave.open(out, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(a.tobytes())
+    return out.getvalue()
+
+
+def _selftest_onde(call, ok, eid: str) -> None:
+    """L'onde précise (06/10) : la pyramide et les échantillons servis sont ceux du son, exactement."""
+    def attendre(path: str):
+        for _ in range(150):
+            st, r = call("GET", path)
+            if st != 200 or not isinstance(r, dict) or r.get("pret"):
+                return st, r
+            time.sleep(0.2)
+        return st, r
+
+    def i16(raw) -> array.array:
+        a = array.array("h")
+        a.frombytes(raw if isinstance(raw, bytes) else b"")
+        if sys.byteorder == "big":
+            a.byteswap()
+        return a
+
+    # un son dissymétrique (des crêtes positives seules, tous les 97 échantillons), d'une longueur sans compte rond
+    ech = array.array("h", [(i * 7919) % 20000 - 7000 if i % 97 else 31000 for i in range(48000 * 2 + 123)])
+    st, it = call("PUT", "/api/library/upload?name=essai-onde-precise.wav", raw=_wav_ech(ech, 48000))
+    iid = it.get("id", "") if isinstance(it, dict) else ""
+    t0 = time.time()
+    st, h = attendre(f"/api/son/onde/{iid}?v={ONDE_V}")
+    ok(st == 200 and h.get("pret") and h.get("sr") == 48000 and h.get("n") == len(ech) and h.get("peak") == 31000
+       and h.get("b0") == ONDE_B0 and h.get("niveaux", [0])[-1] == 1,
+       f"onde : l'en-tête — 48 kHz, {len(ech)} échantillons, le plus fort 31000, jusqu'au son entier ({st}, {time.time() - t0:.1f} s)")
+    if not (st == 200 and h.get("pret")):
+        return
+    d = library.folder_of(iid)
+    b, f = onde_names()
+    ok((d / b).is_file() and (d / f).is_file(), "onde : la pyramide et la copie d'analyse rangées à côté du son")
+    juste = True
+    for k in (0, 1, 2):
+        B = ONDE_B0 * ONDE_F ** k
+        st, raw = call("GET", f"/api/son/onde/{iid}?v={ONDE_V}&niveau={k}&de=0&n={h['niveaux'][k]}")
+        p = i16(raw)
+        attendu = array.array("h")
+        for i in range(0, len(ech), B):
+            attendu.extend((min(ech[i:i + B]), max(ech[i:i + B])))
+        juste = juste and st == 200 and p == attendu
+    ok(juste, "onde : les paliers 0, 1 et 2 sont les min et max exacts de 64, 256 et 1024 échantillons")
+    st, raw = call("GET", f"/api/son/onde/{iid}?v={ONDE_V}&niveau={len(h['niveaux']) - 1}&de=0&n=4")
+    ok(st == 200 and i16(raw) == array.array("h", (min(ech), max(ech))), "onde : le dernier palier résume le son entier")
+    st, raw = call("GET", f"/api/son/onde/{iid}?v={ONDE_V}&niveau=0&de=10&n=3")
+    ok(st == 200 and i16(raw) == array.array("h", (min(ech[640:704]), max(ech[640:704]), min(ech[704:768]), max(ech[704:768]),
+                                                   min(ech[768:832]), max(ech[768:832]))), "onde : une tranche d'un palier, à sa place")
+    t0 = time.time()
+    st, raw = call("GET", f"/api/son/echantillons/{iid}?v={ONDE_V}&de=12345&n=4000")
+    ok(st == 200 and i16(raw) == ech[12345:16345], f"onde : les échantillons 12345 à 16344, exacts ({st}, {(time.time() - t0) * 1000:.0f} ms)")
+    st, raw = call("GET", f"/api/son/echantillons/{iid}?v={ONDE_V}&de={len(ech) - 10}&n=100")
+    ok(st == 200 and i16(raw) == ech[-10:], f"onde : la fin du son — les 10 derniers, pas plus ({st})")
+    bad = [call("GET", f"/api/son/onde/{iid}?niveau=99&de=0&n=1")[0], call("GET", f"/api/son/onde/{iid}?niveau=0&de=-1&n=1")[0],
+           call("GET", f"/api/son/echantillons/{iid}?de=0&n=0")[0], call("GET", f"/api/son/echantillons/{iid}?de=0&n={ECH_MAX + 1}")[0],
+           call("GET", f"/api/son/echantillons/{iid}?de=x&n=1")[0]]
+    ok(bad == [400] * 5, f"onde : un palier, un début, un nombre hors des bornes → 400 ({bad})")
+    st, img = call("PUT", "/api/library/upload?name=pas-un-son-2.png", raw=_tiny_png())
+    st2, _ = call("GET", f"/api/son/onde/{img.get('id')}")
+    st3, _ = call("GET", "/api/son/echantillons/aud-20260101-000000-0000?de=0&n=1")
+    ok(st2 == 404 and st3 == 404, f"onde : une image n'en a pas, un objet absent non plus ({st2}, {st3})")
+    m0 = (d / b).stat().st_mtime_ns
+    st, h2 = call("GET", f"/api/son/onde/{iid}")
+    ok(st == 200 and h2.get("n") == h["n"] and (d / b).stat().st_mtime_ns == m0, "onde : calculée une fois — la deuxième demande lit le fichier")
+    cmd = " ".join(onde_command(Path("x"), Path("y"), 48000))
+    ok("aresample=48000:async=1:first_pts=0" in cmd and "asplit=2" in cmd and "-c:a flac" in cmd,
+       "onde : un seul décodage, aux temps de l'originale, pour la pyramide et la copie sans perte")
+    # la voix d'un élément : la sienne, à côté de son fichier
+    st, hv = attendre(f"/api/son/onde/{eid}?voix=0&v={ONDE_V}")
+    ok(st == 200 and hv.get("pret") and hv.get("n", 0) > 0, f"onde : la voix d'un élément a la sienne ({st})")
+    # le son d'une vidéo (le Montage) : un MP4 avec un son AAC
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        mp4 = Path(td) / "v.mp4"
+        r = subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "color=c=gray:s=64x64:r=25:d=1",
+                            "-f", "lavfi", "-i", "sine=f=440:sample_rate=48000:d=1", "-c:v", "libx264", "-preset", "ultrafast",
+                            "-c:a", "aac", "-shortest", str(mp4)], capture_output=True, timeout=60)
+        if r.returncode == 0:
+            st, vid = call("PUT", "/api/library/upload?name=essai-onde-video.mp4", raw=mp4.read_bytes())
+            vid_id = vid.get("id", "") if isinstance(vid, dict) else ""
+            st, hv = attendre(f"/api/son/onde/{vid_id}?v={ONDE_V}")
+            st2, raw = call("GET", f"/api/son/echantillons/{vid_id}?v={ONDE_V}&de=0&n={ONDE_B0}")
+            st3, rawp = call("GET", f"/api/son/onde/{vid_id}?v={ONDE_V}&niveau=0&de=0&n=1")
+            e0 = i16(raw)
+            ok(st == 200 and hv.get("pret") and hv.get("sr") == 48000 and st2 == 200 and len(e0) == ONDE_B0
+               and i16(rawp) == array.array("h", (min(e0), max(e0))),
+               f"onde : le son d'une vidéo — sa pyramide et ses échantillons s'accordent ({st}, {st2}, {st3})")
 
 
 def _tiny_png() -> bytes:

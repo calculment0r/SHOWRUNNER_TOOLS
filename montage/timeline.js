@@ -206,9 +206,11 @@ export class Timeline {
       if (c.kind === 'video') body.style.backgroundPositionX = `${-((c.in || 0) / M.spd(c) * this.pps)}px`;
     }
     const hasSound = t.kind === 'audio' || (c.kind === 'video' && c.audio);
-    if (t.kind === 'audio' && it && (it.kind === 'audio' || it.audio)) {
-      // l'onde : un canvas dessiné pour la seule partie visible du plan (paintWaves), plus une image étirée
-      const wave = el('canvas', { class: 'wave', 'data-item': it.id, 'data-in': String(c.in || 0), 'data-sp': String(M.spd(c)) });
+    // l'onde : un canvas dessiné pour la seule partie visible du plan (paintWaves), plus une image étirée ;
+    // celle d'un plan son, et celle d'un plan vidéo qui porte son son, dans le bas du plan (06/10)
+    const sonVideo = t.kind === 'video' && c.kind === 'video' && c.audio && it && it.audio;
+    if ((t.kind === 'audio' && it && (it.kind === 'audio' || it.audio)) || sonVideo) {
+      const wave = el('canvas', { class: sonVideo ? 'wave vid' : 'wave', 'data-item': it.id, 'data-in': String(c.in || 0), 'data-sp': String(M.spd(c)) });
       body.append(wave);
     }
     this.fadeMarks(body, w, t.kind === 'audio');

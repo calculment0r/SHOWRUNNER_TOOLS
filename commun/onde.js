@@ -42,7 +42,7 @@ import { menu } from './menu.js';
 const PICS_V = 1;            // apercu_son.py, VERSION
 const ONDE_V = 2;            // apercu_son.py, ONDE_V
 const TUILE = 8192;          // paires (min, max) par tuile d'un palier : 32 Ko
-export const MORCEAU = 131072; // échantillons par morceau : 256 Ko (2,7 s à 48 kHz ; apercu_son.py, ECH_MAX)
+export const MORCEAU = 262144; // échantillons par morceau : 512 Ko (5,5 s à 48 kHz ; apercu_son.py, ECH_MAX)
 const CACHE_MAX = 96 << 20;  // octets gardés au plus, toutes sources (le spectre lit les mêmes morceaux)
 const LIGNE = 1.5;           // échantillons par pixel sous lesquels on relie les échantillons
 const POINTS = 1 / 6;        // … sous lesquels on marque chaque échantillon
@@ -68,6 +68,8 @@ function lire(k) {
 }
 
 const sources = new Map();
+// pour les mesures (docs/etudes/onde_spectre.md § 5) : ce que le cache tient, ce qui est en route
+export const etatOnde = () => ({ octets: lruOctets, tuiles: lru.size, enVol: [...sources.values()].reduce((n, S) => n + S.vol.size, 0) });
 export function source(id, { voix = null } = {}) {
   const k = `${id}|${voix ?? ''}`;
   if (!sources.has(k)) sources.set(k, new Source(id, voix, k));
@@ -152,13 +154,27 @@ class Source {
     }
     return null;
   }
-  niveau(k, j) {
-    const n = Math.min(TUILE, this.h.niveaux[k] - j * TUILE);
-    return this._tuile(`${this.cle}|n${k}|${j}`, `${this.q('onde')}&niveau=${k}&de=${j * TUILE}&n=${n}`);
+  // le temps d'un dessin, les tuiles lues sont mémorisées (les colonnes voisines lisent les mêmes : ni clé
+  // à composer, ni cache à remuer pour chacune)
+  _memo(mk, f) {
+    if (!this.memo) return f();
+    if (this.memo.has(mk)) return this.memo.get(mk);
+    const t = f();
+    this.memo.set(mk, t);
+    return t;
+  }
+  niveau(k, j, demander = true) {
+    return this._memo((demander ? 1 : 2) * 1e8 + k * 1e6 + j, () => {
+      if (!demander) return lire(`${this.cle}|n${k}|${j}`) || null;
+      const n = Math.min(TUILE, this.h.niveaux[k] - j * TUILE);
+      return this._tuile(`${this.cle}|n${k}|${j}`, `${this.q('onde')}&niveau=${k}&de=${j * TUILE}&n=${n}`);
+    });
   }
   morceau(j) {
-    const n = Math.min(MORCEAU, this.h.n - j * MORCEAU);
-    return this._tuile(`${this.cle}|e${j}`, `${this.q('echantillons')}&de=${j * MORCEAU}&n=${n}`);
+    return this._memo(-1 - j, () => {
+      const n = Math.min(MORCEAU, this.h.n - j * MORCEAU);
+      return this._tuile(`${this.cle}|e${j}`, `${this.q('echantillons')}&de=${j * MORCEAU}&n=${n}`);
+    });
   }
   // les échantillons [a, b) : un Int16Array si tous sont là, sinon null (les morceaux manquants sont demandés)
   plage(a, b) {
@@ -198,7 +214,7 @@ class Source {
       const a = Math.floor(i0 / div), b = Math.max(a + 1, Math.ceil(i1 / div));
       let mn = 32767, mx = -32768, ok = true;
       for (let j = Math.floor(a / TUILE); j * TUILE < b; j++) {
-        const t = kk === k ? this.niveau(kk, j) : lire(`${this.cle}|n${kk}|${j}`);
+        const t = this.niveau(kk, j, kk === k);
         if (!t) { ok = false; break; }
         const lo = Math.max(a, j * TUILE) - j * TUILE, hi = Math.min(b, (j + 1) * TUILE, H.niveaux[kk]) - j * TUILE;
         for (let i = lo; i < hi; i++) { if (t[2 * i] < mn) mn = t[2 * i]; if (t[2 * i + 1] > mx) mx = t[2 * i + 1]; }
@@ -274,7 +290,11 @@ export function dessiner(cv, S, opts = {}) {
   peindre(cv, S, opts);
 }
 
-function peindre(cv, S, { t0 = 0, t1 = null, vue = 'onde', alpha = 1, part = 'tout' } = {}) {
+function peindre(cv, S, opts) {
+  S.memo = new Map();
+  try { peindre1(cv, S, opts); } finally { S.memo = null; }
+}
+function peindre1(cv, S, { t0 = 0, t1 = null, vue = 'onde', alpha = 1, part = 'tout' } = {}) {
   const dpr = Math.min(3, window.devicePixelRatio || 1);
   const w = Math.max(1, Math.round(cv.clientWidth * dpr));
   const h = Math.max(1, Math.round(cv.clientHeight * dpr));
