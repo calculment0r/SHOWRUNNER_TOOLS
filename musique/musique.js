@@ -19,6 +19,7 @@
 // (moteur.js) le joue ; ce qu'on entend est ce qu'on exporte.
 
 import { mountHeader, api, jobs, pick, uploadFile, toast, $, href, fmtDur, stateFr, session, espace, enTeteEspace, espaceDocument, surEspace } from '../commun/shell.js';
+import { prefs } from '../commun/prefs.js';   // le tampon audio (music.tampon, musique/prefs.json)
 import { Engine, renderMix, rendusLibres, renderClips, wav24, peakDb, songEnd, peaks } from './moteur.js';
 import { openPublish } from './element.js';   // éléments : « Publier comme élément » (30/09)
 import { MODULES, TRACK_KINDS, COLORS, COLOR_FR, PRESETS, SOURCES_OF, DRUM_MODELS, NOTE_MODELS, TONICS, TONICS_FR, MODES,
@@ -63,8 +64,26 @@ engine.onstop = () => {
   paintTransport();
   views[S.view]?.frame?.(engine.position());
   if (S.view !== 'nodal' && app.nodalDetache?.()) views.nodal?.frame?.(engine.position());   // le nodal dans sa fenêtre
+  if (ovDirty) overviewSoon(300);   // la forme d'onde de la barre attendait l'arrêt (overviewSoon)
 };
-engine.onplay = () => { if (S.rec) rec.begin(); paintTransport(); };
+engine.onplay = () => { if (S.rec) rec.begin(); paintTransport(); overviewHold(); };
+
+// ── le tampon audio (moteur.js, TAMPONS ; préférence music.tampon) ──
+// Lu avant la première lecture, suivi quand il change (le panneau des
+// préférences, un autre onglet). Un contexte refait le dit, avec ce que le
+// navigateur a donné ; les vues se redessinent : leurs analyseurs tenaient à
+// l'ancien contexte.
+const msDe = (s) => (s == null ? '—' : `${Math.round(s * 1000)} ms`);
+engine.reglerTampon(prefs.get('music.tampon'));
+prefs.ready?.then(() => engine.reglerTampon(prefs.get('music.tampon'))).catch(() => {});
+prefs.on('music.tampon', (v) => {
+  if (engine.reglerTampon(v) === 'attente') toast('tampon audio : il change à l’arrêt de la lecture', 4000);
+});
+document.addEventListener('mu:contexte', (e) => {
+  const L = e.detail || {};
+  toast(`tampon audio ${msDe(L.base)} · sortie ≈ ${msDe(L.sortie)} · avance ${msDe(L.avance)}`, 4000);
+  render();
+});
 
 export const uid = (p) => p + Math.random().toString(36).slice(2, 9);
 
@@ -1361,12 +1380,23 @@ function tapTempo(at = performance.now()) {
 // (44,1 kHz : 40 s) ; les 120 colonnes dessinées s'écartent de 1,6 px en
 // moyenne sur 24 du rendu à 48 kHz (44,1 kHz : 1,0 ; deux rendus à 48 kHz
 // entre eux : 0,2, le bruit des caisses).
-let ovBuf = null, ovT = null, ovCtl = null, ovDirty = false, ovEnd = 0;
+let ovBuf = null, ovT = null, ovCtl = null, ovDirty = false, ovEnd = 0, ovX = null;   // ovX : la tête peinte (frame)
 const OV_W = 120, OV_SR = 22050;
+// Pendant la lecture, ce rendu attend l'arrêt (engine.onstop) : un rendu hors
+// temps réel va aussi vite qu'il peut, il prend un cœur entier (et ses fils de
+// convolution, un worklet de plus) au rendu temps réel, et rappelle le fil
+// principal à chaque double croche (renderMix) — de quoi faire craquer la
+// lecture d'une machine chargée (Cal, 06/10). L'aperçu reste celui d'avant.
 function overviewSoon(ms = 1500) {
   ovDirty = true;
   clearTimeout(ovT); ovCtl?.abort(); ovCtl = null;
+  if (engine.running) return;
   ovT = setTimeout(renderOverview, ms);
+}
+function overviewHold() {
+  if (!ovT && !ovCtl) return;
+  clearTimeout(ovT); ovT = null;
+  if (ovCtl) { ovCtl.abort(); ovCtl = null; ovDirty = true; }
 }
 async function renderOverview() {
   if (!S.proj) return;
@@ -1387,6 +1417,7 @@ async function renderOverview() {
   ovCtl = null;
   window.__muOverview = { end, sr: OV_SR, at: performance.now() };   // essais pilotés
   drawOverview();
+  ovX = null;   // la tête se repeint à l'image suivante
 }
 function drawOverview() {
   const w = OV_W, h = 28, dpr = devicePixelRatio || 1;
@@ -1434,21 +1465,29 @@ function render(full = false) {
   app.toys?.wake();   // jouets : un projet qui a des jouets les fait vivre, dans toutes les vues
 }
 
-// la tête de lecture, les vu-mètres, la position : à chaque image
+// la tête de lecture, les vu-mètres, la position : à chaque image. Les vues
+// passent d'abord : elles lisent la mise en page (le défilement, une largeur)
+// avant que la position ne s'écrive — une lecture après une écriture forcerait
+// une mise en page de plus à chaque image (Cal, 06/10 : « le logiciel se ralentit »).
 function frame() {
   if (S.proj) {
     const b = engine.position();
-    setCue(posEl, fmtPos(b));
-    setCue(secEl, fmtClock(b * 60 / S.proj.bpm));
     views[S.view]?.frame?.(b);
     suivrePanneau();
     // le nodal dans sa fenêtre suit le moteur lui aussi (tête, vu-mètres)
     if (S.view !== 'nodal' && F.detache('nodal')) views.nodal?.frame?.(b);
+    setCue(posEl, fmtPos(b));
+    setCue(secEl, fmtClock(b * 60 / S.proj.bpm));
     if (ovBuf && ov.dataset.tot) {
-      // la tête sur la forme d'onde
-      drawOverview();
-      const g = ov.getContext('2d'), w = OV_W, x = ((b * 60 / S.proj.bpm) / +ov.dataset.tot) * w;
-      g.fillStyle = tok('or'); g.fillRect(Math.min(w - 1, x), 0, 1.5, 28);
+      // la tête sur la forme d'onde : la toile ne se refait que quand elle
+      // change de demi-pixel (120 px pour tout le morceau), pas à chaque image
+      const x = Math.min(OV_W - 1, Math.round(((b * 60 / S.proj.bpm) / +ov.dataset.tot) * OV_W * 2) / 2);
+      if (x !== ovX) {
+        ovX = x;
+        drawOverview();
+        const g = ov.getContext('2d');
+        g.fillStyle = tok('or'); g.fillRect(x, 0, 1.5, 28);
+      }
     }
   }
   requestAnimationFrame(frame);

@@ -38,6 +38,7 @@ Chaque changement est marqué `SHOWRUNNER :` dans le code.
 | `instruments/analog-synth.js` | la chute de l'enveloppe (`linearRampToValueAtTime(0, relâchement + release)`) | le gain tenait le maintien jusqu'à l'arrêt des oscillateurs, qui coupaient net : un clic en fin de note |
 | `instruments/analog-synth.js` | `noteOff(note, instant)` | relâcher une note jouée au clavier ou en MIDI, dont la durée n'est pas connue à l'attaque (le contrat d'ODIO n'a que `allNotesOff`) |
 | `instruments/acid-bass.js` | `noteOff(note, instant)` | idem, pour la voix monophonique |
+| `instruments/acid-bass.js` | `#vivantes` : `allNotesOff` arrête toutes les voix planifiées, pas seulement la dernière | l'ordonnanceur pose les notes plusieurs doubles croches d'avance (`moteur.js`, `TAMPONS`) : à l'arrêt, une note déjà posée mais pas encore partie sonnait quand même |
 | `instruments/plaits-synth.js` | messages `relacher` et `ping` du worklet, méthodes `noteOff` et `ping` | relâcher à la main ; l'export hors temps réel attend que les notes postées au worklet soient arrivées (MessagePort garde l'ordre) |
 | `effects/reverb.js` | `flush()` | l'export hors temps réel ne peut pas attendre les 90 ms que la réverbe laisse au geste avant de refaire sa réponse |
 | `effects/eq3.js` | `export` sur `LOW_CORNER`, `HIGH_CORNER` | la vue Instruments pose les points des plateaux à ces coudes (`musique/appareils/egaliseur.js`) : une seule vérité |

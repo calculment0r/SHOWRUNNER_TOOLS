@@ -5,8 +5,9 @@
    Jetons seulement.
    ============================================================ */
 
-/* la tête : un trait orange, un onglet en haut */
-.sr-ph { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; background: var(--or); pointer-events: none; z-index: var(--sr-ph-z, 9); }
+/* la tête : un trait orange, un onglet en haut. Sur son propre calque (will-change) : elle bouge
+   à chaque image de la lecture (poser : transform) sans faire repeindre la timeline dessous */
+.sr-ph { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; background: var(--or); pointer-events: none; z-index: var(--sr-ph-z, 9); will-change: transform; }
 .sr-ph i { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 11px; height: 11px; border-radius: 0 0 4px 4px; background: var(--or); }
 
 /* la règle : les graduations en timecode */

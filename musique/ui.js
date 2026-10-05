@@ -151,9 +151,10 @@ export function vu({ lr = false } = {}) {
     const now = performance.now();
     cols.forEach((c, i) => {
       const db = dbs[i] ?? dbs[0];
-      c.bar.style.height = `${(pos(db) * 100).toFixed(1)}%`;
+      // par transform (musique.css, .vu) : ni mise en page ni peinture à chaque image
+      c.bar.style.transform = `scaleY(${pos(db).toFixed(3)})`;
       if (db > c.pk || now - c.t > 1500) { c.pk = db; c.t = now; }
-      c.hold.style.bottom = `${(pos(c.pk) * 100).toFixed(1)}%`;
+      c.hold.style.transform = `translateY(${(-pos(c.pk) * 100).toFixed(1)}%)`;
       c.col.classList.toggle('hot', c.pk > -1);
     });
   };

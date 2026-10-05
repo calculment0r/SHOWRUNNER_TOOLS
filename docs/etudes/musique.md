@@ -108,7 +108,8 @@ d'ici. Non repris : les instruments qui téléchargent leurs échantillons
 
 | choix | source |
 |---|---|
-| planification sur `AudioContext.currentTime`, réveil toutes les 25 ms, 120 ms d'avance, minuteur dans un Worker | MDN, *Advanced techniques: Creating and sequencing audio* ; *A Tale of Two Clocks* (Chris Wilson) |
+| planification sur `AudioContext.currentTime`, réveil toutes les 25 ms, minuteur dans un Worker ; l'avance suit le tampon (120, 300 ou 500 ms ; 120 jusqu'au 06/10) ; rien ne se pose à moins de 10 ms de l'horloge : une tranche en retard est perdue, ses sons repartent à leur place | MDN, *Advanced techniques: Creating and sequencing audio* ; *A Tale of Two Clocks* (Chris Wilson : « plus d'avance si la page a des mises en page lourdes ») ; spécification Web Audio (`start` dans le passé, temps d'automation « clamped to currentTime ») ; « Les craquements », plus bas |
+| **le tampon de la carte son** : `latencyHint` « playback » par défaut (« interactive » jusqu'au 06/10), réglable (préférence `music.tampon`) | spécification Web Audio (`AudioContextLatencyCategory`) ; Chromium, `media/base/audio_latency.cc` ; *Profiling Web Audio apps in Chrome* (web.dev) |
 | **automation et arc** : `setValueAtTime` au début de chaque tranche planifiée puis `linearRampToValueAtTime` jusqu'à chaque point et à la fin de la tranche | MDN, AudioParam |
 | l'automation tient le réglage pendant la lecture (une molette ne le reprend pas) ; à l'arrêt, `cancelScheduledValues` et la valeur de la courbe à la tête de lecture | MDN, AudioParam ; choix de conception |
 | filtre de l'arc : passe-bas Q = 1/√2 (Butterworth), de la coupure basse (350 Hz par défaut) à 20 kHz en échelle logarithmique ; volume : de −12 dB à 0 | Q de Butterworth : définition ; bornes : choix de réglage |

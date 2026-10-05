@@ -274,7 +274,7 @@ export function createDevices(app) {
     for (const ap of appareils) ap.frame?.();
     for (const [id, mt] of meters) {
       const db = app.engine.level(id);
-      mt.firstChild.style.width = `${Math.max(0, Math.min(100, (db + 60) / 60 * 100)).toFixed(1)}%`;
+      mt.firstChild.style.transform = `scaleX(${Math.max(0, Math.min(1, (db + 60) / 60)).toFixed(3)})`;   // par transform : musique.css, .mtr
       mt.classList.toggle('hot', db > -1);
     }
   }

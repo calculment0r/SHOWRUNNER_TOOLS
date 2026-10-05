@@ -1287,3 +1287,19 @@ def selftest(call, ok) -> None:
     ok(st == 200 and st2 == 404, "un projet va à la corbeille")
     st, _ = call("GET", "/api/music/projects/..%2F..%2Fjobs")
     ok(st in (400, 404), "un identifiant de projet douteux est refusé")
+
+    # le tampon audio d'ODIO (musique/prefs.json ; moteur.js, TAMPONS, 06/10) : les choix de la
+    # préférence sont les tampons du moteur, une seule vérité ; le serveur range un choix, refuse le reste
+    sch = json.loads((config.REPO / "musique" / "prefs.json").read_text(encoding="utf-8"))
+    tp = next((x for x in sch["prefs"] if x["key"] == "tampon"), None)
+    src = (config.REPO / "musique" / "moteur.js").read_text(encoding="utf-8")
+    bloc = re.search(r"export const TAMPONS = \{(.*?)\n\};", src, re.S)
+    cles = re.findall(r"^\s+(\w+): \{ latence:", bloc.group(1), re.M) if bloc else []
+    defaut = re.search(r"export const TAMPON_DEFAUT = '(\w+)'", src)
+    ok(sch.get("tool") == "music" and tp and [o[0] for o in tp["options"]] == cles and defaut and tp["default"] == defaut.group(1),
+       f"le tampon : les choix de musique/prefs.json sont les TAMPONS du moteur ({[o[0] for o in tp['options']] if tp else None} / {cles})")
+    st, d = call("POST", "/api/prefs", {"patch": {"music": {"tampon": "long"}}})
+    ok(st == 200 and d["prefs"].get("music", {}).get("tampon") == "long", f"le tampon se range ({st})")
+    st, d = call("POST", "/api/prefs", {"patch": {"music": {"tampon": "énorme"}}})
+    ok(st == 400, f"un tampon inconnu est refusé ({st})")
+    call("POST", "/api/prefs", {"patch": {"music": {"tampon": None}}})

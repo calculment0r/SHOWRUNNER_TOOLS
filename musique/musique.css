@@ -119,9 +119,12 @@ body.mu-page { display: flex; flex-direction: column; height: 100vh; overflow: h
 .fdr:focus-visible { outline: 2px solid var(--or); outline-offset: 3px; border-radius: var(--r2); }
 .vu { display: flex; gap: 2px; height: 150px; }
 .vu .col { position: relative; width: 6px; height: 100%; border-radius: 3px; background: var(--bg); overflow: hidden; }
-.vu .lvl { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--grn2); }
-.vu .hold { position: absolute; left: 0; right: 0; height: 2px; background: var(--ink2); }
-.vu .col.hot .hold { background: var(--or); }
+/* le niveau et la crête tenue bougent par transform (ui.js, vu) : la crête est un cadre de la
+   hauteur de la colonne, son trait en bas, monté d'autant de pour cent de sa hauteur */
+.vu .lvl { position: absolute; left: 0; right: 0; bottom: 0; height: 100%; background: var(--grn2); transform-origin: 50% 100%; transform: scaleY(0); will-change: transform; }
+.vu .hold { position: absolute; inset: 0; transform: translateY(0); will-change: transform; }
+.vu .hold::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--ink2); }
+.vu .col.hot .hold::after { background: var(--or); }
 .vu .col.hot .lvl { background: var(--amb); }
 
 /* ── menu, modales, panneaux ────────────────────────────── */
@@ -297,7 +300,9 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 .ar-head .row .tb.arm.on { background: var(--or-bg); color: var(--or); box-shadow: inset 0 0 0 1px var(--line-or); }
 .ar-head.muted .nm { color: var(--ink3); }
 .ar-mtr { height: 3px; border-radius: 2px; background: var(--bg); overflow: hidden; width: 100%; max-width: 150px; }
-.ar-mtr i { display: block; height: 100%; width: 0; background: var(--c); opacity: .85; }
+/* les vu-mètres bougent par transform, sur leur propre calque (will-change) : à chaque image,
+   ni mise en page ni peinture du reste (Cal, 06/10 : « le logiciel se ralentit ») */
+.ar-mtr i { display: block; height: 100%; width: 100%; background: var(--c); opacity: .85; transform-origin: 0 50%; transform: scaleX(0); will-change: transform; }
 .ar-mtr.hot i { background: var(--or); }
 .ar-vol { width: 58px; height: 14px; margin: 0 2px; }   /* le curseur du thème (commun/curseur.css) */
 .ar-head .kn.xs { width: 24px; }
@@ -635,7 +640,7 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 .snd .sn { font-size: 12px; max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 canvas.wave { width: 100%; min-width: 320px; height: 46px; background: var(--bg); border-radius: var(--r2); display: block; }
 .mtr { height: 5px; border-radius: 3px; background: var(--bg); overflow: hidden; width: 100%; }
-.mtr i { display: block; height: 100%; width: 0; background: var(--grn2); }
+.mtr i { display: block; height: 100%; width: 100%; background: var(--grn2); transform-origin: 0 50%; transform: scaleX(0); will-change: transform; }   /* comme .ar-mtr i */
 .mtr.hot i { background: var(--or); }
 .mtr.lg { height: 8px; }
 .tl-empty { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; padding: var(--s6); color: var(--ink3); }

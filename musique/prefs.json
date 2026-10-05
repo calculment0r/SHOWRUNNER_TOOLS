@@ -1,0 +1,12 @@
+{
+  "tool": "music",
+  "title": "ODIO",
+  "about": "Le studio de musique. Le tampon audio, comme le « Buffer Size » de Live : plus long, la lecture résiste aux à-coups de la machine (plus de craquements) ; plus court, ce qu’on joue au clavier répond plus vite.",
+  "prefs": [
+    {
+      "key": "tampon", "label": "Tampon audio", "type": "choice", "default": "moyen",
+      "options": [["court", "Court · 10 ms"], ["moyen", "Moyen · 20 ms"], ["long", "Long · 50 ms"]],
+      "help": "Le tampon de la carte son et l’avance de la lecture : court 10 ms et 120 ms (le réglage d’avant : jouer au clavier), moyen 20 ms et 300 ms, long 50 ms et 500 ms (une machine chargée). Le navigateur arrondit le tampon ; la valeur obtenue s’affiche quand il change. Une retouche faite pendant la lecture s’entend après l’avance. Choisi pendant la lecture, le tampon change à l’arrêt."
+    }
+  ]
+}

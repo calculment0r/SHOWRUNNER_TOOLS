@@ -1707,7 +1707,7 @@ export function createTimeline(app) {
     if (app.engine.running) suivre(scroll, phX, { tete: HEAD_W });
     for (const [id, mt] of meters) {
       const db = app.engine.level(id);
-      mt.firstChild.style.width = `${Math.max(0, Math.min(100, (db + 60) / 66 * 100)).toFixed(1)}%`;
+      mt.firstChild.style.transform = `scaleX(${Math.max(0, Math.min(1, (db + 60) / 66)).toFixed(3)})`;   // par transform : musique.css, .ar-mtr
       mt.classList.toggle('hot', db > -1);
     }
     // la prise en cours
