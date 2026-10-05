@@ -164,6 +164,8 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
   if (sur) sous.append(sur);
   const ecran = avecEcran && kind === 'video' ? el('div', { class: 'sr-lect-ecran', title: 'clic : lecture · pause · double-clic : plein écran' },
     attente, src, nav, sous) : null;
+  // le rapport de l'image : l'écran le prend au téléphone (lecteur.css, « le téléphone »)
+  if (ecran && it.width > 0 && it.height > 0) ecran.style.setProperty('--sr-lect-ar', `${it.width} / ${it.height}`);
 
   // ── la barre ──
   const bLire = el('button', { class: 'tb sm sr-lect-lire', type: 'button', title: 'lecture · pause (Espace) · J K L : arrière, arrêt, avant' }, 'Lecture');

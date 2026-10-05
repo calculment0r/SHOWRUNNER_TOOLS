@@ -214,3 +214,25 @@ a.acc-fix:hover { color: var(--ink); }
   .acc-chips { grid-auto-columns: 78%; }
   .acc-strip > *, .acc-chips > * { scroll-snap-align: start; }
 }
+
+/* ── le téléphone (data-appareil="mobile" ; les 44 px : commun/base.css, « LE TÉLÉPHONE ») ──
+   Les mêmes rangées, plus basses : on voit les Apps sans faire défiler un écran par carte. Un outil à
+   grand écran le dit dans son coin (accueil.js, card : « ordinateur ») ; sa page montre l'écran du
+   téléphone (commun/telephone.js). */
+html[data-appareil="mobile"] .acc { padding: var(--s4) 16px calc(var(--s5) + env(safe-area-inset-bottom)); }
+html[data-appareil="mobile"] .acc-app.big { min-height: 168px; }
+html[data-appareil="mobile"] .acc-app.big .acc-txt { padding: 32px 16px 14px; }
+html[data-appareil="mobile"] .acc-app.big .acc-verb { font-size: 20px; }
+html[data-appareil="mobile"] .acc-app { min-height: 116px; }
+html[data-appareil="mobile"] .acc-tool { min-height: 96px; }
+html[data-appareil="mobile"] .acc-more { display: inline-flex; align-items: center; min-height: 44px; padding: 0 2px; }
+html[data-appareil="mobile"] .acc-chip { min-height: 56px; }
+.acc-eng.acc-grand { opacity: 1; box-shadow: inset 0 0 0 1px currentColor; }
+.acc-app.big.has-img .acc-eng.acc-grand { background: var(--veil); box-shadow: none; }
+/* portrait : deux cartes par rangée, le code de l'outil (SR—05) laisse la place à son coin */
+@media (orientation: portrait) { html[data-appareil="mobile"] .acc-tool .acc-code { display: none; } }
+/* paysage : les grandes cartes côte à côte, les rangées en trois */
+@media (orientation: landscape) {
+  html[data-appareil="mobile"] .acc-big { grid-template-columns: 1fr 1fr; }
+  html[data-appareil="mobile"] .acc-row, html[data-appareil="mobile"] .acc-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}

@@ -425,3 +425,58 @@ html.sr-wait body { visibility: hidden; }
    Ouvrir ODIO… — est retiré pour qui ne l'a pas ici (apps_studio_elements.md § 3.2,
    « retire (reste en Studio) ») ; les menus l'écartent de même (`studio: true`) */
 html[data-studio="non"] .sr-studio { display: none !important; }
+
+/* ============================================================
+   LE TÉLÉPHONE — la barre compacte, au doigt (data-appareil="mobile",
+   commun/theme-tot.js ; les cibles de 44 px : base.css, « LE TÉLÉPHONE »)
+   La même barre, dans le même ordre, aux mêmes x d'une page à l'autre :
+   le carré du logotype, la case du nom de l'outil (sa largeur commune,
+   resserrée de même partout : le nom se coupe, entier dans son title),
+   « Outils », puis la grille d'Asset, la roue et le nom. Le Workspace passe
+   au menu du nom (lignesDuNom, .sr-ml-ws) ; le plein écran s'en va
+   (l'iPhone ne l'a pas : pleinecran.js). En paysage aussi : la convention
+   ne change pas quand on tourne le téléphone.
+   ============================================================ */
+html[data-appareil="mobile"] { --sr-hdr-h: 52px; }
+html[data-appareil="mobile"] .hdr { flex-wrap: nowrap; gap: 4px; padding: 4px 8px; }
+html[data-appareil="mobile"] body.ide-page .hdr { padding-top: 4px; padding-bottom: 4px; }
+html[data-appareil="mobile"] .hdr .logo { flex: none; width: 44px; height: 44px; justify-content: center; }
+html[data-appareil="mobile"] .hdr .logo > span:not(.sq) { display: none; }
+html[data-appareil="mobile"] .hdr .logo .sq { flex: none; }   /* ODIO a sa propre .sq (flex: 1, musique.css) */
+html[data-appareil="mobile"] .hdr .tool-name { flex: 0 1 auto; min-width: 0; font-size: 13px; }
+html[data-appareil="mobile"] .hdr .tool-sep { margin: 0 2px; }
+html[data-appareil="mobile"] .hdr .tools { display: none; }
+html[data-appareil="mobile"] .hdr .tools-btn { display: inline-flex; flex: none; padding: 0 10px; }
+html[data-appareil="mobile"] .hdr .sp { flex: 1; min-width: 0; }
+html[data-appareil="mobile"] .hdr .sr-droite { flex: none; gap: 4px; }
+html[data-appareil="mobile"] .hdr .sr-asset-btn { width: 44px; padding: 0; }
+html[data-appareil="mobile"] .hdr .sr-asset-btn span { display: none; }
+html[data-appareil="mobile"] .hdr .sr-gear { width: 44px; }
+html[data-appareil="mobile"] .hdr .sr-full, html[data-appareil="mobile"] .hdr .sr-ws { display: none; }
+html[data-appareil="mobile"] .hdr .sr-me { max-width: 28vw; padding: 0 10px; }
+/* le menu « Outils » : toute la largeur, une ligne de 44 px par outil, et il défile s'il le faut (paysage) */
+html[data-appareil="mobile"] .hdr .tools-menu {
+  left: 8px; right: 8px; min-width: 0; max-height: calc(100 * var(--vh) - var(--sr-hdr-h) - 12px); overflow: auto;
+  overscroll-behavior: contain;
+}
+html[data-appareil="mobile"] .hdr .tools-menu a { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; }
+/* paysage : deux colonnes, Apps et Studio côte à côte (le menu ne passe plus sous le bas de l'écran) */
+@media (orientation: landscape) {
+  html[data-appareil="mobile"] .hdr .tools-menu:not([hidden]) { display: grid; grid-template-columns: 1fr 1fr; grid-auto-flow: row; column-gap: 6px; }
+  html[data-appareil="mobile"] .hdr .tools-menu .grp { grid-column: 1 / -1; }
+}
+/* le menu du nom et celui des Workspaces : des lignes au doigt ; le Workspace y est (la barre ne l'a plus) */
+html[data-appareil="mobile"] .sr-ml-ws { display: flex; }
+html[data-appareil="mobile"] .sr-ml-i, html[data-appareil="mobile"] .sr-ws-item { min-height: 44px; }
+html[data-appareil="mobile"] .sr-ws-menu { left: 8px !important; right: 8px; width: auto; }
+/* le tiroir de la file : tout l'écran, ses bords sûrs */
+html[data-appareil="mobile"] .drawer {
+  width: 100%; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+html[data-appareil="mobile"] .drawer .pan-head { padding: 4px 8px 4px var(--s4); }
+html[data-appareil="mobile"] .job { grid-template-columns: 44px minmax(0, 1fr); }
+html[data-appareil="mobile"] .job > :nth-child(3) { grid-column: 1 / -1; justify-content: flex-end; }
+/* un outil à grand écran, au téléphone (commun/telephone.js) : sa page se cache dès la barre posée, l'écran du
+   téléphone la remplace ; restent la barre, les menus, la file, les boîtes et les bulles communes */
+html.sr-tel-lourd body > :not(.hdr):not(.sr-tel):not(.drawer):not(.scrim):not(.toast):not(.acct):not(.sr-ws-menu):not(.sr-menu):not(.porte) { display: none !important; }
+html.sr-tel-lourd body { overflow: auto !important; height: auto !important; }

@@ -41,6 +41,9 @@ export const TOOLS = [
 ];
 // les pages du portail qui ne sont pas des outils (pas de carte à l'accueil)
 const PAGES = { admin: { id: 'admin', k: 'SR—AD', name: 'Admin' } };
+// les outils qui se font sur un grand écran : au téléphone, l'écran de commun/telephone.js (ses textes : LOURDS) ;
+// l'accueil le dit sur leurs cartes
+export const GRAND_ECRAN = new Set(['music', 'montage', 'image', 'movie']);
 
 // ── le Workspace de l'onglet (docs/etudes/equipes_espaces.md § 4.3, § 4.4) ──
 // Chaque onglet est dans UN Workspace : pris de `?e=esp-…` à l'ouverture, sinon
@@ -1018,6 +1021,16 @@ export function mountHeader(toolId, { dock: useDock = true } = {}) {
   document.addEventListener('click', () => { menu.hidden = true; });
   document.body.prepend(hdr);
   HDR = hdr;
+  // ── téléphone : un outil à grand écran y montre l'écran du téléphone (commun/telephone.js) ; la page est
+  // cachée tout de suite (html.sr-tel-lourd, shell.css), rien d'elle ne s'affiche avant. « Ouvrir quand même »
+  // la rend pour l'onglet (sessionStorage).
+  if (window.SR_APPAREIL?.type === 'mobile') {
+    const lourd = GRAND_ECRAN.has(toolId) && !ss.get(`sr-tel-ouvert-${toolId}`);
+    if (lourd) document.documentElement.classList.add('sr-tel-lourd');
+    import('./telephone.js').then((m) => m.monter(toolId, { lourd }))
+      .catch((e) => { document.documentElement.classList.remove('sr-tel-lourd'); console.error('téléphone', e); });
+  }
+  // ── fin téléphone ──
   // le panneau (et sa place, dès maintenant : la page est encore cachée, rien ne saute)
   if (DOCK.page) import('./dock.js').then((m) => m.mount(DOCK.page)).catch((e) => console.error('panneau Asset', e));
   // la barre ne se coupe jamais : si les noms n'y tiennent pas entiers (douze outils, la case du nom
