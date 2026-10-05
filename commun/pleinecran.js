@@ -29,11 +29,11 @@
 // seulement (Firefox et Safari : pas de `navigator.keyboard.lock`) : là, Échap sort du
 // plein écran et ferme aussi ce que la page ferme — comme avant.
 
-import { dansCoquille } from './coquille.js';
+import { dansCadre } from './coquille.js';
 
-// Dans la coquille (commun/coquille.js : l'outil s'ouvre dans un cadre pour garder le plein
-// écran d'un outil à l'autre), le plein écran est celui du document du HAUT
-const docPlein = (doc) => (doc === document && dansCoquille ? window.top.document : doc);
+// Dans la coquille ou le volet (commun/coquille.js : un cadre pour garder le plein écran d'un outil à
+// l'autre, ou une page ouverte « à côté »), le plein écran est celui du document du HAUT
+const docPlein = (doc) => (doc === document && dansCadre ? window.top.document : doc);
 
 const ICON_IN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
 const ICON_OUT = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>';
