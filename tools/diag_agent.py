@@ -12,7 +12,9 @@ Sur DGX2, depuis ~/SHOWRUNNER_TOOLS :
 
 Dit aussi la fenêtre de contexte : celle que le portail demande (ideation_agent_ctx, 32768 par défaut), celle
 que le modèle porte (num_ctx de son Modelfile, la longueur native de model_info) — la question « 32k ou 64k ? »
-de docs/REPRISE.md § 2.D —, et si le modèle est aussi dans l'Ollama de l'autre machine (machine_ollama).
+de docs/REPRISE.md § 2.D —, et si le modèle est aussi dans l'Ollama de l'autre machine (machine_ollama). Depuis
+le 06/10 : où partent les paliers de l'entrée d'un projet (les images : quel modèle, quelle machine, voit-il ; les
+sons : Transcrire est-il en local) — docs/etudes/agent_showrunner.md § 7.
 """
 import json
 import sys
@@ -90,6 +92,23 @@ for name, other in ((config.get("machine_ollama") or {}) if len(sys.argv) <= 1 e
         print(f"{name} ({other}) : " + (f"présent · capacités {', '.join(oc or []) or 'non rendues'}" if o else "le modèle n'y est pas"))
     except (OSError, ValueError) as e:
         print(f"{name} ({other}) : ne répond pas ({e})")
+# l'entrée d'un projet (06/10) : où partent les paliers d'arrière-plan — les images (le modèle qui voit, sur sa machine
+# si la voie audio y a une instance : le jeton GPU), les sons (Transcrire, s'il est réglé en local)
+if len(sys.argv) <= 1:
+    r = A.route_vision()
+    print(f"\nentrée d'un projet · les images : {r['model']} sur {r['machine']} ({r['url']})"
+          + (f", épinglé sur {r['pin']}" if r.get("pin") else "") + (f" — {r['why']}" if r.get("why") else ""))
+    try:
+        vm = present(r["url"], r["model"])
+        vc = ask(r["url"], "/api/show", {"model": r["model"]}, timeout=20).get("capabilities") or [] if vm else []
+        print("  vision   : " + ("OUI" if "vision" in vc else "NON — les images ne seront pas regardées (l'agent le dit)" if vm
+                                 else "le modèle n'est pas dans cet Ollama — réglage ideation_agent_vision_modele"))
+    except (OSError, ValueError) as e:
+        print(f"  l'Ollama de la vision ne répond pas ({r['url']}) : {e}")
+    from tools import transcrire as T  # noqa: E402
+    print(f"entrée d'un projet · les sons : ideation_agent_sons = {A.sons_mode()} · Transcrire en {T.engine()}"
+          + (" → les sons sont transcrits (mode rapide, puis son résumé)" if A.sons_mode() == "toujours" or (A.sons_mode() == "auto" and T.engine() == "local")
+             else " → les sons ne sont pas transcrits à l'entrée (l'agent le dit)"))
 ready = "tools" in caps
 if ready:
     print("\n→ l'agent peut travailler : il appelle ses outils" + ("." if "vision" in caps else ", sans regarder les images."))

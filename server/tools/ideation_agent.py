@@ -1340,7 +1340,7 @@ def _et(parts: list) -> str:
     return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " et " + parts[-1]
 
 
-def inventaire(items: list, brief: str) -> dict:
+def inventaire(items: list, brief: str, brief_items: list | None = None) -> dict:
     """Ce qui est arrivé, compté par le code (jamais par le modèle) : la première phrase de l'agent."""
     by: dict = {}
     sans_texte, planche = 0, 0
@@ -1354,6 +1354,8 @@ def inventaire(items: list, brief: str) -> dict:
             sans_texte += 1
     order = [k for k in ORDRE_SORTES if by.get(k)] + [k for k in by if k not in ORDRE_SORTES]
     parts = [f"{len(by[k])} {SORTE_FR.get(k, (k, k))[len(by[k]) > 1]}" for k in order]
+    if brief_items and "document" in order:
+        parts[order.index("document")] += " (dont le brief)"
     if planche:
         parts.append(f"{planche} objet{'s' if planche > 1 else ''} de la planche")
     total = sum(len(v) for v in by.values()) + planche
@@ -1387,7 +1389,10 @@ def intake(m: Moteur, board: dict, conv: dict, turn: dict, frac) -> dict:
                 seen.add(n["item"])
                 items.append({"id": n["item"], "kind": n.get("kind"), "node": n["id"]})
     docs, others = [], []
+    skip = set(turn.get("brief_items") or [])   # le brief rangé en document : son texte est déjà dans <brief>
     for c in items:
+        if c.get("id") in skip:
+            continue
         it = library.get(c["id"]) if ITEM.fullmatch(str(c.get("id") or "")) else None
         (docs if it and it["kind"] == "document" else others).append((c, it))
     shown = docs[:APERCU_DOCS]
@@ -1658,10 +1663,11 @@ def paliers_frais(conv: dict) -> bool:
             pieces.append({"id": x["item"], "titre": x["title"], "note": note, "doc": x["doc"]})
         n = len(pieces)
         vids = sum(1 for x in docs if x.get("kind") == "video")
-        what = f"{'Les ' if n > 1 else 'Le '}{n - vids} son{'s' if n - vids > 1 else ''}" if vids < n else ""
+        sons = n - vids
+        what = ["le son" if sons == 1 else f"les {sons} sons"] if sons else []
         if vids:
-            what += (" et " if what else "") + f"{'les' if vids > 1 else 'la'} {vids} piste{'s' if vids > 1 else ''} son de vidéo"
-        ann = f"{what.strip()} : transcrit{'s' if n > 1 else ''} (Transcrire). " + " ; ".join(f"« {x['titre']} » — {x['note']}" for x in pieces[:3])
+            what.append("la piste son de la vidéo" if vids == 1 else f"les pistes son des {vids} vidéos")
+        ann = f"{_et(what)[0].upper() + _et(what)[1:]} : transcrit{'s' if n > 1 else ''} (Transcrire). " + " ; ".join(f"« {x['titre']} » — {x['note']}" for x in pieces[:3])
         if n > 3:
             ann += f" ; et {n - 3} de plus"
         p.update(state="done", annonce=_cut(ann, 600), pieces=pieces, fini=library.now())
@@ -1924,7 +1930,12 @@ def r_turn(req):
         turn = {"id": tid, "at": library.now(), "t0": time.time(), "by": u.get("id"), "by_name": u.get("name") or "", "intent": intent,
                 "user": {"content": content, "items": items}, "state": "queued", "actions": [], "reply": ""}
         if intent == "ingest":
-            turn["reception"] = inventaire(items, content)   # la première phrase : comptée ici, tout de suite
+            # les pièces qui SONT le brief (brief.md, le document coché) : leur texte est déjà le message — comptées, pas relues
+            bi = d.get("brief_items") or []
+            if not isinstance(bi, list) or any(str(x) not in {c["id"] for c in items} for x in bi):
+                raise HttpError(400, "brief_items : des pièces citées")
+            turn["brief_items"] = [str(x) for x in bi][:4]
+            turn["reception"] = inventaire(items, content, turn["brief_items"])   # la première phrase : comptée ici, tout de suite
         elif intent == "plan":
             # les réponses aux questions d'un tour (celles qu'on n'a pas encore données), ou un plan à refaire
             qt = _turn(conv, str(d.get("questions_turn") or "")) if d.get("questions_turn") else None

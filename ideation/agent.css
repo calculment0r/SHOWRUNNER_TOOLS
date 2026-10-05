@@ -144,3 +144,79 @@ body.at-presenting .ag { display: none; }
   0% { outline: calc(3px / var(--z)) solid var(--cy); outline-offset: calc(14px / var(--z)); }
   100% { outline: calc(3px / var(--z)) solid transparent; outline-offset: calc(2px / var(--z)); }
 }
+
+/* ── l'entrée d'un projet (06/10) : la réception, ce qui ne colle pas, les questions, le plan, les paliers, le carnet ── */
+.ag-lab { font-family: var(--f-mono); font-size: 8px; font-weight: 400; letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); }
+.ag-ut.long { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.ag-plus { display: inline-flex; align-items: center; justify-content: center; }
+.ag-qa { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; line-height: 1.45; color: var(--ink); }
+.ag-qa-q { color: var(--ink3); }
+.ag-qa-q::after { content: ' →'; }
+.ag-secs { color: var(--ink3); font-variant-numeric: tabular-nums; }
+
+/* « J'ai bien reçu… » : l'inventaire du serveur, la liste à déplier */
+.ag-recu { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: var(--r2); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
+.ag-recu p { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--ink); }
+.ag-det summary { cursor: pointer; font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
+.ag-det summary:hover { color: var(--ink2); }
+.ag-det ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 11px; line-height: 1.45; color: var(--ink2); overflow-wrap: anywhere; }
+.ag-det b { font-weight: 500; color: var(--ink); }
+
+/* ce qui ne colle pas : l'ambre, pas l'orange (l'orange reste l'action) */
+.ag-contra { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: var(--r2); background: var(--amb-bg); box-shadow: inset 0 0 0 1px var(--line-amb); }
+.ag-contra .ag-lab { color: var(--amb); }
+.ag-contra p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--ink); overflow-wrap: anywhere; }
+
+/* les questions : des choix cliquables, « autre » en texte libre */
+.ag-qcard, .ag-plancard { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: var(--r2); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.ag-plancard.off { box-shadow: inset 0 0 0 1px var(--line); }
+.ag-qs { display: flex; flex-direction: column; gap: 12px; }
+.ag-q { display: flex; flex-direction: column; gap: 6px; }
+.ag-qt { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--ink); }
+.ag-opts { display: flex; flex-wrap: wrap; gap: 5px; }
+.ag-opt { white-space: normal; height: auto; min-height: 26px; padding: 4px 11px; text-align: left; line-height: 1.3; }
+.ag-opt.on { color: var(--on-grn); background: var(--grn); box-shadow: inset 0 0 0 1px var(--grn2); }
+.ag-opt:disabled { cursor: default; }
+.ag-qs.closed .ag-opt:not(.on) { opacity: .45; }
+.ag-autre { height: 28px; font-size: 12px; }
+.ag-autre-dit { margin: 0; font-size: 12px; color: var(--ink); }
+.ag-qcard .ag-foot .ag-why { flex: 1; min-width: 0; }
+
+/* le plan : ses étapes, ce que chacune posera */
+.ag-plan { margin: 0; padding: 0 0 0 18px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; line-height: 1.45; color: var(--ink2); }
+.ag-plan li::marker { font-family: var(--f-mono); font-size: 9px; color: var(--cy); }
+.ag-plan b { display: block; font-weight: 500; color: var(--ink); }
+.ag-plan li.fait b { text-decoration: line-through; text-decoration-color: var(--ink3); }
+.ag-plan li.fait::marker { color: var(--grn2); }
+.ag-suite { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: var(--r2); box-shadow: inset 0 0 0 1px var(--line-cy); }
+.ag-suitet { flex: 1; min-width: 0; font-size: 12px; color: var(--ink); overflow-wrap: anywhere; }
+
+/* un palier d'arrière-plan : une ligne à sa place dans le fil */
+.ag-pal { display: flex; flex-direction: column; gap: 4px; padding: 7px 10px; border-radius: var(--r2); box-shadow: inset 0 0 0 1px var(--line); font-size: 12px; line-height: 1.5; color: var(--ink2); }
+.ag-pal.run { flex-direction: row; align-items: center; gap: 9px; }
+.ag-pal.done { background: var(--panel2); }
+.ag-pal.off { color: var(--ink3); }
+.ag-pal p { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.ag-palt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ag-palq { color: var(--ink2) !important; }
+
+/* le carnet : les décisions, sous l'en-tête ; il se replie */
+.ag-carnet { flex: none; display: flex; flex-direction: column; max-height: 38%; box-shadow: inset 0 -1px 0 var(--line); }
+.ag-carnet[hidden] { display: none; }
+.ag-ch { flex: none; display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 14px; text-align: left; font-size: 11.5px; color: var(--ink2); }
+.ag-ch:hover { color: var(--ink); }
+.ag-ch > span { flex: 1; min-width: 0; }
+.ag-car { font-style: normal; font-family: var(--f-mono); color: var(--ink3); }
+.ag-cbody { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 0 14px 10px; overscroll-behavior: contain; }
+.ag-clist { margin: 0; padding: 0 0 0 18px; display: flex; flex-direction: column; gap: 5px; font-size: 12px; line-height: 1.45; color: var(--ink); }
+.ag-clist li { position: relative; padding-right: 22px; }
+.ag-clist li::marker { font-family: var(--f-mono); font-size: 9px; color: var(--ink3); }
+.ag-clist .ag-meta { margin-left: 6px; }
+.ag-cx { opacity: .6; top: 0; right: 0; }
+.ag-clist li:hover .ag-cx, .ag-cx:focus-visible { opacity: 1; }
+.ag-cin { height: 28px; font-size: 12px; }
+/* au pied d'une carte, l'état sur sa ligne, les boutons dessous : rien ne se serre à 320 px */
+.ag-qcard .ag-foot, .ag-plancard .ag-foot { flex-wrap: wrap; row-gap: 6px; }
+.ag-plancard .ag-foot > .ag-meta { flex: 1 0 100%; }
+.ag-plancard .ag-foot > .sp { display: none; }
+.ag-plancard .ag-foot > .tb.on { margin-left: auto; }

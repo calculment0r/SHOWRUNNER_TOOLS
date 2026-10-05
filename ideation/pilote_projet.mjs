@@ -14,9 +14,14 @@
 //   B  clair, sans agent : un dossier entier (sous-dossier, .DS_Store), deux objets d'Asset par le
 //      panneau (d'ici, d'un autre Workspace : rien n'est copié avant le départ), le nom par défaut.
 //   C  étroit (390 px), sombre et clair.   D  le compte qui ne crée pas de Team (réponse interceptée).
-//   E  30 fichiers et un brief de 6 000 signes : les bornes de l'agent (4 000 signes, 24 pièces).
+//   E  30 fichiers et un brief de 6 000 signes : les bornes de l'agent (4 000 signes ; toutes les pièces).
 //   F  Échap, le menu, un fichier refusé (la phrase du portail), une étape qui tombe → Reprendre,
 //      le brief d'un PDF lu par le portail.
+//   H  (06/10) avec le VRAI agent sur un faux Ollama — le portail lancé avec SR_OLLAMA_URL
+//      (tools/faux_ollama.py), sinon H est sauté en le disant — sombre et clair : un brief sans
+//      rapport, des documents hétéroclites, un .webm et un .mp4 sans image (des sons) ; la
+//      réception, ce qui ne colle pas, les questions cliquables, rien de posé ; une réponse → le
+//      plan ; accepté → une étape, un geste ; « Annuler ce tour ».
 // Chromium tourne en locale UTF-8 : sous la locale POSIX (un conteneur), il laisse tomber sans rien
 // dire les chemins non ASCII de setInputFiles (« repérage_rue.mp4 » manquait, 05/10 : un artefact de
 // l'essai, pas de la page — un <input> nu fait de même). Rend 0 si tout passe ; le détail dans
@@ -58,6 +63,11 @@ open(os.path.join(fx, "donnees.bin"), "wb").write(bytes(range(256)))
 with wave.open(os.path.join(fx, "ambiance.wav"), "wb") as w:
     w.setnchannels(1); w.setsampwidth(2); w.setframerate(22050)
     w.writeframes(b"".join(struct.pack("<h", int(9000 * math.sin(i * 440 * 2 * math.pi / 22050))) for i in range(22050)))
+# 06/10 : deux sons dans des conteneurs vidéo (un mémo vocal .webm, une voix off .mp4) : ils vont dans « Sons »
+if shutil.which("ffmpeg"):
+    for n, codec in (("note_vocale.webm", "libopus"), ("voix_off.mp4", "libopus")):
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=330:duration=1", "-c:a", codec,
+                        os.path.join(fx, n)], check=True)
 for n, src, t in (("repérage_rue.mp4", "testsrc", 2), ("plan_large.mp4", "testsrc2", 1)):
     p = os.path.join(fx, n)
     if shutil.which("ffmpeg"):
@@ -198,6 +208,8 @@ async function scenarioA(theme) {
   ok(acc?.kind === 'video' && acc.title === 'repérage_rue', `le nom accentué rangé : ${acc?.kind} « ${acc?.title} »`);
   const nfd = P.files.find((f) => f.name.startsWith('mémo'));
   ok(nfd && nfd.title === 'mémo_équipe'.normalize('NFC'), `le nom NFD rangé en NFC (${JSON.stringify(nfd?.title)})`);
+  const sonsVid = P.files.filter((f) => /^(note_vocale\.webm|voix_off\.mp4)$/.test(f.name));
+  ok(sonsVid.every((f) => f.kind === 'audio'), `un .webm et un .mp4 sans image rangés en sons (${sonsVid.map((f) => `${f.name}:${f.kind}`).join(' ') || 'pas de ffmpeg'})`);
   const docs = P.files.filter((f) => /\.(pdf|docx|md|txt|bin)$/.test(f.name));
   ok(docs.every((f) => f.kind === 'document'), `les documents en sorte « document » (${docs.map((f) => `${f.name}:${f.kind}`).join(' ')})`);
   // l'agent : appelé après l'enregistrement de la planche, le brief en tête
@@ -208,6 +220,7 @@ async function scenarioA(theme) {
     const briefId = P.files.find((f) => f.name === 'brief.txt')?.id;
     ok(send.o.intent === 'ingest' && Array.isArray(send.o.pieces) && send.o.pieces[0] === briefId, `l'agent : intent ingest, le brief en tête des pièces (${send.o.pieces.length})`);
     ok(new Set(send.o.pieces).size === send.o.pieces.length && send.o.pieces.length === P.files.length + 1, `les pièces : chaque fichier, et brief.md (${send.o.pieces.length} / ${P.files.length + 1})`);
+    ok(send.o.brief?.length === 2 && send.o.brief.includes(briefId), `les pièces qui SONT le brief, nommées (brief.txt et brief.md : ${send.o.brief?.length})`);
     ok(/Les Rues/.test(send.text) && /tourner de nuit/.test(send.text), 'le texte : le brief tapé et celui du document');
     ok(!send.dirty && !send.saving && send.nodes > 0, `la planche enregistrée avant l'analyse (${send.nodes} objets)`);
   }
@@ -231,6 +244,9 @@ async function scenarioA(theme) {
   const inside = (n, f) => n.x >= f.x && n.y >= f.y && n.x + n.w <= f.x + f.w && n.y + n.h <= f.y + f.h;
   const loose = board.nodes.filter((n) => n.t !== 'frame' && n.t !== 'title' && !frames.some((f) => inside(n, f)));
   ok(!loose.length, `chaque objet dans un cadre (${loose.length} dehors)`);
+  const fV = frames.find((f) => f.name === 'Vidéos');
+  const dansV = board.nodes.filter((n) => n.t === 'media' && fV && inside(n, fV)).map((n) => n.kind);
+  ok(fV && dansV.length && dansV.every((k) => k === 'video'), `le cadre « Vidéos » : des vidéos seulement (${dansV.join(', ')})`);
   ok(frames.every((a, i) => frames.every((b, j) => i === j || a.x + a.w <= b.x || b.x + b.w <= a.x)), 'les cadres côte à côte, sans chevauchement');
   // un objet media pour chaque sorte que la planche pose (media_kinds : les documents, le jour où elle les pose)
   const lib = await libOf(P.R.space);
@@ -381,8 +397,8 @@ async function scenarioE() {
   ok(send && send.text.length <= 4000 && /brief\.md/.test(send.text), `le texte coupé à 4 000 signes, la suite nommée (${send?.text.length})`);
   const md = (await libOf(P.R.space)).find((i) => i.title === 'Brief');
   const pdf = P.files.find((f) => f.name === 'scenario.pdf');
-  ok(send && send.o.pieces.length === 24 && send.o.pieces[0] === md?.id && send.o.pieces[1] === pdf?.id, `24 pièces au plus : brief.md, le document, puis les images (${send?.o.pieces.length})`);
-  ok(P.steps.some((s) => s.k === 'agent' && /24 pièces sur 31/.test(s.t)), 'la ligne de l’agent le dit (24 sur 31)');
+  ok(send && send.o.pieces.length === 31 && send.o.pieces[0] === md?.id && send.o.pieces[1] === pdf?.id, `toutes les pièces (sa réception les compte) : brief.md, le document, puis les images (${send?.o.pieces.length})`);
+  ok(P.steps.some((s) => s.k === 'agent' && /31 pièces/.test(s.t)), 'la ligne de l’agent le dit (31 pièces)');
   await page.waitForTimeout(1200);
   await page.shot('E-planche');
   ok(!page.errs.length, `console : ${page.errs.join(' | ') || 'rien'}`);
@@ -443,7 +459,65 @@ async function scenarioF() {
   await ctx.close();
 }
 
-const all = { A: () => scenarioA('dark'), G: () => scenarioA('light'), B: scenarioB, C: scenarioC, D: scenarioD, E: scenarioE, F: scenarioF };
+// ── H : le vrai agent (un faux Ollama derrière) — la réception, les questions, le plan, une étape ──
+async function scenarioH() {
+  say('\n— H : le vrai agent, un brief sans rapport, des documents hétéroclites');
+  const essai = await api('ideation/boards', { method: 'POST', body: JSON.stringify({ name: 'essai moteur' }) });
+  const eng = (await api(`ideation/agent/${essai.id}`)).engine || {};
+  if (!eng.ready) {
+    ok(!want.includes('H'), `H sauté : l'agent n'est pas prêt sur ce portail (${eng.why || 'pas de réponse'}) — le lancer avec SR_OLLAMA_URL=…faux_ollama`);
+    return;
+  }
+  for (const theme of ['dark', 'light']) {
+    const { ctx, page } = await newPage(theme, { width: 1600, height: 940 });
+    page.tag = `H-${theme}`;
+    await ouvrir(page);
+    await page.fill('.pj-txt', 'Une publicité de 30 secondes pour une marque de café en grains, ton chaleureux.');
+    const names = ['dossier.pdf', 'note.docx', 'notes.md', 'moodboard_01.png', 'perso.webp', 'ambiance.wav', 'repérage_rue.mp4', 'note_vocale.webm', 'voix_off.mp4']
+      .filter((n) => fxNames.includes(n));
+    await joindre(page, names.map((n) => `${FX}/${n}`));
+    await page.waitForFunction((n) => document.querySelectorAll('.pj-tile').length >= n, names.length, { timeout: 5000 }).catch(() => {});
+    await page.click('.modal.pj .tb.go');
+    await page.waitForSelector('.ag-recu', { timeout: 60000 });
+    const recu = await page.textContent('.ag-recu p');
+    ok(new RegExp(`J'ai bien reçu ${names.length + 1} pièces`).test(recu) && /rien ne se pose sur la planche/.test(recu), `${theme} : la réception, comptée par le portail (« ${recu.slice(0, 90)}… »)`);
+    await page.waitForSelector('.ag-qcard .ag-opt', { timeout: 60000 });
+    await page.waitForFunction(() => !document.querySelector('.modal.pj'), null, { timeout: 15000 }).catch(() => {});
+    const nodes0 = await page.evaluate(() => window.ideation.S.board.nodes.length);
+    const notes = await page.evaluate(() => window.ideation.S.board.nodes.filter((n) => ['note', 'sticky'].includes(n.type)).length);
+    ok(notes <= 1, `${theme} : aucune note ni post-it de l'agent avant les réponses (${notes} : la note du brief)`);
+    ok(await page.locator('.ag-qcard .ag-q').count() >= 3 && /lequel est le projet/i.test(await page.textContent('.ag-contra')),
+      `${theme} : le brief sans rapport est dit à voix haute ; des questions à choix`);
+    ok(await page.isDisabled('.ag-qcard button:text-is("Répondre")'), `${theme} : « Répondre » éteint tant que rien n'est choisi (il dit pourquoi)`);
+    await page.evaluate(() => { document.querySelector('.ag-fil').scrollTop = 0; });
+    await page.shot(`${page.tag}-1-reception`);
+    await page.locator('.ag-qcard .ag-q').first().locator('.ag-opt').first().click();
+    await page.evaluate(() => { const f = document.querySelector('.ag-fil'); f.scrollTop = f.scrollHeight; });
+    await page.shot(`${page.tag}-2-questions`);
+    await page.click('.ag-qcard button:text-is("Répondre")');
+    await page.waitForSelector('.ag-plancard button:has-text("Accepter")', { timeout: 60000 });
+    ok(await page.evaluate(() => window.ideation.S.board.nodes.length) === nodes0, `${theme} : la réponse → un plan, toujours rien de posé`);
+    await page.shot(`${page.tag}-3-plan`);
+    await page.click('.ag-plancard button:has-text("Accepter")');
+    await page.waitForSelector('.ag-turn:last-child .ag-acts', { timeout: 60000 });
+    await page.waitForTimeout(500);
+    ok(await page.evaluate(() => window.ideation.S.board.nodes.length) === nodes0 + 1, `${theme} : l'étape 1 pose un geste`);
+    await page.shot(`${page.tag}-4-etape`);
+    await page.click('.ag-turn:last-child >> text=Annuler ce tour');
+    await page.waitForTimeout(500);
+    ok(await page.evaluate(() => window.ideation.S.board.nodes.length) === nodes0, `${theme} : « Annuler ce tour » la défait`);
+    await page.waitForFunction(() => document.querySelectorAll('.ag-pal.done, .ag-pal.off').length >= 2, null, { timeout: 60000 }).catch(() => {});
+    const pal = await page.$$eval('.ag-pal', (l) => l.map((x) => x.className + ' ' + x.textContent.slice(0, 60)));
+    ok(pal.length >= 2, `${theme} : les paliers (images, sons) annoncés dans le fil (${pal.join(' | ')})`);
+    await page.click('.ag-ch');
+    await page.shot(`${page.tag}-5-carnet`);
+    ok(await visibleGo(page) <= 1, `${theme} : au plus un orange`);
+    ok(!page.errs.length, `console : ${page.errs.join(' | ') || 'rien'}`);
+    await ctx.close();
+  }
+}
+
+const all = { A: () => scenarioA('dark'), G: () => scenarioA('light'), B: scenarioB, C: scenarioC, D: scenarioD, E: scenarioE, F: scenarioF, H: scenarioH };
 for (const [k, f] of Object.entries(all)) {
   if (want.length && !want.includes(k)) continue;
   try { await f(); } catch (e) { ok(false, `scénario ${k} : ${e.message.split('\n')[0]}`); }

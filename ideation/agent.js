@@ -23,13 +23,21 @@
 // de la planche), un cadre de la planche grandit à la suite de ce qu'il contient ; `pres_de` un
 // objet ; sinon une place libre près de la vue, puis à côté du précédent.
 //
+// L'entrée d'un projet (06/10, après le premier essai réel de Cal) : d'abord ACCUSER RÉCEPTION (la
+// route rend l'inventaire compté par le serveur : il s'affiche tout de suite, avant même que le tour
+// parte), puis COMPRENDRE et DEMANDER (ce qui ne colle pas, dit ; des questions à choix cliquables,
+// « autre » en texte libre), puis PROPOSER peu (un plan court à accepter, changer ou refuser), puis
+// FAIRE une étape à la fois (« Annuler ce tour » la défait). Pendant ce temps, les paliers d'arrière-plan
+// (les images, les sons) s'annoncent chacun en une ligne, à leur place dans le fil. Le carnet (les
+// décisions de la conversation, la « scripte ») se lit et se corrige en haut du panneau.
+//
 // Le contrat (« Commencer un projet », projet.js, l'appelle ainsi) :
 //   app.agent.open()                                     le panneau, le champ prend la main
 //   app.agent.send(text, { items | pieces, intent })     → Promise<{ turn, reply, actions, results }>
 //       items (ou pieces, le même) : des identifiants de la bibliothèque ou d'objets de la planche
-//       (ou des objets {id}) ; intent: 'ingest' : l'analyse d'entrée. La promesse est tenue quand
-//       le tour est fini ET posé sur la planche ; rejetée sur un refus (le message du portail) ou
-//       un tour en échec, arrêté.
+//       (ou des objets {id}) ; intent: 'ingest' : l'entrée d'un projet (la réception, ses questions ;
+//       rien n'est posé) ; brief : les pièces qui SONT le brief (son texte est déjà `text` : comptées, pas relues). La promesse est tenue quand le tour est fini ET posé sur la planche ;
+//       rejetée sur un refus (le message du portail) ou un tour en échec, arrêté.
 //   app.agent.busy()                                     un tour en vol sur cette planche
 // et pour la page : app.agent.cite(ids), app.agent.menuItems(objets) (menus.js), app.dropOut
 // (canvas.js : un objet de la planche lâché sur le champ y est cité, et revient à sa place).
@@ -82,6 +90,9 @@ export function install(app) {
     seen: new Map(),       // objets de la bibliothèque lus (les vignettes)
     token: `t${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`,   // cet onglet, pour réclamer un tour
     els: new Map(),        // tour → { key, el } : le fil ne refait que ce qui change
+    qsel: new Map(),       // tour → { qid: { choix: Set, autre } } : les réponses qu'on est en train de donner
+    run0: new Map(),       // tour → l'instant où cette page l'a vu partir (le compteur de secondes)
+    carnet: !!app.LS('agent-carnet'),
   };
   // un geste du Studio (il calcule) : retiré pour qui ne l'a pas (l'invité, un ami « Apps »), le panneau aussi
   session().then((me) => { A.me = me?.user || null; if (A.open && !studioIci(me)) setOpen(false); });
@@ -96,6 +107,7 @@ export function install(app) {
   const bNew = el('button', { class: 'tb ghost sm', type: 'button', title: 'une conversation neuve (l’ancienne est archivée)' }, 'Nouvelle');
   const bClose = el('button', { class: 'ag-b', type: 'button', title: 'fermer le panneau · I', 'aria-label': 'fermer le panneau', onclick: () => setOpen(false) }, svg(ICO.close));
   const fil = el('div', { class: 'ag-fil', role: 'log', 'aria-live': 'polite' });
+  const carnet = el('section', { class: 'ag-carnet', hidden: true, 'aria-label': 'le carnet du projet : les décisions' });
   const pcs = el('div', { class: 'ag-pcs' });
   const ta = el('textarea', { class: 'ag-ta', rows: 1, maxlength: MAX_TEXT, spellcheck: 'true', 'aria-label': 'ta demande à Showrunner',
     placeholder: 'Demande à Showrunner — glisse ici des assets, des objets de la planche' });
@@ -106,7 +118,7 @@ export function install(app) {
   const box = el('div', { class: 'ag-box' }, pcs, ta, el('div', { class: 'ag-row' }, bAttach, bSel, el('span', { class: 'sp' }), bSend));
   const panel = el('aside', { class: 'ag', hidden: true, 'aria-label': 'Showrunner, l’agent de la planche' },
     el('div', { class: 'ag-h' }, el('b', { class: 'ag-t' }, 'Showrunner'), engine, el('span', { class: 'sp' }), bNew, bClose),
-    fil, el('div', { class: 'ag-comp' }, box, why));
+    carnet, fil, el('div', { class: 'ag-comp' }, box, why));
   const main = document.querySelector('.ide-main');
   (main || document.body).append(panel);
   // ses gestes restent à lui (la planche ne les prend pas)
@@ -142,9 +154,11 @@ export function install(app) {
     paint();
     // un tour en cours qu'on ne suit pas (un autre onglet, quelqu'un d'autre, la page rechargée) : relu tant qu'il
     // tourne et que l'onglet se voit (commun/shell.js, ongletCache) ; de retour sur l'onglet, relu tout de suite
-    if (A.open && A.conv?.busy && !A.flying.has(A.conv.busy) && !ongletCache()) loadT = setTimeout(load, 2500);
+    // de même tant qu'un palier d'arrière-plan travaille (les images, les sons) : sa ligne arrive quand il a fini
+    const other = A.conv?.busy && !A.flying.has(A.conv.busy);
+    if (A.open && (other || A.conv?.paliers_busy) && !ongletCache()) loadT = setTimeout(load, 2500);
   }
-  auRetour(() => { if (A.open && A.conv?.busy && !A.flying.has(A.conv.busy)) load(); });
+  auRetour(() => { if (A.open && ((A.conv?.busy && !A.flying.has(A.conv.busy)) || A.conv?.paliers_busy)) load(); });
 
   // ── envoyer ──────────────────────────────────────────────
   async function send(text, opts = {}) {
@@ -152,7 +166,7 @@ export function install(app) {
     return follow(r.bid, r.turn, r.job);
   }
   // le tour entre dans la file (ou le portail refuse, en disant pourquoi : 400, 409)
-  async function post(text, { items = [], pieces = [], intent = '' } = {}) {
+  async function post(text, { items = [], pieces = [], intent = '', answers, questions_turn, plan_turn, etape, brief } = {}) {
     if (!S.board) throw new Error('ouvrez d’abord une planche');
     const bid = S.board.id;
     let content = String(text || '').trim();
@@ -161,9 +175,15 @@ export function install(app) {
     const ids = [...new Set([...items, ...pieces].map((x) => String((x && typeof x === 'object' ? x.id : x) || '').trim()).filter(Boolean))];
     // l'agent lit la planche enregistrée : les derniers gestes partent d'abord
     try { await app.flushSave?.(); } catch { /* le refus se dit dans la barre ; l'agent lira la dernière enregistrée */ }
-    const r = await api('ideation/agent', { method: 'POST', body: { board: bid, intent, messages: [{ role: 'user', content, items: ids }] } });
+    const more = Object.fromEntries(Object.entries({ answers, questions_turn, plan_turn, etape, brief_items: brief }).filter(([, v]) => v !== undefined));
+    const r = await api('ideation/agent', { method: 'POST', body: { board: bid, intent, messages: [{ role: 'user', content, items: ids }], ...more } });
     A.mine.add(r.turn.id);
-    if (A.bid === bid && A.conv) { A.conv.turns.push(r.turn); A.conv.busy = r.turn.id; }
+    if (A.bid === bid && A.conv) {
+      A.conv.turns.push(r.turn); A.conv.busy = r.turn.id;
+      // les questions auxquelles on vient de répondre se ferment tout de suite ; les paliers neufs entrent dans le fil
+      if (questions_turn) { const q = A.conv.turns.find((x) => x.id === questions_turn); if (q) q.answered_by = r.turn.id; }
+      if (r.paliers?.length) { A.conv.paliers = [...(A.conv.paliers || []), ...r.paliers]; A.conv.paliers_busy = r.paliers.some((p) => ACTIVE.has(p.state)); }
+    }
     paint(true);
     return { bid, ...r };
   }
@@ -184,6 +204,7 @@ export function install(app) {
       } finally {
         A.flying.delete(turn.id);
         paint();
+        if (A.conv?.paliers_busy && A.bid === bid) { clearTimeout(loadT); loadT = setTimeout(load, 2500); }
       }
     })();
   }
@@ -204,7 +225,9 @@ export function install(app) {
     d.text = ''; d.pieces = [];
     paintDraft();
     let r;
-    try { r = await post(text, { items: keep.pieces.map((x) => x.id) }); } catch (e) {
+    const q = openQuestions(), pl = activePlan();
+    const route = q ? { intent: 'plan', questions_turn: q.id, answers: answersOf(q) } : pl?.plan.etat === 'propose' ? { intent: 'plan' } : {};
+    try { r = await post(text, { items: keep.pieces.map((x) => x.id), ...route }); } catch (e) {
       // refusé avant d'entrer (400, 409) : le champ revient tel qu'il était
       if (!draft().text && !draft().pieces.length) Object.assign(draft(), keep);
       paintDraft();
@@ -260,7 +283,8 @@ export function install(app) {
       Promise.resolve().then(() => mod.generate(n.id)).catch((e) => toast(`la carte ne s’est pas lancée : ${e.message}`, 7000));
     }
     api(`ideation/agent/${bid}/turns/${t.id}`, { method: 'POST', body: { applied: true, token: A.token, ids: out.ids, undone: false,
-      results: out.results.map((r) => ({ text: r.text, ok: r.ok, ids: r.made })) } }).catch((e) => console.error('agent · applied', e));
+      results: out.results.map((r) => ({ text: r.text, ok: r.ok, ids: r.made })) } }).then(() => { if (t.intent === 'etape' && !lancer) load(); })
+      .catch((e) => console.error('agent · applied', e));
     paint();
     eclairer([...out.inv.made]);   // ce qui vient d'arriver s'éclaire, sans bouger la vue
     return out;
@@ -682,7 +706,8 @@ export function install(app) {
     if (name && name.value !== S.board.name) { name.value = S.board.name; document.title = `${S.board.name} · Idéation`; }
     t.undone = true;
     A.inv.delete(t.id);
-    api(`ideation/agent/${S.board.id}/turns/${t.id}`, { method: 'POST', body: { undone: true } }).catch(() => {});
+    // une étape défaite est à refaire (le serveur recule le plan) : la conversation relue le montre
+    api(`ideation/agent/${S.board.id}/turns/${t.id}`, { method: 'POST', body: { undone: true } }).then(() => { if (t.intent === 'etape') load(); }).catch(() => {});
     toast(moved ? 'tour défait : ce qu’il avait posé est retiré ; ses déplacements restent (il a été posé avant le rechargement de la page)'
       : 'tour défait — ctrl+Z le remet', 6000);
     paint();
@@ -772,6 +797,10 @@ export function install(app) {
   }
   function grow() { ta.style.height = 'auto'; ta.style.height = `${Math.min(220, ta.scrollHeight)}px`; }
   function paintSend() {
+    const q = A.open && openQuestions(), pl = A.open && !q && activePlan();
+    ta.placeholder = q ? 'Réponds ici en toutes lettres, ou dis ce qui compte — les choix sont au-dessus'
+      : pl && pl.plan.etat === 'propose' ? 'Dis ce qui change dans le plan : il le refait'
+        : 'Demande à Showrunner — glisse ici des assets, des objets de la planche';
     const w = sendWhy();
     bSend.disabled = !!w;
     bSend.title = w || 'envoyer · Entrée (Maj+Entrée : à la ligne)';
@@ -793,6 +822,7 @@ export function install(app) {
     paintEngine();
     paintSend();
     if (!A.open) return;
+    paintCarnet();
     const atEnd = end || fil.scrollHeight - fil.scrollTop - fil.clientHeight < 40;
     const turns = (S.board && A.conv && A.bid === S.board.id) ? A.conv.turns : [];
     if (!turns.length) {
@@ -800,9 +830,25 @@ export function install(app) {
       fil.replaceChildren(emptyEl());
       return;
     }
+    // un palier d'arrière-plan est à sa place dans le fil : sous son tour tant qu'il travaille, à l'heure où il est
+    // arrivé ensuite (les heures du serveur, ISO : elles se trient comme des textes)
+    const items = turns.map((t) => ({ ts: t.at || '', t }));
+    for (const p of A.conv.paliers || []) items.push({ ts: (ACTIVE.has(p.state) ? p.at : p.fini || p.at) || '', p });
+    items.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+    const busy = !!(A.conv?.busy || A.flying.size);
+    const lastId = turns.at(-1)?.id;
+    const oq = openQuestions()?.id, ap = activePlan();
     const kids = [];
-    for (const t of turns) {
-      const key = JSON.stringify([t.state, t.claimed, t.applied, t.undone, t.job_state, t.results?.map((r) => r.text), A.flying.has(t.id), A.inv.has(t.id), t.error, S.board?.id]);
+    for (const { t, p } of items) {
+      if (p) {
+        const key = JSON.stringify([p.state, p.annonce, p.avance, p.job_state?.message, p.job_state?.state, p.why]);
+        let c = A.els.get(p.id);
+        if (!c || c.key !== key) { c = { key, el: palierEl(p) }; A.els.set(p.id, c); }
+        kids.push(c.el);
+        continue;
+      }
+      const key = JSON.stringify([t.state, t.claimed, t.applied, t.undone, t.job_state, t.results?.map((r) => r.text), A.flying.has(t.id), A.inv.has(t.id), t.error, S.board?.id,
+        t.reception?.text, t.questions?.map((q) => q.id), t.answered_by, t.plan, oq === t.id, ap?.id === t.id, ap?.plan?.fait, busy, lastId === t.id]);
       let c = A.els.get(t.id);
       if (!c || c.key !== key) { c = { key, el: turnEl(t) }; A.els.set(t.id, c); }
       kids.push(c.el);
@@ -820,22 +866,32 @@ export function install(app) {
   function turnEl(t) {
     const u = t.user || {};
     const mineName = A.me && t.by && t.by !== A.me.id ? t.by_name : '';
-    const cites = (u.items || []).map((c) => pieceEl({ id: c.id, label: c.title || c.id, kind: c.kind, it: S.items.get(c.id) || A.seen.get(c.id) || null }, { small: true }));
+    const all = u.items || [];
+    const cites = all.slice(0, 12).map((c) => pieceEl({ id: c.id, label: c.title || c.id, kind: c.kind, it: S.items.get(c.id) || A.seen.get(c.id) || null }, { small: true }));
+    if (all.length > 12) cites.push(el('span', { class: 'ag-pc sm txt ag-plus', title: `${all.length} pièces citées` }, el('span', { class: 'ag-pct' }, `+${all.length - 12}`)));
+    const text = u.content || (t.intent === 'ingest' ? 'Commencer le projet (pas de brief écrit).' : t.intent === 'plan' && !t.answers?.length ? 'Vas-y avec ce que tu as.' : '');
+    const said = (t.answers || []).map((a) => el('li', {}, el('span', { class: 'ag-qa-q' }, a.question), ' ', [...(a.choix || []), a.autre].filter(Boolean).join(' · ')));
     const userEl = el('div', { class: 'ag-u' },
       cites.length ? el('div', { class: 'ag-ucites' }, ...cites) : null,
-      el('div', { class: 'ag-ut' }, u.content || (t.intent === 'ingest' ? 'Analyse ces documents et organise la planche.' : '')),
-      el('div', { class: 'ag-meta' }, [t.intent === 'ingest' ? 'analyse d’entrée' : '', mineName, hhmm(t.at)].filter(Boolean).join(' · ')));
+      said.length ? el('ul', { class: 'ag-qa' }, ...said) : null,
+      text ? el('div', { class: 'ag-ut' + (text.length > 420 ? ' long' : ''), title: text.length > 420 ? text.slice(0, 1500) : null }, text) : null,
+      el('div', { class: 'ag-meta' }, [{ ingest: 'commencer un projet', plan: t.answers?.length ? 'réponses' : 'plan', etape: 'étape' }[t.intent] || '', mineName, hhmm(t.at)].filter(Boolean).join(' · ')));
     return el('div', { class: 'ag-turn', 'data-turn': t.id }, userEl, answerEl(t));
   }
   function answerEl(t) {
     const out = el('div', { class: 'ag-a' });
+    const rec = receptionEl(t);
+    if (rec) out.append(rec);
     if (ACTIVE.has(t.state)) {
       const j = t.job_state || {};
-      const txt = (j.state || t.state) === 'queued'
+      const queued = (j.state || t.state) === 'queued';
+      const txt = queued
         ? `en file${j.ahead ? ` · ${j.ahead} devant` : ''}${j.eta_s ? ` · départ ≈ ${fmtWait(j.eta_s)}` : ''}`
         : j.message || 'réfléchit';
-      out.append(el('div', { class: 'ag-run' }, el('i', { class: 'ag-dot' }), el('span', { class: 'ag-runt' }, txt),
-        el('button', { class: 'tb ghost sm', type: 'button', title: 'arrêter ce tour', onclick: () => stop(t) }, 'Arrêter')));
+      if (!queued && !A.run0.has(t.id)) A.run0.set(t.id, Date.now());
+      out.append(el('div', { class: 'ag-run' }, el('i', { class: 'ag-dot' }), el('span', { class: 'ag-runt' }, txt,
+        queued ? null : el('span', { class: 'ag-secs', 'data-t': t.id }, secs(t.id))),
+      el('button', { class: 'tb ghost sm', type: 'button', title: 'arrêter ce tour', onclick: () => stop(t) }, 'Arrêter')));
       if (Number.isFinite(j.progress) && j.progress > 0) out.append(el('div', { class: 'ag-bar' }, el('i', { style: { width: `${Math.round(j.progress * 100)}%` } })));
       return out;
     }
@@ -846,11 +902,16 @@ export function install(app) {
       return out;
     }
     if (t.reply) out.append(el('div', { class: 'ag-reply' }, t.reply));
-    const reads = (t.reads || []).map((r) => (r.tool === 'lire_planche' ? 'la planche' : r.tool === 'chercher_bibliotheque' ? `cherché « ${r.args?.q || ''} » (${r.note})` : `« ${r.note} »`));
+    const reads = (t.reads || []).map((r) => (r.tool === 'lire_planche' ? 'la planche' : r.tool === 'apercu' ? r.note : r.tool === 'chercher_bibliotheque' ? `cherché « ${r.args?.q || ''} » (${r.note})` : `« ${r.note} »`));
     if (reads.length) out.append(el('p', { class: 'ag-reads' }, `a lu : ${[...new Set(reads)].join(' · ')}`));
-    if (t.skipped) out.append(el('p', { class: 'ag-reads' }, `${plural(t.skipped, 'objet cité')} non lu${t.skipped > 1 ? 's' : ''} : l’analyse en lit 40, les documents d’abord`));
+    const contra = contraEl(t);
+    if (contra) out.append(contra);
+    if (t.questions?.length) out.append(questionsEl(t));
+    if (t.plan?.etapes?.length) out.append(planEl(t));
+    if (t.noted?.length) out.append(el('p', { class: 'ag-reads' }, `noté au carnet : ${t.noted.map((id) => (A.conv?.decisions || []).find((d) => d.id === id)?.text).filter(Boolean).join(' · ')}`));
+    const suite = suiteEl(t);
     const acts = t.actions || [];
-    if (!acts.length) return out;
+    if (!acts.length) { if (suite) out.append(suite); return out; }
     const applied = !!t.applied || (t.results || []).length > 0;
     out.append(el('ol', { class: 'ag-acts' + (t.undone ? ' undone' : '') }, ...acts.map((a, i) => {
       const r = (t.results || [])[i];
@@ -873,6 +934,7 @@ export function install(app) {
       foot.append(el('span', { class: 'ag-meta' }, 'posés ailleurs : un autre onglet, une autre personne'));
     } else foot.append(meta);
     out.append(foot);
+    if (suite) out.append(suite);
     return out;
   }
   // le texte d'une action pas encore posée, d'après ses arguments
@@ -899,6 +961,199 @@ export function install(app) {
       default: return a.tool;
     }
   }
+  // ── l'entrée d'un projet : la réception, les questions, le plan, les paliers, le carnet (06/10) ──
+  // les questions encore ouvertes : celles du dernier tour d'entrée, fini, auxquelles on n'a pas répondu
+  function openQuestions() {
+    const t = [...(A.conv?.turns || [])].reverse().find((x) => x.intent === 'ingest');
+    return t && t.state === 'done' && t.questions?.length && !t.answered_by ? t : null;
+  }
+  // le plan vivant : le dernier proposé ou accepté (un plan neuf remplace l'ancien, au serveur)
+  function activePlan() {
+    const t = [...(A.conv?.turns || [])].reverse().find((x) => x.plan?.etapes?.length);
+    return t && ['propose', 'accepte'].includes(t.plan.etat) ? t : null;
+  }
+  const qsel = (t) => { if (!A.qsel.has(t.id)) A.qsel.set(t.id, {}); return A.qsel.get(t.id); };
+  function answersOf(t) {
+    const sel = qsel(t);
+    return (t.questions || []).map((q) => ({ id: q.id, choix: [...(sel[q.id]?.choix || [])], autre: (sel[q.id]?.autre || '').trim() }))
+      .filter((a) => a.choix.length || a.autre);
+  }
+  const secs = (tid) => (A.run0.has(tid) ? ` · ${Math.max(0, Math.round((Date.now() - A.run0.get(tid)) / 1000))} s` : '');
+  // les secondes d'un tour qui tourne : le texte seul change, une fois par seconde (rien n'est redessiné)
+  setInterval(() => { if (A.open) for (const n of fil.querySelectorAll('.ag-secs')) n.textContent = secs(n.dataset.t); }, 1000);
+
+  // « J'ai bien reçu… » : l'inventaire du serveur, et la liste des noms à déplier
+  function receptionEl(t) {
+    const r = t.reception;
+    if (!r?.text) return null;
+    const noms = Object.entries(r.noms || {});
+    return el('div', { class: 'ag-recu' }, el('p', {}, r.text),
+      noms.length ? el('details', { class: 'ag-det' }, el('summary', {}, 'la liste'),
+        el('ul', {}, ...noms.map(([k, l]) => el('li', {}, el('b', {}, `${kindFr(k)} · ${r.counts?.[k] ?? l.length}`), ' ',
+          `${l.join(' · ')}${(r.counts?.[k] || 0) > l.length ? ' …' : ''}`)))) : null);
+  }
+  // ce qui ne colle pas : dit à voix haute, jamais lissé (Fondations II)
+  const contraEl = (t) => (t.contradictions?.length ? el('div', { class: 'ag-contra', role: 'note' },
+    el('b', { class: 'ag-lab' }, 'ce qui ne colle pas'), ...t.contradictions.map((c) => el('p', {}, c))) : null);
+
+  // les questions : des choix cliquables (un seul, ou plusieurs), « autre » en texte libre ; Répondre, ou y aller sans
+  function questionsEl(t) {
+    const open = openQuestions()?.id === t.id;
+    const given = open ? null : A.conv?.turns.find((x) => x.id === t.answered_by)?.answers || [];
+    const sel = qsel(t);
+    const busy = !!(A.conv?.busy || A.flying.size);
+    const bAns = el('button', { class: 'tb on sm', type: 'button', onclick: () => repondre(t) }, 'Répondre');
+    const bGo = el('button', { class: 'tb ghost sm', type: 'button', title: 'il propose un plan avec ce qu’il a : tu pourras le changer', onclick: () => repondre(t, true) }, 'Vas-y sans répondre');
+    const qwhy = el('span', { class: 'ag-why' });
+    const paintFoot = () => {
+      const n = answersOf(t).length;
+      const w = busy ? 'un tour est en cours : attends sa réponse' : !n ? 'choisis une réponse, ou écris-la (autre)' : '';
+      bAns.disabled = !!w; bAns.title = w || `envoyer ${plural(n, 'réponse')} : il propose ensuite un plan court`;
+      bGo.disabled = busy; qwhy.textContent = w && n ? w : '';
+    };
+    const box = el('div', { class: 'ag-qs' + (open ? '' : ' closed') });
+    for (const q of t.questions) {
+      const s = sel[q.id] || (sel[q.id] = { choix: new Set(), autre: '' });
+      const g = given?.find((a) => a.id === q.id);
+      const opts = el('div', { class: 'ag-opts', role: q.plusieurs ? 'group' : 'radiogroup', 'aria-label': q.question });
+      for (const c of q.choix) {
+        const on = open ? s.choix.has(c) : !!g?.choix?.includes(c);
+        const b = el('button', { class: 'ag-chip ag-opt' + (on ? ' on' : ''), type: 'button', role: q.plusieurs ? 'checkbox' : 'radio',
+          'aria-checked': on ? 'true' : 'false', disabled: !open, onclick: () => {
+            if (q.plusieurs) { if (s.choix.has(c)) s.choix.delete(c); else s.choix.add(c); } else { const was = s.choix.has(c); s.choix.clear(); if (!was) s.choix.add(c); }
+            for (const x of opts.children) { const v = s.choix.has(x.textContent); x.classList.toggle('on', v); x.setAttribute('aria-checked', v ? 'true' : 'false'); }
+            paintFoot();
+          } }, c);
+        opts.append(b);
+      }
+      const autre = open ? el('input', { class: 'fld ag-autre', type: 'text', maxlength: 400, value: s.autre, placeholder: 'autre : écris-le',
+        'aria-label': `autre réponse : ${q.question}`, oninput: (e) => { s.autre = e.target.value; paintFoot(); },
+        onkeydown: (e) => { if (e.key === 'Enter' && !bAns.disabled) { e.preventDefault(); repondre(t); } } })
+        : g?.autre ? el('p', { class: 'ag-autre-dit' }, g.autre) : null;
+      box.append(el('div', { class: 'ag-q' },
+        el('p', { class: 'ag-qt' }, q.question, q.palier ? el('span', { class: 'ag-meta' }, ` · après ${q.palier === 'images' ? 'les images' : 'les sons'}`) : null,
+          q.plusieurs && open ? el('span', { class: 'ag-meta' }, ' · plusieurs choix') : null),
+        opts, autre));
+    }
+    if (open) { paintFoot(); box.append(el('div', { class: 'ag-foot' }, qwhy, el('span', { class: 'sp' }), bGo, bAns)); }
+    else box.append(el('p', { class: 'ag-meta' }, t.answered_by ? 'répondu' : 'questions closes'));
+    return el('div', { class: 'ag-qcard' }, el('b', { class: 'ag-lab' }, open ? 'avant de commencer' : 'les questions'), box);
+  }
+  async function repondre(t, go = false) {
+    const answers = go ? [] : answersOf(t);
+    if (!go && !answers.length) return;
+    try {
+      const r = await post(go ? 'Vas-y avec ce que tu as.' : '', { intent: 'plan', questions_turn: t.id, answers });
+      follow(r.bid, r.turn, r.job).catch((e) => toast(`Showrunner : ${e.message}`, 8000));
+    } catch (e) { toast(`Showrunner : ${e.message}`, 8000); load(); }
+  }
+
+  // le plan : ses étapes et ce que chacune posera ; Accepter (l'étape 1 part), Changer (le champ), Refuser
+  function planEl(t) {
+    const p = t.plan;
+    const live = activePlan()?.id === t.id;
+    const busy = !!(A.conv?.busy || A.flying.size);
+    const fait = p.fait || 0;
+    const ol = el('ol', { class: 'ag-plan' }, ...p.etapes.map((e, i) => el('li', { class: i < fait ? 'fait' : '' },
+      el('b', {}, e.titre), el('span', {}, e.pose))));
+    const etat = { propose: 'proposé : à toi de dire', accepte: `accepté · ${fait}/${p.etapes.length} faite${fait > 1 ? 's' : ''}`,
+      refuse: 'refusé', remplace: 'remplacé par un plan plus récent' }[p.etat] || '';
+    const foot = el('div', { class: 'ag-foot' }, el('span', { class: 'ag-meta' }, etat), el('span', { class: 'sp' }));
+    if (live && p.etat === 'propose') {
+      const w = busy ? 'un tour est en cours : attends sa réponse' : '';
+      foot.append(
+        el('button', { class: 'tb ghost sm', type: 'button', disabled: !!w, title: w || 'non : le carnet le note, rien ne se fait', onclick: () => refuser(t) }, 'Refuser'),
+        el('button', { class: 'tb ghost sm', type: 'button', title: 'dis ce qui change dans le champ : il refait le plan', onclick: () => changer() }, 'Changer'),
+        el('button', { class: 'tb on sm', type: 'button', disabled: !!w, title: w || `accepter, et faire l’étape 1 : ${p.etapes[0].titre}`, onclick: () => etape(t, 0) }, 'Accepter · étape 1'));
+    }
+    return el('div', { class: 'ag-plancard' + (live ? '' : ' off') }, el('b', { class: 'ag-lab' }, 'le plan'), ol, foot);
+  }
+  // l'étape suivante : au bas du dernier tour (le plan accepté, ou la dernière étape faite)
+  function suiteEl(t) {
+    const pt = activePlan();
+    const turns = A.conv?.turns || [];
+    if (!pt || pt.plan.etat !== 'accepte' || turns.at(-1)?.id !== t.id || !['etape', 'plan'].includes(t.intent) || ACTIVE.has(t.state)) return null;
+    if (t.intent === 'etape' && t.plan_turn !== pt.id) return null;
+    const k = pt.plan.fait || 0, n = pt.plan.etapes.length;
+    if (k >= n) return el('p', { class: 'ag-reads' }, 'le plan est fait : dis-moi la suite');
+    const busy = !!(A.conv?.busy || A.flying.size);
+    const redo = t.intent === 'etape' && t.undone && t.etape === k;
+    return el('div', { class: 'ag-suite' }, el('span', { class: 'ag-suitet' }, `${redo ? 'refaire l’' : ''}étape ${k + 1}/${n} : ${pt.plan.etapes[k].titre}`),
+      el('button', { class: 'tb on sm', type: 'button', disabled: busy, title: busy ? 'un tour est en cours : attends sa réponse' : pt.plan.etapes[k].pose,
+        onclick: () => etape(pt, k) }, redo ? 'Refaire' : 'Faire cette étape'));
+  }
+  async function etape(pt, k) {
+    try {
+      const r = await post('', { intent: 'etape', plan_turn: pt.id, etape: k });
+      follow(r.bid, r.turn, r.job).catch((e) => toast(`Showrunner : ${e.message}`, 8000));
+    } catch (e) { toast(`Showrunner : ${e.message}`, 8000); load(); }
+  }
+  async function refuser(pt) {
+    try { await api(`ideation/agent/${S.board.id}/turns/${pt.id}`, { method: 'POST', body: { plan: 'refuse' } }); } catch (e) { toast(e.message, 6000); }
+    load();
+  }
+  function changer() {
+    const d = draft();
+    if (!d.text) { d.text = 'Change le plan : '; paintDraft(); }
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+  }
+
+  // un palier d'arrière-plan : en cours (ce qu'il fait, Arrêter), arrivé (sa ligne, ce qu'est chaque pièce), ou pas parti (pourquoi)
+  function palierEl(p) {
+    const what = { images: 'les images', sons: 'les sons' }[p.palier] || p.palier;
+    const where = p.machine ? ` · ${p.machine}` : '';
+    if (ACTIVE.has(p.state)) {
+      const j = p.job_state || {};
+      const txt = p.palier === 'sons' ? `transcription par Transcrire${p.avance ? ` · ${p.avance}` : ''}`
+        : j.state === 'queued' ? `en file${j.ahead ? ` · ${j.ahead} devant` : ''} (la conversation passe devant)` : j.message || 'en cours';
+      return el('div', { class: 'ag-pal run' }, el('i', { class: 'ag-dot' }), el('span', { class: 'ag-palt' }, `${what}${where} · ${txt}`),
+        el('button', { class: 'tb ghost sm', type: 'button', title: 'arrêter ce palier (la conversation continue)', onclick: () => stopPalier(p) }, 'Arrêter'));
+    }
+    if (p.state === 'done') {
+      return el('div', { class: 'ag-pal done' }, el('b', { class: 'ag-lab' }, `${what} · arrivés${where}`), el('p', {}, p.annonce),
+        p.question_libre ? el('p', { class: 'ag-palq' }, `Une question de plus : ${p.question_libre}`) : null,
+        p.pieces?.length ? el('details', { class: 'ag-det' }, el('summary', {}, plural(p.pieces.length, 'pièce')),
+          el('ul', {}, ...p.pieces.map((x) => el('li', {}, el('b', {}, x.titre), ' ', x.note)))) : null);
+    }
+    const no = { images: 'pas regardées', sons: 'pas transcrits' }[p.palier] || 'pas lus';
+    return el('div', { class: 'ag-pal off' }, el('span', {}, `${what} : ${p.state === 'skipped' ? no : p.state === 'cancelled' ? 'arrêtés' : 'en échec'}${p.why ? ` — ${p.why}` : ''}`));
+  }
+  async function stopPalier(p) {
+    try { await api(`ideation/agent/${S.board.id}/paliers/${p.id}`, { method: 'POST', body: { stop: true } }); toast('palier arrêté'); } catch (e) { toast(e.message, 6000); }
+    load();
+  }
+
+  // le carnet : les décisions de la conversation (la scripte), que l'agent relit à chaque tour ; la personne en retire
+  // une qui ne tient plus, ou en écrit une
+  const carnetIn = el('input', { class: 'fld ag-cin', type: 'text', maxlength: 240, placeholder: 'noter une décision', 'aria-label': 'noter une décision au carnet' });
+  carnetIn.addEventListener('keydown', async (e) => {
+    if (e.key !== 'Enter' || !carnetIn.value.trim() || !S.board) return;
+    e.preventDefault();
+    try { const r = await api(`ideation/agent/${S.board.id}/decisions`, { method: 'POST', body: { texte: carnetIn.value.trim() } }); carnetIn.value = ''; if (A.conv) A.conv.decisions = r.decisions; paintCarnet(true); } catch (err) { toast(err.message, 6000); }
+  });
+  const BY = { 'réponse': 'ta réponse', agent: 'entendu', plan: 'le plan', personne: 'écrit à la main' };
+  function paintCarnet(force = false) {
+    const conv = S.board && A.conv && A.bid === S.board.id ? A.conv : null;
+    const ds = conv?.decisions || [];
+    carnet.hidden = !conv || (!conv.turns.length && !ds.length);
+    if (carnet.hidden) return;
+    const key = JSON.stringify([ds.map((d) => [d.id, d.text]), A.carnet]);
+    if (!force && carnet.dataset.key === key) return;
+    carnet.dataset.key = key;
+    const head = el('button', { class: 'ag-ch', type: 'button', 'aria-expanded': A.carnet ? 'true' : 'false', title: 'les décisions de la conversation : l’agent les relit à chaque tour',
+      onclick: () => { A.carnet = !A.carnet; app.LS('agent-carnet', A.carnet); paintCarnet(true); } },
+    el('b', { class: 'ag-lab' }, 'carnet'), el('span', {}, ds.length ? plural(ds.length, 'décision') : 'aucune décision'), el('i', { class: 'ag-car' }, A.carnet ? '−' : '+'));
+    const body = A.carnet ? el('div', { class: 'ag-cbody' },
+      ds.length ? el('ol', { class: 'ag-clist' }, ...ds.map((d) => el('li', {}, el('span', { class: 'ag-ct' }, d.text),
+        el('span', { class: 'ag-meta' }, BY[d.by] || d.by || ''),
+        el('button', { class: 'ag-pcx ag-cx', type: 'button', title: 'retirer : cette décision ne tient plus', 'aria-label': `retirer « ${d.text} »`, onclick: async () => {
+          try { const r = await api(`ideation/agent/${S.board.id}/decisions`, { method: 'POST', body: { retirer: d.id } }); A.conv.decisions = r.decisions; paintCarnet(true); } catch (err) { toast(err.message, 6000); }
+        } }, '×')))) : el('p', { class: 'ag-empty' }, 'Tes réponses, le plan accepté et ce que tu décides dans la conversation s’écrivent ici.'),
+      carnetIn) : null;
+    carnet.replaceChildren(head, body || '');
+  }
+
   // un tour défait, reposé (son jeton est celui de cette page : le serveur le laisse réclamer encore)
   async function reposer(t) {
     const cur = A.conv?.turns.find((x) => x.id === t.id) || t;
