@@ -186,11 +186,12 @@ const toolFr = (t) => TOOL_FR[t] || t || 'upload';
 const MEDIA = ['image', 'video', 'audio'];
 const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
 const KIND_N = { image: ['image', 'images'], element: ['élément', 'éléments'], video: ['vidéo', 'vidéos'], audio: ['son', 'sons'],
-  sequence: ['séquence', 'séquences'], midi: ['clip MIDI', 'clips MIDI'] };
+  sequence: ['séquence', 'séquences'], midi: ['clip MIDI', 'clips MIDI'], document: ['document', 'documents'],
+  playlist: ['playlist', 'playlists'] };
 // les éléments versionnés (30/09, docs/etudes/apps_studio_elements.md) : une source,
-// une pile de versions ; leurs sortes s'ajoutent à celles des planches
-const VTYPE_FR = { music: 'musique', sound: 'son', sequence: 'séquence', picture: 'image' };
-const typeFr = (t) => VTYPE_FR[t] || etypeFr(t);
+// une pile de versions ; leurs sortes s'ajoutent à celles des planches — leurs noms
+// français : etypeFr de commun/shell.js, une seule vérité
+const typeFr = etypeFr;
 const isLiving = (it) => it?.kind === 'element' && Array.isArray(it.element?.versions);
 const MEDIA_KINDS = { audio: ['audio'], image: ['image'], video: ['video'], midi: ['midi'], refs: ['element'] };
 const STATE_FR = { 'à jour': 'à jour', modifiée: 'modifiée', perdue: 'source perdue', 'sans version': 'pas encore publié', 'non suivie': 'source non suivie' };

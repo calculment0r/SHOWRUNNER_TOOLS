@@ -1098,7 +1098,9 @@ export function jobRow(j) {
 // ── vignettes ───────────────────────────────────────────────
 // midi : un clip de notes d'ODIO ; sequence : une séquence du Montage (29/09)
 // document : tout ce qui n'est pas un média (05/10, server/tools/documents.py)
-const KIND_FR = { image: 'image', video: 'vidéo', audio: 'son', element: 'élément', midi: 'MIDI', sequence: 'séquence', document: 'document' };
+// playlist : une liste d'écoute de Musique (docs/etudes/musique_spaces_playlists.md § 3)
+const KIND_FR = { image: 'image', video: 'vidéo', audio: 'son', element: 'élément', midi: 'MIDI', sequence: 'séquence', document: 'document',
+  playlist: 'playlist' };
 export const kindFr = (k) => KIND_FR[k] || k;
 // les sortes d'un élément : les planches (server/core/library.py, ELEMENT_TYPES), puis les sortes d'un
 // élément versionné (VERSIONED_TYPES : une chanson, un son, une séquence, une image) — jamais le nom
