@@ -48,8 +48,8 @@
 // EN DIRECT pendant le glisser ») : le programme montre un autre montage que
 // celui de la page (`pv.p` : déplacer un plan, tel qu'il serait si l'on lâchait
 // maintenant), à un autre instant que la tête (`pv.t`), un seul plan (`pv.seul` :
-// le bord qu'on rogne, plein, sans fondu ni son — Premiere montre l'image du bord
-// au moniteur). Un plan neuf du même média (le morceau d'un plan coupé, une
+// le bord qu'on rogne, Alt maintenu, plein, sans fondu ni son — le mode Trim de
+// Premiere). Un plan neuf du même média (le morceau d'un plan coupé, une
 // copie) reprend l'élément d'un plan qui n'existe plus (`entry`) : rien ne se
 // recharge en chemin, et la copie de défilement montre l'image (montage.js, apercu).
 //

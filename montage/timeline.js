@@ -17,8 +17,9 @@
 // propagation, coupe, vitesse, slip, slide), par `app.gesture` : chaque
 // mouvement repart du projet d'avant le geste et rejoue l'opération du modèle
 // avec le décalage du moment ; le lâcher fait une seule entrée d'annulation.
-// Pendant un geste, le moniteur suit (`app.apercu`, 06/10) : l'image du bord
-// qu'on tire, ou, en déplaçant, l'image sous la tête du montage d'après le lâcher.
+// Pendant un geste, le moniteur suit (`app.apercu`, 06/10) : l'image sous la tête
+// de lecture du montage tel qu'il serait au lâcher (rogner, déplacer…) ; en
+// rognant, Alt maintenu montre l'image du bord qu'on tire.
 // molette commune (commun/molette.js) : seule, défiler haut / bas ; Maj : le temps ; Alt : zoom sous le pointeur ; Ctrl : hauteur des pistes, sur un en-tête (à gauche) : la sienne
 
 import { el, href, ITEM_MIME } from '../commun/shell.js';
@@ -551,7 +552,7 @@ export class Timeline {
   // de sortie ; borné par la source (une image fixe n'a pas de borne) et par les
   // voisins, qui ne bougent pas (M.trimClip, M.trimLimits). Vu en direct : la
   // timeline (l'onde, les vignettes restent en place) et, au moniteur, l'image
-  // du bord qu'on tire.
+  // sous la tête de lecture (Alt : celle du bord qu'on tire ; `live`).
   trim(e, c, side) {
     const fps = this.fps;
     this.live(e, 'rogner', M.trimLimits(this.p, c, side), (q, d) => M.trimClip(M.byId(q, c.id), side, d, fps),
@@ -564,7 +565,7 @@ export class Timeline {
       { edge: side === 'l' ? (d) => c.start + d : (d) => M.clipEnd(c) + d, exclude: new Set([c.id]), vu: (q) => this.bordVu(q, c.id, side) });
   }
 
-  // L'image du bord qu'on tire, au moniteur (Premiere montre le bord rogné) :
+  // L'image du bord qu'on tire, au moniteur, Alt maintenu (le mode Trim de Premiere) :
   // la première image du plan (bord gauche) ou sa dernière (bord droit), le plan
   // seul ; rien pour un son ou un calque d'effet (montage.js, apercu.bord).
   bordVu(q, id, side) {
@@ -589,16 +590,37 @@ export class Timeline {
 
   // Un geste vu en direct : chaque mouvement rejoue `apply(q, d)` sur le
   // projet d'avant le geste. `edge(d)` : l'image du bord qui bouge (aimant) ;
-  // `vu(q, d)` : ce que le moniteur montre pendant le geste (bordVu), rendu au lâcher.
+  // `vu(q, d)` : l'image du bord tiré (bordVu), que le moniteur montre tant qu'Alt est maintenu.
+  //
+  // Le moniteur pendant un rognage (06/10, Cal : « on ne lit plus sous la cue, ça affiche le
+  // nouveau in […] je préfère avoir les fonctions de in et out ») : l'image SOUS LA TÊTE DE
+  // LECTURE, le montage tel qu'il serait si l'on lâchait maintenant (le projet de la page,
+  // rejoué à chaque mouvement) — tant que le bord ne passe pas la tête, l'image ne change pas ;
+  // quand il la passe, ce qui est dessous apparaît. Alt maintenu (on peut le prendre et le
+  // lâcher pendant le geste) : l'image du bord tiré, le plan seul (le mode Trim de Premiere).
   live(e, label, [lo, hi], apply, tip, { edge = null, exclude = new Set(), onEnd = null, vu = null } = {}) {
     const fps = this.fps;
     const pts = edge ? M.snapPoints(this.p, exclude, [this.app.playhead()]) : [];
     const x0 = e.clientX;
     let d = 0;
     this.app.gesture.begin(label);
-    const v0 = vu && this.app.apercu ? vu(this.p, 0) : null;
-    const A = v0 ? this.app.apercu : null;
-    if (A) { A.debut(); A.bord(v0, true); }
+    const A = vu && this.app.apercu && vu(this.p, 0) ? this.app.apercu : null;
+    let alt = !!e.altKey;
+    const voir = (q, rendre = false) => { if (A) A.bord(alt ? vu(q, d) : null, rendre); };
+    // Alt pris ou lâché sans bouger la souris : le moniteur bascule tout de suite
+    const touche = (ev) => {
+      if (ev.key !== 'Alt') return;
+      ev.preventDefault();
+      if (alt === (ev.type === 'keydown')) return;
+      alt = ev.type === 'keydown';
+      voir(this.p, true);
+    };
+    if (A) {
+      A.debut();
+      voir(this.p, true);
+      window.addEventListener('keydown', touche, true);
+      window.addEventListener('keyup', touche, true);
+    }
     this.drag(e, (ev) => {
       let nd = Math.round((ev.clientX - x0) / this.pps * fps);
       let snapped = null;
@@ -609,10 +631,19 @@ export class Timeline {
       nd = Math.max(lo, Math.min(hi, nd));
       this.showSnap(snapped !== null && edge(nd) === snapped ? snapped : null);
       this.showTip(ev, tip(nd));
+      if (A && !!ev.altKey !== alt) { alt = !!ev.altKey; if (nd === d) voir(this.p, true); }
       if (nd === d) return;
       d = nd;
-      this.app.gesture.apply((q) => { apply(q, d); if (A) A.bord(vu(q, d)); });
-    }, () => { if (A) A.fin(false); this.app.gesture.end(); if (onEnd) onEnd(d); });
+      this.app.gesture.apply((q) => { apply(q, d); voir(q); });
+    }, () => {
+      if (A) {
+        window.removeEventListener('keydown', touche, true);
+        window.removeEventListener('keyup', touche, true);
+        A.fin(false);
+      }
+      this.app.gesture.end();
+      if (onEnd) onEnd(d);
+    });
   }
 
   ripple(e, c, side) {

@@ -764,10 +764,12 @@ montrer un aperçu (`pv`, montage/player.js) sans toucher au montage de la page 
   montage tel qu'il serait si l'on lâchait maintenant (`M.moveClips` sur une
   copie, une fois par image d'écran) ;
 - **rogner** (V), propager (B), déplacer la coupe (N), changer la vitesse (R) :
-  l'image du bord qu'on tire, le plan seul et plein (Premiere montre le bord
-  rogné au moniteur — en deux images, sortante et entrante, en mode Trim :
-  helpx « Edit in Trim mode », par les résultats de recherche ; ici une seule,
-  celle du bord pris). Rien pour un son ou un calque d'effet.
+  depuis le 06/10 au soir, l'image sous la tête de lecture, le montage tel qu'il
+  serait au lâcher (voir « Les poignées » plus bas) ; **Alt maintenu**, l'image du
+  bord qu'on tire, le plan seul et plein (Premiere montre le bord rogné au
+  moniteur — en deux images, sortante et entrante, en mode Trim : helpx « Edit in
+  Trim mode », par les résultats de recherche ; ici une seule, celle du bord pris).
+  Rien pour un son ou un calque d'effet.
 
 Fluide : la copie de défilement est devant pendant le geste, l'originale se
 cale au lâcher ; un plan neuf du même média (le morceau d'un plan coupé, une
@@ -889,6 +891,38 @@ MP4), 8 entrées (dont une négative, la tête d'un fondu enchaîné, et une au-
 contre 595 avec la chaîne d'avant. De bout en bout (le vrai travail d'export contre le
 moniteur de la page, une source 24 i/s, chaque image de 63 à 149 après un rognage de
 début de 13) : **87 images sur 87 identiques**, et à 16 i/s ×1,5 les mêmes avant et après.
+
+**La vraie cause, trouvée par Cal** (06/10 au soir, une photo de son écran : un plan
+« vidéo avec son » sur la piste du haut, une voiture dessous, un zoom très fort, la tête
+quelques images après le bord gauche) : « dans la frame, on ne lit plus sous la cue, mais ça
+affiche le nouveau in… C'est pour ça que mon footage en dessous disparaît. C'est pas si mal,
+mais je préfère avoir les fonctions de in et out comme je t'ai dit. » Pendant le geste, le
+moniteur montrait l'image du bord tiré (ci-dessus, « Le moniteur pendant un geste ») : à
+la place de l'image sous la tête, une image qui défile quand on tire — on croit voir la
+matière glisser sous la tête, alors que le modèle tronque bien.
+
+Désormais (`live`, montage/timeline.js) : **pendant un rognage (V, B, N, R), le moniteur
+montre l'image sous la tête de lecture**, le montage tel qu'il serait si l'on lâchait
+maintenant (le projet de la page est rejoué à chaque mouvement, le programme se redessine) ;
+tant que le bord ne passe pas la tête, l'image ne change pas ; quand il la passe, ce qui est
+dessous apparaît (la piste inférieure, ou le noir). **Alt maintenu** — on peut le prendre et
+le lâcher pendant le geste — montre l'image du bord tiré, le plan seul, comme avant (une
+touche plutôt qu'une préférence : c'est le plus simple, et on passe d'une vue à l'autre sans
+lâcher le bord ; Alt n'a pas d'autre sens sur un bord). Le déplacement d'un plan montrait déjà
+l'image sous la tête.
+
+Le pilote `montage/pilote_poignees.mjs` (Playwright, portail d'essai ; 41 essais, sombre et
+clair, aucune erreur de console ; aussi avec la copie de défilement à l'œuvre, faite en VP9
+pour le Chromium du conteneur) : pendant un rognage lent (40 pas d'un demi-pixel, moins
+d'une image chacun : 13 débuts différents), la scène du moniteur est **la même au pixel
+près** (capture comparée à celle d'avant) et le modèle reste juste à chaque pas ; rapide,
+l'image 95 jusqu'à ce que le bord passe la tête, puis l'image fixe de la piste du dessous ;
+Alt : l'image du bord (100), lâché : de nouveau dessous ; le bord de fin pareil. Puis, à T
+fixe avant et après : une vidéo avec son, un son seul (l'onde : les attaques des bips au même
+x d'écran, au pixel près), les deux ensemble (un son dissocié n'est lié à rien : chacun se
+rogne par sa poignée), un zoom fort (32 px par image, +3 images = 96 px), l'aimant (le bord
+se colle à la tête, l'entrée suit), rogner puis re-tirer vers la gauche (jusqu'au début de la
+source), ×1,5, une image fixe (sans borne de source), B, N, R, et chaque Ctrl+Z.
 
 Le contrôle : `model.js` mené par node (l'invariant : après un rognage de début de +10,
 −25, +49 à ×1, de +7 et −5 à ×2, de +13 à ×0,5, ×1,5 et ×3, chaque instant restant montre

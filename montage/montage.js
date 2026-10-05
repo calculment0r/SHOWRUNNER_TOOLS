@@ -1034,10 +1034,11 @@ function focus(which) {
 // ── le moniteur pendant un geste de la timeline (06/10) ──
 // Cal : « voir l'image changer EN DIRECT pendant le glisser […] pour être précis ».
 // Déplacer un plan : le programme montre l'image sous la tête de lecture, le montage tel
-// qu'il serait si l'on lâchait maintenant ; rogner un bord : l'image de ce bord, le plan
-// seul (Premiere montre le bord rogné au moniteur). Rien ne change dans S.p avant le lâcher
-// (player.js, `pv`) ; la copie de défilement est devant le temps du geste (program.scrub) :
-// aucune vidéo ne se recharge, l'originale se cale au lâcher.
+// qu'il serait si l'on lâchait maintenant (rien ne change dans S.p avant le lâcher : player.js,
+// `pv`). Rogner un bord : l'image sous la tête aussi — S.p y est rejoué à chaque mouvement —, et
+// Alt maintenu l'image de ce bord, le plan seul (timeline.js, `live` ; Cal, 06/10 : « je préfère
+// avoir les fonctions de in et out »). La copie de défilement est devant le temps du geste
+// (program.scrub) : aucune vidéo ne se recharge, l'originale se cale au lâcher.
 let apRaf = 0, apMove = null;
 const apercu = {
   debut() { program.scrub(true, false); },          // la copie de défilement, sans le son (la tête ne bouge pas)
@@ -2129,6 +2130,7 @@ function helpModal() {
     ['F', 'concordance des images : le plan sous la tête, dans la source à la même image'],
     ['S · = · − · \\', 'aimant · zoomer · dézoomer · tout le montage'],
     ['glisser + ctrl', 'insérer (pousse la suite) au lieu d’écraser'],
+    ['rogner + alt', 'le moniteur montre l’image du bord tiré (sinon : sous la tête de lecture)'],
     ['LA MOLETTE (TOUTES LES TIMELINES)', ''],
     ...MOLETTE,
     ['TRAJECTOIRE (MONITEUR PROGRAMME)', ''],
