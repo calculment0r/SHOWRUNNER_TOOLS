@@ -436,7 +436,7 @@ valeur.
 - Pas encore de jouet dans la vue Instruments (le rack les liste parmi les
   modules libres, sans leur scène).
 
-## 8. Le génératif dans l'arrangeur : pistes génératives, prises, partition, MIDI (29/09)
+## 8. Le génératif dans l'arrangeur : pistes génératives, versions, partition, MIDI (29/09 ; refait le 06/10)
 
 Cal : « il faut pouvoir ajouter des pistes "génératives" dans l'arrangeur […]
 on dessine une sélection sur la zone et dans le panel du bas on a les infos
@@ -449,28 +449,56 @@ des modèles : `docs/etudes/musique_generatif.md` (§ 6 pour l'intégration,
 § 6.5 pour les paramètres). **Tout tourne sur des moteurs factices** ; le
 câblage réel est écrit derrière des interrupteurs.
 
-### Ce qui est fait
+### Ce qui a changé le 06/10 (relu contre le code ; l'étude : `musique_generatif.md` § 8)
+
+Le panneau de réglages du 29/09 (trois colonnes dans la vue de détail, onglet Clip) et le
+tiroir « Générer » d'un morceau entier n'existent plus. À leur place, **un seul panneau**,
+« Générer » (`musique/generatif_panneau.js`), le tiroir d'ODIO élargi à droite (1 120 px au
+plus), décrit au § 8.6 de `musique_generatif.md` :
+
+- **une question en haut** — une chanson entière, un instrument seul, une variation d'un
+  clip, la suite — et pour chacune les voies du schéma (`intentions` de
+  `generatif_modeles.json`) : la première prête est prise, ce qui manque est grisé avec
+  sa raison ;
+- **les valeurs du projet remplies d'office** (tempo, tonalité, mesure, la plage, les
+  sections, les arcs), « du projet » ou « changé » ; le **clip d'inspiration** et le **guide
+  MIDI** (Chant, Thème, Accords) par glisser ou « Sélection » ; le modèle, les réglages
+  courts et avancés ;
+- le texte : le style, **la structure et les paroles en blocs** (les sections du projet,
+  `p.sections`), la partition de YuE2 (« Écrire la partition », le seul orange ; « Sans
+  relire » à côté ; « Par nos instruments ») ;
+- **les versions** (les « prises » du 29/09) en cartes : « dans le segment », A/B,
+  « Écouter dans le morceau », Garder, ×, Stems, MIDI, « Les versions en pistes ».
+
+Le panneau travaille sur une **cible** : une région existante, ou une plage encore vide (le
+brouillon `P.gen.brouillon`, rien n'est posé avant « Générer »). On l'ouvre par « Générer »
+(la barre du haut), « + Piste » → Générer…, le dessin d'une région sur une piste générative
+ou son double-clic, « Générer ici… » sur une plage, « Générer une variation… » sur un clip
+audio. **Le bas d'une région ne montre plus que ses versions** (`generatif_region.js`,
+`regionPanel`), avec « Génération · Son de la prise » ; depuis le 06/10, en compact, à
+côté de la chaîne (§ « Le panneau du bas en deux tailles », plus bas).
+
+Ce qui suit est l'état du 29/09, corrigé là où le code a changé.
+
+### Ce qui a été fait le 29/09
 
 - **La piste générative** : une piste audio qui porte `gen: { model, task }`
-  (« + Piste » → Générative · ACE-Step ou YuE2, ou le navigateur,
-  Instruments → Génératif). Elle joue, se mixe, s'exporte, se sépare comme
+  (« + Piste » → Piste générative ; le navigateur, Instruments → Génératif :
+  ACE-Step ou YuE2). Elle joue, se mixe, s'exporte, se sépare comme
   les autres. Sur sa voie, **tirer sur le vide dessine une région**, aimantée
   à la grille (Alt : la double croche ; Maj ou Ctrl : le cadre de sélection,
   comme ailleurs ; double-clic : quatre mesures).
-- **La région** est un clip audio qui porte `gen` (modèle, tâche, réglages,
-  contexte, prises) ; sans prise, elle n'a pas de son (hachurée, « à
-  générer »). Elle s'ouvre dans le **panneau du bas** (vue de détail, onglet
-  Clip), dessiné depuis le schéma : à gauche la région, le modèle, la tâche
-  (chacune dit « essai », « réel » ou « pas câblé » et pourquoi), **ce qui
-  vient du projet tout seul** (tempo, mesure, tonalité ramenée à majeur ou
-  mineur, durée et ce que le modèle en fera, sections couvertes), la case des
-  attracteurs ; au milieu les réglages de la tâche (**seulement** : les douze
-  pistes d'ACE-Step ; **ce qui joue autour** : les pistes cochées, la marge ;
-  **audio de style** ou **son à varier** : un clip glissé depuis
-  l'arrangement, le navigateur, la bibliothèque ou le disque ; style,
-  paroles, graine, **prises** 1 à 8 ; les réglages avancés repliés), et ce que
-  le modèle n'a pas, barré avec la raison ; à droite les **prises** et
-  **Générer** (le seul orange ; le GUIDE s'éteint).
+- **La région** est un clip audio qui porte `gen` (la réponse `quoi`, la voie,
+  le modèle, la tâche, les réglages, ce qui change du projet, les versions) ;
+  sans version, elle n'a pas de son (hachurée, « à générer »). *29/09 :* elle
+  s'ouvrait dans un panneau de réglages en bas (trois colonnes, onglet Clip).
+  *Depuis le 06/10 :* ses réglages sont dans « Générer » (plus haut) — ce qui
+  vient du projet, les douze pistes d'ACE-Step pour un instrument seul, ce qui
+  joue autour (les pistes cochées, la marge), le clip d'inspiration ou le clip
+  à varier, le style, les paroles, la graine, le nombre de versions, les
+  réglages avancés repliés, ce que le modèle n'a pas grisé avec sa raison ; le
+  bas ne montre que les versions. « Générer » est le seul orange (le GUIDE
+  s'éteint).
 - **Le contexte** (une piste, compléter, repeindre, isoler) : les pistes
   cochées sont rendues hors temps réel sur la région ± la marge par le moteur
   de la page (`renderMix`, le même graphe que l'export), rangées dans la
@@ -478,10 +506,13 @@ câblage réel est écrit derrière des interrupteurs.
   (`repainting_start/end`). ACE-Step rend la durée exacte de ce qu'on lui
   envoie (étude § 2.3) : la prise tombe calée par construction (`off` = la
   marge).
-- **Les prises** (les « takes » de Live) : N propositions, graine, graine + 1…
-  La première joue ; on écoute (▶ depuis la région), on choisit, on retire ;
-  « Garder » en fait un clip audio ordinaire ; « En pistes » pose une piste
-  muette par prise ; clic droit sur la région : les prises, la suivante.
+- **Les versions** (les « prises » du 29/09, les « takes » de Live) : N
+  propositions, graine, graine + 1… La première joue dans le segment ; une
+  carte s'écoute seule, « dans le segment » la fait jouer dans l'arrangement,
+  A/B passe de l'une à l'autre en lecture ; « Garder » en fait un clip audio
+  ordinaire ; « Les versions en pistes » pose une piste muette par version ;
+  clic droit sur la région : Générer…, les versions, la suivante, Garder
+  celle-ci, les versions en pistes.
   **L'empreinte** (étude § 6, canon d'ODIO_01 § 2.9) : une prise dont les
   entrées ont changé (tempo, mesure, tonalité, réglages, longueur, place pour
   un contexte) reste jouable et le dit (« périmée »).
@@ -496,13 +527,15 @@ câblage réel est écrit derrière des interrupteurs.
   réécrit le dialecte (la note la plus haute quand deux se chevauchent ; les
   accords reconnus parmi les 15 qualités, basse en barre oblique) ; les prises
   chantent cette partition (`abc`), qui reste rangée avec elles ; « Par nos
-  instruments » la joue tout de suite sur des pistes de notes ; « D'une
-  prise » reprend celle qu'une prise a chantée.
+  instruments » la joue tout de suite sur des pistes de notes ; on peut
+  reprendre celle qu'une version a chantée. *06/10 :* ces trois cases sont le
+  **guide MIDI** du panneau « Générer ».
 - **Clic droit sur un clip audio** : « Séparer en stems » (le contrat
   existant), **« Extraire le MIDI »** (notes par basic-pitch, partition par
   SheetSage2, batterie par ADTOF, piano par ByteDance, « séparer d'abord »,
-  quantifier ; les réglages de basic-pitch repliés), « Comme audio de style »
-  (la case de la région ouverte en bas). Le MIDI se pose en clips de notes sur
+  quantifier ; les réglages de basic-pitch repliés), « Détecter le tempo »,
+  « Générer une variation… » (06/10), et « Comme … » pour chaque case de son
+  de la génération ouverte (le clip d'inspiration, le clip à varier). Le MIDI se pose en clips de notes sur
   une piste neuve **sous le clip, au même départ** (transposition, vitesse et
   sens du clip suivis), un canal par piste (chant, thème, accords, batterie).
 - **La bibliothèque MIDI** : une sorte `midi` ajoutée à la bibliothèque du
@@ -513,7 +546,8 @@ câblage réel est écrit derrière des interrupteurs.
   déposer des .mid) ; clic droit sur un clip de notes : « Ranger dans la
   bibliothèque MIDI ». Le fichier s'écrit et se lit côté serveur seulement
   (SMF format 0 ; la batterie en General MIDI au canal 10).
-- Le tiroir « Générer » (un morceau entier) renvoie vers les pistes génératives.
+- *29/09 :* le tiroir « Générer » (un morceau entier) renvoyait vers les pistes
+  génératives. *06/10 :* il est devenu la réponse « Une chanson entière » du panneau.
 
 ### Le schéma des paramètres
 
@@ -565,7 +599,7 @@ voix…) dans la gamme du projet ; une variation par un filtre ffmpeg sur le
 son source ; la partition jouée en sinus ; le MIDI par l'énergie et les
 passages à zéro, ramené à la gamme.
 
-### Ce qui a été vu (DGX2, portail d'essai :8807, `sr_odio_gen_drive.mjs`)
+### Ce qui a été vu le 29/09 (DGX2, portail d'essai :8807, `sr_odio_gen_drive.mjs` ; l'interface d'alors)
 
 `python3 tools/check.py` sur un clone du dépôt (1f64157) avec ces fichiers :
 **692 passés, 0 en échec** (dont les selftests de `music_gen`, `music_midi`,
@@ -625,11 +659,14 @@ clip MIDI qui joue.
 - La mesure 6 s'écrit **M:6/4** dans la partition (une mesure d'ODIO compte
   6 noires sur la grille de 4 doubles croches) ; l'étude proposait 6/8 : à
   trancher par Cal.
-- Asset (`asset/`, `commun/shell.js`) ne connaît pas encore la sorte `midi` :
-  ses clips s'y listent sans vignette ni libellé traduit.
-- Le panneau est dense sous 1400 px (trois colonnes) ; la partition éditée à
-  la main n'a pas de coloration, seul abc_tools la juge (à 700 ms de la
+- ~~Asset ne connaît pas encore la sorte `midi`~~ : il la connaît (`commun/shell.js`,
+  `KIND_FR`, son icône ; `asset/`, sa rubrique MIDI).
+- ~~Le panneau est dense sous 1400 px~~ : refait le 06/10, des colonnes bornées, une
+  seule colonne de 560 px sous 1 180 px (`musique_generatif.md` § 8.6). La partition
+  éditée à la main n'a pas de coloration, seul abc_tools la juge (à 700 ms de la
   frappe).
+- Ce qui reste du génératif après le 06/10 (le module `gen` du nodal, `lego` en réel, les
+  étages, le comping) : `musique_generatif.md` § 8.1 et § 8.7.
 
 ## 9. Troisième tour (29/09) : la souris, les menus, les pistes, un seul graphe
 

@@ -101,7 +101,7 @@ export function createBrowser(app, { poser = null } = {}) {
     // les pistes génératives : on y dessine une région, le modèle la remplit
     out.push(group('Génératif'));
     for (const [model, name, sub, dot] of [['ace', 'Piste générative · ACE-Step', 'une piste, morceau, repeindre', 'coral-1'], ['yue', 'Piste générative · YuE2', 'chanson, partition', 'coral-3']]) {
-      out.push(item({ t: 'gen', model }, { name, sub, dot, title: 'une piste neuve : tirer sur sa voie dessine une région, le panneau du bas la fait générer',
+      out.push(item({ t: 'gen', model }, { name, sub, dot, title: 'une piste neuve : tirer sur sa voie dessine une région, le panneau Générer la règle, ses versions reviennent en bas',
         onclick: () => addGenTrack(app, model) }));
     }
     return out;
