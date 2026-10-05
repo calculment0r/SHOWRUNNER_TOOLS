@@ -52,6 +52,36 @@ export function reglagesArpege(val) {
   };
 }
 
+// LA LOI D'UN PAS, en deux pièces — les clips (arpeger, plus bas) et le jeu au clavier
+// (moteur.js, Engine.noteOn : les notes tenues à la main) s'en servent, une seule loi.
+// La liste d'un pas : les notes tenues ({ s, p, v, ac? }), rangées (par attaque puis
+// hauteur pour « joué », sinon par hauteur), une hauteur une seule fois, étendues sur
+// r.oct octaves.
+export function listeDuPas(tenues, r) {
+  const rangees = r.mode === JOUE ? [...tenues].sort((a, b) => a.s - b.s || a.p - b.p) : [...tenues].sort((a, b) => a.p - b.p);
+  // une hauteur n'y est qu'une fois (deux notes identiques tenues ensemble)
+  const vues = new Set(), base = [];
+  for (const x of rangees) if (!vues.has(x.p)) { vues.add(x.p); base.push(x); }
+  const liste = [];
+  for (let o = 0; o < r.oct; o++) for (const x of base) liste.push({ p: x.p + 12 * o, v: x.v ?? 0.8, ac: x.ac });
+  return liste;
+}
+// Ce qui sonne au pas : `i` le rang dans la suite (il repart à 0 quand plus rien n'est
+// tenu), `k` le pas lui-même (la graine du hasard). Des notes { l, p, v, ac? }, l en
+// doubles croches (la part du pas : le gate).
+export function notesDuPas(liste, i, k, r) {
+  const l = r.pas * r.gate;
+  const note = (x) => ({ l, p: x.p, v: x.v, ...(x.ac ? { ac: true } : {}) });
+  if (r.mode === ACCORD) return liste.map(note);
+  const N = liste.length;
+  let j;
+  if (r.mode === DESCEND) j = N - 1 - (i % N);
+  else if (r.mode === VAVIENT) { const L = Math.max(1, 2 * N - 2); const q = i % L; j = q < N ? q : L - q; }
+  else if (r.mode === HASARD) j = graine(k) % N;
+  else j = i % N;   // monte, joué
+  return [note(liste[j])];
+}
+
 /**
  * Les notes d'un motif ({ s, l, p, v, ac?, sl? }, en doubles croches sur
  * `steps` pas) devenues un arpège. Rend un tableau neuf ; `notes` n'est pas touché.
@@ -65,26 +95,7 @@ export function arpeger(notes, steps, r) {
     const s = k * r.pas;
     const tenues = notes.filter((x) => x.s <= s + 1e-9 && x.s + x.l > s + 1e-9);
     if (!tenues.length) { i = 0; continue; }
-    const rangees = r.mode === JOUE ? [...tenues].sort((a, b) => a.s - b.s || a.p - b.p) : [...tenues].sort((a, b) => a.p - b.p);
-    // une hauteur n'y est qu'une fois (deux notes identiques tenues ensemble)
-    const vues = new Set(), base = [];
-    for (const x of rangees) if (!vues.has(x.p)) { vues.add(x.p); base.push(x); }
-    const liste = [];
-    for (let o = 0; o < r.oct; o++) for (const x of base) liste.push({ p: x.p + 12 * o, v: x.v ?? 0.8, ac: x.ac });
-    const l = r.pas * r.gate;
-    if (r.mode === ACCORD) {
-      for (const x of liste) out.push({ s, l, p: x.p, v: x.v, ...(x.ac ? { ac: true } : {}) });
-      i++;
-      continue;
-    }
-    const N = liste.length;
-    let j;
-    if (r.mode === DESCEND) j = N - 1 - (i % N);
-    else if (r.mode === VAVIENT) { const L = Math.max(1, 2 * N - 2); const q = i % L; j = q < N ? q : L - q; }
-    else if (r.mode === HASARD) j = graine(k) % N;
-    else j = i % N;   // monte, joué
-    const x = liste[j];
-    out.push({ s, l, p: x.p, v: x.v, ...(x.ac ? { ac: true } : {}) });
+    for (const x of notesDuPas(listeDuPas(tenues, r), i, k, r)) out.push({ s, ...x });
     i++;
   }
   return out;

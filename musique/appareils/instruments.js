@@ -178,9 +178,39 @@ function synthe(app, m, accent) {
   const mol = (k, i) => (def.params.find((p) => p.k === k).opts
     ? choixLie(L, k, { dessin: (j, o) => (/^(wave|wave2|lfo_w)$/.test(k) ? iconeOnde(o) : null), apres: () => onde.replaceWith(onde = ondeSvg()) })
     : L.molette(k, { accent: i === 0 ? accent : 'cy' }));
-  const sections = def.sections.map(([name, keys]) => el('div', { class: 'sec' },
-    el('span', { class: 'lbl' }, name),
-    name === 'Oscillateur A' ? onde : name === 'Filtre' ? fl.el : name === 'Enveloppe' ? en.el : null,
-    el('div', { class: 'kns' }, keys.map(mol))));
+  // 06/10 (odio_synthes.md § 6 : « le Synthé est très large dans le rack, environ 2 800 px ») :
+  // deux rangées — le module borné en largeur, ses sections passent à la ligne et leurs
+  // réglages aussi (appareils.css) — et chaque section se replie d'un clic sur son nom.
+  // Repliée, elle dit si l'un de ses réglages s'écarte du défaut, et lesquels (sa bulle) :
+  // rien n'est perdu, un clic la rouvre. Le repli vaut pour tous les Synthés du projet
+  // (S.proj.ui.replis.synth), comme un réglage de la page.
+  const replis = () => (app.S.proj.ui.replis = app.S.proj.ui.replis || {});
+  const replie = (name) => (replis().synth || []).includes(name);
+  const ecarts = (keys) => keys.filter((k) => Math.abs(Number(L.get(k)) - Number(L.defaut(k))) > 1e-9);
+  const sections = def.sections.map(([name, keys]) => {
+    const point = el('i', { class: 'ap-sec-ecart', 'aria-hidden': 'true' });
+    const tete = el('button', { class: 'ap-sec-t', type: 'button' }, el('span', { class: 'lbl' }, name), point);
+    const sec = el('div', { class: 'sec' }, tete,
+      name === 'Oscillateur A' ? onde : name === 'Filtre' ? fl.el : name === 'Enveloppe' ? en.el : null,
+      el('div', { class: 'kns' }, keys.map(mol)));
+    const peindre = () => {
+      const r = replie(name), e = ecarts(keys);
+      sec.classList.toggle('replie', r);
+      tete.setAttribute('aria-expanded', String(!r));
+      point.hidden = !r || !e.length;
+      tete.title = r ? `${name} — repliée · ${e.length ? e.map((k) => `${L.sp(k).label} ${L.texte(k)}`).join(' · ') : 'tout au défaut'} · clic : la déplier`
+        : `${name} · clic : la replier (pour tous les Synthés du projet)`;
+    };
+    tete.addEventListener('click', () => {
+      const l = new Set(replis().synth || []);
+      if (l.has(name)) l.delete(name); else l.add(name);
+      if (l.size) replis().synth = [...l]; else delete replis().synth;
+      app.saveUi();
+      peindre();
+    });
+    L.ecoute(peindre);
+    peindre();
+    return sec;
+  });
   return { el: el('div', { class: 'dev-body synth ap-synth' }, sections), frame: () => {}, peindre: () => { fl.peindre(); en.peindre(); } };
 }

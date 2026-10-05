@@ -119,7 +119,8 @@ export function createTimeline(app) {
   const thOf = (t) => ui().thT?.[t.id] || th();
   const snapU = () => { const s = ui().snap ?? 1; return s === 'bar' ? P().sig : s; };
   const navW = () => (ui().nav === false ? 30 : clamp(ui().navW || 214, 160, 420));
-  const dockH = () => (ui().dock === false ? 0 : clamp(ui().dockH || 300, 120, Math.max(160, innerHeight - 300)));
+  // la hauteur du panneau du bas : celle de sa taille (editeurs.js, compact ou grand — d'office, au plus haut)
+  const dockH = () => (ui().dock === false ? 0 : clamp((ui().dockGrand ? ui().dockHg || 9999 : ui().dockH) || 300, 120, Math.max(160, innerHeight - 300)));
   const root = el('section', { class: 'ar', 'aria-label': 'arrangement' });
   const tools = el('div', { class: 'ar-tools' });
   const scroll = el('div', { class: 'ar-scroll' });
@@ -144,7 +145,7 @@ export function createTimeline(app) {
   const navSplit = splitter('x', { get: navW, min: 160, max: 420, reset: 214, title: 'tirer : la largeur du navigateur · double-clic : d\'origine',
     set: (v) => { body.style.setProperty('--nav-w', `${v}px`); }, done: (v) => { ui().navW = v; ui().nav = true; app.saveUi(); } });
   const dockSplit = splitter('y', { get: dockH, min: 120, max: 900, invert: true, reset: 300, title: 'tirer : la hauteur du détail · double-clic : d\'origine',
-    set: (v) => { dock.el.style.height = `${v}px`; }, done: (v) => { ui().dockH = v; ui().dock = true; app.saveUi(); } });
+    set: (v) => { dock.el.style.height = `${v}px`; }, done: (v) => { ui()[ui().dockGrand ? 'dockHg' : 'dockH'] = v; ui().dock = true; app.saveUi(); } });
   const main = el('div', { class: 'ar-main' }, scroll, dockSplit, dock.el);
   const body = el('div', { class: 'ar-body' }, browser.el, navSplit, main);
   root.append(tools, body);
