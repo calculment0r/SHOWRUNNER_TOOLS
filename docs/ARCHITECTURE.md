@@ -11,7 +11,8 @@ index.html, accueil.js      l'accueil du portail (cartes des outils, compte, mac
 commun/                     tokens.css, base.css, shell.css, shell.js, porte.js/.css (la porte), fonts/ ;
                             theme.js, prefs.js/.css/.json, theme.html (l'éditeur de thème), undo.js,
                             proxies.js, menu.js/.css, fil.js/.css, wire.js/.css, entrees.js/.css, split.js,
-                            refs.js, molette.js, fenetre.js/.html/.css, pleinecran.js (§ 4)
+                            refs.js, molette.js, fenetre.js/.html/.css, pleinecran.js, tete.js/.css,
+                            lecteur.js/.css, dock.js/.css (§ 4)
 asset/ image/ movie/ …      une page par outil : index.html + <outil>.js + <outil>.css
 admin/                      la page de Cal (§ 9)
 media/                      l'image et la vidéo des grandes cartes de l'accueil
@@ -91,6 +92,42 @@ l'original, faites au rangement (et rattrapées au démarrage par le travail
 jamais une vignette à la main : `commun/proxies.js` choisit la copie qui
 suffit (§ 4).
 
+Deux copies de plus, faites au rangement par une accroche d'une ligne de
+`library.add_file` (sinon à la première demande de la page : le rattrapage),
+emportées par la corbeille avec l'objet :
+
+- un **son** a son visuel (30/09, `server/tools/apercu_son.py`) : sa forme
+  d'onde, un masque PNG de 1200 × 160 (`wave.v1.png`, une voix d'élément :
+  `<fichier>.wave.v1.png`) calculé une fois — ffmpeg décode le son, le serveur
+  prend le pic de chaque colonne et normalise sur le plus grand, PIL dessine ;
+  la page le peint avec un jeton (`mask-image`), dans les deux thèmes, sans
+  couleur en dur. Les pics eux-mêmes (`GET /api/son/pics/<id>`) servent l'onde
+  d'un plan du Montage (la piste son d'une vidéo aussi) ;
+- une **vidéo** a sa copie de défilement (30/09, `server/tools/defilement.py`) :
+  H.264 960 px au plus, une image clé toutes les 6 images, sans images B ni son,
+  les temps de l'originale (`defil.v1.mp4`, une copie à la fois, au
+  processeur ; rien au-delà de 30 min). Le lecteur commun la montre pendant
+  qu'on déplace la tête (un saut ne décode jamais plus de 6 images : 8 à 11 ms
+  au lieu de 156 à 850, mesuré le 30/09 dans Chromium), puis repasse sur
+  l'originale (§ 4).
+
+Un **élément versionné** (30/09, `server/tools/elements.py`,
+`docs/etudes/apps_studio_elements.md`) relie une SOURCE vivante (un projet
+ODIO `mus-…`, une séquence `seq-…`, une planche d'Idéation `ide-…`, ou la
+recette d'un objet) à ses VERSIONS : des objets ordinaires, immuables, marqués
+`version: {of, n}` ; l'élément porte `element.source`, `versions` et `media`
+(l'objet public y ajoute `head`, la dernière version prête et présente), et ses
+sortes s'ajoutent à celles des planches (`library.VERSIONED_TYPES` : `music`,
+`sound`, `sequence`, `picture`). Un USAGE (un plan, un clip d'ODIO, un
+nœud d'Idéation) pose l'identifiant d'une version : il est épinglé par
+construction, et les usages se lisent dans les documents eux-mêmes. Une version
+posée ne part pas à la corbeille (le garde de `library.trash` nomme ses usages) ;
+un document qui se poserait dans sa propre descendance est refusé, la chaîne
+nommée (`check-use` pour la page, `check_doc` à l'enregistrement). Chaque geste
+s'écrit au **journal numéroté** (`<data_dir>/elements/journal.jsonl` : `el.created`,
+`el.published`, `el.withdrawn`, `el.ready`…), chaque ligne portant son Workspace :
+une page ne lit que ceux du sien.
+
 ### Routes
 
 | | |
@@ -105,6 +142,14 @@ suffit (§ 4).
 | `POST /api/library/<id>/delete` · `/restore` | corbeille, retour |
 | `POST /api/elements` `{title, type, description, refs:[{item, role, label}]}` | un élément |
 | `POST /api/elements/<id>/refs` `{item, role, label}` | ajoute une référence |
+| `POST /api/elements/<id>/part {file}` | une partie d'un élément (une image de sa planche) en objet de la bibliothèque, pour la poser seule (Idéation, 05/10) : l'image d'où venait la référence, sinon une image neuve, fille de l'élément, que la référence retient (`server/tools/core_api.py`, `el_part`) |
+| `POST /api/elements {title, type, source: {tool, doc}}` ou `{from_item, note}` | un élément versionné, sans version (d'une source) ou dont l'objet devient la v1 sans être recopié |
+| `GET /api/elements?source=<doc>` · `GET /api/elements/<id>` | les éléments (d'une source) avec leur état ; l'élément, sa pile, sa source, ses usages |
+| `POST /api/elements/<id>/versions {item, rev?, note?}` · `…/versions/<n> {state?, note?}` | publier (l'objet devient la v n+1) ; retirer (`withdrawn`), remettre (`ready`), annoter |
+| `POST /api/elements/status {items}` · `GET /api/elements/uses?doc=` · `POST /api/elements/check-use {el \| item, doc}` | pour une page : la version et la dernière de chaque objet ; les usages d'un document et leur pastille ; poser ici ferait-il une boucle (`{ok, why, chain}`) |
+| `GET /api/elements/changes?since=<seq>` | le journal numéroté après `seq`, celui du Workspace : `{seq, events}` |
+| `GET /api/son/apercu/<id>[?voix=k][&v=1]` · `GET /api/son/pics/<id>` | le masque de l'onde (PNG, gardé un an avec `v=1`) ; les pics `{bps, n, b64}` — jugés par l'objet (qui le voit voit son onde) |
+| `GET /api/defil/<id>` | la copie de défilement : `{ready, url, pending, why}` ; pas prête, la demande passe en tête de sa file et la page redemande |
 | `GET /api/cf/characters` · `POST /api/cf/import {slug}` | Character Factory → élément |
 
 ## 3. La file des rendus
@@ -168,12 +213,15 @@ font l'estimation (`durations.json`) et le départ estimé de chacun.
 | | |
 |---|---|
 | `POST /api/jobs {kind, params, title, tool}` | le travail, `state: queued` (429 : quota) |
-| `GET /api/jobs?active=1&tool=` · `GET /api/jobs/<id>` | l'état (`queued running done error cancelled interrupted`), `progress`, `message`, `result.items`, `items` (objets complets), `owner`, `owner_name`, `mine`, `can`, `position`, `ahead`, `eta_s`, `est_s`, `family` |
+| `GET /api/jobs?active=1&tool=` · `GET /api/jobs/<id>` | l'état (`queued running done error cancelled interrupted`), `progress`, `message`, `result.items`, `items` (objets complets), `owner`, `owner_name`, `mine`, `can`, `position`, `ahead`, `eta_s`, `est_s`, `family` ; la liste porte aussi `ev_seq`, le dernier numéro du journal des éléments dans le Workspace de la requête (§ 2, `elements.seq_here`) |
 | `GET /api/queue` | la file de tous : `running`, `queued` (dans l'ordre), `done` (les miens), `paused`, `machines` |
 | `POST /api/jobs/<id>/cancel` · `/retry` · `/forget` | arrêter, relancer, retirer — le sien, ou Cal (403 sinon) |
 
 Côté page : `jobs.submit(kind, params, {title, tool})`, `jobs.wait(id, onTick)`,
-`jobs.watch(cb)` ; l'événement `sr:job` part quand un travail se termine.
+`jobs.watch(cb)` ; l'événement `sr:job` part quand un travail se termine, et
+`sr:elements` (`{seq, since}`) quand `ev_seq` grandit : une page qui suit des
+versions relit alors `GET /api/elements/changes`, sans connexion de plus que le
+relevé de la file (`apps_studio_elements.md` § 2.11).
 `jobRow(j)` dit la place (« 2 devant toi · départ ≈ 4 min ») ; sa vignette
 est la copie d'affichage de l'objet du travail (`jobItemsFor(liste)` les lit
 d'un coup par `/api/library/batch`).
@@ -238,6 +286,9 @@ repeint le fil dans le `onapply` de sa pile (`items` : les objets rendus,
 | `wire.js` | les fils d'un canvas nodal (ceux d'ODIO, repris par Idéation) | `wire`, `wireD`, `wireAt`, `tempWire` ; couleurs = noms de jetons |
 | `entrees.js` | les entrées d'un plan par place (`@image1`… verts ou rouges) | `createEntrees` (Vidéo) |
 | `split.js` | les panneaux redimensionnables | `split(box, parts, {axis, key})` |
+| `tete.js` + `tete.css` | **la tête de lecture et la règle des temps de toutes les timelines** (Cal, 30/09 : « la même cue partout, celle du montage vidéo est bien »), extraites du Montage : un trait orange de 2 px et son onglet, cachés sous les en-têtes collés, qui suivent la lecture ; une règle en timecode `HH:MM:SS:FF` (une étiquette tous les 84 px au moins) qui ne peint que ce qui se voit ; cliquer, glisser sur la règle déplace la tête (capture du pointeur). Le Montage, ODIO (l'arrangement, le piano roll, l'éditeur audio) et le lecteur s'en servent | `tete({z})`, `poser(ph, x, {decal, sous})`, `suivre(scroller, x)`, `peindreRegle(ticks, {pps, fps})`, `brancherRegle(zone, {temps, aller})`, `sauter(media, t)` (un saut ne s'empile jamais sur un saut en cours), `cible`, `glisser`, `tc(images, fps)` |
+| `lecteur.js` + `lecteur.css` | **LE lecteur du portail** (30/09) : une vidéo ou un son dans le thème, jamais les contrôles du navigateur ; la vidéo remplit son cadre ; la frise = la règle et la tête de `tete.js`, la bande des images ou l'onde du son (`/api/son/apercu`), et les pistes de la page ; la molette commune, le clavier du Montage (Espace, J K L, ← →, Début, Fin), la boucle, le son retenu, le plein écran. En glissant, il montre la copie de défilement (`/api/defil`, § 2) et repasse sur l'originale quand elle montre la même image (`requestVideoFrameCallback`). Asset (la fiche), le fil (Image, Vidéo), Transcrire, Movie Analysis et Idéation s'en servent | `lecteur(it, {clavier, sur, onTemps, defilement})` → `L.el`, `seek`, `play`, `pause`, `toggle`, `step`, `piste(nœud)`, `t`, `duree`, `etat()`, `detruire()` ; `petitLecteur(url, {duree, titre})` (un son dans une liste, un seul à la fois) ; `survolSon(video)` (la lecture au survol d'une vignette, avec le son du lecteur) |
+| `dock.js` + `dock.css` | **le panneau Asset** (30/09, `docs/etudes/panneau_asset.md`) : la bibliothèque à gauche de chaque outil, montée par `mountHeader`, fermée à l'arrivée ; Ctrl+Espace (ou ², Préférences → Général), ou sa languette verte au bord. Un visualiseur : chercher, trier, filtrer (les sortes en pastilles ; cinq sections en accordéon : ce Workspace, récents, favoris, autres Workspaces, Character Factory), poser — rien ne s'y range ni ne s'y jette (« Gérer dans Asset ↗ »). Il pousse la page (`html.sr-dock-on`, `@container sr-page`) ; une grille fenêtrée, par pages de 120 (`GET /api/asset/dock`) ; un objet d'un autre Workspace est rapatrié (une copie) avant d'être posé | la façade `dock` de `shell.js` : `dock.configure({place(items, {how}), clickPlaces, placeLabel, menu, kinds, label, dockMin, fiche, hint})`, `dock.contexte({kinds, label, why})`, `declareZone(node, {kinds, label})`, `dock.open/close/toggle/isOpen/reload/recent` ; l'événement `sr:dock` (`{open, w}`) |
 
 **Le clic droit** (Cal, 29/09 : « ne plus avoir de clic droit du navigateur
 partout dans nos outils ; on a un menu contextuel dédié à où on se trouve au
@@ -290,16 +341,45 @@ réel est écrit, vérifié à vide, et s'allume par un réglage de
 
 | outil | routes | travaux | interrupteur |
 |---|---|---|---|
-| Asset | `/api/asset/view`, `move`, `folders/rename`, `lineage/<id>`, `trash` (GET : la corbeille ; POST `{ids}` : y mettre), `restore {ids}`, `trash/<id>/thumb`, `refs/<id>`, `bulk {ids, fav, tags_add, tags_remove}` (rend `before`, que `{restore}` repose), `zip {ids}`, `zip/<jeton>/<nom>`, `cf/refresh` | — | — |
+| Asset | `/api/asset/view`, `move`, `folders/rename`, `lineage/<id>`, `trash` (GET : la corbeille ; POST `{ids}` : y mettre), `restore {ids}`, `trash/<id>/thumb`, `refs/<id>`, `bulk {ids, fav, tags_add, tags_remove}` (rend `before`, que `{restore}` repose), `zip {ids}`, `zip/<jeton>/<nom>`, `cf/refresh` ; `dock?kind=&etype=&media=&q=&folder=&fav=1&space=&spaces=*&limit=&offset=` (le panneau Asset commun : une page d'objets, les comptes de ses pastilles ; le Workspace courant par défaut), `espaces` (les Workspaces que la personne voit) | — | — |
 | Préférences | `GET /api/prefs` (les miennes, avec les schémas), `POST /api/prefs {patch}` (fusion ; `null` retire une clé ; 400 hors schéma, 413 au-delà de 32 Ko), `GET /api/prefs/schemas` — `server/tools/prefs.py`, un fichier `<data_dir>/prefs/<id>.json` par personne | — | — |
 | Image | `/api/image/models`, `compose` (le prompt envoyé), `generate`, `edit`, `redo` | `image.generate`, `image.edit` (voie image) | `"image_backend": "comfyui"` |
 | Vidéo (`movie/`) | `/api/movie/options`, `plan` (le graphe H3), `loras`, `element-image`, `redo` (recréer), `frame` (première / dernière image), `assist`, `h3`, `h3/start`, `h3/stop` | `movie.t2v`, `movie.i2v`, `movie.r2v` (voie h3) | `"movie_engine": "h3"` ; `h3_idle_minutes`, `h3_min_free_gb` |
 | Montage | `/api/montage/meta`, `projects` (GET la liste des séquences, POST `{name, settings}` ou `{from_item}`), `projects/<id>` (lire, enregistrer), `projects/<id>/rename`, `duplicate`, `delete`, `plan` (un id `mon-…` d'avant le 29/09 mène à sa séquence `seq-…`), `wave/<id>`, `luts` (GET, PUT un .cube), `luts/<id>` (POST), `luts/<id>/cube`, `mini`, `delete` | `montage.export` (voie cpu, ffmpeg) | — |
 | ODIO (`musique/`) | `/api/music/projects…` (lire, enregistrer, `delete`), `engines`, `generate` ; `gen/engines`, `gen/generate` (`music_gen.py` : les modèles génératifs du schéma `musique/generatif_modeles.json`) ; `midi` (ranger un clip de notes), `midi/options`, `midi/extract`, `midi/<id>/notes` (`music_midi.py`) ; `stems/options`, `stems/plan`, `stems/separate` ; `yue/options`, `yue/plan`, `yue/generate`, `yue/abc`, `yue/abc/check`. Les jouets (`music_jouets.py`) n'ont pas de route : leurs câbles `notes` et `mod` sont jugés dans l'enregistrement du projet (`music.validate`, sans boucle) | `music.generate`, `music.gen.<modèle>`, `music.midi`, `music.midi.abc`, `music.stems`, `music.yue`, `music.yue.abc` | `"music_engine": "ace-step"`, `"music_yue"`, `"music_stems"`, `"music_midi": true` |
+| Idéation (`ideation/`) | `/api/ideation/meta`, `boards` (GET la liste, POST une planche), `boards/<id>` (lire, enregistrer), `boards/<id>/rename`, `duplicate`, `delete`, `export` (le travail, rangé dans la bibliothèque), `png` (`{frame?}` : la planche ou un cadre en PNG, rendu tout de suite et renvoyé tel quel — la page l'enregistre sur l'ordinateur et le copie dans le presse-papier, rien ne va dans la bibliothèque ; 05/10), `palette/<id>`, `lot` (les cartes Générer : des lots d'images ou de vidéos, lancés par les sortes d'Image et de Vidéo) ; `collab/<id>/…` (`ideation_collab.py` : opérations, flux, présence, accès, invitations, fil, visio) ; `web/apercu`, `web/img/<empreinte>` (`web_apercu.py` : l'objet Web — YouTube, Vimeo, un site dans un cadre s'il l'accepte, sinon une carte lien lue par le serveur, sans adresse locale ni privée) | `ideation.export` (voie cpu) | `"ideation_ice_servers"` |
+| LoRA (les moodboards d'Idéation) | `GET /api/lora/models` (les modèles cibles et s'ils sont prêts), `GET /api/lora/<planche>/<objet>` (l'état d'un moodboard : versions, plan, travail), `POST …/train {items, model, when: "now" \| "HH:MM", name}` (lancer ou planifier la nuit ; la garde du calcul d'abord), `POST …/cancel`, `GET /api/lora` (les LoRA entraînés qu'on voit, pour les cartes Générer), `GET /api/lora/file/<planche>/<objet>/<v>` — `server/tools/lora.py` ; l'état d'un LoRA dans `<data_dir>/lora/<planche>-<objet>.json`, ses fichiers dans `lora/files/` | `lora.train` (voie image, épinglé à la ComfyUI de la machine du portail, une seule chose de GPU pendant ce temps), `lora.train_factice` (voie cpu, l'essai sans GPU, pour Cal) | le manifeste `~/trainers/sr_lora.json` (réglage `lora_manifest`) : un modèle n'est proposé que marqué `ok` après un essai réel à l'installation (`docs/INSTALL_LORA.md`) ; `comfy_loras`, `lora_peer` |
 | Object Creator | `/api/objet/state` (les instances ComfyUI de la voie `image` seulement : une entrée `local` n'en est pas une), `objects` | `objet.mesh` (TRELLIS.2), `objet.mesh_factice` | `"objet_trellis": true` |
 | Movie Analysis | `/api/analyse/list`, `projets` (GET la liste fusionnée : nos films, les analyses d'ici, les projets du portail et du dépôt partagé ; POST `{nom}` un projet), `projets/<id>` (POST `{nom}` renommer, `{supprime}` retirer ou restaurer), `corrections/<film>` (GET, PUT : les corrections des voix et du casting, gardées dans le portail), `diarisation`, `chaine`, `nom/<nom>`, `run`, `diar/etat`, `diar/fichiers`, `diar/travaux`, `diar/travail/<id>` (GET, DELETE), `diar/analyse` (relais vers DGX1 :10002) | `analyse.run` (voie analyse, une à la fois) | — |
 | Upscale | `/api/upscale/models`, `plan`, `run` | `upscale.image`, `upscale.video` (voie image ; cpu en factice) | `"upscale_backend": "comfyui"` |
 | Character Factory | `/character/api/*`, `/character/files/*`, `/character/v1/*` : relais en flux vers le studio de DGX1 | (la file du studio, sur DGX1) | — |
+
+**Idéation, les objets du 05/10** (un module par objet sous `ideation/objets/`, un
+par réglage de diapositive sous `ideation/diapo/`) :
+
+- `objets/moodboard.js` — `{type: 'moodboard', items, open, wc, hc}` : une carte à
+  taille fixe (une mosaïque de neuf), que le double-clic ouvre sur tous ses
+  visuels. Y entrent une image de la planche lâchée dessus, une image du panneau
+  Asset ou un fichier du disque ; un moodboard de sons (la première sorte qui
+  entre décide) vise ACE-Step. Son LoRA (`server/tools/lora.py`) : à jour si les
+  objets de la dernière version sont ceux du moodboard, sinon périmé — la
+  version d'avant reste utilisable ; le lancer, le planifier la nuit, ses
+  versions. L'entraînement réel est dans `server/tools/lora_trainers.py` :
+  ai-toolkit (Krea 2, Qwen-Image 2.1, Z-Image, H3) et l'entraîneur officiel
+  d'ACE-Step 1.5, avec les réglages qui ont marché à l'installation (le
+  manifeste) ; le LoRA est copié dans `ComfyUI/models/loras/showrunner/` des
+  deux DGX (`docs/etudes/lora_entrainement.md`) ;
+- `objets/modele3d.js` — `{type: 'model3d', item, mesh, light, chan}` : le GLB
+  d'un élément (`element.meshes`) dans la visionneuse du portail
+  (`character/viewer.html?embed=1`, un cadre de la même origine) ; une carte
+  légère d'abord, « Interagir » ou un double-clic charge la visionneuse ;
+  l'éclairage (studio, jour, intérieur, contre-jour, plat) et le canal (rendu,
+  albedo, métal, rugosité, normales, filaire) se règlent par la barre de
+  l'objet et passent au cadre par message, sans le recharger ;
+- `diapo/libre.js` — le style « Aucun » d'un titre ou d'une note (le défaut d'un
+  texte neuf) : ses propres police, taille, couleur et fond (des jetons), et
+  justification, par une petite barre au-dessus du texte, comme dans Miro ; un
+  style nommé les met en sommeil.
 
 **Déposer un asset** : tout bloc qui attend un asset passe par `dropZone()`
 de `commun/shell.js` (fichier du disque → bibliothèque avec `tool: upload`,
