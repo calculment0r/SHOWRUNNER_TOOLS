@@ -367,6 +367,8 @@ DIAGS = {   # id : (nom court, ce qu'il dit, commande, délai en s, action ?)
                    "print('poppler :', ', '.join(k + (' oui' if v else ' absent') for k, v in s.items())); "
                    "print('les PDF :', 'lus par le portail (texte, pages rendues)' if s['pdftotext'] else 'lus par la page (pdf.js, depuis cdnjs)')"],
                   30, False),
+    "agent": ("Agent Showrunner", "le modèle de l'agent d'Idéation dans Ollama (/api/show) : tools et vision dans ses capacités, sa fenêtre de contexte",
+              ["python3", "tools/diag_agent.py"], 90, False),
 }
 _runs: dict = {}
 _runs_lock = threading.Lock()

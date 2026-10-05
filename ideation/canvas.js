@@ -1055,6 +1055,14 @@ export function createCanvas(app) {
       if (moved) { app.emit?.('moving', []); sel.gesture(false); }
       const target = drop.armed && !ev.altKey ? drop.t : null;
       disarm();
+      // lâché hors de la planche, sur une zone qui le prend (le champ de l'agent : agent.js, app.dropOut) : elle le
+      // reçoit, les objets reviennent à leur place, sans pas d'annulation
+      if (moved && !inner && !cv.contains(document.elementFromPoint(ev.clientX, ev.clientY)) && app.dropOut?.(moving, ev)) {
+        for (const [n, x, y] of orig) { n.x = x; n.y = y; }
+        app.unsnap?.();
+        render();
+        return;
+      }
       if (moved && target && app.dropOnto(moving, target, orig, ev)) return;
       if (moved && inner) {
         if (outNow) {

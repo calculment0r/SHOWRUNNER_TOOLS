@@ -32,6 +32,8 @@ const PLUGINS = [
   ['collab', () => import('./collab.js')],
   // médias : le bloc son (forme d'onde, mini-timeline) et les gestes de l'objet Web (30/09)
   ['médias · son, web', () => import('./objets/medias.js')],
+  // l'agent Showrunner : le panneau de conversation, ses gestes sur la planche (05/10, docs/etudes/agent_showrunner.md)
+  ['agent Showrunner', () => import('./agent.js')],
 ];
 
 export function installPlugins(app) {
