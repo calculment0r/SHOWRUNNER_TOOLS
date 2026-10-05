@@ -108,13 +108,21 @@ sauvegarde du PC, à ne pas toucher.
   - les images exotiques sont converties en PNG, et l'original reste téléchargeable ;
   - le service est sûr (`library.serve_policy`) : le reste part en pièce jointe, avec une CSP sandbox ;
   - `GET/POST /api/library/<id>/texte`.
+- Fait ensuite (branche `wip2/documents`) : la page.
+  - `commun/documents.js` : `extraireDocument` (pdf.js 4.10.38 de cdnjs ; ses `cmaps/` et `standard_fonts/`
+    de jsdelivr, que cdnjs n'a pas), appelé seul par `uploadFile` ; LA liseuse (pages en vignettes, texte page
+    par page, « Pages » d'un PDF) ;
+  - la fiche « document » d'Asset ; l'objet document d'Idéation (carte, liseuse au double-clic, export PNG) ;
+  - `dropZone` et `pick` prennent tout fichier quand ils prennent `document` ;
+  - `documents.text_of` : l'agent lit le texte des documents sans changement chez lui ;
+  - Admin → Diagnostics → « Documents · PDF » : poppler est-il sur DGX2 ? (non documenté à ce jour) ;
+  - `check.py socle documents ideation ideation_agent asset admin` : 0 échec (l'essai EPS du socle passe) ;
+    Playwright dans les deux thèmes, avec et sans poppler.
 - Reste :
-  - `commun/documents.js` (`extraireDocument`, pdf.js 4.10.38 épinglé sur cdnjs) ;
-  - la fiche « document » d'Asset (texte, Télécharger, pages en vignettes) ;
-  - l'objet d'Idéation (`MEDIA_KINDS`, carte, liseuse, export PNG) ;
-  - `dropZone` et `pick` ;
-  - Playwright ;
-  - relancer `check.py` en entier : la correction de l'essai EPS est venue après le dernier passage complet.
+  - `porte/worker.js` (voie R2, mode `access`) à durcir comme `library.serve_policy` ;
+  - pas d'OCR (un PDF scanné reste sans texte) ; DOC, PPT, XLS d'avant 2007 : rangés sans texte ;
+  - les cartes dessinées par le serveur (la couverture d'un DOCX, d'un TXT) sont aux jetons du thème sombre,
+    même en thème clair : une image, comme une photo.
 
 **L'agent Showrunner dans Idéation** (`wip/agent-showrunner`, étude `docs/etudes/agent_showrunner.md`)
 - Fait, et vérifié contre `tools/faux_ollama.py` :

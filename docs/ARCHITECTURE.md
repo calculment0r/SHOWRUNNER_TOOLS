@@ -12,7 +12,7 @@ commun/                     tokens.css, base.css, shell.css, shell.js, porte.js/
                             theme.js, prefs.js/.css/.json, theme.html (l'éditeur de thème), undo.js,
                             proxies.js, menu.js/.css, fil.js/.css, wire.js/.css, entrees.js/.css, split.js,
                             refs.js, molette.js, fenetre.js/.html/.css, pleinecran.js, tete.js/.css,
-                            lecteur.js/.css, dock.js/.css (§ 4)
+                            lecteur.js/.css, dock.js/.css, documents.js/.css (§ 4)
 asset/ image/ movie/ …      une page par outil : index.html + <outil>.js + <outil>.css
 admin/                      la page de Cal (§ 9)
 media/                      l'image et la vidéo des grandes cartes de l'accueil
@@ -29,7 +29,7 @@ docs/                       REPRISE, ARCHITECTURE, études
 ## 2. La bibliothèque (« Asset »)
 
 Un objet = un dossier `<data_dir>/library/<id>/` avec `item.json`, son
-fichier et sa vignette. Six sortes (`library.KINDS`) : `image`, `video`,
+fichier et sa vignette. Sept sortes (`library.KINDS`) : `image`, `video`,
 `audio`, `element`, et depuis le 29/09 :
 
 - `midi` (id `mid-…`) : un clip de notes, un fichier MIDI standard (`.mid`,
@@ -45,12 +45,22 @@ fichier et sa vignette. Six sortes (`library.KINDS`) : `image`, `video`,
   (titre, taille, cadence, durée, `params.clips`, `params.format`, lignée =
   les plans employés, vignette = le premier plan qui se voit). Elle se range,
   se renomme, part à la corbeille comme les autres ; le Montage l'ouvre par
-  `montage/#<id>` (la fiche d'Asset y mène).
+  `montage/#<id>` (la fiche d'Asset y mène) ;
+- `document` (id `doc-…`, 05/10, `server/tools/documents.py`) : tout ce qui n'est
+  ni une image, ni une vidéo, ni un son, ni un clip MIDI — un PDF, un DOCX, un
+  texte, un tableur, un fichier inconnu —, rangé tel quel (`main.<ext>`) ; son texte
+  page par page (`text.json`), une couverture toujours (la première page, la
+  vignette du fichier, sinon une carte dessinée) ; `doc: {format, label, pages,
+  unit, words, has_text, title, via, needs_page, why}`, et dans l'objet public
+  `text_url` et `doc.page_urls` (les pages rendues par poppler). Un PDF que le
+  serveur ne sait pas lire (poppler absent : `needs_page`) est lu par la page
+  (`commun/documents.js`, pdf.js) qui lui dépose texte et couverture. Servi sans
+  risque (`library.serve_policy`) : ce qui pourrait s'exécuter part en pièce jointe.
 
 ```jsonc
 {
   "id": "ima-20260928-212233-a1b2",
-  "kind": "image",                 // image | video | audio | element | midi | sequence
+  "kind": "image",                 // image | video | audio | element | midi | sequence | document
   "title": "…", "created": "iso", "updated": "iso",
   "file": "main.png", "thumb": "thumb.jpg",
   "width": 1024, "height": 1024, "duration": 5.04, "fps": 24,   // selon la sorte
@@ -137,6 +147,7 @@ une page ne lit que ceux du sien.
 | `GET /api/library/<id>/view?w=256…2048` | la copie d'affichage de cette taille, ou la plus proche au-dessus, ou l'original (ETag, 304) |
 | `POST /api/library/views {ids?, force?}` | relancer le rattrapage des copies (admin) : le travail `library.views` |
 | `GET /api/library/<id>` | l'objet |
+| `GET /api/library/<id>/texte` · `POST {pages: [{n, text}], thumb?, count?}` | le texte d'un document page par page (`{format, title, text, pages, truncated, has_text, via, why}`) ; ce que la page a lu d'un document sans texte (`server/tools/documents.py`) |
 | `PUT /api/library/upload?name=a.png&title=&folder=&tool=` (corps = le fichier) | l'objet créé |
 | `POST /api/library/<id>` `{title, tags, folder, fav, element:{type, description, refs}}` | mise à jour |
 | `POST /api/library/<id>/delete` · `/restore` | corbeille, retour |
@@ -290,6 +301,7 @@ repeint le fil dans le `onapply` de sa pile (`items` : les objets rendus,
 | `split.js` | les panneaux redimensionnables | `split(box, parts, {axis, key})` |
 | `tete.js` + `tete.css` | **la tête de lecture et la règle des temps de toutes les timelines** (Cal, 30/09 : « la même cue partout, celle du montage vidéo est bien »), extraites du Montage : un trait orange de 2 px et son onglet, cachés sous les en-têtes collés, qui suivent la lecture ; une règle en timecode `HH:MM:SS:FF` (une étiquette tous les 84 px au moins) qui ne peint que ce qui se voit ; cliquer, glisser sur la règle déplace la tête (capture du pointeur). Le Montage, ODIO (l'arrangement, le piano roll, l'éditeur audio) et le lecteur s'en servent | `tete({z})`, `poser(ph, x, {decal, sous})`, `suivre(scroller, x)`, `peindreRegle(ticks, {pps, fps})`, `brancherRegle(zone, {temps, aller})`, `sauter(media, t)` (un saut ne s'empile jamais sur un saut en cours), `cible`, `glisser`, `tc(images, fps)` |
 | `lecteur.js` + `lecteur.css` | **LE lecteur du portail** (30/09) : une vidéo ou un son dans le thème, jamais les contrôles du navigateur ; la vidéo remplit son cadre ; la frise = la règle et la tête de `tete.js`, la bande des images ou l'onde du son (`/api/son/apercu`), et les pistes de la page ; la molette commune, le clavier du Montage (Espace, J K L, ← →, Début, Fin), la boucle, le son retenu, le plein écran. En glissant, il montre la copie de défilement (`/api/defil`, § 2) et repasse sur l'originale quand elle montre la même image (`requestVideoFrameCallback`). Asset (la fiche), le fil (Image, Vidéo), Transcrire, Movie Analysis et Idéation s'en servent | `lecteur(it, {clavier, sur, onTemps, defilement})` → `L.el`, `seek`, `play`, `pause`, `toggle`, `step`, `piste(nœud)`, `t`, `duree`, `etat()`, `detruire()` ; `petitLecteur(url, {duree, titre})` (un son dans une liste, un seul à la fois) ; `survolSon(video)` (la lecture au survol d'une vignette, avec le son du lecteur) |
+| `documents.js` + `documents.css` | **les documents** (05/10) : `extraireDocument(it, {file})` lit un PDF que le serveur n'a pas lu (pdf.js 4.10.38, chargé de cdnjs à la première lecture ; ses `cmaps/` et `standard_fonts/` de jsdelivr, que cdnjs n'a pas) et le dépose — `uploadFile` l'appelle seul (`lireSiBesoin`) ; **LA liseuse** : les pages en vignettes (rendues par poppler, sinon pdf.js, sinon leurs premières lignes), le texte page par page, les pages d'un PDF telles qu'elles sont (« Pages ») ; Asset (la fiche) et Idéation (au double-clic) | `liseuse(it, {page, onitem, deposer, telecharger})` → `{el, aller, detruire}` ; `lirePdf(source)`, `deposerLecture(it, lu)`, `rendrePage(pdf, n, px)`, `docLigne(it)`, `nomDe(it)` |
 | `dock.js` + `dock.css` | **le panneau Asset** (30/09, `docs/etudes/panneau_asset.md`) : la bibliothèque à gauche de chaque outil, montée par `mountHeader`, fermée à l'arrivée ; Ctrl+Espace (ou ², Préférences → Général), ou sa languette verte au bord. Un visualiseur : chercher, trier, filtrer (les sortes en pastilles ; cinq sections en accordéon : ce Workspace, récents, favoris, autres Workspaces, Character Factory), poser — rien ne s'y range ni ne s'y jette (« Gérer dans Asset ↗ »). Il pousse la page (`html.sr-dock-on`, `@container sr-page`) ; une grille fenêtrée, par pages de 120 (`GET /api/asset/dock`) ; un objet d'un autre Workspace est rapatrié (une copie) avant d'être posé | la façade `dock` de `shell.js` : `dock.configure({place(items, {how}), clickPlaces, placeLabel, menu, kinds, label, dockMin, fiche, hint})`, `dock.contexte({kinds, label, why})`, `declareZone(node, {kinds, label})`, `dock.open/close/toggle/isOpen/reload/recent` ; l'événement `sr:dock` (`{open, w}`) |
 
 **Le clic droit** (Cal, 29/09 : « ne plus avoir de clic droit du navigateur
@@ -381,13 +393,19 @@ par réglage de diapositive sous `ideation/diapo/`) :
 - `diapo/libre.js` — le style « Aucun » d'un titre ou d'une note (le défaut d'un
   texte neuf) : ses propres police, taille, couleur et fond (des jetons), et
   justification, par une petite barre au-dessus du texte, comme dans Miro ; un
-  style nommé les met en sommeil.
+  style nommé les met en sommeil ;
+- un **document** sur la planche (05/10) : un objet `media` de sorte `document`
+  (`MEDIA_KINDS`, dit à la page par `media_kinds` de `/api/ideation/meta`) — une page
+  debout, sa couverture, sa ligne (« PDF · 12 pages ») et son titre ; le double-clic
+  ouvre la liseuse commune (`app.liseuse(n)`) ; l'export PNG dessine sa couverture.
 
 **Déposer un asset** : tout bloc qui attend un asset passe par `dropZone()`
 de `commun/shell.js` (fichier du disque → bibliothèque avec `tool: upload`,
 `via: <outil>` ; ou vignette glissée, type `application/x-sr-item`). Les
 vignettes se glissent par `dragItem()`. Ce qu'un outil fabrique garde son
-nom d'outil ; seul ce que quelqu'un dépose est « Upload ».
+nom d'outil ; seul ce que quelqu'un dépose est « Upload ». Une zone (ou `pick`)
+qui prend `document` prend tout fichier ; une autre refuse ce qui n'est pas de ses
+sortes, et dit ce qui, rangé, n'y est pas pris (la sorte est celle du portail).
 
 ## 8. L'adresse publique : le Worker de Cloudflare
 
