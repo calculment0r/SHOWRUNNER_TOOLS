@@ -31,10 +31,21 @@
 //     un autre Space choisi, renommé, recoloré, archivé, supprimé.
 //   Une carte de la scène se glisse avec ITEM_MIME et MULTI_MIME (commun/shell.js) : toute
 //   zone qui prend des sons la reçoit.
+//
+// ODIO monte le MÊME menu (06/10, étape 7 de l'étude : la rubrique « Space » de son
+// navigateur, musique/space.js) : montrerSpaces({ box, memo: false, esp, vue, nom… })
+// — le menu se peint dans `box` au lieu du rail, le Space suit le projet ouvert au
+// lieu de la préférence, les lectures et écritures disent le Workspace du projet ;
+// choisirSpace(vue) et rechargerSpaces() le mènent. Sa feuille : spaces.css, à côté.
 import { api, el, $, $$, toast, href, pick, ITEM_MIME, MULTI_MIME } from '../commun/shell.js';
 import { prefs } from '../commun/prefs.js';
 import { menu, kebab, closeMenus } from '../commun/menu.js';
 import { ask } from '../commun/fil.js';
+
+// la feuille du menu des Spaces, chargée une fois, à côté de ce fichier (l'app Musique et ODIO)
+if (!document.querySelector('link[data-sr-spaces]')) {
+  document.head.append(el('link', { rel: 'stylesheet', href: new URL('./spaces.css', import.meta.url).href, 'data-sr-spaces': '' }));
+}
 
 const MON = 'mon', TOUS = '*';
 const CARD_MIME = 'application/x-sr-chanson';   // des cartes de la scène : un type à soi, que le menu Space attend
@@ -44,9 +55,12 @@ const COLOR_FR = { cy: 'acier', grn2: 'vert', amb: 'ambre', 'coral-2': 'corail',
 const P = {
   ws: null, mine: { id: MON, name: 'Mon Space', count: 0 }, list: [], all: 0, colors: Object.keys(COLOR_FR),
   canCreate: true, whyCreate: '', loaded: false,
-  vue: MON, sel: new Set(), anchor: null, where: new Map(), pop: null,
-  opt: { U: null, onChange: null, reload: null },
+  vue: MON, sel: new Set(), anchor: null, where: new Map(), pop: null, box: null,
+  // memo : le Space choisi retenu par Workspace (l'app) ; esp() : les options d'api() du Workspace
+  // (ODIO : celui du projet) ; nom(n) : ce qu'on déplace, dit en mots (l'app : des chansons)
+  opt: { U: null, onChange: null, reload: null, memo: true, esp: null, nom: null },
 };
+const A = (path, o = {}) => api(path, { ...o, ...(P.opt.esp?.() || {}) });
 
 const put = (box, ...kids) => box && box.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false && k !== ''));
 const byId = (id) => (id === MON ? P.mine : P.list.find((x) => x.id === id) || null);
@@ -55,6 +69,7 @@ const marque = (sp) => (sp?.cover_url ? el('img', { class: 'ch-sp-cov', src: hre
   : el('i', { class: 'ch-sp-dot' + (sp ? '' : ' tous'), style: { '--k': sp ? tint(sp) : 'var(--ink2)' } }));
 const cartes = (e) => [...(e.dataTransfer?.types || [])].includes(CARD_MIME);
 const nChansons = (n) => `${n} chanson${n > 1 ? 's' : ''}`;
+const nObjets = (n) => (P.opt.nom ? P.opt.nom(n) : nChansons(n));
 
 // ── le contrat ──────────────────────────────────────────────
 /** Le Space courant de la page : celui où naît ce qu'on crée (voir l'en-tête du fichier). */
@@ -65,6 +80,8 @@ export function spaceCourant() {
 }
 /** Ce que la scène montre : 'mon' | 'msp-…' | '*' (le `space` de GET /api/chanson/list). */
 export const vueSpace = () => P.vue;
+/** Le nom d'un Space du Workspace ('' ou 'mon' : « Mon Space ») ; un Space qui n'est plus là : « Mon Space ». */
+export const spaceNom = (id) => (byId(id || MON) || P.mine).name;
 /** Pourquoi on ne crée pas dans le Space courant ('' : on peut) — la règle 7 du thème. */
 export function spaceWhy() {
   if (!P.loaded) return '';
@@ -85,6 +102,7 @@ function memo() {
   return m;
 }
 function retenir() {
+  if (P.opt.memo === false) return;   // ODIO : le Space est celui du projet ouvert
   const m = memo(), k = P.ws || '-';
   m.delete(k);
   if (P.vue !== MON) m.set(k, P.vue);            // « Mon Space », le défaut, ne s'écrit pas
@@ -93,7 +111,7 @@ function retenir() {
 
 // ── le serveur ──────────────────────────────────────────────
 async function charger() {
-  const r = await api('chanson/spaces');
+  const r = await A('chanson/spaces');
   P.ws = r.workspace || null;
   P.mine = r.mine || P.mine;
   P.list = r.spaces || [];
@@ -103,34 +121,52 @@ async function charger() {
   P.whyCreate = r.why_create || '';
   P.loaded = true;
 }
-/** Ce que la liste des chansons dit (GET /api/chanson/list) : les comptes, le Space montré, où est chaque carte. */
+/** Ce que la liste des chansons dit (GET /api/chanson/list) : les comptes, le Space montré, où est chaque carte
+ *  (ses projets ODIO compris). Sans `counts` (ODIO : le contenu d'un Space), les comptes restent. */
 export function spacesListe(r) {
-  const c = r?.counts || {};
   if (r?.space && r.space !== P.vue) { P.vue = r.space; retenir(); annoncer(); }   // un Space supprimé ailleurs : « Mon Space »
-  P.mine.count = c[MON] || 0;
-  for (const sp of P.list) sp.count = c[sp.id] || 0;
-  P.all = Object.values(c).reduce((a, b) => a + b, 0);
-  P.where = new Map((r?.songs || []).map((s) => [s.id, s.music_space || MON]));
+  const c = r?.counts;
+  if (c) {
+    P.mine.count = c[MON] || 0;
+    for (const sp of P.list) sp.count = c[sp.id] || 0;
+    P.all = Object.values(c).reduce((a, b) => a + b, 0);
+  }
+  P.where = new Map([...(r?.songs || []), ...(r?.projets || [])].map((s) => [s.id, s.music_space || MON]));
   for (const id of [...P.sel]) if (!P.where.has(id)) P.sel.delete(id);
   // un Space créé par quelqu'un d'autre depuis : la liste des Spaces se relit
-  if (Object.keys(c).some((k) => k !== MON && !byId(k))) charger().then(peindre).catch(() => {});
+  if ([...Object.keys(c || {}), ...P.where.values()].some((k) => k !== MON && !byId(k))) charger().then(peindre).catch(() => {});
   peindre();
 }
 
 // ── monter : le rail, la tête de la scène, la sélection ─────
-/** opt : { U (l'annulation de la page), onChange() (un autre Space choisi), reload() (relire les chansons) } */
+/** opt : { U (l'annulation de la page), onChange() (un autre Space choisi), reload() (relire les chansons) ;
+ *  pour une autre page qu'elle (ODIO) : box (le nœud où se peint le menu), memo: false (ne rien retenir),
+ *  vue (le Space montré d'abord), esp() (les options d'api() : le Workspace), nom(n) (ce qu'on déplace) } */
 export async function montrerSpaces(opt = {}) {
   Object.assign(P.opt, opt);
-  $('#rail')?.prepend(el('section', { class: 'ch-space', id: 'ch-space', 'aria-label': 'le Space' }));
+  P.box = opt.box || el('section', { class: 'ch-space', id: 'ch-space', 'aria-label': 'le Space' });
+  P.box.classList.add('ch-space');
+  if (!opt.box) $('#rail')?.prepend(P.box);
   monterTete();
   ecouterSelection();
   try { await charger(); } catch (e) { toast(`Spaces : ${e.message}`, 6000); }
-  // la préférence relue du portail une fois (le miroir de ce navigateur sinon), sans attendre plus d'un instant
-  await Promise.race([prefs.ready, new Promise((r) => setTimeout(r, 1500))]);
-  const want = memo().get(P.ws || '-') || MON;
+  let want = opt.vue;
+  if (want === undefined) {
+    // la préférence relue du portail une fois (le miroir de ce navigateur sinon), sans attendre plus d'un instant
+    await Promise.race([prefs.ready, new Promise((r) => setTimeout(r, 1500))]);
+    want = memo().get(P.ws || '-');
+  }
+  want = want || MON;
   P.vue = want === TOUS || byId(want) ? want : MON;
   peindre();
   annoncer();
+}
+/** Montrer ce Space ('mon' | 'msp-…' | '*' ; un Space qui n'est plus là : « Mon Space ») — ODIO : celui du projet ouvert. */
+export const choisirSpace = (vue) => choisir(vue || MON);
+/** Relire les Spaces du Workspace (ODIO : un projet d'un autre Workspace vient de s'ouvrir), puis repeindre. */
+export async function rechargerSpaces() {
+  await charger();
+  if (P.vue !== TOUS && !byId(P.vue)) choisir(MON); else { peindre(); annoncer(); }
 }
 
 function choisir(vue) {
@@ -146,7 +182,7 @@ function choisir(vue) {
 
 let peint = '';
 function peindre() {
-  const box = $('#ch-space');
+  const box = P.box;
   if (!box) return;
   const cur = P.vue === TOUS ? null : byId(P.vue);
   const n = cur ? cur.count || 0 : P.all;
@@ -278,7 +314,7 @@ function menuGerer() {
 }
 const LABEL = { name: 'renommer', color: 'changer la couleur de', cover: 'changer la pochette de', archived: 'archiver' };
 async function majSpace(id, patch) {
-  const r = await api('chanson/spaces', { method: 'POST', body: { action: 'update', id, ...patch } });
+  const r = await A('chanson/spaces', { method: 'POST', body: { action: 'update', id, ...patch } });
   const i = P.list.findIndex((x) => x.id === id);
   if (i >= 0) P.list[i] = r; else P.list.push(r);
   peindre();
@@ -306,7 +342,7 @@ async function nouveau(ids = null) {
     field: { placeholder: 'son nom — ex. Album été' } });
   if (!name) return;
   let sp;
-  try { sp = await api('chanson/spaces', { method: 'POST', body: { action: 'create', name } }); } catch (e) { toast(e.message, 6000); return; }
+  try { sp = await A('chanson/spaces', { method: 'POST', body: { action: 'create', name } }); } catch (e) { toast(e.message, 6000); return; }
   P.list = [...P.list.filter((x) => x.id !== sp.id), sp].sort((a, b) => (a.archived - b.archived) || a.name.localeCompare(b.name, 'fr'));
   if (ids?.length) await deplacer(ids, sp.id);
   choisir(sp.id);
@@ -323,8 +359,8 @@ async function supprimer(sp) {
   };
   try {
     const r = await P.opt.U.run({ label: `supprimer le Space « ${sp.name} »`,
-      do: async () => { const x = await api('chanson/spaces', { method: 'POST', body: { action: 'delete', id: sp.id } }); await apres(); return x; },
-      undo: async () => { await api('chanson/spaces', { method: 'POST', body: { action: 'restore', id: sp.id } }); await apres(); } });
+      do: async () => { const x = await A('chanson/spaces', { method: 'POST', body: { action: 'delete', id: sp.id } }); await apres(); return x; },
+      undo: async () => { await A('chanson/spaces', { method: 'POST', body: { action: 'restore', id: sp.id } }); await apres(); } });
     toast(r.returned ? `« ${sp.name} » supprimé : ${nChansons(r.returned)} de retour dans « Mon Space » · Ctrl+Z le rend` : `« ${sp.name} » supprimé · Ctrl+Z le rend`, 5000);
   } catch (e) { toast(e.message, 7000); }
 }
@@ -333,15 +369,15 @@ async function supprimer(sp) {
 async function deplacer(ids, to) {
   const dest = byId(to);
   if (!dest || !ids.length) return;
-  const label = `déplacer ${ids.length > 1 ? nChansons(ids.length) : 'une chanson'} vers « ${dest.name} »`;
+  const label = `déplacer ${ids.length > 1 ? nObjets(ids.length) : P.opt.nom ? P.opt.nom(1) : 'une chanson'} vers « ${dest.name} »`;
   try {
     const r = await P.opt.U.run({ label,
-      do: () => api('chanson/spaces/move', { method: 'POST', body: { ids, to } }),
-      undo: (x) => (Object.keys(x?.before || {}).length ? api('chanson/spaces/move', { method: 'POST', body: { restore: x.before } }) : null) });
+      do: () => A('chanson/spaces/move', { method: 'POST', body: { ids, to } }),
+      undo: (x) => (Object.keys(x?.before || {}).length ? A('chanson/spaces/move', { method: 'POST', body: { restore: x.before } }) : null) });
     P.sel.clear(); P.anchor = null;
     const songs = r.moved.length - (r.stems || 0);
-    const more = [r.stems ? `leurs ${r.stems} pistes avec` : '', r.elsewhere ? `${nChansons(r.elsewhere)} d’autres personnes retournent dans leur « Mon Space »` : ''].filter(Boolean);
-    toast(r.moved.length ? `${nChansons(songs)} → « ${dest.name} »${more.length ? ' · ' + more.join(' · ') : ''} · Ctrl+Z les rend` : `déjà dans « ${dest.name} »`, 4500);
+    const more = [r.stems ? `leurs ${r.stems} pistes avec` : '', r.elsewhere ? `${nObjets(r.elsewhere)} d’autres personnes retournent dans leur « Mon Space »` : ''].filter(Boolean);
+    toast(r.moved.length ? `${nObjets(songs)} → « ${dest.name} »${more.length ? ' · ' + more.join(' · ') : ''} · Ctrl+Z les rend` : `déjà dans « ${dest.name} »`, 4500);
     P.opt.reload?.();
   } catch (e) { toast(e.message, 7000); }
 }
@@ -424,11 +460,12 @@ export function carteSpace(card, s) {
     for (const id of ids) $(`.ch-song[data-id="${id}"]`)?.classList.add('drag');
   });
   card.addEventListener('dragend', () => { for (const c of $$('.ch-song.drag')) c.classList.remove('drag'); fermer(); });
-  if (P.vue === TOUS) {
-    const sp = byId(s.music_space || MON) || P.mine;
-    card.querySelector('.ch-meta')?.prepend(el('span', { class: 'ch-sp-tag', title: `Space : ${sp.name}` },
-      el('i', { style: { '--k': tint(sp) } }), sp.name), ' · ');
-  }
+  if (P.vue === TOUS) card.querySelector('.ch-meta')?.prepend(pastilleSpace(s.music_space), ' · ');
+}
+/** La pastille d'un Space (la vue « Tous ») : sa couleur, son nom — une carte, un projet ODIO. */
+export function pastilleSpace(id) {
+  const sp = byId(id || MON) || P.mine;
+  return el('span', { class: 'ch-sp-tag', title: `Space : ${sp.name}` }, el('i', { style: { '--k': tint(sp) } }), sp.name);
 }
 
 // ── la tête de la scène : la barre de la sélection, « Importer » ──

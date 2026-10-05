@@ -4,6 +4,9 @@
 // chaque rubrique s'ouvre et se ferme par son titre, plusieurs à la fois ; le
 // panneau entier se replie en un rail (le bouton ‹, ou Ctrl+Alt+B comme le
 // navigateur de Live) et la vue prend toute la largeur.
+//   Space         le Space de Musique du projet (space.js, 06/10) : le menu des
+//                 Spaces de l'app Musique, et ce que range le Space montré —
+//                 projets ODIO, chansons, stems, sons, MIDI
 //   Projet        la bibliothèque du projet (biblio.js) : ses clips édités
 //                 (références de son, copies de notes), les sons qu'il a pris
 //                 ou fabriqués, ses dossiers — ce qu'on fait dans ODIO sans
@@ -39,9 +42,10 @@ import { listMidi, midiSub, placeMidi, saveClipMidi } from './generatif_midi.js'
 import { addGenTrack } from './generatif_region.js';
 import { QUOI_FR, mesures, fiches, fiche } from './biblio.js';   // la bibliothèque du projet (05/10 au soir)
 import { usagesDuSon } from './projet.js';
+import { rubriqueSpace, titreSpace } from './space.js';   // la rubrique « Space » (06/10, étape 7 de l'étude des Spaces)
 
 const MIME = 'application/x-odio';
-const SECTIONS = [['proj', 'Projet'], ['inst', 'Instruments'], ['fx', 'Effets'], ['pre', 'Préréglages'], ['son', 'Sons'], ['mot', 'Motifs'], ['midi', 'MIDI']];
+const SECTIONS = [['space', 'Space'], ['proj', 'Projet'], ['inst', 'Instruments'], ['fx', 'Effets'], ['pre', 'Préréglages'], ['son', 'Sons'], ['mot', 'Motifs'], ['midi', 'MIDI']];
 // ce qu'un clic pose dans une case de la Session (`poser`) plutôt que sur l'arrangement
 const POSABLE = new Set(['son', 'midi', 'pclip', 'motif', 'modele', 'preset', 'inst']);
 
@@ -51,8 +55,8 @@ export function createBrowser(app, { poser = null } = {}) {
   const root = el('aside', { class: 'nv', 'aria-label': 'navigateur' });
   let q = '', sounds = null, loading = false, player = null, playing = null;
   const ui = () => S.proj.ui;
-  // la rubrique Projet est ouverte tant qu'on ne l'a pas refermée
-  const isOpen = (k) => { const o = ui().navOpen || { inst: true, son: true }; return k === 'proj' ? o.proj !== false : o[k] === true; };
+  // les rubriques Space et Projet sont ouvertes tant qu'on ne les a pas refermées
+  const isOpen = (k) => { const o = ui().navOpen || { inst: true, son: true }; return k === 'proj' || k === 'space' ? o[k] !== false : o[k] === true; };
 
   const item = (payload, { name, sub, dot, title = '', extra = null, onclick, rename = null, ctx = null }) => {
     const nm = el('span', { class: 'nm' }, name);
@@ -407,15 +411,25 @@ export function createBrowser(app, { poser = null } = {}) {
     return d;
   }
 
-  const BODY = { proj: projet, inst: instruments, fx: effects, pre: presets, son: soundsList, mot: motifs, midi: midiList };
+  // ── le Space de Musique (space.js) ──
+  const espace = () => rubriqueSpace({ item, group, listen, playhead });
+  const BODY = { space: espace, proj: projet, inst: instruments, fx: effects, pre: presets, son: soundsList, mot: motifs, midi: midiList };
   function toggle(k) {
-    ui().navOpen = { ...(ui().navOpen || { inst: true, son: true }), [k]: !isOpen(k) };   // Projet : false le referme
+    ui().navOpen = { ...(ui().navOpen || { inst: true, son: true }), [k]: !isOpen(k) };   // Space, Projet : false les referme
     if (k === 'son' && isOpen('son')) sounds = null;
     if (k === 'midi' && isOpen('midi')) mids = null;
     app.saveUi();
     render();
   }
   const collapse = (on) => { ui().nav = on ? false : true; app.saveUi(); app.renderView(); };
+  function section(k, l) {
+    const open = isOpen(k);
+    return el('div', { class: `nv-sec${open ? ' open' : ''}`, 'data-sec': k },
+      el('button', { class: 'nv-h', type: 'button', 'aria-expanded': open, onclick: () => toggle(k) },
+        el('i', { class: 'ch' }, open ? '▾' : '▸'), el('span', {}, l),
+        k === 'space' ? el('b', { class: 'nv-spn' }, titreSpace()) : null),
+      open ? el('div', { class: 'nv-list' }, BODY[k]()) : null);
+  }
 
   function render() {
     if (ui().nav === false) {
@@ -424,21 +438,21 @@ export function createBrowser(app, { poser = null } = {}) {
       return;
     }
     const scrollTop = root.querySelector('.nv-acc')?.scrollTop || 0;
-    const acc = el('div', { class: 'nv-acc' }, SECTIONS.map(([k, l]) => {
-      const open = isOpen(k);
-      return el('div', { class: `nv-sec${open ? ' open' : ''}`, 'data-sec': k },
-        el('button', { class: 'nv-h', type: 'button', 'aria-expanded': open, onclick: () => toggle(k) },
-          el('i', { class: 'ch' }, open ? '▾' : '▸'), el('span', {}, l)),
-        open ? el('div', { class: 'nv-list' }, BODY[k]()) : null);
-    }));
+    const acc = el('div', { class: 'nv-acc' }, SECTIONS.map(([k, l]) => section(k, l)));
     put(root,
       el('div', { class: 'nv-top' }, el('span', { class: 'lbl' }, 'navigateur'), el('span', { class: 'sp' }),
-        el('button', { class: 'tb ghost sm', type: 'button', title: 'tout refermer', onclick: () => { ui().navOpen = { proj: false }; app.saveUi(); render(); } }, '▴'),
+        el('button', { class: 'tb ghost sm', type: 'button', title: 'tout refermer', onclick: () => { ui().navOpen = { space: false, proj: false }; app.saveUi(); render(); } }, '▴'),
         el('button', { class: 'tb ghost sm', type: 'button', title: 'replier le navigateur : l\'arrangement prend toute la largeur · Ctrl+Alt+B', onclick: () => collapse(true) }, '‹')),
       acc);
     acc.scrollTop = scrollTop;
   }
   document.addEventListener('sr:job', () => { if (isOpen('son')) loadSounds(); if (isOpen('midi')) loadMidi(); });
+  // le Space montré, ou ce qu'il range, a changé (space.js) : son titre et sa rubrique se refont, seuls
+  // (une rubrique voisine qu'on renomme garde son champ)
+  document.addEventListener('mu:space', () => {
+    const old = root.isConnected && ui().nav !== false && root.querySelector('.nv-sec[data-sec="space"]');
+    if (old) old.replaceWith(section('space', SECTIONS[0][1]));
+  });
   // un autre Workspace (l'en-tête, musique.js : surEspace) : les sons et le MIDI se relisent
   document.addEventListener('mu:espace', () => {
     if (!root.isConnected) return;

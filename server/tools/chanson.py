@@ -882,7 +882,8 @@ def _projets(table: dict, want: str, me: str | None) -> list[dict]:
             continue
         who = auth.owner_of(p)
         out.append({**music._summary(p), "music_space": "" if k == MON else k, "created": p.get("created"),
-                    "owner_name": auth.display_name(who) if who else "", "open": f"musique/?p={p['id']}"})
+                    "owner_name": auth.display_name(who) if who else "", "mine": me is None or who == me,
+                    "open": f"musique/?p={p['id']}"})
     out.sort(key=lambda s: s.get("updated") or "", reverse=True)
     return out
 

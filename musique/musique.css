@@ -445,6 +445,22 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 .nv-g.nv-dos { color: var(--ink2); cursor: default; }
 .nv-it.off { opacity: .5; cursor: default; }
 .nv-it.off .dot { background: var(--ink3); }
+/* la rubrique « Space » (06/10, space.js) : le nom du Space dans son titre (en bas de casse :
+   c'est un nom), le menu de l'app Musique (chanson/spaces.css) resserré à la largeur du
+   navigateur, sans son cadre ; le projet ouvert parmi les projets du Space */
+.nv-h .nv-spn { flex: 1; min-width: 0; font-family: var(--f-ui); font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none;
+  color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nv .ch-space { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 6px; padding: 2px 0 4px; background: none; box-shadow: none; }
+.nv .ch-space > .lbl { display: none; }
+.nv .ch-space-btn { height: 28px; padding: 0 8px; }
+.nv .ch-space-btn b { font-size: 12px; }
+.nv .ch-space .sr-kebab { width: 28px; height: 28px; }
+.nv .ch-space-n { font-size: 10.5px; padding: 0 2px; }
+.nv-space-ou { padding-top: 0; }
+.nv-it.nv-proj { cursor: pointer; }
+.nv-it.nv-proj.on { background: var(--sel-bg); box-shadow: inset 2px 0 0 var(--cy); cursor: default; }
+.nv-note.warn { color: var(--amb); }
+.mu-tpl-sp { margin: 2px 0 0; font-size: 11px; line-height: 1.5; color: var(--ink2); }
 
 /* ── la vue de détail (en bas de l'arrangement) ─────────── */
 .dk { height: 300px; flex: none; background: var(--panel); border-radius: var(--r3); overflow: hidden; display: flex; flex-direction: column; }
