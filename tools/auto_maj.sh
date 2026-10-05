@@ -17,6 +17,11 @@
 #   bash tools/auto_maj.sh tourne         ce que lance le cron
 #
 # Ce qui n'est jamais touché : showrunner.local.json et les données (~/showrunner-data), hors du suivi git.
+#
+# LE VERROU (05/10, la panne) : un tour tient /tmp/sr_auto_maj_<moi>.lock (descripteur 9) ; tout ce qu'il lance
+# et qui lui survit (le portail relancé, wrangler, ssh) se lance avec `9>&-`, sinon il garde le verrou à sa
+# place, et chaque tour suivant s'arrête en silence (flock -n) tant que ce processus vit — c'est ce qui a
+# figé DGX2 sur 0573119 après « portail relancé » à 13:54. `etat` dit qui tient le verrou.
 set -u
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 LOG="$HOME/showrunner-maj.log"
@@ -90,16 +95,16 @@ tour() {
   if [ "$serveur" -gt 0 ]; then
     if ! bash tools/portail.sh status 2>/dev/null | grep -q 'en route'; then
       dit "portail arrêté : laissé arrêté (tools/portail.sh start pour le lancer)"
-    elif bash tools/portail.sh restart > /tmp/sr_maj_portail.txt 2>&1; then
+    elif bash tools/portail.sh restart 9>&- > /tmp/sr_maj_portail.txt 2>&1; then
       dit "portail relancé"
     else
       dit "ÉCHEC relance du portail : $(tail -3 /tmp/sr_maj_portail.txt | tr '\n' ' ')"
     fi
   fi
   if [ "$pages" -gt 0 ]; then
-    if bash tools/porte.sh deploie > /tmp/sr_maj_porte.txt 2>&1; then dit "adresse publique publiée"; else dit "ÉCHEC publication : $(grep -E 'ÉCHEC|Error|error' /tmp/sr_maj_porte.txt | head -3 | tr '\n' ' ')"; fi
+    if bash tools/porte.sh deploie 9>&- > /tmp/sr_maj_porte.txt 2>&1; then dit "adresse publique publiée"; else dit "ÉCHEC publication : $(grep -E 'ÉCHEC|Error|error' /tmp/sr_maj_porte.txt | head -3 | tr '\n' ' ')"; fi
   fi
-  if ssh -o BatchMode=yes -o ConnectTimeout=5 "$DGX1" "cd ~/SHOWRUNNER_TOOLS && git fetch -q && git reset -q --hard origin/main" 2>/dev/null; then
+  if ssh -o BatchMode=yes -o ConnectTimeout=5 "$DGX1" "cd ~/SHOWRUNNER_TOOLS && git fetch -q && git reset -q --hard origin/main" 9>&- 2>/dev/null; then
     dit "DGX1 recalé"
   else
     dit "DGX1 injoignable (le miroir sera recalé au prochain changement)"
@@ -131,9 +136,9 @@ case "${1:-etat}" in
     cd "$REPO" || exit 1
     git fetch -q origin main 2>/dev/null && git reset -q --hard origin/main
     if bash tools/portail.sh status 2>/dev/null | grep -q 'en route'; then
-      if [ "$(occupe)" -gt 0 ]; then echo "       un calcul tourne : le portail sera relancé au prochain changement"; else bash tools/portail.sh restart > /dev/null 2>&1 && echo "ok     portail relancé"; fi
+      if [ "$(occupe)" -gt 0 ]; then echo "       un calcul tourne : le portail sera relancé au prochain changement"; else bash tools/portail.sh restart 9>&- > /dev/null 2>&1 && echo "ok     portail relancé"; fi
     fi
-    bash tools/porte.sh deploie > /tmp/sr_maj_porte.txt 2>&1 && echo "ok     adresse publique publiée" || echo "ÉCHEC publication : voir /tmp/sr_maj_porte.txt"
+    bash tools/porte.sh deploie 9>&- > /tmp/sr_maj_porte.txt 2>&1 && echo "ok     adresse publique publiée" || echo "ÉCHEC publication : voir /tmp/sr_maj_porte.txt"
     ;;
   desinstalle)
     ( crontab -l 2>/dev/null | grep -v 'tools/auto_maj.sh' ) | crontab -
@@ -146,6 +151,14 @@ case "${1:-etat}" in
     echo "en route    : $(git log -1 --format='%h %s' | cut -c1-100)"
     echo "origin/main : $(git log -1 --format='%h %s' origin/main | cut -c1-100)"
     echo "calculs en cours ou en file : $(occupe)"
+    # le verrou d'un tour : libre, ou tenu (un tour qui tourne, ou un processus qui en a hérité)
+    if [ -e "$LOCK" ] && ! flock -n "$LOCK" true 2>/dev/null; then
+      tiennent=""
+      for d in /proc/[0-9]*; do
+        ls -l "$d/fd" 2>/dev/null | grep -q "$LOCK" && tiennent="$tiennent ${d#/proc/}:$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null | cut -c1-60)"
+      done
+      echo "VERROU TENU ($LOCK) par :${tiennent:- ?} — si ce n'est pas un tour en cours, la mise à jour est figée : relancer le portail à la main le libère"
+    fi
     if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ] && git diff --name-only HEAD origin/main | grep -q '^server/' && [ "$(occupe)" -gt 0 ]; then
       echo "LA MISE À JOUR ATTEND ces travaux (le serveur change ; un redémarrage les interromprait) — Admin → File pour annuler ceux qui sont coincés :"
       bloquants
