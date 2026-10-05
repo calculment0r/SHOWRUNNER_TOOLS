@@ -457,8 +457,17 @@ export, écoute, nodal, jouets, arpège.
 - **Le LFO du Synthé n'est pas automatisable**, sauf le volume et la
   coupure, comme avant. Sa vitesse est réglée sur un AudioParam, mais elle
   n'est pas dans `AUTOMATABLE`.
-- **Le Synthé est très large dans le rack** : huit sections, environ
-  2 800 px. Le rack défile.
+- ~~**Le Synthé est très large dans le rack** : huit sections, environ
+  2 800 px. Le rack défile.~~ **Fait (06/10, finitions)** : deux rangées
+  (le module borné à 1 280 px, ses sections passent à la ligne, et dans une
+  section un choix prend sa ligne, les molettes dessous) : **1 280 × 474 px**
+  au lieu de 2 856 × 245, les 31 commandes toujours là. Chaque section se
+  replie d'un clic sur son nom : un onglet étroit, son nom à la verticale ;
+  un point quand un réglage caché s'écarte du défaut, et sa bulle dit
+  lesquels (« LFO → hauteur 20 ct »). Le repli vaut pour tous les Synthés du
+  projet (`ui.replis.synth`). Bruit, LFO et Arpège repliés : 352 px de haut.
+  Macro (1 900 px de large) et les autres instruments n'ont pas encore ce
+  traitement.
 - **La DR-9 n'a toujours que trois réglages par voix.**
   - La boîte à rythme est plus riche.
   - Une DR-9 sur les percussions de Plaits serait une suite naturelle de la
