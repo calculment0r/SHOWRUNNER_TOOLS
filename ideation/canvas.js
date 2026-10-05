@@ -381,6 +381,9 @@ export function createCanvas(app) {
     const it = n.type === 'media' ? S.items.get(n.item) : null;
     // la place, la taille et l'appartenance ne refont pas l'objet : `place` les suit
     const { x, y, w, h, jobs, group, ...rest } = n;
+    // un modèle 3D : l'éclairage et le canal passent à sa visionneuse par message (objets/modele3d.js) —
+    // la refaire la rechargerait, et perdrait la vue qu'on y a prise
+    if (n.type === 'model3d') { delete rest.light; delete rest.chan; }
     const extra = n.type === 'gen' ? app.gen.cardKey(n) : n.type === 'vgen' ? app.video.cardKey(n) : n.type === 'compose' ? app.composer.cardKey(n)
       : app.objets?.has(n.type) ? app.objets.key(n) : '';
     return JSON.stringify(rest) + (it ? `|${it.updated || ''}${it.missing ? 'x' : ''}${viewsOf(it)[0]?.url || ''}` : '|?') + extra;

@@ -147,3 +147,6 @@
 .mb-v { display: flex; gap: 8px; align-items: baseline; font-size: 11.5px; color: var(--ink2); }
 .mb-v b { font-family: var(--f-mono); font-size: 9.5px; color: var(--ink); }
 .mb-train { min-width: min(520px, 80vw); }
+/* les éclairages et les canaux du modèle 3D, dans le panneau : sur deux lignes au besoin */
+.seg.m3-seg { display: grid; grid-template-columns: repeat(3, 1fr); }
+.seg.m3-seg .tb { padding-inline: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
