@@ -54,3 +54,20 @@ export function galerie(app, { ateliers = true, onPick = null, compacte = false 
       el('div', { class: 'gal-cards' }, ...TEMPLATES.map((t) => el('button', { class: 'gal-card', type: 'button', role: 'menuitem', title: t.desc,
         onclick: () => { onPick?.(); insertTemplate(app, t.id, ...app.canvas.center()); } }, el('b', {}, t.name), el('span', { class: 'gal-line' }, t.desc))))) : null);
 }
+
+// ── le bouton « Modèles » de la barre du haut (un greffon : plugins.js) ──
+// Cal, 05/10 : « mais ils sont où les modèles ? je ne trouve pas » — la galerie d'une planche vide ne se voit plus dès
+// qu'on a posé un objet ; le bouton, lui, est toujours là, à côté de Présenter, avec son mot.
+export async function install(app) {
+  const [{ atelier }, { TOOL_ICON }] = await Promise.all([import('./atelier/socle.js'), import('./objets/modeles.js')]);
+  const A = atelier(app);
+  const open = () => {
+    if (!app.S.board) { toast('ouvrez d’abord une planche'); return; }
+    let close = () => {};
+    close = app.modal('Modèles', galerie(app, { onPick: () => close() }), null, { cls: 'gal-modal' });
+  };
+  const btn = A.button({ order: 9, d: TOOL_ICON, name: 'Modèles', title: 'les modèles : présentations en motion design, statiques, ateliers de film', onclick: open });
+  btn.className = 'tb ghost sm cmp at-present at-tpl';
+  btn.replaceChildren(el('span', { class: 'bi' }, ...btn.childNodes), el('span', { class: 'bt' }, 'Modèles'));
+  A.command({ order: 9, label: 'Modèles', sub: 'motion design, statiques, ateliers', run: open });
+}

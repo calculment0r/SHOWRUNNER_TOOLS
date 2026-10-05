@@ -19,6 +19,8 @@
 const PLUGINS = [
   // [nom, () => import('./module.js')] — chargés après le départ de la planche
   ['atelier · présentation', () => import('./atelier/presentation.js')],
+  // la galerie des modèles : le bouton « Modèles » de la barre du haut (Cal, 05/10)
+  ['modèles', () => import('./galerie.js')],
   // les diapositives : format, grille, styles de texte, panneau (docs/etudes/presentations.md)
   ['diapositives', () => import('./diapo/index.js')],
   ['atelier · vote', () => import('./atelier/vote.js')],
