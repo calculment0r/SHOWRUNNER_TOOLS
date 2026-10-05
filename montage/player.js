@@ -52,9 +52,19 @@
 // au moniteur). Un plan neuf du même média (le morceau d'un plan coupé, une
 // copie) reprend l'élément d'un plan qui n'existe plus (`entry`) : rien ne se
 // recharge en chemin, et la copie de défilement montre l'image (montage.js, apercu).
+//
+// La trajectoire d'un plan (06/10, model.js `cadre` : position, échelle, rotation,
+// ancrage, opacité, recadrage) : son élément, sa copie de défilement et son canevas
+// d'effets sont posés dans la scène (aux proportions de la séquence) par left, top,
+// width, height en pour cent du cadre, `rotate` autour du centre de la part gardée,
+// `clip-path: inset` pour le recadrage ; l'opacité multiplie celle des fondus. Le
+// même calcul que l'export (server/tools/montage.py, `cadre`, `_placement`), qui ne
+// pose que des pixels entiers : à un pixel près. Le programme composé (un calque
+// d'effet) dessine la même géométrie dans son canevas. Pendant un geste (un rognage
+// au moniteur, `pv.seul`), le plan se montre plein, comme avant.
 
 import { href } from '../commun/shell.js';
-import { windows, opacityAt, gainAt, audibleTracks, projectEnd, spd, isOn, chainOf, srcTime } from './model.js';
+import { windows, opacityAt, gainAt, audibleTracks, projectEnd, spd, isOn, chainOf, srcTime, cadre, motionOf } from './model.js';
 import { getLut, lutFailed, lutGL, passesOf } from './lut.js';
 // un saut ne s'empile jamais sur un saut en cours (commun/tete.js, mesuré le 30/09) :
 // la tête glissée à l'arrêt, l'image suit au lieu d'attendre la fin du geste
@@ -74,6 +84,27 @@ function voir(e, op, filtre = null) {
     if (filtre !== null) m.style.filter = m === v ? filtre : 'none';
   }
 }
+// La place d'un élément selon la trajectoire de son plan (`g` = cadre(), null : la mise
+// en place d'avant, celle de .screen .layer). La boîte de l'élément est l'image source
+// entière à son échelle ; le recadrage la découpe (clip-path, dans ses coordonnées,
+// donc il tourne avec elle) ; la rotation se fait autour du centre de la part gardée.
+const POSE = ['left', 'top', 'width', 'height', 'right', 'bottom', 'transform', 'transformOrigin', 'clipPath', 'objectFit'];
+const pc = (v) => `${+(v * 100).toFixed(5)}%`;
+function poser(m, g, sw, sh, W, H) {
+  if (!m) return;
+  const key = g ? [g.cx, g.cy, g.kx, g.ky, g.th, g.x0, g.x1, g.y0, g.y1, sw, sh, W, H].map((v) => v.toFixed(4)).join(',') : '';
+  if (m._pose === key) return;
+  m._pose = key;
+  if (!g) { for (const k of POSE) m.style[k] = ''; return; }
+  const mx = (g.x0 + g.x1) / 2, my = (g.y0 + g.y1) / 2;
+  Object.assign(m.style, {
+    left: pc((g.cx - mx * g.kx) / W), top: pc((g.cy - my * g.ky) / H), width: pc(sw * g.kx / W), height: pc(sh * g.ky / H),
+    right: 'auto', bottom: 'auto', objectFit: 'fill', transformOrigin: `${pc(mx / sw)} ${pc(my / sh)}`,
+    transform: Math.abs(g.th) > 1e-9 ? `rotate(${g.th}rad)` : '',
+    clipPath: g.x0 > 0 || g.y0 > 0 || g.x1 < sw || g.y1 < sh ? `inset(${pc(g.y0 / sh)} ${pc(1 - g.x1 / sw)} ${pc(1 - g.y1 / sh)} ${pc(g.x0 / sw)})` : '',
+  });
+}
+
 // la copie de défilement d'une vidéo (commun/defilement.js), posée juste après elle, comme elle
 function copie(el, item, fps, again) {
   const d = copieDefil(el, item, { fps, montrer: again });
@@ -357,6 +388,30 @@ export class Program {
     return e;
   }
 
+  // La taille de l'image d'un plan telle qu'elle se décode (celle de son élément ; avant
+  // qu'il soit chargé, celle de l'objet de la bibliothèque), ou null.
+  dims(c) {
+    const e = this.els.get(c.id);
+    if (e && e.tag === 'img' && e.el.naturalWidth) return [e.el.naturalWidth, e.el.naturalHeight];
+    if (e && e.tag === 'video' && e.el.videoWidth) return [e.el.videoWidth, e.el.videoHeight];
+    const it = this.itemOf(c.item);
+    return it && it.width > 0 && it.height > 0 ? [it.width, it.height] : null;
+  }
+  // Où se pose l'image d'un plan dans le cadre (model.js, cadre), ou null tant que sa taille
+  // n'est pas connue. `p` : le montage (celui de la page par défaut).
+  geometry(c, p = this.getP()) {
+    const d = p && this.dims(c);
+    if (!d) return null;
+    const g = cadre(motionOf(c), p.settings.width || 1920, p.settings.height || 1080, d[0], d[1]);
+    g.sw = d[0]; g.sh = d[1];
+    return g;
+  }
+  // l'élément, sa copie, son canevas d'effets : à la place de la trajectoire
+  pose(e, g, p) {
+    const W = p.settings.width || 1920, H = p.settings.height || 1080;
+    for (const m of [e.el, e.dfl?.nav, e.cv]) poser(m, g, g ? g.sw : 0, g ? g.sh : 0, W, H);
+  }
+
   // La chaîne prête d'un plan (ou d'un calque) : ses passes, quand toutes ses
   // LUT sont chargées. Tant qu'une LUT se charge, c'est la chaîne d'avant qui
   // reste (`hold.ready`) : l'image ne repasse jamais par « sans LUT ».
@@ -403,7 +458,7 @@ export class Program {
   // vers le haut, cadrées comme l'export (contenues, centrées), sur du noir ;
   // un calque applique ses effets à ce qui est déjà posé, mêlé selon son fondu.
   compose(layers) {
-    const p = this.getP();
+    const p = (this.pv && this.pv.p) || this.getP();
     const W = p.settings.width || 1920, H = p.settings.height || 1080;
     const s = Math.min(1, 1920 / W);
     const w = Math.max(2, Math.round(W * s)), h = Math.max(2, Math.round(H * s));
@@ -435,10 +490,20 @@ export class Program {
       const src = L.e.cv && L.e.shown ? L.e.cv : el;
       const vw = L.e.tag === 'img' ? el.naturalWidth : el.videoWidth, vh = L.e.tag === 'img' ? el.naturalHeight : el.videoHeight;
       if (!vw || !vh || (L.e.tag === 'video' && el.readyState < 2)) continue;
-      const k = Math.min(w / vw, h / vh), dw = vw * k, dh = vh * k;
       ctx.globalAlpha = L.op;
       ctx.filter = src === el ? (L.css || 'none') : 'none';
-      ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
+      if (L.g) {
+        // la trajectoire : la part gardée de la source, centrée sur son centre dans le cadre, tournée
+        const g = L.g, s = w / W, rx = (src === el ? vw : src.width) / g.sw, ry = (src === el ? vh : src.height) / g.sh;
+        ctx.save();
+        ctx.translate(g.cx * s, g.cy * s);
+        ctx.rotate(g.th);
+        ctx.drawImage(src, g.x0 * rx, g.y0 * ry, (g.x1 - g.x0) * rx, (g.y1 - g.y0) * ry, -g.dw * s / 2, -g.dh * s / 2, g.dw * s, g.dh * s);
+        ctx.restore();
+      } else {
+        const k = Math.min(w / vw, h / vh), dw = vw * k, dh = vh * k;
+        ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
+      }
       ctx.filter = 'none';
     }
     ctx.globalAlpha = 1;
@@ -531,6 +596,12 @@ export class Program {
         const lut = ready && !ready.empty ? ready : null;
         e.css = !gl.ok ? steps.filter((f) => f.type === 'grade').map(gradeCss).filter((x) => x !== 'none').join(' ') || 'none' : 'none';
         this.lutLayer(e, !!lut);
+        // la trajectoire (pas pendant le rognage d'un bord : le plan seul et plein) ; sa taille pas encore
+        // connue, le plan attend caché plutôt que de se montrer un instant plein cadre
+        const mo = e.tag !== 'audio' && !seul && !!c.motion;
+        const g = mo ? this.geometry(c, p) : null;
+        this.pose(e, g, p);
+        const mop = !mo ? 1 : g && g.vis ? g.op : 0;
         if (e.cv) e.cv.style.zIndex = e.el.style.zIndex;
         if (e.dfl?.nav) e.dfl.nav.style.zIndex = e.el.style.zIndex;
         if (!active) {                      // en attente : arrêté sur sa première image
@@ -545,12 +616,12 @@ export class Program {
           continue;
         }
         if (e.tag !== 'audio') {
-          const op = seul ? 1 : hidden.has(track.id) ? 0 : opacityAt(w, frame);
+          const op = (seul ? 1 : hidden.has(track.id) ? 0 : opacityAt(w, frame)) * mop;
           if (e.cv) {
             voir(e, 0, 'none');
             e.cv.style.opacity = String(op);
           } else voir(e, op, e.css);
-          if (op > 0) { this.visible.push(c); layers.push({ e, c, op, css: e.css }); }
+          if (op > 0) { this.visible.push(c); layers.push({ e, c, op, css: e.css, g }); }
         }
         const sound = !seul && hear.has(track.id) && (track.kind === 'audio' || c.audio) && c.kind !== 'image';
         setGain(e, sound ? (c.vol ?? 1) * gainAt(w, t, fps) : 0);

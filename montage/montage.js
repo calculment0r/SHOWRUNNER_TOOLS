@@ -29,6 +29,7 @@ import { getLut, lutGL } from './lut.js';
 import { mountProject, MULTI_MIME } from './projet.js';
 import { mountEffects, bindEffectDrops, fxOfDesc, lutFamilies } from './effets.js';
 import { bindTrackDrag } from './pistes.js';
+import { mountCadre } from './cadre.js';
 import { createUndo } from '../commun/undo.js';
 import { createElements } from './elements.js';
 import { pics, dessiner } from '../commun/onde.js';   // éléments : la pastille « vN+1 » (30/09)
@@ -57,6 +58,9 @@ const S = {
   fxSel: new Set(),              // les effets choisis dans l'inspecteur
   fxClip: LS('montage-fx-clipboard'), lastCopy: null, fxFocus: false,
 };
+
+let cadreMon = null;                 // la trajectoire au moniteur (cadre.js), montée avec le programme
+let trajSync = null;                 // la carte Trajectoire de l'inspecteur suit un geste au moniteur
 
 // ── le projet en mémoire ────────────────────────────────────
 const core = (p) => JSON.stringify({ name: p.name, settings: p.settings, tracks: p.tracks, groups: p.groups || [], clips: p.clips, markers: p.markers, range: p.range });
@@ -147,6 +151,7 @@ function changed({ inspector = true } = {}) {
   program.invalidate();
   timeline.render();
   if (inspector) paintInspector();
+  if (cadreMon) cadreMon.paint();
   paintBar();
   paintBin();
   scheduleSave();
@@ -997,6 +1002,7 @@ function paintProgram(t, playing) {
   $('#prg-name').textContent = vis.length ? vis[vis.length - 1].title || '' : (D && t >= D ? 'fin du montage' : '—');
   $('#prg-empty').hidden = !!S.p.clips.length;
   if (!playing) { saveView(); clearTimeout(shelfT); shelfT = setTimeout(() => effects.thumbs(), 250); }
+  if (cadreMon) cadreMon.paint();
 }
 let shelfT = 0;
 
@@ -1127,6 +1133,26 @@ const timeline = new Timeline($('#tl'), {
   renameGroup: (gid) => renameGroup(gid),
 });
 
+// ── la trajectoire au moniteur (06/10, cadre.js) ─────────────
+// Le plan choisi montre son cadre au programme : glisser, mettre à l'échelle, tourner,
+// déplacer l'ancrage ; un double-clic choisit le plan qui s'y voit. Le geste change le
+// plan de la page à chaque mouvement (l'image suit), une seule annulation au lâcher.
+let cadreRaf = 0;
+function liveCadre() {
+  if (cadreRaf) return;
+  cadreRaf = requestAnimationFrame(() => { cadreRaf = 0; program.invalidate(); if (trajSync) trajSync(); if (cadreMon) cadreMon.paint(); });
+}
+cadreMon = mountCadre({ screen: $('#prg-screen'), stage: $('#stage'), program, app: {
+  p: () => S.p,
+  sel: () => S.sel,
+  select: (ids) => { focus('program'); select(ids); },
+  locked: (c) => trackLocked(c.track),
+  snap: () => S.snap,
+  debut: (label) => beginEdit(label),
+  vivant: (id, m) => { const c = M.byId(S.p, id); if (c) { M.setMotion(c, m); liveCadre(); } },
+  fin: () => { cancelAnimationFrame(cadreRaf); cadreRaf = 0; endEdit(); program.invalidate(); paintInspector(); },
+} });
+
 function zoomed(pps) {
   $('#z-val').textContent = `${Math.round(pps / 40 * 100)} %`;
   saveView();
@@ -1140,6 +1166,7 @@ function select(sel, gap = null) {
   S.fxFocus = null;
   timeline.render();
   paintInspector();
+  if (cadreMon) cadreMon.paint();
   paintBar();
 }
 
@@ -1231,6 +1258,7 @@ function detachSound(id) {
   const tid = S.target.audio;
   if (lockedTracks().has(tid)) return toast(`la piste ${tid} est verrouillée`);
   const a = { ...JSON.parse(JSON.stringify(c)), id: M.newClipId(), track: tid, fx: [], audio: true };
+  delete a.motion;                              // le son n'a pas de trajectoire (le serveur ne la garde pas sur une piste A)
   commit('dissocier le son', (p) => { M.byId(p, id).audio = false; M.placeClip(p, a, 'overwrite'); });
   toast(`son sur ${tid}`, 1400);
 }
@@ -1419,6 +1447,110 @@ function slider({ label, min, max, step, value, fmt, color = 'var(--cy)', cls = 
 
 const dB = (v) => (v <= 0 ? '−∞ dB' : `${(20 * Math.log10(v)).toFixed(1)} dB`);
 
+// Un réglage de la trajectoire : le curseur du thème (commun/curseur.css) pour la plage
+// courante, et un champ pour la valeur exacte, qui va au-delà (une position hors du cadre,
+// une échelle de 1000 %) — comme les valeurs à taper du panneau Options d'effet de
+// Premiere. Le glisser du curseur est une seule annulation ; un nombre tapé aussi.
+// Rend { el, sync(v) } : sync remet la valeur affichée (un geste au moniteur).
+function reglage({ label, min, max, step, value, unit = '', digits = 1, fmin = -Infinity, fmax = Infinity, apply, disabled = false, title = '' }) {
+  const fmt = (v) => String(+(+v).toFixed(digits));
+  const inp = el('input', { type: 'range', class: 'rg', min, max, step, 'aria-label': label, disabled: disabled || null });
+  const num = el('input', { class: 'fld nfld', type: 'number', step: 'any', 'aria-label': `${label}${unit ? ` (${unit})` : ''}`, disabled: disabled || null });
+  const paint = (v) => {
+    const r = Math.max(min, Math.min(max, v));
+    inp.value = String(r);
+    inp.style.setProperty('--rg-p', ((r - min) / (max - min) * 100) + '%');
+  };
+  const sync = (v) => { if (num.ownerDocument.activeElement !== num) { num.value = fmt(v); num.defaultValue = num.value; } paint(v); };
+  inp.style.setProperty('--rg-c', 'var(--cy)');
+  sync(value);
+  inp.addEventListener('pointerdown', () => beginEdit(label));
+  inp.addEventListener('keydown', () => beginEdit(label));
+  inp.addEventListener('input', () => { beginEdit(label); const v = +inp.value; num.value = fmt(v); apply(v); inp.style.setProperty('--rg-p', ((v - min) / (max - min) * 100) + '%'); });
+  inp.addEventListener('change', () => { endEdit(); paintBar(); });
+  num.addEventListener('change', () => {
+    const v = Number(num.value);
+    if (num.value.trim() === '' || !Number.isFinite(v)) { num.value = num.defaultValue; return; }
+    const x = Math.max(fmin, Math.min(fmax, v));
+    beginEdit(label); apply(x); endEdit(); paintBar();
+    num.value = fmt(x); num.defaultValue = num.value; paint(x);
+  });
+  return { el: el('label', { class: 'slider reg' + (disabled ? ' off' : ''), title }, el('span', {}, label), inp, el('span', { class: 'nv' }, num, el('small', {}, unit))), sync };
+}
+
+// ── la trajectoire d'un plan (06/10) : la carte de l'inspecteur ──
+// Premiere, panneau « Options d'effet » : Trajectoire (Position, Échelle, Échelle uniforme,
+// Rotation, Point d'ancrage), Opacité, et l'effet Recadrage — puis les autres effets du
+// plan, dessous. La position s'affiche en pixels de la séquence, l'ancrage en pixels de
+// l'image (model.js les garde en fractions : `cadre`). Les grilles posent la position et
+// l'échelle en un clic.
+const W_H = () => [S.p.settings.width || 1920, S.p.settings.height || 1080];
+const dimsOf = (c) => program.dims(c) || W_H();
+function trajCard(c, locked) {
+  const [W, H] = W_H();
+  const [sw, sh] = dimsOf(c);
+  const m = M.motionOf(c);
+  const cur = () => M.motionOf(M.byId(S.p, c.id));
+  const syncs = [];
+  const reg = (o) => {
+    const r = reglage({ ...o, value: o.from(m), disabled: locked, apply: (v) => { const x = M.byId(S.p, c.id); if (x) { M.setMotion(x, o.to(v, M.motionOf(x))); liveCadre(); } } });
+    syncs.push(() => r.sync(o.from(cur())));
+    return r.el;
+  };
+  const head = el('div', { class: 'card-head' }, el('span', { class: 't' }, 'Trajectoire'),
+    el('button', { class: 'lnk', disabled: (!c.motion || locked) || null, title: 'position, échelle, rotation, ancrage, opacité, recadrage par défaut',
+      onclick: () => commit('réinitialiser la trajectoire', (p) => { delete M.byId(p, c.id).motion; }) }, 'Réinit.'));
+  const uni = el('span', { class: 'snapper', title: 'décoché : largeur et hauteur séparées (au moniteur : maj sur un coin)' }, 'échelle uniforme',
+    el('button', { class: 'sw sm' + (m.uniform ? ' on' : ''), 'aria-pressed': String(m.uniform), disabled: locked || null,
+      onclick: () => commit(m.uniform ? 'échelle non uniforme' : 'échelle uniforme', (p) => { const x = M.byId(p, c.id); const mm = M.motionOf(x); M.setMotion(x, { uniform: !mm.uniform, scaleW: mm.scale }); }) }, el('i')));
+  const card = el('div', { class: 'card traj', 'data-clip': c.id }, head,
+    grillesRow([c.id], locked),
+    reg({ label: 'position x', min: -W, max: 2 * W, step: 1, unit: 'px', fmin: -10 * W, fmax: 10 * W, from: (x) => x.x * W, to: (v) => ({ x: v / W }) }),
+    reg({ label: 'position y', min: -H, max: 2 * H, step: 1, unit: 'px', fmin: -10 * H, fmax: 10 * H, from: (x) => x.y * H, to: (v) => ({ y: v / H }) }),
+    reg({ label: m.uniform ? 'échelle' : 'hauteur', min: 0, max: 400, step: 1, unit: '%', fmin: 0, fmax: 10000, from: (x) => x.scale * 100, to: (v) => ({ scale: v / 100 }) }),
+    m.uniform ? null : reg({ label: 'largeur', min: 0, max: 400, step: 1, unit: '%', fmin: 0, fmax: 10000, from: (x) => x.scaleW * 100, to: (v) => ({ scaleW: v / 100 }) }),
+    el('div', { class: 'row' }, el('span', { class: 'sp' }), uni),
+    reg({ label: 'rotation', min: -180, max: 180, step: 0.5, unit: '°', fmin: -3600, fmax: 3600, from: (x) => x.rot, to: (v) => ({ rot: v }) }),
+    reg({ label: 'ancrage x', min: 0, max: sw, step: 1, unit: 'px', fmin: -10 * sw, fmax: 10 * sw, from: (x) => x.ax * sw, to: (v) => ({ ax: v / sw }) }),
+    reg({ label: 'ancrage y', min: 0, max: sh, step: 1, unit: 'px', fmin: -10 * sh, fmax: 10 * sh, from: (x) => x.ay * sh, to: (v) => ({ ay: v / sh }) }),
+    reg({ label: 'opacité', min: 0, max: 100, step: 1, unit: '%', fmin: 0, fmax: 100, from: (x) => x.op * 100, to: (v) => ({ op: v / 100 }) }),
+    el('span', { class: 'lbl sub' }, 'recadrage'),
+    ...[['gauche', 'cl'], ['droite', 'cr'], ['haut', 'ct'], ['bas', 'cb']].map(([label, k]) =>
+      reg({ label, min: 0, max: 100, step: 0.5, unit: '%', fmin: 0, fmax: 100, from: (x) => x[k] * 100, to: (v) => ({ [k]: v / 100 }) })));
+  trajSync = () => { if (card.isConnected && M.byId(S.p, c.id)) for (const fn of syncs) fn(); };
+  return card;
+}
+
+// Les grilles en un clic (model.js, GRILLES) : chaque grille est dessinée aux proportions
+// de la séquence, ses cases sont des boutons. Une case : le plan choisi y va ; plusieurs
+// plans choisis s'y répartissent à partir d'elle, dans l'ordre des pistes (celle du haut
+// d'abord), puis du temps.
+function grillesRow(ids, locked = false) {
+  const [W, H] = W_H();
+  const row = el('div', { class: 'grilles', role: 'group', 'aria-label': 'grilles' });
+  for (const gp of M.GRILLES) {
+    const box = el('div', { class: 'grille', title: gp.label, style: { aspectRatio: `${W} / ${H}` } });
+    gp.cells.forEach((cell, k) => box.append(el('button', { class: 'gc', disabled: locked || null, 'data-grille': gp.id, 'data-case': k,
+      'aria-label': gp.cells.length > 1 ? `${gp.label}, case ${k + 1}` : gp.label, title: gp.cells.length > 1 ? `${gp.label} · case ${k + 1}` : gp.label,
+      style: { left: `${cell[0] * 100}%`, top: `${cell[1] * 100}%`, width: `${cell[2] * 100}%`, height: `${cell[3] * 100}%` },
+      onclick: () => poserGrille(gp, k, ids) })));
+    row.append(box);
+  }
+  return row;
+}
+function poserGrille(gp, k, ids) {
+  const rang = new Map(S.p.tracks.map((t, i) => [t.id, i]));
+  const clips = ids.map((id) => M.byId(S.p, id)).filter((c) => M.movable(c) && !trackLocked(c.track))
+    .sort((a, b) => rang.get(a.track) - rang.get(b.track) || a.start - b.start);
+  if (!clips.length) { toast('choisissez des plans vidéo ou image (pistes V, non verrouillées)'); return; }
+  const [W, H] = W_H();
+  commit(clips.length > 1 ? `grille · ${gp.label} · ${clips.length} plans` : `grille · ${gp.label}`, (p) => clips.forEach((c0, i) => {
+    const c = M.byId(p, c0.id);
+    const [sw, sh] = dimsOf(c);
+    M.setMotion(c, M.dansCase(M.motionOf(c), gp.cells[(k + i) % gp.cells.length], W, H, sw, sh));
+  }));
+}
+
 function paintInspector() {
   suivrePanneau();   // la piste choisie fait les filtres du panneau Asset (tout changement de choix repasse ici)
   const box = $('#insp');
@@ -1426,6 +1558,7 @@ function paintInspector() {
   const keep = box.scrollTop;
   const cards = [];
   const f = fps();
+  trajSync = null;
   if (S.selTrack) cards.push(...trackCards(S.selTrack));
   else if (S.sel.size === 1) {
     const c = M.byId(S.p, [...S.sel][0]);
@@ -1436,6 +1569,15 @@ function paintInspector() {
       el('div', { class: 'row' }, el('button', { class: 'tb ghost sm', onclick: () => del(false) }, 'Supprimer'),
         el('button', { class: 'tb ghost sm', onclick: () => del(true) }, 'Et raccorder'),
         el('button', { class: 'tb ghost sm', disabled: !(S.fxClip && S.fxClip.length) || null, title: 'Ctrl+Alt+V', onclick: () => pasteFx(pasteKeys()) }, 'Coller les effets'))));
+    const mov = [...S.sel].filter((id) => M.movable(M.byId(S.p, id)));
+    if (mov.length) {
+      cards.push(el('div', { class: 'card traj' },
+        el('div', { class: 'card-head' }, el('span', { class: 't' }, `Trajectoire · ${mov.length} plan${mov.length > 1 ? 's' : ''}`),
+          el('button', { class: 'lnk', disabled: !mov.some((id) => M.byId(S.p, id).motion) || null,
+            onclick: () => commit('réinitialiser les trajectoires', (p) => { for (const id of mov) { const c = M.byId(p, id); if (c && !trackLocked(c.track)) delete c.motion; } }) }, 'Réinit.')),
+        el('p', { class: 'lbl' }, 'une case : les plans s’y répartissent à partir d’elle, la piste du haut d’abord'),
+        grillesRow(mov)));
+    }
   } else if (S.gap) {
     cards.push(el('div', { class: 'card' },
       el('div', { class: 'card-head' }, el('span', { class: 't' }, `Vide · ${S.gap.track}`)),
@@ -1701,7 +1843,8 @@ function clipCards(c, f) {
   head.append(acts);
   cards.push(head);
 
-  // les effets (une piste vidéo), puis les fondus
+  // la trajectoire, puis les effets (une piste vidéo) — l'ordre de Premiere —, puis les fondus
+  if (M.movable(c)) cards.push(trajCard(c, locked));
   if (track.kind === 'video') cards.push(fxCard(ownerOf('c:' + c.id), locked));
   cards.push(fadeCard(c, track, locked));
 
@@ -1988,6 +2131,14 @@ function helpModal() {
     ['glisser + ctrl', 'insérer (pousse la suite) au lieu d’écraser'],
     ['LA MOLETTE (TOUTES LES TIMELINES)', ''],
     ...MOLETTE,
+    ['TRAJECTOIRE (MONITEUR PROGRAMME)', ''],
+    ['double-clic dans l’image', 'choisir le plan qui s’y voit (le plus haut) : son cadre, ses poignées'],
+    ['glisser dans le cadre', 'le déplacer · maj : sur un seul axe'],
+    ['poignée de coin', 'l’échelle, proportions gardées · maj : libres (largeur et hauteur)'],
+    ['juste hors d’un coin', 'tourner autour du point d’ancrage · maj : par 15°'],
+    ['alt + glisser l’ancrage', 'déplacer le point d’ancrage sans bouger l’image'],
+    ['aimant (S) · ctrl', 'bords et centre du cadre, angles droits · ctrl le suspend le temps du geste'],
+    ['inspecteur · Trajectoire', 'position, échelle, rotation, ancrage, opacité, recadrage ; les grilles en un clic'],
     ['EFFETS', ''],
     ['glisser un effet', 'sur un plan · sur l’en-tête d’une piste ou d’un groupe · sur la règle : un calque d’effet'],
     ['maj + lâcher une LUT', 'l’ajouter au lieu de remplacer celle du plan'],
@@ -2266,6 +2417,19 @@ function sourceMenu() {
   ];
 }
 
+// la trajectoire des plans choisis, au moniteur : les grilles, réinitialiser
+function trajMenu() {
+  const mov = [...S.sel].map((id) => M.byId(S.p, id)).filter((c) => M.movable(c) && !trackLocked(c.track));
+  if (!mov.length) return [];
+  const ids = mov.map((c) => c.id);
+  return [
+    { head: mov.length > 1 ? `trajectoire · ${mov.length} plans` : 'trajectoire' },
+    { label: 'Grille', icon: '▦', items: M.GRILLES.map((gp) => ({ label: gp.label, sub: gp.cells.length > 1 ? `${gp.cells.length} cases` : '', onclick: () => poserGrille(gp, 0, ids) })) },
+    { label: 'Réinitialiser la trajectoire', disabled: !mov.some((c) => c.motion), why: 'déjà par défaut : l’image tient dans le cadre',
+      onclick: () => commit('réinitialiser la trajectoire', (p) => { for (const id of ids) delete M.byId(p, id).motion; }) },
+    '-',
+  ];
+}
 function programMenu() {
   if (!S.p) return [{ head: 'Programme' }, { label: 'Ouvrir un montage', onclick: projectsModal }, '-', F.entree('prg')];
   const f = program.frame();
@@ -2285,6 +2449,7 @@ function programMenu() {
     { label: 'Ajouter une coupe à toutes les pistes', key: K.cutAll, onclick: () => cutAtPlayhead(true) },
     { label: 'Zones de sécurité', checked: S.safe, sub: '90 % · 80 %', onclick: () => { S.safe = !S.safe; LS('montage-safe', S.safe); $('#safe').hidden = !S.safe; } },
     '-',
+    ...trajMenu(),
     { label: 'Exporter…', key: 'Ctrl+M', disabled: !S.p.clips.length, why: 'rien à exporter : posez des plans sur la timeline', onclick: exportModal },
     '-',
     F.entree('prg'),

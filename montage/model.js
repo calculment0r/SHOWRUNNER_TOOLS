@@ -173,6 +173,11 @@ export function versSource(g, X, Y) {
   const u = g.co * dx + g.si * dy, v = -g.si * dx + g.co * dy;
   return [(g.x0 + g.x1) / 2 + u / g.kx, (g.y0 + g.y1) / 2 + v / g.ky];
 }
+// …et l'inverse : un pixel de la source → sa place dans le cadre
+export function versCadre(g, sx, sy) {
+  const u = (sx - (g.x0 + g.x1) / 2) * g.kx, v = (sy - (g.y0 + g.y1) / 2) * g.ky;
+  return [g.cx + g.co * u - g.si * v, g.cy + g.si * u + g.co * v];
+}
 // le point d'ancrage, en pixels du cadre
 export const ancrage = (m, W, H) => [m.x * W, m.y * H];
 
