@@ -12,8 +12,9 @@ semble… si ? »
   sans doute dans ODIO_01 ou sur le PC de Cal.
 - **Ce qui a été intégré** : les quatre instruments du prototype ODIO_01.
   Ce sont l'Analog, la Basse acide, le Numérique (6 oscillateurs de Plaits)
-  et la boîte à rythme 808/909. Ils sont arrivés avec **19 préréglages**,
-  presque tous leurs réglages d'usine.
+  et la boîte à rythme 808/909. Le studio avait alors **19 préréglages** :
+  10 écrits pour le Synthé et la DR-9, et 9 pour ces instruments, qui sont
+  leurs réglages d'usine ou une variante d'un réglage.
 - **Ce qui ne l'a pas été** :
   - les « sons par machine » d'ODIO_01 ;
   - les instruments à échantillons (TR-808 échantillonnée, General MIDI) ;
@@ -75,8 +76,8 @@ première question pour Cal (§ 5).
   - les oscillateurs de Plaits ;
   - les 13 planogrammes du nodal, dont les voix reprennent ces instruments.
 - **Pas intégrés** :
-  - une banque de sons digne de ce nom : 19 préréglages, dont 8 réglages
-    d'usine ;
+  - une banque de sons digne de ce nom : 19 préréglages ; pour les
+    instruments d'ODIO, 4 réglages d'usine et 5 variantes d'un réglage ;
   - les sons par machine ;
   - les échantillons ;
   - les modulations.
