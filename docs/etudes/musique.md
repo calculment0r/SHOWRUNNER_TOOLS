@@ -983,8 +983,8 @@ défaut (1 020 px dans une boîte de 330).
 - **La vue d'un motif est retenue** (le défilement et la hauteur des rangées) : un redessin
   (une retouche, « Doubler ») la rend telle quelle ; un autre motif se cadre.
 - Maj+Tab, F12, Ctrl+Alt+3 et 4 restent : en compact, aller à la chaîne la ramène à son
-  début. La génération d'une région garde la colonne d'avant (son panneau a ses trois
-  colonnes), sans « Agrandir ».
+  début. Une région générative y montre ses versions en cartes (183 px), la chaîne à côté ;
+  « Génération · Son de la prise » reste en tête.
 - **La vue Clip de la Session** prend l'éditeur compact : il tient dans sa boîte.
 
 ### Après (Chromium, deux thèmes, sans erreur console ; captures `/tmp/odio_compact/`)

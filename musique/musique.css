@@ -459,13 +459,12 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
    editeurs.js, createDock. COMPACT (d'office) : le clip et la chaîne dans la hauteur du
    panneau, chacun défile chez lui ; côte à côte dès que le panneau a 960 px (le clip à
    gauche, la chaîne à droite), sinon l'un sous l'autre. GRAND : le clip remplit le
-   panneau, la chaîne suit dessous (la colonne défile). La génération d'une région garde la
-   colonne d'avant (ni l'un ni l'autre). */
+   panneau, la chaîne suit dessous (la colonne défile). */
 .dk { container-type: inline-size; }
 .dk.compact .dk-body { overflow: hidden; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 3fr) minmax(96px, 2fr); }
 .dk.compact .dk-sec { min-height: 0; min-width: 0; }
 .dk.compact .dk-sec-clip { overflow-x: hidden; overflow-y: auto; }
-.dk.compact .dk-sec-clip > .dk-title { display: none; }
+.dk.compact .dk-sec-clip > .dk-title:not(.dk-title-seg) { display: none; }
 .dk.compact .dk-sec-clip .dk-clip, .dk.grand .dk-sec-clip .dk-clip { flex: 1; min-height: 0; }
 .dk.compact .dk-clip > .pe { min-height: 0; padding: 6px var(--s3) 8px; gap: 4px; }
 /* l'éditeur de notes compact (patternEditor, taille 'compact') : ici et dans la vue Clip de la Session */

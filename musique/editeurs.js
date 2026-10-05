@@ -48,8 +48,8 @@ const STEP_MAX = 256;
 // prennent énormément de place […] trop chiant de scroller jusqu'en bas pour
 // voir les racks ») : en compact, les deux côte à côte, chacun défile chez lui
 // (Live 12 empile la vue Clip au-dessus de la vue Appareils, « stack ») ; en
-// grand, l'ancienne colonne. La génération d'une région garde la colonne (son
-// panneau a ses trois colonnes). « Instruments et effets » (menus, Maj+Tab,
+// grand, l'ancienne colonne. Une région générative y montre ses versions (son
+// panneau de réglages est « Générer »). « Instruments et effets » (menus, Maj+Tab,
 // F12, Ctrl+Alt+3 / 4) va à la partie voulue au lieu de changer d'onglet.
 export const detailGrand = (S) => !!S.proj?.ui?.dockGrand;
 export function createDock(app) {
@@ -61,7 +61,7 @@ export function createDock(app) {
   const devices = createDevices(app);
   const clipSec = el('section', { class: 'dk-sec dk-sec-clip', 'data-part': 'clip', 'aria-label': 'le clip choisi' });
   const chainSec = el('section', { class: 'dk-sec dk-sec-chain', 'data-part': 'device', 'aria-label': 'la chaîne de la piste' });
-  let ed = null, colonne = false;   // colonne : le panneau génératif (il garde la colonne qui défile)
+  let ed = null, colonne = false;   // colonne : un éditeur qui garderait la colonne qui défile (aucun aujourd'hui)
   // compact ↔ grand (Ctrl+Alt+E : musique.js, app.basculerDetail) ; la hauteur suit (timeline.js)
   const basculer = () => app.basculerDetail();
   function target() {
@@ -93,7 +93,9 @@ export function createDock(app) {
     const seg = reg ? el('div', { class: 'seg dk-gen' }, [['gen', 'Génération'], ['son', 'Son de la prise']].map(([k, l]) => el('button', { class: `tb${(S.proj.ui.genSon ? 'son' : 'gen') === k ? ' on' : ''}`, type: 'button',
       onclick: () => { S.proj.ui.genSon = k === 'son' || undefined; app.saveUi(); render(); } }, l))) : null;
     const host = el('div', { class: 'dk-clip' });
-    put(clipSec, title(c && isRegion(c) && !(c.item && S.proj.ui.genSon) ? 'génératif · la région' : 'clip', tg?.t ? tg.t.name : '', seg), host);
+    const tete = title(c && isRegion(c) && !(c.item && S.proj.ui.genSon) ? 'génératif · la région' : 'clip', tg?.t ? tg.t.name : '', seg);
+    if (seg) tete.classList.add('dk-title-seg');   // en compact, le titre ne reste que s'il porte ce choix
+    put(clipSec, tete, host);
     colonne = false;
     if (!tg || !tg.t) {
       ed = null;
@@ -101,8 +103,8 @@ export function createDock(app) {
         el('span', {}, 'choisis un clip : ses notes, ses pas ou son son s\'ouvrent ici · double-clic sur une piste vide : un clip neuf')));
       return;
     }
-    if (tg.t.kind === 'audio' && tg.c && isRegion(tg.c) && !(tg.c.item && S.proj.ui.genSon)) { colonne = true; ed = regionPanel(app, host, tg.c, tg.t); return; }
-    if (tg.t.kind === 'audio' && !tg.c && isGenTrack(tg.t)) { colonne = true; ed = trackPanel(app, host, tg.t); return; }
+    if (tg.t.kind === 'audio' && tg.c && isRegion(tg.c) && !(tg.c.item && S.proj.ui.genSon)) { ed = regionPanel(app, host, tg.c, tg.t); return; }
+    if (tg.t.kind === 'audio' && !tg.c && isGenTrack(tg.t)) { ed = trackPanel(app, host, tg.t); return; }
     ed = tg.t.kind === 'audio'
       ? (tg.c ? audioEditor(app, host, tg.c, tg.t) : (put(host, el('div', { class: 'dk-empty dk-empty-sm' }, el('span', {}, 'choisis un clip de cette piste audio'))), null))
       : patternEditor(app, host, tg.t, tg.c, { taille: detailGrand(S) ? 'grand' : 'compact' });
