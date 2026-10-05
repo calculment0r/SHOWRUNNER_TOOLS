@@ -19,7 +19,7 @@ le reste est comme tu proposes ») : S1 partagé, S2, L1 Cloudflare, L2, L3 comm
   - tout ce qu'elle fabrique est un objet de la bibliothèque : `tool: "chanson"`, dossier « Musique » ;
   - sa recette est dans `params.chanson` ; une variante la rejoue avec une autre graine ;
   - les stems ont `params.stem` et `params.src` ;
-  - la liste (`GET /api/chanson`, `api_list`) montre les chansons de la personne seule (`owner == moi`), sans
+  - la liste (`GET /api/chanson/list`, `api_list`) montre les chansons de la personne seule (`owner == moi`), sans
     aucun rangement ;
   - la page : un rail à gauche (créer) et une scène (les cartes, avec forme d'onde).
 - **Workspaces** (`server/core/espaces.py`) : le champ `space` d'un objet est DÉJÀ pris, c'est l'identifiant du
