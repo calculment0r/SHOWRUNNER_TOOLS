@@ -18,8 +18,12 @@
 //                pointeur, Maj = le temps) ; le clavier du Montage : Espace,
 //                J K L (arrière, arrêt, avant ; répétés : ×2, ×4, ×8), ← →
 //                une image (Maj : une seconde), Début, Fin
-//   la barre     lecture, le timecode (HH:MM:SS:FF), la boucle, le son, le
-//                plein écran du lecteur (Échap pour sortir)
+//   la barre     lecture, le timecode (HH:MM:SS:FF), la boucle, le son (le
+//                fader couché du kit, lecteur.css), le plein écran du lecteur
+//                (Échap pour sortir)
+//   la bande     sa hauteur : --sr-lect-bande-h, posée par la page sur un
+//                parent (Transcrire la règle : l'onde moins haute une fois les
+//                voix séparées, repliée) ; sinon PISTE_H
 //
 // Le défilement (Cal : « quand je déplace la cue il n'affiche pas trop
 // rapidement l'update ») : une vidéo rendue n'a souvent qu'une image clé pour
@@ -182,7 +186,7 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
   // ── la frise ──
   const ticks = el('div', { class: 'sr-lect-ticks' });
   const regle = el('div', { class: 'sr-lect-regle', title: 'clic, glisser : la tête de lecture · Alt + molette : zoom · Maj + molette : le temps' }, ticks);
-  const bande = el('div', { class: `sr-lect-piste sr-lect-${kind}`, style: { height: PISTE_H[kind] + 'px' } });
+  const bande = el('div', { class: `sr-lect-piste sr-lect-${kind}`, style: { height: `var(--sr-lect-bande-h, ${PISTE_H[kind]}px)` } });
   let joue = null;
   if (kind === 'audio') {
     const u = `url("${href(`api/son/apercu/${it.id}?v=1`)}")`;
@@ -397,6 +401,7 @@ export function lecteur(it, { clavier = 'page', sur = null, onTemps = null, fps:
     bSon.title = src.muted ? 'rendre le son' : 'couper le son';
     bSon.setAttribute('aria-pressed', String(src.muted));
     vol.value = String(src.muted ? 0 : src.volume);
+    vol.style.setProperty('--v', vol.value);   // le trait de la valeur du fader couché (lecteur.css)
   };
   bSon.addEventListener('click', () => { src.muted = !src.muted; if (!src.muted && src.volume === 0) src.volume = 1; garderSon({ vol: src.volume, muet: src.muted }); paintSon(); });
   vol.addEventListener('input', () => { src.volume = +vol.value; src.muted = +vol.value === 0; garderSon({ vol: src.volume, muet: src.muted }); paintSon(); });
