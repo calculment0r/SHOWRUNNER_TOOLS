@@ -99,7 +99,8 @@ export function lecturePlaylist(box, { onChange = () => {}, onPlay = () => {}, o
     titre.textContent = `${k + 1} / ${S.q.length} · ${e.titre || e.it.title || e.it.id}`;
     titre.title = titre.textContent;
     box.hidden = false;
-    const xf = Math.max(0, Math.min(6, +S.tr.crossfade_s || 0));
+    const fonduS = () => Math.max(0, Math.min(6, +S.tr.crossfade_s || 0));   // lu à chaque fois : le réglage change pendant l'écoute
+    const xf = fonduS();
     if (avant) {
       let ok = false;
       if (fondu && xf > 0 && avant.gain && x.gain && S.ctx) {
@@ -116,7 +117,8 @@ export function lecturePlaylist(box, { onChange = () => {}, onPlay = () => {}, o
         setTimeout(() => { S.partants = S.partants.filter((p) => p !== avant); lacher(avant); }, xf * 1000 + 120);
       } else lacher(avant);
     }
-    x.a.addEventListener('ended', () => { if (S.cur === x && !x.a.loop) demarrer(k + 1); });
+    // le suivant : celui d'après dans la liste du moment (S.i suit une liste réordonnée pendant l'écoute)
+    x.a.addEventListener('ended', () => { if (S.cur === x && !x.a.loop) demarrer(S.i + 1); });
     // la barre a son propre bouton : la page suit la lecture et la pause
     x.a.addEventListener('play', () => { if (S.cur === x) onChange(S.i); });
     x.a.addEventListener('pause', () => { if (S.cur === x) onChange(S.i); });
@@ -124,9 +126,10 @@ export function lecturePlaylist(box, { onChange = () => {}, onPlay = () => {}, o
       if (S.cur !== x || S.fondu || x.a.loop) return;
       const d = x.a.duration;
       if (!isFinite(d) || !d) return;
-      if (S.tr.mode === 'crossfade' && xf > 0 && k + 1 < S.q.length && d - x.a.currentTime <= xf && d > xf * 2) {
+      const xf = fonduS();
+      if (S.tr.mode === 'crossfade' && xf > 0 && S.i + 1 < S.q.length && d - x.a.currentTime <= xf && d > xf * 2) {
         S.fondu = true;
-        demarrer(k + 1, { fondu: true });
+        demarrer(S.i + 1, { fondu: true });
       }
     });
     // le suivant se charge déjà : il part sans attendre le réseau
