@@ -9,7 +9,9 @@ le diagnostic tools/diag_agent.py : `parameters`, `details`, `model_info`), `POS
 (décharger : compté), `POST /api/chat` :
 
   - avec `format` (un schéma JSON) : un objet conforme au schéma, rempli d'après le texte
-    reçu (l'analyse d'entrée) ;
+    reçu — l'entrée d'un projet (ce qu'il comprend, ce qui ne colle pas : un brief sans un mot
+    en commun avec les documents est signalé, des questions à choix), le plan, un palier
+    (les images regardées) ;
   - avec `tools` : des appels d'outils SCÉNARISÉS, au format d'Ollama
     (`message.tool_calls: [{"function": {"name", "arguments": {…}}}]`), choisis d'après la
     demande (`<request>`) et les objets cités (`<cited>`) du dernier message de la personne,
@@ -104,22 +106,64 @@ class Faux:
 
     def structured(self, schema: dict, msgs: list) -> dict:
         text = (msgs[-1].get("content") if msgs else "") or ""
+        props = schema.get("properties") or {}
+        if "comprehension" in props:
+            return self.entree(text)
+        if "etapes" in props:
+            return self.plan(text)
+        if "annonce" in props:
+            return self.palier(msgs[-1] if msgs else {})
         body = _block(text, "document") or re.sub(r"<[^>]+>", " ", text)
-        words = " ".join(body.split())
-        out = fill(schema, words[:80])
-        if isinstance(out, dict):
-            if "resume" in out:
-                out["resume"] = "Résumé (faux Ollama) : " + words[:160]
-                out["themes"] = ["les années folles", "Montparnasse"]
-                names = [n for n in ("Kiki", "Man Ray", "Léa", "Foujita") if n in body]
-                out["personnages"] = [{"nom": n, "description": "repéré dans le texte (faux)"} for n in names] or \
-                                     [{"nom": "Personnage 1", "description": "repéré dans le texte (faux)"}]
-                out["lieux"] = [p for p in ("Montparnasse", "La Rotonde", "Le Dôme") if p in body] or ["un atelier"]
-                out["references"] = ["Man Ray, rayographies"] if "Man Ray" in body else ["photographie des années 1920"]
-            if "description" in out:
-                out.update(description="Un portrait (faux Ollama), lumière douce, grain de film.", sujet="un portrait",
-                           ambiance="mélancolique", style="photographie argentique", personnages=["une femme"], lieu="un café")
-        return out
+        return fill(schema, " ".join(body.split())[:80])
+
+    @staticmethod
+    def _mots(text: str) -> set:
+        vides = {"projet", "documents", "document", "première", "toutes", "chapitre", "paragraphe", "autres", "pendant"}
+        return {w for w in re.findall(r"[a-zà-ÿ]{6,}", text.lower()) if w not in vides}
+
+    def entree(self, text: str) -> dict:
+        """L'entrée : ce qu'il comprend (le brief, les titres), la contradiction quand le brief n'a pas un mot
+        de six lettres en commun avec le début des documents, puis 3 ou 4 questions à choix."""
+        brief = _block(text, "brief").strip()
+        docs = re.findall(r'<document n="\d+" id="[^"]*" title="([^"]*)"[^>]*>\n?(.*?)</document>', _block(text, "documents"), re.S)
+        titres = [t for t, _ in docs]
+        commun = self._mots(brief) & self._mots(" ".join(t + " " + b for t, b in docs))
+        sujet = " ".join(brief.split()[:10]) or "(pas de brief)"
+        comp = (f"Le brief demande : {sujet}. Les documents reçus : {', '.join(titres[:4]) or 'aucun'}"
+                f"{'…' if len(titres) > 4 else ''}. Je ne sais pas encore la durée ni la cible (faux Ollama).")
+        contra, qs = [], []
+        if brief and docs and not commun:
+            contra.append(f"Le brief parle de « {sujet} », mais les documents parlent de « {titres[0]} »"
+                          + (f" et de « {titres[1]} »" if len(titres) > 1 else "") + " : lequel est le projet ?")
+            qs.append({"question": "Lequel est le projet ?", "choix": ["Le brief", *[f"« {t} »" for t in titres[:3]]][:5], "plusieurs": False})
+        qs.append({"question": "Quel est le livrable ?", "choix": ["Un film de 30 s", "Un film de 60 s", "Un clip de 2 min"], "plusieurs": False})
+        qs.append({"question": "Quel ton ?", "choix": ["Chaleureux", "Sombre", "Drôle"], "plusieurs": False})
+        if titres:
+            qs.append({"question": "Quels documents comptent ?", "choix": titres[:5], "plusieurs": True})
+        while len(qs) < 3:
+            qs.append({"question": "Pour qui ?", "choix": ["Le grand public", "Des professionnels"], "plusieurs": False})
+        return {"comprehension": comp, "contradictions": contra, "questions": qs[:5]}
+
+    def plan(self, text: str) -> dict:
+        ans = _block(text, "answers")
+        req = _block(text, "request")
+        heard = []
+        m = re.search(r"(?:on )?écarte[rz]? (.+)", req, re.I)
+        if m:
+            heard.append(f"On écarte {m.group(1).strip()[:80]}")
+        dur = re.search(r"(\d+ s|\d+ min)", ans)
+        return {"reponse": "C'est noté (faux Ollama)" + (f" : {dur.group(1)}." if dur else ".") + " Je propose de commencer petit.",
+                "decisions": heard,
+                "etapes": [{"titre": "Une note qui résume le projet", "pose": "une note : le projet, la durée, le ton"},
+                           {"titre": "Une carte d'ambiance", "pose": "une carte Générer image, prête, pas lancée"}]}
+
+    def palier(self, last: dict) -> dict:
+        text = last.get("content") or ""
+        noms = re.findall(r"^Picture (\d+): ([^«]*)« (.*) »$", _block(text, "pictures"), re.M)
+        n = len(last.get("images") or [])
+        return {"annonce": f"Les {n} images regardées (faux Ollama) : des aplats de couleur, sans rapport net avec le brief.",
+                "pieces": [{"n": int(k), "ce_que_c_est": f"{'trois images d’une vidéo' if 'video' in kind else 'un aplat'} « {t} »"} for k, kind, t in noms],
+                "questions": [{"question": "Ces images servent-elles de références ?", "choix": ["Oui, toutes", "Non, on les écarte"], "plusieurs": False}]}
 
     def scenario(self, msgs: list) -> tuple[str, list | None]:
         """Les scénarios : la demande (`<request>`) choisit, l'étape avance d'une réponse à l'autre."""
@@ -131,8 +175,16 @@ class Faux:
         board = re.findall(r"^- ([A-Za-z0-9_-]+) · (\S+)", _block(user, "board"), re.M)
         media = [i for i, kind in board if kind in ("image", "vidéo", "video", "élément")]
         last_tool = msgs[-1].get("content", "") if msgs and msgs[-1].get("role") == "tool" else ""
-        if "organize the board from the documents" in req:
-            return self.ingest(user, step, last_tool)
+        if "do only this step" in req:   # une étape d'un plan accepté : un geste, puis la question de la suite
+            if step == 0:
+                titre = re.search(r"«(.*?)»", req)
+                return "", [call("poser_texte", sorte="note", texte="Synthèse du projet (faux Ollama) : " + (titre.group(1) if titre else ""),
+                                 pourquoi="l'étape acceptée")]
+            return "Étape faite : une note de synthèse. On passe à la suivante, ou tu changes quelque chose ?", None
+        if "on écarte" in req or "je décide" in req:
+            if step == 0:
+                return "", [call("noter_decision", texte=req.strip().split("\n")[0][:120])]
+            return "C'est noté au carnet.", None
         if "style" in req or "même" in req or "comme celle" in req:
             if not cited:
                 return "Cite une image (glisse-la dans le champ) : je la brancherai en référence.", None
@@ -167,32 +219,6 @@ class Faux:
         if step == 0:
             return "", [call("lire_planche")]
         return f"Je vois {len(board)} objets sur la planche.", None
-
-    def ingest(self, user: str, step: int, last_tool: str) -> tuple[str, list | None]:
-        docs = re.findall(r'<document id="([^"]+)"[^>]*title="([^"]*)">\n?(.*?)</document>', user, re.S)
-        imgs = re.findall(r'<image id="([^"]+)"( board_object="([^"]+)")?', user)
-        if step == 0:
-            return "", [call("poser_cadre", nom="Histoire", pourquoi="les documents et leur résumé"),
-                        call("poser_cadre", nom="Personnages et lieux", pourquoi="ce que les documents nomment"),
-                        call("poser_cadre", nom="Images", pourquoi="les références visuelles")]
-        if step == 1:
-            calls = []
-            for _id, title, fiche in docs:
-                first = fiche.strip().split("\n")[0][:300]
-                calls.append(call("poser_texte", sorte="note", texte=f"{title} — {first}", dans="new:0", pourquoi=f"le résumé de « {title} »"))
-                for nom in re.findall(r"personnages : (.*)", fiche):
-                    for who in nom.split(";")[:4]:
-                        calls.append(call("poser_texte", sorte="postit", texte=who.split(" — ")[0].strip(), dans="new:1",
-                                          pourquoi="un personnage repéré"))
-            for iid, _b, node in imgs:
-                calls.append(call("deplacer", ids=[node], dans="new:2", pourquoi="une référence visuelle") if node
-                             else call("poser_asset", item=iid, dans="new:2", pourquoi="une référence visuelle"))
-            return "", calls or [call("poser_texte", sorte="note", texte="Rien à lire.", pourquoi="aucun document")]
-        if step == 2:
-            return "", [call("poser_texte", sorte="note", texte="Suite proposée : une carte Générer image par personnage, "
-                             "d'après les références du cadre Images.", pres_de="new:0", pourquoi="la proposition de suite")]
-        return (f"J'ai lu {len(docs)} document{'s' if len(docs) > 1 else ''} et regardé {len(imgs)} image{'s' if len(imgs) > 1 else ''} : "
-                "trois cadres (Histoire, Personnages et lieux, Images), un résumé par document, et une proposition de suite."), None
 
     # ── le serveur ───────────────────────────────────────────
     def start(self, port: int = 0, host: str = "127.0.0.1") -> str:
