@@ -19,7 +19,6 @@ import { menu } from '../../commun/menu.js';
 import { fontsOf } from './scene.js';
 
 const FINIS = ['done', 'error', 'cancelled', 'interrupted'];
-const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
 const safeName = (s) => String(s || 'presentation').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'presentation';
 
 // ctx : { app, frames() (les diapositives montrées), outline (le plan : ses scènes en petit),
@@ -60,7 +59,7 @@ export function exporter(ctx) {
     if (!ctx.frames().length) return short ? 'aucune diapositive (+ Diapositive)' : 'aucune diapositive à exporter : le panneau Diapositives en fait (+ Diapositive)';
     const b = ctx.busy(short);
     if (b) return b;
-    if (pending || (job && !FINIS.includes(job.state))) return short ? 'un export est déjà en route' : 'un export de cette présentation est déjà en route (son avancée sous la barre)';
+    if (pending || (job && !FINIS.includes(job.state) && (job.params?.board || app.S.board?.id) === app.S.board?.id)) return short ? 'un export est déjà en route' : 'un export de cette présentation est déjà en route (son avancée sous la barre)';
     if (pdf) {
       const bad = refusedFonts();
       if (bad.length) {
