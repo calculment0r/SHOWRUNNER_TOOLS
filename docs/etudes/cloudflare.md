@@ -115,6 +115,12 @@ Asset, Idéation) font 85 requêtes par minute : c'est ce que montrait l'Observa
    - le meneur relève et diffuse la liste (`BroadcastChannel` « sr-file:<Workspace> ») ;
    - un geste relève dans son propre onglet et diffuse aussi ;
    - un suiveur qui n'entend rien pendant le délai + 15 s relève lui-même ;
+   - un onglet caché garde la dernière liste diffusée sans la traiter, et la traite à son
+     retour : rien ne part caché, pas même ce que relit un `sr:job` (Asset, le panneau) ;
+   - un travail né et fini entre deux listes (un travail court, ou pendant que l'onglet était
+     caché) fait aussi son `sr:job` : il est plus récent que tous ceux de la liste d'avant
+     (`created`, l'heure du portail) ;
+   - un onglet neuf ne partage qu'une fois son Workspace connu (la session a répondu) ;
    - sans ces API, chaque onglet relève.
 
    `jobs.wait` lit la liste tant que le travail tourne, puis sa fiche une fois fini (un GET

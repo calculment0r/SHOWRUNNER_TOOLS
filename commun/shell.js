@@ -148,6 +148,8 @@ export const session = (fresh = false) => {
         else if (!ESPACE && me.workspace && me.workspace.id) fixeEspace(me.workspace.id);
       }
       lastMe = me;
+      espaceSu = true;   // le Workspace de l'onglet est fixé : la file peut se partager (brancherPartage)
+      if (pollOn) brancherPartage();
       ss.set(ME_KEY, me ? JSON.stringify(me) : null);
       poseStudio(me);
       paintEspace();
@@ -604,8 +606,9 @@ const porteTravail = (d) => !!d && typeof d === 'object' && (estTravail(d) || es
 // plusieurs onglets qui relèvent chacun la file. Les onglets visibles d'un même portail (même origine, même
 // Workspace : ev_seq est celui du Workspace) élisent un meneur par un verrou (Web Locks, navigator.locks : tenu
 // tant que l'onglet le garde ; l'onglet fermé, le verrou passe au suivant ; caché, la porte fermée, il le rend).
-// Le meneur seul relève la file au rythme ci-dessus et diffuse chaque liste (BroadcastChannel) ; chaque onglet,
-// caché compris, la traite comme la sienne (recevoir) : sr:job, sr:elements, l'en-tête, jobs.wait. Un geste qui
+// Le meneur seul relève la file au rythme ci-dessus et diffuse chaque liste (BroadcastChannel) ; chaque onglet
+// visible la traite comme la sienne (recevoir) : sr:job, sr:elements, l'en-tête, jobs.wait ; un onglet caché
+// garde la dernière et la traite à son retour (gardee : caché, rien ne part, pas même ce que sr:job relit). Un geste qui
 // touche la file relève tout de suite dans son onglet, et diffuse aussi. Un suiveur qui n'entend rien pendant le
 // délai + 15 s relève lui-même (le filet). Sans ces deux API : chaque onglet relève, comme avant.
 const PARTAGE = typeof BroadcastChannel === 'function' && !!(navigator.locks && typeof navigator.locks.request === 'function');
@@ -613,8 +616,10 @@ let canal = null;      // le canal du Workspace de l'onglet
 let canalNom = '';
 let meneur = false;    // cet onglet tient le verrou : il relève pour tous
 let lacher = null;     // rend le verrou, ou abandonne la demande en attente
+let gardee = null;     // la dernière liste diffusée pendant que l'onglet était caché : traitée à son retour
+let espaceSu = false;  // la session a répondu (le Workspace de l'onglet est connu) : avant, chacun relève pour soi
 function brancherPartage() {
-  if (!PARTAGE) return;
+  if (!PARTAGE || !espaceSu) return;   // un onglet neuf ne sait son Workspace qu'à la réponse de la session
   const nom = `sr-file:${ESPACE || ''}`;
   if (canal && canalNom === nom) { briguer(); return; }
   if (lacher) lacher();
@@ -625,6 +630,8 @@ function brancherPartage() {
   canal.onmessage = (e) => {
     const d = e.data;
     if (!d || d.t !== 'file' || !Array.isArray(d.jobs)) return;
+    // caché : gardée pour le retour, rien de traité (un sr:job ferait relire ses pages : Asset, le panneau…)
+    if (ongletCache()) { gardee = { jobs: d.jobs, ev: d.ev, bouge: Number(d.bouge) || 0, at: Date.now() }; return; }
     recevoir(d.jobs, d.ev, Number(d.bouge) || 0);
     planifier();
   };
@@ -648,7 +655,7 @@ function briguer() {
 function fileCachee() { if (lacher) lacher(); clearTimeout(pollT); pollT = 0; }
 function planifier() {
   clearTimeout(pollT); pollT = 0;
-  if (!pollOn || doorOn || ongletCache()) return;
+  if (!pollOn || doorOn || ongletCache() || pollVol) return;   // un relevé en vol replanifie en finissant
   const active = lastJobs.some((j) => j.state === 'queued' || j.state === 'running');
   const d = active ? FILE_ACTIVE : Date.now() - bougeA < FILE_CALME ? FILE_PRES : FILE_REPOS;
   // le meneur (ou chaque onglet, sans partage) relève à son heure ; un suiveur attend la diffusion (le filet)
@@ -656,16 +663,24 @@ function planifier() {
   pollT = setTimeout(() => jobs.poll(true), attente);
 }
 // une liste de la file, relevée ici ou diffusée par un autre onglet : la même suite pour toutes
+let dejaRecu = false;   // une première liste reçue : la suivante dit ce qui a changé depuis
 function recevoir(list, ev, bouge = 0) {
   entenduA = Date.now();
   if (bouge > bougeA) bougeA = bouge;
   const before = new Map(lastJobs.map((j) => [j.id, j.state]));
+  // le plus récent travail de la liste d'avant (heure du portail) : un travail absent d'elle et au moins aussi
+  // récent est né depuis (fini entre deux relevés, ou pendant que l'onglet était caché : son sr:job part quand
+  // même) ; plus ancien, il remonte seulement dans la fenêtre des 60 (un autre retiré)
+  const seuil = lastJobs.reduce((m, j) => (j.created && j.created > m ? j.created : m), '');
+  const premier = !dejaRecu;
+  dejaRecu = true;
   lastJobs = list;
   for (const cb of listeners) cb(list);
   for (const j of list) {
     const was = before.get(j.id);
-    if (was !== undefined && was !== j.state) bougeA = Date.now();
-    if (was && was !== j.state && ['done', 'error', 'cancelled'].includes(j.state)) {
+    const neuf = was === undefined && !premier && !!j.created && j.created >= seuil;
+    if ((was !== undefined && was !== j.state) || neuf) bougeA = Date.now();
+    if (['done', 'error', 'cancelled'].includes(j.state) && (was ? was !== j.state : neuf)) {
       document.dispatchEvent(new CustomEvent('sr:job', { detail: j }));
     }
   }
@@ -690,7 +705,8 @@ export const jobs = {
   retry: (id) => api(`jobs/${id}/retry`, { method: 'POST' }).then((j) => (fileBouge(), j)),
   forget: (id) => api(`jobs/${id}/forget`, { method: 'POST' }).then(() => fileBouge()),
   // cb(liste) à chaque relevé ; renvoie de quoi se désabonner
-  watch(cb) { listeners.add(cb); if (lastJobs.length) cb(lastJobs); jobs.poll(true); return () => listeners.delete(cb); },
+  // (un relevé déjà en vol sert aussi ce nouvel abonné : pas un de plus)
+  watch(cb) { listeners.add(cb); if (lastJobs.length) cb(lastJobs); if (pollVol) pollOn = true; else jobs.poll(true); return () => listeners.delete(cb); },
   // Un seul relevé à la fois, une seule minuterie : un poll(true) pendant un relevé en vol en demande
   // UN de plus, juste après (avant le 06/10, chaque jobs.watch lancé pendant un vol ajoutait une chaîne :
   // l'accueil relisait la file deux fois, ODIO trois — tools/compte_requetes.mjs).
@@ -725,12 +741,14 @@ export const jobs = {
     }
   },
 };
-// de retour sur l'onglet : il brigue le verrou ; la liste diffusée pendant qu'il était caché a moins de 2 s : rien
-// à relire, sinon relue tout de suite
+// de retour sur l'onglet : il brigue le verrou ; la dernière liste diffusée pendant qu'il était caché est traitée
+// (les travaux finis entre-temps font leur sr:job maintenant) si elle a moins de 2 s, sinon la file est relue
 auRetour(() => {
   if (!pollOn) return;
   brancherPartage();
-  if (!canal || Date.now() - entenduA > 2000) jobs.poll(true); else planifier();
+  const g = gardee;
+  gardee = null;
+  if (g && Date.now() - g.at < 2000) { recevoir(g.jobs, g.ev, g.bouge); planifier(); } else jobs.poll(true);
 });
 
 const STATE_FR = { queued: 'en file', running: 'en cours', done: 'fini', error: 'échec', cancelled: 'arrêté', interrupted: 'interrompu' };
