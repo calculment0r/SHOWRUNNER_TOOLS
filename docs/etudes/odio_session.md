@@ -321,8 +321,17 @@ une couche par-dessus l'arrangement.
   § 2.F) : par construction, aucune piste n'est prise par la Session.
 - Le nodal montre les modules des voies sans leur titre (le nom de la voie sur
   son nœud de départ, comme pour une piste) : `nodal.js`.
-- Le panneau Asset, cliqué depuis la Session, pose encore sur l'arrangement
-  (`panneau.js`) ; glisser dans une case marche.
+- ~~Le panneau Asset, cliqué depuis la Session, pose encore sur l'arrangement
+  (`panneau.js`) ; glisser dans une case marche.~~ **Fait (06/10, finitions)** :
+  en Session, un clic du panneau pose dans la case choisie, comme un clic du
+  navigateur (`app.session.poser`, session.js) ; sans case de voie choisie (la
+  colonne des scènes, la Session vierge), une voie neuve ; un son sur une voie
+  de notes : une voie neuve, en le disant. Le clic droit propose « Dans une voie
+  neuve » ; l'aide du bas et l'entrée du menu suivent la vue ; en Session, les
+  filtres restent ceux d'ODIO (une case s'y choisit d'un simple clic). Essayé
+  dans Chromium, deux thèmes, sans erreur console : vierge, case choisie, voie
+  de synthé, clip MIDI dans une voie Analog, voie neuve, Ctrl+Z ; l'arrangement
+  inchangé (13 clips).
 - Follow Actions, Legato, vélocité du lancement ; la prise audio en Session ;
   un clip MIDI de plus de 256 pas n'entre qu'en partie dans une case.
 - Relire les trois chapitres sur le manuel (le réseau l'a refusé).

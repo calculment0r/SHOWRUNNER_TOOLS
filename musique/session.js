@@ -369,8 +369,9 @@ export function createSession(app) {
   // Des objets de la bibliothèque (le panneau Asset, le navigateur, le disque),
   // lâchés sur une case : les suivants descendent d'une scène à chaque fois (Live).
   // Hors d'une voie qui les prend (la colonne libre, la Session vierge) : une voie neuve.
+  // Rend le nombre de clips posés.
   async function deposer(items, here) {
-    if (!items.length) return;
+    if (!items.length) return 0;
     let sid = caseDe(here), v = here?.v ? voie(here.v) : null;
     const made = [];
     for (const it of items) {
@@ -387,10 +388,11 @@ export function createSession(app) {
       } else { toast(`la Session prend des sons et des clips MIDI : « ${it.title || it.id} » n'en est pas un`); continue; }
       sid = sceneSous(sid);
     }
-    if (!made.length) return;
+    if (!made.length) return 0;
     cur.v = made[0].voie; cur.s = made[0].scene; S.sel.slot = made[0].id; S.sel.voie = made[0].voie;
     app.label(made.length > 1 ? `poser ${made.length} clips de Session` : `poser « ${slotName(made[0])} » en Session`);
     app.commit('graph');
+    return made.length;
   }
   // ce que le navigateur d'ODIO lâche (navigateur.js) sur une case — ou un clic, dans la case choisie
   async function deposerOdio(d, here) {
@@ -1097,7 +1099,11 @@ export function createSession(app) {
     return null;
   }
 
-  // la prise lit le clavier de l'ordinateur et le MIDI (musique.js les lui passe)
-  app.session = { noteOn, noteOff };
+  // la prise lit le clavier de l'ordinateur et le MIDI (musique.js les lui passe) ;
+  // le panneau Asset (panneau.js) pose par un clic dans la case choisie, comme le
+  // navigateur — sans case de voie choisie (la colonne des scènes, la Session
+  // vierge), une voie neuve ; `neuve` : une voie neuve dans la scène choisie
+  app.session = { noteOn, noteOff,
+    poser: (items, { neuve = false } = {}) => deposer(items, neuve ? { v: null, s: cur.s } : ici()) };
   return { el: root, render, frame, key, zoneMenu, paintSel, lancerScene, appuyer, arreter, finirPrise, get prise() { return prise; } };
 }
