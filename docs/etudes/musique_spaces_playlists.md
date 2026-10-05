@@ -248,11 +248,21 @@ Ce qu'on ajoute à AGOSTA :
    - **premier essai : l'album AGOSTA** (14 MP3 + 13 LRC du dépôt `calculment0r/AGOSTA`) importé en playlist,
      exporté en .zip, puis comparé au site en ligne sur iPhone et Android avec la liste de contrôle du README
      d'AGOSTA (§ 9).
+   - **FAIT (05/10, wip2/ecoute)** : `ecoute/`, `server/tools/ecoute.py` (`POST /api/ecoute/<id>/zip`). Essai sur
+     AGOSTA : le .zip et le site comparés dans Chromium (bureau, iPhone et Android émulés, deux thèmes), la liste
+     du § 9 tenue sur tout ce qui se vérifie sans téléphone ; restent l'écran verrouillé et la lecture écran
+     éteint sur de vrais appareils.
 4. **Les paroles calées** : stems, puis Transcrire en mots, puis l'alignement, puis l'éditeur LRC. Essai sur
    les chansons d'AGOSTA, dont les LRC calés par aeneas servent de vérité : on mesure l'écart ligne par ligne.
 5. **Le volume égal et les enchaînements** à la publication.
+   - **FAIT (05/10, wip2/ecoute)** : loudnorm en deux passes, gardé linéaire quand un simple gain suffit (son
+     mode dynamique écrasait l'étendue d'un morceau d'AGOSTA : LRA 5,8 → 3,5 pour −0,5 dB) ; gapless, fondu
+     enchaîné 0-6 s et « un seul fichier continu », ces deux-là fabriqués dans un seul MP3.
 6. **La destination A** (route Worker, envoi R2, aperçu du lien, code, date de fin, compteur), après le
    jeton R2 de Cal. Puis B si Cal le veut.
+   - **CODÉ, NON DÉPLOYÉ (05/10, wip2/ecoute)** : `GET /ecoute/<jeton>/…` dans `porte/worker.js`, l'envoi par
+     `porte/r2_recopie.py`, `POST /api/ecoute/<id>/publier` et `…/retirer`. Essayé sans Cloudflare
+     (`node porte/essai_ecoute.mjs`, un faux bucket ; un faux S3 dans le selftest). Attend le jeton R2 de Cal.
 7. **ODIO dans les Spaces** (étape 2) : la rubrique « Space » du navigateur d'ODIO, au-dessus de la
    bibliothèque du projet de `wip/odio-session2`.
 
