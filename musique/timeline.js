@@ -97,8 +97,12 @@ export function createTimeline(app) {
   const ui = () => S.proj.ui;
   const ppb = () => ui().ppb || 83 / 4;                 // pixels par noire
   const th = () => ui().th || 88;                       // hauteur des pistes (toutes)
-  // la hauteur d'UNE piste : la sienne (Ctrl+molette sur son en-tête, ui().thT), sinon celle de toutes
-  const TH_MIN = 48, TH_MAX = 180;
+  // la hauteur d'UNE piste : la sienne (Ctrl+molette sur son en-tête, ui().thT), sinon celle de toutes.
+  // L'en-tête suit sa hauteur réelle par paliers (musique.css, « les paliers de
+  // l'en-tête » : pleine, compacte, minimale) ; le plancher est celui de la
+  // minimale (une ligne : le nom et les boutons resserrés) — avant (48), le nom
+  // s'écrasait déjà (05/10, Cal : « on ne voit plus ce que c'est »)
+  const TH_MIN = 26, TH_MAX = 180;
   const thOf = (t) => ui().thT?.[t.id] || th();
   const snapU = () => { const s = ui().snap ?? 1; return s === 'bar' ? P().sig : s; };
   const navW = () => (ui().nav === false ? 30 : clamp(ui().navW || 214, 160, 420));
@@ -722,7 +726,8 @@ export function createTimeline(app) {
       onpointerdown: (e) => e.stopPropagation() });
     const mtr = el('div', { class: 'ar-mtr' }, el('i'));
     meters.push([t.strip, mtr]);
-    const nm = el('span', { class: 'nm', title: 'double-clic : renommer (Ctrl+R)', ondblclick: (e) => { e.stopPropagation(); renameTrack(t, nm); } }, t.name);
+    // son nom entier au survol : en-tête bas, il est tronqué (musique.css, les paliers)
+    const nm = el('span', { class: 'nm', title: `${t.name} · double-clic : renommer (Ctrl+R)`, ondblclick: (e) => { e.stopPropagation(); renameTrack(t, nm); } }, t.name);
     const picked = (S.sel.tracks || []).includes(t.id);
     const box = el('div', { class: `ar-head${S.sel.track === t.id ? ' sel' : ''}${picked ? ' pick' : ''}${t.mute ? ' muted' : ''}${isGenTrack(t) ? ' gen' : ''}${t.grp ? ' in-grp' : ''}`, style: { '--c': `var(--${t.color})`, height: `${thOf(t)}px` },
       'data-track': t.id, 'data-piste': t.id, title: 'clic : choisir (Ctrl : ajouter ou retirer, Maj : jusqu\'à elle) · Suppr : retirer · glisser : déplacer — lâchée ENTRE deux pistes elle s\'y range, SUR une piste elle fait groupe · Ctrl+molette : sa hauteur' },
