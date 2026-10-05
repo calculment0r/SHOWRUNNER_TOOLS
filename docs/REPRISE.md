@@ -1,7 +1,7 @@
 # Reprise — à lire en premier
 
 **État au 05/10/2026, 23 h.** C'est la fin de la session cloud du 05/10 après-midi et soir. `main` est à jour et
-en ligne, et `check.py` y passe : **2601 / 0**. La mise à jour automatique le publie seule. Quatre branches
+en ligne. `check.py` : **2601 / 0** sur `main`, et **2723 / 0** sur `main` plus les cinq branches de fin de session. La mise à jour automatique le publie seule. Quatre branches
 `wip/…` attendent sur GitHub ; elles se fusionnent sans conflit et passent `check.py` (essayé, § 2.A).
 
 - Portail à la maison : **http://192.168.10.247:8790/** (DGX2 ; Tailscale http://100.108.108.65:8790/).
@@ -62,7 +62,8 @@ Ses règles sont fermes ; elles sont dans `CLAUDE.md` et au § 5 plus bas.
 
 - Réponses en français, courtes, avec le lien pour tester. **Jamais d'émoticône.**
 - Cal lit un **« point » en HTML** envoyé dans le chat à chaque session (le dernier :
-  `point_showrunner_0510_soir.html`). C'est un fichier, pas un artifact.
+  `point_showrunner_0510_soir.html`). C'est un fichier, pas un artifact, et il n'est pas dans le dépôt :
+  ce fichier-ci fait foi.
 - Chercher avant de faire, citer ses sources, ne rien inventer ; « non documenté » plutôt qu'une
   supposition.
 - Thème : uniquement les jetons de `commun/tokens.css`, deux thèmes (`CLAUDE.md`).
