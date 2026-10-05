@@ -400,6 +400,12 @@ def relation(a: dict | None, b: dict | None) -> str:
     return f"{f} quinte{'s' if f > 1 else ''}" + (", autre mode" if a["mode"] != b["mode"] else "")
 
 
+def voisines(a: dict | None, b: dict | None) -> bool:
+    """Deux tonalités voisines : la même, une quinte, la relative (un cran de la roue)."""
+    d = key_distance(a, b)
+    return d is not None and d <= 1
+
+
 def _key_cost(a: dict | None, b: dict | None) -> float:
     d = key_distance(a, b)
     return UNKNOWN_KEY if d is None else max(0, d - 1)
@@ -602,7 +608,7 @@ def api_order(req, pid):
         prev = metas[order[p - 1]] if p else None
         rows.append({"from": i, "item": tracks[i]["item"], "bpm": m["bpm"], "key": m["key"]["label"] if m["key"] else None,
                      "src": m["src"], "link": relation(prev["key"], m["key"]) if prev else "",
-                     "near": bool(prev) and (key_distance(prev["key"], m["key"]) or 9) <= 1})
+                     "near": bool(prev) and voisines(prev["key"], m["key"])})
     near = sum(1 for x in rows[1:] if x["near"])
     keyed = sum(1 for p in range(1, len(order)) if metas[order[p - 1]]["key"] and metas[order[p]]["key"])
     bpms = [x["bpm"] for x in rows if x["bpm"]]
@@ -770,7 +776,9 @@ def selftest(call, ok) -> None:
     ok(key_distance(key_of("C"), key_of("G")) == 1 and key_distance(key_of("C"), key_of("Am")) == 1
        and key_distance(key_of("C"), key_of("C")) == 0 and key_distance(key_of("C"), key_of("F#")) == 6
        and key_distance(key_of("C"), key_of("Cm")) == 4 and relation(key_of("Am"), key_of("C")) == "relative"
-       and relation(key_of("C"), key_of("F")) == "quinte voisine",
+       and relation(key_of("C"), key_of("F")) == "quinte voisine"
+       and voisines(key_of("C"), key_of("C")) and voisines(key_of("Am"), key_of("C")) and not voisines(key_of("C"), key_of("D"))
+       and not voisines(None, key_of("C")),
        "le cycle des quintes : quinte, relative, triton, parallèle")
     ok(arch_targets([90, 100, 110, 120, 130]) == [90, 110, 120, 130, 100],
        f"l'arc : lent, monte, sommet aux deux tiers, redescend ({arch_targets([90, 100, 110, 120, 130])})")

@@ -29,11 +29,13 @@
 //
 // L'annulation (commun/undo.js) : mettre une chanson à la corbeille. Le
 // formulaire se garde dans ce navigateur (localStorage), rien à enregistrer.
-import { mountHeader, api, jobs, pick, toast, el, $, href, fmtDur, fmtWait, uploadFile, dropZone, dropAnywhere, stateFr, TOOLS } from '../commun/shell.js';
+import { mountHeader, api, jobs, pick, toast, el, $, href, fmtDur, fmtWait, uploadFile, dropZone, dropAnywhere, stateFr, TOOLS, dragItem } from '../commun/shell.js';
 import { createUndo, libTrash } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { contextMenu, pageMenu, kebab } from '../commun/menu.js';
 import { ask } from '../commun/fil.js';
+// les playlists (05/10) : le volet à droite de la scène (chanson/playlist.js)
+import { monterPlaylists } from './playlist.js';
 
 const hdr = mountHeader('chanson', { sub: 'une chanson par prompt' });
 // accroche : tant que commun/shell.js (TOOLS) ne connaît pas l'app, elle pose son nom elle-même
@@ -67,6 +69,7 @@ const ICON = {
   pause: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 1.5h2.6v9H2.5zM6.9 1.5h2.6v9H6.9z"/></svg>',
 };
 
+let PL = null;            // le volet des playlists (monté au démarrage)
 const put = (box, ...kids) => box && box.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false && k !== ''));
 const PRE = (id) => S.cfg?.presets.find((p) => p.id === id);
 const MOD = (id) => S.cfg?.models[id];
@@ -463,6 +466,7 @@ function find(id) {
   return null;
 }
 function toggle(it, song, at = null) {
+  PL?.pause();             // une seule écoute à la fois : la playlist se tait
   if (S.cur?.id === it.id && at === null) {
     if (player.paused) player.play().catch(() => {}); else player.pause();
     return;
@@ -624,9 +628,10 @@ function card(s) {
       el('button', { class: 'tb ghost sm', type: 'button', 'data-act': 'odio', title: studio() ? (s.stems?.length ? 'la chanson et ses pistes dans le studio' : 'la chanson dans le studio') : S.cfg.studio.why,
         onclick: () => openOdio(s) }, 'Ouvrir dans ODIO', studio() ? null : el('span', { class: 'ch-lock' }, 'Studio'))),
     s.stems?.length ? el('div', { class: 'ch-stems' }, el('span', { class: 'lbl' }, 'pistes'),
-      s.stems.map((st) => el('button', { class: 'ch-stem', type: 'button', 'data-id': st.id, title: `écouter ${STEM_FR[st.params?.stem] || st.params?.stem} seule`,
-        onclick: () => toggle(st, s) }, el('i', { html: ICON.play }), STEM_FR[st.params?.stem] || st.params?.stem))) : null);
-  return c;
+      s.stems.map((st) => dragItem(el('button', { class: 'ch-stem', type: 'button', 'data-id': st.id, title: `écouter ${STEM_FR[st.params?.stem] || st.params?.stem} seule · glisser : dans la playlist`,
+        onclick: () => toggle(st, s) }, el('i', { html: ICON.play }), STEM_FR[st.params?.stem] || st.params?.stem), st))) : null);
+  // une carte se glisse : dans la playlist (le volet), ou partout où l'on attend un son
+  return dragItem(c, s);
 }
 function songMenu(s) {
   const playing = S.cur?.id === s.id && !player.paused;
@@ -634,6 +639,7 @@ function songMenu(s) {
     { label: playing ? 'Pause' : 'Écouter', icon: playing ? '❚❚' : '▶', key: 'Espace', onclick: () => toggle(s, s) },
     { label: 'Reprendre ces réglages', icon: '⤓', sub: 'dans le formulaire', onclick: () => takeRecipe(s) },
     { label: 'Une variante', icon: '↻', sub: 'une autre graine', onclick: () => variant(s) },
+    { label: 'Ajouter à la playlist', icon: '≣', sub: 'le volet à droite', onclick: () => PL?.ajouter([s]) },
     s.params?.score ? { label: 'Copier la partition', icon: '♪', sub: 'ABC', onclick: () => copyScore(s) } : null,
     '-',
     { label: 'Séparer les pistes', icon: '≡', disabled: !!s.stems?.length || !!stemJob(s), why: s.stems?.length ? 'déjà séparée' : 'en cours', onclick: () => separate(s) },
@@ -769,6 +775,8 @@ document.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey || document.querySelector('.scrim')) return;
   const t = document.activeElement;
   if (t && (['INPUT', 'SELECT', 'TEXTAREA'].includes(t.tagName) || t.isContentEditable)) return;
+  // la playlist joue (ou attend en pause) et aucune chanson de la page : Espace est à elle
+  if (e.key === ' ' && !S.cur && PL?.actif()) { e.preventDefault(); PL.toggle(); return; }
   if (e.key === ' ') {
     const f = S.cur ? find(S.cur.id) : null;
     const it = f?.it || S.songs[0];
@@ -805,6 +813,9 @@ async function start() {
   S.advOpen = !!d.advOpen;
   if (d.ref) { try { S.ref = await api('library/' + d.ref); } catch { S.ref = null; } }
   buildRail();
+  // le volet des playlists : son bouton dans l'en-tête de la scène ; écouter la playlist arrête la page
+  PL = monterPlaylists({ U, onPlay: () => { if (S.cur) stop(); } });
+  $('.ch-head .sr-undo')?.before(PL.bouton());
   contextMenu($('#stage'), stageMenu);
   dropAnywhere((files) => { const f = files.find((x) => /^audio\//.test(x.type) || /\.(wav|mp3|flac|m4a|ogg)$/i.test(x.name)); if (f) refFromFile(f); else toast('seul un son se dépose ici : la référence', 5000); });
   await loadSongs();

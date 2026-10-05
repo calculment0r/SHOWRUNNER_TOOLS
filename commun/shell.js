@@ -1098,7 +1098,9 @@ export function jobRow(j) {
 // ── vignettes ───────────────────────────────────────────────
 // midi : un clip de notes d'ODIO ; sequence : une séquence du Montage (29/09)
 // document : tout ce qui n'est pas un média (05/10, server/tools/documents.py)
-const KIND_FR = { image: 'image', video: 'vidéo', audio: 'son', element: 'élément', midi: 'MIDI', sequence: 'séquence', document: 'document' };
+// playlist : une suite de sons de Musique (05/10, server/tools/playlist.py)
+const KIND_FR = { image: 'image', video: 'vidéo', audio: 'son', element: 'élément', midi: 'MIDI', sequence: 'séquence', document: 'document',
+  playlist: 'playlist' };
 export const kindFr = (k) => KIND_FR[k] || k;
 // les sortes d'un élément : les planches (server/core/library.py, ELEMENT_TYPES), puis les sortes d'un
 // élément versionné (VERSIONED_TYPES : une chanson, un son, une séquence, une image) — jamais le nom
@@ -1128,6 +1130,8 @@ export const KIND_ICON = {
   element: '<svg viewBox="0 0 24 24"><path d="M4 9h11v11H4zM9 4h11v11h-5"/></svg>',
   // une page au coin plié : un document (PDF, texte, DOCX…), pas une image
   document: '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6"/></svg>',
+  // trois lignes et une croche : une playlist (une suite de sons), pas son image de pochette
+  playlist: '<svg viewBox="0 0 24 24"><path d="M3 6h12M3 11h12M3 16h7M18 17V6l3-1M18 17a2 2 0 1 1-4 0 2 2 0 0 1 4 0z"/></svg>',
 };
 export function kindMark(it, { compact = false } = {}) {
   const k = it.kind;

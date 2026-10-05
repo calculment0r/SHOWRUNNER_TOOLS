@@ -365,6 +365,20 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .midi-drag .roll { position: relative; inset: auto; width: 64px; height: 40px; flex: none; }
 .midi-drag .md-t { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .midi-drag b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* la fiche d'une playlist (05/10) : sa pochette ou sa mosaïque (commun/pochette.js), ses morceaux à écouter */
+.pl-sh-poch { display: block; width: min(420px, 100%); align-self: center; }
+.viewer .pl-sh-poch { margin: var(--s5) auto; }
+.pl-sh-poch .sr-poch { width: 100%; height: auto; }
+.pl-sh-poch:hover .sr-poch { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.pl-sh-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.pl-sh-tr { display: grid; grid-template-columns: 26px minmax(0, 1fr) minmax(180px, 280px); gap: var(--s3); align-items: center;
+  padding: 6px var(--s3); border-radius: var(--r2); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
+.pl-sh-tr .t { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pl-sh-tr .t a, .pl-sh-tr .t b { font-weight: 500; font-size: 12.5px; color: var(--ink); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-sh-tr .t a:hover { color: var(--cy); }
+.pl-sh-tr.absent .t b { color: var(--ink3); text-decoration: line-through; }
+.pl-sh-tr.absent small { color: var(--amb); }
+@media (max-width: 700px) { .pl-sh-tr { grid-template-columns: 26px minmax(0, 1fr); } .pl-sh-tr .sr-mini { grid-column: 1 / -1; } }
 .sh-side { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
 .blk { background: var(--panel); border-radius: var(--r4); box-shadow: inset 0 0 0 1px var(--line); display: flex; flex-direction: column; min-width: 0; }
 .blk-head { display: flex; align-items: baseline; gap: var(--s3); padding: var(--s4) var(--s4) 0; }

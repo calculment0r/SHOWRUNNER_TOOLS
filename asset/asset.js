@@ -52,6 +52,7 @@ import { prefs } from '../commun/prefs.js';
 import { bind as bindView } from '../commun/proxies.js';
 import { contextMenu, pageMenu, copy } from '../commun/menu.js';
 import { lecteur, petitLecteur } from '../commun/lecteur.js';   // LE lecteur (30/09) : la vidéo ou le son d'une fiche, sa frise, sa tête
+import { pochette } from '../commun/pochette.js';               // la pochette d'une playlist : l'image choisie, sinon la mosaïque (05/10)
 
 mountHeader('asset');
 // le panneau Asset commun (commun/dock.js) n'est plus monté ici (Cal, 05/10 : la page est déjà la
@@ -158,9 +159,10 @@ const bySpace = (items) => {
 };
 
 // les sortes : `sequence` (une séquence du Montage) et `midi` (un clip de
-// notes d'ODIO) depuis le 29/09 (server/core/library.py, KINDS)
+// notes d'ODIO) depuis le 29/09 ; `playlist` (une suite de sons de Musique)
+// depuis le 05/10 (server/core/library.py, KINDS)
 const KINDS = [['', 'Tout'], ['image', 'Images'], ['element', 'Éléments'], ['video', 'Vidéos'], ['audio', 'Sons'],
-  ['sequence', 'Séquences'], ['midi', 'MIDI']];
+  ['sequence', 'Séquences'], ['midi', 'MIDI'], ['playlist', 'Playlists']];
 // les tris (server/tools/asset.py, SORTS)
 const SORTS = [['new', 'récents'], ['old', 'anciens'], ['updated', 'modifiés'], ['title', 'nom'], ['kind', 'sorte'], ['size', 'poids'], ['space', 'Workspace']];
 const DATES = [['', 'toutes dates'], ['1', 'aujourd’hui'], ['7', '7 derniers jours'], ['30', '30 derniers jours'], ['365', 'cette année']];
@@ -180,13 +182,13 @@ const ORDER_HINT = {
 const TOOL_FR = {
   upload: 'upload', asset: 'Asset', image: 'Image', movie: 'Vidéo', 'character-factory': 'Character Factory',
   object: 'Object Creator', objet: 'Object Creator', montage: 'Montage', music: 'ODIO', musique: 'ODIO', odio: 'ODIO',
-  analyse: 'Movie Analysis', upscale: 'Upscale', ideation: 'Idéation', selecteur: 'le sélecteur',
+  analyse: 'Movie Analysis', upscale: 'Upscale', ideation: 'Idéation', selecteur: 'le sélecteur', chanson: 'Musique',
 };
 const toolFr = (t) => TOOL_FR[t] || t || 'upload';
 const MEDIA = ['image', 'video', 'audio'];
 const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
 const KIND_N = { image: ['image', 'images'], element: ['élément', 'éléments'], video: ['vidéo', 'vidéos'], audio: ['son', 'sons'],
-  sequence: ['séquence', 'séquences'], midi: ['clip MIDI', 'clips MIDI'] };
+  sequence: ['séquence', 'séquences'], midi: ['clip MIDI', 'clips MIDI'], playlist: ['playlist', 'playlists'] };
 // les éléments versionnés (30/09, docs/etudes/apps_studio_elements.md) : une source,
 // une pile de versions ; leurs sortes s'ajoutent à celles des planches
 const VTYPE_FR = { music: 'musique', sound: 'son', sequence: 'séquence', picture: 'image' };
@@ -198,7 +200,7 @@ const stateLine = (s) => (!s ? '' : s.state === 'modifiée' ? `modifiée depuis 
 const fmtSize = (b) => (!b ? '—' : b < 1048576 ? `${Math.max(1, Math.round(b / 1024))} Ko` : b < 1073741824 ? `${(b / 1048576).toFixed(1).replace('.', ',')} Mo` : `${(b / 1073741824).toFixed(2).replace('.', ',')} Go`);
 
 // ── l'adresse : le lieu ──────────────────────────────────────
-const ID_RX = /^(ima|vid|aud|ele|seq|mid)-\d{8}-\d{6}-[0-9a-f]{4}$/;
+const ID_RX = /^(ima|vid|aud|ele|seq|mid|pla)-\d{8}-\d{6}-[0-9a-f]{4}$/;   // pla : une playlist (05/10)
 const ESP = /^(esp-[a-z0-9][a-z0-9-]{1,47})$/;
 function parseHash(raw = location.hash) {
   let h = raw.slice(1);
@@ -657,6 +659,7 @@ function subOf(it) {
   const p = it.params || {};
   if (it.kind === 'midi') return [p.bars ? `${p.bars} mes.` : '', p.notes ? `${p.notes} notes` : '', p.bpm ? `${p.bpm} bpm` : '', toolFr(it.origin?.tool)].filter(Boolean).join(' · ');
   if (it.kind === 'sequence') return [p.clips != null ? plural(p.clips, 'plan', 'plans') : '', it.duration ? fmtDur(it.duration) : '', p.format || ''].filter(Boolean).join(' · ');
+  if (it.kind === 'playlist') return [plural(it.playlist?.tracks?.length || 0, 'morceau', 'morceaux'), it.duration ? fmtDur(it.duration) : '', it.playlist?.artist || ''].filter(Boolean).join(' · ');
   if (isLiving(it)) return [it.element.head ? `v${it.element.head}` : 'sans version', plural(it.element.count || 0, 'version', 'versions'), stateLine(it.source_state)].filter(Boolean).join(' · ');
   if (it.kind === 'element') return `${plural(it.element?.refs?.length || 0, 'réf.', 'réf.')}${it.element?.voices?.length ? ' · voix' : ''}${it.element?.meshes?.length ? ' · 3D' : ''} · ${toolFr(it.origin?.tool)}`;
   return [it.width && it.height ? `${it.width}×${it.height}` : '', it.origin?.model || toolFr(it.origin?.tool)].filter(Boolean).join(' · ');
@@ -688,6 +691,8 @@ function itemCard(it) {
       title: [it.element.head ? `la dernière version : v${it.element.head}` : 'pas encore de version', stateLine(s)].filter(Boolean).join(' · ') },
     it.element.head ? `v${it.element.head}` : 'v—', it.element.count > 1 ? el('i', {}, `/${it.element.count}`) : null));
   } else if (!it.thumb_url && glyph(it.kind)) im.prepend(glyph(it.kind));
+  // une playlist sans pochette : la mosaïque de ses premiers morceaux, faite d'office (commun/pochette.js)
+  if (it.kind === 'playlist' && !it.thumb_url) im.prepend(pochette(it, { px: 180 }));
   if (it.version?.of) im.append(el('span', { class: 'verb of', title: it.version.of_present ? `v${it.version.n} de « ${it.version.of_title} »` : 'son élément est à la corbeille' }, `v${it.version.n}`));
   if (it.kind === 'element' && !it.thumb_url && !(living && glyph(it.element.head_kind))) im.prepend(el('span', { class: 'noimg' }, living && !it.element.head ? 'pas encore publié' : 'sans image'));
   if (it.fav) im.append(el('span', { class: 'star', title: 'favori' }, '★'));
@@ -725,7 +730,7 @@ function listHead() {
 const authorName = (id) => (S.data?.authors || []).find((a) => a.id === (id || ''))?.name || id || '—';
 function lthumb(it) {
   const pic = it.thumb_url || it.views?.length ? bindView(el('img', { alt: '', loading: 'lazy', decoding: 'async' }), it, { fit: 'cover', box: [44, 44] })
-    : glyph(it.kind, true) || kindMark(it, { compact: true });
+    : it.kind === 'playlist' ? pochette(it, { px: 44 }) : glyph(it.kind, true) || kindMark(it, { compact: true });
   return el('span', { class: 'lt' }, pic);
 }
 function listRow(it) {
@@ -818,7 +823,7 @@ function paintSel(force = false) {
 // d'affichage qui suffit (commun/proxies.js), suivie à la taille réelle
 function miniOf(m) {
   const pic = m.thumb_url || m.views?.length ? bindView(el('img', { alt: '', loading: 'lazy', decoding: 'async' }), m, { fit: 'cover', box: [88, 88] })
-    : glyph(m.kind, true) || (m.kind === 'audio' ? wave(7) : null);
+    : glyph(m.kind, true) || (m.kind === 'audio' ? wave(7) : m.kind === 'playlist' ? pochette(m, { px: 88 }) : null);
   return el('span', { class: 'mini' + (m.kind === 'element' ? ' el' : ''), title: m.title }, pic, el('i', {}, m.title));
 }
 
@@ -1959,7 +1964,7 @@ async function paintSheet(id, { keepScroll = false } = {}) {
     return;
   }
   sheetEl.replaceChildren(...(it.kind === 'element' ? elementSheet(it) : it.kind === 'sequence' ? sequenceSheet(it)
-    : it.kind === 'midi' ? midiSheet(it) : itemSheet(it)));
+    : it.kind === 'midi' ? midiSheet(it) : it.kind === 'playlist' ? playlistSheet(it) : itemSheet(it)));
   paintDatalist();
   if (keepScroll) scrollTo({ top: y });
 }
@@ -2049,7 +2054,8 @@ function foreignSheet(it) {
     media = el('div', { class: 'viewer sh-media' });
     if (it.kind === 'image' || ((it.kind === 'sequence' || living) && (it.thumb_url || it.views?.length))) {
       media.append(bindView(el('img', { alt: it.title, decoding: 'async' }), it, { fit: 'contain', box: [960, 720] }));
-    } else media.append(el('div', { class: 'seq-empty' }, glyph(it.kind) || null, el('p', { class: 'hint' }, 'pas d’aperçu d’ici : sa fiche, dans son Workspace, le montre')));
+    } else if (it.kind === 'playlist') media.append(el('div', { class: 'pl-sh-poch' }, pochette(it, { px: 480 })));
+    else media.append(el('div', { class: 'seq-empty' }, glyph(it.kind) || null, el('p', { class: 'hint' }, 'pas d’aperçu d’ici : sa fiche, dans son Workspace, le montre')));
   }
   const why = importWhy(it);
   const title = el('h1', { class: 'sh-title ro' }, it.title || it.id);
@@ -2132,6 +2138,53 @@ function sequenceSheet(it) {
     ['plans', p.clips != null ? String(p.clips) : ''], ['durée', it.duration ? fmtDur(it.duration) : ''], ['format', p.format || ''],
     ['taille', it.width && it.height ? `${it.width} × ${it.height} px` : ''], ['images/s', it.fps],
   ]), el('p', { class: 'hint' }, 'Les plans qu’elle emploie sont sa lignée, ci-dessous : les ouvrir mène à leur fiche.'));
+  return [sheetHead(it, kicker), acts,
+    el('section', { class: 'sh-grid' }, media, el('aside', { class: 'sh-side' }, facts, rangement(it), lineage(it), fabrication(it)))];
+}
+
+// ── une playlist de Musique ──────────────────────────────────
+// (05/10, server/tools/playlist.py ; docs/etudes/musique_spaces_playlists.md § 3) Une
+// suite de sons, réécrite en place : sa pochette (l'image choisie, sinon la mosaïque de
+// ses premiers morceaux), ses morceaux à écouter un par un (le petit lecteur), ce
+// qu'elle dit d'elle (artiste, année, enchaînements, téléchargement, description) ;
+// elle se range, se renomme, part à la corbeille comme tout objet ; Musique l'ouvre
+// dans son volet (chanson/?playlist=<id>), et l'y écoute en entier.
+const PL_MODE_FR = { gapless: 'sans blanc', crossfade: 'fondu enchaîné', single: 'un seul fichier continu' };
+function playlistSheet(it) {
+  const pl = it.playlist || {}, tracks = pl.tracks || [];
+  const open = href(`chanson/?playlist=${encodeURIComponent(it.id)}`);
+  const list = el('ol', { class: 'pl-sh-list', 'aria-label': 'les morceaux' }, el('li', { class: 'hint' }, 'lecture des morceaux…'));
+  const media = el('div', { class: 'sh-main pl-sh-main' },
+    el('a', { class: 'pl-sh-poch', href: open, title: pl.cover ? 'la pochette · ouvrir dans Musique' : 'la mosaïque de ses premiers morceaux (faite d’office) · ouvrir dans Musique' },
+      pochette(it, { px: 480 })),
+    blk('les morceaux', tracks.length ? `${plural(tracks.length, 'morceau', 'morceaux')} · ${fmtDur(it.duration || 0)}` : 'aucun encore', list));
+  api('playlist/' + encodeURIComponent(it.id)).then((d) => {
+    const items = d.items || {};
+    // la mosaïque connaît maintenant les vignettes de ses sons
+    if (!pl.cover) $('.pl-sh-poch', media)?.replaceChildren(pochette(d, { items, px: 480 }));
+    list.replaceChildren(...(tracks.length ? tracks.map((t, k) => {
+      const a = items[t.item];
+      const m = d.metas?.[t.item] || {};
+      return el('li', { class: 'pl-sh-tr' + (a ? '' : ' absent') },
+        el('span', { class: 'n lbl' }, String(k + 1).padStart(2, '0')),
+        el('span', { class: 't' }, a ? el('a', { href: '#' + a.id, title: 'sa fiche' }, t.title || a.title || a.id) : el('b', {}, t.title || 'son absent'),
+          el('small', { class: 'lbl' }, [a ? fmtDur(a.duration) : 'à la corbeille, ou plus dans ce Workspace', m.bpm ? `${Math.round(m.bpm)} bpm` : '', m.key || '',
+            t.credits ? t.credits : '', t.lrc || a?.lrc ? 'paroles calées' : t.lyrics ? 'paroles' : ''].filter(Boolean).join(' · '))),
+        a ? petitLecteur(a.url, { duree: a.duration, titre: t.title || a.title }) : el('span'));
+    }) : [el('li', { class: 'hint' }, 'Aucun morceau : ouvre-la dans Musique et glisse des chansons dans son volet.')]));
+  }).catch((e) => list.replaceChildren(el('li', { class: 'warn' }, e.message)));
+  const kicker = ['playlist', plural(tracks.length, 'morceau', 'morceaux'), it.duration ? fmtDur(it.duration) : '', pl.artist || '', 'fait dans Musique'].filter(Boolean).join(' · ');
+  const acts = el('section', { class: 'sh-acts' },
+    link('Ouvrir dans Musique', open, { go: true, title: 'le volet des playlists de Musique : glisser, réordonner, écouter toute la playlist' }),
+    el('span', { class: 'sp' }),
+    btn('Corbeille', () => trashItem(it, { leave: true }), { title: 'mettre à la corbeille — on peut l\'annuler ; ses sons restent dans la bibliothèque' }));
+  const T = pl.transition || {};
+  const facts = blk('la playlist', 'lue dans Musique', readout([
+    ['artiste', pl.artist || ''], ['année', pl.year || ''], ['morceaux', String(tracks.length)], ['durée', it.duration ? fmtDur(it.duration) : ''],
+    ['enchaîner', `${PL_MODE_FR[T.mode] || T.mode || ''}${T.mode === 'crossfade' ? ` · ${T.crossfade_s} s` : ''}`],
+    ['télécharger', pl.download ? 'permis sur le lecteur publié' : 'non'], ['pochette', pl.cover ? 'une image de la bibliothèque' : 'la mosaïque (d’office)'],
+  ]), (pl.description || '').trim() ? el('p', { class: 'o-prose' }, pl.description) : null,
+  el('p', { class: 'hint' }, 'Ses sons sont sa lignée, ci-dessous : les ouvrir mène à leur fiche.'));
   return [sheetHead(it, kicker), acts,
     el('section', { class: 'sh-grid' }, media, el('aside', { class: 'sh-side' }, facts, rangement(it), lineage(it), fabrication(it)))];
 }
@@ -2861,6 +2914,7 @@ function kindItems(it) {
       it.element?.type === 'object' ? { label: 'Ouvrir dans Object Creator', icon: '◇', studio: true, onclick: goTo(`objet/#${id}`) } : null, ...versionItems(it)];
   }
   if (it.kind === 'sequence') return [{ label: 'Ouvrir dans le Montage', icon: '▤', studio: true, onclick: goTo(`montage/#${id}`) }];
+  if (it.kind === 'playlist') return [{ label: 'Ouvrir dans Musique', icon: '≣', sub: 'le volet des playlists', onclick: goTo(`chanson/?playlist=${id}`) }];
   if (it.kind === 'midi') return [{ label: 'Ouvrir ODIO', icon: '↗', sub: 'nouvel onglet', studio: true, onclick: () => window.open(href('musique/'), '_blank', 'noopener') }, ...versionItems(it)];
   return [];
 }
