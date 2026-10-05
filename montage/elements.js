@@ -12,10 +12,13 @@
 //     nouvelle version est plus courte (et le dit) ;
 //   - glisser un élément pose sa dernière version ; poser un élément de sa
 //     propre descendance est refusé avant de poser (check-use), la chaîne nommée ;
-//   - le journal des éléments est relu toutes les 5 s : une version publiée
-//     ailleurs (ODIO, Asset, un autre onglet) fait paraître la pastille, et le
-//     Projet (projet.js), qui montre la dernière version de ses éléments, se
-//     relit (`app.changes`) — même sans séquence ouverte ni plan d'élément.
+//   - le journal des éléments est relu quand il avance : « sr:elements »
+//     (commun/shell.js), porté par le relevé de la file que toute page fait
+//     déjà (GET /api/jobs rend `ev_seq`, apps_studio_elements.md § 2.11) —
+//     plus de relecture à part toutes les 5 s. Une version publiée ailleurs
+//     (ODIO, Asset, un autre onglet) fait paraître la pastille, et le Projet
+//     (projet.js), qui montre la dernière version de ses éléments, se relit
+//     (`app.changes`) — même sans séquence ouverte ni plan d'élément.
 
 import { api, el, toast, href } from '../commun/shell.js';
 import { menu } from '../commun/menu.js';
@@ -24,7 +27,7 @@ import * as M from './model.js';
 export function createElements(app) {
   // app : { getP, commit, ensureItems, itemOf, rerender, changes(events) }
   const info = new Map();         // objet → son statut (POST /api/elements/status)
-  let seq = null, lastIds = '', timer = 0, loading = null;
+  let seq = null, lastIds = '', loading = null;
 
   const clipItems = () => { const p = app.getP(); return p ? [...new Set(M.mediaIds(p))] : []; };
 
@@ -46,8 +49,12 @@ export function createElements(app) {
   // un plan posé, retiré, changé d'objet : on relit (seulement si la liste des objets a changé)
   function changed() { if (clipItems().join(',') !== lastIds) refresh(); }
 
+  // une lecture à la fois : un numéro qui avance pendant la lecture en relance une, depuis le dernier lu
+  let busy = false, again = false;
   async function poll() {
-    if (document.hidden || seq === null) return;
+    if (seq === null) return;   // le premier statut n'est pas arrivé : il apporte le numéro du moment
+    if (busy) { again = true; return; }
+    busy = true;
     try {
       const r = await api(`elements/changes?since=${seq}`);
       if (r.events?.length) {
@@ -58,9 +65,11 @@ export function createElements(app) {
         app.changes?.(r.events);
         for (const e of pub) toast(`nouvelle version : v${e.n} de « ${e.title} »${e.note ? ` — ${e.note}` : ''}`, 5000);
       }
-    } catch { /* hors ligne : au prochain tour */ }
+    } catch { /* hors ligne : au prochain numéro */ }
+    busy = false;
+    if (again) { again = false; poll(); }
   }
-  timer = setInterval(poll, 5000);
+  document.addEventListener('sr:elements', poll);
   refresh();
 
   const stat = (c) => (c && c.item ? info.get(c.item) : null);
@@ -147,5 +156,5 @@ export function createElements(app) {
     return target;
   }
 
-  return { refresh, changed, badge, items, resolve, update, stop: () => clearInterval(timer), info };
+  return { refresh, changed, badge, items, resolve, update, stop: () => document.removeEventListener('sr:elements', poll), info };
 }
