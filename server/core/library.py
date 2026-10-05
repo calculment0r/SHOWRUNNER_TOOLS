@@ -17,6 +17,9 @@ Les sortes d'objets (KINDS) :
            tenue…) et d'une description en prose. Un personnage de
            Character Factory devient un élément ; un élément s'appelle
            ensuite comme référence dans l'image, la vidéo H3, etc.
+  playlist une suite de sons de la bibliothèque (05/10, server/tools/playlist.py) :
+           un objet qu'on réécrit, comme une planche, sans fichier — ses
+           morceaux, sa pochette, ses enchaînements dans `playlist`
 
 Sur disque, sous `<data_dir>/library/<id>/` : `item.json`, le fichier
 principal, sa vignette, ses copies d'affichage (`view-256.webp`…, plus
@@ -75,7 +78,8 @@ from . import auth, config, espaces
 
 # "sequence" : une séquence du Montage (sa timeline dans `sequence.json`, écrite par server/tools/montage.py), 29/09
 # "document" : tout ce qui n'est pas un média (server/tools/documents.py), 05/10
-KINDS = ("image", "video", "audio", "element", "midi", "sequence", "document")
+# "playlist" : une suite de sons, réécrite en place (server/tools/playlist.py), 05/10
+KINDS = ("image", "video", "audio", "element", "midi", "sequence", "document", "playlist")
 EXT_KIND = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
     ".mp4": "video", ".webm": "video", ".mov": "video", ".m4v": "video",
@@ -1004,6 +1008,8 @@ def import_refusal(it: dict, dest: str | None) -> str | None:
     if is_living(it):
         return (f"{name} est un élément versionné : le rapatrier (sa version figée, § 3.3 de l'étude) vient avec "
                 f"l'étape 9 — en attendant, rapatrie sa dernière version (sa fiche, « les versions »)")
+    if it.get("kind") == "playlist":   # comme une séquence : elle pose des sons de son Workspace
+        return f"{name} est une playlist : elle pose des sons de son Workspace — rapatrie ses morceaux"
     if it.get("kind") not in IMPORT_KINDS:
         return (f"{name} est une séquence : elle pose d'autres objets de son Workspace — la dupliquer ailleurs viendra "
                 f"avec les documents (§ 3.5) ; en attendant, rapatrie ses plans")
@@ -1263,7 +1269,10 @@ def query(kinds: list[str] | None = None, q: str = "", folder: str | None = None
         ql = q.lower()
         items = [i for i in items if ql in " ".join([i.get("title", ""), i.get("prompt", ""), " ".join(i.get("tags", [])),
                                                       (i.get("element") or {}).get("description", ""),
-                                                      (i.get("doc") or {}).get("title") or ""]).lower()]
+                                                      (i.get("doc") or {}).get("title") or "",
+                                                      # une playlist : son artiste, sa description
+                                                      (i.get("playlist") or {}).get("artist") or "",
+                                                      (i.get("playlist") or {}).get("description") or ""]).lower()]
     key = {"new": lambda i: i["created"], "old": lambda i: i["created"], "title": lambda i: i.get("title", "").lower(),
            "updated": lambda i: i.get("updated", i["created"])}.get(sort, lambda i: i["created"])
     items.sort(key=key, reverse=sort in ("new", "updated"))
