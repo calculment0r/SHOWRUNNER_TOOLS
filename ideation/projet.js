@@ -181,6 +181,21 @@ export function ouvrirProjet(app, { annule = () => {} } = {}) {
     const x = n.querySelector('.pj-x');
     x.hidden = P.running || P.done || f.state === 'ok';
   }
+  // rangé : la sorte du portail fait foi (core/library.py lit le contenu — un .webm sans image est un son ;
+  // l'extension et le type MIME du navigateur ne servaient qu'à la vignette d'avant l'envoi)
+  function sorteRangee(f) {
+    const k = f.result?.kind === 'element' ? 'element' : SORTE_FR[f.result?.kind] ? f.result.kind : null;
+    if (!k || k === f.kind) return;
+    const n = f.node;
+    if (n) {
+      n.classList.replace(`k-${f.kind}`, `k-${k}`);
+      const ico = n.querySelector('.pj-vis .pj-ico');
+      if (ico) ico.innerHTML = icon(k);
+      const lab = n.querySelector('.pj-k');
+      if (lab) lab.textContent = [SORTE_FR[k], f.size ? fmtMo(f.size) : '', f.folder ? `dossier ${f.folder}` : ''].filter(Boolean).join(' · ');
+    }
+    f.kind = k;
+  }
   // la progression : repeinte une fois par image d'écran, quel que soit le nombre d'envois
   const dirty = new Set();
   let rafBar = 0;
@@ -602,6 +617,7 @@ export function ouvrirProjet(app, { annule = () => {} } = {}) {
               onprogress: (p) => { f.progress = p; barSoon(f); } });
           }
           f.state = 'ok';
+          sorteRangee(f);
         } catch (e) {
           f.state = 'echec';
           f.error = e.message;   // la phrase du portail (un contenu qui n'est pas ce que dit son nom, trop gros…)

@@ -106,6 +106,22 @@ def core_checks() -> None:
     # PIL (Ghostscript, audit du 28/09) : rangé tel quel, il se télécharge ; sa vignette est une carte dessinée
     ok(st == 200 and bad.get("kind") == "document" and bad.get("file") == "main.eps" and bad.get("doc", {}).get("format") == "eps",
        f"un EPS devient un document, jamais lu par PIL (Ghostscript, audit du 28/09) ({st} {bad.get('kind') if isinstance(bad, dict) else bad})")
+    # 06/10 (Cal : « un cadre Vidéos avec les sons dedans ») : un .webm, un .mp4 sans piste d'image sont des sons
+    import shutil
+    import subprocess
+    if shutil.which("ffmpeg"):
+        tmp = Path(tempfile.mkdtemp(prefix="sr_son_"))
+        got = {}
+        for name, args in (("voix.webm", ["-f", "lavfi", "-i", "sine=frequency=330:duration=1", "-c:a", "libopus"]),
+                           ("voix.mp4", ["-f", "lavfi", "-i", "sine=frequency=330:duration=1", "-c:a", "aac"]),
+                           ("plan.webm", ["-f", "lavfi", "-i", "testsrc=size=160x90:rate=10", "-t", "1", "-c:v", "libvpx-vp9"])):
+            subprocess.run(["ffmpeg", "-v", "error", "-y", *args, str(tmp / name)], capture_output=True, timeout=60)
+            st, it = call("PUT", f"/api/library/upload?name={name}&title={name}", raw=(tmp / name).read_bytes())
+            got[name] = (st, it.get("kind") if isinstance(it, dict) else it, it.get("duration") if isinstance(it, dict) else None)
+        ok(got["voix.webm"][:2] == (200, "audio") and got["voix.mp4"][:2] == (200, "audio") and got["voix.webm"][2]
+           and got["plan.webm"][:2] == (200, "video"),
+           f"un .webm et un .mp4 sans image rangés en sons, une vraie vidéo reste une vidéo ({got})")
+        shutil.rmtree(tmp, ignore_errors=True)
     st, el = call("POST", "/api/elements", {"title": "Perso", "type": "character", "description": "un homme",
                                             "refs": [{"item": iid, "role": "face"}]})
     ok(st == 200 and el.get("kind") == "element" and el["element"]["refs"][0]["role"] == "face", f"un élément ({st} {el})")

@@ -438,7 +438,8 @@ def probe(path: Path) -> dict:
     if dur:
         meta["duration"] = round(float(dur), 3)
     for s in info.get("streams", []):
-        if s.get("codec_type") == "video" and "width" not in meta:
+        # une pochette (mp3, m4a, mp4 audio : un flux « video » marqué attached_pic) n'est pas une piste d'image
+        if s.get("codec_type") == "video" and "width" not in meta and not (s.get("disposition") or {}).get("attached_pic"):
             meta.update(width=s.get("width"), height=s.get("height"))
             rate = s.get("avg_frame_rate") or s.get("r_frame_rate") or ""
             if "/" in rate:
@@ -672,9 +673,16 @@ def add_file(src: Path, *, kind: str | None = None, title: str = "", origin: dic
     _load()
     src = Path(src)
     ext = src.suffix.lower()
+    named = kind is None
     kind = kind or kind_of_name(src.name)
     if kind not in ("image", "video", "audio", "midi", "document"):
         raise ValueError(f"type de fichier non pris : {src.suffix}")
+    # ce que contient le fichier (ffprobe), lu avant de lui donner sa sorte : un conteneur vidéo (.webm, .mp4,
+    # .mov…) sans piste d'image est un SON — un mémo vocal, un son exporté en .webm (Cal, 06/10 : « un cadre
+    # Vidéos avec les sons dedans »). La sorte devinée au nom ne tient que si le contenu la confirme.
+    media = probe(src) if kind in ("video", "audio") else {}
+    if named and kind == "video" and media.get("audio") and not media.get("width"):
+        kind = "audio"
     png = None
     if kind == "image" and ext not in EXT_KIND:
         from tools import documents
@@ -702,7 +710,7 @@ def add_file(src: Path, *, kind: str | None = None, title: str = "", origin: dic
             "id": iid, "kind": kind, "title": title or src.stem, "created": now(), "updated": now(),
             "file": name, "origin": org, "prompt": prompt, "params": params or {},
             "parents": list(parents or []), "tags": list(tags or []), "folder": folder, "fav": False,
-            **(probe(d / name) if kind != "document" else {}), **more,
+            **((media or probe(d / name)) if kind != "document" else {}), **more,
             **{k: v for k, v in (extra or {}).items() if k != "space"}, "space": space,
         }
         if kind == "document":   # son texte, sa couverture, ses pages (server/tools/documents.py)
