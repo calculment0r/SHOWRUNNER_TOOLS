@@ -758,6 +758,25 @@ body.mu-page input, body.mu-page textarea, body.mu-page [contenteditable="true"]
 .gd-src { margin: 0; color: var(--ink2); font-size: 11px; line-height: 1.6; }
 .gd-kh { margin: 8px 0 0; font-family: var(--f-mono); font-weight: 400; font-size: 8.5px; letter-spacing: .18em; text-transform: uppercase; color: var(--or); }
 
+/* ── 05/10 : l'objet et le temps, comme dans Live (timeline.js, startTime) ── */
+/* La tête de lecture (commun/tete.js) se prend par son onglet : il reste collé
+   en haut de la vue quand on descend dans les pistes, et sa prise couvre la
+   rangée des sections (22 px), un peu plus large que le dessin. */
+.ar-grid > .sr-ph i { position: sticky; top: 0; left: auto; transform: none; display: block; margin-left: -4.5px;
+  pointer-events: auto; cursor: grab; touch-action: none; }
+.ar-grid > .sr-ph i::before { content: ""; position: absolute; left: -4px; right: -4px; top: 0; height: 22px; }
+body.ar-grab, body.ar-grab * { cursor: grabbing !important; }
+/* la barre de titre d'un clip est l'objet (la main), son corps et le vide
+   d'une piste sont le temps (le curseur de texte) */
+.clip, .ar-lane { cursor: text; }
+/* la sélection de temps : un voile sur la plage, filets aux bords ; le
+   marqueur d'insertion, un trait qui clignote (Live : « flashing insert marker ») */
+.ar-tsel { position: absolute; top: 0; bottom: 0; z-index: 2; pointer-events: none;
+  background: color-mix(in srgb, var(--ink) 15%, transparent); box-shadow: inset 1px 0 0 var(--ink2), inset -1px 0 0 var(--ink2); }
+.ar-tsel.pt { width: 2px; margin-left: -1px; background: var(--ink); box-shadow: none; animation: ar-insert 1.1s steps(1) infinite; }
+@keyframes ar-insert { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .ar-tsel.pt { animation: none; } }
+
 /* La place de la page, pas la fenêtre : le panneau Asset ouvert en prend (@container sr-page,
    commun/shell.css). Une requête de conteneur ne touche pas le conteneur lui-même (body) : sous
    1100 px, c'est .mu-app qui défile, la barre du portail reste en haut. */

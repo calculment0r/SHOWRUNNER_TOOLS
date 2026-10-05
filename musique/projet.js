@@ -417,10 +417,12 @@ export function pasteClips(p, board, at, uid, fallback = null) {
 // Les clips de motif choisis d'une même piste deviennent UN clip, sur un
 // motif neuf qui contient ce qu'ils jouaient réellement (répétitions,
 // décalages et coupes déroulés). Rend { pattern, clip } ou un refus.
-export function consolidatePatterns(p, clips, uid) {
+// `range` [a, b] (une plage de temps choisie) : le clip la couvre tout
+// entière, le vide compris (Live : consolider une sélection de temps).
+export function consolidatePatterns(p, clips, uid, range = null) {
   const tr = p.tracks.find((t) => t.id === clips[0].track);
-  const a = Math.floor(Math.min(...clips.map((c) => c.start)) * 4) / 4;
-  const b = Math.max(...clips.map((c) => c.start + c.len));
+  const a = range ? range[0] : Math.floor(Math.min(...clips.map((c) => c.start)) * 4) / 4;
+  const b = range ? range[1] : Math.max(...clips.map((c) => c.start + c.len));
   const steps = Math.ceil(((b - a) * 4) / 4) * 4;
   if (steps > 256) return 'un motif tient 64 temps au plus (256 pas)';
   const drums = tr.kind === 'drums';
@@ -436,7 +438,7 @@ export function consolidatePatterns(p, clips, uid) {
       if (drums) {
         for (const [v, arr] of Object.entries(src.lanes || {})) arr.forEach((vel, s) => {
           const bt = base + s / 4;
-          if (!vel || bt < c.start || bt >= ce) return;
+          if (!vel || bt < c.start || bt >= ce || bt < a - 1e-9 || bt >= b) return;
           const i = Math.round((bt - a) * 4);
           if (i < 0 || i >= pat.steps) return;
           if (!pat.lanes[v]) pat.lanes[v] = Array(pat.steps).fill(0);
@@ -445,23 +447,48 @@ export function consolidatePatterns(p, clips, uid) {
       } else {
         for (const n of src.notes || []) {
           const bt = base + n.s / 4;
-          if (bt < c.start || bt >= ce) continue;
+          if (bt < c.start || bt >= ce || bt < a - 1e-9 || bt >= b) continue;   // dans le clip, et dans la plage
           const s = Math.round((bt - a) * 4 * 100) / 100;
+          if (s < 0 || s > pat.steps - 1e-6) continue;
           const l = Math.max(0.25, Math.min(n.l, (ce - bt) * 4, pat.steps - s));
           pat.notes.push({ ...n, s, l });
         }
       }
     }
   }
-  const clip = { id: uid('c'), track: tr.id, start: a, len: pat.steps / 4, pat: pat.id };
+  const clip = { id: uid('c'), track: tr.id, start: a, len: range ? b - a : pat.steps / 4, pat: pat.id };
   return { pattern: pat, clip };
+}
+
+// ── la sélection de temps (Live 12, « Arrangement View ») ───
+// Les clips des pistes `ids` sont coupés aux bornes a et b (splitClip) ;
+// rend ceux qui sont entre les deux. a === b : une seule coupe.
+export function splitRange(p, ids, a, b, uid) {
+  const on = new Set(ids);
+  for (const x of [a, b]) for (const c of p.clips.filter((y) => on.has(y.track))) splitClip(p, c, x, uid);
+  // (à moins d'une double-croche d'une borne, un clip n'a pas été coupé : il compte comme dedans)
+  return p.clips.filter((c) => on.has(c.track) && c.start >= a - MIN_LEN && c.start + c.len <= b + MIN_LEN
+    && (b - a < 1e-6 || (c.start < b - 1e-6 && c.start + c.len > a + 1e-6)));
+}
+// la même chose sans toucher au projet : des copies de ce que la plage
+// contient (le presse-papiers, dupliquer la plage), chacune avec son propre
+// id (un morceau que rien ne coupe garderait celui de l'original : le serveur
+// refuse un clip en double)
+export function piecesIn(p, ids, a, b, uid) {
+  const on = new Set(ids);
+  const clips = p.clips.filter((c) => on.has(c.track) && c.start < b - 1e-6 && c.start + c.len > a + 1e-6).map((c) => JSON.parse(JSON.stringify(c)));
+  return splitRange({ tracks: p.tracks, bpm: p.bpm, clips }, ids, a, b, uid).map((c) => ({ ...c, id: uid('c') }));
 }
 
 // ── couper, rogner ──────────────────────────────────────────
 // `off` d'un clip de motif est en noires (où en est le motif), celui d'un
 // clip audio en secondes (où en est le son)
+// Aucun morceau sous la double-croche : le serveur refuse un clip plus court
+// (server/tools/music.py, « longueur de clip ») — une coupe sans aimant tout
+// près d'un bord n'a pas lieu.
+const MIN_LEN = 0.0625;
 export function splitClip(p, c, pos, uid) {
-  if (pos <= c.start + 1e-6 || pos >= c.start + c.len - 1e-6) return null;
+  if (pos < c.start + MIN_LEN - 1e-9 || pos > c.start + c.len - MIN_LEN + 1e-9) return null;
   const tr = p.tracks.find((t) => t.id === c.track);
   const cut = pos - c.start;
   const n = { ...c, ...own(c), id: uid('c'), start: pos, len: c.len - cut };

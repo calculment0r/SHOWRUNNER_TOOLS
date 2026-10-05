@@ -11,7 +11,7 @@ const STEPS = [
   ['La session', 'Le tempo (− / +, la molette, ou « Tap » : le frapper), la tonalité et la mesure sont ceux de tout le morceau : le piano roll éclaire la gamme, les modèles de motifs et la génération les reprennent.', ['#mu-bpm', '#mu-tap', '#mu-key']],
   ['Les sections', 'La règle du haut : double-clic pour une section (intro, couplet, refrain…), double-clic dessus pour la renommer sur place, glisser pour la déplacer avec ses clips, clic droit pour la dupliquer avec ses clips, la colorer, l\'étiqueter pour les paroles.', ['.ar-secs']],
   ['Les pistes', 'Glisser un instrument du navigateur sous les pistes, ou « + Piste ». Chaque piste : muet (M), solo (S), armer (●), automation (A), volume, panoramique ; double-clic sur son nom : le renommer ; un clic sur sa barre de couleur la recolore (son nœud du nodal aussi). Un clic sur l\'en-tête la choisit (Ctrl : en ajouter, Maj : jusqu\'à elle), Suppr la retire. Glisser l\'en-tête : lâchée ENTRE deux pistes (un trait), elle s\'y range ; SUR une piste (elle s\'entoure), elles font groupe — un groupe se replie, se renomme, se défait (clic droit).', ['.nv', '.ar-head']],
-  ['Les clips', 'Double-clic sur une piste : un clip neuf. Glisser un clip : le déplacer (Ctrl : le copier, Alt : sans aimant). Le bord gauche rogne le début (la fin et le contenu restent en place), le droit la fin. Double-clic sur son titre : le renommer. Ctrl+clic ou un cadre tiré sur le vide : plusieurs.', ['.ar-lane']],
+  ['Les clips', 'Double-clic sur une piste : un clip neuf. Comme dans Live, la barre de titre d\'un clip est l\'objet : un clic le choisit, la glisser le déplace (Ctrl : le copier, Alt : sans aimant) ; Maj+clic ou Ctrl+clic : plusieurs. Le corps d\'un clip et le vide d\'une piste sont le temps : un clic y pose le marqueur d\'insertion (la tête de lecture y va), glisser y choisit une plage, sur une ou plusieurs pistes (Maj+clic : l\'étendre). Ctrl+E coupe (au marqueur, ou aux bords de la plage), Suppr retire ce que la plage contient, Ctrl+D la duplique, Ctrl+J en fait un clip (sur une piste MIDI vide : un clip vide). Le bord gauche rogne le début (la fin et le contenu restent en place), le droit la fin. Double-clic sur son titre : le renommer. Ctrl+glisser sur le vide : un cadre qui choisit des clips. La tête de lecture se prend par son onglet orange, en haut.', ['.ar-lane']],
   ['La vue de détail', 'En bas de l\'arrangement, une seule colonne qui défile : le clip choisi (les notes, les pas, le son d\'un clip audio, la génération d\'une région), puis toute la chaîne de la piste. Maj+Tab passe de l\'un à l\'autre ; le filet du haut se tire, sa hauteur reste. Un effet posé dans le nodal que deux pistes traversent est dans les deux chaînes, « lié » : le régler ici le règle pour les deux. Le navigateur, à gauche, se replie (‹ ou Ctrl+Alt+B).', ['.dk', '.nv']],
   ['Enregistrer', 'Armer une piste (●), activer « Rec » (F9), puis Lecture : jouer au clavier de l\'ordinateur (« Clavier » allumé : rangée du milieu, Z X l\'octave, C V la vélocité) ou en MIDI (menu ··· du projet). Stop : la prise se pose en clip « Nouveau ». Une piste audio armée prend le micro.', ['#mu-rec', '#mu-kbd', '.ar-head .arm']],
   ['Importer de l\'audio', 'Glisser des fichiers (WAV, MP3, FLAC, M4A, OGG) sur une piste ou sous les pistes, ou « Importer ». Ils entrent dans la bibliothèque (Upload) et se posent à la grille. La vue Clip règle début, fin, boucle, gain, transposition, inversion, fondus, et « Caler » au tempo.', ['[data-imp]']],
@@ -27,7 +27,10 @@ const STEPS = [
 // Live 12, consulté le 29/09/2026), et pour les gestes, le chapitre
 // « Arrangement View » (ableton.com/en/manual/arrangement-view). Sur Mac,
 // Ctrl se lit Cmd et Alt se lit Option. Ce qui est à ODIO seul est marqué.
-export const LIVE_SOURCE = 'Ableton Live 12 Reference Manual · « Live Keyboard Shortcuts » et « Arrangement View » · consulté le 29/09/2026';
+// L'objet et le temps (05/10) : chapitre « Arrangement View », « Selecting
+// Clips and Time » — relu par recherche web le 05/10/2026, ableton.com
+// n'étant pas joignable depuis la machine d'essai.
+export const LIVE_SOURCE = 'Ableton Live 12 Reference Manual · « Live Keyboard Shortcuts » et « Arrangement View » · consulté le 29/09/2026 (la sélection de temps : le 05/10/2026)';
 const KEYS = [
   ['les vues', [
     ['Tab', 'Arrangement ↔ Nodal (Live : Session ↔ Arrangement)'],
@@ -42,12 +45,16 @@ const KEYS = [
     ['Maj+T', 'frapper le tempo (ODIO : Live n\'a pas de raccourci pour son bouton TAP)'],
   ]],
   ['l\'édition', [
-    ['Ctrl+Z · Ctrl+Maj+Z · Ctrl+Y', 'annuler · rétablir (Mac : Cmd+Z, Cmd+Maj+Z) — la lettre Z, en AZERTY comme en QWERTY ; ↺ dans la barre : le journal des gestes'], ['Ctrl+X · C · V', 'couper · copier · coller à la tête de lecture'],
-    ['Ctrl+D', 'dupliquer'], ['Suppr', 'retirer la sélection'], ['Ctrl+R', 'renommer (le clip choisi, sinon la piste)'],
-    ['Ctrl+A · Échap', 'tout choisir · rien'], ['Ctrl+E', 'couper les clips à la tête de lecture (Live : Split)'],
-    ['Ctrl+J', 'consolider en un clip'], ['0 (zéro)', 'activer / désactiver les clips choisis'], ['R', 'inverser les clips audio choisis'],
-    ['← →', 'déplacer la sélection d\'un pas de grille'], ['Ctrl+1 · Ctrl+2', 'resserrer · élargir la grille'], ['Ctrl+4', 'aimant allumé / éteint'],
-    ['Alt en glissant', 'sans aimant'], ['Ctrl en glissant', 'copier les clips'], ['Ctrl+clic · Maj+clic', 'ajouter à la sélection'],
+    ['Ctrl+Z · Ctrl+Maj+Z · Ctrl+Y', 'annuler · rétablir (Mac : Cmd+Z, Cmd+Maj+Z) — la lettre Z, en AZERTY comme en QWERTY ; ↺ dans la barre : le journal des gestes'], ['Ctrl+X · C · V', 'couper · copier (les clips choisis, ou la plage) · coller au marqueur d\'insertion'],
+    ['barre de titre d\'un clip', 'le choisir · le glisser : le déplacer (Live : l\'objet)'],
+    ['clic dans un clip · dans une piste', 'le marqueur d\'insertion, et la tête de lecture à l\'arrêt (Live : le corps est le temps)'],
+    ['glisser dans un clip · une piste', 'une plage de temps, sur une ou plusieurs pistes · Maj+clic : l\'étendre'],
+    ['onglet de la tête de lecture', 'le glisser : la tête suit, aimantée (Alt : libre)'],
+    ['Ctrl+D', 'dupliquer (une plage : sa copie juste après elle)'], ['Suppr', 'retirer la sélection (une plage : ce qu\'elle contient)'], ['Ctrl+R', 'renommer (le clip choisi, sinon la piste)'],
+    ['Ctrl+A · Échap', 'tout choisir · rien'], ['Ctrl+E', 'couper (Live : Split) : au marqueur d\'insertion, aux bords d\'une plage, sinon les clips choisis à la tête de lecture'],
+    ['Ctrl+J', 'consolider en un clip (Live : Consolidate) ; une plage : en faire un clip, vide sur une piste MIDI vide'], ['0 (zéro)', 'activer / désactiver les clips choisis'], ['R', 'inverser les clips audio choisis'],
+    ['← →', 'déplacer les clips choisis d\'un pas de grille ; sans clip choisi : le marqueur ou la plage (Maj : l\'étendre)'], ['Ctrl+1 · Ctrl+2', 'resserrer · élargir la grille'], ['Ctrl+4', 'aimant allumé / éteint'],
+    ['Alt en glissant', 'sans aimant'], ['Ctrl en glissant', 'copier les clips'], ['Ctrl+clic · Maj+clic', 'ajouter à la sélection'], ['Ctrl+glisser sur le vide', 'un cadre qui choisit des clips'],
   ]],
   ['les pistes et les clips', [
     ['Ctrl+T · Ctrl+Maj+T', 'une piste audio · MIDI — Chrome garde ces deux-là pour ses onglets (réservés, la page ne les reçoit pas) : « + Piste »'],

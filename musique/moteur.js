@@ -1068,6 +1068,17 @@ export class Engine {
     else this.settle();
   }
 
+  // Le marqueur d'insertion (Live 12, « Arrangement View » : « insert
+  // marker ») : là où la lecture part, et où l'arrêt revient. À l'arrêt,
+  // c'est la tête de lecture ; en lecture, le poser (un clic dans une piste)
+  // ne coupe pas ce qui joue : l'arrêt y ramènera (Live fait de même ; la
+  // règle, elle, saute : seek).
+  get insert() { return this.play ? this.play.from : this.pos; }
+  cue(beat) {
+    beat = Math.max(0, beat);
+    if (this.play) this.play.from = beat; else this.seek(beat);
+  }
+
   // ── jouer à la main (clavier, MIDI, pads, piano roll) ──
   async noteOn(srcId, pitch, vel = 0.8) {
     await this.start();

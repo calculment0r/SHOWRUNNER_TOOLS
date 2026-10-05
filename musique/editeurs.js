@@ -121,7 +121,7 @@ export function createDock(app) {
       { label: 'Aller au clip', onclick: () => { S.dockJump = 'clip'; render(); } },
       { label: 'Aller à la chaîne de la piste', onclick: () => { S.dockJump = 'device'; render(); } },
       t ? { label: 'Un effet dans la chaîne', items: devices.fxItems(t.id) } : null,
-      c ? { label: 'Retirer le clip', danger: true, onclick: () => app.removeSel() } : null,
+      c ? { label: 'Retirer le clip', danger: true, onclick: () => app.removeSel((S.sel.clips || []).includes(c.id) ? null : [c.id]) } : null,   // le clip ouvert en bas, choisi ou non (un clic dans son corps)
       '-',
       { label: 'Cacher le panneau du bas', onclick: () => { S.proj.ui.dock = false; app.saveUi(); app.renderView(); } },
     ];
