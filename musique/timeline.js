@@ -79,7 +79,7 @@ import { brancher, borne, tenirY, AIDE as MOLETTE } from '../commun/molette.js';
 // LA tête de lecture du portail (30/09, Cal : « toutes nos timelines [avec] la même cue […] celle du montage vidéo »)
 import { tete, poser, suivre, glisser } from '../commun/tete.js';
 // le son au défilement (06/10, Cal : « entendre le son quand on fait glisser la tête […] pour caler un cut ») : commun/scrub.js
-import { scrub as scrubSon } from '../commun/scrub.js';
+import { scrub as scrubSon, actif as scrubActif } from '../commun/scrub.js';
 
 const HEAD_W = 224;
 const Z_MIN = 2, Z_MAX = 160;                           // pixels par noire, les bornes du zoom
@@ -1448,8 +1448,9 @@ export function createTimeline(app) {
     },
   });
   // le geste commence : le moteur se lance (son contexte, son graphe) s'il ne l'est pas encore
+  // — pas si la préférence coupe le son au défilement
   function ecouteDebut() {
-    if (!app.engine.running) app.engine.start().catch(() => {});
+    if (!app.engine.running && scrubActif()) app.engine.start().catch(() => {});
     ecoute.debut();
   }
   // la tête va à `b` (noires) : le moteur la pose, le son suit (en secondes)
