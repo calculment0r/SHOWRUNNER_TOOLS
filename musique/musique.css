@@ -299,6 +299,41 @@ body.mu-drawer-open #mu-guide.tb.go { background: transparent; color: var(--ink2
 .ar-head .kn.xs { width: 24px; }
 .ar-head .kn.xs .dial { width: 18px; height: 18px; }
 .ar-head .kn.xs .v { display: none; }
+/* LES PALIERS DE L'EN-TÊTE (05/10, Cal : « quand on réduit la hauteur des
+   pistes, on ne voit plus ce que c'est… il faudrait que le nom de la piste
+   rétrécisse aussi pour rester visible »). Avant, une colonne qui débordait :
+   le nom (overflow: hidden, donc rétrécissable jusqu'à 0) s'écrasait le premier.
+   Maintenant l'en-tête est un conteneur de requête sur SA hauteur réelle (celle
+   que Ctrl+molette, S M L ou H lui donnent) : aucun calcul, le navigateur
+   choisit le palier à chaque mise en page, et le nom reste toujours écrit.
+     pleine    72 px et plus : le nom, le sous-titre, le vu-mètre, la rangée
+               (M S ● A, fader, pan) — 72 = ce que ces lignes demandent
+               (6 + 18 + 2 + 11 + 2 + 3 + 2 + 3 + 19 + 6, mesuré)
+     compacte  36 à 72 : UNE ligne, le nom (10 px) puis M S ● A et le pan ; le
+               sous-titre et le fader se cachent ; le vu-mètre passe dessous
+     minimale  moins de 36 (le plancher : 26, timeline.js TH_MIN) : la même
+               ligne, le nom à 9 px, les boutons resserrés (16 px), sans vu-mètre
+   Le nom tronqué s'achève en « … » ; il est entier au survol (son title). La
+   couleur de la piste (.bar) reste à tous les paliers. */
+.ar-head { container: ar-piste / size; }
+.ar-head .nm { flex: none; }
+@container ar-piste (height < 72px) {
+  .ar-head .txt { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "nm row" "mtr mtr";
+    align-content: center; align-items: center; column-gap: 6px; row-gap: 3px; padding: 0; }
+  .ar-head .nm { grid-area: nm; font-size: 10px; line-height: 19px; }
+  .ar-head .kd, .ar-head .ar-vol { display: none; }
+  .ar-head .ar-mtr { grid-area: mtr; max-width: none; }
+  .ar-head .row { grid-area: row; margin-top: 0; }
+}
+@container ar-piste (height < 36px) {
+  .ar-head .txt { grid-template-areas: "nm row"; column-gap: 5px; }
+  .ar-head .ar-mtr { display: none; }
+  .ar-head .nm { font-size: 9px; letter-spacing: .04em; line-height: 16px; }
+  .ar-head .row { gap: 2px; }
+  .ar-head .row .tb { height: 16px; min-width: 16px; padding: 0 3px; font-size: 7.5px; }
+  .ar-head .kn.xs { width: 18px; }
+  .ar-head .kn.xs .dial { width: 16px; height: 16px; }
+}
 .ar-lane { position: relative; box-shadow: inset 0 -1px 0 var(--line); }   /* sa grille : .ar-lignes, par-dessus ses clips */
 .ar-lane.sel { background-color: color-mix(in srgb, var(--sel-bg) 45%, transparent); }
 .ar-lane.drop { box-shadow: inset 0 0 0 1px var(--or); }

@@ -10,13 +10,15 @@
 //              s'arrête quand il n'y a plus de jouet), les ports « notes »
 //              (losange) et « valeur » (carré) et leurs câbles, l'envoi des
 //              notes aux instruments calé sur le transport, les valeurs vers
-//              les réglages, le mélange de la fontaine
+//              les réglages, le mélange de la fontaine, la carte de la
+//              SECOUSSE qui se penche quand on la traîne (`penche`)
 //
 // Le nodal ne connaît de tout cela que des points d'accroche marqués
 // « jouets : » (nodal.js) ; le moteur, trois (moteur.js) ; le projet, les
 // câbles typés `{ a, b, t: 'notes' | 'mod', k }` (musique.js, music_jouets.py).
 
 import { toast } from '../../commun/shell.js';
+import { reducedMotion } from '../../commun/theme.js';
 import { elementAuPoint } from '../../commun/fenetre.js';
 import { MODULES, AUTOMATABLE, TRACK_KINDS, SOURCES_OF, spec, val, fromNorm, drumVoicesOf } from '../modules.js';
 import { el, menu, put, clamp } from '../ui.js';
@@ -39,6 +41,19 @@ const PORT_FR = { audio: 'son', notes: 'notes', mod: 'valeur' };
 // le budget d'un canvas de scène : 4 Mpx (16 Mo) — l'AIMANT (520 × 440) à ×4,2,
 // soit 280 % sur un écran à 150 % ; au-delà, la scène s'étire un peu
 const PIXELS_CANVAS = 4e6;
+// LA CARTE QUI SE PENCHE (05/10, Cal : « qu'il se penche quand on le traîne,
+// comme un ragdoll […] mais attention on ne veut pas alourdir le truc ») : un
+// objet suspendu par son point de prise. Son angle suit la vitesse de la main
+// (en px d'écran par seconde, lissée sur LISSE) vers une cible bornée,
+// PENCHE_MAX · tanh(v / PENCHE_V) — on traîne à droite, le bas traîne derrière,
+// le haut mène —, par un ressort-amortisseur (pulsation W0, amortissement
+// ZETA : lâchée, la carte revient d'aplomb en dépassant d'un tiers, puis se
+// pose en ~1,5 s). Pas de 1/120 s (stable : W0 · pas ≪ 2).
+const PENCHE_MAX = 12 * Math.PI / 180;   // l'inclinaison la plus forte, à pleine vitesse
+const PENCHE_V = 900;                    // px/s : la vitesse qui donne 76 % de PENCHE_MAX
+const W0 = 9;                            // rad/s : ~1,4 oscillation par seconde
+const ZETA = 0.3;                        // dépassement e^(−πζ/√(1−ζ²)) ≈ 37 %
+const LISSE = 0.06;                      // s : le lissage de la vitesse (les événements du pointeur arrivent par à-coups)
 const isToy = (m) => !!MODULES[m?.type]?.jouet;
 const hasScene = (m) => isToy(m) && MODULES[m.type].scene !== false;
 
@@ -185,7 +200,7 @@ export function createJouets(app) {
   const modHeld = new Map();      // `${cible}:${réglage}` → id de la cible (ce que les câbles de valeur tiennent)
   const fx = [];                  // les anneaux d'impact des billes de la fontaine (`sim.fx`)
   let raf = 0, last = 0, lastPush = 0, C = null, nodal = null, svg = null, temp = null, ov = null, link = null;
-  let prevView = null, depth = 0, rectsCache = null, rectsT = 0;
+  let depth = 0, rectsCache = null, rectsT = 0;
 
   const rt = {
     app, fx, beat: 0, sig: 4,
@@ -234,7 +249,7 @@ export function createJouets(app) {
     last = now;
     const P = S.proj, play = engine.running;
     rt.beat = engine.position(); rt.sig = P.sig || 4;
-    panImpulses();
+    penche(dt);
     stepShuffles(dt, now);
     if (dt > 0) for (const j of inst.values()) { j.play = play; j.bpm = P.bpm; j.C = C; if (j.sc) j.sc.phys.call(j, j.Sx, dt); }
     for (const f of fx) f.a -= dt * 2.6;
@@ -416,14 +431,71 @@ export function createJouets(app) {
     for (const [k, v] of Object.entries(vals || {})) { const kn = map.get(k); if (kn?.isConnected) kn.setValue(v); }
   }
 
-  // ── la SECOUSSE sent le canvas qu'on déplace (panDown du Playground) ──
-  function panImpulses() {
-    const v = view();
-    if (prevView && S.view === 'nodal' && v.z === prevView.z) {
-      const dx = v.px - prevView.px, dy = v.py - prevView.py;
-      if ((dx || dy) && Math.abs(dx) < 400 && Math.abs(dy) < 400) for (const j of inst.values()) j.sc?.pan?.call(j, dx, dy);
+  // ── la SECOUSSE sent SON nœud qu'on traîne, et rien d'autre ──
+  // (05/10, Cal : « tout bouge dedans quand on zoome ou dézoome, ou on pan… il
+  // faut que ce soit quand on bouge le node uniquement ».) Avant, l'impulsion
+  // venait aussi du déplacement de la VUE (panDown du Playground : chaque image
+  // comparait px, py de la caméra à ceux d'avant) — un pan, les deux doigts du
+  // pavé qui accompagnent un pincement, tout secouait — et le glissé de
+  // l'en-tête se lisait en pixels d'écran, pointeur bougé ou non. Maintenant
+  // elle se lit sur la position du nœud dans le monde (m.x, m.y), que ni le pan
+  // ni le zoom ni un autre nœud ne changent : juste par construction. Elle ne
+  // compte que tenue par son en-tête (`pe.prise`, posée par decorate) : une
+  // annulation ou un autre geste qui la replace ne la secoue pas.
+  function penche(dt) {
+    if (!(dt > 0)) return;
+    let z = 0;
+    for (const j of inst.values()) {
+      if (!j.sc?.drag) continue;
+      const pe = j.pe || (j.pe = { a: 0, w: 0, v: 0, x: j.m.x, y: j.m.y, ox: 0, oy: 0, prise: false, vivant: false, calme: false });
+      const dx = j.m.x - pe.x, dy = j.m.y - pe.y;
+      pe.x = j.m.x; pe.y = j.m.y;
+      if (!pe.prise && !pe.vivant) continue;                 // au repos : rien, pas même une écriture
+      // l'impulsion : le déplacement du nœud, en unités du monde (blockDown du Playground)
+      if (pe.prise && (dx || dy)) j.sc.drag.call(j, dx, dy);
+      if (!z) z = view().z || 1;
+      const brute = pe.prise ? dx * z / dt : 0;              // la vitesse de la main, px d'écran / s
+      pe.v += (brute - pe.v) * (1 - Math.exp(-dt / LISSE));
+      const cible = pe.calme ? 0 : PENCHE_MAX * Math.tanh(pe.v / PENCHE_V);
+      for (let t = dt; t > 1e-6; t -= 1 / 120) {
+        const h = Math.min(t, 1 / 120);
+        pe.w += (W0 * W0 * (cible - pe.a) - 2 * ZETA * W0 * pe.w) * h;
+        pe.a += pe.w * h;
+      }
+      if (!pe.prise && Math.abs(pe.a) < 5e-4 && Math.abs(pe.w) < 5e-3 && Math.abs(pe.v) < 2) {
+        pe.a = pe.w = pe.v = 0; pe.vivant = false;
+      }
+      poserPenche(j);
     }
-    prevView = { ...v };
+  }
+  // l'angle sur la carte : un transform (ni mise en page ni repeint : la carte
+  // a sa couche le temps du mouvement, .jo-penche), et ses câbles suivent
+  function poserPenche(j) {
+    const pe = j.pe, card = j.card;
+    const css = pe.vivant ? `rotate(${(pe.a * 180 / Math.PI).toFixed(2)}deg)` : '';
+    if (card?.isConnected && card._penche !== css) {        // la même valeur ne s'écrit pas deux fois
+      card._penche = css;
+      card.classList.toggle('jo-penche', pe.vivant);
+      card.style.transformOrigin = pe.vivant ? `${pe.ox}px ${pe.oy}px` : '';
+      card.style.transform = css;
+      suivreCables(j.m.id);
+    }
+  }
+  // tenir un jouet qui se penche par son en-tête : le point de prise est le pivot
+  function prendre(j, e) {
+    if (e.button !== 0) return;
+    const pe = j.pe || (j.pe = { a: 0, w: 0, v: 0, x: j.m.x, y: j.m.y, ox: 0, oy: 0, prise: false, vivant: false, calme: false });
+    if (!pe.vivant) {                                         // encore en train d'osciller : le pivot reste (sinon la carte sauterait)
+      const [wx, wy] = toWorld(e.clientX, e.clientY);
+      pe.ox = Math.round(wx - j.m.x); pe.oy = Math.round(wy - j.m.y);
+    }
+    pe.x = j.m.x; pe.y = j.m.y;
+    pe.prise = true; pe.vivant = true;
+    pe.calme = reducedMotion();                              // prefers-reduced-motion : les billes sentent la main, la carte ne se penche pas
+    const w = e.view || window;                              // le nodal peut être détaché dans sa fenêtre (commun/fenetre.js)
+    const lache = () => { pe.prise = false; w.removeEventListener('pointerup', lache, true); w.removeEventListener('pointercancel', lache, true); };
+    w.addEventListener('pointerup', lache, true); w.addEventListener('pointercancel', lache, true);
+    wake();
   }
 
   // ── le son en direct des jouets qu'on traverse ──
@@ -581,7 +653,6 @@ export function createJouets(app) {
     o.world.prepend(svg);
     ov = el('canvas', { class: 'jo-ov', 'aria-hidden': 'true' });
     o.cv.append(ov);
-    prevView = null;
     // tirer un câble depuis un port typé (capture : avant la carte et le fond)
     o.world.addEventListener('pointerdown', portDown, true);
     wake();
@@ -615,13 +686,10 @@ export function createJouets(app) {
     (def.face || []).forEach((k, i) => { if (kns[i]) map.set(k, kns[i]); });
     knobs.set(m.id, map);
     if (shuf.has(m.id)) box.classList.add('jo-shuf');
-    // la SECOUSSE sent le bloc qu'on tire par son en-tête (blockDown du Playground)
-    if (j?.sc?.drag) hd.addEventListener('pointerdown', (e) => {
-      let lx = e.clientX, ly = e.clientY;
-      const mv = (ev) => { j.sc.drag.call(j, ev.clientX - lx, ev.clientY - ly); lx = ev.clientX; ly = ev.clientY; };
-      const up = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', up); };
-      addEventListener('pointermove', mv); addEventListener('pointerup', up);
-    });
+    // la SECOUSSE sent le bloc qu'on tire par son en-tête (blockDown du
+    // Playground) : tenue, son déplacement dans le monde la secoue et la penche (penche)
+    if (j) { j.card = box; if (j.pe?.vivant) poserPenche(j); }
+    if (j?.sc?.drag) hd.addEventListener('pointerdown', (e) => prendre(j, e));
     rectsCache = null;
     wake();
   }
@@ -631,8 +699,27 @@ export function createJouets(app) {
   function portXY(id, dir, t) {
     const m = app.mod(id), p = m && portsOf(m).find((q) => q.dir === dir && q.t === t);
     if (!p) return null;
-    const w = cardOf(id)?.offsetWidth || width(m) || 236;
-    return [m.x + (dir === 'out' ? w : 0), m.y + p.y];
+    const w = width(m) || cardOf(id)?.offsetWidth || 236;   // un jouet : sa largeur est connue (pas de mise en page lue)
+    const x = m.x + (dir === 'out' ? w : 0), y = m.y + p.y, pe = inst.get(id)?.pe;
+    if (!pe?.a) return [x, y];
+    // la carte penchée : le port tourne avec elle autour du point de prise (rotate() de CSS)
+    const cx = m.x + pe.ox, cy = m.y + pe.oy, c = Math.cos(pe.a), s = Math.sin(pe.a);
+    return [cx + (x - cx) * c - (y - cy) * s, cy + (x - cx) * s + (y - cy) * c];
+  }
+  // pendant que la carte se penche : seuls ses câbles se redessinent (toutes
+  // les coordonnées lues, puis écrites)
+  let traces = [];
+  function suivreCables(id) {
+    const mine = traces.filter((r) => r.c.a === id || r.c.b === id);
+    if (!mine.length) return;
+    const pos = mine.map((r) => [portXY(r.c.a, 'out', r.c.t), portXY(r.c.b, 'in', r.c.t)]);
+    mine.forEach((r, i) => {
+      const [a, b] = pos[i];
+      if (!a || !b) return;
+      const d = curve(a, b);
+      r.vis.setAttribute('d', d); r.hit.setAttribute('d', d);
+      if (r.tx) { r.tx.setAttribute('x', (a[0] + b[0]) / 2); r.tx.setAttribute('y', (a[1] + b[1]) / 2 - 6); }
+    });
   }
   const curve = ([x1, y1], [x2, y2]) => {
     const dx = Math.max(40, Math.abs(x2 - x1) * 0.5);
@@ -642,6 +729,7 @@ export function createJouets(app) {
     if (!svg || !S.proj) return;
     if (svg.parentNode !== nodal.world) nodal.world.prepend(svg);   // le nodal refait son monde à chaque rendu
     put(svg);
+    traces = [];
     for (const c of S.proj.cables) {
       if (!c.t) continue;
       const a = portXY(c.a, 'out', c.t), b = portXY(c.b, 'in', c.t);
@@ -655,12 +743,14 @@ export function createJouets(app) {
       const d = curve(a, b);
       hit.setAttribute('d', d); vis.setAttribute('d', d);
       g.append(vis, hit);
+      let tx = null;
       if (c.t === 'mod') {
-        const tx = document.createElementNS(NS, 'text');
+        tx = document.createElementNS(NS, 'text');
         tx.setAttribute('x', (a[0] + b[0]) / 2); tx.setAttribute('y', (a[1] + b[1]) / 2 - 6);
         tx.setAttribute('class', 'lv'); tx.textContent = `${MODULES[A.type].modOut || 'valeur'} → ${spec(B.type, c.k)?.label || c.k}`;
         g.append(tx);
       }
+      traces.push({ c, vis, hit, tx });
       hit.addEventListener('pointerdown', (e) => {
         e.stopPropagation();
         S.sel.cable = key; S.sel.mod = null;

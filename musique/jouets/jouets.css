@@ -72,6 +72,10 @@
 .nd-card.jo .ft .io span { flex: none; white-space: nowrap; }
 .nd-card.jo .ft .io .lbl { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: center; text-transform: none; letter-spacing: .04em; }
 .nd-card.jo-shuf { box-shadow: inset 0 0 0 1.5px var(--line-or); }
+/* la SECOUSSE traînée se penche (index.js, penche) : sa propre couche le temps
+   du mouvement — l'angle change sans repeindre le nodal ; au repos, elle la rend
+   (le texte se rastérise net à l'échelle de la vue) */
+.nd-card.jo-penche { will-change: transform; }
 .nd-world.lod0 .nd-card.jo .bd, .nd-world.lod0 .nd-card.jo .ft { display: none; }
 
 /* les billes de la fontaine volent au-dessus de toutes les cartes */

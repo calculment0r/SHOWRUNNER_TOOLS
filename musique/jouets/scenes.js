@@ -910,12 +910,18 @@ SCENES.shake = {
     const num = Math.round(kp.num);
     const ax = (SK.vxImp || 0), ay = (SK.vyImp || 0);
     SK.vxImp = ax * .82; SK.vyImp = ay * .82;
+    // SHOWRUNNER : la carte penchée (index.js, penche) — dans la boîte, la
+    // pesanteur tourne : sa part latérale sin(angle), comptée PENTE fois (la
+    // pesanteur du Playground est lente, un choix de jeu : à la lettre, dix
+    // degrés ne feraient presque rien rouler). Le côté qui descend : celui où
+    // la carte penche (angle > 0, sens horaire : vers la droite).
+    const pente = Math.sin(this.pe?.a || 0) * 6;
     SK.flash = Math.max(0, SK.flash - dt * 1.8);
     SK.o.forEach((bl, i) => {
       if (i >= num) return;
       const mass = bl.r / 7;
       const kick = bl.resp / mass;
-      bl.vx += ax * 2.6 * kick + (Math.random() - .5) * bl.jit * Math.abs(ax) * 7;
+      bl.vx += ax * 2.6 * kick + (Math.random() - .5) * bl.jit * Math.abs(ax) * 7 + dt * (.2 + mass * .34) * pente;
       bl.vy += ay * 2.6 * kick + (Math.random() - .5) * bl.jit * Math.abs(ay) * 7 + dt * (.2 + mass * .34);
       const dg = (kp.fric / 100) * dt * 2.2 * bl.drag + dt * .06;
       bl.vx *= 1 - dg; bl.vy *= 1 - dg;
@@ -955,9 +961,11 @@ SCENES.shake = {
   down(S, n) { S.shake.grab = n; },
   move(S, m, lastN) { const S2 = S.shake; S2.vxImp = (S2.vxImp || 0) + (m.x - lastN.x) * 2.2; S2.vyImp = (S2.vyImp || 0) + (m.y - lastN.y) * 2.2; S2.flash = 1; },
   up(S) { S.shake.grab = null; },
-  // SHOWRUNNER : blockDown (le bloc tiré par son en-tête) et panDown (le canvas déplacé)
+  // SHOWRUNNER : blockDown (le bloc tiré par son en-tête) — dx, dy : le
+  // déplacement du nœud dans le monde à cette image (index.js, penche ; à 100 %,
+  // les pixels du Playground). panDown (le canvas déplacé) n'est PAS repris :
+  // la vue qu'on déplace ou qu'on zoome ne secoue rien (Cal, 05/10).
   drag(dx, dy) { const S = this.S; S.vxImp = (S.vxImp || 0) - dx * .0016; S.vyImp = (S.vyImp || 0) - dy * .0016; S.flash = 1; },
-  pan(dx, dy) { const S = this.S; S.vxImp = (S.vxImp || 0) + dx * -.0006; S.vyImp = (S.vyImp || 0) + dy * -.0006; },
   trigger(ev) { const S = this.S, k = .08 + (ev.v ?? .8) * .1; S.vxImp = (S.vxImp || 0) + (Math.random() - .5) * 2 * k; S.vyImp = (S.vyImp || 0) - k * .8; S.flash = 1; },
   modOut(S) {
     const num = Math.round(this.V('shake', 'num'));
