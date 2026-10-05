@@ -1034,7 +1034,7 @@ function focus(which) {
 // aucune vidéo ne se recharge, l'originale se cale au lâcher.
 let apRaf = 0, apMove = null;
 const apercu = {
-  debut() { program.scrub(true); },
+  debut() { program.scrub(true, false); },          // la copie de défilement, sans le son (la tête ne bouge pas)
   // le bord : posé avant le dessin du geste (timeline.live le rend) ; `rendre` : tout de suite
   bord(o, rendre = false) { program.pv = o || null; if (rendre) program.invalidate(); },
   // déplacer, copier : le montage d'après le lâcher, calculé une fois par image d'écran
@@ -2538,6 +2538,9 @@ function wire() {
   $('#s-over').onclick = () => fromSource('overwrite');
   scrubber($('#src-scrub'), (u) => source.seek(u * source.duration), (on) => source.scrub(on));
   scrubber($('#prg-scrub'), (u) => program.seek(u * program.duration()), (on) => program.scrub(on));
+  // le son au défilement (commun/scrub.js) : au survol d'une tête, les sons se chargent d'avance
+  $('#src-scrub').addEventListener('pointerenter', () => source.prechargerSons());
+  for (const z of [$('#prg-scrub'), timeline.ruler]) z.addEventListener('pointerenter', () => program.prechargerSons());
   $('#src-screen').addEventListener('dragstart', (e) => {
     const it = source.item;
     if (!it) { e.preventDefault(); return; }

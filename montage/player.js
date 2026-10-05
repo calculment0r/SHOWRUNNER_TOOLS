@@ -54,12 +54,14 @@
 // recharge en chemin, et la copie de défilement montre l'image (montage.js, apercu).
 
 import { href } from '../commun/shell.js';
-import { windows, opacityAt, gainAt, audibleTracks, projectEnd, spd, isOn, chainOf } from './model.js';
+import { windows, opacityAt, gainAt, audibleTracks, projectEnd, spd, isOn, chainOf, srcTime } from './model.js';
 import { getLut, lutFailed, lutGL, passesOf } from './lut.js';
 // un saut ne s'empile jamais sur un saut en cours (commun/tete.js, mesuré le 30/09) :
 // la tête glissée à l'arrêt, l'image suit au lieu d'attendre la fin du geste
 import { sauter, cible } from '../commun/tete.js';
 import { copieDefil } from '../commun/defilement.js';
+// le son au défilement (06/10) : glisser la tête fait entendre le son sous elle, par grains (commun/scrub.js)
+import { scrub as scrubSon, sonDefil, chargerSon } from '../commun/scrub.js';
 
 // ce qui se voit d'une vidéo : l'originale, ou sa copie pendant qu'on cherche
 const vu = (e) => (e.dfl && e.dfl.montre === 'nav' ? e.dfl.nav : e.el);
@@ -190,6 +192,7 @@ export class Program {
     this.win = null;
     this.raf = 0;
     this.loop = this.loop.bind(this);
+    this.son = scrubSon({ contexte: audio, sons: (t) => this.sons(t) });
   }
 
   get fps() { const p = this.getP(); return p ? p.settings.fps : 25; }
@@ -244,17 +247,45 @@ export class Program {
   toggle() { this.playing ? this.pause() : this.play(1); }
 
   // un geste sur la tête (la règle, la barre du moniteur) commence ou finit : pendant, les
-  // copies de défilement restent devant ; au lâcher, les originales se calent
-  scrub(on) {
+  // copies de défilement restent devant ; au lâcher, les originales se calent. `son` : le son
+  // au défilement suit la tête (faux pour un geste de la timeline qui ne la bouge pas : apercu)
+  scrub(on, son = true) {
     this.geste = !!on;
     for (const e of this.els.values()) if (e.dfl) { if (on) e.dfl.debut(); else e.dfl.fin(); }
+    if (on && son) { this.prechargerSons(); this.son.debut(); } else this.son.fin();
   }
 
   seek(t) {
     this.t = Math.max(0, Math.min(this.duration(), t));
     if (this.playing) { this.t0 = this.t; this.n0 = performance.now(); }
+    else if (this.geste) this.son.aller(this.t);
     this.render();
     this.onTick(this.t, this.playing);
+  }
+
+  // ── le son au défilement (commun/scrub.js) ──
+  // Ce qui s'entend à l'instant t, comme render le règle : les plans des pistes son et le
+  // son des vidéos, muet et solo, fondus et volume, la vitesse du plan ; lus dans le son de
+  // défilement de leur média (une copie mono, décodée une fois : server/tools/defilement.py).
+  sons(t) {
+    const p = this.getP();
+    if (!p) return [];
+    const fps = p.settings.fps, win = this.pv ? windows(p) : (this.win || (this.win = windows(p)));
+    const hear = audibleTracks(p), kind = new Map(p.tracks.map((x) => [x.id, x.kind])), out = [];
+    for (const c of p.clips) {
+      const k = kind.get(c.track);
+      if (!isOn(c) || !hear.has(c.track) || c.kind === 'image' || c.kind === 'adjust' || !(k === 'audio' || (k === 'video' && c.audio))) continue;
+      const w = win.get(c.id);
+      if (!w || t < w.ws / fps || t >= w.we / fps) continue;
+      const buffer = sonDefil(this.itemOf(c.item));
+      if (buffer) out.push({ buffer, at: srcTime(c, t, fps), gain: (c.vol ?? 1) * gainAt(w, t, fps), vitesse: spd(c) });
+    }
+    return out;
+  }
+  // les sons de la séquence, chargés d'avance (au survol de la règle, au début du geste)
+  prechargerSons() {
+    const p = this.getP();
+    if (p) for (const c of p.clips) if (c.kind !== 'image' && c.kind !== 'adjust' && c.item) chargerSon(this.itemOf(c.item));
   }
   seekFrame(f) { this.seek(f / this.fps); }
   step(n) { if (this.playing) this.pause(); this.seekFrame(this.frame() + n); }
@@ -599,6 +630,8 @@ export class Source {
     this.out = 0;
     this.rate = 0;
     this.rev = 0;
+    // le son au défilement : le son de l'objet à la tête de la source (commun/scrub.js)
+    this.son = scrubSon({ contexte: audio, sons: (t) => { const b = this.item && sonDefil(this.item); return b ? [{ buffer: b, at: t }] : []; } });
   }
 
   get fps() { return (this.item && this.item.fps) || this.fpsOf(); }
@@ -658,8 +691,13 @@ export class Source {
 
   stop() { clearInterval(this.rev); this.rev = 0; this.rate = 0; }
 
-  // un geste sur la tête de la source (sa barre) commence ou finit (la copie de défilement)
-  scrub(on) { this.geste = !!on; if (this.dfl) { if (on) this.dfl.debut(); else this.dfl.fin(); } }
+  // un geste sur la tête de la source (sa barre) commence ou finit (la copie de défilement, le son)
+  scrub(on) {
+    this.geste = !!on;
+    if (this.dfl) { if (on) this.dfl.debut(); else this.dfl.fin(); }
+    if (on) { this.prechargerSons(); this.son.debut(); } else this.son.fin();
+  }
+  prechargerSons() { if (this.item) chargerSon(this.item); }
 
   // aller à t (s) : la copie de défilement si elle est prête, l'originale sinon
   go(t, geste = false) {
@@ -698,7 +736,13 @@ export class Source {
     this.onTick();
   }
   toggle() { this.playing ? this.pause() : this.play(1); }
-  seek(t) { if (this.el && this.item.kind !== 'image') { this.go(Math.max(0, Math.min(this.duration, t))); this.onTick(); } }
+  seek(t) {
+    if (!this.el || this.item.kind === 'image') return;
+    const at = Math.max(0, Math.min(this.duration, t));
+    this.go(at);
+    if (this.geste && !this.playing) this.son.aller(at);
+    this.onTick();
+  }
   step(n) { if (!this.el || this.item.kind === 'image') return; this.pause(); this.seek(this.t + n / this.fps); }
   markIn() { if (!this.item || this.item.kind === 'image') return; this.in = Math.min(this.t, Math.max(0, this.out - 1 / this.fps)); this.onTick(); }
   markOut() { if (!this.item || this.item.kind === 'image') return; this.out = Math.max(this.t, this.in + 1 / this.fps); this.onTick(); }
