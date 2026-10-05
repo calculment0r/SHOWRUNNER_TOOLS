@@ -36,7 +36,7 @@ const qz = (x, q) => (q ? Math.round(x / q) * q : Math.round(x * 1000) / 1000);
 // `at`. Un motif tient 256 pas au plus : un long clip MIDI devient une suite
 // de clips calés bout à bout.
 export function placeNotes(app, track, notes, at, { quantize = '1/16', name = 'MIDI' } = {}) {
-  const P = app.S.proj, t = app.track(track);
+  const P = app.S.proj, t = app.owner(track);   // une piste, ou une voie de la Session (session.js : ses motifs, sans ses clips)
   const barSteps = P.sig * 4, q = QUANT[quantize] ?? 1;
   const chunk = Math.floor(256 / barSteps) * barSteps;
   const drums = TRACK_KINDS[t.kind].pattern === 'drums';

@@ -16,8 +16,9 @@ const STEPS = [
   ['Enregistrer', 'Armer une piste (●), activer « Rec » (F9), puis Lecture : jouer au clavier de l\'ordinateur (« Clavier » allumé : rangée du milieu, Z X l\'octave, C V la vélocité) ou en MIDI (menu ··· du projet). Stop : la prise se pose en clip « Nouveau ». Une piste audio armée prend le micro.', ['#mu-rec', '#mu-kbd', '.ar-head .arm']],
   ['Importer de l\'audio', 'Glisser des fichiers (WAV, MP3, FLAC, M4A, OGG) sur une piste ou sous les pistes, ou « Importer ». Ils entrent dans la bibliothèque (Upload) et se posent à la grille. La vue Clip règle début, fin, boucle, gain, transposition, inversion, fondus, et « Caler » au tempo.', ['[data-imp]']],
   ['L\'arc d\'énergie', 'La piste orange sous la règle : peindre à la souris (Maj : une droite, clic droit : effacer). Elle ouvre et ferme le filtre de la sortie, ou son volume. Chaque piste a aussi ses voies d\'automation (A).', ['.ar-arch', '.ar-arc']],
-  ['Mixer', 'La console : un fader, un vu-mètre, des envois vers les bus d\'effets par piste ; un insert s\'ouvre dans la vue Instruments ; le nodal montre les mêmes câbles.', ['[data-view="console"]']],
-  ['Le nodal et son banc', 'Tab : Arrangement ↔ Nodal, deux vues du même graphe : le nœud de départ d\'une piste porte son nom et sa couleur, les fils de sa chaîne aussi. Bouton du milieu glissé : se déplacer ; sur les réglages d\'une tuile, il TRACE l\'ordre de ce qu\'elle garde en dézoomant. Clic : choisir, Maj : ajouter, Ctrl : ajouter ou retirer, glisser le fond : un cadre. Un câble tiré d\'une piste vers un effet d\'une autre le met dans les deux chaînes. Sous le graphe, le banc d\'ODIO_01 : glisser sur une lane, un segment ; clic milieu tiré d\'un segment jusque sur le graphe, un attracteur. Clic droit partout : le menu de ce qu\'on survole.', ['[data-view="nodal"]']],
+  ['La Session', 'Tab fait le tour des trois onglets : Arrangement → Session → Nodal. La Session joue PAR-DESSUS l\'arrangement, sur la même horloge : ses voies sont à elle, vierges au départ (+ Voie), et lancer un clip n\'arrête rien dans l\'arrangement. Dans l\'arrangement, clic droit sur un clip ou sur une plage : « Envoyer à la Session » (ou glisser le clip sur l\'onglet Session) — rien n\'y bouge, le morceau devient un clip du projet et une case de la voie née de sa piste. Une case : ▶ la lance (Entrée aussi), elle boucle ; une scène lance sa ligne. La bibliothèque du projet, rubrique « Projet » du navigateur, garde ces clips et les sons du projet, sans encombrer Asset.', ['[data-view="console"]']],
+  ['Mixer', 'La console, sous la grille de la Session : les voies, les pistes de l\'arrangement, les retours et la sortie, en groupes — un fader, un vu-mètre, des envois vers les bus d\'effets ; un insert s\'ouvre dans la vue Instruments ; le nodal montre les mêmes câbles.', ['[data-view="console"]']],
+  ['Le nodal et son banc', 'Tab y mène aussi : deux vues du même graphe que l\'arrangement : le nœud de départ d\'une piste porte son nom et sa couleur, les fils de sa chaîne aussi. Bouton du milieu glissé : se déplacer ; sur les réglages d\'une tuile, il TRACE l\'ordre de ce qu\'elle garde en dézoomant. Clic : choisir, Maj : ajouter, Ctrl : ajouter ou retirer, glisser le fond : un cadre. Un câble tiré d\'une piste vers un effet d\'une autre le met dans les deux chaînes. Sous le graphe, le banc d\'ODIO_01 : glisser sur une lane, un segment ; clic milieu tiré d\'un segment jusque sur le graphe, un attracteur. Clic droit partout : le menu de ce qu\'on survole.', ['[data-view="nodal"]']],
   ['Générer', 'YuE (paroles et voix) ou ACE-Step : le style, les sections de l\'arrangement comme plan des paroles, la durée, la graine. Le morceau se pose sur une piste audio, puis se sépare en voix, batterie, basse, autre — chacune sur sa piste, alignées.', ['#mu-gen']],
   ['Exporter', 'Le mixage en WAV 24 bits, et chaque piste à part (stems) : tout entre dans la bibliothèque ; « Envoyer au montage » ouvre le montage avec le mixage.', ['#mu-exp']],
 ];
@@ -33,7 +34,7 @@ const STEPS = [
 export const LIVE_SOURCE = 'Ableton Live 12 Reference Manual · « Live Keyboard Shortcuts » et « Arrangement View » · consulté le 29/09/2026 (la sélection de temps : le 05/10/2026)';
 const KEYS = [
   ['les vues', [
-    ['Tab', 'Arrangement ↔ Nodal (Live : Session ↔ Arrangement)'],
+    ['Tab', 'le tour des trois onglets de travail : Arrangement → Session → Nodal → Arrangement (Live : Session ↔ Arrangement)'],
     ['Maj+Tab · F12', 'panneau du bas : aller au clip ↔ à la chaîne (Live : Clip View ↔ Device View) ; F12, le navigateur web peut le garder pour ses outils'],
     ['Ctrl+Alt+3 · Ctrl+Alt+4', 'le clip · la chaîne de la piste'],
     ['Ctrl+Alt+B', 'montrer / cacher le navigateur'],
@@ -65,6 +66,15 @@ const KEYS = [
     ['glisser un en-tête', 'entre deux pistes : la ranger là · sur une piste : grouper'],
     ['S · C · A', 'solo · armer · automation de la piste choisie (clavier MIDI éteint)'],
     ['Maj+M', 'un marqueur à la tête de lecture (ODIO)'],
+  ]],
+  ['la Session (chapitres « Session View » et « Launching Clips » ; docs/etudes/odio_session.md)', [
+    ['Entrée', 'lancer la case choisie (une case vide : arrêter sa voie ; la colonne des scènes : lancer la scène)'],
+    ['← → ↑ ↓', 'choisir une case, ou une scène dans la dernière colonne'],
+    ['Ctrl+D · Ctrl+R · Suppr', 'dupliquer · renommer · retirer le clip (ou la scène) choisi'],
+    ['Ctrl+C · X · V', 'copier · couper · coller un clip de Session'],
+    ['Ctrl+I', 'insérer une scène sous la scène choisie · « Capturer » : une scène des clips qui jouent'],
+    ['double-clic', 'sur un clip : la vue Clip · sur une case vide : un clip MIDI (une voie audio : un son)'],
+    ['clic droit · un clip de l\'arrangement', 'Envoyer à la Session, ou dans une voie (ODIO) · le glisser sur l\'onglet Session : pareil'],
   ]],
   ['la molette (la même dans toutes les timelines du portail)', MOLETTE],
   ['le zoom (chapitre « Arrangement View »)', [

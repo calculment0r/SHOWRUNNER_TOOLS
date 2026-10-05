@@ -16,6 +16,7 @@
 import { toast, uploadFile, href } from '../commun/shell.js';
 import { TRACK_KINDS, drumVoicesOf } from './modules.js';
 import { wav24 } from './moteur.js';
+import { noterOrigine } from './projet.js';   // la bibliothèque du projet : une prise y entre comme « prise »
 
 export function createRecorder(app) {
   const { S, engine } = app;
@@ -150,6 +151,7 @@ export function createRecorder(app) {
       const it = await uploadFile(new File([wav24(buf)], name, { type: 'audio/wav' }), { tool: 'music', folder: 'Musique', title: `Prise micro · ${S.proj.name}` });
       app.items.set(it.id, Promise.resolve({ ...it, href: href(it.url) }));
       const p = S.proj;
+      noterOrigine(p, it.id, 'prise');
       const off = Math.min(M.lat, Math.max(0, buf.duration - 0.05));
       const len = Math.max(0.25, (buf.duration - off) * p.bpm / 60);
       p.clips.push({ id: app.uid('c'), track: M.track, start: Math.max(0, M.beat ?? 0), len, item: it.id, off: Math.round(off * 1000) / 1000 });

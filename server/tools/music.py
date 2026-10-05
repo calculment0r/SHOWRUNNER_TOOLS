@@ -85,6 +85,9 @@ TEMPLATES = ("rythme", "session", "vide")
 # d'un clip (Live 12, « Launching Clips » : Trigger, Gate, Toggle, Repeat)
 QUANTS = ("none", "8", "4", "2", "1", "1/2", "1/2T", "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T", "1/32")
 LAUNCH_MODES = ("trigger", "gate", "toggle", "repeat")
+# la bibliothèque du projet (05/10 au soir, musique/projet.js : biblio) : d'où vient
+# un son que le projet a pris ou fabriqué
+BIBLIO_QUOI = ("asset", "import", "prise", "rendu", "generation")
 GEN_MODELS = ("ace", "yue")          # musique/generatif_modeles.json, « modeles »
 
 # ── les listes du nœud TextEncodeAceStepAudio1.5 (object_info, DGX2, 28/09) ──
@@ -146,6 +149,36 @@ def _curve(pts, what) -> None:
             raise ValueError(f"{what} : un point est [temps, valeur]")
         _num(pt[0], 0, 1e5, f"{what} (temps)")
         _num(pt[1], 0, 1, f"{what} (valeur)")
+
+
+def _notes(what: str, steps: int, notes) -> None:
+    """Les notes d'un motif (ou d'un clip du projet) de `steps` pas."""
+    if not isinstance(notes, list) or len(notes) > 4000:
+        raise ValueError(f"{what} : notes invalides")
+    for nt in notes:
+        _num((nt or {}).get("s"), 0, steps - 1e-6, "départ de note")
+        _num(nt.get("l"), 0.0625, steps, "longueur de note")
+        _num(nt.get("p"), 0, 127, "hauteur de note")
+        _num(nt.get("v", 0.8), 0, 1, "vélocité")
+        _bool(nt, "ac", "accent")
+        _bool(nt, "sl", "liaison")
+
+
+def _lanes(what: str, steps: int, lanes) -> None:
+    """Les pas d'une batterie : une liste de vélocités par voix connue."""
+    if not isinstance(lanes, dict) or not set(lanes) <= set(DRUM_VOICES):
+        raise ValueError(f"{what} : voix de batterie inconnues")
+    for v in lanes.values():
+        if not isinstance(v, list) or len(v) != steps:
+            raise ValueError(f"{what} : une case par pas")
+        for x in v:
+            _num(x, 0, 1, "vélocité")
+
+
+def _pas(v, what: str) -> int:
+    if not isinstance(v, int) or isinstance(v, bool) or not (4 <= v <= 256) or v % 4:
+        raise ValueError(f"{what} : de 4 à 256 pas, par quatre")
+    return v
 
 
 def _cycle(nodes: set, cables: list) -> bool:
@@ -259,9 +292,12 @@ def validate(p: dict) -> None:
         if not strip or strip["type"] != "strip":
             raise ValueError(f"{t['name']} : sa tranche de console manque")
         by_track[tid] = t
+    by_voie = _voies(p, by_mod, by_track)
     for m in mods:
         if m.get("track") is not None and m["track"] not in by_track:
             raise ValueError(f"{m['id']} : piste inconnue")
+        if m.get("voie") is not None and (m["voie"] not in by_voie or m.get("track") is not None):
+            raise ValueError(f"{m['id']} : voie de Session inconnue (un module est d'une piste ou d'une voie)")
 
     seen = set()
     for c in cables:
@@ -289,33 +325,16 @@ def validate(p: dict) -> None:
     by_pat: dict = {}
     for pt in pats:
         pid = _id((pt or {}).get("id"), "motif")
-        tr = by_track.get(pt.get("track"))
+        # le motif d'une piste, ou d'une voie de la Session (`track` : la voie)
+        tr = by_track.get(pt.get("track")) or by_voie.get(pt.get("track"))
         if not tr or tr["kind"] in ("audio", "bus"):
             raise ValueError(f"{pid} : piste absente ou sans motif")
-        steps = pt.get("steps")
-        if not isinstance(steps, int) or isinstance(steps, bool) or not (4 <= steps <= 256) or steps % 4:
-            raise ValueError(f"{pid} : de 4 à 256 pas, par quatre")
+        steps = _pas(pt.get("steps"), pid)
         _str(pt.get("name", ""), 40, "nom de motif")
         if tr["kind"] == "drums":
-            lanes = pt.get("lanes")
-            if not isinstance(lanes, dict) or not set(lanes) <= set(DRUM_VOICES):
-                raise ValueError(f"{pid} : voix de batterie inconnues")
-            for v in lanes.values():
-                if not isinstance(v, list) or len(v) != steps:
-                    raise ValueError(f"{pid} : une case par pas")
-                for x in v:
-                    _num(x, 0, 1, "vélocité")
+            _lanes(pid, steps, pt.get("lanes"))
         else:
-            notes = pt.get("notes")
-            if not isinstance(notes, list) or len(notes) > 4000:
-                raise ValueError(f"{pid} : notes invalides")
-            for nt in notes:
-                _num((nt or {}).get("s"), 0, steps - 1e-6, "départ de note")
-                _num(nt.get("l"), 0.0625, steps, "longueur de note")
-                _num(nt.get("p"), 0, 127, "hauteur de note")
-                _num(nt.get("v", 0.8), 0, 1, "vélocité")
-                _bool(nt, "ac", "accent")
-                _bool(nt, "sl", "liaison")
+            _notes(pid, steps, pt.get("notes"))
         by_pat[pid] = pt
     cids = set()
     for c in clips:
@@ -432,7 +451,8 @@ def validate(p: dict) -> None:
             raise ValueError(f"{r['name']} : un réglage de source connue")
         if not isinstance(r.get("params", {}), dict) or len(r.get("params", {})) > 200:
             raise ValueError(f"{r['name']} : réglages invalides")
-    _session(p, by_track, by_pat)
+    _session(p, by_voie, by_pat)
+    _biblio(p)
     banc = p.get("banc")
     if banc is not None and (not isinstance(banc, dict) or len(json.dumps(banc)) > 65536):
         raise ValueError("banc du nodal : 64 ko au plus")
@@ -444,11 +464,48 @@ def validate(p: dict) -> None:
             _curve(banc["ten"], "courbe de tension")
 
 
-def _session(p: dict, by_track: dict, by_pat: dict) -> None:
+def _voies(p: dict, by_mod: dict, by_track: dict) -> dict:
+    """Les voies de la Session (05/10 au soir, musique/projet.js : voies) : les
+    colonnes du lanceur, à elle, qui jouent EN PLUS de l'arrangement. Une voie a la
+    forme d'une piste (une source de sa sorte, une tranche ; muet, solo, armer ; la
+    chaîne et les envois sont des câbles), sans être une piste : jamais un bus, et
+    son id ne croise pas celui d'une piste (ses motifs portent `track: <voie>`).
+    `piste` : la piste dont elle est née, peut-être retirée depuis."""
+    voies = p.get("voies", [])
+    if not isinstance(voies, list) or len(voies) > 64:
+        raise ValueError("voies de Session : une liste de 64 au plus")
+    by_voie: dict = {}
+    for v in voies:
+        vid = _id((v or {}).get("id"), "voie de Session")
+        if vid in by_voie or vid in by_track:
+            raise ValueError(f"voie de Session en double : {vid}")
+        _str(v.get("name"), 60, "nom de voie", 1)
+        if v.get("kind") not in TRACK_SOURCES or v["kind"] == "bus":
+            raise ValueError(f"{v['name']} : sorte de voie inconnue ({v.get('kind')!r} ; un bus n'est pas une voie)")
+        if v.get("color") not in COLORS:
+            raise ValueError(f"{v['name']} : couleur inconnue ({v.get('color')!r})")
+        if v.get("sub") is not None:
+            _str(v["sub"], 60, "sous-titre de voie")
+        if v.get("piste") is not None:
+            _id(v["piste"], f"{v['name']} : piste d'origine")
+        for k in ("mute", "solo", "arm"):
+            _bool(v, k, f"{v['name']} : {k}")
+        src, strip = by_mod.get(v.get("src")), by_mod.get(v.get("strip"))
+        if not src or src["type"] not in TRACK_SOURCES[v["kind"]]:
+            raise ValueError(f"{v['name']} : sa source manque")
+        if not strip or strip["type"] != "strip":
+            raise ValueError(f"{v['name']} : sa tranche de console manque")
+        by_voie[vid] = v
+    return by_voie
+
+
+def _session(p: dict, by_voie: dict, by_pat: dict) -> None:
     """La vue Session (05/10, musique/projet.js en décrit la forme) : les scènes
-    (les lignes du lanceur), les clips de Session (une case : une piste × une
-    scène, au plus un par case) qui bouclent sur `len` noires, la quantification
-    globale du lancement. Tout est facultatif : un projet d'avant n'en a pas."""
+    (les lignes du lanceur), les clips de Session (une case : une VOIE × une scène,
+    au plus un par case) qui bouclent sur `len` noires, la quantification globale du
+    lancement. Tout est facultatif : un projet d'avant n'en a pas ; celui de la
+    première Session (des clips dans la colonne d'une piste, `track`) est converti
+    par la page à l'ouverture (projet.js, convertirSlots)."""
     scenes = p.get("scenes", [])
     if not isinstance(scenes, list) or len(scenes) > 256:
         raise ValueError("scènes : une liste de 256 au plus")
@@ -472,14 +529,14 @@ def _session(p: dict, by_track: dict, by_pat: dict) -> None:
         if cid in ids:
             raise ValueError(f"clip de Session en double : {cid}")
         ids.add(cid)
-        tr = by_track.get(c.get("track"))
-        if not tr or tr["kind"] == "bus":
-            raise ValueError(f"{cid} : piste absente (un bus n'a pas de clips)")
+        v = by_voie.get(c.get("voie"))
+        if not v:
+            raise ValueError(f"{cid} : voie de Session absente" + (" (un clip de Session est dans une voie : recharger la page convertit le projet)" if c.get("track") else ""))
         if c.get("scene") not in sc_ids:
             raise ValueError(f"{cid} : scène absente")
-        if (tr["id"], c["scene"]) in cases:
-            raise ValueError(f"{cid} : la case est déjà prise (un clip par piste et par scène)")
-        cases.add((tr["id"], c["scene"]))
+        if (v["id"], c["scene"]) in cases:
+            raise ValueError(f"{cid} : la case est déjà prise (un clip par voie et par scène)")
+        cases.add((v["id"], c["scene"]))
         _num(c.get("len"), 0.0625, 4096, "longueur du clip de Session")
         if c.get("name") is not None:
             _str(c["name"], 60, "nom de clip")
@@ -489,25 +546,103 @@ def _session(p: dict, by_track: dict, by_pat: dict) -> None:
             raise ValueError(f"{cid} : mode de lancement inconnu ({c['mode']!r})")
         if c.get("q") is not None and c["q"] not in QUANTS + ("global",):
             raise ValueError(f"{cid} : quantification inconnue ({c['q']!r})")
+        if c.get("ref") is not None:
+            _id(c["ref"], f"{cid} : clip du projet")
         for k in ("mute", "loop", "rev"):
             _bool(c, k, f"{cid} : {k}")
-        if tr["kind"] == "audio":
+        if v["kind"] == "audio":
             _str(c.get("item"), 64, "son du clip", 1)
-            _num(c.get("off", 0), 0, 1e5, "décalage du clip")
-            _num(c.get("gain", 0) or 0, -60, 24, "gain du clip (dB)")
-            _num(c.get("fi", 0) or 0, 0, 600, "fondu d'entrée (s)")
-            _num(c.get("fo", 0) or 0, 0, 600, "fondu de sortie (s)")
-            _num(c.get("pitch", 0) or 0, -48, 48, "transposition du clip (demi-tons)")
-            for k in ("ls", "llen"):
-                if c.get(k) is not None:
-                    _num(c[k], 0, 1e5, "boucle du son (s)")
-        elif c.get("pat") not in by_pat or by_pat[c["pat"]]["track"] != tr["id"]:
+            _son(c, cid)
+        elif c.get("pat") not in by_pat or by_pat[c["pat"]]["track"] != v["id"]:
             raise ValueError(f"{cid} : motif absent")
         else:
             _num(c.get("off", 0), 0, 1e5, "décalage du motif")
     launch = p.get("launch")
     if launch is not None and (not isinstance(launch, dict) or launch.get("q") not in QUANTS):
         raise ValueError(f"quantification du lancement : {', '.join(QUANTS)}")
+
+
+def _son(c: dict, cid: str) -> None:
+    """Les réglages d'un son lu (un clip de Session, un clip du projet)."""
+    _num(c.get("off", 0), 0, 1e5, "décalage du clip")
+    _num(c.get("gain", 0) or 0, -60, 24, "gain du clip (dB)")
+    _num(c.get("fi", 0) or 0, 0, 600, "fondu d'entrée (s)")
+    _num(c.get("fo", 0) or 0, 0, 600, "fondu de sortie (s)")
+    _num(c.get("pitch", 0) or 0, -48, 48, "transposition du clip (demi-tons)")
+    for k in ("ls", "llen"):
+        if c.get(k) is not None:
+            _num(c[k], 0, 1e5, "boucle du son (s)")
+    for k in ("loop", "rev"):
+        _bool(c, k, f"{cid} : {k}")
+
+
+def _biblio(p: dict) -> None:
+    """La bibliothèque du projet (05/10 au soir, musique/projet.js : biblio ; Cal :
+    « une bibliothèque projet pour ODIO ») : des dossiers (un niveau), les clips
+    édités du projet — un son est une RÉFÉRENCE (un objet de la bibliothèque, son
+    départ, sa longueur, son gain…), des notes une COPIE (des pas ou des notes, et
+    l'instrument d'où elles viennent) —, et les sons que le projet a pris ou
+    fabriqués, avec leur origine."""
+    b = p.get("biblio")
+    if b is None:
+        return
+    if not isinstance(b, dict):
+        raise ValueError("bibliothèque du projet : un objet")
+    dossiers, clips, sons = b.get("dossiers", []), b.get("clips", []), b.get("sons", [])
+    for v, n, what in ((dossiers, 64, "dossiers"), (clips, 1024, "clips"), (sons, 4096, "sons")):
+        if not isinstance(v, list) or len(v) > n:
+            raise ValueError(f"bibliothèque du projet : {what}, une liste de {n} au plus")
+    dids = set()
+    for d in dossiers:
+        did = _id((d or {}).get("id"), "dossier du projet")
+        if did in dids:
+            raise ValueError(f"dossier du projet en double : {did}")
+        dids.add(did)
+        _str(d.get("name"), 40, "nom de dossier", 1)
+
+    def dossier(x, what):
+        if x.get("dossier") is not None and x["dossier"] not in dids:
+            raise ValueError(f"{what} : dossier inconnu ({x['dossier']!r})")
+
+    cids = set()
+    for c in clips:
+        cid = _id((c or {}).get("id"), "clip du projet")
+        if cid in cids:
+            raise ValueError(f"clip du projet en double : {cid}")
+        cids.add(cid)
+        dossier(c, cid)
+        if c.get("name") is not None:
+            _str(c["name"], 60, "nom de clip")
+        if c.get("color") is not None and c["color"] not in COLORS:
+            raise ValueError(f"{cid} : couleur inconnue")
+        if c.get("from") is not None:
+            _id(c["from"], f"{cid} : clip d'origine")
+        _num(c.get("len"), 0.0625, 4096, "longueur du clip du projet")
+        if c.get("kind") == "audio":
+            _str(c.get("item"), 64, "son du clip", 1)
+            _son(c, cid)
+        elif c.get("kind") == "midi":
+            _bool(c, "drums", f"{cid} : batterie")
+            steps = _pas(c.get("steps"), cid)
+            if c.get("drums"):
+                _lanes(cid, steps, c.get("lanes"))
+            else:
+                _notes(cid, steps, c.get("notes"))
+            inst = c.get("inst")
+            if inst is not None and (not isinstance(inst, dict) or inst.get("type") not in SOURCES
+                                     or not isinstance(inst.get("params", {}), dict) or len(inst.get("params", {})) > 200):
+                raise ValueError(f"{cid} : l'instrument d'origine, une source connue")
+        else:
+            raise ValueError(f"{cid} : un clip du projet est un son ou des notes ({c.get('kind')!r})")
+    vus = set()
+    for x in sons:
+        it = _str((x or {}).get("item"), 64, "son du projet", 1)
+        if it in vus:
+            raise ValueError(f"son du projet en double : {it}")
+        vus.add(it)
+        if x.get("quoi") not in BIBLIO_QUOI:
+            raise ValueError(f"{it} : origine inconnue ({x.get('quoi')!r} ; {', '.join(BIBLIO_QUOI)})")
+        dossier(x, it)
 
 
 # ── les projets de départ ───────────────────────────────────
@@ -1030,29 +1165,59 @@ def selftest(call, ok) -> None:
     ok(st == 200 and r.get("rev") == 3, f"sections, marqueurs, arc, automation, tonalité passent ({st} {r})")
     good["rev"] = 3
 
-    # la vue Session (05/10) : scènes, clips de Session, quantification du lancement
+    # la vue Session (05/10 ; refaite le soir : des voies à elle, en plus de l'arrangement) :
+    # voies, scènes, clips de Session, quantification du lancement, la bibliothèque du projet
     sess = json.loads(json.dumps(good))
+    sess["voies"] = [{"id": "v1", "name": "Kit · Session", "kind": "drums", "color": "or", "mute": False, "solo": True,
+                      "src": "m6", "strip": "m7", "piste": "t1"},
+                     {"id": "v2", "name": "Boucles", "kind": "audio", "color": "grn2", "src": "m8", "strip": "m9"}]
+    sess["modules"] += [{"id": "m6", "type": "rythme", "voie": "v1", "x": 40, "y": 700, "on": True, "params": {}},
+                        {"id": "m7", "type": "strip", "voie": "v1", "x": 380, "y": 700, "on": True, "params": {}},
+                        {"id": "m8", "type": "player", "voie": "v2", "x": 40, "y": 960, "on": True, "params": {}},
+                        {"id": "m9", "type": "strip", "voie": "v2", "x": 380, "y": 960, "on": True, "params": {}}]
+    sess["cables"] += [{"a": "m6", "b": "m7"}, {"a": "m7", "b": "m0"}, {"a": "m8", "b": "m9"}, {"a": "m9", "b": "m0"}]
+    sess["patterns"].append({"id": "p3", "track": "v1", "name": "Kit", "steps": 16, "lanes": {"bd": [1, 0, 0, 0] * 4}})
     sess["scenes"] = [{"id": "sc1", "name": ""}, {"id": "sc2", "name": "Refrain", "bpm": 124, "color": "or"}]
-    sess["slots"] = [{"id": "cl1", "track": "t1", "scene": "sc1", "len": 4, "pat": "p1", "name": "Kit", "mode": "gate", "q": "1/4"},
-                     {"id": "cl2", "track": "t2", "scene": "sc2", "len": 8, "pat": "p2", "off": 0}]
+    sess["slots"] = [{"id": "cl1", "voie": "v1", "scene": "sc1", "len": 4, "pat": "p3", "name": "Kit", "mode": "gate", "q": "1/4", "ref": "r1"},
+                     {"id": "cl2", "voie": "v2", "scene": "sc2", "len": 8, "item": "aud-20260101-000000-abcd", "off": 1.5, "gain": -3}]
     sess["launch"] = {"q": "1"}
+    sess["biblio"] = {"dossiers": [{"id": "d1", "name": "Découpes"}],
+                      "clips": [{"id": "r1", "name": "Kit", "kind": "midi", "drums": True, "steps": 16, "lanes": {"bd": [1, 0, 0, 0] * 4}, "len": 4,
+                                 "from": "c1", "inst": {"type": "drums", "params": {}}, "dossier": "d1"},
+                                {"id": "r2", "name": "Voix", "kind": "audio", "item": "aud-20260101-000000-abcd", "off": 2.25, "len": 2, "pitch": -2}],
+                      "sons": [{"item": "aud-20260101-000000-abcd", "quoi": "import", "dossier": "d1"}]}
     for mut, why, word in (
-            (lambda b: b["slots"].append({"id": "cl9", "track": "t1", "scene": "sc1", "len": 4, "pat": "p1"}), "deux clips dans une case", "case"),
-            (lambda b: b["slots"].append({"id": "cl9", "track": "t1", "scene": "scx", "len": 4, "pat": "p1"}), "un clip dans une scène absente", "scène"),
-            (lambda b: b["slots"].append({"id": "cl9", "track": "t1", "scene": "sc2", "len": 4, "pat": "p2"}), "un clip de Session qui joue le motif d'une autre piste", "motif"),
+            (lambda b: b["slots"].append({"id": "cl9", "voie": "v1", "scene": "sc1", "len": 4, "pat": "p3"}), "deux clips dans une case", "case"),
+            (lambda b: b["slots"].append({"id": "cl9", "voie": "v1", "scene": "scx", "len": 4, "pat": "p3"}), "un clip dans une scène absente", "scène"),
+            (lambda b: b["slots"].append({"id": "cl9", "voie": "v1", "scene": "sc2", "len": 4, "pat": "p1"}), "un clip de Session qui joue le motif d'une piste", "motif"),
+            (lambda b: b["slots"].append({"id": "cl9", "track": "t1", "scene": "sc2", "len": 4, "pat": "p1"}), "un clip de Session dans la colonne d'une piste (la Session d'avant)", "voie"),
+            (lambda b: b["slots"][1].pop("item"), "un clip de son sans son", "son"),
             (lambda b: b["slots"][0].update(mode="legato"), "un mode de lancement inconnu", "mode"),
             (lambda b: b["slots"][0].update(len=0), "un clip de Session sans longueur", "longueur"),
             (lambda b: b.update(launch={"q": "3/4"}), "une quantification inconnue", "quantification"),
             (lambda b: b["scenes"].append({"id": "sc1", "name": "bis"}), "une scène en double", "scène"),
-            (lambda b: b["scenes"][1].update(bpm=400), "un tempo de scène hors bornes", "tempo")):
+            (lambda b: b["scenes"][1].update(bpm=400), "un tempo de scène hors bornes", "tempo"),
+            (lambda b: b["voies"].append({**b["voies"][0], "id": "t2"}), "une voie qui porte l'id d'une piste", "double"),
+            (lambda b: b["voies"][1].update(kind="bus"), "une voie qui serait un bus", "bus"),
+            (lambda b: b["voies"][0].update(src="m8"), "une voie de batterie qui joue un lecteur", "source"),
+            (lambda b: b["modules"][-1].update(voie="vx"), "un module d'une voie absente", "voie"),
+            (lambda b: b["clips"].append({"id": "c9", "track": "v1", "start": 0, "len": 4, "pat": "p3"}), "un clip d'arrangement sur une voie", "piste"),
+            (lambda b: b["biblio"]["clips"][1].update(kind="video"), "un clip du projet qui n'est ni son ni notes", "son ou des notes"),
+            (lambda b: b["biblio"]["clips"][0].update(steps=18), "un clip du projet de 18 pas", "pas"),
+            (lambda b: b["biblio"]["sons"][0].update(quoi="vol"), "un son du projet d'origine inconnue", "origine"),
+            (lambda b: b["biblio"]["sons"][0].update(dossier="dx"), "un son dans un dossier absent", "dossier")):
         bad = json.loads(json.dumps(sess))
         mut(bad)
         st, r = call("POST", f"/api/music/projects/{pid}", bad)
         ok(st == 400 and word in r.get("error", ""), f"refusé : {why} ({st} {r})")
     st, r = call("POST", f"/api/music/projects/{pid}", sess)
     st2, back = call("GET", f"/api/music/projects/{pid}")
-    ok(st == 200 and back.get("slots") == sess["slots"] and back.get("scenes") == sess["scenes"] and back.get("launch") == {"q": "1"},
-       f"la Session s'enregistre et se relit telle quelle ({st} {r})")
+    ok(st == 200 and all(back.get(k) == sess[k] for k in ("voies", "slots", "scenes", "biblio")) and back.get("launch") == {"q": "1"},
+       f"la Session (voies, clips, scènes) et la bibliothèque du projet s'enregistrent et se relisent telles quelles ({st} {r})")
+    from tools import elements
+    ids = {x for x, _ in elements.ids_in("mus", back)}
+    ok("aud-20260101-000000-abcd" in ids and not elements.closure_gaps("mus", back),
+       f"les sons de la Session et de la bibliothèque du projet sont dans ID_FIELDS (le garde du Workspace, le paquet) ({elements.closure_gaps('mus', back)})")
 
     st, s = call("POST", "/api/music/projects", {"name": "Session", "template": "session"})
     ok(st == 200 and len(s.get("sections", [])) == 4 and s["bpm"] == 112 and s["key"] == {"tonic": 5, "mode": "minor"}

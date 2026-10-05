@@ -407,7 +407,8 @@ def check_loops(doc: str, items) -> None:
 #   seq  montage.normalize (plans, leurs effets) ; montage.chain_of (effets de piste, de groupe)
 #   mus  music.validate ; musique/generatif_region.js (prises `gen.takes`, cases « son »
 #        `gen.v`) ; musique/moteur.js (l'échantillonneur : `params.item`) ; musique.js
-#        savePreset (un réglage gardé recopie les `params` du module)
+#        savePreset (un réglage gardé recopie les `params` du module) ; musique/projet.js
+#        (la bibliothèque du projet, `biblio` : refDeClip, retenirSons — 05/10)
 #   ide  ideation._node (média, nuancier, les images d'un moodboard), ideation._card_data (le visage d'une carte),
 #        la carte Générer (`refChoice` : l'élément → la référence choisie)
 #   item library.py (lignée, éléments, versions), elements.publish (`deps`), les recettes
@@ -415,7 +416,9 @@ def check_loops(doc: str, items) -> None:
 ID_FIELDS = {
     "seq": ("clips[].item", "clips[].fx[].lut", "tracks[].fx[].lut", "groups[].fx[].lut"),
     "mus": ("clips[].item", "clips[].gen.takes[].item", "clips[].gen.v.*", "modules[].params.item",
-            "presets[].params.item", "slots[].item"),   # slots : les clips de la vue Session d'ODIO (05/10)
+            "presets[].params.item", "slots[].item",   # slots : les clips de la vue Session d'ODIO (05/10)
+            # la bibliothèque du projet (05/10 au soir) : les références de son, l'échantillon de l'instrument d'un clip de notes, ses sons
+            "biblio.clips[].item", "biblio.clips[].inst.params.item", "biblio.sons[].item"),
     "ide": ("nodes[].item", "nodes[].items[]", "nodes[].data.item", "nodes[].refChoice.{}"),
     "item": ("parents[]", "version.of", "element.refs[].item", "element.voices[].item", "element.versions[].item",
              "element.versions[].deps[].el", "element.versions[].deps[].item", "params.refs[].item", "params.source",

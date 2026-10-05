@@ -4,9 +4,11 @@
 // l'arc). Les envois sont des câbles qui portent un niveau : le nodal montre le
 // même graphe, en pointillé.
 // Depuis le 05/10, la console est le bas de la vue Session (session.js), comme
-// le mixeur de Live sous sa grille de clips (Live 12, « Mixing ») : chaque
-// tranche tient sous la colonne de sa piste. Ce module fabrique les tranches ;
-// la vue les range.
+// le mixeur de Live sous sa grille de clips (Live 12, « Mixing ») ; refaite le
+// soir, elle range en groupes les voies de la Session, les pistes de
+// l'arrangement, les retours et la sortie (les envois des pistes n'ont pas
+// d'autre console). Ce module fabrique les tranches — d'une piste, d'un bus ou
+// d'une voie (`voie`) ; la vue les range.
 
 import { toast } from '../commun/shell.js';
 import { MODULES, EFFECT_TYPES, spec, val, moduleName } from './modules.js';
@@ -43,11 +45,12 @@ export function createMixer(app, { onSelect = () => {} } = {}) {
       onChange: () => app.commit('quiet') });
   }
 
-  function inserts(t) {
+  // une voie de la Session n'a pas de vue Instruments sous l'arrangement : ses effets se règlent dans le nodal
+  function inserts(t, voie = false) {
     const ch = app.chain(t.id).filter((m) => m.id !== t.src && m.id !== t.strip);
     return el('div', { class: 'cs-ins' },
-      ch.map((m) => el('button', { class: `cs-in${m.on === false ? ' off' : ''}`, type: 'button', title: `${MODULES[m.type].name} · clic : dans la vue Instruments, sous l'arrangement`,
-        style: { '--k': `var(--${MODULES[m.type].color})` }, onclick: () => { S.sel.track = t.id; S.sel.mod = m.id; app.showDetail('device'); } }, moduleName(m.type))),
+      ch.map((m) => el('button', { class: `cs-in${m.on === false ? ' off' : ''}`, type: 'button', title: `${MODULES[m.type].name} · clic : ${voie ? 'dans le nodal' : 'dans la vue Instruments, sous l\'arrangement'}`,
+        style: { '--k': `var(--${MODULES[m.type].color})` }, onclick: () => { S.sel.mod = m.id; if (voie) { app.setView('nodal'); return; } S.sel.track = t.id; app.showDetail('device'); } }, moduleName(m.type))),
       el('button', { class: 'cs-in add', type: 'button', title: 'un effet en insert, avant la tranche', onclick: (e) => {
         const r = e.currentTarget.getBoundingClientRect();
         menu(r.left, r.bottom + 4, EFFECT_TYPES.map((k) => ({ label: MODULES[k].name, sub: MODULES[k].odio ? `ODIO · ${MODULES[k].kind}` : MODULES[k].kind, dot: MODULES[k].color,
@@ -55,7 +58,7 @@ export function createMixer(app, { onSelect = () => {} } = {}) {
       } }, '+'));
   }
 
-  function strip(t, { bus = false } = {}) {
+  function strip(t, { bus = false, voie = false } = {}) {
     const st = app.mod(t.strip), src = app.mod(t.src);
     const volS = spec('strip', 'vol');
     const meter = vu();
@@ -64,16 +67,18 @@ export function createMixer(app, { onSelect = () => {} } = {}) {
       onInput: (v) => { st.params.vol = Math.round(v * 10) / 10; app.commit('param', st); }, onChange: () => app.commit('quiet') });
     const tog = (label, on, title, fn, cls = '') => el('button', { class: `tb sm ${cls}${on ? ' on' : ' ghost'}`, type: 'button', title, onclick: fn }, label);
     const nm = el('b', { title: 'double-clic : renommer', ondblclick: () => inlineEdit(nm, t.name, (n) => { t.name = n.slice(0, 60); app.commit('data'); }, { max: 60 }) }, t.name);
-    return el('div', { class: `cs-strip${bus ? ' bus' : ''}${S.sel.track === t.id ? ' sel' : ''}${t.mute ? ' muted' : ''}`, style: { '--c': `var(--${t.color})` }, 'data-track': t.id,
+    const choisie = voie ? S.sel.voie === t.id : S.sel.track === t.id;
+    return el('div', { class: `cs-strip${bus ? ' bus' : ''}${voie ? ' voie' : ''}${choisie ? ' sel' : ''}${t.mute ? ' muted' : ''}`, style: { '--c': `var(--${t.color})` }, [voie ? 'data-voie' : 'data-track']: t.id,
       onclick: (e) => {
-        if (e.target.closest('button, .kn, .fdr, .mu-inline') || S.sel.track === t.id) return;
+        if (e.target.closest('button, .kn, .fdr, .mu-inline') || choisie) return;
         // choisir sans refaire la vue : un double-clic qui suit renomme encore
-        S.sel.track = t.id; S.sel.pat = t.pat || null; S.sel.clip = null; S.sel.clips = [];
-        onSelect(t);
+        if (voie) S.sel.voie = t.id;
+        else { S.sel.track = t.id; S.sel.pat = t.pat || null; S.sel.clip = null; S.sel.clips = []; }
+        onSelect(t, voie);
       } },
     el('div', { class: 'cs-top' }, el('i', { class: 'bar' }), nm,
       el('span', { class: 'lbl' }, bus ? 'retour' : moduleName(src?.type))),
-    inserts(t),
+    inserts(t, voie),
     bus ? el('div', { class: 'cs-sends empty' }, el('span', { class: 'lbl' }, 'ce que les pistes y envoient'))
       : el('div', { class: 'cs-sends' }, buses().length ? buses().map((b) => el('div', { class: 'cs-send' }, sendKnob(t, b), el('span', { class: 'lbl' }, b.name)))
         : el('span', { class: 'lbl' }, '+ Bus : les envois')),
@@ -82,7 +87,7 @@ export function createMixer(app, { onSelect = () => {} } = {}) {
     el('div', { class: 'row cs-btns' },
       tog('M', t.mute, 'muet', () => { t.mute = !t.mute; app.commit('mute'); }),
       bus ? null : tog('S', t.solo, 'solo', () => { t.solo = !t.solo; app.commit('mute'); }),
-      bus ? null : tog('●', t.arm, 'armer pour la prise · dans la vue Session, ses cases vides deviennent des boutons de prise', () => { t.arm = !t.arm; app.commit('quiet'); app.renderView(); }, 'arm')),
+      bus ? null : tog('●', t.arm, voie ? 'armer pour la prise de Session : ses cases vides deviennent des boutons de prise' : 'armer pour la prise de l\'arrangement (Rec, F9)', () => { t.arm = !t.arm; app.commit('quiet'); app.renderView(); }, 'arm')),
     el('div', { class: 'cs-fv' }, fd, meter),
     bus ? el('button', { class: 'tb ghost sm', type: 'button', title: 'retirer le bus et ses envois', onclick: () => app.removeTrack(t.id) }, 'Retirer') : null);
   }

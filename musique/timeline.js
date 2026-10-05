@@ -1090,6 +1090,7 @@ export function createTimeline(app) {
       { label: app.timeSel() ? 'Couper au marqueur d\'insertion' : 'Couper à la tête de lecture', sub: 'Ctrl+E', onclick: () => app.splitAtPlayhead() },
       { label: 'Dupliquer', sub: 'Ctrl+D', onclick: () => app.duplicateSel() },
       { label: 'Consolider', sub: 'Ctrl+J', onclick: () => app.consolidateSel() },
+      ...versSessionItems({ clips: n > 1 && (S.sel.clips || []).includes(c.id) ? S.sel.clips : [c.id] }, t),
       { label: 'Boucler la sélection', sub: 'Ctrl+L', onclick: () => app.loopSelection() },
       { label: 'Copier', sub: 'Ctrl+C', onclick: () => app.copySel() },
       { label: 'Couper (presse-papiers)', sub: 'Ctrl+X', onclick: () => app.cutSel() },
@@ -1200,6 +1201,13 @@ export function createTimeline(app) {
     const up = (ev) => {
       box.removeEventListener('pointermove', mv); box.removeEventListener('pointerup', up);
       if (!moved) { paintTools(); dock.render(); return; }
+      // lâché sur l'onglet « Session » : envoyé à la Session (biblio.js), il ne bouge pas
+      if (!edge && document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('.mu-views [data-view="console"]')) {
+        for (const x of group) restore(x);
+        app.versSession({ clips: group.map((x) => x.id) });
+        app.setView('console');
+        return;
+      }
       // lâché sur une case du panneau génératif (le son d'une région, une case
       // de sa partition) : le clip y entre, il ne bouge pas
       const slot = !edge && document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('[data-gen-slot], [data-gen-case]');
@@ -1378,7 +1386,20 @@ export function createTimeline(app) {
     { label: 'Couper la plage (presse-papiers)', key: 'Ctrl+X', onclick: () => { if (app.copyTime()) app.deleteTime(); } },
     { label: 'Retirer ce que la plage contient', key: 'Suppr', onclick: () => app.deleteTime() },
     { label: 'Boucler sur la plage', key: 'Ctrl+L', onclick: () => app.loopSelection() },
+    ...versSessionItems({ range: R }),
   ];
+  // « Envoyer à la Session » (docs/etudes/odio_session.md § 6, biblio.js) : non destructif —
+  // la voie née de la piste (une neuve la première fois), ou une voie choisie de la même sorte
+  function versSessionItems(o, t = null) {
+    const vs = (P().voies || []).filter((v) => !t || (t.kind === 'audio' ? v.kind === 'audio' : TRACK_KINDS[v.kind]?.pattern === TRACK_KINDS[t.kind]?.pattern));
+    return [
+      { label: 'Envoyer à la Session', sub: o.range ? 'un clip par piste, par morceau de son' : 'l\'arrangement ne bouge pas', onclick: () => app.versSession(o) },
+      { label: 'Envoyer dans une voie', items: [
+        { label: 'Une voie neuve', sub: 'qui joue comme la piste', onclick: () => app.versSession({ ...o, neuve: true }) },
+        ...(t && vs.length ? ['-', ...vs.map((v) => ({ label: v.name, dot: v.color, onclick: () => app.versSession({ ...o, voie: v.id }) }))] : []),
+      ] },
+    ];
+  }
   // la tête de lecture prise par son onglet : glisser la fait suivre, aimantée
   // (Alt : libre) ; en lecture, la lecture repart d'où on la lâche à chaque pas
   function grabHead(e) {

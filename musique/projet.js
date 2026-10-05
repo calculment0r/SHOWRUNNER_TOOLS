@@ -67,7 +67,7 @@
 //                 générale), import (le disque), prise, rendu, generation ; un son
 //                 posé y entre de lui-même et y reste (retenirSons) }
 
-import { guessTag, MODULES } from './modules.js';
+import { guessTag, MODULES, TRACK_KINDS, COLORS } from './modules.js';
 
 export const VERSION = 2;
 const own = (c) => (c.gen ? { gen: JSON.parse(JSON.stringify(c.gen)) } : {});   // une copie de région a ses propres prises
@@ -97,17 +97,15 @@ export function migrate(p) {
   if (!Array.isArray(p.scenes)) p.scenes = Array.from({ length: 8 }, (_, i) => ({ id: `sc${i + 1}`, name: '' }));
   p.slots = Array.isArray(p.slots) ? p.slots : [];
   if (!p.launch || !QUANT_OF[p.launch.q]) p.launch = { q: '1' };
-  // EN COURS (refonte du 05/10 au soir, docs/etudes/odio_session.md § 6) : les
-  // voies, la conversion des slots d'avant (migrerSession) et la bibliothèque
-  // du projet ne sont pas encore branchées — session.js, moteur.js et le
-  // serveur lisent encore `slots[].track`.
+  // la refonte du soir (docs/etudes/odio_session.md § 6) : les voies, la
+  // Session d'avant convertie, la bibliothèque du projet
+  migrerSession(p);
   p.v = VERSION;
   return p;
 }
 
-// La migration de la refonte, à appeler depuis migrate quand session.js,
-// moteur.js et music.py liront les voies : la Session d'avant convertie, la
-// bibliothèque du projet posée, ce que le projet pose déjà retenu sans geste.
+// La migration de la refonte : la Session d'avant convertie, la bibliothèque
+// du projet posée, ce que le projet pose déjà retenu sans geste.
 export function migrerSession(p) {
   p.voies = Array.isArray(p.voies) ? p.voies : [];
   if ((p.slots || []).some((s) => !s.voie)) convertirSlots(p);
@@ -161,26 +159,94 @@ function convertirSlots(p) {
 // se copient pas (leur état vit ailleurs que dans leur module) : la chaîne se
 // referme sans eux. Rend la voie, déjà dans p.voies.
 export function voieDePiste(p, t, seq, y, uid = nid) {
-  const mods = (seq?.length ? seq : [t.src, t.strip]).map((id) => p.modules.find((m) => m.id === id))
-    .filter((m) => m && !MODULES[m.type]?.jouet);
-  if (mods[0]?.id !== t.src || mods[mods.length - 1]?.id !== t.strip) {
-    const src = p.modules.find((m) => m.id === t.src), st = p.modules.find((m) => m.id === t.strip);
-    mods.splice(0, mods.length, ...[src, st].filter(Boolean));
-  }
   const v = { id: uid('v'), name: t.name, kind: t.kind, color: t.color, mute: false, solo: false, src: '', strip: '', piste: t.id };
   if (t.sub) v.sub = t.sub;
+  copierChaine(p, t, seq, v, 'voie', y, uid);
+  p.voies.push(v);
+  return v;
+}
+// Le chemin inverse (« Vers l'arrangement » d'une scène) : une piste neuve qui
+// joue comme la voie `v`, juste avant les bus ; la voie la retient (`piste`),
+// les scènes suivantes y vont aussi. Rend la piste.
+export function pisteDeVoie(p, v, seq, y, uid = nid) {
+  const t = { id: uid('t'), name: v.name, kind: v.kind, color: v.color, mute: false, solo: false, src: '', strip: '' };
+  if (v.sub) t.sub = v.sub;
+  copierChaine(p, v, seq, t, 'track', y, uid);
+  const bus = p.tracks.findIndex((x) => x.kind === 'bus');
+  p.tracks.splice(bus < 0 ? p.tracks.length : bus, 0, t);
+  v.piste = t.id;
+  return t;
+}
+// La chaîne de `o` (une piste ou une voie : `seq`, les ids de la source à la
+// tranche ; à défaut la source et la tranche seules) recopiée pour `dest`, dont
+// les modules portent `cle` (track ou voie) ; ses sorties et ses envois aussi.
+function copierChaine(p, o, seq, dest, cle, y, uid) {
+  const mods = (seq?.length ? seq : [o.src, o.strip]).map((id) => p.modules.find((m) => m.id === id))
+    .filter((m) => m && !MODULES[m.type]?.jouet);
+  if (mods[0]?.id !== o.src || mods[mods.length - 1]?.id !== o.strip) {
+    const src = p.modules.find((m) => m.id === o.src), st = p.modules.find((m) => m.id === o.strip);
+    mods.splice(0, mods.length, ...[src, st].filter(Boolean));
+  }
   const copies = mods.map((m, i) => {
-    const n = { ...JSON.parse(JSON.stringify(m)), id: uid('m'), voie: v.id, x: 40 + 340 * i, y };
-    delete n.track;
+    const n = { ...JSON.parse(JSON.stringify(m)), id: uid('m'), x: 40 + 340 * i, y };
+    delete n.track; delete n.voie;
+    n[cle] = dest.id;
     p.modules.push(n);
     return n;
   });
-  v.src = copies[0].id; v.strip = copies[copies.length - 1].id;
+  dest.src = copies[0].id; dest.strip = copies[copies.length - 1].id;
   for (let i = 1; i < copies.length; i++) p.cables.push({ a: copies[i - 1].id, b: copies[i].id });
   // ce qui sort de la tranche : la sortie, un bus (son), et les envois (un niveau)
-  for (const c of p.cables.filter((x) => x.a === t.strip && !x.t)) p.cables.push({ ...c, a: v.strip });
+  for (const c of p.cables.filter((x) => x.a === o.strip && !x.t)) p.cables.push({ ...c, a: dest.strip });
+}
+
+// Une voie neuve, vierge (« + Voie ») : une source (l'instrument, ou le lecteur
+// d'un son), sa tranche, la sortie ; comme une piste neuve (musique.js,
+// addTrack), mais dans p.voies. Rend la voie.
+export function voieNeuve(p, kind, { type, params, name, color, sub } = {}, uid = nid) {
+  const src = type || TRACK_KINDS[kind].src;
+  p.voies = p.voies || [];
+  const n = p.voies.filter((v) => v.kind === kind).length + 1;
+  const y = Math.max(0, ...p.modules.map((m) => m.y || 0)) + 260;
+  const v = {
+    id: uid('v'), name: (name || `${kind === 'audio' ? 'Audio' : MODULES[src].name} ${n}`).slice(0, 60), kind,
+    color: color || (kind === 'audio' ? 'grn2' : MODULES[src].color || COLORS[p.voies.length % COLORS.length]),
+    mute: false, solo: false, src: uid('m'), strip: uid('m'),
+  };
+  if (sub) v.sub = sub.slice(0, 60);
+  const mst = p.modules.find((m) => m.type === 'master');
+  p.modules.push({ id: v.src, type: src, voie: v.id, x: 40, y, on: true, params: { ...(params || {}) } },
+    { id: v.strip, type: 'strip', voie: v.id, x: 380, y, on: true, params: {} });
+  p.cables.push({ a: v.src, b: v.strip }, ...(mst ? [{ a: v.strip, b: mst.id }] : []));
   p.voies.push(v);
   return v;
+}
+// Retirer des voies : leurs modules (un effet qu'une piste traverse aussi lui
+// reste), leurs motifs, leurs clips de Session.
+export function retirerVoies(p, ids) {
+  const gone = new Set(ids), T = trajets(p);
+  const mods = new Set(p.modules.filter((m) => gone.has(m.voie) && !(T.de.get(m.id) || []).some((x) => !gone.has(x))).map((m) => m.id));
+  p.modules = p.modules.filter((m) => !mods.has(m.id)).map((m) => {
+    if (!gone.has(m.voie)) return m;
+    const { voie, ...n } = m;   // une copie : sansSession ne touche pas au projet
+    n.track = (T.de.get(m.id) || []).find((x) => p.tracks.some((t) => t.id === x)) || null;
+    return n;
+  });
+  p.cables = p.cables.filter((c) => !mods.has(c.a) && !mods.has(c.b));
+  p.patterns = p.patterns.filter((x) => !gone.has(x.track));
+  p.slots = (p.slots || []).filter((s) => !gone.has(s.voie));
+  p.auto = (p.auto || []).filter((L) => !mods.has(L.mod));
+  p.voies = (p.voies || []).filter((v) => !gone.has(v.id));
+}
+// Le projet sans sa Session (l'export, la forme d'onde de la barre : ce qu'on
+// exporte reste l'arrangement, comme dans Live) — sinon le solo d'une voie
+// tairait l'export. Une copie ; le projet ne bouge pas.
+export function sansSession(p) {
+  const voies = p.voies || [];
+  if (!voies.length && !(p.slots || []).length) return p;
+  const q = { ...p, modules: [...p.modules], cables: [...p.cables], patterns: [...p.patterns], auto: [...(p.auto || [])], slots: [...(p.slots || [])], voies: [...voies] };
+  retirerVoies(q, voies.map((v) => v.id));
+  return q;
 }
 
 // ── la bibliothèque du projet ───────────────────────────────
@@ -211,8 +277,15 @@ export function retenirSons(p) {
   }
   for (const s of p.slots || []) add(s.item, 'asset');
   for (const m of p.modules) if (m.type === 'sampler') add(m.params?.item, 'asset');
-  for (const c of b.clips) add(c.item, 'asset');
+  for (const c of b.clips) { add(c.item, 'asset'); add(c.inst?.params?.item, 'asset'); }
   return n;
+}
+// L'origine d'un son que le projet vient de fabriquer ou de prendre (un import,
+// une prise, un rendu, une génération) : notée avant que retenirSons ne le
+// range comme « asset ». Un son déjà là garde la sienne.
+export function noterOrigine(p, item, quoi) {
+  if (!p.biblio || typeof item !== 'string' || !item || p.biblio.sons.some((x) => x.item === item)) return;
+  p.biblio.sons.push({ item, quoi });
 }
 // Les usages d'un son dans le projet (le dire avant de le retirer, et dans sa ligne)
 export function usagesDuSon(p, id) {
@@ -236,7 +309,9 @@ export function refDeClip(p, c, a, b, uid) {
   const tr = p.tracks.find((t) => t.id === c.track);
   if (!tr) return 'la piste du clip a disparu';
   const base = { id: uid('r'), len: Math.round((b - a) * 1e6) / 1e6, from: c.id };
-  if (c.name) base.name = c.name.slice(0, 60);
+  // son nom : celui du clip, sinon celui de son motif, sinon celui de sa piste
+  const nom = c.name || (c.pat && p.patterns.find((x) => x.id === c.pat)?.name) || tr.name;
+  if (nom) base.name = nom.slice(0, 60);
   if (tr.kind === 'audio') {
     if (!c.item) return 'une région sans prise n\'a pas encore de son';
     const ref = { ...base, kind: 'audio', item: c.item, off: Math.round(addAudioOff(c, (a - c.start) * 60 / p.bpm) * 1e6) / 1e6 };
@@ -248,11 +323,31 @@ export function refDeClip(p, c, a, b, uid) {
   }
   const r = consolidatePatterns(p, [c], uid, [a, b]);
   if (typeof r === 'string') return r;
-  const pat = r.pattern, src = p.modules.find((m) => m.id === tr.src);
+  return refDeNotes(p, tr, r.pattern, base);
+}
+// des notes (un motif consolidé de la piste `tr`) en clip du projet : la copie, et l'instrument d'où elles viennent
+function refDeNotes(p, tr, pat, base) {
+  const src = p.modules.find((m) => m.id === tr.src);
   const ref = { ...base, kind: 'midi', drums: tr.kind === 'drums', steps: pat.steps };
   if (pat.lanes) ref.lanes = pat.lanes; else ref.notes = pat.notes;
   if (src) ref.inst = { type: src.type, params: JSON.parse(JSON.stringify(src.params || {})) };
   return ref;
+}
+// Les clips du projet tirés d'une plage [a, b] d'une piste (« Envoyer à la
+// Session » sur une sélection de temps) : un son, une référence par morceau de
+// clip (chacun garde son son) ; des notes, UNE copie de ce que la piste joue
+// dans la plage, le vide compris (Live : une sélection de temps consolidée).
+// Rend la liste (vide si la plage n'a rien sur cette piste), ou un refus.
+export function refsDePlage(p, tid, a, b, uid) {
+  const tr = p.tracks.find((t) => t.id === tid);
+  if (!tr || tr.kind === 'bus') return [];
+  const cs = p.clips.filter((c) => c.track === tid && !c.mute && c.start < b - 1e-6 && c.start + c.len > a + 1e-6).sort((x, y) => x.start - y.start);
+  if (!cs.length) return [];
+  if (tr.kind === 'audio') return cs.map((c) => refDeClip(p, c, a, b, uid)).filter((r) => typeof r !== 'string');
+  if (b - a < MIN_LEN - 1e-9) return 'la plage est trop courte (une double croche au moins)';
+  const r = consolidatePatterns(p, cs, uid, [a, b]);
+  if (typeof r === 'string') return r;
+  return [refDeNotes(p, tr, r.pattern, { id: uid('r'), len: Math.round((b - a) * 1e6) / 1e6, from: cs[0].id, name: (cs[0].name || tr.name).slice(0, 60) })];
 }
 // Le motif d'un clip du projet (des notes), pour une piste ou une voie `owner`
 export function motifDeRef(ref, owner, uid) {
@@ -290,7 +385,7 @@ export function quantum(key, sig) {
 // la quantification d'un clip de Session : la sienne, sinon la globale
 export const slotQuant = (p, s) => quantum(s?.q && s.q !== 'global' ? s.q : p.launch?.q, p.sig);
 
-export const slotAt = (p, tid, sid) => (p.slots || []).find((s) => s.track === tid && s.scene === sid) || null;
+export const slotAt = (p, vid, sid) => (p.slots || []).find((s) => s.voie === vid && s.scene === sid) || null;
 // le nom d'une scène : le sien, ou son numéro (Live)
 export const sceneName = (p, sc) => sc.name || String(p.scenes.indexOf(sc) + 1);
 
@@ -318,13 +413,13 @@ export function retirerScene(p, sid) {
   p.slots = p.slots.filter((x) => x.scene !== sid);
 }
 // « Capture and Insert Scene » (Live 12, « Session View ») : une scène neuve
-// sous `apres`, avec une copie de chaque clip qui joue (`joue` : piste → id)
+// sous `apres`, avec une copie de chaque clip qui joue (`joue` : voie → id)
 export function capturerScene(p, joue, apres, uid) {
   const i = apres ? p.scenes.findIndex((x) => x.id === apres) + 1 : p.scenes.length;
   const sc = insererScene(p, i, uid);
-  for (const [tid, id] of joue) {
+  for (const [vid, id] of joue) {
     const s = p.slots.find((x) => x.id === id);
-    if (s && p.tracks.some((t) => t.id === tid)) p.slots.push(copieSlot(s, uid, { scene: sc.id, track: tid }));
+    if (s && (p.voies || []).some((v) => v.id === vid)) p.slots.push(copieSlot(s, uid, { scene: sc.id, voie: vid }));
   }
   return sc;
 }
@@ -332,19 +427,36 @@ export function capturerScene(p, joue, apres, uid) {
 // Une scène dans l'arrangement, à `at` (en noires) : chaque clip de la ligne
 // y devient des clips d'arrangement bout à bout, autant de tours qu'il en faut
 // pour remplir la scène (sa longueur : le plus long de ses clips) — ce que la
-// scène joue, lancée seule. Rend les clips posés et la longueur.
+// scène joue, lancée seule. Le clip d'une voie va sur la piste dont elle est
+// née (`piste`, si elle est encore là et de la même sorte), sinon sur une
+// piste neuve qui joue comme elle (pisteDeVoie) ; ses notes y sont copiées.
+// Rend les clips posés, la longueur et les pistes neuves.
 export function sceneVersArrangement(p, sid, at, uid) {
-  const ss = p.slots.filter((s) => s.scene === sid && p.tracks.some((t) => t.id === s.track));
+  const ss = p.slots.filter((s) => s.scene === sid && (p.voies || []).some((v) => v.id === s.voie));
   const len = Math.max(0, ...ss.map((s) => s.len));
-  const made = [];
+  const made = [], neuves = [];
   for (const s of ss) {
+    const v = p.voies.find((x) => x.id === s.voie);
+    let t = p.tracks.find((x) => x.id === v.piste && x.kind === v.kind);
+    if (!t) {
+      const y = Math.max(0, ...p.modules.map((m) => m.y || 0)) + 260;
+      t = pisteDeVoie(p, v, trajets(p).ordre.get(v.id), y, uid);
+      neuves.push(t);
+    }
+    let pat = null;
+    if (s.pat) {
+      const src = p.patterns.find((x) => x.id === s.pat);
+      if (!src) continue;
+      pat = { ...JSON.parse(JSON.stringify(src)), id: uid('p'), track: t.id };
+      p.patterns.push(pat);
+    }
     for (let a = 0; a < len - 1e-9; a += s.len) {
-      const { id, scene, mode, q, color, ...c } = JSON.parse(JSON.stringify(s));
-      made.push({ ...c, id: uid('c'), start: at + a, len: Math.min(s.len, len - a) });
+      const { id, scene, mode, q, color, voie, ref, ...c } = JSON.parse(JSON.stringify(s));
+      made.push({ ...c, ...(pat ? { pat: pat.id } : {}), id: uid('c'), track: t.id, start: at + a, len: Math.min(s.len, len - a) });
     }
   }
   p.clips.push(...made);
-  return { made, len };
+  return { made, len, neuves };
 }
 
 // ── l'historique ────────────────────────────────────────────
@@ -380,13 +492,14 @@ const NOUN = {
   clips: ['clip', 'clips'], tracks: ['piste', 'pistes'], modules: ['module', 'modules'], cables: ['câble', 'câbles'],
   sections: ['section', 'sections'], markers: ['marqueur', 'marqueurs'], patterns: ['motif', 'motifs'],
   auto: ['voie d’automation', 'voies d’automation'], presets: ['préréglage', 'préréglages'], groups: ['groupe de pistes', 'groupes de pistes'],
-  slots: ['clip de Session', 'clips de Session'], scenes: ['scène', 'scènes'],
+  slots: ['clip de Session', 'clips de Session'], scenes: ['scène', 'scènes'], voies: ['voie de Session', 'voies de Session'],
 };
 const WHAT = {
   bpm: 'le tempo', sig: 'la mesure', key: 'la tonalité', loop: 'la boucle', arc: 'l’arc d’énergie', name: 'le nom du projet',
   banc: 'le banc (attracteurs)', nodal: 'le nodal', clips: 'les clips', tracks: 'les pistes', modules: 'les instruments et effets',
   cables: 'les câbles', sections: 'les sections', markers: 'les marqueurs', patterns: 'les motifs', auto: 'l’automation', presets: 'les préréglages',
   groups: 'les groupes de pistes', slots: 'les clips de Session', scenes: 'les scènes', launch: 'la quantification du lancement',
+  voies: 'les voies de Session', biblio: 'la bibliothèque du projet',
 };
 const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
 export function describeWork(a, b, names = {}) {
@@ -407,7 +520,7 @@ export function describeWork(a, b, names = {}) {
         const ch = B.filter((x) => { const o = A.find((y) => y.id === x.id); return o && !same(o, x); });
         if (!ch.length && k === 'tracks') return 'changer l’ordre des pistes';
         if (k === 'modules' && ch.length === 1) return `régler « ${names[ch[0].type] || ch[0].name || ch[0].type} »`;
-        if (k === 'tracks' && ch.length === 1) return `modifier la piste « ${ch[0].name} »`;
+        if ((k === 'tracks' || k === 'voies') && ch.length === 1) return `modifier la ${k === 'voies' ? 'voie' : 'piste'} « ${ch[0].name} »`;
         if ((k === 'clips' || k === 'slots') && ch.length) return `modifier ${ch.length} ${n(ch.length)}`;
         if (!ch.length && k === 'scenes') return 'changer l’ordre des scènes';
       }
@@ -427,11 +540,14 @@ export function describeWork(a, b, names = {}) {
 // construction ; le moteur (moteur.js, Graph) en joue une voix par piste, avec
 // les mêmes réglages : une seule instance, deux passages, le son de chaque
 // piste reste dans sa piste. Câbles de SON seulement : ni les envois de la
-// console (c.send), ni les câbles typés des jouets (c.t).
+// console (c.send), ni les câbles typés des jouets (c.t). Les voies de la
+// Session ont leur chaîne de la même façon : `ordre`, `dedans` et `de`
+// connaissent les pistes ET les voies (leurs ids ne se croisent pas).
 export const deSon = (c) => !c.t && typeof c.send !== 'number';
 const TRAJ = { p: null, sig: '', v: null };
 export function trajets(p) {
-  const sig = `${p.tracks.map((t) => `${t.id}:${t.src}:${t.strip}`).join('|')}#${p.cables.map((c) => (deSon(c) ? `${c.a}>${c.b}` : '')).join(',')}`;
+  const chaines = [...p.tracks, ...(p.voies || [])];
+  const sig = `${chaines.map((t) => `${t.id}:${t.src}:${t.strip}`).join('|')}#${p.cables.map((c) => (deSon(c) ? `${c.a}>${c.b}` : '')).join(',')}`;
   if (TRAJ.p === p && TRAJ.sig === sig) return TRAJ.v;
   const outs = new Map(), ins = new Map();
   for (const c of p.cables) {
@@ -446,7 +562,7 @@ export function trajets(p) {
     return vu;
   };
   const ordre = new Map(), dedans = new Map(), de = new Map();
-  for (const t of p.tracks) {
+  for (const t of chaines) {
     const av = atteint(t.src, outs), ar = atteint(t.strip, ins);
     const on = new Set([...av].filter((id) => ar.has(id)));
     if (!on.has(t.src) || !on.has(t.strip)) { ordre.set(t.id, []); dedans.set(t.id, new Set()); continue; }
@@ -466,8 +582,8 @@ export function trajets(p) {
   TRAJ.v = { ordre, dedans, de };
   return TRAJ.v;
 }
-/** Les pistes dont la chaîne passe par ce module (0, 1 ou plusieurs). */
-export const pistesDuModule = (p, id) => trajets(p).de.get(id) || [];
+/** Les pistes dont la chaîne passe par ce module (0, 1 ou plusieurs) ; pas les voies de la Session. */
+export const pistesDuModule = (p, id) => (trajets(p).de.get(id) || []).filter((x) => p.tracks.some((t) => t.id === x));
 
 // Retirer un module EN RECOUSANT, piste par piste : ce qui entrait est
 // rebranché sur ce qui sortait, mais seulement le long d'une même chaîne — un
