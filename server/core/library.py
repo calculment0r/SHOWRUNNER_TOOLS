@@ -75,7 +75,9 @@ from . import auth, config, espaces
 
 # "sequence" : une séquence du Montage (sa timeline dans `sequence.json`, écrite par server/tools/montage.py), 29/09
 # "document" : tout ce qui n'est pas un média (server/tools/documents.py), 05/10
-KINDS = ("image", "video", "audio", "element", "midi", "sequence", "document")
+# "playlist" : une playlist de Musique (id `pla-…`, `playlist: {…}` dans item.json ; son outil : wip2/playlists ;
+# son lien d'écoute : server/tools/ecoute.py), 05/10
+KINDS = ("image", "video", "audio", "element", "midi", "sequence", "document", "playlist")
 EXT_KIND = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
     ".mp4": "video", ".webm": "video", ".mov": "video", ".m4v": "video",
