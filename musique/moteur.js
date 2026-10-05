@@ -412,6 +412,21 @@ function drumVoice(ctx, out, voice, t, vel, m, live, st) {
   for (const s of srcs) { s.start(t); s.stop(end + 0.02); live(s); }
 }
 
+// Les notes d'une source qui sonnent encore, avec leur fin : la vue Session
+// coupe une piste à l'instant où un clip y part ou s'y arrête (Graph.cut) —
+// comme Live, qui relâche les notes du clip d'avant. Les finies s'oublient
+// en chemin.
+function tenues(ctx) {
+  const set = new Set();
+  return {
+    add(v, t, end) {
+      if (set.size > 64) for (const x of set) if (x.end < ctx.currentTime) set.delete(x);
+      set.add({ v, t, end });
+    },
+    cut(tc) { for (const x of set) if (x.end > tc) x.v.off(tc); set.clear(); },
+  };
+}
+
 // ── les sources ─────────────────────────────────────────────
 const SRC = {
   drums(ctx, m, env) {
@@ -426,7 +441,7 @@ const SRC = {
     };
   },
   synth(ctx, m, env) {
-    const out = G(ctx);
+    const out = G(ctx), held = tenues(ctx);
     // Deux oscillateurs : A (1 à 3 copies réparties dans le désaccord) et B
     // (« comme A » : le second oscillateur d'avant, présent si le désaccord
     // est non nul) → passe-bas à enveloppe → ADSR.
@@ -467,12 +482,13 @@ const SRC = {
       output: out,
       ap: { vol: [[out.gain, dbToGain]] },
       update(mm) { m = mm; setP(ctx, out.gain, mm.on === false ? 0 : dbToGain(val(mm, 'vol'))); },
-      noteOn(p, t, vel = 0.8, dur, over) { const v = voice(p, t, vel, over); if (dur !== undefined) v.off(t + dur); return v; },
+      noteOn(p, t, vel = 0.8, dur, over) { const v = voice(p, t, vel, over); if (dur !== undefined) { v.off(t + dur); held.add(v, t, t + dur); } return v; },
       noteOff(v, t) { if (v) v.off(t); },
+      cut(t) { held.cut(t); },
     };
   },
   sampler(ctx, m, env) {
-    const out = G(ctx);
+    const out = G(ctx), held = tenues(ctx);
     const voice = (p, t, vel) => {
       const buf = env.buffers.get(m.params?.item);
       if (!buf) return null;
@@ -490,12 +506,14 @@ const SRC = {
       output: out,
       ap: { vol: [[out.gain, dbToGain]] },
       update(mm) { m = mm; setP(ctx, out.gain, mm.on === false ? 0 : dbToGain(val(mm, 'vol'))); },
-      noteOn(p, t, vel = 0.8, dur) { const v = voice(p, t, vel); if (v && dur !== undefined) v.off(t + dur); return v; },
+      noteOn(p, t, vel = 0.8, dur) { const v = voice(p, t, vel); if (v && dur !== undefined) { v.off(t + dur); held.add(v, t, t + dur); } return v; },
       noteOff(v, t) { if (v) v.off(t); },
+      cut(t) { held.cut(t); },
     };
   },
   player(ctx, m, env) {
     const out = G(ctx);
+    const sons = new Set();   // les lectures en cours (la Session les coupe : cut)
     return {
       output: out,
       ap: { vol: [[out.gain, dbToGain]] },
@@ -530,6 +548,19 @@ const SRC = {
         // la durée de start() se compte en secondes de contenu (spécification)
         src.start(t, off); src.stop(end);
         env.live(src);
+        const x = { src, g, end };
+        sons.add(x);
+        src.addEventListener('ended', () => sons.delete(x));
+      },
+      // se taire à `tc` (un clip de Session part ou s'arrête sur la piste) : 6 ms de fondu, sans clic
+      cut(tc) {
+        for (const x of sons) {
+          if (x.end <= tc) continue;
+          if (x.g.gain.cancelAndHoldAtTime) x.g.gain.cancelAndHoldAtTime(tc); else x.g.gain.cancelScheduledValues(tc);
+          x.g.gain.linearRampToValueAtTime(0, tc + 0.006);
+          try { x.src.stop(tc + 0.008); } catch { /* déjà arrêtée */ }
+          x.end = tc;
+        }
       },
       noteOn() { return null; }, noteOff() {},
     };
@@ -613,6 +644,7 @@ function odioSource(ctx, m, env) {
       return dur === undefined ? { note: p } : null;
     },
     noteOff(h, t) { if (h && inst.noteOff) inst.noteOff(h.note, t); },
+    cut(t) { inst.allNotesOff?.(t); },   // la Session : le clip d'avant se tait (Graph.cut)
     ping() { return inst.ping ? inst.ping() : Promise.resolve(true); },
     dispose() { try { inst.dispose(); } catch { /* déjà défait */ } },
   };
@@ -868,17 +900,17 @@ export class Graph {
 
   // Pose les événements du morceau entre les temps b0 et b1 (en noires),
   // b0 tombant à l'instant t0 de l'horloge audio. `limit` : un clip audio
-  // s'arrête là (la fin de la boucle).
-  schedule(p, b0, b1, t0, limit = Infinity) {
+  // s'arrête là (la fin de la boucle). `hors` : les pistes qui ne jouent pas
+  // l'arrangement (elles jouent la Session : Engine, plus bas).
+  schedule(p, b0, b1, t0, limit = Infinity, hors = null) {
     const spb = 60 / p.bpm;
     const at = (b) => t0 + (b - b0) * spb;
     this.automate(p, b0, b1, at);
     const trk = new Map(p.tracks.map((t) => [t.id, t]));
     const pats = new Map(p.patterns.map((x) => [x.id, x]));
     const cutLanes = new Map((p.auto || []).filter((L) => L.k === 'cut' && L.on !== false && L.pts?.length).map((L) => [L.mod, L]));
-    const cutSpec = spec('synth', 'cut');
     for (const c of p.clips) {
-      if (c.mute) continue;
+      if (c.mute || hors?.has(c.track)) continue;
       const tr = trk.get(c.track);
       if (!tr) continue;
       const cs = c.start, ce = c.start + c.len;
@@ -890,36 +922,84 @@ export class Graph {
         continue;
       }
       const pat = pats.get(c.pat);
-      if (!pat) continue;
-      const plen = pat.steps / 4;
-      const from = Math.max(b0, cs), to = Math.min(b1, ce);
-      const cutL = cutLanes.get(tr.src);
-      // `off` (en noires) : où le motif en est au début du clip — un clip
-      // coupé en deux continue son motif au lieu de le reprendre
-      const origin = cs - (c.off || 0);
-      for (let k = Math.floor((from - origin) / plen); origin + k * plen < to; k++) {
-        const base = origin + k * plen;
-        if (tr.kind === 'drums') {
-          for (const [v, arr] of Object.entries(pat.lanes || {})) {
-            for (let s = 0; s < arr.length; s++) {
-              if (!arr[s]) continue;
-              const b = base + s / 4;
-              if (b >= from && b < to) src.hit(v, at(b), arr[s]);
-            }
+      if (pat) this.notes(tr, c, pat, src, Math.max(b0, cs), Math.min(b1, ce), at, spb, cutLanes.get(tr.src));
+    }
+  }
+
+  // Les notes d'un clip de motif dont l'attaque tombe dans [from, to) : `at`
+  // change un temps en instant de l'horloge ; `cutL` la coupure automatisée
+  // du synthé (l'arrangement seul la lit).
+  notes(tr, c, pat, src, from, to, at, spb, cutL = null) {
+    const plen = pat.steps / 4, cs = c.start, ce = c.start + c.len;
+    const cutSpec = cutL ? spec('synth', 'cut') : null;
+    // `off` (en noires) : où le motif en est au début du clip — un clip
+    // coupé en deux continue son motif au lieu de le reprendre
+    const origin = cs - (c.off || 0);
+    for (let k = Math.floor((from - origin) / plen); origin + k * plen < to; k++) {
+      const base = origin + k * plen;
+      if (tr.kind === 'drums') {
+        for (const [v, arr] of Object.entries(pat.lanes || {})) {
+          for (let s = 0; s < arr.length; s++) {
+            if (!arr[s]) continue;
+            const b = base + s / 4;
+            if (b >= from && b < to) src.hit(v, at(b), arr[s]);
           }
-        } else {
-          for (const n of pat.notes || []) {
-            const b = base + n.s / 4;
-            if (b >= from && b < to) {
-              // la coupure automatisée du synthé, lue à l'attaque ; l'accent et
-              // la liaison d'une note (la basse acide d'ODIO)
-              const over = cutL || n.ac || n.sl ? { cut: cutL ? fromNorm(cutSpec, interp(cutL.pts, b)) : undefined, ac: n.ac, sl: n.sl } : undefined;
-              src.noteOn(n.p, at(b), n.v ?? 0.8, Math.min(n.l / 4, ce - b) * spb, over);
-            }
+        }
+      } else {
+        for (const n of pat.notes || []) {
+          const b = base + n.s / 4;
+          if (b >= from && b < to) {
+            // la coupure automatisée du synthé, lue à l'attaque ; l'accent et
+            // la liaison d'une note (la basse acide d'ODIO)
+            const over = cutL || n.ac || n.sl ? { cut: cutL ? fromNorm(cutSpec, interp(cutL.pts, b)) : undefined, ac: n.ac, sl: n.sl } : undefined;
+            src.noteOn(n.p, at(b), n.v ?? 0.8, Math.min(n.l / 4, ce - b) * spb, over);
           }
         }
       }
     }
+  }
+
+  // ── la vue Session (session.js ; docs/etudes/odio_session.md) ──
+  // Les clips de Session qui jouent, posés entre les temps a0 et a1 de
+  // l'horloge de la Session (des noires qui ne reviennent jamais en arrière,
+  // même quand la boucle de l'arrangement revient : Engine.tick), a0 tombant
+  // à t0. `joue` : piste → { slot, origin, fresh, rec } ; un clip de Session
+  // boucle sur sa longueur `len` depuis `origin` (Live 12, « Launching
+  // Clips » : un clip de Session tourne en boucle). Chaque tour est un clip
+  // d'arrangement de `len` noires qui commencerait là : les mêmes lectures.
+  // `fresh` : le clip vient de partir en retard, ou la lecture vient de
+  // repartir (playFrom) — un son déjà commencé se reprend en son milieu.
+  scheduleSession(p, joue, a0, a1, t0) {
+    if (!joue.size) return;
+    const spb = 60 / p.bpm;
+    const at = (x) => t0 + (x - a0) * spb;
+    for (const [tid, J] of joue) {
+      const tr = p.tracks.find((t) => t.id === tid);
+      const s = (p.slots || []).find((x) => x.id === J.slot);
+      if (!tr || !s || s.track !== tid) { joue.delete(tid); continue; }   // retirés (Suppr, Ctrl+Z) : la piste se tait
+      const src = this.nodes.get(tr.src);
+      const L = J.rec ? Infinity : s.len;
+      if (!src || !(L > 0)) continue;
+      const pat = s.pat ? p.patterns.find((x) => x.id === s.pat) : null;
+      for (let k = Math.max(0, Math.floor((a0 - J.origin) / L)); J.origin + k * L < a1 && k < 1e6; k++) {
+        const vs = J.origin + k * L;
+        const c = { ...s, start: vs, len: L === Infinity ? 1e5 : L };
+        if (tr.kind === 'audio') {
+          if (vs >= a0) this.audioClip(src, c, at(vs), vs, vs, Infinity, spb);
+          else if (J.fresh) this.audioClip(src, c, at(a0), a0, vs, Infinity, spb);
+        } else if (pat && !J.rec) this.notes(tr, c, pat, src, Math.max(a0, vs), Math.min(a1, vs + c.len), at, spb);
+        if (L === Infinity) break;
+      }
+      J.fresh = false;
+    }
+  }
+
+  // Une piste se tait à l'instant `t` : son clip d'arrangement ou de Session
+  // (les sons lus, les notes tenues) — un clip de Session part, ou s'arrête.
+  cut(p, tid, t) {
+    const tr = p.tracks.find((x) => x.id === tid);
+    const n = tr && this.nodes.get(tr.src);
+    n?.cut?.(t);
   }
 
   // Un clip audio lu à partir du temps `beat` (son début, ou plus loin quand
@@ -941,13 +1021,15 @@ export class Graph {
   }
 
   // Les clips audio déjà commencés à l'instant où la lecture part (ou
-  // reprend en haut de boucle) : lus depuis le bon endroit.
-  resume(p, beat, t, limit = Infinity) {
+  // reprend en haut de boucle) : lus depuis le bon endroit. `hors` : les
+  // pistes qui jouent la Session ; `seules` : ces pistes-là seulement (le
+  // retour à l'arrangement).
+  resume(p, beat, t, limit = Infinity, hors = null, seules = null) {
     const spb = 60 / p.bpm;
     const trk = new Map(p.tracks.map((x) => [x.id, x]));
     for (const c of p.clips) {
       const tr = trk.get(c.track);
-      if (!tr || tr.kind !== 'audio' || c.mute) continue;
+      if (!tr || tr.kind !== 'audio' || c.mute || hors?.has(c.track) || (seules && !seules.has(c.track))) continue;
       if (c.start < beat && c.start + c.len > beat) {
         const src = this.nodes.get(tr.src);
         if (src) this.audioClip(src, c, t, beat, c.start, limit, spb);
@@ -982,6 +1064,16 @@ export class Engine {
     this.metro = false;
     this.live = (node) => { this.voices.add(node); node.onended = () => this.voices.delete(node); };
     this.timer = null;
+    // la vue Session (session.js) : ce qui joue, ce qui attend son temps, les
+    // pistes qui ne jouent plus l'arrangement — l'état de jeu, pas le projet
+    //   joue   piste → { slot, origin, depuis, fresh, rec } (origin : où le
+    //          clip commence, en noires de l'horloge de la Session ; depuis :
+    //          où il a été posé — un départ en retard le reprend en son milieu)
+    //   file   [{ track, slot | null, at, rec }] : les départs et les arrêts
+    //          quantifiés, rangés par `at`
+    //   hors   les pistes qui ne jouent plus l'arrangement (Live : « Back to
+    //          Arrangement » s'allume) ; l'arrêt de la lecture ne les rend pas
+    this.sess = { joue: new Map(), file: [], hors: new Set() };
   }
 
   get running() { return !!this.play; }
@@ -1013,6 +1105,7 @@ export class Engine {
     const ids = new Set();
     for (const m of p.modules) if (m.type === 'sampler' && m.params?.item) ids.add(m.params.item);
     for (const c of p.clips) if (c.item) ids.add(c.item);
+    for (const c of p.slots || []) if (c.item) ids.add(c.item);   // les clips de Session
     return Promise.all([...ids].map((id) => this.buffer(id).catch(() => null)));
   }
 
@@ -1047,12 +1140,23 @@ export class Engine {
 
   async playFrom(beat) {
     await this.start();
+    // la Session continue (un saut de la tête, un tempo changé) : chaque clip
+    // garde sa phase, chaque départ attendu son délai — l'horloge de la
+    // Session repart de `beat`
+    const was = this.play ? this.absNow() : null;
     this.halt();
     const p = this.proj;
     const t0 = this.ctx.currentTime + DEPART_S;
-    this.play = { spb: 60 / p.bpm, cb: beat, ct: t0, from: beat, anchors: [{ time: t0, beat }] };
+    // ab : l'horloge de la Session, en noires — elle suit la tête mais ne revient
+    // jamais en arrière quand la boucle de l'arrangement revient (tick)
+    this.play = { spb: 60 / p.bpm, cb: beat, ct: t0, from: beat, anchors: [{ time: t0, beat }], ab: beat, ab0: beat, ct0: t0 };
+    if (was !== null) {
+      const d = beat - was;
+      for (const J of this.sess.joue.values()) { J.origin += d; J.depuis = beat; J.fresh = true; }
+      for (const ev of this.sess.file) ev.at += d;
+    }
     const loop = this.loopAt(beat);
-    this.graph.resume(p, beat, t0, loop ? loop.b : Infinity);
+    this.graph.resume(p, beat, t0, loop ? loop.b : Infinity, this.sess.hors);
     this.tick();
     if (!this.timer) {
       this.timer = new Worker(URL.createObjectURL(new Blob([TIMER], { type: 'text/javascript' })));
@@ -1072,23 +1176,115 @@ export class Engine {
     if (!P) return;
     const p = this.proj;
     const horizon = this.ctx.currentTime + AHEAD_S;
+    const S = this.sess;
     let guard = 0;
     while (P.ct < horizon && guard++ < 64) {
+      this.echeances();                              // les départs et arrêts de la Session venus à leur temps
       const loop = this.loopAt(P.cb);
       let end = P.cb + (horizon - P.ct) / P.spb, wrap = false;
       if (loop && end >= loop.b) { end = loop.b; wrap = true; }
-      this.graph.schedule(p, P.cb, end, P.ct, loop ? loop.b : Infinity);
+      // la tranche s'arrête au prochain départ de la Session : l'arrangement
+      // de la piste se tait là, pas une tranche plus tard
+      const next = S.file.length ? S.file[0].at : Infinity;
+      if (next < P.ab + (end - P.cb) - 1e-9) { end = P.cb + Math.max(0, next - P.ab); wrap = false; }
+      this.graph.schedule(p, P.cb, end, P.ct, loop ? loop.b : Infinity, S.hors);
+      this.graph.scheduleSession(p, S.joue, P.ab, P.ab + (end - P.cb), P.ct);
       if (this.metro) this.clicks(P.cb, end, P.ct, P.spb, p.sig);
       P.ct += (end - P.cb) * P.spb;
+      P.ab += end - P.cb;
       P.cb = end;
       if (wrap) {
         P.cb = loop.a;
         P.anchors.push({ time: P.ct, beat: loop.a });
         if (P.anchors.length > 32) P.anchors.splice(0, P.anchors.length - 32);
-        this.graph.resume(p, loop.a, P.ct, loop.b);
+        this.graph.resume(p, loop.a, P.ct, loop.b, S.hors);
       }
     }
-    if (!this.loopAt(P.cb) && P.cb > songEnd(p) + 2 && !this.keepGoing) this.stop(true);
+    // la fin du morceau arrête la lecture, sauf si la Session joue ou attend
+    if (!this.loopAt(P.cb) && P.cb > songEnd(p) + 2 && !this.keepGoing && !S.joue.size && !S.file.length) this.stop(true);
+  }
+
+  // ── la vue Session : lancer, arrêter, revenir à l'arrangement ──
+  // Live 12, « Launching Clips » et « Session View » (docs/etudes/odio_session.md).
+  // L'horloge de la Session, à l'instant qu'on entend (null à l'arrêt) — en
+  // noires, comme la tête, mais sans retour de boucle.
+  absNow() {
+    const P = this.play;
+    if (!P) return null;
+    return Math.max(P.ab0, P.ab0 + (this.ctx.currentTime - P.ct0) / P.spb);
+  }
+
+  // Lancer ou arrêter, quantifié : `evs` [{ track, slot (un id) | null (arrêter
+  // la piste), rec }], `q` la quantification en noires (0 : tout de suite). Le
+  // départ tombe sur le prochain multiple de `q` de l'horloge de la Session —
+  // calée sur la tête : une mesure de la Session est une mesure du morceau. À
+  // l'arrêt, la lecture part avec le clip, au début de la mesure de la tête
+  // (Live : lancer un clip lance la lecture).
+  async lancer(evs, q = 0) {
+    const S = this.sess;
+    if (!this.play) {
+      if (!evs.some((ev) => ev.slot)) return null;   // arrêter, à l'arrêt : rien à faire
+      const sig = this.proj?.sig || 4, b = Math.floor(this.pos / sig + 1e-9) * sig;
+      S.file = evs.map((ev) => ({ ...ev, at: b }));
+      await this.playFrom(b);
+      return b;
+    }
+    const P = this.play, now = this.absNow();
+    // sans quantification : au prochain temps encore libre (la tranche déjà posée sonne)
+    const at = q > 0 ? Math.ceil(now / q - 1e-6) * q : P.ab;
+    const pistes = new Set(evs.map((ev) => ev.track));
+    S.file = S.file.filter((ev) => !pistes.has(ev.track));   // un nouveau départ remplace celui qui attendait
+    for (const ev of evs) S.file.push({ ...ev, at });
+    S.file.sort((x, y) => x.at - y.at);
+    return at;
+  }
+
+  // Les départs et les arrêts venus à leur temps. D'ordinaire à la frontière
+  // de ce qui est planifié (P.ab). Un départ demandé juste avant son temps
+  // tombe déjà derrière la frontière (on planifie 120 ms d'avance) : s'il est
+  // encore à venir pour l'oreille, il se rattrape à son instant exact — la
+  // piste se tait là, le clip y part (la tranche manquante se planifie) ;
+  // sinon il part à la frontière, en gardant sa phase.
+  echeances() {
+    const P = this.play, S = this.sess, p = this.proj;
+    while (S.file.length && S.file[0].at <= P.ab + 1e-9) {
+      const ev = S.file.shift();
+      const cur = S.joue.get(ev.track);
+      const t = Math.max(this.ctx.currentTime + 0.003, P.ct - Math.max(0, P.ab - ev.at) * P.spb);
+      const x = P.ab - (P.ct - t) / P.spb;           // le temps de la Session à cet instant
+      if (ev.slot && (p.slots || []).some((s) => s.id === ev.slot && s.track === ev.track)) {
+        this.graph.cut(p, ev.track, t);              // l'arrangement, ou le clip d'avant, se tait
+        S.hors.add(ev.track);
+        const J = { slot: ev.slot, origin: ev.at, depuis: x, fresh: true, rec: !!ev.rec };
+        S.joue.set(ev.track, J);
+        if (x < P.ab - 1e-9) this.graph.scheduleSession(p, new Map([[ev.track, J]]), x, P.ab, t);   // la tranche déjà passée
+      } else if (!ev.slot) {
+        // arrêter la piste : son clip de Session ; ou l'arrangement qu'elle jouait
+        // (Live : le bouton Stop de la piste, et « Back to Arrangement » s'allume)
+        if (cur || !S.hors.has(ev.track)) this.graph.cut(p, ev.track, t);
+        S.joue.delete(ev.track);
+        S.hors.add(ev.track);
+      }
+    }
+  }
+
+  // La fin d'une prise de Session : le clip boucle désormais sur sa longueur
+  finPrise(tid) { const J = this.sess.joue.get(tid); if (J) J.rec = false; }
+
+  // « Retour à l'arrangement » (Live 12, « Session View ») : les pistes `tids`
+  // (toutes par défaut) quittent la Session et reprennent l'arrangement, tout
+  // de suite — à la frontière de ce qui est déjà planifié.
+  retourArrangement(tids = null) {
+    const S = this.sess, p = this.proj;
+    const R = new Set(tids || [...S.hors, ...S.joue.keys()]);
+    S.file = S.file.filter((ev) => !R.has(ev.track));
+    const P = this.play;
+    for (const tid of R) {
+      if (P && S.joue.has(tid)) this.graph.cut(p, tid, P.ct);
+      S.joue.delete(tid);
+      S.hors.delete(tid);
+    }
+    if (P) { const loop = this.loopAt(P.cb); this.graph.resume(p, P.cb, P.ct, loop ? loop.b : Infinity, null, R); }
   }
 
   // Le métronome : un bip à chaque temps, plus aigu sur le premier de la
@@ -1114,12 +1310,15 @@ export class Engine {
     if (this.graph) for (const n of this.graph.nodes.values()) n.odio?.allNotesOff?.();
   }
 
-  // pause : on reste où l'on est ; stop : on revient où la lecture a commencé
+  // pause : on reste où l'on est ; stop : on revient où la lecture a commencé.
+  // La Session s'arrête avec la lecture (Live) ; ses pistes « hors » le restent.
   stop(ended = false, { stay = false } = {}) {
     const from = this.play ? this.play.from : this.pos;
     const here = this.position();
     this.halt();
     this.play = null;
+    this.sess.joue.clear();
+    this.sess.file = [];
     this.pos = stay ? here : from;
     if (this.graph && this.proj) this.graph.settle(this.proj, this.pos);
     if (this.onstop) this.onstop(ended, here);
