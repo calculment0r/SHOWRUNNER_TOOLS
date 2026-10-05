@@ -1694,9 +1694,17 @@ def _rapatrier_selftest(ok) -> None:
         s, lv = ra("POST", "/api/elements", {"from_item": snd["id"], "note": "v1"})
         s2, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [snd["id"], lv.get("id", "x")], "versions": {lv.get("id", "x"): 7}})
         ok(s == 200 and s2 == 409 and "v7" in err(d), f"rapatrier : un élément versionné, une version qui n'existe pas — refusé ({s} {s2} {err(d)[:60]})")
+        # une séquence qui pose un plan parti à la corbeille : refusée en le disant, et rien n'est copié — ni ses
+        # autres plans, ni elle (tout ou rien, le document compris)
         s, sq = ra("POST", "/api/montage/projects", {"name": "Séquence de A"})
+        _, jet = ra("PUT", "/api/library/upload?name=jet.png&title=Plan+jet%C3%A9", raw=png((10, 90, 30)), hd={"Content-Type": "image/png"})
+        cur = ra("GET", f"/api/montage/projects/{sq.get('id', 'x')}")[1]
+        ra("POST", f"/api/montage/projects/{sq.get('id', 'x')}", {**cur, "base_rev": cur.get("rev"), "clips": [
+            {"id": "k1", "track": "V1", "item": img["id"], "kind": "image", "start": 0, "dur": 25, "in": 0},
+            {"id": "k2", "track": "V1", "item": jet.get("id", "x"), "kind": "image", "start": 25, "dur": 25, "in": 0}]})
+        ra("POST", "/api/asset/trash", {"ids": [jet.get("id", "x")]})
         s2, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [sq.get("id", "x")]})
-        ok(s2 == 409 and "séquence" in err(d), f"rapatrier : une séquence, pas encore ({s} {s2} {err(d)[:50]})")
+        ok(s2 == 409 and "corbeille" in err(d), f"rapatrier : une séquence qui pose un plan à la corbeille ({s} {s2} {err(d)[:70]})")
         s, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [cp["vid"]["id"]]})
         ok(s == 409 and "déjà" in err(d), f"rapatrier : un objet déjà dans B ({s})")
         s, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": []})
@@ -1718,6 +1726,7 @@ def _rapatrier_selftest(ok) -> None:
             auth.set_current(None)
             auth.set_current_space(None)
         _selftest_living(ok, err, ra, rb, A, B, lv, snd, wav, rea)
+        _selftest_documents(ok, err, ra, rb, who(REA), A, B, img, vid, wav, png)
         _sh.rmtree(wav.parent, ignore_errors=True)
     finally:
         auth.set_current(None)
@@ -1791,3 +1800,90 @@ def _selftest_living(ok, err, ra, rb, A: str, B: str, lv: dict, snd: dict, wav, 
     s2, ne = ra("POST", "/api/elements", {"title": "Sans version", "source": {"tool": "music", "doc": pj.get("id", "x")}})
     s3, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [ne.get("id", "x")]})
     ok(s2 == 200 and s3 == 409 and "version prête" in err(d), f"élément entre Workspaces : sans version prête, rien à figer ({s2} {s3} {err(d)[:60]})")
+
+
+def _selftest_documents(ok, err, ra, rb, rr, A: str, B: str, img: dict, vid: dict, wav, png) -> None:
+    """Rapatrier un document (equipes_espaces.md § 3.5 « dupliquer dans… », § 3.3 b « avec sa
+    source ») : il arrive avec ce qu'il pose — des copies —, chaque identifiant remplacé par
+    celui de sa copie ; l'original et ce qu'il pose ne bougent pas. `rr` : Rea, sans Workspace
+    imposé (son Perso, une Team Apps)."""
+    from core import espaces, library
+    from tools import elements
+    # ── une séquence de A : une image et une vidéo de A ── (l'image de la fiche est partie plus haut : une neuve)
+    _, img = ra("PUT", "/api/library/upload?name=plan.png&title=Plan+de+A", raw=png((120, 60, 200)), hd={"Content-Type": "image/png"})
+    s, sq = ra("POST", "/api/montage/projects", {"name": "Séquence à rapatrier"})
+    sid = sq.get("id", "x")
+    cur = ra("GET", f"/api/montage/projects/{sid}")[1]
+    s2, _ = ra("POST", f"/api/montage/projects/{sid}", {**cur, "base_rev": cur.get("rev"), "clips": [
+        {"id": "k1", "track": "V1", "item": img["id"], "kind": "image", "start": 0, "dur": 25, "in": 0},
+        {"id": "k2", "track": "V1", "item": vid["id"], "kind": "video", "start": 25, "dur": 10, "in": 0}]})
+    a_seq = (library.folder_of(sid) / "sequence.json").read_text(encoding="utf-8")
+    s3, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [sid]})
+    items = (d.get("items") or []) if isinstance(d, dict) else []
+    sc = items[0] if items else {}
+    ok(s2 == 200 and s3 == 200 and sc.get("kind") == "sequence" and sc.get("space") == B and sc.get("id") != sid
+       and ((sc.get("origin") or {}).get("from") or {}).get("item") == sid and len(items) == 3,
+       f"documents rapatriés : une séquence de A arrive dans B, avec ses deux plans ({s2} {s3} {err(d)[:80]} "
+       f"{[(x.get('id'), x.get('kind'), x.get('space'), ((x.get('origin') or {}).get('from') or {}).get('item')) for x in items]} {sid})")
+    tl = rb("GET", f"/api/montage/projects/{sc.get('id', 'x')}")[1]
+    posed = [c.get("item") for c in (tl.get("clips") or [])] if isinstance(tl, dict) else []
+    ok(len(posed) == 2 and all(library.space_of(library._items.get(x)) == B for x in posed) and not {img["id"], vid["id"]} & set(posed),
+       f"documents rapatriés : la séquence de B pose les copies de ses plans, jamais ceux de A ({posed})")
+    cur = rb("GET", f"/api/montage/projects/{sc.get('id', 'x')}")[1]
+    s4, _ = rb("POST", f"/api/montage/projects/{sc.get('id', 'x')}", {**cur, "base_rev": cur.get("rev"), "clips": cur["clips"][:1]})
+    ok(s4 == 200 and (library.folder_of(sid) / "sequence.json").read_text(encoding="utf-8") == a_seq,
+       f"documents rapatriés : modifier la séquence de B ne touche pas celle de A ({s4})")
+
+    # ── une playlist de A : deux sons, une pochette ──
+    _, s1 = ra("PUT", "/api/library/upload?name=p1.wav&title=Morceau+1", raw=wav.read_bytes(), hd={"Content-Type": "audio/wav"})
+    _, s2_ = ra("PUT", "/api/library/upload?name=p2.wav&title=Morceau+2", raw=wav.read_bytes(), hd={"Content-Type": "audio/wav"})
+    s, pl = ra("POST", "/api/playlist", {"title": "Album de A", "tracks": [s1.get("id", "x"), s2_.get("id", "x")],
+                                          "playlist": {"cover": img["id"]}})
+    s2, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [pl.get("id", "x")]})
+    pc = ((d.get("items") or [{}])[0]) if isinstance(d, dict) else {}
+    tracks = [t.get("item") for t in ((pc.get("playlist") or {}).get("tracks") or [])]
+    cover = (pc.get("playlist") or {}).get("cover")
+    ok(s == 200 and s2 == 200 and pc.get("kind") == "playlist" and pc.get("space") == B and len(tracks) == 2
+       and all(library.space_of(library._items.get(x)) == B for x in tracks + [cover]) and cover != img["id"]
+       and pc.get("music_space") is None,
+       f"documents rapatriés : une playlist arrive avec ses sons et sa pochette, copiés ({s} {err(pl)[:90]} {s2} {err(d)[:80]} {tracks} {cover})")
+    ok([t.get("item") for t in (library.see(pl.get("id", "x")) or {}).get("playlist", {}).get("tracks", [])] == [s1.get("id"), s2_.get("id")],
+       "documents rapatriés : la playlist de A pose toujours ses sons")
+
+    # ── avec sa source (le Studio) : un projet ODIO de A, son élément ──
+    s, pj = ra("POST", "/api/music/projects", {"name": "Chanson à rapatrier", "template": "vide"})
+    pid = pj.get("id", "x")
+    _, snd2 = ra("PUT", "/api/library/upload?name=s.wav&title=Son+du+projet", raw=wav.read_bytes(), hd={"Content-Type": "audio/wav"})
+    q = ra("GET", f"/api/music/projects/{pid}")[1]
+    q["tracks"] = [{"id": "t1", "name": "Son", "kind": "audio", "color": "or", "mute": False, "solo": False, "src": "m1", "strip": "m2"}]
+    q["modules"] = [m for m in q["modules"] if m["type"] == "master"] + [
+        {"id": "m1", "type": "player", "track": "t1", "x": 0, "y": 0, "on": True, "params": {}},
+        {"id": "m2", "type": "strip", "track": "t1", "x": 200, "y": 0, "on": True, "params": {}}]
+    q["cables"] = [{"a": "m1", "b": "m2"}, {"a": "m2", "b": "m0"}]
+    q["clips"] = [{"id": "c1", "track": "t1", "start": 0, "len": 4, "item": snd2.get("id", "x"), "off": 0}]
+    s2, _ = ra("POST", f"/api/music/projects/{pid}", q)
+    s3, el = ra("POST", "/api/elements", {"title": "La chanson", "source": {"tool": "music", "doc": pid}})
+    _, mix = ra("PUT", "/api/library/upload?name=mix.wav&title=Mixage", raw=wav.read_bytes(), hd={"Content-Type": "audio/wav"})
+    s4, _ = ra("POST", f"/api/elements/{el.get('id', 'x')}/versions", {"item": mix.get("id", "x"), "note": "v1"})
+    proj_a = elements._doc_path(pid)
+    a_proj = proj_a.read_text(encoding="utf-8") if proj_a and proj_a.is_file() else None
+    s5, d = rb("POST", f"/api/espaces/{B}/rapatrier", {"items": [el.get("id", "x")], "avec_source": True})
+    items = (d.get("items") or []) if isinstance(d, dict) else []
+    e2 = items[0] if items else {}
+    src2 = (e2.get("element") or {}).get("source") or {}
+    newp = src2.get("doc") or ""
+    proj = rb("GET", f"/api/music/projects/{newp}")[1] if newp else {}
+    pclips = [c.get("item") for c in (proj.get("clips") or [])] if isinstance(proj, dict) else []
+    ok((s2, s3, s4, s5) == (200,) * 4 and newp.startswith("mus-") and newp != pid and proj.get("space") == B
+       and len(pclips) == 1 and pclips[0] != snd2.get("id") and library.space_of(library._items.get(pclips[0])) == B,
+       f"documents rapatriés : avec sa source — l'élément de B vit sur une copie du projet ODIO, qui pose la copie de son son "
+       f"({s2} {s3} {s4} {s5} {err(d)[:80]} {newp} {pclips})")
+    st = rb("GET", f"/api/elements/{e2.get('id', 'x')}")[1]
+    ok(isinstance(st, dict) and (st.get("source_state") or {}).get("state") == "à jour" and (src2.get("from") or {}).get("doc") == pid,
+       f"documents rapatriés : sa v1 est à jour de sa source copiée ; d'où elle vient est dit ({(st or {}).get('source_state') if isinstance(st, dict) else st})")
+    ok(a_proj is not None and proj_a.read_text(encoding="utf-8") == a_proj, "documents rapatriés : le projet ODIO de A n'a pas bougé")
+    # sans le Studio (le Perso de Rea, une offre Apps) : la source ne vient pas — la version figée, oui
+    perso = espaces.personal_space_id("rea-rapatrie")
+    if espaces.space(perso) and espaces.plan_of_space(perso) != "studio":
+        s6, d6 = rr("POST", f"/api/espaces/{perso}/rapatrier", {"items": [el.get("id", "x")], "avec_source": True})
+        ok(s6 == 403 and "Studio" in err(d6), f"documents rapatriés : avec sa source, sans le Studio : 403 qui le dit ({s6} {err(d6)[:70]})")

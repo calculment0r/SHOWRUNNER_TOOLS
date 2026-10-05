@@ -120,7 +120,6 @@ function importWhy(it, dest = here()) {
   const h = spaceInfo(dest);
   if (h && h.import === false) return `copier dans « ${spaceLong(dest)} » : ${h.import_why || 'ton rôle ne le permet pas'}`;
   if (isLiving(it) && !it.element?.head) return `« ${it.title || it.id} » n’a pas de version prête : rien à figer — publie d’abord une version`;
-  if (it.kind === 'sequence') return 'une séquence pose d’autres objets de son Workspace : rapatrie ses plans';
   return '';
 }
 // créer dans un Workspace (déposer, un dossier, un élément) : son rôle le dit
@@ -875,7 +874,7 @@ function fileDrop(node, cb) {
 // POST /api/espaces/<dest>/rapatrier (server/tools/equipes.py → core/library.py) ; tout ou
 // rien. Ctrl+Z met les copies à la corbeille ; rétablir les en sort (pas une copie de plus).
 // `versions` : {élément: n} — la version figée d'un élément versionné (sinon sa dernière prête)
-async function rapatrier(items, { dest = here(), folder = '', versions = null } = {}) {
+async function rapatrier(items, { dest = here(), folder = '', versions = null, avecSource = false } = {}) {
   if (!items.length || !dest) return null;
   const why = items.map((it) => importWhy(it, dest)).find(Boolean);
   if (why) { say(why); return null; }
@@ -886,7 +885,7 @@ async function rapatrier(items, { dest = here(), folder = '', versions = null } 
     const r = await U.run({ label: `copier ${what(items)} dans « ${where} »`,
       do: async () => {
         if (made) { await api('asset/restore', { method: 'POST', body: { ids: made.map((x) => x.id) }, espace: dest }); return made; }
-        const d = await api(`espaces/${dest}/rapatrier`, { method: 'POST', body: { items: items.map((i) => i.id), folder, ...(versions ? { versions } : {}) }, espace: dest });
+        const d = await api(`espaces/${dest}/rapatrier`, { method: 'POST', body: { items: items.map((i) => i.id), folder, ...(versions ? { versions } : {}), ...(avecSource ? { avec_source: true } : {}) }, espace: dest });
         made = d.items;
         made.earlier = d.earlier;
         return made;
@@ -921,6 +920,9 @@ function confirmCopy(items, dest, folder = '') {
           'L’original reste dans ', el('b', {}, from), ' ; modifier l’un ne touche jamais l’autre. Ctrl+Z met la copie à la corbeille.'),
         ok.some(isLiving) ? el('p', { class: 'prose' }, 'Un élément versionné arrive en ', el('b', {}, 'élément neuf'),
           ' : sa v1 est la copie de sa dernière version ; sa source reste dans ', el('b', {}, from), ', rien ne relie les deux.') : null,
+        ok.some((it) => it.kind === 'sequence' || it.kind === 'playlist') ? el('p', { class: 'prose' }, 'Une séquence, une playlist arrivent ',
+          el('b', {}, 'avec ce qu’elles posent'), ' (plans, LUT, sons, pochette), copiés aussi : la copie ne pose que des objets de ',
+          el('b', {}, spaceLong(dest)), '.') : null,
         no.length ? el('p', { class: 'hint warn-line' }, `${plural(no.length, 'objet reste', 'objets restent')} : ${importWhy(no[0], dest)}`) : null,
       ],
       foot: [el('span', { class: 'sp' }), el('button', { class: 'tb ghost', type: 'button', onclick: () => end(false) }, 'Pas maintenant'),
@@ -2080,11 +2082,16 @@ function foreignSheet(it) {
   const pickV = ready.length > 1 ? el('select', { class: 'fld', style: { width: 'auto' }, 'aria-label': 'la version à rapatrier', title: 'la version figée qui devient la v1 de l’élément neuf' },
     ...ready.map((n) => el('option', { value: String(n), selected: n === it.element.head }, `v${n}${n === it.element.head ? ' · la dernière' : ''}`))) : null;
   const chosen = () => (pickV ? Number(pickV.value) : it.element?.head);
+  // « avec sa source » (le Studio, § 3.3 b) : le projet ODIO, la séquence, la planche viennent aussi, avec ce
+  // qu'ils posent ; l'élément neuf vit sur la copie — deux sources qui divergent
+  const srcDoc = living && it.element?.source?.doc;
+  const withSrc = srcDoc ? studioSeul(el('label', { class: 'sh-src', title: 'la source est copiée aussi, avec ce qu’elle pose ; l’élément neuf vit dessus (le Studio)' },
+    el('input', { type: 'checkbox' }), ' avec sa source')) : null;
   const bring = el('button', { class: 'tb go', type: 'button', disabled: !!why,
     title: why || (living ? `un élément neuf dans « ${spaceLong(here())} », dont la v1 est la copie de la version choisie ; sa source reste dans « ${spaceLong(it.space)} » · Ctrl+Z l’annule`
       : `une copie neuve dans « ${spaceLong(here())} » — titre, recette, tags suivent ; l’original ne bouge pas · Ctrl+Z l’annule`),
     onclick: async () => {
-      const r = await rapatrier([it], living ? { versions: { [it.id]: chosen() } } : {});
+      const r = await rapatrier([it], living ? { versions: { [it.id]: chosen() }, avecSource: !!withSrc?.querySelector('input').checked } : {});
       if (r?.[0]) go('#' + r[0].id);   // la copie, ici : elle se modifie, elle sert aux outils
     } }, living ? `Rapatrier la v${chosen() || '?'} dans « ${spaceShort(here())} »` : `Rapatrier dans « ${spaceShort(here())} »`);
   if (pickV) pickV.addEventListener('change', () => { bring.textContent = `Rapatrier la v${chosen()} dans « ${spaceShort(here())} »`; });
@@ -2093,7 +2100,7 @@ function foreignSheet(it) {
     el('span', { class: 'txt' }, 'Dans ', el('b', {}, spaceLong(it.space)), ' : tu le vois d’ici, on ne s’en sert pas d’ici. ',
       'Le rapatrier en fait une copie neuve dans ', el('b', {}, spaceLong(here())), ', que tes outils pourront poser.'),
     why ? el('span', { class: 'why' }, why) : null);
-  const acts = el('section', { class: 'sh-acts' }, pickV, bring,
+  const acts = el('section', { class: 'sh-acts' }, pickV, withSrc, bring,
     el('a', { class: 'tb ghost', href: otherTab(it.space, '#' + it.id), title: 'ouvrir sa fiche dans son Workspace (cet onglet y passe)' }, 'Y aller'),
     el('span', { class: 'sp' }),
     it.url && it.kind !== 'element' ? el('a', { class: 'tb ghost', href: href(it.url), download: it.kind === 'document' ? nomDe(it) : `${it.title || it.id}${(it.file || '').replace(/^main/, '')}` }, 'Télécharger')
@@ -2636,7 +2643,9 @@ function livingSheet(d) {
   const srcBlk = blk('source', STATE_FR[s.state] ? stateLine(s) : '',
     readout([['outil', toolFr(s.tool)], ['document', s.title], ['état', stateLine(s)], ['rev', s.rev != null ? String(s.rev) : '']]),
     s.state === 'modifiée' ? el('p', { class: 'hint' }, `La source a changé depuis la v${s.since} : publie la v${(e.count || 0) + 1} depuis son outil (ODIO : menu ⋯ → Publier comme élément), ou range ici un objet rendu.`) : null,
-    s.elsewhere ? el('p', { class: 'hint' }, `Rapatrié de « ${s.elsewhere} » : sa source y est restée, rien ne relie les deux. Ce qu’on publie ici reste ici.`)
+    s.elsewhere ? el('p', { class: 'hint' }, s.copied
+      ? `Rapatrié de « ${s.elsewhere} » avec une copie de sa source, qui est ici : les deux sources divergent désormais, rien ne les relie.`
+      : `Rapatrié de « ${s.elsewhere} » : sa source y est restée, rien ne relie les deux. Ce qu’on publie ici reste ici.`)
       : s.state === 'non suivie' ? el('p', { class: 'hint' }, 'Cette source n’a pas encore d’empreinte : on ne sait pas dire si elle a changé.') : null);
   const usesBlk = blk('usages', d.uses.length ? plural(d.uses.length, 'endroit', 'endroits') : 'aucun',
     d.uses.length ? el('ul', { class: 'vuses' }, ...d.uses.map(useLine)) : el('p', { class: 'hint' }, 'Aucun document ne pose encore une de ses versions.'));

@@ -1028,6 +1028,16 @@ IMPORT_SKIP = ("item.json", "source.json")
 # (elle n'est la version d'aucun élément de B), son partage, son favori (les favoris sont
 # ceux du Workspace), ce que la copie reçoit à neuf
 IMPORT_DROP = ("uid", "version", "shared", "fav", "id", "space", "origin", "created", "updated", "folder", "parents_space")
+# Un document qui pose d'autres objets (une séquence, une playlist ; la source d'un élément :
+# un projet ODIO, une planche) ne se copie pas seul : ce qu'il pose vient avec lui, et sa
+# copie s'écrit par son outil, qui juge encore que tout ce qu'elle pose est d'ici. Le module
+# des documents (server/tools/elements.py : la table ID_FIELDS) s'inscrit au démarrage :
+#   DOC_IMPORT[sorte](src, dest, folder, at, undo) → [copies], la première : le document
+#   SOURCE_IMPORT[0](élément, version, dest, folder, at, undo) → (source neuve, [copies], empreinte de la v1)
+# `undo` : ce qu'il faut défaire si le rapatriement échoue plus loin (des fonctions) — ce qui
+# n'est pas un objet de la bibliothèque (un projet ODIO, une planche) s'y défait.
+DOC_IMPORT: dict = {}
+SOURCE_IMPORT: list = []
 
 
 def space_name(sid: str | None) -> str:
@@ -1060,6 +1070,8 @@ def import_refusal(it: dict, dest: str | None) -> str | None:
     if is_living(it):
         if head_entry(it) is None:   # rien de prêt à figer
             return f"{name} est un élément versionné sans version prête : rien à figer — publie d'abord une version"
+        return None
+    if it.get("kind") in DOC_IMPORT:   # une séquence, une playlist : ce qu'elle pose vient avec elle
         return None
     if it.get("kind") == "playlist":   # comme une séquence : elle pose des sons de son Workspace
         return f"{name} est une playlist : elle pose des sons de son Workspace — rapatrie ses morceaux"
@@ -1150,12 +1162,15 @@ def frozen_version(src: dict, n=None) -> dict:
     return v
 
 
-def _import_living(src: dict, v: dict, dest: str, folder: str, at: str) -> list[dict]:
+def _import_living(src: dict, v: dict, dest: str, folder: str, at: str, avec_source: bool = False,
+                   undo: list | None = None) -> list[dict]:
     """Un élément versionné rapatrié (§ 3.3, a — la version figée) : un élément NEUF dans
     `dest`, dont la v1 est une copie de la version `v` ; sa source reste dans son Workspace
     (« non suivie » ici : on n'en publie pas depuis B, rien ne relie les deux) ; un
-    personnage de Character Factory garde la sienne, qui n'est d'aucun Workspace. Rend
-    [l'élément, sa v1], pas encore dans `_items`."""
+    personnage de Character Factory garde la sienne, qui n'est d'aucun Workspace.
+    `avec_source` (§ 3.3, b) : sa source aussi est copiée dans `dest`, avec ce qu'elle pose
+    (SOURCE_IMPORT), et l'élément de B vit sur cette copie — deux sources qui divergent.
+    Rend [l'élément, sa v1, ce que la source a copié] ; l'élément et sa v1 pas encore dans `_items`."""
     a = space_of(src)
     vcopy = _import_one(_items[v["item"]], dest, folder, at)
     try:
@@ -1166,28 +1181,43 @@ def _import_living(src: dict, v: dict, dest: str, folder: str, at: str) -> list[
     vcopy["version"] = {"of": ecopy["id"], "n": 1}
     el = ecopy["element"]
     s = el.get("source") if isinstance(el.get("source"), dict) else {}
-    if s.get("tool") != "character-factory":
+    extra, fp = [], v.get("fp")
+    if avec_source and s.get("doc") and SOURCE_IMPORT:
+        try:
+            src_new, extra, fp = SOURCE_IMPORT[0](src, v, dest, folder, at, undo if undo is not None else [])
+        except BaseException:
+            for x in (vcopy, ecopy):
+                shutil.rmtree(folder_of(x["id"]), ignore_errors=True)
+            raise
+        el["source"] = {**src_new, "from": {"space": a, "doc": s["doc"]}}
+    elif s.get("tool") != "character-factory":
         el["source"] = {"tool": s.get("tool") or "asset", "from": {"space": a, **({"doc": s["doc"]} if s.get("doc") else {})}}
     note = f"v{v.get('n')} de « {src.get('title') or src['id']} », rapatriée de « {space_name(a)} »"
     el["versions"] = [{"n": 1, "item": vcopy["id"], "at": at, "by": auth.current_id(), "note": note[:400],
-                       "fp": v.get("fp"), "rev": v.get("rev"), "src": dict(v.get("src") or {}), "deps": [], "state": "ready"}]
+                       "fp": fp, "rev": v.get("rev"), "src": {k: x for k, x in el["source"].items() if k in ("tool", "doc", "slug")},
+                       "deps": [], "state": "ready"}]
     ecopy["origin"]["from"]["n"] = v.get("n")
-    return [ecopy, vcopy]
+    return [ecopy, vcopy, *extra]
 
 
-def rapatrier(ids: list, dest: str, *, folder: str = "", versions: dict | None = None) -> list[dict]:
+def rapatrier(ids: list, dest: str, *, folder: str = "", versions: dict | None = None, avec_source: bool = False) -> list[dict]:
     """Rapatrie les objets `ids` (vus par la personne, où qu'ils soient : `see`) dans le
     Workspace `dest`. Tout ou rien : chaque objet est jugé avant d'en copier un seul, et
     une copie qui échoue défait les précédentes. Un élément versionné arrive en élément
     neuf dont la v1 est sa version figée (`versions` : {élément: n}, sinon la dernière
-    prête ; frozen_version). KeyError : un objet ou le Workspace inconnu (ou invisible) ;
-    PermissionError : on ne peut pas rapatrier dans `dest` ; ValueError : un objet qui ne
-    se rapatrie pas (import_refusal, frozen_version). Rend les copies, dans l'ordre (un
-    élément : lui, puis sa v1)."""
+    prête ; frozen_version) ; `avec_source` (le Studio) : sa source aussi. Un document qui
+    pose d'autres objets (une séquence, une playlist : DOC_IMPORT) arrive avec eux. KeyError :
+    un objet ou le Workspace inconnu (ou invisible) ; PermissionError : on ne peut pas
+    rapatrier dans `dest` ; ValueError : un objet qui ne se rapatrie pas (import_refusal,
+    frozen_version). Rend les copies, la copie de chaque objet demandé d'abord, puis ce qui
+    est venu avec (la v1 d'un élément, ce que pose un document)."""
     _load()
     if espaces.space(dest) is None:
         raise KeyError(dest)
     check_import(dest)
+    if avec_source and not auth.has_studio(auth.current(), dest):
+        raise PermissionError(f"rapatrier avec sa source est du Studio : « {space_name(dest)} » ne l'a pas — "
+                              "rapatrie la version figée, ou demande le Studio à Cal")
     versions = versions if isinstance(versions, dict) else {}
     srcs = []
     who = auth.current()
@@ -1205,20 +1235,34 @@ def rapatrier(ids: list, dest: str, *, folder: str = "", versions: dict | None =
         srcs.append((src, frozen_version(src, versions.get(iid)) if is_living(src) else None))
     at = now()
     made: list[dict] = []
+    undo: list = []
     try:
         for src, v in srcs:   # hors du verrou : les copies de fichiers ne bloquent pas la bibliothèque
-            made.extend(_import_living(src, v, dest, folder, at) if v else [_import_one(src, dest, folder, at)])
+            if v:
+                made.extend(_import_living(src, v, dest, folder, at, avec_source, undo))
+            elif src.get("kind") in DOC_IMPORT:
+                made.extend(DOC_IMPORT[src["kind"]](src, dest, folder, at, undo))
+            else:
+                made.append(_import_one(src, dest, folder, at))
         with _lock:
             for it in made:
                 _items[it["id"]] = it
                 _save(it)
     except BaseException:
+        for fn in reversed(undo):
+            try:
+                fn()
+            except Exception:  # noqa: BLE001 — défaire le reste quand même
+                pass
         with _lock:
             for it in made:
                 _items.pop(it["id"], None)
                 shutil.rmtree(folder_of(it["id"]), ignore_errors=True)
         raise
-    return made
+    # la copie de chaque objet demandé d'abord, dans l'ordre ; puis ce qui est venu avec
+    asked = {s["id"] for s, _ in srcs}
+    first = [m for m in made if ((m.get("origin") or {}).get("from") or {}).get("item") in asked]
+    return first + [m for m in made if m not in first]
 
 
 def copies_of(src: dict, dest: str) -> list[dict]:
