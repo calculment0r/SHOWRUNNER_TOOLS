@@ -899,6 +899,8 @@ d4936ff contre ce code :
 | pointes de 20 ms sur le fil audio | pertes 158 (1,58 s) | 0 |
 | le fil principal bloqué 400 puis 700 ms | 19 sons dans le passé (le pire −362 ms) | aucun ; 2 tranches rattrapées |
 | une boucle de 4 temps, un clip audio au temps 1, huit blocages de 600 ms | 4 départs du clip dans le passé (jusqu'à −320 ms), chacun du début du son | aucun ; 9 tranches rattrapées ; les 4 départs repris à leur place dans le son, 10 ms devant l'horloge |
+| un clip de Session lancé sans quantification, en lecture | il part 120 ms après le geste (l'avance) | 33 ms après (le rattrapage exact), malgré 300 ms d'avance |
+| l'export de 8 temps (`renderMix`, tranches à `engine.avance`) | crête −9,6 dBFS | −9,8 dBFS (les caisses sont du bruit tiré au hasard) |
 
 L'étage des arcs ne coûte rien de notable : le réveil de l'ordonnanceur prend
 0,6 ms au 95ᵉ centile avec ou sans lui (deux passages chacun, aucune perte), et
