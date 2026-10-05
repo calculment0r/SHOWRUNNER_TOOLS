@@ -170,7 +170,7 @@ une page ne lit que ceux du sien.
 | `GET /api/library/<id>/view?w=256…2048` | la copie d'affichage de cette taille, ou la plus proche au-dessus, ou l'original (ETag, 304) |
 | `POST /api/library/views {ids?, force?}` | relancer le rattrapage des copies (admin) : le travail `library.views` |
 | `GET /api/library/<id>` | l'objet |
-| `GET /api/library/<id>/texte` · `POST {pages: [{n, text}], thumb?, count?}` | le texte d'un document page par page (`{format, title, text, pages, truncated, has_text, via, why}`) ; ce que la page a lu d'un document sans texte (`server/tools/documents.py`) |
+| `GET /api/library/<id>/texte` · `POST {pages: [{n, text}], thumb?, count?}` | le texte d'un document page par page (`{format, title, text, pages, truncated, has_text, via, why}`) ; ce que la page a lu d'un document sans texte (un PDF que le serveur n'a pas su lire), par qui peut écrire l'objet (`server/tools/documents.py`) |
 | `PUT /api/library/upload?name=a.png&title=&folder=&tool=` (corps = le fichier) | l'objet créé |
 | `POST /api/library/<id>` `{title, tags, folder, fav, element:{type, description, refs}}` | mise à jour |
 | `POST /api/library/<id>/delete` · `/restore` | corbeille, retour |
@@ -185,7 +185,6 @@ une page ne lit que ceux du sien.
 | `GET /api/son/apercu/<id>[?voix=k][&v=1]` · `GET /api/son/pics/<id>` | le masque de l'onde (PNG, gardé un an avec `v=1`) ; les pics `{bps, n, b64}` — jugés par l'objet (qui le voit voit son onde) |
 | `GET /api/defil/<id>` | la copie de défilement : `{ready, url, pending, why}` ; pas prête, la demande passe en tête de sa file et la page redemande |
 | `GET /api/defil/<id>/son` | le son de défilement (06/10) : le son seul d'une vidéo ou d'un son, mono, 22 050 Hz (11 025 au-delà de 10 min), FLAC (`defil-son.v1.flac`), fait à la première demande : `{ready, url, sr, why}` — les grains de `commun/scrub.js` |
-| `GET /api/library/<id>/texte` · `POST {pages: [{n, text}], thumb?, count?}` | le texte d'un document `{format, text, pages, truncated, has_text, via, why}` ; ce que la page a lu d'un document sans texte (un PDF que le serveur n'a pas su lire), par qui peut écrire l'objet (`server/tools/documents.py`) |
 | `GET /api/cf/characters` · `POST /api/cf/import {slug}` | Character Factory → élément |
 
 ## 3. La file des rendus
