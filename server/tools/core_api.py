@@ -446,7 +446,9 @@ def _job_or_404(job_id: str, write: bool = False) -> dict:
 def jobs_list(req):
     jobs.annotate()
     u = auth.current()
-    return {"jobs": [job_out(j, u) for j in jobs.listing(req.q("active") == "1", req.q("tool"), int(req.q("limit", "80")))]}
+    from tools import elements   # ev_seq : le journal des éléments a-t-il avancé dans ce Workspace ? (commun/shell.js)
+    return {"jobs": [job_out(j, u) for j in jobs.listing(req.q("active") == "1", req.q("tool"), int(req.q("limit", "80")))],
+            "ev_seq": elements.seq_here()}
 
 
 def queue(req):

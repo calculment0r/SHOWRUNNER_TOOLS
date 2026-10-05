@@ -446,6 +446,7 @@ export function dropZone(node, { kinds = ['image', 'element'], multiple = true, 
 const listeners = new Set();
 let lastJobs = [];
 let pollT = null;
+let evSeq = null;   // le dernier numéro vu du journal des éléments (ev_seq de GET /api/jobs)
 export const jobs = {
   async submit(kind, params, { title = '', tool = '' } = {}) {
     const j = await api('jobs', { method: 'POST', body: { kind, params, title, tool } });
@@ -463,7 +464,7 @@ export const jobs = {
     const go = async () => {
       if (doorOn) return;   // la porte est fermée : on ne relit rien
       try {
-        const { jobs: list } = await api('jobs?limit=60');
+        const { jobs: list, ev_seq: ev } = await api('jobs?limit=60');
         const before = new Map(lastJobs.map((j) => [j.id, j.state]));
         lastJobs = list;
         for (const cb of listeners) cb(list);
@@ -472,6 +473,13 @@ export const jobs = {
           if (was && was !== j.state && ['done', 'error', 'cancelled'].includes(j.state)) {
             document.dispatchEvent(new CustomEvent('sr:job', { detail: j }));
           }
+        }
+        // le journal des éléments a avancé dans ce Workspace (server/tools/elements.py, seq_here) :
+        // « sr:elements » dit aux pages qui suivent des versions de relire GET /api/elements/changes
+        // (docs/etudes/apps_studio_elements.md § 2.11) — le relevé de la file, sans connexion de plus
+        if (Number.isInteger(ev)) {
+          if (evSeq !== null && ev > evSeq) document.dispatchEvent(new CustomEvent('sr:elements', { detail: { seq: ev, since: evSeq } }));
+          evSeq = ev;
         }
       } catch { /* le serveur redémarre : on réessaie */ }
       const active = lastJobs.some((j) => j.state === 'queued' || j.state === 'running');
