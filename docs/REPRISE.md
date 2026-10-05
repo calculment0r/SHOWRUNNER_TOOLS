@@ -145,7 +145,11 @@ le carnet toujours en français (le résumé sort dans la langue de l'enregistre
    puis un LoRA de moodboard dans la carte Générer.
 3. Essais à faire faire à Cal (rien ne s'essaie ici sans GPU) : la consigne du carnet de Transcrire, la
    partition de Musique (Soigné), le tempo d'ODIO sur sa musique, les appareils et la Session d'ODIO à 60 i/s.
-4. Toujours ouverts : comptes « à valider » (une capture de Cal), planche de la réunion (Diagnostics →
+4. **Musique : Spaces, playlists, lien d'écoute** (demande de Cal du 05/10 au soir) : l'étude
+   `docs/etudes/musique_spaces_playlists.md`, RIEN DE CODÉ. Lui faire trancher S1 (Space partagé avec le
+   Workspace ou personnel), L1 (lien sur Cloudflare R2 ou GitHub Pages comme AGOSTA), L2, L3 ; puis l'ordre
+   du § 5 (Spaces, playlists, lecteur `ecoute/` repris d'AGOSTA avec l'album AGOSTA comme premier essai).
+5. Toujours ouverts : comptes « à valider » (une capture de Cal), planche de la réunion (Diagnostics →
    `planche`), téléphone (mises en page dédiées), licences.
 
 Le socle Team / Workspace (`server/core/espaces.py`, en-tête `x-sr-espace` dans le Worker)
