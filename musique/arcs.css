@@ -1,0 +1,41 @@
+/* ============================================================
+   ODIO — l'arrangement, en haut : la structure (les sections que tiennent
+   les balises des paroles, projet.js) et le groupe des arcs (arcs.js,
+   timeline.js). Jetons de commun/tokens.css seulement ; la couleur d'une
+   section ou d'un arc passe par --c, posée sur un jeton ; filets en
+   box-shadow inset.
+   ============================================================ */
+
+/* ── la structure : une section tenue par les paroles d'une région ── */
+.ar-sec.liee { box-shadow: inset 2px 0 0 var(--c), inset 0 -1.5px 0 color-mix(in srgb, var(--c) 70%, transparent); }
+.ar-sec .tg { flex: none; margin-left: 6px; font-style: normal; font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .08em;
+  color: var(--ink3); white-space: nowrap; pointer-events: none; }
+.ar-sec:hover .tg { color: var(--ink2); }
+
+/* ── le groupe des arcs (timeline.js, arcsRows ; arcs.js) ──────────────────
+   La rangée du groupe reprend .ar-arch / .ar-arc (collée sous la règle, 58 px) :
+   à gauche le nom, replier / déplier, l'arc qu'elle peint, l'allumer, « + » ;
+   à droite la toile, qui peint cet arc sur les autres, pâles. Déplié, un arc
+   par rangée dessous (.ar-ahead / .ar-alane, comme l'automation), sa couleur
+   en bande à gauche. */
+.ar-arch.grp b { color: var(--ink); }
+.ar-arch.grp .txt span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ar-arch.grp .row { gap: 3px; }
+.ar-arch.grp .ar-pli { width: 20px; padding: 0; }
+.ar-peint { display: inline-flex; align-items: center; gap: 5px; max-width: 98px; min-width: 0; text-transform: none; letter-spacing: .02em; }
+.ar-peint i { flex: none; width: 7px; height: 7px; border-radius: 2px; background: var(--c); }
+.ar-arch.grp.open { box-shadow: inset -1px -1px 0 var(--line), inset 0 -2px 0 var(--line-cy); }
+/* une rangée d'arc : le nom et ce qu'il tient à gauche, ses boutons à droite, sur une ligne */
+.ar-ahead.arch { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 6px; padding: 0 6px 0 12px; }
+.ar-ahead.arch .txt { gap: 3px; }
+.ar-ahead.arch .row { align-items: center; }
+.ar-ahead.arch .tb.sm { height: 20px; padding: 0 5px; font-size: 8px; }
+.ar-ahead.arch b { display: flex; align-items: center; gap: 6px; color: var(--ink); }
+.ar-ahead.arch b i { flex: none; width: 7px; height: 7px; border-radius: 2px; background: var(--c); }
+.ar-ahead.arch.off b, .ar-ahead.arch.off b i { color: var(--ink3); opacity: .7; }
+.ar-ahead.arch.peint { box-shadow: inset -1px -1px 0 var(--line), inset 3px 0 0 var(--c); }
+.ar-ahead.arch .kn.xs { width: 22px; }
+.ar-ahead.arch .kn.xs .dial { width: 18px; height: 18px; }
+.ar-ahead.arch .kn.xs .v { display: none; }
+.ar-alane.arcl { background-color: var(--panel); }
+.ar-ahead.arch .txt span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
