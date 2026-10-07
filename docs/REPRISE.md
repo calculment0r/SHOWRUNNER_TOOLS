@@ -273,6 +273,17 @@ diagnostic « Agent Showrunner » qu'il prend les outils.
 
 ## 3. Ce qui a été fait (le plus récent d'abord ; le détail : `git log`)
 
+### Session cloud du 07/10 : un workshop (4 groupes)
+
+- **Admin → Teams → « Coller une liste »** (carte de chaque Team) : un pseudo par ligne (ou virgules), le rôle
+  choisi ; chacun passe par le même chemin qu'« Ajouter », l'un après l'autre : créé déjà accepté s'il
+  n'existe pas, sinon mis dans la Team ; un refus dit pourquoi et reste dans le champ. Les noms ne vont
+  jamais dans le dépôt (public) : Cal colle la liste lui-même.
+- **La porte ne compte plus que les échecs** (`core/auth.py`, `_miss`) : le lien d'invitation (10 codes faux
+  par adresse et par 10 min) et la porte du pseudo (30 refus). Avant, les essais justes comptaient aussi :
+  22 personnes derrière un même Wi-Fi (une seule adresse) butaient sur « trop d'essais » dès la 11e.
+  Selftest `porte_publique` (22 ouvertures, 35 entrées justes, puis les limites des faux).
+
 ### Session cloud du 06/10
 
 Une session principale, une trentaine d'agents en parallèle (un sujet, une copie, une branche `wip2/…`

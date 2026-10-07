@@ -272,6 +272,17 @@ def _selftest_code(ok, home, home_tok, same_home, keyfile, key, team, jwt_for) -
     ok(s == 429, f"… même le bon code attend (la limite ne dit rien du code) ({s})")
     s, _, jar, _ = C("GET", f"/invitation/{inv}", qui="198.51.100.78")
     ok(s == 303, f"… une autre adresse n'est pas gênée ({s})")
+    # un workshop derrière un même Wi-Fi (Cal, 07/10) : le bon code et les entrées justes ne comptent pas
+    got = [C("GET", f"/invitation/{inv}", qui="198.51.100.90")[0] for _ in range(22)]
+    ok(got == [303] * 22, f"code : 22 personnes d'une même adresse ouvrent le lien d'invitation ({sorted(set(got))})")
+    got = [C("POST", "/api/auth/enter", {"name": "Su007"}, cookies=ic, qui="198.51.100.90")[0] for _ in range(35)]
+    ok(got == [200] * 35, f"code : 35 entrées justes depuis une même adresse, sans limite ({sorted(set(got))})")
+    got = [C("GET", f"/invitation/ZZZZ-ZZZZ-ZZZ{i % 10}", qui="198.51.100.90")[0] for i in range(11)]
+    ok(got[:10] == [403] * 10 and got[10] == 429, f"… les codes faux, eux, comptent toujours ({got})")
+    got = [C("POST", "/api/auth/enter", {"name": "Admin"}, cookies=ic, qui="198.51.100.91")[0] for _ in range(31)]
+    s, _, _, _ = C("POST", "/api/auth/enter", {"name": "Su007"}, cookies=ic, qui="198.51.100.91")
+    ok(all(x in (403, 409) for x in got[:30]) and got[30] == 429 and s == 429,
+       f"code : 30 pseudos refusés depuis une adresse, puis 429, même pour un pseudo juste ({sorted(set(got[:30]))} {got[30]} {s})")
 
     # ── de nouveaux codes : les sessions de la porte se ferment ──
     auth.demo_codes(renew=True)

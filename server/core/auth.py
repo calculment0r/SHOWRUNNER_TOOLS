@@ -1161,14 +1161,26 @@ def after(req, status: int) -> None:
 
 
 # ── les limites de débit (en mémoire) ───────────────────────
-def _rate(key: str, n: int, window: float) -> None:
+def _rate(key: str, n: int, window: float, count: bool = True) -> None:
+    """`count=False` : juge seulement ; l'essai ne se compte qu'en cas d'échec (`_miss`)."""
     now = time.time()
     with _lock:
         hits = [t for t in _hits.get(key, []) if now - t < window]
         if len(hits) >= n:
             raise HttpError(429, "trop d'essais : attends quelques minutes")
-        hits.append(now)
+        if count:
+            hits.append(now)
         _hits[key] = hits
+
+
+def _miss(*keys: str) -> None:
+    """Un essai raté (un code faux, un pseudo refusé) se compte ; un essai juste ne coûte rien. La porte
+    borne qui devine, jamais qui entre : un workshop de 22 personnes derrière un même Wi-Fi (une seule
+    adresse, Cal 07/10) passait la limite des 10 codes ou des 30 entrées alors que personne ne se trompait."""
+    now = time.time()
+    with _lock:
+        for k in keys:
+            _hits.setdefault(k, []).append(now)
 
 
 # ── ce que voit la page ─────────────────────────────────────
@@ -1289,7 +1301,16 @@ def enter(name, req) -> tuple[str, dict, str]:
     if not valid_name(name):
         raise HttpError(400, "ton pseudo : de 2 à 24 lettres ou chiffres (espace, trait d'union, point permis)")
     key, ip = slug(name), _ip(req)
-    _rate(f"entree:{ip}", 30, 600)
+    _rate(f"entree:{ip}", 30, 600, count=False)   # 30 essais ratés par 10 min ; entrer ne compte pas (_miss)
+    try:
+        return _enter(name, key, ip, req, d, level, door)
+    except HttpError as e:
+        if e.status in (403, 409):
+            _miss(f"entree:{ip}")
+        raise
+
+
+def _enter(name: str, key: str, ip: str, req, d, level, door) -> tuple[str, dict, str]:
     with _lock:
         db = _data()
         u = _find(key)
@@ -1301,6 +1322,7 @@ def enter(name, req) -> tuple[str, dict, str]:
                 raise HttpError(409, f"« {name} » est réservé : choisis un autre pseudo")
             if why:
                 raise HttpError(409, f"« {name} » ressemble trop à un pseudo qui existe déjà : choisis-en un autre")
+            _miss(f"entree:{ip}")   # un pseudo inconnu devient une demande : c'est un essai, il compte
             _rate(f"demande:{ip}", 5, 3600)
             pending = [x for x in db["users"].values() if x.get("state") == "pending"]
             if len(pending) >= 30:
@@ -1961,8 +1983,8 @@ def invitation(req, rest: str):
     if req.method == "POST" or code:
         ip = _ip(req)
         try:
-            _rate(f"code:{ip}", 10, 600)
-            _rate("code:tous", 300, 600)
+            _rate(f"code:{ip}", 10, 600, count=False)   # 10 codes faux par adresse, 300 en tout, par 10 min :
+            _rate("code:tous", 300, 600, count=False)    # le bon code ne compte pas (_miss, plus bas)
         except HttpError as e:
             return _invitation_page(e.message, 429, back, d)
         st = demo_state()
@@ -1973,6 +1995,7 @@ def invitation(req, rest: str):
         elif n and st.get("invitation") and hmac.compare_digest(n, _norm_code(st["invitation"])):
             level = "invitation"
         if not level:
+            _miss(f"code:{ip}", "code:tous")
             journal("porte : code refusé", ip=ip)
             return _invitation_page("ce code n’ouvre pas la porte : vérifie-le auprès de Cal", 403, back, d)
         journal("porte : invitation", niveau=level, ip=ip, porte=d)

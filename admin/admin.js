@@ -543,27 +543,77 @@ function memberRow(t, m) {
     perWs);
 }
 
+// une liste collée : un pseudo par ligne (ou séparés par des virgules), sans doublon ni ligne vide
+function pseudoList(txt) {
+  const seen = new Map();
+  for (const s of String(txt || '').split(/[\n,;]+/)) { const v = s.trim(); if (v && !seen.has(v.toLowerCase())) seen.set(v.toLowerCase(), v); }
+  return [...seen.values()];
+}
+const BULK_ST = { wait: ['no', 'en attente'], run: ['run', 'en cours'], created: ['ok', 'créé'], in: ['fam', 'déjà inscrit'], err: ['err', 'refusé'] };
+
+// Coller une liste (Cal, 07/10, un workshop : « plein de login… affecte les gens à la bonne team ») : chaque pseudo
+// passe par le même chemin qu'« Ajouter », l'un après l'autre — créé déjà accepté s'il n'existe pas, sinon mis dans
+// la Team ; un refus dit pourquoi et n'arrête pas les suivants ; ce qui est refusé reste dans le champ, à corriger.
+async function addMany(t, f, list, guest) {
+  f.bulkRun = true;
+  f.bulkOut = list.map((p) => ({ pseudo: p, st: 'wait', msg: '' }));
+  render(true);
+  for (const row of f.bulkOut) {
+    row.st = 'run'; render(true);
+    try {
+      const r = await post(`equipes/${t.id}/membres`, { pseudo: row.pseudo, role: f.role, ...(guest ? { guest: f.guest, spaces: f.spaces } : {}) });
+      row.st = r.added && r.added.created ? 'created' : 'in';
+      if (r.added) row.pseudo = r.added.pseudo || r.added.name || row.pseudo;
+    } catch (e) { row.st = 'err'; row.msg = e.message; }
+  }
+  f.bulkRun = false;
+  const n = (k) => f.bulkOut.filter((x) => x.st === k).length;
+  f.list = f.bulkOut.filter((x) => x.st === 'err').map((x) => x.pseudo).join('\n');
+  toast(`${t.name} : ${n('created')} créé${n('created') > 1 ? 's' : ''}, ${n('in')} déjà inscrit${n('in') > 1 ? 's' : ''}${n('err') ? `, ${n('err')} refusé${n('err') > 1 ? 's' : ''}` : ''}`, 6000);
+  refresh(true);
+}
+
 function addForm(t) {
   const f = tf(t);
   const canAdmin = t.role === 'owner' || isCal();
   const name = el('input', { class: 'fld', placeholder: 'pseudo', maxlength: 24, autocomplete: 'off', spellcheck: 'false', autocapitalize: 'none',
     'aria-label': `le pseudo à mettre dans ${t.name}`, value: f.pseudo, oninput: (e) => { f.pseudo = e.target.value; } });
   const guest = f.role === 'guest';
+  const bulkLabel = () => { const k = pseudoList(f.list).length; return k ? `Ajouter les ${k}` : 'Ajouter'; };
+  const submit = el('button', { class: 'tb', type: 'submit', disabled: f.bulkRun ? true : null, title: f.bulkRun ? 'la liste passe : un pseudo après l’autre' : '' },
+    f.bulk ? bulkLabel() : 'Ajouter');
+  const area = f.bulk ? el('textarea', { class: 'fld bulk-list', rows: 8, spellcheck: 'false', autocapitalize: 'none', autocomplete: 'off',
+    placeholder: 'un pseudo par ligne (ou séparés par des virgules)', 'aria-label': `les pseudos à mettre dans ${t.name}, un par ligne`,
+    oninput: (e) => { f.list = e.target.value; submit.textContent = bulkLabel(); } }, f.list || '') : null;
   return el('form', { class: 'sub-card', 'data-add': t.id, onsubmit: (e) => {
     e.preventDefault();
+    if (f.bulkRun) return;
+    if (guest && !f.spaces.length) { toast('un guest n’entre que dans les Workspaces où on le met : choisis-en au moins un'); return; }
+    if (f.bulk) {
+      const list = pseudoList(f.list);
+      if (!list.length) { area.focus(); return; }
+      addMany(t, f, list, guest);
+      return;
+    }
     const v = name.value.trim();
     if (!v) { name.focus(); return; }
-    if (guest && !f.spaces.length) { toast('un guest n’entre que dans les Workspaces où on le met : choisis-en au moins un'); return; }
     f.pseudo = '';
     act(async () => {
       const r = await post(`equipes/${t.id}/membres`, { pseudo: v, role: f.role, ...(guest ? { guest: f.guest, spaces: f.spaces } : {}) });
       toast(r.added && r.added.created ? `« ${r.added.pseudo} » créé : il entre en tapant ce pseudo` : `${r.added ? r.added.name : v} est dans ${t.name}`, 6000);
     });
   } },
-  el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'mettre quelqu’un'), name,
+  el('div', { class: 'row' }, el('span', { class: 'lbl' }, f.bulk ? 'mettre une liste' : 'mettre quelqu’un'), f.bulk ? null : name,
     segOf([['member', 'membre'], ['guest', 'guest'], ['admin', 'admin']], f.role, (v) => { f.role = v; render(true); },
-      { label: 'son rôle', why: canAdmin ? {} : { admin: 'faire un admin : le propriétaire de la Team, ou Cal' } }),
-    el('button', { class: 'tb', type: 'submit' }, 'Ajouter')),
+      { label: f.bulk ? 'leur rôle' : 'son rôle', why: canAdmin ? {} : { admin: 'faire un admin : le propriétaire de la Team, ou Cal' } }),
+    submit,
+    el('button', { class: 'tb ghost sm', type: 'button', 'aria-pressed': f.bulk ? 'true' : 'false', disabled: f.bulkRun ? true : null,
+      onclick: () => { f.bulk = !f.bulk; if (!f.bulk) f.bulkOut = null; render(true); if (f.bulk) setTimeout(() => $(`[data-add="${t.id}"] .bulk-list`)?.focus(), 0); } },
+      f.bulk ? 'Un seul' : 'Coller une liste')),
+  area,
+  f.bulk && f.bulkOut ? el('div', { class: 'bulk-out', role: 'status', 'aria-live': 'polite' }, ...f.bulkOut.map((x) => el('div', { class: 'row' },
+    el('span', { class: 'chip ' + BULK_ST[x.st][0] }, el('i'), BULK_ST[x.st][1]), el('span', { class: 'nm-s' }, x.pseudo),
+    x.msg ? el('span', { class: 'bulk-why' }, x.msg) : null))) : null,
   guest ? el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'guest'), segOf(GM, f.guest, (v) => { f.guest = v; render(true); }, { label: 'viewer ou acteur' }),
     el('span', { class: 'lbl' }, 'dans'), wsToggles(t, f.spaces, (l) => { f.spaces = l; render(true); }, 'ses Workspaces')) : null,
   el('p', { class: 'adm-note' }, 'Un pseudo qui n’existe pas encore est créé ici, déjà accepté : il entre en le tapant. ',
