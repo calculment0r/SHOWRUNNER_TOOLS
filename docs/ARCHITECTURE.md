@@ -12,7 +12,7 @@ commun/                     tokens.css, base.css, shell.css, shell.js, porte.js/
                             theme.js, prefs.js/.css/.json, theme.html (l'éditeur de thème), undo.js,
                             proxies.js, menu.js/.css, fil.js/.css, wire.js/.css, entrees.js/.css, split.js,
                             refs.js, molette.js, fenetre.js/.html/.css, pleinecran.js, tete.js/.css,
-                            lecteur.js/.css, dock.js/.css, documents.js/.css, telephone.js/.css (§ 4)
+                            lecteur.js/.css, dock.js/.css, documents.js/.css, telephone.js/.css, apercu.js (§ 4)
 asset/ image/ movie/ …      une page par outil : index.html + <outil>.js + <outil>.css
 admin/                      la page de Cal (§ 9) ; sa vue d'ensemble, le tableau de bord de chacun (tableau.js, § 11)
 media/                      l'image et la vidéo des grandes cartes de l'accueil
@@ -360,6 +360,7 @@ repeint le fil dans le `onapply` de sa pile (`items` : les objets rendus,
 | `molette.js` | **la molette de toutes les timelines** (Montage, ODIO, Movie Analysis) : molette = défiler les pistes, Maj = le temps, Alt (ou pincer) = zoom du temps sous le curseur, Ctrl = la hauteur de toutes les pistes (sur un en-tête `data-piste` : la sienne) ; Ctrl + molette ne zoome jamais la page ; `deltaMode` converti | `brancher(zone, {zoom, hauteur, defilerX, defilerY, scroller, piste})` rend de quoi débrancher ; `lire(ev, el)`, `REGLE`, `AIDE` (le texte d'aide) |
 | `fenetre.js` + `fenetre.html`, `fenetre.css` | **les panneaux détachés** (un 2ᵉ écran : Montage, le nodal d'ODIO) : une page, un état, un moteur. `fenetre.html` est une page vide qui se présente à la page qui l'a ouverte (`window.opener.SR_FENETRES`) ; la page y **déplace** le nœud du panneau : écouteurs, annulation, son, données restent ceux de la page. Styles, thème, ancêtres du panneau, clavier et glisser suivent ; fermer la fenêtre rattache le panneau ; sa place est retenue par visiteur (`docs/etudes/fenetres.md`) | `fenetres(outil, {onchange})` puis `F.panneau(id, {node, title})`, `detacher`, `rattacher`, `bouton(id)`, `entree(id)`, `pastilles()` ; `$`, `$$`, `winOf`, `partout`, `suivreTaille`, `fenetreDuGeste` pour un code qui doit voir aussi les fenêtres |
 | `pleinecran.js` | le plein écran de la page entière (`<html>` : menus et bulles restent visibles), Ctrl+Maj+F, Échap pour sortir ; là où il est refusé (l'iPhone), le bouton le dit | `boutonPleinEcran(doc, el)`, `basculer(doc)`, `raccourci(doc)` ; posé par `mountHeader` et par chaque fenêtre détachée |
+| `apercu.js` | **l'aperçu au survol du nom** (09/10) : une bulle de valeurs sous le nom — par machine la mémoire utilisée / totale (une barre fine) et le GPU ou « non mesuré » (`GET /api/machines/apercu`, § 5), les travaux en cours (titre, machine, pourcentage ou étape) et le compte en file ; Cal voit toute la file, les autres leurs travaux. Chargé par `mountHeader` à la première approche du nom (souris, stylet, focus clavier ; au doigt, rien) ; la file : la liste déjà relevée, aucune requête ; les machines : une requête par ouverture, resservie 5 s ; on peut la survoler (WCAG 1.4.13), Échap et le clic la ferment ; styles `.sr-apercu` dans `shell.css` ; essai : `commun/pilote_apercu.mjs` | `brancher(btn, {liste, moi}, ev)`, `liste()` (une liste de la file reçue : la bulle ouverte se repeint) |
 | `theme.js` | pose le thème (sombre, clair, « le mien »), la taille de l'interface (`zoom`, `--ui-zoom`) et les animations avant que la page ne se dessine | importé par `shell.js` ; `reducedMotion()`, `scrollBehavior()` |
 | `prefs.js` | les préférences, générales et par outil, rangées par personne (`/api/prefs`, § 7), miroir dans ce navigateur ; le panneau (roue de l'en-tête, Ctrl+,) | `prefs.get/set/on`, `openPrefs(outil)` ; schéma : `<outil>/prefs.json` |
 | `undo.js` | l'annulation : une pile par page, des commandes et leur contraire ou des instantanés, Ctrl+Z / Ctrl+Maj+Z / Ctrl+Y lus par `e.key` (juste en AZERTY), ↶ ↷ et le journal ; la bibliothèque (`libPatch`, `libTrash`, `libBoard`), le contraire lu sur le serveur | `createUndo`, `U.run/record/group/snapshots`, `U.buttons()` ; se déclare dans `window.SR_UNDO` (le menu de repli) — `docs/etudes/preferences.md` § 4 |
@@ -413,6 +414,16 @@ chargé par `plugins.js` : lire la planche au doigt, Plan, Photo, Note). Le cont
 | H3 | la recette sur :8188 (voie `h3`) ; :8189 `comfyui-h3test` arrêté | idem ; SHOWRUNNER_SANDBOX :8015 |
 | Character Factory | relais :8765 → DGX1 | studio :8765 |
 
+**L'aperçu des machines** (09/10, `server/tools/machines_apercu.py`) : `GET /api/machines/apercu` →
+`{machines: [{name, up, used_gb, total_gb, mem_src, gpu, gpu_why}], age_s}`, lu à l'ouverture de la bulle
+du nom (`commun/apercu.js`), jamais en boucle. Une commande par machine, sur place (`sh`) ou par le câble
+(`ssh -o BatchMode=yes`, l'hôte d'une de ses instances ComfyUI) : la mémoire `MemTotal − MemAvailable` de
+`/proc/meminfo` (mémoire unifiée du GB10 ; `mem_src: meminfo`), sinon le relevé de la file (`comfyui`,
+borné par la cgroup du service) ; le GPU par `nvidia-smi --query-gpu=utilization.gpu` (`null` : non
+mesuré). Gardé 5 s, une lecture à la fois, 4 s au plus par machine ; `gpu_why` (la raison d'une mesure
+qui manque) aux admins seulement ; un membre la lit (comme `GET /api/system`), l'invité non. Ce qui est
+mesuré et ses sources : `docs/etudes/orchestration.md`, « Fait le 09/10 ».
+
 Les graphes Krea 2 et Qwen-Image 2.1 viennent de
 `~/Character_Factory/factory/krea2.py` et `qwen21.py` (réglage `cf_repo`),
 importés, jamais recopiés.
@@ -437,7 +448,8 @@ avec `auth: false` (on entre en Cal), l'écoute sur 127.0.0.1 et les seules voie
 `cpu` et `image` sur la machine même — donc les moteurs factices des réglages par
 défaut ; `SR_LORA_MANIFEST` pose un faux manifeste d'entraîneurs, `SR_FAUX_R2=1` un faux
 R2 (le faux S3 du selftest d'`ecoute.py` et un jeton d'essai : le lien d'écoute se publie
-pour de faux, `chanson/pilote_lien.mjs`). Il s'arrête par
+pour de faux, `chanson/pilote_lien.mjs`), `SR_FAUX_MACHINES=1` deux faux ComfyUI nommés DGX2 et DGX1, hors des voies,
+et la mesure de l'aperçu remplacée (`commun/pilote_apercu.mjs`). Il s'arrête par
 son PID (jamais `pkill -f`). Jamais sur les DGX : c'est le portail de la maison
 qui y tourne. L'agent d'Idéation s'y essaie contre `tools/faux_ollama.py`.
 
