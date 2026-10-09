@@ -357,7 +357,9 @@ def menage_preview(u) -> dict:
                for t in teams for m in t.get("members") or [] if m["id"] != t["owner"] and m["role"] != "owner" and not _spared(m["id"])]
     spared = sorted({m["name"] for t in teams for m in t.get("members") or [] if m["id"] != t["owner"] and _spared(m["id"])})
     return {"comptes": sorted(comptes, key=lambda c: (c["created"] or "", c["name"].lower())), "teams": rows,
-            "membres": membres, "epargnes": spared, "renommer": espaces.rename_personal(dry=True), "mot": MENAGE_MOT}
+            "membres": membres, "epargnes": spared, "renommer": espaces.rename_personal(dry=True),
+            # (e) les My Team de comptes déjà supprimés (archivées avant le 09/10) : détruites, contenu à la corbeille
+            "orphelines": [{**o, "owner_name": o["owner"]} for o in espaces.orphan_homes()], "mot": MENAGE_MOT}
 
 
 def r_menage(req):
@@ -376,7 +378,7 @@ def r_menage_apply(req):
     for k, v in (("comptes", comptes), ("teams", teams)):
         if not isinstance(v, list) or len(v) > 2000 or not all(isinstance(x, str) for x in v):
             raise HttpError(400, f"{k} : une liste d'identifiants")
-    for k in ("retirer_membres", "renommer"):
+    for k in ("retirer_membres", "renommer", "orphelines"):
         if not isinstance(d.get(k, False), bool):
             raise HttpError(400, f"{k} : vrai ou faux")
     comptes, teams = list(dict.fromkeys(comptes)), list(dict.fromkeys(teams))
@@ -394,7 +396,7 @@ def r_menage_apply(req):
     if badt:
         raise HttpError(400, "ces Teams ne se détruisent pas : " + " ; ".join(
             f"{rows[x]['name']} ({rows[x]['destroy_why']})" if x in rows else f"{x} (pas une Team partagée)" for x in badt[:8]))
-    rep: dict = {"teams": [], "comptes": [], "membres": [], "renommees": [], "erreurs": []}
+    rep: dict = {"teams": [], "comptes": [], "membres": [], "renommees": [], "orphelines": [], "erreurs": []}
     for tid in teams:
         try:
             r = espaces.destroy_team(u, tid, typed=False)["destroyed"]
@@ -415,12 +417,20 @@ def r_menage_apply(req):
                 rep["comptes"].append({"id": uid, "name": r["name"]})
         except HttpError as e:
             rep["erreurs"].append(f"compte {names.get(uid) or uid} : {e.message}")
+    if d.get("orphelines"):   # après les comptes : ceux qu'on vient de supprimer ont déjà perdu la leur (forget_user)
+        for o in espaces.orphan_homes():
+            try:
+                r = espaces.destroy_team(u, o["id"], typed=False)["destroyed"]
+                rep["orphelines"].append({"id": o["id"], "owner": o["owner"], "spaces": len(r["spaces"]), "objets": r["objets"]})
+            except HttpError as e:
+                rep["erreurs"].append(f"My Team de {o['owner']} : {e.message}")
     if d.get("retirer_membres"):
         rep["membres"] = espaces.strip_members(spare=_spared)
     if d.get("renommer"):
         rep["renommees"] = espaces.rename_personal()
     auth.journal("ménage", user=u["id"], comptes=[x["id"] for x in rep["comptes"]], teams=[x["id"] for x in rep["teams"]],
-                 membres=len(rep["membres"]), renommees=len(rep["renommees"]), erreurs=rep["erreurs"])
+                 membres=len(rep["membres"]), renommees=len(rep["renommees"]), orphelines=[x["id"] for x in rep["orphelines"]],
+                 erreurs=rep["erreurs"])
     return rep
 
 
@@ -1688,6 +1698,17 @@ def _menage(ok, H, same) -> None:
     # un invité qui attend Cal (D5) : Kim (Studio) met un pseudo neuf dans sa My Team (D2) — il attend la validation
     P("/api/equipes/tea-perso-kim-menage/membres", {"pseudo": "Inv Menage", "role": "member"}, tok=toks["Kim Menage"])
     atelier = up(toks["Etu Deux"], ta["spaces"][0]["id"], "atelier")       # dans la Team de l'atelier : à la corbeille
+    # une My Team orpheline, comme avant le 09/10 : son compte supprimé, elle restait archivée (et listée)
+    P("/api/admin/users", {"name": "Orph Menage", "access": "studio"})
+    _, _, tok_orph = H("POST", "/api/auth/enter", {"name": "Orph Menage"}, headers=same)
+    H("GET", "/api/auth/me", cookie=tok_orph)
+    chez_orph = up(tok_orph, "esp-perso-orph-menage", "chez-orph")
+    with auth._lock:
+        auth._data()["users"].pop("orph-menage", None)
+        auth._save()
+    with espaces._lock:
+        espaces._data()["teams"]["tea-perso-orph-menage"]["archived"] = auth.now_iso()
+        espaces._save()
     with espaces._lock:   # la My Team de Kim, comme avant le 09/10
         espaces._data()["teams"]["tea-perso-kim-menage"]["name"] = espaces.PERSONAL_OLD
         espaces._save()
@@ -1696,6 +1717,10 @@ def _menage(ok, H, same) -> None:
     s, d, _ = G("/api/admin/menage", toks["Kim Menage"])
     ok(s == 403, f"ménage : à Cal seulement ({s})")
     s, pv, _ = G("/api/admin/menage")
+    s2, lst, _ = G("/api/equipes?toutes=1")
+    ok(s2 == 200 and "tea-perso-orph-menage" not in {t["id"] for t in lst.get("teams", [])}
+       and [o["id"] for o in pv.get("orphelines", [])] == ["tea-perso-orph-menage"],
+       f"ménage : (e) une My Team dont le compte est supprimé n'est plus listée, le ménage la propose ({pv.get('orphelines')})")
     with auth._lock:
         users = {k: dict(v) for k, v in auth._data()["users"].items()}
     made = lambda x: bool(x.get("invited")) if x.get("state") == "pending" else x.get("via") == "equipe"   # noqa: E731
@@ -1730,7 +1755,8 @@ def _menage(ok, H, same) -> None:
        f"ménage : un compte en attente créé par une Team en est aussi, qui l'a invité, où ({iv})")
 
     # les refus : rien n'est fait
-    base = {"comptes": ["etu-un", "etu-deux", "etu-trois", "inv-menage"], "teams": [ta["id"]], "retirer_membres": True, "renommer": True}
+    base = {"comptes": ["etu-un", "etu-deux", "etu-trois", "inv-menage"], "teams": [ta["id"]], "retirer_membres": True, "renommer": True,
+            "orphelines": True}
     for body, what in (({**base}, "sans confirmation"), ({**base, "confirme": "menage"}, "mal confirmé"),
                        ({**base, "comptes": ["cal"], "confirme": "MENAGE"}, "Cal"),
                        ({**base, "comptes": ["adm-menage"], "confirme": "MENAGE"}, "un admin"),
@@ -1765,9 +1791,15 @@ def _menage(ok, H, same) -> None:
            "ménage : les « Chez moi » renommées « My Team »")
         library._load()
         a, b = library._items.get(perso_etu["id"]), library._items.get(perso_kim["id"])
-        ok(a and a.get("space") == "esp-perso-etu-un" and b and b.get("space") == "esp-perso-kim-menage"
-           and espaces.space("esp-perso-etu-un") and espaces.space("esp-perso-kim-menage"),
-           "ménage : ce que chacun a fait dans sa My Team reste, où il était")
+        ok(b and b.get("space") == "esp-perso-kim-menage" and espaces.space("esp-perso-kim-menage"),
+           "ménage : ce que chacun a fait dans sa My Team reste, où il était (Kim, gardée)")
+        # Cal, 09/10 : un compte supprimé ne laisse plus sa My Team dans les listes — détruite, son contenu à la corbeille
+        ok(a is None and espaces.team("tea-perso-etu-un") is None and espaces.gone("esp-perso-etu-un")
+           and (library.trash_root() / perso_etu["id"]).is_dir(),
+           "ménage : la My Team d'un compte supprimé est détruite, ce qu'il y avait fait à la corbeille (Stockage le rend)")
+        ok(espaces.team("tea-perso-orph-menage") is None and (library.trash_root() / chez_orph["id"]).is_dir()
+           and [x["id"] for x in rep.get("orphelines", [])] == ["tea-perso-orph-menage"] and not espaces.orphan_homes(),
+           f"ménage : (e) la My Team orpheline détruite, son contenu à la corbeille ({rep.get('orphelines')})")
         ok(any(e["event"] == "ménage" for e in auth.journal_tail(60)), "ménage : le rapport va au journal")
     finally:
         for n, b in snap.items():
