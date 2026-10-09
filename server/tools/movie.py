@@ -2392,6 +2392,57 @@ def selftest(call, ok) -> None:
        and "whose outfit is shown in <Picture 3> and <Picture 4>" in pq2["prompt_sent"]
        and "whose body from behind is shown in <Picture 5>" in pq2["prompt_sent"] and "blanked out" not in pq2["prompt_sent"],
        f"Qualité : les 5 crops de la méthode .char, dans l'ordre de Cal ({lab(pq2)})")
+    # l'audit du 09/10 : deux personnages complets (5 + 5 images) se partagent les 9 places d'H3, chacun garde son
+    # identité d'abord ; la grammaire @ partout ; les plans et leurs temps ; les définitions en anglais ; la voix (Sx)
+    mentions.selftest(ok)
+    st, eira2 = call("POST", "/api/elements", {"title": "Eira bis", "type": "character", "description": "a 16-year-old girl",
+                                               "refs": [{"item": sid, "role": r, "label": lab} for r, lab in kinds]})
+    two = {"element": [{"item": eira.get("id")}, {"item": eira2.get("id")}]}
+    p2 = plan("r2v", {"inputs": two, "desc": "@element1 and @element2 walk.", "method": "qualite"})
+    lab2 = [x["label"] for x in p2["pictures"]]
+    ok(p2["ok"] and len(lab2) == 9 and lab2[:5] == [f"Eira · {x}" for x in ("visage face", "visage 3/4", "tenue haut", "tenue bas", "corps dos")]
+       and lab2[5:] == [f"Eira bis · {x}" for x in ("visage face", "visage 3/4", "tenue haut", "tenue bas")]
+       and any(n.startswith("@element2") and "4 images sur 5" in n and "corps dos" in n for n in p2["notes"]),
+       f"deux personnages complets : 9 images, le second laisse son dos, et c'est dit ({lab2} {p2['errors']})")
+    pb2 = plan("r2v", {"inputs": two, "desc": "@element1 and @element2 walk.", "method": "brouillon"})
+    ok(pb2["ok"] and len(pb2["pictures"]) == 9 and pb2["pictures"][5]["label"] == "Eira bis · planche corps 3 vues visage masqué"
+       and "visage 3/4 sourire" not in pb2["pictures"][8]["label"],
+       f"Brouillon, deux personnages : la planche gardée, le 3/4 sourire laissé d'abord ({[x['label'] for x in pb2['pictures']]})")
+    # Images : @image1 et @image2 sont la première et la dernière image envoyées
+    pi = plan("i2v", {"start": sid, "end": fid, "desc": "@image1 turns into @image2."})
+    ok(pi["ok"] and pi["mentions"] == {"@image1": "<Picture 1>", "@image2": "<Picture 2>"}
+       and "[Shot 1] <Picture 1> turns into <Picture 2>." in pi["prompt_sent"] and "@image" not in pi["prompt_sent"],
+       f"images : la même grammaire, @image1 → <Picture 1> ({pi['errors']})")
+    pi3 = plan("i2v", {"end": fid, "desc": "@image2 lands."})
+    ok(not pi3["ok"] and any("@image2" in e and "mode Images" in e for e in pi3["errors"]), "images : @image2 sans seconde image est refusé, dit")
+    # les plans : un temps de coupe hors de la durée bloque, un plan suivant sans temps est dit
+    ps = plan("r2v", {"inputs": ins, "desc": "[Shot 1] @element1 runs. [Shot 2] At 00:09.000, @image1 at night. [Shot 3] He stops."})
+    ok(not ps["ok"] and any(e.startswith("[Shot 2] coupe à 00:09.000, après la fin") for e in ps["errors"])
+       and any("[Shot 3] sans temps de coupe" in n for n in ps["notes"]), f"plans : la durée relue ({ps['errors']} {ps['notes']})")
+    pr3 = plan("r2v", {"inputs": ins, "desc": "Live-action.\n[Shot 1] @image1 at dawn.\n[Shot 2] At 00:02.500, @element1 enters.",
+                       "subjects": {"@element1": "a lean man in his thirties with a grey hoodie", "image1": "a quiet harbour"},
+                       "summary": "@element1 walks into @image1.", "format": "16:9", "method": "esquisse"})
+    s3 = pr3["prompt_sent"]
+    ok(pr3["ok"] and "<Subject 2> is MJ Survêt, a lean man in his thirties with a grey hoodie, whose face" in s3
+       and "<Subject 1> is a quiet harbour, shown in <Picture 1>." in s3 and "[reference generation] <Subject 2> walks into <Subject 1>." in s3
+       and "<Subject 2> (appears in [Shot 2])" in s3 and "<Subject 1> (appears in [Shot 1])" in s3
+       and "detailed_description:\nr34l1sm. DY. Live-action.\n[Shot 1]" in s3 and pr3["subjects"][1]["described"] == "mise en forme",
+       f"définitions en anglais, résumé, rétention par plan réel, le style avant [Shot 1] ({s3[:300]!r})")
+    ok((pr3["width"], pr3["height"], pr3["stages"], pr3["family"]) == (672, 384, 1, "16:9") and pr3["draft"] is None,
+       f"l'échelle : Esquisse en 16:9 = 672 × 384 en un étage ({pr3['width']}×{pr3['height']})")
+    pfr = plan("r2v", {"inputs": {"element": [{"item": ev["id"]}]}, "desc": "@element1 (S1) dit : <d>[French] Bonjour !</d> et il mange avec les mains."})
+    ok(pfr["ok"] and "<Audio 1> is the voice-timbre reference for <Subject 1> (S1)." in pfr["prompt_sent"]
+       and any("en français" in n and "anglais" in n for n in pfr["notes"]) and pfr["language"] == "fr",
+       f"la voix d'un élément reprend son (S1) ; un texte français est dit avant le rendu ({pfr['notes']})")
+    sc = opts.get("scale") or {}
+    fm = {f["id"]: f["sizes"] for f in sc.get("formats", [])}
+    ok(list(fm) == ["2.4:1", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]
+       and [(fm["2.4:1"][m]["w"], fm["2.4:1"][m]["h"]) for m in METHODS] == [(768, 320), (1152, 480), (1536, 640), (1920, 800)]
+       and (fm["16:9"]["brouillon"]["w"], fm["16:9"]["brouillon"]["h"], fm["16:9"]["brouillon"]["draft"]) == (1344, 768, [672, 384])
+       and (fm["9:16"]["brouillon"]["w"], fm["9:16"]["brouillon"]["h"]) == (768, 1344)
+       and all(x["w"] % 32 == 0 and x["h"] % 32 == 0 for f in fm.values() for x in f.values())
+       and fm["16:9"]["esquisse"]["estimate"]["high"] < fm["16:9"]["brouillon"]["estimate"]["low"],
+       f"l'échelle : la recette de Cal au 2,4:1, 1344 × 768 en 16:9, 768 × 1344 en 9:16, multiples de 32, l'Esquisse plus courte ({fm.get('16:9')})")
     # un élément versionné : sa matière est dans sa dernière version (library.resolve) ; sans version, c'est dit
     st, liv = call("POST", "/api/elements", {"from_item": eira.get("id"), "title": "Eira vivante"})
     pvv = plan("r2v", {"inputs": {"element": [{"item": liv.get("id")}]}, "desc": "@element1 runs.", "method": "qualite"})
@@ -2528,6 +2579,16 @@ def selftest(call, ok) -> None:
             made.append(v)
         st, hist = call("GET", "/api/library?kind=video&tool=movie")
         ok(st == 200 and hist["total"] == 3, "l'historique : les vidéos de l'outil")
+        # le diagnostic d'Admin « Rendus · ce que le modèle a reçu » (tools/diag_rendus.py) relit ces rendus
+        r = subprocess.run(["python3", str(config.REPO / "tools" / "diag_rendus.py"), "3"], capture_output=True, text=True,
+                           timeout=60, cwd=str(config.REPO))
+        rv = made[2] if len(made) > 2 else {}
+        ok(r.returncode == 0 and "3 vidéo(s) de l'outil Vidéo" in r.stdout and f"VIDÉO {rv.get('id')}" in r.stdout
+           and "<Picture 2>   MJ Survêt · visage" in r.stdout and "mentions : @image1 → <Subject 1>, @element1 → <Subject 2>" in r.stdout
+           and "--- l'invite envoyée à H3" in r.stdout and "[Shot 1] <Subject 2> walks in <Subject 1>." in r.stdout,
+           f"diagnostic : ce que H3 a reçu, relu dans la bibliothèque ({r.returncode} {(r.stderr or r.stdout)[-400:]!r})")
+        st, dl = call("GET", "/api/admin/diag")
+        ok(st == 200 and any(d["id"] == "rendus" for d in dl.get("diags", [])), "le diagnostic est dans Admin → Diagnostics")
 
         def wait(jid):
             for _ in range(300):

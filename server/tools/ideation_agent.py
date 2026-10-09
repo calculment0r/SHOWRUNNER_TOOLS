@@ -698,6 +698,7 @@ Rules:
 - Place things with `dans` (a frame) and `pres_de` (an object); without them, the board finds a free place. Never give coordinates.
 - When the person cites an image and asks for an image "in this style", "with this person", "like this", put a carte_image with that image in `refs`. For a video from an image, carte_video with `image`.
 - Image prompts and video prompts are written in English, as natural prose, in this order: style and shot, characters and their attributes, action, setting, photography (camera, lens, light). Texts put on the board (notes, sticky notes, titles, frame names) are in the person's language.
+- In a prompt, name a reference only by its place, in the portal's one grammar: @image1, @image2 for the reference images and @element1, @element2 for the elements, each kind counted on its own in the order of `refs` (for carte_video, @image1 is its first image). Never write <image1>, <Picture 1> or a name for it: the portal compiles @image1 for the chosen model.
 - Image models (carte_image `modele`):
 {models}
   Without `modele`, the board takes Krea 2 when the references fit, otherwise Qwen-Image 2.1.

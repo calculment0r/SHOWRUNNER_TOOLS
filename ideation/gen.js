@@ -32,6 +32,7 @@
 import { api, jobs, toast, el, href, dropZone } from '../commun/shell.js';
 import { sortable, moveItem, heldTitle, sentLabel } from '../commun/refs.js';
 import { arobase } from '../commun/arobase.js';
+import { places } from '../commun/mentions.js';
 import { KINDS, nameOf, fromName, short, inPorts, newSlots, DEFAULT_ROLES, cleanLooks } from './ports.js';
 
 // ── ce que les cartes partagent (video.js aussi) ──────────────
@@ -207,20 +208,19 @@ export function createGen(app) {
   const quality = (g) => { const m = M(g.model); return !m ? g.quality : m.sizes[g.quality] ? g.quality : m.quality[0].id; };
   const goText = (g, pr = promptOf(g)) => (pr.lot && !pr.lot.conflict && pr.lot.on.length ? `Générer ${pr.lot.on.length} × ${g.count}` : `Générer${g.count > 1 ? ' ×' + g.count : ''}`);
 
-  // le « @ » du prompt (commun/arobase.js) : la même règle que la barre d'Image — Qwen-Image 2.1
-  // nomme ses références par leur place (<image1>…, les places ENVOYÉES seulement) ; Krea 2 ne
-  // les nomme pas (l'ordre suffit : la scène, puis le sujet) ; un modèle sans référence le dit
+  // le « @ » du prompt (commun/arobase.js) : la grammaire commune (09/10, commun/mentions.js) — @image1,
+  // @element1, chaque sorte comptée à part, les places ENVOYÉES seulement ; le serveur la compile pour le
+  // modèle (server/tools/image.py, mention_table : <image1> pour Qwen-Image 2.1, « the scene » puis « the
+  // subject » pour Krea 2) ; un modèle sans référence le dit
   function atChoices(g) {
     const m = M(g.model);
     if (!m) return { why: `modèle inconnu : ${g.model}` };
-    if (g.model !== 'qwen21') {
-      return { why: g.model === 'krea2' ? 'Krea 2 ne nomme pas ses références : l’ordre suffit (la scène, puis le sujet)'
-        : m.refs_why || `${m.name} ne prend pas de référence` };
-    }
+    if (!m.refs) return { why: m.refs_why || `${m.name} ne prend pas de référence` };
     const sent = refsOf(g).filter((e) => e.ok && e.item);
     if (!sent.length) return { why: 'aucune référence envoyée : déposez ou branchez des images sur la carte' };
+    const keys = places(sent.map((e) => (S.items.get(e.item)?.kind === 'element' ? 'element' : 'image')));
     return { toks: sent.map((e, k) => { const it = S.items.get(e.item);
-      return { tag: `<image${k + 1}>`, titre: it?.title || '', vignette: it?.thumb_url || (it?.kind === 'image' ? it.url : null) }; }) };
+      return { tag: `@${keys[k]}`, titre: it?.title || '', vignette: it?.thumb_url || (it?.kind === 'image' ? it.url : null) }; }) };
   }
 
   // une carte dont un rendu est en file ou en cours : elle ne se relance pas (Cal, 01/10)

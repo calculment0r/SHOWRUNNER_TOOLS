@@ -4,8 +4,8 @@
 // qu'on peut affecter ; une mini timeline, la durée découpée en plans, réglable avec des poignées ; un mode automatique ». On
 // reste en langage naturel : le panneau écrit les balises (commun/multishot_texte.js : [Shot n], « (S1) says: <d>[langue] … </d> »).
 // Inspiré du nœud « Director » de ComfyUI (Bernini Director : une frise de segments, un prompt par segment ou un prompt global,
-// des références par segment) ; les plans de H3 ne portent, à notre connaissance, que leur ordre : la durée de chaque plan est
-// donc surtout une aide de mise en scène (case facultative pour l'écrire dans le texte, éteinte par défaut, à essayer en A/B).
+// des références par segment). Le guide officiel d'H3 (relu le 09/10) donne la forme du temps de coupe : chaque plan suivant
+// commence par « At 00:03.500, » — la durée de chaque plan s'écrit donc toujours (commun/multishot_texte.js, compose).
 //
 //   openMultishot({ total, desc, mentions: [{ token, label }], lang, onApply(texte) })
 //     total : la durée du plan en secondes (le curseur Durée de la page) ; desc : le prompt actuel (relu en plans s'il a des [Shot])
@@ -25,7 +25,7 @@ const css = () => {
 
 export function openMultishot({ total = 10, desc = '', mentions = [], lang = 'fr', onApply = () => {} } = {}) {
   css();
-  const S = { mode: 'plans', shots: parse(desc, total), sel: 0, n: 3, durations: false, lang, free: desc };
+  const S = { mode: 'plans', shots: parse(desc, total), sel: 0, n: 3, lang, free: desc };
   if (S.shots.length === 1 && !S.shots[0].text && !S.shots[0].lines.length) S.shots = equal(3, total);
   if (S.shots.length === 1) S.free = S.shots[0].text;
 
@@ -37,7 +37,7 @@ export function openMultishot({ total = 10, desc = '', mentions = [], lang = 'fr
   document.addEventListener('keydown', key, true);
 
   const text = () => (S.mode === 'auto' ? auto(S.free, S.n, total) : S.shots);
-  const out = () => compose(text(), { lang: S.lang, durations: S.durations });
+  const out = () => compose(text(), { lang: S.lang });
 
   // ── la frise ──
   function timeline() {
@@ -154,9 +154,7 @@ export function openMultishot({ total = 10, desc = '', mentions = [], lang = 'fr
       el('div', { class: 'ms-prev' }, el('span', { class: 'lbl' }, 'Ce que H3 recevra'),
         el('pre', { class: 'ms-pre' }, out() || '(vide)')),
       el('div', { class: 'ms-foot' },
-        el('label', { class: 'ms-chk', title: 'H3 ne documente, à notre connaissance, que l’ordre des plans : à essayer en A/B' },
-          el('input', { type: 'checkbox', checked: S.durations ? true : null, onchange: (e) => { S.durations = e.target.checked; paint(); } }),
-          'écrire la durée de chaque plan dans le texte (à essayer)'),
+        el('span', { class: 'hint', title: 'le guide officiel d’H3, § 4.2' }, 'chaque plan suivant commence par son temps de coupe : « At 00:03.500, »'),
         el('label', { class: 'ms-lang' }, el('span', { class: 'lbl' }, 'langue parlée'),
           el('select', { class: 'fld', onchange: (e) => { S.lang = e.target.value; paint(); } },
             ...Object.entries(LANG).map(([k, v]) => el('option', { value: k, selected: S.lang === k ? true : null }, v)))),

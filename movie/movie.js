@@ -851,7 +851,8 @@ jobs.watch((list) => {
   S.allJobs = list;
   // les rendus de l'outil ; ceux que la page vient de lancer restent même avant le relevé
   const fresh = S.jobs.filter((j) => !list.some((x) => x.id === j.id) && ['queued', 'running'].includes(j.state));
-  S.jobs = [...fresh, ...list.filter((j) => j.tool === 'movie')];
+  // pas la mise en forme d'une invite (movie.invite, server/tools/movie_invite.py) : elle ne rend pas de vidéo
+  S.jobs = [...fresh, ...list.filter((j) => j.tool === 'movie' && j.kind !== 'movie.invite')];
   for (const j of S.jobs) {
     if (['queued', 'running'].includes(j.state)) S.seen.add(j.id);
     else if (j.state === 'done' && S.seen.has(j.id)) land(j);   // même si la fin a eu lieu entre deux relevés
@@ -863,7 +864,7 @@ jobs.watch((list) => {
 });
 document.addEventListener('sr:job', (e) => {
   const j = e.detail;
-  if (j.tool !== 'movie') return;
+  if (j.tool !== 'movie' || j.kind === 'movie.invite') return;
   if (j.state === 'done') { S.seen.add(j.id); land(j); toast(`vidéo prête · ${j.result?.note || ''}`); }
   else if (j.state === 'error') toast('échec : ' + (j.message || '').slice(0, 160));
 });
