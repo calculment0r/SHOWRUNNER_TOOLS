@@ -97,7 +97,10 @@ def langue(text: str) -> str:
     t = RX.sub(" ", re.sub(r"<[^>]*>|\[[^\]]*\]", " ", t))
     words = re.findall(r"[^\W\d_]+(?:['’][^\W\d_]+)?", t.lower())
     words = [w.split("'")[-1].split("’")[-1] if ("'" in w or "’" in w) else w for w in words]
-    fr = sum(w in _FR for w in words) + sum(1 for w in re.findall(r"\b[ldjnmst]['’]", t.lower()))
+    # les mots-outils, les élisions (« l'», « d'»), et les mots à accent français (« carré », « colérique ») — un nom
+    # propre accentué (« Léa ») pèse peu face aux mots-outils d'une phrase anglaise
+    fr = (sum(w in _FR for w in words) + sum(1 for w in re.findall(r"\b[ldjnmst]['’]", t.lower()))
+          + sum(1 for w in words if re.search(r"[éèêàùçôîâûœë]", w)))
     en = sum(w in _EN for w in words)
     if fr + en < 3:
         return "?"
@@ -116,5 +119,7 @@ def selftest(ok) -> None:
     cal = "il mange des @element1 et @element2 se dispute en francais, il en viennent aux main , cinema d'action"
     ok(langue(cal) == "fr" and langue("<Subject 1> eats noodles at the table while <Subject 2> argues with him (S1) says: "
                                       "<d>[French] Tu m'as volé ma part !</d>") == "en"
-       and langue('A neon sign reading "Ouvert la nuit" glows above the door of the shop.') == "en" and langue("@image1") == "?",
+       and langue('A neon sign reading "Ouvert la nuit" glows above the door of the shop.') == "en" and langue("@image1") == "?"
+       and langue("male, 34, athletic. Visage carré, barbe de trois jours. Colérique, loyal.") == "fr"
+       and langue("Léa walks to the door with her dog in the rain.") == "en",
        "mentions : la langue d'un prompt, hors répliques et enseignes")

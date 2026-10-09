@@ -766,7 +766,8 @@ def check_shots(text: str, seconds: float) -> tuple[list[str], list[str]]:
     prev = 0.0
     for m in marks[1:]:
         if m["at"] is None:
-            notes.append(f"[Shot {m['n']}] sans temps de coupe : le guide H3 écrit « [Shot {m['n']}] At 00:04.000, the camera cuts to… »")
+            notes.append(f"[Shot {m['n']}] sans temps de coupe : le guide H3 fait commencer chaque plan suivant par le sien, "
+                         f"« [Shot {m['n']}] At 00:03.500, the camera cuts to… »")
             continue
         if m["at"] <= prev:
             errors.append(f"[Shot {m['n']}] coupe à {cut_time(m['at'])} : les temps de coupe vont croissant (après {cut_time(prev)})")

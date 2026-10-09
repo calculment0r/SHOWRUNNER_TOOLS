@@ -268,7 +268,7 @@ function refThumb(it, k, R) {
     title: held ? `${heldTitle(maxWhy(R))} · ${it.title || ''}` : `${role} · ${it.title || ''} — glisser pour changer sa place`,
     style: t ? { backgroundImage: `url(${href(t)})` } : null,
     onclick: (e) => up(e.currentTarget, refMenu(it, k, R)) },
-  el('span', { class: 'n' }, tokOf(R.list, k)));
+  el('span', { class: 'n tok' }, tokOf(R.list, k)));
   // déposer sur une vignette la remplace, à la même place
   dropZone(b, { kinds: ['image', 'element'], multiple: false, via: VIA, onitems: ([x]) => { const l = R.list.slice(); l[k] = x; R.set(l); } });
   b._menu = () => refMenu(it, k, R);   // le même menu au clic droit
