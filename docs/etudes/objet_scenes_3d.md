@@ -75,10 +75,10 @@ ByteDance-Seed/Depth-Anything-3 `3d835ec`.
 - **Image** (`server/tools/image.py`) : l'outil **Angle** — Qwen-Image-Edit 2511 + LoRA Multiple-Angles de fal
   (Apache-2.0) + Lightning 4 pas, `factory/views_qwen.py` de Character Factory : `<sks> <azimut> <hauteur> <distance>`,
   8 azimuts, 4 hauteurs (−30 à 60°), 3 distances ; essayé fonction par fonction le 30/09 ; **« Angle "left" à
-  vérifier »** (REPRISE § 2.F). Le détourage BiRefNet, wired.
+  vérifier »** (REPRISE § 2.F). Le détourage BiRefNet, câblé.
 - **Vidéo** (`server/tools/movie.py`) : H3 Texte, Images (première, dernière), Références (9 images, 3 vidéos, 3 sons) ;
   un personnage envoie sa planche « corps 3 vues visage masqué » et ses gros plans (Brouillon) ou ses 5 images
-  « .char » (Qualité) ; un objet envoyait ses deux premières images, définies comme un personnage. Le LoRA H3
+  « .char » (Qualité) ; un objet envoyait ses deux premières images, sans dire ce qu'elles montraient. Le LoRA H3
   **« Orbite 360° »** (`minimax_h3_flf2v_orbit360_v1`, première + dernière image) est dans la liste [lu]. **Rien sur la
   profondeur ni le contrôle** dans le portail (grep du 09/10) ; ComfyUI 0.37.2, lui, a `MiniMaxH3AddGuide` (une image ou
   un extrait ancré à n'importe quelle image du plan) et `MiniMaxH3FunControlNetApply` [lu].
@@ -391,7 +391,7 @@ pourquoi pas : `go`, `pass_open`, `gen` de la réponse du plan.
   "sortie": {"sorte": "element", "type": "object", "parties": ["meshes"]},
   "criteres": [{"si": "classe in [decor, interieur]", "exclut": true, "pourquoi": "une scène ne se reconstruit pas comme un objet (objet_scenes_3d.md § 5)"},
                {"si": "classe == personnage", "exclut": true, "pourquoi": "un personnage passe par Character Factory"}],
-  "limites": ["une seule image lue ; les vues gardées attendent un multi-vues", "≈ 2 min 20 sur DGX2 (REPRISE § 3)"],
+  "limites": ["une seule image lue ; les vues gardées attendent un multi-vues", "≈ 2 min 20 (REPRISE § 3)"],
   "etat": {"exige": {"interrupteur": "objet_trellis=true", "comfy_modeles": ["trellis_2_int8_convrot.safetensors", "dino_v3_L_naf_fp32.safetensors", "birefnet.safetensors"],
                      "noeuds": ["Trellis2Conditioning", "Trellis2ShapeStage", "SaveGLB"]}},
   "cout": {"classe": "gpu", "famille": "trellis", "estimation": "durations.json"}, "memoire": {"famille": "trellis", "go": 40},

@@ -339,8 +339,11 @@ def nearest_from(it: dict, v: dict, target: tuple[int, int]) -> dict:
     best = min(cands, key=lambda s: (separation((s["az"], s["el"]), target), s["pass"] != 0), default=None)
     if not best:
         raise HttpError(409, "cet objet n'a pas d'image : choisis-en une")
-    return {"file": best["ref"], "az": best["az"], "el": best["el"], "slot": best["id"],
-            "label": ("l'image choisie · " if best["pass"] == 0 else "") + angle_label(best["az"], best["el"])}
+    out = {"file": best["ref"], "az": best["az"], "el": best["el"], "slot": best["id"],
+           "label": ("l'image choisie · " if best["pass"] == 0 else "") + angle_label(best["az"], best["el"])}
+    if refs[best["ref"]].get("item"):   # l'image de la bibliothèque d'où vient la vue de départ : la lignée de la nouvelle
+        out["item"] = refs[best["ref"]]["item"]
+    return out
 
 
 def latest_mesh(it: dict, real: bool = False) -> dict | None:
@@ -1056,7 +1059,7 @@ def factice_render(b: dict, az: int, el: int, label: str, dest: Path) -> Path:
              ((2, 3, 7, 6), (0, 1, 0)), ((0, 1, 3, 2), (0, 0, -1)), ((4, 6, 7, 5), (0, 0, 1))]
     img = Image.new("RGB", (SIDE, SIDE), STUDIO_WHITE)
     dr = ImageDraw.Draw(img)
-    light = [0.45, 0.75, 0.5]
+    light = [0.6, 0.7, 0.4]   # d'en haut, de la gauche de l'objet : deux faces voisines ne prennent jamais la même teinte
     vis = []
     for idx, n in faces:
         c = [sum(corners[i][a] for i in idx) / 4 for a in range(3)]
@@ -1066,7 +1069,7 @@ def factice_render(b: dict, az: int, el: int, label: str, dest: Path) -> Path:
         depth = proj(c)[1]
         shade = 0.45 + 0.55 * max(0.0, sum(n[a] * light[a] for a in range(3)))
         vis.append((depth, pts, shade))
-    base = T["verd-5"] if "verd-5" in T else T["panel"]
+    base = T["ink3"]   # une glaise grise, lisible sur le fond blanc
     for _, pts, shade in sorted(vis, key=lambda x: -x[0]):
         dr.polygon(pts, fill=tuple(int(c * shade) for c in base), outline=T["ink3"])
     img = image.stub_band(img, f"rendu {label} · la boîte du mesh, pas le mesh")
