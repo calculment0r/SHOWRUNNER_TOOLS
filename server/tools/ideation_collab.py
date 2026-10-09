@@ -206,6 +206,18 @@ def _others(bid: str, cid: str | None = None) -> list[Conn]:
         return [x for x in _boards.get(bid, {}).values() if x.cid != cid]
 
 
+def _workspace_gone(sid: str) -> None:
+    """Un Workspace détruit (core/espaces.py, QUAND_DETRUIT) : les onglets ouverts sur ses
+    planches sont congédiés aussitôt, en le disant (leur rôle n'y est plus que « none »)."""
+    with _lock:
+        bids = list(_boards)
+    for bid in bids:
+        if _ide().board_space(bid) != sid:
+            continue
+        for c in _others(bid):
+            _remove(c, "ce Workspace a été détruit")
+
+
 def _broadcast(bid: str, payload: bytes, exclude: str | None = None) -> None:
     for x in _others(bid, exclude):
         _push(x, payload)
@@ -471,6 +483,9 @@ def role_of(u: dict | None, bid: str) -> str:
     quel Workspace (equipes_espaces.md § 1.7 : la planche peut ouvrir plus) — celui
     qui l'a reçu n'est souvent pas du Workspace de la planche (un ami « Apps » n'a que
     le sien)."""
+    from core import espaces
+    if espaces.gone(_ide().board_space(bid)):   # D4 : une planche d'un Workspace détruit n'est à personne, lien compris
+        return "none"
     if not auth.enabled():
         return "owner"
     if not u:
@@ -1969,6 +1984,9 @@ def register(app) -> None:
                      shared=lambda u: bool(guest_boards(u)), link_param="invite")   # …/ideation/?invite=<jeton>#<planche>
     app.route("GET", auth.GUEST_HOME, auth.r_guest_home)
     app.route("HEAD", auth.GUEST_HOME, auth.r_guest_home)
+    from core import espaces
+    if _workspace_gone not in espaces.QUAND_DETRUIT:   # un Workspace détruit : ses onglets ouverts sont congédiés
+        espaces.QUAND_DETRUIT.append(_workspace_gone)
     app.route("GET", "/api/ideation/collab/{bid}", r_state)
     app.route("POST", "/api/ideation/collab/{bid}/ops", r_ops)
     app.route("GET", "/api/ideation/collab/{bid}/ops", r_ops_since)
@@ -2087,6 +2105,7 @@ def selftest(call, ok) -> None:
         s, d, cal = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
         s, d, lina = H("POST", "/api/auth/enter", {"name": "Lina"}, headers=same)
         H("POST", "/api/admin/requests/lina/accept", cookie=cal, headers=same)
+        H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": "Lina", "role": "member"}, cookie=cal, headers=same)   # un ami accepté n'a que sa My Team (Cal, 09/10) : Cal le met dans Nirvalab
         s, me_, _ = H("GET", "/api/auth/me", cookie=lina)
         ok(cal and lina and me_.get("state") == "active", f"collab : deux personnes, Cal et Lina ({me_.get('state')})")
 
@@ -2625,7 +2644,7 @@ def _selftest_registres(call, ok) -> None:
 
 
 def _selftest_apps(call, ok) -> None:
-    """Un ami « Apps » (un compte sans le Studio, qui n'a que son Workspace « Perso ») invité
+    """Un ami « Apps » (un compte sans le Studio, qui n'a que sa My Team) invité
     comme éditeur sur la planche P de Cal (dans Général) : le lien lui ouvre P — la page
     d'Idéation, le direct, la co-édition, les objets posés sur P —, et rien d'autre du Studio ;
     ce qui calcule (l'export, le PNG, un travail d'Idéation) reste refusé, et dit pourquoi.
@@ -2686,7 +2705,7 @@ def _selftest_apps(call, ok) -> None:
         ok(s == 200 and rd.get("role") == "editor" and not rd.get("guest") and auth.user("aurore-apps")["role"] == "ami",
            f"apps : le lien d'éditeur l'accepte sur P — elle reste une amie Apps, pas une invitée ({s} {rd})")
         s, me1 = G("GET", "/api/auth/me")
-        _perso = lambda _tok: (me1.get("workspace") or {}).get("id")   # noqa: E731 — son Workspace « Perso »
+        _perso = lambda _tok: (me1.get("workspace") or {}).get("id")   # noqa: E731 — le Workspace de sa My Team
         ok((me1.get("studio") or {}).get("ici") is False and me1["studio"].get("liens") == ["ideation"]
            and me1["user"]["access"] == "apps", f"apps : /api/auth/me dit le lien (studio.liens) ({me1.get('studio')})")
         s1, _, _, _ = PP._req(home, "GET", "/ideation/", cookies={auth.COOKIE: A})
@@ -2892,9 +2911,10 @@ def _selftest_invite(call, ok) -> None:
         ok(ev == "bye" and s1 == 403 and s2 == 403 and s3 == 403, f"invité : le lien retiré, P et son image se ferment ({ev} {s1} {s2} {s3})")
         s, _, _, hd = PP._req(home, "GET", "/", cookies={auth.COOKIE: gas})
         ok(s == 303 and hd.get("Location") == "/ideation/", f"invité sans planche : ramené à Idéation, vide ({hd.get('Location')})")
-        # Cal en fait un ami
+        # Cal en fait un ami (il n'a que sa My Team : Cal, 09/10), puis le met dans Nirvalab, où est la planche Q
         s, _, _ = H("POST", "/api/admin/users/gaspard", {"role": "ami"}, cookie=cal, headers=same)
         s2, _ = G("GET", "/api/library")
+        H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": "Gaspard", "role": "member"}, cookie=cal, headers=same)
         s3, _ = G("GET", f"/api/ideation/boards/{q}")
         ok(s == 200 and s2 == 200 and s3 == 200, f"invité : Cal en fait un ami (Admin), le portail s'ouvre ({s} {s2} {s3})")
 

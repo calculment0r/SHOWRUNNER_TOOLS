@@ -474,6 +474,9 @@ def selftest(call, ok) -> None:
            "l'adresse du visiteur (Cf-Connecting-IP) est notée pour Cal, pas celle du tunnel")
         s, _, _, _ = _req(home, "POST", "/api/admin/requests/zazie/accept", cookies={auth.COOKIE: home_tok}, headers=same_home)
         ok(s == 200, f"Cal accepte Zazie depuis Admin ({s})")
+        # une amie acceptée n'a que sa My Team (Cal, 09/10) : Cal la met dans Nirvalab (Général)
+        _req(home, "POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": "Zazie", "role": "member"}, cookies={auth.COOKIE: home_tok},
+             headers=same_home)
         s, d, _, _ = _req(dport, "GET", "/api/auth/me", cookies=zc, headers=TUN)
         s2, _, _, _ = _req(dport, "GET", "/api/library", cookies=zc, headers=TUN)
         s3, _, _, _ = _req(dport, "GET", "/api/admin/state", cookies=zc, headers=TUN)

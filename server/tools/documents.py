@@ -1522,6 +1522,7 @@ def _selftest_droits(ok, fx) -> None:
         _, _, cal = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
         H("POST", "/api/auth/enter", {"name": "Dora Docs"})
         H("POST", "/api/admin/requests/dora-docs/accept", cookie=cal, headers=same)
+        H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": "Dora Docs", "role": "member"}, cookie=cal, headers=same)   # un ami accepté n'a que sa My Team (Cal, 09/10) : Cal le met dans Nirvalab
         _, _, dora = H("POST", "/api/auth/enter", {"name": "Dora Docs"}, headers=same)
         H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": "Vic Docs", "role": "guest", "guest": "viewer",
                                                          "spaces": ["esp-general"]}, cookie=cal, headers=same)

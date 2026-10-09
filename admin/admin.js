@@ -136,7 +136,7 @@ async function loadSection() {
     if (S.sec === 'demandes' && S.state) await loadAlertes();
     if (S.sec === 'machines') S.mach = await api('admin/machines');
     if (S.sec === 'cablage') S.sw = await api('admin/switches');
-    if (S.sec === 'stockage') S.store = await api('admin/storage');
+    if (S.sec === 'stockage') [S.store, S.detr] = await Promise.all([api('admin/storage'), api('admin/detruits').catch(() => null)]);
     if (S.sec === 'journal') S.jr = await api('admin/journal?n=300');
     if (S.sec === 'diag') S.dg = await api('admin/diag');
   } catch (e) { if (e.status !== 403) toast(e.message); }
@@ -574,7 +574,7 @@ function manyDelete(us) {
         n ? `Supprimer les ${n}` : 'Supprimer')),
     el('div', { class: 'many-list', role: 'group', 'aria-label': 'les comptes à supprimer' }, ...can.map((u) => {
       const on = D.sel.includes(u.id);
-      const tms = (S.teams && S.teams.everyone ? S.teams.teams : []).filter((t) => !t.personal && (t.members || []).some((m) => m.id === u.id)).map((t) => t.name);
+      const tms = (S.teams && S.teams.everyone ? S.teams.teams : []).filter((t) => !(t.personal && t.owner === u.id) && (t.members || []).some((m) => m.id === u.id)).map(teamName);
       return el('label', { class: 'many-row' + (on ? ' on' : '') },
         el('input', { type: 'checkbox', checked: on || null, disabled: D.run || null,
           onchange: (e) => pick(e.target.checked ? [...D.sel, u.id] : D.sel.filter((x) => x !== u.id)) }),
@@ -593,11 +593,16 @@ function manyDelete(us) {
 // « viewer » (voit) ou « acteur » (modifie) — décision 2 de Cal ; il ne calcule jamais.
 // Le serveur juge chaque geste : un bouton grisé dit pourquoi (son titre, et la ligne dessous).
 const TR = { owner: 'propriétaire', admin: 'admin', member: 'membre', guest: 'guest' };
-const WR = { admin: 'admin', editor: 'éditeur', commenter: 'commentateur', viewer: 'lecteur', none: 'sur invitation' };
+// D3 (Cal, 09/10) : un membre voit tous les Workspaces de sa Team — plus de « sur invitation » (none) ; pour n'en
+// ouvrir que certains à quelqu'un, on en fait un guest
+const WR = { admin: 'admin', editor: 'éditeur', commenter: 'commentateur', viewer: 'lecteur' };
 const GM = [['viewer', 'viewer · voit'], ['acteur', 'acteur · modifie']];
 const HOURS_FR = { 24: '24 h', 72: '3 jours', 168: '7 jours', 720: '30 jours' };
 const RIGHTS = [['view', 'voir'], ['comment', 'commenter'], ['edit', 'modifier'], ['compute', 'calculer'], ['publish', 'publier'], ['invite', 'inviter']];
 const isCal = () => !S.limited && !!S.state;
+// le nom d'une Team pour la page : `label` — la My Team d'un autre dit à qui elle est (chacun a la sienne, toutes
+// nées « My Team » : core/espaces.py, label_of)
+const teamName = (t) => t.label || t.name;
 const tf = (t) => (S.tf[t.id] ||= { pseudo: '', role: 'member', guest: 'viewer', spaces: [], irole: 'guest', iguest: 'viewer', ispaces: [], hours: 72, name: '', ws: '', ren: null });
 const segOf = (opts, cur, pick, { label = '', why = {} } = {}) => el('div', { class: 'seg', role: 'group', 'aria-label': label },
   ...opts.map(([v, lab]) => el('button', { class: 'tb' + (cur === v ? ' on' : ''), type: 'button', 'aria-pressed': cur === v ? 'true' : 'false',
@@ -631,15 +636,15 @@ function teamLine(u) {
   const T = S.teams && S.teams.everyone ? S.teams.teams : [];
   const rows = [];
   for (const t of T) {
-    if (t.personal) continue;
+    if (t.personal && t.owner === u.id) continue;   // sa My Team : sa maison, pas une Team où on l'a mis
     const m = (t.members || []).find((x) => x.id === u.id);
     if (m) rows.push([t, m]);
   }
   return el('div', { class: 'row adm-tm', 'data-teams-of': u.id }, el('span', { class: 'lbl' }, 'teams'),
     ...(rows.length ? rows.map(([t, m]) => (m.role === 'guest'
-      ? el('span', { class: 'tm' }, el('span', { class: 'chip amb' }, `${t.name} · guest`), guestSeg(t, m))
-      : el('span', { class: 'chip' }, `${t.name} · ${TR[m.role] || m.role}`))) : [el('span', { class: 'lbl' }, S.teams ? 'aucune' : '…')]),
-    u.perso === false ? el('span', { class: 'chip', title: 'entré comme guest : ni Team personnelle, ni calcul' }, 'sans « chez moi »') : null);
+      ? el('span', { class: 'tm' }, el('span', { class: 'chip amb' }, `${teamName(t)} · guest`), guestSeg(t, m))
+      : el('span', { class: 'chip' }, `${teamName(t)} · ${TR[m.role] || m.role}`))) : [el('span', { class: 'lbl' }, S.teams ? 'aucune' : '…')]),
+    u.perso === false ? el('span', { class: 'chip', title: 'entré comme guest : ni Team personnelle, ni calcul' }, 'sans my team') : null);
 }
 
 function wsRow(t, sp) {
@@ -655,6 +660,7 @@ function wsRow(t, sp) {
     } }, inp, el('button', { class: 'tb sm', type: 'submit' }, 'OK'), el('button', { class: 'tb ghost sm', type: 'button', onclick: () => { f.ren = null; render(true); } }, 'Annuler'))
     : el('span', { class: 'ws-nm' }, sp.name);
   const lastOpen = t.spaces.filter((s) => !s.archived).length <= 1 && !sp.archived;
+  const noDestroy = sp.can.destroy ? '' : (sp.why.destroy || 'détruire : le propriétaire ou un admin de sa Team, ou Cal');
   return el('div', { class: 'ws' + (sp.archived ? ' off' : ''), 'data-ws': sp.id },
     el('div', { class: 'ws-l' }, title,
       el('div', { class: 'cmeta' }, `membres : ${WR[sp.default_role] || sp.default_role}`,
@@ -670,7 +676,14 @@ function wsRow(t, sp) {
       el('button', { class: 'tb ghost sm', type: 'button', disabled: !sp.archived && lastOpen ? true : null,
         title: !sp.archived && lastOpen ? 'le dernier Workspace ouvert de la Team ne s’archive pas : crée-en un autre d’abord' : '',
         onclick: () => undoable(sp.archived ? `rouvrir « ${sp.name} »` : `archiver « ${sp.name} »`, () => post(`espaces/${sp.id}`, { archived: !sp.archived }),
-          () => post(`espaces/${sp.id}`, { archived: !!sp.archived }), sp.archived ? 'rouvert' : 'archivé : lecture seule') }, sp.archived ? 'Rouvrir' : 'Archiver')) : null);
+          () => post(`espaces/${sp.id}`, { archived: !!sp.archived }), sp.archived ? 'rouvert' : 'archivé : lecture seule') }, sp.archived ? 'Rouvrir' : 'Archiver'),
+      // détruire (D4) : ne s'annule pas — Cal le rend depuis Admin → Stockage ; le nom tapé confirme
+      el('button', { class: 'tb ghost sm', type: 'button', 'data-destroy-ws': sp.id, disabled: noDestroy ? true : null, title: noDestroy,
+        onclick: () => confirmBox(`Détruire « ${sp.name} »`,
+          `Le Workspace « ${sp.name} » de « ${teamName(t)} » disparaît pour tous ceux qui y entraient. Ce qu’il tient — objets, planches, projets, séquences, `
+          + 'transcriptions… — part à la corbeille ; Cal peut le rendre (Admin → Stockage), tel quel, dans une My Team. Ça ne s’annule pas d’ici.',
+          'Détruire', (nom) => act(() => post(`espaces/${sp.id}/detruire`, { nom }), `« ${sp.name} » détruit : son contenu est à la corbeille`),
+          { typed: sp.name }) }, 'Détruire')) : null);
 }
 
 function memberRow(t, m) {
@@ -794,7 +807,7 @@ function addForm(t) {
   el('p', { class: 'adm-note' }, isCal() ? 'Un pseudo qui n’existe pas encore est créé ici, déjà accepté : il entre en le tapant. '
     : 'Un pseudo qui n’existe pas encore est créé ici et attend la validation de Cal (il en reçoit l’alerte) ; validé, il entre en le tapant. '
       + 'Un compte qui existe déjà entre tout de suite. ',
-    'Un guest n’entre que dans les Workspaces choisis ; viewer, il voit ; acteur, il modifie ; il ne lance jamais de calcul, et n’a pas de « Chez moi ».'));
+    'Un guest n’entre que dans les Workspaces choisis ; viewer, il voit ; acteur, il modifie ; il ne lance jamais de calcul, et n’a pas de My Team.'));
 }
 
 function inviteBlock(t) {
@@ -879,6 +892,20 @@ function budgetBlock(t) {
     el('div', { class: 'bud-list' }, ...(b.spaces || []).filter((s) => !s.archived).map((r) => part('spaces', r)))];
 }
 
+
+// « Demander le Studio » (règle 7 : ce qui débloque) — la My Team d'un compte Apps n'invite personne
+function askStudio() {
+  const b = el('button', { class: 'tb ghost sm', type: 'button', onclick: async () => {
+    b.disabled = true;
+    try {
+      const r = await api('auth/studio', { method: 'POST', body: {} });
+      toast(r.ok ? 'tu as le Studio' : 'Studio demandé : Cal l’ouvre depuis Admin', 6000);
+      refresh(true);
+    } catch (e) { b.disabled = false; toast(e.message); }
+  } }, 'Demander le Studio');
+  return b;
+}
+
 function teamCard(t) {
   const f = tf(t);
   const canArchive = t.role === 'owner' || isCal();
@@ -887,6 +914,8 @@ function teamCard(t) {
   const newWs = el('input', { class: 'fld sm', placeholder: 'nouveau workspace', maxlength: 40, 'aria-label': 'le nom du nouveau Workspace',
     value: f.ws, oninput: (e) => { f.ws = e.target.value; } });
   const why = t.invite_why;
+  // les membres : une Team partagée, ou une My Team qui invite (D2) ou a déjà quelqu'un
+  const showMembers = t.members && (!t.personal || t.members.length > 1 || (t.manage && t.invite));
   return el('div', { class: 'card team' + (t.archived ? ' off' : ''), 'data-team': t.id },
     el('div', { class: 'card-head' },
       renaming ? el('form', { class: 'row', onsubmit: (e) => {
@@ -894,17 +923,27 @@ function teamCard(t) {
         const v = inp.value.trim();
         if (!v || v === t.name) return render(true);
         undoable(`renommer la Team « ${t.name} »`, () => post(`equipes/${t.id}`, { name: v }), () => post(`equipes/${t.id}`, { name: t.name }), 'renommée');
-      } }, inp, el('button', { class: 'tb sm', type: 'submit' }, 'OK')) : el('span', { class: 'nm' }, t.personal && t.role !== 'owner' ? `Chez ${t.owner_name}` : t.name),
+      } }, inp, el('button', { class: 'tb sm', type: 'submit' }, 'OK')) : el('span', { class: 'nm' }, teamName(t)),
       el('span', { class: 'chip' + (t.plan === 'studio' ? ' fam' : '') }, t.plan),
       t.personal ? el('span', { class: 'chip' }, 'personnelle') : null,
       t.role ? el('span', { class: 'chip' + (t.role === 'guest' ? ' amb' : t.role === 'owner' ? ' adm-role' : '') }, t.role === 'guest' ? `toi : guest · ${t.guest}` : `toi : ${TR[t.role]}`) : null,
       t.archived ? el('span', { class: 'chip err' }, el('i'), 'archivée') : null,
       el('span', { class: 'sp' }),
-      t.manage && !t.personal && !renaming ? el('button', { class: 'tb ghost sm', type: 'button', onclick: () => { f.ren = t.id; render(true); setTimeout(() => inp.focus(), 0); } }, 'Renommer') : null,
+      // renommer : qui gère ; My Team, son propriétaire (ou Cal) — D1
+      t.manage && !renaming ? el('button', { class: 'tb ghost sm', type: 'button', disabled: t.rename ? null : true, title: t.rename ? '' : (t.rename_why || ''),
+        onclick: () => { f.ren = t.id; render(true); setTimeout(() => inp.focus(), 0); } }, 'Renommer') : null,
       t.manage && !t.personal ? el('button', { class: 'tb ghost sm', type: 'button', disabled: canArchive ? null : true,
         title: canArchive ? '' : 'archiver une Team : son propriétaire, ou Cal',
         onclick: () => undoable(t.archived ? `rouvrir « ${t.name} »` : `archiver « ${t.name} »`, () => post(`equipes/${t.id}`, { archived: !t.archived }),
-          () => post(`equipes/${t.id}`, { archived: !!t.archived }), t.archived ? 'rouverte' : 'archivée : lecture seule') }, t.archived ? 'Rouvrir' : 'Archiver') : null),
+          () => post(`equipes/${t.id}`, { archived: !!t.archived }), t.archived ? 'rouverte' : 'archivée : lecture seule') }, t.archived ? 'Rouvrir' : 'Archiver') : null,
+      // détruire (D4) : son propriétaire ou Cal ; grisé, il dit pourquoi (une My Team, Nirvalab, un admin de la Team)
+      t.manage ? el('button', { class: 'tb ghost sm', type: 'button', 'data-destroy-team': t.id, disabled: t.destroy ? null : true, title: t.destroy ? '' : (t.destroy_why || ''),
+        onclick: () => confirmBox(`Détruire la Team « ${t.name} »`,
+          `« ${t.name} » et ses ${plural(t.spaces.length, 'Workspace', 'Workspaces')} disparaissent ; ${t.members ? plural(Math.max(0, t.members.length - 1), 'personne en sort', 'personnes en sortent') : 'ses membres en sortent'}, `
+          + 'ses liens d’invitation ne s’ouvrent plus, son budget s’efface. Ce que ses Workspaces tiennent part à la corbeille : Cal peut rendre chacun '
+          + '(Admin → Stockage) dans une My Team. Ça ne s’annule pas d’ici.',
+          'Détruire', (nom) => act(() => post(`equipes/${t.id}/detruire`, { nom }), `Team « ${t.name} » détruite : son contenu est à la corbeille`),
+          { typed: t.name }) }, 'Détruire') : null),
     el('div', { class: 'cmeta' }, `propriétaire `, el('b', {}, t.owner_name || '—'), ` · ${t.spaces.length} workspace${t.spaces.length > 1 ? 's' : ''}`,
       t.members ? ` · ${t.members.length} personne${t.members.length > 1 ? 's' : ''}` : ''),
     t.manage && !t.personal ? el('div', { class: 'row' },
@@ -924,25 +963,28 @@ function teamCard(t) {
       f.ws = '';
       act(() => post(`equipes/${t.id}/espaces`, { name: v }), `Workspace « ${v} » créé`);
     } }, newWs, el('button', { class: 'tb sm', type: 'submit' }, '+ Workspace')) : null,
-    t.members && !t.personal ? el('span', { class: 'lbl' }, 'membres') : null,
-    t.members && !t.personal ? el('div', { class: 'mem-list' }, ...t.members.map((m) => memberRow(t, m))) : null,
+    showMembers ? el('span', { class: 'lbl' }, 'membres') : null,
+    showMembers ? el('div', { class: 'mem-list' }, ...t.members.map((m) => memberRow(t, m))) : null,
     t.manage && t.invite ? addForm(t) : null,
     t.manage && t.invite ? inviteBlock(t) : null,
-    !t.invite && why && (t.manage || t.personal) ? el('p', { class: 'why' }, `inviter : ${why}`) : null);
+    !t.invite && why && (t.manage || t.personal) ? el('div', { class: 'row' }, el('p', { class: 'why' }, `inviter : ${why}`),
+      t.personal && t.role === 'owner' && /Demander le Studio/.test(why) ? askStudio() : null) : null);
 }
 
 function teamsSec() {
   if (!S.teams) return [head('Teams', 'C'), el('p', { class: 'lbl' }, 'lecture…')];
   const all = S.teams.teams;
-  const mine = all.filter((t) => !t.personal || t.role === 'owner');
-  const others = all.filter((t) => t.personal && t.role !== 'owner');
+  // les miennes (ma My Team, celle d'un autre où l'on m'a mis : D2) ; les My Team des autres, que Cal voit, en bref
+  const mine = all.filter((t) => !t.personal || t.member);
+  const others = all.filter((t) => t.personal && !t.member);
   const f = S.tf._new ||= { name: '' };
   const nm = el('input', { class: 'fld', placeholder: 'le nom de la Team', maxlength: 40, 'aria-label': 'le nom de la nouvelle Team',
     value: f.name, oninput: (e) => { f.name = e.target.value; } });
   return [head('Teams', 'C', `${mine.length} team${mine.length > 1 ? 's' : ''}`),
-    el('p', { class: 'adm-note' }, 'Une Team décide et paie ; ses Workspaces possèdent ce qu’on y crée. Un membre entre dans les Workspaces de la Team ',
-      'avec leur rôle par défaut ; un guest n’entre que dans ceux où on l’a mis, viewer (il voit) ou acteur (il modifie) — il ne lance jamais de calcul. ',
-      isCal() ? 'Tu vois toutes les Teams, celles de chacun comprises.' : 'Tu vois tes Teams ; celles que tu gères ont leurs réglages ici.'),
+    isCal() ? menageCard() : null,
+    el('p', { class: 'adm-note' }, 'Une Team décide et paie ; ses Workspaces possèdent ce qu’on y crée. Chacun a la sienne, My Team ; un membre entre dans tous les ',
+      'Workspaces de la Team, avec leur rôle par défaut ; un guest n’entre que dans ceux où on l’a mis, viewer (il voit) ou acteur (il modifie) — il ne lance ',
+      'jamais de calcul. ', isCal() ? 'Tu vois toutes les Teams, celles de chacun comprises.' : 'Tu vois tes Teams ; celles que tu gères ont leurs réglages ici.'),
     S.teams.can_create ? el('form', { class: 'row', onsubmit: (e) => {
       e.preventDefault();
       const v = nm.value.trim();
@@ -951,18 +993,138 @@ function teamsSec() {
       act(() => post('equipes', { name: v }), `Team « ${v} » créée, avec un Workspace « Général »`);
     } }, nm, el('button', { class: 'tb', type: 'submit' }, '+ Team'))
       : el('p', { class: 'why' }, all.some((t) => t.personal && t.role === 'owner')
-        ? 'créer une Team : le Studio (ton compte ouvre les Apps) — ta Team « Chez moi » a ses Workspaces'
+        ? 'créer une Team : le Studio (ton compte ouvre les Apps) — ta My Team a ses Workspaces'
         : 'créer une Team : un compte du Studio — tu es ici comme guest : demande à Cal'),
     el('div', { class: 'grid2 wide' }, ...mine.map(teamCard)),
-    others.length ? el('span', { class: 'lbl' }, `les « chez moi » des autres · ${others.length}`) : null,
+    others.length ? el('span', { class: 'lbl' }, `les my team des autres · ${others.length}`) : null,
     others.length ? el('div', { class: 'grid2' }, ...others.map(teamMini)) : null];
+}
+
+// ── le grand ménage (D7, Cal, 09/10 : « tous les gens qui se loguent n'ont que leur espace vierge […] tu laisses quand
+// même ce que les gens ont fait dans leur espace ») — server/tools/equipes.py, menage_preview / r_menage_apply. Fermée à
+// l'arrivée ; ouverte, l'aperçu est lu sur les données réelles (GET admin/menage), coché d'avance : les comptes créés par
+// une Team, les Teams partagées dont tous les membres (hors propriétaire) sont parmi eux, les deux cases. Le bouton
+// d'application est l'orange de l'écran ; il dit ce qu'il va faire et part confirmé par MENAGE tapé. Rien ne s'annule
+// d'ici : un Workspace détruit se rend depuis Stockage (Cal) ; un compte supprimé ne revient pas.
+const DOCS_FR = { musique: 'projets ODIO', ideation: 'planches', transcrire: 'transcriptions', luts: 'LUT', image_atelier: 'ateliers d’Image',
+  paroles: 'paroles calées', analyse: 'projets d’analyse' };
+async function loadMenage(fresh = false) {
+  const M = S.men;
+  M.loading = true; M.err = '';
+  render(true);
+  try {
+    const d = await api('admin/menage');
+    M.data = d;
+    if (fresh || !M.init) {   // le préremplissage, une fois (puis après chaque application) : les choix de Cal restent
+      M.comptes = d.comptes.map((c) => c.id);
+      M.teams = d.teams.filter((t) => t.suggest).map((t) => t.id);
+      M.strip = true; M.rename = true; M.init = true;
+    }
+  } catch (e) { M.err = e.message; }
+  M.loading = false;
+  render(true);
+}
+function menageCard() {
+  const M = S.men ||= { open: false, data: null, init: false, loading: false, err: '', comptes: [], teams: [], strip: true, rename: true, run: false, rep: null };
+  const head2 = el('div', { class: 'card-head' }, el('span', { class: 'nm' }, 'Le grand ménage'), el('span', { class: 'chip' }, 'fresh start'),
+    el('span', { class: 'sp' }),
+    M.open && M.data ? el('button', { class: 'tb ghost sm', type: 'button', disabled: M.run || M.loading || null, onclick: () => loadMenage() }, 'Relire') : null,
+    el('button', { class: 'tb ghost sm', type: 'button', 'aria-expanded': M.open ? 'true' : 'false', disabled: M.run || null,
+      onclick: () => { M.open = !M.open; if (M.open && !M.data) loadMenage(); else render(true); } }, M.open ? 'Fermer' : 'Ouvrir'));
+  const lede = el('p', { class: 'adm-note' }, 'Chacun ne garde que sa My Team et ce qu’il y a fait. Les comptes créés par une Team (un atelier) sont supprimés — ceux qui attendent ta validation, refusés —, ',
+    'les Teams partagées cochées détruites (leur contenu à la corbeille), chaque Team restante ne garde que son propriétaire, les « Chez moi » d’avant deviennent My Team. ',
+    'Jamais toi ni un admin.');
+  if (!M.open) return el('div', { class: 'card menage' }, head2, lede);
+  const d = M.data;
+  if (!d) return el('div', { class: 'card menage' }, head2, lede, el('p', { class: M.err ? 'why' : 'lbl' }, M.err || 'lecture des données…'));
+  M.comptes = M.comptes.filter((id) => d.comptes.some((c) => c.id === id));
+  M.teams = M.teams.filter((id) => d.teams.some((t) => t.id === id && t.destroy));
+  const selC = new Set(M.comptes), selT = new Set(M.teams);
+  const toggle = (key, id, on) => { M[key] = on ? [...M[key], id] : M[key].filter((x) => x !== id); render(true); };
+  // ce qu'il va faire, compté sur la sélection : les appartenances de qui est supprimé ou d'une Team détruite partent avec eux
+  const strip = d.membres.filter((m) => !selC.has(m.id) && !selT.has(m.team));
+  const tSel = d.teams.filter((t) => selT.has(t.id));
+  const nWs = tSel.reduce((a, t) => a + t.spaces.length, 0), nObj = tSel.reduce((a, t) => a + t.objets + t.documents, 0);
+  const lone = d.comptes.filter((c) => c.guest && !selC.has(c.id));   // un guest gardé qu'on retire de tout : il n'entre plus nulle part
+  const plan = [selC.size ? `supprimer ${plural(selC.size, 'compte', 'comptes')}` : '',
+    selT.size ? `détruire ${plural(selT.size, 'Team', 'Teams')} (${plural(nWs, 'Workspace', 'Workspaces')}, ${plural(nObj, 'objet ou document', 'objets et documents')} à la corbeille)` : '',
+    M.strip && strip.length ? `retirer ${plural(strip.length, 'appartenance', 'appartenances')}` : '',
+    M.rename && d.renommer.length ? `renommer ${plural(d.renommer.length, 'Team personnelle', 'Teams personnelles')} « My Team »` : ''].filter(Boolean);
+  // rien à faire : rien de coché, ou ce qui est coché est déjà fait (personne à retirer, plus de « Chez moi »)
+  const nothing = selC.size || selT.size || M.strip || M.rename ? 'rien à faire : tout est déjà en ordre' : 'coche d’abord ce qu’il faut faire';
+  const box = (on, onchange, disabled, title) => el('input', { type: 'checkbox', checked: on || null, disabled: disabled || M.run || null, title: title || null, onchange });
+  const go = () => confirmBox('Le grand ménage', `${plan.join(' ; ')}. Le contenu de la My Team de chacun reste. Les comptes supprimés ne reviennent pas ; `
+    + 'un Workspace détruit se rend depuis Stockage. Ça ne s’annule pas d’ici.', 'Appliquer le ménage', async (mot) => {
+    M.run = true; M.rep = null; render(true);
+    try {
+      M.rep = await post('admin/menage', { comptes: M.comptes, teams: M.teams, retirer_membres: M.strip, renommer: M.rename, confirme: mot });
+      toast(`ménage fait : ${plural(M.rep.comptes.length, 'compte supprimé', 'comptes supprimés')}, ${plural(M.rep.teams.length, 'Team détruite', 'Teams détruites')}`, 6000);
+    } catch (e) { toast(e.message, 8000); }
+    M.run = false;
+    await loadTeams().catch(() => {});
+    loadMenage(true);
+  }, { typed: d.mot });
+  const R = M.rep;
+  return el('div', { class: 'card menage' }, head2, lede,
+    M.err ? el('p', { class: 'why' }, M.err) : null,
+    // (a) les comptes créés par une Team
+    el('div', { class: 'row' }, el('span', { class: 'lbl' }, `comptes créés par une Team · ${d.comptes.length}`
+      + (d.comptes.some((c) => c.pending) ? ` · dont ${d.comptes.filter((c) => c.pending).length} en attente` : '')), el('span', { class: 'sp' }),
+      el('button', { class: 'tb ghost sm', type: 'button', disabled: M.run || !d.comptes.length || null, onclick: () => { M.comptes = d.comptes.map((c) => c.id); render(true); } }, 'tous'),
+      el('button', { class: 'tb ghost sm', type: 'button', disabled: M.run || !selC.size || null, onclick: () => { M.comptes = []; render(true); } }, 'aucun')),
+    d.comptes.length ? el('div', { class: 'many-list', role: 'group', 'aria-label': 'les comptes à supprimer' }, ...d.comptes.map((c) => el('label', { class: 'many-row' + (selC.has(c.id) ? ' on' : ''), 'data-compte': c.id },
+      box(selC.has(c.id), (e) => toggle('comptes', c.id, e.target.checked)),
+      el('span', { class: 'nm-s' }, c.pseudo || c.name), c.guest ? el('span', { class: 'chip amb' }, 'guest') : null,
+      c.pending ? el('span', { class: 'chip amb', title: 'invité par un autre que toi : il attend ta validation (Demandes) — coché, il est refusé' }, 'attend cal') : null,
+      el('span', { class: 'many-meta' }, [`${c.pending ? 'invité' : 'créé'} ${fmtDate(c.created)}${c.by_name ? ` par ${c.by_name}` : ''}`,
+        c.teams.length ? c.teams.map((t) => t.name).join(' · ') : 'dans aucune Team',
+        c.items ? `${plural(c.items, 'objet ou document', 'objets et documents')} dans sa My Team (restent)` : ''].filter(Boolean).join(' · ')))))
+      : el('p', { class: 'why' }, 'aucun compte créé par une Team'),
+    // (b) les Teams partagées
+    el('span', { class: 'lbl' }, `teams partagées · ${d.teams.length}`),
+    d.teams.length ? el('div', { class: 'many-list', role: 'group', 'aria-label': 'les Teams à détruire' }, ...d.teams.map((t) => el('label', { class: 'many-row' + (selT.has(t.id) ? ' on' : ''), 'data-menage-team': t.id,
+      title: t.destroy ? '' : t.destroy_why },
+      box(selT.has(t.id), (e) => toggle('teams', t.id, e.target.checked), !t.destroy, t.destroy ? '' : t.destroy_why),
+      el('span', { class: 'nm-s' }, t.name), t.archived ? el('span', { class: 'chip no' }, el('i'), 'archivée') : null,
+      el('span', { class: 'many-meta' }, [`à ${t.owner_name || '—'}`, t.members.length ? t.members.map((m) => m.name).join(', ') : 'personne d’autre',
+        plural(t.spaces.length, 'workspace', 'workspaces'), `${plural(t.objets, 'objet', 'objets')} · ${fmtBytes(t.octets)}`,
+        t.documents ? plural(t.documents, 'document', 'documents') : '', t.destroy ? '' : t.destroy_why].filter(Boolean).join(' · ')))))
+      : el('p', { class: 'why' }, 'aucune Team partagée'),
+    // (c) les appartenances ; (d) les noms
+    el('label', { class: 'many-row' + (M.strip ? ' on' : '') }, box(M.strip, (e) => { M.strip = e.target.checked; render(true); }),
+      el('span', { class: 'nm-s' }, 'Retirer les membres'),
+      el('span', { class: 'many-meta', title: strip.map((m) => `${m.name} · ${m.team_name}`).join('\n') },
+        strip.length ? `${plural(strip.length, 'appartenance', 'appartenances')} : chaque Team ne garde que son propriétaire` : 'personne à retirer',
+        d.epargnes.length ? ` · épargnés : ${d.epargnes.join(', ')}` : '')),
+    el('label', { class: 'many-row' + (M.rename ? ' on' : '') }, box(M.rename, (e) => { M.rename = e.target.checked; render(true); }),
+      el('span', { class: 'nm-s' }, 'Renommer « My Team »'),
+      el('span', { class: 'many-meta', title: d.renommer.map((x) => x.owner_name).join(', ') },
+        d.renommer.length ? `${plural(d.renommer.length, 'Team personnelle', 'Teams personnelles')} encore « Chez moi » : ${d.renommer.map((x) => x.owner_name).join(', ')}` : 'toutes s’appellent déjà My Team (un nom choisi reste)')),
+    M.strip && lone.length ? el('p', { class: 'why' }, `${lone.map((c) => c.pseudo || c.name).join(', ')} : entré${lone.length > 1 ? 's' : ''} comme guest, sans My Team — gardé${lone.length > 1 ? 's' : ''} et retiré${lone.length > 1 ? 's' : ''} de tout, il${lone.length > 1 ? 's' : ''} n’entre${lone.length > 1 ? 'nt' : ''} plus nulle part`) : null,
+    el('div', { class: 'row' }, el('span', { class: 'lbl' }, plan.length ? 'ce qu’il va faire' : nothing), el('span', { class: 'sp' }),
+      el('button', { class: 'tb go', type: 'button', 'data-menage-go': '', disabled: M.run || !plan.length || null,
+        title: plan.length ? plan.join(' ; ') : nothing, onclick: go }, M.run ? 'Ménage en cours…' : 'Appliquer le ménage')),
+    plan.length ? el('p', { class: 'adm-note' }, `${plan.join(' ; ')}.`) : null,
+    R ? el('div', { class: 'bulk-out', role: 'status', 'aria-live': 'polite' },
+      el('span', { class: 'lbl' }, 'le rapport'),
+      ...R.teams.map((x) => el('div', { class: 'row' }, el('span', { class: 'chip ok' }, el('i'), 'détruite'), el('span', { class: 'nm-s' }, x.name),
+        el('span', { class: 'bulk-why' }, `${plural(x.spaces, 'workspace', 'workspaces')} · ${plural(x.objets, 'objet', 'objets')} à la corbeille`))),
+      ...R.comptes.map((x) => el('div', { class: 'row' }, el('span', { class: 'chip ok' }, el('i'), x.attente ? 'refusé' : 'supprimé'), el('span', { class: 'nm-s' }, x.name),
+        x.attente || x.avec_team ? el('span', { class: 'bulk-why' }, x.avec_team ? 'il n’attendait que sa Team, refusé avec elle' : 'il attendait ta validation') : null)),
+      R.membres.length ? el('div', { class: 'row' }, el('span', { class: 'chip ok' }, el('i'), 'retirés'),
+        el('span', { class: 'bulk-why' }, plural(R.membres.length, 'appartenance', 'appartenances'))) : null,
+      R.renommees.length ? el('div', { class: 'row' }, el('span', { class: 'chip ok' }, el('i'), 'renommées'),
+        el('span', { class: 'bulk-why' }, R.renommees.map((x) => x.owner_name).join(', '))) : null,
+      ...R.erreurs.map((x) => el('div', { class: 'row' }, el('span', { class: 'chip err' }, el('i'), 'refusé'), el('span', { class: 'bulk-why' }, x)))) : null);
 }
 
 // la Team personnelle d'un autre (Cal les voit toutes) : en bref ; ses réglages sont à son propriétaire
 function teamMini(t) {
+  const n = (t.members || []).length;
   return el('div', { class: 'card team-mini', 'data-team': t.id },
-    el('div', { class: 'card-head' }, el('span', { class: 'nm' }, `Chez ${t.owner_name}`),
-      el('span', { class: 'chip' + (t.plan === 'studio' ? ' fam' : '') }, t.plan)),
+    el('div', { class: 'card-head' }, el('span', { class: 'nm' }, teamName(t)),
+      el('span', { class: 'chip' + (t.plan === 'studio' ? ' fam' : '') }, t.plan),
+      n > 1 ? el('span', { class: 'chip' }, plural(n, 'personne', 'personnes')) : null),
     el('div', { class: 'ws-names' }, ...t.spaces.map((s) => el('span', { class: 'chip' + (s.archived ? ' no' : '') }, s.name))));
 }
 
@@ -1259,14 +1421,65 @@ function cablage() {
 }
 
 // ── F · le stockage ─────────────────────────────────────────
-function confirmBox(title, text, go, action) {
-  const scrim = el('div', { class: 'scrim' }, el('div', { class: 'modal', role: 'dialog', 'aria-label': title },
-    el('div', { class: 'modal-head' }, el('span', { class: 't' }, title)),
-    el('div', { class: 'modal-body' }, el('p', {}, text)),
-    el('div', { class: 'modal-foot' }, el('span', { class: 'sp' }),
-      el('button', { class: 'tb ghost', onclick: () => scrim.remove() }, 'Annuler'),
-      el('button', { class: 'tb go', onclick: () => { scrim.remove(); action(); } }, go))));
+// `typed` (détruire, le ménage : D4, D7) : ce qu'il faut taper pour que le bouton parte — un nom, MENAGE ;
+// le bouton reste grisé et dit pourquoi tant que ce n'est pas tapé ; `action` reçoit ce qui l'a été
+// (le serveur le rejuge). Échap et « Annuler » ferment sans rien faire.
+function confirmBox(title, text, go, action, { typed = null } = {}) {
+  const inp = typed != null ? el('input', { class: 'fld confirm-typed', autocomplete: 'off', spellcheck: 'false', autocapitalize: 'none',
+    'aria-label': `tape « ${typed} » pour confirmer`, placeholder: typed }) : null;
+  const need = `tape « ${typed} » pour confirmer`;
+  const same = () => !inp || inp.value.split(/\s+/).filter(Boolean).join(' ') === typed;
+  const btn = el('button', { class: 'tb go', type: 'submit', disabled: inp ? true : null, title: inp ? need : '' }, go);
+  const close = () => { scrim.remove(); document.removeEventListener('keydown', esc, true); };
+  const esc = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
+  if (inp) inp.addEventListener('input', () => { btn.disabled = !same(); btn.title = same() ? '' : need; });
+  const scrim = el('div', { class: 'scrim' }, el('form', { class: 'modal', role: 'dialog', 'aria-label': title,
+    onsubmit: (e) => { e.preventDefault(); if (!same()) return; const v = inp ? inp.value : undefined; close(); action(v); } },
+  el('div', { class: 'modal-head' }, el('span', { class: 't' }, title)),
+  el('div', { class: 'modal-body' }, el('p', {}, text),
+    inp ? el('label', { class: 'confirm-row' }, el('span', { class: 'lbl' }, 'pour confirmer'), inp) : null),
+  el('div', { class: 'modal-foot' }, el('span', { class: 'sp' }),
+    el('button', { class: 'tb ghost', type: 'button', onclick: close }, 'Annuler'), btn)));
   document.body.append(scrim);
+  document.addEventListener('keydown', esc, true);
+  (inp || btn).focus();
+}
+
+// les Workspaces détruits (D4, core/espaces.py : destroyed_list, restore_space) : ce que chacun tenait, ce qu'il en reste
+// à la corbeille ; « Rendre » le remet, le même (ses objets, ses documents d'outil tels quels), dans la My Team de son
+// auteur s'il existe encore, sinon dans la tienne — ou de qui tu choisis parmi ses auteurs. Ses rôles d'avant ne
+// reviennent pas (ils étaient d'une autre Team).
+function destroyedCard() {
+  const list = S.detr?.spaces;
+  if (!list || !list.length) return null;
+  const choice = S.detrTo ||= {};
+  return el('div', { class: 'card' }, el('div', { class: 'card-head' }, el('span', { class: 'nm' }, 'Workspaces détruits'), el('span', { class: 'chip' }, String(list.length))),
+    el('p', { class: 'adm-note' }, 'Détruits dans Admin → Teams : ce qu’ils tenaient n’est plus à personne, toi compris, jusqu’à ce que tu les rendes. ',
+      'Ils reviennent tels quels dans une My Team ; ses membres d’avant n’y sont plus.'),
+    el('div', { class: 'ws-list' }, ...list.map((w) => {
+      const homes = w.auteurs.filter((a) => a.home);
+      const to = choice[w.id] || w.vers;
+      const opts = [...homes.map((a) => [a.id, `My Team de ${a.name} · auteur de ${plural(a.n, 'objet ou document', 'objets et documents')}`]),
+        ...(homes.some((a) => a.id === w.vers) ? [] : [[w.vers, `My Team de ${w.vers_name}`]])];
+      const docs = Object.entries(w.documents || {}).map(([k, n]) => `${n} ${DOCS_FR[k] || k}`);
+      const lost = w.objets - w.objets_la;
+      return el('div', { class: 'ws', 'data-detruit': w.id },
+        el('div', { class: 'ws-l' }, el('span', { class: 'ws-nm' }, w.name),
+          el('div', { class: 'cmeta' }, `${w.team_gone ? 'Team détruite' : 'Team'} ${w.team_name || '—'} · détruit ${fmtDate(w.at)} par ${w.by_name || w.by}`)),
+        el('div', { class: 'ws-r' }, el('span', { class: 'lbl' }, [plural(w.objets_la, 'objet', 'objets') + (lost ? ` (${lost} perdu${lost > 1 ? 's' : ''} : corbeille vidée)` : ''),
+          ...docs, w.auteurs.length ? `par ${w.auteurs.map((a) => a.name).join(', ')}` : ''].filter(Boolean).join(' · '))),
+        el('div', { class: 'acts' },
+          el('select', { class: 'fld sm', 'aria-label': `où rendre ${w.name}`, title: 'la My Team qui le reçoit',
+            onchange: (e) => { choice[w.id] = e.target.value; } },
+          ...opts.map(([v, lab]) => el('option', { value: v, selected: v === to ? true : null }, lab))),
+          el('button', { class: 'tb ghost sm', type: 'button', 'data-rendre': w.id,
+            onclick: () => act(async () => {
+              const r = await post(`admin/detruits/${w.id}/rendre`, { vers: choice[w.id] || w.vers });
+              delete choice[w.id];
+              [S.store, S.detr] = await Promise.all([api('admin/storage?fresh=1'), api('admin/detruits')]);
+              toast(`« ${r.name} » rendu dans la My Team de ${r.vers_name} : ${plural(r.objets, 'objet', 'objets')}${r.objets_perdus ? `, ${r.objets_perdus} perdus` : ''}`, 6000);
+            }) }, 'Rendre')));
+    })));
 }
 
 function stockage() {
@@ -1284,11 +1497,16 @@ function stockage() {
         el('dl', { class: 'kv2' }, el('dt', {}, 'objets'), el('dd', {}, String(d.items)),
           ...Object.entries(d.counts).flatMap(([k, v]) => [el('dt', {}, k), el('dd', {}, String(v))]))),
       el('div', { class: 'card' }, el('span', { class: 'nm' }, 'La corbeille'),
-        el('p', { class: 'adm-note' }, `${plural(d.trash_items, 'objet', 'objets')} · ${fmtBytes(trash.bytes)}. Un objet mis à la corbeille peut revenir ; vidée, elle ne rend plus rien.`),
+        el('p', { class: 'adm-note' }, `${plural(d.trash_items, 'objet', 'objets')} · ${fmtBytes(trash.bytes)}. Un objet mis à la corbeille peut revenir ; vidée, elle ne rend plus rien`,
+          (S.detr?.spaces || []).length ? ' — ni les objets des Workspaces détruits (ci-dessous : leurs documents d’outil, eux, restent).' : '.'),
         el('div', { class: 'row' }, el('button', { class: d.trash_items ? 'tb go' : 'tb', disabled: !d.trash_items,
           title: d.trash_items ? '' : 'la corbeille est vide',
           onclick: () => confirmBox('Vider la corbeille', `${plural(d.trash_items, 'objet', 'objets')} (${fmtBytes(trash.bytes)}) supprimés pour de bon.`, 'Vider',
-            () => act(async () => { await post('admin/trash/empty'); S.store = await api('admin/storage?fresh=1'); }, 'corbeille vidée')) }, 'Vider la corbeille')))),
+            () => act(async () => {
+              await post('admin/trash/empty');
+              [S.store, S.detr] = await Promise.all([api('admin/storage?fresh=1'), api('admin/detruits').catch(() => null)]);
+            }, 'corbeille vidée')) }, 'Vider la corbeille')))),
+    destroyedCard(),
     el('div', { class: 'card' }, el('span', { class: 'nm' }, 'Par dossier'),
       el('dl', { class: 'kv2' }, ...d.parts.sort((a, b) => b.bytes - a.bytes).flatMap((p) => [el('dt', {}, p.name), el('dd', {}, `${fmtBytes(p.bytes)} · ${plural(p.files, 'fichier', 'fichiers')}`)])))];
 }
