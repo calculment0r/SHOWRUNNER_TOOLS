@@ -511,10 +511,10 @@ function personne(u) {
           adm ? `${u.name} n’est plus admin` : `${u.name} est admin`) }, adm ? 'Retirer le rôle admin' : 'Donner le rôle admin'),
       adm ? null : el('button', { class: 'tb ghost sm', onclick: () => act(() => post(`admin/users/${u.id}`, { state: susp ? 'active' : 'suspended' }),
         susp ? `${u.name} peut revenir` : `${u.name} suspendu·e : ses travaux en file sont retirés`) }, susp ? 'Réactiver' : 'Suspendre'),
-      // détruire : le compte, ses connexions et ses places dans les Teams ; ce qu'il a rangé reste dans les Workspaces
-      adm ? null : el('button', { class: 'tb ghost sm', type: 'button', title: 'détruit le compte : son pseudo redevient libre (ce qu’il a rangé reste dans les Workspaces)',
+      // détruire : le compte, ses connexions et ses places dans les Teams ; sa My Team à la corbeille (09/10), le reste où il est
+      adm ? null : el('button', { class: 'tb ghost sm', type: 'button', title: 'détruit le compte : son pseudo redevient libre ; sa My Team part à la corbeille, ce qu’il a fait ailleurs reste',
         onclick: () => confirmBox(`Supprimer ${u.name} ?`,
-          'Le compte, ses connexions et sa place dans les Teams disparaissent, et son pseudo redevient libre. Ce qu’il a rangé reste dans les Workspaces. Ça ne s’annule pas.',
+          'Le compte, ses connexions et sa place dans les Teams disparaissent, et son pseudo redevient libre. Sa My Team part à la corbeille (Admin → Stockage la rend) ; ce qu’il a fait dans d’autres Teams y reste. Le compte, lui, ne revient pas.',
           'Supprimer', () => act(() => post(`admin/users/${u.id}/supprimer`), `${u.name} supprimé·e`)) }, 'Supprimer')),
     lastAdm ? el('p', { class: 'why' }, 'dernier admin : son rôle ne se retire pas') : null,
     devBox);
@@ -546,7 +546,7 @@ function manyDelete(us) {
   const go = () => {
     const names = can.filter((u) => D.sel.includes(u.id)).map((u) => u.pseudo || u.name);
     confirmBox(`Supprimer ${plural(n, 'compte', 'comptes')}`,
-      `${names.join(', ')}. Les comptes, leurs connexions et leurs places dans les Teams disparaissent, leurs pseudos redeviennent libres ; ce qu’ils ont rangé reste dans les Workspaces.`,
+      `${names.join(', ')}. Les comptes, leurs connexions et leurs places dans les Teams disparaissent, leurs pseudos redeviennent libres ; leur My Team part à la corbeille (Admin → Stockage la rend), ce qu’ils ont fait dans d’autres Teams y reste.`,
       `Supprimer ${n}`, async () => {
         D.run = true; D.out = can.filter((u) => D.sel.includes(u.id)).map((u) => ({ id: u.id, name: u.pseudo || u.name, st: 'wait', msg: '' }));
         render(true);
@@ -563,7 +563,7 @@ function manyDelete(us) {
   };
   const ST = { wait: ['no', 'en attente'], run: ['run', 'en cours'], gone: ['ok', 'supprimé'], err: ['err', 'refusé'] };
   return el('div', { class: 'card many-del' }, head2,
-    el('p', { class: 'adm-note' }, 'Coche les comptes à supprimer. Ce qu’ils ont rangé reste dans les Workspaces ; un admin ne se supprime pas d’ici.'),
+    el('p', { class: 'adm-note' }, 'Coche les comptes à supprimer. Leur My Team part à la corbeille (Stockage la rend) ; ce qu’ils ont fait ailleurs reste. Un admin ne se supprime pas d’ici.'),
     el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'cocher'),
       el('button', { class: 'tb ghost sm', type: 'button', disabled: D.run || !viaTeam.length || null,
         title: viaTeam.length ? 'les pseudos qu’un admin de Team a créés (un atelier)' : 'aucun compte créé par une Team',
@@ -1025,7 +1025,7 @@ async function loadMenage(fresh = false) {
   render(true);
 }
 function menageCard() {
-  const M = S.men ||= { open: false, data: null, init: false, loading: false, err: '', comptes: [], teams: [], strip: true, rename: true, run: false, rep: null };
+  const M = S.men ||= { open: false, data: null, init: false, loading: false, err: '', comptes: [], teams: [], strip: true, rename: true, orph: true, run: false, rep: null };
   const head2 = el('div', { class: 'card-head' }, el('span', { class: 'nm' }, 'Le grand ménage'), el('span', { class: 'chip' }, 'fresh start'),
     el('span', { class: 'sp' }),
     M.open && M.data ? el('button', { class: 'tb ghost sm', type: 'button', disabled: M.run || M.loading || null, onclick: () => loadMenage() }, 'Relire') : null,
@@ -1049,7 +1049,8 @@ function menageCard() {
   const plan = [selC.size ? `supprimer ${plural(selC.size, 'compte', 'comptes')}` : '',
     selT.size ? `détruire ${plural(selT.size, 'Team', 'Teams')} (${plural(nWs, 'Workspace', 'Workspaces')}, ${plural(nObj, 'objet ou document', 'objets et documents')} à la corbeille)` : '',
     M.strip && strip.length ? `retirer ${plural(strip.length, 'appartenance', 'appartenances')}` : '',
-    M.rename && d.renommer.length ? `renommer ${plural(d.renommer.length, 'Team personnelle', 'Teams personnelles')} « My Team »` : ''].filter(Boolean);
+    M.rename && d.renommer.length ? `renommer ${plural(d.renommer.length, 'Team personnelle', 'Teams personnelles')} « My Team »` : '',
+    M.orph && (d.orphelines || []).length ? `détruire ${plural(d.orphelines.length, 'My Team', 'My Team')} de comptes supprimés (contenu à la corbeille)` : ''].filter(Boolean);
   // rien à faire : rien de coché, ou ce qui est coché est déjà fait (personne à retirer, plus de « Chez moi »)
   const nothing = selC.size || selT.size || M.strip || M.rename ? 'rien à faire : tout est déjà en ordre' : 'coche d’abord ce qu’il faut faire';
   const box = (on, onchange, disabled, title) => el('input', { type: 'checkbox', checked: on || null, disabled: disabled || M.run || null, title: title || null, onchange });
@@ -1057,7 +1058,7 @@ function menageCard() {
     + 'un Workspace détruit se rend depuis Stockage. Ça ne s’annule pas d’ici.', 'Appliquer le ménage', async (mot) => {
     M.run = true; M.rep = null; render(true);
     try {
-      M.rep = await post('admin/menage', { comptes: M.comptes, teams: M.teams, retirer_membres: M.strip, renommer: M.rename, confirme: mot });
+      M.rep = await post('admin/menage', { comptes: M.comptes, teams: M.teams, retirer_membres: M.strip, renommer: M.rename, orphelines: M.orph, confirme: mot });
       toast(`ménage fait : ${plural(M.rep.comptes.length, 'compte supprimé', 'comptes supprimés')}, ${plural(M.rep.teams.length, 'Team détruite', 'Teams détruites')}`, 6000);
     } catch (e) { toast(e.message, 8000); }
     M.run = false;
@@ -1078,7 +1079,7 @@ function menageCard() {
       c.pending ? el('span', { class: 'chip amb', title: 'invité par un autre que toi : il attend ta validation (Demandes) — coché, il est refusé' }, 'attend cal') : null,
       el('span', { class: 'many-meta' }, [`${c.pending ? 'invité' : 'créé'} ${fmtDate(c.created)}${c.by_name ? ` par ${c.by_name}` : ''}`,
         c.teams.length ? c.teams.map((t) => t.name).join(' · ') : 'dans aucune Team',
-        c.items ? `${plural(c.items, 'objet ou document', 'objets et documents')} dans sa My Team (restent)` : ''].filter(Boolean).join(' · ')))))
+        c.items ? `${plural(c.items, 'objet ou document', 'objets et documents')} dans sa My Team (à la corbeille s’il est supprimé)` : ''].filter(Boolean).join(' · ')))))
       : el('p', { class: 'why' }, 'aucun compte créé par une Team'),
     // (b) les Teams partagées
     el('span', { class: 'lbl' }, `teams partagées · ${d.teams.length}`),
@@ -1100,6 +1101,11 @@ function menageCard() {
       el('span', { class: 'nm-s' }, 'Renommer « My Team »'),
       el('span', { class: 'many-meta', title: d.renommer.map((x) => x.owner_name).join(', ') },
         d.renommer.length ? `${plural(d.renommer.length, 'Team personnelle', 'Teams personnelles')} encore « Chez moi » : ${d.renommer.map((x) => x.owner_name).join(', ')}` : 'toutes s’appellent déjà My Team (un nom choisi reste)')),
+    // les My Team de comptes déjà supprimés (archivées avant le 09/10) : plus personne n'y habite
+    el('label', { class: 'many-row' + (M.orph ? ' on' : '') }, box(M.orph, (e) => { M.orph = e.target.checked; render(true); }, !(d.orphelines || []).length),
+      el('span', { class: 'nm-s' }, 'My Team des comptes supprimés'),
+      el('span', { class: 'many-meta', title: (d.orphelines || []).map((x) => x.owner_name).join(', ') },
+        (d.orphelines || []).length ? `${plural(d.orphelines.length, 'à détruire', 'à détruire')}, contenu à la corbeille (Stockage les rend) : ${d.orphelines.map((x) => x.owner_name).join(', ')}` : 'aucune : chaque My Team a encore son compte')),
     M.strip && lone.length ? el('p', { class: 'why' }, `${lone.map((c) => c.pseudo || c.name).join(', ')} : entré${lone.length > 1 ? 's' : ''} comme guest, sans My Team — gardé${lone.length > 1 ? 's' : ''} et retiré${lone.length > 1 ? 's' : ''} de tout, il${lone.length > 1 ? 's' : ''} n’entre${lone.length > 1 ? 'nt' : ''} plus nulle part`) : null,
     el('div', { class: 'row' }, el('span', { class: 'lbl' }, plan.length ? 'ce qu’il va faire' : nothing), el('span', { class: 'sp' }),
       el('button', { class: 'tb go', type: 'button', 'data-menage-go': '', disabled: M.run || !plan.length || null,

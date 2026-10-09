@@ -88,18 +88,19 @@ export function createVideo(app) {
     }, 260));
   }
 
-  // le « @ » du prompt (commun/arobase.js) : les jetons que lit H3 — en Références, la place dans
-  // chaque catégorie (@image1, @element1, @video1, @audio1 : commun/entrees.js, CATS) ; en Images,
-  // les étiquettes du plan du serveur (la première et la dernière image) ; en Texte, aucune entrée
+  // le « @ » du prompt (commun/arobase.js) : la grammaire commune (09/10, commun/mentions.js) — en
+  // Références, la place dans chaque catégorie (@image1, @element1, @video1, @audio1 : commun/entrees.js,
+  // CATS) ; en Images, @image1 la première image envoyée, @image2 la seconde (le serveur les compile en
+  // <Picture 1>, <Picture 2>) ; en Texte, aucune entrée
   function atChoices(v) {
     if (v.mode === 't2v') return { why: 'le mode Texte ne prend pas d’entrée : passez en Images ou en Références' };
     const F = app.flowNow();
     if (v.mode === 'i2v') {
-      // la première image puis la dernière : <Picture 1>, <Picture 2> (server/tools/movie.py, le plan)
+      // la première image puis la dernière : @image1, @image2 → <Picture 1>, <Picture 2> (server/tools/movie.py, le plan)
       const pics = [...F.take(v.id, 'start').map((e) => [e, 'la première image']), ...F.take(v.id, 'end').map((e) => [e, 'la dernière image'])].filter(([e]) => e.item);
       if (!pics.length) return { why: 'branchez une première image, une dernière, ou les deux' };
       return { toks: pics.map(([e, lab], k) => { const it = S.items.get(e.item);
-        return { tag: `<Picture ${k + 1}>`, titre: `${lab} · ${it?.title || ''}`, vignette: it?.thumb_url || (it?.kind === 'image' ? it.url : null) }; }) };
+        return { tag: `@image${k + 1}`, titre: `${lab} · ${it?.title || ''}`, vignette: it?.thumb_url || (it?.kind === 'image' ? it.url : null) }; }) };
     }
     const toks = [];
     for (const cat of SLOTS_R2V) {

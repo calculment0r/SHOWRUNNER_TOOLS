@@ -247,7 +247,10 @@ for (const theme of ['dark', 'light']) {
   await p.click('.modal .tb.go');
   await p.waitForSelector('.card.menage [role="status"]', { timeout: 20000 });
   await p.waitForTimeout(800);
-  await p.locator('.card.menage').screenshot({ path: `${OUT}/F-rapport.png` });
+  // la carte se relit après le ménage (loadMenage) : la capture reprend le nœud neuf s'il a été remplacé
+  for (let i = 0; i < 5; i++) {
+    try { await p.locator('.card.menage').screenshot({ path: `${OUT}/F-rapport.png` }); break; } catch { await p.waitForTimeout(400); }
+  }
   const users = (await c.api('admin/state')).d.users.map((u) => u.id);
   ok(!['etu-un', 'etu-deux', 'etu-trois', 'gus-guest', 'lou-attente'].some((x) => users.includes(x)) && ['cal', 'noe-studio', 'abi-apps', 'kim-ami'].every((x) => users.includes(x)),
      'F : les comptes de l’atelier supprimés, Lou refusé, les autres là');

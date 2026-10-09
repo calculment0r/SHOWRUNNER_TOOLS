@@ -279,7 +279,7 @@ existent, l'estimation se recale sur eux (même méthode).
 `GET /api/movie/loras`, `POST /api/movie/element-image`, `POST /api/movie/redo`
 `{item, same_seed}`, `POST /api/movie/frame` `{item, which: first|last}`,
 `POST /api/movie/assist`, `GET /api/movie/h3`, `POST /api/movie/h3/start|stop` ;
-travaux `movie.t2v`, `movie.i2v`, `movie.r2v`) ; `server/workflows/h3_i2v.json`,
+travaux `movie.t2v`, `movie.i2v`, `movie.r2v`) ; `server/tools/movie_invite.py` (09/10 : `POST /api/movie/apercu`, `POST /api/movie/invite`, travail `movie.invite`, § 9) ; `server/workflows/h3_i2v.json`,
 `h3_r2v.json`. Chaque vidéo garde, en plus de sa recette résolue, ses réglages
 d'envoi (`params.request`) : Réutiliser et Recréer repartent d'eux (les vidéos
 d'avant le 29/09 : refaits depuis la recette, `request_of`).
@@ -287,3 +287,185 @@ Réglages lus : `movie_engine` (`factice` | `h3`), `movie_stub_step_s`,
 `h3_min_free_gb`, `h3_idle_minutes`, `h3_service`, `h3_neighbour_port`.
 Paramètres d'URL : `?mode=t2v|i2v|r2v`, `?start=<image>`, `?ref=<id>`,
 `#<vidéo>` (ou `?id=<vidéo>`) l'ouvre en grand, `?view=cmp&a=<id>&b=<id>`.
+
+## 9. Fait le 09/10 — l'audit des références
+
+Cal, 09/10 : « on appelle nos références avec "@xxx" mais on est sûr que cela marche bien dans tous nos modèles ? en
+image j'ai l'impression que certains attendent d'autres conventions de noms … il faut que le user puisse le faire
+tout le temps de la même façon. […] regarde par exemple mon dernier essai vidéo avec ce prompt : "il mange des
+@element1 et @element2 se dispute en francais, il en viennent aux main , cinema d'action". Mon output est
+complètement nul … il n'a même pas vraiment utilisé les character sheets je pense. » Et : « on veut pouvoir
+facilement faire plusieurs résolutions, et même des plus faibles que celles proposées ».
+
+Sources relues ce jour (GitHub ; Hugging Face est fermé au conteneur) : le guide officiel d'H3,
+**MiniMax-AI/MiniMax-H3** `skills/h3-prompt-writing/` (`SKILL.md`, `references/base-en.txt`, `references/ref-en.txt`)
+et son README ; ComfyUI `comfy_extras/nodes_minimax_h3.py`, `comfy/text_encoders/minimax.py`,
+`comfy_extras/nodes_qwen.py`, `comfy/text_encoders/qwen_image21.py` ; les README de `lbouaraba/comfyui-krea2edit` et
+`lbouaraba/krea2edit-trainer`, `krea-ai/krea-2` (`docs/prompting.md`).
+
+### 9.1 La carte : où l'on nomme une référence, et ce que chaque modèle en reçoit
+
+Avant le 09/10, **trois grammaires** coexistaient : la place par sorte (`@image1`, `@element1` : Vidéo Références),
+l'étiquette du modèle tapée à la main (`<image1>` pour Qwen dans Image et Idéation ; `<Picture 1>` dans Vidéo Images
+et la carte Générer vidéo d'Idéation), et rien du tout (Krea 2 : « l'ordre suffit » ; le « @ » y était refusé).
+
+| où | avant | après |
+|---|---|---|
+| Vidéo · Références (`commun/entrees.js`, `movie._inputs`) | `@image1` `@element1` `@video1` `@audio1` → `<Subject k>`, `<Video k>`, `<Audio j>` | inchangé, par l'analyseur commun |
+| Vidéo · Images | `<Picture 1>` à la main ; un `@` refusé (« ne sert qu'en Références ») | `@image1` (la première envoyée), `@image2` → `<Picture n>` |
+| Vidéo · Multishot (`commun/multishot_texte.js`) | `@element1 (S1) says: <d>…</d>` ; « (about N seconds) », case éteinte | les mêmes répliques ; `[Shot 2] At 00:02.700,` toujours (guide § 4.2) |
+| Image · Qwen-Image 2.1 | le « @ » posait `<image1>` | `@image1`, `@element1` → `<imageN>` à sa place du carrousel |
+| Image · Krea 2 | « @ » refusé | `@…` → « the scene », puis « the subject » |
+| Image · Z-Image | « @ » refusé | refusé avant le rendu, avec la raison |
+| Idéation · cartes Générer, inspecteur | comme Image ; `<Picture n>` pour la vidéo | `@image1`, `@element1` ; `@image1` / `@image2` en vidéo Images |
+| Idéation · l'agent | aucune règle | « name a reference only by its place … @image1, @element1 » |
+
+L'analyseur commun : `server/core/mentions.py` (et `commun/mentions.js`, le même motif) ; chaque outil tient la table
+de ses places vers la convention de son modèle (`docs/ARCHITECTURE.md`, « Les mentions »). Une mention qui ne pointe
+vers rien — une place vide, une référence grisée, un modèle sans référence — est refusée avant le rendu.
+
+Les conventions **documentées** :
+
+| modèle | ce qu'il lit | source |
+|---|---|---|
+| MiniMax H3 | `<Picture i>`, `<Video k>`, `<Audio j>`, 1-based par sorte, dans l'ordre images, vidéos (la bande-son juste avant sa vidéo), sons ; `<Subject N>` pour un contenu défini dans `subject_definitions` | `minimax.py` : « "<Picture %d>: " » devant chaque bloc de vision ; le nœud : « Use the same tags when prompting » ; `ref-en.txt` § 2 |
+| Qwen-Image 2.1 | `<image1>`, `<image2>`… dans l'ordre d'envoi | `qwen_image21.py` : `"<image{}>…".format(i + 1)` devant chaque image |
+| Qwen-Image-Edit 2511 | « Picture 1: » | `TextEncodeQwenImageEditPlus` ; chez nous l'outil Angle, sans prompt libre |
+| Krea 2 Identity Edit | aucune étiquette : la scène (`source_latent`), le sujet (`source_latent_b`) ; des consignes en langage courant | README comfyui-krea2edit ; krea2edit-trainer : « The caption is the instruction ("place her on a beach at sunset") » |
+| Z-Image | aucune image d'entrée | § 3 de image.md |
+
+Ce que le guide d'H3 demande et que le portail ne faisait pas (ou mal) : **tout en anglais** sauf les répliques dans
+`<d>` et le texte visible (« Write all six rewrite sections in English ») ; 350 à 500 mots de description, plan par
+plan ; `[Shot 2] At 00:03.500,` pour chaque plan suivant ; un locuteur `(S1)` par voix, `(S1,S2)` ensemble, la voix de
+référence liée à son sujet (« <Audio 1> is the voice-timbre reference for <Subject 1> (S1) ») ; les vidéos et les sons
+définis dans `subject_definitions` avec leur ligne de rétention ; « appears in » les plans réels ; les lignes
+d'ancrage FL2VA et L2VA (« How the reference pictures align with the target video — … ») ; « field: … » sur la même
+ligne en mode de base. Et le README : la version ouverte d'H3 n'inclut pas **H3-Context-IR**, le réécrivain de son
+pipeline — « H3-Context-IR is critical to the quality of the final output, so we strongly recommend incorporating it
+into your generation pipeline or following the "Prompting Guidance" to build your own context-processing system ».
+
+### 9.2 L'essai de Cal, rejoué par le vrai chemin de compilation
+
+Deux personnages de Character Factory (visage verrouillé, un look, deux tenues, des expressions, une voix : la forme de
+`core_api._walk_cf`), Brouillon, 124 images. Ce que H3 recevait (extrait, mot pour mot) :
+
+```text
+subject_definitions:
+<Subject 1> is Marc, male, 34, Mediterranean, athletic, 1m82. Visage carré, barbe de trois jours, cheveux noirs
+courts. Costume bleu marine, chemise blanche. Colérique, loyal. Style : Painterly digital painting, cinematic light,
+whose face, hair, age and identity come from <Picture 1>, and whose body proportions and outfit come from <Picture 2>.
+<Subject 2> is Léa, …
+summary:
+[reference generation] il mange des <Subject 1> et <Subject 2> se dispute en francais, il en viennent aux main ,
+cinema d'action. <Audio 1> is the voice reference of <Subject 1>: timbre, tone and delivery only, never its words.
+retention_analysis: …
+detailed_description:
+r34l1sm. DY. [Shot 1] il mange des <Subject 1> et <Subject 2> se dispute en francais, il en viennent aux main ,
+cinema d'action
+overall_soundscape:
+Natural diegetic sound of the scene, in sync with the action on screen.
+non_diegetic_music:
+N/A
+```
+
+Images envoyées : **quatre**, `<Picture 1>` visage de Marc, `<Picture 2>` son premier plein pied, `<Picture 3>` et
+`<Picture 4>` de même pour Léa ; toile 1536 × 640 en deux étages depuis 768 × 320 ; 5,17 s ; 8 pas. Pourquoi c'est
+mauvais, cause par cause :
+
+1. **La langue.** Tout est en français (la description, le résumé, la définition de chaque personnage) ; le guide veut
+   l'anglais partout sauf dans `<d>`. Qwen3-VL lit le français, mais H3 a appris sur des réécritures anglaises.
+2. **La grammaire.** « il mange des `<Subject 1>` et `<Subject 2>` se dispute » se lit « il mange des Sujet 1 » : les
+   personnages deviennent le plat ; « il » n'est personne ; « se dispute » n'a pas de sujet.
+3. **Aucune structure.** 18 mots pour 350 à 500 attendus ; manger, se disputer et se battre dans un seul plan de 5,17 s,
+   sans cadre, sans caméra, sans lieu, sans lumière ; « cinema d'action » est un mot abstrait (« Prefer concrete visual
+   and audio details over abstract words like "cinematic" ») ; et la définition de Marc ajoute « Style : Painterly
+   digital painting » (le style de sa fiche) : un tableau, pas du cinéma.
+4. **Pas une réplique.** « se dispute en français » sans les mots : H3 ne dit que ce qui est écrit dans
+   `<d>[French] …</d>` (« Inside <d>, include only … the actual user-provided spoken content ») ; la voix de Marc
+   (`<Audio 1>`) était une référence de timbre pour une voix que rien ne faisait parler.
+5. **Les images des personnages.** Un personnage de Character Factory n'a ni la planche « corps 3 vues visage
+   masqué » ni les 5 crops « .char » (REPRISE § 2.F) : il envoie son visage verrouillé et le plein pied de sa première
+   tenue, rien d'autre — ses expressions, ses looks, ses autres tenues ne partent pas. Les « character sheets » de Cal
+   (les planches de ses scripts) ne sont pas dans ces éléments. Et deux personnages complets (5 + 5 images)
+   auraient été **refusés** : H3 prend 9 images.
+6. **Le Multishot** écrivait des plans sans temps de coupe, et le résumé recopiait toute la description (plans et
+   répliques compris) ; la rétention mettait chaque sujet dans tous les plans.
+
+### 9.3 Ce qui change
+
+- **Une grammaire** (§ 9.1), un analyseur, une table par modèle, le refus avant le rendu.
+- **La mise en forme de l'invite** (`server/tools/movie_invite.py`) : le réécrivain que le README recommande, en local.
+  Le modèle de texte (Ollama, le modèle de l'agent d'Idéation ; travail `movie.invite`, le jeton GPU de sa machine,
+  déchargé après) reçoit l'intention de la personne, la durée, la toile, chaque entrée (ce qu'elle est, sa
+  description), la langue des répliques (choisie, nommée — « en français » —, sinon celle du texte), le découpage du
+  Multishot s'il existe, et des règles tirées du guide. Il rend un objet structuré (schéma JSON ; les jetons des
+  sujets en liste fermée) : le style, l'apparence de chaque sujet en anglais, les plans (début, description, répliques :
+  qui, langue, mots, ton), le son, la musique, le résumé. **La forme est du code** : `[Shot n] At MM:SS.mmm,` (les débuts
+  relus : premier à 0, croissants, dans la durée ; sinon parts égales, et c'est dit), `(S1)`, `(S2)` dans l'ordre des
+  premières répliques, `<d>[French] …</d>` sans un mot changé, le style avant `[Shot 1]` en Références et après en mode
+  de base. Le résultat remplit les champs de la page (`desc`, `sound`, `music`, `subjects` — les définitions en
+  anglais —, `summary`) : la personne relit, corrige, puis lance. Sans modèle de texte, le gabarit (le texte gardé, en
+  plans, temps posés) et la raison. `POST /api/movie/apercu` montre à tout moment ce que H3 recevra, avec ses
+  vérifications (mentions, entrées citées, langue, plans et temps, répliques, longueur, images de chaque élément,
+  toile).
+- **La compilation pour H3** suit le guide mot pour mot : lignes d'ancrage I2VA, FL2VA, L2VA ; « field: » sur la même
+  ligne ; vidéos et sons dans `subject_definitions` et `retention_analysis` ; la voix d'un élément reprend le `(Sx)` de
+  son sujet ; « appears in » les plans où le sujet est écrit ; le résumé est la première phrase du premier plan sans
+  ses répliques (ou celui de la mise en forme) ; un temps de coupe hors de la durée bloque le rendu ; un texte français
+  est signalé, comme la description française d'un élément.
+- **Les images des éléments** : les 9 places se partagent (`movie.fit_budget`) — chacun garde d'abord son identité
+  (la planche, le visage de face, le plein pied, le haut de la tenue, le 3/4…), on retire à celui qui en a le plus
+  sa pièce la moins utile, jamais la dernière, et c'est dit. Deux personnages complets : 5 + 4 (le second laisse son
+  dos en Qualité, son 3/4 sourire en Brouillon). Aucun guide ne documente ce partage : **décision du portail**, à
+  juger au rendu.
+- **L'échelle des toiles** (`movie.scale`, `/api/movie/options` → `scale`, et dans chaque plan) : un format, puis un
+  préréglage. Deux préréglages plus petits : **Esquisse** — le premier étage du Brouillon (768 × 320 au 2,4:1), rendu
+  seul : sa toile est déjà rendue par la recette validée de Cal — et **Léger** (le double de son aire, un étage). Les
+  aires de la recette au 2,4:1, reportées à chaque format, en multiples de 32 (le nœud : min 32, pas 32 ; aucun autre
+  plafond, `MAX_PIXELS` ne servant qu'à `adapt_canvas`) ; le Brouillon est le double exact de l'Esquisse :
+
+| format | Esquisse (1 étage) | Léger (1 étage) | Brouillon (2 étages) | Qualité (1 étage) |
+|---|---|---|---|---|
+| 2,4:1 | 768 × 320 · ≈ 1,2–1,7 min | 1152 × 480 · 2,1–3,0 | 1536 × 640 · 3,6–5,2 | 1920 × 800 · 7,3–10,3 |
+| 21:9 | 736 × 320 | 1120 × 480 | 1472 × 640 | 1792 × 768 |
+| 16:9 | 672 × 384 | 1024 × 576 | 1344 × 768 (la toile par défaut du nœud) | 1536 × 864 |
+| 4:3 | 608 × 448 | 896 × 672 | 1216 × 896 | 1408 × 1056 |
+| 1:1 | 480 × 480 | 736 × 736 | 960 × 960 | 1248 × 1248 |
+| 3:4 | 448 × 608 | 672 × 896 | 896 × 1216 | 1056 × 1408 |
+| 9:16 | 384 × 672 | 576 × 1024 | 768 × 1344 (le plafond cité) | 864 × 1536 |
+
+  Temps pour 124 images à 8 pas, à l'échelle des rendus de Cal (l'Esquisse et le Léger à la vitesse du Brouillon :
+  **non mesurés**). Le paramètre `format` du plan choisit la ligne ; « Paramètres avancés » garde sa toile libre.
+- **Admin → Diagnostics → « Rendus · ce que le modèle a reçu »** (`tools/diag_rendus.py`) : pour les dernières vidéos,
+  le préréglage, la toile et ses étages, ce que la personne a écrit, les mentions, chaque sujet, les images envoyées
+  dans l'ordre de `ref_images` (de quel élément, quelle pièce), les vidéos, les sons, ce que le plan a dit avant le
+  rendu, le graphe, puis l'invite en entier ; pour les dernières images, le modèle, les références dans l'ordre, le
+  prompt écrit et le prompt envoyé. La recette d'une vidéo garde désormais ses sujets, ses remarques et son format.
+
+Le même essai, après (le faux modèle de texte du contrôle, pour la forme ; le vrai rédige le contenu) :
+
+```text
+detailed_description:
+r34l1sm. DY. Live-action, cinematic action film look with hard daylight, high contrast and a handheld camera.
+[Shot 1] Wide shot of a small kitchen table at noon: <Subject 1> and <Subject 2> sit facing each other over steaming
+bowls of noodles, eating with chopsticks. The camera holds a static shot.
+[Shot 2] At 00:02.700, Medium close-up on <Subject 1>, who slams his bowl down … <Subject 1> (S1) shouts angrily:
+<d>[French] Tu as encore pris ma part !</d> <Subject 2> (S2) snaps back: <d>[French] C'est faux, menteur !</d>
+[Shot 3] At 00:05.300, <Subject 1> and <Subject 2> stand up and grapple, the table tips over …
+```
+
+### 9.4 Ce qui reste, ce qui n'est pas vérifié
+
+- **La mise en forme n'a pas tourné sur le vrai modèle** (le conteneur n'a pas d'Ollama) : à essayer sur DGX2 avec
+  l'invite de Cal (temps de l'appel, anglais, longueur, répliques), puis un rendu A/B : le texte de Cal tel quel contre
+  sa mise en forme, même graine, Esquisse puis Brouillon.
+- **Esquisse, Léger et les formats autres que 2,4:1 n'ont jamais été rendus** : la qualité d'H3 à 0,25 Mpx, et les toiles
+  de la Qualité au-delà de 768 de petit côté (16:9 : 864 ; 4:3 : 1056), sont à voir ; les temps sont extrapolés.
+- **Le partage des 9 images** et les mots « the scene » / « the subject » de Krea 2 sont des décisions (aucune
+  documentation) : à juger aux rendus.
+- **Les personnages de Character Factory** n'ont toujours ni planche masquée ni crops `.char` : le studio ne les fait
+  pas ; tant qu'ils manquent, H3 ne reçoit que leur visage et leur premier plein pied (le diagnostic le montre).
+- La page Vidéo (l'agent « video-ux ») doit afficher l'aperçu et le bouton de mise en forme : `POST /api/movie/apercu`,
+  `POST /api/movie/invite` (le travail, son `result.invite`), `scale` d'`/api/movie/options`.
+- Vu en passant, non corrigé : un Brouillon sur une toile avancée dont un côté n'est pas multiple de 64 (1920 × 800,
+  864 × 480) a un premier étage qui n'est pas la moitié exacte de la toile (960 × 384 pour 1920 × 800).

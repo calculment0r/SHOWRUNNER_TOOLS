@@ -101,7 +101,7 @@ def set_user(req, uid):
 def supprimer_compte(uid: str, by: str) -> dict:
     """Le seul chemin de la suppression d'un compte — Admin → Personnes → Supprimer, et le ménage
     (server/tools/equipes.py, D7) : ses travaux en file s'en vont, ses connexions se ferment, il sort
-    des Teams ; ce qu'il a rangé reste dans les Workspaces (espaces.forget_user)."""
+    des Teams ; sa My Team part à la corbeille, ce qu'il a fait ailleurs reste où il est (espaces.forget_user)."""
     gone = auth.delete_user(uid, by)   # les refus d'abord : un refus ne retire aucun travail
     for j in jobs.listing(active=True, limit=10 ** 6):
         if j.get("owner") == uid and j["state"] == "queued":
@@ -387,6 +387,10 @@ DIAGS = {   # id : (nom court, ce qu'il dit, commande, délai en s, action ?)
                      150, False),
     "agent": ("Agent Showrunner", "le modèle de l'agent d'Idéation dans Ollama (/api/show) : tools et vision dans ses capacités, sa fenêtre de contexte",
               ["python3", "tools/diag_agent.py"], 90, False),
+    # 09/10 : l'audit des références (docs/etudes/movie.md) — « H3 ne comprenait pas bien » : copier ce qu'il a reçu
+    "rendus": ("Rendus · ce que le modèle a reçu", "les derniers rendus vidéo et image : l'invite compilée, les références et "
+               "images envoyées dans l'ordre, les sujets et leur définition, le préréglage, la toile",
+               ["python3", "tools/diag_rendus.py", "6"], 60, False),
 }
 _runs: dict = {}
 _runs_lock = threading.Lock()

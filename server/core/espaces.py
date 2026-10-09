@@ -721,7 +721,7 @@ def teams_of(u, *, detail: bool = False, everyone: bool = False) -> list[dict]:
         db = _data()
         uid = _uid(u)
         ids = [tid for tid, t in db["teams"].items()
-               if uid in t.get("members", {}) or (everyone and auth.is_admin(u))]
+               if uid in t.get("members", {}) or (everyone and auth.is_admin(u) and not orphan_home(t))]
         out = [_team_public(db, u, tid, detail) for tid in ids]
     # les Teams partagées, puis sa My Team, puis celles des autres (D2 : on peut être dans la My Team d'un autre)
     return sorted(out, key=lambda t: (bool(t["archived"]), t["personal"], t["personal"] and t["owner"] != uid, t["label"].lower()))
@@ -1184,10 +1184,12 @@ def remove_member(u, tid: str, uid: str) -> dict:
 
 def forget_user(uid: str) -> dict:
     """Un compte détruit (auth.delete_user) : il sort de toutes les Teams et de tous les Workspaces
-    où il n'était que membre. Sa Team personnelle (My Team) est archivée (ses objets restent,
-    dans leurs Workspaces, à la Team) ; une Team qu'il possédait passe à son premier admin, sinon
-    à son premier membre, sinon elle est archivée. Rien n'est effacé du disque."""
-    out = {"teams": 0, "archivees": 0, "transmises": 0}
+    où il n'était que membre. Sa Team personnelle (My Team) est détruite comme une Team (destroy_team :
+    son contenu à la corbeille, que Cal rend depuis Admin → Stockage) — Cal, 09/10 : elle ne doit plus
+    rester listée sous un compte qui n'existe plus ; une Team qu'il possédait passe à son premier admin,
+    sinon à son premier membre, sinon elle est archivée. Rien n'est effacé du disque."""
+    out = {"teams": 0, "archivees": 0, "transmises": 0, "detruites": 0}
+    homes: list[str] = []
     with _lock:
         db = _data()
         for t in db["teams"].values():
@@ -1198,7 +1200,9 @@ def forget_user(uid: str) -> dict:
             if t.get("owner") == uid:
                 rest = {k: v for k, v in (t.get("members") or {}).items() if k != uid}
                 heir = next((k for k, v in rest.items() if v.get("role") == "admin"), None) or next(iter(rest), None)
-                if t.get("personal") or not heir:
+                if t.get("personal"):   # sa My Team : détruite plus bas (corbeille), plus archivée en vue de tous
+                    homes.append(t["id"])
+                elif not heir:
                     t["archived"] = t.get("archived") or now_iso()
                     out["archivees"] += 1
                 else:
@@ -1210,6 +1214,18 @@ def forget_user(uid: str) -> dict:
             (sp.get("members") or {}).pop(uid, None)
         db["users"].pop(uid, None)
         _save()
+    for tid in homes:   # le compte est déjà parti (auth.delete_user d'abord) : sa My Team est orpheline
+        try:
+            destroy_team(None, tid, typed=False)
+            out["detruites"] += 1
+        except HttpError as e:   # une My Team qui ne se détruit pas reste archivée, comme avant
+            with _lock:
+                db = _data()
+                if tid in db["teams"]:
+                    db["teams"][tid]["archived"] = db["teams"][tid].get("archived") or now_iso()
+                    _save()
+            out["archivees"] += 1
+            auth.journal("compte détruit : sa My Team est restée archivée", team=tid, why=e.message)
     return out
 
 
@@ -1408,13 +1424,27 @@ def _destroy_space_why(db: dict, u, sid: str) -> tuple[int, str] | None:
     return None
 
 
+def orphan_home(t: dict | None) -> bool:
+    """Une My Team dont le compte n'existe plus (Cal, 09/10 : « j'ai détruit des persos mais leurs noms
+    apparaissent encore en bas des Teams ») — jamais celle de Cal (`auth.user` rend Cal même sans fiche)."""
+    return bool(t) and bool(t.get("personal")) and auth.user(t.get("owner")) is None
+
+
+def orphan_homes() -> list[dict]:
+    """Les My Team de comptes supprimés qui restent (archivées par forget_user avant le 09/10) : le ménage
+    les détruit (leur contenu à la corbeille, que Cal rend depuis Stockage), les listes ne les montrent plus."""
+    with _lock:
+        teams = [dict(t) for t in _data()["teams"].values()]
+    return [{"id": t["id"], "name": t.get("name"), "owner": t.get("owner")} for t in teams if orphan_home(t)]
+
+
 def _destroy_team_why(db: dict, u, tid: str) -> tuple[int, str] | None:
     """Pourquoi cette Team ne se détruit pas, ou None : son propriétaire ou Cal ; jamais une Team
     personnelle (la maison du compte), jamais celle de l'instance (Nirvalab, qui porte Général)."""
     t = db["teams"].get(tid or "")
     if not t:
         return 404, f"Team inconnue : {tid}"
-    if t.get("personal"):
+    if t.get("personal") and not orphan_home(t):   # celle d'un compte supprimé, si : plus personne n'y habite
         return 409, "My Team ne se détruit pas : c'est la maison du compte — détruis ses Workspaces (elle en garde un)"
     if tid == NIRVALAB or tid == (db["spaces"].get(db.get("default") or "") or {}).get("team"):
         return 409, "c'est la Team de l'instance (Nirvalab, qui porte Général) : elle ne se détruit pas"
