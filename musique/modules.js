@@ -157,12 +157,15 @@ export const MODULES = {
       P('att', 'Attaque', 0.25, 8, 1, '×', 'log'),
       P('rel', 'Chute', 0.25, 8, 1, '×', 'log'),
       P('dyn', 'Dynamique', 0, 1, 1, ''),
-      // −12 dB : les cartographies de VCSL relèvent chaque zone jusqu'à son plein niveau
-      // (« volume » de +7 à +37 dB) ; une note forte crête vers −4 dBFS, un accord dépasserait
-      P('vol', 'Volume', -40, 6, -12, 'dB'),
+      // −8 dB : les cartographies de VCSL relèvent chaque zone jusqu'à son plein niveau
+      // (« volume » de +7 à +37 dB) ; une note forte seule crête vers −4 dBFS, un accord
+      // dépasserait. À −8, la phrase d'écoute d'un clavier crête de −9 à −12 dBFS (mesuré)
+      P('vol', 'Volume', -40, 6, -8, 'dB'),
       ...ARP_PARAMS,
     ],
     face: ['transpo', 'rel', 'dyn', 'vol'],
+    // les attracteurs (musique/facettes.js) : la sorte de chaque réglage continu
+    sortes: { transpo: 'hauteur', accord: 'desaccord', att: 'enveloppe', rel: 'enveloppe', dyn: 'dynamique', vol: 'niveau', arp_oct: 'hauteur', arp_gate: 'duree' },
   },
   player: {
     name: 'Lecteur', kind: 'clips audio', role: 'source', color: 'grn2',
@@ -278,10 +281,20 @@ const ODIO = {
   acid: { cls: AcidBass, name: 'Basse acide', kind: '303 · filtre 18 dB', role: 'source', color: 'grn2', face: ['cutoff', 'resonance', 'envMod', 'decay'], trim: -12 },
   plaits: { cls: PlaitsSynth, name: 'Numérique', kind: 'Plaits · wasm', role: 'source', color: 'coral-2', face: ['modele', 'harmo', 'timbre', 'morph'], trim: -2 },
   // pas d'ODIO_01 : écrit ici sur son contrat (musique/plaits/macro.js, docs/etudes/odio_synthes.md)
-  macro: { cls: MacroPlaits, name: 'Macro', kind: 'Plaits · 24 moteurs', role: 'source', color: 'coral-3', face: ['moteur', 'harmo', 'timbre', 'morph'], trim: 0 },
+  macro: { cls: MacroPlaits, name: 'Macro', kind: 'Plaits · 24 moteurs', role: 'source', color: 'coral-3', face: ['moteur', 'harmo', 'timbre', 'morph'], trim: 0,
+    // les sortes du lot « odio-attracteurs », et l'enveloppe de filtre neuve (09/10, plaits/macro.js)
+    sortes: { harmo: 'forme', timbre: ['forme', 'brillance'], morph: 'forme', aux: 'forme', declin: 'enveloppe', couleur: 'forme',
+      cutoff: 'coupure', resonance: 'resonance', envAmount: 'enveloppe', attack: 'enveloppe', decay: 'enveloppe', sustain: 'enveloppe', release: 'enveloppe', gain: 'niveau' } },
   // 09/10 : Rings et Elements, compilés comme Plaits (musique/mutable/, docs/etudes/odio_synthes.md § 7)
-  resonateur: { cls: Resonateur, name: 'Résonateur', kind: 'Rings · modal, cordes', role: 'source', color: 'amb', face: ['structure', 'brillance', 'amorti', 'position'], trim: 0 },
-  physique: { cls: Physique, name: 'Physique', kind: 'Elements · archet, souffle, frappe', role: 'source', color: 'grn2', face: ['geometrie', 'brillance', 'amorti', 'position'], trim: 0 },
+  // `trim` : mesuré sur leurs préréglages (docs/etudes/odio_synthes.md § 7) — le module sort
+  // ses résonances plus bas que les autres instruments (Rings), ou plus haut (Elements)
+  // `sortes` : la sorte de chaque réglage continu, pour les attracteurs (la règle du lot
+  // « odio-attracteurs », musique/facettes.js) ; les choix (modèle, polyphonie…) sont discrets
+  resonateur: { cls: Resonateur, name: 'Résonateur', kind: 'Rings · modal, cordes', role: 'source', color: 'amb', face: ['structure', 'brillance', 'amorti', 'position'], trim: 8,
+    sortes: { structure: 'forme', brillance: 'coupure', amorti: 'enveloppe', position: 'forme', largeur: 'pano', gain: 'niveau' } },
+  physique: { cls: Physique, name: 'Physique', kind: 'Elements · archet, souffle, frappe', role: 'source', color: 'grn2', face: ['geometrie', 'brillance', 'amorti', 'position'], trim: -6,
+    sortes: { contour: 'enveloppe', archet: 'forme', archet_t: 'forme', souffle: 'forme', flux: 'forme', souffle_t: 'forme', frappe: 'forme', maillet: 'forme',
+      frappe_t: 'forme', geometrie: 'forme', brillance: 'coupure', amorti: 'enveloppe', position: 'forme', espace: 'espace', gain: 'niveau' } },
   reverbe: { cls: ReverbEffect, name: 'Réverbe', kind: 'rvb-02 · convolution', role: 'effect', color: 'cy', face: ['size', 'decay', 'mix'] },
   chorus: { cls: ChorusEffect, name: 'Chorus', kind: 'chr-04 · trois retards', role: 'effect', color: 'cy', face: ['rate', 'depth', 'mix'] },
   rtt: { cls: DelayEffect, name: 'RTT-01', kind: 'délai · filtre en boucle', role: 'effect', color: 'amb', face: ['time', 'fdb', 'mix'] },

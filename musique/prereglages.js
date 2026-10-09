@@ -51,6 +51,9 @@ const R = (id, name, sub, params) => ({ id, type: 'rythme', cat: 'kit', name, su
 const D = (id, name, sub, params) => ({ id, type: 'drums', cat: 'kit', name, sub, params });
 const E = (id, name, sub, params) => ({ id, type: 'sampler', cat: 'env', name, sub, params });
 const M = (id, cat, name, sub, params) => ({ id, type: 'macro', cat, name, sub, params });
+// 09/10 : le Résonateur (Rings) et Physique (Elements), musique/mutable/
+const RS = (id, cat, name, sub, params) => ({ id, type: 'resonateur', cat, name, sub, params });
+const PH = (id, cat, name, sub, params) => ({ id, type: 'physique', cat, name, sub, params });
 // Macro, moteurs FM-6 : un patch DX7 d'une des trois banques de Plaits
 // (plaits/macro.js, PATCHS_FM : leurs noms lus dans les données ; harmoDuPatch :
 // HARMO au milieu de la case du patch). MORPH étire
@@ -283,6 +286,35 @@ export const BANQUE = [
   M('mc-particules', 'fx', 'Particules', 'grains filtrés', { moteur: 18, harmo: 0.5, timbre: 0.6, morph: 0.5, sustain: 1, release: 1 }),
   M('mc-essaim', 'fx', 'Essaim', 'huit scies qui dérivent', { moteur: 16, harmo: 0.5, timbre: 0.4, morph: 0.5, attack: 0.4, sustain: 1, release: 1.5, gain: 0.48 }),
   M('mc-arp', 'arp', 'Arpège marimba', 'FM-6 · MARIMBA · monte en doubles croches', fm(2, 17, { arp: 1, arp_div: 3, arp_oct: 2, arp_gate: 0.6, gain: 0.64 })),
+
+  // ── le Résonateur (Rings, mutable/resonateur.js : modèle 0 modal, 1 cordes sympathiques,
+  // 2 corde, 3 voix FM, 4 sympathiques en accords, 5 corde et réverbe, 6..11 le synthé de
+  // cordes caché et ses effets ; polyphonie 0/1/2 = 1, 2, 4 notes ; accords de Bryan Noll) ──
+  RS('rs-cloche', 'cloche', 'Cloche modale', 'modal · métal', { modele: 0, structure: 0.32, brillance: 0.75, amorti: 0.72, position: 0.3, gain: 0.32 }),
+  RS('rs-verre', 'cloche', 'Verre', 'modal · inharmonique', { modele: 0, structure: 0.82, brillance: 0.85, amorti: 0.78, position: 0.2, gain: 0.87 }),
+  RS('rs-bois', 'pluck', 'Lame de bois', 'modal · bois, court', { modele: 0, structure: 0.18, brillance: 0.35, amorti: 0.42, position: 0.18, gain: 0.55 }),
+  RS('rs-peau', 'perc', 'Peau', 'modal · tambour accordé', { modele: 0, structure: 0.06, brillance: 0.28, amorti: 0.3, position: 0.12, gain: 0.61 }),
+  RS('rs-corde', 'pluck', 'Corde pincée', 'corde · Karplus-Strong étendu', { modele: 2, structure: 0.25, brillance: 0.6, amorti: 0.58, position: 0.22, gain: 0.26 }),
+  RS('rs-basse', 'basse', 'Basse pincée', 'corde · grave, sèche', { modele: 2, structure: 0.25, brillance: 0.32, amorti: 0.5, position: 0.15, poly: 0, gain: 0.96 }),
+  RS('rs-sitar', 'pluck', 'Cordes sympathiques', 'cordes · le chevalet courbe', { modele: 1, structure: 0.55, brillance: 0.7, amorti: 0.72, position: 0.3, gain: 0.13 }),
+  RS('rs-harpe', 'arp', 'Harpe à accords', 'cordes sympathiques · mineur', { modele: 4, accord: 3, structure: 0.4, brillance: 0.62, amorti: 0.74, position: 0.35, arp: 1, arp_div: 3, arp_oct: 2, arp_gate: 0.6, gain: 0.23 }),
+  RS('rs-fm', 'cloche', 'Cloche FM', 'voix FM · deux opérateurs', { modele: 3, structure: 0.42, brillance: 0.55, amorti: 0.65, position: 0.25, gain: 0.22 }),
+  RS('rs-reverbe', 'nappe', 'Corde et réverbe', 'corde · sa réverbe', { modele: 5, structure: 0.25, brillance: 0.5, amorti: 0.82, position: 0.55, gain: 0.55 }),
+  RS('rs-ensemble', 'nappe', 'Cordes cachées', 'le synthé de cordes · ensemble', { modele: 10, accord: 0, structure: 0.35, brillance: 0.55, amorti: 0.75, position: 0.5, gain: 0.92 }),
+  RS('rs-formant', 'nappe', 'Cordes qui chantent', 'le synthé de cordes · formants', { modele: 6, accord: 0, structure: 0.5, brillance: 0.5, amorti: 0.8, position: 0.4, gain: 0.52 }),
+
+  // ── Physique (Elements, mutable/physique.js : résonateur 0 modal, 1 corde, 2 cordes, 3 la
+  // voix cachée ; MAILLET : des échantillons de maillets, puis des modèles de maillets, de
+  // plectres, de particules — son manuel) ──
+  PH('ph-archet', 'nappe', 'Archet', 'archet · corde frottée', { resonateur: 1, contour: 0.75, archet: 0.8, archet_t: 0.45, frappe: 0, geometrie: 0.3, brillance: 0.5, amorti: 0.55, position: 0.25, espace: 0.55, gain: 0.94 }),
+  PH('ph-souffle', 'lead', 'Souffle', 'souffle · tube', { contour: 0.65, souffle: 0.85, flux: 0.4, souffle_t: 0.5, frappe: 0, geometrie: 0.45, brillance: 0.55, amorti: 0.5, position: 0.3, espace: 0.5, gain: 0.26 }),
+  PH('ph-cloche', 'cloche', 'Bol frappé', 'frappe · bol de métal', { frappe: 0.9, maillet: 0.3, frappe_t: 0.7, geometrie: 0.85, brillance: 0.8, amorti: 0.75, position: 0.3, espace: 0.6, gain: 0.54 }),
+  PH('ph-marimba', 'pluck', 'Marimba physique', 'frappe · lame de bois', { frappe: 0.8, maillet: 0.25, frappe_t: 0.4, geometrie: 0.62, brillance: 0.35, amorti: 0.45, position: 0.25, espace: 0.4, gain: 0.6 }),
+  PH('ph-pince', 'pluck', 'Plectre', 'frappe · corde au plectre', { resonateur: 1, frappe: 0.85, maillet: 0.65, frappe_t: 0.55, geometrie: 0.3, brillance: 0.6, amorti: 0.6, position: 0.2, espace: 0.45, gain: 0.34 }),
+  PH('ph-tambour', 'perc', 'Tambour', 'frappe · plaque, court', { frappe: 0.95, maillet: 0.15, frappe_t: 0.4, geometrie: 0.05, brillance: 0.25, amorti: 0.32, position: 0.15, espace: 0.35, gain: 0.66 }),
+  PH('ph-nappe', 'nappe', 'Cordes frottées', 'archet et souffle · cordes, espace', { resonateur: 2, contour: 0.85, archet: 0.6, souffle: 0.3, flux: 0.6, frappe: 0, geometrie: 0.3, brillance: 0.45, amorti: 0.8, position: 0.3, espace: 0.85, gain: 0.7 }),
+  PH('ph-particules', 'fx', 'Particules', 'frappe · particules qui rebondissent', { frappe: 0.85, maillet: 0.95, frappe_t: 0.6, geometrie: 0.7, brillance: 0.7, amorti: 0.8, position: 0.4, espace: 0.9, gain: 0.83 }),
+  PH('ph-verre', 'fx', 'Verre soufflé', 'souffle · coupe de verre', { contour: 0.7, souffle: 0.6, flux: 0.8, souffle_t: 0.7, frappe: 0, geometrie: 0.92, brillance: 0.85, amorti: 0.88, position: 0.35, espace: 0.7, gain: 0.67 }),
 
   // ── Échantillonneur : des enveloppes, qui gardent le son posé ──
   E('ech-coup', 'Coup', 'attaque nette · chute courte', { a: 0.001, r: 0.05 }),

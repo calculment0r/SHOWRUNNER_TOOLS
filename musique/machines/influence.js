@@ -42,10 +42,6 @@ export const FACETTES_MODULES = {
   'plaits.timbre': 'brillance', 'plaits.harmo': 'matière', 'plaits.morph': 'matière', 'plaits.cutoff': 'brillance', 'plaits.resonance': 'matière',
   'sampler.root': 'tonalité',
   'rythme.drive': 'matière',
-  // le Résonateur (Rings) et Physique (Elements), 09/10 : la brillance est la brillance ; le reste, la matière
-  'resonateur.brillance': 'brillance', 'resonateur.structure': 'matière', 'resonateur.amorti': 'matière', 'resonateur.position': 'matière',
-  'physique.brillance': 'brillance', 'physique.geometrie': 'matière', 'physique.amorti': 'matière', 'physique.position': 'matière',
-  'physique.archet': 'matière', 'physique.souffle': 'matière', 'physique.frappe': 'accents',
   'filtre.cutoff': 'brillance', 'filtre.reso': 'matière', 'filtre.drive': 'matière',
   'satura.drive': 'matière', 'crush.bits': 'matière', 'eq3.high': 'brillance',
 };

@@ -40,7 +40,8 @@ export const ACCORDS = ['Octave', 'Quinte', 'Sus4', 'Mineur', 'm7', 'm9', 'm11',
 const PROCESSEUR = 'odio-resonateur';
 const PARAMETERS = [
   { id: 'modele', label: 'modèle', min: 0, max: MODELES.length - 1, default: 0, curve: 'choice', choices: MODELES },
-  { id: 'poly', label: 'polyphonie', min: 0, max: 3, default: 3, curve: 'choice', choices: ['1', '2', '3', '4'] },
+  // une, deux ou quatre notes, comme le module (son manuel : « monophonic, duophonic and quadriphonic »)
+  { id: 'poly', label: 'polyphonie', min: 0, max: 2, default: 2, curve: 'choice', choices: ['1', '2', '4'] },
   { id: 'accord', label: 'accord', min: 0, max: ACCORDS.length - 1, default: 3, curve: 'choice', choices: ACCORDS },
   { id: 'structure', label: 'structure', min: 0, max: 1, default: 0.25, curve: 'linear' },
   { id: 'brillance', label: 'brillance', min: 0, max: 1, default: 0.6, curve: 'linear' },
@@ -70,7 +71,7 @@ class ResonateurProcessor extends AudioWorkletProcessor {
     this.g = new Float32Array(this.B); this.d = new Float32Array(this.B)
     this.file = new FileStereo(this.fsIn, sampleRate)
     // la cible et la valeur lue (les potentiomètres du module : 1 % par bloc)
-    this.r = { modele: 0, poly: 3, accord: 3, structure: 0.25, brillance: 0.6, amorti: 0.6, position: 0.35, largeur: 0.7 }
+    this.r = { modele: 0, poly: 2, accord: 3, structure: 0.25, brillance: 0.6, amorti: 0.6, position: 0.35, largeur: 0.7 }
     this.lu = { ...this.r }
     this.voix = []
     for (let rang = 0; rang < w.nombreVoix(); rang++) this.voix.push({ rang, libre: true, note: 60, gain: 0, cible: 0, calme: 0, frappe: false })
@@ -89,7 +90,7 @@ class ResonateurProcessor extends AudioWorkletProcessor {
   // une note frappée : la voix suivante, à tour de rôle (part.cc), ou le synthé
   frapper(o) {
     if (Math.round(this.lu.modele) >= 6) { const s = this.synthe; s.note = o.note; s.frappe = true; s.libre = false; s.calme = 0; return }
-    const p = Math.round(this.r.poly) + 1
+    const p = [1, 2, 4][Math.round(this.r.poly)] || 1
     const v = this.voix[this.prochaine % p]
     this.prochaine = (this.prochaine + 1) % p
     v.note = o.note; v.cible = o.velocity; v.frappe = true; v.libre = false; v.calme = 0
@@ -119,7 +120,7 @@ class ResonateurProcessor extends AudioWorkletProcessor {
     if (m >= 6) {
       const s = this.synthe
       if (!s.libre) {
-        this.w.rendreSynthe(Math.round(L.poly) + 1, m - 6, s.note + 0, Math.round(L.accord), L.structure, L.brillance, L.amorti, L.position, s.frappe ? 1 : 0, B)
+        this.w.rendreSynthe([1, 2, 4][Math.round(L.poly)] || 1, m - 6, s.note + 0, Math.round(L.accord), L.structure, L.brillance, L.amorti, L.position, s.frappe ? 1 : 0, B)
         s.frappe = false
         const pic = mel(1, 1, L.largeur)
         s.calme = pic < seuil ? s.calme + 1 : 0
