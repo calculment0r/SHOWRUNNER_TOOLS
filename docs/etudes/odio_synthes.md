@@ -754,8 +754,7 @@ s'écoute.
   plancher de bruit, 100 fois sans lui (essayé sur une compilation sans
   plancher : la garde échoue, comme il faut) ; les lois des banques (le suivi
   de vélocité, les fondus, le tour, une note hors des zones, le rapport).
-- `check.py` complet : voir le compte rendu de la branche (3 885 contrôles à
-  0 échec avant `music_moteurs`).
+- `check.py` complet : **3 896 passés, 0 échec** (avec `music_moteurs`).
 
 ### 7.5 Ce qui reste
 
