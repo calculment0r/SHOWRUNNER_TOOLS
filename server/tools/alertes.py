@@ -369,6 +369,9 @@ def _essais(ok, H, same, f, fichier, seen) -> None:
        f"alertes : un seul fil d'écoute et un seul d'envoi, même avec le module chargé deux fois ({noms.count(alertes.ECOUTE)}, {noms.count(alertes.ENVOI)})")
 
     # 8. Couper : plus rien ne part, l'écoute s'arrête ; Rallumer
+    P(f"/api/equipes/{tid}/membres", {"pseudo": "Ivy Alerte", "role": "member"}, ada)
+    ok(attendre(lambda: msg_de("« Ivy Alerte »")), "alertes : Ivy annoncée (avant de couper)")
+    mi = msg_de("« Ivy Alerte »") or {}
     s, e, _ = P("/api/admin/alertes/actif", {"actif": False})
     ok(s == 200 and e.get("actif") is False and e.get("pose") is True, f"alertes : coupées, le jeton reste posé ({s})")
     ok(attendre(lambda: not [t for t in threading.enumerate() if t.name == alertes.ECOUTE and t.is_alive()], 6),
@@ -378,7 +381,18 @@ def _essais(ok, H, same, f, fichier, seen) -> None:
     time.sleep(0.8)
     ok(len(f.messages) == n1 and auth.user("mia-alerte")["state"] == "pending",
        "alertes : coupées, rien ne part (l'invité attend Cal dans Admin)")
+    e0 = len(f.edits)
+    s, _, _ = P("/api/admin/requests/ivy-alerte/accept")
+    time.sleep(0.8)
+    ok(s == 200 and len(f.edits) == e0 and (msg_de("« Ivy Alerte »") or {}).get("reply_markup"),
+       f"alertes : coupées, pas même la mise à jour d'un message ({len(f.edits) - e0})")
     s, e, _ = P("/api/admin/alertes/actif", {"actif": True})
     ok(s == 200 and e.get("actif") is True and attendre(lambda: etat().get("ecoute") is True), f"alertes : rallumées ({s})")
+    a2 = len(f.answers)
+    f.clic(bouton="Valider", message_id=mi.get("message_id"))
+    ok(attendre(lambda: any(a["text"] == "déjà traité" for a in f.answers[a2:])),
+       "alertes : rallumées, le bouton d'Ivy (validée dans Admin entre-temps) dit « déjà traité »")
+    ok(attendre(lambda: "déjà traité" in (msg_de("« Ivy Alerte »") or {}).get("text", "")
+                and not (msg_de("« Ivy Alerte »") or {}).get("reply_markup")), "alertes : … et son message perd ses boutons")
     s, d, _ = P("/api/admin/alertes/actif", {"actif": "oui"})
     ok(s == 400, f"alertes : actif : un booléen ({s})")

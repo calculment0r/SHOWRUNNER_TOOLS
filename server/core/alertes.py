@@ -404,8 +404,8 @@ def _boucle_envoi() -> None:
 def _appel(item: dict) -> None:
     """Un appel simple (modifier un message, répondre) : un échec se dit dans le journal du serveur."""
     r, why = reglage()
-    if not r:
-        print(f"alertes : {item.get('quoi', item['api'])} : pas fait ({why})", flush=True)
+    if not r or not r["actif"]:   # coupées : plus rien ne part, pas même la mise à jour d'un message
+        print(f"alertes : {item.get('quoi', item['api'])} : pas fait ({why or 'alertes coupées'})", flush=True)
         return
     try:
         _api(r["token"], item["api"], item["p"], _cfg()["envoi_s"])
@@ -631,17 +631,25 @@ def _boucle_ecoute() -> None:
                 why = "jeton refusé par Telegram (401) : recolle-le depuis @BotFather"
             elif e.code == 409:
                 why = "un autre programme lit déjà ce bot (409) : un seul portail par bot"
-            _maj(lambda d: d.update(ecoute={"t": auth.now_iso(), "ok": False, "erreur": why}))
+            try:
+                _maj(lambda d: d.update(ecoute={"t": auth.now_iso(), "ok": False, "erreur": why}))
+            except OSError:
+                pass
             _dire_une_fois(f"écoute : {why}")
+            pause = min(60.0, max(5.0, pause * 2))
+            me.stop.wait(pause)
+            continue
+        except Exception as e:   # noqa: BLE001 — le disque, une réponse inattendue : l'écoute reprend après une pause
+            _dire_une_fois(f"écoute : {type(e).__name__} : {_propre(e)}")
             pause = min(60.0, max(5.0, pause * 2))
             me.stop.wait(pause)
             continue
         pause = 0.0
         _mem["dit"] = {x for x in _mem["dit"] if not x.startswith("écoute :")}
         last = None
-        for up in ups or []:
-            last = max(last or 0, int(up.get("update_id") or 0))
+        for up in ups if isinstance(ups, list) else []:
             try:
+                last = max(last or 0, int(up.get("update_id") or 0))
                 if up.get("callback_query"):
                     _clic(r, up["callback_query"])
                 elif up.get("message"):
@@ -653,7 +661,10 @@ def _boucle_ecoute() -> None:
             d["ecoute"] = {"t": auth.now_iso(), "ok": True}
             if last is not None:
                 d["offset"] = last + 1   # la doc : un appel avec un offset plus grand confirme les précédents
-        _maj(note)
+        try:
+            _maj(note)
+        except OSError as e:   # l'offset non écrit : les mêmes mises à jour reviennent, une décision prise ne se reprend pas
+            print(f"alertes : écoute : {_propre(e)}", flush=True)
 
 
 def _bot(r: dict) -> None:
