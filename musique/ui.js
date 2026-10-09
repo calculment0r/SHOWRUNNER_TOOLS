@@ -256,6 +256,30 @@ export function drawer({ title, cls = '', head = [], onclose }) {
 }
 export const drawerOpen = () => openDrawer;
 
+// ── jamais entre l'appui et le clic (09/10) ─────────────────
+// Un champ qui perd la main (blur, change) quand on appuie sur un bouton
+// enregistrait aussitôt, et la vue se redessinait ENTRE l'appui et le
+// relâché : le bouton remplacé, le clic perdu — renommer une piste puis
+// cliquer S sur une autre ne la mettait pas en solo ; taper le style du
+// panneau Générer puis « Générer » ne faisait rien au premier clic.
+// `apresClic(fn)` : tout de suite quand aucun bouton n'est tenu ; sinon
+// juste après le clic (au relâché, puis une tâche : le clic passe d'abord).
+// Une même fonction demandée plusieurs fois ne passe qu'une fois.
+let tenu = false;
+const enAttente = new Set();
+if (typeof window !== 'undefined') {
+  const lacher = () => {
+    if (!tenu) return;
+    tenu = false;
+    if (enAttente.size) setTimeout(() => { const fs = [...enAttente]; enAttente.clear(); for (const f of fs) f(); }, 0);
+  };
+  addEventListener('pointerdown', () => { tenu = true; }, true);
+  addEventListener('pointerup', lacher, true);
+  addEventListener('pointercancel', lacher, true);
+  addEventListener('blur', (e) => { if (e.target === window) lacher(); });   // la fenêtre seulement (le blur d'un champ ne remonte pas)
+}
+export function apresClic(fn) { if (tenu) enAttente.add(fn); else fn(); }
+
 // Renommer EN PLACE (double-clic sur ce que l'utilisateur personnalise :
 // piste, clip, section, marqueur, motif, préréglage) : le texte devient un
 // champ, le seul endroit de la page où l'on sélectionne du texte. Entrée ou

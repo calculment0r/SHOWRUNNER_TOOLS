@@ -44,7 +44,7 @@ import { TONICS, TONICS_FR, MODES, SECTION_TAGS, COLORS } from './modules.js';
 import { songEnd, peaks } from './moteur.js';
 import { valeursArcs } from './arcs.js';
 import { shiftFrom, duplicateSection, swapSection, removeSection, sorted, lireParoles, sectionsDeRegion, structureDepuisParoles, etiquetteDe } from './projet.js';
-import { el, put, menu, tok, drawer } from './ui.js';
+import { el, put, menu, tok, drawer, apresClic } from './ui.js';
 import { loadSchema, schemaNow, model, task, cond, defaultsFor, requestV, unavailable, trackFr, aceKeyOf, secs, choiceIds, choiceLabel } from './generatif_modeles.js';
 import { reportVoices, chordToNotes, abcKey } from './generatif_abc.js';
 import { placeNotes, listMidi, midiSub, openExtract } from './generatif_midi.js';
@@ -75,7 +75,10 @@ export function cibleOuverte(app) {
   if (!O || !document.body.contains(O.dr.root)) return null;
   return cible(app);
 }
-export function repeindre() { if (O && document.body.contains(O.dr.root)) O.paint(); }
+// (jamais entre l'appui et le clic : un champ qui perd la main repeint le panneau, le bouton
+// qu'on presse resterait sans clic — ui.js, apresClic)
+const peindreO = () => { if (O && document.body.contains(O.dr.root)) O.paint(); };
+export function repeindre() { apresClic(peindreO); }
 
 function brouillon(app) {
   const P = app.S.proj;
@@ -1060,7 +1063,9 @@ function piedBox(ctx) {
     ? el('button', { class: 'tb go', type: 'button', id: 'gp-go', disabled: busyAbc || !(vals.tags || '').trim() || null,
       title: !(vals.tags || '').trim() ? 'décris d\'abord le style (YuE2 le lit)' : 'YuE2 écrit d\'abord la partition : tu la relis, puis Générer la chante telle quelle',
       onclick: () => ecrirePartition(ctx) }, busyAbc ? 'La partition s\'écrit…' : 'Écrire la partition')
-    : el('button', { class: 'tb go', type: 'button', id: 'gp-go', disabled: why || null, title: why || '', onclick: (e) => lancer(app, e.currentTarget) }, 'Générer');
+    : O?.envoi   // un envoi en cours (le contexte se rend, la requête part) : un panneau repeint entre-temps ne relance pas
+      ? el('button', { class: 'tb go', type: 'button', id: 'gp-go', disabled: true, title: 'l\'envoi est en cours : le contexte se rend, puis la génération part en file' }, 'Envoi…')
+      : el('button', { class: 'tb go', type: 'button', id: 'gp-go', disabled: why || null, title: why || '', onclick: (e) => lancer(app, e.currentTarget) }, 'Générer');
   const sans = relire ? el('button', { class: 'tb ghost sm', type: 'button', title: 'YuE2 écrit sa partition et chante d\'un trait, sans la montrer', onclick: (e) => lancer(app, e.currentTarget) }, 'Sans relire') : null;
   const garde = V?.garder ? ` · on garde ${g.instrument === 'other' ? 'le reste (stem « other »)' : `${trackFr(s, g.instrument)} (stem « ${I().stems[g.instrument]?.stem} »)`}` : '';
   const dest = c.id ? `dans la région de « ${app.track(c.track)?.name} »` : (destination(app, c).t ? `sur « ${destination(app, c).t.name} »` : `sur une piste neuve « ${nomPiste(g)} »`);
@@ -1098,7 +1103,9 @@ function materialiser(app, d) {
   return c;
 }
 async function lancer(app, go) {
+  if (O.envoi) return;
   go.disabled = true;
+  O.envoi = true;
   try {
     const s = await loadSchema();
     let c = cible(app);
@@ -1123,5 +1130,6 @@ async function lancer(app, go) {
     commit(app);
     jobs.poll(true);
     toast(`en file : ${j.title} · ${vals.n || 1} version${(vals.n || 1) > 1 ? 's' : ''} (${M.nom})`, 4000);
-  } catch (e) { toast(e.message, 7000); go.disabled = false; repeindre(); }
+  } catch (e) { toast(e.message, 7000); go.disabled = false; }
+  finally { if (O) { O.envoi = false; repeindre(); } }
 }
