@@ -156,7 +156,7 @@ await oneGo(page, 'l’arrivée');
 ok(await page.$eval('#pbar', (n) => getComputedStyle(n).position === 'fixed' && n.getBoundingClientRect().bottom > innerHeight - 40),
   'la barre de création est en bas, au-dessus du fil');
 const chipsText = await page.$eval('#pb-chips', (n) => n.textContent);
-ok(/2,4:1/.test(chipsText) && /Brouillon · 1536×640/.test(chipsText) && /5,2 s/.test(chipsText),
+ok(/2,4:1/.test(chipsText) && /Brouillon≈ \d/.test(chipsText) && /5,2 s/.test(chipsText),
   `le format, la qualité et la résolution, la durée sont des puces principales (${chipsText.replace(/\s+/g, ' ').slice(0, 120)})`);
 await page.fill('#desc', 'A woman crosses a rainy street at night and stops in front of a shop window. She turns toward the camera. A neon sign flickers above her.');
 await page.waitForTimeout(500);
@@ -244,16 +244,22 @@ await page.waitForTimeout(700);
 const plan = await page.evaluate(() => {
   const st = JSON.parse(localStorage.getItem('movie.v2'));
   return { format: st.format, method: st.method, canvas: st.canvas.r2v, chip: document.querySelector('.pc.res b')?.textContent,
-    fmt: document.querySelector('.pc.fmt b')?.textContent, est: document.querySelector('.pc.res .pc-s')?.textContent };
+    fmt: document.querySelector('.pc.fmt b')?.textContent, est: document.querySelector('.pc.res .pc-s')?.textContent,
+    tip: document.querySelector('.pc.res')?.title };
 });
-ok(plan.fmt === '16:9' && plan.format === '16:9' && plan.method === 'esquisse' && plan.canvas === null && plan.chip === 'Esquisse · 672×384' && /≈/.test(plan.est || ''),
+ok(plan.fmt === '16:9' && plan.format === '16:9' && plan.method === 'esquisse' && plan.canvas === null && plan.chip === 'Esquisse'
+   && /672×384/.test(plan.tip) && /≈/.test(plan.est || ''),
   `le format et la plus petite résolution se lisent sur les puces, avec le temps estimé (${plan.fmt} · ${plan.chip} ${plan.est})`);
 await page.click('[data-pop="fmt"] .cv-row:has-text("Qualité")');
 await page.waitForTimeout(500);
-ok(/^Qualité · 1536×864/.test(await page.$eval('.pc.res b', (n) => n.textContent)), 'la Qualité au même endroit, à la toile du format');
+ok(/^Qualité/.test(await page.$eval('.pc.res b', (n) => n.textContent)) && /1536×864/.test(await page.$eval('.pc.res', (n) => n.title)),
+  'la Qualité au même endroit, à la taille du format');
 await page.click('[data-pop="fmt"] .cv-row:has-text("Esquisse")');
 await page.keyboard.press('Escape');
 await page.waitForTimeout(300);
+// une information une fois par écran : le temps estimé sur la puce de résolution seulement, la durée sur sa puce
+ok(!(await page.$eval('#go', (b) => b.textContent)).match(/min|≈/) && !(await page.$('#ms .ms-n')),
+  'une information une fois : ni le temps sur « Générer », ni la durée en tête du Multishot');
 // ce que H3 reçoit (POST /api/movie/apercu) : les vérifications, les sujets, les images dans l'ordre, le prompt compilé
 await page.click('.pc.recu');
 await page.waitForSelector('#recu pre.sent');
@@ -266,7 +272,7 @@ ok((await page.$$('#recu .v-def textarea')).length >= 4, 'ce que H3 reçoit : la
 await shot(page, 'apres-recu-sombre-1280');
 // la mise en forme (sans modèle de texte ici : le gabarit) : un travail, puis la barre remplie
 await page.click('#recu .v-inv');
-await waitFor(async () => (await page.$eval('#recu .v-inv', (b) => b.textContent).catch(() => '')) === 'Mettre en forme pour H3'
+await waitFor(async () => (await page.$eval('#recu .v-inv', (b) => b.textContent).catch(() => '')) === 'Mettre en forme'
   && /gabarit|modèle de texte/.test(await page.$eval('.toast', (t) => t.textContent).catch(() => '')), 'la mise en forme tourne, puis rend la main (le gabarit, et pourquoi)', 30000);
 ok(/\[Shot 2\] At 00:0/.test(await page.inputValue('#desc')), 'après la mise en forme, l’invite garde ses plans et leurs temps de coupe');
 await page.keyboard.press('Escape');

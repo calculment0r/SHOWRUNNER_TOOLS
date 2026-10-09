@@ -52,7 +52,7 @@
     <aside class="cmp-rail" id="cmp-rail" aria-label="les deux plans">
       <div class="ab-slot a" id="slot-a"></div>
       <div class="ab-slot b" id="slot-b"></div>
-      <span class="hint">déposez une vidéo sur A ou B, ou dans le fil : ⋯ → Comparer</span>
+      <span class="hint">déposez une vidéo sur A ou B</span>
       <div class="keys"><kbd>espace</kbd>lecture <kbd>←</kbd><kbd>→</kbd>image <kbd>1</kbd>…<kbd>5</kbd>modes <kbd>[</kbd><kbd>]</kbd>rideau <kbd>molette</kbd>zoom <kbd>L</kbd>boucle <kbd>S</kbd>échanger <kbd>A</kbd><kbd>B</kbd><kbd>M</kbd>écoute</div>
     </aside>
     <section class="pane" id="bench">
@@ -101,21 +101,21 @@
   <div class="pb-pops" id="pops">
     <div class="pb-pop" data-pop="fmt" hidden></div>
     <div class="pb-pop" data-pop="son" hidden>
-      <div class="pp-h"><span class="lbl">Son et musique</span><span class="sp"></span><button class="pp-x" type="button" aria-label="fermer" title="fermer (Échap)">×</button></div>
+      <div class="pp-h"><span class="lbl">Son</span><span class="sp"></span><button class="pp-x" type="button" aria-label="fermer" title="fermer (Échap)">×</button></div>
       <div class="pp-body">
-        <label class="field"><span class="lbl">Son d’ambiance</span>
-          <textarea class="fld" id="sound" rows="1" placeholder="bruits, souffles, pas — vide : le son naturel de la scène"></textarea></label>
-        <label class="field"><span class="lbl">Musique hors champ</span>
-          <textarea class="fld" id="music" rows="1" placeholder="instruments, tempo — vide : pas de musique"></textarea></label>
+        <label class="field"><span class="lbl">Ambiance</span>
+          <textarea class="fld" id="sound" rows="1" placeholder="pluie, pas, foule… (vide : le son de la scène)"></textarea></label>
+        <label class="field"><span class="lbl">Musique</span>
+          <textarea class="fld" id="music" rows="1" placeholder="instruments, tempo… (vide : pas de musique)"></textarea></label>
       </div>
     </div>
     <div class="pb-pop" data-pop="aides" hidden>
-      <div class="pp-h"><span class="lbl">Aides d’écriture</span><span class="sp"></span><button class="pp-x" type="button" aria-label="fermer" title="fermer (Échap)">×</button></div>
+      <div class="pp-h"><span class="lbl">Aides</span><span class="sp"></span><button class="pp-x" type="button" aria-label="fermer" title="fermer (Échap)">×</button></div>
       <div class="pp-tabs" role="tablist" id="aides-tabs">
-        <button class="pp-tab on" type="button" role="tab" data-tab="cam"><span>Caméra</span><small>le vocabulaire de MiniMax</small></button>
-        <button class="pp-tab" type="button" role="tab" data-tab="say"><span>Réplique</span><small>(S1) … &lt;d&gt;</small></button>
-        <button class="pp-tab" type="button" role="tab" data-tab="excl"><span>Exclusions</span><small>pas de prompt négatif</small></button>
-        <button class="pp-tab" type="button" role="tab" data-tab="assist"><span>Assistant</span><small>mettre en forme pour H3</small></button>
+        <button class="pp-tab on" type="button" role="tab" data-tab="cam"><span>Caméra</span></button>
+        <button class="pp-tab" type="button" role="tab" data-tab="say"><span>Réplique</span></button>
+        <button class="pp-tab" type="button" role="tab" data-tab="excl"><span>À éviter</span></button>
+        <button class="pp-tab" type="button" role="tab" data-tab="assist"><span>Mise en forme</span></button>
       </div>
       <div class="pp-body">
         <div data-tab="cam">
@@ -125,37 +125,37 @@
           </div>
           <div class="cam-chips" id="cam-chips"></div>
         </div>
-        <div data-tab="say" hidden><button class="tb ghost sm" id="h-say" type="button" title="une réplique : identité et voix dehors, les mots exacts dans &lt;d&gt;">Insérer une réplique</button>
-          <span class="hint">H3 ne fait parler qu’une réplique écrite « (S1) says: &lt;d&gt;[langue] … &lt;/d&gt; » ; plusieurs voix : le Multishot</span></div>
-        <div data-tab="excl" hidden><button class="tb ghost sm" id="h-excl" type="button">Insérer les exclusions</button>
-          <span class="hint">H3 n’a pas de prompt négatif : ce qu’on évite s’écrit à la fin</span></div>
+        <div data-tab="say" hidden><button class="tb ghost sm" id="h-say" type="button">Ajouter une réplique</button>
+          <span class="hint">H3 ne dit que les mots écrits dans une réplique</span></div>
+        <div data-tab="excl" hidden><button class="tb ghost sm" id="h-excl" type="button" title="« No text, subtitles, logos or watermarks… »">Ni texte ni logo</button>
+          <span class="hint">ce qu’on ne veut pas voir s’écrit dans le prompt</span></div>
         <div data-tab="assist" hidden id="assist"></div>
       </div>
     </div>
     <div class="pb-pop" data-pop="adv" hidden>
-      <div class="pp-h"><span class="lbl">Paramètres avancés</span><span class="lbl pp-sum" id="adv-sum"></span><span class="sp"></span><button class="pp-x" type="button" aria-label="fermer" title="fermer (Échap)">×</button></div>
+      <div class="pp-h"><span class="lbl">Avancé</span><span class="sp"></span><button class="pp-x" type="button" aria-label="fermer" title="fermer (Échap)">×</button></div>
       <div class="pp-body">
-        <div class="row"><label class="lbl" for="steps">Pas</label><input class="fld seed" id="steps" inputmode="numeric" placeholder="auto">
+        <div class="row" title="plus de pas : plus lent, parfois plus net"><label class="lbl" for="steps">Pas</label><input class="fld seed" id="steps" inputmode="numeric" placeholder="auto">
           <div class="seg presets" id="step-presets"></div></div>
-        <div class="row"><label class="lbl" for="seed">Graine</label><input class="fld seed" id="seed" inputmode="numeric" placeholder="au hasard">
+        <div class="row" title="la même graine et les mêmes réglages refont la même vidéo"><label class="lbl" for="seed">Graine</label><input class="fld seed" id="seed" inputmode="numeric" placeholder="au hasard">
           <button class="tb ghost sm" id="seed-rand" type="button" title="tirer une graine">dé</button>
           <button class="tb ghost sm" id="seed-orig" type="button" hidden>d’origine</button></div>
-        <label class="row" data-for="r2v"><span class="lbl">Références</span>
+        <label class="row" data-for="r2v" title="la finesse avec laquelle H3 lit les images de référence"><span class="lbl">Détail des réf.</span>
           <select class="fld" id="ref-size">
-            <option value="match">à l'aire du plan · plus rapide</option>
-            <option value="max">détail max · jusqu'à 2048 px, plus lent</option>
+            <option value="match">normal · plus rapide</option>
+            <option value="max">maximal · plus lent</option>
           </select></label>
-        <label class="row"><span class="lbl">Modèle</span><select class="fld" id="a-unet"></select></label>
-        <label class="row"><span class="lbl">Compression</span><input class="fld seed" id="a-crf" inputmode="numeric" placeholder="crf 12"></label>
+        <label class="row" title="les poids d’H3 chargés pour ce mode"><span class="lbl">Modèle</span><select class="fld" id="a-unet"></select></label>
+        <label class="row" title="compression du fichier vidéo (crf) : plus petit = plus fidèle, plus lourd"><span class="lbl">Compression</span><input class="fld seed" id="a-crf" inputmode="numeric" placeholder="12"></label>
         <div class="field"><div class="row"><span class="lbl">LoRA</span><span class="lbl" id="lora-count"></span><span class="sp"></span>
           <button class="tb ghost sm" id="lora-refresh" type="button">Relire</button></div>
           <div class="loras" id="loras"></div></div>
         <div class="profile" id="profile"></div>
-        <details class="pp-acc" id="adv-graph"><summary class="lbl">Le graphe H3 (construit, pas envoyé)</summary><pre class="sent" id="graph"></pre></details>
+        <details class="pp-acc" id="adv-graph"><summary class="lbl">Le graphe ComfyUI</summary><pre class="sent" id="graph"></pre></details>
       </div>
     </div>
     <div class="pb-pop" data-pop="recu" hidden>
-      <div class="pp-h"><span class="lbl">Ce que H3 reçoit</span><span class="lbl pp-sum" id="recu-sum"></span><span class="sp"></span><button class="pp-x" type="button" aria-label="fermer" title="fermer (Échap)">×</button></div>
+      <div class="pp-h"><span class="lbl">Aperçu · ce que H3 recevra</span><span class="sp"></span><button class="pp-x" type="button" aria-label="fermer" title="fermer (Échap)">×</button></div>
       <div class="pp-body" id="recu"></div>
     </div>
   </div>
@@ -174,7 +174,7 @@
     <div class="pb-chips" id="pb-chips"></div>
   </div>
   <div class="pb-go" id="act">
-    <button class="tb go pb-gen" id="go" type="button"><span class="gl">Générer</span><small id="go-sub"></small></button>
+    <button class="tb go pb-gen" id="go" type="button"><span class="gl">Générer</span></button>
     <p class="why" id="why"></p>
   </div>
 </section>

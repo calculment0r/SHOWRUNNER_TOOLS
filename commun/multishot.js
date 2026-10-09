@@ -44,6 +44,7 @@ import {
 } from './multishot_texte.js';
 
 const fr = (n) => String(n).replace('.', ',');
+const LANG_FR = { fr: 'répliques en français', en: 'répliques en anglais' };
 const sec = (f) => `${fr(Math.round((f / FPS) * 10) / 10)} s`;
 const tc = (f) => fr((f / FPS).toFixed(2));
 let cssOn = false;
@@ -88,7 +89,7 @@ export function createMultishot(box, o = {}) {
   const tlw = el('div', { class: 'ms-tlw' }, tl, ruler, tip);
   const edHead = el('div', { class: 'ms-ed-h' });
   const ta = el('textarea', { class: 'fld ms-ta', rows: 2, spellcheck: 'false', 'aria-label': 'ce qu’on voit dans ce plan',
-    placeholder: 'ce qu’on voit dans ce plan : le cadre, le mouvement, l’action — tapez @ pour une entrée, ou déposez-la ici' });
+    placeholder: 'ce qu’on voit dans ce plan (tapez @ pour une référence)' });
   const linesBox = el('div', { class: 'ms-lines' });
   const ed = el('div', { class: 'ms-ed' }, edHead, ta, linesBox);
   box.classList.add('ms');
@@ -107,14 +108,13 @@ export function createMultishot(box, o = {}) {
     const n = S.shots.length;
     const canSplit = n < maxShots(S.total) && S.shots[S.sel]?.frames >= 2 * MIN_FRAMES;
     head.replaceChildren(
-      el('span', { class: 'ms-t' }, 'Multishot'),
-      el('span', { class: 'lbl ms-n' }, `${n} plan${n > 1 ? 's' : ''} · ${sec(S.total)}`),
+      // ni titre ni compte : la puce Multishot et la puce Durée de la page les disent déjà (une fois par écran)
       el('button', { class: 'tb ghost sm', type: 'button', disabled: canSplit ? null : true,
-        title: canSplit ? 'couper le plan choisi en deux' : `un plan garde au moins ${sec(MIN_FRAMES)} : celui-ci est trop court pour deux`,
+        title: canSplit ? 'couper le plan choisi en deux' : 'ce plan est trop court pour être coupé',
         onclick: () => { splitFrames(S.shots, S.sel); changed(); paint(); } }, '+ Plan'),
       el('button', { class: 'tb ghost sm', type: 'button', title: 'la même durée pour chaque plan',
         onclick: () => { fitFrames(S.shots.map((p) => Object.assign(p, { frames: 1 })), S.total); changed(); paint(); } }, 'Durées égales'),
-      el('button', { class: 'tb ghost sm', type: 'button', 'aria-haspopup': 'menu', title: 'le mode automatique : le texte des plans, phrase par phrase, en n plans de même durée',
+      el('button', { class: 'tb ghost sm', type: 'button', 'aria-haspopup': 'menu', title: 'répartir le texte en plans, phrase par phrase',
         onclick: (e) => {
           const r = e.currentTarget.getBoundingClientRect();
           const all = S.shots.map((p) => p.text).filter(Boolean).join(' ');
@@ -129,7 +129,7 @@ export function createMultishot(box, o = {}) {
       el('span', { class: 'sp' }),
       el('select', { class: 'fld ms-lang', 'aria-label': 'la langue des répliques', title: 'la langue des répliques',
         onchange: (e) => { S.lang = e.target.value; changed(); } },
-      ...Object.entries(LANG).map(([k, v]) => el('option', { value: k, selected: S.lang === k ? true : null }, v))));
+      ...Object.keys(LANG).map((k) => el('option', { value: k, selected: S.lang === k ? true : null }, LANG_FR[k] || LANG[k]))));
   }
 
   // ── la frise ──
@@ -150,7 +150,7 @@ export function createMultishot(box, o = {}) {
     tl.title = 'chaque plan suivant commence par son temps de coupe, « At 00:03.500, » (le guide officiel d’H3, § 4.2)';
     N.segs = S.shots.map((p, i) => {
       const s = el('button', { class: `ms-seg c${i % 4}${i === S.sel ? ' sel' : ''}`, type: 'button', 'data-i': i,
-        title: `plan ${i + 1} · ${sec(p.frames)} — clic : l’éditer · glisser : le déplacer · Alt + ← → : le déplacer` }, ...segBody(p, i));
+        title: `plan ${i + 1} — glisser pour le déplacer` }, ...segBody(p, i));
       s.addEventListener('pointerdown', (e) => dragSeg(e, i));
       s.addEventListener('click', () => { if (s._dragged) { s._dragged = false; return; } select(i); });
       s.addEventListener('dblclick', () => { select(i); ta.focus(); });
@@ -166,7 +166,7 @@ export function createMultishot(box, o = {}) {
     });
     N.cuts = S.shots.slice(0, -1).map((_, i) => {
       const h = el('div', { class: 'ms-h', role: 'slider', tabindex: 0, 'aria-label': `coupe entre le plan ${i + 1} et le plan ${i + 2}`,
-        title: 'glisser : déplacer la coupe, à l’image près · ← → : une image (Maj : une seconde)' });
+        title: 'glisser : partager le temps entre les deux plans' });
       h.addEventListener('pointerdown', (e) => dragCut(e, i));
       h.addEventListener('keydown', (e) => {
         const d = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
@@ -177,11 +177,11 @@ export function createMultishot(box, o = {}) {
       });
       return h;
     });
-    N.rest = el('div', { class: 'ms-rest', title: grid ? 'la place que la vidéo peut prendre : tirez la fin du dernier plan' : '' },
+    N.rest = el('div', { class: 'ms-rest', title: grid ? 'tirez la fin pour allonger la vidéo' : '' },
       ...(grid || []).map((g) => el('i', { class: 'ms-g', 'data-f': g })));
     N.end = grid ? el('div', { class: 'ms-end', role: 'slider', tabindex: 0, 'aria-label': 'la fin de la vidéo : sa durée',
       'aria-valuemin': grid[0], 'aria-valuemax': maxF(),
-      title: 'glisser : la durée de la vidéo, aux pas d’H3 (17 images, 0,7 s) · ← → : le pas d’avant, d’après' }) : null;
+      title: 'glisser : la durée de la vidéo' }) : null;
     if (N.end) {
       N.end.addEventListener('pointerdown', dragEnd);
       N.end.addEventListener('keydown', (e) => {
@@ -217,9 +217,8 @@ export function createMultishot(box, o = {}) {
     if (N.rest) { N.rest.style.left = pct(S.total); N.rest.style.width = `calc(100% - ${pct(S.total)})`; }
     for (const g of N.rest?.children || []) { const f = Number(g.dataset.f); g.hidden = f <= S.total; g.style.left = `${((f - S.total) / Math.max(1, maxF() - S.total)) * 100}%`; }
     if (N.end) { N.end.style.left = pct(S.total); N.end.setAttribute('aria-valuenow', String(S.total)); N.end.setAttribute('aria-valuetext', sec(S.total)); }
-    head.querySelector('.ms-n')?.replaceChildren(`${S.shots.length} plan${S.shots.length > 1 ? 's' : ''} · ${sec(S.total)}`);
     const lab = edHead.querySelector('.ms-ed-t');
-    if (lab && S.shots[S.sel]) lab.textContent = `Plan ${S.sel + 1} · ${sec(S.shots[S.sel].frames)} · ${S.shots[S.sel].frames} im.`;
+    if (lab && S.shots[S.sel]) lab.textContent = `Plan ${S.sel + 1}`;
   }
   function paintSegText() {
     S.shots.forEach((p, i) => { const s = N.segs[i]; if (s) s.replaceChildren(...segBody(p, i)); });
@@ -260,8 +259,7 @@ export function createMultishot(box, o = {}) {
       S.shots.forEach((p, k) => { p.frames = orig[k]; });
       cutFrames(S.shots, i, d);
       layout();
-      const at = starts(S.shots)[i + 1];
-      showTip(ev, `coupe à ${tc(at)} s · plan ${i + 1} ${sec(S.shots[i].frames)} · plan ${i + 2} ${sec(S.shots[i + 1].frames)}`);
+      showTip(ev, `plan ${i + 1} : ${sec(S.shots[i].frames)} · plan ${i + 2} : ${sec(S.shots[i + 1].frames)}`);
     }, () => { if (S.shots.some((p, k) => p.frames !== orig[k])) changed(); paint(); });
   }
   function dragEnd(e) {
@@ -276,7 +274,7 @@ export function createMultishot(box, o = {}) {
         trimEnd(S.shots, t);
         layout();
       }
-      showTip(ev, `durée ${sec(S.total)} · ${S.total} images${S.total === ok[0] ? ' · la plus courte' : S.total === ok[ok.length - 1] ? ' · la plus longue' : ''}`);
+      showTip(ev, `${sec(S.total)}${S.total === ok[0] ? ' (le minimum)' : S.total === ok[ok.length - 1] ? ' (le maximum)' : ''}`);
     }, () => {
       if (S.total !== t0) { o.ontotal?.(S.total); changed(); }
       paint();
@@ -322,14 +320,14 @@ export function createMultishot(box, o = {}) {
     if (!p) return;
     const n = S.shots.length;
     edHead.replaceChildren(
-      el('span', { class: 'lbl ms-ed-t' }, `Plan ${S.sel + 1} · ${sec(p.frames)} · ${p.frames} im.`),
+      el('span', { class: 'ms-ed-t' }, `Plan ${S.sel + 1}`),
       el('span', { class: 'sp' }),
       el('button', { class: 'tb ghost sm', type: 'button', disabled: S.sel > 0 ? null : true, title: S.sel > 0 ? 'avancer ce plan d’une place' : 'déjà le premier',
         'aria-label': 'avancer ce plan', onclick: () => { moveShot(S.shots, S.sel, S.sel - 1); S.sel--; changed(); paint(); } }, '‹'),
       el('button', { class: 'tb ghost sm', type: 'button', disabled: S.sel < n - 1 ? null : true, title: S.sel < n - 1 ? 'reculer ce plan d’une place' : 'déjà le dernier',
         'aria-label': 'reculer ce plan', onclick: () => { moveShot(S.shots, S.sel, S.sel + 1); S.sel++; changed(); paint(); } }, '›'),
       el('button', { class: 'tb ghost sm', type: 'button', disabled: n > 1 ? null : true,
-        title: n > 1 ? 'sa durée passe au plan voisin' : 'il faut au moins un plan',
+        title: n > 1 ? 'son temps va au plan voisin' : 'il faut au moins un plan',
         onclick: () => { removeFrames(S.shots, S.sel); S.sel = Math.min(S.sel, S.shots.length - 1); changed(); paint(); } }, 'Retirer'));
     if (document.activeElement !== ta && ta.value !== (p.text || '')) {
       ta.value = p.text || '';
@@ -340,19 +338,19 @@ export function createMultishot(box, o = {}) {
       const free = l.who && !ms.some((m) => m.token === l.who);
       const pickWho = el('select', { class: 'fld ms-who', 'aria-label': 'qui parle', onchange: (e) => {
         l.who = e.target.value === '__libre' ? ' ' : e.target.value; changed(); paintEd(); paintSegText(); } },
-      el('option', { value: '' }, 'personne de nommé (S1)'),
+      el('option', { value: '' }, 'quelqu’un'),
       ...ms.map((m) => el('option', { value: m.token, selected: l.who === m.token ? true : null }, `${m.token}${m.label ? ' · ' + m.label : ''}`)),
-      el('option', { value: '__libre', selected: free ? true : null }, 'un autre : je l’écris…'));
+      el('option', { value: '__libre', selected: free ? true : null }, 'autre…'));
       return el('div', { class: 'ms-line' },
-        el('div', { class: 'ms-who-w' }, pickWho, free ? el('input', { class: 'fld ms-free', value: l.who.trim(), placeholder: 'ex. the old man', 'aria-label': 'qui parle',
+        el('div', { class: 'ms-who-w' }, pickWho, free ? el('input', { class: 'fld ms-free', value: l.who.trim(), placeholder: 'qui ? (en anglais)', 'aria-label': 'qui parle',
           oninput: (e) => { l.who = e.target.value || ' '; changed(); } }) : null),
-        el('input', { class: 'fld ms-say', value: l.text, placeholder: 'la réplique, dans la langue parlée', 'aria-label': 'la réplique',
+        el('input', { class: 'fld ms-say', value: l.text, placeholder: 'ce qui est dit', 'aria-label': 'la réplique',
           oninput: (e) => { l.text = e.target.value; changed(); } }),
         el('button', { class: 'tb ghost sm', type: 'button', 'aria-label': 'retirer cette réplique', title: 'retirer cette réplique',
           onclick: () => { p.lines.splice(k, 1); changed(); paintEd(); } }, '×'));
     };
     linesBox.replaceChildren(...(p.lines || []).map(lineRow),
-      el('button', { class: 'tb ghost sm ms-add', type: 'button', title: 'une réplique de ce plan : qui parle, ce qui est dit',
+      el('button', { class: 'tb ghost sm ms-add', type: 'button', title: 'quelqu’un parle dans ce plan',
         onclick: () => { (p.lines ||= []).push({ who: ms.find((m) => /element/.test(m.token))?.token || '', text: '' }); changed(); paintEd(); linesBox.querySelector('.ms-line:last-of-type .ms-say')?.focus(); } }, '+ Réplique'));
   }
 
@@ -440,7 +438,7 @@ export function openMultishot({ total = 10, desc = '', mentions = [], lang = 'fr
   const go = el('button', { class: 'tb go', type: 'button', title: 'écrit ces plans dans le prompt de la carte',
     onclick: () => { onApply((cur || M.get()).text); close(); } }, 'Écrire dans le prompt');
   const scrim = el('div', { class: 'scrim ms-scrim', onclick: (e) => { if (e.target === scrim) close(); } },
-    el('div', { class: 'modal ms-modal', role: 'dialog', 'aria-label': 'Multishot' }, body,
+    el('div', { class: 'modal ms-modal', role: 'dialog', 'aria-label': 'Multishot' }, el('div', { class: 'ms-mh' }, el('span', { class: 'ms-t' }, 'Multishot')), body,
       el('div', { class: 'ms-foot' }, el('span', { class: 'sp' }), el('button', { class: 'tb ghost', type: 'button', onclick: () => close() }, 'Annuler'), go)));
   const close = () => { scrim.remove(); document.removeEventListener('keydown', key, true); };
   const key = (e) => { if (e.key === 'Escape' && !document.querySelector('.sr-menu')) { e.preventDefault(); e.stopPropagation(); close(); } };

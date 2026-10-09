@@ -28,8 +28,10 @@
 //   ligne 3 — des puces qui montrent leur valeur : le mode, le format, la qualité
 //             et la résolution (avec le temps estimé), la durée (− 5,2 s +), puis,
 //             repliés, Multishot, Son, Aides, Avancé, et ce que H3 reçoit ;
-//   à droite — « Générer », le seul orange, et le temps estimé ; ce qui manque
-//             dessous, et y mène.
+//   à droite — « Générer », le seul orange ; ce qui manque dessous, et y mène.
+// Les mots (Cal, 09/10 : « on doit être simple et lisible ») : le mot de tous les jours, une information
+// une seule fois par écran (le temps estimé : sur la puce de résolution ; la durée : sur sa puce), pas de
+// phrase d'aide là où une infobulle suffit ; les termes du modèle restent dans Avancé et dans l'aperçu.
 // Le banc « Comparer » reprend le banc NL de Cal : rideau, côte à côte,
 // clignotement, zoom sous le curseur, boucle, écoute A/B, recettes et
 // différences.
@@ -62,14 +64,20 @@ const store = {   // commodité du navigateur : le formulaire en cours
 };
 const MODE_FR = { t2v: 'texte', i2v: 'images', r2v: 'références' };
 const MODE_SHORT = { t2v: 'Texte', i2v: 'Images', r2v: 'Réf.' };
-const MODE_TIP = { t2v: 'le prompt seul', i2v: 'une première image, une dernière, ou les deux', r2v: 'des images, des éléments, des vidéos, des sons, appelés par @' };
+const MODE_TIP = { t2v: 'le prompt seul', i2v: 'partir d’une image, finir sur une autre', r2v: 'des images, des personnages, des sons, appelés par @' };
 const METH_FR = { brouillon: 'brouillon', qualite: 'qualité', turbo: 'turbo · ancien banc', origine: 'origine · ancien banc', spectrum: 'spectrum · ancien banc' };
 // les préréglages (server/tools/movie.py, METHODS) : l'Esquisse et le Léger (09/10, l'audit), puis la recette de Cal (30/09)
 const PRESETS = ['esquisse', 'leger', 'brouillon', 'qualite'];
 const ROLE_FR = { face: 'visage', 'full body': 'plein pied', expression: 'expression' };
 // ce qu'un format est, en un mot, sous son rapport (les formats eux-mêmes : l'échelle du serveur, server/tools/movie.py FORMATS)
-const FMT_SUB = { '2.4:1': 'la recette', '21:9': 'cinémascope', '16:9': 'paysage', '4:3': 'classique', '1:1': 'carré', '3:4': 'portrait',
-  '9:16': 'vertical', image: 'd’après l’image' };
+const FMT_SUB = { '2.4:1': 'cinéma', '21:9': 'écran large', '16:9': 'paysage', '4:3': 'classique', '1:1': 'carré', '3:4': 'portrait',
+  '9:16': 'vertical', image: 'comme l’image' };
+// la caméra : le mot de tous les jours sur la pastille, la phrase anglaise de MiniMax (celle qui s'écrit) au survol
+const CAM_FR = { 'Push In': 'avancer', 'Pull Out': 'reculer', 'Zoom In': 'zoom avant', 'Zoom Out': 'zoom arrière', 'Pan Left': 'tourner à gauche',
+  'Pan Right': 'tourner à droite', 'Truck Left': 'glisser à gauche', 'Truck Right': 'glisser à droite', 'Tilt Up': 'lever les yeux',
+  'Tilt Down': 'baisser les yeux', 'Pedestal Up': 'monter', 'Pedestal Down': 'descendre', 'Arc Shot': 'tourner autour', 'Tracking Shot': 'suivre',
+  'Static Shot': 'caméra fixe', POV: 'vue subjective', 'Shake Slightly': 'trembler un peu', 'Shake Strongly': 'trembler fort',
+  'Roll Clockwise': 'pencher à droite', 'Roll Counterclockwise': 'pencher à gauche' };
 const KINDS = ['image', 'element', 'video', 'audio'];
 const mmss = (s) => { if (s == null || !isFinite(s)) return '—'; s = Math.max(0, Math.round(s)); return s >= 60 ? `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')}` : `${s} s`; };
 const p2 = (n) => String(n).padStart(2, '0');
@@ -229,22 +237,22 @@ async function paintSlot(which) {
   const it = await item(F[which]);
   if (F[which] && !it) { F[which] = null; save(); }
   const lab = which === 'start' ? 'début' : 'fin';
-  const tag = which === 'start' || !F.start ? '<Picture 1>' : '<Picture 2>';
+  const tag = which === 'start' || !F.start ? '@image1' : '@image2';   // la grammaire commune : @image1, la première image envoyée
   box.replaceChildren();
   box.className = 'v-slot' + (it ? '' : ' empty');
   if (!it) {
-    box.title = `l’image de ${lab} : choisir, ou déposer une image (ou un personnage : son plein pied)`;
+    box.title = `image de ${lab} : choisir ou déposer`;
     box.append(el('button', { class: 'v-im', type: 'button', onclick: () => chooseImage(which) }, el('b', {}, '+')),
       el('span', { class: 'v-tok' }, lab), el('span', { class: 'v-name' }, ' '));
     return;
   }
-  box.title = `${it.title || ''} — l’image de ${lab} · ${it.width}×${it.height} · clic : changer, retirer`;
+  box.title = `${it.title || ''} — ${tag}`;
   box.append(el('button', { class: 'v-im', type: 'button', style: bg(it.thumb_url || it.url),
     onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); menu(r.left, r.top - 4, [{ head: `${lab} · ${it.title || ''}` },
-      { label: `Insérer ${tag}`, sub: 'dans le prompt', onclick: () => insertAt(descEl, tag) },
+      { label: `Insérer ${tag}`, onclick: () => insertAt(descEl, tag) },
       { label: 'Changer d’image…', onclick: () => chooseImage(which) },
       { label: 'Voir en grand', onclick: () => fil?.open(it) },
-      '-', { label: 'Retirer', icon: '×', danger: true, onclick: () => { F[which] = null; changed(); paintSlot(which); } }]); } }),
+      '-', { label: 'Retirer', icon: '×', danger: true, onclick: () => { F[which] = null; changed(); paintSlot(which); syncImageTokens(); } }]); } }),
   el('span', { class: 'v-tok' }, lab), el('span', { class: 'v-name' }, it.title || ''));
 }
 async function chooseImage(which) {
@@ -263,7 +271,7 @@ async function setImage(which, it) {
   S.items.set(img.id, img);
   F[which] = img.id;
   // la toile reste celle choisie (le plan annonce le recadrage) ; « d'après l'image » se choisit au format
-  changed(); paintSlot(which);
+  changed(); paintSlot(which); syncImageTokens();
 }
 // un élément comme image de départ : laquelle de ses images ? (le plein pied d'abord)
 function fromElement(elem) {
@@ -285,7 +293,7 @@ function fromElement(elem) {
     const scrim = el('div', { class: 'scrim picker' }, el('div', { class: 'modal', role: 'dialog', 'aria-label': 'image de départ' },
       el('div', { class: 'modal-head' }, el('span', { class: 't' }, `Quelle image de ${elem.title} ?`), el('span', { class: 'sp' }),
         el('button', { class: 'tb ghost sm', onclick: () => close(null) }, 'Annuler')),
-      el('div', { class: 'modal-body' }, el('p', {}, 'Le plan partira exactement de cette image.'),
+      el('div', { class: 'modal-body' }, el('p', {}, 'Le plan part de cette image.'),
         refs.length ? grid : el('p', { class: 'warn' }, 'cet élément n’a aucune image'))));
     document.addEventListener('keydown', esc);
     document.body.append(scrim);
@@ -347,12 +355,12 @@ async function toBar(items, toks = null) {
       if ([F.start, F.end].join() !== before) n++;
     }
     if (!rest.length) return n > 0;
-    toast(`${rest.map((x) => x.title).join(', ')} : une vidéo, un son vont en mode Références`, 5000);
+    toast(`${rest.map((x) => x.title).join(', ')} : à poser en mode Références`, 5000);
     return n > 0;
   }
   if (F.mode !== 'r2v') {
     setMode('r2v');
-    toast('passé en mode Références : les entrées s’appellent par leur jeton (@element1…)', 5000);
+    toast('passé en mode Références', 4000);
   }
   return E ? E.add(items, toks) > 0 || (toks?.length > 0) : false;
 }
@@ -361,14 +369,20 @@ async function toBar(items, toks = null) {
 const PH = {
   t2v: 'Décrivez le plan : ce qu’on voit, ce qu’on entend, la caméra',
   i2v: 'Ce qui se passe à partir de l’image : l’action, la caméra, une réplique',
-  r2v: 'Le plan, avec ses entrées : @element1 marche dans @image1… (tapez @)',
+  r2v: 'Le plan, avec ses références : @element1 marche dans @image1… (tapez @)',
 };
 const descEl = $('#desc'), soundEl = $('#sound'), musicEl = $('#music');
 function syncFields() {
   const p = F.p[F.mode];
   if (descEl.value !== p.desc) descEl.value = p.desc;
   soundEl.value = p.sound; musicEl.value = p.music;
-  if (E) { E.enable(F.mode === 'r2v'); E.refreshFields(); }
+  if (E) { E.enable(F.mode === 'r2v'); syncImageTokens(); }
+}
+// en Images, @image1 et @image2 sont les images envoyées, dans l'ordre (le début, puis la fin) : verts s'ils pointent
+function syncImageTokens() {
+  if (!E) return;
+  const imgs = F.mode === 'i2v' ? [F.start, F.end].filter(Boolean).map((id) => S.items.get(id)).filter(Boolean) : [];
+  E.extra(Object.fromEntries(imgs.map((it, k) => [`image${k + 1}`, { cat: 'image', it }])));
 }
 descEl.addEventListener('input', () => { F.p[F.mode].desc = descEl.value; changed(); });
 soundEl.addEventListener('input', () => { F.p[F.mode].sound = soundEl.value; changed(); });
@@ -393,11 +407,11 @@ function segPick(id, cb) { $$(`#${id} .tb`).forEach((b) => b.addEventListener('c
 segPick('cam-amp', (v) => { cam.amp = v; });
 segPick('cam-speed', (v) => { cam.speed = v; });
 function paintCamera() {
-  $('#cam-chips').replaceChildren(...(S.opts?.camera || []).map((c) => el('button', { class: 'chip cam-chip', type: 'button', title: c.phrase,
+  $('#cam-chips').replaceChildren(...(S.opts?.camera || []).map((c) => el('button', { class: 'chip cam-chip', type: 'button', title: `« ${c.phrase} »`,
     onclick: () => {
       const fixed = /Shake|Static|POV/.test(c.id);   // l'amplitude est dans le mot, ou n'a pas de sens
       insertAt(writeIn(), c.phrase + (fixed ? '' : cam.amp) + (/Static/.test(c.id) ? '' : cam.speed) + '.');
-    } }, c.id)));
+    } }, CAM_FR[c.id] || c.id)));
 }
 // la langue de la réplique : la préférence « langue parlée » (Général)
 $('#h-say').addEventListener('click', () => {
@@ -416,9 +430,9 @@ function refreshAssist() {
   const box = $('#assist');
   if (!box || $('[data-pop="aides"]').hidden) return;
   const w = S.opts?.llm || {};
-  box.replaceChildren(inviteButton(), el('span', { class: 'hint', title: w.up ? '' : w.why || '' }, w.up
-    ? `le modèle de texte local (${w.model}) réécrit votre invite au format d’H3 : en anglais, en plans avec leurs temps de coupe, les répliques balisées dans leur langue, chaque sujet défini ; vous relisez avant de lancer`
-    : 'sans modèle de texte : le gabarit pose les plans et leurs temps de coupe, sans traduire'));
+  box.replaceChildren(inviteButton(), el('span', { class: 'hint', title: w.up ? `modèle de texte : ${w.model}` : w.why || '' }, w.up
+    ? 'votre prompt réécrit pour H3, en anglais et en plans ; à relire'
+    : 'sans modèle de texte : les plans seulement, sans traduire'));
 }
 
 // ── le Multishot, dans la barre ─────────────────────────────
@@ -550,43 +564,39 @@ function pickTier(id) {
   changed(); paintFmt();
 }
 const glyph = (ratio, cls = '') => el('span', { class: 'v-ratio ' + cls, style: { aspectRatio: String(Math.max(0.4, Math.min(2.6, ratio || 1))) } });
-const mpx = (w, h) => `${String(Math.round((w * h) / 1e4) / 100).replace('.', ',')} Mpx`;
 function paintFmt() {
   const box = $('[data-pop="fmt"]');
   if (box.hidden || !S.opts) return;
   const list = formats(), cur = formatNow(list), c = canvasNow(), pl = S.plan;
   const keep = box.querySelector('.pp-body')?.scrollTop || 0;
-  const head = el('div', { class: 'pp-h' }, el('span', { class: 'lbl' }, 'Format · résolution'),
-    el('span', { class: 'lbl pp-sum' }, pl ? `${pl.width}×${pl.height} · ${secFr(pl.seconds)} · ≈ ${rngShort(pl.estimate)}` : ''), el('span', { class: 'sp' }),
+  const head = el('div', { class: 'pp-h' }, el('span', { class: 'lbl' }, 'Format · résolution'), el('span', { class: 'sp' }),
     el('button', { class: 'pp-x', type: 'button', title: 'fermer (Échap)', 'aria-label': 'fermer', onclick: () => togglePop('fmt') }, '×'));
   const fmts = el('div', { class: 'v-fmts', role: 'radiogroup', 'aria-label': 'format' }, ...list.map((f) => el('button', {
     class: 'v-fmt' + (f === cur ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': f === cur ? 'true' : 'false',
-    title: f.auto ? `la toile suit l’image de départ : ${f.auto.w} × ${f.auto.h}` : `${f.label} — ${scaleOf().tiers.map((t) => `${f.sizes[t].w}×${f.sizes[t].h}`).join(', ')}`,
+    title: f.auto ? `${f.auto.w} × ${f.auto.h}` : f.label,
     onclick: () => pickFormat(f) }, glyph(f.ratio), el('b', {}, f.short), el('small', {}, f.sub))));
   let rows;
   if (c.auto) {
-    rows = [el('div', { class: 'cv-row on' }, el('b', {}, `${c.w} × ${c.h}`), el('span', { class: 'cv-l' }, `d’après l’image · ${methodOf(F.method)?.label || ''}`),
+    rows = [el('div', { class: 'cv-row on' }, el('span', { class: 'cv-l' }, el('em', {}, methodOf(F.method)?.label || ''), el('b', {}, `${c.w} × ${c.h}`)),
       el('span', { class: 'cv-e' }, pl ? rngShort(pl.estimate) : ''))];
   } else {
-    rows = (c.free ? [el('div', { class: 'cv-row on', title: 'la toile de la vidéo reprise : choisissez une résolution pour revenir à l’échelle' },
-      el('b', {}, `${c.w} × ${c.h}`), el('span', { class: 'cv-l' }, 'toile libre (vidéo reprise)'), el('span', { class: 'cv-e' }, pl ? rngShort(pl.estimate) : ''))] : [])
+    rows = (c.free ? [el('div', { class: 'cv-row on', title: 'la taille de la vidéo reprise' },
+      el('span', { class: 'cv-l' }, el('em', {}, 'reprise'), el('b', {}, `${c.w} × ${c.h}`)), el('span', { class: 'cv-e' }, pl ? rngShort(pl.estimate) : ''))] : [])
       .concat(scaleOf().tiers.map((t) => {
         const sz = cur?.sizes?.[t];
         if (!sz) return null;
         const m = methodOf(t);
         const on = !c.free && F.method === t;
-        return el('button', { class: 'cv-row' + (on ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false', title: m?.note || '',
-          onclick: () => pickTier(t) },
-        el('b', {}, `${sz.w} × ${sz.h}`),
-        el('span', { class: 'cv-l' }, el('em', {}, m?.label || t), ` · ${mpx(sz.w, sz.h)} · ${sz.stages === 2 ? 'deux étages' : 'un étage'}`),
+        return el('button', { class: 'cv-row' + (on ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false',
+          title: `${m?.note || ''}${sz.estimate ? `\ntemps : ${sz.estimate.basis}` : ''}`.trim(), onclick: () => pickTier(t) },
+        el('span', { class: 'cv-l' }, el('em', {}, m?.label || t), el('b', {}, `${sz.w} × ${sz.h}`)),
         el('span', { class: 'cv-e' }, sz.estimate ? rngShort(sz.estimate) : '—'));
       }).filter(Boolean));
   }
   const body = el('div', { class: 'pp-body' },
     el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Format'), fmts),
-    el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, `Résolution · ${cur?.short || ''}`),
-      el('div', { class: 'canvases', role: 'radiogroup', 'aria-label': 'résolution' }, ...rows)),
-    pl ? el('p', { class: 'hint' }, `${pl.estimate.basis}. Chargement du modèle, image et son compris ; le premier rendu après un démarrage d’H3 est plus long.`) : null);
+    el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Résolution'),
+      el('div', { class: 'canvases', role: 'radiogroup', 'aria-label': 'résolution' }, ...rows)));
   box.replaceChildren(head, body);
   body.scrollTop = keep;
 }
@@ -649,24 +659,24 @@ function paintChips() {
       class: F.mode === m ? 'on' : '', type: 'button', role: 'tab', 'aria-selected': F.mode === m ? 'true' : 'false',
       title: `${MODE_FR[m].replace(/^./, (x) => x.toUpperCase())} : ${MODE_TIP[m]}`, onclick: () => setMode(m) }, MODE_SHORT[m]))),
     chip('', { value: cur?.short || '', glyphOf: cur?.ratio, open: S.pop === 'fmt', cls: 'fmt',
-      title: `format · ${cur?.sub || ''} — le changer garde la résolution`, onclick: () => togglePop('fmt') }),
-    chip('', { value: `${c.free ? 'toile libre' : meth?.label || ''} · ${wh}`, small: pl ? `≈ ${rngShort(pl.estimate)}` : '', open: S.pop === 'fmt', cls: 'res',
-      title: `résolution — de l’Esquisse à la Qualité ; le temps estimé de ce plan sur H3${pl ? ` : ${rng(pl.estimate)}` : ''}`, onclick: () => togglePop('fmt') }),
-    el('span', { class: 'pc count dur', title: `durée : ${fr[k]?.frames || F.frames} images à 24 i/s — les pas d’H3 (17 images), de ${secFr(fr[0]?.seconds || 5.17)} à ${secFr(fr[fr.length - 1]?.seconds || 15.08)}` },
+      title: `format · ${cur?.sub || ''}`, onclick: () => togglePop('fmt') }),
+    chip('', { value: c.free ? 'reprise' : meth?.label || '', small: pl ? `≈ ${rngShort(pl.estimate)}` : '', open: S.pop === 'fmt', cls: 'res',
+      title: `résolution · ${wh}${pl ? ` — temps estimé ${rng(pl.estimate)}` : ''}`, onclick: () => togglePop('fmt') }),
+    el('span', { class: 'pc count dur', title: `durée de la vidéo, de ${secFr(fr[0]?.seconds || 5.17)} à ${secFr(fr[fr.length - 1]?.seconds || 15.08)}` },
       el('button', { type: 'button', 'aria-label': 'plus court', disabled: k <= 0 ? true : null, onclick: () => step(-1) }, '−'),
       el('b', { role: 'button', tabindex: 0, title: 'toutes les durées', onclick: (e) => up(e.currentTarget.parentElement, [{ head: 'Durée' },
-        ...fr.map((f) => ({ label: secFr(f.seconds), sub: `${f.frames} im.`, checked: f.frames === (fr[k]?.frames), onclick: () => setFrames(f.frames) }))]) },
+        ...fr.map((f) => ({ label: secFr(f.seconds), checked: f.frames === (fr[k]?.frames), onclick: () => setFrames(f.frames) }))]) },
       secFr(fr[k]?.seconds || F.frames / 24)),
       el('button', { type: 'button', 'aria-label': 'plus long', disabled: k >= fr.length - 1 ? true : null, onclick: () => step(1) }, '+')),
     chip('Multishot', { value: nShots ? `${nShots} plans` : '', cls: 'ms-chip' + (F.ms.on ? ' set' : ''), open: F.ms.on,
-      title: F.ms.on ? 'éteindre le multishot : l’invite garde le texte des plans' : 'découper la vidéo en plans : une frise, un texte et des répliques par plan',
+      title: F.ms.on ? 'revenir à un seul prompt (il garde le texte des plans)' : 'découper la vidéo en plans',
       onclick: toggleMultishot }),
-    chip('Son', { value: snd, cls: snd ? 'set' : '', open: S.pop === 'son', title: 'le son d’ambiance et la musique hors champ (H3 rend le son avec l’image)', onclick: () => togglePop('son') }),
-    chip('Aides', { open: S.pop === 'aides', title: 'caméra, réplique, exclusions, assistant', onclick: () => togglePop('aides') }),
+    chip('Son', { value: snd, cls: snd ? 'set' : '', open: S.pop === 'son', title: 'l’ambiance et la musique', onclick: () => togglePop('son') }),
+    chip('Aides', { open: S.pop === 'aides', title: 'caméra, réplique, à éviter, mise en forme', onclick: () => togglePop('aides') }),
     chip('Avancé', { value: alt.join(' · '), cls: 'adv' + (alt.length ? ' set' : ''), open: S.pop === 'adv',
-      title: 'pas, graine, LoRA, modèle, compression, détail des références, le graphe', onclick: () => togglePop('adv') }),
-    chip('Reçu par H3', { value: notes ? String(notes) : '', cls: 'recu', open: S.pop === 'recu',
-      title: `ce que le modèle reçoit : le prompt compilé, les images dans l’ordre, la toile, la durée${notes ? ` — ${notes} note${notes > 1 ? 's' : ''} du serveur` : ''}`,
+      title: 'les réglages du modèle', onclick: () => togglePop('adv') }),
+    chip('Aperçu', { value: notes ? String(notes) : '', cls: 'recu', open: S.pop === 'recu',
+      title: `ce que H3 recevra${notes ? ` — ${notes} remarque${notes > 1 ? 's' : ''}` : ''}`,
       onclick: () => togglePop('recu') }));
 }
 
@@ -709,35 +719,33 @@ async function paintRecu() {
   if (seq !== recuSeq) return;
   // un champ des sujets qu'on est en train d'écrire garde la main : on ne redessine pas sous les doigts
   if (box.contains(document.activeElement) && document.activeElement.matches('textarea')) return;
-  const words = (ap.desc || '').trim() ? ap.desc.trim().split(/\s+/).length : 0;
-  $('#recu-sum').textContent = `${MODE_FR[ap.mode]} · ${ap.width}×${ap.height} · ${ap.frames} im. · ${secFr(ap.seconds)} · ${ap.steps} pas`;
   const pics = (ap.pictures || []).map((x) => el('div', { class: 'v-pic', title: [x.label, x.role].filter(Boolean).join(' · ') },
     el('span', { class: 'v-pic-im', style: bg(x.thumb_url) }), el('b', {}, x.tag), el('small', {}, x.label || x.role || '')));
-  const checks = el('ul', { class: 'v-checks' }, ...(ap.checks || []).map((c) => el('li', { class: (LEVEL[c.level] || LEVEL.ok)[0] },
+  // la toile et la durée sont sur les puces de la barre : pas une seconde fois ici
+  const checks = el('ul', { class: 'v-checks' }, ...(ap.checks || []).filter((c) => c.id !== 'toile').map((c) => el('li', { class: (LEVEL[c.level] || LEVEL.ok)[0] },
     el('i', { 'aria-hidden': 'true' }, (LEVEL[c.level] || LEVEL.ok)[1]), el('span', {}, c.text))));
   // les sujets : la définition qui part dans subject_definitions (la mise en forme l'écrit en anglais ; vide : la
   // description de l'élément), et le résumé
   const subj = F.mode === 'r2v' ? (ap.subjects || []).filter((x) => /^@(element|image)/.test(x.token)) : [];
-  const defs = subj.length ? el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Les sujets · ce que H3 lit de chacun'),
+  const defs = subj.length ? el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Descriptions'),
     ...subj.map((x) => el('label', { class: 'v-def' }, el('b', {}, x.token), el('span', { class: 'v-def-t' }, x.title || ''),
       el('textarea', { class: 'fld', rows: 1, spellcheck: 'false', title: x.description ? `sinon : ${x.description}` : '',
-        placeholder: x.description ? `vide : ${x.description}` : 'vide : la description de l’élément, telle quelle',
+        placeholder: x.description || 'la description de l’élément',
         oninput: (e) => { F.subjects = { ...F.subjects, [x.token]: e.target.value }; save(); schedulePlan(); } }, F.subjects?.[x.token] || ''))),
-    el('label', { class: 'v-def' }, el('b', {}, 'résumé'), el('span', { class: 'v-def-t' }, 'summary'),
-      el('textarea', { class: 'fld', rows: 1, spellcheck: 'false', placeholder: 'vide : la première phrase du premier plan',
+    el('label', { class: 'v-def' }, el('b', {}, 'résumé'), el('span', { class: 'v-def-t' }, ''),
+      el('textarea', { class: 'fld', rows: 1, spellcheck: 'false', placeholder: 'la première phrase du premier plan',
         oninput: (e) => { F.summary = e.target.value; save(); schedulePlan(); } }, F.summary || ''))) : null;
   const w = ap.writer || {};
   put(box,
     el('div', { class: 'v-sec v-invite' }, el('div', { class: 'row' },
       inviteButton(),
-      el('span', { class: 'hint', title: w.up ? '' : w.why || '' }, w.up ? `le modèle de texte local (${w.model}) écrit l’invite au format d’H3 : en anglais, en plans, les répliques balisées ; vous relisez, puis « Générer »`
-        : 'sans modèle de texte : le gabarit pose les plans et leurs temps, sans traduire'))),
-    el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Les vérifications'), checks),
+      el('span', { class: 'hint', title: w.up ? `modèle de texte : ${w.model}` : w.why || '' }, w.up ? 'votre prompt réécrit pour H3, en anglais et en plans ; à relire'
+        : 'sans modèle de texte : les plans seulement, sans traduire'))),
+    el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Vérifications'), checks),
     defs,
-    pics.length ? el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, `Images chargées, dans l’ordre · ${pics.length}`), el('div', { class: 'v-pics' }, ...pics)) : null,
-    el('div', { class: 'v-sec' }, el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'Le prompt envoyé'), el('span', { class: 'sp' }),
-      el('span', { class: 'lbl' + (words && words < 60 ? ' low' : '') }, `${words} mot${words > 1 ? 's' : ''} écrits`)),
-    el('pre', { class: 'sent' }, ap.prompt_sent || (ap.ok ? '' : `rien encore : ${ap.errors[0] || ''}`))));
+    pics.length ? el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Images envoyées'), el('div', { class: 'v-pics' }, ...pics)) : null,
+    el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Prompt envoyé'),
+      el('pre', { class: 'sent' }, ap.prompt_sent || (ap.ok ? '' : `rien encore : ${ap.errors[0] || ''}`))));
 }
 
 // la mise en forme de l'invite : un travail ; son résultat remplit la barre (l'invite, le son, la musique, les
@@ -747,8 +755,8 @@ function inviteButton() {
   const busy = !!INV.job;
   const empty = !F.p[F.mode].desc.trim();
   return el('button', { class: 'tb ghost sm v-inv', type: 'button', disabled: busy || empty ? true : null,
-    title: busy ? 'en cours…' : empty ? 'écrivez d’abord ce que vous voulez voir : la mise en forme part de votre texte' : 'l’invite réécrite au format d’H3, à relire',
-    onclick: shapeInvite }, busy ? 'Mise en forme…' : 'Mettre en forme pour H3');
+    title: busy ? 'en cours…' : empty ? 'écrivez d’abord le prompt' : 'réécrire le prompt pour H3',
+    onclick: shapeInvite }, busy ? 'Mise en forme…' : 'Mettre en forme');
 }
 async function shapeInvite() {
   if (INV.job || !F.p[F.mode].desc.trim()) return;
@@ -769,8 +777,7 @@ async function shapeInvite() {
     syncFields();
     if (F.ms.on) syncMultishot();   // la frise relit l'invite : ses plans et leurs temps de coupe
     changed();
-    toast(inv.source === 'modèle' ? 'invite mise en forme par le modèle de texte : relisez, corrigez, puis « Générer »'
-      : `gabarit : ${inv.why || 'pas de modèle de texte'}`, 7000);
+    toast(inv.source === 'modèle' ? 'prompt mis en forme : relisez-le avant de lancer' : 'sans modèle de texte : plans seulement', 6000);
   } catch (e) { toast(e.message, 6000); }
   finally { INV.job = null; refreshInvite(); }
 }
@@ -806,7 +813,6 @@ function paintOutput() {
   $('#profile').replaceChildren(el('b', {}, `${meth.label}${pl ? ` · ${pl.width} × ${pl.height}` : ''}${pl?.draft ? ` (depuis ${pl.draft[0]} × ${pl.draft[1]})` : ''}${steps ? ' · ' + steps + ' pas' : ''}`),
     el('span', {}, `La recette de Cal : ${(rec.loras || []).map((l) => `${l.name.replace('.safetensors', '')} ${String(l.strength).replace('.', ',')}`).join(' → ')} ; ${rec.attention || ''} ; ${rec.sampler || ''}, planning ${rec.scheduler || ''}.`));
   if (document.activeElement !== $('#seed')) $('#seed').value = F.seed;
-  $('#adv-sum').textContent = advAlt().join(' · ');
   paintSeedOrig();
 }
 function paintSeedOrig() {
@@ -856,8 +862,8 @@ async function runPlan() {
 }
 // ce qui manque, en peu de mots sous « Générer » (la phrase entière du serveur au survol)
 const SHORT = [[/^écrivez la description/, 'décrivez le plan'], [/ajoutez une première image/, 'ajoutez une image'],
-  [/^ajoutez une entrée/, 'ajoutez une entrée'], [/ne pointent vers rien/, 'des jetons sans entrée'],
-  [/ne servent qu'en mode Références/, 'les jetons @ : mode Références'], [/^toile/, 'résolution hors limites']];
+  [/^ajoutez une entrée/, 'ajoutez une référence'], [/ne pointent vers rien/, 'un @ sans référence'],
+  [/ne servent qu'en mode/, 'les @ : en Références'], [/^toile/, 'taille hors limites']];
 const short = (e) => SHORT.find(([rx]) => rx.test(e))?.[1] || e;
 const FIX = [   // chaque blocage mène à ce qui le lève
   [/première image, une dernière/, () => chooseImage('start')],
@@ -873,8 +879,7 @@ function paintPlan() {
   $('#why').replaceChildren(...(first ? [el('span', { class: fix ? 'fix' : '', role: fix ? 'button' : null, tabindex: fix ? 0 : null,
     title: pl.errors.join('\n'), onclick: fix ? () => fix[1](first) : null }, short(first) + (pl.errors.length > 1 ? ` (+${pl.errors.length - 1})` : ''))] : []));
   $('#go').disabled = !pl.ok;
-  $('#go').title = pl.ok ? `${pl.width} × ${pl.height} · ${secFr(pl.seconds)} · ${pl.frames} images · ${pl.steps} pas — estimé ${rng(pl.estimate)} (Ctrl + Entrée)` : pl.errors.join('\n');
-  $('#go-sub').textContent = pl.ok ? `≈ ${rngShort(pl.estimate)}` : '';
+  $('#go').title = pl.ok ? 'Ctrl + Entrée' : pl.errors.join('\n');
   $('#graph').textContent = pl.graph ? JSON.stringify(pl.graph, null, 1) : (pl.ok ? 'ouvrez ce pli pour le construire' : 'le graphe se construit quand le plan est complet');
   paintOutput();
   paintChips();
@@ -892,7 +897,7 @@ async function launch() {
     const title = (F.p[mode].desc.replace(/\[Shot \d+\]\s*/g, '').replace(/@([\p{L}\p{N}_-]+)/gu, '$1').trim().replace(/\s+/g, ' ') || MODE_FR[mode]).slice(0, 70);
     const j = await jobs.submit('movie.' + mode, params(mode), { title, tool: 'movie' });
     mine(j);
-    toast(pl.engine === 'h3' ? 'rendu en file, en tête du fil : H3 démarre s’il dort' : 'rendu en file, en tête du fil · moteur factice : une vidéo d’essai');
+    toast(pl.engine === 'h3' ? 'rendu lancé : en haut du fil' : 'rendu d’essai lancé (moteur factice) : en haut du fil');
   } catch (e) { toast(e.message); }
   finally { $('#go').disabled = !S.plan?.ok; }
 }
@@ -911,7 +916,7 @@ async function paintEngine() {
   try { S.h3 = await api('movie/h3'); } catch { S.h3 = null; }
   const h = S.h3;
   let cls = 'pill', txt = 'moteur illisible', tip = '';
-  if (h?.engine === 'factice') { cls = 'pill work'; txt = 'moteur factice'; tip = 'une vidéo d’essai (mire, vos images, un bip) : pas H3'; }
+  if (h?.engine === 'factice') { cls = 'pill work'; txt = 'moteur factice'; tip = 'des vidéos d’essai, pas H3'; }
   else if (h) {
     const upI = h.instances.filter((i) => i.up), st = h.instances.find((i) => i.starting_for != null);
     const sleeper = h.instances.some((i) => i.managed);   // une instance que le gardien démarre
@@ -977,7 +982,7 @@ function reuse(it) {
   if (Array.isArray(F.canvas[mode]) && sz && sz.w === F.canvas[mode][0] && sz.h === F.canvas[mode][1]) F.canvas[mode] = null;
   F.subjects = r.subjects && typeof r.subjects === 'object' ? { ...r.subjects } : {};
   F.summary = r.summary || '';
-  if (old) toast('vidéo de l’ancien banc : ses réglages sont repris en Brouillon, la recette de Cal', 6000);
+  if (old) toast('vidéo de l’ancien banc : reprise en Brouillon', 6000);
   if (mode === 'i2v') { F.start = r.start || null; F.end = r.end || null; }
   if (mode === 'r2v') { F.inputs = r.inputs || {}; E?.set(F.inputs); F.refSize = r.ref_image_size || 'match'; $('#ref-size').value = F.refSize; }
   // le Multishot : ses plans s'ils ont été rangés ; sinon un prompt en [Shot n] le rallume, relu
@@ -993,14 +998,14 @@ function reuse(it) {
   setMode(mode);
   syncMultishot();
   (F.ms.on ? $('#ms .ms-ta') : descEl)?.focus();
-  toast('réglages repris · graine vidée : « Générer » fait une variante (la graine d’origine : Avancé)', 5500);
+  toast('réglages repris : « Générer » fait une variante', 5000);
 }
 async function recreate(it, same = false) {
   try {
     const j = await api('movie/redo', { method: 'POST', body: { item: it.id, same_seed: same } });
     mine(j);
     jobs.poll(true);
-    toast(same ? 'refait à l’identique, même graine : en tête du fil' : 'recréé, nouvelle graine : en tête du fil');
+    toast(same ? 'refait à l’identique : en haut du fil' : 'variante lancée : en haut du fil');
   } catch (e) { toast(e.message, 6000); }
 }
 // la première ou la dernière image d'une vidéo, rangée dans la bibliothèque
@@ -1009,7 +1014,7 @@ async function frame(it, which) {
 }
 async function extract(it, which) {
   const img = await frame(it, which);
-  if (img) toast(`« ${img.title} » dans la bibliothèque (Asset) — elle se reprend en image de début, en référence, dans Image`, 6000);
+  if (img) toast(`« ${img.title} » rangée dans la bibliothèque`, 5000);
 }
 // continuer le plan : sa dernière image devient la première d'un nouveau plan
 async function continueFrom(it) {
@@ -1084,7 +1089,7 @@ function menuFor(it) {
       { label: 'La dernière', onclick: () => extract(it, 'last') },
     ] },
     { label: 'Continuer le plan', icon: '→', sub: 'dernière image', title: 'sa dernière image en première image d’un nouveau plan', onclick: () => continueFrom(it) },
-    { label: 'Prendre en référence', icon: '+', sub: '@video', title: 'dans les entrées du mode Références', onclick: () => asRef(it) },
+    { label: 'Prendre en référence', icon: '+', sub: '@video', onclick: () => asRef(it) },
     { label: 'Comparer', icon: '◧', items: [
       { label: 'en A', onclick: () => toBench('A', it) },
       { label: 'en B', onclick: () => toBench('B', it) },
@@ -1168,7 +1173,7 @@ function mountFil() {
     },
     menu: menuFor,
     link: (it) => href('movie/#' + it.id),
-    empty: 'Décrivez le plan en bas, puis « Générer » : le rendu paraît ici dès l’envoi.',
+    empty: 'Décrivez le plan en bas, puis « Générer ».',
   });
 }
 
@@ -1399,7 +1404,7 @@ dropAnywhere(async (files) => {
   for (const f of files) {
     try { await uploadFile(f, { tool: 'upload', via: 'movie' }); n++; } catch (e) { toast(`${f.name} : ${e.message}`); }
   }
-  if (n) toast(`${n > 1 ? n + ' fichiers rangés' : 'rangé'} dans la bibliothèque · Upload — déposez sur la barre pour vous en servir`);
+  if (n) toast(`${n > 1 ? n + ' fichiers rangés' : 'rangé'} dans la bibliothèque : déposez sur la barre pour vous en servir`);
   fil?.reload();
 });
 

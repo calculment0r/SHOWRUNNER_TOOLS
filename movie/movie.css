@@ -60,7 +60,7 @@
 .v-slot.drop-on .v-im { box-shadow: inset 0 0 0 2px var(--grn2); }
 .v-tok {
   position: absolute; left: 2px; top: 30px; padding: 0 3px; border-radius: 2px; background: var(--veil); pointer-events: none;
-  font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink);
+  font-size: 9px; color: var(--ink);
 }
 .v-name { font-size: 9.5px; line-height: 12px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -75,7 +75,7 @@
 .pc-seg button.on { background: var(--grn-bg); color: var(--grn2); box-shadow: inset 0 0 0 1px var(--line-gr); }
 .v-ratio { display: inline-block; flex: none; height: 22px; max-width: 54px; border-radius: 2px; box-shadow: inset 0 0 0 1.5px currentColor; }
 .v-ratio.sm { height: 11px; max-width: 28px; color: var(--ink2); }
-.pc .pc-s { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--cy); }
+.pc .pc-s { font-size: 11px; color: var(--cy); white-space: nowrap; }
 .pc.count.dur b { min-width: 46px; cursor: pointer; }
 .pc.count.dur b:hover { color: var(--cy); }
 .pc.adv b { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
@@ -98,7 +98,7 @@
   border-radius: var(--r2); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink3);
 }
 .v-fmt b { font-family: var(--f-mono); font-size: 11px; font-weight: 500; letter-spacing: .04em; color: var(--ink); }
-.v-fmt small { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
+.v-fmt small { font-size: 10px; color: var(--ink3); }
 .v-fmt:hover { box-shadow: inset 0 0 0 1px var(--line-cy); color: var(--ink2); }
 .v-fmt.on { background: var(--grn-bg); box-shadow: inset 0 0 0 1px var(--line-gr); color: var(--grn2); }
 .v-fmt.on b { color: var(--grn2); }
@@ -181,15 +181,15 @@ details.accel[open] > summary::before { content: "− "; }
 /* la résolution : une ligne par toile, rien de coupé — taille, nom, temps estimé à droite */
 .canvases { display: flex; flex-direction: column; gap: 2px; }
 .cv-row {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 8px; width: 100%;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 8px; width: 100%;
   padding: 6px 8px; border-radius: var(--r2); text-align: left; color: var(--ink2); font-size: 11px;
 }
 .cv-row:hover { background: var(--panel3); color: var(--ink); }
 .cv-row.on { background: var(--panel3); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
-.cv-row b { min-width: 10.5ch; font-family: var(--f-mono); font-size: 10px; font-weight: 400; letter-spacing: .04em; color: var(--ink); white-space: nowrap; }
-.cv-row.on b { color: var(--cy); }
-.cv-l { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cv-e { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .08em; color: var(--ink3); white-space: nowrap; }
+.cv-row b { font-family: var(--f-mono); font-size: 9.5px; font-weight: 400; letter-spacing: .04em; color: var(--ink3); white-space: nowrap; }
+.cv-l { display: flex; align-items: baseline; gap: 10px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.cv-l em { min-width: 76px; }
+.cv-e { font-size: 11px; color: var(--ink2); white-space: nowrap; }
 /* les entrées (commun/entrees.js) : un carrousel par sorte ; au glisser, la place visée */
 .ent-slot:not(.hole) { cursor: grab; touch-action: none; }
 .ent-slot.dragging { opacity: .5; cursor: grabbing; }
