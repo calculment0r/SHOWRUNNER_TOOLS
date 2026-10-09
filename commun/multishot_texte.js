@@ -112,3 +112,97 @@ export function parse(desc, total) {
   });
   return fit(shots, total);
 }
+
+// ── la frise en images (la barre de la page Vidéo, 09/10) ────────────────────────────────────────────────────────
+// Une vidéo H3 est UN rendu : les [Shot n] sont des coupes dans ce rendu. La grille 17k+5 (124 à 362 images à 24 i/s,
+// server/tools/movie.py FRAMES, d'après le code du nœud) vaut pour la vidéo entière, pas pour un plan : un plan n'a
+// pas de grille documentée, une coupe tombe sur une image (1/24 s) — la grammaire relevée dans le guide d'H3 la date
+// à la milliseconde (« [Shot 2] At 00:08.000, », docs/etudes/veille_1009.md § 2.5). D'où, dans la frise :
+//   - une coupe (la poignée entre deux plans) se règle à l'image près, le total ne bouge pas (le « roll » du Montage) ;
+//   - la fin (la poignée du dernier plan) change la durée de la vidéo, aimantée aux durées permises par H3 ;
+//   - un plan garde au moins MIN_FRAMES images (MIN_SECS à 24 i/s) ; il emporte sa durée quand on le déplace.
+// `p.frames` (un entier) fait foi, `p.secs` le suit (compose et le texte en secondes).
+export const FPS = 24;
+export const MIN_FRAMES = Math.round(MIN_SECS * FPS);
+
+const sync = (shots, fps) => { for (const p of shots) p.secs = p.frames / fps; return shots; };
+
+// des images entières qui retombent sur le total, à partir des durées en secondes (ou des images déjà là)
+export function fitFrames(shots, total, { fps = FPS, min = MIN_FRAMES } = {}) {
+  if (!shots.length) return shots;
+  const w = shots.map((p) => Math.max(1e-6, Number.isFinite(p.frames) ? p.frames : (p.secs || 1) * fps));
+  const sum = w.reduce((a, b) => a + b, 0);
+  let acc = 0;
+  shots.forEach((p, i) => {
+    const left = shots.length - 1 - i;
+    p.frames = i === shots.length - 1 ? total - acc : Math.max(min, Math.min(total - acc - left * min, Math.round((w[i] / sum) * total)));
+    acc += p.frames;
+  });
+  return sync(shots, fps);
+}
+
+export const equalFrames = (n, total, o = {}) => fitFrames(Array.from({ length: n }, () => plan(1)), total, o);
+
+// la coupe entre le plan i et le plan i+1, déplacée de d images ; le total ne bouge pas
+export function cutFrames(shots, i, d, { fps = FPS, min = MIN_FRAMES } = {}) {
+  const a = shots[i], b = shots[i + 1];
+  if (!a || !b) return shots;
+  const x = Math.max(min - a.frames, Math.min(b.frames - min, Math.round(d)));
+  a.frames += x;
+  b.frames -= x;
+  return sync(shots, fps);
+}
+
+// la vidéo passe à `total` images : le dernier plan prend l'écart ; trop court, les plans d'avant cèdent, du dernier
+// au premier, jusqu'à leur minimum (le total est déjà sur la grille d'H3 : snapTotal)
+export function trimEnd(shots, total, { fps = FPS, min = MIN_FRAMES } = {}) {
+  if (!shots.length) return shots;
+  let rest = total - shots.reduce((s, p) => s + p.frames, 0);
+  const last = shots[shots.length - 1];
+  if (rest >= 0) { last.frames += rest; return sync(shots, fps); }
+  for (let k = shots.length - 1; k >= 0 && rest < 0; k--) {
+    const give = Math.min(shots[k].frames - min, -rest);
+    shots[k].frames -= give;
+    rest += give;
+  }
+  return sync(shots, fps);
+}
+
+// la durée permise la plus proche (la grille d'H3) ; `grid` : les nombres d'images permis, croissants
+export function snapTotal(frames, grid) {
+  if (!grid?.length) return Math.round(frames);
+  return grid.reduce((best, f) => (Math.abs(f - frames) < Math.abs(best - frames) ? f : best), grid[0]);
+}
+// le plus de plans qu'une durée peut tenir
+export const maxShots = (total, min = MIN_FRAMES) => Math.max(1, Math.floor(total / min));
+
+// déplacer le plan `from` à la place `to` : il emporte sa durée, son texte, ses répliques
+export function moveShot(shots, from, to) {
+  if (from === to || from < 0 || to < 0 || from >= shots.length || to >= shots.length) return shots;
+  const [p] = shots.splice(from, 1);
+  shots.splice(to, 0, p);
+  return shots;
+}
+
+// couper un plan en deux (à l'image près) ; trop court pour deux minimums, rien
+export function splitFrames(shots, i, { fps = FPS, min = MIN_FRAMES } = {}) {
+  const p = shots[i];
+  if (!p || p.frames < 2 * min) return shots;
+  const h = Math.max(min, Math.round(p.frames / 2));
+  const q = plan(0);
+  q.frames = p.frames - h;
+  p.frames = h;
+  shots.splice(i + 1, 0, q);
+  return sync(shots, fps);
+}
+
+// retirer un plan : sa durée passe au voisin (le suivant, ou le précédent pour le dernier)
+export function removeFrames(shots, i, { fps = FPS } = {}) {
+  if (shots.length < 2 || !shots[i]) return shots;
+  const [p] = shots.splice(i, 1);
+  shots[Math.min(i, shots.length - 1)].frames += p.frames;
+  return sync(shots, fps);
+}
+
+// où commence chaque plan, en images (la frise, les temps de coupe)
+export const starts = (shots) => { let at = 0; return shots.map((p) => { const s = at; at += p.frames; return s; }); };
