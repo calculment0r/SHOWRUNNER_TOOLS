@@ -243,7 +243,8 @@ export function createDevices(app) {
       const b = bs.find((x) => x.id === bid);
       if (b) {
         bouton.textContent = `${b.nom} ▾`;
-        credit.textContent = `${b.source} · ${b.licence}${b.credit && b.licence.startsWith('CC-BY') ? ` · ${b.credit}` : ''}`;
+        // une licence CC-BY demande le crédit de l'auteur : il dit déjà la source et la licence
+        credit.textContent = b.credit && b.licence.startsWith('CC-BY') ? b.credit : `${b.source} · ${b.licence}`;
         etat.textContent = app.engine.banques.has(bid) ? `${b.zones} zones · ${Math.round((b.decode || 0) / 1e6)} Mo en mémoire` : 'chargement…';
         if (!app.engine.banques.has(bid)) app.engine.banque(bid).then(() => { etat.textContent = `${b.zones} zones · ${Math.round((b.decode || 0) / 1e6)} Mo en mémoire`; }).catch((e) => { etat.textContent = e.message; });
       } else if (bid) credit.textContent = 'cette banque n\'est pas installée sur ce portail';

@@ -78,11 +78,13 @@ class ResonateurProcessor extends AudioWorkletProcessor {
     this.synthe = { libre: true, note: 60, calme: 0, frappe: false }
     this.prochaine = 0
     this.attente = []
+    this.dates = []   // les réglages datés (un attracteur, une automation) : posés au bloc de leur heure
     this.commence = false
     this.port.onmessage = (e) => this.recevoir(e.data)
   }
   recevoir(o) {
     if (o.type === 'note') this.attente.push(o)
+    else if (o.type === 'reglage' && o.time > currentTime && this.commence) { this.dates.push(o); this.dates.sort((a, b) => a.time - b.time) }
     else if (o.type === 'reglage') { this.r[o.id] = o.valeur; if (!this.commence) this.lu[o.id] = o.valeur }
     else if (o.type === 'silence') this.attente.length = 0
     else if (o.type === 'ping') this.port.postMessage({ pong: o.id })
@@ -97,6 +99,7 @@ class ResonateurProcessor extends AudioWorkletProcessor {
   }
   bloc(t) {
     const B = this.B, fin = t + B / this.fsIn
+    while (this.dates.length && this.dates[0].time < fin) { const o = this.dates.shift(); this.r[o.id] = o.valeur }
     // les notes de ce bloc (leur ordre d'arrivée garde l'ordre des frappes)
     this.attente.sort((a, b) => a.time - b.time)
     while (this.attente.length && this.attente[0].time < fin) this.frapper(this.attente.shift())
@@ -186,13 +189,15 @@ export class Resonateur {
   getParameters() { return PARAMETERS; }
   getParameter(id) { return this.#values.get(id) ?? 0; }
 
-  setParameter(id, value) {
+  // `time` (facultatif) : l'instant de l'horloge où le réglage prend effet (un attracteur,
+  // une automation : le contrat de Macro, plaits/macro.js)
+  setParameter(id, value, time) {
     const d = PARAMETERS.find((p) => p.id === id);
     if (!d) return;
     const v = clamp(value, d.min, d.max);
     this.#values.set(id, v);
-    if (id === 'gain') this.output.gain.setTargetAtTime(v, this.#ctx.currentTime, 0.01);
-    if (AU_WORKLET.has(id)) this.#pousser(id, v);
+    if (id === 'gain') this.output.gain.setTargetAtTime(v, Math.max(time ?? 0, this.#ctx.currentTime), 0.01);
+    if (AU_WORKLET.has(id)) this.#pousser(id, v, time);
   }
 
   noteOn(e) {
@@ -215,5 +220,5 @@ export class Resonateur {
     this.output.disconnect();
   }
 
-  #pousser(id, valeur) { this.#noeud?.port.postMessage({ type: 'reglage', id, valeur }); }
+  #pousser(id, valeur, time) { this.#noeud?.port.postMessage({ type: 'reglage', id, valeur, time }); }
 }
