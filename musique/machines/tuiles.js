@@ -31,6 +31,7 @@ export const CELL = 46;
 export const CELLS = {
   rythme: { w: 6, h: 6 }, drums: { w: 6, h: 6 }, acid: { w: 4, h: 4 },
   analog: { w: 3, h: 4 }, synth: { w: 3, h: 4 }, plaits: { w: 3, h: 4 }, sampler: { w: 3, h: 4 }, player: { w: 3, h: 3 },
+  macro: { w: 3, h: 4 }, resonateur: { w: 3, h: 4 }, physique: { w: 3, h: 4 }, banque: { w: 3, h: 4 },   // les voix de Mutable (06/10, 09/10) : celles d'un instrument
   filtre: { w: 4, h: 4 }, eq3: { w: 4, h: 4 }, satura: { w: 4, h: 4 }, crush: { w: 4, h: 4 }, comp3: { w: 4, h: 4 },
   chorus: { w: 4, h: 4 }, rtt: { w: 4, h: 4 }, reverbe: { w: 4, h: 4 },
   delay: { w: 4, h: 4 }, reverb: { w: 4, h: 4 }, comp: { w: 4, h: 4 }, eq: { w: 4, h: 4 }, filter: { w: 4, h: 4 }, dist: { w: 4, h: 4 },
@@ -58,10 +59,16 @@ export const machineDef = (id) => MACHINES.find((m) => m.id === id) || null;
 export const moteurDe = (id) => MACHINE_ENGINES[id] || null;
 
 // La voix d'une machine (MACHINE_ENGINES.voice) → le module d'ici qui la porte :
-// ce sont les mêmes classes (musique/odio/, reprises d'ODIO_01).
-export const TYPE_DE_VOIX = { synth: 'analog', plaits: 'plaits', acide: 'acid', rythme: 'rythme', delay: 'rtt', reverb: 'reverbe', comp: 'comp3' };
+// ce sont les mêmes classes (musique/odio/, reprises d'ODIO_01). Depuis le 09/10,
+// les vrais moteurs des machines (blocks/machines.js) : Macro (Plaits complet), le
+// Synthé du studio, le Résonateur (Rings) et Physique (Elements).
+export const TYPE_DE_VOIX = { synth: 'analog', plaits: 'plaits', acide: 'acid', rythme: 'rythme', delay: 'rtt', reverb: 'reverbe', comp: 'comp3',
+  macro: 'macro', soustractif: 'synth', resonateur: 'resonateur', physique: 'physique' };
 // … et la sorte de piste qu'une voix d'instrument demande (modules.js, SOURCES_OF)
-export const PISTE_DE_VOIX = { synth: 'synth', plaits: 'synth', acide: 'synth', rythme: 'drums' };
+export const PISTE_DE_VOIX = { synth: 'synth', plaits: 'synth', acide: 'synth', rythme: 'drums',
+  macro: 'synth', soustractif: 'synth', resonateur: 'synth', physique: 'synth' };
+/** Les voix qui jouent des notes (une machine posée reçoit sa phrase de départ). */
+export const VOIX_MELODIQUES = ['synth', 'plaits', 'acide', 'macro', 'soustractif', 'resonateur', 'physique'];
 
 // Les descripteurs d'une section, à son compte MAXIMAL (rack.ts : une rangée
 // étirée à trente-deux pas doit trouver des paramètres pour ses pas 16 à 31).
@@ -122,14 +129,26 @@ export function pousserTout(owner) {
 }
 
 /**
- * LA VOIX PROPRE DES PANNEAUX ODIO (rack.ts, VOIX_DES_PANNEAUX) : POLY-6, FM-6
- * et STRINGS-4 tournent sur le synthé soustractif du minilogue ; sans un
- * réglage de départ à eux, ils sonneraient pareil.
+ * LA VOIX PROPRE DES PANNEAUX ODIO (rack.ts, VOIX_DES_PANNEAUX). Dans ODIO_01,
+ * POLY-6, FM-6 et STRINGS-4 tournaient sur le synthé soustractif du minilogue,
+ * et ces réglages les distinguaient. Depuis le 09/10 chacun a son vrai moteur
+ * (blocks/machines.js, MACHINE_ENGINES) : il ne reste ici que ce que son panneau
+ * ne règle pas — le moteur de Plaits, la banque, l'accord, les formes —, posé
+ * AVANT le branchement (nodal.js, poserMachine) : un réglage que le panneau
+ * porte vient toujours de sa commande, la molette dit ce qu'on entend.
  */
 export const VOIX_DES_PANNEAUX = {
-  p6: { wave: 0, detune: 12, cutoff: 1800, resonance: 2, envAmount: 1200, attack: 0.02, decay: 0.35, sustain: 0.5, release: 0.4, gain: 0.4 },
-  f6: { wave: 1, detune: 3, cutoff: 5000, resonance: 1, envAmount: 4000, attack: 0.003, decay: 0.25, sustain: 0.15, release: 0.3, gain: 0.35 },
-  s4: { wave: 0, detune: 22, cutoff: 3600, resonance: 0.8, envAmount: 600, attack: 0.45, decay: 0.8, sustain: 0.85, release: 1.2, gain: 0.32 },
+  // POLY-6 sur le Synthé : une dent de scie, le sous-oscillateur carré une octave
+  // dessous (oscillateur B), le LFO en triangle (son onde n'est pas branchée)
+  p6: { wave: 2, wave2: 4, oct2: -1, lfo_w: 1, fdec: 0.5 },
+  // MINILOGUE XD sur le Synthé : rien de plus, son panneau règle ses deux VCO
+  ml: {},
+  // FM-6 sur Macro : la banque 2 des FM-6 (pianos électriques, claviers,
+  // percussions accordées) ; l'enveloppe de la voix ouverte, celles du patch font le son
+  f6: { moteur: 3, attack: 0.001, decay: 1, sustain: 1, release: 0.8, gain: 0.3 },
+  // STRINGS-4 sur Macro : la string machine, l'accord d'octave (le premier des
+  // onze de chord_bank.cc, HARMO au milieu de sa case)
+  s4: { moteur: 6, harmo: 0.0446, decay: 0.8, gain: 0.4 },
 };
 
 /**
@@ -149,8 +168,13 @@ export function phraseDeMachine(machineId) {
       [8, 33, false, true], [10, 40, true, false], [11, 33, false, false], [12, 45, false, true], [14, 43, true, false], [15, 36, false, false]];
     return { steps: 16, notes: ph.map(([s, p, sl, ac]) => ({ s, l: sl ? 2 : 1, p, v: ac ? 1 : 0.7, ...(sl ? { sl: true } : {}), ...(ac ? { ac: true } : {}) })) };
   }
-  if (v !== 'synth' && v !== 'plaits') return null;
+  if (!VOIX_MELODIQUES.includes(v) || v === 'acide') return null;
   if (machineId === 'mf') return { steps: 16, notes: [[2, 72], [5, 76], [7, 74], [10, 69], [13, 72]].map(([s, p]) => ({ s, l: 2, p, v: 0.6 })) };
+  // 09/10 : le STRINGS-4 tient des accords (la mineur, fa majeur), le FM-6 les
+  // plaque sur les temps (un clavier) — leurs moteurs sont ceux d'un ensemble
+  // et d'un piano électrique ; choix d'écriture, dans la tonalité des autres phrases
+  if (machineId === 's4') return { steps: 16, notes: [[0, 8, [57, 60, 64]], [8, 8, [53, 57, 60]]].flatMap(([s, l, ps]) => ps.map((p) => ({ s, l, p, v: 0.7 }))) };
+  if (machineId === 'f6') return { steps: 16, notes: [[0, [57, 60, 64]], [4, [57, 60, 64]], [8, [53, 57, 60]], [12, [55, 59, 62]]].flatMap(([s, ps]) => ps.map((p) => ({ s, l: 3, p, v: 0.75 }))) };
   return { steps: 16, notes: [[0, 33], [3, 33], [6, 40], [8, 29], [11, 29], [14, 36]].map(([s, p]) => ({ s, l: 2, p, v: 0.8 })) };
 }
 

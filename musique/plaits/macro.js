@@ -7,7 +7,7 @@
 // banques FM-6 au format DX7 —, compilée en WebAssembly par
 // tools/plaits_wasm/construire.sh. Étude et mesures : docs/etudes/odio_synthes.md.
 //
-//   worklet (8 voix plaits::Voice) → enveloppe par voix → UN passe-bas → VCA → sortie
+//   worklet (8 voix plaits::Voice) → enveloppe par voix → UN filtre → VCA → sortie
 //
 // Le contrat est celui des instruments d'ODIO (odio/types.js) : descripteurs,
 // setParameter, noteOn({ note, velocity, time, duration }), noteOff, ping —
@@ -66,7 +66,15 @@ const PARAMETERS = [
   { id: 'sustain', label: 'sustain', min: 0, max: 1, default: 1, curve: 'linear' },
   { id: 'release', label: 'release', min: 0.01, max: 4, default: 0.3, unit: 's', curve: 'exponential' },
   { id: 'gain', label: 'vol', min: 0, max: 1, default: 0.4, curve: 'linear' },
+  // 09/10 : le mode du filtre et son enveloppe paraphonique, ceux du Numérique
+  // (odio/instruments/plaits-synth.js) — la MicroFreak joue sur Macro et son
+  // panneau a un sélecteur LP/BP/HP et une enveloppe vers la coupure. Placés
+  // après les autres (la tuile du nodal garde ses rails) ; à leurs défauts
+  // (passe-bas, enveloppe nulle), Macro sonne comme avant.
+  { id: 'fmode', label: 'mode', min: 0, max: 2, default: 0, curve: 'choice', choices: ['lp', 'bp', 'hp'] },
+  { id: 'envAmount', label: 'env', min: 0, max: 8000, default: 0, unit: 'Hz', curve: 'linear' },
 ];
+const TYPES_FILTRE = ['lowpass', 'bandpass', 'highpass'];
 // ce que le worklet doit savoir ; le filtre et le volume vivent en Web Audio
 const AU_WORKLET = new Set(['moteur', 'harmo', 'timbre', 'morph', 'aux', 'jeu', 'declin', 'couleur', 'attack', 'decay', 'sustain', 'release']);
 
@@ -229,12 +237,24 @@ export class MacroPlaits {
     if (id === 'gain') this.output.gain.setTargetAtTime(v, t, 0.01);
     if (id === 'cutoff') this.#filtre.frequency.setTargetAtTime(Math.min(v, this.#ctx.sampleRate * 0.45), t, 0.02);
     if (id === 'resonance') this.#filtre.Q.setTargetAtTime(v, t, 0.01);
+    if (id === 'fmode') this.#filtre.type = TYPES_FILTRE[Math.round(v)] ?? 'lowpass';
     if (AU_WORKLET.has(id)) this.#pousser(id, v, time);
   }
 
   noteOn(e) {
     if (!this.#noeud) return;
-    this.#noeud.port.postMessage({ type: 'note', note: e.note, velocity: clamp(e.velocity, 0, 1), time: Math.max(e.time, this.#ctx.currentTime), duration: Math.max(e.duration, 0.01) });
+    const debut = Math.max(e.time, this.#ctx.currentTime);
+    this.#noeud.port.postMessage({ type: 'note', note: e.note, velocity: clamp(e.velocity, 0, 1), time: debut, duration: Math.max(e.duration, 0.01) });
+    // l'enveloppe de filtre, paraphonique (plaits-synth.js) : une seule, rouverte à
+    // chaque note, qui retombe au rythme du déclin ; rien tant que son montant est nul
+    const env = this.getParameter('envAmount');
+    if (env > 0) {
+      const coupure = Math.min(this.getParameter('cutoff'), this.#ctx.sampleRate * 0.45);
+      const f = this.#filtre.frequency;
+      f.cancelScheduledValues(debut);
+      f.setValueAtTime(Math.min(coupure + env * clamp(e.velocity, 0, 1), 18000, this.#ctx.sampleRate * 0.45), debut);
+      f.setTargetAtTime(coupure, debut, Math.max(this.getParameter('decay'), 0.01) / 3);
+    }
   }
 
   noteOff(note, time = this.#ctx.currentTime) { this.#noeud?.port.postMessage({ type: 'relacher', note, time }); }

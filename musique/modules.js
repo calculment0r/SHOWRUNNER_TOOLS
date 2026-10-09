@@ -19,6 +19,9 @@ import { RhythmBox } from './odio/instruments/rhythm-box.js';
 import { PlaitsSynth } from './odio/instruments/plaits-synth.js';
 // Macro : Plaits complet, ses 24 moteurs (06/10 ; musique/plaits/, même contrat que les instruments d'ODIO)
 import { MacroPlaits } from './plaits/macro.js';
+// Résonateur (Rings) et Physique (Elements) : la même méthode que Macro (09/10 ; musique/mutable/)
+import { Resonateur } from './mutable/resonateur.js';
+import { Physique } from './mutable/physique.js';
 import { VOIX } from './odio/instruments/drums-voices.js';
 import { ReverbEffect } from './odio/effects/reverb.js';
 import { ChorusEffect } from './odio/effects/chorus.js';
@@ -163,6 +166,30 @@ export const MODULES = {
     face: ['root', 'start', 'vol'],
     sortes: { root: 'hauteur', start: 'forme', a: 'enveloppe', r: 'enveloppe', vol: 'niveau' },
   },
+  // les banques d'échantillons (09/10, décision 4 de docs/etudes/odio_synthes.md) :
+  // des zones de notes et de vélocités, des tours, des boucles, l'enveloppe de
+  // chaque zone (la cartographie SFZ de l'auteur, banques.js) ; la banque est
+  // `params.banque` (son identifiant, comme `item` pour l'échantillonneur). Les
+  // réglages ne font que déplacer ce que la banque dit : la transposition,
+  // l'accord fin, l'attaque et la chute multipliées, le suivi de vélocité.
+  banque: {
+    name: 'Échantillons', kind: 'zones · vélocités · boucles', role: 'source', color: 'amb',
+    params: [
+      P('transpo', 'Transposition', -24, 24, 0, 'dt', 'lin', 1),
+      P('accord', 'Accord fin', -100, 100, 0, 'ct'),
+      P('att', 'Attaque', 0.25, 8, 1, '×', 'log'),
+      P('rel', 'Chute', 0.25, 8, 1, '×', 'log'),
+      P('dyn', 'Dynamique', 0, 1, 1, ''),
+      // −8 dB : les cartographies de VCSL relèvent chaque zone jusqu'à son plein niveau
+      // (« volume » de +7 à +37 dB) ; une note forte seule crête vers −4 dBFS, un accord
+      // dépasserait. À −8, la phrase d'écoute d'un clavier crête de −9 à −12 dBFS (mesuré)
+      P('vol', 'Volume', -40, 6, -8, 'dB'),
+      ...ARP_PARAMS,
+    ],
+    face: ['transpo', 'rel', 'dyn', 'vol'],
+    // les attracteurs (musique/facettes.js) : la sorte de chaque réglage continu
+    sortes: { transpo: 'hauteur', accord: 'desaccord', att: 'enveloppe', rel: 'enveloppe', dyn: 'dynamique', vol: 'niveau', arp_oct: 'hauteur', arp_gate: 'duree' },
+  },
   player: {
     name: 'Lecteur', kind: 'clips audio', role: 'source', color: 'grn2',
     // -6 dB : un son généré arrive mastérisé près de 0 dBFS (ACE-Step : -0,4 dB
@@ -297,8 +324,19 @@ const ODIO = {
     sortes: { harmo: 'forme', timbre: ['forme', 'brillance'], morph: 'forme', cutoff: 'coupure', resonance: 'resonance', envAmount: 'enveloppe', ...SORTES_ENV } },
   // pas d'ODIO_01 : écrit ici sur son contrat (musique/plaits/macro.js, docs/etudes/odio_synthes.md)
   macro: { cls: MacroPlaits, name: 'Macro', kind: 'Plaits · 24 moteurs', role: 'source', color: 'coral-3', face: ['moteur', 'harmo', 'timbre', 'morph'], trim: 0,
+    // les sortes du lot « odio-attracteurs », et l'enveloppe de filtre neuve (09/10, plaits/macro.js)
     sortes: { harmo: 'forme', timbre: ['forme', 'brillance'], morph: 'forme', aux: 'forme', declin: 'enveloppe', couleur: 'forme',
-      cutoff: 'coupure', resonance: 'resonance', ...SORTES_ENV } },
+      cutoff: 'coupure', resonance: 'resonance', envAmount: 'enveloppe', attack: 'enveloppe', decay: 'enveloppe', sustain: 'enveloppe', release: 'enveloppe', gain: 'niveau' } },
+  // 09/10 : Rings et Elements, compilés comme Plaits (musique/mutable/, docs/etudes/odio_synthes.md § 7)
+  // `trim` : mesuré sur leurs préréglages (docs/etudes/odio_synthes.md § 7) — le module sort
+  // ses résonances plus bas que les autres instruments (Rings), ou plus haut (Elements)
+  // `sortes` : la sorte de chaque réglage continu, pour les attracteurs (la règle du lot
+  // « odio-attracteurs », musique/facettes.js) ; les choix (modèle, polyphonie…) sont discrets
+  resonateur: { cls: Resonateur, name: 'Résonateur', kind: 'Rings · modal, cordes', role: 'source', color: 'amb', face: ['structure', 'brillance', 'amorti', 'position'], trim: 8,
+    sortes: { structure: 'forme', brillance: 'coupure', amorti: 'enveloppe', position: 'forme', largeur: 'pano', gain: 'niveau' } },
+  physique: { cls: Physique, name: 'Physique', kind: 'Elements · archet, souffle, frappe', role: 'source', color: 'grn2', face: ['geometrie', 'brillance', 'amorti', 'position'], trim: -6,
+    sortes: { contour: 'enveloppe', archet: 'forme', archet_t: 'forme', souffle: 'forme', flux: 'forme', souffle_t: 'forme', frappe: 'forme', maillet: 'forme',
+      frappe_t: 'forme', geometrie: 'forme', brillance: 'coupure', amorti: 'enveloppe', position: 'forme', espace: 'espace', gain: 'niveau' } },
   reverbe: { cls: ReverbEffect, name: 'Réverbe', kind: 'rvb-02 · convolution', role: 'effect', color: 'cy', face: ['size', 'decay', 'mix'],
     sortes: { size: 'espace', decay: 'espace', damp: 'coupure', mix: 'espace' } },
   // la largeur d'un chorus est sa place dans le champ stéréo
@@ -350,7 +388,7 @@ for (const def of Object.values(MODULES)) def.params = declarer(def.params, def.
 
 export const EFFECT_TYPES = ['delay', 'reverb', 'comp', 'eq', 'filter', 'dist', ...ODIO_TYPES.filter((t) => ODIO[t].role === 'effect')];
 // les sources qu'une piste peut porter, par sorte de piste
-export const SOURCES_OF = { drums: ['drums', 'rythme'], synth: ['synth', 'analog', 'acid', 'plaits', 'macro'], sampler: ['sampler'], audio: ['player'], bus: ['bus'] };
+export const SOURCES_OF = { drums: ['drums', 'rythme'], synth: ['synth', 'analog', 'acid', 'plaits', 'macro', 'resonateur', 'physique'], sampler: ['sampler', 'banque'], audio: ['player'], bus: ['bus'] };
 export const kindOfSource = (type) => Object.keys(SOURCES_OF).find((k) => SOURCES_OF[k].includes(type));
 
 // Les voix d'une batterie, selon sa source : la DR-9 (huit voix) ou la
@@ -377,7 +415,7 @@ export const COLOR_FR = { or: 'orange', cy: 'acier', amb: 'ambre', grn2: 'vert',
 // part (moteur.js, Graph.schedule).
 export const AUTOMATABLE = {
   strip: ['vol', 'pan'], bus: ['in'], master: ['vol'], synth: ['vol', 'cut'], sampler: ['vol'], player: ['vol'],
-  drums: ['lvl'], filter: ['freq', 'q'], delay: ['mix', 'fb'], reverb: ['mix'], dist: ['mix'],
+  drums: ['lvl'], banque: ['vol'], filter: ['freq', 'q'], delay: ['mix', 'fb'], reverb: ['mix'], dist: ['mix'],
   eq: ['lg', 'mg', 'hg', 'mf', 'hpf', 'lpf'], comp: ['thr', 'gain'],
 };
 // les modules d'ODIO : tout réglage continu, posé par setParameter(id, valeur,

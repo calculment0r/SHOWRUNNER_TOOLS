@@ -33,7 +33,9 @@ export function sonDe(app, pr, { item = null } = {}) {
   const cle = JSON.stringify([pr.type, params, bpm, tonique]);
   if (!sons.has(cle)) {
     const { phrase, tr } = phraseDe(pr, tonique);
-    const r = apercu(pr.type, params, phrase, { bpm, tr, buffers: app.engine.buffers });
+    // une banque d'échantillons (09/10) : ses sons d'abord (chargés une fois par page)
+    const avant = pr.type === 'banque' && params.banque ? app.engine.banque(params.banque) : Promise.resolve();
+    const r = avant.then(() => apercu(pr.type, params, phrase, { bpm, tr, buffers: app.engine.buffers, banques: app.engine.banques }));
     sons.set(cle, r);
     r.catch(() => sons.delete(cle));
     if (sons.size > GARDE) sons.delete(sons.keys().next().value);

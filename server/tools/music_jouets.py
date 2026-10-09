@@ -19,7 +19,7 @@ MUETS = {"fount", "pong", "sling", "ninja", "shake", "pach", "toast", "pin", "in
 TYPES = EFFETS | MUETS
 NOTES_OUT = {"fount", "pong", "sling", "ninja", "shake", "pach", "toast", "pin", "inv", "newt", "horloge"}
 NOTES_IN = ({"fount", "pong", "sling", "sprg", "ninja", "shake", "pach", "toast", "pin", "inv", "newt"}
-            | {"drums", "synth", "sampler", "rythme", "analog", "acid", "plaits", "macro"})
+            | {"drums", "synth", "sampler", "rythme", "analog", "acid", "plaits", "macro", "resonateur", "physique", "banque"})
 MOD_OUT = {"reel", "alch", "pong", "sprg", "mag", "shake", "pach", "toast", "newt"}
 
 

@@ -340,6 +340,8 @@ STORES = {
     "alertes.json": ("instance", "les alertes de Cal (Telegram) : les décisions en attente, l'offset, le dernier envoi", None),
     "movie_h3.json": ("instance", "l'état du serveur H3", None),
     "ideation_web": ("cache", "les aperçus d'adresses web : le web public", None),
+    "echantillons": ("instance", "les banques d'échantillons d'ODIO, communes au portail (VCSL, Salamander : "
+                     "server/tools/music_banques.py, importées par tools/echantillons.py)", None),
     "image_masks": ("temporaire", "les zones peintes d'une édition d'Image, lues par son travail", None),
     "uploads": ("temporaire", "les dépôts en cours", None),
     "work": ("temporaire", "le dossier de travail de chaque calcul", None),
