@@ -347,8 +347,12 @@ def menage_preview(u) -> dict:
     membres = [{"team": t["id"], "team_name": espaces.label_of(t, None), "id": m["id"], "name": m["name"], "role": m["role"]}
                for t in teams for m in t.get("members") or [] if m["id"] != t["owner"] and m["role"] != "owner" and not _spared(m["id"])]
     spared = sorted({m["name"] for t in teams for m in t.get("members") or [] if m["id"] != t["owner"] and _spared(m["id"])})
+    # les invités qui attendent Cal (D5) ne sont pas des comptes du ménage : Admin → Demandes les valide ou les refuse
+    attente = [{"id": x["id"], "name": x["name"], "by_name": auth.display_name((x.get("invited") or {}).get("by"))}
+               for x in auth.users_public() if x.get("state") == "pending" and x.get("invited")]
     return {"comptes": sorted(comptes, key=lambda c: (c["created"] or "", c["name"].lower())), "teams": rows,
-            "membres": membres, "epargnes": spared, "renommer": espaces.rename_personal(dry=True), "mot": MENAGE_MOT}
+            "membres": membres, "epargnes": spared, "renommer": espaces.rename_personal(dry=True), "attente": attente,
+            "mot": MENAGE_MOT}
 
 
 def r_menage(req):
@@ -1438,6 +1442,7 @@ def _my_team(ok, H, same) -> None:
     s, b, _ = G("/api/budget", mia, {"X-SR-Espace": nt["spaces"][0]["id"]})
     ok(s == 200 and b.get("label") == nt.get("label"), f"my team : la pastille GPU de l'accueil aussi ({s} {b.get('label')})")
     s, d, _ = P(f"/api/equipes/{tid}/membres", {"pseudo": "Gil Myteam", "role": "guest", "guest": "viewer", "spaces": [w2["id"]]}, tok=noe)
+    P("/api/admin/requests/gil-myteam/accept")   # un pseudo neuf mis par un autre que Cal attend sa validation (D5)
     gil = auth.user("gil-myteam")
     ok(s == 200 and espaces.can_view(gil, w2["id"]) and not espaces.can_view(gil, t["spaces"][0]["id"]),
        f"my team : un guest reste aux Workspaces où on le met ({s} {err(d)})")
@@ -1652,6 +1657,8 @@ def _menage(ok, H, same) -> None:
         H("GET", "/api/auth/me", cookie=toks[who])
     perso_etu = up(toks["Etu Un"], "esp-perso-etu-un", "chez-etu")         # ce qu'il a fait chez lui : reste
     perso_kim = up(toks["Kim Menage"], "esp-perso-kim-menage", "chez-kim")
+    # un invité qui attend Cal (D5) : Kim (Studio) met un pseudo neuf dans sa My Team (D2) — il attend la validation
+    P("/api/equipes/tea-perso-kim-menage/membres", {"pseudo": "Inv Menage", "role": "member"}, tok=toks["Kim Menage"])
     atelier = up(toks["Etu Deux"], ta["spaces"][0]["id"], "atelier")       # dans la Team de l'atelier : à la corbeille
     with espaces._lock:   # la My Team de Kim, comme avant le 09/10
         espaces._data()["teams"]["tea-perso-kim-menage"]["name"] = espaces.PERSONAL_OLD
@@ -1689,6 +1696,8 @@ def _menage(ok, H, same) -> None:
     ok({(x["team"], x["id"]) for x in pv.get("membres", [])} == strip and (tm["id"], "adm-menage") not in strip
        and "Adm Menage" in pv.get("epargnes", []), f"ménage : (c) les appartenances à retirer, exactement, les admins épargnés ({len(strip)})")
     ok("tea-perso-kim-menage" in {x["id"] for x in pv.get("renommer", [])}, "ménage : (d) les Teams personnelles à renommer")
+    ok((auth.user("inv-menage") or {}).get("state") == "pending" and "inv-menage" in {x["id"] for x in pv.get("attente", [])}
+       and "inv-menage" not in got, f"ménage : un invité qui attend Cal n'est pas un compte du ménage, l'aperçu le dit ({pv.get('attente')})")
 
     # les refus : rien n'est fait
     base = {"comptes": ["etu-un", "etu-deux", "etu-trois"], "teams": [ta["id"]], "retirer_membres": True, "renommer": True}

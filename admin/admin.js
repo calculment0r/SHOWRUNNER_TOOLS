@@ -1082,6 +1082,9 @@ function menageCard() {
       el('span', { class: 'nm-s' }, 'Renommer « My Team »'),
       el('span', { class: 'many-meta', title: d.renommer.map((x) => x.owner_name).join(', ') },
         d.renommer.length ? `${plural(d.renommer.length, 'Team personnelle', 'Teams personnelles')} encore « Chez moi » : ${d.renommer.map((x) => x.owner_name).join(', ')}` : 'toutes s’appellent déjà My Team (un nom choisi reste)')),
+    (d.attente || []).length ? el('div', { class: 'row' }, el('p', { class: 'why' }, `${d.attente.map((x) => x.name).join(', ')} : invité${d.attente.length > 1 ? 's' : ''} `
+      + `qui attend${d.attente.length > 1 ? 'ent' : ''} ta validation — pas des comptes du ménage : tu ${d.attente.length > 1 ? 'les' : 'le'} valides ou refuses dans Demandes`),
+    el('button', { class: 'tb ghost sm', type: 'button', onclick: () => go('demandes') }, 'Demandes')) : null,
     M.strip && lone.length ? el('p', { class: 'why' }, `${lone.map((c) => c.pseudo || c.name).join(', ')} : entré${lone.length > 1 ? 's' : ''} comme guest, sans My Team — gardé${lone.length > 1 ? 's' : ''} et retiré${lone.length > 1 ? 's' : ''} de tout, il${lone.length > 1 ? 's' : ''} n’entre${lone.length > 1 ? 'nt' : ''} plus nulle part`) : null,
     el('div', { class: 'row' }, el('span', { class: 'lbl' }, plan.length ? 'ce qu’il va faire' : 'rien de coché'), el('span', { class: 'sp' }),
       el('button', { class: 'tb go', type: 'button', 'data-menage-go': '', disabled: M.run || !plan.length || null,
