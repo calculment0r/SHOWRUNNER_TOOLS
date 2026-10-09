@@ -713,7 +713,8 @@ def teams_of(u, *, detail: bool = False, everyone: bool = False) -> list[dict]:
         ids = [tid for tid, t in db["teams"].items()
                if uid in t.get("members", {}) or (everyone and auth.is_admin(u))]
         out = [_team_public(db, u, tid, detail) for tid in ids]
-    return sorted(out, key=lambda t: (bool(t["archived"]), t["personal"], t["name"].lower()))
+    # les Teams partagées, puis sa My Team, puis celles des autres (D2 : on peut être dans la My Team d'un autre)
+    return sorted(out, key=lambda t: (bool(t["archived"]), t["personal"], t["personal"] and t["owner"] != uid, t["label"].lower()))
 
 
 def space_public(u, sid: str | None) -> dict | None:

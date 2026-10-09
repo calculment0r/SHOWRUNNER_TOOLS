@@ -1407,31 +1407,16 @@ def accept(uid: str, by: str, role: str | None = None, *, access: str | None = N
             u["via"] = via
         _save()
     journal("accepté", user=uid, by=by, **({"role": role} if role else {}), **({"via": via} if via else {}))
-    if role != GUEST and access is None and perso is not False:   # Cal accepte un ami à la porte
-        _join_instance_team(u)
-    return dict(u)
+    return dict(u)   # un ami accepté n'a que sa My Team (décision de Cal du 09/10 : le commentaire avant find_pseudo)
 
 
-def _join_instance_team(u: dict) -> None:
-    """Un ami que Cal accepte à la porte, crée d'avance, fait ami (un invité de planche)
-    ou à qui il ouvre le Studio dans l'Admin — avec le Studio — devient membre de la
-    Team de l'instance — celle de l'espace par défaut, « Nirvalab » —, donc éditeur
-    de « Général » (un admin du portail aussi : membre ; ses pouvoirs viennent du
-    portail, et s'en vont avec lui). C'est la règle 2
-    de la migration (equipes_espaces.md § 5.1), tenue pour chaque nouvel ami : « tout
-    le monde est dans Général » reste vrai après le 30/09, un ami d'aujourd'hui voit
-    et fait ce qu'il faisait. Un compte Apps n'a que sa Team personnelle ; qui entre
-    par le lien d'une Team (un membre, un guest), un invité de planche : ce que leur
-    lien leur donne (core/espaces.py, redeem)."""
-    from . import espaces
-    tid = espaces.team_of_space(espaces.default_space())
-    if not tid or u.get("id") == admin_id() or u.get("state") != "active" or u.get("perso") is False \
-            or u.get("via") == "equipe" or (u.get("role") != "admin" and u.get("access") != "studio"):
-        return
-    try:   # membre, jamais admin de Team : un admin du portail a déjà tout (il redevient ami : un membre)
-        espaces.add_member(None, tid, u["name"], "member")
-    except HttpError as e:   # une Team archivée, teams.json illisible : l'ami reste accepté, Cal le met à la main
-        journal("team de l'instance : pas ajouté", user=u.get("id"), why=e.message)
+# Un compte neuf — accepté à la porte, ajouté d'avance, fait ami, le Studio ouvert — n'a que sa
+# My Team : il n'entre plus de lui-même dans la Team de l'instance (« Nirvalab », Général). Décision
+# de Cal du 09/10 : « tous les gens qui se loguent n'ont que leur espace vierge […] on ne travaille
+# pas en dehors d'une Team, donc par défaut on a une team qui s'appelle My Team ». Jusque-là
+# (règle 2 de la migration, tenue pour chaque nouvel ami depuis le 30/09), chacun était éditeur de
+# Général : le grand ménage (server/tools/equipes.py, D7) l'aurait défait une fois, et chaque ami
+# neuf l'aurait refait. Cal met quelqu'un dans Nirvalab comme dans toute Team (Admin → Teams).
 
 
 def find_pseudo(name) -> dict | None:
@@ -1599,7 +1584,6 @@ def create_friend(pseudo, by: str, role: str = "ami", access: str | None = None)
         db["users"][key] = u
         _save()
     journal("ajouté d'avance", user=key, by=by, role=role, access=access)
-    _join_instance_team(u)
     return dict(u)
 
 
@@ -1709,8 +1693,6 @@ def set_user(uid: str, patch: dict, by: str) -> dict:
         _save()
         out = dict(u)
     journal("personne", user=uid, by=by, patch=patch)
-    if ("role" in patch or patch.get("access") == "studio") and out.get("role") != GUEST:
-        _join_instance_team(out)   # Cal en fait un ami (ou lui ouvre le Studio) : dans Général, comme les autres
     return out
 
 

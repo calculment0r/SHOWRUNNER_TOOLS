@@ -253,6 +253,9 @@ def selftest(call, ok) -> None:
         ok(s == 200, f"Cal accepte Noé ({s} {d})")
         s, me_, _ = H("GET", "/api/auth/me", cookie=tok)
         ok(me_.get("state") == "active" and me_["user"]["role"] == "ami", f"accepté : le navigateur qui attendait entre ({me_})")
+        # un ami accepté n'a que sa My Team (décision de Cal du 09/10) ; Cal le met dans Nirvalab (Général) pour la suite
+        ok([t.get("personal") for t in me_.get("teams", [])] == [True], f"accepté : Noé n'a que sa My Team ({[t.get('name') for t in me_.get('teams', [])]})")
+        H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": "Noé", "role": "member"}, cookie=adm, headers=same)
         s, d, tok2 = H("POST", "/api/auth/enter", {"name": "noé"})
         ok(s == 200 and tok2 and d.get("state") == "active", f"un pseudo accepté entre sans attente, d'un autre navigateur ({s} {d})")
         s, _, _ = H("GET", "/api/library", cookie=tok2)
@@ -417,8 +420,12 @@ def _selftest_studio(ok, H, same, adm, png) -> None:
     tmp = config.data_dir() / "studio-essai.png"
     tmp.write_bytes(png())
     auth.set_current(auth.user("stephane"))
+    # le Workspace où ses requêtes le mettent (un compte neuf n'a que sa My Team : Cal, 09/10), comme la porte le poserait
+    from core import espaces
+    auth.set_current_space(espaces.default_for(auth.user("stephane")))
     s_img = library.add_file(tmp, title="à Stéphane")
     auth.set_current(None)
+    auth.set_current_space(None)
 
     # un compte Apps : les pages Studio → la page « réservé au Studio », qui mène à la demande
     for tid, t in auth.STUDIO_TOOLS.items():

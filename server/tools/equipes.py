@@ -815,9 +815,12 @@ def _depart(ok, H, same) -> None:
     err = lambda d: d.get("error", "") if isinstance(d, dict) else str(d)[:80]   # noqa: E731
     _, _, adm = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
     toks = {}
-    # trois comptes créés par Cal : deux Studio (membres de Nirvalab, la Team de l'instance), un Apps (seul chez lui)
+    # trois comptes créés par Cal : deux Studio, qu'il met dans Nirvalab (un compte neuf n'a que sa My Team : Cal,
+    # 09/10), un Apps (seul chez lui)
     for name, acc in (("Sam Depart", "studio"), ("Noa Depart", "studio"), ("Ugo Depart", "apps")):
         s, d, _ = H("POST", "/api/admin/users", {"name": name, "access": acc}, cookie=adm, headers=same)
+        if acc == "studio":
+            H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": name, "role": "member"}, cookie=adm, headers=same)
         _, _, toks[name.split()[0]] = H("POST", "/api/auth/enter", {"name": name}, headers=same)
         ok(s == 200 and toks[name.split()[0]], f"départ : {name}, un compte {acc}, entre ({s} {err(d)})")
     sam, noa, ugo = toks["Sam"], toks["Noa"], toks["Ugo"]
@@ -1216,7 +1219,18 @@ def _my_team(ok, H, same) -> None:
         H("GET", "/api/auth/me", cookie=toks[name.split()[0]])   # sa première requête : sa My Team naît
     mia, noe, abi = toks["Mia"], toks["Noe"], toks["Abi"]
 
-    # D1 : un compte neuf reçoit « My Team », son Workspace « Général »
+    # D1 : un compte neuf reçoit « My Team », son Workspace « Général » — et rien d'autre : ni Nirvalab, ni Général
+    # (« tous les gens qui se loguent n'ont que leur espace vierge »), qu'il soit ajouté d'avance, accepté à la porte,
+    # ou que Cal lui ouvre le Studio
+    P("/api/admin/users/abi-myteam", {"access": "studio"})
+    H("POST", "/api/auth/enter", {"name": "Pat Myteam"}, headers=same)
+    P("/api/admin/requests/pat-myteam/accept")
+    _, _, pat = H("POST", "/api/auth/enter", {"name": "Pat Myteam"}, headers=same)
+    H("GET", "/api/auth/me", cookie=pat)   # sa première requête acceptée : sa My Team naît
+    alone = {k: sorted(t["id"] for t in espaces.teams_of(auth.user(k))) for k in ("mia-myteam", "abi-myteam", "pat-myteam")}
+    ok(alone == {k: [espaces.personal_team_id(k)] for k in alone} and not any(espaces.can_view(auth.user(k), "esp-general") for k in alone),
+       f"my team : un compte neuf n'a que sa My Team — ajouté d'avance, Studio ouvert, accepté à la porte ({alone})")
+    P("/api/admin/users/abi-myteam", {"access": "apps"})
     s, me, _ = G("/api/auth/me", mia)
     mt = next((t for t in me.get("teams", []) if t["id"] == "tea-perso-mia-myteam"), {})
     ok(s == 200 and mt.get("name") == "My Team" and mt.get("personal") and [x["name"] for x in mt.get("spaces", [])] == ["Général"],

@@ -2105,6 +2105,7 @@ def selftest(call, ok) -> None:
         s, d, cal = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
         s, d, lina = H("POST", "/api/auth/enter", {"name": "Lina"}, headers=same)
         H("POST", "/api/admin/requests/lina/accept", cookie=cal, headers=same)
+        H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": "Lina", "role": "member"}, cookie=cal, headers=same)   # un ami accepté n'a que sa My Team (Cal, 09/10) : Cal le met dans Nirvalab
         s, me_, _ = H("GET", "/api/auth/me", cookie=lina)
         ok(cal and lina and me_.get("state") == "active", f"collab : deux personnes, Cal et Lina ({me_.get('state')})")
 
@@ -2910,9 +2911,10 @@ def _selftest_invite(call, ok) -> None:
         ok(ev == "bye" and s1 == 403 and s2 == 403 and s3 == 403, f"invité : le lien retiré, P et son image se ferment ({ev} {s1} {s2} {s3})")
         s, _, _, hd = PP._req(home, "GET", "/", cookies={auth.COOKIE: gas})
         ok(s == 303 and hd.get("Location") == "/ideation/", f"invité sans planche : ramené à Idéation, vide ({hd.get('Location')})")
-        # Cal en fait un ami
+        # Cal en fait un ami (il n'a que sa My Team : Cal, 09/10), puis le met dans Nirvalab, où est la planche Q
         s, _, _ = H("POST", "/api/admin/users/gaspard", {"role": "ami"}, cookie=cal, headers=same)
         s2, _ = G("GET", "/api/library")
+        H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": "Gaspard", "role": "member"}, cookie=cal, headers=same)
         s3, _ = G("GET", f"/api/ideation/boards/{q}")
         ok(s == 200 and s2 == 200 and s3 == 200, f"invité : Cal en fait un ami (Admin), le portail s'ouvre ({s} {s2} {s3})")
 
