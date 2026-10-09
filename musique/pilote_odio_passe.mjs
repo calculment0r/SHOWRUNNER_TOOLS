@@ -216,6 +216,33 @@ for (const theme of ['dark', 'light']) {
   await page.waitForTimeout(600);
   const pr4 = await page.evaluate(() => { const { S, app } = window.__mu; const c = S.proj.clips.find((x) => x.track === 't4'); return app.pat(c.pat).notes.length; });
   ok(pr4 === pr0.notes, `${theme} · piano roll : deux Ctrl+Z rendent le motif d'origine (${pr4} notes)`);
+
+  // ── un clic juste après une saisie n'est plus perdu ──
+  // (09/10 : le champ qui perd la main enregistrait, la vue se redessinait entre l'appui et le
+  // relâché, le bouton pressé était remplacé : son clic ne venait pas)
+  await ouvrir(page, `Passe Clic ${theme}`);
+  await page.dblclick('.ar-head[data-track="t2"] .nm');
+  await page.waitForTimeout(200);
+  await page.keyboard.type('Basse bis');
+  await page.click('.ar-head[data-track="t3"] button[title="solo"]');
+  await page.waitForTimeout(400);
+  const pistes = await page.evaluate(() => window.__mu.S.proj.tracks.slice(1, 3).map((t) => [t.name, t.solo]));
+  ok(JSON.stringify(pistes) === JSON.stringify([['Basse bis', false], ['Nappe', true]]),
+    `${theme} · renommer la Basse puis cliquer S sur la Nappe : le nom est pris ET la Nappe passe en solo (${JSON.stringify(pistes)})`);
+  // le panneau Générer : taper le style, puis « Générer » — le premier clic part
+  await page.click('button:has-text("Générer")');
+  await page.waitForTimeout(1200);
+  await page.click('.gp-dr .gp-tiles :text("Un instrument seul")');
+  await page.waitForTimeout(400);
+  await page.fill('.gp-dr textarea.gp-style', 'warm analog bass');
+  await page.click('#gp-go');
+  await page.waitForTimeout(300);
+  const envoi = await page.$eval('#gp-go', (b) => [b.textContent, b.disabled]);
+  await page.waitForFunction(() => window.__mu.S.proj.pending.length || window.__mu.S.proj.clips.some((c) => c.gen?.takes?.length), null, { timeout: 30000 }).catch(() => {});
+  const gen = await page.evaluate(() => ({ attente: window.__mu.S.proj.pending.length, regions: window.__mu.S.proj.clips.filter((c) => c.gen).length }));
+  ok(envoi[1] === true && gen.regions === 1,
+    `${theme} · Générer : le style tapé, le PREMIER clic part (« ${envoi[0]} », désactivé pendant l'envoi ; ${gen.regions} région, ${gen.attente} travail en file)`);
+  await shot(page, `generer_envoi_${theme}`);
   await ctx.close();
 }
 

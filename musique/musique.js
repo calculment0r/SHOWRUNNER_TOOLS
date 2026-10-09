@@ -24,7 +24,7 @@ import { Engine, renderMix, rendusLibres, renderClips, wav24, peakDb, songEnd, p
 import { openPublish } from './element.js';   // éléments : « Publier comme élément » (30/09)
 import { MODULES, TRACK_KINDS, COLORS, COLOR_FR, PRESETS, SOURCES_OF, DRUM_MODELS, NOTE_MODELS, TONICS, TONICS_FR, MODES,
   kindOfSource, keyLabel, moduleName } from './modules.js';
-import { el, modal, ask, confirmBox, menu, put, tok, letter } from './ui.js';
+import { el, modal, ask, confirmBox, menu, put, tok, letter, apresClic } from './ui.js';
 import { migrate, workOf, describeWork, copyClips, pasteClips, splitClip, consolidatePatterns, clipRate, splitRange, piecesIn,
   trajets, pistesDuModule, recoudre, sortirDeLaChaine, entrerDansLaChaine, deplacerPistes, grouperPistes, degrouper, rangerGroupes,
   retenirSons, noterOrigine } from './projet.js';
@@ -136,7 +136,9 @@ export const app = {
     save();
     hist.mark();
     overviewSoon();
-    if (kind !== 'param' && kind !== 'quiet') render();
+    // la vue se redessine, jamais entre l'appui et le clic : un champ qui perd la main en
+    // enregistrant ne mange plus le clic du bouton qu'on presse (ui.js, apresClic)
+    if (kind !== 'param' && kind !== 'quiet') apresClic(render);
   },
   saveUi() { saveQuiet(); },
   renderView: () => render(),
