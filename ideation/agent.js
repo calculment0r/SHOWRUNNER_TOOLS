@@ -31,6 +31,16 @@
 // (les images, les sons) s'annoncent chacun en une ligne, à leur place dans le fil. Le carnet (les
 // décisions de la conversation, la « scripte ») se lit et se corrige en haut du panneau.
 //
+// L'agent autonome, lot 1 (09/10, docs/etudes/agent_autonome.md § 9) : chaque demande libre passe d'abord par un ROUTEUR
+// (une intention du registre, agent/intentions.json) puis par une POLITIQUE écrite en code (server/tools/agent_politique.py) ;
+// la route rend un ACCUSÉ tout de suite (ce qui est reçu, la place dans la file : affiché avant que le tour parte). Les
+// cartes qu'elle peut rendre : des questions tirées des entrées qui manquent (les mêmes cartes que l'entrée d'un projet,
+// leurs réponses partent en `intent: 'skill'`), « pas encore ici » (ce qui manque, ce qu'il faudrait installer, l'approchant
+// en bouton), le choix d'un workflow, et le DÉCOUPAGE d'un storyboard : il se corrige ligne à ligne (réécrire, supprimer,
+// fusionner, couper ; chaque correction enregistrée seule), se valide — le serveur bâtit alors les gestes de la planche et la
+// page les pose comme ceux d'un tour, en UN app.mutate — puis « Lancer les N images » (le seul consentement, coût affiché)
+// lance chaque carte par son bouton Générer.
+//
 // Le contrat (« Commencer un projet », projet.js, l'appelle ainsi) :
 //   app.agent.open()                                     le panneau, le champ prend la main
 //   app.agent.send(text, { items | pieces, intent })     → Promise<{ turn, reply, actions, results }>
@@ -61,17 +71,26 @@ const TEXT_W = { note: 230, sticky: 190, title: 460 };
 const ROLE = { style: 'style', personnages: 'persos', action: 'action', decor: 'decor', photographie: 'photo', son: 'son', musique: 'musique' };
 const DISP = { rangee: 'rangée', grille: 'grille', colonne: 'colonne' };
 const FIELDS = ['x', 'y', 'w', 'h', 'group'];   // ce qu'un tour change d'un objet qui était là : « Annuler ce tour » le remet
-const SUGGEST = ['Que vois-tu sur la planche ?', 'Range les images dans un cadre', 'Une image dans ce style', 'Lis ce document et résume-le en note'];
+const SUGGEST = ['Que vois-tu sur la planche ?', 'Range les images dans un cadre', 'Une image dans ce style', 'Lis ce document et résume-le en note',
+  'Fais le storyboard de ce scénario', 'Que sais-tu faire ?'];
+// le vocabulaire du découpage (agent/skills/storyboard/decoupage.schema.json ; les mêmes mots que ideation_agent.VALEUR_FR, MOUV_FR)
+const VALEUR = { tres_gros_plan: 'très gros plan', gros_plan: 'gros plan', plan_rapproche: 'plan rapproché', plan_taille: 'plan taille',
+  plan_americain: 'plan américain', plan_moyen: 'plan moyen', plan_ensemble: 'plan d’ensemble', plan_general: 'plan général', insert: 'insert' };
+const MOUV = { fixe: 'fixe', panoramique: 'panoramique', travelling: 'travelling', zoom: 'zoom', camera_epaule: 'caméra à l’épaule', drone: 'drone' };
+const MAX_PLANS = 24;   // le schéma du découpage : 1 à 24 plans
 const ICO = {
   agent: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z',
   plus: 'M12 5v14M5 12h14',
   send: 'M12 19V5M6 11l6-6 6 6',
   close: 'M6 6l12 12M18 6L6 18',
+  couper: 'M12 4v16M8 8l-4 4 4 4M16 8l4 4-4 4',
+  fusionner: 'M6 5l6 6 6-6M12 11v8',
 };
 const cut = (s, k = 48) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > k ? s.slice(0, k - 1) + '…' : s; };
 const plural = (n, s, p = s + 's') => `${n} ${n > 1 ? p : s}`;
 const svg = (d) => el('span', { class: 'ag-ico', 'aria-hidden': 'true', html: `<svg viewBox="0 0 24 24"><path d="${d}"/></svg>` });
 const hhmm = (iso) => { try { return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
+const dureeFr = (s) => { s = Number(s) || 0; return s < 60 ? `${String(Math.round(s * 10) / 10).replace('.', ',')} s` : `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, '0')}`; };
 
 // la feuille du panneau : chargée par le module (une page qui ne charge pas l'agent ne la lit pas)
 const FEUILLE = new URL('./agent.css', import.meta.url).href;
@@ -166,7 +185,7 @@ export function install(app) {
     return follow(r.bid, r.turn, r.job);
   }
   // le tour entre dans la file (ou le portail refuse, en disant pourquoi : 400, 409)
-  async function post(text, { items = [], pieces = [], intent = '', answers, questions_turn, plan_turn, etape, brief } = {}) {
+  async function post(text, { items = [], pieces = [], intent = '', answers, questions_turn, plan_turn, etape, brief, skill, donnees } = {}) {
     if (!S.board) throw new Error('ouvrez d’abord une planche');
     const bid = S.board.id;
     let content = String(text || '').trim();
@@ -175,13 +194,15 @@ export function install(app) {
     const ids = [...new Set([...items, ...pieces].map((x) => String((x && typeof x === 'object' ? x.id : x) || '').trim()).filter(Boolean))];
     // l'agent lit la planche enregistrée : les derniers gestes partent d'abord
     try { await app.flushSave?.(); } catch { /* le refus se dit dans la barre ; l'agent lira la dernière enregistrée */ }
-    const more = Object.fromEntries(Object.entries({ answers, questions_turn, plan_turn, etape, brief_items: brief }).filter(([, v]) => v !== undefined));
+    const more = Object.fromEntries(Object.entries({ answers, questions_turn, plan_turn, etape, brief_items: brief, skill, donnees }).filter(([, v]) => v !== undefined));
     const r = await api('ideation/agent', { method: 'POST', body: { board: bid, intent, messages: [{ role: 'user', content, items: ids }], ...more } });
     A.mine.add(r.turn.id);
     if (A.bid === bid && A.conv) {
       A.conv.turns.push(r.turn); A.conv.busy = r.turn.id;
       // les questions auxquelles on vient de répondre se ferment tout de suite ; les paliers neufs entrent dans le fil
-      if (questions_turn) { const q = A.conv.turns.find((x) => x.id === questions_turn); if (q) q.answered_by = r.turn.id; }
+      const qid = questions_turn || donnees?.questions_turn;
+      if (qid) { const q = A.conv.turns.find((x) => x.id === qid); if (q) q.answered_by = r.turn.id; }
+      if (donnees?.choix_turn) { const c = A.conv.turns.find((x) => x.id === donnees.choix_turn); if (c) c.choisi = donnees.capacite; }
       if (r.paliers?.length) { A.conv.paliers = [...(A.conv.paliers || []), ...r.paliers]; A.conv.paliers_busy = r.paliers.some((p) => ACTIVE.has(p.state)); }
     }
     paint(true);
@@ -225,8 +246,9 @@ export function install(app) {
     d.text = ''; d.pieces = [];
     paintDraft();
     let r;
-    const q = openQuestions(), pl = activePlan();
-    const route = q ? { intent: 'plan', questions_turn: q.id, answers: answersOf(q) } : pl?.plan.etat === 'propose' ? { intent: 'plan' } : {};
+    const q = openQuestions(), pl = activePlan(), dc = liveDecoupage();
+    const route = q ? answerRoute(q, text) : dc ? { intent: 'skill', skill: 'storyboard', etape: 'decoupage', donnees: { decoupage_turn: dc.id } }
+      : pl?.plan.etat === 'propose' ? { intent: 'plan' } : {};
     try { r = await post(text, { items: keep.pieces.map((x) => x.id), ...route }); } catch (e) {
       // refusé avant d'entrer (400, 409) : le champ revient tel qu'il était
       if (!draft().text && !draft().pieces.length) Object.assign(draft(), keep);
@@ -269,6 +291,7 @@ export function install(app) {
     A.inv.set(t.id, out.inv);
     A.posed.add(t.id);
     t.results = out.results; t.ids = out.ids; t.applied = true; t.undone = false;
+    if (t.decoupage) t.lance = null;   // posé à nouveau : ses cartes neuves attendent leur accord (le serveur fait de même)
     // jamais un rendu sans la personne : seulement la carte que le modèle a dite demandée (lancer: true)
     for (const L of out.launch) {
       const n = app.node(L.id);
@@ -800,6 +823,7 @@ export function install(app) {
     const q = A.open && openQuestions(), pl = A.open && !q && activePlan();
     ta.placeholder = q ? 'Réponds ici en toutes lettres, ou dis ce qui compte — les choix sont au-dessus'
       : pl && pl.plan.etat === 'propose' ? 'Dis ce qui change dans le plan : il le refait'
+        : liveDecoupage() ? 'Dis ce qui change dans le découpage : il le refait'
         : 'Demande à Showrunner — glisse ici des assets, des objets de la planche';
     const w = sendWhy();
     bSend.disabled = !!w;
@@ -848,7 +872,8 @@ export function install(app) {
         continue;
       }
       const key = JSON.stringify([t.state, t.claimed, t.applied, t.undone, t.job_state, t.results?.map((r) => r.text), A.flying.has(t.id), A.inv.has(t.id), t.error, S.board?.id,
-        t.reception?.text, t.questions?.map((q) => q.id), t.answered_by, t.plan, oq === t.id, ap?.id === t.id, ap?.plan?.fait, busy, lastId === t.id]);
+        t.reception?.text, t.questions?.map((q) => q.id), t.answered_by, t.plan, oq === t.id, ap?.id === t.id, ap?.plan?.fait, busy, lastId === t.id,
+        t.accuse?.texte, t.decoupage, t.hors ? 1 : 0, t.choisi, t.lance, liveDecoupage()?.id === t.id]);
       let c = A.els.get(t.id);
       if (!c || c.key !== key) { c = { key, el: turnEl(t) }; A.els.set(t.id, c); }
       kids.push(c.el);
@@ -875,12 +900,13 @@ export function install(app) {
       cites.length ? el('div', { class: 'ag-ucites' }, ...cites) : null,
       said.length ? el('ul', { class: 'ag-qa' }, ...said) : null,
       text ? el('div', { class: 'ag-ut' + (text.length > 420 ? ' long' : ''), title: text.length > 420 ? text.slice(0, 1500) : null }, text) : null,
-      el('div', { class: 'ag-meta' }, [{ ingest: 'commencer un projet', plan: t.answers?.length ? 'réponses' : 'plan', etape: 'étape' }[t.intent] || '', mineName, hhmm(t.at)].filter(Boolean).join(' · ')));
+      el('div', { class: 'ag-meta' }, [{ ingest: 'commencer un projet', plan: t.answers?.length ? 'réponses' : 'plan', etape: 'étape',
+        skill: t.answers?.length ? 'réponses' : t.skill || 'skill' }[t.intent] || '', mineName, hhmm(t.at)].filter(Boolean).join(' · ')));
     return el('div', { class: 'ag-turn', 'data-turn': t.id }, userEl, answerEl(t));
   }
   function answerEl(t) {
     const out = el('div', { class: 'ag-a' });
-    const rec = receptionEl(t);
+    const rec = receptionEl(t) || accuseEl(t);
     if (rec) out.append(rec);
     if (ACTIVE.has(t.state)) {
       const j = t.job_state || {};
@@ -908,6 +934,9 @@ export function install(app) {
     if (contra) out.append(contra);
     if (t.questions?.length) out.append(questionsEl(t));
     if (t.plan?.etapes?.length) out.append(planEl(t));
+    if (t.hors) out.append(horsEl(t));
+    if (t.choix?.candidats?.length) out.append(choixEl(t));
+    if (t.decoupage) out.append(decoupageEl(t));
     if (t.noted?.length) out.append(el('p', { class: 'ag-reads' }, `noté au carnet : ${t.noted.map((id) => (A.conv?.decisions || []).find((d) => d.id === id)?.text).filter(Boolean).join(' · ')}`));
     const suite = suiteEl(t);
     const acts = t.actions || [];
@@ -962,10 +991,24 @@ export function install(app) {
     }
   }
   // ── l'entrée d'un projet : la réception, les questions, le plan, les paliers, le carnet (06/10) ──
-  // les questions encore ouvertes : celles du dernier tour d'entrée, fini, auxquelles on n'a pas répondu
+  // les questions encore ouvertes : celles du dernier tour qui en a posé (l'entrée d'un projet, ou une skill : les entrées
+  // qui manquent, une contradiction avec la fiche), fini, auxquelles on n'a pas répondu
   function openQuestions() {
-    const t = [...(A.conv?.turns || [])].reverse().find((x) => x.intent === 'ingest');
-    return t && t.state === 'done' && t.questions?.length && !t.answered_by ? t : null;
+    const t = [...(A.conv?.turns || [])].reverse().find((x) => x.questions?.length && (x.intent === 'ingest' || x.suite));
+    return t && t.state === 'done' && !t.answered_by ? t : null;
+  }
+  // répondre : à l'entrée d'un projet, un plan ; à une skill, elle reprend (`intent: 'skill'`) ; écrit dans le champ sans
+  // choix cliqué, le texte est la réponse « autre » à la première question
+  function answerRoute(q, text = '') {
+    let answers = answersOf(q);
+    if (q.intent === 'ingest') return { intent: 'plan', questions_turn: q.id, answers };
+    if (!answers.length && text) answers = [{ id: q.questions[0].id, choix: [], autre: text }];
+    return { intent: 'skill', skill: q.suite?.skill, etape: 'entrees', donnees: { questions_turn: q.id, answers } };
+  }
+  // le découpage qui attend : le dernier, proposé, pas encore validé
+  function liveDecoupage() {
+    const t = [...(A.conv?.turns || [])].reverse().find((x) => x.decoupage);
+    return t && t.state === 'done' && t.decoupage.etat === 'propose' ? t : null;
   }
   // le plan vivant : le dernier proposé ou accepté (un plan neuf remplace l'ancien, au serveur)
   function activePlan() {
@@ -1003,13 +1046,15 @@ export function install(app) {
     const sel = qsel(t);
     const busy = !!(A.conv?.busy || A.flying.size);
     const bAns = el('button', { class: 'tb on sm', type: 'button', onclick: () => repondre(t) }, 'Répondre');
-    const bGo = el('button', { class: 'tb ghost sm', type: 'button', title: 'il propose un plan avec ce qu’il a : tu pourras le changer', onclick: () => repondre(t, true) }, 'Vas-y sans répondre');
+    const ingest = t.intent === 'ingest';   // une skill demande ce qui lui manque : pas de « sans répondre »
+    const bGo = ingest ? el('button', { class: 'tb ghost sm', type: 'button', title: 'il propose un plan avec ce qu’il a : tu pourras le changer', onclick: () => repondre(t, true) }, 'Vas-y sans répondre') : null;
     const qwhy = el('span', { class: 'ag-why' });
     const paintFoot = () => {
       const n = answersOf(t).length;
       const w = busy ? 'un tour est en cours : attends sa réponse' : !n ? 'choisis une réponse, ou écris-la (autre)' : '';
-      bAns.disabled = !!w; bAns.title = w || `envoyer ${plural(n, 'réponse')} : il propose ensuite un plan court`;
-      bGo.disabled = busy; qwhy.textContent = w && n ? w : '';
+      bAns.disabled = !!w; bAns.title = w || (ingest ? `envoyer ${plural(n, 'réponse')} : il propose ensuite un plan court` : `envoyer ${plural(n, 'réponse')} : il reprend`);
+      if (bGo) bGo.disabled = busy;
+      qwhy.textContent = w && n ? w : '';
     };
     const box = el('div', { class: 'ag-qs' + (open ? '' : ' closed') });
     for (const q of t.questions) {
@@ -1043,7 +1088,7 @@ export function install(app) {
     const answers = go ? [] : answersOf(t);
     if (!go && !answers.length) return;
     try {
-      const r = await post(go ? 'Vas-y avec ce que tu as.' : '', { intent: 'plan', questions_turn: t.id, answers });
+      const r = await post(go ? 'Vas-y avec ce que tu as.' : '', go ? { intent: 'plan', questions_turn: t.id, answers } : answerRoute(t));
       follow(r.bid, r.turn, r.job).catch((e) => toast(`Showrunner : ${e.message}`, 8000));
     } catch (e) { toast(`Showrunner : ${e.message}`, 8000); load(); }
   }
@@ -1097,6 +1142,157 @@ export function install(app) {
     if (!d.text) { d.text = 'Change le plan : '; paintDraft(); }
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
+  }
+
+  // ── l'agent autonome, lot 1 (09/10) : l'accusé, « pas encore ici », le choix d'un workflow, le découpage ──
+  // l'accusé : rendu par la route avant que le tour parte (ce qui est reçu, la file) ; il cède la place à la réponse
+  function accuseEl(t) {
+    if (!t.accuse?.texte || t.state === 'done') return null;
+    return el('div', { class: 'ag-recu ag-acc' }, el('p', {}, t.accuse.texte));
+  }
+  // ce que le portail ne sait pas encore faire : l'approchant et l'outil qui le font déjà, en boutons ; ce qu'il faudrait installer
+  function horsEl(t) {
+    const h = t.hors;
+    const go = [...(h.approchant || []), ...(h.outils || [])];
+    const btns = go.map((c) => el('a', { class: 'tb ghost sm', href: href(`/${c.outil}/`), target: '_blank', rel: 'noopener',
+      title: `ouvrir l’outil ${c.outil}${c.etat === 'factice' ? ' (son moteur d’essai : réglage dans Admin → Câblage)' : ''}` }, c.label));
+    const inst = [...(h.manque || []), ...(h.exclues || [])];
+    const dl = (c) => (c.telechargements?.length ? ` · à télécharger : ${c.telechargements.map((x) => `${x.depot} · ${x.fichier}${x.go ? ` (${x.go} Go)` : ''}`).join(' ; ')}` : '');
+    const lic = (c) => (c.licence ? ` · licence : ${c.licence.nom}${c.licence.lue ? '' : ' (pas lue)'}` : '');
+    return el('div', { class: 'ag-hors' }, el('b', { class: 'ag-lab' }, 'pas encore ici'),
+      btns.length ? el('div', { class: 'ag-hbtns' }, ...btns) : null,
+      inst.length ? el('details', { class: 'ag-det' }, el('summary', {}, 'ce qu’il faudrait installer'),
+        el('ul', {}, ...inst.map((c) => el('li', {}, el('b', {}, c.label), ` — ${c.pourquoi || ''}${dl(c)}${lic(c)}`)))) : null);
+  }
+  // plusieurs workflows conviennent, à égalité : un bouton par candidat, la recommandation dite
+  function choixEl(t) {
+    const busy = !!(A.conv?.busy || A.flying.size);
+    const opts = el('div', { class: 'ag-opts' }, ...t.choix.candidats.map((c) => el('button', { class: 'ag-chip ag-opt' + (t.choisi === c.id ? ' on' : ''), type: 'button',
+      disabled: t.choisi || busy ? true : null, title: t.choisi ? 'déjà choisi' : busy ? 'un tour est en cours : attends sa réponse' : c.pourquoi_choix || c.pourquoi || '',
+      onclick: () => choisir(t, c.id) }, `${c.label}${c.recommandee ? ' · recommandé' : ''}`)));
+    return el('div', { class: 'ag-qcard' }, el('b', { class: 'ag-lab' }, 'quel workflow'), opts, t.choisi ? el('p', { class: 'ag-meta' }, 'choisi') : null);
+  }
+  async function choisir(t, cid) {
+    try {
+      const r = await post('', { intent: 'skill', skill: t.suite?.skill, etape: 'choix', donnees: { choix_turn: t.id, capacite: cid } });
+      follow(r.bid, r.turn, r.job).catch((e) => toast(`Showrunner : ${e.message}`, 8000));
+    } catch (e) { toast(`Showrunner : ${e.message}`, 8000); load(); }
+  }
+
+  // le découpage d'un storyboard : une ligne par plan, qui se corrige (chaque correction enregistrée seule, relue par
+  // le schéma au serveur) ; « Valider le découpage » (le serveur bâtit les gestes, la page les pose) ; « Refaire » (le champ) ;
+  // validé et posé, « Lancer les N images » : le seul consentement, son coût dit
+  function decoupageEl(t) {
+    const dc = t.decoupage;
+    const plans = dc.plans || [];
+    const live = liveDecoupage()?.id === t.id;
+    const busy = !!(A.conv?.busy || A.flying.size);
+    const save = async (next) => {
+      try {
+        const r = await api(`ideation/agent/${S.board.id}/turns/${t.id}`, { method: 'POST', body: { decoupage: { titre: dc.titre, plans: next, remarques: dc.remarques || [] } } });
+        Object.assign(t, r);
+      } catch (e) { toast(`le découpage : ${e.message}`, 7000); load(); }
+      paint();
+    };
+    const edit = (i, patch) => save(plans.map((p, k) => (k === i ? { ...p, ...patch } : p)));
+    const cutTxt = (s, k) => String(s || '').slice(0, k);
+    const couper = (i) => { const p = plans[i], half = Math.max(0.5, Math.round(p.duree_s * 5) / 10); save([...plans.slice(0, i), { ...p, duree_s: half }, { ...p, duree_s: half }, ...plans.slice(i + 1)]); };
+    const fusionner = (i) => {
+      const a = plans[i], b = plans[i + 1];
+      const j = (x, y, k, sep = ' / ') => cutTxt([x, y].filter((v) => String(v || '').trim()).join(sep), k);
+      const m = { ...a, duree_s: Math.min(30, Math.round((a.duree_s + b.duree_s) * 10) / 10), action: j(a.action, b.action, 300), dialogue: j(a.dialogue, b.dialogue, 300, ' '),
+        son: j(a.son, b.son, 200), prompt: j(a.prompt, b.prompt, 600, ' '), personnages: [...new Set([...(a.personnages || []), ...(b.personnages || [])])].slice(0, 4) };
+      save([...plans.slice(0, i), m, ...plans.slice(i + 2)]);
+    };
+    const total = plans.reduce((s, p) => s + Number(p.duree_s || 0), 0);
+    const rows = plans.map((p, i) => {
+      if (!live) {
+        return el('li', { class: 'ag-dl' }, el('p', { class: 'ag-dh' }, [VALEUR[p.valeur] || p.valeur, MOUV[p.mouvement] || p.mouvement, dureeFr(p.duree_s)].join(' · ')),
+          el('p', { class: 'ag-dt' }, p.action), p.dialogue ? el('p', { class: 'ag-ddit' }, `« ${p.dialogue} »`) : null);
+      }
+      const n = i + 1;
+      const sel = (opts, key, label) => {
+        const s2 = el('select', { class: 'fld sm', 'aria-label': `${label}, plan ${n}`, title: label }, ...Object.entries(opts).map(([v, l]) => el('option', { value: v, selected: v === p[key] ? true : null }, l)));
+        s2.addEventListener('change', () => edit(i, { [key]: s2.value }));
+        return s2;
+      };
+      const dur = el('input', { class: 'fld sm ag-ddur', type: 'number', min: 0.5, max: 30, step: 0.5, value: p.duree_s, title: 'durée, en secondes', 'aria-label': `durée en secondes, plan ${n}` });
+      dur.addEventListener('change', () => edit(i, { duree_s: Math.min(30, Math.max(0.5, Math.round(Number(dur.value) * 2) / 2 || 0.5)) }));
+      const act = el('textarea', { class: 'fld ag-dact', rows: 2, maxlength: 300, 'aria-label': `ce qu’on voit, plan ${n}` });
+      act.value = p.action || '';
+      act.addEventListener('change', () => { const v = act.value.trim(); if (v) edit(i, { action: cutTxt(v, 300) }); else { act.value = p.action; toast('le plan dit ce qu’on voit : une action, s’il te plaît'); } });
+      const dia = el('input', { class: 'fld sm ag-ddia', type: 'text', maxlength: 300, value: p.dialogue || '', placeholder: 'dialogue (vide : personne ne parle)', 'aria-label': `dialogue, plan ${n}` });
+      dia.addEventListener('change', () => edit(i, { dialogue: cutTxt(dia.value.trim(), 300) }));
+      const b = (ico, label, why, fn) => el('button', { class: 'ag-b ag-db', type: 'button', title: why || label, 'aria-label': label, disabled: why ? true : null, onclick: fn }, svg(ico));
+      const cutWhy = plans.length >= MAX_PLANS ? `${MAX_PLANS} plans au plus` : p.duree_s < 1 ? 'trop court pour le couper (1 s au moins)' : '';
+      return el('li', { class: 'ag-dl', 'data-plan': String(n) },
+        el('div', { class: 'ag-drow' }, el('span', { class: 'ag-dn' }, String(n)), sel(VALEUR, 'valeur', 'valeur du plan'), sel(MOUV, 'mouvement', 'mouvement de caméra'), dur,
+          el('span', { class: 'ag-du', 'aria-hidden': 'true' }, 's')),
+        act,
+        el('div', { class: 'ag-drow' }, dia,
+          b(ICO.couper, 'couper en deux', cutWhy, () => couper(i)),
+          b(ICO.fusionner, 'fusionner avec le suivant', i === plans.length - 1 ? 'le dernier plan n’a pas de suivant' : '', () => fusionner(i)),
+          b(ICO.close, 'supprimer ce plan', plans.length < 2 ? 'un plan au moins' : '', () => save(plans.filter((_, k) => k !== i)))));
+    });
+    const foot = el('div', { class: 'ag-foot' }, el('span', { class: 'ag-meta' }, `${plural(plans.length, 'plan')} · ${dureeFr(total)}`), el('span', { class: 'sp' }));
+    if (live) {
+      const w = busy ? 'un tour est en cours : attends sa réponse' : '';
+      foot.append(el('button', { class: 'tb ghost sm', type: 'button', title: 'dis ce qui change dans le champ : il refait le découpage (un appel de plus)', onclick: () => refaire() }, 'Refaire'),
+        el('button', { class: 'tb on sm', type: 'button', disabled: w ? true : null, title: w || 'le carnet le note ; la planche se pose : un cadre, une case par plan, sa note, sa carte prête',
+          onclick: () => valider(t) }, 'Valider le découpage'));
+    } else if (dc.etat === 'remplace') foot.append(el('span', { class: 'ag-meta' }, 'remplacé par un découpage plus récent'));
+    else if (dc.etat === 'valide') foot.append(lancerEl(t));
+    return el('div', { class: 'ag-dec' + (live || dc.etat === 'valide' ? '' : ' off'), 'aria-label': 'le découpage du storyboard' },
+      el('b', { class: 'ag-lab' }, `découpage · ${dc.portee || dc.titre || ''}${dc.etat === 'valide' ? ' · validé' : ''}`),
+      el('ol', { class: 'ag-dlist' }, ...rows),
+      dc.remarques?.length ? el('ul', { class: 'ag-drem' }, ...dc.remarques.map((r) => el('li', {}, r))) : null,
+      foot);
+  }
+  function refaire() {
+    const d = draft();
+    if (!d.text) { d.text = 'Refais le découpage : '; paintDraft(); }
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+  }
+  async function valider(t) {
+    try { Object.assign(t, await api(`ideation/agent/${S.board.id}/turns/${t.id}`, { method: 'POST', body: { valide: true } })); } catch (e) {
+      toast(`le découpage : ${e.message}`, 8000);
+      load();
+      return;
+    }
+    paint();
+    if (S.board) await appliquer(t);
+  }
+  // le consentement : le coût (la durée mesurée d'une image × N, les machines de la voie image) ; chaque carte part par sa garde
+  function lancerEl(t) {
+    const n = (t.decoupage.plans || []).length, c = t.decoupage.cout || {};
+    const posed = t.applied && !t.undone;
+    const w = t.lance ? 'les images sont lancées' : t.undone ? 'la planche est défaite : « Reposer » d’abord'
+      : !posed ? (t.claimed && !A.posed.has(t.id) ? 'posée dans un autre onglet : lance-les de là, ou de leurs cartes' : 'la planche n’est pas encore posée') : '';
+    const lab = t.lance ? `${plural(n, 'image')} lancée${n > 1 ? 's' : ''}`
+      : `Lancer les ${n} images · ${c.s_total ? `≈ ${dureeFr(c.s_total)}` : 'durée non mesurée'}${c.machines?.length ? ` sur ${c.machines.join(', ')}` : ''}`;
+    return el('button', { class: 'tb on sm ag-lancer', type: 'button', disabled: w ? true : null,
+      title: w || 'chaque carte part par son bouton Générer : la file les prend une à une ; le carnet note ton accord', onclick: () => lancer(t) }, lab);
+  }
+  async function lancer(t) {
+    try { Object.assign(t, await api(`ideation/agent/${S.board.id}/turns/${t.id}`, { method: 'POST', body: { consent: 'images' } })); } catch (e) {
+      toast(`Showrunner : ${e.message}`, 8000);
+      load();
+      return;
+    }
+    const ids = (t.actions || []).map((a) => (a.tool === 'carte_image' ? t.ids?.[a.id] : null)).filter(Boolean);
+    let n = 0;
+    const why = [];
+    for (const id of ids) {
+      const node = app.node(id);
+      if (!node) { why.push('une carte n’est plus sur la planche'); continue; }
+      const w = typeof app.gen?.why === 'function' ? app.gen.why(node) : '';
+      const wt = typeof w === 'string' ? w : w?.why || '';
+      if (wt) { why.push(wt); continue; }
+      try { await app.gen.generate(id); n++; } catch (e) { why.push(e.message); }
+    }
+    toast(n === ids.length ? `${plural(n, 'image')} en file` : `${n}/${ids.length} images en file — ${[...new Set(why)].join(' ; ')}`, 8000);
+    paint();
   }
 
   // un palier d'arrière-plan : en cours (ce qu'il fait, Arrêter), arrivé (sa ligne, ce qu'est chaque pièce), ou pas parti (pourquoi)

@@ -4,7 +4,7 @@ chaque outil qui en a un. Rend 0 si tout passe.
 
     python3 tools/check.py
     python3 tools/check.py chanson documents   # seulement ces selftests (plus vite)
-    python3 tools/check.py socle garde chanson # « socle », « garde », « isolement » les ajoutent
+    python3 tools/check.py socle garde chanson # « socle », « garde », « registre », « isolement » les ajoutent
 
 Il lance le serveur dans ce processus, sur un port libre et des données
 jetables, et le mène par son API comme une page le ferait. Un outil
@@ -349,6 +349,55 @@ STORES = {
     "*essai*": ("essai", "ce que laissent les selftests (données jetables)", None),
     "*selftest*": ("essai", "ce que laissent les selftests (données jetables)", None),
 }
+
+
+# Le registre de l'agent (docs/etudes/agent_autonome.md § 5.6) : chaque sorte de la file est le TRAVAIL d'une capacité
+# (agent/capacites/*.json), ou marquée ici interne, avec sa raison — comme STORES pour <data_dir>. Toutes les sortes, pas
+# seulement celles de coût gpu ou api : dans le contrôle, la plupart des sortes GPU s'enregistrent sur la voie cpu (les
+# moteurs factices) ; le coût qu'on y lit ne dit pas celui des DGX. Une sorte neuve sans fiche fait échouer le contrôle.
+INTERNES = {
+    "ideation.agent": "l'agent lui-même : un tour de la conversation",
+    "ideation.palier": "l'agent lui-même : un palier d'arrière-plan de l'entrée d'un projet",
+    "ideation.export": "l'export PNG d'une planche, lancé par sa page",
+    "library.views": "les copies d'affichage de la bibliothèque, faites par le portail",
+    "ecoute.zip": "le zip d'un lien d'écoute, lancé par sa page",
+    "ecoute.publier": "une publication : jamais par l'agent (agent_autonome.md § 5.10)",
+    "paroles.caler": "le calage des paroles d'un son, lancé par la page de Musique",
+    "lora.train": "l'entraînement d'un LoRA, lancé par son moodboard (Idéation) : hors du vocabulaire de l'agent",
+    "lora.train_factice": "l'essai sans GPU de lora.train",
+    "objet.mesh_factice": "le moteur d'essai d'objet.mesh",
+    "chanson.plan": "une étape de Chanson, Soigné (la partition avant le chant) : musique.chanson.soignee",
+    "chanson.paroles": "une étape de Chanson : écrire les paroles",
+    "music.yue.abc": "une étape d'ODIO : la partition seule de YuE2",
+    "music.midi.abc": "une étape d'ODIO : la partition d'un son",
+    "music.midi.gpu": "la voie piano d'Extraire le MIDI : musique.midi",
+    "check.*": "un essai du contrôle", "essai.*": "un essai de l'ordonnanceur (Admin)", "budget.*": "un essai des budgets (equipes)",
+    "droits.*": "un essai des droits", "compte.essai": "un essai de la porte", "detruire.essai": "un essai de la destruction (equipes)",
+    "registre.*": "un essai du registre (agent_registre)",
+}
+
+
+def registre_checks() -> None:
+    """Le registre de l'agent est complet : chaque sorte de jobs.HANDLERS est le travail d'une capacité ou marquée
+    interne ; une sorte interne n'est pas aussi le travail d'une capacité ; une sorte GPU neuve, sans fiche, est vue."""
+    import fnmatch
+    from tools import agent_registre as ar
+    reg = ar.charger()
+    ok(not reg["erreurs"], f"registre : agent/ se lit ({reg['erreurs'][:4]})")
+    travaux = {c["travail"] for c in reg["capacites"] if c.get("travail")}
+    interne = lambda k: any(fnmatch.fnmatch(k, pat) for pat in INTERNES)   # noqa: E731
+    orphelines = [k for k in sorted(jobs.HANDLERS) if k not in travaux and not interne(k)]
+    ok(not orphelines, "registre : chaque sorte de la file est le travail d'une capacité (agent/capacites/) ou marquée interne "
+                       f"(INTERNES, tools/check.py) — sans fiche : {orphelines}")
+    deux = sorted(t for t in travaux if interne(t))
+    ok(not deux, f"registre : une sorte est une capacité ou interne, pas les deux ({deux})")
+    jobs.register("orpheline.gpu", lambda ctx: {"note": "ok"}, lane="cpu", title="Essai : une sorte sans fiche", cost="gpu")
+    try:
+        vue = [k for k in sorted(jobs.HANDLERS) if k not in travaux and not interne(k)] == ["orpheline.gpu"]
+    finally:
+        jobs.HANDLERS.pop("orpheline.gpu", None)
+        jobs._META.pop("orpheline.gpu", None)
+    ok(vue, "registre : une sorte GPU déclarée sans fiche ni raison est vue (le contrôle échouerait)")
 
 
 def isolation_checks() -> None:
@@ -823,6 +872,12 @@ def main() -> int:
             import traceback
             traceback.print_exc()
             ok(False, f"la garde du calcul : le contrôle a planté : {type(e).__name__}: {e}")
+    if not seul or "garde" in seul or "registre" in seul:
+        print("le registre de l'agent")
+        try:
+            registre_checks()
+        except Exception as e:  # noqa: BLE001
+            ok(False, f"le registre de l'agent : le contrôle a planté : {type(e).__name__}: {e}")
     if not seul or "isolement" in seul:
         print("l'isolement des Workspaces")
         try:

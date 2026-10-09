@@ -1,0 +1,64 @@
+{
+ "id": "image.atelier",
+ "label": "L'atelier d'Image (Détail, Lumière, Style, Ajouter, Retirer, Fond)",
+ "intentions": [
+  "image.modifier",
+  "vfx.retirer"
+ ],
+ "outil": "image",
+ "travail": "image.atelier",
+ "route": "POST /api/image/atelier/{sid}/run",
+ "entrees": {
+  "image": {
+   "sorte": "image",
+   "requis": true,
+   "question": {
+    "texte": "Quelle image ?"
+   }
+  },
+  "consigne": {
+   "type": "texte",
+   "requis": true
+  }
+ },
+ "sortie": {
+  "sorte": "image",
+  "parents": [
+   "image"
+  ]
+ },
+ "criteres": [
+  {
+   "si": "image_citee",
+   "poids": 1,
+   "pourquoi": "l'image sous les yeux, une zone, des essais à comparer avant de valider"
+  }
+ ],
+ "limites": [
+  "une image fixe ; les essais ne sont pas des objets de la bibliothèque tant qu'on ne valide pas"
+ ],
+ "etat": {
+  "exige": {
+   "interrupteur": "image_backend=comfyui",
+   "image": "qwen21"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "qwen21",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "Qwen Research License (Qwen 2.1) ; Krea 2 Community License",
+  "lue": true,
+  "commercial": "non pour Qwen 2.1",
+  "source": "docs/etudes/image.md"
+ },
+ "sources": [
+  "server/tools/image_atelier.py",
+  "docs/etudes/image.md"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

@@ -387,7 +387,9 @@ def _piece(p: dict) -> str:
     k = p.get("kind")
     if k == "document":
         d = p.get("doc") or {}
-        bits = [str(d.get("label") or d.get("format") or "").strip(), f"{d['pages']} {d.get('unit') or 'pages'}" if d.get("pages") else ""]
+        unit = str(d.get("unit") or "pages")
+        bits = [str(d.get("label") or d.get("format") or "").strip(),
+                f"{d['pages']} {unit[:-1] if d.get('pages') == 1 and unit.endswith('s') else unit}" if d.get("pages") else ""]
         return " (" + ", ".join(b for b in bits if b) + ")" if any(bits) else ""
     if k in ("video", "audio") and p.get("duration"):
         return f" ({float(p['duration']):.1f} s)".replace(".", ",")
@@ -577,7 +579,7 @@ def selftest(call, ok) -> None:
     ok(ue2["action"] == "hors_capacite" and any(c["id"] == "vfx.retirer_personne.h3" for c in ue2["exclues"]) and "écarté" in ue2["texte"],
        f"politique : § 3.3 · H3 seul installé et le projet dans l'UE → écarté, en le disant ({ue2.get('texte')})")
     rien = d({"intention": "vfx.retirer", "kinds": ["video"]})
-    ok(rien["action"] == "hors_capacite" and [c["id"] for c in rien["approchant"]] == ["image.consigne"]
+    ok(rien["action"] == "hors_capacite" and "image.consigne" in [c["id"] for c in rien["approchant"]]
        and any(c["id"] == "vfx.retirer_personne.ltx" and c.get("telechargements") for c in rien["manque"])
        and "lot 6" in rien["texte"],
        f"politique : § 3.3 · rien d'installé (aujourd'hui) → je ne sais pas encore, ce qui manque, l'approchant : une image fixe ({rien.get('texte')})")

@@ -1191,6 +1191,12 @@ def history(conv: dict, upto: str, budget: int = HISTORY_CHARS) -> list:
         if (t.get("plan") or {}).get("etapes"):
             p = t["plan"]
             a += "\n(plan: " + "; ".join(f"{i + 1}) {e['titre']}" for i, e in enumerate(p["etapes"])) + f" — {PLAN_EN.get(p.get('etat'), '')}, {p.get('fait', 0)} done)"
+        if t.get("decoupage"):
+            dc = t["decoupage"]
+            a += (f"\n(storyboard breakdown of « {dc.get('portee')} »: {len(dc.get('plans') or [])} shots, "
+                  f"{ {'propose': 'proposed, not yet validated', 'valide': 'validated and put on the board', 'remplace': 'replaced by a newer one'}.get(dc.get('etat'), dc.get('etat')) })")
+        if t.get("hors"):
+            a += "\n(the portal cannot do this yet; said so)"
         if t.get("undone"):
             a += "\n(the person undid this turn's gestures)"
         size = len(u) + len(a)
@@ -1619,7 +1625,7 @@ def contexte_storyboard(routage: dict, cited: list, board: dict, conv: dict, tur
         elif c:
             it = library.get(c["id"]) or {}
             text, label = (TEXTE_DOCUMENT(it) or "") if it else "", f"« {_cut(it.get('title') or c['id'], 50)} »"
-    found = {"source": {"id": src, "titre": label}, "texte": "", "portee": ""}
+    found = {"source": {"id": src, "titre": label}, "texte": "", "portee": "", "dite": ""}   # dite : la portée dans une phrase
     if src and not text.strip():
         ctx["introuvables"].append("source")
         ctx["pourquoi"]["source"] = f"{label or src} n'a pas de texte que je puisse lire."
@@ -1638,10 +1644,10 @@ def contexte_storyboard(routage: dict, cited: list, board: dict, conv: dict, tur
             ctx["introuvables"].append("portee")
             ctx["pourquoi"]["portee"] = f"« {_cut(portee, 60)} » : je ne la trouve pas dans {label}."
             return ctx, found
-        found.update(texte=scenes[i]["texte"], portee=scenes[i]["titre"])
+        found.update(texte=scenes[i]["texte"], portee=scenes[i]["titre"], dite=f"« {scenes[i]['titre']} »")
     else:
         ctx["long"] = len(text) > pol.PORTEE_MAX
-        found.update(texte=text, portee=label)
+        found.update(texte=text, portee=label, dite=label)
     if len(found["texte"]) > pol.PORTEE_MAX:
         found["texte"] = found["texte"][:pol.PORTEE_MAX] + "\n(… la suite n'est pas lue : trop longue pour un appel)"
     return ctx, found
@@ -1714,10 +1720,10 @@ def decoupage_turn(m: Moteur, board: dict, conv: dict, turn: dict, a: dict, foun
     if errs:
         raise RuntimeError("le découpage rendu ne suit pas son schéma : " + "; ".join(errs[:3]))
     total = round(sum(float(p["duree_s"]) for p in d["plans"]), 1)
-    dc = {**d, "etat": "propose", "source": found["source"], "portee": found["portee"], "total_s": total,
+    dc = {**d, "etat": "propose", "source": found["source"], "portee": found["portee"], "dite": found["dite"], "total_s": total,
           "entrees": {k: e.get(k) for k in ("format", "rendu", "plans")}, "elements": [{"id": p["id"], "titre": p["titre"]} for p in persos]}
     n = len(d["plans"])
-    return {"reply": f"Voici le découpage de {found['portee']} : {n} plan{'s' if n > 1 else ''}, {duree_fr(total)} au total. "
+    return {"reply": f"Voici le découpage de {found['dite']} : {n} plan{'s' if n > 1 else ''}, {duree_fr(total)} au total. "
                      "Corrige-le ici (réécrire, supprimer, fusionner, couper), puis valide : rien n'est posé avant.",
             "decoupage": dc, "actions": [], "reads": [{"tool": "apercu", "args": {}, "note": f"{found['portee']} ({len(found['texte'])} signes)"}]}
 
@@ -1739,7 +1745,7 @@ def _plat(s) -> str:
 
 def storyboard_actions(dc: dict, board: dict) -> list:
     """Les étapes `planche` et `cartes` (§ 9.4, points 7 et 8), par le CODE, depuis le découpage validé : un cadre
-    « Storyboard · <portée> », une case par plan dans l'ordre (sa note ; sa carte Générer, son prompt préfixé du rendu,
+    « Storyboard · <portée> », une case par plan dans l'ordre (sa note ; sa carte Générer d'UNE image, son prompt préfixé du rendu,
     ses références — les éléments des personnages du plan —, `lancer: false`), les personnages qui ne sont pas encore sur
     la planche dans un cadre à côté. Les actions passent par le même validateur que celles du modèle (Gestes) : la page
     les pose comme aujourd'hui, en UN app.mutate."""
@@ -1774,7 +1780,7 @@ def storyboard_actions(dc: dict, board: dict) -> list:
         put("poser_texte", f"le plan {k} : sa valeur, son action", sorte="note", texte=note_plan(k, p), dans=case)
         refs = list(dict.fromkeys(refs_of[e] for e in es if e in refs_of))[:4]
         put("carte_image", f"la première image du plan {k}, prête : son bouton reste à toi", prompt=prefix + p["prompt"],
-            refs=refs, format=fmt, lancer=False, dans=case)
+            refs=refs, format=fmt, nombre=1, lancer=False, dans=case)
     return g.actions
 
 
@@ -1811,7 +1817,7 @@ def mener(m: Moteur, board: dict, conv: dict, turn: dict, frac, progress) -> dic
     keep = {k: v for k, v in routage.items() if k not in ("kinds", "reponses", "bouton")}
     out = {"routage": keep, "decision": {k: a.get(k) for k in ("action", "regle", "intention", "skill", "capacite", "pourquoi") if a.get(k)},
            "reponses_notees": notes, "fiche": fiche, "actions": [], "reads": []}
-    suite = {"routage": {**keep, "entrees": a.get("entrees", keep.get("entrees") or {})}}
+    suite = {"routage": {**keep, "entrees": a.get("entrees", keep.get("entrees") or {})}, "skill": a.get("skill") or intent.get("skill")}
     act = a["action"]
     if act == "repondre":
         out.update(reply=a["texte"])
@@ -2533,7 +2539,7 @@ def storyboard_mark(req, conv: dict, t: dict, d: dict, bid: str) -> None:
         t["actions"] = storyboard_actions(dc, board)
         dc.update(etat="valide", valide=library.now(), cout=cout_images(n))
         t.update(claim=None, applied=False, undone=False, results=[], ids={})
-        add_decisions(conv, [f"Storyboard de {dc.get('portee') or dc.get('titre')} : {n} plan{'s' if n > 1 else ''} validé{'s' if n > 1 else ''}"],
+        add_decisions(conv, [f"Storyboard de {dc.get('dite') or dc.get('titre')} : {n} plan{'s' if n > 1 else ''} validé{'s' if n > 1 else ''}"],
                       "plan", t["id"])
         fmt = (dc.get("entrees") or {}).get("format")
         if fmt:
@@ -2927,14 +2933,15 @@ def storyboard_essai(call, ok, wait, F, f) -> None:
     lina = next((a for a in acts if a["tool"] == "poser_asset"), {})
     ok(s0 == 409 and s4 == 200 and kinds.count("poser_cadre") == 1 + 1 + 2 and kinds.count("poser_texte") == 2 and len(cards) == 2
        and acts[0]["args"]["nom"] == "Storyboard · EXT. QUAI - NUIT" and [c["args"]["nom"][:2] for c in cases] == ["1 ", "2 "]
-       and all(c["args"]["lancer"] is False and c["args"]["format"] == "16:9" and c["args"]["prompt"].startswith(RENDU_PROMPT["photoreal"]) for c in cards)
+       and all(c["args"]["lancer"] is False and c["args"]["format"] == "16:9" and c["args"]["nombre"] == 1
+               and c["args"]["prompt"].startswith(RENDU_PROMPT["photoreal"]) for c in cards)
        and [c["args"]["prompt"][len(RENDU_PROMPT["photoreal"]):] for c in cards] == [plans[0]["prompt"], p23["prompt"]]
        and lina.get("args", {}).get("item") == el.get("id") and cards[1]["args"]["refs"] == [lina.get("id")] and cards[0]["args"]["refs"] == []
        and t4["decoupage"]["etat"] == "valide" and t4["decoupage"]["cout"]["images"] == 2,
        f"storyboard : validé → les gestes du code : le cadre, 2 cases dans l'ordre, leurs notes, leurs cartes prêtes (lancer faux), Lina branchée "
        f"sur sa case ; avant, pas de consentement possible ({s0} {s4} {kinds})")
     _, conv = call("GET", f"/api/ideation/agent/{bid}")
-    ok(any(d["text"] == "Storyboard de EXT. QUAI - NUIT : 2 plans validés" for d in conv.get("decisions") or [])
+    ok(any(d["text"] == "Storyboard de « EXT. QUAI - NUIT » : 2 plans validés" for d in conv.get("decisions") or [])
        and (conv.get("fiche") or {}).get("format", {}).get("valeur") == "16:9",
        f"storyboard : la validation au carnet, le format à la fiche du projet ({[d['text'] for d in conv.get('decisions') or []][-2:]})")
     s5, _ = mark(sbt, {"decoupage": new})
@@ -2995,7 +3002,7 @@ def storyboard_essai(call, ok, wait, F, f) -> None:
     s, r, _, conv, t = tour({"messages": [{"role": "user", "content": "enlève le passant en rouge", "items": [vid] if vid else []}]})
     h = t.get("hors") or {}
     ok((t.get("decision") or {}).get("action") == "hors_capacite" and t.get("actions") == [] and len(f.calls) == 1
-       and ((vid and [c["id"] for c in h.get("approchant") or []] == ["image.consigne"]
+       and ((vid and "image.consigne" in [c["id"] for c in h.get("approchant") or []]
              and any(c["id"] == "vfx.retirer_personne.h3" for c in h.get("manque") or []))
             or (not vid and any(c["id"] == "image.consigne" for c in h.get("outils") or []))),
        f"storyboard : « enlève le passant » (une vidéo citée) → hors capacité, ce qui manque, l'approchant image.consigne ({t.get('reply')!r})")
