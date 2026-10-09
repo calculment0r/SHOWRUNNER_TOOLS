@@ -1151,6 +1151,8 @@ def api_caler(req, iid):
 
 
 def register(app) -> None:
+    from core import inventaire
+    inventaire.attach("paroles", "l'état du calage des paroles d'un son : il suit son son (les paroles sont dans l'objet, `lrc`)")
     jobs.register(KIND, run_caler, lane="cpu", title="Caler les paroles", cost="cpu")
     if _suite not in jobs.AFTER:
         jobs.AFTER.append(_suite)

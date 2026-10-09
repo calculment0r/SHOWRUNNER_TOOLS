@@ -1163,7 +1163,20 @@ def api_generate(req):
     return jobs.public(j)
 
 
+def _inventaire():
+    """Les projets ODIO, pour l'inventaire (core/inventaire.py) : `owner` et `space`, posés
+    par library.stamp à la naissance (un projet d'avant le 29/09 n'a pas d'auteur)."""
+    from core import inventaire
+    for f, p in inventaire.json_docs(_dir().glob("mus-*.json")):
+        yield {"id": f.stem, "title": p.get("name") or "Sans titre", "owner": p.get("owner"), "space": p.get("space"),
+               "created": p.get("created"), "updated": p.get("updated"), "open": f"musique/?p={f.stem}",
+               "sub": f"{len(p.get('tracks') or [])} pistes"}
+
+
 def register(app) -> None:
+    from core import inventaire
+    inventaire.declare("odio", label="projet ODIO", plural="projets ODIO", tool="musique", store="musique",
+                       lister=_inventaire, order=21)
     if mode() == "ace-step":
         jobs.register("music.generate", run_generate_ace, lane="audio", title="Musique", cost="gpu")
     else:

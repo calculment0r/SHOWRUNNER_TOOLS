@@ -1470,7 +1470,22 @@ def api_options(req):
     return options(req)
 
 
+def _inventaire():
+    """Les Spaces de Musique, pour l'inventaire (core/inventaire.py) : un Space est une fiche
+    de la table de son Workspace (la clé, chanson/spaces.json), `owner` : qui l'a créé. Un
+    Space supprimé n'en est plus un (ses chansons sont retournées dans « Mon Space »). Les
+    chansons sont des objets de la bibliothèque (le socle les compte)."""
+    for ws, table in _read_json(SPACES).items():
+        for k, v in (table.items() if isinstance(table, dict) else ()):
+            if isinstance(v, dict) and MSP_RX.fullmatch(str(k)) and not v.get("deleted"):
+                yield {"id": k, "title": v.get("name") or k, "owner": v.get("owner"), "space": ws, "created": v.get("created"),
+                       "updated": v.get("updated") or v.get("created"), "open": "chanson/", "sub": "archivé" if v.get("archived") else ""}
+
+
 def register(app) -> None:
+    from core import inventaire
+    inventaire.declare("space", label="Space de Musique", plural="Spaces de Musique", tool="chanson", store="chanson",
+                       lister=_inventaire, order=26)
     for model in ("ace", "yue"):
         real = engine(model) == "reel"
         fn = {("ace", False): run_ace_test, ("ace", True): run_ace_real,

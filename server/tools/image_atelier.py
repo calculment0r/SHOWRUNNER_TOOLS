@@ -749,7 +749,23 @@ def r_file(req, sid, name):
     raise HttpError(404, "fichier inconnu")
 
 
+def _inventaire():
+    """Les sessions de l'atelier, pour l'inventaire (core/inventaire.py) : `owner` (qui l'a
+    ouverte) et `space` (celui de l'image source), posés par library.stamp. Ce qui a été
+    validé est un objet de la bibliothèque (le socle le compte)."""
+    from core import inventaire
+    for f, s in inventaire.json_docs(root().glob("atl-*.json")):
+        src = library._items.get(str(s.get("source") or ""))
+        n = len(s.get("trials") or [])
+        yield {"id": f.stem, "title": f"Atelier · {(src or {}).get('title') or s.get('source') or '?'}", "owner": s.get("owner"),
+               "space": s.get("space"), "created": s.get("created"), "updated": s.get("updated"), "open": f"image/atelier/?s={f.stem}",
+               "sub": f"{n} essai{'s' if n > 1 else ''}", "thumb": (lambda src=src: library.public(src).get("thumb_url")) if src else None}
+
+
 def register(app) -> None:
+    from core import inventaire
+    inventaire.declare("atelier", label="session d'atelier", plural="sessions d'atelier", tool="image", store="image_atelier",
+                       lister=_inventaire, order=24)
     IM._register_job(KIND, run_job, "Atelier", IM._family_edit, IM._mem_edit)
     app.route("GET", "/api/image/atelier/config", r_config)
     app.route("GET", "/api/image/atelier", r_list)

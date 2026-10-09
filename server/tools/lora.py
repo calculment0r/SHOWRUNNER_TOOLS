@@ -504,7 +504,9 @@ def _add_version(bid: str, nid: str, items: list, src: Path | None, job_id: str,
         name = f"{bid}-{nid}-v{v:03d}" + (".factice" if factice else ".safetensors")
         if src is not None:
             src.replace(files / name)
-        entry = {"v": v, "at": library.now(), "items": items, "file": name, "job": job_id, "model": s.get("model")}
+        # `by` : son auteur, celui du travail qui l'a entraînée (09/10, l'inventaire : core/inventaire.py)
+        by = (jobs.get(job_id) or {}).get("owner") or auth.current_id()
+        entry = {"v": v, "at": library.now(), "items": items, "file": name, "job": job_id, "model": s.get("model"), "by": by}
         if factice:
             entry["factice"] = True
         # ce que l'entraîneur en dit : le mot déclencheur, le nom dans ComfyUI, la durée (lora_trainers.py)
@@ -654,7 +656,30 @@ def _loop() -> None:
         time.sleep(30)
 
 
+def _inventaire():
+    """Les LoRA, pour l'inventaire (core/inventaire.py) : un LoRA est l'état d'un moodboard
+    (sa planche, son objet) ; son Workspace est celui de sa planche ; son auteur, celui de sa
+    première version (`by`, depuis le 09/10 ; avant : le travail qui l'a entraînée, `job`),
+    sinon de son plan de nuit. Un état sans version, ni plan, ni travail n'est rien encore."""
+    from core import inventaire
+    from tools import ideation
+    for f, s in inventaire.json_docs(_dir().glob("*.json")):
+        vs = [v for v in s.get("versions") or [] if isinstance(v, dict)]
+        plan = s.get("plan") if isinstance(s.get("plan"), dict) else {}
+        if not (vs or plan or s.get("job")) or not s.get("board"):
+            continue
+        first = vs[0] if vs else {}
+        yield {"id": s.get("id") or f.stem, "title": s.get("name") or "LoRA", "owner": first.get("by") or plan.get("owner"),
+               "job": first.get("job") or s.get("job"), "space": ideation.board_space(str(s["board"])),
+               "created": first.get("at") or plan.get("at"), "updated": vs[-1].get("at") if vs else plan.get("at"),
+               "open": f"ideation/#{s['board']}",
+               "sub": f"v{vs[-1].get('v')} · {(MODELS.get(vs[-1].get('model') or s.get('model')) or {}).get('name', '')}".rstrip(" ·")
+               if vs else "prévu"}
+
+
 def register(app) -> None:
+    from core import inventaire
+    inventaire.declare("lora", label="LoRA", plural="LoRA", tool="ideation", store="lora", lister=_inventaire, order=27)
     app.route("GET", "/api/lora/models", r_models)
     app.route("GET", "/api/lora", r_list)
     app.route("GET", "/api/lora/file/{bid}/{nid}/{v}", r_file)

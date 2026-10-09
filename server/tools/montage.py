@@ -2381,7 +2381,20 @@ def r_lut_delete(req, lid):
     return {"ok": True}
 
 
+def _inventaire_luts():
+    """Les LUT, pour l'inventaire (core/inventaire.py) : `owner` et `space` posés par
+    store_lut (une LUT importée en ligne de commande n'a pas d'auteur). Elles s'ouvrent dans
+    l'étagère du Montage. Les séquences sont des objets de la bibliothèque (le socle les
+    compte) ; le Projet de chaque Workspace (montage/projet/) ne fait que les nommer."""
+    from core import inventaire
+    for f, m in inventaire.json_docs(_luts_dir().glob("lut-*.json")):
+        yield {"id": f.stem, "title": m.get("title"), "owner": m.get("owner"), "space": m.get("space"),
+               "created": m.get("created"), "updated": m.get("created"), "open": "montage/", "sub": m.get("family") or ""}
+
+
 def register(app) -> None:
+    from core import inventaire
+    inventaire.declare("lut", label="LUT", plural="LUT", tool="montage", store="luts", lister=_inventaire_luts, order=23)
     try:
         made = migrate()                   # les montages d'avant deviennent des séquences (une fois)
         if made:

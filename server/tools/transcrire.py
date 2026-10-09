@@ -1976,7 +1976,22 @@ def api_qa_delete(req, tid, qid) -> dict:
     return public(_update(tid, lambda x: x.__setitem__("qa", [y for y in x.get("qa") or [] if y["id"] != qid])))
 
 
+def _inventaire():
+    """Les transcriptions, pour l'inventaire (core/inventaire.py) : `owner` (qui l'a lancée)
+    et `space` (celui du son), posés par library.stamp à la naissance ; `job` : sa
+    transcription. Le carnet est dans le document (`notes`, `qa`) : il se compte avec lui."""
+    from core import inventaire
+    for f, d in inventaire.json_docs(p for p in _dir().glob("trn-*.json") if not p.name.endswith(".voix.json")):
+        carnet = any((v or {}).get("state") == "done" for v in (d.get("notes") or {}).values()) or bool(d.get("qa"))
+        yield {"id": f.stem, "title": d.get("title"), "owner": d.get("owner"), "job": d.get("job"), "space": d.get("space"),
+               "created": d.get("created"), "updated": d.get("updated"), "open": f"transcrire/#{f.stem}",
+               "thumb": d.get("thumb_url"), "sub": MODES.get(mode_of(d.get("mode")), {}).get("label", "") + (" · carnet" if carnet else "")}
+
+
 def register(app) -> None:
+    from core import inventaire
+    inventaire.declare("transcription", label="transcription", plural="transcriptions", tool="transcrire", store="transcrire",
+                       lister=_inventaire, order=22)
     real = engine() == "local"
     jobs.register("transcrire.transcribe", run_transcribe, lane="audio" if real else "cpu", title="Transcrire",
                   family=(lambda p: p.get("family")) if real else None, gpu=real,

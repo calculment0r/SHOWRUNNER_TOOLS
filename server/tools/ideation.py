@@ -1972,7 +1972,23 @@ def r_lot(req):
     raise HttpError(400, "un lot est d'images ou de vidéos (kind : image | video)")
 
 
+def _inventaire():
+    """Les planches, pour l'inventaire (core/inventaire.py) : l'auteur est dans le fichier
+    d'accès de la planche (ideation_collab, `owner` : qui l'a créée), son Workspace dans la
+    planche. Une planche qui a des diapositives est une présentation (ses exports PDF, PNG,
+    MP4 sont des objets de la bibliothèque)."""
+    from core import inventaire
+    from tools import ideation_collab
+    for f, b in inventaire.json_docs(_dir().glob("ide-*.json")):
+        slides = sum(1 for n in b.get("nodes") or [] if isinstance(n, dict) and n.get("slide") is not None)
+        yield {"id": f.stem, "title": b.get("name") or "Sans titre", "owner": ideation_collab._access(f.stem).get("owner"),
+               "space": b.get("space"), "created": b.get("created"), "updated": b.get("updated"), "open": f"ideation/#{f.stem}",
+               "sub": f"présentation · {slides} diapositive{'s' if slides > 1 else ''}" if slides else ""}
+
+
 def register(app) -> None:
+    from core import inventaire
+    inventaire.declare("planche", label="planche", plural="planches", tool="ideation", store="ideation", lister=_inventaire, order=20)
     jobs.register("ideation.export", run_export, lane="cpu", title="Idéation · export", cost="cpu")
     app.route("POST", "/api/ideation/lot", r_lot)
     app.route("GET", "/api/ideation/meta", r_meta)
