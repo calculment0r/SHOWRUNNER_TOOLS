@@ -359,6 +359,7 @@ INTERNES = {
     "ideation.agent": "l'agent lui-même : un tour de la conversation",
     "ideation.palier": "l'agent lui-même : un palier d'arrière-plan de l'entrée d'un projet",
     "ideation.export": "l'export PNG d'une planche, lancé par sa page",
+    "movie.invite": "une étape de Vidéo : la mise en forme de l'invite d'H3 par le modèle de texte (movie_invite.py), avant le rendu",
     "library.views": "les copies d'affichage de la bibliothèque, faites par le portail",
     "ecoute.zip": "le zip d'un lien d'écoute, lancé par sa page",
     "ecoute.publier": "une publication : jamais par l'agent (agent_autonome.md § 5.10)",

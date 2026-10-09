@@ -45,6 +45,7 @@ import { createUndo } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { scrollBehavior } from '../commun/theme.js';
 import { sortable, moveItem, isHeld, heldTitle, sentLabel } from '../commun/refs.js';
+import { places } from '../commun/mentions.js';
 
 mountHeader('image', { sub: 'créer' });
 
@@ -219,13 +220,16 @@ function paintBar() {
 }
 
 // ligne 1 : les références. La règle commune (commun/refs.js) : un carrousel
-// ordonné ; l'adresse d'une référence est sa place (<image1>, « la scène ») ;
-// le modèle envoie les N premières, les suivantes restent grisées ; changer
-// de modèle n'en retire aucune ; on les réordonne en les glissant.
+// ordonné ; l'adresse d'une référence est sa place ; le modèle envoie les N
+// premières, les suivantes restent grisées ; changer de modèle n'en retire
+// aucune ; on les réordonne en les glissant. L'adresse s'écrit comme partout
+// (09/10, commun/mentions.js) : @image1, @element1, chaque sorte comptée à part ;
+// le serveur la compile pour le modèle (roleOf : ce que le modèle lit).
 function roleOf(model, k, n) {
   if (model === 'qwen21') return `<image${1 + k}>`;
   return n > 1 ? (k === 0 ? 'la scène' : 'le sujet') : 'la personne ou l’objet';
 }
+const tokOf = (list, k) => `@${places(list.map((it) => (it.kind === 'element' ? 'element' : 'image')))[k]}`;
 const swap = (list, k) => moveItem(list, k, k - 1);
 // le carrousel prend ce que prend le plus grand des modèles
 const CAP = () => Math.max(...S.cfg.models.map((m) => m.refs));
@@ -239,7 +243,7 @@ function afterRefs() { saveDraft(); schedCompose(); paintRefs(); paintChips(); p
 function refMenu(it, k, R) {
   const els = it.kind === 'element' ? (it.element?.refs || []) : [];
   const cur = S.refChoice[it.id] || els[0]?.file;
-  const place = (j) => (isHeld(j, R.max) ? `place ${j + 1} · non envoyée` : roleOf(R.model, j, R.sent));
+  const place = (j) => (isHeld(j, R.max) ? `${tokOf(R.list, j)} · non envoyée` : `${tokOf(R.list, j)} · ${roleOf(R.model, j, R.sent)}`);
   return [
     { head: `${place(k)} · ${it.title || it.id}` },
     isHeld(k, R.max) ? { head: maxWhy(R) } : null,
@@ -259,12 +263,12 @@ function refThumb(it, k, R) {
   const t = it.kind === 'element' ? (it.element?.refs?.find((r) => r.file === S.refChoice[it.id])?.thumb_url || it.thumb_url) : (it.thumb_url || it.url);
   // au-delà de ce que prend le modèle : grisée, gardée, non envoyée (sa place reste son numéro)
   const held = isHeld(k, R.max);
-  const role = held ? String(k + 1) : roleOf(R.model, k, R.sent);
+  const role = held ? tokOf(R.list, k) : `${tokOf(R.list, k)} · ${roleOf(R.model, k, R.sent)}`;
   const b = el('button', { class: 'pb-ref r' + (it.kind === 'element' ? ' element' : '') + (held ? ' held' : ''), type: 'button', 'data-k': k,
     title: held ? `${heldTitle(maxWhy(R))} · ${it.title || ''}` : `${role} · ${it.title || ''} — glisser pour changer sa place`,
     style: t ? { backgroundImage: `url(${href(t)})` } : null,
     onclick: (e) => up(e.currentTarget, refMenu(it, k, R)) },
-  el('span', { class: 'n' }, role.replace(/^<image(\d+)>$/, '$1').replace(/^la |^le /, '').replace('personne ou l’objet', 'réf.')));
+  el('span', { class: 'n tok' }, tokOf(R.list, k)));
   // déposer sur une vignette la remplace, à la même place
   dropZone(b, { kinds: ['image', 'element'], multiple: false, via: VIA, onitems: ([x]) => { const l = R.list.slice(); l[k] = x; R.set(l); } });
   b._menu = () => refMenu(it, k, R);   // le même menu au clic droit
@@ -316,20 +320,19 @@ function grow() {
 }
 // Krea : « Long detailed prompts yield best results » (docs/prompting.md) ; Z-Image et Qwen : des phrases détaillées
 function promptHint() {
-  if (S.model === 'qwen21') return 'Décrivez l’image, en anglais — @ nomme une référence';
+  if (M(S.model)?.refs) return 'Décrivez l’image, en anglais — @ nomme une référence (@image1, @element1)';
   return 'Décrivez l’image, en anglais : le sujet, le lieu, la lumière';
 }
 const AT = { list: [], sel: 0, q: null };
 function atChoices() {
   const R = refsOf();
-  if (R.model !== 'qwen21') {
-    return { why: R.model === 'krea2' ? 'Krea 2 ne nomme pas ses références : l’ordre suffit (la scène, puis le sujet)'
-      : M(R.model).refs_why || `${M(R.model).name} ne prend pas de référence` };
-  }
-  // les places envoyées seulement : une grisée n'a pas d'adresse chez le modèle
+  if (!R.max) return { why: M(R.model).refs_why || `${M(R.model).name} ne prend pas de référence` };
+  // les places envoyées seulement : une grisée n'est pas envoyée (le serveur refuse sa mention, et le dit) ;
+  // le jeton est celui de la personne (@image1, @element1), le titre dit ce que le modèle lit à cette place
   const toks = R.list.slice(0, R.sent);
   if (!toks.length) return { why: 'aucune référence : ajoutez-en par « + »' };
-  return { toks: toks.map((it, k) => ({ tag: `<image${k + 1}>`, title: it.title || '', thumb: it.thumb_url || it.url })) };
+  return { toks: toks.map((it, k) => ({ tag: tokOf(R.list, k), title: `${roleOf(R.model, k, R.sent)} · ${it.title || ''}`,
+    thumb: it.thumb_url || it.url })) };
 }
 function atCheck() {
   const ta = $('#prompt');

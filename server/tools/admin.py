@@ -387,6 +387,10 @@ DIAGS = {   # id : (nom court, ce qu'il dit, commande, délai en s, action ?)
                      150, False),
     "agent": ("Agent Showrunner", "le modèle de l'agent d'Idéation dans Ollama (/api/show) : tools et vision dans ses capacités, sa fenêtre de contexte",
               ["python3", "tools/diag_agent.py"], 90, False),
+    # 09/10 : l'audit des références (docs/etudes/movie.md) — « H3 ne comprenait pas bien » : copier ce qu'il a reçu
+    "rendus": ("Rendus · ce que le modèle a reçu", "les derniers rendus vidéo et image : l'invite compilée, les références et "
+               "images envoyées dans l'ordre, les sujets et leur définition, le préréglage, la toile",
+               ["python3", "tools/diag_rendus.py", "6"], 60, False),
 }
 _runs: dict = {}
 _runs_lock = threading.Lock()

@@ -14,7 +14,9 @@ le diagnostic tools/diag_agent.py : `parameters`, `details`, `model_info`), `POS
     (les images regardées), le ROUTEUR de l'agent (09/10 : une intention de l'enum du schéma,
     choisie par mots-clés dans `<request>`, et les entrées que la demande dit — la source citée,
     la séquence, le nombre de plans, le format, le rendu), le DÉCOUPAGE d'un storyboard (un plan
-    par ligne d'action de `<scope>`, dans les bornes du schéma : son nombre de plans, ses enums) ;
+    par ligne d'action de `<scope>`, dans les bornes du schéma : son nombre de plans, ses enums),
+    l'invite d'H3 mise en forme (server/tools/movie_invite.py : des plans en anglais qui citent
+    chaque entrée, des répliques dans la langue demandée) ;
   - avec `tools` : des appels d'outils SCÉNARISÉS, au format d'Ollama
     (`message.tool_calls: [{"function": {"name", "arguments": {…}}}]`), choisis d'après la
     demande (`<request>`) et les objets cités (`<cited>`) du dernier message de la personne,
@@ -123,8 +125,44 @@ class Faux:
             return self.routeur(text, schema)
         if "plans" in props and "remarques" in props:
             return self.decoupage(text, schema)
+        if "shots" in props and "subjects" in props:
+            return self.invite(text)
         body = _block(text, "document") or re.sub(r"<[^>]+>", " ", text)
         return fill(schema, " ".join(body.split())[:80])
+
+    @staticmethod
+    def invite(text: str) -> dict:
+        """La mise en forme d'une invite H3 (server/tools/movie_invite.py) : des plans en anglais qui citent chaque
+        entrée, des répliques dans la langue demandée quand la demande parle de dispute, de dialogue."""
+        toks = re.findall(r"^(@(?:image|element)\d+): [^\n]*?(?:description: ([^\n]*))?$", _block(text, "inputs"), re.M)
+        req = _block(text, "request")
+        m = re.search(r"<duration>([\d.]+) seconds", text)
+        dur = float(m.group(1)) if m else 5.0
+        m = re.search(r"split the video into (\d+) shots", text)
+        n = int(m.group(1)) if m else (3 if dur >= 5 else 1)
+        lang = _block(text, "spoken_language") or "English"
+        who = [t for t, _ in toks] or ["the man"]
+        both = " and ".join(who[:2])
+        acts = [f"Wide shot of a small kitchen table at noon: {both} sit facing each other over steaming bowls of noodles, "
+                "eating with chopsticks. The camera holds a static shot.",
+                f"Medium close-up on {who[0]}, who slams his bowl down and points across the table; the camera pushes in "
+                "with small amplitude at slow speed.",
+                f"{both} stand up and grapple, the table tips over and the bowls shatter on the floor; the camera shakes "
+                "strongly as a tracking shot follows them."]
+        lines = []
+        if re.search(r"disput|argu|dialog|parle|talk", req, re.I):
+            fr = lang == "French"
+            lines = [{"who": who[0], "language": lang, "text": "Tu as encore pris ma part !" if fr else "You took my share again!",
+                      "delivery": "shouts angrily"},
+                     {"who": who[-1], "language": lang, "text": "C'est faux, menteur !" if fr else "That's a lie!",
+                      "delivery": "snaps back"}]
+        shots = [{"start": round(k * dur / n, 1), "description": acts[min(k, len(acts) - 1)], "lines": lines if k == min(1, n - 1) else []}
+                 for k in range(n)]
+        return {"style": "Live-action, cinematic action film look with hard daylight, high contrast and a handheld camera.",
+                "subjects": [{"token": t, "appearance": f"the person described as {d.strip()[:60] or 'in the reference images'}"}
+                             for t, d in toks],
+                "shots": shots, "soundscape": "Chopsticks clatter on ceramic bowls, then chairs scrape and bowls shatter on the tiles.",
+                "music": "N/A", "summary": f"{both} argue over a meal, then fight."}
 
     @staticmethod
     def _mots(text: str) -> set:

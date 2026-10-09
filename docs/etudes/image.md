@@ -303,7 +303,35 @@ visionneuse) ; la colonne de réglages (c'est la barre).
 ici) ; notre ligne 3 a deux puces de plus (Prise de vue, Avancé) et, en édition, jusqu'à onze puces
 qui passent sur deux lignes ; « Générer » est orange, pas vert fluo.
 
-## 11. Sources
+## 11. Fait le 09/10 — l'audit des références
+
+Cal, 09/10 : « en image j'ai l'impression que certains attendent d'autres conventions de noms pour linker les images ou
+éléments… il faut que le user puisse le faire tout le temps de la même façon ». C'était vrai : la barre posait
+`<image1>` pour Qwen (l'étiquette du modèle), refusait le « @ » pour Krea 2 (« l'ordre suffit ») et Z-Image, quand
+Vidéo écrivait `@image1`, `@element1`. L'audit complet, ses sources et la carte de tous les outils :
+`docs/etudes/movie.md` § 9.
+
+Ce qui change ici (`server/tools/image.py`, `mention_table`, `check_mentions`) : la personne écrit `@image1`,
+`@element1` — une sorte et une place, chaque sorte comptée à part dans l'ordre du carrousel (la vignette porte son
+jeton) ; le serveur compile :
+
+- **Qwen-Image 2.1** : `<imageN>` à la place du carrousel, ce que son encodeur écrit devant chaque image
+  (`comfy/text_encoders/qwen_image21.py`) ; en édition, `<image1>` est l'image éditée et les références suivent ; une
+  référence que le prompt ne nomme pas reste présentée d'office (« <image2> shows … ») ; un `<imageN>` écrit à la main
+  au-delà de ce qui part est refusé ;
+- **Krea 2** : aucune étiquette documentée (Identity Edit : la scène sur `source_latent`, le sujet sur
+  `source_latent_b`, des consignes en langage courant — README comfyui-krea2edit, krea2edit-trainer) : la mention
+  devient « the scene », puis « the subject » (une seule référence : « the subject ») — décision, à juger au rendu ;
+- **Z-Image** : aucune image d'entrée : une mention est refusée avant le rendu, avec la raison.
+
+Une mention d'une référence grisée (au-delà de ce que prend le modèle) ou d'une place vide est refusée, dite par
+`/api/image/compose`, `generate`, `edit`. L'aperçu « ce que le modèle reçoit » d'Image existait déjà
+(`POST /api/image/compose`) ; il dit maintenant les mentions compilées (`notes`). Les cartes Générer d'Idéation et
+son agent écrivent la même grammaire. Le diagnostic d'Admin « Rendus · ce que le modèle a reçu » montre aussi les
+dernières images : le modèle, les références dans l'ordre, le prompt écrit et le prompt envoyé. Non vérifié : aucun
+rendu réel (le conteneur n'a pas de GPU).
+
+## 12. Sources
 
 Toutes les pages citées ci-dessus, plus : gabarits officiels ComfyUI lus dans
 `comfyui_workflow_templates_json` 0.11.69 sur DGX2 (`image_z_image_turbo`, `image_z_image`,

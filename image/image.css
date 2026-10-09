@@ -60,6 +60,9 @@ html.sr-dock-on .pbar { --pb-dk: var(--sr-dock-w); }
 }
 /* le carrousel (commun/refs.js) : on glisse une vignette pour changer sa place ;
    au-delà de ce que prend le modèle, grisée, gardée, non envoyée */
+/* le jeton de la place (@image1, @element1 : la grammaire commune, commun/mentions.js), tel qu'on le tape : sans
+   espacement ni capitales, pour que « @element1 » tienne entier dans la vignette */
+.pb-ref .n.tok { left: 1px; max-width: calc(100% - 2px); padding: 0 1px; letter-spacing: -.02em; text-transform: none; }
 .pb-ref.r { cursor: grab; touch-action: none; }
 .pb-ref.held { opacity: .38; filter: grayscale(1); }
 .pb-ref.held .n { color: var(--ink3); }
