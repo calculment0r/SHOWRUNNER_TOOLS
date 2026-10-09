@@ -11,7 +11,8 @@ le diagnostic tools/diag_agent.py : `parameters`, `details`, `model_info`), `POS
   - avec `format` (un schéma JSON) : un objet conforme au schéma, rempli d'après le texte
     reçu — l'entrée d'un projet (ce qu'il comprend, ce qui ne colle pas : un brief sans un mot
     en commun avec les documents est signalé, des questions à choix), le plan, un palier
-    (les images regardées) ;
+    (les images regardées), l'invite d'H3 mise en forme (server/tools/movie_invite.py : des plans
+    en anglais qui citent chaque entrée, des répliques dans la langue demandée) ;
   - avec `tools` : des appels d'outils SCÉNARISÉS, au format d'Ollama
     (`message.tool_calls: [{"function": {"name", "arguments": {…}}}]`), choisis d'après la
     demande (`<request>`) et les objets cités (`<cited>`) du dernier message de la personne,
