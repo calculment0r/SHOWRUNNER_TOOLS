@@ -1088,7 +1088,7 @@ export class Graph {
   // Les clips de Session qui jouent, posés entre les temps a0 et a1 de
   // l'horloge de la Session (des noires qui ne reviennent jamais en arrière,
   // même quand la boucle de l'arrangement revient : Engine.tick), a0 tombant
-  // à t0. `joue` : voie → { slot, origin, fresh, rec } ; un clip de Session
+  // à t0. `jeu` : voie → { slot, origin, fresh, rec } ; un clip de Session
   // boucle sur sa longueur `len` depuis `origin` (Live 12, « Launching
   // Clips » : un clip de Session tourne en boucle). Chaque tour est un clip
   // d'arrangement de `len` noires qui commencerait là : les mêmes lectures,
@@ -1097,14 +1097,16 @@ export class Graph {
   // repartir (playFrom) — un son déjà commencé se reprend en son milieu ;
   // un nombre (le retard rattrapé, Engine.tick) : seulement un tour commencé
   // à partir de ce temps de la Session (ceux d'avant jouent déjà).
-  scheduleSession(p, joue, a0, a1, t0) {
-    if (!joue.size) return;
+  // (`jeu`, jamais `joue` : il masquerait la fonction du module qui lit le motif et
+  // son arpège — jusqu'au 09/10, un clip de notes lancé jetait à chaque réveil.)
+  scheduleSession(p, jeu, a0, a1, t0) {
+    if (!jeu.size) return;
     const spb = 60 / p.bpm;
     const at = (x) => t0 + (x - a0) * spb;
-    for (const [vid, J] of joue) {
+    for (const [vid, J] of jeu) {
       const tr = (p.voies || []).find((v) => v.id === vid);
       const s = (p.slots || []).find((x) => x.id === J.slot);
-      if (!tr || !s || s.voie !== vid) { joue.delete(vid); continue; }   // retirés (Suppr, Ctrl+Z) : la voie se tait
+      if (!tr || !s || s.voie !== vid) { jeu.delete(vid); continue; }   // retirés (Suppr, Ctrl+Z) : la voie se tait
       const src = this.nodes.get(tr.src);
       const L = J.rec ? Infinity : s.len;
       if (!src || !(L > 0)) continue;
