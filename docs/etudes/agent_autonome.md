@@ -875,11 +875,12 @@ qui vérifie la FORME (le banc réel est au lot 2).
 - `intentions.json` : les 20 intentions du § 5.6, chacune sa skill ; `a_venir` dit le lot qui écrira la sienne
   (`slides.*` 4, `media.analyser` 5, `vfx.*` 6, `montage.premier_jet`, `musique.creer`, `objet3d.creer` 7) ; `autre`
   nomme ses approchants (les exports PDF, MP4, du Montage).
-- `capacites/*.json` : 37 fiches. Les 15 du § 9.1, plus ce que la garde du registre a fait déclarer (chaque sorte de la
+- `capacites/*.json` : 40 fiches. Les 15 du § 9.1, plus ce que la garde du registre a fait déclarer (chaque sorte de la
   file a sa fiche ou sa raison) : `document.lecture`, `asset.recherche`, `image.atelier`, `image.detourer`,
   `image.agrandir`, `video.agrandir`, `transcrire.traduire`, `transcrire.carnet`, `analyse.film`, `montage.sequence`, huit
-  fiches de Musique ; de la veille (`veille_1009.md` § 3) : `vfx.retirer_objet.void`, `vfx.retirer_objet.h3_inpaint`
-  (installables), `vfx.incruster.video`, `slides.pptx` (aucune voie connue : `absent`). Les champs de la veille
+  fiches de Musique, les vues et les rendus d'Object Creator (`objet_scenes_3d.md` § 10, sous `objet3d.creer` : ses trois
+  intentions de plus attendent D9) ; de la veille (`veille_1009.md` § 3) : `vfx.retirer_objet.void`,
+  `vfx.retirer_objet.h3_inpaint` (installables), `vfx.incruster.video`, `slides.pptx` (aucune voie connue : `absent`). Les champs de la veille
   (`telechargements`, `memoire`, `licence.commercial`, `licence.territoire`, `etat.exige.comfyui_min`) sont lus.
 - `skills/conversation/` (la consigne du 05/10, déplacée ; `outils_selon_intention` : 4 à 9 outils par intention au lieu
   de 16 ; 3 gestes au plus), `skills/storyboard/` (§ 9.3 ; `decoupage.schema.json`).

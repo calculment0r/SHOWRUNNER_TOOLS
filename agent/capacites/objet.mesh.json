@@ -42,11 +42,15 @@
  },
  "consentement": "rendu",
  "licence": {
-  "nom": "non relevée dans le dépôt",
-  "lue": false
+  "nom": "MIT (TRELLIS.2) + DINOv3 License",
+  "lue": true,
+  "commercial": "selon DINOv3",
+  "territoire": [],
+  "source": "https://github.com/microsoft/TRELLIS.2 (docs/etudes/objet_scenes_3d.md § 10)"
  },
  "sources": [
-  "server/tools/objet.py"
+  "server/tools/objet.py",
+  "docs/etudes/objet_scenes_3d.md"
  ],
  "rempli_par": "agent_autonome.md",
  "verifie": "2026-10-09"
