@@ -88,7 +88,7 @@ const KEYS = [
     ['Z · X', 'octave − / +'], ['C · V', 'vélocité − / +'],
   ]],
   ['les éditeurs', [
-    ['Piano roll', '↑ ↓ transposer (Maj : octave) · Ctrl+U quantifier · Maj+glisser : choisir · double-clic : ôter · Alt+molette : zoom du temps · Ctrl+molette : hauteur des notes · F : replier sur les notes (Live : Fold) · H : cadrer (clavier MIDI éteint)'],
+    ['Piano roll', '↑ ↓ transposer (Maj : octave) · Ctrl+U quantifier · Maj+glisser : choisir · Ctrl+C · X · V : copier, couper, coller les notes (à la tête de lecture si elle est dans le clip, sinon à la suite) · Ctrl+D : dupliquer · Échap : rien · double-clic : ôter · Alt+molette : zoom du temps · Ctrl+molette : hauteur des notes · F : replier sur les notes (Live : Fold) · H : cadrer (clavier MIDI éteint)'],
     ['Onde d\'un clip audio', 'Alt+molette : zoom · Maj+molette ou glisser : défiler · double-clic : tout le son'],
     ['Nodal, le banc', '« c » : quelle tête gouverne (ODIO_01) · Suppr : retirer l\'attracteur choisi'],
     ['Nodal, la souris', 'bouton du milieu : se déplacer · sur les réglages d\'une tuile : tracer l\'ordre gardé au zoom (ODIO_01) · Maj+clic : ajouter · Ctrl+clic : ajouter ou retirer · ⌥ : retirer · l\'étiquette d\'une piste se glisse comme l\'en-tête de son nœud'],
