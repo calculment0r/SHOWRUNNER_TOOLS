@@ -64,10 +64,11 @@ PIL, voie cpu) : la forme de la planche des personnages pour H3 (movie.py :
 gardé, côte à côte, sans texte.
 
   GET  /api/objet/{eid}/vues                     le plan, ses images, le générateur
-  POST /api/objet/{eid}/vues/source {az, el}     d'où l'image choisie voit l'objet
+  POST /api/objet/{eid}/vues/source {az, el, file?}   d'où l'image choisie voit l'objet (et laquelle)
   POST /api/objet/{eid}/vues/plan {pass: 2} | {az, el}   plus de vues
   POST /api/objet/{eid}/vues/generer {slots?, seed?}     un travail par vue
-  POST /api/objet/{eid}/vues/{sid} {action, item?}       garder, rejeter, rouvrir, retirer
+  POST /api/objet/{eid}/vues/{sid} {action, item?}       garder, poser (une image de la bibliothèque),
+                                                         rejeter, rouvrir, retirer
   POST /api/objet/{eid}/classe {value}           ce qu'est l'image, dit par la personne
   POST /api/objet/{eid}/classer                  le modèle qui voit le propose (et l'angle)
   POST /api/objet/{eid}/face {face}              la face du modèle 3D (calage des rendus)
@@ -430,6 +431,10 @@ def r_source(req, eid):
     az, el = _angle(d.get("az"), d.get("el"))
 
     def fn(it, v):
+        if d.get("file"):   # une autre image choisie (« Changer d'image ») : une référence de l'objet
+            if not any(r["file"] == d["file"] for r in it["element"]["refs"]):
+                raise HttpError(400, f"référence inconnue dans cet objet : {d['file']}")
+            v["source"]["file"] = d["file"]
         v["source"].update(az=az, el=el, by="personne")
         for r in it["element"]["refs"]:
             if r["file"] == v["source"].get("file"):
@@ -536,8 +541,8 @@ def r_slot(req, eid, sid):
     _object(eid)
     d = req.json()
     action = d.get("action")
-    if action not in ("garder", "rejeter", "rouvrir", "retirer"):
-        raise HttpError(400, "action : garder, rejeter, rouvrir ou retirer")
+    if action not in ("garder", "poser", "rejeter", "rouvrir", "retirer"):
+        raise HttpError(400, "action : garder, poser, rejeter, rouvrir ou retirer")
 
     def fn(it, v):
         s = _slot(v, sid)
@@ -545,7 +550,14 @@ def r_slot(req, eid, sid):
             raise HttpError(409, "c'est l'image choisie : elle se change dans « son image »")
         if s["state"] == "file" and action != "retirer":
             raise HttpError(409, "cette vue est en train de se faire : attends-la, ou arrête son travail")
-        if action == "garder":
+        if action == "poser":   # une image de la bibliothèque (un dépôt, le panneau Asset) devient cette vue
+            image = library.get(str(d.get("item") or ""))
+            if not image or image["kind"] != "image":
+                raise HttpError(400, "il faut une image de la bibliothèque")
+            if image["id"] not in s["items"]:
+                s["items"].append(image["id"])
+            s.update(state="gardee", ref=_keep(it, s, image), pick=image["id"], why="")
+        elif action == "garder":
             item = d.get("item") or (s["items"][-1] if s["items"] else None)
             if not item or item not in s["items"]:
                 raise HttpError(409, "rien à garder : aucune proposition pour cette vue" if not s["items"]
@@ -657,8 +669,14 @@ def r_planche(req, eid):
 
 def meta() -> dict:
     """Ce que la page affiche de la chaîne des vues (avec /api/objet/state)."""
+    from tools import ideation_agent as A
     g = generator()
-    return {"gen": {"id": g, **GENS[g]}, "gens": GENS, "rendus": {"wired": renders_wired()},
+    r = A.route_vision()
+    st = A.engine_state(url=r["url"], model=r["model"])   # lu, jamais appelé à calculer ; gardé 30 s
+    seeing = bool(st.get("present")) and "vision" in (st.get("caps") or [])
+    vision = {"ready": seeing, "model": r["model"], "machine": r["machine"],
+              "why": "" if seeing else (st.get("why") or f"le modèle {r['model']} ne voit pas les images")}
+    return {"gen": {"id": g, **GENS[g]}, "gens": GENS, "rendus": {"wired": renders_wired()}, "vision": vision,
             "angles": {"az": AZ_NAMES, "el": EL_NAMES}, "passes": PASSES, "classes": CLASSES, "routes": CLASS_ROUTE,
             "class_why": CLASS_WHY, "render_angles": RENDER_ANGLES}
 
