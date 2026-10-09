@@ -1,0 +1,79 @@
+{
+ "id": "vfx.retirer_objet.void",
+ "label": "Retirer un objet et ses effets · VOID",
+ "intentions": [
+  "vfx.retirer"
+ ],
+ "outil": "movie",
+ "travail": "movie.retoucher",
+ "route": null,
+ "entrees": {
+  "video": {
+   "sorte": "video",
+   "requis": true,
+   "contraintes": {
+    "cote_multiple": 32,
+    "fps": 24
+   }
+  },
+  "quoi": {
+   "type": "texte",
+   "requis": true,
+   "question": {
+    "texte": "Quel objet retirer ?"
+   }
+  }
+ },
+ "sortie": {
+  "sorte": "video",
+  "parents": [
+   "video"
+  ]
+ },
+ "criteres": [
+  {
+   "si": "objet_et_ombres",
+   "poids": 1,
+   "pourquoi": "il efface l'objet et ce qu'il cause (ombres, contacts)"
+  },
+  {
+   "si": "objet_immobile",
+   "poids": 1,
+   "pourquoi": "un objet désigné par un mot (SAM 3.1), immobile ou non"
+  }
+ ],
+ "limites": [
+  "≈ 34 Go au total (gabarit utility_void_video_inpainting)"
+ ],
+ "etat": {
+  "exige": {
+   "noeuds": [
+    "VOIDInpaintConditioning",
+    "SAM3_Detect"
+   ],
+   "comfy_modeles": [
+    "diffusion_models/void_pass1.safetensors",
+    "diffusion_models/void_pass2.safetensors"
+   ]
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "void",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "code Apache-2.0 ; poids non lus",
+  "lue": false
+ },
+ "sources": [
+  "docs/etudes/veille_1009.md § 2.1"
+ ],
+ "memoire": {
+  "famille": "void",
+  "go": 34.3
+ },
+ "rempli_par": "veille_1009.md",
+ "verifie": "2026-10-09"
+}

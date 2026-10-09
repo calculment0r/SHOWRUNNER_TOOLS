@@ -1,0 +1,38 @@
+{
+ "id": "vfx.incruster.video",
+ "label": "Incruster en vidéo, harmonisé",
+ "intentions": [
+  "vfx.incruster"
+ ],
+ "outil": "montage",
+ "travail": "montage.incruster",
+ "route": null,
+ "entrees": {
+  "video": {
+   "sorte": "video",
+   "requis": true
+  }
+ },
+ "sortie": {
+  "sorte": "video"
+ },
+ "criteres": [],
+ "limites": [
+  "détourer une vidéo (Alpha-Gen, SAM 3.1), garder l'alpha au Montage, harmoniser la lumière : aucune voie générale documentée"
+ ],
+ "etat": {
+  "exige": {}
+ },
+ "cout": {
+  "classe": "gpu",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "aucune voie : pas de licence",
+  "lue": false
+ },
+ "sources": [],
+ "rempli_par": "veille_1009.md",
+ "verifie": "2026-10-09"
+}

@@ -169,6 +169,12 @@ console sur les 14 pages.
 **À faire après la mise à jour** : recharger (ou fermer) les onglets du portail déjà ouverts.
 Un onglet ouvert garde son ancien code, et ses relevés, jusqu'à ce qu'on le recharge.
 
+**09/10, l'aperçu au survol du nom** (`commun/apercu.js`, `orchestration.md`, « Fait le 09/10 ») : il
+n'ajoute aucun relevé. Bulle fermée, aucune requête ; les travaux viennent de la liste de la file déjà
+relevée ; les machines, `GET /api/machines/apercu`, une fois par ouverture, resservie 5 s (mesuré par
+`commun/pilote_apercu.mjs` : 0 requête bulle fermée, 1 par survol, 0 de plus en la rouvrant dans les
+5 s, ni pendant qu'elle reste ouverte et que la file bouge). Au doigt, rien.
+
 ### Un flux par onglet (`/api/events`) : étudié, pas codé
 
 L'idée : une requête longue (SSE) qui pousse la file, `ev_seq` et la session, au lieu des

@@ -1,0 +1,42 @@
+{
+ "id": "musique.region.yue",
+ "label": "Une région d'ODIO · YuE2",
+ "intentions": [
+  "musique.creer"
+ ],
+ "outil": "musique",
+ "travail": "music.gen.yue",
+ "route": "POST /api/music/gen/generate",
+ "entrees": {
+  "texte": {
+   "type": "texte",
+   "requis": true
+  }
+ },
+ "sortie": {
+  "sorte": "son"
+ },
+ "criteres": [],
+ "limites": [],
+ "etat": {
+  "exige": {
+   "interrupteur": "music_yue=true"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "yue",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "non relevée dans le dépôt",
+  "lue": false
+ },
+ "sources": [
+  "docs/etudes/musique_generatif.md",
+  "docs/etudes/musique_app.md"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

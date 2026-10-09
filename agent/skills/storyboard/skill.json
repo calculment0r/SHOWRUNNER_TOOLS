@@ -1,0 +1,26 @@
+{
+  "id": "storyboard", "version": 1, "label": "Storyboard",
+  "description": "Turn a script, a sequence or a brief into a shot breakdown the person validates, then a storyboard on the board: one panel per shot with its note and a ready Generate card.",
+  "intentions": ["storyboard.creer"],
+  "entrees": {
+    "source": {"sorte": ["document", "note"], "requis": true, "valeurs": ["cite", "brief", "demande"],
+               "question": {"texte": "D'où part le storyboard ?", "choix": ["le document cité", "le brief", "je décris la scène"]}},
+    "portee": {"type": "texte", "requis": false, "si_long": true,
+               "question": {"texte": "Quelle séquence ?", "choix_de": "scenes"}},
+    "plans": {"type": "entier", "min": 1, "max": 24, "requis": false,
+              "question": {"texte": "Combien de plans, à peu près ?", "choix": ["6", "12", "24", "selon le texte"]}},
+    "format": {"type": "enum", "valeurs": ["16:9", "9:16", "2.39:1", "1:1"], "defaut_de": "fiche.format"},
+    "rendu": {"type": "enum", "valeurs": ["crayonne", "photoreal"], "requis": true,
+              "question": {"texte": "Les cases ?", "choix": ["crayonné", "photoréaliste"]}}
+  },
+  "etapes": [
+    {"id": "decoupage", "sorte": "structure", "schema": "decoupage.schema.json", "pose": [], "validation": "personne"},
+    {"id": "planche", "sorte": "code", "pose": ["frame", "frame×plans", "note×plans"], "max_objets": 80},
+    {"id": "cartes", "sorte": "code", "pose": ["gen×plans"], "capacite": "image.generer", "lancer": false},
+    {"id": "images", "sorte": "travaux", "consentement": "images", "cout_de": "image.generer"}
+  ],
+  "outils": ["lire_document", "chercher_bibliotheque"],
+  "sortie": {"sorte": "planche", "contrat": "un cadre « Storyboard · <portée> », une case par plan dans l'ordre du découpage"},
+  "verifications": ["plans posés = plans validés (nombre, ordre)", "0 geste avant la validation", "lancer faux sur chaque carte"],
+  "paliers": ["decoupage", "planche", "images"]
+}

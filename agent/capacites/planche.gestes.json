@@ -1,0 +1,39 @@
+{
+ "id": "planche.gestes",
+ "label": "Les gestes de la planche · Idéation",
+ "intentions": [
+  "planche.question",
+  "planche.retoucher",
+  "projet.demarrer",
+  "projet.creer",
+  "storyboard.creer"
+ ],
+ "outil": "ideation",
+ "travail": null,
+ "route": null,
+ "entrees": {},
+ "sortie": {
+  "sorte": "planche"
+ },
+ "criteres": [],
+ "limites": [
+  "des gestes annulables d'un coup, posés par la page (un app.mutate)"
+ ],
+ "etat": {
+  "exige": {}
+ },
+ "cout": {
+  "classe": "none"
+ },
+ "consentement": "aucun",
+ "licence": {
+  "nom": "le code du portail",
+  "lue": true
+ },
+ "sources": [
+  "server/tools/ideation_agent.py (Gestes)",
+  "ideation/agent.js"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

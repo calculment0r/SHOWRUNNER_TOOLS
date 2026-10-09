@@ -997,7 +997,8 @@ export async function entrerEspace(id) {
 // à gauche le logotype, le NOM de l'outil en gros, la navigation ; à droite ASSET (la page
 // dédiée : l'organisation de la bibliothèque), les préférences (la roue), le plein écran, la
 // Team / le Workspace, puis le NOM (le compte), dont le menu porte la file de rendu, les Teams et
-// Workspaces, l'Admin et l'état des machines. Plus rien sous le nom de l'outil : l'option `sub`
+// Workspaces, l'Admin et l'état des machines ; son survol, l'aperçu des machines et des travaux en cours
+// (commun/apercu.js, 09/10). Plus rien sous le nom de l'outil : l'option `sub`
 // des pages est ignorée ici, par construction (tous les onglets d'un coup) — une page peut la
 // passer encore, elle ne se dessine plus.
 let HDR = null;
@@ -1064,6 +1065,7 @@ export function mountHeader(toolId, { dock: useDock = true } = {}) {
   document.addEventListener('click', () => { menu.hidden = true; });
   document.body.prepend(hdr);
   HDR = hdr;
+  brancherApercu($('#sr-me', hdr));
   // ── téléphone : un outil à grand écran y montre l'écran du téléphone (commun/telephone.js) ; la page est
   // cachée tout de suite (html.sr-tel-lourd, shell.css), rien d'elle ne s'affiche avant. « Ouvrir quand même »
   // la rend pour l'onglet (sessionStorage).
@@ -1179,6 +1181,7 @@ export function mountHeader(toolId, { dock: useDock = true } = {}) {
     ss.set(FILE_KEY, FILE_N ? String(FILE_N) : null);
     paintFile();
     if ($('.drawer.on')) paintDrawer(list);
+    APERCU?.liste();   // la bulle du nom, ouverte : repeinte avec la même liste (aucune requête)
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') drawer(false); });
   document.addEventListener('keydown', (e) => {
@@ -1197,13 +1200,34 @@ export function mountHeader(toolId, { dock: useDock = true } = {}) {
 const SYS_KEY = 'sr-sys', FILE_KEY = 'sr-file';
 let SYS = lu(SYS_KEY);
 let FILE_N = Number(ss.get(FILE_KEY)) || 0;
+// Le nom ne porte plus de bulle du navigateur (title) : au survol, l'aperçu (plus bas) prend sa place ; ce
+// qu'elle disait reste au lecteur d'écran (aria-label, qui commence par le nom affiché : WCAG 2.5.3).
 function paintFile() {
   const b = document.getElementById('sr-me');
   if (!b) return;
   b.querySelector('.dq').hidden = !FILE_N;
   const pend = lastMe?.user?.role === 'admin' ? lastMe.pending_requests || 0 : 0;
-  b.title = ['mon compte · la file, les Teams et Workspaces', FILE_N ? `${FILE_N} calcul${FILE_N > 1 ? 's' : ''} en file` : '',
-    pend ? `${pend} demande${pend > 1 ? 's' : ''} à traiter (Admin)` : ''].filter(Boolean).join('\n');
+  b.setAttribute('aria-label', [b.querySelector('.sr-nm').textContent, 'mon compte',
+    FILE_N ? `${FILE_N} calcul${FILE_N > 1 ? 's' : ''} en file` : '',
+    pend ? `${pend} demande${pend > 1 ? 's' : ''} à traiter (Admin)` : ''].filter(Boolean).join(' · '));
+}
+// ── l'aperçu au survol du nom (commun/apercu.js) ────────────
+// Les machines (mémoire, GPU) et les travaux en cours, en valeurs ; chargé à la première approche du nom (la
+// souris, le stylet, le focus clavier — pas le doigt), il lit la file que l'en-tête relève déjà et l'état des
+// machines une fois par ouverture.
+let APERCU = null;
+function brancherApercu(btn) {
+  if (!btn) return;
+  const ctx = { liste: () => lastJobs, moi: () => lastMe };
+  const approche = (e) => {
+    if (e.type === 'pointerenter' && e.pointerType !== 'mouse' && e.pointerType !== 'pen') return;
+    if (e.type === 'focus' && !btn.matches(':focus-visible')) return;
+    btn.removeEventListener('pointerenter', approche);
+    btn.removeEventListener('focus', approche);
+    import('./apercu.js').then((m) => { APERCU = m; m.brancher(btn, ctx, e); }).catch((err) => console.error('aperçu du nom', err));
+  };
+  btn.addEventListener('pointerenter', approche);
+  btn.addEventListener('focus', approche);
 }
 function paintSys(sys, node = null) {
   if (sys !== undefined) {

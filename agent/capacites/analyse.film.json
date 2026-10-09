@@ -1,0 +1,46 @@
+{
+ "id": "analyse.film",
+ "label": "Dépouiller un film · Movie Analysis",
+ "intentions": [
+  "media.analyser"
+ ],
+ "outil": "analyse",
+ "travail": "analyse.run",
+ "route": "POST /api/analyse/run",
+ "entrees": {
+  "film": {
+   "sorte": "video",
+   "requis": true
+  }
+ },
+ "sortie": {
+  "sorte": "document"
+ },
+ "criteres": [
+  {
+   "si": "video_citee",
+   "poids": 1,
+   "pourquoi": "un film : les plans, les dialogues, qui parle"
+  }
+ ],
+ "limites": [
+  "sur DGX2 (Whisper, VLM, pyannote)"
+ ],
+ "etat": {
+  "exige": {}
+ },
+ "cout": {
+  "classe": "gpu",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "non relevée dans le dépôt",
+  "lue": false
+ },
+ "sources": [
+  "docs/etudes/analyse.md"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}
