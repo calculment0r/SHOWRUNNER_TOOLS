@@ -17,6 +17,10 @@
                                                    # tools/faux_telegram.py --port 8832 ; son jeton se colle
                                                    # dans Admin → Demandes → Alertes). Le réglage est toujours
                                                    # <données>/telegram-essai.json : jamais le bot de Cal
+    SR_FAUX_MACHINES=1 …                           # deux faux ComfyUI nommés DGX2 et DGX1, hors des voies (rien n'y
+                                                   # part), et la mesure de l'aperçu du nom remplacée (ni ssh ni
+                                                   # nvidia-smi) : DGX2 à 37 % de GPU, DGX1 non mesuré —
+                                                   # commun/pilote_apercu.mjs
     SR_PORTE=1 …                                   # la porte allumée (entrer par un pseudo : nico007 depuis
                                                    # 127.0.0.1, puis les comptes qu'on crée) — admin/pilote_invites.mjs,
                                                    # admin/pilote_tableau.mjs (ce que voit un membre),
@@ -75,6 +79,17 @@ if os.environ.get("SR_FAUX_R2"):
     faux = ecoute._FauxS3()
     ecoute.R2_POINT = faux.point
     print(f"faux R2 : {faux.point} (le bucket showrunner-bibliotheque, en mémoire)", flush=True)
+if os.environ.get("SR_FAUX_MACHINES"):   # server/tools/machines_apercu.py : la mesure est la seule chose remplacée
+    from tools import admin, machines_apercu  # noqa: E402
+    fc = admin._faux()
+    _, _, u2 = fc.start(total_gb=130.0, free_gb=88.0)
+    _, _, u1 = fc.start(total_gb=107.4, free_gb=31.0)
+    config.CFG["extra_instances"] = [u2, u1]
+    config.CFG["machine_names"] = {u2: "DGX2", u1: "DGX1"}
+    # DGX2 : /proc/meminfo (42 Go sur 130) et nvidia-smi ; DGX1 : nvidia-smi sans mesure, la mémoire du faux ComfyUI
+    sorties = {"DGX2": "gpu 37\nMemTotal:       127000000 kB\nMemAvailable:    86000000 kB\n", "DGX1": "gpu [N/A]\n"}
+    machines_apercu.LIRE = lambda m, url: sorties.get(m, "")
+    print(f"fausses machines : DGX2 {u2}, DGX1 {u1}", flush=True)
 jobs.start()
 print(f"portail d'essai : http://127.0.0.1:{port}/  (données {data}, PID {os.getpid()})", flush=True)
 app.serve("127.0.0.1", int(port))

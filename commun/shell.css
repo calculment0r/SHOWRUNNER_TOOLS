@@ -128,6 +128,44 @@ body > .hdr { min-height: var(--sr-hdr-h); }
 .sr-ml-sys { padding: 8px 10px 6px; gap: 8px; font-size: 8px; letter-spacing: .16em; }
 .sr-ml-sys .n { flex: 1; }
 .sr-ml-sys .r { flex: none; }
+
+/* ── l'aperçu au survol du nom (commun/apercu.js) : des valeurs, sans phrase ; une note, pas une action (ni
+   orange ni bouton). Capitales mono pour ce que dit la machine ; le titre d'un travail reste en bas de casse.
+   La mémoire en acier (les valeurs lues), l'avancement en vert (la progression) ; sous le menu du compte. ── */
+.sr-apercu {
+  position: fixed; z-index: 79; width: min(300px, calc(100vw - 16px)); padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 10px; border-radius: var(--r3);
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line), 0 16px 40px var(--drop);
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink3);
+}
+.sr-apercu .ap-bar { display: block; height: 3px; border-radius: 2px; background: var(--panel3); overflow: hidden; }
+.sr-apercu .ap-bar > i { display: block; height: 100%; background: var(--cy); }
+/* une machine par ligne : NOM · la barre · utilisée / totale · GPU */
+.sr-apercu .ap-m { display: grid; grid-template-columns: auto minmax(36px, 1fr) auto auto; align-items: center; gap: 8px 9px; }
+.sr-apercu .ap-m > b { font-weight: 400; color: var(--ink2); }
+.sr-apercu .ap-r { display: contents; }
+.sr-apercu .ap-r > b { font-weight: 400; color: var(--ink); }
+.sr-apercu .ap-r.off > b { color: var(--ink3); }
+.sr-apercu .v, .sr-apercu .g { white-space: nowrap; }
+.sr-apercu .v { color: var(--ink2); text-align: right; }
+.sr-apercu .g > span { color: var(--ink); }
+.sr-apercu .g > span.nm { color: var(--ink3); }
+/* les travaux en cours : titre · machine · avancement, la barre dessous ; puis les deux comptes */
+.sr-apercu .ap-t { display: flex; flex-direction: column; gap: 8px; }
+.sr-apercu .ap-m + .ap-t { padding-top: 10px; box-shadow: inset 0 1px 0 var(--line); }
+.sr-apercu .ap-j { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: baseline; gap: 4px 8px; }
+.sr-apercu .ap-j .n { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--f-ui); font-size: 11.5px; letter-spacing: 0; text-transform: none; color: var(--ink); }
+.sr-apercu .ap-j .m { color: var(--ink3); }
+.sr-apercu .ap-j .p { color: var(--ink2); white-space: nowrap; }
+/* pas de pourcentage : l'étape que le travail dit (prose), coupée ; la barre en attente */
+.sr-apercu .ap-j .p.etape { max-width: 120px; overflow: hidden; text-overflow: ellipsis; font-family: var(--f-ui); font-size: 10.5px; letter-spacing: 0; text-transform: none; color: var(--ink3); }
+.sr-apercu .ap-j .ap-bar { grid-column: 1 / -1; }
+.sr-apercu .ap-j .ap-bar > i { background: var(--grn2); }
+.sr-apercu .ap-j .ap-bar.flou > i { opacity: .35; }
+.sr-apercu .ap-plus { color: var(--ink3); }
+.sr-apercu .ap-n { display: flex; align-items: baseline; gap: 6px; }
+.sr-apercu .ap-n > b { font-weight: 400; color: var(--ink); margin-right: 12px; }
+.sr-apercu .ap-j + .ap-n, .sr-apercu .ap-plus + .ap-n { padding-top: 2px; }
 .sr-ws-menu {
   position: fixed; z-index: 80; width: min(300px, calc(100vw - 16px)); max-height: calc(70 * var(--vh)); overflow: auto;
   padding: 6px; display: flex; flex-direction: column; border-radius: var(--r3);
