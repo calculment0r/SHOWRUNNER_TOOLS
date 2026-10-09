@@ -80,19 +80,23 @@ class PhysiqueProcessor extends AudioWorkletProcessor {
     for (let rang = 0; rang < w.nombreVoix(); rang++) this.voix.push({ rang, libre: true, note: 60, force: 0.8, fin: 0, age: 0, calme: 0 })
     this.horloge = 0
     this.attente = []
+    this.dates = []   // les réglages datés (un attracteur, une automation) : posés au bloc de leur heure
     this.commence = false
     this.port.onmessage = (e) => this.recevoir(e.data)
   }
   recevoir(o) {
     if (o.type === 'note') this.attente.push(o)
-    else if (o.type === 'reglage') {
-      if (o.id === 'resonateur') this.resonateur = Math.round(o.valeur)
-      else if (o.id in this.place) { this.cible[this.place[o.id]] = o.valeur; if (!this.commence) this.patch[this.place[o.id]] = o.valeur }
-    } else if (o.type === 'silence') { for (const v of this.voix) v.fin = Math.min(v.fin, currentTime); this.attente.length = 0 }
+    else if (o.type === 'reglage' && o.time > currentTime && this.commence) { this.dates.push(o); this.dates.sort((a, b) => a.time - b.time) }
+    else if (o.type === 'reglage') this.regler(o)
+    else if (o.type === 'silence') { for (const v of this.voix) v.fin = Math.min(v.fin, currentTime); this.attente.length = 0 }
     else if (o.type === 'relacher') {
       for (const v of this.voix) if (!v.libre && v.note === o.note) v.fin = Math.min(v.fin, o.time)
       for (const a of this.attente) if (a.note === o.note) a.duration = Math.max(0.01, o.time - a.time)
     } else if (o.type === 'ping') this.port.postMessage({ pong: o.id })
+  }
+  regler(o) {
+    if (o.id === 'resonateur') this.resonateur = Math.round(o.valeur)
+    else if (o.id in this.place) { this.cible[this.place[o.id]] = o.valeur; if (!this.commence) this.patch[this.place[o.id]] = o.valeur }
   }
   prendre() {
     let ancienne = this.voix[0]
@@ -101,6 +105,7 @@ class PhysiqueProcessor extends AudioWorkletProcessor {
   }
   bloc(t) {
     const B = this.B, fin = t + B / this.fsIn
+    while (this.dates.length && this.dates[0].time < fin) this.regler(this.dates.shift())
     this.attente.sort((a, b) => a.time - b.time)
     while (this.attente.length && this.attente[0].time < fin) {
       const o = this.attente.shift(), v = this.prendre()
@@ -172,13 +177,14 @@ export class Physique {
   getParameters() { return PARAMETERS; }
   getParameter(id) { return this.#values.get(id) ?? 0; }
 
-  setParameter(id, value) {
+  // `time` (facultatif) : l'instant de l'horloge où le réglage prend effet (le contrat de Macro)
+  setParameter(id, value, time) {
     const d = PARAMETERS.find((p) => p.id === id);
     if (!d) return;
     const v = clamp(value, d.min, d.max);
     this.#values.set(id, v);
-    if (id === 'gain') this.output.gain.setTargetAtTime(v, this.#ctx.currentTime, 0.01);
-    if (AU_WORKLET.has(id)) this.#pousser(id, v);
+    if (id === 'gain') this.output.gain.setTargetAtTime(v, Math.max(time ?? 0, this.#ctx.currentTime), 0.01);
+    if (AU_WORKLET.has(id)) this.#pousser(id, v, time);
   }
 
   noteOn(e) {
@@ -200,5 +206,5 @@ export class Physique {
     this.output.disconnect();
   }
 
-  #pousser(id, valeur) { this.#noeud?.port.postMessage({ type: 'reglage', id, valeur }); }
+  #pousser(id, valeur, time) { this.#noeud?.port.postMessage({ type: 'reglage', id, valeur, time }); }
 }
