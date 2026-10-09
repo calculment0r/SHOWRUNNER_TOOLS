@@ -123,6 +123,23 @@
 .v-pic small { font-size: 9.5px; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .v-tags { margin: 0; font-family: var(--f-mono); font-size: 9.5px; line-height: 1.6; color: var(--ink2); overflow-wrap: anywhere; }
 .lbl.low { color: var(--amb); }
+/* les vérifications du code (POST /api/movie/apercu, checks) : ok, remarque, erreur */
+.v-checks { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.v-checks li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 6px; align-items: baseline; font-size: 11px; line-height: 1.45; color: var(--ink2); }
+.v-checks li i { font-style: normal; font-family: var(--f-mono); font-size: 10px; text-align: center; }
+.v-checks li.ok i { color: var(--grn2); }
+.v-checks li.rem i, .v-checks li.rem { color: var(--amb); }
+.v-checks li.err i, .v-checks li.err { color: var(--or); }
+/* ce que la mise en forme a écrit de chaque sujet : à relire, à corriger */
+.v-def { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 2px 8px; align-items: start; }
+.v-def b { font-family: var(--f-mono); font-size: 10px; font-weight: 400; color: var(--grn2); padding-top: 6px; }
+.v-def .v-def-t { grid-column: 1; font-size: 10px; color: var(--ink3); margin-top: -2px; }
+.v-def textarea { grid-column: 2; grid-row: 1 / span 2; min-height: 30px; resize: vertical; font-size: 11.5px; background: var(--panel3); }
+.v-invite .row { flex-wrap: nowrap; align-items: center; }
+.v-invite .hint, #assist .hint { min-width: 0; }
+#assist { gap: 8px; }
+.cv-l em { font-style: normal; color: var(--ink); }
+.cv-row.on .cv-l em { color: var(--cy); }
 /* les réglages avancés : un intitulé à gauche, les choix à droite (comme ceux d'Image) */
 .vbar .pp-body > .row > .lbl:first-child { flex: none; min-width: 84px; }
 .vbar .pp-body .fld.seed { width: 120px; padding: 5px 8px; font-family: var(--f-mono); font-size: 11px; }

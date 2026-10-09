@@ -131,7 +131,14 @@ const dockClose = async (page) => { if (await page.$('html.sr-dock-on')) await p
 const tile = (page, it) => page.locator(typeof it === 'string' ? `.lt[draggable=true][title^="${it}"]` : `.lt[draggable=true][data-id="${it.id}"]`).first();
 // glisser une poignée de dx pixels, pas à pas (comme une main)
 async function drag(page, sel, dx, steps = 14) {
-  const b = await (await page.$(sel)).boundingBox();
+  // la barre se recentre (et change de hauteur) quand le panneau Asset se ferme : on attend qu'elle ne bouge plus
+  let b = await (await page.$(sel)).boundingBox();
+  for (let k = 0; k < 30; k++) {
+    await page.waitForTimeout(150);
+    const n = await (await page.$(sel)).boundingBox();
+    if (n.x === b.x && n.y === b.y) break;
+    b = n;
+  }
   const x = b.x + b.width / 2, y = b.y + b.height / 2;
   await page.mouse.move(x, y);
   await page.mouse.down();
@@ -210,7 +217,8 @@ await page.mouse.up();
 await page.waitForTimeout(400);
 const after = (await segs(page)).map((x) => x.t);
 ok(after[0] === before[2] && after[1] === before[0], 'un plan glissé change de place, il emporte son texte');
-ok(/^\[Shot 1\] A neon sign/.test(await page.inputValue('#desc')), 'l’invite suit la frise ([Shot 1] est le plan déplacé)');
+ok(/^\[Shot 1\] A neon sign/.test(await page.inputValue('#desc')) && /\[Shot 2\] At 00:0\d\.\d{3},/.test(await page.inputValue('#desc')),
+  'l’invite suit la frise ([Shot 1] est le plan déplacé, les plans suivants avec leur temps de coupe)');
 // le plan choisi s'édite sur place, une réplique
 await (await page.$$('#ms .ms-seg'))[1].click();
 await page.click('#ms .ms-add');
@@ -219,44 +227,57 @@ await page.waitForTimeout(400);
 ok(/\(S1\) says: <d>\[French\] Encore toi \?<\/d>/.test(await page.inputValue('#desc')), 'une réplique du plan choisi s’écrit dans l’invite, au format H3');
 await shot(page, 'apres-multishot-sombre-1280');
 
-// le format et la résolution, des commandes principales ; des toiles plus petites, le temps estimé à côté
+// le format et la résolution, des commandes principales ; l'échelle du serveur, de l'Esquisse à la Qualité, le temps à côté
 await page.click('.pc.fmt');
 await page.waitForSelector('[data-pop="fmt"] .v-fmt');
 await shot(page, 'apres-format-sombre-1280');
+const fmts = await page.$$eval('[data-pop="fmt"] .v-fmt b', (l) => l.map((n) => n.textContent));
+ok(['2,4:1', '21:9', '16:9', '4:3', '1:1', '3:4', '9:16'].every((f) => fmts.includes(f)), `les formats de l’échelle (${fmts.join(', ')})`);
 await page.click('[data-pop="fmt"] .v-fmt:has-text("16:9")');
-await page.waitForTimeout(600);
-const rows = await page.$$eval('[data-pop="fmt"] .cv-row', (l) => l.map((n) => n.querySelector('b').textContent));
-ok(rows.length >= 2, `le format 16:9 propose ses résolutions (${rows.join(', ')})`);
+await page.waitForTimeout(700);
+const rows = await page.$$eval('[data-pop="fmt"] .cv-row', (l) => l.map((n) => `${n.querySelector('em')?.textContent} ${n.querySelector('b').textContent} ${n.querySelector('.cv-e').textContent}`));
+ok(rows.length === 4 && /^Esquisse 672 × 384/.test(rows[0]) && rows.every((r) => /min|s$/.test(r)),
+  `le 16:9 propose ses quatre résolutions, la plus petite d’abord, chacune avec son temps (${rows.join(' | ')})`);
 await page.click('[data-pop="fmt"] .cv-row >> nth=0');
 await page.waitForTimeout(700);
-const plan = await page.evaluate(async () => {
+const plan = await page.evaluate(() => {
   const st = JSON.parse(localStorage.getItem('movie.v2'));
-  return { canvas: st.canvas.r2v, chip: document.querySelector('.pc.res b')?.textContent, fmt: document.querySelector('.pc.fmt b')?.textContent,
-    est: document.querySelector('.pc.res .pc-s')?.textContent };
+  return { format: st.format, method: st.method, canvas: st.canvas.r2v, chip: document.querySelector('.pc.res b')?.textContent,
+    fmt: document.querySelector('.pc.fmt b')?.textContent, est: document.querySelector('.pc.res .pc-s')?.textContent };
 });
-ok(plan.fmt === '16:9' && Array.isArray(plan.canvas) && plan.chip.includes(`${plan.canvas[0]}×${plan.canvas[1]}`) && /≈/.test(plan.est || ''),
+ok(plan.fmt === '16:9' && plan.format === '16:9' && plan.method === 'esquisse' && plan.canvas === null && plan.chip === 'Esquisse · 672×384' && /≈/.test(plan.est || ''),
   `le format et la plus petite résolution se lisent sur les puces, avec le temps estimé (${plan.fmt} · ${plan.chip} ${plan.est})`);
-await page.click('[data-pop="fmt"] .v-q:has-text("Qualité")');
+await page.click('[data-pop="fmt"] .cv-row:has-text("Qualité")');
 await page.waitForTimeout(500);
-ok(/^Qualité/.test(await page.$eval('.pc.res b', (n) => n.textContent)), 'la qualité se change au même endroit');
-await page.click('[data-pop="fmt"] .v-q:has-text("Brouillon")');
+ok(/^Qualité · 1536×864/.test(await page.$eval('.pc.res b', (n) => n.textContent)), 'la Qualité au même endroit, à la toile du format');
+await page.click('[data-pop="fmt"] .cv-row:has-text("Esquisse")');
 await page.keyboard.press('Escape');
 await page.waitForTimeout(300);
-// ce que H3 reçoit
+// ce que H3 reçoit (POST /api/movie/apercu) : les vérifications, les sujets, les images dans l'ordre, le prompt compilé
 await page.click('.pc.recu');
 await page.waitForSelector('#recu pre.sent');
 await page.waitForTimeout(600);
 const sent = await page.$eval('#recu pre.sent', (n) => n.textContent);
-ok(/subject_definitions/.test(sent) && /\[Shot 1\]/.test(sent) && /<Subject 1>/.test(sent), 'ce que H3 reçoit : le prompt compilé, ses plans et ses sujets');
+ok(/subject_definitions/.test(sent) && /\[Shot 2\] At 00:0/.test(sent) && /<Subject 1>/.test(sent), 'ce que H3 reçoit : le prompt compilé, ses plans et leurs temps de coupe, ses sujets');
+ok((await page.$$('#recu .v-checks li')).length >= 5, 'ce que H3 reçoit : les vérifications du code');
 ok((await page.$$('#recu .v-pic')).length >= 3, 'ce que H3 reçoit : les images chargées, dans l’ordre');
+ok((await page.$$('#recu .v-def textarea')).length >= 4, 'ce que H3 reçoit : la définition de chaque sujet et le résumé, à corriger');
 await shot(page, 'apres-recu-sombre-1280');
+// la mise en forme (sans modèle de texte ici : le gabarit) : un travail, puis la barre remplie
+await page.click('#recu .v-inv');
+await waitFor(async () => (await page.$eval('#recu .v-inv', (b) => b.textContent).catch(() => '')) === 'Mettre en forme pour H3'
+  && /gabarit|modèle de texte/.test(await page.$eval('.toast', (t) => t.textContent).catch(() => '')), 'la mise en forme tourne, puis rend la main (le gabarit, et pourquoi)', 30000);
+ok(/\[Shot 2\] At 00:0/.test(await page.inputValue('#desc')), 'après la mise en forme, l’invite garde ses plans et leurs temps de coupe');
 await page.keyboard.press('Escape');
 await page.waitForTimeout(300);
 // « Générer » (moteur factice) : le rendu en tête du fil, puis sa vidéo
 await waitFor(() => page.$eval('#go', (b) => !b.disabled), '« Générer » s’allume');
 await oneGo(page, 'prêt à lancer');
+const vids = () => page.$$eval('#fil [data-id]:not(.fl-job)', (l) => l.length);
+const n0 = await vids();
 await page.click('#go');
-await waitFor(() => page.$('.fl-card video, .fl-card .fl-media, [data-id^="vid-"]'), 'la vidéo arrive dans le fil', 90000);
+await waitFor(() => page.$('#fil .fl-job'), 'le rendu paraît en tête du fil dès l’envoi', 15000);
+await waitFor(async () => (await vids()) > n0, 'la vidéo arrive dans le fil, à la place du rendu', 120000);
 await page.waitForTimeout(800);
 await shot(page, 'apres-rendu-sombre-1280');
 const page1 = page;

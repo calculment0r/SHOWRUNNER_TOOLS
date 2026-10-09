@@ -115,7 +115,7 @@
         <button class="pp-tab on" type="button" role="tab" data-tab="cam"><span>Caméra</span><small>le vocabulaire de MiniMax</small></button>
         <button class="pp-tab" type="button" role="tab" data-tab="say"><span>Réplique</span><small>(S1) … &lt;d&gt;</small></button>
         <button class="pp-tab" type="button" role="tab" data-tab="excl"><span>Exclusions</span><small>pas de prompt négatif</small></button>
-        <button class="pp-tab" type="button" role="tab" data-tab="assist"><span>Assistant</span><small>le modèle de texte</small></button>
+        <button class="pp-tab" type="button" role="tab" data-tab="assist"><span>Assistant</span><small>mettre en forme pour H3</small></button>
       </div>
       <div class="pp-body">
         <div data-tab="cam">
@@ -129,13 +129,7 @@
           <span class="hint">H3 ne fait parler qu’une réplique écrite « (S1) says: &lt;d&gt;[langue] … &lt;/d&gt; » ; plusieurs voix : le Multishot</span></div>
         <div data-tab="excl" hidden><button class="tb ghost sm" id="h-excl" type="button">Insérer les exclusions</button>
           <span class="hint">H3 n’a pas de prompt négatif : ce qu’on évite s’écrit à la fin</span></div>
-        <div data-tab="assist" hidden>
-          <textarea class="fld" id="as-brief" rows="2" placeholder="décrivez simplement ce que vous voulez"></textarea>
-          <input class="fld" id="as-keep" placeholder="à garder : noms, styles">
-          <div class="row"><button class="tb ghost sm" id="as-write" type="button" disabled>Écrire le prompt</button>
-            <button class="tb ghost sm" id="as-refine" type="button" disabled>Affiner</button></div>
-          <span class="why">pas encore câblé : le modèle de texte du portail (llm_url)</span>
-        </div>
+        <div data-tab="assist" hidden id="assist"></div>
       </div>
     </div>
     <div class="pb-pop" data-pop="adv" hidden>

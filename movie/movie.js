@@ -64,11 +64,12 @@ const MODE_FR = { t2v: 'texte', i2v: 'images', r2v: 'références' };
 const MODE_SHORT = { t2v: 'Texte', i2v: 'Images', r2v: 'Réf.' };
 const MODE_TIP = { t2v: 'le prompt seul', i2v: 'une première image, une dernière, ou les deux', r2v: 'des images, des éléments, des vidéos, des sons, appelés par @' };
 const METH_FR = { brouillon: 'brouillon', qualite: 'qualité', turbo: 'turbo · ancien banc', origine: 'origine · ancien banc', spectrum: 'spectrum · ancien banc' };
-const PRESETS = ['brouillon', 'qualite'];   // la recette de Cal (30/09) : server/tools/movie.py, METHODS
+// les préréglages (server/tools/movie.py, METHODS) : l'Esquisse et le Léger (09/10, l'audit), puis la recette de Cal (30/09)
+const PRESETS = ['esquisse', 'leger', 'brouillon', 'qualite'];
 const ROLE_FR = { face: 'visage', 'full body': 'plein pied', expression: 'expression' };
-// le nom d'un format pour les gens : la famille du serveur (server/tools/movie.py, FAMILIES), son rapport
-const FAM_FR = { '2,4:1': ['2,4:1', 'la recette'], paysage: ['16:9', 'paysage'], '21:9': ['21:9', 'cinémascope'], portrait: ['9:16', 'portrait'],
-  carré: ['1:1', 'carré'], image: ['image', 'd’après l’image'] };
+// ce qu'un format est, en un mot, sous son rapport (les formats eux-mêmes : l'échelle du serveur, server/tools/movie.py FORMATS)
+const FMT_SUB = { '2.4:1': 'la recette', '21:9': 'cinémascope', '16:9': 'paysage', '4:3': 'classique', '1:1': 'carré', '3:4': 'portrait',
+  '9:16': 'vertical', image: 'd’après l’image' };
 const KINDS = ['image', 'element', 'video', 'audio'];
 const mmss = (s) => { if (s == null || !isFinite(s)) return '—'; s = Math.max(0, Math.round(s)); return s >= 60 ? `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')}` : `${s} s`; };
 const p2 = (n) => String(n).padStart(2, '0');
@@ -84,7 +85,7 @@ function rngShort(e) {
   if (!e) return '';
   if (e.high < 90) return `${Math.round(e.low)}–${Math.round(e.high)} s`;
   const lo = Math.round(e.low / 60), hi = Math.round(e.high / 60);
-  return lo === hi ? `≈ ${lo} min` : `${lo}–${hi} min`;
+  return lo === hi ? `${lo} min` : `${lo}–${hi} min`;
 }
 
 // ── l'état ──────────────────────────────────────────────────
@@ -94,24 +95,31 @@ const F = {
   p: { t2v: { desc: '', sound: '', music: '' }, i2v: { desc: '', sound: '', music: '' }, r2v: { desc: '', sound: '', music: '' } },
   start: null, end: null, inputs: {}, refSize: 'match',
   // la toile : null = celle du préréglage (Brouillon 1536 × 640, Qualité 1920 × 800), 'auto' = d'après l'image, [w, h] sinon
-  canvas: { t2v: null, i2v: null, r2v: null }, fam: { t2v: '2,4:1', i2v: '2,4:1', r2v: '2,4:1' },
+  // le format (l'échelle des toiles : 2.4:1, 21:9, 16:9, 4:3, 1:1, 3:4, 9:16) et le préréglage font la toile ;
+  // `canvas` : null = celle de l'échelle, 'auto' = d'après l'image (Images), [w, h] = une toile libre (d'une vidéo reprise)
+  format: '2.4:1', canvas: { t2v: null, i2v: null, r2v: null },
   method: 'brouillon', frames: 124, steps: '', seed: '', origSeed: null, loras: {}, adv: {},
+  // ce que la mise en forme de l'invite écrit (server/tools/movie_invite.py) et qu'on relit : la définition en anglais de
+  // chaque sujet, le résumé (mode Références)
+  subjects: {}, summary: '',
   // le Multishot : allumé ou non, ses plans (des images entières), la langue des répliques, les durées dans le texte
-  ms: { on: false, shots: null, lang: null, durations: false },
+  ms: { on: false, shots: null, lang: null },
   ...saved,
 };
 // une seule invite (09/10) : celle du mode où l'on était, pour les trois
 { const seen = { desc: '', sound: '', music: '', ...((saved.p || {})[saved.mode || F.mode] || {}) };
   for (const k of ['t2v', 'i2v', 'r2v']) F.p[k] = { ...seen }; }
-F.ms = { on: false, shots: null, lang: null, durations: false, ...(saved.ms || {}) };
+F.ms = { on: false, shots: null, lang: null, ...(saved.ms || {}) };
+delete F.ms.durations;   // la case d'avant le 09/10 : les temps de coupe s'écrivent toujours (le guide d'H3)
 // un formulaire gardé d'avant les préréglages (méthodes turbo / origine / spectrum de l'ancien banc) :
 // le Brouillon, la toile du préréglage, les pas par défaut — les prompts restent
 if (!PRESETS.includes(F.method)) {
   F.method = 'brouillon'; F.steps = '';
-  F.canvas = { t2v: null, i2v: null, r2v: null }; F.fam = { t2v: '2,4:1', i2v: '2,4:1', r2v: '2,4:1' };
+  F.canvas = { t2v: null, i2v: null, r2v: null };
   delete F.adv.sampler; delete F.adv.scheduler;
 }
-delete F.refs; delete F.refKind;   // l'ancienne forme (références nommées)
+delete F.refs; delete F.refKind; delete F.fam;   // les formes d'avant (références nommées ; les familles de toiles)
+if (!F.subjects || typeof F.subjects !== 'object') F.subjects = {};
 let E = null;   // les entrées (mode Références), créées quand les options sont là
 let M = null;   // le Multishot, monté à son premier allumage
 let fil = null; // le fil des vidéos (commun/fil.js)
@@ -132,7 +140,8 @@ const U = createUndo({ name: 'movie', onapply: (e, { items }) => {
 const sameJ = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const FIELD_FR = { desc: 'écrire ce qu’on voit et entend', sound: 'écrire le son d’ambiance', music: 'écrire la musique' };
 const FORM_FR = [['start', 'changer l’image de début'], ['end', 'changer l’image de fin'], ['inputs', 'changer les entrées'],
-  ['ms', 'changer le multishot'], ['refSize', 'changer le détail des références'], ['fam', 'changer le format'], ['canvas', 'changer la résolution'],
+  ['ms', 'changer le multishot'], ['subjects', 'changer la définition d’un sujet'], ['summary', 'changer le résumé'],
+  ['refSize', 'changer le détail des références'], ['format', 'changer le format'], ['canvas', 'changer la toile'],
   ['method', 'changer la qualité'], ['frames', 'changer la durée'], ['steps', 'changer le nombre de pas'], ['seed', 'changer la graine'],
   ['origSeed', 'changer la graine d’origine'], ['loras', 'changer les LoRA'], ['adv', 'changer un réglage avancé']];
 const TYPED = new Set(['steps', 'seed']);
@@ -400,6 +409,16 @@ $$('#aides-tabs .pp-tab').forEach((b) => b.addEventListener('click', () => { S.a
 function paintAides() {
   $$('#aides-tabs .pp-tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === S.aides));
   $$('[data-pop="aides"] .pp-body > [data-tab]').forEach((n) => { n.hidden = n.dataset.tab !== S.aides; });
+  refreshAssist();
+}
+// l'assistant : la mise en forme de l'invite (le même bouton que dans « ce que H3 reçoit »)
+function refreshAssist() {
+  const box = $('#assist');
+  if (!box || $('[data-pop="aides"]').hidden) return;
+  const w = S.opts?.llm || {};
+  box.replaceChildren(inviteButton(), el('span', { class: 'hint', title: w.up ? '' : w.why || '' }, w.up
+    ? `le modèle de texte local (${w.model}) réécrit votre invite au format d’H3 : en anglais, en plans avec leurs temps de coupe, les répliques balisées dans leur langue, chaque sujet défini ; vous relisez avant de lancer`
+    : 'sans modèle de texte : le gabarit pose les plans et leurs temps de coupe, sans traduire'));
 }
 
 // ── le Multishot, dans la barre ─────────────────────────────
@@ -412,17 +431,17 @@ function msMentions() {
 }
 const lang = () => F.ms.lang || (prefs.get('general.langue', 'fr') === 'en' ? 'en' : 'fr');
 // le texte des plans ; des plans tous vides n'écrivent rien (l'invite vide dit ce qui manque)
-function msText(shots, o = { lang: lang(), durations: !!F.ms.durations }) {
+function msText(shots, o = { lang: lang() }) {
   if (!shots?.length || shots.every((p) => !(p.text || '').trim() && !(p.lines || []).some((l) => (l.text || '').trim()))) return '';
   return compose(shots.map((p) => ({ ...p, secs: (p.frames || 0) / FPS })), o);
 }
 function msMount(shots) {
   const grid = (S.opts.frames || []).map((f) => f.frames);
   M = createMultishot($('#ms'), {
-    total: F.frames, grid, shots, desc: F.p[F.mode].desc, lang: lang(), durations: F.ms.durations,
+    total: F.frames, grid, shots, desc: F.p[F.mode].desc, lang: lang(),
     mentions: msMentions,
     onchange: (st) => {
-      F.ms.shots = st.shots; F.ms.lang = st.lang; F.ms.durations = st.durations;
+      F.ms.shots = st.shots; F.ms.lang = st.lang;
       const t = msText(st.shots, st);
       F.p[F.mode].desc = t;
       descEl.value = t;
@@ -496,87 +515,76 @@ function paintLoras() {
     el('div', { class: 'accel-list' }, ...accel.map((l) => el('span', { title: l.name }, l.nom)))) : null);
 }
 
-// ── le format, la qualité, la résolution ────────────────────
-// L'échelle du serveur quand il la donne (opts.formats : [{ id, label, sub, sizes: [{ w, h, label }] }]) ; sinon
-// les toiles de /api/movie/options rangées par famille (server/tools/movie.py, CANVASES et FAMILIES). Le temps de
-// chaque toile vient du plan (pl.canvases, même préréglage, même durée).
+// ── le format et la résolution : l'échelle du serveur ──────
+// Un format, puis une résolution (le préréglage) : la toile en découle (server/tools/movie.py, scale ; /api/movie/options et
+// chaque plan → `scale`). Les résolutions vont de l'Esquisse (≈ 0,25 Mpx, le premier étage du Brouillon) à la Qualité, avec
+// leur temps estimé pour ce plan. En Images, « d'après l'image » (la règle du nœud) ; une toile libre (une vidéo reprise)
+// se montre et s'abandonne en choisissant une résolution.
+const scaleOf = () => S.plan?.scale || S.opts?.scale || { formats: [], tiers: [] };
+const methodOf = (id) => S.opts?.methods.find((m) => m.id === id);
+const fmtLabel = (f) => (f?.label || f?.id || '').split(' · ')[0];
 function formats() {
-  const o = S.opts;
-  if (!o) return [];
-  const pl = S.plan;
-  const list = Array.isArray(o.formats) && o.formats.length
-    ? o.formats.map((f) => ({ id: f.id, label: f.label || f.id, sub: f.sub || '', sizes: (f.sizes || []).map((c) => ({ ...c, family: f.id })) }))
-    : o.families.map((f) => ({ id: f, label: (FAM_FR[f] || [f])[0], sub: (FAM_FR[f] || [])[1] || '',
-      sizes: o.canvases.filter((c) => c.family === f) }));
-  // en Images, avec une image : « d'après l'image » (la règle du nœud)
-  const auto = F.mode === 'i2v' ? (pl?.canvases || []).find((c) => c.family === 'image') : null;
-  if (auto) list.unshift({ id: 'image', label: FAM_FR.image[0], sub: FAM_FR.image[1], sizes: [{ ...auto, auto: true }] });
-  const est = new Map((pl?.canvases || []).map((c) => [`${c.w}x${c.h}`, c.estimate]));
-  for (const f of list) {
-    f.sizes = f.sizes.map((c) => ({ ...c, estimate: c.estimate || est.get(`${c.w}x${c.h}`) || null })).sort((a, b) => a.w * a.h - b.w * b.h);
-    f.ratio = f.sizes.length ? f.sizes[f.sizes.length - 1].w / f.sizes[f.sizes.length - 1].h : 1;
-  }
+  const list = scaleOf().formats.map((f) => ({ ...f, short: fmtLabel(f), sub: FMT_SUB[f.id] || '' }));
+  const auto = F.mode === 'i2v' ? (S.plan?.canvases || []).find((c) => c.family === 'image') : null;
+  if (auto) list.unshift({ id: 'image', short: 'image', sub: FMT_SUB.image, ratio: auto.w / auto.h, auto });
   return list;
 }
-const presetWH = () => S.opts?.methods.find((m) => m.id === F.method)?.canvas || [1536, 640];
-// la toile choisie, en clair : [w, h], 'auto', ou celle du préréglage
+// la toile choisie, en clair
 function canvasNow() {
   const cv = F.canvas[F.mode];
   if (cv === 'auto') return { auto: true, w: S.plan?.width, h: S.plan?.height };
-  if (Array.isArray(cv)) return { w: cv[0], h: cv[1] };
-  const [w, h] = presetWH();
-  return { w, h, preset: true };
+  if (Array.isArray(cv)) return { free: true, w: cv[0], h: cv[1] };
+  const f = scaleOf().formats.find((x) => x.id === F.format) || scaleOf().formats[0];
+  const sz = f?.sizes?.[F.method];
+  return { w: sz?.w || S.plan?.width, h: sz?.h || S.plan?.height, stages: sz?.stages, estimate: sz?.estimate };
 }
-function formatNow(list = formats()) {
-  const c = canvasNow();
-  if (c.auto) return list.find((f) => f.id === 'image') || null;
-  return list.find((f) => f.sizes.some((s) => s.w === c.w && s.h === c.h)) || list.find((f) => f.id === F.fam[F.mode]) || list[0] || null;
-}
-function setCanvas(w, h, fam) {
-  const [pw, ph] = presetWH();
-  F.canvas[F.mode] = fam === 'image' ? 'auto' : w === pw && h === ph ? null : [w, h];
-  if (fam) F.fam[F.mode] = fam;
+const formatNow = (list = formats()) => (F.canvas[F.mode] === 'auto' ? list.find((f) => f.id === 'image') : list.find((f) => f.id === F.format)) || list[0] || null;
+function pickFormat(f) {
+  if (f.id === 'image') F.canvas[F.mode] = 'auto';
+  else { F.format = f.id; if (F.canvas[F.mode] === 'auto') F.canvas[F.mode] = null; }
   changed(); paintFmt();
 }
-// un autre format : la toile de ce format la plus proche de l'aire actuelle
-function pickFormat(f) {
-  if (f.id === 'image') { setCanvas(0, 0, 'image'); return; }
-  const c = canvasNow();
-  const area = (c.w || 1536) * (c.h || 640);
-  const best = f.sizes.reduce((b, s) => (!b || Math.abs(Math.log((s.w * s.h) / area)) < Math.abs(Math.log((b.w * b.h) / area)) ? s : b), null);
-  if (best) setCanvas(best.w, best.h, f.id);
+function pickTier(id) {
+  F.method = id; F.steps = '';
+  if (F.canvas[F.mode] !== 'auto') F.canvas[F.mode] = null;   // une toile libre s'abandonne
+  changed(); paintFmt();
 }
 const glyph = (ratio, cls = '') => el('span', { class: 'v-ratio ' + cls, style: { aspectRatio: String(Math.max(0.4, Math.min(2.6, ratio || 1))) } });
+const mpx = (w, h) => `${String(Math.round((w * h) / 1e4) / 100).replace('.', ',')} Mpx`;
 function paintFmt() {
   const box = $('[data-pop="fmt"]');
   if (box.hidden || !S.opts) return;
   const list = formats(), cur = formatNow(list), c = canvasNow(), pl = S.plan;
   const keep = box.querySelector('.pp-body')?.scrollTop || 0;
-  const head = el('div', { class: 'pp-h' }, el('span', { class: 'lbl' }, 'Format · qualité · résolution'),
+  const head = el('div', { class: 'pp-h' }, el('span', { class: 'lbl' }, 'Format · résolution'),
     el('span', { class: 'lbl pp-sum' }, pl ? `${pl.width}×${pl.height} · ${secFr(pl.seconds)} · ≈ ${rngShort(pl.estimate)}` : ''), el('span', { class: 'sp' }),
     el('button', { class: 'pp-x', type: 'button', title: 'fermer (Échap)', 'aria-label': 'fermer', onclick: () => togglePop('fmt') }, '×'));
   const fmts = el('div', { class: 'v-fmts', role: 'radiogroup', 'aria-label': 'format' }, ...list.map((f) => el('button', {
     class: 'v-fmt' + (f === cur ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': f === cur ? 'true' : 'false',
-    title: `${f.label}${f.sub ? ' · ' + f.sub : ''} — ${f.sizes.map((s) => `${s.w}×${s.h}`).join(', ')}`, onclick: () => pickFormat(f) },
-  glyph(f.ratio), el('b', {}, f.label), el('small', {}, f.sub))));
-  const meths = el('div', { class: 'v-qs', role: 'radiogroup', 'aria-label': 'qualité' }, ...S.opts.methods.map((m) => el('button', {
-    class: 'v-q' + (F.method === m.id ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': F.method === m.id ? 'true' : 'false', title: m.note,
-    onclick: () => { if (F.method !== m.id) { F.method = m.id; F.steps = ''; changed(); paintFmt(); } } },
-  el('b', {}, m.label), el('span', {}, m.id === 'brouillon' ? 'rapide, deux étages' : 'le rendu final, un étage'),
-  el('i', {}, pl?.presets?.[m.id] ? `≈ ${rngShort(pl.presets[m.id])}` : m.cal.what))));
-  const rows = (cur?.sizes || []).map((s) => {
-    const on = s.auto ? c.auto : !c.auto && s.w === c.w && s.h === c.h;
-    const native = !s.auto && s.w === presetWH()[0] && s.h === presetWH()[1];
-    return el('button', { class: 'cv-row' + (on ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false', title: s.source || '',
-      onclick: () => setCanvas(s.w, s.h, cur.id) },
-    el('b', {}, s.auto && !s.w ? 'd’après l’image' : `${s.w} × ${s.h}`),
-    el('span', { class: 'cv-l' }, native ? `la recette du ${S.opts.methods.find((m) => m.id === F.method)?.label.toLowerCase()}` : s.label || ''),
-    el('span', { class: 'cv-e' }, s.estimate ? rngShort(s.estimate) : '—'));
-  });
+    title: f.auto ? `la toile suit l’image de départ : ${f.auto.w} × ${f.auto.h}` : `${f.label} — ${scaleOf().tiers.map((t) => `${f.sizes[t].w}×${f.sizes[t].h}`).join(', ')}`,
+    onclick: () => pickFormat(f) }, glyph(f.ratio), el('b', {}, f.short), el('small', {}, f.sub))));
+  let rows;
+  if (c.auto) {
+    rows = [el('div', { class: 'cv-row on' }, el('b', {}, `${c.w} × ${c.h}`), el('span', { class: 'cv-l' }, `d’après l’image · ${methodOf(F.method)?.label || ''}`),
+      el('span', { class: 'cv-e' }, pl ? rngShort(pl.estimate) : ''))];
+  } else {
+    rows = (c.free ? [el('div', { class: 'cv-row on', title: 'la toile de la vidéo reprise : choisissez une résolution pour revenir à l’échelle' },
+      el('b', {}, `${c.w} × ${c.h}`), el('span', { class: 'cv-l' }, 'toile libre (vidéo reprise)'), el('span', { class: 'cv-e' }, pl ? rngShort(pl.estimate) : ''))] : [])
+      .concat(scaleOf().tiers.map((t) => {
+        const sz = cur?.sizes?.[t];
+        if (!sz) return null;
+        const m = methodOf(t);
+        const on = !c.free && F.method === t;
+        return el('button', { class: 'cv-row' + (on ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false', title: m?.note || '',
+          onclick: () => pickTier(t) },
+        el('b', {}, `${sz.w} × ${sz.h}`),
+        el('span', { class: 'cv-l' }, el('em', {}, m?.label || t), ` · ${mpx(sz.w, sz.h)} · ${sz.stages === 2 ? 'deux étages' : 'un étage'}`),
+        el('span', { class: 'cv-e' }, sz.estimate ? rngShort(sz.estimate) : '—'));
+      }).filter(Boolean));
+  }
   const body = el('div', { class: 'pp-body' },
     el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Format'), fmts),
-    el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Qualité'), meths),
-    el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, `Résolution · ${cur?.label || ''}`),
+    el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, `Résolution · ${cur?.short || ''}`),
       el('div', { class: 'canvases', role: 'radiogroup', 'aria-label': 'résolution' }, ...rows)),
     pl ? el('p', { class: 'hint' }, `${pl.estimate.basis}. Chargement du modèle, image et son compris ; le premier rendu après un démarrage d’H3 est plus long.`) : null);
   box.replaceChildren(head, body);
@@ -627,7 +635,7 @@ function paintChips() {
   if (!box || !S.opts) return;
   const pl = S.plan;
   const list = formats(), cur = formatNow(list), c = canvasNow();
-  const meth = S.opts.methods.find((m) => m.id === F.method);
+  const meth = methodOf(F.method);
   const fr = S.opts.frames || [];
   const k = durIndex();
   const step = (d) => { const j = Math.max(0, Math.min(fr.length - 1, k + d)); setFrames(fr[j].frames); };
@@ -635,15 +643,15 @@ function paintChips() {
   const snd = [F.p[F.mode].sound.trim() ? 'ambiance' : '', F.p[F.mode].music.trim() ? 'musique' : ''].filter(Boolean).join(' · ');
   const notes = pl?.notes?.length || 0;
   const alt = advAlt();
-  const wh = c.auto ? (pl ? `${pl.width}×${pl.height}` : 'd’après l’image') : `${c.w}×${c.h}`;
+  const wh = c.w ? `${c.w}×${c.h}` : 'd’après l’image';
   box.replaceChildren(
     el('span', { class: 'pc-seg', role: 'tablist', 'aria-label': 'mode' }, ...['t2v', 'i2v', 'r2v'].map((m) => el('button', {
       class: F.mode === m ? 'on' : '', type: 'button', role: 'tab', 'aria-selected': F.mode === m ? 'true' : 'false',
       title: `${MODE_FR[m].replace(/^./, (x) => x.toUpperCase())} : ${MODE_TIP[m]}`, onclick: () => setMode(m) }, MODE_SHORT[m]))),
-    chip('', { value: cur?.label || '', glyphOf: cur?.ratio, open: S.pop === 'fmt', cls: 'fmt',
-      title: `format · ${cur?.sub || ''}${c.auto ? '' : ` · ${c.w} × ${c.h}`}`, onclick: () => togglePop('fmt') }),
-    chip('', { value: `${meth?.label || ''} · ${wh}`, small: pl ? `≈ ${rngShort(pl.estimate)}` : '', open: S.pop === 'fmt', cls: 'res',
-      title: `qualité et résolution — le temps estimé de ce plan sur H3${pl ? ` : ${rng(pl.estimate)}` : ''}`, onclick: () => togglePop('fmt') }),
+    chip('', { value: cur?.short || '', glyphOf: cur?.ratio, open: S.pop === 'fmt', cls: 'fmt',
+      title: `format · ${cur?.sub || ''} — le changer garde la résolution`, onclick: () => togglePop('fmt') }),
+    chip('', { value: `${c.free ? 'toile libre' : meth?.label || ''} · ${wh}`, small: pl ? `≈ ${rngShort(pl.estimate)}` : '', open: S.pop === 'fmt', cls: 'res',
+      title: `résolution — de l’Esquisse à la Qualité ; le temps estimé de ce plan sur H3${pl ? ` : ${rng(pl.estimate)}` : ''}`, onclick: () => togglePop('fmt') }),
     el('span', { class: 'pc count dur', title: `durée : ${fr[k]?.frames || F.frames} images à 24 i/s — les pas d’H3 (17 images), de ${secFr(fr[0]?.seconds || 5.17)} à ${secFr(fr[fr.length - 1]?.seconds || 15.08)}` },
       el('button', { type: 'button', 'aria-label': 'plus court', disabled: k <= 0 ? true : null, onclick: () => step(-1) }, '−'),
       el('b', { role: 'button', tabindex: 0, title: 'toutes les durées', onclick: (e) => up(e.currentTarget.parentElement, [{ head: 'Durée' },
@@ -684,38 +692,90 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ── ce que H3 reçoit ────────────────────────────────────────
-// Le plan résolu par le serveur (/api/movie/plan) : le prompt compilé, les images dans l'ordre où H3 les charge, la
-// toile, la durée, les notes. La route d'aperçu de l'audit (POST /api/movie/apercu : la mise en forme de l'invite par
-// le modèle de texte) s'y ajoute dès que /api/movie/options l'annonce (`apercu`) ; sans elle, sa place reste masquée.
-async function apercu() {
-  if (!S.opts?.apercu) return null;   // la route de l'audit s'annonce dans /api/movie/options ; sans elle, rien
-  try { return await api('movie/apercu', { method: 'POST', body: { mode: F.mode, params: params(F.mode) } }); } catch { return null; }
-}
+// POST /api/movie/apercu (server/tools/movie_invite.py) : le plan compilé — le prompt, les images dans l'ordre où H3
+// les charge, les étiquettes — et les vérifications du code (`checks` : mentions, entrées citées, langue, plans et
+// temps de coupe, répliques, longueur, images de chaque élément, toile). On y relit et corrige ce que la mise en forme
+// a écrit (la définition de chaque sujet, le résumé), et on la lance : POST /api/movie/invite, un travail (le modèle de
+// texte local écrit l'invite au format d'H3 ; sans lui, le gabarit, et pourquoi) dont le résultat remplit la barre.
+const LEVEL = { ok: ['ok', '✓'], remarque: ['rem', '!'], erreur: ['err', '×'] };
+let recuSeq = 0;
 async function paintRecu() {
   const box = $('#recu');
-  const pl = S.plan;
-  if (!pl) { box.replaceChildren(el('p', { class: 'hint' }, 'le plan se résout…')); return; }
-  const words = (pl.desc || '').trim() ? pl.desc.trim().split(/\s+/).length : 0;
-  $('#recu-sum').textContent = `${MODE_FR[pl.mode]} · ${pl.width}×${pl.height} · ${pl.frames} im. · ${secFr(pl.seconds)} · ${pl.steps} pas`;
-  const pics = (pl.pictures || []).map((p) => el('div', { class: 'v-pic', title: [p.label, p.role].filter(Boolean).join(' · ') },
-    el('span', { class: 'v-pic-im', style: bg(p.thumb_url) }), el('b', {}, p.tag), el('small', {}, p.label || p.role || '')));
-  const subj = (pl.subjects || []).map((s) => `${s.token} → ${s.tag} (${s.pictures.join(', ')})`);
-  const kids = [
-    pl.notes.length ? el('ul', { class: 'v-notes' }, ...pl.notes.map((n) => el('li', {}, n))) : null,
+  if ($('[data-pop="recu"]').hidden) return;
+  const seq = ++recuSeq;
+  let ap = null;
+  try { ap = await api('movie/apercu', { method: 'POST', body: { mode: F.mode, params: params(F.mode) } }); }
+  catch (e) { box.replaceChildren(el('p', { class: 'why' }, `l’aperçu ne répond pas : ${e.message}`)); return; }
+  if (seq !== recuSeq) return;
+  // un champ des sujets qu'on est en train d'écrire garde la main : on ne redessine pas sous les doigts
+  if (box.contains(document.activeElement) && document.activeElement.matches('textarea')) return;
+  const words = (ap.desc || '').trim() ? ap.desc.trim().split(/\s+/).length : 0;
+  $('#recu-sum').textContent = `${MODE_FR[ap.mode]} · ${ap.width}×${ap.height} · ${ap.frames} im. · ${secFr(ap.seconds)} · ${ap.steps} pas`;
+  const pics = (ap.pictures || []).map((x) => el('div', { class: 'v-pic', title: [x.label, x.role].filter(Boolean).join(' · ') },
+    el('span', { class: 'v-pic-im', style: bg(x.thumb_url) }), el('b', {}, x.tag), el('small', {}, x.label || x.role || '')));
+  const checks = el('ul', { class: 'v-checks' }, ...(ap.checks || []).map((c) => el('li', { class: (LEVEL[c.level] || LEVEL.ok)[0] },
+    el('i', { 'aria-hidden': 'true' }, (LEVEL[c.level] || LEVEL.ok)[1]), el('span', {}, c.text))));
+  // les sujets : la définition qui part dans subject_definitions (la mise en forme l'écrit en anglais ; vide : la
+  // description de l'élément), et le résumé
+  const subj = F.mode === 'r2v' ? (ap.subjects || []).filter((x) => /^@(element|image)/.test(x.token)) : [];
+  const defs = subj.length ? el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Les sujets · ce que H3 lit de chacun'),
+    ...subj.map((x) => el('label', { class: 'v-def' }, el('b', {}, x.token), el('span', { class: 'v-def-t' }, x.title || ''),
+      el('textarea', { class: 'fld', rows: 1, spellcheck: 'false', placeholder: 'vide : la description de l’élément, telle quelle',
+        oninput: (e) => { F.subjects = { ...F.subjects, [x.token]: e.target.value }; save(); schedulePlan(); } }, F.subjects?.[x.token] || ''))),
+    el('label', { class: 'v-def' }, el('b', {}, 'résumé'), el('span', { class: 'v-def-t' }, 'summary'),
+      el('textarea', { class: 'fld', rows: 1, spellcheck: 'false', placeholder: 'vide : la première phrase du premier plan',
+        oninput: (e) => { F.summary = e.target.value; save(); schedulePlan(); } }, F.summary || ''))) : null;
+  const w = ap.writer || {};
+  put(box,
+    el('div', { class: 'v-sec v-invite' }, el('div', { class: 'row' },
+      inviteButton(),
+      el('span', { class: 'hint', title: w.up ? '' : w.why || '' }, w.up ? `le modèle de texte local (${w.model}) écrit l’invite au format d’H3 : en anglais, en plans, les répliques balisées ; vous relisez, puis « Générer »`
+        : 'sans modèle de texte : le gabarit pose les plans et leurs temps, sans traduire'))),
+    el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Les vérifications'), checks),
+    defs,
     pics.length ? el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, `Images chargées, dans l’ordre · ${pics.length}`), el('div', { class: 'v-pics' }, ...pics)) : null,
-    subj.length || (pl.videos || []).length || (pl.audios || []).length ? el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Étiquettes'),
-      el('p', { class: 'v-tags' }, [...subj, ...(pl.videos || []).map((v) => `${v.token} → ${v.tag}`), ...(pl.audios || []).map((a) => `${a.token || 'bande-son'} → ${a.tag}`)].join(' · '))) : null,
     el('div', { class: 'v-sec' }, el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'Le prompt envoyé'), el('span', { class: 'sp' }),
-      el('span', { class: 'lbl' + (words && words < 60 ? ' low' : ''), title: 'les guides MiniMax visent 350 à 500 mots pour la description' }, `${words} mot${words > 1 ? 's' : ''} · visé 350–500`)),
-    el('pre', { class: 'sent' }, pl.prompt_sent || (pl.ok ? '' : `rien encore : ${pl.errors[0] || ''}`))),
-    el('div', { class: 'v-sec', id: 'apercu', hidden: true }),
-  ];
-  put(box, ...kids);
-  const r = await apercu();
-  if (!r || S.pop !== 'recu') return;
-  const ap = $('#apercu');
-  ap.hidden = false;
-  ap.replaceChildren(el('span', { class: 'lbl' }, r.titre || 'mis en forme pour H3'), el('pre', { class: 'sent' }, r.prompt || r.prompt_sent || JSON.stringify(r, null, 1)));
+      el('span', { class: 'lbl' + (words && words < 60 ? ' low' : '') }, `${words} mot${words > 1 ? 's' : ''} écrits`)),
+    el('pre', { class: 'sent' }, ap.prompt_sent || (ap.ok ? '' : `rien encore : ${ap.errors[0] || ''}`))));
+}
+
+// la mise en forme de l'invite : un travail ; son résultat remplit la barre (l'invite, le son, la musique, les
+// sujets, le résumé) — un geste qu'on annule ; jamais lancée seule
+const INV = { job: null };
+function inviteButton() {
+  const busy = !!INV.job;
+  const empty = !F.p[F.mode].desc.trim();
+  return el('button', { class: 'tb ghost sm v-inv', type: 'button', disabled: busy || empty ? true : null,
+    title: busy ? 'en cours…' : empty ? 'écrivez d’abord ce que vous voulez voir : la mise en forme part de votre texte' : 'l’invite réécrite au format d’H3, à relire',
+    onclick: shapeInvite }, busy ? 'Mise en forme…' : 'Mettre en forme pour H3');
+}
+async function shapeInvite() {
+  if (INV.job || !F.p[F.mode].desc.trim()) return;
+  const mode = F.mode;
+  let j;
+  try { j = await api('movie/invite', { method: 'POST', body: { mode, params: params(mode) } }); } catch (e) { toast(e.message, 6000); return; }
+  INV.job = j.id;
+  refreshInvite();
+  try {
+    const done = await jobs.wait(j.id, () => {});
+    if (done.state !== 'done') { toast(`mise en forme : ${done.message || done.state}`, 7000); return; }
+    const inv = done.result?.invite || {};
+    const got = inv.params || {};
+    if (F.mode !== mode) setMode(mode);
+    F.p[mode] = { desc: got.desc ?? F.p[mode].desc, sound: got.sound ?? F.p[mode].sound, music: got.music ?? F.p[mode].music };
+    if (got.subjects) F.subjects = { ...got.subjects };
+    if (got.summary !== undefined) F.summary = got.summary || '';
+    syncFields();
+    if (F.ms.on) syncMultishot();   // la frise relit l'invite : ses plans et leurs temps de coupe
+    changed();
+    toast(inv.source === 'modèle' ? 'invite mise en forme par le modèle de texte : relisez, corrigez, puis « Générer »'
+      : `gabarit : ${inv.why || 'pas de modèle de texte'}`, 7000);
+  } catch (e) { toast(e.message, 6000); }
+  finally { INV.job = null; refreshInvite(); }
+}
+function refreshInvite() {
+  for (const b of $$('.v-inv')) b.replaceWith(inviteButton());
+  if (!$('[data-pop="recu"]').hidden) paintRecu();
 }
 
 // ── réglages avancés ────────────────────────────────────────
@@ -765,14 +825,19 @@ function params(mode = F.mode) {
   const out = {
     desc: p.desc, sound: p.sound, music: p.music, method: F.method, frames: F.frames,
     steps: F.steps ? Number(F.steps) : null, seed: F.seed === '' ? null : Number(F.seed),
-    canvas: F.canvas[mode], speech_lang: prefs.get('general.langue', 'fr') === 'en' ? 'en' : 'fr',
+    format: F.format, canvas: F.canvas[mode], speech_lang: prefs.get('general.langue', 'fr') === 'en' ? 'en' : 'fr',
     loras: S.loras.filter((l) => F.loras[l.name]?.on && l.modes.includes(mode) && !l.accel).map((l) => ({ name: l.name, strength: F.loras[l.name].strength })),
     adv: { unet: F.adv['unet_' + w], crf: F.adv.crf || null },
   };
   if (mode === 'i2v') { out.start = F.start; out.end = F.end; }
-  if (mode === 'r2v') { out.inputs = E ? E.get() : F.inputs; out.ref_image_size = F.refSize; }
+  if (mode === 'r2v') {
+    out.inputs = E ? E.get() : F.inputs; out.ref_image_size = F.refSize;
+    const subj = Object.fromEntries(Object.entries(F.subjects || {}).filter(([, v]) => String(v || '').trim()));
+    if (Object.keys(subj).length) out.subjects = subj;
+    if (F.summary.trim()) out.summary = F.summary;
+  }
   // les plans du Multishot, pour que « Réutiliser » rouvre la frise telle quelle (le prompt, lui, les porte déjà)
-  if (F.ms.on && F.ms.shots) out.multishot = { shots: F.ms.shots.map(({ frames, text, lines }) => ({ frames, text, lines })), lang: lang(), durations: !!F.ms.durations };
+  if (F.ms.on && F.ms.shots) out.multishot = { shots: F.ms.shots.map(({ frames, text, lines }) => ({ frames, text, lines })), lang: lang() };
   return out;
 }
 
@@ -814,6 +879,7 @@ function paintPlan() {
   paintChips();
   if (S.pop === 'fmt') paintFmt();
   if (S.pop === 'recu') paintRecu();
+  refreshAssist();
 }
 $('#go').addEventListener('click', launch);
 async function launch() {
@@ -904,14 +970,18 @@ function reuse(it) {
   F.seed = ''; F.origSeed = p.seed ?? r.seed ?? null;
   const cv = r.canvas;
   F.canvas[mode] = old || cv == null || cv === 'preset' ? null : cv === 'auto' ? 'auto' : Array.isArray(cv) ? cv.map(Number) : null;
-  F.fam[mode] = F.canvas[mode] === 'auto' ? 'image' : !Array.isArray(F.canvas[mode]) ? '2,4:1'
-    : (S.opts?.canvases.find((c) => c.w === F.canvas[mode][0] && c.h === F.canvas[mode][1])?.family || p.family || 'paysage');
+  F.format = r.format || p.format || '2.4:1';
+  // une toile qui est celle de l'échelle (format, préréglage) n'est pas « libre »
+  const sz = (S.opts?.scale?.formats || []).find((f) => f.id === F.format)?.sizes?.[F.method];
+  if (Array.isArray(F.canvas[mode]) && sz && sz.w === F.canvas[mode][0] && sz.h === F.canvas[mode][1]) F.canvas[mode] = null;
+  F.subjects = r.subjects && typeof r.subjects === 'object' ? { ...r.subjects } : {};
+  F.summary = r.summary || '';
   if (old) toast('vidéo de l’ancien banc : ses réglages sont repris en Brouillon, la recette de Cal', 6000);
   if (mode === 'i2v') { F.start = r.start || null; F.end = r.end || null; }
   if (mode === 'r2v') { F.inputs = r.inputs || {}; E?.set(F.inputs); F.refSize = r.ref_image_size || 'match'; $('#ref-size').value = F.refSize; }
   // le Multishot : ses plans s'ils ont été rangés ; sinon un prompt en [Shot n] le rallume, relu
   const msr = r.multishot && Array.isArray(r.multishot.shots) ? r.multishot : null;
-  F.ms = { on: !!msr || /\[Shot \d+\]/.test(F.p[mode].desc), shots: msr ? msr.shots : null, lang: msr?.lang || null, durations: !!msr?.durations };
+  F.ms = { on: !!msr || /\[Shot \d+\]/.test(F.p[mode].desc), shots: msr ? msr.shots : null, lang: msr?.lang || null };
   for (const k of Object.keys(F.loras)) F.loras[k].on = false;
   for (const l of r.loras || []) F.loras[l.name] = { on: true, strength: l.strength };
   const adv = r.adv || {};
