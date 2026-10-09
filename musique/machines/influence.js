@@ -158,26 +158,32 @@ export function attracteursActifs(p, t, blocs = null) {
 }
 
 /**
- * CE QUE CAPTE UN ATTRACTEUR, qu'il parle ou non — pour le voir (le nodal au
- * survol, le banc) : bloc → { nom, w (le plus grand poids), reglages [{ label,
- * facette, w, valeur, op, unite, entendu, tenu }] }. `tenu` : une voie
- * d'automation ou un câble de valeur garde ce réglage ; `entendu` : le moteur
- * le jouera quand l'attracteur parlera.
+ * CE QUE CAPTE UN ATTRACTEUR, qu'il parle ou non — pour le voir (le banc, le
+ * nodal au survol, le panneau d'une tuile) : ses opérateurs, du plus lourd au
+ * plus léger, chacun avec `entendu` (le moteur le jouera quand il parlera) et
+ * `tenu` (une voie d'automation ou un câble de valeur garde ce réglage).
  */
+export function reglagesDe(p, atr, blocs = blocsDInfluence(p)) {
+  const tenus = reglagesTenus(p);
+  return operateurs(atr, blocs).map((o) => {
+    const owner = p.modules.find((m) => m.id === o.mod);
+    const k = o.cle || (o.ctl && owner?.mach ? moteurDe(owner.mach.id)?.map?.[o.ctl]?.param : null);
+    const tenu = !!k && tenus.has(`${o.mod}:${k}`);
+    return { ...o, tenu, entendu: !!o.branche && !!owner && !tenu };
+  });
+}
+/** Les mêmes, par bloc : blocId → { nom, mod, w (le plus grand poids), reglages }. */
 export function capteParAttracteur(p, atr, blocs = blocsDInfluence(p)) {
-  const tenus = reglagesTenus(p), out = new Map();
-  for (const o of operateurs(atr, blocs)) {
+  const out = new Map();
+  for (const o of reglagesDe(p, atr, blocs)) {
     let b = out.get(o.blocId);
     if (!b) { b = { nom: o.blocNom, mod: o.mod, w: 0, reglages: [] }; out.set(o.blocId, b); }
     b.w = Math.max(b.w, o.w);
-    const owner = p.modules.find((m) => m.id === o.mod);
-    const k = o.cle || (o.ctl && owner?.mach ? moteurDe(owner.mach.id)?.map?.[o.ctl]?.param : null);
-    b.reglages.push({ label: o.label, facette: o.facette, couleur: o.couleur, w: o.w, valeur: o.valeur, op: o.op, unite: o.unite,
-      entendu: !!o.branche && !!owner, tenu: !!k && tenus.has(`${o.mod}:${k}`) });
+    b.reglages.push(o);
   }
   return out;
 }
-/** Les attracteurs qui captent un bloc (une tuile) : [{ atr, parle, reglages }] — le panneau du nodal. */
+/** Les attracteurs qui captent un bloc (une tuile), du plus lourd au plus léger : [{ atr, w, parle, reglages }]. */
 export function attracteursDe(p, blocId, t = null, blocs = blocsDInfluence(p)) {
   const out = [];
   for (const atr of p.banc?.atts || []) {

@@ -750,7 +750,9 @@ function odioSource(ctx, m, env) {
   return {
     output: out, odio: inst, ready,
     update(mm) { m = mm; apply(mm); setP(ctx, out.gain, mm.on === false ? 0 : trim); },
-    setAt(k, v) { inst.setParameter(k, v); },
+    // à l'instant `t` : un instrument qui tient ses réglages dans le temps (un AudioParam, l'AudioWorklet de
+    // Plaits et de Macro) les y pose ; les autres les lisent à l'attaque des notes qui partent ensuite
+    setAt(k, v, t) { inst.setParameter(k, v, t); },
     hit(voice, t, vel = 1) { drum(voices?.find((x) => x.id === voice), t, vel); },
     // une note sans durée (clavier, MIDI) part longue et se relâche à noteOff
     noteOn(p, t, vel = 0.8, dur, over) {

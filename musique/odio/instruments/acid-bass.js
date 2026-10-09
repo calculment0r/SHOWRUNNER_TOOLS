@@ -136,12 +136,13 @@ export class AcidBass                       {
     return this.#values.get(id) ?? 0
   }
 
-  setParameter(id        , value        )       {
+  // SHOWRUNNER : `time` (facultatif), l'instant où le réglage prend effet (un attracteur, moteur.js)
+  setParameter(id        , value        , time         )       {
     const descriptor = PARAMETERS.find((parameter) => parameter.id === id)
     if (!descriptor) return
     const next = clamp(value, descriptor.min, descriptor.max)
     this.#values.set(id, next)
-    const maintenant = this.#context.currentTime
+    const maintenant = Math.max(time ?? 0, this.#context.currentTime)
     if (id === "gain") this.output.gain.setTargetAtTime(next, maintenant, 0.01)
     if (id === "wave" && this.#voix) this.#voix.osc.type = ONDES[Math.round(next)] ?? "sawtooth"
     if (id === "resonance" && this.#voix) {

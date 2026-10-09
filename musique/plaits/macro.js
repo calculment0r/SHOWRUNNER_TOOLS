@@ -90,12 +90,15 @@ class MacroProcessor extends AudioWorkletProcessor {
     this.voix = []
     for (let rang = 0; rang < w.nombreVoix(); rang++) this.voix.push({ rang, etat: 'libre', note: 0, vel: 0, env: 0, fin: 0, age: 0, debut: 0, bas: 0, porte: 0, file: new Float32Array(this.B), lu: this.B })
     this.attente = []
+    this.dates = []   // les réglages datés (un attracteur, une automation) : posés au quantum de leur heure
     this.horloge = 0
     this.port.onmessage = (e) => this.recevoir(e.data)
   }
   recevoir(o) {
     if (o.type === 'note') this.attente.push(o)
-    else if (o.type === 'reglage') this.r[o.id] = o.valeur
+    else if (o.type === 'reglage') {
+      if (o.time > currentTime) { this.dates.push(o); this.dates.sort((a, b) => a.time - b.time) } else this.r[o.id] = o.valeur
+    }
     else if (o.type === 'silence') { for (const v of this.voix) if (v.etat !== 'libre') v.etat = 'release'; this.attente.length = 0 }
     else if (o.type === 'relacher') {
       for (const v of this.voix) if (v.etat !== 'libre' && v.note === o.note) v.fin = Math.min(v.fin, o.time)
@@ -112,6 +115,7 @@ class MacroProcessor extends AudioWorkletProcessor {
     if (!s) return true
     const n = s.length, t0 = currentTime, fin = t0 + n / sampleRate
     s.fill(0)
+    while (this.dates.length && this.dates[0].time < fin) { const o = this.dates.shift(); this.r[o.id] = o.valeur }
     for (let i = this.attente.length - 1; i >= 0; i--) {
       const o = this.attente[i]
       if (o.time >= fin) continue
@@ -214,16 +218,18 @@ export class MacroPlaits {
   getParameters() { return PARAMETERS; }
   getParameter(id) { return this.#values.get(id) ?? 0; }
 
-  setParameter(id, value) {
+  // `time` (facultatif) : l'instant de l'horloge où le réglage prend effet — un attracteur, une
+  // automation tombent à leur temps, pas quand on les planifie (l'avance du tampon plus tôt)
+  setParameter(id, value, time) {
     const d = PARAMETERS.find((p) => p.id === id);
     if (!d) return;
     const v = clamp(value, d.min, d.max);
     this.#values.set(id, v);
-    const t = this.#ctx.currentTime;
+    const t = Math.max(time ?? 0, this.#ctx.currentTime);
     if (id === 'gain') this.output.gain.setTargetAtTime(v, t, 0.01);
     if (id === 'cutoff') this.#filtre.frequency.setTargetAtTime(Math.min(v, this.#ctx.sampleRate * 0.45), t, 0.02);
     if (id === 'resonance') this.#filtre.Q.setTargetAtTime(v, t, 0.01);
-    if (AU_WORKLET.has(id)) this.#pousser(id, v);
+    if (AU_WORKLET.has(id)) this.#pousser(id, v, time);
   }
 
   noteOn(e) {
@@ -256,5 +262,5 @@ export class MacroPlaits {
     this.output.disconnect();
   }
 
-  #pousser(id, valeur) { this.#noeud?.port.postMessage({ type: 'reglage', id, valeur: id === 'moteur' ? Math.round(valeur) : valeur }); }
+  #pousser(id, valeur, time) { this.#noeud?.port.postMessage({ type: 'reglage', id, valeur: id === 'moteur' ? Math.round(valeur) : valeur, time }); }
 }

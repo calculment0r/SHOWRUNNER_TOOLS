@@ -94,8 +94,8 @@ types.forEach((type, i) => {
   for (const s of d.params) if (!s.opts) params[s.k] = loin(s);
   p.modules.push({ id: `m_${type}`, type, track: null, x: (i % 8) * 3000, y: Math.floor(i / 8) * 3000, w: 200, h: 200, on: true, params });
 });
-// trois machines (le synthé du minilogue, l'ACID-3, la TR-8S), chacune sur le module qui porte son son
-const machines = [['ml', 'analog'], ['a3', 'acid'], ['tr', 'rythme']];
+// chaque machine qui a un son (instrument ou effet), sur le module qui porte ce son (TYPE_DE_VOIX)
+const machines = MB.MACHINES.map((m) => [m.id, T.TYPE_DE_VOIX[MB.MACHINE_ENGINES[m.id]?.voice]]).filter(([, type]) => type);
 machines.forEach(([id, type], i) => {
   const def = MB.MACHINES.find((x) => x.id === id), at = { x: 0, y: 40000 + i * 3000 };
   const ctl = {};
@@ -238,7 +238,7 @@ def selftest(call, ok) -> None:
     ok(ml["ml_v2pitch"][3] == "tonalité" and ml["ml_v2pitch"][5] == "ODIO_01" and ml["ml_v1pitch"][3] == "tonalité" and not ml["ml_v1pitch"][4],
        "attracteurs, les machines : la table d'ODIO_01 décide d'abord ; un contrôle qu'elle nomme sans branchement est capté, pas entendu")
     om = R["operateurMachines"]
-    ok(all(not v["pas"] and v["ok"] for v in om.values()),
+    ok(len(om) >= 10 and all(not v["pas"] for v in om.values()) and all(om[k]["ok"] for k in ("ml", "mf", "a3", "tr", "t3", "pl", "vm")),
        f"attracteurs, les machines : chaque contrôle capté et branché joue son opérateur sur le réglage de son module ({om})")
     # 4. l'opérateur
     op = R["operateur"]

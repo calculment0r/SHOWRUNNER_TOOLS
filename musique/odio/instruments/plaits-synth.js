@@ -107,6 +107,7 @@ class PlaitsProcessor extends AudioWorkletProcessor {
       this.voix.push({ rang, etat: "libre", f0: 0, cible: 0, env: 0, debut: 0, fin: 0, age: 0 })
     }
     this.attente = []
+    this.dates = []   // SHOWRUNNER : les réglages datés (un attracteur), posés au bloc de leur heure
     this.horloge = 0
 
     this.port.onmessage = (message) => this.recevoir(message.data)
@@ -117,7 +118,8 @@ class PlaitsProcessor extends AudioWorkletProcessor {
     if (ordre.type === "note") {
       this.attente.push(ordre)
     } else if (ordre.type === "reglage") {
-      this.reglages[ordre.id] = ordre.valeur
+      // SHOWRUNNER : un réglage daté attend son heure (process)
+      if (ordre.time > currentTime) { this.dates.push(ordre); this.dates.sort((a, b) => a.time - b.time) } else this.reglages[ordre.id] = ordre.valeur
     } else if (ordre.type === "silence") {
       for (const voix of this.voix) if (voix.etat !== "libre") voix.etat = "release"
       this.attente.length = 0
@@ -152,6 +154,8 @@ class PlaitsProcessor extends AudioWorkletProcessor {
 
     // ── LES NOTES DONT L'HEURE EST VENUE, avant de rendre le bloc.
     const finBloc = currentTime + taille / sampleRate
+    // SHOWRUNNER : et les réglages datés
+    while (this.dates.length && this.dates[0].time < finBloc) { const o = this.dates.shift(); this.reglages[o.id] = o.valeur }
     for (let rang = this.attente.length - 1; rang >= 0; rang--) {
       const ordre = this.attente[rang]
       if (ordre.time > finBloc) continue
@@ -279,17 +283,19 @@ export class PlaitsSynth                       {
     return this.#values.get(id) ?? 0
   }
 
-  setParameter(id        , value        )       {
+  // SHOWRUNNER : `time` (facultatif), l'instant où le réglage prend effet — un attracteur tombe à
+  // son temps, pas quand on le planifie (moteur.js, odioSource)
+  setParameter(id        , value        , time         )       {
     const descriptor = PARAMETERS.find((parameter) => parameter.id === id)
     if (!descriptor) return
     const next = clamp(value, descriptor.min, descriptor.max)
     this.#values.set(id, next)
-    const maintenant = this.#context.currentTime
+    const maintenant = Math.max(time ?? 0, this.#context.currentTime)
     if (id === "gain") this.output.gain.setTargetAtTime(next, maintenant, 0.01)
     if (id === "resonance") this.#filtre.Q.setTargetAtTime(next, maintenant, 0.01)
     if (id === "cutoff") this.#filtre.frequency.setTargetAtTime(next, maintenant, 0.02)
     if (id === "fmode") this.#filtre.type = TYPES_FILTRE[Math.round(next)] ?? "lowpass"
-    if (AU_WORKLET.has(id)) this.#pousser(id, next)
+    if (AU_WORKLET.has(id)) this.#pousser(id, next, time)
   }
 
   noteOn(event               )       {
@@ -353,11 +359,12 @@ export class PlaitsSynth                       {
     this.output.disconnect()
   }
 
-  #pousser(id        , valeur        )       {
+  #pousser(id        , valeur        , time         )       {
     this.#noeud?.port.postMessage({
       type: "reglage",
       id,
       valeur: id === "modele" ? Math.round(valeur) : valeur,
+      time,   // SHOWRUNNER : daté (setParameter)
     })
   }
 }
