@@ -19,6 +19,9 @@ import { RhythmBox } from './odio/instruments/rhythm-box.js';
 import { PlaitsSynth } from './odio/instruments/plaits-synth.js';
 // Macro : Plaits complet, ses 24 moteurs (06/10 ; musique/plaits/, même contrat que les instruments d'ODIO)
 import { MacroPlaits } from './plaits/macro.js';
+// Résonateur (Rings) et Physique (Elements) : la même méthode que Macro (09/10 ; musique/mutable/)
+import { Resonateur } from './mutable/resonateur.js';
+import { Physique } from './mutable/physique.js';
 import { VOIX } from './odio/instruments/drums-voices.js';
 import { ReverbEffect } from './odio/effects/reverb.js';
 import { ChorusEffect } from './odio/effects/chorus.js';
@@ -255,6 +258,9 @@ const ODIO = {
   plaits: { cls: PlaitsSynth, name: 'Numérique', kind: 'Plaits · wasm', role: 'source', color: 'coral-2', face: ['modele', 'harmo', 'timbre', 'morph'], trim: -2 },
   // pas d'ODIO_01 : écrit ici sur son contrat (musique/plaits/macro.js, docs/etudes/odio_synthes.md)
   macro: { cls: MacroPlaits, name: 'Macro', kind: 'Plaits · 24 moteurs', role: 'source', color: 'coral-3', face: ['moteur', 'harmo', 'timbre', 'morph'], trim: 0 },
+  // 09/10 : Rings et Elements, compilés comme Plaits (musique/mutable/, docs/etudes/odio_synthes.md § 7)
+  resonateur: { cls: Resonateur, name: 'Résonateur', kind: 'Rings · modal, cordes', role: 'source', color: 'amb', face: ['structure', 'brillance', 'amorti', 'position'], trim: 0 },
+  physique: { cls: Physique, name: 'Physique', kind: 'Elements · archet, souffle, frappe', role: 'source', color: 'grn2', face: ['geometrie', 'brillance', 'amorti', 'position'], trim: 0 },
   reverbe: { cls: ReverbEffect, name: 'Réverbe', kind: 'rvb-02 · convolution', role: 'effect', color: 'cy', face: ['size', 'decay', 'mix'] },
   chorus: { cls: ChorusEffect, name: 'Chorus', kind: 'chr-04 · trois retards', role: 'effect', color: 'cy', face: ['rate', 'depth', 'mix'] },
   rtt: { cls: DelayEffect, name: 'RTT-01', kind: 'délai · filtre en boucle', role: 'effect', color: 'amb', face: ['time', 'fdb', 'mix'] },
@@ -290,7 +296,7 @@ Object.assign(MODULES, JOUETS);   // jouets : leurs réglages et leurs ports (mu
 
 export const EFFECT_TYPES = ['delay', 'reverb', 'comp', 'eq', 'filter', 'dist', ...ODIO_TYPES.filter((t) => ODIO[t].role === 'effect')];
 // les sources qu'une piste peut porter, par sorte de piste
-export const SOURCES_OF = { drums: ['drums', 'rythme'], synth: ['synth', 'analog', 'acid', 'plaits', 'macro'], sampler: ['sampler'], audio: ['player'], bus: ['bus'] };
+export const SOURCES_OF = { drums: ['drums', 'rythme'], synth: ['synth', 'analog', 'acid', 'plaits', 'macro', 'resonateur', 'physique'], sampler: ['sampler'], audio: ['player'], bus: ['bus'] };
 export const kindOfSource = (type) => Object.keys(SOURCES_OF).find((k) => SOURCES_OF[k].includes(type));
 
 // Les voix d'une batterie, selon sa source : la DR-9 (huit voix) ou la

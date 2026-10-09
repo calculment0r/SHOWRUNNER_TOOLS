@@ -1,0 +1,2 @@
+// SHOWRUNNER — <cstdio> vide : Elements l'inclut (tube.cc, ominous_voice.cc) sans
+// rien en appeler dans ce qui est compilé ici (tools/mutable_wasm/construire.sh).

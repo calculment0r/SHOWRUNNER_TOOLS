@@ -26,6 +26,8 @@
 // ─────────────────────────────────────────────────────────────── types
 
 import { DRUM_VOICES,                          } from "../../odio/instruments/rhythm-box.js"
+// SHOWRUNNER (09/10) : le patch DX7 que vise HARMO, pour le FM-6 sur Macro (docs/etudes/odio_synthes.md § 7)
+import { harmoDuPatch } from "../../plaits/macro.js"
 import {
   getCoteSection,
   getMachineDesign,
@@ -1086,6 +1088,29 @@ function reglagesDeVoix()                                                       
 const coupure = { param: "cutoff", from: exp(60, 14000) }
 const resonance = { param: "resonance", from: exp(0.1, 20) }
 const volume = { param: "gain", from: lin(0, 1) }
+/**
+ * SHOWRUNNER (09/10) — LES MACHINES SUR LEURS VRAIS MOTEURS (décision 3 de
+ * docs/etudes/odio_synthes.md, § 7). Trois sortes de voix s'ajoutent à celles
+ * d'ODIO_01 (machines/tuiles.js, TYPE_DE_VOIX) :
+ *   "macro"        Plaits complet (plaits/macro.js) : FM-6, STRINGS-4, MICROFREAK ;
+ *   "soustractif"  le Synthé du studio (moteur.js, SRC.synth) : deux oscillateurs,
+ *                  bruit, deux enveloppes, LFO à délai — POLY-6 et MINILOGUE XD,
+ *                  dont les panneaux ont tout cela et que l'Analog (un oscillateur
+ *                  doublé, une enveloppe) ne servait qu'en partie ;
+ *   "resonateur", "physique"  Rings et Elements (mutable/), pour les gabarits de PLANO.
+ * Les réglages du Synthé de ce branchement sont ceux de modules.js : la coupure
+ * de 40 Hz à 16 kHz, la résonance en dB, les temps en secondes.
+ */
+const coupureS = { param: "cut", from: exp(40, 16000) }
+const resonanceS = { param: "res", from: lin(0, 24) }
+const volumeS = { param: "vol", from: lin(-40, 0) }
+/** La MicroFreak : ses types d'oscillateur dans l'ordre du panneau, et le moteur de Plaits de chacun. */
+export const TYPES_MICROFREAK = [
+  // les modes d'Arturia : leur plus proche voisin dans Plaits (ce n'est pas leur code)
+  ["basic waves", 0], ["superwave", 16], ["wavetable", 13], ["harmonic", 12], ["karplus strong", 19],
+  // les sept modes repris de Plaits par Arturia (CDM, 2019 ; Sound On Sound) : les moteurs mêmes
+  ["v. analog", 8], ["waveshaper", 9], ["two op fm", 10], ["formant", 11], ["chords", 14], ["speech", 15], ["modal", 20],
+]
 
 export const MACHINE_ENGINES                                = {
   /**
@@ -1104,21 +1129,38 @@ export const MACHINE_ENGINES                                = {
    */
   mix: { voice: "table", outSection: "mix_main", notesIn: false, map: {} },
   // ── les instruments : ils reçoivent des notes et sortent du son
+  /**
+   * SHOWRUNNER (09/10) : le MINILOGUE XD passe de l'Analog au Synthé du studio,
+   * qui a ses deux VCO (forme et pied chacun), la part du VCO 2 au mélangeur, ses DEUX enveloppes (l'amplitude, et l'EG du filtre : déclin et
+   * intensité) et son LFO (forme, vitesse ; l'intensité vers la coupure, sa
+   * cible par défaut). Non branchés : la cible du LFO, le pitch fin et le shape
+   * des VCO, sync et ring, le moteur multiple (son bruit n'est qu'une de ses trois
+   * sortes ; par défaut il est en VPM, que le Synthé n'a pas), le drive, les effets, le
+   * séquenceur du panneau.
+   */
   ml: {
-    voice: "synth",
+    voice: "soustractif",
     outSection: "ml_master",
     notesIn: true,
     map: {
-      ml_cut: coupure,
-      ml_res: resonance,
-      ml_mvol: volume,
-      ml_v1wave: { param: "wave", from: (n) => Math.round(n * 2) },
-      ml_v2pitch: { param: "detune", from: lin(0, 50) },
-      ml_e2i: { param: "envAmount", from: lin(0, 8000) },
-      ml_ega: { param: "attack", from: exp(0.001, 2) },
-      ml_egd: { param: "decay", from: exp(0.01, 2) },
-      ml_egs: { param: "sustain", from: lin(0, 1) },
-      ml_egr: { param: "release", from: exp(0.01, 3) },
+      ml_cut: coupureS,
+      ml_res: resonanceS,
+      ml_mvol: volumeS,
+      // saw / tri / sqr → les formes du Synthé (Sinus, Triangle, Dent de scie, Carré)
+      ml_v1wave: { param: "wave", from: (n) => [2, 1, 3][Math.round(n * 2)] },
+      ml_v1oct: { param: "oct", from: (n) => Math.round(n * 3) - 1 },
+      ml_v2wave: { param: "wave2", from: (n) => [3, 2, 4][Math.round(n * 2)] },
+      ml_v2oct: { param: "oct2", from: (n) => Math.round(n * 3) - 1 },
+      ml_mx2: { param: "mix2", from: lin(0, 1) },
+      ml_e2d: { param: "fdec", from: exp(0.01, 3) },
+      ml_e2i: { param: "fenv", from: lin(0, 6) },
+      ml_ega: { param: "a", from: exp(0.001, 3) },
+      ml_egd: { param: "d", from: exp(0.01, 3) },
+      ml_egs: { param: "s", from: lin(0, 1) },
+      ml_egr: { param: "r", from: exp(0.005, 4) },
+      ml_lwave: { param: "lfo_w", from: (n) => [3, 1, 2][Math.round(n * 2)] },
+      ml_lrate: { param: "lfo_f", from: exp(0.05, 20) },
+      ml_lint: { param: "lfo_c", from: lin(0, 3) },
     },
   },
   /**
@@ -1147,15 +1189,22 @@ export const MACHINE_ENGINES                                = {
    * déclin ; le release garde sa valeur et se règle ailleurs, plutôt que
    * d'inventer une liaison que l'appareil ne fait pas.
    */
+  /**
+   * SHOWRUNNER (09/10) : la MicroFreak passe des six OSCILLATEURS de Plaits
+   * (le Numérique) à ses MOTEURS (Macro). Sept de ses douze types sont les
+   * moteurs mêmes de Plaits, repris par Arturia ; ses cinq types à elle prennent
+   * leur plus proche voisin (TYPES_MICROFREAK). Le reste du branchement est
+   * celui d'avant : Macro a reçu pour elle le mode du filtre et son enveloppe.
+   */
   mf: {
-    voice: "plaits",
+    voice: "macro",
     outSection: "mf_x8",
     notesIn: true,
     map: {
       mf_fcut: coupure,
       mf_fres: resonance,
       mf_pvol: volume,
-      mf_otype: { param: "modele", from: (n) => Math.round(n * 5) },
+      mf_otype: { param: "moteur", from: (n) => TYPES_MICROFREAK[Math.round(n * (TYPES_MICROFREAK.length - 1))][1] },
       mf_owave: { param: "harmo", from: lin(0, 1) },
       mf_otim: { param: "timbre", from: lin(0, 1) },
       mf_oshape: { param: "morph", from: lin(0, 1) },
@@ -1166,11 +1215,39 @@ export const MACHINE_ENGINES                                = {
       mf_esus: { param: "sustain", from: lin(0, 1) },
     },
   },
+  /**
+   * SHOWRUNNER (09/10) : le POLY-6 passe de l'Analog au Synthé du studio, qui a
+   * ce que son panneau montre — un LFO à délai vers le filtre, le pied du DCO,
+   * un sous-oscillateur (l'oscillateur B, carré, une octave dessous), le bruit,
+   * l'enveloppe ADSR, la quantité d'enveloppe sur le filtre, le portamento — et
+   * son chorus en copies désaccordées de l'oscillateur (« ensemble »). Non
+   * branchés, faute d'équivalent dans le Synthé : la largeur d'impulsion et sa
+   * modulation, les boutons dent de scie / impulsion, le coupe-bas, la polarité,
+   * le mode de voix, l'onde du LFO (il reste en triangle, VOIX_DES_PANNEAUX).
+   */
   p6: {
-    voice: "synth",
+    voice: "soustractif",
     outSection: "p6_a7",
     notesIn: true,
-    map: { p6_cut: coupure, p6_res: resonance, p6_vol: volume },
+    map: {
+      p6_lr: { param: "lfo_f", from: exp(0.05, 20) },
+      p6_ld: { param: "lfo_d", from: lin(0, 2) },
+      p6_rng: { param: "oct", from: (n) => Math.round(n * 2) - 1 },
+      p6_sub: { param: "mix2", from: lin(0, 0.6) },
+      p6_nse: { param: "noise", from: lin(0, 1) },
+      p6_cut: coupureS,
+      p6_res: resonanceS,
+      p6_eamt: { param: "fenv", from: lin(0, 6) },
+      p6_lamt: { param: "lfo_c", from: lin(0, 3) },
+      p6_ea: { param: "a", from: exp(0.001, 3) },
+      p6_ed: { param: "d", from: exp(0.01, 3) },
+      p6_es: { param: "s", from: lin(0, 1) },
+      p6_er: { param: "r", from: exp(0.005, 4) },
+      p6_ch: { param: "uni", from: (n) => 1 + Math.round(n * 2) },
+      p6_chd: { param: "det", from: lin(0, 30) },
+      p6_port: { param: "glide", from: lin(0, 1) },
+      p6_vol: volumeS,
+    },
   },
   /**
    * L'ACID-3 est une 303, pas un synthé poly réglé grave.
@@ -1196,8 +1273,57 @@ export const MACHINE_ENGINES                                = {
       a3_vol: { param: "gain", from: lin(0, 1) },
     },
   },
-  f6: { voice: "synth", outSection: "f6_c1", notesIn: true, map: {} },
-  s4: { voice: "synth", outSection: "s4_d4", notesIn: true, map: { s4_ovol: volume } },
+  /**
+   * SHOWRUNNER (09/10) : le FM-6 n'était pas de la FM (le synthé soustractif,
+   * branchement vide). Il joue maintenant le moteur FM à six opérateurs de
+   * Plaits et ses banques de 32 patchs au format DX7 (Macro, moteurs 2 à 4 ;
+   * la banque des claviers par défaut, VOIX_DES_PANNEAUX). Ce qui se branche,
+   * d'après la documentation du module (Plaits 1.2, « 6-operator FM synth » :
+   * HARMO le patch, TIMBRE le niveau des modulateurs, MORPH l'étirement des
+   * enveloppes) :
+   *   algo (32 crans)  → le patch : chaque patch DX7 porte son algorithme ;
+   *   retour           → TIMBRE : les modulateurs plus ou moins forts ; à la
+   *                      place du bouton sur le panneau (0,3), ceux du patch (0,5) ;
+   *   r2               → MORPH, à rebours : une vitesse plus haute raccourcit
+   *                      les enveloppes ; au milieu, celles du patch.
+   * Les rapports, niveaux et désaccords par opérateur, la matrice, la courbe et
+   * l'échelle de clavier ne se branchent pas : Plaits les lit dans le patch.
+   */
+  f6: {
+    voice: "macro",
+    outSection: "f6_c1",
+    notesIn: true,
+    map: {
+      f6_alg: { param: "harmo", from: (n) => harmoDuPatch(Math.round(n * 31)) },
+      f6_fb: { param: "timbre", from: (n) => (n <= 0.3 ? (n / 0.3) * 0.5 : 0.5 + ((n - 0.3) / 0.7) * 0.5) },
+      f6_c3_r2: { param: "morph", from: (n) => 1 - n },
+    },
+  },
+  /**
+   * SHOWRUNNER (09/10) : le STRINGS-4 joue la string machine de Plaits (Macro,
+   * moteur 6 : « String machine emulation with stereo filter and chorus »,
+   * HARMO l'accord, TIMBRE le chorus et le filtre, MORPH la forme d'onde) ;
+   * l'accord est l'octave (VOIX_DES_PANNEAUX) : chaque note jouée sonne avec
+   * son octave, comme les registres d'un ensemble. Branchés : le registre de 4'
+   * → MORPH, sur la moitié des onze registrations du moteur (string_machine_engine.cc :
+   * de la scie seule aux mélanges de scies et de carrés), la profondeur de
+   * l'ensemble → TIMBRE, l'attaque et la chute, la tenue, le volume. Les
+   * autres registres, la vitesse et le mode de l'ensemble, l'archet, la
+   * balance et l'accord n'ont pas d'équivalent dans le moteur.
+   */
+  s4: {
+    voice: "macro",
+    outSection: "s4_d4",
+    notesIn: true,
+    map: {
+      s4_r4: { param: "morph", from: lin(0, 0.5) },
+      s4_ed: { param: "timbre", from: lin(0.5, 1) },
+      s4_at: { param: "attack", from: exp(0.005, 2) },
+      s4_rl: { param: "release", from: exp(0.05, 4) },
+      s4_sus: { param: "sustain", from: (n) => Math.round(n) },
+      s4_ovol: volume,
+    },
+  },
 
   // ── la boîte à rythme : elle joue son propre motif, pas de notes en entrée
   tr: {

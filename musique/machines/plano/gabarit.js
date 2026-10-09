@@ -34,7 +34,10 @@
                               
 
 /** Les voix du moteur qu'un gabarit peut porter. */
-export const VOIX_DE_GABARIT = ["synth", "plaits", "acide", "rythme", "delay", "reverb", "comp", "notes"]         
+// SHOWRUNNER (09/10) : les vrais moteurs aussi (machines/tuiles.js, TYPE_DE_VOIX) — Macro, le
+// Synthé du studio, le Résonateur (Rings), Physique (Elements)
+export const VOIX_DE_GABARIT = ["synth", "plaits", "acide", "rythme", "delay", "reverb", "comp", "notes",
+  "macro", "soustractif", "resonateur", "physique"]         
                                                             
 
 /** Les lois de branchement : comment une position 0..1 devient une valeur. */
@@ -277,7 +280,8 @@ export function composer(gabarit         )                  {
   const moteur                = {
     voice: voix,
     outSection: `${gabarit.id}_${gabarit.sortie}`,
-    notesIn: voix === "synth" || voix === "plaits" || voix === "acide",
+    // SHOWRUNNER (09/10) : les voix mélodiques neuves reçoivent des notes
+    notesIn: ["synth", "plaits", "acide", "macro", "soustractif", "resonateur", "physique"].includes(voix),
     map,
   }
   return {
