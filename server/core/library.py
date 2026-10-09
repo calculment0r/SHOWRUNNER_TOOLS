@@ -312,6 +312,8 @@ def check_create(space: str | None) -> None:
     """Créer dans ce Workspace (planche, séquence, projet, dépôt de fichier) : la
     matrice, `create` (un lecteur, un commentateur, un guest viewer : non).
     PermissionError (403) qui dit pourquoi et à qui demander. Le socle : oui."""
+    if espaces.gone(space):   # D4 : rien ne naît dans un Workspace détruit, pas même un travail du socle
+        raise PermissionError("ce Workspace a été détruit : rien ne s'y crée plus (Cal peut le rendre, Admin → Stockage)")
     u = auth.current()
     if u is None or (auth.is_admin(u) and espaces.space(space) is None):
         return   # le socle ; Cal hors de tout Workspace connu (teams.json absent ou illisible)
@@ -1009,6 +1011,51 @@ def restore(item_id: str) -> dict:
         it = json.loads((folder_of(item_id) / "item.json").read_text(encoding="utf-8"))
         _items[item_id] = it
         return it
+
+
+# ── un Workspace détruit (D4, 09/10 ; core/espaces.py, destroy_space) ──
+# Ses objets vont à la corbeille d'un bloc : le jugement (qui détruit) est fait, les gardes de la
+# corbeille (une version posée ne part pas) n'ont pas lieu d'être — tout ce qui la pose part avec
+# elle. Chaque `item.json` garde son Workspace : la corbeille d'Asset ne les montre à personne (un
+# Workspace détruit ne se voit pas), Admin → Stockage les compte, « Vider la corbeille » les
+# efface. Rendre le Workspace (restore_space) les sort de la corbeille, tels quels.
+def bury(space: str) -> list[str]:
+    """Tous les objets de ce Workspace à la corbeille ; rend leurs identifiants."""
+    _load()
+    out = []
+    with _lock:
+        for iid in [k for k, it in _items.items() if it.get("space") == space]:
+            src, dest = folder_of(iid), trash_root() / iid
+            if not src.is_dir():
+                _items.pop(iid, None)
+                continue
+            if dest.exists():   # un même identifiant déjà jeté (une copie d'essai) : l'objet vivant l'emporte
+                shutil.rmtree(dest)
+            shutil.move(str(src), str(dest))
+            _items.pop(iid, None)
+            out.append(iid)
+    return out
+
+
+def unbury(ids: list[str], space: str) -> list[str]:
+    """Le retour : ceux de ces objets que la corbeille tient encore (elle a pu être vidée), du
+    Workspace `space`, reviennent dans la bibliothèque ; rend leurs identifiants."""
+    _load()
+    out = []
+    with _lock:
+        for iid in ids:
+            if not ID_RE.fullmatch(str(iid)):
+                continue
+            src = trash_root() / iid
+            if not src.is_dir() or folder_of(iid).exists() or space_of(trashed_meta(iid)) != space:
+                continue
+            shutil.move(str(src), str(folder_of(iid)))
+            try:
+                _items[iid] = json.loads((folder_of(iid) / "item.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            out.append(iid)
+    return out
 
 
 # ── rapatrier : copier un objet d'un Workspace dans un autre ─

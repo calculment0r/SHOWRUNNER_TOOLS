@@ -499,7 +499,21 @@ def owner_of(it: dict) -> str | None:
 # le rôle dans leur Workspace).
 # Ces juges disent « où qu'il soit » : la borne du Workspace courant (un outil n'atteint
 # que son Workspace) est à part, dans core/library.py (readable, get, query).
-def can_read_item(it: dict, u: dict | None, _view=None, links: bool = True) -> bool:
+# Un Workspace détruit (D4, core/espaces.py, destroy_space) : ce qu'il tenait n'est à
+# personne, Cal et le socle compris, tant que Cal ne l'a pas rendu — par ces trois juges.
+def _gone(it: dict, memo: dict | None = None) -> bool:
+    from . import espaces
+    s = space_of(it)
+    if memo is None:
+        return espaces.gone(s)
+    if s not in memo:
+        memo[s] = espaces.gone(s)
+    return memo[s]
+
+
+def can_read_item(it: dict, u: dict | None, _view=None, links: bool = True, _dead: dict | None = None) -> bool:
+    if _gone(it, _dead):
+        return False
     if is_guest(u):   # un invité : les objets que ses outils lui montrent, rien d'autre
         return it.get("id") in guest_items(u)
     if u is None or is_admin(u):
@@ -513,19 +527,22 @@ def item_reader(u: dict | None):
     """can_read_item pour une liste : l'avis de chaque Workspace pris une fois (une liste
     de 10 000 objets ne rejuge pas 10 000 fois le même Workspace)."""
     memo: dict = {}
+    dead: dict = {}
 
     def view(space):
         if space not in memo:
             memo[space] = can_view(u, space)
         return memo[space]
-    return lambda it: can_read_item(it, u, view, links=False)
+    return lambda it: can_read_item(it, u, view, links=False, _dead=dead)
 
 
 def can_write_item(it: dict, u: dict | None) -> bool:
     """Modifier : un éditeur du Workspace du document (décision 9 : dans un Workspace
     partagé, tout éditeur modifie ; un guest acteur aussi ; un lecteur, un commentateur,
     un guest viewer, jamais ; un Workspace archivé : personne) ; Cal, tout. L'invité
-    d'une planche : ce qui est à lui."""
+    d'une planche : ce qui est à lui. Un Workspace détruit : personne."""
+    if _gone(it):
+        return False
     if u is None or is_admin(u):
         return True
     if is_guest(u):
@@ -537,7 +554,9 @@ def can_write_item(it: dict, u: dict | None) -> bool:
 def can_trash_item(it: dict, u: dict | None) -> bool:
     """Mettre à la corbeille, en sortir : l'auteur s'il peut modifier dans ce Workspace,
     un admin du Workspace (ou de sa Team), Cal. Un objet sans auteur (d'avant la porte) :
-    les admins."""
+    les admins. Un Workspace détruit : personne (Cal le rend d'un bloc, Admin → Stockage)."""
+    if _gone(it):
+        return False
     if u is None or is_admin(u):
         return True
     if is_guest(u):
@@ -573,7 +592,7 @@ STUDIO_WHY = ("{name} fait partie du Studio ; ton compte ouvre les Apps et Asset
 
 
 def access_of(u: dict | None, space: str | None = None) -> str:
-    """Sans espace : le droit du compte (l'offre de sa Team personnelle « Chez moi »).
+    """Sans espace : le droit du compte (l'offre de sa Team personnelle, My Team).
     Avec un Workspace : l'offre de sa Team (Teams et Workspaces : le droit passe à la
     Team), s'il y entre ; sinon celle du compte."""
     if u is None or is_admin(u):
@@ -1637,7 +1656,7 @@ def users_public() -> list[dict]:
                         # le droit Studio : l'effectif (un admin l'a toujours), et la demande qui attend
                         "access": access_of(u),
                         "studio_asked": (u.get("studio_request") or None) if not has_studio(u) else None,
-                        # Teams et Workspaces : un compte entré comme guest n'a pas de « Chez moi »
+                        # Teams et Workspaces : un compte entré comme guest n'a pas de Team personnelle (My Team)
                         "perso": u.get("perso", True) is not False and u.get("role") != GUEST, "via": u.get("via")})
     return sorted(out, key=lambda x: (x["role"] != "admin", x["state"] != "pending", x["name"].lower()))
 

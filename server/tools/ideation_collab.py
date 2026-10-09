@@ -206,6 +206,18 @@ def _others(bid: str, cid: str | None = None) -> list[Conn]:
         return [x for x in _boards.get(bid, {}).values() if x.cid != cid]
 
 
+def _workspace_gone(sid: str) -> None:
+    """Un Workspace détruit (core/espaces.py, QUAND_DETRUIT) : les onglets ouverts sur ses
+    planches sont congédiés aussitôt, en le disant (leur rôle n'y est plus que « none »)."""
+    with _lock:
+        bids = list(_boards)
+    for bid in bids:
+        if _ide().board_space(bid) != sid:
+            continue
+        for c in _others(bid):
+            _remove(c, "ce Workspace a été détruit")
+
+
 def _broadcast(bid: str, payload: bytes, exclude: str | None = None) -> None:
     for x in _others(bid, exclude):
         _push(x, payload)
@@ -471,6 +483,9 @@ def role_of(u: dict | None, bid: str) -> str:
     quel Workspace (equipes_espaces.md § 1.7 : la planche peut ouvrir plus) — celui
     qui l'a reçu n'est souvent pas du Workspace de la planche (un ami « Apps » n'a que
     le sien)."""
+    from core import espaces
+    if espaces.gone(_ide().board_space(bid)):   # D4 : une planche d'un Workspace détruit n'est à personne, lien compris
+        return "none"
     if not auth.enabled():
         return "owner"
     if not u:
@@ -1969,6 +1984,9 @@ def register(app) -> None:
                      shared=lambda u: bool(guest_boards(u)), link_param="invite")   # …/ideation/?invite=<jeton>#<planche>
     app.route("GET", auth.GUEST_HOME, auth.r_guest_home)
     app.route("HEAD", auth.GUEST_HOME, auth.r_guest_home)
+    from core import espaces
+    if _workspace_gone not in espaces.QUAND_DETRUIT:   # un Workspace détruit : ses onglets ouverts sont congédiés
+        espaces.QUAND_DETRUIT.append(_workspace_gone)
     app.route("GET", "/api/ideation/collab/{bid}", r_state)
     app.route("POST", "/api/ideation/collab/{bid}/ops", r_ops)
     app.route("GET", "/api/ideation/collab/{bid}/ops", r_ops_since)

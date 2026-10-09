@@ -8,7 +8,7 @@ Le modèle
     | studio), l'interrupteur des API payantes (`api`, coupé par défaut), des
     membres avec un rôle de Team : `owner` (un seul), `admin`, `member`,
     `guest`. Le droit `access` d'aujourd'hui passe à la Team ; la Team
-    personnelle d'un compte (« Chez moi ») a l'offre de son compte : un compte
+    personnelle d'un compte (« My Team ») a l'offre de son compte : un compte
     à `access: studio` → sa Team l'a (une seule vérité : auth.access_of).
   - Un **Workspace** (`esp-…`) est un lieu de travail d'une Team : ce qu'on y
     crée lui appartient (le champ `space` d'un objet ou d'un document ; sans
@@ -23,9 +23,26 @@ Le modèle
     acteur, un guest ne consomme **jamais** de calcul (`can_compute` faux,
     quel que soit le coût) ni ne publie, ni n'invite.
   - Chaque compte (sauf un invité de planche, rôle portail `invite`, et un
-    compte entré comme guest) a sa Team personnelle « Chez moi », seul, avec
-    un Workspace « Perso » : l'offre Apps y crée ses Workspaces ; elle
-    n'invite personne (inviter est du Studio).
+    compte entré comme guest) a sa Team personnelle, « My Team » (décision de
+    Cal du 09/10 : on ne travaille pas en dehors d'une Team ; « Chez moi » /
+    « Perso » avant), avec un Workspace « Général » (« Perso » pour celles
+    d'avant, gardé tel quel) : l'offre Apps y crée ses Workspaces. Son
+    propriétaire la renomme (`renamed` le retient : le renommage des
+    « Chez moi » d'avant, rename_personal, ne touche jamais un nom choisi).
+    Elle invite si son propriétaire a le Studio (inviter est du Studio : un
+    compte Apps la garde seul) ; elle ne se détruit pas et ne se quitte pas
+    (c'est la maison du compte).
+  - Détruire (09/10, D4) : un Workspace (qui gère sa Team, Cal ; jamais le
+    dernier ouvert d'une Team, jamais Général), une Team (son propriétaire,
+    Cal ; jamais une Team personnelle ni Nirvalab) — confirmé en tapant son nom.
+    Son enregistrement passe dans `destroyed_spaces` (et `destroyed_teams`) :
+    tout ce qui porte son identifiant devient, par construction, à personne
+    (aucun profil dans un Workspace qui n'existe plus ; `gone` ferme aussi les
+    juges d'auth à Cal et le lien d'une planche) ; les objets de la
+    bibliothèque vont à la corbeille (library.bury), les travaux en cours
+    s'arrêtent. Cal le rend (restore_space) : le MÊME identifiant revient, dans
+    la My Team de son auteur principal (sinon celle de Cal) — rien à
+    réécrire : chaque document porte encore son `space`.
 
 L'API interne (pour les étapes suivantes ; auth.py en reprend l'essentiel)
   profile(u, espace)                 le profil de la matrice, ou None (n'y entre pas)
@@ -43,6 +60,10 @@ L'API interne (pour les étapes suivantes ; auth.py en reprend l'essentiel)
   migrate(root, dry) → rapport       la migration (étape 3), idempotente
   budget_of(team) / set_budget(u, team, patch) / unblockers(team)
                                      le réglage du budget (étape 8) ; la réservation : core/jobs.py
+  destroy_space(u, e, nom) / destroy_team(u, t, nom) / restore_space(u, e, vers)
+  destroyed_list() / gone(e) / content_of(espaces)
+                                     détruire, la corbeille des Workspaces détruits, ce que tient un
+                                     Workspace (D4, 09/10) ; rename_personal(dry) : « Chez moi » → My Team
 
 Stockage : `<data_dir>/teams.json` (relu s'il change, écrit d'un bloc) :
   {"v": 1, "default": "esp-general",
@@ -52,7 +73,10 @@ Stockage : `<data_dir>/teams.json` (relu s'il change, écrit d'un bloc) :
    "spaces": {id: {id, team, name, default_role, created, by, archived,
                    members: {uid: {role} | {guest: true}}}},
    "invites": {id: {id, h, team, role, guest, spaces, hours, created, exp, by, revoked, uses}},
-   "users":  {uid: {last}}}
+   "users":  {uid: {last}},
+   "destroyed_spaces": {id: {…le Workspace…, destroyed: {at, by, team_name, team_gone?, objets: [ids],
+                             corbeille, documents: {magasin: n}, auteurs: {uid: n}}}},
+   "destroyed_teams":  {id: {…la Team, sans son budget…, destroyed: {at, by, spaces: [ids]}}}}
 """
 
 from __future__ import annotations
@@ -78,6 +102,9 @@ PLANS = ("apps", "studio")
 COSTS = ("none", "cpu", "gpu", "api")
 HOURS = (24, 72, 168, 720)
 NIRVALAB, GENERAL = "tea-nirvalab", "esp-general"
+# la Team personnelle (décision de Cal du 09/10) : son nom à la naissance, celui d'avant (que
+# rename_personal remplace, jamais un nom choisi), le nom de son premier Workspace
+PERSONAL_NAME, PERSONAL_OLD, PERSONAL_SPACE = "My Team", "Chez moi", "Général"
 HEADER, PARAM = "X-SR-Espace", "e"
 TEAM_RX = re.compile(r"tea-[a-z0-9][a-z0-9-]{1,47}")
 SPACE_RX = re.compile(r"esp-[a-z0-9][a-z0-9-]{1,47}")
@@ -138,7 +165,8 @@ def clean_name(name, what: str = "le nom") -> str:
 
 # ── le fichier ──────────────────────────────────────────────
 def _empty() -> dict:
-    return {"v": 1, "default": None, "teams": {}, "spaces": {}, "invites": {}, "users": {}}
+    return {"v": 1, "default": None, "teams": {}, "spaces": {}, "invites": {}, "users": {},
+            "destroyed_spaces": {}, "destroyed_teams": {}}
 
 
 def _file(root: Path | None = None) -> Path:
@@ -236,6 +264,16 @@ def space(sid: str | None) -> dict | None:
     with _lock:
         sp = _data()["spaces"].get(sid or "")
         return dict(sp) if sp else None
+
+
+def gone(sid: str | None) -> bool:
+    """Ce Workspace a-t-il été détruit (D4) ? Ce qu'il tenait n'est alors à personne — Cal
+    compris (auth.can_read_item, can_write_item, can_trash_item ; le lien d'une planche) —
+    tant que Cal ne l'a pas rendu (restore_space), et rien ne s'y crée (library.check_create)."""
+    if not sid:
+        return False
+    with _lock:
+        return sid in _data()["destroyed_spaces"]
 
 
 def team(tid: str | None) -> dict | None:
@@ -341,9 +379,18 @@ WHY = {
     "guest_compute": "guest : calculer et publier sont réservés aux membres de la Team — demande à un admin de la Team",
     "role": "ton rôle dans ce Workspace ({role}) ne le permet pas — demande à un admin du Workspace",
     "api": "l'API payante est coupée pour cette Team — un admin de la Team l'ouvre",
-    "personal": "« Chez moi » est une Team personnelle : elle n'invite personne — crée une Team pour inviter",
+    # D2 (Cal, 09/10) : My Team invite si son propriétaire a le Studio ; un compte Apps la garde seul
+    "personal": "My Team a l'offre de son compte, Apps : inviter est du Studio — son propriétaire demande le Studio à Cal",
+    "personal_mine": "My Team a l'offre de ton compte, Apps : inviter est du Studio — demande le Studio à Cal "
+                     "(bouton « Demander le Studio »)",
     "apps": "offre Apps : inviter est du Studio — demande le Studio à Cal",
 }
+
+
+def _personal_why(t: dict, u) -> str:
+    """La phrase du refus d'inviter dans une Team personnelle Apps : à son propriétaire, ce qui
+    la débloque (sa demande de Studio, règle 7) ; aux autres, à qui elle revient."""
+    return WHY["personal_mine" if u and t.get("owner") == _uid(u) else "personal"]
 
 
 def judge(u, sid: str | None, action: str) -> tuple[bool, str | None]:
@@ -364,17 +411,14 @@ def judge(u, sid: str | None, action: str) -> tuple[bool, str | None]:
             return False, WHY["role"].format(role=label)
         if (sp.get("archived") or t.get("archived")) and action not in ARCHIVED_OK:
             return False, WHY["archived"]
+        if action == "invite_space" and t.get("personal") and plan_of(t) != "studio":
+            return False, _personal_why(t, u)   # Cal compris : un compte Apps garde sa My Team seul
         if p == "portal_admin":
-            if action in ("invite_space",) and t.get("personal"):
-                return False, WHY["personal"]
             return True, None
         if action == "compute_api" and not t.get("api"):
             return False, WHY["api"]
-        if action == "invite_space":
-            if t.get("personal"):
-                return False, WHY["personal"]
-            if plan_of(t) != "studio":
-                return False, WHY["apps"]
+        if action == "invite_space" and plan_of(t) != "studio":
+            return False, WHY["apps"]
     return True, None
 
 
@@ -466,17 +510,19 @@ def personal_space_id(uid: str) -> str:
 
 
 def _ensure_personal(db: dict, uid: str, by: str = "", now: str | None = None) -> tuple[str, bool]:
-    """La Team « Chez moi » et son Workspace « Perso » (idempotent) ; (espace, créé ?)."""
+    """La Team « My Team » et son Workspace « Général » (idempotent) ; (espace, créé ?). Une Team
+    personnelle d'avant garde son nom et son Workspace « Perso » ; un Workspace perso détruit
+    (D4 : la Team en garde un autre) ne revient pas."""
     tid, sid = personal_team_id(uid), personal_space_id(uid)
     now = now or now_iso()
     made = False
     if tid not in db["teams"]:
-        db["teams"][tid] = {"id": tid, "name": "Chez moi", "plan": None, "personal": True, "owner": uid, "api": False,
+        db["teams"][tid] = {"id": tid, "name": PERSONAL_NAME, "plan": None, "personal": True, "owner": uid, "api": False,
                             "created": now, "by": by or uid, "archived": None,
                             "members": {uid: {"role": "owner", "since": now, "by": by or uid}}}
         made = True
-    if sid not in db["spaces"]:
-        db["spaces"][sid] = {"id": sid, "team": tid, "name": "Perso", "default_role": "editor", "created": now,
+    if sid not in db["spaces"] and sid not in db["destroyed_spaces"]:
+        db["spaces"][sid] = {"id": sid, "team": tid, "name": PERSONAL_SPACE, "default_role": "editor", "created": now,
                              "by": by or uid, "archived": None, "members": {}}
         made = True
     return sid, made
@@ -488,8 +534,9 @@ def ensure_personal(u) -> str | None:
     uid = _uid(u)
     with _lock:
         db = _data()
-        if personal_team_id(uid) in db["teams"] and personal_space_id(uid) in db["spaces"]:
-            return personal_space_id(uid)
+        if personal_team_id(uid) in db["teams"] and (personal_space_id(uid) in db["spaces"]
+                                                      or personal_space_id(uid) in db["destroyed_spaces"]):
+            return home_space(db, uid)
         if _broken:
             return None
         sid, made = _ensure_personal(db, uid)
@@ -498,6 +545,20 @@ def ensure_personal(u) -> str | None:
     if made:
         auth.journal("team personnelle", user=uid)
     return sid
+
+
+def home_space(db: dict, uid: str) -> str | None:
+    """Le Workspace où l'on retombe chez soi : celui de sa My Team né avec elle s'il est
+    ouvert, sinon le plus ancien de ses Workspaces ouverts (le premier a pu être détruit)."""
+    tid = personal_team_id(uid)
+    if (db["teams"].get(tid) or {}).get("archived"):
+        return None
+    sid = personal_space_id(uid)
+    if (db["spaces"].get(sid) or {}).get("team") == tid and not db["spaces"][sid].get("archived"):
+        return sid
+    mine = sorted((x for x in db["spaces"].values() if x.get("team") == tid and not x.get("archived")),
+                  key=lambda x: x.get("created") or "")
+    return mine[0]["id"] if mine else None
 
 
 def _visible_spaces(db: dict, u, superpower: bool) -> list[str]:
@@ -511,7 +572,7 @@ def default_for(u) -> str | None:
     if not u:
         return None
     uid = _uid(u)
-    ensure_personal(u)   # chaque compte a sa Team « Chez moi » dès sa première requête (idempotent)
+    ensure_personal(u)   # chaque compte a sa Team personnelle (My Team) dès sa première requête (idempotent)
     with _lock:
         db = _data()
         live = lambda s: (s in db["spaces"] and not db["spaces"][s].get("archived")   # noqa: E731
@@ -523,12 +584,14 @@ def default_for(u) -> str | None:
         if d and live(d) and _profile(db, u, d, superpower=False):
             return d
         mine = [s for s in _visible_spaces(db, u, superpower=False) if live(s)]
-        shared = [s for s in mine if not db["teams"][db["spaces"][s]["team"]].get("personal")]
+        own = personal_team_id(uid)
+        shared = [s for s in mine if db["spaces"][s]["team"] != own]
         if shared:
             return sorted(shared, key=lambda s: (db["teams"][db["spaces"][s]["team"]]["name"].lower(),
                                                  db["spaces"][s].get("created") or ""))[0]
-        if personal_space_id(uid) in db["spaces"] and live(personal_space_id(uid)):
-            return personal_space_id(uid)
+        home = home_space(db, uid)
+        if home and live(home):
+            return home
     return ensure_personal(u) or (d if d and auth.is_admin(u) else None)
 
 
@@ -578,6 +641,10 @@ def _space_public(db: dict, u, sid: str, detail: bool) -> dict:
     out = {"id": sid, "name": sp["name"], "team": sp["team"], "archived": sp.get("archived"),
            "default_role": sp.get("default_role") or "editor", "role": space_role(u, sid), "profile": profile(u, sid),
            **_can_map(u, sid)}
+    no = _destroy_space_why(db, u, sid)   # détruire (D4) : la même phrase que le refus de la route
+    out["can"]["destroy"] = no is None
+    if no:
+        out["why"]["destroy"] = no[1]
     if detail:
         out["members"] = {k: dict(v) for k, v in (sp.get("members") or {}).items()}
     return out
@@ -592,16 +659,20 @@ def _team_public(db: dict, u, tid: str, detail: bool) -> dict:
     seen = [s for s in sids if _profile(db, u, s)]
     sids = sorted(seen, key=lambda s: (bool(db["spaces"][s].get("archived")), db["spaces"][s].get("created") or ""))
     inv_ok, inv_why = True, None
-    if t.get("personal"):
-        inv_ok, inv_why = False, WHY["personal"]
+    if t.get("personal") and plan_of(t) != "studio":   # D2 : un compte Apps garde sa My Team seul
+        inv_ok, inv_why = False, _personal_why(t, u)
     elif plan_of(t) != "studio" and not auth.is_admin(u):
         inv_ok, inv_why = False, WHY["apps"]
     elif not manage:
         inv_ok, inv_why = False, "inviter dans la Team : son propriétaire ou un de ses admins"
+    ren_why = _rename_why(t, u)
+    no = _destroy_team_why(db, u, tid)
     out = {"id": tid, "name": t["name"], "plan": plan_of(t), "personal": bool(t.get("personal")), "owner": t.get("owner"),
            "owner_name": auth.display_name(t.get("owner")), "api": bool(t.get("api")), "archived": t.get("archived"),
-           "role": me.get("role") or ("admin" if auth.is_admin(u) else None), "guest": me.get("guest"),
+           "role": me.get("role") or ("admin" if auth.is_admin(u) else None), "guest": me.get("guest"), "member": bool(me),
            "manage": manage, "invite": inv_ok, "invite_why": inv_why,
+           "rename": ren_why is None, "rename_why": ren_why,
+           "destroy": no is None, "destroy_why": no[1] if no else None,
            "spaces": [_space_public(db, u, s, detail and manage) for s in sids]}
     if detail and (manage or me.get("role") in ("owner", "admin", "member")):
         rows = []
@@ -644,7 +715,7 @@ def space_public(u, sid: str | None) -> dict | None:
             return None
         out = _space_public(db, u, sid, False)
         t = db["teams"].get(out["team"]) or {}
-        out.update(team_name=t.get("name"), plan=plan_of(t), personal=bool(t.get("personal")))
+        out.update(team_name=label_of(t, _uid(u)) if t else None, plan=plan_of(t), personal=bool(t.get("personal")))
     return out
 
 
@@ -654,6 +725,14 @@ def me_payload(u, current: str | None, refused: str | None = None) -> dict:
     if refused:
         out["workspace_refused"] = refused
     return out
+
+
+def label_of(t: dict, uid: str | None) -> str:
+    """Le nom d'une Team pour cette personne : la My Team d'un autre dit à qui elle est
+    (chacun a la sienne, toutes nées « My Team »)."""
+    if t.get("personal") and t.get("owner") != uid:
+        return f"{t['name']} · {auth.display_name(t.get('owner'))}"
+    return t["name"]
 
 
 def people_for(u) -> dict:
@@ -668,14 +747,15 @@ def people_for(u) -> dict:
     uid, every = _uid(u), auth.is_admin(u)
     with _lock:
         db = _data()
-        mine = [t for t in db["teams"].values() if not t.get("personal") and not t.get("archived")
+        # une My Team qui invite (D2, 09/10) compte comme les autres : ses membres sont des gens de mes Teams
+        mine = [t for t in db["teams"].values() if not t.get("archived")
                 and (t.get("members", {}).get(uid) or {}).get("role") in ("owner", "admin", "member")]
         teams: dict[str, list] = {}   # qui → les Teams (partagées) où on le trouve
         for t in (db["teams"].values() if every else mine):
-            if t.get("personal"):
+            if t.get("personal") and (every or len(t.get("members") or {}) < 2):
                 continue
             for mid in t.get("members", {}):
-                teams.setdefault(mid, []).append(t["name"])
+                teams.setdefault(mid, []).append(label_of(t, uid))
     ids = [x["id"] for x in auth.users_public()] if every else list(teams)
     out = []
     for i in ids:
@@ -768,8 +848,9 @@ def team_view(u, tid: str) -> dict:
 
 
 def update_team(u, tid: str, patch: dict) -> dict:
-    """Renommer (qui gère), archiver ou rouvrir (le propriétaire, Cal), l'offre (Cal),
-    l'API payante (qui gère : ouverte ou coupée)."""
+    """Renommer (qui gère ; My Team : son propriétaire, ou Cal — `renamed` retient que le nom est
+    choisi), archiver ou rouvrir (le propriétaire, Cal), l'offre (Cal), l'API payante (qui gère :
+    ouverte ou coupée)."""
     with _lock:
         db = _data()
         t = _team_or_404(db, tid)
@@ -777,13 +858,16 @@ def update_team(u, tid: str, patch: dict) -> dict:
         _need(can_manage(u, tid), "réglages de la Team : son propriétaire ou un de ses admins")
         done = {}
         if "name" in patch:
-            if t.get("personal"):
-                raise HttpError(409, "« Chez moi » garde son nom : c'est ta Team personnelle")
-            t["name"] = done["name"] = clean_name(patch["name"], "le nom de la Team")
+            why = _rename_why(t, u)
+            _need(why is None, why or "")
+            name = clean_name(patch["name"], "le nom de la Team")
+            if t.get("personal") and name != t["name"]:
+                t["renamed"] = now_iso()   # un nom choisi : rename_personal n'y touche plus
+            t["name"] = done["name"] = name
         if "plan" in patch:
             _need(auth.is_admin(u), "l'offre d'une Team : Cal la règle")
             if t.get("personal"):
-                raise HttpError(409, "l'offre de « Chez moi » est celle du compte : Admin → Personnes, Apps ou Studio")
+                raise HttpError(409, "l'offre de My Team est celle du compte : Admin → Personnes, Apps ou Studio")
             if patch["plan"] not in PLANS:
                 raise HttpError(400, "l'offre : apps ou studio")
             t["plan"] = done["plan"] = patch["plan"]
@@ -792,7 +876,7 @@ def update_team(u, tid: str, patch: dict) -> dict:
         if "archived" in patch:
             _need(u is None or auth.is_admin(u) or t.get("owner") == _uid(u), "archiver une Team : son propriétaire, ou Cal")
             if t.get("personal"):
-                raise HttpError(409, "« Chez moi » ne s'archive pas : archive ses Workspaces")
+                raise HttpError(409, "My Team ne s'archive pas : c'est la maison du compte — archive ses Workspaces")
             if t["id"] == team_of_space(db.get("default")) and patch["archived"]:
                 raise HttpError(409, "cette Team porte le Workspace par défaut de l'instance : elle ne s'archive pas")
             t["archived"] = done["archived"] = now_iso() if patch["archived"] else None
@@ -892,10 +976,11 @@ def _check_spaces(db: dict, tid: str, spaces) -> list[str]:
 
 def _may_invite(u, db: dict, t: dict, role: str, spaces: list[str]) -> None:
     """Inviter : l'admin de Team (tout rôle sauf owner ; admin : le propriétaire ou Cal) ;
-    l'admin d'un Workspace fait des guests dans ses Workspaces, rien d'autre."""
+    l'admin d'un Workspace fait des guests dans ses Workspaces, rien d'autre. Une My Team
+    invite si son propriétaire a le Studio (D2, 09/10) ; un compte Apps la garde seul."""
     tid = t["id"]
-    if t.get("personal"):
-        raise HttpError(409, WHY["personal"])
+    if t.get("personal") and plan_of(t) != "studio":
+        raise HttpError(409, _personal_why(t, u))
     if t.get("archived"):
         raise HttpError(409, "cette Team est archivée : rouvre-la d'abord")
     if plan_of(t) != "studio" and not auth.is_admin(u):
@@ -1052,7 +1137,7 @@ def remove_member(u, tid: str, uid: str) -> dict:
 
 def forget_user(uid: str) -> dict:
     """Un compte détruit (auth.delete_user) : il sort de toutes les Teams et de tous les Workspaces
-    où il n'était que membre. Sa Team personnelle « Chez moi » est archivée (ses objets restent,
+    où il n'était que membre. Sa Team personnelle (My Team) est archivée (ses objets restent,
     dans leurs Workspaces, à la Team) ; une Team qu'il possédait passe à son premier admin, sinon
     à son premier membre, sinon elle est archivée. Rien n'est effacé du disque."""
     out = {"teams": 0, "archivees": 0, "transmises": 0}
@@ -1118,6 +1203,416 @@ def set_space_member(u, sid: str, uid: str, role: str | None) -> dict:
     return out
 
 
+# ── détruire ; la corbeille des Workspaces détruits (D4, décisions de Cal du 09/10) ──
+# Détruire ne réécrit aucun document : l'enregistrement du Workspace passe de `spaces` à
+# `destroyed_spaces`, et tout ce qui porte son identifiant — objets, documents d'outil, travaux,
+# Projet du Montage, Spaces de Musique, dossiers d'Asset (l'inventaire STORES de tools/check.py,
+# CONTENT plus bas) — devient, par construction, à personne : aucun profil dans un Workspace qui
+# n'existe plus (_profile), Cal compris (`gone` : les juges d'auth, le lien d'une planche), et rien
+# ne s'y crée (library.check_create). Les objets de la bibliothèque vont en plus à la corbeille
+# (library.bury) : Admin → Stockage les compte, « Vider la corbeille » les efface pour de bon. Les
+# travaux en file ou en cours s'arrêtent ; qui l'avait pour « dernier » retombe chez soi ; un onglet
+# ouvert dessus reçoit le refus d'un Workspace qu'on ne voit pas (`workspace_refused`) et se recale.
+# Rendre (Cal, restore_space) est l'inverse exact : le MÊME identifiant revient, dans une My Team
+# — chaque document le porte encore, rien n'est à réécrire.
+QUAND_DETRUIT: list = []   # fn(espace) : un outil qui tient des connexions ouvertes les ferme (ideation_collab)
+
+# Ce que tient un Workspace, magasin par magasin (l'aperçu du ménage, la fiche d'un Workspace
+# détruit) : les noms sont ceux de STORES (tools/check.py, qui vérifie que chaque magasin « champ »
+# est ici ou dit pourquoi pas). Un document d'outil : `<magasin>/<motif>`, le champ `space`, son
+# auteur (`owner`, `origin.user` ; une planche : son fichier d'accès).
+CONTENT_DOCS = {
+    "musique": ("projets ODIO", "musique/mus-*.json"),
+    "ideation": ("planches", "ideation/ide-*.json"),
+    "transcrire": ("transcriptions", "transcrire/trn-*.json"),
+    "luts": ("LUT", "luts/lut-*.json"),
+    "image_atelier": ("ateliers d'Image", "image_atelier/*.json"),
+    "paroles": ("paroles calées", "paroles/*.json"),
+}
+CONTENT_STORES = ("library", "trash", "analyse", *CONTENT_DOCS)
+CONTENT_SKIP = {"elements": "le journal des éléments : ses lignes gardent leur Workspace (un journal ne se rend pas)"}
+
+
+def _du(d: Path) -> int:
+    n = 0
+    for p in d.rglob("*"):
+        try:
+            if p.is_file():
+                n += p.stat().st_size
+        except OSError:
+            continue
+    return n
+
+
+def content_of(sids) -> dict:
+    """{espace: {objets, octets, corbeille, documents: {magasin: n}, auteurs: {uid: n}}} : les objets
+    de la bibliothèque (leur poids sur le disque), ceux déjà à sa corbeille, les documents de chaque
+    outil, et qui a fait quoi (objets et documents). À appeler HORS de _lock (la bibliothèque a le sien)."""
+    from . import library
+    want = {s for s in sids if s}
+    out = {s: {"objets": 0, "octets": 0, "corbeille": 0, "documents": {}, "auteurs": {}} for s in want}
+
+    def mark(s: str, who) -> None:
+        if who:
+            out[s]["auteurs"][who] = out[s]["auteurs"].get(who, 0) + 1
+
+    library._load()
+    with library._lock:
+        items = [it for it in library._items.values() if it.get("space") in want]
+    for it in items:
+        o = out[it["space"]]
+        o["objets"] += 1
+        o["octets"] += _du(library.folder_of(it["id"]))
+        mark(it["space"], auth.owner_of(it))
+    root = config.data_dir()
+    for d in (library.trash_root().iterdir() if want else ()):
+        try:
+            s = json.loads((d / "item.json").read_text(encoding="utf-8")).get("space")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if s in want:
+            out[s]["corbeille"] += 1
+    for store, (_label, pattern) in (CONTENT_DOCS.items() if want else ()):
+        for f in root.glob(pattern):
+            if f.name.endswith(".voix.json"):
+                continue
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            s = d.get("space") if isinstance(d, dict) else None
+            if s not in want:
+                continue
+            docs = out[s]["documents"]
+            docs[store] = docs.get(store, 0) + 1
+            who = auth.owner_of(d)
+            if not who and store == "ideation":   # l'auteur d'une planche est dans son fichier d'accès
+                try:
+                    who = json.loads((root / "ideation_collab" / f"{f.stem}.access.json").read_text(encoding="utf-8")).get("owner")
+                except (OSError, ValueError, AttributeError):
+                    who = None
+            mark(s, who)
+    try:
+        projets = json.loads((root / "analyse" / "projets.json").read_text(encoding="utf-8")).get("projets") or []
+    except (OSError, ValueError, AttributeError):
+        projets = []
+    for x in projets:
+        if isinstance(x, dict) and x.get("space") in want:
+            docs = out[x["space"]]["documents"]
+            docs["analyse"] = docs.get("analyse", 0) + 1
+            mark(x["space"], x.get("auteur"))
+    return out
+
+
+def _destroy_space_why(db: dict, u, sid: str) -> tuple[int, str] | None:
+    """Pourquoi ce Workspace ne se détruit pas (le statut, la phrase), ou None : qui gère sa Team
+    ou Cal ; jamais Général (l'espace par défaut de l'instance), jamais le dernier ouvert d'une Team."""
+    sp = db["spaces"].get(sid or "")
+    if not sp:
+        return 404, f"Workspace inconnu : {sid}"
+    tid = sp["team"]
+    if not can_manage(u, tid):
+        return 403, "détruire un Workspace : le propriétaire ou un admin de sa Team, ou Cal"
+    if sid == db.get("default"):
+        return 409, "c'est le Workspace par défaut de l'instance (Général) : il ne se détruit pas"
+    if not any(x["team"] == tid and s != sid and not x.get("archived") for s, x in db["spaces"].items()):
+        t = db["teams"].get(tid) or {}
+        return 409, ("c'est le dernier Workspace ouvert de la Team : elle en garde toujours un — crée-en un autre d'abord"
+                     + ("" if t.get("personal") or tid == team_of_space(db.get("default")) else ", ou détruis la Team"))
+    return None
+
+
+def _destroy_team_why(db: dict, u, tid: str) -> tuple[int, str] | None:
+    """Pourquoi cette Team ne se détruit pas, ou None : son propriétaire ou Cal ; jamais une Team
+    personnelle (la maison du compte), jamais celle de l'instance (Nirvalab, qui porte Général)."""
+    t = db["teams"].get(tid or "")
+    if not t:
+        return 404, f"Team inconnue : {tid}"
+    if t.get("personal"):
+        return 409, "My Team ne se détruit pas : c'est la maison du compte — détruis ses Workspaces (elle en garde un)"
+    if tid == NIRVALAB or tid == (db["spaces"].get(db.get("default") or "") or {}).get("team"):
+        return 409, "c'est la Team de l'instance (Nirvalab, qui porte Général) : elle ne se détruit pas"
+    if not (u is None or auth.is_admin(u) or t.get("owner") == _uid(u)):
+        return 403, "détruire une Team : son propriétaire, ou Cal"
+    return None
+
+
+def _rename_why(t: dict, u) -> str | None:
+    """Renommer une Team : qui la gère ; My Team, son propriétaire (ou Cal)."""
+    if not can_manage(u, t.get("id")):
+        return "renommer la Team : son propriétaire ou un de ses admins"
+    if t.get("personal") and not (u is None or auth.is_admin(u) or t.get("owner") == _uid(u)):
+        return "renommer My Team : son propriétaire"
+    return None
+
+
+def _typed(nom, name: str, what: str) -> None:
+    """La confirmation : le nom tapé (aux espaces près), comme une page le demande avant de détruire."""
+    if " ".join(str(nom or "").split()) != name:
+        raise HttpError(400, f"pour détruire {what}, tape son nom exact : « {name} »")
+
+
+def _bury(db: dict, sid: str, by: str, now: str, team: dict, team_gone: bool, content: dict) -> dict:
+    """Le Workspace passe à la corbeille des Workspaces détruits (sous _lock, avant _save) : qui
+    l'avait pour dernier retombe chez soi, les liens qui y menaient l'oublient (un lien de guest
+    qui n'a plus de Workspace est retiré), sa part du budget s'en va."""
+    sp = db["spaces"].pop(sid)
+    c = content.get(sid) or {}
+    rec = {**sp, "destroyed": {"at": now, "by": by, "team_name": team.get("name"), **({"team_gone": True} if team_gone else {}),
+                               "objets": [], "corbeille": c.get("corbeille", 0), "documents": c.get("documents") or {},
+                               "auteurs": c.get("auteurs") or {}}}
+    db["destroyed_spaces"][sid] = rec
+    for uid, x in db["users"].items():
+        if x.get("last") == sid:
+            home = home_space(db, uid)
+            if home:
+                x["last"] = home
+            else:
+                x.pop("last", None)
+    for i in db["invites"].values():
+        if sid in (i.get("spaces") or []):
+            i["spaces"] = [x for x in i["spaces"] if x != sid]
+            if i.get("role") == "guest" and not i["spaces"]:
+                i["revoked"] = True
+    b = team.get("budget")
+    if isinstance(b, dict) and isinstance(b.get("spaces"), dict):
+        b["spaces"].pop(sid, None)
+    return rec
+
+
+def _empty_into_trash(sids: list[str]) -> dict:
+    """Après la pierre tombale (rien ne s'y crée plus) : les objets à la corbeille, les travaux
+    arrêtés, les connexions des outils fermées ; le relevé des objets va dans la fiche. Hors de _lock."""
+    from . import jobs, library
+    moved = {s: library.bury(s) for s in sids}
+    stopped = 0
+    for j in jobs.listing(active=True, limit=10 ** 6):
+        if j.get("space") in moved:
+            try:
+                jobs.cancel(j["id"])
+                stopped += 1
+            except KeyError:
+                pass
+    for s in sids:
+        for fn in QUAND_DETRUIT:
+            try:
+                fn(s)
+            except Exception as e:   # noqa: BLE001 — une connexion qui se ferme mal n'empêche rien
+                auth.journal("workspace détruit : un outil n'a pas fermé ses connexions", space=s, why=str(e)[:200])
+    with _lock:
+        db = _data()
+        for s, ids in moved.items():
+            rec = db["destroyed_spaces"].get(s)
+            if rec:
+                rec["destroyed"]["objets"] = ids
+        _save()
+    return {"objets": sum(len(v) for v in moved.values()), "travaux": stopped}
+
+
+def destroy_space(u, sid: str, nom) -> dict:
+    """Détruire un Workspace (D4) : qui gère sa Team, ou Cal ; jamais Général ni le dernier Workspace
+    ouvert d'une Team ; confirmé par son nom tapé. Ce qu'il tenait va à la corbeille (plus haut)."""
+    with _lock:
+        db = _data()
+        sp = _space_or_404(db, sid)
+        if not (can_view(u, sid) or can_manage(u, sp["team"])):
+            raise HttpError(404, f"Workspace inconnu : {sid}")
+        no = _destroy_space_why(db, u, sid)
+        if no:
+            raise HttpError(*no)
+        _typed(nom, sp["name"], "ce Workspace")
+    content = content_of({sid})   # hors de _lock : la bibliothèque a le sien
+    uid, now = _uid(u) or auth.admin_id(), now_iso()
+    with _lock:
+        db = _data()
+        no = _destroy_space_why(db, u, sid)   # rejugé : rien n'a bougé entre-temps
+        if no:
+            raise HttpError(*no)
+        tid = db["spaces"][sid]["team"]
+        rec = _bury(db, sid, uid, now, db["teams"].get(tid) or {}, False, content)
+        _save()
+    done = _empty_into_trash([sid])
+    auth.journal("workspace détruit", user=uid, team=tid, space=sid, name=rec["name"], objets=done["objets"],
+                 travaux=done["travaux"], documents=rec["destroyed"]["documents"])
+    out = {"destroyed": {"id": sid, "name": rec["name"], "team": tid, **done, "documents": rec["destroyed"]["documents"]}}
+    if team(tid) and (can_manage(u, tid) or team_role(u, tid)):
+        out["team"] = team_view(u, tid)
+    return out
+
+
+def destroy_team(u, tid: str, nom=None, *, typed: bool = True) -> dict:
+    """Détruire une Team (D4) : son propriétaire ou Cal ; jamais une Team personnelle ni Nirvalab ;
+    confirmé par son nom tapé (le ménage, D7, confirme autrement : `typed=False`). Chacun de ses
+    Workspaces va à la corbeille (comme destroy_space), ses membres sortent, ses liens d'invitation
+    sont retirés, son budget s'efface ; la fiche de la Team reste dans `destroyed_teams`."""
+    with _lock:
+        db = _data()
+        t = _team_or_404(db, tid)
+        _see_team(u, tid)
+        no = _destroy_team_why(db, u, tid)
+        if no:
+            raise HttpError(*no)
+        if typed:
+            _typed(nom, t["name"], "cette Team")
+        sids = [s for s, sp in db["spaces"].items() if sp["team"] == tid]
+    content = content_of(set(sids))
+    uid, now = _uid(u) or auth.admin_id(), now_iso()
+    with _lock:
+        db = _data()
+        no = _destroy_team_why(db, u, tid)
+        if no:
+            raise HttpError(*no)
+        t = db["teams"][tid]
+        sids = [s for s, sp in db["spaces"].items() if sp["team"] == tid]
+        for s in sids:
+            _bury(db, s, uid, now, t, True, content)
+        revoked = 0
+        for i in db["invites"].values():
+            if i.get("team") == tid and not i.get("revoked"):
+                i["revoked"] = True
+                revoked += 1
+        members = sorted(k for k in t.get("members", {}) if k != t.get("owner"))
+        db["destroyed_teams"][tid] = {**{k: v for k, v in t.items() if k != "budget"},
+                                      "destroyed": {"at": now, "by": uid, "spaces": sids}}
+        del db["teams"][tid]
+        _save()
+    done = _empty_into_trash(sids)
+    auth.journal("team détruite", user=uid, team=tid, name=t["name"], spaces=sids, membres=len(members), liens=revoked,
+                 objets=done["objets"], travaux=done["travaux"])
+    return {"destroyed": {"id": tid, "name": t["name"], "spaces": sids, "members": members, "invites": revoked, **done}}
+
+
+def _home_team(db: dict, uid: str | None) -> str | None:
+    """La My Team de quelqu'un, si elle existe encore : son compte est là (pas une demande), sa
+    Team personnelle n'est pas archivée (un compte détruit : forget_user l'archive)."""
+    x = auth.user(uid) if uid else None
+    if not x or x.get("state") == "pending":
+        return None
+    t = db["teams"].get(personal_team_id(uid))
+    return t["id"] if t and not t.get("archived") else None
+
+
+def _heir(db: dict, rec: dict) -> str:
+    """Où rendre un Workspace détruit, par défaut : la My Team de son auteur — celui qui y a fait le
+    plus (objets et documents ; à égalité, qui l'a créé, puis l'ordre des noms) —, s'il existe
+    encore ; sinon celle de Cal."""
+    auteurs = (rec.get("destroyed") or {}).get("auteurs") or {}
+    live = [(n, uid) for uid, n in auteurs.items() if _home_team(db, uid)]
+    if live:
+        return sorted(live, key=lambda x: (-x[0], x[1] != rec.get("by"), x[1]))[0][1]
+    return auth.admin_id()
+
+
+def destroyed_list() -> list[dict]:
+    """La corbeille des Workspaces détruits (Admin → Stockage) : chacun, ce qu'il tenait, ce qui en
+    reste à la corbeille des objets, où il reviendrait (`vers`) et qui d'autre pourrait le recevoir."""
+    from . import library
+    with _lock:
+        db = _data()
+        recs = [dict(r) for r in db["destroyed_spaces"].values()]
+        homes = {uid: bool(_home_team(db, uid)) for r in recs for uid in (r.get("destroyed") or {}).get("auteurs") or {}}
+        heirs = {r["id"]: _heir(db, r) for r in recs}
+    out = []
+    for r in recs:
+        d = r.get("destroyed") or {}
+        ids = d.get("objets") or []
+        out.append({"id": r["id"], "name": r.get("name"), "team": r.get("team"), "team_name": d.get("team_name"),
+                    "team_gone": bool(d.get("team_gone")), "at": d.get("at"), "by": d.get("by"),
+                    "by_name": auth.display_name(d.get("by")), "objets": len(ids),
+                    "objets_la": sum(1 for i in ids if (library.trash_root() / i / "item.json").is_file()),
+                    "corbeille": d.get("corbeille", 0), "documents": d.get("documents") or {},
+                    "auteurs": sorted(({"id": k, "name": auth.display_name(k), "n": n, "home": homes.get(k, False)}
+                                       for k, n in (d.get("auteurs") or {}).items()), key=lambda x: (-x["n"], x["name"].lower())),
+                    "vers": heirs[r["id"]], "vers_name": auth.display_name(heirs[r["id"]])})
+    return sorted(out, key=lambda x: x["at"] or "", reverse=True)
+
+
+def restore_space(u, sid: str, vers: str | None = None) -> dict:
+    """Rendre un Workspace détruit (Cal) : le même identifiant revient, dans la My Team de `vers`
+    (par défaut son auteur, sinon Cal : _heir) — ses objets sortent de la corbeille, ses documents
+    le retrouvent tels quels. Ses rôles par membre ne reviennent pas (ils étaient d'une autre Team)."""
+    _need(u is None or auth.is_admin(u), "rendre un Workspace détruit : Cal")
+    cal = auth.user(auth.admin_id())
+    if cal:
+        ensure_personal(cal)   # la My Team de Cal, le dernier recours, existe
+    uid, now = _uid(u) or auth.admin_id(), now_iso()
+    with _lock:
+        db = _data()
+        rec = db["destroyed_spaces"].get(sid or "") if SPACE_RX.fullmatch(sid or "") else None
+        if not rec:
+            raise HttpError(404, f"pas de Workspace détruit à cet identifiant : {sid}")
+        who = vers or _heir(db, rec)
+        tid = _home_team(db, who)
+        if not tid:
+            if vers:
+                raise HttpError(409, f"la My Team de {auth.display_name(vers) or vers} n'existe plus : choisis-en une autre")
+            who, tid = auth.admin_id(), _home_team(db, auth.admin_id())
+        if not tid:
+            raise HttpError(409, "aucune My Team où le rendre (celle de Cal manque) : vois les Teams dans Admin")
+        d = rec["destroyed"]
+        sp = {k: v for k, v in rec.items() if k != "destroyed"}
+        taken = {x["name"] for x in db["spaces"].values() if x["team"] == tid}
+        name = sp["name"] if sp["name"] not in taken else clean_name(f"{sp['name'][:29]} (rendu)")
+        sp.update(team=tid, name=name, members={}, archived=None,
+                  restored={"at": now, "by": uid, "from_team": rec.get("team"), "from_team_name": d.get("team_name"),
+                            "destroyed": d.get("at")})
+        db["spaces"][sid] = sp
+        del db["destroyed_spaces"][sid]
+        _save()
+    from . import library
+    back = library.unbury(d.get("objets") or [], sid)
+    auth.journal("workspace rendu", user=uid, space=sid, team=tid, vers=who, objets=len(back))
+    return {"id": sid, "name": name, "team": tid, "vers": who, "vers_name": auth.display_name(who), "objets": len(back),
+            "objets_perdus": len(d.get("objets") or []) - len(back), "documents": d.get("documents") or {}}
+
+
+def rename_personal(dry: bool = False) -> list[dict]:
+    """« Chez moi » → « My Team » (D1, 09/10) : chaque Team personnelle qui porte encore le nom
+    qu'on lui donnait à sa naissance ; jamais un nom choisi (`renamed`, posé par update_team).
+    Idempotent : une seconde passe ne trouve rien. Lancé par le ménage (D7), visible et journalisé."""
+    with _lock:
+        db = _data()
+        todo = [t for t in db["teams"].values() if t.get("personal") and t.get("name") == PERSONAL_OLD and not t.get("renamed")]
+        if todo and not dry:
+            for t in todo:
+                t["name"] = PERSONAL_NAME
+            _save()
+        out = [{"id": t["id"], "owner": t.get("owner")} for t in todo]
+    for x in out:
+        x["owner_name"] = auth.display_name(x["owner"])
+    if out and not dry:
+        auth.journal("teams personnelles renommées", n=len(out), to=PERSONAL_NAME)
+    return out
+
+
+def strip_members(spare=None) -> list[dict]:
+    """Le ménage (D7) : chaque Team ne garde que son propriétaire — tout autre membre en sort (ses
+    rôles et ses places de guest dans les Workspaces aussi ; qui l'avait pour dernier retombe chez
+    soi). `spare(uid)` : qui ne sort pas (les admins du portail). Ce qu'ils y ont fait reste à la Team."""
+    out = []
+    with _lock:
+        db = _data()
+        for t in db["teams"].values():
+            for mid in [k for k in t.get("members", {}) if k != t.get("owner") and t["members"][k].get("role") != "owner"]:
+                if spare and spare(mid):
+                    continue
+                m = t["members"].pop(mid)
+                tids = {s for s, sp in db["spaces"].items() if sp["team"] == t["id"]}
+                for s in tids:
+                    (db["spaces"][s].get("members") or {}).pop(mid, None)
+                rec = db["users"].get(mid) or {}
+                if rec.get("last") in tids:
+                    home = home_space(db, mid)
+                    if home:
+                        rec["last"] = home
+                    else:
+                        rec.pop("last", None)
+                out.append({"team": t["id"], "team_name": t["name"], "id": mid, "role": m.get("role")})
+        if out:
+            _save()
+    return out
+
+
 # ── le budget (étape 8 ; décision 6 : le budget est à la Team) ──
 # Le réglage seul vit ici (teams.json, `team["budget"]`) ; la réservation, la mesure et
 # le journal `conso.jsonl` sont dans la file (core/jobs.py), l'endroit par où tout
@@ -1177,8 +1672,8 @@ def _amount(v, what: str, top: int, allow_none: bool = True):
 
 
 def set_budget(u, tid: str, patch: dict) -> dict:
-    """Régler le budget d'une Team : le propriétaire ou un admin de la Team, ou Cal ; « Chez
-    moi » : Cal seul (on ne relève pas son propre plafond). `gpu_s` (vide : illimité),
+    """Régler le budget d'une Team : le propriétaire ou un admin de la Team, ou Cal ; My Team :
+    Cal seul (on ne relève pas son propre plafond). `gpu_s` (vide : illimité),
     `api_credits` (0 : coupée), `users` / `spaces` : {id: {gpu_s, api_credits} | null}."""
     if not isinstance(patch, dict):
         raise HttpError(400, "le budget : un objet")
@@ -1188,7 +1683,7 @@ def set_budget(u, tid: str, patch: dict) -> dict:
         _see_team(u, tid)
         _need(can_manage(u, tid), "le budget de la Team : son propriétaire ou un de ses admins")
         if t.get("personal"):
-            _need(u is None or auth.is_admin(u), "le budget de « Chez moi » : Cal le règle")
+            _need(u is None or auth.is_admin(u), "le budget de My Team : Cal le règle")
         b = dict(t.get("budget") or {}) if isinstance(t.get("budget"), dict) else {}
         done: dict = {}
         if "gpu_s" in patch:
@@ -1401,7 +1896,8 @@ def migrate(root: Path | str | None = None, dry: bool = False) -> dict:
          Général (son `access: studio` reste) ; un autre admin du portail → admin de
          Nirvalab ; un compte Apps → sa seule Team personnelle ; un invité de planche
          reste dans le royaume d'Idéation ;
-      3. chaque compte (sauf l'invité de planche) → « Chez moi » + « Perso » ;
+      3. chaque compte (sauf l'invité de planche) → sa Team personnelle (« Chez moi » + « Perso »
+         jusqu'au 09/10, « My Team » + « Général » depuis : _ensure_personal) ;
       4. chaque objet (bibliothèque, corbeille), document d'outil (`<id>.json`) et
          travail de la file sans `space` → Général. Rien d'autre ne change : auth.json
          n'est pas touché.
