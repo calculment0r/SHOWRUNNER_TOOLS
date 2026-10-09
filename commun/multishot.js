@@ -89,7 +89,7 @@ export function createMultishot(box, o = {}) {
   const tlw = el('div', { class: 'ms-tlw' }, tl, ruler, tip);
   const edHead = el('div', { class: 'ms-ed-h' });
   const ta = el('textarea', { class: 'fld ms-ta', rows: 2, spellcheck: 'false', 'aria-label': 'ce qu’on voit dans ce plan',
-    placeholder: 'ce qu’on voit dans ce plan (tapez @ pour une référence)' });
+    placeholder: 'ce qu’on voit dans ce plan (tape @ pour une référence)' });
   const linesBox = el('div', { class: 'ms-lines' });
   const ed = el('div', { class: 'ms-ed' }, edHead, ta, linesBox);
   box.classList.add('ms');
@@ -147,7 +147,6 @@ export function createMultishot(box, o = {}) {
   }
   function paintTl() {
     tl.setAttribute('aria-label', `la vidéo, ${sec(S.total)}, découpée en ${S.shots.length} plans`);
-    tl.title = 'chaque plan suivant commence par son temps de coupe, « At 00:03.500, » (le guide officiel d’H3, § 4.2)';
     N.segs = S.shots.map((p, i) => {
       const s = el('button', { class: `ms-seg c${i % 4}${i === S.sel ? ' sel' : ''}`, type: 'button', 'data-i': i,
         title: `plan ${i + 1} — glisser pour le déplacer` }, ...segBody(p, i));
@@ -177,7 +176,7 @@ export function createMultishot(box, o = {}) {
       });
       return h;
     });
-    N.rest = el('div', { class: 'ms-rest', title: grid ? 'tirez la fin pour allonger la vidéo' : '' },
+    N.rest = el('div', { class: 'ms-rest', title: grid ? 'tire la fin pour allonger la vidéo' : '' },
       ...(grid || []).map((g) => el('i', { class: 'ms-g', 'data-f': g })));
     N.end = grid ? el('div', { class: 'ms-end', role: 'slider', tabindex: 0, 'aria-label': 'la fin de la vidéo : sa durée',
       'aria-valuemin': grid[0], 'aria-valuemax': maxF(),

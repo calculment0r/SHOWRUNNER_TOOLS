@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="theme-color" content="#0a0d0b">
 <title>VIDÉO · SHOWRUNNER</title>
-<meta name="description" content="Des plans vidéo avec H3 : le fil des vidéos et la barre de création — l’invite et ses entrées (@image1, @element1…), le format, la durée, la qualité ; le Multishot ; le banc pour comparer deux plans.">
+<meta name="description" content="Des plans vidéo avec H3 : le fil des vidéos et la barre de création — le prompt et ses références (@image1, @element1…), le format, la durée, la résolution ; le Multishot ; le banc pour comparer deux plans.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Azeret+Mono:wght@300;400;500&display=swap">
@@ -52,7 +52,7 @@
     <aside class="cmp-rail" id="cmp-rail" aria-label="les deux plans">
       <div class="ab-slot a" id="slot-a"></div>
       <div class="ab-slot b" id="slot-b"></div>
-      <span class="hint">déposez une vidéo sur A ou B</span>
+      <span class="hint">dépose une vidéo sur A ou B</span>
       <div class="keys"><kbd>espace</kbd>lecture <kbd>←</kbd><kbd>→</kbd>image <kbd>1</kbd>…<kbd>5</kbd>modes <kbd>[</kbd><kbd>]</kbd>rideau <kbd>molette</kbd>zoom <kbd>L</kbd>boucle <kbd>S</kbd>échanger <kbd>A</kbd><kbd>B</kbd><kbd>M</kbd>écoute</div>
     </aside>
     <section class="pane" id="bench">
@@ -64,7 +64,7 @@
         <div class="tag b"><b>B</b><i class="spk" id="spkB" title="on écoute B">♪</i><span id="tagB">—</span></div>
         <div class="zoombadge" id="zoomBadge" hidden></div>
         <div class="readout" id="readout">00:00.00</div>
-        <div class="empty" id="benchEmpty"><b>Deux plans</b><span class="lbl">choisissez A et B : à gauche, ou dans le fil (⋯ → Comparer)</span></div>
+        <div class="empty" id="benchEmpty"><b>Deux plans</b><span class="lbl">choisis A et B : à gauche, ou dans le fil (⋯ → Comparer)</span></div>
       </div>
       <div class="transport">
         <button class="tb go" id="bPlay" title="lecture / pause (espace)"><svg viewBox="0 0 24 24" id="icoPlay"><path d="M7 4l13 8-13 8z"/></svg></button>
@@ -96,7 +96,7 @@
   </div>
 </main>
 
-<!-- ── la barre de création : l'invite et ses entrées, le format, la durée, la qualité, « Générer » ── -->
+<!-- ── la barre de création : le prompt et ses références, le format, la durée, la résolution, « Générer » ── -->
 <section class="pbar vbar" id="pbar" aria-label="la barre de création">
   <div class="pb-pops" id="pops">
     <div class="pb-pop" data-pop="fmt" hidden></div>
@@ -140,12 +140,12 @@
         <div class="row" title="la même graine et les mêmes réglages refont la même vidéo"><label class="lbl" for="seed">Graine</label><input class="fld seed" id="seed" inputmode="numeric" placeholder="au hasard">
           <button class="tb ghost sm" id="seed-rand" type="button" title="tirer une graine">dé</button>
           <button class="tb ghost sm" id="seed-orig" type="button" hidden>d’origine</button></div>
-        <label class="row" data-for="r2v" title="la finesse avec laquelle H3 lit les images de référence"><span class="lbl">Détail des réf.</span>
+        <label class="row" data-for="r2v" title="la finesse avec laquelle H3 lit les références"><span class="lbl">Détail des références</span>
           <select class="fld" id="ref-size">
             <option value="match">normal · plus rapide</option>
             <option value="max">maximal · plus lent</option>
           </select></label>
-        <label class="row" title="les poids d’H3 chargés pour ce mode"><span class="lbl">Modèle</span><select class="fld" id="a-unet"></select></label>
+        <label class="row" title="la version d’H3 chargée pour ce mode"><span class="lbl">Modèle</span><select class="fld" id="a-unet"></select></label>
         <label class="row" title="compression du fichier vidéo (crf) : plus petit = plus fidèle, plus lourd"><span class="lbl">Compression</span><input class="fld seed" id="a-crf" inputmode="numeric" placeholder="12"></label>
         <div class="field"><div class="row"><span class="lbl">LoRA</span><span class="lbl" id="lora-count"></span><span class="sp"></span>
           <button class="tb ghost sm" id="lora-refresh" type="button">Relire</button></div>

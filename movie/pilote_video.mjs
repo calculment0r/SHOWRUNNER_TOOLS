@@ -169,14 +169,19 @@ await waitFor(async () => (await toks(page)).length, 'Mara arrive dans les entr�
 ok(await page.$eval('body', (b) => b.dataset.mode) === 'r2v', 'un élément déposé en mode Texte fait passer en Références');
 ok((await toks(page)).includes('@element1=Mara'), `Mara : sa vignette, son jeton @element1, son nom (${await toks(page)})`);
 ok(/A woman crosses a rainy street/.test(await page.inputValue('#desc')), 'l’invite reste quand le mode change (une seule invite)');
-// un objet, sur les entrées
+// un objet, sur le « + » des références (déposé sur une vignette, il la remplacerait : c'est la règle des places)
 await dockShow(page, 'here', 'Valise');
-await tile(page, valise).dragTo(page.locator('#entrees'));
+await tile(page, valise).dragTo(page.locator('#entrees .ent-drop'));
 await waitFor(async () => (await toks(page)).includes('@element2=Valise'), 'l’objet Valise arrive en @element2');
 // un personnage de Character Factory, pas encore importé : importé au dépôt
 await dockShow(page, 'cf', 'Nora');
-await tile(page, 'Nora').dragTo(page.locator('#entrees'));
+await tile(page, 'Nora').dragTo(page.locator('#entrees .ent-drop'));
 await waitFor(async () => (await toks(page)).includes('@element3=Nora'), 'Nora (Character Factory) est importée au dépôt et arrive en @element3');
+// déposé sur une vignette, un asset la remplace à sa place (le jeton ne change pas) ; un refus dit pourquoi
+await dockShow(page, 'here', 'Rue');
+await tile(page, rue).dragTo(page.locator('#entrees .ent-slot[data-tok="@element2"]'));
+await waitFor(async () => /pas pris ici/.test(await page.$eval('.toast', (t) => t.textContent).catch(() => '')), 'une image déposée sur la place d’un élément est refusée, et c’est dit');
+ok((await toks(page)).includes('@element2=Valise'), 'la place @element2 garde la Valise');
 await shot(page, 'apres-entrees-dock-sombre-1280');
 await dockClose(page);
 

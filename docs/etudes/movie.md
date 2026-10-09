@@ -186,7 +186,7 @@ Retenues (dans l'ordre du menu) :
 | Continuer le plan | sa dernière image devient la première d'un nouveau plan (mode Images) | l'usage courant de la dernière image : enchaîner les plans |
 | Prendre en référence | la vidéo dans les entrées du mode Références (`@video1`) | leur « Reuse » d'un mouvement ; H3 prend 3 vidéos de référence |
 | Comparer › en A · en B | le banc A/B de Cal | remplace les boutons A et B des anciennes cartes |
-| Agrandir dans Upscale | `upscale/?src=<id>` | l'outil Upscale prend les vidéos |
+| Agrandir | `upscale/?src=<id>` | l'outil Upscale prend les vidéos |
 | Envoyer au Montage | `montage/?add=<id>` | la route d'entrée du Montage |
 | Créer un élément | **désactivé, dit pourquoi** : un élément se fait d'images (et d'une voix) — tirer d'abord une image | la bibliothèque n'accepte pas une vidéo en référence d'élément (`POST /api/elements`) |
 | Aimer | le drapeau `fav` de l'objet (`POST /api/library/<id>`), filtre « aimés » | leur « Like » ; c'était l'« Épingler » de l'ancienne page |
@@ -543,7 +543,7 @@ des plans, le plan choisi édité sur place, et l'on y dépose les éléments co
     son rapport), **la résolution** (le préréglage et sa toile, avec le temps estimé), **la durée** (− 5,2 s +, aux
     pas d'H3 ; un clic sur la valeur : toutes les durées) ; puis, repliés : Multishot, Son (ambiance, musique), Aides
     (caméra, réplique, exclusions, assistant), Avancé (pas, graine, références, modèle, compression, LoRA, la recette,
-    le graphe ; ce qui s'écarte du défaut se lit sur la puce), et **Reçu par H3** ;
+    le graphe ; ce qui s'écarte du défaut se lit sur la puce), et **Aperçu** (ce que H3 recevra) ;
   - **« Générer »**, le seul orange, avec le temps estimé ; dessous, ce qui manque en deux ou trois mots (la phrase du
     serveur au survol), qui mène à ce qui le lève.
 - **Le format et la résolution** suivent l'échelle de l'audit (§ 9.3 ; `scale` d'`/api/movie/options` et du plan,
@@ -564,7 +564,7 @@ des plans, le plan choisi édité sur place, et l'on y dépose les éléments co
   paraissent sur leurs plans. Chaque geste réécrit l'invite, au format du guide (`[Shot 2] At 00:01.708,`) : rien à
   « écrire dans le prompt ». La fenêtre d'avant ne sert plus qu'à la carte Vidéo d'Idéation (`openMultishot`, la même
   frise). Les poignées marchent : pendant un glisser, rien n'est redessiné.
-- **Ce que H3 reçoit** (la puce « Reçu par H3 ») : `POST /api/movie/apercu` — les vérifications du code (ok,
+- **Ce que H3 reçoit** (la puce « Aperçu ») : `POST /api/movie/apercu` — les vérifications du code (ok,
   remarque, erreur), la définition de chaque sujet et le résumé que la mise en forme écrit (à relire, à corriger,
   envoyés avec le plan : `subjects`, `summary`), les images chargées dans l'ordre, le prompt compilé. **« Mettre en
   forme pour H3 »** (là, et dans Aides → Assistant, à la place de l'assistant « pas encore câblé ») lance
@@ -593,6 +593,8 @@ des plans, le plan choisi édité sur place, et l'on y dépose les éléments co
 
 - **Pas vu sur les DGX ni avec un vrai modèle de texte** : la mise en forme a tourné ici sans Ollama (le gabarit) ;
   les temps des petites résolutions sont ceux de l'audit (extrapolés, § 9.4).
+- **Le lexique commun** vit dans `docs/etudes/redaction.md` (le lot « rédaction », une branche à part) : les mots de
+  Vidéo y sont alignés (§ 10.7) ; si les deux branches se contredisent, c'est le lexique qui gagne.
 - **Le téléphone** : la barre tient à 390 px (les puces défilent, rien ne déborde), mais Multishot allumé, elle prend
   la moitié de l'écran ; les outils à grand écran y montrent d'abord l'écran du téléphone (`commun/telephone.js`).
 - Glisser une vignette des entrées de la barre sur un plan de la frise n'est pas un geste (les entrées se
@@ -600,3 +602,46 @@ des plans, le plan choisi édité sur place, et l'on y dépose les éléments co
 - `POST /api/movie/assist` (l'assistant d'avant, 501) n'a plus de bouton : la mise en forme le remplace ; la route
   peut partir.
 
+
+### 10.7 La rédaction : « simple et lisible » (fait le 09/10, la reprise du lot)
+
+Les règles de Cal du 09/10 (le mot de tous les jours ; court ; une information une fois par écran, là où l'on s'en
+sert ; les états par des formes ; une action désactivée dit pourquoi ; les capitales pour la machine ; le même mot
+partout) appliquées à toute la page, avec le lexique commun du lot « rédaction » (`docs/etudes/redaction.md`) : une
+**référence** (pas « entrée »), un **prompt** (pas « invite »), un **rendu**, un **essai** (pas « moteur factice »),
+une **résolution** et une **taille** (pas « préréglage » ni « toile »), et le **tutoiement**, le ton du portail
+(`agent_autonome.md`, « Le ton »). Ce qui a changé, avant → après :
+
+| où | avant | après |
+|---|---|---|
+| le mode | Texte · Images · Réf. | Texte · Images · Références |
+| « Générer » | « Générer · ≈ 4–5 min », le même temps sur la puce de résolution, l'infobulle répétait la taille, la durée, les pas | le temps une fois, sur la puce de résolution ; « Générer » seul (Ctrl + Entrée au survol) |
+| la puce de l'aperçu | « Reçu par H3 · 2 » — « ce que le modèle reçoit : le prompt compilé, les images dans l'ordre, la toile, la durée — 2 notes du serveur » | « Aperçu · 2 » — « ce que H3 recevra — 2 remarques » |
+| le panneau de l'aperçu | l'en-tête répétait « références · 1536×640 · 124 im. · 5,2 s · 8 pas » ; « Les sujets · ce que H3 lit de chacun », « Images chargées, dans l'ordre · 3 », « Le prompt envoyé · 42 mots écrits » ; la vérification de la toile (déjà sur la puce) | « Vérifications », « Descriptions », « Images envoyées », « Prompt envoyé » |
+| la tête du Multishot | « MULTISHOT · 3 plans · 5,2 s » (la puce Multishot et la puce Durée le disent déjà) | les gestes seulement (+ Plan, Durées égales, Auto…, la langue) |
+| le plan choisi | « PLAN 2 · 1,7 s · 41 im. » en capitales | « Plan 2 » (sa durée est sur la frise) |
+| les poignées | « glisser : déplacer la coupe, à l'image près · ← → : une image (Maj : une seconde) » ; « glisser : la durée de la vidéo, aux pas d'H3 (17 images, 0,7 s) · ← → : le pas d'avant, d'après » | « glisser : partager le temps entre les deux plans » ; « glisser : la durée de la vidéo » |
+| la frise | une infobulle qui citait le guide d'H3 (§ 4.2) ; un plan : « clic : l'éditer · glisser : le déplacer · Alt + ← → » | aucune ; « plan 2 — glisser pour le déplacer » |
+| qui parle | « personne de nommé (S1) », « un autre : je l'écris… » ; « la réplique, dans la langue parlée » | « quelqu'un », « autre… » ; « ce qui est dit » |
+| Son | « Son et musique » : « Son d'ambiance » (bruits, souffles, pas — vide : le son naturel de la scène), « Musique hors champ » | « Son » : « Ambiance » (pluie, pas, foule… vide : le son de la scène), « Musique » |
+| Aides | « Caméra · le vocabulaire de MiniMax », « Réplique · (S1) … <d> », « Exclusions · pas de prompt négatif », « Assistant · mettre en forme pour H3 » ; les pastilles caméra en anglais (« Push In ») ; des phrases de deux lignes | « Caméra », « Réplique », « À éviter », « Mise en forme » ; les pastilles en français (« avancer », la phrase anglaise au survol) ; une aide d'une ligne |
+| Avancé | « Paramètres avancés » et son résumé orange dans l'en-tête (déjà sur la puce) ; « Références : à l'aire du plan · plus rapide / détail max · jusqu'à 2048 px, plus lent » ; « Le graphe H3 (construit, pas envoyé) » | « Avancé » ; « Détail des références : normal · plus rapide / maximal · plus lent » ; chaque réglage dit ce qu'il fait au survol |
+| Format · résolution | l'en-tête répétait « 1536×640 · 5,2 s · ≈ 4–5 min » ; chaque ligne « 1536 × 640 · Brouillon · 0,98 Mpx · deux étages » ; trois lignes sur le temps | le nom, la taille, le temps ; les étages et la base du temps au survol ; « cinéma », « écran large », « comme l'image » |
+| les images de début et de fin | « l'image de début : choisir, ou déposer une image (ou un personnage : son plein pied) » ; le jeton `<Picture 1>` | « image de début : choisir ou déposer » ; `@image1`, `@image2` — la grammaire commune, verts dans le prompt dès que l'image est là (`E.extra`, `commun/entrees.js`) ; le serveur les compile en `<Picture n>` (vérifié : `POST /api/movie/plan`, mode Images) |
+| les vignettes des références | « Mara — @element1 · personnage · clic : insérer, utiliser comme, retirer · glisser : changer sa place » ; « plein pour les images (9 / 9) » ; « Retirer · la place reste, son jeton rougit » | « Mara — @element1 · personnage » ; le compte au survol du « + » ; « Retirer » |
+| le bandeau d'une vidéo | « H3 · références · brouillon · factice » ; la « famille » de la toile parmi les puces | « H3 · références · brouillon · essai » |
+| la recette (visionneuse, banc) | Préréglage, Toile, Entrées (« détail match »), Moteur (« factice · vidéo d'essai, pas H3 ») | Résolution, Taille, Références (« détail normal »), Rendu par (« essai (pas H3) ») |
+| la pastille du moteur | « moteur factice », « moteur illisible » | « essai », « H3 · état inconnu » |
+| les messages | « rendu en file, en tête du fil : H3 démarre s'il dort » ; « réglages repris · graine vidée : « Générer » fait une variante (la graine d'origine : Avancé) » ; « passé en mode Références : les entrées s'appellent par leur jeton (@element1…) » ; « invite mise en forme par le modèle de texte : relisez, corrigez, puis « Générer » » | « rendu lancé : en haut du fil » ; « réglages repris : « Générer » fait une variante » ; « passé en mode Références » ; « prompt mis en forme : relis-le avant de lancer » |
+| ce qui manque, sous « Générer » | « ajoutez une entrée », « des jetons sans entrée » | « ajoute une référence », « un @ sans référence » (les phrases du serveur se lisent qu'elles tutoient ou vouvoient) |
+| le fil vide | « Décrivez le plan en bas, puis « Générer » : le rendu paraît ici dès l'envoi. » | « Tes vidéos s'afficheront ici. Décris le plan en bas, puis « Générer ». » |
+| le ton | « déposez », « choisissez », « votre prompt » | « dépose », « choisis », « ton prompt » |
+
+Les mots de Vidéo, tenus au lexique commun : **plan** (une vidéo, ou un plan du Multishot), **référence** (une place,
+`@image1`), **prompt**, **rendu**, **calcul** (un rendu en file), **essai**, **format**, **résolution** (Esquisse, Léger,
+Brouillon, Qualité), **taille** (w × h), **durée**, **Multishot**, **réplique**, **mise en forme**, **aperçu**. Les
+termes du modèle (pas, graine, crf, LoRA, le graphe) restent dans Avancé, chacun expliqué d'une ligne au survol.
+
+Vu en passant, par le pilote : déposer un asset **au milieu de la rangée** des références tombe sur une vignette et la
+remplace (la règle des places, la même qu'Image) ; pour ajouter, on dépose sur le « + » ou n'importe où ailleurs sur
+la barre. Le pilote le fait, et vérifie qu'une image déposée sur la place d'un élément est refusée, et que c'est dit.

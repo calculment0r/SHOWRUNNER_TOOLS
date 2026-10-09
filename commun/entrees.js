@@ -60,7 +60,7 @@ export { TOKEN_RX };
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 
 export function createEntrees(box, { limits = { image: 9, video: 3, audio: 3, files: 12 }, cost = defaultCost, roles = {},
-  via = '', state = null, onchange = () => {}, title = 'Entrées', layout = 'cadre', insert = null } = {}) {
+  via = '', state = null, onchange = () => {}, title = 'Références', layout = 'cadre', insert = null } = {}) {
   const row = layout === 'rangee';
   const S = { image: [], element: [], video: [], audio: [] };
   const items = new Map();
@@ -190,7 +190,7 @@ export function createEntrees(box, { limits = { image: 9, video: 3, audio: 3, fi
   else box.replaceChildren(head, zone, cats);
   dropZone(box, { kinds: ['image', 'element', 'video', 'audio'], multiple: true, via, onitems: add });
   async function choose() {
-    const got = await pick({ kinds: ['image', 'element', 'video', 'audio'], multiple: true, title: 'Entrées · images, éléments, vidéos, sons' });
+    const got = await pick({ kinds: ['image', 'element', 'video', 'audio'], multiple: true, title: 'Références · images, éléments, vidéos, sons' });
     add(got);
   }
   function paint() {
@@ -202,15 +202,15 @@ export function createEntrees(box, { limits = { image: 9, video: 3, audio: 3, fi
       box.querySelector('.ent-use').hidden = true;
       zone.replaceChildren('+');
       zone.classList.toggle('full', full.length > 0);
-      zone.title = full.length ? `plein : ${full.map((r) => `${u[r]} / ${limits[r]} ${RES_FR[r][1]}`).join(', ')} — déposez sur une vignette pour la remplacer`
+      zone.title = full.length ? `plein : ${full.map((r) => `${u[r]} / ${limits[r]} ${RES_FR[r][1]}`).join(', ')} — dépose sur une vignette pour la remplacer`
         : `ajouter une référence (${u.files} / ${limits.files})`;
       cats.replaceChildren(...CATS.filter((c) => S[c.id].length).map((c) => catBox(c, u)));
       return;
     }
     zone.classList.toggle('compact', any);
     zone.replaceChildren(el('b', {}, '+'), el('span', {}, full.length
-      ? `plein pour les ${full.map((r) => `${RES_FR[r][1]} (${u[r]} / ${limits[r]})`).join(', ')} — déposez sur une vignette pour la remplacer`
-      : any ? 'déposer ou choisir une autre entrée' : 'déposez des images, des vidéos, des sons, des éléments — ou cliquez pour choisir'));
+      ? `plein pour les ${full.map((r) => `${RES_FR[r][1]} (${u[r]} / ${limits[r]})`).join(', ')} — dépose sur une vignette pour la remplacer`
+      : any ? 'déposer ou choisir une autre référence' : 'dépose des images, des vidéos, des sons, des éléments, ou clique pour choisir'));
     zone.classList.toggle('full', full.length > 0);
     cats.replaceChildren(...CATS.filter((c) => S[c.id].length).map((c) => catBox(c, u)));
   }
@@ -244,7 +244,7 @@ export function createEntrees(box, { limits = { image: 9, video: 3, audio: 3, fi
     const tok = tokenOf(c.id, i);
     const it = p ? items.get(p.item) : null;
     const node = el('div', { class: 'ent-slot' + (p ? '' : ' hole') + (c.id === 'element' ? ' element' : ''),
-      title: p ? `${it?.title || ''} — cliquer : insérer ${tok} dans le prompt · déposer ici : remplacer` : `${tok} : place vide — déposez ici pour la remplir` });
+      title: p ? `${it?.title || ''} — cliquer : insérer ${tok} dans le prompt · déposer ici : remplacer` : `${tok} : place vide — dépose ici pour la remplir` });
     dropZone(node, { kinds: c.kinds, multiple: false, via, onitems: ([x]) => replace(c.id, i, x) });
     if (!p) {
       node.append(el('span', { class: 'ent-im' }, el('span', { class: 'ent-empty' }, 'vide')), el('span', { class: 'ent-tok bad' }, tok),

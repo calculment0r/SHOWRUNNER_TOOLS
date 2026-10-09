@@ -63,7 +63,7 @@ const store = {   // commodité du navigateur : le formulaire en cours
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* navigation privée */ } },
 };
 const MODE_FR = { t2v: 'texte', i2v: 'images', r2v: 'références' };
-const MODE_SHORT = { t2v: 'Texte', i2v: 'Images', r2v: 'Réf.' };
+const MODE_SHORT = { t2v: 'Texte', i2v: 'Images', r2v: 'Références' };
 const MODE_TIP = { t2v: 'le prompt seul', i2v: 'partir d’une image, finir sur une autre', r2v: 'des images, des personnages, des sons, appelés par @' };
 const METH_FR = { brouillon: 'brouillon', qualite: 'qualité', turbo: 'turbo · ancien banc', origine: 'origine · ancien banc', spectrum: 'spectrum · ancien banc' };
 // les préréglages (server/tools/movie.py, METHODS) : l'Esquisse et le Léger (09/10, l'audit), puis la recette de Cal (30/09)
@@ -147,9 +147,9 @@ const U = createUndo({ name: 'movie', onapply: (e, { items }) => {
 } });
 const sameJ = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const FIELD_FR = { desc: 'écrire ce qu’on voit et entend', sound: 'écrire le son d’ambiance', music: 'écrire la musique' };
-const FORM_FR = [['start', 'changer l’image de début'], ['end', 'changer l’image de fin'], ['inputs', 'changer les entrées'],
-  ['ms', 'changer le multishot'], ['subjects', 'changer la définition d’un sujet'], ['summary', 'changer le résumé'],
-  ['refSize', 'changer le détail des références'], ['format', 'changer le format'], ['canvas', 'changer la toile'],
+const FORM_FR = [['start', 'changer l’image de début'], ['end', 'changer l’image de fin'], ['inputs', 'changer les références'],
+  ['ms', 'changer le multishot'], ['subjects', 'changer la description d’un sujet'], ['summary', 'changer le résumé'],
+  ['refSize', 'changer le détail des références'], ['format', 'changer le format'], ['canvas', 'changer la taille'],
   ['method', 'changer la qualité'], ['frames', 'changer la durée'], ['steps', 'changer le nombre de pas'], ['seed', 'changer la graine'],
   ['origSeed', 'changer la graine d’origine'], ['loras', 'changer les LoRA'], ['adv', 'changer un réglage avancé']];
 const TYPED = new Set(['steps', 'seed']);
@@ -367,9 +367,9 @@ async function toBar(items, toks = null) {
 
 // ── le prompt : une invite, le son et la musique à part ─────
 const PH = {
-  t2v: 'Décrivez le plan : ce qu’on voit, ce qu’on entend, la caméra',
+  t2v: 'Décris le plan : ce qu’on voit, ce qu’on entend, la caméra',
   i2v: 'Ce qui se passe à partir de l’image : l’action, la caméra, une réplique',
-  r2v: 'Le plan, avec ses références : @element1 marche dans @image1… (tapez @)',
+  r2v: 'Le plan, avec ses références : @element1 marche dans @image1… (tape @)',
 };
 const descEl = $('#desc'), soundEl = $('#sound'), musicEl = $('#music');
 function syncFields() {
@@ -431,7 +431,7 @@ function refreshAssist() {
   if (!box || $('[data-pop="aides"]').hidden) return;
   const w = S.opts?.llm || {};
   box.replaceChildren(inviteButton(), el('span', { class: 'hint', title: w.up ? `modèle de texte : ${w.model}` : w.why || '' }, w.up
-    ? 'votre prompt réécrit pour H3, en anglais et en plans ; à relire'
+    ? 'ton prompt réécrit pour H3, en anglais et en plans ; à relire'
     : 'sans modèle de texte : les plans seulement, sans traduire'));
 }
 
@@ -739,7 +739,7 @@ async function paintRecu() {
   put(box,
     el('div', { class: 'v-sec v-invite' }, el('div', { class: 'row' },
       inviteButton(),
-      el('span', { class: 'hint', title: w.up ? `modèle de texte : ${w.model}` : w.why || '' }, w.up ? 'votre prompt réécrit pour H3, en anglais et en plans ; à relire'
+      el('span', { class: 'hint', title: w.up ? `modèle de texte : ${w.model}` : w.why || '' }, w.up ? 'ton prompt réécrit pour H3, en anglais et en plans ; à relire'
         : 'sans modèle de texte : les plans seulement, sans traduire'))),
     el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Vérifications'), checks),
     defs,
@@ -755,7 +755,7 @@ function inviteButton() {
   const busy = !!INV.job;
   const empty = !F.p[F.mode].desc.trim();
   return el('button', { class: 'tb ghost sm v-inv', type: 'button', disabled: busy || empty ? true : null,
-    title: busy ? 'en cours…' : empty ? 'écrivez d’abord le prompt' : 'réécrire le prompt pour H3',
+    title: busy ? 'en cours…' : empty ? 'écris d’abord le prompt' : 'réécrire le prompt pour H3',
     onclick: shapeInvite }, busy ? 'Mise en forme…' : 'Mettre en forme');
 }
 async function shapeInvite() {
@@ -777,7 +777,7 @@ async function shapeInvite() {
     syncFields();
     if (F.ms.on) syncMultishot();   // la frise relit l'invite : ses plans et leurs temps de coupe
     changed();
-    toast(inv.source === 'modèle' ? 'prompt mis en forme : relisez-le avant de lancer' : 'sans modèle de texte : plans seulement', 6000);
+    toast(inv.source === 'modèle' ? 'prompt mis en forme : relis-le avant de lancer' : 'sans modèle de texte : plans seulement', 6000);
   } catch (e) { toast(e.message, 6000); }
   finally { INV.job = null; refreshInvite(); }
 }
@@ -861,13 +861,13 @@ async function runPlan() {
   } catch (e) { $('#why').replaceChildren(el('span', {}, 'le portail ne répond pas : ' + e.message)); $('#go').disabled = true; }
 }
 // ce qui manque, en peu de mots sous « Générer » (la phrase entière du serveur au survol)
-const SHORT = [[/^écrivez la description/, 'décrivez le plan'], [/ajoutez une première image/, 'ajoutez une image'],
-  [/^ajoutez une entrée/, 'ajoutez une référence'], [/ne pointent vers rien/, 'un @ sans référence'],
+const SHORT = [[/^écri(?:vez|s) la description/, 'décris le plan'], [/ajoute(?:z)? une première image/, 'ajoute une image'],
+  [/^ajoute(?:z)? une (?:entrée|référence)/, 'ajoute une référence'], [/ne pointent vers rien/, 'un @ sans référence'],
   [/ne servent qu'en mode/, 'les @ : en Références'], [/^toile/, 'taille hors limites']];
 const short = (e) => SHORT.find(([rx]) => rx.test(e))?.[1] || e;
 const FIX = [   // chaque blocage mène à ce qui le lève
   [/première image, une dernière/, () => chooseImage('start')],
-  [/ajoutez une entrée/, () => $('#entrees .ent-drop')?.click()],
+  [/ajoute(?:z)? une (?:entrée|référence)/, () => $('#entrees .ent-drop')?.click()],
   [/ne pointent vers rien|mode Références/, () => descEl.focus()],
   [/description|déclencheur/, () => (F.ms.on ? $('#ms .ms-ta') : descEl)?.focus()],
   [/toile/, () => { if (S.pop !== 'fmt') togglePop('fmt'); }],
@@ -880,7 +880,7 @@ function paintPlan() {
     title: pl.errors.join('\n'), onclick: fix ? () => fix[1](first) : null }, short(first) + (pl.errors.length > 1 ? ` (+${pl.errors.length - 1})` : ''))] : []));
   $('#go').disabled = !pl.ok;
   $('#go').title = pl.ok ? 'Ctrl + Entrée' : pl.errors.join('\n');
-  $('#graph').textContent = pl.graph ? JSON.stringify(pl.graph, null, 1) : (pl.ok ? 'ouvrez ce pli pour le construire' : 'le graphe se construit quand le plan est complet');
+  $('#graph').textContent = pl.graph ? JSON.stringify(pl.graph, null, 1) : (pl.ok ? 'ouvre ce pli pour le construire' : 'le graphe se construit quand le plan est complet');
   paintOutput();
   paintChips();
   if (S.pop === 'fmt') paintFmt();
@@ -897,7 +897,7 @@ async function launch() {
     const title = (F.p[mode].desc.replace(/\[Shot \d+\]\s*/g, '').replace(/@([\p{L}\p{N}_-]+)/gu, '$1').trim().replace(/\s+/g, ' ') || MODE_FR[mode]).slice(0, 70);
     const j = await jobs.submit('movie.' + mode, params(mode), { title, tool: 'movie' });
     mine(j);
-    toast(pl.engine === 'h3' ? 'rendu lancé : en haut du fil' : 'rendu d’essai lancé (moteur factice) : en haut du fil');
+    toast(pl.engine === 'h3' ? 'rendu lancé : en haut du fil' : 'rendu d’essai lancé : en haut du fil');
   } catch (e) { toast(e.message); }
   finally { $('#go').disabled = !S.plan?.ok; }
 }
@@ -915,8 +915,9 @@ async function paintEngine() {
   const pill = $('#engine-pill');
   try { S.h3 = await api('movie/h3'); } catch { S.h3 = null; }
   const h = S.h3;
-  let cls = 'pill', txt = 'moteur illisible', tip = '';
-  if (h?.engine === 'factice') { cls = 'pill work'; txt = 'moteur factice'; tip = 'des vidéos d’essai, pas H3'; }
+  let cls = 'pill', txt = 'H3 · état inconnu', tip = '';
+  // le lexique commun : un portail ou un modèle factice se dit « essai », par une pastille
+  if (h?.engine === 'factice') { cls = 'pill work'; txt = 'essai'; tip = 'des vidéos d’essai, pas H3'; }
   else if (h) {
     const upI = h.instances.filter((i) => i.up), st = h.instances.find((i) => i.starting_for != null);
     const sleeper = h.instances.some((i) => i.managed);   // une instance que le gardien démarre
@@ -935,8 +936,8 @@ function recipeRows(it) {
   const unet = o && p.weights ? (o.unets[p.weights]?.find((u) => u.f === p.unet)?.nom || p.unet) : p.unet;
   return [
     ['Mode', MODE_FR[p.mode]],
-    ['Préréglage', p.method ? `${o?.methods.find((m) => m.id === p.method)?.label || METH_FR[p.method] || p.method}` : null],
-    ['Toile', it.width ? `${it.width} × ${it.height}${p.draft ? ` · depuis ${p.draft[0]} × ${p.draft[1]}` : ''}${p.family ? ' · ' + p.family : ''}` : null],
+    ['Résolution', p.method ? `${o?.methods.find((m) => m.id === p.method)?.label || METH_FR[p.method] || p.method}` : null],
+    ['Taille', it.width ? `${it.width} × ${it.height}${p.draft ? ` · depuis ${p.draft[0]} × ${p.draft[1]}` : ''}${p.family ? ' · ' + p.family : ''}` : null],
     ['Durée', it.duration ? `${it.duration.toFixed(2)} s${p.frames ? ` · ${p.frames} images` : ''}${it.fps ? ` · ${it.fps} i/s` : ''}` : null],
     ['Plans', p.request?.multishot?.shots?.length ? `${p.request.multishot.shots.length} · multishot` : null],
     ['Pas', p.steps], ['Graine', p.seed],
@@ -944,10 +945,10 @@ function recipeRows(it) {
     ['Modèle', unet],
     ['LoRA', p.method !== undefined ? [...(p.recipe_loras || []), ...(p.loras || [])].map((l) => `${l.name.split('/').pop().replace('.safetensors', '')} × ${l.strength}`)
       .concat(p.turbo ? ['turbo du banc'] : []).join(' → ') || 'aucun' : null],
-    ['Entrées', p.mode === 'r2v' ? Object.entries(p.mentions || {}).map(([k, v]) => `${k} → ${v}`).join(' · ') + ` · détail ${p.ref_image_size}` : null],
+    ['Références', p.mode === 'r2v' ? Object.entries(p.mentions || {}).map(([k, v]) => `${k} → ${v}`).join(' · ') + ` · détail ${p.ref_image_size === 'max' ? 'maximal' : 'normal'}` : null],
     ['Images', p.mode === 'i2v' ? [p.start ? 'début' : null, p.end ? 'fin' : null].filter(Boolean).join(' + ') : null],
     ['Son', it.audio ? 'oui, rendu avec l’image' : 'non'],
-    ['Moteur', p.engine === 'factice' ? 'factice · vidéo d’essai, pas H3' : it.origin?.model || it.origin?.tool],
+    ['Rendu par', p.engine === 'factice' ? 'essai (pas H3)' : it.origin?.model || it.origin?.tool],
     ['Rendu', it.render_seconds != null ? `${mmss(it.render_seconds)}${it.machine ? ' · ' + it.machine : ''}${p.estimate ? ` (estimé H3 ${rng(p.estimate)})` : ''}` : null],
   ].filter(([, v]) => v !== null && v !== undefined && v !== '');
 }
@@ -1024,7 +1025,7 @@ async function continueFrom(it) {
   if (S.view !== 'create') setView('create');
   setMode('i2v');
   await setImage('start', img);
-  toast('la dernière image en début de plan : décrivez la suite', 5000);
+  toast('la dernière image en début de plan : décris la suite', 5000);
 }
 function asRef(it) {
   fil.close();
@@ -1042,9 +1043,9 @@ function toBench(k, it) {
 // puis la fin ; sinon les entrées, chacune dans sa catégorie (en Texte, on passe en Références) ;
 // Comparer → A, puis B. Glisser une vignette sur un plan du Multishot l'y écrit.
 const DOCK_CTX = {
-  t2v: { kinds: KINDS, label: 'les entrées · mode Références' },
+  t2v: { kinds: KINDS, label: 'les références (mode Références)' },
   i2v: { kinds: ['image', 'element'], label: 'la première image, la dernière' },
-  r2v: { kinds: KINDS, label: 'les entrées' },
+  r2v: { kinds: KINDS, label: 'les références' },
   cmp: { kinds: ['video'], label: 'le banc A/B' },
 };
 function followDock() { dock.contexte(DOCK_CTX[S.view === 'cmp' ? 'cmp' : F.mode] || null); }
@@ -1072,7 +1073,7 @@ dock.configure({
       img && F.mode === 'i2v' ? { label: 'En image de début', onclick: () => setImage('start', it) } : null,
       img && F.mode === 'i2v' ? { label: 'En image de fin', onclick: () => setImage('end', it) } : null,
       img && F.mode !== 'i2v' ? { label: 'En image de début', sub: 'mode Images', onclick: () => { setMode('i2v'); setImage('start', it); } } : null,
-      F.mode !== 'r2v' ? { label: 'En entrée', sub: 'mode Références', onclick: () => { setMode('r2v'); E?.add(chosen); } } : null,
+      F.mode !== 'r2v' ? { label: 'En référence', sub: 'mode Références', onclick: () => { setMode('r2v'); E?.add(chosen); } } : null,
       it.kind === 'video' && one ? { label: 'Comparer', sub: 'en A', onclick: () => toBench('A', it) } : null,
     ];
   },
@@ -1097,7 +1098,7 @@ function menuFor(it) {
     { label: 'Agrandir dans Upscale', icon: '⇱', disabled: !vid, why: 'pas une vidéo', onclick: go(`upscale/?src=${id}`) },
     { label: 'Envoyer au Montage', icon: '▤', studio: true, onclick: go(`montage/?add=${id}`) },   // retiré sans le Studio (commun/menu.js)
     { label: 'Créer un élément', icon: '◆', disabled: true,
-      why: 'un élément se fait d’images (et d’une voix) : tirez d’abord une image de la vidéo (⋯ → Extraire une image), puis faites l’élément depuis Image ou Asset' },
+      why: 'extrais d’abord une image (⋯ → Extraire une image), puis crée l’élément dans Asset' },
   ];
 }
 function extra(it) {
@@ -1115,7 +1116,7 @@ function extra(it) {
 function badge(it) {
   const p = it.params || {};
   if (!p.mode) return it.origin?.tool === 'upload' ? 'déposée' : (it.origin?.tool || 'vidéo');
-  return ['H3', MODE_FR[p.mode], METH_FR[p.method] || '', p.engine === 'factice' ? 'factice' : ''].filter(Boolean).join(' · ');
+  return ['H3', MODE_FR[p.mode], METH_FR[p.method] || '', p.engine === 'factice' ? 'essai' : ''].filter(Boolean).join(' · ');
 }
 
 // ── la file dans le fil : les rendus en file, en cours, et mes échecs récents ──
@@ -1156,7 +1157,7 @@ function mountFil() {
     promptLabel: 'Prompt',
     badge,
     chips: (it) => [it.width ? `${it.width}×${it.height}` : '', it.duration ? `${it.duration.toFixed(1).replace('.', ',')} s` : '',
-      it.params?.family || '', it.params?.request?.multishot?.shots?.length ? `${it.params.request.multishot.shots.length} plans` : '', it.audio ? 'son' : 'muet'],
+      it.params?.request?.multishot?.shots?.length ? `${it.params.request.multishot.shots.length} plans` : '', it.audio ? 'son' : 'muet'],
     details: (it) => recipeRows(it),
     extra,
     viewerActions: (it) => [
@@ -1173,7 +1174,7 @@ function mountFil() {
     },
     menu: menuFor,
     link: (it) => href('movie/#' + it.id),
-    empty: 'Décrivez le plan en bas, puis « Générer ».',
+    empty: 'Tes vidéos s’afficheront ici. Décris le plan en bas, puis « Générer ».',
   });
 }
 
@@ -1240,7 +1241,7 @@ function paintSlots() {
       el('b', { class: 'k' }, k),
       el('div', { class: 'th', style: bg(it?.thumb_url) }),
       el('div', { class: 'ab-txt' }, el('span', { class: 't' }, it ? (it.title || it.id) : 'aucun plan'),
-        el('span', { class: 'lbl' }, it ? [p.mode ? MODE_FR[p.mode] : null, p.method || null, it.width ? `${it.width}×${it.height}` : null].filter(Boolean).join(' · ') : 'à choisir, ou déposez une vidéo ici')),
+        el('span', { class: 'lbl' }, it ? [p.mode ? MODE_FR[p.mode] : null, p.method || null, it.width ? `${it.width}×${it.height}` : null].filter(Boolean).join(' · ') : 'à choisir, ou dépose une vidéo ici')),
       el('button', { class: 'tb ghost sm', type: 'button', onclick: () => chooseAB(k) }, 'Choisir'));
   }
 }
@@ -1379,7 +1380,7 @@ function paintMetas(a, b) {   // les recettes côte à côte : ce qui diffère e
   const differs = (k) => ra && rb && k !== 'Rendu' && String(ra[k] ?? '') !== String(rb[k] ?? '');
   const dk = keys.filter(differs);
   const bare = a && b && !a.params?.mode && !b.params?.mode;
-  $('#diffline').replaceChildren(!(a && b) ? el('span', { class: 'lbl' }, 'choisissez deux plans pour voir ce qui diffère')
+  $('#diffline').replaceChildren(!(a && b) ? el('span', { class: 'lbl' }, 'choisis deux plans pour voir ce qui diffère')
     : bare ? el('span', {}, 'ces vidéos n’ont pas de recette (déposées, pas faites ici) : seuls l’image et le son se comparent')
     : dk.length ? el('span', {}, el('b', {}, `${dk.length} différence${dk.length > 1 ? 's' : ''}`), ' · ' + dk.join(', ').toLowerCase())
       : el('span', {}, 'mêmes réglages : seul le hasard du rendu les sépare'));
@@ -1390,7 +1391,7 @@ function paintMetas(a, b) {   // les recettes côte à côte : ce qui diffère e
     box.replaceChildren(el('span', { class: 'dots' }), head, el('div', { class: 'name' }, it.title || it.id),
       el('dl', { class: 'kv' }, ...keys.filter((x) => r[x] !== undefined && r[x] !== '').flatMap((x) => {
         const d = differs(x) ? 'diff' : '';
-        const long = x === 'Prompt' || x === 'Son demandé' || x === 'Entrées' ? ' long' : '';
+        const long = x === 'Prompt' || x === 'Son demandé' || x === 'Références' ? ' long' : '';
         return [el('dt', { class: d }, x), el('dd', { class: (d + long + (x === 'Rendu' ? ' big' : '')).trim() }, String(r[x]))];
       })));
   }
@@ -1404,7 +1405,7 @@ dropAnywhere(async (files) => {
   for (const f of files) {
     try { await uploadFile(f, { tool: 'upload', via: 'movie' }); n++; } catch (e) { toast(`${f.name} : ${e.message}`); }
   }
-  if (n) toast(`${n > 1 ? n + ' fichiers rangés' : 'rangé'} dans la bibliothèque : déposez sur la barre pour vous en servir`);
+  if (n) toast(`${n > 1 ? n + ' fichiers rangés' : 'rangé'} dans la bibliothèque : à déposer sur la barre pour s’en servir`);
   fil?.reload();
 });
 
