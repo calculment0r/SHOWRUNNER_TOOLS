@@ -518,6 +518,8 @@ par réglage de diapositive sous `ideation/diapo/`) :
   lu par parties, chaque image regardée, en sorties structurées, puis la planche
   organisée. Rien n'a tourné sur le vrai modèle : le contrôle passe par
   `tools/faux_ollama.py`.
+- la suite (09/10, étude seulement, rien n'est codé) : `docs/etudes/agent_autonome.md` — l'accusé par le code, un
+  routeur, une politique de conversation en code, des skills, le registre des capacités (`agent/`, `GET /api/agent/registre`).
 
 **ODIO, « Détecter le tempo » (05/10)** : le calcul est dans la page
 (`musique/tempo.js`, un module pur, appelé par `musique/bpm.js` sur le son que

@@ -1,5 +1,7 @@
 # Le mode « showrunner » — « Commencer un projet » (05/10/2026)
 
+> **09/10** : la conduite de l'agent après l'entrée d'un projet (registre, politique, skills) : `agent_autonome.md`.
+
 Demande de Cal, mot pour mot (05/10) :
 
 > « on va avancer un peu aussi sur le mode "showrunner". On enlève le "répondre à
