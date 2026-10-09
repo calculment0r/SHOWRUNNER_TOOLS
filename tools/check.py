@@ -43,6 +43,9 @@ config.CFG["lanes"] = {"cpu": ["local"]}  # aucun GPU pour le contrôle
 # la porte coupée pour les outils : tout se passe comme si Cal était connecté ;
 # la porte elle-même s'essaie à part, allumée (server/tools/compte.py, admin.py)
 config.CFG["auth"] = False
+# les alertes de Cal (core/alertes.py) : jamais le vrai bot — un réglage d'essai, absent tant que le selftest
+# d'alertes.py ne le pose pas (contre le faux Telegram) ; sur DGX2, le contrôle n'écoute ni n'écrit au bot de Cal
+config.CFG["alertes"] = {"fichier": str(Path(DATA) / "telegram-essai.json")}
 import showrunner  # noqa: E402
 
 BASE = f"http://127.0.0.1:{PORT}"
@@ -334,6 +337,7 @@ STORES = {
     "conso.jsonl": ("instance", "la consommation : chaque ligne porte sa Team et son Workspace", None),
     "journal.jsonl": ("instance", "le journal des écritures : chaque ligne porte son Workspace", None),
     "porte-demo.json": ("instance", "les codes de la porte", None),
+    "alertes.json": ("instance", "les alertes de Cal (Telegram) : les décisions en attente, l'offset, le dernier envoi", None),
     "movie_h3.json": ("instance", "l'état du serveur H3", None),
     "ideation_web": ("cache", "les aperçus d'adresses web : le web public", None),
     "image_masks": ("temporaire", "les zones peintes d'une édition d'Image, lues par son travail", None),

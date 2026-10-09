@@ -13,6 +13,12 @@
     SR_CPU=2 …                                     # deux ouvriers sur la voie cpu (les paliers en parallèle)
     SR_FAUX_R2=1 python3 tools/portail_essai.py    # le lien d'écoute publié sans Cloudflare : le faux S3
                                                    # du selftest d'ecoute.py, un jeton d'essai (chanson/pilote_lien.mjs)
+    SR_TELEGRAM_URL=http://127.0.0.1:8832 …        # les alertes de Cal sur un faux Telegram (python3
+                                                   # tools/faux_telegram.py --port 8832 ; son jeton se colle
+                                                   # dans Admin → Demandes → Alertes). Le réglage est toujours
+                                                   # <données>/telegram-essai.json : jamais le bot de Cal
+    SR_PORTE=1 …                                   # la porte allumée (entrer par un pseudo : nico007 depuis
+                                                   # 127.0.0.1, puis les comptes qu'on crée) — admin/pilote_invites.mjs
 
 Le même que la session cloud du 05/10 faisait tourner à la main (docs/REPRISE.md, « Session
 cloud ») : arrêter par son PID, jamais par `pkill -f` (le motif tue aussi le shell qui le tape).
@@ -34,7 +40,11 @@ sys.path.insert(0, str(REPO / "server"))
 
 from core import config  # noqa: E402
 
-config.CFG["auth"] = False                       # pas de connexion : on entre en admin
+config.CFG["auth"] = bool(os.environ.get("SR_PORTE"))   # sans SR_PORTE : pas de connexion, on entre en admin
+# les alertes de Cal (core/alertes.py) : un réglage à ce portail, dans ses données — jamais ~/.config/showrunner
+config.CFG["alertes"] = {"fichier": str(Path(data) / "telegram-essai.json")}
+if os.environ.get("SR_TELEGRAM_URL"):
+    config.CFG["alertes"].update(url=os.environ["SR_TELEGRAM_URL"], poll_s=5)
 config.CFG["host"] = "127.0.0.1"
 config.CFG["lanes"] = {"cpu": ["local"], "image": ["local"]}
 if os.environ.get("SR_LORA_MANIFEST"):

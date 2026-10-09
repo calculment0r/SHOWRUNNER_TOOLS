@@ -109,6 +109,15 @@ Le droit `access` passe à la Team (`access_of(u, espace)` = l'offre de la Team 
 Workspace ; la Team personnelle a celle du compte) ; d'ici l'étape 2, la porte
 prend le meilleur des deux : rien de ce qui est ouvert ne se ferme.
 
+Les invités d'une Team (09/10, docs/etudes/equipes_espaces.md, « Fait le 09/10 ») : un pseudo
+neuf mis dans une Team par quelqu'un d'autre que Cal (ou un admin du portail) — par son pseudo,
+ou par le lien d'invitation d'une Team fait par un non-Cal — naît en attente (`pending`, avec
+`invited` : qui, quelle Team, quel rôle) ; sa place dans la Team est écrite mais ne compte pas
+(core/espaces.py ne voit qu'un compte actif), la porte lui dit qu'il attend la validation de
+Cal. Cal l'accepte (accept_request : le compte, donc ses places) ou le refuse (refuse : le
+compte et ses places) dans Admin → Demandes, ou d'un bouton de l'alerte Telegram
+(core/alertes.py : chaque demande, à la porte, de Studio ou d'un invité, y est annoncée).
+
 La garde du calcul (étape 1) : jobs.submit juge chaque travail
 (`compute_refusal` : la personne, le Workspace du travail, le coût déclaré de
 sa sorte) ; les calculs hors file sont déclarés dans `COMPUTE_ROUTES` et jugés
@@ -662,6 +671,8 @@ def request_studio(u: dict | None) -> dict:
             new = True
     if new:
         journal("demande de Studio", user=u["id"], name=u.get("name", ""))
+        from . import alertes
+        alertes.demande_studio(u)   # Cal en est alerté (core/alertes.py : rangée, jamais envoyée d'ici)
     return {"ok": False, "access": "apps", "asked": asked}
 
 
@@ -1251,6 +1262,8 @@ def _me(req) -> dict:
     if not u:
         return {"auth": True, "state": "anonymous"}
     out = {"auth": True, "state": u["state"], "user": public_user(u), "since": u.get("created")}
+    if invited_public(u):   # D5 : la porte lui dit qu'il attend la validation de Cal
+        out["invited"] = invited_public(u)
     if u["state"] == "active" and _offnet(u, req):
         return {"auth": True, "state": "offnet", "user": public_user(u),
                 "message": OFFNET.format(p=u.get("pseudo") or u["name"])}
@@ -1336,33 +1349,49 @@ def _enter(name: str, key: str, ip: str, req, d, level, door) -> tuple[str, dict
             db["users"][key] = u
             _save()
             tok = _new_session(key, req, **door)
-            journal("demande", user=key, name=name, ip=ip, **({"porte": d} if d else {}))
-            return "pending", dict(u), tok
-        if u.get("state") == "suspended":
-            raise HttpError(403, "ce compte est suspendu : vois avec Cal")
-        if d and is_admin(u) and level != "admin" and not admin_by_pseudo(d):
-            raise HttpError(403, DOOR_ADMIN.format(p=f"« {name} »"))
-        if _offnet(u, req):
-            raise HttpError(403, OFFNET.format(p=f"« {name} »"))
-        tok = _new_session(u["id"], req, **door)
+            fresh = dict(u)
+        else:
+            fresh = None
+            if u.get("state") == "suspended":
+                raise HttpError(403, "ce compte est suspendu : vois avec Cal")
+            if d and is_admin(u) and level != "admin" and not admin_by_pseudo(d):
+                raise HttpError(403, DOOR_ADMIN.format(p=f"« {name} »"))
+            if _offnet(u, req):
+                raise HttpError(403, OFFNET.format(p=f"« {name} »"))
+            tok = _new_session(u["id"], req, **door)
+    if fresh:   # une demande neuve : Cal en est alerté (core/alertes.py : rangée, jamais envoyée d'ici)
+        journal("demande", user=key, name=name, ip=ip, **({"porte": d} if d else {}))
+        from . import alertes
+        alertes.demande_porte(fresh)
+        return "pending", fresh, tok
     journal("entrée" if u["state"] == "active" else "demande rejointe", user=u["id"], ip=ip,
             **({"porte": d, "niveau": level} if d else {}))
     return u["state"], dict(u), tok
 
 
 def cancel_request(req) -> None:
+    """Annuler sa demande (la porte qui attend). Un invité qui attend Cal (D5 : un admin de Team l'a
+    mis dans sa Team) ne fait que fermer ce navigateur : son compte n'est pas à lui de défaire, c'est
+    à Cal de le valider ou de le refuser."""
     h, s, u = session_of(req)
+    mine = bool(u) and u.get("state") == "pending" and not u.get("invited")
+    if mine:
+        from . import espaces
+        espaces.drop_memberships(u["id"])   # (aucune : une demande de la porte n'est dans aucune Team)
     with _lock:
         db = _data()
         if h:
             db["sessions"].pop(h, None)
-        if u and u.get("state") == "pending":
+        if mine:
             db["users"].pop(u["id"], None)
             for k in [k for k, x in db["sessions"].items() if x.get("user") == u["id"]]:
                 db["sessions"].pop(k, None)
         _save()
     if u:
-        journal("demande annulée", user=u["id"])
+        journal("demande annulée" if mine else "attente quittée", user=u["id"])
+    if mine:
+        from . import alertes
+        alertes.clore("compte", u["id"], "demande annulée par la personne")
 
 
 def accept(uid: str, by: str, role: str | None = None, *, access: str | None = None, perso: bool | None = None,
@@ -1384,13 +1413,60 @@ def accept(uid: str, by: str, role: str | None = None, *, access: str | None = N
             u.setdefault("access", settings()["new_access"])
         if perso is False:
             u["perso"] = False
+        elif perso is True:
+            u.pop("perso", None)
         if via:
             u["via"] = via
         _save()
     journal("accepté", user=uid, by=by, **({"role": role} if role else {}), **({"via": via} if via else {}))
+    from . import alertes
+    alertes.clore("compte", uid, f"validé par {display_name(by)}")   # l'alerte de sa demande le dit, sans boutons
     if role != GUEST and access is None and perso is not False:   # Cal accepte un ami à la porte
         _join_instance_team(u)
     return dict(u)
+
+
+def invited_public(u: dict | None) -> dict | None:
+    """Ce que la porte d'un invité qui attend Cal (D5) lui dit : qui l'a invité, quand (/api/auth/me, et la
+    réponse de /api/auth/enter : la page qui attend le dit dès le pseudo tapé)."""
+    if not u or u.get("state") != "pending" or not u.get("invited"):
+        return None
+    return {"by_name": display_name(u["invited"].get("by")), "at": u["invited"].get("at")}
+
+
+def accept_request(uid: str, by: str) -> dict:
+    """« Accepter » une demande (Admin → Demandes, et le bouton Valider de l'alerte : core/alertes.py).
+    Un pseudo tapé à la porte : accept, comme avant. Un invité qui attend Cal (D5 : `invited`, un admin
+    de Team l'a mis dans sa Team) : son compte, et par là ses places dans les Teams — elles ne comptaient
+    pas tant qu'il attendait (core/espaces.py ne voit qu'un compte actif). Il entre comme le lien d'une
+    Team l'aurait fait entrer : sans le Studio du compte (la Team l'a), sans « Chez moi » s'il n'est que
+    guest partout."""
+    u = user(uid)
+    if not u or u.get("state") != "pending":
+        raise HttpError(404, "pas de demande en attente à ce pseudo")
+    if not u.get("invited"):
+        return accept(uid, by)
+    from . import espaces
+    roles = [x["role"] for x in espaces.invitations_of(uid)] or [u["invited"].get("role")]
+    return accept(uid, by, access="apps", perso=any(r != "guest" for r in roles), via="equipe")
+
+
+INVITES_MAX = 50   # les invités d'un même admin qui attendent Cal : au-delà, qu'il valide d'abord
+
+
+def mark_invited(uid: str, invited: dict) -> dict:
+    """Un pseudo neuf qui attend (tapé à la porte) ouvre le lien d'une Team fait par un non-Cal (D5) :
+    il reste en attente, désormais comme un invité — Cal le valide (Admin → Demandes, l'alerte)."""
+    with _lock:
+        u = _data()["users"].get(uid)
+        if not u or u.get("state") != "pending":
+            raise HttpError(404, "pas de demande en attente à ce pseudo")
+        if not u.get("invited"):
+            u["invited"] = dict(invited)
+            _save()
+        out = dict(u)
+    journal("invité en attente", user=uid, by=invited.get("by"), team=invited.get("team"), lien=invited.get("lien"))
+    return out
 
 
 def _join_instance_team(u: dict) -> None:
@@ -1425,11 +1501,14 @@ def find_pseudo(name) -> dict | None:
         return dict(u) if u else None
 
 
-def create_invited(pseudo, by: str, guest: bool) -> dict:
-    """Un pseudo neuf mis dans une Team par son admin (core/espaces.py, add_member) :
-    déjà accepté, comme un pseudo que Cal ajoute (il entre en le tapant), mais sans le
+def create_invited(pseudo, by: str, guest: bool, invited: dict | None = None) -> dict:
+    """Un pseudo neuf mis dans une Team par son admin (core/espaces.py, add_member), sans le
     Studio du compte (c'est la Team qui l'a) ; un guest n'a pas de Team personnelle
-    (`perso: false`) : il ne calcule nulle part."""
+    (`perso: false`) : il ne calcule nulle part. Mis par Cal (ou un admin du portail) : déjà
+    accepté, il entre en le tapant. Mis par un autre (D5, Cal, 09/10 : « je voudrais recevoir une
+    alerte pour pouvoir valider l'invité ») : `invited` {by, team, role, guest?, spaces?, at} —
+    le compte attend Cal (`pending`) ; il n'a ni droit ni entrée tant que Cal ne l'a pas validé
+    (accept_request) ; refusé, il disparaît avec ses places dans les Teams (refuse)."""
     name = clean_name(pseudo)
     if not valid_name(name):
         raise HttpError(400, "le pseudo : de 2 à 24 lettres ou chiffres (espace, trait d'union, point permis)")
@@ -1443,13 +1522,20 @@ def create_invited(pseudo, by: str, guest: bool) -> dict:
             raise HttpError(409, f"« {name} » est réservé : choisis un autre pseudo")
         if why:
             raise HttpError(409, f"« {name} » ressemble trop à un pseudo qui existe déjà : choisis-en un autre")
+        if invited and sum(1 for x in db["users"].values() if x.get("state") == "pending"
+                           and (x.get("invited") or {}).get("by") == by) >= INVITES_MAX:
+            raise HttpError(429, f"{INVITES_MAX} de tes invités attendent déjà la validation de Cal : qu'il les valide d'abord")
         u = {"id": key, "name": name, "pseudo": name, "role": "ami", "access": "apps", "state": "active",
              "created": now_iso(), "accepted": now_iso(), "by": by, "via": "equipe", "quotas": {}}
+        if invited:
+            u.pop("accepted")
+            u.update(state="pending", invited=dict(invited))
         if guest:
             u["perso"] = False
         db["users"][key] = u
         _save()
-    journal("ajouté par une Team", user=key, by=by, guest=guest)
+    journal("invité en attente" if invited else "ajouté par une Team", user=key, by=by, guest=guest,
+            **({"team": invited.get("team")} if invited else {}))
     return dict(u)
 
 
@@ -1479,6 +1565,14 @@ def delete_user(uid: str, by: str) -> dict:
 
 
 def refuse(uid: str, by: str) -> None:
+    """Refuser une demande (Admin → Demandes, le bouton Refuser de l'alerte) : le compte en attente
+    disparaît, et avec lui ses places dans les Teams (un invité, D5) — retirées d'abord : un pseudo
+    recréé plus tard n'en hérite jamais. La page qui attend dit « refusé »."""
+    u0 = user(uid)
+    if not u0 or u0.get("state") != "pending":
+        raise HttpError(404, "pas de demande en attente à ce pseudo")
+    from . import espaces
+    espaces.drop_memberships(uid)
     with _lock:
         db = _data()
         u = db["users"].get(uid)
@@ -1489,7 +1583,9 @@ def refuse(uid: str, by: str) -> None:
             if s.get("user") == uid:
                 s.update(user=None, refused=True, name=u["name"])
         _save()
-    journal("refusé", user=uid, by=by)
+    journal("refusé", user=uid, by=by, **({"invite_par": (u.get("invited") or {}).get("by")} if u.get("invited") else {}))
+    from . import alertes
+    alertes.clore("compte", uid, f"refusé par {display_name(by)}")
 
 
 def logout(req) -> None:
@@ -1638,7 +1734,9 @@ def users_public() -> list[dict]:
                         "access": access_of(u),
                         "studio_asked": (u.get("studio_request") or None) if not has_studio(u) else None,
                         # Teams et Workspaces : un compte entré comme guest n'a pas de « Chez moi »
-                        "perso": u.get("perso", True) is not False and u.get("role") != GUEST, "via": u.get("via")})
+                        "perso": u.get("perso", True) is not False and u.get("role") != GUEST, "via": u.get("via"),
+                        # D5 : un invité qui attend Cal (qui l'a mis, dans quelle Team) ; Admin → Demandes le détaille
+                        "invited": dict(u["invited"]) if u.get("state") == "pending" and u.get("invited") else None})
     return sorted(out, key=lambda x: (x["role"] != "admin", x["state"] != "pending", x["name"].lower()))
 
 
@@ -1690,6 +1788,10 @@ def set_user(uid: str, patch: dict, by: str) -> dict:
         _save()
         out = dict(u)
     journal("personne", user=uid, by=by, patch=patch)
+    if patch.get("access") == "studio" or ("studio_request" in patch and patch["studio_request"] in (None, "")):
+        from . import alertes   # sa demande de Studio est tranchée : l'alerte le dit, sans boutons
+        alertes.clore("studio", uid, f"Studio ouvert par {display_name(by)}" if patch.get("access") == "studio"
+                      else f"demande écartée par {display_name(by)}")
     if ("role" in patch or patch.get("access") == "studio") and out.get("role") != GUEST:
         _join_instance_team(out)   # Cal en fait un ami (ou lui ouvre le Studio) : dans Général, comme les autres
     return out

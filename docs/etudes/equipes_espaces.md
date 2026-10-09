@@ -954,6 +954,135 @@ Workspaces ; rapatrier un objet), 6 (`check_doc` par `ID_FIELDS`), 8 (le budget)
 
 ---
 
+## Fait le 09/10 — Cal valide les invités, et il en est alerté (Telegram)
+
+Cal, 09/10 : « si le user invite quelqu'un je voudrais recevoir une alerte pour pouvoir valider
+l'invité… on peut faire un truc par l'app Signal ? ou Telegram ? ». Ce qui change le § 4.1 : un
+pseudo neuf n'est plus « accepté par le lien » quand le lien (ou le geste) n'est pas de Cal.
+
+### La validation (D5)
+
+- **Qui attend.** Un pseudo NEUF créé par quelqu'un d'autre que Cal (un admin du portail compte
+  comme Cal) — par son pseudo (`espaces.add_member` → `auth.create_invited(…, invited=…)`), ou en
+  ouvrant le lien d'une Team fait par un non-Cal (`espaces.redeem` → `auth.mark_invited`) — naît
+  `state: "pending"` avec `invited: {by, team, role, guest?, spaces?, at}` (et `lien` pour un lien).
+- **Sa place ne compte pas, par construction.** Elle est écrite dans `teams.json` comme les autres,
+  mais tout `core/espaces.py` ne voit qu'un compte actif (`_profile` le faisait déjà ; `team_role` et
+  `teams_of` aussi désormais) : ni profil, ni droit, ni Team dans `/api/auth/me`, ni calcul ; la
+  porte du socle le garde dehors comme toute demande (401 sur `/api/…`). Aucun filtre à ajouter outil
+  par outil : la matrice ne lui donne rien tant qu'il attend.
+- **Ce qu'il voit.** Sa porte (`commun/porte.js`) : « invitation · en attente de Cal », « X t'a
+  invité ; ton compte attend la validation de Cal » (`auth.invited_public`, dans `/api/auth/me` et
+  dans la réponse de `/api/auth/enter`). « Taper un autre pseudo » ne ferme que ce navigateur : son
+  compte n'est pas à lui de défaire (`cancel_request`), c'est à Cal.
+- **Ce que voit qui l'invite.** Le toast « « x » attend la validation de Cal » (un à un, `addForm`,
+  et la liste collée, `addMany` : « attend Cal » par ligne), la pastille « attend Cal » sur sa ligne
+  de membre, et la note du formulaire et du lien qui le disent d'avance.
+- **Un compte qui existe et qui est actif** entre directement (Cal l'a déjà accepté une fois) ; Cal
+  en est seulement informé. Ce que Cal crée (Admin, `add_member` par Cal, son lien) reste accepté
+  d'emblée.
+- **Admin → Demandes** montre l'invité à côté des demandes de la porte : « invité par X dans la
+  Team Y (rôle) » (`espaces.invitations_of`). **Accepter** (`auth.accept_request`) active le compte,
+  donc ses places — sans le Studio du compte (la Team l'a) et sans « Chez moi » s'il n'est que guest
+  partout, comme l'aurait fait le lien de Cal. **Refuser** (`auth.refuse`) retire d'abord ses places
+  (`espaces.drop_memberships` : un pseudo recréé plus tard n'en hérite jamais), puis le compte.
+- **Bornes, décidées ici** : un invité qui attend, remis dans une Team (la même ou une autre) : 409,
+  « déjà invité, attend la validation de Cal » ; 50 invités d'un même admin en attente au plus
+  (`auth.INVITES_MAX`, 429 au-delà : qu'il fasse valider d'abord).
+
+### Pourquoi Telegram plutôt que Signal (D6)
+
+| | Telegram | Signal |
+|---|---|---|
+| API de bot | officielle, documentée : « Bot API » [TG1] | aucune publiée par Signal ; signal-cli est un client tiers, « primarily intended to be used on servers to notify admins of important events » [SG1] |
+| depuis le portail | HTTPS + JSON : `POST https://api.telegram.org/bot<jeton>/<méthode>` [TG2] — `urllib` de la bibliothèque standard suffit | un démon à part (JSON-RPC ou D-Bus) [SG1] |
+| ce qu'il faut installer | rien | Java (« at least Java Runtime Environment (JRE) 25 ») et `libsignal-client`, natif, « bundled for x86_64 Linux », Windows et macOS [SG1] — nos DGX sont en aarch64 (GB10) : à fournir soi-même |
+| l'identité | un bot créé par @BotFather, un jeton | un numéro de téléphone à lui (s'inscrire « will unregister any existing client » : pas celui de Cal) [SG1] |
+| l'entretien | l'API officielle, tenue par Telegram | « signal-cli releases older than three months may not work correctly » [SG1] |
+| des boutons dans le message | `inline_keyboard`, `callback_query`, `answerCallbackQuery` [TG1] | non trouvé dans signal-cli |
+| recevoir les clics | `getUpdates` en long polling, sans adresse publique ni webhook [TG1] | le démon |
+
+Ce qu'on a lu de l'API [TG1] et qui fonde le code (`server/core/alertes.py`) :
+- `getUpdates` : « Timeout in seconds for long polling » ; « An update is considered confirmed as soon
+  as getUpdates is called with an offset higher than its update_id » (l'offset tenu sur le disque) ;
+  « This method will not work if an outgoing webhook is set up » ; deux lecteurs du même bot : 409
+  (« Error 409 means that you are running your bot several times on long polling » [TG2]).
+- un bouton : `callback_data`, « 1-64 bytes » — la nôtre fait 12 octets, `v:` ou `r:` et un
+  identifiant aléatoire tenu par le serveur, jamais le pseudo ;
+- « Telegram clients will display a progress bar until you call answerCallbackQuery. It is,
+  therefore, necessary to react by calling answerCallbackQuery » ; son texte : « 0-200 characters » ;
+- `sendMessage` : « Text of the message to be sent, 1-4096 characters » (au plus 40 personnes par
+  message) ; `editMessageText` remplace le texte et prend `reply_markup` (« An object for an inline
+  keyboard »).
+- **Non documenté, à vérifier au premier essai réel** : qu'un `editMessageText` sans `reply_markup`
+  ôte les boutons (le faux Telegram le fait ; c'est l'usage connu) ; que le lien
+  `t.me/<bot>?start=<code>` (« links like t.me/your_bot?start=XXXX that open your bot with a
+  parameter » [TG1]) arrive au bot comme « /start <code> » (la page des fonctions des bots,
+  core.telegram.org/bots/features, est fermée au conteneur) — taper « /start <code> » à la main
+  marche dans les deux cas ; la marche à suivre de @BotFather (`/newbot`, un nom, un identifiant qui
+  finit par « bot ») est celle de la même page.
+
+### Les alertes (`server/core/alertes.py`, la carte `server/tools/alertes.py`)
+
+- **Le réglage** : `~/.config/showrunner/telegram.json` (`{"token", "chat_id", "chat_nom", "actif"}`,
+  réglage `alertes.fichier`), exigé en 600 — lisible par d'autres, il est refusé et la carte dit
+  `chmod 600`, comme la clé de la porte. L'adresse : `https://api.telegram.org`, sinon `alertes.url`,
+  sinon `SR_TELEGRAM_URL` (les essais). Le jeton ne sort jamais : la carte dit « posé » ou non, une
+  erreur qui le citerait est nettoyée, le contrôle vérifie qu'il n'est dans aucune réponse ni aucun
+  fichier des données.
+- **Rien ne part d'une requête** : un événement se range dans une file (bornée à 200) ; un fil
+  « alertes-envoi » l'envoie (10 s par appel) ; un échec est journalisé « alerte non envoyée : … » et
+  noté « dernier envoi » sur la carte. Des invités d'un même admin dans une même Team, arrivés
+  ensemble (une liste collée), partent en un message (« Valider (3) »).
+- **Les événements** : invité en attente (Valider · Refuser), demande à la porte (Valider ·
+  Refuser), demande de Studio (Ouvrir le Studio · Écarter), compte existant mis dans une Team par un
+  non-Cal (pour info, sans bouton). Sans emoji.
+- **Les boutons** : un fil « alertes-ecoute », `getUpdates` en long polling (50 s), l'offset dans
+  `<data_dir>/alertes.json` ; seul le chat réglé est écouté (un autre : ignoré, journalisé) ; la
+  donnée d'un bouton nomme une décision aléatoire qui désigne des demandes précises (le compte et sa
+  date de création, une demande de Studio et sa date) et s'éteint avec elles : tranchée ailleurs
+  (Admin, l'autre message, la personne qui annule), ses messages disent le verdict et perdent leurs
+  boutons ; un clic appelle la même fonction qu'Admin (`accept_request`, `refuse`, `set_user`),
+  répond (`answerCallbackQuery` : « validé par Cal », « refusé par Cal », « déjà traité ») et
+  remplace le message. Un seul fil de chaque, même module rechargé (retrouvés par leur nom) ;
+  « Couper » l'arrête (plus rien ne part, pas même une mise à jour) ; un portail tué : rien ne se
+  perd de ce qui compte (les décisions et l'offset sont sur le disque ; une mise à jour relue après
+  coup trouve sa décision déjà prise : « déjà traité »).
+- **« Trouver mon chat »** : un code de six signes, un quart d'heure, à envoyer au bot
+  (`/start <code>`, ou le lien t.me) ; le chat qui l'envoie, en privé, devient celui de Cal. Décidé
+  ici : pas « le premier chat qui écrit au bot » — le nom d'un bot se trouve, n'importe qui peut lui
+  écrire ; le code ne se lit que dans l'Admin de Cal.
+- **La carte « Alertes »** (Admin → Demandes, Cal seul) : l'état (posé, le bot, le chat, l'écoute,
+  le dernier envoi), la marche à suivre, le champ du jeton (écrit en 600) ou la commande à taper sur
+  DGX2 (`ssh -t dgx2 'cd ~/SHOWRUNNER_TOOLS && python3 server/showrunner.py --telegram'`, le jeton
+  sans écho), « Trouver mon chat », « Envoyer un essai », « Couper » / « Rallumer » (annulable).
+- **Essayer** : `tools/faux_telegram.py` (les méthodes appelées, `getUpdates`, Cal qui écrit, Cal
+  qui clique, Telegram lent ou en panne), pris par le selftest de `server/tools/alertes.py` et par
+  `tools/portail_essai.py` (`SR_TELEGRAM_URL`, `SR_PORTE=1` pour la porte allumée) ; le pilote
+  `admin/pilote_invites.mjs` (sombre et clair). Le contrôle (`tools/check.py`) ne lit jamais le
+  réglage de Cal.
+
+### Brancher son bot (Cal, une fois)
+
+1. Telegram, sur le téléphone : ouvrir **@BotFather**, envoyer `/newbot`, un nom (« Showrunner »),
+   puis un identifiant qui finit par `bot`. Il répond par un jeton `123456789:AA…`.
+2. À la maison, **Admin → Demandes**, carte **Alertes** : coller le jeton, « Poser le jeton » (ou la
+   commande ci-dessus sur DGX2). La carte dit le nom du bot et « chat à trouver ».
+3. **« Trouver mon chat »** : envoyer à son bot le `/start <code>` affiché (ou toucher « Ouvrir le bot
+   dans Telegram »). Le bot répond « C'est noté » ; la carte passe à « branchées ».
+4. **« Envoyer un essai »** : « SHOWRUNNER · essai » arrive. Le bot ne doit servir qu'à ce portail
+   (un second lecteur : 409, la carte le dit).
+
+### Reste
+
+- Un invité retiré de sa Team par celui qui l'a invité reste dans les Demandes (« puis retiré de la
+  Team : refuse-le plutôt ») et son alerte garde ses boutons : `remove_member` n'est pas de ce lot.
+- Les parts du budget d'une Team listent aussi ses invités en attente (sans effet : ils ne calculent
+  pas).
+- Les deux points « non documenté » ci-dessus, au premier essai avec le vrai Telegram.
+
+---
+
 ## Sources (lues le 30/09/2026)
 
 - [MI1] https://help.miro.com/hc/en-us/articles/360017571194-Roles-in-Miro (extrait)
@@ -1020,3 +1149,13 @@ Workspaces ; rapatrier un objet), 6 (`check_doc` par `ID_FIELDS`), 8 (le budget)
 - [SL1] https://slack.com/help/articles/202518103-Understand-guest-roles-in-Slack
 - [LI1] https://linear.app/docs/members-roles
 - [LI2] https://linear.app/docs/teams
+
+Ajoutées le 09/10/2026 (D6, les alertes) — core.telegram.org est fermé au conteneur ; l'API y est
+relue par deux paquets qui en recopient les descriptions et l'appellent :
+- [TG1] la Bot API, https://core.telegram.org/bots/api — relue dans `@grammyjs/types` 5.0.0 (registre
+  npm) : `methods.d.ts` (getUpdates, sendMessage, answerCallbackQuery, editMessageText), `markup.d.ts`
+  (InlineKeyboardButton, CallbackQuery)
+- [TG2] `grammy` 1.46.0 (registre npm) : `out/core/client.js` (l'adresse `${root}/bot${token}/${method}`,
+  `apiRoot` par défaut `https://api.telegram.org`), `out/core/error.js` (le 409)
+- [SG1] signal-cli, https://github.com/AsamK/signal-cli — son README (lu le 09/10 sur
+  raw.githubusercontent.com) ; aucune page de Signal ne documente d'API de bot (non trouvée)
