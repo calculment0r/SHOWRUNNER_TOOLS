@@ -1335,6 +1335,10 @@ export const MACHINE_ENGINES                                = {
       // Le sélecteur de kit du panneau choisit la MACHINE : 808 ou 909. Ce ne
       // sont pas deux réglages du même circuit, ce sont deux circuits.
       tr_kit: { param: "kit", from: (norm        ) => Math.round(norm) },
+      // SHOWRUNNER (09/10) : la molette SHUFFLE règle le swing de la batterie (modules.js,
+      // SWING_PARAMS) — 0 : droit (50 %), à fond : 75 %, le plafond de la MPC ; la loi de la
+      // TR-8S elle-même n'est pas documentée ici, celle-ci est un choix de réglage
+      tr_shuf: { param: "swing", from: lin(50, 75) },
       ...reglagesDeVoix(),
     },
   },

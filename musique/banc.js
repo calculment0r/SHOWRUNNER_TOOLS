@@ -56,7 +56,8 @@ import { brancherCanvas } from '../commun/molette.js';
 import { $ as $partout } from '../commun/fenetre.js';   // un menu ouvert dans la fenêtre du nodal détaché compte aussi
 import { songEnd, projEnd } from './moteur.js';
 import { el, put, tok, clamp, letter } from './ui.js';
-import { attracteursActifs as actifsDuProjet, blocsDInfluence, operateurs, membres, actif, ecartBoite, poids, FACETTES_MODULES } from './machines/influence.js';
+import { attracteursActifs as actifsDuProjet, blocsDInfluence, reglagesDe, capteParAttracteur, attracteursDe, membres, actif, ecartBoite, poids,
+  FACETTES_MODULES } from './machines/influence.js';
 
 /**
  * POUR LE GÉNÉRATIF (et qui veut lire le banc) : à l'instant `temps` (en
@@ -403,21 +404,30 @@ export function createBench(app, nodal) {
     if (x > W + 20 || x + w < -20) return null;
     // le contenu se recale sur la part visible (n° 52)
     const gx = Math.max(0, -x), vw = Math.min(w, W - x) - gx;
-    const nom = vw >= 30 && h >= 14 ? tient([lane.nom, lane.nom.slice(0, 3)], vw - 10) : null;
+    // LES CHIFFRES (09/10) : combien de réglages il capte, dans combien de blocs ; chaque ligne dit
+    // son poids, et ce qui ne s'entend pas (un contrôle branché à rien, un réglage qu'on tient)
+    const regs = atr ? reglagesDe(P(), atr, bl) : [];
+    const nb = new Set(regs.map((o) => o.blocId)).size;
+    const nom = vw >= 30 && h >= 14 ? tient([...(atr ? [`${lane.nom} · ${regs.length} réglages · ${nb} blocs`, `${lane.nom} · ${regs.length}`] : []), lane.nom, lane.nom.slice(0, 3)], vw - 10) : null;
     const lignes = [];
     if (atr && vw >= 120 && h >= 30) {
       let reste = h - 18;
-      for (const o of operateurs(atr, bl)) {
+      for (const o of regs) {
         if (reste < 14) break;
-        const valeur = ecrire(o.op), source = `${ecrire(o.valeur)}${o.unite} → `;
+        const valeur = o.entendu ? ecrire(o.op) : o.tenu ? 'tenu' : 'non branché';
+        const source = `${ecrire(o.valeur)}${o.unite} → `, pd = `×${o.w.toFixed(2)}`;
         let mis = null;
-        for (const src of [source, '']) {
-          const et = tient([`${o.blocNom} · ${o.label}`, o.label], vw - 12 - (src ? largeur(src) : 0) - largeur(valeur) - 10);
-          if (et) { mis = { et, src }; break; }
+        for (const [src, p2] of [[source, pd], ['', pd], ['', '']]) {
+          const et = tient([`${o.blocNom} · ${o.label}`, o.label], vw - 12 - (src ? largeur(src) : 0) - (p2 ? largeur(p2) + 8 : 0) - largeur(valeur) - 10);
+          if (et) { mis = { et, src, p2 }; break; }
         }
         if (!mis) continue;
         reste -= 14;
-        lignes.push(el('div', { class: `bn-op${parle ? ' agit' : ''}`, style: { '--c': `var(--${o.couleur})` } }, el('span', {}, mis.et), mis.src ? el('u', {}, mis.src) : null, el('b', {}, valeur)));
+        const pourquoi = o.entendu ? `poids ${o.w.toFixed(2)} : ${ecrire(o.valeur)}${o.unite} ramené à ${ecrire(o.op)}${o.unite}`
+          : o.tenu ? 'une voie d\'automation ou un câble de valeur tient ce réglage : l\'attracteur ne le reprend pas'
+            : 'capté, mais rien ne branche ce contrôle au moteur : il ne s\'entend pas';
+        lignes.push(el('div', { class: `bn-op${parle && o.entendu ? ' agit' : ''}${o.entendu ? '' : ' muet'}`, style: { '--c': `var(--${o.couleur})` }, title: pourquoi },
+          el('span', {}, mis.et), mis.src ? el('u', {}, mis.src) : null, mis.p2 ? el('i', {}, mis.p2) : null, el('b', {}, valeur)));
       }
     }
     const dort = !atr && vw >= 60 && h >= 26 ? tient(['dormant', '·'], vw - 12) : null;
@@ -429,8 +439,9 @@ export function createBench(app, nodal) {
     nomEl, el('div', { class: 'bn-segcorps', style: { left: `${gx}px`, width: `${Math.max(0, vw)}px` } }, lignes.length ? lignes : dort ? el('span', { class: 'bn-dort' }, dort) : null), rx);
     box.addEventListener('pointerdown', (e) => naitre(e, seg));
     box.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
-    box.addEventListener('pointerenter', () => { if (seg.atr) { survol = seg.atr; paintFil(); } });
-    box.addEventListener('pointerleave', () => { if (survol === seg.atr) { survol = null; paintFil(); } });
+    // le survol d'un segment montre son fil, et ce que son attracteur capte (ceQuIlCapte)
+    box.addEventListener('pointerenter', () => { if (seg.atr && survol !== seg.atr) { survol = seg.atr; paintFil(); if (!rafMeta) rafMeta = requestAnimationFrame(peindreMeta); } });
+    box.addEventListener('pointerleave', () => { if (seg.atr && survol === seg.atr) { survol = null; paintFil(); if (!rafMeta) rafMeta = requestAnimationFrame(peindreMeta); } });
     nomEl.addEventListener('pointerdown', (e) => tirerSegment(e, seg));
     rx.addEventListener('pointerdown', (e) => etirerSegment(e, seg));
     return box;
@@ -660,14 +671,60 @@ export function createBench(app, nodal) {
       }
       if (!parle && tient(['muet', '·'], R * 1.55)) centre.append(el('em', { class: 'bn-muet' }, 'muet'));
       centre.addEventListener('pointerdown', (e) => tirerAttracteur(e, a));
-      centre.addEventListener('pointerenter', () => { survol = a.id; paintFil(); });
-      centre.addEventListener('pointerleave', () => { if (survol === a.id) { survol = null; paintFil(); } });
+      // le survol montre aussi ce qu'il capte (ceQuIlCapte) : la couche se refait
+      centre.addEventListener('pointerenter', () => { if (survol === a.id) return; survol = a.id; paintFil(); if (!rafMeta) rafMeta = requestAnimationFrame(peindreMeta); });
+      centre.addEventListener('pointerleave', () => { if (survol === a.id) { survol = null; paintFil(); if (!rafMeta) rafMeta = requestAnimationFrame(peindreMeta); } });
       // son filet (plein, choisi, muet) : un trait d'écran par-dessus le panneau du disque
       g.append(centre, cercle('bn-disque', a.x, a.y, a.r, a.couleur));
       kids.push(g);
     }
-    put(meta, ...kids);
+    const { dessous, dessus } = ceQuIlCapte(atts, bl, tg);
+    put(meta, ...dessous, ...kids, ...dessus);
     paintFil();
+  }
+
+  // CE QUE FAIT UN ATTRACTEUR, À LE VOIR (09/10, Cal : « il y a plein de nodes qui ne semblent pas
+  // être pris en compte ») : l'attracteur frôlé ou choisi cerne chaque tuile qu'il capte, et dit sur
+  // elle son poids et ses réglages par facette ; une tuile choisie dans le nodal est reliée à chaque
+  // attracteur qui la capte, le poids sur le fil. Tout est du monde, les traits et les mots de l'écran.
+  function ceQuIlCapte(atts, bl, tg) {
+    const out = [], dessus = [], p = P();   // les traits sous les attracteurs, les mots par-dessus
+    const boite = (id) => bl.find((b) => b.id === id)?.boite;
+    const montre = atts.find((a) => a.id === (survol || selection));
+    if (montre) {
+      for (const [id, b] of capteParAttracteur(p, montre, bl)) {
+        const bx = boite(id);
+        if (!bx) continue;
+        const parF = new Map();
+        for (const o of b.reglages) parF.set(o.facette, (parF.get(o.facette) || 0) + 1);
+        const sourds = b.reglages.filter((o) => !o.entendu).length;
+        const et = [b.w.toFixed(2), ...[...parF].map(([f, n]) => `${f} ${n}`), ...(sourds ? [`${sourds} sans effet`] : [])].join(' · ');
+        out.push(el('div', { class: 'bn-capte', 'data-capte': id, style: { left: `${bx.x}px`, top: `${bx.y}px`, width: `${bx.w}px`, height: `${bx.h}px`, '--c': `var(--${montre.couleur})` } }));
+        dessus.push(el('span', { class: 'bn-capte-et', 'data-capte': id, style: { left: `${bx.x}px`, top: `${bx.y}px`, '--c': `var(--${montre.couleur})` },
+          title: b.reglages.map((o) => `${o.label} ×${o.w.toFixed(2)}${o.entendu ? '' : o.tenu ? ' (tenu)' : ' (sans effet)'}`).join(' · ') }, et));
+      }
+    }
+    // la tuile choisie : un fil vers chaque attracteur qui la capte
+    const choisies = nodal.selection?.() || [];
+    if (choisies.length === 1) {
+      const id = choisies[0], bx = boite(id);
+      if (bx) {
+        const cx = bx.x + bx.w / 2, cy = bx.y + bx.h / 2;
+        for (const x of attracteursDe(p, id, tg, bl)) {
+          const a = x.atr, x0 = Math.min(a.x, cx), y0 = Math.min(a.y, cy);
+          const svg = sv('svg', { class: `bn-lien${x.parle ? ' parle' : ''}`, width: Math.max(1, Math.abs(cx - a.x)), height: Math.max(1, Math.abs(cy - a.y)),
+            style: `left:${x0}px;top:${y0}px;--c:var(--${a.couleur})` });
+          svg.append(sv('line', { x1: a.x - x0, y1: a.y - y0, x2: cx - x0, y2: cy - y0 }));
+          out.push(svg);
+          // l'étiquette là où le fil sort du disque (au milieu quand la tuile est dessous)
+          const L = Math.hypot(cx - a.x, cy - a.y), d = L > a.r * 1.6 ? a.r + 24 : L / 2;
+          const ex = a.x + (cx - a.x) * (d / (L || 1)), ey = a.y + (cy - a.y) * (d / (L || 1));
+          dessus.push(el('span', { class: 'bn-etiquette bn-lien-et', 'data-lien': a.id, style: { left: `${ex}px`, top: `${ey}px`, '--c': `var(--${a.couleur})` } },
+            `${a.nom.toLowerCase()} ${x.w.toFixed(2)} · ${x.reglages.length} réglage${x.reglages.length > 1 ? 's' : ''}${x.parle ? ' · parle' : ''}`));
+        }
+      }
+    }
+    return { dessous: out, dessus };
   }
 
   function tirerAttracteur(e, a) {

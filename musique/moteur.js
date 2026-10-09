@@ -72,8 +72,12 @@ const G = (ctx, gain = 1) => new GainNode(ctx, { gain });
 // les AudioParam que l'automation tient pendant la lecture : une molette ou
 // un enregistrement du projet ne les reprend pas avant l'arrêt
 const HELD = new WeakSet();
+// l'instant où une copie posée par Graph.aLInstant prend effet (attracteurs :
+// l'opérateur tombe au temps de la tranche, pas quand on la planifie) ; null : maintenant
+let INSTANT = null;
 function setP(ctx, param, v, tc = 0.012) {
   if (HELD.has(param)) return;
+  if (INSTANT !== null) { param.setTargetAtTime(v, INSTANT, tc); return; }
   // une molette qu'on tourne pendant la lecture : on glisse vers la valeur
   // (AudioParam.setTargetAtTime, MDN) plutôt que de sauter, sinon ça claque
   if (ctx instanceof OfflineAudioContext || ctx.state !== 'running') param.value = v;
@@ -801,7 +805,9 @@ function odioSource(ctx, m, env) {
   return {
     output: out, odio: inst, ready,
     update(mm) { m = mm; apply(mm); setP(ctx, out.gain, mm.on === false ? 0 : trim); },
-    setAt(k, v) { inst.setParameter(k, v); },
+    // à l'instant `t` : un instrument qui tient ses réglages dans le temps (un AudioParam, l'AudioWorklet de
+    // Plaits et de Macro) les y pose ; les autres les lisent à l'attaque des notes qui partent ensuite
+    setAt(k, v, t) { inst.setParameter(k, v, t); },
     hit(voice, t, vel = 1) { drum(voices?.find((x) => x.id === voice), t, vel); },
     // une note sans durée (clavier, MIDI) part longue et se relâche à noteOff
     noteOn(p, t, vel = 0.8, dur, over) {
@@ -886,6 +892,8 @@ export function joue(pat, m) {
   if (!m || !pat?.notes || !spec(m.type, 'arp')) return pat;
   return motifJoue(pat, (k) => val(m, k));
 }
+// Le swing d'une batterie (modules.js, SWING_PARAMS) : 50 quand sa source n'en a pas.
+export const swingDe = (m) => (m && spec(m.type, 'swing') ? val(m, 'swing') : 50);
 
 // ── le graphe d'un projet dans un contexte ──────────────────
 export class Graph {
@@ -931,7 +939,7 @@ export class Graph {
         for (const tid of garde) if (!n.par.has(tid)) n.par.set(tid, makeNode(this.ctx, m, this.env));
         if (!ps) { n = n.par.values().next().value; this.nodes.set(m.id, n); }
       }
-      n.update(m, p.bpm);
+      n.update(this.entendu(m), p.bpm);
     }
     configurerArcs(this, p);   // les arcs du projet : l'étage de la sortie ne porte que ceux qu'on a peints (arcs.js)
     this.wire(p);
@@ -1015,7 +1023,25 @@ export class Graph {
     }
   }
 
-  update(m, bpm) { const n = this.nodes.get(m.id); if (n) n.update(m, bpm); }
+  // un réglage tourné pendant qu'un attracteur parle : le module garde ce qu'il entend
+  update(m, bpm) { const n = this.nodes.get(m.id); if (n) n.update(this.entendu(m), bpm); }
+
+  // ── ce que le moteur entend (machines/influence.js) ──
+  // Le module tel qu'il sonne : ses réglages, et l'opérateur des attracteurs
+  // qui parlent pour ceux qu'ils captent. L'arpège, les scènes des jouets, une
+  // molette tournée en lecture le lisent : un réglage capté s'entend partout
+  // où on le lit, pas seulement dans ses AudioParam.
+  entendu(m) {
+    const ks = m && this._influence?.get(m.id);
+    return ks?.size ? { ...m, params: { ...m.params, ...Object.fromEntries([...ks].map(([k, o]) => [k, o.v])) } } : m;
+  }
+  valeur(id, k) { return this._influence?.get(id)?.get(k)?.v; }
+  // poser une copie à l'instant `t` de l'horloge : ses AudioParam y glissent (setP)
+  aLInstant(t, f) {
+    const avant = INSTANT;
+    INSTANT = Math.max(t, this.ctx.currentTime);
+    try { f(); } finally { INSTANT = avant; }
+  }
 
   // les AudioParam d'une voie d'automation : [[param, fn]] et la conversion 0..1 → valeur
   lane(p, L) {
@@ -1102,14 +1128,17 @@ export class Graph {
         continue;
       }
       const pat = pats.get(c.pat);
-      if (pat) this.notes(tr, c, joue(pat, mods.get(tr.src)), src, Math.max(b0, cs), Math.min(b1, ce), at, spb, cutLanes.get(tr.src));
+      const m = this.entendu(mods.get(tr.src));
+      if (pat) this.notes(tr, c, joue(pat, m), src, Math.max(b0, cs), Math.min(b1, ce), at, spb, cutLanes.get(tr.src), swingDe(m));
     }
   }
 
   // Les notes d'un clip de motif dont l'attaque tombe dans [from, to) : `at`
   // change un temps en instant de l'horloge ; `cutL` la coupure automatisée
-  // du synthé (l'arrangement seul la lit).
-  notes(tr, c, pat, src, from, to, at, spb, cutL = null) {
+  // du synthé (l'arrangement seul la lit) ; `sw` le swing d'une batterie (%) :
+  // un pas impair tombe à sw % de sa paire (50 : droit).
+  notes(tr, c, pat, src, from, to, at, spb, cutL = null, sw = 50) {
+    const decale = (sw - 50) / 200;   // en noires : (sw − 50) % d'une paire de doubles croches (une demi-noire)
     const plen = pat.steps / 4, cs = c.start, ce = c.start + c.len;
     const cutSpec = cutL ? spec('synth', 'cut') : null;
     // `off` (en noires) : où le motif en est au début du clip — un clip
@@ -1121,7 +1150,7 @@ export class Graph {
         for (const [v, arr] of Object.entries(pat.lanes || {})) {
           for (let s = 0; s < arr.length; s++) {
             if (!arr[s]) continue;
-            const b = base + s / 4;
+            const b = base + s / 4 + (s % 2 ? decale : 0);
             if (b >= from && b < to) src.hit(v, at(b), arr[s]);
           }
         }
@@ -1143,7 +1172,7 @@ export class Graph {
   // Les clips de Session qui jouent, posés entre les temps a0 et a1 de
   // l'horloge de la Session (des noires qui ne reviennent jamais en arrière,
   // même quand la boucle de l'arrangement revient : Engine.tick), a0 tombant
-  // à t0. `joue` : voie → { slot, origin, fresh, rec } ; un clip de Session
+  // à t0. `jeu` : voie → { slot, origin, fresh, rec } ; un clip de Session
   // boucle sur sa longueur `len` depuis `origin` (Live 12, « Launching
   // Clips » : un clip de Session tourne en boucle). Chaque tour est un clip
   // d'arrangement de `len` noires qui commencerait là : les mêmes lectures,
@@ -1152,26 +1181,29 @@ export class Graph {
   // repartir (playFrom) — un son déjà commencé se reprend en son milieu ;
   // un nombre (le retard rattrapé, Engine.tick) : seulement un tour commencé
   // à partir de ce temps de la Session (ceux d'avant jouent déjà).
-  scheduleSession(p, joue, a0, a1, t0) {
-    if (!joue.size) return;
+  // (`jeu`, jamais `joue` : il masquerait la fonction du module qui lit le motif et
+  // son arpège — jusqu'au 09/10, un clip de notes lancé jetait à chaque réveil.)
+  scheduleSession(p, jeu, a0, a1, t0) {
+    if (!jeu.size) return;
     const spb = 60 / p.bpm;
     const at = (x) => t0 + (x - a0) * spb;
-    for (const [vid, J] of joue) {
+    for (const [vid, J] of jeu) {
       const tr = (p.voies || []).find((v) => v.id === vid);
       const s = (p.slots || []).find((x) => x.id === J.slot);
-      if (!tr || !s || s.voie !== vid) { joue.delete(vid); continue; }   // retirés (Suppr, Ctrl+Z) : la voie se tait
+      if (!tr || !s || s.voie !== vid) { jeu.delete(vid); continue; }   // retirés (Suppr, Ctrl+Z) : la voie se tait
       const src = this.nodes.get(tr.src);
       const L = J.rec ? Infinity : s.len;
       if (!src || !(L > 0)) continue;
       const pat0 = s.pat ? p.patterns.find((x) => x.id === s.pat) : null;
-      const pat = pat0 && joue(pat0, p.modules.find((x) => x.id === tr.src));
+      const msrc = this.entendu(p.modules.find((x) => x.id === tr.src));
+      const pat = pat0 && joue(pat0, msrc);
       for (let k = Math.max(0, Math.floor((a0 - J.origin) / L)); J.origin + k * L < a1 && k < 1e6; k++) {
         const vs = J.origin + k * L;
         const c = { ...s, start: vs, len: L === Infinity ? 1e5 : L };
         if (tr.kind === 'audio') {
           if (vs >= a0) this.audioClip(src, c, at(vs), vs, vs, Infinity, spb);
           else if (J.fresh === true || (typeof J.fresh === 'number' && vs >= J.fresh - 1e-9)) this.audioClip(src, c, at(a0), a0, vs, Infinity, spb);
-        } else if (pat && !J.rec) this.notes(tr, c, pat, src, Math.max(a0, vs), Math.min(a1, vs + c.len), at, spb);
+        } else if (pat && !J.rec) this.notes(tr, c, pat, src, Math.max(a0, vs), Math.min(a1, vs + c.len), at, spb, null, swingDe(msrc));
         if (L === Infinity) break;
       }
       J.fresh = false;

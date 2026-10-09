@@ -88,7 +88,7 @@ import {
 import { liensDe, jouerNotes } from './machines/liens.js';
 import { ouvrirCatalogue, ouvrirPalette } from './machines/catalogue.js';
 import { ouvrirPlano, installerGabaritsDu } from './machines/plano.js';
-import { attracteursActifs, blocsDInfluence } from './machines/influence.js';
+import { attracteursActifs, blocsDInfluence, attracteursDe } from './machines/influence.js';
 
 // le style du nodal : ses tuiles, ses câbles, ses machines (musique/nodal.css) —
 // posé par index.html avant tout dessin (ses jetons nommés, --nd-*, sont lus
@@ -216,6 +216,7 @@ export function createNodal(app) {
     tuiles: () => T,
     box: (id) => parId.get(id) || null,
     porteur: (id) => porteurDeTuile(P(), id).owner,
+    selection: () => sel,   // attracteurs : la tuile choisie est reliée à ceux qui la captent
   });
   root.append(el('div', { class: 'nd-main' }, cv, bench.el), side);
   app.toys?.attach({ cv, world, view, zNet: () => zNet ?? view().z, paintSide: () => paintSide(), paintWires: () => peindreCables() });   // jouets : leurs câbles typés, les billes de la fontaine
@@ -864,6 +865,7 @@ export function createNodal(app) {
       for (const x of T) { const v = vues.get(x.id); if (v) v.el.classList.toggle('tile--courante', estCourante(x)); }
     }
     classesSelection(); peindreDessus(); paintSide(); peindreOutils(); paintCableClass();
+    if (avant.join() !== ids.join()) bench.paintMeta();   // attracteurs : les fils vers la tuile choisie
     // le « bloc pris » d'une section de machine change son T en édition
     if (machinePanel) rafraichir([...new Set([...avant, ...ids])].filter((id) => parId.get(id)?.sec));
   }
@@ -2385,6 +2387,45 @@ export function createNodal(app) {
 
   // ═══════════════════════════════════════════════ le panneau de droite
   let sideParams = null;
+  // LES ATTRACTEURS D'UNE TUILE (09/10) : ceux qui la captent, du plus lourd au plus léger, s'ils
+  // parlent, et ce que chacun ramène sur ses réglages (la valeur → l'opérateur) ; aucun : ce qu'elle
+  // offre, et le geste qui l'attache. Relu à chaque image qui change quelque chose (frame).
+  let sideAttr = null, sideAttrSig = '';
+  const sobre = (v) => { const a = Math.abs(v); return (a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : v.toFixed(2)).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1'); };
+  function panneauAttracteurs(t, owner) {
+    const boite = el('div', { class: 'nd-atr' }), compte = el('span', { class: 'lbl' });
+    sideAttrSig = '';
+    sideAttr = () => {
+      const p = P();
+      if (!p || !boite.isConnected && sideAttrSig) return;
+      const bl = blocsDInfluence(p, T), bloc = bl.find((b) => b.id === t.id);
+      const qui = bloc ? attracteursDe(p, t.id, bench.tempsGouvernant?.() ?? app.pos(), bl) : [];
+      const sig = JSON.stringify([t.id, bloc?.parametres.length || 0, qui.map((x) => [x.atr.id, x.w.toFixed(3), x.parle, x.reglages.map((o) => [o.label, sobre(o.valeur), sobre(o.op), o.entendu])])]);
+      if (sig === sideAttrSig) return;
+      sideAttrSig = sig;
+      compte.textContent = qui.length ? `${qui.length} le capte${qui.length > 1 ? 'nt' : ''}` : '';
+      if (!bloc) {
+        // la rédaction du 09/10 : le mot de tous les jours, une phrase courte
+        put(boite, el('p', { class: 'nd-atr-p' }, owner.mach && t.sec ? 'rien à capter dans cette section : des niveaux ou des choix' : 'rien à capter : des niveaux, des choix ou une place dans le champ'));
+        return;
+      }
+      if (!qui.length) {
+        const parF = new Map();
+        for (const q of bloc.parametres) parF.set(q.facette, (parF.get(q.facette) || 0) + 1);
+        put(boite, el('p', { class: 'nd-atr-p' }, `aucun attracteur ne la capte · elle offre ${[...parF].map(([f, n]) => `${f} ${n}`).join(', ')} · pour en poser un : clic milieu d'un segment du banc, tiré jusqu'ici`));
+        return;
+      }
+      put(boite, ...qui.map((x) => el('div', { class: `nd-atr-a${x.parle ? ' parle' : ''}`, style: { '--c': `var(--${x.atr.couleur})` } },
+        el('div', { class: 'nd-atr-t' }, el('i'), el('span', { class: 'nd-atr-nom' }, x.atr.nom), el('span', { class: 'sp' }),
+          el('span', { class: 'lbl' }, `poids ${x.w.toFixed(2)} · ${x.parle ? 'parle' : 'muet'}`)),
+        // « tenu » : une automation ou un câble le tient ; « sans effet » : ce contrôle ne change pas le son (le même mot que sur la tuile cernée)
+        ...x.reglages.map((o) => el('div', { class: `nd-atr-r${o.entendu ? '' : ' sourd'}`, title: o.entendu ? `${o.facette} · poids ${o.w.toFixed(2)}` : o.tenu ? 'tenu par une automation ou un câble : l\'attracteur ne le reprend pas' : 'capté, mais ce contrôle ne change pas le son' },
+          el('span', {}, o.label), el('span', { class: 'sp' }),
+          el('u', {}, o.entendu ? `${sobre(o.valeur)} → ${sobre(o.op)}${o.unite ? ` ${o.unite}` : ''}` : o.tenu ? 'tenu' : 'sans effet'))))));
+    };
+    sideAttr();
+    return el('div', { class: 'pan nd-sel' }, el('div', { class: 'row' }, el('b', { class: 'venus' }, 'Attracteurs'), el('span', { class: 'sp' }), compte), boite);
+  }
   function paintSideParams() { if (sideParams) sideParams(); }
   function paintSide() {
     const p = P(), secs = [];
@@ -2430,6 +2471,8 @@ export function createNodal(app) {
     } else {
       secs.push(el('div', { class: 'pan nd-sel' }, el('p', { class: 'lbl' }, sel.length > 1 ? `${sel.length} blocs : G les groupe, T les range, Suppr les retire` : 'clic sur une tuile : ses réglages ici · double-clic sur le fond : le catalogue')));
     }
+    sideAttr = null;
+    if (t && owner && (owner.mach || app.mod(owner.id))) secs.push(panneauAttracteurs(t, owner));   // le clavier simple n'a aucun réglage
     const blocDe = (id) => (nodalDe(p).blocs || []).find((b) => b.id === id);
     const nm = (id) => {
       const x = app.mod(id);
@@ -2472,6 +2515,7 @@ export function createNodal(app) {
     const now = performance.now();
     if (now - tInflu > 120) {
       tInflu = now;
+      sideAttr?.();   // le panneau d'une tuile : ses attracteurs (déplacés, qui se mettent à parler)
       const p = P();
       if (p?.banc?.atts?.length || influ.size) {
         const t = bench.tempsGouvernant?.() ?? app.pos();

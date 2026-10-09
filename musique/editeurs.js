@@ -37,6 +37,7 @@ import { tete, poser } from '../commun/tete.js';   // LA tête de lecture du por
 // le génératif (29/09) : une région (un clip qui porte `gen`) s'ouvre sur sa
 // génération ; sa prise choisie, sur la vue Clip d'un son
 import { isRegion, isGenTrack, regionPanel, trackPanel } from './generatif_region.js';
+import { poserNotes } from './projet.js';   // coller, dupliquer des notes (09/10)
 
 const STEP_MAX = 256;
 
@@ -305,6 +306,9 @@ const CENTRE = new WeakMap();   // ce qui défile → le motif sur lequel on l'a
 // la vue d'un motif dans un piano roll qui défile chez lui : { top, rh, taille } — un
 // redessin (une retouche, « Doubler ») la rend telle quelle ; un autre motif se cadre
 const VUES = new Map();
+// le presse-papiers des notes (09/10) : { pat, a, len, notes } — les notes copiées, leur début
+// ramené à 0 ; `a`, `len` : où elles étaient dans leur motif (en pas)
+let presseNotes = null;
 // replier (Live 12, « Editing MIDI » : le bouton Fold, « Fold to Notes » — seules les
 // rangées qui ont des notes ; « Fold to Scale » — celles de la gamme, plus les notes hors
 // gamme, qui restent visibles) ; F : les notes ↔ tout, comme dans Live
@@ -491,6 +495,17 @@ function pianoRoll(app, p, src, t, c, ui, taille) {
   });
 
   const selOrAll = () => (chosen.size ? [...chosen] : p.notes);
+  // où coller : à la tête de lecture quand elle est dans ce clip (un clic dans l'arrangement l'y
+  // pose), aimantée à la grille ; sinon juste après les notes copiées dans leur motif (comme
+  // Ctrl+D), ou à leur place dans un autre
+  function ouColler() {
+    const pos = app.pos(), plen = p.steps / 4;
+    if (typeof c?.start === 'number' && pos >= c.start && pos < c.start + c.len) {
+      const s = ((((pos - c.start + (c.off || 0)) % plen) + plen) % plen) * 4;
+      return Math.floor(s / gridS() + 1e-6) * gridS();
+    }
+    return presseNotes.pat === p.id ? presseNotes.a + presseNotes.len : presseNotes.a;
+  }
   function quantize(q) {
     for (const n of selOrAll()) { n.s = clamp(Math.round(n.s / q) * q, 0, p.steps - q / 2); if (n.l < q / 2) n.l = q / 2; }
     commit(); toast(`quantifié à ${GRIDS.find(([v]) => v === q)?.[1] || q}`);
@@ -603,7 +618,7 @@ function pianoRoll(app, p, src, t, c, ui, taille) {
     centrer: () => (compact ? cadrer() : centrer()),
     tools,
     el: el('div', { class: 'pr-wrap', style: { '--k': `var(--${t.color})` } }, wrap, velBox),
-    hint: 'clic : une note · glisser : sa longueur · glisser une note : la déplacer · Maj+glisser : choisir · double-clic ou clic droit : l\'ôter · ↑ ↓ transposer · Ctrl+A tout · Suppr · Ctrl+U quantifier · F replier · H cadrer · la voie du bas : vélocités · molette : monter, descendre · Maj : le temps · Alt : zoom · Ctrl : hauteur des notes',
+    hint: 'clic : une note · glisser : sa longueur · glisser une note : la déplacer · Maj+glisser : choisir · double-clic ou clic droit : l\'ôter · ↑ ↓ transposer · Ctrl+A tout · Ctrl+C, X, V : copier, couper, coller (à la tête de lecture dans le clip, sinon à la suite) · Ctrl+D dupliquer · Suppr · Ctrl+U quantifier · F replier · H cadrer · la voie du bas : vélocités · molette : monter, descendre · Maj : le temps · Alt : zoom · Ctrl : hauteur des notes',
     frame() {
       const st = playingStep(app, p, c);
       nowCol.style.display = st >= 0 ? 'block' : 'none';
@@ -634,9 +649,33 @@ function pianoRoll(app, p, src, t, c, ui, taille) {
         e.preventDefault();
         const g = [...chosen], a = Math.min(...g.map((n) => n.s)), b = Math.max(...g.map((n) => n.s + n.l));
         chosen.clear();
-        for (const n of g) if (n.s + (b - a) < p.steps) { const m = { ...n, s: n.s + (b - a) }; p.notes.push(m); chosen.add(m); }
+        for (const m of poserNotes(p, g.map((n) => ({ ...n, s: n.s + (b - a) })))) chosen.add(m);
         commit(); return true;
       }
+      // copier, couper, coller des notes (Live : l'éditeur de notes a son presse-papiers) — avant le
+      // 09/10, ces touches allaient à l'arrangement : Ctrl+C puis Ctrl+V y collait le CLIP. Le panneau
+      // du bas a la main (un clic dedans) : elles restent ici, même sans note choisie
+      if (ctrl && !e.shiftKey && (letter(e) === 'c' || letter(e) === 'x')) {
+        e.preventDefault();
+        if (!chosen.size) { toast('aucune note choisie : Maj+glisser, ou Ctrl+A'); return true; }
+        const g = [...chosen].sort((x, y) => x.s - y.s), a = g[0].s, b = Math.max(...g.map((n) => n.s + n.l));
+        presseNotes = { pat: p.id, a, len: b - a, notes: g.map((n) => ({ ...n, s: n.s - a })) };
+        const coupe = letter(e) === 'x';
+        if (coupe) { p.notes = p.notes.filter((n) => !chosen.has(n)); chosen.clear(); commit(); }
+        toast(`${g.length} note${g.length > 1 ? 's' : ''} ${coupe ? 'coupée' : 'copiée'}${g.length > 1 ? 's' : ''}`, 1500);
+        return true;
+      }
+      if (ctrl && !e.shiftKey && letter(e) === 'v') {
+        e.preventDefault();
+        if (!presseNotes) { toast('rien à coller ici : choisis des notes, Ctrl+C'); return true; }
+        const at = ouColler();
+        const posees = poserNotes(p, presseNotes.notes.map((n) => ({ ...n, s: at + n.s })));   // rien ne tient : rien ne change
+        if (!posees.length) { toast('rien ne tient : la fin du motif est avant (« Doubler » l\'allonge)'); return true; }
+        chosen.clear();
+        for (const m of posees) chosen.add(m);
+        commit(); return true;
+      }
+      if (e.key === 'Escape' && chosen.size) { chosen.clear(); paintNotes(); return true; }
       // Ctrl+U : « Quantize » de Live 12 ; Q, l'ancien raccourci d'ODIO, reste
       if ((ctrl && letter(e) === 'u') || (letter(e) === 'q' && !ctrl)) { e.preventDefault(); quantize(gridS()); return true; }
       return false;

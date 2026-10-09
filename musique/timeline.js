@@ -66,7 +66,7 @@ import { toast, api, ITEM_MIME, MULTI_MIME, uploadFile, declareZone } from '../c
 import { poserObjets } from './panneau.js';
 import { MODULES, TRACK_KINDS, COLORS, COLOR_FR, AUTOMATABLE, SECTION_TAGS, SECTION_NAMES, SOURCES_OF,
   spec, val, fmt, fromNorm, drumVoicesOf, guessTag, moduleName } from './modules.js';
-import { peaks, projEnd, interp, clipBuffer, audioGeom, joue } from './moteur.js';
+import { peaks, projEnd, interp, clipBuffer, audioGeom, joue, swingDe } from './moteur.js';
 import { el, knob, fader, menu, tok, clamp, put, confirmBox, inlineEdit, splitter, letter } from './ui.js';
 import { sectionAt, duplicateSection, moveSection, swapSection, removeSection, trimStart, rangerGroupes } from './projet.js';
 import { createDock } from './editeurs.js';
@@ -1361,7 +1361,11 @@ export function createTimeline(app) {
         }
       }
       if (!edge && ev.ctrlKey) {                           // Ctrl : les originaux restent, ce qui bouge est la copie
-        for (const x of group) p.clips.push({ ...JSON.parse(JSON.stringify(orig.get(x.id))), id: app.uid('c') });
+        // la copie est un clip neuf, l'original garde son id à sa place : elle seule est
+        // « posée », elle l'emporte sur ce qu'elle recouvre — l'original compris (le recouvrement, projet.js)
+        const cps = group.map((x) => { const cp = { ...JSON.parse(JSON.stringify(x)), id: app.uid('c') }; restore(x); p.clips.push(cp); return cp; });
+        S.sel.clips = cps.map((x) => x.id);
+        S.sel.clip = cps[group.indexOf(c)]?.id || cps[0].id;
         toast(`${group.length} clip${group.length > 1 ? 's' : ''} copié${group.length > 1 ? 's' : ''}`);
       }
       app.commit('data');
@@ -1614,7 +1618,7 @@ export function createTimeline(app) {
       g.notes(tr, c, joue(pat, mods.get(tr.src)), {
         noteOn: (pitch, at, v, d, over) => prendre({ at, pitch, v, d, ac: !!over?.ac }),
         hit: (voix, at, v) => prendre({ at, voix, v }),
-      }, Math.max(lo, cs), Math.min(hi, ce), (x) => x, spb);
+      }, Math.max(lo, cs), Math.min(hi, ce), (x) => x, spb, null, swingDe(mods.get(tr.src)));   // le swing d'une batterie (09/10)
       if (!evs.length) continue;
       const pres = avant ? Math.max(...evs.map((x) => x.at)) : Math.min(...evs.map((x) => x.at));
       const cur = parPiste.get(tr.id);
@@ -1947,10 +1951,26 @@ export function createTimeline(app) {
     zone.classList.toggle('on', !!p.loop.on);
   }
 
+  // Suivre la tête (Live : « Follow ») : en lecture, la vue la suit — sauf quand on défile soi-même
+  // (Maj+molette, la barre, un zoom) : elle reste où on l'a mise, et reprend dès que la tête repasse
+  // dans la vue, ou à la lecture suivante. Avant le 09/10, elle revenait à la tête à chaque image :
+  // impossible de regarder plus loin, d'y préparer un geste, pendant que le morceau joue.
+  let suiviA = null, libre = false;   // suiviA : le défilement posé par le suivi ; libre : on a défilé ailleurs
+  scroll.addEventListener('scroll', () => {
+    if (app.engine.running && suiviA !== null && Math.abs(scroll.scrollLeft - suiviA) > 1) libre = true;
+  }, { passive: true });
+  function suivreTete() {
+    if (!app.engine.running) { libre = false; suiviA = null; return; }
+    if (libre && phX >= scroll.scrollLeft && phX <= scroll.scrollLeft + scroll.clientWidth - HEAD_W - 30) libre = false;
+    if (libre) return;
+    suivre(scroll, phX, { tete: HEAD_W });
+    suiviA = scroll.scrollLeft;
+  }
+
   function frame(beat) {
     // LA tête (commun/tete.js) : sa place, cachée sous les en-têtes collés ; en lecture, la vue la suit (comme le Montage)
     phX = poser(ph, X(beat), { decal: HEAD_W, sous: scroll.scrollLeft });
-    if (app.engine.running) suivre(scroll, phX, { tete: HEAD_W });
+    suivreTete();
     for (const [id, mt] of meters) {
       const db = app.engine.level(id);
       mt.firstChild.style.transform = `scaleX(${Math.max(0, Math.min(1, (db + 60) / 66)).toFixed(3)})`;   // par transform : musique.css, .ar-mtr
