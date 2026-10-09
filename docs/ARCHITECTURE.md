@@ -746,7 +746,9 @@ outil l'énumère** pour l'inventaire (`server/core/inventaire.py`), que lisent 
   porte), `job` (le travail qui l'a fait, s'il le dit), `space`, `created`, `updated`, `open`
   (l'adresse dans son outil, relative à la racine, sans `?e=` : l'inventaire le pose, `with_e`),
   `sub`, `thumb` (une adresse, ou une fonction : calculée pour la page montrée seulement). Les
-  fichiers se lisent par `inventaire.json_docs(chemins)` (relus seulement s'ils ont changé).
+  fichiers se lisent par `inventaire.json_docs(chemins, fiche)` : seule la fiche de chaque fichier est
+  gardée en mémoire, jamais le document, et un fichier n'est relu que s'il a changé ; ce qui dépend d'un
+  autre document (l'auteur d'une planche, le titre d'une image source) se lit à chaque relevé.
 - **Rattacher** un magasin à documents qui n'est pas une création en soi : `inventaire.attach(store,
   pourquoi)`. `check.py isolement` échoue si un magasin « champ » de `STORES` n'est ni l'un ni l'autre.
 - **L'auteur d'un document qui ne le porte pas** (un objet d'avant la porte, une planche d'avant le
@@ -755,7 +757,9 @@ outil l'énumère** pour l'inventaire (`server/core/inventaire.py`), que lisent 
   sinon « auteur inconnu » ; chaque fiche dit d'où (`via` : `doc` | `travail` | `journal` | null).
 - **Les droits** : une fiche n'est rendue qu'à qui la verrait dans une liste d'Asset
   (`auth.item_reader` : le rôle dans son Workspace) — jamais celle d'un Workspace où l'on n'entre
-  pas ; Cal entre partout, en lecture.
+  pas ; Cal entre partout, en lecture. Le pseudo d'un compte (ce qu'on tape à la porte) n'est montré
+  et cherché que par Cal ; les autres voient et cherchent le nom. La Team personnelle d'un autre se
+  nomme « <son nom> · <la personne> ».
 
 | sorte (`kind`) | magasin, sous `<data_dir>` | outil | auteur | Workspace | titre · dates | s'ouvre (`open`, puis `?e=<sid>`) |
 |---|---|---|---|---|---|---|
@@ -788,4 +792,4 @@ objet (la sorte `subtitle` manque : Transcrire l'exporte).
 | `GET /api/tableau[?toutes=1]` | les Teams que la personne voit (Cal, `toutes` : toutes, les Teams personnelles de chacun comprises, et `orphans` : ce qui reste d'un Workspace qui n'existe plus) → par Team, par Workspace : `total`, `counts` (par sorte), `authors` (par auteur), `last` (la dernière activité) ; `people` (qui a créé combien, où, quand pour la dernière fois) ; `kinds` |
 | `GET /api/tableau/espace/<sid>?kind=a,b&q=&author=&limit=&offset=` | les objets d'un Workspace, du plus récent : sorte, titre, auteur (`via`), dates, `open` (avec `?e=<sid>`), vignette ; 404 d'un Workspace qu'on ne voit pas, comme d'un Workspace qui n'existe pas |
 | `GET /api/tableau/personne/<uid>?kind=&limit=&offset=` | tout ce que cette personne a créé, partout, avec son Workspace et sa Team (`spaces` : où, combien, quand) — Cal, ou soi-même (403) ; `inconnu` : ce dont on ne sait pas l'auteur |
-| `GET /api/tableau/cherche?q=&toutes=1` | les personnes (nom, pseudo) et les objets (titre, nom de l'auteur) qui répondent à `q`, sans casse ni accents ; Cal : tous les comptes |
+| `GET /api/tableau/cherche?q=&toutes=1` | les personnes (le nom ; Cal : aussi le pseudo, l'identifiant) et les objets (titre, nom de l'auteur) qui répondent à `q`, sans casse ni accents ; Cal (`toutes`) : tous les comptes, même ceux qui n'ont rien créé |
