@@ -67,14 +67,18 @@ def state(req):
         u["today"] = jobs.day_count(u["id"])
         u["items"] = sum(1 for it in items if it.get("owner") == u["id"] or (not it.get("owner") and u["role"] == "admin"))
         u["recent"] = [{k: j.get(k) for k in ("id", "title", "state", "created", "tool", "message")} for j in mine[:8]]
+        if u.get("invited"):   # D5 : qui l'a mis, et ses places en attente (« invité par X dans la Team Y (rôle) »)
+            u["invited"] = {**u["invited"], "by_name": auth.display_name(u["invited"].get("by")),
+                            "teams": espaces.invitations_of(u["id"])}
     return {"me": auth.public_user(me), "auth": auth.enabled(), "requests": [u for u in users if u["state"] == "pending"],
             "users": [u for u in users if u["state"] != "pending"], "settings": auth.settings(), "queue": view,
             "priorities": jobs.PRIORITIES}
 
 
 def accept(req, uid):
+    """Une demande de la porte, ou un invité qui attend Cal (D5 : son compte et ses places dans les Teams)."""
     me = _admin(req)
-    return auth.public_user(auth.accept(uid, me["id"]))
+    return auth.public_user(auth.accept_request(uid, me["id"]))
 
 
 def refuse(req, uid):

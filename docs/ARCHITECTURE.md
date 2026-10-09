@@ -641,14 +641,15 @@ est refusée : un tunnel pointé par erreur sur 8790 n'ouvre rien. Le contrôle 
 
 | Routes de la porte (`server/tools/compte.py`) | |
 |---|---|
-| `GET /api/auth/me` | `{auth, state: anonymous pending active refused suspended offnet, user}` |
+| `GET /api/auth/me` | `{auth, state: anonymous pending active refused suspended offnet, user}` ; un invité qui attend Cal : `invited {by_name, at}` (aussi dans la réponse d'`enter`) |
 | `POST /api/auth/enter {name}` · `/cancel` | entrer par son pseudo (un pseudo inconnu : une demande), annuler sa demande |
 | `POST /api/auth/logout` · `GET /api/auth/devices` · `POST /api/auth/devices/<id>/revoke` | se déconnecter, ses connexions |
 
 | Routes de Cal (`server/tools/admin.py`, page `admin/`) | |
 |---|---|
 | `GET /api/admin/state` | demandes, personnes (quotas, compte du jour, derniers travaux), réglages, la file entière |
-| `POST /api/admin/requests/<id>/accept` · `/refuse` | les demandes |
+| `POST /api/admin/requests/<id>/accept` · `/refuse` | les demandes : un pseudo tapé à la porte, ou un invité qui attend Cal (§ 10 ; accepter : le compte et ses places, refuser : les deux) |
+| `GET /api/admin/alertes` · `POST …/alertes/jeton {token}` · `…/chercher` · `…/essai` · `…/actif {actif}` | les alertes de Cal sur Telegram (`core/alertes.py`, `server/tools/alertes.py`) : l'état (jamais le jeton), le jeton écrit en 600 dans `~/.config/showrunner/telegram.json`, « Trouver mon chat » (un code à envoyer au bot), un essai, couper ou rallumer |
 | `POST /api/admin/users/<id> {role, state, quotas}` · `GET …/devices` · `POST …/devices/<sid>/revoke` | le rôle admin (jamais le dernier), suspendre (ses travaux en file s'en vont ; pas un admin), quotas, connexions |
 | `POST /api/admin/settings {visibility, admin_first, admin_lan_only, quotas, total_queued}` | les réglages |
 | `POST /api/admin/queue/<job> {before | to_end | priority | top}` | glisser, priorité, épingler |
@@ -703,6 +704,16 @@ Admin → Teams.
   renommer, confirme: "MENAGE"}` : tout est jugé avant le premier geste, puis les Teams
   détruites, les comptes supprimés (`admin.supprimer_compte`, le chemin d'Admin → Personnes),
   chaque Team restante réduite à son propriétaire, les noms ; jamais Cal ni un admin.
+- **Cal valide les invités** (09/10, l'étude, « Fait le 09/10 ») : un pseudo neuf mis dans une Team
+  par un autre que Cal (un admin du portail compte comme Cal) — `add_member`, ou le lien d'une Team
+  fait par un non-Cal — naît `pending` avec `invited {by, team, role, guest?, spaces?, at}` ; sa
+  place est écrite, mais `core/espaces.py` ne voit qu'un compte actif (`_profile`, `team_role`,
+  `teams_of`, `can_manage`) : rien ne compte tant qu'il attend. Admin → Demandes l'accepte
+  (`auth.accept_request`) ou le refuse (`auth.refuse` : ses places d'abord, `drop_memberships`). Un
+  compte actif entre directement. Chaque demande (invité, porte, Studio) et chaque compte existant
+  mis dans une Team par un non-Cal est annoncé à Cal sur Telegram (`core/alertes.py` : une file et
+  un fil, jamais dans la requête ; les boutons par `getUpdates`, du seul chat réglé, appellent les
+  mêmes fonctions qu'Admin) ; essais : `tools/faux_telegram.py`, `SR_TELEGRAM_URL`.
 - **La matrice** (`espaces.MATRIX`, profils × actions) est la seule vérité :
   `espaces.judge(u, espace, action)` rend (oui, pourquoi pas) ; `auth.can_view`,
   `can_edit`, `can_compute`, `can_publish`… la reprennent. Un guest ne calcule jamais,

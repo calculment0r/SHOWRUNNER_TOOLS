@@ -45,6 +45,12 @@ Le modèle
     s'arrêtent. Cal le rend (restore_space) : le MÊME identifiant revient, dans
     la My Team de son auteur principal (sinon celle de Cal) — rien à
     réécrire : chaque document porte encore son `space`.
+  - Cal valide les invités (D5, 09/10) : un pseudo neuf qu'un autre que Cal met
+    dans sa Team (add_member, le lien d'une Team : redeem) attend Cal ; sa place
+    est écrite mais ne compte pas — tout ici ne voit qu'un compte actif
+    (`_profile`, `team_role`, `teams_of`, `can_manage`) ; refusé, elle s'en va
+    avec lui (drop_memberships). Un compte actif entre directement ; Cal en est
+    informé (core/alertes.py).
 
 L'API interne (pour les étapes suivantes ; auth.py en reprend l'essentiel)
   profile(u, espace)                 le profil de la matrice, ou None (n'y entre pas)
@@ -332,6 +338,10 @@ def plan_of_space(sid: str | None) -> str | None:
 
 
 def team_role(u, tid: str | None) -> str | None:
+    """Son rôle dans la Team ; un compte en attente (un invité que Cal n'a pas encore validé, D5) ou
+    suspendu n'en a aucun : sa place est écrite, elle ne compte pas."""
+    if u is not None and not _active(u):
+        return None
     with _lock:
         t = _data()["teams"].get(tid or "")
         m = (t or {}).get("members", {}).get(_uid(u) or "")
@@ -705,7 +715,7 @@ def _team_public(db: dict, u, tid: str, detail: bool) -> dict:
 def teams_of(u, *, detail: bool = False, everyone: bool = False) -> list[dict]:
     """Les Teams de la personne (Cal avec `everyone` : toutes), les Workspaces qu'elle y
     voit, ses droits dans chacun (et, `detail`, les membres et les liens pour qui gère)."""
-    if not u:
+    if not u or not _active(u):   # un compte en attente n'est dans aucune Team (D5)
         return []
     with _lock:
         db = _data()
@@ -1007,16 +1017,28 @@ def _may_invite(u, db: dict, t: dict, role: str, spaces: list[str]) -> None:
           "inviter : un admin de la Team ; un admin de Workspace fait des guests dans ses Workspaces")
 
 
+def by_cal(u) -> bool:
+    """Ce que Cal fait — un admin du portail, ou le socle (personne) — est accepté d'emblée ; ce
+    qu'un autre fait entrer de neuf attend Cal (D5, 09/10)."""
+    return u is None or auth.is_admin(u)
+
+
 def add_member(u, tid: str, who, role: str = "member", guest: str | None = None, spaces=None) -> dict:
-    """Mettre quelqu'un dans la Team par son pseudo. Un pseudo qui n'existe pas encore
-    est créé ici, déjà accepté (il entre en le tapant, comme un pseudo que Cal ajoute) —
-    un guest sans Team personnelle ni Studio : il ne calcule nulle part."""
+    """Mettre quelqu'un dans la Team par son pseudo. Un pseudo qui n'existe pas encore est créé
+    ici — un guest sans Team personnelle ni Studio : il ne calcule nulle part. Mis par Cal (ou un
+    admin du portail) : déjà accepté, il entre en le tapant. Mis par un autre (D5, Cal, 09/10) : il
+    attend la validation de Cal (auth.create_invited, `invited`) ; sa place est écrite ici et ne
+    compte qu'une fois son compte actif (`_profile`, `team_role`, `teams_of` ne voient qu'un compte
+    actif) ; Cal en reçoit l'alerte (core/alertes.py). Un compte qui existe déjà et qui est actif
+    entre directement (Cal l'a déjà accepté une fois) ; mis par un autre, Cal en est informé."""
     guest = guest or ("viewer" if role == "guest" else None)
     if role == "guest" and guest not in GUEST_MODES:
         raise HttpError(400, "un guest : viewer ou acteur")
     if role == "guest":
         _guests_ok()
     created = None
+    cal = by_cal(u)
+    by = _uid(u) or auth.admin_id()
     with _lock:
         db = _data()
         t = _team_or_404(db, tid)
@@ -1025,17 +1047,24 @@ def add_member(u, tid: str, who, role: str = "member", guest: str | None = None,
         _may_invite(u, db, t, role, spaces)
         target = auth.find_pseudo(who)
     if target is None:
-        created = auth.create_invited(who, by=_uid(u) or auth.admin_id(), guest=(role == "guest"))
+        invited = None if cal else {"by": by, "team": tid, "role": role, "at": now_iso(),
+                                    **({"guest": guest, "spaces": spaces} if role == "guest" else {})}
+        created = auth.create_invited(who, by=by, guest=(role == "guest"), invited=invited)
         target = created
     if target.get("role") == auth.GUEST:
         raise HttpError(409, f"« {target.get('name')} » est un invité de planche (Idéation) : fais-en d'abord un ami dans Admin")
-    if target.get("state") != "active":
+    waiting = bool(created) and target.get("state") == "pending"
+    if target.get("state") == "pending" and target.get("invited") and not waiting:
+        raise HttpError(409, f"« {target.get('name')} » est déjà invité et attend la validation de Cal : "
+                        "une fois validé, il peut être mis dans d'autres Teams")
+    if target.get("state") != "active" and not waiting:
         raise HttpError(409, f"« {target.get('name')} » n'est pas actif (en attente ou suspendu) : vois avec Cal")
-    uid, by, now = target["id"], _uid(u) or auth.admin_id(), now_iso()
+    uid, now = target["id"], now_iso()
     with _lock:
         db = _data()
         t = db["teams"][tid]
         cur = t["members"].get(uid)
+        new = cur is None
         if cur and _rank(cur) >= _rank({"role": role}) and role != "guest":
             pass   # déjà là, au moins à ce rang : jamais de recul
         elif cur and cur.get("role") in ("owner", "admin", "member") and role == "guest":
@@ -1053,9 +1082,15 @@ def add_member(u, tid: str, who, role: str = "member", guest: str | None = None,
             _set_guest_spaces(db, tid, uid, spaces, by, now, replace=False)
         _save()
     auth.journal("team : membre", user=by, team=tid, membre=uid, role=role, guest=guest, spaces=spaces,
-                 **({"cree": True} if created else {}))
+                 **({"cree": True} if created else {}), **({"attend_cal": True} if waiting else {}))
+    from . import alertes   # rangées dans la file des alertes : la requête n'attend jamais Telegram
+    if waiting:
+        alertes.invite_en_attente(uid, by, tid, role, guest, spaces)
+    elif not cal and new:
+        alertes.ajoute_par_team(uid, by, tid, role, guest, spaces)
     out = team_view(u, tid)
-    out["added"] = {"id": uid, "name": target["name"], "pseudo": target.get("pseudo") or target["name"], "created": bool(created)}
+    out["added"] = {"id": uid, "name": target["name"], "pseudo": target.get("pseudo") or target["name"], "created": bool(created),
+                    "pending": waiting}
     return out
 
 
@@ -1176,6 +1211,45 @@ def forget_user(uid: str) -> dict:
         db["users"].pop(uid, None)
         _save()
     return out
+
+
+def drop_memberships(uid: str) -> int:
+    """Un compte en attente qui s'en va (refusé par Cal, auth.refuse ; une demande annulée) : ses places
+    dans les Teams et les Workspaces s'en vont avec lui — retirées avant le compte, pour qu'un pseudo
+    recréé plus tard n'en hérite jamais. Rien n'est écrit s'il n'en avait pas (une demande de la porte)."""
+    n = 0
+    with _lock:
+        db = _data()
+        for t in db["teams"].values():
+            if uid in (t.get("members") or {}) and t.get("owner") != uid:
+                t["members"].pop(uid)
+                n += 1
+        for sp in db["spaces"].values():
+            if uid in (sp.get("members") or {}):
+                sp["members"].pop(uid)
+                n += 1
+        if uid in db["users"]:
+            db["users"].pop(uid)
+            n += 1
+        if n:
+            _save()
+    return n
+
+
+def invitations_of(uid: str) -> list[dict]:
+    """Les Teams où un compte a sa place, et qui l'y a mis (Admin → Demandes : « invité par X dans la
+    Team Y (rôle) » ; auth.accept_request : guest partout, ou non)."""
+    with _lock:
+        db = _data()
+        out = []
+        for t in db["teams"].values():
+            m = (t.get("members") or {}).get(uid)
+            if not m:
+                continue
+            names = [sp["name"] for sp in db["spaces"].values() if sp["team"] == t["id"] and (sp.get("members") or {}).get(uid)]
+            out.append({"team": t["id"], "team_name": t["name"], "role": m.get("role"), "role_fr": TEAM_FR.get(m.get("role"), m.get("role")),
+                        "guest": m.get("guest"), "spaces": names, "by": m.get("by"), "by_name": auth.display_name(m.get("by"))})
+    return sorted(out, key=lambda x: x["team_name"].lower())
 
 
 def set_space_member(u, sid: str, uid: str, role: str | None) -> dict:
@@ -1836,8 +1910,11 @@ def invite_info(token: str) -> dict:
 def redeem(u, token: str) -> dict:
     """Ouvrir un lien : la personne de la session (un pseudo neuf qui attend, ou un
     compte actif) entre dans la Team avec le rôle du lien — jamais de recul. Un pseudo
-    neuf est accepté par le lien (qui l'a fait a vouché pour lui) : sans Studio, et sans
-    Team personnelle s'il entre comme guest."""
+    neuf, sur un lien de Cal (ou d'un admin du portail), est accepté par le lien (Cal a
+    vouché pour lui) : sans Studio, et sans Team personnelle s'il entre comme guest. Sur le
+    lien d'un autre (D5, 09/10) : il reste en attente, comme un invité (auth.mark_invited) —
+    sa place est écrite, elle compte quand Cal l'a validé ; Cal en reçoit l'alerte. Un compte
+    actif entre directement ; sur le lien d'un autre, Cal en est informé."""
     if not u:
         raise HttpError(401, "tape d'abord ton pseudo à la porte du portail, puis rouvre le lien")
     if u.get("state") == "suspended":
@@ -1849,14 +1926,23 @@ def redeem(u, token: str) -> dict:
     if rec["role"] == "guest":
         _guests_ok()
     fresh = u.get("state") == "pending"
-    if fresh:
+    maker = auth.user(rec["by"])   # qui a fait le lien, tel qu'il est aujourd'hui (un compte effacé : pas Cal)
+    cal = bool(maker) and by_cal(maker)
+    waiting = fresh and not cal
+    if fresh and cal:
         u = auth.accept(u["id"], by=rec["by"], access="apps", perso=rec["role"] != "guest", via="equipe")
+    elif waiting:
+        u = auth.mark_invited(u["id"], {"by": rec["by"], "team": rec["team"], "role": rec["role"], "at": now_iso(),
+                                        "lien": rec["id"],
+                                        **({"guest": rec.get("guest"), "spaces": rec.get("spaces") or []}
+                                           if rec["role"] == "guest" else {})})
     uid, now = u["id"], now_iso()
     with _lock:
         db = _data()
         rec = _find_invite(db, token)
         t = db["teams"][rec["team"]]
         cur = t["members"].get(uid)
+        new = cur is None
         if not cur or _rank(cur) < _rank(rec):
             t["members"][uid] = {"role": rec["role"], "since": (cur or {}).get("since") or now, "by": rec["by"], "via": rec["id"],
                                  **({"guest": rec["guest"]} if rec["role"] == "guest" else {})}
@@ -1877,9 +1963,16 @@ def redeem(u, token: str) -> dict:
             db["users"].setdefault(uid, {})["last"] = first
         _save()
         role, mode = cur["role"], cur.get("guest")
-    auth.journal("team : invitation ouverte", user=uid, team=rec["team"], invite=rec["id"], role=role, accepte=fresh)
+    auth.journal("team : invitation ouverte", user=uid, team=rec["team"], invite=rec["id"], role=role,
+                 accepte=fresh and cal, **({"attend_cal": True} if waiting else {}))
+    from . import alertes   # rangées dans la file des alertes : la requête n'attend jamais Telegram
+    if waiting and new:     # le même lien rouvert (la page rechargée) : rien de neuf à dire à Cal
+        alertes.invite_en_attente(uid, rec["by"], rec["team"], role, mode, rec.get("spaces"))
+    elif not cal and new and not waiting:
+        alertes.ajoute_par_team(uid, rec["by"], rec["team"], role, mode, rec.get("spaces"))
     return {"team": rec["team"], "team_name": t["name"], "role": role, "role_fr": TEAM_FR[role], "guest": mode,
-            "workspace": first, "accepted": fresh}
+            "workspace": first, "accepted": fresh and cal, "pending": waiting,
+            "by_name": auth.display_name(rec.get("by"))}
 
 
 # ── la migration (étape 3) ──────────────────────────────────
