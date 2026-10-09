@@ -226,7 +226,7 @@ body.at-presenting .ag { display: none; }
 /* ce que le portail ne sait pas encore faire : un filet neutre (ni l'ambre d'une contradiction, ni l'orange de l'action) */
 .ag-hors { display: flex; flex-direction: column; gap: 7px; padding: 8px 10px; border-radius: var(--r2); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
 .ag-hbtns { display: flex; flex-wrap: wrap; gap: 6px; }
-.ag-hbtns .tb { max-width: 100%; white-space: normal; height: auto; min-height: 26px; text-align: left; }
+.ag-hbtns .ag-chip { display: inline-flex; align-items: center; text-decoration: none; }
 .ag-hors .ag-det li { line-height: 1.45; }
 
 /* le découpage : une ligne par plan, ses champs ; le total et les boutons au pied */

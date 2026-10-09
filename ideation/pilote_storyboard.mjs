@@ -11,7 +11,8 @@
 // découpage (4 plans) → une ligne supprimée, deux fusionnées → « Valider le découpage » → la planche posée en UN pas
 // d'annulation, les cases dans l'ordre, sans chevauchement, chaque case avec sa note et sa carte prête, Lina branchée sur
 // la sienne → « Annuler ce tour » : la planche revient identique → « Reposer » → « Lancer les 2 images » : 2 travaux en
-// file. Captures en sombre et en clair. Rend 0 si tout passe ; le détail dans <out>/pilote.log.
+// file ; « enlève le passant » → la carte « pas encore ici » ; « que sais-tu faire ? » → la liste du registre. Captures en
+// sombre et en clair. Rend 0 si tout passe ; le détail dans <out>/pilote.log.
 import { createRequire } from 'module';
 import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import { homedir } from 'os';
@@ -157,6 +158,21 @@ for (const theme of ['dark', 'light']) {
   await page.click('.ag-ch');
   await sleep(200);
   await page.screenshot({ path: `${out}/${theme}-5-carnet.png` });
+  await page.click('.ag-ch');
+  // ce qu'il ne sait pas encore faire, dit par le code (et l'outil qui le fait déjà) ; ce qu'il sait faire, lu dans le registre
+  const hors = await page.evaluate(async () => { const r = await window.ideation.app.agent.send('enlève le passant en rouge'); return r.turn.hors; });
+  await sleep(400);
+  const det = await page.locator('.ag-turn:last-child .ag-hors summary').count();
+  ok(hors && hors.outils.some((c) => c.id === 'image.consigne') && hors.manque.some((c) => c.id === 'vfx.retirer_personne.ltx') && det === 1
+    && await page.locator('.ag-turn:last-child .ag-hbtns a').count() >= 1,
+    `${theme} : « enlève le passant » → pas encore ici : l'outil qui le fait (Image · Consigne), ce qu'il faudrait installer`);
+  await page.click('.ag-turn:last-child .ag-hors summary');
+  await sleep(200);
+  await page.screenshot({ path: `${out}/${theme}-6-hors.png` });
+  const aide = await page.evaluate(async () => (await window.ideation.app.agent.send('que sais-tu faire ?')).reply);
+  ok(/^Ce que je sais faire ici/.test(aide), `${theme} : « que sais-tu faire ? » → la liste du registre`);
+  await sleep(300);
+  await page.screenshot({ path: `${out}/${theme}-7-aide.png` });
   await ctx.close();
 }
 await browser.close();

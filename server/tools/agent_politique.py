@@ -217,24 +217,25 @@ def hors_capacite(intent: dict, reg: dict, kinds: list, applicables: list, exclu
     approchant += [c for c in reg["capacites"] if c["id"] in (intent.get("approchants") or []) and c not in approchant]
     sur = next((SUR[k] for k in ("video", "image", "audio", "document") if k in kinds), "")
     bits = []
+    labels = lambda cs: _et([c["label"] for c in cs[:4]]) + ("…" if len(cs) > 4 else "")   # noqa: E731
     if not caps:
         bits.append("Ce n'est pas dans le portail : je ne peux pas le faire d'ici.")
     elif skill_absente:
-        bits.append(f"Je ne sais pas encore le faire depuis la conversation : la skill « {intent['skill']} » arrive avec le "
-                    f"lot {intent.get('a_venir')} (docs/etudes/agent_autonome.md § 8).")
+        bits.append(f"Je ne sais pas encore le faire depuis la conversation : ma skill « {intent['skill']} » arrive avec le lot {intent.get('a_venir')}.")
         if pretes:
-            bits.append("Le portail le fait déjà : " + _et([f"{c['label']} (outil {c['outil']})" for c in pretes[:4]]) + ".")
+            bits.append(f"Le portail le fait déjà, dans son outil : {labels(pretes)}.")
         if manque:
-            bits.append(f"Pas encore prêt ici{' ' + sur if sur else ''} : "
-                        + "; ".join(f"{c['label']} — {_cut(c.get('pourquoi'), 120)}" for c in manque[:3]) + ".")
+            bits.append(f"Pas encore prêt ici{' ' + sur if sur else ''} : {labels(manque)}.")
+    elif len(manque) == 1:
+        bits.append(f"Je ne sais pas encore le faire {sur + ' ' if sur else ''}ici : {manque[0]['label']} — {_cut(manque[0].get('pourquoi'), 120)}.")
     else:
-        bits.append(f"Je ne sais pas encore le faire {sur + ' ' if sur else ''}ici : "
-                    + "; ".join(f"{c['label']} — {_cut(c.get('pourquoi'), 120)}" for c in manque[:3]) + ".")
+        bits.append(f"Je ne sais pas encore le faire {sur + ' ' if sur else ''}ici : {labels(manque) or 'aucune voie'} ne sont pas prêts.")
     for c, why in exclues[:2]:
         bits.append(f"{c['label']} est écarté : {why}.")
     if approchant:
-        bits.append(("Ce que le portail sait en sortir : " if not caps else "Je peux : ")
-                    + _et([f"{c['label']}" for c in approchant[:3]]) + ".")
+        bits.append(("Ce que le portail sait en sortir : " if not caps else "Je peux : ") + labels(approchant[:3]) + ".")
+    if manque or exclues:
+        bits.append("Le détail est sous « ce qu'il faudrait installer ».")
     return {"action": "hors_capacite", "regle": 4, "intention": intent["id"], "texte": " ".join(bits),
             "manque": [_court(c) for c in manque], "outils": [_court(c) for c in pretes] if skill_absente else [],
             "exclues": [{**_court(c), "pourquoi": why} for c, why in exclues], "approchant": [_court(c) for c in approchant]}

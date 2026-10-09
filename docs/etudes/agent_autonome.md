@@ -11,7 +11,7 @@ LoRA) » ; « on aura besoin d'un super chat bot ». Le 06/10, sur l'agent actue
 me poser des questions avant… on ne submerge pas le user » ; « un modèle plus léger pour les textes et un plus compliqué
 pour les vidéos… restitution par paliers ».
 
-**Statut** : étude. Rien n'est codé, rien n'est téléchargé. Elle **consolide**, sans les remplacer :
+**Statut** : étude ; son lot 1 (§ 9) est codé le 09/10 (« Fait le 09/10 — lot 1 », en fin d'étude). Rien n'est téléchargé. Elle **consolide**, sans les remplacer :
 `agent_showrunner.md` (l'agent d'Idéation, 05-06/10), `agent_design.md` (D1-D10, 06/10), `mode_showrunner.md`
 (« Commencer un projet »), `orchestration.md` § 1 (un modèle de langue à l'entrée) et `presentations_motion.md` § 5 (la
 passe assistée). Deux études voisines, écrites en même temps, rempliront le registre des capacités (§ 5.6) :
@@ -865,6 +865,86 @@ session : rien n'en est repris ici. Ce qu'il faudrait que Cal en extraie (un fic
   `tools_spec()` 10 953 signes pour 16 outils), lue en important le module.
 - Renvois d'une ligne vers cette étude : `docs/ARCHITECTURE.md` et l'en-tête de `agent_showrunner.md`,
   `agent_design.md`, `mode_showrunner.md`, `orchestration.md`, `presentations_motion.md`.
+
+## Fait le 09/10 — lot 1
+
+Le § 9, codé (branche `wip3/agent-lot1`). Rien n'a tourné sur le vrai modèle : tout est essayé contre le faux Ollama,
+qui vérifie la FORME (le banc réel est au lot 2).
+
+**Les données** (`agent/`) :
+- `intentions.json` : les 20 intentions du § 5.6, chacune sa skill ; `a_venir` dit le lot qui écrira la sienne
+  (`slides.*` 4, `media.analyser` 5, `vfx.*` 6, `montage.premier_jet`, `musique.creer`, `objet3d.creer` 7) ; `autre`
+  nomme ses approchants (les exports PDF, MP4, du Montage).
+- `capacites/*.json` : 37 fiches. Les 15 du § 9.1, plus ce que la garde du registre a fait déclarer (chaque sorte de la
+  file a sa fiche ou sa raison) : `document.lecture`, `asset.recherche`, `image.atelier`, `image.detourer`,
+  `image.agrandir`, `video.agrandir`, `transcrire.traduire`, `transcrire.carnet`, `analyse.film`, `montage.sequence`, huit
+  fiches de Musique ; de la veille (`veille_1009.md` § 3) : `vfx.retirer_objet.void`, `vfx.retirer_objet.h3_inpaint`
+  (installables), `vfx.incruster.video`, `slides.pptx` (aucune voie connue : `absent`). Les champs de la veille
+  (`telechargements`, `memoire`, `licence.commercial`, `licence.territoire`, `etat.exige.comfyui_min`) sont lus.
+- `skills/conversation/` (la consigne du 05/10, déplacée ; `outils_selon_intention` : 4 à 9 outils par intention au lieu
+  de 16 ; 3 gestes au plus), `skills/storyboard/` (§ 9.3 ; `decoupage.schema.json`).
+
+**Le code** :
+- `server/tools/agent_registre.py` : charger et vérifier le registre (le format d'Agent Skills, les fiches champ par
+  champ, une intention sans skill ni `a_venir`, une entrée qui change de sens d'une skill à l'autre) ; l'état calculé
+  (le travail déclaré, l'interrupteur, la voie et ses instances, `pret` — l'outil le dit —, `image.availability`, et dans
+  la ComfyUI : `/object_info/<nœud>`, `/models/<dossier>` et `system.comfyui_version`, lus dans `server.py` de ComfyUI le
+  09/10) ; `GET /api/agent/registre` ; le schéma du routeur, construit à chaque appel.
+- `server/tools/agent_politique.py` : `decide` (les 9 règles du § 5.4), `accuse`, `scenes_of`, `trouver_portee`,
+  `valeur_reponse` ; des fonctions pures.
+- `server/tools/ideation_agent.py` : le routeur au début du tour (UN appel à sortie structurée), l'accusé dans la réponse
+  de la route (gardé avec le tour), `intent: "skill"` (réponses, choix, « Refaire » : sans routeur), les outils filtrés par
+  l'intention (un outil hors de la liste est refusé au modèle, avec sa raison), 3 gestes au plus dans la conversation, les
+  temps d'Ollama gardés appel par appel (`mesures` : chargement, lecture, écriture, jetons), la skill storyboard de bout
+  en bout, `INGEST_SCHEMA` de 0 à 3 questions (plus de minimum). La fiche du projet (§ 5.9) commence ici : écrite par le
+  code d'après les réponses (une entrée `defaut_de: fiche.x`) et les validations (le format), gardée avec la conversation,
+  rendue par `GET /api/ideation/agent/<planche>` ; le lot 3 la porte au Workspace.
+- `POST …/turns/<t>` : `{decoupage}` (relu par le schéma, 400 sinon), `{valide: true}` et `{consent: "images"}` passent par
+  `decide` (règle 8) ; la validation bâtit les gestes de la planche par le code, au même validateur (`Gestes`).
+- `ideation/agent.js` : l'accusé tout de suite ; les questions des skills ; « pas encore ici » (l'outil qui le fait déjà,
+  l'approchant, ce qu'il faudrait installer) ; le choix d'un workflow ; la carte du découpage (réécrire, supprimer,
+  fusionner, couper ; chaque correction enregistrée seule) ; « Valider le découpage » ; « Lancer les N images ».
+- `tools/check.py` : la garde du registre (`INTERNES`) ; `tools/faux_ollama.py` : le routeur et le découpage, les temps
+  d'Ollama ; `tools/faux_comfy.py` : `/models/<dossier>`, la version.
+
+**Les écarts au § 9, et pourquoi** :
+1. **Pas d'orange dans le panneau** : « Valider le découpage » et « Lancer les N images » sont le vert `.tb.on` (comme
+   « Accepter » du plan), pas un `.tb.go` : la règle 4 du thème (un seul orange par écran) est tenue par le Générer de
+   l'inspecteur — le § 9.5 (« seul orange ») la contredisait.
+2. **La règle 6 (choisir) ne vaut que pour une skill qui LANCE un workflow** (une étape `travaux`) : la conversation ne
+   pose qu'une carte prête, que la personne règle et lance — lui demander « Krea 2 ou Qwen ? » avant une carte gratuite
+   serait la submerger. La capacité retenue est gardée sur le tour (`decision`) pour le banc.
+3. **Une intention dont la skill n'est pas écrite** dit ce que le portail fait déjà et dans quel outil (règle 4 élargie,
+   § 3.1 règle 5) : « enlève le passant » répond aujourd'hui que la skill VFX arrive au lot 6, que l'atelier d'Image et la
+   Consigne le font sur une image, et ce qu'il faudrait installer pour la vidéo. `media.analyser` est passée au lot 5
+   (Transcrire et Movie Analysis, que la conversation ne mène pas encore).
+4. **La garde du registre porte sur toutes les sortes**, pas seulement celles de coût `gpu` ou `api` : dans le contrôle,
+   les sortes GPU s'enregistrent sur la voie cpu (les moteurs factices) ; le coût qu'on y lit ne dit pas celui des DGX.
+5. **Demander ne coûte aucun appel** : les questions viennent du registre (les entrées qui manquent), par le code. Le
+   storyboard coûte 2 appels (le routeur, le découpage), question comprise.
+6. **Le schéma du découpage** : des longueurs bornées en plus (`titre`, `scene`, chaque remarque) ; un nombre de plans
+   demandé fixe `minItems = maxItems` dans le schéma de l'appel ; la sortie est ramenée dans ses bornes (`borne`) avant
+   d'être vérifiée — que la sortie structurée d'Ollama tienne `maxLength` n'est pas documenté.
+7. **2,39:1** n'est pas un rapport d'Image (`ASPECTS`) : la carte prend 21:9, le plus proche. **Une image par case**
+   (`nombre: 1`). Les personnages qui ne sont pas sur la planche se posent dans un cadre « Personnages » à côté du
+   storyboard, chacun branché sur ses cases.
+8. **Les sept intentions proposées par la veille** (`vfx.remplacer`, `vfx.decor`…) ne sont pas ajoutées (V12 est une
+   décision de Cal) ; leurs voies d'aujourd'hui sont rangées dans les 20 (agrandir : `image.modifier`, `video.creer`).
+9. L'étape de l'entrée d'un projet (`intent: "etape"`) garde ses 12 gestes et tous ses outils : la skill `projet` est au
+   lot 2. Les intentions en une ligne pour le routeur font ≈ 2 800 signes (un exemple chacune), pas 2 000.
+
+**Les essais** : les selftests `agent_registre` (le format, l'état calculé contre un faux ComfyUI, le schéma du routeur, la
+route rejouée par un guest), `agent_politique` (la table du § 5.4, les six branches du § 3.3, les questions 0-3,
+l'accusé, `scenes_of` sur un Fountain, un scénario français, un texte sans en-tête), `ideation_agent` (le routeur par
+table ; le storyboard de bout en bout : l'accusé en moins d'une seconde, la question, 2 appels, 0 geste avant la
+validation, un découpage hors schéma refusé, les gestes du code, le carnet, la fiche, le consentement, une portée
+introuvable, « Refaire », une contradiction avec la fiche, « enlève la personne », « que sais-tu faire ? »), la garde du
+registre (`python3 tools/check.py registre`). Les pilotes : `ideation/pilote_storyboard.mjs` (§ 9.6, sombre et clair) ;
+`ideation/pilote_agent.mjs` suit les 3 gestes par tour.
+
+**Pas vérifié** : le vrai modèle (le routeur et le découpage de `qwen3:30b-a3b` ou de `qwen3-vl-32b-32k`, leur justesse,
+leurs temps) ; l'état lu dans les vraies ComfyUI des DGX (seulement contre le faux ComfyUI) ; le coût affiché tant que
+`durations.json` n'a pas de rendu d'image mesuré (« durée non mesurée »).
 
 ## Sources
 

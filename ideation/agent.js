@@ -1154,7 +1154,7 @@ export function install(app) {
   function horsEl(t) {
     const h = t.hors;
     const go = [...(h.approchant || []), ...(h.outils || [])];
-    const btns = go.map((c) => el('a', { class: 'tb ghost sm', href: href(`/${c.outil}/`), target: '_blank', rel: 'noopener',
+    const btns = go.map((c) => el('a', { class: 'ag-chip ag-opt', href: href(`/${c.outil}/`), target: '_blank', rel: 'noopener',
       title: `ouvrir l’outil ${c.outil}${c.etat === 'factice' ? ' (son moteur d’essai : réglage dans Admin → Câblage)' : ''}` }, c.label));
     const inst = [...(h.manque || []), ...(h.exclues || [])];
     const dl = (c) => (c.telechargements?.length ? ` · à télécharger : ${c.telechargements.map((x) => `${x.depot} · ${x.fichier}${x.go ? ` (${x.go} Go)` : ''}`).join(' ; ')}` : '');

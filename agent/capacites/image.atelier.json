@@ -1,6 +1,6 @@
 {
  "id": "image.atelier",
- "label": "L'atelier d'Image (Détail, Lumière, Style, Ajouter, Retirer, Fond)",
+ "label": "L'atelier d'Image · retoucher par zones",
  "intentions": [
   "image.modifier",
   "vfx.retirer"
