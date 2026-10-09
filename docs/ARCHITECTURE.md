@@ -10,7 +10,8 @@ rien demander aux autres.
 index.html, accueil.js      l'accueil du portail (cartes des outils, compte, machines)
 commun/                     tokens.css, base.css, shell.css, shell.js, porte.js/.css (la porte), fonts/ ;
                             theme.js, prefs.js/.css/.json, theme.html (l'éditeur de thème), undo.js,
-                            proxies.js, menu.js/.css, fil.js/.css, wire.js/.css, entrees.js/.css, split.js,
+                            proxies.js, menu.js/.css, fil.js/.css, barre.css, wire.js/.css, entrees.js/.css,
+                            multishot.js/.css, multishot_texte.js, mentions.js, split.js,
                             refs.js, molette.js, fenetre.js/.html/.css, pleinecran.js, tete.js/.css,
                             lecteur.js/.css, dock.js/.css, documents.js/.css, telephone.js/.css (§ 4)
 asset/ image/ movie/ …      une page par outil : index.html + <outil>.js + <outil>.css
@@ -351,6 +352,17 @@ jeter se rangent avec leur contraire (`libPatch`, `libTrash`) ; la page
 repeint le fil dans le `onapply` de sa pile (`items` : les objets rendus,
 `{id, gone: true}` pour un objet reparti à la corbeille).
 
+**La barre de création** (`commun/barre.css`, née dans Image le 29/09, commune
+avec Vidéo depuis le 09/10) : en bas, au-dessus du fil, centrée sur la page
+(le panneau Asset ouvert la pousse) ; ses lignes — les références
+(`.pb-refs`), le prompt (`.pb-text`), les puces (`.pb-chips`, `.pc`, chacune
+montre sa valeur) — et à droite l'action (`.pb-go`, `.pb-gen`, le seul
+orange) ; un panneau au-dessus d'elle (`.pb-pop`, `.pp-*`). La page pose
+`--pbar-h` (sa hauteur, par un `ResizeObserver`) : le fil garde sa marge
+basse, le bandeau des messages passe au-dessus. La page Vidéo y monte ses
+entrées (`createEntrees`, `layout: 'rangee'`) et son Multishot
+(`createMultishot`).
+
 ### Les modules communs
 
 | module | ce qu'il fait | l'API |
@@ -367,7 +379,8 @@ repeint le fil dans le `onapply` de sa pile (`items` : les objets rendus,
 | `menu.js` | le menu commun (clic droit, « ⋯ », sous-menus, clavier), le menu de repli | `menu`, `contextMenu(node, build)`, `kebab`, `pageMenu(build)`, `commonItems()`, `fallbackMenu`, `copy` |
 | `fil.js` | le fil d'un outil (ci-dessus) | `createFil`, `copyText`, `ask` |
 | `wire.js` | les fils d'un canvas nodal (ceux d'ODIO, repris par Idéation) | `wire`, `wireD`, `wireAt`, `tempWire` ; couleurs = noms de jetons |
-| `entrees.js` | les entrées d'un plan par place (`@image1`… verts ou rouges) | `createEntrees` (Vidéo) |
+| `entrees.js` | les entrées d'un plan par place (`@image1`… verts ou rouges) ; deux mises en page : `cadre` (une colonne), `rangee` (09/10 : la barre de création — une vignette, son jeton en surimpression, le nom dessous ; un clic, son menu : insérer, utiliser comme, la bande-son, retirer) | `createEntrees(box, {limits, cost, roles, via, state, onchange, layout, insert})` (Vidéo) ; `E.add(objets, jetons?)` rend le nombre posé et remplit `jetons` (le Multishot les écrit dans un plan) |
+| `multishot.js` + `multishot.css`, `multishot_texte.js` | **le Multishot** (04/10 ; dans la barre de Vidéo depuis le 09/10) : une vidéo H3 découpée en plans, un texte et des répliques par plan ; la frise est à l'échelle de la plus longue vidéo d'H3, la poignée de fin change la durée (aimantée à la grille 17k+5, `/api/movie/options` `frames`), une poignée entre deux plans déplace la coupe à l'image près (le total ne bouge pas), un plan se glisse pour changer de place, le plan choisi s'édite sur place, un asset déposé sur un plan s'écrit dans son texte ; rien n'est redessiné pendant un glisser. Le texte : la forme du guide d'H3 (`[Shot 2] At 00:01.708,`, `(S1) says: <d>[French] …</d>`). `multishot_texte.js` est pur (essayé par node : `server/tools/movie_multishot.py`) | `createMultishot(box, {total, grid, shots, desc, lang, mentions, onchange, ontotal, drop, bindField})` → `set`, `setTotal`, `get`, `text`, `paint`, `select`, `refresh` ; `openMultishot({total, desc, mentions, lang, onApply})` (la même frise dans une fenêtre : la carte Vidéo d'Idéation) ; `fitFrames`, `cutFrames`, `trimEnd`, `snapTotal`, `moveShot`, `splitFrames`, `removeFrames`, `starts`, `compose`, `parse` |
 | `mentions.js` | **la grammaire des mentions** (09/10) : la personne écrit partout `@image1`, `@element1`, `@video1`, `@audio1` — une sorte et une place, chaque sorte comptée à part dans l'ordre des entrées (un carrousel mélangé aussi) ; le même motif que `server/core/mentions.py`, qui la compile pour chaque modèle (§ « Les mentions ») | `TOKEN_RX`, `keyOf`, `tokenOf`, `scan`, `places` (Image, Vidéo, Idéation) |
 | `split.js` | les panneaux redimensionnables | `split(box, parts, {axis, key})` |
 | `tete.js` + `tete.css` | **la tête de lecture et la règle des temps de toutes les timelines** (Cal, 30/09 : « la même cue partout, celle du montage vidéo est bien »), extraites du Montage : un trait orange de 2 px et son onglet, cachés sous les en-têtes collés, qui suivent la lecture ; une règle en timecode `HH:MM:SS:FF` (une étiquette tous les 84 px au moins) qui ne peint que ce qui se voit ; cliquer, glisser sur la règle déplace la tête (capture du pointeur). Le Montage, ODIO (l'arrangement, le piano roll, l'éditeur audio), le lecteur et la minuterie de motion d'Idéation (06/10) s'en servent | `tete({z})`, `poser(ph, x, {decal, sous})`, `suivre(scroller, x)`, `peindreRegle(ticks, {pps, fps})`, `brancherRegle(zone, {temps, aller})`, `sauter(media, t)` (un saut ne s'empile jamais sur un saut en cours), `cible`, `glisser`, `tc(images, fps)` |
@@ -556,7 +569,9 @@ d'Idéation) ; l'agent d'Idéation l'écrit aussi. Les prompts d'H3 se mettent e
 `sound`, `music`, `subjects` — `{"@element1": "définition en anglais"}` —, `summary`), et `POST /api/movie/apercu`
 montre ce que H3 recevra (le plan compilé et `checks` : `[{id, level: ok | remarque | erreur, text}]`). Les réglages
 d'un plan Vidéo gagnent `format` (l'échelle des toiles : `2.4:1`, `21:9`, `16:9`, `4:3`, `1:1`, `3:4`, `9:16`),
-`subjects`, `summary`, `speech_lang` ; les préréglages, `esquisse` et `leger`.
+`subjects`, `summary`, `speech_lang` ; les préréglages, `esquisse` et `leger`. La page Vidéo envoie aussi
+`multishot` (`{shots: [{frames, text, lines}], lang}`, 09/10) : la vidéo le garde dans ses réglages d'envoi
+(`REQUEST_KEYS`, avec `summary`), « Réutiliser » rouvre la frise telle quelle.
 
 **ODIO, « Détecter le tempo » (05/10)** : le calcul est dans la page
 (`musique/tempo.js`, un module pur, appelé par `musique/bpm.js` sur le son que
@@ -578,7 +593,11 @@ d'avant, d'après.
 **Déposer un asset** : tout bloc qui attend un asset passe par `dropZone()`
 de `commun/shell.js` (fichier du disque → bibliothèque avec `tool: upload`,
 `via: <outil>` ; ou vignette glissée, type `application/x-sr-item`). Les
-vignettes se glissent par `dragItem()`. Ce qu'un outil fabrique garde son
+vignettes se glissent par `dragItem()`. Une zone qui prend les éléments prend
+aussi un personnage de la section Character Factory du panneau Asset pas encore
+importé (`application/x-sr-cf`, `{slug, imported}`) : elle l'importe au dépôt
+(`POST /api/cf/import`) et le reçoit en élément ; l'événement `sr:cf-import`
+(`{slug, item}`) le dit au panneau (09/10). Ce qu'un outil fabrique garde son
 nom d'outil ; seul ce que quelqu'un dépose est « Upload ». Une zone (ou `pick`)
 qui prend `document` prend tout fichier ; une autre refuse ce qui n'est pas de ses
 sortes, et dit ce qui, rangé, n'y est pas pris (la sorte est celle du portail).
