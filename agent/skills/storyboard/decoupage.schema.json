@@ -1,0 +1,16 @@
+{"type": "object", "required": ["titre", "plans", "remarques"], "properties": {
+  "titre": {"type": "string", "maxLength": 120},
+  "plans": {"type": "array", "minItems": 1, "maxItems": 24, "items": {"type": "object",
+    "required": ["valeur", "mouvement", "duree_s", "action", "prompt"], "properties": {
+      "scene": {"type": "string", "maxLength": 120},
+      "valeur": {"enum": ["tres_gros_plan", "gros_plan", "plan_rapproche", "plan_taille", "plan_americain",
+                          "plan_moyen", "plan_ensemble", "plan_general", "insert"]},
+      "angle": {"enum": ["normal", "plongee", "contre_plongee", "aerien", "subjectif"]},
+      "mouvement": {"enum": ["fixe", "panoramique", "travelling", "zoom", "camera_epaule", "drone"]},
+      "duree_s": {"type": "number", "minimum": 0.5, "maximum": 30},
+      "action": {"type": "string", "maxLength": 300},
+      "dialogue": {"type": "string", "maxLength": 300},
+      "son": {"type": "string", "maxLength": 200},
+      "personnages": {"type": "array", "items": {"type": "string"}, "maxItems": 4},
+      "prompt": {"type": "string", "maxLength": 600}}}},
+  "remarques": {"type": "array", "items": {"type": "string", "maxLength": 300}, "maxItems": 3}}}

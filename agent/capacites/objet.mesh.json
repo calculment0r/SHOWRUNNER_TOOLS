@@ -1,0 +1,53 @@
+{
+ "id": "objet.mesh",
+ "label": "Un objet 3D · Object Creator (TRELLIS.2)",
+ "intentions": [
+  "objet3d.creer"
+ ],
+ "outil": "objet",
+ "travail": "objet.mesh",
+ "route": null,
+ "entrees": {
+  "image": {
+   "sorte": "image",
+   "requis": true,
+   "question": {
+    "texte": "De quelle image ?"
+   }
+  }
+ },
+ "sortie": {
+  "sorte": "objet3d",
+  "parents": [
+   "image"
+  ]
+ },
+ "criteres": [
+  {
+   "si": "image_citee",
+   "poids": 1,
+   "pourquoi": "une image d'un objet devient un GLB"
+  }
+ ],
+ "limites": [],
+ "etat": {
+  "exige": {
+   "interrupteur": "objet_trellis=true"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "trellis",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "non relevée dans le dépôt",
+  "lue": false
+ },
+ "sources": [
+  "server/tools/objet.py"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

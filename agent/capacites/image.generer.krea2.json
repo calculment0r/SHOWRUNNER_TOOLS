@@ -1,0 +1,65 @@
+{
+ "id": "image.generer.krea2",
+ "label": "Une image · Krea 2",
+ "intentions": [
+  "image.creer"
+ ],
+ "outil": "image",
+ "travail": "image.generate",
+ "route": "POST /api/image/generate",
+ "entrees": {
+  "texte": {
+   "type": "texte",
+   "requis": true
+  },
+  "references": {
+   "sorte": [
+    "image",
+    "element"
+   ],
+   "requis": false
+  }
+ },
+ "sortie": {
+  "sorte": "image"
+ },
+ "criteres": [
+  {
+   "si": "references",
+   "poids": 2,
+   "pourquoi": "ses références y tiennent : la règle des cartes Générer (Krea 2 d'abord)"
+  },
+  {
+   "si": "sans_reference",
+   "poids": 1,
+   "pourquoi": "il tire aussi une image du texte seul"
+  }
+ ],
+ "limites": [
+  "2 références au plus"
+ ],
+ "etat": {
+  "exige": {
+   "interrupteur": "image_backend=comfyui",
+   "image": "krea2"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "krea2",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "Krea 2 Community License",
+  "lue": true,
+  "source": "docs/etudes/veille_1009.md § 2.6",
+  "note": "elle exige des filtres de contenu chez qui la déploie (§ 4.2) : aucun dans le portail"
+ },
+ "sources": [
+  "docs/etudes/image.md",
+  "server/tools/image.py (MODELS)"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

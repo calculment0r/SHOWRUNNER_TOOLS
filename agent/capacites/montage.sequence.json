@@ -1,0 +1,34 @@
+{
+ "id": "montage.sequence",
+ "label": "Une séquence · Montage",
+ "intentions": [
+  "montage.premier_jet"
+ ],
+ "outil": "montage",
+ "travail": null,
+ "route": "POST /api/montage/projects",
+ "entrees": {},
+ "sortie": {
+  "sorte": "sequence"
+ },
+ "criteres": [],
+ "limites": [
+  "les positions en images entières"
+ ],
+ "etat": {
+  "exige": {}
+ },
+ "cout": {
+  "classe": "none"
+ },
+ "consentement": "aucun",
+ "licence": {
+  "nom": "le code du portail",
+  "lue": true
+ },
+ "sources": [
+  "server/tools/montage.py"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

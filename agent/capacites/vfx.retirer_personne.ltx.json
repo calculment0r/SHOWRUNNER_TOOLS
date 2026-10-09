@@ -1,0 +1,99 @@
+{
+ "id": "vfx.retirer_personne.ltx",
+ "label": "Retirer les sujets mobiles · LTX-2.5 Clean-Plate",
+ "intentions": [
+  "vfx.retirer"
+ ],
+ "outil": "movie",
+ "travail": "movie.retoucher",
+ "route": null,
+ "entrees": {
+  "video": {
+   "sorte": "video",
+   "requis": true,
+   "contraintes": {
+    "cote_multiple": 32,
+    "images": "8k+1",
+    "fps": 24
+   }
+  }
+ },
+ "sortie": {
+  "sorte": "video",
+  "parents": [
+   "video"
+  ]
+ },
+ "criteres": [
+  {
+   "si": "tout_ce_qui_bouge",
+   "poids": 1,
+   "pourquoi": "il retire tous les sujets mobiles, sans masque"
+  },
+  {
+   "si": "une_personne_parmi_plusieurs",
+   "poids": -1,
+   "pourquoi": "il ne choisit pas qui retirer"
+  },
+  {
+   "si": "objet_immobile",
+   "poids": -1,
+   "pourquoi": "il vise ce qui bouge : un objet immobile reste"
+  }
+ ],
+ "limites": [
+  "un objet immobile reste",
+  "temps sur DGX Spark non mesuré"
+ ],
+ "etat": {
+  "exige": {
+   "comfy_modeles": [
+    "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+    "loras/ltx-2.5-22b-ic-lora-clean-plate-1.0.safetensors"
+   ],
+   "noeuds": [
+    "LTXAddVideoICLoRAGuide"
+   ],
+   "comfyui_min": "0.32.0"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "ltx",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "LTX-2.x Community License",
+  "lue": true,
+  "commercial": "< 10 M$ de CA",
+  "territoire": [],
+  "source": "https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x"
+ },
+ "sources": [
+  "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Clean-Plate",
+  "docs/etudes/veille_1009.md § 2.1"
+ ],
+ "telechargements": [
+  {
+   "depot": "Lightricks/LTX-2.5",
+   "fichier": "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+   "dossier": "diffusion_models",
+   "go": null,
+   "licence": "LTX-2.x"
+  },
+  {
+   "depot": "Lightricks/LTX-2.5-22b-IC-LoRA-Clean-Plate",
+   "fichier": "ltx-2.5-22b-ic-lora-clean-plate-1.0.safetensors",
+   "dossier": "loras",
+   "go": null,
+   "licence": "LTX-2.x"
+  }
+ ],
+ "memoire": {
+  "famille": "ltx",
+  "go": null
+ },
+ "rempli_par": "veille_1009.md",
+ "verifie": "2026-10-09"
+}

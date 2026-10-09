@@ -1,0 +1,91 @@
+{
+ "id": "vfx.retirer_objet.h3_inpaint",
+ "label": "Retirer un objet · H3 Fun ControlNet (inpainting)",
+ "intentions": [
+  "vfx.retirer"
+ ],
+ "outil": "movie",
+ "travail": "movie.retoucher",
+ "route": null,
+ "entrees": {
+  "video": {
+   "sorte": "video",
+   "requis": true,
+   "contraintes": {
+    "cote_multiple": 32,
+    "fps": 24
+   }
+  },
+  "quoi": {
+   "type": "texte",
+   "requis": true,
+   "question": {
+    "texte": "Quel objet retirer ?"
+   }
+  }
+ },
+ "sortie": {
+  "sorte": "video",
+  "parents": [
+   "video"
+  ]
+ },
+ "criteres": [
+  {
+   "si": "objet_immobile",
+   "poids": 1,
+   "pourquoi": "un masque (SAM 3.1) : la zone régénérée sur le même H3"
+  },
+  {
+   "si": "commercial_ue",
+   "exclut": true,
+   "pourquoi": "la licence d'H3 exclurait l'UE (non lue : veille_1009.md § 2.1)"
+  }
+ ],
+ "limites": [
+  "un masque à suivre (SAM 3.1)"
+ ],
+ "etat": {
+  "exige": {
+   "comfy_modeles": [
+    "model_patches/minimax_h3_fun_controlnet_union_pruned_int8_convrot.safetensors"
+   ],
+   "noeuds": [
+    "MiniMaxH3FunControlNetApply",
+    "SAM3_TrackToMask"
+   ],
+   "comfyui_min": "0.35.0"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "h3",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "MiniMax H3 Community License ; ControlNet d'alibaba-pai (non lue)",
+  "lue": false,
+  "territoire": [
+   "UE",
+   "US",
+   "UK",
+   "KR"
+  ],
+  "source": "docs/etudes/veille_1009.md § 2.1 (extraits) ; REPRISE § 2.D : « H3 non licencié dans l'UE »"
+ },
+ "sources": [
+  "docs/etudes/veille_1009.md § 2.1"
+ ],
+ "telechargements": [
+  {
+   "depot": "alibaba-pai (H3 Fun ControlNet Union)",
+   "fichier": "minimax_h3_fun_controlnet_union_pruned_int8_convrot.safetensors",
+   "dossier": "model_patches",
+   "go": 2.14,
+   "licence": "non lue"
+  }
+ ],
+ "rempli_par": "veille_1009.md",
+ "verifie": "2026-10-09"
+}

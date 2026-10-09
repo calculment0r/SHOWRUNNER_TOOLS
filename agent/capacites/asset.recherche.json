@@ -1,0 +1,39 @@
+{
+ "id": "asset.recherche",
+ "label": "Chercher dans la bibliothèque · Asset",
+ "intentions": [
+  "asset.chercher"
+ ],
+ "outil": "asset",
+ "travail": null,
+ "route": "GET /api/library",
+ "entrees": {
+  "mots": {
+   "type": "texte",
+   "requis": true
+  }
+ },
+ "sortie": {
+  "sorte": "planche"
+ },
+ "criteres": [],
+ "limites": [
+  "par les mots : titres, prompts, étiquettes, descriptions (pas encore par l'image)"
+ ],
+ "etat": {
+  "exige": {}
+ },
+ "cout": {
+  "classe": "none"
+ },
+ "consentement": "aucun",
+ "licence": {
+  "nom": "le code du portail",
+  "lue": true
+ },
+ "sources": [
+  "server/core/library.py (query)"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

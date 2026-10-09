@@ -1,0 +1,22 @@
+{
+  "id": "conversation", "version": 1, "label": "Conversation",
+  "description": "Short answers and small reversible gestures on the Idéation board, with only the tools of the routed intention.",
+  "intentions": ["aide.capacites", "planche.question", "planche.retoucher", "projet.demarrer", "projet.creer", "document.analyser",
+                 "asset.chercher", "image.creer", "image.modifier", "video.creer", "autre"],
+  "entrees": {},
+  "etapes": [{"id": "geste", "sorte": "boucle", "max_appels": 12, "max_gestes": 3}],
+  "outils": ["lire_planche", "poser_texte", "poser_cadre", "ranger", "grouper", "deplacer", "relier", "renommer_planche", "noter_decision"],
+  "outils_selon_intention": {
+    "planche.question": ["lire_planche", "lire_document", "decrire_image", "noter_decision"],
+    "projet.demarrer": ["lire_planche", "lire_document", "poser_texte", "noter_decision"],
+    "projet.creer": ["lire_planche", "lire_document", "poser_texte", "noter_decision"],
+    "document.analyser": ["lire_document", "poser_texte", "noter_decision"],
+    "asset.chercher": ["chercher_bibliotheque", "poser_asset", "poser_cadre", "noter_decision"],
+    "image.creer": ["decrire_image", "chercher_bibliotheque", "carte_image", "composeur", "noter_decision"],
+    "image.modifier": ["decrire_image", "carte_image", "composeur", "noter_decision"],
+    "video.creer": ["decrire_image", "carte_video", "composeur", "noter_decision"]
+  },
+  "sortie": {"sorte": "planche", "contrat": "une réponse courte ; au plus 3 gestes annulables d'un coup, sur ce que la personne désigne ; une carte Générer posée prête, jamais lancée"},
+  "verifications": ["0 geste hors de ce qui est désigné", "3 gestes au plus", "un outil hors de la skill est refusé"],
+  "paliers": []
+}

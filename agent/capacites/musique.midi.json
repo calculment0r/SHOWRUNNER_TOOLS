@@ -1,0 +1,47 @@
+{
+ "id": "musique.midi",
+ "label": "Extraire le MIDI · ODIO",
+ "intentions": [
+  "musique.creer"
+ ],
+ "outil": "musique",
+ "travail": "music.midi",
+ "route": "POST /api/music/midi/extract",
+ "entrees": {
+  "son": {
+   "sorte": "audio",
+   "requis": true
+  }
+ },
+ "sortie": {
+  "sorte": "son"
+ },
+ "criteres": [
+  {
+   "si": "son_cite",
+   "poids": 1,
+   "pourquoi": "un son cité"
+  }
+ ],
+ "limites": [],
+ "etat": {
+  "exige": {
+   "interrupteur": "music_midi=true"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "non relevée dans le dépôt",
+  "lue": false
+ },
+ "sources": [
+  "docs/etudes/musique_generatif.md",
+  "docs/etudes/musique_app.md"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

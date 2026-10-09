@@ -1,0 +1,38 @@
+{
+ "id": "presentation.video",
+ "label": "Une présentation en MP4 · Idéation",
+ "intentions": [
+  "slides.creer",
+  "slides.retoucher"
+ ],
+ "outil": "ideation",
+ "travail": "presentation.video",
+ "route": "POST /api/ideation/boards/{bid}/video",
+ "entrees": {},
+ "sortie": {
+  "sorte": "video"
+ },
+ "criteres": [],
+ "limites": [
+  "les diapositives d'une planche, leurs animations"
+ ],
+ "etat": {
+  "exige": {
+   "pret": "presentation_pdf.state"
+  }
+ },
+ "cout": {
+  "classe": "cpu"
+ },
+ "consentement": "aucun",
+ "licence": {
+  "nom": "le code du portail",
+  "lue": true
+ },
+ "sources": [
+  "docs/etudes/presentations_motion.md",
+  "server/tools/presentation_pdf.py"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}
