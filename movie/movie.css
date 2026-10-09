@@ -2,125 +2,154 @@
    VIDÉO — le parcours de H3 Studio (github.com/
    underworldhistory1-ctrl/minimax-h3-higgsfield, MIT, Copyright
    (c) 2026 Charles Mod) redessiné dans le thème du portail ; depuis
-   le 29/09, sur le modèle de Higgsfield : les réglages à gauche, le
-   fil des vidéos au centre (commun/fil.css) ; le banc A/B repris du
-   banc NL de Cal.
+   le 09/10, comme la page Image : le fil sur toute la largeur
+   (commun/fil.css), la barre de création en bas (commun/barre.css :
+   ses lignes, ses puces, ses panneaux ; ici ce qui n'est qu'à Vidéo),
+   le Multishot dans la barre (commun/multishot.css) ; le banc A/B
+   repris du banc NL de Cal.
    Règles du thème : aucune couleur en dur (tout vient de
    commun/tokens.css), des filets et jamais de bordures, un seul
-   .tb.go visible à la fois, les capitales pour la machine.
+   .tb.go visible à la fois (« Générer » ; sur le banc, la lecture),
+   les capitales pour la machine.
    ============================================================ */
 
-/* ── le gabarit : réglages | le fil (ou le banc) ─────────── */
-.movie {
-  max-width: 1880px; margin: 0 auto; padding: var(--s4) var(--s6) 48px;
-  display: grid; grid-template-columns: 350px minmax(0, 1fr); gap: var(--s5); align-items: start;
-}
-/* la place de la page, pas la fenêtre : le panneau Asset ouvert lui en prend (@container sr-page, commun/shell.css) */
-@container sr-page (max-width: 1280px) { .movie { grid-template-columns: 330px minmax(0, 1fr); gap: var(--s4); } }
-@container sr-page (max-width: 900px) { .movie { grid-template-columns: 1fr; padding: var(--s4); } }
-.movie .rail {
-  position: sticky; top: 66px; height: calc(100 * var(--vh) - 82px); display: flex; flex-direction: column; min-width: 0;
-  border-radius: var(--r4); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden;
-}
-@container sr-page (max-width: 900px) { .movie .rail { position: static; height: auto; } }
-.rail-scroll { flex: 1; overflow: auto; padding: var(--s4); display: flex; flex-direction: column; gap: var(--s3); }
-/* une carte garde sa hauteur : la colonne défile, elle ne l'écrase pas (la carte du modèle rognait l'état du moteur) */
-.rail-scroll > * { flex-shrink: 0; }
-.wspace { display: flex; flex-direction: column; gap: var(--s4); min-width: 0; }   /* pas « .work » : c'est l'état .pill.work du portail */
-.pane { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
+/* ── la page : la ligne du haut, le fil (ou le banc) ────── */
+.v-page { max-width: 1880px; margin: 0 auto; padding: var(--s4) var(--s6) 0; }
+@container sr-page (max-width: 700px) { .v-page { padding: var(--s3) var(--s3) 0; } }
+.v-top { display: flex; align-items: center; gap: var(--s3); margin-bottom: var(--s3); flex-wrap: wrap; }
+.v-top .sp { flex: 1; }
+.v-views .tb { min-width: 84px; }
+.v-top .sr-undo button { height: 26px; color: var(--ink2); }
+.pane { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }   /* pas « .work » : c'est l'état .pill.work du portail */
 .hint { font-size: 10.5px; line-height: 1.5; color: var(--ink3); }
-.row.nowrap { flex-wrap: nowrap; }
-.grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s3); }
-
-/* les onglets en tête de la colonne : Créer | Comparer (comme Create Video / Edit Video) */
-.rail-tabs { flex: none; display: flex; gap: var(--s5); padding: 0 var(--s4); box-shadow: inset 0 -1px 0 var(--line); }
-.rail-tabs button {
-  height: 42px; font-family: var(--f-mono); font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink3);
+.v-cmp { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: var(--s5); align-items: start; padding-bottom: 48px; }
+@container sr-page (max-width: 900px) { .v-cmp { grid-template-columns: 1fr; } }
+.cmp-rail {
+  position: sticky; top: 66px; display: flex; flex-direction: column; gap: var(--s3); padding: var(--s4);
+  border-radius: var(--r4); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line);
 }
-.rail-tabs button:hover { color: var(--ink); }
-.rail-tabs button.on { color: var(--ink); box-shadow: inset 0 -2px 0 var(--or); }
-/* annuler · rétablir · le journal (commun/undo.js), au bout des onglets */
-.rail-tabs .sr-undo { margin-left: auto; align-self: center; }
-.rail-tabs .sr-undo button { height: 26px; color: var(--ink2); }
+@container sr-page (max-width: 900px) { .cmp-rail { position: static; } }
 
-/* la carte du modèle, avec l'état du moteur */
-.model-card {
-  position: relative; overflow: hidden; border-radius: var(--r3); padding: 13px 15px; min-height: 88px;
-  display: flex; flex-direction: column; gap: 3px; background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line-gr);
-}
-.model-card .k { color: var(--grn2); }
-.model-card b { font-family: var(--f-disp); font-weight: 400; font-size: 17px; letter-spacing: .06em; text-transform: uppercase; }
-.model-card .sub { font-size: 11px; color: var(--ink2); }
-.model-card .pill { margin-top: 5px; position: relative; z-index: 1; }
-.model-card .wm {
-  position: absolute; right: 10px; top: -6px; font-family: var(--f-disp); font-size: 84px; line-height: 1; letter-spacing: -.02em;
-  color: var(--line); pointer-events: none;
-}
+/* ── la barre (commun/barre.css) : un peu plus large qu'Image, le Multishot y vit ── */
+.pbar.vbar { width: min(1160px, calc(100cqw - 32px)); }
+.vbar .pb-pops { display: contents; }   /* les panneaux se posent au-dessus de la barre (position absolue), sans case dans sa grille */
+/* un panneau tient dans la place au-dessus de la barre (au téléphone, le Multishot l'agrandit) */
+.vbar .pb-pop { max-height: min(calc(60 * var(--vh)), 540px, calc(100 * var(--vh) - var(--pbar-h, 200px) - 72px)); }
+@container sr-page (max-width: 700px) { .pbar.vbar { width: 100cqw; } }
+.vbar .pb-main { gap: 7px; }
+.vbar .pb-refs { min-height: 0; align-items: flex-start; }
+.vbar .pb-refs[hidden] { display: none; }
+/* l'invite, liée aux entrées (commun/entrees.css) : le calque des jetons suit le texte, la boîte défile au-delà de sept lignes */
+.vbar .pb-text .ent-wrap { background: transparent; max-height: 148px; overflow-y: auto; scrollbar-width: thin; }
+.vbar .pb-text .ent-wrap textarea.ent-ta, .vbar .pb-text .ent-mirror { font-size: 13px; line-height: 20px; padding: 4px 2px; }
+.vbar .ent-mirror { bottom: auto; }
+.vbar .ent-menu { top: auto; bottom: calc(100% + 4px); }
+.vbar textarea.pb-ta { min-height: 28px; }
 
-/* les trois modes */
-.modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-.modes button {
-  min-height: 56px; padding: 8px 4px; border-radius: var(--r2); background: var(--panel2); text-align: center;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-  box-shadow: inset 0 0 0 1px var(--line); color: var(--ink2);
+/* Images : la première et la dernière image, des vignettes comme celles des entrées */
+.v-frames { display: flex; gap: 6px; }
+.v-slot { position: relative; width: 52px; display: flex; flex-direction: column; gap: 2px; }
+.v-im {
+  position: relative; display: flex; align-items: center; justify-content: center; width: 52px; height: 44px; border-radius: var(--r2);
+  background: var(--panel2) center / cover no-repeat; box-shadow: inset 0 0 0 1px var(--line);
 }
-/* Venus Rising est large : « Références » tient dans le tiers du rail à 9,5 px, sans espacement */
-.modes button b { font-family: var(--f-disp); font-weight: 400; font-size: 9.5px; letter-spacing: 0; text-transform: uppercase; color: var(--ink); white-space: nowrap; }
-.modes button span { font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
-.modes button:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
-.modes button.on { background: var(--grn-bg); box-shadow: inset 0 0 0 1px var(--line-gr); }
-.modes button.on b { color: var(--grn2); }
-
-/* les deux préréglages (la recette de Cal, 30/09) : le mot, ce qu'il fait, son temps */
-.presets-pick { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-.presets-pick button {
-  min-height: 64px; padding: 8px 10px; border-radius: var(--r2); background: var(--panel3); text-align: left;
-  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
-  box-shadow: inset 0 0 0 1px var(--line); color: var(--ink2);
+.v-im:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.v-slot.empty .v-im { background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line-gr); }
+.v-slot.empty .v-im b { font-family: var(--f-mono); font-size: 18px; font-weight: 400; color: var(--ink3); }
+.v-slot.empty .v-im:hover b { color: var(--or); }
+.v-slot.drop-on .v-im { box-shadow: inset 0 0 0 2px var(--grn2); }
+.v-tok {
+  position: absolute; left: 2px; top: 30px; padding: 0 3px; border-radius: 2px; background: var(--veil); pointer-events: none;
+  font-size: 9px; color: var(--ink);
 }
-.presets-pick button b { font-family: var(--f-disp); font-weight: 400; font-size: 11px; text-transform: uppercase; color: var(--ink); }
-.presets-pick button span { font-size: 10.5px; line-height: 1.35; color: var(--ink2); }
-.presets-pick button i { font-style: normal; font-family: var(--f-mono); font-size: 9px; letter-spacing: .08em; color: var(--cy); }
-.presets-pick button:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
-.presets-pick button.on { background: var(--grn-bg); box-shadow: inset 0 0 0 1px var(--line-gr); }
-.presets-pick button.on b { color: var(--grn2); }
-.fmt .seg.fam { display: flex; flex-wrap: wrap; gap: 2px; }
-.preset #estimate-short { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cy); }
-.lora.recipe { box-shadow: inset 0 0 0 1px var(--line-gr); }
+.v-name { font-size: 9.5px; line-height: 12px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* les cartes du rail */
-.card { border-radius: var(--r3); background: var(--panel2); padding: 12px 13px; display: flex; flex-direction: column; gap: var(--s2); min-width: 0; }
-.card h3 { margin: 0; font-family: var(--f-disp); font-weight: 400; font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; }
-.card > p { margin: 0 0 2px; font-size: 11px; line-height: 1.5; color: var(--ink3); }
-.card > p b { color: var(--cy); font-weight: 500; }
-.card .fld { background: var(--panel3); }
-.card .tb { white-space: nowrap; flex: none; }
-.card .field.sep { margin-top: 4px; padding-top: 10px; box-shadow: inset 0 1px 0 var(--line); }
-#words.low { color: var(--amb); }
+/* le Multishot, dans la barre, au-dessus des puces */
+.v-ms[hidden] { display: none; }
+.vbar .v-ms .ms-ed { background: var(--panel); }
 
-/* images de début et de fin */
-.frames { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.slot {
-  position: relative; aspect-ratio: 4 / 3; border-radius: var(--r2); background: var(--black); overflow: hidden;
-  box-shadow: inset 0 0 0 1px var(--line); cursor: pointer; display: flex; align-items: center; justify-content: center;
+/* les puces propres à Vidéo : le mode en trois boutons, la forme du format, le temps estimé */
+.pc-seg { display: inline-flex; flex: none; height: 28px; padding: 2px; gap: 2px; border-radius: var(--r2); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
+.pc-seg button { padding: 0 8px; border-radius: var(--r1); font-size: 11.5px; color: var(--ink2); white-space: nowrap; }
+.pc-seg button:hover { color: var(--ink); }
+.pc-seg button.on { background: var(--grn-bg); color: var(--grn2); box-shadow: inset 0 0 0 1px var(--line-gr); }
+.v-ratio { display: inline-block; flex: none; height: 22px; max-width: 54px; border-radius: 2px; box-shadow: inset 0 0 0 1.5px currentColor; }
+.v-ratio.sm { height: 11px; max-width: 28px; color: var(--ink2); }
+.pc .pc-s { font-size: 11px; color: var(--cy); white-space: nowrap; }
+.pc.count.dur b { min-width: 46px; cursor: pointer; }
+.pc.count.dur b:hover { color: var(--cy); }
+.pc.adv b { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.pc.recu b { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--amb-bg); box-shadow: inset 0 0 0 1px var(--line-amb); color: var(--amb); font: 500 9px/16px var(--f-mono); text-align: center; }
+/* à droite : « Générer » et son temps estimé ; ce qui manque, dessous, mène à ce qui le lève */
+.vbar .pb-gen small { min-height: 10px; }
+/* ce qui manque est une phrase (« décris le plan ») : en bas de casse, pas en capitales de machine */
+.vbar .pb-go .why { font-family: var(--f-ui); font-size: 11px; letter-spacing: 0; text-transform: none; line-height: 1.35; }
+.vbar .pb-go .why:empty { display: none; }
+.why .fix { cursor: pointer; }
+.why .fix::before { content: "→ "; }
+.why .fix:hover { color: var(--ink); }
+
+/* ── les panneaux au-dessus de la barre ─────────────────── */
+.v-sec { display: flex; flex-direction: column; gap: 6px; }
+.v-sec + .v-sec { padding-top: 10px; box-shadow: inset 0 1px 0 var(--line); }
+/* le format : une forme par rapport, son nom, sa famille */
+.v-fmts { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 5px; }
+.v-fmt {
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; min-height: 70px; padding: 8px 6px 7px;
+  border-radius: var(--r2); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink3);
 }
-.slot img { width: 100%; height: 100%; object-fit: contain; display: block; }
-.slot:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
-.slot.empty { background: var(--panel3); box-shadow: inset 0 0 0 1px var(--line-gr); cursor: default; }
-.slot.empty:hover { box-shadow: inset 0 0 0 1px var(--or); }
-.slot-empty { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 8px; text-align: center; color: var(--ink3); font-size: 10px; line-height: 1.4; }
-.slot-empty b { font-family: var(--f-mono); font-weight: 400; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink2); }
-.slot-empty:hover b { color: var(--or); }
-.slot .cap { position: absolute; left: 5px; bottom: 5px; padding: 2px 5px; border-radius: var(--r1); background: var(--veil); font-family: var(--f-mono); font-size: 7.5px; letter-spacing: .1em; color: var(--ink2); }
-.slot .x {
-  position: absolute; top: 5px; right: 5px; width: 20px; height: 20px; border-radius: 50%; z-index: 2;
-  background: var(--veil); color: var(--ink); font-size: 12px; line-height: 20px; text-align: center; box-shadow: inset 0 0 0 1px var(--line);
+.v-fmt b { font-family: var(--f-mono); font-size: 11px; font-weight: 500; letter-spacing: .04em; color: var(--ink); }
+.v-fmt small { font-size: 10px; color: var(--ink3); }
+.v-fmt:hover { box-shadow: inset 0 0 0 1px var(--line-cy); color: var(--ink2); }
+.v-fmt.on { background: var(--grn-bg); box-shadow: inset 0 0 0 1px var(--line-gr); color: var(--grn2); }
+.v-fmt.on b { color: var(--grn2); }
+/* la qualité : les deux préréglages de la recette de Cal (30/09), leur temps pour ce plan */
+.v-qs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.v-q {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 7px 10px; border-radius: var(--r2); text-align: left;
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink2);
 }
-.slot .x:hover { color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }
+.v-q b { font-family: var(--f-disp); font-weight: 400; font-size: 10.5px; text-transform: uppercase; color: var(--ink); }
+.v-q span { font-size: 11px; color: var(--ink2); }
+.v-q i { font-style: normal; font-family: var(--f-mono); font-size: 9px; letter-spacing: .08em; color: var(--cy); }
+.v-q:hover { box-shadow: inset 0 0 0 1px var(--line-cy); }
+.v-q.on { background: var(--grn-bg); box-shadow: inset 0 0 0 1px var(--line-gr); }
+.v-q.on b { color: var(--grn2); }
+/* ce que H3 reçoit */
+.v-notes { margin: 0; padding-left: 16px; font-size: 11px; line-height: 1.5; color: var(--amb); }
+.v-pics { display: flex; flex-wrap: wrap; gap: 6px; }
+.v-pic { width: 64px; display: flex; flex-direction: column; gap: 2px; }
+.v-pic-im { width: 64px; height: 48px; border-radius: var(--r2); background: var(--panel3) center / cover no-repeat; box-shadow: inset 0 0 0 1px var(--line); }
+.v-pic b { font-family: var(--f-mono); font-size: 8px; font-weight: 400; color: var(--grn2); white-space: nowrap; }
+.v-pic small { font-size: 9.5px; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v-tags { margin: 0; font-family: var(--f-mono); font-size: 9.5px; line-height: 1.6; color: var(--ink2); overflow-wrap: anywhere; }
+.lbl.low { color: var(--amb); }
+/* les vérifications du code (POST /api/movie/apercu, checks) : ok, remarque, erreur */
+.v-checks { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.v-checks li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 6px; align-items: baseline; font-size: 11px; line-height: 1.45; color: var(--ink2); }
+.v-checks li i { font-style: normal; font-family: var(--f-mono); font-size: 10px; text-align: center; }
+.v-checks li.ok i { color: var(--grn2); }
+.v-checks li.rem i, .v-checks li.rem { color: var(--amb); }
+.v-checks li.err i, .v-checks li.err { color: var(--or); }
+/* ce que la mise en forme a écrit de chaque sujet : à relire, à corriger */
+.v-def { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 2px 8px; align-items: start; }
+.v-def b { font-family: var(--f-mono); font-size: 10px; font-weight: 400; color: var(--grn2); padding-top: 6px; }
+.v-def .v-def-t { grid-column: 1; font-size: 10px; color: var(--ink3); margin-top: -2px; }
+.v-def textarea { grid-column: 2; grid-row: 1 / span 2; min-height: 30px; resize: vertical; font-size: 11.5px; background: var(--panel3); }
+.v-invite .row { flex-wrap: nowrap; align-items: center; }
+.v-invite .hint, #assist .hint { min-width: 0; }
+#assist { gap: 8px; }
+.cv-l em { font-style: normal; color: var(--ink); }
+.cv-row.on .cv-l em { color: var(--cy); }
+/* les réglages avancés : un intitulé à gauche, les choix à droite (comme ceux d'Image) */
+.vbar .pp-body > .row > .lbl:first-child { flex: none; min-width: 84px; }
+.vbar .pp-body .fld.seed { width: 120px; padding: 5px 8px; font-family: var(--f-mono); font-size: 11px; }
+.vbar .pp-body select.fld { width: auto; max-width: 100%; }
+.vbar [data-pop="aides"] .pp-body > div { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.vbar [data-pop="aides"] .pp-body > div[hidden] { display: none; }
+.vbar [data-pop="son"] textarea.ent-ta { min-height: 40px; }
 
-/* le prompt */
-.chips { display: flex; flex-wrap: wrap; gap: 4px; }
-.chips:empty { display: none; }
+/* les puces du vocabulaire caméra (Aides) */
 .chip {
   max-width: 100%; padding: 4px 7px; border-radius: var(--r1); background: var(--panel3); text-align: left;
   font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .06em; color: var(--ink2);
@@ -128,24 +157,10 @@
 }
 .chip b { color: var(--cy); font-weight: 400; }
 .chip:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
-.cam, .assist { border-radius: var(--r2); background: var(--panel3); padding: 7px 9px; }
-.assist:not([hidden]) { display: flex; flex-direction: column; gap: 6px; }
-.chip.on { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-gr); }
-/* les trois champs, liés aux entrées (commun/entrees.css) : ils grandissent avec leur texte */
-.card textarea.ent-ta { min-height: 38px; }
-.card textarea#desc.ent-ta { min-height: 128px; }
-details.adv > summary, .sentbox > summary { cursor: pointer; list-style: none; display: flex; gap: 6px; align-items: baseline; }
-details > summary::-webkit-details-marker { display: none; }
-details.adv > summary::before, .sentbox > summary::before {
-  content: "+"; font-family: var(--f-mono); font-size: 10px; color: var(--ink3); width: 9px;
-}
-details[open].adv > summary::before, .sentbox[open] > summary::before { content: "−"; }
-.cam-mods { margin: 8px 0 6px; }
+.cam-mods { margin: 0 0 4px; gap: 6px; }
 .cam-mods .seg .tb { height: 22px; font-size: 9px; padding: 0 7px; }
 .cam-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 .cam-chip { font-size: 8px; letter-spacing: .1em; text-transform: uppercase; }
-.helpers { gap: 4px; }
-.assist .why { margin-top: 2px; }
 
 /* LoRA */
 .loras { display: flex; flex-direction: column; gap: 5px; }
@@ -164,71 +179,43 @@ details.accel > summary::before { content: "+ "; font-family: var(--f-mono); col
 details.accel[open] > summary::before { content: "− "; }
 .accel-list { display: flex; flex-direction: column; gap: 2px; padding: 6px 0 0 12px; font-family: var(--f-mono); font-size: 8.5px; color: var(--ink3); overflow-wrap: anywhere; }
 
-/* sortie : toiles et temps */
-.fam { display: flex; width: 100%; flex-wrap: wrap; }
-.fam .tb { flex: 1; padding: 0 4px; font-size: 9px; }
-.fmt .row h3 { flex: none; }
-.fmt #estimate-short { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cy); }
-/* la toile : une ligne par toile, rien de coupé — taille, nom, temps estimé à droite */
+/* la résolution : une ligne par toile, rien de coupé — taille, nom, temps estimé à droite */
 .canvases { display: flex; flex-direction: column; gap: 2px; }
 .cv-row {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 8px; width: 100%;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 8px; width: 100%;
   padding: 6px 8px; border-radius: var(--r2); text-align: left; color: var(--ink2); font-size: 11px;
 }
 .cv-row:hover { background: var(--panel3); color: var(--ink); }
 .cv-row.on { background: var(--panel3); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-cy); }
-.cv-row b { min-width: 10.5ch; font-family: var(--f-mono); font-size: 10px; font-weight: 400; letter-spacing: .04em; color: var(--ink); white-space: nowrap; }
-.cv-row.on b { color: var(--cy); }
-.cv-l { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cv-e { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .08em; color: var(--ink3); white-space: nowrap; }
-/* la durée : un curseur aux pas d'H3, la valeur en clair, le nombre d'images en petit */
-.dur-h { display: flex; align-items: baseline; gap: 6px; }
-.dur-h .sp { flex: 1; }
-.dur-v { font-size: 13px; font-weight: 600; color: var(--ink); }
-.dur-n { font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
-.dur-r { width: 100%; }   /* le curseur du thème (commun/curseur.css) */
-.dur-ends { display: flex; justify-content: space-between; font-family: var(--f-mono); font-size: 8px; letter-spacing: .1em; color: var(--ink3); }
+.cv-row b { font-family: var(--f-mono); font-size: 9.5px; font-weight: 400; letter-spacing: .04em; color: var(--ink3); white-space: nowrap; }
+.cv-l { display: flex; align-items: baseline; gap: 10px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.cv-l em { min-width: 76px; }
+.cv-e { font-size: 11px; color: var(--ink2); white-space: nowrap; }
 /* les entrées (commun/entrees.js) : un carrousel par sorte ; au glisser, la place visée */
 .ent-slot:not(.hole) { cursor: grab; touch-action: none; }
 .ent-slot.dragging { opacity: .5; cursor: grabbing; }
 .ent-slot.drop-before { box-shadow: inset 3px 0 0 var(--cy); }
 .ent-slot.drop-after { box-shadow: inset -3px 0 0 var(--cy); }
-.presets { display: flex; width: 100%; }
-.presets .tb { flex: 1; height: 24px; font-size: 8.5px; padding: 0 4px; }
+
+.presets { display: flex; }
+.presets .tb { height: 24px; font-size: 8.5px; padding: 0 6px; }
 .profile { border-radius: var(--r2); background: var(--panel3); padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; line-height: 1.5; color: var(--ink2); box-shadow: inset 0 0 0 1px var(--line); }
 .profile b { font-family: var(--f-mono); font-weight: 400; font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--cy); }
-.estimate { display: flex; flex-direction: column; gap: 3px; }
-.estimate b { font-size: 12px; font-weight: 600; color: var(--cy); }
 
-/* réglages avancés */
-details.adv { background: var(--panel2); }
-.adv-body { display: flex; flex-direction: column; gap: var(--s3); padding-top: var(--s3); }
+/* le prompt envoyé, le graphe */
 .sent {
   margin: 0; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word;
   font-family: var(--f-mono); font-size: 9.5px; line-height: 1.6; color: var(--ink2);
   background: var(--panel3); border-radius: var(--r2); padding: var(--s3); box-shadow: inset 0 0 0 1px var(--line);
 }
 .sent:empty { display: none; }
-.sentbox .sent { margin-top: 6px; }
-
-/* le pied du rail : l'action */
-.dock { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 12px var(--s4); background: var(--panel); box-shadow: inset 0 1px 0 var(--line); }
-.dock .tb.block { height: 42px; font-size: 11.5px; }
-.dock .small { font-size: 10px; line-height: 1.45; color: var(--ink3); text-align: center; }
-.why:empty, .notes:empty { display: none; }
-.why div + div { margin-top: 3px; }
-.why .fix { cursor: pointer; }
-.why .fix::before { content: "→ "; }
-.why .fix:hover { color: var(--ink); }
-.notes { max-height: 7.5em; overflow: auto; font-size: 10.5px; line-height: 1.5; color: var(--ink3); }
-.notes div + div { margin-top: 3px; }
 
 /* ── la fenêtre de choix d'une image d'élément ───────────── */
 .modal .ttl { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--ink); }
 .modal .kv { grid-template-columns: max-content minmax(0, 1fr); }
 .modal .kv dd { overflow-wrap: anywhere; }
 
-/* ── comparer : A et B dans le rail ─────────────────────── */
+/* ── comparer : A et B dans la colonne du banc ──────────── */
 .ab-slot { display: grid; grid-template-columns: 18px 60px minmax(0, 1fr) auto; gap: var(--s3); align-items: center; background: var(--panel2); border-radius: var(--r3); padding: 8px 10px; }
 .ab-slot.a { box-shadow: inset 0 0 0 1px var(--line-cy); }
 .ab-slot.b { box-shadow: inset 0 0 0 1px var(--line-or); }
@@ -238,8 +225,6 @@ details.adv { background: var(--panel2); }
 .ab-slot .th { width: 60px; height: 60px; border-radius: var(--r2); background: var(--panel3) center / cover no-repeat; }
 .ab-txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .ab-txt .t { font-size: 12px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.keys { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; line-height: 2; color: var(--ink3); }
-.keys kbd { display: inline-block; padding: 0 5px; margin-right: 3px; border-radius: var(--r1); background: var(--panel3); color: var(--ink2); font: inherit; }
 
 /* ── le banc : moniteur à vidéos, zoom sous le curseur ───── */
 .movie .monitor { touch-action: none; }

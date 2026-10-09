@@ -22,16 +22,26 @@
 // Les capacités viennent de l'outil (limits, cost) : Movie Creator y met
 // celles d'H3, l'outil Image celles de ses modèles.
 //
+// Deux mises en page : `cadre` (la colonne d'avant) ; `rangee` (09/10, la barre de
+// création de la page Vidéo, comme les références de la barre d'Image) : une
+// rangée de vignettes — l'image, le jeton en surimpression, le nom dessous —,
+// les sortes à la suite, un « + » au bout ; un clic sur une vignette ouvre son
+// menu (insérer le jeton, utiliser comme, la bande-son d'une vidéo, retirer).
+//
 //   const E = createEntrees(box, {
 //     limits: { image: 9, video: 3, audio: 3, files: 12 },   // ce que le modèle prend
 //     cost: (item) => ({ image: 1 }),                          // ce qu'un objet consomme
 //     roles: { image: [['auto', 'auto'], …] },                 // « utiliser comme », facultatif
 //     via: 'movie', state, onchange: (state) => {…},
+//     layout: 'cadre' | 'rangee', insert: (jeton) => {…},     // insert : où va le jeton (sinon le dernier champ lié)
 //   });
-//   E.bindField(textarea) · E.get() · E.set(state) · E.badTokens([textes]) · E.tokens()
+//   E.bindField(textarea) · E.get() · E.set(state) · E.badTokens([textes]) · E.tokens() · E.add(objets) → jetons
+//   E.extra({ image1: { cat, it } })   des jetons justes hors des places (le mode Images de Vidéo : @image1, @image2,
+//                                      la première et la dernière image) ; E.enable(false) n'efface pas ceux-là
 
 import { api, el, toast, href, pick, dropZone, kindFr, etypeFr } from './shell.js';
 import { sortable, moveItem } from './refs.js';
+import { menu } from './menu.js';
 import { TOKEN_RX } from './mentions.js';
 
 export const CATS = [   // l'ordre d'affichage ; `token` fait le jeton, `kinds` ce qui s'y range
@@ -50,12 +60,14 @@ export { TOKEN_RX };
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 
 export function createEntrees(box, { limits = { image: 9, video: 3, audio: 3, files: 12 }, cost = defaultCost, roles = {},
-  via = '', state = null, onchange = () => {}, title = 'Entrées' } = {}) {
+  via = '', state = null, onchange = () => {}, title = 'Références', layout = 'cadre', insert = null } = {}) {
+  const row = layout === 'rangee';
   const S = { image: [], element: [], video: [], audio: [] };
   const items = new Map();
   const fields = [];
   let lastField = null;
   let on = true;   // éteint : aucun jeton ne pointe vers rien (un mode sans entrées)
+  let extras = {};  // des jetons justes hors des places (E.extra)
 
   // ── l'état : des places, remplies ou vides ────────────────
   function set(st) {
@@ -94,18 +106,22 @@ export function createEntrees(box, { limits = { image: 9, video: 3, audio: 3, fi
     const cat = CAT_OF[it.kind];
     return (roles[cat] || [])[0]?.[0] || '';
   }
-  function add(list) {   // chaque objet dans sa catégorie : la première place vide, sinon à la suite
+  // chaque objet dans sa catégorie : la première place vide, sinon à la suite ; rend le nombre posé.
+  // `toks` (facultatif) reçoit le jeton de chaque objet posé ou déjà là (le Multishot les écrit dans un plan)
+  function add(list, toks = null) {
     let n = 0;
     for (const it of list) {
       const cat = CAT_OF[it.kind];
-      if (!cat) { toast(`${it.title} : ${kindFr(it.kind)}, pas une entrée`); continue; }
+      if (!cat) { toast(`${it.title} : ${kindFr(it.kind)}, pas une référence`); continue; }
       items.set(it.id, it);
-      if (S[cat].some((p) => p && p.item === it.id)) { toast(`${it.title} est déjà là (${tokenOf(cat, S[cat].findIndex((p) => p && p.item === it.id))})`); continue; }
+      const was = S[cat].findIndex((p) => p && p.item === it.id);
+      if (was >= 0) { toks?.push(tokenOf(cat, was)); if (!toks) toast(`${it.title} est déjà là (${tokenOf(cat, was)})`); continue; }
       const p = { item: it.id, role: defaultRole(it), sound: false };
       const why = overflow(it, p);
       if (why) { toast(why, 5000); continue; }
       const hole = S[cat].indexOf(null);
       if (hole >= 0) S[cat][hole] = p; else S[cat].push(p);
+      toks?.push(tokenOf(cat, hole >= 0 ? hole : S[cat].length - 1));
       n++;
     }
     if (n) changed();
@@ -152,7 +168,7 @@ export function createEntrees(box, { limits = { image: 9, video: 3, audio: 3, fi
   // ── les jetons ────────────────────────────────────────────
   const tokenOf = (cat, pos) => `@${CATS.find((c) => c.id === cat).token}${pos + 1}`;
   function tokens() {
-    const out = {};
+    const out = { ...extras };
     if (!on) return out;
     for (const c of CATS) S[c.id].forEach((p, i) => { if (p) out[`${c.token}${i + 1}`] = { cat: c.id, pos: i, ...p, it: items.get(p.item) }; });
     return out;
@@ -170,10 +186,11 @@ export function createEntrees(box, { limits = { image: 9, video: 3, audio: 3, fi
   const cats = el('div', { class: 'ent-cats' });
   const head = el('div', { class: 'ent-head' }, el('h3', {}, title), el('span', { class: 'sp' }), el('span', { class: 'lbl ent-use' }));
   box.classList.add('ent');
-  box.replaceChildren(head, zone, cats);
+  if (row) { box.classList.add('ent-row'); box.replaceChildren(cats, zone, el('span', { class: 'lbl ent-use' })); }
+  else box.replaceChildren(head, zone, cats);
   dropZone(box, { kinds: ['image', 'element', 'video', 'audio'], multiple: true, via, onitems: add });
   async function choose() {
-    const got = await pick({ kinds: ['image', 'element', 'video', 'audio'], multiple: true, title: 'Entrées · images, éléments, vidéos, sons' });
+    const got = await pick({ kinds: ['image', 'element', 'video', 'audio'], multiple: true, title: 'Références · images, éléments, vidéos, sons' });
     add(got);
   }
   function paint() {
@@ -181,10 +198,19 @@ export function createEntrees(box, { limits = { image: 9, video: 3, audio: 3, fi
     const full = Object.keys(limits).filter((r) => u[r] >= limits[r]);
     box.querySelector('.ent-use').textContent = `${u.files} / ${limits.files} fichiers`;
     const any = CATS.some((c) => S[c.id].length);
+    if (row) {   // la rangée : les vignettes, le « + » au bout ; le compte au survol du « + », sa couleur quand c'est plein
+      box.querySelector('.ent-use').hidden = true;
+      zone.replaceChildren('+');
+      zone.classList.toggle('full', full.length > 0);
+      zone.title = full.length ? `plein : ${full.map((r) => `${u[r]} / ${limits[r]} ${RES_FR[r][1]}`).join(', ')} — dépose sur une vignette pour la remplacer`
+        : `ajouter une référence (${u.files} / ${limits.files})`;
+      cats.replaceChildren(...CATS.filter((c) => S[c.id].length).map((c) => catBox(c, u)));
+      return;
+    }
     zone.classList.toggle('compact', any);
     zone.replaceChildren(el('b', {}, '+'), el('span', {}, full.length
-      ? `plein pour les ${full.map((r) => `${RES_FR[r][1]} (${u[r]} / ${limits[r]})`).join(', ')} — déposez sur une vignette pour la remplacer`
-      : any ? 'déposer ou choisir une autre entrée' : 'déposez des images, des vidéos, des sons, des éléments — ou cliquez pour choisir'));
+      ? `plein pour les ${full.map((r) => `${RES_FR[r][1]} (${u[r]} / ${limits[r]})`).join(', ')} — dépose sur une vignette pour la remplacer`
+      : any ? 'déposer ou choisir une autre référence' : 'dépose des images, des vidéos, des sons, des éléments, ou clique pour choisir'));
     zone.classList.toggle('full', full.length > 0);
     cats.replaceChildren(...CATS.filter((c) => S[c.id].length).map((c) => catBox(c, u)));
   }
@@ -199,6 +225,12 @@ export function createEntrees(box, { limits = { image: 9, video: 3, audio: 3, fi
       const r = c.id;
       count = `${u[r]} / ${limits[r]}${u[r] >= limits[r] ? ' · plein' : ''}`;
     }
+    if (row) {
+      return el('div', { class: 'ent-cat', title: `${c.label} · ${count}` },
+        sortable(el('div', { class: 'ent-slots' }, ...S[c.id].map((p, i) => slot(c, p, i))), { item: '.ent-slot',
+          onmove: (a, b) => { S[c.id] = moveItem(S[c.id], a, b); changed(); } }),
+        holes ? el('button', { class: 'tb ghost sm ent-pack', type: 'button', title: 'enlever les places vides (le prompt suit)', onclick: pack }, 'Tasser') : null);
+    }
     return el('div', { class: 'ent-cat' },
       el('div', { class: 'ent-cat-head' }, el('span', { class: 'lbl' }, c.label), el('span', { class: 'lbl n' + (c.id !== 'element' && u[c.id] >= limits[c.id] ? ' full' : '') }, count),
         el('span', { class: 'sp' }), holes ? el('button', { class: 'tb ghost sm', type: 'button', title: 'retirer les places vides et renuméroter ; les jetons du prompt suivent', onclick: pack }, 'Tasser') : null),
@@ -208,10 +240,11 @@ export function createEntrees(box, { limits = { image: 9, video: 3, audio: 3, fi
         onmove: (a, b) => { S[c.id] = moveItem(S[c.id], a, b); changed(); } }));
   }
   function slot(c, p, i) {
+    if (row) return tile(c, p, i);
     const tok = tokenOf(c.id, i);
     const it = p ? items.get(p.item) : null;
     const node = el('div', { class: 'ent-slot' + (p ? '' : ' hole') + (c.id === 'element' ? ' element' : ''),
-      title: p ? `${it?.title || ''} — cliquer : insérer ${tok} dans le prompt · déposer ici : remplacer` : `${tok} : place vide — déposez ici pour la remplir` });
+      title: p ? `${it?.title || ''} — cliquer : insérer ${tok} dans le prompt · déposer ici : remplacer` : `${tok} : place vide — dépose ici pour la remplir` });
     dropZone(node, { kinds: c.kinds, multiple: false, via, onitems: ([x]) => replace(c.id, i, x) });
     if (!p) {
       node.append(el('span', { class: 'ent-im' }, el('span', { class: 'ent-empty' }, 'vide')), el('span', { class: 'ent-tok bad' }, tok),
@@ -241,6 +274,43 @@ export function createEntrees(box, { limits = { image: 9, video: 3, audio: 3, fi
           p.sound = !p.sound; changed();
         } }, p.sound ? '♪ son' : '♪'));
     }
+    return node;
+  }
+
+  // la vignette de la rangée : l'image (ou ♪), le jeton dessus, le nom dessous ; un clic, son menu
+  function tile(c, p, i) {
+    const tok = tokenOf(c.id, i);
+    const it = p ? items.get(p.item) : null;
+    const node = el('div', { class: 'ent-slot' + (p ? '' : ' hole') + (c.id === 'element' ? ' element' : ''), 'data-tok': tok });
+    dropZone(node, { kinds: c.kinds, multiple: false, via, onitems: ([x]) => replace(c.id, i, x) });
+    const at = (e) => { const r = e.currentTarget.getBoundingClientRect(); return [r.left, r.bottom + 4]; };
+    if (!p) {
+      node.title = `${tok} : vide`;
+      node.append(el('button', { class: 'ent-im', type: 'button', onclick: (e) => menu(...at(e), [{ head: `${tok} · place vide` },
+        { label: 'Choisir…', onclick: async () => { const [x] = await pick({ kinds: c.kinds, multiple: false, title: tok }); if (x) replace(c.id, i, x); } },
+        { label: 'Oublier cette place', danger: true, onclick: () => { S[c.id].splice(i, 1); changed(); } }]) },
+      el('span', { class: 'ent-empty' }, 'vide')), el('span', { class: 'ent-tok bad' }, tok), el('span', { class: 'ent-name' }, ' '));
+      return node;
+    }
+    const thumb = it?.thumb_url || (it?.kind === 'image' ? it.url : null);
+    const rl = roles[c.id];
+    const kind = c.id === 'element' ? etypeFr(it?.element?.type) : (rl || []).find((r) => r[0] === p.role)?.[1] || '';
+    node.title = `${it?.title || ''} — ${tok}${kind && kind !== 'auto' ? ` · ${kind}` : ''}`;
+    const items_ = () => [{ head: `${tok} · ${it?.title || ''}` },
+      { label: `Insérer ${tok}`, onclick: () => (insert ? insert(tok) : insertToken(tok)) },
+      ...(rl && rl.length > 1 ? ['-', { head: 'utiliser comme' }, ...rl.map(([v, lab]) => ({ label: lab, checked: p.role === v, onclick: () => { p.role = v; changed(); } }))] : []),
+      ...(c.id === 'video' && it?.audio ? ['-', { label: 'Avec son son', checked: !!p.sound, onclick: () => {
+        if (!p.sound && usage().audio + 1 > limits.audio) { toast(`plus de place pour un son : ${usage().audio} / ${limits.audio} sons`); return; }
+        p.sound = !p.sound; changed();
+      } }] : []),
+      '-', { label: 'Retirer', icon: '×', danger: true, onclick: () => remove(c.id, i) }];
+    node.append(
+      el('button', { class: 'ent-im', type: 'button', style: thumb ? { backgroundImage: `url(${href(thumb)})` } : null, onclick: (e) => menu(...at(e), items_()) },
+        c.id === 'audio' ? el('span', { class: 'ent-ico' }, '♪') : null,
+        it?.duration ? el('span', { class: 'ent-dur' }, `${it.duration.toFixed(1)} s`) : null,
+        c.id === 'video' && p.sound ? el('span', { class: 'ent-ico snd' }, '♪') : null),
+      el('span', { class: 'ent-tok ok' }, tok),
+      el('span', { class: 'ent-name' }, it?.title || ''));
     return node;
   }
 
@@ -302,7 +372,7 @@ export function createEntrees(box, { limits = { image: 9, video: 3, audio: 3, fi
   }
   function insertToken(tok) {
     const ta = lastField || fields[0]?.ta;
-    if (!ta) return;
+    if (!ta || ta.offsetParent === null) { if (insert) insert(tok); return; }
     const a = ta.selectionStart ?? ta.value.length, b = ta.selectionEnd ?? a;
     const pre = ta.value.slice(0, a), post = ta.value.slice(b);
     const pad = pre && !/\s$/.test(pre) ? ' ' : '';
@@ -313,9 +383,10 @@ export function createEntrees(box, { limits = { image: 9, video: 3, audio: 3, fi
   }
   function refreshFields() { for (const f of fields) f.paint(); }
   function enable(v) { on = !!v; refreshFields(); }
+  function extra(map) { extras = map && typeof map === 'object' ? { ...map } : {}; refreshFields(); }
 
   set(state);
-  return { get, set, add, tokens, badTokens, bindField, refreshFields, insertToken, usage, limits, enable };
+  return { get, set, add, tokens, badTokens, bindField, refreshFields, insertToken, usage, limits, enable, extra, tokenOf };
 }
 
 // ce qu'un objet consomme, par défaut : une place de sa sorte

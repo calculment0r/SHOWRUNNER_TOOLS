@@ -17,6 +17,9 @@
                                                    # tools/faux_telegram.py --port 8832 ; son jeton se colle
                                                    # dans Admin → Demandes → Alertes). Le réglage est toujours
                                                    # <données>/telegram-essai.json : jamais le bot de Cal
+    SR_CF_API=http://127.0.0.1:8897 …              # un faux studio Character Factory (/api/characters, /files/…) :
+                                                   # la section Character Factory du panneau Asset, son import
+                                                   # (movie/pilote_video.mjs en monte un)
     SR_FAUX_MACHINES=1 …                           # deux faux ComfyUI nommés DGX2 et DGX1, hors des voies (rien n'y
                                                    # part), et la mesure de l'aperçu du nom remplacée (ni ssh ni
                                                    # nvidia-smi) : DGX2 à 37 % de GPU, DGX1 non mesuré —
@@ -61,6 +64,8 @@ if os.environ.get("SR_OLLAMA_VISION_URL"):   # server/tools/ideation_agent.py, r
     config.CFG["ideation_agent_vision_url"] = os.environ["SR_OLLAMA_VISION_URL"]
 if os.environ.get("SR_SONS"):
     config.CFG["ideation_agent_sons"] = os.environ["SR_SONS"]
+if os.environ.get("SR_CF_API"):   # server/tools/core_api.py, _cf_get : jamais le studio de DGX1 depuis un essai
+    config.CFG["cf_api"] = os.environ["SR_CF_API"]
 if os.environ.get("SR_CPU", "").isdigit():
     config.CFG["lanes"]["cpu"] = ["local"] * max(1, min(4, int(os.environ["SR_CPU"])))
 if os.environ.get("SR_FAUX_R2"):   # un jeton d'essai, lu par porte/r2_recopie.py (SR_R2_JETON) ; jamais le vrai

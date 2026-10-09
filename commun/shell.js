@@ -480,6 +480,21 @@ export async function rapatrier(items) {
   toast(ids.length > 1 ? `${ids.length} assets copiés ${where}` : `copié ${where} : ${made[0]?.title || ids[0]}`);
   return items.map((it) => (it && copy.get(it.id)) || it);
 }
+// Un personnage de Character Factory glissé du panneau Asset (CF_MIME : {slug, imported}) : l'élément
+// déjà importé, sinon l'import (le même que « poser » du panneau, commun/dock.js cfItem). Rend [élément] ou [].
+async function cfImport(raw) {
+  let ch = null;
+  try { ch = JSON.parse(raw); } catch { return []; }
+  if (!ch?.slug) return [];
+  if (ch.imported) { try { return [await api('library/' + ch.imported + '?spaces=*')]; } catch { /* retiré : on réimporte */ } }
+  toast('import depuis Character Factory…', 20000);
+  try {
+    const it = await api('cf/import', { method: 'POST', body: { slug: ch.slug } });
+    toast(`${it.title} est maintenant un élément de la bibliothèque`);
+    document.dispatchEvent(new CustomEvent('sr:cf-import', { detail: { slug: ch.slug, item: it } }));
+    return [it];
+  } catch (err) { toast(`Character Factory : ${err.message}`, 7000); return []; }
+}
 export function dragItem(node, it) {
   node.draggable = true;
   node.addEventListener('dragstart', (e) => {
@@ -507,10 +522,17 @@ const kindOfFile = (f) => { const x = (f.name.includes('.') ? f.name.split('.').
 // y entre en document (server/tools/documents.py, 05/10).
 // Un élément versionné lâché là où l'on attend la sorte de sa dernière version
 // (un son, pour une chanson d'ODIO) y pose cette dernière version.
+// Un personnage de Character Factory pas encore importé (la section Character Factory du panneau Asset ne
+// porte alors que CF_MIME) : une zone qui prend les éléments l'importe au dépôt (POST /api/cf/import, comme
+// « poser » du panneau) et le reçoit en élément (Cal, 09/10 : « les images marchent mais pas les éléments ») ;
+// l'événement `sr:cf-import` ({slug, item}) le dit au panneau, qui ne le réimporte plus.
 export function dropZone(node, { kinds = ['image', 'element'], multiple = true, via = '', label = '', onitems = () => {} } = {}) {
   declareZone(node, { kinds, label: label || via });
   let depth = 0;
-  const wants = (e) => { const t = e.dataTransfer?.types || []; return t.includes('Files') || t.includes(ITEM_MIME); };
+  const wants = (e) => {
+    const t = e.dataTransfer?.types || [];
+    return t.includes('Files') || t.includes(ITEM_MIME) || (t.includes(CF_MIME) && kinds.includes('element'));
+  };
   // un dépôt dans une zone intérieure ne passe pas par la zone qui la contient :
   // chaque zone se remet à zéro à tout dépôt ou fin de glisser, où qu'il ait lieu
   const reset = () => { depth = 0; node.classList.remove('drop-on'); };
@@ -532,6 +554,9 @@ export function dropZone(node, { kinds = ['image', 'element'], multiple = true, 
       try { got.push(...(await api('library/batch', { method: 'POST', body: { ids: many.map(String), spaces: '*' } })).items); } catch (err) { toast(err.message); }
     } else if (raw) {
       try { got.push(await api('library/' + JSON.parse(raw).id + '?spaces=*')); } catch (err) { toast(err.message); }
+    } else if (kinds.includes('element')) {
+      const cf = e.dataTransfer.getData(CF_MIME);
+      if (cf) got.push(...await cfImport(cf));
     }
     for (let i = 0; i < got.length; i++) {
       const it = got[i];

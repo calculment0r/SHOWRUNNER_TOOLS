@@ -355,6 +355,15 @@ async function cfItem(ch) {
   return it;
 }
 
+// un personnage glissé de la section et importé par la zone qui l'a reçu (commun/shell.js, dropZone) :
+// le panneau le sait, il ne le réimportera pas, et l'élément paraît dans « Ce workspace »
+document.addEventListener('sr:cf-import', (e) => {
+  const { slug, item } = e.detail || {};
+  const ch = (S.lists.cf?.all || []).find((c) => c.slug === slug);
+  if (ch && item?.id) ch.imported = [item.id, ...(ch.imported || [])];
+  reload(true);
+});
+
 // ── poser, choisir, glisser ─────────────────────────────────
 function targetsFor(it) {
   const k = keyOf(it);

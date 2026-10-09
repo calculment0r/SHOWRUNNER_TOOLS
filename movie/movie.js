@@ -2,24 +2,36 @@
 // avec H3, dans le thème du portail.
 //
 // Le parcours suit H3 Studio (github.com/underworldhistory1-ctrl/minimax-h3-higgsfield,
-// licence MIT, Copyright (c) 2026 Charles Mod) : une colonne de création (carte
-// du modèle, modes Texte / Images / Références, les trois champs du prompt H3,
-// toiles avec temps estimé, durée ; méthode, pas, graine, LoRA repliés).
-// Réécrit ici ; la bibliothèque du portail, la file commune et les éléments
-// remplacent leurs fichiers locaux.
+// licence MIT, Copyright (c) 2026 Charles Mod) : les modes Texte / Images /
+// Références, les trois champs du prompt H3, les toiles avec temps estimé, la
+// durée ; méthode, pas, graine, LoRA repliés. Réécrit ici ; la bibliothèque du
+// portail, la file commune et les éléments remplacent leurs fichiers locaux.
 //
-// Depuis le 29/09, sur le modèle de Higgsfield : les réglages à gauche, le
-// fil des vidéos au centre (commun/fil.js), en liste — la grande vidéo et sa
-// carte (modèle, prompt aux jetons surlignés, entrées, puces, date) — ; les
-// rendus en file et en cours en tête du fil ; au survol, aimer, réutiliser,
-// recréer, télécharger, et le menu ⋯ ; un clic ouvre la visionneuse plein
-// écran, la molette passe d'une vidéo à l'autre.
+// Depuis le 29/09, sur le modèle de Higgsfield : le fil des vidéos
+// (commun/fil.js), en liste — la grande vidéo et sa carte (modèle, prompt aux
+// jetons surlignés, entrées, puces, date) — ; les rendus en file et en cours en
+// tête du fil ; au survol, aimer, réutiliser, recréer, télécharger, et le menu ⋯ ;
+// un clic ouvre la visionneuse plein écran, la molette passe d'une vidéo à l'autre.
 //
-// Les entrées du mode Références passent par le cadre commun (commun/entrees.js) :
-// rangées par sorte, appelées par position — @image1, @element1, @video1,
-// @audio1 — vertes si leur place est remplie, rouges sinon (décision de Cal
-// du 29/09 : on garde le prompt en changeant les images).
-//
+// Depuis le 09/10 (Cal : « on doit revoir vraiment le design d'expérience de la
+// création de vidéo … trop de texte partout, les infos les plus importantes sont
+// mal hiérarchisées ») : la page prend la forme d'Image — le fil sur toute la
+// largeur, la barre de création en bas (commun/barre.css) :
+//   ligne 1 — les entrées : en Images, la première et la dernière image ; en
+//             Références, les vignettes (commun/entrees.js en rangée : l'image,
+//             son jeton @element1, son nom) ; on dépose tout sur la barre — du
+//             disque, du fil, du panneau Asset, un personnage de Character Factory
+//             compris — ; en Texte, un dépôt fait passer en Références ;
+//   le Multishot, allumé : la frise des plans (commun/multishot.js) prend la
+//             place de l'invite ; on y dépose un élément sur un plan ;
+//   ligne 2 — l'invite, une seule quel que soit le mode, jetons en couleur, « @ » ;
+//   ligne 3 — des puces qui montrent leur valeur : le mode, le format, la qualité
+//             et la résolution (avec le temps estimé), la durée (− 5,2 s +), puis,
+//             repliés, Multishot, Son, Aides, Avancé, et ce que H3 reçoit ;
+//   à droite — « Générer », le seul orange ; ce qui manque dessous, et y mène.
+// Les mots (Cal, 09/10 : « on doit être simple et lisible ») : le mot de tous les jours, une information
+// une seule fois par écran (le temps estimé : sur la puce de résolution ; la durée : sur sa puce), pas de
+// phrase d'aide là où une infobulle suffit ; les termes du modèle restent dans Avancé et dans l'aperçu.
 // Le banc « Comparer » reprend le banc NL de Cal : rideau, côte à côte,
 // clignotement, zoom sous le curseur, boucle, écoute A/B, recettes et
 // différences.
@@ -28,19 +40,21 @@
 // prompt envoyé, graphe, temps estimé, ce qui manque) ; la page l'affiche et
 // soumet à la file (movie.t2v / movie.i2v / movie.r2v) ; /api/movie/redo
 // recrée une vidéo, /api/movie/frame en tire la première ou la dernière image.
-
 //
 // L'annulation (commun/undo.js) : le formulaire par instantanés (images,
-// entrées, les trois champs une fois écrits, toile, durée, méthode, LoRA,
-// réglages avancés) ; aimer, ranger, jeter depuis le fil (le fil les range
-// lui-même dans la pile : commun/fil.js, option undo). Ne s'annulent pas : un rendu lancé, une image tirée d'une
-// vidéo, un fichier déposé. Le banc « Comparer » est une vue : il ne s'annule pas.
+// entrées, l'invite une fois écrite, le Multishot, format, toile, durée,
+// méthode, LoRA, réglages avancés) ; aimer, ranger, jeter depuis le fil (le fil
+// les range lui-même dans la pile : commun/fil.js, option undo). Ne s'annulent
+// pas : un rendu lancé, une image tirée d'une vidéo, un fichier déposé. Le banc
+// « Comparer » est une vue : il ne s'annule pas.
 import { mountHeader, api, jobs, pick, uploadFile, toast, el, $, $$, href, fmtDate, dropAnywhere, dropZone, dock, releve } from '../commun/shell.js';
 import { createEntrees } from '../commun/entrees.js';
 import { createFil } from '../commun/fil.js';
 import { createUndo } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
-import { pageMenu } from '../commun/menu.js';
+import { menu, pageMenu } from '../commun/menu.js';
+import { createMultishot } from '../commun/multishot.js';
+import { compose, FPS } from '../commun/multishot_texte.js';
 
 mountHeader('movie');
 
@@ -49,9 +63,22 @@ const store = {   // commodité du navigateur : le formulaire en cours
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* navigation privée */ } },
 };
 const MODE_FR = { t2v: 'texte', i2v: 'images', r2v: 'références' };
+const MODE_SHORT = { t2v: 'Texte', i2v: 'Images', r2v: 'Références' };
+const MODE_TIP = { t2v: 'le prompt seul', i2v: 'partir d’une image, finir sur une autre', r2v: 'des images, des personnages, des sons, appelés par @' };
 const METH_FR = { brouillon: 'brouillon', qualite: 'qualité', turbo: 'turbo · ancien banc', origine: 'origine · ancien banc', spectrum: 'spectrum · ancien banc' };
-const PRESETS = ['brouillon', 'qualite'];   // la recette de Cal (30/09) : server/tools/movie.py, METHODS
+// les préréglages (server/tools/movie.py, METHODS) : l'Esquisse et le Léger (09/10, l'audit), puis la recette de Cal (30/09)
+const PRESETS = ['esquisse', 'leger', 'brouillon', 'qualite'];
 const ROLE_FR = { face: 'visage', 'full body': 'plein pied', expression: 'expression' };
+// ce qu'un format est, en un mot, sous son rapport (les formats eux-mêmes : l'échelle du serveur, server/tools/movie.py FORMATS)
+const FMT_SUB = { '2.4:1': 'cinéma', '21:9': 'écran large', '16:9': 'paysage', '4:3': 'classique', '1:1': 'carré', '3:4': 'portrait',
+  '9:16': 'vertical', image: 'comme l’image' };
+// la caméra : le mot de tous les jours sur la pastille, la phrase anglaise de MiniMax (celle qui s'écrit) au survol
+const CAM_FR = { 'Push In': 'avancer', 'Pull Out': 'reculer', 'Zoom In': 'zoom avant', 'Zoom Out': 'zoom arrière', 'Pan Left': 'tourner à gauche',
+  'Pan Right': 'tourner à droite', 'Truck Left': 'glisser à gauche', 'Truck Right': 'glisser à droite', 'Tilt Up': 'lever les yeux',
+  'Tilt Down': 'baisser les yeux', 'Pedestal Up': 'monter', 'Pedestal Down': 'descendre', 'Arc Shot': 'tourner autour', 'Tracking Shot': 'suivre',
+  'Static Shot': 'caméra fixe', POV: 'vue subjective', 'Shake Slightly': 'trembler un peu', 'Shake Strongly': 'trembler fort',
+  'Roll Clockwise': 'pencher à droite', 'Roll Counterclockwise': 'pencher à gauche' };
+const KINDS = ['image', 'element', 'video', 'audio'];
 const mmss = (s) => { if (s == null || !isFinite(s)) return '—'; s = Math.max(0, Math.round(s)); return s >= 60 ? `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')}` : `${s} s`; };
 const p2 = (n) => String(n).padStart(2, '0');
 const tcode = (t) => { if (!isFinite(t)) t = 0; const m = Math.floor(t / 60), s = t - m * 60; return p2(m) + ':' + s.toFixed(2).padStart(5, '0'); };
@@ -60,6 +87,14 @@ const bg = (u) => (u ? { backgroundImage: `url(${href(u)})` } : null);
 const put = (box, ...kids) => box.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false));
 const rng = (e) => (e ? `${mmss(e.low)} – ${mmss(e.high)}` : '');
 const ms = (iso) => Date.parse(iso || '') || 0;
+const secFr = (s) => `${String(Math.round(s * 10) / 10).replace('.', ',')} s`;
+// un temps court : « 3–4 min », « 40–55 s »
+function rngShort(e) {
+  if (!e) return '';
+  if (e.high < 90) return `${Math.round(e.low)}–${Math.round(e.high)} s`;
+  const lo = Math.round(e.low / 60), hi = Math.round(e.high / 60);
+  return lo === hi ? `${lo} min` : `${lo}–${hi} min`;
+}
 
 // ── l'état ──────────────────────────────────────────────────
 const saved = store.get('movie.v2', {});
@@ -67,25 +102,38 @@ const F = {
   mode: prefs.get('movie.mode', 't2v'),   // un formulaire neuf : la préférence (movie/prefs.json)
   p: { t2v: { desc: '', sound: '', music: '' }, i2v: { desc: '', sound: '', music: '' }, r2v: { desc: '', sound: '', music: '' } },
   start: null, end: null, inputs: {}, refSize: 'match',
-  // la toile : null = celle du préréglage (Brouillon 1536 × 640, Qualité 1920 × 800) ; une autre se choisit en avancé
-  canvas: { t2v: null, i2v: null, r2v: null }, fam: { t2v: '2,4:1', i2v: '2,4:1', r2v: '2,4:1' },
+  // la toile : null = celle du préréglage (Brouillon 1536 × 640, Qualité 1920 × 800), 'auto' = d'après l'image, [w, h] sinon
+  // le format (l'échelle des toiles : 2.4:1, 21:9, 16:9, 4:3, 1:1, 3:4, 9:16) et le préréglage font la toile ;
+  // `canvas` : null = celle de l'échelle, 'auto' = d'après l'image (Images), [w, h] = une toile libre (d'une vidéo reprise)
+  format: '2.4:1', canvas: { t2v: null, i2v: null, r2v: null },
   method: 'brouillon', frames: 124, steps: '', seed: '', origSeed: null, loras: {}, adv: {},
+  // ce que la mise en forme de l'invite écrit (server/tools/movie_invite.py) et qu'on relit : la définition en anglais de
+  // chaque sujet, le résumé (mode Références)
+  subjects: {}, summary: '',
+  // le Multishot : allumé ou non, ses plans (des images entières), la langue des répliques, les durées dans le texte
+  ms: { on: false, shots: null, lang: null },
   ...saved,
 };
-for (const k of ['t2v', 'i2v', 'r2v']) F.p[k] = { desc: '', sound: '', music: '', ...((saved.p || {})[k] || {}) };
+// une seule invite (09/10) : celle du mode où l'on était, pour les trois
+{ const seen = { desc: '', sound: '', music: '', ...((saved.p || {})[saved.mode || F.mode] || {}) };
+  for (const k of ['t2v', 'i2v', 'r2v']) F.p[k] = { ...seen }; }
+F.ms = { on: false, shots: null, lang: null, ...(saved.ms || {}) };
+delete F.ms.durations;   // la case d'avant le 09/10 : les temps de coupe s'écrivent toujours (le guide d'H3)
 // un formulaire gardé d'avant les préréglages (méthodes turbo / origine / spectrum de l'ancien banc) :
 // le Brouillon, la toile du préréglage, les pas par défaut — les prompts restent
 if (!PRESETS.includes(F.method)) {
   F.method = 'brouillon'; F.steps = '';
-  F.canvas = { t2v: null, i2v: null, r2v: null }; F.fam = { t2v: '2,4:1', i2v: '2,4:1', r2v: '2,4:1' };
+  F.canvas = { t2v: null, i2v: null, r2v: null };
   delete F.adv.sampler; delete F.adv.scheduler;
 }
-delete F.refs; delete F.refKind;   // l'ancienne forme (références nommées)
-let E = null;   // le cadre des entrées, créé quand les options sont là
+delete F.refs; delete F.refKind; delete F.fam;   // les formes d'avant (références nommées ; les familles de toiles)
+if (!F.subjects || typeof F.subjects !== 'object') F.subjects = {};
+let E = null;   // les entrées (mode Références), créées quand les options sont là
+let M = null;   // le Multishot, monté à son premier allumage
 let fil = null; // le fil des vidéos (commun/fil.js)
 const S = {
   view: 'create', opts: null, plan: null, seq: 0, items: new Map(), jobs: [], allJobs: [], loras: [], loraMachine: '', A: null, B: null, h3: null,
-  myJobs: new Set(store.get('movie.myjobs', [])), seen: new Set(), landed: new Set(), gone: new Set(),
+  myJobs: new Set(store.get('movie.myjobs', [])), seen: new Set(), landed: new Set(), gone: new Set(), pop: null, aides: 'cam',
 };
 // ── l'annulation ────────────────────────────────────────────
 const U = createUndo({ name: 'movie', onapply: (e, { items }) => {
@@ -99,16 +147,19 @@ const U = createUndo({ name: 'movie', onapply: (e, { items }) => {
 } });
 const sameJ = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const FIELD_FR = { desc: 'écrire ce qu’on voit et entend', sound: 'écrire le son d’ambiance', music: 'écrire la musique' };
-const FORM_FR = [['start', 'changer l’image de début'], ['end', 'changer l’image de fin'], ['inputs', 'changer les entrées'],
-  ['refSize', 'changer le détail des références'], ['fam', 'changer le format'], ['canvas', 'changer la toile'], ['method', 'changer de méthode'],
-  ['frames', 'changer la durée'], ['steps', 'changer le nombre de pas'], ['seed', 'changer la graine'], ['origSeed', 'changer la graine d’origine'],
-  ['loras', 'changer les LoRA'], ['adv', 'changer un réglage avancé']];
+const FORM_FR = [['start', 'changer l’image de début'], ['end', 'changer l’image de fin'], ['inputs', 'changer les références'],
+  ['ms', 'changer le multishot'], ['subjects', 'changer la description d’un sujet'], ['summary', 'changer le résumé'],
+  ['refSize', 'changer le détail des références'], ['format', 'changer le format'], ['canvas', 'changer la taille'],
+  ['method', 'changer la qualité'], ['frames', 'changer la durée'], ['steps', 'changer le nombre de pas'], ['seed', 'changer la graine'],
+  ['origSeed', 'changer la graine d’origine'], ['loras', 'changer les LoRA'], ['adv', 'changer un réglage avancé']];
 const TYPED = new Set(['steps', 'seed']);
 let typing = 0;   // chaque passage dans un champ : une saisie, un seul geste
 function formDescribe(b, a) {
+  // le Multishot réécrit l'invite : son geste est celui du multishot
+  if (!sameJ(b.ms, a.ms)) return { label: 'changer le multishot', merge: `ms#${typing}`, mergeMs: 1200 };
   for (const m of ['t2v', 'i2v', 'r2v']) {
     for (const k of ['desc', 'sound', 'music']) {
-      if (b.p?.[m]?.[k] !== a.p?.[m]?.[k]) return { label: FIELD_FR[k], merge: `${m}.${k}#${typing}`, mergeMs: Infinity };
+      if (b.p?.[m]?.[k] !== a.p?.[m]?.[k]) return { label: FIELD_FR[k], merge: `${k}#${typing}`, mergeMs: Infinity };
     }
   }
   for (const [k, label] of FORM_FR) {
@@ -123,12 +174,13 @@ function formRestore(s) {
   $('#ref-size').value = F.refSize;
   if (S.view !== 'create') setView('create');
   setMode(F.mode);
+  syncMultishot();
 }
 
 const save = () => { store.set('movie.v2', F); form?.commit(); };
 // un ajustement que la page fait seule (un LoRA qui ne va pas au mode) : gardé, sans faire un geste
 const quietSave = () => { store.set('movie.v2', F); form?.reset(); };
-function changed() { save(); schedulePlan(); }
+function changed() { save(); schedulePlan(); paintChips(); }
 async function item(id) {
   if (!id) return null;
   if (S.items.has(id)) return S.items.get(id);
@@ -139,29 +191,28 @@ async function item(id) {
 function setView(v) {
   S.view = v;
   document.body.dataset.view = v;
-  $$('.rail-tabs [data-view]').forEach((b) => b.classList.toggle('on', b.dataset.view === v));
-  $('#create').hidden = v !== 'create';
-  $('#cmp-rail').hidden = v !== 'cmp';
-  $('#dock').hidden = v !== 'create';
+  $$('.v-views [data-view]').forEach((b) => b.classList.toggle('on', b.dataset.view === v));
   $('#view').hidden = v !== 'create';
-  $('#bench').hidden = v !== 'cmp';
+  $('#pbar').hidden = v !== 'create';
+  $('#cmp').hidden = v !== 'cmp';
   if (v === 'cmp') benchLoad(); else pauseBench();
   syncUrl();
   followDock();
 }
-$$('.rail-tabs [data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
-// ↶ ↷ et le journal, au bout des onglets de la colonne
-$('.rail-tabs').append(el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons()));
-$('#rail').addEventListener('focusin', (e) => { if (e.target.matches?.('textarea, input')) typing++; });
+$$('.v-views [data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+// ↶ ↷ et le journal, au bout de la ligne du haut
+$('.v-top').append(el('span', { class: 'sr-undo', role: 'group', 'aria-label': 'annuler, rétablir' }, ...U.buttons()));
+$('#pbar').addEventListener('focusin', (e) => { if (e.target.matches?.('textarea, input')) typing++; });
 
+// Une seule invite, quel que soit le mode (09/10) : on change de mode sans perdre ce qu'on a écrit
+// (les brouillons par mode de H3 Studio faisaient disparaître l'invite quand un dépôt changeait le mode).
 function setMode(m) {
+  if (m !== F.mode) F.p[m] = { ...F.p[F.mode] };
   F.mode = m;
   document.body.dataset.mode = m;
-  $$('#modes [data-mode]').forEach((b) => { const on = b.dataset.mode === m; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
-  $$('#create [data-for]').forEach((n) => { n.hidden = n.dataset.for !== m; });
-  $$('#adv [data-for]').forEach((n) => { n.hidden = n.dataset.for !== m; });
-  $('#desc-lbl').textContent = m === 'r2v' ? 'Ce qu’on voit et entend · detailed_description' : 'Ce qu’on voit et entend · integrated_multimodal_description';
-  $('#desc').placeholder = PH[m];
+  $$('#pbar [data-for]').forEach((n) => { n.hidden = n.dataset.for !== m; });
+  $('#pb-refs').hidden = m === 't2v';
+  descEl.placeholder = PH[m];
   syncFields();
   if (m === 'i2v') { paintSlot('start'); paintSlot('end'); }
   paintLoras();
@@ -169,8 +220,9 @@ function setMode(m) {
   save(); schedulePlan();
   syncUrl();
   followDock();
+  paintChips();
+  M?.refresh();
 }
-$$('#modes [data-mode]').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
 
 function syncUrl() {
   const q = new URLSearchParams();
@@ -179,25 +231,29 @@ function syncUrl() {
   try { history.replaceState(null, '', '?' + q + location.hash); } catch { /* aperçu */ }
 }
 
-// ── Images : début · fin ────────────────────────────────────
+// ── Images : la première et la dernière image, dans la barre ─
 async function paintSlot(which) {
   const box = $(which === 'start' ? '#start-slot' : '#end-slot');
   const it = await item(F[which]);
   if (F[which] && !it) { F[which] = null; save(); }
+  const lab = which === 'start' ? 'début' : 'fin';
+  const tag = which === 'start' || !F.start ? '@image1' : '@image2';   // la grammaire commune : @image1, la première image envoyée
   box.replaceChildren();
-  box.onclick = null;
+  box.className = 'v-slot' + (it ? '' : ' empty');
   if (!it) {
-    box.className = 'slot empty';
-    box.append(el('button', { class: 'slot-empty', type: 'button', onclick: () => chooseImage(which) },
-      el('b', {}, which === 'start' ? '+ début' : '+ fin'), el('span', {}, 'choisir, déposer, ou le plein pied d’un personnage')));
+    box.title = `image de ${lab} : choisir ou déposer`;
+    box.append(el('button', { class: 'v-im', type: 'button', onclick: () => chooseImage(which) }, el('b', {}, '+')),
+      el('span', { class: 'v-tok' }, lab), el('span', { class: 'v-name' }, ' '));
     return;
   }
-  box.className = 'slot';
-  box.title = 'changer d’image';
-  box.append(el('img', { src: href(it.thumb_url || it.url), alt: it.title || '' }),
-    el('span', { class: 'cap' }, `${it.width}×${it.height}`),
-    el('button', { class: 'x', type: 'button', title: 'retirer', onclick: (e) => { e.stopPropagation(); F[which] = null; changed(); paintSlot(which); } }, '×'));
-  box.onclick = () => chooseImage(which);
+  box.title = `${it.title || ''} — ${tag}`;
+  box.append(el('button', { class: 'v-im', type: 'button', style: bg(it.thumb_url || it.url),
+    onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); menu(r.left, r.top - 4, [{ head: `${lab} · ${it.title || ''}` },
+      { label: `Insérer ${tag}`, onclick: () => insertAt(descEl, tag) },
+      { label: 'Changer d’image…', onclick: () => chooseImage(which) },
+      { label: 'Voir en grand', onclick: () => fil?.open(it) },
+      '-', { label: 'Retirer', icon: '×', danger: true, onclick: () => { F[which] = null; changed(); paintSlot(which); syncImageTokens(); } }]); } }),
+  el('span', { class: 'v-tok' }, lab), el('span', { class: 'v-name' }, it.title || ''));
 }
 async function chooseImage(which) {
   const [it] = await pick({ kinds: ['image', 'element'], multiple: false, title: which === 'start' ? 'Image de début' : 'Image de fin' });
@@ -207,15 +263,15 @@ async function chooseImage(which) {
 // via movie) ou une vignette glissée d'ailleurs dans le portail (dropZone).
 for (const which of ['start', 'end']) {
   dropZone($(which === 'start' ? '#start-slot' : '#end-slot'), { kinds: ['image', 'element'], multiple: false, via: 'movie',
-    onitems: ([it]) => setImage(which, it) });
+    label: which === 'start' ? 'l’image de début' : 'l’image de fin', onitems: ([it]) => setImage(which, it) });
 }
 async function setImage(which, it) {
   const img = it.kind === 'element' ? await fromElement(it) : it;
   if (!img) return;
   S.items.set(img.id, img);
   F[which] = img.id;
-  // la toile reste celle du préréglage (le plan annonce le recadrage) ; « d'après l'image » se choisit en avancé
-  changed(); paintSlot(which);
+  // la toile reste celle choisie (le plan annonce le recadrage) ; « d'après l'image » se choisit au format
+  changed(); paintSlot(which); syncImageTokens();
 }
 // un élément comme image de départ : laquelle de ses images ? (le plein pied d'abord)
 function fromElement(elem) {
@@ -237,14 +293,14 @@ function fromElement(elem) {
     const scrim = el('div', { class: 'scrim picker' }, el('div', { class: 'modal', role: 'dialog', 'aria-label': 'image de départ' },
       el('div', { class: 'modal-head' }, el('span', { class: 't' }, `Quelle image de ${elem.title} ?`), el('span', { class: 'sp' }),
         el('button', { class: 'tb ghost sm', onclick: () => close(null) }, 'Annuler')),
-      el('div', { class: 'modal-body' }, el('p', {}, 'Le plan partira exactement de cette image. Le plein pied montre le personnage entier, dans sa tenue.'),
+      el('div', { class: 'modal-body' }, el('p', {}, 'Le plan part de cette image.'),
         refs.length ? grid : el('p', { class: 'warn' }, 'cet élément n’a aucune image'))));
     document.addEventListener('keydown', esc);
     document.body.append(scrim);
   });
 }
 
-// ── Entrées (mode Références) : le cadre commun ─────────────
+// ── Entrées (mode Références) : le cadre commun, en rangée ──
 $('#ref-size').value = F.refSize;
 $('#ref-size').addEventListener('change', (e) => { F.refSize = e.target.value; changed(); });
 const AUDIO_EXT = /\.(wav|mp3|flac|m4a|ogg)$/i;
@@ -273,31 +329,66 @@ function mountEntrees() {
   const L = S.opts.limits;
   const roles = Object.fromEntries(Object.entries(S.opts.roles).map(([k, v]) => [k, v.map((r) => [r.id, r.label])]));
   E = createEntrees($('#entrees'), { limits: { image: L.image, video: L.video, audio: L.audio, files: L.files }, cost: h3Cost,
-    roles, via: 'movie', state: F.inputs, onchange: (st) => { F.inputs = st; changed(); } });
+    roles, via: 'movie', state: F.inputs, layout: 'rangee', insert: insertToken,
+    onchange: (st) => { F.inputs = st; changed(); M?.refresh(); } });
   for (const ta of [descEl, soundEl, musicEl]) E.bindField(ta);
   E.enable(F.mode === 'r2v');
 }
-// ── le prompt : trois champs, mentions, caméra ──────────────
+// un jeton d'entrée : dans le plan choisi du Multishot s'il est allumé, sinon dans l'invite
+function insertToken(tok) {
+  if (F.ms.on && M) { const ta = $('#ms .ms-ta'); if (ta) { insertAt(ta, tok); return; } }
+  insertAt(descEl, tok);
+}
+// ce que prend la barre (un dépôt, « poser » du panneau Asset) : chaque objet là où il sert
+// — Images : le début, puis la fin ; sinon les entrées (on passe en Références s'il le faut).
+// `toks` reçoit les jetons des entrées posées. Faux si rien n'a été posé.
+async function toBar(items, toks = null) {
+  if (!items.length) return false;
+  if (F.mode === 'i2v' && !toks) {
+    const imgs = items.filter((x) => x.kind === 'image' || x.kind === 'element');
+    const rest = items.filter((x) => !imgs.includes(x));
+    let n = 0;
+    for (const it of imgs) {
+      if (F.start && F.end) break;
+      const before = [F.start, F.end].join();
+      await setImage(!F.start ? 'start' : 'end', it);
+      if ([F.start, F.end].join() !== before) n++;
+    }
+    if (!rest.length) return n > 0;
+    toast(`${rest.map((x) => x.title).join(', ')} : à poser en mode Références`, 5000);
+    return n > 0;
+  }
+  if (F.mode !== 'r2v') {
+    setMode('r2v');
+    toast('passé en mode Références', 4000);
+  }
+  return E ? E.add(items, toks) > 0 || (toks?.length > 0) : false;
+}
+
+// ── le prompt : une invite, le son et la musique à part ─────
 const PH = {
-  t2v: 'Ce qu’on voit et entend, dans l’ordre. Ex. : [Shot 1] Live-action, cinematic. A lighthouse keeper climbs a spiral staircase at dawn; the camera tracks up with him at slow speed. The weathered man (S1) mutters: <d>[English] Not tonight.</d>',
-  i2v: 'Ce qui se passe à partir de l’image : l’action, la caméra, une réplique. Ex. : The man shown in <Picture 1> slowly turns toward the lens and smiles; the camera pushes in with small amplitude at slow speed.',
-  r2v: 'Le plan, avec les jetons des entrées (tapez @). Ex. : @element1 runs through @image1 at night; a tracking shot follows him at fast speed, neon reflections on wet asphalt.',
+  t2v: 'Décris le plan : ce qu’on voit, ce qu’on entend, la caméra',
+  i2v: 'Ce qui se passe à partir de l’image : l’action, la caméra, une réplique',
+  r2v: 'Le plan, avec ses références : @element1 marche dans @image1… (tape @)',
 };
 const descEl = $('#desc'), soundEl = $('#sound'), musicEl = $('#music');
 function syncFields() {
   const p = F.p[F.mode];
-  descEl.value = p.desc; soundEl.value = p.sound; musicEl.value = p.music;
-  if (E) { E.enable(F.mode === 'r2v'); E.refreshFields(); }
-  paintWords();
+  if (descEl.value !== p.desc) descEl.value = p.desc;
+  soundEl.value = p.sound; musicEl.value = p.music;
+  if (E) { E.enable(F.mode === 'r2v'); syncImageTokens(); }
 }
-function paintWords() {
-  const n = F.p[F.mode].desc.trim() ? F.p[F.mode].desc.trim().split(/\s+/).length : 0;
-  $('#words').textContent = `${n} mot${n > 1 ? 's' : ''} · visé 350–500`;
-  $('#words').classList.toggle('low', n > 0 && n < 60);
+// en Images, @image1 et @image2 sont les images envoyées, dans l'ordre (le début, puis la fin) : verts s'ils pointent
+function syncImageTokens() {
+  if (!E) return;
+  const imgs = F.mode === 'i2v' ? [F.start, F.end].filter(Boolean).map((id) => S.items.get(id)).filter(Boolean) : [];
+  E.extra(Object.fromEntries(imgs.map((it, k) => [`image${k + 1}`, { cat: 'image', it }])));
 }
-descEl.addEventListener('input', () => { F.p[F.mode].desc = descEl.value; paintWords(); changed(); });
+descEl.addEventListener('input', () => { F.p[F.mode].desc = descEl.value; changed(); });
 soundEl.addEventListener('input', () => { F.p[F.mode].sound = soundEl.value; changed(); });
 musicEl.addEventListener('input', () => { F.p[F.mode].music = musicEl.value; changed(); });
+// Ctrl (ou ⌘) + Entrée : lancer, d'où qu'on écrive dans la barre
+$('#pbar').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); launch(); } });
 
 function insertAt(t, text, { select = null } = {}) {
   const a = t.selectionStart ?? t.value.length, b = t.selectionEnd ?? a;
@@ -307,44 +398,99 @@ function insertAt(t, text, { select = null } = {}) {
   const at = (pre + pad).length;
   t.focus();
   if (select) t.setSelectionRange(at + select[0], at + select[1]); else t.setSelectionRange(at + text.length, at + text.length);
-  t.dispatchEvent(new Event('input'));
+  t.dispatchEvent(new Event('input', { bubbles: true }));
 }
-// les étiquettes des images de début et de fin (en Références, les jetons sont sur les vignettes et dans le menu « @ »)
-function paintChips() {
-  const pl = S.plan;
-  const chips = F.mode === 'i2v' ? (pl?.pictures || []).map((p) => ({ ins: p.tag, lab: p.label })) : [];
-  $('#chips').replaceChildren(...chips.map((c) => el('button', { class: 'chip', type: 'button', title: `insérer ${c.ins}`, onclick: () => insertAt(descEl, c.ins) },
-    el('b', {}, c.ins), c.lab ? ' ' + c.lab : '')));
-}
-// la caméra : le vocabulaire contrôlé, écrit dans la phrase
+// la caméra : le vocabulaire contrôlé, écrit dans la phrase (dans le plan choisi du Multishot s'il est allumé)
+const writeIn = () => (F.ms.on && $('#ms .ms-ta')) || descEl;
 const cam = { amp: '', speed: '' };
 function segPick(id, cb) { $$(`#${id} .tb`).forEach((b) => b.addEventListener('click', () => { $$(`#${id} .tb`).forEach((x) => x.classList.toggle('on', x === b)); cb(b.dataset.v); })); }
 segPick('cam-amp', (v) => { cam.amp = v; });
 segPick('cam-speed', (v) => { cam.speed = v; });
 function paintCamera() {
-  $('#cam-chips').replaceChildren(...(S.opts?.camera || []).map((c) => el('button', { class: 'chip cam-chip', type: 'button', title: c.phrase,
+  $('#cam-chips').replaceChildren(...(S.opts?.camera || []).map((c) => el('button', { class: 'chip cam-chip', type: 'button', title: `« ${c.phrase} »`,
     onclick: () => {
       const fixed = /Shake|Static|POV/.test(c.id);   // l'amplitude est dans le mot, ou n'a pas de sens
-      insertAt(descEl, c.phrase + (fixed ? '' : cam.amp) + (/Static/.test(c.id) ? '' : cam.speed) + '.');
-    } }, c.id)));
+      insertAt(writeIn(), c.phrase + (fixed ? '' : cam.amp) + (/Static/.test(c.id) ? '' : cam.speed) + '.');
+    } }, CAM_FR[c.id] || c.id)));
 }
-$('#h-cam').addEventListener('click', () => { $('#cam').hidden = !$('#cam').hidden; $('#h-cam').classList.toggle('on', !$('#cam').hidden); });
-$('#h-assist').addEventListener('click', () => { $('#assist').hidden = !$('#assist').hidden; $('#h-assist').classList.toggle('on', !$('#assist').hidden); });
 // la langue de la réplique : la préférence « langue parlée » (Général)
 $('#h-say').addEventListener('click', () => {
   const pre = `(S1) says: <d>[${prefs.get('general.langue', 'fr') === 'en' ? 'English' : 'French'}] `;
-  insertAt(descEl, pre + '…</d>', { select: [pre.length, pre.length + 1] });
+  insertAt(writeIn(), pre + '…</d>', { select: [pre.length, pre.length + 1] });
 });
-// le multishot : le panneau de la frise (commun/multishot.js) écrit les [Shot n] et les <d> dans le prompt
-$('#h-multi').addEventListener('click', async () => {
-  const { openMultishot } = await import('../commun/multishot.js');
-  const fr = S.opts?.frames || [];
-  const secs = fr[durIndex()]?.seconds || F.frames / 24;
-  const mentions = Object.entries(S.plan?.mentions || {}).map(([token, label]) => ({ token, label: String(label || '').replace(/^<|>$/g, '') }));
-  openMultishot({ total: secs, desc: descEl.value, mentions, lang: prefs.get('general.langue', 'fr') === 'en' ? 'en' : 'fr',
-    onApply: (text) => { descEl.value = text; descEl.dispatchEvent(new Event('input', { bubbles: true })); descEl.focus(); } });
-});
-$('#h-excl').addEventListener('click', () => insertAt(descEl, 'No text, subtitles, logos or watermarks of any kind, keep the live-action texture.'));
+$('#h-excl').addEventListener('click', () => insertAt(writeIn(), 'No text, subtitles, logos or watermarks of any kind, keep the live-action texture.'));
+$$('#aides-tabs .pp-tab').forEach((b) => b.addEventListener('click', () => { S.aides = b.dataset.tab; paintAides(); }));
+function paintAides() {
+  $$('#aides-tabs .pp-tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === S.aides));
+  $$('[data-pop="aides"] .pp-body > [data-tab]').forEach((n) => { n.hidden = n.dataset.tab !== S.aides; });
+  refreshAssist();
+}
+// l'assistant : la mise en forme de l'invite (le même bouton que dans « ce que H3 reçoit »)
+function refreshAssist() {
+  const box = $('#assist');
+  if (!box || $('[data-pop="aides"]').hidden) return;
+  const w = S.opts?.llm || {};
+  box.replaceChildren(inviteButton(), el('span', { class: 'hint', title: w.up ? `modèle de texte : ${w.model}` : w.why || '' }, w.up
+    ? 'ton prompt réécrit pour H3, en anglais et en plans ; à relire'
+    : 'sans modèle de texte : les plans seulement, sans traduire'));
+}
+
+// ── le Multishot, dans la barre ─────────────────────────────
+// Allumé, la frise prend la place de l'invite ; chaque geste réécrit l'invite ([Shot n], répliques) ;
+// éteint, l'invite garde ce texte et reste modifiable ; rallumé après une modification à la main,
+// la frise relit l'invite.
+function msMentions() {
+  if (!E || F.mode !== 'r2v') return [];
+  return Object.entries(E.tokens()).map(([k, t]) => ({ token: '@' + k, label: t.it?.title || '', thumb: t.it?.thumb_url ? href(t.it.thumb_url) : (t.it?.kind === 'image' ? href(t.it.url) : '') }));
+}
+const lang = () => F.ms.lang || (prefs.get('general.langue', 'fr') === 'en' ? 'en' : 'fr');
+// le texte des plans ; des plans tous vides n'écrivent rien (l'invite vide dit ce qui manque)
+function msText(shots, o = { lang: lang() }) {
+  if (!shots?.length || shots.every((p) => !(p.text || '').trim() && !(p.lines || []).some((l) => (l.text || '').trim()))) return '';
+  return compose(shots.map((p) => ({ ...p, secs: (p.frames || 0) / FPS })), o);
+}
+function msMount(shots) {
+  const grid = (S.opts.frames || []).map((f) => f.frames);
+  M = createMultishot($('#ms'), {
+    total: F.frames, grid, shots, desc: F.p[F.mode].desc, lang: lang(),
+    mentions: msMentions,
+    onchange: (st) => {
+      F.ms.shots = st.shots; F.ms.lang = st.lang;
+      const t = msText(st.shots, st);
+      F.p[F.mode].desc = t;
+      descEl.value = t;
+      changed();
+    },
+    ontotal: (frames) => { F.frames = frames; },
+    drop: { kinds: KINDS, via: 'movie', onitems: async (items) => { const toks = []; await toBar(items, toks); return toks; } },
+    bindField: (ta) => E?.bindField(ta),
+  });
+}
+// La frise suit l'état : ses plans s'ils écrivent encore l'invite ; sinon (l'invite changée à la main, ou
+// reprise d'une vidéo) elle relit l'invite — ses [Shot n], ou ses phrases.
+function syncMultishot() {
+  const on = !!F.ms.on && !!S.opts;
+  $('#ms').hidden = !on;
+  $('#pb-text').hidden = on;
+  if (!on) { syncFields(); return; }
+  const desc = F.p[F.mode].desc;
+  const fits = F.ms.shots?.length && msText(F.ms.shots) === desc;
+  if (!M) msMount(fits ? F.ms.shots : null);
+  else M.set({ shots: fits ? F.ms.shots : null, desc, total: F.frames });
+  M.refresh();
+}
+function toggleMultishot() {
+  F.ms.on = !F.ms.on;
+  syncMultishot();
+  if (F.ms.on) {
+    const st = M.get();
+    F.ms.shots = st.shots;
+    const t = msText(st.shots, st);
+    if (t !== F.p[F.mode].desc && t) { F.p[F.mode].desc = t; descEl.value = t; }
+  }
+  changed();
+  (F.ms.on ? $('#ms .ms-ta') : descEl)?.focus();
+}
 
 // ── LoRA ────────────────────────────────────────────────────
 async function loadLoras() {
@@ -361,10 +507,9 @@ function paintLoras() {
   if (!S.loras.length) return;
   const accel = S.loras.filter((l) => l.accel && !l.recipe);
   // la pile de la recette (People 0,6 → DY 0,6 → Turbo v4) : toujours posée, montrée cochée et figée
-  const pile = S.loras.filter((l) => l.recipe).map((l) => el('div', { class: 'lora on recipe' },
+  const pile = S.loras.filter((l) => l.recipe).map((l) => el('div', { class: 'lora on recipe', title: l.note || '' },
     el('label', { class: 'lh' }, el('input', { type: 'checkbox', checked: true, disabled: true }), el('b', {}, l.nom),
-      el('input', { class: 'fld force', value: l.force, disabled: true, 'aria-label': 'force' })),
-    el('span', { class: 'hint' }, l.note)));
+      el('input', { class: 'fld force', value: l.force, disabled: true, 'aria-label': 'force' }))));
   put($('#loras'), ...pile, ...S.loras.filter((l) => !l.accel && !l.recipe).map((l) => {
     const st = F.loras[l.name] || (F.loras[l.name] = { on: false, strength: l.force });
     const fits = l.modes.includes(F.mode);
@@ -372,113 +517,274 @@ function paintLoras() {
     if (off && st.on) { st.on = false; quietSave(); }
     const force = el('input', { class: 'fld force', inputmode: 'decimal', value: st.strength, 'aria-label': 'force', disabled: off || null,
       onchange: (e) => { const v = parseFloat(e.target.value.replace(',', '.')); st.strength = isFinite(v) ? Math.max(0, Math.min(2, v)) : l.force; e.target.value = st.strength; changed(); } });
-    return el('div', { class: 'lora' + (st.on ? ' on' : '') + (off ? ' off' : '') },
+    return el('div', { class: 'lora' + (st.on ? ' on' : '') + (off ? ' off' : ''), title: [l.note, l.warn ? 'décision de Cal : exclu pour ses personnages' : ''].filter(Boolean).join('\n') },
       el('label', { class: 'lh' },
         el('input', { type: 'checkbox', checked: st.on || null, disabled: off || null, onchange: (e) => { st.on = e.target.checked; changed(); paintLoras(); } }),
         // un LoRA de moodboard d'Idéation, entraîné par le portail (server/tools/lora.py)
         el('b', {}, l.nom), l.moodboard ? el('span', { class: 'lbl mb', title: l.trigger ? `mot déclencheur « ${l.trigger} »` : '' }, 'moodboard') : null, force),
-      el('span', { class: 'hint' }, l.note),
       !fits && !l.accel ? el('span', { class: 'why' }, `pas pour ce mode : ${l.modes.map((m) => MODE_FR[m]).join(', ')}`) : null,
-      l.warn ? el('span', { class: 'warn-t' }, 'décision de Cal : exclu pour ses personnages') : null);
+      l.warn ? el('span', { class: 'warn-t' }, 'exclu pour les personnages de Cal') : null);
   }), accel.length ? el('details', { class: 'accel' },
     el('summary', {}, el('span', { class: 'lbl' }, `${accel.length} autres accélérateurs · la recette pose le Turbo v4`)),
     el('div', { class: 'accel-list' }, ...accel.map((l) => el('span', { title: l.name }, l.nom)))) : null);
 }
 
-// ── Sortie : préréglage, durée ; en avancé : toile, pas, graine ─
-function paintOutput() {
-  const o = S.opts, pl = S.plan;
-  if (!o) return;
-  if (!o.methods.some((m) => m.id === F.method)) F.method = o.default_method || o.methods[0].id;
-  const meth = o.methods.find((m) => m.id === F.method);
-  // les deux préréglages : le mot, ce qu'il fait, son temps estimé pour ce plan (le temps de Cal sinon)
-  $('#presets').replaceChildren(...o.methods.map((m) => el('button', { class: F.method === m.id ? 'on' : '', type: 'button', role: 'radio',
-    'aria-checked': F.method === m.id ? 'true' : 'false', title: m.note,
-    onclick: () => { if (F.method !== m.id) { F.method = m.id; F.steps = ''; changed(); paintOutput(); } } },
-  el('b', {}, m.label), el('span', {}, m.sub),
-  el('i', {}, pl?.presets?.[m.id] ? `≈ ${rng(pl.presets[m.id])}` : `chez Cal : ${m.cal.what}`))));
-  $('#preset-note').textContent = meth.note;
-  // la toile (avancé) : celle du préréglage d'abord ; sinon une famille, puis sa toile
-  const fams = ['préréglage'].concat(F.mode === 'i2v' && pl?.canvases?.[0]?.family === 'image' ? ['image'] : [], o.families);
-  const famNow = F.canvas[F.mode] == null ? 'préréglage' : F.canvas[F.mode] === 'auto' ? 'image' : F.fam[F.mode];
-  $('#fam').replaceChildren(...fams.map((f) => el('button', { class: 'tb' + (famNow === f ? ' on' : ''), type: 'button',
-    onclick: () => {   // une famille : sa première toile, pour que l'affiché soit l'envoyé
-      if (f === 'préréglage') F.canvas[F.mode] = null;
-      else {
-        F.fam[F.mode] = f;
-        const first = o.canvases.find((c) => c.family === f);
-        F.canvas[F.mode] = f === 'image' ? 'auto' : first ? [first.w, first.h] : null;
-      }
-      changed(); paintOutput();
-    } }, f === 'préréglage' ? 'recette' : f)));
-  // une ligne par toile de la famille — sa taille, son nom, son temps estimé à droite ; ce qui est coché part
-  const [pw, ph] = meth.canvas;
-  const rows = famNow === 'préréglage'
-    ? [{ w: pw, h: ph, family: 'préréglage', label: `${meth.label} · la recette`, source: 'la toile du préréglage', estimate: pl?.presets?.[F.method] }]
-    : (pl?.canvases || o.canvases.map((c) => ({ ...c, estimate: null }))).filter((c) => c.family === famNow);
-  const cur = F.canvas[F.mode];
-  const key = (c) => (c.family === 'préréglage' ? 'preset' : c.family === 'image' ? 'auto' : `${c.w}x${c.h}`);
-  const curKey = cur == null ? 'preset' : cur === 'auto' ? 'auto' : Array.isArray(cur) ? `${cur[0]}x${cur[1]}` : '';
-  $('#canvas').replaceChildren(...rows.map((c) => el('button', { class: 'cv-row' + (key(c) === curKey ? ' on' : ''), type: 'button', role: 'radio',
-    'aria-checked': key(c) === curKey ? 'true' : 'false', title: c.source,
-    onclick: () => { F.canvas[F.mode] = c.family === 'préréglage' ? null : c.family === 'image' ? 'auto' : [c.w, c.h]; changed(); paintOutput(); } },
-  el('b', {}, c.family === 'image' && !c.w ? 'd’après l’image' : `${c.w} × ${c.h}`), el('span', { class: 'cv-l' }, c.label || ''),
-  el('span', { class: 'cv-e' }, c.estimate ? rngShort(c.estimate) : ''))));
-  $('#estimate-short').textContent = pl ? `${pl.width}×${pl.height} · ≈ ${rng(pl.estimate)}` : '';
-  $('#adv-sum').textContent = pl ? `${meth.label.toLowerCase()} · ${pl.steps} pas${F.seed ? ' · graine ' + F.seed : ''}${pl.loras.length ? ` · ${pl.loras.length} LoRA de plus` : ''}${F.canvas[F.mode] != null ? ` · ${pl.width}×${pl.height}` : ''}` : '';
-  paintDuration();
-  const steps = pl?.steps;
-  $('#step-presets').replaceChildren(...meth.steps.map((s) => el('button', { class: 'tb' + (Number(F.steps || steps) === s ? ' on' : ''), type: 'button',
-    onclick: () => { F.steps = String(s); $('#steps').value = F.steps; changed(); paintOutput(); } },
-  `${s}${s === 8 ? ' · la recette' : ''}`)));
-  $('#steps').value = F.steps;
-  $('#steps').placeholder = steps ? `auto · ${steps}` : 'auto';
-  const rec = o.recipe || {};
-  $('#profile').replaceChildren(el('b', {}, `${meth.label}${pl ? ` · ${pl.width} × ${pl.height}` : ''}${pl?.draft ? ` (depuis ${pl.draft[0]} × ${pl.draft[1]})` : ''}${steps ? ' · ' + steps + ' pas' : ''}`),
-    el('span', {}, `La recette de Cal : ${(rec.loras || []).map((l) => `${l.name.replace('.safetensors', '')} ${String(l.strength).replace('.', ',')}`).join(' → ')} ; ${rec.attention || ''} ; ${rec.sampler || ''}, planning ${rec.scheduler || ''} ; « ${rec.tag || ''} » en tête de la description.`));
-  $('#seed').value = F.seed;
-  paintSeedOrig();
-  if (pl) $('#estimate').replaceChildren(el('b', {}, `Estimé ${pl.width}×${pl.height} : ${rng(pl.estimate)}`),
-    el('span', { class: 'hint' }, `${pl.estimate.basis}. Chargement du modèle, image et son compris ; le premier rendu après un démarrage d’H3 est plus long.`));
+// ── le format et la résolution : l'échelle du serveur ──────
+// Un format, puis une résolution (le préréglage) : la toile en découle (server/tools/movie.py, scale ; /api/movie/options et
+// chaque plan → `scale`). Les résolutions vont de l'Esquisse (≈ 0,25 Mpx, le premier étage du Brouillon) à la Qualité, avec
+// leur temps estimé pour ce plan. En Images, « d'après l'image » (la règle du nœud) ; une toile libre (une vidéo reprise)
+// se montre et s'abandonne en choisissant une résolution.
+const scaleOf = () => S.plan?.scale || S.opts?.scale || { formats: [], tiers: [] };
+const methodOf = (id) => S.opts?.methods.find((m) => m.id === id);
+const fmtLabel = (f) => (f?.label || f?.id || '').split(' · ')[0];
+function formats() {
+  const list = scaleOf().formats.map((f) => ({ ...f, short: fmtLabel(f), sub: FMT_SUB[f.id] || '' }));
+  const auto = F.mode === 'i2v' ? (S.plan?.canvases || []).find((c) => c.family === 'image') : null;
+  if (auto) list.unshift({ id: 'image', short: 'image', sub: FMT_SUB.image, ratio: auto.w / auto.h, auto });
+  return list;
 }
-function paintSeedOrig() {
-  const b = $('#seed-orig');
-  b.hidden = F.origSeed === null || F.origSeed === undefined;
-  b.title = b.hidden ? '' : `la graine de la vidéo réutilisée : ${F.origSeed} — la même recette refait le même plan`;
+// la toile choisie, en clair
+function canvasNow() {
+  const cv = F.canvas[F.mode];
+  if (cv === 'auto') return { auto: true, w: S.plan?.width, h: S.plan?.height };
+  if (Array.isArray(cv)) return { free: true, w: cv[0], h: cv[1] };
+  const f = scaleOf().formats.find((x) => x.id === F.format) || scaleOf().formats[0];
+  const sz = f?.sizes?.[F.method];
+  return { w: sz?.w || S.plan?.width, h: sz?.h || S.plan?.height, stages: sz?.stages, estimate: sz?.estimate };
 }
-// la durée : un curseur en secondes, aux pas permis par H3 (la grille 17k+5 à 24 i/s, lue dans
-// /api/movie/options) ; la valeur en clair, le nombre d'images en petit
-const secFr = (s) => `${String(Math.round(s * 10) / 10).replace('.', ',')} s`;
+const formatNow = (list = formats()) => (F.canvas[F.mode] === 'auto' ? list.find((f) => f.id === 'image') : list.find((f) => f.id === F.format)) || list[0] || null;
+function pickFormat(f) {
+  if (f.id === 'image') F.canvas[F.mode] = 'auto';
+  else { F.format = f.id; if (F.canvas[F.mode] === 'auto') F.canvas[F.mode] = null; }
+  changed(); paintFmt();
+}
+function pickTier(id) {
+  F.method = id; F.steps = '';
+  if (F.canvas[F.mode] !== 'auto') F.canvas[F.mode] = null;   // une toile libre s'abandonne
+  changed(); paintFmt();
+}
+const glyph = (ratio, cls = '') => el('span', { class: 'v-ratio ' + cls, style: { aspectRatio: String(Math.max(0.4, Math.min(2.6, ratio || 1))) } });
+function paintFmt() {
+  const box = $('[data-pop="fmt"]');
+  if (box.hidden || !S.opts) return;
+  const list = formats(), cur = formatNow(list), c = canvasNow(), pl = S.plan;
+  const keep = box.querySelector('.pp-body')?.scrollTop || 0;
+  const head = el('div', { class: 'pp-h' }, el('span', { class: 'lbl' }, 'Format · résolution'), el('span', { class: 'sp' }),
+    el('button', { class: 'pp-x', type: 'button', title: 'fermer (Échap)', 'aria-label': 'fermer', onclick: () => togglePop('fmt') }, '×'));
+  const fmts = el('div', { class: 'v-fmts', role: 'radiogroup', 'aria-label': 'format' }, ...list.map((f) => el('button', {
+    class: 'v-fmt' + (f === cur ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': f === cur ? 'true' : 'false',
+    title: f.auto ? `${f.auto.w} × ${f.auto.h}` : f.label,
+    onclick: () => pickFormat(f) }, glyph(f.ratio), el('b', {}, f.short), el('small', {}, f.sub))));
+  let rows;
+  if (c.auto) {
+    rows = [el('div', { class: 'cv-row on' }, el('span', { class: 'cv-l' }, el('em', {}, methodOf(F.method)?.label || ''), el('b', {}, `${c.w} × ${c.h}`)),
+      el('span', { class: 'cv-e' }, pl ? rngShort(pl.estimate) : ''))];
+  } else {
+    rows = (c.free ? [el('div', { class: 'cv-row on', title: 'la taille de la vidéo reprise' },
+      el('span', { class: 'cv-l' }, el('em', {}, 'reprise'), el('b', {}, `${c.w} × ${c.h}`)), el('span', { class: 'cv-e' }, pl ? rngShort(pl.estimate) : ''))] : [])
+      .concat(scaleOf().tiers.map((t) => {
+        const sz = cur?.sizes?.[t];
+        if (!sz) return null;
+        const m = methodOf(t);
+        const on = !c.free && F.method === t;
+        return el('button', { class: 'cv-row' + (on ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false',
+          title: `${m?.note || ''}${sz.estimate ? `\ntemps : ${sz.estimate.basis}` : ''}`.trim(), onclick: () => pickTier(t) },
+        el('span', { class: 'cv-l' }, el('em', {}, m?.label || t), el('b', {}, `${sz.w} × ${sz.h}`)),
+        el('span', { class: 'cv-e' }, sz.estimate ? rngShort(sz.estimate) : '—'));
+      }).filter(Boolean));
+  }
+  const body = el('div', { class: 'pp-body' },
+    el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Format'), fmts),
+    el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Résolution'),
+      el('div', { class: 'canvases', role: 'radiogroup', 'aria-label': 'résolution' }, ...rows)));
+  box.replaceChildren(head, body);
+  body.scrollTop = keep;
+}
+
+// ── la durée : les pas d'H3 (la grille 17k+5 à 24 i/s, lue dans /api/movie/options) ──
 function durIndex() {
   const fr = S.opts?.frames || [];
   let k = 0;
   fr.forEach((f, i) => { if (Math.abs(f.frames - F.frames) < Math.abs(fr[k].frames - F.frames)) k = i; });
   return k;
 }
-function paintDuration(k = durIndex()) {
-  const fr = S.opts?.frames || [];
-  if (!fr.length) return;
-  const r = $('#frames');
-  r.max = String(fr.length - 1);
-  r.value = String(k);
-  $('#dur-v').textContent = secFr(fr[k].seconds);
-  $('#dur-n').textContent = `${fr[k].frames} images`;
-  $('#dur-lo').textContent = secFr(fr[0].seconds);
-  $('#dur-hi').textContent = secFr(fr[fr.length - 1].seconds);
+function setFrames(frames) {
+  if (frames === F.frames) return;
+  F.frames = frames;
+  if (F.ms.on && M) M.setTotal(frames);   // la fin de la frise suit ; le dernier plan prend l'écart
+  changed();
 }
-$('#frames').addEventListener('input', (e) => paintDuration(Number(e.target.value)));
-$('#frames').addEventListener('change', (e) => { F.frames = S.opts.frames[Number(e.target.value)].frames; changed(); });
-// un temps court pour une ligne de toile : « 3–4 min », « 40–55 s »
-function rngShort(e) {
-  if (!e) return '';
-  if (e.high < 90) return `${Math.round(e.low)}–${Math.round(e.high)} s`;
-  const lo = Math.round(e.low / 60), hi = Math.round(e.high / 60);
-  return lo === hi ? `≈ ${lo} min` : `${lo}–${hi} min`;
+
+// ── les puces de la barre ───────────────────────────────────
+function chip(label, { value = '', onclick, title = '', cls = '', off = '', open = false, glyphOf = null, small = '' } = {}) {
+  return el('button', { class: `pc ${cls}${open ? ' on' : ''}`.trim(), type: 'button', 'aria-haspopup': 'true',
+    'aria-expanded': open ? 'true' : null, title: off || title || null, 'aria-disabled': off ? 'true' : null,
+    onclick: (e) => { if (off) { toast(off, 5000); return; } onclick(e.currentTarget); } },
+  glyphOf ? glyph(glyphOf, 'sm') : null,
+  label ? el('span', { class: 'pc-l' }, label) : null,
+  value ? el('b', {}, value) : null,
+  small ? el('small', { class: 'pc-s' }, small) : null);
 }
-$('#steps').addEventListener('input', (e) => { F.steps = e.target.value.replace(/[^0-9]/g, ''); if (e.target.value !== F.steps) e.target.value = F.steps; changed(); });
-$('#seed').addEventListener('input', (e) => { F.seed = e.target.value.replace(/[^0-9]/g, ''); if (e.target.value !== F.seed) e.target.value = F.seed; changed(); });
-$('#seed-rand').addEventListener('click', () => { F.seed = String(Math.floor(Math.random() * 2 ** 31)); $('#seed').value = F.seed; changed(); });
-$('#seed-orig').addEventListener('click', () => { if (F.origSeed == null) return; F.seed = String(F.origSeed); $('#seed').value = F.seed; changed(); });
+// un petit menu qui s'ouvre vers le haut, au-dessus de sa puce (la barre est en bas)
+function up(anchor, items) {
+  const r = anchor.getBoundingClientRect();
+  const { node } = menu(r.left, r.top, items);
+  if (!node) return;
+  const h = node.getBoundingClientRect().height;
+  node.style.top = `${Math.max(8, r.top - h - 6)}px`;
+}
+function advAlt() {
+  const pl = S.plan;
+  const unetDef = (S.opts?.unets?.[pl?.weights] || []).find((u) => u.defaut)?.f;
+  return [F.seed ? `graine ${F.seed}` : '', F.steps ? `${F.steps} pas` : '',
+    pl?.loras?.length ? `${pl.loras.length} LoRA` : '', F.adv.crf ? `crf ${F.adv.crf}` : '',
+    pl && unetDef && pl.unet !== unetDef ? pl.unet_nom : '', F.mode === 'r2v' && F.refSize === 'max' ? 'détail max' : ''].filter(Boolean);
+}
+function paintChips() {
+  const box = $('#pb-chips');
+  if (!box || !S.opts) return;
+  const pl = S.plan;
+  const list = formats(), cur = formatNow(list), c = canvasNow();
+  const meth = methodOf(F.method);
+  const fr = S.opts.frames || [];
+  const k = durIndex();
+  const step = (d) => { const j = Math.max(0, Math.min(fr.length - 1, k + d)); setFrames(fr[j].frames); };
+  const nShots = F.ms.on && F.ms.shots ? F.ms.shots.length : 0;
+  const snd = [F.p[F.mode].sound.trim() ? 'ambiance' : '', F.p[F.mode].music.trim() ? 'musique' : ''].filter(Boolean).join(' · ');
+  const notes = pl?.notes?.length || 0;
+  const alt = advAlt();
+  const wh = c.w ? `${c.w}×${c.h}` : 'd’après l’image';
+  box.replaceChildren(
+    el('span', { class: 'pc-seg', role: 'tablist', 'aria-label': 'mode' }, ...['t2v', 'i2v', 'r2v'].map((m) => el('button', {
+      class: F.mode === m ? 'on' : '', type: 'button', role: 'tab', 'aria-selected': F.mode === m ? 'true' : 'false',
+      title: `${MODE_FR[m].replace(/^./, (x) => x.toUpperCase())} : ${MODE_TIP[m]}`, onclick: () => setMode(m) }, MODE_SHORT[m]))),
+    chip('', { value: cur?.short || '', glyphOf: cur?.ratio, open: S.pop === 'fmt', cls: 'fmt',
+      title: `format · ${cur?.sub || ''}`, onclick: () => togglePop('fmt') }),
+    chip('', { value: c.free ? 'reprise' : meth?.label || '', small: pl ? `≈ ${rngShort(pl.estimate)}` : '', open: S.pop === 'fmt', cls: 'res',
+      title: `résolution · ${wh}${pl ? ` — temps estimé ${rng(pl.estimate)}` : ''}`, onclick: () => togglePop('fmt') }),
+    el('span', { class: 'pc count dur', title: `durée de la vidéo, de ${secFr(fr[0]?.seconds || 5.17)} à ${secFr(fr[fr.length - 1]?.seconds || 15.08)}` },
+      el('button', { type: 'button', 'aria-label': 'plus court', disabled: k <= 0 ? true : null, onclick: () => step(-1) }, '−'),
+      el('b', { role: 'button', tabindex: 0, title: 'toutes les durées', onclick: (e) => up(e.currentTarget.parentElement, [{ head: 'Durée' },
+        ...fr.map((f) => ({ label: secFr(f.seconds), checked: f.frames === (fr[k]?.frames), onclick: () => setFrames(f.frames) }))]) },
+      secFr(fr[k]?.seconds || F.frames / 24)),
+      el('button', { type: 'button', 'aria-label': 'plus long', disabled: k >= fr.length - 1 ? true : null, onclick: () => step(1) }, '+')),
+    chip('Multishot', { value: nShots ? `${nShots} plans` : '', cls: 'ms-chip' + (F.ms.on ? ' set' : ''), open: F.ms.on,
+      title: F.ms.on ? 'revenir à un seul prompt (il garde le texte des plans)' : 'découper la vidéo en plans',
+      onclick: toggleMultishot }),
+    chip('Son', { value: snd, cls: snd ? 'set' : '', open: S.pop === 'son', title: 'l’ambiance et la musique', onclick: () => togglePop('son') }),
+    chip('Aides', { open: S.pop === 'aides', title: 'caméra, réplique, à éviter, mise en forme', onclick: () => togglePop('aides') }),
+    chip('Avancé', { value: alt.join(' · '), cls: 'adv' + (alt.length ? ' set' : ''), open: S.pop === 'adv',
+      title: 'les réglages du modèle', onclick: () => togglePop('adv') }),
+    chip('Aperçu', { value: notes ? String(notes) : '', cls: 'recu', open: S.pop === 'recu',
+      title: `ce que H3 recevra${notes ? ` — ${notes} remarque${notes > 1 ? 's' : ''}` : ''}`,
+      onclick: () => togglePop('recu') }));
+}
+
+// ── les panneaux au-dessus de la barre ──────────────────────
+function togglePop(id) {
+  S.pop = S.pop === id ? null : id;
+  $$('#pops > .pb-pop').forEach((n) => { n.hidden = n.dataset.pop !== S.pop; });
+  if (S.pop === 'fmt') paintFmt();
+  if (S.pop === 'recu') paintRecu();
+  if (S.pop === 'aides') paintAides();
+  if (S.pop === 'adv' && !S.plan?.graph) runPlan();
+  paintChips();
+}
+$$('#pops .pp-x').forEach((b) => b.addEventListener('click', () => togglePop(S.pop)));
+// un panneau se ferme par Échap ou un clic hors de la barre
+addEventListener('pointerdown', (e) => {
+  if (!S.pop || $('#pbar').contains(e.target) || e.target.closest?.('.sr-menu, .scrim, .fv, .sr-dock, aside')) return;
+  togglePop(S.pop);
+}, true);
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !S.pop || document.querySelector('.sr-menu, .scrim, .fv')) return;
+  togglePop(S.pop);
+});
+
+// ── ce que H3 reçoit ────────────────────────────────────────
+// POST /api/movie/apercu (server/tools/movie_invite.py) : le plan compilé — le prompt, les images dans l'ordre où H3
+// les charge, les étiquettes — et les vérifications du code (`checks` : mentions, entrées citées, langue, plans et
+// temps de coupe, répliques, longueur, images de chaque élément, toile). On y relit et corrige ce que la mise en forme
+// a écrit (la définition de chaque sujet, le résumé), et on la lance : POST /api/movie/invite, un travail (le modèle de
+// texte local écrit l'invite au format d'H3 ; sans lui, le gabarit, et pourquoi) dont le résultat remplit la barre.
+const LEVEL = { ok: ['ok', '✓'], remarque: ['rem', '!'], erreur: ['err', '×'] };
+let recuSeq = 0;
+async function paintRecu() {
+  const box = $('#recu');
+  if ($('[data-pop="recu"]').hidden) return;
+  const seq = ++recuSeq;
+  let ap = null;
+  try { ap = await api('movie/apercu', { method: 'POST', body: { mode: F.mode, params: params(F.mode) } }); }
+  catch (e) { box.replaceChildren(el('p', { class: 'why' }, `l’aperçu ne répond pas : ${e.message}`)); return; }
+  if (seq !== recuSeq) return;
+  // un champ des sujets qu'on est en train d'écrire garde la main : on ne redessine pas sous les doigts
+  if (box.contains(document.activeElement) && document.activeElement.matches('textarea')) return;
+  const pics = (ap.pictures || []).map((x) => el('div', { class: 'v-pic', title: [x.label, x.role].filter(Boolean).join(' · ') },
+    el('span', { class: 'v-pic-im', style: bg(x.thumb_url) }), el('b', {}, x.tag), el('small', {}, x.label || x.role || '')));
+  // la toile et la durée sont sur les puces de la barre : pas une seconde fois ici
+  const checks = el('ul', { class: 'v-checks' }, ...(ap.checks || []).filter((c) => c.id !== 'toile').map((c) => el('li', { class: (LEVEL[c.level] || LEVEL.ok)[0] },
+    el('i', { 'aria-hidden': 'true' }, (LEVEL[c.level] || LEVEL.ok)[1]), el('span', {}, c.text))));
+  // les sujets : la définition qui part dans subject_definitions (la mise en forme l'écrit en anglais ; vide : la
+  // description de l'élément), et le résumé
+  const subj = F.mode === 'r2v' ? (ap.subjects || []).filter((x) => /^@(element|image)/.test(x.token)) : [];
+  const defs = subj.length ? el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Descriptions'),
+    ...subj.map((x) => el('label', { class: 'v-def' }, el('b', {}, x.token), el('span', { class: 'v-def-t' }, x.title || ''),
+      el('textarea', { class: 'fld', rows: 1, spellcheck: 'false', title: x.description ? `sinon : ${x.description}` : '',
+        placeholder: x.description || 'la description de l’élément',
+        oninput: (e) => { F.subjects = { ...F.subjects, [x.token]: e.target.value }; save(); schedulePlan(); } }, F.subjects?.[x.token] || ''))),
+    el('label', { class: 'v-def' }, el('b', {}, 'résumé'), el('span', { class: 'v-def-t' }, ''),
+      el('textarea', { class: 'fld', rows: 1, spellcheck: 'false', placeholder: 'la première phrase du premier plan',
+        oninput: (e) => { F.summary = e.target.value; save(); schedulePlan(); } }, F.summary || ''))) : null;
+  const w = ap.writer || {};
+  put(box,
+    el('div', { class: 'v-sec v-invite' }, el('div', { class: 'row' },
+      inviteButton(),
+      el('span', { class: 'hint', title: w.up ? `modèle de texte : ${w.model}` : w.why || '' }, w.up ? 'ton prompt réécrit pour H3, en anglais et en plans ; à relire'
+        : 'sans modèle de texte : les plans seulement, sans traduire'))),
+    el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Vérifications'), checks),
+    defs,
+    pics.length ? el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Images envoyées'), el('div', { class: 'v-pics' }, ...pics)) : null,
+    el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Prompt envoyé'),
+      el('pre', { class: 'sent' }, ap.prompt_sent || (ap.ok ? '' : `rien encore : ${ap.errors[0] || ''}`))));
+}
+
+// la mise en forme de l'invite : un travail ; son résultat remplit la barre (l'invite, le son, la musique, les
+// sujets, le résumé) — un geste qu'on annule ; jamais lancée seule
+const INV = { job: null };
+function inviteButton() {
+  const busy = !!INV.job;
+  const empty = !F.p[F.mode].desc.trim();
+  return el('button', { class: 'tb ghost sm v-inv', type: 'button', disabled: busy || empty ? true : null,
+    title: busy ? 'en cours…' : empty ? 'écris d’abord le prompt' : 'réécrire le prompt pour H3',
+    onclick: shapeInvite }, busy ? 'Mise en forme…' : 'Mettre en forme');
+}
+async function shapeInvite() {
+  if (INV.job || !F.p[F.mode].desc.trim()) return;
+  const mode = F.mode;
+  let j;
+  try { j = await api('movie/invite', { method: 'POST', body: { mode, params: params(mode) } }); } catch (e) { toast(e.message, 6000); return; }
+  INV.job = j.id;
+  refreshInvite();
+  try {
+    const done = await jobs.wait(j.id, () => {});
+    if (done.state !== 'done') { toast(`mise en forme : ${done.message || done.state}`, 7000); return; }
+    const inv = done.result?.invite || {};
+    const got = inv.params || {};
+    if (F.mode !== mode) setMode(mode);
+    F.p[mode] = { desc: got.desc ?? F.p[mode].desc, sound: got.sound ?? F.p[mode].sound, music: got.music ?? F.p[mode].music };
+    if (got.subjects) F.subjects = { ...got.subjects };
+    if (got.summary !== undefined) F.summary = got.summary || '';
+    syncFields();
+    if (F.ms.on) syncMultishot();   // la frise relit l'invite : ses plans et leurs temps de coupe
+    changed();
+    toast(inv.source === 'modèle' ? 'prompt mis en forme : relis-le avant de lancer' : 'sans modèle de texte : plans seulement', 6000);
+  } catch (e) { toast(e.message, 6000); }
+  finally { INV.job = null; refreshInvite(); }
+}
+function refreshInvite() {
+  for (const b of $$('.v-inv')) b.replaceWith(inviteButton());
+  if (!$('[data-pop="recu"]').hidden) paintRecu();
+}
 
 // ── réglages avancés ────────────────────────────────────────
 function paintAdv() {
@@ -492,6 +798,33 @@ function paintAdv() {
 }
 $('#a-unet').addEventListener('change', (e) => { F.adv['unet_' + S.opts.modes.find((m) => m.id === F.mode).weights] = e.target.value; changed(); });
 $('#a-crf').addEventListener('input', (e) => { F.adv.crf = e.target.value.replace(/[^0-9]/g, ''); changed(); });
+function paintOutput() {
+  const o = S.opts, pl = S.plan;
+  if (!o) return;
+  if (!o.methods.some((m) => m.id === F.method)) F.method = o.default_method || o.methods[0].id;
+  const meth = o.methods.find((m) => m.id === F.method);
+  const steps = pl?.steps;
+  $('#step-presets').replaceChildren(...meth.steps.map((s) => el('button', { class: 'tb' + (Number(F.steps || steps) === s ? ' on' : ''), type: 'button',
+    onclick: () => { F.steps = String(s); $('#steps').value = F.steps; changed(); paintOutput(); } },
+  `${s}${s === meth.default_steps ? ' · recette' : ''}`)));
+  if (document.activeElement !== $('#steps')) $('#steps').value = F.steps;
+  $('#steps').placeholder = steps ? `auto · ${steps}` : 'auto';
+  const rec = o.recipe || {};
+  $('#profile').replaceChildren(el('b', {}, `${meth.label}${pl ? ` · ${pl.width} × ${pl.height}` : ''}${pl?.draft ? ` (depuis ${pl.draft[0]} × ${pl.draft[1]})` : ''}${steps ? ' · ' + steps + ' pas' : ''}`),
+    el('span', {}, `La recette de Cal : ${(rec.loras || []).map((l) => `${l.name.replace('.safetensors', '')} ${String(l.strength).replace('.', ',')}`).join(' → ')} ; ${rec.attention || ''} ; ${rec.sampler || ''}, planning ${rec.scheduler || ''}.`));
+  if (document.activeElement !== $('#seed')) $('#seed').value = F.seed;
+  paintSeedOrig();
+}
+function paintSeedOrig() {
+  const b = $('#seed-orig');
+  b.hidden = F.origSeed === null || F.origSeed === undefined;
+  b.title = b.hidden ? '' : `la graine de la vidéo réutilisée : ${F.origSeed} — la même recette refait le même plan`;
+}
+$('#steps').addEventListener('input', (e) => { F.steps = e.target.value.replace(/[^0-9]/g, ''); if (e.target.value !== F.steps) e.target.value = F.steps; changed(); });
+$('#seed').addEventListener('input', (e) => { F.seed = e.target.value.replace(/[^0-9]/g, ''); if (e.target.value !== F.seed) e.target.value = F.seed; changed(); });
+$('#seed-rand').addEventListener('click', () => { F.seed = String(Math.floor(Math.random() * 2 ** 31)); $('#seed').value = F.seed; changed(); });
+$('#seed-orig').addEventListener('click', () => { if (F.origSeed == null) return; F.seed = String(F.origSeed); $('#seed').value = F.seed; changed(); });
+$('#adv-graph').addEventListener('toggle', () => { if ($('#adv-graph').open) runPlan(); });
 
 function params(mode = F.mode) {
   const p = F.p[mode];
@@ -499,12 +832,19 @@ function params(mode = F.mode) {
   const out = {
     desc: p.desc, sound: p.sound, music: p.music, method: F.method, frames: F.frames,
     steps: F.steps ? Number(F.steps) : null, seed: F.seed === '' ? null : Number(F.seed),
-    canvas: F.canvas[mode], speech_lang: prefs.get('general.langue', 'fr') === 'en' ? 'en' : 'fr',
+    format: F.format, canvas: F.canvas[mode], speech_lang: prefs.get('general.langue', 'fr') === 'en' ? 'en' : 'fr',
     loras: S.loras.filter((l) => F.loras[l.name]?.on && l.modes.includes(mode) && !l.accel).map((l) => ({ name: l.name, strength: F.loras[l.name].strength })),
     adv: { unet: F.adv['unet_' + w], crf: F.adv.crf || null },
   };
   if (mode === 'i2v') { out.start = F.start; out.end = F.end; }
-  if (mode === 'r2v') { out.inputs = E ? E.get() : F.inputs; out.ref_image_size = F.refSize; }
+  if (mode === 'r2v') {
+    out.inputs = E ? E.get() : F.inputs; out.ref_image_size = F.refSize;
+    const subj = Object.fromEntries(Object.entries(F.subjects || {}).filter(([, v]) => String(v || '').trim()));
+    if (Object.keys(subj).length) out.subjects = subj;
+    if (F.summary.trim()) out.summary = F.summary;
+  }
+  // les plans du Multishot, pour que « Réutiliser » rouvre la frise telle quelle (le prompt, lui, les porte déjà)
+  if (F.ms.on && F.ms.shots) out.multishot = { shots: F.ms.shots.map(({ frames, text, lines }) => ({ frames, text, lines })), lang: lang() };
   return out;
 }
 
@@ -514,47 +854,50 @@ function schedulePlan() { clearTimeout(planT); planT = setTimeout(runPlan, 220);
 async function runPlan() {
   const seq = ++S.seq, mode = F.mode;
   try {
-    const pl = await api('movie/plan', { method: 'POST', body: { mode, params: params(mode), graph: $('#adv').open } });
+    const pl = await api('movie/plan', { method: 'POST', body: { mode, params: params(mode), graph: S.pop === 'adv' || $('#adv-graph').open } });
     if (seq !== S.seq || mode !== F.mode) return;
     S.plan = pl;
     paintPlan();
-  } catch (e) { $('#why').replaceChildren(el('div', {}, 'le portail ne répond pas : ' + e.message)); $('#go').disabled = true; }
+  } catch (e) { $('#why').replaceChildren(el('span', {}, 'le portail ne répond pas : ' + e.message)); $('#go').disabled = true; }
 }
-$('#adv').addEventListener('toggle', () => { if ($('#adv').open) runPlan(); });
+// ce qui manque, en peu de mots sous « Générer » (la phrase entière du serveur au survol)
+const SHORT = [[/^écri(?:vez|s) la description/, 'décris le plan'], [/ajoute(?:z)? une première image/, 'ajoute une image'],
+  [/^ajoute(?:z)? une (?:entrée|référence)/, 'ajoute une référence'], [/ne pointent vers rien/, 'un @ sans référence'],
+  [/ne servent qu'en mode/, 'les @ : en Références'], [/^toile/, 'taille hors limites']];
+const short = (e) => SHORT.find(([rx]) => rx.test(e))?.[1] || e;
 const FIX = [   // chaque blocage mène à ce qui le lève
   [/première image, une dernière/, () => chooseImage('start')],
-  [/ajoutez une entrée/, () => $('#entrees .ent-drop').click()],
+  [/ajoute(?:z)? une (?:entrée|référence)/, () => $('#entrees .ent-drop')?.click()],
   [/ne pointent vers rien|mode Références/, () => descEl.focus()],
-  [/description|déclencheur/, () => descEl.focus()],
+  [/description|déclencheur/, () => (F.ms.on ? $('#ms .ms-ta') : descEl)?.focus()],
+  [/toile/, () => { if (S.pop !== 'fmt') togglePop('fmt'); }],
 ];
 function paintPlan() {
   const pl = S.plan;
-  $('#why').replaceChildren(...pl.errors.map((e) => {
-    const fix = FIX.find(([rx]) => rx.test(e));
-    return el('div', { class: fix ? 'fix' : '', role: fix ? 'button' : null, tabindex: fix ? 0 : null, onclick: fix ? () => fix[1](e) : null }, e);
-  }));
+  const first = pl.errors[0];
+  const fix = first ? FIX.find(([rx]) => rx.test(first)) : null;
+  $('#why').replaceChildren(...(first ? [el('span', { class: fix ? 'fix' : '', role: fix ? 'button' : null, tabindex: fix ? 0 : null,
+    title: pl.errors.join('\n'), onclick: fix ? () => fix[1](first) : null }, short(first) + (pl.errors.length > 1 ? ` (+${pl.errors.length - 1})` : ''))] : []));
   $('#go').disabled = !pl.ok;
-  $('#go').textContent = pl.ok ? `Générer · ${pl.width}×${pl.height} · ${String(pl.seconds.toFixed(1)).replace('.', ',')} s →` : 'Générer la vidéo →';
-  $('#notes').replaceChildren(...pl.notes.map((n) => el('div', {}, n)));
-  $('#sent').textContent = pl.prompt_sent || '';
-  $('#graph').textContent = pl.graph ? JSON.stringify(pl.graph, null, 1) : (pl.ok ? 'ouvrez ce panneau pour le construire' : 'le graphe se construit quand le plan est complet');
-  $('#format-hint').textContent = pl.raw ? 'prompt déjà au format H3 : il part tel quel.'
-    : F.mode === 'r2v' ? `À l’envoi : les six sections du guide ref de MiniMax ; ${Object.entries(pl.mentions || {}).map(([k, v]) => `${k} → ${v}`).join(', ') || 'les jetons deviennent <Subject n>, <Video n>, <Audio n>'}.`
-      : 'À l’envoi : les trois champs du guide de MiniMax' + (F.mode === 'i2v' ? ', et la ligne d’ancrage des images avec la durée.' : '.');
-  paintChips();
+  $('#go').title = pl.ok ? 'Ctrl + Entrée' : pl.errors.join('\n');
+  $('#graph').textContent = pl.graph ? JSON.stringify(pl.graph, null, 1) : (pl.ok ? 'ouvre ce pli pour le construire' : 'le graphe se construit quand le plan est complet');
   paintOutput();
+  paintChips();
+  if (S.pop === 'fmt') paintFmt();
+  if (S.pop === 'recu') paintRecu();
+  refreshAssist();
 }
 $('#go').addEventListener('click', launch);
 async function launch() {
   const pl = S.plan;
-  if (!pl?.ok) return;
+  if (!pl?.ok) { if (pl?.errors?.[0]) toast(pl.errors[0], 5000); return; }
   const mode = F.mode;
   $('#go').disabled = true;
   try {
-    const title = (F.p[mode].desc.replace(/@([\p{L}\p{N}_-]+)/gu, '$1').trim().replace(/\s+/g, ' ') || MODE_FR[mode]).slice(0, 70);
+    const title = (F.p[mode].desc.replace(/\[Shot \d+\]\s*/g, '').replace(/@([\p{L}\p{N}_-]+)/gu, '$1').trim().replace(/\s+/g, ' ') || MODE_FR[mode]).slice(0, 70);
     const j = await jobs.submit('movie.' + mode, params(mode), { title, tool: 'movie' });
     mine(j);
-    toast(pl.engine === 'h3' ? 'rendu en file, en tête du fil : H3 démarre s’il dort' : 'rendu en file, en tête du fil · moteur factice : une vidéo d’essai');
+    toast(pl.engine === 'h3' ? 'rendu lancé : en haut du fil' : 'rendu d’essai lancé : en haut du fil');
   } catch (e) { toast(e.message); }
   finally { $('#go').disabled = !S.plan?.ok; }
 }
@@ -572,15 +915,16 @@ async function paintEngine() {
   const pill = $('#engine-pill');
   try { S.h3 = await api('movie/h3'); } catch { S.h3 = null; }
   const h = S.h3;
-  let cls = 'pill', txt = 'moteur illisible', tip = '';
-  if (h?.engine === 'factice') { cls = 'pill work'; txt = 'moteur factice · pas H3'; tip = 'une vidéo d’essai (mire, vos images, un bip) : le câblage d’H3 vient ensuite'; }
+  let cls = 'pill', txt = 'H3 · état inconnu', tip = '';
+  // le lexique commun : un portail ou un modèle factice se dit « essai », par une pastille
+  if (h?.engine === 'factice') { cls = 'pill work'; txt = 'essai'; tip = 'des vidéos d’essai, pas H3'; }
   else if (h) {
-    const up = h.instances.filter((i) => i.up), st = h.instances.find((i) => i.starting_for != null);
-    const sleeper = h.instances.some((i) => i.managed);   // une instance H3TEST que le gardien démarre
-    cls = 'pill ' + (up.length ? 'on' : st ? 'work' : '');
-    txt = up.length ? `H3 prêt · ${up.map((i) => i.machine).join(' + ')}` : st ? `H3 démarre · ${st.machine}`
+    const upI = h.instances.filter((i) => i.up), st = h.instances.find((i) => i.starting_for != null);
+    const sleeper = h.instances.some((i) => i.managed);   // une instance que le gardien démarre
+    cls = 'pill ' + (upI.length ? 'on' : st ? 'work' : '');
+    txt = upI.length ? `H3 prêt · ${upI.map((i) => i.machine).join(' + ')}` : st ? `H3 démarre · ${st.machine}`
       : sleeper ? 'H3 dort · démarre au rendu' : `H3 ne répond pas · ${h.instances.map((i) => `${i.machine} :${i.port}`).join(', ') || 'aucune instance (lanes.h3)'}`;
-    tip = up.map((i) => `${i.machine} : ${Math.round(i.free_gb ?? 0)} Go libres${i.stops_in != null ? ` · s’arrête dans ${mmss(i.stops_in)}` : ''}`).join('\n');
+    tip = upI.map((i) => `${i.machine} : ${Math.round(i.free_gb ?? 0)} Go libres${i.stops_in != null ? ` · s’arrête dans ${mmss(i.stops_in)}` : ''}`).join('\n');
   }
   pill.className = cls; pill.lastChild.textContent = txt; pill.title = tip;
 }
@@ -592,18 +936,19 @@ function recipeRows(it) {
   const unet = o && p.weights ? (o.unets[p.weights]?.find((u) => u.f === p.unet)?.nom || p.unet) : p.unet;
   return [
     ['Mode', MODE_FR[p.mode]],
-    ['Préréglage', p.method ? `${o?.methods.find((m) => m.id === p.method)?.label || METH_FR[p.method] || p.method}` : null],
-    ['Toile', it.width ? `${it.width} × ${it.height}${p.draft ? ` · depuis ${p.draft[0]} × ${p.draft[1]}` : ''}${p.family ? ' · ' + p.family : ''}` : null],
+    ['Résolution', p.method ? `${o?.methods.find((m) => m.id === p.method)?.label || METH_FR[p.method] || p.method}` : null],
+    ['Taille', it.width ? `${it.width} × ${it.height}${p.draft ? ` · depuis ${p.draft[0]} × ${p.draft[1]}` : ''}${p.family ? ' · ' + p.family : ''}` : null],
     ['Durée', it.duration ? `${it.duration.toFixed(2)} s${p.frames ? ` · ${p.frames} images` : ''}${it.fps ? ` · ${it.fps} i/s` : ''}` : null],
+    ['Plans', p.request?.multishot?.shots?.length ? `${p.request.multishot.shots.length} · multishot` : null],
     ['Pas', p.steps], ['Graine', p.seed],
     ['Sampler', p.sampler ? `${p.sampler} · ${p.scheduler}` : null],
     ['Modèle', unet],
     ['LoRA', p.method !== undefined ? [...(p.recipe_loras || []), ...(p.loras || [])].map((l) => `${l.name.split('/').pop().replace('.safetensors', '')} × ${l.strength}`)
       .concat(p.turbo ? ['turbo du banc'] : []).join(' → ') || 'aucun' : null],
-    ['Entrées', p.mode === 'r2v' ? Object.entries(p.mentions || {}).map(([k, v]) => `${k} → ${v}`).join(' · ') + ` · détail ${p.ref_image_size}` : null],
+    ['Références', p.mode === 'r2v' ? Object.entries(p.mentions || {}).map(([k, v]) => `${k} → ${v}`).join(' · ') + ` · détail ${p.ref_image_size === 'max' ? 'maximal' : 'normal'}` : null],
     ['Images', p.mode === 'i2v' ? [p.start ? 'début' : null, p.end ? 'fin' : null].filter(Boolean).join(' + ') : null],
     ['Son', it.audio ? 'oui, rendu avec l’image' : 'non'],
-    ['Moteur', p.engine === 'factice' ? 'factice · vidéo d’essai, pas H3' : it.origin?.model || it.origin?.tool],
+    ['Rendu par', p.engine === 'factice' ? 'essai (pas H3)' : it.origin?.model || it.origin?.tool],
     ['Rendu', it.render_seconds != null ? `${mmss(it.render_seconds)}${it.machine ? ' · ' + it.machine : ''}${p.estimate ? ` (estimé H3 ${rng(p.estimate)})` : ''}` : null],
   ].filter(([, v]) => v !== null && v !== undefined && v !== '');
 }
@@ -624,6 +969,7 @@ function reuse(it) {
   const mode = p.mode;
   if (!MODE_FR[mode]) { toast(noRecipe(it)); return; }
   const r = requestOf(p);
+  F.mode = mode;
   F.p[mode] = { desc: r.desc ?? it.prompt ?? '', sound: r.sound || '', music: r.music || '' };
   // une vidéo de l'ancien banc (turbo, origine, spectrum) se reprend en Brouillon, à la toile du préréglage
   const old = !PRESETS.includes(r.method);
@@ -631,11 +977,18 @@ function reuse(it) {
   F.seed = ''; F.origSeed = p.seed ?? r.seed ?? null;
   const cv = r.canvas;
   F.canvas[mode] = old || cv == null || cv === 'preset' ? null : cv === 'auto' ? 'auto' : Array.isArray(cv) ? cv.map(Number) : null;
-  F.fam[mode] = F.canvas[mode] === 'auto' ? 'image' : !Array.isArray(F.canvas[mode]) ? '2,4:1'
-    : (S.opts?.canvases.find((c) => c.w === F.canvas[mode][0] && c.h === F.canvas[mode][1])?.family || p.family || 'paysage');
-  if (old) toast('vidéo de l’ancien banc : ses réglages sont repris en Brouillon, la recette de Cal', 6000);
+  F.format = r.format || p.format || '2.4:1';
+  // une toile qui est celle de l'échelle (format, préréglage) n'est pas « libre »
+  const sz = (S.opts?.scale?.formats || []).find((f) => f.id === F.format)?.sizes?.[F.method];
+  if (Array.isArray(F.canvas[mode]) && sz && sz.w === F.canvas[mode][0] && sz.h === F.canvas[mode][1]) F.canvas[mode] = null;
+  F.subjects = r.subjects && typeof r.subjects === 'object' ? { ...r.subjects } : {};
+  F.summary = r.summary || '';
+  if (old) toast('vidéo de l’ancien banc : reprise en Brouillon', 6000);
   if (mode === 'i2v') { F.start = r.start || null; F.end = r.end || null; }
   if (mode === 'r2v') { F.inputs = r.inputs || {}; E?.set(F.inputs); F.refSize = r.ref_image_size || 'match'; $('#ref-size').value = F.refSize; }
+  // le Multishot : ses plans s'ils ont été rangés ; sinon un prompt en [Shot n] le rallume, relu
+  const msr = r.multishot && Array.isArray(r.multishot.shots) ? r.multishot : null;
+  F.ms = { on: !!msr || /\[Shot \d+\]/.test(F.p[mode].desc), shots: msr ? msr.shots : null, lang: msr?.lang || null };
   for (const k of Object.keys(F.loras)) F.loras[k].on = false;
   for (const l of r.loras || []) F.loras[l.name] = { on: true, strength: l.strength };
   const adv = r.adv || {};
@@ -644,16 +997,16 @@ function reuse(it) {
   F.adv.crf = crf && Number(crf) !== 12 ? String(crf) : '';
   if (S.view !== 'create') setView('create');
   setMode(mode);
-  $('#rail .rail-scroll').scrollTop = 0;
-  descEl.focus();
-  toast('réglages repris · graine vidée : « Générer » fait une variante (la graine d’origine : Réglages avancés)', 5500);
+  syncMultishot();
+  (F.ms.on ? $('#ms .ms-ta') : descEl)?.focus();
+  toast('réglages repris : « Générer » fait une variante', 5000);
 }
 async function recreate(it, same = false) {
   try {
     const j = await api('movie/redo', { method: 'POST', body: { item: it.id, same_seed: same } });
     mine(j);
     jobs.poll(true);
-    toast(same ? 'refait à l’identique, même graine : en tête du fil' : 'recréé, nouvelle graine : en tête du fil');
+    toast(same ? 'refait à l’identique : en haut du fil' : 'variante lancée : en haut du fil');
   } catch (e) { toast(e.message, 6000); }
 }
 // la première ou la dernière image d'une vidéo, rangée dans la bibliothèque
@@ -662,7 +1015,7 @@ async function frame(it, which) {
 }
 async function extract(it, which) {
   const img = await frame(it, which);
-  if (img) toast(`« ${img.title} » dans la bibliothèque (Asset) — elle se reprend en image de début, en référence, dans Image`, 6000);
+  if (img) toast(`« ${img.title} » rangée dans la bibliothèque`, 5000);
 }
 // continuer le plan : sa dernière image devient la première d'un nouveau plan
 async function continueFrom(it) {
@@ -672,13 +1025,12 @@ async function continueFrom(it) {
   if (S.view !== 'create') setView('create');
   setMode('i2v');
   await setImage('start', img);
-  toast('la dernière image en début de plan : décrivez la suite', 5000);
+  toast('la dernière image en début de plan : décris la suite', 5000);
 }
 function asRef(it) {
   fil.close();
   if (S.view !== 'create') setView('create');
-  setMode('r2v');
-  if (E) E.add([it]);
+  toBar([it]);
 }
 function toBench(k, it) {
   S.items.set(it.id, it);
@@ -687,13 +1039,13 @@ function toBench(k, it) {
 }
 
 // ── le panneau Asset (commun/dock.js, Ctrl+Espace) ──────────
-// Poser (double-clic, Entrée) va là où la vue ouverte prend un asset : Images →
-// le début, puis la fin ; Références → les entrées, chacune dans sa catégorie ;
-// Comparer → A, puis B. Texte ne prend rien : il le dit. Les filtres suivent.
+// Poser (double-clic, Entrée) fait ce que fait un dépôt sur la barre (toBar) : Images → le début,
+// puis la fin ; sinon les entrées, chacune dans sa catégorie (en Texte, on passe en Références) ;
+// Comparer → A, puis B. Glisser une vignette sur un plan du Multishot l'y écrit.
 const DOCK_CTX = {
-  t2v: { kinds: [], label: 'le mode Texte', why: 'le prompt seul — passer en Images ou en Références pour poser un asset' },
-  i2v: { kinds: ['image', 'element'], label: 'la première image' },
-  r2v: { kinds: ['image', 'element', 'video', 'audio'], label: 'les entrées' },
+  t2v: { kinds: KINDS, label: 'les références (mode Références)' },
+  i2v: { kinds: ['image', 'element'], label: 'la première image, la dernière' },
+  r2v: { kinds: KINDS, label: 'les références' },
   cmp: { kinds: ['video'], label: 'le banc A/B' },
 };
 function followDock() { dock.contexte(DOCK_CTX[S.view === 'cmp' ? 'cmp' : F.mode] || null); }
@@ -704,20 +1056,12 @@ async function dockPlace(items) {
     toBench(!S.A ? 'A' : 'B', v);
     return true;
   }
-  if (F.mode === 'i2v') {
-    const it = items.find((x) => x.kind === 'image' || x.kind === 'element');
-    if (!it) { toast('le début et la fin sont des images (ou l’image d’un élément)'); return false; }
-    const before = [F.start, F.end].join();
-    await setImage(!F.start ? 'start' : 'end', it);
-    return [F.start, F.end].join() !== before;
-  }
-  if (F.mode === 'r2v') return E ? E.add(items) > 0 : false;
-  toast(DOCK_CTX.t2v.why, 5000);
-  return false;
+  return toBar(items);
 }
 dock.configure({
-  placeLabel: 'Poser dans le plan',
-  hint: 'double-clic : dans le plan · glisser : sur une image, une entrée, A ou B',
+  label: 'la barre',
+  placeLabel: 'Poser dans la barre',
+  hint: 'double-clic : dans la barre · glisser : sur la barre, un plan du multishot, A ou B',
   place: (items) => dockPlace(items),
   menu: (it, chosen) => {
     const one = chosen.length === 1;
@@ -729,11 +1073,13 @@ dock.configure({
       img && F.mode === 'i2v' ? { label: 'En image de début', onclick: () => setImage('start', it) } : null,
       img && F.mode === 'i2v' ? { label: 'En image de fin', onclick: () => setImage('end', it) } : null,
       img && F.mode !== 'i2v' ? { label: 'En image de début', sub: 'mode Images', onclick: () => { setMode('i2v'); setImage('start', it); } } : null,
-      F.mode !== 'r2v' ? { label: 'En entrée', sub: 'mode Références', onclick: () => { setMode('r2v'); E?.add(chosen); } } : null,
+      F.mode !== 'r2v' ? { label: 'En référence', sub: 'mode Références', onclick: () => { setMode('r2v'); E?.add(chosen); } } : null,
       it.kind === 'video' && one ? { label: 'Comparer', sub: 'en A', onclick: () => toBench('A', it) } : null,
     ];
   },
 });
+// la barre entière prend un dépôt (ses emplacements — début, fin, une vignette, un plan — le prennent d'abord)
+dropZone($('#pbar'), { kinds: KINDS, multiple: true, via: 'movie', label: 'la barre', onitems: (items) => toBar(items) });
 const go = (path) => () => { location.href = href(path); };
 function menuFor(it) {
   const id = it.id;
@@ -744,15 +1090,15 @@ function menuFor(it) {
       { label: 'La dernière', onclick: () => extract(it, 'last') },
     ] },
     { label: 'Continuer le plan', icon: '→', sub: 'dernière image', title: 'sa dernière image en première image d’un nouveau plan', onclick: () => continueFrom(it) },
-    { label: 'Prendre en référence', icon: '+', sub: '@video', title: 'dans les entrées du mode Références', onclick: () => asRef(it) },
+    { label: 'Prendre en référence', icon: '+', sub: '@video', onclick: () => asRef(it) },
     { label: 'Comparer', icon: '◧', items: [
       { label: 'en A', onclick: () => toBench('A', it) },
       { label: 'en B', onclick: () => toBench('B', it) },
     ] },
-    { label: 'Agrandir dans Upscale', icon: '⇱', disabled: !vid, why: 'pas une vidéo', onclick: go(`upscale/?src=${id}`) },
+    { label: 'Agrandir', icon: '⇱', disabled: !vid, why: 'pas une vidéo', onclick: go(`upscale/?src=${id}`) },
     { label: 'Envoyer au Montage', icon: '▤', studio: true, onclick: go(`montage/?add=${id}`) },   // retiré sans le Studio (commun/menu.js)
     { label: 'Créer un élément', icon: '◆', disabled: true,
-      why: 'un élément se fait d’images (et d’une voix) : tirez d’abord une image de la vidéo (⋯ → Extraire une image), puis faites l’élément depuis Image ou Asset' },
+      why: 'extrais d’abord une image (⋯ → Extraire une image), puis crée l’élément dans Asset' },
   ];
 }
 function extra(it) {
@@ -770,7 +1116,7 @@ function extra(it) {
 function badge(it) {
   const p = it.params || {};
   if (!p.mode) return it.origin?.tool === 'upload' ? 'déposée' : (it.origin?.tool || 'vidéo');
-  return ['H3', MODE_FR[p.mode], METH_FR[p.method] || '', p.engine === 'factice' ? 'factice' : ''].filter(Boolean).join(' · ');
+  return ['H3', MODE_FR[p.mode], METH_FR[p.method] || '', p.engine === 'factice' ? 'essai' : ''].filter(Boolean).join(' · ');
 }
 
 // ── la file dans le fil : les rendus en file, en cours, et mes échecs récents ──
@@ -811,7 +1157,7 @@ function mountFil() {
     promptLabel: 'Prompt',
     badge,
     chips: (it) => [it.width ? `${it.width}×${it.height}` : '', it.duration ? `${it.duration.toFixed(1).replace('.', ',')} s` : '',
-      it.params?.family || '', it.audio ? 'son' : 'muet'],
+      it.params?.request?.multishot?.shots?.length ? `${it.params.request.multishot.shots.length} plans` : '', it.audio ? 'son' : 'muet'],
     details: (it) => recipeRows(it),
     extra,
     viewerActions: (it) => [
@@ -828,7 +1174,7 @@ function mountFil() {
     },
     menu: menuFor,
     link: (it) => href('movie/#' + it.id),
-    empty: 'Choisissez un mode, décrivez la scène et le son, « Générer » : le rendu paraît ici dès l’envoi, avec sa place dans la file ; la vidéo reste dans la bibliothèque jusqu’à sa suppression.',
+    empty: 'Tes vidéos s’afficheront ici. Décris le plan en bas, puis « Générer ».',
   });
 }
 
@@ -870,6 +1216,14 @@ document.addEventListener('sr:job', (e) => {
 });
 setInterval(() => { if (S.jobs.some((j) => j.state === 'running')) fil?.paintJobs(); }, 1000);   // l'écoulé avance
 
+// ── la barre : sa hauteur (le fil garde sa marge basse) ─────
+{
+  const box = $('#pbar');
+  const setH = () => document.documentElement.style.setProperty('--pbar-h', `${Math.ceil(box.getBoundingClientRect().height)}px`);
+  if ('ResizeObserver' in window) new ResizeObserver(setH).observe(box);
+  setH();
+}
+
 // ── le banc A/B (repris du banc NL de Cal) ──────────────────
 const vA = $('#vA'), vB = $('#vB'), mon = $('#monitor'), layA = $('#layA'), layB = $('#layB'), handle = $('#handle');
 const zsA = $('#zsA'), zsB = $('#zsB'), scrub = $('#scrub'), fill = $('#fill');
@@ -887,7 +1241,7 @@ function paintSlots() {
       el('b', { class: 'k' }, k),
       el('div', { class: 'th', style: bg(it?.thumb_url) }),
       el('div', { class: 'ab-txt' }, el('span', { class: 't' }, it ? (it.title || it.id) : 'aucun plan'),
-        el('span', { class: 'lbl' }, it ? [p.mode ? MODE_FR[p.mode] : null, p.method || null, it.width ? `${it.width}×${it.height}` : null].filter(Boolean).join(' · ') : 'à choisir, ou déposez une vidéo ici')),
+        el('span', { class: 'lbl' }, it ? [p.mode ? MODE_FR[p.mode] : null, p.method || null, it.width ? `${it.width}×${it.height}` : null].filter(Boolean).join(' · ') : 'à choisir, ou dépose une vidéo ici')),
       el('button', { class: 'tb ghost sm', type: 'button', onclick: () => chooseAB(k) }, 'Choisir'));
   }
 }
@@ -1026,7 +1380,7 @@ function paintMetas(a, b) {   // les recettes côte à côte : ce qui diffère e
   const differs = (k) => ra && rb && k !== 'Rendu' && String(ra[k] ?? '') !== String(rb[k] ?? '');
   const dk = keys.filter(differs);
   const bare = a && b && !a.params?.mode && !b.params?.mode;
-  $('#diffline').replaceChildren(!(a && b) ? el('span', { class: 'lbl' }, 'choisissez deux plans pour voir ce qui diffère')
+  $('#diffline').replaceChildren(!(a && b) ? el('span', { class: 'lbl' }, '')   // le moniteur dit déjà qu'il faut deux plans
     : bare ? el('span', {}, 'ces vidéos n’ont pas de recette (déposées, pas faites ici) : seuls l’image et le son se comparent')
     : dk.length ? el('span', {}, el('b', {}, `${dk.length} différence${dk.length > 1 ? 's' : ''}`), ' · ' + dk.join(', ').toLowerCase())
       : el('span', {}, 'mêmes réglages : seul le hasard du rendu les sépare'));
@@ -1037,7 +1391,7 @@ function paintMetas(a, b) {   // les recettes côte à côte : ce qui diffère e
     box.replaceChildren(el('span', { class: 'dots' }), head, el('div', { class: 'name' }, it.title || it.id),
       el('dl', { class: 'kv' }, ...keys.filter((x) => r[x] !== undefined && r[x] !== '').flatMap((x) => {
         const d = differs(x) ? 'diff' : '';
-        const long = x === 'Prompt' || x === 'Son demandé' || x === 'Entrées' ? ' long' : '';
+        const long = x === 'Prompt' || x === 'Son demandé' || x === 'Références' ? ' long' : '';
         return [el('dt', { class: d }, x), el('dd', { class: (d + long + (x === 'Rendu' ? ' big' : '')).trim() }, String(r[x]))];
       })));
   }
@@ -1051,7 +1405,7 @@ dropAnywhere(async (files) => {
   for (const f of files) {
     try { await uploadFile(f, { tool: 'upload', via: 'movie' }); n++; } catch (e) { toast(`${f.name} : ${e.message}`); }
   }
-  if (n) toast(`${n > 1 ? n + ' fichiers rangés' : 'rangé'} dans la bibliothèque · Upload — déposez sur un emplacement pour vous en servir`);
+  if (n) toast(`${n > 1 ? n + ' fichiers rangés' : 'rangé'} dans la bibliothèque : à déposer sur la barre pour s’en servir`);
   fil?.reload();
 });
 
@@ -1071,6 +1425,7 @@ dropAnywhere(async (files) => {
   if (refId) { const it = await item(refId); if (it && E) E.add([it]); }   // ?ref=<id> : l'objet entre dans sa catégorie
   mountFil();
   setMode(F.mode);
+  syncMultishot();
   // à partir d'ici, chaque changement du formulaire est un geste (le mode suit sans en faire un)
   form = U.snapshots({ get: () => F, set: formRestore, describe: formDescribe, ignore: ['mode'] });
   form.reset();
@@ -1099,12 +1454,12 @@ pageMenu(() => {
       { label: 'Choisir le plan A…', icon: 'A', onclick: () => chooseAB('A') }, { label: 'Choisir le plan B…', icon: 'B', onclick: () => chooseAB('B') },
       { label: 'Revenir à la création', icon: '‹', onclick: () => setView('create') }];
   }
-  const go = $('#go');
-  const why = [...$$('#why > div')].map((n) => n.textContent).join(' · ');
+  const why = S.plan?.errors?.join(' · ') || '';
   return [{ head: `Vidéo · ${MODE_FR[F.mode]}` },
-    { label: go?.textContent || 'Générer la vidéo', icon: '▶', disabled: !go || go.disabled, why: why || 'le plan n’est pas complet', onclick: launch },
+    { label: 'Générer', icon: '▶', key: 'Ctrl+Entrée', disabled: !S.plan?.ok, why: why || 'le plan n’est pas complet', onclick: launch },
     '-',
     ...Object.entries(MODE_FR).map(([m, lab]) => ({ label: lab.charAt(0).toUpperCase() + lab.slice(1), checked: F.mode === m, onclick: () => setMode(m) })),
+    { label: 'Multishot', checked: !!F.ms.on, onclick: toggleMultishot },
     F.mode === 'i2v' ? { label: 'Choisir l’image de début…', icon: '▭', onclick: () => chooseImage('start') } : null,
     F.mode === 'i2v' ? { label: 'Choisir l’image de fin…', icon: '▭', onclick: () => chooseImage('end') } : null,
     '-',

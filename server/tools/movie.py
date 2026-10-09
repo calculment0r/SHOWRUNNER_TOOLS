@@ -1520,7 +1520,10 @@ def _prep_start(ctx, pic: dict, width: int, height: int, name: str = "premiere.p
 
 # ce que la page envoie pour un plan (movie.js, params()) : de quoi le refaire tel quel
 REQUEST_KEYS = ("desc", "sound", "music", "method", "frames", "steps", "seed", "canvas", "loras", "adv",
-                "start", "end", "inputs", "ref_image_size", "format", "subjects", "speech_lang")
+                "start", "end", "inputs", "ref_image_size", "format", "subjects", "speech_lang",
+                # la page Vidéo (09/10) : le résumé que la mise en forme écrit, les plans du Multishot — « Réutiliser »
+                # les rend tels quels (la frise, ses durées)
+                "summary", "multishot")
 
 
 def request_of(rec: dict) -> dict:
