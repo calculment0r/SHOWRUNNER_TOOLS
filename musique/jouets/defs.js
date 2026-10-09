@@ -39,6 +39,9 @@ const PORT = [
 ];
 const NOTE = [O('note', 'Note', NOTES, 0)];
 const GAMME = [O('root', 'Tonique', NOTES, 0), O('scale', 'Gamme', SCALES.map((s) => s.n), 0)];
+// attracteurs (09/10, musique/facettes.js) : la sorte de chaque réglage continu,
+// ceux de port compris ; la physique d'une scène décide quand ses notes partent
+const PORT_S = { oct: 'hauteur', dur: 'duree' };
 
 const J = (o) => ({ jouet: true, role: 'jouet', color: 'coral-3', ...o });
 const FX = (o) => ({ jouet: true, role: 'effect', color: 'cy', ...o });
@@ -48,51 +51,68 @@ const FX = (o) => ({ jouet: true, role: 'effect', color: 'cy', ...o });
 export const JOUETS = {
   fount: J({ no: '00', name: 'Shuffle fountain', kind: 'aléa par gravité', hint: 'clique pour tirer', w: 780, h: 540,
     params: [P('force', 'Force', 10, 100, 62), P('rate', 'Débit', 0, 100, 34), P('fuse', 'Fusion', 100, 3000, 700, 'ms', 0, ms), P('hold', 'Maintien', 200, 6000, 2200, 'ms', 0, ms), ...NOTE, ...PORT],
-    face: ['force', 'rate', 'fuse', 'hold'], ins: ['notes', 'mod'], outs: ['notes'] }),
+    face: ['force', 'rate', 'fuse', 'hold'], ins: ['notes', 'mod'], outs: ['notes'],
+    sortes: { force: 'mouvement', rate: 'cadence', fuse: 'duree', hold: 'duree', ...PORT_S } }),
   reel: FX({ no: '01', name: 'Reel–2', kind: 'écho à bande', hint: 'glisse sur la bande pour scruber', w: 640, h: 400,
     params: [P('speed', 'Vitesse', 0, 100, 46), P('fdb', 'Feedback', 0, 100, 52), P('wow', 'Wow', 0, 100, 22)],
-    face: ['speed', 'fdb', 'wow'], ins: ['audio', 'mod'], outs: ['audio', 'mod'], modOut: 'bande' }),
+    face: ['speed', 'fdb', 'wow'], ins: ['audio', 'mod'], outs: ['audio', 'mod'], modOut: 'bande',
+    sortes: { speed: 'cadence', fdb: 'espace', wow: 'modulation' } }),
   alch: FX({ no: '02', name: 'Alchimie', kind: 'mélange', hint: 'baisse le niveau : la fiole se penche', w: 420, h: 400,
     params: [P('level', 'Niveau', 0, 100, 72), P('visc', 'Viscosité', 0, 100, 40)],
-    face: ['level', 'visc'], ins: ['audio', 'mod'], outs: ['audio', 'mod'], modOut: 'niveau' }),
+    face: ['level', 'visc'], ins: ['audio', 'mod'], outs: ['audio', 'mod'], modOut: 'niveau',
+    sortes: { level: 'niveau', visc: 'mouvement' } }),
   pong: J({ no: '03', name: 'Ping–pong', kind: 'générateur de trigs', hint: 'attrape la balle et lâche-la', w: 520, h: 400,
     params: [P('grav', 'Gravité', 20, 200, 92, 'g', 0, g), P('elast', 'Rebond', 40, 99, 82), P('spin', 'Effet', -100, 100, 0, '', 0, sgn), ...NOTE, ...PORT],
-    face: ['grav', 'elast', 'spin'], ins: ['notes', 'mod'], outs: ['notes', 'mod'], modOut: 'hauteur' }),
+    face: ['grav', 'elast', 'spin'], ins: ['notes', 'mod'], outs: ['notes', 'mod'], modOut: 'hauteur',
+    sortes: { grav: 'mouvement', elast: 'mouvement', spin: 'mouvement', ...PORT_S } }),
   sling: J({ no: '04', name: 'Lance–pierre', kind: 'tir sur cible mobile', hint: 'tire la boule en arrière et lâche', w: 640, h: 440,
     params: [P('band', 'Tension', 30, 100, 72), P('tspd', 'Cible', 0, 100, 58), ...GAMME, ...PORT],
-    face: ['band', 'tspd'], ins: ['notes', 'mod'], outs: ['notes'] }),
+    face: ['band', 'tspd'], ins: ['notes', 'mod'], outs: ['notes'],
+    sortes: { band: 'mouvement', tspd: 'mouvement', ...PORT_S } }),
   sprg: FX({ no: '05', name: 'Ressort', kind: 'réverbération', hint: 'pince le ressort et relâche', w: 420, h: 440,
     params: [P('decay', 'Decay', 0, 100, 64), P('tens', 'Tension', 10, 100, 55), P('mix', 'Mix', 0, 100, 38)],
-    face: ['decay', 'tens', 'mix'], ins: ['audio', 'notes', 'mod'], outs: ['audio', 'mod'], modOut: 'énergie' }),
+    face: ['decay', 'tens', 'mix'], ins: ['audio', 'notes', 'mod'], outs: ['audio', 'mod'], modOut: 'énergie',
+    // la tension du ressort règle l'amorti de la réverbe (jouets/son.js)
+    sortes: { decay: 'espace', tens: 'coupure', mix: 'espace' } }),
   mag: FX({ no: '06', name: 'Aimant', kind: 'filtre à trajectoire', hint: 'dessine un chemin : il se boucle', w: 520, h: 440,
     params: [P('force', 'Champ', 10, 100, 62), O('bars', 'Boucle', ['1 mes.', '2 mes.', '4 mes.', '8 mes.'], 1), P('grain', 'Grain', 0, 100, 40)],
-    face: ['force', 'bars', 'grain'], ins: ['audio', 'mod'], outs: ['audio', 'mod'], modOut: 'coupure' }),
+    face: ['force', 'bars', 'grain'], ins: ['audio', 'mod'], outs: ['audio', 'mod'], modOut: 'coupure',
+    sortes: { force: 'mouvement', grain: 'mouvement' } }),
   ninja: J({ no: '07', name: 'Ninja', kind: 'notes lancées', hint: 'tranche les formes · combo = harmoniques', w: 780, h: 480,
     params: [O('root', 'Tonique', NOTES, 0), O('scale', 'Gamme', SCALES.map((s) => s.n), 0), P('pull', 'Pull', 20, 100, 62), ...PORT],
-    face: ['root', 'scale', 'pull'], ins: ['notes', 'mod'], outs: ['notes'] }),
+    face: ['root', 'scale', 'pull'], ins: ['notes', 'mod'], outs: ['notes'],
+    sortes: { pull: 'mouvement', ...PORT_S } }),
   shake: J({ no: '08', name: 'Secousse', kind: 'boîte à billes', hint: 'secoue le bloc par son en-tête', w: 420, h: 480,
     params: [P('fric', 'Friction', 0, 100, 28), P('num', 'Billes', 3, 14, 8, '', 1, sgn), ...PORT],
-    face: ['fric', 'num'], ins: ['notes', 'mod'], outs: ['notes', 'mod'], modOut: 'agitation' }),
+    face: ['fric', 'num'], ins: ['notes', 'mod'], outs: ['notes', 'mod'], modOut: 'agitation',
+    sortes: { fric: 'mouvement', num: 'cadence', ...PORT_S } }),
   pach: J({ no: '09', name: 'Pachinko', kind: 'probabilités', hint: 'clique en haut pour lâcher une bille', w: 380, h: 480,
     params: [P('bias', 'Biais', -100, 100, 0, '', 0, sgn), P('rate', 'Débit', 0, 100, 30), ...GAMME, ...PORT],
-    face: ['bias', 'rate'], ins: ['notes', 'mod'], outs: ['notes', 'mod'], modOut: 'bac' }),
+    face: ['bias', 'rate'], ins: ['notes', 'mod'], outs: ['notes', 'mod'], modOut: 'bac',
+    // le biais penche les billes vers les bacs graves ou aigus : la note
+    sortes: { bias: 'hauteur', rate: 'cadence', ...PORT_S } }),
   toast: J({ no: '10', name: 'Grille–pain', kind: 'trig à retardement', hint: 'baisse le levier · ça saute tout seul', w: 480, h: 340,
     params: [P('brown', 'Brunissage', 0, 100, 62), P('pop', 'Ressort', 30, 100, 72), P('slices', 'Tranches', 1, 2, 2, '', 1, sgn), ...PORT],
-    face: ['brown', 'pop', 'slices'], ins: ['notes', 'mod'], outs: ['notes', 'mod'], modOut: 'chaleur' }),
+    face: ['brown', 'pop', 'slices'], ins: ['notes', 'mod'], outs: ['notes', 'mod'], modOut: 'chaleur',
+    // la cuisson grave la note sur la tranche (jouets/scenes.js)
+    sortes: { brown: 'hauteur', pop: 'mouvement', slices: 'cadence', ...PORT_S } }),
   pin: J({ no: '11', name: 'Flipper', kind: 'notes à mémoriser', hint: 'survole · clic gauche / clic droit = palettes', w: 460, h: 660,
     params: [P('grav', 'Gravité', 20, 200, 104, 'g', 0, g), P('kick', 'Palette', 30, 100, 70), P('idle', 'Patience', 3, 14, 7, 's', 0, (v) => String(Math.round(v))), ...PORT],
-    face: ['grav', 'kick', 'idle'], ins: ['notes', 'mod'], outs: ['notes'] }),
+    face: ['grav', 'kick', 'idle'], ins: ['notes', 'mod'], outs: ['notes'],
+    sortes: { grav: 'mouvement', kick: 'mouvement', idle: 'duree', ...PORT_S } }),
   inv: J({ no: '12', name: 'Navette', kind: 'défilement infini', hint: 'survole · flèches = déplacer · clic = tirer', w: 560, h: 660,
     params: [P('spd', 'Descente', 10, 100, 42), P('dens', 'Densité', 10, 100, 46), P('rate', 'Cadence', 20, 100, 64), ...GAMME, ...PORT],
-    face: ['spd', 'dens', 'rate'], ins: ['notes', 'mod'], outs: ['notes'] }),
+    face: ['spd', 'dens', 'rate'], ins: ['notes', 'mod'], outs: ['notes'],
+    sortes: { spd: 'mouvement', dens: 'cadence', rate: 'cadence', ...PORT_S } }),
   newt: J({ no: '13', name: 'Berceau', kind: 'conservation du mouvement', hint: 'tire une bille de bout et lâche', w: 700, h: 420,
     params: [P('damp', 'Amorti', 0, 100, 12), P('num', 'Billes', 5, 7, 7, '', 1, sgn), P('len', 'Longueur', 40, 100, 74), ...PORT],
-    face: ['damp', 'num', 'len'], ins: ['notes', 'mod'], outs: ['notes', 'mod'], modOut: 'énergie' }),
+    face: ['damp', 'num', 'len'], ins: ['notes', 'mod'], outs: ['notes', 'mod'], modOut: 'énergie',
+    sortes: { damp: 'mouvement', num: 'cadence', len: 'mouvement', ...PORT_S } }),
   // l'horloge n'est pas du Playground : elle donne aux jouets le temps du
   // transport (une note par division, tant qu'il joue)
   horloge: J({ no: '', name: 'Horloge', kind: 'le temps du transport', hint: 'une note par division, tant que le transport joue', color: 'ink2', scene: false,
     params: [O('div', 'Division', ['1/1', '1/2', '1/4', '1/8', '1/16'], 2), ...NOTE, P('oct', 'Octave', 1, 7, 4, '', 1), P('dur', 'Durée', 0.125, 4, 0.25, 'temps', 0)],
-    face: ['div', 'note'], ins: [], outs: ['notes'] }),
+    face: ['div', 'note'], ins: [], outs: ['notes'], sortes: PORT_S }),
 };
 export const JOUET_TYPES = Object.keys(JOUETS);
 // les instruments qui reçoivent des notes (le lecteur de clips audio n'en joue pas)

@@ -33,6 +33,7 @@ import { VolumeEffect } from './odio/effects/volume.js';
 import { JOUETS } from './jouets/defs.js';   // jouets : les quatorze jouets du Playground de Cal (musique/jouets/)
 import { ARP_MODES, ARP_DIVS } from './arpege.js';   // l'arpégiateur des instruments mélodiques (06/10)
 import { BANQUE } from './prereglages.js';   // la banque de préréglages (06/10, docs/etudes/odio_synthes.md)
+import { declarer } from './facettes.js';   // attracteurs : la sorte de chaque réglage, sa facette (09/10)
 
 // ── les sortes de réglage ───────────────────────────────────
 // { k, label, min, max, def, unit, curve: 'lin' | 'log', step, opts: [libellés] }
@@ -53,10 +54,12 @@ export const DRUM_VOICES = [
 ];
 
 const drumParams = [P('lvl', 'Niveau', -40, 6, 0, 'dB')];
+const drumSortes = { lvl: 'niveau' };
 for (const v of DRUM_VOICES) {
   drumParams.push(P(`${v.id}_tune`, `${v.short} accord`, -12, 12, 0, 'dt', 'lin', 1));
   drumParams.push(P(`${v.id}_dec`, `${v.short} déclin`, 0.25, 4, 1, '×', 'log'));
   drumParams.push(P(`${v.id}_lvl`, `${v.short} niveau`, -40, 6, 0, 'dB'));
+  Object.assign(drumSortes, { [`${v.id}_tune`]: 'accord', [`${v.id}_dec`]: 'enveloppe', [`${v.id}_lvl`]: 'niveau' });
 }
 
 export const WAVES = ['sine', 'triangle', 'sawtooth', 'square'];   // OscillatorNode.type (MDN)
@@ -78,12 +81,19 @@ export const ARP_PARAMS = [
   P('arp_gate', 'Durée', 0.05, 1, 0.5, ''),
 ];
 const ARP_KEYS = new Set(ARP_PARAMS.map((x) => x.k));
+const ARP_SORTES = { arp_oct: 'hauteur', arp_gate: 'duree' };
+
+// LES SORTES DES RÉGLAGES (09/10, musique/facettes.js) : chaque module dit,
+// pour chacun de ses réglages continus, ce qu'il est ; la sorte donne la
+// facette qu'un attracteur capte, ou le met hors attracteurs. Un réglage
+// discret n'a rien à déclarer (hors d'office). Un module neuf déclare les
+// siens : la garde (server/tools/music_attracteurs.py) refuse un oubli.
 
 export const MODULES = {
   // ── sources ──
   drums: {
     name: 'DR-9', kind: 'boîte à rythmes', role: 'source', color: 'or',
-    params: drumParams, face: ['lvl'],
+    params: drumParams, face: ['lvl'], sortes: drumSortes,
   },
   synth: {
     name: 'Synthé', kind: 'soustractif', role: 'source', color: 'cy',
@@ -124,6 +134,10 @@ export const MODULES = {
       ...ARP_PARAMS,
     ],
     face: ['cut', 'res', 'd', 'vol'],
+    sortes: { oct: 'hauteur', uni: 'forme', det: 'desaccord', oct2: 'hauteur', mix2: 'forme', cut: 'coupure', res: 'resonance',
+      fenv: 'enveloppe', fdec: 'enveloppe', a: 'enveloppe', d: 'enveloppe', s: 'enveloppe', r: 'enveloppe', vol: 'niveau',
+      osc: 'forme', noise: 'forme', glide: 'glisse', penv: 'enveloppe', pdec: 'enveloppe',
+      lfo_f: 'modulation', lfo_d: 'modulation', lfo_p: 'desaccord', lfo_c: 'modulation', lfo_a: 'modulation', ...ARP_SORTES },
     sections: [['Oscillateur A', ['wave', 'oct', 'uni', 'det']], ['Oscillateur B', ['wave2', 'oct2', 'mix2']],
       ['Bruit · hauteur', ['osc', 'noise', 'glide', 'penv', 'pdec']],
       ['Filtre', ['cut', 'res', 'fenv', 'fdec']], ['Enveloppe', ['a', 'd', 's', 'r']],
@@ -139,12 +153,13 @@ export const MODULES = {
       P('vol', 'Volume', -40, 6, -3, 'dB'),
     ],
     face: ['root', 'start', 'vol'],
+    sortes: { root: 'hauteur', start: 'forme', a: 'enveloppe', r: 'enveloppe', vol: 'niveau' },
   },
   player: {
     name: 'Lecteur', kind: 'clips audio', role: 'source', color: 'grn2',
     // -6 dB : un son généré arrive mastérisé près de 0 dBFS (ACE-Step : -0,4 dB
     // mesuré le 28/09) ; posé à côté de la batterie, il saturerait la sortie
-    params: [P('vol', 'Volume', -40, 6, -6, 'dB')], face: ['vol'],
+    params: [P('vol', 'Volume', -40, 6, -6, 'dB')], face: ['vol'], sortes: { vol: 'niveau' },
   },
   // ── effets ──
   delay: {
@@ -158,6 +173,7 @@ export const MODULES = {
       O('dry', 'Son sec', ['Garder', 'Couper'], 0),
     ],
     face: ['div', 'fb', 'mix'],
+    sortes: { fb: 'espace', tone: 'coupure', mix: 'espace' },
   },
   reverb: {
     name: 'Réverbération', kind: 'convolution', role: 'effect', color: 'cy',
@@ -168,6 +184,7 @@ export const MODULES = {
       P('mix', 'Mix', 0, 1, 0.25, ''),
     ],
     face: ['time', 'damp', 'mix'],
+    sortes: { time: 'espace', pre: 'espace', damp: 'coupure', mix: 'espace' },
   },
   comp: {
     name: 'Compresseur', kind: 'dynamique', role: 'effect', color: 'coral-1',
@@ -181,6 +198,7 @@ export const MODULES = {
       P('gain', 'Gain', 0, 24, 3, 'dB'),
     ],
     face: ['thr', 'ratio', 'gain'],
+    sortes: { thr: 'dynamique', ratio: 'dynamique', att: 'dynamique', rel: 'dynamique', knee: 'dynamique', gain: 'niveau' },
   },
   // l'égaliseur paramétrique : cinq bandes, la découpe d'EQ Eight (coupe-bas,
   // plateau, cloche, plateau, coupe-haut) ; les deux coupes éteintes et le Q
@@ -201,6 +219,9 @@ export const MODULES = {
       P('out', 'Sortie', -24, 12, 0, 'dB'),
     ],
     face: ['lg', 'mg', 'hg'],
+    // le Q d'une coupe-haut est sa résonance (la bosse à la coupure)
+    sortes: { lf: 'bande', lg: 'bande', mf: 'bande', mg: 'bande', hf: 'aigu', hg: 'aigu', mq: 'bande',
+      hpf: 'bande', hpq: 'bande', lpf: 'coupure', lpq: 'resonance', out: 'niveau' },
   },
   filter: {
     name: 'Filtre', kind: 'résonant', role: 'effect', color: 'cy',
@@ -210,23 +231,25 @@ export const MODULES = {
       P('q', 'Résonance', 0.1, 20, 1, '', 'log'),
     ],
     face: ['freq', 'q'],
+    sortes: { freq: 'coupure', q: 'resonance' },
   },
   dist: {
     name: 'Distorsion', kind: 'saturation', role: 'effect', color: 'coral-1',
     params: [P('drive', 'Saturation', 0, 100, 30, ''), P('tone', 'Ton', 500, 16000, 6000, 'Hz', 'log'),
       P('mix', 'Mix', 0, 1, 1, ''), P('out', 'Sortie', -24, 6, -6, 'dB')],
     face: ['drive', 'mix'],
+    sortes: { drive: 'saturation', tone: 'coupure', mix: 'saturation', out: 'niveau' },
   },
   // ── la console ──
   strip: {
     name: 'Piste', kind: 'tranche', role: 'strip', color: 'ink2',
     params: [P('vol', 'Volume', -60, 6, 0, 'dB'), P('pan', 'Panoramique', -1, 1, 0, '')],
-    face: ['vol', 'pan'],
+    face: ['vol', 'pan'], sortes: { vol: 'niveau', pan: 'pano' },
   },
   // l'entrée d'un bus d'effets : ce que les envois de la console y versent
   bus: {
     name: 'Retour', kind: 'entrée de bus', role: 'bus', color: 'cy',
-    params: [P('in', 'Entrée', -24, 12, 0, 'dB')], face: ['in'],
+    params: [P('in', 'Entrée', -24, 12, 0, 'dB')], face: ['in'], sortes: { in: 'niveau' },
   },
   master: {
     name: 'Sortie', kind: 'master', role: 'master', color: 'grn2',
@@ -237,7 +260,7 @@ export const MODULES = {
       P('arc_lo', 'Arc · coupure basse', 80, 8000, 350, 'Hz', 'log'),
       P('arc_db', 'Arc · volume bas', -36, 0, -12, 'dB'),
     ],
-    face: ['vol'],
+    face: ['vol'], sortes: { vol: 'niveau', arc_lo: 'arc', arc_db: 'arc' },
   },
 };
 
@@ -247,24 +270,48 @@ export const MODULES = {
 // réglage qui ne ferait rien ici (l'envoi de la table de mix n'est branché
 // sur rien dans la console d'ODIO — la console a ses propres envois).
 // `trim` : le gain de sortie de l'adaptateur, pour que chaque instrument
-// arrive au niveau des autres (mesuré, docs/etudes/musique.md).
+// arrive au niveau des autres (mesuré, docs/etudes/musique.md). `sortes` :
+// la sorte de chaque réglage continu (musique/facettes.js), sur les
+// identifiants de ses descripteurs.
+// la boîte à rythme : quatre réglages par voix (odio/instruments/rhythm-box.js)
+const SORTES_RYTHME = { drive: 'saturation', gain: 'niveau' };
+for (const v of VOIX) Object.assign(SORTES_RYTHME, { [`${v.id}.tune`]: 'accord', [`${v.id}.decay`]: 'enveloppe', [`${v.id}.ctrl`]: 'forme', [`${v.id}.niv`]: 'niveau' });
+const SORTES_ENV = { attack: 'enveloppe', decay: 'enveloppe', sustain: 'enveloppe', release: 'enveloppe', gain: 'niveau' };
 const ODIO = {
-  rythme: { cls: RhythmBox, name: 'Boîte à rythme', kind: '808 · 909 · onze voix', role: 'source', color: 'or', drum: true, face: ['kit', 'drive', 'gain'], trim: -8 },
-  analog: { cls: AnalogSynth, name: 'Analog', kind: 'soustractif · ODIO', role: 'source', color: 'cy', face: ['cutoff', 'resonance', 'decay', 'gain'], trim: -6 },
-  acid: { cls: AcidBass, name: 'Basse acide', kind: '303 · filtre 18 dB', role: 'source', color: 'grn2', face: ['cutoff', 'resonance', 'envMod', 'decay'], trim: -12 },
-  plaits: { cls: PlaitsSynth, name: 'Numérique', kind: 'Plaits · wasm', role: 'source', color: 'coral-2', face: ['modele', 'harmo', 'timbre', 'morph'], trim: -2 },
+  rythme: { cls: RhythmBox, name: 'Boîte à rythme', kind: '808 · 909 · onze voix', role: 'source', color: 'or', drum: true, face: ['kit', 'drive', 'gain'], trim: -8,
+    sortes: SORTES_RYTHME },
+  analog: { cls: AnalogSynth, name: 'Analog', kind: 'soustractif · ODIO', role: 'source', color: 'cy', face: ['cutoff', 'resonance', 'decay', 'gain'], trim: -6,
+    sortes: { detune: 'desaccord', cutoff: 'coupure', resonance: 'resonance', envAmount: 'enveloppe', ...SORTES_ENV } },
+  acid: { cls: AcidBass, name: 'Basse acide', kind: '303 · filtre 18 dB', role: 'source', color: 'grn2', face: ['cutoff', 'resonance', 'envMod', 'decay'], trim: -12,
+    sortes: { cutoff: 'coupure', resonance: 'resonance', envMod: 'enveloppe', decay: 'enveloppe', accent: 'accent', glide: 'glisse', gain: 'niveau' } },
+  // le timbre de Plaits : brillance, le choix du 29/09 (FACETTES_MODULES)
+  plaits: { cls: PlaitsSynth, name: 'Numérique', kind: 'Plaits · wasm', role: 'source', color: 'coral-2', face: ['modele', 'harmo', 'timbre', 'morph'], trim: -2,
+    sortes: { harmo: 'forme', timbre: ['forme', 'brillance'], morph: 'forme', cutoff: 'coupure', resonance: 'resonance', envAmount: 'enveloppe', ...SORTES_ENV } },
   // pas d'ODIO_01 : écrit ici sur son contrat (musique/plaits/macro.js, docs/etudes/odio_synthes.md)
-  macro: { cls: MacroPlaits, name: 'Macro', kind: 'Plaits · 24 moteurs', role: 'source', color: 'coral-3', face: ['moteur', 'harmo', 'timbre', 'morph'], trim: 0 },
-  reverbe: { cls: ReverbEffect, name: 'Réverbe', kind: 'rvb-02 · convolution', role: 'effect', color: 'cy', face: ['size', 'decay', 'mix'] },
-  chorus: { cls: ChorusEffect, name: 'Chorus', kind: 'chr-04 · trois retards', role: 'effect', color: 'cy', face: ['rate', 'depth', 'mix'] },
-  rtt: { cls: DelayEffect, name: 'RTT-01', kind: 'délai · filtre en boucle', role: 'effect', color: 'amb', face: ['time', 'fdb', 'mix'] },
-  comp3: { cls: CompEffect, name: 'Comp', kind: 'cmp-03', role: 'effect', color: 'coral-1', face: ['threshold', 'ratio', 'makeup'] },
-  eq3: { cls: EqEffect, name: 'EQ-3', kind: 'eq-03 · trois bandes', role: 'effect', color: 'coral-3', face: ['low', 'mid', 'high'] },
-  filtre: { cls: FilterEffect, name: 'Filtre drive', kind: 'flt-07', role: 'effect', color: 'cy', face: ['cutoff', 'reso', 'drive'] },
-  satura: { cls: DriveEffect, name: 'Satura', kind: 'sat-09 · saturation', role: 'effect', color: 'coral-1', face: ['drive', 'bias', 'mix'] },
-  crush: { cls: CrushEffect, name: 'Crush', kind: 'crs-06 · résolution', role: 'effect', color: 'coral-2', face: ['bits', 'drive', 'mix'] },
-  table: { cls: MixTable, name: 'Table de mix', kind: 'mix-01 · tranche', role: 'effect', color: 'ink2', face: ['gain', 'low', 'high', 'niveau'], skip: ['envoi'] },
-  volume: { cls: VolumeEffect, name: 'Volume', kind: 'vol-05', role: 'effect', color: 'ink2', face: ['niveau', 'pano'] },
+  macro: { cls: MacroPlaits, name: 'Macro', kind: 'Plaits · 24 moteurs', role: 'source', color: 'coral-3', face: ['moteur', 'harmo', 'timbre', 'morph'], trim: 0,
+    sortes: { harmo: 'forme', timbre: ['forme', 'brillance'], morph: 'forme', aux: 'forme', declin: 'enveloppe', couleur: 'forme',
+      cutoff: 'coupure', resonance: 'resonance', ...SORTES_ENV } },
+  reverbe: { cls: ReverbEffect, name: 'Réverbe', kind: 'rvb-02 · convolution', role: 'effect', color: 'cy', face: ['size', 'decay', 'mix'],
+    sortes: { size: 'espace', decay: 'espace', damp: 'coupure', mix: 'espace' } },
+  // la largeur d'un chorus est sa place dans le champ stéréo
+  chorus: { cls: ChorusEffect, name: 'Chorus', kind: 'chr-04 · trois retards', role: 'effect', color: 'cy', face: ['rate', 'depth', 'mix'],
+    sortes: { rate: 'modulation', depth: 'modulation', spread: 'pano', mix: 'modulation' } },
+  rtt: { cls: DelayEffect, name: 'RTT-01', kind: 'délai · filtre en boucle', role: 'effect', color: 'amb', face: ['time', 'fdb', 'mix'],
+    sortes: { time: 'cadence', fdb: 'espace', tone: 'coupure', mix: 'espace' } },
+  comp3: { cls: CompEffect, name: 'Comp', kind: 'cmp-03', role: 'effect', color: 'coral-1', face: ['threshold', 'ratio', 'makeup'],
+    sortes: { threshold: 'dynamique', ratio: 'dynamique', attack: 'dynamique', release: 'dynamique', makeup: 'niveau' } },
+  eq3: { cls: EqEffect, name: 'EQ-3', kind: 'eq-03 · trois bandes', role: 'effect', color: 'coral-3', face: ['low', 'mid', 'high'],
+    sortes: { low: 'bande', mid: 'bande', midHz: 'bande', high: 'aigu', width: 'bande' } },
+  filtre: { cls: FilterEffect, name: 'Filtre drive', kind: 'flt-07', role: 'effect', color: 'cy', face: ['cutoff', 'reso', 'drive'],
+    sortes: { cutoff: 'coupure', reso: 'resonance', drive: 'saturation' } },
+  satura: { cls: DriveEffect, name: 'Satura', kind: 'sat-09 · saturation', role: 'effect', color: 'coral-1', face: ['drive', 'bias', 'mix'],
+    sortes: { drive: 'saturation', bias: 'saturation', tone: 'coupure', mix: 'saturation' } },
+  crush: { cls: CrushEffect, name: 'Crush', kind: 'crs-06 · résolution', role: 'effect', color: 'coral-2', face: ['bits', 'drive', 'mix'],
+    sortes: { bits: 'saturation', drive: 'saturation', tone: 'coupure', mix: 'saturation' } },
+  // `coupe` : le muet de la tranche (0 ou 1, écrit continu par son descripteur)
+  table: { cls: MixTable, name: 'Table de mix', kind: 'mix-01 · tranche', role: 'effect', color: 'ink2', face: ['gain', 'low', 'high', 'niveau'], skip: ['envoi'],
+    sortes: { gain: 'niveau', low: 'bande', mid: 'bande', midHz: 'bande', high: 'aigu', pano: 'pano', niveau: 'niveau', coupe: 'routage' } },
+  volume: { cls: VolumeEffect, name: 'Volume', kind: 'vol-05', role: 'effect', color: 'ink2', face: ['niveau', 'pano'], sortes: { niveau: 'niveau', pano: 'pano' } },
 };
 const CHOICE_FR = { sawtooth: 'Scie', square: 'Carré', triangle: 'Triangle', sine: 'Sinus', lowpass: 'Passe-bas',
   highpass: 'Passe-haut', bandpass: 'Passe-bande', none: 'Aucun', lp: 'Passe-bas', bp: 'Passe-bande', hp: 'Passe-haut' };
@@ -280,13 +327,17 @@ function fromOdio(d) {
   for (const [type, def] of Object.entries(ODIO)) {
     const inst = new def.cls(probe);
     const params = inst.getParameters().filter((d) => !(def.skip || []).includes(d.id)).map(fromOdio);
-    if (def.role === 'source' && !def.drum) params.push(...ARP_PARAMS);   // l'arpège : lu par le moteur, pas par l'instrument
-    MODULES[type] = { ...def, odio: true, params };
+    const arp = def.role === 'source' && !def.drum;
+    if (arp) params.push(...ARP_PARAMS);   // l'arpège : lu par le moteur, pas par l'instrument
+    MODULES[type] = { ...def, odio: true, params, sortes: { ...def.sortes, ...(arp ? ARP_SORTES : {}) } };
     inst.dispose?.();
   }
 }
 export const ODIO_TYPES = Object.keys(ODIO);
 Object.assign(MODULES, JOUETS);   // jouets : leurs réglages et leurs ports (musique/jouets/defs.js)
+// attracteurs : chaque réglage porte sa sorte et sa facette (musique/facettes.js) ;
+// un réglage continu qui n'a pas pris position n'est capté par rien, et la garde le refuse
+for (const def of Object.values(MODULES)) def.params = declarer(def.params, def.sortes);
 
 export const EFFECT_TYPES = ['delay', 'reverb', 'comp', 'eq', 'filter', 'dist', ...ODIO_TYPES.filter((t) => ODIO[t].role === 'effect')];
 // les sources qu'une piste peut porter, par sorte de piste

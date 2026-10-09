@@ -71,8 +71,12 @@ const G = (ctx, gain = 1) => new GainNode(ctx, { gain });
 // les AudioParam que l'automation tient pendant la lecture : une molette ou
 // un enregistrement du projet ne les reprend pas avant l'arrêt
 const HELD = new WeakSet();
+// l'instant où une copie posée par Graph.aLInstant prend effet (attracteurs :
+// l'opérateur tombe au temps de la tranche, pas quand on la planifie) ; null : maintenant
+let INSTANT = null;
 function setP(ctx, param, v, tc = 0.012) {
   if (HELD.has(param)) return;
+  if (INSTANT !== null) { param.setTargetAtTime(v, INSTANT, tc); return; }
   // une molette qu'on tourne pendant la lecture : on glisse vers la valeur
   // (AudioParam.setTargetAtTime, MDN) plutôt que de sauter, sinon ça claque
   if (ctx instanceof OfflineAudioContext || ctx.state !== 'running') param.value = v;
@@ -876,7 +880,7 @@ export class Graph {
         for (const tid of garde) if (!n.par.has(tid)) n.par.set(tid, makeNode(this.ctx, m, this.env));
         if (!ps) { n = n.par.values().next().value; this.nodes.set(m.id, n); }
       }
-      n.update(m, p.bpm);
+      n.update(this.entendu(m), p.bpm);
     }
     configurerArcs(this, p);   // les arcs du projet : l'étage de la sortie ne porte que ceux qu'on a peints (arcs.js)
     this.wire(p);
@@ -960,7 +964,25 @@ export class Graph {
     }
   }
 
-  update(m, bpm) { const n = this.nodes.get(m.id); if (n) n.update(m, bpm); }
+  // un réglage tourné pendant qu'un attracteur parle : le module garde ce qu'il entend
+  update(m, bpm) { const n = this.nodes.get(m.id); if (n) n.update(this.entendu(m), bpm); }
+
+  // ── ce que le moteur entend (machines/influence.js) ──
+  // Le module tel qu'il sonne : ses réglages, et l'opérateur des attracteurs
+  // qui parlent pour ceux qu'ils captent. L'arpège, les scènes des jouets, une
+  // molette tournée en lecture le lisent : un réglage capté s'entend partout
+  // où on le lit, pas seulement dans ses AudioParam.
+  entendu(m) {
+    const ks = m && this._influence?.get(m.id);
+    return ks?.size ? { ...m, params: { ...m.params, ...Object.fromEntries([...ks].map(([k, o]) => [k, o.v])) } } : m;
+  }
+  valeur(id, k) { return this._influence?.get(id)?.get(k)?.v; }
+  // poser une copie à l'instant `t` de l'horloge : ses AudioParam y glissent (setP)
+  aLInstant(t, f) {
+    const avant = INSTANT;
+    INSTANT = Math.max(t, this.ctx.currentTime);
+    try { f(); } finally { INSTANT = avant; }
+  }
 
   // les AudioParam d'une voie d'automation : [[param, fn]] et la conversion 0..1 → valeur
   lane(p, L) {
@@ -1047,7 +1069,7 @@ export class Graph {
         continue;
       }
       const pat = pats.get(c.pat);
-      if (pat) this.notes(tr, c, joue(pat, mods.get(tr.src)), src, Math.max(b0, cs), Math.min(b1, ce), at, spb, cutLanes.get(tr.src));
+      if (pat) this.notes(tr, c, joue(pat, this.entendu(mods.get(tr.src))), src, Math.max(b0, cs), Math.min(b1, ce), at, spb, cutLanes.get(tr.src));
     }
   }
 
@@ -1109,7 +1131,7 @@ export class Graph {
       const L = J.rec ? Infinity : s.len;
       if (!src || !(L > 0)) continue;
       const pat0 = s.pat ? p.patterns.find((x) => x.id === s.pat) : null;
-      const pat = pat0 && joue(pat0, p.modules.find((x) => x.id === tr.src));
+      const pat = pat0 && joue(pat0, this.entendu(p.modules.find((x) => x.id === tr.src)));
       for (let k = Math.max(0, Math.floor((a0 - J.origin) / L)); J.origin + k * L < a1 && k < 1e6; k++) {
         const vs = J.origin + k * L;
         const c = { ...s, start: vs, len: L === Infinity ? 1e5 : L };

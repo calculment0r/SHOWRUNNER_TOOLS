@@ -183,7 +183,10 @@ export function tuilesDe(p, MODULES) {
   const out = [];
   for (const m of p.modules) {
     if (m.mach && tuilesDeMachine(m, out, false)) continue;
-    const o = tailleDOrigine(m.type, MODULES);
+    // un jouet : sa carte a la taille de sa scène (jouets/defs.js ; le nodal la mesure, nodal.js
+    // lireTuiles) — l'attracteur le capte là où on le voit
+    const dj = MODULES?.[m.type]?.jouet && MODULES[m.type].w ? MODULES[m.type] : null;
+    const o = dj ? { w: dj.w - 2, h: dj.h } : tailleDOrigine(m.type, MODULES);
     out.push({ id: m.id, mod: m.id, bloc: false, sec: null, x: m.x ?? 0, y: m.y ?? 0, w: m.w ?? o.w, h: m.h ?? o.h,
       group: m.grp || null, machine: null, type: m.type, teinte: m.teinte || null });
   }

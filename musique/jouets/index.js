@@ -104,11 +104,15 @@ class Jeu extends Scene {
   }
   get w() { return this.def.w - 2; }
   get h() { return this.def.h - 102; }
-  // V(bloc, réglage) : la signature du Playground ; le bloc est toujours celui-ci
+  // V(bloc, réglage) : la signature du Playground ; le bloc est toujours celui-ci.
+  // Le mélange de la fontaine, puis un câble de valeur, puis l'attracteur qui
+  // parle (ce que le moteur entend, machines/influence.js), puis le réglage
   V(bid, k) {
     if (k === undefined) k = bid;
     if (this.eff[k] !== undefined) return this.eff[k];
     if (this.mod[k] !== undefined) return this.mod[k];
+    const a = this.rt.entendu?.(this.m.id, k);
+    if (a !== undefined) return a;
     return val(this.m, k);
   }
   base(k) { return val(this.m, k); }
@@ -207,6 +211,7 @@ export function createJouets(app) {
     get C() { return C; },
     rects, shuffle, shufKeys: () => [...shuf.keys()].map((id) => app.mod(id)?.type || id),
     note, setParam, wakeAudio,
+    entendu: (id, k) => engine.graph?.valeur?.(id, k),   // attracteurs : l'opérateur d'un réglage capté
   };
 
   // ── les couleurs du Playground : ses jetons (jouets.css), lus une fois chargés ──
