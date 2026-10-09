@@ -5,7 +5,9 @@
 //   node musique/pilote_odio_passe.mjs http://127.0.0.1:8931 /tmp/sr_odio-passe/shots
 //   PLAYWRIGHT=/opt/node22/lib/node_modules/playwright/package.json CHROMIUM=/opt/pw-browsers/chromium node …   (une session cloud)
 //
-// Les essais : la Session (un clip de notes lancé s'entend, « Arrêter tous les clips » l'arrête).
+// Les essais : la Session (un clip de notes lancé s'entend, « Arrêter tous les clips » l'arrête) ;
+// l'arrangement (un clip glissé ou collé l'emporte sur ce qu'il recouvre, un seul Ctrl+Z, la prise
+// n'efface rien) ; le piano roll (Ctrl+C, X, V : des notes, jamais le clip ; Échap).
 // Captures en sombre et en clair. Rend 0 si tout passe.
 import { createRequire } from 'module';
 import { writeFileSync, mkdirSync } from 'fs';
@@ -136,6 +138,54 @@ for (const theme of ['dark', 'light']) {
   const prise = await page.evaluate(() => window.__mu.S.proj.clips.filter((c) => c.track === 't2').map((c) => [c.start, c.len, !!c.mute, c.name || '']).sort((a, b) => a[0] - b[0]));
   ok(prise.some((c) => c[3] === 'Nouveau') && prise.some((c) => c[0] === 32 && c[1] === 16 && c[2]),
     `${theme} · la prise se pose, le refrain qu'elle recouvre reste entier et muet (${JSON.stringify(prise)})`);
+
+  // ── le piano roll : Ctrl+C, X, V copient, coupent, collent des NOTES ──
+  // (09/10 : ces touches allaient à l'arrangement, Ctrl+V y collait le clip à la tête de lecture)
+  await ouvrir(page, `Passe Notes ${theme}`);
+  await page.evaluate(() => { const { S, app } = window.__mu; const c = S.proj.clips.find((x) => x.track === 't4'); app.selectClips([c.id], true); app.showDetail('clip'); window.__mu.engine.seek(0); });
+  await page.waitForTimeout(700);
+  const etatPR = () => page.evaluate(() => { const { S, app } = window.__mu; const c = app.clip(S.sel.clip); const p = c && app.pat(c.pat); return { clips: S.proj.clips.length, notes: p?.notes.length, choisies: document.querySelectorAll('.pr-n.sel').length, deux: p?.notes.filter((n) => n.s >= 32).map((n) => [n.s, n.p]).sort((a, b) => a[0] - b[0]) }; });
+  const pr0 = await etatPR();
+  // choisir les notes du premier temps fort (pas 0 à 8) par Maj+glisser
+  // la part visible de la grille (elle défile chez elle : le cadre se tire dedans)
+  const aire = await page.$eval('.pr-area', (n) => {
+    const r = n.getBoundingClientRect(), v = n.closest('.pr').getBoundingClientRect();
+    const y0 = Math.max(r.top, v.top), y1 = Math.min(r.bottom, v.bottom);
+    return { x: r.x, y: y0, w: r.width, h: y1 - y0 };
+  });
+  const n0 = await page.$eval('.pr-n', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y + r.height / 2 }; });
+  await page.mouse.click(n0.x + 2, n0.y);                       // une note choisie, le panneau a la main
+  await page.keyboard.press('Control+a');
+  const total = (await etatPR()).choisies;
+  await page.keyboard.press('Control+c');
+  await page.keyboard.press('Control+v');
+  await page.waitForTimeout(400);
+  const pr1 = await etatPR();
+  ok(pr1.clips === pr0.clips && pr1.choisies === total && pr1.notes === pr0.notes,
+    `${theme} · piano roll : Ctrl+A, Ctrl+C, Ctrl+V — à la suite des ${total} notes, rien ne tient (le motif est plein) : rien ne change, et aucun clip n'est collé dans l'arrangement (${JSON.stringify({ avant: pr0.clips, apres: pr1.clips, notes: pr1.notes })})`);
+  // couper la moitié, la coller à la tête de lecture posée dans le clip (mesure 11 = temps 40 : pas 32 du motif)
+  await page.keyboard.press('Escape');
+  ok((await etatPR()).choisies === 0 && await page.evaluate(() => !!window.__mu.S.sel.clip), `${theme} · piano roll : Échap ne choisit plus aucune note, le clip reste ouvert`);
+  await page.keyboard.down('Shift');
+  await page.mouse.move(aire.x + 1, aire.y + 1); await page.mouse.down();
+  await page.mouse.move(aire.x + aire.w / 2 - 2, aire.y + aire.h - 2, { steps: 6 }); await page.mouse.up();
+  await page.keyboard.up('Shift');
+  const moitie = (await etatPR()).choisies;
+  await page.keyboard.press('Control+x');
+  await page.waitForTimeout(300);
+  const pr2 = await etatPR();
+  await page.evaluate(() => window.__mu.engine.seek(40));
+  await page.keyboard.press('Control+v');
+  await page.waitForTimeout(400);
+  const pr3 = await etatPR();
+  ok(moitie > 0 && pr2.notes === pr0.notes - moitie && pr3.notes >= pr2.notes && pr3.choisies === moitie && pr3.clips === pr0.clips,
+    `${theme} · piano roll : Ctrl+X coupe ${moitie} notes, Ctrl+V les colle à la tête de lecture (temps 40, pas 32 du motif) (${JSON.stringify({ coupe: pr2.notes, colle: pr3.notes, a32: pr3.deux?.slice(0, 4) })})`);
+  await shot(page, `pianoroll_colle_${theme}`);
+  await page.keyboard.press('Control+z');
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(600);
+  const pr4 = await page.evaluate(() => { const { S, app } = window.__mu; const c = S.proj.clips.find((x) => x.track === 't4'); return app.pat(c.pat).notes.length; });
+  ok(pr4 === pr0.notes, `${theme} · piano roll : deux Ctrl+Z rendent le motif d'origine (${pr4} notes)`);
   await ctx.close();
 }
 

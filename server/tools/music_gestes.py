@@ -83,6 +83,14 @@ R.autre = essai((p) => { p.clips.push({ id: 'x', track: 't2', start: 16, len: 16
 R.premier = (() => { const p = projet(); p.clips[0].start = 24; return PJ.ecraserRecouverts(p, null, uid).n; })();
 """
 
+# coller des notes : elles l'emportent sur celles de même hauteur qu'elles recouvrent (projet.js, poserNotes)
+_NOTES_JS = r"""
+const m = { steps: 16, notes: [{ s: 0, l: 4, p: 60 }, { s: 4, l: 4, p: 62 }, { s: 6, l: 6, p: 64 }, { s: 9, l: 2, p: 64 }] };
+const posees = PJ.poserNotes(m, [{ s: 8, l: 4, p: 64, v: 0.5 }, { s: 8, l: 2, p: 67 }, { s: 14, l: 4, p: 60 }, { s: 16, l: 2, p: 60 }, { s: -1, l: 1, p: 60 }]);
+R.notes = { posees: posees.map((n) => [n.s, n.l, n.p]), motif: m.notes.map((n) => [n.s, n.l, n.p]).sort((a, b) => a[0] - b[0] || a[2] - b[2]),
+  memes: posees.every((n) => m.notes.includes(n)) };
+"""
+
 
 def _node(js: str, ok, quoi: str) -> dict | None:
     node = shutil.which("node")
@@ -121,3 +129,10 @@ def selftest(call, ok) -> None:
         ok(["d", "t2", 36, 12, 2, 0] in R["audio"]["e"] and R["audio"]["n"] == 1,
            f"recouvrement : un son rogné par le début avance dans le son (4 noires à 120 BPM : 2 s), sans fondu d'entrée ({R['audio']})")
         ok(R["autre"]["n"] == 0 and R["premier"] == 0, f"recouvrement : rien sur une autre piste, rien sans l'empreinte du geste d'avant ({R['autre']} {R['premier']})")
+    R = _node(_NOTES_JS, ok, "coller des notes")
+    if R is not None:
+        n = R["notes"]
+        ok(n["posees"] == [[8, 4, 64], [8, 2, 67], [14, 2, 60]] and n["memes"],
+           f"notes collées : celles qui tiennent sont posées (rognées à la fin du motif), le reste dehors ; ce sont les objets du motif ({n})")
+        ok(n["motif"] == [[0, 4, 60], [4, 4, 62], [6, 2, 64], [8, 4, 64], [8, 2, 67], [14, 2, 60]],
+           f"notes collées : la note de même hauteur commencée avant est raccourcie, celle qui commence dessous s'en va, les autres hauteurs restent ({n['motif']})")

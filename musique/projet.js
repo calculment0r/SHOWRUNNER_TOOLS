@@ -1177,3 +1177,22 @@ export function ecraserRecouverts(p, vu, uid) {
   }
   return { vu: now, retires, n };
 }
+
+// ── poser des notes dans un motif (09/10 : coller, dupliquer) ──
+// Comme un clip sur sa piste (plus haut) : les notes posées l'emportent sur
+// celles de même hauteur qu'elles recouvrent — une note qui commence dessous
+// s'en va, une note commencée avant est raccourcie jusqu'à elles ; deux notes
+// de même hauteur ne sonnent jamais ensemble. Ce qui tomberait après la fin du
+// motif reste dehors. Rend les notes posées (les objets du motif).
+export function poserNotes(p, notes) {
+  const out = new Set();
+  for (const n of notes) {
+    if (!(n.s >= 0 && n.s < p.steps - 1e-9)) continue;
+    const m = { ...n, l: Math.min(n.l, p.steps - n.s) };
+    p.notes = p.notes.filter((o) => out.has(o) || !(o.p === m.p && o.s >= m.s - 1e-9 && o.s < m.s + m.l - 1e-9));
+    for (const o of p.notes) if (!out.has(o) && o.p === m.p && o.s < m.s && o.s + o.l > m.s + 1e-9) o.l = m.s - o.s;
+    p.notes.push(m);
+    out.add(m);
+  }
+  return [...out];
+}
