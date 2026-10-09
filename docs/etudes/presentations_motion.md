@@ -1,5 +1,7 @@
 # Le mode Présentation, le motion et les modèles (30/09/2026)
 
+> **09/10** : la passe assistée devient un outil de la skill « slides » de `agent_autonome.md` (§ 6, lot 4).
+
 Suite de `presentations.md` (étapes 1 à 4, « Fait le 30/09 ») : la demande de
 Cal du 30/09 — « des templates hyper beaux […] 5 statiques, 5 en motion […]
 un mode "expert" […] on fait la présentation, on cale tout, et on fait une
