@@ -2,7 +2,8 @@
 
 **Statut** : les étapes 0 à 10 sont codées — le socle (0, 3, 7) et 1, 2, 4, 5, 6, 8 le
 30/09, la phase B (9, 10, et la vérification générale) le 05/10 : voir « Fait le 30/09 » et
-« Fait le 05/10 » en fin de fichier, et ce qui reste. Le code est lu sur le PC le
+« Fait le 05/10 » en fin de fichier, et ce qui reste ; les tableaux de bord (qui a créé quoi,
+où) le 09/10 : « Fait le 09/10 ». Le code est lu sur le PC le
 30/09 (`server/core/auth.py`, `library.py`, `jobs.py`, `server/tools/core_api.py`,
 `droits.py`, `ideation_collab.py`, `music.py`, `ideation.py`) ; les données sur
 DGX2 en lecture seule (`ssh dgx2`, `~/showrunner-data`, rien modifié).
@@ -951,6 +952,97 @@ Workspaces ; rapatrier un objet), 6 (`check_doc` par `ID_FIELDS`), 8 (le budget)
   (la Team au survol) : deux « Général » se confondent ;
 - déplacer un document (au lieu de le dupliquer) : non, par décision (§ 3.5) ; une planche
   rapatriée avec sa source n'emporte pas les LoRA de ses moodboards (entraînés dans A).
+
+## Fait le 09/10 — les tableaux de bord (branche `wip3/tableau`)
+
+La demande de Cal (09/10), ses mots : « il faut que les users aient un dashboard avec la
+possibilité de gérer les accès etc. […] par exemple, [un ami] a lancé des transcripts et je ne
+vois pas où il a créé cet asset : je dois moi avoir un dashboard qui me permette de voir toutes
+les teams, workspaces et assets créés par les gens. »
+
+**Où était la transcription de l'ami** (lu dans le code le 09/10, `server/tools/transcrire.py`,
+`lancer`) :
+- rangée sous `<data_dir>/transcrire/trn-<date>-<heure>-<hex>.json` : un document de Transcrire,
+  pas un objet de la bibliothèque — elle n'apparaît pas dans Asset (le son, oui ; un sous-titre
+  ne s'y range pas encore, la sorte `subtitle` manque au socle) ;
+- elle porte son auteur (`owner`, posé par `library.stamp` : qui l'a lancée), son Workspace
+  (`space` : celui du son, donc là où l'ami avait déposé son son — sa Team personnelle s'il y
+  travaillait) et son travail (`job`) ;
+- Cal ne la trouvait pas : Transcrire ne liste que le Workspace de l'onglet (un outil n'atteint
+  que son Workspace, `library.readable`), et Asset ne montre à Cal que ses Teams
+  (`asset.spaces_seen` : `espaces.teams_of`, sans les Teams personnelles des autres) — rien
+  n'ouvrait la Team personnelle de l'ami.
+
+**Comment Cal la retrouve maintenant** : Admin → « Vue d'ensemble » (en tête de l'Admin). L'ami
+est dans « les personnes » (combien, dans combien de Workspaces, la dernière fois, où), ou on
+tape son nom dans la recherche ; un clic : tout ce qu'il a créé, Workspace par Workspace (« Team /
+Workspace »). La transcription s'ouvre dans Transcrire, dans un nouvel onglet placé dans son
+Workspace (`transcrire/?e=<sid>#<id>`) ; son son, dans sa fiche d'Asset (`asset/?e=<sid>#<id>` :
+`?e=` ajoute ce Workspace à l'arbre d'Asset). Toutes les Teams y sont, les Teams personnelles de
+chacun comprises (« <son nom> · <la personne> »), et ce qui reste d'un Workspace qui n'existe
+plus (« Hors des Teams »).
+
+**L'inventaire : chaque outil énumère ses créations** (`server/core/inventaire.py`, contrat :
+`docs/ARCHITECTURE.md` § 11). Pourquoi pas un module qui lirait les dossiers des autres : il
+recopierait leurs formats, qui ne se ressemblent pas — l'auteur d'une planche est dans son
+fichier d'accès (`ideation_collab`), celui d'un projet d'analyse dans `auteur` (`par` n'est que
+le dernier geste), celui d'un LoRA dans ses versions ; le Workspace d'un Space de Musique est la
+clé de sa table, celui d'un LoRA celui de sa planche ; une présentation se reconnaît par la règle
+de l'export (`presentation_pdf._slides`) — et il se tromperait au premier changement. L'outil
+qui écrit le format l'énumère, dans son `register(app)` (une dizaine de lignes) ; la
+bibliothèque est déclarée par le socle. Juste par construction : `check.py isolement` exige que
+chaque magasin « champ » de `STORES` soit énuméré (`declare`) ou rattaché (`attach` : le calage
+des paroles, le journal des éléments, la corbeille), et que l'inventaire ne nomme que des
+entrées de `STORES` — un outil neuf qui range des documents sans le dire fait échouer le
+contrôle. Seule la fiche de chaque fichier est gardée en mémoire (une transcription au mot pèse
+des mégaoctets), relue s'il change. Mesuré le 09/10 (conteneur, objets factices) : 10 000 objets,
+≈ 50 à 100 ms pour la vue d'ensemble ou une recherche ; 50 000, ≈ 0,5 s ; la page la relit au
+plus toutes les 30 s.
+
+**Les magasins sans auteur** : relus un à un (`library._owned`, `library.stamp`, `store_lut`,
+`projet_creer`, les Spaces de Musique, `ideation_collab.created`), tous portaient déjà auteur et
+Workspace, sauf la version d'un LoRA (seul son travail le disait, et la file ne garde que ses 400
+derniers travaux) : elle porte désormais `by`, celui du travail (selftest). Pour l'existant, sans
+rien inventer : le travail qui l'a fait (son `owner`), sinon le premier qui a écrit sur
+l'identifiant d'après `journal.jsonl` (et sa rotation), sinon « auteur inconnu » ; chaque ligne dit
+d'où (« d'après son travail », « d'après le journal »). L'auteur d'une planche n'est écrit que
+porte allumée (`ideation_collab.created`) ; un objet d'avant la porte (29/09) n'en a pas, ni de
+journal : « auteur inconnu ».
+
+**Les routes** (`server/tools/tableau.py`) : `GET /api/tableau` (`?toutes=1` : Cal),
+`/api/tableau/espace/<sid>`, `/api/tableau/personne/<uid>`, `/api/tableau/cherche`. Les droits
+sont ceux des listes d'Asset (`auth.item_reader`) : jamais une fiche d'un Workspace où l'on
+n'entre pas ; un tel Workspace répond 404 comme un Workspace qui n'existe pas ; le tableau d'une
+autre personne : Cal seul (403) ; le pseudo d'un compte (ce qu'on tape à la porte, sans mot de
+passe) n'est montré et cherché que par Cal.
+
+**La page : pas de page de plus.** L'Admin « limité » (un compte qui n'est pas admin du portail,
+`S.limited`) avait déjà la section Teams, où l'on gère les accès (membres, rôles, invitations,
+Workspaces). Le tableau de bord de chacun est la même section que la vue d'ensemble de Cal
+(`admin/tableau.js`, `admin/tableau.css`), placée avant Teams, avec les composants de l'Admin
+(`card`, `chip`, `seg`, le rack) : une page à part aurait recopié l'en-tête, le rack et le
+passage aux accès, et séparé « qui crée quoi » de « qui a accès », que Cal demande ensemble.
+Elle n'écrit rien (pas d'orange) ; elle garde son nœud d'un relevé à l'autre (le champ de
+recherche garde la main pendant qu'on tape). Le menu du compte : « Teams et Workspaces » devient
+« Tableau de bord » (`admin/#tableau`).
+
+**Vérifié** : les selftests de `tableau` (chaque sorte créée par un membre d'essai, vue avec son
+auteur et son Workspace ; la transcription ; les droits — un membre d'une autre Team ne voit
+rien, Cal voit tout ; la recherche par personne ; l'auteur par le travail, par le journal ; un
+document réécrit puis effacé ; ce qui reste d'un Workspace disparu), `check.py isolement`, et le
+pilote `admin/pilote_tableau.mjs` (portail d'essai porte allumée, `SR_PORTE=1`) : la vue de Cal et
+le tableau d'un membre, sombre et clair, à 1280 et 390 px ; la transcription et le son d'un autre
+s'ouvrent dans leur outil, dans leur Workspace.
+
+**Reste** :
+- la fiche d'un objet dans Asset ne dit pas son auteur (« entré par » est l'outil du dépôt) ;
+  la liste d'Asset et le tableau de bord le disent ;
+- un sous-titre n'est pas un objet (la sorte `subtitle`) : Transcrire l'exporte seulement ;
+- l'en-tête des outils nomme la Team d'un autre par son seul nom quand Cal y entre (« Chez moi /
+  Perso ») ; la branche Teams v2 (09/10) le corrige (`espaces.label_of`) — même règle que
+  `tableau._View.team_name`, qui pourra l'appeler à la fusion ;
+- un Workspace détruit (Teams v2) : ce qui en reste paraît dans « Hors des Teams » tant que ses
+  objets existent ; à revoir avec sa corbeille une fois les deux branches fusionnées.
 
 ---
 

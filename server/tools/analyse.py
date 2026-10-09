@@ -1117,7 +1117,22 @@ def _publie(w: Path, log: Path, nom: str, titre: str, video_nom: str, p: dict, j
 
 
 # ── l'enregistrement ────────────────────────────────────────
+def _inventaire():
+    """Les projets créés dans le portail, pour l'inventaire (core/inventaire.py) : `auteur`
+    (posé une fois par projet_creer ; `par` ne dit que le dernier geste) et `space`. Une
+    analyse du dépôt masquée ici (`depot`) n'est pas une création ; un projet supprimé non
+    plus. Les dépouillements (analyses/) suivent leur projet."""
+    for e in _store_lit():
+        if e.get("depot") or e.get("supprime"):
+            continue
+        yield {"id": e["id"], "title": e.get("nom") or e["id"], "owner": e.get("auteur"), "space": e.get("space"),
+               "created": e.get("cree"), "updated": e.get("maj"), "open": f"analyse/?projet={e['id']}"}
+
+
 def register(app) -> None:
+    from core import inventaire
+    inventaire.declare("analyse", label="projet d'analyse", plural="projets d'analyse", tool="analyse", store="analyse",
+                       lister=_inventaire, order=25)
     app.mount("analyse/runs", produites())
     jobs.register(KIND, run, lane="analyse", title="Analyse de film", cost="gpu")   # Whisper, VLM, pyannote sur DGX2
     app.route("GET", "/api/analyse/list", analyses_list)

@@ -1236,7 +1236,7 @@ function lignesDuNom(me, fermer) {
     // au téléphone seulement (shell.css) : le sélecteur de la barre n'y tient plus
     cur ? ligne('button', { type: 'button', 'aria-haspopup': 'menu', onclick: () => { fermer(); openWsMenu(btnNom()); } },
       'Workspace', `${cur.t.name ? cur.t.name + ' / ' : ''}${cur.s.name}`, 'sr-ml-ws') : null,
-    invite ? null : ligne('a', { href: avecEspace(href('admin/#teams')) }, 'Teams et Workspaces'),
+    invite ? null : ligne('a', { href: avecEspace(href('admin/#tableau')) }, 'Tableau de bord'),
     me.user.role === 'admin' ? ligne('a', { href: avecEspace(href('admin/')) }, 'Admin', pend ? `${pend} à traiter` : '', pend ? 'amb' : '') : null,
     mach,
   ];

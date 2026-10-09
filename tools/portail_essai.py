@@ -18,7 +18,8 @@
                                                    # dans Admin → Demandes → Alertes). Le réglage est toujours
                                                    # <données>/telegram-essai.json : jamais le bot de Cal
     SR_PORTE=1 …                                   # la porte allumée (entrer par un pseudo : nico007 depuis
-                                                   # 127.0.0.1, puis les comptes qu'on crée) — admin/pilote_invites.mjs
+                                                   # 127.0.0.1, puis les comptes qu'on crée) — admin/pilote_invites.mjs,
+                                                   # admin/pilote_tableau.mjs (ce que voit un membre)
 
 Le même que la session cloud du 05/10 faisait tourner à la main (docs/REPRISE.md, « Session
 cloud ») : arrêter par son PID, jamais par `pkill -f` (le motif tue aussi le shell qui le tape).
