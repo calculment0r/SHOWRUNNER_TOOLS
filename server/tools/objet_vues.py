@@ -1473,6 +1473,14 @@ def selftest(call, ok) -> None:
         ok(p["classe"]["value"] == "objet" and p["classe"]["by"] == "personne" and p["classe"].get("proposal", {}).get("sujet")
            and p["vues"]["source"]["az"] == 45 and p["vues"]["source"]["by"] == "personne",
            f"vues : ce qu'on a dit soi-même n'est pas remplacé, la proposition est notée ({p['classe']})")
+        # poser une image de la bibliothèque sur une place : elle devient cette vue, gardée
+        st, p = call("GET", f"/api/objet/{o2['id']}/vues")
+        g90 = by_angle(p, 90, 0)
+        st, p = call("POST", f"/api/objet/{o2['id']}/vues/{g90['id']}", {"action": "poser", "item": img["id"]})
+        st2, _ = call("POST", f"/api/objet/{o2['id']}/vues/{g90['id']}", {"action": "poser", "item": "ima-20000101-000000-0000"})
+        st3, _ = call("POST", f"/api/objet/{o2['id']}/vues/source", {"az": 0, "el": 0, "file": "ref-99.png"})
+        ok(st == 200 and by_angle(p, 90, 0)["state"] == "gardee" and by_angle(p, 90, 0)["pick"] == img["id"] and st2 == 400 and st3 == 400,
+           f"vues : une image de la bibliothèque posée sur une place la garde ; une image ou une référence inconnue est refusée ({st} {st2} {st3})")
         f.caps = ["completion", "tools"]
         A._probe.clear()
         st, r = call("POST", f"/api/objet/{o2['id']}/classer", {})

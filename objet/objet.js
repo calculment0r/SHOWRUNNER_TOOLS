@@ -490,7 +490,7 @@ function objectSheet(o, s, P) {
   const meshesRow = el('div', { class: 'row-end' });
   if (m) {
     // append(null) écrirait « null » : l'étiquette factice seulement quand elle existe
-    three.append(el('span', { class: 'lbl tl' }, m.factice ? 'cube de contrôle · glisser pour tourner' : 'glisser pour tourner'));
+    three.append(el('span', { class: 'lbl tl' }, m.factice ? 'cube de contrôle' : 'glisser pour tourner'));
     if (m.factice) three.append(el('span', { class: 'st wait tr' }, 'factice · pas TRELLIS.2'));
     viewer = preview(three, href(`library/${o.id}/${m.file}`));
     meshesRow.append(el('a', { class: 'tb ghost sm', href: href(`library/${o.id}/${m.file}`), download: `${o.title}-${m.file}` }, 'Télécharger le GLB'),
@@ -616,32 +616,38 @@ function slotCard(o, P, x) {
   const item = () => P.items[items[shown.k]];
   const isSrc = x.pass === 0;
   const pic = el('div', { class: 'vc-pic' });
+  const act = el('div', { class: 'vc-act' });
+  const a = (label, fn, { title = '', dis = false } = {}) => el('button', { class: 'tb ghost sm', type: 'button', title, disabled: dis, onclick: fn }, label);
+  const put = (...n) => act.append(...n.filter(Boolean));   // append(null) écrirait « null »
+  // les gestes suivent la proposition montrée (« Garder celle-ci » quand on en feuillette une autre)
+  const paintAct = () => {
+    if (isSrc) return;
+    act.replaceChildren();
+    if (x.state === 'proposee') put(a('Garder', () => slotAction(o, x, 'garder', items[shown.k]), { title: 'cette proposition devient une vue de l’objet' }),
+      a('Refaire', () => generer(o, [x.id]), { title: 'une autre proposition (une autre graine)' }), a('Rejeter', () => slotAction(o, x, 'rejeter')));
+    else if (x.state === 'gardee') put(items.length > 1 && items[shown.k] !== x.pick ? a('Garder celle-ci', () => slotAction(o, x, 'garder', items[shown.k])) : null,
+      a('Refaire', () => generer(o, [x.id])), a('Ne plus garder', () => slotAction(o, x, 'rouvrir'), { title: 'elle redevient une proposition' }));
+    else if (x.state === 'rejetee') put(a('Refaire', () => generer(o, [x.id])), a('Rouvrir', () => slotAction(o, x, 'rouvrir')));
+    else if (x.state === 'echec') put(a('Refaire', () => generer(o, [x.id])));
+    else if (x.state === 'prevue') put(a('Faire', () => generer(o, [x.id]), { dis: !P.go.ok || !P.gen.els.includes(x.el), title: !P.go.ok ? P.go.why : !P.gen.els.includes(x.el) ? `${P.gen.name} ne fait pas cette vue` : '' }));
+    else if (x.state === 'file' && x.job) put(a('Arrêter', async () => { try { await jobs.cancel(x.job); } catch (e) { say(e.message); } }));
+    if (x.pass === 3 && !['file', 'gardee'].includes(x.state)) put(a('×', () => slotAction(o, x, 'retirer'), { title: 'retirer cette vue du plan' }));
+  };
   const paintPic = () => {
     const it = item();
     const url = isSrc ? x.ref_thumb : (x.state === 'gardee' && items[shown.k] === x.pick ? x.ref_thumb : null) || it?.thumb_url || it?.url;
-    pic.replaceChildren(...(url ? [el('img', { src: href(url), alt: x.label, loading: 'lazy' })] : [el('span', { class: 'vc-empty', html: compassSvg(x.az, x.el) })]),
+    // replaceChildren(null) écrirait « null » (movie.md § 7) : les nœuds absents sont filtrés
+    pic.replaceChildren(...[url ? el('img', { src: href(url), alt: x.label, loading: 'lazy' }) : el('span', { class: 'vc-empty', html: compassSvg(x.az, x.el) }),
       el('span', { class: 'vc-tag' }, isSrc ? 'image choisie' : x.state === 'file' ? (x.job_state === 'running' ? 'en cours' : 'en file') : STATE[x.state] || x.state),
       items.length > 1 && !isSrc ? el('span', { class: 'vc-nav' },
         el('button', { type: 'button', 'aria-label': 'proposition précédente', disabled: shown.k === 0, onclick: (ev) => { ev.stopPropagation(); shown.k--; paintPic(); } }, '‹'),
         el('span', {}, `${shown.k + 1}/${items.length}`),
-        el('button', { type: 'button', 'aria-label': 'proposition suivante', disabled: shown.k >= items.length - 1, onclick: (ev) => { ev.stopPropagation(); shown.k++; paintPic(); } }, '›')) : null);
+        el('button', { type: 'button', 'aria-label': 'proposition suivante', disabled: shown.k >= items.length - 1, onclick: (ev) => { ev.stopPropagation(); shown.k++; paintPic(); } }, '›')) : null].filter(Boolean));
+    paintAct();
   };
   paintPic();
   const from = item()?.params?.from;
   const bar = el('div', { class: 'run-bar', hidden: x.state !== 'file' }, el('i', { style: { width: `${Math.round((x.progress ?? 0.03) * 100)}%` } }));
-  const act = el('div', { class: 'vc-act' });
-  const a = (label, fn, { title = '', dis = false } = {}) => el('button', { class: 'tb ghost sm', type: 'button', title, disabled: dis, onclick: fn }, label);
-  if (!isSrc) {
-    if (x.state === 'proposee') act.append(a('Garder', () => slotAction(o, x, 'garder', items[shown.k]), { title: 'cette proposition devient une vue de l’objet' }),
-      a('Refaire', () => generer(o, [x.id]), { title: 'une autre proposition (une autre graine)' }), a('Rejeter', () => slotAction(o, x, 'rejeter')));
-    else if (x.state === 'gardee') act.append(items.length > 1 && items[shown.k] !== x.pick ? a('Garder celle-ci', () => slotAction(o, x, 'garder', items[shown.k])) : null,
-      a('Refaire', () => generer(o, [x.id])), a('Ne plus garder', () => slotAction(o, x, 'rouvrir'), { title: 'elle redevient une proposition' }));
-    else if (x.state === 'rejetee') act.append(a('Refaire', () => generer(o, [x.id])), a('Rouvrir', () => slotAction(o, x, 'rouvrir')));
-    else if (x.state === 'echec') act.append(a('Refaire', () => generer(o, [x.id])));
-    else if (x.state === 'prevue') act.append(a('Faire', () => generer(o, [x.id]), { dis: !P.go.ok || !P.gen.els.includes(x.el), title: !P.go.ok ? P.go.why : !P.gen.els.includes(x.el) ? `${P.gen.name} ne fait pas cette vue` : '' }));
-    else if (x.state === 'file' && x.job) act.append(a('Arrêter', async () => { try { await jobs.cancel(x.job); } catch (e) { say(e.message); } }));
-    if (x.pass === 3 && !['file', 'gardee'].includes(x.state)) act.append(a('×', () => slotAction(o, x, 'retirer'), { title: 'retirer cette vue du plan' }));
-  }
   const card = el('div', { class: `vcard s-${x.state}${isSrc ? ' src' : ''}`, 'data-slot': x.id, 'data-state': x.state, role: 'group', 'aria-label': `vue ${x.label} · ${STATE[x.state] || x.state}` },
     pic,
     el('div', { class: 'vc-cap' }, el('span', { class: 'nm' }, x.label),

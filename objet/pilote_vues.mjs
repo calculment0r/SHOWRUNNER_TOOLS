@@ -80,6 +80,8 @@ let c = await cards(page);
 ok(c[0].state === 'source' && c.filter((x) => x.state === 'prevue').map((x) => x.nm).join() === 'gauche · 90°,dos · 180°,droite · 270°',
   `à l’arrivée : l’image choisie (de face par défaut) et les trois autres vues principales prévues (${c.map((x) => x.nm + ':' + x.state)})`);
 ok((await gos(page)).join() === 'b-generer', `une étape : « Générer » est le seul orange (${await gos(page)})`);
+const nul = async () => !/\bnull\b|undefined/.test(await page.textContent('#app'));
+ok(await nul(), 'aucun « null » ni « undefined » écrit dans la fiche');
 await shot(page, 'objet-arrivee-sombre');
 // la voiture est vue de 3/4 avant gauche : la face rentre dans le plan
 await page.click('.az-dot[data-az="45"]');
@@ -124,6 +126,7 @@ for (const nm of ['3/4 arrière gauche · 135°', '3/4 avant droit · 315°']) {
 await card(page, 'face · 0°').locator('button', { hasText: /^Refaire$/ }).click();
 await page.waitForFunction(() => [...document.querySelectorAll('.vcard')].some((c) => c.querySelector('.nm')?.textContent === 'face · 0°' && c.querySelector('.vc-nav')), null, { timeout: 30000 });
 ok(await card(page, 'face · 0°').getAttribute('data-state') === 'gardee', 'refaire une vue gardée : elle le reste, la nouvelle proposition se feuillette');
+ok(await nul(), 'aucun « null » écrit dans la fiche, avec des propositions à feuilleter');
 await shot(page, 'objet-affinage-sombre');
 // la 3D factice, ses rendus, la planche
 await card(page, '3/4 arrière droit · 225°').locator('button', { hasText: /^Rejeter$/ }).click();
