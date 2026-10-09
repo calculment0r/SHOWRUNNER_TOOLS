@@ -2470,7 +2470,7 @@ export function createNodal(app) {
       secs.push(el('div', { class: 'pan nd-sel' }, el('p', { class: 'lbl' }, sel.length > 1 ? `${sel.length} blocs : G les groupe, T les range, Suppr les retire` : 'clic sur une tuile : ses réglages ici · double-clic sur le fond : le catalogue')));
     }
     sideAttr = null;
-    if (t && owner) secs.push(panneauAttracteurs(t, owner));
+    if (t && owner && (owner.mach || app.mod(owner.id))) secs.push(panneauAttracteurs(t, owner));   // le clavier simple n'a aucun réglage
     const blocDe = (id) => (nodalDe(p).blocs || []).find((b) => b.id === id);
     const nm = (id) => {
       const x = app.mod(id);

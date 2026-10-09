@@ -53,8 +53,9 @@ const p = {
   patterns: [{ id: 'p1', track: 'v1', steps: 16, notes: [{ s: 0, l: 2, p: 60, v: 0.9 }, { s: 8, l: 2, p: 67, v: 0.9 }] }],
 };
 const vu = [];
+// entendu : le module tel qu'il sonne (Graph.entendu, l'opérateur des attracteurs qui parlent) — ici, lui-même
 const g = { nodes: new Map([['m1', {}]]), notes: (tr, c, pat, src, from, to) => vu.push([tr.id, c.start, c.len, pat.notes.length, from, to]),
-  audioClip: () => vu.push(['audio']) };
+  audioClip: () => vu.push(['audio']), entendu: (m) => m };
 const jeu = new Map([['v1', { slot: 'cl1', origin: 0, fresh: true, rec: false }]]);
 try { M.Graph.prototype.scheduleSession.call(g, p, jeu, 0, 8, 0); R.session = { ok: true, vu, reste: jeu.size }; }
 catch (e) { R.session = { ok: false, err: String(e) }; }

@@ -398,7 +398,9 @@ async function interfaces(theme) {
   const fils = await page.$$eval('.bn-lien-et', (xs) => xs.map((x) => x.textContent));
   ok(fils.length >= 1, `${theme} : la tuile choisie est reliée à chaque attracteur qui la capte (${fils.join(' | ')})`);
   await shot(page, `${theme}_2_tuile`);
-  // la lecture : les chiffres du banc (poids, valeur → opérateur), la tuile qui parle
+  // la lecture : les chiffres du banc (poids, valeur → opérateur), la tuile qui parle ; le banc zoomé
+  // (sa caméra, comme la molette la laisse) pour que les segments montrent leurs lignes
+  await page.evaluate(() => { const { S, app } = window.__mu; S.proj.ui.banc = { ...(S.proj.ui.banc || {}), h: 360, cam: { x: -6, y: 150, k: 2.5 } }; app.renderView(); });
   await page.evaluate(() => window.__mu.engine.playFrom(5));
   await page.waitForTimeout(1500);
   const lignes = await page.$$eval('.bn-op', (xs) => xs.slice(0, 6).map((x) => x.textContent));
