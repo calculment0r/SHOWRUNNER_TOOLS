@@ -132,11 +132,12 @@ const tile = (page, it) => page.locator(typeof it === 'string' ? `.lt[draggable=
 // glisser une poignée de dx pixels, pas à pas (comme une main)
 async function drag(page, sel, dx, steps = 14) {
   // la barre se recentre (et change de hauteur) quand le panneau Asset se ferme : on attend qu'elle ne bouge plus
+  // (cinq relevés de suite au même endroit : sous charge, une animation peut sauter une image)
   let b = await (await page.$(sel)).boundingBox();
-  for (let k = 0; k < 30; k++) {
+  for (let k = 0, still = 0; k < 60 && still < 5; k++) {
     await page.waitForTimeout(150);
     const n = await (await page.$(sel)).boundingBox();
-    if (n.x === b.x && n.y === b.y) break;
+    still = n.x === b.x && n.y === b.y ? still + 1 : 0;
     b = n;
   }
   const x = b.x + b.width / 2, y = b.y + b.height / 2;

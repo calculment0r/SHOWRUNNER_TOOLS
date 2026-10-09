@@ -720,7 +720,8 @@ async function paintRecu() {
   const subj = F.mode === 'r2v' ? (ap.subjects || []).filter((x) => /^@(element|image)/.test(x.token)) : [];
   const defs = subj.length ? el('div', { class: 'v-sec' }, el('span', { class: 'lbl' }, 'Les sujets · ce que H3 lit de chacun'),
     ...subj.map((x) => el('label', { class: 'v-def' }, el('b', {}, x.token), el('span', { class: 'v-def-t' }, x.title || ''),
-      el('textarea', { class: 'fld', rows: 1, spellcheck: 'false', placeholder: 'vide : la description de l’élément, telle quelle',
+      el('textarea', { class: 'fld', rows: 1, spellcheck: 'false', title: x.description ? `sinon : ${x.description}` : '',
+        placeholder: x.description ? `vide : ${x.description}` : 'vide : la description de l’élément, telle quelle',
         oninput: (e) => { F.subjects = { ...F.subjects, [x.token]: e.target.value }; save(); schedulePlan(); } }, F.subjects?.[x.token] || ''))),
     el('label', { class: 'v-def' }, el('b', {}, 'résumé'), el('span', { class: 'v-def-t' }, 'summary'),
       el('textarea', { class: 'fld', rows: 1, spellcheck: 'false', placeholder: 'vide : la première phrase du premier plan',
