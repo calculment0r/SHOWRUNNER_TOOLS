@@ -86,7 +86,7 @@ import struct
 import time
 from pathlib import Path
 
-from core import config, jobs, library
+from core import auth, config, jobs, library
 from core.http import HttpError
 
 config.declare_switch("objet_vues", ["factice", "qwen-edit-2511", "qwen21-anyangle"], label="Object Creator · vues",
@@ -412,6 +412,14 @@ def _object(eid: str) -> dict:
     return it
 
 
+def _garde(kind: str) -> None:
+    """La garde du calcul (celle de jobs.submit) AVANT tout jugement du plan : une personne qui ne
+    calcule pas ici l'apprend par elle, et rien de l'objet ne lui en est dit (le motif d'Image,
+    `api_edit`)."""
+    me = auth.current()
+    jobs._guard(kind, {}, me, me, jobs._space_for(me))
+
+
 def _edit(eid: str, fn):
     try:
         return edit_plan(eid, fn)
@@ -467,6 +475,7 @@ def r_plan(req, eid):
 def r_generer(req, eid):
     """Un travail par vue : celles qu'on nomme, sinon toutes les prévues et celles en échec.
     La garde du calcul juge chaque mise en file (jobs.submit) AVANT que le plan ne change."""
+    _garde(GENS[generator()]["kind"])
     it = _object(eid)
     library.check_write(it)
     d = req.json()
@@ -605,6 +614,7 @@ def r_classer(req, eid):
     """Le modèle qui voit dit ce qu'est l'image et d'où elle voit l'objet : un travail (la
     garde du calcul, la mémoire), sur la machine du modèle (ideation_agent.route_vision)."""
     from tools import ideation_agent as A
+    _garde("objet.classer")
     it = _object(eid)
     library.check_write(it)
     r = A.route_vision()
@@ -621,6 +631,7 @@ def r_classer(req, eid):
 
 
 def r_rendus(req, eid):
+    _garde("objet.rendus" if renders_wired() else "objet.rendus_factice")
     it = _object(eid)
     library.check_write(it)
     m = latest_mesh(it)
@@ -657,6 +668,7 @@ def sheet_why(it: dict) -> str:
 
 
 def r_planche(req, eid):
+    _garde("objet.planche")
     it = _object(eid)
     library.check_write(it)
     why = sheet_why(it)
