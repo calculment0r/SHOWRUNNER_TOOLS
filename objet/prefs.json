@@ -6,6 +6,10 @@
     {
       "key": "autorotate", "label": "L’aperçu 3D tourne seul", "type": "toggle", "default": true,
       "help": "Il s’arrête dès qu’on le prend à la souris. Les animations réduites (Général) l’arrêtent aussi."
+    },
+    {
+      "key": "classer_auto", "label": "Demander au modèle qui voit à l’arrivée d’une image", "type": "toggle", "default": true,
+      "help": "Un objet neuf : le modèle qui voit dit ce que montre l’image (objet, bâtiment, décor, pièce, personnage) et d’où, s’il est là. Un calcul sur la machine du modèle ; ce qu’on dit soi-même n’est jamais remplacé."
     }
   ]
 }

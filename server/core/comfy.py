@@ -68,13 +68,18 @@ class Comfy:
         self._json("POST", "/interrupt", {})
 
     # ── fichiers ────────────────────────────────────────────
-    def upload(self, path: Path, name: str | None = None) -> str:
+    def upload(self, path: Path, name: str | None = None, subfolder: str = "") -> str:
+        """Dépose un fichier dans `input/` de ComfyUI (`/upload/image`) et rend le nom à donner au
+        nœud. `subfolder` : un sous-dossier d'`input/` — `3d` pour un GLB, celui que liste Load 3D
+        (comfy_extras/nodes_load_3d.py : `input/3d`, envoyé comme le fait son bouton `upload=model`)."""
         path = Path(path)
         name = name or f"sr_{secrets.token_hex(4)}_{path.name}"
         boundary = "----sr" + secrets.token_hex(8)
         head = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"{name}\"\r\n"
                 f"Content-Type: application/octet-stream\r\n\r\n").encode()
-        tail = (f"\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"overwrite\"\r\n\r\ntrue"
+        sub = (f"\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"subfolder\"\r\n\r\n{subfolder}"
+               if subfolder else "")
+        tail = (f"{sub}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"overwrite\"\r\n\r\ntrue"
                 f"\r\n--{boundary}--\r\n").encode()
         raw = self._req("POST", "/upload/image", head + path.read_bytes() + tail,
                         f"multipart/form-data; boundary={boundary}", timeout=300)

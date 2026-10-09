@@ -379,6 +379,9 @@ def element_parts(el: dict, method: str = DEFAULT_METHOD) -> tuple[list, list, s
     # la voix est rangée à part (element.voices, library.py) ; un son dans refs
     # (ancienne forme) compte aussi
     voices = list(el.get("voices") or []) + [r for r in refs if r.get("file", "").lower().endswith(AUDIO_EXT)]
+    if el.get("type") == "object":
+        return object_parts(imgs), voices[:1], ("" if any(r.get("role") == "sheet" for r in imgs)
+                                                 else "pas de planche objet (Object Creator) : ses vues à la place")
     want = SHEET_SET if METHODS.get(method, METHODS[DEFAULT_METHOD])["refs"] == "planche" else CHAR_SET
     # Cal prend des gros plans du visage à part pour la planche (ref-visage-*.png) et les crops
     # .char pour Qualité (ref-1-visage-face.png…) : un « gros plan » passe d'abord pour la planche, après sinon
@@ -402,6 +405,25 @@ def element_parts(el: dict, method: str = DEFAULT_METHOD) -> tuple[list, list, s
     chosen = [r for role in REF_ROLES for r in [next((x for x in imgs if x.get("role") == role), None)] if r]
     need = "la planche masquée et les gros plans du visage" if want == SHEET_SET else "les 5 images de la méthode .char"
     return (chosen or imgs[:2]), voices[:1], f"n'a pas {need} : son visage et son plein pied à la place"
+
+
+# Un objet d'Object Creator (09/10, server/tools/objet_vues.py) : sa planche (« face, profil,
+# dos » sur fond blanc de studio, la forme de la planche des personnages ci-dessus), puis ses
+# vues gardées, la face d'abord, puis un 3/4 avant, un profil, le dos — quatre images en tout,
+# de quoi laisser à H3 la place des autres entrées (9 images au plus). Aucun guide MiniMax ne
+# documente la planche d'un objet : c'est la forme de celle des personnages (Cal, 30/09).
+OBJECT_MAX = 4
+OBJECT_RANK = {0: 0, 45: 1, 315: 1, 90: 2, 270: 2, 180: 3, 135: 4, 225: 4}
+
+
+def object_parts(imgs: list) -> list:
+    from tools.objet_vues import _ref_angle
+    sheet = next((r for r in imgs if r.get("role") == "sheet"), None)
+    views = [(a, r) for r in imgs if r.get("role") == "view" for a in [_ref_angle(r)] if a]
+    views.sort(key=lambda x: (x[0][1] != 0, OBJECT_RANK.get(x[0][0], 5), x[0][0]))
+    out = [dict(sheet, _kind="object_sheet")] if sheet else []
+    out += [dict(r, _kind="object_view", az=a[0], el=a[1]) for a, r in views][:OBJECT_MAX - len(out)]
+    return out or [dict(r, _kind="object_view") for r in imgs[:2]]
 
 
 def token_key(kind: str, num: str) -> str:
@@ -677,8 +699,14 @@ def compose_ref(desc: str, sound: str, music: str, R: dict) -> str:
                 src.append(f"whose body from behind is shown in {_tags(back)}")
             if nums.get("full body"):
                 src.append(f"whose body proportions and outfit come from {_tags(nums['full body'])}")
+            # un objet (Object Creator) : sa planche, puis ses vues
+            if nums.get("object_sheet"):
+                src.append(f"whose shape, materials and details are shown in {_tags(nums['object_sheet'])} "
+                           "(front, side and back views on a white studio background)")
+            if nums.get("object_view"):
+                src.append(f"seen from several angles in {_tags(nums['object_view'])}")
             known = {"face", "face_front", "face_34_smile", "face_34", "face_profile", "sheet", "outfit_top",
-                     "outfit_bottom", "back", "full body"}
+                     "outfit_bottom", "back", "full body", "object_sheet", "object_view"}
             others = [n for r, v in nums.items() if r not in known for n in v]
             if others:
                 src.append(f"shown in {_tags(others)}")
@@ -699,6 +727,11 @@ def compose_ref(desc: str, sound: str, music: str, R: dict) -> str:
                 "the backgrounds, poses and framing"
             keep.append(f"{subj} (appears in {shots}): fully_preserved - the face, hair, age, identity, body proportions and "
                         f"outfit are retained; {sheet} of its reference images are not reproduced.")
+        elif s["kind"] == "element" and s.get("etype") == "object":
+            lay = "the multi-view sheet layout and white studio background" if s["nums"].get("object_sheet") else \
+                "the backgrounds and framing"
+            keep.append(f"{subj} (appears in {shots}): fully_preserved - its shape, proportions, materials, colors and "
+                        f"details are retained; {lay} of its reference images are not reproduced.")
         else:
             keep.append(f"{subj} (appears in {shots}): fully_preserved - the defining visual attributes shown in {pics} are retained.")
     for n, v in enumerate(R["videos"], start=1):
