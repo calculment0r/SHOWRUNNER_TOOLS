@@ -77,7 +77,7 @@ function paintAsk(me, err = '') {
     try {
       const d = await api('auth/enter', { method: 'POST', body: { name: name.value } });
       if (d.state === 'active') { location.reload(); return; }
-      paint({ state: d.state, user: d.user, since: d.since });
+      paint({ state: d.state, user: d.user, since: d.since, invited: d.invited });
     } catch (x) { warn.hidden = false; warn.textContent = x.message; go.disabled = false; name.focus(); }
   } }, el('div', { class: 'row' }, name, go));
   box.replaceChildren(frame(

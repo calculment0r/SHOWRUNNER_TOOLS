@@ -1262,8 +1262,8 @@ def _me(req) -> dict:
     if not u:
         return {"auth": True, "state": "anonymous"}
     out = {"auth": True, "state": u["state"], "user": public_user(u), "since": u.get("created")}
-    if u["state"] == "pending" and u.get("invited"):   # D5 : la porte lui dit qu'il attend la validation de Cal
-        out["invited"] = {"by_name": display_name(u["invited"].get("by")), "at": u["invited"].get("at")}
+    if invited_public(u):   # D5 : la porte lui dit qu'il attend la validation de Cal
+        out["invited"] = invited_public(u)
     if u["state"] == "active" and _offnet(u, req):
         return {"auth": True, "state": "offnet", "user": public_user(u),
                 "message": OFFNET.format(p=u.get("pseudo") or u["name"])}
@@ -1424,6 +1424,14 @@ def accept(uid: str, by: str, role: str | None = None, *, access: str | None = N
     if role != GUEST and access is None and perso is not False:   # Cal accepte un ami à la porte
         _join_instance_team(u)
     return dict(u)
+
+
+def invited_public(u: dict | None) -> dict | None:
+    """Ce que la porte d'un invité qui attend Cal (D5) lui dit : qui l'a invité, quand (/api/auth/me, et la
+    réponse de /api/auth/enter : la page qui attend le dit dès le pseudo tapé)."""
+    if not u or u.get("state") != "pending" or not u.get("invited"):
+        return None
+    return {"by_name": display_name(u["invited"].get("by")), "at": u["invited"].get("at")}
 
 
 def accept_request(uid: str, by: str) -> dict:

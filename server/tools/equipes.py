@@ -650,7 +650,8 @@ def _validation(ok, H, same) -> None:
        and espaces.teams_of(mx) == [] and not auth.can_compute(mx, sid) and not espaces.can_manage(mx, tid),
        "validation : en attente, sa place ne compte pas (profil, voir, rôle, Teams, calcul, gérer : rien)")
     s, me, M = entrer("Max Valid")
-    ok(s == 200 and me.get("state") == "pending" and M, f"validation : il tape son pseudo : la porte le fait attendre ({s} {me.get('state')})")
+    ok(s == 200 and me.get("state") == "pending" and M and (me.get("invited") or {}).get("by_name") == "Rui Valid",
+       f"validation : il tape son pseudo : la porte le fait attendre, et dit qui l'a invité ({s} {me.get('state')} {me.get('invited')})")
     s, me, _ = G("/api/auth/me", M)
     ok(me.get("state") == "pending" and (me.get("invited") or {}).get("by_name") == "Rui Valid" and "teams" not in me,
        f"validation : /api/auth/me dit qu'il attend la validation de Cal, invité par Rui ({me.get('invited')})")

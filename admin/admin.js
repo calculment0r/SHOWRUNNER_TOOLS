@@ -383,8 +383,8 @@ function alertesCard() {
       el('span', { class: 'sp' }),
       el('button', { class: 'tb ghost', type: 'button', ...why(noTok), onclick: () => undoable(a.actif ? 'couper les alertes' : 'rallumer les alertes',
         () => post('admin/alertes/actif', { actif: !a.actif }), () => post('admin/alertes/actif', { actif: !!a.actif }),
-        a.actif ? 'alertes coupées : le jeton reste posé' : 'alertes rallumées') }, a.actif ? 'Couper' : 'Rallumer')),
-    noTok || off ? el('p', { class: 'why' }, noTok || off) : null);
+        a.actif ? 'alertes coupées : le jeton reste posé' : 'alertes rallumées') }, a.pose && !a.actif ? 'Rallumer' : 'Couper')),
+    noTok || off || !a.chat ? el('p', { class: 'why' }, noTok || off || 'envoyer un essai : trouve d’abord ton chat (étape 3)') : null);
 }
 function alertesChip(a) {
   const [k, t] = !a.pose ? (a.why && a.why !== 'pas posé' ? ['err', 'réglage refusé'] : ['no', 'à brancher'])

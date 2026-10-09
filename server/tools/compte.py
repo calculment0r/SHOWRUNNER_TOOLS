@@ -53,7 +53,9 @@ def enter(req):
     if not auth.enabled():
         raise HttpError(409, "la porte est coupée sur ce portail (auth: false)")
     state, u, tok = auth.enter(req.json().get("name"), req)
-    return _json({"state": state, "user": auth.public_user(u), "since": u.get("created")}, cookie=tok)
+    inv = auth.invited_public(u)   # un invité qui attend Cal (D5) : la porte le lui dit tout de suite
+    return _json({"state": state, "user": auth.public_user(u), "since": u.get("created"), **({"invited": inv} if inv else {})},
+                 cookie=tok)
 
 
 def cancel(req):
